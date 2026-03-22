@@ -17,10 +17,11 @@ services:
       - kiseki
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 8s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:
@@ -32,8 +33,7 @@ services:
       # サーバーコンポーネントからバックエンドへの接続（Docker内部ネットワーク）
       - NEXT_PUBLIC_API_URL=http://backend:8000
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
       - kiseki
     restart: unless-stopped
