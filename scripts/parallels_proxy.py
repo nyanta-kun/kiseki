@@ -27,7 +27,7 @@ logger = logging.getLogger("parallels_proxy")
 PARALLELS_HOST = "0.0.0.0"
 PROXY_PORT = 8000
 TARGET_HOST = "127.0.0.1"
-TARGET_PORT = 8000
+TARGET_PORT = 8001  # Docker は 127.0.0.1:8001 にマップ
 
 
 def forward(src: socket.socket, dst: socket.socket) -> None:

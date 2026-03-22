@@ -40,9 +40,13 @@ class Pedigree(Base):
     """血統情報"""
 
     __tablename__ = "pedigrees"
+    __table_args__ = (
+        UniqueConstraint("horse_id", name="uq_pedigree_horse_id"),
+        {"schema": SCHEMA},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    horse_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.horses.id"))
+    horse_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.horses.id"), unique=True, index=True)
     sire: Mapped[str | None] = mapped_column(String(100))  # 父
     dam: Mapped[str | None] = mapped_column(String(100))  # 母
     sire_of_dam: Mapped[str | None] = mapped_column(String(100))  # 母父

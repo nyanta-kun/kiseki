@@ -121,6 +121,65 @@ Windows Agent
 - スピード指数基準: 平均=50、標準偏差=10
 - 期待値購入閾値: 1.2以上
 
+## Windows操作（Parallels経由）
+
+**前提**: Windows 11はParallels VMとして動作。Mac側の `Z:\GitHub\kiseki\` にプロジェクトがマウント済み。
+
+### コマンド実行
+```bash
+# PowerShellコマンド実行
+prlctl exec "Windows 11" --current-user powershell -Command "コマンド"
+
+# ファイル転送（Mac→Windows）
+prlctl exec "Windows 11" --current-user powershell -Command "Copy-Item 'Z:\GitHub\kiseki\windows-agent\FILE.py' 'C:\kiseki\windows-agent\FILE.py' -Force"
+
+# Pythonスクリプト実行（複数行の場合はhere-string経由）
+prlctl exec "Windows 11" --current-user powershell -Command "
+@'
+import win32com.client
+print('test')
+'@ | Out-File -FilePath 'C:\kiseki\windows-agent\test.py' -Encoding utf8
+python C:\kiseki\windows-agent\test.py"
+```
+
+### ログ確認
+```bash
+# Windows agentのログ（最新50行）
+prlctl exec "Windows 11" --current-user powershell -Command "Get-Content 'C:\kiseki\windows-agent\jvlink_agent.log' -Tail 50"
+```
+
+### Windows VM再起動
+```bash
+prlctl restart "Windows 11"
+```
+
+### jvlink_agent.py 起動
+```bash
+# setupモード（全過去データ取得）
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'python' -ArgumentList 'jvlink_agent.py --mode setup' `
+    -WorkingDirectory 'C:\kiseki\windows-agent' -WindowStyle Normal -PassThru
+"
+
+# dailyモード（当日データ取得）
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'python' -ArgumentList 'jvlink_agent.py --mode daily' `
+    -WorkingDirectory 'C:\kiseki\windows-agent' -WindowStyle Normal -PassThru
+"
+```
+
+### JV-Link rc=-303 修復
+rc=-303（ファイル存在確認エラー）= JVNextCoreがJRA-VANサーバー確認に失敗。
+**最も確実な対処**: Windows VMの再起動。
+```bash
+# Step 1: 修復スクリプト試行（JVNextCoreをkill+テスト）
+prlctl exec "Windows 11" --current-user powershell -Command "cd C:\kiseki\windows-agent; python fix_jvlink_303.py"
+
+# Step 2: それでも-303が続く場合はVM再起動
+prlctl restart "Windows 11"
+# 再起動後、jvlink_agent --mode setup を再実行
+```
+
 ## 開発マイルストーン
 - MS1: 環境構築 + データ取込 + スピード指数CSV出力
 - MS2: コース適性 + 枠順バイアス + 総合指数CSV

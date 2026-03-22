@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import Horse, Jockey, Race, RaceEntry, RaceResult
+from ..db.models import CalculatedIndex, Horse, Jockey, Race, RaceEntry, RaceResult
 from ..db.session import get_db
 
 router = APIRouter(prefix="/api/races", tags=["races"])
@@ -65,6 +65,24 @@ class ResultOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class HorseIndexOut(BaseModel):
+    """1頭分の指数レスポンス。"""
+    horse_number: int
+    horse_name: str
+    composite_index: float
+    win_probability: float | None   # 勝率予測
+    place_probability: float | None  # 複勝率予測（3着以内）
+    # 単体指数
+    speed_index: float | None
+    last3f_index: float | None
+    course_aptitude: float | None
+    position_advantage: float | None
+    jockey_index: float | None
+    pace_index: float | None
+    rotation_index: float | None
+    pedigree_index: float | None
+
+
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
@@ -115,6 +133,53 @@ def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
             weight_change=entry.weight_change,
         ))
     return result
+
+
+@router.get("/{race_id}/indices")
+def get_indices(race_id: int, db: DbDep) -> list[HorseIndexOut]:
+    """レースの算出指数一覧を返す（composite_index 降順）。
+
+    win_probability / place_probability は Softmax + Harville 式で算出。
+    未算出の場合は null を返す。
+    """
+    race = db.query(Race).filter(Race.id == race_id).first()
+    if not race:
+        raise HTTPException(status_code=404, detail="Race not found")
+
+    rows = (
+        db.query(CalculatedIndex, RaceEntry, Horse)
+        .join(RaceEntry, (RaceEntry.race_id == CalculatedIndex.race_id)
+              & (RaceEntry.horse_id == CalculatedIndex.horse_id))
+        .join(Horse, Horse.id == CalculatedIndex.horse_id)
+        .filter(CalculatedIndex.race_id == race_id)
+        .order_by(CalculatedIndex.composite_index.desc().nullslast())
+        .all()
+    )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No indices calculated for this race")
+
+    def _f(v) -> float | None:
+        return float(v) if v is not None else None
+
+    return [
+        HorseIndexOut(
+            horse_number=entry.horse_number,
+            horse_name=horse.name,
+            composite_index=float(ci.composite_index),
+            win_probability=_f(ci.win_probability),
+            place_probability=_f(ci.place_probability),
+            speed_index=_f(ci.speed_index),
+            last3f_index=_f(ci.last_3f_index),
+            course_aptitude=_f(ci.course_aptitude),
+            position_advantage=_f(ci.position_advantage),
+            jockey_index=_f(ci.jockey_index),
+            pace_index=_f(ci.pace_index),
+            rotation_index=_f(ci.rotation_index),
+            pedigree_index=_f(ci.pedigree_index),
+        )
+        for ci, entry, horse in rows
+    ]
 
 
 @router.get("/{race_id}/results")

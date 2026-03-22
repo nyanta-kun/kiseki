@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db.session import get_db
-from ..importers import ChangeHandler, OddsImporter, RaceImporter
+from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +144,26 @@ async def import_weights(
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     db.commit()
+    return {"ok": True, "stats": stats}
+
+
+@router.post("/bloodlines")
+async def import_bloodlines(
+    body: ImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """HN/SKレコード（血統データ）を取り込む。
+
+    Windows Agent の run_setup から呼び出される。
+    HN (繁殖馬マスタ) と SK (産駒マスタ) を同一バッチで送信すること。
+    HN が先に処理されて in-memory 辞書を構築し、SK の馬名解決に使用する。
+    """
+    importer = PedigreeImporter(db)
+    records = [r.model_dump() for r in body.records]
+    stats = importer.import_records(records)
+    db.commit()
+    logger.info(f"import_bloodlines: {stats}")
     return {"ok": True, "stats": stats}
 
 

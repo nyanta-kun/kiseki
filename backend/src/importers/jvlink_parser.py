@@ -59,10 +59,12 @@ TRACK_CODE_MAP: dict[str, tuple[str, str | None]] = {
 }
 
 # グレードコード (コード表2003)
+# 'E' = OP特別（平地オープン特別戦）: 実データで確認済み（鎌ケ谷特別・スピカステークス等）
+# 'D'/'F'/'G' = 障害グレード系: 障害レースデータ取得後に要検証
 GRADE_MAP: dict[str, str] = {
     "A": "G1", "B": "G2", "C": "G3",
-    "D": "J.G1", "E": "J.G2", "F": "J.G3",
-    "G": "OP特別", "H": "重賞", "L": "Listed",
+    "D": "J.G1", "E": "OP特別", "F": "J.G2", "G": "J.G3",
+    "H": "重賞", "L": "Listed",
     " ": "一般", "": "",
 }
 
@@ -539,6 +541,152 @@ def parse_jc(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# HN レコード（繁殖馬マスタ, 251バイト）
+# -------------------------------------------------------------------
+# 共通ヘッダー相当の位置:
+#   1- 2: "HN"
+#   3   : データ区分 (0:削除)
+#   4-11: データ作成年月日
+#  12-21: 繁殖登録番号 (10バイト) ← KEY
+#  30-39: 血統登録番号 (10バイト)
+#  41-76: 馬名 (36バイト, SJIS全角)
+#  77-116: 馬名半角カナ (40バイト)
+# 117-196: 馬名欧字 (80バイト)
+# 197-200: 生年 (4バイト)
+#  201  : 性別コード (1バイト)
+# 230-239: 父馬繁殖登録番号 (10バイト)
+# 240-249: 母馬繁殖登録番号 (10バイト)
+
+def parse_hn(data: str) -> dict[str, Any] | None:
+    """HNレコード（繁殖馬マスタ）をパースする。
+
+    繁殖登録番号をキーとして、馬名・血統登録番号・親馬コードを返す。
+    SKレコードの sire_code/dam_code をこのレコードで名前解決する。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト）:
+      1- 2: "HN"
+      3   : データ区分 (0:削除)
+      4-11: データ作成年月日
+     12-21: 繁殖登録番号 (KEY)
+     30-39: 血統登録番号
+     41-76: 馬名 (SJIS全角36バイト)
+    117-196: 馬名欧字 (80バイト)
+    230-239: 父馬繁殖登録番号
+    240-249: 母馬繁殖登録番号
+    """
+    if len(data) < 249:
+        return None
+    try:
+        rec_id = _s(data, 1, 2)
+        if rec_id != "HN":
+            return None
+
+        data_type = _s(data, 3, 3)
+        breeding_code = _s(data, 12, 21)  # 繁殖登録番号
+        if not breeding_code:
+            return None
+
+        blood_code = _s(data, 30, 39)  # 血統登録番号（競走馬として登録がある場合）
+        name = _decode(data, 41, 76)    # 馬名（全角）
+        name_en = _s(data, 117, 196)    # 馬名欧字
+        birth_year = _s(data, 197, 200)
+        sex_code = _s(data, 201, 201)
+        sire_breeding_code = _s(data, 230, 239)
+        dam_breeding_code = _s(data, 240, 249)
+
+        return {
+            "_rec_id": "HN",
+            "data_type": data_type,
+            "breeding_code": breeding_code,
+            "blood_code": blood_code,
+            "name": name,
+            "name_en": name_en.strip(),
+            "birth_year": birth_year,
+            "sex_code": sex_code,
+            "sire_breeding_code": sire_breeding_code,
+            "dam_breeding_code": dam_breeding_code,
+        }
+    except Exception as e:
+        logger.error(f"HN parse error: {e} data={data[:30]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
+# SK レコード（産駒マスタ, 208バイト）
+# -------------------------------------------------------------------
+# 共通ヘッダー相当の位置:
+#   1- 2: "SK"
+#   3   : データ区分 (0:削除)
+#   4-11: データ作成年月日
+#  12-21: 血統登録番号 (10バイト) ← KEY = Horse.jravan_code
+#  22-29: 生年月日 (8バイト, YYYYMMDD)
+#  30   : 性別コード
+#  31   : 品種コード
+#  32-33: 毛色コード
+#  34   : 産駒持込区分
+#  35-38: 輸入年
+#  39-46: 生産者コード
+#  47-66: 産地名 (20バイト, SJIS全角)
+#  67-206: 3代血統 繁殖登録番号 × 14頭 (10バイト×14=140バイト)
+#          index 0: 父  index 1: 母  index 2: 父父  index 3: 父母
+#          index 4: 母父 index 5: 母母 ...（以降は4代目）
+# 207-208: レコード区切
+
+def parse_sk(data: str) -> dict[str, Any] | None:
+    """SKレコード（産駒マスタ）をパースする。
+
+    血統登録番号（Horse.jravan_code）をキーとして、3代血統の繁殖登録番号を返す。
+    繁殖登録番号は HNレコードの breeding_code で名前解決する。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト）:
+      1- 2: "SK"
+     12-21: 血統登録番号 (KEY, = Horse.jravan_code)
+     22-29: 生年月日 YYYYMMDD
+     67-206: 3代血統 繁殖登録番号 × 14頭 (10バイト×14)
+             [0]父 [1]母 [2]父父 [3]父母 [4]母父 [5]母母
+             [6]父父父 [7]父父母 [8]父母父 [9]父母母
+             [10]母父父 [11]母父母 [12]母母父 [13]母母母
+    """
+    if len(data) < 206:
+        return None
+    try:
+        rec_id = _s(data, 1, 2)
+        if rec_id != "SK":
+            return None
+
+        data_type = _s(data, 3, 3)
+        blood_code = _s(data, 12, 21)  # 血統登録番号 = Horse.jravan_code
+        if not blood_code:
+            return None
+
+        birth_date = _s(data, 22, 29)
+
+        # 3代血統 繁殖登録番号 (14頭分)
+        pedigree_codes: list[str] = []
+        for i in range(14):
+            start = 67 + i * 10
+            end = start + 9  # 10バイト (start〜start+9)
+            pedigree_codes.append(_s(data, start, end))
+
+        return {
+            "_rec_id": "SK",
+            "data_type": data_type,
+            "blood_code": blood_code,        # = Horse.jravan_code
+            "birth_date": birth_date,
+            "sire_code": pedigree_codes[0],      # 父
+            "dam_code": pedigree_codes[1],       # 母
+            "sire_sire_code": pedigree_codes[2], # 父父
+            "sire_dam_code": pedigree_codes[3],  # 父母
+            "dam_sire_code": pedigree_codes[4],  # 母父
+            "dam_dam_code": pedigree_codes[5],   # 母母
+            "all_codes": pedigree_codes,
+        }
+    except Exception as e:
+        logger.error(f"SK parse error: {e} data={data[:30]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
 # レコード種別ディスパッチ
 # -------------------------------------------------------------------
 
@@ -561,6 +709,8 @@ def parse_record(rec: dict[str, str]) -> dict[str, Any] | None:
         "O4": parse_odds, "O5": parse_odds, "O6": parse_odds,
         "AV": parse_av,
         "JC": parse_jc,
+        "HN": parse_hn,
+        "SK": parse_sk,
     }
     parser = parsers.get(rec_id)
     if parser is None:
