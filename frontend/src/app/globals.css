@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* kiseki カラーパレット */
+  --green-deep: #1a5c38;
+  --green-mid:  #2d7a50;
+  --green-light: #e8f5ee;
+  --gold:       #c9a84c;
+  --gold-light: #f5e9c8;
+  --rank-1: #e8f5ee;
+  --rank-2: #f0faf4;
+  --rank-3: #f7fcf9;
+  --ev-high: #16a34a;   /* 期待値1.2以上 */
+  --ev-mid:  #ca8a04;   /* 期待値0.9-1.2 */
+  --ev-low:  #dc2626;   /* 期待値0.9未満 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0f1a14;
+    --foreground: #e8f5ee;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Noto Sans JP", system-ui, sans-serif;
+}
+
+/* 競馬新聞スタイル：指数バー */
+.index-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #e5e7eb;
+  position: relative;
+  overflow: hidden;
+}
+.index-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* 期待値バッジ */
+.ev-badge-high { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.ev-badge-mid  { background: #fef9c3; color: #a16207; border: 1px solid #fde047; }
+.ev-badge-low  { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+
+/* スクロール可能テーブル（モバイル） */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* PWA safe area */
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+}
