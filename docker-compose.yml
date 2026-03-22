@@ -13,6 +13,8 @@ services:
     volumes:
       - ./backend/src:/app/src
       - ./logs:/app/logs
+    networks:
+      - kiseki
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -20,18 +22,22 @@ services:
       timeout: 10s
       retries: 3
 
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3000:3000"
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - NEXT_PUBLIC_API_URL=http://localhost:${API_PORT:-8000}
-  #     - NEXT_PUBLIC_WS_URL=ws://localhost:${API_PORT:-8000}
-  #   depends_on:
-  #     - backend
-  #   restart: unless-stopped
-  # ※ Frontend は MS6 で有効化
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # サーバーコンポーネントからバックエンドへの接続（Docker内部ネットワーク）
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - kiseki
+    restart: unless-stopped
+
+networks:
+  kiseki:
+    driver: bridge
