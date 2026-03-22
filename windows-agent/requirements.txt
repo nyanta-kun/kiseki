@@ -1,0 +1,7 @@
+# kiseki Windows Agent 依存パッケージ
+# ※ Python 32bit版で実行すること（JV-Linkが32bit COMのため）
+# pip install -r requirements.txt
+
+pywin32>=306
+requests>=2.31.0
+python-dotenv>=1.0.0

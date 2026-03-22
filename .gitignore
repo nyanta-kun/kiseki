@@ -1,0 +1,39 @@
+# 環境変数（絶対にコミットしない）
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.uv/
+dist/
+build/
+
+# ログ
+logs/*.log
+
+# データファイル（生データ・一時ファイル）
+data/raw/
+data/processed/
+*.csv
+
+# Node.js
+node_modules/
+.next/
+.pnpm-store/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Docker
+docker-compose.override.yml
