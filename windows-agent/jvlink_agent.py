@@ -32,6 +32,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -230,20 +231,28 @@ def mark_file_completed(dataspec: str, filename: str) -> None:
 
 
 def retry_pending() -> None:
-    """ペンディングキューをすべてリトライする。成功したファイルは削除する。"""
+    """ペンディングキューをすべて並列リトライする。成功したファイルは削除する。"""
     items = load_pending_all()
     if not items:
         logger.info("[pending] ペンディングキューは空です")
         return
 
-    logger.info(f"[pending] {len(items)} ファイルをリトライします")
-    for endpoint, path, records in items:
+    logger.info(f"[pending] {len(items)} ファイルをリトライします (並列4)")
+
+    def _retry_one(item: tuple) -> tuple[bool, str, int, str]:
+        endpoint, path, records = item
         ok = post_to_backend(endpoint, {"records": records})
-        if ok:
-            path.unlink()
-            logger.info(f"[pending] OK -> 削除: {path.name} ({len(records)} records, {endpoint})")
-        else:
-            logger.warning(f"[pending] NG -> 残留: {path.name} ({len(records)} records, {endpoint})")
+        return ok, path.name, len(records), endpoint, path
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_retry_one, item): item for item in items}
+        for future in as_completed(futures):
+            ok, name, count, endpoint, path = future.result()
+            if ok:
+                path.unlink()
+                logger.info(f"[pending] OK -> 削除: {name} ({count} records, {endpoint})")
+            else:
+                logger.warning(f"[pending] NG -> 残留: {name} ({count} records, {endpoint})")
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +557,7 @@ def _filter_race_records(records: list[dict]) -> list[dict]:
     return [r for r in records if r.get("rec_id") in ("RA", "SE")]
 
 
-def _post_in_batches(endpoint: str, records: list[dict], batch_size: int = 200) -> None:
+def _post_in_batches(endpoint: str, records: list[dict], batch_size: int = 500) -> None:
     """
     レコードをbatch_size件ずつ分割してPOSTする。
 

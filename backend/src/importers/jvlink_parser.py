@@ -178,6 +178,103 @@ def _parse_sst_time(raw: str) -> int | None:
     return int(raw)
 
 
+def _parse_sst(data: str, start: int, end: int) -> "Decimal | None":
+    """SST形式フィールド（秒×10 3バイト）をDecimalに変換する。
+
+    SST = 秒(2桁) + 0.1秒(1桁)
+    例: "336" → Decimal('33.6')、"000" → None
+
+    Args:
+        data: レコード文字列
+        start: 開始バイト位置 (1-indexed)
+        end: 終了バイト位置 (1-indexed)
+
+    Returns:
+        秒単位のDecimal、無効の場合は None
+    """
+    from decimal import Decimal
+    raw = _s(data, start, end)
+    try:
+        v = int(raw)
+        if v <= 0:
+            return None
+        return Decimal(str(round(v / 10, 1)))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_weight_field(data: str, start: int, end: int) -> "Decimal | None":
+    """斤量フィールド（0.1kg単位整数）をDecimalに変換する。
+
+    例: "560" → Decimal('56.0')、"000" → None
+
+    Args:
+        data: レコード文字列
+        start: 開始バイト位置 (1-indexed)
+        end: 終了バイト位置 (1-indexed)
+
+    Returns:
+        kg単位のDecimal、無効の場合は None
+    """
+    from decimal import Decimal
+    raw = _s(data, start, end)
+    try:
+        v = int(raw)
+        if v <= 0:
+            return None
+        return Decimal(str(round(v / 10, 1)))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_win_odds(data: str, start: int, end: int) -> "Decimal | None":
+    """単勝オッズフィールド（10倍精度, 4バイト）をDecimalに変換する。
+
+    例: "0153" → Decimal('15.3')、"9999"=不成立 → None
+
+    Args:
+        data: レコード文字列
+        start: 開始バイト位置 (1-indexed)
+        end: 終了バイト位置 (1-indexed)
+
+    Returns:
+        倍率のDecimal、無効・不成立の場合は None
+    """
+    from decimal import Decimal
+    raw = _s(data, start, end)
+    try:
+        v = int(raw)
+        if v <= 0 or v >= 9999:
+            return None
+        return Decimal(str(round(v / 10, 1)))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_time_diff(data: str, pos: int) -> "Decimal | None":
+    """タイム差フィールド（pos=1-indexed先頭位置, 4バイト: 符号1+数値3）をDecimalに変換する。
+
+    例: " 053" → Decimal('5.3')（プラス）、"-053" → Decimal('-5.3')
+
+    Args:
+        data: レコード文字列
+        pos: 符号文字の1-indexedバイト位置
+
+    Returns:
+        秒単位のDecimal（符号付き）、無効の場合は None
+    """
+    from decimal import Decimal
+    sign_char = data[pos - 1]
+    num_str = data[pos:pos + 3]
+    try:
+        v = int(num_str)
+        if sign_char == "-":
+            v = -v
+        return Decimal(str(round(v / 10, 1)))
+    except (ValueError, TypeError):
+        return None
+
+
 # -------------------------------------------------------------------
 # 共通ヘッダー抽出
 # -------------------------------------------------------------------
@@ -238,13 +335,15 @@ def parse_ra(data: str) -> dict[str, Any] | None:
     617-618: 競走種別コード
     698-701: 距離 (メートル, 4桁)
     706-707: トラックコード (コード表2009)
+    874-877: 発走時刻 (hhmm形式, 例: "1025" = 10:25)
+    878-881: 変更前発走時刻 (発走時刻変更時のみ)
     882-883: 登録頭数
     884-885: 出走頭数
     888   : 天候コード (コード表2011)
     889   : 芝馬場状態コード (コード表2010)
     890   : ダート馬場状態コード (コード表2010)
     """
-    if len(data) < 890:
+    if len(data) < 1272:
         logger.warning(f"RA record too short: {len(data)} bytes")
         return None
 
@@ -290,6 +389,27 @@ def parse_ra(data: str) -> dict[str, Any] | None:
             "condition": condition,
             "weather": WEATHER_MAP.get(_s(data, 888, 888)),
             "head_count": _i(data, 884, 885),  # 出走頭数 (取消除外後)
+            "post_time": _s(data, 874, 877) or None,  # 発走時刻 hhmm形式 (例: "1025")
+            # 競走情報
+            "race_type_code": _s(data, 617, 618),
+            "weight_type_code": _s(data, 622, 622),
+            "prev_grade_code": _s(data, 616, 616) or None,
+            # 賞金（百円単位、0はNone）
+            "prize_1st": _i(data, 714, 721) or None,
+            "prize_2nd": _i(data, 722, 729) or None,
+            "prize_3rd": _i(data, 730, 737) or None,
+            # 頭数
+            "registered_count": _i(data, 882, 883),
+            "finishers_count": _i(data, 886, 887),
+            # ラップ・ハロンタイム
+            "first_3f": _parse_sst(data, 970, 972),
+            "last_3f_race": _parse_sst(data, 976, 978),
+            "lap_times": _s(data, 891, 965) or None,
+            "record_update_type": _s(data, 1270, 1270) or None,
+            # 変更前フィールド（変更検知用）
+            "prev_distance": _i(data, 702, 705) or None,
+            "prev_track_code": _s(data, 708, 709) or None,
+            "prev_post_time": _s(data, 878, 881) or None,
             "data_type": header["data_type"],
         }
     except Exception as e:
@@ -337,7 +457,7 @@ def parse_se(data: str) -> dict[str, Any] | None:
     358-359: 4コーナー通過順位
     391-393: 後3ハロンタイム (3バイト, SST形式: "336"=33.6秒)
     """
-    if len(data) < 393:
+    if len(data) < 555:
         logger.warning(f"SE record too short: {len(data)} bytes")
         return None
 
@@ -404,6 +524,28 @@ def parse_se(data: str) -> dict[str, Any] | None:
             "passing_2": _i(data, 354, 355),
             "passing_3": _i(data, 356, 357),
             "passing_4": _i(data, 358, 359),
+            # 馬情報
+            "horse_age": _i(data, 83, 84),
+            "east_west_code": _s(data, 85, 85),
+            # 変更前フィールド（変更検知用）
+            "prev_weight_carried": _parse_weight_field(data, 292, 294),
+            "blinker": _s(data, 295, 295) == "1",
+            "prev_jockey_code": _s(data, 302, 306) or None,
+            "jockey_apprentice_code": _s(data, 323, 323) or None,
+            # 着順・着差
+            "arrival_position": _i(data, 333, 334) or None,
+            "dead_heat": _s(data, 337, 337) == "1",
+            "margin_code": _s(data, 343, 345) or None,
+            # オッズ・賞金
+            "win_odds": _parse_win_odds(data, 360, 363),
+            "win_popularity": _i(data, 364, 365) or None,
+            "prize_money": _i(data, 366, 373) or None,
+            # ハロンタイム
+            "last_4f": _parse_sst(data, 388, 390),
+            # タイム差
+            "time_diff": _parse_time_diff(data, 532),
+            # 脚質
+            "running_style": _s(data, 553, 553) or None,
             "data_type": header["data_type"],
         }
     except Exception as e:
