@@ -413,6 +413,7 @@ def fetch_stored_data(
     file_records: list[dict] = []  # 現在ファイル分（コールバック用）
     read_count = 0
     current_file = ""
+    skip_current = False  # 現在ファイルをスキップ中（レコード蓄積しない）
     last_log_time = time.time()
     wait_count = 0
     error_count = 0
@@ -421,13 +422,12 @@ def fetch_stored_data(
 
     def _flush_file(fname: str) -> None:
         """現在ファイルのレコードをコールバックに渡し、累積リストへ移す。"""
-        nonlocal file_records
-        if not file_records:
-            return
-        if on_file_done:
+        nonlocal file_records, skip_current
+        if fname and on_file_done:
             on_file_done(fname, file_records)
         all_records.extend(file_records)
         file_records = []
+        skip_current = False
 
     while True:
         r = jv.JVRead("", 256000, "")
@@ -450,14 +450,23 @@ def fetch_stored_data(
                 )
                 _flush_file(current_file)
             current_file = new_file
-            # skip_file_fn が True を返すファイルは JVSkip で即スキップ
+            # skip_file_fn が True を返すファイルは JVSkip で即スキップを試みる。
+            # JVSkip が失敗した場合は skip_current=True でレコード蓄積を抑制する。
             if new_file and skip_file_fn and skip_file_fn(new_file):
                 rc_skip = jv.JVSkip()
-                logger.info(f"JVSkip: {new_file} (rc={rc_skip})")
-                if on_file_done:
-                    on_file_done(new_file, [])
-                current_file = ""
-                file_records = []
+                if rc_skip == 0:
+                    # JVSkip 成功: 次ファイルへ即移動
+                    logger.info(f"JVSkip: {new_file} (成功)")
+                    if on_file_done:
+                        on_file_done(new_file, [])
+                    current_file = ""
+                    skip_current = False
+                else:
+                    # JVSkip 失敗 (rc={rc_skip}): レコードは読み捨て
+                    logger.debug(f"JVSkip: {new_file} 失敗(rc={rc_skip}) → 読み捨てモード")
+                    skip_current = True
+            else:
+                skip_current = False
             continue
         elif ret_code == -3:
             # ダウンロード中
@@ -504,11 +513,12 @@ def fetch_stored_data(
             current_file = ""
             continue
         else:
-            buff = _normalize_jvread(r[1])
-            rec_id = buff[:2]
-            file_records.append({"rec_id": rec_id, "data": buff})
             read_count += 1
             wait_count = 0
+            if not skip_current:
+                buff = _normalize_jvread(r[1])
+                rec_id = buff[:2]
+                file_records.append({"rec_id": rec_id, "data": buff})
 
             if read_count % 1000 == 0:
                 logger.info(f"  ... {read_count} 件読込済 (現在ファイル: {current_file})")
@@ -767,30 +777,34 @@ def run_recent(jv, from_year: int = 2023) -> None:
     """直近データ優先取得（指定年以降を先にDBへ投入する）。
 
     option=3 で全ファイルを対象にしつつ、from_year より前のファイルは
-    JVSkip で高速スキップする。完了後は run_setup を実行することで
-    残りの過去データを補完できる。
+    レコードを読み捨て（skip_current=True）して高速スキップする。
+    完了後は --mode setup を実行することで残りの過去データを補完できる。
 
     Args:
         jv: JV-Link COMオブジェクト
         from_year: この年以降のファイルのみDB反映する（例: 2023）
     """
-    logger.info(f"=== RECENT MODE: {from_year}年以降データを優先取得 ===")
-    logger.info(f"※ {from_year}年より前のファイルは JVSkip で高速スキップします。")
+    logger.info(f"=== RECENT MODE: {from_year}年以降データを優先取得 (option=3) ===")
+    logger.info(f"※ {from_year}年より前のファイルはレコードを読み捨てて高速スキップします。")
 
     from_time = "19860101000000"
     completed = load_completed_files(DATASPEC_RACE)
     if completed:
-        logger.info(f"[completed] 処理済みファイル: {len(completed)} 件（JVSkip対象）")
+        logger.info(f"[completed] 処理済みファイル: {len(completed)} 件（スキップ対象）")
 
     total_posted = {"ra_se": 0, "files": 0, "skipped": 0}
 
     def on_race_file_done(filename: str, file_records: list[dict]) -> None:
-        if not file_records and filename not in completed:
-            # JVSkip経由: 完了マークだけ付ける
-            mark_file_completed(DATASPEC_RACE, filename)
+        if filename in completed:
             total_posted["skipped"] += 1
             return
-        if filename in completed:
+        # from_year より前 or 空ファイル → 完了マークして終了（POST不要）
+        try:
+            year = int(filename[4:8]) if filename else 0
+        except (ValueError, IndexError):
+            year = 0
+        if year < from_year:
+            mark_file_completed(DATASPEC_RACE, filename)
             total_posted["skipped"] += 1
             return
         ra_se = _filter_race_records(file_records)
@@ -807,7 +821,7 @@ def run_recent(jv, from_year: int = 2023) -> None:
         )
 
     def recent_skip_fn(filename: str) -> bool:
-        """処理済み or from_year より前のファイルは JVSkip でスキップ。"""
+        """処理済み or from_year より前のファイルは skip_current で読み捨て。"""
         if filename in completed:
             return True
         try:
