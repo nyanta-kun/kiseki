@@ -1,0 +1,28 @@
+version: '3.8'
+
+# ローカル開発用 Compose（バックエンドのみ）
+#
+# フロントエンドはホットリロードのため pnpm dev で直接起動する:
+#   docker compose -f docker-compose.local.yml up -d   # バックエンド起動
+#   cd frontend && pnpm dev                             # フロント起動（別ターミナル）
+#
+# .env にDBの接続情報等を設定しておくこと
+
+name: kiseki-local
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kiseki-backend-local
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend/src:/app/src   # ソースをマウント → コード変更を即時反映
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
