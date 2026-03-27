@@ -5,34 +5,30 @@ import { todayYYYYMMDD } from "@/lib/utils";
 
 type Props = {
   currentDate: string;
+  /** 直前の開催日（なければ null） */
+  prevDate: string | null;
+  /** 直後の開催日（なければ null） */
+  nextDate: string | null;
 };
 
-function addDays(yyyymmdd: string, days: number): string {
-  const y = parseInt(yyyymmdd.slice(0, 4));
-  const m = parseInt(yyyymmdd.slice(4, 6)) - 1;
-  const d = parseInt(yyyymmdd.slice(6, 8));
-  const date = new Date(y, m, d + days);
-  return (
-    date.getFullYear().toString() +
-    String(date.getMonth() + 1).padStart(2, "0") +
-    String(date.getDate()).padStart(2, "0")
-  );
-}
-
-export function DateNav({ currentDate }: Props) {
+export function DateNav({ currentDate, prevDate, nextDate }: Props) {
   const router = useRouter();
   const today = todayYYYYMMDD();
   const isToday = currentDate === today;
 
   const go = (date: string) => router.push(`/?date=${date}`);
 
+  const toInputValue = (d: string) =>
+    `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+
   return (
     <div className="flex items-center justify-between px-4 pb-2 gap-2">
       <button
-        onClick={() => go(addDays(currentDate, -1))}
-        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors"
+        onClick={() => prevDate && go(prevDate)}
+        disabled={!prevDate}
+        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
       >
-        ← 前日
+        ← 前開催
       </button>
 
       <div className="flex items-center gap-1.5">
@@ -44,9 +40,11 @@ export function DateNav({ currentDate }: Props) {
             今日
           </button>
         )}
+        {/* key でマウントし直すことで currentDate 変化時に表示を更新 */}
         <input
+          key={currentDate}
           type="date"
-          defaultValue={`${currentDate.slice(0, 4)}-${currentDate.slice(4, 6)}-${currentDate.slice(6, 8)}`}
+          defaultValue={toInputValue(currentDate)}
           onChange={(e) => {
             const v = e.target.value.replace(/-/g, "");
             if (v.length === 8) go(v);
@@ -56,10 +54,11 @@ export function DateNav({ currentDate }: Props) {
       </div>
 
       <button
-        onClick={() => go(addDays(currentDate, 1))}
-        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors"
+        onClick={() => nextDate && go(nextDate)}
+        disabled={!nextDate}
+        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
       >
-        翌日 →
+        翌開催 →
       </button>
     </div>
   );

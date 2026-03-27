@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { HorseIndex, RaceHistoryEntry, fetchHorseHistory } from "@/lib/api";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHistory } from "@/lib/api";
 import { IndexBar } from "./IndexBar";
 import { cn, indexColor } from "@/lib/utils";
 
@@ -9,6 +9,10 @@ type Props = {
   indices: HorseIndex[];
   /** horse_number → finish_position のマップ（成績あり時） */
   results?: Map<number, number | null>;
+  /** 初期オッズデータ（サーバーサイドで取得済み） */
+  initialOdds?: OddsData;
+  /** レースID（WebSocket接続用） */
+  raceId?: number;
 };
 
 type SortKey = "composite_index" | "win_probability" | "horse_number" | "finish_position";
@@ -202,11 +206,44 @@ function HistorySection({ horseId }: { horseId: number }) {
   );
 }
 
-export function IndicesTable({ indices, results }: Props) {
+export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
   const hasResults = results && results.size > 0;
   const defaultSort: SortKey = hasResults ? "finish_position" : "composite_index";
   const [sort, setSort] = useState<SortKey>(defaultSort);
   const [expandedHorse, setExpandedHorse] = useState<number | null>(null);
+  const [odds, setOdds] = useState<OddsData>(initialOdds ?? { win: {}, place: {} });
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // WebSocket接続 - オッズリアルタイム更新
+  useEffect(() => {
+    if (!raceId) return;
+    const url = buildOddsWsUrl(raceId);
+    if (!url) return;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url);
+      wsRef.current = ws;
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as OddsData;
+          setOdds(data);
+        } catch {
+          // ignore
+        }
+      };
+      ws.onerror = () => {
+        // WS接続失敗は静かに無視（オッズなしで動作）
+      };
+    } catch {
+      // WebSocket非対応環境は無視
+    }
+
+    return () => {
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [raceId]);
 
   // 総合指数1位の馬番（ソート不問で固定）
   const topHorseNumber = indices.reduce(
@@ -279,6 +316,10 @@ export function IndicesTable({ indices, results }: Props) {
           const finishLabel_ = finishLabel(finishPos);
           const finishClass = finishBadgeClass(finishPos);
 
+          const hn = String(horse.horse_number);
+          const winOdds = odds.win[hn];
+          const placeOdds = odds.place[hn];
+
           return (
             <div
               key={horse.horse_number}
@@ -317,11 +358,26 @@ export function IndicesTable({ indices, results }: Props) {
                   </div>
                 </div>
 
-                {/* 右側: 着順 + 確率 */}
+                {/* 右側: オッズ + 着順 + 確率 */}
                 <div className="flex-shrink-0 text-right space-y-1">
                   {finishLabel_ && (
                     <div className={cn("text-[11px] px-1.5 py-0.5 rounded text-center", finishClass)}>
                       {finishLabel_}
+                    </div>
+                  )}
+                  {/* 単勝・複勝オッズ */}
+                  {(winOdds !== undefined || placeOdds !== undefined) && (
+                    <div className="flex gap-1 justify-end">
+                      {winOdds !== undefined && (
+                        <span className="text-[11px] font-mono tabular-nums bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded border border-amber-200">
+                          単{winOdds.toFixed(1)}
+                        </span>
+                      )}
+                      {placeOdds !== undefined && (
+                        <span className="text-[11px] font-mono tabular-nums bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded border border-sky-200">
+                          複{placeOdds.toFixed(1)}
+                        </span>
+                      )}
                     </div>
                   )}
                   <div className="flex gap-1 justify-end">

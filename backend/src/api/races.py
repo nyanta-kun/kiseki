@@ -7,16 +7,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from sqlalchemy import exists
+from sqlalchemy import exists, func
 
-from ..db.models import CalculatedIndex, Horse, Jockey, Race, RaceEntry, RaceResult
+from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence
+from .ws_manager import manager as ws_manager
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
@@ -110,9 +111,46 @@ class HorseIndexOut(BaseModel):
     paddock_index: float | None
 
 
+class OddsOut(BaseModel):
+    """単勝・複勝オッズレスポンス。"""
+    win: dict[str, float]    # horse_number (str) → オッズ倍率
+    place: dict[str, float]  # horse_number (str) → オッズ倍率（中間値）
+
+
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
+@router.get("/nearest-date")
+def get_nearest_race_date(
+    db: DbDep,
+    from_date: str = Query(..., description="基準日 YYYYMMDD"),
+    direction: str = Query(..., description="prev | next"),
+) -> dict:
+    """基準日から最も近い開催日を返す。
+
+    開催データが存在する日付のみ対象とする（平日等はスキップ）。
+    """
+    if direction == "prev":
+        result = (
+            db.query(Race.date)
+            .filter(Race.date < from_date)
+            .order_by(Race.date.desc())
+            .limit(1)
+            .scalar()
+        )
+    else:
+        result = (
+            db.query(Race.date)
+            .filter(Race.date > from_date)
+            .order_by(Race.date.asc())
+            .limit(1)
+            .scalar()
+        )
+    if not result:
+        raise HTTPException(status_code=404, detail="No adjacent race date found")
+    return {"date": result}
+
+
 @router.get("")
 def list_races(
     db: DbDep,
@@ -321,3 +359,48 @@ def get_results(race_id: int, db: DbDep) -> list[ResultOut]:
         )
         for r, h in results
     ]
+
+
+@router.get("/{race_id}/odds")
+def get_odds(race_id: int, db: DbDep) -> OddsOut:
+    """レースの最新単勝・複勝オッズを馬番ごとに返す。"""
+    win_odds: dict[str, float] = {}
+    place_odds: dict[str, float] = {}
+
+    for bet_type, target in (("win", win_odds), ("place", place_odds)):
+        latest_at = (
+            db.query(func.max(OddsHistory.fetched_at))
+            .filter(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
+            .scalar()
+        )
+        if latest_at is None:
+            continue
+        rows = (
+            db.query(OddsHistory)
+            .filter(
+                OddsHistory.race_id == race_id,
+                OddsHistory.bet_type == bet_type,
+                OddsHistory.fetched_at == latest_at,
+            )
+            .all()
+        )
+        for row in rows:
+            if row.odds is not None:
+                target[row.combination] = float(row.odds)
+
+    return OddsOut(win=win_odds, place=place_odds)
+
+
+@router.websocket("/{race_id}/odds/ws")
+async def odds_websocket(race_id: int, ws: WebSocket) -> None:
+    """オッズリアルタイム更新用WebSocket。
+
+    接続後、オッズが更新されるたびに {"win": {...}, "place": {...}} を送信する。
+    """
+    await ws_manager.connect(race_id, ws)
+    try:
+        while True:
+            # クライアントからのメッセージを待機（ping-pong等）
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(race_id, ws)

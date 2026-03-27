@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db.session import get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
+from .ws_manager import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +122,42 @@ async def import_odds(
     _: ApiKeyDep,
     db: DbDep,
 ) -> dict:
-    """O1-O8オッズレコードを取り込む。"""
+    """O1-O8オッズレコードを取り込む。更新後WebSocketでブロードキャスト。"""
+    from sqlalchemy import func
+    from ..db.models import OddsHistory
+
     importer = OddsImporter(db)
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     db.commit()
     logger.info(f"import_odds: {stats}")
+
+    # 更新されたレースのオッズをWebSocketクライアントへブロードキャスト
+    for race_id in stats.get("race_ids", []):
+        win: dict[str, float] = {}
+        place: dict[str, float] = {}
+        for bet_type, target in (("win", win), ("place", place)):
+            latest_at = (
+                db.query(func.max(OddsHistory.fetched_at))
+                .filter(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
+                .scalar()
+            )
+            if latest_at is None:
+                continue
+            rows = (
+                db.query(OddsHistory)
+                .filter(
+                    OddsHistory.race_id == race_id,
+                    OddsHistory.bet_type == bet_type,
+                    OddsHistory.fetched_at == latest_at,
+                )
+                .all()
+            )
+            for row in rows:
+                if row.odds is not None:
+                    target[row.combination] = float(row.odds)
+        await ws_manager.broadcast(race_id, {"win": win, "place": place})
+
     return {"ok": True, "stats": stats}
 
 

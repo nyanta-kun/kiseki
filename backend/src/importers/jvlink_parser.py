@@ -572,12 +572,14 @@ def parse_odds(data: str) -> dict[str, Any] | None:
             return None
 
         bet_type_map = {
-            "O1": "win_place_bracket",
-            "O2": "quinella",
-            "O3": "quinella_place",
-            "O4": "exacta",
-            "O5": "trio",
-            "O6": "trifecta",
+            "O1": "win",             # 単勝
+            "O2": "place",           # 複勝
+            "O3": "bracket_quinella",  # 枠連
+            "O4": "quinella",        # 馬連
+            "O5": "quinella_place",  # ワイド
+            "O6": "exacta",          # 馬単
+            "O7": "trio",            # 三連複
+            "O8": "trifecta",        # 三連単
         }
 
         header = _parse_common_header(data)

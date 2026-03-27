@@ -6,6 +6,10 @@
 #   1. sekito側に ~/GitHub/kiseki が存在すること（git cloneまたはpull済み）
 #   2. ~/GitHub/kiseki/.env が設定済みであること
 #   3. nginxに /kiseki 設定が追加済みであること
+#   4. nginxの /kiseki/api/ location に WebSocket ヘッダーが設定済みであること:
+#      proxy_http_version 1.1;
+#      proxy_set_header Upgrade $http_upgrade;
+#      proxy_set_header Connection "upgrade";
 
 set -euo pipefail
 

@@ -53,9 +53,9 @@ export type HorseIndex = {
   paddock_index: number | null;
 };
 
-export type OddsEntry = {
-  combination: string;
-  odds: number;
+export type OddsData = {
+  win: Record<string, number>;   // horse_number (str) → 倍率
+  place: Record<string, number>; // horse_number (str) → 倍率
 };
 
 export type RaceConfidence = {
@@ -116,4 +116,30 @@ export async function fetchResults(raceId: number): Promise<RaceResult[]> {
 
 export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEntry[]> {
   return get<RaceHistoryEntry[]>(`/api/horses/${horseId}/history`);
+}
+
+export async function fetchOdds(raceId: number): Promise<OddsData> {
+  return get<OddsData>(`/api/races/${raceId}/odds`);
+}
+
+export async function fetchNearestDate(
+  fromDate: string,
+  direction: "prev" | "next"
+): Promise<{ date: string }> {
+  return get<{ date: string }>(`/api/races/nearest-date?from=${fromDate}&direction=${direction}`);
+}
+
+/** WebSocket URLを組み立てる（ブラウザ専用）。
+ *  NEXT_PUBLIC_WS_URL が設定されていればそれを使用（ローカル開発用）。
+ *  未設定時は window.location から導出（本番環境 nginx プロキシ経由）。
+ */
+export function buildOddsWsUrl(raceId: number): string {
+  if (typeof window === "undefined") return "";
+  const explicit = process.env.NEXT_PUBLIC_WS_URL;
+  if (explicit) {
+    return `${explicit}/api/races/${raceId}/odds/ws`;
+  }
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host;
+  return `${proto}://${host}/kiseki/api/races/${raceId}/odds/ws`;
 }

@@ -65,17 +65,18 @@ class OddsImporter:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
+    def import_records(self, records: list[dict[str, str]]) -> dict[str, Any]:
         """オッズレコードリストをDBへ取り込む。
 
         Args:
             records: [{"rec_id": "O1", "data": "O11..."}, ...]
 
         Returns:
-            {"saved": N, "errors": N}
+            {"saved": N, "errors": N, "race_ids": [更新されたrace_idのリスト]}
         """
-        stats = {"saved": 0, "errors": 0}
+        stats: dict[str, Any] = {"saved": 0, "errors": 0, "race_ids": []}
         now = datetime.now()
+        affected_race_ids: set[int] = set()
 
         for rec in records:
             rec_id = rec.get("rec_id", "")
@@ -95,12 +96,14 @@ class OddsImporter:
                 if rows:
                     self.db.execute(insert(OddsHistory), rows)
                     stats["saved"] += len(rows)
+                    affected_race_ids.add(race_db_id)
 
             except Exception as e:
                 logger.error(f"Odds import error rec_id={rec_id}: {e}")
                 stats["errors"] += 1
 
         self.db.flush()
+        stats["race_ids"] = list(affected_race_ids)
         return stats
 
     def _get_race_id(self, jravan_race_id: str) -> int | None:

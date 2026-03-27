@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { fetchIndices, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
+import { OddsData, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { surfaceIcon, gradeClass, formatDate } from "@/lib/utils";
 import { IndicesTable } from "@/components/IndicesTable";
 import { EVSummary } from "@/components/EVSummary";
@@ -47,6 +47,14 @@ export default async function RacePage({ params }: { params: Params }) {
     // 成績なし（レース前）は無視
   }
 
+  // 初期オッズを取得（未取得の場合は空）
+  let initialOdds: OddsData = { win: {}, place: {} };
+  try {
+    initialOdds = await fetchOdds(raceId);
+  } catch {
+    // オッズなし（レース前）は無視
+  }
+
   let indicesResp = null;
   try {
     indicesResp = await fetchIndices(raceId);
@@ -87,7 +95,7 @@ export default async function RacePage({ params }: { params: Params }) {
             出馬表 指数一覧
             <span className="text-xs text-gray-400 font-normal ml-1">{indices.length}頭</span>
           </h2>
-          <IndicesTable indices={indices} results={resultsMap} />
+          <IndicesTable indices={indices} results={resultsMap} initialOdds={initialOdds} raceId={raceId} />
         </section>
 
         {/* 凡例 */}
