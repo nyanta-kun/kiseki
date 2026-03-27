@@ -1,53 +1,66 @@
 """コース適性指数算出Agent
 
-馬の過去成績をコース・距離・馬場(surface)別に集計し、
+馬の過去成績と競馬場コース特徴（直線距離・高低差・回り方向・芝種別）を組み合わせ、
 対象コースへの適性をスコア化する。
 
 算出ロジック:
   1. 馬の過去 LOOKBACK_RACES 戦の成績を取得（異常レース除外）
-  2. 各レースを完全一致/距離近似/馬場一致の3カテゴリで重み付け
-     - 完全一致 (同コース・同距離・同馬場): 重み 1.0
-     - 距離近似 (同コース・±DIST_TOLERANCE m以内・同馬場): 重み 0.6
-     - 馬場一致 (同コース・同馬場のみ): 重み 0.3
-  3. カテゴリごとに「平均着順スコア」と「タイム偏差スコア」を計算
-     - 着順スコア: 1着=100, 2着=80, 3着=65, 4着=50 ... 1着毎に-15
-     - タイム偏差: 同条件の標準タイムとの差を正規化
-  4. 加重平均して生スコアを算出
-  5. 平均50, σ=10 に正規化（他指数と同スケール）
-  6. データ不足（MIN_SAMPLE 未満）は SPEED_INDEX_MEAN=50 を返す
+  2. 各過去レースに対して、対象コースとの「コース類似度」を算出
+     - 回り方向一致: 0.25
+     - 直線距離の近さ: 0.35
+     - 高低差の近さ: 0.25
+     - 1周距離の近さ: 0.15
+     ※ 馬場種別(芝/ダ)が異なる場合は除外
+  3. 距離近接度を乗じた最終重みを計算
+     - |距離差| ≤ 200m: ×1.0
+     - |距離差| ≤ 400m: ×0.7
+     - |距離差| ≤ 600m: ×0.4
+     - 600m超: ×0.1
+  4. 加重平均スコアを算出（着順スコア + タイム偏差スコア）
+  5. 信頼度加重でデフォルト50.0と合成
+     - reliability = min(1.0, 有効重み合計 / RELIABLE_WEIGHT)
+     - 最終スコア = reliability × 算出スコア + (1 - reliability) × 50.0
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..db.models import Race, RaceEntry, RaceResult
+from ..db.models import Race, RaceEntry, RaceResult, RacecourseFeatures
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
 from .base import IndexCalculator
 
 logger = logging.getLogger(__name__)
 
 # 過去何戦を参照するか
-LOOKBACK_RACES = 15
-# 距離近似の許容範囲 (m)
-DIST_TOLERANCE = 200
-# データ不足判定の最低サンプル数
-MIN_SAMPLE = 3
-# 完全一致/距離近似/馬場一致の重み
-WEIGHT_EXACT = 1.0
-WEIGHT_DIST = 0.6
-WEIGHT_SURFACE = 0.3
-# 着順→生スコアの変換テーブル (1着=100, 以降-15ずつ, 最低0)
+LOOKBACK_RACES = 20
+# 距離近接度ブレーク点 (m)
+DIST_BREAKS = [(200, 1.0), (400, 0.7), (600, 0.4)]
+DIST_FALLBACK_WEIGHT = 0.1   # 600m超の重みスケール
+# 信頼度計算：有効重み合計がこれ以上で reliability=1.0
+RELIABLE_WEIGHT = 3.0
+
+# コース類似度計算の次元ウェイト
+SIM_W_DIRECTION = 0.25
+SIM_W_STRAIGHT  = 0.35
+SIM_W_ELEVATION = 0.25
+SIM_W_CIRCUIT   = 0.15
+
+# 同一馬場種別かどうかで類似度補正
+GRASS_SAME_BONUS = 1.0
+GRASS_DIFF_PENALTY = 0.6   # 洋芝 ↔ 野芝+洋芝 は完全に別扱いではないが割引
+
+# 着順→生スコアの変換（1着=100, 以降-15ずつ, 最低0）
 def _position_score(pos: int) -> float:
-    """着順を0-100のスコアに変換する。"""
     return max(0.0, 100.0 - (pos - 1) * 15.0)
 
-# 指数クリップ
 INDEX_MIN = 0.0
 INDEX_MAX = 100.0
 
@@ -55,51 +68,30 @@ INDEX_MAX = 100.0
 class CourseAptitudeCalculator(IndexCalculator):
     """コース適性指数算出Agent。
 
-    IndexCalculator を継承し、単一馬（calculate）と
-    レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
+    競馬場コース特徴マスタ (racecourse_features) を用いて
+    コース間の類似度を算出し、データ不足時も類似コースの成績で補完する。
+    信頼度加重によりデータが少ない馬はデフォルト値50.0に近づける。
     """
 
     def __init__(self, db: Session) -> None:
-        """初期化。
-
-        Args:
-            db: SQLAlchemy セッション
-        """
         super().__init__(db)
-        # 基準タイムのキャッシュ（コース・距離・馬場ごと）
         self._std_time_cache: dict[tuple[str, int, str], tuple[float, float]] = {}
+        # 競馬場特徴を初回アクセス時にキャッシュ（セッション非依存の SimpleNamespace で保持）
+        self._course_features: dict[str, SimpleNamespace] | None = None
 
     # ------------------------------------------------------------------
     # 公開インターフェース
     # ------------------------------------------------------------------
 
     def calculate(self, race_id: int, horse_id: int) -> float:
-        """単一馬のコース適性指数を算出する。
-
-        Args:
-            race_id: DB の races.id（対象レース）
-            horse_id: DB の horses.id
-
-        Returns:
-            コース適性指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
-        """
         race = self.db.query(Race).filter(Race.id == race_id).first()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
-
         rows = self._get_past_results_for_horse(horse_id, race.date, race_id)
         return self._compute_aptitude_index(rows, race)
 
     def calculate_batch(self, race_id: int) -> dict[int, float]:
-        """レース全馬のコース適性指数を一括算出する。
-
-        Args:
-            race_id: DB の races.id
-
-        Returns:
-            {horse_id: course_aptitude_index} のdict。エントリが存在しない場合は空dict。
-        """
         race = self.db.query(Race).filter(Race.id == race_id).first()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
@@ -112,30 +104,101 @@ class CourseAptitudeCalculator(IndexCalculator):
         horse_ids = [e.horse_id for e in entries]
         rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
 
-        result: dict[int, float] = {}
-        for entry in entries:
-            rows = rows_map.get(entry.horse_id, [])
-            result[entry.horse_id] = self._compute_aptitude_index(rows, race)
-
-        return result
+        return {
+            entry.horse_id: self._compute_aptitude_index(
+                rows_map.get(entry.horse_id, []), race
+            )
+            for entry in entries
+        }
 
     # ------------------------------------------------------------------
-    # 内部メソッド
+    # コース特徴・類似度
+    # ------------------------------------------------------------------
+
+    def _load_course_features(self) -> dict[str, SimpleNamespace]:
+        """racecourse_features をセッション非依存のオブジェクトとしてキャッシュして返す。
+
+        expunge_all() 後もデタッチされないよう ORM インスタンスを保持しない。
+        """
+        if self._course_features is None:
+            rows = self.db.query(RacecourseFeatures).all()
+            self._course_features = {
+                r.course_code: SimpleNamespace(
+                    direction=r.direction,
+                    straight_distance=r.straight_distance,
+                    elevation_diff=r.elevation_diff,
+                    circuit_length=r.circuit_length,
+                    grass_type=r.grass_type,
+                )
+                for r in rows
+            }
+        return self._course_features
+
+    def _course_similarity(self, code_a: str, code_b: str) -> float:
+        """2競馬場間の類似度スコア（0.0〜1.0）を返す。
+
+        コース特徴が不明な場合は 0.5（中立）を返す。
+        同一コードの場合は 1.0。
+
+        類似度の計算軸:
+          - 回り方向: 一致=1点, 不一致=0点  (weight SIM_W_DIRECTION)
+          - 直線距離: 差をコース間最大差で正規化 (weight SIM_W_STRAIGHT)
+          - 高低差: 同上 (weight SIM_W_ELEVATION)
+          - 1周距離: 同上 (weight SIM_W_CIRCUIT)
+        """
+        if code_a == code_b:
+            return 1.0
+
+        features = self._load_course_features()
+        fa = features.get(code_a)
+        fb = features.get(code_b)
+        if fa is None or fb is None:
+            return 0.5  # 特徴不明→中立
+
+        # 回り方向
+        dir_score = 1.0 if fa.direction == fb.direction else 0.0
+
+        # 直線距離（正規化: 最大差 ≈ 658-262 = 396m を1.0とする）
+        straight_range = 400.0
+        straight_score = max(0.0, 1.0 - abs(float(fa.straight_distance) - float(fb.straight_distance)) / straight_range)
+
+        # 高低差（正規化: 最大差 ≈ 3.5m を1.0とする）
+        elevation_range = 4.0
+        elevation_score = max(0.0, 1.0 - abs(float(fa.elevation_diff) - float(fb.elevation_diff)) / elevation_range)
+
+        # 1周距離（正規化: 最大差 ≈ 2223-1600 = 623m を1.0とする）
+        circuit_range = 700.0
+        circuit_score = max(0.0, 1.0 - abs(float(fa.circuit_length) - float(fb.circuit_length)) / circuit_range)
+
+        similarity = (
+            dir_score     * SIM_W_DIRECTION
+            + straight_score * SIM_W_STRAIGHT
+            + elevation_score * SIM_W_ELEVATION
+            + circuit_score  * SIM_W_CIRCUIT
+        )
+
+        # 芝種別補正（洋芝 vs 野芝+洋芝 は若干割引）
+        if fa.grass_type != fb.grass_type:
+            similarity *= GRASS_DIFF_PENALTY
+
+        return round(similarity, 4)
+
+    @staticmethod
+    def _distance_proximity(dist_diff: int) -> float:
+        """距離差(m)から近接度スケール係数を返す。"""
+        abs_diff = abs(dist_diff)
+        for threshold, scale in DIST_BREAKS:
+            if abs_diff <= threshold:
+                return scale
+        return DIST_FALLBACK_WEIGHT
+
+    # ------------------------------------------------------------------
+    # データ取得
     # ------------------------------------------------------------------
 
     def _get_past_results_for_horse(
         self, horse_id: int, before_date: str, exclude_race_id: int
     ) -> list[Any]:
-        """単一馬の過去レース結果を取得する。
-
-        Args:
-            horse_id: horses.id
-            before_date: この日付より前のレースのみ取得（YYYYMMDD）
-            exclude_race_id: 当該レースは除外
-
-        Returns:
-            [(RaceResult, Race), ...]（日付降順, 最大 LOOKBACK_RACES 件）
-        """
         return (
             self.db.query(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
@@ -154,16 +217,6 @@ class CourseAptitudeCalculator(IndexCalculator):
     def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
     ) -> dict[int, list[Any]]:
-        """複数馬の過去レース結果を単一クエリで一括取得する。
-
-        Args:
-            horse_ids: 対象 horses.id のリスト
-            before_date: この日付より前のレース（YYYYMMDD）
-            exclude_race_id: 当該レースは除外
-
-        Returns:
-            {horse_id: [(RaceResult, Race), ...]}（各馬最大 LOOKBACK_RACES 件）
-        """
         if not horse_ids:
             return {}
 
@@ -183,7 +236,6 @@ class CourseAptitudeCalculator(IndexCalculator):
 
         result_map: dict[int, list[Any]] = defaultdict(list)
         count_map: dict[int, int] = defaultdict(int)
-
         for row in rows:
             hid = row.RaceResult.horse_id
             if count_map[hid] < LOOKBACK_RACES:
@@ -192,24 +244,28 @@ class CourseAptitudeCalculator(IndexCalculator):
 
         return dict(result_map)
 
+    # ------------------------------------------------------------------
+    # 指数算出
+    # ------------------------------------------------------------------
+
     def _compute_aptitude_index(self, rows: list[Any], target_race: Race) -> float:
-        """過去レース結果からコース適性指数を算出する。
+        """過去レース結果とコース類似度から適性指数を算出する。
 
-        Args:
-            rows: [(RaceResult, Race), ...] 過去レース結果
-            target_race: 対象レース（コース・距離・馬場の比較基準）
-
-        Returns:
-            コース適性指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
+        手順:
+          1. 各過去レースの重み = course_similarity × distance_proximity
+             ※ 馬場種別(芝/ダ/障)が異なる場合は weight=0 でスキップ
+          2. 加重平均スコアを算出
+          3. 信頼度 = min(1.0, 有効重み合計 / RELIABLE_WEIGHT)
+          4. 最終スコア = reliability × raw + (1 - reliability) × 50.0
         """
         if not rows:
             return SPEED_INDEX_MEAN
 
-        target_course = target_race.course
-        target_dist = target_race.distance or 0
+        target_course  = target_race.course
+        target_dist    = int(target_race.distance or 0)
         target_surface = target_race.surface or ""
 
-        weighted_scores: list[tuple[float, float]] = []  # (スコア, 重み)
+        weighted_scores: list[tuple[float, float]] = []
 
         for row in rows:
             result: RaceResult = row.RaceResult
@@ -218,90 +274,65 @@ class CourseAptitudeCalculator(IndexCalculator):
             if result.finish_position is None:
                 continue
 
-            pos_score = _position_score(int(result.finish_position))
+            past_surface = race.surface or ""
 
-            # タイム偏差スコア（算出できない場合は着順スコアのみ）
-            time_score = self._compute_time_score(result, race)
-            combined = pos_score * 0.6 + (time_score if time_score is not None else pos_score) * 0.4
-
-            # 重みカテゴリの判定（優先度の高い条件から順に評価）
-            same_course = race.course == target_course
-            same_surface = (race.surface or "") == target_surface
-            dist = race.distance or 0
-            within_tolerance = abs(dist - target_dist) <= DIST_TOLERANCE
-
-            if not same_course:
-                # コース不一致は除外
+            # 馬場種別が異なれば除外（芝 vs ダート は全く別の適性）
+            if past_surface != target_surface:
                 continue
-            elif within_tolerance and same_surface:
-                # 完全一致: 同コース・距離近似・同馬場
-                weight = WEIGHT_EXACT
-            elif within_tolerance:
-                # 同コース・距離近似（馬場不問）
-                weight = WEIGHT_DIST
-            elif same_surface:
-                # 同コース・同馬場（距離は範囲外）
-                weight = WEIGHT_SURFACE
-            else:
-                # 同コースのみ（距離・馬場ともに不一致）
-                weight = WEIGHT_SURFACE * 0.5
 
-            weighted_scores.append((combined, weight))
+            # コース類似度
+            sim = self._course_similarity(race.course, target_course)
 
-        if len(weighted_scores) < MIN_SAMPLE:
+            # 距離近接度
+            past_dist = int(race.distance or 0)
+            dist_prox = self._distance_proximity(past_dist - target_dist)
+
+            weight = sim * dist_prox
+            if weight < 0.05:
+                continue  # 実質ゼロの寄与は除外
+
+            # スコア算出（着順スコア + タイム偏差スコアの合成）
+            pos_score  = _position_score(int(result.finish_position))
+            time_score = self._compute_time_score(result, race)
+            score = pos_score * 0.6 + (time_score if time_score is not None else pos_score) * 0.4
+
+            weighted_scores.append((score, weight))
+
+        if not weighted_scores:
             return SPEED_INDEX_MEAN
 
         total_w = sum(w for _, w in weighted_scores)
         raw_score = sum(s * w for s, w in weighted_scores) / total_w
 
-        # raw_score は概ね [0, 100] の範囲で、平均が50近辺になるよう設計
-        # 着順スコア平均: 1着=100, 2着=85, ... 着順の期待値が4位程度なら約55
-        # ここではそのまま使用し、[0,100]にクリップ
-        return round(max(INDEX_MIN, min(INDEX_MAX, raw_score)), 1)
+        # 信頼度加重：データ不足はデフォルト値50.0に引き寄せる
+        reliability = min(1.0, total_w / RELIABLE_WEIGHT)
+        final = reliability * raw_score + (1.0 - reliability) * SPEED_INDEX_MEAN
+
+        return round(max(INDEX_MIN, min(INDEX_MAX, final)), 1)
+
+    # ------------------------------------------------------------------
+    # タイム偏差スコア
+    # ------------------------------------------------------------------
 
     def _compute_time_score(self, result: RaceResult, race: Race) -> float | None:
-        """タイム偏差を0-100スコアに変換する。
-
-        同コース・距離・馬場の基準タイムとの差を指数化する。
-
-        Args:
-            result: レース結果
-            race: レース情報
-
-        Returns:
-            タイムスコア（0-100）。算出不可の場合は None。
-        """
+        """同コース・距離・馬場の基準タイムとの偏差を0-100スコアに変換する。"""
         if result.finish_time is None:
             return None
 
-        course = race.course
-        distance = race.distance or 0
-        surface = race.surface or ""
-
-        std_time, std_dev = self._get_standard_time(course, distance, surface)
+        std_time, std_dev = self._get_standard_time(
+            race.course, int(race.distance or 0), race.surface or ""
+        )
         if std_dev < 0.01:
             return None
 
-        actual_time = float(result.finish_time)
-        diff = std_time - actual_time
+        diff = std_time - float(result.finish_time)
         score = (diff / std_dev) * SPEED_INDEX_STD + SPEED_INDEX_MEAN
         return max(INDEX_MIN, min(INDEX_MAX, score))
 
     def _get_standard_time(
         self, course: str, distance: int, surface: str
     ) -> tuple[float, float]:
-        """コース・距離・馬場の基準タイム（平均・標準偏差）を返す。
-
-        同セッション内でキャッシュし、DBアクセスを最小化する。
-
-        Args:
-            course: 場コード
-            distance: 距離（m）
-            surface: 馬場種別（芝/ダ/障）
-
-        Returns:
-            (平均タイム秒, 標準偏差秒)。サンプル不足時は (0.0, 0.0)。
-        """
+        """コース・距離・馬場の基準タイム（平均・標準偏差）をキャッシュ付きで返す。"""
         cache_key = (course, distance, surface)
         if cache_key in self._std_time_cache:
             return self._std_time_cache[cache_key]

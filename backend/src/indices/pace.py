@@ -11,7 +11,16 @@
      - escape数 == 1: 平均ペース (normal)
      - escape数 == 0: スローペース (slow)
   3. 脚質 × ペースの適合スコアテーブルで基本スコアを決定する
-  4. 上がり3F平均が同条件平均より速い場合は +5 ボーナス（最大100）
+  4. コース特性補正（コーナーきつさ・直線長・スタート〜コーナー距離）
+     - 短直線・小回り: 逃げ/先行 有利補正
+     - 長直線・大回り: 差し/追い込み 有利補正
+  5. 当開催前後バイアス補正（MeetBiasService）
+     - 開催初期（前有利）: 逃げ/先行 に +ボーナス
+     - 開催後半（後ろ有利）: 差し/追い込み に +ボーナス
+  6. 出走頭数補正
+     - 多頭数（≥14）+ 小回り: 前の位置取りが困難 → 外枠先行には罰則
+     - 多頭数 + 短スタートコーナー距離: 逃げ馬に競り合いリスク
+  7. 上がり3F平均が同条件平均より速い場合は +5 ボーナス（最大100）
 
 制約:
   - 除外・取消（abnormality_code > 0）のレースは除外
@@ -24,14 +33,16 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from ..db.models import Race, RaceEntry, RaceResult
+from ..db.models import Race, RaceEntry, RaceResult, RacecourseFeatures
 from ..utils.constants import SPEED_INDEX_MEAN
 from .base import IndexCalculator
+from .meet_bias import MeetBiasService
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +72,18 @@ PACE_SCORE_TABLE: dict[str, dict[str, float]] = {
     "closer": {"fast": 80.0, "normal": 60.0, "slow": 45.0},
     "unknown": {"fast": 50.0, "normal": 50.0, "slow": 50.0},
 }
+
+# コース特性補正の閾値
+LONG_STRAIGHT_M   = 450    # これ以上: 差し/追い込み有利コース
+SHORT_STRAIGHT_M  = 310    # これ以下: 逃げ/先行有利コース
+TIGHT_CORNER      = 0.65   # これ以上: 小回り（前有利）
+LARGE_FIELD       = 14     # これ以上: 多頭数
+SHORT_START_CORNER = 120   # スタート〜コーナーがこれ以下: 前争い激化
+
+# コース特性・当開催バイアスの最大補正幅（ポイント）
+COURSE_ADJ_MAX  = 6.0
+MEET_ADJ_MAX    = 7.0
+FIELD_ADJ_MAX   = 4.0
 
 
 def _classify_runner_type(avg_relative_pos: float) -> str:
@@ -95,6 +118,9 @@ class PaceIndexCalculator(IndexCalculator):
         super().__init__(db)
         # 上がり3F平均のキャッシュ（コース・距離・馬場ごと）
         self._last3f_avg_cache: dict[tuple[str, int, str], float | None] = {}
+        self._meet_bias = MeetBiasService(db)
+        # コース特徴キャッシュ（セッション非依存の SimpleNamespace で保持）
+        self._course_features: dict[str, SimpleNamespace] | None = None
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -176,13 +202,21 @@ class PaceIndexCalculator(IndexCalculator):
         # Step3: レース全体のペースを1回だけ予測
         pace_type = self._predict_pace(runner_types)
 
-        # Step4: 各馬のスコア算出
+        # Step4: コース特性・当開催バイアス・頭数を一度だけ取得
+        course_feat = self._get_course_features(race.course)
+        meet_bias   = self._meet_bias.get_bias(race)
+        head_count  = race.head_count or len(horse_ids)
+
+        # Step5: 各馬のスコア算出
         result: dict[int, float] = {}
         for hid in horse_ids:
             runner_type = runner_types[hid]
-            base_score = PACE_SCORE_TABLE[runner_type][pace_type]
+            base_score  = PACE_SCORE_TABLE[runner_type][pace_type]
             horse_past_rows = rows_map.get(hid, [])
             score = self._apply_last3f_bonus(base_score, horse_past_rows, race)
+            score = self._apply_course_adjustment(score, runner_type, course_feat)
+            score = self._apply_meet_bias_adjustment(score, runner_type, meet_bias)
+            score = self._apply_field_size_adjustment(score, runner_type, head_count, course_feat)
             result[hid] = round(max(INDEX_MIN, min(INDEX_MAX, score)), 1)
 
         return result
@@ -290,6 +324,128 @@ class PaceIndexCalculator(IndexCalculator):
 
         avg_rel_pos = sum(relative_positions) / len(relative_positions)
         return _classify_runner_type(avg_rel_pos)
+
+    def _get_course_features(self, course_code: str) -> SimpleNamespace | None:
+        """コース特徴をキャッシュ付きで返す。
+
+        expunge_all() 後もデタッチされないよう ORM インスタンスを保持しない。
+        """
+        if self._course_features is None:
+            rows = self.db.query(RacecourseFeatures).all()
+            self._course_features = {
+                r.course_code: SimpleNamespace(
+                    straight_distance=r.straight_distance,
+                    corner_tightness=r.corner_tightness,
+                    start_to_corner_m=r.start_to_corner_m,
+                )
+                for r in rows
+            }
+        return self._course_features.get(course_code)
+
+    def _apply_course_adjustment(
+        self,
+        score: float,
+        runner_type: str,
+        feat: SimpleNamespace | None,
+    ) -> float:
+        """コース特性に基づいて脚質スコアを補正する。
+
+        長直線・大回りコース: 差し/追い込み有利（前走有利コースとは逆）
+        短直線・小回りコース: 逃げ/先行有利
+        """
+        if feat is None:
+            return score
+
+        straight = float(feat.straight_distance)
+        tightness = float(feat.corner_tightness) if feat.corner_tightness else 0.5
+        start_to_corner = int(feat.start_to_corner_m) if feat.start_to_corner_m else 200
+
+        # 直線長による補正
+        if straight >= LONG_STRAIGHT_M:
+            ratio = min(1.0, (straight - LONG_STRAIGHT_M) / 200)
+            if runner_type in ("closer", "mid"):
+                score += ratio * COURSE_ADJ_MAX
+            elif runner_type == "escape":
+                score -= ratio * COURSE_ADJ_MAX * 0.5
+        elif straight <= SHORT_STRAIGHT_M:
+            ratio = min(1.0, (SHORT_STRAIGHT_M - straight) / 50)
+            if runner_type in ("escape", "leader"):
+                score += ratio * COURSE_ADJ_MAX
+            elif runner_type == "closer":
+                score -= ratio * COURSE_ADJ_MAX * 0.5
+
+        # コーナーきつさによる補正（小回りは前/先行有利）
+        if tightness >= TIGHT_CORNER:
+            ratio = min(1.0, (tightness - TIGHT_CORNER) / 0.35)
+            if runner_type in ("escape", "leader"):
+                score += ratio * COURSE_ADJ_MAX * 0.5
+            elif runner_type == "closer":
+                score -= ratio * COURSE_ADJ_MAX * 0.3
+
+        return score
+
+    def _apply_meet_bias_adjustment(
+        self,
+        score: float,
+        runner_type: str,
+        bias: "MeetBias",  # type: ignore[name-defined]
+    ) -> float:
+        """当開催の前後バイアスによる補正。
+
+        front_back > 0 (前有利の開催): 逃げ/先行に加算、差し/追い込みに減算
+        front_back < 0 (後ろ有利の開催): 差し/追い込みに加算、逃げ/先行に減算
+        """
+        fb = bias.front_back  # -1.0 〜 +1.0
+        if abs(fb) < 0.05:
+            return score  # ほぼ中立
+
+        if runner_type in ("escape", "leader"):
+            score += fb * MEET_ADJ_MAX
+        elif runner_type in ("mid", "closer"):
+            score -= fb * MEET_ADJ_MAX
+
+        return score
+
+    def _apply_field_size_adjustment(
+        self,
+        score: float,
+        runner_type: str,
+        head_count: int,
+        feat: SimpleNamespace | None,
+    ) -> float:
+        """出走頭数 × コース特性による補正。
+
+        多頭数 + 小回り/短スタートコーナー: 前の位置取りが困難になり
+        逃げ馬同士が競り合う → 逃げにとってはリスク増（ハイペースになりやすい）
+        多頭数 + 長直線: 外から差せるため差し/追い込みに有利
+        """
+        if head_count < LARGE_FIELD or feat is None:
+            return score
+
+        tightness = float(feat.corner_tightness) if feat.corner_tightness else 0.5
+        start_to_corner = int(feat.start_to_corner_m) if feat.start_to_corner_m else 200
+        straight = float(feat.straight_distance)
+
+        ratio = min(1.0, (head_count - LARGE_FIELD) / 4)  # 14頭=0, 18頭=1
+
+        # 小回り + 多頭数: コーナー前の混雑で前の位置取りリスク
+        if tightness >= TIGHT_CORNER:
+            if runner_type == "escape":
+                score -= ratio * FIELD_ADJ_MAX * 0.8  # 逃げは競り合いリスク
+            elif runner_type == "leader":
+                score -= ratio * FIELD_ADJ_MAX * 0.3
+
+        # 短スタート〜コーナー + 多頭数: 外枠の先行馬が位置取り困難
+        if start_to_corner <= SHORT_START_CORNER:
+            if runner_type in ("escape", "leader"):
+                score -= ratio * FIELD_ADJ_MAX * 0.5
+
+        # 長直線 + 多頭数: 外から差せる分、差し/追い込みが有利に
+        if straight >= LONG_STRAIGHT_M:
+            if runner_type in ("closer", "mid"):
+                score += ratio * FIELD_ADJ_MAX * 0.5
+
+        return score
 
     def _predict_pace(self, runner_types: dict[int, str]) -> str:
         """全馬の脚質分布からペースを予測する。

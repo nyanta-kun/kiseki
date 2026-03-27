@@ -4,15 +4,18 @@
 対象馬の枠番が有利か不利かをスコア化する。
 
 算出ロジック:
-  1. 対象レースのコース・距離・馬場で過去レース結果を全件集計
+  1. 対象レースのコース・距離・馬場で過去レース結果を全件集計（長期統計）
   2. 枠番(1-8)ごとに「平均着順」「勝率（1着率）」を計算
   3. 全枠の平均着順・平均勝率を基準に、対象枠番の有利不利を算出
   4. 平均=50, σ=10 に正規化 (同じスケール)
   5. サンプル不足（MIN_SAMPLE 未満）は 50 を返す
+  6. 当開催バイアス（MeetBiasService）で補正する
+     - 長期統計 70% + 当開催バイアス 30%
+     - 当開催で内有利が続いていれば内枠スコアを加算、外有利なら外枠スコアを加算
 
 スコアイメージ:
-  - 内枠有利コースで1枠: 60前後
-  - 外枠不利コースで8枠: 40前後
+  - 内枠有利コースで1枠（かつ当開催も内有利）: 65前後
+  - 外枠不利コースで8枠（かつ当開催も外有利）: 35前後
   - データ平均的な枠番: 50前後
 """
 
@@ -27,6 +30,7 @@ from sqlalchemy.orm import Session
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
 from .base import IndexCalculator
+from .meet_bias import MeetBiasService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,11 @@ INDEX_MAX = 100.0
 # 枠番範囲
 FRAME_MIN = 1
 FRAME_MAX = 8
+# 長期統計 vs 当開催バイアスの合成比率
+LONG_TERM_WEIGHT = 0.70
+MEET_BIAS_WEIGHT = 0.30
+# 当開催バイアスの最大影響量（ポイント）
+MEET_BIAS_MAX_ADJ = 8.0
 
 # 着順→スコア変換: 1着に近いほど高いスコア
 def _position_score(pos: int, head_count: int) -> float:
@@ -76,6 +85,7 @@ class FrameBiasCalculator(IndexCalculator):
         self._frame_stats_cache: dict[
             tuple[str, int, str], dict[int, dict[str, float]]
         ] = {}
+        self._meet_bias = MeetBiasService(db)
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -198,7 +208,17 @@ class FrameBiasCalculator(IndexCalculator):
 
         pos_component = (frame_score - global_avg_score) / score_std * SPEED_INDEX_STD
 
-        raw = SPEED_INDEX_MEAN + pos_component * 0.7 + win_component * 0.3
+        long_term_score = SPEED_INDEX_MEAN + pos_component * 0.7 + win_component * 0.3
+
+        # 当開催バイアス補正
+        # inner_outer > 0 = 内有利 → 内枠(1-4)を加算、外枠(5+)を減算
+        meet_bias = self._meet_bias.get_bias(race)
+        if frame_number <= 4:
+            bias_adj = meet_bias.inner_outer * MEET_BIAS_MAX_ADJ
+        else:
+            bias_adj = -meet_bias.inner_outer * MEET_BIAS_MAX_ADJ
+
+        raw = long_term_score * LONG_TERM_WEIGHT + (long_term_score + bias_adj) * MEET_BIAS_WEIGHT
         return round(max(INDEX_MIN, min(INDEX_MAX, raw)), 1)
 
     def _get_frame_stats(
