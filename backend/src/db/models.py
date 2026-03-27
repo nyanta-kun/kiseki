@@ -220,6 +220,7 @@ class CalculatedIndex(Base):
     # 状態指数系
     rotation_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), comment="ローテーション指数")
     training_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), comment="調教指数")
+    anagusa_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), comment="穴ぐさ指数（sekito.anagusa ピック実績ベースの期待度スコア）")
     paddock_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), comment="パドック指数")
     disadvantage_flag: Mapped[bool | None] = mapped_column(Boolean, default=False, comment="不利フラグ（True:レース中に不利あり）")
     # 総合
@@ -242,6 +243,24 @@ class EntryChange(Base):
     new_value: Mapped[str | None] = mapped_column(String(100), comment="変更後の値")
     detected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="変更検知日時")
     recalc_triggered: Mapped[bool] = mapped_column(Boolean, default=False, comment="再算出実行済みフラグ")
+
+
+class RacecourseFeatures(Base):
+    """競馬場コース特徴マスタ"""
+
+    __tablename__ = "racecourse_features"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_code: Mapped[str] = mapped_column(String(2), unique=True, nullable=False, comment="場コード（races.course と対応）")
+    course_name: Mapped[str] = mapped_column(String(20), nullable=False, comment="競馬場名")
+    direction: Mapped[int] = mapped_column(Integer, nullable=False, comment="回り方向: 1=左回り, -1=右回り")
+    straight_distance: Mapped[Decimal] = mapped_column(Numeric(6, 1), nullable=False, comment="最終直線距離(m)")
+    elevation_diff: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False, comment="最終直線高低差(m)")
+    circuit_length: Mapped[int] = mapped_column(Integer, nullable=False, comment="芝コース1周距離(m)")
+    grass_type: Mapped[str] = mapped_column(String(20), nullable=False, comment="芝種別: 洋芝 / 野芝+洋芝")
+    corner_tightness: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), comment="コーナーきつさ (0.0=緩〜1.0=急)")
+    start_to_corner_m: Mapped[int | None] = mapped_column(Integer, comment="スタート〜第1コーナー代表距離(m)")
 
 
 class OddsHistory(Base):
