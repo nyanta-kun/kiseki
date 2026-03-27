@@ -123,7 +123,7 @@ class OddsOut(BaseModel):
 @router.get("/nearest-date")
 def get_nearest_race_date(
     db: DbDep,
-    from_date: str = Query(..., description="基準日 YYYYMMDD"),
+    from_date: str = Query(..., alias="from", description="基準日 YYYYMMDD"),
     direction: str = Query(..., description="prev | next"),
 ) -> dict:
     """基準日から最も近い開催日を返す。
