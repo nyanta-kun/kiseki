@@ -14,7 +14,21 @@ dist/
 build/
 
 # ログ
-logs/*.log
+logs/
+
+# ドキュメント生成物（PDF仕様書・検証レポート）
+docs/sources/
+docs/verification/
+
+# キャッシュ・一時ファイル
+BLOD_cache.jsonl
+*.jsonl
+
+# Windows agentデバッグスクリプト
+windows-agent/debug_*.py
+
+# Claude Code メモリ
+.claude/
 
 # データファイル（生データ・一時ファイル）
 data/raw/
