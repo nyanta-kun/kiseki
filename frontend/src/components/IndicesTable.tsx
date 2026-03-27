@@ -31,7 +31,11 @@ const SUB_INDICES: { key: keyof HorseIndex; label: string }[] = [
   { key: "paddock_index", label: "パドック" },
 ];
 
-const ANAGUSA_THRESHOLD = 58.0;
+const ANAGUSA_RANK_COLOR: Record<string, string> = {
+  A: "bg-red-50 text-red-600 border-red-200",
+  B: "bg-orange-50 text-orange-600 border-orange-200",
+  C: "bg-yellow-50 text-yellow-700 border-yellow-200",
+};
 
 function finishLabel(pos: number | null | undefined): string {
   if (pos == null) return "";
@@ -307,10 +311,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
             : null;
 
           const isTop = horse.horse_number === topHorseNumber;
-          const isAnagusa =
-            horse.anagusa_index !== null &&
-            horse.anagusa_index >= ANAGUSA_THRESHOLD &&
-            !isTop;
+          const isAnagusa = horse.anagusa_rank !== null && !isTop;
 
           const finishPos = results?.get(horse.horse_number);
           const finishLabel_ = finishLabel(finishPos);
@@ -346,7 +347,6 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                   <div className="font-semibold text-sm text-gray-900 truncate">
                     {horse.horse_name}
                     {isTop && <span className="ml-1 text-[10px] text-green-600 font-normal">◎ 本命</span>}
-                    {isAnagusa && <span className="ml-1 text-[10px] text-yellow-600 font-normal">☆ 穴ぐさ</span>}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={cn("text-xs font-bold tabular-nums", indexColor(horse.composite_index))}>
@@ -380,7 +380,15 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                       )}
                     </div>
                   )}
-                  <div className="flex gap-1 justify-end">
+                  <div className="flex gap-1 justify-end items-center">
+                    {isAnagusa && (
+                      <span className={cn(
+                        "text-[10px] px-1 py-0.5 rounded border font-bold",
+                        ANAGUSA_RANK_COLOR[horse.anagusa_rank!] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                      )}>
+                        ☆{horse.anagusa_rank}
+                      </span>
+                    )}
                     {winPct && (
                       <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
                         単{winPct}%
@@ -404,6 +412,24 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                   <p className="text-[10px] text-gray-400 mb-2">指数内訳</p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                     {SUB_INDICES.map(({ key, label }) => {
+                      if (key === "anagusa_index") {
+                        const rank = horse.anagusa_rank;
+                        return (
+                          <div key={key} className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-500 w-10 flex-shrink-0">{label}</span>
+                            {rank ? (
+                              <span className={cn(
+                                "text-[11px] font-bold px-1.5 py-0.5 rounded border",
+                                ANAGUSA_RANK_COLOR[rank] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                              )}>
+                                {rank}ランク
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-gray-400">-</span>
+                            )}
+                          </div>
+                        );
+                      }
                       const val = horse[key] as number | null;
                       return (
                         <div key={key} className="flex items-center gap-1.5">

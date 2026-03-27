@@ -44,11 +44,6 @@ export function RaceCard({ race }: Props) {
                 {race.grade}
               </span>
             )}
-            {race.has_anagusa && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium">
-                ☆穴
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5 flex-wrap">
             {postTime && <span className="font-medium text-gray-700">{postTime}</span>}
@@ -58,8 +53,13 @@ export function RaceCard({ race }: Props) {
           </div>
         </div>
 
-        {/* 右側: 信頼度 + 算出済みバッジ + 矢印 */}
+        {/* 右側: 穴ぐさ + 信頼度 + 算出済みバッジ + 矢印 */}
         <div className="flex-shrink-0 flex items-center gap-1.5">
+          {race.has_anagusa && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium whitespace-nowrap">
+              ☆穴ぐさ
+            </span>
+          )}
           {conf && (
             <div className="flex flex-col items-center gap-0.5">
               <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium whitespace-nowrap ${conf.class}`}>

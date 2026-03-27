@@ -23,6 +23,41 @@ router = APIRouter(prefix="/api/races", tags=["races"])
 
 DbDep = Annotated[Session, Depends(get_db)]
 
+# JRA 2桁コード → sekito.anagusa course_code
+_JRA_TO_SEKITO: dict[str, str] = {
+    "01": "JSPK", "02": "JHKD", "03": "JFKS", "04": "JNGT", "05": "JTOK",
+    "06": "JNKY", "07": "JCKO", "08": "JKYO", "09": "JHSN", "10": "JKKR",
+}
+
+
+def _fetch_anagusa_picks(db: Session, race: "Race") -> dict[int, str]:
+    """sekito.anagusa からレースのピック情報を取得する。
+
+    Returns:
+        {horse_no: rank} — A/B/C のいずれか
+    """
+    from sqlalchemy import text as _text
+    sekito_code = _JRA_TO_SEKITO.get(race.course)
+    if not sekito_code:
+        return {}
+    race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
+    rows = db.execute(
+        _text("SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"),
+        {"d": race_date, "c": sekito_code, "r": race.race_number},
+    ).fetchall()
+    return {r[0]: r[1] for r in rows if r[1] in ("A", "B", "C")}
+
+
+def _anagusa_picks_for_date(db: Session, date: str) -> set[tuple[str, int]]:
+    """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
+    from sqlalchemy import text as _text
+    race_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    rows = db.execute(
+        _text("SELECT course_code, race_no FROM sekito.anagusa WHERE date = :d"),
+        {"d": race_date},
+    ).fetchall()
+    return {(r[0], r[1]) for r in rows}
+
 
 # -------------------------------------------------------------------
 # レスポンスモデル
@@ -111,6 +146,7 @@ class HorseIndexOut(BaseModel):
     training_index: float | None
     anagusa_index: float | None
     paddock_index: float | None
+    anagusa_rank: str | None = None  # "A" / "B" / "C" / None（ピックなし）
 
 
 class OddsOut(BaseModel):
@@ -182,10 +218,9 @@ def list_races(
         ):
             best_versions[rid] = min(ver, COMPOSITE_VERSION)
 
-    # 各レースの composite_index・anagusa_index 一覧を取得
+    # 各レースの composite_index 一覧を取得
     from collections import defaultdict
     race_indices: dict[int, list[float]] = defaultdict(list)
-    race_anagusa: dict[int, bool] = {}
     if best_versions:
         from sqlalchemy import tuple_
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
@@ -193,25 +228,26 @@ def list_races(
             db.query(
                 CalculatedIndex.race_id,
                 CalculatedIndex.composite_index,
-                CalculatedIndex.anagusa_index,
             )
             .filter(
                 tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs)
             )
             .all()
         )
-        for rid, ci, ai in rows:
+        for rid, ci in rows:
             race_indices[rid].append(float(ci))
-            if ai is not None and float(ai) >= 58.0:
-                race_anagusa[rid] = True
 
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
+
+    # has_anagusa: sekito.anagusa のピック有無で判定（スコア閾値でなく実ピック）
+    anagusa_picks_set = _anagusa_picks_for_date(db, date)
 
     result = []
     for r in races:
         out = RaceOut.model_validate(r)
         out.has_indices = r.id in indexed_ids
-        out.has_anagusa = race_anagusa.get(r.id, False)
+        sekito_code = _JRA_TO_SEKITO.get(r.course)
+        out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         if r.id in indexed_ids:
             conf = calculate_race_confidence(race_indices[r.id], r.head_count)
             out.confidence_score = conf["score"]
@@ -331,6 +367,11 @@ def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         )
         for ci, entry, horse in unique_rows
     ]
+
+    # sekito.anagusa からランク情報を付与
+    picks = _fetch_anagusa_picks(db, race)
+    for h in horses:
+        h.anagusa_rank = picks.get(h.horse_number)
 
     conf_data = calculate_race_confidence(
         composite_indices=[h.composite_index for h in horses],

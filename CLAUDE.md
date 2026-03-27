@@ -32,9 +32,16 @@ VPS - PostgreSQL（既存DB / keiba スキーマ）
 - Python: Ruff準拠、型ヒント必須、docstring必須
 - TypeScript: strict mode、ESLint準拠
 - テスト: 指数計算ロジックは必ずユニットテスト作成
-- DB: スキーマは常に 'keiba' を使用。Alembic経由のみでDDL変更
+- DB: keiba スキーマ（メイン）+ sekito スキーマ（穴ぐさ等外部データ）を使用。Alembic経由のみでDDL変更
 - 環境変数: .env に記載、コードにハードコードしない
 - Git: .env は絶対にコミットしない
+
+## DBスキーマ構成
+- `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ
+- `sekito.anagusa` — 穴ぐさピック情報（date, course_code, race_no, horse_no, rank A/B/C）
+  - course_code は JSPK/JHKD/JFKS/JNGT/JTOK/JNKY/JCKO/JKYO/JHSN/JKKR（sekito独自コード）
+  - `has_anagusa` 判定はスコア閾値でなく sekito.anagusa のピック有無で行う
+  - `anagusa_rank`（A/B/C）は API の `HorseIndexOut` レスポンスに含まれる（DBには未格納）
 
 ## コミュニケーションルール
 - **応答は常に日本語で行うこと**

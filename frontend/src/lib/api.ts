@@ -53,6 +53,7 @@ export type HorseIndex = {
   training_index: number | null;
   anagusa_index: number | null;
   paddock_index: number | null;
+  anagusa_rank: string | null;  // "A" | "B" | "C" | null（ピックなし）
 };
 
 export type OddsData = {
