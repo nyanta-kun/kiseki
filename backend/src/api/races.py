@@ -41,7 +41,9 @@ class RaceOut(BaseModel):
     weather: str | None
     head_count: int | None
     jravan_race_id: str | None
+    post_time: str | None = None       # 発走時刻 (hhmm形式, 例: "1025")
     has_indices: bool = False
+    has_anagusa: bool = False           # 穴ぐさ指数58以上の馬が存在するか
     confidence_score: int | None = None
     confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
 
@@ -180,22 +182,28 @@ def list_races(
         ):
             best_versions[rid] = min(ver, COMPOSITE_VERSION)
 
-    # 各レースの composite_index 一覧を取得
+    # 各レースの composite_index・anagusa_index 一覧を取得
     from collections import defaultdict
     race_indices: dict[int, list[float]] = defaultdict(list)
+    race_anagusa: dict[int, bool] = {}
     if best_versions:
-        # バージョンごとにまとめて取得
         from sqlalchemy import tuple_
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
         rows = (
-            db.query(CalculatedIndex.race_id, CalculatedIndex.composite_index)
+            db.query(
+                CalculatedIndex.race_id,
+                CalculatedIndex.composite_index,
+                CalculatedIndex.anagusa_index,
+            )
             .filter(
                 tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs)
             )
             .all()
         )
-        for rid, ci in rows:
+        for rid, ci, ai in rows:
             race_indices[rid].append(float(ci))
+            if ai is not None and float(ai) >= 58.0:
+                race_anagusa[rid] = True
 
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
 
@@ -203,6 +211,7 @@ def list_races(
     for r in races:
         out = RaceOut.model_validate(r)
         out.has_indices = r.id in indexed_ids
+        out.has_anagusa = race_anagusa.get(r.id, False)
         if r.id in indexed_ids:
             conf = calculate_race_confidence(race_indices[r.id], r.head_count)
             out.confidence_score = conf["score"]

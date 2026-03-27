@@ -20,7 +20,9 @@ export type Race = {
   condition: string | null;
   weather: string | null;
   head_count: number | null;
+  post_time: string | null;  // 発走時刻 hhmm形式
   has_indices: boolean;
+  has_anagusa: boolean;
   confidence_score: number | null;
   confidence_label: "HIGH" | "MID" | "LOW" | null;
 };

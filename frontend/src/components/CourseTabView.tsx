@@ -20,7 +20,6 @@ export function CourseTabView({ courseGroups }: Props) {
       {/* 開催場タブ */}
       <div className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-none">
         {courses.map((course) => {
-          const count = courseGroups[course].length;
           const hasAny = courseGroups[course].some((r) => r.has_indices);
           return (
             <button
@@ -39,14 +38,6 @@ export function CourseTabView({ courseGroups }: Props) {
               }
             >
               {course}
-              <span
-                className={cn(
-                  "ml-1 text-xs",
-                  active === course ? "text-green-200" : "text-gray-400"
-                )}
-              >
-                {count}R
-              </span>
               {hasAny && (
                 <span
                   className={cn(

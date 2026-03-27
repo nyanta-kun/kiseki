@@ -20,14 +20,9 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
     <div className="min-h-screen" style={{ background: "#f8faf9" }}>
       {/* ヘッダー */}
       <header style={{ background: "var(--green-deep)" }} className="sticky top-0 z-10 shadow-md">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div>
-            <h1 className="text-white font-bold text-lg leading-tight">kiseki</h1>
-            <p className="text-green-200 text-[10px]">競馬予測指数システム</p>
-          </div>
-          <div className="text-right">
-            <p className="text-white text-sm font-medium">{formatDate(targetDate)}</p>
-          </div>
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center">
+          <h1 className="text-white font-bold text-lg leading-tight">kiseki</h1>
+          <p className="text-green-200 text-[10px] ml-2">競馬予測指数システム</p>
         </div>
         <DateNav currentDate={targetDate} prevDate={prevDate} nextDate={nextDate} />
       </header>
