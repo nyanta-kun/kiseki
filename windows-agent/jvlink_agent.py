@@ -344,6 +344,7 @@ def fetch_stored_data(
     option: int = 1,
     on_file_done=None,
     skip_file_fn=None,
+    skip_cache: bool = False,
 ) -> list[dict]:
     """
     蓄積系データを取得する (JVOpen)。
@@ -362,12 +363,16 @@ def fetch_stored_data(
         skip_file_fn: ファイル名を受け取りTrueを返すとJVSkipでスキップする。
                       Noneの場合はスキップしない。
                       signature: skip_file_fn(filename: str) -> bool
+        skip_cache: Trueの場合キャッシュの読み書きをスキップし、全レコードの
+                    メモリ蓄積も行わない。on_file_done コールバックで逐次処理する
+                    大量データ取得時（recentモード等）に使用する。
     """
     # キャッシュ確認
-    cached = load_cache(dataspec, from_time, option)
-    if cached is not None:
-        logger.info(f"[cache] キャッシュ使用: {dataspec} from={from_time} opt={option} ({len(cached)} records)")
-        return cached
+    if not skip_cache:
+        cached = load_cache(dataspec, from_time, option)
+        if cached is not None:
+            logger.info(f"[cache] キャッシュ使用: {dataspec} from={from_time} opt={option} ({len(cached)} records)")
+            return cached
 
     # キャッシュなし → JVOpenで取得
     # JVOpen は長時間ブロックする場合があるため、別スレッドでハートビートを出力する
@@ -425,7 +430,8 @@ def fetch_stored_data(
         nonlocal file_records, skip_current
         if fname and on_file_done:
             on_file_done(fname, file_records)
-        all_records.extend(file_records)
+        if not skip_cache:
+            all_records.extend(file_records)
         file_records = []
         skip_current = False
 
@@ -529,8 +535,9 @@ def fetch_stored_data(
 
     records = all_records
 
-    # 取得成功したらキャッシュ保存（0件でも保存して再取得を防ぐ）
-    save_cache(dataspec, from_time, option, records)
+    # 取得成功したらキャッシュ保存（skip_cache=True の場合はスキップ）
+    if not skip_cache:
+        save_cache(dataspec, from_time, option, records)
 
     return records
 
@@ -773,67 +780,108 @@ def run_setup(jv) -> None:
     )
 
 
-def run_recent(jv, from_year: int = 2023) -> None:
-    """直近データ優先取得（指定年以降を先にDBへ投入する）。
+def _run_blod_only(jv) -> None:
+    """血統データ（BLOD）のみを取得してDBへ送信する。
 
-    option=3 で全ファイルを対象にしつつ、from_year より前のファイルは
-    レコードを読み捨て（skip_current=True）して高速スキップする。
+    run_setup() の BLOD フェーズを独立させたもの。
+    RACE フェーズをスキップするため、血統データだけを素早く取得できる。
+    """
+    logger.info("=== BLOD-ONLY MODE: 血統データ取得 ===")
+    from_time = "19860101000000"
+    completed_blod = load_completed_files(DATASPEC_BLOD)
+    if completed_blod:
+        logger.info(f"[completed] 処理済みBLODファイル: {len(completed_blod)} 件（スキップ対象）")
+
+    total_blod = {"hn_sk": 0, "files": 0, "skipped": 0}
+
+    def on_blod_file_done(filename: str, file_records: list[dict]) -> None:
+        if filename in completed_blod:
+            total_blod["skipped"] += 1
+            return
+        hn_sk = [r for r in file_records if r.get("rec_id") in ("HN", "SK")]
+        if not hn_sk:
+            mark_file_completed(DATASPEC_BLOD, filename)
+            return
+        logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
+        _post_in_batches("/api/import/bloodlines", hn_sk)
+        total_blod["hn_sk"] += len(hn_sk)
+        total_blod["files"] += 1
+        mark_file_completed(DATASPEC_BLOD, filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: ファイル {total_blod['files']} 本 / {total_blod['hn_sk']} 件)"
+        )
+
+    logger.info(f"Fetching BLOD from {from_time} (option=3)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLOD, from_time, option=3,
+        on_file_done=on_blod_file_done,
+        skip_file_fn=lambda fn: fn in completed_blod,
+    )
+    logger.info(
+        f"BLOD 取得完了: {total_blod['files']} ファイル / "
+        f"{total_blod['hn_sk']} 件をDBへ反映 / {total_blod['skipped']} ファイルスキップ"
+    )
+
+
+def run_recent(jv, from_year: int = 2023) -> None:
+    """指定年以降のデータを優先取得する。
+
+    option=3 (セットアップ) + from_time で JV-Link 側がその年以降のファイルのみを返す。
+    option=1 では過去取得済みファイルが返らないため、option=3 を使用する。
+    skip_cache=True でメモリ蓄積なし。
     完了後は --mode setup を実行することで残りの過去データを補完できる。
 
     Args:
         jv: JV-Link COMオブジェクト
-        from_year: この年以降のファイルのみDB反映する（例: 2023）
+        from_year: この年以降のデータを取得する（例: 2023）
     """
-    logger.info(f"=== RECENT MODE: {from_year}年以降データを優先取得 (option=3) ===")
-    logger.info(f"※ {from_year}年より前のファイルはレコードを読み捨てて高速スキップします。")
+    from_time = f"{from_year}0101000000"
+    logger.info(f"=== RECENT MODE: {from_year}年以降データを取得 (option=3, from={from_time}) ===")
 
-    from_time = "19860101000000"
     completed = load_completed_files(DATASPEC_RACE)
     if completed:
-        logger.info(f"[completed] 処理済みファイル: {len(completed)} 件（スキップ対象）")
+        logger.info(f"[completed] 処理済みファイル: {len(completed)} 件（JVSkip対象）")
 
     total_posted = {"ra_se": 0, "files": 0, "skipped": 0}
 
     def on_race_file_done(filename: str, file_records: list[dict]) -> None:
-        if filename in completed:
+        # JVSkip経由でスキップされた場合（file_records が空 かつ completedに未登録）
+        if not file_records and filename not in completed:
+            mark_file_completed(DATASPEC_RACE, filename)
+            completed.add(filename)  # メモリ内セットも更新（エラーリトライ時のJVSkip用）
             total_posted["skipped"] += 1
             return
-        # from_year より前 or 空ファイル → 完了マークして終了（POST不要）
-        try:
-            year = int(filename[4:8]) if filename else 0
-        except (ValueError, IndexError):
-            year = 0
-        if year < from_year:
-            mark_file_completed(DATASPEC_RACE, filename)
+        # 処理済みファイルはスキップ
+        if filename in completed:
             total_posted["skipped"] += 1
             return
         ra_se = _filter_race_records(file_records)
         if not ra_se:
+            logger.info(f"  [{filename}] RA/SE なし ({len(file_records)} 件中) → 完了マーク")
             mark_file_completed(DATASPEC_RACE, filename)
+            completed.add(filename)
             return
-        logger.info(f"  [{filename}] RA/SE {len(ra_se)} 件 → DB反映開始")
+        logger.info(
+            f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
+        )
         _post_in_batches("/api/import/races", ra_se)
         total_posted["ra_se"] += len(ra_se)
         total_posted["files"] += 1
         mark_file_completed(DATASPEC_RACE, filename)
+        completed.add(filename)
         logger.info(
             f"  [{filename}] 完了 (累計: ファイル {total_posted['files']} 本 / {total_posted['ra_se']} 件)"
         )
 
     def recent_skip_fn(filename: str) -> bool:
-        """処理済み or from_year より前のファイルは skip_current で読み捨て。"""
-        if filename in completed:
-            return True
-        try:
-            year = int(filename[4:8])
-            return year < from_year
-        except (ValueError, IndexError):
-            return False
+        """処理済みファイルのみ JVSkip でスキップ。"""
+        return filename in completed
 
-    logger.info(f"Fetching RACE (option=3, recent mode, skip < {from_year})...")
+    logger.info(f"Fetching RACE (option=3, from={from_time})...")
     fetch_stored_data(
         jv, DATASPEC_RACE, from_time, option=3,
         on_file_done=on_race_file_done, skip_file_fn=recent_skip_fn,
+        skip_cache=True,
     )
     logger.info(
         f"RECENT 完了: {total_posted['files']} ファイル / "
@@ -944,9 +992,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "recent", "daily", "realtime", "retry", "wait"],
+        choices=["all", "setup", "blod", "recent", "daily", "realtime", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, blod=血統データのみ取得, wait=コマンド待ち受けモード)",
+    )
+    parser.add_argument(
+        "--from-year",
+        type=int,
+        default=2023,
+        metavar="YEAR",
+        help="recent モードで取得する開始年 (default: 2023, 例: --from-year 2020)",
     )
     args = parser.parse_args()
 
@@ -982,11 +1037,18 @@ def main() -> None:
         run_setup(jv)
         report_status("idle", message="Setup completed. Entering command loop.")
         run_command_loop(jv)
+    elif args.mode == "blod":
+        report_status("running", mode="blod", message="Starting BLOD-only fetch")
+        _run_blod_only(jv)
+        report_status("done", message="BLOD fetch completed.")
+        jv.JVClose()
+        logger.info("blod モード完了。終了します。")
     elif args.mode == "recent":
-        report_status("running", mode="recent", message="Starting recent mode (2023+)")
-        run_recent(jv, from_year=2023)
-        report_status("idle", message="Recent mode completed. Run setup for historical data.")
-        run_command_loop(jv)
+        report_status("running", mode="recent", message=f"Starting recent mode ({args.from_year}+)")
+        run_recent(jv, from_year=args.from_year)
+        report_status("done", message="Recent mode completed.")
+        jv.JVClose()
+        logger.info("recent モード完了。終了します。")
     elif args.mode == "daily":
         report_status("running", mode="daily", message="Starting daily fetch")
         run_daily_fetch(jv)

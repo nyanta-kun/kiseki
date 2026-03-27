@@ -221,6 +221,7 @@ class RaceImporter:
                 "prize_1st": p.get("prize_1st"),
                 "prize_2nd": p.get("prize_2nd"),
                 "prize_3rd": p.get("prize_3rd"),
+                "head_count": p.get("head_count"),
                 "registered_count": p.get("registered_count"),
                 "finishers_count": p.get("finishers_count"),
                 "first_3f": p.get("first_3f"),
@@ -237,7 +238,7 @@ class RaceImporter:
         update_cols = [
             "race_name", "surface", "distance", "direction", "condition", "weather",
             "grade", "post_time", "race_type_code", "weight_type_code",
-            "prize_1st", "prize_2nd", "prize_3rd", "registered_count", "finishers_count",
+            "head_count", "prize_1st", "prize_2nd", "prize_3rd", "registered_count", "finishers_count",
             "first_3f", "last_3f_race", "lap_times", "record_update_type",
             "prev_distance", "prev_track_code", "prev_grade_code", "prev_post_time",
         ]

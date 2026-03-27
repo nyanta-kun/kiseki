@@ -716,7 +716,7 @@ def parse_hn(data: str) -> dict[str, Any] | None:
     230-239: 父馬繁殖登録番号
     240-249: 母馬繁殖登録番号
     """
-    if len(data) < 249:
+    if len(data) < 30:
         return None
     try:
         rec_id = _s(data, 1, 2)
@@ -788,8 +788,11 @@ def parse_sk(data: str) -> dict[str, Any] | None:
              [0]父 [1]母 [2]父父 [3]父母 [4]母父 [5]母母
              [6]父父父 [7]父父母 [8]父母父 [9]父母母
              [10]母父父 [11]母父母 [12]母母父 [13]母母母
+
+    注: 実際のJVLink返却データは仕様書より短い場合あり（11頭分=176バイト程度）。
+    blood_code(pos12-21) と 母父(pos107-116) が取れる最小長=116 を下限とする。
     """
-    if len(data) < 206:
+    if len(data) < 30:
         return None
     try:
         rec_id = _s(data, 1, 2)

@@ -154,17 +154,27 @@ prlctl restart "Windows 11"
 ```
 
 ### jvlink_agent.py 起動
+※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
 ```bash
 # setupモード（全過去データ取得）
 prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'python' -ArgumentList 'jvlink_agent.py --mode setup' `
-    -WorkingDirectory 'C:\kiseki\windows-agent' -WindowStyle Normal -PassThru
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode setup' \`
+    -WindowStyle Normal -PassThru
 "
 
 # dailyモード（当日データ取得）
 prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'python' -ArgumentList 'jvlink_agent.py --mode daily' `
-    -WorkingDirectory 'C:\kiseki\windows-agent' -WindowStyle Normal -PassThru
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode daily' \`
+    -WindowStyle Normal -PassThru
+"
+
+# recentモード（指定年以降を取得、完了後に自動終了）
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode recent --from-year 2023' \`
+    -WindowStyle Normal -PassThru
 "
 ```
 
