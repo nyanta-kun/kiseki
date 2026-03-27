@@ -17,13 +17,14 @@ export function formatDate(yyyymmdd: string): string {
   return `${m}月${d}日(${days[date.getDay()]})`;
 }
 
-/** 今日の日付を YYYYMMDD 形式で返す */
+/** 今日の日付を YYYYMMDD 形式で返す（JST = UTC+9 固定） */
 export function todayYYYYMMDD(): string {
-  const d = new Date();
+  // サーバー(Docker/UTC)・クライアント問わず JST で統一
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   return (
-    d.getFullYear().toString() +
-    String(d.getMonth() + 1).padStart(2, "0") +
-    String(d.getDate()).padStart(2, "0")
+    jst.getUTCFullYear().toString() +
+    String(jst.getUTCMonth() + 1).padStart(2, "0") +
+    String(jst.getUTCDate()).padStart(2, "0")
   );
 }
 
