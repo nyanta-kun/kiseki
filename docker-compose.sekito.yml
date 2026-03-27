@@ -1,0 +1,56 @@
+version: '3.8'
+
+# sekito-stable.com 本番デプロイ用 Compose
+# 使用方法: docker compose -f docker-compose.sekito.yml up -d --build
+#
+# nginx: /kiseki/      → 127.0.0.1:3001  (Next.js)
+# nginx: /kiseki/api/  → 127.0.0.1:8002  (FastAPI)
+
+name: kiseki
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kiseki-backend-1
+    ports:
+      - "127.0.0.1:8002:8000"
+    env_file:
+      - .env
+    command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./backend/src:/app/src
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - kiseki
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kiseki-frontend-1
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      # SSR時にDockerネットワーク内でバックエンドを呼び出す
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - kiseki
+    restart: unless-stopped
+
+networks:
+  kiseki:
+    driver: bridge

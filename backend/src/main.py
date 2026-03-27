@@ -20,6 +20,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://frontend:3000",
+        "https://sekito-stable.com",
+        "https://www.sekito-stable.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
