@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { fetchRacesByDate } from "@/lib/api";
 import { formatDate, todayYYYYMMDD } from "@/lib/utils";
-import { RaceCard } from "@/components/RaceCard";
+import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 
 type SearchParams = Promise<{ date?: string }>;
@@ -66,27 +66,7 @@ async function RaceList({ date }: { date: string }) {
     courseGroups[race.course_name].push(race);
   }
 
-  return (
-    <div className="space-y-5">
-      {Object.entries(courseGroups).map(([course, courseRaces]) => (
-        <section key={course}>
-          <h2 className="text-sm font-bold text-gray-600 mb-2 flex items-center gap-2">
-            <span
-              className="w-1 h-4 rounded inline-block"
-              style={{ background: "var(--green-deep)" }}
-            />
-            {course}
-            <span className="text-xs text-gray-400 font-normal">{courseRaces.length}R</span>
-          </h2>
-          <div className="space-y-1.5">
-            {courseRaces.map((race) => (
-              <RaceCard key={race.id} race={race} />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
+  return <CourseTabView courseGroups={courseGroups} />;
 }
 
 function RaceListSkeleton() {

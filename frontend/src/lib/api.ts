@@ -19,9 +19,22 @@ export type Race = {
   grade: string | null;
   condition: string | null;
   weather: string | null;
+  head_count: number | null;
+  has_indices: boolean;
+  confidence_score: number | null;
+  confidence_label: "HIGH" | "MID" | "LOW" | null;
+};
+
+export type RaceResult = {
+  horse_number: number | null;
+  finish_position: number | null;
+  finish_time: number | null;
+  last_3f: number | null;
+  horse_name: string;
 };
 
 export type HorseIndex = {
+  horse_id: number;
   horse_number: number;
   horse_name: string;
   composite_index: number;
@@ -35,11 +48,42 @@ export type HorseIndex = {
   pace_index: number | null;
   rotation_index: number | null;
   pedigree_index: number | null;
+  training_index: number | null;
+  anagusa_index: number | null;
+  paddock_index: number | null;
 };
 
 export type OddsEntry = {
   combination: string;
   odds: number;
+};
+
+export type RaceConfidence = {
+  score: number;
+  label: "HIGH" | "MID" | "LOW";
+  gap_1_2: number;
+  gap_1_3: number;
+  head_count: number;
+};
+
+export type IndicesResponse = {
+  horses: HorseIndex[];
+  confidence: RaceConfidence;
+};
+
+export type RaceHistoryEntry = {
+  date: string;
+  course_name: string;
+  surface: string;
+  distance: number;
+  race_name: string | null;
+  finish_position: number | null;
+  finish_time: number | null;
+  last_3f: number | null;
+  horse_number: number | null;
+  win_odds: number | null;
+  win_popularity: number | null;
+  composite_index: number | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -48,16 +92,28 @@ export type OddsEntry = {
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    next: { revalidate: 30 },
+    cache: "no-store",
   });
   if (!res.ok) throw new Error(`API error: ${res.status} ${path}`);
   return res.json() as Promise<T>;
+}
+
+export async function fetchRace(raceId: number): Promise<Race> {
+  return get<Race>(`/api/races/${raceId}`);
 }
 
 export async function fetchRacesByDate(date: string): Promise<Race[]> {
   return get<Race[]>(`/api/races?date=${date}`);
 }
 
-export async function fetchIndices(raceId: number): Promise<HorseIndex[]> {
-  return get<HorseIndex[]>(`/api/races/${raceId}/indices`);
+export async function fetchIndices(raceId: number): Promise<IndicesResponse> {
+  return get<IndicesResponse>(`/api/races/${raceId}/indices`);
+}
+
+export async function fetchResults(raceId: number): Promise<RaceResult[]> {
+  return get<RaceResult[]>(`/api/races/${raceId}/results`);
+}
+
+export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEntry[]> {
+  return get<RaceHistoryEntry[]>(`/api/horses/${horseId}/history`);
 }

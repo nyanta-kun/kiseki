@@ -7,10 +7,9 @@ type Props = {
 };
 
 export function EVSummary({ indices }: Props) {
-  // 勝率上位3頭を抽出
+  // 総合指数上位3頭を抽出
   const top3 = [...indices]
-    .filter((h) => h.win_probability !== null)
-    .sort((a, b) => (b.win_probability ?? 0) - (a.win_probability ?? 0))
+    .sort((a, b) => b.composite_index - a.composite_index)
     .slice(0, 3);
 
   if (top3.length === 0) return null;
