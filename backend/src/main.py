@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.agent_router import router as agent_router
+from .api.horses import router as horses_router
 from .api.import_router import changes_router, router as import_router
 from .api.races import router as races_router
 from .config import settings
@@ -36,6 +37,7 @@ async def health_check():
 app.include_router(import_router)   # POST /api/import/*
 app.include_router(changes_router)  # POST /api/changes/notify
 app.include_router(races_router)    # GET  /api/races/*
+app.include_router(horses_router)   # GET  /api/horses/*
 app.include_router(agent_router)    # GET/POST /api/agent/*
 
 # MS2以降で順次有効化:

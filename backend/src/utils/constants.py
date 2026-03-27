@@ -19,16 +19,23 @@ WEIGHT_CORRECTION_PER_KG = 0.5  # 斤量1kgあたりの補正値（秒）
 BASE_WEIGHT = 55.0            # 基準斤量
 
 # 総合指数の重み（MS3以降で最適化）
+# v5: 穴ぐさ指数追加。speed 0.30→0.27、last_3f 0.12→0.10 から 0.05 を拠出。
+# v6: パドック指数追加。speed 0.27→0.24 から 0.03 を拠出。
+# v7: Nelder-Mead最適化 (20250101-20251231訓練、20260101-20260322検証)
+#     コース適性を大幅増 (0.13→0.31)、スピードを減 (0.24→0.13)
+#     穴ぐさ・パドックは予測寄与なしのため0に。
 INDEX_WEIGHTS = {
-    "speed": 0.30,
-    "last_3f": 0.12,
-    "course_aptitude": 0.13,
-    "pace": 0.08,
-    "jockey_trainer": 0.08,
-    "pedigree": 0.08,
-    "rotation": 0.05,
-    "training": 0.05,
-    "position_advantage": 0.06,
+    "speed": 0.1251,
+    "last_3f": 0.1168,
+    "course_aptitude": 0.3097,
+    "pace": 0.0399,
+    "jockey_trainer": 0.1213,
+    "pedigree": 0.0662,
+    "rotation": 0.1124,
+    "training": 0.0327,
+    "position_advantage": 0.0259,
+    "anagusa": 0.0000,
+    "paddock": 0.0000,
     "disadvantage_bonus": 0.05,
 }
 

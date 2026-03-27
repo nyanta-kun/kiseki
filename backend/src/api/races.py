@@ -11,8 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from sqlalchemy import exists
+
 from ..db.models import CalculatedIndex, Horse, Jockey, Race, RaceEntry, RaceResult
 from ..db.session import get_db
+from ..indices.composite import COMPOSITE_VERSION
+from ..indices.confidence import calculate_race_confidence
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
@@ -34,7 +38,11 @@ class RaceOut(BaseModel):
     grade: str | None
     condition: str | None
     weather: str | None
+    head_count: int | None
     jravan_race_id: str | None
+    has_indices: bool = False
+    confidence_score: int | None = None
+    confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
 
     model_config = {"from_attributes": True}
 
@@ -65,8 +73,24 @@ class ResultOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RaceConfidence(BaseModel):
+    """レース信頼度スコア。"""
+    score: int
+    label: str          # "HIGH" | "MID" | "LOW"
+    gap_1_2: float      # 1位-2位の指数差
+    gap_1_3: float      # 1位-3位の指数差
+    head_count: int
+
+
+class IndicesResponse(BaseModel):
+    """指数APIレスポンス（馬リスト + レース信頼度）。"""
+    horses: list["HorseIndexOut"]
+    confidence: RaceConfidence
+
+
 class HorseIndexOut(BaseModel):
     """1頭分の指数レスポンス。"""
+    horse_id: int
     horse_number: int
     horse_name: str
     composite_index: float
@@ -81,6 +105,9 @@ class HorseIndexOut(BaseModel):
     pace_index: float | None
     rotation_index: float | None
     pedigree_index: float | None
+    training_index: float | None
+    anagusa_index: float | None
+    paddock_index: float | None
 
 
 # -------------------------------------------------------------------
@@ -92,7 +119,7 @@ def list_races(
     date: str = Query(..., description="対象日付 YYYYMMDD"),
     course: str | None = Query(None, description="場コード (01-10) または場名"),
 ) -> list[RaceOut]:
-    """指定日のレース一覧を返す。"""
+    """指定日のレース一覧を返す。has_indices=true は指数算出済みを示す。"""
     q = db.query(Race).filter(Race.date == date)
     if course:
         if len(course) <= 2 and course.isdigit():
@@ -100,7 +127,59 @@ def list_races(
         else:
             q = q.filter(Race.course_name == course)
     races = q.order_by(Race.race_number).all()
-    return [RaceOut.model_validate(r) for r in races]
+
+    # 算出済み指数を一括取得（N+1回避）: 各レースの全 composite_index を取得
+    race_ids = [r.id for r in races]
+    # 各レースで利用可能な最大バージョンを取得
+    from sqlalchemy import func
+    best_versions: dict[int, int] = {}
+    if race_ids:
+        for rid, ver in (
+            db.query(CalculatedIndex.race_id, func.max(CalculatedIndex.version))
+            .filter(CalculatedIndex.race_id.in_(race_ids))
+            .group_by(CalculatedIndex.race_id)
+            .all()
+        ):
+            best_versions[rid] = min(ver, COMPOSITE_VERSION)
+
+    # 各レースの composite_index 一覧を取得
+    from collections import defaultdict
+    race_indices: dict[int, list[float]] = defaultdict(list)
+    if best_versions:
+        # バージョンごとにまとめて取得
+        from sqlalchemy import tuple_
+        version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
+        rows = (
+            db.query(CalculatedIndex.race_id, CalculatedIndex.composite_index)
+            .filter(
+                tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs)
+            )
+            .all()
+        )
+        for rid, ci in rows:
+            race_indices[rid].append(float(ci))
+
+    indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
+
+    result = []
+    for r in races:
+        out = RaceOut.model_validate(r)
+        out.has_indices = r.id in indexed_ids
+        if r.id in indexed_ids:
+            conf = calculate_race_confidence(race_indices[r.id], r.head_count)
+            out.confidence_score = conf["score"]
+            out.confidence_label = conf["label"]
+        result.append(out)
+    return result
+
+
+@router.get("/{race_id}")
+def get_race(race_id: int, db: DbDep) -> RaceOut:
+    """レース詳細を返す。"""
+    race = db.query(Race).filter(Race.id == race_id).first()
+    if not race:
+        raise HTTPException(status_code=404, detail="Race not found")
+    return RaceOut.model_validate(race)
 
 
 @router.get("/{race_id}/entries")
@@ -136,7 +215,7 @@ def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
 
 
 @router.get("/{race_id}/indices")
-def get_indices(race_id: int, db: DbDep) -> list[HorseIndexOut]:
+def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     """レースの算出指数一覧を返す（composite_index 降順）。
 
     win_probability / place_probability は Softmax + Harville 式で算出。
@@ -146,12 +225,25 @@ def get_indices(race_id: int, db: DbDep) -> list[HorseIndexOut]:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
+    # v7 がなければ最新バージョンにフォールバック
+    latest_version = (
+        db.query(CalculatedIndex.version)
+        .filter(CalculatedIndex.race_id == race_id)
+        .order_by(CalculatedIndex.version.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_version is None:
+        raise HTTPException(status_code=404, detail="No indices calculated for this race")
+    use_version = COMPOSITE_VERSION if latest_version >= COMPOSITE_VERSION else latest_version
+
     rows = (
         db.query(CalculatedIndex, RaceEntry, Horse)
         .join(RaceEntry, (RaceEntry.race_id == CalculatedIndex.race_id)
               & (RaceEntry.horse_id == CalculatedIndex.horse_id))
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
         .filter(CalculatedIndex.race_id == race_id)
+        .filter(CalculatedIndex.version == use_version)
         .order_by(CalculatedIndex.composite_index.desc().nullslast())
         .all()
     )
@@ -159,11 +251,20 @@ def get_indices(race_id: int, db: DbDep) -> list[HorseIndexOut]:
     if not rows:
         raise HTTPException(status_code=404, detail="No indices calculated for this race")
 
+    # race_entries に (race_id, horse_id) の重複がある場合に備え、horse_id で重複排除
+    seen: set[int] = set()
+    unique_rows = []
+    for row in rows:
+        if row[0].horse_id not in seen:
+            seen.add(row[0].horse_id)
+            unique_rows.append(row)
+
     def _f(v) -> float | None:
         return float(v) if v is not None else None
 
-    return [
+    horses = [
         HorseIndexOut(
+            horse_id=horse.id,
             horse_number=entry.horse_number,
             horse_name=horse.name,
             composite_index=float(ci.composite_index),
@@ -177,9 +278,22 @@ def get_indices(race_id: int, db: DbDep) -> list[HorseIndexOut]:
             pace_index=_f(ci.pace_index),
             rotation_index=_f(ci.rotation_index),
             pedigree_index=_f(ci.pedigree_index),
+            training_index=_f(ci.training_index),
+            anagusa_index=_f(ci.anagusa_index),
+            paddock_index=_f(ci.paddock_index),
         )
-        for ci, entry, horse in rows
+        for ci, entry, horse in unique_rows
     ]
+
+    conf_data = calculate_race_confidence(
+        composite_indices=[h.composite_index for h in horses],
+        head_count=race.head_count,
+    )
+
+    return IndicesResponse(
+        horses=horses,
+        confidence=RaceConfidence(**conf_data),
+    )
 
 
 @router.get("/{race_id}/results")

@@ -1,21 +1,23 @@
 """総合指数算出Agent
 
-各単体指数（スピード・コース適性・枠順・ローテーション・騎手・展開・血統）を
+各単体指数（スピード・コース適性・枠順・ローテーション・騎手・展開・血統・調教・穴ぐさ）を
 INDEX_WEIGHTS で重み付け合成し、総合指数を算出する。
 
-未実装指数（調教・パドック）はニュートラル値（50.0）で補完する。
+未実装指数（パドック）はニュートラル値（50.0）で補完する。
 算出結果は calculated_indices テーブルへ upsert する。
 
 重み構成（constants.INDEX_WEIGHTS 準拠）:
-  speed              0.30  (SpeedIndexCalculator)
-  last_3f            0.12  (Last3FIndexCalculator)
-  course_aptitude    0.13  (CourseAptitudeCalculator)
-  pace               0.08  (PaceIndexCalculator)
-  jockey_trainer     0.08  (JockeyIndexCalculator)
-  pedigree           0.08  (PedigreeIndexCalculator)
-  rotation           0.05  (RotationIndexCalculator)
-  training           0.05  (未実装 → 50.0)
-  position_advantage 0.06  (FrameBiasCalculator)
+  speed              0.1251 (SpeedIndexCalculator)
+  last_3f            0.1168 (Last3FIndexCalculator)
+  course_aptitude    0.3097 (CourseAptitudeCalculator)
+  pace               0.0399 (PaceIndexCalculator)
+  jockey_trainer     0.1213 (JockeyIndexCalculator)
+  pedigree           0.0662 (PedigreeIndexCalculator)
+  rotation           0.1124 (RotationIndexCalculator)
+  training           0.0327 (TrainingIndexCalculator: タイムトレンド+上がり3F+体重)
+  position_advantage 0.0259 (FrameBiasCalculator)
+  anagusa            0.0000 (AnagusaIndexCalculator: 穴ぐさピック期待度)
+  paddock            0.0000 (PaddockIndexCalculator: 発走前パドック状態)
   disadvantage_bonus 0.05  (未実装 → 0.0 加算なし)
 
 合計重み: 1.00 (disadvantage_bonus は加算方式のため別途処理)
@@ -33,7 +35,9 @@ from sqlalchemy.orm import Session
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
+from .anagusa import AnagusaIndexCalculator
 from .course_aptitude import CourseAptitudeCalculator
+from .paddock import PaddockIndexCalculator
 from .frame_bias import FrameBiasCalculator
 from .jockey import JockeyIndexCalculator
 from .last3f import Last3FIndexCalculator
@@ -41,11 +45,19 @@ from .pace import PaceIndexCalculator
 from .pedigree import PedigreeIndexCalculator
 from .rotation import RotationIndexCalculator
 from .speed import SpeedIndexCalculator
+from .training import TrainingIndexCalculator
 
 logger = logging.getLogger(__name__)
 
 # 算出バージョン（ロジック変更時にインクリメント）
-COMPOSITE_VERSION = 1
+# v2: コース適性改善（類似コースフォールバック+信頼度加重）
+#     FrameBias/PaceIndex に開催バイアス・コース特性・頭数補正を追加
+# v3: 血統指数改善（SKコードによる実績ベース統計計算）
+# v4: 調教指数実装（タイムトレンド+上がり3F改善+体重コンディション）
+# v5: 穴ぐさ指数追加（sekito.anagusa ピック実績ベース、speed -0.03/last_3f -0.02 から拠出）
+# v6: パドック指数追加（sekito.netkeiba p_rank ベース、speed -0.03 から拠出）
+# v7: Nelder-Mead重み最適化。コース適性 0.13→0.31、スピード 0.24→0.13。穴ぐさ・パドック=0
+COMPOSITE_VERSION = 7
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -80,6 +92,9 @@ class CompositeIndexCalculator:
         self._jockey = JockeyIndexCalculator(db)
         self._pace = PaceIndexCalculator(db)
         self._pedigree = PedigreeIndexCalculator(db)
+        self._training = TrainingIndexCalculator(db)
+        self._anagusa = AnagusaIndexCalculator(db)
+        self._paddock = PaddockIndexCalculator(db)
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -119,6 +134,9 @@ class CompositeIndexCalculator:
         jockey_map = self._jockey.calculate_batch(race_id)
         pace_map = self._pace.calculate_batch(race_id)
         pedigree_map = self._pedigree.calculate_batch(race_id)
+        training_map = self._training.calculate_batch(race_id)
+        anagusa_map = self._anagusa.calculate_batch(race_id)
+        paddock_map = self._paddock.calculate_batch(race_id)
 
         results = []
         for entry in entries:
@@ -133,6 +151,9 @@ class CompositeIndexCalculator:
                 jockey=jockey_map.get(hid, DEFAULT_INDEX),
                 pace=pace_map.get(hid, DEFAULT_INDEX),
                 pedigree=pedigree_map.get(hid, DEFAULT_INDEX),
+                training=training_map.get(hid, DEFAULT_INDEX),
+                anagusa=anagusa_map.get(hid, DEFAULT_INDEX),
+                paddock=paddock_map.get(hid, DEFAULT_INDEX),
             )
             results.append({"horse_id": hid, **row})
 
@@ -192,10 +213,13 @@ class CompositeIndexCalculator:
         jockey: float,
         pace: float,
         pedigree: float,
+        training: float,
+        anagusa: float,
+        paddock: float,
     ) -> dict:
         """各指数から総合指数を算出する。
 
-        未実装指数（training）はニュートラル値（50.0）で補完する。
+        未実装指数（パドック）はニュートラル値（50.0）で補完する。
 
         Args:
             horse_id: 馬ID（ログ用）
@@ -207,6 +231,9 @@ class CompositeIndexCalculator:
             jockey: 騎手指数
             pace: 展開指数
             pedigree: 血統指数
+            training: 調教指数（タイムトレンド近似）
+            anagusa: 穴ぐさ指数（sekito.anagusa ピック実績ベース）
+            paddock: パドック指数（sekito.netkeiba p_rank ベース、データなし=50）
 
         Returns:
             各指数と総合指数を含む dict
@@ -221,8 +248,10 @@ class CompositeIndexCalculator:
             + jockey            * w["jockey_trainer"]
             + pedigree          * w["pedigree"]
             + rotation          * w["rotation"]
-            + DEFAULT_INDEX     * w["training"]          # 未実装 → neutral
+            + training          * w["training"]
             + position_advantage * w["position_advantage"]
+            + anagusa           * w["anagusa"]
+            + paddock           * w["paddock"]
             # disadvantage_bonus は flag ベースで別途加算（未実装）
         )
         composite = round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
@@ -236,6 +265,9 @@ class CompositeIndexCalculator:
             "jockey_index": round(jockey, 1),
             "pace_index": round(pace, 1),
             "pedigree_index": round(pedigree, 1),
+            "training_index": round(training, 1),
+            "anagusa_index": round(anagusa, 1),
+            "paddock_index": round(paddock, 1),
             "composite_index": composite,
         }
 
@@ -334,6 +366,10 @@ class CompositeIndexCalculator:
         win_prob = Decimal(str(data["win_probability"])) if "win_probability" in data else None
         place_prob = Decimal(str(data["place_probability"])) if "place_probability" in data else None
 
+        training_val = Decimal(str(data["training_index"])) if "training_index" in data else None
+        anagusa_val = Decimal(str(data["anagusa_index"])) if "anagusa_index" in data else None
+        paddock_val = Decimal(str(data["paddock_index"])) if "paddock_index" in data else None
+
         if existing:
             existing.speed_index = Decimal(str(data["speed_index"]))
             existing.last_3f_index = Decimal(str(data["last3f_index"]))
@@ -343,6 +379,9 @@ class CompositeIndexCalculator:
             existing.jockey_index = Decimal(str(data["jockey_index"]))
             existing.pace_index = Decimal(str(data["pace_index"]))
             existing.pedigree_index = Decimal(str(data["pedigree_index"]))
+            existing.training_index = training_val
+            existing.anagusa_index = anagusa_val
+            existing.paddock_index = paddock_val
             existing.composite_index = Decimal(str(data["composite_index"]))
             existing.win_probability = win_prob
             existing.place_probability = place_prob
@@ -360,6 +399,9 @@ class CompositeIndexCalculator:
                 jockey_index=Decimal(str(data["jockey_index"])),
                 pace_index=Decimal(str(data["pace_index"])),
                 pedigree_index=Decimal(str(data["pedigree_index"])),
+                training_index=training_val,
+                anagusa_index=anagusa_val,
+                paddock_index=paddock_val,
                 composite_index=Decimal(str(data["composite_index"])),
                 win_probability=win_prob,
                 place_probability=place_prob,
