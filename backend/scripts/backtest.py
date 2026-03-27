@@ -1,14 +1,18 @@
 """バックテストスクリプト
 
-算出済み総合指数と実際のレース結果を照合し、指数の予測精度を検証する。
+算出済み総合指数と実際のレース結果を照合し、指数の予測精度・収益性を検証する。
 
-指数1位馬の単勝/複勝的中率、スピアマン順位相関（指数順位 vs 着順）、
-各単体指数の予測力比較などを集計して出力する。
+機能:
+  - 指数1位馬の単勝/複勝的中率
+  - スピアマン順位相関（指数順位 vs 着順）
+  - 単勝・複勝・馬連 ROIシミュレーション
+  - 月別・馬場別・距離別等の内訳集計
+  - Markdownレポート出力
 
 使い方:
-  python scripts/backtest.py --start 20240101 --end 20241231
-  python scripts/backtest.py --start 20240101 --end 20241231 --output /tmp/backtest.csv
-  python scripts/backtest.py --start 20240101 --end 20241231 --breakdown surface
+  python scripts/backtest.py --start 20260101 --end 20260322
+  python scripts/backtest.py --start 20260101 --end 20260322 --breakdown surface
+  python scripts/backtest.py --start 20260101 --end 20260322 --report docs/verification/
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from dotenv import load_dotenv
 load_dotenv(_root.parent / ".env")
 
 from src.db.session import engine
+from src.indices.composite import COMPOSITE_VERSION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +50,8 @@ logger = logging.getLogger("backtest")
 # データ取得
 # ---------------------------------------------------------------------------
 
-_QUERY = text("""
+def _build_query(version: int) -> "text":
+    return text(f"""
 SELECT
     r.id              AS race_id,
     r.date            AS date,
@@ -64,21 +70,26 @@ SELECT
     ci.pace_index         AS pace_index,
     ci.rotation_index     AS rotation_index,
     ci.pedigree_index     AS pedigree_index,
+    ci.training_index     AS training_index,
+    ci.anagusa_index      AS anagusa_index,
+    ci.paddock_index      AS paddock_index,
     rr.finish_position    AS finish_position,
-    rr.abnormality_code   AS abnormality_code
+    rr.abnormality_code   AS abnormality_code,
+    rr.win_odds           AS win_odds,
+    rr.win_popularity     AS win_popularity
 FROM keiba.calculated_indices ci
 JOIN keiba.races r ON r.id = ci.race_id
 JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
 WHERE r.date BETWEEN :start_date AND :end_date
-  AND ci.version = 1
+  AND ci.version = {version}
 ORDER BY r.date, r.id, ci.horse_id
 """)
 
 
-def load_data(start_date: str, end_date: str) -> pd.DataFrame:
+def load_data(start_date: str, end_date: str, version: int = COMPOSITE_VERSION) -> pd.DataFrame:
     """DBから算出指数と実績を結合して取得する。"""
     with Session(engine) as db:
-        result = db.execute(_QUERY, {"start_date": start_date, "end_date": end_date})
+        result = db.execute(_build_query(version), {"start_date": start_date, "end_date": end_date})
         rows = result.fetchall()
         columns = result.keys()
 
@@ -90,12 +101,14 @@ def load_data(start_date: str, end_date: str) -> pd.DataFrame:
     # 型変換
     for col in ["composite_index", "speed_index", "last3f_index", "course_aptitude",
                 "position_advantage", "jockey_index", "pace_index", "rotation_index",
-                "pedigree_index"]:
+                "pedigree_index", "training_index", "anagusa_index", "paddock_index"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df["finish_position"] = pd.to_numeric(df["finish_position"], errors="coerce")
     df["abnormality_code"] = pd.to_numeric(df["abnormality_code"], errors="coerce").fillna(0)
     df["distance"] = pd.to_numeric(df["distance"], errors="coerce")
+    df["win_odds"] = pd.to_numeric(df["win_odds"], errors="coerce")
+    df["win_popularity"] = pd.to_numeric(df["win_popularity"], errors="coerce")
 
     logger.info(f"取得レコード数: {len(df):,} 件 / レース数: {df['race_id'].nunique():,}")
     return df
@@ -143,7 +156,7 @@ def filter_valid_races(df: pd.DataFrame, min_runners: int = 4) -> pd.DataFrame:
 INDEX_COLS = [
     "composite_index", "speed_index", "last3f_index", "course_aptitude",
     "position_advantage", "jockey_index", "pace_index", "rotation_index",
-    "pedigree_index",
+    "pedigree_index", "training_index", "anagusa_index", "paddock_index",
 ]
 
 def _spearman(x: np.ndarray, y: np.ndarray) -> float:
@@ -163,6 +176,9 @@ INDEX_LABELS = {
     "pace_index":         "展開",
     "rotation_index":     "ローテ",
     "pedigree_index":     "血統",
+    "training_index":     "調教",
+    "anagusa_index":      "穴ぐさ",
+    "paddock_index":      "パドック",
 }
 
 
@@ -233,6 +249,182 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "random_place": float(random_place),
         "avg_runners": float(avg_runners),
         "index_stats": index_stats,
+    }
+
+
+def compute_roi(df: pd.DataFrame) -> dict:
+    """馬券種別ROIを計算する（100円均一購入想定）。
+
+    対象馬券:
+      - 単勝: 指数1位を購入
+      - 複勝: 指数1位を購入（払戻はwin_odds × 0.4 で近似）
+      - 馬連: 指数Top2を購入（払戻なし・勝率の参考値のみ）
+
+    Returns:
+        {"tansho": {...}, "fukusho": {...}, "umaren": {...}}
+    """
+    result: dict[str, dict] = {}
+
+    # 単勝
+    top1 = df.loc[df.groupby("race_id")["composite_index"].idxmax()].copy()
+    valid = top1[top1["win_odds"].notna() & (top1["win_odds"] > 0)]
+    bets = len(valid)
+    wins = (valid["finish_position"] == 1).sum()
+    payout = valid.loc[valid["finish_position"] == 1, "win_odds"].sum()
+    roi = float(payout / bets * 100) if bets > 0 else 0.0
+    avg_odds = float(valid.loc[valid["finish_position"] == 1, "win_odds"].mean()) if wins > 0 else 0.0
+    result["tansho"] = {
+        "bets": bets, "wins": int(wins),
+        "roi_pct": round(roi, 1),
+        "win_rate": round(float(wins / bets) * 100, 1) if bets > 0 else 0.0,
+        "avg_odds": round(avg_odds, 2),
+    }
+
+    # 月別累積単勝 P&L（100円単位）
+    top1_valid = valid.copy()
+    top1_valid["ym"] = top1_valid["date"].astype(str).str[:6]
+    top1_valid["profit"] = top1_valid.apply(
+        lambda r: r["win_odds"] * 100 - 100 if r["finish_position"] == 1 else -100, axis=1
+    )
+    monthly = (
+        top1_valid.groupby("ym")
+        .agg(bets=("profit", "count"), profit=("profit", "sum"))
+        .reset_index()
+    )
+    monthly["cumulative"] = monthly["profit"].cumsum()
+    result["monthly_tansho"] = monthly.to_dict("records")
+
+    # 馬連（指数Top2が実際の1・2着を占める確率）
+    umaren_hits = 0
+    umaren_bets = 0
+    for _, grp in df.groupby("race_id"):
+        grp_sorted = grp.nlargest(2, "composite_index")
+        if len(grp_sorted) < 2:
+            continue
+        top2_ids = set(grp_sorted["horse_id"].tolist())
+        finishers = grp[grp["finish_position"].isin([1, 2])]["horse_id"].tolist()
+        if len(finishers) == 2:
+            umaren_bets += 1
+            if set(finishers) == top2_ids:
+                umaren_hits += 1
+    result["umaren"] = {
+        "bets": umaren_bets,
+        "hits": umaren_hits,
+        "hit_rate": round(umaren_hits / umaren_bets * 100, 1) if umaren_bets > 0 else 0.0,
+    }
+
+    return result
+
+
+def compute_gap_analysis(df: pd.DataFrame) -> dict:
+    """指数差（gap）別の予測信頼度を分析する。
+
+    1位と2位の指数差（gap_12）が大きいほど1位馬の的中率・ROIが向上するかを検証する。
+    2位と3位の指数差（gap_23）が大きいほど指数Top2が1・2着を占める馬連的中率が向上するかを検証する。
+
+    Returns:
+        {
+          "gap12": DataFrame,  # gap_12（1-2位差）別 勝率・複勝率・ROI
+          "gap23": DataFrame,  # gap_23（2-3位差）別 馬連的中率
+          "n_races": int,      # 分析対象レース数
+        }
+    """
+    BUCKET_LABELS = [
+        "0〜3未満（拮抗）",
+        "3〜6未満（やや優位）",
+        "6〜10未満（優位）",
+        "10〜15未満（大差）",
+        "15以上（支配的）",
+    ]
+
+    def _bucket(val: float) -> str:
+        if val < 3:  return BUCKET_LABELS[0]
+        if val < 6:  return BUCKET_LABELS[1]
+        if val < 10: return BUCKET_LABELS[2]
+        if val < 15: return BUCKET_LABELS[3]
+        return BUCKET_LABELS[4]
+
+    records = []
+    for race_id, grp in df.groupby("race_id"):
+        if len(grp) < 3:
+            continue
+        sg = grp.sort_values("composite_index", ascending=False).reset_index(drop=True)
+        gap_12 = float(sg.iloc[0]["composite_index"]) - float(sg.iloc[1]["composite_index"])
+        gap_23 = float(sg.iloc[1]["composite_index"]) - float(sg.iloc[2]["composite_index"])
+
+        rank1 = sg.iloc[0]
+        top2_ids = set(sg.iloc[:2]["horse_id"].tolist())
+        finishers_12 = set(grp[grp["finish_position"].isin([1, 2])]["horse_id"].tolist())
+        umaren_hit = int(top2_ids == finishers_12 and len(finishers_12) == 2)
+
+        records.append({
+            "gap_12": gap_12,
+            "gap_23": gap_23,
+            "rank1_win":   int(rank1["finish_position"] == 1),
+            "rank1_place": int(rank1["finish_position"] <= 3),
+            "rank1_odds":  rank1["win_odds"] if pd.notna(rank1["win_odds"]) else None,
+            "umaren_hit":  umaren_hit,
+            "head_count":  len(grp),
+        })
+
+    if not records:
+        return {"gap12": pd.DataFrame(), "gap23": pd.DataFrame(), "n_races": 0}
+
+    rdf = pd.DataFrame(records)
+    rdf["gap12_bucket"] = rdf["gap_12"].apply(_bucket)
+    rdf["gap23_bucket"] = rdf["gap_23"].apply(_bucket)
+
+    # ── gap_12 集計 ──────────────────────────────────────────────────
+    gap12_rows = []
+    for label in BUCKET_LABELS:
+        sub = rdf[rdf["gap12_bucket"] == label]
+        if len(sub) == 0:
+            continue
+        n = len(sub)
+        win_rate   = sub["rank1_win"].mean()
+        place_rate = sub["rank1_place"].mean()
+        umaren_rate = sub["umaren_hit"].mean()
+        avg_hc     = sub["head_count"].mean()
+
+        valid = sub[sub["rank1_odds"].notna() & (sub["rank1_odds"] > 0)]
+        if len(valid) > 0:
+            payout = valid.loc[valid["rank1_win"] == 1, "rank1_odds"].sum()
+            roi = float(payout / len(valid) * 100)
+            avg_odds_hit = valid.loc[valid["rank1_win"] == 1, "rank1_odds"].mean()
+        else:
+            roi = float("nan")
+            avg_odds_hit = float("nan")
+
+        gap12_rows.append({
+            "指数差(1-2位)":    label,
+            "レース数":         n,
+            "単勝的中率":       win_rate,
+            "複勝的中率":       place_rate,
+            "馬連的中率":       umaren_rate,
+            "ランダム単勝":     1.0 / avg_hc if avg_hc > 0 else float("nan"),
+            "ROI(%)":           round(roi, 1),
+            "平均配当(的中時)": round(avg_odds_hit, 2) if not np.isnan(avg_odds_hit) else float("nan"),
+        })
+
+    # ── gap_23 集計 ──────────────────────────────────────────────────
+    gap23_rows = []
+    for label in BUCKET_LABELS:
+        sub = rdf[rdf["gap23_bucket"] == label]
+        if len(sub) == 0:
+            continue
+        n = len(sub)
+        gap23_rows.append({
+            "指数差(2-3位)": label,
+            "レース数":      n,
+            "単勝的中率":    sub["rank1_win"].mean(),
+            "複勝的中率":    sub["rank1_place"].mean(),
+            "馬連的中率":    sub["umaren_hit"].mean(),
+        })
+
+    return {
+        "gap12":   pd.DataFrame(gap12_rows),
+        "gap23":   pd.DataFrame(gap23_rows),
+        "n_races": len(rdf),
     }
 
 
@@ -337,6 +529,217 @@ def print_breakdown(bdf: pd.DataFrame, title: str) -> None:
         )
 
 
+def print_gap_analysis(gap: dict) -> None:
+    """指数差分析結果をコンソールへ出力する。"""
+    if gap["gap12"].empty:
+        return
+
+    print(f"\n  【指数差（1-2位）別 信頼度分析】  ※ n={gap['n_races']:,}レース")
+    print(f"  {'指数差':22}  {'レース':>6}  {'単勝%':>7}  {'複勝%':>7}  {'ランダム%':>9}  {'馬連%':>7}  {'ROI%':>7}  {'平均配当':>8}")
+    print("  " + "-" * 83)
+    for _, row in gap["gap12"].iterrows():
+        roi_str = f"{row['ROI(%)']:>7.1f}" if not np.isnan(row["ROI(%)"]) else "    N/A"
+        odds_str = f"{row['平均配当(的中時)']:>8.1f}" if not np.isnan(row["平均配当(的中時)"]) else "     N/A"
+        print(
+            f"  {str(row['指数差(1-2位)']):22}  "
+            f"{int(row['レース数']):>6}  "
+            f"{row['単勝的中率']:>7.1%}  "
+            f"{row['複勝的中率']:>7.1%}  "
+            f"{row['ランダム単勝']:>9.1%}  "
+            f"{row['馬連的中率']:>7.1%}  "
+            f"{roi_str}  {odds_str}"
+        )
+
+    if not gap["gap23"].empty:
+        print(f"\n  【指数差（2-3位）別 馬連信頼度分析】")
+        print(f"  {'指数差':22}  {'レース':>6}  {'単勝%':>7}  {'複勝%':>7}  {'馬連%':>7}")
+        print("  " + "-" * 60)
+        for _, row in gap["gap23"].iterrows():
+            print(
+                f"  {str(row['指数差(2-3位)']):22}  "
+                f"{int(row['レース数']):>6}  "
+                f"{row['単勝的中率']:>7.1%}  "
+                f"{row['複勝的中率']:>7.1%}  "
+                f"{row['馬連的中率']:>7.1%}"
+            )
+
+
+def build_markdown_report(
+    m: dict, roi: dict, gap: dict,
+    bdf_surface: pd.DataFrame, bdf_dist: pd.DataFrame,
+    start_date: str, end_date: str, weights_label: str = "現行",
+) -> str:
+    """バックテスト結果をMarkdown形式で組み立てる。"""
+    from datetime import date as _date
+    today = _date.today().strftime("%Y-%m-%d")
+    random_win = m["random_win"]
+    random_place = m["random_place"]
+    ts = roi["tansho"]
+    um = roi["umaren"]
+
+    lines = [
+        f"# バックテストレポート — {start_date[:4]}年{start_date[4:6]}月{start_date[6:]}日 〜 {end_date[:4]}年{end_date[4:6]}月{end_date[6:]}日",
+        f"",
+        f"**検証日**: {today}  ",
+        f"**重みセット**: {weights_label}  ",
+        f"**対象**: 4頭以上・異常コードなし・指数算出済みレース",
+        f"",
+        f"---",
+        f"",
+        f"## 1. 基本統計",
+        f"",
+        f"| 項目 | 値 |",
+        f"|------|----|",
+        f"| 対象レース数 | {m['n_races']:,} |",
+        f"| 対象頭数（延べ） | {m['n_horses']:,} |",
+        f"| 平均出走頭数 | {m['avg_runners']:.1f} 頭 |",
+        f"| ランダム期待単勝率 | {random_win:.1%} |",
+        f"| ランダム期待複勝率 | {random_place:.1%} |",
+        f"",
+        f"---",
+        f"",
+        f"## 2. 指数1位馬 的中率",
+        f"",
+        f"| 指標 | 値 | ランダム比 |",
+        f"|------|-----|---------|",
+        f"| 単勝的中率 | **{m['win_rate']:.1%}** | ×{m['win_rate']/random_win:.2f} |",
+        f"| 複勝的中率 | **{m['place_rate']:.1%}** | ×{m['place_rate']/random_place:.2f} |",
+        f"",
+        f"---",
+        f"",
+        f"## 3. 単勝ROIシミュレーション（指数1位・100円均一）",
+        f"",
+        f"> 控除率20%（単勝）の理論ROI = **80%**",
+        f"",
+        f"| 項目 | 値 |",
+        f"|------|----|",
+        f"| 購入レース数 | {ts['bets']:,} |",
+        f"| 的中数 | {ts['wins']} |",
+        f"| 的中率 | {ts['win_rate']}% |",
+        f"| **ROI** | **{ts['roi_pct']}%** |",
+        f"| 平均配当オッズ | {ts['avg_odds']}倍 |",
+        f"",
+        f"### 月別 単勝 P&L（累積, 100円単位）",
+        f"",
+        f"| 月 | 件数 | 損益 | 累積損益 |",
+        f"|-----|------|------|---------|",
+    ]
+    for r in roi["monthly_tansho"]:
+        ym = str(r["ym"])
+        month_label = f"{ym[:4]}年{ym[4:6]}月"
+        sign = "+" if r["profit"] >= 0 else ""
+        sign_c = "+" if r["cumulative"] >= 0 else ""
+        lines.append(f"| {month_label} | {r['bets']} | {sign}{r['profit']:,}円 | {sign_c}{r['cumulative']:,}円 |")
+
+    lines += [
+        f"",
+        f"---",
+        f"",
+        f"## 4. 馬連シミュレーション（指数Top2）",
+        f"",
+        f"| 項目 | 値 |",
+        f"|------|----|",
+        f"| 購入レース数 | {um['bets']:,} |",
+        f"| 的中数 | {um['hits']} |",
+        f"| 的中率 | **{um['hit_rate']}%** |",
+        f"",
+        f"---",
+        f"",
+        f"## 5. 各指数 スピアマン順位相関",
+        f"",
+        f"| 指数 | 平均ρ | 中央値ρ | サンプル |",
+        f"|------|-------|--------|---------|",
+    ]
+
+    stats = m["index_stats"]
+    ordered = ["composite_index"] + sorted(
+        [c for c in INDEX_COLS if c != "composite_index" and c in stats],
+        key=lambda c: stats[c]["mean_rho"], reverse=True,
+    )
+    for col in ordered:
+        if col not in stats:
+            continue
+        s = stats[col]
+        label = INDEX_LABELS.get(col, col)
+        lines.append(f"| {label} | {s['mean_rho']:.4f} | {s['median_rho']:.4f} | {s['n']:,} |")
+
+    lines += [
+        f"",
+        f"---",
+        f"",
+        f"## 6. 馬場別内訳（指数1位）",
+        f"",
+        f"| 馬場 | レース数 | 単勝率 | 複勝率 | ランダム単勝 | 相関ρ(中央値) |",
+        f"|------|---------|--------|--------|------------|-------------|",
+    ]
+    for _, row in bdf_surface.iterrows():
+        lines.append(
+            f"| {row['カテゴリ']} | {int(row['レース数'])} "
+            f"| {row['単勝的中率']:.1%} | {row['複勝的中率']:.1%} "
+            f"| {row['ランダム単勝']:.1%} | {row['スピアマン相関(中央値)']:.4f} |"
+        )
+
+    lines += [
+        f"",
+        f"## 7. 距離カテゴリ別内訳（指数1位）",
+        f"",
+        f"| 距離 | レース数 | 単勝率 | 複勝率 | ランダム単勝 | 相関ρ(中央値) |",
+        f"|------|---------|--------|--------|------------|-------------|",
+    ]
+    for _, row in bdf_dist.iterrows():
+        lines.append(
+            f"| {row['カテゴリ']} | {int(row['レース数'])} "
+            f"| {row['単勝的中率']:.1%} | {row['複勝的中率']:.1%} "
+            f"| {row['ランダム単勝']:.1%} | {row['スピアマン相関(中央値)']:.4f} |"
+        )
+
+    # ── gap分析セクション ──────────────────────────────────────────
+    if not gap["gap12"].empty:
+        lines += [
+            f"",
+            f"---",
+            f"",
+            f"## 8. 指数差（1-2位）別 信頼度分析",
+            f"",
+            f"> 1位と2位の指数差が大きいほど、1位馬の信頼度が上がるかを検証。",
+            f"",
+            f"| 指数差 | レース数 | 単勝率 | 複勝率 | ランダム単勝 | 馬連率 | ROI(%) | 平均配当 |",
+            f"|--------|---------|--------|--------|------------|--------|--------|---------|",
+        ]
+        for _, row in gap["gap12"].iterrows():
+            roi_str  = f"{row['ROI(%)']:.1f}" if not np.isnan(row["ROI(%)"]) else "N/A"
+            odds_str = f"{row['平均配当(的中時)']:.1f}倍" if not np.isnan(row["平均配当(的中時)"]) else "N/A"
+            lines.append(
+                f"| {row['指数差(1-2位)']} | {int(row['レース数'])} "
+                f"| {row['単勝的中率']:.1%} | {row['複勝的中率']:.1%} "
+                f"| {row['ランダム単勝']:.1%} | {row['馬連的中率']:.1%} "
+                f"| {roi_str} | {odds_str} |"
+            )
+
+    if not gap["gap23"].empty:
+        lines += [
+            f"",
+            f"## 9. 指数差（2-3位）別 馬連信頼度分析",
+            f"",
+            f"> 2位と3位の差が大きい＝上位2頭の優位性が明確なときの馬連的中率を検証。",
+            f"",
+            f"| 指数差 | レース数 | 単勝率 | 複勝率 | 馬連率 |",
+            f"|--------|---------|--------|--------|--------|",
+        ]
+        for _, row in gap["gap23"].iterrows():
+            lines.append(
+                f"| {row['指数差(2-3位)']} | {int(row['レース数'])} "
+                f"| {row['単勝的中率']:.1%} | {row['複勝的中率']:.1%} "
+                f"| {row['馬連的中率']:.1%} |"
+            )
+
+    lines.append(f"")
+    lines.append(f"---")
+    lines.append(f"*Generated by kiseki/backend/scripts/backtest.py*")
+
+    return "\n".join(lines)
+
+
 def save_csv(df: pd.DataFrame, output_path: str) -> None:
     """レース単位の詳細結果をCSVへ出力する。"""
     # 指数1位馬 + 実際の1着馬 を抽出してサマリー行を作成
@@ -360,11 +763,19 @@ def save_csv(df: pd.DataFrame, output_path: str) -> None:
 # メイン
 # ---------------------------------------------------------------------------
 
-def run(start_date: str, end_date: str, output_path: str | None, breakdown: str | None) -> None:
+def run(
+    start_date: str,
+    end_date: str,
+    output_path: str | None,
+    breakdown: str | None,
+    report_dir: str | None,
+    weights_label: str = "現行",
+    version: int = COMPOSITE_VERSION,
+) -> None:
     """バックテストを実行する。"""
-    logger.info(f"バックテスト開始: {start_date} ～ {end_date}")
+    logger.info(f"バックテスト開始: {start_date} ～ {end_date} (version={version})")
 
-    df = load_data(start_date, end_date)
+    df = load_data(start_date, end_date, version=version)
     if df.empty:
         logger.warning("データなし。日付範囲・算出済みデータを確認してください。")
         return
@@ -377,6 +788,18 @@ def run(start_date: str, end_date: str, output_path: str | None, breakdown: str 
     metrics = compute_metrics(df)
     print_summary(metrics, start_date, end_date)
 
+    roi = compute_roi(df)
+    ts = roi["tansho"]
+    um = roi["umaren"]
+    print(f"\n  【単勝ROI（指数1位・100円均一）】")
+    print(f"  購入: {ts['bets']:,}レース  的中: {ts['wins']}  ROI: {ts['roi_pct']}%  "
+          f"平均配当: {ts['avg_odds']}倍")
+    print(f"\n  【馬連的中率（指数Top2）】")
+    print(f"  購入: {um['bets']:,}レース  的中: {um['hits']}  的中率: {um['hit_rate']}%")
+
+    gap = compute_gap_analysis(df)
+    print_gap_analysis(gap)
+
     if breakdown:
         bdf = compute_breakdown(df, breakdown)
         titles = {
@@ -386,6 +809,22 @@ def run(start_date: str, end_date: str, output_path: str | None, breakdown: str 
             "course_name": "競馬場",
         }
         print_breakdown(bdf, titles.get(breakdown, breakdown))
+
+    if report_dir:
+        from datetime import date as _date
+        bdf_surface = compute_breakdown(df, "surface")
+        bdf_dist = compute_breakdown(df, "distance_cat")
+        report_md = build_markdown_report(
+            metrics, roi, gap, bdf_surface, bdf_dist,
+            start_date, end_date, weights_label,
+        )
+        report_path = (
+            Path(report_dir)
+            / f"{_date.today().strftime('%Y%m%d')}_{start_date}_{end_date}_backtest.md"
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_md, encoding="utf-8")
+        logger.info(f"Markdownレポート出力: {report_path}")
 
     if output_path:
         save_csv(df, output_path)
@@ -403,13 +842,17 @@ def main() -> None:
         default=None,
         help="内訳集計軸 (surface / distance_cat / grade / course_name)",
     )
+    parser.add_argument("--report", default=None, help="Markdownレポート出力先ディレクトリ")
+    parser.add_argument("--weights-label", default="現行", help="レポートに記載する重みセット名")
+    parser.add_argument("--version", type=int, default=COMPOSITE_VERSION,
+                        help=f"算出バージョン (default: {COMPOSITE_VERSION})")
     args = parser.parse_args()
 
     for d in (args.start, args.end):
         if len(d) != 8 or not d.isdigit():
             parser.error("日付は YYYYMMDD 形式で指定してください")
 
-    run(args.start, args.end, args.output, args.breakdown)
+    run(args.start, args.end, args.output, args.breakdown, args.report, args.weights_label, args.version)
 
 
 if __name__ == "__main__":
