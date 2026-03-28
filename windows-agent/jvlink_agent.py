@@ -650,6 +650,8 @@ def run_realtime_monitor(jv) -> None:
 
     # 送信済み出走取消キー（JVRTOpenが毎回全件返すため重複防止）
     seen_scratches: set[str] = set()
+    # 送信済み成績キー（重複防止）
+    seen_results: set[str] = set()
 
     while True:
         try:
@@ -695,6 +697,22 @@ def run_realtime_monitor(jv) -> None:
                     "date": today,
                     "records": weight_records,
                 })
+
+            # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
+            # 0B12 の正規キーは YYYYMMDDJJRR だが、16文字レースキーで呼んでも受理される場合がある
+            new_results = []
+            for race_key in race_keys:
+                result_records = fetch_realtime_data(jv, RT_RACE_INFO, race_key)
+                for rec in result_records:
+                    if rec.get("rec_id") != "SE":
+                        continue
+                    key = rec["data"][:30]  # 先頭30文字でユニーク識別
+                    if key not in seen_results:
+                        seen_results.add(key)
+                        new_results.append(rec)
+            if new_results:
+                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信")
+                post_to_backend("/api/import/races", new_results)
 
             time.sleep(30)  # 30秒間隔
 

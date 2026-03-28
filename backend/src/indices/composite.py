@@ -301,9 +301,12 @@ class CompositeIndexCalculator:
 
     @staticmethod
     def _harville_place_probs(win_probs: list[float]) -> list[float]:
-        """Harville 公式で各馬の複勝確率（3着以内）を算出する。
+        """Harville 公式で各馬の複勝確率を算出する。
 
-        P(i が3着以内) = P(i が1着) + P(i が2着) + P(i が3着)
+        JRAルール:
+          - 8頭以上: 3着以内 → P(i) = P(1着) + P(2着) + P(3着)
+          - 8頭未満: 2着以内 → P(i) = P(1着) + P(2着)
+
         計算量: O(n^3) だが n≤18（JRA最大出走数）のため問題なし。
         """
         n = len(win_probs)
@@ -323,21 +326,23 @@ class CompositeIndexCalculator:
                 p2 += win_probs[j] * (pi / denom_j)
 
             # 3着確率: Σ_{j≠i} Σ_{k≠i,j} P(j 1着) × P(k | j 除外後) × P(i | j,k 除外後)
+            # 8頭未満は2着払いのため p3 は加算しない
             p3 = 0.0
-            for j in range(n):
-                if j == i:
-                    continue
-                denom_j = 1.0 - win_probs[j]
-                if denom_j <= 1e-9:
-                    continue
-                for k in range(n):
-                    if k == i or k == j:
+            if n >= 8:
+                for j in range(n):
+                    if j == i:
                         continue
-                    p_k_given_j = win_probs[k] / denom_j
-                    denom_jk = 1.0 - win_probs[j] - win_probs[k]
-                    if denom_jk <= 1e-9:
+                    denom_j = 1.0 - win_probs[j]
+                    if denom_j <= 1e-9:
                         continue
-                    p3 += win_probs[j] * p_k_given_j * (pi / denom_jk)
+                    for k in range(n):
+                        if k == i or k == j:
+                            continue
+                        p_k_given_j = win_probs[k] / denom_j
+                        denom_jk = 1.0 - win_probs[j] - win_probs[k]
+                        if denom_jk <= 1e-9:
+                            continue
+                        p3 += win_probs[j] * p_k_given_j * (pi / denom_jk)
 
             place_probs.append(min(pi + p2 + p3, 1.0))
 

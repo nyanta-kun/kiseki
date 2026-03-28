@@ -127,11 +127,11 @@ class OddsImporter:
         rows: list[dict[str, Any]] = []
 
         if rec_id == "O1":
-            rows = self._extract_win(data, bet_type, race_db_id, fetched_at)
-        elif rec_id == "O2":
-            rows = self._extract_place(data, bet_type, race_db_id, fetched_at)
-        elif rec_id in ("O3", "O4", "O5", "O6"):
-            rows = self._extract_pair_odds(rec_id, data, bet_type, race_db_id, fetched_at)
+            # O1（単複枠）は単勝・複勝の両方を含む1レコード
+            rows = self._extract_win(data, "win", race_db_id, fetched_at)
+            rows += self._extract_place(data, "place", race_db_id, fetched_at)
+        elif rec_id in ("O2", "O3", "O4", "O5", "O6"):
+            rows = self._extract_pair_odds(rec_id, data, bet_type, race_db_id, fetched_at)  # 馬連・ワイド等
         elif rec_id in ("O7", "O8"):
             rows = self._extract_trio_odds(rec_id, data, bet_type, race_db_id, fetched_at)
 
@@ -190,14 +190,12 @@ class OddsImporter:
             low_raw = entry[PLACE_ODDS_OFFSET:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN]
             high_raw = entry[PLACE_ODDS_OFFSET + PLACE_ODDS_LEN:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN * 2]
             low = _parse_odds_value(low_raw)
-            high = _parse_odds_value(high_raw)
             if low is not None:
-                mid = round((low + (high or low)) / 2, 1)
                 rows.append({
                     "race_id": race_id,
                     "bet_type": bet_type,
                     "combination": str(horse_no),
-                    "odds": mid,
+                    "odds": low,  # 最低オッズを格納（EV計算・表示用）
                     "fetched_at": fetched_at,
                 })
         return rows

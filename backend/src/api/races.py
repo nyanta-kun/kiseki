@@ -17,7 +17,7 @@ from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceE
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence
-from .ws_manager import manager as ws_manager
+from .ws_manager import manager as ws_manager, results_manager
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
@@ -450,7 +450,48 @@ async def odds_websocket(race_id: int, ws: WebSocket) -> None:
     await ws_manager.connect(race_id, ws)
     try:
         while True:
-            # クライアントからのメッセージを待機（ping-pong等）
             await ws.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(race_id, ws)
+
+
+@router.websocket("/{race_id}/results/ws")
+async def results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
+    """成績リアルタイム更新用WebSocket。
+
+    接続時に現在の成績を即送信し、その後は成績確定時にブロードキャストされる
+    [{horse_number, finish_position, finish_time, last_3f, horse_name}, ...] を受信する。
+    """
+    await results_manager.connect(race_id, ws)
+    try:
+        # 接続時に現在の成績を即送信（ページリロード不要にするため）
+        current = _fetch_results_payload(race_id, db)
+        if current:
+            await ws.send_json(current)
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        results_manager.disconnect(race_id, ws)
+
+
+def _fetch_results_payload(race_id: int, db) -> list[dict]:
+    """指定レースの成績をWebSocket送信用リストで返す。"""
+    from ..db.models import RaceResult, Horse
+    rows = (
+        db.query(RaceResult, Horse)
+        .join(Horse, RaceResult.horse_id == Horse.id)
+        .filter(RaceResult.race_id == race_id)
+        .order_by(RaceResult.finish_position.asc().nullslast())
+        .all()
+    )
+    return [
+        {
+            "horse_number": r.horse_number,
+            "finish_position": r.finish_position,
+            "finish_time": float(r.finish_time) if r.finish_time else None,
+            "last_3f": float(r.last_3f) if r.last_3f else None,
+            "horse_name": h.name,
+        }
+        for r, h in rows
+        if r.finish_position is not None
+    ]

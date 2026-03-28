@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db.session import get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
-from .ws_manager import manager as ws_manager
+from .ws_manager import manager as ws_manager, results_manager
+from .races import _fetch_results_payload
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,13 @@ async def import_races(
     stats = importer.import_records(records)
     db.commit()
     logger.warning(f"import_races stats: {stats}")
+
+    # 成績が確定したレースをWebSocketでブロードキャスト
+    for race_id in stats.get("result_race_ids", []):
+        payload = _fetch_results_payload(race_id, db)
+        if payload:
+            await results_manager.broadcast(race_id, payload)
+
     return {"ok": True, "stats": stats}
 
 

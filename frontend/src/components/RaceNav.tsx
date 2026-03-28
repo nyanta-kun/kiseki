@@ -17,7 +17,11 @@ export function RaceNav({ currentRaceId, races }: Props) {
     if (!courseGroups[r.course_name]) courseGroups[r.course_name] = [];
     courseGroups[r.course_name].push(r);
   }
-  const courses = Object.keys(courseGroups);
+  const COURSE_ORDER = ["東京", "中山", "阪神", "京都", "札幌", "函館", "福島", "新潟", "中京", "小倉"];
+  const courses = [
+    ...COURSE_ORDER.filter((c) => courseGroups[c]),
+    ...Object.keys(courseGroups).filter((c) => !COURSE_ORDER.includes(c)),
+  ];
 
   // 現在のレースの競馬場を初期タブに
   const currentRace = races.find((r) => r.id === currentRaceId);
@@ -28,6 +32,7 @@ export function RaceNav({ currentRaceId, races }: Props) {
 
   return (
     <div className="border-t border-white/10">
+      <div className="max-w-3xl mx-auto">
       {/* 競馬場タブ */}
       <div className="flex gap-1 overflow-x-auto px-4 pt-2 pb-1 scrollbar-none">
         {courses.map((course) => (
@@ -48,7 +53,7 @@ export function RaceNav({ currentRaceId, races }: Props) {
 
       {/* レース番号ボタン */}
       <div className="flex gap-1 overflow-x-auto px-4 pb-2 scrollbar-none">
-        {(courseGroups[activeCourse] ?? []).map((race) => {
+        {(courseGroups[activeCourse] ?? []).sort((a, b) => a.race_number - b.race_number).map((race) => {
           const isCurrent = race.id === currentRaceId;
           return (
             <button
@@ -70,6 +75,7 @@ export function RaceNav({ currentRaceId, races }: Props) {
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

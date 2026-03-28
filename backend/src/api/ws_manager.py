@@ -50,4 +50,5 @@ class ConnectionManager:
 
 
 # モジュールレベルのシングルトン
-manager = ConnectionManager()
+manager = ConnectionManager()          # オッズ用
+results_manager = ConnectionManager()  # 成績用

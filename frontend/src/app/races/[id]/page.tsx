@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { OddsData, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
+import { OddsData, RaceResult, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { surfaceIcon, gradeClass, formatDate } from "@/lib/utils";
-import { IndicesTable } from "@/components/IndicesTable";
 import { EVSummary } from "@/components/EVSummary";
-import { ProbabilityChart } from "@/components/ProbabilityChart";
 import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
+import { RaceDetailClient } from "@/components/RaceDetailClient";
 
 type Params = Promise<{ id: string }>;
 
@@ -33,16 +32,9 @@ export default async function RacePage({ params }: { params: Params }) {
   }
 
   // 成績を取得（レース前は空配列）
-  let resultsMap: Map<number, number | null> | undefined;
+  let initialResults: RaceResult[] = [];
   try {
-    const results = await fetchResults(raceId);
-    if (results.length > 0) {
-      resultsMap = new Map(
-        results
-          .filter((r) => r.horse_number !== null)
-          .map((r) => [r.horse_number as number, r.finish_position])
-      );
-    }
+    initialResults = await fetchResults(raceId);
   } catch {
     // 成績なし（レース前）は無視
   }
@@ -85,18 +77,13 @@ export default async function RacePage({ params }: { params: Params }) {
         {/* 信頼度パネル */}
         <ConfidencePanel confidence={confidence} />
 
-        {/* 確率チャート */}
-        <ProbabilityChart indices={indices} />
-
-        {/* 指数テーブル */}
-        <section className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
-            <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--green-deep)" }} />
-            出馬表 指数一覧
-            <span className="text-xs text-gray-400 font-normal ml-1">{indices.length}頭</span>
-          </h2>
-          <IndicesTable indices={indices} results={resultsMap} initialOdds={initialOdds} raceId={raceId} />
-        </section>
+        {/* 確率チャート・指数テーブル（成績WebSocketで自動更新） */}
+        <RaceDetailClient
+          raceId={raceId}
+          indices={indices}
+          initialOdds={initialOdds}
+          initialResults={initialResults}
+        />
 
         {/* 凡例 */}
         <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">
@@ -114,6 +101,11 @@ export default async function RacePage({ params }: { params: Params }) {
   );
 }
 
+function formatPostTime(postTime: string | null): string {
+  if (!postTime || postTime.length < 4) return "";
+  return `${postTime.slice(0, 2)}:${postTime.slice(2, 4)}`;
+}
+
 function Header({
   raceId,
   race,
@@ -125,6 +117,16 @@ function Header({
   date: string;
   allRaces: Race[];
 }) {
+  // 発走時刻順でソートして前後レースを取得
+  const sortedRaces = [...allRaces].sort((a, b) => {
+    const pa = a.post_time ?? "9999";
+    const pb = b.post_time ?? "9999";
+    return pa.localeCompare(pb) || a.id - b.id;
+  });
+  const currentIdx = sortedRaces.findIndex((r) => r.id === raceId);
+  const prevRace = currentIdx > 0 ? sortedRaces[currentIdx - 1] : null;
+  const nextRace = currentIdx < sortedRaces.length - 1 ? sortedRaces[currentIdx + 1] : null;
+
   return (
     <header style={{ background: "var(--green-deep)" }} className="sticky top-0 z-10 shadow-md">
       <div className="max-w-3xl mx-auto px-4 py-3">
@@ -150,13 +152,48 @@ function Header({
             </div>
             {race && (
               <p className="text-green-200 text-[11px] mt-0.5">
-                {formatDate(date)} {surfaceIcon(race.surface)} {race.surface} {race.distance}m
+                {formatDate(date)}
+                {race.post_time && (
+                  <span className="ml-1.5 font-medium text-white/90">{formatPostTime(race.post_time)} 発走</span>
+                )}
+                {" · "}{surfaceIcon(race.surface)} {race.surface} {race.distance}m
                 {race.condition ? ` · ${race.condition}` : ""}
               </p>
             )}
           </div>
         </div>
       </div>
+
+      {/* 前後レースナビゲーション */}
+      {(prevRace || nextRace) && (
+        <div className="max-w-3xl mx-auto px-4 pb-1.5 flex items-center justify-between">
+          {prevRace ? (
+            <Link
+              href={`/races/${prevRace.id}`}
+              className="flex items-center gap-1 text-green-200 hover:text-white text-[11px] transition-colors"
+            >
+              <span className="text-sm leading-none">‹</span>
+              <span>
+                {prevRace.course_name}{prevRace.race_number}R
+                {prevRace.post_time && ` ${formatPostTime(prevRace.post_time)}`}
+              </span>
+            </Link>
+          ) : <span />}
+          {nextRace ? (
+            <Link
+              href={`/races/${nextRace.id}`}
+              className="flex items-center gap-1 text-green-200 hover:text-white text-[11px] transition-colors"
+            >
+              <span>
+                {nextRace.course_name}{nextRace.race_number}R
+                {nextRace.post_time && ` ${formatPostTime(nextRace.post_time)}`}
+              </span>
+              <span className="text-sm leading-none">›</span>
+            </Link>
+          ) : <span />}
+        </div>
+      )}
+
       {allRaces.length > 0 && (
         <RaceNav currentRaceId={raceId} races={allRaces} />
       )}

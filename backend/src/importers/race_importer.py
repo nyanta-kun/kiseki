@@ -94,7 +94,7 @@ class RaceImporter:
         Returns:
             {"races": N, "entries": N, "results": N, "errors": N}
         """
-        stats = {"races": 0, "entries": 0, "results": 0, "errors": 0}
+        stats: dict[str, Any] = {"races": 0, "entries": 0, "results": 0, "errors": 0, "result_race_ids": []}
 
         # Phase1: パース
         ra_parsed: list[dict[str, Any]] = []
@@ -145,7 +145,9 @@ class RaceImporter:
             # Phase2e: resultsを1SQLでバルクupsert
             if entry_map:
                 try:
-                    stats["results"] = self._bulk_upsert_results(se_parsed, entry_map)
+                    race_ids, count = self._bulk_upsert_results(se_parsed, entry_map)
+                    stats["results"] = count
+                    stats["result_race_ids"] = race_ids
                 except Exception as e:
                     logger.error(f"Bulk result upsert error: {e}")
                     stats["errors"] += len(se_parsed)
@@ -360,14 +362,14 @@ class RaceImporter:
 
     def _bulk_upsert_results(
         self, se_list: list[dict[str, Any]], entry_map: dict[tuple[int, int], int]
-    ) -> int:
+    ) -> tuple[list[int], int]:
         """SEレコードのRaceResultを1 SQLでバルクupsertする。
 
         Args:
             entry_map: _bulk_upsert_entries()の戻り値
 
         Returns:
-            upsertした件数
+            (成績が保存されたrace_idリスト, upsert件数)
         """
         values = []
         for p in se_list:
@@ -414,7 +416,8 @@ class RaceImporter:
                 "running_style": p.get("running_style"),
             })
         if not values:
-            return 0
+            return [], 0
+        result_race_ids = list({v["race_id"] for v in values if v.get("finish_position")})
         update_cols = [
             "finish_position", "finish_time", "last_3f",
             "passing_1", "passing_2", "passing_3", "passing_4",
@@ -428,7 +431,7 @@ class RaceImporter:
             set_={col: stmt.excluded[col] for col in update_cols},
         )
         self.db.execute(stmt)
-        return len(values)
+        return result_race_ids, len(values)
 
     # ------------------------------------------------------------------
     # 内部メソッド

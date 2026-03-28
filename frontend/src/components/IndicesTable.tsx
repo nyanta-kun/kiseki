@@ -381,14 +381,15 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                     </div>
                   )}
                   <div className="flex gap-1 justify-end items-center">
-                    {isAnagusa && (
-                      <span className={cn(
-                        "text-[10px] px-1 py-0.5 rounded border font-bold",
-                        ANAGUSA_RANK_COLOR[horse.anagusa_rank!] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
-                      )}>
-                        ☆{horse.anagusa_rank}
-                      </span>
-                    )}
+                    {/* 穴ぐさバッジ: 常にスペース確保し、非該当時は invisible で隠す */}
+                    <span className={cn(
+                      "text-[10px] px-1 py-0.5 rounded border font-bold",
+                      isAnagusa
+                        ? ANAGUSA_RANK_COLOR[horse.anagusa_rank!] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                        : "invisible"
+                    )}>
+                      ☆{horse.anagusa_rank || "A"}
+                    </span>
                     {winPct && (
                       <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
                         単{winPct}%
