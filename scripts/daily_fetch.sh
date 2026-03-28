@@ -1,9 +1,14 @@
 #!/bin/bash
 # kiseki daily fetch + 指数算出パイプライン
-# JV-Linkからデータ取得 → DB反映 → 直近14日分の指数を算出
+# JV-Linkからデータ取得 → DB反映 → 指数算出
 #
-# cron設定（毎朝8:00）:
-#   0 8 * * * /Users/ysuzuki/GitHub/kiseki/scripts/daily_fetch.sh >> /Users/ysuzuki/GitHub/kiseki/logs/cron.log 2>&1
+# JVデータ提供タイミング（jvdata-spec.md）に基づくcron設定:
+#   0 8  * * *   毎朝8:00 - 日次ベースライン（前日データ取込）
+#   30 14 * * 1  月曜14:30 - 確定成績・DIFF・血統（仕様: 月曜14:00提供）
+#   0 17  * * 4  木曜17:00 - 週末出馬表（仕様: 木曜16:30提供）
+#   30 20 * * 4  木曜20:30 - DIFF・血統・スナップ（仕様: 木曜20:00提供）
+#   30 12 * * 5  金曜12:30 - 土曜出馬表更新（仕様: 金曜12:00提供）
+#   30 12 * * 6  土曜12:30 - 日曜出馬表更新（仕様: 土曜12:00提供）
 #
 # 手動実行:
 #   bash /Users/ysuzuki/GitHub/kiseki/scripts/daily_fetch.sh
@@ -28,10 +33,10 @@ fi
 
 # ── Step 2: 指数算出バッチの多重起動チェック ──────────────────────────
 CALC_RUNNING=$(docker exec "$DOCKER_CONTAINER" sh -c \
-  "ls /proc/*/cmdline 2>/dev/null | xargs -I{} sh -c 'cat {} 2>/dev/null | tr \"\0\" \" \"' | grep -c calculate_indices_range || true")
+  "ls /proc/*/cmdline 2>/dev/null | xargs -I{} sh -c 'cat {} 2>/dev/null | tr \"\0\" \" \"' | grep -cE 'calculate_indices' || true")
 
 if [ "${CALC_RUNNING:-0}" -gt 0 ]; then
-    echo "$LOG_PREFIX SKIP: calculate_indices_range already running (${CALC_RUNNING} process(es))"
+    echo "$LOG_PREFIX SKIP: calculate_indices already running (${CALC_RUNNING} process(es))"
     exit 0
 fi
 
@@ -45,13 +50,34 @@ prlctl exec "Windows 11" --current-user powershell -Command "
 " 2>&1
 echo "$LOG_PREFIX [1/3] Windows agent done"
 
-# ── Step 4: 直近14日分の指数を算出 ────────────────────────────────────────
+# ── Step 4: 指数算出（2段階）────────────────────────────────────────────
+# 4a: 直近14日分（成績確定済み）→ calculate_indices_range.py（race_results必須）
 START_DATE=$(date -v-14d '+%Y%m%d' 2>/dev/null || date -d '14 days ago' '+%Y%m%d')
 END_DATE=$(date '+%Y%m%d')
 
-echo "$LOG_PREFIX [2/3] Calculating indices: $START_DATE -> $END_DATE"
+echo "$LOG_PREFIX [2/3] Calculating indices (confirmed): $START_DATE -> $END_DATE"
 docker exec "$DOCKER_CONTAINER" sh -c \
   "cd /app && uv run python scripts/calculate_indices_range.py --start $START_DATE --end $END_DATE" 2>&1
+echo "$LOG_PREFIX [2/3a] Confirmed race index calculation done"
+
+# 4b: 翌日分（出馬表あり・成績なし）→ calculate_indices.py（race_results不要）
+TOMORROW=$(date -v+1d '+%Y%m%d' 2>/dev/null || date -d 'tomorrow' '+%Y%m%d')
+TOMORROW_RACE_COUNT=$(docker exec "$DOCKER_CONTAINER" sh -c "cd /app && uv run python -c \"
+from src.db.session import engine
+from sqlalchemy import text
+with engine.connect() as c:
+    r = c.execute(text(\\\"SELECT COUNT(*) FROM keiba.races WHERE date='$TOMORROW'\\\"))
+    print(r.scalar())
+\"" 2>/dev/null || echo "0")
+
+if [ "${TOMORROW_RACE_COUNT:-0}" -gt 0 ]; then
+    echo "$LOG_PREFIX [2/3b] Calculating indices for tomorrow ($TOMORROW): ${TOMORROW_RACE_COUNT} races"
+    docker exec "$DOCKER_CONTAINER" sh -c \
+      "cd /app && uv run python scripts/calculate_indices.py --date $TOMORROW" 2>&1
+    echo "$LOG_PREFIX [2/3b] Tomorrow index calculation done"
+else
+    echo "$LOG_PREFIX [2/3b] No races found for tomorrow ($TOMORROW), skipping"
+fi
 echo "$LOG_PREFIX [2/3] Index calculation done"
 
 # ── Step 5: 完了サマリー ──────────────────────────────────────────────────

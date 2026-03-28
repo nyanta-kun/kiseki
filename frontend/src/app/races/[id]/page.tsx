@@ -12,7 +12,7 @@ export default async function RacePage({ params }: { params: Params }) {
   const { id } = await params;
   const raceId = parseInt(id);
 
-  // レース情報を取得
+  // レース情報を最初に取得（date が後続フェッチに必要なため）
   let race = null;
   try {
     race = await fetchRace(raceId);
@@ -21,36 +21,15 @@ export default async function RacePage({ params }: { params: Params }) {
   }
   const date = race?.date ?? "";
 
-  // 同日全レースを取得（ナビゲーション用）
-  let allRaces: Race[] = [];
-  if (date) {
-    try {
-      allRaces = await fetchRacesByDate(date);
-    } catch {
-      // ignore
-    }
-  }
+  // 残り4つを並列取得
+  const [allRaces, initialResults, initialOdds, indicesResp] = await Promise.all([
+    date ? fetchRacesByDate(date).catch(() => [] as Race[]) : Promise.resolve([] as Race[]),
+    fetchResults(raceId).catch(() => [] as RaceResult[]),
+    fetchOdds(raceId).catch(() => ({ win: {}, place: {} } as OddsData)),
+    fetchIndices(raceId).catch(() => null),
+  ]);
 
-  // 成績を取得（レース前は空配列）
-  let initialResults: RaceResult[] = [];
-  try {
-    initialResults = await fetchResults(raceId);
-  } catch {
-    // 成績なし（レース前）は無視
-  }
-
-  // 初期オッズを取得（未取得の場合は空）
-  let initialOdds: OddsData = { win: {}, place: {} };
-  try {
-    initialOdds = await fetchOdds(raceId);
-  } catch {
-    // オッズなし（レース前）は無視
-  }
-
-  let indicesResp = null;
-  try {
-    indicesResp = await fetchIndices(raceId);
-  } catch {
+  if (!indicesResp) {
     return (
       <div className="min-h-screen" style={{ background: "#f8faf9" }}>
         <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />

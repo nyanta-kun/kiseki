@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from sqlalchemy import exists, func
+from sqlalchemy import exists, func, select
 
 from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult
 from ..db.session import get_db
@@ -418,19 +418,18 @@ def get_odds(race_id: int, db: DbDep) -> OddsOut:
     place_odds: dict[str, float] = {}
 
     for bet_type, target in (("win", win_odds), ("place", place_odds)):
-        latest_at = (
-            db.query(func.max(OddsHistory.fetched_at))
-            .filter(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
-            .scalar()
+        # MAX(fetched_at) をサブクエリ化し、1クエリで最新オッズを取得
+        latest_at_subq = (
+            select(func.max(OddsHistory.fetched_at))
+            .where(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
+            .scalar_subquery()
         )
-        if latest_at is None:
-            continue
         rows = (
             db.query(OddsHistory)
             .filter(
                 OddsHistory.race_id == race_id,
                 OddsHistory.bet_type == bet_type,
-                OddsHistory.fetched_at == latest_at,
+                OddsHistory.fetched_at == latest_at_subq,
             )
             .all()
         )
