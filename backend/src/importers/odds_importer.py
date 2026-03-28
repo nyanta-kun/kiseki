@@ -20,35 +20,36 @@ from .jvlink_parser import parse_odds
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
-# オッズレコード内部構造（JVDF v4.x 参照）
-# O1（単勝）: ヘッダー後、馬番1〜18 × 各6byte (例: "01800" = 18.0倍)
-# O2（複勝）: 馬番 × 2値(下限/上限) 各5byte
-# O3（枠連）: 8枠×8枠 / 2 の組み合わせ × 6byte
-# O4（馬連）: 馬番ペアの組み合わせ × 6byte
-# ...
-# 注意: 実際のオッズ格納位置はJVDF仕様書を参照すること
+# オッズレコード内部構造（JVDF v4.9 仕様書準拠）
+# O1（単複枠）レコード長: 962バイト
+#   単勝オッズ: pos 44, 28頭 × 8byte (馬番2+オッズ4+人気順2)
+#   複勝オッズ: pos 268, 28頭 × 12byte (馬番2+最低4+最高4+人気順2)
+#   枠連オッズ: pos 604, 36組 × 9byte (組番2+オッズ5+人気順2)
+# オッズ値 4桁: "0022" = 2.2倍 / "9999" = 999.9倍以上
+# 特殊値: "0000"=無投票 "----"=発売前取消 "****"=発売後取消
 # -------------------------------------------------------------------
 
-# ヘッダー終端位置（1-indexed = 23文字 → Pythonでは23まで）
-ODDS_HEADER_END = 23
+# O1 単勝: pos44(1-indexed), 28頭 × 8byte(馬番2+オッズ4+人気順2)
+WIN_ODDS_START = 44   # 1-indexed
+WIN_ENTRY_SIZE = 8    # bytes per entry
+WIN_ODDS_OFFSET = 2   # オッズは各エントリの2バイト目から
+WIN_ODDS_LEN = 4      # オッズフィールドは4バイト
+WIN_MAX_HORSES = 28   # 最大28頭
 
-# O1 単勝: ヘッダー後 24文字目から、馬番1-18 × 6byte
-# "000180" = 18.0倍 / "000000" = 発売なし
-WIN_ODDS_START = 24  # 1-indexed
-WIN_ODDS_WIDTH = 6   # bytes per horse
-WIN_MAX_HORSES = 18
-
-# O2 複勝: 馬番1-18 × (下限5byte + 上限5byte) = 10byte
-PLACE_ODDS_START = 24
-PLACE_ODDS_WIDTH = 10
-PLACE_MAX_HORSES = 18
+# O1 複勝: pos268(1-indexed), 28頭 × 12byte(馬番2+最低4+最高4+人気順2)
+PLACE_ODDS_START = 268  # 1-indexed
+PLACE_ENTRY_SIZE = 12   # bytes per entry
+PLACE_ODDS_OFFSET = 2   # 最低オッズは各エントリの2バイト目から
+PLACE_ODDS_LEN = 4      # 最低・最高それぞれ4バイト
+PLACE_MAX_HORSES = 28   # 最大28頭
 
 
 def _parse_odds_value(raw: str) -> float | None:
-    """オッズ文字列（例: "000180"）を float に変換する。
+    """オッズ文字列（4桁, 例: "0022"）を float に変換する。
 
-    JV-Linkのオッズは10倍値で格納されている（例: "0180" = 18.0倍）。
-    "000000" や "00000" は発売なし → None を返す。
+    JV-Linkのオッズは10倍値で格納されている（例: "0022" = 2.2倍）。
+    "0000"=無投票 / "----"=発売前取消 / "****"=発売後取消 → None を返す。
+    "9999"=999.9倍以上 → 999.9 を返す。
     """
     s = raw.strip()
     if not s or not s.isdigit():
@@ -141,21 +142,27 @@ class OddsImporter:
     ) -> list[dict[str, Any]]:
         """O1 単勝オッズ展開。
 
-        ヘッダー後、馬番1-18 × 6byte。
+        pos44(1-indexed)から28頭分、各8byte(馬番2+オッズ4+人気順2)。
+        馬番は各エントリに実際の番号が格納されている。
         """
         rows = []
-        start = WIN_ODDS_START - 1  # 0-indexed
+        start = WIN_ODDS_START - 1  # 0-indexed: 43
         for i in range(WIN_MAX_HORSES):
-            pos = start + i * WIN_ODDS_WIDTH
-            raw = data[pos:pos + WIN_ODDS_WIDTH]
-            if len(raw) < WIN_ODDS_WIDTH:
+            pos = start + i * WIN_ENTRY_SIZE
+            if pos + WIN_ENTRY_SIZE > len(data):
                 break
-            odds_val = _parse_odds_value(raw)
+            entry = data[pos:pos + WIN_ENTRY_SIZE]
+            horse_no_str = entry[:WIN_ODDS_OFFSET]
+            if not horse_no_str.isdigit() or int(horse_no_str) == 0:
+                break
+            horse_no = int(horse_no_str)
+            odds_raw = entry[WIN_ODDS_OFFSET:WIN_ODDS_OFFSET + WIN_ODDS_LEN]
+            odds_val = _parse_odds_value(odds_raw)
             if odds_val is not None:
                 rows.append({
                     "race_id": race_id,
                     "bet_type": bet_type,
-                    "combination": str(i + 1),
+                    "combination": str(horse_no),
                     "odds": odds_val,
                     "fetched_at": fetched_at,
                 })
@@ -164,29 +171,32 @@ class OddsImporter:
     def _extract_place(
         self, data: str, bet_type: str, race_id: int, fetched_at: datetime
     ) -> list[dict[str, Any]]:
-        """O2 複勝オッズ展開。
+        """O1 複勝オッズ展開。
 
-        馬番1-18 × (下限5byte + 上限5byte) = 10byte。
+        pos268(1-indexed)から28頭分、各12byte(馬番2+最低4+最高4+人気順2)。
         下限・上限の中間値をオッズとして格納。
         """
         rows = []
-        start = PLACE_ODDS_START - 1
+        start = PLACE_ODDS_START - 1  # 0-indexed: 267
         for i in range(PLACE_MAX_HORSES):
-            pos = start + i * PLACE_ODDS_WIDTH
-            raw = data[pos:pos + PLACE_ODDS_WIDTH]
-            if len(raw) < PLACE_ODDS_WIDTH:
+            pos = start + i * PLACE_ENTRY_SIZE
+            if pos + PLACE_ENTRY_SIZE > len(data):
                 break
-            low_raw = raw[:5]
-            high_raw = raw[5:]
+            entry = data[pos:pos + PLACE_ENTRY_SIZE]
+            horse_no_str = entry[:PLACE_ODDS_OFFSET]
+            if not horse_no_str.isdigit() or int(horse_no_str) == 0:
+                break
+            horse_no = int(horse_no_str)
+            low_raw = entry[PLACE_ODDS_OFFSET:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN]
+            high_raw = entry[PLACE_ODDS_OFFSET + PLACE_ODDS_LEN:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN * 2]
             low = _parse_odds_value(low_raw)
             high = _parse_odds_value(high_raw)
             if low is not None:
-                # 下限〜上限の平均をオッズとして使用
                 mid = round((low + (high or low)) / 2, 1)
                 rows.append({
                     "race_id": race_id,
                     "bet_type": bet_type,
-                    "combination": str(i + 1),
+                    "combination": str(horse_no),
                     "odds": mid,
                     "fetched_at": fetched_at,
                 })
