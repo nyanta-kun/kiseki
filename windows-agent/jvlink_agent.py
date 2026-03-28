@@ -81,13 +81,12 @@ DATASPEC_HOYU = "HOYU"   # 馬主データ
 DATASPEC_WOOD = "WOOD"   # ウッドチップ調教
 
 # 速報系 (JVRTOpen)
+# ※ 契約プランによって利用可否が異なる。0B11/0B14/0B15 は利用可。
+# ※ 0B31(全オッズ)/0B20(騎手変更)/0B30(成績)/0B32(払戻) は契約外(-114)。
 RT_RACE_INFO = "0B12"    # 出馬表（速報）
-RT_ODDS_ALL = "0B31"     # オッズ速報（全賭式）
+RT_ODDS_WIN_PLACE = "0B11"  # 単複オッズ速報（契約内）
 RT_WEIGHT = "0B14"       # 馬体重
 RT_SCRATCH = "0B15"      # 出走取消・競走除外
-RT_JOCKEY_CHANGE = "0B20"  # 騎手変更
-RT_RESULT = "0B30"       # 成績速報
-RT_PAYOUT = "0B32"       # 払戻速報
 
 # レコード種別IDとデータ内容の対応
 RECORD_TYPES = {
@@ -295,6 +294,11 @@ def init_jvlink():
     try:
         import win32com.client
         jv = win32com.client.Dispatch("JVDTLab.JVLink")
+        # セットアップダイアログ・バルーン通知を非表示にする
+        try:
+            jv.JVSetUIProperties(False, False)
+        except Exception:
+            pass  # SDK バージョンによっては未対応でも問題なし
         rc = jv.JVInit(JRAVAN_SID)
         if rc != 0:
             logger.error(f"JVInit failed: rc={rc}")
@@ -631,12 +635,14 @@ def run_realtime_monitor(jv) -> None:
 
     while True:
         try:
-            # オッズ取得
-            odds_records = fetch_realtime_data(jv, RT_ODDS_ALL, today)
-            if odds_records:
+            # 単複オッズ取得（0B11: 契約内）
+            odds_records = fetch_realtime_data(jv, RT_ODDS_WIN_PLACE, today)
+            o1o2 = [r for r in odds_records if r.get("rec_id") in ("O1", "O2")]
+            if o1o2:
+                logger.info(f"オッズ取得: {len(o1o2)}件 (O1/O2)")
                 post_to_backend("/api/import/odds", {
                     "date": today,
-                    "records": odds_records,
+                    "records": o1o2,
                 })
 
             # 出走取消チェック
@@ -645,16 +651,6 @@ def run_realtime_monitor(jv) -> None:
                 logger.warning(f"出走取消検知: {rec['data'][:30]}")
                 post_to_backend("/api/changes/notify", {
                     "change_type": "scratch",
-                    "raw_data": rec["data"],
-                    "detected_at": datetime.now().isoformat(),
-                })
-
-            # 騎手変更チェック
-            jc_records = fetch_realtime_data(jv, RT_JOCKEY_CHANGE, today)
-            for rec in jc_records:
-                logger.warning(f"騎手変更検知: {rec['data'][:30]}")
-                post_to_backend("/api/changes/notify", {
-                    "change_type": "jockey_change",
                     "raw_data": rec["data"],
                     "detected_at": datetime.now().isoformat(),
                 })
