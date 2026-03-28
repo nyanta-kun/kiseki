@@ -27,7 +27,8 @@ export function EVSummary({ indices }: Props) {
         指数本命予想
       </h2>
 
-      <div className="flex gap-3">
+      {/* 3カードが収まらない場合は横スクロール。各カード最低132px（9文字馬名+padding） */}
+      <div className="flex gap-3 overflow-x-auto pb-1">
         {top3.map((horse, i) => {
           const winPct = horse.win_probability !== null
             ? (horse.win_probability * 100).toFixed(1)
@@ -39,7 +40,7 @@ export function EVSummary({ indices }: Props) {
           return (
             <div
               key={horse.horse_number}
-              className="flex-1 rounded-lg border p-3 text-center"
+              className="flex-shrink-0 w-[calc((100%-1.5rem)/3)] min-w-[132px] rounded-lg border p-3 text-center"
               style={{
                 borderColor: i === 0 ? "var(--gold)" : "#e5e7eb",
                 background: i === 0 ? "var(--gold-light)" : "#f9fafb",

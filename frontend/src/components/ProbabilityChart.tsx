@@ -30,21 +30,26 @@ type ChartData = {
   winEV?: number;
   placeEV?: number;
   finishPos?: number | null; // undefined=成績なし, null=取消, number=着順
+  hasAnagusa?: boolean;
 };
 
 // YAxis列レイアウト（左→右）:
-// [馬番/着順 右詰 18px] [4px] [馬名 左詰 90px] [4px] [EV単 右詰 24px] [10px] [EV複 右詰 24px]
-// 合計: 174px
+// [馬番/着順 右詰 18px] [4px] [馬名 左詰 90px] [4px] [EV単 右詰 24px] [10px] [EV複 右詰 24px] [6px] [穴バッジ 20px]
+// 合計: 200px
 const NUM_WIDTH = 18;
 const GAP = 4;
 const NAME_WIDTH = 90;
 const EV_WIDTH = 24;
 const EV_GAP = 10;
+const ANA_GAP = 6;
+const ANA_WIDTH = 20;
 
 const NUM_X    = NUM_WIDTH;
 const NAME_X   = NUM_WIDTH + GAP;
 const WIN_EV_X = NAME_X + NAME_WIDTH + GAP + EV_WIDTH;
-const Y_AXIS_WIDTH = NUM_WIDTH + GAP + NAME_WIDTH + GAP + EV_WIDTH + EV_GAP + EV_WIDTH; // 174
+const PLACE_EV_X = WIN_EV_X + EV_GAP + EV_WIDTH;
+const ANA_X    = PLACE_EV_X + ANA_GAP;
+const Y_AXIS_WIDTH = NUM_WIDTH + GAP + NAME_WIDTH + GAP + EV_WIDTH + EV_GAP + EV_WIDTH + ANA_GAP + ANA_WIDTH; // 200
 
 // 着順カラー定義
 const FINISH_STYLE: Record<number, { badge: string; text: string; rowFill: string; winBar: string; placeBar: string }> = {
@@ -149,13 +154,30 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
       {/* 複期待値 */}
       {entry?.placeEV !== undefined && (
         <text
-          x={nx} y={ny} dy="0.35em"
+          x={PLACE_EV_X} y={ny} dy="0.35em"
           textAnchor="end" fontSize={9}
           fill={evColor(entry.placeEV)}
           fontWeight={entry.placeEV >= 1.5 ? "bold" : "normal"}
         >
           {entry.placeEV.toFixed(2)}
         </text>
+      )}
+
+      {/* 穴ぐさバッジ */}
+      {entry?.hasAnagusa && (
+        <>
+          <rect
+            x={ANA_X} y={ny - 7} width={ANA_WIDTH - 2} height={14}
+            rx={3} fill="#f97316"
+          />
+          <text
+            x={ANA_X + (ANA_WIDTH - 2) / 2} y={ny} dy="0.35em"
+            textAnchor="middle" fontSize={9}
+            fill="#fff" fontWeight="bold"
+          >
+            穴
+          </text>
+        </>
       )}
     </g>
   );
@@ -193,6 +215,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
         ? Math.round(placeOdds * placeProb * 100) / 100
         : undefined,
       finishPos: hasResults ? (results.get(h.horse_number) ?? null) : undefined,
+      hasAnagusa: h.anagusa_rank !== null,
     };
   });
 
