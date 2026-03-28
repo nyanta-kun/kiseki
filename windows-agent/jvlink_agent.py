@@ -633,6 +633,9 @@ def run_realtime_monitor(jv) -> None:
     logger.info("=== Realtime monitor started ===")
     today = datetime.now().strftime("%Y%m%d")
 
+    # 送信済み出走取消キー（JVRTOpenが毎回全件返すため重複防止）
+    seen_scratches: set[str] = set()
+
     while True:
         try:
             # 単複オッズ取得（0B11: 契約内）
@@ -645,15 +648,23 @@ def run_realtime_monitor(jv) -> None:
                     "records": o1o2,
                 })
 
-            # 出走取消チェック
+            # 出走取消チェック（重複送信防止）
             scratch_records = fetch_realtime_data(jv, RT_SCRATCH, today)
+            new_scratches = []
             for rec in scratch_records:
+                key = rec["data"][:40]  # 先頭40文字でユニーク識別
+                if key not in seen_scratches:
+                    seen_scratches.add(key)
+                    new_scratches.append(rec)
+            for rec in new_scratches:
                 logger.warning(f"出走取消検知: {rec['data'][:30]}")
                 post_to_backend("/api/changes/notify", {
                     "change_type": "scratch",
                     "raw_data": rec["data"],
                     "detected_at": datetime.now().isoformat(),
                 })
+            if scratch_records and not new_scratches:
+                logger.debug(f"出走取消: {len(scratch_records)}件（送信済みスキップ）")
 
             # 馬体重
             weight_records = fetch_realtime_data(jv, RT_WEIGHT, today)
