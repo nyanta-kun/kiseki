@@ -81,12 +81,14 @@ DATASPEC_HOYU = "HOYU"   # 馬主データ
 DATASPEC_WOOD = "WOOD"   # ウッドチップ調教
 
 # 速報系 (JVRTOpen)
-# ※ 契約プランによって利用可否が異なる。0B11/0B14/0B15 は利用可。
-# ※ 0B31(全オッズ)/0B20(騎手変更)/0B30(成績)/0B32(払戻) は契約外(-114)。
-RT_RACE_INFO = "0B12"    # 出馬表（速報）
-RT_ODDS_WIN_PLACE = "0B11"  # 単複オッズ速報（契約内）
-RT_WEIGHT = "0B14"       # 馬体重
-RT_SCRATCH = "0B15"      # 出走取消・競走除外
+# ※ key の形式: 0B11/0B12 は YYYYMMDDJJRR（JVWatchEvent から取得）
+# ※              0B31〜0B36 は YYYYMMDDJJKKHHRR（レースキー16文字）
+# ※              0B14/0B15/0B16 は YYYYMMDD（開催日）
+# ※ 0B31 を日付キー（YYYYMMDD）で呼ぶと rc=-114（key パラメータ不正）
+RT_RACE_INFO = "0B12"    # 速報成績（払戻確定後）
+RT_ODDS_WIN_PLACE = "0B31"  # 速報オッズ（単複枠）key=レースキー16文字
+RT_WEIGHT = "0B11"       # 速報馬体重 key=YYYYMMDDJJRR（JVWatchEvent経由）
+RT_SCRATCH = "0B15"      # 速報レース情報（出走取消・騎手変更等）key=YYYYMMDD
 
 # レコード種別IDとデータ内容の対応
 RECORD_TYPES = {
@@ -628,6 +630,19 @@ def run_daily_fetch(jv) -> None:
     logger.info(f"Daily fetch complete: 全体 {len(records)} 件")
 
 
+def _fetch_today_race_keys(today: str) -> list[str]:
+    """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。"""
+    try:
+        resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=5)
+        if resp.status_code == 200:
+            races = resp.json()
+            keys = [r["jravan_race_id"] for r in races if r.get("jravan_race_id")]
+            return keys
+    except Exception as e:
+        logger.warning(f"レースキー取得失敗: {e}")
+    return []
+
+
 def run_realtime_monitor(jv) -> None:
     """リアルタイム監視ループ"""
     logger.info("=== Realtime monitor started ===")
@@ -638,14 +653,21 @@ def run_realtime_monitor(jv) -> None:
 
     while True:
         try:
-            # 単複オッズ取得（0B11: 契約内）
-            odds_records = fetch_realtime_data(jv, RT_ODDS_WIN_PLACE, today)
-            o1o2 = [r for r in odds_records if r.get("rec_id") in ("O1", "O2")]
-            if o1o2:
-                logger.info(f"オッズ取得: {len(o1o2)}件 (O1/O2)")
+            # 速報オッズ取得（0B31: レースキー単位）
+            # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
+            race_keys = _fetch_today_race_keys(today)
+            if not race_keys:
+                logger.debug("本日のレースキーが取得できませんでした")
+            all_o1 = []
+            for race_key in race_keys:
+                odds_records = fetch_realtime_data(jv, RT_ODDS_WIN_PLACE, race_key)
+                o1 = [r for r in odds_records if r.get("rec_id") == "O1"]
+                all_o1.extend(o1)
+            if all_o1:
+                logger.info(f"オッズ取得: {len(all_o1)}件 (O1) / {len(race_keys)}レース")
                 post_to_backend("/api/import/odds", {
                     "date": today,
-                    "records": o1o2,
+                    "records": all_o1,
                 })
 
             # 出走取消チェック（重複送信防止）
