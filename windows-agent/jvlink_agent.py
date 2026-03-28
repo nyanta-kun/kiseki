@@ -559,7 +559,8 @@ def fetch_realtime_data(jv, dataspec: str, key: str) -> list[dict]:
     """
     rc = jv.JVRTOpen(dataspec, key)
     if rc < 0:
-        logger.error(f"JVRTOpen error: rc={rc}, dataspec={dataspec}")
+        # rc=-1 はデータなし（未確定レースで 0B12 を試みた場合など）、エラーは debug レベル
+        logger.debug(f"JVRTOpen no data: rc={rc}, dataspec={dataspec}, key={key[:12]}")
         return []
 
     records = []
@@ -712,7 +713,7 @@ def run_realtime_monitor(jv) -> None:
                         new_results.append(rec)
             if new_results:
                 logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信")
-                post_to_backend("/api/import/races", new_results)
+                post_to_backend("/api/import/races", {"records": new_results})
 
             time.sleep(30)  # 30秒間隔
 

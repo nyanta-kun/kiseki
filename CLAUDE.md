@@ -71,6 +71,18 @@ class IndexCalculator(ABC):
 - JV-Linkは同時1接続のみ。TARGET使用時はスクリプトを停止すること
 - JVRead 戻り値: 0=EOF, -1=ファイル切り替わり(継続), -3=ダウンロード中(待機), <-3=エラー
 
+### 速報系データスペック（JVRTOpen）
+| DataSpec | 内容 | key形式 |
+|----------|------|---------|
+| `0B12` | 速報成績（払戻確定後）| レースキー16文字（YYYYMMDDJJKKHHRR） |
+| `0B11` | 速報馬体重 | YYYYMMDD |
+| `0B31` | 速報単複枠オッズ（O1レコード）| レースキー16文字 |
+| `0B15` | 速報レース情報（出走取消・騎手変更等）| YYYYMMDD |
+
+- O1レコードには単勝・複勝・枠連の3種が含まれる（O2=馬連、O3=ワイド、O4=枠連 ではない）
+- 複勝オッズは最低倍率（low）を使用（最高倍率は参考値）
+- realtimeループは約30秒ごとに全36レースキーで各DataSpecをポーリング
+
 ## データパイプライン
 
 ```
@@ -182,6 +194,13 @@ prlctl exec "Windows 11" --current-user powershell -Command "
 prlctl exec "Windows 11" --current-user powershell -Command "
   Start-Process -FilePath 'cmd.exe' \`
     -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode recent --from-year 2023' \`
+    -WindowStyle Hidden -PassThru
+"
+
+# realtimeモード（オッズ・成績・出走取消を30秒間隔でポーリング、常駐）
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' \`
     -WindowStyle Hidden -PassThru
 "
 ```

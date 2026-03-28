@@ -24,8 +24,9 @@ docs/verification/
 BLOD_cache.jsonl
 *.jsonl
 
-# Windows agentデバッグスクリプト
+# Windows agentデバッグ・テストスクリプト
 windows-agent/debug_*.py
+windows-agent/test_*.py
 
 # Claude Code メモリ
 .claude/
