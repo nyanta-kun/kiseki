@@ -57,7 +57,9 @@ logger = logging.getLogger(__name__)
 # v5: 穴ぐさ指数追加（sekito.anagusa ピック実績ベース、speed -0.03/last_3f -0.02 から拠出）
 # v6: パドック指数追加（sekito.netkeiba p_rank ベース、speed -0.03 から拠出）
 # v7: Nelder-Mead重み最適化。コース適性 0.13→0.31、スピード 0.24→0.13。穴ぐさ・パドック=0
-COMPOSITE_VERSION = 7
+# v8: スピアマン相関比例重み。後3F(0.117→0.171)・血統(0.066→0.118)を増。
+#     コース適性(0.310→0.167)・ローテ(0.112→0.113)を調整。テストROI=86.4%（v7比+10.3%）
+COMPOSITE_VERSION = 8
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0

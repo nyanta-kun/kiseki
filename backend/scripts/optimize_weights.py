@@ -130,6 +130,7 @@ JOIN keiba.race_results rr
     ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
 WHERE r.date BETWEEN :start_date AND :end_date
   AND ci.version = {version}
+  AND r.course_name ~ '^[^\x30-\x39]'
 ORDER BY r.date, r.id, ci.horse_id
 """)
 

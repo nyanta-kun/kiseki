@@ -24,16 +24,20 @@ BASE_WEIGHT = 55.0            # 基準斤量
 # v7: Nelder-Mead最適化 (20250101-20251231訓練、20260101-20260322検証)
 #     コース適性を大幅増 (0.13→0.31)、スピードを減 (0.24→0.13)
 #     穴ぐさ・パドックは予測寄与なしのため0に。
+# v8: スピアマン相関比例重み (JRAのみ、20240101-20250831訓練、20250901-20260328テスト)
+#     訓練ROI=84.6% / テストROI=86.4%（v7比+10.3%）
+#     後3F(ρ=0.284)とコース適性(ρ=0.278)を並列化。血統(ρ=0.197)を0.066→0.118に引き上げ。
+#     Nelder-Mead最適化は血統0.345の過学習を確認し見送り。
 INDEX_WEIGHTS = {
-    "speed": 0.1251,
-    "last_3f": 0.1168,
-    "course_aptitude": 0.3097,
-    "pace": 0.0399,
-    "jockey_trainer": 0.1213,
-    "pedigree": 0.0662,
-    "rotation": 0.1124,
-    "training": 0.0327,
-    "position_advantage": 0.0259,
+    "speed": 0.1236,
+    "last_3f": 0.1709,
+    "course_aptitude": 0.1672,
+    "pace": 0.0280,
+    "jockey_trainer": 0.1560,
+    "pedigree": 0.1182,
+    "rotation": 0.1133,
+    "training": 0.0383,
+    "position_advantage": 0.0346,
     "anagusa": 0.0000,
     "paddock": 0.0000,
     "disadvantage_bonus": 0.05,
