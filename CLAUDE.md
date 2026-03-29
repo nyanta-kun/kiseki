@@ -140,6 +140,35 @@ Windows Agent
 - スピード指数基準: 平均=50、標準偏差=10
 - 期待値購入閾値: 1.2以上
 
+## Auth.js v5 (next-auth@beta) 認証構成
+
+### Next.js 16 + Auth.js の既知の罠（解決済み）
+
+**① route.ts での basePath 手動注入**
+Next.js 16 は App Router ルートハンドラに渡す `req.url` から basePath(`/kiseki`)を除去する。
+Auth.js は `AUTH_URL` のパス(`/kiseki/api/auth`)を `config.basePath` として使いアクションを解析するが、
+除去後の `/api/auth/session` では `^/kiseki/api/auth` にマッチせず `UnknownAction` → 502 となる。
+`frontend/src/app/api/auth/[...nextauth]/route.ts` の `injectBasePath()` でbasePath復元済み。
+
+**② Auth.js セッショントークンは JWE（暗号化）**
+Auth.js は `EncryptJWT`/`jwtDecrypt`（A256CBC-HS512）でセッションを暗号化する。
+`jwtVerify`（JWS署名検証）は使用不可。`proxy.ts` ではカスタム検証せず `auth()` ラッパーを使う。
+
+**③ proxy.ts での nextUrl.pathname に basePath が混入する**
+`auth()` ラッパー内の `reqWithEnvURL` が NextRequest を再構築する際、
+`nextUrl.pathname` が basePath 込みの `/kiseki/login` になる場合がある。
+そのまま `"/kiseki" + pathname` すると `/kiseki/kiseki/login` になり無限リダイレクト発生。
+→ `proxy.ts` では pathname 使用前に手動で basePath を除去すること。
+
+**④ AUTH_URL の形式**
+`AUTH_URL` は `https://sekito-stable.com/kiseki/api/auth`（basePath + `/api/auth` まで含める）。
+`/api/auth` まで含めることで `config.basePath = "/kiseki/api/auth"` となり、
+コールバック URL が正確に生成される。
+
+**⑤ SessionProvider に basePath 明示**
+`<NextAuthSessionProvider basePath="/kiseki/api/auth">` が必須。
+未指定だとクライアントが `/api/auth/session` を呼び 404 になる。
+
 ## Windows操作（Parallels経由）
 
 **前提**: Windows 11はParallels VMとして動作。Mac側の `Z:\GitHub\kiseki\` にプロジェクトがマウント済み。
