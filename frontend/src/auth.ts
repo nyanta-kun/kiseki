@@ -4,9 +4,11 @@ import { cookies } from "next/headers";
 import { jwtVerify } from "jose";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // AUTH_URL に /api/auth まで含めることで正確なコールバックURLを生成する
-  // AUTH_URL=https://sekito-stable.com/kiseki/api/auth → callback=/kiseki/api/auth/callback/google
-  // trustHost を使うと内部コンテナURL(localhost:3000)が誤検知されるため使用しない
+  // AUTH_URL に /api/auth まで含めることでコールバックURLを正確に生成する
+  // 例: AUTH_URL=https://sekito-stable.com/kiseki/api/auth
+  //   → redirect_uri = https://sekito-stable.com/kiseki/api/auth/callback/google
+  // trustHost: nginx/Docker プロキシ経由のリクエストを許可するために必要
+  trustHost: true,
   providers: [Google],
   pages: {
     signIn: "/login",
