@@ -7,11 +7,15 @@ import { NextRequest } from "next/server";
 // → /kiseki プレフィックスを復元することでアクション解析を通す。
 const NEXT_BASEPATH = "/kiseki";
 
-function injectBasePath(req: NextRequest): Request {
+function injectBasePath(req: NextRequest): NextRequest {
   const url = new URL(req.url);
   if (!url.pathname.startsWith(NEXT_BASEPATH)) {
     url.pathname = NEXT_BASEPATH + url.pathname;
-    return new Request(url.toString(), req);
+    return new NextRequest(url.toString(), {
+      method: req.method,
+      headers: req.headers,
+      body: req.body,
+    });
   }
   return req;
 }
