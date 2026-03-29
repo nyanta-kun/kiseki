@@ -92,3 +92,23 @@ export function gradeClass(grade: string | null): string {
   if (grade.includes("OP") || grade.includes("L")) return "bg-yellow-100 text-yellow-700";
   return "bg-gray-100 text-gray-600";
 }
+
+/** 条件戦クラスバッジの色 */
+export function raceClassBadgeClass(label: string | null): string {
+  if (!label) return "bg-gray-100 text-gray-600";
+  if (label.includes("3勝")) return "bg-indigo-100 text-indigo-700";
+  if (label.includes("2勝")) return "bg-blue-100 text-blue-700";
+  if (label.includes("1勝")) return "bg-sky-50 text-sky-700 border border-sky-200";
+  if (label.includes("未勝利")) return "bg-gray-100 text-gray-600";
+  return "bg-gray-100 text-gray-600";
+}
+
+/** 条件戦クラスの短縮表記（バッジ用）"4歳以上2勝クラス" → "2勝" */
+export function raceClassShort(label: string | null): string | null {
+  if (!label) return null;
+  if (label.includes("3勝")) return "3勝";
+  if (label.includes("2勝")) return "2勝";
+  if (label.includes("1勝")) return "1勝";
+  if (label.includes("未勝利")) return "未勝利";
+  return null;
+}

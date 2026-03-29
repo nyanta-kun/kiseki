@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Race } from "@/lib/api";
-import { gradeClass, surfaceIcon } from "@/lib/utils";
+import { gradeClass, raceClassBadgeClass, raceClassShort, surfaceIcon } from "@/lib/utils";
 
 type Props = {
   race: Race;
@@ -37,11 +37,16 @@ export function RaceCard({ race }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-semibold text-gray-800 truncate">
-              {race.race_name ?? `${race.race_number}R`}
+              {race.race_name ?? race.race_class_label ?? `${race.race_number}R`}
             </span>
             {race.grade && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${gradeClass(race.grade)}`}>
                 {race.grade}
+              </span>
+            )}
+            {!race.grade && raceClassShort(race.race_class_label) && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${raceClassBadgeClass(race.race_class_label)}`}>
+                {raceClassShort(race.race_class_label)}
               </span>
             )}
           </div>

@@ -2,7 +2,12 @@
  * kiseki バックエンドAPIクライアント
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// SSR（サーバーサイド）はBACKEND_URLを優先（Docker内部URL）。
+// ブラウザはNEXT_PUBLIC_API_URLを使用（外部からアクセス可能なURL）。
+const BASE_URL =
+  typeof window === "undefined"
+    ? (process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -21,6 +26,7 @@ export type Race = {
   weather: string | null;
   head_count: number | null;
   post_time: string | null;  // 発走時刻 hhmm形式
+  race_class_label: string | null;  // 条件戦クラスラベル（例: "3歳未勝利", "4歳以上2勝クラス"）
   has_indices: boolean;
   has_anagusa: boolean;
   confidence_score: number | null;
@@ -88,6 +94,7 @@ export type RaceHistoryEntry = {
   win_odds: number | null;
   win_popularity: number | null;
   composite_index: number | null;
+  remarks: string | null;
 };
 
 // ---------------------------------------------------------------------------

@@ -27,7 +27,6 @@ const SUB_INDICES: { key: keyof HorseIndex; label: string }[] = [
   { key: "pedigree_index", label: "血統" },
   { key: "position_advantage", label: "枠順" },
   { key: "training_index", label: "調教" },
-  { key: "anagusa_index", label: "穴ぐさ" },
   { key: "paddock_index", label: "パドック" },
 ];
 
@@ -160,7 +159,8 @@ function HistorySection({ horseId }: { horseId: number }) {
               <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">タイム</th>
               <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">後3F</th>
               <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">人気</th>
-              <th className="text-right pb-1 font-normal whitespace-nowrap">指数</th>
+              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">指数</th>
+              <th className="text-left pb-1 font-normal whitespace-nowrap">不利</th>
             </tr>
           </thead>
           <tbody>
@@ -194,12 +194,19 @@ function HistorySection({ horseId }: { horseId: number }) {
                 <td className="py-1 pr-2 text-right whitespace-nowrap">
                   {h.win_popularity != null ? `${h.win_popularity}番人気` : "-"}
                 </td>
-                <td className="py-1 text-right tabular-nums whitespace-nowrap">
+                <td className="py-1 pr-2 text-right tabular-nums whitespace-nowrap">
                   {h.composite_index != null ? (
                     <span className={cn("font-medium", indexColor(h.composite_index))}>
                       {h.composite_index.toFixed(1)}
                     </span>
                   ) : "-"}
+                </td>
+                <td className="py-1 whitespace-nowrap">
+                  {h.remarks ? (
+                    <span className="text-[10px] text-orange-600 bg-orange-50 px-1 py-0.5 rounded border border-orange-200">
+                      {h.remarks}
+                    </span>
+                  ) : null}
                 </td>
               </tr>
             ))}
@@ -442,24 +449,6 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                     {SUB_INDICES.map(({ key, label }) => {
-                      if (key === "anagusa_index") {
-                        const rank = horse.anagusa_rank;
-                        return (
-                          <div key={key} className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-gray-500 w-10 flex-shrink-0">{label}</span>
-                            {rank ? (
-                              <span className={cn(
-                                "text-[11px] font-bold px-1.5 py-0.5 rounded border",
-                                ANAGUSA_RANK_COLOR[rank] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
-                              )}>
-                                {rank}ランク
-                              </span>
-                            ) : (
-                              <span className="text-[11px] text-gray-400">-</span>
-                            )}
-                          </div>
-                        );
-                      }
                       const val = horse[key] as number | null;
                       return (
                         <div key={key} className="flex items-center gap-1.5">

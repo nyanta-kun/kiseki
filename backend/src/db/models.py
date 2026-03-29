@@ -112,6 +112,49 @@ class Race(Base):
     jravan_race_id: Mapped[str | None] = mapped_column(String(30), unique=True, index=True, comment="JRA-VANレースID（16文字: year+month_day+course+kai+day+race_num）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="レコード作成日時")
 
+    @property
+    def race_class_label(self) -> str | None:
+        """条件戦のクラスラベルを算出する（例: '3歳未勝利', '4歳以上2勝クラス'）。
+
+        grade が設定されている場合（G1/G2/G3/OP特別等）は None を返す。
+        race_type_code と prize_1st（百円単位）からクラスを判定。
+        """
+        if self.grade:
+            return None
+
+        _AGE: dict[str, str] = {
+            "11": "2歳",
+            "12": "3歳",
+            "13": "3歳以上",
+            "14": "4歳以上",
+            "18": "障害3歳以上",
+            "19": "障害4歳以上",
+        }
+        age = _AGE.get(self.race_type_code or "", "")
+
+        if not self.prize_1st:
+            return age or None
+
+        p = self.prize_1st
+        tc = self.race_type_code or ""
+
+        if tc == "11":          # 2歳
+            cls = "未勝利" if p <= 58000 else "1勝クラス"
+        elif tc == "12":        # 3歳
+            cls = "未勝利" if p <= 62000 else "1勝クラス" if p <= 74000 else "2勝クラス"
+        elif tc == "13":        # 3歳以上
+            cls = "1勝クラス" if p <= 100000 else "2勝クラス" if p <= 130000 else "3勝クラス"
+        elif tc == "14":        # 4歳以上
+            cls = "2勝クラス" if p <= 100000 else "3勝クラス"
+        elif tc in ("18", "19"):  # 障害
+            cls = "未勝利" if p <= 90000 else "2勝クラス" if p <= 150000 else "3勝クラス"
+        else:
+            cls = ""
+
+        if age and cls:
+            return f"{age}{cls}"
+        return age or cls or None
+
 
 class RaceEntry(Base):
     """出馬表"""
@@ -261,6 +304,24 @@ class RacecourseFeatures(Base):
     grass_type: Mapped[str] = mapped_column(String(20), nullable=False, comment="芝種別: 洋芝 / 野芝+洋芝")
     corner_tightness: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), comment="コーナーきつさ (0.0=緩〜1.0=急)")
     start_to_corner_m: Mapped[int | None] = mapped_column(Integer, comment="スタート〜第1コーナー代表距離(m)")
+
+
+class NetkeibaRaceExtra(Base):
+    """netkeibaスクレイピングデータ（プレミアム会員取得分）"""
+
+    __tablename__ = "netkeiba_race_extras"
+    __table_args__ = (
+        UniqueConstraint("race_id", "horse_id", name="uq_netkeiba_race_extras_race_horse"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    race_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.races.id"), index=True)
+    horse_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.horses.id"))
+    remarks: Mapped[str | None] = mapped_column(String(200), comment="備考（出遅れ・不利・後方一気等の短評テキスト）")
+    notable_comment: Mapped[str | None] = mapped_column(String(1000), comment="注目馬レース後の短評（プレミアム）")
+    race_analysis: Mapped[str | None] = mapped_column(String(1000), comment="分析コメント（レース全体の流れ、全馬共通）")
+    scraped_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class OddsHistory(Base):

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { OddsData, RaceResult, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
-import { surfaceIcon, gradeClass, formatDate } from "@/lib/utils";
+import { surfaceIcon, gradeClass, raceClassBadgeClass, raceClassShort, formatDate } from "@/lib/utils";
 import { EVSummary } from "@/components/EVSummary";
 import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
@@ -119,14 +119,19 @@ function Header({
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-white font-bold text-base leading-tight truncate">
+              <h1 className="text-white font-bold text-base leading-tight">
                 {race
-                  ? `${race.course_name} ${race.race_number}R ${race.race_name ?? ""}`
+                  ? `${race.course_name} ${race.race_number}R ${race.race_name ?? race.race_class_label ?? ""}`
                   : `Race #${raceId}`}
               </h1>
               {race?.grade && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${gradeClass(race.grade)}`}>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${gradeClass(race.grade)}`}>
                   {race.grade}
+                </span>
+              )}
+              {race && !race.grade && raceClassShort(race.race_class_label) && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${raceClassBadgeClass(race.race_class_label)}`}>
+                  {raceClassShort(race.race_class_label)}
                 </span>
               )}
             </div>

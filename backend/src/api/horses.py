@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import CalculatedIndex, Horse, Race, RaceResult
+from ..db.models import CalculatedIndex, Horse, NetkeibaRaceExtra, Race, RaceResult
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 
@@ -34,6 +34,7 @@ class RaceHistoryEntry(BaseModel):
     win_odds: float | None
     win_popularity: int | None
     composite_index: float | None
+    remarks: str | None
 
 
 @router.get("/{horse_id}/history")
@@ -55,6 +56,7 @@ def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
 
     race_ids = [race.id for _, race in rows]
     indices: dict[int, CalculatedIndex] = {}
+    extras: dict[int, NetkeibaRaceExtra] = {}
     if race_ids:
         ci_rows = (
             db.query(CalculatedIndex)
@@ -66,6 +68,16 @@ def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
             .all()
         )
         indices = {ci.race_id: ci for ci in ci_rows}
+
+        extra_rows = (
+            db.query(NetkeibaRaceExtra)
+            .filter(
+                NetkeibaRaceExtra.race_id.in_(race_ids),
+                NetkeibaRaceExtra.horse_id == horse_id,
+            )
+            .all()
+        )
+        extras = {ex.race_id: ex for ex in extra_rows}
 
     return [
         RaceHistoryEntry(
@@ -81,6 +93,7 @@ def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
             win_odds=float(rr.win_odds) if rr.win_odds else None,
             win_popularity=rr.win_popularity,
             composite_index=float(indices[race.id].composite_index) if race.id in indices else None,
+            remarks=extras[race.id].remarks if race.id in extras else None,
         )
         for rr, race in rows
     ]

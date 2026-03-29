@@ -46,7 +46,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "logs/kiseki.log"
 
-    model_config = {"env_file": "../.env", "env_file_encoding": "utf-8"}
+    # --- Netkeiba スクレイピング ---
+    netkeiba_user_id: str = ""
+    netkeiba_password: str = ""
+
+    # --- Auth (Auth.js / NextAuth.js) ---
+    auth_secret: str = ""
+    auth_password: str = ""
+    auth_google_id: str = ""
+    auth_google_secret: str = ""
+    auth_url: str = ""
+
+    model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

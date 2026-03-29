@@ -144,6 +144,7 @@ class RaceOut(BaseModel):
     head_count: int | None
     jravan_race_id: str | None
     post_time: str | None = None       # 発走時刻 (hhmm形式, 例: "1025")
+    race_class_label: str | None = None  # 条件戦クラスラベル（例: "3歳未勝利", "4歳以上2勝クラス"）
     has_indices: bool = False
     has_anagusa: bool = False           # 穴ぐさ指数58以上の馬が存在するか
     confidence_score: int | None = None
