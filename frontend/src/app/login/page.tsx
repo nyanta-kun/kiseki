@@ -22,60 +22,46 @@ function LoginForm() {
   );
 
   return (
-    <div className="h-screen w-full flex items-center justify-center md:justify-end relative overflow-hidden">
-      {/* ---- 背景画像: CSS background-image で SSR/CSR ミスマッチを回避 ---- */}
-      {/* デスクトップ (md以上) */}
-      <div
-        className="absolute inset-0 z-0 hidden md:block"
-        style={{
-          backgroundImage: `url('${BASEPATH}/images/login-bg-desktop.png')`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        }}
-      />
-      {/* モバイル (md未満) */}
-      <div
-        className="absolute inset-0 z-0 block md:hidden"
-        style={{
-          backgroundImage: `url('${BASEPATH}/images/login-bg-mobile.png')`,
-          backgroundSize: "cover",
-          backgroundPosition: "top center",
-        }}
-      />
+    <div
+      className="h-screen w-full flex flex-col md:flex-row items-center justify-center relative overflow-hidden"
+      style={{ background: "#090d1a" }}
+    >
 
-      {/* ---- フォームカード ---- */}
-      <div className="relative z-10 w-full max-w-sm mx-6 md:mx-0 md:mr-16 lg:mr-24">
-        <div
-          className="rounded-2xl overflow-hidden border shadow-[0_8px_48px_rgba(0,0,0,0.5)]"
+      {/* ---- 左（PC）/ 上（スマホ）: image.png ---- */}
+      <div className="relative z-10 flex items-center justify-center w-full md:w-1/2 md:h-full flex-shrink-0 mt-8 md:mt-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`${BASEPATH}/images/image.png`}
+          alt="GallopLab"
+          className="w-auto max-h-52 md:max-h-[70vh] object-contain select-none"
           style={{
-            background: "rgba(5, 18, 45, 0.82)",
-            backdropFilter: "blur(28px)",
-            WebkitBackdropFilter: "blur(28px)",
-            borderColor: "rgba(80, 150, 220, 0.35)",
+            mixBlendMode: "screen",
+            maskImage:
+              "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%), " +
+              "linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%)",
+            WebkitMaskImage:
+              "linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%), " +
+              "linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%)",
+            maskComposite: "intersect",
+            WebkitMaskComposite: "source-in",
+          }}
+        />
+      </div>
+
+      {/* ---- 右（PC）/ 下（スマホ）: フォームカード ---- */}
+      <div className="relative z-10 w-full max-w-sm mx-6 md:mx-0 md:mr-16 lg:mr-24 mb-8 md:mb-0 flex-shrink-0">
+        <div
+          className="rounded-2xl overflow-hidden border"
+          style={{
+            background: "rgba(6, 14, 36, 0.96)",
+            borderColor: "rgba(0, 180, 255, 0.45)",
+            boxShadow:
+              "0 0 0 1px rgba(0,180,255,0.1), 0 0 40px rgba(0,180,255,0.12), 0 16px 48px rgba(0,0,0,0.7)",
           }}
         >
-          {/* カードヘッダー: ロゴ + ブランディング統合 */}
-          <div
-            className="px-8 py-4 text-center border-b"
-            style={{
-              background: "rgba(0, 10, 30, 0.50)",
-              borderColor: "rgba(80, 150, 220, 0.25)",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`${BASEPATH}/images/logo.png`}
-              alt="PEGASUS AI"
-              width={160}
-              height={97}
-              className="drop-shadow-[0_0_20px_rgba(100,180,255,0.8)] select-none mx-auto"
-            />
-            <p className="text-blue-200/80 text-xs mt-3">競馬予測指数システム</p>
-          </div>
-
           {/* カードボディ */}
-          <div className="px-8 py-6 space-y-4">
-            <p className="text-white/90 text-sm text-center leading-relaxed">
+          <div className="px-8 py-8 space-y-5">
+            <p className="text-white/90 text-xs text-center leading-relaxed">
               合言葉を入力後、Googleアカウントで認証してください
             </p>
 
@@ -85,20 +71,25 @@ function LoginForm() {
                 type="password"
                 placeholder="合言葉を入力"
                 required
-                className="
-                  w-full px-4 py-3 rounded-xl text-sm
-                  text-white placeholder-white/60
-                  focus:outline-none focus:ring-2 transition-all
-                "
+                className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all"
                 style={{
-                  background: "rgba(255,255,255,0.12)",
-                  border: "1px solid rgba(100,160,220,0.45)",
-                  // focus ring は Tailwind の ring-blue-400/60
+                  background: "rgba(0, 180, 255, 0.09)",
+                  border: "1px solid rgba(0, 180, 255, 0.5)",
+                  color: "#fff",
+                  caretColor: "#00c8ff",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.border = "1px solid rgba(0, 200, 255, 0.75)";
+                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(0,180,255,0.15)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.border = "1px solid rgba(0, 180, 255, 0.35)";
+                  e.currentTarget.style.boxShadow = "none";
                 }}
               />
 
               {errorMessage && (
-                <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
+                <p className="text-red-300 text-xs bg-red-500/15 border border-red-400/30 rounded-lg px-3 py-2">
                   {errorMessage}
                 </p>
               )}
@@ -106,14 +97,18 @@ function LoginForm() {
               <button
                 type="submit"
                 disabled={isPending}
-                className="
-                  w-full flex items-center justify-center gap-3
-                  bg-white hover:bg-blue-50
-                  disabled:opacity-60 disabled:cursor-not-allowed
-                  text-gray-800 font-semibold py-3 rounded-xl
-                  transition-all shadow-md hover:shadow-lg
-                  text-sm
-                "
+                className="w-full flex items-center justify-center gap-3 font-semibold py-3 rounded-xl transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: "linear-gradient(135deg, #00aaee 0%, #0055cc 100%)",
+                  color: "#fff",
+                  boxShadow: "0 0 20px rgba(0,180,255,0.3)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isPending) e.currentTarget.style.boxShadow = "0 0 32px rgba(0,200,255,0.55)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = "0 0 20px rgba(0,180,255,0.3)";
+                }}
               >
                 {isPending ? (
                   <span className="flex items-center gap-2">
@@ -129,8 +124,8 @@ function LoginForm() {
               </button>
             </form>
 
-            <p className="text-center text-blue-300/50 text-xs pt-1">
-              Powered by PEGASUS AI
+            <p className="text-center text-[#00c8ff]/70 text-xs">
+              Powered by GallopLab
             </p>
           </div>
         </div>
@@ -186,7 +181,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="h-screen flex items-center justify-center bg-[#9db3c8]">
+        <div className="h-screen flex items-center justify-center bg-[#090d1a]">
           <div className="text-white/70 text-sm tracking-widest animate-pulse">
             LOADING...
           </div>
