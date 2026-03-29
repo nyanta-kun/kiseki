@@ -1,9 +1,9 @@
 "use client";
 
-import { signIn } from "next-auth/react";
 import { useActionState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import { verifyPasswordAndRedirect } from "./actions";
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -11,17 +11,7 @@ function LoginForm() {
 
   const [errorMessage, formAction, isPending] = useActionState(
     async (_prev: string | null, formData: FormData) => {
-      const password = formData.get("password") as string;
-      const result = await signIn("credentials", {
-        password,
-        callbackUrl,
-        redirect: false,
-      });
-      if (result?.error) {
-        return "合言葉が違います。";
-      }
-      window.location.href = callbackUrl;
-      return null;
+      return await verifyPasswordAndRedirect(callbackUrl, formData);
     },
     null
   );
@@ -37,55 +27,37 @@ function LoginForm() {
           <p className="text-green-200 text-sm mt-1">競馬予測指数システム</p>
         </div>
 
-        <div className="px-8 py-8 space-y-6">
-          {/* 合言葉ログイン */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
-              合言葉でログイン
-            </h2>
-            <form action={formAction} className="space-y-3">
-              <div>
-                <input
-                  name="password"
-                  type="password"
-                  placeholder="合言葉を入力"
-                  required
-                  className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1a5c38] focus:border-transparent placeholder-gray-400"
-                />
-              </div>
-              {errorMessage && (
-                <p className="text-red-500 text-sm">{errorMessage}</p>
-              )}
-              <button
-                type="submit"
-                disabled={isPending}
-                className="w-full bg-[#1a5c38] hover:bg-[#2d7a50] disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
-              >
-                {isPending ? "確認中..." : "ログイン"}
-              </button>
-            </form>
-          </div>
+        <div className="px-8 py-8 space-y-4">
+          <p className="text-sm text-gray-500 text-center">
+            合言葉を入力後、Googleアカウントで認証してください
+          </p>
 
-          {/* 区切り */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-xs text-gray-400">または</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-
-          {/* Google ログイン */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
-              Googleでログイン
-            </h2>
+          <form action={formAction} className="space-y-3">
+            <input
+              name="password"
+              type="password"
+              placeholder="合言葉を入力"
+              required
+              className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1a5c38] focus:border-transparent placeholder-gray-400"
+            />
+            {errorMessage && (
+              <p className="text-red-500 text-sm">{errorMessage}</p>
+            )}
             <button
-              onClick={() => signIn("google", { callbackUrl })}
-              className="w-full flex items-center justify-center gap-3 border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3 rounded-lg transition-colors text-sm"
+              type="submit"
+              disabled={isPending}
+              className="w-full flex items-center justify-center gap-3 bg-[#1a5c38] hover:bg-[#2d7a50] disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
             >
-              <GoogleIcon />
-              Googleアカウントで続ける
+              {isPending ? (
+                "確認中..."
+              ) : (
+                <>
+                  <GoogleIcon />
+                  合言葉を確認してGoogleでログイン
+                </>
+              )}
             </button>
-          </div>
+          </form>
         </div>
       </div>
     </div>
