@@ -30,8 +30,9 @@ export async function verifyPasswordAndRedirect(
     path: "/",
   });
 
-  // Google認証へリダイレクト（Auth.jsのsignInはredirectを内部で行う）
-  await signIn("google", { redirectTo: callbackUrl });
+  // Google認証へリダイレクト（redirectTo はbasePath込みの絶対パスまたはルート相対パス）
+  // callbackUrl がbasePath除きのパス（例: /races/123）の場合でも正しく処理される
+  await signIn("google", { redirectTo: callbackUrl || "/kiseki" });
 
   return null;
 }

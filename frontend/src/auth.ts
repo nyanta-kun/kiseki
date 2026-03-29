@@ -4,7 +4,9 @@ import { cookies } from "next/headers";
 import { jwtVerify } from "jose";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  basePath: "/kiseki/api/auth",
+  // basePath は指定しない（Next.js の basePath /kiseki が自動適用される）
+  // Auth.js は /api/auth をデフォルトで使用し、/kiseki/api/auth として動作する
+  trustHost: true,
   providers: [Google],
   pages: {
     signIn: "/login",

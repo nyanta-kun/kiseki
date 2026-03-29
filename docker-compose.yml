@@ -48,7 +48,8 @@ services:
       - AUTH_PASSWORD=${AUTH_PASSWORD}
       - AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
-      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      - AUTH_URL=${AUTH_URL}
+      - AUTH_TRUST_HOST=true
     volumes:
       - ./frontend:/app
       # node_modules はコンテナ内に保持（ホストのものと混在させない）
