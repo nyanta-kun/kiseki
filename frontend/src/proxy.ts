@@ -1,49 +1,73 @@
-import { auth } from "@/auth";
+/**
+ * Next.js 16 ではミドルウェアのエントリーポイントは proxy.ts（middleware.ts は非推奨）。
+ * Next.js 16 では proxy.ts はパスを basePath(/kiseki) 込みで受け取るため、
+ * matcher および pathname 判定の両方でこれを考慮する必要がある。
+ */
+import { getToken } from "next-auth/jwt";
+import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import type { NextAuthRequest } from "next-auth";
 
 const BASEPATH = "/kiseki";
 
-export const proxy = auth((req: NextAuthRequest) => {
-  // 開発時バイパス: frontend/.env.local に AUTH_BYPASS_DEV=true を追加すると認証スキップ
+/** basePath を除去して正規化したパスを返す */
+function normalizePath(rawPathname: string): string {
+  return rawPathname.startsWith(BASEPATH)
+    ? rawPathname.slice(BASEPATH.length) || "/"
+    : rawPathname;
+}
+
+export default async function proxy(req: NextRequest): Promise<NextResponse> {
+  // 開発時バイパス
   if (process.env.AUTH_BYPASS_DEV === "true") {
     return NextResponse.next();
   }
 
-  const { nextUrl } = req;
-  const session = req.auth;
+  const pathname = normalizePath(req.nextUrl.pathname);
 
-  // auth()ラッパーがreqWithEnvURLでNextRequestを再構築するため
-  // nextUrl.pathnameがbasePath込みの場合がある（例: /kiseki/login）
-  // → basePath重複を防ぐため手動で除去する
-  const rawPathname = nextUrl.pathname;
-  const pathname = rawPathname.startsWith(BASEPATH)
-    ? rawPathname.slice(BASEPATH.length) || "/"
-    : rawPathname;
+  // _next 静的アセット・Auth API ルートは素通し
+  if (
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/api/auth") ||
+    pathname === "/favicon.ico" ||
+    pathname === "/manifest.json" ||
+    pathname.startsWith("/images/") ||
+    /^\/icon-.*\.png$/.test(pathname)
+  ) {
+    return NextResponse.next();
+  }
+
+  // セッション確認: JWE 対応の getToken を使用
+  const token = await getToken({
+    req,
+    secret: process.env.AUTH_SECRET!,
+    secureCookie: process.env.NODE_ENV === "production",
+  }).catch(() => null);
 
   // ログインページは認証不要
   if (pathname === "/login") {
-    if (session) {
-      return NextResponse.redirect(new URL(BASEPATH, nextUrl.origin));
+    if (token) {
+      return NextResponse.redirect(new URL(BASEPATH, req.nextUrl.origin));
     }
     return NextResponse.next();
   }
 
   // 未認証の場合はログインページへ
-  if (!session) {
-    const loginUrl = new URL(BASEPATH + "/login", nextUrl.origin);
+  if (!token) {
+    const loginUrl = new URL(BASEPATH + "/login", req.nextUrl.origin);
     loginUrl.searchParams.set(
       "callbackUrl",
-      BASEPATH + pathname + nextUrl.search
+      BASEPATH + pathname + req.nextUrl.search
     );
     return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
-});
+}
 
 export const config = {
+  // Next.js 16 の proxy.ts は basePath 込みのパスを受け取るため
+  // kiseki/_next, kiseki/api/auth なども除外パターンに含める
   matcher: [
-    "/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|icon-.*\\.png|api/auth).*)",
+    "/((?!_next/|kiseki/_next/|images/|kiseki/images/|favicon\\.ico|manifest\\.json|icon-|api/auth|kiseki/api/auth).*)",
   ],
 };

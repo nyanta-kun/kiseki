@@ -5,6 +5,7 @@ import { EVSummary } from "@/components/EVSummary";
 import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
+import { LogoutButton } from "@/components/LogoutButton";
 
 type Params = Promise<{ id: string }>;
 
@@ -31,7 +32,7 @@ export default async function RacePage({ params }: { params: Params }) {
 
   if (!indicesResp) {
     return (
-      <div className="min-h-screen" style={{ background: "#f8faf9" }}>
+      <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
         <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
         <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
           <p className="text-3xl mb-2">📊</p>
@@ -46,7 +47,7 @@ export default async function RacePage({ params }: { params: Params }) {
   const confidence = indicesResp.confidence;
 
   return (
-    <div className="min-h-screen" style={{ background: "#f8faf9" }}>
+    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
       <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
       <main className="max-w-3xl mx-auto px-4 py-4 space-y-4">
@@ -107,12 +108,12 @@ function Header({
   const nextRace = currentIdx < sortedRaces.length - 1 ? sortedRaces[currentIdx + 1] : null;
 
   return (
-    <header style={{ background: "var(--green-deep)" }} className="sticky top-0 z-10 shadow-md">
+    <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
       <div className="max-w-3xl mx-auto px-4 py-3">
         <div className="flex items-center gap-3">
           <Link
             href={`/?date=${date}`}
-            className="text-green-200 hover:text-white text-lg leading-none"
+            className="text-blue-200 hover:text-white text-lg leading-none"
           >
             ←
           </Link>
@@ -130,7 +131,7 @@ function Header({
               )}
             </div>
             {race && (
-              <p className="text-green-200 text-[11px] mt-0.5">
+              <p className="text-blue-200 text-[11px] mt-0.5">
                 {formatDate(date)}
                 {race.post_time && (
                   <span className="ml-1.5 font-medium text-white/90">{formatPostTime(race.post_time)} 発走</span>
@@ -140,6 +141,7 @@ function Header({
               </p>
             )}
           </div>
+          <LogoutButton />
         </div>
       </div>
 
@@ -149,7 +151,7 @@ function Header({
           {prevRace ? (
             <Link
               href={`/races/${prevRace.id}`}
-              className="flex items-center gap-1 text-green-200 hover:text-white text-[11px] transition-colors"
+              className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
             >
               <span className="text-sm leading-none">‹</span>
               <span>
@@ -161,7 +163,7 @@ function Header({
           {nextRace ? (
             <Link
               href={`/races/${nextRace.id}`}
-              className="flex items-center gap-1 text-green-200 hover:text-white text-[11px] transition-colors"
+              className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
             >
               <span>
                 {nextRace.course_name}{nextRace.race_number}R

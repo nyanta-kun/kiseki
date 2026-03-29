@@ -54,6 +54,7 @@ export type HorseIndex = {
   anagusa_index: number | null;
   paddock_index: number | null;
   anagusa_rank: string | null;  // "A" | "B" | "C" | null（ピックなし）
+  upside_score: number | null;  // 穴馬スコア 0〜1（指数下位でも馬券になりやすい度合い）
 };
 
 export type OddsData = {

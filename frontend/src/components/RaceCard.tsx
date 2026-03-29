@@ -26,10 +26,10 @@ export function RaceCard({ race }: Props) {
 
   return (
     <Link href={`/races/${race.id}`}>
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border border-gray-100 rounded-lg hover:border-green-300 hover:bg-green-50/30 transition-colors cursor-pointer">
+      <div className="flex items-center gap-3 px-4 py-3 bg-white border border-gray-100 rounded-lg hover:border-blue-300 hover:bg-blue-50/30 transition-colors cursor-pointer">
         {/* R番号 */}
         <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm"
-          style={{ background: "var(--green-deep)" }}>
+          style={{ background: "var(--primary)" }}>
           {race.race_number}R
         </div>
 
@@ -71,7 +71,7 @@ export function RaceCard({ race }: Props) {
             </div>
           )}
           {race.has_indices && !conf && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 font-medium whitespace-nowrap">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium whitespace-nowrap">
               指数✓
             </span>
           )}

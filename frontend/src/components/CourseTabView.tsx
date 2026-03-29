@@ -29,11 +29,11 @@ export function CourseTabView({ courseGroups }: Props) {
                 "flex-shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap",
                 active === course
                   ? "text-white shadow-sm"
-                  : "bg-white border border-gray-200 text-gray-600 hover:border-green-300"
+                  : "bg-white border border-gray-200 text-gray-600 hover:border-blue-300"
               )}
               style={
                 active === course
-                  ? { background: "var(--green-deep)" }
+                  ? { background: "var(--primary)" }
                   : undefined
               }
             >
@@ -42,7 +42,7 @@ export function CourseTabView({ courseGroups }: Props) {
                 <span
                   className={cn(
                     "ml-1 text-[10px]",
-                    active === course ? "text-green-300" : "text-green-500"
+                    active === course ? "text-blue-300" : "text-blue-500"
                   )}
                 >
                   ✓

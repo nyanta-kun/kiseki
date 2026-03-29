@@ -5,6 +5,11 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { verifyPasswordAndRedirect } from "./actions";
 
+// next/image は basePath を自動付与しないため、CSS background-image では
+// /kiseki プレフィックスを手動で含める。
+// <Image unoptimized> は Next.js が basePath を付加するため src に不要。
+const BASEPATH = "/kiseki";
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/kiseki";
@@ -17,47 +22,117 @@ function LoginForm() {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#1a5c38]">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
-        {/* ヘッダー */}
-        <div className="bg-[#1a5c38] px-8 py-6 text-center">
-          <h1 className="text-2xl font-bold text-[#c9a84c] tracking-widest">
-            kiseki
-          </h1>
-          <p className="text-green-200 text-sm mt-1">競馬予測指数システム</p>
-        </div>
+    <div className="min-h-screen w-full flex items-center justify-center md:justify-end relative overflow-hidden">
+      {/* ---- 背景画像: CSS background-image で SSR/CSR ミスマッチを回避 ---- */}
+      {/* デスクトップ (md以上) */}
+      <div
+        className="absolute inset-0 z-0 hidden md:block"
+        style={{
+          backgroundImage: `url('${BASEPATH}/images/login-bg-desktop.png')`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      />
+      {/* モバイル (md未満) */}
+      <div
+        className="absolute inset-0 z-0 block md:hidden"
+        style={{
+          backgroundImage: `url('${BASEPATH}/images/login-bg-mobile.png')`,
+          backgroundSize: "cover",
+          backgroundPosition: "top center",
+        }}
+      />
 
-        <div className="px-8 py-8 space-y-4">
-          <p className="text-sm text-gray-500 text-center">
-            合言葉を入力後、Googleアカウントで認証してください
-          </p>
-
-          <form action={formAction} className="space-y-3">
-            <input
-              name="password"
-              type="password"
-              placeholder="合言葉を入力"
-              required
-              className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1a5c38] focus:border-transparent placeholder-gray-400"
+      {/* ---- フォームカード ---- */}
+      <div className="relative z-10 w-full max-w-sm mx-6 md:mx-0 md:mr-16 lg:mr-24">
+        <div
+          className="rounded-2xl overflow-hidden border shadow-[0_8px_48px_rgba(0,0,0,0.5)]"
+          style={{
+            background: "rgba(5, 18, 45, 0.82)",
+            backdropFilter: "blur(28px)",
+            WebkitBackdropFilter: "blur(28px)",
+            borderColor: "rgba(80, 150, 220, 0.35)",
+          }}
+        >
+          {/* カードヘッダー: ロゴ + ブランディング統合 */}
+          <div
+            className="px-8 py-6 text-center border-b"
+            style={{
+              background: "rgba(0, 10, 30, 0.50)",
+              borderColor: "rgba(80, 150, 220, 0.25)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`${BASEPATH}/images/logo.png`}
+              alt="PEGASUS AI"
+              width={160}
+              height={97}
+              className="drop-shadow-[0_0_20px_rgba(100,180,255,0.8)] select-none mx-auto"
             />
-            {errorMessage && (
-              <p className="text-red-500 text-sm">{errorMessage}</p>
-            )}
-            <button
-              type="submit"
-              disabled={isPending}
-              className="w-full flex items-center justify-center gap-3 bg-[#1a5c38] hover:bg-[#2d7a50] disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
-            >
-              {isPending ? (
-                "確認中..."
-              ) : (
-                <>
-                  <GoogleIcon />
-                  合言葉を確認してGoogleでログイン
-                </>
+            <p className="text-blue-200/80 text-xs mt-3">競馬予測指数システム</p>
+          </div>
+
+          {/* カードボディ */}
+          <div className="px-8 py-8 space-y-5">
+            <p className="text-white/90 text-sm text-center leading-relaxed">
+              合言葉を入力後、Googleアカウントで認証してください
+            </p>
+
+            <form action={formAction} className="space-y-4">
+              <input
+                name="password"
+                type="password"
+                placeholder="合言葉を入力"
+                required
+                className="
+                  w-full px-4 py-3 rounded-xl text-sm
+                  text-white placeholder-white/60
+                  focus:outline-none focus:ring-2 transition-all
+                "
+                style={{
+                  background: "rgba(255,255,255,0.12)",
+                  border: "1px solid rgba(100,160,220,0.45)",
+                  // focus ring は Tailwind の ring-blue-400/60
+                }}
+              />
+
+              {errorMessage && (
+                <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
+                  {errorMessage}
+                </p>
               )}
-            </button>
-          </form>
+
+              <button
+                type="submit"
+                disabled={isPending}
+                className="
+                  w-full flex items-center justify-center gap-3
+                  bg-white hover:bg-blue-50
+                  disabled:opacity-60 disabled:cursor-not-allowed
+                  text-gray-800 font-semibold py-3 rounded-xl
+                  transition-all shadow-md hover:shadow-lg
+                  text-sm
+                "
+              >
+                {isPending ? (
+                  <span className="flex items-center gap-2">
+                    <SpinnerIcon />
+                    確認中...
+                  </span>
+                ) : (
+                  <>
+                    <GoogleIcon />
+                    Googleでログイン
+                  </>
+                )}
+              </button>
+            </form>
+
+            <p className="text-center text-blue-300/50 text-xs pt-1">
+              Powered by PEGASUS AI
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -87,13 +162,37 @@ function GoogleIcon() {
   );
 }
 
+function SpinnerIcon() {
+  return (
+    <svg
+      className="animate-spin"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-[#1a5c38]">
-        <div className="text-white">読み込み中...</div>
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#9db3c8]">
+          <div className="text-white/70 text-sm tracking-widest animate-pulse">
+            LOADING...
+          </div>
+        </div>
+      }
+    >
       <LoginForm />
     </Suspense>
   );

@@ -4,18 +4,19 @@
   --background: #ffffff;
   --foreground: #171717;
 
-  /* kiseki カラーパレット */
-  --green-deep: #1a5c38;
-  --green-mid:  #2d7a50;
-  --green-light: #e8f5ee;
-  --gold:       #c9a84c;
+  /* PEGASUS AI カラーパレット */
+  --primary: #0d1f35;       /* メインヘッダー・ダークネイビー（旧 --green-deep: #1a5c38）*/
+  --primary-mid: #1a3a5c;   /* セカンダリ（旧 --green-mid: #2d7a50）*/
+  --primary-light: #e8f0fa; /* ライト背景（旧 --green-light: #e8f5ee）*/
+  --blue-accent: #2c6fad;   /* ブルーアクセント（新規）*/
+  --gold: #c9a84c;
   --gold-light: #f5e9c8;
-  --rank-1: #e8f5ee;
-  --rank-2: #f0faf4;
-  --rank-3: #f7fcf9;
-  --ev-high: #16a34a;   /* 期待値1.2以上 */
-  --ev-mid:  #ca8a04;   /* 期待値0.9-1.2 */
-  --ev-low:  #dc2626;   /* 期待値0.9未満 */
+  --rank-1: #e8f0fa;        /* 旧 #e8f5ee */
+  --rank-2: #f0f5fd;        /* 旧 #f0faf4 */
+  --rank-3: #f7f9fd;        /* 旧 #f7fcf9 */
+  --ev-high: #16a34a;
+  --ev-mid: #ca8a04;
+  --ev-low: #dc2626;
 }
 
 @theme inline {
@@ -27,8 +28,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0f1a14;
-    --foreground: #e8f5ee;
+    --background: #0a1628;
+    --foreground: #e8f0fa;
   }
 }
 

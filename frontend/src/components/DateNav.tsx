@@ -32,12 +32,12 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
   };
 
   return (
-    <div className="flex items-center justify-between px-4 pb-2 gap-2">
+    <div className="max-w-3xl mx-auto flex items-center justify-between px-4 pb-2 gap-2">
       {/* 前開催 */}
       <button
         onClick={() => prevDate && go(prevDate)}
         disabled={!prevDate}
-        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+        className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
       >
         ← 前開催
       </button>
@@ -47,7 +47,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         {!isToday && (
           <button
             onClick={() => go(today)}
-            className="text-[11px] px-2 py-0.5 rounded border border-green-500 text-green-200 hover:bg-white/10 transition-colors flex-shrink-0"
+            className="text-[11px] px-2 py-0.5 rounded border border-blue-400 text-blue-200 hover:bg-white/10 transition-colors flex-shrink-0"
           >
             今日
           </button>
@@ -59,7 +59,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         <div className="relative flex-shrink-0">
           <button
             onClick={openPicker}
-            className="text-green-300 hover:text-white transition-colors text-base leading-none"
+            className="text-blue-300 hover:text-white transition-colors text-base leading-none"
             aria-label="日付を選択"
           >
             📅
@@ -82,7 +82,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
       <button
         onClick={() => nextDate && go(nextDate)}
         disabled={!nextDate}
-        className="text-green-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+        className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
       >
         翌開催 →
       </button>

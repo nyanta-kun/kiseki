@@ -30,6 +30,73 @@ _JRA_TO_SEKITO: dict[str, str] = {
 }
 
 
+def _compute_upside_scores(horses: list["HorseIndexOut"]) -> None:
+    """穴馬スコアをレース内全馬に付与する（in-place）。
+
+    考え方:
+      総合指数は低くても、特定の個別指数（コース適性・末脚・穴ぐさ等）が
+      レース内で突出している馬に高いスコアを与える。
+
+    スコア = Σ max(0, composite_rank - individual_rank) × weight を正規化
+
+    重みの根拠（2024-2026実績 upside_detection.py 分析）:
+      穴ぐさ:     lift +6.3%  → 0.30
+      コース適性: lift +5.9%  → 0.28
+      パドック:   lift +5.0%  → 0.23
+      血統:       lift +3.4%  → 0.10
+      騎手:       lift +2.9%  → 0.09
+      後3F:       lift +1.7%  → 0.00 (コース適性に包含)
+      ローテ:     lift -6.2%  → 除外
+      調教:       lift -4.5%  → 除外
+      展開:       lift -1.9%  → 除外
+      枠順:       lift -2.8%  → 除外
+    """
+    # 穴馬スコアに使う個別指数と重み（実測リフト比例）
+    UPSIDE_WEIGHTS: dict[str, float] = {
+        "anagusa_index":    0.30,
+        "course_aptitude":  0.28,
+        "paddock_index":    0.23,
+        "pedigree_index":   0.10,
+        "jockey_index":     0.09,
+    }
+
+    n = len(horses)
+    if n < 2:
+        return
+
+    # 総合指数の降順ランク（1=最高）
+    sorted_by_composite = sorted(
+        range(n), key=lambda i: horses[i].composite_index or 0.0, reverse=True
+    )
+    composite_ranks = [0] * n
+    for rank, idx in enumerate(sorted_by_composite, start=1):
+        composite_ranks[idx] = rank
+
+    # 個別指数ランクと突出スコア算出
+    raw_scores = [0.0] * n
+    for attr, weight in UPSIDE_WEIGHTS.items():
+        values = [getattr(h, attr) for h in horses]
+        if all(v is None for v in values):
+            continue
+        # None を最低値で補完してランク付け
+        filled = [v if v is not None else 0.0 for v in values]
+        sorted_by_attr = sorted(range(n), key=lambda i: filled[i], reverse=True)
+        attr_ranks = [0] * n
+        for rank, idx in enumerate(sorted_by_attr, start=1):
+            attr_ranks[idx] = rank
+
+        # 個別指数ランクが総合ランクよりも上位（数値が小さい）ほど突出
+        prominences = [max(0.0, composite_ranks[i] - attr_ranks[i]) for i in range(n)]
+        max_prom = max(prominences) if max(prominences) > 0 else 1.0
+        for i in range(n):
+            raw_scores[i] += (prominences[i] / max_prom) * weight
+
+    # 0〜1 に正規化
+    max_score = max(raw_scores) if max(raw_scores) > 0 else 1.0
+    for i, h in enumerate(horses):
+        h.upside_score = round(raw_scores[i] / max_score, 4)
+
+
 def _fetch_anagusa_picks(db: Session, race: "Race") -> dict[int, str]:
     """sekito.anagusa からレースのピック情報を取得する。
 
@@ -147,6 +214,7 @@ class HorseIndexOut(BaseModel):
     anagusa_index: float | None
     paddock_index: float | None
     anagusa_rank: str | None = None  # "A" / "B" / "C" / None（ピックなし）
+    upside_score: float | None = None  # 穴馬スコア（指数下位でも馬券になりやすい度合い）
 
 
 class OddsOut(BaseModel):
@@ -372,6 +440,9 @@ def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     picks = _fetch_anagusa_picks(db, race)
     for h in horses:
         h.anagusa_rank = picks.get(h.horse_number)
+
+    # 穴馬スコア算出（指数下位でも特定個別指数が突出している度合い）
+    _compute_upside_scores(horses)
 
     conf_data = calculate_race_confidence(
         composite_indices=[h.composite_index for h in horses],

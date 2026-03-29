@@ -3,6 +3,7 @@ import { fetchNearestDate, fetchRacesByDate } from "@/lib/api";
 import { formatDate, todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
+import { LogoutButton } from "@/components/LogoutButton";
 
 type SearchParams = Promise<{ date?: string }>;
 
@@ -17,12 +18,17 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   ]);
 
   return (
-    <div className="min-h-screen" style={{ background: "#f8faf9" }}>
+    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
       {/* ヘッダー */}
-      <header style={{ background: "var(--green-deep)" }} className="sticky top-0 z-10 shadow-md">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center">
-          <h1 className="text-white font-bold text-lg leading-tight">kiseki</h1>
-          <p className="text-green-200 text-[10px] ml-2">競馬予測指数システム</p>
+      <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/kiseki/images/logo2.png" alt="PEGASUS AI" width={52} height={32} className="select-none opacity-90 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h1 className="text-white font-bold text-base leading-tight tracking-wide">PEGASUS AI</h1>
+            <p className="text-blue-200 text-[10px]">競馬予測指数システム</p>
+          </div>
+          <LogoutButton />
         </div>
         <DateNav currentDate={targetDate} prevDate={prevDate} nextDate={nextDate} />
       </header>

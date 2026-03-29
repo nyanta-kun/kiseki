@@ -15,7 +15,7 @@ type Props = {
   raceId?: number;
 };
 
-type SortKey = "composite_index" | "win_probability" | "horse_number" | "finish_position";
+type SortKey = "composite_index" | "win_probability" | "horse_number" | "finish_position" | "upside_score";
 
 const SUB_INDICES: { key: keyof HorseIndex; label: string }[] = [
   { key: "speed_index", label: "速度" },
@@ -265,18 +265,22 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
       const pb = results.get(b.horse_number) ?? 999;
       return pa - pb;
     }
+    if (sort === "upside_score") {
+      return (b.upside_score ?? 0) - (a.upside_score ?? 0);
+    }
     return b.composite_index - a.composite_index;
   });
 
   const sortKeys: SortKey[] = hasResults
-    ? ["finish_position", "composite_index", "win_probability", "horse_number"]
-    : ["composite_index", "win_probability", "horse_number"];
+    ? ["finish_position", "composite_index", "win_probability", "upside_score", "horse_number"]
+    : ["composite_index", "win_probability", "upside_score", "horse_number"];
 
   const sortLabels: Record<SortKey, string> = {
     composite_index: "指数順",
     win_probability: "勝率順",
     horse_number: "馬番順",
     finish_position: "着順",
+    upside_score: "穴スコア順",
   };
 
   return (
@@ -312,6 +316,10 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
           const isTop = horse.horse_number === topHorseNumber;
           const isAnagusa = horse.anagusa_rank !== null && !isTop;
+          // 指数4位以降でupsideスコアが高い = 穴候補
+          const compositeRank = [...indices].sort((a, b) => b.composite_index - a.composite_index)
+            .findIndex((h) => h.horse_number === horse.horse_number) + 1;
+          const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
 
           const finishPos = results?.get(horse.horse_number);
           const finishLabel_ = finishLabel(finishPos);
@@ -390,6 +398,12 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                     )}>
                       ☆{horse.anagusa_rank || "A"}
                     </span>
+                    {/* 穴候補バッジ */}
+                    {isUpsideCandidate && (
+                      <span className="text-[10px] px-1 py-0.5 rounded border font-bold bg-purple-50 text-purple-700 border-purple-200">
+                        穴{Math.round((horse.upside_score ?? 0) * 100)}
+                      </span>
+                    )}
                     {winPct && (
                       <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
                         単{winPct}%
@@ -410,7 +424,22 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
               {/* 展開: 指数内訳 + 近走成績 */}
               {isExpanded && (
                 <div className="border-t border-gray-100 bg-gray-50 px-3 py-3">
-                  <p className="text-[10px] text-gray-400 mb-2">指数内訳</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] text-gray-400">指数内訳</p>
+                    {horse.upside_score !== null && horse.upside_score !== undefined && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-gray-400">穴馬スコア</span>
+                        <span className={cn(
+                          "text-[11px] font-bold px-1.5 py-0.5 rounded border",
+                          horse.upside_score >= 0.7 ? "bg-purple-100 text-purple-800 border-purple-300" :
+                          horse.upside_score >= 0.5 ? "bg-purple-50 text-purple-700 border-purple-200" :
+                          "bg-gray-50 text-gray-500 border-gray-200"
+                        )}>
+                          {(horse.upside_score * 100).toFixed(0)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                     {SUB_INDICES.map(({ key, label }) => {
                       if (key === "anagusa_index") {

@@ -36,7 +36,7 @@ export function ConfidencePanel({ confidence }: Props) {
         <h2 className="text-sm font-bold text-gray-700 flex items-center gap-1.5">
           <span
             className="w-1 h-4 rounded inline-block"
-            style={{ background: "var(--green-mid)" }}
+            style={{ background: "var(--primary)" }}
           />
           レース信頼度
         </h2>

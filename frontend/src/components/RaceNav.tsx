@@ -42,8 +42,8 @@ export function RaceNav({ currentRaceId, races }: Props) {
             className={cn(
               "flex-shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors whitespace-nowrap",
               activeCourse === course
-                ? "bg-white text-green-800 font-bold"
-                : "text-green-200 hover:text-white hover:bg-white/10"
+                ? "bg-white text-blue-900 font-bold"
+                : "text-blue-200 hover:text-white hover:bg-white/10"
             )}
           >
             {course}
@@ -62,15 +62,15 @@ export function RaceNav({ currentRaceId, races }: Props) {
               className={cn(
                 "flex-shrink-0 text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap",
                 isCurrent
-                  ? "bg-white text-green-800 font-bold"
+                  ? "bg-white text-blue-900 font-bold"
                   : race.has_indices
-                  ? "text-green-100 hover:text-white hover:bg-white/10"
-                  : "text-green-300/50 hover:text-green-200 hover:bg-white/5"
+                  ? "text-blue-100 hover:text-white hover:bg-white/10"
+                  : "text-blue-300/50 hover:text-blue-200 hover:bg-white/5"
               )}
             >
               {race.race_number}R
               {race.has_indices && !isCurrent && (
-                <span className="ml-0.5 text-[9px] text-green-300">✓</span>
+                <span className="ml-0.5 text-[9px] text-blue-300">✓</span>
               )}
             </button>
           );
