@@ -4,9 +4,9 @@ import { cookies } from "next/headers";
 import { jwtVerify } from "jose";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // basePath は指定しない（Next.js の basePath /kiseki が自動適用される）
-  // Auth.js は /api/auth をデフォルトで使用し、/kiseki/api/auth として動作する
-  trustHost: true,
+  // AUTH_URL に /api/auth まで含めることで正確なコールバックURLを生成する
+  // AUTH_URL=https://sekito-stable.com/kiseki/api/auth → callback=/kiseki/api/auth/callback/google
+  // trustHost を使うと内部コンテナURL(localhost:3000)が誤検知されるため使用しない
   providers: [Google],
   pages: {
     signIn: "/login",
