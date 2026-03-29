@@ -1,61 +1,33 @@
+import { auth } from "@/auth";
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { jwtVerify } from "jose";
+import type { NextAuthRequest } from "next-auth";
 
-const AUTH_COOKIE_NAMES = [
-  "__Secure-authjs.session-token",
-  "authjs.session-token",
-];
+const BASEPATH = "/kiseki";
 
-async function verifySession(token: string): Promise<boolean> {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) return false;
-  try {
-    const key = new TextEncoder().encode(secret);
-    await jwtVerify(token, key);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-
-  // セッショントークンをクッキーから取得
-  let sessionToken: string | undefined;
-  for (const name of AUTH_COOKIE_NAMES) {
-    const cookie = request.cookies.get(name);
-    if (cookie?.value) {
-      sessionToken = cookie.value;
-      break;
-    }
-  }
-
-  const isLoggedIn = sessionToken ? await verifySession(sessionToken) : false;
+export const proxy = auth((req: NextAuthRequest) => {
+  const { nextUrl } = req;
+  const session = req.auth;
 
   // ログインページは認証不要
-  if (pathname === "/login") {
-    if (isLoggedIn) {
-      return NextResponse.redirect(
-        new URL("/kiseki", request.nextUrl.origin)
-      );
+  if (nextUrl.pathname === "/login") {
+    if (session) {
+      return NextResponse.redirect(new URL(BASEPATH, nextUrl.origin));
     }
     return NextResponse.next();
   }
 
   // 未認証の場合はログインページへ
-  if (!isLoggedIn) {
-    const loginUrl = new URL("/kiseki/login", request.nextUrl.origin);
+  if (!session) {
+    const loginUrl = new URL(BASEPATH + "/login", nextUrl.origin);
     loginUrl.searchParams.set(
       "callbackUrl",
-      request.nextUrl.pathname + request.nextUrl.search
+      BASEPATH + nextUrl.pathname + nextUrl.search
     );
     return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
-}
+});
 
 export const config = {
   matcher: [
