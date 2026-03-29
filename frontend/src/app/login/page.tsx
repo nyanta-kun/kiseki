@@ -22,7 +22,7 @@ function LoginForm() {
   );
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center md:justify-end relative overflow-hidden">
+    <div className="h-screen w-full flex items-center justify-center md:justify-end relative overflow-hidden">
       {/* ---- 背景画像: CSS background-image で SSR/CSR ミスマッチを回避 ---- */}
       {/* デスクトップ (md以上) */}
       <div
@@ -56,7 +56,7 @@ function LoginForm() {
         >
           {/* カードヘッダー: ロゴ + ブランディング統合 */}
           <div
-            className="px-8 py-6 text-center border-b"
+            className="px-8 py-4 text-center border-b"
             style={{
               background: "rgba(0, 10, 30, 0.50)",
               borderColor: "rgba(80, 150, 220, 0.25)",
@@ -74,7 +74,7 @@ function LoginForm() {
           </div>
 
           {/* カードボディ */}
-          <div className="px-8 py-8 space-y-5">
+          <div className="px-8 py-6 space-y-4">
             <p className="text-white/90 text-sm text-center leading-relaxed">
               合言葉を入力後、Googleアカウントで認証してください
             </p>
@@ -186,7 +186,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[#9db3c8]">
+        <div className="h-screen flex items-center justify-center bg-[#9db3c8]">
           <div className="text-white/70 text-sm tracking-widest animate-pulse">
             LOADING...
           </div>
