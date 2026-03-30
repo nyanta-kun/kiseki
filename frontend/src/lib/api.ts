@@ -152,7 +152,7 @@ export function buildOddsWsUrl(raceId: number): string {
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/kiseki/api/races/${raceId}/odds/ws`;
+  return `${proto}://${host}/api/races/${raceId}/odds/ws`;
 }
 
 export function buildResultsWsUrl(raceId: number): string {
@@ -163,5 +163,5 @@ export function buildResultsWsUrl(raceId: number): string {
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/kiseki/api/races/${raceId}/results/ws`;
+  return `${proto}://${host}/api/races/${raceId}/results/ws`;
 }

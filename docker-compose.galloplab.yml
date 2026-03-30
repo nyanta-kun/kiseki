@@ -3,12 +3,8 @@ version: '3.8'
 # galloplab.com 本番デプロイ用 Compose
 # 使用方法: docker compose -f docker-compose.galloplab.yml up -d --build
 #
-# nginx: /kiseki/      → 127.0.0.1:3002  (Next.js)
-# nginx: /kiseki/api/  → 127.0.0.1:8003  (FastAPI)
-#
-# sekito-stable.com との分離:
-#   sekito: frontend=3001, backend=8002
-#   galloplab: frontend=3002, backend=8003
+# nginx: galloplab.com/      → 127.0.0.1:3002  (Next.js)
+# nginx: api.galloplab.com/  → 127.0.0.1:8003  (FastAPI)
 
 name: kiseki-galloplab
 
@@ -44,22 +40,22 @@ services:
       dockerfile: Dockerfile
       args:
         # NEXT_PUBLIC_* はビルド時に埋め込まれるため build.args で渡す
-        NEXT_PUBLIC_API_URL: https://galloplab.com/kiseki
+        # api.galloplab.com DNS/SSL 設定完了後に https://api.galloplab.com に変更
+        NEXT_PUBLIC_API_URL: https://galloplab.com
+        NEXT_PUBLIC_WS_URL: wss://galloplab.com
     container_name: galloplab-frontend-1
     ports:
       - "127.0.0.1:3002:3000"
     environment:
       # SSR時にDockerネットワーク内でバックエンドを呼び出す（ブラウザには公開しない）
       - BACKEND_URL=http://backend:8000
-      # ブラウザからアクセス可能なURL（外部公開URL経由でnginxがバックエンドに転送）
-      - NEXT_PUBLIC_API_URL=https://galloplab.com
       # 認証（Auth.js）- galloplab.com向け設定
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
       - AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
       # AUTH_URLはgalloplab.com向けに上書き（.envのsekito-stable.com設定を無視）
-      - AUTH_URL=https://galloplab.com/kiseki/api/auth
+      - AUTH_URL=https://galloplab.com/api/auth
     depends_on:
       backend:
         condition: service_healthy

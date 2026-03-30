@@ -13,6 +13,8 @@ WORKDIR /app
 # NEXT_PUBLIC_* はビルド時にクライアントバンドルへ静的埋め込みされるため ARG で受け取る
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \

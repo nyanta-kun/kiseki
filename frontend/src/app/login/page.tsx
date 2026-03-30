@@ -8,11 +8,9 @@ import { verifyPasswordAndRedirect } from "./actions";
 // next/image は basePath を自動付与しないため、CSS background-image では
 // /kiseki プレフィックスを手動で含める。
 // <Image unoptimized> は Next.js が basePath を付加するため src に不要。
-const BASEPATH = "/kiseki";
-
 function LoginForm() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/kiseki";
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/races";
 
   const [errorMessage, formAction, isPending] = useActionState(
     async (_prev: string | null, formData: FormData) => {
@@ -31,7 +29,7 @@ function LoginForm() {
       <div className="relative z-10 flex items-center justify-center w-full md:w-1/2 md:h-full flex-shrink-0 mt-8 md:mt-0">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`${BASEPATH}/images/image.png`}
+          src="/images/image.png"
           alt="GallopLab"
           className="w-auto max-h-52 md:max-h-[70vh] object-contain select-none"
           style={{
