@@ -28,6 +28,8 @@ export async function verifyPasswordAndRedirect(
     sameSite: "lax",
     maxAge: 600,
     path: "/",
+    // 本番環境では api.galloplab.com のコールバックで読めるよう .galloplab.com ドメインを設定
+    ...(process.env.NODE_ENV === "production" ? { domain: ".galloplab.com" } : {}),
   });
 
   // Google認証へリダイレクト（redirectTo はbasePath込みの絶対パスまたはルート相対パス）

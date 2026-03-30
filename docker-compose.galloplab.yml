@@ -54,7 +54,8 @@ services:
       - AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
       # AUTH_URLはgalloplab.com向けに上書き（.envのsekito-stable.com設定を無視）
-      - AUTH_URL=https://galloplab.com/api/auth
+      # コールバックURL: https://api.galloplab.com/auth/callback/google
+      - AUTH_URL=https://api.galloplab.com/auth
     depends_on:
       backend:
         condition: service_healthy

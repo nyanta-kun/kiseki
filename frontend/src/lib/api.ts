@@ -110,34 +110,34 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export async function fetchRace(raceId: number): Promise<Race> {
-  return get<Race>(`/api/races/${raceId}`);
+  return get<Race>(`/races/${raceId}`);
 }
 
 export async function fetchRacesByDate(date: string): Promise<Race[]> {
-  return get<Race[]>(`/api/races?date=${date}`);
+  return get<Race[]>(`/races?date=${date}`);
 }
 
 export async function fetchIndices(raceId: number): Promise<IndicesResponse> {
-  return get<IndicesResponse>(`/api/races/${raceId}/indices`);
+  return get<IndicesResponse>(`/races/${raceId}/indices`);
 }
 
 export async function fetchResults(raceId: number): Promise<RaceResult[]> {
-  return get<RaceResult[]>(`/api/races/${raceId}/results`);
+  return get<RaceResult[]>(`/races/${raceId}/results`);
 }
 
 export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEntry[]> {
-  return get<RaceHistoryEntry[]>(`/api/horses/${horseId}/history`);
+  return get<RaceHistoryEntry[]>(`/horses/${horseId}/history`);
 }
 
 export async function fetchOdds(raceId: number): Promise<OddsData> {
-  return get<OddsData>(`/api/races/${raceId}/odds`);
+  return get<OddsData>(`/races/${raceId}/odds`);
 }
 
 export async function fetchNearestDate(
   fromDate: string,
   direction: "prev" | "next"
 ): Promise<{ date: string }> {
-  return get<{ date: string }>(`/api/races/nearest-date?from=${fromDate}&direction=${direction}`);
+  return get<{ date: string }>(`/races/nearest-date?from=${fromDate}&direction=${direction}`);
 }
 
 /** WebSocket URLを組み立てる（ブラウザ専用）。
@@ -148,20 +148,20 @@ export function buildOddsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
   if (explicit) {
-    return `${explicit}/api/races/${raceId}/odds/ws`;
+    return `${explicit}/races/${raceId}/odds/ws`;
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/api/races/${raceId}/odds/ws`;
+  return `${proto}://${host}/races/${raceId}/odds/ws`;
 }
 
 export function buildResultsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
   if (explicit) {
-    return `${explicit}/api/races/${raceId}/results/ws`;
+    return `${explicit}/races/${raceId}/results/ws`;
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/api/races/${raceId}/results/ws`;
+  return `${proto}://${host}/races/${raceId}/results/ws`;
 }

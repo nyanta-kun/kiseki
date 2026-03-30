@@ -7,10 +7,11 @@ export default function SessionProvider({
 }: {
   children: React.ReactNode;
 }) {
-  // basePath: Next.js basePath(/kiseki) + Auth.jsパス(/api/auth) を明示指定
-  // 未指定だと /api/auth/session を呼び出し404になる
+  // basePath: Auth.js ハンドラーのパスを明示指定
+  // 本番環境では api.galloplab.com/auth/ に配置されているが、
+  // クライアントからは同一オリジン(galloplab.com)の /auth/ として参照する
   return (
-    <NextAuthSessionProvider basePath="/api/auth">
+    <NextAuthSessionProvider basePath="/auth">
       {children}
     </NextAuthSessionProvider>
   );

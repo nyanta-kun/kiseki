@@ -14,6 +14,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/auth/") ||
     pathname === "/favicon.ico" ||
     pathname === "/manifest.json" ||
     pathname.startsWith("/images/") ||
@@ -49,6 +50,6 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 
 export const config = {
   matcher: [
-    "/((?!_next/|images/|favicon\\.ico|manifest\\.json|icon-|api/auth).*)",
+    "/((?!_next/|images/|favicon\\.ico|manifest\\.json|icon-|api/auth|auth/).*)",
   ],
 };
