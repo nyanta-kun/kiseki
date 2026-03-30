@@ -40,9 +40,8 @@ services:
       dockerfile: Dockerfile
       args:
         # NEXT_PUBLIC_* はビルド時に埋め込まれるため build.args で渡す
-        # api.galloplab.com DNS/SSL 設定完了後に https://api.galloplab.com に変更
-        NEXT_PUBLIC_API_URL: https://galloplab.com
-        NEXT_PUBLIC_WS_URL: wss://galloplab.com
+        NEXT_PUBLIC_API_URL: https://api.galloplab.com
+        NEXT_PUBLIC_WS_URL: wss://api.galloplab.com
     container_name: galloplab-frontend-1
     ports:
       - "127.0.0.1:3002:3000"
