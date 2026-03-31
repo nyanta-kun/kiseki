@@ -68,9 +68,12 @@ def calc_indices(start: date, end: date) -> bool:
     """指定期間の v7 総合指数を算出する。"""
     log = LOG_DIR / f"calc_{start:%Y%m%d}_{end:%Y%m%d}.log"
     cmd = [
-        sys.executable, "scripts/calculate_indices_range.py",
-        "--start", start.strftime("%Y%m%d"),
-        "--end",   end.strftime("%Y%m%d"),
+        sys.executable,
+        "scripts/calculate_indices_range.py",
+        "--start",
+        start.strftime("%Y%m%d"),
+        "--end",
+        end.strftime("%Y%m%d"),
     ]
     logger.info(f"  指数算出: {start} 〜 {end}")
     ok = run_cmd(cmd, log)
@@ -84,10 +87,14 @@ def run_backtest(start: date, end: date) -> bool:
     """指定期間のバックテストを実行してレポートを保存する。"""
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     cmd = [
-        sys.executable, "scripts/backtest.py",
-        "--start", start.strftime("%Y%m%d"),
-        "--end",   end.strftime("%Y%m%d"),
-        "--report", str(REPORT_DIR),
+        sys.executable,
+        "scripts/backtest.py",
+        "--start",
+        start.strftime("%Y%m%d"),
+        "--end",
+        end.strftime("%Y%m%d"),
+        "--report",
+        str(REPORT_DIR),
     ]
     log = LOG_DIR / f"backtest_{start:%Y%m%d}_{end:%Y%m%d}.log"
     logger.info(f"  バックテスト: {start} 〜 {end}")
@@ -104,24 +111,22 @@ def main() -> None:
     """エントリーポイント。"""
     parser = argparse.ArgumentParser(description="2ヶ月単位増分バックテスト")
     parser.add_argument(
-        "--from-end", default="20241031",
+        "--from-end",
+        default="20241031",
         help="遡り開始の期間末日 YYYYMMDD (default: 20241031)",
     )
     parser.add_argument(
-        "--oldest", default="20230101",
+        "--oldest",
+        default="20230101",
         help="遡る最古の開始日 YYYYMMDD (default: 20230101)",
     )
     args = parser.parse_args()
 
-    period_end = date(
-        int(args.from_end[:4]), int(args.from_end[4:6]), int(args.from_end[6:])
-    )
-    oldest = date(
-        int(args.oldest[:4]), int(args.oldest[4:6]), int(args.oldest[6:])
-    )
+    period_end = date(int(args.from_end[:4]), int(args.from_end[4:6]), int(args.from_end[6:]))
+    oldest = date(int(args.oldest[:4]), int(args.oldest[4:6]), int(args.oldest[6:]))
 
     logger.info("=" * 60)
-    logger.info(f" 2ヶ月単位増分バックテスト開始")
+    logger.info(" 2ヶ月単位増分バックテスト開始")
     logger.info(f" {period_end} から遡って {oldest} まで")
     logger.info("=" * 60)
 
@@ -134,9 +139,9 @@ def main() -> None:
             ps = oldest
 
         logger.info("")
-        logger.info(f"{'─'*60}")
+        logger.info(f"{'─' * 60}")
         logger.info(f" 期間: {ps} 〜 {period_end}")
-        logger.info(f"{'─'*60}")
+        logger.info(f"{'─' * 60}")
 
         # 1. 指数算出
         ok_calc = calc_indices(ps, period_end)
@@ -149,7 +154,7 @@ def main() -> None:
             if ok_bt:
                 completed.append((ps, period_end))
             else:
-                logger.warning(f"  バックテスト失敗（データ不足の可能性）")
+                logger.warning("  バックテスト失敗（データ不足の可能性）")
                 failed.append((ps, period_end))
 
         if ps <= oldest:

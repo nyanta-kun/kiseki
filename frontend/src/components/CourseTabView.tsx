@@ -18,12 +18,18 @@ export function CourseTabView({ courseGroups }: Props) {
   return (
     <div>
       {/* 開催場タブ */}
-      <div className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-none">
+      <div
+        className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-none"
+        role="tablist"
+        aria-label="開催場選択"
+      >
         {courses.map((course) => {
           const hasAny = courseGroups[course].some((r) => r.has_indices);
           return (
             <button
               key={course}
+              role="tab"
+              aria-selected={active === course}
               onClick={() => setActive(course)}
               className={cn(
                 "flex-shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap",
@@ -44,6 +50,7 @@ export function CourseTabView({ courseGroups }: Props) {
                     "ml-1 text-[10px]",
                     active === course ? "text-blue-300" : "text-blue-500"
                   )}
+                  aria-hidden="true"
                 >
                   ✓
                 </span>
@@ -54,7 +61,7 @@ export function CourseTabView({ courseGroups }: Props) {
       </div>
 
       {/* レース一覧 */}
-      <div className="space-y-1.5">
+      <div role="tabpanel" aria-label={`${active}のレース一覧`} className="space-y-1.5">
         {(courseGroups[active] ?? []).map((race) => (
           <RaceCard key={race.id} race={race} />
         ))}

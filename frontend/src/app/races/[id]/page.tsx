@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { OddsData, RaceResult, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { surfaceIcon, gradeClass, raceClassBadgeClass, raceClassShort, formatDate } from "@/lib/utils";
 import { EVSummary } from "@/components/EVSummary";
@@ -8,6 +9,17 @@ import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { LogoutButton } from "@/components/LogoutButton";
 
 type Params = Promise<{ id: string }>;
+
+export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const race = await fetchRace(parseInt(id));
+    const title = `${race.course_name} ${race.race_number}R ${race.race_name ?? race.race_class_label ?? ""} | GallopLab`;
+    return { title, description: `${race.surface} ${race.distance}m ${race.condition ?? ""}`.trim() };
+  } catch {
+    return { title: `レース詳細 | GallopLab` };
+  }
+}
 
 export default async function RacePage({ params }: { params: Params }) {
   const { id } = await params;
@@ -50,7 +62,7 @@ export default async function RacePage({ params }: { params: Params }) {
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
       <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
-      <main className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* 期待値サマリー */}
         <EVSummary indices={indices} />
 
@@ -114,6 +126,7 @@ function Header({
           <Link
             href={`/races?date=${date}`}
             className="text-blue-200 hover:text-white text-lg leading-none"
+            aria-label="レース一覧に戻る"
           >
             ←
           </Link>
@@ -157,8 +170,9 @@ function Header({
             <Link
               href={`/races/${prevRace.id}`}
               className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
+              aria-label={`前のレース: ${prevRace.course_name} ${prevRace.race_number}R`}
             >
-              <span className="text-sm leading-none">‹</span>
+              <span className="text-sm leading-none" aria-hidden="true">‹</span>
               <span>
                 {prevRace.course_name}{prevRace.race_number}R
                 {prevRace.post_time && ` ${formatPostTime(prevRace.post_time)}`}
@@ -169,12 +183,13 @@ function Header({
             <Link
               href={`/races/${nextRace.id}`}
               className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
+              aria-label={`次のレース: ${nextRace.course_name} ${nextRace.race_number}R`}
             >
               <span>
                 {nextRace.course_name}{nextRace.race_number}R
                 {nextRace.post_time && ` ${formatPostTime(nextRace.post_time)}`}
               </span>
-              <span className="text-sm leading-none">›</span>
+              <span className="text-sm leading-none" aria-hidden="true">›</span>
             </Link>
           ) : <span />}
         </div>

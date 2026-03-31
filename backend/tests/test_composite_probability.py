@@ -6,12 +6,9 @@ DB 接続不要。
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from src.indices.composite import CompositeIndexCalculator
-
 
 # ---------------------------------------------------------------------------
 # Softmax テスト
@@ -87,12 +84,14 @@ class TestHarvillePlaceProbs:
             assert pp >= wp - 1e-9
 
     def test_three_horses_place_prob_high(self) -> None:
-        """3頭レースでは各馬の複勝率が高い（全馬3着以内）"""
+        """3頭レースでは各馬の複勝率が高い（JRAは8頭未満で2着払い）"""
         win_probs = [0.5, 0.3, 0.2]
         place = CompositeIndexCalculator._harville_place_probs(win_probs)
-        # 3頭なら全員3着以内なので全員 ≈ 1.0
+        # 3頭でも8頭未満なので2着払い。1着+2着確率の合算値（< 1.0）
+        # 最低でも0.4以上になることを確認（合理的な下限）
         for pp in place:
-            assert pp == pytest.approx(1.0, abs=1e-6)
+            assert pp >= 0.4
+            assert pp <= 1.0
 
     def test_single_horse_place_is_one(self) -> None:
         """1頭なら複勝率 1.0"""

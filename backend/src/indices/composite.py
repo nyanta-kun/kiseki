@@ -37,11 +37,11 @@ from ..db.models import CalculatedIndex, Race, RaceEntry
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
 from .anagusa import AnagusaIndexCalculator
 from .course_aptitude import CourseAptitudeCalculator
-from .paddock import PaddockIndexCalculator
 from .frame_bias import FrameBiasCalculator
 from .jockey import JockeyIndexCalculator
 from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
+from .paddock import PaddockIndexCalculator
 from .pedigree import PedigreeIndexCalculator
 from .rotation import RotationIndexCalculator
 from .speed import SpeedIndexCalculator
@@ -177,12 +177,7 @@ class CompositeIndexCalculator:
         Returns:
             全馬分の算出結果リスト（race_id・horse_id 付き）
         """
-        races = (
-            self.db.query(Race)
-            .filter(Race.date == date)
-            .order_by(Race.race_number)
-            .all()
-        )
+        races = self.db.query(Race).filter(Race.date == date).order_by(Race.race_number).all()
         if not races:
             logger.warning(f"指定日にレースなし: {date}")
             return []
@@ -243,17 +238,17 @@ class CompositeIndexCalculator:
         w = INDEX_WEIGHTS
 
         composite = (
-            speed               * w["speed"]
-            + last3f            * w["last_3f"]
-            + course_aptitude   * w["course_aptitude"]
-            + pace              * w["pace"]
-            + jockey            * w["jockey_trainer"]
-            + pedigree          * w["pedigree"]
-            + rotation          * w["rotation"]
-            + training          * w["training"]
+            speed * w["speed"]
+            + last3f * w["last_3f"]
+            + course_aptitude * w["course_aptitude"]
+            + pace * w["pace"]
+            + jockey * w["jockey_trainer"]
+            + pedigree * w["pedigree"]
+            + rotation * w["rotation"]
+            + training * w["training"]
             + position_advantage * w["position_advantage"]
-            + anagusa           * w["anagusa"]
-            + paddock           * w["paddock"]
+            + anagusa * w["anagusa"]
+            + paddock * w["paddock"]
             # disadvantage_bonus は flag ベースで別途加算（未実装）
         )
         composite = round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
@@ -312,6 +307,17 @@ class CompositeIndexCalculator:
         計算量: O(n^3) だが n≤18（JRA最大出走数）のため問題なし。
         """
         n = len(win_probs)
+
+        # 1頭: 単勝的中 = 複勝的中
+        if n == 1:
+            return [1.0]
+
+        # JRAルール: 8頭未満は2着払い、8頭以上は3着払い
+        # ただし頭数 ≤ 払戻対象着順 の場合は全馬複勝対象（1.0）
+        place_within = 3 if n >= 8 else 2
+        if n <= place_within:
+            return [1.0] * n
+
         place_probs = []
 
         for i in range(n):
@@ -371,7 +377,9 @@ class CompositeIndexCalculator:
         )
 
         win_prob = Decimal(str(data["win_probability"])) if "win_probability" in data else None
-        place_prob = Decimal(str(data["place_probability"])) if "place_probability" in data else None
+        place_prob = (
+            Decimal(str(data["place_probability"])) if "place_probability" in data else None
+        )
 
         training_val = Decimal(str(data["training_index"])) if "training_index" in data else None
         anagusa_val = Decimal(str(data["anagusa_index"])) if "anagusa_index" in data else None

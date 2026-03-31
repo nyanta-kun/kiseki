@@ -68,6 +68,8 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
             key={currentDate}
             ref={dateInputRef}
             type="date"
+            aria-hidden="true"
+            tabIndex={-1}
             className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
             defaultValue={toInputValue(currentDate)}
             onChange={(e) => {

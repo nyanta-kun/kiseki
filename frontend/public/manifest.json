@@ -2,16 +2,28 @@
   "name": "kiseki - 競馬予測指数",
   "short_name": "kiseki",
   "description": "JV-Linkデータを元にした競馬指数・期待値分析システム",
-  "start_url": "/",
+  "start_url": "/kiseki/races",
+  "scope": "/kiseki/",
   "display": "standalone",
-  "background_color": "#1a5c38",
+  "background_color": "#0d1f35",
   "theme_color": "#1a5c38",
   "orientation": "portrait",
   "icons": [
     {
       "src": "/images/logo.png",
-      "sizes": "any",
+      "sizes": "192x192",
       "type": "image/png"
+    },
+    {
+      "src": "/images/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/images/logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

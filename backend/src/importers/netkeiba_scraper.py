@@ -149,13 +149,13 @@ def _parse_race_analysis(text: str) -> str | None:
     th内にimgタグが含まれるため .*? でスキップする。
     """
     m = re.search(
-        r'<th[^>]*>分析コメント.*?</th>\s*<td[^>]*>(.*?)</td>',
+        r"<th[^>]*>分析コメント.*?</th>\s*<td[^>]*>(.*?)</td>",
         text,
         re.DOTALL,
     )
     if not m:
         return None
-    return re.sub(r'<[^>]+>', '', m.group(1)).strip() or None
+    return re.sub(r"<[^>]+>", "", m.group(1)).strip() or None
 
 
 def _parse_horse_remarks(text: str) -> list[dict]:
@@ -175,7 +175,7 @@ def _parse_horse_remarks(text: str) -> list[dict]:
     # 備考を含む diary_snap_cut ブロックのパターン
     # ico_oikiri と ico_comment の後に続く <td nowrap> が備考列
     remarks_block_re = re.compile(
-        r'ico_oikiri\.gif.*?ico_comment\.gif.*?'
+        r"ico_oikiri\.gif.*?ico_comment\.gif.*?"
         r'<td nowrap="nowrap">\s*(.*?)\s*<div class="txt_c">',
         re.DOTALL,
     )
@@ -189,7 +189,7 @@ def _parse_horse_remarks(text: str) -> list[dict]:
     table_text = table_m.group(1) if table_m else text
 
     # 馬ごとのtr行を抽出
-    for row in re.finditer(r'<tr[^>]*>(.*?)</tr>', table_text, re.DOTALL):
+    for row in re.finditer(r"<tr[^>]*>(.*?)</tr>", table_text, re.DOTALL):
         row_html = row.group(1)
 
         horse_m = horse_link_re.search(row_html)
@@ -200,15 +200,17 @@ def _parse_horse_remarks(text: str) -> list[dict]:
         # 備考セルを抽出
         remarks_m = remarks_block_re.search(row_html)
         if remarks_m:
-            raw = re.sub(r'<[^>]+>', '', remarks_m.group(1)).strip()
+            raw = re.sub(r"<[^>]+>", "", remarks_m.group(1)).strip()
             remarks = raw if raw else None
         else:
             remarks = None
 
-        results.append({
-            "horse_name": horse_name,
-            "remarks": remarks,
-        })
+        results.append(
+            {
+                "horse_name": horse_name,
+                "remarks": remarks,
+            }
+        )
 
     return results
 
@@ -232,12 +234,12 @@ def _parse_notable_comments(text: str) -> dict[str, str]:
 
     # thが「N着:馬名」、次のtdがコメント
     entries = re.findall(
-        r'<th>\d+着:([^<]+)</th>\s*</tr>\s*<tr>\s*<td>(.*?)</td>',
+        r"<th>\d+着:([^<]+)</th>\s*</tr>\s*<tr>\s*<td>(.*?)</td>",
         table,
         re.DOTALL,
     )
     for horse_name, comment in entries:
-        comment_clean = re.sub(r'<[^>]+>', '', comment).strip()
+        comment_clean = re.sub(r"<[^>]+>", "", comment).strip()
         if horse_name and comment_clean:
             result[horse_name.strip()] = comment_clean
 

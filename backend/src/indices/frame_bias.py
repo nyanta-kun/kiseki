@@ -50,6 +50,7 @@ MEET_BIAS_WEIGHT = 0.30
 # 当開催バイアスの最大影響量（ポイント）
 MEET_BIAS_MAX_ADJ = 8.0
 
+
 # 着順→スコア変換: 1着に近いほど高いスコア
 def _position_score(pos: int, head_count: int) -> float:
     """着順を0-100のスコアに変換する（頭数で正規化）。
@@ -82,9 +83,7 @@ class FrameBiasCalculator(IndexCalculator):
         super().__init__(db)
         # 枠番統計のキャッシュ（同セッション内で再利用）
         # key: (course, distance, surface) -> {frame_number: {"avg_pos": float, "win_rate": float, "cnt": int}}
-        self._frame_stats_cache: dict[
-            tuple[str, int, str], dict[int, dict[str, float]]
-        ] = {}
+        self._frame_stats_cache: dict[tuple[str, int, str], dict[int, dict[str, float]]] = {}
         self._meet_bias = MeetBiasService(db)
 
     # ------------------------------------------------------------------
@@ -115,7 +114,9 @@ class FrameBiasCalculator(IndexCalculator):
             .first()
         )
         if not entry or entry.frame_number is None:
-            logger.warning(f"Entry not found or no frame_number: race_id={race_id}, horse_id={horse_id}")
+            logger.warning(
+                f"Entry not found or no frame_number: race_id={race_id}, horse_id={horse_id}"
+            )
             return SPEED_INDEX_MEAN
 
         return self._compute_frame_bias(race, int(entry.frame_number))
@@ -192,7 +193,7 @@ class FrameBiasCalculator(IndexCalculator):
         # 全枠標準偏差（枠間のばらつき）
         if len(all_scores) >= 2:
             variance = sum((s - global_avg_score) ** 2 for s in all_scores) / len(all_scores)
-            score_std = variance ** 0.5
+            score_std = variance**0.5
         else:
             score_std = 1.0  # フォールバック
 
@@ -284,10 +285,12 @@ class FrameBiasCalculator(IndexCalculator):
             pos_score = _position_score(int(result.finish_position), head_count)
             is_win = 1 if int(result.finish_position) == 1 else 0
 
-            frame_data[frame].append({
-                "pos_score": pos_score,
-                "is_win": is_win,
-            })
+            frame_data[frame].append(
+                {
+                    "pos_score": pos_score,
+                    "is_win": is_win,
+                }
+            )
 
         # 統計値に変換
         stats: dict[int, dict[str, float]] = {}

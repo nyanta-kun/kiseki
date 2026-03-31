@@ -33,10 +33,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from ..db.models import Race, RaceEntry, RaceResult

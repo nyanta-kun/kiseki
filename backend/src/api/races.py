@@ -7,30 +7,59 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+import os
 
-from sqlalchemy import exists, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, WebSocketException, status
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence
-from .ws_manager import manager as ws_manager, results_manager
+from .ws_manager import manager as ws_manager
+from .ws_manager import results_manager
 
 router = APIRouter(prefix="/api/races", tags=["races"])
+
+_ALLOWED_ORIGINS: set[str] = {
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+}
+
+
+def _check_ws_origin(ws: WebSocket) -> None:
+    """WebSocket接続のOriginヘッダーを検証する。
+
+    本番環境で ALLOWED_ORIGINS が設定されている場合のみ検証。
+    未設定（空文字）の場合は検証をスキップ（ローカル開発用）。
+    """
+    if not _ALLOWED_ORIGINS:
+        return
+    origin = ws.headers.get("origin", "")
+    if origin not in _ALLOWED_ORIGINS:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
 
 DbDep = Annotated[Session, Depends(get_db)]
 
 # JRA 2桁コード → sekito.anagusa course_code
 _JRA_TO_SEKITO: dict[str, str] = {
-    "01": "JSPK", "02": "JHKD", "03": "JFKS", "04": "JNGT", "05": "JTOK",
-    "06": "JNKY", "07": "JCKO", "08": "JKYO", "09": "JHSN", "10": "JKKR",
+    "01": "JSPK",
+    "02": "JHKD",
+    "03": "JFKS",
+    "04": "JNGT",
+    "05": "JTOK",
+    "06": "JNKY",
+    "07": "JCKO",
+    "08": "JKYO",
+    "09": "JHSN",
+    "10": "JKKR",
 }
 
 
-def _compute_upside_scores(horses: list["HorseIndexOut"]) -> None:
+def _compute_upside_scores(horses: list[HorseIndexOut]) -> None:
     """穴馬スコアをレース内全馬に付与する（in-place）。
 
     考え方:
@@ -53,11 +82,11 @@ def _compute_upside_scores(horses: list["HorseIndexOut"]) -> None:
     """
     # 穴馬スコアに使う個別指数と重み（実測リフト比例）
     UPSIDE_WEIGHTS: dict[str, float] = {
-        "anagusa_index":    0.30,
-        "course_aptitude":  0.28,
-        "paddock_index":    0.23,
-        "pedigree_index":   0.10,
-        "jockey_index":     0.09,
+        "anagusa_index": 0.30,
+        "course_aptitude": 0.28,
+        "paddock_index": 0.23,
+        "pedigree_index": 0.10,
+        "jockey_index": 0.09,
     }
 
     n = len(horses)
@@ -97,19 +126,22 @@ def _compute_upside_scores(horses: list["HorseIndexOut"]) -> None:
         h.upside_score = round(raw_scores[i] / max_score, 4)
 
 
-def _fetch_anagusa_picks(db: Session, race: "Race") -> dict[int, str]:
+def _fetch_anagusa_picks(db: Session, race: Race) -> dict[int, str]:
     """sekito.anagusa からレースのピック情報を取得する。
 
     Returns:
         {horse_no: rank} — A/B/C のいずれか
     """
     from sqlalchemy import text as _text
+
     sekito_code = _JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
         return {}
     race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
     rows = db.execute(
-        _text("SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"),
+        _text(
+            "SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"
+        ),
         {"d": race_date, "c": sekito_code, "r": race.race_number},
     ).fetchall()
     return {r[0]: r[1] for r in rows if r[1] in ("A", "B", "C")}
@@ -118,6 +150,7 @@ def _fetch_anagusa_picks(db: Session, race: "Race") -> dict[int, str]:
 def _anagusa_picks_for_date(db: Session, date: str) -> set[tuple[str, int]]:
     """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
     from sqlalchemy import text as _text
+
     race_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
     rows = db.execute(
         _text("SELECT course_code, race_no FROM sekito.anagusa WHERE date = :d"),
@@ -131,6 +164,7 @@ def _anagusa_picks_for_date(db: Session, date: str) -> set[tuple[str, int]]:
 # -------------------------------------------------------------------
 class RaceOut(BaseModel):
     """レース情報レスポンス。"""
+
     id: int
     date: str
     course_name: str
@@ -143,10 +177,10 @@ class RaceOut(BaseModel):
     weather: str | None
     head_count: int | None
     jravan_race_id: str | None
-    post_time: str | None = None       # 発走時刻 (hhmm形式, 例: "1025")
+    post_time: str | None = None  # 発走時刻 (hhmm形式, 例: "1025")
     race_class_label: str | None = None  # 条件戦クラスラベル（例: "3歳未勝利", "4歳以上2勝クラス"）
     has_indices: bool = False
-    has_anagusa: bool = False           # 穴ぐさ指数58以上の馬が存在するか
+    has_anagusa: bool = False  # 穴ぐさ指数58以上の馬が存在するか
     confidence_score: int | None = None
     confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
 
@@ -155,6 +189,7 @@ class RaceOut(BaseModel):
 
 class EntryOut(BaseModel):
     """出馬表エントリーレスポンス。"""
+
     id: int
     frame_number: int
     horse_number: int
@@ -170,6 +205,7 @@ class EntryOut(BaseModel):
 
 class ResultOut(BaseModel):
     """成績レスポンス。"""
+
     horse_number: int | None
     finish_position: int | None
     finish_time: float | None
@@ -181,26 +217,29 @@ class ResultOut(BaseModel):
 
 class RaceConfidence(BaseModel):
     """レース信頼度スコア。"""
+
     score: int
-    label: str          # "HIGH" | "MID" | "LOW"
-    gap_1_2: float      # 1位-2位の指数差
-    gap_1_3: float      # 1位-3位の指数差
+    label: str  # "HIGH" | "MID" | "LOW"
+    gap_1_2: float  # 1位-2位の指数差
+    gap_1_3: float  # 1位-3位の指数差
     head_count: int
 
 
 class IndicesResponse(BaseModel):
     """指数APIレスポンス（馬リスト + レース信頼度）。"""
-    horses: list["HorseIndexOut"]
+
+    horses: list[HorseIndexOut]
     confidence: RaceConfidence
 
 
 class HorseIndexOut(BaseModel):
     """1頭分の指数レスポンス。"""
+
     horse_id: int
     horse_number: int
     horse_name: str
     composite_index: float
-    win_probability: float | None   # 勝率予測
+    win_probability: float | None  # 勝率予測
     place_probability: float | None  # 複勝率予測（3着以内）
     # 単体指数
     speed_index: float | None
@@ -220,7 +259,8 @@ class HorseIndexOut(BaseModel):
 
 class OddsOut(BaseModel):
     """単勝・複勝オッズレスポンス。"""
-    win: dict[str, float]    # horse_number (str) → オッズ倍率
+
+    win: dict[str, float]  # horse_number (str) → オッズ倍率
     place: dict[str, float]  # horse_number (str) → オッズ倍率（中間値）
 
 
@@ -277,6 +317,7 @@ def list_races(
     race_ids = [r.id for r in races]
     # 各レースで利用可能な最大バージョンを取得
     from sqlalchemy import func
+
     best_versions: dict[int, int] = {}
     if race_ids:
         for rid, ver in (
@@ -289,18 +330,18 @@ def list_races(
 
     # 各レースの composite_index 一覧を取得
     from collections import defaultdict
+
     race_indices: dict[int, list[float]] = defaultdict(list)
     if best_versions:
         from sqlalchemy import tuple_
+
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
         rows = (
             db.query(
                 CalculatedIndex.race_id,
                 CalculatedIndex.composite_index,
             )
-            .filter(
-                tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs)
-            )
+            .filter(tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs))
             .all()
         )
         for rid, ci in rows:
@@ -352,17 +393,19 @@ def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
 
     result = []
     for entry, horse, jockey in entries:
-        result.append(EntryOut(
-            id=entry.id,
-            frame_number=entry.frame_number,
-            horse_number=entry.horse_number,
-            horse_name=horse.name,
-            jockey_name=jockey.name if jockey else None,
-            trainer_name=None,  # Trainerは別途join対応
-            weight_carried=float(entry.weight_carried) if entry.weight_carried else None,
-            horse_weight=entry.horse_weight,
-            weight_change=entry.weight_change,
-        ))
+        result.append(
+            EntryOut(
+                id=entry.id,
+                frame_number=entry.frame_number,
+                horse_number=entry.horse_number,
+                horse_name=horse.name,
+                jockey_name=jockey.name if jockey else None,
+                trainer_name=None,  # Trainerは別途join対応
+                weight_carried=float(entry.weight_carried) if entry.weight_carried else None,
+                horse_weight=entry.horse_weight,
+                weight_change=entry.weight_change,
+            )
+        )
     return result
 
 
@@ -391,8 +434,11 @@ def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
 
     rows = (
         db.query(CalculatedIndex, RaceEntry, Horse)
-        .join(RaceEntry, (RaceEntry.race_id == CalculatedIndex.race_id)
-              & (RaceEntry.horse_id == CalculatedIndex.horse_id))
+        .join(
+            RaceEntry,
+            (RaceEntry.race_id == CalculatedIndex.race_id)
+            & (RaceEntry.horse_id == CalculatedIndex.horse_id),
+        )
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
         .filter(CalculatedIndex.race_id == race_id)
         .filter(CalculatedIndex.version == use_version)
@@ -518,6 +564,7 @@ async def odds_websocket(race_id: int, ws: WebSocket) -> None:
 
     接続後、オッズが更新されるたびに {"win": {...}, "place": {...}} を送信する。
     """
+    _check_ws_origin(ws)
     await ws_manager.connect(race_id, ws)
     try:
         while True:
@@ -533,6 +580,7 @@ async def results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
     接続時に現在の成績を即送信し、その後は成績確定時にブロードキャストされる
     [{horse_number, finish_position, finish_time, last_3f, horse_name}, ...] を受信する。
     """
+    _check_ws_origin(ws)
     await results_manager.connect(race_id, ws)
     try:
         # 接続時に現在の成績を即送信（ページリロード不要にするため）
@@ -547,7 +595,8 @@ async def results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
 
 def _fetch_results_payload(race_id: int, db) -> list[dict]:
     """指定レースの成績をWebSocket送信用リストで返す。"""
-    from ..db.models import RaceResult, Horse
+    from ..db.models import Horse, RaceResult
+
     rows = (
         db.query(RaceResult, Horse)
         .join(Horse, RaceResult.horse_id == Horse.id)

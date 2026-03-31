@@ -42,29 +42,29 @@ logger = logging.getLogger(__name__)
 # 定数
 # ─────────────────────────────────────────────
 
-DIST_SPRINT_MAX = 1400   # スプリント: ≤1400m
-DIST_MILE_MAX   = 1800   # マイル: 1401-1800m
-DIST_MIDDLE_MAX = 2400   # 中距離: 1801-2400m
+DIST_SPRINT_MAX = 1400  # スプリント: ≤1400m
+DIST_MILE_MAX = 1800  # マイル: 1401-1800m
+DIST_MIDDLE_MAX = 2400  # 中距離: 1801-2400m
 # 長距離: >2400m
 
 # JRA競馬場コード
 JRA_COURSES = ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10")
 
 # 斤量カテゴリ境界 (kg)
-WEIGHT_LIGHT_MAX = 55.0   # ≤55.0 = light
-WEIGHT_HEAVY_MIN = 57.5   # ≥57.5 = heavy
+WEIGHT_LIGHT_MAX = 55.0  # ≤55.0 = light
+WEIGHT_HEAVY_MIN = 57.5  # ≥57.5 = heavy
 
 # 父/母父の重み
-SIRE_WEIGHT     = 0.65
+SIRE_WEIGHT = 0.65
 DAM_SIRE_WEIGHT = 0.35
 
 # 各因子の重み (合計 1.0)
 FACTOR_WEIGHTS: dict[str, float] = {
-    "surface":  0.35,
+    "surface": 0.35,
     "dist_cat": 0.25,
-    "course":   0.20,
-    "grass":    0.10,
-    "weight":   0.10,
+    "course": 0.20,
+    "grass": 0.10,
+    "weight": 0.10,
 }
 
 # z-score スケーリング: ±3σ = 0/100 に対応
@@ -82,6 +82,7 @@ INDEX_MAX = 100.0
 # ─────────────────────────────────────────────
 # ヘルパー関数
 # ─────────────────────────────────────────────
+
 
 def _dist_category(distance: int | None) -> str:
     """距離（メートル）を距離カテゴリ名に変換する。"""
@@ -119,9 +120,11 @@ def _weight_cat(weight_carried: float | None) -> str:
 # 種牡馬実績統計キャッシュ
 # ─────────────────────────────────────────────
 
+
 @dataclass
 class _CondStats:
     """ある条件での実績統計。"""
+
     cnt: int
     win_rate: float
     place_rate: float
@@ -181,7 +184,9 @@ class SireStatsCache:
         jra_in = "'" + "','".join(JRA_COURSES) + "'"
 
         # 父（sire）の統計
-        self._load_factor("surface", f"""
+        self._load_factor(
+            "surface",
+            f"""
             SELECT p.sire,
                    CASE WHEN ra.surface LIKE '芝%%' THEN 'turf' ELSE 'dirt' END surface_key,
                    COUNT(*) cnt,
@@ -193,9 +198,12 @@ class SireStatsCache:
             WHERE rr.finish_position IS NOT NULL AND rr.abnormality_code = 0
               AND p.sire IS NOT NULL AND ra.course IN ({jra_in})
             GROUP BY p.sire, surface_key
-        """)
+        """,
+        )
 
-        self._load_factor("dist_cat", f"""
+        self._load_factor(
+            "dist_cat",
+            f"""
             SELECT p.sire,
                    CASE WHEN ra.distance <= 1400 THEN 'sprint'
                         WHEN ra.distance <= 1800 THEN 'mile'
@@ -210,9 +218,12 @@ class SireStatsCache:
             WHERE rr.finish_position IS NOT NULL AND rr.abnormality_code = 0
               AND p.sire IS NOT NULL AND ra.course IN ({jra_in})
             GROUP BY p.sire, dist_cat
-        """)
+        """,
+        )
 
-        self._load_factor("course", f"""
+        self._load_factor(
+            "course",
+            f"""
             SELECT p.sire, ra.course,
                    COUNT(*) cnt,
                    AVG(CASE WHEN rr.finish_position=1 THEN 1.0 ELSE 0.0 END) win_rate,
@@ -223,9 +234,12 @@ class SireStatsCache:
             WHERE rr.finish_position IS NOT NULL AND rr.abnormality_code = 0
               AND p.sire IS NOT NULL AND ra.course IN ({jra_in})
             GROUP BY p.sire, ra.course
-        """)
+        """,
+        )
 
-        self._load_factor("grass", f"""
+        self._load_factor(
+            "grass",
+            f"""
             SELECT p.sire, rf.grass_type,
                    COUNT(*) cnt,
                    AVG(CASE WHEN rr.finish_position=1 THEN 1.0 ELSE 0.0 END) win_rate,
@@ -238,9 +252,12 @@ class SireStatsCache:
               AND p.sire IS NOT NULL AND ra.surface NOT LIKE 'ダ%%'
               AND ra.course IN ({jra_in})
             GROUP BY p.sire, rf.grass_type
-        """)
+        """,
+        )
 
-        self._load_factor("weight", f"""
+        self._load_factor(
+            "weight",
+            f"""
             SELECT p.sire,
                    CASE WHEN re.weight_carried <= 55.0 THEN 'light'
                         WHEN re.weight_carried >= 57.5 THEN 'heavy'
@@ -256,10 +273,13 @@ class SireStatsCache:
               AND p.sire IS NOT NULL AND re.weight_carried IS NOT NULL
               AND ra.course IN ({jra_in})
             GROUP BY p.sire, weight_cat
-        """)
+        """,
+        )
 
         # 母父（sire_of_dam）の統計（父と同じ因子を集計）
-        self._load_factor("surface", f"""
+        self._load_factor(
+            "surface",
+            f"""
             SELECT p.sire_of_dam,
                    CASE WHEN ra.surface LIKE '芝%%' THEN 'turf' ELSE 'dirt' END surface_key,
                    COUNT(*) cnt,
@@ -272,14 +292,14 @@ class SireStatsCache:
               AND p.sire_of_dam IS NOT NULL AND ra.course IN ({jra_in})
               AND p.sire_of_dam NOT IN (SELECT DISTINCT sire FROM keiba.pedigrees WHERE sire IS NOT NULL)
             GROUP BY p.sire_of_dam, surface_key
-        """, merge=True)  # merge=True: 既存エントリとマージ（片方にしかない馬）
+        """,
+            merge=True,
+        )  # merge=True: 既存エントリとマージ（片方にしかない馬）
 
         # 母集団統計（平均・標準偏差）を計算
         self._compute_pop_stats()
 
-        logger.info(
-            f"SireStatsCache: {len(self.stats):,}種牡馬分の統計を集計完了"
-        )
+        logger.info(f"SireStatsCache: {len(self.stats):,}種牡馬分の統計を集計完了")
 
     def _load_factor(self, factor_name: str, sql: str, merge: bool = False) -> None:
         """SQL結果をキャッシュに格納する。
@@ -392,6 +412,7 @@ class SireStatsCache:
 # 血統指数算出 Agent
 # ─────────────────────────────────────────────
 
+
 class PedigreeIndexCalculator(IndexCalculator):
     """血統指数算出Agent（データ駆動型）。
 
@@ -458,15 +479,10 @@ class PedigreeIndexCalculator(IndexCalculator):
             return {}
 
         horse_ids = [e.horse_id for e in entries]
-        pedigrees = (
-            self.db.query(Pedigree)
-            .filter(Pedigree.horse_id.in_(horse_ids))
-            .all()
-        )
+        pedigrees = self.db.query(Pedigree).filter(Pedigree.horse_id.in_(horse_ids)).all()
         ped_map: dict[int, Pedigree] = {p.horse_id: p for p in pedigrees}
         weight_map: dict[int, float | None] = {
-            e.horse_id: (float(e.weight_carried) if e.weight_carried else None)
-            for e in entries
+            e.horse_id: (float(e.weight_carried) if e.weight_carried else None) for e in entries
         }
 
         result: dict[int, float] = {}
@@ -501,14 +517,16 @@ class PedigreeIndexCalculator(IndexCalculator):
         Returns:
             血統指数（0-100）
         """
-        surface   = _surface_key(race.surface)
-        dist_cat  = _dist_category(race.distance)
-        course    = race.course or ""
-        grass     = self._cache.course_grass_type(course) or ""
-        weight    = _weight_cat(weight_carried)
+        surface = _surface_key(race.surface)
+        dist_cat = _dist_category(race.distance)
+        course = race.course or ""
+        grass = self._cache.course_grass_type(course) or ""
+        weight = _weight_cat(weight_carried)
 
-        sire_score     = self._factor_score(pedigree.sire, surface, dist_cat, course, grass, weight)
-        dam_sire_score = self._factor_score(pedigree.sire_of_dam, surface, dist_cat, course, grass, weight)
+        sire_score = self._factor_score(pedigree.sire, surface, dist_cat, course, grass, weight)
+        dam_sire_score = self._factor_score(
+            pedigree.sire_of_dam, surface, dist_cat, course, grass, weight
+        )
 
         # 芝レース以外は grass 因子を surface に振り替え（ダートに洋芝/野芝区別なし）
         if surface == "dirt":
@@ -545,11 +563,11 @@ class PedigreeIndexCalculator(IndexCalculator):
         """
         c = self._cache
         scores = {
-            "surface":  c.aptitude_score(sire_name, "surface",  surface),
+            "surface": c.aptitude_score(sire_name, "surface", surface),
             "dist_cat": c.aptitude_score(sire_name, "dist_cat", dist_cat),
-            "course":   c.aptitude_score(sire_name, "course",   course),
-            "grass":    c.aptitude_score(sire_name, "grass",    grass) if grass else NEUTRAL,
-            "weight":   c.aptitude_score(sire_name, "weight",   weight),
+            "course": c.aptitude_score(sire_name, "course", course),
+            "grass": c.aptitude_score(sire_name, "grass", grass) if grass else NEUTRAL,
+            "weight": c.aptitude_score(sire_name, "weight", weight),
         }
 
         # ダートレースは grass 重みを surface に加算

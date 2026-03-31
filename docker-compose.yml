@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ローカル開発用 Compose
 # - backend: src/ をvolumeマウント → コード変更即時反映（--reload付き）
 # - frontend: pnpm dev で起動 → ホットリロード対応、ビルド不要
@@ -25,6 +23,11 @@ services:
     networks:
       - kiseki
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 30s

@@ -42,17 +42,19 @@ logger = logging.getLogger(__name__)
 #   斜行           → 加害馬の行為を示す表現
 #   競走除外・競走中止 → 完走できなかった事象（能力評価の文脈では不利でない）
 #   落馬           → 次走で巻き返し推定の根拠にはならない
-_DISADVANTAGE_KEYWORDS = frozenset([
-    "出遅れ",
-    "不利",
-    "S接触",
-    "内に張られ",
-    "外に張られ",
-    "内に寄られ",
-    "外に寄られ",
-    "弾かれ",
-    "挟まれ",
-])
+_DISADVANTAGE_KEYWORDS = frozenset(
+    [
+        "出遅れ",
+        "不利",
+        "S接触",
+        "内に張られ",
+        "外に張られ",
+        "内に寄られ",
+        "外に寄られ",
+        "弾かれ",
+        "挟まれ",
+    ]
+)
 
 
 def _is_disadvantage(remarks: str | None) -> bool:
@@ -96,8 +98,7 @@ def import_previous_race_extras(
 
     # ── Step 1: 全対象レースの出走馬を一括取得 ──────────────────────────────
     all_entries: list[tuple[int, int]] = session.execute(  # (horse_id, target_race_id)
-        select(RaceEntry.horse_id, RaceEntry.race_id)
-        .where(RaceEntry.race_id.in_(target_race_ids))
+        select(RaceEntry.horse_id, RaceEntry.race_id).where(RaceEntry.race_id.in_(target_race_ids))
     ).all()
 
     if not all_entries:
@@ -106,7 +107,8 @@ def import_previous_race_extras(
 
     logger.info(
         "対象レース %d 本、合計 %d 頭分の前走を収集します",
-        len(target_race_ids), len(all_entries),
+        len(target_race_ids),
+        len(all_entries),
     )
 
     # ── Step 2: 各馬の前走レースを取得 ───────────────────────────────────────
@@ -128,9 +130,7 @@ def import_previous_race_extras(
             logger.debug("馬ID %d: 前走なし", horse_id)
             continue
 
-        scrape_map.setdefault(prev.jravan_race_id, set()).add(
-            (horse_id, prev.race_id)
-        )
+        scrape_map.setdefault(prev.jravan_race_id, set()).add((horse_id, prev.race_id))
 
     if not scrape_map:
         logger.warning("スクレイピング対象の前走が見つかりません")
@@ -140,8 +140,9 @@ def import_previous_race_extras(
     all_prev_race_ids = {race_db_id for pairs in scrape_map.values() for _, race_db_id in pairs}
     existing: set[tuple[int, int]] = set(
         session.execute(
-            select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id)
-            .where(NetkeibaRaceExtra.race_id.in_(all_prev_race_ids))
+            select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id).where(
+                NetkeibaRaceExtra.race_id.in_(all_prev_race_ids)
+            )
         ).all()
     )
 
@@ -195,13 +196,15 @@ def import_previous_race_extras(
                 notable = notable_map.get(horse_name) if horse_name else None
 
                 session.execute(
-                    insert(NetkeibaRaceExtra).values(
+                    insert(NetkeibaRaceExtra)
+                    .values(
                         race_id=prev_race_db_id,
                         horse_id=horse_id,
                         remarks=remarks,
                         notable_comment=notable,
                         race_analysis=race_analysis,
-                    ).on_conflict_do_update(
+                    )
+                    .on_conflict_do_update(
                         constraint="uq_netkeiba_race_extras_race_horse",
                         set_={
                             "remarks": remarks,
@@ -222,7 +225,9 @@ def import_previous_race_extras(
                     )
                     logger.info(
                         "不利フラグ ON: race=%d horse=%d remarks=%r",
-                        prev_race_db_id, horse_id, remarks,
+                        prev_race_db_id,
+                        horse_id,
+                        remarks,
                     )
 
                 stored_count += 1
@@ -248,13 +253,15 @@ def import_for_date(session: Session, date: str) -> int:
     """
     from ..db.models import Race, RaceEntry
 
-    race_ids: list[int] = session.execute(
-        select(Race.id)
-        .where(Race.date == date)
-        .where(
-            Race.id.in_(select(RaceEntry.race_id).distinct())
+    race_ids: list[int] = (
+        session.execute(
+            select(Race.id)
+            .where(Race.date == date)
+            .where(Race.id.in_(select(RaceEntry.race_id).distinct()))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     if not race_ids:
         logger.warning("date=%s に出走馬のいるレースが見つかりません", date)
@@ -310,15 +317,15 @@ def import_race_remarks_direct(
     # ── Step 2: 取得済み (race_id, horse_id) を確認 ───────────────────────────
     existing: set[tuple[int, int]] = set(
         session.execute(
-            select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id)
-            .where(NetkeibaRaceExtra.race_id.in_(race_ids))
+            select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id).where(
+                NetkeibaRaceExtra.race_id.in_(race_ids)
+            )
         ).all()
     )
 
     # ── Step 3: 各レースの出走馬を一括取得 ───────────────────────────────────
     entries = session.execute(
-        select(RaceEntry.race_id, RaceEntry.horse_id)
-        .where(RaceEntry.race_id.in_(race_ids))
+        select(RaceEntry.race_id, RaceEntry.horse_id).where(RaceEntry.race_id.in_(race_ids))
     ).all()
 
     race_horse_map: dict[int, set[int]] = {}
@@ -381,11 +388,13 @@ def import_race_remarks_direct(
                 remarks = remarks_map.get(horse_name) if horse_name else None
 
                 session.execute(
-                    insert(NetkeibaRaceExtra).values(
+                    insert(NetkeibaRaceExtra)
+                    .values(
                         race_id=race_id,
                         horse_id=horse_id,
                         remarks=remarks,
-                    ).on_conflict_do_update(
+                    )
+                    .on_conflict_do_update(
                         constraint="uq_netkeiba_race_extras_race_horse",
                         set_={
                             "remarks": remarks,
@@ -398,7 +407,9 @@ def import_race_remarks_direct(
                     disadvantage_updates.append((race_id, horse_id))
                     logger.info(
                         "不利フラグ ON: race=%d horse=%d remarks=%r",
-                        race_id, horse_id, remarks,
+                        race_id,
+                        horse_id,
+                        remarks,
                     )
 
                 stored_count += 1
@@ -441,6 +452,7 @@ def import_race_remarks_for_month(session: Session, year_month: str) -> int:
         DB格納した (race_id, horse_id) ペア数（月累計）
     """
     import calendar
+
     from ..db.models import Race
 
     year = int(year_month[:4])
@@ -449,14 +461,18 @@ def import_race_remarks_for_month(session: Session, year_month: str) -> int:
     _, last_day = calendar.monthrange(year, month)
     end = f"{year_month}{last_day:02d}"
 
-    dates: list[str] = session.execute(
-        select(Race.date)
-        .where(Race.date >= start)
-        .where(Race.date <= end)
-        .where(Race.jravan_race_id.is_not(None))
-        .distinct()
-        .order_by(Race.date)
-    ).scalars().all()
+    dates: list[str] = (
+        session.execute(
+            select(Race.date)
+            .where(Race.date >= start)
+            .where(Race.date <= end)
+            .where(Race.jravan_race_id.is_not(None))
+            .distinct()
+            .order_by(Race.date)
+        )
+        .scalars()
+        .all()
+    )
 
     if not dates:
         logger.warning("year_month=%s に開催日が見つかりません", year_month)
@@ -469,7 +485,9 @@ def import_race_remarks_for_month(session: Session, year_month: str) -> int:
 
     logger.info(
         "year_month=%s: %d 開催日をログイン1回で処理開始（日付間 %d 秒待機）",
-        year_month, len(dates), _DATE_INTERVAL_SECONDS,
+        year_month,
+        len(dates),
+        _DATE_INTERVAL_SECONDS,
     )
     client = create_session(user_id, password)
     month_total = 0
@@ -483,7 +501,8 @@ def import_race_remarks_for_month(session: Session, year_month: str) -> int:
             if i < len(dates) - 1:
                 logger.info(
                     "date=%s 完了。次の日付まで %d 秒待機...",
-                    date, _DATE_INTERVAL_SECONDS,
+                    date,
+                    _DATE_INTERVAL_SECONDS,
                 )
                 time.sleep(_DATE_INTERVAL_SECONDS)
     finally:

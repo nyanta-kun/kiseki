@@ -5,23 +5,18 @@ DB接続不要のユニットテスト。SireStatsCache をモックして適性
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.indices.pedigree import (
-    DAM_SIRE_WEIGHT,
     NEUTRAL,
-    SIRE_WEIGHT,
-    SireStatsCache,
     PedigreeIndexCalculator,
+    SireStatsCache,
     _CondStats,
     _dist_category,
     _surface_key,
     _weight_cat,
 )
 from src.utils.constants import SPEED_INDEX_MEAN
-
 
 # ---------------------------------------------------------------------------
 # ユーティリティ: _dist_category
@@ -220,8 +215,8 @@ class TestSireStatsCacheAptitudeScore:
         cache = _make_cache_with_data()
         # dirt は cnt=20 < RELIABLE_SAMPLES=20 のボーダー（ちょうど20=1.0だが念のため）
         # sprint は cnt=10 → 信頼度=0.5 → neutral に寄る
-        full_score = cache.aptitude_score("TestSire", "surface", "turf")   # cnt=100 → 信頼度高
-        low_score = cache.aptitude_score("TestSire", "dist_cat", "sprint") # cnt=10 → 信頼度低
+        full_score = cache.aptitude_score("TestSire", "surface", "turf")  # cnt=100 → 信頼度高
+        low_score = cache.aptitude_score("TestSire", "dist_cat", "sprint")  # cnt=10 → 信頼度低
         # sprint も get_rate は低いが、サンプル不足でニュートラルに引き戻される
         # → full_score より NEUTRAL に近いはず
         assert abs(low_score - NEUTRAL) < abs(full_score - NEUTRAL)

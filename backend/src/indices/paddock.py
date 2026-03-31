@@ -25,10 +25,8 @@ sekito.netkeiba テーブルの p_type / p_rank / p_comment を参照し、
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from ..db.models import Race, RaceEntry
 from .base import IndexCalculator
@@ -59,9 +57,9 @@ SEKITO_COURSE_MAP: dict[str, str] = {
 # p_type: "人気" | "特注"
 # p_rank: "A" | "B" | "C" | "穴"
 PADDOCK_SCORES: dict[tuple[str, str], float] = {
-    ("人気", "A"): 85.0,   # 複勝率 52.3%
-    ("人気", "B"): 70.0,   # 複勝率 37.9%
-    ("人気", "C"): 45.0,   # 複勝率 20.8%（人気馬として期待を下回る）
+    ("人気", "A"): 85.0,  # 複勝率 52.3%
+    ("人気", "B"): 70.0,  # 複勝率 37.9%
+    ("人気", "C"): 45.0,  # 複勝率 20.8%（人気馬として期待を下回る）
     ("特注", "穴"): 60.0,  # 複勝率 20.1%（穴馬として高い水準）
 }
 
@@ -104,11 +102,7 @@ class PaddockIndexCalculator(IndexCalculator):
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = (
-            self.db.query(RaceEntry)
-            .filter(RaceEntry.race_id == race_id)
-            .all()
-        )
+        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
         if not entries:
             return {}
 
@@ -122,17 +116,14 @@ class PaddockIndexCalculator(IndexCalculator):
             result[entry.horse_id] = round(score, 1)
 
         available = sum(1 for v in result.values() if v != NEUTRAL_SCORE)
-        logger.debug(
-            f"パドック指数: race_id={race_id} "
-            f"available={available}/{len(entries)}"
-        )
+        logger.debug(f"パドック指数: race_id={race_id} available={available}/{len(entries)}")
         return result
 
     # ------------------------------------------------------------------
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _fetch_paddock(self, race: Race) -> dict[int, tuple[Optional[str], Optional[str]]]:
+    def _fetch_paddock(self, race: Race) -> dict[int, tuple[str | None, str | None]]:
         """sekito.netkeiba からこのレースのパドックデータを取得する。
 
         Args:

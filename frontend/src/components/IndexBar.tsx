@@ -18,7 +18,14 @@ export function IndexBar({ value, max = 100, showValue = false }: Props) {
           {value !== null ? value.toFixed(0) : "-"}
         </span>
       )}
-      <div className="index-bar flex-1">
+      <div
+        className="index-bar flex-1"
+        role="progressbar"
+        aria-valuenow={value ?? 0}
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-label="指数バー"
+      >
         <div
           className={`index-bar-fill ${indexBarColor(value)}`}
           style={{ width: `${pct}%` }}

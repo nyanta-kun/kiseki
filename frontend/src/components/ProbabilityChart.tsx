@@ -269,6 +269,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
         <div className="flex gap-1">
           <button
             onClick={() => setSortByHorseNumber(false)}
+            aria-pressed={!sortByHorseNumber}
             className={cn(
               "text-[11px] px-2 py-0.5 rounded-full border transition-colors",
               !sortByHorseNumber
@@ -280,6 +281,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
           </button>
           <button
             onClick={() => setSortByHorseNumber(true)}
+            aria-pressed={sortByHorseNumber}
             className={cn(
               "text-[11px] px-2 py-0.5 rounded-full border transition-colors",
               sortByHorseNumber
@@ -318,6 +320,8 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
             margin={{ top: 0, right: 8, left: 0, bottom: 0 }}
             barSize={8}
             barGap={2}
+            accessibilityLayer
+            aria-label="勝率・複勝率チャート"
           >
             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
             <XAxis

@@ -25,7 +25,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
@@ -33,7 +32,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..db.models import Race, RaceEntry, RaceResult, RacecourseFeatures
+from ..db.models import Race, RacecourseFeatures, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
 from .base import IndexCalculator
 
@@ -43,23 +42,27 @@ logger = logging.getLogger(__name__)
 LOOKBACK_RACES = 20
 # 距離近接度ブレーク点 (m)
 DIST_BREAKS = [(200, 1.0), (400, 0.7), (600, 0.4)]
-DIST_FALLBACK_WEIGHT = 0.1   # 600m超の重みスケール
+DIST_FALLBACK_WEIGHT = 0.1  # 600m超の重みスケール
 # 信頼度計算：有効重み合計がこれ以上で reliability=1.0
 RELIABLE_WEIGHT = 3.0
+# 有効サンプル（重み付き）の最低件数：これ未満ならデフォルト値を返す
+MIN_SAMPLE = 3
 
 # コース類似度計算の次元ウェイト
 SIM_W_DIRECTION = 0.25
-SIM_W_STRAIGHT  = 0.35
+SIM_W_STRAIGHT = 0.35
 SIM_W_ELEVATION = 0.25
-SIM_W_CIRCUIT   = 0.15
+SIM_W_CIRCUIT = 0.15
 
 # 同一馬場種別かどうかで類似度補正
 GRASS_SAME_BONUS = 1.0
-GRASS_DIFF_PENALTY = 0.6   # 洋芝 ↔ 野芝+洋芝 は完全に別扱いではないが割引
+GRASS_DIFF_PENALTY = 0.6  # 洋芝 ↔ 野芝+洋芝 は完全に別扱いではないが割引
+
 
 # 着順→生スコアの変換（1着=100, 以降-15ずつ, 最低0）
 def _position_score(pos: int) -> float:
     return max(0.0, 100.0 - (pos - 1) * 15.0)
+
 
 INDEX_MIN = 0.0
 INDEX_MAX = 100.0
@@ -105,9 +108,7 @@ class CourseAptitudeCalculator(IndexCalculator):
         rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
 
         return {
-            entry.horse_id: self._compute_aptitude_index(
-                rows_map.get(entry.horse_id, []), race
-            )
+            entry.horse_id: self._compute_aptitude_index(rows_map.get(entry.horse_id, []), race)
             for entry in entries
         }
 
@@ -153,28 +154,35 @@ class CourseAptitudeCalculator(IndexCalculator):
         fa = features.get(code_a)
         fb = features.get(code_b)
         if fa is None or fb is None:
-            return 0.5  # 特徴不明→中立
+            return 0.0  # 特徴不明→類似度なし（除外）
 
         # 回り方向
         dir_score = 1.0 if fa.direction == fb.direction else 0.0
 
         # 直線距離（正規化: 最大差 ≈ 658-262 = 396m を1.0とする）
         straight_range = 400.0
-        straight_score = max(0.0, 1.0 - abs(float(fa.straight_distance) - float(fb.straight_distance)) / straight_range)
+        straight_score = max(
+            0.0,
+            1.0 - abs(float(fa.straight_distance) - float(fb.straight_distance)) / straight_range,
+        )
 
         # 高低差（正規化: 最大差 ≈ 3.5m を1.0とする）
         elevation_range = 4.0
-        elevation_score = max(0.0, 1.0 - abs(float(fa.elevation_diff) - float(fb.elevation_diff)) / elevation_range)
+        elevation_score = max(
+            0.0, 1.0 - abs(float(fa.elevation_diff) - float(fb.elevation_diff)) / elevation_range
+        )
 
         # 1周距離（正規化: 最大差 ≈ 2223-1600 = 623m を1.0とする）
         circuit_range = 700.0
-        circuit_score = max(0.0, 1.0 - abs(float(fa.circuit_length) - float(fb.circuit_length)) / circuit_range)
+        circuit_score = max(
+            0.0, 1.0 - abs(float(fa.circuit_length) - float(fb.circuit_length)) / circuit_range
+        )
 
         similarity = (
-            dir_score     * SIM_W_DIRECTION
+            dir_score * SIM_W_DIRECTION
             + straight_score * SIM_W_STRAIGHT
             + elevation_score * SIM_W_ELEVATION
-            + circuit_score  * SIM_W_CIRCUIT
+            + circuit_score * SIM_W_CIRCUIT
         )
 
         # 芝種別補正（洋芝 vs 野芝+洋芝 は若干割引）
@@ -261,8 +269,8 @@ class CourseAptitudeCalculator(IndexCalculator):
         if not rows:
             return SPEED_INDEX_MEAN
 
-        target_course  = target_race.course
-        target_dist    = int(target_race.distance or 0)
+        target_course = target_race.course
+        target_dist = int(target_race.distance or 0)
         target_surface = target_race.surface or ""
 
         weighted_scores: list[tuple[float, float]] = []
@@ -292,13 +300,13 @@ class CourseAptitudeCalculator(IndexCalculator):
                 continue  # 実質ゼロの寄与は除外
 
             # スコア算出（着順スコア + タイム偏差スコアの合成）
-            pos_score  = _position_score(int(result.finish_position))
+            pos_score = _position_score(int(result.finish_position))
             time_score = self._compute_time_score(result, race)
             score = pos_score * 0.6 + (time_score if time_score is not None else pos_score) * 0.4
 
             weighted_scores.append((score, weight))
 
-        if not weighted_scores:
+        if len(weighted_scores) < MIN_SAMPLE:
             return SPEED_INDEX_MEAN
 
         total_w = sum(w for _, w in weighted_scores)
@@ -329,9 +337,7 @@ class CourseAptitudeCalculator(IndexCalculator):
         score = (diff / std_dev) * SPEED_INDEX_STD + SPEED_INDEX_MEAN
         return max(INDEX_MIN, min(INDEX_MAX, score))
 
-    def _get_standard_time(
-        self, course: str, distance: int, surface: str
-    ) -> tuple[float, float]:
+    def _get_standard_time(self, course: str, distance: int, surface: str) -> tuple[float, float]:
         """コース・距離・馬場の基準タイム（平均・標準偏差）をキャッシュ付きで返す。"""
         cache_key = (course, distance, surface)
         if cache_key in self._std_time_cache:

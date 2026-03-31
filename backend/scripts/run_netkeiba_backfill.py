@@ -36,13 +36,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-from sqlalchemy import create_engine, select, func
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from src.config import settings
-from src.importers.netkeiba_importer import import_race_remarks_direct, import_race_remarks_for_month
+from src.importers.netkeiba_importer import (
+    import_race_remarks_for_month,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,13 +65,17 @@ def get_race_dates_in_month(session: Session, year_month: str) -> list[str]:
     _, last_day = calendar.monthrange(year, month)
     end = f"{year_month}{last_day:02d}"
 
-    dates: list[str] = session.execute(
-        select(func.distinct(Race.date))
-        .where(Race.date >= start)
-        .where(Race.date <= end)
-        .where(Race.jravan_race_id.is_not(None))
-        .order_by(Race.date)
-    ).scalars().all()
+    dates: list[str] = (
+        session.execute(
+            select(func.distinct(Race.date))
+            .where(Race.date >= start)
+            .where(Race.date <= end)
+            .where(Race.jravan_race_id.is_not(None))
+            .order_by(Race.date)
+        )
+        .scalars()
+        .all()
+    )
 
     return dates
 
@@ -84,21 +91,27 @@ def show_progress(session: Session, year_month: str, dates: list[str]) -> None:
     end = f"{year_month}{last_day:02d}"
 
     # 総出走馬数
-    total_horses: int = session.execute(
-        select(func.count(RaceEntry.horse_id))
-        .join(Race, Race.id == RaceEntry.race_id)
-        .where(Race.date >= start)
-        .where(Race.date <= end)
-        .where(Race.jravan_race_id.is_not(None))
-    ).scalar() or 0
+    total_horses: int = (
+        session.execute(
+            select(func.count(RaceEntry.horse_id))
+            .join(Race, Race.id == RaceEntry.race_id)
+            .where(Race.date >= start)
+            .where(Race.date <= end)
+            .where(Race.jravan_race_id.is_not(None))
+        ).scalar()
+        or 0
+    )
 
     # 取得済みペア数
-    collected: int = session.execute(
-        select(func.count(NetkeibaRaceExtra.id))
-        .join(Race, Race.id == NetkeibaRaceExtra.race_id)
-        .where(Race.date >= start)
-        .where(Race.date <= end)
-    ).scalar() or 0
+    collected: int = (
+        session.execute(
+            select(func.count(NetkeibaRaceExtra.id))
+            .join(Race, Race.id == NetkeibaRaceExtra.race_id)
+            .where(Race.date >= start)
+            .where(Race.date <= end)
+        ).scalar()
+        or 0
+    )
 
     pct = (collected / total_horses * 100) if total_horses > 0 else 0
     print(f"  進捗: {collected:,} / {total_horses:,} ペア取得済み ({pct:.1f}%)")
@@ -135,9 +148,9 @@ if __name__ == "__main__":
 
     with Session(engine) as session:
         for year_month in args.year_month:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"  {year_month[:4]}年{year_month[4:6]}月 バックフィル開始")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             dates = get_race_dates_in_month(session, year_month)
             if not dates:
@@ -160,5 +173,7 @@ if __name__ == "__main__":
                 print("    ※ 再実行すると取得済みはスキップして再開します")
                 sys.exit(1)
 
-            print(f"\n  ✅ {year_month[:4]}年{year_month[4:6]}月 完了: 合計 {month_total:,} ペア格納")
+            print(
+                f"\n  ✅ {year_month[:4]}年{year_month[4:6]}月 完了: 合計 {month_total:,} ペア格納"
+            )
             show_progress(session, year_month, dates)

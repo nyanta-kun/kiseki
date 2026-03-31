@@ -6,15 +6,17 @@ Create Date: 2026-03-24 10:00:00.000000
 
 JVData仕様書の全フィールドをracesおよびrace_entries, race_resultsテーブルに追加する。
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "b1c2d3e4f5a6"
-down_revision: Union[str, None] = "a5567aa39d8b"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "a5567aa39d8b"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

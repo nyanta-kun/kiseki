@@ -55,10 +55,17 @@ _agent_status: dict[str, Any] = {
 # 認証
 # -------------------------------------------------------------------
 
+
 def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
-    """API Key 認証（開発環境はスキップ）。"""
+    """API Key 認証。本番環境ではAPIキーが必須。"""
     if not settings.change_notify_api_key:
-        return
+        if settings.api_env == "production":
+            logger.error("CHANGE_NOTIFY_API_KEY is not set in production environment")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="API key not configured",
+            )
+        return  # 開発環境では認証省略
     if x_api_key != settings.change_notify_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,23 +80,27 @@ ApiKeyDep = Annotated[None, Depends(verify_api_key)]
 # リクエスト/レスポンスモデル
 # -------------------------------------------------------------------
 
+
 class CommandRequest(BaseModel):
     """Mac側からAgentへのコマンド。"""
-    action: str                     # "setup" | "daily" | "retry" | "stop"
-    params: dict[str, Any] = {}    # オプションパラメータ
+
+    action: str  # "setup" | "daily" | "retry" | "stop"
+    params: dict[str, Any] = {}  # オプションパラメータ
 
 
 class AgentStatusReport(BaseModel):
     """Windows AgentからのステータスPOST。"""
-    status: str                         # "running" | "idle" | "error" | "done"
-    mode: str | None = None            # "setup" | "daily" | "realtime"
+
+    status: str  # "running" | "idle" | "error" | "done"
+    mode: str | None = None  # "setup" | "daily" | "realtime"
     message: str = ""
-    progress: dict[str, Any] = {}      # 任意の進捗情報
+    progress: dict[str, Any] = {}  # 任意の進捗情報
 
 
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
+
 
 @router.post("/command", summary="コマンドをキューに追加（Mac → Agent）")
 async def enqueue_command(
@@ -123,7 +134,7 @@ async def enqueue_command(
 
 
 @router.get("/command", summary="次のコマンドを取得（Agent polling）")
-async def dequeue_command() -> dict:
+async def dequeue_command(_: ApiKeyDep) -> dict:
     """Windows AgentがポーリングしてMac側からのコマンドを受け取る。
 
     キューに積まれたコマンドがあれば取り出して返す。
@@ -137,7 +148,7 @@ async def dequeue_command() -> dict:
 
 
 @router.post("/status", summary="Agentステータスを報告（Agent → Mac）")
-async def report_status(report: AgentStatusReport) -> dict:
+async def report_status(report: AgentStatusReport, _: ApiKeyDep) -> dict:
     """Windows Agentが現在の状態をBackendへ報告する。
 
     Mac側は GET /api/agent/status でこれを確認できる。
@@ -155,7 +166,7 @@ async def report_status(report: AgentStatusReport) -> dict:
 
 
 @router.get("/status", summary="Agentの最新ステータスを取得")
-async def get_status() -> dict:
+async def get_status(_: ApiKeyDep) -> dict:
     """Mac側からWindows Agentの最新ステータスを確認する。"""
     return {
         **_agent_status,

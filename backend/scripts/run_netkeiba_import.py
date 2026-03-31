@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from sqlalchemy.orm import Session
@@ -34,10 +35,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="netkeibaスクレイピングインポーター")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--date", help="開催日 (YYYYMMDD) — 当日の全レースを一括処理")
-    group.add_argument("--race-id", type=int, nargs="+", metavar="ID", help="races.id を指定（複数可）")
+    group.add_argument(
+        "--race-id", type=int, nargs="+", metavar="ID", help="races.id を指定（複数可）"
+    )
     args = parser.parse_args()
 
     from sqlalchemy import create_engine
+
     engine = create_engine(settings.database_url)
 
     with Session(engine) as session:

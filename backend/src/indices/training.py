@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func
@@ -70,6 +69,7 @@ MIN_BASELINE_SAMPLE = 5
 # 内部ユーティリティ
 # ---------------------------------------------------------------------------
 
+
 def _weight_cond_score(weight_change: int | None) -> float:
     """体重変化から状態スコアを算出する。
 
@@ -83,13 +83,13 @@ def _weight_cond_score(weight_change: int | None) -> float:
         return NEUTRAL
     abs_change = abs(weight_change)
     if abs_change <= 2:
-        return 55.0   # 安定
+        return 55.0  # 安定
     elif abs_change <= 6:
-        return 52.0   # 許容範囲
+        return 52.0  # 許容範囲
     elif abs_change <= 10:
-        return 45.0   # やや大きな変化
+        return 45.0  # やや大きな変化
     else:
-        return 38.0   # 大幅変化（懸念）
+        return 38.0  # 大幅変化（懸念）
 
 
 def _linear_trend(values: list[float]) -> float:
@@ -131,6 +131,7 @@ def _trend_to_score(slope: float, scale: float = 2.0) -> float:
 # ---------------------------------------------------------------------------
 # メインクラス
 # ---------------------------------------------------------------------------
+
 
 class TrainingIndexCalculator(IndexCalculator):
     """調教指数算出Agent（レース成績トレンドによる近似）。
@@ -225,11 +226,7 @@ class TrainingIndexCalculator(IndexCalculator):
             else None
         )
 
-        composite = (
-            time_score * W_TIME_TREND
-            + last3f_score * W_LAST3F
-            + weight_score * W_WEIGHT
-        )
+        composite = time_score * W_TIME_TREND + last3f_score * W_LAST3F + weight_score * W_WEIGHT
         return round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
 
     def _time_trend_score(self, rows: list[Any], ref_race: Race) -> float:
@@ -289,9 +286,7 @@ class TrainingIndexCalculator(IndexCalculator):
                 .first()
             )
             if row and row.cnt and int(row.cnt) >= MIN_BASELINE_SAMPLE:
-                self._baseline_cache[key] = (
-                    float(row.avg), float(row.std or 1.0), int(row.cnt)
-                )
+                self._baseline_cache[key] = (float(row.avg), float(row.std or 1.0), int(row.cnt))
             else:
                 self._baseline_cache[key] = (0.0, 0.0, 0)
 

@@ -68,3 +68,16 @@ body {
 body {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* アニメーション低減対応（前庭障害・てんかん等への配慮） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .index-bar-fill {
+    transition: none;
+  }
+}

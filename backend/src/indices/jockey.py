@@ -27,13 +27,12 @@ import logging
 import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from ..db.models import Jockey, Race, RaceEntry, RaceResult
+from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
 from .base import IndexCalculator
 
@@ -144,9 +143,7 @@ class JockeyIndexCalculator(IndexCalculator):
         jockey_ids = list({e.jockey_id for e in entries if e.jockey_id is not None})
 
         # 騎手ごとの過去成績を一括取得
-        jockey_stats = self._get_all_jockey_stats_batch(
-            jockey_ids, before_date, surface, distance
-        )
+        jockey_stats = self._get_all_jockey_stats_batch(jockey_ids, before_date, surface, distance)
 
         # 有効スコアのみで正規化パラメータを算出
         valid_scores = [v for v in jockey_stats.values() if v is not None]
@@ -350,8 +347,7 @@ class JockeyIndexCalculator(IndexCalculator):
         """
         # 距離フィルタを適用
         filtered = [
-            row for row in rows
-            if abs((row.Race.distance or 0) - target_distance) <= DIST_TOLERANCE
+            row for row in rows if abs((row.Race.distance or 0) - target_distance) <= DIST_TOLERANCE
         ]
 
         total = len(filtered)
@@ -359,12 +355,14 @@ class JockeyIndexCalculator(IndexCalculator):
             return None
 
         wins = sum(
-            1 for row in filtered
+            1
+            for row in filtered
             if row.RaceResult.finish_position is not None
             and int(row.RaceResult.finish_position) == 1
         )
         top2 = sum(
-            1 for row in filtered
+            1
+            for row in filtered
             if row.RaceResult.finish_position is not None
             and int(row.RaceResult.finish_position) <= 2
         )
@@ -393,9 +391,7 @@ class JockeyIndexCalculator(IndexCalculator):
             上がり3Fスコア（0-100）
         """
         last3f_values = [
-            float(row.RaceResult.last_3f)
-            for row in rows
-            if row.RaceResult.last_3f is not None
+            float(row.RaceResult.last_3f) for row in rows if row.RaceResult.last_3f is not None
         ]
         if not last3f_values:
             return SPEED_INDEX_MEAN

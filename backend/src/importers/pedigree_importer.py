@@ -60,7 +60,6 @@ SIRE_LINE_MAP: dict[str, str] = {
     "スワーヴリチャード": "ハーツクライ系",
     "シルバーステート": "ディープインパクト系",
     "ブラックタイド": "ブラックタイド系",
-
     # ミスタープロスペクター系
     "キングカメハメハ": "キングカメハメハ系",
     "ロードカナロア": "ロードカナロア系",
@@ -76,7 +75,6 @@ SIRE_LINE_MAP: dict[str, str] = {
     "カネヒキリ": "フジキセキ系",
     "フジキセキ": "フジキセキ系",
     "ダイワメジャー": "サンデーサイレンス系",
-
     # ノーザンダンサー系
     "クロフネ": "クロフネ系",
     "タイキシャトル": "タイキシャトル系",
@@ -108,31 +106,31 @@ SIRE_LINE_MAP: dict[str, str] = {
 # dist_pref: 得意距離帯リスト ["sprint","mile","middle","long"]
 # ---------------------------------------------------------------------------
 SIRE_LINE_TRAITS: dict[str, dict[str, Any]] = {
-    "ディープインパクト系": {"surface": "turf",  "dist_pref": ["middle", "long", "mile"]},
-    "ハーツクライ系":       {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "ステイゴールド系":     {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "ネオユニヴァース系":   {"surface": "turf",  "dist_pref": ["middle"]},
-    "マンハッタンカフェ系": {"surface": "turf",  "dist_pref": ["long", "middle"]},
-    "アドマイヤムーン系":   {"surface": "turf",  "dist_pref": ["mile", "middle"]},
-    "スクリーンヒーロー系": {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "エピファネイア系":     {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "ドゥラメンテ系":       {"surface": "turf",  "dist_pref": ["mile", "middle"]},
-    "モーリス系":           {"surface": "turf",  "dist_pref": ["mile", "middle"]},
-    "ブラックタイド系":     {"surface": "turf",  "dist_pref": ["middle"]},
-    "キタサンブラック系":   {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "キングカメハメハ系":   {"surface": "both",  "dist_pref": ["mile", "middle"]},
-    "ロードカナロア系":     {"surface": "turf",  "dist_pref": ["sprint", "mile"]},
-    "フジキセキ系":         {"surface": "both",  "dist_pref": ["sprint", "mile"]},
-    "クロフネ系":           {"surface": "dirt",  "dist_pref": ["sprint", "mile", "middle"]},
-    "フレンチデピュティ系": {"surface": "dirt",  "dist_pref": ["sprint", "mile"]},
+    "ディープインパクト系": {"surface": "turf", "dist_pref": ["middle", "long", "mile"]},
+    "ハーツクライ系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "ステイゴールド系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "ネオユニヴァース系": {"surface": "turf", "dist_pref": ["middle"]},
+    "マンハッタンカフェ系": {"surface": "turf", "dist_pref": ["long", "middle"]},
+    "アドマイヤムーン系": {"surface": "turf", "dist_pref": ["mile", "middle"]},
+    "スクリーンヒーロー系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "エピファネイア系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "ドゥラメンテ系": {"surface": "turf", "dist_pref": ["mile", "middle"]},
+    "モーリス系": {"surface": "turf", "dist_pref": ["mile", "middle"]},
+    "ブラックタイド系": {"surface": "turf", "dist_pref": ["middle"]},
+    "キタサンブラック系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "キングカメハメハ系": {"surface": "both", "dist_pref": ["mile", "middle"]},
+    "ロードカナロア系": {"surface": "turf", "dist_pref": ["sprint", "mile"]},
+    "フジキセキ系": {"surface": "both", "dist_pref": ["sprint", "mile"]},
+    "クロフネ系": {"surface": "dirt", "dist_pref": ["sprint", "mile", "middle"]},
+    "フレンチデピュティ系": {"surface": "dirt", "dist_pref": ["sprint", "mile"]},
     "ミスタープロスペクター系": {"surface": "dirt", "dist_pref": ["sprint", "mile", "middle"]},
-    "サンデーサイレンス系": {"surface": "turf",  "dist_pref": ["mile", "middle", "long"]},
-    "タイキシャトル系":     {"surface": "turf",  "dist_pref": ["sprint", "mile"]},
-    "ロベルト系":           {"surface": "turf",  "dist_pref": ["middle", "long"]},
-    "ホワイトマズル系":     {"surface": "dirt",  "dist_pref": ["sprint", "mile"]},
-    "マイバブー系":         {"surface": "turf",  "dist_pref": ["long"]},
+    "サンデーサイレンス系": {"surface": "turf", "dist_pref": ["mile", "middle", "long"]},
+    "タイキシャトル系": {"surface": "turf", "dist_pref": ["sprint", "mile"]},
+    "ロベルト系": {"surface": "turf", "dist_pref": ["middle", "long"]},
+    "ホワイトマズル系": {"surface": "dirt", "dist_pref": ["sprint", "mile"]},
+    "マイバブー系": {"surface": "turf", "dist_pref": ["long"]},
     "ファストネットロック系": {"surface": "turf", "dist_pref": ["sprint", "mile"]},
-    "不明":                  {"surface": "both",  "dist_pref": ["sprint", "mile", "middle", "long"]},
+    "不明": {"surface": "both", "dist_pref": ["sprint", "mile", "middle", "long"]},
 }
 
 
@@ -210,11 +208,7 @@ class PedigreeImporter:
                 continue
 
             blood_code = parsed["blood_code"]
-            horse = (
-                self.db.query(Horse)
-                .filter(Horse.jravan_code == blood_code)
-                .first()
-            )
+            horse = self.db.query(Horse).filter(Horse.jravan_code == blood_code).first()
             if horse is None:
                 # レースデータより先に血統データが来た場合はスキップ
                 skipped += 1
@@ -239,9 +233,7 @@ class PedigreeImporter:
             imported += 1
 
         self.db.flush()
-        logger.info(
-            f"pedigrees UPSERT完了: imported={imported} skipped={skipped}"
-        )
+        logger.info(f"pedigrees UPSERT完了: imported={imported} skipped={skipped}")
         return {"hn_parsed": hn_parsed, "sk_imported": imported, "sk_skipped": skipped}
 
     # ------------------------------------------------------------------

@@ -16,8 +16,6 @@ from src.indices.pace import (
     PaceIndexCalculator,
     _classify_runner_type,
 )
-from src.utils.constants import SPEED_INDEX_MEAN
-
 
 # ---------------------------------------------------------------------------
 # ユーティリティ: モックオブジェクト生成ヘルパー
@@ -273,12 +271,14 @@ class TestCalculateBatch:
                 last_3f = cfg.get("last_3f")
                 if passing_4 is not None or last_3f is not None:
                     for _ in range(5):
-                        rows.append(_make_row(
-                            horse_id=hid,
-                            passing_4=passing_4,
-                            head_count=head_count,
-                            last_3f=last_3f,
-                        ))
+                        rows.append(
+                            _make_row(
+                                horse_id=hid,
+                                passing_4=passing_4,
+                                head_count=head_count,
+                                last_3f=last_3f,
+                            )
+                        )
                 result[hid] = rows
             return result
 
@@ -331,9 +331,9 @@ class TestCalculateBatch:
         """
         # horse_id=1 が逃げ（1頭）→ normal ペース → escape+normal=70
         horse_configs = [
-            {"horse_id": 1, "passing_4": 1, "head_count": 10},   # escape
-            {"horse_id": 2, "passing_4": 8, "head_count": 10},   # closer
-            {"horse_id": 3, "passing_4": 9, "head_count": 10},   # closer
+            {"horse_id": 1, "passing_4": 1, "head_count": 10},  # escape
+            {"horse_id": 2, "passing_4": 8, "head_count": 10},  # closer
+            {"horse_id": 3, "passing_4": 9, "head_count": 10},  # closer
         ]
         calc = self._build_calc(horse_configs)
         # 上がり3Fなし → ボーナスなし
@@ -344,9 +344,9 @@ class TestCalculateBatch:
         """追込馬+ハイペース → 80。"""
         # 逃げ馬2頭 → fast ペース
         horse_configs = [
-            {"horse_id": 1, "passing_4": 1, "head_count": 10},   # escape
-            {"horse_id": 2, "passing_4": 1, "head_count": 10},   # escape
-            {"horse_id": 3, "passing_4": 9, "head_count": 10},   # closer
+            {"horse_id": 1, "passing_4": 1, "head_count": 10},  # escape
+            {"horse_id": 2, "passing_4": 1, "head_count": 10},  # escape
+            {"horse_id": 3, "passing_4": 9, "head_count": 10},  # closer
         ]
         calc = self._build_calc(horse_configs)
         result = calc.calculate_batch(race_id=1)
@@ -356,9 +356,9 @@ class TestCalculateBatch:
         """逃げ馬+ハイペース → 45。"""
         # 逃げ馬3頭 → fast ペース
         horse_configs = [
-            {"horse_id": 1, "passing_4": 1, "head_count": 10},   # escape
-            {"horse_id": 2, "passing_4": 1, "head_count": 10},   # escape
-            {"horse_id": 3, "passing_4": 1, "head_count": 10},   # escape
+            {"horse_id": 1, "passing_4": 1, "head_count": 10},  # escape
+            {"horse_id": 2, "passing_4": 1, "head_count": 10},  # escape
+            {"horse_id": 3, "passing_4": 1, "head_count": 10},  # escape
         ]
         calc = self._build_calc(horse_configs)
         result = calc.calculate_batch(race_id=1)
@@ -369,8 +369,8 @@ class TestCalculateBatch:
         """追込馬+スロー展開 → 45。"""
         # 逃げ馬なし → slow ペース
         horse_configs = [
-            {"horse_id": 1, "passing_4": 9, "head_count": 10},   # closer
-            {"horse_id": 2, "passing_4": 8, "head_count": 10},   # closer
+            {"horse_id": 1, "passing_4": 9, "head_count": 10},  # closer
+            {"horse_id": 2, "passing_4": 8, "head_count": 10},  # closer
         ]
         calc = self._build_calc(horse_configs)
         result = calc.calculate_batch(race_id=1)
@@ -403,7 +403,12 @@ class TestCalculateBatch:
         # escape + slow(85) + bonus(5) = 90 ≤ 100 (クリップ不要)
         # escape + slow スコアが高い馬 + 高速上がり3F
         horse_configs = [
-            {"horse_id": 1, "passing_4": 1, "head_count": 10, "last_3f": 30.0},  # escape, fast last3f
+            {
+                "horse_id": 1,
+                "passing_4": 1,
+                "head_count": 10,
+                "last_3f": 30.0,
+            },  # escape, fast last3f
         ]
         calc = self._build_calc(horse_configs)
         result = calc.calculate_batch(race_id=1)

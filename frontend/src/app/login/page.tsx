@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import Image from "next/image";
 import { verifyPasswordAndRedirect } from "./actions";
 
 // next/image は basePath を自動付与しないため、CSS background-image では
@@ -27,10 +28,12 @@ function LoginForm() {
 
       {/* ---- 左（PC）/ 上（スマホ）: image.png ---- */}
       <div className="relative z-10 flex items-center justify-center w-full md:w-1/2 md:h-full flex-shrink-0 mt-8 md:mt-0">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <Image
           src="/images/image.png"
           alt="GallopLab"
+          width={600}
+          height={600}
+          priority
           className="w-auto max-h-52 md:max-h-[70vh] object-contain select-none"
           style={{
             mixBlendMode: "screen",
@@ -64,27 +67,31 @@ function LoginForm() {
             </p>
 
             <form action={formAction} className="space-y-4">
-              <input
-                name="password"
-                type="password"
-                placeholder="合言葉を入力"
-                required
-                className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all"
-                style={{
-                  background: "rgba(0, 180, 255, 0.09)",
-                  border: "1px solid rgba(0, 180, 255, 0.5)",
-                  color: "#fff",
-                  caretColor: "#00c8ff",
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.border = "1px solid rgba(0, 200, 255, 0.75)";
-                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(0,180,255,0.15)";
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.border = "1px solid rgba(0, 180, 255, 0.35)";
-                  e.currentTarget.style.boxShadow = "none";
-                }}
-              />
+              <div>
+                <label htmlFor="password" className="sr-only">合言葉（パスワード）</label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="合言葉を入力"
+                  required
+                  className="w-full px-4 py-3 rounded-xl text-sm text-white transition-all focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1"
+                  style={{
+                    background: "rgba(0, 180, 255, 0.09)",
+                    border: "1px solid rgba(0, 180, 255, 0.5)",
+                    color: "#fff",
+                    caretColor: "#00c8ff",
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.border = "1px solid rgba(0, 200, 255, 0.75)";
+                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(0,180,255,0.15)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.border = "1px solid rgba(0, 180, 255, 0.35)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+              </div>
 
               {errorMessage && (
                 <p className="text-red-300 text-xs bg-red-500/15 border border-red-400/30 rounded-lg px-3 py-2">

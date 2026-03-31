@@ -7,7 +7,6 @@ X-API-Key ヘッダーで簡易認証を行う。
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -17,8 +16,9 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db.session import get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
-from .ws_manager import manager as ws_manager, results_manager
 from .races import _fetch_results_payload
+from .ws_manager import manager as ws_manager
+from .ws_manager import results_manager
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,15 @@ changes_router = APIRouter(prefix="/api/changes", tags=["changes"])
 def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
     """X-API-Key ヘッダーを検証する。
 
-    settings.change_notify_api_key が空の場合は開発モードとして認証スキップ。
+    本番環境ではAPIキーが必須。開発環境では未設定時に認証省略。
     """
     if not settings.change_notify_api_key:
+        if settings.api_env == "production":
+            logger.error("CHANGE_NOTIFY_API_KEY is not set in production environment")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="API key not configured",
+            )
         return  # 開発環境では認証省略
     if x_api_key != settings.change_notify_api_key:
         raise HTTPException(
@@ -52,17 +58,20 @@ DbDep = Annotated[Session, Depends(get_db)]
 # -------------------------------------------------------------------
 class JvRecord(BaseModel):
     """JV-Link 1レコードの形式。"""
+
     rec_id: str
     data: str
 
 
 class ImportRequest(BaseModel):
     """インポートリクエスト共通形式。"""
+
     records: list[JvRecord]
 
 
 class ChangeNotifyRequest(BaseModel):
     """変更通知リクエスト（出走取消・騎手変更）。"""
+
     change_type: str  # "scratch" | "jockey_change"
     raw_data: str
     detected_at: str  # ISO8601
@@ -70,6 +79,7 @@ class ChangeNotifyRequest(BaseModel):
 
 class WeightRequest(BaseModel):
     """馬体重レコード。SEレコードと同じく race_importer で処理。"""
+
     date: str
     records: list[JvRecord]
 
@@ -89,13 +99,14 @@ async def import_races(
     """
     importer = RaceImporter(db)
     records = [r.model_dump() for r in body.records]
-    # デバッグ: 受信レコードの先頭を確認
     if records:
         first = records[0]
-        logger.warning(f"DEBUG recv: rec_id={first.get('rec_id')!r} data[:20]={first.get('data','')[:20]!r} total={len(records)}")
+        logger.debug(
+            f"recv: rec_id={first.get('rec_id')!r} data[:20]={first.get('data', '')[:20]!r} total={len(records)}"
+        )
     stats = importer.import_records(records)
     db.commit()
-    logger.warning(f"import_races stats: {stats}")
+    logger.info(f"import_races stats: {stats}")
 
     # 成績が確定したレースをWebSocketでブロードキャスト
     for race_id in stats.get("result_race_ids", []):
@@ -132,6 +143,7 @@ async def import_odds(
 ) -> dict:
     """O1-O8オッズレコードを取り込む。更新後WebSocketでブロードキャスト。"""
     from sqlalchemy import func
+
     from ..db.models import OddsHistory
 
     importer = OddsImporter(db)

@@ -26,8 +26,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -38,8 +37,8 @@ logger = logging.getLogger(__name__)
 # 信頼度計算: この件数以上で bias フル反映
 RELIABLE_SAMPLE = 8
 # front/backの分類閾値（passing_4 / head_count）
-FRONT_THRESHOLD = 0.35   # 上位35%をfront
-BACK_THRESHOLD  = 0.65   # 下位35%をback
+FRONT_THRESHOLD = 0.35  # 上位35%をfront
+BACK_THRESHOLD = 0.65  # 下位35%をback
 # 内枠の定義
 INNER_FRAMES = {1, 2, 3, 4}
 
@@ -47,9 +46,10 @@ INNER_FRAMES = {1, 2, 3, 4}
 @dataclass
 class MeetBias:
     """開催バイアス値。"""
-    inner_outer: float = 0.0   # +1.0=内有利 / 0=中立 / -1.0=外有利
-    front_back:  float = 0.0   # +1.0=前有利 / 0=中立 / -1.0=後ろ有利
-    sample_count: int = 0      # 算出サンプル数（レース数）
+
+    inner_outer: float = 0.0  # +1.0=内有利 / 0=中立 / -1.0=外有利
+    front_back: float = 0.0  # +1.0=前有利 / 0=中立 / -1.0=後ろ有利
+    sample_count: int = 0  # 算出サンプル数（レース数）
 
     @property
     def reliability(self) -> float:
@@ -57,7 +57,7 @@ class MeetBias:
         return min(1.0, self.sample_count / RELIABLE_SAMPLE)
 
 
-def _extract_kai(jravan_race_id: Optional[str]) -> Optional[str]:
+def _extract_kai(jravan_race_id: str | None) -> str | None:
     """jravan_race_id から開催回（kai）を抽出する。
 
     フォーマット: year(4) + monthday(4) + course(2) + kai(2) + day(2) + raceno(2)
@@ -68,7 +68,7 @@ def _extract_kai(jravan_race_id: Optional[str]) -> Optional[str]:
     return jravan_race_id[8:10]
 
 
-def _extract_year(jravan_race_id: Optional[str]) -> Optional[str]:
+def _extract_year(jravan_race_id: str | None) -> str | None:
     """jravan_race_id から年を抽出する。"""
     if not jravan_race_id or len(jravan_race_id) < 4:
         return None
@@ -97,7 +97,7 @@ class MeetBiasService:
             MeetBias。バイアス算出不可（jravan_race_id なし等）の場合は
             inner_outer=0.0, front_back=0.0 の中立値を返す。
         """
-        kai  = _extract_kai(race.jravan_race_id)
+        kai = _extract_kai(race.jravan_race_id)
         year = _extract_year(race.jravan_race_id)
 
         if not kai or not year:
@@ -137,7 +137,7 @@ class MeetBiasService:
         """
         # 同開催（同コース・同年・同回）内でこのレースより前の全結果を取得
         # jravan_race_id のパターン: year(4) + * + course(2) + kai(2) + *
-        pattern = f"{year}____{ course}{kai}%%"
+        pattern = f"{year}____{course}{kai}%%"
 
         rows = (
             self.db.query(RaceResult, Race)
@@ -183,17 +183,15 @@ class MeetBiasService:
         inner_win_rate = inner_wins / inner_total if inner_total > 0 else 0.0
         outer_win_rate = outer_wins / outer_total if outer_total > 0 else 0.0
         denom = inner_win_rate + outer_win_rate
-        inner_outer_raw = (
-            (inner_win_rate - outer_win_rate) / denom if denom > 1e-9 else 0.0
-        )
+        inner_outer_raw = (inner_win_rate - outer_win_rate) / denom if denom > 1e-9 else 0.0
 
         # ---- 前後バイアス ----
         front_wins = front_total = 0
-        back_wins  = back_total  = 0
+        back_wins = back_total = 0
 
         for row in rows:
             result = row.RaceResult
-            race   = row.Race
+            race = row.Race
             p4 = result.passing_4
             hc = race.head_count
             if p4 is None or hc is None or hc <= 0:
@@ -210,16 +208,14 @@ class MeetBiasService:
                     back_wins += 1
 
         front_win_rate = front_wins / front_total if front_total > 0 else 0.0
-        back_win_rate  = back_wins  / back_total  if back_total  > 0 else 0.0
+        back_win_rate = back_wins / back_total if back_total > 0 else 0.0
         denom2 = front_win_rate + back_win_rate
-        front_back_raw = (
-            (front_win_rate - back_win_rate) / denom2 if denom2 > 1e-9 else 0.0
-        )
+        front_back_raw = (front_win_rate - back_win_rate) / denom2 if denom2 > 1e-9 else 0.0
 
         # 信頼度で 0.0 に引き寄せ（サンプル不足時は中立に近づける）
         reliability = min(1.0, sample_count / RELIABLE_SAMPLE)
         inner_outer = round(inner_outer_raw * reliability, 4)
-        front_back  = round(front_back_raw  * reliability, 4)
+        front_back = round(front_back_raw * reliability, 4)
 
         logger.debug(
             f"MeetBias: course={course} year={year} kai={kai} "

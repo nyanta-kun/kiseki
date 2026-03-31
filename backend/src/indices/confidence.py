@@ -29,7 +29,13 @@ def calculate_race_confidence(
         gap_1_2 (float), gap_1_3 (float), head_count (int)
     """
     if not composite_indices:
-        return {"score": 0, "label": "LOW", "gap_1_2": 0.0, "gap_1_3": 0.0, "head_count": head_count or 0}
+        return {
+            "score": 0,
+            "label": "LOW",
+            "gap_1_2": 0.0,
+            "gap_1_3": 0.0,
+            "head_count": head_count or 0,
+        }
 
     n = head_count if head_count is not None else len(composite_indices)
     sorted_idx = sorted(composite_indices, reverse=True)

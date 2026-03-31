@@ -8,11 +8,8 @@ from __future__ import annotations
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.indices.course_aptitude import MIN_SAMPLE, CourseAptitudeCalculator
 from src.utils.constants import SPEED_INDEX_MEAN
-
 
 # ---------------------------------------------------------------------------
 # ヘルパー: テスト用モックオブジェクト生成
@@ -69,6 +66,25 @@ def _make_row(
     return row
 
 
+def _make_course_feature(
+    course: str,
+    direction: str = "右",
+    straight_distance: float = 400.0,
+    elevation_diff: float = 1.5,
+    circuit_length: float = 1800.0,
+    grass_type: str = "野芝",
+) -> MagicMock:
+    """RacecourseFeatures モックを生成する。"""
+    f = MagicMock()
+    f.course = course
+    f.direction = direction
+    f.straight_distance = straight_distance
+    f.elevation_diff = elevation_diff
+    f.circuit_length = circuit_length
+    f.grass_type = grass_type
+    return f
+
+
 def _make_calculator(
     rows: list[MagicMock] | None = None,
     target_race: MagicMock | None = None,
@@ -90,6 +106,20 @@ def _make_calculator(
 
     # 基準タイムキャッシュを注入（DB不要）
     calc._std_time_cache[("05", 1600, "芝")] = (93.0, 2.0)
+
+    # コース特徴キャッシュを注入（DB不要）
+    # コース05（東京）を登録、09（阪神）は登録しないことで異なるコースを「特徴不明」扱いにする
+    from types import SimpleNamespace
+
+    calc._course_features = {
+        "05": SimpleNamespace(
+            direction="左",
+            straight_distance=525.9,
+            elevation_diff=2.0,
+            circuit_length=2083.0,
+            grass_type="野芝",
+        ),
+    }
 
     if rows is not None:
         calc._get_past_results_for_horse = MagicMock(return_value=rows)
@@ -116,7 +146,10 @@ class TestComputeAptitudeIndex:
         """MIN_SAMPLE 未満（同コースの行が少ない）→ SPEED_INDEX_MEAN を返す。"""
         calc = _make_calculator()
         # 同コース一致行が MIN_SAMPLE - 1 件
-        rows = [_make_row(finish_position=1, course="05", distance=1600, surface="芝") for _ in range(MIN_SAMPLE - 1)]
+        rows = [
+            _make_row(finish_position=1, course="05", distance=1600, surface="芝")
+            for _ in range(MIN_SAMPLE - 1)
+        ]
         target_race = _make_race(course="05", distance=1600, surface="芝")
         result = calc._compute_aptitude_index(rows, target_race)
         assert result == SPEED_INDEX_MEAN
@@ -138,7 +171,9 @@ class TestComputeAptitudeIndex:
         calc = _make_calculator()
         # 全レース最下位付近（遅いタイム）
         rows = [
-            _make_row(finish_position=14, finish_time=98.0, course="05", distance=1600, surface="芝")
+            _make_row(
+                finish_position=14, finish_time=98.0, course="05", distance=1600, surface="芝"
+            )
             for _ in range(MIN_SAMPLE + 2)
         ]
         target_race = _make_race(course="05", distance=1600, surface="芝")
@@ -167,7 +202,9 @@ class TestComputeAptitudeIndex:
             for _ in range(MIN_SAMPLE + 3)
         ]
         rows_loser = [
-            _make_row(finish_position=10, finish_time=96.0, course="05", distance=1600, surface="芝")
+            _make_row(
+                finish_position=10, finish_time=96.0, course="05", distance=1600, surface="芝"
+            )
             for _ in range(MIN_SAMPLE + 3)
         ]
         target_race = _make_race(course="05", distance=1600, surface="芝")

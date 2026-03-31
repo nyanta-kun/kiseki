@@ -14,11 +14,10 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from datetime import date
-
-import logging
 
 # SQLAlchemy のエコーログをインポート前に抑制
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
@@ -32,7 +31,6 @@ from sqlalchemy import text
 from src.db.session import SessionLocal
 from src.indices.anagusa import (
     OVERALL_PLACE_RATE,
-    SEKITO_COURSE_MAP,
     AnagusaIndexCalculator,
 )
 
@@ -120,11 +118,13 @@ def main() -> None:
         # レースごとにキャッシュ
         processed_races: dict[int, dict[int, float]] = {}
 
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"穴ぐさ期待度レポート: {target_date}")
-        print(f"{'='*80}")
-        print(f"{'競馬場':<6}{'R':<3}{'rank':<5}{'馬番':<4}{'馬名':<18}{'穴スコア':<9}{'単勝':<8}{'期待値'}")
-        print(f"{'-'*80}")
+        print(f"{'=' * 80}")
+        print(
+            f"{'競馬場':<6}{'R':<3}{'rank':<5}{'馬番':<4}{'馬名':<18}{'穴スコア':<9}{'単勝':<8}{'期待値'}"
+        )
+        print(f"{'-' * 80}")
 
         course_prev = None
         for row in rows:
@@ -167,9 +167,9 @@ def main() -> None:
                 f"{ev_str}"
             )
 
-        print(f"\n{'='*80}")
-        print(f"※穴ぐさスコア: ピック実績(2024-2026)ベース + コース/距離/頭数バイアス補正")
-        print(f"  A=75基準, B=60基準, C=42基準, ニュートラル(未ピック)=50")
+        print(f"\n{'=' * 80}")
+        print("※穴ぐさスコア: ピック実績(2024-2026)ベース + コース/距離/頭数バイアス補正")
+        print("  A=75基準, B=60基準, C=42基準, ニュートラル(未ピック)=50")
         print(f"  全体複勝率実績: {OVERALL_PLACE_RATE}%  (A: 19.4%, B: 14.9%, C: 11.8%)")
 
     finally:

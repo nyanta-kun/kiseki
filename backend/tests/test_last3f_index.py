@@ -12,12 +12,10 @@ import pytest
 
 from src.indices.last3f import (
     MIN_FIELD_SAMPLE,
-    MIN_RACES,
     WEIGHT_DECAY,
     Last3FIndexCalculator,
 )
 from src.utils.constants import SPEED_INDEX_MEAN
-
 
 # ---------------------------------------------------------------------------
 # ユーティリティ: モックオブジェクト生成ヘルパー
@@ -72,7 +70,9 @@ def _make_past_row(
 ) -> tuple[MagicMock, MagicMock, MagicMock]:
     """(RaceResult, Race, RaceEntry) タプルモックを生成する。"""
     return (
-        _make_result(horse_id=horse_id, race_id=race_id, last_3f=last_3f, abnormality_code=abnormality_code),
+        _make_result(
+            horse_id=horse_id, race_id=race_id, last_3f=last_3f, abnormality_code=abnormality_code
+        ),
         _make_race(id=race_id, date=date),
         _make_entry(horse_id=horse_id),
     )
@@ -179,8 +179,8 @@ class TestComputeScores:
         stats = {10: (35.0, 1.0), 11: (35.0, 1.0)}
         result = calc._compute_scores(rows, stats)
         assert len(result) == 2
-        assert result[0] > 50.0   # faster → high
-        assert result[1] < 50.0   # slower → low
+        assert result[0] > 50.0  # faster → high
+        assert result[1] < 50.0  # slower → low
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +204,7 @@ class TestWeightedAverage:
     def test_single_score_min_races_1(self) -> None:
         """MIN_RACES=1 に設定した場合は1件でも有効。"""
         import src.indices.last3f as mod
+
         original = mod.MIN_RACES
         mod.MIN_RACES = 1
         try:
@@ -231,7 +232,7 @@ class TestWeightedAverage:
         """加重は WEIGHT_DECAY の累乗で減衰する。"""
         calc = _make_calculator()
         scores = [60.0, 50.0, 40.0]
-        w0, w1, w2 = 1.0, WEIGHT_DECAY, WEIGHT_DECAY ** 2
+        w0, w1, w2 = 1.0, WEIGHT_DECAY, WEIGHT_DECAY**2
         expected = (60.0 * w0 + 50.0 * w1 + 40.0 * w2) / (w0 + w1 + w2)
         result = calc._weighted_average(scores)
         assert result == pytest.approx(expected, abs=0.1)
@@ -258,8 +259,7 @@ class TestCalculate:
         db.query.return_value.filter.return_value.first.return_value = _make_race()
         # past results クエリ
         past_rows = [_make_past_row(last_3f=None, race_id=10)]
-        db.query.return_value.filter.return_value.join.return_value.join.return_value \
-            .filter.return_value.order_by.return_value.limit.return_value.all.return_value = past_rows
+        db.query.return_value.filter.return_value.join.return_value.join.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = past_rows
 
         calc = Last3FIndexCalculator(db)
         # フィールド統計クエリも None を返すよう設定
@@ -306,7 +306,9 @@ class TestFieldStats:
         db = MagicMock()
         # 3件のみ（MIN_FIELD_SAMPLE=4 未満）
         db.query.return_value.filter.return_value.all.return_value = [
-            (Decimal("34.0"),), (Decimal("35.0"),), (Decimal("36.0"),),
+            (Decimal("34.0"),),
+            (Decimal("35.0"),),
+            (Decimal("36.0"),),
         ]
         calc = Last3FIndexCalculator(db)
         result = calc._get_field_stats(10)
@@ -324,6 +326,7 @@ class TestFieldStats:
         assert result is not None
         mean, std = result
         import statistics
+
         assert mean == pytest.approx(statistics.mean(vals), abs=0.01)
         assert std == pytest.approx(statistics.stdev(vals), abs=0.01)
 
@@ -365,8 +368,7 @@ class TestScoreValidity:
     ) -> tuple[Last3FIndexCalculator, list[float]]:
         """過去レースと固定フィールド統計でスコアを計算するヘルパー。"""
         rows = [
-            _make_past_row(last_3f=val, race_id=100 + i)
-            for i, val in enumerate(past_last3f_list)
+            _make_past_row(last_3f=val, race_id=100 + i) for i, val in enumerate(past_last3f_list)
         ]
         field_stats = {
             100 + i: (field_mean, field_std) if val is not None else None
@@ -379,27 +381,21 @@ class TestScoreValidity:
     def test_consistently_fast_horse_high_score(self) -> None:
         """常に速い上がりの馬は60超の加重平均。"""
         # 全レースで1σ速い（mean=35.0, std=1.0, horse=34.0 → score=60）
-        calc, scores = self._make_calc_with_past(
-            [34.0, 34.0, 34.0], field_mean=35.0, field_std=1.0
-        )
+        calc, scores = self._make_calc_with_past([34.0, 34.0, 34.0], field_mean=35.0, field_std=1.0)
         result = calc._weighted_average(scores)
         assert result > 55.0
 
     def test_consistently_slow_horse_low_score(self) -> None:
         """常に遅い上がりの馬は45未満の加重平均。"""
         # 全レースで1σ遅い（horse=36.0 → score=40）
-        calc, scores = self._make_calc_with_past(
-            [36.0, 36.0, 36.0], field_mean=35.0, field_std=1.0
-        )
+        calc, scores = self._make_calc_with_past([36.0, 36.0, 36.0], field_mean=35.0, field_std=1.0)
         result = calc._weighted_average(scores)
         assert result < 45.0
 
     def test_improving_horse_favors_recent(self) -> None:
         """最近の上がりが改善している馬は、単純平均より高スコア。"""
         # 直近=33.0（速い=score70）、古い=37.0（遅い=score30）
-        calc, scores = self._make_calc_with_past(
-            [33.0, 37.0], field_mean=35.0, field_std=1.0
-        )
+        calc, scores = self._make_calc_with_past([33.0, 37.0], field_mean=35.0, field_std=1.0)
         simple_avg = sum(scores) / len(scores)  # 50.0
         result = calc._weighted_average(scores)
         assert result > simple_avg  # 直近の速い上がりを重視
@@ -407,9 +403,9 @@ class TestScoreValidity:
     def test_none_last3f_excluded_from_scores(self) -> None:
         """last_3f=None のレースはスコアに含まれない。"""
         rows = [
-            _make_past_row(last_3f=None, race_id=100),   # 除外
-            _make_past_row(last_3f=34.0, race_id=101),   # 有効
-            _make_past_row(last_3f=34.0, race_id=102),   # 有効
+            _make_past_row(last_3f=None, race_id=100),  # 除外
+            _make_past_row(last_3f=34.0, race_id=101),  # 有効
+            _make_past_row(last_3f=34.0, race_id=102),  # 有効
         ]
         field_stats = {
             100: (35.0, 1.0),

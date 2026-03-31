@@ -18,6 +18,7 @@ from .jvlink_parser import parse_ra, parse_se
 
 logger = logging.getLogger(__name__)
 
+
 # -------------------------------------------------------------------
 # 単位変換ヘルパー
 # -------------------------------------------------------------------
@@ -94,7 +95,13 @@ class RaceImporter:
         Returns:
             {"races": N, "entries": N, "results": N, "errors": N}
         """
-        stats: dict[str, Any] = {"races": 0, "entries": 0, "results": 0, "errors": 0, "result_race_ids": []}
+        stats: dict[str, Any] = {
+            "races": 0,
+            "entries": 0,
+            "results": 0,
+            "errors": 0,
+            "result_race_ids": [],
+        }
 
         # Phase1: パース
         ra_parsed: list[dict[str, Any]] = []
@@ -172,27 +179,35 @@ class RaceImporter:
         new_race_ids = race_ids - set(self._race_cache)
 
         if new_horse_codes:
-            rows = self.db.query(Horse.jravan_code, Horse.id).filter(
-                Horse.jravan_code.in_(new_horse_codes)
-            ).all()
+            rows = (
+                self.db.query(Horse.jravan_code, Horse.id)
+                .filter(Horse.jravan_code.in_(new_horse_codes))
+                .all()
+            )
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_jockey_codes:
-            rows = self.db.query(Jockey.jravan_code, Jockey.id).filter(
-                Jockey.jravan_code.in_(new_jockey_codes)
-            ).all()
+            rows = (
+                self.db.query(Jockey.jravan_code, Jockey.id)
+                .filter(Jockey.jravan_code.in_(new_jockey_codes))
+                .all()
+            )
             self._jockey_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_trainer_codes:
-            rows = self.db.query(Trainer.jravan_code, Trainer.id).filter(
-                Trainer.jravan_code.in_(new_trainer_codes)
-            ).all()
+            rows = (
+                self.db.query(Trainer.jravan_code, Trainer.id)
+                .filter(Trainer.jravan_code.in_(new_trainer_codes))
+                .all()
+            )
             self._trainer_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_race_ids:
-            rows = self.db.query(Race.jravan_race_id, Race.id).filter(
-                Race.jravan_race_id.in_(new_race_ids)
-            ).all()
+            rows = (
+                self.db.query(Race.jravan_race_id, Race.id)
+                .filter(Race.jravan_race_id.in_(new_race_ids))
+                .all()
+            )
             self._race_cache.update({r.jravan_race_id: r.id for r in rows})
 
     # ------------------------------------------------------------------
@@ -238,11 +253,30 @@ class RaceImporter:
             for p in ra_list
         ]
         update_cols = [
-            "race_name", "surface", "distance", "direction", "condition", "weather",
-            "grade", "post_time", "race_type_code", "weight_type_code",
-            "head_count", "prize_1st", "prize_2nd", "prize_3rd", "registered_count", "finishers_count",
-            "first_3f", "last_3f_race", "lap_times", "record_update_type",
-            "prev_distance", "prev_track_code", "prev_grade_code", "prev_post_time",
+            "race_name",
+            "surface",
+            "distance",
+            "direction",
+            "condition",
+            "weather",
+            "grade",
+            "post_time",
+            "race_type_code",
+            "weight_type_code",
+            "head_count",
+            "prize_1st",
+            "prize_2nd",
+            "prize_3rd",
+            "registered_count",
+            "finishers_count",
+            "first_3f",
+            "last_3f_race",
+            "lap_times",
+            "record_update_type",
+            "prev_distance",
+            "prev_track_code",
+            "prev_grade_code",
+            "prev_post_time",
         ]
         stmt = insert(Race).values(values)
         stmt = stmt.on_conflict_do_update(
@@ -274,9 +308,11 @@ class RaceImporter:
             self.db.execute(
                 insert(Horse).values(list(new_horses.values())).on_conflict_do_nothing()
             )
-            rows = self.db.query(Horse.jravan_code, Horse.id).filter(
-                Horse.jravan_code.in_(new_horses.keys())
-            ).all()
+            rows = (
+                self.db.query(Horse.jravan_code, Horse.id)
+                .filter(Horse.jravan_code.in_(new_horses.keys()))
+                .all()
+            )
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
 
         # --- 騎手 ---
@@ -289,9 +325,11 @@ class RaceImporter:
             self.db.execute(
                 insert(Jockey).values(list(new_jockeys.values())).on_conflict_do_nothing()
             )
-            rows = self.db.query(Jockey.jravan_code, Jockey.id).filter(
-                Jockey.jravan_code.in_(new_jockeys.keys())
-            ).all()
+            rows = (
+                self.db.query(Jockey.jravan_code, Jockey.id)
+                .filter(Jockey.jravan_code.in_(new_jockeys.keys()))
+                .all()
+            )
             self._jockey_cache.update({r.jravan_code: r.id for r in rows})
 
         # --- 調教師 ---
@@ -304,14 +342,14 @@ class RaceImporter:
             self.db.execute(
                 insert(Trainer).values(list(new_trainers.values())).on_conflict_do_nothing()
             )
-            rows = self.db.query(Trainer.jravan_code, Trainer.id).filter(
-                Trainer.jravan_code.in_(new_trainers.keys())
-            ).all()
+            rows = (
+                self.db.query(Trainer.jravan_code, Trainer.id)
+                .filter(Trainer.jravan_code.in_(new_trainers.keys()))
+                .all()
+            )
             self._trainer_cache.update({r.jravan_code: r.id for r in rows})
 
-    def _bulk_upsert_entries(
-        self, se_list: list[dict[str, Any]]
-    ) -> dict[tuple[int, int], int]:
+    def _bulk_upsert_entries(self, se_list: list[dict[str, Any]]) -> dict[tuple[int, int], int]:
         """SEレコードのRaceEntryを1 SQLでバルクupsertする。
 
         Returns:
@@ -326,29 +364,39 @@ class RaceImporter:
                     f"Entry skip: race={p.get('jravan_race_id')} horse={p.get('jravan_horse_code')} not in cache"
                 )
                 continue
-            values.append({
-                "race_id": race_id,
-                "horse_id": horse_id,
-                "frame_number": p.get("frame_number") or 0,
-                "horse_number": p.get("horse_number") or 0,
-                "jockey_id": self._jockey_cache.get(p.get("jravan_jockey_code", "")),
-                "trainer_id": self._trainer_cache.get(p.get("jravan_trainer_code", "")),
-                "weight_carried": p.get("weight_carried"),
-                "horse_weight": p.get("horse_weight"),
-                "weight_change": p.get("weight_change"),
-                "horse_age": p.get("horse_age"),
-                "east_west_code": p.get("east_west_code"),
-                "prev_weight_carried": p.get("prev_weight_carried"),
-                "blinker": p.get("blinker"),
-                "prev_jockey_code": p.get("prev_jockey_code"),
-                "jockey_apprentice_code": p.get("jockey_apprentice_code"),
-            })
+            values.append(
+                {
+                    "race_id": race_id,
+                    "horse_id": horse_id,
+                    "frame_number": p.get("frame_number") or 0,
+                    "horse_number": p.get("horse_number") or 0,
+                    "jockey_id": self._jockey_cache.get(p.get("jravan_jockey_code", "")),
+                    "trainer_id": self._trainer_cache.get(p.get("jravan_trainer_code", "")),
+                    "weight_carried": p.get("weight_carried"),
+                    "horse_weight": p.get("horse_weight"),
+                    "weight_change": p.get("weight_change"),
+                    "horse_age": p.get("horse_age"),
+                    "east_west_code": p.get("east_west_code"),
+                    "prev_weight_carried": p.get("prev_weight_carried"),
+                    "blinker": p.get("blinker"),
+                    "prev_jockey_code": p.get("prev_jockey_code"),
+                    "jockey_apprentice_code": p.get("jockey_apprentice_code"),
+                }
+            )
         if not values:
             return {}
         update_cols = [
-            "jockey_id", "trainer_id", "weight_carried", "horse_weight", "weight_change",
-            "horse_age", "east_west_code", "prev_weight_carried", "blinker",
-            "prev_jockey_code", "jockey_apprentice_code",
+            "jockey_id",
+            "trainer_id",
+            "weight_carried",
+            "horse_weight",
+            "weight_change",
+            "horse_age",
+            "east_west_code",
+            "prev_weight_carried",
+            "blinker",
+            "prev_jockey_code",
+            "jockey_apprentice_code",
         ]
         stmt = insert(RaceEntry).values(values)
         stmt = stmt.on_conflict_do_update(
@@ -387,43 +435,58 @@ class RaceImporter:
                 continue
             finish_time_raw = p.get("finish_time")
             last_3f_raw = p.get("last_3f")
-            values.append({
-                "race_id": race_id,
-                "horse_id": horse_id,
-                "entry_id": entry_id,
-                "finish_position": finish_pos,
-                "frame_number": p.get("frame_number"),
-                "horse_number": horse_num,
-                "jockey_id": self._jockey_cache.get(p.get("jravan_jockey_code", "")),
-                "weight_carried": p.get("weight_carried"),
-                "horse_weight": p.get("horse_weight"),
-                "weight_change": p.get("weight_change"),
-                "finish_time": _finish_time_to_decimal(finish_time_raw),
-                "last_3f": _last3f_to_decimal(last_3f_raw),
-                "passing_1": p.get("passing_1"),
-                "passing_2": p.get("passing_2"),
-                "passing_3": p.get("passing_3"),
-                "passing_4": p.get("passing_4"),
-                "abnormality_code": abnormal,
-                "arrival_position": p.get("arrival_position"),
-                "dead_heat": p.get("dead_heat"),
-                "margin_code": p.get("margin_code"),
-                "win_odds": p.get("win_odds"),
-                "win_popularity": p.get("win_popularity"),
-                "prize_money": p.get("prize_money"),
-                "last_4f": p.get("last_4f"),
-                "time_diff": p.get("time_diff"),
-                "running_style": p.get("running_style"),
-            })
+            values.append(
+                {
+                    "race_id": race_id,
+                    "horse_id": horse_id,
+                    "entry_id": entry_id,
+                    "finish_position": finish_pos,
+                    "frame_number": p.get("frame_number"),
+                    "horse_number": horse_num,
+                    "jockey_id": self._jockey_cache.get(p.get("jravan_jockey_code", "")),
+                    "weight_carried": p.get("weight_carried"),
+                    "horse_weight": p.get("horse_weight"),
+                    "weight_change": p.get("weight_change"),
+                    "finish_time": _finish_time_to_decimal(finish_time_raw),
+                    "last_3f": _last3f_to_decimal(last_3f_raw),
+                    "passing_1": p.get("passing_1"),
+                    "passing_2": p.get("passing_2"),
+                    "passing_3": p.get("passing_3"),
+                    "passing_4": p.get("passing_4"),
+                    "abnormality_code": abnormal,
+                    "arrival_position": p.get("arrival_position"),
+                    "dead_heat": p.get("dead_heat"),
+                    "margin_code": p.get("margin_code"),
+                    "win_odds": p.get("win_odds"),
+                    "win_popularity": p.get("win_popularity"),
+                    "prize_money": p.get("prize_money"),
+                    "last_4f": p.get("last_4f"),
+                    "time_diff": p.get("time_diff"),
+                    "running_style": p.get("running_style"),
+                }
+            )
         if not values:
             return [], 0
         result_race_ids = list({v["race_id"] for v in values if v.get("finish_position")})
         update_cols = [
-            "finish_position", "finish_time", "last_3f",
-            "passing_1", "passing_2", "passing_3", "passing_4",
-            "abnormality_code", "jockey_id", "arrival_position", "dead_heat",
-            "margin_code", "win_odds", "win_popularity", "prize_money",
-            "last_4f", "time_diff", "running_style",
+            "finish_position",
+            "finish_time",
+            "last_3f",
+            "passing_1",
+            "passing_2",
+            "passing_3",
+            "passing_4",
+            "abnormality_code",
+            "jockey_id",
+            "arrival_position",
+            "dead_heat",
+            "margin_code",
+            "win_odds",
+            "win_popularity",
+            "prize_money",
+            "last_4f",
+            "time_diff",
+            "running_style",
         ]
         stmt = insert(RaceResult).values(values)
         stmt = stmt.on_conflict_do_update(
@@ -556,11 +619,7 @@ class RaceImporter:
         """jravan_race_id からDBのRace.idを取得する。キャッシュ優先。"""
         if jravan_race_id in self._race_cache:
             return self._race_cache[jravan_race_id]
-        race = (
-            self.db.query(Race.id)
-            .filter(Race.jravan_race_id == jravan_race_id)
-            .scalar()
-        )
+        race = self.db.query(Race.id).filter(Race.jravan_race_id == jravan_race_id).scalar()
         if race is not None:
             self._race_cache[jravan_race_id] = race
         return race
@@ -571,7 +630,9 @@ class RaceImporter:
         if race_db_id is None:
             # Raceが先にインポートされていない場合はスキップ
             # （バッチ内でRAが先に来ることを想定。後処理でリトライ可能）
-            logger.warning(f"Race not found for jravan_race_id={parsed['jravan_race_id']}, SE skipped")
+            logger.warning(
+                f"Race not found for jravan_race_id={parsed['jravan_race_id']}, SE skipped"
+            )
             return
 
         horse_id = self._get_or_create_horse(parsed)

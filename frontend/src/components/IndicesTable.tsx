@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHistory } from "@/lib/api";
 import { IndexBar } from "./IndexBar";
 import { cn, indexColor } from "@/lib/utils";
@@ -80,7 +80,7 @@ function Sparkline({ values }: { values: (number | null)[] }) {
   const color = last >= prev ? "#16a34a" : "#f97316";
 
   return (
-    <svg width={w} height={h} className="overflow-visible">
+    <svg width={w} height={h} className="overflow-visible" aria-hidden="true">
       <polyline
         points={pts.join(" ")}
         fill="none"
@@ -136,7 +136,13 @@ function HistorySection({ horseId }: { horseId: number }) {
     );
   }
 
-  if (!history || history.length === 0) return null;
+  if (!history || history.length === 0) {
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-100 text-[10px] text-gray-400">
+        近走成績なし
+      </div>
+    );
+  }
 
   return (
     <div className="mt-3 pt-3 border-t border-gray-100">
@@ -151,16 +157,17 @@ function HistorySection({ horseId }: { horseId: number }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[10px] text-gray-600">
+          <caption className="sr-only">近走成績</caption>
           <thead>
             <tr className="text-gray-400 border-b border-gray-100">
-              <th className="text-left pb-1 pr-2 font-normal whitespace-nowrap">日付</th>
-              <th className="text-left pb-1 pr-2 font-normal whitespace-nowrap">開催</th>
-              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">着順</th>
-              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">タイム</th>
-              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">後3F</th>
-              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">人気</th>
-              <th className="text-right pb-1 pr-2 font-normal whitespace-nowrap">指数</th>
-              <th className="text-left pb-1 font-normal whitespace-nowrap">不利</th>
+              <th scope="col" className="text-left pb-1 pr-2 font-normal whitespace-nowrap">日付</th>
+              <th scope="col" className="text-left pb-1 pr-2 font-normal whitespace-nowrap">開催</th>
+              <th scope="col" className="text-right pb-1 pr-2 font-normal whitespace-nowrap">着順</th>
+              <th scope="col" className="text-right pb-1 pr-2 font-normal whitespace-nowrap">タイム</th>
+              <th scope="col" className="text-right pb-1 pr-2 font-normal whitespace-nowrap">後3F</th>
+              <th scope="col" className="text-right pb-1 pr-2 font-normal whitespace-nowrap">人気</th>
+              <th scope="col" className="text-right pb-1 pr-2 font-normal whitespace-nowrap">指数</th>
+              <th scope="col" className="text-left pb-1 font-normal whitespace-nowrap">不利</th>
             </tr>
           </thead>
           <tbody>
@@ -223,7 +230,9 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
   const [sort, setSort] = useState<SortKey>(defaultSort);
   const [expandedHorse, setExpandedHorse] = useState<number | null>(null);
   const [odds, setOdds] = useState<OddsData>(initialOdds ?? { win: {}, place: {} });
+  const [wsConnected, setWsConnected] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
+  const liveRegionRef = useRef<HTMLDivElement | null>(null);
 
   // WebSocket接続 - オッズリアルタイム更新
   useEffect(() => {
@@ -232,25 +241,46 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
     if (!url) return;
 
     let ws: WebSocket;
-    try {
-      ws = new WebSocket(url);
-      wsRef.current = ws;
-      ws.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data) as OddsData;
-          setOdds(data);
-        } catch {
-          // ignore
-        }
-      };
-      ws.onerror = () => {
-        // WS接続失敗は静かに無視（オッズなしで動作）
-      };
-    } catch {
-      // WebSocket非対応環境は無視
-    }
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(url);
+        wsRef.current = ws;
+        ws.onopen = () => {
+          setWsConnected(true);
+        };
+        ws.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data) as OddsData;
+            setOdds(data);
+            if (liveRegionRef.current) {
+              liveRegionRef.current.textContent = "オッズが更新されました";
+              setTimeout(() => {
+                if (liveRegionRef.current) liveRegionRef.current.textContent = "";
+              }, 3000);
+            }
+          } catch {
+            // ignore
+          }
+        };
+        ws.onerror = () => {
+          setWsConnected(false);
+        };
+        ws.onclose = () => {
+          setWsConnected(false);
+          // 30秒後に再接続試行
+          reconnectTimeout = setTimeout(connect, 30000);
+        };
+      } catch {
+        setWsConnected(false);
+      }
+    };
+
+    connect();
 
     return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       wsRef.current?.close();
       wsRef.current = null;
     };
@@ -261,6 +291,12 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
     (best, h) => h.composite_index > best.composite_index ? h : best,
     indices[0]
   )?.horse_number;
+
+  // 総合指数ランクマップ（O(n log n) → O(1) lookup）
+  const compositeRankMap = useMemo(() => {
+    const sorted = [...indices].sort((a, b) => b.composite_index - a.composite_index);
+    return new Map(sorted.map((h, i) => [h.horse_number, i + 1]));
+  }, [indices]);
 
   const sorted = [...indices].sort((a, b) => {
     if (sort === "horse_number") return a.horse_number - b.horse_number;
@@ -292,14 +328,29 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
   return (
     <div>
+      {/* スクリーンリーダー向けライブリージョン */}
+      <div ref={liveRegionRef} aria-live="polite" aria-atomic="true" className="sr-only" />
+
+      {/* WebSocket切断通知 */}
+      {raceId && !wsConnected && (
+        <div
+          role="status"
+          className="mb-2 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs flex items-center gap-2"
+        >
+          <span aria-hidden="true">⚠️</span>
+          リアルタイム更新停止中（再接続を試みています...）
+        </div>
+      )}
+
       {/* ソートタブ */}
-      <div className="flex gap-1 mb-3 flex-wrap">
+      <div className="flex gap-1 mb-3 flex-wrap" role="group" aria-label="ソート順">
         {sortKeys.map((key) => (
           <button
             key={key}
+            aria-pressed={sort === key}
             onClick={() => setSort(key)}
             className={cn(
-              "text-xs px-3 py-1 rounded-full border transition-colors",
+              "text-xs px-3 py-1 min-h-[32px] rounded-full border transition-colors",
               sort === key
                 ? "border-green-600 bg-green-700 text-white"
                 : "border-gray-200 text-gray-600 hover:border-green-300"
@@ -324,8 +375,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
           const isTop = horse.horse_number === topHorseNumber;
           const isAnagusa = horse.anagusa_rank !== null && !isTop;
           // 指数4位以降でupsideスコアが高い = 穴候補
-          const compositeRank = [...indices].sort((a, b) => b.composite_index - a.composite_index)
-            .findIndex((h) => h.horse_number === horse.horse_number) + 1;
+          const compositeRank = compositeRankMap.get(horse.horse_number) ?? 99;
           const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
 
           const finishPos = results?.get(horse.horse_number);
@@ -346,9 +396,12 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
             >
               {/* メイン行 */}
               <button
+                aria-expanded={isExpanded}
+                aria-controls={`horse-detail-${horse.horse_number}`}
+                aria-label={`${horse.horse_name}の詳細を${isExpanded ? "閉じる" : "表示する"}`}
                 onClick={() => setExpandedHorse(isExpanded ? null : horse.horse_number)}
                 className={cn(
-                  "w-full text-left px-3 py-2.5 flex items-center gap-3",
+                  "w-full text-left px-3 py-2.5 flex items-center gap-3 focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-1",
                   isTop ? "bg-green-50" : "bg-white hover:bg-gray-50"
                 )}
               >
@@ -430,7 +483,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
               {/* 展開: 指数内訳 + 近走成績 */}
               {isExpanded && (
-                <div className="border-t border-gray-100 bg-gray-50 px-3 py-3">
+                <div id={`horse-detail-${horse.horse_number}`} className="border-t border-gray-100 bg-gray-50 px-3 py-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-[10px] text-gray-400">指数内訳</p>
                     {horse.upside_score !== null && horse.upside_score !== undefined && (

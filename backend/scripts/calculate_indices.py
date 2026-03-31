@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -27,12 +26,13 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 from sqlalchemy.orm import Session
 
-from src.db.session import engine
 from src.db.models import Horse, RaceEntry
+from src.db.session import engine
 from src.indices.composite import CompositeIndexCalculator
 
 logging.basicConfig(
@@ -68,27 +68,31 @@ def run(date: str, output_path: str | None) -> None:
         # 馬番を付与（race_id + horse_id → horse_number）
         entry_map: dict[tuple[int, int], int] = {}
         race_ids = list({r["race_id"] for r in rows})
-        entries = (
-            db.query(RaceEntry)
-            .filter(RaceEntry.race_id.in_(race_ids))
-            .all()
-        )
+        entries = db.query(RaceEntry).filter(RaceEntry.race_id.in_(race_ids)).all()
         for e in entries:
             entry_map[(e.race_id, e.horse_id)] = e.horse_number
 
         # CSV 出力
         fieldnames = [
-            "date", "course_name", "race_number", "race_name",
-            "horse_number", "horse_name",
+            "date",
+            "course_name",
+            "race_number",
+            "race_name",
+            "horse_number",
+            "horse_name",
             "composite_index",
-            "speed_index", "course_aptitude", "position_advantage",
-            "rotation_index", "jockey_index", "pace_index",
+            "speed_index",
+            "course_aptitude",
+            "position_advantage",
+            "rotation_index",
+            "jockey_index",
+            "pace_index",
         ]
 
         def _sorted_rows(data: list[dict]) -> list[dict]:
             return sorted(
                 data,
-                key=lambda r: (r["race_number"], entry_map.get((r["race_id"], r["horse_id"]), 99))
+                key=lambda r: (r["race_number"], entry_map.get((r["race_id"], r["horse_id"]), 99)),
             )
 
         def _make_row(r: dict) -> dict:
@@ -143,7 +147,9 @@ def _print_summary(rows: list[dict]) -> None:
         if race_key != current_race:
             current_race = race_key
             print(f"\n  R{r['race_number']:>2} {r['course_name']} {r['race_name'] or ''}")
-            print(f"  {'馬番':>4} {'馬名':>18} {'総合':>6} {'速度':>6} {'コース':>6} {'展開':>6} {'騎手':>6} {'ロテ':>6}")
+            print(
+                f"  {'馬番':>4} {'馬名':>18} {'総合':>6} {'速度':>6} {'コース':>6} {'展開':>6} {'騎手':>6} {'ロテ':>6}"
+            )
             print("  " + "-" * 62)
 
         print(

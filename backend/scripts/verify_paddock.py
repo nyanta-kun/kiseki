@@ -34,6 +34,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 from src.db.session import engine
@@ -176,6 +177,7 @@ def load_weight_data(start_date: str, end_date: str) -> pd.DataFrame:
 # ユーティリティ
 # ============================================================
 
+
 def win_rate(df: pd.DataFrame) -> float:
     """勝率を返す。"""
     return (df["finish_position"] == 1).mean()
@@ -237,6 +239,7 @@ def top1_accuracy(df: pd.DataFrame, score_col: str) -> tuple[float, float, int]:
 # Section 1: Netkeiba パドック検証
 # ============================================================
 
+
 def verify_netkeiba(df: pd.DataFrame) -> None:
     """Netkeibaパドック（p_rank）の有効性を検証する。"""
     print("\n" + "=" * 60)
@@ -246,12 +249,12 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
     total = len(df)
     has_paddock = df["p_rank"].notna() & df["p_rank"].isin(["A", "B", "C", "穴"])
     print(f"\nデータ総数: {total:,} 件")
-    print(f"パドックデータあり: {has_paddock.sum():,} 件 ({has_paddock.mean()*100:.1f}%)")
+    print(f"パドックデータあり: {has_paddock.sum():,} 件 ({has_paddock.mean() * 100:.1f}%)")
 
     # ベースライン
     baseline_wr = win_rate(df)
     baseline_pr = place_rate(df)
-    print(f"\n全体ベースライン: 勝率={baseline_wr*100:.1f}%, 複勝率={baseline_pr*100:.1f}%")
+    print(f"\n全体ベースライン: 勝率={baseline_wr * 100:.1f}%, 複勝率={baseline_pr * 100:.1f}%")
 
     # p_type / p_rank 別の統計
     print("\n--- p_type × p_rank 別 勝率・複勝率 ---")
@@ -280,13 +283,19 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
             p_str = f"{p:.4f}{'*' if p < 0.05 else ''}"
         except Exception:
             p_str = "N/A"
-        print(f"  {p_type}/{p_rank:<10} {len(sub):>6}   {wr*100:>5.1f}%  {pr*100:>6.1f}%  {p_str:>12}")
+        print(
+            f"  {p_type}/{p_rank:<10} {len(sub):>6}   {wr * 100:>5.1f}%  {pr * 100:>6.1f}%  {p_str:>12}"
+        )
 
     # データなし vs あり の比較
     no_paddock = df[~has_paddock]
     with_paddock = df[has_paddock]
-    print(f"\n  データなし         {len(no_paddock):>6}   {win_rate(no_paddock)*100:>5.1f}%  {place_rate(no_paddock)*100:>6.1f}%")
-    print(f"  データあり(計)     {len(with_paddock):>6}   {win_rate(with_paddock)*100:>5.1f}%  {place_rate(with_paddock)*100:>6.1f}%")
+    print(
+        f"\n  データなし         {len(no_paddock):>6}   {win_rate(no_paddock) * 100:>5.1f}%  {place_rate(no_paddock) * 100:>6.1f}%"
+    )
+    print(
+        f"  データあり(計)     {len(with_paddock):>6}   {win_rate(with_paddock) * 100:>5.1f}%  {place_rate(with_paddock) * 100:>6.1f}%"
+    )
 
     # スコア付与してスピアマン相関
     PADDOCK_SCORES = {
@@ -308,15 +317,15 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
     df_valid = df[df["race_id"].isin(valid_race_ids)]
 
     mean_rho, med_rho, n_races = spearman_per_race(df_valid, "paddock_score")
-    print(f"\nスピアマン相関（パドックデータありレース限定）:")
+    print("\nスピアマン相関（パドックデータありレース限定）:")
     print(f"  対象レース数: {n_races}")
     print(f"  平均ρ: {mean_rho:.4f}, 中央値ρ: {med_rho:.4f}")
-    print(f"  ※ ρ>0 = 高スコア馬が上位着（予測力あり）")
+    print("  ※ ρ>0 = 高スコア馬が上位着（予測力あり）")
 
     # top1 的中率
     wr1, pr1, n1 = top1_accuracy(df_valid, "paddock_score")
     print(f"\n指数最高馬の的中率（対象レース: {n1}）:")
-    print(f"  単勝的中率: {wr1*100:.1f}%  複勝的中率: {pr1*100:.1f}%")
+    print(f"  単勝的中率: {wr1 * 100:.1f}%  複勝的中率: {pr1 * 100:.1f}%")
 
     # 人気馬だけの評価（人気馬だからあたりやすい補正のため）
     print("\n--- 人気補正: p_rank=A かつ 単勝1〜3番人気 ---")
@@ -325,8 +334,12 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
     if mask_fav.sum() >= 10:
         sub_a = df[mask_fav]
         sub_all = df[mask_no_a]
-        print(f"  A+1-3人気: {mask_fav.sum()}件, 勝率={win_rate(sub_a)*100:.1f}%, 複勝率={place_rate(sub_a)*100:.1f}%")
-        print(f"  1-3人気全体: {len(sub_all)}件, 勝率={win_rate(sub_all)*100:.1f}%, 複勝率={place_rate(sub_all)*100:.1f}%")
+        print(
+            f"  A+1-3人気: {mask_fav.sum()}件, 勝率={win_rate(sub_a) * 100:.1f}%, 複勝率={place_rate(sub_a) * 100:.1f}%"
+        )
+        print(
+            f"  1-3人気全体: {len(sub_all)}件, 勝率={win_rate(sub_all) * 100:.1f}%, 複勝率={place_rate(sub_all) * 100:.1f}%"
+        )
     else:
         print(f"  サンプル不足 ({mask_fav.sum()}件)")
 
@@ -336,8 +349,12 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
     if mask_ana.sum() >= 10:
         sub_ana = df[mask_ana]
         sub_low = df[mask_low]
-        print(f"  穴+4番人気以下: {mask_ana.sum()}件, 勝率={win_rate(sub_ana)*100:.1f}%, 複勝率={place_rate(sub_ana)*100:.1f}%")
-        print(f"  4番人気以下全体: {len(sub_low)}件, 勝率={win_rate(sub_low)*100:.1f}%, 複勝率={place_rate(sub_low)*100:.1f}%")
+        print(
+            f"  穴+4番人気以下: {mask_ana.sum()}件, 勝率={win_rate(sub_ana) * 100:.1f}%, 複勝率={place_rate(sub_ana) * 100:.1f}%"
+        )
+        print(
+            f"  4番人気以下全体: {len(sub_low)}件, 勝率={win_rate(sub_low) * 100:.1f}%, 複勝率={place_rate(sub_low) * 100:.1f}%"
+        )
     else:
         print(f"  サンプル不足 ({mask_ana.sum()}件)")
 
@@ -345,6 +362,7 @@ def verify_netkeiba(df: pd.DataFrame) -> None:
 # ============================================================
 # Section 2: 馬体重変化 検証
 # ============================================================
+
 
 def _weight_category(wc: float) -> str:
     """体重変化をカテゴリ分類する。"""
@@ -362,6 +380,7 @@ def _weight_category(wc: float) -> str:
 
 
 WEIGHT_CAT_ORDER = ["±2以内", "±3-4", "±5-6", "±7-10", "±11以上"]
+
 
 # 増加 vs 減少で分ける
 def _weight_dir_category(wc: float) -> str:
@@ -397,7 +416,9 @@ def verify_weight(df: pd.DataFrame) -> None:
     total = len(df)
     baseline_wr = win_rate(df)
     baseline_pr = place_rate(df)
-    print(f"\nデータ総数: {total:,} 件  ベースライン: 勝率={baseline_wr*100:.1f}%, 複勝率={baseline_pr*100:.1f}%")
+    print(
+        f"\nデータ総数: {total:,} 件  ベースライン: 勝率={baseline_wr * 100:.1f}%, 複勝率={baseline_pr * 100:.1f}%"
+    )
 
     # 体重変化絶対値カテゴリ別
     df["wc_cat"] = df["weight_change"].apply(_weight_category)
@@ -419,27 +440,33 @@ def verify_weight(df: pd.DataFrame) -> None:
             p_str = f"{p:.4f}{'*' if p < 0.05 else ''}"
         except Exception:
             p_str = "N/A"
-        print(f"  {cat:<10} {len(sub):>8}   {wr*100:>5.1f}%  {pr*100:>6.1f}%  {p_str:>12}")
+        print(f"  {cat:<10} {len(sub):>8}   {wr * 100:>5.1f}%  {pr * 100:>6.1f}%  {p_str:>12}")
 
     # 増加 vs 減少の比較
     print("\n--- 体重増加 vs 減少 比較 ---")
     inc = df[df["weight_change"] > 0]
     dec = df[df["weight_change"] < 0]
     flat = df[df["weight_change"] == 0]
-    print(f"  増加: {len(inc):,}件  勝率={win_rate(inc)*100:.1f}%  複勝率={place_rate(inc)*100:.1f}%")
-    print(f"  減少: {len(dec):,}件  勝率={win_rate(dec)*100:.1f}%  複勝率={place_rate(dec)*100:.1f}%")
-    print(f"  変化なし: {len(flat):,}件  勝率={win_rate(flat)*100:.1f}%  複勝率={place_rate(flat)*100:.1f}%")
+    print(
+        f"  増加: {len(inc):,}件  勝率={win_rate(inc) * 100:.1f}%  複勝率={place_rate(inc) * 100:.1f}%"
+    )
+    print(
+        f"  減少: {len(dec):,}件  勝率={win_rate(dec) * 100:.1f}%  複勝率={place_rate(dec) * 100:.1f}%"
+    )
+    print(
+        f"  変化なし: {len(flat):,}件  勝率={win_rate(flat) * 100:.1f}%  複勝率={place_rate(flat) * 100:.1f}%"
+    )
 
     # スコア付与してスピアマン相関
     df["weight_score"] = df["weight_change"].apply(weight_score)
     mean_rho, med_rho, n_races = spearman_per_race(df, "weight_score")
-    print(f"\nスピアマン相関（全レース）:")
+    print("\nスピアマン相関（全レース）:")
     print(f"  対象レース数: {n_races}")
     print(f"  平均ρ: {mean_rho:.4f}, 中央値ρ: {med_rho:.4f}")
 
     wr1, pr1, n1 = top1_accuracy(df, "weight_score")
     print(f"\n体重スコア最高馬の的中率（対象レース: {n1}）:")
-    print(f"  単勝的中率: {wr1*100:.1f}%  複勝的中率: {pr1*100:.1f}%")
+    print(f"  単勝的中率: {wr1 * 100:.1f}%  複勝的中率: {pr1 * 100:.1f}%")
 
     # 体重絶対値との相関（重い馬が強い傾向があるか）
     rho_w, p_w = stats.spearmanr(df["horse_weight"], -df["finish_position"])
@@ -448,7 +475,7 @@ def verify_weight(df: pd.DataFrame) -> None:
     # 体重変化 vs 着順の直接相関
     rho_c, p_c = stats.spearmanr(df["weight_change"].abs(), df["finish_position"])
     print(f"|体重変化| vs 着順 スピアマン相関: ρ={rho_c:.4f}, p={p_c:.4f}")
-    print(f"  ※ ρ>0 = 体重変化大きいほど着順悪い（負の予測力あり）")
+    print("  ※ ρ>0 = 体重変化大きいほど着順悪い（負の予測力あり）")
 
     # 距離別・芝ダート別クロス
     print("\n--- 芝 vs ダート での体重変化効果 ---")
@@ -460,14 +487,17 @@ def verify_weight(df: pd.DataFrame) -> None:
         # 安定馬（±4以内）の複勝率
         stable = sub[sub["weight_change"].abs() <= 4]
         unstable = sub[sub["weight_change"].abs() > 8]
-        print(f"  {label}: |wc| vs 着順 ρ={rho:.4f}(p={p:.4f}), "
-              f"安定({len(stable)}件)複勝率={place_rate(stable)*100:.1f}%, "
-              f"不安定({len(unstable)}件)複勝率={place_rate(unstable)*100:.1f}%")
+        print(
+            f"  {label}: |wc| vs 着順 ρ={rho:.4f}(p={p:.4f}), "
+            f"安定({len(stable)}件)複勝率={place_rate(stable) * 100:.1f}%, "
+            f"不安定({len(unstable)}件)複勝率={place_rate(unstable) * 100:.1f}%"
+        )
 
 
 # ============================================================
 # Section 3: 総合比較・結論
 # ============================================================
+
 
 def conclusion(df_nk: pd.DataFrame, df_wt: pd.DataFrame) -> None:
     """2手法を比較して結論を出す。"""
@@ -485,12 +515,19 @@ def conclusion(df_nk: pd.DataFrame, df_wt: pd.DataFrame) -> None:
     baseline_pr_wt = place_rate(df_wt)
 
     # スピアマン（Netkeiba）
-    PADDOCK_SCORES = {("人気","A"):85.0,("人気","B"):70.0,("人気","C"):45.0,("特注","穴"):60.0}
+    PADDOCK_SCORES = {
+        ("人気", "A"): 85.0,
+        ("人気", "B"): 70.0,
+        ("人気", "C"): 45.0,
+        ("特注", "穴"): 60.0,
+    }
     df_nk = df_nk.copy()
     df_nk["paddock_score"] = df_nk.apply(
-        lambda r: PADDOCK_SCORES.get((r["p_type"], r["p_rank"]), 50.0), axis=1)
+        lambda r: PADDOCK_SCORES.get((r["p_type"], r["p_rank"]), 50.0), axis=1
+    )
     races_with_any = df_nk.groupby("race_id")["p_rank"].apply(
-        lambda x: x.isin(["A","B","C","穴"]).any())
+        lambda x: x.isin(["A", "B", "C", "穴"]).any()
+    )
     valid_ids = races_with_any[races_with_any].index
     df_nk_valid = df_nk[df_nk["race_id"].isin(valid_ids)]
     nk_rho, _, nk_n = spearman_per_race(df_nk_valid, "paddock_score")
@@ -506,13 +543,15 @@ def conclusion(df_nk: pd.DataFrame, df_wt: pd.DataFrame) -> None:
 手法                      | サンプル数 | スピアマンρ | 単勝的中率 | 複勝的中率
 --------------------------|-----------|------------|-----------|----------
 Netkeiba p_rank (全体)    | {len(df_nk):>9,} | {nk_rho:>+.4f}      | 参考値    | 参考値
-Netkeiba (有効レースのみ) | {nk_n1:>9,} | -          | {nk_w1*100:>8.1f}% | {nk_p1*100:>8.1f}%
-馬体重変化スコア          | {wt_n1:>9,} | {wt_rho:>+.4f}      | {wt_w1*100:>8.1f}% | {wt_p1*100:>8.1f}%
+Netkeiba (有効レースのみ) | {nk_n1:>9,} | -          | {nk_w1 * 100:>8.1f}% | {nk_p1 * 100:>8.1f}%
+馬体重変化スコア          | {wt_n1:>9,} | {wt_rho:>+.4f}      | {wt_w1 * 100:>8.1f}% | {wt_p1 * 100:>8.1f}%
 """)
 
     print("=== 判定基準 ===")
     print("  有効: スピアマンρ > 0.02 かつ 複勝的中率 > ベースライン+3%")
-    print(f"  ベースライン複勝率: Netkeiba={baseline_pr_nk*100:.1f}%, 体重={baseline_pr_wt*100:.1f}%")
+    print(
+        f"  ベースライン複勝率: Netkeiba={baseline_pr_nk * 100:.1f}%, 体重={baseline_pr_wt * 100:.1f}%"
+    )
     print()
 
     # 判定
@@ -522,7 +561,9 @@ Netkeiba (有効レースのみ) | {nk_n1:>9,} | -          | {nk_w1*100:>8.1f}%
     if nk_effective:
         print("✅ Netkeibaパドック: 有効（総合指数への反映を推奨）")
     else:
-        print(f"❌ Netkeibaパドック: 効果限定的（ρ={nk_rho:.4f}, 捕捉率{has_rank.mean()*100:.1f}%）")
+        print(
+            f"❌ Netkeibaパドック: 効果限定的（ρ={nk_rho:.4f}, 捕捉率{has_rank.mean() * 100:.1f}%）"
+        )
         print("   → 総合指数への反映は見送り。引き続きweight=0で表示専用。")
 
     if wt_effective:
@@ -532,8 +573,8 @@ Netkeiba (有効レースのみ) | {nk_n1:>9,} | -          | {nk_w1*100:>8.1f}%
         print("   → 総合指数への反映は見送り。training指数内の体重要素で代替。")
 
     # サンプルサイズの問題
-    print(f"\n--- サンプルサイズ評価 ---")
-    print(f"  Netkeibaパドック有効データ: {has_rank.sum()}件 (全体の{has_rank.mean()*100:.1f}%)")
+    print("\n--- サンプルサイズ評価 ---")
+    print(f"  Netkeibaパドック有効データ: {has_rank.sum()}件 (全体の{has_rank.mean() * 100:.1f}%)")
     if has_rank.sum() < 1000:
         print("  ⚠️  サンプル不足により統計的有意性が低い可能性あり")
     if len(rank_a) < 100:
@@ -543,6 +584,7 @@ Netkeiba (有効レースのみ) | {nk_n1:>9,} | -          | {nk_w1*100:>8.1f}%
 # ============================================================
 # メイン
 # ============================================================
+
 
 def main() -> None:
     """メイン処理。"""
@@ -569,13 +611,13 @@ def main() -> None:
     conclusion(df_nk, df_wt)
 
     if args.report:
-        import io, contextlib
-        from datetime import datetime
         out_dir = _root / "docs" / "verification"
         out_dir.mkdir(parents=True, exist_ok=True)
         fname = out_dir / f"paddock_verify_{args.start}_{args.end}.txt"
         # テキストをキャプチャ（再実行）して保存
-        print(f"\n※ レポートは {fname} に出力するには --report を外して stdout をリダイレクトしてください")
+        print(
+            f"\n※ レポートは {fname} に出力するには --report を外して stdout をリダイレクトしてください"
+        )
 
 
 if __name__ == "__main__":

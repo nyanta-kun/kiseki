@@ -24,10 +24,8 @@ sekito.anagusa テーブルから穴ぐさピック情報を取得し、
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from ..db.models import Race, RaceEntry
 from .base import IndexCalculator
@@ -146,11 +144,7 @@ class AnagusaIndexCalculator(IndexCalculator):
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = (
-            self.db.query(RaceEntry)
-            .filter(RaceEntry.race_id == race_id)
-            .all()
-        )
+        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
         if not entries:
             return {}
 
@@ -164,7 +158,7 @@ class AnagusaIndexCalculator(IndexCalculator):
 
         result: dict[int, float] = {}
         for entry in entries:
-            rank: Optional[str] = picks.get(entry.horse_number)
+            rank: str | None = picks.get(entry.horse_number)
             base = RANK_BASE_SCORES.get(rank, DEFAULT_SCORE) if rank else DEFAULT_SCORE
             score = base + course_adj + surface_dist_adj + head_adj
             score = round(max(0.0, min(100.0, score)), 1)

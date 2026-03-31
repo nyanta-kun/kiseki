@@ -30,6 +30,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 from sqlalchemy import text
@@ -140,8 +141,7 @@ def run(
                 db.expunge_all()
                 total_horses += len(rows)
                 logger.info(
-                    f"[{i:>4}/{len(dates)}] {date}: {len(rows):>4} 頭 "
-                    f"(累計 {total_horses:,})"
+                    f"[{i:>4}/{len(dates)}] {date}: {len(rows):>4} 頭 (累計 {total_horses:,})"
                 )
             except Exception as e:
                 db.rollback()
@@ -149,10 +149,7 @@ def run(
                 errors += 1
                 logger.error(f"[{i:>4}/{len(dates)}] {date}: エラー → {e}")
 
-    logger.info(
-        f"完了: {len(dates)} 日 / {total_horses:,} 頭分の指数を保存 "
-        f"(エラー: {errors} 日)"
-    )
+    logger.info(f"完了: {len(dates)} 日 / {total_horses:,} 頭分の指数を保存 (エラー: {errors} 日)")
 
 
 def main() -> None:

@@ -41,11 +41,7 @@ class ChangeHandler:
             return {"recorded": False, "recalc_race_id": None}
 
     def _get_race_id(self, jravan_race_id: str) -> int | None:
-        return (
-            self.db.query(Race.id)
-            .filter(Race.jravan_race_id == jravan_race_id)
-            .scalar()
-        )
+        return self.db.query(Race.id).filter(Race.jravan_race_id == jravan_race_id).scalar()
 
     def _get_horse_id_by_horse_num(self, race_db_id: int, horse_num: int) -> int | None:
         """馬番からhorse_idを引く。"""

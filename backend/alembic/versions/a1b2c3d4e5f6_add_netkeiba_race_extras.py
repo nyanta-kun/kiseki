@@ -9,6 +9,7 @@ Create Date: 2026-03-29
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "a1b2c3d4e5f6"
@@ -23,12 +24,24 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("race_id", sa.Integer(), nullable=False),
         sa.Column("horse_id", sa.Integer(), nullable=False),
-        sa.Column("remarks", sa.String(length=200), nullable=True,
-                  comment="備考（出遅れ・不利・後方一気等の短評テキスト）"),
-        sa.Column("notable_comment", sa.Text(), nullable=True,
-                  comment="注目馬レース後の短評（プレミアム）"),
-        sa.Column("race_analysis", sa.Text(), nullable=True,
-                  comment="分析コメント（レース全体の流れ、全馬共通）"),
+        sa.Column(
+            "remarks",
+            sa.String(length=200),
+            nullable=True,
+            comment="備考（出遅れ・不利・後方一気等の短評テキスト）",
+        ),
+        sa.Column(
+            "notable_comment",
+            sa.Text(),
+            nullable=True,
+            comment="注目馬レース後の短評（プレミアム）",
+        ),
+        sa.Column(
+            "race_analysis",
+            sa.Text(),
+            nullable=True,
+            comment="分析コメント（レース全体の流れ、全馬共通）",
+        ),
         sa.Column("scraped_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["race_id"], ["keiba.races.id"]),
         sa.ForeignKeyConstraint(["horse_id"], ["keiba.horses.id"]),
@@ -45,5 +58,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_netkeiba_race_extras_race_id", table_name="netkeiba_race_extras", schema="keiba")
+    op.drop_index(
+        "ix_netkeiba_race_extras_race_id", table_name="netkeiba_race_extras", schema="keiba"
+    )
     op.drop_table("netkeiba_race_extras", schema="keiba")

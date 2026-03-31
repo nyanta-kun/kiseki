@@ -30,9 +30,14 @@ export async function verifyPasswordAndRedirect(
     path: "/",
   });
 
+  // callbackUrl のバリデーション（オープンリダイレクト防止）
+  const safeCallback =
+    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
+      ? callbackUrl
+      : "/races";
+
   // Google認証へリダイレクト（redirectTo はbasePath込みの絶対パスまたはルート相対パス）
-  // callbackUrl がbasePath除きのパス（例: /races/123）の場合でも正しく処理される
-  await signIn("google", { redirectTo: callbackUrl || "/races" });
+  await signIn("google", { redirectTo: safeCallback });
 
   return null;
 }

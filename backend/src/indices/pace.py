@@ -32,14 +32,13 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..db.models import Race, RaceEntry, RaceResult, RacecourseFeatures
+from ..db.models import Race, RacecourseFeatures, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN
 from .base import IndexCalculator
 from .meet_bias import MeetBiasService
@@ -68,22 +67,22 @@ RUNNER_TYPE_THRESHOLDS = {
 PACE_SCORE_TABLE: dict[str, dict[str, float]] = {
     "escape": {"fast": 45.0, "normal": 70.0, "slow": 85.0},
     "leader": {"fast": 55.0, "normal": 70.0, "slow": 75.0},
-    "mid":    {"fast": 70.0, "normal": 65.0, "slow": 60.0},
+    "mid": {"fast": 70.0, "normal": 65.0, "slow": 60.0},
     "closer": {"fast": 80.0, "normal": 60.0, "slow": 45.0},
     "unknown": {"fast": 50.0, "normal": 50.0, "slow": 50.0},
 }
 
 # コース特性補正の閾値
-LONG_STRAIGHT_M   = 450    # これ以上: 差し/追い込み有利コース
-SHORT_STRAIGHT_M  = 310    # これ以下: 逃げ/先行有利コース
-TIGHT_CORNER      = 0.65   # これ以上: 小回り（前有利）
-LARGE_FIELD       = 14     # これ以上: 多頭数
-SHORT_START_CORNER = 120   # スタート〜コーナーがこれ以下: 前争い激化
+LONG_STRAIGHT_M = 450  # これ以上: 差し/追い込み有利コース
+SHORT_STRAIGHT_M = 310  # これ以下: 逃げ/先行有利コース
+TIGHT_CORNER = 0.65  # これ以上: 小回り（前有利）
+LARGE_FIELD = 14  # これ以上: 多頭数
+SHORT_START_CORNER = 120  # スタート〜コーナーがこれ以下: 前争い激化
 
 # コース特性・当開催バイアスの最大補正幅（ポイント）
-COURSE_ADJ_MAX  = 6.0
-MEET_ADJ_MAX    = 7.0
-FIELD_ADJ_MAX   = 4.0
+COURSE_ADJ_MAX = 6.0
+MEET_ADJ_MAX = 7.0
+FIELD_ADJ_MAX = 4.0
 
 
 def _classify_runner_type(avg_relative_pos: float) -> str:
@@ -151,8 +150,7 @@ class PaceIndexCalculator(IndexCalculator):
         all_rows_map = self._get_past_results_batch(all_horse_ids, race.date, race_id)
 
         runner_types = {
-            hid: self._determine_runner_type(rows)
-            for hid, rows in all_rows_map.items()
+            hid: self._determine_runner_type(rows) for hid, rows in all_rows_map.items()
         }
         # エントリがあるが過去データなし → unknown
         for hid in all_horse_ids:
@@ -204,14 +202,14 @@ class PaceIndexCalculator(IndexCalculator):
 
         # Step4: コース特性・当開催バイアス・頭数を一度だけ取得
         course_feat = self._get_course_features(race.course)
-        meet_bias   = self._meet_bias.get_bias(race)
-        head_count  = race.head_count or len(horse_ids)
+        meet_bias = self._meet_bias.get_bias(race)
+        head_count = race.head_count or len(horse_ids)
 
         # Step5: 各馬のスコア算出
         result: dict[int, float] = {}
         for hid in horse_ids:
             runner_type = runner_types[hid]
-            base_score  = PACE_SCORE_TABLE[runner_type][pace_type]
+            base_score = PACE_SCORE_TABLE[runner_type][pace_type]
             horse_past_rows = rows_map.get(hid, [])
             score = self._apply_last3f_bonus(base_score, horse_past_rows, race)
             score = self._apply_course_adjustment(score, runner_type, course_feat)
@@ -388,7 +386,7 @@ class PaceIndexCalculator(IndexCalculator):
         self,
         score: float,
         runner_type: str,
-        bias: "MeetBias",  # type: ignore[name-defined]
+        bias: MeetBias,  # type: ignore[name-defined]
     ) -> float:
         """当開催の前後バイアスによる補正。
 
@@ -467,9 +465,7 @@ class PaceIndexCalculator(IndexCalculator):
         else:
             return "slow"
 
-    def _apply_last3f_bonus(
-        self, base_score: float, past_rows: list[Any], race: Race
-    ) -> float:
+    def _apply_last3f_bonus(self, base_score: float, past_rows: list[Any], race: Race) -> float:
         """上がり3F補正を適用する。
 
         馬の上がり3F平均が同条件（コース・距離・馬場）の平均より速い場合に
@@ -488,9 +484,7 @@ class PaceIndexCalculator(IndexCalculator):
 
         # 馬の上がり3F平均を計算
         last3f_values = [
-            float(row.RaceResult.last_3f)
-            for row in past_rows
-            if row.RaceResult.last_3f is not None
+            float(row.RaceResult.last_3f) for row in past_rows if row.RaceResult.last_3f is not None
         ]
 
         if not last3f_values:
@@ -513,9 +507,7 @@ class PaceIndexCalculator(IndexCalculator):
 
         return base_score
 
-    def _get_avg_last3f(
-        self, course: str, distance: int, surface: str
-    ) -> float | None:
+    def _get_avg_last3f(self, course: str, distance: int, surface: str) -> float | None:
         """同条件の上がり3F平均を返す。
 
         同セッション内でキャッシュし、DBアクセスを最小化する。

@@ -25,6 +25,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 from sqlalchemy import text
@@ -286,6 +287,7 @@ ORDER BY idx_rank
 # 検証実行 & レポート生成
 # ---------------------------------------------------------------------------
 
+
 def run(year: str, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{date.today().strftime('%Y%m%d')}_{year}_verification.md"
@@ -294,11 +296,11 @@ def run(year: str, output_dir: Path) -> None:
         logger.info(f"{year}年 指数精度検証開始...")
         params = {"year": year}
 
-        basic   = db.execute(SQL_BASIC_STATS,       params).mappings().first()
-        ranks   = db.execute(SQL_RANK_BREAKDOWN,    params).mappings().all()
-        indices = db.execute(SQL_INDIVIDUAL_INDEX,  params).mappings().all()
-        grades  = db.execute(SQL_GRADE_BREAKDOWN,   params).mappings().all()
-        roi     = db.execute(SQL_ROI,               params).mappings().all()
+        basic = db.execute(SQL_BASIC_STATS, params).mappings().first()
+        ranks = db.execute(SQL_RANK_BREAKDOWN, params).mappings().all()
+        indices = db.execute(SQL_INDIVIDUAL_INDEX, params).mappings().all()
+        grades = db.execute(SQL_GRADE_BREAKDOWN, params).mappings().all()
+        roi = db.execute(SQL_ROI, params).mappings().all()
 
     report = _build_report(year, basic, ranks, indices, grades, roi)
 
@@ -311,40 +313,40 @@ def run(year: str, output_dir: Path) -> None:
 
 def _build_report(year, basic, ranks, indices, grades, roi) -> str:
     today = date.today().strftime("%Y-%m-%d")
-    random_win  = float(basic["random_win_pct"])
+    random_win = float(basic["random_win_pct"])
     random_place = float(basic["random_place_pct"])
-    rank1_win   = round(int(basic["rank1_wins"])  / int(basic["rank1_cnt"]) * 100, 1)
+    rank1_win = round(int(basic["rank1_wins"]) / int(basic["rank1_cnt"]) * 100, 1)
     rank1_place = round(int(basic["rank1_places"]) / int(basic["rank1_cnt"]) * 100, 1)
     top3_win_rate = round(int(basic["top3_wins"]) / int(basic["top3_cnt"]) * 100, 1)
     top3_place_rate = round(int(basic["top3_places"]) / int(basic["top3_cnt"]) * 100, 1)
 
     lines = [
         f"# 指数精度検証レポート — {year}年",
-        f"",
+        "",
         f"**検証日**: {today}  ",
         f"**対象**: {year}年 全レース（頭数4頭以上・異常コードなし）",
-        f"",
-        f"---",
-        f"",
-        f"## 1. 基本統計",
-        f"",
-        f"| 項目 | 値 |",
-        f"|------|----|",
+        "",
+        "---",
+        "",
+        "## 1. 基本統計",
+        "",
+        "| 項目 | 値 |",
+        "|------|----|",
         f"| 対象レース数 | {basic['total_races']:,} |",
         f"| 対象馬数（延べ） | {basic['total_horses']:,} |",
         f"| 平均出走頭数 | {basic['avg_field_size']} 頭 |",
         f"| ランダム期待単勝率 | {random_win}% |",
         f"| ランダム期待複勝率 | {random_place}% |",
         f"| 指数ランク↔着順 Pearson相関 | {basic['pearson_corr']} |",
-        f"",
-        f"---",
-        f"",
-        f"## 2. 総合指数 ランク別的中率",
-        f"",
+        "",
+        "---",
+        "",
+        "## 2. 総合指数 ランク別的中率",
+        "",
         f"> ランダム期待値: 単勝 **{random_win}%** / 複勝 **{random_place}%**",
-        f"",
-        f"| 指数ランク | 件数 | 単勝数 | 複勝数 | 単勝率 | 複勝率 | 平均着順 | 単勝リフト |",
-        f"|-----------|------|--------|--------|--------|--------|----------|-----------|",
+        "",
+        "| 指数ランク | 件数 | 単勝数 | 複勝数 | 単勝率 | 複勝率 | 平均着順 | 単勝リフト |",
+        "|-----------|------|--------|--------|--------|--------|----------|-----------|",
     ]
 
     for r in ranks:
@@ -355,23 +357,23 @@ def _build_report(year, basic, ranks, indices, grades, roi) -> str:
         )
 
     lines += [
-        f"",
-        f"**指数1位のサマリー**",
-        f"- 単勝的中率: **{rank1_win}%**（ランダム比 ×{round(rank1_win/random_win,2)}）",
-        f"- 複勝的中率: **{rank1_place}%**（ランダム比 ×{round(rank1_place/random_place,2)}）",
-        f"",
-        f"**指数Top3のサマリー（全体の1着馬をカバーできるか）**",
+        "",
+        "**指数1位のサマリー**",
+        f"- 単勝的中率: **{rank1_win}%**（ランダム比 ×{round(rank1_win / random_win, 2)}）",
+        f"- 複勝的中率: **{rank1_place}%**（ランダム比 ×{round(rank1_place / random_place, 2)}）",
+        "",
+        "**指数Top3のサマリー（全体の1着馬をカバーできるか）**",
         f"- 単勝カバー率（Top3に1着馬が入る確率）: **{top3_win_rate}%**",
         f"- 複勝カバー率（Top3に複勝馬が入る確率）: **{top3_place_rate}%**",
-        f"",
-        f"---",
-        f"",
-        f"## 3. 各指数のランク1位的中率",
-        f"",
-        f"> 同率1位が複数いる場合は全員カウント（実件数 > レース数になることがある）",
-        f"",
-        f"| 指数 | 件数 | 単勝数 | 複勝数 | 単勝率 | 複勝率 |",
-        f"|------|------|--------|--------|--------|--------|",
+        "",
+        "---",
+        "",
+        "## 3. 各指数のランク1位的中率",
+        "",
+        "> 同率1位が複数いる場合は全員カウント（実件数 > レース数になることがある）",
+        "",
+        "| 指数 | 件数 | 単勝数 | 複勝数 | 単勝率 | 複勝率 |",
+        "|------|------|--------|--------|--------|--------|",
     ]
 
     for idx in indices:
@@ -381,13 +383,13 @@ def _build_report(year, basic, ranks, indices, grades, roi) -> str:
         )
 
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 4. グレード・馬場別 指数1位的中率",
-        f"",
-        f"| 馬場 | グレード | レース数 | 単勝率 | 複勝率 | 平均着順 |",
-        f"|------|---------|---------|--------|--------|---------|",
+        "",
+        "---",
+        "",
+        "## 4. グレード・馬場別 指数1位的中率",
+        "",
+        "| 馬場 | グレード | レース数 | 単勝率 | 複勝率 | 平均着順 |",
+        "|------|---------|---------|--------|--------|---------|",
     ]
 
     for g in grades:
@@ -397,16 +399,16 @@ def _build_report(year, basic, ranks, indices, grades, roi) -> str:
         )
 
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 5. 単勝ROIシミュレーション（指数ランク別・100円均一購入）",
-        f"",
-        f"> ROI = (勝利時の払戻合計) / (投資合計) × 100%  ",
-        f"> 控除率25%のため、ランダム購入時の理論ROIは **75%**",
-        f"",
-        f"| 指数ランク | 購入レース数 | 的中数 | ROI | 平均配当オッズ |",
-        f"|-----------|------------|--------|-----|--------------|",
+        "",
+        "---",
+        "",
+        "## 5. 単勝ROIシミュレーション（指数ランク別・100円均一購入）",
+        "",
+        "> ROI = (勝利時の払戻合計) / (投資合計) × 100%  ",
+        "> 控除率25%のため、ランダム購入時の理論ROIは **75%**",
+        "",
+        "| 指数ランク | 購入レース数 | 的中数 | ROI | 平均配当オッズ |",
+        "|-----------|------------|--------|-----|--------------|",
     ]
 
     for r in roi:
@@ -417,29 +419,29 @@ def _build_report(year, basic, ranks, indices, grades, roi) -> str:
         )
 
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 6. 考察・課題",
-        f"",
-        f"### 精度評価",
-        f"- 指数1位の単勝的中率 **{rank1_win}%**（ランダム {random_win}% の約×{round(rank1_win/random_win,1)}倍）",
+        "",
+        "---",
+        "",
+        "## 6. 考察・課題",
+        "",
+        "### 精度評価",
+        f"- 指数1位の単勝的中率 **{rank1_win}%**（ランダム {random_win}% の約×{round(rank1_win / random_win, 1)}倍）",
         f"- Pearson相関 **{basic['pearson_corr']}**：中程度の正の相関あり",
-        f"",
+        "",
         f"### データ品質の制約（{year}年時点）",
-        f"- `course_aptitude`（コース適性）: 過去同条件3戦未満の馬はデフォルト値50.0",
-        f"- `pedigree_index`（血統）: 取り込み済みデータ範囲による精度差",
-        f"- `training_index`（調教）: 未実装（50.0固定）",
-        f"- `paddock_index`（パドック）: 未実装（50.0固定）",
-        f"",
-        f"### 今後の改善ポイント",
-        f"1. データ量増加（2024年・2025年再算出完了後）による精度向上確認",
-        f"2. G2/G3レースで精度が低い → 重賞専用の重み調整を検討",
-        f"3. 障害レースは別モデルの必要性",
-        f"4. ROIが理論値（75%）以下のランクの重み最適化",
-        f"",
-        f"---",
-        f"*Generated by kiseki/backend/scripts/verify_indices.py*",
+        "- `course_aptitude`（コース適性）: 過去同条件3戦未満の馬はデフォルト値50.0",
+        "- `pedigree_index`（血統）: 取り込み済みデータ範囲による精度差",
+        "- `training_index`（調教）: 未実装（50.0固定）",
+        "- `paddock_index`（パドック）: 未実装（50.0固定）",
+        "",
+        "### 今後の改善ポイント",
+        "1. データ量増加（2024年・2025年再算出完了後）による精度向上確認",
+        "2. G2/G3レースで精度が低い → 重賞専用の重み調整を検討",
+        "3. 障害レースは別モデルの必要性",
+        "4. ROIが理論値（75%）以下のランクの重み最適化",
+        "",
+        "---",
+        "*Generated by kiseki/backend/scripts/verify_indices.py*",
     ]
 
     return "\n".join(lines)
@@ -449,8 +451,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="指数精度検証レポート生成")
     parser.add_argument("--year", required=True, help="検証対象年 (例: 2026)")
     parser.add_argument(
-        "--output", default=None,
-        help="出力先ディレクトリ（省略時は docs/verification/）"
+        "--output", default=None, help="出力先ディレクトリ（省略時は docs/verification/）"
     )
     args = parser.parse_args()
 

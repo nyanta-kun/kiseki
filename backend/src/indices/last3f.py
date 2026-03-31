@@ -133,9 +133,7 @@ class Last3FIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _get_past_results(
-        self, horse_id: int, before_date: str, exclude_race_id: int
-    ) -> list[Any]:
+    def _get_past_results(self, horse_id: int, before_date: str, exclude_race_id: int) -> list[Any]:
         """単一馬の過去レース結果を取得する（last_3f あり優先）。"""
         return (
             self.db.query(RaceResult, Race, RaceEntry)
@@ -230,9 +228,7 @@ class Last3FIndexCalculator(IndexCalculator):
         self._field_stats_cache[race_id] = result
         return result
 
-    def _get_field_stats_batch(
-        self, race_ids: set[int]
-    ) -> dict[int, tuple[float, float] | None]:
+    def _get_field_stats_batch(self, race_ids: set[int]) -> dict[int, tuple[float, float] | None]:
         """複数レースのフィールド統計を一括取得する。"""
         if not race_ids:
             return {}
@@ -314,7 +310,7 @@ class Last3FIndexCalculator(IndexCalculator):
         if len(scores) < MIN_RACES:
             return SPEED_INDEX_MEAN
 
-        weights = [WEIGHT_DECAY ** i for i in range(len(scores))]
+        weights = [WEIGHT_DECAY**i for i in range(len(scores))]
         total_weight = sum(weights)
         weighted_sum = sum(s * w for s, w in zip(scores, weights))
         return round(weighted_sum / total_weight, 1)

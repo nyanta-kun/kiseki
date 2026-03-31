@@ -20,14 +20,18 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from ..db.models import Race, RaceEntry, RaceResult
-from ..utils.constants import BASE_WEIGHT, SPEED_INDEX_MEAN, SPEED_INDEX_STD, WEIGHT_CORRECTION_PER_KG
+from ..utils.constants import (
+    BASE_WEIGHT,
+    SPEED_INDEX_MEAN,
+    SPEED_INDEX_STD,
+    WEIGHT_CORRECTION_PER_KG,
+)
 from .base import IndexCalculator
 
 logger = logging.getLogger(__name__)

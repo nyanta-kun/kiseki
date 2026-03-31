@@ -30,18 +30,18 @@ logger = logging.getLogger(__name__)
 # -------------------------------------------------------------------
 
 # O1 単勝: pos44(1-indexed), 28頭 × 8byte(馬番2+オッズ4+人気順2)
-WIN_ODDS_START = 44   # 1-indexed
-WIN_ENTRY_SIZE = 8    # bytes per entry
-WIN_ODDS_OFFSET = 2   # オッズは各エントリの2バイト目から
-WIN_ODDS_LEN = 4      # オッズフィールドは4バイト
-WIN_MAX_HORSES = 28   # 最大28頭
+WIN_ODDS_START = 44  # 1-indexed
+WIN_ENTRY_SIZE = 8  # bytes per entry
+WIN_ODDS_OFFSET = 2  # オッズは各エントリの2バイト目から
+WIN_ODDS_LEN = 4  # オッズフィールドは4バイト
+WIN_MAX_HORSES = 28  # 最大28頭
 
 # O1 複勝: pos268(1-indexed), 28頭 × 12byte(馬番2+最低4+最高4+人気順2)
 PLACE_ODDS_START = 268  # 1-indexed
-PLACE_ENTRY_SIZE = 12   # bytes per entry
-PLACE_ODDS_OFFSET = 2   # 最低オッズは各エントリの2バイト目から
-PLACE_ODDS_LEN = 4      # 最低・最高それぞれ4バイト
-PLACE_MAX_HORSES = 28   # 最大28頭
+PLACE_ENTRY_SIZE = 12  # bytes per entry
+PLACE_ODDS_OFFSET = 2  # 最低オッズは各エントリの2バイト目から
+PLACE_ODDS_LEN = 4  # 最低・最高それぞれ4バイト
+PLACE_MAX_HORSES = 28  # 最大28頭
 
 
 def _parse_odds_value(raw: str) -> float | None:
@@ -93,7 +93,9 @@ class OddsImporter:
                     logger.debug(f"Race not found for odds: {parsed['jravan_race_id']}")
                     continue
 
-                rows = self._extract_odds_rows(rec_id, rec["data"], parsed["bet_type"], race_db_id, now)
+                rows = self._extract_odds_rows(
+                    rec_id, rec["data"], parsed["bet_type"], race_db_id, now
+                )
                 if rows:
                     self.db.execute(insert(OddsHistory), rows)
                     stats["saved"] += len(rows)
@@ -109,11 +111,7 @@ class OddsImporter:
 
     def _get_race_id(self, jravan_race_id: str) -> int | None:
         """jravan_race_id からDBのRace.idを取得する。"""
-        return (
-            self.db.query(Race.id)
-            .filter(Race.jravan_race_id == jravan_race_id)
-            .scalar()
-        )
+        return self.db.query(Race.id).filter(Race.jravan_race_id == jravan_race_id).scalar()
 
     def _extract_odds_rows(
         self,
@@ -131,7 +129,9 @@ class OddsImporter:
             rows = self._extract_win(data, "win", race_db_id, fetched_at)
             rows += self._extract_place(data, "place", race_db_id, fetched_at)
         elif rec_id in ("O2", "O3", "O4", "O5", "O6"):
-            rows = self._extract_pair_odds(rec_id, data, bet_type, race_db_id, fetched_at)  # 馬連・ワイド等
+            rows = self._extract_pair_odds(
+                rec_id, data, bet_type, race_db_id, fetched_at
+            )  # 馬連・ワイド等
         elif rec_id in ("O7", "O8"):
             rows = self._extract_trio_odds(rec_id, data, bet_type, race_db_id, fetched_at)
 
@@ -151,21 +151,23 @@ class OddsImporter:
             pos = start + i * WIN_ENTRY_SIZE
             if pos + WIN_ENTRY_SIZE > len(data):
                 break
-            entry = data[pos:pos + WIN_ENTRY_SIZE]
+            entry = data[pos : pos + WIN_ENTRY_SIZE]
             horse_no_str = entry[:WIN_ODDS_OFFSET]
             if not horse_no_str.isdigit() or int(horse_no_str) == 0:
                 break
             horse_no = int(horse_no_str)
-            odds_raw = entry[WIN_ODDS_OFFSET:WIN_ODDS_OFFSET + WIN_ODDS_LEN]
+            odds_raw = entry[WIN_ODDS_OFFSET : WIN_ODDS_OFFSET + WIN_ODDS_LEN]
             odds_val = _parse_odds_value(odds_raw)
             if odds_val is not None:
-                rows.append({
-                    "race_id": race_id,
-                    "bet_type": bet_type,
-                    "combination": str(horse_no),
-                    "odds": odds_val,
-                    "fetched_at": fetched_at,
-                })
+                rows.append(
+                    {
+                        "race_id": race_id,
+                        "bet_type": bet_type,
+                        "combination": str(horse_no),
+                        "odds": odds_val,
+                        "fetched_at": fetched_at,
+                    }
+                )
         return rows
 
     def _extract_place(
@@ -182,22 +184,26 @@ class OddsImporter:
             pos = start + i * PLACE_ENTRY_SIZE
             if pos + PLACE_ENTRY_SIZE > len(data):
                 break
-            entry = data[pos:pos + PLACE_ENTRY_SIZE]
+            entry = data[pos : pos + PLACE_ENTRY_SIZE]
             horse_no_str = entry[:PLACE_ODDS_OFFSET]
             if not horse_no_str.isdigit() or int(horse_no_str) == 0:
                 break
             horse_no = int(horse_no_str)
-            low_raw = entry[PLACE_ODDS_OFFSET:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN]
-            high_raw = entry[PLACE_ODDS_OFFSET + PLACE_ODDS_LEN:PLACE_ODDS_OFFSET + PLACE_ODDS_LEN * 2]
+            low_raw = entry[PLACE_ODDS_OFFSET : PLACE_ODDS_OFFSET + PLACE_ODDS_LEN]
+            high_raw = entry[
+                PLACE_ODDS_OFFSET + PLACE_ODDS_LEN : PLACE_ODDS_OFFSET + PLACE_ODDS_LEN * 2
+            ]
             low = _parse_odds_value(low_raw)
             if low is not None:
-                rows.append({
-                    "race_id": race_id,
-                    "bet_type": bet_type,
-                    "combination": str(horse_no),
-                    "odds": low,  # 最低オッズを格納（EV計算・表示用）
-                    "fetched_at": fetched_at,
-                })
+                rows.append(
+                    {
+                        "race_id": race_id,
+                        "bet_type": bet_type,
+                        "combination": str(horse_no),
+                        "odds": low,  # 最低オッズを格納（EV計算・表示用）
+                        "fetched_at": fetched_at,
+                    }
+                )
         return rows
 
     def _extract_pair_odds(

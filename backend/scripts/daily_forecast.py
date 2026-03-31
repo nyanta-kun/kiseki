@@ -34,6 +34,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -46,8 +47,8 @@ from src.utils.constants import EV_BUY_THRESHOLD, JRA_TAKEOUT_RATE
 # 穴ぐさ候補の閾値（指数差）
 ANAGUSA_HIGHLIGHT_SCORE = 58.0
 # EV 表示記号の閾値
-EV_BUY   = EV_BUY_THRESHOLD   # 1.20
-EV_HOLD  = 1.00
+EV_BUY = EV_BUY_THRESHOLD  # 1.20
+EV_HOLD = 1.00
 
 _QUERY = text("""
 SELECT
@@ -105,9 +106,17 @@ def load_forecast(
         return pd.DataFrame()
 
     df = pd.DataFrame(rows, columns=cols)
-    for col in ["composite_index", "speed_index", "course_aptitude",
-                "pace_index", "anagusa_index", "paddock_index",
-                "finish_position", "win_odds", "win_popularity"]:
+    for col in [
+        "composite_index",
+        "speed_index",
+        "course_aptitude",
+        "pace_index",
+        "anagusa_index",
+        "paddock_index",
+        "finish_position",
+        "win_odds",
+        "win_popularity",
+    ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
@@ -120,7 +129,7 @@ def _estimate_win_prob(df_race: pd.DataFrame) -> pd.Series:
     """
     tau = 10.0
     scores = df_race["composite_index"].fillna(50.0)
-    exp_s = (scores / tau).apply(lambda x: 2.718281828 ** x)
+    exp_s = (scores / tau).apply(lambda x: 2.718281828**x)
     return exp_s / exp_s.sum()
 
 
@@ -183,14 +192,16 @@ def print_race(df_race: pd.DataFrame, top_only: bool = False, min_ev: float = 0.
     hcount = int(row0["head_count"]) if pd.notna(row0["head_count"]) else len(df_race)
     cond = str(row0["condition"]) if pd.notna(row0["condition"]) else ""
     has_result = df_race["finish_position"].notna().any()
-    has_odds   = df_race["win_odds"].notna().any()
+    has_odds = df_race["win_odds"].notna().any()
 
     # 勝率推定 → EV 算出
     probs = _estimate_win_prob(df_race)
     df_race = df_race.copy()
     df_race["_prob"] = probs.values
     df_race["_ev"] = df_race.apply(
-        lambda r: _ev(float(r["win_odds"]), r["_prob"]) if pd.notna(r["win_odds"]) else float("nan"),
+        lambda r: (
+            _ev(float(r["win_odds"]), r["_prob"]) if pd.notna(r["win_odds"]) else float("nan")
+        ),
         axis=1,
     )
 
@@ -200,12 +211,9 @@ def print_race(df_race: pd.DataFrame, top_only: bool = False, min_ev: float = 0.
         if not has_ev_candidate:
             return
 
-    print(f"\n{'━'*70}")
-    print(
-        f"  {course} R{rno:02d}  {rname}{grade}  "
-        f"{surf} {dist}m  {hcount}頭  {cond}"
-    )
-    print(f"{'━'*70}")
+    print(f"\n{'━' * 70}")
+    print(f"  {course} R{rno:02d}  {rname}{grade}  {surf} {dist}m  {hcount}頭  {cond}")
+    print(f"{'━' * 70}")
 
     header = (
         f"  {'印':2}  {'馬番':3}  {'馬名':<16}  {'騎手':<8}  "
@@ -217,7 +225,7 @@ def print_race(df_race: pd.DataFrame, top_only: bool = False, min_ev: float = 0.
     if has_odds:
         header += f"  {'人気':3}"
     print(header)
-    print(f"  {'─'*67}")
+    print(f"  {'─' * 67}")
 
     top_idx = df_race["composite_index"].idxmax()
 
@@ -226,21 +234,21 @@ def print_race(df_race: pd.DataFrame, top_only: bool = False, min_ev: float = 0.
             break
 
         # 印
-        is_top = (idx == top_idx)
+        is_top = idx == top_idx
         is_anagusa = (
-            pd.notna(r["anagusa_index"]) and
-            r["anagusa_index"] >= ANAGUSA_HIGHLIGHT_SCORE and
-            not is_top
+            pd.notna(r["anagusa_index"])
+            and r["anagusa_index"] >= ANAGUSA_HIGHLIGHT_SCORE
+            and not is_top
         )
         mark = "◎" if is_top else ("☆" if is_anagusa else "  ")
 
-        comp  = f"{r['composite_index']:5.1f}" if pd.notna(r["composite_index"]) else "  N/A"
-        sp    = f"{r['speed_index']:5.1f}"     if pd.notna(r["speed_index"])     else "  N/A"
-        apt   = f"{r['course_aptitude']:5.1f}" if pd.notna(r["course_aptitude"]) else "  N/A"
-        pace  = f"{r['pace_index']:5.1f}"      if pd.notna(r["pace_index"])      else "  N/A"
-        ana   = f"{r['anagusa_index']:5.1f}"   if pd.notna(r["anagusa_index"])   else "  N/A"
-        wc    = f"{float(r['weight_carried']):4.1f}" if pd.notna(r["weight_carried"]) else " N/A"
-        ev_s  = _ev_label(r["_ev"], has_odds and pd.notna(r["win_odds"]))
+        comp = f"{r['composite_index']:5.1f}" if pd.notna(r["composite_index"]) else "  N/A"
+        sp = f"{r['speed_index']:5.1f}" if pd.notna(r["speed_index"]) else "  N/A"
+        apt = f"{r['course_aptitude']:5.1f}" if pd.notna(r["course_aptitude"]) else "  N/A"
+        pace = f"{r['pace_index']:5.1f}" if pd.notna(r["pace_index"]) else "  N/A"
+        ana = f"{r['anagusa_index']:5.1f}" if pd.notna(r["anagusa_index"]) else "  N/A"
+        wc = f"{float(r['weight_carried']):4.1f}" if pd.notna(r["weight_carried"]) else " N/A"
+        ev_s = _ev_label(r["_ev"], has_odds and pd.notna(r["win_odds"]))
 
         # min_ev フィルタ
         if min_ev > 0 and not is_top and r["_ev"] < min_ev:
@@ -254,7 +262,9 @@ def print_race(df_race: pd.DataFrame, top_only: bool = False, min_ev: float = 0.
         if has_result:
             line += f"  {_finish_label(r['finish_position']):4}"
         if has_odds and pd.notna(r["win_odds"]):
-            line += f"  {int(r['win_popularity']):3}人" if pd.notna(r["win_popularity"]) else "     "
+            line += (
+                f"  {int(r['win_popularity']):3}人" if pd.notna(r["win_popularity"]) else "     "
+            )
         print(line)
 
     # EV購入候補サマリー
@@ -282,29 +292,35 @@ def run(
 
     n_races = df["race_id"].nunique()
     n_horses = len(df)
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  {race_date}  指数予想レポート  ({n_races}レース / {n_horses}頭)  v{version}")
-    print(f"{'='*70}")
-    print(f"  凡例: ◎本命  ☆穴ぐさ候補(指数{ANAGUSA_HIGHLIGHT_SCORE:.0f}+)  "
-          f"★EV≥{EV_BUY}(購入候補)  EV=期待値")
+    print(f"{'=' * 70}")
+    print(
+        f"  凡例: ◎本命  ☆穴ぐさ候補(指数{ANAGUSA_HIGHLIGHT_SCORE:.0f}+)  "
+        f"★EV≥{EV_BUY}(購入候補)  EV=期待値"
+    )
 
     for race_id, df_race in df.groupby("race_id", sort=False):
         print_race(df_race, top_only=top_only, min_ev=min_ev)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="当日レース指数予想出力")
-    parser.add_argument("--date",    required=True, help="対象日 YYYYMMDD")
-    parser.add_argument("--race",    type=int, default=0, help="レース番号（0=全レース）")
+    parser.add_argument("--date", required=True, help="対象日 YYYYMMDD")
+    parser.add_argument("--race", type=int, default=0, help="レース番号（0=全レース）")
     parser.add_argument("--top-only", action="store_true", help="各レースTop3のみ表示")
     parser.add_argument(
-        "--min-ev", type=float, default=0.0,
+        "--min-ev",
+        type=float,
+        default=0.0,
         help=f"この期待値以上の馬がいるレースのみ表示（例: {EV_BUY_THRESHOLD}）",
     )
     parser.add_argument(
-        "--version", type=int, default=COMPOSITE_VERSION,
+        "--version",
+        type=int,
+        default=COMPOSITE_VERSION,
         help=f"算出バージョン (default: {COMPOSITE_VERSION})",
     )
     args = parser.parse_args()

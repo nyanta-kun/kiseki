@@ -17,8 +17,6 @@ from src.indices.rotation import (
     _position_bonus,
     _time_bonus,
 )
-from src.utils.constants import SPEED_INDEX_MEAN
-
 
 # ---------------------------------------------------------------------------
 # ユーティリティ: _interval_score

@@ -34,6 +34,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from dotenv import load_dotenv
+
 load_dotenv(_root.parent / ".env")
 
 from src.db.session import engine
@@ -65,17 +66,17 @@ OPTIM_COLS = [
 ]
 
 OPTIM_LABELS = {
-    "speed_index":        "スピード",
-    "last_3f_index":      "後3F",
-    "course_aptitude":    "コース適性",
+    "speed_index": "スピード",
+    "last_3f_index": "後3F",
+    "course_aptitude": "コース適性",
     "position_advantage": "枠順",
-    "jockey_index":       "騎手",
-    "pace_index":         "展開",
-    "pedigree_index":     "血統",
-    "rotation_index":     "ローテ",
-    "training_index":     "調教",
-    "anagusa_index":      "穴ぐさ",
-    "paddock_index":      "パドック",
+    "jockey_index": "騎手",
+    "pace_index": "展開",
+    "pedigree_index": "血統",
+    "rotation_index": "ローテ",
+    "training_index": "調教",
+    "anagusa_index": "穴ぐさ",
+    "paddock_index": "パドック",
 }
 
 # disadvantage_bonus(0.05) を除いた最適化可能な重みの合計
@@ -83,17 +84,17 @@ OPTIMIZABLE_TOTAL = 1.0 - INDEX_WEIGHTS.get("disadvantage_bonus", 0.05)  # 0.95
 
 # 現行重み（constants.py の INDEX_WEIGHTS から自動取得）
 _KEY_MAP = {
-    "speed_index":        "speed",
-    "last_3f_index":      "last_3f",
-    "course_aptitude":    "course_aptitude",
+    "speed_index": "speed",
+    "last_3f_index": "last_3f",
+    "course_aptitude": "course_aptitude",
     "position_advantage": "position_advantage",
-    "jockey_index":       "jockey_trainer",
-    "pace_index":         "pace",
-    "pedigree_index":     "pedigree",
-    "rotation_index":     "rotation",
-    "training_index":     "training",
-    "anagusa_index":      "anagusa",
-    "paddock_index":      "paddock",
+    "jockey_index": "jockey_trainer",
+    "pace_index": "pace",
+    "pedigree_index": "pedigree",
+    "rotation_index": "rotation",
+    "training_index": "training",
+    "anagusa_index": "anagusa",
+    "paddock_index": "paddock",
 }
 CURRENT_WEIGHTS = {col: INDEX_WEIGHTS.get(_KEY_MAP[col], 0.0) for col in OPTIM_COLS}
 
@@ -103,6 +104,7 @@ NEUTRAL_VALUE = 50.0
 # ---------------------------------------------------------------------------
 # データ取得
 # ---------------------------------------------------------------------------
+
 
 def _build_query(version: int) -> text:
     return text(f"""
@@ -166,9 +168,7 @@ def load_data(start_date: str, end_date: str, version: int = COMPOSITE_VERSION) 
 
 def filter_valid(df: pd.DataFrame, min_runners: int = 4) -> pd.DataFrame:
     """異常あり・着順なし・頭数不足のレースを除外する。"""
-    bad = df[
-        (df["abnormality_code"] > 0) | df["finish_position"].isna()
-    ]["race_id"].unique()
+    bad = df[(df["abnormality_code"] > 0) | df["finish_position"].isna()]["race_id"].unique()
     df = df[~df["race_id"].isin(bad)].copy()
     counts = df.groupby("race_id")["horse_id"].count()
     valid = counts[counts >= min_runners].index
@@ -178,6 +178,7 @@ def filter_valid(df: pd.DataFrame, min_runners: int = 4) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # 評価関数
 # ---------------------------------------------------------------------------
+
 
 def score_weights(df: pd.DataFrame, weights: dict[str, float]) -> dict:
     """重みセットを評価して指標を返す。"""
@@ -195,10 +196,10 @@ def score_weights(df: pd.DataFrame, weights: dict[str, float]) -> dict:
     roi = float(payout / bets * 100) if bets > 0 else 0.0
 
     return {
-        "win_rate":   float(wins / n) if n > 0 else 0.0,
+        "win_rate": float(wins / n) if n > 0 else 0.0,
         "place_rate": float(places / n) if n > 0 else 0.0,
-        "roi_pct":    round(roi, 1),
-        "n_races":    n,
+        "roi_pct": round(roi, 1),
+        "n_races": n,
     }
 
 
@@ -226,6 +227,7 @@ def spearman_per_index(df: pd.DataFrame) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 # 最適化
 # ---------------------------------------------------------------------------
+
 
 def correlation_weights(spearman: dict[str, float]) -> dict[str, float]:
     """スピアマン相関を正規化して相関比例重みを返す。
@@ -257,7 +259,9 @@ def optimize(df_train: pd.DataFrame, init_weights: dict[str, float]) -> dict[str
         return -score_weights(df_train, weights)["win_rate"]
 
     res = minimize(
-        objective, x0, method="Nelder-Mead",
+        objective,
+        x0,
+        method="Nelder-Mead",
         options={"maxiter": 5000, "xatol": 1e-5, "fatol": 1e-5},
     )
     exp_x = np.exp(res.x - res.x.max())
@@ -269,9 +273,12 @@ def optimize(df_train: pd.DataFrame, init_weights: dict[str, float]) -> dict[str
 # レポート生成
 # ---------------------------------------------------------------------------
 
+
 def build_report(
-    train_start: str, train_end: str,
-    test_start: str, test_end: str,
+    train_start: str,
+    train_end: str,
+    test_start: str,
+    test_end: str,
     spearman: dict[str, float],
     weight_sets: dict[str, dict[str, float]],
     train_results: dict[str, dict],
@@ -279,24 +286,25 @@ def build_report(
     version: int,
 ) -> str:
     from datetime import date as _date
+
     today = _date.today().strftime("%Y-%m-%d")
 
     lines = [
-        f"# INDEX_WEIGHTS 最適化レポート",
-        f"",
+        "# INDEX_WEIGHTS 最適化レポート",
+        "",
         f"**実行日**: {today}  ",
         f"**算出バージョン**: v{version}  ",
         f"**訓練データ**: {train_start} 〜 {train_end}  ",
         f"**テストデータ**: {test_start} 〜 {test_end}  ",
-        f"",
-        f"---",
-        f"",
-        f"## 1. 各指数のスピアマン相関（訓練データ）",
-        f"",
-        f"> ρ < 0: 高指数 → 良い着順（正常）  ρ > 0: 逆相関（要確認）",
-        f"",
-        f"| 指数 | スピアマン相関 ρ | 傾向 | 現行重み |",
-        f"|------|----------------|------|---------|",
+        "",
+        "---",
+        "",
+        "## 1. 各指数のスピアマン相関（訓練データ）",
+        "",
+        "> ρ < 0: 高指数 → 良い着順（正常）  ρ > 0: 逆相関（要確認）",
+        "",
+        "| 指数 | スピアマン相関 ρ | 傾向 | 現行重み |",
+        "|------|----------------|------|---------|",
     ]
     for col in sorted(OPTIM_COLS, key=lambda c: spearman[c]):
         rho = spearman[col]
@@ -305,18 +313,18 @@ def build_report(
         lines.append(f"| {OPTIM_LABELS[col]} | {rho:+.4f} | {trend} | {cur_w:.3f} |")
 
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 2. 重みセット比較",
-        f"",
-        f"| 指数 | 現行重み | 相関比例 | 最適化 | 変化 |",
-        f"|------|---------|---------|--------|------|",
+        "",
+        "---",
+        "",
+        "## 2. 重みセット比較",
+        "",
+        "| 指数 | 現行重み | 相関比例 | 最適化 | 変化 |",
+        "|------|---------|---------|--------|------|",
     ]
     for col in OPTIM_COLS:
-        cur  = weight_sets["現行"].get(col, 0.0)
+        cur = weight_sets["現行"].get(col, 0.0)
         corr = weight_sets["相関比例"].get(col, 0.0)
-        opt  = weight_sets["最適化"].get(col, 0.0)
+        opt = weight_sets["最適化"].get(col, 0.0)
         delta = opt - cur
         arrow = "▲" if delta > 0.005 else ("▽" if delta < -0.005 else "─")
         lines.append(
@@ -330,13 +338,13 @@ def build_report(
     )
 
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 3. 訓練データでの評価",
-        f"",
-        f"| 重みセット | 単勝的中率 | 複勝的中率 | ROI | レース数 |",
-        f"|-----------|---------|---------|-----|---------|",
+        "",
+        "---",
+        "",
+        "## 3. 訓練データでの評価",
+        "",
+        "| 重みセット | 単勝的中率 | 複勝的中率 | ROI | レース数 |",
+        "|-----------|---------|---------|-----|---------|",
     ]
     for label, r in train_results.items():
         lines.append(
@@ -346,11 +354,11 @@ def build_report(
 
     best_label = max(eval_results, key=lambda k: eval_results[k]["win_rate"])
     lines += [
-        f"",
-        f"## 4. テストデータでの評価（汎化性能）",
-        f"",
-        f"| 重みセット | 単勝的中率 | 複勝的中率 | ROI | レース数 |",
-        f"|-----------|---------|---------|-----|---------|",
+        "",
+        "## 4. テストデータでの評価（汎化性能）",
+        "",
+        "| 重みセット | 単勝的中率 | 複勝的中率 | ROI | レース数 |",
+        "|-----------|---------|---------|-----|---------|",
     ]
     for label, r in eval_results.items():
         marker = " ✅" if label == best_label else ""
@@ -361,30 +369,27 @@ def build_report(
 
     best_w = weight_sets["最適化"]
     lines += [
-        f"",
-        f"---",
-        f"",
-        f"## 5. 推奨重み（constants.py への反映案）",
-        f"",
-        f"```python",
-        f"INDEX_WEIGHTS = {{",
+        "",
+        "---",
+        "",
+        "## 5. 推奨重み（constants.py への反映案）",
+        "",
+        "```python",
+        "INDEX_WEIGHTS = {",
     ]
     for col in OPTIM_COLS:
         k = _KEY_MAP[col]
         cur = CURRENT_WEIGHTS.get(col, 0.0)
-        lines.append(
-            f'    "{k}": {best_w[col]:.4f},  '
-            f'# {OPTIM_LABELS[col]} (現行: {cur:.3f})'
-        )
+        lines.append(f'    "{k}": {best_w[col]:.4f},  # {OPTIM_LABELS[col]} (現行: {cur:.3f})')
     lines += [
-        f'    "disadvantage_bonus": 0.05,  # 加算型・固定',
-        f"}}",
-        f"```",
-        f"",
-        f"> **注意**: 過学習に注意。テストデータで現行重みを上回る場合のみ採用を推奨。",
-        f"",
-        f"---",
-        f"*Generated by kiseki/backend/scripts/optimize_weights.py*",
+        '    "disadvantage_bonus": 0.05,  # 加算型・固定',
+        "}",
+        "```",
+        "",
+        "> **注意**: 過学習に注意。テストデータで現行重みを上回る場合のみ採用を推奨。",
+        "",
+        "---",
+        "*Generated by kiseki/backend/scripts/optimize_weights.py*",
     ]
     return "\n".join(lines)
 
@@ -393,9 +398,12 @@ def build_report(
 # メイン
 # ---------------------------------------------------------------------------
 
+
 def run(
-    train_start: str, train_end: str,
-    test_start: str, test_end: str,
+    train_start: str,
+    train_end: str,
+    test_start: str,
+    test_end: str,
     output_dir: Path,
     version: int = COMPOSITE_VERSION,
 ) -> None:
@@ -403,14 +411,14 @@ def run(
     logger.info(f"訓練: {train_start}〜{train_end} / テスト: {test_start}〜{test_end}")
 
     df_train_raw = load_data(train_start, train_end, version)
-    df_test_raw  = load_data(test_start,  test_end,  version)
+    df_test_raw = load_data(test_start, test_end, version)
 
     if df_train_raw.empty or df_test_raw.empty:
         logger.error("データが取得できませんでした。")
         return
 
     df_train = filter_valid(df_train_raw)
-    df_test  = filter_valid(df_test_raw)
+    df_test = filter_valid(df_test_raw)
     logger.info(
         f"訓練: {df_train['race_id'].nunique()} レース / "
         f"テスト: {df_test['race_id'].nunique()} レース"
@@ -434,9 +442,9 @@ def run(
     opt_weights = optimize(df_train, corr_weights)
 
     weight_sets = {
-        "現行":   CURRENT_WEIGHTS,
+        "現行": CURRENT_WEIGHTS,
         "相関比例": corr_weights,
-        "最適化":  opt_weights,
+        "最適化": opt_weights,
     }
 
     # 評価
@@ -460,10 +468,18 @@ def run(
 
     # レポート出力
     report = build_report(
-        train_start, train_end, test_start, test_end,
-        spearman, weight_sets, train_results, eval_results, version,
+        train_start,
+        train_end,
+        test_start,
+        test_end,
+        spearman,
+        weight_sets,
+        train_results,
+        eval_results,
+        version,
     )
     from datetime import date as _date
+
     fname = f"{_date.today().strftime('%Y%m%d')}_{train_start}_{train_end}_weight_opt.md"
     report_path = output_dir / fname
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -479,10 +495,7 @@ def run(
         opt = opt_weights[col]
         delta = opt - cur
         sign = "▲" if delta > 0.005 else ("▽" if delta < -0.005 else " ")
-        print(
-            f"  {OPTIM_LABELS[col]:<12}: {cur:.3f} → {opt:.3f}  "
-            f"{sign}{abs(delta):.3f}"
-        )
+        print(f"  {OPTIM_LABELS[col]:<12}: {cur:.3f} → {opt:.3f}  {sign}{abs(delta):.3f}")
     print("=" * 62)
     best_label = max(eval_results, key=lambda k: eval_results[k]["win_rate"])
     print(f"  テストデータ最良: {best_label}  単勝 {eval_results[best_label]['win_rate']:.1%}")
@@ -492,27 +505,32 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description="指数重み最適化")
     parser.add_argument("--start", required=True, help="訓練データ開始日 YYYYMMDD")
-    parser.add_argument("--end",   required=True, help="訓練データ終了日 YYYYMMDD")
+    parser.add_argument("--end", required=True, help="訓練データ終了日 YYYYMMDD")
     parser.add_argument(
-        "--test-start", default=None,
+        "--test-start",
+        default=None,
         help="テストデータ開始日（省略時は --start と同じ）",
     )
     parser.add_argument(
-        "--test-end", default=None,
+        "--test-end",
+        default=None,
         help="テストデータ終了日（省略時は --end と同じ）",
     )
     parser.add_argument(
-        "--output", default=None,
+        "--output",
+        default=None,
         help="レポート出力先ディレクトリ（省略時は docs/verification/）",
     )
     parser.add_argument(
-        "--version", type=int, default=COMPOSITE_VERSION,
+        "--version",
+        type=int,
+        default=COMPOSITE_VERSION,
         help=f"算出バージョン (default: {COMPOSITE_VERSION})",
     )
     args = parser.parse_args()
 
     test_start = args.test_start or args.start
-    test_end   = args.test_end   or args.end
+    test_end = args.test_end or args.end
     output_dir = Path(args.output) if args.output else _root.parent / "docs" / "verification"
 
     run(args.start, args.end, test_start, test_end, output_dir, args.version)

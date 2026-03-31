@@ -13,7 +13,6 @@ import pytest
 from src.indices.jockey import MIN_SAMPLE, JockeyIndexCalculator
 from src.utils.constants import SPEED_INDEX_MEAN
 
-
 # ---------------------------------------------------------------------------
 # ヘルパー: テスト用モックオブジェクト生成
 # ---------------------------------------------------------------------------
@@ -147,13 +146,11 @@ class TestHighWinRate:
         """全勝の騎手と全敗の騎手を比較すると全勝の方が高い指数になる。"""
         # 全勝騎手（jockey_id=1）
         rows_winner = [
-            _make_row(jockey_id=1, finish_position=1, last_3f=33.0)
-            for _ in range(MIN_SAMPLE + 5)
+            _make_row(jockey_id=1, finish_position=1, last_3f=33.0) for _ in range(MIN_SAMPLE + 5)
         ]
         # 全敗騎手（jockey_id=2）
         rows_loser = [
-            _make_row(jockey_id=2, finish_position=10, last_3f=36.0)
-            for _ in range(MIN_SAMPLE + 5)
+            _make_row(jockey_id=2, finish_position=10, last_3f=36.0) for _ in range(MIN_SAMPLE + 5)
         ]
 
         race = _make_race()
@@ -185,12 +182,10 @@ class TestLowWinRate:
     def test_low_win_rate_jockey_below_mean(self) -> None:
         """全敗の騎手は全勝の騎手より低い指数になる。"""
         rows_winner = [
-            _make_row(jockey_id=1, finish_position=1, last_3f=33.0)
-            for _ in range(MIN_SAMPLE + 5)
+            _make_row(jockey_id=1, finish_position=1, last_3f=33.0) for _ in range(MIN_SAMPLE + 5)
         ]
         rows_loser = [
-            _make_row(jockey_id=2, finish_position=12, last_3f=36.5)
-            for _ in range(MIN_SAMPLE + 5)
+            _make_row(jockey_id=2, finish_position=12, last_3f=36.5) for _ in range(MIN_SAMPLE + 5)
         ]
 
         race = _make_race()
@@ -201,9 +196,7 @@ class TestLowWinRate:
         calc = _build_calculator(race=race, entries=entries)
         score_winner = calc._compute_raw_score(rows_winner, "芝", 1600)
         score_loser = calc._compute_raw_score(rows_loser, "芝", 1600)
-        calc._get_all_jockey_stats_batch = MagicMock(
-            return_value={1: score_winner, 2: score_loser}
-        )
+        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: score_winner, 2: score_loser})
 
         result = calc.calculate_batch(race_id=1)
         assert result[2] < SPEED_INDEX_MEAN
@@ -221,8 +214,7 @@ class TestMinSample:
     def test_insufficient_sample_returns_mean(self) -> None:
         """MIN_SAMPLE - 1 件のサンプルでは SPEED_INDEX_MEAN を返す。"""
         rows = [
-            _make_row(jockey_id=1, finish_position=1, last_3f=33.0)
-            for _ in range(MIN_SAMPLE - 1)
+            _make_row(jockey_id=1, finish_position=1, last_3f=33.0) for _ in range(MIN_SAMPLE - 1)
         ]
         calc = _build_calculator()
         score = calc._compute_raw_score(rows, "芝", 1600)
@@ -261,9 +253,7 @@ class TestCalculateBatch:
         entries = [_make_entry(horse_id=hid, jockey_id=hid) for hid in horse_ids]
 
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(
-            return_value={hid: 30.0 for hid in horse_ids}
-        )
+        calc._get_all_jockey_stats_batch = MagicMock(return_value={hid: 30.0 for hid in horse_ids})
 
         result = calc.calculate_batch(race_id=1)
         assert set(result.keys()) == set(horse_ids)
@@ -275,9 +265,7 @@ class TestCalculateBatch:
         entries = [_make_entry(horse_id=hid, jockey_id=hid) for hid in horse_ids]
 
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(
-            return_value={1: 25.0, 2: 35.0}
-        )
+        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: 25.0, 2: 35.0})
 
         result = calc.calculate_batch(race_id=1)
         for val in result.values():
@@ -334,8 +322,7 @@ class TestLast3FScore:
         ]
         # last_3f なし（全 None）→ last3f コンポーネントは 50.0
         rows_no_last3f = [
-            _make_row(jockey_id=2, finish_position=1, last_3f=None)
-            for _ in range(MIN_SAMPLE + 3)
+            _make_row(jockey_id=2, finish_position=1, last_3f=None) for _ in range(MIN_SAMPLE + 3)
         ]
 
         calc = _build_calculator()
@@ -351,8 +338,7 @@ class TestLast3FScore:
     def test_no_last3f_data_returns_mean_component(self) -> None:
         """last_3f が全て None の場合、last3f コンポーネントは SPEED_INDEX_MEAN になる。"""
         rows = [
-            _make_row(jockey_id=1, finish_position=1, last_3f=None)
-            for _ in range(MIN_SAMPLE + 3)
+            _make_row(jockey_id=1, finish_position=1, last_3f=None) for _ in range(MIN_SAMPLE + 3)
         ]
         calc = _build_calculator()
         score = calc._compute_last3f_score(rows)

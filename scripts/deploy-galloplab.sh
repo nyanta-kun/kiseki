@@ -55,6 +55,8 @@ EOF
       git pull origin main
       docker image prune -f
       docker compose -f $COMPOSE_FILE build --no-cache
+      echo "[deploy] DBマイグレーション実行..."
+      docker compose -f $COMPOSE_FILE run --rm --no-deps backend uv run alembic upgrade head
       docker compose -f $COMPOSE_FILE up -d
       sleep 10
       docker ps | grep galloplab
@@ -72,6 +74,9 @@ EOF
       set -euo pipefail
       cd $REMOTE_DIR
       git pull origin main
+      echo "[deploy] DBマイグレーション実行..."
+      docker compose -f $COMPOSE_FILE build backend
+      docker compose -f $COMPOSE_FILE run --rm --no-deps backend uv run alembic upgrade head
       docker compose -f $COMPOSE_FILE up -d --build
       sleep 8
       docker ps | grep galloplab

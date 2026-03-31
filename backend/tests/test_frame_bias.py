@@ -12,7 +12,6 @@ import pytest
 from src.indices.frame_bias import MIN_SAMPLE, FrameBiasCalculator, _position_score
 from src.utils.constants import SPEED_INDEX_MEAN
 
-
 # ---------------------------------------------------------------------------
 # ヘルパー: テスト用モックオブジェクト生成
 # ---------------------------------------------------------------------------
@@ -118,7 +117,10 @@ class TestComputeFrameBias:
 
     def test_inner_frame_advantage(self) -> None:
         """内枠有利設定: 1枠の平均着順スコアが高い → 50より高い。"""
-        stats = {frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125) for frame in range(1, 9)}
+        stats = {
+            frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
+            for frame in range(1, 9)
+        }
         # 1枠を有利に設定
         stats[1] = _make_frame_stats(1, avg_pos_score=75.0, win_rate=0.25)
         calc = _make_calc_with_frame_stats(stats)
@@ -128,7 +130,10 @@ class TestComputeFrameBias:
 
     def test_outer_frame_disadvantage(self) -> None:
         """外枠不利設定: 8枠の平均着順スコアが低い → 50より低い。"""
-        stats = {frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125) for frame in range(1, 9)}
+        stats = {
+            frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
+            for frame in range(1, 9)
+        }
         # 8枠を不利に設定
         stats[8] = _make_frame_stats(8, avg_pos_score=25.0, win_rate=0.025)
         calc = _make_calc_with_frame_stats(stats)
@@ -145,7 +150,10 @@ class TestComputeFrameBias:
 
     def test_insufficient_sample_returns_mean(self) -> None:
         """対象枠番のサンプル数が MIN_SAMPLE 未満 → SPEED_INDEX_MEAN を返す。"""
-        stats = {frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125) for frame in range(1, 9)}
+        stats = {
+            frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
+            for frame in range(1, 9)
+        }
         # 3枠だけサンプル数不足
         stats[3] = _make_frame_stats(3, avg_pos_score=80.0, win_rate=0.5, cnt=MIN_SAMPLE - 1)
         calc = _make_calc_with_frame_stats(stats)
@@ -155,7 +163,10 @@ class TestComputeFrameBias:
 
     def test_index_within_valid_range(self) -> None:
         """算出された指数が [0, 100] の範囲内に収まる。"""
-        stats = {frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125) for frame in range(1, 9)}
+        stats = {
+            frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
+            for frame in range(1, 9)
+        }
         stats[1] = _make_frame_stats(1, avg_pos_score=100.0, win_rate=0.9)
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()

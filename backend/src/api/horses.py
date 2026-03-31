@@ -22,6 +22,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 class RaceHistoryEntry(BaseModel):
     """近走1レース分のデータ。"""
+
     date: str
     course_name: str
     surface: str

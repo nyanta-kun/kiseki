@@ -3,8 +3,8 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
-  // 開発時バイパス
-  if (process.env.AUTH_BYPASS_DEV === "true") {
+  // 開発時バイパス（本番では絶対に動作しない）
+  if (process.env.NODE_ENV === "development" && process.env.AUTH_BYPASS_DEV === "true") {
     return NextResponse.next();
   }
 

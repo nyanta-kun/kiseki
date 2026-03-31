@@ -1,6 +1,7 @@
 import { Suspense } from "react";
+import Image from "next/image";
 import { fetchNearestDate, fetchRacesByDate } from "@/lib/api";
-import { formatDate, todayYYYYMMDD } from "@/lib/utils";
+import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -22,8 +23,7 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
       {/* ヘッダー */}
       <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/logo.png" alt="GallopLab" width={160} height={98} className="select-none opacity-90 flex-shrink-0 h-8 w-auto" />
+          <Image src="/images/logo.png" alt="GallopLab" width={160} height={98} className="select-none opacity-90 flex-shrink-0 h-8 w-auto" priority />
           <div className="flex-1 min-w-0" />
           <LogoutButton />
         </div>
@@ -31,7 +31,8 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
       </header>
 
       {/* コンテンツ */}
-      <main className="max-w-3xl mx-auto px-4 py-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
+        <h1 className="sr-only">開催レース一覧</h1>
         <Suspense fallback={<RaceListSkeleton />}>
           <RaceList date={targetDate} />
         </Suspense>
@@ -47,9 +48,15 @@ async function RaceList({ date }: { date: string }) {
   } catch {
     return (
       <div className="text-center py-12 text-gray-400">
-        <p className="text-4xl mb-2">🏇</p>
+        <p className="text-4xl mb-2" aria-hidden="true">🏇</p>
         <p>APIに接続できませんでした</p>
         <p className="text-xs mt-1">バックエンドが起動しているか確認してください</p>
+        <a
+          href="."
+          className="mt-4 inline-block px-4 py-2 bg-green-700 text-white text-sm rounded-lg font-medium hover:bg-green-800 transition-colors"
+        >
+          再読み込み
+        </a>
       </div>
     );
   }
@@ -86,7 +93,7 @@ async function RaceList({ date }: { date: string }) {
 
 function RaceListSkeleton() {
   return (
-    <div className="space-y-2 animate-pulse">
+    <div className="space-y-2 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="読み込み中">
       {Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="h-16 bg-gray-100 rounded-lg" />
       ))}

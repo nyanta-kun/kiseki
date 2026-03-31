@@ -2,6 +2,7 @@
 
 レースごとのオッズWebSocket接続を管理し、リアルタイムブロードキャストを行う。
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,5 +51,5 @@ class ConnectionManager:
 
 
 # モジュールレベルのシングルトン
-manager = ConnectionManager()          # オッズ用
+manager = ConnectionManager()  # オッズ用
 results_manager = ConnectionManager()  # 成績用

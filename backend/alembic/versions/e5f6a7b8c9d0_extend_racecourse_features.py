@@ -19,44 +19,53 @@ start_to_corner_m の根拠:
   - 短いほど多頭数時に外枠が不利、逃げ馬が位置取り争いを強いられる
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
+
 revision: str = "e5f6a7b8c9d0"
-down_revision: Union[str, None] = "d4e5f6a7b8c9"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "d4e5f6a7b8c9"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 SCHEMA = "keiba"
 
 # (course_code, corner_tightness, start_to_corner_m)
 CORNER_DATA = [
-    ("01", 0.70, 130),   # 札幌: 小回り・円形に近い
-    ("02", 0.85, 80),    # 函館: スパイラルカーブ・最もきつい
-    ("03", 0.75, 100),   # 福島: 小回り
-    ("04", 0.25, 350),   # 新潟: 日本最大・最も緩やか
-    ("05", 0.30, 300),   # 東京: 大回り・余裕あり
-    ("06", 0.65, 150),   # 中山: 中程度・急坂複合
-    ("07", 0.35, 250),   # 中京: 大回り（改修後）
-    ("08", 0.40, 200),   # 京都: 外回り基準
-    ("09", 0.45, 200),   # 阪神: 外回り基準
-    ("10", 0.70, 90),    # 小倉: 小回り
+    ("01", 0.70, 130),  # 札幌: 小回り・円形に近い
+    ("02", 0.85, 80),  # 函館: スパイラルカーブ・最もきつい
+    ("03", 0.75, 100),  # 福島: 小回り
+    ("04", 0.25, 350),  # 新潟: 日本最大・最も緩やか
+    ("05", 0.30, 300),  # 東京: 大回り・余裕あり
+    ("06", 0.65, 150),  # 中山: 中程度・急坂複合
+    ("07", 0.35, 250),  # 中京: 大回り（改修後）
+    ("08", 0.40, 200),  # 京都: 外回り基準
+    ("09", 0.45, 200),  # 阪神: 外回り基準
+    ("10", 0.70, 90),  # 小倉: 小回り
 ]
 
 
 def upgrade() -> None:
     op.add_column(
         "racecourse_features",
-        sa.Column("corner_tightness", sa.Numeric(3, 2), nullable=True,
-                  comment="コーナーのきつさ (0.0=緩い〜1.0=急)"),
+        sa.Column(
+            "corner_tightness",
+            sa.Numeric(3, 2),
+            nullable=True,
+            comment="コーナーのきつさ (0.0=緩い〜1.0=急)",
+        ),
         schema=SCHEMA,
     )
     op.add_column(
         "racecourse_features",
-        sa.Column("start_to_corner_m", sa.Integer, nullable=True,
-                  comment="スタート〜第1コーナー代表距離(m)"),
+        sa.Column(
+            "start_to_corner_m",
+            sa.Integer,
+            nullable=True,
+            comment="スタート〜第1コーナー代表距離(m)",
+        ),
         schema=SCHEMA,
     )
 
