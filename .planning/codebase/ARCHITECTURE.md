@@ -1,216 +1,148 @@
 # Architecture
 
-**Analysis Date:** 2026-03-22
+**Last Updated:** 2026-03-31
 
 ## Pattern Overview
 
-**Overall:** Distributed multi-agent prediction system with client-server architecture
+**Overall:** 分散型マルチエージェント予測システム
 
 **Key Characteristics:**
-- **Windows Agent (JV-Link SDK)**: Data acquisition from JRA-VAN via Windows COM interface (Parallels VM)
-- **Mac Backend (FastAPI)**: Index calculation engines (14 agents) + REST API + state management
-- **PostgreSQL (VPS)**: Persistent storage of race data, entries, results, and calculated indices
-- **Command Queue Pattern**: Windows Agent polls FastAPI for commands; reports status asynchronously
-- **Index Agent Pattern**: Each index calculation (speed, aptitude, jockey, pace, etc.) is an independent Agent inheriting from `IndexCalculator`
+- **Windows Agent (JV-Link SDK)**: Parallels VM 上で JRA-VAN データを取得
+- **Mac Backend (FastAPI)**: 指数算出エンジン (9 agents) + REST API + WebSocket
+- **PostgreSQL (VPS)**: レースデータ・指数・成績の永続化
+- **Next.js Frontend (PWA)**: 競馬新聞スタイルの Web UI、Google OAuth 認証
+- **Index Agent Pattern**: 各指数計算は独立した Agent として実装
 
-## Layers
+## System Layers
 
-**Windows Agent (Data Acquisition):**
-- Purpose: Extract JRA-VAN raw data via JV-Link SDK, cache locally, POST to Mac backend
-- Location: `windows-agent/jvlink_agent.py`
-- Contains: COM interface calls (`pywin32`), JVRead loops, local JSONL caching, HTTP retry queue
-- Depends on: JV-Link SDK, .env config (JRAVAN_SID, BACKEND_URL)
-- Used by: Triggered by Mac-side command queue (`GET /api/agent/command`)
+### Windows Agent (Data Acquisition)
+- **目的**: JV-Link SDK 経由で JRA-VAN 生データを取得し FastAPI へ POST
+- **場所**: `windows-agent/jvlink_agent.py`
+- **依存**: pywin32 (COM), httpx, .env (JRAVAN_SID, BACKEND_URL)
+- **モード**: setup / daily / realtime / recent
 
-**Backend HTTP Layer (FastAPI):**
-- Purpose: Receive data from Windows Agent, coordinate index calculation, expose REST API
-- Location: `backend/src/main.py`
-- Contains: CORS middleware, health endpoint, three routers (import, changes, races, agent)
-- Depends on: SQLAlchemy Session, index calculators, importers
-- Routes:
-  - `POST /api/import/*`: Receive RA/SE/odds data from Windows Agent
-  - `POST /api/changes/notify`: Detect race entry changes (scratch, jockey change)
-  - `GET /api/agent/command`: Agent polling for commands
-  - `POST /api/agent/status`: Agent status reporting
-  - `GET /api/races/*`: Query race/entry/result data
+### Backend HTTP Layer (FastAPI)
+- **目的**: Windows Agent からデータ受信、指数算出、REST API 提供
+- **場所**: `backend/src/main.py`
+- **主要ルート**:
+  - `POST /api/import/*` — Windows Agent からの RA/SE/オッズデータ受信
+  - `POST /api/changes/notify` — 出走取消・騎手変更検知 → 再算出
+  - `GET /api/races/*` — レース/出馬表/成績データ取得
+  - `GET /api/races/{id}/indices` — 指数・期待値取得
+  - `WS /api/races/{id}/results/ws` — 成績リアルタイム配信
 
-**Data Import Layer:**
-- Purpose: Parse JV-Link raw strings into DB inserts/updates (idempotent)
-- Location: `backend/src/importers/`
-  - `jvlink_parser.py`: Parse RA/SE/O1-O5/AV/JC binary strings with SJIS encoding
-  - `race_importer.py`: UPSERT Race, RaceEntry, RaceResult into PostgreSQL
-  - `odds_importer.py`: UPSERT OddsHistory
-  - `change_handler.py`: Handle race entry changes, trigger recalculation
-- Depends on: SQLAlchemy dialects.postgresql.insert (UPSERT), models
-- Used by: import_router (`POST /api/import/races`, etc.)
+### Data Import Layer
+- **場所**: `backend/src/importers/`
+  - `jvlink_parser.py` — RA/SE/O1-O5/AV/JC バイナリ文字列のパース (SJIS)
+  - `race_importer.py` — Race / RaceEntry / RaceResult の UPSERT
+  - `odds_importer.py` — OddsHistory の UPSERT
+  - `change_handler.py` — 変更検知 → 選択的再算出
 
-**Index Calculation Agents:**
-- Purpose: Calculate 9 index types independently; composite agent combines them
-- Location: `backend/src/indices/`
-  - `base.py`: Abstract `IndexCalculator` base class
-  - `speed.py`: Speed index (0.30 weight) - past race timing comparison
-  - `last3f.py`: Last 3F index (0.12 weight) - finishing acceleration
-  - `course_aptitude.py`: Course aptitude (0.13 weight) - course/distance/surface match
-  - `frame_bias.py`: Frame/position bias (0.06 weight) - post/placement advantage
-  - `jockey.py`: Jockey/trainer index (0.08 weight) - rider performance
-  - `pace.py`: Pace index (0.08 weight) - race tempo/position flow
-  - `rotation.py`: Rotation index (0.05 weight) - recent performance trend
-  - `composite.py`: Weighted sum agent (combines above + defaults for unimplemented)
-- Depends on: IndexCalculator base, database queries (Race, RaceEntry, RaceResult)
-- Used by: agent_router (`POST /api/agent/calculate`)
+### Index Calculation Agents
+- **場所**: `backend/src/indices/`
+- **実装済みエージェント**:
 
-**Database Layer:**
-- Purpose: Persistent storage with schema `keiba` on VPS PostgreSQL
-- Location: `backend/src/db/`
-  - `models.py`: 13 SQLAlchemy models (Horse, Jockey, Race, RaceEntry, RaceResult, CalculatedIndex, etc.)
-  - `session.py`: Engine, SessionLocal factory, Alembic integration
-- Schema migrations: `backend/alembic/versions/`
-- Tables: horses, jockeys, trainers, races, race_entries, race_results, calculated_indices, odds_history, entry_changes, etc.
+| Agent | ファイル | 重み |
+|---|---|---|
+| スピード指数 | `speed.py` | 0.30 |
+| 上がり指数 | `last3f.py` | 0.12 |
+| コース適性 | `course_aptitude.py` | 0.13 |
+| 枠順バイアス | `frame_bias.py` | 0.06 |
+| 騎手・調教師 | `jockey.py` | 0.08 |
+| 展開指数 | `pace.py` | 0.08 |
+| ローテーション | `rotation.py` | 0.05 |
+| 穴ぐさ指数 | `anagusa.py` | — (sekito.anagusa 参照) |
+| 複合指数 | `composite.py` | 全エージェント集約 |
 
-**Configuration:**
-- Location: `backend/src/config.py`
-- Reads from `.env` via Pydantic BaseSettings
-- Key settings: db_* (PostgreSQL connection), api_* (port/host), bet_* (safety limits), jravan_sid
+### Database Layer
+- **スキーマ**: `keiba.*` (メイン) + `sekito.*` (穴ぐさ等外部データ)
+- **場所**: `backend/src/db/`
+  - `models.py` — SQLAlchemy モデル群
+  - `session.py` — Engine / SessionLocal / Alembic 統合
+- **マイグレーション**: `backend/alembic/versions/`
+
+### Frontend Layer (Next.js 16)
+- **URL**: https://galloplab.com/kiseki/
+- **認証**: Auth.js v5 / Google OAuth / JWT strategy
+- **主要ページ**:
+  - `/login` — Google ログイン画面
+  - `/races?date=YYYYMMDD` — レース一覧（日付ナビ）
+  - `/races/[id]` — レース詳細（指数・チャート・成績）
+- **リアルタイム**: WebSocket で成績を受信 → チャート・テーブルを自動更新
 
 ## Data Flow
 
-**Initial Data Intake (Setup Mode):**
+### 初期データ取込 (setup mode)
+```
+Windows Agent: JVOpen(option=3) → JVRead() → parse_ra/parse_se()
+  → POST /api/import/races
+  → RaceImporter.import_records() (UPSERT)
+  → PostgreSQL keiba.races / race_entries
+```
 
-1. Mac operator: `POST /api/agent/command {"action": "setup"}`
-2. Windows Agent: `GET /api/agent/command` polls, receives setup action
-3. Agent: `JVOpen(option=3)` retrieves historical data (RA/SE records)
-4. Agent: Parses with `jvlink_parser.parse_ra()` / `parse_se()`
-5. Agent: `POST /api/import/races` sends {records: [{...}]}
-6. FastAPI: `RaceImporter.import_records()` UPSERTs Race, RaceEntry, RaceResult
-7. Result: PostgreSQL keiba schema populated
+### 日次更新 + リアルタイム
+```
+Windows Agent: JVOpen(daily) → POST /api/import/*
+  + JVRTOpen() → オッズ/取消/騎手変更をポーリング (30秒間隔)
+  → POST /api/changes/notify → ChangeHandler → 選択的再算出
+```
 
-**Daily Data Intake:**
+### 指数算出
+```
+CompositeIndexCalculator.calculate_batch(race_id)
+  → 各エージェント.calculate_batch()
+  → 重み付き合算
+  → UPSERT keiba.calculated_indices (version管理)
+```
 
-1. Windows Agent: `jvlink_agent.py --mode daily` runs
-2. Agent: `JVOpen(option=1/2)` retrieves today's RA/SE
-3. Agent: Parses and POSTs same way as setup
-4. Concurrent: JVRTOpen fetches odds, scratches, jockey changes
-5. Agent: POSTs changes via `POST /api/changes/notify` (triggers recalc)
-
-**Index Calculation Flow:**
-
-1. Data arrives and is imported
-2. Composite agent is triggered (manual or auto)
-3. CompositeIndexCalculator iterates over all horse_ids in race
-4. For each agent type (speed, aptitude, etc.):
-   - Single-horse: `calculate(race_id, horse_id)` queries history
-   - Batch: `calculate_batch(race_id)` returns {horse_id: index_value}
-5. Composite: Weighted sum with `INDEX_WEIGHTS` dict
-6. UPSERT into `calculated_indices` table with version tracking
-
-**Real-time Change Detection:**
-
-1. Windows Agent detects via JVRTOpen (scratch/jockey change)
-2. Agent: `POST /api/changes/notify` with change_type and raw data
-3. ChangeHandler: Parses and identifies affected race_id/horse_id
-4. ChangeHandler: Marks entry_changes and triggers selective recalc
-   - Scratch: Recalc all horses in race
-   - Jockey change: Recalc jockey + pace indices
-   - Weight change: Recalc speed index only
-
-**State Management:**
-
-- Agent status: In-memory dict in `agent_router.py` (updated via `POST /api/agent/status`)
-- Command queue: In-memory deque (FIFO) in `agent_router.py`
-- Index versions: Tracked in `calculated_indices.version` for re-runs
-- Cache: Windows Agent stores raw JVRead output in local JSONL (pending queue for retry)
+### フロントエンド表示
+```
+Next.js SSR: fetchIndices() / fetchOdds() / fetchResults()
+  → ProbabilityChart (ResizeObserver + Recharts BarChart)
+  → IndicesTable (勝率/複勝率/期待値/穴ぐさバッジ)
+  → RaceDetailClient: WebSocket → setResultsMap → 着順ハイライト更新
+```
 
 ## Key Abstractions
 
-**IndexCalculator (Abstract Base):**
-- Purpose: Standardize all index agents with single interface
-- Location: `backend/src/indices/base.py`
-- Methods:
-  - `calculate(race_id: int, horse_id: int) -> float`: Single horse
-  - `calculate_batch(race_id: int) -> dict[int, float]`: All horses in race
-  - `recalculate(race_id: int, version: int)`: Re-run with version tracking
-- Examples: `SpeedIndexCalculator`, `CourseAptitudeCalculator`, `FrameBiasCalculator`
-- Pattern: Each agent queries database, applies proprietary algorithm, returns 0-100 index score
+### IndexCalculator (Abstract Base)
+```python
+class IndexCalculator(ABC):
+    def calculate(self, race_id: int, horse_id: int) -> float: ...
+    def calculate_batch(self, race_id: int) -> dict[int, float]: ...
+```
+- 全エージェントはこの基底クラスを継承
+- 独立してテスト可能
+- `version` カラムで再算出管理
 
-**Importer Pattern:**
-- Purpose: Make data intake idempotent (duplicate-safe)
-- Examples: `RaceImporter.import_records()`, `OddsImporter.import_records()`
-- Implementation: SQLAlchemy `insert().on_conflict_do_update()` with jravan_*_id uniqueness
-- Result: Safe to re-run multiple times without corrupting data
+### Importer Pattern (idempotent)
+```python
+insert_stmt = insert(Race).values(...).on_conflict_do_update(...)
+```
+- 重複実行しても安全（UPSERT）
 
-**JV-Link Parser Pattern:**
-- Purpose: Convert raw SJIS binary strings to Python dicts (field extraction)
-- Location: `backend/src/importers/jvlink_parser.py`
-- Conventions:
-  - Helper functions: `_s()` (string), `_i()` (int), `_decode()` (SJIS→UTF-8)
-  - Byte positions: 1-indexed per JVDF spec, converted to 0-indexed Python slicing
-  - Time fields: MSST (4B: M+SS+T) and SST (3B: SS+T) → 0.1sec-unit integers
-  - Returns: `dict[str, Any]` with extracted fields, None if invalid
-
-## Entry Points
-
-**Windows Agent:**
-- Location: `windows-agent/jvlink_agent.py --mode {setup|daily|realtime|retry}`
-- Triggers: Manual invocation or via `/api/agent/command` polling
-- Responsibilities: JVRead loops, local caching, HTTP POST to FastAPI, retry queue management
-
-**FastAPI Server:**
-- Location: `backend/src/main.py` + `uvicorn` via Docker or direct
-- Triggers: HTTP server startup
-- Responsibilities: Route incoming data, coordinate agents, expose REST API
-
-**Index Calculation (On-Demand):**
-- Location: `backend/src/api/agent_router.py` → `CompositeIndexCalculator`
-- Triggers: Manual CLI call or scheduled (APScheduler planned for MS3+)
-- Responsibilities: Invoke all 9 agents, aggregate indices, persist results
+### JV-Link Parser Pattern
+- SJIS バイナリ文字列を Python dict に変換
+- バイト位置は仕様書の 1-indexed を 0-indexed に変換
+- 時刻フィールド: MSST (4B) / SST (3B) → 0.1秒単位整数
 
 ## Error Handling
 
-**Strategy:** Graceful degradation with logging; never crash on bad data
+- **パースエラー**: `None` を返してスキップ（クラッシュしない）
+- **DBエラー**: UPSERT で冪等性を保証
+- **未実装指数**: デフォルト値 50.0 を使用
+- **WebSocket切断**: フロントエンドは再接続しない（成績確定後は不要）
 
-**Patterns:**
+## Authentication (Auth.js v5)
 
-- **Parser errors**: Return `None` if record is malformed; skip silently
-  ```python
-  def parse_ra(data: str) -> dict[str, Any] | None:
-      if len(data) < MIN_LENGTH:
-          return None  # Skip bad record
-  ```
-
-- **Database errors**: UPSERT on conflict (idempotent); log duplicates
-  ```python
-  insert_stmt = insert(Race).values(...).on_conflict_do_update(...)
-  ```
-
-- **Missing data**: Return neutral value (50.0) for unimplemented indices
-  ```python
-  # In CompositeIndexCalculator: pedigree_index = 50.0  # Not yet implemented
-  ```
-
-- **API errors**: Return HTTP status codes (401/400/500) with descriptive messages
-
-## Cross-Cutting Concerns
-
-**Logging:**
-- Framework: Python `logging` module
-- Handlers: Console + file (`logs/kiseki.log`)
-- Configuration: `backend/src/config.py` (log_level, log_file)
-
-**Validation:**
-- Pydantic models for API input (CommandRequest, AgentStatusReport, etc.)
-- Type hints throughout (Python strict mode ready)
-- Database constraints: UNIQUE, FOREIGN KEY, CHECK via SQLAlchemy
-
-**Authentication:**
-- Simple header-based: `X-API-Key` for Windows Agent ↔ Mac communication
-- Fallback: Development mode (empty key) skips check
-- Location: `backend/src/api/import_router.py`, `agent_router.py` (verify_api_key)
-
-**Database Schema Management:**
-- Tool: Alembic migrations
-- Location: `backend/alembic/versions/`
-- Workflow: Always DDL via `alembic upgrade head`; never hand-edit schema
+- **戦略**: JWT (セッションをサーバーに持たない)
+- **認証フロー**: Google OAuth → `/auth/callback/google` → JWT → Cookie
+- **既知の注意点**:
+  - `signIn` / `signOut` はサーバーアクション経由（CSRF対策）
+  - `useSession` は使用しない（`auth()` を直接呼ぶ）
+  - `AUTH_URL` は `/auth` まで（`/api/auth` ではない）
+  - コールバック URL: `https://galloplab.com/auth/callback/google`
 
 ---
 
-*Architecture analysis: 2026-03-22*
+*Updated: 2026-03-31*
