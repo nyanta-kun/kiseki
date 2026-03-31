@@ -16,7 +16,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
   const today = todayYYYYMMDD();
   const isToday = currentDate === today;
 
-  const go = (date: string) => router.push(`/?date=${date}`);
+  const go = (date: string) => router.push(`/races?date=${date}`);
 
   const toInputValue = (d: string) =>
     `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
