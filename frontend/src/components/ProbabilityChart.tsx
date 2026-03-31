@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -185,6 +185,8 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
 
 export function ProbabilityChart({ indices, initialOdds, results }: Props) {
   const [sortByHorseNumber, setSortByHorseNumber] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   const odds = initialOdds ?? { win: {}, place: {} };
   const hasResults = results && results.size > 0;
 
@@ -293,7 +295,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
       </div>
 
       <div className="w-full" style={{ height: Math.max(200, chartData.length * 28 + 60) }}>
-        <ResponsiveContainer width="100%" height="100%" minWidth={1}>
+        {mounted && <ResponsiveContainer width="100%" height="100%">
           <BarChart
             layout="vertical"
             data={chartData}
@@ -364,7 +366,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
               })}
             </Bar>
           </BarChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </div>
     </section>
   );
