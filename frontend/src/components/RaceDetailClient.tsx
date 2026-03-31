@@ -1,9 +1,15 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { HorseIndex, OddsData, RaceResult, buildResultsWsUrl } from "@/lib/api";
-import { ProbabilityChart } from "@/components/ProbabilityChart";
 import { IndicesTable } from "@/components/IndicesTable";
+
+// ResponsiveContainer はDOMサイズ計測が必要なため SSR を無効化
+const ProbabilityChart = dynamic(
+  () => import("@/components/ProbabilityChart").then((m) => m.ProbabilityChart),
+  { ssr: false }
+);
 
 type Props = {
   raceId: number;
