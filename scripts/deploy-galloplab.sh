@@ -75,9 +75,9 @@ EOF
       cd $REMOTE_DIR
       git pull origin main
       echo "[deploy] DBマイグレーション実行..."
-      docker compose -f $COMPOSE_FILE build backend
+      docker compose -f $COMPOSE_FILE build
       docker compose -f $COMPOSE_FILE run --rm --no-deps -e PYTHONPATH=/app backend uv run alembic upgrade head
-      docker compose -f $COMPOSE_FILE up -d --build
+      docker compose -f $COMPOSE_FILE up -d
       sleep 8
       docker ps | grep galloplab
       echo "[deploy] 完了"
