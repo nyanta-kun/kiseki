@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -8,7 +8,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Cell,
 } from "recharts";
 import { HorseIndex, OddsData } from "@/lib/api";
@@ -185,8 +184,19 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
 
 export function ProbabilityChart({ indices, initialOdds, results }: Props) {
   const [sortByHorseNumber, setSortByHorseNumber] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const [chartWidth, setChartWidth] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setChartWidth(w);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
   const odds = initialOdds ?? { win: {}, place: {} };
   const hasResults = results && results.size > 0;
 
@@ -294,11 +304,17 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
         </span>
       </div>
 
-      <div className="w-full" style={{ height: Math.max(200, chartData.length * 28 + 60) }}>
-        {mounted && <ResponsiveContainer width="100%" height="100%">
+      <div
+        ref={containerRef}
+        className="w-full"
+        style={{ height: Math.max(200, chartData.length * 28 + 60) }}
+      >
+        {chartWidth > 0 && (
           <BarChart
             layout="vertical"
             data={chartData}
+            width={chartWidth}
+            height={Math.max(200, chartData.length * 28 + 60)}
             margin={{ top: 0, right: 8, left: 0, bottom: 0 }}
             barSize={8}
             barGap={2}
@@ -366,7 +382,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
               })}
             </Bar>
           </BarChart>
-        </ResponsiveContainer>}
+        )}
       </div>
     </section>
   );
