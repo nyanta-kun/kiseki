@@ -30,8 +30,8 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     secureCookie: process.env.NODE_ENV === "production",
   }).catch(() => null);
 
-  // ログインページは認証不要
-  if (pathname === "/login") {
+  // トップページ・ログインページは認証不要
+  if (pathname === "/" || pathname === "/login") {
     if (token) {
       return NextResponse.redirect(new URL("/races", req.nextUrl.origin));
     }
