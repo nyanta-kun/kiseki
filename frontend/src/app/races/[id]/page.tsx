@@ -112,7 +112,7 @@ function Header({
       <div className="max-w-3xl mx-auto px-4 py-3">
         <div className="flex items-center gap-3">
           <Link
-            href={`/?date=${date}`}
+            href={`/races?date=${date}`}
             className="text-blue-200 hover:text-white text-lg leading-none"
           >
             ←
