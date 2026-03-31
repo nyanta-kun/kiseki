@@ -11,7 +11,7 @@ import { verifyPasswordAndRedirect } from "./actions";
 // <Image unoptimized> は Next.js が basePath を付加するため src に不要。
 function LoginForm() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/";
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/races";
 
   const [errorMessage, formAction, isPending] = useActionState(
     async (_prev: string | null, formData: FormData) => {
