@@ -24,6 +24,13 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      // galloplab.com移行: /kiseki 旧URLを新URLにリダイレクト
+      { source: "/kiseki", destination: "/races", permanent: true },
+      { source: "/kiseki/:path*", destination: "/:path*", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

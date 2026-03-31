@@ -86,4 +86,4 @@ EOF
 
 esac
 
-echo "[deploy] デプロイ完了: https://galloplab.com/kiseki/"
+echo "[deploy] デプロイ完了: https://galloplab.com/"
