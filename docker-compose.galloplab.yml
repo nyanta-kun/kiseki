@@ -47,7 +47,7 @@ services:
       - "127.0.0.1:3002:3000"
     environment:
       # SSR時にDockerネットワーク内でバックエンドを呼び出す（ブラウザには公開しない）
-      - BACKEND_URL=http://backend:8000
+      - BACKEND_URL=http://backend:8000/api
       # 認証（Auth.js）- galloplab.com向け設定
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
