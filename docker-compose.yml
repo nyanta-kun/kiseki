@@ -45,9 +45,9 @@ services:
       - "3000:3000"
     environment:
       # SSR時にDockerネットワーク内でバックエンドを呼び出す（ブラウザには公開しない）
-      - BACKEND_URL=http://backend:8000
+      - BACKEND_URL=http://backend:8000/api
       # ブラウザからアクセス可能なURL（ホストのlocalhost:8000へポートマッピング済み）
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
       # 認証（Auth.js）- .env ファイルから注入
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_PASSWORD=${AUTH_PASSWORD}

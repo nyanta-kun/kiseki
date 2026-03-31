@@ -48,7 +48,7 @@ services:
       - "127.0.0.1:3001:3000"
     environment:
       # SSR時にDockerネットワーク内でバックエンドを呼び出す（ブラウザには公開しない）
-      - BACKEND_URL=http://backend:8000
+      - BACKEND_URL=http://backend:8000/api
       # ブラウザからアクセス可能なURL（外部公開URL経由でnginxがバックエンドに転送）
       - NEXT_PUBLIC_API_URL=https://sekito-stable.com
       # 認証（Auth.js）- .env ファイルから注入
