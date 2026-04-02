@@ -1,8 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Image from "next/image";
 import { auth } from "@/auth";
-import { AppNav } from "@/components/AppNav";
+import { SiteHeader } from "@/components/SiteHeader";
 import { Footer } from "@/components/Footer";
 import ServiceWorkerRegister from "./sw-register";
 import "./globals.css";
@@ -73,7 +72,6 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const session = await auth();
-  const isLoggedIn = !!session?.user;
   const isAdmin = session?.user?.role === "admin";
 
   return (
@@ -90,23 +88,8 @@ export default async function RootLayout({
           メインコンテンツへスキップ
         </a>
 
-        {/* 共有ヘッダー（ログイン済みの場合のみ表示） */}
-        {isLoggedIn && (
-          <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
-            <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-              <Image
-                src="/images/logo.png"
-                alt="GallopLab"
-                width={160}
-                height={98}
-                className="select-none opacity-90 flex-shrink-0 h-8 w-auto"
-                priority
-              />
-              <div className="flex-1 min-w-0" />
-              <AppNav isAdmin={isAdmin} />
-            </div>
-          </header>
-        )}
+        {/* 共有ヘッダー（/ と /login では非表示） */}
+        <SiteHeader isAdmin={isAdmin} />
 
         <div className="flex-1 flex flex-col">
           {children}
