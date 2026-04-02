@@ -4,10 +4,12 @@
 
 // SSR（サーバーサイド）はBACKEND_URLを優先（Docker内部URL）。
 // ブラウザはNEXT_PUBLIC_API_URLを使用（外部からアクセス可能なURL）。
-const BASE_URL =
+// NEXT_PUBLIC_API_URLは/api無しで設定される場合があるため正規化する。
+const _rawBase =
   typeof window === "undefined"
     ? (process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
     : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
+const BASE_URL = _rawBase.replace(/\/api\/?$/, "").replace(/\/$/, "") + "/api";
 
 // ---------------------------------------------------------------------------
 // 型定義
