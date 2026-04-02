@@ -5,11 +5,19 @@ DBに格納済みのレース・出馬表・成績データを返すエンドポ
 
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
-import os
-
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, WebSocketException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    WebSocketException,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session

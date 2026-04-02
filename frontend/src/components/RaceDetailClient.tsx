@@ -71,7 +71,10 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
       // WebSocket非対応環境は無視
     }
   }, [raceId]);
-  connectRef.current = connect;
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     mountedRef.current = true;

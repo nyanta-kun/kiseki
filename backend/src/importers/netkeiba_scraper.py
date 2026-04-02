@@ -63,7 +63,7 @@ def create_session(user_id: str, password: str) -> httpx.Client:
     # ログインページ取得でCookieを初期化
     client.get(f"{LOGIN_URL}?pid=login")
 
-    resp = client.post(
+    client.post(
         LOGIN_URL,
         data={
             "pid": "login",

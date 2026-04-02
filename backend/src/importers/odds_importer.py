@@ -190,7 +190,7 @@ class OddsImporter:
                 break
             horse_no = int(horse_no_str)
             low_raw = entry[PLACE_ODDS_OFFSET : PLACE_ODDS_OFFSET + PLACE_ODDS_LEN]
-            high_raw = entry[
+            _ = entry[
                 PLACE_ODDS_OFFSET + PLACE_ODDS_LEN : PLACE_ODDS_OFFSET + PLACE_ODDS_LEN * 2
             ]
             low = _parse_odds_value(low_raw)

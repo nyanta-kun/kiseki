@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from ..db.models import Race, RacecourseFeatures, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN
 from .base import IndexCalculator
-from .meet_bias import MeetBiasService
+from .meet_bias import MeetBias, MeetBiasService
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ class PaceIndexCalculator(IndexCalculator):
 
         straight = float(feat.straight_distance)
         tightness = float(feat.corner_tightness) if feat.corner_tightness else 0.5
-        start_to_corner = int(feat.start_to_corner_m) if feat.start_to_corner_m else 200
+        _start_to_corner = int(feat.start_to_corner_m) if feat.start_to_corner_m else 200
 
         # 直線長による補正
         if straight >= LONG_STRAIGHT_M:
@@ -386,7 +386,7 @@ class PaceIndexCalculator(IndexCalculator):
         self,
         score: float,
         runner_type: str,
-        bias: MeetBias,  # type: ignore[name-defined]
+        bias: MeetBias,
     ) -> float:
         """当開催の前後バイアスによる補正。
 

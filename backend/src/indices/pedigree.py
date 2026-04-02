@@ -532,9 +532,9 @@ class PedigreeIndexCalculator(IndexCalculator):
         if surface == "dirt":
             # grass factor を無効化し surface factor に集約
             grass_w = FACTOR_WEIGHTS["grass"]
-            adj = {"surface": FACTOR_WEIGHTS["surface"] + grass_w, "grass": 0.0}
+            _adj = {"surface": FACTOR_WEIGHTS["surface"] + grass_w, "grass": 0.0}
         else:
-            adj = {}
+            _adj = {}
 
         score = sire_score * SIRE_WEIGHT + dam_sire_score * DAM_SIRE_WEIGHT
         return round(max(INDEX_MIN, min(INDEX_MAX, score)), 1)
