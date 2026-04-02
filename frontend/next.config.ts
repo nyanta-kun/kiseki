@@ -6,6 +6,8 @@ const withPWA = withPWAInit({
   disable: process.env.NODE_ENV === "development",
 });
 
+const isDev = process.env.NODE_ENV === "development";
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -20,7 +22,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      "connect-src 'self' wss://galloplab.com wss://sekito-stable.com https://galloplab.com https://sekito-stable.com https://accounts.google.com",
+      `connect-src 'self' wss://galloplab.com wss://sekito-stable.com https://galloplab.com https://sekito-stable.com https://accounts.google.com${isDev ? " ws://localhost:8000 http://localhost:8000" : ""}`,
       "frame-src https://accounts.google.com",
       "frame-ancestors 'none'",
     ].join("; "),
