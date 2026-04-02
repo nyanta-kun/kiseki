@@ -7,6 +7,8 @@ import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { LogoutButton } from "@/components/LogoutButton";
+import { BottomNav } from "@/components/BottomNav";
+import { auth } from "@/auth";
 
 type Params = Promise<{ id: string }>;
 
@@ -25,6 +27,9 @@ export default async function RacePage({ params }: { params: Params }) {
   const { id } = await params;
   const raceId = parseInt(id);
 
+  const session = await auth();
+  const isPremium = session?.user?.is_active ?? false;
+
   // レース情報を最初に取得（date が後続フェッチに必要なため）
   let race = null;
   try {
@@ -33,6 +38,7 @@ export default async function RacePage({ params }: { params: Params }) {
     // ignore
   }
   const date = race?.date ?? "";
+  const raceNumber = race?.race_number ?? 1;
 
   // 残り4つを並列取得
   const [allRaces, initialResults, initialOdds, indicesResp] = await Promise.all([
@@ -46,11 +52,12 @@ export default async function RacePage({ params }: { params: Params }) {
     return (
       <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
         <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
-        <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
+        <main className="max-w-3xl mx-auto px-4 py-8 pb-20 text-center text-gray-400">
           <p className="text-3xl mb-2">📊</p>
           <p>この レースの指数データがありません</p>
           <p className="text-xs mt-1">算出が完了していない可能性があります</p>
         </main>
+        <BottomNav />
       </div>
     );
   }
@@ -62,7 +69,7 @@ export default async function RacePage({ params }: { params: Params }) {
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
       <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 pb-20 space-y-4">
         {/* 期待値サマリー */}
         <EVSummary indices={indices} />
 
@@ -75,6 +82,8 @@ export default async function RacePage({ params }: { params: Params }) {
           indices={indices}
           initialOdds={initialOdds}
           initialResults={initialResults}
+          isPremium={isPremium}
+          raceNumber={raceNumber}
         />
 
         {/* 凡例 */}
@@ -89,6 +98,8 @@ export default async function RacePage({ params }: { params: Params }) {
           </ul>
         </div>
       </main>
+
+      <BottomNav />
     </div>
   );
 }

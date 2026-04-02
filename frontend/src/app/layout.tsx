@@ -13,23 +13,37 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "kiseki - JV-Linkデータによる競馬予測指数・期待値分析",
+  title: "GallopLab - 競馬AI指数・期待値分析",
   description:
-    "JV-Linkデータを元にスピード指数・コース適性・騎手指数など14種の競馬指数を算出し、オッズとの期待値比較で合理的な馬券購入をサポートするシステム。",
+    "JRA競馬のAI指数・期待値を提供する競馬予測サービス。スピード指数・コース適性・騎手指数など14種の指数で合理的な馬券購入をサポート。",
   manifest: "/manifest.json",
   robots: { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/images/favicon/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/images/favicon/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/images/favicon/favicon-48x48.png", sizes: "48x48", type: "image/png" },
+      { url: "/images/favicon/favicon-64x64.png", sizes: "64x64", type: "image/png" },
+      { url: "/images/favicon/favicon-128x128.png", sizes: "128x128", type: "image/png" },
+      { url: "/images/favicon/favicon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/images/favicon/favicon-256x256.png", sizes: "256x256", type: "image/png" },
+      { url: "/images/favicon/favicon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/images/favicon/favicon.ico",
+    apple: { url: "/images/favicon/favicon-180x180.png", sizes: "180x180", type: "image/png" },
+  },
   openGraph: {
     type: "website",
     locale: "ja_JP",
-    siteName: "kiseki",
-    title: "kiseki - 競馬予測指数システム",
-    description: "JV-Linkデータによる競馬指数・期待値分析",
+    siteName: "GallopLab",
+    title: "GallopLab - 競馬AI指数・期待値分析",
+    description: "JRA競馬のAI指数・期待値を提供する競馬予測サービス。スピード指数・コース適性・騎手指数など14種の指数で合理的な馬券購入をサポート。",
     images: [{ url: "/images/logo.png", width: 512, height: 512 }],
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "kiseki",
+    title: "GallopLab",
   },
 };
 

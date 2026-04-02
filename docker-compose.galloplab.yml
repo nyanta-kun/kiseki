@@ -59,6 +59,8 @@ services:
       # コールバックURL: https://galloplab.com/api/auth/callback/google
       # Next.jsのルートが /api/auth/[...nextauth] のため /api/auth まで含める
       - AUTH_URL=https://galloplab.com/api/auth
+      # バックエンドAPI認証（サーバーサイドからの内部呼び出し用）
+      - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
     depends_on:
       backend:
         condition: service_healthy

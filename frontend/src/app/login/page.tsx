@@ -6,9 +6,6 @@ import { Suspense } from "react";
 import Image from "next/image";
 import { verifyPasswordAndRedirect } from "./actions";
 
-// next/image は basePath を自動付与しないため、CSS background-image では
-// /kiseki プレフィックスを手動で含める。
-// <Image unoptimized> は Next.js が basePath を付加するため src に不要。
 function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/races";
@@ -25,7 +22,6 @@ function LoginForm() {
       className="h-screen w-full flex flex-col md:flex-row items-center justify-center relative overflow-hidden"
       style={{ background: "#090d1a" }}
     >
-
       {/* ---- 左（PC）/ 上（スマホ）: image.png ---- */}
       <div className="relative z-10 flex items-center justify-center w-full md:w-1/2 md:h-full flex-shrink-0 mt-8 md:mt-0">
         <Image
@@ -49,7 +45,7 @@ function LoginForm() {
         />
       </div>
 
-      {/* ---- 右（PC）/ 下（スマホ）: フォームカード ---- */}
+      {/* ---- 右（PC）/ 下（スマホ）: ログインカード ---- */}
       <div className="relative z-10 w-full max-w-sm mx-6 md:mx-0 md:mr-16 lg:mr-24 mb-8 md:mb-0 flex-shrink-0">
         <div
           className="rounded-2xl overflow-hidden border"
@@ -60,41 +56,27 @@ function LoginForm() {
               "0 0 0 1px rgba(0,180,255,0.1), 0 0 40px rgba(0,180,255,0.12), 0 16px 48px rgba(0,0,0,0.7)",
           }}
         >
-          {/* カードボディ */}
           <div className="px-8 py-8 space-y-5">
             <p className="text-white/90 text-xs text-center leading-relaxed">
               合言葉を入力後、Googleアカウントで認証してください
             </p>
 
             <form action={formAction} className="space-y-4">
-              <div>
-                <label htmlFor="password" className="sr-only">合言葉（パスワード）</label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="合言葉を入力"
-                  required
-                  className="w-full px-4 py-3 rounded-xl text-sm text-white transition-all focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1"
-                  style={{
-                    background: "rgba(0, 180, 255, 0.09)",
-                    border: "1px solid rgba(0, 180, 255, 0.5)",
-                    color: "#fff",
-                    caretColor: "#00c8ff",
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.border = "1px solid rgba(0, 200, 255, 0.75)";
-                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(0,180,255,0.15)";
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.border = "1px solid rgba(0, 180, 255, 0.35)";
-                    e.currentTarget.style.boxShadow = "none";
-                  }}
-                />
-              </div>
+              <input
+                name="password"
+                type="password"
+                placeholder="合言葉を入力"
+                required
+                autoComplete="current-password"
+                className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-[#00aaee]/60 transition-all"
+                style={{
+                  background: "rgba(255,255,255,0.10)",
+                  border: "1px solid rgba(100,160,220,0.40)",
+                }}
+              />
 
               {errorMessage && (
-                <p className="text-red-300 text-xs bg-red-500/15 border border-red-400/30 rounded-lg px-3 py-2">
+                <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
                   {errorMessage}
                 </p>
               )}
@@ -104,22 +86,18 @@ function LoginForm() {
                 disabled={isPending}
                 className="w-full flex items-center justify-center gap-3 font-semibold py-3 rounded-xl transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
-                  background: "linear-gradient(135deg, #00aaee 0%, #0055cc 100%)",
+                  background: isPending
+                    ? "rgba(0,100,180,0.6)"
+                    : "linear-gradient(135deg, #00aaee 0%, #0055cc 100%)",
                   color: "#fff",
-                  boxShadow: "0 0 20px rgba(0,180,255,0.3)",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isPending) e.currentTarget.style.boxShadow = "0 0 32px rgba(0,200,255,0.55)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = "0 0 20px rgba(0,180,255,0.3)";
+                  boxShadow: isPending ? "none" : "0 0 20px rgba(0,180,255,0.3)",
                 }}
               >
                 {isPending ? (
-                  <span className="flex items-center gap-2">
+                  <>
                     <SpinnerIcon />
-                    確認中...
-                  </span>
+                    認証中...
+                  </>
                 ) : (
                   <>
                     <GoogleIcon />

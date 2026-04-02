@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     auth_google_id: str = ""
     auth_google_secret: str = ""
     auth_url: str = ""
+    # 管理者メールアドレス（カンマ区切り）。upsert 時に role=admin を付与する
+    admin_emails: str = "info.galloplab@gmail.com"
+
+    @property
+    def admin_email_list(self) -> list[str]:
+        """管理者メールアドレスのリストを返す。"""
+        return [e.strip() for e in self.admin_emails.split(",") if e.strip()]
 
     model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

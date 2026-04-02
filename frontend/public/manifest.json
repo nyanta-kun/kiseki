@@ -1,7 +1,7 @@
 {
-  "name": "kiseki - 競馬予測指数",
-  "short_name": "kiseki",
-  "description": "JV-Linkデータを元にした競馬指数・期待値分析システム",
+  "name": "GallopLab - 競馬AI指数・期待値分析",
+  "short_name": "GallopLab",
+  "description": "JRA競馬のAI指数・期待値を提供する競馬予測サービス",
   "start_url": "/races",
   "scope": "/",
   "display": "standalone",
@@ -10,17 +10,17 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/images/logo.png",
+      "src": "/images/favicon/favicon-192x192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/images/logo.png",
+      "src": "/images/favicon/favicon-512x512.png",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/images/logo.png",
+      "src": "/images/favicon/favicon-512x512.png",
       "sizes": "any",
       "type": "image/png",
       "purpose": "maskable"

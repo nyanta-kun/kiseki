@@ -45,6 +45,18 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(loginUrl);
   }
 
+  // アカウント無効化チェック
+  if (token.is_active === false) {
+    return NextResponse.redirect(new URL("/login?error=account_suspended", req.nextUrl.origin));
+  }
+
+  // 管理画面は admin ロールのみ
+  if (pathname.startsWith("/admin")) {
+    if (token.role !== "admin") {
+      return NextResponse.redirect(new URL("/races", req.nextUrl.origin));
+    }
+  }
+
   return NextResponse.next();
 }
 

@@ -55,6 +55,8 @@ services:
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
       - AUTH_URL=${AUTH_URL}
       - AUTH_TRUST_HOST=true
+      # バックエンドAPI認証（サーバーサイドからの内部呼び出し用）
+      - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
     volumes:
       - ./frontend:/app
       # node_modules はコンテナ内に保持（ホストのものと混在させない）

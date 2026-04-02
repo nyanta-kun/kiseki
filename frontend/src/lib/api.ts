@@ -1,5 +1,5 @@
 /**
- * kiseki バックエンドAPIクライアント
+ * GallopLab バックエンドAPIクライアント
  */
 
 // SSR（サーバーサイド）はBACKEND_URLを優先（Docker内部URL）。

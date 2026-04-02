@@ -5,12 +5,15 @@ import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { LogoutButton } from "@/components/LogoutButton";
+import { BottomNav } from "@/components/BottomNav";
+import { auth } from "@/auth";
 
 type SearchParams = Promise<{ date?: string }>;
 
 export default async function RacesPage({ searchParams }: { searchParams: SearchParams }) {
   const { date } = await searchParams;
   const targetDate = date ?? todayYYYYMMDD();
+  const session = await auth();
 
   // 前後の開催日をサーバーサイドで取得（平日スキップ）
   const [prevDate, nextDate] = await Promise.all([
@@ -25,18 +28,28 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <Image src="/images/logo.png" alt="GallopLab" width={160} height={98} className="select-none opacity-90 flex-shrink-0 h-8 w-auto" priority />
           <div className="flex-1 min-w-0" />
+          {session?.user?.role === "admin" && (
+            <a
+              href="/admin"
+              className="text-blue-200 hover:text-white text-xs px-2.5 py-1 rounded border border-blue-400/40 hover:border-white/40 hover:bg-white/10 transition-colors"
+            >
+              管理
+            </a>
+          )}
           <LogoutButton />
         </div>
         <DateNav currentDate={targetDate} prevDate={prevDate} nextDate={nextDate} />
       </header>
 
       {/* コンテンツ */}
-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 pb-16">
         <h1 className="sr-only">開催レース一覧</h1>
         <Suspense fallback={<RaceListSkeleton />}>
           <RaceList date={targetDate} />
         </Suspense>
       </main>
+
+      <BottomNav />
     </div>
   );
 }

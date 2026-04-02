@@ -467,3 +467,31 @@ class OddsHistory(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="取得日時"
     )
+
+
+class User(Base):
+    """ユーザーマスタ（Google OAuth）"""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    google_sub: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, comment="Google subject ID（不変）"
+    )
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, comment="メールアドレス"
+    )
+    name: Mapped[str | None] = mapped_column(String(255), comment="表示名")
+    image_url: Mapped[str | None] = mapped_column(String(1024), comment="プロフィール画像URL")
+    role: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="member", comment="ロール（member/admin）"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", comment="有効フラグ"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), comment="登録日時"
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="最終ログイン日時"
+    )
