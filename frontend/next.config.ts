@@ -49,7 +49,8 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/(.*)",
+        // /_next/static/ は Next.js 内部ファイル（Turbopack開発ビルド含む）のため除外
+        source: "/((?!_next/static/).*)",
         headers: securityHeaders,
       },
     ];
