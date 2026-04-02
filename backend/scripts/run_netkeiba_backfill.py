@@ -144,7 +144,7 @@ if __name__ == "__main__":
             print(f"ERROR: --year-month は YYYYMM 形式で指定してください: {ym!r}", file=sys.stderr)
             sys.exit(1)
 
-    engine = create_engine(settings.database_url)
+    engine = create_engine(settings.database_url_sync)
 
     with Session(engine) as session:
         for year_month in args.year_month:
