@@ -23,6 +23,7 @@ services:
       - ./logs:/app/logs
     tmpfs:
       - /tmp
+      - /home/appuser/.cache/uv
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -77,6 +78,7 @@ services:
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
     tmpfs:
       - /tmp
+      - /home/appuser/.cache/uv
     depends_on:
       backend:
         condition: service_healthy
