@@ -125,9 +125,13 @@ jobs:
                 docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
                   -e PYTHONPATH=/app backend uv run alembic upgrade head
                 docker compose -f docker-compose.galloplab.yml up -d
-                echo \"[deploy] コンテナ起動待機中...\"
-                docker compose -f docker-compose.galloplab.yml wait backend frontend || \
-                  docker compose -f docker-compose.galloplab.yml ps
-                docker ps | grep galloplab
+                echo \"[deploy] ヘルスチェック待機中...\"
+                for i in \$(seq 1 12); do
+                  sleep 5
+                  STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" kiseki-backend-galloplab 2>/dev/null || echo \"unknown\")
+                  echo \"  backend health: \$STATUS (\${i}/12)\"
+                  if [ \"\$STATUS\" = \"healthy\" ]; then break; fi
+                done
+                docker compose -f docker-compose.galloplab.yml ps
                 echo \"[deploy] 完了: https://galloplab.com/\"
               "'
