@@ -169,20 +169,22 @@ export function buildOddsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
   if (explicit) {
-    return `${explicit}/races/${raceId}/odds/ws`;
+    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
+    return `${base}/api/races/${raceId}/odds/ws`;
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/races/${raceId}/odds/ws`;
+  return `${proto}://${host}/api/races/${raceId}/odds/ws`;
 }
 
 export function buildResultsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
   if (explicit) {
-    return `${explicit}/races/${raceId}/results/ws`;
+    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
+    return `${base}/api/races/${raceId}/results/ws`;
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/races/${raceId}/results/ws`;
+  return `${proto}://${host}/api/races/${raceId}/results/ws`;
 }
