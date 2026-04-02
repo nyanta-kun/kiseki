@@ -25,6 +25,7 @@ sekito.netkeiba テーブルの p_type / p_rank / p_comment を参照し、
 from __future__ import annotations
 
 import logging
+from datetime import date as _date
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,7 +145,7 @@ class PaddockIndexCalculator(IndexCalculator):
         Returns:
             {horse_number: (p_type, p_rank)} — データなし馬は未収録
         """
-        race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
+        race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
 
         jra_to_sekito = {v: k for k, v in SEKITO_COURSE_MAP.items()}
         sekito_code = jra_to_sekito.get(race.course)

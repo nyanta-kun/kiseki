@@ -24,6 +24,7 @@ sekito.anagusa テーブルから穴ぐさピック情報を取得し、
 from __future__ import annotations
 
 import logging
+from datetime import date as _date
 
 from sqlalchemy import select, text
 
@@ -190,7 +191,8 @@ class AnagusaIndexCalculator(IndexCalculator):
             {horse_number: rank} — ピックされた馬番→rank(A/B/C)
         """
         # sekito.anagusa は date型、keiba.races.date は YYYYMMDD文字列
-        race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
+        # asyncpg は DATE カラムに datetime.date オブジェクトが必要（文字列不可）
+        race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
 
         # sekito course_code → JRA 2桁コードの逆引き
         jra_to_sekito = {v: k for k, v in SEKITO_COURSE_MAP.items()}

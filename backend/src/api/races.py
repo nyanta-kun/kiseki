@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from datetime import date as _date
 from typing import Annotated
 
 from fastapi import (
@@ -145,7 +146,7 @@ async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
     sekito_code = _JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
         return {}
-    race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
+    race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
     result = await db.execute(
         _text(
             "SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"
@@ -158,7 +159,7 @@ async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
 
 async def _anagusa_picks_for_date(db: AsyncSession, date: str) -> set[tuple[str, int]]:
     """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
-    race_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    race_date = _date(int(date[:4]), int(date[4:6]), int(date[6:8]))
     result = await db.execute(
         _text("SELECT course_code, race_no FROM sekito.anagusa WHERE date = :d"),
         {"d": race_date},
