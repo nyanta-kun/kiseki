@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.indices.meet_bias import (
-    INNER_FRAMES,
     RELIABLE_SAMPLE,
     MeetBias,
     MeetBiasService,

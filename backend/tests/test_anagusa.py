@@ -12,7 +12,6 @@ import pytest
 
 from src.indices.anagusa import (
     DEFAULT_SCORE,
-    OVERALL_PLACE_RATE,
     RANK_BASE_SCORES,
     AnagusaIndexCalculator,
 )
