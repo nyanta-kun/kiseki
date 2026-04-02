@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { HorseIndex, OddsData, RaceResult, buildResultsWsUrl } from "@/lib/api";
 import { IndicesTable } from "@/components/IndicesTable";
 import { PaywallGate } from "@/components/PaywallGate";
@@ -29,8 +29,17 @@ function toResultsMap(results: RaceResult[]): Map<number, number | null> {
   );
 }
 
+// SSR=false、クライアント=true を返すhook（useEffect/setState不要）
+function useIsMounted() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+}
+
 export function RaceDetailClient({ raceId, indices, initialOdds, initialResults, isPremium = false, raceNumber = 1 }: Props) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsMounted();
   const [resultsMap, setResultsMap] = useState<Map<number, number | null> | undefined>(
     initialResults.length > 0 ? toResultsMap(initialResults) : undefined
   );
@@ -76,10 +85,6 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     mountedRef.current = true;

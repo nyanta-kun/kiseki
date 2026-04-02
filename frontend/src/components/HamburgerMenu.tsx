@@ -16,21 +16,18 @@ const NAV_ITEMS = [
 ];
 
 export function HamburgerMenu({ isAdmin = false }: Props) {
-  const [isOpen, setIsOpen] = useState(false);
+  // pathnameが変わると自動的に閉じる派生state（useEffect不要）
+  const [openedOnPath, setOpenedOnPath] = useState<string | null>(null);
   const pathname = usePathname();
+  const isOpen = openedOnPath === pathname;
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // ページ遷移時に閉じる
-  useEffect(() => {
-    setIsOpen(false);
-  }, [pathname]);
 
   // 外側クリックで閉じる
   useEffect(() => {
     if (!isOpen) return;
     const handleClick = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
+        setOpenedOnPath(null);
       }
     };
     document.addEventListener("mousedown", handleClick);
@@ -41,7 +38,7 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
     <div ref={containerRef} className="relative md:hidden">
       {/* ハンバーガーボタン */}
       <button
-        onClick={() => setIsOpen((v) => !v)}
+        onClick={() => setOpenedOnPath((v) => v === pathname ? null : pathname)}
         aria-expanded={isOpen}
         aria-haspopup="true"
         aria-label={isOpen ? "メニューを閉じる" : "メニューを開く"}
@@ -84,7 +81,7 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
               key={item.label}
               href={item.href}
               role="menuitem"
-              onClick={() => setIsOpen(false)}
+              onClick={() => setOpenedOnPath(null)}
               className="flex items-center gap-3 px-4 py-3.5 text-sm transition-colors hover:bg-white/10"
               style={{ color: isActive ? "#ffffff" : "rgba(255,255,255,0.65)" }}
             >
@@ -103,7 +100,7 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
             <Link
               href="/admin"
               role="menuitem"
-              onClick={() => setIsOpen(false)}
+              onClick={() => setOpenedOnPath(null)}
               className="flex items-center gap-3 px-4 py-3.5 text-sm text-blue-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               <span aria-hidden="true">⚙️</span>
