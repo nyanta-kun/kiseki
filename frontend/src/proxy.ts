@@ -35,6 +35,10 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     if (token) {
       return NextResponse.redirect(new URL("/races", req.nextUrl.origin));
     }
+    // 未認証の / は /login へ直接リダイレクト（callbackUrl なし）
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/login", req.nextUrl.origin));
+    }
     return NextResponse.next();
   }
 
