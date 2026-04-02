@@ -3,8 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.access import access_admin_router
-from .api.access import access_router
+from .api.access import access_admin_router, access_router
 from .api.agent_router import router as agent_router
 from .api.horses import router as horses_router
 from .api.import_router import changes_router

@@ -20,8 +20,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.models import InvitationCode, Race, User, UserAccessGrant
 from .users import ApiKeyDep, DbDep, get_user_premium_status
+from ..db.models import InvitationCode, Race, User, UserAccessGrant
 
 logger = logging.getLogger(__name__)
 
