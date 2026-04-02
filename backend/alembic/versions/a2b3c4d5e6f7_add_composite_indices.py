@@ -1,7 +1,7 @@
 """add composite indices to calculated_indices and odds_history
 
 Revision ID: a2b3c4d5e6f7
-Revises: f6a7b8c9d0e1
+Revises: b0c1d2e3f4a5
 Create Date: 2026-04-02
 
 PF-003 / PF-004: クエリパフォーマンス改善のため複合インデックスを追加する。
@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a2b3c4d5e6f7"
-down_revision: str | None = "f6a7b8c9d0e1"
+down_revision: str | None = "b0c1d2e3f4a5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
