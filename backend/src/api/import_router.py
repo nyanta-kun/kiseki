@@ -99,7 +99,7 @@ async def import_races(
 
     Windows Agent の run_daily_fetch / run_setup から呼び出される。
     """
-    importer = RaceImporter(db)
+    importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     if records:
         first = records[0]
@@ -111,10 +111,10 @@ async def import_races(
     logger.info(f"import_races stats: {stats}")
 
     # 成績が確定したレースをWebSocketでブロードキャスト
-    for race_id in stats.get("result_race_ids", []):
+    for race_id in stats.get("result_race_ids", []):  # type: ignore[union-attr]
         payload = await _fetch_results_payload(race_id, db)
         if payload:
-            await results_manager.broadcast(race_id, payload)
+            await results_manager.broadcast(race_id, payload)  # type: ignore[arg-type]
 
     return {"ok": True, "stats": stats}
 
@@ -129,7 +129,7 @@ async def import_entries(
 
     /races と同じ処理。Windows Agent が分けて送る場合用。
     """
-    importer = RaceImporter(db)
+    importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     await db.commit()
@@ -144,7 +144,7 @@ async def import_odds(
     db: DbDep,
 ) -> dict:
     """O1-O8オッズレコードを取り込む。更新後WebSocketでブロードキャスト。"""
-    importer = OddsImporter(db)
+    importer = OddsImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     await db.commit()
@@ -190,7 +190,7 @@ async def import_weights(
 
     WEレコードはSEと同じ馬情報を持つため RaceImporter で処理。
     """
-    importer = RaceImporter(db)
+    importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     await db.commit()
@@ -209,7 +209,7 @@ async def import_bloodlines(
     HN (繁殖馬マスタ) と SK (産駒マスタ) を同一バッチで送信すること。
     HN が先に処理されて in-memory 辞書を構築し、SK の馬名解決に使用する。
     """
-    importer = PedigreeImporter(db)
+    importer = PedigreeImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
     await db.commit()
@@ -229,7 +229,7 @@ async def notify_change(
       scratch      → 該当レース全馬を再算出
       jockey_change → 該当馬の騎手指数 + 全馬の展開指数を再算出
     """
-    handler = ChangeHandler(db)
+    handler = ChangeHandler(db)  # type: ignore[arg-type]
     result = handler.handle(body.change_type, body.raw_data)
     await db.commit()
 

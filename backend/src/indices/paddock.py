@@ -124,7 +124,7 @@ class PaddockIndexCalculator(IndexCalculator):
         result: dict[int, float] = {}
         for entry in entries:
             p_type, p_rank = paddock_map.get(entry.horse_number, (None, None))
-            score = PADDOCK_SCORES.get((p_type, p_rank), NEUTRAL_SCORE) if p_type else NEUTRAL_SCORE
+            score = PADDOCK_SCORES.get((p_type, p_rank), NEUTRAL_SCORE) if p_type and p_rank else NEUTRAL_SCORE
             result[entry.horse_id] = round(score, 1)
 
         available = sum(1 for v in result.values() if v != NEUTRAL_SCORE)

@@ -97,9 +97,9 @@ def import_previous_race_extras(
         raise RuntimeError("NETKEIBA_USER_ID / NETKEIBA_PASSWORD が未設定です")
 
     # ── Step 1: 全対象レースの出走馬を一括取得 ──────────────────────────────
-    all_entries: list[tuple[int, int]] = session.execute(  # (horse_id, target_race_id)
+    all_entries: list[tuple[int, int]] = list(session.execute(  # type: ignore[arg-type]  # (horse_id, target_race_id)
         select(RaceEntry.horse_id, RaceEntry.race_id).where(RaceEntry.race_id.in_(target_race_ids))
-    ).all()
+    ).all())
 
     if not all_entries:
         logger.warning("対象レース %s に出走馬が見つかりません", target_race_ids)
@@ -143,7 +143,7 @@ def import_previous_race_extras(
             select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id).where(
                 NetkeibaRaceExtra.race_id.in_(all_prev_race_ids)
             )
-        ).all()
+        ).all()  # type: ignore[arg-type]
     )
 
     # 取得済みペアを除外し、スクレイピングが不要になった jravan_race_id も除去
@@ -253,7 +253,7 @@ def import_for_date(session: Session, date: str) -> int:
     """
     from ..db.models import Race, RaceEntry
 
-    race_ids: list[int] = (
+    race_ids: list[int] = list(
         session.execute(
             select(Race.id)
             .where(Race.date == date)
@@ -301,12 +301,12 @@ def import_race_remarks_direct(
     )
 
     # ── Step 1: 当日レース一覧を取得 ──────────────────────────────────────────
-    races: list[tuple[int, str]] = session.execute(
+    races: list[tuple[int, str]] = list(session.execute(  # type: ignore[arg-type]
         select(Race.id, Race.jravan_race_id)
         .where(Race.date == date)
         .where(Race.jravan_race_id.is_not(None))
         .order_by(Race.id)
-    ).all()
+    ).all())
 
     if not races:
         logger.warning("date=%s にレースが見つかりません", date)
@@ -320,7 +320,7 @@ def import_race_remarks_direct(
             select(NetkeibaRaceExtra.race_id, NetkeibaRaceExtra.horse_id).where(
                 NetkeibaRaceExtra.race_id.in_(race_ids)
             )
-        ).all()
+        ).all()  # type: ignore[arg-type]
     )
 
     # ── Step 3: 各レースの出走馬を一括取得 ───────────────────────────────────
@@ -353,6 +353,7 @@ def import_race_remarks_direct(
         if not user_id or not password:
             raise RuntimeError("NETKEIBA_USER_ID / NETKEIBA_PASSWORD が未設定です")
         client = create_session(user_id, password)
+    assert client is not None
 
     stored_count = 0
     # 1日分の書き込みをすべてここに溜め、最後に一括コミットする
@@ -461,7 +462,7 @@ def import_race_remarks_for_month(session: Session, year_month: str) -> int:
     _, last_day = calendar.monthrange(year, month)
     end = f"{year_month}{last_day:02d}"
 
-    dates: list[str] = (
+    dates: list[str] = list(
         session.execute(
             select(Race.date)
             .where(Race.date >= start)

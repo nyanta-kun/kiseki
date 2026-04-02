@@ -153,8 +153,8 @@ class MeetBiasService:
                 RaceResult.abnormality_code == 0,
             )
         )
-        result = await self.db.execute(stmt)
-        rows = result.all()
+        db_result = await self.db.execute(stmt)
+        rows = db_result.all()
 
         if not rows:
             return MeetBias()
@@ -170,7 +170,7 @@ class MeetBiasService:
         for row in rows:
             result: RaceResult = row.RaceResult
             frame = result.frame_number
-            if frame is None:
+            if frame is None or result.finish_position is None:
                 continue
             is_win = int(result.finish_position) == 1
             if frame in INNER_FRAMES:
@@ -196,7 +196,7 @@ class MeetBiasService:
             race = row.Race
             p4 = result.passing_4
             hc = race.head_count
-            if p4 is None or hc is None or hc <= 0:
+            if p4 is None or hc is None or hc <= 0 or result.finish_position is None:
                 continue
             rel = p4 / hc
             is_win = int(result.finish_position) == 1

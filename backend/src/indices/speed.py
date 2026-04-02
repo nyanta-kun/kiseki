@@ -163,7 +163,7 @@ class SpeedIndexCalculator(IndexCalculator):
             .limit(LOOKBACK_RACES)
         )
         result = await self.db.execute(stmt)
-        return result.all()
+        return list(result.all())
 
     async def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int

@@ -253,7 +253,7 @@ async def list_invitation_codes(
     result = await db.execute(
         select(InvitationCode).order_by(InvitationCode.created_at.desc())
     )
-    return result.scalars().all()
+    return list(result.scalars().all())
 
 
 @access_admin_router.post("/invitation-codes", response_model=InvitationCodeResponse)

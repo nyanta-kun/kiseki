@@ -272,8 +272,8 @@ class FrameBiasCalculator(IndexCalculator):
                 RaceResult.abnormality_code == 0,
             )
         )
-        result = await self.db.execute(stmt)
-        rows = result.all()
+        db_result = await self.db.execute(stmt)
+        rows = db_result.all()
 
         # 枠番ごとに集計
         frame_data: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -282,7 +282,7 @@ class FrameBiasCalculator(IndexCalculator):
             race: Race = row.Race
 
             frame = result.frame_number
-            if frame is None or not (FRAME_MIN <= frame <= FRAME_MAX):
+            if frame is None or not (FRAME_MIN <= frame <= FRAME_MAX) or result.finish_position is None:
                 continue
 
             head_count = race.head_count or 16  # 不明時は16頭とみなす

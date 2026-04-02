@@ -46,7 +46,7 @@ class Pedigree(Base):
     """血統情報"""
 
     __tablename__ = "pedigrees"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("horse_id", name="uq_pedigree_horse_id"),
         {"schema": SCHEMA},
     )
@@ -216,7 +216,7 @@ class RaceEntry(Base):
 
     __tablename__ = "race_entries"
 
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_id", "horse_number", name="uq_race_entry_horse_num"),
         {"schema": SCHEMA},
     )
@@ -255,7 +255,7 @@ class RaceResult(Base):
     """レース結果"""
 
     __tablename__ = "race_results"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_id", "horse_id", name="uq_race_result_horse"),
         {"schema": SCHEMA},
     )
@@ -438,7 +438,7 @@ class NetkeibaRaceExtra(Base):
     """netkeibaスクレイピングデータ（プレミアム会員取得分）"""
 
     __tablename__ = "netkeiba_race_extras"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_id", "horse_id", name="uq_netkeiba_race_extras_race_horse"),
         {"schema": SCHEMA},
     )
@@ -511,7 +511,7 @@ class InvitationCode(Base):
     """招待コード"""
 
     __tablename__ = "invitation_codes"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("code", name="uq_invitation_codes_code"),
         {"schema": SCHEMA},
     )

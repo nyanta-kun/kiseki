@@ -279,11 +279,11 @@ class RaceImporter:
             "prev_post_time",
         ]
         stmt = insert(Race).values(values)
-        stmt = stmt.on_conflict_do_update(
+        returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["jravan_race_id"],
             set_={col: stmt.excluded[col] for col in update_cols},
         ).returning(Race.id, Race.jravan_race_id)
-        for race_id, jravan_id in self.db.execute(stmt):
+        for race_id, jravan_id in self.db.execute(returning_stmt):
             self._race_cache[jravan_id] = race_id
 
     def _ensure_entities_bulk(self, se_list: list[dict[str, Any]]) -> None:
@@ -399,12 +399,12 @@ class RaceImporter:
             "jockey_apprentice_code",
         ]
         stmt = insert(RaceEntry).values(values)
-        stmt = stmt.on_conflict_do_update(
+        returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["race_id", "horse_number"],
             set_={col: stmt.excluded[col] for col in update_cols},
         ).returning(RaceEntry.id, RaceEntry.race_id, RaceEntry.horse_number)
         entry_map: dict[tuple[int, int], int] = {}
-        for entry_id, race_id, horse_num in self.db.execute(stmt):
+        for entry_id, race_id, horse_num in self.db.execute(returning_stmt):
             entry_map[(race_id, horse_num)] = entry_id
         return entry_map
 
@@ -499,7 +499,7 @@ class RaceImporter:
     # ------------------------------------------------------------------
     # 内部メソッド
     # ------------------------------------------------------------------
-    def _upsert_race(self, parsed: dict[str, Any]) -> Race:
+    def _upsert_race(self, parsed: dict[str, Any]) -> int:
         """Raceを upsert する（jravan_race_id でユニーク識別）。"""
         race_id_key = parsed["jravan_race_id"]
 

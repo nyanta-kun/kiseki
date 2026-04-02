@@ -94,7 +94,7 @@ async def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
             horse_number=rr.horse_number,
             win_odds=float(rr.win_odds) if rr.win_odds else None,
             win_popularity=rr.win_popularity,
-            composite_index=float(indices[race.id].composite_index) if race.id in indices else None,
+            composite_index=float(indices[race.id].composite_index) if race.id in indices and indices[race.id].composite_index is not None else None,  # type: ignore[arg-type]
             remarks=extras[race.id].remarks if race.id in extras else None,
         )
         for rr, race in rows

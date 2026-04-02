@@ -282,7 +282,7 @@ class JockeyIndexCalculator(IndexCalculator):
             .order_by(Race.date.desc())
         )
         result = await self.db.execute(stmt)
-        return result.all()
+        return list(result.all())
 
     async def _query_jockey_results_batch(
         self,

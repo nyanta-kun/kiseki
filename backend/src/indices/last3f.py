@@ -118,9 +118,9 @@ class Last3FIndexCalculator(IndexCalculator):
         # フィールド統計を一括取得（N+1回避）
         past_race_ids: set[int] = set()
         for rows in rows_map.values():
-            for result, _, _ in rows:
-                if result.last_3f is not None:
-                    past_race_ids.add(result.race_id)
+            for row_result, _, _ in rows:
+                if row_result.last_3f is not None:
+                    past_race_ids.add(row_result.race_id)
 
         field_stats = await self._get_field_stats_batch(past_race_ids)
 
@@ -158,7 +158,7 @@ class Last3FIndexCalculator(IndexCalculator):
             .limit(LOOKBACK_RACES)
         )
         result = await self.db.execute(stmt)
-        return result.all()
+        return list(result.all())
 
     async def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
