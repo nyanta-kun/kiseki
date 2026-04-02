@@ -22,7 +22,7 @@ export function BottomNav() {
   return (
     <nav
       aria-label="メインナビゲーション"
-      className="fixed bottom-0 left-0 right-0 z-20 flex"
+      className="fixed bottom-0 left-0 right-0 z-20 flex md:hidden"
       style={{
         background: "#0d1f35",
         paddingBottom: "env(safe-area-inset-bottom)",

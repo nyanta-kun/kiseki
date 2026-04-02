@@ -6,8 +6,6 @@ import { EVSummary } from "@/components/EVSummary";
 import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
-import { LogoutButton } from "@/components/LogoutButton";
-import { BottomNav } from "@/components/BottomNav";
 import { auth } from "@/auth";
 
 type Params = Promise<{ id: string }>;
@@ -51,13 +49,12 @@ export default async function RacePage({ params }: { params: Params }) {
   if (!indicesResp) {
     return (
       <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
-        <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
-        <main className="max-w-3xl mx-auto px-4 py-8 pb-20 text-center text-gray-400">
+        <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
+        <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
           <p className="text-3xl mb-2">📊</p>
           <p>この レースの指数データがありません</p>
           <p className="text-xs mt-1">算出が完了していない可能性があります</p>
         </main>
-        <BottomNav />
       </div>
     );
   }
@@ -67,9 +64,9 @@ export default async function RacePage({ params }: { params: Params }) {
 
   return (
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
-      <Header raceId={raceId} race={race} date={date} allRaces={allRaces} />
+      <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 pb-20 space-y-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* 期待値サマリー */}
         <EVSummary indices={indices} />
 
@@ -98,8 +95,6 @@ export default async function RacePage({ params }: { params: Params }) {
           </ul>
         </div>
       </main>
-
-      <BottomNav />
     </div>
   );
 }
@@ -109,7 +104,7 @@ function formatPostTime(postTime: string | null): string {
   return `${postTime.slice(0, 2)}:${postTime.slice(2, 4)}`;
 }
 
-function Header({
+function RaceSubHeader({
   raceId,
   race,
   date,
@@ -120,23 +115,14 @@ function Header({
   date: string;
   allRaces: Race[];
 }) {
-  // 発走時刻順でソートして前後レースを取得
-  const sortedRaces = [...allRaces].sort((a, b) => {
-    const pa = a.post_time ?? "9999";
-    const pb = b.post_time ?? "9999";
-    return pa.localeCompare(pb) || a.id - b.id;
-  });
-  const currentIdx = sortedRaces.findIndex((r) => r.id === raceId);
-  const prevRace = currentIdx > 0 ? sortedRaces[currentIdx - 1] : null;
-  const nextRace = currentIdx < sortedRaces.length - 1 ? sortedRaces[currentIdx + 1] : null;
-
   return (
-    <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
-      <div className="max-w-3xl mx-auto px-4 py-3">
-        <div className="flex items-center gap-3">
+    <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
+      {/* レース情報 */}
+      <div className="max-w-3xl mx-auto px-4 py-2.5">
+        <div className="flex items-center gap-2">
           <Link
             href={`/races?date=${date}`}
-            className="text-blue-200 hover:text-white text-lg leading-none"
+            className="text-blue-200 hover:text-white text-lg leading-none flex-shrink-0"
             aria-label="レース一覧に戻る"
           >
             ←
@@ -170,45 +156,13 @@ function Header({
               </p>
             )}
           </div>
-          <LogoutButton />
         </div>
       </div>
 
-      {/* 前後レースナビゲーション */}
-      {(prevRace || nextRace) && (
-        <div className="max-w-3xl mx-auto px-4 pb-1.5 flex items-center justify-between">
-          {prevRace ? (
-            <Link
-              href={`/races/${prevRace.id}`}
-              className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
-              aria-label={`前のレース: ${prevRace.course_name} ${prevRace.race_number}R`}
-            >
-              <span className="text-sm leading-none" aria-hidden="true">‹</span>
-              <span>
-                {prevRace.course_name}{prevRace.race_number}R
-                {prevRace.post_time && ` ${formatPostTime(prevRace.post_time)}`}
-              </span>
-            </Link>
-          ) : <span />}
-          {nextRace ? (
-            <Link
-              href={`/races/${nextRace.id}`}
-              className="flex items-center gap-1 text-blue-200 hover:text-white text-[11px] transition-colors"
-              aria-label={`次のレース: ${nextRace.course_name} ${nextRace.race_number}R`}
-            >
-              <span>
-                {nextRace.course_name}{nextRace.race_number}R
-                {nextRace.post_time && ` ${formatPostTime(nextRace.post_time)}`}
-              </span>
-              <span className="text-sm leading-none" aria-hidden="true">›</span>
-            </Link>
-          ) : <span />}
-        </div>
-      )}
-
+      {/* 前後ナビ + 競馬場タブ + レース番号 */}
       {allRaces.length > 0 && (
         <RaceNav currentRaceId={raceId} races={allRaces} />
       )}
-    </header>
+    </div>
   );
 }

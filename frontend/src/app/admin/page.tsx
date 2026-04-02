@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { updateUser, createInvitationCode, toggleInvitationCode } from "./actions";
@@ -75,15 +74,6 @@ export default async function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#f0f5fb]">
-      {/* ヘッダー */}
-      <header className="bg-[#0d1f35] text-white px-6 py-4 flex items-center gap-4">
-        <Link href="/races" className="text-white/60 hover:text-white text-sm transition-colors">
-          ← レース一覧
-        </Link>
-        <h1 className="text-lg font-bold">管理画面</h1>
-        <span className="ml-auto text-xs text-white/50">{session.user?.email}</span>
-      </header>
-
       <main className="p-6 max-w-6xl mx-auto space-y-8">
 
         {/* ===== ユーザー管理 ===== */}

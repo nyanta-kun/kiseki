@@ -30,6 +30,7 @@ function toResultsMap(results: RaceResult[]): Map<number, number | null> {
 }
 
 export function RaceDetailClient({ raceId, indices, initialOdds, initialResults, isPremium = false, raceNumber = 1 }: Props) {
+  const [mounted, setMounted] = useState(false);
   const [resultsMap, setResultsMap] = useState<Map<number, number | null> | undefined>(
     initialResults.length > 0 ? toResultsMap(initialResults) : undefined
   );
@@ -77,13 +78,26 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
   }, [connect]);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     mountedRef.current = true;
     connect();
     return () => {
       mountedRef.current = false;
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      wsRef.current?.close();
+      const ws = wsRef.current;
       wsRef.current = null;
+      if (ws) {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => ws.close();
+          ws.onclose = null;
+          ws.onerror = null;
+        } else {
+          ws.close();
+        }
+      }
     };
   }, [connect]);
 
@@ -99,7 +113,7 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
             <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--green-deep)" }} />
             出馬表 指数一覧
             <span className="text-xs text-gray-400 font-normal ml-1">{indices.length}頭</span>
-            {buildResultsWsUrl(raceId) && !wsConnected && (
+            {mounted && buildResultsWsUrl(raceId) && !wsConnected && (
               <span
                 className="ml-auto text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
                 role="status"

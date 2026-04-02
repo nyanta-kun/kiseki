@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Image from "next/image";
+import { auth } from "@/auth";
+import { AppNav } from "@/components/AppNav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,14 +16,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://galloplab.com"
+  ),
   title: "GallopLab - 競馬AI指数・期待値分析",
   description:
     "JRA競馬のAI指数・期待値を提供する競馬予測サービス。スピード指数・コース適性・騎手指数など14種の指数で合理的な馬券購入をサポート。",
   manifest: "/manifest.json",
   robots: { index: false, follow: false },
   icons: {
-    // /app/favicon.ico が browser tab favicon を自動処理（Next.js 16 ファイル規約）
-    // PNG サイズは PWA マニフェスト・OGP 用途向け
     icon: [
       { url: "/images/favicon/favicon-32x32.png", sizes: "32x32", type: "image/png" },
       { url: "/images/favicon/favicon-192x192.png", sizes: "192x192", type: "image/png" },
@@ -49,11 +53,15 @@ export const viewport: Viewport = {
   themeColor: "#1a5c38",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await auth();
+  const isLoggedIn = !!session?.user;
+  const isAdmin = session?.user?.role === "admin";
+
   return (
     <html
       lang="ja"
@@ -67,6 +75,25 @@ export default function RootLayout({
         >
           メインコンテンツへスキップ
         </a>
+
+        {/* 共有ヘッダー（ログイン済みの場合のみ表示） */}
+        {isLoggedIn && (
+          <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
+            <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+              <Image
+                src="/images/logo.png"
+                alt="GallopLab"
+                width={160}
+                height={98}
+                className="select-none opacity-90 flex-shrink-0 h-8 w-auto"
+                priority
+              />
+              <div className="flex-1 min-w-0" />
+              <AppNav isAdmin={isAdmin} />
+            </div>
+          </header>
+        )}
+
         {children}
       </body>
     </html>

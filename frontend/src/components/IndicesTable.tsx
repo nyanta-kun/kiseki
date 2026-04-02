@@ -281,8 +281,17 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
     return () => {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      wsRef.current?.close();
+      const current = wsRef.current;
       wsRef.current = null;
+      if (current) {
+        if (current.readyState === WebSocket.CONNECTING) {
+          current.onopen = () => current.close();
+          current.onclose = null;
+          current.onerror = null;
+        } else {
+          current.close();
+        }
+      }
     };
   }, [raceId]);
 

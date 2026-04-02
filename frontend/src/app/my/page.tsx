@@ -1,9 +1,7 @@
 import { redirect } from "next/navigation";
 import Image from "next/image";
-import Link from "next/link";
 import { auth } from "@/auth";
 import { LogoutButton } from "@/components/LogoutButton";
-import { BottomNav } from "@/components/BottomNav";
 import { RedeemCodeForm } from "./RedeemCodeForm";
 
 export const metadata = {
@@ -63,30 +61,7 @@ export default async function MyPage() {
 
   return (
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
-      {/* ヘッダー */}
-      <header style={{ background: "var(--primary)" }} className="sticky top-0 z-10 shadow-md">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <Image
-            src="/images/logo.png"
-            alt="GallopLab"
-            width={160}
-            height={98}
-            className="select-none opacity-90 flex-shrink-0 h-8 w-auto"
-            priority
-          />
-          <div className="flex-1 min-w-0" />
-          <Link
-            href="/races"
-            className="text-blue-200 hover:text-white text-xs px-2.5 py-1 rounded border border-blue-400/40 hover:border-white/40 hover:bg-white/10 transition-colors"
-          >
-            ← レース一覧
-          </Link>
-          <LogoutButton />
-        </div>
-      </header>
-
-      {/* コンテンツ */}
-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-6 pb-20 space-y-4">
+      <main id="main-content" className="max-w-3xl mx-auto px-4 py-6 space-y-4">
         <h1 className="text-lg font-bold text-gray-800">マイページ</h1>
 
         {/* 1. 会員ステータスカード */}
@@ -172,8 +147,6 @@ export default async function MyPage() {
           <LogoutButton />
         </section>
       </main>
-
-      <BottomNav />
     </div>
   );
 }
