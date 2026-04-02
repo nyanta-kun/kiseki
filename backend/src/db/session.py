@@ -9,7 +9,10 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    connect_args={"timeout": 10},
+    connect_args={
+        "timeout": 10,
+        "server_settings": {"search_path": settings.db_schema},
+    },
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

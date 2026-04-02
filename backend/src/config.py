@@ -20,11 +20,11 @@ class Settings(BaseSettings):
 
         本番環境では ssl=require を付与してDB接続を暗号化する。
         """
+        # asyncpg では server_settings をURLに書けない（connect_argsで渡す）
         base_url = (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
             f"?prepared_statement_cache_size=0"
-            f"&server_settings[search_path]={self.db_schema}"
         )
         if self.api_env == "production":
             base_url += "&ssl=require"
