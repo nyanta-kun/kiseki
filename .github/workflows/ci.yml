@@ -92,14 +92,23 @@ jobs:
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          printf '%s' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Validate SSH key
+        run: |
+          echo "--- key head/tail ---"
+          head -1 ~/.ssh/deploy_key
+          tail -1 ~/.ssh/deploy_key
+          echo "--- public key from private ---"
+          ssh-keygen -y -f ~/.ssh/deploy_key
 
       - name: Deploy
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=accept-new \
+              -v \
               "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
               'bash -lc "
                 set -euo pipefail
