@@ -7,7 +7,7 @@ X-API-Key ヘッダーで認証（change_notify_api_key と共用）。
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -96,7 +96,7 @@ def upsert_user(
     - 以降: last_login_at・name・image_url を更新。role は変更しない。
     """
     user = db.query(User).filter(User.google_sub == body.google_sub).first()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if user is None:
         role = "admin" if body.email in settings.admin_email_list else "member"
