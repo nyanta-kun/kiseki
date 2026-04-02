@@ -1,10 +1,11 @@
 """kiseki データベースモデル定義"""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -494,4 +495,57 @@ class User(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), comment="最終ログイン日時"
+    )
+
+
+class InvitationCode(Base):
+    """招待コード"""
+
+    __tablename__ = "invitation_codes"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_invitation_codes_code"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, comment="招待コード文字列")
+    grant_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="付与種別 (unlimited/weeks/date)"
+    )
+    weeks_count: Mapped[int | None] = mapped_column(Integer, comment="grant_type=weeks のとき")
+    target_date: Mapped[date | None] = mapped_column(Date(), comment="grant_type=date のとき")
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserAccessGrant(Base):
+    """ユーザーアクセス付与"""
+
+    __tablename__ = "user_access_grants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id"), nullable=False, index=True
+    )
+    grant_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="unlimited/weeks/date"
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="NULL=無期限"
+    )
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="admin", comment="code/admin"
+    )
+    source_code_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.invitation_codes.id")
+    )
+    note: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

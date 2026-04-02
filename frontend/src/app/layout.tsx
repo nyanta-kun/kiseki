@@ -19,18 +19,13 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   robots: { index: false, follow: false },
   icons: {
+    // /app/favicon.ico が browser tab favicon を自動処理（Next.js 16 ファイル規約）
+    // PNG サイズは PWA マニフェスト・OGP 用途向け
     icon: [
-      { url: "/favicon.ico" },
-      { url: "/images/favicon/favicon-16x16.png", sizes: "16x16", type: "image/png" },
       { url: "/images/favicon/favicon-32x32.png", sizes: "32x32", type: "image/png" },
-      { url: "/images/favicon/favicon-48x48.png", sizes: "48x48", type: "image/png" },
-      { url: "/images/favicon/favicon-64x64.png", sizes: "64x64", type: "image/png" },
-      { url: "/images/favicon/favicon-128x128.png", sizes: "128x128", type: "image/png" },
       { url: "/images/favicon/favicon-192x192.png", sizes: "192x192", type: "image/png" },
-      { url: "/images/favicon/favicon-256x256.png", sizes: "256x256", type: "image/png" },
       { url: "/images/favicon/favicon-512x512.png", sizes: "512x512", type: "image/png" },
     ],
-    shortcut: "/images/favicon/favicon.ico",
     apple: { url: "/images/favicon/favicon-180x180.png", sizes: "180x180", type: "image/png" },
   },
   openGraph: {

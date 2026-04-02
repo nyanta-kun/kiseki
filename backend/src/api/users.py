@@ -12,10 +12,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import User
+from ..db.models import User, UserAccessGrant
 from ..db.session import get_db
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,32 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 
 # ---------------------------------------------------------------------------
+# プレミアム判定ヘルパー
+# ---------------------------------------------------------------------------
+def get_user_premium_status(user_id: int, db: Session) -> tuple[bool, datetime | None]:
+    """(is_premium, access_expires_at) を返す。access_expires_at=None は無期限。"""
+    now = datetime.now(UTC)
+    grants = (
+        db.query(UserAccessGrant)
+        .filter(
+            UserAccessGrant.user_id == user_id,
+            UserAccessGrant.is_active.is_(True),
+            or_(
+                UserAccessGrant.expires_at.is_(None),
+                UserAccessGrant.expires_at > now,
+            ),
+        )
+        .all()
+    )
+    if not grants:
+        return False, None
+    if any(g.expires_at is None for g in grants):
+        return True, None
+    access_expires_at = max(g.expires_at for g in grants if g.expires_at is not None)
+    return True, access_expires_at
+
+
+# ---------------------------------------------------------------------------
 # スキーマ
 # ---------------------------------------------------------------------------
 class UpsertUserRequest(BaseModel):
@@ -68,10 +95,12 @@ class UserResponse(BaseModel):
     image_url: str | None
     role: str
     is_active: bool
+    is_premium: bool
+    access_expires_at: datetime | None
     created_at: datetime
     last_login_at: datetime | None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": False}
 
 
 class UpdateUserRequest(BaseModel):
@@ -84,12 +113,29 @@ class UpdateUserRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # エンドポイント
 # ---------------------------------------------------------------------------
+def _make_user_response(user: User, db: Session) -> UserResponse:
+    """User ORM オブジェクトを UserResponse に変換する。"""
+    is_premium, access_expires_at = get_user_premium_status(user.id, db)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        image_url=user.image_url,
+        role=user.role,
+        is_active=user.is_active,
+        is_premium=is_premium,
+        access_expires_at=access_expires_at,
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
+    )
+
+
 @router.post("/upsert", response_model=UserResponse)
 def upsert_user(
     body: UpsertUserRequest,
     _: ApiKeyDep,
     db: DbDep,
-) -> User:
+) -> UserResponse:
     """ログイン時にユーザーを upsert する。
 
     - 初回ログイン: 新規作成。admin_emails に含まれる場合 role=admin を付与。
@@ -118,16 +164,17 @@ def upsert_user(
 
     db.commit()
     db.refresh(user)
-    return user
+    return _make_user_response(user, db)
 
 
 @admin_router.get("/users", response_model=list[UserResponse])
 def list_users(
     _: ApiKeyDep,
     db: DbDep,
-) -> list[User]:
+) -> list[UserResponse]:
     """全ユーザー一覧を返す（管理者用）。"""
-    return db.query(User).order_by(User.created_at.desc()).all()
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [_make_user_response(u, db) for u in users]
 
 
 @admin_router.patch("/users/{user_id}", response_model=UserResponse)
@@ -136,7 +183,7 @@ def update_user(
     body: UpdateUserRequest,
     _: ApiKeyDep,
     db: DbDep,
-) -> User:
+) -> UserResponse:
     """ユーザーの role / is_active を更新する（管理者用）。"""
     user = db.get(User, user_id)
     if user is None:
@@ -155,4 +202,4 @@ def update_user(
     db.commit()
     db.refresh(user)
     logger.info("ユーザー更新: id=%d email=%s role=%s is_active=%s", user.id, user.email, user.role, user.is_active)
-    return user
+    return _make_user_response(user, db)

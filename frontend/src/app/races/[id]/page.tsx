@@ -28,7 +28,7 @@ export default async function RacePage({ params }: { params: Params }) {
   const raceId = parseInt(id);
 
   const session = await auth();
-  const isPremium = session?.user?.is_active ?? false;
+  const isPremium = session?.user?.is_premium ?? false;
 
   // レース情報を最初に取得（date が後続フェッチに必要なため）
   let race = null;

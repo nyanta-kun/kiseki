@@ -79,3 +79,37 @@ jobs:
           AUTH_SECRET: "ci-test-secret-32-chars-long-ok"
           AUTH_PASSWORD: "test"
           AUTH_URL: "http://localhost:3000/api/auth"
+
+  deploy:
+    name: Deploy to galloplab.com
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    # main ブランチへの push 時のみデプロイ（PR では実行しない）
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+              'bash -lc "
+                set -euo pipefail
+                cd ~/GitHub/kiseki
+                git pull origin main
+                echo \"[deploy] DBマイグレーション実行...\"
+                docker compose -f docker-compose.galloplab.yml build
+                docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
+                  -e PYTHONPATH=/app backend uv run alembic upgrade head
+                docker compose -f docker-compose.galloplab.yml up -d
+                sleep 8
+                docker ps | grep galloplab
+                echo \"[deploy] 完了: https://galloplab.com/\"
+              "'

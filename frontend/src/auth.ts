@@ -42,24 +42,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               id: number;
               role: string;
               is_active: boolean;
+              is_premium: boolean;
+              access_expires_at: string | null;
             };
             token.db_id = user.id;
             token.role = user.role;
             token.is_active = user.is_active;
+            token.is_premium = user.is_premium;
+            token.access_expires_at = user.access_expires_at;
           } else {
             // upsert 失敗時は安全側に倒して無効扱い
             token.is_active = false;
+            token.is_premium = false;
           }
         } catch {
           token.is_active = false;
+          token.is_premium = false;
         }
       }
       return token;
     },
 
     async session({ session, token }) {
+      session.user.db_id = token.db_id;
       session.user.role = token.role;
       session.user.is_active = token.is_active;
+      session.user.is_premium = token.is_premium;
+      session.user.access_expires_at = token.access_expires_at;
       return session;
     },
   },

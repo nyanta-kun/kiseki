@@ -6,6 +6,9 @@ declare module "next-auth" {
     user: {
       role?: string;
       is_active?: boolean;
+      is_premium?: boolean;
+      access_expires_at?: string | null;
+      db_id?: number;
     } & DefaultSession["user"];
   }
 }
@@ -14,6 +17,8 @@ declare module "next-auth/jwt" {
   interface JWT extends DefaultJWT {
     role?: string;
     is_active?: boolean;
+    is_premium?: boolean;
+    access_expires_at?: string | null;
     db_id?: number;
   }
 }
