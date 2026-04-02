@@ -6,7 +6,7 @@ DB接続不要のモックベーステスト。
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -70,22 +70,20 @@ def _build_calculator(
     race: MagicMock | None = None,
     entries: list[MagicMock] | None = None,
 ) -> JockeyIndexCalculator:
-    """モックDB付き JockeyIndexCalculator を返す。
-
-    Args:
-        race: 対象レースのモック（Noneの場合はデフォルトを使用）
-        entries: レースエントリのモックリスト
-
-    Returns:
-        テスト用 JockeyIndexCalculator
-    """
-    db = MagicMock()
+    """モックDB付き JockeyIndexCalculator を返す。"""
+    db = AsyncMock()
     if race is None:
         race = _make_race()
-    db.query.return_value.filter.return_value.first.return_value = race
+
+    mock_race_result = MagicMock()
+    mock_race_result.scalar_one_or_none.return_value = race
 
     if entries is not None:
-        db.query.return_value.filter.return_value.all.return_value = entries
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = entries
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
+    else:
+        db.execute.return_value = mock_race_result
 
     return JockeyIndexCalculator(db=db)
 
@@ -106,31 +104,33 @@ def _make_entry(horse_id: int = 1, jockey_id: int | None = 1) -> MagicMock:
 class TestNoJockey:
     """騎手未登録の馬は SPEED_INDEX_MEAN を返すことを確認。"""
 
-    def test_calculate_no_jockey_returns_mean(self) -> None:
+    async def test_calculate_no_jockey_returns_mean(self) -> None:
         """calculate: jockey_id=None の馬は SPEED_INDEX_MEAN を返す。"""
         race = _make_race()
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.side_effect = [race, None]
+        db = AsyncMock()
 
-        calc = JockeyIndexCalculator(db=db)
-
-        # RaceEntry.jockey_id = None を返す
         entry_mock = MagicMock()
         entry_mock.jockey_id = None
-        db.query.return_value.filter.return_value.first.side_effect = [race, entry_mock]
 
-        result = calc.calculate(race_id=1, horse_id=1)
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = race
+        mock_entry_result = MagicMock()
+        mock_entry_result.scalar_one_or_none.return_value = entry_mock
+        db.execute.side_effect = [mock_race_result, mock_entry_result]
+
+        calc = JockeyIndexCalculator(db=db)
+        result = await calc.calculate(race_id=1, horse_id=1)
         assert result == SPEED_INDEX_MEAN
 
-    def test_calculate_batch_no_jockey_horse_gets_mean(self) -> None:
+    async def test_calculate_batch_no_jockey_horse_gets_mean(self) -> None:
         """calculate_batch: jockey_id=None の馬は SPEED_INDEX_MEAN を返す。"""
         race = _make_race()
         entries = [_make_entry(horse_id=1, jockey_id=None)]
 
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[1] == SPEED_INDEX_MEAN
 
 
@@ -142,7 +142,7 @@ class TestNoJockey:
 class TestHighWinRate:
     """勝率の高い騎手は 50 より高い指数になることを確認。"""
 
-    def test_high_win_rate_jockey_above_mean(self) -> None:
+    async def test_high_win_rate_jockey_above_mean(self) -> None:
         """全勝の騎手と全敗の騎手を比較すると全勝の方が高い指数になる。"""
         # 全勝騎手（jockey_id=1）
         rows_winner = [
@@ -159,14 +159,14 @@ class TestHighWinRate:
             _make_entry(horse_id=2, jockey_id=2),
         ]
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(
+        calc._get_all_jockey_stats_batch = AsyncMock(
             return_value={
                 1: calc._compute_raw_score(rows_winner, "芝", 1600),
                 2: calc._compute_raw_score(rows_loser, "芝", 1600),
             }
         )
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[1] > SPEED_INDEX_MEAN
         assert result[1] > result[2]
 
@@ -179,7 +179,7 @@ class TestHighWinRate:
 class TestLowWinRate:
     """勝率の低い騎手は 50 より低い指数になることを確認。"""
 
-    def test_low_win_rate_jockey_below_mean(self) -> None:
+    async def test_low_win_rate_jockey_below_mean(self) -> None:
         """全敗の騎手は全勝の騎手より低い指数になる。"""
         rows_winner = [
             _make_row(jockey_id=1, finish_position=1, last_3f=33.0) for _ in range(MIN_SAMPLE + 5)
@@ -196,9 +196,9 @@ class TestLowWinRate:
         calc = _build_calculator(race=race, entries=entries)
         score_winner = calc._compute_raw_score(rows_winner, "芝", 1600)
         score_loser = calc._compute_raw_score(rows_loser, "芝", 1600)
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: score_winner, 2: score_loser})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={1: score_winner, 2: score_loser})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[2] < SPEED_INDEX_MEAN
         assert result[2] < result[1]
 
@@ -226,15 +226,15 @@ class TestMinSample:
         score = calc._compute_raw_score([], "芝", 1600)
         assert score is None
 
-    def test_calculate_batch_insufficient_sample_returns_mean(self) -> None:
+    async def test_calculate_batch_insufficient_sample_returns_mean(self) -> None:
         """calculate_batch: サンプル不足の騎手は SPEED_INDEX_MEAN を返す。"""
         race = _make_race()
         entries = [_make_entry(horse_id=1, jockey_id=1)]
         calc = _build_calculator(race=race, entries=entries)
         # None を返す（サンプル不足）
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: None})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={1: None})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[1] == SPEED_INDEX_MEAN
 
 
@@ -246,28 +246,28 @@ class TestMinSample:
 class TestCalculateBatch:
     """calculate_batch が全エントリ馬の horse_id をキーとして返すことを確認。"""
 
-    def test_returns_all_horse_ids(self) -> None:
+    async def test_returns_all_horse_ids(self) -> None:
         """エントリ全馬の horse_id がキーとして返る。"""
         race = _make_race()
         horse_ids = [101, 102, 103]
         entries = [_make_entry(horse_id=hid, jockey_id=hid) for hid in horse_ids]
 
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={hid: 30.0 for hid in horse_ids})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={hid: 30.0 for hid in horse_ids})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert set(result.keys()) == set(horse_ids)
 
-    def test_returns_float_values(self) -> None:
+    async def test_returns_float_values(self) -> None:
         """全馬の指数値が float 型であることを確認。"""
         race = _make_race()
         horse_ids = [1, 2]
         entries = [_make_entry(horse_id=hid, jockey_id=hid) for hid in horse_ids]
 
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: 25.0, 2: 35.0})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={1: 25.0, 2: 35.0})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         for val in result.values():
             assert isinstance(val, float)
 
@@ -280,22 +280,26 @@ class TestCalculateBatch:
 class TestRaceNotFound:
     """レースが存在しない場合は空 dict を返すことを確認。"""
 
-    def test_calculate_batch_race_not_found_returns_empty(self) -> None:
+    async def test_calculate_batch_race_not_found_returns_empty(self) -> None:
         """race_id が存在しない → 空 dict を返す。"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        db.execute.return_value = mock_result
         calc = JockeyIndexCalculator(db=db)
 
-        result = calc.calculate_batch(race_id=9999)
+        result = await calc.calculate_batch(race_id=9999)
         assert result == {}
 
-    def test_calculate_race_not_found_returns_mean(self) -> None:
+    async def test_calculate_race_not_found_returns_mean(self) -> None:
         """calculate: race_id が存在しない → SPEED_INDEX_MEAN を返す。"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        db.execute.return_value = mock_result
         calc = JockeyIndexCalculator(db=db)
 
-        result = calc.calculate(race_id=9999, horse_id=1)
+        result = await calc.calculate(race_id=9999, horse_id=1)
         assert result == SPEED_INDEX_MEAN
 
 
@@ -308,13 +312,7 @@ class TestLast3FScore:
     """上がり3Fが速い騎手の方が高い指数になることを確認。"""
 
     def test_fast_last3f_jockey_scores_higher(self) -> None:
-        """last_3f のある騎手は last_3f=None の騎手より raw_score が変わることを確認。
-
-        Note: _compute_raw_score はサンプル内部の標準偏差でZ-scoreを算出するため、
-        全データが同一値の場合 std=0 となり last3f_score は SPEED_INDEX_MEAN=50.0 に
-        フォールバックする。よって last_3f の違いは calculate_batch の正規化ステップで
-        考慮される。ここでは last_3f あり/なしの違いが raw_score に影響することを確認する。
-        """
+        """last_3f のある騎手は last_3f=None の騎手より raw_score が変わることを確認。"""
         # last_3f あり（バラつきがあれば std > 0 で計算される）
         rows_with_last3f = [
             _make_row(jockey_id=1, finish_position=1, last_3f=33.0 + i * 0.5)
@@ -353,7 +351,7 @@ class TestLast3FScore:
 class TestSameJockeyMultipleHorses:
     """同一騎手が複数馬に乗っている場合でも正常動作することを確認。"""
 
-    def test_same_jockey_on_multiple_horses(self) -> None:
+    async def test_same_jockey_on_multiple_horses(self) -> None:
         """同一 jockey_id を持つ複数馬が全馬同じ指数を返す。"""
         race = _make_race()
         # jockey_id=1 が horse_id=1,2 両方に乗る
@@ -362,15 +360,15 @@ class TestSameJockeyMultipleHorses:
             _make_entry(horse_id=2, jockey_id=1),
         ]
         calc = _build_calculator(race=race, entries=entries)
-        calc._get_all_jockey_stats_batch = MagicMock(return_value={1: 40.0})
+        calc._get_all_jockey_stats_batch = AsyncMock(return_value={1: 40.0})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert 1 in result
         assert 2 in result
         # 同一騎手なので同じ指数
         assert result[1] == result[2]
 
-    def test_same_jockey_cache_is_used(self) -> None:
+    async def test_same_jockey_cache_is_used(self) -> None:
         """同一騎手のスコアはキャッシュから返され、DBアクセスは1回のみ。"""
         race = _make_race()
         entries = [
@@ -381,11 +379,11 @@ class TestSameJockeyMultipleHorses:
         calc = _build_calculator(race=race, entries=entries)
         # キャッシュに注入
         calc._jockey_stats_cache[(5, "芝", 1600)] = 60.0
-        calc._get_all_jockey_stats_batch = MagicMock(
+        calc._get_all_jockey_stats_batch = AsyncMock(
             side_effect=lambda ids, *a, **kw: {jid: 60.0 for jid in ids}
         )
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert 1 in result
         assert 2 in result
 

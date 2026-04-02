@@ -1,8 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { HorseIndex, OddsData, RaceResult, buildResultsWsUrl } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndicesTable } from "@/components/IndicesTable";
 import { PaywallGate } from "@/components/PaywallGate";
 
@@ -43,68 +45,16 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
   const [resultsMap, setResultsMap] = useState<Map<number, number | null> | undefined>(
     initialResults.length > 0 ? toResultsMap(initialResults) : undefined
   );
-  const [wsConnected, setWsConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef = useRef(true);
-  const connectRef = useRef<() => void>(() => {});
 
-  const connect = useCallback(() => {
-    const url = buildResultsWsUrl(raceId);
-    if (!url || !mountedRef.current) return;
+  const wsUrl = mounted ? buildResultsWsUrl(raceId) : null;
 
-    try {
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.onopen = () => { if (mountedRef.current) setWsConnected(true); };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: RaceResult[] = JSON.parse(event.data);
-          if (Array.isArray(data) && data.length > 0) {
-            setResultsMap(toResultsMap(data));
-          }
-        } catch {
-          // 無視
-        }
-      };
-
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
-        setWsConnected(false);
-        reconnectRef.current = setTimeout(() => connectRef.current(), 5000);
-      };
-
-      ws.onerror = () => { ws.close(); };
-    } catch {
-      // WebSocket非対応環境は無視
+  const handleMessage = useCallback((data: unknown) => {
+    if (Array.isArray(data) && data.length > 0) {
+      setResultsMap(toResultsMap(data as RaceResult[]));
     }
-  }, [raceId]);
+  }, []);
 
-  useEffect(() => {
-    connectRef.current = connect;
-  }, [connect]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    connect();
-    return () => {
-      mountedRef.current = false;
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (ws) {
-        if (ws.readyState === WebSocket.CONNECTING) {
-          ws.onopen = () => ws.close();
-          ws.onclose = null;
-          ws.onerror = null;
-        } else {
-          ws.close();
-        }
-      }
-    };
-  }, [connect]);
+  const { isConnected: wsConnected } = useWebSocket(wsUrl, handleMessage);
 
   return (
     <PaywallGate isPremium={isPremium} raceNumber={raceNumber}>
@@ -118,13 +68,9 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
             <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--green-deep)" }} />
             出馬表 指数一覧
             <span className="text-xs text-gray-400 font-normal ml-1">{indices.length}頭</span>
-            {mounted && buildResultsWsUrl(raceId) && !wsConnected && (
-              <span
-                className="ml-auto text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
-                role="status"
-                aria-live="polite"
-              >
-                成績更新: 再接続中…
+            {mounted && wsUrl && (
+              <span className="ml-auto">
+                <WsStatusBadge connected={wsConnected} label="成績更新: 再接続中…" />
               </span>
             )}
           </h2>

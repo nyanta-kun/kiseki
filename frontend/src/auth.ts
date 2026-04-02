@@ -1,8 +1,14 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
-const BACKEND_URL =
-  process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+// BACKEND_URL は /api まで含む形式が必要。
+// NEXT_PUBLIC_API_URL はベース URL のみ（/api なし）の場合があるため正規化する。
+const _backendBase = (
+  process.env.BACKEND_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8000"
+).replace(/\/api\/?$/, "").replace(/\/$/, "");
+const BACKEND_URL = `${_backendBase}/api`;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // trustHost: nginx/Docker プロキシ経由のリクエストを許可するために必要
@@ -52,10 +58,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             token.access_expires_at = user.access_expires_at;
           } else {
             // upsert 失敗時は安全側に倒して無効扱い
+            token.db_id = undefined;
+            token.role = "user";
             token.is_active = false;
             token.is_premium = false;
           }
         } catch {
+          token.db_id = undefined;
+          token.role = "user";
           token.is_active = false;
           token.is_premium = false;
         }

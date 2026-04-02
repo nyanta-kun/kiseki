@@ -11,9 +11,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..db.models import OddsHistory
 from ..db.session import get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
 from .races import _fetch_results_payload
@@ -34,7 +36,7 @@ def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
 
     本番環境ではAPIキーが必須。開発環境では未設定時に認証省略。
     """
-    if not settings.change_notify_api_key:
+    if not settings.change_notify_api_key or not settings.change_notify_api_key.strip():
         if settings.api_env == "production":
             logger.error("CHANGE_NOTIFY_API_KEY is not set in production environment")
             raise HTTPException(
@@ -50,7 +52,7 @@ def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
 
 
 ApiKeyDep = Annotated[None, Depends(verify_api_key)]
-DbDep = Annotated[Session, Depends(get_db)]
+DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 # -------------------------------------------------------------------
@@ -105,12 +107,12 @@ async def import_races(
             f"recv: rec_id={first.get('rec_id')!r} data[:20]={first.get('data', '')[:20]!r} total={len(records)}"
         )
     stats = importer.import_records(records)
-    db.commit()
+    await db.commit()
     logger.info(f"import_races stats: {stats}")
 
     # 成績が確定したレースをWebSocketでブロードキャスト
     for race_id in stats.get("result_race_ids", []):
-        payload = _fetch_results_payload(race_id, db)
+        payload = await _fetch_results_payload(race_id, db)
         if payload:
             await results_manager.broadcast(race_id, payload)
 
@@ -130,7 +132,7 @@ async def import_entries(
     importer = RaceImporter(db)
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
-    db.commit()
+    await db.commit()
     logger.info(f"import_entries: {stats}")
     return {"ok": True, "stats": stats}
 
@@ -142,14 +144,10 @@ async def import_odds(
     db: DbDep,
 ) -> dict:
     """O1-O8オッズレコードを取り込む。更新後WebSocketでブロードキャスト。"""
-    from sqlalchemy import func
-
-    from ..db.models import OddsHistory
-
     importer = OddsImporter(db)
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
-    db.commit()
+    await db.commit()
     logger.info(f"import_odds: {stats}")
 
     # 更新されたレースのオッズをWebSocketクライアントへブロードキャスト
@@ -157,22 +155,23 @@ async def import_odds(
         win: dict[str, float] = {}
         place: dict[str, float] = {}
         for bet_type, target in (("win", win), ("place", place)):
-            latest_at = (
-                db.query(func.max(OddsHistory.fetched_at))
-                .filter(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
-                .scalar()
+            latest_at_result = await db.execute(
+                select(func.max(OddsHistory.fetched_at)).where(
+                    OddsHistory.race_id == race_id,
+                    OddsHistory.bet_type == bet_type,
+                )
             )
+            latest_at = latest_at_result.scalar()
             if latest_at is None:
                 continue
-            rows = (
-                db.query(OddsHistory)
-                .filter(
+            rows_result = await db.execute(
+                select(OddsHistory).where(
                     OddsHistory.race_id == race_id,
                     OddsHistory.bet_type == bet_type,
                     OddsHistory.fetched_at == latest_at,
                 )
-                .all()
             )
+            rows = rows_result.scalars().all()
             for row in rows:
                 if row.odds is not None:
                     target[row.combination] = float(row.odds)
@@ -194,7 +193,7 @@ async def import_weights(
     importer = RaceImporter(db)
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
-    db.commit()
+    await db.commit()
     return {"ok": True, "stats": stats}
 
 
@@ -213,7 +212,7 @@ async def import_bloodlines(
     importer = PedigreeImporter(db)
     records = [r.model_dump() for r in body.records]
     stats = importer.import_records(records)
-    db.commit()
+    await db.commit()
     logger.info(f"import_bloodlines: {stats}")
     return {"ok": True, "stats": stats}
 
@@ -232,7 +231,7 @@ async def notify_change(
     """
     handler = ChangeHandler(db)
     result = handler.handle(body.change_type, body.raw_data)
-    db.commit()
+    await db.commit()
 
     if result.get("recalc_race_id"):
         logger.warning(

@@ -17,7 +17,7 @@ export default function Error({
   return (
     <div className="min-h-screen flex flex-col items-center justify-center" style={{ background: "#f0f5fb" }}>
       <div className="text-center px-4">
-        <p className="text-5xl mb-4">⚠️</p>
+        <p className="text-5xl mb-4"><span aria-hidden="true">⚠️</span></p>
         <h1 className="text-xl font-bold text-gray-800 mb-2">エラーが発生しました</h1>
         <p className="text-gray-500 text-sm mb-6">
           予期しないエラーが発生しました。しばらく経ってから再度お試しください。

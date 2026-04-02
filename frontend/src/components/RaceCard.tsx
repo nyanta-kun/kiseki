@@ -25,7 +25,10 @@ export function RaceCard({ race }: Props) {
   const postTime = formatPostTime(race.post_time);
 
   return (
-    <Link href={`/races/${race.id}`}>
+    <Link
+      href={`/races/${race.id}`}
+      aria-label={`${race.course_name} ${race.race_number}R ${race.race_name ?? ''} 詳細へ`}
+    >
       <div className="flex items-center gap-3 px-4 py-3 bg-white border border-gray-100 rounded-lg hover:border-blue-300 hover:bg-blue-50/30 transition-colors cursor-pointer">
         {/* R番号 */}
         <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm"

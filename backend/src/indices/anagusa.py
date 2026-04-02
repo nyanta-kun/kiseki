@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from ..db.models import Race, RaceEntry
 from .base import IndexCalculator
@@ -117,7 +117,7 @@ class AnagusaIndexCalculator(IndexCalculator):
     ピックなし馬はニュートラル値 50.0 を返す。
     """
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の穴ぐさ指数を算出する。
 
         Args:
@@ -127,10 +127,10 @@ class AnagusaIndexCalculator(IndexCalculator):
         Returns:
             穴ぐさ指数（0〜100）
         """
-        batch = self.calculate_batch(race_id)
+        batch = await self.calculate_batch(race_id)
         return batch.get(horse_id, DEFAULT_SCORE)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の穴ぐさ指数を一括算出する。
 
         Args:
@@ -139,17 +139,19 @@ class AnagusaIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: score} — ピックなし馬は DEFAULT_SCORE(50.0)
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         # sekito.anagusa からピック取得
-        picks = self._fetch_picks(race)
+        picks = await self._fetch_picks(race)
 
         # バイアス係数を計算
         course_adj = self._course_adj(race.course)
@@ -178,7 +180,7 @@ class AnagusaIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _fetch_picks(self, race: Race) -> dict[int, str]:
+    async def _fetch_picks(self, race: Race) -> dict[int, str]:
         """sekito.anagusa からこのレースのピック情報を取得する。
 
         Args:
@@ -205,14 +207,15 @@ class AnagusaIndexCalculator(IndexCalculator):
               AND race_no = :race_no
             """
         )
-        rows = self.db.execute(
+        result = await self.db.execute(
             sql,
             {
                 "race_date": race_date,
                 "course_code": sekito_code,
                 "race_no": race.race_number,
             },
-        ).fetchall()
+        )
+        rows = result.fetchall()
 
         return {row.horse_no: row.rank for row in rows if row.rank in RANK_BASE_SCORES}
 

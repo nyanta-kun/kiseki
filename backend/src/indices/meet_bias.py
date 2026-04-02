@@ -28,7 +28,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceResult
 
@@ -82,12 +83,12 @@ class MeetBiasService:
     参照されるユーティリティクラス。セッション内でキャッシュを持つ。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         # キャッシュ: (course, year, kai) → MeetBias
         self._cache: dict[tuple[str, str, str], MeetBias] = {}
 
-    def get_bias(self, race: Race) -> MeetBias:
+    async def get_bias(self, race: Race) -> MeetBias:
         """対象レースの開催バイアスを返す。
 
         Args:
@@ -107,7 +108,7 @@ class MeetBiasService:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        bias = self._compute_bias(race.course, year, kai, race.date, race.surface or "")
+        bias = await self._compute_bias(race.course, year, kai, race.date, race.surface or "")
         self._cache[cache_key] = bias
         return bias
 
@@ -115,7 +116,7 @@ class MeetBiasService:
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _compute_bias(
+    async def _compute_bias(
         self,
         course: str,
         year: str,
@@ -139,10 +140,10 @@ class MeetBiasService:
         # jravan_race_id のパターン: year(4) + * + course(2) + kai(2) + *
         pattern = f"{year}____{course}{kai}%%"
 
-        rows = (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 Race.course == course,
                 Race.surface == surface,
                 Race.date < before_date,
@@ -151,8 +152,9 @@ class MeetBiasService:
                 RaceResult.frame_number.isnot(None),
                 RaceResult.abnormality_code == 0,
             )
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         if not rows:
             return MeetBias()

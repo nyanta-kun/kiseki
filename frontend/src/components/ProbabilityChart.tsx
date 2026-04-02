@@ -111,7 +111,7 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
           <rect x={1} y={ny - 8} width={NUM_WIDTH - 2} height={16} rx={3} fill={finishStyle.badge} />
           <text
             x={NUM_X - 1} y={ny} dy="0.35em"
-            textAnchor="end" fontSize={10}
+            textAnchor="end" fontSize={11}
             fill={finishStyle.text} fontWeight="bold"
           >
             {finishPos}
@@ -121,7 +121,7 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
         // 馬番: グレー数字
         <text
           x={NUM_X} y={ny} dy="0.35em"
-          textAnchor="end" fontSize={10}
+          textAnchor="end" fontSize={11}
           fill={hasResults && finishPos != null ? "#d1d5db" : "#9ca3af"}
         >
           {num}
@@ -131,7 +131,7 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
       {/* 馬名 */}
       <text
         x={NAME_X} y={ny} dy="0.35em"
-        textAnchor="start" fontSize={10}
+        textAnchor="start" fontSize={11}
         fill={nameColor}
         fontWeight={finishStyle ? "600" : "normal"}
       >
@@ -142,7 +142,7 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
       {entry?.winEV !== undefined && (
         <text
           x={WIN_EV_X} y={ny} dy="0.35em"
-          textAnchor="end" fontSize={9}
+          textAnchor="end" fontSize={11}
           fill={evColor(entry.winEV)}
           fontWeight={entry.winEV >= 1.5 ? "bold" : "normal"}
         >
@@ -154,7 +154,7 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
       {entry?.placeEV !== undefined && (
         <text
           x={PLACE_EV_X} y={ny} dy="0.35em"
-          textAnchor="end" fontSize={9}
+          textAnchor="end" fontSize={11}
           fill={evColor(entry.placeEV)}
           fontWeight={entry.placeEV >= 1.5 ? "bold" : "normal"}
         >
@@ -388,6 +388,41 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
           </BarChart>
         )}
       </div>
+
+      {/* スクリーンリーダー向けのアクセシブルなデータテーブル */}
+      <table className="sr-only" aria-label="勝率・複勝率データ">
+        <caption>勝率・複勝率チャートのデータ一覧</caption>
+        <thead>
+          <tr>
+            <th scope="col">馬番</th>
+            <th scope="col">馬名</th>
+            <th scope="col">単勝率(%)</th>
+            <th scope="col">複勝率(%)</th>
+            {chartData.some((d) => d.winEV !== undefined) && <th scope="col">単勝期待値</th>}
+            {chartData.some((d) => d.placeEV !== undefined) && <th scope="col">複勝期待値</th>}
+            {hasResults && <th scope="col">着順</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {chartData.map((entry) => (
+            <tr key={entry.horseNumber}>
+              <td>{entry.num}</td>
+              <td>{entry.horseName}</td>
+              <td>{entry.win.toFixed(1)}</td>
+              <td>{entry.place.toFixed(1)}</td>
+              {chartData.some((d) => d.winEV !== undefined) && (
+                <td>{entry.winEV !== undefined ? entry.winEV.toFixed(2) : "-"}</td>
+              )}
+              {chartData.some((d) => d.placeEV !== undefined) && (
+                <td>{entry.placeEV !== undefined ? entry.placeEV.toFixed(2) : "-"}</td>
+              )}
+              {hasResults && (
+                <td>{entry.finishPos != null ? `${entry.finishPos}着` : "-"}</td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 }

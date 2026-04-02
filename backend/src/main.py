@@ -40,7 +40,7 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """ヘルスチェックエンドポイント"""
-    return {"status": "ok", "env": settings.api_env}
+    return {"status": "ok"}
 
 
 # --- API Routers ---

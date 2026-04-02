@@ -69,8 +69,10 @@ export function RaceNav({ currentRaceId, races }: Props) {
             {courses.map((course) => (
               <button
                 key={course}
+                id={`tab-racenav-${course}`}
                 role="tab"
                 aria-selected={activeCourse === course}
+                aria-controls={`panel-racenav-${course}`}
                 onClick={() => setActiveCourse(course)}
                 className={cn(
                   "flex-shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors whitespace-nowrap",
@@ -101,9 +103,10 @@ export function RaceNav({ currentRaceId, races }: Props) {
 
         {/* レース番号ボタン */}
         <div
+          id={`panel-racenav-${activeCourse}`}
           className="overflow-x-auto scrollbar-none pb-2"
           role="tabpanel"
-          aria-label={`${activeCourse}のレース一覧`}
+          aria-labelledby={`tab-racenav-${activeCourse}`}
         >
           <div className="flex gap-1 px-4 w-fit mx-auto">
           {(courseGroups[activeCourse] ?? []).sort((a, b) => a.race_number - b.race_number).map((race) => {

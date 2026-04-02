@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions/auth";
@@ -21,6 +21,13 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
   const pathname = usePathname();
   const isOpen = openedOnPath === pathname;
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeMenu = useCallback(() => {
+    setOpenedOnPath(null);
+    // メニューを閉じたときにトリガーボタンへフォーカスを戻す
+    setTimeout(() => triggerRef.current?.focus(), 0);
+  }, []);
 
   // 外側クリックで閉じる
   useEffect(() => {
@@ -34,10 +41,23 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [isOpen]);
 
+  // Escapeキーでメニューを閉じる
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeMenu();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, closeMenu]);
+
   return (
     <div ref={containerRef} className="relative md:hidden">
       {/* ハンバーガーボタン */}
       <button
+        ref={triggerRef}
         onClick={() => setOpenedOnPath((v) => v === pathname ? null : pathname)}
         aria-expanded={isOpen}
         aria-haspopup="true"

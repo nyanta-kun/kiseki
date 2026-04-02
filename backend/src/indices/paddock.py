@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry
 from .base import IndexCalculator
@@ -76,7 +77,15 @@ class PaddockIndexCalculator(IndexCalculator):
     パドックデータが未取得のレース・馬はすべてニュートラル値 50.0 を返す。
     """
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    def __init__(self, db: AsyncSession) -> None:
+        """初期化。
+
+        Args:
+            db: SQLAlchemy 非同期セッション
+        """
+        super().__init__(db)
+
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬のパドック指数を算出する。
 
         Args:
@@ -86,9 +95,10 @@ class PaddockIndexCalculator(IndexCalculator):
         Returns:
             パドック指数（0〜100）
         """
-        return self.calculate_batch(race_id).get(horse_id, NEUTRAL_SCORE)
+        batch = await self.calculate_batch(race_id)
+        return batch.get(horse_id, NEUTRAL_SCORE)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬のパドック指数を一括算出する。
 
         Args:
@@ -97,17 +107,19 @@ class PaddockIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: score} — データなし馬は NEUTRAL_SCORE(50.0)
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         # sekito.netkeiba からパドックデータを取得
-        paddock_map = self._fetch_paddock(race)
+        paddock_map = await self._fetch_paddock(race)
 
         result: dict[int, float] = {}
         for entry in entries:
@@ -123,7 +135,7 @@ class PaddockIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _fetch_paddock(self, race: Race) -> dict[int, tuple[str | None, str | None]]:
+    async def _fetch_paddock(self, race: Race) -> dict[int, tuple[str | None, str | None]]:
         """sekito.netkeiba からこのレースのパドックデータを取得する。
 
         Args:
@@ -151,14 +163,15 @@ class PaddockIndexCalculator(IndexCalculator):
               AND p_rank != ''
             """
         )
-        rows = self.db.execute(
+        result = await self.db.execute(
             sql,
             {
                 "race_date": race_date,
                 "course_code": sekito_code,
                 "race_no": race.race_number,
             },
-        ).fetchall()
+        )
+        rows = result.fetchall()
 
         return {
             row.horse_no: (row.p_type, row.p_rank)

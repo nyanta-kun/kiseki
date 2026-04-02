@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Image from "next/image";
 import { auth } from "@/auth";
 import { AppNav } from "@/components/AppNav";
+import { Footer } from "@/components/Footer";
+import ServiceWorkerRegister from "./sw-register";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,6 +26,9 @@ export const metadata: Metadata = {
     "JRA競馬のAI指数・期待値を提供する競馬予測サービス。スピード指数・コース適性・騎手指数など14種の指数で合理的な馬券購入をサポート。",
   manifest: "/manifest.json",
   robots: { index: false, follow: false },
+  alternates: {
+    canonical: "https://galloplab.com",
+  },
   icons: {
     icon: [
       { url: "/images/favicon/favicon-32x32.png", sizes: "32x32", type: "image/png" },
@@ -38,7 +43,16 @@ export const metadata: Metadata = {
     siteName: "GallopLab",
     title: "GallopLab - 競馬AI指数・期待値分析",
     description: "JRA競馬のAI指数・期待値を提供する競馬予測サービス。スピード指数・コース適性・騎手指数など14種の指数で合理的な馬券購入をサポート。",
-    images: [{ url: "/images/logo.png", width: 512, height: 512 }],
+    images: [
+      { url: "/images/og-image.png", width: 1200, height: 630, alt: "GallopLab - 競馬AI指数・期待値分析" },
+      { url: "/images/logo.png", width: 512, height: 512 },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "GallopLab",
+    description: "JRA-VAN公式データを活用した競馬AI指数・期待値分析サービス",
+    images: ["/images/og-image.png"],
   },
   appleWebApp: {
     capable: true,
@@ -94,7 +108,11 @@ export default async function RootLayout({
           </header>
         )}
 
-        {children}
+        <div className="flex-1 flex flex-col">
+          {children}
+        </div>
+        <Footer />
+        <ServiceWorkerRegister />
       </body>
     </html>
   );

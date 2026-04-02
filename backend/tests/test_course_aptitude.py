@@ -6,7 +6,7 @@ DB接続不要のモックベーステスト。
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.indices.course_aptitude import MIN_SAMPLE, CourseAptitudeCalculator
 from src.utils.constants import SPEED_INDEX_MEAN
@@ -94,13 +94,15 @@ def _make_calculator(
     _get_past_results_for_horse / _get_past_results_batch をモックし、
     DBアクセスなしで動作する。
     """
-    db = MagicMock()
+    db = AsyncMock()
 
     if target_race is None:
         target_race = _make_race()
 
-    # db.query(Race).filter().first() → target_race を返す
-    db.query.return_value.filter.return_value.first.return_value = target_race
+    # db.execute() → Race query
+    mock_race_result = MagicMock()
+    mock_race_result.scalar_one_or_none.return_value = target_race
+    db.execute.return_value = mock_race_result
 
     calc = CourseAptitudeCalculator(db=db)
 
@@ -108,7 +110,6 @@ def _make_calculator(
     calc._std_time_cache[("05", 1600, "芝")] = (93.0, 2.0)
 
     # コース特徴キャッシュを注入（DB不要）
-    # コース05（東京）を登録、09（阪神）は登録しないことで異なるコースを「特徴不明」扱いにする
     from types import SimpleNamespace
 
     calc._course_features = {
@@ -122,7 +123,7 @@ def _make_calculator(
     }
 
     if rows is not None:
-        calc._get_past_results_for_horse = MagicMock(return_value=rows)
+        calc._get_past_results_for_horse = AsyncMock(return_value=rows)
 
     return calc
 
@@ -233,10 +234,7 @@ class TestComputeAptitudeIndex:
             for _ in range(MIN_SAMPLE + 2)
         ]
         target_race = _make_race(course="05", distance=1600, surface="芝")
-        # 距離近似分なのでサンプルは含まれるはず（MIN_SAMPLE 以上）
         result = calc._compute_aptitude_index(rows, target_race)
-        # データが反映されているので SPEED_INDEX_MEAN ではない可能性が高い
-        # 少なくとも例外なく完走することを確認
         assert isinstance(result, float)
         assert 0.0 <= result <= 100.0
 
@@ -255,9 +253,8 @@ class TestCalculateInterface:
         rows: list[MagicMock] | None = None,
     ) -> tuple[CourseAptitudeCalculator, MagicMock]:
         """モックDB付き Calculator とターゲットレースを返す。"""
-        db = MagicMock()
+        db = AsyncMock()
         target_race = _make_race(course="05", distance=1600, surface="芝")
-        db.query.return_value.filter.return_value.first.return_value = target_race
 
         if rows is None:
             rows = []
@@ -265,26 +262,30 @@ class TestCalculateInterface:
         # エントリ（RaceEntry）のモック
         entry = MagicMock()
         entry.horse_id = horse_id
-        db.query.return_value.filter.return_value.all.return_value = [entry]
+
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = [entry]
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
 
         calc = CourseAptitudeCalculator(db=db)
         calc._std_time_cache[("05", 1600, "芝")] = (93.0, 2.0)
-        calc._get_past_results_for_horse = MagicMock(return_value=rows)
-        calc._get_past_results_batch = MagicMock(return_value={horse_id: rows})
+        calc._get_past_results_for_horse = AsyncMock(return_value=rows)
+        calc._get_past_results_batch = AsyncMock(return_value={horse_id: rows})
 
         return calc, target_race
 
-    def test_calculate_no_data_returns_mean(self) -> None:
+    async def test_calculate_no_data_returns_mean(self) -> None:
         """calculate: 過去データなし → SPEED_INDEX_MEAN。"""
         calc, _ = self._build_calc(horse_id=1, rows=[])
-        result = calc.calculate(race_id=1, horse_id=1)
+        result = await calc.calculate(race_id=1, horse_id=1)
         assert result == SPEED_INDEX_MEAN
 
-    def test_calculate_batch_returns_all_horses(self) -> None:
+    async def test_calculate_batch_returns_all_horses(self) -> None:
         """calculate_batch: エントリ全馬のhorse_idがキーとして返る。"""
-        db = MagicMock()
+        db = AsyncMock()
         target_race = _make_race()
-        db.query.return_value.filter.return_value.first.return_value = target_race
 
         horse_ids = [1, 2, 3]
         entries = []
@@ -292,30 +293,40 @@ class TestCalculateInterface:
             e = MagicMock()
             e.horse_id = hid
             entries.append(e)
-        db.query.return_value.filter.return_value.all.return_value = entries
+
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = entries
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
 
         calc = CourseAptitudeCalculator(db=db)
         calc._std_time_cache[("05", 1600, "芝")] = (93.0, 2.0)
-        calc._get_past_results_batch = MagicMock(return_value={hid: [] for hid in horse_ids})
+        calc._get_past_results_batch = AsyncMock(return_value={hid: [] for hid in horse_ids})
 
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert set(result.keys()) == set(horse_ids)
 
-    def test_calculate_batch_no_entry_returns_empty(self) -> None:
+    async def test_calculate_batch_no_entry_returns_empty(self) -> None:
         """calculate_batch: エントリなし → 空dict。"""
-        db = MagicMock()
+        db = AsyncMock()
         target_race = _make_race()
-        db.query.return_value.filter.return_value.first.return_value = target_race
-        db.query.return_value.filter.return_value.all.return_value = []
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = []
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
 
         calc = CourseAptitudeCalculator(db=db)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result == {}
 
-    def test_calculate_race_not_found_returns_mean(self) -> None:
+    async def test_calculate_race_not_found_returns_mean(self) -> None:
         """calculate: レースが存在しない → SPEED_INDEX_MEAN。"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        db.execute.return_value = mock_result
         calc = CourseAptitudeCalculator(db=db)
-        result = calc.calculate(race_id=999, horse_id=1)
+        result = await calc.calculate(race_id=999, horse_id=1)
         assert result == SPEED_INDEX_MEAN

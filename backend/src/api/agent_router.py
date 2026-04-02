@@ -58,7 +58,7 @@ _agent_status: dict[str, Any] = {
 
 def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
     """API Key 認証。本番環境ではAPIキーが必須。"""
-    if not settings.change_notify_api_key:
+    if not settings.change_notify_api_key or not settings.change_notify_api_key.strip():
         if settings.api_env == "production":
             logger.error("CHANGE_NOTIFY_API_KEY is not set in production environment")
             raise HTTPException(

@@ -25,7 +25,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
@@ -74,11 +75,11 @@ class FrameBiasCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
-            db: SQLAlchemy セッション
+            db: SQLAlchemy 非同期セッション
         """
         super().__init__(db)
         # 枠番統計のキャッシュ（同セッション内で再利用）
@@ -90,7 +91,7 @@ class FrameBiasCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の枠順バイアス指数を算出する。
 
         Args:
@@ -100,28 +101,28 @@ class FrameBiasCalculator(IndexCalculator):
         Returns:
             枠順バイアス指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
-        entry = (
-            self.db.query(RaceEntry)
-            .filter(
+        entry_result = await self.db.execute(
+            select(RaceEntry).where(
                 RaceEntry.race_id == race_id,
                 RaceEntry.horse_id == horse_id,
             )
-            .first()
         )
+        entry = entry_result.scalar_one_or_none()
         if not entry or entry.frame_number is None:
             logger.warning(
                 f"Entry not found or no frame_number: race_id={race_id}, horse_id={horse_id}"
             )
             return SPEED_INDEX_MEAN
 
-        return self._compute_frame_bias(race, int(entry.frame_number))
+        return await self._compute_frame_bias(race, int(entry.frame_number))
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の枠順バイアス指数を一括算出する。
 
         枠番統計は1回だけ取得してキャッシュを活用する（N+1回避）。
@@ -132,12 +133,14 @@ class FrameBiasCalculator(IndexCalculator):
         Returns:
             {horse_id: frame_bias_index} のdict。エントリが存在しない場合は空dict。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
@@ -146,7 +149,7 @@ class FrameBiasCalculator(IndexCalculator):
             if entry.frame_number is None:
                 result[entry.horse_id] = SPEED_INDEX_MEAN
             else:
-                result[entry.horse_id] = self._compute_frame_bias(race, int(entry.frame_number))
+                result[entry.horse_id] = await self._compute_frame_bias(race, int(entry.frame_number))
 
         return result
 
@@ -154,7 +157,7 @@ class FrameBiasCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _compute_frame_bias(self, race: Race, frame_number: int) -> float:
+    async def _compute_frame_bias(self, race: Race, frame_number: int) -> float:
         """指定枠番の枠順バイアス指数を算出する。
 
         Args:
@@ -168,7 +171,7 @@ class FrameBiasCalculator(IndexCalculator):
         distance = race.distance or 0
         surface = race.surface or ""
 
-        stats = self._get_frame_stats(course, distance, surface)
+        stats = await self._get_frame_stats(course, distance, surface)
         if not stats:
             return SPEED_INDEX_MEAN
 
@@ -213,7 +216,7 @@ class FrameBiasCalculator(IndexCalculator):
 
         # 当開催バイアス補正
         # inner_outer > 0 = 内有利 → 内枠(1-4)を加算、外枠(5+)を減算
-        meet_bias = self._meet_bias.get_bias(race)
+        meet_bias = await self._meet_bias.get_bias(race)
         if frame_number <= 4:
             bias_adj = meet_bias.inner_outer * MEET_BIAS_MAX_ADJ
         else:
@@ -222,7 +225,7 @@ class FrameBiasCalculator(IndexCalculator):
         raw = long_term_score * LONG_TERM_WEIGHT + (long_term_score + bias_adj) * MEET_BIAS_WEIGHT
         return round(max(INDEX_MIN, min(INDEX_MAX, raw)), 1)
 
-    def _get_frame_stats(
+    async def _get_frame_stats(
         self, course: str, distance: int, surface: str
     ) -> dict[int, dict[str, float]]:
         """枠番別統計を取得する（キャッシュ付き）。
@@ -240,11 +243,11 @@ class FrameBiasCalculator(IndexCalculator):
         if cache_key in self._frame_stats_cache:
             return self._frame_stats_cache[cache_key]
 
-        stats = self._compute_frame_stats(course, distance, surface)
+        stats = await self._compute_frame_stats(course, distance, surface)
         self._frame_stats_cache[cache_key] = stats
         return stats
 
-    def _compute_frame_stats(
+    async def _compute_frame_stats(
         self, course: str, distance: int, surface: str
     ) -> dict[int, dict[str, float]]:
         """DBから枠番別統計を集計する。
@@ -257,10 +260,10 @@ class FrameBiasCalculator(IndexCalculator):
         Returns:
             {frame_number: {"avg_pos_score": float, "win_rate": float, "cnt": int}}
         """
-        rows = (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 Race.course == course,
                 Race.distance == distance,
                 Race.surface == surface,
@@ -268,8 +271,9 @@ class FrameBiasCalculator(IndexCalculator):
                 RaceResult.frame_number.isnot(None),
                 RaceResult.abnormality_code == 0,
             )
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         # 枠番ごとに集計
         frame_data: dict[int, list[dict[str, Any]]] = defaultdict(list)

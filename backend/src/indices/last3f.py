@@ -25,8 +25,8 @@ import statistics
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
@@ -54,7 +54,7 @@ class Last3FIndexCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
@@ -68,7 +68,7 @@ class Last3FIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の上がり3ハロン指数を算出する。
 
         Args:
@@ -78,18 +78,19 @@ class Last3FIndexCalculator(IndexCalculator):
         Returns:
             上がり3ハロン指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
-        past_rows = self._get_past_results(horse_id, race.date, race_id)
+        past_rows = await self._get_past_results(horse_id, race.date, race_id)
         race_ids = {r.race_id for r, _, _ in past_rows if r.last_3f is not None}
-        field_stats = {rid: self._get_field_stats(rid) for rid in race_ids}
+        field_stats = await self._get_field_stats_batch(race_ids)
         scores = self._compute_scores(past_rows, field_stats)
         return self._weighted_average(scores)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の上がり3ハロン指数を一括算出する。
 
         Args:
@@ -98,19 +99,21 @@ class Last3FIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: last3f_index} のdict。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
 
         # 全馬の過去結果を一括取得
-        rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
+        rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
         # フィールド統計を一括取得（N+1回避）
         past_race_ids: set[int] = set()
@@ -119,7 +122,7 @@ class Last3FIndexCalculator(IndexCalculator):
                 if result.last_3f is not None:
                     past_race_ids.add(result.race_id)
 
-        field_stats = self._get_field_stats_batch(past_race_ids)
+        field_stats = await self._get_field_stats_batch(past_race_ids)
 
         result: dict[int, float] = {}
         for entry in entries:
@@ -133,10 +136,10 @@ class Last3FIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _get_past_results(self, horse_id: int, before_date: str, exclude_race_id: int) -> list[Any]:
+    async def _get_past_results(self, horse_id: int, before_date: str, exclude_race_id: int) -> list[Any]:
         """単一馬の過去レース結果を取得する（last_3f あり優先）。"""
-        return (
-            self.db.query(RaceResult, Race, RaceEntry)
+        stmt = (
+            select(RaceResult, Race, RaceEntry)
             .join(Race, RaceResult.race_id == Race.id)
             .join(
                 RaceEntry,
@@ -145,7 +148,7 @@ class Last3FIndexCalculator(IndexCalculator):
                     RaceEntry.horse_id == RaceResult.horse_id,
                 ),
             )
-            .filter(
+            .where(
                 RaceResult.horse_id == horse_id,
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -153,18 +156,19 @@ class Last3FIndexCalculator(IndexCalculator):
             )
             .order_by(Race.date.desc())
             .limit(LOOKBACK_RACES)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.all()
 
-    def _get_past_results_batch(
+    async def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
     ) -> dict[int, list[Any]]:
         """複数馬の過去レース結果を単一クエリで一括取得する。"""
         if not horse_ids:
             return {}
 
-        rows = (
-            self.db.query(RaceResult, Race, RaceEntry)
+        stmt = (
+            select(RaceResult, Race, RaceEntry)
             .join(Race, RaceResult.race_id == Race.id)
             .join(
                 RaceEntry,
@@ -173,62 +177,29 @@ class Last3FIndexCalculator(IndexCalculator):
                     RaceEntry.horse_id == RaceResult.horse_id,
                 ),
             )
-            .filter(
+            .where(
                 RaceResult.horse_id.in_(horse_ids),
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.horse_id, Race.date.desc())
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         rows_map: dict[int, list[Any]] = defaultdict(list)
         counts: dict[int, int] = defaultdict(int)
         for row in rows:
-            result, race, entry = row
-            hid = result.horse_id
+            rr, race, entry = row
+            hid = rr.horse_id
             if counts[hid] < LOOKBACK_RACES:
                 rows_map[hid].append(row)
                 counts[hid] += 1
 
         return rows_map
 
-    def _get_field_stats(self, race_id: int) -> tuple[float, float] | None:
-        """単一レースの last_3f フィールド統計 (mean, std) を返す。
-
-        キャッシュを利用して重複クエリを回避する。
-        MIN_FIELD_SAMPLE 未満のレースは None を返す。
-        """
-        if race_id in self._field_stats_cache:
-            return self._field_stats_cache[race_id]
-
-        values = (
-            self.db.query(RaceResult.last_3f)
-            .filter(
-                RaceResult.race_id == race_id,
-                RaceResult.last_3f.isnot(None),
-                RaceResult.abnormality_code == 0,
-            )
-            .all()
-        )
-        vals = [float(v[0]) for v in values]
-
-        if len(vals) < MIN_FIELD_SAMPLE:
-            self._field_stats_cache[race_id] = None
-            return None
-
-        mean = statistics.mean(vals)
-        std = statistics.stdev(vals) if len(vals) >= 2 else 0.0
-        if std < 0.1:
-            self._field_stats_cache[race_id] = None
-            return None
-
-        result = (mean, std)
-        self._field_stats_cache[race_id] = result
-        return result
-
-    def _get_field_stats_batch(self, race_ids: set[int]) -> dict[int, tuple[float, float] | None]:
+    async def _get_field_stats_batch(self, race_ids: set[int]) -> dict[int, tuple[float, float] | None]:
         """複数レースのフィールド統計を一括取得する。"""
         if not race_ids:
             return {}
@@ -237,15 +208,16 @@ class Last3FIndexCalculator(IndexCalculator):
         uncached = {rid for rid in race_ids if rid not in self._field_stats_cache}
 
         if uncached:
-            rows = (
-                self.db.query(RaceResult.race_id, RaceResult.last_3f)
-                .filter(
+            stmt = (
+                select(RaceResult.race_id, RaceResult.last_3f)
+                .where(
                     RaceResult.race_id.in_(uncached),
                     RaceResult.last_3f.isnot(None),
                     RaceResult.abnormality_code == 0,
                 )
-                .all()
             )
+            result = await self.db.execute(stmt)
+            rows = result.all()
 
             # race_id ごとにまとめる
             vals_map: dict[int, list[float]] = defaultdict(list)

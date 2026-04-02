@@ -12,7 +12,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { icon: "🏇", label: "レース", href: "/races", matchPath: "/races" },
-  { icon: "📊", label: "実績", href: "/races", matchPath: "/results" },
+  { icon: "📊", label: "実績", href: "/results", matchPath: "/results" },
   { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
 ];
 
@@ -21,7 +21,7 @@ export function BottomNav() {
 
   return (
     <nav
-      aria-label="メインナビゲーション"
+      aria-label="ボトムナビゲーション"
       className="fixed bottom-0 left-0 right-0 z-20 flex md:hidden"
       style={{
         background: "#0d1f35",

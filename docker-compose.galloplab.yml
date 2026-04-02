@@ -16,14 +16,28 @@ services:
       - "127.0.0.1:8003:8000"
     env_file:
       - .env
+    environment:
+      - ALLOWED_ORIGINS=https://galloplab.com
     command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - ./logs:/app/logs
+    tmpfs:
+      - /tmp
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - kiseki-galloplab
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+        reservations:
+          memory: 128m
     logging:
       driver: "json-file"
       options:
@@ -61,12 +75,24 @@ services:
       - AUTH_URL=https://galloplab.com/api/auth
       # バックエンドAPI認証（サーバーサイドからの内部呼び出し用）
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
+    tmpfs:
+      - /tmp
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - kiseki-galloplab
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+        reservations:
+          memory: 128m
     logging:
       driver: "json-file"
       options:

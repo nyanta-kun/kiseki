@@ -1,8 +1,17 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { fetchNearestDate, fetchRacesByDate } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
+
+export const metadata: Metadata = {
+  title: "開催レース一覧 | GallopLab",
+  description: "本日のJRA開催レース指数・期待値一覧",
+  alternates: {
+    canonical: "https://galloplab.com/races",
+  },
+};
 
 type SearchParams = Promise<{ date?: string }>;
 
@@ -40,7 +49,7 @@ async function RaceList({ date }: { date: string }) {
   } catch {
     return (
       <div className="text-center py-12 text-gray-400">
-        <p className="text-4xl mb-2" aria-hidden="true">🏇</p>
+        <p className="text-4xl mb-2"><span aria-hidden="true">🏇</span></p>
         <p>APIに接続できませんでした</p>
         <p className="text-xs mt-1">バックエンドが起動しているか確認してください</p>
         <a
@@ -56,7 +65,7 @@ async function RaceList({ date }: { date: string }) {
   if (races.length === 0) {
     return (
       <div className="text-center py-12 text-gray-400">
-        <p className="text-4xl mb-2">🏟️</p>
+        <p className="text-4xl mb-2"><span aria-hidden="true">🏟️</span></p>
         <p>この日の開催データがありません</p>
       </div>
     );

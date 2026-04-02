@@ -25,6 +25,7 @@ class Horse(Base):
     """馬マスタ"""
 
     __tablename__ = "horses"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, comment="馬名")
@@ -65,6 +66,7 @@ class Jockey(Base):
     """騎手マスタ"""
 
     __tablename__ = "jockeys"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False, comment="騎手名")
@@ -77,6 +79,7 @@ class Trainer(Base):
     """調教師マスタ"""
 
     __tablename__ = "trainers"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), nullable=False, comment="調教師名")
@@ -89,6 +92,7 @@ class Race(Base):
     """レースマスタ"""
 
     __tablename__ = "races"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     date: Mapped[str] = mapped_column(
@@ -307,6 +311,7 @@ class TrackCondition(Base):
     """馬場差データ"""
 
     __tablename__ = "track_conditions"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     date: Mapped[str] = mapped_column(String(8), index=True, comment="開催日（YYYYMMDD）")
@@ -323,6 +328,7 @@ class CalculatedIndex(Base):
     """算出指数"""
 
     __tablename__ = "calculated_indices"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.races.id"), index=True)
@@ -376,6 +382,7 @@ class EntryChange(Base):
     """出走変更履歴"""
 
     __tablename__ = "entry_changes"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.races.id"))
@@ -455,6 +462,7 @@ class OddsHistory(Base):
     """オッズ推移"""
 
     __tablename__ = "odds_history"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.races.id"), index=True)
@@ -474,6 +482,7 @@ class User(Base):
     """ユーザーマスタ（Google OAuth）"""
 
     __tablename__ = "users"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     google_sub: Mapped[str] = mapped_column(
@@ -527,6 +536,7 @@ class UserAccessGrant(Base):
     """ユーザーアクセス付与"""
 
     __tablename__ = "user_access_grants"
+    __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(

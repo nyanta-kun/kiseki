@@ -29,8 +29,8 @@ from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RacecourseFeatures, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
@@ -76,7 +76,7 @@ class CourseAptitudeCalculator(IndexCalculator):
     信頼度加重によりデータが少ない馬はデフォルト値50.0に近づける。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
         self._std_time_cache: dict[tuple[str, int, str], tuple[float, float]] = {}
         # 競馬場特徴を初回アクセス時にキャッシュ（セッション非依存の SimpleNamespace で保持）
@@ -86,26 +86,35 @@ class CourseAptitudeCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+    async def calculate(self, race_id: int, horse_id: int) -> float:
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
-        rows = self._get_past_results_for_horse(horse_id, race.date, race_id)
+        rows = await self._get_past_results_for_horse(
+            horse_id, race.date, race_id,
+            target_surface=race.surface or "", target_course=race.course, target_dist=int(race.distance or 0)
+        )
         return self._compute_aptitude_index(rows, race)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
-        rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
+        rows_map = await self._get_past_results_batch(
+            horse_ids, race.date, race_id,
+            target_surface=race.surface or "", target_course=race.course, target_dist=int(race.distance or 0)
+        )
 
         return {
             entry.horse_id: self._compute_aptitude_index(rows_map.get(entry.horse_id, []), race)
@@ -116,13 +125,14 @@ class CourseAptitudeCalculator(IndexCalculator):
     # コース特徴・類似度
     # ------------------------------------------------------------------
 
-    def _load_course_features(self) -> dict[str, SimpleNamespace]:
+    async def _load_course_features(self) -> dict[str, SimpleNamespace]:
         """racecourse_features をセッション非依存のオブジェクトとしてキャッシュして返す。
 
         expunge_all() 後もデタッチされないよう ORM インスタンスを保持しない。
         """
         if self._course_features is None:
-            rows = self.db.query(RacecourseFeatures).all()
+            result = await self.db.execute(select(RacecourseFeatures))
+            rows = result.scalars().all()
             self._course_features = {
                 r.course_code: SimpleNamespace(
                     direction=r.direction,
@@ -150,7 +160,8 @@ class CourseAptitudeCalculator(IndexCalculator):
         if code_a == code_b:
             return 1.0
 
-        features = self._load_course_features()
+        # NOTE: _course_similarity は同期メソッドのため、呼び出し前に _course_features がロード済みであること
+        features = self._course_features or {}
         fa = features.get(code_a)
         fb = features.get(code_b)
         if fa is None or fb is None:
@@ -204,13 +215,24 @@ class CourseAptitudeCalculator(IndexCalculator):
     # データ取得
     # ------------------------------------------------------------------
 
-    def _get_past_results_for_horse(
-        self, horse_id: int, before_date: str, exclude_race_id: int
+    async def _get_past_results_for_horse(
+        self,
+        horse_id: int,
+        before_date: str,
+        exclude_race_id: int,
+        target_surface: str = "",
+        target_course: str = "",
+        target_dist: int = 0,
     ) -> list[Any]:
-        return (
-            self.db.query(RaceResult, Race)
+        # コース特徴を事前ロード（_course_similarity で使用）
+        await self._load_course_features()
+        # 基準タイム事前ロード
+        if target_course and target_dist and target_surface:
+            await self._preload_standard_time(target_course, target_dist, target_surface)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.horse_id == horse_id,
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -219,19 +241,32 @@ class CourseAptitudeCalculator(IndexCalculator):
             )
             .order_by(Race.date.desc())
             .limit(LOOKBACK_RACES)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.all()
 
-    def _get_past_results_batch(
-        self, horse_ids: list[int], before_date: str, exclude_race_id: int
+    async def _get_past_results_batch(
+        self,
+        horse_ids: list[int],
+        before_date: str,
+        exclude_race_id: int,
+        target_surface: str = "",
+        target_course: str = "",
+        target_dist: int = 0,
     ) -> dict[int, list[Any]]:
         if not horse_ids:
             return {}
 
-        rows = (
-            self.db.query(RaceResult, Race)
+        # コース特徴を事前ロード（_course_similarity で使用）
+        await self._load_course_features()
+        # 基準タイム事前ロード
+        if target_course and target_dist and target_surface:
+            await self._preload_standard_time(target_course, target_dist, target_surface)
+
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.horse_id.in_(horse_ids),
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -239,8 +274,9 @@ class CourseAptitudeCalculator(IndexCalculator):
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.horse_id, Race.date.desc())
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         result_map: dict[int, list[Any]] = defaultdict(list)
         count_map: dict[int, int] = defaultdict(int)
@@ -338,34 +374,41 @@ class CourseAptitudeCalculator(IndexCalculator):
         return max(INDEX_MIN, min(INDEX_MAX, score))
 
     def _get_standard_time(self, course: str, distance: int, surface: str) -> tuple[float, float]:
-        """コース・距離・馬場の基準タイム（平均・標準偏差）をキャッシュ付きで返す。"""
+        """コース・距離・馬場の基準タイム（平均・標準偏差）をキャッシュから返す。
+
+        NOTE: このメソッドはキャッシュのみ参照する。初回ロードには _preload_standard_times を使用すること。
+        """
+        cache_key = (course, distance, surface)
+        return self._std_time_cache.get(cache_key, (0.0, 0.0))
+
+    async def _preload_standard_time(self, course: str, distance: int, surface: str) -> None:
+        """単一条件の基準タイムをDBから取得してキャッシュする。"""
         cache_key = (course, distance, surface)
         if cache_key in self._std_time_cache:
-            return self._std_time_cache[cache_key]
+            return
 
-        row = (
-            self.db.query(
+        stmt = (
+            select(
                 func.avg(RaceResult.finish_time).label("avg_time"),
                 func.stddev_pop(RaceResult.finish_time).label("std_time"),
                 func.count(RaceResult.id).label("cnt"),
             )
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 Race.course == course,
                 Race.distance == distance,
                 Race.surface == surface,
                 RaceResult.finish_time.isnot(None),
                 RaceResult.abnormality_code == 0,
             )
-            .first()
         )
+        result = await self.db.execute(stmt)
+        row = result.first()
 
         if row is None or row.cnt is None or int(row.cnt) < 5:
             self._std_time_cache[cache_key] = (0.0, 0.0)
-            return (0.0, 0.0)
+            return
 
         avg = float(row.avg_time) if row.avg_time else 0.0
         std = float(row.std_time) if row.std_time else 0.0
-        value = (avg, max(std, 0.01))
-        self._std_time_cache[cache_key] = value
-        return value
+        self._std_time_cache[cache_key] = (avg, max(std, 0.01))

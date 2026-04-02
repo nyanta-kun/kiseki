@@ -30,10 +30,20 @@ export async function verifyPasswordAndRedirect(
     path: "/",
   });
 
-  const safeCallback =
-    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
-      ? callbackUrl
-      : "/races";
+  // new URL() でパースしてパス部分のみを抽出（ホスト部分を完全に無視し、オープンリダイレクトを防止）
+  let safeCallback = "/races";
+  if (callbackUrl) {
+    try {
+      const parsed = new URL(callbackUrl, "http://localhost");
+      // pathname + search + hash のみ使用（ホストは無視）
+      const path = parsed.pathname + parsed.search + parsed.hash;
+      if (path.startsWith("/")) {
+        safeCallback = path;
+      }
+    } catch {
+      // パース失敗時はデフォルトにフォールバック
+    }
+  }
 
   await signIn("google", { redirectTo: safeCallback });
 

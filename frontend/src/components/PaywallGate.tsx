@@ -24,12 +24,16 @@ export function PaywallGate({ isPremium, raceNumber, children }: Props) {
   return (
     <div className="relative">
       {/* コンテンツはぼかして背後に表示 */}
-      <div className="select-none pointer-events-none blur-sm opacity-60">
+      <div className="select-none pointer-events-none blur-md opacity-60" aria-hidden="true">
         {children}
       </div>
 
       {/* オーバーレイ */}
-      <div className="absolute inset-0 flex items-center justify-center bg-white/30 backdrop-blur-sm rounded-xl">
+      <div
+        className="absolute inset-0 flex items-center justify-center bg-white/30 backdrop-blur-sm rounded-xl"
+        role="region"
+        aria-label="有料会員限定コンテンツ"
+      >
         <div className="bg-white rounded-2xl shadow-lg px-6 py-5 text-center border border-green-200 mx-4 max-w-xs">
           <div className="text-2xl mb-2">🔒</div>
           <p className="font-bold text-gray-800 text-sm">有料会員限定</p>

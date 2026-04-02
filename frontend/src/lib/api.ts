@@ -101,43 +101,62 @@ export type RaceHistoryEntry = {
 // API関数
 // ---------------------------------------------------------------------------
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    cache: "no-store",
-  });
+type CacheInit =
+  | { cache: RequestCache }
+  | { next: { revalidate: number } };
+
+/**
+ * バックエンド API への GET リクエスト。
+ *
+ * @param path APIパス（`/races/123` など）
+ * @param cacheInit Next.js fetch キャッシュ設定。省略時は `next: { revalidate: 30 }`。
+ */
+async function get<T>(path: string, cacheInit?: CacheInit): Promise<T> {
+  const init: RequestInit = cacheInit ?? { next: { revalidate: 30 } };
+  const res = await fetch(`${BASE_URL}${path}`, init);
   if (!res.ok) throw new Error(`API error: ${res.status} ${path}`);
   return res.json() as Promise<T>;
 }
 
+/** レース基本情報（更新頻度低・発走後はほぼ変化なし）→ 5 分キャッシュ */
 export async function fetchRace(raceId: number): Promise<Race> {
-  return get<Race>(`/races/${raceId}`);
+  return get<Race>(`/races/${raceId}`, { next: { revalidate: 300 } });
 }
 
+/** 日付別レース一覧（レース削除・追加はほぼない）→ 5 分キャッシュ */
 export async function fetchRacesByDate(date: string): Promise<Race[]> {
-  return get<Race[]>(`/races?date=${date}`);
+  return get<Race[]>(`/races?date=${date}`, { next: { revalidate: 300 } });
 }
 
+/** 指数（再算出はあるが頻繁ではない）→ 60 秒キャッシュ */
 export async function fetchIndices(raceId: number): Promise<IndicesResponse> {
-  return get<IndicesResponse>(`/races/${raceId}/indices`);
+  return get<IndicesResponse>(`/races/${raceId}/indices`, { next: { revalidate: 60 } });
 }
 
+/** 成績（確定後は不変、確定前はリアルタイム WebSocket を使用）→ 30 秒キャッシュ */
 export async function fetchResults(raceId: number): Promise<RaceResult[]> {
-  return get<RaceResult[]>(`/races/${raceId}/results`);
+  return get<RaceResult[]>(`/races/${raceId}/results`, { next: { revalidate: 30 } });
 }
 
+/** 馬の近走成績（一度確定すると変化しない）→ 5 分キャッシュ */
 export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEntry[]> {
-  return get<RaceHistoryEntry[]>(`/horses/${horseId}/history`);
+  return get<RaceHistoryEntry[]>(`/horses/${horseId}/history`, { next: { revalidate: 300 } });
 }
 
+/** オッズ（リアルタイム WebSocket を主に使用。初期値取得のみ）→ 30 秒キャッシュ */
 export async function fetchOdds(raceId: number): Promise<OddsData> {
-  return get<OddsData>(`/races/${raceId}/odds`);
+  return get<OddsData>(`/races/${raceId}/odds`, { next: { revalidate: 30 } });
 }
 
+/** 最近開催日検索（カレンダーナビゲーション用）→ 30 秒キャッシュ */
 export async function fetchNearestDate(
   fromDate: string,
   direction: "prev" | "next"
 ): Promise<{ date: string }> {
-  return get<{ date: string }>(`/races/nearest-date?from=${fromDate}&direction=${direction}`);
+  return get<{ date: string }>(
+    `/races/nearest-date?from=${fromDate}&direction=${direction}`,
+    { next: { revalidate: 30 } },
+  );
 }
 
 /** WebSocket URLを組み立てる（ブラウザ専用）。

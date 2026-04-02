@@ -5,7 +5,7 @@ DB接続不要のユニットテスト。SireStatsCache をモックして適性
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.indices.pedigree import (
     NEUTRAL,
@@ -120,7 +120,7 @@ class TestWeightCat:
 
 def _make_cache_with_data() -> SireStatsCache:
     """テスト用にデータ入り SireStatsCache を構築する（DB不要）。"""
-    db = MagicMock()
+    db = AsyncMock()
     cache = SireStatsCache(db)
     cache._loaded = True  # ロード済みとしてセット
 
@@ -213,12 +213,8 @@ class TestSireStatsCacheAptitudeScore:
     def test_insufficient_sample_blends_toward_neutral(self) -> None:
         """サンプル数不足 → ニュートラルへのブレンドで50に近づく"""
         cache = _make_cache_with_data()
-        # dirt は cnt=20 < RELIABLE_SAMPLES=20 のボーダー（ちょうど20=1.0だが念のため）
-        # sprint は cnt=10 → 信頼度=0.5 → neutral に寄る
         full_score = cache.aptitude_score("TestSire", "surface", "turf")  # cnt=100 → 信頼度高
         low_score = cache.aptitude_score("TestSire", "dist_cat", "sprint")  # cnt=10 → 信頼度低
-        # sprint も get_rate は低いが、サンプル不足でニュートラルに引き戻される
-        # → full_score より NEUTRAL に近いはず
         assert abs(low_score - NEUTRAL) < abs(full_score - NEUTRAL)
 
     def test_score_in_range_0_100(self) -> None:
@@ -274,6 +270,15 @@ def _make_mock_entry(horse_id: int, weight_carried: float = 57.0) -> MagicMock:
     return e
 
 
+def _make_execute_result(scalar_value=None, scalars_all=None) -> MagicMock:
+    """db.execute() の戻り値モックを生成する。"""
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar_value
+    if scalars_all is not None:
+        result.scalars.return_value.all.return_value = scalars_all
+    return result
+
+
 # ---------------------------------------------------------------------------
 # PedigreeIndexCalculator.calculate: 単一馬テスト
 # ---------------------------------------------------------------------------
@@ -284,62 +289,83 @@ class TestCalculateSingleHorse:
 
     def _make_calc_with_cache(
         self,
-        race: MagicMock | None,
-        pedigree: MagicMock | None,
-        entry: MagicMock | None = None,
+        execute_side_effects: list,
         cache: SireStatsCache | None = None,
     ) -> PedigreeIndexCalculator:
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.side_effect = [race, pedigree, entry]
+        db = AsyncMock()
+        db.execute.side_effect = execute_side_effects
         calc = PedigreeIndexCalculator(db=db)
         if cache:
             calc._cache = cache
         else:
-            # デフォルト: 空キャッシュ（pedigrees テーブル空）
             empty_cache = SireStatsCache(db)
             empty_cache._loaded = True
             calc._cache = empty_cache
         return calc
 
-    def test_unknown_race_returns_default(self) -> None:
+    async def test_unknown_race_returns_default(self) -> None:
         """存在しない race_id → SPEED_INDEX_MEAN"""
-        calc = self._make_calc_with_cache(race=None, pedigree=None)
-        result = calc.calculate(race_id=9999, horse_id=101)
+        # ensure_loaded は _loaded=True でスキップ、race_id not found
+        exec_results = [
+            _make_execute_result(scalar_value=None),  # Race query
+        ]
+        calc = self._make_calc_with_cache(exec_results)
+        result = await calc.calculate(race_id=9999, horse_id=101)
         assert result == SPEED_INDEX_MEAN
 
-    def test_no_pedigree_returns_default(self) -> None:
+    async def test_no_pedigree_returns_default(self) -> None:
         """血統データ未登録 → SPEED_INDEX_MEAN"""
         race = _make_mock_race(1)
-        calc = self._make_calc_with_cache(race=race, pedigree=None)
-        result = calc.calculate(race_id=1, horse_id=101)
+        exec_results = [
+            _make_execute_result(scalar_value=race),  # Race query
+            _make_execute_result(scalar_value=None),  # Pedigree query → None
+        ]
+        calc = self._make_calc_with_cache(exec_results)
+        result = await calc.calculate(race_id=1, horse_id=101)
         assert result == SPEED_INDEX_MEAN
 
-    def test_result_in_range_0_to_100(self) -> None:
+    async def test_result_in_range_0_to_100(self) -> None:
         """結果は常に 0-100"""
         race = _make_mock_race(1, surface="芝", distance=2000)
         pedigree = _make_mock_pedigree(101)
         entry = _make_mock_entry(101)
         cache = _make_cache_with_data()
-        calc = self._make_calc_with_cache(race=race, pedigree=pedigree, entry=entry, cache=cache)
-        result = calc.calculate(race_id=1, horse_id=101)
+        exec_results = [
+            _make_execute_result(scalar_value=race),      # Race query
+            _make_execute_result(scalar_value=pedigree),  # Pedigree query
+            _make_execute_result(scalar_value=entry),     # RaceEntry query
+        ]
+        calc = self._make_calc_with_cache(exec_results, cache=cache)
+        result = await calc.calculate(race_id=1, horse_id=101)
         assert 0.0 <= result <= 100.0
 
-    def test_empty_stats_returns_neutral(self) -> None:
+    async def test_empty_stats_returns_neutral(self) -> None:
         """キャッシュ空（pedigrees テーブル空）→ NEUTRAL(50.0)"""
         race = _make_mock_race(1, surface="芝", distance=2000)
         pedigree = _make_mock_pedigree(101)
-        calc = self._make_calc_with_cache(race=race, pedigree=pedigree)
-        result = calc.calculate(race_id=1, horse_id=101)
+        entry = _make_mock_entry(101)
+        exec_results = [
+            _make_execute_result(scalar_value=race),      # Race query
+            _make_execute_result(scalar_value=pedigree),  # Pedigree query
+            _make_execute_result(scalar_value=entry),     # RaceEntry query
+        ]
+        calc = self._make_calc_with_cache(exec_results)
+        result = await calc.calculate(race_id=1, horse_id=101)
         assert result == NEUTRAL
 
-    def test_strong_sire_turf_middle_above_neutral(self) -> None:
+    async def test_strong_sire_turf_middle_above_neutral(self) -> None:
         """得意条件の父 → NEUTRAL より高いスコア"""
         race = _make_mock_race(1, surface="芝", distance=2000, course="05")
         pedigree = _make_mock_pedigree(101, sire="TestSire", sire_of_dam="TestSire")
         entry = _make_mock_entry(101, weight_carried=57.0)
         cache = _make_cache_with_data()
-        calc = self._make_calc_with_cache(race=race, pedigree=pedigree, entry=entry, cache=cache)
-        result = calc.calculate(race_id=1, horse_id=101)
+        exec_results = [
+            _make_execute_result(scalar_value=race),      # Race query
+            _make_execute_result(scalar_value=pedigree),  # Pedigree query
+            _make_execute_result(scalar_value=entry),     # RaceEntry query
+        ]
+        calc = self._make_calc_with_cache(exec_results, cache=cache)
+        result = await calc.calculate(race_id=1, horse_id=101)
         assert result > NEUTRAL
 
 
@@ -358,18 +384,17 @@ class TestCalculateBatch:
         pedigrees: list[MagicMock],
         cache: SireStatsCache | None = None,
     ) -> PedigreeIndexCalculator:
-        db = MagicMock()
+        db = AsyncMock()
 
-        mock_race_q = MagicMock()
-        mock_race_q.filter.return_value.first.return_value = race
+        exec_results = []
+        # Race query
+        exec_results.append(_make_execute_result(scalar_value=race))
+        # RaceEntry query
+        exec_results.append(_make_execute_result(scalars_all=entries))
+        # Pedigree query
+        exec_results.append(_make_execute_result(scalars_all=pedigrees))
 
-        mock_entry_q = MagicMock()
-        mock_entry_q.filter.return_value.all.return_value = entries
-
-        mock_ped_q = MagicMock()
-        mock_ped_q.filter.return_value.all.return_value = pedigrees
-
-        db.query.side_effect = [mock_race_q, mock_entry_q, mock_ped_q]
+        db.execute.side_effect = exec_results
         calc = PedigreeIndexCalculator(db=db)
 
         if cache:
@@ -380,40 +405,40 @@ class TestCalculateBatch:
             calc._cache = empty_cache
         return calc
 
-    def test_unknown_race_returns_empty(self) -> None:
+    async def test_unknown_race_returns_empty(self) -> None:
         """存在しない race_id → 空dict"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        db = AsyncMock()
+        db.execute.return_value = _make_execute_result(scalar_value=None)
         calc = PedigreeIndexCalculator(db=db)
         empty_cache = SireStatsCache(db)
         empty_cache._loaded = True
         calc._cache = empty_cache
-        assert calc.calculate_batch(race_id=9999) == {}
+        assert await calc.calculate_batch(race_id=9999) == {}
 
-    def test_no_entries_returns_empty(self) -> None:
+    async def test_no_entries_returns_empty(self) -> None:
         """エントリなし → 空dict"""
         race = _make_mock_race(1)
         calc = self._build_batch_calc(race, entries=[], pedigrees=[])
-        assert calc.calculate_batch(race_id=1) == {}
+        assert await calc.calculate_batch(race_id=1) == {}
 
-    def test_no_pedigree_returns_default(self) -> None:
+    async def test_no_pedigree_returns_default(self) -> None:
         """血統未登録の馬 → SPEED_INDEX_MEAN"""
         race = _make_mock_race(1)
         entries = [_make_mock_entry(101)]
         calc = self._build_batch_calc(race, entries, pedigrees=[])
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[101] == SPEED_INDEX_MEAN
 
-    def test_all_horse_ids_returned(self) -> None:
+    async def test_all_horse_ids_returned(self) -> None:
         """全馬の horse_id がキーとして返る"""
         race = _make_mock_race(1, surface="芝", distance=2000)
         entries = [_make_mock_entry(hid) for hid in [101, 102, 103]]
         pedigrees = [_make_mock_pedigree(hid) for hid in [101, 102, 103]]
         calc = self._build_batch_calc(race, entries, pedigrees)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert set(result.keys()) == {101, 102, 103}
 
-    def test_strong_sire_higher_than_weak(self) -> None:
+    async def test_strong_sire_higher_than_weak(self) -> None:
         """得意条件の父 > 苦手条件の父"""
         race = _make_mock_race(1, surface="芝", distance=2000, course="05")
         entries = [_make_mock_entry(101), _make_mock_entry(102)]
@@ -423,25 +448,25 @@ class TestCalculateBatch:
         ]
         cache = _make_cache_with_data()
         calc = self._build_batch_calc(race, entries, pedigrees, cache=cache)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[101] > result[102]
 
-    def test_mixed_pedigree_missing_returns_default(self) -> None:
+    async def test_mixed_pedigree_missing_returns_default(self) -> None:
         """血統あり馬とない馬が混在 → ない馬は SPEED_INDEX_MEAN"""
         race = _make_mock_race(1, surface="芝", distance=2000)
         entries = [_make_mock_entry(101), _make_mock_entry(102)]
         pedigrees = [_make_mock_pedigree(101)]  # 102は血統なし
         calc = self._build_batch_calc(race, entries, pedigrees)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[102] == SPEED_INDEX_MEAN
 
-    def test_all_scores_in_range(self) -> None:
+    async def test_all_scores_in_range(self) -> None:
         """全スコアが 0-100 範囲"""
         race = _make_mock_race(1, surface="芝", distance=2000)
         entries = [_make_mock_entry(hid) for hid in [101, 102]]
         pedigrees = [_make_mock_pedigree(hid) for hid in [101, 102]]
         cache = _make_cache_with_data()
         calc = self._build_batch_calc(race, entries, pedigrees, cache=cache)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         for score in result.values():
             assert 0.0 <= score <= 100.0

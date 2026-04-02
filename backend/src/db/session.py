@@ -1,17 +1,17 @@
 """データベースセッション管理"""
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
 from ..config import settings
 
-engine = create_engine(
+engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    connect_args={"connect_timeout": 10},
+    connect_args={"timeout": 10},
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
 class Base(DeclarativeBase):
@@ -20,10 +20,7 @@ class Base(DeclarativeBase):
     __table_args__ = {"schema": "keiba"}
 
 
-def get_db():
+async def get_db():
     """FastAPI Dependencyとして使用するDBセッション生成器"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with AsyncSessionLocal() as session:
+        yield session

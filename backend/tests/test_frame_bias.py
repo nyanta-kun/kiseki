@@ -5,7 +5,7 @@ DB接続不要のモックベーステスト。
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -53,12 +53,14 @@ def _make_calc_with_frame_stats(
     target_race: MagicMock | None = None,
 ) -> FrameBiasCalculator:
     """枠番統計をキャッシュ注入済みの FrameBiasCalculator を返す。"""
-    db = MagicMock()
+    db = AsyncMock()
 
     if target_race is None:
         target_race = _make_race()
 
-    db.query.return_value.filter.return_value.first.return_value = target_race
+    mock_race_result = MagicMock()
+    mock_race_result.scalar_one_or_none.return_value = target_race
+    db.execute.return_value = mock_race_result
 
     calc = FrameBiasCalculator(db=db)
     cache_key = (target_race.course, target_race.distance, target_race.surface)
@@ -107,15 +109,15 @@ class TestComputeFrameBias:
             for frame in range(1, 9)
         }
 
-    def test_uniform_bias_returns_mean(self) -> None:
+    async def test_uniform_bias_returns_mean(self) -> None:
         """全枠均一な統計 → 全枠 SPEED_INDEX_MEAN を返す。"""
         stats = self._build_uniform_stats()
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=1)
+        result = await calc._compute_frame_bias(target_race, frame_number=1)
         assert result == pytest.approx(SPEED_INDEX_MEAN, abs=1.0)
 
-    def test_inner_frame_advantage(self) -> None:
+    async def test_inner_frame_advantage(self) -> None:
         """内枠有利設定: 1枠の平均着順スコアが高い → 50より高い。"""
         stats = {
             frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
@@ -125,10 +127,10 @@ class TestComputeFrameBias:
         stats[1] = _make_frame_stats(1, avg_pos_score=75.0, win_rate=0.25)
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=1)
+        result = await calc._compute_frame_bias(target_race, frame_number=1)
         assert result > SPEED_INDEX_MEAN
 
-    def test_outer_frame_disadvantage(self) -> None:
+    async def test_outer_frame_disadvantage(self) -> None:
         """外枠不利設定: 8枠の平均着順スコアが低い → 50より低い。"""
         stats = {
             frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
@@ -138,17 +140,17 @@ class TestComputeFrameBias:
         stats[8] = _make_frame_stats(8, avg_pos_score=25.0, win_rate=0.025)
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=8)
+        result = await calc._compute_frame_bias(target_race, frame_number=8)
         assert result < SPEED_INDEX_MEAN
 
-    def test_no_stats_returns_mean(self) -> None:
+    async def test_no_stats_returns_mean(self) -> None:
         """統計データなし → SPEED_INDEX_MEAN を返す。"""
         calc = _make_calc_with_frame_stats({})
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=1)
+        result = await calc._compute_frame_bias(target_race, frame_number=1)
         assert result == SPEED_INDEX_MEAN
 
-    def test_insufficient_sample_returns_mean(self) -> None:
+    async def test_insufficient_sample_returns_mean(self) -> None:
         """対象枠番のサンプル数が MIN_SAMPLE 未満 → SPEED_INDEX_MEAN を返す。"""
         stats = {
             frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
@@ -158,10 +160,10 @@ class TestComputeFrameBias:
         stats[3] = _make_frame_stats(3, avg_pos_score=80.0, win_rate=0.5, cnt=MIN_SAMPLE - 1)
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=3)
+        result = await calc._compute_frame_bias(target_race, frame_number=3)
         assert result == SPEED_INDEX_MEAN
 
-    def test_index_within_valid_range(self) -> None:
+    async def test_index_within_valid_range(self) -> None:
         """算出された指数が [0, 100] の範囲内に収まる。"""
         stats = {
             frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
@@ -170,10 +172,10 @@ class TestComputeFrameBias:
         stats[1] = _make_frame_stats(1, avg_pos_score=100.0, win_rate=0.9)
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        result = calc._compute_frame_bias(target_race, frame_number=1)
+        result = await calc._compute_frame_bias(target_race, frame_number=1)
         assert 0.0 <= result <= 100.0
 
-    def test_inner_higher_than_outer_in_inner_advantage_course(self) -> None:
+    async def test_inner_higher_than_outer_in_inner_advantage_course(self) -> None:
         """内枠有利コースでは1枠 > 8枠 になる。"""
         # 内枠ほど有利なグラデーション
         stats = {
@@ -186,8 +188,8 @@ class TestComputeFrameBias:
         }
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
-        score_inner = calc._compute_frame_bias(target_race, frame_number=1)
-        score_outer = calc._compute_frame_bias(target_race, frame_number=8)
+        score_inner = await calc._compute_frame_bias(target_race, frame_number=1)
+        score_outer = await calc._compute_frame_bias(target_race, frame_number=8)
         assert score_inner > score_outer
 
 
@@ -205,16 +207,11 @@ class TestCalculateInterface:
         frame_numbers: dict[int, int],
         frame_stats: dict[int, dict[str, float]] | None = None,
     ) -> FrameBiasCalculator:
-        """モックDB付き Calculator を返す。
-
-        Args:
-            horse_ids: エントリ馬のhorse_idリスト
-            frame_numbers: {horse_id: frame_number}
-            frame_stats: 枠番統計（Noneの場合は均一統計）
-        """
-        db = MagicMock()
+        """モックDB付き Calculator を返す。"""
+        db = AsyncMock()
         target_race = _make_race()
-        db.query.return_value.filter.return_value.first.return_value = target_race
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
 
         entries = []
         for hid in horse_ids:
@@ -222,7 +219,9 @@ class TestCalculateInterface:
             e.horse_id = hid
             e.frame_number = frame_numbers.get(hid)
             entries.append(e)
-        db.query.return_value.filter.return_value.all.return_value = entries
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = entries
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
 
         calc = FrameBiasCalculator(db=db)
         if frame_stats is None:
@@ -234,61 +233,72 @@ class TestCalculateInterface:
         calc._frame_stats_cache[cache_key] = frame_stats
         return calc
 
-    def test_calculate_batch_returns_all_horses(self) -> None:
+    async def test_calculate_batch_returns_all_horses(self) -> None:
         """calculate_batch: 全エントリ馬のhorse_idがキーとして返る。"""
         horse_ids = [101, 102, 103]
         frame_numbers = {101: 1, 102: 4, 103: 8}
         calc = self._build_calc(horse_ids, frame_numbers)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert set(result.keys()) == set(horse_ids)
 
-    def test_calculate_batch_no_entry_returns_empty(self) -> None:
+    async def test_calculate_batch_no_entry_returns_empty(self) -> None:
         """calculate_batch: エントリなし → 空dict。"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = _make_race()
-        db.query.return_value.filter.return_value.all.return_value = []
+        db = AsyncMock()
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = _make_race()
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = []
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
         calc = FrameBiasCalculator(db=db)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result == {}
 
-    def test_calculate_race_not_found_returns_mean(self) -> None:
+    async def test_calculate_race_not_found_returns_mean(self) -> None:
         """calculate: レースが存在しない → SPEED_INDEX_MEAN。"""
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        db.execute.return_value = mock_result
         calc = FrameBiasCalculator(db=db)
-        result = calc.calculate(race_id=999, horse_id=1)
+        result = await calc.calculate(race_id=999, horse_id=1)
         assert result == SPEED_INDEX_MEAN
 
-    def test_calculate_no_frame_number_returns_mean(self) -> None:
+    async def test_calculate_no_frame_number_returns_mean(self) -> None:
         """calculate: 枠番なし（RaceEntryにframe_numberがない）→ SPEED_INDEX_MEAN。"""
-        db = MagicMock()
+        db = AsyncMock()
         target_race = _make_race()
-        # first()が2回呼ばれる: Raceの取得と、RaceEntryの取得
         entry = MagicMock()
         entry.frame_number = None
 
-        db.query.return_value.filter.return_value.first.side_effect = [target_race, entry]
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
+        mock_entry_result = MagicMock()
+        mock_entry_result.scalar_one_or_none.return_value = entry
+        db.execute.side_effect = [mock_race_result, mock_entry_result]
 
         calc = FrameBiasCalculator(db=db)
-        result = calc.calculate(race_id=1, horse_id=1)
+        result = await calc.calculate(race_id=1, horse_id=1)
         assert result == SPEED_INDEX_MEAN
 
-    def test_calculate_batch_no_frame_number_returns_mean(self) -> None:
+    async def test_calculate_batch_no_frame_number_returns_mean(self) -> None:
         """calculate_batch: frame_numberがNoneのエントリ → SPEED_INDEX_MEAN を返す。"""
-        db = MagicMock()
+        db = AsyncMock()
         target_race = _make_race()
-        db.query.return_value.filter.return_value.first.return_value = target_race
+        mock_race_result = MagicMock()
+        mock_race_result.scalar_one_or_none.return_value = target_race
 
         entry = MagicMock()
         entry.horse_id = 1
         entry.frame_number = None
-        db.query.return_value.filter.return_value.all.return_value = [entry]
+        mock_entries_result = MagicMock()
+        mock_entries_result.scalars.return_value.all.return_value = [entry]
+        db.execute.side_effect = [mock_race_result, mock_entries_result]
 
         calc = FrameBiasCalculator(db=db)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[1] == SPEED_INDEX_MEAN
 
-    def test_relative_ordering_preserved(self) -> None:
+    async def test_relative_ordering_preserved(self) -> None:
         """内枠有利コースで 1枠馬 > 8枠馬 の順序が保たれる。"""
         horse_ids = [101, 102]
         frame_numbers = {101: 1, 102: 8}
@@ -302,5 +312,5 @@ class TestCalculateInterface:
             for frame in range(1, 9)
         }
         calc = self._build_calc(horse_ids, frame_numbers, frame_stats)
-        result = calc.calculate_batch(race_id=1)
+        result = await calc.calculate_batch(race_id=1)
         assert result[101] > result[102]

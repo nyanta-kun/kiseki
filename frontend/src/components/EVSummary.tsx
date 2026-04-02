@@ -1,12 +1,13 @@
 "use client";
 
-import { HorseIndex } from "@/lib/api";
+import { HorseIndex, OddsData } from "@/lib/api";
 
 type Props = {
   indices: HorseIndex[];
+  odds?: OddsData;
 };
 
-export function EVSummary({ indices }: Props) {
+export function EVSummary({ indices, odds }: Props) {
   // 総合指数上位3頭を抽出
   const top3 = [...indices]
     .sort((a, b) => b.composite_index - a.composite_index)
@@ -37,6 +38,20 @@ export function EVSummary({ indices }: Props) {
             ? (horse.place_probability * 100).toFixed(1)
             : null;
 
+          const hn = String(horse.horse_number);
+          const winOdds = odds?.win[hn];
+          const placeOdds = odds?.place[hn];
+          const winProb = horse.win_probability;
+          const placeProb = horse.place_probability;
+          const winEV = winOdds !== undefined && winProb !== null && winProb > 0
+            ? Math.round(winOdds * winProb * 100) / 100
+            : null;
+          const placeEV = placeOdds !== undefined && placeProb !== null && placeProb > 0
+            ? Math.round(placeOdds * placeProb * 100) / 100
+            : null;
+
+          const evColor = (ev: number) => ev >= 1.5 ? "text-green-700" : ev >= 1.0 ? "text-amber-500" : "text-gray-400";
+
           return (
             <div
               key={horse.horse_number}
@@ -65,6 +80,16 @@ export function EVSummary({ indices }: Props) {
                 {placePct && (
                   <div className="text-[11px] text-gray-600">
                     複勝率 <span className="font-bold text-purple-700">{placePct}%</span>
+                  </div>
+                )}
+                {winEV !== null && (
+                  <div className="text-[11px] text-gray-600">
+                    単期待値 <span className={`font-bold ${evColor(winEV)}`}>{winEV.toFixed(2)}</span>
+                  </div>
+                )}
+                {placeEV !== null && (
+                  <div className="text-[11px] text-gray-600">
+                    複期待値 <span className={`font-bold ${evColor(placeEV)}`}>{placeEV.toFixed(2)}</span>
                   </div>
                 )}
               </div>

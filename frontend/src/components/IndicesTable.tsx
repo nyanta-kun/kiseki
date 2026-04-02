@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHistory } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndexBar } from "./IndexBar";
 import { cn, indexColor } from "@/lib/utils";
 
@@ -230,98 +232,58 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
   const [sort, setSort] = useState<SortKey>(defaultSort);
   const [expandedHorse, setExpandedHorse] = useState<number | null>(null);
   const [odds, setOdds] = useState<OddsData>(initialOdds ?? { win: {}, place: {} });
-  const [wsConnected, setWsConnected] = useState(true);
-  const wsRef = useRef<WebSocket | null>(null);
   const liveRegionRef = useRef<HTMLDivElement | null>(null);
 
   // WebSocket接続 - オッズリアルタイム更新
-  useEffect(() => {
-    if (!raceId) return;
-    const url = buildOddsWsUrl(raceId);
-    if (!url) return;
+  const wsUrl = raceId ? buildOddsWsUrl(raceId) : null;
 
-    let ws: WebSocket;
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  const handleOddsMessage = useCallback((data: unknown) => {
+    setOdds(data as OddsData);
+    if (liveRegionRef.current) {
+      liveRegionRef.current.textContent = "オッズが更新されました";
+      setTimeout(() => {
+        if (liveRegionRef.current) liveRegionRef.current.textContent = "";
+      }, 3000);
+    }
+  }, []);
 
-    const connect = () => {
-      try {
-        ws = new WebSocket(url);
-        wsRef.current = ws;
-        ws.onopen = () => {
-          setWsConnected(true);
-        };
-        ws.onmessage = (e) => {
-          try {
-            const data = JSON.parse(e.data) as OddsData;
-            setOdds(data);
-            if (liveRegionRef.current) {
-              liveRegionRef.current.textContent = "オッズが更新されました";
-              setTimeout(() => {
-                if (liveRegionRef.current) liveRegionRef.current.textContent = "";
-              }, 3000);
-            }
-          } catch {
-            // ignore
-          }
-        };
-        ws.onerror = () => {
-          setWsConnected(false);
-        };
-        ws.onclose = () => {
-          setWsConnected(false);
-          // 30秒後に再接続試行
-          reconnectTimeout = setTimeout(connect, 30000);
-        };
-      } catch {
-        setWsConnected(false);
-      }
-    };
-
-    connect();
-
-    return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      const current = wsRef.current;
-      wsRef.current = null;
-      if (current) {
-        if (current.readyState === WebSocket.CONNECTING) {
-          current.onopen = () => current.close();
-          current.onclose = null;
-          current.onerror = null;
-        } else {
-          current.close();
-        }
-      }
-    };
-  }, [raceId]);
+  const { isConnected: wsConnected } = useWebSocket(wsUrl, handleOddsMessage, {
+    reconnectInterval: 30_000,
+  });
 
   // 総合指数1位の馬番（ソート不問で固定）
-  const topHorseNumber = indices.reduce(
-    (best, h) => h.composite_index > best.composite_index ? h : best,
-    indices[0]
-  )?.horse_number;
+  const topHorseNumber = useMemo(
+    () =>
+      indices.reduce(
+        (best, h) => h.composite_index > best.composite_index ? h : best,
+        indices[0],
+      )?.horse_number,
+    [indices],
+  );
 
   // 総合指数ランクマップ（O(n log n) → O(1) lookup）
   const compositeRankMap = useMemo(() => {
-    const sorted = [...indices].sort((a, b) => b.composite_index - a.composite_index);
-    return new Map(sorted.map((h, i) => [h.horse_number, i + 1]));
+    const sortedByIndex = [...indices].sort((a, b) => b.composite_index - a.composite_index);
+    return new Map(sortedByIndex.map((h, i) => [h.horse_number, i + 1]));
   }, [indices]);
 
-  const sorted = [...indices].sort((a, b) => {
-    if (sort === "horse_number") return a.horse_number - b.horse_number;
-    if (sort === "win_probability") {
-      return (b.win_probability ?? 0) - (a.win_probability ?? 0);
-    }
-    if (sort === "finish_position" && results) {
-      const pa = results.get(a.horse_number) ?? 999;
-      const pb = results.get(b.horse_number) ?? 999;
-      return pa - pb;
-    }
-    if (sort === "upside_score") {
-      return (b.upside_score ?? 0) - (a.upside_score ?? 0);
-    }
-    return b.composite_index - a.composite_index;
-  });
+  const sorted = useMemo(() => {
+    return [...indices].sort((a, b) => {
+      if (sort === "horse_number") return a.horse_number - b.horse_number;
+      if (sort === "win_probability") {
+        return (b.win_probability ?? 0) - (a.win_probability ?? 0);
+      }
+      if (sort === "finish_position" && results) {
+        const pa = results.get(a.horse_number) ?? 999;
+        const pb = results.get(b.horse_number) ?? 999;
+        return pa - pb;
+      }
+      if (sort === "upside_score") {
+        return (b.upside_score ?? 0) - (a.upside_score ?? 0);
+      }
+      return b.composite_index - a.composite_index;
+    });
+  }, [indices, sort, results]);
 
   const sortKeys: SortKey[] = hasResults
     ? ["finish_position", "composite_index", "win_probability", "upside_score", "horse_number"]
@@ -341,13 +303,12 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
       <div ref={liveRegionRef} aria-live="polite" aria-atomic="true" className="sr-only" />
 
       {/* WebSocket切断通知 */}
-      {raceId && !wsConnected && (
-        <div
-          role="status"
-          className="mb-2 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs flex items-center gap-2"
-        >
-          <span aria-hidden="true">⚠️</span>
-          リアルタイム更新停止中（再接続を試みています...）
+      {raceId && (
+        <div className="mb-2">
+          <WsStatusBadge
+            connected={wsConnected}
+            label="リアルタイム更新停止中（再接続を試みています...）"
+          />
         </div>
       )}
 

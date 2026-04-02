@@ -35,8 +35,8 @@ from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RacecourseFeatures, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN
@@ -108,11 +108,11 @@ class PaceIndexCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
-            db: SQLAlchemy セッション
+            db: SQLAlchemy 非同期セッション
         """
         super().__init__(db)
         # 上がり3F平均のキャッシュ（コース・距離・馬場ごと）
@@ -125,7 +125,7 @@ class PaceIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の展開指数を算出する。
 
         Args:
@@ -135,19 +135,21 @@ class PaceIndexCalculator(IndexCalculator):
         Returns:
             展開指数（0-100）。データ不足時は 50.0。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
         # 単一馬の脚質を判定
-        past_rows = self._get_past_results_for_horse(horse_id, race.date, race_id)
+        past_rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         runner_type = self._determine_runner_type(past_rows)
 
         # 全馬の脚質を集計してペースを予測
-        all_entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        all_entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        all_entries = all_entries_result.scalars().all()
         all_horse_ids = [e.horse_id for e in all_entries]
-        all_rows_map = self._get_past_results_batch(all_horse_ids, race.date, race_id)
+        all_rows_map = await self._get_past_results_batch(all_horse_ids, race.date, race_id)
 
         runner_types = {
             hid: self._determine_runner_type(rows) for hid, rows in all_rows_map.items()
@@ -162,11 +164,11 @@ class PaceIndexCalculator(IndexCalculator):
 
         # 上がり3F補正
         horse_past_rows = all_rows_map.get(horse_id, [])
-        score = self._apply_last3f_bonus(base_score, horse_past_rows, race)
+        score = await self._apply_last3f_bonus(base_score, horse_past_rows, race)
 
         return round(max(INDEX_MIN, min(INDEX_MAX, score)), 1)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の展開指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
@@ -177,19 +179,21 @@ class PaceIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: pace_index} のdict。エントリが存在しない場合は空dict。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
 
         # Step1: 全馬の過去成績を一括取得
-        rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
+        rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
         # Step2: 各馬の脚質を判定
         runner_types: dict[int, str] = {}
@@ -201,8 +205,8 @@ class PaceIndexCalculator(IndexCalculator):
         pace_type = self._predict_pace(runner_types)
 
         # Step4: コース特性・当開催バイアス・頭数を一度だけ取得
-        course_feat = self._get_course_features(race.course)
-        meet_bias = self._meet_bias.get_bias(race)
+        course_feat = await self._get_course_features(race.course)
+        meet_bias = await self._meet_bias.get_bias(race)
         head_count = race.head_count or len(horse_ids)
 
         # Step5: 各馬のスコア算出
@@ -211,7 +215,7 @@ class PaceIndexCalculator(IndexCalculator):
             runner_type = runner_types[hid]
             base_score = PACE_SCORE_TABLE[runner_type][pace_type]
             horse_past_rows = rows_map.get(hid, [])
-            score = self._apply_last3f_bonus(base_score, horse_past_rows, race)
+            score = await self._apply_last3f_bonus(base_score, horse_past_rows, race)
             score = self._apply_course_adjustment(score, runner_type, course_feat)
             score = self._apply_meet_bias_adjustment(score, runner_type, meet_bias)
             score = self._apply_field_size_adjustment(score, runner_type, head_count, course_feat)
@@ -223,7 +227,7 @@ class PaceIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _get_past_results_for_horse(
+    async def _get_past_results_for_horse(
         self, horse_id: int, before_date: str, exclude_race_id: int
     ) -> list[Any]:
         """単一馬の過去レース結果を取得する。
@@ -236,10 +240,10 @@ class PaceIndexCalculator(IndexCalculator):
         Returns:
             [(RaceResult, Race), ...]（日付降順, 最大 LOOKBACK_RACES 件）
         """
-        return (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.horse_id == horse_id,
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -247,10 +251,11 @@ class PaceIndexCalculator(IndexCalculator):
             )
             .order_by(Race.date.desc())
             .limit(LOOKBACK_RACES)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.all()
 
-    def _get_past_results_batch(
+    async def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
     ) -> dict[int, list[Any]]:
         """複数馬の過去レース結果を単一クエリで一括取得する。
@@ -266,18 +271,19 @@ class PaceIndexCalculator(IndexCalculator):
         if not horse_ids:
             return {}
 
-        rows = (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.horse_id.in_(horse_ids),
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.horse_id, Race.date.desc())
-            .all()
         )
+        db_result = await self.db.execute(stmt)
+        rows = db_result.all()
 
         result_map: dict[int, list[Any]] = defaultdict(list)
         count_map: dict[int, int] = defaultdict(int)
@@ -323,13 +329,14 @@ class PaceIndexCalculator(IndexCalculator):
         avg_rel_pos = sum(relative_positions) / len(relative_positions)
         return _classify_runner_type(avg_rel_pos)
 
-    def _get_course_features(self, course_code: str) -> SimpleNamespace | None:
+    async def _get_course_features(self, course_code: str) -> SimpleNamespace | None:
         """コース特徴をキャッシュ付きで返す。
 
         expunge_all() 後もデタッチされないよう ORM インスタンスを保持しない。
         """
         if self._course_features is None:
-            rows = self.db.query(RacecourseFeatures).all()
+            result = await self.db.execute(select(RacecourseFeatures))
+            rows = result.scalars().all()
             self._course_features = {
                 r.course_code: SimpleNamespace(
                     straight_distance=r.straight_distance,
@@ -465,7 +472,7 @@ class PaceIndexCalculator(IndexCalculator):
         else:
             return "slow"
 
-    def _apply_last3f_bonus(self, base_score: float, past_rows: list[Any], race: Race) -> float:
+    async def _apply_last3f_bonus(self, base_score: float, past_rows: list[Any], race: Race) -> float:
         """上がり3F補正を適用する。
 
         馬の上がり3F平均が同条件（コース・距離・馬場）の平均より速い場合に
@@ -496,7 +503,7 @@ class PaceIndexCalculator(IndexCalculator):
         course = race.course
         distance = race.distance or 0
         surface = race.surface or ""
-        cond_avg = self._get_avg_last3f(course, distance, surface)
+        cond_avg = await self._get_avg_last3f(course, distance, surface)
 
         if cond_avg is None:
             return base_score
@@ -507,7 +514,7 @@ class PaceIndexCalculator(IndexCalculator):
 
         return base_score
 
-    def _get_avg_last3f(self, course: str, distance: int, surface: str) -> float | None:
+    async def _get_avg_last3f(self, course: str, distance: int, surface: str) -> float | None:
         """同条件の上がり3F平均を返す。
 
         同セッション内でキャッシュし、DBアクセスを最小化する。
@@ -524,21 +531,22 @@ class PaceIndexCalculator(IndexCalculator):
         if cache_key in self._last3f_avg_cache:
             return self._last3f_avg_cache[cache_key]
 
-        row = (
-            self.db.query(
+        stmt = (
+            select(
                 func.avg(RaceResult.last_3f).label("avg_last3f"),
                 func.count(RaceResult.id).label("cnt"),
             )
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 Race.course == course,
                 Race.distance == distance,
                 Race.surface == surface,
                 RaceResult.last_3f.isnot(None),
                 RaceResult.abnormality_code == 0,
             )
-            .first()
         )
+        result = await self.db.execute(stmt)
+        row = result.first()
 
         if row is None or row.cnt is None or int(row.cnt) < MIN_LAST3F_SAMPLE:
             self._last3f_avg_cache[cache_key] = None

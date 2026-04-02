@@ -22,8 +22,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import and_, func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import (
@@ -54,11 +54,11 @@ class SpeedIndexCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
-            db: SQLAlchemy セッション
+            db: SQLAlchemy 非同期セッション
         """
         super().__init__(db)
         # 基準タイムのメモリキャッシュ（同セッション内で再利用）
@@ -68,7 +68,7 @@ class SpeedIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬のスピード指数を算出する。
 
         Args:
@@ -78,16 +78,17 @@ class SpeedIndexCalculator(IndexCalculator):
         Returns:
             スピード指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
-        rows = self._get_past_results_for_horse(horse_id, race.date, race_id)
+        rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         scores = self._compute_scores(rows)
         return self._weighted_average(scores)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬のスピード指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
@@ -98,19 +99,23 @@ class SpeedIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: speed_index} のdict。エントリが存在しない場合は空dict。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(
+            select(RaceEntry).where(RaceEntry.race_id == race_id)
+        )
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
 
         # 全馬の過去結果を並行（単一クエリ）で取得
-        rows_map = self._get_past_results_batch(horse_ids, race.date, race_id)
+        rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
         result: dict[int, float] = {}
         for entry in entries:
@@ -124,7 +129,7 @@ class SpeedIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _get_past_results_for_horse(
+    async def _get_past_results_for_horse(
         self, horse_id: int, before_date: str, exclude_race_id: int
     ) -> list[Any]:
         """単一馬の過去レース結果を取得する。
@@ -137,8 +142,8 @@ class SpeedIndexCalculator(IndexCalculator):
         Returns:
             [(RaceResult, Race, RaceEntry), ...]（日付降順, 最大 LOOKBACK_RACES 件）
         """
-        return (
-            self.db.query(RaceResult, Race, RaceEntry)
+        stmt = (
+            select(RaceResult, Race, RaceEntry)
             .join(Race, RaceResult.race_id == Race.id)
             .join(
                 RaceEntry,
@@ -147,7 +152,7 @@ class SpeedIndexCalculator(IndexCalculator):
                     RaceEntry.horse_id == RaceResult.horse_id,
                 ),
             )
-            .filter(
+            .where(
                 RaceResult.horse_id == horse_id,
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -156,10 +161,11 @@ class SpeedIndexCalculator(IndexCalculator):
             )
             .order_by(Race.date.desc())
             .limit(LOOKBACK_RACES)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.all()
 
-    def _get_past_results_batch(
+    async def _get_past_results_batch(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
     ) -> dict[int, list[Any]]:
         """複数馬の過去レース結果を単一クエリで一括取得する。
@@ -175,8 +181,8 @@ class SpeedIndexCalculator(IndexCalculator):
         if not horse_ids:
             return {}
 
-        rows = (
-            self.db.query(RaceResult, Race, RaceEntry)
+        stmt = (
+            select(RaceResult, Race, RaceEntry)
             .join(Race, RaceResult.race_id == Race.id)
             .join(
                 RaceEntry,
@@ -185,7 +191,7 @@ class SpeedIndexCalculator(IndexCalculator):
                     RaceEntry.horse_id == RaceResult.horse_id,
                 ),
             )
-            .filter(
+            .where(
                 RaceResult.horse_id.in_(horse_ids),
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
@@ -193,8 +199,9 @@ class SpeedIndexCalculator(IndexCalculator):
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.horse_id, Race.date.desc())
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         # horse_id ごとにグループ化し、最新 LOOKBACK_RACES 件を保持
         result_map: dict[int, list[Any]] = defaultdict(list)
@@ -249,9 +256,11 @@ class SpeedIndexCalculator(IndexCalculator):
         weight_correction = (weight - BASE_WEIGHT) * WEIGHT_CORRECTION_PER_KG
         adjusted_time = actual_time + weight_correction
 
-        # 同条件の基準タイム・標準偏差を取得
-        std_time, std_dev = self._get_standard_time(
-            race.course, race.distance or 0, race.surface or "", race.condition
+        # 同条件の基準タイム・標準偏差を取得（キャッシュはここでは使えないためNoneを返す）
+        # NOTE: 非同期メソッドのため _get_standard_time は呼べない。呼び出し元で事前キャッシュ済みを使う
+        std_time, std_dev = self._std_time_cache.get(
+            (race.course, race.distance or 0, race.surface or "", race.condition),
+            (0.0, 0.0),
         )
 
         if std_dev < 0.01:
@@ -264,7 +273,7 @@ class SpeedIndexCalculator(IndexCalculator):
 
         return max(INDEX_MIN, min(INDEX_MAX, score))
 
-    def _get_standard_time(
+    async def _get_standard_time(
         self, course: str, distance: int, surface: str, condition: str | None
     ) -> tuple[float, float]:
         """コース・距離・芝ダ・馬場状態別の基準タイムと標準偏差を返す。
@@ -284,11 +293,11 @@ class SpeedIndexCalculator(IndexCalculator):
         if cache_key in self._std_time_cache:
             return self._std_time_cache[cache_key]
 
-        value = self._compute_standard_time(course, distance, surface, condition)
+        value = await self._compute_standard_time(course, distance, surface, condition)
         self._std_time_cache[cache_key] = value
         return value
 
-    def _compute_standard_time(
+    async def _compute_standard_time(
         self, course: str, distance: int, surface: str, condition: str | None
     ) -> tuple[float, float]:
         """DB から基準タイムを算出する。
@@ -305,14 +314,14 @@ class SpeedIndexCalculator(IndexCalculator):
         Returns:
             (平均秒, 標準偏差秒)。サンプル MIN_STD_SAMPLE 未満は (0.0, 0.0)。
         """
-        query = (
-            self.db.query(
+        stmt = (
+            select(
                 func.avg(RaceResult.finish_time).label("avg_time"),
                 func.stddev_pop(RaceResult.finish_time).label("std_time"),
                 func.count(RaceResult.id).label("cnt"),
             )
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 Race.course == course,
                 Race.distance == distance,
                 Race.surface == surface,
@@ -322,9 +331,10 @@ class SpeedIndexCalculator(IndexCalculator):
         )
 
         if condition is not None:
-            query = query.filter(Race.condition == condition)
+            stmt = stmt.where(Race.condition == condition)
 
-        row = query.first()
+        result = await self.db.execute(stmt)
+        row = result.first()
 
         if row is None or row.cnt is None or int(row.cnt) < MIN_STD_SAMPLE:
             logger.debug(
@@ -337,6 +347,50 @@ class SpeedIndexCalculator(IndexCalculator):
         std = float(row.std_time) if row.std_time else 0.0
 
         return (avg, max(std, 0.01))  # 標準偏差は最低 0.01 秒
+
+    async def _preload_standard_times(self, race_id: int) -> None:
+        """レース内の全馬が使う基準タイムを事前に一括キャッシュする。
+
+        calculate_batch の前に呼び出すことで、_single_race_speed_score での
+        キャッシュ参照が正しく機能するようにする。
+
+        Args:
+            race_id: DB の races.id（このレースの出走馬の過去レース条件を収集）
+        """
+        # 対象レースの過去結果に登場するコース・距離・芝ダ・馬場の組み合わせを取得
+        entries_result = await self.db.execute(
+            select(RaceEntry).where(RaceEntry.race_id == race_id)
+        )
+        entries = entries_result.scalars().all()
+        horse_ids = [e.horse_id for e in entries]
+
+        if not horse_ids:
+            return
+
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
+        if not race:
+            return
+
+        # 過去結果のコース・距離・表面・馬場の組み合わせを収集
+        past_stmt = (
+            select(Race.course, Race.distance, Race.surface, Race.condition)
+            .join(RaceResult, RaceResult.race_id == Race.id)
+            .where(
+                RaceResult.horse_id.in_(horse_ids),
+                Race.date < race.date,
+                RaceResult.race_id != race_id,
+                RaceResult.finish_time.isnot(None),
+                RaceResult.abnormality_code == 0,
+            )
+            .distinct()
+        )
+        conditions_result = await self.db.execute(past_stmt)
+        combos = conditions_result.all()
+
+        for c_course, c_distance, c_surface, c_condition in combos:
+            if c_course and c_distance and c_surface:
+                await self._get_standard_time(c_course, c_distance or 0, c_surface or "", c_condition)
 
     @staticmethod
     def _weighted_average(scores: list[float]) -> float:

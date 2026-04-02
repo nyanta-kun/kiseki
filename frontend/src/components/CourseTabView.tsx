@@ -25,11 +25,15 @@ export function CourseTabView({ courseGroups }: Props) {
       >
         {courses.map((course) => {
           const hasAny = courseGroups[course].some((r) => r.has_indices);
+          const tabId = `tab-course-${course}`;
+          const panelId = `panel-course-${course}`;
           return (
             <button
               key={course}
+              id={tabId}
               role="tab"
               aria-selected={active === course}
+              aria-controls={panelId}
               onClick={() => setActive(course)}
               className={cn(
                 "flex-shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap",
@@ -61,7 +65,12 @@ export function CourseTabView({ courseGroups }: Props) {
       </div>
 
       {/* レース一覧 */}
-      <div role="tabpanel" aria-label={`${active}のレース一覧`} className="space-y-1.5">
+      <div
+        id={`panel-course-${active}`}
+        role="tabpanel"
+        aria-labelledby={`tab-course-${active}`}
+        className="space-y-1.5"
+      >
         {(courseGroups[active] ?? []).map((race) => (
           <RaceCard key={race.id} race={race} />
         ))}

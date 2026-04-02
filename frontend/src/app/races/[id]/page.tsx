@@ -1,11 +1,9 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 import { OddsData, RaceResult, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
-import { surfaceIcon, gradeClass, raceClassBadgeClass, raceClassShort, formatDate } from "@/lib/utils";
 import { EVSummary } from "@/components/EVSummary";
-import { RaceNav } from "@/components/RaceNav";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
+import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { auth } from "@/auth";
 
 type Params = Promise<{ id: string }>;
@@ -15,9 +13,16 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   try {
     const race = await fetchRace(parseInt(id));
     const title = `${race.course_name} ${race.race_number}R ${race.race_name ?? race.race_class_label ?? ""} | GallopLab`;
-    return { title, description: `${race.surface} ${race.distance}m ${race.condition ?? ""}`.trim() };
+    return {
+      title,
+      description: `${race.surface} ${race.distance}m ${race.condition ?? ""}`.trim(),
+      alternates: { canonical: `https://galloplab.com/races/${id}` },
+    };
   } catch {
-    return { title: `レース詳細 | GallopLab` };
+    return {
+      title: `レース詳細 | GallopLab`,
+      alternates: { canonical: `https://galloplab.com/races/${id}` },
+    };
   }
 }
 
@@ -51,7 +56,7 @@ export default async function RacePage({ params }: { params: Params }) {
       <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
         <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
         <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
-          <p className="text-3xl mb-2">📊</p>
+          <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
           <p>この レースの指数データがありません</p>
           <p className="text-xs mt-1">算出が完了していない可能性があります</p>
         </main>
@@ -99,70 +104,3 @@ export default async function RacePage({ params }: { params: Params }) {
   );
 }
 
-function formatPostTime(postTime: string | null): string {
-  if (!postTime || postTime.length < 4) return "";
-  return `${postTime.slice(0, 2)}:${postTime.slice(2, 4)}`;
-}
-
-function RaceSubHeader({
-  raceId,
-  race,
-  date,
-  allRaces,
-}: {
-  raceId: number;
-  race: Awaited<ReturnType<typeof fetchRace>> | null;
-  date: string;
-  allRaces: Race[];
-}) {
-  return (
-    <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
-      {/* レース情報 */}
-      <div className="max-w-3xl mx-auto px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <Link
-            href={`/races?date=${date}`}
-            className="text-blue-200 hover:text-white text-lg leading-none flex-shrink-0"
-            aria-label="レース一覧に戻る"
-          >
-            ←
-          </Link>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-white font-bold text-base leading-tight">
-                {race
-                  ? `${race.course_name} ${race.race_number}R ${race.race_name ?? race.race_class_label ?? ""}`
-                  : `Race #${raceId}`}
-              </h1>
-              {race?.grade && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${gradeClass(race.grade)}`}>
-                  {race.grade}
-                </span>
-              )}
-              {race && !race.grade && raceClassShort(race.race_class_label) && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${raceClassBadgeClass(race.race_class_label)}`}>
-                  {raceClassShort(race.race_class_label)}
-                </span>
-              )}
-            </div>
-            {race && (
-              <p className="text-blue-200 text-[11px] mt-0.5">
-                {formatDate(date)}
-                {race.post_time && (
-                  <span className="ml-1.5 font-medium text-white/90">{formatPostTime(race.post_time)} 発走</span>
-                )}
-                {" · "}{surfaceIcon(race.surface)} {race.surface} {race.distance}m
-                {race.condition ? ` · ${race.condition}` : ""}
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 前後ナビ + 競馬場タブ + レース番号 */}
-      {allRaces.length > 0 && (
-        <RaceNav currentRaceId={raceId} races={allRaces} />
-      )}
-    </div>
-  );
-}

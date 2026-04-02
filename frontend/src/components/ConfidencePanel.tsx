@@ -54,6 +54,11 @@ export function ConfidencePanel({ confidence }: Props) {
         <div className="flex-1">
           <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
             <div
+              role="progressbar"
+              aria-valuenow={confidence.score}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="信頼度スコア"
               className={`h-2.5 rounded-full transition-all ${cfg.bar}`}
               style={{ width: `${confidence.score}%` }}
             />

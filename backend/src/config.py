@@ -16,11 +16,34 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        return (
+        """SQLAlchemy 非同期接続 URL を生成する（asyncpg 用）。
+
+        本番環境では ssl=require を付与してDB接続を暗号化する。
+        """
+        base_url = (
+            f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+            f"?prepared_statement_cache_size=0"
+            f"&server_settings[search_path]={self.db_schema}"
+        )
+        if self.api_env == "production":
+            base_url += "&ssl=require"
+        return base_url
+
+    @property
+    def database_url_sync(self) -> str:
+        """SQLAlchemy 同期接続 URL を生成する（Alembic / psycopg2 用）。
+
+        本番環境では sslmode=require を付与してDB接続を暗号化する。
+        """
+        base_url = (
             f"postgresql://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
             f"?options=-csearch_path={self.db_schema}"
         )
+        if self.api_env == "production":
+            base_url += "&sslmode=require"
+        return base_url
 
     # --- JRA-VAN ---
     jravan_sid: str = ""

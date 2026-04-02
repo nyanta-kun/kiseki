@@ -9,7 +9,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Horse, NetkeibaRaceExtra, Race, RaceResult
 from ..db.session import get_db
@@ -17,7 +18,7 @@ from ..indices.composite import COMPOSITE_VERSION
 
 router = APIRouter(prefix="/api/horses", tags=["horses"])
 
-DbDep = Annotated[Session, Depends(get_db)]
+DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 class RaceHistoryEntry(BaseModel):
@@ -39,45 +40,45 @@ class RaceHistoryEntry(BaseModel):
 
 
 @router.get("/{horse_id}/history")
-def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
+async def get_horse_history(horse_id: int, db: DbDep) -> list[RaceHistoryEntry]:
     """馬の近走成績と指数推移を返す（最新5走）。"""
-    horse = db.query(Horse).filter(Horse.id == horse_id).first()
+    horse_result = await db.execute(select(Horse).where(Horse.id == horse_id))
+    horse = horse_result.scalar_one_or_none()
     if not horse:
         raise HTTPException(status_code=404, detail="Horse not found")
 
-    rows = (
-        db.query(RaceResult, Race)
+    stmt = (
+        select(RaceResult, Race)
         .join(Race, RaceResult.race_id == Race.id)
-        .filter(RaceResult.horse_id == horse_id)
-        .filter(RaceResult.finish_position.isnot(None))
+        .where(RaceResult.horse_id == horse_id)
+        .where(RaceResult.finish_position.isnot(None))
         .order_by(Race.date.desc())
         .limit(5)
-        .all()
     )
+    rows_result = await db.execute(stmt)
+    rows = rows_result.all()
 
     race_ids = [race.id for _, race in rows]
     indices: dict[int, CalculatedIndex] = {}
     extras: dict[int, NetkeibaRaceExtra] = {}
     if race_ids:
-        ci_rows = (
-            db.query(CalculatedIndex)
-            .filter(
+        ci_result = await db.execute(
+            select(CalculatedIndex).where(
                 CalculatedIndex.race_id.in_(race_ids),
                 CalculatedIndex.horse_id == horse_id,
                 CalculatedIndex.version == COMPOSITE_VERSION,
             )
-            .all()
         )
+        ci_rows = ci_result.scalars().all()
         indices = {ci.race_id: ci for ci in ci_rows}
 
-        extra_rows = (
-            db.query(NetkeibaRaceExtra)
-            .filter(
+        extra_result = await db.execute(
+            select(NetkeibaRaceExtra).where(
                 NetkeibaRaceExtra.race_id.in_(race_ids),
                 NetkeibaRaceExtra.horse_id == horse_id,
             )
-            .all()
         )
+        extra_rows = extra_result.scalars().all()
         extras = {ex.race_id: ex for ex in extra_rows}
 
     return [

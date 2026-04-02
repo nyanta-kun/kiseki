@@ -29,8 +29,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN, SPEED_INDEX_STD
@@ -61,11 +61,11 @@ class JockeyIndexCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
-            db: SQLAlchemy セッション
+            db: SQLAlchemy 非同期セッション
         """
         super().__init__(db)
         # 騎手統計のキャッシュ（jockey_id + surface + distance → raw_score）
@@ -75,7 +75,7 @@ class JockeyIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の騎手指数を算出する。
 
         Args:
@@ -85,21 +85,21 @@ class JockeyIndexCalculator(IndexCalculator):
         Returns:
             騎手指数（0-100, 平均50）。データ不足または騎手未登録時は SPEED_INDEX_MEAN。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
-        entry = (
-            self.db.query(RaceEntry)
-            .filter(
+        entry_result = await self.db.execute(
+            select(RaceEntry).where(
                 and_(
                     RaceEntry.race_id == race_id,
                     RaceEntry.horse_id == horse_id,
                 )
             )
-            .first()
         )
+        entry = entry_result.scalar_one_or_none()
         if not entry or entry.jockey_id is None:
             return SPEED_INDEX_MEAN
 
@@ -107,7 +107,7 @@ class JockeyIndexCalculator(IndexCalculator):
         surface = race.surface or ""
         distance = race.distance or 0
 
-        raw = self._get_jockey_raw_score(entry.jockey_id, before_date, surface, distance)
+        raw = await self._get_jockey_raw_score(entry.jockey_id, before_date, surface, distance)
         if raw is None:
             return SPEED_INDEX_MEAN
 
@@ -115,7 +115,7 @@ class JockeyIndexCalculator(IndexCalculator):
         # （calculate_batch での正規化を推奨）
         return round(max(INDEX_MIN, min(INDEX_MAX, raw)), 1)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の騎手指数を一括算出する。
 
         騎手単位で集計しN+1を回避する。全騎手のスコアを正規化（平均50, σ=10）して返す。
@@ -126,12 +126,14 @@ class JockeyIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: jockey_index} のdict。エントリが存在しない場合は空dict。
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
@@ -143,7 +145,7 @@ class JockeyIndexCalculator(IndexCalculator):
         jockey_ids = list({e.jockey_id for e in entries if e.jockey_id is not None})
 
         # 騎手ごとの過去成績を一括取得
-        jockey_stats = self._get_all_jockey_stats_batch(jockey_ids, before_date, surface, distance)
+        jockey_stats = await self._get_all_jockey_stats_batch(jockey_ids, before_date, surface, distance)
 
         # 有効スコアのみで正規化パラメータを算出
         valid_scores = [v for v in jockey_stats.values() if v is not None]
@@ -168,7 +170,7 @@ class JockeyIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _get_jockey_raw_score(
+    async def _get_jockey_raw_score(
         self,
         jockey_id: int,
         before_date: str,
@@ -192,12 +194,12 @@ class JockeyIndexCalculator(IndexCalculator):
         if cache_key in self._jockey_stats_cache:
             return self._jockey_stats_cache[cache_key]
 
-        rows = self._query_jockey_results(jockey_id, before_date, surface, distance)
+        rows = await self._query_jockey_results(jockey_id, before_date, surface, distance)
         score = self._compute_raw_score(rows, surface, distance)
         self._jockey_stats_cache[cache_key] = score
         return score
 
-    def _get_all_jockey_stats_batch(
+    async def _get_all_jockey_stats_batch(
         self,
         jockey_ids: list[int],
         before_date: str,
@@ -233,7 +235,7 @@ class JockeyIndexCalculator(IndexCalculator):
             return result
 
         # 未キャッシュ分を一括クエリ
-        rows_all = self._query_jockey_results_batch(missing_ids, before_date, surface, distance)
+        rows_all = await self._query_jockey_results_batch(missing_ids, before_date, surface, distance)
 
         for jid in missing_ids:
             rows = rows_all.get(jid, [])
@@ -244,7 +246,7 @@ class JockeyIndexCalculator(IndexCalculator):
 
         return result
 
-    def _query_jockey_results(
+    async def _query_jockey_results(
         self,
         jockey_id: int,
         before_date: str,
@@ -266,10 +268,10 @@ class JockeyIndexCalculator(IndexCalculator):
         """
         since_date = _calc_since_date(before_date, LOOKBACK_DAYS)
 
-        return (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.jockey_id == jockey_id,
                 Race.date >= since_date,
                 Race.date < before_date,
@@ -278,10 +280,11 @@ class JockeyIndexCalculator(IndexCalculator):
                 RaceResult.abnormality_code == 0,
             )
             .order_by(Race.date.desc())
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.all()
 
-    def _query_jockey_results_batch(
+    async def _query_jockey_results_batch(
         self,
         jockey_ids: list[int],
         before_date: str,
@@ -304,10 +307,10 @@ class JockeyIndexCalculator(IndexCalculator):
 
         since_date = _calc_since_date(before_date, LOOKBACK_DAYS)
 
-        rows = (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.jockey_id.in_(jockey_ids),
                 Race.date >= since_date,
                 Race.date < before_date,
@@ -316,8 +319,9 @@ class JockeyIndexCalculator(IndexCalculator):
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.jockey_id, Race.date.desc())
-            .all()
         )
+        result = await self.db.execute(stmt)
+        rows = result.all()
 
         result_map: dict[int, list[Any]] = defaultdict(list)
         for row in rows:

@@ -30,8 +30,8 @@ import math
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
@@ -79,11 +79,11 @@ class CompositeIndexCalculator:
     calculated_indices テーブルへ保存する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
-            db: SQLAlchemy セッション
+            db: SQLAlchemy 非同期セッション
         """
         self.db = db
         self._speed = SpeedIndexCalculator(db)
@@ -102,7 +102,7 @@ class CompositeIndexCalculator:
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate_and_save(self, race_id: int) -> list[dict]:
+    async def calculate_and_save(self, race_id: int) -> list[dict]:
         """レース全馬の総合指数を算出して calculated_indices へ upsert する。
 
         Args:
@@ -111,12 +111,14 @@ class CompositeIndexCalculator:
         Returns:
             [{"horse_id": int, "composite_index": float, ...}, ...] 算出結果リスト
         """
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             logger.warning(f"Race not found: race_id={race_id}")
             return []
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             logger.info(f"No entries for race_id={race_id}")
             return []
@@ -128,17 +130,17 @@ class CompositeIndexCalculator:
         )
 
         # 各指数を一括算出（N+1回避: calculate_batch を使用）
-        speed_map = self._speed.calculate_batch(race_id)
-        last3f_map = self._last3f.calculate_batch(race_id)
-        course_map = self._course.calculate_batch(race_id)
-        frame_map = self._frame.calculate_batch(race_id)
-        rotation_map = self._rotation.calculate_batch(race_id)
-        jockey_map = self._jockey.calculate_batch(race_id)
-        pace_map = self._pace.calculate_batch(race_id)
-        pedigree_map = self._pedigree.calculate_batch(race_id)
-        training_map = self._training.calculate_batch(race_id)
-        anagusa_map = self._anagusa.calculate_batch(race_id)
-        paddock_map = self._paddock.calculate_batch(race_id)
+        speed_map = await self._speed.calculate_batch(race_id)
+        last3f_map = await self._last3f.calculate_batch(race_id)
+        course_map = await self._course.calculate_batch(race_id)
+        frame_map = await self._frame.calculate_batch(race_id)
+        rotation_map = await self._rotation.calculate_batch(race_id)
+        jockey_map = await self._jockey.calculate_batch(race_id)
+        pace_map = await self._pace.calculate_batch(race_id)
+        pedigree_map = await self._pedigree.calculate_batch(race_id)
+        training_map = await self._training.calculate_batch(race_id)
+        anagusa_map = await self._anagusa.calculate_batch(race_id)
+        paddock_map = await self._paddock.calculate_batch(race_id)
 
         results = []
         for entry in entries:
@@ -163,12 +165,12 @@ class CompositeIndexCalculator:
         self._attach_probabilities(results)
 
         for row in results:
-            self._upsert(race_id, row["horse_id"], row)
+            await self._upsert(race_id, row["horse_id"], row)
 
         logger.info(f"総合指数算出完了: {len(results)} 頭")
         return results
 
-    def calculate_batch_for_date(self, date: str) -> list[dict]:
+    async def calculate_batch_for_date(self, date: str) -> list[dict]:
         """指定日の全レース・全馬の総合指数を算出して保存する。
 
         Args:
@@ -177,14 +179,17 @@ class CompositeIndexCalculator:
         Returns:
             全馬分の算出結果リスト（race_id・horse_id 付き）
         """
-        races = self.db.query(Race).filter(Race.date == date).order_by(Race.race_number).all()
+        races_result = await self.db.execute(
+            select(Race).where(Race.date == date).order_by(Race.race_number)
+        )
+        races = races_result.scalars().all()
         if not races:
             logger.warning(f"指定日にレースなし: {date}")
             return []
 
         all_results = []
         for race in races:
-            rows = self.calculate_and_save(race.id)
+            rows = await self.calculate_and_save(race.id)
             for row in rows:
                 row["race_id"] = race.id
                 row["date"] = date
@@ -356,7 +361,7 @@ class CompositeIndexCalculator:
 
         return place_probs
 
-    def _upsert(self, race_id: int, horse_id: int, data: dict) -> None:
+    async def _upsert(self, race_id: int, horse_id: int, data: dict) -> None:
         """calculated_indices へ upsert する（同 race_id + horse_id + version は上書き）。
 
         Args:
@@ -364,17 +369,16 @@ class CompositeIndexCalculator:
             horse_id: DB の horses.id
             data: _compute_composite の戻り値
         """
-        existing = (
-            self.db.query(CalculatedIndex)
-            .filter(
+        existing_result = await self.db.execute(
+            select(CalculatedIndex).where(
                 and_(
                     CalculatedIndex.race_id == race_id,
                     CalculatedIndex.horse_id == horse_id,
                     CalculatedIndex.version == COMPOSITE_VERSION,
                 )
             )
-            .first()
         )
+        existing = existing_result.scalar_one_or_none()
 
         win_prob = Decimal(str(data["win_probability"])) if "win_probability" in data else None
         place_prob = (

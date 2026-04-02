@@ -29,8 +29,8 @@ import logging
 import statistics
 from dataclasses import dataclass
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Pedigree, Race, RaceEntry
 from ..utils.constants import SPEED_INDEX_MEAN
@@ -141,7 +141,7 @@ class SireStatsCache:
     pedigrees が空の場合は stats も空のまま（全馬ニュートラル）。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self._loaded = False
         # {sire_name → {factor → {value → _CondStats}}}
@@ -151,21 +151,24 @@ class SireStatsCache:
         # {course_code → grass_type}
         self.course_grass: dict[str, str] = {}
 
-    def ensure_loaded(self) -> None:
+    async def ensure_loaded(self) -> None:
         """未ロードの場合のみ集計を実行する。"""
         if not self._loaded:
-            self._load()
+            await self._load()
             self._loaded = True
 
     # ──────────────────────────────────────────
     # ロード処理
     # ──────────────────────────────────────────
 
-    def _load(self) -> None:
+    async def _load(self) -> None:
         """種牡馬別条件統計を DB から一括集計する。"""
         # pedigrees が空ならスキップ
         try:
-            cnt = self.db.execute(text("SELECT COUNT(*) FROM keiba.pedigrees")).scalar()
+            cnt_result = await self.db.execute(
+                text("SELECT COUNT(*) FROM keiba.pedigrees")
+            )
+            cnt = cnt_result.scalar()
         except Exception:
             cnt = 0
         if not cnt:
@@ -174,9 +177,10 @@ class SireStatsCache:
 
         # コース特徴（洋芝/野芝）をロード
         try:
-            rows = self.db.execute(
+            rows_result = await self.db.execute(
                 text("SELECT course_code, grass_type FROM keiba.racecourse_features")
-            ).fetchall()
+            )
+            rows = rows_result.fetchall()
             self.course_grass = {r[0]: r[1] for r in rows}
         except Exception as e:
             logger.warning(f"racecourse_features 取得失敗: {e}")
@@ -184,7 +188,7 @@ class SireStatsCache:
         jra_in = "'" + "','".join(JRA_COURSES) + "'"
 
         # 父（sire）の統計
-        self._load_factor(
+        await self._load_factor(
             "surface",
             f"""
             SELECT p.sire,
@@ -201,7 +205,7 @@ class SireStatsCache:
         """,
         )
 
-        self._load_factor(
+        await self._load_factor(
             "dist_cat",
             f"""
             SELECT p.sire,
@@ -221,7 +225,7 @@ class SireStatsCache:
         """,
         )
 
-        self._load_factor(
+        await self._load_factor(
             "course",
             f"""
             SELECT p.sire, ra.course,
@@ -237,7 +241,7 @@ class SireStatsCache:
         """,
         )
 
-        self._load_factor(
+        await self._load_factor(
             "grass",
             f"""
             SELECT p.sire, rf.grass_type,
@@ -255,7 +259,7 @@ class SireStatsCache:
         """,
         )
 
-        self._load_factor(
+        await self._load_factor(
             "weight",
             f"""
             SELECT p.sire,
@@ -277,7 +281,7 @@ class SireStatsCache:
         )
 
         # 母父（sire_of_dam）の統計（父と同じ因子を集計）
-        self._load_factor(
+        await self._load_factor(
             "surface",
             f"""
             SELECT p.sire_of_dam,
@@ -301,7 +305,7 @@ class SireStatsCache:
 
         logger.info(f"SireStatsCache: {len(self.stats):,}種牡馬分の統計を集計完了")
 
-    def _load_factor(self, factor_name: str, sql: str, merge: bool = False) -> None:
+    async def _load_factor(self, factor_name: str, sql: str, merge: bool = False) -> None:
         """SQL結果をキャッシュに格納する。
 
         Args:
@@ -310,7 +314,8 @@ class SireStatsCache:
             merge: True のとき既存エントリが存在する場合はスキップする
         """
         try:
-            rows = self.db.execute(text(sql)).fetchall()
+            result = await self.db.execute(text(sql))
+            rows = result.fetchall()
         except Exception as e:
             logger.warning(f"SireStatsCache._load_factor({factor_name}): {e}")
             return
@@ -422,7 +427,7 @@ class PedigreeIndexCalculator(IndexCalculator):
     初回 calculate_batch 呼び出し時に SireStatsCache を初期化する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
         self._cache = SireStatsCache(db)
 
@@ -430,7 +435,7 @@ class PedigreeIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ──────────────────────────────────────────
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
+    async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の血統指数を算出する。
 
         Args:
@@ -440,26 +445,32 @@ class PedigreeIndexCalculator(IndexCalculator):
         Returns:
             血統指数（0-100）。データ未登録時は SPEED_INDEX_MEAN。
         """
-        self._cache.ensure_loaded()
+        await self._cache.ensure_loaded()
 
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             return SPEED_INDEX_MEAN
 
-        pedigree = self.db.query(Pedigree).filter(Pedigree.horse_id == horse_id).first()
+        ped_result = await self.db.execute(
+            select(Pedigree).where(Pedigree.horse_id == horse_id)
+        )
+        pedigree = ped_result.scalar_one_or_none()
         if pedigree is None:
             return SPEED_INDEX_MEAN
 
-        entry = (
-            self.db.query(RaceEntry)
-            .filter(RaceEntry.race_id == race_id, RaceEntry.horse_id == horse_id)
-            .first()
+        entry_result = await self.db.execute(
+            select(RaceEntry).where(
+                RaceEntry.race_id == race_id,
+                RaceEntry.horse_id == horse_id,
+            )
         )
+        entry = entry_result.scalar_one_or_none()
         weight_carried = float(entry.weight_carried) if entry and entry.weight_carried else None
 
         return self._compute_score(pedigree, race, weight_carried)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の血統指数を一括算出する。
 
         Args:
@@ -468,18 +479,23 @@ class PedigreeIndexCalculator(IndexCalculator):
         Returns:
             {horse_id: pedigree_index} の dict。エントリなし時は空 dict。
         """
-        self._cache.ensure_loaded()
+        await self._cache.ensure_loaded()
 
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             return {}
 
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
-        pedigrees = self.db.query(Pedigree).filter(Pedigree.horse_id.in_(horse_ids)).all()
+        pedigrees_result = await self.db.execute(
+            select(Pedigree).where(Pedigree.horse_id.in_(horse_ids))
+        )
+        pedigrees = pedigrees_result.scalars().all()
         ped_map: dict[int, Pedigree] = {p.horse_id: p for p in pedigrees}
         weight_map: dict[int, float | None] = {
             e.horse_id: (float(e.weight_carried) if e.weight_carried else None) for e in entries

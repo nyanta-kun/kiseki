@@ -6,6 +6,7 @@ DBに格納済みのレース・出馬表・成績データを返すエンドポ
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from typing import Annotated
 
 from fastapi import (
@@ -19,10 +20,11 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select, tuple_
+from sqlalchemy import text as _text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult
+from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, Trainer
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence
@@ -50,7 +52,7 @@ def _check_ws_origin(ws: WebSocket) -> None:
     if origin not in _ALLOWED_ORIGINS:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
 
-DbDep = Annotated[Session, Depends(get_db)]
+DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 # JRA 2桁コード → sekito.anagusa course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -134,36 +136,34 @@ def _compute_upside_scores(horses: list[HorseIndexOut]) -> None:
         h.upside_score = round(raw_scores[i] / max_score, 4)
 
 
-def _fetch_anagusa_picks(db: Session, race: Race) -> dict[int, str]:
+async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
     """sekito.anagusa からレースのピック情報を取得する。
 
     Returns:
         {horse_no: rank} — A/B/C のいずれか
     """
-    from sqlalchemy import text as _text
-
     sekito_code = _JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
         return {}
     race_date = f"{race.date[:4]}-{race.date[4:6]}-{race.date[6:8]}"
-    rows = db.execute(
+    result = await db.execute(
         _text(
             "SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"
         ),
         {"d": race_date, "c": sekito_code, "r": race.race_number},
-    ).fetchall()
+    )
+    rows = result.fetchall()
     return {r[0]: r[1] for r in rows if r[1] in ("A", "B", "C")}
 
 
-def _anagusa_picks_for_date(db: Session, date: str) -> set[tuple[str, int]]:
+async def _anagusa_picks_for_date(db: AsyncSession, date: str) -> set[tuple[str, int]]:
     """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
-    from sqlalchemy import text as _text
-
     race_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
-    rows = db.execute(
+    result = await db.execute(
         _text("SELECT course_code, race_no FROM sekito.anagusa WHERE date = :d"),
         {"d": race_date},
-    ).fetchall()
+    )
+    rows = result.fetchall()
     return {(r[0], r[1]) for r in rows}
 
 
@@ -276,7 +276,7 @@ class OddsOut(BaseModel):
 # エンドポイント
 # -------------------------------------------------------------------
 @router.get("/nearest-date")
-def get_nearest_race_date(
+async def get_nearest_race_date(
     db: DbDep,
     from_date: str = Query(..., alias="from", description="基準日 YYYYMMDD"),
     direction: str = Query(..., description="prev | next"),
@@ -286,81 +286,78 @@ def get_nearest_race_date(
     開催データが存在する日付のみ対象とする（平日等はスキップ）。
     """
     if direction == "prev":
-        result = (
-            db.query(Race.date)
-            .filter(Race.date < from_date)
+        stmt = (
+            select(Race.date)
+            .where(Race.date < from_date)
             .order_by(Race.date.desc())
             .limit(1)
-            .scalar()
         )
     else:
-        result = (
-            db.query(Race.date)
-            .filter(Race.date > from_date)
+        stmt = (
+            select(Race.date)
+            .where(Race.date > from_date)
             .order_by(Race.date.asc())
             .limit(1)
-            .scalar()
         )
-    if not result:
+    result = await db.execute(stmt)
+    race_date = result.scalar()
+    if not race_date:
         raise HTTPException(status_code=404, detail="No adjacent race date found")
-    return {"date": result}
+    return {"date": race_date}
 
 
 @router.get("")
-def list_races(
+async def list_races(
     db: DbDep,
     date: str = Query(..., description="対象日付 YYYYMMDD"),
     course: str | None = Query(None, description="場コード (01-10) または場名"),
 ) -> list[RaceOut]:
     """指定日のレース一覧を返す。has_indices=true は指数算出済みを示す。"""
-    q = db.query(Race).filter(Race.date == date)
+    stmt = select(Race).where(Race.date == date)
     if course:
         if len(course) <= 2 and course.isdigit():
-            q = q.filter(Race.course == course)
+            stmt = stmt.where(Race.course == course)
         else:
-            q = q.filter(Race.course_name == course)
-    races = q.order_by(Race.race_number).all()
+            stmt = stmt.where(Race.course_name == course)
+    stmt = stmt.order_by(Race.race_number)
+    result = await db.execute(stmt)
+    races = result.scalars().all()
 
     # 算出済み指数を一括取得（N+1回避）: 各レースの全 composite_index を取得
     race_ids = [r.id for r in races]
     # 各レースで利用可能な最大バージョンを取得
-    from sqlalchemy import func
-
     best_versions: dict[int, int] = {}
     if race_ids:
-        for rid, ver in (
-            db.query(CalculatedIndex.race_id, func.max(CalculatedIndex.version))
-            .filter(CalculatedIndex.race_id.in_(race_ids))
+        ver_stmt = (
+            select(CalculatedIndex.race_id, func.max(CalculatedIndex.version))
+            .where(CalculatedIndex.race_id.in_(race_ids))
             .group_by(CalculatedIndex.race_id)
-            .all()
-        ):
+        )
+        ver_result = await db.execute(ver_stmt)
+        for rid, ver in ver_result.all():
             best_versions[rid] = min(ver, COMPOSITE_VERSION)
 
     # 各レースの composite_index 一覧を取得
-    from collections import defaultdict
-
     race_indices: dict[int, list[float]] = defaultdict(list)
     if best_versions:
-        from sqlalchemy import tuple_
-
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
-        rows = (
-            db.query(
+        idx_stmt = (
+            select(
                 CalculatedIndex.race_id,
                 CalculatedIndex.composite_index,
             )
-            .filter(tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs))
-            .all()
+            .where(tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs))
         )
-        for rid, ci in rows:
+        idx_result = await db.execute(idx_stmt)
+        for rid, ci in idx_result.all():
             race_indices[rid].append(float(ci))
 
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
 
     # has_anagusa: sekito.anagusa のピック有無で判定（スコア閾値でなく実ピック）
-    anagusa_picks_set = _anagusa_picks_for_date(db, date)
+    anagusa_picks_set = await _anagusa_picks_for_date(db, date)
 
-    result = []
+    result_list = []
     for r in races:
         out = RaceOut.model_validate(r)
         out.has_indices = r.id in indexed_ids
@@ -370,37 +367,41 @@ def list_races(
             conf = calculate_race_confidence(race_indices[r.id], r.head_count)
             out.confidence_score = conf["score"]
             out.confidence_label = conf["label"]
-        result.append(out)
-    return result
+        result_list.append(out)
+    return result_list
 
 
 @router.get("/{race_id}")
-def get_race(race_id: int, db: DbDep) -> RaceOut:
+async def get_race(race_id: int, db: DbDep) -> RaceOut:
     """レース詳細を返す。"""
-    race = db.query(Race).filter(Race.id == race_id).first()
+    result = await db.execute(select(Race).where(Race.id == race_id))
+    race = result.scalar_one_or_none()
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
     return RaceOut.model_validate(race)
 
 
 @router.get("/{race_id}/entries")
-def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
+async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
     """レースの出馬表を返す。"""
-    race = db.query(Race).filter(Race.id == race_id).first()
+    race_result = await db.execute(select(Race).where(Race.id == race_id))
+    race = race_result.scalar_one_or_none()
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
-    entries = (
-        db.query(RaceEntry, Horse, Jockey)
+    stmt = (
+        select(RaceEntry, Horse, Jockey, Trainer)
         .join(Horse, RaceEntry.horse_id == Horse.id)
         .outerjoin(Jockey, RaceEntry.jockey_id == Jockey.id)
-        .filter(RaceEntry.race_id == race_id)
+        .outerjoin(Trainer, RaceEntry.trainer_id == Trainer.id)
+        .where(RaceEntry.race_id == race_id)
         .order_by(RaceEntry.horse_number)
-        .all()
     )
+    entries_result = await db.execute(stmt)
+    entries = entries_result.all()
 
     result = []
-    for entry, horse, jockey in entries:
+    for entry, horse, jockey, trainer in entries:
         result.append(
             EntryOut(
                 id=entry.id,
@@ -408,7 +409,7 @@ def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
                 horse_number=entry.horse_number,
                 horse_name=horse.name,
                 jockey_name=jockey.name if jockey else None,
-                trainer_name=None,  # Trainerは別途join対応
+                trainer_name=trainer.name if trainer else None,
                 weight_carried=float(entry.weight_carried) if entry.weight_carried else None,
                 horse_weight=entry.horse_weight,
                 weight_change=entry.weight_change,
@@ -418,41 +419,43 @@ def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
 
 
 @router.get("/{race_id}/indices")
-def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
+async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     """レースの算出指数一覧を返す（composite_index 降順）。
 
     win_probability / place_probability は Softmax + Harville 式で算出。
     未算出の場合は null を返す。
     """
-    race = db.query(Race).filter(Race.id == race_id).first()
+    race_result = await db.execute(select(Race).where(Race.id == race_id))
+    race = race_result.scalar_one_or_none()
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
     # v7 がなければ最新バージョンにフォールバック
-    latest_version = (
-        db.query(CalculatedIndex.version)
-        .filter(CalculatedIndex.race_id == race_id)
+    ver_result = await db.execute(
+        select(CalculatedIndex.version)
+        .where(CalculatedIndex.race_id == race_id)
         .order_by(CalculatedIndex.version.desc())
         .limit(1)
-        .scalar()
     )
+    latest_version = ver_result.scalar()
     if latest_version is None:
         raise HTTPException(status_code=404, detail="No indices calculated for this race")
     use_version = COMPOSITE_VERSION if latest_version >= COMPOSITE_VERSION else latest_version
 
-    rows = (
-        db.query(CalculatedIndex, RaceEntry, Horse)
+    stmt = (
+        select(CalculatedIndex, RaceEntry, Horse)
         .join(
             RaceEntry,
             (RaceEntry.race_id == CalculatedIndex.race_id)
             & (RaceEntry.horse_id == CalculatedIndex.horse_id),
         )
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
-        .filter(CalculatedIndex.race_id == race_id)
-        .filter(CalculatedIndex.version == use_version)
+        .where(CalculatedIndex.race_id == race_id)
+        .where(CalculatedIndex.version == use_version)
         .order_by(CalculatedIndex.composite_index.desc().nullslast())
-        .all()
     )
+    rows_result = await db.execute(stmt)
+    rows = rows_result.all()
 
     if not rows:
         raise HTTPException(status_code=404, detail="No indices calculated for this race")
@@ -492,7 +495,7 @@ def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     ]
 
     # sekito.anagusa からランク情報を付与
-    picks = _fetch_anagusa_picks(db, race)
+    picks = await _fetch_anagusa_picks(db, race)
     for h in horses:
         h.anagusa_rank = picks.get(h.horse_number)
 
@@ -511,19 +514,21 @@ def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
 
 
 @router.get("/{race_id}/results")
-def get_results(race_id: int, db: DbDep) -> list[ResultOut]:
+async def get_results(race_id: int, db: DbDep) -> list[ResultOut]:
     """レースの成績を返す。"""
-    race = db.query(Race).filter(Race.id == race_id).first()
+    race_result = await db.execute(select(Race).where(Race.id == race_id))
+    race = race_result.scalar_one_or_none()
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
-    results = (
-        db.query(RaceResult, Horse)
+    stmt = (
+        select(RaceResult, Horse)
         .join(Horse, RaceResult.horse_id == Horse.id)
-        .filter(RaceResult.race_id == race_id)
+        .where(RaceResult.race_id == race_id)
         .order_by(RaceResult.finish_position.asc().nullslast())
-        .all()
     )
+    results_result = await db.execute(stmt)
+    results = results_result.all()
 
     return [
         ResultOut(
@@ -538,7 +543,7 @@ def get_results(race_id: int, db: DbDep) -> list[ResultOut]:
 
 
 @router.get("/{race_id}/odds")
-def get_odds(race_id: int, db: DbDep) -> OddsOut:
+async def get_odds(race_id: int, db: DbDep) -> OddsOut:
     """レースの最新単勝・複勝オッズを馬番ごとに返す。"""
     win_odds: dict[str, float] = {}
     place_odds: dict[str, float] = {}
@@ -550,15 +555,13 @@ def get_odds(race_id: int, db: DbDep) -> OddsOut:
             .where(OddsHistory.race_id == race_id, OddsHistory.bet_type == bet_type)
             .scalar_subquery()
         )
-        rows = (
-            db.query(OddsHistory)
-            .filter(
-                OddsHistory.race_id == race_id,
-                OddsHistory.bet_type == bet_type,
-                OddsHistory.fetched_at == latest_at_subq,
-            )
-            .all()
+        stmt = select(OddsHistory).where(
+            OddsHistory.race_id == race_id,
+            OddsHistory.bet_type == bet_type,
+            OddsHistory.fetched_at == latest_at_subq,
         )
+        odds_result = await db.execute(stmt)
+        rows = odds_result.scalars().all()
         for row in rows:
             if row.odds is not None:
                 target[row.combination] = float(row.odds)
@@ -592,7 +595,7 @@ async def results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
     await results_manager.connect(race_id, ws)
     try:
         # 接続時に現在の成績を即送信（ページリロード不要にするため）
-        current = _fetch_results_payload(race_id, db)
+        current = await _fetch_results_payload(race_id, db)
         if current:
             await ws.send_json(current)
         while True:
@@ -601,17 +604,18 @@ async def results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
         results_manager.disconnect(race_id, ws)
 
 
-def _fetch_results_payload(race_id: int, db) -> list[dict]:
+async def _fetch_results_payload(race_id: int, db: AsyncSession) -> list[dict]:
     """指定レースの成績をWebSocket送信用リストで返す。"""
     from ..db.models import Horse, RaceResult
 
-    rows = (
-        db.query(RaceResult, Horse)
+    stmt = (
+        select(RaceResult, Horse)
         .join(Horse, RaceResult.horse_id == Horse.id)
-        .filter(RaceResult.race_id == race_id)
+        .where(RaceResult.race_id == race_id)
         .order_by(RaceResult.finish_position.asc().nullslast())
-        .all()
     )
+    result = await db.execute(stmt)
+    rows = result.all()
     return [
         {
             "horse_number": r.horse_number,

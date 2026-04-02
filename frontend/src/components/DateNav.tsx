@@ -37,9 +37,11 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
       <button
         onClick={() => prevDate && go(prevDate)}
         disabled={!prevDate}
+        aria-disabled={!prevDate}
+        aria-label="前の開催日へ"
         className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
       >
-        ← 前開催
+        <span aria-hidden="true">←</span> 前開催
       </button>
 
       {/* 中央: 今日ボタン + 日付 + カレンダーアイコン */}
@@ -84,9 +86,11 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
       <button
         onClick={() => nextDate && go(nextDate)}
         disabled={!nextDate}
+        aria-disabled={!nextDate}
+        aria-label="次の開催日へ"
         className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
       >
-        翌開催 →
+        翌開催 <span aria-hidden="true">→</span>
       </button>
     </div>
   );

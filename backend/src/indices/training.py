@@ -39,8 +39,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Race, RaceEntry, RaceResult
 from ..utils.constants import SPEED_INDEX_MEAN
@@ -139,7 +139,7 @@ class TrainingIndexCalculator(IndexCalculator):
     IndexCalculator を継承し calculate / calculate_batch を提供する。
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
         # コース・距離別 基準タイム統計キャッシュ {(course, distance, surface): (avg, std, cnt)}
         self._baseline_cache: dict[tuple, tuple[float, float, int]] = {}
@@ -148,52 +148,58 @@ class TrainingIndexCalculator(IndexCalculator):
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def calculate(self, race_id: int, horse_id: int) -> float:
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+    async def calculate(self, race_id: int, horse_id: int) -> float:
+        """単一馬の調教指数を算出する。"""
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             return NEUTRAL
-        rows = self._fetch_past_results([horse_id], race.date, race_id)
-        return self._compute(rows.get(horse_id, []), race)
+        rows_map = await self._fetch_past_results([horse_id], race.date, race_id)
+        return await self._compute(rows_map.get(horse_id, []), race)
 
-    def calculate_batch(self, race_id: int) -> dict[int, float]:
-        race = self.db.query(Race).filter(Race.id == race_id).first()
+    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+        """レース全馬の調教指数を一括算出する。"""
+        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
+        race = race_result.scalar_one_or_none()
         if not race:
             return {}
-        entries = self.db.query(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
+        entries = entries_result.scalars().all()
         if not entries:
             return {}
 
         horse_ids = [e.horse_id for e in entries]
-        rows_map = self._fetch_past_results(horse_ids, race.date, race_id)
+        rows_map = await self._fetch_past_results(horse_ids, race.date, race_id)
 
-        return {
-            entry.horse_id: self._compute(rows_map.get(entry.horse_id, []), race)
-            for entry in entries
-        }
+        result: dict[int, float] = {}
+        for entry in entries:
+            result[entry.horse_id] = await self._compute(rows_map.get(entry.horse_id, []), race)
+        return result
 
     # ------------------------------------------------------------------
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _fetch_past_results(
+    async def _fetch_past_results(
         self, horse_ids: list[int], before_date: str, exclude_race_id: int
     ) -> dict[int, list[Any]]:
         """複数馬の直近レース結果を一括取得する（最大 LOOKBACK_RACES 件）。"""
         if not horse_ids:
             return {}
 
-        rows = (
-            self.db.query(RaceResult, Race)
+        stmt = (
+            select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
-            .filter(
+            .where(
                 RaceResult.horse_id.in_(horse_ids),
                 Race.date < before_date,
                 RaceResult.race_id != exclude_race_id,
                 RaceResult.abnormality_code == 0,
             )
             .order_by(RaceResult.horse_id, Race.date.desc())
-            .all()
         )
+        db_result = await self.db.execute(stmt)
+        rows = db_result.all()
 
         result_map: dict[int, list[Any]] = defaultdict(list)
         count_map: dict[int, int] = defaultdict(int)
@@ -205,7 +211,7 @@ class TrainingIndexCalculator(IndexCalculator):
 
         return dict(result_map)
 
-    def _compute(self, rows: list[Any], race: Race) -> float:
+    async def _compute(self, rows: list[Any], race: Race) -> float:
         """3軸スコアを合成して調教指数を返す。
 
         Args:
@@ -218,7 +224,7 @@ class TrainingIndexCalculator(IndexCalculator):
         if not rows:
             return NEUTRAL
 
-        time_score = self._time_trend_score(rows, race)
+        time_score = await self._time_trend_score(rows, race)
         last3f_score = self._last3f_trend_score(rows[:LAST3F_LOOKBACK])
         weight_score = _weight_cond_score(
             int(rows[0].RaceResult.weight_change)
@@ -229,7 +235,7 @@ class TrainingIndexCalculator(IndexCalculator):
         composite = time_score * W_TIME_TREND + last3f_score * W_LAST3F + weight_score * W_WEIGHT
         return round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
 
-    def _time_trend_score(self, rows: list[Any], ref_race: Race) -> float:
+    async def _time_trend_score(self, rows: list[Any], ref_race: Race) -> float:
         """直近レースのタイム偏差スコアのトレンドから調教スコアを算出する。
 
         Args:
@@ -246,7 +252,7 @@ class TrainingIndexCalculator(IndexCalculator):
             r: Race = row.Race
             if rr.finish_time is None:
                 continue
-            dev = self._time_deviation(float(rr.finish_time), r)
+            dev = await self._time_deviation(float(rr.finish_time), r)
             if dev is not None:
                 scored.append(dev)
 
@@ -257,7 +263,7 @@ class TrainingIndexCalculator(IndexCalculator):
         # 1走あたり2点改善が「良好トレンド」の目安
         return _trend_to_score(slope, scale=2.0)
 
-    def _time_deviation(self, finish_time: float, race: Race) -> float | None:
+    async def _time_deviation(self, finish_time: float, race: Race) -> float | None:
         """指定レースのタイムを同コース・距離・馬場の基準と比較してスコア化する。
 
         Args:
@@ -269,22 +275,23 @@ class TrainingIndexCalculator(IndexCalculator):
         """
         key = (race.course, race.distance, race.surface)
         if key not in self._baseline_cache:
-            row = (
-                self.db.query(
+            stmt = (
+                select(
                     func.avg(RaceResult.finish_time).label("avg"),
                     func.stddev_pop(RaceResult.finish_time).label("std"),
                     func.count(RaceResult.id).label("cnt"),
                 )
                 .join(Race, RaceResult.race_id == Race.id)
-                .filter(
+                .where(
                     Race.course == race.course,
                     Race.distance == race.distance,
                     Race.surface == race.surface,
                     RaceResult.finish_time.isnot(None),
                     RaceResult.abnormality_code == 0,
                 )
-                .first()
             )
+            result = await self.db.execute(stmt)
+            row = result.first()
             if row and row.cnt and int(row.cnt) >= MIN_BASELINE_SAMPLE:
                 self._baseline_cache[key] = (float(row.avg), float(row.std or 1.0), int(row.cnt))
             else:

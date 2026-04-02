@@ -3,11 +3,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
-  // 開発時バイパス（本番では絶対に動作しない）
-  if (process.env.NODE_ENV === "development" && process.env.AUTH_BYPASS_DEV === "true") {
-    return NextResponse.next();
-  }
-
   const pathname = req.nextUrl.pathname;
 
   // _next 静的アセット・Auth API ルートは素通し
@@ -32,7 +27,8 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 
   // トップページ・ログインページは認証不要
   if (pathname === "/" || pathname === "/login") {
-    if (token) {
+    // is_active=false のトークンはログインページに留まらせる（リダイレクトループ防止）
+    if (token && token.is_active !== false) {
       return NextResponse.redirect(new URL("/races", req.nextUrl.origin));
     }
     // 未認証の / は /login へ直接リダイレクト（callbackUrl なし）

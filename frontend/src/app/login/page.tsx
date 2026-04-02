@@ -22,6 +22,7 @@ function LoginForm() {
       className="h-screen w-full flex flex-col md:flex-row items-center justify-center relative overflow-hidden"
       style={{ background: "#090d1a" }}
     >
+      <h1 className="sr-only">GallopLab ログイン</h1>
       {/* ---- 左（PC）/ 上（スマホ）: image.png ---- */}
       <div className="relative z-10 flex items-center justify-center w-full md:w-1/2 md:h-full flex-shrink-0 mt-8 md:mt-0">
         <Image
@@ -62,7 +63,9 @@ function LoginForm() {
             </p>
 
             <form action={formAction} className="space-y-4">
+              <label htmlFor="password" className="sr-only">合言葉</label>
               <input
+                id="password"
                 name="password"
                 type="password"
                 placeholder="合言葉を入力"

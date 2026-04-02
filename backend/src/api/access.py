@@ -19,10 +19,11 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import InvitationCode, Race, User, UserAccessGrant
-from .users import ApiKeyDep, DbDep, get_user_premium_status
+from .users import AdminRoleDep, ApiKeyDep, DbDep, get_user_premium_status
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +45,20 @@ def _generate_code() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(12))
 
 
-def _calc_weeks_expiry(weeks_count: int, db: Session) -> datetime:
+async def _calc_weeks_expiry(weeks_count: int, db: AsyncSession) -> datetime:
     """N 競馬週後の日曜 23:59:59 JST を返す。
 
     競馬週 = 少なくとも1レースが存在する月〜日の週。
     DB の races テーブルから将来の開催日を取得して集計する。
     """
     today_str = date_type.today().strftime("%Y%m%d")
-    rows = (
-        db.query(Race.date)
-        .filter(Race.date > today_str)
+    result = await db.execute(
+        select(Race.date)
+        .where(Race.date > today_str)
         .distinct()
         .order_by(Race.date)
-        .all()
     )
+    rows = result.all()
     seen: set[tuple[int, int]] = set()
     sundays: list[date_type] = []
     for (ds,) in rows:
@@ -158,7 +159,7 @@ class GrantAccessRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @access_router.post("/{user_id}/redeem-code", response_model=AccessStatusResponse)
-def redeem_code(
+async def redeem_code(
     user_id: int,
     body: RedeemCodeRequest,
     _: ApiKeyDep,
@@ -166,14 +167,13 @@ def redeem_code(
 ) -> AccessStatusResponse:
     """招待コードを使ってアクセスを付与する。"""
     code_str = body.code.upper().strip()
-    code = (
-        db.query(InvitationCode)
-        .filter(
+    code_result = await db.execute(
+        select(InvitationCode).where(
             InvitationCode.code == code_str,
             InvitationCode.is_active.is_(True),
         )
-        .first()
     )
+    code = code_result.scalar_one_or_none()
     if code is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="コードが見つかりません"
@@ -183,14 +183,14 @@ def redeem_code(
             status_code=status.HTTP_409_CONFLICT, detail="このコードは使用済みです"
         )
 
-    user = db.get(User, user_id)
+    user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     if code.grant_type == "unlimited":
         expires_at = None
     elif code.grant_type == "weeks":
-        expires_at = _calc_weeks_expiry(code.weeks_count or 1, db)
+        expires_at = await _calc_weeks_expiry(code.weeks_count or 1, db)
     elif code.grant_type == "date":
         if code.target_date is None:
             raise HTTPException(
@@ -214,26 +214,26 @@ def redeem_code(
     )
     db.add(grant)
     code.use_count += 1
-    db.commit()
+    await db.commit()
     logger.info(
         "コード使用: user_id=%d code=%s grant_type=%s expires_at=%s",
         user_id, code.code, code.grant_type, expires_at,
     )
 
-    is_premium, access_expires_at = get_user_premium_status(user_id, db)
+    is_premium, access_expires_at = await get_user_premium_status(user_id, db)
     return AccessStatusResponse(
         user_id=user_id, is_premium=is_premium, access_expires_at=access_expires_at
     )
 
 
 @access_router.get("/{user_id}/access", response_model=AccessStatusResponse)
-def get_access_status(
+async def get_access_status(
     user_id: int,
     _: ApiKeyDep,
     db: DbDep,
 ) -> AccessStatusResponse:
     """ユーザーのアクセス状態を返す。"""
-    is_premium, access_expires_at = get_user_premium_status(user_id, db)
+    is_premium, access_expires_at = await get_user_premium_status(user_id, db)
     return AccessStatusResponse(
         user_id=user_id, is_premium=is_premium, access_expires_at=access_expires_at
     )
@@ -244,18 +244,23 @@ def get_access_status(
 # ---------------------------------------------------------------------------
 
 @access_admin_router.get("/invitation-codes", response_model=list[InvitationCodeResponse])
-def list_invitation_codes(
+async def list_invitation_codes(
     _: ApiKeyDep,
+    __: AdminRoleDep,
     db: DbDep,
 ) -> list[InvitationCode]:
     """招待コード一覧を返す（管理者）。"""
-    return db.query(InvitationCode).order_by(InvitationCode.created_at.desc()).all()
+    result = await db.execute(
+        select(InvitationCode).order_by(InvitationCode.created_at.desc())
+    )
+    return result.scalars().all()
 
 
 @access_admin_router.post("/invitation-codes", response_model=InvitationCodeResponse)
-def create_invitation_code(
+async def create_invitation_code(
     body: InvitationCodeCreate,
     _: ApiKeyDep,
+    __: AdminRoleDep,
     db: DbDep,
 ) -> InvitationCode:
     """招待コードを新規作成する（管理者）。"""
@@ -284,8 +289,8 @@ def create_invitation_code(
         note=body.note,
     )
     db.add(code)
-    db.commit()
-    db.refresh(code)
+    await db.commit()
+    await db.refresh(code)
     logger.info("招待コード作成: code=%s grant_type=%s", code.code, code.grant_type)
     return code
 
@@ -293,14 +298,15 @@ def create_invitation_code(
 @access_admin_router.patch(
     "/invitation-codes/{code_id}", response_model=InvitationCodeResponse
 )
-def update_invitation_code(
+async def update_invitation_code(
     code_id: int,
     body: InvitationCodeUpdate,
     _: ApiKeyDep,
+    __: AdminRoleDep,
     db: DbDep,
 ) -> InvitationCode:
     """招待コードを更新する（管理者）。"""
-    code = db.get(InvitationCode, code_id)
+    code = await db.get(InvitationCode, code_id)
     if code is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code not found")
     if body.is_active is not None:
@@ -309,29 +315,30 @@ def update_invitation_code(
         code.max_uses = body.max_uses
     if body.note is not None:
         code.note = body.note
-    db.commit()
-    db.refresh(code)
+    await db.commit()
+    await db.refresh(code)
     return code
 
 
 @access_admin_router.post(
     "/users/{user_id}/grant-access", response_model=AccessStatusResponse
 )
-def admin_grant_access(
+async def admin_grant_access(
     user_id: int,
     body: GrantAccessRequest,
     _: ApiKeyDep,
+    __: AdminRoleDep,
     db: DbDep,
 ) -> AccessStatusResponse:
     """管理者が直接アクセスを付与する。"""
-    user = db.get(User, user_id)
+    user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     if body.grant_type == "unlimited":
         expires_at = None
     elif body.grant_type == "weeks":
-        expires_at = _calc_weeks_expiry(body.weeks_count or 1, db)
+        expires_at = await _calc_weeks_expiry(body.weeks_count or 1, db)
     elif body.grant_type == "date":
         if body.target_date is None:
             raise HTTPException(
@@ -352,13 +359,13 @@ def admin_grant_access(
         note=body.note,
     )
     db.add(grant)
-    db.commit()
+    await db.commit()
     logger.info(
         "管理者アクセス付与: user_id=%d grant_type=%s expires_at=%s",
         user_id, body.grant_type, expires_at,
     )
 
-    is_premium, access_expires_at = get_user_premium_status(user_id, db)
+    is_premium, access_expires_at = await get_user_premium_status(user_id, db)
     return AccessStatusResponse(
         user_id=user_id, is_premium=is_premium, access_expires_at=access_expires_at
     )
