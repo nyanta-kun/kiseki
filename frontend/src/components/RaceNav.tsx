@@ -101,10 +101,11 @@ export function RaceNav({ currentRaceId, races }: Props) {
 
         {/* レース番号ボタン */}
         <div
-          className="flex gap-1 overflow-x-auto px-4 pb-2 scrollbar-none"
+          className="overflow-x-auto scrollbar-none pb-2"
           role="tabpanel"
           aria-label={`${activeCourse}のレース一覧`}
         >
+          <div className="flex gap-1 px-4 w-fit mx-auto">
           {(courseGroups[activeCourse] ?? []).sort((a, b) => a.race_number - b.race_number).map((race) => {
             const isCurrent = race.id === currentRaceId;
             return (
@@ -129,6 +130,7 @@ export function RaceNav({ currentRaceId, races }: Props) {
               </button>
             );
           })}
+          </div>
         </div>
       </div>
     </div>
