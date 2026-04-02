@@ -13,15 +13,16 @@ from __future__ import annotations
 import logging
 import secrets
 import string
-from datetime import UTC, date as date_type, datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from datetime import date as date_type
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from .users import ApiKeyDep, DbDep, get_user_premium_status
 from ..db.models import InvitationCode, Race, User, UserAccessGrant
+from .users import ApiKeyDep, DbDep, get_user_premium_status
 
 logger = logging.getLogger(__name__)
 
