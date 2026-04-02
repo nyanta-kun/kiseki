@@ -84,6 +84,7 @@ jobs:
     name: Deploy to galloplab.com
     needs: [backend, frontend]
     runs-on: ubuntu-latest
+    environment: production
     # main ブランチへの push 時のみデプロイ（PR では実行しない）
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
