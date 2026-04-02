@@ -37,6 +37,7 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
     const url = buildResultsWsUrl(raceId);
@@ -62,7 +63,7 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
       ws.onclose = () => {
         if (!mountedRef.current) return;
         setWsConnected(false);
-        reconnectRef.current = setTimeout(connect, 5000);
+        reconnectRef.current = setTimeout(() => connectRef.current(), 5000);
       };
 
       ws.onerror = () => { ws.close(); };
@@ -70,6 +71,7 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
       // WebSocket非対応環境は無視
     }
   }, [raceId]);
+  connectRef.current = connect;
 
   useEffect(() => {
     mountedRef.current = true;
