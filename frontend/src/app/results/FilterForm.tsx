@@ -54,22 +54,38 @@ function currentDatePreset(fromDate?: string): string {
   return "prev_year";
 }
 
+/**
+ * RSC シリアライズで string[] が string になるケースを防ぐ正規化関数。
+ * string / string[] / undefined のいずれでも string[] を返す。
+ */
+function toArr(v: string[] | string | undefined): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 /** URL クエリ文字列を生成する（配列はカンマ区切り） */
-function buildQueryString(filters: PerformanceFilters): string {
+function buildQueryString(f: {
+  from_date?: string;
+  to_date?: string;
+  course_name: string[];
+  surface: string[];
+  distance_range: string[];
+  condition: string[];
+}): string {
   const params = new URLSearchParams();
-  if (filters.from_date) params.set("from_date", filters.from_date);
-  if (filters.to_date) params.set("to_date", filters.to_date);
-  if (filters.course_name?.length) params.set("course_name", filters.course_name.join(","));
-  if (filters.surface?.length) params.set("surface", filters.surface.join(","));
-  if (filters.distance_range?.length) params.set("distance_range", filters.distance_range.join(","));
-  if (filters.condition?.length) params.set("condition", filters.condition.join(","));
+  if (f.from_date) params.set("from_date", f.from_date);
+  if (f.to_date) params.set("to_date", f.to_date);
+  if (f.course_name.length) params.set("course_name", f.course_name.join(","));
+  if (f.surface.length) params.set("surface", f.surface.join(","));
+  if (f.distance_range.length) params.set("distance_range", f.distance_range.join(","));
+  if (f.condition.length) params.set("condition", f.condition.join(","));
   return params.toString();
 }
 
 /** 配列から値をトグル（あれば除去、なければ追加） */
-function toggle(arr: string[] | undefined, value: string): string[] {
-  const cur = arr ?? [];
-  return cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
+function toggle(arr: string[], value: string): string[] {
+  return arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value];
 }
 
 type Props = {
@@ -80,12 +96,22 @@ export function FilterForm({ current }: Props) {
   const router = useRouter();
   const pathname = usePathname();
 
-  function push(next: PerformanceFilters) {
+  // RSC シリアライズで string になる場合があるため常に string[] に正規化
+  const norm = {
+    from_date:      current.from_date,
+    to_date:        current.to_date,
+    course_name:    toArr(current.course_name as string[] | string | undefined),
+    surface:        toArr(current.surface as string[] | string | undefined),
+    distance_range: toArr(current.distance_range as string[] | string | undefined),
+    condition:      toArr(current.condition as string[] | string | undefined),
+  };
+
+  function push(next: typeof norm) {
     const qs = buildQueryString(next);
     router.push(qs ? `${pathname}?${qs}` : pathname);
   }
 
-  const datePreset = currentDatePreset(current.from_date);
+  const datePreset = currentDatePreset(norm.from_date);
 
   const activePillCls = "text-xs px-2.5 py-1 rounded-full font-medium transition-colors bg-blue-600 text-white border border-blue-600";
   const pillCls = "text-xs px-2.5 py-1 rounded-full font-medium transition-colors border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 cursor-pointer";
@@ -101,7 +127,7 @@ export function FilterForm({ current }: Props) {
             return (
               <button
                 key={p.value}
-                onClick={() => push({ ...current, from_date: from, to_date: to })}
+                onClick={() => push({ ...norm, from_date: from, to_date: to })}
                 className={datePreset === p.value ? activePillCls : pillCls}
               >
                 {p.label}
@@ -116,16 +142,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">競馬場</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...current, course_name: undefined })}
-            className={!current.course_name?.length ? activePillCls : pillCls}
+            onClick={() => push({ ...norm, course_name: [] })}
+            className={norm.course_name.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {COURSES.map((c) => (
             <button
               key={c}
-              onClick={() => push({ ...current, course_name: toggle(current.course_name, c) || undefined })}
-              className={current.course_name?.includes(c) ? activePillCls : pillCls}
+              onClick={() => push({ ...norm, course_name: toggle(norm.course_name, c) })}
+              className={norm.course_name.includes(c) ? activePillCls : pillCls}
             >
               {c}
             </button>
@@ -138,16 +164,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">馬場</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...current, surface: undefined })}
-            className={!current.surface?.length ? activePillCls : pillCls}
+            onClick={() => push({ ...norm, surface: [] })}
+            className={norm.surface.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {SURFACES.map((s) => (
             <button
               key={s.value}
-              onClick={() => push({ ...current, surface: toggle(current.surface, s.value) || undefined })}
-              className={current.surface?.includes(s.value) ? activePillCls : pillCls}
+              onClick={() => push({ ...norm, surface: toggle(norm.surface, s.value) })}
+              className={norm.surface.includes(s.value) ? activePillCls : pillCls}
             >
               {s.label}
             </button>
@@ -160,16 +186,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">距離</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...current, distance_range: undefined })}
-            className={!current.distance_range?.length ? activePillCls : pillCls}
+            onClick={() => push({ ...norm, distance_range: [] })}
+            className={norm.distance_range.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {DISTANCE_RANGES.map((r) => (
             <button
               key={r}
-              onClick={() => push({ ...current, distance_range: toggle(current.distance_range, r) || undefined })}
-              className={current.distance_range?.includes(r) ? activePillCls : pillCls}
+              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, r) })}
+              className={norm.distance_range.includes(r) ? activePillCls : pillCls}
             >
               {r}
             </button>
@@ -182,16 +208,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">条件</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...current, condition: undefined })}
-            className={!current.condition?.length ? activePillCls : pillCls}
+            onClick={() => push({ ...norm, condition: [] })}
+            className={norm.condition.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {CONDITIONS.map((c) => (
             <button
               key={c}
-              onClick={() => push({ ...current, condition: toggle(current.condition, c) || undefined })}
-              className={current.condition?.includes(c) ? activePillCls : pillCls}
+              onClick={() => push({ ...norm, condition: toggle(norm.condition, c) })}
+              className={norm.condition.includes(c) ? activePillCls : pillCls}
             >
               {c}
             </button>

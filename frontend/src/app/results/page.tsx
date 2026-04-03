@@ -41,13 +41,19 @@ function MetricCard({
   );
 }
 
+function safeArr(v: string[] | string | undefined): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 function FilterBadge({ filters }: { filters: PerformanceFilters }) {
   const surfaceLabel: Record<string, string> = { 芝: "芝", ダ: "ダート", 障: "障害" };
   const parts: string[] = [
-    ...(filters.course_name ?? []),
-    ...(filters.surface ?? []).map((s) => surfaceLabel[s] ?? s),
-    ...(filters.distance_range ?? []),
-    ...(filters.condition ?? []),
+    ...safeArr(filters.course_name as string[] | string | undefined),
+    ...safeArr(filters.surface as string[] | string | undefined).map((s) => surfaceLabel[s] ?? s),
+    ...safeArr(filters.distance_range as string[] | string | undefined),
+    ...safeArr(filters.condition as string[] | string | undefined),
   ];
   if (parts.length === 0) return null;
   return (
