@@ -165,7 +165,8 @@ export function FilterForm({ current }: Props) {
       </div>
 
       {/* 地方・海外トグル */}
-      <div className="flex items-center gap-2 pt-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500 w-10 shrink-0" />
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input
             type="checkbox"
