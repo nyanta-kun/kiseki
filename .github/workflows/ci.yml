@@ -156,29 +156,32 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=yes \
               "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
-              'bash -lc "
-                set -euo pipefail
-                cd ~/GitHub/kiseki
-                git pull origin main
-                echo \"[deploy] ghcr.io 認証...\"
-                echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-                echo \"[deploy] イメージプル（VPSでのビルド不要）...\"
-                docker compose -f docker-compose.galloplab.yml pull
-                echo \"[deploy] DBマイグレーション実行...\"
-                docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
-                  -e PYTHONPATH=/app backend uv run alembic upgrade head
-                docker compose -f docker-compose.galloplab.yml up -d
-                echo \"[deploy] ヘルスチェック待機中...\"
-                for i in \$(seq 1 12); do
-                  sleep 5
-                  STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" galloplab-backend-1 2>/dev/null || echo \"unknown\")
-                  echo \"  backend health: \$STATUS (\${i}/12)\"
-                  if [ \"\$STATUS\" = \"healthy\" ]; then break; fi
-                done
-                docker compose -f docker-compose.galloplab.yml ps
-                echo \"[deploy] 完了: https://galloplab.com/\"
-              '"'
+              'bash -s' << EOF
+          set -euo pipefail
+          cd ~/GitHub/kiseki
+          git pull origin main
+          echo "[deploy] ghcr.io 認証..."
+          printf '%s\n' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          echo "[deploy] イメージプル（VPSでのビルド不要）..."
+          docker compose -f docker-compose.galloplab.yml pull
+          echo "[deploy] DBマイグレーション実行..."
+          docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
+            -e PYTHONPATH=/app backend uv run alembic upgrade head
+          docker compose -f docker-compose.galloplab.yml up -d
+          echo "[deploy] ヘルスチェック待機中..."
+          for i in \$(seq 1 12); do
+            sleep 5
+            STATUS=\$(docker inspect --format='{{.State.Health.Status}}' galloplab-backend-1 2>/dev/null || echo "unknown")
+            echo "  backend health: \$STATUS (\${i}/12)"
+            if [ "\$STATUS" = "healthy" ]; then break; fi
+          done
+          docker compose -f docker-compose.galloplab.yml ps
+          echo "[deploy] 完了: https://galloplab.com/"
+          EOF
