@@ -75,6 +75,22 @@ _DISTANCE_KEY_MAP: dict[str, tuple[str, int, int]] = {
 _DISTANCE_LABEL_TO_KEY: dict[str, str] = {v[0]: k for k, v in _DISTANCE_KEY_MAP.items()}
 
 
+_SURFACE_NORMALIZE: dict[str, str] = {
+    "10": "芝",  # track_code 1x = 芝
+    "11": "芝", "12": "芝", "13": "芝", "14": "芝", "15": "芝", "16": "芝", "17": "芝",
+    "20": "ダ",  # track_code 2x = ダート
+    "21": "ダ", "22": "ダ", "23": "ダ", "24": "ダ", "25": "ダ", "26": "ダ", "27": "ダ",
+    "51": "障", "52": "障", "53": "障", "54": "障", "55": "障",  # 5x = 障害
+}
+
+
+def _normalize_surface(surface: str | None) -> str:
+    """track_code が残存している surface 値を正規化する。"""
+    if not surface:
+        return "不明"
+    return _SURFACE_NORMALIZE.get(surface, surface)
+
+
 def _distance_range_label(distance: int | None) -> str:
     if not distance:
         return "不明"
@@ -494,7 +510,7 @@ async def get_performance_summary(
             "race_date": str(sample.race_date),
             "confidence_label": conf["label"],
             "course_name": str(sample.course_name or "不明"),
-            "surface": str(sample.surface or "不明"),
+            "surface": _normalize_surface(sample.surface),
             "distance_range": _distance_range_label(sample.distance),
             "condition": cond_label,
             "win_hit": win_hit,
