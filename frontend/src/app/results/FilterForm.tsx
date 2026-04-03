@@ -13,12 +13,13 @@ const SURFACES = [
   { value: "障", label: "障害" },
 ];
 
-const DISTANCE_RANGES = [
-  "短距離(〜1400m)",
-  "マイル(1401〜1799m)",
-  "中距離(1800〜2200m)",
-  "長距離(2201m〜)",
-];
+// URL キーは ASCII のみ（〜等の特殊文字を避ける）、ラベルは表示用
+const DISTANCE_OPTIONS = [
+  { key: "sprint", label: "短距離(〜1400m)" },
+  { key: "mile",   label: "マイル(1401〜1799m)" },
+  { key: "middle", label: "中距離(1800〜2200m)" },
+  { key: "long",   label: "長距離(2201m〜)" },
+] as const;
 
 const CONDITIONS = [
   "G1", "G2", "G3", "OP・L",
@@ -191,13 +192,13 @@ export function FilterForm({ current }: Props) {
           >
             全て
           </button>
-          {DISTANCE_RANGES.map((r) => (
+          {DISTANCE_OPTIONS.map((opt) => (
             <button
-              key={r}
-              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, r) })}
-              className={norm.distance_range.includes(r) ? activePillCls : pillCls}
+              key={opt.key}
+              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, opt.key) })}
+              className={norm.distance_range.includes(opt.key) ? activePillCls : pillCls}
             >
-              {r}
+              {opt.label}
             </button>
           ))}
         </div>

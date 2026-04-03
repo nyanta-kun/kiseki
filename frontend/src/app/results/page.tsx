@@ -47,12 +47,19 @@ function safeArr(v: string[] | string | undefined): string[] {
   return v.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+const DISTANCE_KEY_LABELS: Record<string, string> = {
+  sprint: "短距離(〜1400m)",
+  mile:   "マイル(1401〜1799m)",
+  middle: "中距離(1800〜2200m)",
+  long:   "長距離(2201m〜)",
+};
+
 function FilterBadge({ filters }: { filters: PerformanceFilters }) {
   const surfaceLabel: Record<string, string> = { 芝: "芝", ダ: "ダート", 障: "障害" };
   const parts: string[] = [
     ...safeArr(filters.course_name as string[] | string | undefined),
     ...safeArr(filters.surface as string[] | string | undefined).map((s) => surfaceLabel[s] ?? s),
-    ...safeArr(filters.distance_range as string[] | string | undefined),
+    ...safeArr(filters.distance_range as string[] | string | undefined).map((k) => DISTANCE_KEY_LABELS[k] ?? k),
     ...safeArr(filters.condition as string[] | string | undefined),
   ];
   if (parts.length === 0) return null;

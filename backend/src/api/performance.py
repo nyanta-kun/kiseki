@@ -63,18 +63,22 @@ def _condition_label(
     return "条件戦"
 
 
-_DISTANCE_RANGES = [
-    ("短距離(〜1400m)", 0, 1400),
-    ("マイル(1401〜1799m)", 1401, 1799),
-    ("中距離(1800〜2200m)", 1800, 2200),
-    ("長距離(2201m〜)", 2201, 99999),
-]
+# key: フロントエンドの URL パラメータキー（ASCII）
+# label: 表示・集計ラベル（日本語）
+_DISTANCE_KEY_MAP: dict[str, tuple[str, int, int]] = {
+    "sprint": ("短距離(〜1400m)",   0,    1400),
+    "mile":   ("マイル(1401〜1799m)", 1401, 1799),
+    "middle": ("中距離(1800〜2200m)", 1800, 2200),
+    "long":   ("長距離(2201m〜)",   2201, 99999),
+}
+# 後方互換: 旧ラベル → ラベルのまま（直接ラベル指定時）
+_DISTANCE_LABEL_TO_KEY: dict[str, str] = {v[0]: k for k, v in _DISTANCE_KEY_MAP.items()}
 
 
 def _distance_range_label(distance: int | None) -> str:
     if not distance:
         return "不明"
-    for label, lo, hi in _DISTANCE_RANGES:
+    for _key, (label, lo, hi) in _DISTANCE_KEY_MAP.items():
         if lo <= distance <= hi:
             return label
     return "不明"
@@ -215,7 +219,7 @@ _CONDITION_ORDER = [
     "3勝", "2勝", "1勝", "未勝利",
     "障害", "条件戦",
 ]
-_DISTANCE_ORDER = [label for label, _, _ in _DISTANCE_RANGES]
+_DISTANCE_ORDER = [v[0] for v in _DISTANCE_KEY_MAP.values()]
 _SURFACE_ORDER = ["芝", "ダ", "障"]
 
 
@@ -280,9 +284,13 @@ async def get_performance_summary(
     if distance_ranges:
         dist_conds = []
         for dr in distance_ranges:
-            for label, lo, hi in _DISTANCE_RANGES:
-                if label == dr:
-                    dist_conds.append((Race.distance >= lo) & (Race.distance <= hi))
+            # キー（sprint/mile/middle/long）または旧ラベルを両方受け付ける
+            entry = _DISTANCE_KEY_MAP.get(dr) or _DISTANCE_KEY_MAP.get(
+                _DISTANCE_LABEL_TO_KEY.get(dr, ""), None
+            )
+            if entry:
+                _, lo, hi = entry
+                dist_conds.append((Race.distance >= lo) & (Race.distance <= hi))
         if dist_conds:
             sql_conditions.append(or_(*dist_conds))
     # condition フィルタは Python 側で適用（race_class_label が DB カラムでないため）
