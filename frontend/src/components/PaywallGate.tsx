@@ -16,7 +16,7 @@ type Props = {
  * - それ以外はBlur Gate（ぼかし + 購入訴求オーバーレイ）を表示
  */
 export function PaywallGate({ isPremium, raceNumber, children }: Props) {
-  const paywallEnabled = process.env.NEXT_PUBLIC_SHOW_FOOTER !== "false";
+  const paywallEnabled = process.env.NEXT_PUBLIC_PAID_MODE === "true";
   const isFree = !paywallEnabled || isPremium || raceNumber === 1;
 
   if (isFree) {

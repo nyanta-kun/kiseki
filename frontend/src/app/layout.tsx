@@ -94,7 +94,7 @@ export default async function RootLayout({
         <div className="flex-1 flex flex-col">
           {children}
         </div>
-        {process.env.NEXT_PUBLIC_SHOW_FOOTER !== "false" && <Footer />}
+        {process.env.NEXT_PUBLIC_PAID_MODE === "true" && <Footer />}
         <ServiceWorkerRegister />
       </body>
     </html>
