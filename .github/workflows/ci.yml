@@ -156,9 +156,6 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=yes \
@@ -169,14 +166,12 @@ jobs:
           set -euo pipefail
           cd ~/GitHub/kiseki
           git pull origin main
-          echo "[deploy] ghcr.io 認証..."
-          printf '%s\n' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          echo "[deploy] イメージプル（VPSでのビルド不要）..."
-          docker compose -f docker-compose.galloplab.yml pull
+          echo "[deploy] イメージビルド（VPS上でビルド）..."
+          docker compose -f docker-compose.galloplab.yml build
           echo "[deploy] DBマイグレーション実行..."
           docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
             -e PYTHONPATH=/app backend uv run alembic upgrade head
-          echo "[deploy] コンテナ再作成（--no-wait で即時復帰）..."
+          echo "[deploy] コンテナ再作成..."
           docker compose -f docker-compose.galloplab.yml up -d --force-recreate --no-wait
           echo "[deploy] ヘルスチェック待機中..."
           for i in \$(seq 1 36); do
