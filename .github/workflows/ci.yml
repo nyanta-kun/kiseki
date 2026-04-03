@@ -174,7 +174,7 @@ jobs:
           echo "[deploy] DBマイグレーション実行..."
           docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
             -e PYTHONPATH=/app backend uv run alembic upgrade head
-          docker compose -f docker-compose.galloplab.yml up -d
+          docker compose -f docker-compose.galloplab.yml up -d --force-recreate
           echo "[deploy] ヘルスチェック待機中..."
           for i in \$(seq 1 12); do
             sleep 5
