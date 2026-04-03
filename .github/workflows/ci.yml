@@ -172,7 +172,7 @@ jobs:
           docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
             -e PYTHONPATH=/app backend uv run alembic upgrade head
           echo "[deploy] コンテナ再作成..."
-          docker compose -f docker-compose.galloplab.yml up -d --force-recreate --no-wait
+          docker compose -f docker-compose.galloplab.yml up -d --force-recreate
           echo "[deploy] ヘルスチェック待機中..."
           for i in \$(seq 1 36); do
             sleep 5
