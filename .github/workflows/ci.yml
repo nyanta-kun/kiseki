@@ -168,18 +168,17 @@ jobs:
           git pull origin main
           echo "[deploy] イメージビルド（VPS上でビルド）..."
           docker compose -f docker-compose.galloplab.yml build
-          echo "[deploy] DBマイグレーション実行..."
-          docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
-            -e PYTHONPATH=/app backend uv run alembic upgrade head
           echo "[deploy] コンテナ再作成..."
           docker compose -f docker-compose.galloplab.yml up -d --force-recreate
-          echo "[deploy] ヘルスチェック待機中..."
+          echo "[deploy] ヘルスチェック待機中（backend が healthy になるまで最大180秒）..."
           for i in \$(seq 1 36); do
             sleep 5
             STATUS=\$(docker inspect --format='{{.State.Health.Status}}' galloplab-backend-1 2>/dev/null || echo "unknown")
             echo "  backend health: \$STATUS (\${i}/36)"
             if [ "\$STATUS" = "healthy" ]; then break; fi
           done
+          echo "[deploy] DBマイグレーション実行..."
+          docker exec galloplab-backend-1 uv run alembic upgrade head
           docker compose -f docker-compose.galloplab.yml ps
           echo "[deploy] 完了: https://galloplab.com/"
           EOF
