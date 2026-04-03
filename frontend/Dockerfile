@@ -3,9 +3,7 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
-# BuildKit キャッシュマウントでpnpmストアを再利用（lockfile変更時も高速化）
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # --- ビルド ---
 FROM node:22-alpine AS builder
@@ -19,8 +17,7 @@ ARG NEXT_PUBLIC_PAID_MODE
 ENV NEXT_PUBLIC_PAID_MODE=$NEXT_PUBLIC_PAID_MODE
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    corepack enable && pnpm build
+RUN corepack enable && pnpm build
 
 # --- 実行 ---
 FROM node:22-alpine AS runner
