@@ -178,7 +178,7 @@ jobs:
             if [ "\$STATUS" = "healthy" ]; then break; fi
           done
           echo "[deploy] DBマイグレーション実行..."
-          docker exec galloplab-backend-1 uv run alembic upgrade head
+          docker exec -e PYTHONPATH=/app galloplab-backend-1 uv run alembic upgrade head
           docker compose -f docker-compose.galloplab.yml ps
           echo "[deploy] 完了: https://galloplab.com/"
           EOF
