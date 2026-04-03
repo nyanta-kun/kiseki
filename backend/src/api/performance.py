@@ -416,8 +416,8 @@ async def get_performance_summary(
         )
         has_place_odds = place_odds_val is not None
         roi_contribution_place = (
-            float(place_odds_val) * 100.0
-            if place_hit and has_place_odds
+            place_odds_val * 100.0
+            if place_hit and place_odds_val is not None
             else 0.0
         )
 
