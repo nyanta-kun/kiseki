@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -34,9 +35,8 @@ from dotenv import load_dotenv
 load_dotenv(_root.parent / ".env")
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
-from src.db.session import engine
+from src.db.session import AsyncSessionLocal
 from src.indices.composite import COMPOSITE_VERSION, CompositeIndexCalculator
 
 logging.basicConfig(
@@ -71,7 +71,7 @@ ORDER BY r.date
 """)
 
 
-def get_target_dates(
+async def get_target_dates(
     start_date: str,
     end_date: str,
     skip_existing: bool = False,
@@ -83,21 +83,21 @@ def get_target_dates(
         end_date: 終了日 YYYYMMDD
         skip_existing: True のとき算出済みバージョンの日付をスキップ
     """
-    with Session(engine) as db:
+    async with AsyncSessionLocal() as db:
         if skip_existing:
-            result = db.execute(
+            result = await db.execute(
                 _DATE_QUERY_SKIP,
                 {"start_date": start_date, "end_date": end_date, "version": COMPOSITE_VERSION},
             )
         else:
-            result = db.execute(
+            result = await db.execute(
                 _DATE_QUERY,
                 {"start_date": start_date, "end_date": end_date},
             )
         return [row[0] for row in result]
 
 
-def run(
+async def run(
     start_date: str,
     end_date: str,
     dry_run: bool = False,
@@ -109,7 +109,7 @@ def run(
     SireStatsCache（重い初期化）はセッション全体で1回のみ実行される。
     各日付の commit 後に expunge_all() でORMオブジェクトをメモリから解放する。
     """
-    dates = get_target_dates(start_date, end_date, skip_existing)
+    dates = await get_target_dates(start_date, end_date, skip_existing)
     skipped_msg = "（算出済みスキップ）" if skip_existing else ""
     logger.info(
         f"対象開催日: {len(dates)} 日 ({start_date}〜{end_date}){skipped_msg} "
@@ -130,13 +130,13 @@ def run(
 
     # ── 単一セッション・単一インスタンスで全日付を処理 ──
     # SireStatsCache は最初の calculate_batch 呼び出し時に1回だけ構築される
-    with Session(engine) as db:
+    async with AsyncSessionLocal() as db:
         calc = CompositeIndexCalculator(db)
 
         for i, date in enumerate(dates, 1):
             try:
-                rows = calc.calculate_batch_for_date(date)
-                db.commit()
+                rows = await calc.calculate_batch_for_date(date)
+                await db.commit()
                 # ORMオブジェクトをメモリから解放（SireStatsCache 等の辞書キャッシュは保持）
                 db.expunge_all()
                 total_horses += len(rows)
@@ -144,7 +144,7 @@ def run(
                     f"[{i:>4}/{len(dates)}] {date}: {len(rows):>4} 頭 (累計 {total_horses:,})"
                 )
             except Exception as e:
-                db.rollback()
+                await db.rollback()
                 db.expunge_all()
                 errors += 1
                 logger.error(f"[{i:>4}/{len(dates)}] {date}: エラー → {e}")
@@ -167,7 +167,7 @@ def main() -> None:
         help="対象日付のみ表示（算出しない）",
     )
     args = parser.parse_args()
-    run(args.start, args.end, args.dry_run, args.skip_existing)
+    asyncio.run(run(args.start, args.end, args.dry_run, args.skip_existing))
 
 
 if __name__ == "__main__":

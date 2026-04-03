@@ -14,6 +14,7 @@ calculated_indices テーブルへ保存した上で CSV ファイルを出力�
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
 import logging
 import sys
@@ -29,10 +30,10 @@ from dotenv import load_dotenv
 
 load_dotenv(_root.parent / ".env")
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from src.db.models import Horse, RaceEntry
-from src.db.session import engine
+from src.db.session import AsyncSessionLocal
 from src.indices.composite import CompositeIndexCalculator
 
 logging.basicConfig(
@@ -42,18 +43,18 @@ logging.basicConfig(
 logger = logging.getLogger("calculate_indices")
 
 
-def run(date: str, output_path: str | None) -> None:
+async def run(date: str, output_path: str | None) -> None:
     """指定日の指数を算出して保存・CSV出力する。
 
     Args:
         date: "YYYYMMDD" 形式の日付
         output_path: CSV 出力先パス。None の場合は stdout へ出力。
     """
-    with Session(engine) as db:
+    async with AsyncSessionLocal() as db:
         calc = CompositeIndexCalculator(db)
         logger.info(f"算出開始: date={date}")
-        rows = calc.calculate_batch_for_date(date)
-        db.commit()
+        rows = await calc.calculate_batch_for_date(date)
+        await db.commit()
         logger.info(f"DB保存完了: {len(rows)} 件")
 
         if not rows:
@@ -62,13 +63,17 @@ def run(date: str, output_path: str | None) -> None:
 
         # 馬名を付与
         horse_ids = list({r["horse_id"] for r in rows})
-        horses = db.query(Horse).filter(Horse.id.in_(horse_ids)).all()
+        horses = (
+            await db.execute(select(Horse).where(Horse.id.in_(horse_ids)))
+        ).scalars().all()
         horse_name_map = {h.id: h.name for h in horses}
 
         # 馬番を付与（race_id + horse_id → horse_number）
         entry_map: dict[tuple[int, int], int] = {}
         race_ids = list({r["race_id"] for r in rows})
-        entries = db.query(RaceEntry).filter(RaceEntry.race_id.in_(race_ids)).all()
+        entries = (
+            await db.execute(select(RaceEntry).where(RaceEntry.race_id.in_(race_ids)))
+        ).scalars().all()
         for e in entries:
             entry_map[(e.race_id, e.horse_id)] = e.horse_number
 
@@ -180,7 +185,7 @@ def main() -> None:
     if len(args.date) != 8 or not args.date.isdigit():
         parser.error("--date は YYYYMMDD 形式で指定してください (例: 20260322)")
 
-    run(args.date, args.output)
+    asyncio.run(run(args.date, args.output))
 
 
 if __name__ == "__main__":
