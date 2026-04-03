@@ -222,9 +222,40 @@ _CONDITION_ORDER = [
 _DISTANCE_ORDER = [v[0] for v in _DISTANCE_KEY_MAP.values()]
 _SURFACE_ORDER = ["芝", "ダ", "障"]
 
-
 # JRA 10場のコードセット（フィルタ用）
 _JRA_COURSE_CODES = {"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"}
+
+# 競馬場別表示順: JRA10場 → 地方 → 海外（各グループ内はレース数降順）
+_JRA_COURSE_NAMES = ["札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉"]
+_LOCAL_COURSE_NAMES = [
+    "門別", "盛岡", "水沢", "浦和", "船橋", "大井", "川崎",
+    "笠松", "名古屋", "園田", "姫路", "高知", "佐賀",
+    "旭川(廃止)", "高崎(廃止)", "荒尾(廃止)",
+    "廃止場(56)", "廃止場(57)", "廃止場(58)", "廃止場(59)", "新潟(地方廃止)",
+]
+_OVERSEAS_COURSE_NAMES = [
+    "香港", "UAE", "サウジアラビア", "カタール", "バーレーン",
+    "英国", "フランス", "アイルランド", "ドイツ", "イタリア",
+    "米国", "カナダ", "オーストラリア", "韓国",
+]
+
+
+def _sort_by_course_group(groups: dict[str, list[dict]]) -> list[DimensionStat]:
+    """競馬場別を JRA → 地方 → 海外 の順で、各グループ内はレース数降順で返す。"""
+    def make_stats(names: list[str]) -> list[DimensionStat]:
+        subset = {k: v for k, v in groups.items() if k in names}
+        return _dim_stats(subset, sort_by_races=True)
+
+    # 上記リストに含まれない名前はグループ不明として地方扱い
+    known = set(_JRA_COURSE_NAMES) | set(_LOCAL_COURSE_NAMES) | set(_OVERSEAS_COURSE_NAMES)
+    unknown = {k: v for k, v in groups.items() if k not in known}
+
+    return (
+        make_stats(_JRA_COURSE_NAMES)
+        + make_stats(_LOCAL_COURSE_NAMES)
+        + _dim_stats(unknown, sort_by_races=True)  # 未知コードは地方扱い
+        + make_stats(_OVERSEAS_COURSE_NAMES)
+    )
 
 
 @router.get("/summary", response_model=PerformanceSummaryOut)
@@ -547,7 +578,7 @@ async def get_performance_summary(
             g[m[key]].append(m)
         return g
 
-    by_course = _dim_stats(_group_by("course_name"), sort_by_races=True)
+    by_course = _sort_by_course_group(_group_by("course_name"))
     by_surface = _dim_stats(_group_by("surface"), order=_SURFACE_ORDER)
     by_distance_range = _dim_stats(_group_by("distance_range"), order=_DISTANCE_ORDER)
     by_condition = _dim_stats(_group_by("condition"), order=_CONDITION_ORDER)

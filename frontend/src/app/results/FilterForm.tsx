@@ -258,13 +258,13 @@ export function FilterForm({ current }: Props) {
         </div>
       </div>
 
-      {/* 検索ボタン */}
-      <div className="flex justify-end pt-1 border-t border-gray-50">
+      {/* 集計ボタン */}
+      <div className="flex justify-end pt-2 border-t border-gray-100">
         <button
           onClick={apply}
-          className="text-xs px-4 py-1.5 rounded-full font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          className="px-5 py-2 rounded-lg text-sm font-semibold bg-blue-700 text-white shadow-sm hover:bg-blue-800 active:scale-95 transition-all"
         >
-          検索
+          集計
         </button>
       </div>
     </div>
