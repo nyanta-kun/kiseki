@@ -922,6 +922,251 @@ def parse_sk(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# HR レコード（払戻情報）
+# -------------------------------------------------------------------
+
+# JVDF v4.9 HR レコード 馬券種別ごとのバイト位置定義
+# 参考仕様: JV-Data JVDF v4.9 HR（払戻情報）レコード
+#
+# HR レコード共通ヘッダー (pos 1-27): RA/SE と同一構造
+#
+# 払戻データ部 (pos 28〜): 馬券種別ごとの払戻情報
+#   単勝 (pos 28-40):   馬番(2) + 払戻(7) + 人気(3) + 未使用(1) = 13バイト × 1件
+#   複勝 (pos 41-76):   馬番(2) + 払戻低(7) + 払戻高(7) + 人気(3) = 19バイト × 3件 = 57バイト
+#                       ※ 実際: 各19バイト構造（TODO: 仕様書で要確認）
+#   枠連 (pos 99〜):    枠番ペア(2) + 払戻(7) + 人気(3) = 12バイト × 1件（同枠含む1件）
+#   馬連 (pos 112〜):   馬番ペア(4) + 払戻(7) + 人気(3) = 14バイト × 3件（同着対応）
+#   ワイド (pos 155〜): 馬番ペア(4) + 払戻低(7) + 払戻高(7) + 人気(3) = 21バイト × 7件
+#   馬単 (pos 303〜):   馬番ペア(4) + 払戻(7) + 人気(3) = 14バイト × 6件
+#   三連複 (pos 387〜): 馬番3頭(6) + 払戻(7) + 人気(3) = 16バイト × 3件（同着対応）
+#   三連単 (pos 435〜): 馬番3頭(6) + 払戻(7) + 人気(3) = 16バイト × 6件
+#
+# NOTE: バイト位置の一部は仕様書の詳細確認が必要なため TODO コメントを付与
+
+
+def parse_hr(data: str) -> dict[str, Any] | None:
+    """HRレコード（払戻情報）をパースする。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト）:
+      1- 2: "HR"
+      3   : データ区分
+      4-11: データ作成年月日
+     12-15: 開催年
+     16-19: 開催月日
+     20-21: 競馬場コード
+     22-23: 開催回
+     24-25: 開催日目
+     26-27: レース番号
+     28〜 : 払戻データ部（各馬券種）
+
+    Returns:
+        {
+            "rec_id": "HR",
+            "race_id": str,  # 16文字のレースキー
+            "race_date": str,  # YYYYMMDD
+            "course": str,
+            "race_number": int,
+            "payouts": [
+                {"bet_type": "win", "combination": "3", "payout": 1540, "popularity": 1},
+                ...
+            ]
+        }
+        または None（パース失敗・削除レコード）
+    """
+    # HR レコードの最小長チェック（ヘッダー27バイト + データ部）
+    if len(data) < 100:
+        logger.warning(f"HR record too short: {len(data)} bytes")
+        return None
+
+    try:
+        header = _parse_common_header(data)
+        if not header or header["rec_id"] != "HR":
+            return None
+        if header["data_type"] == "0":  # 削除レコード
+            return None
+
+        payouts: list[dict[str, Any]] = []
+
+        # --- 単勝 (Win) ---
+        # pos 28-29: 馬番(2), pos 30-36: 払戻金(7), pos 37-39: 人気(3)
+        # TODO: JVDF v4.9 仕様書で pos 40 の未使用1バイトを要確認
+        win_horse = _s(data, 28, 29)
+        win_payout = _s(data, 30, 36)
+        win_pop = _s(data, 37, 39)
+        if win_horse and win_payout and win_payout.isdigit() and int(win_payout) > 0:
+            payouts.append({
+                "bet_type": "win",
+                "combination": str(int(win_horse)),
+                "payout": int(win_payout),
+                "popularity": int(win_pop) if win_pop.isdigit() else None,
+            })
+
+        # --- 複勝 (Place) ---
+        # pos 41〜: 3頭分、各エントリ = 馬番(2) + 払戻低(7) + 払戻高(7) + 人気(3) = 19バイト
+        # TODO: 複勝の正確なバイトレイアウト（払戻低/高の構造）は JVDF v4.9 仕様書で要確認
+        PLACE_START = 41
+        PLACE_ENTRY_SIZE = 19  # TODO: 仕様書で確認
+        for i in range(3):
+            base = PLACE_START + i * PLACE_ENTRY_SIZE
+            if base + PLACE_ENTRY_SIZE - 1 > len(data):
+                break
+            ph_horse = _s(data, base, base + 1)
+            ph_payout_low = _s(data, base + 2, base + 8)   # 払戻低（7バイト）
+            # ph_payout_high = _s(data, base + 9, base + 15)  # 払戻高（7バイト、参考値）
+            ph_pop = _s(data, base + 16, base + 18)         # 人気（3バイト）
+            if ph_horse and ph_payout_low and ph_payout_low.isdigit() and int(ph_payout_low) > 0:
+                payouts.append({
+                    "bet_type": "place",
+                    "combination": str(int(ph_horse)),
+                    "payout": int(ph_payout_low),  # 最低払戻倍率を使用
+                    "popularity": int(ph_pop) if ph_pop.isdigit() else None,
+                })
+
+        # --- 枠連 (Bracket Quinella) ---
+        # TODO: pos 98〜 枠番ペア(2) + 払戻(7) + 人気(3) = 12バイト × 1件 (JVDF要確認)
+        BRACKET_START = 99
+        if len(data) >= BRACKET_START + 11:
+            bq_frames = _s(data, BRACKET_START, BRACKET_START + 1)
+            bq_payout = _s(data, BRACKET_START + 2, BRACKET_START + 8)
+            bq_pop = _s(data, BRACKET_START + 9, BRACKET_START + 11)
+            if bq_frames and bq_payout and bq_payout.isdigit() and int(bq_payout) > 0:
+                f1 = bq_frames[0]
+                f2 = bq_frames[1] if len(bq_frames) > 1 else ""
+                combination = f"{f1}-{f2}" if f2 else f1
+                payouts.append({
+                    "bet_type": "bracket",
+                    "combination": combination,
+                    "payout": int(bq_payout),
+                    "popularity": int(bq_pop) if bq_pop.isdigit() else None,
+                })
+
+        # --- 馬連 (Quinella) ---
+        # TODO: pos 112〜 馬番ペア(4) + 払戻(7) + 人気(3) = 14バイト × 3件 (JVDF要確認)
+        QUINELLA_START = 112
+        QUINELLA_ENTRY_SIZE = 14
+        for i in range(3):
+            base = QUINELLA_START + i * QUINELLA_ENTRY_SIZE
+            if base + QUINELLA_ENTRY_SIZE - 1 > len(data):
+                break
+            q_pair = _s(data, base, base + 3)         # 馬番ペア（4バイト: "0307"）
+            q_payout = _s(data, base + 4, base + 10)  # 払戻（7バイト）
+            q_pop = _s(data, base + 11, base + 13)    # 人気（3バイト）
+            if q_pair and q_payout and q_payout.isdigit() and int(q_payout) > 0:
+                h1 = str(int(q_pair[:2])) if q_pair[:2].isdigit() else ""
+                h2 = str(int(q_pair[2:])) if q_pair[2:].isdigit() else ""
+                combination = f"{h1}-{h2}" if h1 and h2 else q_pair
+                payouts.append({
+                    "bet_type": "quinella",
+                    "combination": combination,
+                    "payout": int(q_payout),
+                    "popularity": int(q_pop) if q_pop.isdigit() else None,
+                })
+
+        # --- ワイド (Wide) ---
+        # TODO: pos 155〜 馬番ペア(4) + 払戻低(7) + 払戻高(7) + 人気(3) = 21バイト × 7件 (JVDF要確認)
+        WIDE_START = 155
+        WIDE_ENTRY_SIZE = 21
+        for i in range(7):
+            base = WIDE_START + i * WIDE_ENTRY_SIZE
+            if base + WIDE_ENTRY_SIZE - 1 > len(data):
+                break
+            w_pair = _s(data, base, base + 3)
+            w_payout = _s(data, base + 4, base + 10)  # 払戻低（最低倍率）
+            w_pop = _s(data, base + 18, base + 20)
+            if w_pair and w_payout and w_payout.isdigit() and int(w_payout) > 0:
+                h1 = str(int(w_pair[:2])) if w_pair[:2].isdigit() else ""
+                h2 = str(int(w_pair[2:])) if w_pair[2:].isdigit() else ""
+                combination = f"{h1}-{h2}" if h1 and h2 else w_pair
+                payouts.append({
+                    "bet_type": "wide",
+                    "combination": combination,
+                    "payout": int(w_payout),
+                    "popularity": int(w_pop) if w_pop.isdigit() else None,
+                })
+
+        # --- 馬単 (Exacta) ---
+        # TODO: pos 303〜 馬番ペア(4) + 払戻(7) + 人気(3) = 14バイト × 6件 (JVDF要確認)
+        EXACTA_START = 303
+        EXACTA_ENTRY_SIZE = 14
+        for i in range(6):
+            base = EXACTA_START + i * EXACTA_ENTRY_SIZE
+            if base + EXACTA_ENTRY_SIZE - 1 > len(data):
+                break
+            e_pair = _s(data, base, base + 3)
+            e_payout = _s(data, base + 4, base + 10)
+            e_pop = _s(data, base + 11, base + 13)
+            if e_pair and e_payout and e_payout.isdigit() and int(e_payout) > 0:
+                h1 = str(int(e_pair[:2])) if e_pair[:2].isdigit() else ""
+                h2 = str(int(e_pair[2:])) if e_pair[2:].isdigit() else ""
+                combination = f"{h1}-{h2}" if h1 and h2 else e_pair
+                payouts.append({
+                    "bet_type": "exacta",
+                    "combination": combination,
+                    "payout": int(e_payout),
+                    "popularity": int(e_pop) if e_pop.isdigit() else None,
+                })
+
+        # --- 三連複 (Trio) ---
+        # TODO: pos 387〜 馬番3頭(6) + 払戻(7) + 人気(3) = 16バイト × 3件 (JVDF要確認)
+        TRIO_START = 387
+        TRIO_ENTRY_SIZE = 16
+        for i in range(3):
+            base = TRIO_START + i * TRIO_ENTRY_SIZE
+            if base + TRIO_ENTRY_SIZE - 1 > len(data):
+                break
+            t_combo = _s(data, base, base + 5)          # 3頭馬番（6バイト: "030711"）
+            t_payout = _s(data, base + 6, base + 12)    # 払戻（7バイト）
+            t_pop = _s(data, base + 13, base + 15)      # 人気（3バイト）
+            if t_combo and t_payout and t_payout.isdigit() and int(t_payout) > 0:
+                h1 = str(int(t_combo[0:2])) if t_combo[0:2].isdigit() else ""
+                h2 = str(int(t_combo[2:4])) if t_combo[2:4].isdigit() else ""
+                h3 = str(int(t_combo[4:6])) if t_combo[4:6].isdigit() else ""
+                combination = f"{h1}-{h2}-{h3}" if h1 and h2 and h3 else t_combo
+                payouts.append({
+                    "bet_type": "trio",
+                    "combination": combination,
+                    "payout": int(t_payout),
+                    "popularity": int(t_pop) if t_pop.isdigit() else None,
+                })
+
+        # --- 三連単 (Trifecta) ---
+        # TODO: pos 435〜 馬番3頭(6) + 払戻(7) + 人気(3) = 16バイト × 6件 (JVDF要確認)
+        TRIFECTA_START = 435
+        TRIFECTA_ENTRY_SIZE = 16
+        for i in range(6):
+            base = TRIFECTA_START + i * TRIFECTA_ENTRY_SIZE
+            if base + TRIFECTA_ENTRY_SIZE - 1 > len(data):
+                break
+            tf_combo = _s(data, base, base + 5)
+            tf_payout = _s(data, base + 6, base + 12)
+            tf_pop = _s(data, base + 13, base + 15)
+            if tf_combo and tf_payout and tf_payout.isdigit() and int(tf_payout) > 0:
+                h1 = str(int(tf_combo[0:2])) if tf_combo[0:2].isdigit() else ""
+                h2 = str(int(tf_combo[2:4])) if tf_combo[2:4].isdigit() else ""
+                h3 = str(int(tf_combo[4:6])) if tf_combo[4:6].isdigit() else ""
+                combination = f"{h1}-{h2}-{h3}" if h1 and h2 and h3 else tf_combo
+                payouts.append({
+                    "bet_type": "trifecta",
+                    "combination": combination,
+                    "payout": int(tf_payout),
+                    "popularity": int(tf_pop) if tf_pop.isdigit() else None,
+                })
+
+        race_num_raw = header["race_num"]
+        return {
+            "rec_id": "HR",
+            "race_id": header["jravan_race_id"],
+            "race_date": header["race_date"],
+            "course": header["course_code"],
+            "race_number": int(race_num_raw) if race_num_raw.isdigit() else 0,
+            "payouts": payouts,
+        }
+    except Exception as e:
+        logger.error(f"HR parse error: {e} | data[:30]={data[:30]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
 # レコード種別ディスパッチ
 # -------------------------------------------------------------------
 
@@ -951,6 +1196,7 @@ def parse_record(rec: dict[str, str]) -> dict[str, Any] | None:
         "JC": parse_jc,
         "HN": parse_hn,
         "SK": parse_sk,
+        "HR": parse_hr,
     }
     parser = parsers.get(rec_id)
     if parser is None:

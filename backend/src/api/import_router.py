@@ -14,8 +14,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from ..config import settings
-from ..db.models import OddsHistory
+from ..db.models import OddsHistory, Race, RacePayout, RaceResult
 from ..db.session import get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
 from .races import _fetch_results_payload
@@ -84,6 +86,32 @@ class WeightRequest(BaseModel):
 
     date: str
     records: list[JvRecord]
+
+
+class PayoutEntry(BaseModel):
+    """払戻情報1件（parse_hr の payouts リスト要素）。"""
+
+    bet_type: str
+    combination: str
+    payout: int
+    popularity: int | None = None
+
+
+class HrRecord(BaseModel):
+    """HR レコード（払戻情報）のパース結果。"""
+
+    rec_id: str
+    race_id: str  # 16文字のレースキー（jravan_race_id）
+    race_date: str
+    course: str
+    race_number: int
+    payouts: list[PayoutEntry]
+
+
+class PayoutsImportRequest(BaseModel):
+    """払戻インポートリクエスト。"""
+
+    records: list[HrRecord]
 
 
 # -------------------------------------------------------------------
@@ -215,6 +243,77 @@ async def import_bloodlines(
     await db.commit()
     logger.info(f"import_bloodlines: {stats}")
     return {"ok": True, "stats": stats}
+
+
+@router.post("/payouts")
+async def import_payouts(
+    body: PayoutsImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """HR レコード（払戻情報）を取り込む。
+
+    処理内容:
+      1. jravan_race_id で races.id を解決する
+      2. race_payouts に upsert（UNIQUE制約で重複排除）
+      3. 複勝払戻は race_results.place_odds にも更新する（horse_number で照合）
+    """
+    from decimal import Decimal
+
+    imported = 0
+    skipped = 0
+
+    for hr in body.records:
+        # races.id を jravan_race_id で解決
+        race_row = await db.execute(
+            select(Race.id).where(Race.jravan_race_id == hr.race_id)
+        )
+        race_db_id: int | None = race_row.scalar()
+        if race_db_id is None:
+            logger.debug(f"import_payouts: race not found for jravan_race_id={hr.race_id!r}")
+            skipped += len(hr.payouts)
+            continue
+
+        for entry in hr.payouts:
+            # race_payouts に upsert
+            stmt = (
+                pg_insert(RacePayout)
+                .values(
+                    race_id=race_db_id,
+                    bet_type=entry.bet_type,
+                    combination=entry.combination,
+                    payout=entry.payout,
+                    popularity=entry.popularity,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_race_payouts_race_type_combo",
+                    set_={
+                        "payout": entry.payout,
+                        "popularity": entry.popularity,
+                    },
+                )
+            )
+            await db.execute(stmt)
+            imported += 1
+
+            # 複勝払戻を race_results.place_odds に反映
+            if entry.bet_type == "place" and entry.combination.isdigit():
+                horse_number = int(entry.combination)
+                # payout は 100円あたり払戻金額（整数）→ 倍率に変換
+                place_odds_val = Decimal(str(round(entry.payout / 100, 1)))
+                result_row = await db.execute(
+                    select(RaceResult).where(
+                        RaceResult.race_id == race_db_id,
+                        RaceResult.horse_number == horse_number,
+                    )
+                )
+                result = result_row.scalar_one_or_none()
+                if result is not None:
+                    result.place_odds = place_odds_val
+
+    await db.commit()
+    logger.info(f"import_payouts: imported={imported}, skipped={skipped}")
+    return {"imported": imported, "skipped": skipped}
 
 
 @changes_router.post("/notify")

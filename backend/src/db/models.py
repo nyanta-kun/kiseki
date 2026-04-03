@@ -251,6 +251,40 @@ class RaceEntry(Base):
     )
 
 
+class RacePayout(Base):
+    """払戻情報（HR レコード由来）"""
+
+    __tablename__ = "race_payouts"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("race_id", "bet_type", "combination", name="uq_race_payouts_race_type_combo"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    race_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.races.id"), index=True, comment="races テーブルの id"
+    )
+    bet_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="馬券種別（win/place/bracket/quinella/wide/exacta/trio/trifecta）",
+    )
+    combination: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        comment="馬番組み合わせ（単: '3', 2頭: '3-7', 3頭: '3-7-11' など）",
+    )
+    payout: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="払戻金額（100円あたり）",
+    )
+    popularity: Mapped[int | None] = mapped_column(Integer, comment="人気順位")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), comment="レコード作成日時"
+    )
+
+
 class RaceResult(Base):
     """レース結果"""
 
@@ -303,6 +337,10 @@ class RaceResult(Base):
     )
     running_style: Mapped[str | None] = mapped_column(
         String(1), comment="JRA判定脚質（1:逃,2:先,3:差,4:追）"
+    )
+    place_odds: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 1),
+        comment="複勝確定払戻倍率（HR レコードから取得、100円あたり払戻÷100）",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

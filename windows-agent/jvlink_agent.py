@@ -589,8 +589,51 @@ def fetch_realtime_data(jv, dataspec: str, key: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _filter_race_records(records: list[dict]) -> list[dict]:
-    """RA/SEレコードのみ抽出する。RACE dataspaceにはJG等も混在するため。"""
-    return [r for r in records if r.get("rec_id") in ("RA", "SE")]
+    """RA/SE/HRレコードのみ抽出する。RACE dataspaceにはJG等も混在するため。"""
+    return [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
+
+
+def _split_race_hr(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    """RA/SE と HR レコードに分割する。
+
+    Returns:
+        (ra_se_records, hr_records)
+    """
+    ra_se = [r for r in records if r.get("rec_id") in ("RA", "SE")]
+    hr = [r for r in records if r.get("rec_id") == "HR"]
+    return ra_se, hr
+
+
+def _post_hr_payouts(hr_records: list[dict]) -> None:
+    """HR レコードを parse_hr でパースして /api/import/payouts へ送信する。
+
+    Args:
+        hr_records: rec_id="HR" のレコードリスト（{"rec_id": "HR", "data": "..."}）
+    """
+    if not hr_records:
+        return
+
+    try:
+        from jvlink_parser import parse_hr  # noqa: PLC0415
+    except ImportError:
+        logger.warning("jvlink_parser.parse_hr が利用できません。HR レコードをスキップします。")
+        return
+
+    parsed = []
+    for rec in hr_records:
+        result = parse_hr(rec.get("data", ""))
+        if result:
+            parsed.append(result)
+
+    if not parsed:
+        return
+
+    ok = post_to_backend("/api/import/payouts", {"records": parsed})
+    if ok:
+        logger.info(f"  POST /api/import/payouts {len(parsed)} 件 -> OK")
+    else:
+        logger.warning(f"  POST /api/import/payouts {len(parsed)} 件 -> NG (ペンディング保存)")
+        save_pending("/api/import/payouts", parsed)
 
 
 def _post_in_batches(endpoint: str, records: list[dict], batch_size: int = 500) -> None:
@@ -622,10 +665,14 @@ def run_daily_fetch(jv) -> None:
     logger.info("=== レース情報・出馬表取得 ===")
 
     def on_daily_file_done(filename: str, file_records: list[dict]) -> None:
-        ra_se = _filter_race_records(file_records)
+        filtered = _filter_race_records(file_records)
+        ra_se, hr = _split_race_hr(filtered)
         if ra_se:
-            logger.info(f"  [{filename}] {len(ra_se)} 件 → DB反映")
+            logger.info(f"  [{filename}] RA/SE {len(ra_se)} 件 → DB反映")
             _post_in_batches("/api/import/races", ra_se)
+        if hr:
+            logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
+            _post_hr_payouts(hr)
 
     records = fetch_stored_data(jv, DATASPEC_RACE, yesterday, option=2, on_file_done=on_daily_file_done)
     logger.info(f"Daily fetch complete: 全体 {len(records)} 件")
@@ -762,17 +809,22 @@ def run_setup(jv) -> None:
             total_posted["skipped"] += 1
             return
 
-        ra_se = _filter_race_records(file_records)
-        if not ra_se:
-            logger.info(f"  [{filename}] RA/SE なし ({len(file_records)} 件中) → 完了マーク")
+        filtered = _filter_race_records(file_records)
+        ra_se, hr = _split_race_hr(filtered)
+        if not ra_se and not hr:
+            logger.info(f"  [{filename}] RA/SE/HR なし ({len(file_records)} 件中) → 完了マーク")
             mark_file_completed(DATASPEC_RACE, filename)
             return
 
-        logger.info(
-            f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
-        )
-        _post_in_batches("/api/import/races", ra_se)
-        total_posted["ra_se"] += len(ra_se)
+        if ra_se:
+            logger.info(
+                f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
+            )
+            _post_in_batches("/api/import/races", ra_se)
+            total_posted["ra_se"] += len(ra_se)
+        if hr:
+            logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
+            _post_hr_payouts(hr)
         total_posted["files"] += 1
         mark_file_completed(DATASPEC_RACE, filename)
         logger.info(
@@ -903,17 +955,22 @@ def run_recent(jv, from_year: int = 2023) -> None:
         if filename in completed:
             total_posted["skipped"] += 1
             return
-        ra_se = _filter_race_records(file_records)
-        if not ra_se:
-            logger.info(f"  [{filename}] RA/SE なし ({len(file_records)} 件中) → 完了マーク")
+        filtered = _filter_race_records(file_records)
+        ra_se, hr = _split_race_hr(filtered)
+        if not ra_se and not hr:
+            logger.info(f"  [{filename}] RA/SE/HR なし ({len(file_records)} 件中) → 完了マーク")
             mark_file_completed(DATASPEC_RACE, filename)
             completed.add(filename)
             return
-        logger.info(
-            f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
-        )
-        _post_in_batches("/api/import/races", ra_se)
-        total_posted["ra_se"] += len(ra_se)
+        if ra_se:
+            logger.info(
+                f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
+            )
+            _post_in_batches("/api/import/races", ra_se)
+            total_posted["ra_se"] += len(ra_se)
+        if hr:
+            logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
+            _post_hr_payouts(hr)
         total_posted["files"] += 1
         mark_file_completed(DATASPEC_RACE, filename)
         completed.add(filename)

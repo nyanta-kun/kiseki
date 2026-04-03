@@ -340,32 +340,57 @@ async def get_performance_summary(
     for row in rows:
         race_groups[row.race_id].append(row)
 
-    # --- 複勝オッズを odds_history から一括取得 ---
+    # --- 複勝オッズを race_payouts → odds_history の順で一括取得 ---
+    # race_payouts に確定払戻が存在する場合はそちらを優先し、
+    # なければ odds_history の最新オッズにフォールバックする。
     race_ids = list(race_groups.keys())
     place_odds_map: dict[tuple[int, int], float] = {}
     if race_ids:
-        place_rows = (
+        # 1. race_payouts から確定複勝払戻を取得（payout は 100円あたり払戻金額）
+        payout_rows = (
             await db.execute(
                 text("""
-                    SELECT race_id, combination::int AS horse_number, odds
-                    FROM (
-                        SELECT race_id, combination, odds,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY race_id, combination
-                                   ORDER BY fetched_at DESC
-                               ) AS rn
-                        FROM keiba.odds_history
-                        WHERE bet_type = 'place'
-                          AND combination ~ '^[0-9]+$'
-                          AND race_id = ANY(:race_ids)
-                    ) t
-                    WHERE rn = 1
+                    SELECT race_id, combination::int AS horse_number,
+                           payout::float / 100.0 AS odds
+                    FROM keiba.race_payouts
+                    WHERE bet_type = 'place'
+                      AND combination ~ '^[0-9]+$'
+                      AND race_id = ANY(:race_ids)
                 """),
                 {"race_ids": race_ids},
             )
         ).fetchall()
-        for pr in place_rows:
+        for pr in payout_rows:
             place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+
+        # 2. race_payouts に存在しないレースは odds_history の最新オッズで補完
+        missing_race_ids = [
+            rid for rid in race_ids
+            if not any(k[0] == rid for k in place_odds_map)
+        ]
+        if missing_race_ids:
+            fallback_rows = (
+                await db.execute(
+                    text("""
+                        SELECT race_id, combination::int AS horse_number, odds
+                        FROM (
+                            SELECT race_id, combination, odds,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY race_id, combination
+                                       ORDER BY fetched_at DESC
+                                   ) AS rn
+                            FROM keiba.odds_history
+                            WHERE bet_type = 'place'
+                              AND combination ~ '^[0-9]+$'
+                              AND race_id = ANY(:race_ids)
+                        ) t
+                        WHERE rn = 1
+                    """),
+                    {"race_ids": missing_race_ids},
+                )
+            ).fetchall()
+            for pr in fallback_rows:
+                place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
 
     # --- レースごとの指標を計算 ---
     race_metrics: list[dict] = []
