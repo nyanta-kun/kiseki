@@ -13,13 +13,14 @@ const SURFACES = [
   { value: "障", label: "障害" },
 ];
 
-// URL キーは ASCII のみ（〜等の特殊文字を避ける）、ラベルは表示用
+// URL パラメータは ASCII キー（〜等の特殊文字を避ける）、ラベルは表示用
+// SURFACES と同じ { value, label } 構造を使用
 const DISTANCE_OPTIONS = [
-  { key: "sprint", label: "短距離(〜1400m)" },
-  { key: "mile",   label: "マイル(1401〜1799m)" },
-  { key: "middle", label: "中距離(1800〜2200m)" },
-  { key: "long",   label: "長距離(2201m〜)" },
-] as const;
+  { value: "sprint", label: "短距離(〜1400m)" },
+  { value: "mile",   label: "マイル(1401〜1799m)" },
+  { value: "middle", label: "中距離(1800〜2200m)" },
+  { value: "long",   label: "長距離(2201m〜)" },
+];
 
 const CONDITIONS = [
   "G1", "G2", "G3", "OP・L",
@@ -192,13 +193,13 @@ export function FilterForm({ current }: Props) {
           >
             全て
           </button>
-          {DISTANCE_OPTIONS.map((opt) => (
+          {DISTANCE_OPTIONS.map((d) => (
             <button
-              key={opt.key}
-              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, opt.key) })}
-              className={norm.distance_range.includes(opt.key) ? activePillCls : pillCls}
+              key={d.value}
+              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, d.value) })}
+              className={norm.distance_range.includes(d.value) ? activePillCls : pillCls}
             >
-              {opt.label}
+              {d.label}
             </button>
           ))}
         </div>
