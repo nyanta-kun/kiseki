@@ -106,6 +106,7 @@ export default async function ResultsPage({
     surface:        toArray(sp.surface),
     distance_range: toArray(sp.distance_range),
     condition:      toArray(sp.condition),
+    include_nonJRA: sp.include_nonJRA === "true",
   };
 
   let data;

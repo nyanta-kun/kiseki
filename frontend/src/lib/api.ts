@@ -231,6 +231,7 @@ export type PerformanceFilters = {
   surface?: string[];
   distance_range?: string[];
   condition?: string[];
+  include_nonJRA?: boolean;
 };
 
 /** AI指数精度サマリー（成績確定済みレースの集計）→ 5分キャッシュ */
@@ -245,6 +246,7 @@ export async function fetchPerformanceSummary(
   if (filters.surface?.length) params.set("surface", filters.surface.join(","));
   if (filters.distance_range?.length) params.set("distance_range", filters.distance_range.join(","));
   if (filters.condition?.length) params.set("condition", filters.condition.join(","));
+  if (filters.include_nonJRA) params.set("include_nonJRA", "true");
   const qs = params.toString() ? `?${params.toString()}` : "";
   return get<PerformanceSummary>(`/performance/summary${qs}`, { next: { revalidate: 300 } });
 }

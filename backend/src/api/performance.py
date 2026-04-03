@@ -223,6 +223,10 @@ _DISTANCE_ORDER = [v[0] for v in _DISTANCE_KEY_MAP.values()]
 _SURFACE_ORDER = ["芝", "ダ", "障"]
 
 
+# JRA 10場のコードセット（フィルタ用）
+_JRA_COURSE_CODES = {"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"}
+
+
 @router.get("/summary", response_model=PerformanceSummaryOut)
 async def get_performance_summary(
     db: DbDep,
@@ -241,6 +245,10 @@ async def get_performance_summary(
     condition: str | None = Query(
         default=None,
         description="条件（カンマ区切り複数可: G1,G2,G3）",
+    ),
+    include_nonJRA: bool = Query(
+        default=False,
+        description="地方競馬・海外レースを含める（デフォルト: JRA10場のみ）",
     ),
 ) -> PerformanceSummaryOut:
     """AI指数の予測精度サマリーを返す。
@@ -277,6 +285,8 @@ async def get_performance_summary(
         Race.date <= to_date,
         RaceResult.finish_position.is_not(None),
     ]
+    if not include_nonJRA:
+        sql_conditions.append(Race.course.in_(list(_JRA_COURSE_CODES)))
     if course_names:
         sql_conditions.append(Race.course_name.in_(course_names))
     if surfaces:
