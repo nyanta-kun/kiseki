@@ -7,8 +7,6 @@ Create Date: 2026-04-03
 
 from __future__ import annotations
 
-from alembic import op
-
 revision: str = "h8i9j0k1l2m3"
 down_revision: tuple[str, str] = ("a2b3c4d5e6f7", "g7h8i9j0k1l2")
 branch_labels = None
