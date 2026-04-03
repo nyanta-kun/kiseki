@@ -240,10 +240,11 @@ export async function fetchPerformanceSummary(
   const params = new URLSearchParams();
   if (filters.from_date) params.set("from_date", filters.from_date);
   if (filters.to_date) params.set("to_date", filters.to_date);
-  for (const v of filters.course_name ?? []) params.append("course_name", v);
-  for (const v of filters.surface ?? []) params.append("surface", v);
-  for (const v of filters.distance_range ?? []) params.append("distance_range", v);
-  for (const v of filters.condition ?? []) params.append("condition", v);
+  // カンマ区切りで送信（バックエンドが分割）
+  if (filters.course_name?.length) params.set("course_name", filters.course_name.join(","));
+  if (filters.surface?.length) params.set("surface", filters.surface.join(","));
+  if (filters.distance_range?.length) params.set("distance_range", filters.distance_range.join(","));
+  if (filters.condition?.length) params.set("condition", filters.condition.join(","));
   const qs = params.toString() ? `?${params.toString()}` : "";
   return get<PerformanceSummary>(`/performance/summary${qs}`, { next: { revalidate: 300 } });
 }

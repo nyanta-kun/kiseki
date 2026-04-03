@@ -73,7 +73,9 @@ type SearchParams = Promise<RawSearchParams>;
 
 function toArray(v: string | string[] | undefined): string[] | undefined {
   if (!v) return undefined;
-  const arr = Array.isArray(v) ? v : [v];
+  // カンマ区切り文字列 or 配列の両方に対応
+  const str = Array.isArray(v) ? v.join(",") : v;
+  const arr = str.split(",").map((s) => s.trim()).filter(Boolean);
   return arr.length > 0 ? arr : undefined;
 }
 

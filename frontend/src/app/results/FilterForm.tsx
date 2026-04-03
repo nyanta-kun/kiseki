@@ -54,15 +54,15 @@ function currentDatePreset(fromDate?: string): string {
   return "prev_year";
 }
 
-/** URLSearchParams に配列キーを複数 append して文字列化する */
+/** URL クエリ文字列を生成する（配列はカンマ区切り） */
 function buildQueryString(filters: PerformanceFilters): string {
   const params = new URLSearchParams();
   if (filters.from_date) params.set("from_date", filters.from_date);
   if (filters.to_date) params.set("to_date", filters.to_date);
-  for (const v of filters.course_name ?? []) params.append("course_name", v);
-  for (const v of filters.surface ?? []) params.append("surface", v);
-  for (const v of filters.distance_range ?? []) params.append("distance_range", v);
-  for (const v of filters.condition ?? []) params.append("condition", v);
+  if (filters.course_name?.length) params.set("course_name", filters.course_name.join(","));
+  if (filters.surface?.length) params.set("surface", filters.surface.join(","));
+  if (filters.distance_range?.length) params.set("distance_range", filters.distance_range.join(","));
+  if (filters.condition?.length) params.set("condition", filters.condition.join(","));
   return params.toString();
 }
 

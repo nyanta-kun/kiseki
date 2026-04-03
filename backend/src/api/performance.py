@@ -215,7 +215,7 @@ _CONDITION_ORDER = [
     "3勝", "2勝", "1勝", "未勝利",
     "障害", "条件戦",
 ]
-_DISTANCE_ORDER = [l for l, _, _ in _DISTANCE_RANGES]
+_DISTANCE_ORDER = [label for label, _, _ in _DISTANCE_RANGES]
 _SURFACE_ORDER = ["芝", "ダ", "障"]
 
 
@@ -228,15 +228,15 @@ async def get_performance_summary(
     to_date: str | None = Query(
         default=None, description="集計終了日 YYYYMMDD（デフォルト: 今日）"
     ),
-    course_name: list[str] | None = Query(default=None, description="競馬場名（複数指定可: 東京, 中山, ...）"),
-    surface: list[str] | None = Query(default=None, description="馬場（複数指定可: 芝/ダ/障）"),
-    distance_range: list[str] | None = Query(
+    course_name: str | None = Query(default=None, description="競馬場名（カンマ区切り複数可: 東京,中山）"),
+    surface: str | None = Query(default=None, description="馬場（カンマ区切り複数可: 芝,ダ）"),
+    distance_range: str | None = Query(
         default=None,
-        description="距離帯（複数指定可: 短距離(〜1400m)/マイル(1401〜1799m)/中距離(1800〜2200m)/長距離(2201m〜)）",
+        description="距離帯（カンマ区切り複数可: 短距離(〜1400m),マイル(1401〜1799m)）",
     ),
-    condition: list[str] | None = Query(
+    condition: str | None = Query(
         default=None,
-        description="条件（複数指定可: G1/G2/G3/OP・L/3勝/2勝/1勝/未勝利/障害）",
+        description="条件（カンマ区切り複数可: G1,G2,G3）",
     ),
 ) -> PerformanceSummaryOut:
     """AI指数の予測精度サマリーを返す。
@@ -254,6 +254,18 @@ async def get_performance_summary(
     if to_date is None:
         to_date = today.strftime("%Y%m%d")
 
+    # --- カンマ区切りパラメータを展開 ---
+    def _split(v: str | None) -> list[str] | None:
+        if not v:
+            return None
+        items = [s.strip() for s in v.split(",") if s.strip()]
+        return items if items else None
+
+    course_names = _split(course_name)
+    surfaces = _split(surface)
+    distance_ranges = _split(distance_range)
+    conditions = _split(condition)
+
     # --- SQLフィルタ条件の構築 ---
     sql_conditions = [
         CalculatedIndex.version == COMPOSITE_VERSION,
@@ -261,13 +273,13 @@ async def get_performance_summary(
         Race.date <= to_date,
         RaceResult.finish_position.is_not(None),
     ]
-    if course_name:
-        sql_conditions.append(Race.course_name.in_(course_name))
-    if surface:
-        sql_conditions.append(Race.surface.in_(surface))
-    if distance_range:
+    if course_names:
+        sql_conditions.append(Race.course_name.in_(course_names))
+    if surfaces:
+        sql_conditions.append(Race.surface.in_(surfaces))
+    if distance_ranges:
         dist_conds = []
-        for dr in distance_range:
+        for dr in distance_ranges:
             for label, lo, hi in _DISTANCE_RANGES:
                 if label == dr:
                     dist_conds.append((Race.distance >= lo) & (Race.distance <= hi))
@@ -346,7 +358,7 @@ async def get_performance_summary(
         cond_label = _condition_label(
             sample.grade, sample.race_type_code, sample.prize_1st
         )
-        if condition and cond_label not in condition:
+        if conditions and cond_label not in conditions:
             continue
 
         composite_indices = [
