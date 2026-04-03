@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import type { PerformanceFilters } from "@/lib/api";
 
@@ -92,6 +93,16 @@ function toggle(arr: string[], value: string): string[] {
   return arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value];
 }
 
+type FilterState = {
+  from_date?: string;
+  to_date?: string;
+  course_name: string[];
+  surface: string[];
+  distance_range: string[];
+  condition: string[];
+  include_nonJRA: boolean;
+};
+
 type Props = {
   current: PerformanceFilters;
 };
@@ -100,8 +111,8 @@ export function FilterForm({ current }: Props) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // RSC シリアライズで string になる場合があるため常に string[] に正規化
-  const norm = {
+  // URL パラメータから初期状態を作成（ページリロード時のみ評価、key prop で制御）
+  const initial: FilterState = {
     from_date:      current.from_date,
     to_date:        current.to_date,
     course_name:    toArr(current.course_name as string[] | string | undefined),
@@ -111,12 +122,15 @@ export function FilterForm({ current }: Props) {
     include_nonJRA: current.include_nonJRA ?? false,
   };
 
-  function push(next: typeof norm) {
-    const qs = buildQueryString(next);
+  // フィルタ変更はローカル state に蓄積し、検索ボタン押下時のみ URL に反映
+  const [draft, setDraft] = useState<FilterState>(initial);
+
+  function apply() {
+    const qs = buildQueryString(draft);
     router.push(qs ? `${pathname}?${qs}` : pathname);
   }
 
-  const datePreset = currentDatePreset(norm.from_date);
+  const datePreset = currentDatePreset(draft.from_date);
 
   const activePillCls = "text-xs px-2.5 py-1 rounded-full font-medium transition-colors bg-blue-600 text-white border border-blue-600";
   const pillCls = "text-xs px-2.5 py-1 rounded-full font-medium transition-colors border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 cursor-pointer";
@@ -132,7 +146,7 @@ export function FilterForm({ current }: Props) {
             return (
               <button
                 key={p.value}
-                onClick={() => push({ ...norm, from_date: from, to_date: to })}
+                onClick={() => setDraft({ ...draft, from_date: from, to_date: to })}
                 className={datePreset === p.value ? activePillCls : pillCls}
               >
                 {p.label}
@@ -147,16 +161,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">競馬場</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...norm, course_name: [] })}
-            className={norm.course_name.length === 0 ? activePillCls : pillCls}
+            onClick={() => setDraft({ ...draft, course_name: [] })}
+            className={draft.course_name.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {COURSES.map((c) => (
             <button
               key={c}
-              onClick={() => push({ ...norm, course_name: toggle(norm.course_name, c) })}
-              className={norm.course_name.includes(c) ? activePillCls : pillCls}
+              onClick={() => setDraft({ ...draft, course_name: toggle(draft.course_name, c) })}
+              className={draft.course_name.includes(c) ? activePillCls : pillCls}
             >
               {c}
             </button>
@@ -170,8 +184,8 @@ export function FilterForm({ current }: Props) {
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={norm.include_nonJRA}
-            onChange={(e) => push({ ...norm, include_nonJRA: e.target.checked })}
+            checked={draft.include_nonJRA}
+            onChange={(e) => setDraft({ ...draft, include_nonJRA: e.target.checked })}
             className="w-3.5 h-3.5 rounded accent-blue-600"
           />
           <span className="text-xs text-gray-500">地方・海外を含める</span>
@@ -183,16 +197,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">馬場</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...norm, surface: [] })}
-            className={norm.surface.length === 0 ? activePillCls : pillCls}
+            onClick={() => setDraft({ ...draft, surface: [] })}
+            className={draft.surface.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {SURFACES.map((s) => (
             <button
               key={s.value}
-              onClick={() => push({ ...norm, surface: toggle(norm.surface, s.value) })}
-              className={norm.surface.includes(s.value) ? activePillCls : pillCls}
+              onClick={() => setDraft({ ...draft, surface: toggle(draft.surface, s.value) })}
+              className={draft.surface.includes(s.value) ? activePillCls : pillCls}
             >
               {s.label}
             </button>
@@ -205,16 +219,16 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">距離</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...norm, distance_range: [] })}
-            className={norm.distance_range.length === 0 ? activePillCls : pillCls}
+            onClick={() => setDraft({ ...draft, distance_range: [] })}
+            className={draft.distance_range.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {DISTANCE_OPTIONS.map((d) => (
             <button
               key={d.value}
-              onClick={() => push({ ...norm, distance_range: toggle(norm.distance_range, d.value) })}
-              className={norm.distance_range.includes(d.value) ? activePillCls : pillCls}
+              onClick={() => setDraft({ ...draft, distance_range: toggle(draft.distance_range, d.value) })}
+              className={draft.distance_range.includes(d.value) ? activePillCls : pillCls}
             >
               {d.label}
             </button>
@@ -227,21 +241,31 @@ export function FilterForm({ current }: Props) {
         <span className="text-xs text-gray-500 w-10 shrink-0">条件</span>
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => push({ ...norm, condition: [] })}
-            className={norm.condition.length === 0 ? activePillCls : pillCls}
+            onClick={() => setDraft({ ...draft, condition: [] })}
+            className={draft.condition.length === 0 ? activePillCls : pillCls}
           >
             全て
           </button>
           {CONDITIONS.map((c) => (
             <button
               key={c}
-              onClick={() => push({ ...norm, condition: toggle(norm.condition, c) })}
-              className={norm.condition.includes(c) ? activePillCls : pillCls}
+              onClick={() => setDraft({ ...draft, condition: toggle(draft.condition, c) })}
+              className={draft.condition.includes(c) ? activePillCls : pillCls}
             >
               {c}
             </button>
           ))}
         </div>
+      </div>
+
+      {/* 検索ボタン */}
+      <div className="flex justify-end pt-1 border-t border-gray-50">
+        <button
+          onClick={apply}
+          className="text-xs px-4 py-1.5 rounded-full font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+        >
+          検索
+        </button>
       </div>
     </div>
   );

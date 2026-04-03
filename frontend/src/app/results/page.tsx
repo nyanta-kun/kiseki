@@ -146,8 +146,8 @@ export default async function ResultsPage({
           </p>
         </div>
 
-        {/* フィルタフォーム */}
-        <FilterForm current={filters} />
+        {/* フィルタフォーム（key で URL 変更時に state をリセット）*/}
+        <FilterForm current={filters} key={JSON.stringify(filters)} />
 
         {/* 適用中フィルタ表示 */}
         <FilterBadge filters={filters} />
