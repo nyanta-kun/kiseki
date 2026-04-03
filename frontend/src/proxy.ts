@@ -12,6 +12,8 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     pathname.startsWith("/auth/") ||
     pathname === "/favicon.ico" ||
     pathname === "/manifest.json" ||
+    pathname === "/sw.js" ||
+    /^\/workbox-.*\.js$/.test(pathname) ||
     pathname.startsWith("/images/") ||
     /^\/icon-.*\.png$/.test(pathname)
   ) {
