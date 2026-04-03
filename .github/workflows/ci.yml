@@ -162,6 +162,8 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
               "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
               'bash -s' << EOF
           set -euo pipefail
@@ -174,12 +176,13 @@ jobs:
           echo "[deploy] DBマイグレーション実行..."
           docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
             -e PYTHONPATH=/app backend uv run alembic upgrade head
-          docker compose -f docker-compose.galloplab.yml up -d --force-recreate
+          echo "[deploy] コンテナ再作成（--no-wait で即時復帰）..."
+          docker compose -f docker-compose.galloplab.yml up -d --force-recreate --no-wait
           echo "[deploy] ヘルスチェック待機中..."
-          for i in \$(seq 1 12); do
+          for i in \$(seq 1 36); do
             sleep 5
             STATUS=\$(docker inspect --format='{{.State.Health.Status}}' galloplab-backend-1 2>/dev/null || echo "unknown")
-            echo "  backend health: \$STATUS (\${i}/12)"
+            echo "  backend health: \$STATUS (\${i}/36)"
             if [ "\$STATUS" = "healthy" ]; then break; fi
           done
           docker compose -f docker-compose.galloplab.yml ps
