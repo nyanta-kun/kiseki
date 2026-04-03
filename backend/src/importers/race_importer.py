@@ -10,8 +10,9 @@ import logging
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Horse, Jockey, Race, RaceEntry, RaceResult, Trainer
 from .jvlink_parser import parse_ra, parse_se
@@ -67,7 +68,7 @@ def _year4(year_str: str) -> str:
 class RaceImporter:
     """RA/SEレコードをDBに取り込むクラス。"""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """初期化。
 
         Args:
@@ -83,7 +84,7 @@ class RaceImporter:
     # ------------------------------------------------------------------
     # 公開メソッド
     # ------------------------------------------------------------------
-    def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
+    async def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
         """RA/SEレコードのリストをDBへ取り込む（バルクupsert処理）。
 
         Phase1: 全レコードをパースしてRA/SEを分離
@@ -124,7 +125,7 @@ class RaceImporter:
         # Phase2a: RAを1SQLでバルクupsert → raceキャッシュを構築
         if ra_parsed:
             try:
-                self._bulk_upsert_races(ra_parsed)
+                await self._bulk_upsert_races(ra_parsed)
                 stats["races"] = len(ra_parsed)
             except Exception as e:
                 logger.error(f"Bulk race upsert error: {e}")
@@ -132,18 +133,18 @@ class RaceImporter:
 
         if se_parsed:
             # Phase2b: 既存エンティティをバルクSELECTでキャッシュ構築（4 SQL）
-            self._warm_up_caches(se_parsed)
+            await self._warm_up_caches(se_parsed)
 
             # Phase2c: 新規エンティティをバルクINSERT DO NOTHINGで登録（最大6 SQL）
             try:
-                self._ensure_entities_bulk(se_parsed)
+                await self._ensure_entities_bulk(se_parsed)
             except Exception as e:
                 logger.error(f"Bulk entity create error: {e}")
 
             # Phase2d: entriesを1SQLでバルクupsert（RETURNING でentry_id取得）
             entry_map: dict[tuple[int, int], int] = {}
             try:
-                entry_map = self._bulk_upsert_entries(se_parsed)
+                entry_map = await self._bulk_upsert_entries(se_parsed)
                 stats["entries"] = len(entry_map)
             except Exception as e:
                 logger.error(f"Bulk entry upsert error: {e}")
@@ -152,17 +153,17 @@ class RaceImporter:
             # Phase2e: resultsを1SQLでバルクupsert
             if entry_map:
                 try:
-                    race_ids, count = self._bulk_upsert_results(se_parsed, entry_map)
+                    race_ids, count = await self._bulk_upsert_results(se_parsed, entry_map)
                     stats["results"] = count
                     stats["result_race_ids"] = race_ids
                 except Exception as e:
                     logger.error(f"Bulk result upsert error: {e}")
                     stats["errors"] += len(se_parsed)
 
-        self.db.flush()
+        await self.db.flush()
         return stats
 
-    def _warm_up_caches(self, se_list: list[dict[str, Any]]) -> None:
+    async def _warm_up_caches(self, se_list: list[dict[str, Any]]) -> None:
         """SE群から必要なコードをバルクSELECTしてキャッシュを構築する。
 
         VPSへのRTTを最小化するため、N件のSELECTを各1件にまとめる。
@@ -180,40 +181,40 @@ class RaceImporter:
 
         if new_horse_codes:
             rows = (
-                self.db.query(Horse.jravan_code, Horse.id)
-                .filter(Horse.jravan_code.in_(new_horse_codes))
-                .all()
-            )
+                await self.db.execute(
+                    select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(new_horse_codes))
+                )
+            ).fetchall()
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_jockey_codes:
             rows = (
-                self.db.query(Jockey.jravan_code, Jockey.id)
-                .filter(Jockey.jravan_code.in_(new_jockey_codes))
-                .all()
-            )
+                await self.db.execute(
+                    select(Jockey.jravan_code, Jockey.id).where(Jockey.jravan_code.in_(new_jockey_codes))
+                )
+            ).fetchall()
             self._jockey_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_trainer_codes:
             rows = (
-                self.db.query(Trainer.jravan_code, Trainer.id)
-                .filter(Trainer.jravan_code.in_(new_trainer_codes))
-                .all()
-            )
+                await self.db.execute(
+                    select(Trainer.jravan_code, Trainer.id).where(Trainer.jravan_code.in_(new_trainer_codes))
+                )
+            ).fetchall()
             self._trainer_cache.update({r.jravan_code: r.id for r in rows})
 
         if new_race_ids:
             rows = (
-                self.db.query(Race.jravan_race_id, Race.id)
-                .filter(Race.jravan_race_id.in_(new_race_ids))
-                .all()
-            )
+                await self.db.execute(
+                    select(Race.jravan_race_id, Race.id).where(Race.jravan_race_id.in_(new_race_ids))
+                )
+            ).fetchall()
             self._race_cache.update({r.jravan_race_id: r.id for r in rows})
 
     # ------------------------------------------------------------------
     # バルクupsertメソッド（N件を1 SQLで処理）
     # ------------------------------------------------------------------
-    def _bulk_upsert_races(self, ra_list: list[dict[str, Any]]) -> None:
+    async def _bulk_upsert_races(self, ra_list: list[dict[str, Any]]) -> None:
         """RAレコードを1 SQLでバルクupsertし、_race_cacheを更新する。
 
         個別ループ（N SQL）→ 1 SQL に変換することでVPS RTTを大幅削減。
@@ -283,10 +284,10 @@ class RaceImporter:
             index_elements=["jravan_race_id"],
             set_={col: stmt.excluded[col] for col in update_cols},
         ).returning(Race.id, Race.jravan_race_id)
-        for race_id, jravan_id in self.db.execute(returning_stmt):
+        for race_id, jravan_id in (await self.db.execute(returning_stmt)):
             self._race_cache[jravan_id] = race_id
 
-    def _ensure_entities_bulk(self, se_list: list[dict[str, Any]]) -> None:
+    async def _ensure_entities_bulk(self, se_list: list[dict[str, Any]]) -> None:
         """SE群の新規馬・騎手・調教師をバルクINSERTしてキャッシュを補完する。
 
         _warm_up_cachesでDBに存在するものはキャッシュ済み。
@@ -305,14 +306,14 @@ class RaceImporter:
                     "jravan_code": code,
                 }
         if new_horses:
-            self.db.execute(
+            await self.db.execute(
                 insert(Horse).values(list(new_horses.values())).on_conflict_do_nothing()
             )
             rows = (
-                self.db.query(Horse.jravan_code, Horse.id)
-                .filter(Horse.jravan_code.in_(new_horses.keys()))
-                .all()
-            )
+                await self.db.execute(
+                    select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(new_horses.keys()))
+                )
+            ).fetchall()
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
 
         # --- 騎手 ---
@@ -322,14 +323,14 @@ class RaceImporter:
             if code and code not in self._jockey_cache and code not in new_jockeys:
                 new_jockeys[code] = {"name": p.get("jockey_name", ""), "jravan_code": code}
         if new_jockeys:
-            self.db.execute(
+            await self.db.execute(
                 insert(Jockey).values(list(new_jockeys.values())).on_conflict_do_nothing()
             )
             rows = (
-                self.db.query(Jockey.jravan_code, Jockey.id)
-                .filter(Jockey.jravan_code.in_(new_jockeys.keys()))
-                .all()
-            )
+                await self.db.execute(
+                    select(Jockey.jravan_code, Jockey.id).where(Jockey.jravan_code.in_(new_jockeys.keys()))
+                )
+            ).fetchall()
             self._jockey_cache.update({r.jravan_code: r.id for r in rows})
 
         # --- 調教師 ---
@@ -339,17 +340,17 @@ class RaceImporter:
             if code and code not in self._trainer_cache and code not in new_trainers:
                 new_trainers[code] = {"name": p.get("trainer_name", ""), "jravan_code": code}
         if new_trainers:
-            self.db.execute(
+            await self.db.execute(
                 insert(Trainer).values(list(new_trainers.values())).on_conflict_do_nothing()
             )
             rows = (
-                self.db.query(Trainer.jravan_code, Trainer.id)
-                .filter(Trainer.jravan_code.in_(new_trainers.keys()))
-                .all()
-            )
+                await self.db.execute(
+                    select(Trainer.jravan_code, Trainer.id).where(Trainer.jravan_code.in_(new_trainers.keys()))
+                )
+            ).fetchall()
             self._trainer_cache.update({r.jravan_code: r.id for r in rows})
 
-    def _bulk_upsert_entries(self, se_list: list[dict[str, Any]]) -> dict[tuple[int, int], int]:
+    async def _bulk_upsert_entries(self, se_list: list[dict[str, Any]]) -> dict[tuple[int, int], int]:
         """SEレコードのRaceEntryを1 SQLでバルクupsertする。
 
         Returns:
@@ -404,11 +405,11 @@ class RaceImporter:
             set_={col: stmt.excluded[col] for col in update_cols},
         ).returning(RaceEntry.id, RaceEntry.race_id, RaceEntry.horse_number)
         entry_map: dict[tuple[int, int], int] = {}
-        for entry_id, race_id, horse_num in self.db.execute(returning_stmt):
+        for entry_id, race_id, horse_num in (await self.db.execute(returning_stmt)):
             entry_map[(race_id, horse_num)] = entry_id
         return entry_map
 
-    def _bulk_upsert_results(
+    async def _bulk_upsert_results(
         self, se_list: list[dict[str, Any]], entry_map: dict[tuple[int, int], int]
     ) -> tuple[list[int], int]:
         """SEレコードのRaceResultを1 SQLでバルクupsertする。
@@ -493,7 +494,7 @@ class RaceImporter:
             index_elements=["race_id", "horse_id"],
             set_={col: stmt.excluded[col] for col in update_cols},
         )
-        self.db.execute(stmt)
+        await self.db.execute(stmt)
         return result_race_ids, len(values)
 
     # ------------------------------------------------------------------

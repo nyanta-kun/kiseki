@@ -99,14 +99,14 @@ async def import_races(
 
     Windows Agent の run_daily_fetch / run_setup から呼び出される。
     """
-    importer = RaceImporter(db)  # type: ignore[arg-type]
+    importer = RaceImporter(db)
     records = [r.model_dump() for r in body.records]
     if records:
         first = records[0]
         logger.debug(
             f"recv: rec_id={first.get('rec_id')!r} data[:20]={first.get('data', '')[:20]!r} total={len(records)}"
         )
-    stats = importer.import_records(records)
+    stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_races stats: {stats}")
 
