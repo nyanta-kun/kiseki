@@ -22,7 +22,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      `connect-src 'self' wss://galloplab.com wss://sekito-stable.com https://galloplab.com https://sekito-stable.com https://accounts.google.com${isDev ? " ws://localhost:8000 http://localhost:8000" : ""}`,
+      `connect-src 'self' wss://galloplab.com wss://api.galloplab.com wss://sekito-stable.com https://galloplab.com https://api.galloplab.com https://sekito-stable.com https://accounts.google.com${isDev ? " ws://localhost:8000 http://localhost:8000" : ""}`,
       "frame-src https://accounts.google.com",
       "frame-ancestors 'none'",
     ].join("; "),
