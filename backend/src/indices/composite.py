@@ -179,8 +179,11 @@ class CompositeIndexCalculator:
         Returns:
             全馬分の算出結果リスト（race_id・horse_id 付き）
         """
+        _JRA_COURSE_CODES = {"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"}
         races_result = await self.db.execute(
-            select(Race).where(Race.date == date).order_by(Race.race_number)
+            select(Race)
+            .where(Race.date == date, Race.course.in_(list(_JRA_COURSE_CODES)))
+            .order_by(Race.race_number)
         )
         races = races_result.scalars().all()
         if not races:

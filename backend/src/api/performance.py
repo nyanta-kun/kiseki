@@ -277,10 +277,6 @@ async def get_performance_summary(
         default=None,
         description="条件（カンマ区切り複数可: G1,G2,G3）",
     ),
-    include_nonJRA: bool = Query(
-        default=False,
-        description="地方競馬・海外レースを含める（デフォルト: JRA10場のみ）",
-    ),
 ) -> PerformanceSummaryOut:
     """AI指数の予測精度サマリーを返す。
 
@@ -315,9 +311,8 @@ async def get_performance_summary(
         Race.date >= from_date,
         Race.date <= to_date,
         RaceResult.finish_position.is_not(None),
+        Race.course.in_(list(_JRA_COURSE_CODES)),
     ]
-    if not include_nonJRA:
-        sql_conditions.append(Race.course.in_(list(_JRA_COURSE_CODES)))
     if course_names:
         sql_conditions.append(Race.course_name.in_(course_names))
     if surfaces:

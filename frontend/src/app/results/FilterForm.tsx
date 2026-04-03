@@ -75,7 +75,6 @@ function buildQueryString(f: {
   surface: string[];
   distance_range: string[];
   condition: string[];
-  include_nonJRA: boolean;
 }): string {
   const params = new URLSearchParams();
   if (f.from_date) params.set("from_date", f.from_date);
@@ -84,7 +83,6 @@ function buildQueryString(f: {
   if (f.surface.length) params.set("surface", f.surface.join(","));
   if (f.distance_range.length) params.set("distance_range", f.distance_range.join(","));
   if (f.condition.length) params.set("condition", f.condition.join(","));
-  if (f.include_nonJRA) params.set("include_nonJRA", "true");
   return params.toString();
 }
 
@@ -100,7 +98,6 @@ type FilterState = {
   surface: string[];
   distance_range: string[];
   condition: string[];
-  include_nonJRA: boolean;
 };
 
 type Props = {
@@ -119,7 +116,6 @@ export function FilterForm({ current }: Props) {
     surface:        toArr(current.surface as string[] | string | undefined),
     distance_range: toArr(current.distance_range as string[] | string | undefined),
     condition:      toArr(current.condition as string[] | string | undefined),
-    include_nonJRA: current.include_nonJRA ?? false,
   };
 
   // フィルタ変更はローカル state に蓄積し、検索ボタン押下時のみ URL に反映
@@ -176,20 +172,6 @@ export function FilterForm({ current }: Props) {
             </button>
           ))}
         </div>
-      </div>
-
-      {/* 地方・海外トグル */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-500 w-10 shrink-0" />
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={draft.include_nonJRA}
-            onChange={(e) => setDraft({ ...draft, include_nonJRA: e.target.checked })}
-            className="w-3.5 h-3.5 rounded accent-blue-600"
-          />
-          <span className="text-xs text-gray-500">地方・海外を含める</span>
-        </label>
       </div>
 
       {/* 馬場 */}
@@ -262,7 +244,7 @@ export function FilterForm({ current }: Props) {
       <div className="flex justify-end pt-2 border-t border-gray-100">
         <button
           onClick={apply}
-          className="px-5 py-2 rounded-lg text-sm font-semibold bg-blue-700 text-white shadow-sm hover:bg-blue-800 active:scale-95 transition-all"
+          className="px-5 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
         >
           集計
         </button>
