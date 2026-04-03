@@ -10,12 +10,14 @@ type Props = {
 
 /**
  * ペイウォールゲート。
+ * - NEXT_PUBLIC_SHOW_FOOTER が "false" の場合はペイウォール無効（開発環境等）
  * - 1Rは無料公開
  * - 有料会員（isPremium）は無条件で表示
  * - それ以外はBlur Gate（ぼかし + 購入訴求オーバーレイ）を表示
  */
 export function PaywallGate({ isPremium, raceNumber, children }: Props) {
-  const isFree = isPremium || raceNumber === 1;
+  const paywallEnabled = process.env.NEXT_PUBLIC_SHOW_FOOTER !== "false";
+  const isFree = !paywallEnabled || isPremium || raceNumber === 1;
 
   if (isFree) {
     return <>{children}</>;
