@@ -1,0 +1,109 @@
+name: Backfill Netkeiba Remarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "実行モード"
+        required: true
+        default: "start"
+        type: choice
+        options:
+          - start   # バックフィル開始（既に実行中なら何もしない）
+          - status  # ログ末尾を確認
+          - stop    # 実行中のバックフィルを停止
+
+# 最小権限
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: Netkeiba Backfill (${{ github.event.inputs.mode }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Start backfill
+        if: github.event.inputs.mode == 'start'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o ServerAliveInterval=30 \
+              "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+              'bash -s' << 'EOF'
+          set -euo pipefail
+          cd ~/GitHub/kiseki
+
+          # 既に実行中かチェック
+          if pgrep -f "run_netkeiba_backfill_all.sh" > /dev/null 2>&1; then
+            echo "[backfill] 既に実行中です。"
+            pgrep -a -f "run_netkeiba_backfill_all.sh"
+            echo "[backfill] ログ末尾:"
+            tail -20 /tmp/backfill_all.log 2>/dev/null || echo "(ログなし)"
+            exit 0
+          fi
+
+          echo "[backfill] バックフィルを起動します..."
+          nohup docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
+            backend \
+            bash scripts/run_netkeiba_backfill_all.sh \
+            > /tmp/backfill_all.log 2>&1 &
+
+          BGPID=$!
+          echo "[backfill] PID=${BGPID} で起動しました。"
+          echo "[backfill] ログ: /tmp/backfill_all.log"
+
+          # 10秒待って起動確認
+          sleep 10
+          tail -20 /tmp/backfill_all.log || echo "(ログ未生成)"
+          EOF
+
+      - name: Check status
+        if: github.event.inputs.mode == 'status'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+              'bash -s' << 'EOF'
+          echo "=== 実行中プロセス ==="
+          pgrep -a -f "run_netkeiba_backfill" || echo "(実行中なし)"
+
+          echo ""
+          echo "=== ログ末尾 (50行) ==="
+          tail -50 /tmp/backfill_all.log 2>/dev/null || echo "(ログなし)"
+
+          echo ""
+          echo "=== 月別ログ最新状況 ==="
+          ls -lt /tmp/backfill_2*.log 2>/dev/null | head -5 || echo "(月別ログなし)"
+          EOF
+
+      - name: Stop backfill
+        if: github.event.inputs.mode == 'stop'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+              'bash -s' << 'EOF'
+          PIDS=$(pgrep -f "run_netkeiba_backfill" || true)
+          if [ -z "$PIDS" ]; then
+            echo "[backfill] 実行中のバックフィルプロセスは見つかりませんでした。"
+            exit 0
+          fi
+          echo "[backfill] 停止対象 PID: $PIDS"
+          kill $PIDS
+          echo "[backfill] 停止しました。"
+
+          # 関連するdocker composeコンテナも停止
+          docker ps --filter "name=kiseki-backend" --filter "name=galloplab-backend" \
+            --format "{{.Names}}" | grep -v "galloplab-backend-1" | while read cname; do
+            echo "[backfill] コンテナ停止: $cname"
+            docker stop "$cname" 2>/dev/null || true
+          done
+          EOF
