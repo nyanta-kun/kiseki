@@ -8,9 +8,7 @@ name: kiseki-galloplab
 
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ghcr.io/nyanta-kun/kiseki/backend:main
     container_name: galloplab-backend-1
     ports:
       - "127.0.0.1:8003:8000"
@@ -52,14 +50,7 @@ services:
       start_period: 30s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        # NEXT_PUBLIC_* はビルド時に埋め込まれるため build.args で渡す
-        NEXT_PUBLIC_API_URL: https://api.galloplab.com
-        NEXT_PUBLIC_WS_URL: wss://api.galloplab.com
-        NEXT_PUBLIC_SHOW_FOOTER: "true"
+    image: ghcr.io/nyanta-kun/kiseki/frontend:main
     container_name: galloplab-frontend-1
     ports:
       - "127.0.0.1:3002:3000"

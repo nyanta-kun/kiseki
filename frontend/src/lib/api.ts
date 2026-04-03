@@ -83,6 +83,65 @@ export type IndicesResponse = {
   confidence: RaceConfidence;
 };
 
+export type ConfidenceStats = {
+  total_races: number;
+  win_hit_rate: number;        // 単勝的中率 0-1
+  place_hit_rate: number;      // 複勝的中率 0-1
+  top3_coverage_rate: number;  // top3カバー率 0-1
+  simulated_roi_win: number;   // 単勝シミュレーション回収率 (1.0=±0)
+  simulated_roi_place: number; // 複勝シミュレーション回収率
+  place_roi_races: number;     // 複勝ROI算出対象レース数
+};
+
+export type DimensionStat = {
+  label: string;
+  total_races: number;
+  win_hit_rate: number;
+  place_hit_rate: number;
+  top3_coverage_rate: number;
+  simulated_roi_win: number;
+  simulated_roi_place: number;
+  place_roi_races: number;
+};
+
+export type MonthlyStats = {
+  year_month: string;          // "2025-01"
+  total_races: number;
+  win_hit_rate: number;
+  place_hit_rate: number;
+  top3_coverage_rate: number;
+  simulated_roi_win: number;
+  simulated_roi_place: number;
+  place_roi_races: number;
+  breakdown: {
+    HIGH: ConfidenceStats | null;
+    MID: ConfidenceStats | null;
+    LOW: ConfidenceStats | null;
+  };
+};
+
+export type PerformanceSummary = {
+  from_date: string;
+  to_date: string;
+  total_races: number;
+  win_hit_rate: number;
+  place_hit_rate: number;
+  top3_coverage_rate: number;
+  simulated_roi_win: number;
+  simulated_roi_place: number;
+  place_roi_races: number;
+  breakdown: {
+    HIGH: ConfidenceStats | null;
+    MID: ConfidenceStats | null;
+    LOW: ConfidenceStats | null;
+  };
+  monthly_stats: MonthlyStats[];
+  by_course: DimensionStat[];
+  by_surface: DimensionStat[];
+  by_distance_range: DimensionStat[];
+  by_condition: DimensionStat[];
+};
+
 export type RaceHistoryEntry = {
   date: string;
   course_name: string;
@@ -165,6 +224,30 @@ export async function fetchNearestDate(
  *  NEXT_PUBLIC_WS_URL が設定されていればそれを使用（ローカル開発用）。
  *  未設定時は window.location から導出（本番環境 nginx プロキシ経由）。
  */
+export type PerformanceFilters = {
+  from_date?: string;
+  to_date?: string;
+  course_name?: string[];
+  surface?: string[];
+  distance_range?: string[];
+  condition?: string[];
+};
+
+/** AI指数精度サマリー（成績確定済みレースの集計）→ 5分キャッシュ */
+export async function fetchPerformanceSummary(
+  filters: PerformanceFilters = {},
+): Promise<PerformanceSummary> {
+  const params = new URLSearchParams();
+  if (filters.from_date) params.set("from_date", filters.from_date);
+  if (filters.to_date) params.set("to_date", filters.to_date);
+  for (const v of filters.course_name ?? []) params.append("course_name", v);
+  for (const v of filters.surface ?? []) params.append("surface", v);
+  for (const v of filters.distance_range ?? []) params.append("distance_range", v);
+  for (const v of filters.condition ?? []) params.append("condition", v);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return get<PerformanceSummary>(`/performance/summary${qs}`, { next: { revalidate: 300 } });
+}
+
 export function buildOddsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;

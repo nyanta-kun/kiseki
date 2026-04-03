@@ -85,9 +85,53 @@ jobs:
           AUTH_PASSWORD: "test"
           AUTH_URL: "http://localhost:3000/api/auth"
 
+  build-and-push:
+    name: Build & Push Docker Images
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ghcr.io/${{ github.repository }}/backend:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/${{ github.repository }}/frontend:main
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://api.galloplab.com
+            NEXT_PUBLIC_WS_URL=wss://api.galloplab.com
+            NEXT_PUBLIC_SHOW_FOOTER=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     name: Deploy to galloplab.com
-    needs: [backend, frontend]
+    needs: [build-and-push]
     runs-on: ubuntu-latest
     # GitHub Environments の required_reviewers で承認ゲートを設定可能（INF-014）
     # Settings > Environments > production > Required reviewers に承認者を追加することを推奨
@@ -120,18 +164,21 @@ jobs:
                 set -euo pipefail
                 cd ~/GitHub/kiseki
                 git pull origin main
+                echo \"[deploy] ghcr.io 認証...\"
+                echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+                echo \"[deploy] イメージプル（VPSでのビルド不要）...\"
+                docker compose -f docker-compose.galloplab.yml pull
                 echo \"[deploy] DBマイグレーション実行...\"
-                docker compose -f docker-compose.galloplab.yml build
                 docker compose -f docker-compose.galloplab.yml run --rm --no-deps \
                   -e PYTHONPATH=/app backend uv run alembic upgrade head
                 docker compose -f docker-compose.galloplab.yml up -d
                 echo \"[deploy] ヘルスチェック待機中...\"
                 for i in \$(seq 1 12); do
                   sleep 5
-                  STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" kiseki-backend-galloplab 2>/dev/null || echo \"unknown\")
+                  STATUS=\$(docker inspect --format=\"{{.State.Health.Status}}\" galloplab-backend-1 2>/dev/null || echo \"unknown\")
                   echo \"  backend health: \$STATUS (\${i}/12)\"
                   if [ \"\$STATUS\" = \"healthy\" ]; then break; fi
                 done
                 docker compose -f docker-compose.galloplab.yml ps
                 echo \"[deploy] 完了: https://galloplab.com/\"
-              "'
+              '"'

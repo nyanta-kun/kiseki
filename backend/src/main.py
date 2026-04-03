@@ -8,6 +8,7 @@ from .api.agent_router import router as agent_router
 from .api.horses import router as horses_router
 from .api.import_router import changes_router
 from .api.import_router import router as import_router
+from .api.performance import router as performance_router
 from .api.races import router as races_router
 from .api.users import admin_router as users_admin_router
 from .api.users import router as users_router
@@ -48,6 +49,7 @@ app.include_router(import_router)       # POST /api/import/*
 app.include_router(changes_router)      # POST /api/changes/notify
 app.include_router(races_router)        # GET  /api/races/*
 app.include_router(horses_router)       # GET  /api/horses/*
+app.include_router(performance_router)  # GET  /api/performance/*
 app.include_router(agent_router)        # GET/POST /api/agent/*
 app.include_router(users_router)        # POST /api/users/upsert
 app.include_router(users_admin_router)  # GET/PATCH /api/admin/users
