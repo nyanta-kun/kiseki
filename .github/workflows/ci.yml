@@ -125,7 +125,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=https://api.galloplab.com
             NEXT_PUBLIC_WS_URL=wss://api.galloplab.com
-            NEXT_PUBLIC_PAID_MODE=true
+            NEXT_PUBLIC_PAID_MODE=${{ vars.NEXT_PUBLIC_PAID_MODE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -172,12 +172,18 @@ jobs:
           echo "[deploy] コンテナ再作成..."
           docker compose -f docker-compose.galloplab.yml up -d --force-recreate
           echo "[deploy] ヘルスチェック待機中（backend が healthy になるまで最大180秒）..."
+          STATUS="unknown"
           for i in \$(seq 1 36); do
             sleep 5
             STATUS=\$(docker inspect --format='{{.State.Health.Status}}' galloplab-backend-1 2>/dev/null || echo "unknown")
             echo "  backend health: \$STATUS (\${i}/36)"
             if [ "\$STATUS" = "healthy" ]; then break; fi
           done
+          if [ "\$STATUS" != "healthy" ]; then
+            echo "ERROR: backend が healthy になりませんでした（最終ステータス: \$STATUS）"
+            docker compose -f docker-compose.galloplab.yml logs --tail=50 backend
+            exit 1
+          fi
           echo "[deploy] DBマイグレーション実行..."
           docker exec -e PYTHONPATH=/app galloplab-backend-1 uv run alembic upgrade head
           docker compose -f docker-compose.galloplab.yml ps
