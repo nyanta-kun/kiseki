@@ -61,14 +61,11 @@ export function DisplaySettingsClient({ initialSettings }: Props) {
               <tr key={s.target_user_id} className="border-b border-gray-50 last:border-0">
                 <td className="px-4 py-3">
                   <div className="text-gray-800 font-medium truncate max-w-[180px]">
-                    {s.target_user_name ?? s.target_user_email}
+                    {s.yoso_name}
                   </div>
-                  <div className="text-gray-400 text-xs truncate max-w-[180px]">
-                    {s.target_user_name ? s.target_user_email : ""}
-                    {s.target_can_input_index && (
-                      <span className="ml-2 text-blue-400">指数あり</span>
-                    )}
-                  </div>
+                  {s.target_can_input_index && (
+                    <div className="text-blue-400 text-xs mt-0.5">指数あり</div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-center">
                   <Toggle

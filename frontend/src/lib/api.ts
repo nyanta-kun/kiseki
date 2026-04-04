@@ -286,7 +286,7 @@ export type OtherHorsePrediction = {
 
 export type OtherUserPrediction = {
   user_id: number;
-  user_name: string | null;
+  yoso_name: string;
   show_index: boolean;
   predictions: OtherHorsePrediction[];
 };
@@ -302,11 +302,15 @@ export type YosoRace = {
 
 export type DisplaySetting = {
   target_user_id: number;
-  target_user_name: string | null;
-  target_user_email: string;
+  yoso_name: string;
   target_can_input_index: boolean;
   show_mark: boolean;
   show_index: boolean;
+};
+
+export type MyPublicSetting = {
+  is_yoso_public: boolean;
+  yoso_name: string | null;
 };
 
 export type ImportLog = {

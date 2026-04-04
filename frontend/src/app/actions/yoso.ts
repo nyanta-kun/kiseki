@@ -2,7 +2,7 @@
 
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
-import type { DisplaySetting } from "@/lib/api";
+import type { DisplaySetting, MyPublicSetting } from "@/lib/api";
 
 const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -127,6 +127,40 @@ export async function fetchImportHistory() {
   );
   if (!res.ok) return [];
   return res.json();
+}
+
+export async function fetchMyPublicSetting(): Promise<MyPublicSetting> {
+  const email = await getEmail();
+  const res = await fetch(
+    `${API_BASE}/yoso/settings/my-public?x_user_email=${encodeURIComponent(email)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return { is_yoso_public: false, yoso_name: null };
+  return res.json() as Promise<MyPublicSetting>;
+}
+
+export async function updateMyPublicSetting(
+  setting: MyPublicSetting,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const email = await getEmail();
+    const res = await fetch(
+      `${API_BASE}/yoso/settings/my-public?x_user_email=${encodeURIComponent(email)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(setting),
+      },
+    );
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: (data as { detail?: string }).detail ?? "保存に失敗しました" };
+    }
+    revalidatePath("/yoso/settings");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
 
 export async function fetchYosoStats(params: {

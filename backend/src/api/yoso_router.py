@@ -111,7 +111,7 @@ class RacePredictionOut(BaseModel):
 class OtherUserPredictionOut(BaseModel):
     """他ユーザーの予想（表示設定に従い）"""
     user_id: int
-    user_name: str | None
+    yoso_name: str  # 予想名（公開ユーザーのみ表示されるため必ず設定済み）
     show_index: bool
     predictions: list[OtherHorsePrediction]
 
@@ -124,8 +124,7 @@ class OtherHorsePrediction(BaseModel):
 
 class DisplaySettingOut(BaseModel):
     target_user_id: int
-    target_user_name: str | None
-    target_user_email: str
+    yoso_name: str  # 予想名（公開ユーザーのみ対象なので必ず設定済み）
     target_can_input_index: bool
     show_mark: bool
     show_index: bool
@@ -135,6 +134,18 @@ class DisplaySettingIn(BaseModel):
     target_user_id: int
     show_mark: bool
     show_index: bool
+
+
+class MyPublicSettingOut(BaseModel):
+    """自分の公開設定"""
+    is_yoso_public: bool
+    yoso_name: str | None
+
+
+class MyPublicSettingIn(BaseModel):
+    """自分の公開設定更新リクエスト"""
+    is_yoso_public: bool
+    yoso_name: str | None = None
 
 
 class StatsOut(BaseModel):
@@ -280,7 +291,7 @@ async def get_yoso_races(
         if rr.horse_number is not None:
             finish_map[(rr.race_id, rr.horse_number)] = rr.finish_position
 
-    # 表示設定に基づく他ユーザー取得
+    # 表示設定に基づく他ユーザー取得（公開ONユーザーのみ）
     disp_result = await db.execute(
         select(UserDisplaySetting, User)
         .join(User, UserDisplaySetting.target_user_id == User.id)
@@ -288,6 +299,7 @@ async def get_yoso_races(
             UserDisplaySetting.owner_user_id == me.id,
             UserDisplaySetting.show_mark.is_(True),
             User.is_active.is_(True),
+            User.is_yoso_public.is_(True),
         )
     )
     display_targets = list(disp_result.all())
@@ -355,7 +367,7 @@ async def get_yoso_races(
             if other_horse_preds:
                 other_users_out.append(OtherUserPredictionOut(
                     user_id=target_user.id,
-                    user_name=target_user.name,
+                    yoso_name=target_user.yoso_name or f"予想者{target_user.id}",
                     show_index=show_idx,
                     predictions=other_horse_preds,
                 ))
@@ -773,12 +785,16 @@ async def get_display_settings(
     x_user_email: Annotated[str, Query()],
     db: DbDep,
 ) -> list[DisplaySettingOut]:
-    """自分の他ユーザー表示設定一覧を返す。全有効ユーザーを返し、未設定はデフォルト（show_mark=True, show_index=False）。"""
+    """自分の他ユーザー表示設定一覧を返す。公開ONユーザーのみ対象。未設定はデフォルト（show_mark=True, show_index=False）。"""
     me = await _get_user_by_email(x_user_email, db)
 
-    # 全有効ユーザー（自分以外）
+    # 公開ONの有効ユーザー（自分以外）のみ
     all_users_result = await db.execute(
-        select(User).where(User.is_active.is_(True), User.id != me.id).order_by(User.name)
+        select(User).where(
+            User.is_active.is_(True),
+            User.id != me.id,
+            User.is_yoso_public.is_(True),
+        ).order_by(User.yoso_name)
     )
     all_users = all_users_result.scalars().all()
 
@@ -795,8 +811,7 @@ async def get_display_settings(
         s = settings_map.get(u.id)
         output.append(DisplaySettingOut(
             target_user_id=u.id,
-            target_user_name=u.name,
-            target_user_email=u.email,
+            yoso_name=u.yoso_name or f"予想者{u.id}",
             target_can_input_index=u.can_input_index,
             show_mark=s.show_mark if s else True,
             show_index=s.show_index if s else False,
@@ -835,3 +850,50 @@ async def update_display_settings(
 
     await db.commit()
     return {"ok": True, "updated": len(body)}
+
+
+# ---------------------------------------------------------------------------
+# エンドポイント: 自分の公開設定
+# ---------------------------------------------------------------------------
+@router.get("/settings/my-public", response_model=MyPublicSettingOut)
+async def get_my_public_setting(
+    x_user_email: Annotated[str, Query()],
+    db: DbDep,
+) -> MyPublicSettingOut:
+    """自分の公開設定（is_yoso_public / yoso_name）を返す。"""
+    me = await _get_user_by_email(x_user_email, db)
+    return MyPublicSettingOut(is_yoso_public=me.is_yoso_public, yoso_name=me.yoso_name)
+
+
+@router.put("/settings/my-public", response_model=MyPublicSettingOut)
+async def update_my_public_setting(
+    body: MyPublicSettingIn,
+    x_user_email: Annotated[str, Query()],
+    db: DbDep,
+) -> MyPublicSettingOut:
+    """自分の公開設定を更新する。公開ONの場合は予想名が必須。"""
+    me = await _get_user_by_email(x_user_email, db)
+
+    yoso_name = body.yoso_name.strip() if body.yoso_name else None
+
+    if body.is_yoso_public:
+        if not yoso_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="公開する場合は予想名を登録してください",
+            )
+
+    me.is_yoso_public = body.is_yoso_public
+    me.yoso_name = yoso_name if body.is_yoso_public else me.yoso_name
+
+    try:
+        await db.commit()
+        await db.refresh(me)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="予想名はすでに使用されています",
+        )
+
+    return MyPublicSettingOut(is_yoso_public=me.is_yoso_public, yoso_name=me.yoso_name)

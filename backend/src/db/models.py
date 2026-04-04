@@ -549,6 +549,12 @@ class User(Base):
     can_input_index: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", comment="TARGET外部指数の投入権限フラグ"
     )
+    is_yoso_public: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", comment="予想を他ユーザーに公開するか"
+    )
+    yoso_name: Mapped[str | None] = mapped_column(
+        String(50), unique=True, nullable=True, comment="予想公開時の表示名（予想名）"
+    )
 
 
 class InvitationCode(Base):

@@ -125,7 +125,7 @@ export function RaceMarkTableWrapper({ race, canInputIndex }: Props) {
               <th className="px-2 py-1.5 text-right w-16">AI指数</th>
               {hasOtherUsers && race.other_users.map((u) => (
                 <th key={u.user_id} className="px-2 py-1.5 text-center w-14 text-blue-400">
-                  {u.user_name?.slice(0, 4) ?? `U${u.user_id}`}
+                  {u.yoso_name.slice(0, 4)}
                 </th>
               ))}
               <th className="px-2 py-1.5 text-right w-14">単オッズ</th>
