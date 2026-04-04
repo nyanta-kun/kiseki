@@ -7,6 +7,7 @@ declare module "next-auth" {
       role?: string;
       is_active?: boolean;
       is_premium?: boolean;
+      can_input_index?: boolean;
       access_expires_at?: string | null;
       db_id?: number;
     } & DefaultSession["user"];
@@ -18,6 +19,7 @@ declare module "next-auth/jwt" {
     role?: string;
     is_active?: boolean;
     is_premium?: boolean;
+    can_input_index?: boolean;
     access_expires_at?: string | null;
     db_id?: number;
   }

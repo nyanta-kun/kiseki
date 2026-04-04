@@ -49,12 +49,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               role: string;
               is_active: boolean;
               is_premium: boolean;
+              can_input_index: boolean;
               access_expires_at: string | null;
             };
             token.db_id = user.id;
             token.role = user.role;
             token.is_active = user.is_active;
             token.is_premium = user.is_premium;
+            token.can_input_index = user.can_input_index;
             token.access_expires_at = user.access_expires_at;
           } else {
             // upsert 失敗時は安全側に倒して無効扱い
@@ -78,6 +80,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.role = token.role;
       session.user.is_active = token.is_active;
       session.user.is_premium = token.is_premium;
+      session.user.can_input_index = token.can_input_index;
       session.user.access_expires_at = token.access_expires_at;
       return session;
     },

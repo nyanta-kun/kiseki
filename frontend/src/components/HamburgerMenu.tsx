@@ -12,6 +12,7 @@ type Props = {
 const NAV_ITEMS = [
   { icon: "🏇", label: "レース", href: "/races", matchPath: "/races" },
   { icon: "📊", label: "実績", href: "/results", matchPath: "/results" },
+  { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
   { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
 ];
 

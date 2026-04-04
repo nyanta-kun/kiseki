@@ -546,6 +546,9 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), comment="最終ログイン日時"
     )
+    can_input_index: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", comment="TARGET外部指数の投入権限フラグ"
+    )
 
 
 class InvitationCode(Base):
@@ -597,6 +600,89 @@ class UserAccessGrant(Base):
     )
     note: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserPrediction(Base):
+    """ユーザー予想（印・指数）"""
+
+    __tablename__ = "user_predictions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "race_id", "horse_id", name="uq_user_predictions_key"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.races.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    horse_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.horses.id", ondelete="CASCADE"), nullable=False
+    )
+    mark: Mapped[str | None] = mapped_column(String(4), comment="印（◎○▲△×）")
+    user_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), comment="ユーザー投入指数（TARGET外部指数等）"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserImport(Base):
+    """ファイル投入ログ"""
+
+    __tablename__ = "user_imports"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    race_date: Mapped[str] = mapped_column(String(8), nullable=False, comment="YYYYMMDD")
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    saved_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserDisplaySetting(Base):
+    """他ユーザーの予想表示設定"""
+
+    __tablename__ = "user_display_settings"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "target_user_id", name="uq_user_display_settings_key"
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target_user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False
+    )
+    show_mark: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", comment="他ユーザーの印を表示するか"
+    )
+    show_index: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="他ユーザーの指数を表示するか（相手のcan_input_indexも必要）",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

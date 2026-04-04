@@ -122,6 +122,7 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     is_premium: bool
+    can_input_index: bool
     access_expires_at: datetime | None
     created_at: datetime
     last_login_at: datetime | None
@@ -134,6 +135,7 @@ class UpdateUserRequest(BaseModel):
 
     role: str | None = None
     is_active: bool | None = None
+    can_input_index: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +152,7 @@ async def _make_user_response(user: User, db: AsyncSession) -> UserResponse:
         role=user.role,
         is_active=user.is_active,
         is_premium=is_premium,
+        can_input_index=user.can_input_index,
         access_expires_at=access_expires_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
@@ -228,8 +231,13 @@ async def update_user(
         user.role = body.role
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.can_input_index is not None:
+        user.can_input_index = body.can_input_index
 
     await db.commit()
     await db.refresh(user)
-    logger.info("ユーザー更新: id=%d email=%s role=%s is_active=%s", user.id, user.email, user.role, user.is_active)
+    logger.info(
+        "ユーザー更新: id=%d email=%s role=%s is_active=%s can_input_index=%s",
+        user.id, user.email, user.role, user.is_active, user.can_input_index,
+    )
     return await _make_user_response(user, db)

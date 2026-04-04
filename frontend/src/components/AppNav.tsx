@@ -7,6 +7,7 @@ import { HamburgerMenu } from "./HamburgerMenu";
 const NAV_ITEMS = [
   { label: "レース", href: "/races", matchPath: "/races" },
   { label: "実績", href: "/results", matchPath: "/results" },
+  { label: "予想", href: "/yoso", matchPath: "/yoso" },
   { label: "マイページ", href: "/my", matchPath: "/my" },
 ];
 

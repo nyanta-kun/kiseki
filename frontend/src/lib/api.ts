@@ -261,6 +261,103 @@ export function buildOddsWsUrl(raceId: number): string {
   return `${proto}://${host}/api/races/${raceId}/odds/ws`;
 }
 
+// ---------------------------------------------------------------------------
+// 予想（Yoso）型定義
+// ---------------------------------------------------------------------------
+export type YosoPrediction = {
+  horse_id: number;
+  horse_number: number;
+  horse_name: string;
+  frame_number: number | null;
+  mark: string | null;
+  user_index: number | null;
+  index_share: number | null;    // 占有率 0〜1
+  galloplab_index: number | null;
+  win_odds: number | null;
+  place_odds: number | null;
+  finish_position: number | null;
+};
+
+export type OtherHorsePrediction = {
+  horse_id: number;
+  mark: string | null;
+  user_index: number | null;
+};
+
+export type OtherUserPrediction = {
+  user_id: number;
+  user_name: string | null;
+  show_index: boolean;
+  predictions: OtherHorsePrediction[];
+};
+
+export type YosoRace = {
+  race_id: number;
+  race_name: string | null;
+  race_number: number;
+  course_name: string;
+  horses: YosoPrediction[];
+  other_users: OtherUserPrediction[];
+};
+
+export type DisplaySetting = {
+  target_user_id: number;
+  target_user_name: string | null;
+  target_user_email: string;
+  target_can_input_index: boolean;
+  show_mark: boolean;
+  show_index: boolean;
+};
+
+export type ImportLog = {
+  id: number;
+  filename: string;
+  race_date: string;
+  total_count: number;
+  saved_count: number;
+  error_count: number;
+  created_at: string;
+};
+
+export type YosoStats = {
+  by_mark: MarkStats[];
+  by_index_range: IndexRangeStats[];
+  by_share_range: ShareRangeStats[];
+};
+
+export type MarkStats = {
+  mark: string;
+  count: number;
+  win_count: number;
+  place_count: number;
+  win_rate: number;
+  place_rate: number;
+  win_roi: number;
+  place_roi: number;
+};
+
+export type IndexRangeStats = {
+  label: string;
+  min_val: number;
+  max_val: number | null;
+  count: number;
+  win_rate: number;
+  place_rate: number;
+  win_roi: number;
+  place_roi: number;
+};
+
+export type ShareRangeStats = {
+  label: string;
+  min_val: number;
+  max_val: number | null;
+  count: number;
+  win_rate: number;
+  place_rate: number;
+  win_roi: number;
+  place_roi: number;
+};
+
 export function buildResultsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
   const explicit = process.env.NEXT_PUBLIC_WS_URL;

@@ -12,6 +12,7 @@ from .api.performance import router as performance_router
 from .api.races import router as races_router
 from .api.users import admin_router as users_admin_router
 from .api.users import router as users_router
+from .api.yoso_router import router as yoso_router
 from .config import settings
 
 app = FastAPI(
@@ -33,7 +34,7 @@ app.add_middleware(
         "https://www.sekito-stable.com",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT"],
     allow_headers=["Content-Type", "X-API-Key"],
 )
 
@@ -55,6 +56,7 @@ app.include_router(users_router)        # POST /api/users/upsert
 app.include_router(users_admin_router)  # GET/PATCH /api/admin/users
 app.include_router(access_router)       # POST/GET /api/users/{id}/redeem-code, /access
 app.include_router(access_admin_router) # GET/POST/PATCH /api/admin/invitation-codes
+app.include_router(yoso_router)         # GET/POST /api/yoso/*
 
 # MS2以降で順次有効化:
 # from .api import indices, newspaper
