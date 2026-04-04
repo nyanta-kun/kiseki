@@ -609,7 +609,7 @@ class UserPrediction(Base):
     """ユーザー予想（印・指数）"""
 
     __tablename__ = "user_predictions"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("user_id", "race_id", "horse_id", name="uq_user_predictions_key"),
         {"schema": SCHEMA},
     )
@@ -660,7 +660,7 @@ class UserDisplaySetting(Base):
     """他ユーザーの予想表示設定"""
 
     __tablename__ = "user_display_settings"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint(
             "owner_user_id", "target_user_id", name="uq_user_display_settings_key"
         ),

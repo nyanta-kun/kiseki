@@ -249,25 +249,27 @@ async def get_yoso_races(
     )
     ci_map: dict[tuple[int, int], float] = {}
     for ci in ci_result.scalars().all():
-        if ci.composite is not None:
-            ci_map[(ci.race_id, ci.horse_id)] = float(ci.composite)
+        if ci.composite_index is not None:
+            ci_map[(ci.race_id, ci.horse_id)] = float(ci.composite_index)
 
     # オッズ取得（最新）
+    # OddsHistory.combination = 馬番文字列（例: "3"）、OddsHistory.odds = 倍率
     from ..db.models import OddsHistory  # 循環避けローカルインポート
     odds_result = await db.execute(
         select(OddsHistory).where(
             OddsHistory.race_id.in_(race_ids),
             OddsHistory.bet_type.in_(["win", "place"]),
-        ).order_by(OddsHistory.recorded_at.desc())
+        ).order_by(OddsHistory.fetched_at.desc())
     )
-    # 最新オッズのみ保持
+    # 最新オッズのみ保持 (race_id, combination) → odds
     win_odds_map: dict[tuple[int, str], float] = {}
     place_odds_map: dict[tuple[int, str], float] = {}
     for oh in odds_result.scalars().all():
-        if oh.bet_type == "win" and (oh.race_id, oh.horse_number) not in win_odds_map:
-            win_odds_map[(oh.race_id, oh.horse_number)] = oh.odds_value
-        elif oh.bet_type == "place" and (oh.race_id, oh.horse_number) not in place_odds_map:
-            place_odds_map[(oh.race_id, oh.horse_number)] = oh.odds_value
+        combo = oh.combination  # "3" 等の馬番文字列
+        if oh.bet_type == "win" and (oh.race_id, combo) not in win_odds_map:
+            win_odds_map[(oh.race_id, combo)] = float(oh.odds) if oh.odds is not None else 0.0
+        elif oh.bet_type == "place" and (oh.race_id, combo) not in place_odds_map:
+            place_odds_map[(oh.race_id, combo)] = float(oh.odds) if oh.odds is not None else 0.0
 
     # 着順取得
     results_result = await db.execute(
@@ -288,7 +290,7 @@ async def get_yoso_races(
             User.is_active.is_(True),
         )
     )
-    display_targets: list[tuple[UserDisplaySetting, User]] = disp_result.all()
+    display_targets = list(disp_result.all())
 
     # 他ユーザーの予想取得
     other_user_ids = [u.id for _, u in display_targets]
@@ -309,12 +311,11 @@ async def get_yoso_races(
         race_entries = entries_by_race.get(race.id, [])
 
         # 自分の指数合計（占有率計算用）
-        total_index = sum(
-            float(my_preds[(race.id, e.horse_id)].user_index)
-            for e, _ in race_entries
-            if (race.id, e.horse_id) in my_preds
-            and my_preds[(race.id, e.horse_id)].user_index is not None
-        )
+        total_index: float = 0.0
+        for e, _ in race_entries:
+            pred_for_sum = my_preds.get((race.id, e.horse_id))
+            if pred_for_sum is not None and pred_for_sum.user_index is not None:
+                total_index += float(pred_for_sum.user_index)
 
         horses_out: list[PredictionOut] = []
         for entry, horse in race_entries:
@@ -343,13 +344,13 @@ async def get_yoso_races(
             user_preds = other_preds_map.get(target_user.id, {})
             other_horse_preds: list[OtherHorsePrediction] = []
             for entry, horse in race_entries:
-                p = user_preds.get((race.id, entry.horse_id))
-                if p is None:
+                other_pred = user_preds.get((race.id, entry.horse_id))
+                if other_pred is None:
                     continue
                 other_horse_preds.append(OtherHorsePrediction(
                     horse_id=horse.id,
-                    mark=p.mark,
-                    user_index=float(p.user_index) if (show_idx and p.user_index is not None) else None,
+                    mark=other_pred.mark,
+                    user_index=float(other_pred.user_index) if (show_idx and other_pred.user_index is not None) else None,
                 ))
             if other_horse_preds:
                 other_users_out.append(OtherUserPredictionOut(
@@ -667,9 +668,10 @@ async def get_stats(
             RacePayout.bet_type.in_(["win", "place"]),
         )
     )
-    payout_map: dict[tuple[int, int, str], float] = {}
+    # payout_map: (race_id, combination文字列, bet_type) → 払戻金額（100円あたり÷100でオッズ換算）
+    payout_map: dict[tuple[int | None, str, str], float] = {}
     for p in payouts_result.scalars().all():
-        payout_map[(p.race_id, p.horse_number, p.bet_type)] = p.payout_amount / 100.0
+        payout_map[(p.race_id, p.combination, p.bet_type)] = p.payout / 100.0
 
     # 同レース全馬の指数合計（占有率計算用）
     all_preds_result = await db.execute(
@@ -693,11 +695,11 @@ async def get_stats(
         win_cnt = sum(1 for r in subset if r.finish_position == 1)
         place_cnt = sum(1 for r in subset if r.finish_position is not None and r.finish_position <= 3)
         win_payout = sum(
-            payout_map.get((r.race_id, r.horse_number, "win"), 0.0)
+            payout_map.get((r.race_id, str(r.horse_number), "win"), 0.0)
             for r in subset if r.finish_position == 1
         )
         place_payout = sum(
-            payout_map.get((r.race_id, r.horse_number, "place"), 0.0)
+            payout_map.get((r.race_id, str(r.horse_number), "place"), 0.0)
             for r in subset if r.finish_position is not None and r.finish_position <= 3
         )
         return {
