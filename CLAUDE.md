@@ -227,6 +227,14 @@ prlctl exec "Windows 11" --current-user powershell -Command "
     -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' \`
     -WindowStyle Hidden -PassThru
 "
+
+# odds-prefetchモード（前日発売オッズを1回取得して終了。VPS cronから1時間ごとに呼び出す）
+# --fetch-date を省略すると翌日のオッズを取得。指定する場合は YYYYMMDD 形式。
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode odds-prefetch' \`
+    -WindowStyle Hidden -PassThru
+"
 ```
 
 ### JV-Link rc=-303 修復
