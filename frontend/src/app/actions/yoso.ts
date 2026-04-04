@@ -2,7 +2,7 @@
 
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
-import type { DisplaySetting, MyPublicSetting } from "@/lib/api";
+import type { DisplaySetting, MyPublicSetting, YosoRace } from "@/lib/api";
 
 const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -99,14 +99,25 @@ export async function importTargetCsv(
 // ---------------------------------------------------------------------------
 // データ取得ヘルパー（Server Components 用）
 // ---------------------------------------------------------------------------
-export async function fetchYosoRaces(date: string) {
-  const email = await getEmail();
-  const res = await fetch(
-    `${API_BASE}/yoso/races/${date}?x_user_email=${encodeURIComponent(email)}`,
-    { cache: "no-store" },
-  );
-  if (!res.ok) return [];
-  return res.json();
+export async function fetchYosoRaces(
+  date: string,
+): Promise<{ data: YosoRace[]; error?: string }> {
+  try {
+    const email = await getEmail();
+    const res = await fetch(
+      `${API_BASE}/yoso/races/${date}?x_user_email=${encodeURIComponent(email)}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const detail = (body as { detail?: string }).detail ?? `HTTP ${res.status}`;
+      return { data: [], error: detail };
+    }
+    const data = (await res.json()) as YosoRace[];
+    return { data };
+  } catch (e) {
+    return { data: [], error: String(e) };
+  }
 }
 
 export async function fetchDisplaySettings(): Promise<DisplaySetting[]> {
