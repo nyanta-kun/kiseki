@@ -324,6 +324,7 @@ async def import_payouts(
         )
         results_map: dict[tuple[int, int], RaceResult] = {
             (r.race_id, r.horse_number): r for r in result_rows.scalars()
+            if r.race_id is not None and r.horse_number is not None
         }
         for race_db_id, horse_number, odds_val in place_updates:
             result = results_map.get((race_db_id, horse_number))
