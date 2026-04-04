@@ -155,37 +155,11 @@ jobs:
           #   printf '%s\n' "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
           ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy
+      - name: Deploy (Blue-Green)
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=yes \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=20 \
               "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
-              'bash -s' << EOF
-          set -euo pipefail
-          cd ~/GitHub/kiseki
-          git fetch origin main
-          git reset --hard origin/main
-          echo "[deploy] イメージビルド（VPS上でビルド）..."
-          docker compose -f docker-compose.galloplab.yml build
-          echo "[deploy] コンテナ再作成..."
-          docker compose -f docker-compose.galloplab.yml up -d --force-recreate
-          echo "[deploy] ヘルスチェック待機中（backend が healthy になるまで最大180秒）..."
-          STATUS="unknown"
-          for i in \$(seq 1 36); do
-            sleep 5
-            STATUS=\$(docker inspect --format='{{.State.Health.Status}}' galloplab-backend-1 2>/dev/null || echo "unknown")
-            echo "  backend health: \$STATUS (\${i}/36)"
-            if [ "\$STATUS" = "healthy" ]; then break; fi
-          done
-          if [ "\$STATUS" != "healthy" ]; then
-            echo "ERROR: backend が healthy になりませんでした（最終ステータス: \$STATUS）"
-            docker compose -f docker-compose.galloplab.yml logs --tail=50 backend
-            exit 1
-          fi
-          echo "[deploy] DBマイグレーション実行..."
-          docker exec -e PYTHONPATH=/app galloplab-backend-1 uv run alembic upgrade head
-          docker compose -f docker-compose.galloplab.yml ps
-          echo "[deploy] 完了: https://galloplab.com/"
-          EOF
+              'bash ~/GitHub/kiseki/scripts/deploy-bluegreen.sh'

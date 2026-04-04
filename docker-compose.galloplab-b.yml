@@ -1,20 +1,22 @@
-# galloplab.com 本番デプロイ用 Compose
-# 使用方法: docker compose -f docker-compose.galloplab.yml up -d --build
+# galloplab.com Blue-Green デプロイ用 候補スロット（Bスロット）
 #
-# nginx: galloplab.com/      → 127.0.0.1:3002  (Next.js)
-# nginx: api.galloplab.com/  → 127.0.0.1:8003  (FastAPI)
+# 役割: 新ビルドを本番と並行して起動し、ヘルスチェックで検証する
+#       検証OK後に本番（galloplab.yml）へ切り替える
+#
+# ポート:
+#   backend:  127.0.0.1:8004:8000  （本番: 8003）
+#   frontend: 127.0.0.1:3003:3000  （本番: 3002）
+#
+# ※ このファイルは直接 docker compose up しない。scripts/deploy-bluegreen.sh 経由で使用。
 
-name: kiseki-galloplab
+name: kiseki-galloplab-b
 
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+  backend-b:
     image: kiseki-galloplab-backend:candidate
-    container_name: galloplab-backend-1
+    container_name: galloplab-backend-b
     ports:
-      - "127.0.0.1:8003:8000"
+      - "127.0.0.1:8004:8000"
     env_file:
       - .env
     environment:
@@ -28,8 +30,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - kiseki-galloplab
-    restart: unless-stopped
+      - kiseki-galloplab-b
+    restart: "no"
     read_only: true
     cap_drop:
       - ALL
@@ -44,49 +46,37 @@ services:
       driver: "json-file"
       options:
         max-size: "10m"
-        max-file: "5"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
+      interval: 15s
       timeout: 8s
-      retries: 5
+      retries: 6
       start_period: 30s
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: https://api.galloplab.com
-        NEXT_PUBLIC_WS_URL: wss://api.galloplab.com
-        NEXT_PUBLIC_PAID_MODE: ${NEXT_PUBLIC_PAID_MODE:-false}
+  frontend-b:
     image: kiseki-galloplab-frontend:candidate
-    container_name: galloplab-frontend-1
+    container_name: galloplab-frontend-b
     ports:
-      - "127.0.0.1:3002:3000"
+      - "127.0.0.1:3003:3000"
     environment:
-      # SSR時にDockerネットワーク内でバックエンドを呼び出す（ブラウザには公開しない）
-      - BACKEND_URL=http://backend:8000/api
-      # 認証（Auth.js）- galloplab.com向け設定
+      # SSR 時は候補バックエンドに接続
+      - BACKEND_URL=http://backend-b:8000/api
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
       - AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
-      # AUTH_URLはgalloplab.com向けに上書き（.envのsekito-stable.com設定を無視）
-      # コールバックURL: https://galloplab.com/api/auth/callback/google
-      # Next.jsのルートが /api/auth/[...nextauth] のため /api/auth まで含める
       - AUTH_URL=https://galloplab.com/api/auth
-      # バックエンドAPI認証（サーバーサイドからの内部呼び出し用）
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
     tmpfs:
       - /tmp
       - /home/appuser/.cache/uv
     depends_on:
-      backend:
+      backend-b:
         condition: service_healthy
     networks:
-      - kiseki-galloplab
-    restart: unless-stopped
+      - kiseki-galloplab-b
+    restart: "no"
     read_only: true
     cap_drop:
       - ALL
@@ -101,7 +91,7 @@ services:
       driver: "json-file"
       options:
         max-size: "10m"
-        max-file: "5"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/', (r) => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
@@ -110,5 +100,5 @@ services:
       start_period: 60s
 
 networks:
-  kiseki-galloplab:
+  kiseki-galloplab-b:
     driver: bridge
