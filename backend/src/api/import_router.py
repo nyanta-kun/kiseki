@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db.models import OddsHistory, Race, RacePayout, RaceResult
-from ..db.session import get_db
+from ..db.session import AsyncSessionLocal, get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
+from ..indices.composite import CompositeIndexCalculator
 from .races import _fetch_results_payload
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
@@ -340,3 +341,38 @@ async def notify_change(
         # TODO: MS5でリアルタイム再算出トリガーを実装
 
     return {"ok": True, "recorded": result.get("recorded", False)}
+
+
+# -------------------------------------------------------------------
+# 指数算出トリガー
+# -------------------------------------------------------------------
+
+async def _run_calculate(date: str) -> None:
+    """バックグラウンドで指定日の指数を算出する（独立セッション）。"""
+    async with AsyncSessionLocal() as db:
+        try:
+            calc = CompositeIndexCalculator(db)
+            logger.info(f"[calculate] 開始: date={date}")
+            rows = await calc.calculate_batch_for_date(date)
+            await db.commit()
+            logger.info(f"[calculate] 完了: {len(rows)} 件保存 date={date}")
+        except Exception as e:
+            logger.error(f"[calculate] 失敗: date={date} error={e}", exc_info=True)
+
+
+@router.post("/calculate")
+async def trigger_calculate(
+    background_tasks: BackgroundTasks,
+    _: ApiKeyDep,
+    date: str = Query(description="算出対象日 YYYYMMDD"),
+) -> dict:
+    """指定日の全レースについて総合指数をバックグラウンド算出する。
+
+    Windows Agent の daily フェッチ後に自動で呼び出される。
+    既存の calculated_indices レコードは UPSERT で上書きされる。
+    """
+    if len(date) != 8 or not date.isdigit():
+        raise HTTPException(status_code=400, detail="date must be YYYYMMDD")
+    background_tasks.add_task(_run_calculate, date)
+    logger.info(f"[calculate] バックグラウンドタスク登録: date={date}")
+    return {"ok": True, "date": date, "message": "Calculation started in background"}

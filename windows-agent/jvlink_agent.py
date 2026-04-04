@@ -677,6 +677,24 @@ def run_daily_fetch(jv) -> None:
     records = fetch_stored_data(jv, DATASPEC_RACE, yesterday, option=2, on_file_done=on_daily_file_done)
     logger.info(f"Daily fetch complete: 全体 {len(records)} 件")
 
+    # 翌日（出馬表）と当日の指数を自動算出トリガー
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d")
+    today_str = datetime.now().strftime("%Y%m%d")
+    for calc_date in [tomorrow, today_str]:
+        try:
+            resp = requests.post(
+                f"{BACKEND_URL}/api/import/calculate",
+                params={"date": calc_date},
+                headers={"X-API-Key": API_KEY},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                logger.info(f"指数算出トリガー送信: date={calc_date}")
+            else:
+                logger.warning(f"指数算出トリガー失敗: date={calc_date} status={resp.status_code}")
+        except Exception as e:
+            logger.warning(f"指数算出トリガー送信エラー: date={calc_date} error={e}")
+
 
 def _fetch_today_race_keys(today: str) -> list[str]:
     """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。"""
@@ -1067,8 +1085,8 @@ def run_command_loop(jv) -> None:
                     report_status("idle", message="Setup completed")
                 elif action == "daily":
                     report_status("running", mode="daily", message="Starting daily fetch")
-                    run_daily_fetch(jv)
-                    report_status("idle", message="Daily fetch completed")
+                    run_daily_fetch(jv)  # 内部で指数算出トリガーも送信
+                    report_status("idle", message="Daily fetch and index calculation triggered")
                 elif action == "retry":
                     report_status("running", mode="retry", message="Retrying pending queue")
                     retry_pending()
