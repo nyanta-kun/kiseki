@@ -158,7 +158,7 @@ async def import_entries(
     """
     importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
-    stats = importer.import_records(records)
+    stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_entries: {stats}")
     return {"ok": True, "stats": stats}
@@ -173,7 +173,7 @@ async def import_odds(
     """O1-O8オッズレコードを取り込む。更新後WebSocketでブロードキャスト。"""
     importer = OddsImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
-    stats = importer.import_records(records)
+    stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_odds: {stats}")
 
@@ -219,7 +219,7 @@ async def import_weights(
     """
     importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
-    stats = importer.import_records(records)
+    stats = await importer.import_records(records)
     await db.commit()
     return {"ok": True, "stats": stats}
 

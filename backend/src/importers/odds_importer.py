@@ -11,8 +11,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import OddsHistory, Race
 from .jvlink_parser import parse_odds
@@ -63,10 +64,10 @@ def _parse_odds_value(raw: str) -> float | None:
 class OddsImporter:
     """O1-O8レコードをOddsHistoryテーブルへ格納するクラス。"""
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    def import_records(self, records: list[dict[str, str]]) -> dict[str, Any]:
+    async def import_records(self, records: list[dict[str, str]]) -> dict[str, Any]:
         """オッズレコードリストをDBへ取り込む。
 
         Args:
@@ -88,7 +89,7 @@ class OddsImporter:
                 if not parsed:
                     continue
 
-                race_db_id = self._get_race_id(parsed["jravan_race_id"])
+                race_db_id = await self._get_race_id(parsed["jravan_race_id"])
                 if race_db_id is None:
                     logger.debug(f"Race not found for odds: {parsed['jravan_race_id']}")
                     continue
@@ -97,7 +98,7 @@ class OddsImporter:
                     rec_id, rec["data"], parsed["bet_type"], race_db_id, now
                 )
                 if rows:
-                    self.db.execute(insert(OddsHistory), rows)
+                    await self.db.execute(insert(OddsHistory), rows)
                     stats["saved"] += len(rows)
                     affected_race_ids.add(race_db_id)
 
@@ -105,13 +106,16 @@ class OddsImporter:
                 logger.error(f"Odds import error rec_id={rec_id}: {e}")
                 stats["errors"] += 1
 
-        self.db.flush()
+        await self.db.flush()
         stats["race_ids"] = list(affected_race_ids)
         return stats
 
-    def _get_race_id(self, jravan_race_id: str) -> int | None:
+    async def _get_race_id(self, jravan_race_id: str) -> int | None:
         """jravan_race_id からDBのRace.idを取得する。"""
-        return self.db.query(Race.id).filter(Race.jravan_race_id == jravan_race_id).scalar()
+        result = await self.db.execute(
+            select(Race.id).where(Race.jravan_race_id == jravan_race_id)
+        )
+        return result.scalar()
 
     def _extract_odds_rows(
         self,

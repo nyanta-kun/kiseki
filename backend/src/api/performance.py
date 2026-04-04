@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import func
+
 from ..db.models import CalculatedIndex, Race, RaceResult
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
@@ -309,6 +311,25 @@ async def get_performance_summary(
     if to_date is None:
         to_date = today.strftime("%Y%m%d")
 
+    # --- 有効バージョン: COMPOSITE_VERSION のデータが存在しなければ最新バージョンにフォールバック ---
+    version_check = (
+        await db.execute(
+            select(CalculatedIndex.version).where(
+                CalculatedIndex.version == COMPOSITE_VERSION
+            ).limit(1)
+        )
+    ).scalar()
+    if version_check is None:
+        # COMPOSITE_VERSION のデータがまだ未算出: DB内の最新バージョンを使用
+        fallback_version = (
+            await db.execute(
+                select(func.max(CalculatedIndex.version))
+            )
+        ).scalar()
+        effective_version = fallback_version if fallback_version is not None else COMPOSITE_VERSION
+    else:
+        effective_version = COMPOSITE_VERSION
+
     # --- カンマ区切りパラメータを展開 ---
     def _split(v: str | None) -> list[str] | None:
         if not v:
@@ -323,7 +344,7 @@ async def get_performance_summary(
 
     # --- SQLフィルタ条件の構築 ---
     sql_conditions = [
-        CalculatedIndex.version == COMPOSITE_VERSION,
+        CalculatedIndex.version == effective_version,
         Race.date >= from_date,
         Race.date <= to_date,
         RaceResult.finish_position.is_not(None),

@@ -33,22 +33,23 @@ type ChartData = {
 };
 
 // YAxis列レイアウト（左→右）:
-// [馬番/着順 右詰 18px] [4px] [馬名 左詰 90px] [4px] [EV単 右詰 24px] [10px] [EV複 右詰 24px] [6px] [穴バッジ 20px]
-// 合計: 200px
+// [馬番/着順 右詰 18px] [4px] [馬名 左詰 90px] [18px] [EV単 右詰 24px] [10px] [EV複 右詰 24px] [2px] [穴バッジ 16px]
+// 合計: 206px（①馬名↔単EV=18px、②複EV↔チャート=18px で均等）
 const NUM_WIDTH = 18;
 const GAP = 4;
 const NAME_WIDTH = 90;
+const NAME_EV_GAP = 18; // 馬名とEV列の間のスペース
 const EV_WIDTH = 24;
 const EV_GAP = 10;
-const ANA_GAP = 6;
-const ANA_WIDTH = 20;
+const ANA_GAP = 2;
+const ANA_WIDTH = 16;
 
 const NUM_X    = NUM_WIDTH;
 const NAME_X   = NUM_WIDTH + GAP;
-const WIN_EV_X = NAME_X + NAME_WIDTH + GAP + EV_WIDTH;
+const WIN_EV_X = NAME_X + NAME_WIDTH + NAME_EV_GAP + EV_WIDTH;
 const PLACE_EV_X = WIN_EV_X + EV_GAP + EV_WIDTH;
 const ANA_X    = PLACE_EV_X + ANA_GAP;
-const Y_AXIS_WIDTH = NUM_WIDTH + GAP + NAME_WIDTH + GAP + EV_WIDTH + EV_GAP + EV_WIDTH + ANA_GAP + ANA_WIDTH; // 200
+const Y_AXIS_WIDTH = NUM_WIDTH + GAP + NAME_WIDTH + NAME_EV_GAP + EV_WIDTH + EV_GAP + EV_WIDTH + ANA_GAP + ANA_WIDTH; // 18+4+90+18+24+10+24+2+16=206
 
 // 着順カラー定義
 const FINISH_STYLE: Record<number, { badge: string; text: string; rowFill: string; winBar: string; placeBar: string }> = {
