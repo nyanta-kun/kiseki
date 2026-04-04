@@ -19,10 +19,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from sqlalchemy import func
 
 from ..db.models import CalculatedIndex, Race, RaceResult
 from ..db.session import get_db
