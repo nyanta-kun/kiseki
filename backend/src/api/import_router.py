@@ -254,62 +254,81 @@ async def import_payouts(
     """HR レコード（払戻情報）を取り込む。
 
     処理内容:
-      1. jravan_race_id で races.id を解決する
-      2. race_payouts に upsert（UNIQUE制約で重複排除）
-      3. 複勝払戻は race_results.place_odds にも更新する（horse_number で照合）
+      1. jravan_race_id で races.id を一括解決（N+1回避）
+      2. race_payouts に一括 upsert（UNIQUE制約で重複排除）
+      3. 複勝払戻は race_results.place_odds にも一括更新する
     """
     from decimal import Decimal
 
-    imported = 0
+    if not body.records:
+        return {"imported": 0, "skipped": 0}
+
+    # 1. 一括 race_id 解決（jravan_race_id → DB id）
+    jravan_ids = list({hr.race_id for hr in body.records})
+    race_rows = await db.execute(
+        select(Race.id, Race.jravan_race_id).where(Race.jravan_race_id.in_(jravan_ids))
+    )
+    race_id_map: dict[str, int] = {r.jravan_race_id: r.id for r in race_rows}
+
+    # 2. 全 upsert 値を一括構築
+    payout_values: list[dict] = []
+    place_updates: list[tuple[int, int, Decimal]] = []  # (race_db_id, horse_number, odds)
     skipped = 0
 
     for hr in body.records:
-        # races.id を jravan_race_id で解決
-        race_row = await db.execute(
-            select(Race.id).where(Race.jravan_race_id == hr.race_id)
-        )
-        race_db_id: int | None = race_row.scalar()
+        race_db_id = race_id_map.get(hr.race_id)
         if race_db_id is None:
             logger.debug(f"import_payouts: race not found for jravan_race_id={hr.race_id!r}")
             skipped += len(hr.payouts)
             continue
 
         for entry in hr.payouts:
-            # race_payouts に upsert
-            stmt = (
-                pg_insert(RacePayout)
-                .values(
-                    race_id=race_db_id,
-                    bet_type=entry.bet_type,
-                    combination=entry.combination,
-                    payout=entry.payout,
-                    popularity=entry.popularity,
-                )
-                .on_conflict_do_update(
-                    constraint="uq_race_payouts_race_type_combo",
-                    set_={
-                        "payout": entry.payout,
-                        "popularity": entry.popularity,
-                    },
-                )
-            )
-            await db.execute(stmt)
-            imported += 1
-
-            # 複勝払戻を race_results.place_odds に反映
+            payout_values.append({
+                "race_id": race_db_id,
+                "bet_type": entry.bet_type,
+                "combination": entry.combination,
+                "payout": entry.payout,
+                "popularity": entry.popularity,
+            })
             if entry.bet_type == "place" and entry.combination.isdigit():
                 horse_number = int(entry.combination)
-                # payout は 100円あたり払戻金額（整数）→ 倍率に変換
                 place_odds_val = Decimal(str(round(entry.payout / 100, 1)))
-                result_row = await db.execute(
-                    select(RaceResult).where(
-                        RaceResult.race_id == race_db_id,
-                        RaceResult.horse_number == horse_number,
-                    )
-                )
-                result = result_row.scalar_one_or_none()
-                if result is not None:
-                    result.place_odds = place_odds_val
+                place_updates.append((race_db_id, horse_number, place_odds_val))
+
+    # 3. 一括 upsert（race_payoutsへ）
+    imported = 0
+    if payout_values:
+        stmt = (
+            pg_insert(RacePayout)
+            .values(payout_values)
+            .on_conflict_do_update(
+                constraint="uq_race_payouts_race_type_combo",
+                set_={
+                    "payout": pg_insert(RacePayout).excluded.payout,
+                    "popularity": pg_insert(RacePayout).excluded.popularity,
+                },
+            )
+        )
+        await db.execute(stmt)
+        imported = len(payout_values)
+
+    # 4. 複勝払戻を race_results.place_odds に一括反映
+    if place_updates:
+        # (race_id, horse_number) ペアで一括取得
+        from sqlalchemy import tuple_ as sa_tuple
+        pairs = [(r, h) for r, h, _ in place_updates]
+        result_rows = await db.execute(
+            select(RaceResult).where(
+                sa_tuple(RaceResult.race_id, RaceResult.horse_number).in_(pairs)
+            )
+        )
+        results_map: dict[tuple[int, int], RaceResult] = {
+            (r.race_id, r.horse_number): r for r in result_rows.scalars()
+        }
+        for race_db_id, horse_number, odds_val in place_updates:
+            result = results_map.get((race_db_id, horse_number))
+            if result is not None:
+                result.place_odds = odds_val
 
     await db.commit()
     logger.info(f"import_payouts: imported={imported}, skipped={skipped}")
