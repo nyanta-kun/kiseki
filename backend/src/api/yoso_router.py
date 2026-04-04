@@ -14,7 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -263,24 +263,29 @@ async def get_yoso_races(
         if ci.composite_index is not None:
             ci_map[(ci.race_id, ci.horse_id)] = float(ci.composite_index)
 
-    # オッズ取得（最新）
-    # OddsHistory.combination = 馬番文字列（例: "3"）、OddsHistory.odds = 倍率
-    from ..db.models import OddsHistory  # 循環避けローカルインポート
-    odds_result = await db.execute(
-        select(OddsHistory).where(
-            OddsHistory.race_id.in_(race_ids),
-            OddsHistory.bet_type.in_(["win", "place"]),
-        ).order_by(OddsHistory.fetched_at.desc())
-    )
-    # 最新オッズのみ保持 (race_id, combination) → odds
+    # オッズ取得（各馬番の最新のみ DISTINCT ON で効率取得）
     win_odds_map: dict[tuple[int, str], float] = {}
     place_odds_map: dict[tuple[int, str], float] = {}
-    for oh in odds_result.scalars().all():
-        combo = oh.combination  # "3" 等の馬番文字列
-        if oh.bet_type == "win" and (oh.race_id, combo) not in win_odds_map:
-            win_odds_map[(oh.race_id, combo)] = float(oh.odds) if oh.odds is not None else 0.0
-        elif oh.bet_type == "place" and (oh.race_id, combo) not in place_odds_map:
-            place_odds_map[(oh.race_id, combo)] = float(oh.odds) if oh.odds is not None else 0.0
+    if race_ids:
+        odds_rows = (
+            await db.execute(
+                text("""
+                    SELECT DISTINCT ON (race_id, bet_type, combination)
+                        race_id, bet_type, combination, odds
+                    FROM keiba.odds_history
+                    WHERE race_id = ANY(:race_ids)
+                      AND bet_type IN ('win', 'place')
+                    ORDER BY race_id, bet_type, combination, fetched_at DESC
+                """),
+                {"race_ids": race_ids},
+            )
+        ).fetchall()
+        for row in odds_rows:
+            combo = str(row.combination)
+            if row.bet_type == "win":
+                win_odds_map[(row.race_id, combo)] = float(row.odds) if row.odds is not None else 0.0
+            elif row.bet_type == "place":
+                place_odds_map[(row.race_id, combo)] = float(row.odds) if row.odds is not None else 0.0
 
     # 着順取得
     results_result = await db.execute(
