@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceResult
 from ..db.session import get_db
-from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence
 
 router = APIRouter(prefix="/api/performance", tags=["performance"])
@@ -309,25 +308,6 @@ async def get_performance_summary(
     if to_date is None:
         to_date = today.strftime("%Y%m%d")
 
-    # --- 有効バージョン: COMPOSITE_VERSION のデータが存在しなければ最新バージョンにフォールバック ---
-    version_check = (
-        await db.execute(
-            select(CalculatedIndex.version).where(
-                CalculatedIndex.version == COMPOSITE_VERSION
-            ).limit(1)
-        )
-    ).scalar()
-    if version_check is None:
-        # COMPOSITE_VERSION のデータがまだ未算出: DB内の最新バージョンを使用
-        fallback_version = (
-            await db.execute(
-                select(func.max(CalculatedIndex.version))
-            )
-        ).scalar()
-        effective_version = fallback_version if fallback_version is not None else COMPOSITE_VERSION
-    else:
-        effective_version = COMPOSITE_VERSION
-
     # --- カンマ区切りパラメータを展開 ---
     def _split(v: str | None) -> list[str] | None:
         if not v:
@@ -340,9 +320,21 @@ async def get_performance_summary(
     distance_ranges = _split(distance_range)
     conditions = _split(condition)
 
+    # --- 各 (race_id, horse_id) の最新バージョンサブクエリ ---
+    # バージョンごとに集計期間が異なるため、固定バージョンでなく
+    # 各レース・各馬ごとの最大バージョンを使用して集計する。
+    latest_version_sq = (
+        select(
+            CalculatedIndex.race_id.label("lv_race_id"),
+            CalculatedIndex.horse_id.label("lv_horse_id"),
+            func.max(CalculatedIndex.version).label("lv_max_version"),
+        )
+        .group_by(CalculatedIndex.race_id, CalculatedIndex.horse_id)
+        .subquery()
+    )
+
     # --- SQLフィルタ条件の構築 ---
     sql_conditions = [
-        CalculatedIndex.version == effective_version,
         Race.date >= from_date,
         Race.date <= to_date,
         RaceResult.finish_position.is_not(None),
@@ -386,6 +378,12 @@ async def get_performance_summary(
                 RaceResult.win_odds,
             )
             .join(CalculatedIndex, CalculatedIndex.race_id == Race.id)
+            .join(
+                latest_version_sq,
+                (latest_version_sq.c.lv_race_id == CalculatedIndex.race_id)
+                & (latest_version_sq.c.lv_horse_id == CalculatedIndex.horse_id)
+                & (latest_version_sq.c.lv_max_version == CalculatedIndex.version),
+            )
             .join(
                 RaceResult,
                 (RaceResult.race_id == Race.id)
