@@ -709,6 +709,46 @@ def _fetch_today_race_keys(today: str) -> list[str]:
     return []
 
 
+def run_odds_prefetch(jv, fetch_date: str | None = None) -> None:
+    """指定日（デフォルト: 翌日）の前日発売オッズを取得してバックエンドへ送信する。
+
+    JRA前日発売に対応: 前日9時頃から翌日のレースのオッズが `JVRTOpen("0B31", raceKey16)` で取得可能になる。
+    1回実行して終了する（VPS cronから1時間ごとに呼び出す想定）。
+
+    Args:
+        jv: JV-Link COMオブジェクト
+        fetch_date: 対象日 YYYYMMDD。None の場合は翌日を使用。
+    """
+    if fetch_date is None:
+        fetch_date = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d")
+
+    logger.info(f"=== ODDS PREFETCH: {fetch_date} のオッズ取得 ===")
+
+    race_keys = _fetch_today_race_keys(fetch_date)
+    if not race_keys:
+        logger.info(f"対象レースなし（出馬表未登録 or 開催なし）: date={fetch_date}")
+        return
+
+    logger.info(f"レースキー {len(race_keys)} 件: {fetch_date}")
+
+    all_o1 = []
+    for race_key in race_keys:
+        odds_records = fetch_realtime_data(jv, RT_ODDS_WIN_PLACE, race_key)
+        o1 = [r for r in odds_records if r.get("rec_id") == "O1"]
+        all_o1.extend(o1)
+
+    if all_o1:
+        logger.info(f"オッズ取得: {len(all_o1)}件 (O1) / {len(race_keys)}レース → 送信")
+        post_to_backend("/api/import/odds", {
+            "date": fetch_date,
+            "records": all_o1,
+        })
+    else:
+        logger.info(f"オッズデータなし（前日発売未開始の可能性）: date={fetch_date}")
+
+    logger.info("=== ODDS PREFETCH 完了 ===")
+
+
 def run_realtime_monitor(jv) -> None:
     """リアルタイム監視ループ"""
     logger.info("=== Realtime monitor started ===")
@@ -1087,6 +1127,11 @@ def run_command_loop(jv) -> None:
                     report_status("running", mode="daily", message="Starting daily fetch")
                     run_daily_fetch(jv)  # 内部で指数算出トリガーも送信
                     report_status("idle", message="Daily fetch and index calculation triggered")
+                elif action == "odds_prefetch":
+                    fetch_date = cmd.get("params", {}).get("date")
+                    report_status("running", mode="odds_prefetch", message=f"Fetching prefetch odds: {fetch_date or 'tomorrow'}")
+                    run_odds_prefetch(jv, fetch_date)
+                    report_status("idle", message=f"Odds prefetch done: {fetch_date or 'tomorrow'}")
                 elif action == "retry":
                     report_status("running", mode="retry", message="Retrying pending queue")
                     retry_pending()
@@ -1115,9 +1160,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "blod", "recent", "daily", "realtime", "retry", "wait"],
+        choices=["all", "setup", "blod", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, blod=血統データのみ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, blod=血統データのみ取得, odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+    )
+    parser.add_argument(
+        "--fetch-date",
+        type=str,
+        default=None,
+        metavar="YYYYMMDD",
+        help="odds-prefetch モードで取得する対象日 (default: 翌日, 例: --fetch-date 20260406)",
     )
     parser.add_argument(
         "--from-year",
@@ -1179,6 +1231,12 @@ def main() -> None:
         run_command_loop(jv)
     elif args.mode == "realtime":
         run_realtime_monitor(jv)
+    elif args.mode == "odds-prefetch":
+        report_status("running", mode="odds_prefetch", message=f"Starting odds prefetch: {args.fetch_date or 'tomorrow'}")
+        run_odds_prefetch(jv, args.fetch_date)
+        report_status("done", message=f"Odds prefetch completed: {args.fetch_date or 'tomorrow'}")
+        jv.JVClose()
+        logger.info("odds-prefetch モード完了。終了します。")
     elif args.mode == "all":
         run_daily_fetch(jv)
         report_status("idle", message="Daily fetch done. Entering command loop + realtime.")
