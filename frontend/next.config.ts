@@ -5,8 +5,10 @@ const withPWA = withPWAInit({
   dest: "public",
   disable: process.env.NODE_ENV === "development",
   // 新ビルドデプロイ時に旧キャッシュを即座に置き換える（Server Action ハッシュ不一致防止）
-  skipWaiting: true,
-  clientsClaim: true,
+  workboxOptions: {
+    skipWaiting: true,
+    clientsClaim: true,
+  },
 });
 
 const isDev = process.env.NODE_ENV === "development";
