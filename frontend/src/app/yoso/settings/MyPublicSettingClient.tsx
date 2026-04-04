@@ -57,13 +57,13 @@ export function MyPublicSettingClient({ initial }: Props) {
             role="switch"
             aria-checked={isPublic}
             onClick={() => setIsPublic((v) => !v)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 ${
-              isPublic ? "bg-blue-500" : "bg-gray-200"
+            className={`relative shrink-0 inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 ${
+              isPublic ? "bg-blue-500" : "bg-gray-300"
             }`}
           >
             <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transform transition-transform ${
-                isPublic ? "translate-x-4.5" : "translate-x-0.5"
+              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${
+                isPublic ? "translate-x-6" : "translate-x-1"
               }`}
             />
           </button>
