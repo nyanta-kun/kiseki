@@ -165,7 +165,8 @@ jobs:
               'bash -s' << EOF
           set -euo pipefail
           cd ~/GitHub/kiseki
-          git pull origin main
+          git fetch origin main
+          git reset --hard origin/main
           echo "[deploy] イメージビルド（VPS上でビルド）..."
           docker compose -f docker-compose.galloplab.yml build
           echo "[deploy] コンテナ再作成..."
