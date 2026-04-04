@@ -3,6 +3,8 @@
 # 役割: 新ビルドを本番と並行して起動し、ヘルスチェックで検証する
 #       検証OK後に本番（galloplab.yml）へ切り替える
 #
+# イメージ: CI でビルド済みの ghcr.io イメージを使用（ローカルビルド不要）
+#
 # ポート:
 #   backend:  127.0.0.1:8004:8000  （本番: 8003）
 #   frontend: 127.0.0.1:3003:3000  （本番: 3002）
@@ -13,7 +15,7 @@ name: kiseki-galloplab-b
 
 services:
   backend-b:
-    image: kiseki-galloplab-backend:candidate
+    image: ghcr.io/nyanta-kun/kiseki/backend:main
     container_name: galloplab-backend-b
     ports:
       - "127.0.0.1:8004:8000"
@@ -55,7 +57,7 @@ services:
       start_period: 30s
 
   frontend-b:
-    image: kiseki-galloplab-frontend:candidate
+    image: ghcr.io/nyanta-kun/kiseki/frontend:main
     container_name: galloplab-frontend-b
     ports:
       - "127.0.0.1:3003:3000"

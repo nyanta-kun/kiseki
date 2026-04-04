@@ -2,7 +2,8 @@
 # Blue-Green デプロイスクリプト for galloplab.com
 #
 # 流れ:
-#   Phase 1: 新イメージをビルド → 候補スロット（Bスロット: ports 3003/8004）で起動
+#   Phase 0: コード更新 + ghcr.io から最新イメージを pull
+#   Phase 1: 候補スロット（Bスロット: ports 3003/8004）で起動・ヘルスチェック
 #   Phase 2: 候補スロットのヘルスチェック
 #   Phase 3: 問題なければ本番スロット（Aスロット: ports 3002/8003）を切り替え
 #   Phase 3.5: DBマイグレーション（本番スロットで実行・DBはVPS内のみアクセス可）
@@ -26,18 +27,30 @@ log() { echo "[bluegreen] $*"; }
 err() { echo "[bluegreen] ERROR: $*" >&2; }
 
 # -------------------------------------------------------------------
-# Phase 0: コード更新
+# Phase 0: コード更新 + イメージ取得
 # -------------------------------------------------------------------
 log "Phase 0: コード更新..."
 git fetch origin main
 git reset --hard origin/main
 
-# -------------------------------------------------------------------
-# Phase 1: イメージビルド
-# -------------------------------------------------------------------
-log "Phase 1: イメージビルド（candidate タグ）..."
-docker compose -f "$COMPOSE_PROD" build
+log "Phase 0: ghcr.io ログイン..."
+# GHCR_TOKEN / GHCR_USER は .env に設定
+# 例: GHCR_USER=nyanta-kun / GHCR_TOKEN=ghp_xxxxx (read:packages スコープ)
+GHCR_TOKEN=$(grep -E '^GHCR_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+GHCR_USER=$(grep -E '^GHCR_USER=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+if [ -n "$GHCR_TOKEN" ] && [ -n "$GHCR_USER" ]; then
+  echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+else
+  log "  警告: GHCR_TOKEN / GHCR_USER が未設定のため docker login をスキップ"
+  log "  パブリックパッケージの場合は問題なし"
+fi
 
+log "Phase 0: 最新イメージを pull..."
+docker compose -f "$COMPOSE_PROD" pull
+
+# -------------------------------------------------------------------
+# Phase 1: 候補スロット起動（ports 3003/8004）
+# -------------------------------------------------------------------
 log "Phase 1: 候補スロット起動（ports 3003/8004）..."
 # 古い候補コンテナ・ネットワークが残っていれば強制削除
 docker rm -f galloplab-backend-b galloplab-frontend-b 2>/dev/null || true
@@ -85,7 +98,7 @@ fi
 # Phase 3: 本番スロット切り替え
 # -------------------------------------------------------------------
 log "Phase 3: 本番スロット切り替え（ports 3002/8003）..."
-log "  ※ イメージは Phase 1 でビルド済みのため高速切り替え"
+log "  ※ イメージは Phase 0 で pull 済みのため高速切り替え"
 docker compose -f "$COMPOSE_PROD" up -d --force-recreate
 
 log "Phase 3: 本番 backend ヘルスチェック待機..."
@@ -117,18 +130,9 @@ docker exec -e PYTHONPATH=/app "$CONTAINER_BACKEND_PROD" uv run alembic upgrade 
 log "Phase 4: 候補スロットをクリーンアップ..."
 docker compose -f "$COMPOSE_CAND" down --remove-orphans
 
-# 不要イメージを削除（Blue-Green で使用中の candidate タグイメージのみ残す）
-#
-# ダングリングイメージ: 前回ビルド時に candidate タグを上書きされた古いイメージ層。
-#   → docker image prune -f で安全に削除（実行中コンテナから参照されていない）
-#
-# candidate タグ以外の未使用イメージ（ghcr.io/... や <none>:<none>）:
-#   → docker image prune -a -f は実行中コンテナで使われていない全イメージを削除する。
-#     ビルドキャッシュも消えるため、次回ビルドが遅くなる可能性があるが
-#     VPSのディスク節約を優先してここでは全削除する。
-#     ※ candidate タグ付きイメージは galloplab-backend-1 / galloplab-frontend-1 が
-#       参照中のため prune -a でも削除されない。
-
+# 不要イメージを削除
+# ghcr.io/...：main タグは実行中コンテナが参照中のため prune -a でも削除されない。
+# ダングリングイメージ（前回 pull で置き換えられた旧レイヤー）は削除される。
 log "Phase 4: 未使用イメージを削除..."
 BEFORE=$(docker system df --format '{{.Size}}' 2>/dev/null | head -1 || echo "不明")
 docker image prune -a -f

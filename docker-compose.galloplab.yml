@@ -1,6 +1,7 @@
 # galloplab.com 本番デプロイ用 Compose
-# 使用方法: docker compose -f docker-compose.galloplab.yml up -d --build
+# 使用方法: docker compose -f docker-compose.galloplab.yml up -d
 #
+# イメージ: CI (GitHub Actions) でビルド済みの ghcr.io イメージを使用
 # nginx: galloplab.com/      → 127.0.0.1:3002  (Next.js)
 # nginx: api.galloplab.com/  → 127.0.0.1:8003  (FastAPI)
 
@@ -8,10 +9,7 @@ name: kiseki-galloplab
 
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: kiseki-galloplab-backend:candidate
+    image: ghcr.io/nyanta-kun/kiseki/backend:main
     container_name: galloplab-backend-1
     ports:
       - "127.0.0.1:8003:8000"
@@ -53,14 +51,7 @@ services:
       start_period: 30s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: https://api.galloplab.com
-        NEXT_PUBLIC_WS_URL: wss://api.galloplab.com
-        NEXT_PUBLIC_PAID_MODE: ${NEXT_PUBLIC_PAID_MODE:-false}
-    image: kiseki-galloplab-frontend:candidate
+    image: ghcr.io/nyanta-kun/kiseki/frontend:main
     container_name: galloplab-frontend-1
     ports:
       - "127.0.0.1:3002:3000"

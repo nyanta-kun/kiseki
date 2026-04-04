@@ -85,8 +85,8 @@ jobs:
           AUTH_PASSWORD: "test"
           AUTH_URL: "http://localhost:3000/api/auth"
 
-  build-and-push:
-    name: Build & Push Docker Images
+  build-backend:
+    name: Build & Push Backend Image
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -113,8 +113,30 @@ jobs:
           context: ./backend
           push: true
           tags: ghcr.io/${{ github.repository }}/backend:main
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  build-frontend:
+    name: Build & Push Frontend Image
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push frontend
         uses: docker/build-push-action@v6
@@ -126,12 +148,12 @@ jobs:
             NEXT_PUBLIC_API_URL=https://api.galloplab.com
             NEXT_PUBLIC_WS_URL=wss://api.galloplab.com
             NEXT_PUBLIC_PAID_MODE=${{ vars.NEXT_PUBLIC_PAID_MODE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
   deploy:
     name: Deploy to galloplab.com
-    needs: [build-and-push]
+    needs: [build-backend, build-frontend]
     runs-on: ubuntu-latest
     # GitHub Environments の required_reviewers で承認ゲートを設定可能（INF-014）
     # Settings > Environments > production > Required reviewers に承認者を追加することを推奨
