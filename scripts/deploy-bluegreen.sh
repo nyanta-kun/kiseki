@@ -115,5 +115,23 @@ fi
 log "Phase 4: 候補スロットをクリーンアップ..."
 docker compose -f "$COMPOSE_CAND" down --remove-orphans
 
+# 不要イメージを削除（Blue-Green で使用中の candidate タグイメージのみ残す）
+#
+# ダングリングイメージ: 前回ビルド時に candidate タグを上書きされた古いイメージ層。
+#   → docker image prune -f で安全に削除（実行中コンテナから参照されていない）
+#
+# candidate タグ以外の未使用イメージ（ghcr.io/... や <none>:<none>）:
+#   → docker image prune -a -f は実行中コンテナで使われていない全イメージを削除する。
+#     ビルドキャッシュも消えるため、次回ビルドが遅くなる可能性があるが
+#     VPSのディスク節約を優先してここでは全削除する。
+#     ※ candidate タグ付きイメージは galloplab-backend-1 / galloplab-frontend-1 が
+#       参照中のため prune -a でも削除されない。
+
+log "Phase 4: 未使用イメージを削除..."
+BEFORE=$(docker system df --format '{{.Size}}' 2>/dev/null | head -1 || echo "不明")
+docker image prune -a -f
+AFTER=$(docker system df --format '{{.Size}}' 2>/dev/null | head -1 || echo "不明")
+log "  イメージ領域: $BEFORE → $AFTER"
+
 docker compose -f "$COMPOSE_PROD" ps
 log "=== デプロイ完了: https://galloplab.com/ ==="
