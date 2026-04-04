@@ -59,53 +59,59 @@ export default async function MyPage() {
   const isPremium = access?.is_premium ?? session.user.is_premium ?? false;
   const accessExpiresAt = access?.access_expires_at ?? session.user.access_expires_at ?? null;
 
+  const paidMode = process.env.NEXT_PUBLIC_PAID_MODE === "true";
+
   return (
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-6 space-y-4">
         <h1 className="text-lg font-bold text-gray-800">マイページ</h1>
 
-        {/* 1. 会員ステータスカード */}
-        <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
-            <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--primary)" }} />
-            会員ステータス
-          </h2>
-          {isPremium ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-300">
-                  アクセス有効
-                </span>
-                <p className="text-sm text-gray-700">
-                  {accessExpiresAt ? formatExpiry(accessExpiresAt) : "無期限アクセス"}
-                </p>
+        {/* 1. 会員ステータスカード（有料モード時のみ表示） */}
+        {paidMode && (
+          <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+              <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--primary)" }} />
+              会員ステータス
+            </h2>
+            {isPremium ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-300">
+                    アクセス有効
+                  </span>
+                  <p className="text-sm text-gray-700">
+                    {accessExpiresAt ? formatExpiry(accessExpiresAt) : "無期限アクセス"}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500">全レースの指数・予想を閲覧できます</p>
               </div>
-              <p className="text-xs text-gray-500">全レースの指数・予想を閲覧できます</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-300">
-                  無料プラン
-                </span>
-                <p className="text-sm text-gray-700">各競馬場1R目のみ閲覧可能</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-300">
+                    無料プラン
+                  </span>
+                  <p className="text-sm text-gray-700">各競馬場1R目のみ閲覧可能</p>
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+          </section>
+        )}
 
-        {/* 2. 招待コード入力カード */}
-        <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
-            <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--primary)" }} />
-            招待コード入力
-          </h2>
-          <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-            note 購入者の方は招待コードを入力してアクセスを有効化してください。
-            コードは大文字・小文字を区別しません。
-          </p>
-          <RedeemCodeForm />
-        </section>
+        {/* 2. 招待コード入力カード（有料モード時のみ表示） */}
+        {paidMode && (
+          <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
+            <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+              <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--primary)" }} />
+              招待コード入力
+            </h2>
+            <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+              note 購入者の方は招待コードを入力してアクセスを有効化してください。
+              コードは大文字・小文字を区別しません。
+            </p>
+            <RedeemCodeForm />
+          </section>
+        )}
 
         {/* 3. アカウント情報カード */}
         <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">

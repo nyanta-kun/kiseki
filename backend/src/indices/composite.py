@@ -43,6 +43,7 @@ from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
 from .paddock import PaddockIndexCalculator
 from .pedigree import PedigreeIndexCalculator
+from .rebound import ReboundIndexCalculator
 from .rotation import RotationIndexCalculator
 from .speed import SpeedIndexCalculator
 from .training import TrainingIndexCalculator
@@ -59,7 +60,9 @@ logger = logging.getLogger(__name__)
 # v7: Nelder-Mead重み最適化。コース適性 0.13→0.31、スピード 0.24→0.13。穴ぐさ・パドック=0
 # v8: スピアマン相関比例重み。後3F(0.117→0.171)・血統(0.066→0.118)を増。
 #     コース適性(0.310→0.167)・ローテ(0.112→0.113)を調整。テストROI=86.4%（v7比+10.3%）
-COMPOSITE_VERSION = 8
+# v9: 巻き返し指数追加（ReboundIndexCalculator）。disadvantage_bonus(0.05)を rebound として活用。
+#     バックフィルデータ（2024-01〜）が揃い次第、重み最適化予定。
+COMPOSITE_VERSION = 9
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -97,6 +100,7 @@ class CompositeIndexCalculator:
         self._training = TrainingIndexCalculator(db)
         self._anagusa = AnagusaIndexCalculator(db)
         self._paddock = PaddockIndexCalculator(db)
+        self._rebound = ReboundIndexCalculator(db)
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -141,6 +145,7 @@ class CompositeIndexCalculator:
         training_map = await self._training.calculate_batch(race_id)
         anagusa_map = await self._anagusa.calculate_batch(race_id)
         paddock_map = await self._paddock.calculate_batch(race_id)
+        rebound_map = await self._rebound.calculate_batch(race_id)
 
         results = []
         for entry in entries:
@@ -158,6 +163,7 @@ class CompositeIndexCalculator:
                 training=training_map.get(hid, DEFAULT_INDEX),
                 anagusa=anagusa_map.get(hid, DEFAULT_INDEX),
                 paddock=paddock_map.get(hid, DEFAULT_INDEX),
+                rebound=rebound_map.get(hid, DEFAULT_INDEX),
             )
             results.append({"horse_id": hid, **row})
 
@@ -221,6 +227,7 @@ class CompositeIndexCalculator:
         training: float,
         anagusa: float,
         paddock: float,
+        rebound: float = DEFAULT_INDEX,
     ) -> dict:
         """各指数から総合指数を算出する。
 
@@ -239,6 +246,7 @@ class CompositeIndexCalculator:
             training: 調教指数（タイムトレンド近似）
             anagusa: 穴ぐさ指数（sekito.anagusa ピック実績ベース）
             paddock: パドック指数（sekito.netkeiba p_rank ベース、データなし=50）
+            rebound: 巻き返し指数（前走不利+着順乖離、中立=50）
 
         Returns:
             各指数と総合指数を含む dict
@@ -257,7 +265,7 @@ class CompositeIndexCalculator:
             + position_advantage * w["position_advantage"]
             + anagusa * w["anagusa"]
             + paddock * w["paddock"]
-            # disadvantage_bonus は flag ベースで別途加算（未実装）
+            + rebound * w["disadvantage_bonus"]
         )
         composite = round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
 
@@ -273,6 +281,7 @@ class CompositeIndexCalculator:
             "training_index": round(training, 1),
             "anagusa_index": round(anagusa, 1),
             "paddock_index": round(paddock, 1),
+            "rebound_index": round(rebound, 1),
             "composite_index": composite,
         }
 
@@ -391,6 +400,7 @@ class CompositeIndexCalculator:
         training_val = Decimal(str(data["training_index"])) if "training_index" in data else None
         anagusa_val = Decimal(str(data["anagusa_index"])) if "anagusa_index" in data else None
         paddock_val = Decimal(str(data["paddock_index"])) if "paddock_index" in data else None
+        rebound_val = Decimal(str(data["rebound_index"])) if "rebound_index" in data else None
 
         if existing:
             existing.speed_index = Decimal(str(data["speed_index"]))
@@ -404,6 +414,7 @@ class CompositeIndexCalculator:
             existing.training_index = training_val
             existing.anagusa_index = anagusa_val
             existing.paddock_index = paddock_val
+            existing.rebound_index = rebound_val
             existing.composite_index = Decimal(str(data["composite_index"]))
             existing.win_probability = win_prob
             existing.place_probability = place_prob
@@ -424,6 +435,7 @@ class CompositeIndexCalculator:
                 training_index=training_val,
                 anagusa_index=anagusa_val,
                 paddock_index=paddock_val,
+                rebound_index=rebound_val,
                 composite_index=Decimal(str(data["composite_index"])),
                 win_probability=win_prob,
                 place_probability=place_prob,

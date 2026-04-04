@@ -98,9 +98,6 @@ export function EVSummary({ indices, odds }: Props) {
         })}
       </div>
 
-      <p className="text-[10px] text-gray-400 mt-2">
-        ※ 指数に基づく予測です。投票は自己責任でお願いします。
-      </p>
     </section>
   );
 }

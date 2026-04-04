@@ -23,4 +23,11 @@ services:
       - ./logs:/app/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - kiseki
     restart: "no"
+
+networks:
+  kiseki:
+    external: true
+    name: kiseki_kiseki

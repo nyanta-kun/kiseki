@@ -402,6 +402,9 @@ class CalculatedIndex(Base):
         Numeric(5, 1), comment="穴ぐさ指数（sekito.anagusa ピック実績ベースの期待度スコア）"
     )
     paddock_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), comment="パドック指数")
+    rebound_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1), comment="巻き返し指数（前走不利+着順乖離から次走巻き返し期待度, 中立=50）"
+    )
     disadvantage_flag: Mapped[bool | None] = mapped_column(
         Boolean, default=False, comment="不利フラグ（True:レース中に不利あり）"
     )

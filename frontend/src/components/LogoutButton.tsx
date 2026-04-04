@@ -7,7 +7,7 @@ export function LogoutButton() {
     <form action={logout}>
       <button
         type="submit"
-        className="flex-shrink-0 text-blue-200 hover:text-white text-xs px-2.5 py-1 rounded border border-blue-400/40 hover:border-white/40 hover:bg-white/10 transition-colors"
+        className="flex-shrink-0 text-blue-500 hover:text-blue-700 text-xs px-2.5 py-1 rounded border border-blue-300 hover:border-blue-500 hover:bg-blue-50 transition-colors"
         aria-label="ログアウト"
       >
         ログアウト
