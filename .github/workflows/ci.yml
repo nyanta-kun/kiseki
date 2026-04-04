@@ -162,4 +162,4 @@ jobs:
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=20 \
               "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
-              'bash ~/GitHub/kiseki/scripts/deploy-bluegreen.sh'
+              'cd ~/GitHub/kiseki && git fetch origin main && git reset --hard origin/main && bash scripts/deploy-bluegreen.sh'
