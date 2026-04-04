@@ -38,7 +38,8 @@ log "Phase 1: イメージビルド（candidate タグ）..."
 docker compose -f "$COMPOSE_PROD" build
 
 log "Phase 1: 候補スロット起動（ports 3003/8004）..."
-# 古い候補コンテナが残っていれば削除
+# 古い候補コンテナ・ネットワークが残っていれば強制削除
+docker rm -f galloplab-backend-b galloplab-frontend-b 2>/dev/null || true
 docker compose -f "$COMPOSE_CAND" down --remove-orphans 2>/dev/null || true
 docker compose -f "$COMPOSE_CAND" up -d
 
