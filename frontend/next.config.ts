@@ -4,6 +4,9 @@ import withPWAInit from "@ducanh2912/next-pwa";
 const withPWA = withPWAInit({
   dest: "public",
   disable: process.env.NODE_ENV === "development",
+  // 新ビルドデプロイ時に旧キャッシュを即座に置き換える（Server Action ハッシュ不一致防止）
+  skipWaiting: true,
+  clientsClaim: true,
 });
 
 const isDev = process.env.NODE_ENV === "development";
@@ -49,9 +52,17 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // /_next/static/ は Next.js 内部ファイル（Turbopack開発ビルド含む）のため除外
-        source: "/((?!_next/static/).*)",
-        headers: securityHeaders,
+        // HTML ページはキャッシュしない（デプロイ後の Server Action ハッシュ不一致防止）
+        source: "/((?!_next/static|_next/image|favicon).*)",
+        headers: [
+          { key: "Cache-Control", value: "no-store, must-revalidate" },
+          ...securityHeaders,
+        ],
+      },
+      {
+        // /_next/static/ は content-hash 付きファイルなので永続キャッシュ
+        source: "/_next/static/(.*)",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
       },
     ];
   },
