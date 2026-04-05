@@ -73,7 +73,10 @@ Plans:
   2. 設定タブにPAID_MODEトグルが表示され、ONにするとDBに反映され、フロントエンドの次回アクセス時にペイウォールが有効化される
   3. バックエンドにGET /api/admin/settings と PUT /api/admin/settings エンドポイントが存在し、ADMIN_KEY認証で保護されている
   4. フロントエンドがビルド時の環境変数ではなく、起動時にAPIからPAID_MODEを取得し、DBの値に基づいてペイウォールを制御する
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — バックエンド AppSettings モデル + Alembic マイグレーション + GET/PUT /api/admin/settings
+- [ ] 17-02-PLAN.md — フロントエンド PAID_MODE 動的取得移行 + 設定タブ SettingsTab 実装
 
 ---
 
@@ -86,4 +89,4 @@ Plans:
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
 | 15. Admin UI再構成 | 2/2 | Complete    | 2026-04-05 | - |
 | 16. データタブ | 2/2 | Complete    | 2026-04-05 | - |
-| 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/TBD | Not started | - |
+| 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/2 | Planned | - |
