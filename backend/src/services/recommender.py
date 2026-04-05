@@ -83,29 +83,40 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     )
     all_rows = indices_result.all()
 
-    # オッズ（win/place）の最新値を取得
-    odds_result = await session.execute(
-        select(OddsHistory)
+    # オッズ（win/place）の最新値を取得（DISTINCT ON で最新行のみ取得し大量履歴のメモリ問題を回避）
+    from sqlalchemy import Integer, Numeric, String, func
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    race_ids_tuple = tuple(race_ids)
+    latest_odds_sq = (
+        select(
+            OddsHistory.race_id,
+            OddsHistory.bet_type,
+            OddsHistory.combination,
+            OddsHistory.odds,
+        )
         .where(
-            OddsHistory.race_id.in_(race_ids),
+            OddsHistory.race_id.in_(race_ids_tuple),
             OddsHistory.bet_type.in_(["win", "place"]),
         )
-        .order_by(OddsHistory.race_id, OddsHistory.bet_type, OddsHistory.fetched_at.desc())
+        .distinct(OddsHistory.race_id, OddsHistory.bet_type, OddsHistory.combination)
+        .order_by(
+            OddsHistory.race_id,
+            OddsHistory.bet_type,
+            OddsHistory.combination,
+            OddsHistory.fetched_at.desc(),
+        )
     )
-    all_odds = odds_result.scalars().all()
+    odds_result = await session.execute(latest_odds_sq)
+    all_odds = odds_result.all()
 
-    # オッズを race_id → {win: {馬番str: 倍率}, place: {馬番str: 倍率}} に整理（最新のみ）
+    # オッズを race_id → {win: {馬番str: 倍率}, place: {馬番str: 倍率}} に整理
     odds_map: dict[int, dict[str, dict[str, float]]] = {}
-    seen_odds: set[tuple[int | None, str, str]] = set()
-    for o in all_odds:
-        odds_key = (o.race_id, o.bet_type, o.combination)
-        if odds_key in seen_odds:
-            continue
-        seen_odds.add(odds_key)
-        if o.race_id not in odds_map:
-            odds_map[o.race_id] = {"win": {}, "place": {}}  # type: ignore[index]
-        if o.odds is not None:
-            odds_map[o.race_id][o.bet_type][o.combination] = float(o.odds)  # type: ignore[index]
+    for race_id, bet_type, combination, odds in all_odds:
+        if race_id not in odds_map:
+            odds_map[race_id] = {"win": {}, "place": {}}  # type: ignore[index]
+        if odds is not None:
+            odds_map[race_id][bet_type][combination] = float(odds)  # type: ignore[index]
 
     # 指数を race_id でグループ化（horse_id の重複排除）
     indices_map: dict[int, list[tuple[CalculatedIndex, RaceEntry, Horse]]] = {}
