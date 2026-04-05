@@ -116,8 +116,10 @@ async def enqueue_command(
     - daily: JVOpen(option=1/2)で当日データを取得
     - retry: ペンディングキューを再送
     - stop: Agentを停止
+    - recent: JVOpen(option=3)で指定年以降のデータを再取得
+      params: {"from_year": 2023, "year_month": "202301"}
     """
-    valid_actions = {"setup", "daily", "retry", "stop"}
+    valid_actions = {"setup", "daily", "retry", "stop", "recent"}
     if cmd.action not in valid_actions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

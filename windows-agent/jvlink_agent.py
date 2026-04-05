@@ -1136,6 +1136,16 @@ def run_command_loop(jv) -> None:
                     report_status("running", mode="retry", message="Retrying pending queue")
                     retry_pending()
                     report_status("idle", message="Retry completed")
+                elif action == "recent":
+                    from_year = cmd.get("params", {}).get("from_year", 2023)
+                    year_month = cmd.get("params", {}).get("year_month", "")
+                    report_status(
+                        "running",
+                        mode="recent",
+                        message=f"Starting recent mode (from {from_year}, year_month={year_month})",
+                    )
+                    run_recent(jv, from_year=from_year)
+                    report_status("idle", message=f"Recent fetch completed (from_year={from_year})")
                 elif action == "stop":
                     report_status("done", message="Stopped by command from Mac")
                     logger.info("[command] stop受信 → 終了")
