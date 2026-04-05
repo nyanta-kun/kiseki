@@ -16,7 +16,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..db.models import User, UserAccessGrant
+from ..db.models import Race, User, UserAccessGrant
 from ..db.session import get_db
 
 logger = logging.getLogger(__name__)
@@ -140,6 +140,34 @@ class UpdateUserRequest(BaseModel):
     can_input_index: bool | None = None
 
 
+class MonthCoverage(BaseModel):
+    """月別レースデータ取得状況。"""
+
+    year_month: str   # "YYYYMM"
+    race_count: int
+
+
+class YearCoverage(BaseModel):
+    """年別レースデータ取得状況（01〜12月全件含む）。"""
+
+    year: str
+    months: list[MonthCoverage]
+    total: int
+
+
+class DataCoverageResponse(BaseModel):
+    """データ取得状況レスポンス。"""
+
+    coverage: list[YearCoverage]
+    total_races: int
+
+
+class FetchDataRequest(BaseModel):
+    """データ取得指示リクエスト。"""
+
+    year_month: str  # "YYYYMM" 形式（例: "202301"）
+
+
 # ---------------------------------------------------------------------------
 # エンドポイント
 # ---------------------------------------------------------------------------
@@ -245,3 +273,64 @@ async def update_user(
         user.id, user.email, user.role, user.is_active, user.can_input_index,
     )
     return await _make_user_response(user, db)
+
+
+@admin_router.get("/data-coverage", response_model=DataCoverageResponse)
+async def get_data_coverage(_: ApiKeyDep, db: DbDep) -> DataCoverageResponse:
+    """年/月別のレースデータ取得状況を返す。ゼロ件の月も含めて01〜12月全件を返す。"""
+    from sqlalchemy import func, select
+
+    stmt = (
+        select(
+            func.left(Race.date, 6).label("year_month"),
+            func.count(Race.id).label("race_count"),
+        )
+        .group_by(func.left(Race.date, 6))
+        .order_by(func.left(Race.date, 6))
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    month_counts: dict[str, int] = {row.year_month: row.race_count for row in rows}
+
+    if not month_counts:
+        return DataCoverageResponse(coverage=[], total_races=0)
+
+    years = sorted({ym[:4] for ym in month_counts})
+    coverage = []
+    for year in years:
+        months = [
+            MonthCoverage(
+                year_month=f"{year}{m:02d}",
+                race_count=month_counts.get(f"{year}{m:02d}", 0),
+            )
+            for m in range(1, 13)
+        ]
+        coverage.append(
+            YearCoverage(year=year, months=months, total=sum(mo.race_count for mo in months))
+        )
+
+    return DataCoverageResponse(
+        coverage=coverage,
+        total_races=sum(month_counts.values()),
+    )
+
+
+@admin_router.post("/fetch-data")
+async def trigger_fetch_data(body: FetchDataRequest, _: ApiKeyDep) -> dict:
+    """指定年月のデータ取得をWindows Agentへ指示する。recentモードでコマンドキューに積む。"""
+    from .agent_router import _command_queue
+
+    if len(body.year_month) != 6 or not body.year_month.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="year_month は YYYYMM 形式で指定してください",
+        )
+    from_year = int(body.year_month[:4])
+    entry = {
+        "action": "recent",
+        "params": {"from_year": from_year, "year_month": body.year_month},
+        "queued_at": datetime.now(UTC).isoformat(),
+    }
+    _command_queue.append(entry)
+    return {"queued": True, "action": "recent", "from_year": from_year, "year_month": body.year_month}
