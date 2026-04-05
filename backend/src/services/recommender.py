@@ -96,7 +96,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
 
     # オッズを race_id → {win: {馬番str: 倍率}, place: {馬番str: 倍率}} に整理（最新のみ）
     odds_map: dict[int, dict[str, dict[str, float]]] = {}
-    seen_odds: set[tuple[int, str, str]] = set()
+    seen_odds: set[tuple[int | None, str, str]] = set()
     for o in all_odds:
         key = (o.race_id, o.bet_type, o.combination)
         if key in seen_odds:
@@ -104,7 +104,8 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         seen_odds.add(key)
         if o.race_id not in odds_map:
             odds_map[o.race_id] = {"win": {}, "place": {}}
-        odds_map[o.race_id][o.bet_type][o.combination] = float(o.odds)
+        if o.odds is not None:
+            odds_map[o.race_id][o.bet_type][o.combination] = float(o.odds)
 
     # 指数を race_id でグループ化（horse_id の重複排除）
     indices_map: dict[int, list[tuple[CalculatedIndex, RaceEntry, Horse]]] = {}
@@ -216,7 +217,7 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
         messages=[{"role": "user", "content": user_prompt}],
     )
 
-    raw_text = message.content[0].text.strip()
+    raw_text = next(b.text for b in message.content if hasattr(b, "text")).strip()
     logger.debug("Claude API レスポンス: %s", raw_text[:500])
 
     try:
@@ -332,7 +333,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
                 )
                 payout_rec = payout_result.scalars().first()
                 if payout_rec:
-                    payout = payout_rec.payout_amount
+                    payout = payout_rec.payout
                 elif winner and winner.win_odds is not None:
                     payout = int(float(winner.win_odds) * 100)
 
@@ -354,7 +355,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
             {**h, "finish_position": finish_map.get(h.get("horse_number"))}
             for h in rec.target_horses
         ]
-        rec.target_horses = updated_horses
+        rec.target_horses = updated_horses  # type: ignore[assignment]
         flag_modified(rec, "target_horses")
 
         rec.result_correct = correct

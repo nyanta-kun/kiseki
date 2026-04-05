@@ -669,7 +669,7 @@ class RaceRecommendation(Base):
     """Claude APIによる推奨レース・馬券（1日5件）"""
 
     __tablename__ = "race_recommendations"
-    __table_args__ = ({"schema": SCHEMA},)
+    __table_args__ = ({"schema": SCHEMA},)  # type: ignore[assignment]
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[str] = mapped_column(String(8), nullable=False, index=True, comment="開催日 YYYYMMDD")
