@@ -183,9 +183,15 @@ function CustomYAxisTick({ x, y, payload, data }: TickProps) {
   );
 }
 
+type HoveredTooltip = {
+  entry: ChartData;
+  y: number;
+};
+
 export function ProbabilityChart({ indices, initialOdds, results }: Props) {
   const [sortByHorseNumber, setSortByHorseNumber] = useState(false);
   const [chartWidth, setChartWidth] = useState(0);
+  const [hovered, setHovered] = useState<HoveredTooltip | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -309,7 +315,7 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
 
       <div
         ref={containerRef}
-        className="w-full"
+        className="w-full relative overflow-hidden"
         style={{ height: Math.max(200, chartData.length * 28 + 60) }}
       >
         {chartWidth > 0 && (
@@ -323,6 +329,22 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
             barGap={2}
             accessibilityLayer
             aria-label="勝率・複勝率チャート"
+            onMouseMove={(state) => {
+              // recharts v3: onMouseMove receives { isTooltipActive, activeCoordinate, activeLabel, ... }
+              // activePayload は v3 では存在しないため activeLabel でデータを検索する
+              const s = state as unknown as {
+                isTooltipActive?: boolean;
+                activeCoordinate?: { x: number; y: number };
+                activeLabel?: string;
+              };
+              if (s.isTooltipActive && s.activeLabel && s.activeCoordinate) {
+                const entry = chartData.find((d) => d.name === s.activeLabel);
+                if (entry) setHovered({ entry, y: s.activeCoordinate.y });
+              } else {
+                setHovered(null);
+              }
+            }}
+            onMouseLeave={() => setHovered(null)}
           >
             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
             <XAxis
@@ -342,23 +364,10 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
               axisLine={false}
               tickLine={false}
             />
+            {/* display:none にして tooltip state の store 登録のみ行う（overflow 防止） */}
             <Tooltip
-              formatter={(value, name) => [
-                typeof value === "number" ? `${value.toFixed(1)}%` : `${value}%`,
-                name === "win" ? "単勝率" : "複勝率",
-              ]}
-              labelFormatter={(label) => {
-                const entry = chartData.find((d) => d.name === label);
-                if (!entry) return label;
-                const base = entry.finishPos != null
-                  ? `${entry.finishPos}着 ${entry.num}番 ${entry.horseName}`
-                  : `${entry.num}番 ${entry.horseName}`;
-                const evParts = [];
-                if (entry.winEV !== undefined) evParts.push(`単EV:${entry.winEV.toFixed(2)}`);
-                if (entry.placeEV !== undefined) evParts.push(`複EV:${entry.placeEV.toFixed(2)}`);
-                return evParts.length ? `${base} | ${evParts.join(" ")}` : base;
-              }}
-              contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+              content={() => null}
+              wrapperStyle={{ display: "none" }}
             />
             <Bar dataKey="win" name="win" radius={[0, 3, 3, 0]}>
               {chartData.map((entry) => {
@@ -388,6 +397,44 @@ export function ProbabilityChart({ indices, initialOdds, results }: Props) {
             </Bar>
           </BarChart>
         )}
+
+        {/* カスタムツールチップ：バー開始位置の左端に重ねて表示 */}
+        {hovered && chartWidth > 0 && (() => {
+          const chartHeight = Math.max(200, chartData.length * 28 + 60);
+          const tooltipH = 80 + (hovered.entry.winEV !== undefined ? 16 : 0) + (hovered.entry.placeEV !== undefined ? 16 : 0);
+          const top = Math.max(0, Math.min(hovered.y - tooltipH / 2, chartHeight - tooltipH - 8));
+          return (
+            <div
+              style={{
+                position: "absolute",
+                top,
+                left: Y_AXIS_WIDTH + 6,
+                maxWidth: chartWidth - Y_AXIS_WIDTH - 14,
+                pointerEvents: "none",
+                zIndex: 20,
+              }}
+              className="bg-white/95 border border-gray-200 rounded-lg shadow-md px-2.5 py-2 text-xs"
+            >
+              <p className="font-semibold text-gray-700 mb-1 truncate">
+                {hovered.entry.finishPos != null
+                  ? `${hovered.entry.finishPos}着 ${hovered.entry.num}番 ${hovered.entry.horseName}`
+                  : `${hovered.entry.num}番 ${hovered.entry.horseName}`}
+              </p>
+              <p className="text-green-600">単勝率: {hovered.entry.win.toFixed(1)}%</p>
+              <p className="text-purple-600">複勝率: {hovered.entry.place.toFixed(1)}%</p>
+              {hovered.entry.winEV !== undefined && (
+                <p style={{ color: evColor(hovered.entry.winEV) }}>
+                  単EV: {hovered.entry.winEV.toFixed(2)}
+                </p>
+              )}
+              {hovered.entry.placeEV !== undefined && (
+                <p style={{ color: evColor(hovered.entry.placeEV) }}>
+                  複EV: {hovered.entry.placeEV.toFixed(2)}
+                </p>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* スクリーンリーダー向けのアクセシブルなデータテーブル */}

@@ -53,7 +53,7 @@ export default async function RacePage({ params }: { params: Params }) {
 
   if (!indicesResp) {
     return (
-      <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+      <div className="min-h-screen overflow-x-hidden" style={{ background: "#f0f5fb" }}>
         <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
         <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
           <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
@@ -68,7 +68,7 @@ export default async function RacePage({ params }: { params: Params }) {
   const confidence = indicesResp.confidence;
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+    <div className="min-h-screen overflow-x-hidden" style={{ background: "#f0f5fb" }}>
       <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 space-y-4">
