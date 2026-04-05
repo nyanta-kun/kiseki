@@ -16,7 +16,7 @@
 - [x] **ADMIN-05**: データタブで年/月単位のレースデータ取得状況（件数）を確認できる
 - [x] **ADMIN-06**: データタブで未取得月のデータをUIからWindows Agentへ取得指示できる
 - [ ] **ADMIN-07**: 設定タブでPAID_MODEのON/OFFをUI上で切り替えられる
-- [ ] **ADMIN-08**: PAID_MODEがDBで管理され、フロントエンドが起動時にAPIから動的取得する
+- [x] **ADMIN-08**: PAID_MODEがDBで管理され、フロントエンドが起動時にAPIから動的取得する
 
 ## Future Requirements
 
@@ -44,7 +44,7 @@
 | ADMIN-05 | Phase 16 | Complete |
 | ADMIN-06 | Phase 16 | Complete |
 | ADMIN-07 | Phase 17 | Pending |
-| ADMIN-08 | Phase 17 | Pending |
+| ADMIN-08 | Phase 17 | Complete |
 
 **Coverage:**
 - v7.0 requirements: 8 total

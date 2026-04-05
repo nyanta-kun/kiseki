@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: 管理画面整備
 status: planning
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-04-05T10:52:10.187Z"
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-04-05T11:14:44.515Z"
 last_activity: 2026-04-05 — Milestone v7.0 roadmap created (Phases 15–17)
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 50
 ---
 
@@ -51,6 +51,7 @@ Progress: [█████░░░░░] 50%
 | Phase 15 P01 | 5 | 1 tasks | 1 files |
 | Phase 16-データタブ P01 | 15 | 2 tasks | 3 files |
 | Phase 16-データタブ P02 | 2 | 2 tasks | 3 files |
+| Phase 17 P01 | 525616min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - [Phase 16-データタブ]: fetch-data エンドポイントは DB セッション不要（キューに積むだけ）、_command_queue を agent_router から直接 import
 - [Phase 16-データタブ]: Route Handler 経由で INTERNAL_API_KEY をブラウザに露出させない設計を採用
 - [Phase 16-データタブ]: 取得ボタン押下時は confirm() でユーザー確認を取り、startTransition で非同期処理を実行
+- [Phase 17]: PAID_MODEをキーバリューテーブル keiba.app_settings で管理（ビルド時環境変数ではなくランタイム変更可能）
+- [Phase 17]: PUT /api/admin/settings は UPSERT 方式（pg_insert + on_conflict_do_update）で冪等性を確保
 
 ### Known Issues / Blockers
 
@@ -85,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-05T10:49:54.494Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-04-05T11:14:44.513Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None
