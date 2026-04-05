@@ -13,7 +13,7 @@ POST /api/recommendations/update-results?date=YYYYMMDD
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query

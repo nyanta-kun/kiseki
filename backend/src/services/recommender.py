@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import anthropic
@@ -227,7 +227,7 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
         raise
 
     # オッズスナップショット（現在時刻）
-    snapshot_at = datetime.now(tz=timezone.utc)
+    snapshot_at = datetime.now(tz=UTC)
     race_entry_map = {r["race_id"]: r for r in race_data_with_odds}
 
     # 既存レコード削除 → 再生成
@@ -359,7 +359,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
 
         rec.result_correct = correct
         rec.result_payout = payout
-        rec.result_updated_at = datetime.now(tz=timezone.utc)
+        rec.result_updated_at = datetime.now(tz=UTC)
         updated += 1
 
     await session.commit()
