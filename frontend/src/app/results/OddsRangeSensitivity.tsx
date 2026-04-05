@@ -201,7 +201,9 @@ function DualSlider({
   const dragging   = useRef<"low" | "high" | null>(null);
   // stale closure 回避: 常に最新の値・コールバックを参照する
   const latest     = useRef({ low, high, min, max, step, onChange });
-  latest.current   = { low, high, min, max, step, onChange };
+  useEffect(() => {
+    latest.current = { low, high, min, max, step, onChange };
+  });
 
   const lowPct  = ((low  - min) / (max - min)) * 100;
   const highPct = ((high - min) / (max - min)) * 100;
@@ -245,7 +247,7 @@ function DualSlider({
       window.removeEventListener("touchmove", onTouch);
       window.removeEventListener("touchend",  onUp);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   /** トラック上のクリック → 最寄りハンドルを移動 */
   function handleTrackClick(e: React.MouseEvent) {
