@@ -300,15 +300,15 @@ async def update_user(
 @admin_router.get("/data-coverage", response_model=DataCoverageResponse)
 async def get_data_coverage(_: ApiKeyDep, db: DbDep) -> DataCoverageResponse:
     """年/月別のレースデータ取得状況を返す。ゼロ件の月も含めて01〜12月全件を返す。"""
-    from sqlalchemy import func, select
+    from sqlalchemy import func, select, text
 
     stmt = (
         select(
             func.left(Race.date, 6).label("year_month"),
             func.count(Race.id).label("race_count"),
         )
-        .group_by(func.left(Race.date, 6))
-        .order_by(func.left(Race.date, 6))
+        .group_by(text("1"))
+        .order_by(text("1"))
     )
     result = await db.execute(stmt)
     rows = result.all()
