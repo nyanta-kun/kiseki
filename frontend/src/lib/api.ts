@@ -420,6 +420,29 @@ export type Recommendation = {
   created_at: string;
 };
 
+export type OddsDataPoint = {
+  win_odds: number | null;
+  win_hit: boolean;
+  place_odds: number | null;
+  place_hit: boolean;
+  has_place_odds: boolean;
+};
+
+/** オッズ帯別ROI感度分析用データ（クライアント側でインタラクティブ集計）→ no-store */
+export async function fetchOddsData(
+  filters: PerformanceFilters = {},
+): Promise<OddsDataPoint[]> {
+  const params = new URLSearchParams();
+  if (filters.from_date) params.set("from_date", filters.from_date);
+  if (filters.to_date) params.set("to_date", filters.to_date);
+  if (filters.course_name?.length) params.set("course_name", filters.course_name.join(","));
+  if (filters.surface?.length) params.set("surface", filters.surface.join(","));
+  if (filters.distance_range?.length) params.set("distance_range", filters.distance_range.join(","));
+  if (filters.condition?.length) params.set("condition", filters.condition.join(","));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return get<OddsDataPoint[]>(`/performance/odds-data${qs}`, { cache: "no-store" });
+}
+
 export async function fetchRecommendations(date: string): Promise<Recommendation[]> {
   const res = await fetch(`${BASE_URL}/recommendations?date=${date}`, {
     cache: "no-store",

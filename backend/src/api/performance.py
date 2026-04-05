@@ -404,6 +404,11 @@ async def get_performance_summary(
     # なければ odds_history の最新オッズにフォールバックする。
     race_ids = list(race_groups.keys())
     place_odds_map: dict[tuple[int, int], float] = {}
+    # race_payouts でカバーされているレース（結果確定済み）の race_id セット。
+    # race_payouts には 3 着以内の馬の払戻しか存在しないため、
+    # 予測 1 位馬が着外の場合は place_odds_map にエントリがない。
+    # has_place_odds フラグはこのセットを参照して「賭けた」を正しく判定する。
+    payout_covered_race_ids: set[int] = set()
     if race_ids:
         # 1. race_payouts から確定複勝払戻を取得（payout は 100円あたり払戻金額）
         payout_rows = (
@@ -421,11 +426,12 @@ async def get_performance_summary(
         ).fetchall()
         for pr in payout_rows:
             place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+            payout_covered_race_ids.add(pr.race_id)
 
         # 2. race_payouts に存在しないレースは odds_history の最新オッズで補完
         missing_race_ids = [
             rid for rid in race_ids
-            if not any(k[0] == rid for k in place_odds_map)
+            if rid not in payout_covered_race_ids
         ]
         if missing_race_ids:
             fallback_rows = (
@@ -516,7 +522,9 @@ async def get_performance_summary(
             if horse_number is not None
             else None
         )
-        has_place_odds = place_odds_val is not None
+        # race_payouts カバー済み（結果確定）のレースは着外でも「賭けた」扱いにする。
+        # race_payouts に予測 1 位馬のエントリがない = 着外 = 回収 0 円（ROI 計算上正しい）。
+        has_place_odds = race_id in payout_covered_race_ids or place_odds_val is not None
         roi_contribution_place = (
             place_odds_val * 100.0
             if place_hit and place_odds_val is not None
@@ -628,3 +636,228 @@ async def get_performance_summary(
         by_distance_range=by_distance_range,
         by_condition=by_condition,
     )
+
+
+# ---------------------------------------------------------------------------
+# オッズ感度分析用エンドポイント
+# ---------------------------------------------------------------------------
+
+
+class OddsDataPoint(BaseModel):
+    """オッズ感度分析用の1レース分データ。"""
+
+    win_odds: float | None      # RaceResult.win_odds（単勝オッズ）
+    win_hit: bool               # 予測1位馬が1着
+    place_odds: float | None    # 複勝オッズ（race_payouts優先, odds_historyフォールバック）
+    place_hit: bool             # 予測1位馬が3着以内
+    has_place_odds: bool        # race_payoutsカバー済み or odds_historyあり
+
+
+@router.get("/odds-data", response_model=list[OddsDataPoint])
+async def get_odds_data(
+    db: DbDep,
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    course_name: str | None = Query(default=None),
+    surface: str | None = Query(default=None),
+    distance_range: str | None = Query(default=None),
+    condition: str | None = Query(default=None),
+) -> list[OddsDataPoint]:
+    """各レースの予測1位馬のオッズと的中データを返す（オッズ感度分析用）。"""
+    # --- デフォルト日付（今月1日〜今日）---
+    today = _date.today()
+    if from_date is None:
+        from_date = f"{today.year}{str(today.month).zfill(2)}01"
+    if to_date is None:
+        to_date = today.strftime("%Y%m%d")
+
+    # --- カンマ区切りパラメータを展開 ---
+    def _split(v: str | None) -> list[str] | None:
+        if not v:
+            return None
+        items = [s.strip() for s in v.split(",") if s.strip()]
+        return items if items else None
+
+    course_names = _split(course_name)
+    surfaces = _split(surface)
+    distance_ranges = _split(distance_range)
+    conditions = _split(condition)
+
+    # --- 各 (race_id, horse_id) の最新バージョンサブクエリ ---
+    latest_version_sq = (
+        select(
+            CalculatedIndex.race_id.label("lv_race_id"),
+            CalculatedIndex.horse_id.label("lv_horse_id"),
+            func.max(CalculatedIndex.version).label("lv_max_version"),
+        )
+        .group_by(CalculatedIndex.race_id, CalculatedIndex.horse_id)
+        .subquery()
+    )
+
+    # --- SQLフィルタ条件の構築 ---
+    sql_conditions = [
+        Race.date >= from_date,
+        Race.date <= to_date,
+        RaceResult.finish_position.is_not(None),
+        Race.course.in_(list(_JRA_COURSE_CODES)),
+    ]
+    if course_names:
+        sql_conditions.append(Race.course_name.in_(course_names))
+    if surfaces:
+        sql_conditions.append(Race.surface.in_(surfaces))
+    if distance_ranges:
+        dist_conds = []
+        for dr in distance_ranges:
+            entry = _DISTANCE_KEY_MAP.get(dr) or _DISTANCE_KEY_MAP.get(
+                _DISTANCE_LABEL_TO_KEY.get(dr, ""), None
+            )
+            if entry:
+                _, lo, hi = entry
+                dist_conds.append((Race.distance >= lo) & (Race.distance <= hi))
+        if dist_conds:
+            sql_conditions.append(or_(*dist_conds))
+
+    # --- 全馬 composite_index + 着順を一括取得 ---
+    rows = (
+        await db.execute(
+            select(
+                Race.id.label("race_id"),
+                Race.grade.label("grade"),
+                Race.race_type_code.label("race_type_code"),
+                Race.prize_1st.label("prize_1st"),
+                CalculatedIndex.horse_id,
+                CalculatedIndex.composite_index,
+                RaceResult.finish_position,
+                RaceResult.horse_number,
+                RaceResult.win_odds,
+            )
+            .join(CalculatedIndex, CalculatedIndex.race_id == Race.id)
+            .join(
+                latest_version_sq,
+                (latest_version_sq.c.lv_race_id == CalculatedIndex.race_id)
+                & (latest_version_sq.c.lv_horse_id == CalculatedIndex.horse_id)
+                & (latest_version_sq.c.lv_max_version == CalculatedIndex.version),
+            )
+            .join(
+                RaceResult,
+                (RaceResult.race_id == Race.id)
+                & (RaceResult.horse_id == CalculatedIndex.horse_id),
+            )
+            .where(*sql_conditions)
+            .order_by(Race.date, Race.id)
+        )
+    ).fetchall()
+
+    # --- レースごとにグループ化 ---
+    race_groups: dict[int, list] = defaultdict(list)
+    for row in rows:
+        race_groups[row.race_id].append(row)
+
+    # --- 複勝オッズを race_payouts → odds_history の順で一括取得 ---
+    race_ids = list(race_groups.keys())
+    place_odds_map: dict[tuple[int, int], float] = {}
+    payout_covered_race_ids: set[int] = set()
+    if race_ids:
+        payout_rows = (
+            await db.execute(
+                text("""
+                    SELECT race_id, combination::int AS horse_number,
+                           payout::float / 100.0 AS odds
+                    FROM keiba.race_payouts
+                    WHERE bet_type = 'place'
+                      AND combination ~ '^[0-9]+$'
+                      AND race_id = ANY(:race_ids)
+                """),
+                {"race_ids": race_ids},
+            )
+        ).fetchall()
+        for pr in payout_rows:
+            place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+            payout_covered_race_ids.add(pr.race_id)
+
+        missing_race_ids = [
+            rid for rid in race_ids
+            if rid not in payout_covered_race_ids
+        ]
+        if missing_race_ids:
+            fallback_rows = (
+                await db.execute(
+                    text("""
+                        SELECT race_id, combination::int AS horse_number, odds
+                        FROM (
+                            SELECT race_id, combination, odds,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY race_id, combination
+                                       ORDER BY fetched_at DESC
+                                   ) AS rn
+                            FROM keiba.odds_history
+                            WHERE bet_type = 'place'
+                              AND combination ~ '^[0-9]+$'
+                              AND race_id = ANY(:race_ids)
+                        ) t
+                        WHERE rn = 1
+                    """),
+                    {"race_ids": missing_race_ids},
+                )
+            ).fetchall()
+            for pr in fallback_rows:
+                place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+
+    # --- レースごとに予測1位馬のデータを抽出 ---
+    result: list[OddsDataPoint] = []
+
+    for race_id, horses in race_groups.items():
+        # 条件フィルタ（Python側）
+        sample = horses[0]
+        cond_label = _condition_label(
+            sample.grade, sample.race_type_code, sample.prize_1st
+        )
+        if conditions and cond_label not in conditions:
+            continue
+
+        valid = [
+            h
+            for h in horses
+            if h.composite_index is not None and h.finish_position is not None
+        ]
+        if not valid:
+            continue
+
+        sorted_by_pred = sorted(
+            valid, key=lambda h: float(h.composite_index), reverse=True
+        )
+        predicted_winner = sorted_by_pred[0]
+
+        win_pos = int(predicted_winner.finish_position)
+        win_hit = win_pos == 1
+        place_hit = win_pos <= 3
+
+        win_odds_val = (
+            float(predicted_winner.win_odds)
+            if predicted_winner.win_odds is not None
+            else None
+        )
+
+        horse_number = (
+            int(predicted_winner.horse_number)
+            if predicted_winner.horse_number is not None
+            else None
+        )
+        place_odds_val = (
+            place_odds_map.get((race_id, horse_number))
+            if horse_number is not None
+            else None
+        )
+        has_place_odds = race_id in payout_covered_race_ids or place_odds_val is not None
+
+        result.append(
+            OddsDataPoint(
+                win_odds=win_odds_val,
+                win_hit=win_hit,
+                place_odds=place_odds_val,
+                place_hit=place_hit,
+                has_place_odds=has_place_odds,
+            )
+        )
+
+    return result

@@ -4,6 +4,7 @@ import type { PerformanceFilters } from "@/lib/api";
 import { PerformanceChart } from "@/components/PerformanceChart";
 import { FilterForm } from "./FilterForm";
 import { BreakdownTabs } from "./BreakdownTabs";
+import { OddsRangeSensitivity } from "./OddsRangeSensitivity";
 
 export const metadata: Metadata = {
   title: "AI指数実績 | GallopLab",
@@ -99,9 +100,14 @@ export default async function ResultsPage({
 }) {
   const sp = await searchParams;
 
+  // デフォルト期間: 今月1日〜今日
+  const _today = new Date();
+  const _defaultFrom = `${_today.getFullYear()}${String(_today.getMonth() + 1).padStart(2, "0")}01`;
+  const _defaultTo   = `${_today.getFullYear()}${String(_today.getMonth() + 1).padStart(2, "0")}${String(_today.getDate()).padStart(2, "0")}`;
+
   const filters: PerformanceFilters = {
-    from_date:      typeof sp.from_date === "string" ? sp.from_date : undefined,
-    to_date:        typeof sp.to_date === "string" ? sp.to_date : undefined,
+    from_date:      typeof sp.from_date === "string" ? sp.from_date : _defaultFrom,
+    to_date:        typeof sp.to_date === "string" ? sp.to_date : _defaultTo,
     course_name:    toArray(sp.course_name),
     surface:        toArray(sp.surface),
     distance_range: toArray(sp.distance_range),
@@ -207,6 +213,9 @@ export default async function ResultsPage({
                 <PerformanceChart monthly={data.monthly_stats} initialFilter="ALL" />
               </section>
             )}
+
+            {/* オッズ帯別ROI感度分析 */}
+            <OddsRangeSensitivity filters={filters} />
 
             {/* 月次テーブル */}
             {data.monthly_stats.length > 0 && (
