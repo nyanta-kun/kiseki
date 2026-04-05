@@ -98,24 +98,24 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     odds_map: dict[int, dict[str, dict[str, float]]] = {}
     seen_odds: set[tuple[int | None, str, str]] = set()
     for o in all_odds:
-        key = (o.race_id, o.bet_type, o.combination)
-        if key in seen_odds:
+        odds_key = (o.race_id, o.bet_type, o.combination)
+        if odds_key in seen_odds:
             continue
-        seen_odds.add(key)
+        seen_odds.add(odds_key)
         if o.race_id not in odds_map:
-            odds_map[o.race_id] = {"win": {}, "place": {}}
+            odds_map[o.race_id] = {"win": {}, "place": {}}  # type: ignore[index]
         if o.odds is not None:
-            odds_map[o.race_id][o.bet_type][o.combination] = float(o.odds)
+            odds_map[o.race_id][o.bet_type][o.combination] = float(o.odds)  # type: ignore[index]
 
     # 指数を race_id でグループ化（horse_id の重複排除）
     indices_map: dict[int, list[tuple[CalculatedIndex, RaceEntry, Horse]]] = {}
     seen_horse: set[tuple[int | None, int | None]] = set()
     for row in all_rows:
         ci, entry, horse = row
-        key = (ci.race_id, ci.horse_id)
-        if key in seen_horse:
+        horse_key = (ci.race_id, ci.horse_id)
+        if horse_key in seen_horse:
             continue
-        seen_horse.add(key)
+        seen_horse.add(horse_key)
         indices_map.setdefault(ci.race_id, []).append((ci, entry, horse))
 
     def _f(v: Any) -> float | None:
