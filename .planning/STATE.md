@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: 管理画面整備
 status: planning
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-04-05T10:21:55.430Z"
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-04-05T10:29:08.685Z"
 last_activity: 2026-04-05 — Milestone v7.0 roadmap created (Phases 15–17)
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 50
 ---
 
@@ -60,6 +60,9 @@ Recent decisions affecting current work:
 - v7.0 start: PAID_MODEをDBで管理する方針（keiba.app_settingsテーブル新設）
 - v7.0 start: Windows AgentへのUI取得指示はrecentモードのエージェントコマンド経由
 - [Phase 15]: model_config={'from_attributes': False}を維持し_make_user_response()での手動セット方式を継続
+- [Phase 15]: 型定義（User, InvitationCode）は AdminTabs.tsx で export し他コンポーネントが import type で再利用する構成を採用
+- [Phase 15]: page.tsx のインライン Server Action を全削除し CodesTab/UsersTab が actions.ts から直接 import する形に統一
+- [Phase 15]: Server Action への引数渡しは .bind(null, id, patch) パターンで型安全な呼び出しを実現
 
 ### Known Issues / Blockers
 
@@ -77,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-05T10:21:55.427Z
-Stopped at: Completed 15-01-PLAN.md
+Last session: 2026-04-05T10:29:04.023Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None
