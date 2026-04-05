@@ -4,7 +4,7 @@ milestone: v7.0
 milestone_name: 管理画面整備
 status: planning
 stopped_at: Completed 17-02-PLAN.md
-last_updated: "2026-04-05T21:56:30.062Z"
+last_updated: "2026-04-05T21:59:12.175Z"
 last_activity: 2026-04-05 — Milestone v7.0 roadmap created (Phases 15–17)
 progress:
   total_phases: 3
