@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anthropic
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -83,12 +83,23 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     )
     all_rows = indices_result.all()
 
-    # オッズ（win/place）の最新値を取得（DISTINCT ON で最新行のみ取得し大量履歴のメモリ問題を回避）
-    from sqlalchemy import Integer, Numeric, String, func
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
+    # オッズ（win/place）の最新値を取得
+    # 大量の履歴がある日付でもスキャン量を抑えるため、最終取得時刻から60分以内に絞ってから DISTINCT ON する
     race_ids_tuple = tuple(race_ids)
-    latest_odds_sq = (
+
+    latest_time_result = await session.execute(
+        select(func.max(OddsHistory.fetched_at)).where(
+            OddsHistory.race_id.in_(race_ids_tuple)
+        )
+    )
+    latest_time = latest_time_result.scalar()
+    time_filter = (
+        [OddsHistory.fetched_at >= latest_time - timedelta(minutes=60)]
+        if latest_time is not None
+        else []
+    )
+
+    odds_result = await session.execute(
         select(
             OddsHistory.race_id,
             OddsHistory.bet_type,
@@ -98,6 +109,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         .where(
             OddsHistory.race_id.in_(race_ids_tuple),
             OddsHistory.bet_type.in_(["win", "place"]),
+            *time_filter,
         )
         .distinct(OddsHistory.race_id, OddsHistory.bet_type, OddsHistory.combination)
         .order_by(
@@ -107,7 +119,6 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             OddsHistory.fetched_at.desc(),
         )
     )
-    odds_result = await session.execute(latest_odds_sq)
     all_odds = odds_result.all()
 
     # オッズを race_id → {win: {馬番str: 倍率}, place: {馬番str: 倍率}} に整理
