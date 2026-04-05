@@ -79,6 +79,23 @@ export async function toggleInvitationCode(
   return {};
 }
 
+export async function triggerFetchData(yearMonth: string): Promise<{ error?: string }> {
+  const res = await fetch(`${BACKEND_URL}/admin/fetch-data`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": API_KEY,
+    },
+    body: JSON.stringify({ year_month: yearMonth }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: (body as { detail?: string }).detail ?? "取得指示に失敗しました" };
+  }
+  return {};
+}
+
 export async function grantUserAccess(
   userId: number,
   formData: FormData
