@@ -59,7 +59,10 @@ Plans:
   2. 件数がゼロの月に対して「取得」ボタンが表示され、クリックするとWindows AgentのrecentモードでそのYYYY/MMのデータ取得が開始される
   3. バックエンドに月別取得状況を返すAPIエンドポイント（GET /api/admin/data-coverage）が存在し、正常なJSONレスポンスを返す
   4. バックエンドにWindows Agent取得指示を受け付けるAPIエンドポイント（POST /api/admin/fetch-data）が存在し、recentモードでエージェントコマンドを発行する
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 16-01-PLAN.md — バックエンド API 2本追加（data-coverage / fetch-data）+ agent_router / jvlink_agent に recent 対応
+- [ ] 16-02-PLAN.md — Next.js Route Handler + DataTab.tsx 実装 + actions.ts triggerFetchData 追加
 
 #### Phase 17: 設定タブ + PAID_MODE DB化
 **Goal**: PAID_MODEがDBで管理され、管理者がUIからON/OFFを切り替えるとリアルタイムにサービスの公開/制限状態が変わる
@@ -82,5 +85,5 @@ Plans:
 | 6–8. Realtime | MS5 | — | Complete | 2026 Q1 |
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
 | 15. Admin UI再構成 | 2/2 | Complete    | 2026-04-05 | - |
-| 16. データタブ | v7.0 | 0/TBD | Not started | - |
+| 16. データタブ | v7.0 | 0/2 | Not started | - |
 | 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/TBD | Not started | - |
