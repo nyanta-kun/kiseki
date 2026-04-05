@@ -46,7 +46,7 @@ env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
 JRAVAN_SID = os.getenv("JRAVAN_SID", "")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://host.internal:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://YuichironoMacBook-Pro-6.local:8000")
 API_KEY = os.getenv("CHANGE_NOTIFY_API_KEY", "")
 
 # ローカルデータディレクトリ
