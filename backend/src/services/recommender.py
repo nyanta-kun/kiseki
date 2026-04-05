@@ -109,7 +109,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
 
     # 指数を race_id でグループ化（horse_id の重複排除）
     indices_map: dict[int, list[tuple[CalculatedIndex, RaceEntry, Horse]]] = {}
-    seen_horse: set[tuple[int, int]] = set()
+    seen_horse: set[tuple[int | None, int | None]] = set()
     for row in all_rows:
         ci, entry, horse = row
         key = (ci.race_id, ci.horse_id)
