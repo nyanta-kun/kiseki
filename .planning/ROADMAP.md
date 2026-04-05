@@ -89,4 +89,4 @@ Plans:
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
 | 15. Admin UI再構成 | 2/2 | Complete    | 2026-04-05 | - |
 | 16. データタブ | 2/2 | Complete    | 2026-04-05 | - |
-| 17. 設定タブ + PAID_MODE DB化 | 1/2 | In Progress|  | - |
+| 17. 設定タブ + PAID_MODE DB化 | 2/2 | Complete   | 2026-04-05 | - |

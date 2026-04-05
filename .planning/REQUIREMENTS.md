@@ -15,7 +15,7 @@
 - [x] **ADMIN-04**: 登録ユーザーテーブルに予想家名（yoso_name）・公開設定（is_yoso_public）が表示される
 - [x] **ADMIN-05**: データタブで年/月単位のレースデータ取得状況（件数）を確認できる
 - [x] **ADMIN-06**: データタブで未取得月のデータをUIからWindows Agentへ取得指示できる
-- [ ] **ADMIN-07**: 設定タブでPAID_MODEのON/OFFをUI上で切り替えられる
+- [x] **ADMIN-07**: 設定タブでPAID_MODEのON/OFFをUI上で切り替えられる
 - [x] **ADMIN-08**: PAID_MODEがDBで管理され、フロントエンドが起動時にAPIから動的取得する
 
 ## Future Requirements
@@ -43,7 +43,7 @@
 | ADMIN-04 | Phase 15 | Complete |
 | ADMIN-05 | Phase 16 | Complete |
 | ADMIN-06 | Phase 16 | Complete |
-| ADMIN-07 | Phase 17 | Pending |
+| ADMIN-07 | Phase 17 | Complete |
 | ADMIN-08 | Phase 17 | Complete |
 
 **Coverage:**
