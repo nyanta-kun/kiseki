@@ -94,7 +94,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     )
     latest_time = latest_time_result.scalar()
     time_filter = (
-        [OddsHistory.fetched_at >= latest_time - timedelta(minutes=60)]
+        [OddsHistory.fetched_at >= latest_time - timedelta(minutes=5)]
         if latest_time is not None
         else []
     )
