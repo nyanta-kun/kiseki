@@ -96,6 +96,23 @@ export async function triggerFetchData(yearMonth: string): Promise<{ error?: str
   return {};
 }
 
+export async function updatePaidMode(enabled: boolean): Promise<{ error?: string }> {
+  const res = await fetch(`${BACKEND_URL}/admin/settings`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": API_KEY,
+    },
+    body: JSON.stringify({ key: "PAID_MODE", value: enabled ? "true" : "false" }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: (body as { detail?: string }).detail ?? "更新に失敗しました" };
+  }
+  return {};
+}
+
 export async function grantUserAccess(
   userId: number,
   formData: FormData
