@@ -304,6 +304,14 @@ async def update_results(session: AsyncSession, date: str) -> int:
         if not target_numbers:
             continue
 
+        # レース全体の成績が取込済みかチェック（対象馬の有無に関わらず）
+        any_result = await session.execute(
+            select(RaceResult.id).where(RaceResult.race_id == rec.race_id).limit(1)
+        )
+        if not any_result.scalar():
+            continue  # 成績未確定（まだ取り込まれていない）
+
+        # 推奨馬の結果を取得（取消等で存在しない場合もある）
         results_result = await session.execute(
             select(RaceResult).where(
                 RaceResult.race_id == rec.race_id,
@@ -311,8 +319,6 @@ async def update_results(session: AsyncSession, date: str) -> int:
             )
         )
         race_results = results_result.scalars().all()
-        if not race_results:
-            continue
 
         correct = False
         payout = None

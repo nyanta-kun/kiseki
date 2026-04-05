@@ -56,7 +56,7 @@ export function RecommendCard({ rec }: Props) {
   const betLabel = BET_LABEL[bet_type] ?? bet_type;
   const postTime = fmtTime(race.post_time);
   const snapshotTime = snapshot_at
-    ? new Date(snapshot_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
+    ? new Date(snapshot_at).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" })
     : null;
 
   const hasResult = rec.result_correct !== null && rec.result_correct !== undefined;

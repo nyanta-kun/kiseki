@@ -31,6 +31,7 @@ export async function RecommendView({ date }: Props) {
   // スナップショット時刻（全件共通の想定）
   const snapshotAt = recs[0]?.snapshot_at
     ? new Date(recs[0].snapshot_at).toLocaleString("ja-JP", {
+        timeZone: "Asia/Tokyo",
         month: "numeric",
         day: "numeric",
         hour: "2-digit",
