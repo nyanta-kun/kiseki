@@ -19,6 +19,7 @@ dependencies = [
     "websockets>=13.0",
     "apscheduler>=3.10.0",
     "python-multipart>=0.0.9",
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]

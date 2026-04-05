@@ -373,3 +373,57 @@ export function buildResultsWsUrl(raceId: number): string {
   const host = window.location.host;
   return `${proto}://${host}/api/races/${raceId}/results/ws`;
 }
+
+// ---------------------------------------------------------------------------
+// 推奨レース・馬券
+// ---------------------------------------------------------------------------
+
+export type RecommendationHorse = {
+  horse_number: number;
+  horse_name: string | null;
+  composite_index: number | null;
+  win_probability: number | null;
+  place_probability: number | null;
+  ev_win: number | null;
+  ev_place: number | null;
+  win_odds: number | null;
+  place_odds: number | null;
+  finish_position: number | null;  // 結果更新後に追記
+};
+
+export type RecommendationRace = {
+  race_id: number;
+  course_name: string;
+  race_number: number;
+  race_name: string | null;
+  post_time: string | null;
+  surface: string | null;
+  distance: number | null;
+  grade: string | null;
+  head_count: number | null;
+};
+
+export type Recommendation = {
+  id: number;
+  rank: number;
+  race: RecommendationRace;
+  bet_type: "win" | "place" | "quinella";
+  target_horses: RecommendationHorse[];
+  snapshot_win_odds: Record<string, number> | null;
+  snapshot_place_odds: Record<string, number> | null;
+  snapshot_at: string | null;
+  reason: string;
+  confidence: number;
+  result_correct: boolean | null;
+  result_payout: number | null;
+  result_updated_at: string | null;
+  created_at: string;
+};
+
+export async function fetchRecommendations(date: string): Promise<Recommendation[]> {
+  const res = await fetch(`${BASE_URL}/recommendations?date=${date}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`fetchRecommendations failed: ${res.status}`);
+  return res.json();
+}

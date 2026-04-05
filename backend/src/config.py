@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "logs/kiseki.log"
 
+    # --- Anthropic ---
+    anthropic_api_key: str = ""
+
     # --- Netkeiba スクレイピング ---
     netkeiba_user_id: str = ""
     netkeiba_password: str = ""

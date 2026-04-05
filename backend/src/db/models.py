@@ -7,13 +7,16 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .session import Base
@@ -657,6 +660,42 @@ class UserImport(Base):
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     saved_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RaceRecommendation(Base):
+    """Claude APIによる推奨レース・馬券（1日5件）"""
+
+    __tablename__ = "race_recommendations"
+    __table_args__ = ({"schema": SCHEMA},)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[str] = mapped_column(String(8), nullable=False, index=True, comment="開催日 YYYYMMDD")
+    rank: Mapped[int] = mapped_column(Integer, nullable=False, comment="推奨順位 1〜5")
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.races.id"), nullable=False, index=True
+    )
+    bet_type: Mapped[str] = mapped_column(String(20), nullable=False, comment="win/place/quinella")
+    target_horses: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, comment="推奨馬リスト [{horse_number, horse_name, composite_index, ...}]"
+    )
+    snapshot_win_odds: Mapped[dict | None] = mapped_column(
+        JSONB, comment="スナップショット時点の単勝オッズ {horse_number: odds}"
+    )
+    snapshot_place_odds: Mapped[dict | None] = mapped_column(
+        JSONB, comment="スナップショット時点の複勝オッズ {horse_number: odds}"
+    )
+    snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="オッズスナップショット取得時刻"
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False, comment="Claudeによる推奨理由（日本語）")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, comment="推奨信頼スコア 0〜1")
+    # レース後に更新
+    result_correct: Mapped[bool | None] = mapped_column(Boolean, comment="推奨馬券が的中したか")
+    result_payout: Mapped[int | None] = mapped_column(Integer, comment="払戻金額（円/100円購入あたり）")
+    result_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
