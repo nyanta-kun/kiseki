@@ -126,6 +126,8 @@ class UserResponse(BaseModel):
     access_expires_at: datetime | None
     created_at: datetime
     last_login_at: datetime | None
+    yoso_name: str | None        # 予想家名
+    is_yoso_public: bool         # 予想公開フラグ
 
     model_config = {"from_attributes": False}
 
@@ -156,6 +158,8 @@ async def _make_user_response(user: User, db: AsyncSession) -> UserResponse:
         access_expires_at=access_expires_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+        yoso_name=user.yoso_name,
+        is_yoso_public=user.is_yoso_public,
     )
 
 
