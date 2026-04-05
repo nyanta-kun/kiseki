@@ -731,3 +731,20 @@ class UserDisplaySetting(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class AppSettings(Base):
+    """アプリケーション設定テーブル。キーバリュー形式で設定値を管理する。"""
+
+    __tablename__ = "app_settings"
+    __table_args__ = {"schema": SCHEMA}
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True, comment="設定キー（例: PAID_MODE）")
+    value: Mapped[str] = mapped_column(String(500), nullable=False, comment="設定値（文字列）")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        comment="最終更新日時",
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(100), comment="更新者メールアドレス")
