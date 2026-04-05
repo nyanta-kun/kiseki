@@ -10,7 +10,10 @@ RUN uv sync --no-dev
 COPY . .
 
 # non-root ユーザーで実行（セキュリティベストプラクティス）
-RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
+# .cache/uv を事前作成しておかないと read_only: true + tmpfs 構成で再起動時に Permission denied になる
+RUN adduser --disabled-password --gecos '' appuser && \
+    mkdir -p /home/appuser/.cache/uv && \
+    chown -R appuser /app /home/appuser/.cache
 USER appuser
 
 EXPOSE 8000
