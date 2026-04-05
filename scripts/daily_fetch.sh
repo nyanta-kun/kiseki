@@ -80,6 +80,22 @@ else
 fi
 echo "$LOG_PREFIX [2/3] Index calculation done"
 
+# ── Step 4c: 推奨レース生成（翌日レースがある場合）─────────────────────────
+if [ "${TOMORROW_RACE_COUNT:-0}" -gt 0 ]; then
+    echo "$LOG_PREFIX [2c/3] Generating recommendations for tomorrow ($TOMORROW)..."
+    docker exec "$DOCKER_CONTAINER" sh -c \
+      "cd /app && uv run python scripts/calculate_recommendations.py $TOMORROW" 2>&1
+    echo "$LOG_PREFIX [2c/3] Recommendation generation done"
+else
+    echo "$LOG_PREFIX [2c/3] No races for tomorrow ($TOMORROW), skipping recommendation"
+fi
+
+# ── Step 4d: 推奨結果更新（直近7日分の的中・払戻を反映）──────────────────
+echo "$LOG_PREFIX [2d/3] Updating recommendation results (last 7 days)..."
+docker exec "$DOCKER_CONTAINER" sh -c \
+  "cd /app && uv run python scripts/update_recommendation_results.py" 2>&1
+echo "$LOG_PREFIX [2d/3] Recommendation result update done"
+
 # ── Step 5: 完了サマリー ──────────────────────────────────────────────────
 COMPOSITE_VERSION=$(docker exec "$DOCKER_CONTAINER" sh -c \
   "cd /app && uv run python -c 'from src.indices.composite import COMPOSITE_VERSION; print(COMPOSITE_VERSION)'" 2>/dev/null || echo "?")
