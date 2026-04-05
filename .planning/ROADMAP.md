@@ -85,5 +85,5 @@ Plans:
 | 6–8. Realtime | MS5 | — | Complete | 2026 Q1 |
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
 | 15. Admin UI再構成 | 2/2 | Complete    | 2026-04-05 | - |
-| 16. データタブ | 1/2 | In Progress|  | - |
+| 16. データタブ | 2/2 | Complete   | 2026-04-05 | - |
 | 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/TBD | Not started | - |

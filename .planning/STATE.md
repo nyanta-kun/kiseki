@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: 管理画面整備
 status: planning
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-04-05T10:47:30.270Z"
+stopped_at: Completed 16-02-PLAN.md
+last_updated: "2026-04-05T10:49:54.497Z"
 last_activity: 2026-04-05 — Milestone v7.0 roadmap created (Phases 15–17)
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
   percent: 50
 ---
 
@@ -50,6 +50,7 @@ Progress: [█████░░░░░] 50%
 *Updated after each plan completion*
 | Phase 15 P01 | 5 | 1 tasks | 1 files |
 | Phase 16-データタブ P01 | 15 | 2 tasks | 3 files |
+| Phase 16-データタブ P02 | 2 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - [Phase 15]: page.tsx のインライン Server Action を全削除し CodesTab/UsersTab が actions.ts から直接 import する形に統一
 - [Phase 15]: Server Action への引数渡しは .bind(null, id, patch) パターンで型安全な呼び出しを実現
 - [Phase 16-データタブ]: fetch-data エンドポイントは DB セッション不要（キューに積むだけ）、_command_queue を agent_router から直接 import
+- [Phase 16-データタブ]: Route Handler 経由で INTERNAL_API_KEY をブラウザに露出させない設計を採用
+- [Phase 16-データタブ]: 取得ボタン押下時は confirm() でユーザー確認を取り、startTransition で非同期処理を実行
 
 ### Known Issues / Blockers
 
@@ -82,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-05T10:47:30.268Z
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-04-05T10:49:54.494Z
+Stopped at: Completed 16-02-PLAN.md
 Resume file: None
