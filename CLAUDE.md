@@ -196,6 +196,13 @@ prlctl exec "Windows 11" --current-user powershell -Command "Get-Content 'C:\kis
 prlctl restart "Windows 11"
 ```
 
+### Windows agent 設定ファイル
+- **`.env` の場所**: `C:\kiseki\.env`（`jvlink_agent.py` は `Path(__file__).parent.parent / ".env"` を読む）
+- `C:\kiseki\windows-agent\.env` は読まれない（混同注意）
+- **BACKEND_URL**: `http://YuichironoMacBook-Pro-6.local:8000`（mDNS/Bonjour名。MacのIPが変わっても自動追従）
+  - `10.211.55.2`（Parallels NAT）はWindowsから到達不可なので使用不可
+  - `192.168.11.x`（WiFi IP）は変動するので使用不可
+
 ### jvlink_agent.py 起動
 ※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
 ※ `-WindowStyle Hidden` でウィンドウ非表示。ログは jvlink_agent.log で確認。
