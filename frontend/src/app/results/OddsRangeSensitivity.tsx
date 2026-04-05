@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ComposedChart,
   Bar,
@@ -186,6 +186,7 @@ function DualSlider({
   step,
   low,
   high,
+  color,
   onChange,
 }: {
   min: number;
@@ -193,57 +194,121 @@ function DualSlider({
   step: number;
   low: number;
   high: number;
+  color: "blue" | "green";
   onChange: (low: number, high: number) => void;
 }) {
-  const lowPct = ((low - min) / (max - min)) * 100;
+  const trackRef   = useRef<HTMLDivElement>(null);
+  const dragging   = useRef<"low" | "high" | null>(null);
+  // stale closure 回避: 常に最新の値・コールバックを参照する
+  const latest     = useRef({ low, high, min, max, step, onChange });
+  latest.current   = { low, high, min, max, step, onChange };
+
+  const lowPct  = ((low  - min) / (max - min)) * 100;
   const highPct = ((high - min) / (max - min)) * 100;
-  const lowOnTop = low > max - (max - min) * 0.1;
+
+  const rangeColor  = color === "blue" ? "#3b82f6" : "#22c55e";
+  const borderLow   = color === "blue" ? "#3b82f6" : "#22c55e";
+  const borderHigh  = color === "blue" ? "#1d4ed8" : "#15803d";
+
+  /** クライアント X 座標 → オッズ値（step に丸め） */
+  function clientXToVal(clientX: number): number {
+    if (!trackRef.current) return latest.current.low;
+    const { min, max, step } = latest.current;
+    const rect = trackRef.current.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return Math.round((min + pct * (max - min)) / step) * step;
+  }
+
+  // グローバルイベントを1度だけ登録（依存なし、ref 経由でアクセス）
+  useEffect(() => {
+    const onMove = (clientX: number) => {
+      if (!dragging.current) return;
+      const val = clientXToVal(clientX);
+      const { low, high, step, onChange } = latest.current;
+      if (dragging.current === "low") {
+        onChange(Math.min(val, high - step), high);
+      } else {
+        onChange(low, Math.max(val, low + step));
+      }
+    };
+    const onMouse = (e: MouseEvent)     => onMove(e.clientX);
+    const onTouch = (e: TouchEvent)     => { if (e.touches[0]) onMove(e.touches[0].clientX); };
+    const onUp    = ()                  => { dragging.current = null; };
+
+    window.addEventListener("mousemove", onMouse);
+    window.addEventListener("mouseup",   onUp);
+    window.addEventListener("touchmove", onTouch, { passive: false });
+    window.addEventListener("touchend",  onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouse);
+      window.removeEventListener("mouseup",   onUp);
+      window.removeEventListener("touchmove", onTouch);
+      window.removeEventListener("touchend",  onUp);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** トラック上のクリック → 最寄りハンドルを移動 */
+  function handleTrackClick(e: React.MouseEvent) {
+    const val = clientXToVal(e.clientX);
+    const { low, high, step, onChange } = latest.current;
+    if (Math.abs(val - low) <= Math.abs(val - high)) {
+      onChange(Math.min(val, high - step), high);
+    } else {
+      onChange(low, Math.max(val, low + step));
+    }
+  }
+
+  function startDrag(handle: "low" | "high", e: React.MouseEvent | React.TouchEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging.current = handle;
+  }
 
   return (
-    <div className="relative h-6 mt-2">
-      {/* Track */}
-      <div className="absolute top-2.5 left-0 right-0 h-1.5 bg-gray-200 rounded-full">
+    <div className="py-3 px-1 select-none">
+      {/* トラック */}
+      <div
+        ref={trackRef}
+        className="relative h-3 bg-gray-200 rounded-full cursor-pointer"
+        onClick={handleTrackClick}
+      >
+        {/* 選択範囲ハイライト */}
         <div
-          className="absolute h-full bg-blue-500 rounded-full"
-          style={{ left: `${lowPct}%`, right: `${100 - highPct}%` }}
+          className="absolute h-full rounded-full pointer-events-none opacity-80"
+          style={{ left: `${lowPct}%`, right: `${100 - highPct}%`, backgroundColor: rangeColor }}
+        />
+        {/* 下限ハンドル */}
+        <button
+          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-white border-2 rounded-full shadow-md cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-blue-300"
+          style={{ left: `${lowPct}%`, zIndex: 20, borderColor: borderLow }}
+          onMouseDown={(e) => startDrag("low", e)}
+          onTouchStart={(e) => startDrag("low", e)}
+          aria-label={`下限 ${low.toFixed(1)}倍`}
+        />
+        {/* 上限ハンドル */}
+        <button
+          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-white border-2 rounded-full shadow-md cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-blue-300"
+          style={{ left: `${highPct}%`, zIndex: 20, borderColor: borderHigh }}
+          onMouseDown={(e) => startDrag("high", e)}
+          onTouchStart={(e) => startDrag("high", e)}
+          aria-label={`上限 ${high.toFixed(1)}倍`}
         />
       </div>
-      {/* Low input */}
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={low}
-        onChange={(e) =>
-          onChange(Math.min(+e.target.value, high - step), high)
-        }
-        className="absolute inset-0 w-full opacity-0 cursor-pointer"
-        style={{ zIndex: lowOnTop ? 5 : 3 }}
-      />
-      {/* High input */}
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={high}
-        onChange={(e) =>
-          onChange(low, Math.max(+e.target.value, low + step))
-        }
-        className="absolute inset-0 w-full opacity-0 cursor-pointer"
-        style={{ zIndex: 4 }}
-      />
-      {/* Low thumb */}
-      <div
-        className="absolute top-1 w-4 h-4 bg-white border-2 border-blue-500 rounded-full shadow pointer-events-none -translate-x-1/2"
-        style={{ left: `${lowPct}%` }}
-      />
-      {/* High thumb */}
-      <div
-        className="absolute top-1 w-4 h-4 bg-white border-2 border-blue-600 rounded-full shadow pointer-events-none -translate-x-1/2"
-        style={{ left: `${highPct}%` }}
-      />
+      {/* 値ラベル（ハンドル位置の下） */}
+      <div className="relative h-5 mt-1">
+        <span
+          className="absolute -translate-x-1/2 text-xs font-medium text-gray-700 tabular-nums whitespace-nowrap"
+          style={{ left: `${lowPct}%` }}
+        >
+          {low.toFixed(1)}倍
+        </span>
+        <span
+          className="absolute -translate-x-1/2 text-xs font-medium text-gray-700 tabular-nums whitespace-nowrap"
+          style={{ left: `${highPct}%` }}
+        >
+          {high.toFixed(1)}倍
+        </span>
+      </div>
     </div>
   );
 }
@@ -333,11 +398,17 @@ export function OddsRangeSensitivity({ filters }: Props) {
   const [placeHigh, setPlaceHigh] = useState(10.0);
 
   useEffect(() => {
-    setData(null);
-    setError(false);
-    fetchOddsData(filters)
-      .then((d) => setData(d))
-      .catch(() => setError(true));
+    async function load() {
+      setData(null);
+      setError(false);
+      try {
+        const d = await fetchOddsData(filters);
+        setData(d);
+      } catch {
+        setError(true);
+      }
+    }
+    void load();
   }, [filters]);
 
   if (error) {
@@ -394,7 +465,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
               label={{ value: "ROI%", angle: 90, position: "insideRight", style: { fontSize: 10 } }}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Legend wrapperStyle={{ fontSize: 10, color: "#111827" }} />
             <Bar
               yAxisId="left"
               dataKey="count"
@@ -420,17 +491,11 @@ export function OddsRangeSensitivity({ filters }: Props) {
         </ResponsiveContainer>
 
         {/* スライダー */}
-        <div className="mt-3 px-1">
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span>下限: {winLow.toFixed(1)}倍</span>
-            <span>上限: {winHigh.toFixed(1)}倍</span>
-          </div>
+        <div className="mt-2" style={{ paddingLeft: "36px", paddingRight: "76px" }}>
           <DualSlider
-            min={1.0}
-            max={50.0}
-            step={0.5}
-            low={winLow}
-            high={winHigh}
+            min={1.0} max={50.0} step={0.5}
+            low={winLow} high={winHigh}
+            color="blue"
             onChange={(l, h) => { setWinLow(l); setWinHigh(h); }}
           />
         </div>
@@ -462,7 +527,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
               label={{ value: "ROI%", angle: 90, position: "insideRight", style: { fontSize: 10 } }}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Legend wrapperStyle={{ fontSize: 10, color: "#111827" }} />
             <Bar
               yAxisId="left"
               dataKey="count"
@@ -488,17 +553,11 @@ export function OddsRangeSensitivity({ filters }: Props) {
         </ResponsiveContainer>
 
         {/* スライダー */}
-        <div className="mt-3 px-1">
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span>下限: {placeLow.toFixed(1)}倍</span>
-            <span>上限: {placeHigh.toFixed(1)}倍</span>
-          </div>
+        <div className="mt-2" style={{ paddingLeft: "36px", paddingRight: "76px" }}>
           <DualSlider
-            min={1.0}
-            max={10.0}
-            step={0.1}
-            low={placeLow}
-            high={placeHigh}
+            min={1.0} max={10.0} step={0.1}
+            low={placeLow} high={placeHigh}
+            color="green"
             onChange={(l, h) => { setPlaceLow(l); setPlaceHigh(h); }}
           />
         </div>
