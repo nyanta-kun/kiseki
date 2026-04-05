@@ -61,6 +61,24 @@ export const metadata: Metadata = {
   },
 };
 
+async function fetchPaidMode(): Promise<boolean> {
+  const BACKEND_URL =
+    process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+  const API_KEY = process.env.INTERNAL_API_KEY ?? "";
+  try {
+    const res = await fetch(`${BACKEND_URL}/admin/settings`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { settings: { key: string; value: string }[] };
+    const setting = data.settings.find((s) => s.key === "PAID_MODE");
+    return setting?.value === "true";
+  } catch {
+    return false;
+  }
+}
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -74,13 +92,14 @@ export default async function RootLayout({
 }>) {
   const session = await auth();
   const isAdmin = session?.user?.role === "admin";
+  const paidMode = await fetchPaidMode();
 
   return (
     <html
       lang="ja"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col overflow-x-hidden">
         {/* スキップナビゲーション（キーボードユーザー向け） */}
         <a
           href="#main-content"
@@ -92,10 +111,10 @@ export default async function RootLayout({
         {/* 共有ヘッダー（/ と /login では非表示） */}
         <SiteHeader isAdmin={isAdmin} />
 
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 min-h-0 flex flex-col">
           {children}
         </div>
-        {process.env.NEXT_PUBLIC_PAID_MODE === "true" && <Footer />}
+        {paidMode && <Footer />}
         <ServiceWorkerRegister />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />

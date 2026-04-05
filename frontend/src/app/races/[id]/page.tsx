@@ -6,7 +6,29 @@ import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { auth } from "@/auth";
 
+const BACKEND_URL =
+  process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const API_KEY = process.env.INTERNAL_API_KEY ?? "";
+
+async function fetchPaidMode(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/admin/settings`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { settings: { key: string; value: string }[] };
+    const setting = data.settings.find((s) => s.key === "PAID_MODE");
+    return setting?.value === "true";
+  } catch {
+    return false;
+  }
+}
+
 type Params = Promise<{ id: string }>;
+
+// SiteHeader の高さ（py-3 × 2 = 24px + h-8 ロゴ = 32px → 56px = 3.5rem）
+const SITE_HEADER_H = "3.5rem";
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { id } = await params;
@@ -32,6 +54,7 @@ export default async function RacePage({ params }: { params: Params }) {
 
   const session = await auth();
   const isPremium = session?.user?.is_premium ?? false;
+  const paidMode = await fetchPaidMode();
 
   // レース情報を最初に取得（date が後続フェッチに必要なため）
   let race = null;
@@ -51,14 +74,30 @@ export default async function RacePage({ params }: { params: Params }) {
     fetchIndices(raceId).catch(() => null),
   ]);
 
+  // SiteHeader 直下〜画面下端を fixed で占有。DOM の flex 高さ計算に依存しない。
+  // z-0 にして SiteHeader(z-10) が必ず前面に来るようにする。
+  const wrapperStyle = {
+    position: "fixed" as const,
+    top: SITE_HEADER_H,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: "flex",
+    flexDirection: "column" as const,
+    background: "#f0f5fb",
+    zIndex: 0,
+  };
+
   if (!indicesResp) {
     return (
-      <div className="min-h-screen overflow-x-hidden" style={{ background: "#f0f5fb" }}>
+      <div style={wrapperStyle}>
         <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
-        <main className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
-          <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
-          <p>この レースの指数データがありません</p>
-          <p className="text-xs mt-1">算出が完了していない可能性があります</p>
+        <main style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
+          <div className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
+            <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
+            <p>この レースの指数データがありません</p>
+            <p className="text-xs mt-1">算出が完了していない可能性があります</p>
+          </div>
         </main>
       </div>
     );
@@ -68,39 +107,41 @@ export default async function RacePage({ params }: { params: Params }) {
   const confidence = indicesResp.confidence;
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: "#f0f5fb" }}>
+    <div style={wrapperStyle}>
       <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
 
-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-4 space-y-4">
-        {/* 期待値サマリー */}
-        <EVSummary indices={indices} />
+      <main id="main-content" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
+        <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+          {/* 期待値サマリー */}
+          <EVSummary indices={indices} />
 
-        {/* 信頼度パネル */}
-        <ConfidencePanel confidence={confidence} />
+          {/* 信頼度パネル */}
+          <ConfidencePanel confidence={confidence} />
 
-        {/* 確率チャート・指数テーブル（成績WebSocketで自動更新） */}
-        <RaceDetailClient
-          raceId={raceId}
-          indices={indices}
-          initialOdds={initialOdds}
-          initialResults={initialResults}
-          isPremium={isPremium}
-          raceNumber={raceNumber}
-        />
+          {/* 確率チャート・指数テーブル（成績WebSocketで自動更新） */}
+          <RaceDetailClient
+            raceId={raceId}
+            indices={indices}
+            initialOdds={initialOdds}
+            initialResults={initialResults}
+            isPremium={isPremium}
+            raceNumber={raceNumber}
+            paywallEnabled={paidMode}
+          />
 
-        {/* 凡例 */}
-        <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">
-          <p className="font-medium text-gray-500 mb-1">指数について</p>
-          <ul className="space-y-0.5">
-            <li>・ 総合指数: 各指数を重み付け合計（0-100）</li>
-            <li>・ ◎ 本命: 総合指数1位の馬（ソート順に関係なく固定）</li>
-            <li>・ ☆ 穴ぐさ: 穴ぐさ指数58以上の本命以外の馬</li>
-            <li>・ 勝率/複勝率: Softmax + Harville式で算出</li>
-            <li>・ <span className="text-green-700 font-medium">緑</span>=高評価 / <span className="text-red-600">赤</span>=低評価</li>
-          </ul>
+          {/* 凡例 */}
+          <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">
+            <p className="font-medium text-gray-500 mb-1">指数について</p>
+            <ul className="space-y-0.5">
+              <li>・ 総合指数: 各指数を重み付け合計（0-100）</li>
+              <li>・ ◎ 本命: 総合指数1位の馬（ソート順に関係なく固定）</li>
+              <li>・ ☆ 穴ぐさ: 穴ぐさ指数58以上の本命以外の馬</li>
+              <li>・ 勝率/複勝率: Softmax + Harville式で算出</li>
+              <li>・ <span className="text-green-700 font-medium">緑</span>=高評価 / <span className="text-red-600">赤</span>=低評価</li>
+            </ul>
+          </div>
         </div>
       </main>
     </div>
   );
 }
-

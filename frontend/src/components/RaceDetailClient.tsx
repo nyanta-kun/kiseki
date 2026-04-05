@@ -21,6 +21,7 @@ type Props = {
   initialResults: RaceResult[];
   isPremium?: boolean;
   raceNumber?: number;
+  paywallEnabled?: boolean;
 };
 
 function toResultsMap(results: RaceResult[]): Map<number, number | null> {
@@ -40,7 +41,7 @@ function useIsMounted() {
   );
 }
 
-export function RaceDetailClient({ raceId, indices, initialOdds, initialResults, isPremium = false, raceNumber = 1 }: Props) {
+export function RaceDetailClient({ raceId, indices, initialOdds, initialResults, isPremium = false, raceNumber = 1, paywallEnabled = false }: Props) {
   const mounted = useIsMounted();
   const [resultsMap, setResultsMap] = useState<Map<number, number | null> | undefined>(
     initialResults.length > 0 ? toResultsMap(initialResults) : undefined
@@ -57,7 +58,7 @@ export function RaceDetailClient({ raceId, indices, initialOdds, initialResults,
   const { isConnected: wsConnected } = useWebSocket(wsUrl, handleMessage);
 
   return (
-    <PaywallGate isPremium={isPremium} raceNumber={raceNumber}>
+    <PaywallGate isPremium={isPremium} raceNumber={raceNumber} paywallEnabled={paywallEnabled ?? false}>
       <>
         {/* 確率チャート */}
         <ProbabilityChart indices={indices} initialOdds={initialOdds} results={resultsMap} />

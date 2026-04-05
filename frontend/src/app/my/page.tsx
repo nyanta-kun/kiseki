@@ -12,6 +12,21 @@ const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 const API_KEY = process.env.INTERNAL_API_KEY ?? "";
 
+async function fetchPaidMode(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/admin/settings`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { settings: { key: string; value: string }[] };
+    const setting = data.settings.find((s) => s.key === "PAID_MODE");
+    return setting?.value === "true";
+  } catch {
+    return false;
+  }
+}
+
 type AccessStatus = {
   user_id: number;
   is_premium: boolean;
@@ -59,7 +74,7 @@ export default async function MyPage() {
   const isPremium = access?.is_premium ?? session.user.is_premium ?? false;
   const accessExpiresAt = access?.access_expires_at ?? session.user.access_expires_at ?? null;
 
-  const paidMode = process.env.NEXT_PUBLIC_PAID_MODE === "true";
+  const paidMode = await fetchPaidMode();
 
   return (
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
