@@ -81,6 +81,6 @@ Plans:
 | 1–5. Indices Engine | MS1–MS4 | — | Complete | 2026 Q1 |
 | 6–8. Realtime | MS5 | — | Complete | 2026 Q1 |
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
-| 15. Admin UI再構成 | v7.0 | 0/2 | Not started | - |
+| 15. Admin UI再構成 | 1/2 | In Progress|  | - |
 | 16. データタブ | v7.0 | 0/TBD | Not started | - |
 | 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/TBD | Not started | - |

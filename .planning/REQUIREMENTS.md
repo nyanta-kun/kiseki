@@ -12,7 +12,7 @@
 - [ ] **ADMIN-01**: 管理画面がタブUI（ユーザー / データ / 設定）に再構成される
 - [ ] **ADMIN-02**: 登録ユーザーテーブルの各行が1行表示（whitespace-nowrap + テーブル内横スクロール）
 - [ ] **ADMIN-03**: 登録ユーザーテーブルが10件ページングで閲覧できる
-- [ ] **ADMIN-04**: 登録ユーザーテーブルに予想家名（yoso_name）・公開設定（is_yoso_public）が表示される
+- [x] **ADMIN-04**: 登録ユーザーテーブルに予想家名（yoso_name）・公開設定（is_yoso_public）が表示される
 - [ ] **ADMIN-05**: データタブで年/月単位のレースデータ取得状況（件数）を確認できる
 - [ ] **ADMIN-06**: データタブで未取得月のデータをUIからWindows Agentへ取得指示できる
 - [ ] **ADMIN-07**: 設定タブでPAID_MODEのON/OFFをUI上で切り替えられる
@@ -40,7 +40,7 @@
 | ADMIN-01 | Phase 15 | Pending |
 | ADMIN-02 | Phase 15 | Pending |
 | ADMIN-03 | Phase 15 | Pending |
-| ADMIN-04 | Phase 15 | Pending |
+| ADMIN-04 | Phase 15 | Complete |
 | ADMIN-05 | Phase 16 | Pending |
 | ADMIN-06 | Phase 16 | Pending |
 | ADMIN-07 | Phase 17 | Pending |
