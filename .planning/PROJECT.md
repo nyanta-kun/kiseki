@@ -35,9 +35,12 @@ JRA-VAN Data Lab SDKから競馬データを直接取得し、独自の指数（
 
 ### Active
 
-<!-- 次のマイルストーンで対応予定 — 確定後に記入 -->
+<!-- v7.0: 管理画面整備 -->
 
-(TBD — milestone planning in progress)
+- [ ] 管理画面タブUI（ユーザー / データ / 設定）再構成
+- [ ] 登録ユーザーテーブル改善（1行表示・10件ページング・予想家名表示）
+- [ ] データタブ（年/月単位取得状況・Windows Agentへの取得指示）
+- [ ] 設定タブ（PAID_MODEのDB管理・UI切り替え）
 
 ### Out of Scope
 
@@ -73,5 +76,15 @@ JRA-VAN Data Lab SDKから競馬データを直接取得し、独自の指数（
 | JRADB商用契約: 法人化必要 | 個人事業主では申請不可（2026-04-02確認） | — Pending |
 | クローズドβ継続 | 法人化意思決定までJRA-VAN個人利用で運用 | — Pending |
 
+## Current Milestone: v7.0 管理画面整備
+
+**Goal:** 管理画面をタブ構成に再編し、ユーザー管理の使い勝手向上・データ取得状況の可視化・PAID_MODEのDB管理を実現する。
+
+**Target features:**
+- タブUI（ユーザー / データ / 設定）
+- ユーザーテーブル改善（1行・ページング・予想家名）
+- データタブ（月別取得状況 + 取得指示）
+- 設定タブ（PAID_MODE DB化）
+
 ---
-*Last updated: 2026-04-05 after MS6 completion*
+*Last updated: 2026-04-05 after v7.0 milestone start*
