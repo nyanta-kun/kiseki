@@ -97,10 +97,10 @@ export default async function RootLayout({
         </div>
         {process.env.NEXT_PUBLIC_PAID_MODE === "true" && <Footer />}
         <ServiceWorkerRegister />
+        {process.env.NEXT_PUBLIC_GA_ID && (
+          <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
+        )}
       </body>
-      {process.env.NEXT_PUBLIC_GA_ID && (
-        <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
-      )}
     </html>
   );
 }
