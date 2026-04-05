@@ -168,6 +168,28 @@ class FetchDataRequest(BaseModel):
     year_month: str  # "YYYYMM" 形式（例: "202301"）
 
 
+class AppSettingResponse(BaseModel):
+    """設定レスポンス。"""
+
+    key: str
+    value: str
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class AppSettingsResponse(BaseModel):
+    """全設定レスポンス。"""
+
+    settings: list[AppSettingResponse]
+
+
+class UpdateSettingRequest(BaseModel):
+    """設定更新リクエスト。"""
+
+    key: str
+    value: str
+
+
 # ---------------------------------------------------------------------------
 # エンドポイント
 # ---------------------------------------------------------------------------
@@ -334,3 +356,50 @@ async def trigger_fetch_data(body: FetchDataRequest, _: ApiKeyDep) -> dict:
     }
     _command_queue.append(entry)
     return {"queued": True, "action": "recent", "from_year": from_year, "year_month": body.year_month}
+
+
+@admin_router.get("/settings", response_model=AppSettingsResponse)
+async def get_settings(_: ApiKeyDep, db: DbDep) -> AppSettingsResponse:
+    """全アプリ設定を取得する。"""
+    from ..db.models import AppSettings
+
+    result = await db.execute(select(AppSettings).order_by(AppSettings.key))
+    rows = result.scalars().all()
+    return AppSettingsResponse(
+        settings=[
+            AppSettingResponse(
+                key=row.key,
+                value=row.value,
+                updated_at=row.updated_at,
+                updated_by=row.updated_by,
+            )
+            for row in rows
+        ]
+    )
+
+
+@admin_router.put("/settings", response_model=AppSettingResponse)
+async def update_setting(body: UpdateSettingRequest, _: ApiKeyDep, db: DbDep) -> AppSettingResponse:
+    """設定値を更新（または挿入）する。UPSERT 方式。"""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from ..db.models import AppSettings
+
+    stmt = (
+        pg_insert(AppSettings)
+        .values(key=body.key, value=body.value)
+        .on_conflict_do_update(
+            index_elements=["key"],
+            set_={"value": body.value, "updated_at": datetime.now(UTC)},
+        )
+        .returning(AppSettings)
+    )
+    result = await db.execute(stmt)
+    row = result.scalar_one()
+    await db.commit()
+    return AppSettingResponse(
+        key=row.key,
+        value=row.value,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
