@@ -23,11 +23,11 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self' data:",
-      `connect-src 'self' wss://galloplab.com wss://api.galloplab.com wss://sekito-stable.com https://galloplab.com https://api.galloplab.com https://sekito-stable.com https://accounts.google.com${isDev ? " ws://localhost:8000 http://localhost:8000" : ""}`,
+      `connect-src 'self' wss://galloplab.com wss://api.galloplab.com wss://sekito-stable.com https://galloplab.com https://api.galloplab.com https://sekito-stable.com https://accounts.google.com https://www.google-analytics.com https://analytics.google.com https://www.googletagmanager.com${isDev ? " ws://localhost:8000 http://localhost:8000" : ""}`,
       "frame-src https://accounts.google.com",
       "frame-ancestors 'none'",
     ].join("; "),
