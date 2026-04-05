@@ -45,7 +45,10 @@
   2. ユーザーテーブルの各行が1行に収まり（whitespace-nowrap + 横スクロール）、長いフィールドが行を折り返さない
   3. ユーザーテーブルが10件ページングで表示され、前後ページへ移動できる
   4. ユーザーテーブルに予想家名（yoso_name）と公開設定（is_yoso_public）の列が追加されている
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 15-01-PLAN.md — バックエンド UserResponse に yoso_name / is_yoso_public を追加
+- [ ] 15-02-PLAN.md — 管理画面タブ再構成 + ユーザーテーブル改善（AdminTabs / UsersTab / CodesTab / DataTab / SettingsTab）
 
 #### Phase 16: データタブ
 **Goal**: 管理者がデータタブで年/月単位のレースデータ取得状況を確認し、UIから未取得月のデータ取得をWindows Agentへ指示できる
@@ -78,6 +81,6 @@
 | 1–5. Indices Engine | MS1–MS4 | — | Complete | 2026 Q1 |
 | 6–8. Realtime | MS5 | — | Complete | 2026 Q1 |
 | 9–14. PWA + Paid | MS6 | — | Complete | 2026-04-05 |
-| 15. Admin UI再構成 | v7.0 | 0/TBD | Not started | - |
+| 15. Admin UI再構成 | v7.0 | 0/2 | Not started | - |
 | 16. データタブ | v7.0 | 0/TBD | Not started | - |
 | 17. 設定タブ + PAID_MODE DB化 | v7.0 | 0/TBD | Not started | - |
