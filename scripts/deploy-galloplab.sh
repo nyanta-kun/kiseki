@@ -30,16 +30,16 @@ case "$MODE" in
 
   --backend)
     # -------------------------------------------------------
-    # バックエンドのみ再起動
-    # src/ はvolumeマウントされているので git pull + restart だけでOK
+    # バックエンドのみ再作成（compose設定変更を確実に反映）
+    # restart では env var 変更が反映されないため up --force-recreate を使用
     # -------------------------------------------------------
-    echo "[deploy] バックエンド再起動のみ（~15秒）"
+    echo "[deploy] バックエンド再作成（~15秒）"
     ssh "$REMOTE_HOST" bash << EOF
       set -euo pipefail
       cd $REMOTE_DIR
       git pull origin main
-      docker compose -f $COMPOSE_FILE restart backend
-      echo "[deploy] バックエンド再起動完了"
+      docker compose -f $COMPOSE_FILE up -d --force-recreate backend
+      echo "[deploy] バックエンド再作成完了"
 EOF
     ;;
 
