@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v7.0
 milestone_name: 管理画面整備
 status: planning
-stopped_at: "Checkpoint: Task 3 human-verify for 17-02-PLAN.md"
-last_updated: "2026-04-05T11:18:41.808Z"
+stopped_at: Completed 17-02-PLAN.md
+last_updated: "2026-04-05T21:56:30.062Z"
 last_activity: 2026-04-05 — Milestone v7.0 roadmap created (Phases 15–17)
 progress:
   total_phases: 3
@@ -53,6 +53,7 @@ Progress: [█████░░░░░] 50%
 | Phase 16-データタブ P02 | 2 | 2 tasks | 3 files |
 | Phase 17 P01 | 525616min | 2 tasks | 3 files |
 | Phase 17 P02 | 1min | 2 tasks | 8 files |
+| Phase 17-設定タブ-paid-mode-db化 P02 | 10 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase 17]: PUT /api/admin/settings は UPSERT 方式（pg_insert + on_conflict_do_update）で冪等性を確保
 - [Phase 17-02]: 自己参照 Route Handler を使わず各サーバーコンポーネントで直接バックエンドを叩くパターンを採用（Pitfall 3 回避）
 - [Phase 17-02]: バックエンド障害時のフェイルセーフは paidMode=false（ペイウォール無効）
+- [Phase 17-02]: 自己参照 Route Handler を使わず各サーバーコンポーネントで直接バックエンドを叩くパターン採用（Pitfall 3 回避）
+- [Phase 17-02]: バックエンド障害時のフェイルセーフは paidMode=false（ペイウォール無効）
 
 ### Known Issues / Blockers
 
@@ -91,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-05T11:18:41.806Z
-Stopped at: Checkpoint: Task 3 human-verify for 17-02-PLAN.md
+Last session: 2026-04-05T21:56:30.059Z
+Stopped at: Completed 17-02-PLAN.md
 Resume file: None

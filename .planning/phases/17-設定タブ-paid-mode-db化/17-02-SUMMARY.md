@@ -58,7 +58,7 @@ completed: 2026-04-05
 - **Duration:** 1 min
 - **Started:** 2026-04-05T11:15:00Z
 - **Completed:** 2026-04-05T11:16:00Z
-- **Tasks:** 2 of 3 (Task 3 は checkpoint:human-verify)
+- **Tasks:** 3 of 3 (Task 3 は checkpoint:human-verify → approved)
 - **Files modified:** 7 (1 created)
 
 ## Accomplishments
@@ -73,7 +73,7 @@ completed: 2026-04-05
 
 1. **Task 1: 管理者向け設定 Route Handler + SettingsTab.tsx 実装 + actions.ts に updatePaidMode 追加** - `273c6d2` (feat)
 2. **Task 2: PAID_MODE 動的取得へ移行（PaywallGate / RaceDetailClient / layout.tsx / my/page.tsx / races/[id]/page.tsx）** - `681c853` (feat)
-3. **Task 3: PAID_MODE DB 管理の動作確認** - checkpoint:human-verify（人手確認中）
+3. **Task 3: PAID_MODE DB 管理の動作確認** - checkpoint:human-verify（approved）
 
 ## Files Created/Modified
 
@@ -105,9 +105,10 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Task 3 のチェックポイント確認後に Phase 17 が完了
-- バックエンドをリビルドしてマイグレーションを実行すること: `docker compose up --build backend -d && docker compose exec backend alembic upgrade head`
-- 管理画面 `/admin` → 設定タブ で PAID_MODE トグルが動作することを確認すること
+- Phase 17 全体が完了（17-01 + 17-02）し、PAID_MODE の DB 管理が完全稼働
+- 管理者は管理画面 `/admin` → 設定タブ から PAID_MODE を即時切り替え可能
+- フロントエンドは次回ページアクセス時（SSR）に最新の paidMode 値を反映する
+- v7.0 管理画面整備マイルストーンが完了
 
 ---
 *Phase: 17-設定タブ-paid-mode-db化*
