@@ -94,4 +94,20 @@ with engine.connect() as conn:
     print(f'v{COMPOSITE_VERSION} total:', r.scalar())
 \"" 2>&1 || true
 
+# ── Step 6: realtimeモード起動（既存プロセスがなければ） ──────────────────
+REALTIME_RUNNING=$(prlctl exec "Windows 11" --current-user powershell -Command \
+  "if (Get-Process python -ErrorAction SilentlyContinue) { 'running' } else { 'idle' }" 2>/dev/null | tr -d '\r\n')
+
+if [ "$REALTIME_RUNNING" = "running" ]; then
+    echo "$LOG_PREFIX [realtime] Python already running, skipping realtime start"
+else
+    echo "$LOG_PREFIX [realtime] Starting realtime monitor..."
+    prlctl exec "Windows 11" --current-user powershell -Command "
+      Start-Process -FilePath 'cmd.exe' \`
+        -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' \`
+        -WindowStyle Hidden -PassThru
+    " 2>&1
+    echo "$LOG_PREFIX [realtime] Realtime monitor launched"
+fi
+
 echo "$LOG_PREFIX DONE"
