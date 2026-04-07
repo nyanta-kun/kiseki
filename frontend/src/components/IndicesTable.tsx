@@ -261,6 +261,12 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
     [indices],
   );
 
+  // 総合指数の最大値（足切り判定用）
+  const maxComposite = useMemo(
+    () => Math.max(...indices.map((h) => h.composite_index ?? 0)),
+    [indices],
+  );
+
   // 総合指数ランクマップ（O(n log n) → O(1) lookup）
   const compositeRankMap = useMemo(() => {
     const sortedByIndex = [...indices].sort((a, b) => b.composite_index - a.composite_index);
@@ -331,6 +337,11 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
         ))}
       </div>
 
+      {/* 足切り凡例 */}
+      <p className="text-[10px] text-gray-400 mb-2">
+        <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
+      </p>
+
       {/* 馬カード一覧 */}
       <div className="space-y-2">
         {sorted.map((horse) => {
@@ -347,6 +358,9 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
           // 指数4位以降でupsideスコアが高い = 穴候補
           const compositeRank = compositeRankMap.get(horse.horse_number) ?? 99;
           const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
+          // 足切り: トップ差20以上 or (差15以上かつ5位以下)
+          const gapFromTop = maxComposite - (horse.composite_index ?? 0);
+          const isCutOff = gapFromTop >= 20 || (gapFromTop >= 15 && compositeRank >= 5);
 
           const finishPos = results?.get(horse.horse_number);
           const finishLabel_ = finishLabel(finishPos);
@@ -361,6 +375,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
               key={horse.horse_number}
               className={cn(
                 "rounded-lg border overflow-hidden transition-all",
+                isCutOff ? "opacity-40 border-gray-100" :
                 isTop ? "border-green-400 shadow-sm" : "border-gray-100"
               )}
             >
@@ -372,6 +387,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                 onClick={() => setExpandedHorse(isExpanded ? null : horse.horse_number)}
                 className={cn(
                   "w-full text-left px-3 py-2.5 flex items-center gap-3 focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-1",
+                  isCutOff ? "bg-gray-50" :
                   isTop ? "bg-green-50" : "bg-white hover:bg-gray-50"
                 )}
               >

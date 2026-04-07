@@ -161,6 +161,21 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
     return bv - av;
   });
 
+  // 足切り判定: 総合指数でのランク・差を事前計算
+  const maxComposite = Math.max(...horses.map((h) => h.composite_index ?? 0));
+  const compositeRankMap = new Map<number, number>(
+    [...horses]
+      .sort((a, b) => (b.composite_index ?? 0) - (a.composite_index ?? 0))
+      .map((h, i) => [h.horse_id, i + 1])
+  );
+  /** 指数5位以下かつトップ差15以上、またはトップ差20以上の馬を足切り対象とする */
+  function isCutOff(horse: ChihouHorseIndex): boolean {
+    if (horse.composite_index === null) return false;
+    const gap = maxComposite - horse.composite_index;
+    const rank = compositeRankMap.get(horse.horse_id) ?? 999;
+    return gap >= 20 || (gap >= 15 && rank >= 5);
+  }
+
   return (
     <>
       {/* 信頼度・推奨度ランクパネル */}
@@ -240,12 +255,14 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
               const frameNum = horse.horse_number !== null
                 ? horseNumToFrame(horse.horse_number, totalHorses)
                 : 0;
+              const cutOff = isCutOff(horse);
 
               return (
                 <tr
                   key={horse.horse_id}
                   className={cn(
                     "border-b border-gray-50 transition-colors",
+                    cutOff ? "opacity-40 bg-gray-50" :
                     isWin ? "bg-yellow-50" :
                     isPlace ? "bg-orange-50/40" :
                     "hover:bg-gray-50"
@@ -376,8 +393,9 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
       )}
 
       {/* 凡例 */}
-      <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2">
-        <span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）
+      <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2 space-y-0.5">
+        <p><span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）</p>
+        <p><span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）</p>
       </div>
     </section>
     </>
