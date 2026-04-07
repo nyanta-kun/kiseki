@@ -687,8 +687,32 @@ async def get_stats(
     )
     # payout_map: (race_id, combination文字列, bet_type) → 払戻金額（100円あたり÷100でオッズ換算）
     payout_map: dict[tuple[int | None, str, str], float] = {}
-    for p in payouts_result.scalars().all():
+    payout_records = payouts_result.scalars().all()
+    for p in payout_records:
         payout_map[(p.race_id, p.combination, p.bet_type)] = p.payout / 100.0
+    # race_payouts 未収録レース（結果未確定 or データなし）は odds_history の最新オッズで代替。
+    # 単勝払戻 ≒ 単勝オッズ × 100円、複勝払戻 ≒ 複勝オッズ × 100円 として近似する。
+    payout_covered_races = {p.race_id for p in payout_records}
+    missing_race_ids_for_payout = [rid for rid in race_ids_set if rid not in payout_covered_races]
+    if missing_race_ids_for_payout:
+        hist_rows = (
+            await db.execute(
+                text("""
+                    SELECT DISTINCT ON (race_id, bet_type, combination)
+                        race_id, bet_type, combination, odds
+                    FROM keiba.odds_history
+                    WHERE race_id = ANY(:race_ids)
+                      AND bet_type IN ('win', 'place')
+                      AND combination ~ '^[0-9]+$'
+                    ORDER BY race_id, bet_type, combination, fetched_at DESC
+                """),
+                {"race_ids": missing_race_ids_for_payout},
+            )
+        ).fetchall()
+        for hr in hist_rows:
+            key = (hr.race_id, str(hr.combination), hr.bet_type)
+            if key not in payout_map:
+                payout_map[key] = float(hr.odds)
 
     # 同レース全馬の指数合計（占有率計算用）
     all_preds_result = await db.execute(

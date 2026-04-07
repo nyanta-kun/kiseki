@@ -61,11 +61,11 @@ const nextConfig: NextConfig = {
           ...securityHeaders,
         ],
       },
-      {
-        // /_next/static/ は content-hash 付きファイルなので永続キャッシュ
+      // /_next/static/ は本番ビルドのみ永続キャッシュ（devモードはchunkがcontent-hash付きでないため除外）
+      ...(!isDev ? [{
         source: "/_next/static/(.*)",
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
-      },
+      }] : []),
     ];
   },
   async redirects() {

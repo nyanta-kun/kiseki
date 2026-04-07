@@ -8,15 +8,17 @@ type Props = {
   currentDate: string;
   prevDate: string | null;
   nextDate: string | null;
+  basePath?: string;
 };
 
-export function DateNav({ currentDate, prevDate, nextDate }: Props) {
+export function DateNav({ currentDate, prevDate, nextDate, basePath = "/races" }: Props) {
   const router = useRouter();
   const dateInputRef = useRef<HTMLInputElement>(null);
   const today = todayYYYYMMDD();
   const isToday = currentDate === today;
+  const isChihou = basePath.startsWith("/chihou");
 
-  const go = (date: string) => router.push(`/races?date=${date}`);
+  const go = (date: string) => router.push(`${basePath}?date=${date}`);
 
   const toInputValue = (d: string) =>
     `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
@@ -39,7 +41,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         disabled={!prevDate}
         aria-disabled={!prevDate}
         aria-label="前の開催日へ"
-        className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+        className={`${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0`}
       >
         <span aria-hidden="true">←</span> 前開催
       </button>
@@ -49,7 +51,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         {!isToday && (
           <button
             onClick={() => go(today)}
-            className="text-[11px] px-2 py-0.5 rounded border border-blue-400 text-blue-200 hover:bg-white/10 transition-colors flex-shrink-0"
+            className={`text-[11px] px-2 py-0.5 rounded border ${isChihou ? "border-green-300 text-green-100" : "border-blue-400 text-blue-200"} hover:bg-white/10 transition-colors flex-shrink-0`}
           >
             今日
           </button>
@@ -61,7 +63,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         <div className="relative flex-shrink-0">
           <button
             onClick={openPicker}
-            className="text-blue-300 hover:text-white transition-colors text-base leading-none"
+            className={`${isChihou ? "text-green-200" : "text-blue-300"} hover:text-white transition-colors text-base leading-none`}
             aria-label="日付を選択"
           >
             📅
@@ -88,7 +90,7 @@ export function DateNav({ currentDate, prevDate, nextDate }: Props) {
         disabled={!nextDate}
         aria-disabled={!nextDate}
         aria-label="次の開催日へ"
-        className="text-blue-200 hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+        className={`${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0`}
       >
         翌開催 <span aria-hidden="true">→</span>
       </button>

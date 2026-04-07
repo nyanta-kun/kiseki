@@ -6,12 +6,14 @@ import { gradeClass, raceClassBadgeClass, raceClassShort, surfaceIcon } from "@/
 
 type Props = {
   race: Race;
+  basePath?: string;
 };
 
-const CONFIDENCE_CONFIG = {
-  HIGH: { text: "高信頼", class: "bg-green-100 text-green-700 border-green-200" },
-  MID:  { text: "中信頼", class: "bg-yellow-100 text-yellow-700 border-yellow-200" },
-  LOW:  { text: "低信頼", class: "bg-red-100 text-red-600 border-red-200" },
+const RANK_CONFIG = {
+  S: { cls: "bg-purple-100 text-purple-700 border-purple-300 font-bold" },
+  A: { cls: "bg-green-100 text-green-700 border-green-300 font-bold" },
+  B: { cls: "bg-yellow-100 text-yellow-700 border-yellow-300 font-semibold" },
+  C: { cls: "bg-gray-100 text-gray-500 border-gray-200" },
 } as const;
 
 /** "1025" → "10:25" */
@@ -20,13 +22,14 @@ function formatPostTime(t: string | null): string | null {
   return `${t.slice(0, 2)}:${t.slice(2, 4)}`;
 }
 
-export function RaceCard({ race }: Props) {
-  const conf = race.confidence_label ? CONFIDENCE_CONFIG[race.confidence_label] : null;
+export function RaceCard({ race, basePath = "/races" }: Props) {
+  const confRank = race.confidence_rank ?? null;
+  const recRank  = race.recommend_rank  ?? null;
   const postTime = formatPostTime(race.post_time);
 
   return (
     <Link
-      href={`/races/${race.id}`}
+      href={`${basePath}/${race.id}`}
       aria-label={`${race.course_name} ${race.race_number}R ${race.race_name ?? ''} 詳細へ`}
     >
       <div className="flex items-center gap-3 px-4 py-3 bg-white border border-gray-100 rounded-lg hover:border-blue-300 hover:bg-blue-50/30 transition-colors cursor-pointer">
@@ -61,29 +64,30 @@ export function RaceCard({ race }: Props) {
           </div>
         </div>
 
-        {/* 右側: 穴ぐさ + 信頼度 + 算出済みバッジ + 矢印 */}
+        {/* 右側: 穴ぐさ + 信頼度/推奨度ランク + 算出済みバッジ + 矢印 */}
         <div className="flex-shrink-0 flex items-center gap-1.5">
           {race.has_anagusa && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium whitespace-nowrap">
               ☆穴ぐさ
             </span>
           )}
-          {conf && (
-            <div className="flex flex-col items-center gap-0.5">
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium whitespace-nowrap ${conf.class}`}>
-                {conf.text}
-              </span>
-              <span className="text-[9px] text-gray-400 tabular-nums">
-                {race.confidence_score}pt
-              </span>
+          {confRank && recRank ? (
+            <div className="flex flex-col items-center gap-0.5 min-w-[52px]">
+              <div className="flex gap-1">
+                <span className={`text-[10px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[confRank].cls}`}>
+                  信{confRank}
+                </span>
+                <span className={`text-[10px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
+                  推{recRank}
+                </span>
+              </div>
+              <span className="text-[9px] text-gray-400 tabular-nums">{race.confidence_score}pt</span>
             </div>
-          )}
-          {race.has_indices && !conf && (
+          ) : race.has_indices ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium whitespace-nowrap">
               指数✓
             </span>
-          )}
-          {!race.has_indices && (
+          ) : (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 border border-gray-100 whitespace-nowrap">
               未算出
             </span>

@@ -9,16 +9,29 @@ import { cn } from "@/lib/utils";
 type Props = {
   currentRaceId: number;
   races: Race[];
+  basePath?: string;
 };
 
-export function RaceNav({ currentRaceId, races }: Props) {
+export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
+  const isChihou = basePath.startsWith("/chihou");
   // 競馬場グループ
   const courseGroups: Record<string, Race[]> = {};
   for (const r of races) {
     if (!courseGroups[r.course_name]) courseGroups[r.course_name] = [];
     courseGroups[r.course_name].push(r);
   }
-  const COURSE_ORDER = ["東京", "中山", "阪神", "京都", "札幌", "函館", "福島", "新潟", "中京", "小倉"];
+  const JRA_COURSE_ORDER = ["東京", "中山", "阪神", "京都", "札幌", "函館", "福島", "新潟", "中京", "小倉"];
+  // 南関東を先頭、以降は地域順
+  const CHIHOU_COURSE_ORDER = [
+    "浦和", "船橋", "大井", "川崎",          // 南関東
+    "門別",                                   // 北海道
+    "盛岡", "水沢",                           // 東北
+    "金沢", "笠松", "名古屋",                 // 中部
+    "園田", "姫路",                           // 近畿
+    "高知",                                   // 四国
+    "佐賀",                                   // 九州
+  ];
+  const COURSE_ORDER = isChihou ? CHIHOU_COURSE_ORDER : JRA_COURSE_ORDER;
   const courses = [
     ...COURSE_ORDER.filter((c) => courseGroups[c]),
     ...Object.keys(courseGroups).filter((c) => !COURSE_ORDER.includes(c)),
@@ -49,8 +62,8 @@ export function RaceNav({ currentRaceId, races }: Props) {
           {/* 前レース */}
           {prevRace ? (
             <Link
-              href={`/races/${prevRace.id}`}
-              className="flex-shrink-0 flex items-center gap-0.5 text-blue-200 hover:text-white text-[11px] transition-colors"
+              href={`${basePath}/${prevRace.id}`}
+              className={`flex-shrink-0 flex items-center gap-0.5 ${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-[11px] transition-colors`}
               aria-label={`前のレース: ${prevRace.course_name} ${prevRace.race_number}R`}
             >
               <span className="text-sm leading-none" aria-hidden="true">‹</span>
@@ -77,8 +90,8 @@ export function RaceNav({ currentRaceId, races }: Props) {
                 className={cn(
                   "flex-shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors whitespace-nowrap",
                   activeCourse === course
-                    ? "bg-white text-blue-900 font-bold"
-                    : "text-blue-200 hover:text-white hover:bg-white/10"
+                    ? `bg-white ${isChihou ? "text-green-900" : "text-blue-900"} font-bold`
+                    : `${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white hover:bg-white/10`
                 )}
               >
                 {course}
@@ -89,8 +102,8 @@ export function RaceNav({ currentRaceId, races }: Props) {
           {/* 次レース */}
           {nextRace ? (
             <Link
-              href={`/races/${nextRace.id}`}
-              className="flex-shrink-0 flex items-center gap-0.5 text-blue-200 hover:text-white text-[11px] transition-colors"
+              href={`${basePath}/${nextRace.id}`}
+              className={`flex-shrink-0 flex items-center gap-0.5 ${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-[11px] transition-colors`}
               aria-label={`次のレース: ${nextRace.course_name} ${nextRace.race_number}R`}
             >
               <span className="whitespace-nowrap">{nextRace.course_name}{nextRace.race_number}R</span>
@@ -116,19 +129,19 @@ export function RaceNav({ currentRaceId, races }: Props) {
                 key={race.id}
                 aria-pressed={isCurrent}
                 aria-label={`${race.race_number}R${race.has_indices ? "（指数あり）" : ""}`}
-                onClick={() => router.push(`/races/${race.id}`)}
+                onClick={() => router.push(`${basePath}/${race.id}`)}
                 className={cn(
                   "flex-shrink-0 text-xs px-2 py-1 min-h-[28px] rounded transition-colors whitespace-nowrap",
                   isCurrent
-                    ? "bg-white text-blue-900 font-bold"
+                    ? `bg-white ${isChihou ? "text-green-900" : "text-blue-900"} font-bold`
                     : race.has_indices
-                    ? "text-blue-100 hover:text-white hover:bg-white/10"
-                    : "text-blue-300/50 hover:text-blue-200 hover:bg-white/5"
+                    ? `${isChihou ? "text-green-100" : "text-blue-100"} hover:text-white hover:bg-white/10`
+                    : `${isChihou ? "text-green-200/60 hover:text-green-100" : "text-blue-300/50 hover:text-blue-200"} hover:bg-white/5`
                 )}
               >
                 {race.race_number}R
                 {race.has_indices && !isCurrent && (
-                  <span className="ml-0.5 text-[9px] text-blue-300" aria-hidden="true">✓</span>
+                  <span className={`ml-0.5 text-[9px] ${isChihou ? "text-green-200" : "text-blue-300"}`} aria-hidden="true">✓</span>
                 )}
               </button>
             );

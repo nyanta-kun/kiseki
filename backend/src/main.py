@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.access import access_admin_router, access_router
 from .api.agent_router import router as agent_router
+from .api.chihou_import_router import chihou_router
+from .api.chihou_performance import router as chihou_performance_router
+from .api.chihou_races_router import router as chihou_races_router
 from .api.horses import router as horses_router
 from .api.import_router import changes_router
 from .api.import_router import router as import_router
@@ -59,6 +62,9 @@ app.include_router(access_router)           # POST/GET /api/users/{id}/redeem-co
 app.include_router(access_admin_router)     # GET/POST/PATCH /api/admin/invitation-codes
 app.include_router(yoso_router)             # GET/POST /api/yoso/*
 app.include_router(recommendations_router)  # GET/POST /api/recommendations
+app.include_router(chihou_router)              # POST /api/import/chihou/*
+app.include_router(chihou_races_router)        # GET  /api/chihou/races/*
+app.include_router(chihou_performance_router)  # GET  /api/chihou/performance/*
 
 # MS2以降で順次有効化:
 # from .api import indices, newspaper

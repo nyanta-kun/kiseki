@@ -13,20 +13,27 @@ export function RaceSubHeader({
   race,
   date,
   allRaces,
+  basePath = "/races",
 }: {
   raceId: number;
   race: Awaited<ReturnType<typeof fetchRace>> | null;
   date: string;
   allRaces: Race[];
+  basePath?: string;
 }) {
+  const isChihou = basePath.startsWith("/chihou");
+  const subheaderBg = isChihou ? "var(--chihou-primary-mid)" : "var(--primary-mid)";
+  const linkColorClass = isChihou ? "text-green-100 hover:text-white" : "text-blue-200 hover:text-white";
+  const metaColorClass = isChihou ? "text-green-100" : "text-blue-200";
+
   return (
-    <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
+    <div style={{ background: subheaderBg, flexShrink: 0 }} className="shadow-sm">
       {/* レース情報 */}
       <div className="max-w-3xl mx-auto px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Link
-            href={`/races?date=${date}`}
-            className="text-blue-200 hover:text-white text-lg leading-none flex-shrink-0"
+            href={`${basePath}?date=${date}${race?.course_name ? `&course=${encodeURIComponent(race.course_name)}` : ""}`}
+            className={`${linkColorClass} text-lg leading-none flex-shrink-0`}
             aria-label="レース一覧に戻る"
           >
             ←
@@ -50,7 +57,7 @@ export function RaceSubHeader({
               )}
             </div>
             {race && (
-              <p className="text-blue-200 text-[11px] mt-0.5">
+              <p className={`${metaColorClass} text-[11px] mt-0.5`}>
                 {formatDate(date)}
                 {race.post_time && (
                   <span className="ml-1.5 font-medium text-white/90">{formatPostTime(race.post_time)} 発走</span>
@@ -65,7 +72,7 @@ export function RaceSubHeader({
 
       {/* 前後ナビ + 競馬場タブ + レース番号 */}
       {allRaces.length > 0 && (
-        <RaceNav currentRaceId={raceId} races={allRaces} />
+        <RaceNav currentRaceId={raceId} races={allRaces} basePath={basePath} />
       )}
     </div>
   );

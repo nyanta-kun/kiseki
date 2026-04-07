@@ -9,17 +9,18 @@ type Props = {
   isAdmin?: boolean;
 };
 
-const NAV_ITEMS = [
-  { icon: "🏇", label: "レース", href: "/races", matchPath: "/races" },
-  { icon: "📊", label: "実績", href: "/results", matchPath: "/results" },
-  { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
-  { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
-];
-
 export function HamburgerMenu({ isAdmin = false }: Props) {
   // pathnameが変わると自動的に閉じる派生state（useEffect不要）
   const [openedOnPath, setOpenedOnPath] = useState<string | null>(null);
   const pathname = usePathname();
+  const isChihou = pathname.startsWith("/chihou");
+
+  const NAV_ITEMS = [
+    { icon: "🏇", label: "レース", href: isChihou ? "/chihou/races" : "/races", matchPath: isChihou ? "/chihou/races" : "/races" },
+    { icon: "📊", label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
+    { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
+    { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
+  ];
   const isOpen = openedOnPath === pathname;
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);

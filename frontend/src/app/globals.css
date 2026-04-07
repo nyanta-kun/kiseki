@@ -39,6 +39,14 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+/* 地方競馬テーマカラー（JRAネイビーと同等の暗さで揃えた濃いグリーン） */
+:root {
+  --chihou-primary: #0a2217;     /* ダークフォレスト（JRA #0d1f35 相当の暗さ） */
+  --chihou-primary-mid: #0f3520; /* ディープグリーン（JRA #1a3a5c 相当）*/
+  --chihou-primary-light: #e8f5ee;
+  --chihou-accent: #2c8a5c;
+}
+
 :focus-visible {
   outline: 2px solid #1a5c38;
   outline-offset: 2px;

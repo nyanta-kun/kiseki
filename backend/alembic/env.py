@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool, text
 
 from alembic import context
 from src.config import settings
+from src.db.chihou_models import ChihouBase
 from src.db.models import Base
 
 config = context.config
@@ -14,13 +15,13 @@ config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, ChihouBase.metadata]
 
 
 def include_name(name, type_, parent_names):
-    """keiba スキーマのオブジェクトのみを対象にする"""
+    """keiba / chihou スキーマのオブジェクトのみを対象にする"""
     if type_ == "schema":
-        return name == "keiba"
+        return name in ("keiba", "chihou")
     return True
 
 
@@ -46,8 +47,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        # keiba スキーマが存在しない場合は作成
+        # keiba / chihou スキーマが存在しない場合は作成
         connection.execute(text("CREATE SCHEMA IF NOT EXISTS keiba"))
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS chihou"))
         connection.commit()
 
         context.configure(

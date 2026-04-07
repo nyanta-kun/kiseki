@@ -33,6 +33,8 @@ export type Race = {
   has_anagusa: boolean;
   confidence_score: number | null;
   confidence_label: "HIGH" | "MID" | "LOW" | null;
+  confidence_rank: "S" | "A" | "B" | "C" | null;
+  recommend_rank: "S" | "A" | "B" | "C" | null;
 };
 
 export type RaceResult = {
@@ -73,9 +75,13 @@ export type OddsData = {
 export type RaceConfidence = {
   score: number;
   label: "HIGH" | "MID" | "LOW";
+  rank: "S" | "A" | "B" | "C";
+  recommend_rank: "S" | "A" | "B" | "C";
   gap_1_2: number;
   gap_1_3: number;
   head_count: number;
+  win_prob_top: number | null;
+  top_win_odds: number | null;
 };
 
 export type IndicesResponse = {
@@ -247,6 +253,56 @@ export async function fetchPerformanceSummary(
   if (filters.condition?.length) params.set("condition", filters.condition.join(","));
   const qs = params.toString() ? `?${params.toString()}` : "";
   return get<PerformanceSummary>(`/performance/summary${qs}`, { next: { revalidate: 300 } });
+}
+
+// ---------------------------------------------------------------------------
+// 地方競馬 パフォーマンス
+// ---------------------------------------------------------------------------
+
+export type ChihouMonthlyStats = {
+  year_month: string;
+  total_races: number;
+  win_hit_rate: number;
+  place_hit_rate: number;
+  top3_coverage_rate: number;
+  simulated_roi_win: number;
+  simulated_roi_place: number;
+  place_roi_races: number;
+};
+
+export type ChihouPerformanceSummary = {
+  from_date: string;
+  to_date: string;
+  total_races: number;
+  win_hit_rate: number;
+  place_hit_rate: number;
+  top3_coverage_rate: number;
+  simulated_roi_win: number;
+  simulated_roi_place: number;
+  place_roi_races: number;
+  monthly_stats: ChihouMonthlyStats[];
+  by_course: DimensionStat[];
+  by_surface: DimensionStat[];
+};
+
+export type ChihouPerformanceFilters = {
+  from_date?: string;
+  to_date?: string;
+  course_name?: string[];
+  surface?: string[];
+};
+
+/** 地方競馬 AI指数精度サマリー → 5分キャッシュ */
+export async function fetchChihouPerformanceSummary(
+  filters: ChihouPerformanceFilters = {},
+): Promise<ChihouPerformanceSummary> {
+  const params = new URLSearchParams();
+  if (filters.from_date) params.set("from_date", filters.from_date);
+  if (filters.to_date) params.set("to_date", filters.to_date);
+  if (filters.course_name?.length) params.set("course_name", filters.course_name.join(","));
+  if (filters.surface?.length) params.set("surface", filters.surface.join(","));
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return get<ChihouPerformanceSummary>(`/chihou/performance/summary${qs}`, { next: { revalidate: 300 } });
 }
 
 export function buildOddsWsUrl(raceId: number): string {
@@ -449,4 +505,76 @@ export async function fetchRecommendations(date: string): Promise<Recommendation
   });
   if (!res.ok) throw new Error(`fetchRecommendations failed: ${res.status}`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// 地方競馬 型定義
+// ---------------------------------------------------------------------------
+
+export type ChihouHorseIndex = {
+  horse_id: number;
+  horse_number: number | null;
+  horse_name: string;
+  composite_index: number;
+  win_probability: number | null;
+  place_probability: number | null;
+  speed_index: number | null;
+  last3f_index: number | null;
+  jockey_index: number | null;
+  rotation_index: number | null;
+};
+
+export type ChihouRaceRanks = {
+  score: number;
+  confidence_rank: "S" | "A" | "B" | "C";
+  recommend_rank: "S" | "A" | "B" | "C";
+  gap_1_2: number;
+  gap_1_3: number;
+  win_prob_top: number | null;
+  top_win_odds: number | null;
+};
+
+export type ChihouIndicesResponse = {
+  horses: ChihouHorseIndex[];
+  ranks: ChihouRaceRanks | null;
+};
+
+// ---------------------------------------------------------------------------
+// 地方競馬 API関数
+// ---------------------------------------------------------------------------
+
+/** 地方競馬 日付別レース一覧 → 5分キャッシュ */
+export async function fetchChihouRacesByDate(date: string): Promise<Race[]> {
+  return get<Race[]>(`/chihou/races?date=${date}`, { next: { revalidate: 300 } });
+}
+
+/** 地方競馬 レース詳細 → 5分キャッシュ */
+export async function fetchChihouRace(raceId: number): Promise<Race> {
+  return get<Race>(`/chihou/races/${raceId}`, { next: { revalidate: 300 } });
+}
+
+/** 地方競馬 前後開催日検索 → 30秒キャッシュ */
+export async function fetchChihouNearestDate(
+  fromDate: string,
+  direction: "prev" | "next",
+): Promise<{ date: string }> {
+  return get<{ date: string }>(
+    `/chihou/races/nearest-date?from=${fromDate}&direction=${direction}`,
+    { next: { revalidate: 30 } },
+  );
+}
+
+/** 地方競馬 指数 → 60秒キャッシュ */
+export async function fetchChihouIndices(raceId: number): Promise<ChihouIndicesResponse> {
+  return get<ChihouIndicesResponse>(`/chihou/races/${raceId}/indices`, { next: { revalidate: 60 } });
+}
+
+/** 地方競馬 成績 → 30秒キャッシュ */
+export async function fetchChihouResults(raceId: number): Promise<RaceResult[]> {
+  return get<RaceResult[]>(`/chihou/races/${raceId}/results`, { next: { revalidate: 30 } });
+}
+
+/** 地方競馬 単勝・複勝オッズ → 30秒キャッシュ */
+export async function fetchChihouOdds(raceId: number): Promise<OddsData> {
+  return get<OddsData>(`/chihou/races/${raceId}/odds`, { next: { revalidate: 30 } });
 }

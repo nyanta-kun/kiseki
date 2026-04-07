@@ -32,7 +32,6 @@ import os
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -40,6 +39,18 @@ import requests
 
 # 環境変数読み込み
 from dotenv import load_dotenv
+
+from link_common import (
+    _normalize_jvread,
+    post_to_backend,
+    _post_in_batches,
+    save_cache,
+    load_cache,
+    save_pending,
+    load_pending_all,
+    retry_pending,
+    report_status as _lc_report_status,
+)
 
 # .envはプロジェクトルートにある想定
 env_path = Path(__file__).resolve().parent.parent / ".env"
@@ -112,100 +123,17 @@ RECORD_TYPES = {
 
 
 # ---------------------------------------------------------------------------
-# ローカルキャッシュ
+# ローカルキャッシュ（実装は link_common.py に移動）
 # ---------------------------------------------------------------------------
-
-def _cache_key(dataspec: str, from_time: str, option: int) -> str:
-    """キャッシュファイルのベースキー文字列を返す。"""
-    return f"{dataspec}_{from_time}_{option}"
-
-
-def _cache_path(dataspec: str, from_time: str, option: int) -> Path:
-    """キャッシュファイルのパスを返す。"""
-    return CACHE_DIR / f"{_cache_key(dataspec, from_time, option)}.jsonl"
-
-
-def save_cache(dataspec: str, from_time: str, option: int, records: list[dict]) -> None:
-    """取得レコードをローカルJSONLキャッシュへ保存する。"""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _cache_path(dataspec, from_time, option)
-    with path.open("w", encoding="utf-8") as f:
-        for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    logger.info(f"[cache] saved {len(records)} records -> {path.name}")
-
-
-def load_cache(dataspec: str, from_time: str, option: int) -> list[dict] | None:
-    """
-    キャッシュが存在すればレコードリストを返す。なければ None を返す。
-    """
-    path = _cache_path(dataspec, from_time, option)
-    if not path.exists():
-        return None
-    records = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    logger.info(f"[cache] loaded {len(records)} records from {path.name}")
-    return records
+# save_cache / load_cache は link_common からインポート済み。
+# 各呼び出し箇所では cache_dir=CACHE_DIR を引数として渡す。
 
 
 # ---------------------------------------------------------------------------
-# ペンディングキュー（POST失敗分の保存・リトライ）
+# ペンディングキュー（実装は link_common.py に移動）
 # ---------------------------------------------------------------------------
-
-def _pending_dir_for(endpoint: str) -> Path:
-    """エンドポイント別のペンディングディレクトリを返す。"""
-    safe = endpoint.lstrip("/").replace("/", "_")
-    return PENDING_DIR / safe
-
-
-def save_pending(endpoint: str, records: list[dict]) -> Path:
-    """
-    POST失敗レコードをペンディングキューへ保存する。
-
-    Returns:
-        保存したファイルのPath
-    """
-    d = _pending_dir_for(endpoint)
-    d.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    path = d / f"{ts}.jsonl"
-    with path.open("w", encoding="utf-8") as f:
-        for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    logger.warning(f"[pending] saved {len(records)} records -> {path}")
-    return path
-
-
-def load_pending_all() -> list[tuple[str, Path, list[dict]]]:
-    """
-    全ペンディングファイルを読み込む。
-
-    Returns:
-        [(endpoint_str, file_path, records), ...]
-    """
-    if not PENDING_DIR.exists():
-        return []
-    result = []
-    for ep_dir in sorted(PENDING_DIR.iterdir()):
-        if not ep_dir.is_dir():
-            continue
-        endpoint = "/" + ep_dir.name.replace("_", "/", ep_dir.name.count("_") - 1 if ep_dir.name.count("_") > 1 else ep_dir.name.count("_"))
-        # ディレクトリ名から元のエンドポイントを復元: api_import_races -> /api/import/races
-        endpoint = "/" + ep_dir.name.replace("_", "/")
-        for jsonl_file in sorted(ep_dir.glob("*.jsonl")):
-            records = []
-            with jsonl_file.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        records.append(json.loads(line))
-            if records:
-                result.append((endpoint, jsonl_file, records))
-    return result
+# save_pending / load_pending_all は link_common からインポート済み。
+# 各呼び出し箇所では pending_dir=PENDING_DIR を引数として渡す。
 
 
 # ---------------------------------------------------------------------------
@@ -231,61 +159,12 @@ def mark_file_completed(dataspec: str, filename: str) -> None:
         f.write(filename + "\n")
 
 
-def retry_pending() -> None:
-    """ペンディングキューをすべて並列リトライする。成功したファイルは削除する。"""
-    items = load_pending_all()
-    if not items:
-        logger.info("[pending] ペンディングキューは空です")
-        return
-
-    logger.info(f"[pending] {len(items)} ファイルをリトライします (並列4)")
-
-    def _retry_one(item: tuple) -> tuple[bool, str, int, str]:
-        endpoint, path, records = item
-        ok = post_to_backend(endpoint, {"records": records})
-        return ok, path.name, len(records), endpoint, path
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_retry_one, item): item for item in items}
-        for future in as_completed(futures):
-            ok, name, count, endpoint, path = future.result()
-            if ok:
-                path.unlink()
-                logger.info(f"[pending] OK -> 削除: {name} ({count} records, {endpoint})")
-            else:
-                logger.warning(f"[pending] NG -> 残留: {name} ({count} records, {endpoint})")
-
-
 # ---------------------------------------------------------------------------
-# JVRead バッファ正規化
+# ペンディングリトライ / JVRead バッファ正規化 / バックエンドPOST（実装は link_common.py に移動）
 # ---------------------------------------------------------------------------
-
-def _normalize_jvread(raw: str) -> str:
-    """win32com が返す JVRead バッファを「1バイト = 1 Python文字」形式に正規化する。
-
-    win32com の COM BSTR 機構は SJIS バイト列を Unicode に変換して返すため、
-    全角文字（2 SJIS バイト）が 1 Python 文字に縮む。
-    これにより JVDF 仕様書の 1-indexed バイト位置とズレが生じる。
-
-    この関数は:
-      1. raw を CP932（SJIS）バイト列に re-encode
-      2. Latin-1 として re-decode → 1 バイト = 1 Python 文字
-
-    これでパーサーの 1-indexed バイト位置がそのまま Python 文字列インデックスと一致する。
-    漢字フィールドは引き続き _decode() で CP932 → Unicode に変換して読む。
-
-    Args:
-        raw: JVRead が返した Python 文字列（COM BSTR 経由で Unicode 変換済み）
-
-    Returns:
-        1バイト = 1文字 の Latin-1 文字列
-    """
-    try:
-        return raw.encode("cp932").decode("latin-1")
-    except (UnicodeEncodeError, UnicodeDecodeError) as e:
-        logger.warning(f"_normalize_jvread fallback: {e}")
-        return raw
-
+# retry_pending / _normalize_jvread / post_to_backend は link_common からインポート済み。
+# retry_pending の呼び出し箇所では pending_dir=PENDING_DIR, backend_url=BACKEND_URL,
+# api_key=API_KEY を引数として渡す。
 
 # ---------------------------------------------------------------------------
 # JV-Link 初期化
@@ -311,32 +190,6 @@ def init_jvlink():
         logger.error(f"JV-Link initialization error: {e}")
         logger.error("Python 32bit版で実行していますか？ JV-Linkはインストール済みですか？")
         sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# バックエンドへのPOST
-# ---------------------------------------------------------------------------
-
-def post_to_backend(endpoint: str, data: dict) -> bool:
-    """Mac側FastAPIにデータをPOSTする"""
-    try:
-        resp = requests.post(
-            f"{BACKEND_URL}{endpoint}",
-            json=data,
-            headers={"X-API-Key": API_KEY},
-            timeout=120,
-        )
-        if resp.status_code == 200:
-            return True
-        else:
-            logger.warning(f"POST {endpoint} failed: {resp.status_code} {resp.text}")
-            return False
-    except requests.exceptions.ConnectionError:
-        logger.error(f"Backend unreachable: {BACKEND_URL}")
-        return False
-    except Exception as e:
-        logger.error(f"POST error: {e}")
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +228,7 @@ def fetch_stored_data(
     """
     # キャッシュ確認
     if not skip_cache:
-        cached = load_cache(dataspec, from_time, option)
+        cached = load_cache(dataspec, from_time, option, CACHE_DIR)
         if cached is not None:
             logger.info(f"[cache] キャッシュ使用: {dataspec} from={from_time} opt={option} ({len(cached)} records)")
             return cached
@@ -543,7 +396,7 @@ def fetch_stored_data(
 
     # 取得成功したらキャッシュ保存（skip_cache=True の場合はスキップ）
     if not skip_cache:
-        save_cache(dataspec, from_time, option, records)
+        save_cache(dataspec, from_time, option, records, CACHE_DIR)
 
     return records
 
@@ -628,28 +481,12 @@ def _post_hr_payouts(hr_records: list[dict]) -> None:
     if not parsed:
         return
 
-    ok = post_to_backend("/api/import/payouts", {"records": parsed})
+    ok = post_to_backend("/api/import/payouts", {"records": parsed}, BACKEND_URL, API_KEY)
     if ok:
         logger.info(f"  POST /api/import/payouts {len(parsed)} 件 -> OK")
     else:
         logger.warning(f"  POST /api/import/payouts {len(parsed)} 件 -> NG (ペンディング保存)")
-        save_pending("/api/import/payouts", parsed)
-
-
-def _post_in_batches(endpoint: str, records: list[dict], batch_size: int = 500) -> None:
-    """
-    レコードをbatch_size件ずつ分割してPOSTする。
-
-    失敗したバッチはペンディングキューへ保存する。
-    """
-    for i in range(0, len(records), batch_size):
-        batch = records[i:i + batch_size]
-        ok = post_to_backend(endpoint, {"records": batch})
-        if ok:
-            logger.info(f"  POST {endpoint} batch[{i}:{i+batch_size}] -> OK")
-        else:
-            logger.warning(f"  POST {endpoint} batch[{i}:{i+batch_size}] -> NG (ペンディング保存)")
-            save_pending(endpoint, batch)
+        save_pending("/api/import/payouts", parsed, PENDING_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +506,7 @@ def run_daily_fetch(jv) -> None:
         ra_se, hr = _split_race_hr(filtered)
         if ra_se:
             logger.info(f"  [{filename}] RA/SE {len(ra_se)} 件 → DB反映")
-            _post_in_batches("/api/import/races", ra_se)
+            _post_in_batches("/api/import/races", ra_se, 500, BACKEND_URL, API_KEY, PENDING_DIR)
         if hr:
             logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
             _post_hr_payouts(hr)
@@ -742,7 +579,7 @@ def run_odds_prefetch(jv, fetch_date: str | None = None) -> None:
         post_to_backend("/api/import/odds", {
             "date": fetch_date,
             "records": all_o1,
-        })
+        }, BACKEND_URL, API_KEY)
     else:
         logger.info(f"オッズデータなし（前日発売未開始の可能性）: date={fetch_date}")
 
@@ -776,7 +613,7 @@ def run_realtime_monitor(jv) -> None:
                 post_to_backend("/api/import/odds", {
                     "date": today,
                     "records": all_o1,
-                })
+                }, BACKEND_URL, API_KEY)
 
             # 出走取消チェック（重複送信防止）
             scratch_records = fetch_realtime_data(jv, RT_SCRATCH, today)
@@ -792,7 +629,7 @@ def run_realtime_monitor(jv) -> None:
                     "change_type": "scratch",
                     "raw_data": rec["data"],
                     "detected_at": datetime.now().isoformat(),
-                })
+                }, BACKEND_URL, API_KEY)
             if scratch_records and not new_scratches:
                 logger.debug(f"出走取消: {len(scratch_records)}件（送信済みスキップ）")
 
@@ -802,7 +639,7 @@ def run_realtime_monitor(jv) -> None:
                 post_to_backend("/api/import/weights", {
                     "date": today,
                     "records": weight_records,
-                })
+                }, BACKEND_URL, API_KEY)
 
             # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
             # 0B12 の正規キーは YYYYMMDDJJRR だが、16文字レースキーで呼んでも受理される場合がある
@@ -818,7 +655,7 @@ def run_realtime_monitor(jv) -> None:
                         new_results.append(rec)
             if new_results:
                 logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信")
-                post_to_backend("/api/import/races", {"records": new_results})
+                post_to_backend("/api/import/races", {"records": new_results}, BACKEND_URL, API_KEY)
 
             time.sleep(30)  # 30秒間隔
 
@@ -878,7 +715,7 @@ def run_setup(jv) -> None:
             logger.info(
                 f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
             )
-            _post_in_batches("/api/import/races", ra_se)
+            _post_in_batches("/api/import/races", ra_se, 500, BACKEND_URL, API_KEY, PENDING_DIR)
             total_posted["ra_se"] += len(ra_se)
         if hr:
             logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
@@ -918,7 +755,7 @@ def run_setup(jv) -> None:
             mark_file_completed(DATASPEC_BLOD, filename)
             return
         logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
-        _post_in_batches("/api/import/bloodlines", hn_sk)
+        _post_in_batches("/api/import/bloodlines", hn_sk, 500, BACKEND_URL, API_KEY, PENDING_DIR)
         total_blod["hn_sk"] += len(hn_sk)
         total_blod["files"] += 1
         mark_file_completed(DATASPEC_BLOD, filename)
@@ -961,7 +798,7 @@ def _run_blod_only(jv) -> None:
             mark_file_completed(DATASPEC_BLOD, filename)
             return
         logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
-        _post_in_batches("/api/import/bloodlines", hn_sk)
+        _post_in_batches("/api/import/bloodlines", hn_sk, 500, BACKEND_URL, API_KEY, PENDING_DIR)
         total_blod["hn_sk"] += len(hn_sk)
         total_blod["files"] += 1
         mark_file_completed(DATASPEC_BLOD, filename)
@@ -1024,7 +861,7 @@ def run_recent(jv, from_year: int = 2023) -> None:
             logger.info(
                 f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
             )
-            _post_in_batches("/api/import/races", ra_se)
+            _post_in_batches("/api/import/races", ra_se, 500, BACKEND_URL, API_KEY, PENDING_DIR)
             total_posted["ra_se"] += len(ra_se)
         if hr:
             logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
@@ -1056,8 +893,16 @@ def run_recent(jv, from_year: int = 2023) -> None:
 # コマンドポーリング / ステータス報告
 # ---------------------------------------------------------------------------
 
-def report_status(status: str, mode: str | None = None, message: str = "", progress: dict | None = None) -> None:
-    """Backendへ現在のステータスをPOSTする。
+
+def report_status(
+    status: str,
+    mode: str | None = None,
+    message: str = "",
+    progress: dict | None = None,
+) -> None:
+    """グローバル変数を補完する report_status のローカルラッパー。
+
+    link_common.report_status を BACKEND_URL / API_KEY で呼び出す。
 
     Args:
         status: "running" | "idle" | "error" | "done"
@@ -1065,21 +910,7 @@ def report_status(status: str, mode: str | None = None, message: str = "", progr
         message: 状態の説明
         progress: 任意の進捗情報
     """
-    payload = {
-        "status": status,
-        "mode": mode,
-        "message": message,
-        "progress": progress or {},
-    }
-    try:
-        requests.post(
-            f"{BACKEND_URL}/api/agent/status",
-            json=payload,
-            headers={"X-API-Key": API_KEY},
-            timeout=10,
-        )
-    except Exception as e:
-        logger.debug(f"Status report failed (non-critical): {e}")
+    _lc_report_status(status, mode, message, progress, BACKEND_URL, API_KEY)
 
 
 def poll_command() -> dict | None:
@@ -1134,7 +965,7 @@ def run_command_loop(jv) -> None:
                     report_status("idle", message=f"Odds prefetch done: {fetch_date or 'tomorrow'}")
                 elif action == "retry":
                     report_status("running", mode="retry", message="Retrying pending queue")
-                    retry_pending()
+                    retry_pending(PENDING_DIR, BACKEND_URL, API_KEY)
                     report_status("idle", message="Retry completed")
                 elif action == "recent":
                     from_year = cmd.get("params", {}).get("from_year", 2023)
@@ -1199,7 +1030,7 @@ def main() -> None:
     logger.info(f"Data dir: {DATA_DIR}")
 
     # 起動時に常にペンディングリトライ（retryモード以外でも）
-    retry_pending()
+    retry_pending(PENDING_DIR, BACKEND_URL, API_KEY)
 
     if args.mode == "retry":
         # リトライのみで終了

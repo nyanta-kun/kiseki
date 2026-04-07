@@ -428,34 +428,34 @@ async def get_performance_summary(
             place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
             payout_covered_race_ids.add(pr.race_id)
 
-        # 2. race_payouts に存在しないレースは odds_history の最新オッズで補完
-        missing_race_ids = [
-            rid for rid in race_ids
-            if rid not in payout_covered_race_ids
-        ]
-        if missing_race_ids:
-            fallback_rows = (
-                await db.execute(
-                    text("""
-                        SELECT race_id, combination::int AS horse_number, odds
-                        FROM (
-                            SELECT race_id, combination, odds,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY race_id, combination
-                                       ORDER BY fetched_at DESC
-                                   ) AS rn
-                            FROM keiba.odds_history
-                            WHERE bet_type = 'place'
-                              AND combination ~ '^[0-9]+$'
-                              AND race_id = ANY(:race_ids)
-                        ) t
-                        WHERE rn = 1
-                    """),
-                    {"race_ids": missing_race_ids},
-                )
-            ).fetchall()
-            for pr in fallback_rows:
-                place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+        # 2. odds_history で不足分を補完。
+        #    payout_covered_race_ids 外のレース（未確定）に加え、
+        #    カバー済みレースでも着外馬は race_payouts に存在しないため全 race_ids を対象とする。
+        #    race_payouts の確定払戻（place_odds_map 登録済み）は上書きしない。
+        fallback_rows = (
+            await db.execute(
+                text("""
+                    SELECT race_id, combination::int AS horse_number, odds
+                    FROM (
+                        SELECT race_id, combination, odds,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY race_id, combination
+                                   ORDER BY fetched_at DESC
+                               ) AS rn
+                        FROM keiba.odds_history
+                        WHERE bet_type = 'place'
+                          AND combination ~ '^[0-9]+$'
+                          AND race_id = ANY(:race_ids)
+                    ) t
+                    WHERE rn = 1
+                """),
+                {"race_ids": race_ids},
+            )
+        ).fetchall()
+        for pr in fallback_rows:
+            key = (pr.race_id, pr.horse_number)
+            if key not in place_odds_map:  # race_payouts の確定払戻を上書きしない
+                place_odds_map[key] = float(pr.odds)
 
     # --- レースごとの指標を計算 ---
     race_metrics: list[dict] = []
@@ -753,55 +753,36 @@ async def get_odds_data(
     for row in rows:
         race_groups[row.race_id].append(row)
 
-    # --- 複勝オッズを race_payouts → odds_history の順で一括取得 ---
+    # --- 複勝オッズを odds_history のみから取得（感度分析専用） ---
+    # race_payouts は3着以内の馬しか記録しないため「着外予測1位馬」のオッズが欠落し、
+    # 分母が着馬のみになって ROI が大幅に過大評価される。
+    # odds_history（事前オッズ）は着否にかかわらず全馬を記録するため感度分析に適している。
+    # odds_history のカバレッジは 2026/03/28 以降のため、それ以前は has_place_odds=False になる。
     race_ids = list(race_groups.keys())
     place_odds_map: dict[tuple[int, int], float] = {}
-    payout_covered_race_ids: set[int] = set()
     if race_ids:
-        payout_rows = (
+        history_rows = (
             await db.execute(
                 text("""
-                    SELECT race_id, combination::int AS horse_number,
-                           payout::float / 100.0 AS odds
-                    FROM keiba.race_payouts
-                    WHERE bet_type = 'place'
-                      AND combination ~ '^[0-9]+$'
-                      AND race_id = ANY(:race_ids)
+                    SELECT race_id, combination::int AS horse_number, odds
+                    FROM (
+                        SELECT race_id, combination, odds,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY race_id, combination
+                                   ORDER BY fetched_at DESC
+                               ) AS rn
+                        FROM keiba.odds_history
+                        WHERE bet_type = 'place'
+                          AND combination ~ '^[0-9]+$'
+                          AND race_id = ANY(:race_ids)
+                    ) t
+                    WHERE rn = 1
                 """),
                 {"race_ids": race_ids},
             )
         ).fetchall()
-        for pr in payout_rows:
+        for pr in history_rows:
             place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
-            payout_covered_race_ids.add(pr.race_id)
-
-        missing_race_ids = [
-            rid for rid in race_ids
-            if rid not in payout_covered_race_ids
-        ]
-        if missing_race_ids:
-            fallback_rows = (
-                await db.execute(
-                    text("""
-                        SELECT race_id, combination::int AS horse_number, odds
-                        FROM (
-                            SELECT race_id, combination, odds,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY race_id, combination
-                                       ORDER BY fetched_at DESC
-                                   ) AS rn
-                            FROM keiba.odds_history
-                            WHERE bet_type = 'place'
-                              AND combination ~ '^[0-9]+$'
-                              AND race_id = ANY(:race_ids)
-                        ) t
-                        WHERE rn = 1
-                    """),
-                    {"race_ids": missing_race_ids},
-                )
-            ).fetchall()
-            for pr in fallback_rows:
-                place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
 
     # --- レースごとに予測1位馬のデータを抽出 ---
     result: list[OddsDataPoint] = []
@@ -848,7 +829,11 @@ async def get_odds_data(
             if horse_number is not None
             else None
         )
-        has_place_odds = race_id in payout_covered_race_ids or place_odds_val is not None
+        # 感度分析では「オッズ値が実際に取得できた場合のみ」分母に含める。
+        # race_payouts カバー済みでも着外馬は place_odds=None になるため除外し、
+        # 分母が着馬のみになって ROI が過大評価されるのを防ぐ。
+        # （get_performance_summary の has_place_odds とは異なるロジック）
+        has_place_odds = place_odds_val is not None
 
         result.append(
             OddsDataPoint(

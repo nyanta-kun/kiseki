@@ -508,7 +508,10 @@ export function OddsRangeSensitivity({ filters }: Props) {
 
       {/* 複勝セクション */}
       <div>
-        <h3 className="text-xs font-semibold text-green-700 mb-2">複勝</h3>
+        <div className="flex items-baseline gap-2 mb-2">
+          <h3 className="text-xs font-semibold text-green-700">複勝</h3>
+          <span className="text-xs text-gray-400">※ 集計対象: 2026/03/28以降（速報オッズ記録開始日）</span>
+        </div>
 
         {/* ヒストグラム */}
         <ResponsiveContainer width="100%" height={200}>
@@ -568,7 +571,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
         <MetricsRow result={placeResult} />
 
         <p className="text-xs text-gray-400 mt-2">
-          ※ 複勝は race_payouts 確定済みレースまたは odds_history がある場合のみ集計対象
+          ※ 複勝ROI算出には発走前の速報オッズ（着外馬含む）が必要なため、記録開始日の 2026/03/28 以降のみ対象。それ以前は着馬のみオッズが確定し、非着馬の事前オッズは取得不可。
         </p>
       </div>
     </section>

@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, Trainer
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence
+from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
 
@@ -192,6 +192,8 @@ class RaceOut(BaseModel):
     has_anagusa: bool = False  # 穴ぐさ指数58以上の馬が存在するか
     confidence_score: int | None = None
     confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
+    confidence_rank: str | None = None   # S / A / B / C
+    recommend_rank: str | None = None    # S / A / B / C
 
     model_config = {"from_attributes": True}
 
@@ -228,10 +230,14 @@ class RaceConfidence(BaseModel):
     """レース信頼度スコア。"""
 
     score: int
-    label: str  # "HIGH" | "MID" | "LOW"
-    gap_1_2: float  # 1位-2位の指数差
-    gap_1_3: float  # 1位-3位の指数差
+    label: str           # "HIGH" | "MID" | "LOW"
+    rank: str = "C"      # S / A / B / C
+    recommend_rank: str = "C"  # S / A / B / C
+    gap_1_2: float       # 1位-2位の指数差
+    gap_1_3: float       # 1位-3位の指数差
     head_count: int
+    win_prob_top: float | None = None
+    top_win_odds: float | None = None
 
 
 class IndicesResponse(BaseModel):
@@ -338,22 +344,59 @@ async def list_races(
         for rid, ver in ver_result.all():
             best_versions[rid] = min(ver, COMPOSITE_VERSION)
 
-    # 各レースの composite_index 一覧を取得
+    # 各レースの composite_index + win_probability 一覧を取得
     race_indices: dict[int, list[float]] = defaultdict(list)
+    race_win_probs: dict[int, list[float]] = defaultdict(list)
+    race_top_horse_num: dict[int, int | None] = {}
     if best_versions:
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
         idx_stmt = (
             select(
                 CalculatedIndex.race_id,
                 CalculatedIndex.composite_index,
+                CalculatedIndex.win_probability,
+                RaceEntry.horse_number,
             )
+            .outerjoin(RaceEntry, (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id))
             .where(tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs))
         )
         idx_result = await db.execute(idx_stmt)
-        for rid, ci in idx_result.all():
+        idx_rows_all = idx_result.all()
+        for rid, ci, wp, hn in idx_rows_all:
             race_indices[rid].append(float(ci))
+            if wp is not None:
+                race_win_probs[rid].append(float(wp))
+        # トップ馬（最大 composite_index）の horse_number を抽出
+        by_race: dict[int, list[tuple]] = defaultdict(list)
+        for rid, ci, wp, hn in idx_rows_all:
+            by_race[rid].append((float(ci), hn))
+        for rid, entries in by_race.items():
+            best = max(entries, key=lambda x: x[0])
+            race_top_horse_num[rid] = best[1]
 
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
+
+    # トップ馬の最新単勝オッズをバッチ取得
+    top_horse_win_odds: dict[int, float] = {}
+    if indexed_ids:
+        odds_rows = await db.execute(
+            select(
+                OddsHistory.race_id,
+                OddsHistory.combination,
+                OddsHistory.odds,
+                OddsHistory.fetched_at,
+            )
+            .where(OddsHistory.race_id.in_(list(indexed_ids)))
+            .where(OddsHistory.bet_type == "win")
+            .order_by(OddsHistory.race_id, OddsHistory.fetched_at.desc())
+        )
+        seen_races_odds: set[int] = set()
+        for rid, combo, odds, _ in odds_rows.all():
+            top_hn = race_top_horse_num.get(rid)
+            if top_hn is not None and combo == str(top_hn) and rid not in seen_races_odds:
+                if odds is not None:
+                    top_horse_win_odds[rid] = float(odds)
+                seen_races_odds.add(rid)
 
     # has_anagusa: sekito.anagusa のピック有無で判定（スコア閾値でなく実ピック）
     anagusa_picks_set = await _anagusa_picks_for_date(db, date)
@@ -365,9 +408,16 @@ async def list_races(
         sekito_code = _JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         if r.id in indexed_ids:
-            conf = calculate_race_confidence(race_indices[r.id], r.head_count)
+            wp_list = race_win_probs.get(r.id) or None
+            conf = calculate_race_confidence(race_indices[r.id], r.head_count, wp_list)
             out.confidence_score = conf["score"]
             out.confidence_label = conf["label"]
+            out.confidence_rank = conf["rank"]
+            out.recommend_rank = calculate_recommend_rank(
+                conf["score"],
+                conf.get("win_prob_top"),
+                top_horse_win_odds.get(r.id),
+            )
         result_list.append(out)
     return result_list
 
@@ -503,14 +553,37 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     # 穴馬スコア算出（指数下位でも特定個別指数が突出している度合い）
     _compute_upside_scores(horses)
 
+    wp_list = [h.win_probability for h in horses if h.win_probability is not None]
     conf_data = calculate_race_confidence(
         composite_indices=[h.composite_index for h in horses],
         head_count=race.head_count,
+        win_probabilities=wp_list or None,
     )
+
+    # トップ馬の最新単勝オッズ取得
+    top_win_odds: float | None = None
+    if horses and horses[0].horse_number is not None:
+        odds_row = await db.execute(
+            select(OddsHistory.odds)
+            .where(OddsHistory.race_id == race_id)
+            .where(OddsHistory.bet_type == "win")
+            .where(OddsHistory.combination == str(horses[0].horse_number))
+            .order_by(OddsHistory.fetched_at.desc())
+            .limit(1)
+        )
+        odds_val = odds_row.scalar()
+        if odds_val is not None:
+            top_win_odds = float(odds_val)
+
+    rec_rank = calculate_recommend_rank(conf_data["score"], conf_data.get("win_prob_top"), top_win_odds)
 
     return IndicesResponse(
         horses=horses,
-        confidence=RaceConfidence(**conf_data),
+        confidence=RaceConfidence(
+            **conf_data,
+            recommend_rank=rec_rank,
+            top_win_odds=top_win_odds,
+        ),
     )
 
 
