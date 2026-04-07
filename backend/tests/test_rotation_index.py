@@ -262,27 +262,23 @@ class TestCalculateSingleHorse:
         # interval=80, pos_bonus=20, time_bonus=0 → clip(100) = 100.0
         assert result == 100.0
 
-    async def test_time_bonus_applied(self) -> None:
+    def test_time_bonus_applied(self) -> None:
         """speed_score=60 → time_bonus=10 が _compute_rotation_index に加算される"""
-        target_race = _make_mock_race(1, "20260322")
         prev_race = _make_mock_race(99, "20260223")  # 28日前
         prev_result = _make_mock_result(horse_id=101, finish_position=6)
         rows = [_make_row(prev_result, prev_race)]
-        db = AsyncMock()
-        calc = RotationIndexCalculator(db=db)
+        calc = RotationIndexCalculator(db=AsyncMock())
         # speed_score=60（+10ボーナス）を直接 _compute_rotation_index に渡す
         result = calc._compute_rotation_index(rows, "20260322", speed_score=60.0)
         # interval=80, pos_bonus=0, time_bonus=10 → 90.0
         assert result == 90.0
 
-    async def test_score_clipped_at_100(self) -> None:
+    def test_score_clipped_at_100(self) -> None:
         """全ボーナス満点でも上限100"""
-        target_race = _make_mock_race(1, "20260322")
         prev_race = _make_mock_race(99, "20260223")  # 28日前
         prev_result = _make_mock_result(horse_id=101, finish_position=1)
         rows = [_make_row(prev_result, prev_race)]
-        db = AsyncMock()
-        calc = RotationIndexCalculator(db=db)
+        calc = RotationIndexCalculator(db=AsyncMock())
         # speed_score=100（time_bonus=10）を直接 _compute_rotation_index に渡す
         result = calc._compute_rotation_index(rows, "20260322", speed_score=100.0)
         # interval=80, pos_bonus=20, time_bonus=10 → clip(110) = 100.0
