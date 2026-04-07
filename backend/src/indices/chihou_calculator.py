@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, case, func, select
@@ -244,8 +243,6 @@ class ChihouIndexCalculator:
             return {"saved": 0, "skipped": 0, "errors": 0}
 
         race_date = _date_to_str(race.date)
-        horse_ids = [e.horse_id for e in entries]
-        jockey_ids = [e.jockey_id for e in entries if e.jockey_id]
 
         # 各指数をバッチ算出
         speed_map   = await self._speed_batch(race_id, race, entries)
@@ -258,19 +255,18 @@ class ChihouIndexCalculator:
         for entry in entries:
             hid = entry.horse_id
             s = speed_map.get(hid, INDEX_NEUTRAL)
-            l = last3f_map.get(hid, INDEX_NEUTRAL)
+            last3f = last3f_map.get(hid, INDEX_NEUTRAL)
             j = jockey_map.get(hid, INDEX_NEUTRAL)
             r = rotation_map.get(hid, INDEX_NEUTRAL)
             comp = (
                 COMPOSITE_WEIGHTS["speed"]    * s
-                + COMPOSITE_WEIGHTS["last3f"]   * l
+                + COMPOSITE_WEIGHTS["last3f"]   * last3f
                 + COMPOSITE_WEIGHTS["jockey"]   * j
                 + COMPOSITE_WEIGHTS["rotation"] * r
             )
             composite_inputs.append((hid, _clip(comp)))
 
         # Softmax で単勝確率を推定
-        horse_id_list = [hid for hid, _ in composite_inputs]
         comp_values   = [v for _, v in composite_inputs]
         win_probs   = _softmax(comp_values, SOFTMAX_TEMPERATURE)
         # 複勝確率: Harville モデルで上位3着以内の確率を算出
