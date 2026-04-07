@@ -168,13 +168,19 @@ class RotationIndexCalculator(IndexCalculator):
         rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         return self._compute_rotation_index(rows, race.date)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(
+        self,
+        race_id: int,
+        speed_map: dict[int, float] | None = None,
+    ) -> dict[int, float]:
         """レース全馬のローテーション指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
 
         Args:
             race_id: DB の races.id
+            speed_map: 事前計算済みのスピード指数マップ（horse_id → speed_index）。
+                       渡された場合は前走タイム偏差ボーナス算出に使用する。
 
         Returns:
             {horse_id: rotation_index} のdict。エントリが存在しない場合は空dict。
@@ -196,7 +202,9 @@ class RotationIndexCalculator(IndexCalculator):
         result: dict[int, float] = {}
         for entry in entries:
             rows = rows_map.get(entry.horse_id, [])
-            result[entry.horse_id] = self._compute_rotation_index(rows, race.date)
+            # 前走馬のスピード指数を speed_map から取得（前走の horse_id は同じ）
+            prev_speed = speed_map.get(entry.horse_id) if speed_map else None
+            result[entry.horse_id] = self._compute_rotation_index(rows, race.date, prev_speed)
 
         return result
 
@@ -273,12 +281,18 @@ class RotationIndexCalculator(IndexCalculator):
 
         return dict(result_map)
 
-    def _compute_rotation_index(self, rows: list[Any], target_date: str) -> float:
+    def _compute_rotation_index(
+        self,
+        rows: list[Any],
+        target_date: str,
+        speed_score: float | None = None,
+    ) -> float:
         """過去レース結果リストからローテーション指数を算出する。
 
         Args:
             rows: [(RaceResult, Race), ...] 前走・前々走の結果（日付降順）
             target_date: 対象レースの日付（YYYYMMDD）
+            speed_score: 事前計算済みのスピード指数（タイム偏差ボーナス算出用）
 
         Returns:
             ローテーション指数（0-100）。前走データなし（初出走）は DEFAULT_SCORE。
@@ -305,25 +319,8 @@ class RotationIndexCalculator(IndexCalculator):
         # 前走着順ボーナス
         pos_bonus = _position_bonus(prev_result.finish_position)
 
-        # 前走タイム偏差ボーナス（非同期コンテキスト外なのでスコア算出は簡易版）
-        speed_score = self._estimate_speed_score_sync(prev_result)
+        # 前走タイム偏差ボーナス（speed_map から提供されたスピード指数を使用）
         t_bonus = _time_bonus(speed_score)
 
         total = interval + pos_bonus + t_bonus
         return round(max(INDEX_MIN, min(INDEX_MAX, total)), 1)
-
-    def _estimate_speed_score_sync(self, result: RaceResult) -> float | None:
-        """前走のタイムから簡易スピードスコアを推定する（同期版・キャッシュなし）。
-
-        非同期コンテキスト外から呼ばれるため、finish_time のみで
-        フォールバックスコアを返す簡易実装。
-        完全なスピードスコアは SpeedIndexCalculator で算出される。
-
-        Args:
-            result: 前走のレース結果
-
-        Returns:
-            None（DBアクセス不可のため常にNone、time_bonusはスキップ）
-        """
-        # バッチ版では precomputed speed_map を使う設計のため None を返す
-        return None

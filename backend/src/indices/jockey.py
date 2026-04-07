@@ -237,9 +237,23 @@ class JockeyIndexCalculator(IndexCalculator):
         # 未キャッシュ分を一括クエリ
         rows_all = await self._query_jockey_results_batch(missing_ids, before_date, surface, distance)
 
+        # 全騎手データを合わせてグローバル後3F平均を算出（上がり3F比較の基準）
+        all_last3f: list[float] = []
+        for rows in rows_all.values():
+            filtered = [
+                row for row in rows
+                if abs((row.Race.distance or 0) - distance) <= DIST_TOLERANCE
+            ]
+            all_last3f.extend(
+                float(row.RaceResult.last_3f)
+                for row in filtered
+                if row.RaceResult.last_3f is not None
+            )
+        global_mean_last3f = statistics.mean(all_last3f) if len(all_last3f) >= 2 else None
+
         for jid in missing_ids:
             rows = rows_all.get(jid, [])
-            score = self._compute_raw_score(rows, surface, distance)
+            score = self._compute_raw_score(rows, surface, distance, global_mean_last3f)
             cache_key = (jid, surface, distance)
             self._jockey_stats_cache[cache_key] = score
             result[jid] = score
@@ -335,6 +349,7 @@ class JockeyIndexCalculator(IndexCalculator):
         rows: list[Any],
         target_surface: str,
         target_distance: int,
+        global_mean_last3f: float | None = None,
     ) -> float | None:
         """過去成績リストから騎手の生スコアを算出する。
 
@@ -345,6 +360,7 @@ class JockeyIndexCalculator(IndexCalculator):
             rows: [(RaceResult, Race), ...] の成績リスト
             target_surface: フィルタ済み馬場種別（クエリ済み）
             target_distance: 対象距離（m）
+            global_mean_last3f: 全騎手データを合わせた後3F平均（比較基準）
 
         Returns:
             生スコア（0-100）。MIN_SAMPLE 未満の場合は None。
@@ -373,7 +389,7 @@ class JockeyIndexCalculator(IndexCalculator):
 
         win_rate_score = wins / total * 100.0
         top2_rate_score = top2 / total * 100.0
-        last3f_score = self._compute_last3f_score(filtered)
+        last3f_score = self._compute_last3f_score(filtered, global_mean_last3f)
 
         raw = (
             win_rate_score * WEIGHT_WIN_RATE
@@ -382,18 +398,26 @@ class JockeyIndexCalculator(IndexCalculator):
         )
         return raw
 
-    def _compute_last3f_score(self, rows: list[Any]) -> float:
+    def _compute_last3f_score(
+        self,
+        rows: list[Any],
+        global_mean_last3f: float | None = None,
+    ) -> float:
         """上がり3F偏差スコアを算出する（0-100）。
 
-        騎手の平均 last_3f が同リスト内の全体平均より速ければ高スコア。
-        データが存在しない場合は 50.0 を返す。
+        騎手の平均 last_3f を全騎手データのグローバル平均と比較してスコア化する。
+        グローバル平均が渡されない場合は 50.0 を返す。
 
         Args:
             rows: [(RaceResult, Race), ...] の成績リスト（距離フィルタ適用済み）
+            global_mean_last3f: 全騎手データを合わせた後3F平均（比較基準）
 
         Returns:
             上がり3Fスコア（0-100）
         """
+        if global_mean_last3f is None:
+            return SPEED_INDEX_MEAN
+
         last3f_values = [
             float(row.RaceResult.last_3f) for row in rows if row.RaceResult.last_3f is not None
         ]
@@ -401,18 +425,15 @@ class JockeyIndexCalculator(IndexCalculator):
             return SPEED_INDEX_MEAN
 
         mean_jockey = statistics.mean(last3f_values)
-        mean_all = statistics.mean(last3f_values)  # 同一サンプル内での相対評価
-        if len(last3f_values) >= 2:
-            std_all = statistics.stdev(last3f_values)
-        else:
-            return SPEED_INDEX_MEAN
 
-        if std_all < 0.01:
-            return SPEED_INDEX_MEAN
+        # 全騎手データの標準偏差を使って正規化
+        # std は _get_all_jockey_stats_batch で計算済みの global_std が理想だが、
+        # ここでは実用的な固定値 0.5 秒（地方含む後3F分布の典型的std）を使用
+        GLOBAL_STD = 0.5
 
         # last_3f は秒数（小さいほど速い）なので符号を反転
-        diff = mean_all - mean_jockey  # 正なら平均より速い
-        score = (diff / std_all) * SPEED_INDEX_STD + SPEED_INDEX_MEAN
+        diff = global_mean_last3f - mean_jockey  # 正なら平均より速い
+        score = (diff / GLOBAL_STD) * SPEED_INDEX_STD + SPEED_INDEX_MEAN
         return max(INDEX_MIN, min(INDEX_MAX, score))
 
     @staticmethod

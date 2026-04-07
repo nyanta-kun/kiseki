@@ -62,7 +62,14 @@ logger = logging.getLogger(__name__)
 #     コース適性(0.310→0.167)・ローテ(0.112→0.113)を調整。テストROI=86.4%（v7比+10.3%）
 # v9: 巻き返し指数追加（ReboundIndexCalculator）。disadvantage_bonus(0.05)を rebound として活用。
 #     バックフィルデータ（2024-01〜）が揃い次第、重み最適化予定。
-COMPOSITE_VERSION = 9
+# v10: 既存バグ修正（重みは v9 から変更なし）
+#   ① 騎手指数の上がり3Fスコアが常に50だったバグを修正:
+#      _compute_last3f_score の mean_all が mean_jockey と同値（自己参照）だった
+#      → 全騎手データのグローバル後3F平均と各騎手の平均を比較するよう変更
+#   ② ローテーション指数のタイムボーナスが常に0だったバグを修正:
+#      _estimate_speed_score_sync が常に None を返していた
+#      → calculate_batch に speed_map 引数を追加し、CompositeIndexCalculator から渡す
+COMPOSITE_VERSION = 10
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -134,11 +141,12 @@ class CompositeIndexCalculator:
         )
 
         # 各指数を一括算出（N+1回避: calculate_batch を使用）
+        # speed は rotation のタイムボーナスに使うため先に算出する
         speed_map = await self._speed.calculate_batch(race_id)
         last3f_map = await self._last3f.calculate_batch(race_id)
         course_map = await self._course.calculate_batch(race_id)
         frame_map = await self._frame.calculate_batch(race_id)
-        rotation_map = await self._rotation.calculate_batch(race_id)
+        rotation_map = await self._rotation.calculate_batch(race_id, speed_map=speed_map)
         jockey_map = await self._jockey.calculate_batch(race_id)
         pace_map = await self._pace.calculate_batch(race_id)
         pedigree_map = await self._pedigree.calculate_batch(race_id)
