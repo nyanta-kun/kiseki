@@ -205,7 +205,6 @@ def _build_calculator(
 
     calc = RotationIndexCalculator(db=db)
     calc._get_past_results_for_horse = AsyncMock(return_value=past_rows)
-    calc._estimate_speed_score_sync = MagicMock(return_value=None)
     return calc
 
 
@@ -264,20 +263,15 @@ class TestCalculateSingleHorse:
         assert result == 100.0
 
     async def test_time_bonus_applied(self) -> None:
-        """前走スピードスコア=60 → time_bonus=10 が加算される"""
+        """speed_score=60 → time_bonus=10 が _compute_rotation_index に加算される"""
         target_race = _make_mock_race(1, "20260322")
         prev_race = _make_mock_race(99, "20260223")  # 28日前
         prev_result = _make_mock_result(horse_id=101, finish_position=6)
         rows = [_make_row(prev_result, prev_race)]
         db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = target_race
-        db.execute.return_value = mock_result
         calc = RotationIndexCalculator(db=db)
-        calc._get_past_results_for_horse = AsyncMock(return_value=rows)
-        # スピードスコア=60（+10ボーナス）
-        calc._estimate_speed_score_sync = MagicMock(return_value=60.0)
-        result = await calc.calculate(race_id=1, horse_id=101)
+        # speed_score=60（+10ボーナス）を直接 _compute_rotation_index に渡す
+        result = calc._compute_rotation_index(rows, "20260322", speed_score=60.0)
         # interval=80, pos_bonus=0, time_bonus=10 → 90.0
         assert result == 90.0
 
@@ -288,14 +282,9 @@ class TestCalculateSingleHorse:
         prev_result = _make_mock_result(horse_id=101, finish_position=1)
         rows = [_make_row(prev_result, prev_race)]
         db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = target_race
-        db.execute.return_value = mock_result
         calc = RotationIndexCalculator(db=db)
-        calc._get_past_results_for_horse = AsyncMock(return_value=rows)
-        # スピードスコア=100（time_bonus=10）
-        calc._estimate_speed_score_sync = MagicMock(return_value=100.0)
-        result = await calc.calculate(race_id=1, horse_id=101)
+        # speed_score=100（time_bonus=10）を直接 _compute_rotation_index に渡す
+        result = calc._compute_rotation_index(rows, "20260322", speed_score=100.0)
         # interval=80, pos_bonus=20, time_bonus=10 → clip(110) = 100.0
         assert result == 100.0
 
@@ -349,7 +338,6 @@ class TestCalculateBatch:
 
         calc = RotationIndexCalculator(db=db)
         calc._get_past_results_batch = AsyncMock(return_value=past_rows_map)
-        calc._estimate_speed_score_sync = MagicMock(return_value=None)
         return calc
 
     async def test_batch_returns_all_horse_ids(self) -> None:
