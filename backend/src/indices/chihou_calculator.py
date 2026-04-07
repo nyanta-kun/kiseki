@@ -237,7 +237,7 @@ class ChihouIndexCalculator:
         entry_rows = await self.db.execute(
             select(ChihouRaceEntry).where(ChihouRaceEntry.race_id == race_id)
         )
-        entries = entry_rows.scalars().all()
+        entries: list[ChihouRaceEntry] = list(entry_rows.scalars().all())
         if not entries:
             logger.info("no entries for race_id=%d", race_id)
             return {"saved": 0, "skipped": 0, "errors": 0}
