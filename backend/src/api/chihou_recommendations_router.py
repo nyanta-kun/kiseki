@@ -152,7 +152,8 @@ async def get_chihou_recommendations(
             recs = await generate_chihou_recommendations(db, date)
         except Exception as e:
             logger.error("地方推奨オンデマンド生成失敗: %s", e)
-            raise HTTPException(status_code=503, detail=f"推奨生成に失敗しました: {e}")
+            # API過負荷・一時エラー時は空リストを返す（503でクライアントを壊さない）
+            return []
 
     if not recs:
         return []
