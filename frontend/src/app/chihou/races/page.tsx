@@ -4,6 +4,7 @@ import { fetchChihouRacesByDate, fetchChihouNearestDate } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
+import { ChihouRecommendPanel } from "@/components/ChihouRecommendPanel";
 
 export const metadata: Metadata = {
   title: "地方競馬 開催レース一覧 | GallopLab",
@@ -84,9 +85,9 @@ async function ChihouRaceList({ date }: { date: string }) {
   return (
     <CourseTabView
       courseGroups={courseGroups}
-      recommendPanel={null}
+      recommendPanel={<ChihouRecommendPanel date={date} />}
       basePath="/chihou/races"
-      hideRecommend={true}
+      hideRecommend={false}
     />
   );
 }

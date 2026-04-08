@@ -6,13 +6,16 @@ from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 CHIHOU_SCHEMA = "chihou"
@@ -367,3 +370,38 @@ class ChihouPedigree(ChihouBase):
     sire_of_dam: Mapped[str | None] = mapped_column(String(100), comment="母父馬名")
     sire_line: Mapped[str | None] = mapped_column(String(50), comment="父系統名")
     dam_sire_line: Mapped[str | None] = mapped_column(String(50), comment="母父系統名")
+
+
+class ChihouRaceRecommendation(ChihouBase):
+    """Claude APIによる地方競馬推奨レース・馬券（1日最大5件）"""
+
+    __tablename__ = "race_recommendations"
+    __table_args__ = ({"schema": CHIHOU_SCHEMA},)  # type: ignore[assignment]
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[str] = mapped_column(String(8), nullable=False, index=True, comment="開催日 YYYYMMDD")
+    rank: Mapped[int] = mapped_column(Integer, nullable=False, comment="推奨順位 1〜5")
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{CHIHOU_SCHEMA}.races.id"), nullable=False, index=True
+    )
+    bet_type: Mapped[str] = mapped_column(String(20), nullable=False, comment="win/place")
+    target_horses: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, comment="推奨馬リスト [{horse_number, horse_name, composite_index, ...}]"
+    )
+    # 10分前オッズスナップショット（生成時は null）
+    snapshot_win_odds: Mapped[dict | None] = mapped_column(JSONB, comment="単勝オッズスナップショット")
+    snapshot_place_odds: Mapped[dict | None] = mapped_column(JSONB, comment="複勝オッズスナップショット")
+    snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reason: Mapped[str] = mapped_column(Text, nullable=False, comment="Claude推奨理由")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, comment="推奨信頼スコア 0〜1")
+    # 発走10分前のオッズ購入判断
+    odds_decision: Mapped[str | None] = mapped_column(String(10), comment="'buy' | 'pass' | null=未判断")
+    odds_decision_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    odds_decision_reason: Mapped[str | None] = mapped_column(Text, comment="判断理由テキスト")
+    # レース後に更新
+    result_correct: Mapped[bool | None] = mapped_column(Boolean)
+    result_payout: Mapped[int | None] = mapped_column(Integer, comment="払戻金額（円/100円）")
+    result_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

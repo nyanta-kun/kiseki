@@ -578,3 +578,49 @@ export async function fetchChihouResults(raceId: number): Promise<RaceResult[]> 
 export async function fetchChihouOdds(raceId: number): Promise<OddsData> {
   return get<OddsData>(`/chihou/races/${raceId}/odds`, { next: { revalidate: 30 } });
 }
+
+// ---------------------------------------------------------------------------
+// 地方競馬 推奨
+// ---------------------------------------------------------------------------
+
+export type ChihouTargetHorse = {
+  horse_number: number;
+  horse_name: string | null;
+  composite_index: number | null;
+  win_probability: number | null;
+  place_probability: number | null;
+  finish_position: number | null;
+};
+
+export type ChihouRecommendation = {
+  id: number;
+  rank: number;
+  race: {
+    race_id: number;
+    course_name: string;
+    race_number: number;
+    race_name: string | null;
+    post_time: string | null;
+    surface: string | null;
+    distance: number | null;
+  };
+  bet_type: string;
+  target_horses: ChihouTargetHorse[];
+  reason: string;
+  confidence: number;
+  odds_decision: "buy" | "pass" | null;
+  odds_decision_at: string | null;
+  odds_decision_reason: string | null;
+  snapshot_win_odds: Record<string, number> | null;
+  snapshot_place_odds: Record<string, number> | null;
+  snapshot_at: string | null;
+  result_correct: boolean | null;
+  result_payout: number | null;
+  result_updated_at: string | null;
+  created_at: string;
+};
+
+/** 地方競馬 推奨一覧 → 30秒キャッシュ */
+export async function fetchChihouRecommendations(date: string): Promise<ChihouRecommendation[]> {
+  return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { next: { revalidate: 30 } });
+}
