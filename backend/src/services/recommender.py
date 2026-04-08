@@ -6,16 +6,95 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from datetime import date as _date
 from typing import Any
 
 import anthropic
 from sqlalchemy import delete, func, select
+from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db.models import CalculatedIndex, Horse, OddsHistory, Race, RaceEntry, RaceRecommendation
 from ..indices.composite import COMPOSITE_VERSION
 from .recommendation_prompt import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+
+# JRA 2桁コード → sekito course_code
+_JRA_TO_SEKITO: dict[str, str] = {
+    "01": "JSPK", "02": "JHKD", "03": "JFKS", "04": "JNGT", "05": "JTOK",
+    "06": "JNKY", "07": "JCKO", "08": "JKYO", "09": "JHSN", "10": "JKKR",
+}
+
+
+def _parse_nb_num(raw: str | None) -> float | None:
+    """netkeibaの指数文字列から数値を抽出する。"""
+    if not raw or raw.strip() in ("-", "", "0"):
+        return None
+    import re as _re
+    m = _re.search(r"\d+", raw)
+    return float(m.group()) if m else None
+
+
+async def _fetch_external_data_batch(
+    session: AsyncSession, races: list,
+) -> dict[int, dict[int, dict[str, int | None]]]:
+    """複数レース分の外部指数ランクを一括取得する。
+
+    Returns:
+        {race_id: {horse_no: {nb_course_rank, nb_ave_rank, km_rank}}}
+    """
+    result: dict[int, dict[int, dict[str, int | None]]] = {}
+
+    for race in races:
+        sekito_code = _JRA_TO_SEKITO.get(race.course)
+        if not sekito_code:
+            continue
+        race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
+
+        nb_rows = (await session.execute(
+            _text("SELECT horse_no, idx_course, idx_ave FROM sekito.netkeiba"
+                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
+            {"d": race_date, "c": sekito_code, "r": race.race_number},
+        )).fetchall()
+
+        km_rows = (await session.execute(
+            _text("SELECT horse_no, sp_score FROM sekito.kichiuma"
+                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
+            {"d": race_date, "c": sekito_code, "r": race.race_number},
+        )).fetchall()
+
+        nb_course: dict[int, float] = {}
+        nb_ave: dict[int, float] = {}
+        for horse_no, idx_course, idx_ave in nb_rows:
+            c = _parse_nb_num(idx_course)
+            a = _parse_nb_num(idx_ave)
+            if c is not None:
+                nb_course[horse_no] = c
+            if a is not None:
+                nb_ave[horse_no] = a
+
+        km_score: dict[int, float] = {}
+        for horse_no, sp_score in km_rows:
+            if sp_score is not None:
+                km_score[horse_no] = float(sp_score)
+
+        def _rank(score_map: dict[int, float]) -> dict[int, int]:
+            return {hn: i + 1 for i, hn in enumerate(sorted(score_map, key=lambda h: score_map[h], reverse=True))}
+
+        nb_course_ranks = _rank(nb_course)
+        nb_ave_ranks = _rank(nb_ave)
+        km_ranks = _rank(km_score)
+
+        all_horses = set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys())
+        result[race.id] = {
+            hn: {
+                "nb_course_rank": nb_course_ranks.get(hn),
+                "nb_ave_rank": nb_ave_ranks.get(hn),
+                "km_rank": km_ranks.get(hn),
+            }
+            for hn in all_horses
+        }
+    return result
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +208,9 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         if odds is not None:
             odds_map[race_id][bet_type][combination] = float(odds)  # type: ignore[index]
 
+    # 外部指数ランクを一括取得（sekito.netkeiba / sekito.kichiuma）
+    external_data = await _fetch_external_data_batch(session, list(races))
+
     # 指数を race_id でグループ化（horse_id の重複排除）
     indices_map: dict[int, list[tuple[CalculatedIndex, RaceEntry, Horse]]] = {}
     seen_horse: set[tuple[int | None, int | None]] = set()
@@ -152,6 +234,8 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         win_odds = odds_map.get(race.id, {}).get("win", {})
         place_odds = odds_map.get(race.id, {}).get("place", {})
 
+        race_ext = external_data.get(race.id, {})
+
         horses: list[dict[str, Any]] = []
         for ci, entry, horse in rows:
             hn_str = str(entry.horse_number)
@@ -162,6 +246,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             ev_win = round(win_prob * w_odds, 3) if win_prob is not None and w_odds is not None else None
             ev_place = round(place_prob * p_odds, 3) if place_prob is not None and p_odds is not None else None
 
+            ext = race_ext.get(entry.horse_number, {})
             horses.append({
                 "horse_number": entry.horse_number,
                 "horse_name": horse.name,
@@ -173,6 +258,9 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 "ev_win": ev_win,
                 "ev_place": ev_place,
                 "anagusa_index": round(float(ci.anagusa_index), 1) if ci.anagusa_index else None,
+                "nb_course_rank": ext.get("nb_course_rank"),
+                "nb_ave_rank": ext.get("nb_ave_rank"),
+                "km_rank": ext.get("km_rank"),
             })
 
         if not horses:
@@ -189,6 +277,21 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             if len(ranked) >= 2
             else None
         )
+
+        # 外部指数穴馬候補を計算（CI4位以下でnb_course_rank=1、またはNB1×KM1）
+        ci_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(ranked)}
+        for h in horses:
+            ci_rank = ci_rank_map.get(h["horse_number"], 99)
+            nb_cr = h.get("nb_course_rank")
+            nb_ar = h.get("nb_ave_rank")
+            km_r = h.get("km_rank")
+            h["external_dark_horse"] = (
+                ci_rank >= 4
+                and (
+                    nb_cr == 1  # コース指数1位（最も有効なシグナル）
+                    or (nb_ar is not None and nb_ar <= 2 and km_r == 1)  # NB上位2×KM1位
+                )
+            )
 
         race_data.append({
             "race_id": race.id,

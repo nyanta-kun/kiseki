@@ -157,6 +157,82 @@ async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
     return {r[0]: r[1] for r in rows if r[1] in ("A", "B", "C")}
 
 
+def _parse_index_num(raw: str | None) -> float | None:
+    """netkeibaの指数文字列から数値を抽出する（"76", "73*", "-" 等に対応）。"""
+    if not raw or raw.strip() in ("-", "", "0"):
+        return None
+    import re as _re
+    m = _re.search(r"\d+", raw)
+    return float(m.group()) if m else None
+
+
+async def _fetch_external_ranks(db: AsyncSession, race: Race) -> dict[int, dict[str, int | None]]:
+    """sekito.netkeiba / sekito.kichiuma から外部指数のレース内ランクを取得する。
+
+    Returns:
+        {horse_no: {"nb_course_rank": int|None, "nb_ave_rank": int|None, "km_rank": int|None}}
+    """
+    sekito_code = _JRA_TO_SEKITO.get(race.course)
+    if not sekito_code:
+        return {}
+    race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
+
+    # netkeiba から idx_course / idx_ave を取得
+    nb_result = await db.execute(
+        _text(
+            "SELECT horse_no, idx_course, idx_ave FROM sekito.netkeiba"
+            " WHERE date = :d AND course_code = :c AND race_no = :r"
+        ),
+        {"d": race_date, "c": sekito_code, "r": race.race_number},
+    )
+    nb_rows = nb_result.fetchall()
+
+    # kichiuma から sp_score を取得
+    km_result = await db.execute(
+        _text(
+            "SELECT horse_no, sp_score FROM sekito.kichiuma"
+            " WHERE date = :d AND course_code = :c AND race_no = :r"
+        ),
+        {"d": race_date, "c": sekito_code, "r": race.race_number},
+    )
+    km_rows = km_result.fetchall()
+
+    # 数値パース
+    nb_course: dict[int, float] = {}
+    nb_ave: dict[int, float] = {}
+    for horse_no, idx_course, idx_ave in nb_rows:
+        c = _parse_index_num(idx_course)
+        a = _parse_index_num(idx_ave)
+        if c is not None:
+            nb_course[horse_no] = c
+        if a is not None:
+            nb_ave[horse_no] = a
+
+    km_score: dict[int, float] = {}
+    for horse_no, sp_score in km_rows:
+        if sp_score is not None:
+            km_score[horse_no] = float(sp_score)
+
+    # 降順ランク付け（同値は同ランク、次は連続順位）
+    def _rank(score_map: dict[int, float]) -> dict[int, int]:
+        sorted_keys = sorted(score_map, key=lambda h: score_map[h], reverse=True)
+        return {hn: i + 1 for i, hn in enumerate(sorted_keys)}
+
+    nb_course_ranks = _rank(nb_course)
+    nb_ave_ranks = _rank(nb_ave)
+    km_ranks = _rank(km_score)
+
+    all_horses = set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys())
+    return {
+        hn: {
+            "nb_course_rank": nb_course_ranks.get(hn),
+            "nb_ave_rank": nb_ave_ranks.get(hn),
+            "km_rank": km_ranks.get(hn),
+        }
+        for hn in all_horses
+    }
+
+
 async def _anagusa_picks_for_date(db: AsyncSession, date: str) -> set[tuple[str, int]]:
     """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
     race_date = _date(int(date[:4]), int(date[4:6]), int(date[6:8]))
@@ -270,6 +346,10 @@ class HorseIndexOut(BaseModel):
     paddock_index: float | None
     anagusa_rank: str | None = None  # "A" / "B" / "C" / None（ピックなし）
     upside_score: float | None = None  # 穴馬スコア（指数下位でも馬券になりやすい度合い）
+    # 外部指数ランク（sekito.netkeiba / sekito.kichiuma）
+    nb_course_rank: int | None = None  # netkeibaコース適性指数のレース内順位（1=最高）
+    nb_ave_rank: int | None = None     # netkeibaタイム平均指数のレース内順位（1=最高）
+    km_rank: int | None = None         # kichiumaスピードスコアのレース内順位（1=最高）
 
 
 class OddsOut(BaseModel):
@@ -549,6 +629,14 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     picks = await _fetch_anagusa_picks(db, race)
     for h in horses:
         h.anagusa_rank = picks.get(h.horse_number)
+
+    # sekito.netkeiba / sekito.kichiuma から外部指数ランクを付与
+    ext_ranks = await _fetch_external_ranks(db, race)
+    for h in horses:
+        er = ext_ranks.get(h.horse_number, {})
+        h.nb_course_rank = er.get("nb_course_rank")
+        h.nb_ave_rank = er.get("nb_ave_rank")
+        h.km_rank = er.get("km_rank")
 
     # 穴馬スコア算出（指数下位でも特定個別指数が突出している度合い）
     _compute_upside_scores(horses)

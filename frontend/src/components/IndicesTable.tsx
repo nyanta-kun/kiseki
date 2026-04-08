@@ -38,6 +38,19 @@ const ANAGUSA_RANK_COLOR: Record<string, string> = {
   C: "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
 
+/** 外部指数穴馬候補の判定
+ * シミュレーション結果: 以下の条件でROIプラス実績
+ *   - CI4位以下 + netkeibaコース指数1位: 単勝ROI +105〜355%（平場芝）
+ *   - CI4位以下 + NB上位2 + KM1位 + 芝: 単勝ROI +126%
+ */
+function isExternalDarkHorse(horse: HorseIndex, compositeRank: number): boolean {
+  if (compositeRank < 4) return false;
+  const nbCr = horse.nb_course_rank;
+  const nbAr = horse.nb_ave_rank;
+  const kmR = horse.km_rank;
+  return nbCr === 1 || (nbAr !== null && nbAr <= 2 && kmR === 1);
+}
+
 function finishLabel(pos: number | null | undefined): string {
   if (pos == null) return "";
   if (pos === 1) return "1着";
@@ -358,6 +371,8 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
           // 指数4位以降でupsideスコアが高い = 穴候補
           const compositeRank = compositeRankMap.get(horse.horse_number) ?? 99;
           const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
+          // 外部指数穴馬候補
+          const isExtDark = !isTop && isExternalDarkHorse(horse, compositeRank);
           // 足切り: トップ差20以上 or (差15以上かつ5位以下)
           const gapFromTop = maxComposite - (horse.composite_index ?? 0);
           const isCutOff = gapFromTop >= 20 || (gapFromTop >= 15 && compositeRank >= 5);
@@ -450,6 +465,19 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                         穴{Math.round((horse.upside_score ?? 0) * 100)}
                       </span>
                     )}
+                    {/* 外部指数穴馬バッジ（CI低いがnetkeiba/kichiumaが高評価） */}
+                    {isExtDark && (
+                      <span
+                        title={
+                          horse.nb_course_rank === 1
+                            ? "netkeibaコース指数1位（自指数より外部評価が高い）"
+                            : "netkeiba×kichiuma外部指数一致（自指数より外部評価が高い）"
+                        }
+                        className="text-[10px] px-1 py-0.5 rounded border font-bold bg-teal-50 text-teal-700 border-teal-200"
+                      >
+                        {horse.nb_course_rank === 1 ? "外◎" : "外○"}
+                      </span>
+                    )}
                     {winPct && (
                       <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
                         単{winPct}%
@@ -472,19 +500,51 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                 <div id={`horse-detail-${horse.horse_number}`} className="border-t border-gray-100 bg-gray-50 px-3 py-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-[10px] text-gray-400">指数内訳</p>
-                    {horse.upside_score !== null && horse.upside_score !== undefined && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] text-gray-400">穴馬スコア</span>
-                        <span className={cn(
-                          "text-[11px] font-bold px-1.5 py-0.5 rounded border",
-                          horse.upside_score >= 0.7 ? "bg-purple-100 text-purple-800 border-purple-300" :
-                          horse.upside_score >= 0.5 ? "bg-purple-50 text-purple-700 border-purple-200" :
-                          "bg-gray-50 text-gray-500 border-gray-200"
-                        )}>
-                          {(horse.upside_score * 100).toFixed(0)}
-                        </span>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {/* 外部指数ランク */}
+                      {(horse.nb_course_rank !== null || horse.nb_ave_rank !== null || horse.km_rank !== null) && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-gray-400">外部指数</span>
+                          {horse.nb_course_rank !== null && (
+                            <span className={cn(
+                              "text-[10px] px-1 py-0.5 rounded border",
+                              horse.nb_course_rank === 1 ? "bg-teal-50 text-teal-700 border-teal-200 font-bold" : "bg-gray-50 text-gray-500 border-gray-200"
+                            )}>
+                              コース{horse.nb_course_rank}位
+                            </span>
+                          )}
+                          {horse.nb_ave_rank !== null && (
+                            <span className={cn(
+                              "text-[10px] px-1 py-0.5 rounded border",
+                              horse.nb_ave_rank <= 2 ? "bg-teal-50 text-teal-700 border-teal-200 font-bold" : "bg-gray-50 text-gray-500 border-gray-200"
+                            )}>
+                              NB{horse.nb_ave_rank}位
+                            </span>
+                          )}
+                          {horse.km_rank !== null && (
+                            <span className={cn(
+                              "text-[10px] px-1 py-0.5 rounded border",
+                              horse.km_rank === 1 ? "bg-teal-50 text-teal-700 border-teal-200 font-bold" : "bg-gray-50 text-gray-500 border-gray-200"
+                            )}>
+                              KM{horse.km_rank}位
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {horse.upside_score !== null && horse.upside_score !== undefined && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-gray-400">穴スコア</span>
+                          <span className={cn(
+                            "text-[11px] font-bold px-1.5 py-0.5 rounded border",
+                            horse.upside_score >= 0.7 ? "bg-purple-100 text-purple-800 border-purple-300" :
+                            horse.upside_score >= 0.5 ? "bg-purple-50 text-purple-700 border-purple-200" :
+                            "bg-gray-50 text-gray-500 border-gray-200"
+                          )}>
+                            {(horse.upside_score * 100).toFixed(0)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                     {SUB_INDICES.map(({ key, label }) => {
