@@ -66,6 +66,7 @@ class ChihouHorseIndexOut(BaseModel):
     last3f_index: float | None = None
     jockey_index: float | None = None
     rotation_index: float | None = None
+    external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
 
 
 class ChihouRaceRanks(BaseModel):
@@ -279,6 +280,53 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     if not rows:
         raise HTTPException(status_code=404, detail="No indices found for this race")
 
+    # 外部指数コンセンサス取得（sekito.kichiuma / sekito.netkeiba）
+    ext_sql = sql_text("""
+        SELECT
+            re.horse_number,
+            k.sp_score,
+            CASE
+                WHEN n.idx_ave ~ '^-?[0-9]+\\*?$'
+                THEN regexp_replace(n.idx_ave, '\\*', '')::float
+                ELSE NULL
+            END AS idx_ave
+        FROM chihou.races r
+        JOIN sekito.racecourse rc ON r.course = rc.netkeiba_id
+        JOIN chihou.race_entries re ON re.race_id = r.id
+        LEFT JOIN sekito.kichiuma k
+            ON k.date = TO_DATE(r.date, 'YYYYMMDD')
+            AND k.course_code = rc.code
+            AND k.race_no = r.race_number
+            AND k.horse_no = re.horse_number
+        LEFT JOIN sekito.netkeiba n
+            ON n.date = TO_DATE(r.date, 'YYYYMMDD')
+            AND n.course_code = rc.code
+            AND n.race_no = r.race_number
+            AND n.horse_no = re.horse_number
+            AND n.is_time_index = true
+        WHERE r.id = :race_id
+        ORDER BY re.horse_number
+    """)
+    ext_rows = (await db.execute(ext_sql, {"race_id": race_id})).fetchall()
+
+    # 外部指数コンセンサス計算
+    consensus_map: dict[int, int] = {}
+    if ext_rows:
+        # horse_number → (sp_score, idx_ave) の辞書
+        ext_dict: dict[int, tuple[float | None, float | None]] = {
+            r[0]: (float(r[1]) if r[1] is not None else None,
+                   float(r[2]) if r[2] is not None else None)
+            for r in ext_rows
+        }
+        kichi_entries = [(hn, v[0]) for hn, v in ext_dict.items() if v[0] is not None]
+        netk_entries = [(hn, v[1]) for hn, v in ext_dict.items() if v[1] is not None]
+        kichi_top = max(kichi_entries, key=lambda x: x[1])[0] if kichi_entries else None
+        netk_top = max(netk_entries, key=lambda x: x[1])[0] if netk_entries else None
+
+        if kichi_top is not None or netk_top is not None:
+            for hn in ext_dict:
+                consensus_map[hn] = (1 if hn == kichi_top else 0) + (1 if hn == netk_top else 0)
+
     horses = []
     for row in rows:
         ci: ChihouCalculatedIndex = row[0]
@@ -296,6 +344,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
                 jockey_index=float(ci.jockey_index) if ci.jockey_index is not None else None,
                 rotation_index=float(ci.rotation_index) if ci.rotation_index is not None else None,
+                external_consensus=consensus_map.get(horse_number) if (consensus_map and horse_number is not None) else None,
             )
         )
 

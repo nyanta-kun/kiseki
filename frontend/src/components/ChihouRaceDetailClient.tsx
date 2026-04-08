@@ -278,11 +278,23 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
                     </span>
                   </td>
 
-                  {/* 馬名 */}
+                  {/* 馬名 + 外部コンセンサスバッジ */}
                   <td className="py-2 px-1">
-                    <span className="text-gray-800 font-medium truncate block max-w-[100px]">
-                      {horse.horse_name}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-800 font-medium truncate block max-w-[90px]">
+                        {horse.horse_name}
+                      </span>
+                      {horse.external_consensus === 2 && (
+                        <span className="text-[9px] bg-purple-100 text-purple-700 border border-purple-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
+                          外部◎
+                        </span>
+                      )}
+                      {horse.external_consensus === 1 && (
+                        <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-200 px-1 py-0.5 rounded whitespace-nowrap">
+                          外部○
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* 総合指数 + バー */}

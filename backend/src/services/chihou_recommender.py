@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anthropic
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -69,6 +69,90 @@ def _fmt_date(date_str: str) -> str:
     return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
 
 
+async def _fetch_external_consensus(
+    session: AsyncSession, race_ids: list[int]
+) -> dict[int, dict[int, int]]:
+    """sekito.kichiuma / sekito.netkeiba から外部指数コンセンサスを取得する。
+
+    Returns:
+        dict[race_id, dict[horse_number, external_consensus]]
+        external_consensus: 0〜2（kichiuma/netkeibaのうち何本が1位と一致するか）
+        レース自体に外部データが存在しない場合は race_id がキーに含まれない。
+    """
+    if not race_ids:
+        return {}
+
+    sql = text("""
+        SELECT
+            r.id AS race_id,
+            re.horse_number,
+            k.sp_score,
+            CASE
+                WHEN n.idx_ave ~ '^-?[0-9]+\\*?$'
+                THEN regexp_replace(n.idx_ave, '\\*', '')::float
+                ELSE NULL
+            END AS idx_ave
+        FROM chihou.races r
+        JOIN sekito.racecourse rc ON r.course = rc.netkeiba_id
+        JOIN chihou.race_entries re ON re.race_id = r.id
+        LEFT JOIN sekito.kichiuma k
+            ON k.date = TO_DATE(r.date, 'YYYYMMDD')
+            AND k.course_code = rc.code
+            AND k.race_no = r.race_number
+            AND k.horse_no = re.horse_number
+        LEFT JOIN sekito.netkeiba n
+            ON n.date = TO_DATE(r.date, 'YYYYMMDD')
+            AND n.course_code = rc.code
+            AND n.race_no = r.race_number
+            AND n.horse_no = re.horse_number
+            AND n.is_time_index = true
+        WHERE r.id = ANY(:race_ids)
+        ORDER BY r.id, re.horse_number
+    """)
+    rows = (await session.execute(sql, {"race_ids": race_ids})).fetchall()
+
+    # race_id → {horse_number: (sp_score, idx_ave)}
+    raw: dict[int, dict[int, tuple[float | None, float | None]]] = {}
+    for race_id, horse_number, sp_score, idx_ave in rows:
+        raw.setdefault(race_id, {})[horse_number] = (
+            float(sp_score) if sp_score is not None else None,
+            float(idx_ave) if idx_ave is not None else None,
+        )
+
+    result: dict[int, dict[int, int]] = {}
+    for race_id, horse_map in raw.items():
+        # どちらのデータも全馬 None ならこのレースはスキップ（外部データなし）
+        has_kichi = any(v[0] is not None for v in horse_map.values())
+        has_netk = any(v[1] is not None for v in horse_map.values())
+        if not has_kichi and not has_netk:
+            continue
+
+        # kichiuma 最高 sp_score 馬番
+        kichi_top: int | None = None
+        if has_kichi:
+            kichi_top = max(
+                (hn for hn, v in horse_map.items() if v[0] is not None),
+                key=lambda hn: horse_map[hn][0],  # type: ignore[index]
+                default=None,
+            )
+        # netkeiba 最高 idx_ave 馬番
+        netk_top: int | None = None
+        if has_netk:
+            netk_top = max(
+                (hn for hn, v in horse_map.items() if v[1] is not None),
+                key=lambda hn: horse_map[hn][1],  # type: ignore[index]
+                default=None,
+            )
+
+        consensus: dict[int, int] = {}
+        for hn in horse_map:
+            score = (1 if hn == kichi_top else 0) + (1 if hn == netk_top else 0)
+            consensus[hn] = score
+        result[race_id] = consensus
+
+    return result
+
+
 async def _collect_chihou_race_data(session: AsyncSession, date: str) -> list[dict[str, Any]]:
     """当日の地方競馬レースデータを指数のみで収集（オッズなし）。"""
     races_result = await session.execute(
@@ -110,20 +194,28 @@ async def _collect_chihou_race_data(session: AsyncSession, date: str) -> list[di
         seen.add(key)
         indices_map.setdefault(ci.race_id, []).append((ci, entry, horse))
 
+    # 外部指数コンセンサス取得
+    consensus_map = await _fetch_external_consensus(session, race_ids)
+
     race_data: list[dict[str, Any]] = []
     for race in races:
         rows = indices_map.get(race.id, [])
         if not rows:
             continue
 
+        race_consensus = consensus_map.get(race.id)  # None = 外部データなし
+
         horses: list[dict[str, Any]] = []
         for ci, entry, horse in rows:
+            hn = entry.horse_number
             horses.append({
-                "horse_number": entry.horse_number,
+                "horse_number": hn,
                 "horse_name": horse.name,
                 "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
                 "win_probability": round(float(ci.win_probability), 4) if ci.win_probability else None,
                 "place_probability": round(float(ci.place_probability), 4) if ci.place_probability else None,
+                # 外部指数コンセンサス: 0〜2（外部データなしの場合は null）
+                "external_consensus": race_consensus.get(hn) if race_consensus is not None else None,
             })
 
         if not horses:

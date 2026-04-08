@@ -46,6 +46,7 @@ class ChihouTargetHorse(BaseModel):
     win_probability: float | None
     place_probability: float | None
     finish_position: int | None = None
+    external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
 
 
 class ChihouRaceInfo(BaseModel):
@@ -105,6 +106,7 @@ def _to_out(rec: ChihouRaceRecommendation, race: ChihouRace) -> ChihouRecommenda
             win_probability=h.get("win_probability"),
             place_probability=h.get("place_probability"),
             finish_position=h.get("finish_position"),
+            external_consensus=h.get("external_consensus"),
         )
         for h in (rec.target_horses or [])
     ]

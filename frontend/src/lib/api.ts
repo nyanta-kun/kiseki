@@ -522,6 +522,8 @@ export type ChihouHorseIndex = {
   last3f_index: number | null;
   jockey_index: number | null;
   rotation_index: number | null;
+  /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
+  external_consensus: number | null;
 };
 
 export type ChihouRaceRanks = {
@@ -590,6 +592,8 @@ export type ChihouTargetHorse = {
   win_probability: number | null;
   place_probability: number | null;
   finish_position: number | null;
+  /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
+  external_consensus: number | null;
 };
 
 export type ChihouRecommendation = {
