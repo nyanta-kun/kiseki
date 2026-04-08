@@ -130,19 +130,13 @@ async def _fetch_external_consensus(
         # kichiuma 最高 sp_score 馬番
         kichi_top: int | None = None
         if has_kichi:
-            kichi_top = max(
-                (hn for hn, v in horse_map.items() if v[0] is not None),
-                key=lambda hn: horse_map[hn][0],  # type: ignore[index]
-                default=None,
-            )
+            kichi_entries = [(hn, v[0]) for hn, v in horse_map.items() if v[0] is not None]
+            kichi_top = max(kichi_entries, key=lambda x: x[1])[0] if kichi_entries else None
         # netkeiba 最高 idx_ave 馬番
         netk_top: int | None = None
         if has_netk:
-            netk_top = max(
-                (hn for hn, v in horse_map.items() if v[1] is not None),
-                key=lambda hn: horse_map[hn][1],  # type: ignore[index]
-                default=None,
-            )
+            netk_entries = [(hn, v[1]) for hn, v in horse_map.items() if v[1] is not None]
+            netk_top = max(netk_entries, key=lambda x: x[1])[0] if netk_entries else None
 
         consensus: dict[int, int] = {}
         for hn in horse_map:
