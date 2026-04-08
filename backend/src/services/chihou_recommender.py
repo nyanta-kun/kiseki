@@ -292,8 +292,20 @@ async def update_chihou_results(session: AsyncSession, date: str) -> int:
                     (r for r in race_results if r.finish_position is not None and r.finish_position <= 3),
                     None,
                 )
-                if place_winner and place_winner.place_odds is not None:
-                    payout = int(float(place_winner.place_odds) * 100)
+                if place_winner:
+                    # race_payouts から複勝払戻を取得
+                    place_payout_result = await session.execute(
+                        select(ChihouRacePayout).where(
+                            ChihouRacePayout.race_id == rec.race_id,
+                            ChihouRacePayout.bet_type == "place",
+                            ChihouRacePayout.combination == str(place_winner.horse_number),
+                        )
+                    )
+                    place_payout_rec = place_payout_result.scalars().first()
+                    if place_payout_rec:
+                        payout = place_payout_rec.payout
+                    elif place_winner.place_odds is not None:
+                        payout = int(float(place_winner.place_odds) * 100)
 
         updated_horses = [
             {**h, "finish_position": finish_map.get(h.get("horse_number"))}
