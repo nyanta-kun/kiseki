@@ -887,6 +887,14 @@ def run_realtime_monitor(nv) -> None:
 
     while True:
         try:
+            # 日付跨ぎ検知: 毎サイクル今日の日付を更新
+            current_date = datetime.now().strftime("%Y%m%d")
+            if current_date != today:
+                logger.info(f"日付変更検知: {today} → {current_date}. seen_results をリセット")
+                today = current_date
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
+                seen_results = set()
+
             # 本日のレースキーを取得
             race_keys = _fetch_today_race_keys(today)
             if not race_keys:
