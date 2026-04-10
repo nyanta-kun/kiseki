@@ -313,7 +313,16 @@ def fetch_stored_data(
         logger.info(f"NVOpen 戻り値: rc={rc}")
 
     if rc < 0:
-        logger.error(f"NVOpen エラー: rc={rc}")
+        if rc == -202:
+            # rc=-202 は「前回取得以降に新データなし」を意味する（エラーではない）。
+            # NVOpen が内部セッション状態を「空オープン」したままにする場合があるため、
+            # 必ず NVClose を呼んでオブジェクトを中立状態に戻す。
+            # これを怠ると同一 nv オブジェクトでの NVRTOpen がブロックされる。
+            logger.debug(f"NVOpen: 新データなし (rc=-202, dataspec={dataspec})")
+            nv.NVClose()
+        else:
+            logger.error(f"NVOpen エラー: rc={rc}")
+            nv.NVClose()
         return []
 
     logger.info(f"NVRead ループ開始 (rc={rc} ファイル)")
