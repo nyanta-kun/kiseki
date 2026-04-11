@@ -49,8 +49,8 @@ logger = logging.getLogger("optimize_weights")
 # 最適化対象の指数カラム
 # ---------------------------------------------------------------------------
 
-# disadvantage_bonus は加算型（線形重みではない）ため最適化対象外
-# 残り11指数の重みの合計 = 0.95
+# disadvantage_bonus / rivals_growth / career_phase / distance_change /
+# jockey_trainer_combo / going_pedigree は固定または upside_bonus 統合のため最適化対象外
 OPTIM_COLS = [
     "speed_index",
     "last_3f_index",
@@ -63,6 +63,12 @@ OPTIM_COLS = [
     "training_index",
     "anagusa_index",
     "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
 ]
 
 OPTIM_LABELS = {
@@ -77,10 +83,16 @@ OPTIM_LABELS = {
     "training_index": "調教",
     "anagusa_index": "穴ぐさ",
     "paddock_index": "パドック",
+    "rebound_index": "巻き返し",
+    "rivals_growth_index": "上昇相手",
+    "career_phase_index": "成長曲線",
+    "distance_change_index": "距離変更",
+    "jockey_trainer_combo_index": "騎手×厩舎",
+    "going_pedigree_index": "重馬場血統",
 }
 
-# disadvantage_bonus(0.05) を除いた最適化可能な重みの合計
-OPTIMIZABLE_TOTAL = 1.0 - INDEX_WEIGHTS.get("disadvantage_bonus", 0.05)  # 0.95
+# disadvantage_bonus を除いた最適化可能な重みの合計
+OPTIMIZABLE_TOTAL = 1.0 - INDEX_WEIGHTS.get("disadvantage_bonus", 0.01867)
 
 # 現行重み（constants.py の INDEX_WEIGHTS から自動取得）
 _KEY_MAP = {
@@ -95,6 +107,12 @@ _KEY_MAP = {
     "training_index": "training",
     "anagusa_index": "anagusa",
     "paddock_index": "paddock",
+    "rebound_index": "disadvantage_bonus",
+    "rivals_growth_index": "rivals_growth",
+    "career_phase_index": "career_phase",
+    "distance_change_index": "distance_change",
+    "jockey_trainer_combo_index": "jockey_trainer_combo",
+    "going_pedigree_index": "going_pedigree",
 }
 CURRENT_WEIGHTS = {col: INDEX_WEIGHTS.get(_KEY_MAP[col], 0.0) for col in OPTIM_COLS}
 
@@ -112,20 +130,26 @@ SELECT
     r.id              AS race_id,
     r.date            AS date,
     ci.horse_id       AS horse_id,
-    ci.speed_index        AS speed_index,
-    ci.last_3f_index      AS last_3f_index,
-    ci.course_aptitude    AS course_aptitude,
-    ci.position_advantage AS position_advantage,
-    ci.jockey_index       AS jockey_index,
-    ci.pace_index         AS pace_index,
-    ci.pedigree_index     AS pedigree_index,
-    ci.rotation_index     AS rotation_index,
-    ci.training_index     AS training_index,
-    ci.anagusa_index      AS anagusa_index,
-    ci.paddock_index      AS paddock_index,
-    rr.finish_position    AS finish_position,
-    rr.abnormality_code   AS abnormality_code,
-    rr.win_odds           AS win_odds
+    ci.speed_index            AS speed_index,
+    ci.last_3f_index          AS last_3f_index,
+    ci.course_aptitude        AS course_aptitude,
+    ci.position_advantage     AS position_advantage,
+    ci.jockey_index           AS jockey_index,
+    ci.pace_index             AS pace_index,
+    ci.pedigree_index         AS pedigree_index,
+    ci.rotation_index         AS rotation_index,
+    ci.training_index         AS training_index,
+    ci.anagusa_index          AS anagusa_index,
+    ci.paddock_index          AS paddock_index,
+    ci.rebound_index          AS rebound_index,
+    ci.rivals_growth_index    AS rivals_growth_index,
+    ci.career_phase_index     AS career_phase_index,
+    ci.distance_change_index  AS distance_change_index,
+    ci.jockey_trainer_combo_index AS jockey_trainer_combo_index,
+    ci.going_pedigree_index   AS going_pedigree_index,
+    rr.finish_position        AS finish_position,
+    rr.abnormality_code       AS abnormality_code,
+    rr.win_odds               AS win_odds
 FROM keiba.calculated_indices ci
 JOIN keiba.races r ON r.id = ci.race_id
 JOIN keiba.race_results rr

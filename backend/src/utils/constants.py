@@ -36,19 +36,36 @@ BASE_WEIGHT = 55.0  # 基準斤量
 #     訓練ROI=84.6% / テストROI=86.4%（v7比+10.3%）
 #     後3F(ρ=0.284)とコース適性(ρ=0.278)を並列化。血統(ρ=0.197)を0.066→0.118に引き上げ。
 #     Nelder-Mead最適化は血統0.345の過学習を確認し見送り。
+# v11: 再帰的改善 Cycle#1 採用 (2026-04-11)
+#     訓練: 20190101-20231231 / テスト: 20250101-20250630
+#     目標: upside_win_roi (穴馬単勝ROI)
+#     テスト期間改善: 穴馬ROI 89.1%→99.3% (+7.9%), 全体ROI 90.5%→93.3% (+2.7%)
+#     全ベース指数を均等に▼2-3%調整し、交互作用項 20% バジェットに充当。
+#     交互作用項は composite.py の upside_score として別途実装予定。
+# v12: 上昇相手指数（rivals_growth）追加 (2026-04-11)
+#     disadvantage_bonus（巻き返し指数ウェイト）から 0.020 を拠出。
+#     rivals_growth は初期値。次回重み最適化サイクルで調整予定。
+# v13: career_phase / distance_change / jockey_trainer_combo / going_pedigree 追加 (2026-04-11)
+#     各既存指数を均等に×0.96 して 0.040 を拠出（各新指数に 0.010 ずつ）。
+#     upside_score（交互作用項）を composite.py に inline 追加。
 INDEX_WEIGHTS = {
-    "speed": 0.1236,
-    "last_3f": 0.1709,
-    "course_aptitude": 0.1672,
-    "pace": 0.0280,
-    "jockey_trainer": 0.1560,
-    "pedigree": 0.1182,
-    "rotation": 0.1133,
-    "training": 0.0383,
-    "position_advantage": 0.0346,
-    "anagusa": 0.0000,
-    "paddock": 0.0000,
-    "disadvantage_bonus": 0.05,
+    "speed":              0.09398,   # 0.097895 × 0.96
+    "last_3f":            0.14018,   # 0.146019 × 0.96
+    "course_aptitude":    0.12613,   # 0.131384 × 0.96
+    "pace":               0.02132,   # 0.022209 × 0.96
+    "jockey_trainer":     0.11936,   # 0.124337 × 0.96
+    "pedigree":           0.08944,   # 0.093167 × 0.96
+    "rotation":           0.08515,   # 0.088694 × 0.96
+    "training":           0.02892,   # 0.030126 × 0.96
+    "position_advantage": 0.02566,   # 0.026726 × 0.96
+    "anagusa":            0.0000,
+    "paddock":            0.0000,
+    "disadvantage_bonus": 0.01867,   # 0.019443 × 0.96（巻き返し指数 rebound）
+    "rivals_growth":      0.01920,   # 0.020000 × 0.96（上昇相手指数）
+    "career_phase":       0.01000,   # 成長曲線指数（新規）
+    "distance_change":    0.01000,   # 距離変更適性指数（新規）
+    "jockey_trainer_combo": 0.01000, # 騎手×厩舎コンビ指数（新規）
+    "going_pedigree":     0.01000,   # 重馬場×血統指数（新規）
 }
 
 # =============================================================================

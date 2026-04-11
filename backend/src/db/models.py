@@ -408,6 +408,26 @@ class CalculatedIndex(Base):
     rebound_index: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 1), comment="巻き返し指数（前走不利+着順乖離から次走巻き返し期待度, 中立=50）"
     )
+    rivals_growth_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment="上昇相手指数（過去に負かした相手馬の後続活躍度から競走強度を推定, 中立=50）",
+    )
+    career_phase_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment="成長曲線指数（直近N走のトレンドと馬齢フェーズ, 中立=50）",
+    )
+    distance_change_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment="距離変更適性指数（延長/短縮パターン別成績, 中立=50）",
+    )
+    jockey_trainer_combo_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment="騎手×厩舎コンビ指数（コンビ勝率 vs 単独騎手勝率, 中立=50）",
+    )
+    going_pedigree_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment="重馬場×血統指数（重/不良馬場での父系統適性, 中立=50）",
+    )
     disadvantage_flag: Mapped[bool | None] = mapped_column(
         Boolean, default=False, comment="不利フラグ（True:レース中に不利あり）"
     )

@@ -72,12 +72,18 @@ SELECT
     ci.rotation_index     AS rotation_index,
     ci.pedigree_index     AS pedigree_index,
     ci.training_index     AS training_index,
-    ci.anagusa_index      AS anagusa_index,
-    ci.paddock_index      AS paddock_index,
-    rr.finish_position    AS finish_position,
-    rr.abnormality_code   AS abnormality_code,
-    rr.win_odds           AS win_odds,
-    rr.win_popularity     AS win_popularity
+    ci.anagusa_index              AS anagusa_index,
+    ci.paddock_index              AS paddock_index,
+    ci.rebound_index              AS rebound_index,
+    ci.rivals_growth_index        AS rivals_growth_index,
+    ci.career_phase_index         AS career_phase_index,
+    ci.distance_change_index      AS distance_change_index,
+    ci.jockey_trainer_combo_index AS jockey_trainer_combo_index,
+    ci.going_pedigree_index       AS going_pedigree_index,
+    rr.finish_position            AS finish_position,
+    rr.abnormality_code           AS abnormality_code,
+    rr.win_odds                   AS win_odds,
+    rr.win_popularity             AS win_popularity
 FROM keiba.calculated_indices ci
 JOIN keiba.races r ON r.id = ci.race_id
 JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id

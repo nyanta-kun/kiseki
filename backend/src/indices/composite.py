@@ -36,14 +36,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.models import CalculatedIndex, Race, RaceEntry
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
 from .anagusa import AnagusaIndexCalculator
+from .career_phase import CareerPhaseIndexCalculator
 from .course_aptitude import CourseAptitudeCalculator
+from .distance_change import DistanceChangeIndexCalculator
 from .frame_bias import FrameBiasCalculator
+from .going_pedigree import GoingPedigreeIndexCalculator
 from .jockey import JockeyIndexCalculator
+from .jockey_trainer_combo import JockeyTrainerComboIndexCalculator
 from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
 from .paddock import PaddockIndexCalculator
 from .pedigree import PedigreeIndexCalculator
 from .rebound import ReboundIndexCalculator
+from .rivals_growth import RivalsGrowthIndexCalculator
 from .rotation import RotationIndexCalculator
 from .speed import SpeedIndexCalculator
 from .training import TrainingIndexCalculator
@@ -69,7 +74,20 @@ logger = logging.getLogger(__name__)
 #   ② ローテーション指数のタイムボーナスが常に0だったバグを修正:
 #      _estimate_speed_score_sync が常に None を返していた
 #      → calculate_batch に speed_map 引数を追加し、CompositeIndexCalculator から渡す
-COMPOSITE_VERSION = 10
+# v11: 再帰的改善 Cycle#1 採用 (2026-04-11)
+#   Nelder-Mead最適化 (目標: 穴馬単勝ROI, 訓練: 20190101-20231231, テスト: 20250101-20250630)
+#   テスト期間: 穴馬ROI +7.9%, 全体ROI +2.7%, 3着内率 +0.2%
+#   全ベース指数を均等に▼2-3%調整。交互作用項(20%バジェット)は upside_score として別途実装予定。
+# v12: 上昇相手指数（rivals_growth）追加 (2026-04-11)
+#   過去レースで負かした相手馬が後に上位クラスで活躍していれば高スコア。
+#   disadvantage_bonus から 0.020 を拠出。初期値設定。次回重み最適化で調整予定。
+# v13: career_phase / distance_change / jockey_trainer_combo / going_pedigree 追加 (2026-04-11)
+#   各既存指数を均等に×0.96 して 0.040 を拠出（各新指数に 0.010 ずつ）。
+#   upside_bonus（交互作用項）を inline 追加:
+#     last_3f×pedigree / position_advantage×pedigree / jockey×pedigree
+#     + speed×pedigree / rotation×pedigree 各 ×0.013333（×1/100）
+#   平均ボーナス ≈ 1.67点（全指数が中立50のとき）
+COMPOSITE_VERSION = 13
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -108,6 +126,11 @@ class CompositeIndexCalculator:
         self._anagusa = AnagusaIndexCalculator(db)
         self._paddock = PaddockIndexCalculator(db)
         self._rebound = ReboundIndexCalculator(db)
+        self._rivals_growth = RivalsGrowthIndexCalculator(db)
+        self._career_phase = CareerPhaseIndexCalculator(db)
+        self._distance_change = DistanceChangeIndexCalculator(db)
+        self._jockey_trainer_combo = JockeyTrainerComboIndexCalculator(db)
+        self._going_pedigree = GoingPedigreeIndexCalculator(db)
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -154,6 +177,11 @@ class CompositeIndexCalculator:
         anagusa_map = await self._anagusa.calculate_batch(race_id)
         paddock_map = await self._paddock.calculate_batch(race_id)
         rebound_map = await self._rebound.calculate_batch(race_id)
+        rivals_growth_map = await self._rivals_growth.calculate_batch(race_id)
+        career_phase_map = await self._career_phase.calculate_batch(race_id)
+        distance_change_map = await self._distance_change.calculate_batch(race_id)
+        jockey_trainer_combo_map = await self._jockey_trainer_combo.calculate_batch(race_id)
+        going_pedigree_map = await self._going_pedigree.calculate_batch(race_id)
 
         results = []
         for entry in entries:
@@ -172,6 +200,11 @@ class CompositeIndexCalculator:
                 anagusa=anagusa_map.get(hid, DEFAULT_INDEX),
                 paddock=paddock_map.get(hid, DEFAULT_INDEX),
                 rebound=rebound_map.get(hid, DEFAULT_INDEX),
+                rivals_growth=rivals_growth_map.get(hid, DEFAULT_INDEX),
+                career_phase=career_phase_map.get(hid, DEFAULT_INDEX),
+                distance_change=distance_change_map.get(hid, DEFAULT_INDEX),
+                jockey_trainer_combo=jockey_trainer_combo_map.get(hid, DEFAULT_INDEX),
+                going_pedigree=going_pedigree_map.get(hid, DEFAULT_INDEX),
             )
             results.append({"horse_id": hid, **row})
 
@@ -236,6 +269,11 @@ class CompositeIndexCalculator:
         anagusa: float,
         paddock: float,
         rebound: float = DEFAULT_INDEX,
+        rivals_growth: float = DEFAULT_INDEX,
+        career_phase: float = DEFAULT_INDEX,
+        distance_change: float = DEFAULT_INDEX,
+        jockey_trainer_combo: float = DEFAULT_INDEX,
+        going_pedigree: float = DEFAULT_INDEX,
     ) -> dict:
         """各指数から総合指数を算出する。
 
@@ -255,13 +293,18 @@ class CompositeIndexCalculator:
             anagusa: 穴ぐさ指数（sekito.anagusa ピック実績ベース）
             paddock: パドック指数（sekito.netkeiba p_rank ベース、データなし=50）
             rebound: 巻き返し指数（前走不利+着順乖離、中立=50）
+            rivals_growth: 上昇相手指数（過去に負かした相手馬の後続活躍度、中立=50）
+            career_phase: 成長曲線指数（直近N走トレンドと馬齢フェーズ、中立=50）
+            distance_change: 距離変更適性指数（延長/短縮パターン別成績、中立=50）
+            jockey_trainer_combo: 騎手×厩舎コンビ指数（コンビ勝率 vs 単独騎手勝率、中立=50）
+            going_pedigree: 重馬場×血統指数（重/不良馬場での父系統適性、中立=50）
 
         Returns:
             各指数と総合指数を含む dict
         """
         w = INDEX_WEIGHTS
 
-        composite = (
+        base_composite = (
             speed * w["speed"]
             + last3f * w["last_3f"]
             + course_aptitude * w["course_aptitude"]
@@ -274,7 +317,24 @@ class CompositeIndexCalculator:
             + anagusa * w["anagusa"]
             + paddock * w["paddock"]
             + rebound * w["disadvantage_bonus"]
+            + rivals_growth * w["rivals_growth"]
+            + career_phase * w["career_phase"]
+            + distance_change * w["distance_change"]
+            + jockey_trainer_combo * w["jockey_trainer_combo"]
+            + going_pedigree * w["going_pedigree"]
         )
+
+        # 交互作用項ボーナス（top5 pedigree interactions from optimization）
+        _INTER_W = 0.013333
+        upside_bonus = (
+            last3f * pedigree / 100.0 * _INTER_W
+            + position_advantage * pedigree / 100.0 * _INTER_W
+            + jockey * pedigree / 100.0 * _INTER_W
+            + speed * pedigree / 100.0 * _INTER_W
+            + rotation * pedigree / 100.0 * _INTER_W
+        )
+
+        composite = base_composite + upside_bonus
         composite = round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
 
         return {
@@ -290,6 +350,12 @@ class CompositeIndexCalculator:
             "anagusa_index": round(anagusa, 1),
             "paddock_index": round(paddock, 1),
             "rebound_index": round(rebound, 1),
+            "rivals_growth_index": round(rivals_growth, 1),
+            "career_phase_index": round(career_phase, 1),
+            "distance_change_index": round(distance_change, 1),
+            "jockey_trainer_combo_index": round(jockey_trainer_combo, 1),
+            "going_pedigree_index": round(going_pedigree, 1),
+            "upside_bonus": round(upside_bonus, 3),
             "composite_index": composite,
         }
 
@@ -409,6 +475,23 @@ class CompositeIndexCalculator:
         anagusa_val = Decimal(str(data["anagusa_index"])) if "anagusa_index" in data else None
         paddock_val = Decimal(str(data["paddock_index"])) if "paddock_index" in data else None
         rebound_val = Decimal(str(data["rebound_index"])) if "rebound_index" in data else None
+        rivals_growth_val = (
+            Decimal(str(data["rivals_growth_index"])) if "rivals_growth_index" in data else None
+        )
+        career_phase_val = (
+            Decimal(str(data["career_phase_index"])) if "career_phase_index" in data else None
+        )
+        distance_change_val = (
+            Decimal(str(data["distance_change_index"])) if "distance_change_index" in data else None
+        )
+        jockey_trainer_combo_val = (
+            Decimal(str(data["jockey_trainer_combo_index"]))
+            if "jockey_trainer_combo_index" in data
+            else None
+        )
+        going_pedigree_val = (
+            Decimal(str(data["going_pedigree_index"])) if "going_pedigree_index" in data else None
+        )
 
         if existing:
             existing.speed_index = Decimal(str(data["speed_index"]))
@@ -423,6 +506,11 @@ class CompositeIndexCalculator:
             existing.anagusa_index = anagusa_val
             existing.paddock_index = paddock_val
             existing.rebound_index = rebound_val
+            existing.rivals_growth_index = rivals_growth_val
+            existing.career_phase_index = career_phase_val
+            existing.distance_change_index = distance_change_val
+            existing.jockey_trainer_combo_index = jockey_trainer_combo_val
+            existing.going_pedigree_index = going_pedigree_val
             existing.composite_index = Decimal(str(data["composite_index"]))
             existing.win_probability = win_prob
             existing.place_probability = place_prob
@@ -444,6 +532,11 @@ class CompositeIndexCalculator:
                 anagusa_index=anagusa_val,
                 paddock_index=paddock_val,
                 rebound_index=rebound_val,
+                rivals_growth_index=rivals_growth_val,
+                career_phase_index=career_phase_val,
+                distance_change_index=distance_change_val,
+                jockey_trainer_combo_index=jockey_trainer_combo_val,
+                going_pedigree_index=going_pedigree_val,
                 composite_index=Decimal(str(data["composite_index"])),
                 win_probability=win_prob,
                 place_probability=place_prob,
