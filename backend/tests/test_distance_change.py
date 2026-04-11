@@ -15,10 +15,8 @@ from src.indices.distance_change import (
     DEFAULT_SCORE,
     MIN_PATTERN_RACES,
     RATIO_SCALE,
-    DistanceChangeIndexCalculator,
     _classify_change,
 )
-
 
 # ---------------------------------------------------------------------------
 # _classify_change

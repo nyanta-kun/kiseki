@@ -13,9 +13,7 @@ from src.indices.jockey_trainer_combo import (
     DEFAULT_SCORE,
     LIFT_SCALE,
     MIN_COMBO_RACES,
-    JockeyTrainerComboIndexCalculator,
 )
-
 
 # ---------------------------------------------------------------------------
 # lift とスコアの数式検証

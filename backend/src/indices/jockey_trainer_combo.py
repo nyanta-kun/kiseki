@@ -25,7 +25,6 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession

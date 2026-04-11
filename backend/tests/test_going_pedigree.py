@@ -15,9 +15,7 @@ from src.indices.going_pedigree import (
     HEAVY_CONDITIONS,
     MIN_HEAVY_RACES,
     NEUTRAL_CONDITIONS,
-    GoingPedigreeIndexCalculator,
 )
-
 
 # ---------------------------------------------------------------------------
 # 定数・条件分岐テスト

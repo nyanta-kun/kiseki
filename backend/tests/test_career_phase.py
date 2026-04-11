@@ -13,14 +13,10 @@ from src.indices.career_phase import (
     AGE_BONUS_3YO_SPRING,
     DEFAULT_SCORE,
     LOOKBACK_RACES,
-    SLOPE_CLIP_MAX,
-    SLOPE_CLIP_MIN,
-    SLOPE_SCALE,
     CareerPhaseIndexCalculator,
     _age_adjustment,
     _compute_slope,
 )
-
 
 # ---------------------------------------------------------------------------
 # _compute_slope
