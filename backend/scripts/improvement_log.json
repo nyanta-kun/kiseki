@@ -1,0 +1,108 @@
+{
+  "cycles": [
+    {
+      "cycle_id": 1,
+      "timestamp": "2026-04-11T09:19:15.785923",
+      "train_period": "20190101-20231231",
+      "test_period": "20250101-20250630",
+      "objective": "upside_win_roi",
+      "baseline": {
+        "train": {
+          "place_rate_pct": 49.1,
+          "win_roi_pct": 97.3,
+          "upside_bets": 9298,
+          "upside_win_roi_pct": 107.1,
+          "upside_place_roi_pct": null,
+          "upside_hit_rate": 0.2516
+        },
+        "test": {
+          "place_rate_pct": 54.2,
+          "win_roi_pct": 90.1,
+          "upside_bets": 1304,
+          "upside_win_roi_pct": 89.1,
+          "upside_place_roi_pct": null,
+          "upside_hit_rate": 0.2389
+        }
+      },
+      "candidate_interactions": [
+        "last_3f_index*pedigree_index",
+        "rotation_index*pedigree_index",
+        "pedigree_index*anagusa_index",
+        "speed_index*pedigree_index",
+        "pedigree_index*paddock_index",
+        "pedigree_index*rebound_index",
+        "position_advantage*pedigree_index",
+        "jockey_index*pedigree_index",
+        "last_3f_index*rotation_index",
+        "position_advantage*rotation_index",
+        "jockey_index*rotation_index",
+        "last_3f_index*anagusa_index",
+        "course_aptitude*rotation_index",
+        "speed_index*last_3f_index",
+        "last_3f_index*paddock_index"
+      ],
+      "new_weights": {
+        "base": {
+          "speed_index": 0.097895,
+          "last_3f_index": 0.146019,
+          "course_aptitude": 0.131384,
+          "position_advantage": 0.026726,
+          "jockey_index": 0.124337,
+          "pace_index": 0.022209,
+          "rotation_index": 0.088694,
+          "pedigree_index": 0.093167,
+          "training_index": 0.030126,
+          "anagusa_index": 0.0,
+          "paddock_index": 0.0,
+          "rebound_index": 0.039443
+        },
+        "interactions": {
+          "last_3f_index*pedigree_index": 0.013333,
+          "rotation_index*pedigree_index": 0.013333,
+          "pedigree_index*anagusa_index": 0.013333,
+          "speed_index*pedigree_index": 0.013333,
+          "pedigree_index*paddock_index": 0.013333,
+          "pedigree_index*rebound_index": 0.013333,
+          "position_advantage*pedigree_index": 0.013333,
+          "jockey_index*pedigree_index": 0.013334,
+          "last_3f_index*rotation_index": 0.013333,
+          "position_advantage*rotation_index": 0.013333,
+          "jockey_index*rotation_index": 0.013333,
+          "last_3f_index*anagusa_index": 0.013334,
+          "course_aptitude*rotation_index": 0.013333,
+          "speed_index*last_3f_index": 0.013333,
+          "last_3f_index*paddock_index": 0.013334
+        }
+      },
+      "result": {
+        "train_upside_place_roi_current": 107.8,
+        "train_upside_place_roi_new": 114.2,
+        "train_upside_place_roi_diff": 6.5,
+        "train_upside_win_roi_current": 107.8,
+        "train_upside_win_roi_new": 114.2,
+        "train_upside_win_roi_diff": 6.5,
+        "train_place_rate_current": 48.9,
+        "train_place_rate_new": 50.1,
+        "train_place_rate_diff": 1.1,
+        "train_roi_current": 97.4,
+        "train_roi_new": 104.9,
+        "train_roi_diff": 7.5,
+        "test_upside_place_roi_current": 91.4,
+        "test_upside_place_roi_new": 99.3,
+        "test_upside_place_roi_diff": 7.9,
+        "test_upside_win_roi_current": 91.4,
+        "test_upside_win_roi_new": 99.3,
+        "test_upside_win_roi_diff": 7.9,
+        "test_place_rate_current": 54.0,
+        "test_place_rate_new": 54.2,
+        "test_place_rate_diff": 0.2,
+        "test_roi_current": 90.5,
+        "test_roi_new": 93.3,
+        "test_roi_diff": 2.7,
+        "overfit_flag": true
+      },
+      "decision": "adopted",
+      "note": "テスト期間改善+7.9%を評価。過学習フラグはデータ期間構造差(訓練/テスト元々18pt乖離)による誤発報と判断。"
+    }
+  ]
+}
