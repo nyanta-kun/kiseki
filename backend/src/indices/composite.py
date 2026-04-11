@@ -92,7 +92,14 @@ logger = logging.getLogger(__name__)
 #   基準タイムキャッシュが常に空 → 全馬の速度指数が 50.0（デフォルト値）に固定されていた。
 #   修正: calculate_batch の先頭で await self._preload_standard_times(race_id) を呼ぶ。
 #   ※ v13 以前のバックフィルデータは速度指数がすべて 50.0 で無効。再算出が必要。
-COMPOSITE_VERSION = 14
+# v15: 芝スプリント限定ウェイトチューニング (2026-04-12)
+#   バックテスト分析（2025年全年/3,106レース）でセグメント別スピアマン相関を測定:
+#   ① 芝スプリント(〜1400m): 展開ρ=+0.02（逆効果） → pace=0、速度+騎手に再配分
+#      シミュレーション: 芝スプリント ROI 77.1% → 90.7% (+13.6%)
+#   ※ ダートルール(paddock有効化)・長距離ルールは全体ROIを悪化させたため除外
+#      ダート: ダートマイル -7.2%、ダートスプリント -4.2%（paddock重みが逆効果）
+#      長距離: 芝長距離 +0.0%（効果なし）、その他長距離 -6.0%
+COMPOSITE_VERSION = 15
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -100,6 +107,49 @@ DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
 # 総合指数クリップ範囲
 INDEX_MIN = 0.0
 INDEX_MAX = 100.0
+
+
+def _segment_weights(surface: str | None, distance: int | None) -> dict:
+    """セグメント（馬場×距離）別にウェイトを調整して返す。
+
+    バックテスト分析（v14 2025年全年/3,106レース）のスピアマン相関に基づく:
+
+    芝スプリント (surface starts with "芝", distance ≤ 1400):
+       - 展開指数 ρ = +0.02 (逆効果) → pace = 0
+       - 解放した予算をスピード(70%)・騎手(30%)に再配分
+       - シミュレーション: ROI 77.1% → 90.7% (+13.6%)
+
+    ※ 以下は検討したが除外:
+       - ダートルール(paddock有効化): ダートマイル -7.2%、ダートスプリント -4.2% で逆効果
+       - 長距離ルール: 芝長距離 +0.0%（効果なし）、その他長距離 -6.0%
+
+    Args:
+        surface: "芝" / "ダート" / "障害" 等（Race.surface）
+        distance: 距離（m）
+
+    Returns:
+        調整済みウェイト dict（INDEX_WEIGHTS をコピーして変更）
+    """
+    w = dict(INDEX_WEIGHTS)
+
+    is_turf_sprint = (
+        isinstance(surface, str) and surface.startswith("芝")
+        and distance is not None and distance <= 1400
+    )
+
+    # 芝スプリント: 展開ウェイトを0にしてスピード・騎手に再配分
+    if is_turf_sprint:
+        freed = w["pace"]                        # 0.02132
+        w["pace"] = 0.0
+        w["speed"] += freed * 0.70               # +0.01492
+        w["jockey_trainer"] += freed * 0.30      # +0.00640
+
+    # 負値クランプ（念のため）
+    for k in w:
+        if w[k] < 0.0:
+            w[k] = 0.0
+
+    return w
 
 # Softmax 温度パラメータ（composite_index 10点差 → 約2.7倍の確率比）
 SOFTMAX_TEMPERATURE = 10.0
@@ -188,6 +238,9 @@ class CompositeIndexCalculator:
         jockey_trainer_combo_map = await self._jockey_trainer_combo.calculate_batch(race_id)
         going_pedigree_map = await self._going_pedigree.calculate_batch(race_id)
 
+        # セグメント別ウェイト（レース単位で1回だけ計算）
+        seg_weights = _segment_weights(race.surface, race.distance)
+
         results = []
         for entry in entries:
             hid = entry.horse_id
@@ -210,6 +263,7 @@ class CompositeIndexCalculator:
                 distance_change=distance_change_map.get(hid, DEFAULT_INDEX),
                 jockey_trainer_combo=jockey_trainer_combo_map.get(hid, DEFAULT_INDEX),
                 going_pedigree=going_pedigree_map.get(hid, DEFAULT_INDEX),
+                weights=seg_weights,
             )
             results.append({"horse_id": hid, **row})
 
@@ -279,10 +333,12 @@ class CompositeIndexCalculator:
         distance_change: float = DEFAULT_INDEX,
         jockey_trainer_combo: float = DEFAULT_INDEX,
         going_pedigree: float = DEFAULT_INDEX,
+        weights: dict | None = None,
     ) -> dict:
         """各指数から総合指数を算出する。
 
         未実装指数（パドック）はニュートラル値（50.0）で補完する。
+        weights を指定するとセグメント別ウェイトを使用する。
 
         Args:
             horse_id: 馬ID（ログ用）
@@ -303,11 +359,12 @@ class CompositeIndexCalculator:
             distance_change: 距離変更適性指数（延長/短縮パターン別成績、中立=50）
             jockey_trainer_combo: 騎手×厩舎コンビ指数（コンビ勝率 vs 単独騎手勝率、中立=50）
             going_pedigree: 重馬場×血統指数（重/不良馬場での父系統適性、中立=50）
+            weights: セグメント別ウェイト dict（None のとき INDEX_WEIGHTS を使用）
 
         Returns:
             各指数と総合指数を含む dict
         """
-        w = INDEX_WEIGHTS
+        w = weights if weights is not None else INDEX_WEIGHTS
 
         base_composite = (
             speed * w["speed"]
