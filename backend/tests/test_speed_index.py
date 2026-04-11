@@ -257,6 +257,9 @@ class TestCalculateBatch:
         calc = SpeedIndexCalculator(db=db)
         calc._std_time_cache[("05", 1600, "芝", "良")] = (93.0, 2.0)
 
+        # _preload_standard_times はキャッシュを上書きするだけなので no-op でモック
+        calc._preload_standard_times = AsyncMock(return_value=None)
+
         # _get_past_results_batch をモックして past_scores から直接スコアを返す
         async def mock_batch(horse_ids_arg, before_date, exclude_race_id):
             result = {}
