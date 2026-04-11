@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Race } from "@/lib/api";
+import type { Race } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -77,8 +77,20 @@ export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
           <div
             className="flex-1 flex gap-1 overflow-x-auto scrollbar-none justify-center"
             role="tablist"
-            aria-label="競馬場選択"
+            aria-label="競馬場・推奨選択"
           >
+            {/* 推奨タブ */}
+            <Link
+              href={`${basePath}?date=${races[0]?.date ?? ""}`}
+              className={cn(
+                "flex-shrink-0 text-xs px-2.5 py-1 rounded-full transition-colors whitespace-nowrap",
+                `${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white hover:bg-white/10`
+              )}
+              aria-label="推奨一覧へ"
+            >
+              ★推奨
+            </Link>
+
             {courses.map((course) => (
               <button
                 key={course}

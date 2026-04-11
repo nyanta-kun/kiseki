@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { OddsData, RaceResult, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
+import { OddsData, RaceEntry, RaceResult, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { EVSummary } from "@/components/EVSummary";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
+import { EntriesTable } from "@/components/EntriesTable";
 import { auth } from "@/auth";
 
 const BACKEND_URL =
@@ -66,12 +67,13 @@ export default async function RacePage({ params }: { params: Params }) {
   const date = race?.date ?? "";
   const raceNumber = race?.race_number ?? 1;
 
-  // 残り4つを並列取得
-  const [allRaces, initialResults, initialOdds, indicesResp] = await Promise.all([
+  // 残り5つを並列取得
+  const [allRaces, initialResults, initialOdds, indicesResp, entries] = await Promise.all([
     date ? fetchRacesByDate(date).catch(() => [] as Race[]) : Promise.resolve([] as Race[]),
     fetchResults(raceId).catch(() => [] as RaceResult[]),
     fetchOdds(raceId).catch(() => ({ win: {}, place: {} } as OddsData)),
     fetchIndices(raceId).catch(() => null),
+    fetchEntries(raceId).catch(() => [] as RaceEntry[]),
   ]);
 
   // SiteHeader 直下〜画面下端を fixed で占有。DOM の flex 高さ計算に依存しない。
@@ -93,10 +95,16 @@ export default async function RacePage({ params }: { params: Params }) {
       <div style={wrapperStyle}>
         <RaceSubHeader raceId={raceId} race={race} date={date} allRaces={allRaces} />
         <main style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
-          <div className="max-w-3xl mx-auto px-4 py-8 text-center text-gray-400">
-            <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
-            <p>この レースの指数データがありません</p>
-            <p className="text-xs mt-1">算出が完了していない可能性があります</p>
+          <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+            {entries.length > 0 ? (
+              <EntriesTable entries={entries} odds={initialOdds} />
+            ) : (
+              <div className="py-8 text-center text-gray-400">
+                <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>
+                <p>このレースの指数データがありません</p>
+                <p className="text-xs mt-1">算出が完了していない可能性があります</p>
+              </div>
+            )}
           </div>
         </main>
       </div>

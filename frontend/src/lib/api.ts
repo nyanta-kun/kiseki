@@ -76,6 +76,18 @@ export type OddsData = {
   place: Record<string, number>; // horse_number (str) → 倍率
 };
 
+export type RaceEntry = {
+  id: number;
+  frame_number: number;
+  horse_number: number;
+  horse_name: string;
+  jockey_name: string | null;
+  trainer_name: string | null;
+  weight_carried: number | null;
+  horse_weight: number | null;
+  weight_change: number | null;
+};
+
 export type RaceConfidence = {
   score: number;
   label: "HIGH" | "MID" | "LOW";
@@ -217,6 +229,11 @@ export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEnt
 /** オッズ（リアルタイム WebSocket を主に使用。初期値取得のみ）→ 30 秒キャッシュ */
 export async function fetchOdds(raceId: number): Promise<OddsData> {
   return get<OddsData>(`/races/${raceId}/odds`, { next: { revalidate: 30 } });
+}
+
+/** 出走馬一覧（枠順確定後・指数算出前でも取得可能）→ 30 秒キャッシュ */
+export async function fetchEntries(raceId: number): Promise<RaceEntry[]> {
+  return get<RaceEntry[]>(`/races/${raceId}/entries`, { next: { revalidate: 30 } });
 }
 
 /** 最近開催日検索（カレンダーナビゲーション用）→ 30 秒キャッシュ */
