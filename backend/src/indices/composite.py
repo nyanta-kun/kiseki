@@ -30,7 +30,7 @@ import math
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
@@ -87,7 +87,12 @@ logger = logging.getLogger(__name__)
 #     last_3f×pedigree / position_advantage×pedigree / jockey×pedigree
 #     + speed×pedigree / rotation×pedigree 各 ×0.013333（×1/100）
 #   平均ボーナス ≈ 1.67点（全指数が中立50のとき）
-COMPOSITE_VERSION = 13
+# v14: 速度指数バグ修正 (2026-04-11) ← 全期間バックフィル必須
+#   SpeedIndexCalculator.calculate_batch が _preload_standard_times を呼んでいなかった。
+#   基準タイムキャッシュが常に空 → 全馬の速度指数が 50.0（デフォルト値）に固定されていた。
+#   修正: calculate_batch の先頭で await self._preload_standard_times(race_id) を呼ぶ。
+#   ※ v13 以前のバックフィルデータは速度指数がすべて 50.0 で無効。再算出が必要。
+COMPOSITE_VERSION = 14
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -450,6 +455,9 @@ class CompositeIndexCalculator:
     async def _upsert(self, race_id: int, horse_id: int, data: dict) -> None:
         """calculated_indices へ upsert する（同 race_id + horse_id + version は上書き）。
 
+        SELECT + UPDATE/INSERT の2段階。重複行が存在する場合は最初の1行を更新し、
+        余分な行は削除して一意性を回復する。
+
         Args:
             race_id: DB の races.id
             horse_id: DB の horses.id
@@ -464,81 +472,66 @@ class CompositeIndexCalculator:
                 )
             )
         )
-        existing = existing_result.scalar_one_or_none()
+        all_existing = existing_result.scalars().all()
 
-        win_prob = Decimal(str(data["win_probability"])) if "win_probability" in data else None
-        place_prob = (
-            Decimal(str(data["place_probability"])) if "place_probability" in data else None
-        )
+        # 重複行がある場合、余分な行を削除して1行に正規化
+        if len(all_existing) > 1:
+            for dup in all_existing[1:]:
+                await self.db.delete(dup)
+            await self.db.flush()
 
-        training_val = Decimal(str(data["training_index"])) if "training_index" in data else None
-        anagusa_val = Decimal(str(data["anagusa_index"])) if "anagusa_index" in data else None
-        paddock_val = Decimal(str(data["paddock_index"])) if "paddock_index" in data else None
-        rebound_val = Decimal(str(data["rebound_index"])) if "rebound_index" in data else None
-        rivals_growth_val = (
-            Decimal(str(data["rivals_growth_index"])) if "rivals_growth_index" in data else None
-        )
-        career_phase_val = (
-            Decimal(str(data["career_phase_index"])) if "career_phase_index" in data else None
-        )
-        distance_change_val = (
-            Decimal(str(data["distance_change_index"])) if "distance_change_index" in data else None
-        )
-        jockey_trainer_combo_val = (
-            Decimal(str(data["jockey_trainer_combo_index"]))
-            if "jockey_trainer_combo_index" in data
-            else None
-        )
-        going_pedigree_val = (
-            Decimal(str(data["going_pedigree_index"])) if "going_pedigree_index" in data else None
-        )
+        existing = all_existing[0] if all_existing else None
+
+        def _d(key: str) -> Decimal | None:
+            v = data.get(key)
+            return Decimal(str(v)) if v is not None else None
 
         if existing:
-            existing.speed_index = Decimal(str(data["speed_index"]))
-            existing.last_3f_index = Decimal(str(data["last3f_index"]))
-            existing.course_aptitude = Decimal(str(data["course_aptitude"]))
-            existing.position_advantage = Decimal(str(data["position_advantage"]))
-            existing.rotation_index = Decimal(str(data["rotation_index"]))
-            existing.jockey_index = Decimal(str(data["jockey_index"]))
-            existing.pace_index = Decimal(str(data["pace_index"]))
-            existing.pedigree_index = Decimal(str(data["pedigree_index"]))
-            existing.training_index = training_val
-            existing.anagusa_index = anagusa_val
-            existing.paddock_index = paddock_val
-            existing.rebound_index = rebound_val
-            existing.rivals_growth_index = rivals_growth_val
-            existing.career_phase_index = career_phase_val
-            existing.distance_change_index = distance_change_val
-            existing.jockey_trainer_combo_index = jockey_trainer_combo_val
-            existing.going_pedigree_index = going_pedigree_val
-            existing.composite_index = Decimal(str(data["composite_index"]))
-            existing.win_probability = win_prob
-            existing.place_probability = place_prob
+            existing.speed_index = _d("speed_index")
+            existing.last_3f_index = _d("last3f_index")
+            existing.course_aptitude = _d("course_aptitude")
+            existing.position_advantage = _d("position_advantage")
+            existing.rotation_index = _d("rotation_index")
+            existing.jockey_index = _d("jockey_index")
+            existing.pace_index = _d("pace_index")
+            existing.pedigree_index = _d("pedigree_index")
+            existing.training_index = _d("training_index")
+            existing.anagusa_index = _d("anagusa_index")
+            existing.paddock_index = _d("paddock_index")
+            existing.rebound_index = _d("rebound_index")
+            existing.rivals_growth_index = _d("rivals_growth_index")
+            existing.career_phase_index = _d("career_phase_index")
+            existing.distance_change_index = _d("distance_change_index")
+            existing.jockey_trainer_combo_index = _d("jockey_trainer_combo_index")
+            existing.going_pedigree_index = _d("going_pedigree_index")
+            existing.composite_index = _d("composite_index")
+            existing.win_probability = _d("win_probability")
+            existing.place_probability = _d("place_probability")
             existing.calculated_at = datetime.now()
         else:
             record = CalculatedIndex(
                 race_id=race_id,
                 horse_id=horse_id,
                 version=COMPOSITE_VERSION,
-                speed_index=Decimal(str(data["speed_index"])),
-                last_3f_index=Decimal(str(data["last3f_index"])),
-                course_aptitude=Decimal(str(data["course_aptitude"])),
-                position_advantage=Decimal(str(data["position_advantage"])),
-                rotation_index=Decimal(str(data["rotation_index"])),
-                jockey_index=Decimal(str(data["jockey_index"])),
-                pace_index=Decimal(str(data["pace_index"])),
-                pedigree_index=Decimal(str(data["pedigree_index"])),
-                training_index=training_val,
-                anagusa_index=anagusa_val,
-                paddock_index=paddock_val,
-                rebound_index=rebound_val,
-                rivals_growth_index=rivals_growth_val,
-                career_phase_index=career_phase_val,
-                distance_change_index=distance_change_val,
-                jockey_trainer_combo_index=jockey_trainer_combo_val,
-                going_pedigree_index=going_pedigree_val,
-                composite_index=Decimal(str(data["composite_index"])),
-                win_probability=win_prob,
-                place_probability=place_prob,
+                speed_index=_d("speed_index"),
+                last_3f_index=_d("last3f_index"),
+                course_aptitude=_d("course_aptitude"),
+                position_advantage=_d("position_advantage"),
+                rotation_index=_d("rotation_index"),
+                jockey_index=_d("jockey_index"),
+                pace_index=_d("pace_index"),
+                pedigree_index=_d("pedigree_index"),
+                training_index=_d("training_index"),
+                anagusa_index=_d("anagusa_index"),
+                paddock_index=_d("paddock_index"),
+                rebound_index=_d("rebound_index"),
+                rivals_growth_index=_d("rivals_growth_index"),
+                career_phase_index=_d("career_phase_index"),
+                distance_change_index=_d("distance_change_index"),
+                jockey_trainer_combo_index=_d("jockey_trainer_combo_index"),
+                going_pedigree_index=_d("going_pedigree_index"),
+                composite_index=_d("composite_index"),
+                win_probability=_d("win_probability"),
+                place_probability=_d("place_probability"),
             )
             self.db.add(record)

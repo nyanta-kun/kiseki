@@ -114,6 +114,9 @@ class SpeedIndexCalculator(IndexCalculator):
 
         horse_ids = [e.horse_id for e in entries]
 
+        # 基準タイムキャッシュを事前一括ロード（_single_race_speed_score が参照する）
+        await self._preload_standard_times(race_id)
+
         # 全馬の過去結果を並行（単一クエリ）で取得
         rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 

@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 
 load_dotenv(_root.parent / ".env")
 
-from src.db.session import engine
+from src.db.session import sync_engine as engine
 from src.indices.composite import COMPOSITE_VERSION
 
 logging.basicConfig(
