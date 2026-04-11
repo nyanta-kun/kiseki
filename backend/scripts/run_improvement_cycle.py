@@ -55,7 +55,9 @@ from src.indices.composite import COMPOSITE_VERSION
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_improvement_cycle")
 
-LOG_PATH = _here.parent / "improvement_log.json"
+_WRITABLE_DIR = Path("/tmp/kiseki_improvement") if Path("/tmp").exists() else _here.parent
+_WRITABLE_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = _WRITABLE_DIR / "improvement_log.json"
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +385,7 @@ def main() -> None:
 
     train_start, train_end = _parse_period(args.train)
     test_start, test_end = _parse_period(args.test)
-    inter_json = _here.parent / "interaction_candidates.json"
+    inter_json = _WRITABLE_DIR / "interaction_candidates.json"
 
     # 改善履歴ロード
     log = load_log()
@@ -451,7 +453,7 @@ def main() -> None:
         report_path = (
             Path(args.report_out)
             if args.report_out
-            else _here.parent / f"improvement_report_{cycle_id}.md"
+            else _WRITABLE_DIR / f"improvement_report_{cycle_id}.md"
         )
         # 分析のみサイクルを記録
         entry = {
@@ -503,7 +505,7 @@ def main() -> None:
     report_path = (
         Path(args.report_out)
         if args.report_out
-        else _here.parent / f"improvement_report_{cycle_id}.md"
+        else _WRITABLE_DIR / f"improvement_report_{cycle_id}.md"
     )
     report_path.write_text(report_md)
     print(f"\n  Markdown レポートを保存: {report_path}")
@@ -540,7 +542,7 @@ def main() -> None:
         print("\n  ⏸  保留しました。後から improvement_log.json の decision を更新できます。")
 
     # optimization_result.json に保存
-    opt_out = _here.parent / "optimization_result.json"
+    opt_out = _WRITABLE_DIR / "optimization_result.json"
     opt_payload = {
         "meta": {
             "cycle_id": cycle_id,
