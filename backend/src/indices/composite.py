@@ -30,7 +30,7 @@ import math
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_, select, text
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
