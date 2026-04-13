@@ -210,6 +210,8 @@ prlctl restart "Windows 11"
   - 第2利用キーや `JRAVAN_SID_2` は不要。複数 COM インスタンスが独立動作する
 - **UmaConnも同様に realtime + setup を同時起動できる**（検証済み 2026-04-13）
   - 追加API_KEY不要。`NVSetServiceKey rc=-101`（2回目）は正常（既登録の意味）
+  - **PC-KEIBA アプリ不要**。NVDTLab.dll（UmaConn SDK）は PC-KEIBA なしで直接動作（2026-04-13 実機確認）
+  - 認証は `HKLM\SOFTWARE\WOW6432Node\RateBuster Co.,Ltd\UmaConn\3.5.4.0` で管理（PC-KEIBAのDB設定とは無関係）
 
 ### jvlink_agent.py 起動
 ※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
