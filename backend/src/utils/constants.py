@@ -53,19 +53,24 @@ BASE_WEIGHT = 55.0  # 基準斤量
 #     過学習フラグ: なし（初の通過）, λ=3.0, top-n=0（交互作用項なし）
 #     テスト期間改善: 1位単勝ROI 81.8%→86.1% (+4.3%), 穴馬ROI 67.6%→85.2% (+17.6%)
 #     主な変化: pedigree 8.9%→15.7% (+6.8%), jockey 11.9%→10.4% (-1.5%)
+# v17: 再帰的改善 Cycle#10 採用 (2026-04-14)
+#     目標: roi, 訓練: 20230413-20251231(v15), テスト: 20260101-20260413, λ=3.0, top-n=0
+#     過学習フラグ: なし
+#     テスト期間改善: 1位単勝ROI 86.1%→89.1% (+3.0%), 穴馬ROI 85.2%→95.8% (+10.6%), 3着内率 +0.3%
+#     主な変化: pedigree 15.7%→20.2% (+4.5%), course_aptitude 11.8%→10.4% (-1.4%)
 INDEX_WEIGHTS = {
-    "speed":              0.09743,   # v16: Nelder-Mead (roi, λ=3.0)
-    "last_3f":            0.14372,   # v16
-    "course_aptitude":    0.11814,   # v16
-    "pace":               0.01786,   # v16
-    "jockey_trainer":     0.10387,   # v16
-    "pedigree":           0.15712,   # v16: 8.9% → 15.7% (+6.8%)
-    "rotation":           0.09276,   # v16
-    "training":           0.03003,   # v16
-    "position_advantage": 0.02306,   # v16
+    "speed":              0.09258,   # v17: Nelder-Mead (roi, λ=3.0, v15データ)
+    "last_3f":            0.13735,   # v17
+    "course_aptitude":    0.10415,   # v17
+    "pace":               0.01346,   # v17
+    "jockey_trainer":     0.10023,   # v17
+    "pedigree":           0.20217,   # v17: 15.7% → 20.2% (+4.5%)
+    "rotation":           0.08403,   # v17
+    "training":           0.02941,   # v17
+    "position_advantage": 0.02173,   # v17
     "anagusa":            0.0000,
     "paddock":            0.0000,
-    "disadvantage_bonus": 0.01603,   # v16（巻き返し指数 rebound）
+    "disadvantage_bonus": 0.01489,   # v17（巻き返し指数 rebound）
     "rivals_growth":      0.01920,   # v12: 上昇相手指数（未最適化）
     "career_phase":       0.01000,   # v13: 成長曲線指数（未最適化）
     "distance_change":    0.01000,   # v13: 距離変更適性指数（未最適化）
