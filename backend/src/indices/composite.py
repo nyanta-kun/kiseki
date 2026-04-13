@@ -25,6 +25,7 @@ INDEX_WEIGHTS で重み付け合成し、総合指数を算出する。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from datetime import datetime
@@ -34,6 +35,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
+from ..db.session import AsyncSessionLocal
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
 from .anagusa import AnagusaIndexCalculator
 from .career_phase import CareerPhaseIndexCalculator
@@ -270,14 +272,18 @@ class CompositeIndexCalculator:
         # 全馬の指数が揃ってから勝率・複勝率を算出（softmax + Harville）
         self._attach_probabilities(results)
 
-        for row in results:
-            await self._upsert(race_id, row["horse_id"], row)
+        # バルク upsert（1 SELECT/レース + add_all で馬ごと N 往復を回避）
+        await self._bulk_upsert_for_race(race_id, results)
 
         logger.info(f"総合指数算出完了: {len(results)} 頭")
         return results
 
     async def calculate_batch_for_date(self, date: str) -> list[dict]:
         """指定日の全レース・全馬の総合指数を算出して保存する。
+
+        レース単位で最大 _RACE_CONCURRENCY 並列処理を行う。
+        SireStatsCache はメインセッションで1回だけ初期化し、
+        ワーカーインスタンス間でクラス変数経由で共有する（再初期化コスト回避）。
 
         Args:
             date: "YYYYMMDD" 形式の日付
@@ -296,16 +302,38 @@ class CompositeIndexCalculator:
             logger.warning(f"指定日にレースなし: {date}")
             return []
 
-        all_results = []
-        for race in races:
-            rows = await self.calculate_and_save(race.id)
-            for row in rows:
-                row["race_id"] = race.id
-                row["date"] = date
-                row["course_name"] = race.course_name
-                row["race_number"] = race.race_number
-                row["race_name"] = race.race_name
-            all_results.extend(rows)
+        # SireStatsCache をメインセッションで事前ロード（ワーカーの再初期化を防ぐ）
+        await self._pedigree._cache.ensure_loaded()
+        if PedigreeIndexCalculator._shared_cache is None:
+            PedigreeIndexCalculator._shared_cache = self._pedigree._cache
+
+        # レース並列処理: 各レースを独立セッションで同時処理（最大 _RACE_CONCURRENCY）
+        _RACE_CONCURRENCY = 4
+        sem = asyncio.Semaphore(_RACE_CONCURRENCY)
+
+        async def _process_race(race: Race) -> list[dict]:
+            async with sem:
+                async with AsyncSessionLocal() as session:
+                    calc = CompositeIndexCalculator(session)
+                    rows = await calc.calculate_and_save(race.id)
+                    await session.commit()
+                    for row in rows:
+                        row["race_id"] = race.id
+                        row["date"] = date
+                        row["course_name"] = race.course_name
+                        row["race_number"] = race.race_number
+                        row["race_name"] = race.race_name
+                    return rows
+
+        raw = await asyncio.gather(
+            *[_process_race(r) for r in races], return_exceptions=True
+        )
+        all_results: list[dict] = []
+        for i, result in enumerate(raw):
+            if isinstance(result, Exception):
+                logger.error(f"レース並列処理エラー race_id={races[i].id} ({date}): {result}")
+            else:
+                all_results.extend(result)
 
         return all_results
 
@@ -509,11 +537,81 @@ class CompositeIndexCalculator:
 
         return place_probs
 
+    async def _bulk_upsert_for_race(self, race_id: int, results: list[dict]) -> None:
+        """レース全馬分を一括 upsert する（バックフィル高速化用）。
+
+        従来の馬ごと SELECT + INSERT/UPDATE（N往復）を
+        1 SELECT（レース全馬一括）+ add_all（新規のみ）に削減する。
+
+        Args:
+            race_id: DB の races.id
+            results: calculate_and_save の results リスト（horse_id キーを含む）
+        """
+        if not results:
+            return
+
+        existing_result = await self.db.execute(
+            select(CalculatedIndex).where(
+                CalculatedIndex.race_id == race_id,
+                CalculatedIndex.version == COMPOSITE_VERSION,
+            )
+        )
+        existing_map: dict[int, CalculatedIndex] = {
+            r.horse_id: r for r in existing_result.scalars().all()
+        }
+
+        def _d(v: object) -> Decimal | None:
+            return Decimal(str(v)) if v is not None else None
+
+        new_records: list[CalculatedIndex] = []
+        for row in results:
+            hid = row["horse_id"]
+            kwargs = {
+                "speed_index": _d(row.get("speed_index")),
+                "last_3f_index": _d(row.get("last3f_index")),
+                "course_aptitude": _d(row.get("course_aptitude")),
+                "position_advantage": _d(row.get("position_advantage")),
+                "rotation_index": _d(row.get("rotation_index")),
+                "jockey_index": _d(row.get("jockey_index")),
+                "pace_index": _d(row.get("pace_index")),
+                "pedigree_index": _d(row.get("pedigree_index")),
+                "training_index": _d(row.get("training_index")),
+                "anagusa_index": _d(row.get("anagusa_index")),
+                "paddock_index": _d(row.get("paddock_index")),
+                "rebound_index": _d(row.get("rebound_index")),
+                "rivals_growth_index": _d(row.get("rivals_growth_index")),
+                "career_phase_index": _d(row.get("career_phase_index")),
+                "distance_change_index": _d(row.get("distance_change_index")),
+                "jockey_trainer_combo_index": _d(row.get("jockey_trainer_combo_index")),
+                "going_pedigree_index": _d(row.get("going_pedigree_index")),
+                "composite_index": _d(row.get("composite_index")),
+                "win_probability": _d(row.get("win_probability")),
+                "place_probability": _d(row.get("place_probability")),
+            }
+            if hid in existing_map:
+                existing = existing_map[hid]
+                for attr, val in kwargs.items():
+                    setattr(existing, attr, val)
+                existing.calculated_at = datetime.now()
+            else:
+                new_records.append(
+                    CalculatedIndex(
+                        race_id=race_id,
+                        horse_id=hid,
+                        version=COMPOSITE_VERSION,
+                        **kwargs,
+                    )
+                )
+
+        if new_records:
+            self.db.add_all(new_records)
+
     async def _upsert(self, race_id: int, horse_id: int, data: dict) -> None:
         """calculated_indices へ upsert する（同 race_id + horse_id + version は上書き）。
 
         SELECT + UPDATE/INSERT の2段階。重複行が存在する場合は最初の1行を更新し、
         余分な行は削除して一意性を回復する。
+        単一馬の更新（リアルタイム再算出など）に使用。バックフィルには _bulk_upsert_for_race を使うこと。
 
         Args:
             race_id: DB の races.id

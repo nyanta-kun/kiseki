@@ -425,11 +425,25 @@ class PedigreeIndexCalculator(IndexCalculator):
     レース全馬バッチ（calculate_batch）の両インターフェースを提供する。
 
     初回 calculate_batch 呼び出し時に SireStatsCache を初期化する。
+
+    並列バックフィル最適化:
+    _shared_cache クラス変数に一度ロードされたキャッシュを保持し、
+    同一プロセス内の後続インスタンスは 13 秒の再初期化を省略する。
     """
+
+    # プロセス内で共有する初期化済み SireStatsCache（バックフィル並列処理の高速化）
+    _shared_cache: "SireStatsCache | None" = None
 
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
-        self._cache = SireStatsCache(db)
+        if (
+            PedigreeIndexCalculator._shared_cache is not None
+            and PedigreeIndexCalculator._shared_cache._loaded
+        ):
+            # 初期化済みキャッシュを再利用（13 秒の再ロードを省略）
+            self._cache = PedigreeIndexCalculator._shared_cache
+        else:
+            self._cache = SireStatsCache(db)
 
     # ──────────────────────────────────────────
     # 公開インターフェース
@@ -480,6 +494,9 @@ class PedigreeIndexCalculator(IndexCalculator):
             {horse_id: pedigree_index} の dict。エントリなし時は空 dict。
         """
         await self._cache.ensure_loaded()
+        # 初回ロード完了後にクラス変数へ登録（並列ワーカーが再ロードせず再利用できるよう）
+        if PedigreeIndexCalculator._shared_cache is None and self._cache._loaded:
+            PedigreeIndexCalculator._shared_cache = self._cache
 
         race_result = await self.db.execute(select(Race).where(Race.id == race_id))
         race = race_result.scalar_one_or_none()
