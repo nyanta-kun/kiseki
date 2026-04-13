@@ -57,6 +57,10 @@ env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
 JRAVAN_SID = os.getenv("JRAVAN_SID", "")
+# JRAVAN_SID_2: 蓄積系（setup/recent/daily）専用の第2利用キー。
+# 設定すると realtimeはSID1固定、蓄積系はSID2固定で同時実行可能。
+# 未設定の場合は全モードでSID1（JRAVAN_SID）を使用する。
+JRAVAN_SID_2 = os.getenv("JRAVAN_SID_2", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://YuichironoMacBook-Pro-6.local:8000")
 API_KEY = os.getenv("CHANGE_NOTIFY_API_KEY", "")
 
@@ -170,8 +174,13 @@ def mark_file_completed(dataspec: str, filename: str) -> None:
 # JV-Link 初期化
 # ---------------------------------------------------------------------------
 
-def init_jvlink():
-    """JV-Link COMオブジェクトを初期化する"""
+def init_jvlink(sid: str | None = None):
+    """JV-Link COMオブジェクトを初期化する。
+
+    Args:
+        sid: 利用キー（Noneの場合はグローバルのJRAVAN_SIDを使用）
+    """
+    use_sid = sid if sid else JRAVAN_SID
     try:
         import win32com.client
         jv = win32com.client.Dispatch("JVDTLab.JVLink")
@@ -180,11 +189,12 @@ def init_jvlink():
             jv.JVSetUIProperties(False, False)
         except Exception:
             pass  # SDK バージョンによっては未対応でも問題なし
-        rc = jv.JVInit(JRAVAN_SID)
+        rc = jv.JVInit(use_sid)
         if rc != 0:
             logger.error(f"JVInit failed: rc={rc}")
             sys.exit(1)
-        logger.info("JV-Link initialized successfully")
+        sid_label = "SID2(蓄積系)" if (JRAVAN_SID_2 and use_sid == JRAVAN_SID_2) else "SID1(共通)"
+        logger.info(f"JV-Link initialized successfully ({sid_label})")
         return jv
     except Exception as e:
         logger.error(f"JV-Link initialization error: {e}")
@@ -363,17 +373,39 @@ def fetch_stored_data(
                 session_closed = True
                 break
 
-            # JVClose → JVOpen(option=1) でセッション再開を試みる
-            # option=3 がエラーファイルで止まった場合、option=1 でその後のファイルを取得できる
+            # JVClose → エラーファイルの日付翌日から JVOpen(option=3) で再開
+            # option=1 はカーソルが同じファイルに戻るため -403 ループになる場合がある。
+            # ファイル名先頭の日付(pos 4-11, YYYYMMDD)の翌日を from_time にして
+            # option=3 でそのファイルを丸ごとスキップする。
             jv.JVClose()
             session_closed = True
-            logger.info(f"JVRead エラー後 JVClose。option=1 でセッション再開を試みます... (エラー {error_count}/{MAX_ERRORS})")
-            result2 = jv.JVOpen(dataspec, from_time, 1, 0, 0, "")
+            advance_from = None
+            if current_file and len(current_file) >= 12:
+                try:
+                    import datetime as _dt
+                    file_date_str = current_file[4:12]  # "YYYYMMDD" 部分
+                    file_date = _dt.datetime.strptime(file_date_str, "%Y%m%d")
+                    next_day = file_date + _dt.timedelta(days=1)
+                    advance_from = next_day.strftime("%Y%m%d000000")
+                except Exception:
+                    pass
+            if advance_from:
+                logger.info(
+                    f"JVRead エラー後 JVClose。{current_file} の翌日 ({advance_from}) から "
+                    f"option=3 で再開... (エラー {error_count}/{MAX_ERRORS})"
+                )
+                result2 = jv.JVOpen(dataspec, advance_from, 3, 0, 0, "")
+            else:
+                logger.info(
+                    f"JVRead エラー後 JVClose。option=1 でセッション再開を試みます... "
+                    f"(エラー {error_count}/{MAX_ERRORS})"
+                )
+                result2 = jv.JVOpen(dataspec, from_time, 1, 0, 0, "")
             rc2 = result2[0] if isinstance(result2, tuple) else result2
             if rc2 < 0:
                 logger.error(f"JVOpen 再開失敗: rc={rc2}。処理を中断します。")
                 break
-            logger.info(f"JVOpen 再開成功 (option=1): rc={rc2}。残りファイルの読み取りを続けます。")
+            logger.info(f"JVOpen 再開成功: rc={rc2}。残りファイルの読み取りを続けます。")
             session_closed = False  # 新しいセッションが開いた
             current_file = ""
             continue
@@ -644,18 +676,27 @@ def run_realtime_monitor(jv) -> None:
             # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
             # 0B12 の正規キーは YYYYMMDDJJRR だが、16文字レースキーで呼んでも受理される場合がある
             new_results = []
+            new_payouts = []
             for race_key in race_keys:
                 result_records = fetch_realtime_data(jv, RT_RACE_INFO, race_key)
                 for rec in result_records:
-                    if rec.get("rec_id") != "SE":
-                        continue
-                    key = rec["data"][:30]  # 先頭30文字でユニーク識別
-                    if key not in seen_results:
-                        seen_results.add(key)
-                        new_results.append(rec)
+                    rec_id = rec.get("rec_id")
+                    if rec_id == "SE":
+                        key = rec["data"][:30]  # 先頭30文字でユニーク識別
+                        if key not in seen_results:
+                            seen_results.add(key)
+                            new_results.append(rec)
+                    elif rec_id == "HR":
+                        key = rec["data"][:30]
+                        if key not in seen_results:
+                            seen_results.add(key)
+                            new_payouts.append(rec)
             if new_results:
                 logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信")
                 post_to_backend("/api/import/races", {"records": new_results}, BACKEND_URL, API_KEY)
+            if new_payouts:
+                logger.info(f"払戻取得: {len(new_payouts)}件 (HR) → /api/import/payouts へ送信")
+                _post_hr_payouts(new_payouts)
 
             time.sleep(30)  # 30秒間隔
 
@@ -819,19 +860,21 @@ def _run_blod_only(jv) -> None:
 
 
 def run_recent(jv, from_year: int = 2023) -> None:
-    """指定年以降のデータを優先取得する。
+    """直近データを取得する（option=2: 今週分のファイルのみ）。
 
-    option=3 (セットアップ) + from_time で JV-Link 側がその年以降のファイルのみを返す。
-    option=1 では過去取得済みファイルが返らないため、option=3 を使用する。
-    skip_cache=True でメモリ蓄積なし。
-    完了後は --mode setup を実行することで残りの過去データを補完できる。
+    【重要】option=3 は from_time を無視して JRA-VAN 全過去ファイルをスキャンするため、
+    JVOpen が数時間〜十数時間ブロックする。再発防止のため option=2 を使用する。
+
+    option=2（今週）: JVOpen が数十秒で完了する。直近の成績・出馬表の修復に使用。
+    - 数週間以上前のデータ修復には option=2 では取得できない場合がある
+    - 全期間の再取得が必要な場合は --mode setup を使用すること
 
     Args:
         jv: JV-Link COMオブジェクト
-        from_year: この年以降のデータを取得する（例: 2023）
+        from_year: 取得開始年（option=2 では今週分が返るため実質的には無視される）
     """
     from_time = f"{from_year}0101000000"
-    logger.info(f"=== RECENT MODE: {from_year}年以降データを取得 (option=3, from={from_time}) ===")
+    logger.info(f"=== RECENT MODE: 直近データ取得 (option=2, from={from_time} ※今週分が対象) ===")
 
     completed = load_completed_files(DATASPEC_RACE)
     if completed:
@@ -877,9 +920,9 @@ def run_recent(jv, from_year: int = 2023) -> None:
         """処理済みファイルのみ JVSkip でスキップ。"""
         return filename in completed
 
-    logger.info(f"Fetching RACE (option=3, from={from_time})...")
+    logger.info(f"Fetching RACE (option=2, from={from_time})...")
     fetch_stored_data(
-        jv, DATASPEC_RACE, from_time, option=3,
+        jv, DATASPEC_RACE, from_time, option=2,
         on_file_done=on_race_file_done, skip_file_fn=recent_skip_fn,
         skip_cache=True,
     )
@@ -1025,6 +1068,16 @@ def main() -> None:
         logger.error("JRAVAN_SID が設定されていません。.env を確認してください。")
         sys.exit(1)
 
+    # デュアルSID構成: JRAVAN_SID_2が設定されている場合
+    # - realtime: SID1（常時接続維持）
+    # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
+    # SID2未設定の場合は全モードでSID1を使用（従来通り）
+    BULK_MODES = ("setup", "recent", "daily", "blod", "odds-prefetch", "all")
+    use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
+    if JRAVAN_SID_2:
+        sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
+        logger.info(f"デュアルSID構成: {sid_role} を使用")
+
     logger.info(f"kiseki JV-Link Agent starting (mode={args.mode})")
     logger.info(f"Backend URL: {BACKEND_URL}")
     logger.info(f"Data dir: {DATA_DIR}")
@@ -1040,13 +1093,13 @@ def main() -> None:
         # JV-Linkなしでコマンド待ち受けのみ（デバッグ・テスト用）
         jv = None
         try:
-            jv = init_jvlink()
+            jv = init_jvlink(use_sid)
         except SystemExit:
             logger.warning("JV-Link 初期化失敗。コマンド受信は可能ですが実行はできません。")
         run_command_loop(jv)
         return
 
-    jv = init_jvlink()
+    jv = init_jvlink(use_sid)
 
     if args.mode == "setup":
         report_status("running", mode="setup", message="Starting setup mode")

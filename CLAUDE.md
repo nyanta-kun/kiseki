@@ -203,6 +203,14 @@ prlctl restart "Windows 11"
   - `10.211.55.2`（Parallels NAT）はWindowsから到達不可なので使用不可
   - `192.168.11.x`（WiFi IP）は変動するので使用不可
 
+### JV-Link / UmaConn 同時接続について（重要）
+- **JV-Linkは同一PCで realtime + setup/daily/recent を同時起動できる**（検証済み 2026-04-13）
+  - 実際の認証は `HKLM:\Software\WOW6432Node\JRA-VAN Data Lab.\uid_pass\servicekey` で行われる
+  - `JRAVAN_SID`（.env）は任意のラベル文字列。認証には無関係（"kiseki"のままでよい）
+  - 第2利用キーや `JRAVAN_SID_2` は不要。複数 COM インスタンスが独立動作する
+- **UmaConnも同様に realtime + setup を同時起動できる**（検証済み 2026-04-13）
+  - 追加API_KEY不要。`NVSetServiceKey rc=-101`（2回目）は正常（既登録の意味）
+
 ### jvlink_agent.py 起動
 ※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
 ※ `-WindowStyle Hidden` でウィンドウ非表示。ログは jvlink_agent.log で確認。
@@ -255,6 +263,75 @@ prlctl exec "Windows 11" --current-user powershell -Command "cd C:\kiseki\window
 prlctl restart "Windows 11"
 # 再起動後、jvlink_agent --mode setup を再実行
 ```
+
+## 指数バックフィル運用ルール
+
+### 対象期間の方針
+- **バックフィル対象は「実施日から3年前」を起点とする**
+  - 例: 2026-04-13 実施 → `--start 20230413`
+  - 3年分あれば ROI シミュレーション・重み最適化・馬のキャリア追跡に十分
+  - 月日が進んだ場合も同様に「実施日 - 3年」で計算すること
+- 3年以前の古いデータは優先度低（必要時のみ別プロセスで追加実行）
+- **理由**: 全期間（2019〜）処理には約12日かかり、直近データが遅れるため
+  - 4並列で約5〜6時間で完了（リソース実測: CPU ~60%・RAM ~700MB/16GB）
+
+### 実行コマンド（日付は実施時点で計算）
+```bash
+cd backend
+
+# 開始日を「今日 - 3年」で動的に計算
+START=$(python3 -c "
+from datetime import date
+d = date.today().replace(year=date.today().year - 3)
+print(d.strftime('%Y%m%d'))
+")
+TODAY=$(python3 -c "from datetime import date; print(date.today().strftime('%Y%m%d'))")
+
+# 3年分を4等分
+Q1=$(python3 -c "
+from datetime import date
+s=date.today().replace(year=date.today().year-3); t=date.today(); span=t-s
+print((s+span//4).strftime('%Y%m%d'))
+")
+Q2=$(python3 -c "
+from datetime import date
+s=date.today().replace(year=date.today().year-3); t=date.today(); span=t-s
+print((s+span//2).strftime('%Y%m%d'))
+")
+Q3=$(python3 -c "
+from datetime import date
+s=date.today().replace(year=date.today().year-3); t=date.today(); span=t-s
+print((s+span*3//4).strftime('%Y%m%d'))
+")
+echo "対象: $START 〜 $TODAY  (Q1=$Q1, Q2=$Q2, Q3=$Q3)"
+
+# 4分割並列バックフィル（約5〜6時間で完了）
+nohup .venv/bin/python scripts/calculate_indices_range.py \
+  --start $START --end $Q1 --skip-existing > /tmp/v15_p1.log 2>&1 &
+echo "P1 PID: $! (${START}〜${Q1})"
+nohup .venv/bin/python scripts/calculate_indices_range.py \
+  --start $Q1 --end $Q2 --skip-existing > /tmp/v15_p2.log 2>&1 &
+echo "P2 PID: $! (${Q1}〜${Q2})"
+nohup .venv/bin/python scripts/calculate_indices_range.py \
+  --start $Q2 --end $Q3 --skip-existing > /tmp/v15_p3.log 2>&1 &
+echo "P3 PID: $! (${Q2}〜${Q3})"
+nohup .venv/bin/python scripts/calculate_indices_range.py \
+  --start $Q3 --end $TODAY --skip-existing > /tmp/v15_p4.log 2>&1 &
+echo "P4 PID: $! (${Q3}〜${TODAY})"
+```
+
+### 進捗確認
+```bash
+ps aux | grep calculate_indices | grep -v grep | awk '{print "PID:"$2, "CPU:"$3"%", "RSS:"$6/1024"MB"}'
+for i in 1 2 3 4; do echo "=P${i}="; grep -E "\[.*\].*頭 \(累計" /tmp/v15_p${i}.log | tail -2; done
+```
+
+### パフォーマンス改善（2026-04-13 適用済み）
+- `_bulk_upsert_for_race()`: 馬ごと N 往復 → レース1回の SELECT + bulk add_all
+- `asyncio.gather` レース並列（セマフォ4）+ `SireStatsCache` クラス変数共有
+- 実測効果: 旧比 **約5倍高速**（シングル51h → 4プロセス並列で約5〜6h）
+- スループット: 約12,000件/時間/プロセス
+- `_upsert()` はリアルタイム単一馬更新用として引き続き保持
 
 ## 開発マイルストーン
 - MS1: 環境構築 + データ取込 + スピード指数CSV出力
