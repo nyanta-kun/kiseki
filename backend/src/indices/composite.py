@@ -101,7 +101,11 @@ logger = logging.getLogger(__name__)
 #   ※ ダートルール(paddock有効化)・長距離ルールは全体ROIを悪化させたため除外
 #      ダート: ダートマイル -7.2%、ダートスプリント -4.2%（paddock重みが逆効果）
 #      長距離: 芝長距離 +0.0%（効果なし）、その他長距離 -6.0%
-COMPOSITE_VERSION = 15
+# v16: 再帰的改善 Cycle#6 採用 (2026-04-13)
+#   roi目標 / Nelder-Mead / λ=3.0 / top-n=0 (交互作用項なし)
+#   テスト期間: 1位単勝ROI 81.8%→86.1% (+4.3%), 穴馬ROI 67.6%→85.2% (+17.6%)
+#   pedigree 8.9%→15.7% (+6.8%), jockey 11.9%→10.4% (-1.5%)
+COMPOSITE_VERSION = 16
 
 # 未実装指数のデフォルト値
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0

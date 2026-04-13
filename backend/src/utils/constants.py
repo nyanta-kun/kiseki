@@ -48,24 +48,29 @@ BASE_WEIGHT = 55.0  # 基準斤量
 # v13: career_phase / distance_change / jockey_trainer_combo / going_pedigree 追加 (2026-04-11)
 #     各既存指数を均等に×0.96 して 0.040 を拠出（各新指数に 0.010 ずつ）。
 #     upside_score（交互作用項）を composite.py に inline 追加。
+# v16: 再帰的改善 Cycle#6 採用 (2026-04-13)
+#     目標: roi（1位単勝ROI）, 訓練: 20230413-20251231, テスト: 20260101-20260413
+#     過学習フラグ: なし（初の通過）, λ=3.0, top-n=0（交互作用項なし）
+#     テスト期間改善: 1位単勝ROI 81.8%→86.1% (+4.3%), 穴馬ROI 67.6%→85.2% (+17.6%)
+#     主な変化: pedigree 8.9%→15.7% (+6.8%), jockey 11.9%→10.4% (-1.5%)
 INDEX_WEIGHTS = {
-    "speed":              0.09398,   # 0.097895 × 0.96
-    "last_3f":            0.14018,   # 0.146019 × 0.96
-    "course_aptitude":    0.12613,   # 0.131384 × 0.96
-    "pace":               0.02132,   # 0.022209 × 0.96
-    "jockey_trainer":     0.11936,   # 0.124337 × 0.96
-    "pedigree":           0.08944,   # 0.093167 × 0.96
-    "rotation":           0.08515,   # 0.088694 × 0.96
-    "training":           0.02892,   # 0.030126 × 0.96
-    "position_advantage": 0.02566,   # 0.026726 × 0.96
+    "speed":              0.09743,   # v16: Nelder-Mead (roi, λ=3.0)
+    "last_3f":            0.14372,   # v16
+    "course_aptitude":    0.11814,   # v16
+    "pace":               0.01786,   # v16
+    "jockey_trainer":     0.10387,   # v16
+    "pedigree":           0.15712,   # v16: 8.9% → 15.7% (+6.8%)
+    "rotation":           0.09276,   # v16
+    "training":           0.03003,   # v16
+    "position_advantage": 0.02306,   # v16
     "anagusa":            0.0000,
     "paddock":            0.0000,
-    "disadvantage_bonus": 0.01867,   # 0.019443 × 0.96（巻き返し指数 rebound）
-    "rivals_growth":      0.01920,   # 0.020000 × 0.96（上昇相手指数）
-    "career_phase":       0.01000,   # 成長曲線指数（新規）
-    "distance_change":    0.01000,   # 距離変更適性指数（新規）
-    "jockey_trainer_combo": 0.01000, # 騎手×厩舎コンビ指数（新規）
-    "going_pedigree":     0.01000,   # 重馬場×血統指数（新規）
+    "disadvantage_bonus": 0.01603,   # v16（巻き返し指数 rebound）
+    "rivals_growth":      0.01920,   # v12: 上昇相手指数（未最適化）
+    "career_phase":       0.01000,   # v13: 成長曲線指数（未最適化）
+    "distance_change":    0.01000,   # v13: 距離変更適性指数（未最適化）
+    "jockey_trainer_combo": 0.01000, # v13: 騎手×厩舎コンビ指数（未最適化）
+    "going_pedigree":     0.01000,   # v13: 重馬場×血統指数（未最適化）
 }
 
 # =============================================================================
