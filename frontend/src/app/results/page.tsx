@@ -100,10 +100,11 @@ export default async function ResultsPage({
 }) {
   const sp = await searchParams;
 
-  // デフォルト期間: 今月1日〜今日
-  const _today = new Date();
-  const _defaultFrom = `${_today.getFullYear()}${String(_today.getMonth() + 1).padStart(2, "0")}01`;
-  const _defaultTo   = `${_today.getFullYear()}${String(_today.getMonth() + 1).padStart(2, "0")}${String(_today.getDate()).padStart(2, "0")}`;
+  // デフォルト期間: 今月1日〜今日（JST固定: サーバーがUTC動作でも日付がずれないように）
+  const _jstStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }); // "YYYY-MM-DD"
+  const [_jy, _jm, _jd] = _jstStr.split("-");
+  const _defaultFrom = `${_jy}${_jm}01`;
+  const _defaultTo   = `${_jy}${_jm}${_jd}`;
 
   const filters: PerformanceFilters = {
     from_date:      typeof sp.from_date === "string" ? sp.from_date : _defaultFrom,

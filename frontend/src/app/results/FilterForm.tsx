@@ -36,13 +36,13 @@ const DATE_PRESETS = [
 ];
 
 function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  // JST固定: ブラウザのロケール/タイムゾーン設定に依存しないようにする
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }).replace(/-/g, "");
 }
 
 function thisMonthStartStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}01`;
+  const [y, m] = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }).split("-");
+  return `${y}${m}01`;
 }
 
 /** プリセット値から { from, to } を返す。"custom" は null（日付変更なし） */
