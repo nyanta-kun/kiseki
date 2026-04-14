@@ -341,7 +341,7 @@ class CompositeIndexCalculator:
             if isinstance(result, Exception):
                 logger.error(f"レース並列処理エラー race_id={races[i].id} ({date}): {result}")
             else:
-                all_results.extend(result)
+                all_results.extend(result)  # type: ignore[arg-type]
 
         return all_results
 
