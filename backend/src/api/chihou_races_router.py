@@ -66,6 +66,7 @@ class ChihouHorseIndexOut(BaseModel):
     last3f_index: float | None = None
     jockey_index: float | None = None
     rotation_index: float | None = None
+    place_ev_index: float | None = None  # 複勝期待値指数（EV>1.0→50超、v3以降）
     external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
 
 
@@ -344,6 +345,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
                 jockey_index=float(ci.jockey_index) if ci.jockey_index is not None else None,
                 rotation_index=float(ci.rotation_index) if ci.rotation_index is not None else None,
+                place_ev_index=float(ci.place_ev_index) if ci.place_ev_index is not None else None,
                 external_consensus=consensus_map.get(horse_number) if (consensus_map and horse_number is not None) else None,
             )
         )

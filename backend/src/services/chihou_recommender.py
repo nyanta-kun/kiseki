@@ -26,12 +26,12 @@ from ..db.chihou_models import (
     ChihouRaceRecommendation,
     ChihouRaceResult,
 )
+from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 from .chihou_recommendation_prompt import CHIHOU_SYSTEM_PROMPT, CHIHOU_USER_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-6"
-_CHIHOU_COMPOSITE_VERSION = 2
 
 # buy/pass判断の期待値閾値
 _BUY_EV_THRESHOLD = 1.0

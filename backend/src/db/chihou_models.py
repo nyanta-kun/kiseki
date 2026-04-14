@@ -347,6 +347,13 @@ class ChihouCalculatedIndex(ChihouBase):
     composite_index: Mapped[float | None] = mapped_column(comment="総合指数（0-100）")
     win_probability: Mapped[float | None] = mapped_column(comment="推定単勝確率（0-1）")
     place_probability: Mapped[float | None] = mapped_column(comment="推定複勝確率（0-1）")
+    place_ev_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1),
+        comment=(
+            "複勝期待値指数（place_probability × estimated_place_odds, "
+            "EV=1.0→50, EV>1.0で期待値プラス, 中立=50）"
+        ),
+    )
     calculated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="算出日時"
     )

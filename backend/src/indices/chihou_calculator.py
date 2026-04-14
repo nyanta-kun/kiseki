@@ -8,6 +8,7 @@ chihou.calculated_indices テーブルへ保存する。
   - last3f_index : 後3ハロン指数（コース・距離別基準後3Fタイムとの比較）
   - jockey_index : 騎手指数（競馬場別の過去180日勝率・連対率）
   - rotation_index: ローテーション指数（前走間隔 + 前走着順）
+  - place_ev_index: 複勝期待値指数（複勝確率×推定複勝オッズ、EV>1.0で期待値プラス）
   - composite_index: 総合指数（加重平均 → Softmax確率換算）
 
 JRAシステムとの主な差異:
@@ -22,6 +23,12 @@ v2 変更点（CHIHOU_COMPOSITE_VERSION=2）:
   - 後3F指数: コース・距離別の基準後3Fタイムでz-score正規化（フォールバック付き）
   - 騎手指数: 競馬場別に集計（データ不足時は全場合算にフォールバック）
   - 今走と同じコース・距離の過去走には重み1.5を適用（距離適性）
+
+v3 変更点（CHIHOU_COMPOSITE_VERSION=3）:
+  - place_ev_index 新設: 複勝確率（Harville）× 推定複勝オッズ（log-log回帰）
+    EV=1.0（元本回収）→ index=50, EV>1.0（期待値プラス）→ index>50
+  - 不人気の穴馬を複勝で狙う戦略に対応（COMPOSITE_WEIGHTS に place_ev: 0.25 追加）
+  - 単勝オッズ不明時は place_ev を除いた4指数で正規化合成
 """
 
 from __future__ import annotations
@@ -49,7 +56,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 2
+CHIHOU_COMPOSITE_VERSION = 3
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -94,16 +101,27 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数の重み
+# 総合指数の重み（v3: place_ev_indexを組み込み、不人気期待馬を抽出）
 COMPOSITE_WEIGHTS = {
-    "speed":    0.40,
-    "last3f":   0.25,
-    "jockey":   0.20,
-    "rotation": 0.15,
+    "speed":    0.30,
+    "last3f":   0.20,
+    "jockey":   0.15,
+    "rotation": 0.10,
+    "place_ev": 0.25,  # 複勝期待値指数（v3で新設）
 }
 
 # Softmax 温度パラメータ
 SOFTMAX_TEMPERATURE = 10.0
+
+# place_ev_index: 単勝オッズから複勝オッズを推定するlog-log回帰パラメータ
+# 地方競馬統計より導出: place_odds ≈ PLACE_ODDS_COEF × win_odds^PLACE_ODDS_EXP
+# (n=11,070, 3着内入着馬サンプル)
+PLACE_ODDS_COEF = 0.8015
+PLACE_ODDS_EXP  = 0.4562
+
+# place_ev_index の中立EV（1.0=元本回収を指数50に対応）
+EV_NEUTRAL = 1.0
+EV_SCALE   = 20.0  # log(EV) × 20 + 50 → 指数化スケール
 
 # 基準タイムの型エイリアス: (course, distance, condition) → (par_time, par_std)
 ParTimeKey = tuple[str, int, str]
@@ -136,6 +154,46 @@ def _days_between(date_a: str, date_b: str) -> int:
 def _zscore_to_index(z: float) -> float:
     """z スコアを 平均50・σ=10 の指数に変換してクリップする。"""
     return _clip(z * 10.0 + 50.0)
+
+
+def _estimate_place_odds(win_odds: float) -> float:
+    """単勝オッズから複勝オッズを推定する（地方競馬統計より導出）。
+
+    log-log回帰: place_odds ≈ PLACE_ODDS_COEF × win_odds^PLACE_ODDS_EXP
+    (n=11,070, 3着内入着馬サンプル)
+
+    Args:
+        win_odds: 単勝オッズ（1.0以上）
+
+    Returns:
+        推定複勝オッズ
+    """
+    if win_odds <= 0.0:
+        return 1.0
+    return PLACE_ODDS_COEF * (win_odds ** PLACE_ODDS_EXP)
+
+
+def _place_ev_to_index(place_probability: float, win_odds: float) -> float:
+    """複勝期待値をEV指数（0-100）に変換する。
+
+    EV = place_probability × estimated_place_odds
+    EV=1.0（元本回収）→ index=50
+    EV>1.0（期待値プラス）→ index>50
+    EV<1.0（期待値マイナス）→ index<50
+
+    Args:
+        place_probability: 複勝確率（0.0〜1.0, Harvilleモデル出力）
+        win_odds: 単勝オッズ
+
+    Returns:
+        place_ev_index（0〜100）
+    """
+    est_place_odds = _estimate_place_odds(win_odds)
+    ev = place_probability * est_place_odds
+    if ev <= 0.0:
+        return INDEX_MIN
+    index = math.log(ev) * EV_SCALE + 50.0
+    return _clip(index)
 
 
 def _weighted_avg(scores: list[float], weights: list[float]) -> float:
@@ -253,13 +311,19 @@ class ChihouIndexCalculator:
     # 公開 API
     # ===================================================================
 
-    async def calculate_and_save(self, race_id: int) -> dict[str, Any]:
+    async def calculate_and_save(
+        self,
+        race_id: int,
+        odds_map: dict[int, float] | None = None,
+    ) -> dict[str, Any]:
         """指定レースの全馬指数を算出して DB に upsert する。
 
         ばんえい競馬（course='83'）は処理をスキップする。
 
         Args:
             race_id: chihou.races.id
+            odds_map: horse_id → 単勝オッズ のマップ（リアルタイム用）。
+                      None の場合は race_results テーブルから win_odds を取得する。
 
         Returns:
             {"saved": N, "skipped": M, "errors": K}
@@ -297,7 +361,49 @@ class ChihouIndexCalculator:
         jockey_map   = await self._jockey_batch(race_date, race.course, entries)
         rotation_map = await self._rotation_batch(race_date, entries)
 
-        # 総合指数・確率算出
+        # 単勝オッズを取得（odds_map が渡されない場合は race_results から取得）
+        if odds_map is None:
+            odds_map = await self._fetch_win_odds(race_id, entries)
+
+        # 総合指数の仮算出（place_ev_index の入力となる place_probability を得るため）
+        # Step 1: place_ev なしで一時的な composite を計算し Softmax → place_prob を得る
+        base_weight_sum = (
+            COMPOSITE_WEIGHTS["speed"]
+            + COMPOSITE_WEIGHTS["last3f"]
+            + COMPOSITE_WEIGHTS["jockey"]
+            + COMPOSITE_WEIGHTS["rotation"]
+        )
+        pre_composite: list[tuple[int, float]] = []
+        for entry in entries:
+            hid = entry.horse_id
+            s = speed_map.get(hid, INDEX_NEUTRAL)
+            last3f = last3f_map.get(hid, INDEX_NEUTRAL)
+            j = jockey_map.get(hid, INDEX_NEUTRAL)
+            r = rotation_map.get(hid, INDEX_NEUTRAL)
+            # base_weight_sum で正規化して 0-100 スケールを保つ
+            comp_base = (
+                COMPOSITE_WEIGHTS["speed"]    * s
+                + COMPOSITE_WEIGHTS["last3f"]   * last3f
+                + COMPOSITE_WEIGHTS["jockey"]   * j
+                + COMPOSITE_WEIGHTS["rotation"] * r
+            ) / base_weight_sum
+            pre_composite.append((hid, _clip(comp_base)))
+
+        pre_win_probs   = _softmax([v for _, v in pre_composite], SOFTMAX_TEMPERATURE)
+        pre_place_probs = _harville_place_probs(pre_win_probs)
+
+        # Step 2: place_ev_index を算出（Harvilleの複勝確率 × 推定複勝オッズ）
+        place_ev_map: dict[int, float] = {}
+        for idx, entry in enumerate(entries):
+            hid = entry.horse_id
+            win_odds = odds_map.get(hid)
+            if win_odds is not None and win_odds > 0.0:
+                place_ev_map[hid] = _place_ev_to_index(
+                    pre_place_probs[idx], win_odds
+                )
+            # win_odds が不明な場合は place_ev_index = None（DB に NULL を格納）
+
+        # Step 3: place_ev_index を含む最終 composite_index を算出
         composite_inputs: list[tuple[int, float]] = []
         for entry in entries:
             hid = entry.horse_id
@@ -305,12 +411,25 @@ class ChihouIndexCalculator:
             last3f = last3f_map.get(hid, INDEX_NEUTRAL)
             j = jockey_map.get(hid, INDEX_NEUTRAL)
             r = rotation_map.get(hid, INDEX_NEUTRAL)
-            comp = (
-                COMPOSITE_WEIGHTS["speed"]    * s
-                + COMPOSITE_WEIGHTS["last3f"]   * last3f
-                + COMPOSITE_WEIGHTS["jockey"]   * j
-                + COMPOSITE_WEIGHTS["rotation"] * r
-            )
+            pe = place_ev_map.get(hid)
+
+            if pe is not None:
+                # place_ev_index が算出できた場合は全5指数で合成
+                comp = (
+                    COMPOSITE_WEIGHTS["speed"]    * s
+                    + COMPOSITE_WEIGHTS["last3f"]   * last3f
+                    + COMPOSITE_WEIGHTS["jockey"]   * j
+                    + COMPOSITE_WEIGHTS["rotation"] * r
+                    + COMPOSITE_WEIGHTS["place_ev"] * pe
+                )
+            else:
+                # オッズ不明の場合は place_ev を除いた4指数で合成（正規化）
+                comp = (
+                    COMPOSITE_WEIGHTS["speed"]    * s
+                    + COMPOSITE_WEIGHTS["last3f"]   * last3f
+                    + COMPOSITE_WEIGHTS["jockey"]   * j
+                    + COMPOSITE_WEIGHTS["rotation"] * r
+                ) / base_weight_sum
             composite_inputs.append((hid, _clip(comp)))
 
         # Softmax で単勝確率を推定
@@ -333,6 +452,7 @@ class ChihouIndexCalculator:
                 "composite_index":   comp,
                 "win_probability":   win_probs[i],
                 "place_probability": min(1.0, place_probs[i]),
+                "place_ev_index":    place_ev_map.get(hid),
                 "calculated_at":     datetime.utcnow(),
             })
 
@@ -345,14 +465,15 @@ class ChihouIndexCalculator:
             .on_conflict_do_update(
                 constraint="uq_chihou_calc_idx_race_horse_ver",
                 set_={
-                    "speed_index":      pg_insert(ChihouCalculatedIndex).excluded.speed_index,
-                    "last3f_index":     pg_insert(ChihouCalculatedIndex).excluded.last3f_index,
-                    "jockey_index":     pg_insert(ChihouCalculatedIndex).excluded.jockey_index,
-                    "rotation_index":   pg_insert(ChihouCalculatedIndex).excluded.rotation_index,
-                    "composite_index":  pg_insert(ChihouCalculatedIndex).excluded.composite_index,
-                    "win_probability":  pg_insert(ChihouCalculatedIndex).excluded.win_probability,
+                    "speed_index":       pg_insert(ChihouCalculatedIndex).excluded.speed_index,
+                    "last3f_index":      pg_insert(ChihouCalculatedIndex).excluded.last3f_index,
+                    "jockey_index":      pg_insert(ChihouCalculatedIndex).excluded.jockey_index,
+                    "rotation_index":    pg_insert(ChihouCalculatedIndex).excluded.rotation_index,
+                    "composite_index":   pg_insert(ChihouCalculatedIndex).excluded.composite_index,
+                    "win_probability":   pg_insert(ChihouCalculatedIndex).excluded.win_probability,
                     "place_probability": pg_insert(ChihouCalculatedIndex).excluded.place_probability,
-                    "calculated_at":    pg_insert(ChihouCalculatedIndex).excluded.calculated_at,
+                    "place_ev_index":    pg_insert(ChihouCalculatedIndex).excluded.place_ev_index,
+                    "calculated_at":     pg_insert(ChihouCalculatedIndex).excluded.calculated_at,
                 },
             )
         )
@@ -446,6 +567,41 @@ class ChihouIndexCalculator:
                 self._par_l3f[key] = (par_l3f, par_l3f_std)
 
         logger.info("par_l3f loaded: %d entries", len(self._par_l3f))
+
+    # ===================================================================
+    # 単勝オッズ取得
+    # ===================================================================
+
+    async def _fetch_win_odds(
+        self,
+        race_id: int,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, float]:
+        """race_results テーブルから単勝オッズを取得する（バックフィル用）。
+
+        Args:
+            race_id: chihou.races.id
+            entries: レースエントリのリスト
+
+        Returns:
+            horse_id → win_odds のマップ。オッズがない馬はキーに含まれない。
+        """
+        horse_ids = [e.horse_id for e in entries]
+        if not horse_ids:
+            return {}
+
+        q = text("""
+            SELECT horse_id, win_odds
+            FROM chihou.race_results
+            WHERE race_id = :race_id
+              AND horse_id = ANY(:horse_ids)
+              AND win_odds IS NOT NULL
+              AND win_odds > 0
+        """)
+        rows = await self.db.execute(
+            q, {"race_id": race_id, "horse_ids": horse_ids}
+        )
+        return {int(r["horse_id"]): float(r["win_odds"]) for r in rows.mappings()}
 
     # ===================================================================
     # スピード指数
