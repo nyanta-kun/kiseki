@@ -432,7 +432,7 @@ class PedigreeIndexCalculator(IndexCalculator):
     """
 
     # プロセス内で共有する初期化済み SireStatsCache（バックフィル並列処理の高速化）
-    _shared_cache: "SireStatsCache | None" = None
+    _shared_cache: SireStatsCache | None = None
 
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
