@@ -324,7 +324,7 @@ def check_stopping_conditions(log: dict, objective: str) -> None:
 
     recent = cycles[-3:]
     no_improve = all(
-        c.get("result", {}).get(f"test_{objective}_diff", 0) <= 0 for c in recent
+        (c.get("result") or {}).get(f"test_{objective}_diff", 0) <= 0 for c in recent
     )
     if no_improve:
         print(
@@ -332,7 +332,7 @@ def check_stopping_conditions(log: dict, objective: str) -> None:
             f" 探索アプローチの見直しを検討してください。"
         )
 
-    all_overfit = all(c.get("result", {}).get("overfit_flag", False) for c in recent)
+    all_overfit = all((c.get("result") or {}).get("overfit_flag", False) for c in recent)
     if all_overfit:
         print(
             f"\n⚠️  警告: 直近3サイクル全て過学習フラグ。"
@@ -444,7 +444,7 @@ def main() -> None:
     )
     interactions = analyst_results["top_interactions"]
 
-    if args.skip_optimize or not interactions:
+    if args.skip_optimize or (not interactions and args.top_n > 0):
         if args.skip_optimize:
             print("\n  --skip-optimize 指定のため最適化をスキップ")
         else:
