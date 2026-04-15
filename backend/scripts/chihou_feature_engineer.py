@@ -260,6 +260,7 @@ def nelder_mead_optimize(
     odds_threshold: float = UPSIDE_ODDS_THRESHOLD,
     time_decay: float = 0.0,
     extra_cols: list[str] | None = None,
+    extra_l2_lambda: float = 0.0,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Nelder-Mead で最適ウェイトを探索する。
 
@@ -268,16 +269,17 @@ def nelder_mead_optimize(
       - raw_inter[M] → softmax → scale to INTER_BUDGET
 
     L2 正則化: ベース指数は現行ウェイトからの乖離にペナルティ
-    extra_cols: 追加検証指数（現行ウェイト=0 を prior とし、効果があれば採用）
+    extra_cols: 追加検証指数（extra_l2_lambda=0 のときペナルティなし → 信号があれば自由にウェイトを取れる）
 
     Args:
         df_train: 訓練データ（add_interaction_features 済み）
         inter_names: 交互作用項列名のリスト
         objective: 最適化目標
         n_folds: CV フォールド数（デフォルト3: JRAより少ないため）
-        l2_lambda: L2 正則化係数（デフォルト3.0: JRAの0.5より強め）
+        l2_lambda: L2 正則化係数（ベース5指数用、デフォルト3.0）
         odds_threshold: 穴馬判定オッズ閾値
-        extra_cols: 追加指数列名リスト（検証用、現行ウェイト=0）
+        extra_cols: 追加指数列名リスト（検証用）
+        extra_l2_lambda: extra_cols の L2 正則化係数（デフォルト0.0: ペナルティなし）
 
     Returns:
         (base_weights, inter_weights): 最適化済みウェイト
@@ -346,8 +348,14 @@ def nelder_mead_optimize(
         raw_base = params[:n_base]
         exp_base = np.exp(raw_base - raw_base.max())
         base_norm = exp_base / exp_base.sum()
-        # ベース指数: 現行ウェイトからの乖離にペナルティ
-        base_penalty = l2_lambda * float(np.sum((base_norm - current_base_norm) ** 2))
+        # ベース指数（5指数）: 現行ウェイトからの乖離にペナルティ
+        n_base_only = len(INDEX_COLS)
+        base_penalty = l2_lambda * float(
+            np.sum((base_norm[:n_base_only] - current_base_norm[:n_base_only]) ** 2)
+        )
+        # extra_cols: 別途 extra_l2_lambda で管理（デフォルト0 = ペナルティなし）
+        if n_base > n_base_only and extra_l2_lambda > 0:
+            base_penalty += extra_l2_lambda * float(np.sum(base_norm[n_base_only:] ** 2))
 
         # 交互作用項: スパース正則化（0への引力）
         # 有効な交互作用項のみ高ウェイトを取れるようにし、均等配分を防ぐ
