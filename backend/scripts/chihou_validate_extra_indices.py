@@ -26,6 +26,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 _here = Path(__file__).resolve()
@@ -54,9 +55,7 @@ from chihou_feature_engineer import (
     add_interaction_features,
     evaluate,
     nelder_mead_optimize,
-    make_eval_table,
     print_weights_table,
-    print_eval_table,
     INDEX_COLS,
 )
 
@@ -141,10 +140,17 @@ def run_single_validation(
     min_odds: float,
     l2: float,
     folds: int,
+    baseline_base_w: dict[str, float] | None = None,
+    baseline_inter_w: dict[str, float] | None = None,
     baseline_train_roi: float = 0.0,
     baseline_test_roi: float = 0.0,
 ) -> dict:
     """1つの追加指数の検証を実行する。
+
+    アプローチ: グリッドサーチ
+    - ベース5指数は baseline_base_w で固定（Softmax 予算を共有しない）
+    - extra col の加算ウェイト α をグリッドサーチして 3-fold CV で選択
+    - この方式により extra col の貢献を L2 ペナルティと完全に切り離して測定できる
 
     Returns:
         dict: {
@@ -154,6 +160,9 @@ def run_single_validation(
             "elapsed_sec"
         }
     """
+    baseline_base_w = baseline_base_w or {}
+    baseline_inter_w = baseline_inter_w or {}
+
     label = EXTRA_INDEX_LABELS.get(index_name, index_name)
     compute_fn = EXTRA_INDEX_REGISTRY.get(index_name)
     if compute_fn is None:
@@ -162,21 +171,19 @@ def run_single_validation(
 
     t_start = time.time()
     logger.info(f"\n{'=' * 60}")
-    logger.info(f"  [{index_name}] {label} 検証開始")
+    logger.info(f"  [{index_name}] {label} 検証開始（グリッドサーチ）")
     logger.info(f"{'=' * 60}")
 
     # 追加指数の計算
     logger.info(f"  訓練データの {label} を計算中...")
-    col_name = f"{index_name}_x"  # 既存列との衝突を避けるためサフィックス付き
+    col_name = f"{index_name}_x"
     train_extra = compute_fn(df_train, engine)  # type: ignore[call-arg]
-    train_extra.name = col_name
-    df_tr = df_train.copy()
+    df_tr = add_interaction_features(df_train.copy(), [])
     df_tr[col_name] = train_extra.values
 
     logger.info(f"  テストデータの {label} を計算中...")
     test_extra = compute_fn(df_test, engine)  # type: ignore[call-arg]
-    test_extra.name = col_name
-    df_te = df_test.copy()
+    df_te = add_interaction_features(df_test.copy(), [])
     df_te[col_name] = test_extra.values
 
     # 統計情報
@@ -198,44 +205,66 @@ def run_single_validation(
             "note": "有効データ不足",
         }
 
-    # 交互作用項なし（新指数単体の効果を純粋に測定）
-    df_tr = add_interaction_features(df_tr, [])
-    df_te = add_interaction_features(df_te, [])
+    # グリッドサーチ: extra col の加算ウェイト α を CV で最適化
+    # ベース5指数は baseline_base_w 固定 → Softmax 予算を圧迫しない
+    race_ids = df_tr["race_id"].unique()
+    np.random.seed(42)
+    np.random.shuffle(race_ids)
+    cv_folds = np.array_split(race_ids, folds)
 
-    # 最適化（追加指数 col_name を base_cols に追加）
-    base_w, inter_w = nelder_mead_optimize(
-        df_tr,
-        inter_names=[],
-        objective="upside_win_roi",
-        n_folds=folds,
-        l2_lambda=l2,
-        odds_threshold=min_odds,
-        extra_cols=[col_name],
-    )
+    # α=0 のベースライン CV ROI を基準にする
+    alpha_grid = [0.0, 0.01, 0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30]
+    best_cv_roi = -float("inf")
+    best_alpha = 0.0
+    cv_results = []
 
-    print_weights_table(base_w, inter_w, extra_cols=[col_name])
+    for alpha in alpha_grid:
+        combined_w = dict(baseline_base_w)
+        combined_w[col_name] = alpha
 
-    elapsed = round(time.time() - t_start, 1)
-    extra_w = base_w.get(col_name, 0.0)
+        fold_rois = []
+        for fold_ids in cv_folds:
+            val = df_tr[df_tr["race_id"].isin(fold_ids)]
+            if len(val) == 0:
+                continue
+            fold_rois.append(evaluate(val, combined_w, {}, "upside_win_roi", min_odds))
 
-    # ベースライン比較（正しい差分: 5指数再最適化との比較）
-    new_train_roi = round(evaluate(df_tr, base_w, inter_w, "upside_win_roi", min_odds), 1)
-    new_test_roi = round(evaluate(df_te, base_w, inter_w, "upside_win_roi", min_odds), 1)
+        cv_roi = float(np.mean(fold_rois)) if fold_rois else 0.0
+        cv_results.append((alpha, cv_roi))
+        if cv_roi > best_cv_roi:
+            best_cv_roi = cv_roi
+            best_alpha = alpha
+
+    logger.info(f"  グリッドサーチ結果: best_alpha={best_alpha:.2f}, best_cv_roi={best_cv_roi:.1f}%")
+    logger.info(f"  α別 CV ROI: " + "  ".join(f"α={a:.2f}:{r:.1f}%" for a, r in cv_results))
+
+    # ベスト α でフルセット評価
+    combined_best = dict(baseline_base_w)
+    combined_best[col_name] = best_alpha
+
+    new_train_roi = round(evaluate(df_tr, combined_best, {}, "upside_win_roi", min_odds), 1)
+    new_test_roi = round(evaluate(df_te, combined_best, {}, "upside_win_roi", min_odds), 1)
     train_diff = round(new_train_roi - baseline_train_roi, 1)
     test_diff = round(new_test_roi - baseline_test_roi, 1)
     overfit_flag = (new_test_roi < new_train_roi * 0.90) if new_train_roi > 0 else False
 
-    print(f"\n  指標                   ベースライン        新         差")
+    elapsed = round(time.time() - t_start, 1)
+
+    print(f"\n  グリッドサーチ α別 CV ROI:")
+    for alpha, cv_roi in cv_results:
+        marker = " ← best" if alpha == best_alpha else ""
+        print(f"    α={alpha:.2f}: CV={cv_roi:.1f}%{marker}")
+    print(f"\n  指標                   ベースライン      ベストα={best_alpha:.2f}      差")
     print(f"  {'穴馬単勝ROI (train)':<22} {baseline_train_roi:>7.1f}%  {new_train_roi:>7.1f}%  {train_diff:>+7.1f}%")
     print(f"  {'穴馬単勝ROI (test)':<22} {baseline_test_roi:>7.1f}%  {new_test_roi:>7.1f}%  {test_diff:>+7.1f}%")
     print(f"  過学習フラグ: {'あり' if overfit_flag else 'なし'}")
 
     logger.info(
         f"\n  [{label}] "
+        f"best_alpha={best_alpha:.2f}  "
         f"train_diff={train_diff:+.1f}%  "
         f"test_diff={test_diff:+.1f}%  "
         f"overfit={overfit_flag}  "
-        f"extra_w={extra_w:.1%}  "
         f"elapsed={elapsed}s"
     )
 
@@ -247,7 +276,8 @@ def run_single_validation(
         "test_upside_win_roi_baseline": baseline_test_roi,
         "test_upside_win_roi_new": new_test_roi,
         "overfit_flag": overfit_flag,
-        "extra_weight": round(extra_w, 4),
+        "extra_weight": round(best_alpha, 4),
+        "cv_roi_by_alpha": {str(a): round(r, 1) for a, r in cv_results},
         "elapsed_sec": elapsed,
         "note": "",
     }
@@ -332,9 +362,9 @@ def main() -> None:
     engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
 
     # ベースライン（5指数のみ再最適化）を事前に計算
-    # 各extra指数の diff はこのベースラインとの比較で計算する（CURRENT_BASE_WEIGHTS固定との比較ではない）
+    # 各extra指数は baseline_base_w を固定してグリッドサーチで α のみ最適化
     logger.info("\nベースライン最適化を実行中...")
-    _, _, baseline_train_roi, baseline_test_roi = run_baseline_optimization(
+    baseline_base_w, baseline_inter_w, baseline_train_roi, baseline_test_roi = run_baseline_optimization(
         df_train, df_test,
         min_odds=args.min_odds,
         l2=args.l2,
@@ -352,6 +382,8 @@ def main() -> None:
             min_odds=args.min_odds,
             l2=args.l2,
             folds=args.folds,
+            baseline_base_w=baseline_base_w,
+            baseline_inter_w=baseline_inter_w,
             baseline_train_roi=baseline_train_roi,
             baseline_test_roi=baseline_test_roi,
         )
