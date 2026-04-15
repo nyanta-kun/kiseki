@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 3
+CHIHOU_COMPOSITE_VERSION = 4
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -101,13 +101,14 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数の重み（v3: place_ev_indexを組み込み、不人気期待馬を抽出）
+# 総合指数の重み（v4: min-odds=15.0穴馬定義でNelder-Mead最適化 Cycle#13採用）
+# v3 → v4: test upside_win_roi +1.3%（20260101-20260415, 過学習なし）
 COMPOSITE_WEIGHTS = {
-    "speed":    0.30,
-    "last3f":   0.20,
-    "jockey":   0.15,
-    "rotation": 0.10,
-    "place_ev": 0.25,  # 複勝期待値指数（v3で新設）
+    "speed":    0.2954,
+    "last3f":   0.2033,
+    "jockey":   0.1481,
+    "rotation": 0.0999,
+    "place_ev": 0.2533,  # 複勝期待値指数（v3で新設）
 }
 
 # Softmax 温度パラメータ
