@@ -259,14 +259,16 @@ def nelder_mead_optimize(
     l2_lambda: float = 3.0,
     odds_threshold: float = UPSIDE_ODDS_THRESHOLD,
     time_decay: float = 0.0,
+    extra_cols: list[str] | None = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Nelder-Mead で最適ウェイトを探索する。
 
     パラメータ構造（2段階 Softmax）:
-      - raw_base[4]  → softmax → scale to BASE_BUDGET
-      - raw_inter[N] → softmax → scale to INTER_BUDGET
+      - raw_base[N]  → softmax → scale to BASE_BUDGET
+      - raw_inter[M] → softmax → scale to INTER_BUDGET
 
     L2 正則化: ベース指数は現行ウェイトからの乖離にペナルティ
+    extra_cols: 追加検証指数（現行ウェイト=0 を prior とし、効果があれば採用）
 
     Args:
         df_train: 訓練データ（add_interaction_features 済み）
@@ -275,11 +277,13 @@ def nelder_mead_optimize(
         n_folds: CV フォールド数（デフォルト3: JRAより少ないため）
         l2_lambda: L2 正則化係数（デフォルト3.0: JRAの0.5より強め）
         odds_threshold: 穴馬判定オッズ閾値
+        extra_cols: 追加指数列名リスト（検証用、現行ウェイト=0）
 
     Returns:
         (base_weights, inter_weights): 最適化済みウェイト
     """
-    n_base = len(INDEX_COLS)
+    all_base_cols = INDEX_COLS + (extra_cols or [])
+    n_base = len(all_base_cols)
     n_inter = len(inter_names)
 
     race_ids = df_train["race_id"].unique()
@@ -298,7 +302,8 @@ def nelder_mead_optimize(
     else:
         fold_weights = np.ones(n_folds)
 
-    current_base_arr = np.array([CURRENT_BASE_WEIGHTS.get(c, 0.0) for c in INDEX_COLS])
+    # extra_cols の現行ウェイトは 0（prior: 効果がなければ採用しない）
+    current_base_arr = np.array([CURRENT_BASE_WEIGHTS.get(c, 0.0) for c in all_base_cols])
     current_base_norm = current_base_arr / (current_base_arr.sum() or 1.0)
 
     def _decode(params: np.ndarray) -> tuple[dict[str, float], dict[str, float]]:
@@ -307,7 +312,7 @@ def nelder_mead_optimize(
 
         exp_base = np.exp(raw_base - raw_base.max())
         base_norm = exp_base / exp_base.sum()
-        base_w = {col: float(base_norm[i] * BASE_BUDGET) for i, col in enumerate(INDEX_COLS)}
+        base_w = {col: float(base_norm[i] * BASE_BUDGET) for i, col in enumerate(all_base_cols)}
 
         inter_w: dict[str, float] = {}
         if n_inter > 0:
@@ -456,17 +461,22 @@ def print_eval_table(result: dict, objective: str) -> None:
     print(f"\n  過学習フラグ: {'⚠️  あり（リジェクト推奨）' if flag else 'なし'}")
 
 
-def print_weights_table(base_w: dict[str, float], inter_w: dict[str, float]) -> None:
-    """新ウェイトと現行ウェイトを比較表示する。"""
-    print(f"\n  {'指数名':<20} {'新ウェイト':>10}  {'現行':>8}  {'差分':>8}")
-    print("  " + "-" * 50)
-    for col in INDEX_COLS:
+def print_weights_table(
+    base_w: dict[str, float],
+    inter_w: dict[str, float],
+    extra_cols: list[str] | None = None,
+) -> None:
+    """新ウェイトと現行ウェイトを比較表示する。extra_cols は現行=0として表示。"""
+    all_cols = INDEX_COLS + (extra_cols or [])
+    print(f"\n  {'指数名':<24} {'新ウェイト':>10}  {'現行':>8}  {'差分':>8}")
+    print("  " + "-" * 54)
+    for col in all_cols:
         key = COL_TO_WEIGHT_KEY.get(col, col)
         new_w = base_w.get(col, 0.0)
         cur_w = float(COMPOSITE_WEIGHTS.get(key, 0.0))
         diff = new_w - cur_w
         bar = "▲" if diff > 0.005 else ("▼" if diff < -0.005 else " ")
-        print(f"  {col:<20} {new_w:>9.1%}  {cur_w:>7.1%}  {bar}{abs(diff):.1%}")
+        print(f"  {col:<24} {new_w:>9.1%}  {cur_w:>7.1%}  {bar}{abs(diff):.1%}")
 
     if inter_w:
         print(f"\n  {'交互作用項':<28} {'新ウェイト':>10}")
