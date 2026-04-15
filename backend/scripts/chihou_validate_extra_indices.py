@@ -52,6 +52,7 @@ from chihou_extra_indices import EXTRA_INDEX_REGISTRY, EXTRA_INDEX_LABELS
 from chihou_feature_engineer import (
     UPSIDE_ODDS_THRESHOLD,
     add_interaction_features,
+    evaluate,
     nelder_mead_optimize,
     make_eval_table,
     print_weights_table,
@@ -94,6 +95,44 @@ def load_base_data(
     return df_train, df_test
 
 
+def run_baseline_optimization(
+    df_train: pd.DataFrame,
+    df_test: pd.DataFrame,
+    min_odds: float,
+    l2: float,
+    folds: int,
+) -> tuple[dict[str, float], dict[str, float], float, float]:
+    """5指数のみで再最適化してベースラインROIを計算する。
+
+    Returns:
+        (base_w, inter_w, baseline_train_roi, baseline_test_roi)
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("  [ベースライン] 5指数のみ再最適化")
+    logger.info("=" * 60)
+
+    df_tr = add_interaction_features(df_train.copy(), [])
+    df_te = add_interaction_features(df_test.copy(), [])
+
+    base_w, inter_w = nelder_mead_optimize(
+        df_tr,
+        inter_names=[],
+        objective="upside_win_roi",
+        n_folds=folds,
+        l2_lambda=l2,
+        odds_threshold=min_odds,
+        extra_cols=[],
+    )
+    print_weights_table(base_w, inter_w, extra_cols=[])
+
+    baseline_train_roi = evaluate(df_tr, base_w, inter_w, "upside_win_roi", min_odds)
+    baseline_test_roi = evaluate(df_te, base_w, inter_w, "upside_win_roi", min_odds)
+    logger.info(
+        f"  ベースライン: train_roi={baseline_train_roi:.1f}%  test_roi={baseline_test_roi:.1f}%"
+    )
+    return base_w, inter_w, baseline_train_roi, baseline_test_roi
+
+
 def run_single_validation(
     index_name: str,
     df_train: pd.DataFrame,
@@ -102,6 +141,8 @@ def run_single_validation(
     min_odds: float,
     l2: float,
     folds: int,
+    baseline_train_roi: float = 0.0,
+    baseline_test_roi: float = 0.0,
 ) -> dict:
     """1つの追加指数の検証を実行する。
 
@@ -174,17 +215,26 @@ def run_single_validation(
 
     print_weights_table(base_w, inter_w, extra_cols=[col_name])
 
-    eval_result = make_eval_table(df_tr, df_te, base_w, inter_w, "upside_win_roi", min_odds)
-    print_eval_table(eval_result, "upside_win_roi")
-
     elapsed = round(time.time() - t_start, 1)
     extra_w = base_w.get(col_name, 0.0)
 
+    # ベースライン比較（正しい差分: 5指数再最適化との比較）
+    new_train_roi = round(evaluate(df_tr, base_w, inter_w, "upside_win_roi", min_odds), 1)
+    new_test_roi = round(evaluate(df_te, base_w, inter_w, "upside_win_roi", min_odds), 1)
+    train_diff = round(new_train_roi - baseline_train_roi, 1)
+    test_diff = round(new_test_roi - baseline_test_roi, 1)
+    overfit_flag = (new_test_roi < new_train_roi * 0.90) if new_train_roi > 0 else False
+
+    print(f"\n  指標                   ベースライン        新         差")
+    print(f"  {'穴馬単勝ROI (train)':<22} {baseline_train_roi:>7.1f}%  {new_train_roi:>7.1f}%  {train_diff:>+7.1f}%")
+    print(f"  {'穴馬単勝ROI (test)':<22} {baseline_test_roi:>7.1f}%  {new_test_roi:>7.1f}%  {test_diff:>+7.1f}%")
+    print(f"  過学習フラグ: {'あり' if overfit_flag else 'なし'}")
+
     logger.info(
         f"\n  [{label}] "
-        f"train_diff={eval_result.get('train_upside_win_roi_diff', 0):+.1f}%  "
-        f"test_diff={eval_result.get('test_upside_win_roi_diff', 0):+.1f}%  "
-        f"overfit={eval_result.get('overfit_flag', False)}  "
+        f"train_diff={train_diff:+.1f}%  "
+        f"test_diff={test_diff:+.1f}%  "
+        f"overfit={overfit_flag}  "
         f"extra_w={extra_w:.1%}  "
         f"elapsed={elapsed}s"
     )
@@ -192,11 +242,11 @@ def run_single_validation(
     return {
         "index_name": index_name,
         "label": label,
-        "test_upside_win_roi_diff": eval_result.get("test_upside_win_roi_diff", 0.0),
-        "train_upside_win_roi_diff": eval_result.get("train_upside_win_roi_diff", 0.0),
-        "test_upside_win_roi_current": eval_result.get("test_upside_win_roi_current", 0.0),
-        "test_upside_win_roi_new": eval_result.get("test_upside_win_roi_new", 0.0),
-        "overfit_flag": eval_result.get("overfit_flag", False),
+        "test_upside_win_roi_diff": test_diff,
+        "train_upside_win_roi_diff": train_diff,
+        "test_upside_win_roi_baseline": baseline_test_roi,
+        "test_upside_win_roi_new": new_test_roi,
+        "overfit_flag": overfit_flag,
         "extra_weight": round(extra_w, 4),
         "elapsed_sec": elapsed,
         "note": "",
@@ -281,6 +331,17 @@ def main() -> None:
     # SQLAlchemy engine（extra indices計算用）
     engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
 
+    # ベースライン（5指数のみ再最適化）を事前に計算
+    # 各extra指数の diff はこのベースラインとの比較で計算する（CURRENT_BASE_WEIGHTS固定との比較ではない）
+    logger.info("\nベースライン最適化を実行中...")
+    _, _, baseline_train_roi, baseline_test_roi = run_baseline_optimization(
+        df_train, df_test,
+        min_odds=args.min_odds,
+        l2=args.l2,
+        folds=args.folds,
+    )
+    logger.info(f"ベースライン確定: train={baseline_train_roi:.1f}%  test={baseline_test_roi:.1f}%")
+
     all_results = []
     t_total = time.time()
 
@@ -291,6 +352,8 @@ def main() -> None:
             min_odds=args.min_odds,
             l2=args.l2,
             folds=args.folds,
+            baseline_train_roi=baseline_train_roi,
+            baseline_test_roi=baseline_test_roi,
         )
         all_results.append(result)
         logger.info(f"  完了 ({result.get('elapsed_sec', 0):.0f}s)")
@@ -304,10 +367,13 @@ def main() -> None:
     output = {
         "meta": {
             "train": args.train,
+            "train": args.train,
             "test": args.test,
             "version": args.version,
             "min_odds": args.min_odds,
             "l2": args.l2,
+            "baseline_train_roi": baseline_train_roi,
+            "baseline_test_roi": baseline_test_roi,
             "total_elapsed_sec": total_elapsed,
         },
         "results": all_results,
