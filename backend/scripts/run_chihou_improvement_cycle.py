@@ -423,6 +423,10 @@ def main() -> None:
         help="calculated_indices バージョン"
     )
     parser.add_argument(
+        "--courses", default=None,
+        help="競馬場フィルタ（カンマ区切り）例: 盛岡,高知,笠松,佐賀"
+    )
+    parser.add_argument(
         "--skip-optimize", action="store_true", help="最適化をスキップ（分析のみ実行）"
     )
     parser.add_argument(
@@ -435,6 +439,7 @@ def main() -> None:
 
     train_start, train_end = _parse_period(args.train)
     test_start, test_end = _parse_period(args.test)
+    courses = [c.strip() for c in args.courses.split(",")] if args.courses else None
     inter_json = _WRITABLE_DIR / "chihou_interaction_candidates.json"
 
     log = load_log()
@@ -454,9 +459,9 @@ def main() -> None:
     print(f"  Step 1: データロード")
     print(f"{'─'*68}")
     logger.info("訓練データ読み込み中...")
-    df_train_raw = analyst.load_data(train_start, train_end, version=args.version)
+    df_train_raw = analyst.load_data(train_start, train_end, version=args.version, courses=courses)
     logger.info("テストデータ読み込み中...")
-    df_test_raw = analyst.load_data(test_start, test_end, version=args.version)
+    df_test_raw = analyst.load_data(test_start, test_end, version=args.version, courses=courses)
 
     if df_train_raw.empty or df_test_raw.empty:
         print("データなし。終了します。")

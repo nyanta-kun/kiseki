@@ -85,6 +85,7 @@ def load_data(
     start_date: str,
     end_date: str,
     version: int = CHIHOU_COMPOSITE_VERSION,
+    courses: list[str] | None = None,
 ) -> pd.DataFrame:
     """算出指数・レース結果・レース情報を結合取得する。
 
@@ -95,12 +96,18 @@ def load_data(
         start_date: 開始日 (YYYYMMDD)
         end_date: 終了日 (YYYYMMDD)
         version: chihou.calculated_indices バージョン
+        courses: 競馬場名リスト（Noneで全場）例: ["盛岡", "高知", "笠松", "佐賀"]
 
     Returns:
         DataFrame: 全馬の指数・結果・レース情報を結合したデータ
     """
     sd = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
     ed = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+
+    course_filter = ""
+    if courses:
+        names = ", ".join(f"'{c}'" for c in courses)
+        course_filter = f"  AND r.course_name IN ({names})"
 
     sql = text(f"""
 SELECT
@@ -136,6 +143,7 @@ JOIN chihou.race_results rr
 WHERE r.date BETWEEN :sd AND :ed
   AND ci.version = {version}
   AND r.course != '{BANEI_COURSE}'
+{course_filter}
 ORDER BY r.date, r.id, ci.horse_id
 """)
 
