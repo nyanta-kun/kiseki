@@ -224,6 +224,7 @@ def step_feature_engineer(
     l2_lambda: float,
     n_folds: int,
     odds_threshold: float,
+    time_decay: float = 0.0,
 ) -> tuple[dict, dict, dict]:
     """Step 3: Feature Engineer — 最適ウェイト探索。
 
@@ -243,6 +244,7 @@ def step_feature_engineer(
         n_folds=n_folds,
         l2_lambda=l2_lambda,
         odds_threshold=odds_threshold,
+        time_decay=time_decay,
     )
 
     print(f"\n── ウェイト比較（ベース4指数 + 交互作用項{len(inter_w)}個）")
@@ -427,6 +429,10 @@ def main() -> None:
         help="競馬場フィルタ（カンマ区切り）例: 盛岡,高知,笠松,佐賀"
     )
     parser.add_argument(
+        "--time-decay", type=float, default=0.0,
+        help="時間的重み付け係数（0=均等, 1.0=指数増加。直近データを重視）"
+    )
+    parser.add_argument(
         "--skip-optimize", action="store_true", help="最適化をスキップ（分析のみ実行）"
     )
     parser.add_argument(
@@ -533,6 +539,7 @@ def main() -> None:
         l2_lambda=args.l2,
         n_folds=args.folds,
         odds_threshold=args.min_odds,
+        time_decay=args.time_decay,
     )
 
     # ── Step 5: レポート生成 ──────────────────────────────────────

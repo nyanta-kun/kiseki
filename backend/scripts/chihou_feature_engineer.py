@@ -258,6 +258,7 @@ def nelder_mead_optimize(
     n_folds: int = 3,
     l2_lambda: float = 3.0,
     odds_threshold: float = UPSIDE_ODDS_THRESHOLD,
+    time_decay: float = 0.0,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Nelder-Mead で最適ウェイトを探索する。
 
@@ -282,9 +283,20 @@ def nelder_mead_optimize(
     n_inter = len(inter_names)
 
     race_ids = df_train["race_id"].unique()
-    np.random.seed(42)
-    np.random.shuffle(race_ids)
+    if time_decay > 0.0:
+        # 時間的重み付け: race_idを昇順ソート（古→新）し、後のfoldほど高ウェイト
+        race_ids = np.sort(race_ids)
+    else:
+        np.random.seed(42)
+        np.random.shuffle(race_ids)
     folds = np.array_split(race_ids, n_folds)
+
+    # fold重み: time_decay>0のとき指数的増加（古→新）、0のとき均等
+    if time_decay > 0.0:
+        raw_fold_weights = np.array([np.exp(time_decay * i) for i in range(n_folds)])
+        fold_weights = raw_fold_weights / raw_fold_weights.sum() * n_folds
+    else:
+        fold_weights = np.ones(n_folds)
 
     current_base_arr = np.array([CURRENT_BASE_WEIGHTS.get(c, 0.0) for c in INDEX_COLS])
     current_base_norm = current_base_arr / (current_base_arr.sum() or 1.0)
@@ -311,14 +323,20 @@ def nelder_mead_optimize(
         base_w, inter_w = _decode(params)
 
         scores = []
-        for fold_ids in folds:
+        weights = []
+        for fold_i, fold_ids in enumerate(folds):
             val = df_train[df_train["race_id"].isin(fold_ids)]
             if len(val) == 0:
                 continue
             s = evaluate(val, base_w, inter_w, objective=objective, odds_threshold=odds_threshold)
             scores.append(s)
+            weights.append(fold_weights[fold_i])
 
-        cv_score = float(np.mean(scores)) if scores else 0.0
+        if scores:
+            w_arr = np.array(weights)
+            cv_score = float(np.average(scores, weights=w_arr))
+        else:
+            cv_score = 0.0
 
         raw_base = params[:n_base]
         exp_base = np.exp(raw_base - raw_base.max())
@@ -487,6 +505,10 @@ def main() -> None:
     parser.add_argument("--folds", type=int, default=3, help="CV フォールド数")
     parser.add_argument("--min-odds", type=float, default=10.0, help="穴馬判定オッズ閾値")
     parser.add_argument(
+        "--time-decay", type=float, default=0.0,
+        help="時間的重み付け係数（0=均等, 1.0=指数増加。直近データを重視）"
+    )
+    parser.add_argument(
         "--version", type=int, default=CHIHOU_COMPOSITE_VERSION,
         help="calculated_indices バージョン"
     )
@@ -532,6 +554,7 @@ def main() -> None:
         n_folds=args.folds,
         l2_lambda=args.l2,
         odds_threshold=args.min_odds,
+        time_decay=args.time_decay,
     )
 
     print(f"\n── ウェイト比較（ベース4指数 + 交互作用項{len(inter_w)}個）")
