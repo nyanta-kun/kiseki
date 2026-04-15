@@ -29,6 +29,12 @@ v3 変更点（CHIHOU_COMPOSITE_VERSION=3）:
     EV=1.0（元本回収）→ index=50, EV>1.0（期待値プラス）→ index>50
   - 不人気の穴馬を複勝で狙う戦略に対応（COMPOSITE_WEIGHTS に place_ev: 0.25 追加）
   - 単勝オッズ不明時は place_ev を除いた4指数で正規化合成
+
+v5 変更点（CHIHOU_COMPOSITE_VERSION=5）:
+  - last_margin_index 新設: 前走1着とのタイム差をスコア化（小さいほど高評価）
+  - Nelder-Mead + grid search (α=0.08) による追加検証で採用
+  - test upside_win_roi +3.2% (20260101-20260415) / overfit=False
+  - COMPOSITE_WEIGHTS: v4重み×(0.88分母正規化) + last_margin:0.0909
 """
 
 from __future__ import annotations
@@ -56,7 +62,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 4
+CHIHOU_COMPOSITE_VERSION = 5
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -101,14 +107,16 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数の重み（v4: min-odds=15.0穴馬定義でNelder-Mead最適化 Cycle#13採用）
-# v3 → v4: test upside_win_roi +1.3%（20260101-20260415, 過学習なし）
+# 総合指数の重み（v5: last_margin_index を追加、grid search α=0.08 採用）
+# v4 → v5: v4重みを (base×0.80/0.88 + last_margin:0.08/0.88) で正規化
+#   test upside_win_roi +3.2%（20260101-20260415, 過学習なし）
 COMPOSITE_WEIGHTS = {
-    "speed":    0.2954,
-    "last3f":   0.2033,
-    "jockey":   0.1481,
-    "rotation": 0.0999,
-    "place_ev": 0.2533,  # 複勝期待値指数（v3で新設）
+    "speed":        0.2685,
+    "last3f":       0.1848,
+    "jockey":       0.1346,
+    "rotation":     0.0908,
+    "place_ev":     0.2303,  # 複勝期待値指数（v3で新設）
+    "last_margin":  0.0909,  # 前走着差指数（v5で新設）
 }
 
 # Softmax 温度パラメータ
@@ -357,10 +365,11 @@ class ChihouIndexCalculator:
         await self._ensure_par_l3f()
 
         # 各指数をバッチ算出
-        speed_map    = await self._speed_batch(race_id, race, entries)
-        last3f_map   = await self._last3f_batch(race_id, race, entries)
-        jockey_map   = await self._jockey_batch(race_date, race.course, entries)
-        rotation_map = await self._rotation_batch(race_date, entries)
+        speed_map        = await self._speed_batch(race_id, race, entries)
+        last3f_map       = await self._last3f_batch(race_id, race, entries)
+        jockey_map       = await self._jockey_batch(race_date, race.course, entries)
+        rotation_map     = await self._rotation_batch(race_date, entries)
+        last_margin_map  = await self._last_margin_batch(race_date, entries)
 
         # 単勝オッズを取得（odds_map が渡されない場合は race_results から取得）
         if odds_map is None:
@@ -404,34 +413,33 @@ class ChihouIndexCalculator:
                 )
             # win_odds が不明な場合は place_ev_index = None（DB に NULL を格納）
 
-        # Step 3: place_ev_index を含む最終 composite_index を算出
+        # Step 3: place_ev_index・last_margin_index を含む最終 composite_index を算出
+        # NULL の指数はウェイトごと除外して正規化
         composite_inputs: list[tuple[int, float]] = []
         for entry in entries:
             hid = entry.horse_id
-            s = speed_map.get(hid, INDEX_NEUTRAL)
+            s      = speed_map.get(hid, INDEX_NEUTRAL)
             last3f = last3f_map.get(hid, INDEX_NEUTRAL)
-            j = jockey_map.get(hid, INDEX_NEUTRAL)
-            r = rotation_map.get(hid, INDEX_NEUTRAL)
-            pe = place_ev_map.get(hid)
+            j      = jockey_map.get(hid, INDEX_NEUTRAL)
+            r      = rotation_map.get(hid, INDEX_NEUTRAL)
+            pe     = place_ev_map.get(hid)
+            lm     = last_margin_map.get(hid)
 
+            # 4指数（常に利用可能）の合計
+            w_total = base_weight_sum
+            comp = (
+                COMPOSITE_WEIGHTS["speed"]    * s
+                + COMPOSITE_WEIGHTS["last3f"]   * last3f
+                + COMPOSITE_WEIGHTS["jockey"]   * j
+                + COMPOSITE_WEIGHTS["rotation"] * r
+            )
             if pe is not None:
-                # place_ev_index が算出できた場合は全5指数で合成
-                comp = (
-                    COMPOSITE_WEIGHTS["speed"]    * s
-                    + COMPOSITE_WEIGHTS["last3f"]   * last3f
-                    + COMPOSITE_WEIGHTS["jockey"]   * j
-                    + COMPOSITE_WEIGHTS["rotation"] * r
-                    + COMPOSITE_WEIGHTS["place_ev"] * pe
-                )
-            else:
-                # オッズ不明の場合は place_ev を除いた4指数で合成（正規化）
-                comp = (
-                    COMPOSITE_WEIGHTS["speed"]    * s
-                    + COMPOSITE_WEIGHTS["last3f"]   * last3f
-                    + COMPOSITE_WEIGHTS["jockey"]   * j
-                    + COMPOSITE_WEIGHTS["rotation"] * r
-                ) / base_weight_sum
-            composite_inputs.append((hid, _clip(comp)))
+                comp    += COMPOSITE_WEIGHTS["place_ev"] * pe
+                w_total += COMPOSITE_WEIGHTS["place_ev"]
+            if lm is not None:
+                comp    += COMPOSITE_WEIGHTS["last_margin"] * lm
+                w_total += COMPOSITE_WEIGHTS["last_margin"]
+            composite_inputs.append((hid, _clip(comp / w_total)))
 
         # Softmax で単勝確率を推定
         comp_values = [v for _, v in composite_inputs]
@@ -443,18 +451,19 @@ class ChihouIndexCalculator:
         values = []
         for i, (hid, comp) in enumerate(composite_inputs):
             values.append({
-                "race_id":           race_id,
-                "horse_id":          hid,
-                "version":           CHIHOU_COMPOSITE_VERSION,
-                "speed_index":       speed_map.get(hid, INDEX_NEUTRAL),
-                "last3f_index":      last3f_map.get(hid, INDEX_NEUTRAL),
-                "jockey_index":      jockey_map.get(hid, INDEX_NEUTRAL),
-                "rotation_index":    rotation_map.get(hid, INDEX_NEUTRAL),
-                "composite_index":   comp,
-                "win_probability":   win_probs[i],
-                "place_probability": min(1.0, place_probs[i]),
-                "place_ev_index":    place_ev_map.get(hid),
-                "calculated_at":     datetime.utcnow(),
+                "race_id":            race_id,
+                "horse_id":           hid,
+                "version":            CHIHOU_COMPOSITE_VERSION,
+                "speed_index":        speed_map.get(hid, INDEX_NEUTRAL),
+                "last3f_index":       last3f_map.get(hid, INDEX_NEUTRAL),
+                "jockey_index":       jockey_map.get(hid, INDEX_NEUTRAL),
+                "rotation_index":     rotation_map.get(hid, INDEX_NEUTRAL),
+                "last_margin_index":  last_margin_map.get(hid),
+                "composite_index":    comp,
+                "win_probability":    win_probs[i],
+                "place_probability":  min(1.0, place_probs[i]),
+                "place_ev_index":     place_ev_map.get(hid),
+                "calculated_at":      datetime.utcnow(),
             })
 
         if not values:
@@ -466,15 +475,16 @@ class ChihouIndexCalculator:
             .on_conflict_do_update(
                 constraint="uq_chihou_calc_idx_race_horse_ver",
                 set_={
-                    "speed_index":       pg_insert(ChihouCalculatedIndex).excluded.speed_index,
-                    "last3f_index":      pg_insert(ChihouCalculatedIndex).excluded.last3f_index,
-                    "jockey_index":      pg_insert(ChihouCalculatedIndex).excluded.jockey_index,
-                    "rotation_index":    pg_insert(ChihouCalculatedIndex).excluded.rotation_index,
-                    "composite_index":   pg_insert(ChihouCalculatedIndex).excluded.composite_index,
-                    "win_probability":   pg_insert(ChihouCalculatedIndex).excluded.win_probability,
-                    "place_probability": pg_insert(ChihouCalculatedIndex).excluded.place_probability,
-                    "place_ev_index":    pg_insert(ChihouCalculatedIndex).excluded.place_ev_index,
-                    "calculated_at":     pg_insert(ChihouCalculatedIndex).excluded.calculated_at,
+                    "speed_index":        pg_insert(ChihouCalculatedIndex).excluded.speed_index,
+                    "last3f_index":       pg_insert(ChihouCalculatedIndex).excluded.last3f_index,
+                    "jockey_index":       pg_insert(ChihouCalculatedIndex).excluded.jockey_index,
+                    "rotation_index":     pg_insert(ChihouCalculatedIndex).excluded.rotation_index,
+                    "last_margin_index":  pg_insert(ChihouCalculatedIndex).excluded.last_margin_index,
+                    "composite_index":    pg_insert(ChihouCalculatedIndex).excluded.composite_index,
+                    "win_probability":    pg_insert(ChihouCalculatedIndex).excluded.win_probability,
+                    "place_probability":  pg_insert(ChihouCalculatedIndex).excluded.place_probability,
+                    "place_ev_index":     pg_insert(ChihouCalculatedIndex).excluded.place_ev_index,
+                    "calculated_at":      pg_insert(ChihouCalculatedIndex).excluded.calculated_at,
                 },
             )
         )
@@ -984,6 +994,95 @@ class ChihouIndexCalculator:
             # 前走着順ボーナス
             bonus = _FINISH_BONUS.get(finish, 0.0) if finish else 0.0
             result[hid] = _clip(interval_score + bonus)
+
+        return result
+
+    # ===================================================================
+    # 前走着差指数
+    # ===================================================================
+
+    async def _last_margin_batch(
+        self,
+        race_date: str,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, float]:
+        """全エントリの前走着差指数を一括算出する。
+
+        前走1着とのタイム差（time_diff）が小さいほど高評価。
+        1着馬は time_diff=0 として扱う。
+        ばんえい競馬（course='83'）は除外。
+        """
+        horse_ids = [e.horse_id for e in entries]
+
+        # 各馬の直前レース結果を取得（race_date より前の最新1戦）
+        subq = (
+            select(
+                ChihouRaceResult.horse_id,
+                func.max(ChihouRace.date).label("last_date"),
+            )
+            .join(ChihouRace, ChihouRace.id == ChihouRaceResult.race_id)
+            .where(
+                and_(
+                    ChihouRaceResult.horse_id.in_(horse_ids),
+                    ChihouRace.date < race_date,
+                    ChihouRace.course != BANEI_COURSE_CODE,
+                    ChihouRaceResult.abnormality_code == 0,
+                    ChihouRaceResult.finish_position.isnot(None),
+                )
+            )
+            .group_by(ChihouRaceResult.horse_id)
+            .subquery()
+        )
+
+        rows = await self.db.execute(
+            select(
+                ChihouRaceResult.horse_id,
+                ChihouRaceResult.finish_position,
+                ChihouRaceResult.time_diff,
+            )
+            .join(ChihouRace, ChihouRace.id == ChihouRaceResult.race_id)
+            .join(
+                subq,
+                and_(
+                    subq.c.horse_id == ChihouRaceResult.horse_id,
+                    subq.c.last_date == ChihouRace.date,
+                ),
+            )
+        )
+
+        # 生データ収集（time_diff は秒、1着なら 0）
+        raw: dict[int, float] = {}
+        for row in rows.mappings():
+            hid    = row["horse_id"]
+            finish = row["finish_position"]
+            tdiff  = row["time_diff"]
+            if finish == 1:
+                raw[hid] = 0.0
+            elif tdiff is not None:
+                raw[hid] = float(tdiff)
+            # tdiff が NULL かつ 1着以外の場合は None 扱い（キー追加しない）
+
+        if not raw:
+            return {}
+
+        # time_diff 小=良 → 符号反転後 z-score 正規化（0-100スケール）
+        vals = list(raw.values())
+        if len(vals) < 2:
+            # 馬が1頭しかいない場合は中立値
+            return {hid: INDEX_NEUTRAL for hid in raw}
+
+        mean_val = sum(vals) / len(vals)
+        variance = sum((v - mean_val) ** 2 for v in vals) / len(vals)
+        stdev    = math.sqrt(variance)
+
+        result: dict[int, float] = {}
+        for hid, td in raw.items():
+            if stdev < 1e-9:
+                result[hid] = INDEX_NEUTRAL
+            else:
+                # 符号反転: time_diff が小さいほど高スコア
+                z = -(td - mean_val) / stdev
+                result[hid] = _clip(z * 10.0 + INDEX_NEUTRAL)
 
         return result
 

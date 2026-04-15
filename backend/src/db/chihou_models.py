@@ -344,6 +344,9 @@ class ChihouCalculatedIndex(ChihouBase):
     last3f_index: Mapped[float | None] = mapped_column(comment="後3ハロン指数（0-100, 平均50）")
     jockey_index: Mapped[float | None] = mapped_column(comment="騎手指数（0-100, 平均50）")
     rotation_index: Mapped[float | None] = mapped_column(comment="ローテーション指数（0-100）")
+    last_margin_index: Mapped[float | None] = mapped_column(
+        comment="前走着差指数（0-100, 前走タイム差が小さいほど高評価, 接戦=高評価）"
+    )
     composite_index: Mapped[float | None] = mapped_column(comment="総合指数（0-100）")
     win_probability: Mapped[float | None] = mapped_column(comment="推定単勝確率（0-1）")
     place_probability: Mapped[float | None] = mapped_column(comment="推定複勝確率（0-1）")
