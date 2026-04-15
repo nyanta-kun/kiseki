@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { fetchChihouPerformanceSummary } from "@/lib/api";
 import type { ChihouPerformanceFilters } from "@/lib/api";
 import { ChihouFilterForm } from "./ChihouFilterForm";
+import { ChihouBuyingGuide } from "./BuyingGuide";
 
 export const metadata: Metadata = {
   title: "地方競馬 実績 | GallopLab",
@@ -194,6 +195,9 @@ export default async function ChihouResultsPage({
                 </div>
               </section>
             )}
+
+            {/* 購入指針統計 */}
+            <ChihouBuyingGuide />
 
             {/* 月次テーブル */}
             {data.monthly_stats.length > 0 && (

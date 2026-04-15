@@ -35,6 +35,8 @@ export type Race = {
   confidence_label: "HIGH" | "MID" | "LOW" | null;
   confidence_rank: "S" | "A" | "B" | "C" | null;
   recommend_rank: "S" | "A" | "B" | "C" | null;
+  buy_signal: "buy" | "caution" | "pass" | null;
+  top_win_odds: number | null;
 };
 
 export type RaceResult = {
@@ -648,4 +650,31 @@ export type ChihouRecommendation = {
 /** 地方競馬 推奨一覧 → 30秒キャッシュ */
 export async function fetchChihouRecommendations(date: string): Promise<ChihouRecommendation[]> {
   return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { next: { revalidate: 30 } });
+}
+
+// ---------------------------------------------------------------------------
+// 購入指針統計
+// ---------------------------------------------------------------------------
+
+export type BuyingGuideRow = {
+  label: string;
+  races: number;
+  win_pct: number;
+  place_pct: number;
+  win_roi: number;
+};
+
+export type BuyingGuide = {
+  odds_cutoff: BuyingGuideRow[];
+  by_course: BuyingGuideRow[];
+  by_distance: BuyingGuideRow[];
+  since: string;
+};
+
+export async function fetchJraBuyingGuide(since = "20250101"): Promise<BuyingGuide> {
+  return get<BuyingGuide>(`/performance/buying-guide?since=${since}`, { next: { revalidate: 3600 } });
+}
+
+export async function fetchChihouBuyingGuide(since = "20250101"): Promise<BuyingGuide> {
+  return get<BuyingGuide>(`/chihou/performance/buying-guide?since=${since}`, { next: { revalidate: 3600 } });
 }

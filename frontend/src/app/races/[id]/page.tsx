@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { OddsData, RaceEntry, RaceResult, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { EVSummary } from "@/components/EVSummary";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
+import { computeJraBuySignal } from "@/components/BuySignalBadge";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { EntriesTable } from "@/components/EntriesTable";
@@ -124,7 +125,10 @@ export default async function RacePage({ params }: { params: Params }) {
           <EVSummary indices={indices} />
 
           {/* 信頼度パネル */}
-          <ConfidencePanel confidence={confidence} />
+          <ConfidencePanel
+            confidence={confidence}
+            buySignal={computeJraBuySignal(race?.distance ?? 0, confidence.top_win_odds)}
+          />
 
           {/* 確率チャート・指数テーブル（成績WebSocketで自動更新） */}
           <RaceDetailClient

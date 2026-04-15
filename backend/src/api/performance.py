@@ -846,3 +846,167 @@ async def get_odds_data(
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# 購入指針 統計エンドポイント
+# ---------------------------------------------------------------------------
+
+class BuyingGuideRow(BaseModel):
+    """購入指針分析の1行。"""
+
+    label: str
+    races: int
+    win_pct: float    # %
+    place_pct: float  # %
+    win_roi: float    # %
+
+
+class JraBuyingGuide(BaseModel):
+    """JRA購入指針統計レスポンス。"""
+
+    odds_cutoff: list[BuyingGuideRow]
+    by_course: list[BuyingGuideRow]
+    by_distance: list[BuyingGuideRow]
+    since: str
+
+
+@router.get("/buying-guide", response_model=JraBuyingGuide)
+async def get_jra_buying_guide(
+    db: DbDep,
+    since: str = Query("20250101", description="集計開始日 YYYYMMDD"),
+    version: int = Query(17, description="指数バージョン"),
+) -> JraBuyingGuide:
+    """JRA購入指針統計（オッズ別・競馬場別・距離帯別）を返す。"""
+
+    params = {"since": since, "ver": version}
+
+    def to_rows_2(result, races_col: int = 2) -> list[BuyingGuideRow]:
+        return [
+            BuyingGuideRow(
+                label=str(row[0]),
+                races=int(row[races_col]),
+                win_pct=float(row[races_col + 1]),
+                place_pct=float(row[races_col + 2]),
+                win_roi=float(row[races_col + 3]),
+            )
+            for row in result
+            if row[races_col] and int(row[races_col]) >= 20
+        ]
+
+    # ── オッズ別 ──────────────────────────────────────────────────────────
+    odds_sql = text("""
+        WITH base AS (
+            SELECT rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM keiba.calculated_indices ci
+            JOIN keiba.races r ON r.id = ci.race_id
+            JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+              AND r.course IN ('01','02','03','04','05','06','07','08','09','10')
+              AND r.head_count >= 8
+        ), top1 AS (SELECT finish_position, win_odds FROM base WHERE ci_rank = 1)
+        SELECT label, ord, COUNT(*) AS races,
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM (
+            SELECT finish_position, win_odds, '全体' AS label, 0 AS ord FROM top1
+            UNION ALL SELECT finish_position, win_odds, '2.5倍以上', 1 FROM top1 WHERE win_odds >= 2.5
+            UNION ALL SELECT finish_position, win_odds, '3.0倍以上', 2 FROM top1 WHERE win_odds >= 3.0
+            UNION ALL SELECT finish_position, win_odds, '4.0倍以上', 3 FROM top1 WHERE win_odds >= 4.0
+            UNION ALL SELECT finish_position, win_odds, '5.0倍以上', 4 FROM top1 WHERE win_odds >= 5.0
+            UNION ALL SELECT finish_position, win_odds, '6.0倍以上', 5 FROM top1 WHERE win_odds >= 6.0
+            UNION ALL SELECT finish_position, win_odds, '8.0倍以上', 6 FROM top1 WHERE win_odds >= 8.0
+            UNION ALL SELECT finish_position, win_odds, '10.0倍以上', 7 FROM top1 WHERE win_odds >= 10.0
+        ) t GROUP BY label, ord ORDER BY ord
+    """)
+
+    # ── 競馬場別 ──────────────────────────────────────────────────────────
+    course_sql = text("""
+        WITH top1 AS (
+            SELECT
+                CASE r.course
+                    WHEN '01' THEN '札幌' WHEN '02' THEN '函館' WHEN '03' THEN '福島'
+                    WHEN '04' THEN '新潟' WHEN '05' THEN '東京' WHEN '06' THEN '中山'
+                    WHEN '07' THEN '中京' WHEN '08' THEN '京都' WHEN '09' THEN '阪神'
+                    WHEN '10' THEN '小倉' ELSE r.course
+                END AS label,
+                rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM keiba.calculated_indices ci
+            JOIN keiba.races r ON r.id = ci.race_id
+            JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+              AND r.course IN ('01','02','03','04','05','06','07','08','09','10')
+              AND r.head_count >= 8
+        )
+        SELECT label,
+            COUNT(*) AS races,
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM top1 WHERE ci_rank = 1
+        GROUP BY label ORDER BY 5 DESC
+    """)
+
+    # ── 距離帯別 ──────────────────────────────────────────────────────────
+    dist_sql = text("""
+        WITH top1 AS (
+            SELECT
+                CASE
+                    WHEN r.distance <= 1400 THEN '短距離(〜1400m)'
+                    WHEN r.distance <= 1800 THEN 'マイル(1401-1800m)'
+                    WHEN r.distance <= 2200 THEN '中距離(1801-2200m)'
+                    ELSE '長距離(2201m〜)'
+                END AS label,
+                CASE
+                    WHEN r.distance <= 1400 THEN 1
+                    WHEN r.distance <= 1800 THEN 2
+                    WHEN r.distance <= 2200 THEN 3
+                    ELSE 4
+                END AS ord,
+                rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM keiba.calculated_indices ci
+            JOIN keiba.races r ON r.id = ci.race_id
+            JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+              AND r.course IN ('01','02','03','04','05','06','07','08','09','10')
+              AND r.head_count >= 8
+        )
+        SELECT label, ord, COUNT(*),
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM top1 WHERE ci_rank = 1
+        GROUP BY label, ord ORDER BY ord
+    """)
+
+    odds_rows = (await db.execute(odds_sql, params)).all()
+    course_rows = (await db.execute(course_sql, params)).all()
+    dist_rows = (await db.execute(dist_sql, params)).all()
+
+    # course_sql returns: label, races, win_pct, place_pct, win_roi (no ord column)
+    def to_course_rows(result) -> list[BuyingGuideRow]:
+        return [
+            BuyingGuideRow(
+                label=str(row[0]),
+                races=int(row[1]),
+                win_pct=float(row[2]),
+                place_pct=float(row[3]),
+                win_roi=float(row[4]),
+            )
+            for row in result
+            if row[1] and int(row[1]) >= 20
+        ]
+
+    return JraBuyingGuide(
+        odds_cutoff=to_rows_2(odds_rows),
+        by_course=to_course_rows(course_rows),
+        by_distance=to_rows_2(dist_rows),
+        since=since,
+    )

@@ -5,6 +5,7 @@ import { PerformanceChart } from "@/components/PerformanceChart";
 import { FilterForm } from "./FilterForm";
 import { BreakdownTabs } from "./BreakdownTabs";
 import { OddsRangeSensitivity } from "./OddsRangeSensitivity";
+import { JraBuyingGuide } from "./BuyingGuide";
 
 export const metadata: Metadata = {
   title: "AI指数実績 | GallopLab",
@@ -214,6 +215,9 @@ export default async function ResultsPage({
                 <PerformanceChart monthly={data.monthly_stats} initialFilter="ALL" />
               </section>
             )}
+
+            {/* 購入指針統計 */}
+            <JraBuyingGuide />
 
             {/* オッズ帯別ROI感度分析 */}
             <OddsRangeSensitivity filters={filters} />

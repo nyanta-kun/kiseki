@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, Trainer
 from ..db.session import get_db
+from ..indices.buy_signal import jra_buy_signal
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from .ws_manager import manager as ws_manager
@@ -270,6 +271,8 @@ class RaceOut(BaseModel):
     confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
     confidence_rank: str | None = None   # S / A / B / C
     recommend_rank: str | None = None    # S / A / B / C
+    buy_signal: str | None = None        # "buy" | "caution" | "pass" | None
+    top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
 
     model_config = {"from_attributes": True}
 
@@ -490,14 +493,17 @@ async def list_races(
         if r.id in indexed_ids:
             wp_list = race_win_probs.get(r.id) or None
             conf = calculate_race_confidence(race_indices[r.id], r.head_count, wp_list)
+            top_odds = top_horse_win_odds.get(r.id)
             out.confidence_score = conf["score"]
             out.confidence_label = conf["label"]
             out.confidence_rank = conf["rank"]
             out.recommend_rank = calculate_recommend_rank(
                 conf["score"],
                 conf.get("win_prob_top"),
-                top_horse_win_odds.get(r.id),
+                top_odds,
             )
+            out.top_win_odds = top_odds
+            out.buy_signal = jra_buy_signal(r.distance, top_odds)
         result_list.append(out)
     return result_list
 

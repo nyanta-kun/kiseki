@@ -294,3 +294,152 @@ async def get_chihou_performance_summary(
         by_course=by_course,
         by_surface=by_surface,
     )
+
+
+# ---------------------------------------------------------------------------
+# 購入指針 統計エンドポイント
+# ---------------------------------------------------------------------------
+
+class ChihouBuyingGuideRow(BaseModel):
+    """地方購入指針分析の1行。"""
+
+    label: str
+    races: int
+    win_pct: float
+    place_pct: float
+    win_roi: float
+
+
+class ChihouBuyingGuide(BaseModel):
+    """地方競馬購入指針統計レスポンス。"""
+
+    odds_cutoff: list[ChihouBuyingGuideRow]
+    by_course: list[ChihouBuyingGuideRow]
+    by_distance: list[ChihouBuyingGuideRow]
+    since: str
+
+
+@router.get("/buying-guide", response_model=ChihouBuyingGuide)
+async def get_chihou_buying_guide(
+    db: DbDep,
+    since: str = Query("20250101", description="集計開始日 YYYYMMDD"),
+    version: int = Query(CHIHOU_COMPOSITE_VERSION, description="指数バージョン"),
+) -> ChihouBuyingGuide:
+    """地方競馬購入指針統計（オッズ別・競馬場別・距離帯別）を返す。"""
+
+    params = {"since": since, "ver": version}
+
+    # ── オッズ別 ──────────────────────────────────────────────────────────
+    odds_sql = sql_text("""
+        WITH base AS (
+            SELECT rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM chihou.calculated_indices ci
+            JOIN chihou.races r ON r.id = ci.race_id
+            JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+        ),
+        top1 AS (SELECT finish_position, win_odds FROM base WHERE ci_rank = 1)
+        SELECT label, ord,
+            COUNT(*) AS races,
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM (
+            SELECT finish_position, win_odds, '全体' AS label, 0 AS ord FROM top1
+            UNION ALL SELECT finish_position, win_odds, '2.0倍以上', 1 FROM top1 WHERE win_odds >= 2.0
+            UNION ALL SELECT finish_position, win_odds, '3.0倍以上', 2 FROM top1 WHERE win_odds >= 3.0
+            UNION ALL SELECT finish_position, win_odds, '4.0倍以上', 3 FROM top1 WHERE win_odds >= 4.0
+            UNION ALL SELECT finish_position, win_odds, '6.0倍以上', 4 FROM top1 WHERE win_odds >= 6.0
+            UNION ALL SELECT finish_position, win_odds, '10.0倍以上', 5 FROM top1 WHERE win_odds >= 10.0
+        ) t GROUP BY label, ord ORDER BY ord
+    """)
+
+    # ── 競馬場別 ──────────────────────────────────────────────────────────
+    course_sql = sql_text("""
+        WITH top1 AS (
+            SELECT r.course_name AS label,
+                rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM chihou.calculated_indices ci
+            JOIN chihou.races r ON r.id = ci.race_id
+            JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+        )
+        SELECT label, COUNT(*),
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM top1 WHERE ci_rank = 1
+        GROUP BY label ORDER BY 5 DESC
+    """)
+
+    # ── 距離帯別 ──────────────────────────────────────────────────────────
+    dist_sql = sql_text("""
+        WITH top1 AS (
+            SELECT
+                CASE
+                    WHEN r.distance <= 1400 THEN '短距離(〜1400m)'
+                    WHEN r.distance <= 1800 THEN 'マイル(1401-1800m)'
+                    WHEN r.distance <= 2200 THEN '中距離(1801-2200m)'
+                    ELSE '長距離(2201m〜)'
+                END AS label,
+                CASE
+                    WHEN r.distance <= 1400 THEN 1
+                    WHEN r.distance <= 1800 THEN 2
+                    WHEN r.distance <= 2200 THEN 3
+                    ELSE 4
+                END AS ord,
+                rr.finish_position, rr.win_odds,
+                RANK() OVER (PARTITION BY r.id ORDER BY ci.composite_index DESC) AS ci_rank
+            FROM chihou.calculated_indices ci
+            JOIN chihou.races r ON r.id = ci.race_id
+            JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+            WHERE r.date >= :since AND ci.version = :ver
+              AND rr.abnormality_code = 0 AND rr.finish_position IS NOT NULL
+        )
+        SELECT label, ord, COUNT(*),
+            ROUND(AVG(CASE WHEN finish_position=1 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(AVG(CASE WHEN finish_position<=3 THEN 1.0 ELSE 0 END)*100,1),
+            ROUND(SUM(CASE WHEN finish_position=1 THEN win_odds ELSE 0 END)/NULLIF(COUNT(*),0)*100,1)
+        FROM top1 WHERE ci_rank = 1
+        GROUP BY label, ord ORDER BY ord
+    """)
+
+    odds_result = (await db.execute(odds_sql, params)).all()
+    course_result = (await db.execute(course_sql, params)).all()
+    dist_result = (await db.execute(dist_sql, params)).all()
+
+    # odds_sql returns: label, ord, races, win_pct, place_pct, win_roi
+    odds_rows = [
+        ChihouBuyingGuideRow(
+            label=str(r[0]), races=int(r[2]),
+            win_pct=float(r[3]), place_pct=float(r[4]), win_roi=float(r[5])
+        )
+        for r in odds_result if int(r[2]) >= 20
+    ]
+    # course_sql returns: label, races, win_pct, place_pct, win_roi
+    course_rows = [
+        ChihouBuyingGuideRow(
+            label=str(r[0]), races=int(r[1]),
+            win_pct=float(r[2]), place_pct=float(r[3]), win_roi=float(r[4])
+        )
+        for r in course_result if int(r[1]) >= 20
+    ]
+    # dist_sql returns: label, ord, races, win_pct, place_pct, win_roi
+    dist_rows = [
+        ChihouBuyingGuideRow(
+            label=str(r[0]), races=int(r[2]),
+            win_pct=float(r[3]), place_pct=float(r[4]), win_roi=float(r[5])
+        )
+        for r in dist_result if int(r[2]) >= 20
+    ]
+
+    return ChihouBuyingGuide(
+        odds_cutoff=odds_rows,
+        by_course=course_rows,
+        by_distance=dist_rows,
+        since=since,
+    )

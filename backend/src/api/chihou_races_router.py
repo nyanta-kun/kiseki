@@ -20,6 +20,7 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..db.session import get_db
+from ..indices.buy_signal import chihou_buy_signal
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 
@@ -49,6 +50,8 @@ class ChihouRaceOut(BaseModel):
     confidence_label: str | None = None
     confidence_rank: str | None = None   # S / A / B / C
     recommend_rank: str | None = None    # S / A / B / C
+    buy_signal: str | None = None        # "buy" | "caution" | "pass"
+    top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
 
     model_config = {"from_attributes": True}
 
@@ -224,6 +227,8 @@ async def get_chihou_races_by_date(
             confidence_label=confidence_data[race.id]["label"] if race.id in confidence_data else None,
             confidence_rank=confidence_data[race.id]["rank"] if race.id in confidence_data else None,
             recommend_rank=confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
+            buy_signal=chihou_buy_signal(race.course_name),
+            top_win_odds=latest_win_odds.get(race.id),
         )
         for race in races
     ]

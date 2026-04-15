@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Race } from "@/lib/api";
 import { gradeClass, raceClassBadgeClass, raceClassShort, surfaceIcon } from "@/lib/utils";
+import { BuySignalBadge } from "./BuySignalBadge";
 
 type Props = {
   race: Race;
@@ -23,9 +24,10 @@ function formatPostTime(t: string | null): string | null {
 }
 
 export function RaceCard({ race, basePath = "/races" }: Props) {
-  const confRank = race.confidence_rank ?? null;
-  const recRank  = race.recommend_rank  ?? null;
-  const postTime = formatPostTime(race.post_time);
+  const confRank  = race.confidence_rank ?? null;
+  const recRank   = race.recommend_rank  ?? null;
+  const buySignal = race.buy_signal ?? null;
+  const postTime  = formatPostTime(race.post_time);
 
   return (
     <Link
@@ -64,21 +66,23 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
           </div>
         </div>
 
-        {/* 右側: 穴ぐさ + 信頼度/推奨度ランク + 算出済みバッジ + 矢印 */}
+        {/* 右側: 穴ぐさ + 購入指針 + 信頼度/推奨度ランク + 算出済みバッジ + 矢印 */}
         <div className="flex-shrink-0 flex items-center gap-1.5">
           {race.has_anagusa && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium whitespace-nowrap">
               ☆穴ぐさ
             </span>
           )}
+          {/* 購入指針バッジ（最優先表示） */}
+          {buySignal && <BuySignalBadge signal={buySignal} size="sm" />}
           {confRank && recRank ? (
-            <div className="flex flex-col items-center gap-0.5 min-w-[52px]">
-              <div className="flex gap-1">
-                <span className={`text-[10px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[confRank].cls}`}>
+            <div className="flex flex-col items-center gap-0.5 min-w-[44px]">
+              <div className="flex gap-0.5">
+                <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[confRank].cls}`}>
                   信{confRank}
                 </span>
-                <span className={`text-[10px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
-                  推{recRank}
+                <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
+                  EV{recRank}
                 </span>
               </div>
               <span className="text-[9px] text-gray-400 tabular-nums">{race.confidence_score}pt</span>

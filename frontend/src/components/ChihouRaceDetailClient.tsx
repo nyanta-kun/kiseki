@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { ChihouHorseIndex, ChihouRaceRanks, OddsData, RaceResult } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 
 type Props = {
   horses: ChihouHorseIndex[];
   initialResults: RaceResult[];
   initialOdds: OddsData;
   ranks: ChihouRaceRanks | null;
+  buySignal?: "buy" | "caution" | "pass" | null;
 };
 
 type SortKey = "composite" | "speed" | "last3f" | "jockey" | "rotation" | "finish";
@@ -134,7 +136,7 @@ function SortButton({
   );
 }
 
-export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ranks }: Props) {
+export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ranks, buySignal }: Props) {
   const resultsMap = new Map<number, number | null>(
     initialResults
       .filter((r) => r.horse_number !== null)
@@ -179,28 +181,40 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
   return (
     <>
       {/* 信頼度・推奨度ランクパネル */}
-      {ranks && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-3">
-              <RankBadge
-                prefix="信頼度 "
-                rank={ranks.confidence_rank}
-                sub={`${ranks.score}pt`}
-              />
-              <RankBadge
-                prefix="推奨度 "
-                rank={ranks.recommend_rank}
-                sub={ranks.top_win_odds != null ? `オッズ ${ranks.top_win_odds.toFixed(1)}倍` : "オッズ未取得"}
-              />
-            </div>
-            <div className="text-[10px] text-gray-400 space-y-0.5 ml-auto">
-              <p>指数差 1-2位: {ranks.gap_1_2.toFixed(1)}pt / 1-3位: {ranks.gap_1_3.toFixed(1)}pt</p>
-              {ranks.win_prob_top != null && (
-                <p>予測1位 勝率: {Math.round(ranks.win_prob_top * 100)}%</p>
+      {(ranks || buySignal) && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 space-y-2">
+          {/* 購入指針 */}
+          {buySignal !== undefined && (
+            <div className="flex items-center gap-2 pb-2 border-b border-gray-50">
+              <span className="text-[10px] text-gray-400 font-medium">購入指針</span>
+              <BuySignalBadge signal={buySignal} size="sm" />
+              {buySignal && (
+                <span className="text-[10px] text-gray-500 ml-1">{BUY_SIGNAL_DESC[buySignal]}</span>
               )}
             </div>
-          </div>
+          )}
+          {ranks && (
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <RankBadge
+                  prefix="指数信頼度 "
+                  rank={ranks.confidence_rank}
+                  sub={`${ranks.score}pt`}
+                />
+                <RankBadge
+                  prefix="期待値 "
+                  rank={ranks.recommend_rank}
+                  sub={ranks.top_win_odds != null ? `オッズ ${ranks.top_win_odds.toFixed(1)}倍` : "オッズ未取得"}
+                />
+              </div>
+              <div className="text-[10px] text-gray-400 space-y-0.5 ml-auto">
+                <p>指数差 1-2位: {ranks.gap_1_2.toFixed(1)}pt / 1-3位: {ranks.gap_1_3.toFixed(1)}pt</p>
+                {ranks.win_prob_top != null && (
+                  <p>予測1位 勝率: {Math.round(ranks.win_prob_top * 100)}%</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

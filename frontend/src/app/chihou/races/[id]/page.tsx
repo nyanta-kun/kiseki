@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { ChihouRaceDetailClient } from "@/components/ChihouRaceDetailClient";
+import { computeChihouBuySignal } from "@/components/BuySignalBadge";
 
 type Params = Promise<{ id: string }>;
 
@@ -102,6 +103,7 @@ export default async function ChihouRacePage({ params }: { params: Params }) {
             initialResults={initialResults}
             initialOdds={initialOdds}
             ranks={indicesResp.ranks ?? null}
+            buySignal={computeChihouBuySignal(race?.course_name ?? "")}
           />
 
           {/* 凡例 */}
