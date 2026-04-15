@@ -177,6 +177,19 @@ ORDER BY r.date, r.id, ci.horse_id
         columns = list(result.keys())
 
     df = pd.DataFrame(rows, columns=columns)
+
+    # Decimal 型カラムを float に変換（SQLAlchemy が NUMERIC を Decimal で返すため）
+    numeric_cols = (
+        ["speed_index", "last_3f_index", "course_aptitude", "position_advantage",
+         "jockey_index", "pace_index", "rotation_index", "pedigree_index",
+         "training_index", "anagusa_index", "paddock_index", "rebound_index",
+         "composite_index", "win_probability"]
+        + DB_EXTRA_COLS
+    )
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     logger.info(f"拡張データ取得: {len(df):,} 件 / {df['race_id'].nunique():,} レース")
     return df
 
