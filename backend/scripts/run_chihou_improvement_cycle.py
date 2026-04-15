@@ -410,7 +410,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--objective",
-        choices=["upside_win_roi", "upside_place_roi", "place_rate", "roi"],
+        choices=["upside_win_roi", "upside_place_roi", "place_rate", "roi", "hit_roi"],
         default="upside_win_roi",
         help="最適化目標（地方はplace_odds不足のためupside_win_roiを推奨）",
     )

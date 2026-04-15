@@ -223,6 +223,19 @@ def evaluate(
         top1 = df.loc[df.groupby("race_id")["_score"].idxmax()]
         return float((top1["finish_position"] <= 3).mean() * 100)
 
+    elif objective == "hit_roi":
+        # 複合目標: 0.7 × upside_win_roi + 0.3 × upside_hit_rate(%)
+        # 純粋ROI最大化の分散を抑えつつ穴馬の的中率を加味
+        df["_rank"] = df.groupby("race_id")["_score"].rank(ascending=False, method="min")
+        candidates = df[(df["_rank"] <= upside_top_n) & (df["win_odds"] >= odds_threshold)]
+        if candidates.empty:
+            return 0.0
+        n = len(candidates)
+        wins = candidates[candidates["finish_position"] == 1]
+        win_roi = float(wins["win_odds"].sum() / n * 100)
+        hit_rate_pct = float(len(wins) / n * 100)
+        return win_roi * 0.7 + hit_rate_pct * 0.3
+
     else:  # roi
         top1 = df.loc[df.groupby("race_id")["_score"].idxmax()]
         valid = top1[top1["win_odds"].notna() & (top1["win_odds"] > 0)]
@@ -462,7 +475,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--objective",
-        choices=["upside_win_roi", "upside_place_roi", "place_rate", "roi"],
+        choices=["upside_win_roi", "upside_place_roi", "place_rate", "roi", "hit_roi"],
         default="upside_win_roi",
         help="最適化目標（地方はplace_odds不足のためupside_win_roiを推奨）",
     )
