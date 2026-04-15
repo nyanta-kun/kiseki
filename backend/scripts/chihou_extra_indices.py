@@ -290,9 +290,9 @@ def compute_last_margin(df: pd.DataFrame, engine: "Engine") -> pd.Series:
 # ─────────────────────────────────────────────────────────────────
 
 def compute_trainer(df: pd.DataFrame, engine: "Engine") -> pd.Series:
-    """調教師の勝率 × ROI加重スコアを計算する（騎手指数と同様の算出方法）。
+    """調教師の勝率 × ROI加重スコアを計算する（日付フィルタあり）。
 
-    騎手指数との差別化: コース・距離を問わない総合的な「仕上げ能力」を評価。
+    df の最小レース日より前のデータのみ参照してリークを防ぐ。
     """
     race_ids = df["race_id"].unique().tolist()
     entries = _get_entries(race_ids, engine)
@@ -301,6 +301,8 @@ def compute_trainer(df: pd.DataFrame, engine: "Engine") -> pd.Series:
         return pd.Series(50.0, index=df.index, name="trainer")
 
     trainer_ids = entries["trainer_id"].dropna().astype(int).unique().tolist()
+    # df の最小日より前のデータのみ使用（training/test period 内のレース結果を除外）
+    min_date = str(df["date"].min()) if "date" in df.columns else "2999-12-31"
 
     stats_sql = text("""
         SELECT
@@ -315,13 +317,14 @@ def compute_trainer(df: pd.DataFrame, engine: "Engine") -> pd.Series:
           AND (rr.abnormality_code = 0 OR rr.abnormality_code IS NULL)
           AND rr.finish_position IS NOT NULL
           AND r.course != :banei
+          AND r.date < :min_date
         GROUP BY re.trainer_id
         HAVING COUNT(*) >= :min_s
     """)
 
     with engine.connect() as conn:
         stats = pd.DataFrame(
-            conn.execute(stats_sql, {"tids": trainer_ids, "banei": BANEI_COURSE, "min_s": _MIN_SAMPLES}).fetchall(),
+            conn.execute(stats_sql, {"tids": trainer_ids, "banei": BANEI_COURSE, "min_s": _MIN_SAMPLES, "min_date": min_date}).fetchall(),
             columns=["trainer_id", "total", "wins", "win_odds_sum"],
         )
 
@@ -396,10 +399,9 @@ def compute_weight_trend(df: pd.DataFrame, engine: "Engine") -> pd.Series:
 # ─────────────────────────────────────────────────────────────────
 
 def compute_jockey_course(df: pd.DataFrame, engine: "Engine") -> pd.Series:
-    """騎手 × 競馬場の組み合わせ別勝率をスコア化する。
+    """騎手 × 競馬場の組み合わせ別勝率をスコア化する（日付フィルタあり）。
 
-    サンプル不足の場合は騎手全体平均にフォールバック。
-    地方騎手の得意/不得意コースを捉える。
+    df の最小レース日より前のデータのみ参照してリークを防ぐ。
     """
     race_ids = df["race_id"].unique().tolist()
     entries = _get_entries(race_ids, engine)
@@ -408,6 +410,7 @@ def compute_jockey_course(df: pd.DataFrame, engine: "Engine") -> pd.Series:
         return pd.Series(50.0, index=df.index, name="jockey_course")
 
     jockey_ids = entries["jockey_id"].dropna().astype(int).unique().tolist()
+    min_date = str(df["date"].min()) if "date" in df.columns else "2999-12-31"
 
     stats_sql = text("""
         SELECT
@@ -422,12 +425,13 @@ def compute_jockey_course(df: pd.DataFrame, engine: "Engine") -> pd.Series:
           AND (rr.abnormality_code = 0 OR rr.abnormality_code IS NULL)
           AND rr.finish_position IS NOT NULL
           AND r.course != :banei
+          AND r.date < :min_date
         GROUP BY re.jockey_id, r.course
     """)
 
     with engine.connect() as conn:
         stats = pd.DataFrame(
-            conn.execute(stats_sql, {"jids": jockey_ids, "banei": BANEI_COURSE}).fetchall(),
+            conn.execute(stats_sql, {"jids": jockey_ids, "banei": BANEI_COURSE, "min_date": min_date}).fetchall(),
             columns=["jockey_id", "course", "total", "wins"],
         )
 
@@ -466,61 +470,73 @@ def compute_jockey_course(df: pd.DataFrame, engine: "Engine") -> pd.Series:
 # ─────────────────────────────────────────────────────────────────
 
 def compute_distance_apt(df: pd.DataFrame, engine: "Engine") -> pd.Series:
-    """馬の距離帯別着順から距離適性をスコア化する。
+    """馬の距離帯別着順から距離適性をスコア化する（日付フィルタあり）。
 
-    現在のレース距離帯（S/M/L）での過去成績を使用。
-    サンプル不足の場合は全距離平均にフォールバック。
+    各レースに対して「そのレース日より前の成績のみ」を参照してリークを防ぐ。
+    compute_last_margin と同様に bisect で日付切り出しを行う。
     """
     horse_ids = df["horse_id"].unique().tolist()
 
-    stats_sql = text("""
-        SELECT
-            rr.horse_id,
-            CASE WHEN r.distance <= 1200 THEN 'S'
-                 WHEN r.distance <= 1800 THEN 'M'
-                 ELSE 'L' END AS dist_band,
-            COUNT(*) AS total,
-            SUM(CASE WHEN rr.finish_position = 1 THEN 1 ELSE 0 END) AS wins,
-            SUM(CASE WHEN rr.finish_position <= 3 THEN 1 ELSE 0 END) AS top3
+    hist_sql = text("""
+        SELECT rr.horse_id, r.date, r.distance, rr.finish_position
         FROM chihou.race_results rr
         JOIN chihou.races r ON r.id = rr.race_id
         WHERE rr.horse_id = ANY(:hids)
           AND (rr.abnormality_code = 0 OR rr.abnormality_code IS NULL)
           AND rr.finish_position IS NOT NULL
           AND r.course != :banei
-        GROUP BY rr.horse_id, dist_band
+        ORDER BY rr.horse_id, r.date
     """)
 
     with engine.connect() as conn:
-        stats = pd.DataFrame(
-            conn.execute(stats_sql, {"hids": horse_ids, "banei": BANEI_COURSE}).fetchall(),
-            columns=["horse_id", "dist_band", "total", "wins", "top3"],
+        hist = pd.DataFrame(
+            conn.execute(hist_sql, {"hids": horse_ids, "banei": BANEI_COURSE}).fetchall(),
+            columns=["horse_id", "date", "distance", "finish_position"],
         )
 
-    if stats.empty:
+    if hist.empty:
         return pd.Series(50.0, index=df.index, name="distance_apt")
 
-    stats["top3_rate"] = stats["top3"].astype(float) / stats["total"].astype(float)
+    def _dist_band(d: float) -> str:
+        return "S" if d <= 1200 else ("M" if d <= 1800 else "L")
 
-    fine = stats[stats["total"] >= 5][["horse_id", "dist_band", "top3_rate"]].copy()
-    horse_avg = (
-        stats.groupby("horse_id")
-        .apply(lambda g: g["top3"].sum() / g["total"].sum(), include_groups=False)
-        .reset_index()
-        .rename(columns={0: "top3_rate_h"})
-    )
+    hist["dist_band"] = hist["distance"].apply(_dist_band)
+    hist["top3"] = (hist["finish_position"].astype(float) <= 3).astype(int)
 
-    work = df[["race_id", "horse_id", "distance"]].copy()
-    work["dist_band"] = pd.cut(
-        work["distance"], bins=[0, 1200, 1800, 99999], labels=["S", "M", "L"]
-    ).astype(str)
-    work = work.merge(fine, on=["horse_id", "dist_band"], how="left")
-    work = work.merge(horse_avg, on="horse_id", how="left")
-    work["rate"] = work["top3_rate"].fillna(work["top3_rate_h"])
+    # horse_id → [(date_str, dist_band, top3), ...] (昇順)
+    horse_hist: dict[int, list[tuple]] = {}
+    for row in hist.itertuples(index=False):
+        hid = int(row.horse_id)
+        horse_hist.setdefault(hid, []).append((str(row.date), str(row.dist_band), int(row.top3)))
 
-    result = _z_norm(work["rate"])
-    result.index = df.index
-    return result.rename("distance_apt")
+    results = []
+    for idx in df.index:
+        horse_id = int(df.at[idx, "horse_id"])
+        target_date = str(df.at[idx, "date"])
+        tgt_dist = float(df.at[idx, "distance"]) if pd.notna(df.at[idx, "distance"]) else 1400.0
+        tgt_band = _dist_band(tgt_dist)
+
+        races = horse_hist.get(horse_id, [])
+        if not races:
+            results.append(None)
+            continue
+        dates = [r[0] for r in races]
+        pos = bisect_left(dates, target_date)
+        past = races[:pos]
+        if not past:
+            results.append(None)
+            continue
+
+        same_dist = [r for r in past if r[1] == tgt_band]
+        if len(same_dist) >= 5:
+            results.append(sum(r[2] for r in same_dist) / len(same_dist))
+        elif len(past) >= 3:
+            results.append(sum(r[2] for r in past) / len(past))
+        else:
+            results.append(None)
+
+    raw = pd.Series(results, index=df.index, dtype="float64")
+    return _z_norm(raw).rename("distance_apt")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -528,18 +544,17 @@ def compute_distance_apt(df: pd.DataFrame, engine: "Engine") -> pd.Series:
 # ─────────────────────────────────────────────────────────────────
 
 def compute_track_cond(df: pd.DataFrame, engine: "Engine") -> pd.Series:
-    """馬場状態（良/稍/重/不）別の過去成績から道悪・良馬場適性をスコア化する。
+    """馬場状態（良/稍/重/不）別の過去成績から道悪・良馬場適性をスコア化する（日付フィルタあり）。
 
-    現在のレースの condition に対する各馬の過去成績で評価。
+    各レースに対して「そのレース日より前の成績のみ」を参照してリークを防ぐ。
     """
+    if "condition" not in df.columns:
+        return pd.Series(50.0, index=df.index, name="track_cond")
+
     horse_ids = df["horse_id"].unique().tolist()
 
-    stats_sql = text("""
-        SELECT
-            rr.horse_id,
-            r.condition,
-            COUNT(*) AS total,
-            SUM(CASE WHEN rr.finish_position <= 3 THEN 1 ELSE 0 END) AS top3
+    hist_sql = text("""
+        SELECT rr.horse_id, r.date, r.condition, rr.finish_position
         FROM chihou.race_results rr
         JOIN chihou.races r ON r.id = rr.race_id
         WHERE rr.horse_id = ANY(:hids)
@@ -547,36 +562,53 @@ def compute_track_cond(df: pd.DataFrame, engine: "Engine") -> pd.Series:
           AND rr.finish_position IS NOT NULL
           AND r.condition IS NOT NULL
           AND r.course != :banei
-        GROUP BY rr.horse_id, r.condition
+        ORDER BY rr.horse_id, r.date
     """)
 
     with engine.connect() as conn:
-        stats = pd.DataFrame(
-            conn.execute(stats_sql, {"hids": horse_ids, "banei": BANEI_COURSE}).fetchall(),
-            columns=["horse_id", "condition", "total", "top3"],
+        hist = pd.DataFrame(
+            conn.execute(hist_sql, {"hids": horse_ids, "banei": BANEI_COURSE}).fetchall(),
+            columns=["horse_id", "date", "condition", "finish_position"],
         )
 
-    if stats.empty or "condition" not in df.columns:
+    if hist.empty:
         return pd.Series(50.0, index=df.index, name="track_cond")
 
-    stats["top3_rate"] = stats["top3"].astype(float) / stats["total"].astype(float)
+    hist["top3"] = (hist["finish_position"].astype(float) <= 3).astype(int)
 
-    fine = stats[stats["total"] >= 3][["horse_id", "condition", "top3_rate"]].copy()
-    horse_avg = (
-        stats.groupby("horse_id")
-        .apply(lambda g: g["top3"].sum() / g["total"].sum(), include_groups=False)
-        .reset_index()
-        .rename(columns={0: "top3_rate_h"})
-    )
+    # horse_id → [(date_str, condition, top3), ...] (昇順)
+    horse_hist: dict[int, list[tuple]] = {}
+    for row in hist.itertuples(index=False):
+        hid = int(row.horse_id)
+        horse_hist.setdefault(hid, []).append((str(row.date), str(row.condition), int(row.top3)))
 
-    work = df[["race_id", "horse_id", "condition"]].copy()
-    work = work.merge(fine, on=["horse_id", "condition"], how="left")
-    work = work.merge(horse_avg, on="horse_id", how="left")
-    work["rate"] = work["top3_rate"].fillna(work["top3_rate_h"])
+    results = []
+    for idx in df.index:
+        horse_id = int(df.at[idx, "horse_id"])
+        target_date = str(df.at[idx, "date"])
+        tgt_cond = str(df.at[idx, "condition"]) if pd.notna(df.at[idx, "condition"]) else ""
 
-    result = _z_norm(work["rate"])
-    result.index = df.index
-    return result.rename("track_cond")
+        races = horse_hist.get(horse_id, [])
+        if not races:
+            results.append(None)
+            continue
+        dates = [r[0] for r in races]
+        pos = bisect_left(dates, target_date)
+        past = races[:pos]
+        if not past:
+            results.append(None)
+            continue
+
+        same_cond = [r for r in past if r[1] == tgt_cond]
+        if len(same_cond) >= 3:
+            results.append(sum(r[2] for r in same_cond) / len(same_cond))
+        elif len(past) >= 3:
+            results.append(sum(r[2] for r in past) / len(past))
+        else:
+            results.append(None)
+
+    raw = pd.Series(results, index=df.index, dtype="float64")
+    return _z_norm(raw).rename("track_cond")
 
 
 # ─────────────────────────────────────────────────────────────────
