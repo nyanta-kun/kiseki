@@ -46,6 +46,24 @@ v6 変更点（CHIHOU_COMPOSITE_VERSION=6）:
     speed 0.2685→0.3489 / last3f 0.1848→0.2401 / jockey 0.1346→0.1749
     rotation 0.0908→0.1180 / last_margin 0.0909→0.1181
   - アルゴリズム簡略化: 3ステップ→2ステップ（仮composite不要）
+
+v7 変更点（CHIHOU_COMPOSITE_VERSION=7）:
+  - 設計思想の変更: 加重合算 → 乗数方式
+    【旧v6】composite = Σ(weight_i × index_i)
+      問題: jockey=80 等の補助指数が speed=42 の馬を上位に押し上げる
+    【新v7】composite = ability_base × K_jockey × K_rotation
+      原則: 馬の速度実績がベース。騎手・ローテは小幅補正のみ。
+  - ability_base = weighted_avg(speed, last3f, last_margin)
+      ABILITY_WEIGHTS: speed=0.50 / last3f=0.20 / last_margin=0.30
+      last_margin が NULL の場合は speed/last3f の2指数で正規化
+  - K_jockey = clip(1.0 + (jockey_index - 50)/50 × max_jockey, ±max_jockey)
+      max_jockey はコース別に設定（COURSE_JOCKEY_MAX 辞書）
+      グループA（馬能力重視 南関東・九州・四国・北海道）: 0.05〜0.15
+      グループB（騎手補正維持 笠松・金沢・園田・水沢）: 0.08〜0.15
+  - K_rotation = clip(1.0 + (rotation_index - 50)/50 × 0.08, ±0.08)
+  - バックテスト検証（16,824R 2025-01〜2026-04）:
+      全体ROI: v6=76.5% → v7=77.1% (+0.6%)
+      穴馬（10倍以上）ROI: v6=82.6% → v7=88.2% (+5.6%)
 """
 
 from __future__ import annotations
@@ -73,7 +91,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 6
+CHIHOU_COMPOSITE_VERSION = 7
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -118,15 +136,39 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数の重み（v6: place_ev をオッズ依存のため除外し残り5指数を比例正規化）
-# v5 → v6: place_ev(0.2303)除外 → sum=0.7696 → 各重み÷0.7696
-COMPOSITE_WEIGHTS = {
-    "speed":        0.3489,  # 0.2685/0.7696
-    "last3f":       0.2401,  # 0.1848/0.7696
-    "jockey":       0.1749,  # 0.1346/0.7696
-    "rotation":     0.1180,  # 0.0908/0.7696
-    "last_margin":  0.1181,  # 0.0909/0.7696（NULLの場合は残り4指数で正規化）
+# 総合指数 v7: 乗数方式
+# ability_base = weighted_avg(speed, last3f, last_margin)
+ABILITY_WEIGHTS = {
+    "speed":       0.50,
+    "last3f":      0.20,
+    "last_margin": 0.30,
 }
+
+# K_rotation = clip(1.0 + (rotation_index - 50)/50 × ROTATION_MAX_EFFECT, ±ROTATION_MAX_EFFECT)
+ROTATION_MAX_EFFECT = 0.08
+
+# K_jockey = clip(1.0 + (jockey_index - 50)/50 × max_jk, ±max_jk)  コース別
+# グループA（馬能力重視）: max_jk 小
+# グループB（騎手補正維持）: max_jk 大
+COURSE_JOCKEY_MAX: dict[str, float] = {
+    # グループA
+    "川崎":   0.05,
+    "佐賀":   0.05,
+    "高知":   0.05,
+    "名古屋": 0.05,
+    "門別":   0.05,
+    "大井":   0.08,
+    "船橋":   0.08,
+    "盛岡":   0.08,
+    "浦和":   0.12,
+    "姫路":   0.15,
+    # グループB
+    "金沢":   0.08,
+    "水沢":   0.10,
+    "園田":   0.08,
+    "笠松":   0.15,
+}
+DEFAULT_JOCKEY_MAX = 0.08  # 未知コース用デフォルト
 
 # Softmax 温度パラメータ
 SOFTMAX_TEMPERATURE = 10.0
@@ -380,33 +422,44 @@ class ChihouIndexCalculator:
         rotation_map     = await self._rotation_batch(race_date, entries)
         last_margin_map  = await self._last_margin_batch(race_date, entries)
 
-        # Step 1: composite_index を算出（オッズ非依存の5指数）
-        # last_margin_index は初走馬で NULL になる場合があるためウェイトごと除外して正規化
+        # Step 1: composite_index を算出（v7乗数方式）
+        # ability_base = 馬固有の能力（タイム系3指数の加重平均）
+        # K_jockey / K_rotation = 小幅補正乗数（±max%）
+        w_sp = ABILITY_WEIGHTS["speed"]
+        w_l3 = ABILITY_WEIGHTS["last3f"]
+        w_lm = ABILITY_WEIGHTS["last_margin"]
+        max_jk = COURSE_JOCKEY_MAX.get(race.course_name, DEFAULT_JOCKEY_MAX)
+
         composite_inputs: list[tuple[int, float]] = []
         for entry in entries:
-            hid = entry.horse_id
+            hid    = entry.horse_id
             s      = speed_map.get(hid, INDEX_NEUTRAL)
             last3f = last3f_map.get(hid, INDEX_NEUTRAL)
             j      = jockey_map.get(hid, INDEX_NEUTRAL)
             r      = rotation_map.get(hid, INDEX_NEUTRAL)
             lm     = last_margin_map.get(hid)
 
-            w_total = (
-                COMPOSITE_WEIGHTS["speed"]
-                + COMPOSITE_WEIGHTS["last3f"]
-                + COMPOSITE_WEIGHTS["jockey"]
-                + COMPOSITE_WEIGHTS["rotation"]
-            )
-            comp = (
-                COMPOSITE_WEIGHTS["speed"]    * s
-                + COMPOSITE_WEIGHTS["last3f"]   * last3f
-                + COMPOSITE_WEIGHTS["jockey"]   * j
-                + COMPOSITE_WEIGHTS["rotation"] * r
-            )
+            # 馬固有能力ベース（last_margin NULL時は2指数で正規化）
             if lm is not None:
-                comp    += COMPOSITE_WEIGHTS["last_margin"] * lm
-                w_total += COMPOSITE_WEIGHTS["last_margin"]
-            composite_inputs.append((hid, _clip(comp / w_total)))
+                ability_base = (w_sp * s + w_l3 * last3f + w_lm * lm) / (w_sp + w_l3 + w_lm)
+            else:
+                ability_base = (w_sp * s + w_l3 * last3f) / (w_sp + w_l3)
+
+            # 騎手補正乗数（±max_jk%）
+            k_jockey = _clip(
+                1.0 + (j - 50.0) / 50.0 * max_jk,
+                lo=1.0 - max_jk,
+                hi=1.0 + max_jk,
+            )
+            # ローテーション補正乗数（±8%固定）
+            k_rotation = _clip(
+                1.0 + (r - 50.0) / 50.0 * ROTATION_MAX_EFFECT,
+                lo=1.0 - ROTATION_MAX_EFFECT,
+                hi=1.0 + ROTATION_MAX_EFFECT,
+            )
+
+            composite = _clip(ability_base * k_jockey * k_rotation)
+            composite_inputs.append((hid, composite))
 
         # Softmax で単勝確率を推定 → Harville で複勝確率を算出
         comp_values = [v for _, v in composite_inputs]

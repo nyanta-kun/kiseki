@@ -36,26 +36,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def backfill(from_date: str, batch_size: int) -> None:
-    """指定日以降の全レースを指数算出する。
+async def backfill(from_date: str, batch_size: int, to_date: str | None = None) -> None:
+    """指定期間の全レースを指数算出する。
 
     Args:
         from_date: 開始日（YYYYMMDD）
         batch_size: 一度にコミットするレース数
+        to_date: 終了日（YYYYMMDD, 省略時は全期間）
     """
     engine = create_async_engine(settings.database_url, echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)  # type: ignore[call-overload]
 
     # 対象レース一覧を取得（成績が入っているレースのみ = 過去レース）
     async with async_session() as db:
+        cond = ChihouRace.date >= from_date
+        if to_date:
+            cond = and_(cond, ChihouRace.date < to_date)
         rows = await db.execute(
             select(ChihouRace.id, ChihouRace.date, ChihouRace.course_name, ChihouRace.race_number)
-            .where(ChihouRace.date >= from_date)
+            .where(cond)
             .order_by(ChihouRace.date, ChihouRace.id)
         )
         races = rows.fetchall()
 
-    logger.info("対象レース数: %d（%s 以降）", len(races), from_date)
+    period = f"{from_date}〜{to_date}" if to_date else f"{from_date}〜"
+    logger.info("対象レース数: %d（%s）", len(races), period)
 
     saved_total  = 0
     error_total  = 0
@@ -106,6 +111,11 @@ def main() -> None:
         help="開始日（YYYYMMDD, デフォルト: 20250101）",
     )
     parser.add_argument(
+        "--to-date",
+        default=None,
+        help="終了日（YYYYMMDD, 省略時は全期間）。並列バックフィル用。",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=100,
@@ -113,7 +123,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    asyncio.run(backfill(args.from_date, args.batch_size))
+    asyncio.run(backfill(args.from_date, args.batch_size, args.to_date))
 
 
 if __name__ == "__main__":
