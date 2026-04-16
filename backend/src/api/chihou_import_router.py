@@ -22,11 +22,13 @@ from ..importers.chihou_odds_importer import ChihouOddsImporter
 from ..importers.chihou_pedigree_importer import ChihouPedigreeImporter
 from ..importers.chihou_race_importer import ChihouRaceImporter
 from ..importers.jvlink_parser import parse_hr
+from .chihou_races_router import _fetch_chihou_results_payload
 from .import_router import (
     ImportRequest,
     WeightRequest,
     verify_api_key,
 )
+from .ws_manager import chihou_results_manager
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,14 @@ async def chihou_import_races(
     stats = await importer.import_records(records)
     await db.commit()
     logger.info("chihou_import_races stats: %s", stats)
+
+    # 成績が確定したレースをWebSocketでブロードキャスト
+    result_race_ids: list[int] = stats.get("result_race_ids", [])  # type: ignore[assignment]
+    for race_id in result_race_ids:
+        payload = await _fetch_chihou_results_payload(race_id, db)
+        if payload:
+            await chihou_results_manager.broadcast(race_id, payload)  # type: ignore[arg-type]
+
     return {"ok": True, "stats": stats}
 
 

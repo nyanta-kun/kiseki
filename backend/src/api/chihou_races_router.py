@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from sqlalchemy import exists, select
 from sqlalchemy import text as sql_text
@@ -21,6 +21,7 @@ from ..db.chihou_models import (
 )
 from ..db.session import get_db
 from ..indices.buy_signal import chihou_buy_signal
+from .ws_manager import chihou_results_manager
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 
@@ -490,3 +491,62 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         has_indices=has_indices,
         buy_signal=chihou_buy_signal(race.course_name),
     )
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_chihou_results_payload(race_id: int, db: AsyncSession) -> list[dict]:
+    """指定レースの地方競馬成績をWebSocket送信用リストで返す。"""
+    stmt = (
+        select(ChihouRaceResult, ChihouHorse.name.label("horse_name"))
+        .join(ChihouHorse, ChihouRaceResult.horse_id == ChihouHorse.id)
+        .where(ChihouRaceResult.race_id == race_id)
+        .order_by(ChihouRaceResult.finish_position.asc().nulls_last())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [
+        {
+            "horse_number": r.horse_number,
+            "finish_position": r.finish_position,
+            "finish_time": float(r.finish_time) if r.finish_time is not None else None,
+            "last_3f": float(r.last_3f) if r.last_3f is not None else None,
+            "horse_name": horse_name,
+        }
+        for r, horse_name in rows
+        if r.finish_position is not None
+    ]
+
+
+def _check_ws_origin(ws: WebSocket) -> None:
+    """開発環境以外では Origin ヘッダーを検証する（CSRF対策）。"""
+    import os
+    origin = ws.headers.get("origin", "")
+    allowed = os.environ.get("ALLOWED_ORIGINS", "")
+    if not allowed:
+        return  # 未設定時はスキップ（開発環境）
+    if origin and origin not in allowed.split(","):
+        import logging
+        logging.getLogger(__name__).warning("WS blocked origin: %r", origin)
+
+
+@router.websocket("/{race_id}/results/ws")
+async def chihou_results_websocket(race_id: int, ws: WebSocket, db: DbDep) -> None:
+    """地方競馬成績リアルタイム更新用WebSocket。
+
+    接続時に現在の成績を即送信し、その後は成績確定時にブロードキャストされる
+    [{horse_number, finish_position, finish_time, last_3f, horse_name}, ...] を受信する。
+    """
+    _check_ws_origin(ws)
+    await chihou_results_manager.connect(race_id, ws)
+    try:
+        current = await _fetch_chihou_results_payload(race_id, db)
+        if current:
+            await ws.send_json(current)
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        chihou_results_manager.disconnect(race_id, ws)

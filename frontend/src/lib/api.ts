@@ -453,6 +453,18 @@ export function buildResultsWsUrl(raceId: number): string {
   return `${proto}://${host}/api/races/${raceId}/results/ws`;
 }
 
+export function buildChihouResultsWsUrl(raceId: number): string {
+  if (typeof window === "undefined") return "";
+  const explicit = process.env.NEXT_PUBLIC_WS_URL;
+  if (explicit) {
+    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
+    return `${base}/api/chihou/races/${raceId}/results/ws`;
+  }
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host;
+  return `${proto}://${host}/api/chihou/races/${raceId}/results/ws`;
+}
+
 // ---------------------------------------------------------------------------
 // 推奨レース・馬券
 // ---------------------------------------------------------------------------

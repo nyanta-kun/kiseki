@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { ChihouHorseIndex, ChihouRaceRanks, OddsData, RaceResult } from "@/lib/api";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import { ChihouHorseIndex, ChihouRaceRanks, OddsData, RaceResult, buildChihouResultsWsUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { WsStatusBadge } from "@/components/WsStatusBadge";
 
 type Props = {
+  raceId: number;
   horses: ChihouHorseIndex[];
   initialResults: RaceResult[];
   initialOdds: OddsData;
@@ -136,13 +139,36 @@ function SortButton({
   );
 }
 
-export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ranks, buySignal }: Props) {
-  const resultsMap = new Map<number, number | null>(
-    initialResults
+function toResultsMap(results: RaceResult[]): Map<number, number | null> {
+  return new Map(
+    results
       .filter((r) => r.horse_number !== null)
       .map((r) => [r.horse_number as number, r.finish_position])
   );
+}
+
+function useIsMounted() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+}
+
+export function ChihouRaceDetailClient({ raceId, horses, initialResults, initialOdds, ranks, buySignal }: Props) {
+  const mounted = useIsMounted();
+  const [resultsMap, setResultsMap] = useState<Map<number, number | null>>(
+    () => toResultsMap(initialResults)
+  );
   const hasResults = resultsMap.size > 0;
+
+  const wsUrl = mounted ? buildChihouResultsWsUrl(raceId) : null;
+  const handleWsMessage = useCallback((data: unknown) => {
+    if (Array.isArray(data) && data.length > 0) {
+      setResultsMap(toResultsMap(data as RaceResult[]));
+    }
+  }, []);
+  const { isConnected: wsConnected } = useWebSocket(wsUrl, handleWsMessage);
   const totalHorses = horses.length;
 
   // デフォルトは常に総合（レース確定後も同様）
@@ -225,6 +251,11 @@ export function ChihouRaceDetailClient({ horses, initialResults, initialOdds, ra
           <span className="w-1 h-4 rounded inline-block bg-green-600" />
           出馬表 指数一覧
           <span className="text-xs text-gray-400 font-normal ml-1">{horses.length}頭</span>
+          {mounted && wsUrl && (
+            <span className="ml-1">
+              <WsStatusBadge connected={wsConnected} label="成績更新: 再接続中…" />
+            </span>
+          )}
         </h2>
         <div className="flex gap-1 ml-auto flex-wrap">
           <SortButton k="composite" label="総合" sortKey={sortKey} setSortKey={setSortKey} />

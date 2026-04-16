@@ -51,5 +51,6 @@ class ConnectionManager:
 
 
 # モジュールレベルのシングルトン
-manager = ConnectionManager()  # オッズ用
-results_manager = ConnectionManager()  # 成績用
+manager = ConnectionManager()          # JRAオッズ用
+results_manager = ConnectionManager()  # JRA成績用
+chihou_results_manager = ConnectionManager()  # 地方競馬成績用
