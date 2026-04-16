@@ -35,6 +35,17 @@ v5 変更点（CHIHOU_COMPOSITE_VERSION=5）:
   - Nelder-Mead + grid search (α=0.08) による追加検証で採用
   - test upside_win_roi +3.2% (20260101-20260415) / overfit=False
   - COMPOSITE_WEIGHTS: v4重み×(0.88分母正規化) + last_margin:0.0909
+
+v6 変更点（CHIHOU_COMPOSITE_VERSION=6）:
+  - place_ev_index を composite_index から除外
+  - 理由: オッズは変動するため指数に組み込むとバックテストにデータリークが生じる
+    （過去レース: race_results のオッズ使用 → ROI過大評価）
+    （直前レース: オッズ未確定でNULL → composite計算が不一致）
+  - place_ev_index は引き続き別列として保存（フロントでのEV参考表示用）
+  - COMPOSITE_WEIGHTS: v5の place_ev(0.2303) を除き残り5指数を比例正規化
+    speed 0.2685→0.3489 / last3f 0.1848→0.2401 / jockey 0.1346→0.1749
+    rotation 0.0908→0.1180 / last_margin 0.0909→0.1181
+  - アルゴリズム簡略化: 3ステップ→2ステップ（仮composite不要）
 """
 
 from __future__ import annotations
@@ -62,7 +73,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 5
+CHIHOU_COMPOSITE_VERSION = 6
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -107,16 +118,14 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数の重み（v5: last_margin_index を追加、grid search α=0.08 採用）
-# v4 → v5: v4重みを (base×0.80/0.88 + last_margin:0.08/0.88) で正規化
-#   test upside_win_roi +3.2%（20260101-20260415, 過学習なし）
+# 総合指数の重み（v6: place_ev をオッズ依存のため除外し残り5指数を比例正規化）
+# v5 → v6: place_ev(0.2303)除外 → sum=0.7696 → 各重み÷0.7696
 COMPOSITE_WEIGHTS = {
-    "speed":        0.2685,
-    "last3f":       0.1848,
-    "jockey":       0.1346,
-    "rotation":     0.0908,
-    "place_ev":     0.2303,  # 複勝期待値指数（v3で新設）
-    "last_margin":  0.0909,  # 前走着差指数（v5で新設）
+    "speed":        0.3489,  # 0.2685/0.7696
+    "last3f":       0.2401,  # 0.1848/0.7696
+    "jockey":       0.1749,  # 0.1346/0.7696
+    "rotation":     0.1180,  # 0.0908/0.7696
+    "last_margin":  0.1181,  # 0.0909/0.7696（NULLの場合は残り4指数で正規化）
 }
 
 # Softmax 温度パラメータ
@@ -371,50 +380,8 @@ class ChihouIndexCalculator:
         rotation_map     = await self._rotation_batch(race_date, entries)
         last_margin_map  = await self._last_margin_batch(race_date, entries)
 
-        # 単勝オッズを取得（odds_map が渡されない場合は race_results から取得）
-        if odds_map is None:
-            odds_map = await self._fetch_win_odds(race_id, entries)
-
-        # 総合指数の仮算出（place_ev_index の入力となる place_probability を得るため）
-        # Step 1: place_ev なしで一時的な composite を計算し Softmax → place_prob を得る
-        base_weight_sum = (
-            COMPOSITE_WEIGHTS["speed"]
-            + COMPOSITE_WEIGHTS["last3f"]
-            + COMPOSITE_WEIGHTS["jockey"]
-            + COMPOSITE_WEIGHTS["rotation"]
-        )
-        pre_composite: list[tuple[int, float]] = []
-        for entry in entries:
-            hid = entry.horse_id
-            s = speed_map.get(hid, INDEX_NEUTRAL)
-            last3f = last3f_map.get(hid, INDEX_NEUTRAL)
-            j = jockey_map.get(hid, INDEX_NEUTRAL)
-            r = rotation_map.get(hid, INDEX_NEUTRAL)
-            # base_weight_sum で正規化して 0-100 スケールを保つ
-            comp_base = (
-                COMPOSITE_WEIGHTS["speed"]    * s
-                + COMPOSITE_WEIGHTS["last3f"]   * last3f
-                + COMPOSITE_WEIGHTS["jockey"]   * j
-                + COMPOSITE_WEIGHTS["rotation"] * r
-            ) / base_weight_sum
-            pre_composite.append((hid, _clip(comp_base)))
-
-        pre_win_probs   = _softmax([v for _, v in pre_composite], SOFTMAX_TEMPERATURE)
-        pre_place_probs = _harville_place_probs(pre_win_probs)
-
-        # Step 2: place_ev_index を算出（Harvilleの複勝確率 × 推定複勝オッズ）
-        place_ev_map: dict[int, float] = {}
-        for idx, entry in enumerate(entries):
-            hid = entry.horse_id
-            win_odds = odds_map.get(hid)
-            if win_odds is not None and win_odds > 0.0:
-                place_ev_map[hid] = _place_ev_to_index(
-                    pre_place_probs[idx], win_odds
-                )
-            # win_odds が不明な場合は place_ev_index = None（DB に NULL を格納）
-
-        # Step 3: place_ev_index・last_margin_index を含む最終 composite_index を算出
-        # NULL の指数はウェイトごと除外して正規化
+        # Step 1: composite_index を算出（オッズ非依存の5指数）
+        # last_margin_index は初走馬で NULL になる場合があるためウェイトごと除外して正規化
         composite_inputs: list[tuple[int, float]] = []
         for entry in entries:
             hid = entry.horse_id
@@ -422,30 +389,40 @@ class ChihouIndexCalculator:
             last3f = last3f_map.get(hid, INDEX_NEUTRAL)
             j      = jockey_map.get(hid, INDEX_NEUTRAL)
             r      = rotation_map.get(hid, INDEX_NEUTRAL)
-            pe     = place_ev_map.get(hid)
             lm     = last_margin_map.get(hid)
 
-            # 4指数（常に利用可能）の合計
-            w_total = base_weight_sum
+            w_total = (
+                COMPOSITE_WEIGHTS["speed"]
+                + COMPOSITE_WEIGHTS["last3f"]
+                + COMPOSITE_WEIGHTS["jockey"]
+                + COMPOSITE_WEIGHTS["rotation"]
+            )
             comp = (
                 COMPOSITE_WEIGHTS["speed"]    * s
                 + COMPOSITE_WEIGHTS["last3f"]   * last3f
                 + COMPOSITE_WEIGHTS["jockey"]   * j
                 + COMPOSITE_WEIGHTS["rotation"] * r
             )
-            if pe is not None:
-                comp    += COMPOSITE_WEIGHTS["place_ev"] * pe
-                w_total += COMPOSITE_WEIGHTS["place_ev"]
             if lm is not None:
                 comp    += COMPOSITE_WEIGHTS["last_margin"] * lm
                 w_total += COMPOSITE_WEIGHTS["last_margin"]
             composite_inputs.append((hid, _clip(comp / w_total)))
 
-        # Softmax で単勝確率を推定
+        # Softmax で単勝確率を推定 → Harville で複勝確率を算出
         comp_values = [v for _, v in composite_inputs]
         win_probs   = _softmax(comp_values, SOFTMAX_TEMPERATURE)
-        # 複勝確率: Harville モデルで上位3着以内の確率を算出
         place_probs = _harville_place_probs(win_probs)
+
+        # Step 2: place_ev_index を算出（参考列として保存。composite には含まない）
+        # オッズは race_results から取得（直前レースでは None → DB に NULL を格納）
+        if odds_map is None:
+            odds_map = await self._fetch_win_odds(race_id, entries)
+        place_ev_map: dict[int, float] = {}
+        for idx, entry in enumerate(entries):
+            hid = entry.horse_id
+            win_odds = odds_map.get(hid)
+            if win_odds is not None and win_odds > 0.0:
+                place_ev_map[hid] = _place_ev_to_index(place_probs[idx], win_odds)
 
         # upsert
         values = []
