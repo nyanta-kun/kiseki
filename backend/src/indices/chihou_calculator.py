@@ -64,6 +64,17 @@ v7 変更点（CHIHOU_COMPOSITE_VERSION=7）:
   - バックテスト検証（16,824R 2025-01〜2026-04）:
       全体ROI: v6=76.5% → v7=77.1% (+0.6%)
       穴馬（10倍以上）ROI: v6=82.6% → v7=88.2% (+5.6%)
+
+v8 変更点（CHIHOU_COMPOSITE_VERSION=8）:
+  - K_dark（穴馬ポテンシャル乗数）を追加
+    【新v8】composite = ability_base × K_jockey × K_rotation × K_dark
+    K_dark ∈ [1.00, 1.20]（上方補正のみ。条件なし = 1.0）
+  - バックテスト（30,186R 2023-04〜2026-04）から有効シグナルを抽出:
+      ⑤ 前走後方（running_style 3or4 or passing_1>70%頭数）: ROI差 +124% → K+=0.10
+      ① 距離短縮200〜400m: ROI差 +54%（先行時）       → K+=0.05
+      ② 外枠（頭数60%以上の枠番）: ROI差 +46%（先行時）→ K+=0.03
+      ⑥ 騎手変更×上位騎手（jockey_index≥62）: ROI差 +16% → K+=0.03
+  - 前走データは _rotation_batch と同じサブクエリパターンで取得
 """
 
 from __future__ import annotations
@@ -91,7 +102,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 7
+CHIHOU_COMPOSITE_VERSION = 8
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -169,6 +180,10 @@ COURSE_JOCKEY_MAX: dict[str, float] = {
     "笠松":   0.15,
 }
 DEFAULT_JOCKEY_MAX = 0.08  # 未知コース用デフォルト
+
+# 穴馬ポテンシャル乗数 K_dark（v8）
+DARK_HORSE_MAX_EFFECT = 0.20     # K_dark の最大値 = 1.0 + 0.20
+DARK_HORSE_JOCKEY_TOP = 62.0    # 上位騎手とみなす jockey_index 閾値（全体 top20%相当）
 
 # Softmax 温度パラメータ
 SOFTMAX_TEMPERATURE = 10.0
@@ -421,10 +436,12 @@ class ChihouIndexCalculator:
         jockey_map       = await self._jockey_batch(race_date, race.course, entries)
         rotation_map     = await self._rotation_batch(race_date, entries)
         last_margin_map  = await self._last_margin_batch(race_date, entries)
+        dark_horse_map   = await self._dark_horse_batch(race_date, race, entries, jockey_map)
 
-        # Step 1: composite_index を算出（v7乗数方式）
+        # Step 1: composite_index を算出（v8乗数方式）
         # ability_base = 馬固有の能力（タイム系3指数の加重平均）
         # K_jockey / K_rotation = 小幅補正乗数（±max%）
+        # K_dark = 穴馬ポテンシャル乗数（[1.00, 1.20]、前走後方・距離短縮等で上方補正）
         w_sp = ABILITY_WEIGHTS["speed"]
         w_l3 = ABILITY_WEIGHTS["last3f"]
         w_lm = ABILITY_WEIGHTS["last_margin"]
@@ -457,8 +474,10 @@ class ChihouIndexCalculator:
                 lo=1.0 - ROTATION_MAX_EFFECT,
                 hi=1.0 + ROTATION_MAX_EFFECT,
             )
+            # 穴馬ポテンシャル乗数（前走後方・距離短縮・外枠・騎手強化）
+            k_dark = dark_horse_map.get(hid, 1.0)
 
-            composite = _clip(ability_base * k_jockey * k_rotation)
+            composite = _clip(ability_base * k_jockey * k_rotation * k_dark)
             composite_inputs.append((hid, composite))
 
         # Softmax で単勝確率を推定 → Harville で複勝確率を算出
@@ -1024,6 +1043,127 @@ class ChihouIndexCalculator:
             # 前走着順ボーナス
             bonus = _FINISH_BONUS.get(finish, 0.0) if finish else 0.0
             result[hid] = _clip(interval_score + bonus)
+
+        return result
+
+    # ===================================================================
+    # 穴馬ポテンシャル乗数（v8）
+    # ===================================================================
+
+    async def _dark_horse_batch(
+        self,
+        race_date: str,
+        race: "ChihouRace",
+        entries: list["ChihouRaceEntry"],
+        jockey_map: dict[int, float],
+    ) -> dict[int, float]:
+        """全エントリの穴馬ポテンシャル乗数（K_dark）を一括算出する（v8）。
+
+        前走データと今走エントリから以下のシグナルを検出し K_dark を算出する。
+        すべて事前情報（レース前に確定しているデータ）のみを使用。
+
+        シグナル（加算式）:
+          ⑤ 前走後方（running_style "3"or"4" / passing_1>70%頭数）→ +0.10
+          ① 距離短縮200〜400m（prev_distance - curr_distance ∈ [200, 400]）→ +0.05
+          ② 外枠（frame_number ≥ head_count×0.60）→ +0.03
+          ⑥ 騎手変更×上位騎手（jockey_index ≥ DARK_HORSE_JOCKEY_TOP）→ +0.03
+
+        K_dark ∈ [1.00, 1.00 + DARK_HORSE_MAX_EFFECT]
+        前走データなし（初出走等）は K_dark = 1.0
+
+        Args:
+            race_date: 今走の日付（YYYYMMDD）
+            race: 今走の ChihouRace オブジェクト（distance, head_count 参照用）
+            entries: 出走馬エントリリスト
+            jockey_map: horse_id → jockey_index（_jockey_batch の結果）
+        """
+        horse_ids = [e.horse_id for e in entries]
+        entry_map: dict[int, ChihouRaceEntry] = {e.horse_id: e for e in entries}
+        current_distance = race.distance
+        current_head_count = race.head_count or 10
+
+        # 各馬の直前レース日付を取得（_rotation_batch と同パターン）
+        subq = (
+            select(
+                ChihouRaceResult.horse_id,
+                func.max(ChihouRace.date).label("last_date"),
+            )
+            .join(ChihouRace, ChihouRace.id == ChihouRaceResult.race_id)
+            .where(
+                and_(
+                    ChihouRaceResult.horse_id.in_(horse_ids),
+                    ChihouRace.date < race_date,
+                    ChihouRaceResult.abnormality_code == 0,
+                )
+            )
+            .group_by(ChihouRaceResult.horse_id)
+            .subquery()
+        )
+
+        rows = await self.db.execute(
+            select(
+                ChihouRaceResult.horse_id,
+                ChihouRace.distance.label("prev_distance"),
+                ChihouRace.head_count.label("prev_head_count"),
+                ChihouRaceResult.running_style,
+                ChihouRaceResult.passing_1,
+                ChihouRaceResult.jockey_id.label("prev_jockey_id"),
+            )
+            .join(ChihouRace, ChihouRace.id == ChihouRaceResult.race_id)
+            .join(
+                subq,
+                and_(
+                    subq.c.horse_id == ChihouRaceResult.horse_id,
+                    subq.c.last_date == ChihouRace.date,
+                ),
+            )
+        )
+
+        result: dict[int, float] = {}
+        for row in rows.mappings():
+            hid = row["horse_id"]
+            entry = entry_map.get(hid)
+            if not entry:
+                continue
+
+            k_dark = 1.0
+            prev_dist  = row["prev_distance"]
+            prev_head  = row["prev_head_count"] or current_head_count
+            prev_style = row["running_style"]      # str "1"〜"4" or None
+            prev_pass1 = row["passing_1"]          # int or None
+            prev_jockey = row["prev_jockey_id"]
+            curr_jockey = entry.jockey_id
+            frame = entry.frame_number or 0
+
+            # ⑤ 前走後方（running_style "3"or"4"、または passing_1 > 70%頭数）
+            was_rear = (
+                (prev_style is not None and prev_style in ("3", "4")) or
+                (prev_pass1 is not None and float(prev_pass1) > float(prev_head) * 0.70)
+            )
+            if was_rear:
+                k_dark += 0.10
+
+            # ① 距離短縮200〜400m
+            if prev_dist is not None and current_distance is not None:
+                dist_diff = int(prev_dist) - int(current_distance)
+                if 200 <= dist_diff <= 400:
+                    k_dark += 0.05
+
+            # ② 外枠（頭数の60%以上の枠番）
+            if frame > 0 and current_head_count > 0:
+                if frame >= current_head_count * 0.60:
+                    k_dark += 0.03
+
+            # ⑥ 騎手変更×上位騎手（jockey_index ≥ DARK_HORSE_JOCKEY_TOP）
+            if (
+                prev_jockey is not None
+                and curr_jockey is not None
+                and prev_jockey != curr_jockey
+                and jockey_map.get(hid, INDEX_NEUTRAL) >= DARK_HORSE_JOCKEY_TOP
+            ):
+                k_dark += 0.03
+
+            result[hid] = _clip(k_dark, lo=1.0, hi=1.0 + DARK_HORSE_MAX_EFFECT)
 
         return result
 
