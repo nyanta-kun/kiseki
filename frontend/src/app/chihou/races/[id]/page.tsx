@@ -11,7 +11,7 @@ import {
 } from "@/lib/api";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { ChihouRaceDetailClient } from "@/components/ChihouRaceDetailClient";
-import { computeChihouBuySignal } from "@/components/BuySignalBadge";
+import { computeChihouBuySignal } from "@/lib/buySignal";
 
 type Params = Promise<{ id: string }>;
 

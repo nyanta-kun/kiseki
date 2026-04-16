@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { OddsData, RaceEntry, RaceResult, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
 import { EVSummary } from "@/components/EVSummary";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
-import { computeJraBuySignal } from "@/components/BuySignalBadge";
+import { computeJraBuySignal } from "@/lib/buySignal";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { EntriesTable } from "@/components/EntriesTable";

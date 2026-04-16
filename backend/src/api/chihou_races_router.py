@@ -488,4 +488,5 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         head_count=race.head_count,
         post_time=race.post_time,
         has_indices=has_indices,
+        buy_signal=chihou_buy_signal(race.course_name),
     )
