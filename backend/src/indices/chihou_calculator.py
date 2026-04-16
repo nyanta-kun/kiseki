@@ -1053,8 +1053,8 @@ class ChihouIndexCalculator:
     async def _dark_horse_batch(
         self,
         race_date: str,
-        race: "ChihouRace",
-        entries: list["ChihouRaceEntry"],
+        race: ChihouRace,
+        entries: list[ChihouRaceEntry],
         jockey_map: dict[int, float],
     ) -> dict[int, float]:
         """全エントリの穴馬ポテンシャル乗数（K_dark）を一括算出する（v8）。
