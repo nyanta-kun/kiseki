@@ -21,9 +21,9 @@ from ..db.chihou_models import (
 )
 from ..db.session import get_db
 from ..indices.buy_signal import chihou_buy_signal
-from .ws_manager import chihou_results_manager
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from .ws_manager import chihou_results_manager
 
 router = APIRouter(prefix="/api/chihou/races", tags=["chihou-races"])
 DbDep = Annotated[AsyncSession, Depends(get_db)]
