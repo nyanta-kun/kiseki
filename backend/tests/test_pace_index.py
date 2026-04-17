@@ -288,6 +288,11 @@ class TestCalculateBatch:
         calc._get_course_features = AsyncMock(return_value=None)
         calc._meet_bias.get_bias = AsyncMock(return_value=MeetBias())
 
+        # v18: _ensure_first3f_medians のDBアクセスをスキップ（キャッシュ初期化済みとする）
+        calc._first3f_medians = {}
+        # v18: _apply_pace_rebound_bonus はモックデータのfirst_3fがNoneのためスキップ
+        calc._apply_pace_rebound_bonus = lambda score, rows: score
+
         return calc
 
     async def test_returns_all_horse_ids(self) -> None:
