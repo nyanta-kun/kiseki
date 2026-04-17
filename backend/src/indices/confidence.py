@@ -48,7 +48,14 @@ def calculate_recommend_rank(
 
     ev = win_prob_top * win_odds_top
 
-    # EV × 信頼度の組み合わせでランク決定
+    # EV > 2.0 は市場と指数の乖離が大きい大穴候補（P1実績 ROI 72.2%）
+    # 最適帯 EV 1.0-2.0（ROI 82-85%）より劣るため最大 A
+    if ev > 2.0:
+        if confidence_score >= 70:
+            return "A"
+        return "B"
+
+    # 最適帯 EV 1.0-2.0 × 信頼度の組み合わせでランク決定
     if ev >= 1.5 and confidence_score >= 70:
         return "S"
     if ev >= 1.2 and confidence_score >= 50:

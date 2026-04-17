@@ -84,6 +84,12 @@ COURSE_ADJ_MAX = 6.0
 MEET_ADJ_MAX = 7.0
 FIELD_ADJ_MAX = 4.0
 
+# 前走ハイペース×先行リバウンドボーナス（v18）
+# バックテスト（v17 16,198R 2023-2026）: ROI差 +24.5%
+PACE_REBOUND_BONUS = 6.0
+# 先行判定: passing_1 / head_count がこれ以下
+FRONT_POSITION_RATIO = 0.25
+
 
 def _classify_runner_type(avg_relative_pos: float) -> str:
     """平均relative_posから脚質を返す。
@@ -120,6 +126,8 @@ class PaceIndexCalculator(IndexCalculator):
         self._meet_bias = MeetBiasService(db)
         # コース特徴キャッシュ（セッション非依存の SimpleNamespace で保持）
         self._course_features: dict[str, SimpleNamespace] | None = None
+        # 距離別 first_3f 中央値キャッシュ（前走ハイペース判定用）
+        self._first3f_medians: dict[int, float] | None = None
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -209,7 +217,10 @@ class PaceIndexCalculator(IndexCalculator):
         meet_bias = await self._meet_bias.get_bias(race)
         head_count = race.head_count or len(horse_ids)
 
-        # Step5: 各馬のスコア算出
+        # Step5: 前走ハイペース判定に必要な距離別 first_3f 中央値を事前ロード
+        await self._ensure_first3f_medians()
+
+        # Step6: 各馬のスコア算出
         result: dict[int, float] = {}
         for hid in horse_ids:
             runner_type = runner_types[hid]
@@ -219,6 +230,7 @@ class PaceIndexCalculator(IndexCalculator):
             score = self._apply_course_adjustment(score, runner_type, course_feat)
             score = self._apply_meet_bias_adjustment(score, runner_type, meet_bias)
             score = self._apply_field_size_adjustment(score, runner_type, head_count, course_feat)
+            score = self._apply_pace_rebound_bonus(score, horse_past_rows)
             result[hid] = round(max(INDEX_MIN, min(INDEX_MAX, score)), 1)
 
         return result
@@ -328,6 +340,85 @@ class PaceIndexCalculator(IndexCalculator):
 
         avg_rel_pos = sum(relative_positions) / len(relative_positions)
         return _classify_runner_type(avg_rel_pos)
+
+    async def _ensure_first3f_medians(self) -> None:
+        """距離別 first_3f 中央値をキャッシュする（セッション内1回のみ実行）。
+
+        前走ハイペース判定に使用する。
+        SELECT は PERCENTILE_CONT による1クエリで完結する。
+        """
+        if self._first3f_medians is not None:
+            return
+        from sqlalchemy import text as sa_text
+        rows = (
+            await self.db.execute(
+                sa_text(
+                    """
+                    SELECT distance,
+                           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CAST(first_3f AS float))
+                               AS median_f3f
+                    FROM keiba.races
+                    WHERE first_3f IS NOT NULL
+                      AND first_3f > 0
+                      AND surface NOT LIKE '障%'
+                    GROUP BY distance
+                    """
+                )
+            )
+        ).all()
+        self._first3f_medians = {int(r.distance): float(r.median_f3f) for r in rows}
+
+    def _apply_pace_rebound_bonus(
+        self,
+        score: float,
+        prev_rows: list[Any],
+    ) -> float:
+        """前走ハイペース×先行馬のリバウンドボーナスを適用する（v18）。
+
+        前走で「先行ポジション（passing_1 ≤ head_count × 0.25）かつ
+        ハイペース（first_3f < 距離別中央値）」だった馬は
+        市場に過小評価されやすく、今走巻き返しの可能性が高い。
+
+        バックテスト（v17 16,198R 2023-2026）: ROI差 +24.5%
+
+        Args:
+            score: 現在の展開スコア
+            prev_rows: 過去レース結果（新しい順、最初の要素が直前レース）
+
+        Returns:
+            補正後スコア（条件不成立時は変更なし）
+        """
+        if not prev_rows or self._first3f_medians is None:
+            return score
+
+        latest = prev_rows[0]
+        result: RaceResult = latest.RaceResult
+        race: Race = latest.Race
+
+        passing_1 = result.passing_1
+        first_3f = float(race.first_3f) if race.first_3f is not None else None
+        distance = race.distance
+        head_count = race.head_count
+
+        if passing_1 is None or first_3f is None or distance is None or head_count is None:
+            return score
+        if head_count <= 0:
+            return score
+
+        # 先行判定: passing_1 が頭数の上位 FRONT_POSITION_RATIO 以内
+        was_front = float(passing_1) / float(head_count) <= FRONT_POSITION_RATIO
+        if not was_front:
+            return score
+
+        # ハイペース判定: first_3f が距離別中央値より速い（小さい）
+        median_f3f = self._first3f_medians.get(int(distance))
+        if median_f3f is None:
+            return score
+
+        if first_3f < median_f3f:
+            score += PACE_REBOUND_BONUS
+
+        return score
 
     async def _get_course_features(self, course_code: str) -> SimpleNamespace | None:
         """コース特徴をキャッシュ付きで返す。

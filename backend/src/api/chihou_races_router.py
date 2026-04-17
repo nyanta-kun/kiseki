@@ -228,7 +228,10 @@ async def get_chihou_races_by_date(
             confidence_label=confidence_data[race.id]["label"] if race.id in confidence_data else None,
             confidence_rank=confidence_data[race.id]["rank"] if race.id in confidence_data else None,
             recommend_rank=confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
-            buy_signal=chihou_buy_signal(race.course_name),
+            buy_signal=chihou_buy_signal(
+                race.course_name,
+                confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
+            ),
             top_win_odds=latest_win_odds.get(race.id),
         )
         for race in races

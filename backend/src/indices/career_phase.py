@@ -17,8 +17,13 @@
        3歳 春（1-6月）: +5（クラシック成長期）
        3歳 秋以降・4歳以上: ±0
   5. slope_score = 50 + clip(improvement_score × 40, -30, +30)
-  6. final = clip(slope_score + age_adj, 0, 100)
-  7. データ点 < 2 の場合は DEFAULT_SCORE(50.0) を返す
+  6. クラス慣れ補正（prize_1st でクラス判定）
+       昇級2戦目（前走同クラス + 前々走は下クラス）: +CLASS_UP_2ND_BONUS
+       昇級3戦目（前走2走同クラス + 3走前は下クラス）: +CLASS_UP_3RD_BONUS
+       バックテスト（v17 2023-2026 16,198R）実証:
+         昇級1戦目 ROI +6.8% / 昇級2戦目 ROI +15.1% / 昇級3戦目 ROI +12.2%
+  7. final = clip(slope_score + age_adj + class_bonus, 0, 100)
+  8. データ点 < 2 の場合は DEFAULT_SCORE(50.0) を返す
 """
 
 from __future__ import annotations
@@ -47,6 +52,23 @@ SLOPE_CLIP_MIN = -30.0
 # 年齢ボーナス
 AGE_BONUS_2YO = 5.0
 AGE_BONUS_3YO_SPRING = 5.0
+# 昇級慣れボーナス（バックテスト実証: v17 16,198R 2023-2026）
+CLASS_UP_2ND_BONUS = 6.0  # 昇級2戦目: ROI差 +15.1%
+CLASS_UP_3RD_BONUS = 4.0  # 昇級3戦目: ROI差 +12.2%
+
+# prize_1st（百円単位）からクラス階層へのしきい値
+# 3歳以上条件戦: 未勝利<70000<1勝<110000<2勝<145000<3勝<190000<OP
+_CLASS_TIER_THRESHOLDS = [70_000, 110_000, 145_000, 190_000]
+
+
+def _class_tier(prize_1st: int | None) -> int:
+    """prize_1st からクラス階層を返す（低→高 = 1→5）。不明は 0。"""
+    if prize_1st is None:
+        return 0
+    for tier, threshold in enumerate(_CLASS_TIER_THRESHOLDS, start=1):
+        if prize_1st < threshold:
+            return tier
+    return len(_CLASS_TIER_THRESHOLDS) + 1  # オープン
 
 
 def _compute_slope(x: list[float], y: list[float]) -> float:
@@ -137,7 +159,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
 
         past_data = await self._get_past_results(horse_id, race.date, race_id)
         race_month = datetime.strptime(race.date, "%Y%m%d").month
-        return self._compute_score(past_data, horse_age, race_month)
+        return self._compute_score(past_data, horse_age, race_month, race.prize_1st)
 
     async def calculate_batch(self, race_id: int) -> dict[int, float]:
         """レース全馬の成長曲線指数を一括算出する。
@@ -174,7 +196,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         for entry in entries:
             hid = entry.horse_id
             past_data = past_map.get(hid, [])
-            score = self._compute_score(past_data, age_map.get(hid), race_month)
+            score = self._compute_score(past_data, age_map.get(hid), race_month, race.prize_1st)
             result[hid] = score
 
         return result
@@ -188,8 +210,8 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         horse_id: int,
         before_date: str,
         exclude_race_id: int,
-    ) -> list[tuple[int, int]]:
-        """単一馬の直近LOOKBACK_RACES走の (finish_position, head_count) を取得する。
+    ) -> list[tuple[int, int, int | None]]:
+        """単一馬の直近LOOKBACK_RACES走の (finish_position, head_count, prize_1st) を取得する。
 
         Args:
             horse_id: horses.id
@@ -197,10 +219,10 @@ class CareerPhaseIndexCalculator(IndexCalculator):
             exclude_race_id: 対象レースは除外
 
         Returns:
-            [(finish_position, head_count), ...] 新しい順
+            [(finish_position, head_count, prize_1st), ...] 新しい順
         """
         stmt = (
-            select(RaceResult.finish_position, Race.head_count)
+            select(RaceResult.finish_position, Race.head_count, Race.prize_1st)
             .join(Race, RaceResult.race_id == Race.id)
             .where(
                 RaceResult.horse_id == horse_id,
@@ -213,14 +235,17 @@ class CareerPhaseIndexCalculator(IndexCalculator):
             .limit(LOOKBACK_RACES)
         )
         rows = (await self.db.execute(stmt)).all()
-        return [(int(r.finish_position), int(r.head_count) if r.head_count else 1) for r in rows]
+        return [
+            (int(r.finish_position), int(r.head_count) if r.head_count else 1, r.prize_1st)
+            for r in rows
+        ]
 
     async def _get_past_results_batch(
         self,
         horse_ids: list[int],
         before_date: str,
         exclude_race_id: int,
-    ) -> dict[int, list[tuple[int, int]]]:
+    ) -> dict[int, list[tuple[int, int, int | None]]]:
         """複数馬の直近LOOKBACK_RACES走を一括取得する。
 
         Args:
@@ -229,13 +254,13 @@ class CareerPhaseIndexCalculator(IndexCalculator):
             exclude_race_id: 対象レースは除外
 
         Returns:
-            {horse_id: [(finish_position, head_count), ...] 新しい順}
+            {horse_id: [(finish_position, head_count, prize_1st), ...] 新しい順}
         """
         if not horse_ids:
             return {}
 
         stmt = (
-            select(RaceResult.horse_id, RaceResult.finish_position, Race.head_count)
+            select(RaceResult.horse_id, RaceResult.finish_position, Race.head_count, Race.prize_1st)
             .join(Race, RaceResult.race_id == Race.id)
             .where(
                 RaceResult.horse_id.in_(horse_ids),
@@ -249,14 +274,14 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         rows = (await self.db.execute(stmt)).all()
 
         # horse_id ごとに最大 LOOKBACK_RACES 件収集
-        result: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        result: dict[int, list[tuple[int, int, int | None]]] = defaultdict(list)
         count_map: dict[int, int] = defaultdict(int)
         for row in rows:
             hid = row.horse_id
             if count_map[hid] < LOOKBACK_RACES:
                 fp = int(row.finish_position)
                 hc = int(row.head_count) if row.head_count else 1
-                result[hid].append((fp, hc))
+                result[hid].append((fp, hc, row.prize_1st))
                 count_map[hid] += 1
 
         return dict(result)
@@ -267,16 +292,18 @@ class CareerPhaseIndexCalculator(IndexCalculator):
 
     def _compute_score(
         self,
-        past_data: list[tuple[int, int]],
+        past_data: list[tuple[int, int, int | None]],
         horse_age: int | None,
         race_month: int,
+        current_prize_1st: int | None = None,
     ) -> float:
         """着順データと馬齢から成長曲線スコアを算出する。
 
         Args:
-            past_data: [(finish_position, head_count), ...] 新しい順
+            past_data: [(finish_position, head_count, prize_1st), ...] 新しい順
             horse_age: 馬齢（満年齢）。None の場合は補正なし。
             race_month: レース開催月（1-12）
+            current_prize_1st: 今走の1着賞金（百円単位）。クラス判定に使用。
 
         Returns:
             成長曲線指数（0-100, 中立=50）
@@ -286,7 +313,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
 
         # 正規化着順を算出（1.0=1着、0.0=最下位）
         winning_ranks: list[float] = []
-        for finish_position, head_count in past_data:
+        for finish_position, head_count, _prize in past_data:
             denom = max(head_count - 1, 1)
             winning_rank = 1.0 - (finish_position - 1) / denom
             winning_ranks.append(winning_rank)
@@ -301,5 +328,50 @@ class CareerPhaseIndexCalculator(IndexCalculator):
 
         slope_score = 50.0 + max(SLOPE_CLIP_MIN, min(SLOPE_CLIP_MAX, improvement_score * SLOPE_SCALE))
         age_adj = _age_adjustment(horse_age, race_month)
-        final = max(0.0, min(100.0, slope_score + age_adj))
+        class_bonus = self._compute_class_bonus(past_data, current_prize_1st)
+        final = max(0.0, min(100.0, slope_score + age_adj + class_bonus))
         return round(final, 1)
+
+    def _compute_class_bonus(
+        self,
+        past_data: list[tuple[int, int, int | None]],
+        current_prize_1st: int | None,
+    ) -> float:
+        """昇級2〜3戦目ボーナスを算出する。
+
+        前走・前々走の prize_1st からクラス階層を判定し、
+        今走が昇級後2戦目または3戦目に該当する場合にボーナスを返す。
+
+        バックテスト（v17 16,198R 2023-2026）:
+          昇級2戦目: ROI差 +15.1% → CLASS_UP_2ND_BONUS
+          昇級3戦目: ROI差 +12.2% → CLASS_UP_3RD_BONUS
+
+        Args:
+            past_data: [(finish_position, head_count, prize_1st), ...] 新しい順
+            current_prize_1st: 今走の1着賞金（百円単位）
+
+        Returns:
+            クラス慣れボーナス（0.0 / CLASS_UP_2ND_BONUS / CLASS_UP_3RD_BONUS）
+        """
+        curr_tier = _class_tier(current_prize_1st)
+        if curr_tier == 0:
+            return 0.0
+
+        # 過去走のクラス階層リスト（新しい順）
+        past_tiers = [_class_tier(d[2]) for d in past_data]
+
+        # 昇級2戦目: 前走が同クラス、前々走が下クラス
+        if len(past_tiers) >= 2:
+            if past_tiers[0] == curr_tier and 0 < past_tiers[1] < curr_tier:
+                return CLASS_UP_2ND_BONUS
+
+        # 昇級3戦目: 前走・前々走が同クラス、3走前が下クラス
+        if len(past_tiers) >= 3:
+            if (
+                past_tiers[0] == curr_tier
+                and past_tiers[1] == curr_tier
+                and 0 < past_tiers[2] < curr_tier
+            ):
+                return CLASS_UP_3RD_BONUS
+
+        return 0.0

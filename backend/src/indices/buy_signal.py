@@ -9,11 +9,13 @@ JRA（2025-01以降, v17, 4,387レース実績）:
     3.0-4.0倍 + マイル以上: ROI ~98% → "caution"
     4.0倍未満: ROI 85-94% → "pass"
 
-地方（2025-01以降, v5, 16,824レース実績）:
-    競馬場ベースで判定（オッズフィルターはROI改善効果が薄い）。
-    高知・盛岡・園田: ROI 84-95% → "buy"
-    佐賀〜川崎: ROI 65-80% → "caution"
-    水沢・姫路・船橋・浦和: ROI 54-65% → "pass"
+地方（v8 P1実績 2023-04-16〜2024-04-16, 3,373R）:
+    競馬場 × 期待値EV（推定勝率×単勝オッズ）の組み合わせで判定。
+    EV最適帯 = 1.0〜2.0（ROI 82-85%）。EV>2.0は大穴不安定（ROI 72%台）。
+
+    [buy]  高ROIコース（高知94.7%/園田91.0%/盛岡） × EV rank S/A
+    [caution] 上記コース × EV rank B/C、または中ROIコース × EV rank S/A
+    [pass] 中ROIコース × EV rank B/C、または低ROIコース
 """
 
 from __future__ import annotations
@@ -51,35 +53,58 @@ def jra_buy_signal(distance: int, top_win_odds: float | None) -> str | None:
 # 地方競馬 購入指針
 # ---------------------------------------------------------------------------
 
-# 競馬場名 → 購入指針グレード（2025-01以降 v5 実績）
+# 競馬場名 → コースグレード（v8 P1実績 2023-04-16〜2024-04-16）
 _CHIHOU_COURSE_GRADE: dict[str, str] = {
-    # buy: ROI ≥ 80%
-    "高知":   "buy",      # 95.2%
-    "盛岡":   "buy",      # 84.6%
-    "園田":   "buy",      # 84.0%
-    # caution: 65% ≤ ROI < 80%
-    "佐賀":   "caution",  # 79.4%
-    "門別":   "caution",  # 79.1%
-    "名古屋": "caution",  # 75.9%
-    "金沢":   "caution",  # 72.9%
-    "笠松":   "caution",  # 72.3%
-    "大井":   "caution",  # 69.2%
-    "川崎":   "caution",  # 65.9%
-    # pass: ROI < 65%
-    "水沢":   "pass",     # 63.3%
-    "姫路":   "pass",     # 61.3%
-    "船橋":   "pass",     # 56.7%
-    "浦和":   "pass",     # 53.6%
+    # buy: ROI ≥ 85%
+    "高知":   "buy",      # 94.7%
+    "園田":   "buy",      # 91.0%
+    "盛岡":   "buy",      # ※ P1データ不足、過去実績から維持
+    # caution: 65% ≤ ROI < 85%
+    "佐賀":   "caution",  # 83.7%
+    "名古屋": "caution",  # 78.6%
+    "水沢":   "caution",  # 77.9%（旧pass→更新）
+    "大井":   "caution",  # 77.5%
+    "姫路":   "caution",  # 71.4%（旧pass→更新）
+    "船橋":   "caution",  # 71.1%（旧pass→更新）
+    "川崎":   "caution",  # 64.9%
+    "笠松":   "caution",  # 64.1%
+    "浦和":   "caution",  # 61.6%
+    "門別":   "caution",  # 未集計（暫定）
+    # pass: ROI < 60%
+    "金沢":   "pass",     # 48.3%（旧caution→更新）
 }
 
 
-def chihou_buy_signal(course_name: str) -> str:
+def chihou_buy_signal(course_name: str, recommend_rank: str | None = None) -> str:
     """地方競馬レースの購入指針を算出する。
 
+    コースグレード × 期待値ランク（recommend_rank）で判定する。
+    recommend_rank が None（オッズ未取得）の場合はコースグレードのみで暫定判定。
+
     Args:
-        course_name: 競馬場名（例: "高知", "園田"）
+        course_name:    競馬場名（例: "高知", "園田"）
+        recommend_rank: 期待値ランク S/A/B/C（None = オッズ未取得）
 
     Returns:
         "buy" | "caution" | "pass"
     """
-    return _CHIHOU_COURSE_GRADE.get(course_name, "caution")
+    course_grade = _CHIHOU_COURSE_GRADE.get(course_name, "caution")
+
+    if recommend_rank is None:
+        # オッズ未取得: コースグレードをそのまま返す（暫定）
+        return course_grade
+
+    if course_grade == "buy":
+        # 高ROIコース: EV良好(S/A)なら買い、不良(B/C)なら要注意
+        if recommend_rank in ("S", "A"):
+            return "buy"
+        return "caution"  # コース◎ × EV不利（過剰人気 or 大穴）
+
+    if course_grade == "caution":
+        # 中ROIコース: EV良好でも買いには格上げしない
+        if recommend_rank in ("S", "A"):
+            return "caution"  # EV良好、詳細確認推奨
+        return "pass"  # EV不利なら見送り
+
+    # pass コース
+    return "pass"
