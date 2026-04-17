@@ -117,7 +117,7 @@ class TestComputeScore:
     def test_insufficient_data_returns_default(self) -> None:
         """データ点 < 2 の場合、DEFAULT_SCORE を返す。"""
         assert self.calc._compute_score([], None, 5) == DEFAULT_SCORE
-        assert self.calc._compute_score([(1, 10)], None, 5) == DEFAULT_SCORE
+        assert self.calc._compute_score([(1, 10, None)], None, 5) == DEFAULT_SCORE
 
     def test_improving_trajectory(self) -> None:
         """最近の着順が良い（上昇中）→ スコアは 50 を超える。
@@ -125,7 +125,7 @@ class TestComputeScore:
         past_data は新しい順: [(1位/10頭), (5位/10頭), (8位/10頭)]
         x=[0,1,2], y=[1.0, 0.556, 0.222] → slope < 0 → improvement_score > 0
         """
-        past_data = [(1, 10), (5, 10), (8, 10)]
+        past_data = [(1, 10, None), (5, 10, None), (8, 10, None)]
         score = self.calc._compute_score(past_data, 4, 5)
         assert score > DEFAULT_SCORE
 
@@ -135,19 +135,19 @@ class TestComputeScore:
         past_data は新しい順: [(8位/10頭), (5位/10頭), (1位/10頭)]
         x=[0,1,2], y=[0.222, 0.556, 1.0] → slope > 0 → improvement_score < 0
         """
-        past_data = [(8, 10), (5, 10), (1, 10)]
+        past_data = [(8, 10, None), (5, 10, None), (1, 10, None)]
         score = self.calc._compute_score(past_data, 4, 5)
         assert score < DEFAULT_SCORE
 
     def test_flat_trajectory(self) -> None:
         """着順変化なし（中立）→ スコアは 50 付近。"""
-        past_data = [(5, 10), (5, 10), (5, 10), (5, 10)]
+        past_data = [(5, 10, None), (5, 10, None), (5, 10, None), (5, 10, None)]
         score = self.calc._compute_score(past_data, 4, 5)
         assert score == pytest.approx(DEFAULT_SCORE, abs=1.0)
 
     def test_age_bonus_applied(self) -> None:
         """2歳馬のスコアには年齢ボーナスが加算される。"""
-        past_data = [(5, 10), (5, 10), (5, 10)]  # フラット → slope_score=50
+        past_data = [(5, 10, None), (5, 10, None), (5, 10, None)]  # フラット → slope_score=50
         score_2yo = self.calc._compute_score(past_data, 2, 5)
         score_4yo = self.calc._compute_score(past_data, 4, 5)
         assert score_2yo == pytest.approx(score_4yo + AGE_BONUS_2YO, abs=0.5)
@@ -155,27 +155,27 @@ class TestComputeScore:
     def test_score_capped_at_100(self) -> None:
         """スコアは 100 を超えない。"""
         # 極端な上昇トレンド
-        past_data = [(1, 10)] + [(10, 10)] * (LOOKBACK_RACES - 1)
+        past_data = [(1, 10, None)] + [(10, 10, None)] * (LOOKBACK_RACES - 1)
         score = self.calc._compute_score(past_data, 2, 5)  # 2歳ボーナスも加算
         assert score <= 100.0
 
     def test_score_not_below_zero(self) -> None:
         """スコアは 0 を下回らない。"""
         # 極端な下降トレンド
-        past_data = [(10, 10)] + [(1, 10)] * (LOOKBACK_RACES - 1)
+        past_data = [(10, 10, None)] + [(1, 10, None)] * (LOOKBACK_RACES - 1)
         score = self.calc._compute_score(past_data, 4, 5)
         assert score >= 0.0
 
     def test_two_data_points_used(self) -> None:
         """データ点がちょうど 2 つでも計算される（デフォルト返さず）。"""
-        past_data = [(1, 10), (10, 10)]
+        past_data = [(1, 10, None), (10, 10, None)]
         score = self.calc._compute_score(past_data, 4, 5)
         # 上昇傾向なのでデフォルトより高いはず
         assert score != DEFAULT_SCORE
 
     def test_3yo_spring_bonus(self) -> None:
         """3歳 春のスコアには年齢ボーナスが加算される。"""
-        past_data = [(5, 10), (5, 10), (5, 10)]
+        past_data = [(5, 10, None), (5, 10, None), (5, 10, None)]
         score_spring = self.calc._compute_score(past_data, 3, 4)  # 4月
         score_autumn = self.calc._compute_score(past_data, 3, 9)  # 9月
         assert score_spring == pytest.approx(score_autumn + AGE_BONUS_3YO_SPRING, abs=0.5)
