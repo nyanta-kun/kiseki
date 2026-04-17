@@ -630,6 +630,8 @@ def run_realtime_monitor(jv) -> None:
 
     while True:
         try:
+            # 日付をループ内で更新（日をまたいでも正しい日付を使う）
+            today = datetime.now().strftime("%Y%m%d")
             # 速報オッズ取得（0B31: レースキー単位）
             # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
             race_keys = _fetch_today_race_keys(today)

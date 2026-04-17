@@ -119,7 +119,7 @@ async def enqueue_command(
     - recent: JVOpen(option=3)で指定年以降のデータを再取得
       params: {"from_year": 2023, "year_month": "202301"}
     """
-    valid_actions = {"setup", "daily", "retry", "stop", "recent"}
+    valid_actions = {"setup", "daily", "retry", "stop", "recent", "odds_prefetch"}
     if cmd.action not in valid_actions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
