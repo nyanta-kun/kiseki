@@ -104,7 +104,7 @@ export default async function ChihouRacePage({ params }: { params: Params }) {
             initialResults={initialResults}
             initialOdds={initialOdds}
             ranks={indicesResp.ranks ?? null}
-            buySignal={computeChihouBuySignal(race?.course_name ?? "")}
+            buySignal={computeChihouBuySignal(race?.course_name ?? "", indicesResp.ranks?.recommend_rank)}
           />
 
           {/* 凡例 */}

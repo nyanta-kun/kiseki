@@ -52,10 +52,10 @@ export function BuySignalBadge({ signal, size = "sm", showLabel = false }: Props
   );
 }
 
-/** 購入指針の説明文（ConfidencePanel内などで使用） */
+/** 購入指針の説明文（レース詳細パネル内で使用） */
 export const BUY_SIGNAL_DESC: Record<NonNullable<BuySignal>, string> = {
-  buy:     "過去実績に基づき積極的な購入を推奨します（単勝ROI 100%超）。",
-  caution: "購入可能圏内ですが収益は限定的です（単勝ROI ±0付近）。",
-  pass:    "過去実績から見送りを推奨します（単勝ROI 100%未満）。",
+  buy:     "高ROIコース × EV最適帯（1.0–2.0）。過去実績 ROI 85%超。積極的な購入を推奨。",
+  caution: "コースROIまたはEVが最適条件から外れています。詳細を確認の上判断してください。",
+  pass:    "低ROIコース、またはEVが最適帯（1.0–2.0）から大きく外れています。見送り推奨。",
 };
 

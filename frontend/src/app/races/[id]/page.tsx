@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { OddsData, RaceEntry, RaceResult, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
-import { EVSummary } from "@/components/EVSummary";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { computeJraBuySignal } from "@/lib/buySignal";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
@@ -121,9 +120,6 @@ export default async function RacePage({ params }: { params: Params }) {
 
       <main id="main-content" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
-          {/* 期待値サマリー */}
-          <EVSummary indices={indices} />
-
           {/* 信頼度パネル */}
           <ConfidencePanel
             confidence={confidence}

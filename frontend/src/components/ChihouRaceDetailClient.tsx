@@ -107,15 +107,12 @@ const RANK_CONF: Record<string, { bg: string; text: string; border: string }> = 
   C: { bg: "bg-gray-100",   text: "text-gray-500",   border: "border-gray-200"   },
 };
 
-function RankBadge({ prefix, rank, sub }: { prefix: string; rank: string; sub?: string }) {
+function RankBadge({ rank }: { rank: string }) {
   const c = RANK_CONF[rank] ?? RANK_CONF.C;
   return (
-    <div className="flex flex-col items-center gap-0.5">
-      <span className={`text-xs px-2 py-0.5 rounded border font-bold ${c.bg} ${c.text} ${c.border}`}>
-        {prefix}<span className="text-sm">{rank}</span>
-      </span>
-      {sub && <span className="text-[9px] text-gray-400">{sub}</span>}
-    </div>
+    <span className={`inline-flex items-center justify-center w-6 h-6 rounded border font-bold text-sm flex-shrink-0 ${c.bg} ${c.text} ${c.border}`}>
+      {rank}
+    </span>
   );
 }
 
@@ -207,42 +204,72 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
   return (
     <>
       {/* 信頼度・推奨度ランクパネル */}
-      {(ranks || buySignal) && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 space-y-2">
-          {/* 購入指針 */}
-          {buySignal !== undefined && (
-            <div className="flex items-center gap-2 pb-2 border-b border-gray-50">
-              <span className="text-[10px] text-gray-400 font-medium">購入指針</span>
-              <BuySignalBadge signal={buySignal} size="sm" />
-              {buySignal && (
-                <span className="text-[10px] text-gray-500 ml-1">{BUY_SIGNAL_DESC[buySignal]}</span>
-              )}
-            </div>
-          )}
-          {ranks && (
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="flex items-center gap-3">
-                <RankBadge
-                  prefix="指数信頼度 "
-                  rank={ranks.confidence_rank}
-                  sub={`${ranks.score}pt`}
-                />
-                <RankBadge
-                  prefix="期待値 "
-                  rank={ranks.recommend_rank}
-                  sub={ranks.top_win_odds != null ? `オッズ ${ranks.top_win_odds.toFixed(1)}倍` : "オッズ未取得"}
-                />
-              </div>
-              <div className="text-[10px] text-gray-400 space-y-0.5 ml-auto">
-                <p>指数差 1-2位: {ranks.gap_1_2.toFixed(1)}pt / 1-3位: {ranks.gap_1_3.toFixed(1)}pt</p>
-                {ranks.win_prob_top != null && (
-                  <p>予測1位 勝率: {Math.round(ranks.win_prob_top * 100)}%</p>
+      {(ranks || buySignal) && (() => {
+        const ev =
+          ranks?.win_prob_top != null && ranks?.top_win_odds != null
+            ? ranks.win_prob_top * ranks.top_win_odds
+            : null;
+        const evZone =
+          ev === null ? null
+          : ev >= 2.0 ? { label: "大穴注意", cls: "text-orange-500" }
+          : ev >= 1.0 ? { label: "最適帯",   cls: "text-green-600"  }
+          : ev >= 0.8 ? { label: "過剰人気", cls: "text-yellow-600" }
+          :             { label: "過剰人気", cls: "text-red-500"     };
+        return (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
+            {/* 購入指針 */}
+            {buySignal !== undefined && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-400 whitespace-nowrap">購入指針</span>
+                <BuySignalBadge signal={buySignal} size="sm" />
+                {buySignal && (
+                  <span className="text-[10px] text-gray-400 leading-tight">{BUY_SIGNAL_DESC[buySignal]}</span>
                 )}
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+
+            {/* 指数信頼度 ＋ EV 横並び */}
+            {ranks && (
+              <div className="flex items-center gap-3 pt-1.5 border-t border-gray-50 flex-wrap">
+                {/* 信頼度 */}
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
+                  <RankBadge rank={ranks.confidence_rank} />
+                  <span className="text-gray-600 whitespace-nowrap">{ranks.score}pt</span>
+                  <span className="text-gray-400 whitespace-nowrap">
+                    差{ranks.gap_1_2.toFixed(1)}/{ranks.gap_1_3.toFixed(1)}
+                  </span>
+                </div>
+
+                <div className="w-px h-4 bg-gray-200 flex-shrink-0" />
+
+                {/* EV */}
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-gray-400 whitespace-nowrap">期待値 EV</span>
+                  <RankBadge rank={ranks.recommend_rank} />
+                  {ev !== null ? (
+                    <>
+                      <span className={`font-bold whitespace-nowrap ${evZone?.cls ?? ""}`}>
+                        {ev.toFixed(2)}
+                      </span>
+                      {evZone && (
+                        <span className={`whitespace-nowrap ${evZone.cls}`}>{evZone.label}</span>
+                      )}
+                      {ranks.win_prob_top != null && ranks.top_win_odds != null && (
+                        <span className="text-gray-400 whitespace-nowrap">
+                          ({Math.round(ranks.win_prob_top * 100)}%×{ranks.top_win_odds.toFixed(1)}倍)
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-gray-400">オッズ未取得</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
     <section className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
       {/* ヘッダー + ソートボタン */}
@@ -260,25 +287,27 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
         <div className="flex gap-1 ml-auto flex-wrap">
           <SortButton k="composite" label="総合" sortKey={sortKey} setSortKey={setSortKey} />
           <SortButton k="speed" label="速度" sortKey={sortKey} setSortKey={setSortKey} />
-          <SortButton k="last3f" label="後3F" sortKey={sortKey} setSortKey={setSortKey} />
-          <SortButton k="jockey" label="騎手" sortKey={sortKey} setSortKey={setSortKey} />
-          <SortButton k="rotation" label="ローテ" sortKey={sortKey} setSortKey={setSortKey} />
+          <span className="hidden sm:contents">
+            <SortButton k="last3f" label="後3F" sortKey={sortKey} setSortKey={setSortKey} />
+            <SortButton k="jockey" label="騎手" sortKey={sortKey} setSortKey={setSortKey} />
+            <SortButton k="rotation" label="ローテ" sortKey={sortKey} setSortKey={setSortKey} />
+          </span>
           {hasResults && <SortButton k="finish" label="着順" sortKey={sortKey} setSortKey={setSortKey} />}
         </div>
       </div>
 
       {/* テーブル */}
       <div className="overflow-x-auto -mx-1">
-        <table className="w-full text-xs min-w-[480px]">
+        <table className="w-full text-xs min-w-[320px]">
           <thead>
             <tr className="border-b border-gray-100 text-gray-400 text-[10px]">
               <th className="text-right py-1 pl-2 pr-2 w-8">馬番</th>
               <th className="text-left py-1 px-1">馬名</th>
               <th className="text-right py-1 px-1 w-20">総合</th>
               <th className="text-right py-1 px-1 w-12">速度</th>
-              <th className="text-right py-1 px-1 w-12">後3F</th>
-              <th className="text-right py-1 px-1 w-12">騎手</th>
-              <th className="text-right py-1 px-1 w-12">ローテ</th>
+              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">後3F</th>
+              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">騎手</th>
+              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">ローテ</th>
               <th className="text-right py-1 px-1 w-12">勝率</th>
               <th className="text-right py-1 px-1 w-12">複率</th>
               <th className="text-right py-1 px-1 w-14">単オッズ</th>
@@ -306,7 +335,7 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
                 <tr
                   key={horse.horse_id}
                   className={cn(
-                    "border-b border-gray-50 transition-colors",
+                    "border-b border-gray-50 transition-colors whitespace-nowrap",
                     cutOff ? "opacity-40 bg-gray-50" :
                     isWin ? "bg-yellow-50" :
                     isPlace ? "bg-orange-50/40" :
@@ -324,9 +353,9 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
                   </td>
 
                   {/* 馬名 + 外部コンセンサスバッジ */}
-                  <td className="py-2 px-1">
+                  <td className="py-2 px-1 whitespace-normal">
                     <div className="flex items-center gap-1">
-                      <span className="text-gray-800 font-medium truncate block max-w-[90px]">
+                      <span className="text-gray-800 font-medium truncate block max-w-[140px]">
                         {horse.horse_name}
                       </span>
                       {horse.external_consensus === 2 && (
@@ -363,17 +392,17 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
                   </td>
 
                   {/* 後3F */}
-                  <td className={`py-2 px-1 text-right ${indexColorClass(horse.last3f_index)}`}>
+                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.last3f_index)}`}>
                     {horse.last3f_index !== null ? horse.last3f_index.toFixed(1) : "–"}
                   </td>
 
                   {/* 騎手 */}
-                  <td className={`py-2 px-1 text-right ${indexColorClass(horse.jockey_index)}`}>
+                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.jockey_index)}`}>
                     {horse.jockey_index !== null ? horse.jockey_index.toFixed(1) : "–"}
                   </td>
 
                   {/* ローテ */}
-                  <td className={`py-2 px-1 text-right ${indexColorClass(horse.rotation_index)}`}>
+                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.rotation_index)}`}>
                     {horse.rotation_index !== null ? horse.rotation_index.toFixed(1) : "–"}
                   </td>
 
