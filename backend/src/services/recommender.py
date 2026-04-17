@@ -280,6 +280,14 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
 
         # 外部指数穴馬候補を計算（CI4位以下でnb_course_rank=1、またはNB1×KM1）
         ci_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(ranked)}
+
+        # オッズ人気順（単勝オッズ昇順 = 1位が最も人気）
+        win_odds_sorted = sorted(
+            [h for h in horses if h.get("win_odds") is not None],
+            key=lambda h: h["win_odds"],
+        )
+        odds_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(win_odds_sorted)}
+
         for h in horses:
             ci_rank = ci_rank_map.get(h["horse_number"], 99)
             nb_cr = h.get("nb_course_rank")
@@ -291,6 +299,19 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                     nb_cr == 1  # コース指数1位（最も有効なシグナル）
                     or (nb_ar is not None and nb_ar <= 2 and km_r == 1)  # NB上位2×KM1位
                 )
+            )
+
+            # 指数順位・オッズ人気順・乖離を付与
+            # odds_rank_gap > 0: 指数より人気がない（大衆が過小評価）
+            # odds_rank_gap < 0: 指数より人気がある（大衆が過大評価）
+            idx_rank = ci_rank_map.get(h["horse_number"])
+            odds_rank = odds_rank_map.get(h["horse_number"])
+            h["index_rank"] = idx_rank
+            h["odds_rank"] = odds_rank
+            h["odds_rank_gap"] = (
+                odds_rank - idx_rank
+                if idx_rank is not None and odds_rank is not None
+                else None
             )
 
         race_data.append({
@@ -361,12 +382,60 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
         delete(RaceRecommendation).where(RaceRecommendation.date == date)
     )
 
+    # ---- ハードフィルター（Claude の指示無視を防ぐバックエンド側の安全網） ----
+    # A: index_rank ≤ 3（external_dark_horse=True は例外）
+    # B: EV ≥ 1.0（bet_type に応じて ev_win / ev_place を確認）
+    # C: win_probability ≥ 0.05（単勝推奨のみ）
+    def _passes_hard_filter(item: dict[str, Any], race_entry: dict[str, Any], bet_type: str) -> bool:
+        for hn in item.get("target_horse_numbers", []):
+            horse = next((h for h in race_entry["horses"] if h["horse_number"] == hn), None)
+            if horse is None:
+                continue
+            idx_rank = horse.get("index_rank")
+            is_dark = horse.get("external_dark_horse", False)
+            ev_win = horse.get("ev_win")
+            ev_place = horse.get("ev_place")
+            win_prob = horse.get("win_probability") or 0.0
+
+            # A: 指数ランク制約
+            if idx_rank is not None and idx_rank > 3 and not is_dark:
+                logger.warning(
+                    "ハードフィルターA: 馬番%d 指数%d位（external_dark_horse=False）→ 除外",
+                    hn, idx_rank,
+                )
+                return False
+
+            # B: EV下限
+            ev = ev_win if bet_type == "win" else ev_place
+            if ev is not None and ev < 1.0:
+                logger.warning(
+                    "ハードフィルターB: 馬番%d EV=%.2f < 1.0 → 除外", hn, ev,
+                )
+                return False
+
+            # C: 勝率下限（単勝のみ）
+            if bet_type == "win" and not is_dark and win_prob < 0.05:
+                logger.warning(
+                    "ハードフィルターC: 馬番%d win_prob=%.4f < 0.05 → 除外", hn, win_prob,
+                )
+                return False
+
+        return True
+
     records: list[RaceRecommendation] = []
+    rank_counter = 1
     for item in items[:5]:
         race_id = int(item["race_id"])
         race_entry = race_entry_map.get(race_id)
         if race_entry is None:
             logger.warning("推奨: race_id=%d が当日データに存在しません", race_id)
+            continue
+
+        bet_type = item.get("bet_type", "win")
+
+        # ハードフィルター適用
+        if not _passes_hard_filter(item, race_entry, bet_type):
+            logger.info("推奨スキップ（ハードフィルター）: race_id=%d", race_id)
             continue
 
         win_snap = {str(h["horse_number"]): h["win_odds"] for h in race_entry["horses"] if h["win_odds"] is not None}
@@ -386,13 +455,14 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
                     "ev_place": horse.get("ev_place"),
                     "win_odds": horse.get("win_odds"),
                     "place_odds": horse.get("place_odds"),
+                    "index_rank": horse.get("index_rank"),
                 })
 
         rec = RaceRecommendation(
             date=date,
-            rank=int(item["rank"]),
+            rank=rank_counter,  # フィルター後の連番で再採番
             race_id=race_id,
-            bet_type=item["bet_type"],
+            bet_type=bet_type,
             target_horses=target_details,
             snapshot_win_odds=win_snap or None,
             snapshot_place_odds=place_snap or None,
@@ -402,9 +472,10 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
         )
         session.add(rec)
         records.append(rec)
+        rank_counter += 1
 
     await session.commit()
-    logger.info("推奨生成完了: %s → %d 件保存", date, len(records))
+    logger.info("推奨生成完了: %s → %d 件保存（フィルター前: %d件）", date, len(records), len(items))
     return records
 
 
