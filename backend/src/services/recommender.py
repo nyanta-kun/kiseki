@@ -366,8 +366,14 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
     raw_text = next(b.text for b in message.content if hasattr(b, "text")).strip()
     logger.debug("Claude API レスポンス: %s", raw_text[:500])
 
+    # マークダウンコードブロック除去 → JSONブロック抽出
+    json_text = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
+    json_match = re.search(r"\{[\s\S]*\}", json_text)
+    if json_match:
+        json_text = json_match.group(0)
+
     try:
-        parsed = json.loads(raw_text)
+        parsed = json.loads(json_text)
         items: list[dict[str, Any]] = parsed["recommendations"]
     except (json.JSONDecodeError, KeyError) as e:
         logger.error("Claude API レスポンスのパース失敗: %s\n%s", e, raw_text)
