@@ -236,25 +236,57 @@ class CompositeIndexCalculator:
             f"{race.distance}m {race.surface}) {len(entries)}頭"
         )
 
-        # 各指数を一括算出（N+1回避: calculate_batch を使用）
-        # speed は rotation のタイムボーナスに使うため先に算出する
+        # speed を先行算出（rotation の speed_map 依存のため）
         speed_map = await self._speed.calculate_batch(race_id)
-        last3f_map = await self._last3f.calculate_batch(race_id)
-        course_map = await self._course.calculate_batch(race_id)
-        frame_map = await self._frame.calculate_batch(race_id)
-        rotation_map = await self._rotation.calculate_batch(race_id, speed_map=speed_map)
-        jockey_map = await self._jockey.calculate_batch(race_id)
-        pace_map = await self._pace.calculate_batch(race_id)
-        pedigree_map = await self._pedigree.calculate_batch(race_id)
-        training_map = await self._training.calculate_batch(race_id)
-        anagusa_map = await self._anagusa.calculate_batch(race_id)
-        paddock_map = await self._paddock.calculate_batch(race_id)
-        rebound_map = await self._rebound.calculate_batch(race_id)
-        rivals_growth_map = await self._rivals_growth.calculate_batch(race_id)
-        career_phase_map = await self._career_phase.calculate_batch(race_id)
-        distance_change_map = await self._distance_change.calculate_batch(race_id)
-        jockey_trainer_combo_map = await self._jockey_trainer_combo.calculate_batch(race_id)
-        going_pedigree_map = await self._going_pedigree.calculate_batch(race_id)
+
+        # 残り16指数を並列算出（各々独立セッション、per-race 最大4並列）
+        _sem = asyncio.Semaphore(4)
+
+        async def _run(calc_cls: type, **kw: object) -> dict[int, float]:
+            async with _sem:
+                async with AsyncSessionLocal() as sess:
+                    return await calc_cls(sess).calculate_batch(race_id, **kw)
+
+        _parallel = await asyncio.gather(
+            _run(Last3FIndexCalculator),
+            _run(CourseAptitudeCalculator),
+            _run(FrameBiasCalculator),
+            _run(RotationIndexCalculator, speed_map=speed_map),
+            _run(JockeyIndexCalculator),
+            _run(PaceIndexCalculator),
+            _run(PedigreeIndexCalculator),
+            _run(TrainingIndexCalculator),
+            _run(AnagusaIndexCalculator),
+            _run(PaddockIndexCalculator),
+            _run(ReboundIndexCalculator),
+            _run(RivalsGrowthIndexCalculator),
+            _run(CareerPhaseIndexCalculator),
+            _run(DistanceChangeIndexCalculator),
+            _run(JockeyTrainerComboIndexCalculator),
+            _run(GoingPedigreeIndexCalculator),
+            return_exceptions=True,
+        )
+
+        _labels = [
+            "last3f", "course", "frame", "rotation", "jockey", "pace",
+            "pedigree", "training", "anagusa", "paddock", "rebound",
+            "rivals_growth", "career_phase", "distance_change",
+            "jockey_trainer_combo", "going_pedigree",
+        ]
+
+        def _safe(result: object, label: str) -> dict[int, float]:
+            if isinstance(result, Exception):
+                logger.error(f"指数エラー [{label}] race_id={race_id}: {result}")
+                return {}
+            return result  # type: ignore[return-value]
+
+        (
+            last3f_map, course_map, frame_map, rotation_map,
+            jockey_map, pace_map, pedigree_map, training_map,
+            anagusa_map, paddock_map, rebound_map, rivals_growth_map,
+            career_phase_map, distance_change_map, jockey_trainer_combo_map,
+            going_pedigree_map,
+        ) = [_safe(r, lbl) for r, lbl in zip(_parallel, _labels)]
 
         # セグメント別ウェイト（レース単位で1回だけ計算）
         seg_weights = _segment_weights(race.surface, race.distance)

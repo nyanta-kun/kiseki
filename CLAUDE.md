@@ -223,7 +223,8 @@ pkill -9 -f "prlctl exec"
 ### Windows agent 設定ファイル
 - **`.env` の場所**: `C:\kiseki\.env`（`jvlink_agent.py` は `Path(__file__).parent.parent / ".env"` を読む）
 - `C:\kiseki\windows-agent\.env` は読まれない（混同注意）
-- **BACKEND_URL**: `http://YuichironoMacBook-Pro-6.local:8000`（mDNS/Bonjour名。MacのIPが変わっても自動追従）
+- **BACKEND_URL**: `https://api.galloplab.com`（VPS FastAPI に直接 POST。Mac を経由しないため Mac-VPS 間 RTT を排除）
+  - 旧値: `http://YuichironoMacBook-Pro-6.local:8000`（Mac経由。DB書き込みのたびに VPS RTT が発生していた）
   - `10.211.55.2`（Parallels NAT）はWindowsから到達不可なので使用不可
   - `192.168.11.x`（WiFi IP）は変動するので使用不可
 

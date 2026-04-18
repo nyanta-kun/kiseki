@@ -10,6 +10,7 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
+    max_overflow=15,
     connect_args={
         "timeout": 10,
         "server_settings": {"search_path": settings.db_schema},

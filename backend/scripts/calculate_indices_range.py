@@ -51,7 +51,7 @@ FROM keiba.races r
 JOIN keiba.race_entries re ON re.race_id = r.id
 JOIN keiba.race_results rr ON rr.race_id = r.id
 WHERE r.date BETWEEN :start_date AND :end_date
-ORDER BY r.date
+ORDER BY r.date DESC
 """)
 
 _DATE_QUERY_SKIP = text("""
@@ -67,7 +67,7 @@ WHERE r.date BETWEEN :start_date AND :end_date
       AND ci.version = :version
     LIMIT 1
   )
-ORDER BY r.date
+ORDER BY r.date DESC
 """)
 
 
@@ -112,7 +112,7 @@ async def run(
     dates = await get_target_dates(start_date, end_date, skip_existing)
     skipped_msg = "（算出済みスキップ）" if skip_existing else ""
     logger.info(
-        f"対象開催日: {len(dates)} 日 ({start_date}〜{end_date}){skipped_msg} "
+        f"対象開催日: {len(dates)} 日 ({end_date}→{start_date} 新しい順){skipped_msg} "
         f"version={COMPOSITE_VERSION}"
     )
 
