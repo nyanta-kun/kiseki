@@ -33,6 +33,7 @@ UmaConn 固有の仕様:
 import argparse
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -209,6 +210,12 @@ def init_umaconn():
         if rc != 0:
             logger.error(f"NVInit failed: rc={rc}")
             sys.exit(1)
+        # UI（ダウンロードダイアログ等）を非表示にする
+        try:
+            nv.NVSetUIProperties()
+            logger.info("NVSetUIProperties() called (UI hidden)")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"NVSetUIProperties failed: {e}")
         # サービスキーを設定（NVOpen前に必須）
         # タイムアウト付き実行: NVSetServiceKey はサービスサーバーへのネットワーク接続を行い
         # サーバーが応答しない場合に数分以上ブロックすることがある。
@@ -973,31 +980,55 @@ def run_realtime_monitor(nv) -> None:
             f"{latest_post_time // 100:02d}:{latest_post_time % 100:02d}"
         )
 
-    # 0B12 バックグラウンドフェッチ管理
+    # 0B12 バックグラウンドフェッチ管理（常駐ワーカー型）
+    # NVInit を起動時1回だけ呼ぶことで UmaConn設定.exe の繰り返し起動を防ぐ
+    _bg_task_queue: queue.Queue = queue.Queue(maxsize=1)
     _bg_result_buf: list[dict] = []
-    _bg_thread: threading.Thread | None = None
+    _bg_done_event = threading.Event()
+    _bg_done_event.set()  # 初期状態: 完了済み（処理中でない）
 
-    def _start_bg_results_fetch(keys: list[str]) -> threading.Thread:
-        """0B12 を別スレッド・別COMオブジェクトで取得し _bg_result_buf に蓄積する。"""
-        _bg_result_buf.clear()
-
-        def worker() -> None:
+    def _bg_nv2_worker() -> None:
+        """常駐バックグラウンドワーカー。NVLink インスタンスを一度だけ作成して再利用する。"""
+        try:
+            import win32com.client  # noqa: PLC0415
+            nv2 = win32com.client.Dispatch("NVDTLabLib.NVLink")
+            rc = nv2.NVInit("UNKNOWN")
+            if rc != 0:
+                logger.error(f"bg worker: NVInit failed rc={rc}")
+                return
             try:
-                import win32com.client  # noqa: PLC0415
-                nv2 = win32com.client.Dispatch("NVDTLabLib.NVLink")
-                rc = nv2.NVInit("UNKNOWN")
-                if rc != 0:
-                    return
-                for race_key in keys:
-                    for rec in fetch_realtime_data(nv2, RT_RESULT, race_key):
-                        if rec.get("rec_id") in ("RA", "SE", "HR"):
-                            _bg_result_buf.append(rec)
-            except Exception as e:  # noqa: BLE001
-                logger.debug(f"bg_results_fetch error: {e}")
+                nv2.NVSetUIProperties()
+            except Exception:  # noqa: BLE001
+                pass
+            logger.info("bg worker (0B12): NVLink initialized")
+            while True:
+                try:
+                    keys = _bg_task_queue.get(timeout=120)
+                    if keys is None:  # shutdown signal
+                        break
+                    _bg_result_buf.clear()
+                    for race_key in keys:
+                        for rec in fetch_realtime_data(nv2, RT_RESULT, race_key):
+                            if rec.get("rec_id") in ("RA", "SE", "HR"):
+                                _bg_result_buf.append(rec)
+                    _bg_done_event.set()
+                except queue.Empty:
+                    continue
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"bg worker error: {e}")
+        finally:
+            _bg_done_event.set()  # エラー時もブロック解除
 
-        t = threading.Thread(target=worker, daemon=True, name="bg-0b12")
-        t.start()
-        return t
+    threading.Thread(target=_bg_nv2_worker, daemon=True, name="bg-0b12-persistent").start()
+
+    def _start_bg_results_fetch(keys: list[str]) -> None:
+        """0B12 フェッチをバックグラウンドワーカーに依頼する。"""
+        _bg_done_event.clear()
+        try:
+            _bg_task_queue.put_nowait(keys)
+        except queue.Full:
+            logger.debug("0B12 前サイクルのタスクがまだキューにある — スキップ")
+            _bg_done_event.set()
 
     while True:
         try:
@@ -1035,7 +1066,7 @@ def run_realtime_monitor(nv) -> None:
                 logger.debug("本日の地方競馬レースキーが取得できませんでした")
 
             # ----- 前サイクルの 0B12 結果を処理 -----
-            if _bg_thread is not None and not _bg_thread.is_alive():
+            if _bg_done_event.is_set() and _bg_result_buf:
                 new_results = []
                 for rec in _bg_result_buf:
                     key = rec["data"][:30]
@@ -1050,7 +1081,7 @@ def run_realtime_monitor(nv) -> None:
                     if hr:
                         logger.info(f"払戻取得(0B12): {len(hr)} 件 (HR) → chihou/payouts へ送信")
                         _post_hr_payouts(hr)
-                _bg_thread = None
+                _bg_result_buf.clear()
 
             # ----- 蓄積系差分取得 (option=2) — 約5分ごとに確定成績をポーリング -----
             if cycle % INCREMENTAL_EVERY == 0:
@@ -1089,8 +1120,8 @@ def run_realtime_monitor(nv) -> None:
                 post_to_backend(EP_ODDS, {"date": today, "records": all_odds}, BACKEND_URL, API_KEY)
 
             # ----- 0B12 フェッチをバックグラウンドで開始（前サイクルが完了している場合のみ） -----
-            if _bg_thread is None or not _bg_thread.is_alive():
-                _bg_thread = _start_bg_results_fetch(race_keys)
+            if _bg_done_event.is_set():
+                _start_bg_results_fetch(race_keys)
             else:
                 logger.debug("0B12 前サイクルのフェッチがまだ実行中 — 今回はスキップ")
 
