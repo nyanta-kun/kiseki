@@ -961,8 +961,16 @@ def run_realtime_monitor(nv) -> None:
             elapsed = time.time() - _heartbeat[0]
             if elapsed > _REALTIME_WATCHDOG_TIMEOUT:
                 logger.error(
-                    f"ウォッチドッグ: {elapsed:.0f}秒間無応答 → プロセスを強制終了 (os._exit)"
+                    f"ウォッチドッグ: {elapsed:.0f}秒間無応答 → bg worker をシャットダウン後に強制終了"
                 )
+                # bg worker に None を送って NVClose を呼ばせ COM オブジェクトを正常解放する
+                # (os._exit だけだと COM サーバー側が TNVLink リークダイアログを表示する)
+                try:
+                    _bg_task_queue.put_nowait(None)
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(3)  # bg worker の COM 解放を待つ
+                logger.error("ウォッチドッグ: os._exit(1) 実行")
                 os._exit(1)
 
     threading.Thread(target=_watchdog, daemon=True, name="watchdog").start()
@@ -1005,6 +1013,10 @@ def run_realtime_monitor(nv) -> None:
                 try:
                     keys = _bg_task_queue.get(timeout=120)
                     if keys is None:  # shutdown signal
+                        try:
+                            nv2.NVClose()
+                        except Exception:  # noqa: BLE001
+                            pass
                         break
                     _bg_result_buf.clear()
                     for race_key in keys:
