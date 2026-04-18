@@ -216,6 +216,11 @@ until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 
   - 追加API_KEY不要。`NVSetServiceKey rc=-101`（2回目）は正常（既登録の意味）
   - **PC-KEIBA アプリ不要**。NVDTLab.dll（UmaConn SDK）は PC-KEIBA なしで直接動作（2026-04-13 実機確認）
   - 認証は `HKLM\SOFTWARE\WOW6432Node\RateBuster Co.,Ltd\UmaConn\3.5.4.0` で管理（PC-KEIBAのDB設定とは無関係）
+- **umaconn_agent realtimeモード 自動管理**（2026-04-18 実装済み）
+  - Windowsタスクスケジューラ（`kiseki-UmaConn-Realtime`）が毎朝9:00に自動起動
+  - 自動停止: 最終レース発走+90分 or 21:30ハードストップ（先に来た方）
+  - ウォッチドッグ: NVRTOpenハングを180秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
+  - タスク状態確認: `prlctl exec "Windows 11" --current-user powershell -Command "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
 
 ### jvlink_agent.py 起動
 ※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
