@@ -15,7 +15,7 @@ async function fetchPaidMode(): Promise<boolean> {
   try {
     const res = await fetch(`${BACKEND_URL}/admin/settings`, {
       headers: { "X-API-Key": API_KEY },
-      cache: "no-store",
+      next: { revalidate: 60 },
     });
     if (!res.ok) return false;
     const data = (await res.json()) as { settings: { key: string; value: string }[] };
@@ -53,17 +53,13 @@ export default async function RacePage({ params }: { params: Params }) {
   const { id } = await params;
   const raceId = parseInt(id);
 
-  const session = await auth();
+  // auth・PAID_MODE・レース基本情報は互いに依存しないので並列取得
+  const [session, paidMode, race] = await Promise.all([
+    auth(),
+    fetchPaidMode(),
+    fetchRace(raceId).catch(() => null),
+  ]);
   const isPremium = session?.user?.is_premium ?? false;
-  const paidMode = await fetchPaidMode();
-
-  // レース情報を最初に取得（date が後続フェッチに必要なため）
-  let race = null;
-  try {
-    race = await fetchRace(raceId);
-  } catch {
-    // ignore
-  }
   const date = race?.date ?? "";
   const raceNumber = race?.race_number ?? 1;
 

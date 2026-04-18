@@ -14,7 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -660,14 +660,14 @@ async def get_stats(
         )
         .join(Race, UserPrediction.race_id == Race.id)
         .join(
+            RaceEntry,
+            (RaceEntry.race_id == UserPrediction.race_id)
+            & (RaceEntry.horse_id == UserPrediction.horse_id),
+        )
+        .join(
             RaceResult,
-            and_(
-                RaceResult.race_id == UserPrediction.race_id,
-                RaceResult.horse_number == select(RaceEntry.horse_number)
-                    .where(RaceEntry.race_id == UserPrediction.race_id)
-                    .where(RaceEntry.horse_id == UserPrediction.horse_id)
-                    .scalar_subquery(),
-            ),
+            (RaceResult.race_id == UserPrediction.race_id)
+            & (RaceResult.horse_number == RaceEntry.horse_number),
         )
         .where(*conditions)
     )

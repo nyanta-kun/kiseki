@@ -320,89 +320,117 @@ async def get_performance_summary(
     distance_ranges = _split(distance_range)
     conditions = _split(condition)
 
-    # --- 各 (race_id, horse_id) の最新バージョンサブクエリ ---
-    # バージョンごとに集計期間が異なるため、固定バージョンでなく
-    # 各レース・各馬ごとの最大バージョンを使用して集計する。
-    latest_version_sq = (
-        select(
-            CalculatedIndex.race_id.label("lv_race_id"),
-            CalculatedIndex.horse_id.label("lv_horse_id"),
-            func.max(CalculatedIndex.version).label("lv_max_version"),
-        )
-        .group_by(CalculatedIndex.race_id, CalculatedIndex.horse_id)
-        .subquery()
-    )
-
-    # --- SQLフィルタ条件の構築 ---
-    sql_conditions = [
-        Race.date >= from_date,
-        Race.date <= to_date,
-        RaceResult.finish_position.is_not(None),
-        Race.course.in_(list(_JRA_COURSE_CODES)),
+    # --- SQLフィルタ条件の構築（raw SQL 用パラメータ） ---
+    # ウィンドウ関数 CTE で 1 レース 1 行に集約し、全馬 fetchall → Python 集計の
+    # メモリ爆発（~37,500 行）を ~2,500 行に削減する。
+    where_parts = [
+        "rr.finish_position IS NOT NULL",
+        "r.course = ANY(:jra_courses)",
+        "r.date >= :from_date",
+        "r.date <= :to_date",
     ]
+    sql_params: dict[str, object] = {
+        "jra_courses": list(_JRA_COURSE_CODES),
+        "from_date": from_date,
+        "to_date": to_date,
+    }
     if course_names:
-        sql_conditions.append(Race.course_name.in_(course_names))
+        where_parts.append("r.course_name = ANY(:course_names)")
+        sql_params["course_names"] = course_names
     if surfaces:
-        sql_conditions.append(Race.surface.in_(surfaces))
+        where_parts.append("r.surface = ANY(:surfaces)")
+        sql_params["surfaces"] = surfaces
     if distance_ranges:
-        dist_conds = []
-        for dr in distance_ranges:
-            # キー（sprint/mile/middle/long）または旧ラベルを両方受け付ける
+        dist_parts: list[str] = []
+        for i, dr in enumerate(distance_ranges):
             entry = _DISTANCE_KEY_MAP.get(dr) or _DISTANCE_KEY_MAP.get(
                 _DISTANCE_LABEL_TO_KEY.get(dr, ""), None
             )
             if entry:
                 _, lo, hi = entry
-                dist_conds.append((Race.distance >= lo) & (Race.distance <= hi))
-        if dist_conds:
-            sql_conditions.append(or_(*dist_conds))
+                dist_parts.append(
+                    f"(r.distance >= :dist_lo_{i} AND r.distance <= :dist_hi_{i})"
+                )
+                sql_params[f"dist_lo_{i}"] = lo
+                sql_params[f"dist_hi_{i}"] = hi
+        if dist_parts:
+            where_parts.append(f"({' OR '.join(dist_parts)})")
     # condition フィルタは Python 側で適用（race_class_label が DB カラムでないため）
 
-    # --- 全馬 composite_index + 着順を一括取得 ---
+    where_clause = " AND ".join(where_parts)
+
+    # ウィンドウ関数 CTE: 各レースのトップ馬 1 行 + 集約データを返す
     rows = (
         await db.execute(
-            select(
-                Race.id.label("race_id"),
-                Race.date.label("race_date"),
-                Race.head_count.label("head_count"),
-                Race.course_name.label("course_name"),
-                Race.surface.label("surface"),
-                Race.distance.label("distance"),
-                Race.grade.label("grade"),
-                Race.race_type_code.label("race_type_code"),
-                Race.prize_1st.label("prize_1st"),
-                CalculatedIndex.horse_id,
-                CalculatedIndex.composite_index,
-                RaceResult.finish_position,
-                RaceResult.horse_number,
-                RaceResult.win_odds,
-            )
-            .join(CalculatedIndex, CalculatedIndex.race_id == Race.id)
-            .join(
-                latest_version_sq,
-                (latest_version_sq.c.lv_race_id == CalculatedIndex.race_id)
-                & (latest_version_sq.c.lv_horse_id == CalculatedIndex.horse_id)
-                & (latest_version_sq.c.lv_max_version == CalculatedIndex.version),
-            )
-            .join(
-                RaceResult,
-                (RaceResult.race_id == Race.id)
-                & (RaceResult.horse_id == CalculatedIndex.horse_id),
-            )
-            .where(*sql_conditions)
-            .order_by(Race.date, Race.id)
+            text(f"""
+                WITH latest_v AS (
+                    SELECT race_id, horse_id, MAX(version) AS max_version
+                    FROM keiba.calculated_indices
+                    GROUP BY race_id, horse_id
+                ),
+                race_horses AS (
+                    SELECT
+                        r.id                AS race_id,
+                        r.date              AS race_date,
+                        r.head_count,
+                        r.course_name,
+                        r.surface,
+                        r.distance,
+                        r.grade,
+                        r.race_type_code,
+                        r.prize_1st,
+                        ci.horse_id,
+                        ci.composite_index::float   AS composite_index,
+                        rr.finish_position,
+                        rr.horse_number,
+                        rr.win_odds,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.id
+                            ORDER BY ci.composite_index DESC NULLS LAST
+                        ) AS pred_rank,
+                        ARRAY_AGG(ci.composite_index::float)
+                            OVER (PARTITION BY r.id)
+                            AS all_composite_indices,
+                        (ARRAY_AGG(ci.horse_id ORDER BY ci.composite_index DESC NULLS LAST)
+                            OVER (PARTITION BY r.id))[1:3]
+                            AS pred_top3_ids,
+                        ARRAY_REMOVE(
+                            ARRAY_AGG(
+                                CASE WHEN rr.finish_position <= 3
+                                     THEN ci.horse_id END
+                            ) OVER (PARTITION BY r.id),
+                            NULL
+                        ) AS actual_top3_ids
+                    FROM keiba.races r
+                    JOIN keiba.calculated_indices ci ON ci.race_id = r.id
+                    JOIN latest_v lv
+                        ON  lv.race_id    = ci.race_id
+                        AND lv.horse_id   = ci.horse_id
+                        AND lv.max_version = ci.version
+                    JOIN keiba.race_results rr
+                        ON  rr.race_id  = r.id
+                        AND rr.horse_id = ci.horse_id
+                    WHERE {where_clause}
+                )
+                SELECT
+                    race_id, race_date, head_count, course_name, surface,
+                    distance, grade, race_type_code, prize_1st,
+                    horse_id, composite_index, finish_position, horse_number, win_odds,
+                    all_composite_indices, pred_top3_ids, actual_top3_ids
+                FROM race_horses
+                WHERE pred_rank = 1
+                ORDER BY race_date, race_id
+            """),
+            sql_params,
         )
     ).fetchall()
 
-    # --- レースごとにグループ化 ---
-    race_groups: dict[int, list] = defaultdict(list)
-    for row in rows:
-        race_groups[row.race_id].append(row)
+    # rows は 1 レース 1 行（各レースのトップ馬）
+    race_ids = [row.race_id for row in rows]
 
     # --- 複勝オッズを race_payouts → odds_history の順で一括取得 ---
     # race_payouts に確定払戻が存在する場合はそちらを優先し、
     # なければ odds_history の最新オッズにフォールバックする。
-    race_ids = list(race_groups.keys())
     place_odds_map: dict[tuple[int, int], float] = {}
     # race_payouts でカバーされているレース（結果確定済み）の race_id セット。
     # race_payouts には 3 着以内の馬の払戻しか存在しないため、
@@ -457,86 +485,56 @@ async def get_performance_summary(
             if key not in place_odds_map:  # race_payouts の確定払戻を上書きしない
                 place_odds_map[key] = float(pr.odds)
 
-    # --- レースごとの指標を計算 ---
+    # --- レースごとの指標を計算（rows は 1 レース 1 行） ---
     race_metrics: list[dict] = []
 
-    for race_id, horses in race_groups.items():
+    for row in rows:
         # 条件フィルタ（Python側）
-        sample = horses[0]
-        cond_label = _condition_label(
-            sample.grade, sample.race_type_code, sample.prize_1st
-        )
+        cond_label = _condition_label(row.grade, row.race_type_code, row.prize_1st)
         if conditions and cond_label not in conditions:
             continue
 
-        composite_indices = [
-            float(h.composite_index)
-            for h in horses
-            if h.composite_index is not None
-        ]
-        if not composite_indices:
+        all_indices = [float(x) for x in (row.all_composite_indices or []) if x is not None]
+        if not all_indices or row.finish_position is None:
             continue
 
-        conf = calculate_race_confidence(composite_indices, sample.head_count)
+        conf = calculate_race_confidence(all_indices, row.head_count)
 
-        valid = [
-            h
-            for h in horses
-            if h.composite_index is not None and h.finish_position is not None
-        ]
-        if not valid:
-            continue
-
-        sorted_by_pred = sorted(
-            valid, key=lambda h: float(h.composite_index), reverse=True
-        )
-        predicted_winner = sorted_by_pred[0]
-        predicted_top3_ids = {h.horse_id for h in sorted_by_pred[:3]}
-
-        win_pos = int(predicted_winner.finish_position)
+        win_pos = int(row.finish_position)
         win_hit = win_pos == 1
         place_hit = win_pos <= 3
 
-        actual_top3_ids = {
-            h.horse_id for h in valid if int(h.finish_position) <= 3
-        }
+        pred_top3_ids = set(row.pred_top3_ids or [])
+        actual_top3_ids = {hid for hid in (row.actual_top3_ids or []) if hid is not None}
         coverage = (
-            len(actual_top3_ids & predicted_top3_ids) / max(len(actual_top3_ids), 1)
+            len(actual_top3_ids & pred_top3_ids) / max(len(actual_top3_ids), 1)
             if actual_top3_ids
             else 0.0
         )
 
         roi_contribution_win = (
-            float(predicted_winner.win_odds) * 100.0
-            if win_hit and predicted_winner.win_odds
-            else 0.0
+            float(row.win_odds) * 100.0 if win_hit and row.win_odds else 0.0
         )
 
-        horse_number = (
-            int(predicted_winner.horse_number)
-            if predicted_winner.horse_number is not None
-            else None
-        )
+        horse_number = int(row.horse_number) if row.horse_number is not None else None
         place_odds_val = (
-            place_odds_map.get((race_id, horse_number))
+            place_odds_map.get((row.race_id, horse_number))
             if horse_number is not None
             else None
         )
         # race_payouts カバー済み（結果確定）のレースは着外でも「賭けた」扱いにする。
         # race_payouts に予測 1 位馬のエントリがない = 着外 = 回収 0 円（ROI 計算上正しい）。
-        has_place_odds = race_id in payout_covered_race_ids or place_odds_val is not None
+        has_place_odds = row.race_id in payout_covered_race_ids or place_odds_val is not None
         roi_contribution_place = (
-            place_odds_val * 100.0
-            if place_hit and place_odds_val is not None
-            else 0.0
+            place_odds_val * 100.0 if place_hit and place_odds_val is not None else 0.0
         )
 
         race_metrics.append({
-            "race_date": str(sample.race_date),
+            "race_date": str(row.race_date),
             "confidence_label": conf["label"],
-            "course_name": str(sample.course_name or "不明"),
-            "surface": _normalize_surface(sample.surface),
-            "distance_range": _distance_range_label(sample.distance),
+            "course_name": str(row.course_name or "不明"),
+            "surface": _normalize_surface(row.surface),
+            "distance_range": _distance_range_label(row.distance),
             "condition": cond_label,
             "win_hit": win_hit,
             "place_hit": place_hit,

@@ -178,41 +178,35 @@ async def _fetch_external_ranks(db: AsyncSession, race: Race) -> dict[int, dict[
         return {}
     race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
 
-    # netkeiba から idx_course / idx_ave を取得
-    nb_result = await db.execute(
+    # netkeiba と kichiuma を UNION ALL で 1 クエリに統合
+    combined_result = await db.execute(
         _text(
-            "SELECT horse_no, idx_course, idx_ave FROM sekito.netkeiba"
-            " WHERE date = :d AND course_code = :c AND race_no = :r"
+            "SELECT 'nb' AS src, horse_no, idx_course::text AS v1, idx_ave::text AS v2"
+            " FROM sekito.netkeiba WHERE date = :d AND course_code = :c AND race_no = :r"
+            " UNION ALL"
+            " SELECT 'km' AS src, horse_no, sp_score::text AS v1, NULL::text AS v2"
+            " FROM sekito.kichiuma WHERE date = :d AND course_code = :c AND race_no = :r"
         ),
         {"d": race_date, "c": sekito_code, "r": race.race_number},
     )
-    nb_rows = nb_result.fetchall()
-
-    # kichiuma から sp_score を取得
-    km_result = await db.execute(
-        _text(
-            "SELECT horse_no, sp_score FROM sekito.kichiuma"
-            " WHERE date = :d AND course_code = :c AND race_no = :r"
-        ),
-        {"d": race_date, "c": sekito_code, "r": race.race_number},
-    )
-    km_rows = km_result.fetchall()
+    combined_rows = combined_result.fetchall()
 
     # 数値パース
     nb_course: dict[int, float] = {}
     nb_ave: dict[int, float] = {}
-    for horse_no, idx_course, idx_ave in nb_rows:
-        c = _parse_index_num(idx_course)
-        a = _parse_index_num(idx_ave)
-        if c is not None:
-            nb_course[horse_no] = c
-        if a is not None:
-            nb_ave[horse_no] = a
-
     km_score: dict[int, float] = {}
-    for horse_no, sp_score in km_rows:
-        if sp_score is not None:
-            km_score[horse_no] = float(sp_score)
+    for src, horse_no, v1, v2 in combined_rows:
+        if src == "nb":
+            c = _parse_index_num(v1)
+            a = _parse_index_num(v2)
+            if c is not None:
+                nb_course[horse_no] = c
+            if a is not None:
+                nb_ave[horse_no] = a
+        else:
+            s = _parse_index_num(v1)
+            if s is not None:
+                km_score[horse_no] = s
 
     # 降順ランク付け（同値は同ランク、次は連続順位）
     def _rank(score_map: dict[int, float]) -> dict[int, int]:
@@ -599,19 +593,21 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     win_probability / place_probability は Softmax + Harville 式で算出。
     未算出の場合は null を返す。
     """
-    race_result = await db.execute(select(Race).where(Race.id == race_id))
-    race = race_result.scalar_one_or_none()
-    if not race:
-        raise HTTPException(status_code=404, detail="Race not found")
-
-    # v7 がなければ最新バージョンにフォールバック
-    ver_result = await db.execute(
-        select(CalculatedIndex.version)
+    # Race と最大バージョンを 1 クエリで取得（2 往復 → 1 往復）
+    latest_ver_sq = (
+        select(func.max(CalculatedIndex.version))
         .where(CalculatedIndex.race_id == race_id)
-        .order_by(CalculatedIndex.version.desc())
-        .limit(1)
+        .scalar_subquery()
     )
-    latest_version = ver_result.scalar()
+    race_ver_result = await db.execute(
+        select(Race, latest_ver_sq.label("latest_version"))
+        .where(Race.id == race_id)
+    )
+    race_ver_row = race_ver_result.one_or_none()
+    if not race_ver_row:
+        raise HTTPException(status_code=404, detail="Race not found")
+    race = race_ver_row[0]
+    latest_version: int | None = race_ver_row[1]
     if latest_version is None:
         raise HTTPException(status_code=404, detail="No indices calculated for this race")
     use_version = COMPOSITE_VERSION if latest_version >= COMPOSITE_VERSION else latest_version
