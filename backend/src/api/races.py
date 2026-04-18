@@ -273,6 +273,10 @@ class RaceOut(BaseModel):
     recommend_rank: str | None = None    # S / A / B / C
     buy_signal: str | None = None        # "buy" | "caution" | "pass" | None
     top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
+    top_horse_number: int | None = None  # 指数1位馬番
+    top_horse_name: str | None = None    # 指数1位馬名（結果確定後）
+    top_horse_finish: int | None = None  # 指数1位馬の確定着順（取消の場合はnull）
+    result_confirmed: bool = False       # レース結果確定済み（いずれかの馬に着順あり）
 
     model_config = {"from_attributes": True}
 
@@ -481,6 +485,32 @@ async def list_races(
                     top_horse_win_odds[rid] = float(odds)
                 seen_races_odds.add(rid)
 
+    # 指数1位馬の成績をバッチ取得（取消馬は finish_position=null のまま返る）
+    top_horse_result_map: dict[int, tuple[int | None, str]] = {}  # race_id → (finish_position, horse_name)
+    if race_top_horse_num:
+        pairs = [(rid, hn) for rid, hn in race_top_horse_num.items() if hn is not None]
+        if pairs:
+            finish_stmt = (
+                select(RaceResult.race_id, RaceResult.finish_position, Horse.name)
+                .join(Horse, RaceResult.horse_id == Horse.id)
+                .where(tuple_(RaceResult.race_id, RaceResult.horse_number).in_(pairs))
+            )
+            finish_result = await db.execute(finish_stmt)
+            for rid, fp, hname in finish_result.all():
+                top_horse_result_map[rid] = (fp, hname)
+
+    # レース確定判定: finish_positionがある馬が1頭以上存在するか（取消馬を除く）
+    confirmed_race_ids: set[int] = set()
+    if race_ids:
+        confirmed_stmt = (
+            select(RaceResult.race_id)
+            .where(RaceResult.race_id.in_(race_ids))
+            .where(RaceResult.finish_position.is_not(None))
+            .distinct()
+        )
+        confirmed_result = await db.execute(confirmed_stmt)
+        confirmed_race_ids = {row[0] for row in confirmed_result.all()}
+
     # has_anagusa: sekito.anagusa のピック有無で判定（スコア閾値でなく実ピック）
     anagusa_picks_set = await _anagusa_picks_for_date(db, date)
 
@@ -490,6 +520,13 @@ async def list_races(
         out.has_indices = r.id in indexed_ids
         sekito_code = _JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
+        out.result_confirmed = r.id in confirmed_race_ids
+        if r.id in race_top_horse_num:
+            out.top_horse_number = race_top_horse_num[r.id]
+        if r.id in top_horse_result_map:
+            fp, hname = top_horse_result_map[r.id]
+            out.top_horse_finish = fp
+            out.top_horse_name = hname
         if r.id in indexed_ids:
             wp_list = race_win_probs.get(r.id) or None
             conf = calculate_race_confidence(race_indices[r.id], r.head_count, wp_list)

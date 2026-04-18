@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker
 
 from src.config import settings
 from src.db.chihou_models import ChihouRace
-from src.indices.chihou_calculator import ChihouIndexCalculator
+from src.indices.chihou_calculator import BANEI_COURSE_CODE, ChihouIndexCalculator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +55,7 @@ async def backfill(from_date: str, batch_size: int, to_date: str | None = None) 
         rows = await db.execute(
             select(ChihouRace.id, ChihouRace.date, ChihouRace.course_name, ChihouRace.race_number)
             .where(cond)
+            .where(ChihouRace.course != BANEI_COURSE_CODE)
             .order_by(ChihouRace.date, ChihouRace.id)
         )
         races = rows.fetchall()

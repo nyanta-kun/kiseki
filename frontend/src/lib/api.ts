@@ -37,6 +37,10 @@ export type Race = {
   recommend_rank: "S" | "A" | "B" | "C" | null;
   buy_signal: "buy" | "caution" | "pass" | null;
   top_win_odds: number | null;
+  top_horse_number: number | null;   // 指数1位馬番
+  top_horse_name: string | null;     // 指数1位馬名（結果確定後）
+  top_horse_finish: number | null;   // 指数1位馬の確定着順（取消はnull）
+  result_confirmed: boolean;         // レース結果確定済み
 };
 
 export type RaceResult = {

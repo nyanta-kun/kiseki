@@ -21,7 +21,7 @@ from ..db.chihou_models import (
 )
 from ..db.session import get_db
 from ..indices.buy_signal import chihou_buy_signal
-from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
+from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from .ws_manager import chihou_results_manager
 
@@ -114,6 +114,7 @@ async def get_chihou_race_keys(
         select(ChihouRace.id, ChihouRace.umaconn_race_id)
         .where(ChihouRace.date == date)
         .where(ChihouRace.umaconn_race_id.isnot(None))
+        .where(ChihouRace.course != BANEI_COURSE_CODE)
         .order_by(ChihouRace.race_number)
     )
     rows = result.all()
@@ -129,6 +130,7 @@ async def get_chihou_races_by_date(
     result = await db.execute(
         select(ChihouRace)
         .where(ChihouRace.date == date)
+        .where(ChihouRace.course != BANEI_COURSE_CODE)
         .order_by(ChihouRace.race_number)
     )
     races = result.scalars().all()
@@ -249,6 +251,7 @@ async def get_chihou_nearest_date(
         result = await db.execute(
             select(ChihouRace.date)
             .where(ChihouRace.date < from_)
+            .where(ChihouRace.course != BANEI_COURSE_CODE)
             .order_by(ChihouRace.date.desc())
             .limit(1)
         )
@@ -256,6 +259,7 @@ async def get_chihou_nearest_date(
         result = await db.execute(
             select(ChihouRace.date)
             .where(ChihouRace.date > from_)
+            .where(ChihouRace.course != BANEI_COURSE_CODE)
             .order_by(ChihouRace.date.asc())
             .limit(1)
         )
