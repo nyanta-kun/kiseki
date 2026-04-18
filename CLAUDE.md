@@ -193,7 +193,11 @@ prlctl exec "Windows 11" --current-user powershell -Command "Get-Content 'C:\kis
 
 ### Windows VM再起動
 ```bash
-prlctl restart "Windows 11"
+# ※ prlctl restart は Windows を実際に再起動しない（uptimeがリセットされない）
+# 必ず shutdown /r /t 0 を使うこと
+prlctl exec "Windows 11" --current-user powershell -Command "shutdown /r /t 0"
+# 再起動完了を待つ（約1〜2分）
+until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 'ready'" 2>/dev/null | grep -q ready; do sleep 5; done
 ```
 
 ### Windows agent 設定ファイル
@@ -262,7 +266,9 @@ rc=-303（ファイル存在確認エラー）= JVNextCoreがJRA-VANサーバー
 prlctl exec "Windows 11" --current-user powershell -Command "cd C:\kiseki\windows-agent; python fix_jvlink_303.py"
 
 # Step 2: それでも-303が続く場合はVM再起動
-prlctl restart "Windows 11"
+# ※ prlctl restart は実際に再起動しない。必ず shutdown /r /t 0 を使うこと
+prlctl exec "Windows 11" --current-user powershell -Command "shutdown /r /t 0"
+until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 'ready'" 2>/dev/null | grep -q ready; do sleep 5; done
 # 再起動後、jvlink_agent --mode setup を再実行
 ```
 
