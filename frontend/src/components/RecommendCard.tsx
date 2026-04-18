@@ -206,14 +206,11 @@ export function RecommendCard({ rec }: Props) {
             </div>
 
             {/* 推奨馬の着順一覧 */}
-            <div className="flex flex-wrap gap-2 mt-1.5">
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
               {target_horses.map((h) => (
-                <div key={h.horse_number} className="flex items-center gap-1">
-                  <span className="text-xs text-gray-500">{h.horse_number}番 {h.horse_name}</span>
-                  <span className={cn("text-xs px-1.5 py-0.5 rounded font-bold", posColor(h.finish_position))}>
-                    {fmtPos(h.finish_position)}
-                  </span>
-                </div>
+                <span key={h.horse_number} className={cn("text-xs px-1.5 py-0.5 rounded font-bold", posColor(h.finish_position))}>
+                  {fmtPos(h.finish_position)}
+                </span>
               ))}
             </div>
 
