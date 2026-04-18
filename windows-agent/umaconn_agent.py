@@ -105,6 +105,20 @@ RT_RESULT = "0B12"  # 速報成績（払戻確定後）
 # UmaConn 取得可能開始日時の下限
 UMACONN_EARLIEST: str = "20050101000000"
 
+# ---------------------------------------------------------------------------
+# realtime モード: 自動停止・ウォッチドッグ設定
+# ---------------------------------------------------------------------------
+
+# NVRTOpen が応答しない場合にプロセスを強制終了するまでの秒数
+_REALTIME_WATCHDOG_TIMEOUT = 180
+
+# 最終レース発走後この分数が経過したら結果確定とみなして停止
+_REALTIME_RESULTS_BUFFER_MIN = 90
+
+# ハードストップ時刻（この時刻以降は無条件で停止）
+_REALTIME_HARD_STOP_HOUR = 21
+_REALTIME_HARD_STOP_MIN = 30
+
 # chihou エンドポイント
 EP_RACES = "/api/import/chihou/races"
 EP_ODDS = "/api/import/chihou/odds"
@@ -586,6 +600,60 @@ def report_status(
 # バックエンドからレースキーを取得
 # ---------------------------------------------------------------------------
 
+def _fetch_today_latest_post_time(date: str) -> int | None:
+    """今日の最終レース発走時刻（HHMM の int）をバックエンドAPIから取得する。
+
+    Returns:
+        例: 2050 → 20:50、取得失敗時は None
+    """
+    try:
+        resp = requests.get(
+            f"{BACKEND_URL}/api/chihou/races",
+            params={"date": date},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            races = resp.json()
+            times = [int(r["post_time"]) for r in races if r.get("post_time")]
+            if times:
+                return max(times)
+    except Exception as e:
+        logger.debug(f"最終発走時刻取得失敗: {e}")
+    return None
+
+
+def _should_stop_realtime(latest_post_time: int | None) -> bool:
+    """realtimeモードを停止すべきか判断する。
+
+    最終レース発走から _REALTIME_RESULTS_BUFFER_MIN 分後、
+    または _REALTIME_HARD_STOP_HOUR:_REALTIME_HARD_STOP_MIN 以降なら True。
+    """
+    now = datetime.now()
+    now_min = now.hour * 60 + now.minute
+
+    hard_stop_min = _REALTIME_HARD_STOP_HOUR * 60 + _REALTIME_HARD_STOP_MIN
+    if now_min >= hard_stop_min:
+        logger.info(
+            f"ハード停止時刻 {_REALTIME_HARD_STOP_HOUR:02d}:{_REALTIME_HARD_STOP_MIN:02d} に達しました。"
+        )
+        return True
+
+    if latest_post_time is not None:
+        last_h = latest_post_time // 100
+        last_m = latest_post_time % 100
+        stop_min = last_h * 60 + last_m + _REALTIME_RESULTS_BUFFER_MIN
+        if now_min >= stop_min:
+            stop_h, stop_m = divmod(stop_min, 60)
+            logger.info(
+                f"最終レース {last_h:02d}:{last_m:02d} から"
+                f" {_REALTIME_RESULTS_BUFFER_MIN} 分経過"
+                f"（{stop_h:02d}:{stop_m:02d}）。全結果確定とみなし停止します。"
+            )
+            return True
+
+    return False
+
+
 def _fetch_today_race_keys(date: str) -> list[str]:
     """バックエンド API から指定日の地方競馬レースキー一覧を取得する。
 
@@ -860,6 +928,15 @@ def run_realtime_monitor(nv) -> None:
     - 0B12 (速報成績): 別スレッド・別COMオブジェクトでバックグラウンド実行。
       NVRTOpen("0B12") はデータ準備中にブロックすることがある。
       そのため sleep 中に並行して実行し、完了した結果のみ次サイクルで処理する。
+
+    自動停止条件（いずれか先に達した方）:
+      1. 最終レース発走から _REALTIME_RESULTS_BUFFER_MIN 分経過（全結果確定とみなす）
+      2. _REALTIME_HARD_STOP_HOUR:_REALTIME_HARD_STOP_MIN のハードストップ
+
+    ウォッチドッグ:
+      NVRTOpen がハングして _REALTIME_WATCHDOG_TIMEOUT 秒間無応答になった場合、
+      os._exit(1) でプロセスを強制終了する。
+      Windows タスクスケジューラが翌朝 9:00 に自動再起動する。
     """
     logger.info("=== REALTIME MODE: リアルタイム監視開始 ===")
     today = datetime.now().strftime("%Y%m%d")
@@ -867,6 +944,34 @@ def run_realtime_monitor(nv) -> None:
     seen_results: set[str] = set()
     cycle = 0
     INCREMENTAL_EVERY = 10  # 約5分ごと（30秒×10）に蓄積系差分取得
+
+    # ---- ウォッチドッグスレッド ----
+    _heartbeat = [time.time()]
+
+    def _watchdog() -> None:
+        while True:
+            time.sleep(30)
+            elapsed = time.time() - _heartbeat[0]
+            if elapsed > _REALTIME_WATCHDOG_TIMEOUT:
+                logger.error(
+                    f"ウォッチドッグ: {elapsed:.0f}秒間無応答 → プロセスを強制終了 (os._exit)"
+                )
+                os._exit(1)
+
+    threading.Thread(target=_watchdog, daemon=True, name="watchdog").start()
+    logger.info(
+        f"ウォッチドッグ起動: {_REALTIME_WATCHDOG_TIMEOUT}秒無応答で強制終了 / "
+        f"自動停止: 最終レース+{_REALTIME_RESULTS_BUFFER_MIN}分 or "
+        f"{_REALTIME_HARD_STOP_HOUR:02d}:{_REALTIME_HARD_STOP_MIN:02d}"
+    )
+
+    # 最終レース発走時刻を初回取得
+    latest_post_time: int | None = _fetch_today_latest_post_time(today)
+    if latest_post_time:
+        logger.info(
+            f"本日の最終レース発走時刻: "
+            f"{latest_post_time // 100:02d}:{latest_post_time % 100:02d}"
+        )
 
     # 0B12 バックグラウンドフェッチ管理
     _bg_result_buf: list[dict] = []
@@ -896,6 +1001,8 @@ def run_realtime_monitor(nv) -> None:
 
     while True:
         try:
+            _heartbeat[0] = time.time()  # ウォッチドッグ用ハートビート更新
+
             # 日付跨ぎ検知: 毎サイクル今日の日付を更新
             current_date = datetime.now().strftime("%Y%m%d")
             if current_date != today:
@@ -903,6 +1010,24 @@ def run_realtime_monitor(nv) -> None:
                 today = current_date
                 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
                 seen_results = set()
+                latest_post_time = _fetch_today_latest_post_time(today)
+
+            # 自動停止チェック（最終レース+バッファ or ハードストップ）
+            if _should_stop_realtime(latest_post_time):
+                logger.info(
+                    "realtimeモードを終了します。次回は朝のタスクスケジューラで自動起動します。"
+                )
+                break
+
+            # 最終レース発走時刻を1時間ごとに更新（出走情報が更新される場合に対応）
+            if cycle > 0 and cycle % (INCREMENTAL_EVERY * 12) == 0:
+                new_latest = _fetch_today_latest_post_time(today)
+                if new_latest and new_latest != latest_post_time:
+                    logger.info(
+                        f"最終レース発走時刻を更新: "
+                        f"{latest_post_time} → {new_latest}"
+                    )
+                    latest_post_time = new_latest
 
             # 本日のレースキーを取得
             race_keys = _fetch_today_race_keys(today)
@@ -971,12 +1096,14 @@ def run_realtime_monitor(nv) -> None:
 
             cycle += 1
             time.sleep(30)
+            _heartbeat[0] = time.time()  # sleep 完了後もリセット
 
         except KeyboardInterrupt:
             logger.info("Realtime monitor stopped by user")
             break
         except Exception as e:
             logger.error(f"Realtime monitor error: {e}")
+            _heartbeat[0] = time.time()  # 例外処理中もリセット
             time.sleep(10)
 
 
