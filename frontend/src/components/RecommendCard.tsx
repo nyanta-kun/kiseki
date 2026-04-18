@@ -193,20 +193,16 @@ export function RecommendCard({ rec }: Props) {
                 : "bg-gray-50 border border-gray-200"
             )}
           >
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 flex-wrap">
               <span
                 className={cn(
-                  "text-xs font-bold px-2 py-0.5 rounded-full",
+                  "text-xs font-bold px-2 py-0.5 rounded-full shrink-0",
                   resultCorrect ? "bg-emerald-500 text-white" : "bg-gray-400 text-white"
                 )}
               >
                 {resultCorrect ? "的中" : "不的中"}
               </span>
-              <span className="text-[11px] font-bold text-gray-400">レース結果</span>
-            </div>
-
-            {/* 推奨馬の着順一覧 */}
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              <span className="text-[11px] font-bold text-gray-400 shrink-0">レース結果</span>
               {target_horses.map((h) => (
                 <span key={h.horse_number} className={cn("text-xs px-1.5 py-0.5 rounded font-bold", posColor(h.finish_position))}>
                   {fmtPos(h.finish_position)}

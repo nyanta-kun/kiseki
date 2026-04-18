@@ -200,6 +200,26 @@ prlctl exec "Windows 11" --current-user powershell -Command "shutdown /r /t 0"
 until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 'ready'" 2>/dev/null | grep -q ready; do sleep 5; done
 ```
 
+### Windows Terminal ウィンドウが繰り返し表示される問題（解決済み）
+
+**症状**: `prlctl exec "Windows 11" --current-user` 実行後、Windows 11 で PowerShell ウィンドウが数秒おきに繰り返し表示される。
+
+**根本原因**:
+1. Windows 11 のデフォルトターミナルが Windows Terminal に変更されており、`--current-user` で起動したコンソールプロセスが全て Windows Terminal 経由でウィンドウを生成する
+2. `prlctl exec` がハングすると Parallels Tools Service（PID 3736 の `prl_tools_service.exe`）が約7秒おきにリトライし、毎回新しいウィンドウが出現する
+
+**恒久対策（実施済み）**: `set_conhost.py` でデフォルトターミナルを ConHost に変更
+```bash
+prlctl exec "Windows 11" --current-user powershell -Command "C:\Python312-32\python.exe C:\kiseki\windows-agent\set_conhost.py"
+```
+`HKCU\Console\%Startup\DelegateFocusToConsoleHost=1` を設定。以後 `prlctl exec --current-user` でウィンドウが出なくなる。
+
+**ハングプロセスの確認と kill**:
+```bash
+ps aux | grep "prlctl exec" | grep -v grep
+pkill -9 -f "prlctl exec"
+```
+
 ### Windows agent 設定ファイル
 - **`.env` の場所**: `C:\kiseki\.env`（`jvlink_agent.py` は `Path(__file__).parent.parent / ".env"` を読む）
 - `C:\kiseki\windows-agent\.env` は読まれない（混同注意）
