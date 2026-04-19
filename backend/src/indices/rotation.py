@@ -166,7 +166,8 @@ class RotationIndexCalculator(IndexCalculator):
             return DEFAULT_SCORE
 
         rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
-        return self._compute_rotation_index(rows, race.date)
+        result = self._compute_rotation_index(rows, race.date)
+        return result if result is not None else DEFAULT_SCORE
 
     async def calculate_batch(
         self,

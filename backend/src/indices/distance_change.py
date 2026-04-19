@@ -105,7 +105,8 @@ class DistanceChangeIndexCalculator(IndexCalculator):
             return DEFAULT_SCORE
 
         batch = await self._compute_batch([horse_id], race)
-        return batch.get(horse_id, DEFAULT_SCORE)
+        v = batch.get(horse_id)
+        return v if v is not None else DEFAULT_SCORE
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の距離変更適性指数を一括算出する。

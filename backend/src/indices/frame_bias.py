@@ -120,7 +120,8 @@ class FrameBiasCalculator(IndexCalculator):
             )
             return SPEED_INDEX_MEAN
 
-        return await self._compute_frame_bias(race, int(entry.frame_number))
+        result = await self._compute_frame_bias(race, int(entry.frame_number))
+        return result if result is not None else SPEED_INDEX_MEAN
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の枠順バイアス指数を一括算出する。

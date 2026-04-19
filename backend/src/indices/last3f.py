@@ -88,7 +88,8 @@ class Last3FIndexCalculator(IndexCalculator):
         race_ids = {r.race_id for r, _, _ in past_rows if r.last_3f is not None}
         field_stats = await self._get_field_stats_batch(race_ids)
         scores = self._compute_scores(past_rows, field_stats)
-        return self._weighted_average(scores)
+        result = self._weighted_average(scores)
+        return result if result is not None else SPEED_INDEX_MEAN
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の上がり3ハロン指数を一括算出する。

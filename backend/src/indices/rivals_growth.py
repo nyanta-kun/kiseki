@@ -144,7 +144,8 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
         if not race:
             return DEFAULT_SCORE
         batch = await self._compute_batch([horse_id], race.date)
-        return batch.get(horse_id, DEFAULT_SCORE)
+        v = batch.get(horse_id)
+        return v if v is not None else DEFAULT_SCORE
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の上昇相手指数を一括算出する。

@@ -129,9 +129,10 @@ class AnagusaIndexCalculator(IndexCalculator):
             穴ぐさ指数（0〜100）
         """
         batch = await self.calculate_batch(race_id)
-        return batch.get(horse_id, DEFAULT_SCORE)
+        v = batch.get(horse_id, DEFAULT_SCORE)
+        return v if v is not None else DEFAULT_SCORE
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の穴ぐさ指数を一括算出する。
 
         Args:
@@ -159,7 +160,7 @@ class AnagusaIndexCalculator(IndexCalculator):
         surface_dist_adj = self._surface_dist_adj(race.surface, race.distance)
         head_adj = self._head_adj(race.head_count)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             rank: str | None = picks.get(entry.horse_number)
             base = RANK_BASE_SCORES.get(rank, DEFAULT_SCORE) if rank else DEFAULT_SCORE

@@ -155,7 +155,8 @@ class TrainingIndexCalculator(IndexCalculator):
         if not race:
             return NEUTRAL
         rows_map = await self._fetch_past_results([horse_id], race.date, race_id)
-        return await self._compute(rows_map.get(horse_id, []), race)
+        result = await self._compute(rows_map.get(horse_id, []), race)
+        return result if result is not None else NEUTRAL
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の調教指数を一括算出する。"""

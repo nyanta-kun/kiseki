@@ -159,7 +159,8 @@ class CareerPhaseIndexCalculator(IndexCalculator):
 
         past_data = await self._get_past_results(horse_id, race.date, race_id)
         race_month = datetime.strptime(race.date, "%Y%m%d").month
-        return self._compute_score(past_data, horse_age, race_month, race.prize_1st)
+        result = self._compute_score(past_data, horse_age, race_month, race.prize_1st)
+        return result if result is not None else DEFAULT_SCORE
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の成長曲線指数を一括算出する。

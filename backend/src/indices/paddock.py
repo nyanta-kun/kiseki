@@ -97,9 +97,10 @@ class PaddockIndexCalculator(IndexCalculator):
             パドック指数（0〜100）
         """
         batch = await self.calculate_batch(race_id)
-        return batch.get(horse_id, NEUTRAL_SCORE)
+        v = batch.get(horse_id, NEUTRAL_SCORE)
+        return v if v is not None else NEUTRAL_SCORE
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬のパドック指数を一括算出する。
 
         Args:
@@ -122,7 +123,7 @@ class PaddockIndexCalculator(IndexCalculator):
         # sekito.netkeiba からパドックデータを取得
         paddock_map = await self._fetch_paddock(race)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             p_type, p_rank = paddock_map.get(entry.horse_number, (None, None))
             score = PADDOCK_SCORES.get((p_type, p_rank), NEUTRAL_SCORE) if p_type and p_rank else NEUTRAL_SCORE

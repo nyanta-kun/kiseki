@@ -86,7 +86,8 @@ class SpeedIndexCalculator(IndexCalculator):
 
         rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         scores = self._compute_scores(rows)
-        return self._weighted_average(scores)
+        score = self._weighted_average(scores)
+        return score if score is not None else SPEED_INDEX_MEAN
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬のスピード指数を一括算出する。

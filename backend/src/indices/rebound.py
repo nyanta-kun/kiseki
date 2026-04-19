@@ -185,7 +185,8 @@ class ReboundIndexCalculator(IndexCalculator):
 
         prev_data = await self._get_prev_data_for_horse(horse_id, race.date, race_id)
         chronic = await self._is_chronic_slipstart(horse_id, race.date, race_id)
-        return self._compute_from_prev_data(prev_data, chronic)
+        result = self._compute_from_prev_data(prev_data, chronic)
+        return result if result is not None else DEFAULT_SCORE
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の巻き返し指数を一括算出する。
