@@ -115,7 +115,7 @@ class JockeyIndexCalculator(IndexCalculator):
         # （calculate_batch での正規化を推奨）
         return round(max(INDEX_MIN, min(INDEX_MAX, raw)), 1)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の騎手指数を一括算出する。
 
         騎手単位で集計しN+1を回避する。全騎手のスコアを正規化（平均50, σ=10）して返す。
@@ -151,15 +151,15 @@ class JockeyIndexCalculator(IndexCalculator):
         valid_scores = [v for v in jockey_stats.values() if v is not None]
         mean, std = self._compute_normalization_params(valid_scores)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             if entry.jockey_id is None:
-                result[entry.horse_id] = SPEED_INDEX_MEAN
+                result[entry.horse_id] = None
                 continue
 
             raw = jockey_stats.get(entry.jockey_id)
             if raw is None:
-                result[entry.horse_id] = SPEED_INDEX_MEAN
+                result[entry.horse_id] = None
             else:
                 normalized = self._normalize(raw, mean, std)
                 result[entry.horse_id] = round(max(INDEX_MIN, min(INDEX_MAX, normalized)), 1)

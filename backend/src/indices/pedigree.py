@@ -484,7 +484,7 @@ class PedigreeIndexCalculator(IndexCalculator):
 
         return self._compute_score(pedigree, race, weight_carried)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の血統指数を一括算出する。
 
         Args:
@@ -518,11 +518,11 @@ class PedigreeIndexCalculator(IndexCalculator):
             e.horse_id: (float(e.weight_carried) if e.weight_carried else None) for e in entries
         }
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             ped = ped_map.get(entry.horse_id)
             if ped is None:
-                result[entry.horse_id] = SPEED_INDEX_MEAN
+                result[entry.horse_id] = None
             else:
                 result[entry.horse_id] = self._compute_score(
                     ped, race, weight_map.get(entry.horse_id)

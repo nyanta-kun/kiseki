@@ -117,14 +117,41 @@ logger = logging.getLogger(__name__)
 #   ② pace（展開指数）: 前走ハイペース×先行リバウンドボーナス追加
 #      前走が先行（passing_1/head_count ≤ 0.25）× 距離別 first_3f 中央値超速ペース → +6.0pt
 #      バックテスト: 前走ハイペース×先行 ROI +24.5%（全体比）
-COMPOSITE_VERSION = 18
+# v19: コース適性 3改善 (2026-04-19)
+#   ① time_score キャッシュバグ修正: 過去走全コースの基準タイムを事前プリロード
+#   ② SAME_COURSE_MULT=2.0: 同一競馬場過去走 weight×2.0
+#      バックテスト: CA1位率 21.1% → 22.9% (+1.8pp)
+#   ③ SIMILAR_COURSE_MULT=1.5: 類似度≥0.80の競馬場 weight×1.5（福島/小倉/函館/札幌等）
+# v20: コース適性スコア式改訂 (2026-04-19)
+#   着順スコア主体(0.6) → タイム偏差スコア主体(0.7) に変更
+# v21: 全指数「データなし」をレース内平均に置換 (2026-04-19)
+#   各計算機が None を返した馬（データ不足）は固定値50.0でなく、
+#   同レース内で計算できた馬の平均値を使用する（_fill_with_race_mean）。
+#   コース適性スコア式: time×0.9 + pos×0.1（v20の0.7→0.9に強化）
+#   理由: 計算不能馬=50.0固定では、実測値44の馬が「計算不能馬全員」より下位になる不合理が生じる
+COMPOSITE_VERSION = 21
 
-# 未実装指数のデフォルト値
+# 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
 
 # 総合指数クリップ範囲
 INDEX_MIN = 0.0
 INDEX_MAX = 100.0
+
+
+def _fill_with_race_mean(
+    vals: dict[int, float | None],
+    fallback: float = DEFAULT_INDEX,
+) -> dict[int, float]:
+    """None（計算不能）をレース内算出済み馬の平均値で埋める。
+
+    計算できた馬が1頭もいない場合は fallback（デフォルト 50.0）を使用。
+    これにより、計算不能馬は「このレースの平均的な馬」として扱われ、
+    固定50.0による順位の不合理（実測44点の馬が全員に負ける等）を解消する。
+    """
+    calculated = [v for v in vals.values() if v is not None]
+    mean = sum(calculated) / len(calculated) if calculated else fallback
+    return {k: (v if v is not None else mean) for k, v in vals.items()}
 
 
 def _segment_weights(surface: str | None, distance: int | None) -> dict:
@@ -237,12 +264,13 @@ class CompositeIndexCalculator:
         )
 
         # speed を先行算出（rotation の speed_map 依存のため）
-        speed_map = await self._speed.calculate_batch(race_id)
+        # レース内平均で即座にNoneを埋める（rotation が使うため）
+        speed_map = _fill_with_race_mean(await self._speed.calculate_batch(race_id))
 
         # 残り16指数を並列算出（各々独立セッション、per-race 最大4並列）
         _sem = asyncio.Semaphore(4)
 
-        async def _run(calc_cls: type, **kw: object) -> dict[int, float]:
+        async def _run(calc_cls: type, **kw: object) -> dict[int, float | None]:
             async with _sem:
                 async with AsyncSessionLocal() as sess:
                     return await calc_cls(sess).calculate_batch(race_id, **kw)
@@ -274,19 +302,20 @@ class CompositeIndexCalculator:
             "jockey_trainer_combo", "going_pedigree",
         ]
 
-        def _safe(result: object, label: str) -> dict[int, float]:
+        def _safe(result: object, label: str) -> dict[int, float | None]:
             if isinstance(result, Exception):
                 logger.error(f"指数エラー [{label}] race_id={race_id}: {result}")
                 return {}
             return result  # type: ignore[return-value]
 
+        # None（計算不能）をレース内平均で埋める（全指数共通）
         (
             last3f_map, course_map, frame_map, rotation_map,
             jockey_map, pace_map, pedigree_map, training_map,
             anagusa_map, paddock_map, rebound_map, rivals_growth_map,
             career_phase_map, distance_change_map, jockey_trainer_combo_map,
             going_pedigree_map,
-        ) = [_safe(r, lbl) for r, lbl in zip(_parallel, _labels)]
+        ) = [_fill_with_race_mean(_safe(r, lbl)) for r, lbl in zip(_parallel, _labels)]
 
         # セグメント別ウェイト（レース単位で1回だけ計算）
         seg_weights = _segment_weights(race.surface, race.distance)

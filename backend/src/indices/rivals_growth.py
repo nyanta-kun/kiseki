@@ -1,17 +1,20 @@
 """上昇相手指数算出Agent（Rivals Growth Index）
 
-過去レースで負かした相手馬の後続活躍度から、
+過去レースの同一出走馬の後続活躍度から、
 対象馬が出走したレースの競走強度（相手レベル）を推定する指数。
 
 算出ロジック:
   1. 対象馬の直近 N_LOOKBACK_RACES 走を参照（除外・取消を除く）
-  2. 各過去レースで対象馬より着順が下だった馬（負かした相手）を特定
+  2. 各過去レースの全出走馬（自分以外）を対象に後続活躍を評価:
+     - 対象馬が負かした馬（opp_pos > my_pos）: フルボーナス（factor=1.0）
+     - 対象馬に先着した馬（opp_pos <= my_pos）: FIELD_QUALITY_FACTOR=0.5倍ボーナス
+       → 自分が6着でも上位馬が後続で活躍すれば「ハイレベルレース」の証明として評価
   3. 各相手馬について、その過去レース以降 SUBSEQUENT_WINDOW_DAYS 以内の
      最高グレード到達レースを取得（対象レース日より前のデータのみ使用）
   4. グレード上昇幅（uplift = 後の最高グレードランク − 元レースグレードランク）が
      正で、かつ 1〜3 着を達成していればスコアを加算:
-       - 勝利（1着）: uplift × UPLIFT_UNIT × WIN_MULTIPLIER
-       - 2〜3着: uplift × UPLIFT_UNIT × PLACE_MULTIPLIER
+       - 勝利（1着）: uplift × UPLIFT_UNIT × WIN_MULTIPLIER × field_factor
+       - 2〜3着: uplift × UPLIFT_UNIT × PLACE_MULTIPLIER × field_factor
   5. 過去走の新しさに応じた減衰重み（RECENCY_DECAY^i）を乗算して累積
   6. score = 50 + min(MAX_BONUS, cumulative) に変換（中立=50、最大=100）
 
@@ -53,6 +56,9 @@ RECENCY_DECAY = 0.75
 MAX_BONUS = 50.0
 # 中立スコア（データなし・上昇馬なし）
 DEFAULT_SCORE = 50.0
+# 「負かした」ではなく「同一レースで自分に先着した馬」が後続活躍した場合の係数
+# これはレース全体のハイレベル証明として評価（フルボーナスの半額）
+FIELD_QUALITY_FACTOR = 0.5
 
 
 def _grade_rank(
@@ -140,7 +146,7 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
         batch = await self._compute_batch([horse_id], race.date)
         return batch.get(horse_id, DEFAULT_SCORE)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の上昇相手指数を一括算出する。
 
         N+1 を回避するため、全データを単一または少数のクエリで取得する。
@@ -172,7 +178,7 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
 
     async def _compute_batch(
         self, horse_ids: list[int], race_date: str
-    ) -> dict[int, float]:
+    ) -> dict[int, float | None]:
         """複数馬の上昇相手指数を一括算出する。
 
         Args:
@@ -211,7 +217,7 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
                 count_map[hid] += 1
 
         if not past_races_map:
-            return {hid: DEFAULT_SCORE for hid in horse_ids}
+            return {hid: None for hid in horse_ids}
 
         # ----------------------------------------------------------------
         # Step 2: 過去レースの全出走馬成績を一括取得（相手馬特定用）
@@ -238,11 +244,14 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
                 )
 
         # ----------------------------------------------------------------
-        # Step 3: 各馬の「負かした相手」を特定
-        # beaten_per_race[subject_horse_id][past_race_id] = {beaten_horse_id, ...}
+        # Step 3: 各馬の同一レース全出走馬を記録（着順関係を保持）
+        # field_per_race[subject_horse_id][past_race_id][opp_horse_id] = opp_pos
+        # 「負かした相手」(opp_pos > my_pos)はフルボーナス
+        # 「先着した相手」(opp_pos <= my_pos)はFIELD_QUALITY_FACTOR倍のボーナス
+        #   → 同一レースのハイレベル証明（6着でも上位馬が後続で勝てば評価UP）
         # ----------------------------------------------------------------
-        beaten_per_race: dict[int, dict[int, set[int]]] = defaultdict(
-            lambda: defaultdict(set)
+        field_per_race: dict[int, dict[int, dict[int, int]]] = defaultdict(
+            lambda: defaultdict(dict)
         )
 
         for hid, past_list in past_races_map.items():
@@ -253,19 +262,18 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
                 for opp_horse_id, opp_pos in race_opponents_map.get(past_race.id, []):
                     if opp_horse_id == hid:
                         continue
-                    if opp_pos > my_pos:
-                        beaten_per_race[hid][past_race.id].add(opp_horse_id)
+                    field_per_race[hid][past_race.id][opp_horse_id] = opp_pos
 
-        all_beaten_ids = list(
+        all_field_ids = list(
             {
-                bid
-                for per_race in beaten_per_race.values()
-                for beaten_set in per_race.values()
-                for bid in beaten_set
+                opp_id
+                for per_race in field_per_race.values()
+                for opp_map in per_race.values()
+                for opp_id in opp_map
             }
         )
-        if not all_beaten_ids:
-            return {hid: DEFAULT_SCORE for hid in horse_ids}
+        if not all_field_ids:
+            return {hid: None for hid in horse_ids}
 
         # ----------------------------------------------------------------
         # Step 4: 相手馬の後続成績を一括取得
@@ -280,7 +288,7 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
             select(RaceResult, Race)
             .join(Race, RaceResult.race_id == Race.id)
             .where(
-                RaceResult.horse_id.in_(all_beaten_ids),
+                RaceResult.horse_id.in_(all_field_ids),
                 Race.date > min_original_date,
                 Race.date < race_date,
                 RaceResult.abnormality_code == 0,
@@ -300,11 +308,11 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
         # ----------------------------------------------------------------
         # Step 5: スコア算出
         # ----------------------------------------------------------------
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for hid in horse_ids:
             horse_past_list: list[tuple[RaceResult, Race]] = past_races_map.get(hid, [])
             if not horse_past_list:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             cumulative = 0.0
@@ -323,14 +331,19 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
                     + timedelta(days=SUBSEQUENT_WINDOW_DAYS)
                 ).strftime("%Y%m%d")
 
-                for beaten_hid in beaten_per_race[hid].get(past_race.id, set()):
+                my_pos = past_result.finish_position
+                for opp_hid, opp_pos in field_per_race[hid].get(past_race.id, {}).items():
                     best_contribution = 0.0
+                    # 着順関係による重み: 負かした馬=1.0、先着した馬=FIELD_QUALITY_FACTOR
+                    if my_pos is not None and opp_pos > my_pos:
+                        field_factor = 1.0
+                    else:
+                        field_factor = FIELD_QUALITY_FACTOR
 
-                    for subseq_result, subseq_race in subseq_map.get(beaten_hid, []):
+                    for subseq_result, subseq_race in subseq_map.get(opp_hid, []):
                         if subseq_race.date <= past_race.date:
                             continue
                         if subseq_race.date > window_end:
-                            # date asc でソート済みのため早期終了
                             break
 
                         subseq_rank = _grade_rank(
@@ -350,7 +363,7 @@ class RivalsGrowthIndexCalculator(IndexCalculator):
                         else:
                             continue
 
-                        contribution = uplift * UPLIFT_UNIT * multiplier
+                        contribution = uplift * UPLIFT_UNIT * multiplier * field_factor
                         if contribution > best_contribution:
                             best_contribution = contribution
 

@@ -187,7 +187,7 @@ class ReboundIndexCalculator(IndexCalculator):
         chronic = await self._is_chronic_slipstart(horse_id, race.date, race_id)
         return self._compute_from_prev_data(prev_data, chronic)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の巻き返し指数を一括算出する。
 
         N+1 を回避するため、全馬のデータを単一または少数のクエリで取得する。
@@ -216,7 +216,7 @@ class ReboundIndexCalculator(IndexCalculator):
         prev_data_map = await self._get_prev_data_batch(horse_ids, race.date, race_id)
         chronic_map = await self._get_chronic_slipstart_batch(horse_ids, race.date, race_id)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             hid = entry.horse_id
             prev_data = prev_data_map.get(hid)
@@ -506,7 +506,7 @@ class ReboundIndexCalculator(IndexCalculator):
 
     def _compute_from_prev_data(
         self, prev_data: dict[str, Any] | None, is_chronic_slipstart: bool
-    ) -> float:
+    ) -> float | None:
         """前走データからスコアを算出する。
 
         Args:
@@ -514,10 +514,10 @@ class ReboundIndexCalculator(IndexCalculator):
             is_chronic_slipstart: 常習出遅れフラグ
 
         Returns:
-            巻き返し指数スコア（0-100）
+            巻き返し指数スコア（0-100）。前走データなし時は None。
         """
         if prev_data is None:
-            return DEFAULT_SCORE
+            return None
 
         return _compute_score(
             remarks=prev_data.get("remarks"),

@@ -90,7 +90,7 @@ class Last3FIndexCalculator(IndexCalculator):
         scores = self._compute_scores(past_rows, field_stats)
         return self._weighted_average(scores)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の上がり3ハロン指数を一括算出する。
 
         Args:
@@ -124,7 +124,7 @@ class Last3FIndexCalculator(IndexCalculator):
 
         field_stats = await self._get_field_stats_batch(past_race_ids)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             rows = rows_map.get(entry.horse_id, [])
             scores = self._compute_scores(rows, field_stats)
@@ -270,17 +270,17 @@ class Last3FIndexCalculator(IndexCalculator):
 
         return scores
 
-    def _weighted_average(self, scores: list[float]) -> float:
+    def _weighted_average(self, scores: list[float]) -> float | None:
         """直近レースほど高重みの加重平均を計算する。
 
         Args:
             scores: 直近 → 古い順のスコアリスト
 
         Returns:
-            加重平均スコア。スコアが MIN_RACES 未満なら SPEED_INDEX_MEAN。
+            加重平均スコア。スコアが MIN_RACES 未満なら None。
         """
         if len(scores) < MIN_RACES:
-            return SPEED_INDEX_MEAN
+            return None
 
         weights = [WEIGHT_DECAY**i for i in range(len(scores))]
         total_weight = sum(weights)

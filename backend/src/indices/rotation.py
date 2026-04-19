@@ -172,7 +172,7 @@ class RotationIndexCalculator(IndexCalculator):
         self,
         race_id: int,
         speed_map: dict[int, float] | None = None,
-    ) -> dict[int, float]:
+    ) -> dict[int, float | None]:
         """レース全馬のローテーション指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
@@ -199,7 +199,7 @@ class RotationIndexCalculator(IndexCalculator):
         horse_ids = [e.horse_id for e in entries]
         rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             rows = rows_map.get(entry.horse_id, [])
             # 前走馬のスピード指数を speed_map から取得（前走の horse_id は同じ）
@@ -286,7 +286,7 @@ class RotationIndexCalculator(IndexCalculator):
         rows: list[Any],
         target_date: str,
         speed_score: float | None = None,
-    ) -> float:
+    ) -> float | None:
         """過去レース結果リストからローテーション指数を算出する。
 
         Args:
@@ -295,10 +295,10 @@ class RotationIndexCalculator(IndexCalculator):
             speed_score: 事前計算済みのスピード指数（タイム偏差ボーナス算出用）
 
         Returns:
-            ローテーション指数（0-100）。前走データなし（初出走）は DEFAULT_SCORE。
+            ローテーション指数（0-100）。前走データなし（初出走）は None。
         """
         if not rows:
-            return DEFAULT_SCORE
+            return None
 
         # 直近1戦（前走）のデータ
         prev_row = rows[0]
@@ -312,7 +312,7 @@ class RotationIndexCalculator(IndexCalculator):
             days = (target_dt - prev_dt).days
         except (ValueError, AttributeError) as e:
             logger.warning(f"日付解析エラー: target={target_date}, prev={prev_race.date}: {e}")
-            return DEFAULT_SCORE
+            return None
 
         interval = _interval_score(days)
 

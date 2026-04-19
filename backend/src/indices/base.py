@@ -17,10 +17,14 @@ class IndexCalculator(ABC):
         ...
 
     @abstractmethod
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
-        """レース全馬の指数を一括算出する。{horse_id: index_value}"""
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
+        """レース全馬の指数を一括算出する。{horse_id: index_value}
+
+        データ不足・計算不能な馬は None を返す。
+        composite.py 側でレース内平均値に置換される。
+        """
         ...
 
-    async def recalculate(self, race_id: int, version: int) -> dict[int, float]:
+    async def recalculate(self, race_id: int, version: int) -> dict[int, float | None]:
         """再算出（デフォルトはcalculate_batchと同じ）。必要に応じてオーバーライド。"""
         return await self.calculate_batch(race_id)

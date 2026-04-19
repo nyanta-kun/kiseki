@@ -83,7 +83,7 @@ class JockeyTrainerComboIndexCalculator(IndexCalculator):
         batch = await self._compute_batch([horse_id], race)
         return batch.get(horse_id, DEFAULT_SCORE)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の騎手×厩舎コンビ指数を一括算出する。
 
         N+1 を回避するため、全馬のデータを少数のクエリで取得する。
@@ -117,7 +117,7 @@ class JockeyTrainerComboIndexCalculator(IndexCalculator):
         self,
         horse_ids: list[int],
         current_race: Race,
-    ) -> dict[int, float]:
+    ) -> dict[int, float | None]:
         """複数馬の騎手×厩舎コンビ指数を一括算出する。
 
         Args:
@@ -163,7 +163,7 @@ class JockeyTrainerComboIndexCalculator(IndexCalculator):
                 unique_jockey_ids.add(jid)
 
         if not unique_combos:
-            return {hid: DEFAULT_SCORE for hid in horse_ids}
+            return {hid: None for hid in horse_ids}
 
         # ----------------------------------------------------------------
         # Step 3: 各コンビの過去統計を取得
@@ -232,23 +232,23 @@ class JockeyTrainerComboIndexCalculator(IndexCalculator):
         # ----------------------------------------------------------------
         # Step 5: スコア算出
         # ----------------------------------------------------------------
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for hid in horse_ids:
             combo = horse_combo.get(hid)
             if combo is None:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             jid, tid = combo
             if jid is None or tid is None:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             c_wins, c_total = combo_stats.get((jid, tid), (0, 0))
             j_wins, j_total = jockey_stats.get(jid, (0, 0))
 
             if c_total < MIN_COMBO_RACES:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             combo_win_rate = c_wins / c_total

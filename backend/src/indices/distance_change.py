@@ -107,7 +107,7 @@ class DistanceChangeIndexCalculator(IndexCalculator):
         batch = await self._compute_batch([horse_id], race)
         return batch.get(horse_id, DEFAULT_SCORE)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の距離変更適性指数を一括算出する。
 
         N+1 を回避するため、全馬のデータを単一または少数のクエリで取得する。
@@ -141,7 +141,7 @@ class DistanceChangeIndexCalculator(IndexCalculator):
         self,
         horse_ids: list[int],
         current_race: Race,
-    ) -> dict[int, float]:
+    ) -> dict[int, float | None]:
         """複数馬の距離変更適性指数を一括算出する。
 
         Args:
@@ -195,21 +195,21 @@ class DistanceChangeIndexCalculator(IndexCalculator):
         # ----------------------------------------------------------------
         # Step 2: 各馬のスコアを算出
         # ----------------------------------------------------------------
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for hid in horse_ids:
             past = horse_races.get(hid, [])
 
             if not past:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             # 現在レースと直前レースの距離変更を判定
             prev_race_dist = past[0][1]  # 最新（直前）の距離
             current_pattern = _classify_change(curr_dist, prev_race_dist)
 
-            # 同距離は中立
+            # 同距離はデータなし扱い
             if current_pattern == _PATTERN_SAME:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             # ----------------------------------------------------------------
@@ -244,7 +244,7 @@ class DistanceChangeIndexCalculator(IndexCalculator):
                         pattern_wins += 1
 
             if pattern_total < MIN_PATTERN_RACES:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             overall_win_rate = total_wins / max(total_valid, 1)

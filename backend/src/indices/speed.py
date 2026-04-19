@@ -88,7 +88,7 @@ class SpeedIndexCalculator(IndexCalculator):
         scores = self._compute_scores(rows)
         return self._weighted_average(scores)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬のスピード指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
@@ -120,7 +120,7 @@ class SpeedIndexCalculator(IndexCalculator):
         # 全馬の過去結果を並行（単一クエリ）で取得
         rows_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             rows = rows_map.get(entry.horse_id, [])
             scores = self._compute_scores(rows)
@@ -396,7 +396,7 @@ class SpeedIndexCalculator(IndexCalculator):
                 await self._get_standard_time(c_course, c_distance or 0, c_surface or "", c_condition)
 
     @staticmethod
-    def _weighted_average(scores: list[float]) -> float:
+    def _weighted_average(scores: list[float]) -> float | None:
         """直近レース優先の加重平均を計算する。
 
         scores[0] が最新レース、scores[-1] が最古レース。
@@ -406,10 +406,10 @@ class SpeedIndexCalculator(IndexCalculator):
             scores: スピードスコアのリスト（最新順）
 
         Returns:
-            加重平均スピード指数。空の場合は SPEED_INDEX_MEAN。
+            加重平均スピード指数。空の場合は None。
         """
         if not scores:
-            return SPEED_INDEX_MEAN
+            return None
 
         weights = [WEIGHT_DECAY**i for i in range(len(scores))]
         total_w = sum(weights)

@@ -89,7 +89,7 @@ class GoingPedigreeIndexCalculator(IndexCalculator):
         batch = await self._compute_batch([horse_id], race)
         return batch.get(horse_id, DEFAULT_SCORE)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の重馬場×血統指数を一括算出する。
 
         N+1 を回避するため、全馬のデータを単一または少数のクエリで取得する。
@@ -112,9 +112,9 @@ class GoingPedigreeIndexCalculator(IndexCalculator):
         if not entries:
             return {}
 
-        # 良/稍馬場は全馬中立
+        # 良/稍馬場は全馬データなし扱い
         if race.condition not in HEAVY_CONDITIONS:
-            return {e.horse_id: DEFAULT_SCORE for e in entries}
+            return {e.horse_id: None for e in entries}
 
         horse_ids = [e.horse_id for e in entries]
         return await self._compute_batch(horse_ids, race)
@@ -127,7 +127,7 @@ class GoingPedigreeIndexCalculator(IndexCalculator):
         self,
         horse_ids: list[int],
         current_race: Race,
-    ) -> dict[int, float]:
+    ) -> dict[int, float | None]:
         """複数馬の重馬場×血統指数を一括算出する（重/不馬場のみ呼び出し）。
 
         Args:
@@ -162,7 +162,7 @@ class GoingPedigreeIndexCalculator(IndexCalculator):
         }
 
         if not unique_sires:
-            return {hid: DEFAULT_SCORE for hid in horse_ids}
+            return {hid: None for hid in horse_ids}
 
         # ----------------------------------------------------------------
         # Step 2: 父馬ごとに産駒の成績を一括取得
@@ -207,22 +207,22 @@ class GoingPedigreeIndexCalculator(IndexCalculator):
         # ----------------------------------------------------------------
         # Step 3: スコア算出
         # ----------------------------------------------------------------
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for hid in horse_ids:
             sire_or_none = sire_map.get(hid)
             if sire_or_none is None:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             horse_sire: str = sire_or_none
             stats = sire_stats.get(horse_sire)
             if stats is None:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             heavy_wins, heavy_total, all_wins, all_total = stats
             if heavy_total < MIN_HEAVY_RACES:
-                result[hid] = DEFAULT_SCORE
+                result[hid] = None
                 continue
 
             heavy_win_rate = heavy_wins / heavy_total

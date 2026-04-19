@@ -161,7 +161,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         race_month = datetime.strptime(race.date, "%Y%m%d").month
         return self._compute_score(past_data, horse_age, race_month, race.prize_1st)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の成長曲線指数を一括算出する。
 
         N+1 を回避するため、全馬のデータを単一または少数のクエリで取得する。
@@ -192,7 +192,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         past_map = await self._get_past_results_batch(horse_ids, race.date, race_id)
 
         race_month = datetime.strptime(race.date, "%Y%m%d").month
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             hid = entry.horse_id
             past_data = past_map.get(hid, [])
@@ -296,7 +296,7 @@ class CareerPhaseIndexCalculator(IndexCalculator):
         horse_age: int | None,
         race_month: int,
         current_prize_1st: int | None = None,
-    ) -> float:
+    ) -> float | None:
         """着順データと馬齢から成長曲線スコアを算出する。
 
         Args:
@@ -306,10 +306,10 @@ class CareerPhaseIndexCalculator(IndexCalculator):
             current_prize_1st: 今走の1着賞金（百円単位）。クラス判定に使用。
 
         Returns:
-            成長曲線指数（0-100, 中立=50）
+            成長曲線指数（0-100, 中立=50）。データ不足時は None。
         """
         if len(past_data) < 2:
-            return DEFAULT_SCORE
+            return None
 
         # 正規化着順を算出（1.0=1着、0.0=最下位）
         winning_ranks: list[float] = []

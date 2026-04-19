@@ -122,7 +122,7 @@ class FrameBiasCalculator(IndexCalculator):
 
         return await self._compute_frame_bias(race, int(entry.frame_number))
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の枠順バイアス指数を一括算出する。
 
         枠番統計は1回だけ取得してキャッシュを活用する（N+1回避）。
@@ -144,10 +144,10 @@ class FrameBiasCalculator(IndexCalculator):
         if not entries:
             return {}
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             if entry.frame_number is None:
-                result[entry.horse_id] = SPEED_INDEX_MEAN
+                result[entry.horse_id] = None
             else:
                 result[entry.horse_id] = await self._compute_frame_bias(race, int(entry.frame_number))
 
@@ -157,7 +157,7 @@ class FrameBiasCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    async def _compute_frame_bias(self, race: Race, frame_number: int) -> float:
+    async def _compute_frame_bias(self, race: Race, frame_number: int) -> float | None:
         """指定枠番の枠順バイアス指数を算出する。
 
         Args:
@@ -165,7 +165,7 @@ class FrameBiasCalculator(IndexCalculator):
             frame_number: 枠番（1-8）
 
         Returns:
-            枠順バイアス指数（0-100, 平均50）。データ不足時は SPEED_INDEX_MEAN。
+            枠順バイアス指数（0-100, 平均50）。データ不足時は None。
         """
         course = race.course
         distance = race.distance or 0
@@ -173,18 +173,18 @@ class FrameBiasCalculator(IndexCalculator):
 
         stats = await self._get_frame_stats(course, distance, surface)
         if not stats:
-            return SPEED_INDEX_MEAN
+            return None
 
         frame_stat = stats.get(frame_number)
         if frame_stat is None or frame_stat["cnt"] < MIN_SAMPLE:
-            return SPEED_INDEX_MEAN
+            return None
 
         # 全枠の平均着順スコア・勝率を算出（基準値）
         all_scores = [s["avg_pos_score"] for s in stats.values() if s["cnt"] >= MIN_SAMPLE]
         all_win_rates = [s["win_rate"] for s in stats.values() if s["cnt"] >= MIN_SAMPLE]
 
         if not all_scores:
-            return SPEED_INDEX_MEAN
+            return None
 
         global_avg_score = sum(all_scores) / len(all_scores)
         global_avg_win = sum(all_win_rates) / len(all_win_rates) if all_win_rates else 0.0
@@ -201,8 +201,8 @@ class FrameBiasCalculator(IndexCalculator):
             score_std = 1.0  # フォールバック
 
         if score_std < 0.1:
-            # 枠間の差がほぼない場合は全枠 50
-            return SPEED_INDEX_MEAN
+            # 枠間の差がほぼない場合はデータ不足とみなす
+            return None
 
         # 着順スコアと勝率を合成（着順スコア 70% + 勝率 30%）
         if global_avg_win > 0:

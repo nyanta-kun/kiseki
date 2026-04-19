@@ -176,7 +176,7 @@ class PaceIndexCalculator(IndexCalculator):
 
         return round(max(INDEX_MIN, min(INDEX_MAX, score)), 1)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の展開指数を一括算出する。
 
         N+1 を回避するため、全馬の過去レース結果を単一クエリで取得する。
@@ -221,7 +221,7 @@ class PaceIndexCalculator(IndexCalculator):
         await self._ensure_first3f_medians()
 
         # Step6: 各馬のスコア算出
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for hid in horse_ids:
             runner_type = runner_types[hid]
             base_score = PACE_SCORE_TABLE[runner_type][pace_type]

@@ -157,7 +157,7 @@ class TrainingIndexCalculator(IndexCalculator):
         rows_map = await self._fetch_past_results([horse_id], race.date, race_id)
         return await self._compute(rows_map.get(horse_id, []), race)
 
-    async def calculate_batch(self, race_id: int) -> dict[int, float]:
+    async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の調教指数を一括算出する。"""
         race_result = await self.db.execute(select(Race).where(Race.id == race_id))
         race = race_result.scalar_one_or_none()
@@ -171,7 +171,7 @@ class TrainingIndexCalculator(IndexCalculator):
         horse_ids = [e.horse_id for e in entries]
         rows_map = await self._fetch_past_results(horse_ids, race.date, race_id)
 
-        result: dict[int, float] = {}
+        result: dict[int, float | None] = {}
         for entry in entries:
             result[entry.horse_id] = await self._compute(rows_map.get(entry.horse_id, []), race)
         return result
@@ -211,7 +211,7 @@ class TrainingIndexCalculator(IndexCalculator):
 
         return dict(result_map)
 
-    async def _compute(self, rows: list[Any], race: Race) -> float:
+    async def _compute(self, rows: list[Any], race: Race) -> float | None:
         """3軸スコアを合成して調教指数を返す。
 
         Args:
@@ -219,10 +219,10 @@ class TrainingIndexCalculator(IndexCalculator):
             race: 対象レース（基準タイム取得に使用）
 
         Returns:
-            調教指数（0-100）
+            調教指数（0-100）。過去レースデータなし時は None。
         """
         if not rows:
-            return NEUTRAL
+            return None
 
         time_score = await self._time_trend_score(rows, race)
         last3f_score = self._last3f_trend_score(rows[:LAST3F_LOOKBACK])
