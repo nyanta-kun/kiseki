@@ -1,11 +1,20 @@
 "use client";
 
 import { useCallback, useState, useSyncExternalStore } from "react";
-import { ChihouHorseIndex, ChihouRaceRanks, OddsData, RaceResult, buildChihouResultsWsUrl } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import {
+  ChihouHorseIndex,
+  ChihouRaceRanks,
+  OddsData,
+  RaceResult,
+  buildChihouResultsWsUrl,
+  fetchChihouHorseHistory,
+} from "@/lib/api";
+import { cn, indexColor } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
+import { IndexBar } from "@/components/IndexBar";
+import { HorseHistorySection } from "@/components/HorseHistorySection";
 
 type Props = {
   raceId: number;
@@ -18,18 +27,21 @@ type Props = {
 
 type SortKey = "composite" | "speed" | "last3f" | "jockey" | "rotation" | "finish";
 
-/** 枠番 → 馬番のマッピング（n頭立て）
- *  日本中央競馬会方式: extra = n-8 頭分を枠8から逆順に2頭ずつ格納 */
+const CHIHOU_SUB_INDICES: { key: keyof ChihouHorseIndex; label: string }[] = [
+  { key: "speed_index",    label: "速度"   },
+  { key: "last3f_index",   label: "後3F"   },
+  { key: "jockey_index",   label: "騎手"   },
+  { key: "rotation_index", label: "ローテ" },
+];
+
 function horseNumToFrame(horseNum: number, totalHorses: number): number {
   if (totalHorses <= 8) return horseNum;
   const extra = totalHorses - 8;
-  const singleFrames = 8 - extra; // 1頭枠の数
+  const singleFrames = 8 - extra;
   if (horseNum <= singleFrames) return horseNum;
-  const remaining = horseNum - singleFrames;
-  return singleFrames + Math.ceil(remaining / 2);
+  return singleFrames + Math.ceil((horseNum - singleFrames) / 2);
 }
 
-/** 枠番 → 背景・文字色クラス（JRA標準8色）*/
 function frameColorClass(frame: number): string {
   switch (frame) {
     case 1: return "bg-white border border-gray-400 text-gray-800";
@@ -44,29 +56,16 @@ function frameColorClass(frame: number): string {
   }
 }
 
-/** 0–100 の指数値をカラークラスに変換 */
-function indexColorClass(v: number | null): string {
-  if (v === null) return "text-gray-300";
-  if (v >= 65) return "text-green-600 font-semibold";
-  if (v >= 55) return "text-green-500";
-  if (v >= 45) return "text-gray-600";
-  if (v >= 35) return "text-orange-500";
-  return "text-red-500";
-}
-
-/** 指数バー幅（0–100） */
 function barWidth(v: number | null): string {
   if (v === null) return "0%";
   return `${Math.max(0, Math.min(100, v))}%`;
 }
 
-/** 確率を % 文字列に変換 */
 function pct(v: number | null): string {
   if (v === null) return "–";
   return `${Math.round(v * 100)}%`;
 }
 
-/** 走破タイム（秒）→ m:ss.f 形式 */
 function formatTime(sec: number | null): string {
   if (sec === null) return "–";
   const m = Math.floor(sec / 60);
@@ -74,7 +73,6 @@ function formatTime(sec: number | null): string {
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
-/** 単勝オッズのカラークラス */
 function winOddsColorClass(odds: number | null): string {
   if (odds === null) return "text-gray-600";
   if (odds < 10) return "text-red-600 font-semibold";
@@ -82,7 +80,6 @@ function winOddsColorClass(odds: number | null): string {
   return "text-gray-600";
 }
 
-/** 期待値のカラークラス */
 function evColorClass(ev: number | null): string {
   if (ev === null) return "text-gray-400";
   if (ev >= 1.5) return "text-green-600 font-bold";
@@ -91,7 +88,6 @@ function evColorClass(ev: number | null): string {
   return "text-gray-400";
 }
 
-/** 着順バッジのクラス */
 function finishBadgeClass(pos: number | null | undefined): string {
   if (pos == null) return "text-gray-400";
   if (pos === 1) return "bg-yellow-100 text-yellow-800 font-bold px-1 rounded";
@@ -152,7 +148,14 @@ function useIsMounted() {
   );
 }
 
-export function ChihouRaceDetailClient({ raceId, horses, initialResults, initialOdds, ranks, buySignal }: Props) {
+export function ChihouRaceDetailClient({
+  raceId,
+  horses,
+  initialResults,
+  initialOdds,
+  ranks,
+  buySignal,
+}: Props) {
   const mounted = useIsMounted();
   const [resultsMap, setResultsMap] = useState<Map<number, number | null>>(
     () => toResultsMap(initialResults)
@@ -168,8 +171,8 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
   const { isConnected: wsConnected } = useWebSocket(wsUrl, handleWsMessage);
   const totalHorses = horses.length;
 
-  // デフォルトは常に総合（レース確定後も同様）
   const [sortKey, setSortKey] = useState<SortKey>("composite");
+  const [expandedHorse, setExpandedHorse] = useState<number | null>(null);
 
   const sorted = [...horses].sort((a, b) => {
     if (sortKey === "finish" && hasResults) {
@@ -186,20 +189,21 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
     return bv - av;
   });
 
-  // 足切り判定: 総合指数でのランク・差を事前計算
   const maxComposite = Math.max(...horses.map((h) => h.composite_index ?? 0));
   const compositeRankMap = new Map<number, number>(
     [...horses]
       .sort((a, b) => (b.composite_index ?? 0) - (a.composite_index ?? 0))
       .map((h, i) => [h.horse_id, i + 1])
   );
-  /** 指数5位以下かつトップ差15以上、またはトップ差20以上の馬を足切り対象とする */
+
   function isCutOff(horse: ChihouHorseIndex): boolean {
     if (horse.composite_index === null) return false;
     const gap = maxComposite - horse.composite_index;
     const rank = compositeRankMap.get(horse.horse_id) ?? 999;
     return gap >= 20 || (gap >= 15 && rank >= 5);
   }
+
+  const colSpan = hasResults ? 12 : 11;
 
   return (
     <>
@@ -217,7 +221,6 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
           :             { label: "過剰人気", cls: "text-red-500"     };
         return (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
-            {/* 購入指針 */}
             {buySignal !== undefined && (
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-gray-400 whitespace-nowrap">購入指針</span>
@@ -227,11 +230,8 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
                 )}
               </div>
             )}
-
-            {/* 指数信頼度 ＋ EV 横並び */}
             {ranks && (
               <div className="flex items-center gap-3 pt-1.5 border-t border-gray-50 flex-wrap">
-                {/* 信頼度 */}
                 <div className="flex items-center gap-1.5 text-[10px]">
                   <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
                   <RankBadge rank={ranks.confidence_rank} />
@@ -240,10 +240,7 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
                     差{ranks.gap_1_2.toFixed(1)}/{ranks.gap_1_3.toFixed(1)}
                   </span>
                 </div>
-
                 <div className="w-px h-4 bg-gray-200 flex-shrink-0" />
-
-                {/* EV */}
                 <div className="flex items-center gap-1.5 text-[10px]">
                   <span className="text-gray-400 whitespace-nowrap">期待値 EV</span>
                   <RankBadge rank={ranks.recommend_rank} />
@@ -271,219 +268,269 @@ export function ChihouRaceDetailClient({ raceId, horses, initialResults, initial
         );
       })()}
 
-    <section className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-      {/* ヘッダー + ソートボタン */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <h2 className="text-sm font-bold text-gray-700 flex items-center gap-1.5">
-          <span className="w-1 h-4 rounded inline-block bg-green-600" />
-          出馬表 指数一覧
-          <span className="text-xs text-gray-400 font-normal ml-1">{horses.length}頭</span>
-          {mounted && wsUrl && (
-            <span className="ml-1">
-              <WsStatusBadge connected={wsConnected} label="成績更新: 再接続中…" />
+      <section className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        {/* ヘッダー + ソートボタン */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <h2 className="text-sm font-bold text-gray-700 flex items-center gap-1.5">
+            <span className="w-1 h-4 rounded inline-block bg-green-600" />
+            出馬表 指数一覧
+            <span className="text-xs text-gray-400 font-normal ml-1">{horses.length}頭</span>
+            {mounted && wsUrl && (
+              <span className="ml-1">
+                <WsStatusBadge connected={wsConnected} label="成績更新: 再接続中…" />
+              </span>
+            )}
+          </h2>
+          <div className="flex gap-1 ml-auto flex-wrap">
+            <SortButton k="composite" label="総合" sortKey={sortKey} setSortKey={setSortKey} />
+            <SortButton k="speed" label="速度" sortKey={sortKey} setSortKey={setSortKey} />
+            <span className="hidden sm:contents">
+              <SortButton k="last3f" label="後3F" sortKey={sortKey} setSortKey={setSortKey} />
+              <SortButton k="jockey" label="騎手" sortKey={sortKey} setSortKey={setSortKey} />
+              <SortButton k="rotation" label="ローテ" sortKey={sortKey} setSortKey={setSortKey} />
             </span>
-          )}
-        </h2>
-        <div className="flex gap-1 ml-auto flex-wrap">
-          <SortButton k="composite" label="総合" sortKey={sortKey} setSortKey={setSortKey} />
-          <SortButton k="speed" label="速度" sortKey={sortKey} setSortKey={setSortKey} />
-          <span className="hidden sm:contents">
-            <SortButton k="last3f" label="後3F" sortKey={sortKey} setSortKey={setSortKey} />
-            <SortButton k="jockey" label="騎手" sortKey={sortKey} setSortKey={setSortKey} />
-            <SortButton k="rotation" label="ローテ" sortKey={sortKey} setSortKey={setSortKey} />
-          </span>
-          {hasResults && <SortButton k="finish" label="着順" sortKey={sortKey} setSortKey={setSortKey} />}
-        </div>
-      </div>
-
-      {/* テーブル */}
-      <div className="overflow-x-auto -mx-1">
-        <table className="w-full text-xs min-w-[320px]">
-          <thead>
-            <tr className="border-b border-gray-100 text-gray-400 text-[10px]">
-              <th className="text-right py-1 pl-2 pr-2 w-8">馬番</th>
-              <th className="text-left py-1 px-1">馬名</th>
-              <th className="text-right py-1 px-1 w-20">総合</th>
-              <th className="text-right py-1 px-1 w-12">速度</th>
-              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">後3F</th>
-              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">騎手</th>
-              <th className="hidden sm:table-cell text-right py-1 px-1 w-12">ローテ</th>
-              <th className="text-right py-1 px-1 w-12">勝率</th>
-              <th className="text-right py-1 px-1 w-12">複率</th>
-              <th className="text-right py-1 px-1 w-14">単オッズ</th>
-              <th className="text-right py-1 pr-2 w-12">期待値</th>
-              {hasResults && <th className="text-right py-1 pr-2 w-10">着順</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((horse) => {
-              const finishPos = horse.horse_number !== null ? resultsMap.get(horse.horse_number) : undefined;
-              const isWin = finishPos === 1;
-              const isPlace = finishPos !== undefined && finishPos !== null && finishPos <= 3;
-              const winOdds = horse.horse_number !== null
-                ? (initialOdds.win[horse.horse_number.toString()] ?? null)
-                : null;
-              const ev = horse.win_probability !== null && winOdds !== null
-                ? horse.win_probability * winOdds
-                : null;
-              const frameNum = horse.horse_number !== null
-                ? horseNumToFrame(horse.horse_number, totalHorses)
-                : 0;
-              const cutOff = isCutOff(horse);
-
-              return (
-                <tr
-                  key={horse.horse_id}
-                  className={cn(
-                    "border-b border-gray-50 transition-colors whitespace-nowrap",
-                    cutOff ? "opacity-40 bg-gray-50" :
-                    isWin ? "bg-yellow-50" :
-                    isPlace ? "bg-orange-50/40" :
-                    "hover:bg-gray-50"
-                  )}
-                >
-                  {/* 馬番（枠番カラーバッジ） */}
-                  <td className="py-1.5 pl-2 pr-2 text-right">
-                    <span className={cn(
-                      "inline-flex items-center justify-center w-6 h-6 rounded text-[11px] font-bold tabular-nums",
-                      frameColorClass(frameNum)
-                    )}>
-                      {horse.horse_number ?? "–"}
-                    </span>
-                  </td>
-
-                  {/* 馬名 + 外部コンセンサスバッジ */}
-                  <td className="py-2 px-1 whitespace-normal">
-                    <div className="flex items-center gap-1">
-                      <span className="text-gray-800 font-medium truncate block max-w-[140px]">
-                        {horse.horse_name}
-                      </span>
-                      {horse.external_consensus === 2 && (
-                        <span className="text-[9px] bg-purple-100 text-purple-700 border border-purple-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
-                          外部◎
-                        </span>
-                      )}
-                      {horse.external_consensus === 1 && (
-                        <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-200 px-1 py-0.5 rounded whitespace-nowrap">
-                          外部○
-                        </span>
-                      )}
-                    </div>
-                  </td>
-
-                  {/* 総合指数 + バー */}
-                  <td className="py-2 px-1">
-                    <div className="flex items-center gap-1 justify-end">
-                      <span className={indexColorClass(horse.composite_index)}>
-                        {horse.composite_index.toFixed(1)}
-                      </span>
-                      <div className="w-12 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-green-500 rounded-full"
-                          style={{ width: barWidth(horse.composite_index) }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* 速度 */}
-                  <td className={`py-2 px-1 text-right ${indexColorClass(horse.speed_index)}`}>
-                    {horse.speed_index !== null ? horse.speed_index.toFixed(1) : "–"}
-                  </td>
-
-                  {/* 後3F */}
-                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.last3f_index)}`}>
-                    {horse.last3f_index !== null ? horse.last3f_index.toFixed(1) : "–"}
-                  </td>
-
-                  {/* 騎手 */}
-                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.jockey_index)}`}>
-                    {horse.jockey_index !== null ? horse.jockey_index.toFixed(1) : "–"}
-                  </td>
-
-                  {/* ローテ */}
-                  <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColorClass(horse.rotation_index)}`}>
-                    {horse.rotation_index !== null ? horse.rotation_index.toFixed(1) : "–"}
-                  </td>
-
-                  {/* 勝率 */}
-                  <td className="py-2 px-1 text-right text-gray-600">
-                    {pct(horse.win_probability)}
-                  </td>
-
-                  {/* 複勝率 */}
-                  <td className="py-2 px-1 text-right text-gray-600">
-                    {pct(horse.place_probability)}
-                  </td>
-
-                  {/* 単勝オッズ */}
-                  <td className={`py-2 px-1 text-right ${winOddsColorClass(winOdds)}`}>
-                    {winOdds !== null ? `${winOdds.toFixed(1)}倍` : "–"}
-                  </td>
-
-                  {/* 期待値 */}
-                  <td className={`py-2 pr-2 text-right ${evColorClass(ev)}`}>
-                    {ev !== null ? ev.toFixed(2) : "–"}
-                  </td>
-
-                  {/* 着順バッジ */}
-                  {hasResults && (
-                    <td className="py-2 pr-2 text-right">
-                      {finishPos != null ? (
-                        <span className={finishBadgeClass(finishPos)}>
-                          {finishPos}着
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">–</span>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* 確定着順サマリ（成績あり時） */}
-      {hasResults && (
-        <div className="mt-4 pt-3 border-t border-gray-100">
-          <h3 className="text-xs font-semibold text-gray-500 mb-2">確定着順</h3>
-          <div className="space-y-1">
-            {initialResults
-              .filter((r) => r.finish_position !== null)
-              .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99))
-              .slice(0, 5)
-              .map((r) => (
-                <div key={r.horse_name} className="flex items-center gap-2 text-xs">
-                  <span className={cn(
-                    "min-w-[2.5rem] text-center text-[11px] py-0.5 rounded font-bold",
-                    r.finish_position === 1 ? "bg-yellow-100 text-yellow-800" :
-                    r.finish_position === 2 ? "bg-gray-100 text-gray-700" :
-                    r.finish_position === 3 ? "bg-orange-100 text-orange-700" :
-                    "text-gray-500"
-                  )}>
-                    {r.finish_position}着
-                  </span>
-                  <span className="font-medium text-gray-800">{r.horse_name}</span>
-                  {r.finish_time !== null && (
-                    <span className="text-gray-400 tabular-nums">{formatTime(r.finish_time)}</span>
-                  )}
-                  {r.last_3f !== null && (
-                    <span className="text-gray-400 tabular-nums">後3F {r.last_3f.toFixed(1)}</span>
-                  )}
-                </div>
-              ))}
+            {hasResults && (
+              <SortButton k="finish" label="着順" sortKey={sortKey} setSortKey={setSortKey} />
+            )}
           </div>
         </div>
-      )}
 
-      {/* 凡例 */}
-      <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2 space-y-0.5">
-        <p><span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）</p>
-        <p><span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）</p>
-      </div>
-    </section>
+        {/* テーブル */}
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-xs min-w-[320px]">
+            <thead>
+              <tr className="border-b border-gray-100 text-gray-400 text-[10px]">
+                <th className="text-right py-1 pl-2 pr-2 w-8">馬番</th>
+                <th className="text-left py-1 px-1">馬名</th>
+                <th className="text-right py-1 px-1 w-20">総合</th>
+                <th className="text-right py-1 px-1 w-12">速度</th>
+                <th className="hidden sm:table-cell text-right py-1 px-1 w-12">後3F</th>
+                <th className="hidden sm:table-cell text-right py-1 px-1 w-12">騎手</th>
+                <th className="hidden sm:table-cell text-right py-1 px-1 w-12">ローテ</th>
+                <th className="text-right py-1 px-1 w-12">勝率</th>
+                <th className="text-right py-1 px-1 w-12">複率</th>
+                <th className="text-right py-1 px-1 w-14">単オッズ</th>
+                <th className="text-right py-1 pr-2 w-12">期待値</th>
+                {hasResults && <th className="text-right py-1 pr-2 w-10">着順</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.flatMap((horse) => {
+                const finishPos = horse.horse_number !== null
+                  ? resultsMap.get(horse.horse_number)
+                  : undefined;
+                const isWin = finishPos === 1;
+                const isPlace = finishPos !== undefined && finishPos !== null && finishPos <= 3;
+                const winOdds = horse.horse_number !== null
+                  ? (initialOdds.win[horse.horse_number.toString()] ?? null)
+                  : null;
+                const ev =
+                  horse.win_probability !== null && winOdds !== null
+                    ? horse.win_probability * winOdds
+                    : null;
+                const frameNum = horse.horse_number !== null
+                  ? horseNumToFrame(horse.horse_number, totalHorses)
+                  : 0;
+                const cutOff = isCutOff(horse);
+                const isExpanded = expandedHorse === horse.horse_id;
+
+                const rows = [
+                  <tr
+                    key={horse.horse_id}
+                    onClick={() => setExpandedHorse(isExpanded ? null : horse.horse_id)}
+                    className={cn(
+                      "border-b border-gray-50 transition-colors whitespace-nowrap cursor-pointer",
+                      cutOff ? "opacity-40 bg-gray-50" :
+                      isWin ? "bg-yellow-50" :
+                      isPlace ? "bg-orange-50/40" :
+                      "hover:bg-gray-50"
+                    )}
+                  >
+                    {/* 馬番 */}
+                    <td className="py-1.5 pl-2 pr-2 text-right">
+                      <span className={cn(
+                        "inline-flex items-center justify-center w-6 h-6 rounded text-[11px] font-bold tabular-nums",
+                        frameColorClass(frameNum)
+                      )}>
+                        {horse.horse_number ?? "–"}
+                      </span>
+                    </td>
+
+                    {/* 馬名 + 外部コンセンサスバッジ */}
+                    <td className="py-2 px-1 whitespace-normal">
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-800 font-medium truncate block max-w-[140px]">
+                          {horse.horse_name}
+                        </span>
+                        {horse.external_consensus === 2 && (
+                          <span className="text-[9px] bg-purple-100 text-purple-700 border border-purple-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
+                            外部◎
+                          </span>
+                        )}
+                        {horse.external_consensus === 1 && (
+                          <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-200 px-1 py-0.5 rounded whitespace-nowrap">
+                            外部○
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* 総合 + バー */}
+                    <td className="py-2 px-1">
+                      <div className="flex items-center gap-1 justify-end">
+                        <span className={indexColor(horse.composite_index)}>
+                          {horse.composite_index.toFixed(1)}
+                        </span>
+                        <div className="w-12 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-green-500 rounded-full"
+                            style={{ width: barWidth(horse.composite_index) }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* 速度 */}
+                    <td className={`py-2 px-1 text-right ${indexColor(horse.speed_index)}`}>
+                      {horse.speed_index !== null ? horse.speed_index.toFixed(1) : "–"}
+                    </td>
+
+                    {/* 後3F */}
+                    <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColor(horse.last3f_index)}`}>
+                      {horse.last3f_index !== null ? horse.last3f_index.toFixed(1) : "–"}
+                    </td>
+
+                    {/* 騎手 */}
+                    <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColor(horse.jockey_index)}`}>
+                      {horse.jockey_index !== null ? horse.jockey_index.toFixed(1) : "–"}
+                    </td>
+
+                    {/* ローテ */}
+                    <td className={`hidden sm:table-cell py-2 px-1 text-right ${indexColor(horse.rotation_index)}`}>
+                      {horse.rotation_index !== null ? horse.rotation_index.toFixed(1) : "–"}
+                    </td>
+
+                    {/* 勝率 */}
+                    <td className="py-2 px-1 text-right text-gray-600">
+                      {pct(horse.win_probability)}
+                    </td>
+
+                    {/* 複率 */}
+                    <td className="py-2 px-1 text-right text-gray-600">
+                      {pct(horse.place_probability)}
+                    </td>
+
+                    {/* 単オッズ */}
+                    <td className={`py-2 px-1 text-right ${winOddsColorClass(winOdds)}`}>
+                      {winOdds !== null ? `${winOdds.toFixed(1)}倍` : "–"}
+                    </td>
+
+                    {/* 期待値 */}
+                    <td className={`py-2 pr-2 text-right ${evColorClass(ev)}`}>
+                      {ev !== null ? ev.toFixed(2) : "–"}
+                    </td>
+
+                    {/* 着順 */}
+                    {hasResults && (
+                      <td className="py-2 pr-2 text-right">
+                        {finishPos != null ? (
+                          <span className={finishBadgeClass(finishPos)}>{finishPos}着</span>
+                        ) : (
+                          <span className="text-gray-300">–</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>,
+                ];
+
+                if (isExpanded) {
+                  rows.push(
+                    <tr key={`${horse.horse_id}-detail`}>
+                      <td colSpan={colSpan} className="border-b border-gray-100 bg-gray-50 px-3 py-3">
+                        {/* 指数内訳 */}
+                        <p className="text-[10px] text-gray-400 mb-2">指数内訳</p>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                          {CHIHOU_SUB_INDICES.map(({ key, label }) => {
+                            const val = horse[key] as number | null;
+                            return (
+                              <div key={key} className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-gray-500 w-10 flex-shrink-0">
+                                  {label}
+                                </span>
+                                <span className={cn(
+                                  "text-[11px] font-mono tabular-nums w-7 text-right flex-shrink-0",
+                                  indexColor(val)
+                                )}>
+                                  {val !== null ? val.toFixed(0) : "-"}
+                                </span>
+                                <div className="flex-1">
+                                  <IndexBar value={val} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* 近走成績 */}
+                        <HorseHistorySection
+                          horseId={horse.horse_id}
+                          fetchHistory={fetchChihouHorseHistory}
+                        />
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return rows;
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 確定着順サマリ */}
+        {hasResults && (
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <h3 className="text-xs font-semibold text-gray-500 mb-2">確定着順</h3>
+            <div className="space-y-1">
+              {initialResults
+                .filter((r) => r.finish_position !== null)
+                .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99))
+                .slice(0, 5)
+                .map((r) => (
+                  <div key={r.horse_name} className="flex items-center gap-2 text-xs">
+                    <span className={cn(
+                      "min-w-[2.5rem] text-center text-[11px] py-0.5 rounded font-bold",
+                      r.finish_position === 1 ? "bg-yellow-100 text-yellow-800" :
+                      r.finish_position === 2 ? "bg-gray-100 text-gray-700" :
+                      r.finish_position === 3 ? "bg-orange-100 text-orange-700" :
+                      "text-gray-500"
+                    )}>
+                      {r.finish_position}着
+                    </span>
+                    <span className="font-medium text-gray-800">{r.horse_name}</span>
+                    {r.finish_time !== null && (
+                      <span className="text-gray-400 tabular-nums">{formatTime(r.finish_time)}</span>
+                    )}
+                    {r.last_3f !== null && (
+                      <span className="text-gray-400 tabular-nums">後3F {r.last_3f.toFixed(1)}</span>
+                    )}
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* 凡例 */}
+        <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2 space-y-0.5">
+          <p>
+            <span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）
+          </p>
+          <p>
+            <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
+          </p>
+          <p>行クリックで指数内訳・近走成績を表示</p>
+        </div>
+      </section>
     </>
   );
 }

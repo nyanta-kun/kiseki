@@ -3,7 +3,7 @@
 # VPS cron から呼び出される: 0 21 * * * /home/ysuzuki/GitHub/kiseki/scripts/daily_trigger.sh
 # 21:00 UTC = 06:00 JST（翌日出馬表が揃う時間帯）
 
-BACKEND_URL="http://127.0.0.1:8003"
+BACKEND_URL="http://127.0.0.1:8003"  # VPS backend (galloplab-backend-1コンテナ)
 LOG_FILE="/home/ysuzuki/GitHub/kiseki/logs/daily_trigger.log"
 
 log() {

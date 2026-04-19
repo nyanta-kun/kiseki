@@ -122,7 +122,7 @@ export default async function RacePage({ params }: { params: Params }) {
             buySignal={computeJraBuySignal(race?.distance ?? 0, confidence.top_win_odds)}
           />
 
-          {/* 確率チャート・指数テーブル（成績WebSocketで自動更新） */}
+          {/* 指数テーブル（成績WebSocketで自動更新） */}
           <RaceDetailClient
             raceId={raceId}
             indices={indices}
@@ -132,18 +132,6 @@ export default async function RacePage({ params }: { params: Params }) {
             raceNumber={raceNumber}
             paywallEnabled={paidMode}
           />
-
-          {/* 凡例 */}
-          <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">
-            <p className="font-medium text-gray-500 mb-1">指数について</p>
-            <ul className="space-y-0.5">
-              <li>・ 総合指数: 各指数を重み付け合計（0-100）</li>
-              <li>・ ◎ 本命: 総合指数1位の馬（ソート順に関係なく固定）</li>
-              <li>・ ☆ 穴ぐさ: 穴ぐさ指数58以上の本命以外の馬</li>
-              <li>・ 勝率/複勝率: Softmax + Harville式で算出</li>
-              <li>・ <span className="text-green-700 font-medium">緑</span>=高評価 / <span className="text-red-600">赤</span>=低評価</li>
-            </ul>
-          </div>
         </div>
       </main>
     </div>

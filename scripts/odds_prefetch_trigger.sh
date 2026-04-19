@@ -9,7 +9,7 @@
 #   ./odds_prefetch_trigger.sh              # 翌日のオッズを取得
 #   ./odds_prefetch_trigger.sh 20260406     # 指定日のオッズを取得
 
-BACKEND_URL="http://127.0.0.1:8003"
+BACKEND_URL="http://127.0.0.1:8003"  # VPS backend (galloplab-backend-1コンテナ)
 LOG_FILE="/home/ysuzuki/GitHub/kiseki/logs/odds_prefetch_trigger.log"
 FETCH_DATE="${1:-}"  # 引数あれば使用、なければ翌日（agent側でデフォルト）
 

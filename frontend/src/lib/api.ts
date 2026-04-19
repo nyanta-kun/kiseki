@@ -232,6 +232,11 @@ export async function fetchHorseHistory(horseId: number): Promise<RaceHistoryEnt
   return get<RaceHistoryEntry[]>(`/horses/${horseId}/history`, { next: { revalidate: 300 } });
 }
 
+/** 地方競馬 馬の近走成績 → 5 分キャッシュ */
+export async function fetchChihouHorseHistory(horseId: number): Promise<RaceHistoryEntry[]> {
+  return get<RaceHistoryEntry[]>(`/chihou/horses/${horseId}/history`, { next: { revalidate: 300 } });
+}
+
 /** オッズ（リアルタイム WebSocket を主に使用。初期値取得のみ）→ 30 秒キャッシュ */
 export async function fetchOdds(raceId: number): Promise<OddsData> {
   return get<OddsData>(`/races/${raceId}/odds`, { next: { revalidate: 30 } });
