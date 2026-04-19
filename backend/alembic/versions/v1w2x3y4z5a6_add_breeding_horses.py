@@ -7,8 +7,6 @@ Create Date: 2026-04-19
 
 from __future__ import annotations
 
-import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "v1w2x3y4z5a6"
