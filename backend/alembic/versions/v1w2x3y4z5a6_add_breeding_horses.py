@@ -16,16 +16,15 @@ down_revision: str = "u1v2w3x4y5z6"
 
 
 def upgrade() -> None:
-    op.execute("SET search_path TO keiba")
-    op.create_table(
-        "breeding_horses",
-        sa.Column("breeding_code", sa.Text(), nullable=False),
-        sa.Column("name", sa.Text(), nullable=True),
-        sa.Column("name_en", sa.Text(), nullable=True),
-        sa.PrimaryKeyConstraint("breeding_code"),
-        schema="keiba",
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS keiba.breeding_horses (
+            breeding_code TEXT NOT NULL,
+            name TEXT,
+            name_en TEXT,
+            CONSTRAINT pk_breeding_horses PRIMARY KEY (breeding_code)
+        )
+    """)
 
 
 def downgrade() -> None:
-    op.drop_table("breeding_horses", schema="keiba")
+    op.execute("DROP TABLE IF EXISTS keiba.breeding_horses")
