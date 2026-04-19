@@ -72,8 +72,11 @@ async def get_chihou_horse_history(horse_id: int, db: DbDep) -> list[ChihouRaceH
         ci_rows = ci_result.scalars().all()
         indices = {ci.race_id: ci for ci in ci_rows}
 
-    return [
-        ChihouRaceHistoryEntry(
+    result = []
+    for rr, race in rows:
+        ci = indices.get(race.id)
+        composite_index = float(ci.composite_index) if ci is not None and ci.composite_index is not None else None
+        result.append(ChihouRaceHistoryEntry(
             date=race.date,
             course_name=race.course_name,
             surface=race.surface or "",
@@ -85,11 +88,6 @@ async def get_chihou_horse_history(horse_id: int, db: DbDep) -> list[ChihouRaceH
             horse_number=rr.horse_number,
             win_odds=float(rr.win_odds) if rr.win_odds is not None else None,
             win_popularity=rr.win_popularity,
-            composite_index=(
-                float(indices[race.id].composite_index)
-                if race.id in indices and indices[race.id].composite_index is not None
-                else None
-            ),
-        )
-        for rr, race in rows
-    ]
+            composite_index=composite_index,
+        ))
+    return result
