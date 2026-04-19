@@ -65,6 +65,21 @@ class Pedigree(Base):
     dam_sire_line: Mapped[str | None] = mapped_column(String(50), comment="母父系統名")
 
 
+class BreedingHorse(Base):
+    """繁殖馬マスタ（HNレコード永続キャッシュ）
+
+    JV-Link BLOD HN レコードを永続化する。
+    プロセス再起動後も繁殖登録番号 → 馬名の変換が可能になる。
+    """
+
+    __tablename__ = "breeding_horses"
+    __table_args__ = {"schema": SCHEMA}
+
+    breeding_code: Mapped[str] = mapped_column(Text(), primary_key=True, comment="繁殖登録番号")
+    name: Mapped[str | None] = mapped_column(Text(), comment="馬名（日本語）")
+    name_en: Mapped[str | None] = mapped_column(Text(), comment="馬名（欧字）")
+
+
 class Jockey(Base):
     """騎手マスタ"""
 

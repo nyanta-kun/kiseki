@@ -841,7 +841,7 @@ def _run_blod_only(jv) -> None:
             mark_file_completed(DATASPEC_BLOD, filename)
             return
         logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
-        _post_in_batches("/api/import/bloodlines", hn_sk, 500, BACKEND_URL, API_KEY, PENDING_DIR)
+        _post_in_batches("/api/import/bloodlines", hn_sk, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
         total_blod["hn_sk"] += len(hn_sk)
         total_blod["files"] += 1
         mark_file_completed(DATASPEC_BLOD, filename)
@@ -849,14 +849,30 @@ def _run_blod_only(jv) -> None:
             f"  [{filename}] 完了 (累計: ファイル {total_blod['files']} 本 / {total_blod['hn_sk']} 件)"
         )
 
-    logger.info(f"Fetching BLOD from {from_time} (option=3)...")
+    logger.info(f"Fetching BLOD from {from_time} (option=3, skip_cache=True)...")
     fetch_stored_data(
         jv, DATASPEC_BLOD, from_time, option=3,
         on_file_done=on_blod_file_done,
         skip_file_fn=lambda fn: fn in completed_blod,
+        skip_cache=True,
     )
     logger.info(
-        f"BLOD 取得完了: {total_blod['files']} ファイル / "
+        f"BLOD option=3 完了: {total_blod['files']} ファイル / "
+        f"{total_blod['hn_sk']} 件をDBへ反映 / {total_blod['skipped']} ファイルスキップ"
+    )
+
+    # option=1: 最終TS以降の新しいBLODデータをJRA-VANサーバーからダウンロード
+    # (option=3はローカルキャッシュのみスキャンするため、2023年8月以降の新規データが取得できない)
+    from_time_update = "20230801000000"
+    logger.info(f"Fetching BLOD updates from {from_time_update} (option=1, JRA-VANサーバーから最新取得)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLOD, from_time_update, option=1,
+        on_file_done=on_blod_file_done,
+        skip_file_fn=lambda fn: fn in completed_blod,
+        skip_cache=True,
+    )
+    logger.info(
+        f"BLOD 取得完了 (option=3+1合計): {total_blod['files']} ファイル / "
         f"{total_blod['hn_sk']} 件をDBへ反映 / {total_blod['skipped']} ファイルスキップ"
     )
 

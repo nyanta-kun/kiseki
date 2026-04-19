@@ -19,11 +19,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import Horse, Pedigree
+from ..db.models import BreedingHorse, Horse, Pedigree
 from .jvlink_parser import parse_hn, parse_sk
 
 logger = logging.getLogger(__name__)
@@ -153,8 +153,9 @@ class PedigreeImporter:
     HN/SK レコードを受け取り pedigrees テーブルへ UPSERT する。
     重複実行に対して冪等（horse_id 単位で ON CONFLICT UPDATE）。
 
-    _global_hn_cache はプロセス内で永続するため、HN レコードを先行バッチで
-    送信してから SK レコードを後続バッチで送信する分割送信に対応する。
+    HN レコードは keiba.breeding_horses テーブルに永続化するため、
+    プロセス再起動後も繁殖登録番号 → 馬名の変換が可能。
+    _global_hn_cache はプロセス内の高速ルックアップ用キャッシュとして補助的に使用する。
     """
 
     # プロセス内で共有する繁殖馬マスタキャッシュ（HN レコードの累積辞書）
@@ -176,9 +177,10 @@ class PedigreeImporter:
         Returns:
             {"hn_parsed": int, "sk_imported": int, "sk_skipped": int}
         """
-        # --- Step 1: HN レコードをグローバルキャッシュへ累積 ---
+        # --- Step 1: HN レコードを DB + グローバルキャッシュへ累積 ---
         hn_map: dict[str, dict[str, str]] = dict(PedigreeImporter._global_hn_cache)
         hn_parsed = 0
+        hn_upsert_rows: list[dict[str, str | None]] = []
         for rec in records:
             rec_id = rec.get("rec_id", "")
             if rec_id != "HN":
@@ -193,13 +195,55 @@ class PedigreeImporter:
             }
             hn_map[code] = entry
             PedigreeImporter._global_hn_cache[code] = entry
+            hn_upsert_rows.append({
+                "breeding_code": code,
+                "name": parsed["name"] or None,
+                "name_en": parsed["name_en"] or None,
+            })
             hn_parsed += 1
+
+        # HN レコードを keiba.breeding_horses テーブルへ一括 UPSERT
+        if hn_upsert_rows:
+            stmt = (
+                insert(BreedingHorse)
+                .values(hn_upsert_rows)
+                .on_conflict_do_update(
+                    index_elements=["breeding_code"],
+                    set_={"name": text("EXCLUDED.name"), "name_en": text("EXCLUDED.name_en")},
+                )
+            )
+            await self.db.execute(stmt)
 
         logger.info(f"HN辞書構築完了: {hn_parsed} 件 (累計キャッシュ: {len(PedigreeImporter._global_hn_cache)} 件)")
 
         # --- Step 2: SK レコードを UPSERT ---
         imported = 0
         skipped = 0
+
+        # SK の sire_code/dam_code で未解決のコードを事前に DB から一括取得
+        sk_codes_needed: set[str] = set()
+        for rec in records:
+            if rec.get("rec_id") != "SK":
+                continue
+            parsed = parse_sk(rec.get("data", ""))
+            if parsed is None or parsed.get("data_type") == "0":
+                continue
+            for code_key in ("sire_code", "dam_code", "dam_sire_code"):
+                code = parsed.get(code_key, "")
+                if code and code not in hn_map:
+                    sk_codes_needed.add(code)
+
+        # DB から不足分のコードを補完
+        if sk_codes_needed:
+            rows = await self.db.execute(
+                select(BreedingHorse).where(
+                    BreedingHorse.breeding_code.in_(list(sk_codes_needed))
+                )
+            )
+            for bh in rows.scalars():
+                hn_map[bh.breeding_code] = {"name": bh.name or "", "name_en": bh.name_en or ""}
+                PedigreeImporter._global_hn_cache[bh.breeding_code] = hn_map[bh.breeding_code]
+
         for rec in records:
             rec_id = rec.get("rec_id", "")
             if rec_id != "SK":
