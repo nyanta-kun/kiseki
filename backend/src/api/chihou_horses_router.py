@@ -80,10 +80,10 @@ async def get_chihou_horse_history(horse_id: int, db: DbDep) -> list[ChihouRaceH
             distance=race.distance or 0,
             race_name=race.race_name,
             finish_position=rr.finish_position,
-            finish_time=float(rr.finish_time) if rr.finish_time else None,
-            last_3f=float(rr.last_3f) if rr.last_3f else None,
+            finish_time=float(rr.finish_time) if rr.finish_time is not None else None,
+            last_3f=float(rr.last_3f) if rr.last_3f is not None else None,
             horse_number=rr.horse_number,
-            win_odds=float(rr.win_odds) if rr.win_odds else None,
+            win_odds=float(rr.win_odds) if rr.win_odds is not None else None,
             win_popularity=rr.win_popularity,
             composite_index=(
                 float(indices[race.id].composite_index)
