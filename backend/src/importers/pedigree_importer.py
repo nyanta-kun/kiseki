@@ -151,14 +151,15 @@ class PedigreeImporter:
 
     HN/SK レコードを受け取り pedigrees テーブルへ UPSERT する。
     重複実行に対して冪等（horse_id 単位で ON CONFLICT UPDATE）。
+
+    _global_hn_cache はプロセス内で永続するため、HN レコードを先行バッチで
+    送信してから SK レコードを後続バッチで送信する分割送信に対応する。
     """
 
-    def __init__(self, db: Session) -> None:
-        """初期化。
+    # プロセス内で共有する繁殖馬マスタキャッシュ（HN レコードの累積辞書）
+    _global_hn_cache: dict[str, dict[str, str]] = {}
 
-        Args:
-            db: SQLAlchemy セッション
-        """
+    def __init__(self, db: Session) -> None:
         self.db = db
 
     # ------------------------------------------------------------------
@@ -174,8 +175,8 @@ class PedigreeImporter:
         Returns:
             {"hn_parsed": int, "sk_imported": int, "sk_skipped": int}
         """
-        # --- Step 1: HN レコードを in-memory 辞書へ展開 ---
-        hn_map: dict[str, dict[str, str]] = {}
+        # --- Step 1: HN レコードをグローバルキャッシュへ累積 ---
+        hn_map: dict[str, dict[str, str]] = dict(PedigreeImporter._global_hn_cache)
         hn_parsed = 0
         for rec in records:
             rec_id = rec.get("rec_id", "")
@@ -185,13 +186,15 @@ class PedigreeImporter:
             if parsed is None or parsed.get("data_type") == "0":
                 continue
             code = parsed["breeding_code"]
-            hn_map[code] = {
+            entry = {
                 "name": parsed["name"],
                 "name_en": parsed["name_en"],
             }
+            hn_map[code] = entry
+            PedigreeImporter._global_hn_cache[code] = entry
             hn_parsed += 1
 
-        logger.info(f"HN辞書構築完了: {hn_parsed} 件")
+        logger.info(f"HN辞書構築完了: {hn_parsed} 件 (累計キャッシュ: {len(PedigreeImporter._global_hn_cache)} 件)")
 
         # --- Step 2: SK レコードを UPSERT ---
         imported = 0
