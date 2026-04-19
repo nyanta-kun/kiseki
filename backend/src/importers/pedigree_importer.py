@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import BreedingHorse, Horse, Pedigree
-from .jvlink_parser import parse_hn, parse_sk
+from .jvlink_parser import parse_hn, parse_sk, parse_um
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,42 @@ class PedigreeImporter:
         Returns:
             {"hn_parsed": int, "sk_imported": int, "sk_skipped": int}
         """
+        # --- Step 0: UM レコードから種牡馬を含む祖先データを breeding_horses へ補完 ---
+        # HN レコードは繁殖牝馬のみ。種牡馬名は UM の3代血統情報 (pos 205) から取得する。
+        um_upsert_rows: list[dict[str, str | None]] = []
+        for rec in records:
+            if rec.get("rec_id") != "UM":
+                continue
+            parsed_um = parse_um(rec.get("data", ""))
+            if parsed_um is None:
+                continue
+            for ancestor in parsed_um.get("ancestors", []):
+                code = ancestor.get("breeding_code", "")
+                name = ancestor.get("name", "")
+                if code:
+                    um_upsert_rows.append({"breeding_code": code, "name": name or None, "name_en": None})
+
+        um_ancestors = 0
+        if um_upsert_rows:
+            # 同一バッチ内の重複を除去（最初に登場したものを優先）
+            seen_codes: set[str] = set()
+            deduped: list[dict[str, str | None]] = []
+            for row in um_upsert_rows:
+                if row["breeding_code"] not in seen_codes:
+                    seen_codes.add(row["breeding_code"])  # type: ignore[arg-type]
+                    deduped.append(row)
+            stmt = (
+                insert(BreedingHorse)
+                .values(deduped)
+                .on_conflict_do_update(
+                    index_elements=["breeding_code"],
+                    set_={"name": text("COALESCE(EXCLUDED.name, breeding_horses.name)")},
+                )
+            )
+            await self.db.execute(stmt)
+            um_ancestors = len(deduped)
+            logger.info(f"UM由来 breeding_horses upsert: {um_ancestors} 件")
+
         # --- Step 1: HN レコードを DB + グローバルキャッシュへ累積 ---
         hn_map: dict[str, dict[str, str]] = dict(PedigreeImporter._global_hn_cache)
         hn_parsed = 0
@@ -280,7 +316,7 @@ class PedigreeImporter:
 
         await self.db.flush()
         logger.info(f"pedigrees UPSERT完了: imported={imported} skipped={skipped}")
-        return {"hn_parsed": hn_parsed, "sk_imported": imported, "sk_skipped": skipped}
+        return {"hn_parsed": hn_parsed, "sk_imported": imported, "sk_skipped": skipped, "um_ancestors": um_ancestors}
 
     # ------------------------------------------------------------------
     # 内部メソッド

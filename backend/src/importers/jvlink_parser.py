@@ -922,6 +922,63 @@ def parse_sk(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# UM レコード（競走馬マスタ, 1609バイト）
+# -------------------------------------------------------------------
+# 項番18: 3代血統情報 | pos 205 | 46×14=644バイト
+#   各祖先: 繁殖登録番号(10バイト) + 馬名(36バイト, SJIS全角)
+#   [0]父 [1]母 [2]父父 [3]父母 [4]母父 [5]母母
+#   [6]父父父 [7]父父母 [8]父母父 [9]父母母 [10]母父父 [11]母父母 [12]母母父 [13]母母母
+# BLOD ではなく DIFF/DIFN/TCOV/RCOV dataspec に含まれる。
+
+
+def parse_um(data: str) -> dict[str, Any] | None:
+    """UMレコード（競走馬マスタ）から3代血統情報をパースする。
+
+    各祖先の繁殖登録番号と馬名を抽出し、breeding_horses テーブルへの
+    種牡馬データ補完に使用する。
+    HN レコードは繁殖牝馬のみを持つため、種牡馬名は UM 経由で取得する。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト）:
+      1- 2: "UM"
+      3   : データ区分 (0:削除)
+     12-21: 血統登録番号 (Horse.jravan_code)
+    205-848: 3代血統情報 46×14 (繁殖登録番号10+馬名36)
+    """
+    if len(data) < 251:
+        return None
+    try:
+        rec_id = _s(data, 1, 2)
+        if rec_id != "UM":
+            return None
+
+        data_type = _s(data, 3, 3)
+        if data_type == "0":
+            return None
+
+        ancestors: list[dict[str, str]] = []
+        for i in range(14):
+            base = 205 + i * 46  # 1-indexed start of this ancestor's 46-byte block
+            if base + 45 > len(data):
+                break
+            breeding_code = _s(data, base, base + 9)
+            name = _decode(data, base + 10, base + 45)
+            if breeding_code:
+                ancestors.append({"breeding_code": breeding_code, "name": name})
+
+        if not ancestors:
+            return None
+
+        return {
+            "_rec_id": "UM",
+            "data_type": data_type,
+            "ancestors": ancestors,
+        }
+    except Exception as e:
+        logger.error(f"UM parse error: {e} data={data[:30]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
 # HR レコード（払戻情報）
 # -------------------------------------------------------------------
 
@@ -1100,6 +1157,7 @@ def parse_record(rec: dict[str, str]) -> dict[str, Any] | None:
         "JC": parse_jc,
         "HN": parse_hn,
         "SK": parse_sk,
+        "UM": parse_um,
         "HR": parse_hr,
     }
     parser = parsers.get(rec_id)
