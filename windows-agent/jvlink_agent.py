@@ -878,6 +878,53 @@ def _run_blod_only(jv) -> None:
     )
 
 
+def _run_blod_um(jv) -> None:
+    """BLOD の UM（競走馬マスタ）レコードを全期間取得して pedigrees を更新する。
+
+    BLOD の SK sire_code は旧形式 '20xxx'/'40xxx' で breeding_horses に存在しないが、
+    UM レコードは3代血統名をテキストとして直接保持するため breeding_code 依存なし。
+    これにより 2022 年以前の馬の pedigrees.sire も埋めることができる。
+    completed ファイルのキーは "BLOD_UM"（BLOD HN/SK 追跡とは独立）。
+    """
+    logger.info("=== BLOD-UM MODE: 競走馬マスタ（血統名テキスト）全期間取得 ===")
+    COMPLETED_KEY = "BLOD_UM"
+    from_time = "19860101000000"
+    completed = load_completed_files(COMPLETED_KEY)
+    if completed:
+        logger.info(f"[completed] 処理済みBLOD-UMファイル: {len(completed)} 件（スキップ対象）")
+
+    total = {"um": 0, "files": 0, "skipped": 0}
+
+    def on_file_done(filename: str, file_records: list[dict]) -> None:
+        if filename in completed:
+            total["skipped"] += 1
+            return
+        um_records = [r for r in file_records if r.get("rec_id") == "UM"]
+        if not um_records:
+            mark_file_completed(COMPLETED_KEY, filename)
+            return
+        logger.info(f"  [{filename}] UM {len(um_records)} 件 → DB反映開始")
+        _post_in_batches("/api/import/bloodlines", um_records, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
+        total["um"] += len(um_records)
+        total["files"] += 1
+        mark_file_completed(COMPLETED_KEY, filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: ファイル {total['files']} 本 / {total['um']} 件)"
+        )
+
+    logger.info(f"Fetching BLOD UM from {from_time} (option=4, skip_cache=True)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLOD, from_time, option=4,
+        on_file_done=on_file_done,
+        skip_file_fn=lambda fn: fn in completed,
+        skip_cache=True,
+    )
+    logger.info(
+        f"BLOD-UM 取得完了: {total['files']} ファイル / "
+        f"{total['um']} 件をDBへ反映 / {total['skipped']} ファイルスキップ"
+    )
+
+
 def _run_bldn_only(jv) -> None:
     """血統データ（BLDN・新形式）を取得してDBへ送信する。
 
@@ -1109,9 +1156,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "blod", "bldn", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
+        choices=["all", "setup", "blod", "blod-um", "bldn", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, blod=血統旧形式, bldn=血統新形式(pedigrees.sire解決用), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1137,7 +1184,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "recent", "daily", "blod", "bldn", "odds-prefetch", "all")
+    BULK_MODES = ("setup", "recent", "daily", "blod", "blod-um", "bldn", "odds-prefetch", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1177,6 +1224,12 @@ def main() -> None:
         report_status("done", message="BLOD fetch completed.")
         jv.JVClose()
         logger.info("blod モード完了。終了します。")
+    elif args.mode == "blod-um":
+        report_status("running", mode="blod-um", message="Starting BLOD-UM fetch (全期間UM血統名テキスト)")
+        _run_blod_um(jv)
+        report_status("done", message="BLOD-UM fetch completed.")
+        jv.JVClose()
+        logger.info("blod-um モード完了。終了します。")
     elif args.mode == "bldn":
         report_status("running", mode="bldn", message="Starting BLDN-only fetch (新形式血統)")
         _run_bldn_only(jv)
