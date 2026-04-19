@@ -91,8 +91,8 @@ def main() -> None:
         return
 
     from_time = "19860101000000"
-    logger.info(f"JVOpen: DIFF from={from_time} option=3")
-    result = jv.JVOpen("DIFF", from_time, 3, 0, 0, "")
+    logger.info(f"JVOpen: DIFF from={from_time} option=4 (ダイアログ無し)")
+    result = jv.JVOpen("DIFF", from_time, 4, 0, 0, "")
     if isinstance(result, tuple):
         rc, count, dl = result[0], result[1], result[2]
         logger.info(f"JVOpen rc={rc} count={count} dl={dl}")

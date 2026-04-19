@@ -394,7 +394,7 @@ def fetch_stored_data(
                     f"JVRead エラー後 JVClose。{current_file} の翌日 ({advance_from}) から "
                     f"option=3 で再開... (エラー {error_count}/{MAX_ERRORS})"
                 )
-                result2 = jv.JVOpen(dataspec, advance_from, 3, 0, 0, "")
+                result2 = jv.JVOpen(dataspec, advance_from, 4, 0, 0, "")
             else:
                 logger.info(
                     f"JVRead エラー後 JVClose。option=1 でセッション再開を試みます... "
@@ -773,11 +773,11 @@ def run_setup(jv) -> None:
         """処理済みファイルは JVSkip でスキップする。"""
         return filename in completed
 
-    # RACE: option=3 で全過去ファイルを取得、ファイル完了ごとに即時DB反映
+    # RACE: option=4 (ダイアログ無しセットアップ) で全過去ファイルを取得
     # 処理済みファイルは JVSkip で高速スキップ（全レコード読み込みを回避）
-    logger.info(f"Fetching RACE from {from_time} (option=3, セットアップモード)...")
+    logger.info(f"Fetching RACE from {from_time} (option=4, ダイアログ無しセットアップ)...")
     fetch_stored_data(
-        jv, DATASPEC_RACE, from_time, option=3,
+        jv, DATASPEC_RACE, from_time, option=4,
         on_file_done=on_race_file_done, skip_file_fn=race_skip_fn,
     )
     logger.info(
@@ -806,9 +806,9 @@ def run_setup(jv) -> None:
             f"  [{filename}] 完了 (累計: ファイル {total_blod['files']} 本 / {total_blod['hn_sk']} 件)"
         )
 
-    logger.info(f"Fetching BLOD from {from_time} (option=3, セットアップモード)...")
+    logger.info(f"Fetching BLOD from {from_time} (option=4, ダイアログ無しセットアップ)...")
     fetch_stored_data(
-        jv, DATASPEC_BLOD, from_time, option=3,
+        jv, DATASPEC_BLOD, from_time, option=4,
         on_file_done=on_blod_file_done,
         skip_file_fn=lambda fn: fn in completed_blod,
     )
@@ -849,9 +849,9 @@ def _run_blod_only(jv) -> None:
             f"  [{filename}] 完了 (累計: ファイル {total_blod['files']} 本 / {total_blod['hn_sk']} 件)"
         )
 
-    logger.info(f"Fetching BLOD from {from_time} (option=3, skip_cache=True)...")
+    logger.info(f"Fetching BLOD from {from_time} (option=4, ダイアログ無しセットアップ, skip_cache=True)...")
     fetch_stored_data(
-        jv, DATASPEC_BLOD, from_time, option=3,
+        jv, DATASPEC_BLOD, from_time, option=4,
         on_file_done=on_blod_file_done,
         skip_file_fn=lambda fn: fn in completed_blod,
         skip_cache=True,
