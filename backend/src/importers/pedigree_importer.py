@@ -4,12 +4,13 @@ HN（繁殖馬マスタ）と SK（産駒マスタ）レコードを受け取り
 pedigrees テーブルへ UPSERT する。
 
 処理フロー:
+  0. UM レコードから祖先名を breeding_horses へ補完し、pedigrees を一括補完
   1. HN レコードを先に処理して in-memory 辞書を構築:
        {繁殖登録番号: {"name": 馬名, "name_en": 欧字名}}
-  2. SK レコードを処理:
-       血統登録番号で horses テーブルを検索し horse_id を取得
+  2. SK レコードを一括処理:
+       全 blood_code を IN句で一括 SELECT → horse_id を取得
        sire_code / dam_sire_code を HN 辞書で名前解決
-       pedigrees テーブルへ UPSERT (horse_id 単位で冪等)
+       pedigrees テーブルへ一括 UPSERT (horse_id 単位で冪等)
 
 父系統（sire_line）は主要種牡馬の名前から自動分類する。
 """
@@ -30,10 +31,6 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 父系統分類テーブル
-# ---------------------------------------------------------------------------
-# 主要種牡馬とその系統分類。
-# 馬名（日本語）→ 系統名 のマッピング。
-# 未登録の種牡馬は "不明" に分類される。
 # ---------------------------------------------------------------------------
 SIRE_LINE_MAP: dict[str, str] = {
     # サンデーサイレンス系
@@ -100,10 +97,6 @@ SIRE_LINE_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # 種牡馬適性データ
 # ---------------------------------------------------------------------------
-# 各系統の surface/distance 適性スコア（内部計算用）
-# surface: "turf"=芝, "dirt"=ダート, "both"=両方得意
-# dist_pref: 得意距離帯リスト ["sprint","mile","middle","long"]
-# ---------------------------------------------------------------------------
 SIRE_LINE_TRAITS: dict[str, dict[str, Any]] = {
     "ディープインパクト系": {"surface": "turf", "dist_pref": ["middle", "long", "mile"]},
     "ハーツクライ系": {"surface": "turf", "dist_pref": ["middle", "long"]},
@@ -134,14 +127,7 @@ SIRE_LINE_TRAITS: dict[str, dict[str, Any]] = {
 
 
 def classify_sire_line(sire_name: str | None) -> str:
-    """種牡馬名から父系統名を返す。
-
-    Args:
-        sire_name: 種牡馬名（日本語）
-
-    Returns:
-        系統名。未登録の場合は "不明"。
-    """
+    """種牡馬名から父系統名を返す。未登録の場合は "不明"。"""
     if not sire_name:
         return "不明"
     return SIRE_LINE_MAP.get(sire_name.strip(), "不明")
@@ -150,7 +136,7 @@ def classify_sire_line(sire_name: str | None) -> str:
 class PedigreeImporter:
     """血統データインポーター。
 
-    HN/SK レコードを受け取り pedigrees テーブルへ UPSERT する。
+    HN/SK/UM レコードを受け取り pedigrees テーブルへ UPSERT する。
     重複実行に対して冪等（horse_id 単位で ON CONFLICT UPDATE）。
 
     HN レコードは keiba.breeding_horses テーブルに永続化するため、
@@ -158,30 +144,30 @@ class PedigreeImporter:
     _global_hn_cache はプロセス内の高速ルックアップ用キャッシュとして補助的に使用する。
     """
 
-    # プロセス内で共有する繁殖馬マスタキャッシュ（HN レコードの累積辞書）
     _global_hn_cache: dict[str, dict[str, str]] = {}
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
-    # 公開インターフェース
-    # ------------------------------------------------------------------
-
     async def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
-        """HN/SK レコードをパースして pedigrees テーブルへ UPSERT する。
+        """HN/SK/UM レコードをパースして pedigrees テーブルへ UPSERT する。
 
         Args:
-            records: [{"rec_id": "HN"|"SK", "data": "..."}, ...] のリスト
+            records: [{"rec_id": "HN"|"SK"|"UM", "data": "..."}, ...] のリスト
 
         Returns:
-            {"hn_parsed": int, "sk_imported": int, "sk_skipped": int}
+            {"hn_parsed": int, "sk_imported": int, "sk_skipped": int,
+             "um_ancestors": int, "um_pedigrees": int}
         """
-        # --- Step 0: UM レコードから種牡馬を含む祖先データを breeding_horses へ補完 ---
-        # HN レコードは繁殖牝馬のみ。種牡馬名は UM の3代血統情報 (pos 205) から取得する。
-        # また UM には馬自身の jravan_code が含まれるため、祖先名を直接 pedigrees へ設定できる。
-        um_upsert_rows: list[dict[str, str | None]] = []
-        um_pedigrees_data: list[dict] = []
+        # ------------------------------------------------------------------
+        # Step 0: UM レコード処理
+        #   - 祖先データを breeding_horses へ一括補完
+        #   - 馬自身の jravan_code + 祖先名から pedigrees を一括補完（NULL フィールドのみ）
+        # ------------------------------------------------------------------
+        um_ancestor_rows: list[dict[str, str | None]] = []
+        um_jravan_codes: list[str] = []
+        um_ancestors_map: dict[str, list[dict[str, str]]] = {}  # jravan_code -> ancestors
+
         for rec in records:
             if rec.get("rec_id") != "UM":
                 continue
@@ -193,26 +179,22 @@ class PedigreeImporter:
                 code = ancestor.get("breeding_code", "")
                 name = ancestor.get("name", "")
                 if code:
-                    um_upsert_rows.append({"breeding_code": code, "name": name or None, "name_en": None})
+                    um_ancestor_rows.append({"breeding_code": code, "name": name or None, "name_en": None})
             jravan_code = parsed_um.get("jravan_code", "")
             if jravan_code and ancestors:
-                um_pedigrees_data.append({
-                    "jravan_code": jravan_code,
-                    "sire": ancestors[0]["name"] if len(ancestors) > 0 else None,
-                    "dam": ancestors[1]["name"] if len(ancestors) > 1 else None,
-                    "dam_sire": ancestors[4]["name"] if len(ancestors) > 4 else None,
-                })
+                um_jravan_codes.append(jravan_code)
+                um_ancestors_map[jravan_code] = ancestors
 
+        # breeding_horses 一括 UPSERT
         um_ancestors = 0
-        if um_upsert_rows:
-            # 同一バッチ内の重複を除去（最初に登場したものを優先）
-            seen_codes: set[str] = set()
+        if um_ancestor_rows:
+            seen: set[str] = set()
             deduped: list[dict[str, str | None]] = []
-            for row in um_upsert_rows:
-                if row["breeding_code"] not in seen_codes:
-                    seen_codes.add(row["breeding_code"])  # type: ignore[arg-type]
+            for row in um_ancestor_rows:
+                if row["breeding_code"] not in seen:
+                    seen.add(row["breeding_code"])  # type: ignore[arg-type]
                     deduped.append(row)
-            stmt = (
+            await self.db.execute(
                 insert(BreedingHorse)
                 .values(deduped)
                 .on_conflict_do_update(
@@ -220,54 +202,71 @@ class PedigreeImporter:
                     set_={"name": text("COALESCE(EXCLUDED.name, breeding_horses.name)")},
                 )
             )
-            await self.db.execute(stmt)
             um_ancestors = len(deduped)
             logger.info(f"UM由来 breeding_horses upsert: {um_ancestors} 件")
 
-        # UM 由来で pedigrees を補完（既存の非 NULL 値は保持）
+        # pedigrees 一括補完（NULL フィールドのみ。既存の非 NULL は保持）
         um_pedigree_count = 0
-        if um_pedigrees_data:
-            jravan_codes = [p["jravan_code"] for p in um_pedigrees_data]
-            horse_result = await self.db.execute(
-                select(Horse).where(Horse.jravan_code.in_(jravan_codes))
+        if um_jravan_codes:
+            horse_rows = await self.db.execute(
+                select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(um_jravan_codes))
             )
-            jravan_to_horse_id: dict[str, int] = {h.jravan_code: h.id for h in horse_result.scalars()}
-            for pd in um_pedigrees_data:
-                horse_id = jravan_to_horse_id.get(pd["jravan_code"])
+            um_code_to_id: dict[str, int] = {row.jravan_code: row.id for row in horse_rows}
+
+            um_pedigree_rows: list[dict] = []
+            for jravan_code, ancestors in um_ancestors_map.items():
+                horse_id = um_code_to_id.get(jravan_code)
                 if horse_id is None:
                     continue
-                sire = pd.get("sire") or None
-                dam = pd.get("dam") or None
-                sire_of_dam = pd.get("dam_sire") or None
+                sire = (ancestors[0]["name"] if len(ancestors) > 0 else "") or None
+                dam = (ancestors[1]["name"] if len(ancestors) > 1 else "") or None
+                sire_of_dam = (ancestors[4]["name"] if len(ancestors) > 4 else "") or None
                 sire_line = classify_sire_line(sire) if sire else None
                 dam_sire_line = classify_sire_line(sire_of_dam) if sire_of_dam else None
-                await self._upsert_fill_nulls(
-                    horse_id=horse_id,
-                    sire=sire,
-                    dam=dam,
-                    sire_of_dam=sire_of_dam,
-                    sire_line=sire_line if sire_line != "不明" else None,
-                    dam_sire_line=dam_sire_line if dam_sire_line != "不明" else None,
-                )
+                um_pedigree_rows.append({
+                    "horse_id": horse_id,
+                    "sire": sire,
+                    "dam": dam,
+                    "sire_of_dam": sire_of_dam,
+                    "sire_line": sire_line if sire_line != "不明" else None,
+                    "dam_sire_line": dam_sire_line if dam_sire_line != "不明" else None,
+                })
                 um_pedigree_count += 1
-            logger.info(f"UM由来 pedigrees upsert: {um_pedigree_count} 件")
 
-        # --- Step 1: HN レコードを DB + グローバルキャッシュへ累積 ---
+            if um_pedigree_rows:
+                await self.db.execute(
+                    insert(Pedigree)
+                    .values(um_pedigree_rows)
+                    .on_conflict_do_update(
+                        index_elements=["horse_id"],
+                        set_={
+                            "sire": text("COALESCE(pedigrees.sire, EXCLUDED.sire)"),
+                            "dam": text("COALESCE(pedigrees.dam, EXCLUDED.dam)"),
+                            "sire_of_dam": text("COALESCE(pedigrees.sire_of_dam, EXCLUDED.sire_of_dam)"),
+                            "sire_line": text("COALESCE(pedigrees.sire_line, EXCLUDED.sire_line)"),
+                            "dam_sire_line": text("COALESCE(pedigrees.dam_sire_line, EXCLUDED.dam_sire_line)"),
+                        },
+                    )
+                )
+                logger.info(f"UM由来 pedigrees upsert: {um_pedigree_count} 件")
+
+        # ------------------------------------------------------------------
+        # Step 1: HN レコード処理
+        #   - in-memory 辞書 + グローバルキャッシュへ累積
+        #   - breeding_horses テーブルへ一括 UPSERT
+        # ------------------------------------------------------------------
         hn_map: dict[str, dict[str, str]] = dict(PedigreeImporter._global_hn_cache)
         hn_parsed = 0
         hn_upsert_rows: list[dict[str, str | None]] = []
+
         for rec in records:
-            rec_id = rec.get("rec_id", "")
-            if rec_id != "HN":
+            if rec.get("rec_id", "") != "HN":
                 continue
             parsed = parse_hn(rec.get("data", ""))
             if parsed is None or parsed.get("data_type") == "0":
                 continue
             code = parsed["breeding_code"]
-            entry = {
-                "name": parsed["name"],
-                "name_en": parsed["name_en"],
-            }
+            entry = {"name": parsed["name"], "name_en": parsed["name_en"]}
             hn_map[code] = entry
             PedigreeImporter._global_hn_cache[code] = entry
             hn_upsert_rows.append({
@@ -277,9 +276,8 @@ class PedigreeImporter:
             })
             hn_parsed += 1
 
-        # HN レコードを keiba.breeding_horses テーブルへ一括 UPSERT
         if hn_upsert_rows:
-            stmt = (
+            await self.db.execute(
                 insert(BreedingHorse)
                 .values(hn_upsert_rows)
                 .on_conflict_do_update(
@@ -287,71 +285,93 @@ class PedigreeImporter:
                     set_={"name": text("EXCLUDED.name"), "name_en": text("EXCLUDED.name_en")},
                 )
             )
-            await self.db.execute(stmt)
 
         logger.info(f"HN辞書構築完了: {hn_parsed} 件 (累計キャッシュ: {len(PedigreeImporter._global_hn_cache)} 件)")
 
-        # --- Step 2: SK レコードを UPSERT ---
+        # ------------------------------------------------------------------
+        # Step 2: SK レコード処理（一括化）
+        #   1回パス: 全 SK を解析し blood_code + 必要コードを収集
+        #   1 SELECT: horses テーブルから jravan_code IN (...) で一括取得
+        #   1 SELECT: breeding_horses から不足コードを補完
+        #   1 UPSERT: pedigrees テーブルへ全行を一括 INSERT...ON CONFLICT
+        # ------------------------------------------------------------------
         imported = 0
         skipped = 0
 
-        # SK の sire_code/dam_code で未解決のコードを事前に DB から一括取得
-        sk_codes_needed: set[str] = set()
+        sk_parsed_list: list[dict] = []
+        sk_blood_codes: list[str] = []
+        sk_needed_codes: set[str] = set()
+
         for rec in records:
-            if rec.get("rec_id") != "SK":
+            if rec.get("rec_id", "") != "SK":
                 continue
             parsed = parse_sk(rec.get("data", ""))
             if parsed is None or parsed.get("data_type") == "0":
+                skipped += 1
                 continue
+            sk_parsed_list.append(parsed)
+            sk_blood_codes.append(parsed["blood_code"])
             for code_key in ("sire_code", "dam_code", "dam_sire_code"):
                 code = parsed.get(code_key, "")
                 if code and code not in hn_map:
-                    sk_codes_needed.add(code)
+                    sk_needed_codes.add(code)
 
-        # DB から不足分のコードを補完
-        if sk_codes_needed:
-            rows = await self.db.execute(
-                select(BreedingHorse).where(
-                    BreedingHorse.breeding_code.in_(list(sk_codes_needed))
-                )
+        # breeding_horses から不足コードを一括補完
+        if sk_needed_codes:
+            bh_rows = await self.db.execute(
+                select(BreedingHorse).where(BreedingHorse.breeding_code.in_(list(sk_needed_codes)))
             )
-            for bh in rows.scalars():
-                hn_map[bh.breeding_code] = {"name": bh.name or "", "name_en": bh.name_en or ""}
-                PedigreeImporter._global_hn_cache[bh.breeding_code] = hn_map[bh.breeding_code]
+            for bh in bh_rows.scalars():
+                entry = {"name": bh.name or "", "name_en": bh.name_en or ""}
+                hn_map[bh.breeding_code] = entry
+                PedigreeImporter._global_hn_cache[bh.breeding_code] = entry
 
-        for rec in records:
-            rec_id = rec.get("rec_id", "")
-            if rec_id != "SK":
-                continue
-            parsed = parse_sk(rec.get("data", ""))
-            if parsed is None or parsed.get("data_type") == "0":
+        # horses を一括 SELECT（N+1 解消）
+        sk_code_to_horse_id: dict[str, int] = {}
+        if sk_blood_codes:
+            horse_rows = await self.db.execute(
+                select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(sk_blood_codes))
+            )
+            sk_code_to_horse_id = {row.jravan_code: row.id for row in horse_rows}
+
+        # pedigrees データを構築
+        pedigree_rows: list[dict] = []
+        for parsed in sk_parsed_list:
+            horse_id = sk_code_to_horse_id.get(parsed["blood_code"])
+            if horse_id is None:
                 skipped += 1
                 continue
-
-            blood_code = parsed["blood_code"]
-            result = await self.db.execute(select(Horse).where(Horse.jravan_code == blood_code))
-            horse = result.scalar_one_or_none()
-            if horse is None:
-                skipped += 1
-                continue
-
-            # 父名・母名・母父名を HN 辞書から解決
             sire_name = hn_map.get(parsed["sire_code"], {}).get("name", "")
             dam_name = hn_map.get(parsed["dam_code"], {}).get("name", "")
             dam_sire_name = hn_map.get(parsed["dam_sire_code"], {}).get("name", "")
-
             sire_line = classify_sire_line(sire_name)
             dam_sire_line = classify_sire_line(dam_sire_name)
-
-            await self._upsert(
-                horse_id=horse.id,
-                sire=sire_name or None,
-                dam=dam_name or None,
-                sire_of_dam=dam_sire_name or None,
-                sire_line=sire_line if sire_line != "不明" else None,
-                dam_sire_line=dam_sire_line if dam_sire_line != "不明" else None,
-            )
+            pedigree_rows.append({
+                "horse_id": horse_id,
+                "sire": sire_name or None,
+                "dam": dam_name or None,
+                "sire_of_dam": dam_sire_name or None,
+                "sire_line": sire_line if sire_line != "不明" else None,
+                "dam_sire_line": dam_sire_line if dam_sire_line != "不明" else None,
+            })
             imported += 1
+
+        # pedigrees 一括 UPSERT（新しい非 NULL 値で上書き、NULL なら既存を保持）
+        if pedigree_rows:
+            await self.db.execute(
+                insert(Pedigree)
+                .values(pedigree_rows)
+                .on_conflict_do_update(
+                    index_elements=["horse_id"],
+                    set_={
+                        "sire": text("COALESCE(EXCLUDED.sire, pedigrees.sire)"),
+                        "dam": text("COALESCE(EXCLUDED.dam, pedigrees.dam)"),
+                        "sire_of_dam": text("COALESCE(EXCLUDED.sire_of_dam, pedigrees.sire_of_dam)"),
+                        "sire_line": text("COALESCE(EXCLUDED.sire_line, pedigrees.sire_line)"),
+                        "dam_sire_line": text("COALESCE(EXCLUDED.dam_sire_line, pedigrees.dam_sire_line)"),
+                    },
+                )
+            )
 
         await self.db.flush()
         logger.info(f"pedigrees UPSERT完了: imported={imported} skipped={skipped}")
@@ -362,80 +382,3 @@ class PedigreeImporter:
             "um_ancestors": um_ancestors,
             "um_pedigrees": um_pedigree_count,
         }
-
-    # ------------------------------------------------------------------
-    # 内部メソッド
-    # ------------------------------------------------------------------
-
-    async def _upsert(
-        self,
-        horse_id: int,
-        sire: str | None,
-        dam: str | None,
-        sire_of_dam: str | None,
-        sire_line: str | None,
-        dam_sire_line: str | None,
-    ) -> None:
-        """pedigrees テーブルへ UPSERT する（horse_id で一意）。
-
-        新しい値が NULL の場合は既存の非 NULL 値を保持する。
-        新しい値が非 NULL の場合は上書きする（SK で名前解決済みの場合に有効）。
-        """
-        stmt = (
-            insert(Pedigree)
-            .values(
-                horse_id=horse_id,
-                sire=sire,
-                dam=dam,
-                sire_of_dam=sire_of_dam,
-                sire_line=sire_line,
-                dam_sire_line=dam_sire_line,
-            )
-            .on_conflict_do_update(
-                index_elements=["horse_id"],
-                set_={
-                    "sire": text("COALESCE(EXCLUDED.sire, pedigrees.sire)"),
-                    "dam": text("COALESCE(EXCLUDED.dam, pedigrees.dam)"),
-                    "sire_of_dam": text("COALESCE(EXCLUDED.sire_of_dam, pedigrees.sire_of_dam)"),
-                    "sire_line": text("COALESCE(EXCLUDED.sire_line, pedigrees.sire_line)"),
-                    "dam_sire_line": text("COALESCE(EXCLUDED.dam_sire_line, pedigrees.dam_sire_line)"),
-                },
-            )
-        )
-        await self.db.execute(stmt)
-
-    async def _upsert_fill_nulls(
-        self,
-        horse_id: int,
-        sire: str | None,
-        dam: str | None,
-        sire_of_dam: str | None,
-        sire_line: str | None,
-        dam_sire_line: str | None,
-    ) -> None:
-        """pedigrees テーブルへ UPSERT する（NULL フィールドのみ補完）。
-
-        UM 由来データ用。既存の非 NULL 値は一切上書きしない。
-        """
-        stmt = (
-            insert(Pedigree)
-            .values(
-                horse_id=horse_id,
-                sire=sire,
-                dam=dam,
-                sire_of_dam=sire_of_dam,
-                sire_line=sire_line,
-                dam_sire_line=dam_sire_line,
-            )
-            .on_conflict_do_update(
-                index_elements=["horse_id"],
-                set_={
-                    "sire": text("COALESCE(pedigrees.sire, EXCLUDED.sire)"),
-                    "dam": text("COALESCE(pedigrees.dam, EXCLUDED.dam)"),
-                    "sire_of_dam": text("COALESCE(pedigrees.sire_of_dam, EXCLUDED.sire_of_dam)"),
-                    "sire_line": text("COALESCE(pedigrees.sire_line, EXCLUDED.sire_line)"),
-                    "dam_sire_line": text("COALESCE(pedigrees.dam_sire_line, EXCLUDED.dam_sire_line)"),
-                },
-            )
-        )
-        await self.db.execute(stmt)
