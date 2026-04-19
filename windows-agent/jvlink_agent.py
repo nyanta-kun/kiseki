@@ -86,7 +86,8 @@ logger = logging.getLogger("jvlink_agent")
 DATASPEC_RACE = "RACE"   # レース情報(RA) + 馬毎レース情報(SE)
 DATASPEC_TOKU = "TOKU"   # 特別登録馬
 DATASPEC_DIFF = "TOKU"   # 出馬表(特別登録馬) ※"DIFF"は無効なDataSpec
-DATASPEC_BLOD = "BLOD"   # 血統
+DATASPEC_BLOD = "BLOD"   # 血統（旧形式: 繁殖登録番号 '20xxx'/'40xxx'）
+DATASPEC_BLDN = "BLDN"   # 血統（新形式: 繁殖登録番号 '11xxx'/'12xxx', 2023-08-08以降提供）
 DATASPEC_MING = "MING"   # 馬名意味由来
 DATASPEC_SNAP = "SNAP"   # 調教データ
 DATASPEC_SLOP = "SLOP"   # 坂路調教
@@ -877,6 +878,52 @@ def _run_blod_only(jv) -> None:
     )
 
 
+def _run_bldn_only(jv) -> None:
+    """血統データ（BLDN・新形式）を取得してDBへ送信する。
+
+    BLDN は 2023-08-08 以降提供。旧形式 BLOD の SK sire_code は '20xxx'/'40xxx' で
+    breeding_horses に存在しないため pedigrees.sire が NULL になるが、BLDN の SK は
+    新形式 '11xxx'/'12xxx' を使用するため正しく名前解決できる。
+    """
+    logger.info("=== BLDN-ONLY MODE: 血統データ（新形式）取得 ===")
+    # BLDN は 2023-08-08 から提供。全過去馬のデータを新形式で含む。
+    from_time = "20230801000000"
+    completed_bldn = load_completed_files(DATASPEC_BLDN)
+    if completed_bldn:
+        logger.info(f"[completed] 処理済みBLDNファイル: {len(completed_bldn)} 件（スキップ対象）")
+
+    total_bldn = {"hn_sk": 0, "files": 0, "skipped": 0}
+
+    def on_bldn_file_done(filename: str, file_records: list[dict]) -> None:
+        if filename in completed_bldn:
+            total_bldn["skipped"] += 1
+            return
+        hn_sk = [r for r in file_records if r.get("rec_id") in ("HN", "SK")]
+        if not hn_sk:
+            mark_file_completed(DATASPEC_BLDN, filename)
+            return
+        logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
+        _post_in_batches("/api/import/bloodlines", hn_sk, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
+        total_bldn["hn_sk"] += len(hn_sk)
+        total_bldn["files"] += 1
+        mark_file_completed(DATASPEC_BLDN, filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: ファイル {total_bldn['files']} 本 / {total_bldn['hn_sk']} 件)"
+        )
+
+    logger.info(f"Fetching BLDN from {from_time} (option=4, ダイアログ無しセットアップ)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLDN, from_time, option=4,
+        on_file_done=on_bldn_file_done,
+        skip_file_fn=lambda fn: fn in completed_bldn,
+        skip_cache=True,
+    )
+    logger.info(
+        f"BLDN 取得完了: {total_bldn['files']} ファイル / "
+        f"{total_bldn['hn_sk']} 件をDBへ反映 / {total_bldn['skipped']} ファイルスキップ"
+    )
+
+
 def run_recent(jv, from_year: int = 2023) -> None:
     """直近データを取得する（option=2: 今週分のファイルのみ）。
 
@@ -1062,9 +1109,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "blod", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
+        choices=["all", "setup", "blod", "bldn", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, blod=血統データのみ取得, odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, blod=血統旧形式, bldn=血統新形式(pedigrees.sire解決用), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1090,7 +1137,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "recent", "daily", "blod", "odds-prefetch", "all")
+    BULK_MODES = ("setup", "recent", "daily", "blod", "bldn", "odds-prefetch", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1130,6 +1177,12 @@ def main() -> None:
         report_status("done", message="BLOD fetch completed.")
         jv.JVClose()
         logger.info("blod モード完了。終了します。")
+    elif args.mode == "bldn":
+        report_status("running", mode="bldn", message="Starting BLDN-only fetch (新形式血統)")
+        _run_bldn_only(jv)
+        report_status("done", message="BLDN fetch completed.")
+        jv.JVClose()
+        logger.info("bldn モード完了。終了します。")
     elif args.mode == "recent":
         report_status("running", mode="recent", message=f"Starting recent mode ({args.from_year}+)")
         run_recent(jv, from_year=args.from_year)
