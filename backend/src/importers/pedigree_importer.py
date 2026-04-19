@@ -19,8 +19,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Horse, Pedigree
 from .jvlink_parser import parse_hn, parse_sk
@@ -159,14 +160,14 @@ class PedigreeImporter:
     # プロセス内で共有する繁殖馬マスタキャッシュ（HN レコードの累積辞書）
     _global_hn_cache: dict[str, dict[str, str]] = {}
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     # ------------------------------------------------------------------
     # 公開インターフェース
     # ------------------------------------------------------------------
 
-    def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
+    async def import_records(self, records: list[dict[str, str]]) -> dict[str, int]:
         """HN/SK レコードをパースして pedigrees テーブルへ UPSERT する。
 
         Args:
@@ -209,9 +210,9 @@ class PedigreeImporter:
                 continue
 
             blood_code = parsed["blood_code"]
-            horse = self.db.query(Horse).filter(Horse.jravan_code == blood_code).first()
+            result = await self.db.execute(select(Horse).where(Horse.jravan_code == blood_code))
+            horse = result.scalar_one_or_none()
             if horse is None:
-                # レースデータより先に血統データが来た場合はスキップ
                 skipped += 1
                 continue
 
@@ -223,7 +224,7 @@ class PedigreeImporter:
             sire_line = classify_sire_line(sire_name)
             dam_sire_line = classify_sire_line(dam_sire_name)
 
-            self._upsert(
+            await self._upsert(
                 horse_id=horse.id,
                 sire=sire_name or None,
                 dam=dam_name or None,
@@ -233,7 +234,7 @@ class PedigreeImporter:
             )
             imported += 1
 
-        self.db.flush()
+        await self.db.flush()
         logger.info(f"pedigrees UPSERT完了: imported={imported} skipped={skipped}")
         return {"hn_parsed": hn_parsed, "sk_imported": imported, "sk_skipped": skipped}
 
@@ -241,7 +242,7 @@ class PedigreeImporter:
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    def _upsert(
+    async def _upsert(
         self,
         horse_id: int,
         sire: str | None,
@@ -272,4 +273,4 @@ class PedigreeImporter:
                 },
             )
         )
-        self.db.execute(stmt)
+        await self.db.execute(stmt)

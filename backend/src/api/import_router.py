@@ -258,9 +258,9 @@ async def import_bloodlines(
     HN (繁殖馬マスタ) と SK (産駒マスタ) を同一バッチで送信すること。
     HN が先に処理されて in-memory 辞書を構築し、SK の馬名解決に使用する。
     """
-    importer = PedigreeImporter(db)  # type: ignore[arg-type]
+    importer = PedigreeImporter(db)
     records = [r.model_dump() for r in body.records]
-    stats = importer.import_records(records)
+    stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_bloodlines: {stats}")
     return {"ok": True, "stats": stats}
