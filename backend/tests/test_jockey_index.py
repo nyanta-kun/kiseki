@@ -131,7 +131,7 @@ class TestNoJockey:
         calc._get_all_jockey_stats_batch = AsyncMock(return_value={})
 
         result = await calc.calculate_batch(race_id=1)
-        assert result[1] == SPEED_INDEX_MEAN
+        assert result[1] is None
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ class TestMinSample:
         calc._get_all_jockey_stats_batch = AsyncMock(return_value={1: None})
 
         result = await calc.calculate_batch(race_id=1)
-        assert result[1] == SPEED_INDEX_MEAN
+        assert result[1] is None
 
 
 # ---------------------------------------------------------------------------

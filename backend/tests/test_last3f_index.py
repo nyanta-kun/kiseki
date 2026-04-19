@@ -196,13 +196,13 @@ class TestWeightedAverage:
 
     def test_empty_returns_mean(self) -> None:
         calc = _make_calculator()
-        assert calc._weighted_average([]) == SPEED_INDEX_MEAN
+        assert calc._weighted_average([]) is None
 
     def test_below_min_races_returns_mean(self) -> None:
         """MIN_RACES 未満はデフォルト値。"""
         calc = _make_calculator()
         # MIN_RACES=2 なのでスコア1つだけは不足
-        assert calc._weighted_average([60.0]) == SPEED_INDEX_MEAN
+        assert calc._weighted_average([60.0]) is None
 
     def test_single_score_min_races_1(self) -> None:
         """MIN_RACES=1 に設定した場合は1件でも有効。"""

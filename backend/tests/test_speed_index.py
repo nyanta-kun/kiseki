@@ -72,7 +72,7 @@ class TestWeightedAverage:
 
     def test_empty_returns_mean(self) -> None:
         calc = SpeedIndexCalculator(db=AsyncMock())
-        assert calc._weighted_average([]) == SPEED_INDEX_MEAN
+        assert calc._weighted_average([]) is None
 
     def test_single_score(self) -> None:
         calc = SpeedIndexCalculator(db=AsyncMock())
@@ -295,7 +295,7 @@ class TestCalculateBatch:
         """過去データなし → SPEED_INDEX_MEAN を返す。"""
         calc = self._build_calc_with_past_data([101], {})
         result = await calc.calculate_batch(race_id=1)
-        assert result[101] == SPEED_INDEX_MEAN
+        assert result[101] is None
 
     async def test_relative_ordering(self) -> None:
         """速い馬ほど高い指数になることを確認。"""

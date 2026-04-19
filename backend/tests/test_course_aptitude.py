@@ -137,14 +137,14 @@ class TestComputeAptitudeIndex:
     """_compute_aptitude_index のテスト。"""
 
     def test_empty_rows_returns_mean(self) -> None:
-        """過去データが0件 → SPEED_INDEX_MEAN を返す。"""
+        """過去データが0件 → None を返す（composite側でrace平均に補完）。"""
         calc = _make_calculator()
         target_race = _make_race(course="05", distance=1600, surface="芝")
         result = calc._compute_aptitude_index([], target_race)
-        assert result == SPEED_INDEX_MEAN
+        assert result is None
 
     def test_insufficient_sample_returns_mean(self) -> None:
-        """MIN_SAMPLE 未満（同コースの行が少ない）→ SPEED_INDEX_MEAN を返す。"""
+        """MIN_SAMPLE 未満（同コースの行が少ない）→ None を返す（composite側でrace平均に補完）。"""
         calc = _make_calculator()
         # 同コース一致行が MIN_SAMPLE - 1 件
         rows = [
@@ -153,7 +153,7 @@ class TestComputeAptitudeIndex:
         ]
         target_race = _make_race(course="05", distance=1600, surface="芝")
         result = calc._compute_aptitude_index(rows, target_race)
-        assert result == SPEED_INDEX_MEAN
+        assert result is None
 
     def test_got_aptitude_horse_above_mean(self) -> None:
         """得意コース（1着が多い）→ 50より高い指数を返す。"""
@@ -182,7 +182,7 @@ class TestComputeAptitudeIndex:
         assert result < SPEED_INDEX_MEAN
 
     def test_different_course_rows_ignored(self) -> None:
-        """他コースのみのデータ → 重みなし → SPEED_INDEX_MEAN を返す。"""
+        """他コースのみのデータ → 重みなし → None を返す（composite側でrace平均に補完）。"""
         calc = _make_calculator()
         # 阪神(09)のデータのみ
         rows = [
@@ -191,7 +191,7 @@ class TestComputeAptitudeIndex:
         ]
         target_race = _make_race(course="05", distance=1600, surface="芝")
         result = calc._compute_aptitude_index(rows, target_race)
-        assert result == SPEED_INDEX_MEAN
+        assert result is None
 
     def test_winner_gets_higher_than_loser(self) -> None:
         """同コースで1着が多い馬の方が、下位が多い馬より高い指数になる。"""

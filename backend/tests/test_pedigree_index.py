@@ -427,7 +427,7 @@ class TestCalculateBatch:
         entries = [_make_mock_entry(101)]
         calc = self._build_batch_calc(race, entries, pedigrees=[])
         result = await calc.calculate_batch(race_id=1)
-        assert result[101] == SPEED_INDEX_MEAN
+        assert result[101] is None
 
     async def test_all_horse_ids_returned(self) -> None:
         """全馬の horse_id がキーとして返る"""
@@ -458,7 +458,7 @@ class TestCalculateBatch:
         pedigrees = [_make_mock_pedigree(101)]  # 102は血統なし
         calc = self._build_batch_calc(race, entries, pedigrees)
         result = await calc.calculate_batch(race_id=1)
-        assert result[102] == SPEED_INDEX_MEAN
+        assert result[102] is None
 
     async def test_all_scores_in_range(self) -> None:
         """全スコアが 0-100 範囲"""

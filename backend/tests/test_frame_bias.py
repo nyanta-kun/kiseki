@@ -144,14 +144,14 @@ class TestComputeFrameBias:
         assert result < SPEED_INDEX_MEAN
 
     async def test_no_stats_returns_mean(self) -> None:
-        """統計データなし → SPEED_INDEX_MEAN を返す。"""
+        """統計データなし → None を返す（composite側でrace平均に補完）。"""
         calc = _make_calc_with_frame_stats({})
         target_race = _make_race()
         result = await calc._compute_frame_bias(target_race, frame_number=1)
-        assert result == SPEED_INDEX_MEAN
+        assert result is None
 
     async def test_insufficient_sample_returns_mean(self) -> None:
-        """対象枠番のサンプル数が MIN_SAMPLE 未満 → SPEED_INDEX_MEAN を返す。"""
+        """対象枠番のサンプル数が MIN_SAMPLE 未満 → None を返す（composite側でrace平均に補完）。"""
         stats = {
             frame: _make_frame_stats(frame, avg_pos_score=50.0, win_rate=0.125)
             for frame in range(1, 9)
@@ -161,7 +161,7 @@ class TestComputeFrameBias:
         calc = _make_calc_with_frame_stats(stats)
         target_race = _make_race()
         result = await calc._compute_frame_bias(target_race, frame_number=3)
-        assert result == SPEED_INDEX_MEAN
+        assert result is None
 
     async def test_index_within_valid_range(self) -> None:
         """算出された指数が [0, 100] の範囲内に収まる。"""
@@ -296,7 +296,7 @@ class TestCalculateInterface:
 
         calc = FrameBiasCalculator(db=db)
         result = await calc.calculate_batch(race_id=1)
-        assert result[1] == SPEED_INDEX_MEAN
+        assert result[1] is None
 
     async def test_relative_ordering_preserved(self) -> None:
         """内枠有利コースで 1枠馬 > 8枠馬 の順序が保たれる。"""

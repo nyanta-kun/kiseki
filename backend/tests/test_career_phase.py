@@ -116,8 +116,8 @@ class TestComputeScore:
 
     def test_insufficient_data_returns_default(self) -> None:
         """データ点 < 2 の場合、DEFAULT_SCORE を返す。"""
-        assert self.calc._compute_score([], None, 5) == DEFAULT_SCORE
-        assert self.calc._compute_score([(1, 10, None)], None, 5) == DEFAULT_SCORE
+        assert self.calc._compute_score([], None, 5) is None
+        assert self.calc._compute_score([(1, 10, None)], None, 5) is None
 
     def test_improving_trajectory(self) -> None:
         """最近の着順が良い（上昇中）→ スコアは 50 を超える。

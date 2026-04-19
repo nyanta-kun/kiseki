@@ -202,8 +202,8 @@ class FrameBiasCalculator(IndexCalculator):
             score_std = 1.0  # フォールバック
 
         if score_std < 0.1:
-            # 枠間の差がほぼない場合はデータ不足とみなす
-            return None
+            # 枠間の差がほぼない場合はバイアスなし（中立値）
+            return SPEED_INDEX_MEAN
 
         # 着順スコアと勝率を合成（着順スコア 70% + 勝率 30%）
         if global_avg_win > 0:

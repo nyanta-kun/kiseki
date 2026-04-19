@@ -284,8 +284,8 @@ class TestCalculateBatch:
         calc = TrainingIndexCalculator(db=db)
         calc._fetch_past_results = AsyncMock(return_value={})
         result = await calc.calculate_batch(race_id=1)
-        assert result[101] == NEUTRAL
-        assert result[102] == NEUTRAL
+        assert result[101] is None
+        assert result[102] is None
 
     async def test_improving_horse_above_neutral(self) -> None:
         """改善傾向にある馬はNEUTRAL以上のスコアを返す。"""
@@ -351,7 +351,7 @@ class TestCompute:
         """行が空の場合はNEUTRALを返す。"""
         calc = self._make_calc()
         race = _make_race()
-        assert await calc._compute([], race) == NEUTRAL
+        assert await calc._compute([], race) is None
 
     async def test_with_data_returns_float(self) -> None:
         """データがある場合はfloatを返す。"""

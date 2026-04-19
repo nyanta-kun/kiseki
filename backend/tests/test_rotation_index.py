@@ -377,7 +377,7 @@ class TestCalculateBatch:
         horse_ids = [101]
         calc = self._build_batch_calc(horse_ids, {})
         result = await calc.calculate_batch(race_id=1)
-        assert result[101] == DEFAULT_SCORE
+        assert result[101] is None
 
     async def test_batch_score_ordering(self) -> None:
         """理想間隔の馬 > 超過酷ローテの馬 の順でスコアが高い"""
