@@ -5,9 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.access import access_admin_router, access_router
 from .api.agent_router import router as agent_router
+from .api.chihou_horses_router import router as chihou_horses_router
 from .api.chihou_import_router import chihou_router
 from .api.chihou_performance import router as chihou_performance_router
-from .api.chihou_horses_router import router as chihou_horses_router
 from .api.chihou_races_router import router as chihou_races_router
 from .api.chihou_recommendations_router import router as chihou_recommendations_router
 from .api.horses import router as horses_router
