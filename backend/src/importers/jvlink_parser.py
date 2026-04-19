@@ -955,6 +955,8 @@ def parse_um(data: str) -> dict[str, Any] | None:
         if data_type == "0":
             return None
 
+        jravan_code = _s(data, 12, 21)  # 血統登録番号 = Horse.jravan_code
+
         ancestors: list[dict[str, str]] = []
         for i in range(14):
             base = 205 + i * 46  # 1-indexed start of this ancestor's 46-byte block
@@ -971,6 +973,7 @@ def parse_um(data: str) -> dict[str, Any] | None:
         return {
             "_rec_id": "UM",
             "data_type": data_type,
+            "jravan_code": jravan_code,
             "ancestors": ancestors,
         }
     except Exception as e:
