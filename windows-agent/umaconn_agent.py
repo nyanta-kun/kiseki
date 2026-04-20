@@ -210,25 +210,8 @@ def init_umaconn():
         if rc != 0:
             logger.error(f"NVInit failed: rc={rc}")
             sys.exit(1)
-        # UI（ダウンロードダイアログ等）を非表示にする
-        # NVSetUIProperties は環境によってブロックするため15秒タイムアウト付きで実行
-        _ui_done: list = []
-
-        def _set_ui() -> None:
-            try:
-                nv.NVSetUIProperties()
-                _ui_done.append("ok")
-            except Exception as e:  # noqa: BLE001
-                _ui_done.append(f"error: {e}")
-
-        _ui_t = threading.Thread(target=_set_ui, daemon=True)
-        _ui_t.start()
-        _ui_t.join(timeout=15)
-        if _ui_t.is_alive():
-            logger.warning("NVSetUIProperties: 15秒タイムアウト。スキップして続行します。")
-        else:
-            logger.info(f"NVSetUIProperties() result: {_ui_done[0] if _ui_done else 'no_result'}")
         # サービスキーを設定（NVOpen前に必須）
+        # NVSetUIProperties() は環境によってダイアログを表示し動作に影響しないためスキップ
         # タイムアウト付き実行: NVSetServiceKey はサービスサーバーへのネットワーク接続を行い
         # サーバーが応答しない場合に数分以上ブロックすることがある。
         # スレッドで実行して最大60秒待機し、超過した場合は警告して続行する。
@@ -1032,10 +1015,6 @@ def run_realtime_monitor(nv) -> None:
             if rc != 0:
                 logger.error(f"bg worker: NVInit failed rc={rc}")
                 return
-            try:
-                nv2.NVSetUIProperties()
-            except Exception:  # noqa: BLE001
-                pass
             logger.info("bg worker (0B12): NVLink initialized")
             while True:
                 try:
