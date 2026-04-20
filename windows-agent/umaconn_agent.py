@@ -211,11 +211,23 @@ def init_umaconn():
             logger.error(f"NVInit failed: rc={rc}")
             sys.exit(1)
         # UI（ダウンロードダイアログ等）を非表示にする
-        try:
-            nv.NVSetUIProperties()
-            logger.info("NVSetUIProperties() called (UI hidden)")
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"NVSetUIProperties failed: {e}")
+        # NVSetUIProperties は環境によってブロックするため15秒タイムアウト付きで実行
+        _ui_done: list = []
+
+        def _set_ui() -> None:
+            try:
+                nv.NVSetUIProperties()
+                _ui_done.append("ok")
+            except Exception as e:  # noqa: BLE001
+                _ui_done.append(f"error: {e}")
+
+        _ui_t = threading.Thread(target=_set_ui, daemon=True)
+        _ui_t.start()
+        _ui_t.join(timeout=15)
+        if _ui_t.is_alive():
+            logger.warning("NVSetUIProperties: 15秒タイムアウト。スキップして続行します。")
+        else:
+            logger.info(f"NVSetUIProperties() result: {_ui_done[0] if _ui_done else 'no_result'}")
         # サービスキーを設定（NVOpen前に必須）
         # タイムアウト付き実行: NVSetServiceKey はサービスサーバーへのネットワーク接続を行い
         # サーバーが応答しない場合に数分以上ブロックすることがある。
@@ -847,6 +859,22 @@ def run_daily_fetch(nv) -> None:
         on_file_done=on_daily_file_done,
     )
     logger.info(f"Daily fetch 完了: 全体 {len(records)} 件")
+
+    # 当日分の地方指数を自動算出トリガー
+    today = datetime.now().strftime("%Y%m%d")
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/import/chihou/calculate",
+            params={"date": today},
+            headers={"X-API-Key": API_KEY},
+            timeout=10,
+        )
+        if resp.ok:
+            logger.info(f"[calculate] 地方指数算出トリガー送信完了: date={today}")
+        else:
+            logger.warning(f"[calculate] 地方指数算出トリガー失敗: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"[calculate] 地方指数算出トリガー例外: {e}")
 
 
 # ---------------------------------------------------------------------------

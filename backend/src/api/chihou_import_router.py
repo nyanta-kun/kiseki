@@ -10,18 +10,19 @@ import logging
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from sqlalchemy import and_, select
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.chihou_models import ChihouRace, ChihouRacePayout, ChihouRaceResult
-from ..db.session import get_db
+from ..db.session import AsyncSessionLocal, get_db
 from ..importers.chihou_odds_importer import ChihouOddsImporter
 from ..importers.chihou_pedigree_importer import ChihouPedigreeImporter
 from ..importers.chihou_race_importer import ChihouRaceImporter
 from ..importers.jvlink_parser import parse_hr
+from ..indices.chihou_calculator import BANEI_COURSE_CODE, ChihouIndexCalculator
 from .chihou_races_router import _fetch_chihou_results_payload
 from .import_router import (
     ImportRequest,
@@ -222,6 +223,46 @@ async def chihou_import_payouts(
     await db.commit()
     logger.info("chihou_import_payouts: imported=%d, skipped=%d", imported, skipped)
     return {"imported": imported, "skipped": skipped}
+
+
+async def _run_chihou_calculate(date: str) -> None:
+    """バックグラウンドで指定日の地方指数を算出する（独立セッション）。"""
+    async with AsyncSessionLocal() as db:
+        try:
+            races = (
+                await db.execute(
+                    select(ChihouRace.id, ChihouRace.race_number)
+                    .where(and_(ChihouRace.date == date, ChihouRace.course != BANEI_COURSE_CODE))
+                    .order_by(ChihouRace.id)
+                )
+            ).fetchall()
+            if not races:
+                logger.info(f"[chihou calculate] 対象レースなし: date={date}")
+                return
+            calc = ChihouIndexCalculator(db)
+            saved_total = 0
+            for race_id, race_num in races:
+                stats = await calc.calculate_and_save(race_id)
+                saved_total += stats.get("saved", 0)
+            await db.commit()
+            logger.info(f"[chihou calculate] 完了: date={date} races={len(races)} saved={saved_total}")
+        except Exception as e:
+            logger.error(f"[chihou calculate] 失敗: date={date} error={e}", exc_info=True)
+
+
+@chihou_router.post("/calculate")
+async def chihou_trigger_calculate(
+    background_tasks: BackgroundTasks,
+    _: ApiKeyDep,
+    date: str = Query(description="算出対象日 YYYYMMDD"),
+) -> dict:
+    """指定日の地方競馬全レースについて指数をバックグラウンド算出する。
+
+    UmaConn Agent の daily フェッチ後に自動で呼び出される。
+    """
+    background_tasks.add_task(_run_chihou_calculate, date)
+    logger.info(f"[chihou calculate] バックグラウンドタスク登録: date={date}")
+    return {"ok": True, "date": date, "message": "Chihou calculation started in background"}
 
 
 @chihou_router.post("/weights")
