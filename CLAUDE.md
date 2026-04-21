@@ -208,13 +208,24 @@ until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 
 1. Windows 11 のデフォルトターミナルが Windows Terminal に変更されており、`--current-user` で起動したコンソールプロセスが全て Windows Terminal 経由でウィンドウを生成する
 2. `prlctl exec` がハングすると Parallels Tools Service（PID 3736 の `prl_tools_service.exe`）が約7秒おきにリトライし、毎回新しいウィンドウが出現する
 
-**恒久対策（実施済み）**: `set_conhost.py` でデフォルトターミナルを ConHost に変更
+**恒久対策①（実施済み）**: `set_conhost.py` でデフォルトターミナルを ConHost に変更
 ```bash
 prlctl exec "Windows 11" --current-user powershell -Command "C:\Python312-32\python.exe C:\kiseki\windows-agent\set_conhost.py"
 ```
 `HKCU\Console\%Startup\DelegateFocusToConsoleHost=1` を設定。以後 `prlctl exec --current-user` でウィンドウが出なくなる。
 
-**ハングプロセスの確認と kill**:
+**恒久対策②（実施済み）**: Mac 側 LaunchAgent で 90秒以上ハングした `prlctl exec` を自動 kill
+- ファイル: `~/Library/LaunchAgents/com.kiseki.prlctl-watchdog.plist`
+- 30秒ごとに実行。経過時間 > 90秒の `prlctl exec` プロセスを自動 kill
+- Mac 起動時に自動有効（launchd 管理）
+```bash
+# 状態確認
+launchctl list com.kiseki.prlctl-watchdog
+# 手動停止（通常不要）
+launchctl unload ~/Library/LaunchAgents/com.kiseki.prlctl-watchdog.plist
+```
+
+**ハングプロセスの手動確認と kill（緊急時）**:
 ```bash
 ps aux | grep "prlctl exec" | grep -v grep
 pkill -9 -f "prlctl exec"
@@ -282,7 +293,136 @@ prlctl exec "Windows 11" --current-user powershell -Command "
     -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode odds-prefetch' \`
     -WindowStyle Hidden -PassThru
 "
+
+# blod-umモード（pedigrees.sire NULL補完。2022年以前の馬が対象。1回のみ実行）
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode blod-um' \`
+    -WindowStyle Hidden -PassThru
+"
 ```
+
+### blod-um モード 仕様（pedigrees.sire NULL 補完）
+
+**目的**: 2022年以前の馬の `pedigrees.sire` が NULL になっている問題を解消する。
+
+**根本原因**: BLOD の SK レコードが旧形式 sire_code（`20xxx`/`40xxx`）を持ち、`breeding_horses` に存在しないため名前解決できない。UM レコード（競走馬マスタ）は祖先名をテキストで直接保持するため、breeding_code の解決不要。
+
+**DataSpec の選択根拠**（重要）:
+- `BLOD` DataSpec には UM レコードが**含まれない**（BT/HN/SK のみ）
+- UM レコードは `DIFF` / `DIFN` / `TCOV` / `RCOV` にのみ存在（仕様書 p.20・`jvlink_parser.py` L931 コメントで確認済み）
+- **`--mode blod-um` は `DataSpec="DIFN"` + `option=1`（差分モード）を使用**
+  - `DIFF`/`DIFN` + `option=4`（セットアップ）はセットアップファイルに UM レコードが**含まれない**ため使用不可（DIFF=111秒・DIFN=82秒で JVOpen は完了するが UM=0件。2026-04-20 確認）
+  - UM レコードは UMFW ファイルだけでなく BN/CH/KS/RA/SE 等あらゆるファイルに散在するため、ファイル名フィルタは不要
+
+**JVOpen パラメータ**:
+```
+JVOpen("DIFN", from_time="20000101000000", option=1, ...)
+```
+- `from_time="20000101000000"` で全期間の差分を取得
+- `option=1` = 通常差分モード。数分で JVOpen が完了する
+
+**正常動作フロー**:
+```
+JVOpen("DIFN", "20000101000000", option=1)
+  → 数分で完了
+JVRead ループ（max_errors=1000）:
+  → 各ファイルから rec_id="UM" のレコードのみ抽出
+  → BRFW 等 rc=-402 エラーファイルは completed マークしてスキップ
+  → completed.add(filename) でメモリ上の完了セットも更新（同セッション内の重複処理を防止）
+POST /api/import/bloodlines（batch_size=200）
+  → pedigree_importer.import_records()
+  → INSERT INTO pedigrees ... ON CONFLICT DO UPDATE SET sire=COALESCE(pedigrees.sire, EXCLUDED.sire)
+  → 既存の非NULLは保持、NULL のみ補完
+```
+
+**実装上の注意**（`jvlink_agent.py` `_run_blod_um`）:
+- `batch_size=200`：nginx 1MB 制限対策（2000 だと HTTP 413）
+- `max_errors=1000`：BRFW ファイルの rc=-402 多発で中断しないよう緩和
+- `retry_pending` を起動時に呼ぶ（`link_common.retry_pending` もバッチ分割対応済み）
+- `fetch_stored_data` の `skip_file_fn=lambda fn: fn in completed` でスキップ
+
+**実行結果（2026-04-20 完了）**:
+- UM レコード 11,043 件 DB 反映済み（7,917 ファイル処理完了）
+- 完了済みファイルは `data/completed/BLOD_UM.txt` に記録
+
+**進捗確認**:
+```bash
+prlctl exec "Windows 11" --current-user powershell -Command "Get-Content 'C:\kiseki\windows-agent\jvlink_agent.log' -Tail 20"
+```
+
+**完了確認（DB）**:
+```sql
+SELECT COUNT(*) FROM keiba.pedigrees WHERE sire IS NULL;
+```
+
+**再実行が必要な場合**:
+```bash
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Get-WmiObject Win32_Process | Where-Object { \$_.Name -eq 'python.exe' } | ForEach-Object { \$_.Terminate() }
+  Start-Sleep 3
+  Start-Process 'cmd.exe' -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode blod-um' -WindowStyle Hidden
+"
+```
+- 全件再取得する場合は `data/completed/BLOD_UM.txt` を削除してから実行
+
+### bldn-full モード 仕様（breeding_horses + pedigrees.sire 全歴史補完）
+
+**目的**: 2023年以前の馬の `pedigrees.sire` が NULL になっている問題を解消する。
+
+**根本原因**:
+- 旧形式 BLOD の SK sire_code（`20xxx`/`40xxx`）は breeding_horses に存在しない
+- BLDN の新形式 SK sire_code（`1110000xxx` 等）も、HN（繁殖馬マスタ）が breeding_horses に未登録だと解決できない
+- 通常の `--mode bldn`（from_time="20230801000000"）は差分ファイルのみ取得し、累積マスタ HN を含まない
+
+**解決策**: `from_time="20000101000000"`（BLDNサービス開始前）で JVOpen すると、JV-Link はサーバー保持期間外とみなし、**累積マスタファイル（571ファイル）のみ**を返す。これには1986年以降の全 HN + SK が含まれる。
+
+**JVOpen 動作の重要な挙動**:
+- `from_time` が BLDN 開始（2023-08-08）**以前** → 累積マスタ 571 ファイルのみ（DL=0、6〜8分）
+- `from_time` が BLDN 開始**以降** → 累積マスタ + 差分ファイル（30,919件、~6分）
+- いずれも JVOpen は正常完了（rc=0）
+
+**JVOpen パラメータ**:
+```
+JVOpen("BLDN", from_time="20000101000000", option=4, ...)
+```
+
+**正常動作フロー**:
+```
+Step1: JVOpen("BLDN", "20000101000000", option=4) → 571ファイルを全読み（キャッシュ確定）
+Step2: JVOpen("BLDN", "20000101000000", option=4) → HN/SK のみ抽出してDB反映
+  → 大きな累積 HNVM ファイル（113,530件など）→ breeding_horses 登録
+  → 年度別 HNVM + SKVM ペア → breeding_horses → pedigrees.sire 解決
+POST /api/import/bloodlines（batch_size=2000）
+  → INSERT INTO breeding_horses ... ON CONFLICT DO UPDATE
+  → INSERT INTO pedigrees ... ON CONFLICT DO UPDATE SET sire=COALESCE(pedigrees.sire, EXCLUDED.sire)
+```
+
+**完了済みファイルは** `data/completed/BLDN_FULL.txt` に記録。再実行時は削除不要（スキップ対象）。
+
+**実行結果（2026-04-20 完了）**:
+- 569 ファイル / 588,768 件 DB 反映済み
+- breeding_horses: 170,315 → 314,246 件（+143,931件）
+- pedigrees.sire NULL: 73,159 → 3,152 件（**95.7% 削減**）
+- sire 解決済み: 77,924 / 81,076 件（96.1%）
+- 残り 3,152 件は外国種牡馬・父不明など構造的に解消困難
+
+**実行コマンド**:
+```bash
+prlctl exec "Windows 11" --current-user powershell -Command "
+  Start-Process -FilePath 'cmd.exe' \`
+    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode bldn-full' \`
+    -WindowStyle Hidden -PassThru
+"
+```
+
+**完了確認（DB）**:
+```sql
+SELECT COUNT(*) FROM keiba.pedigrees WHERE sire IS NULL;
+```
+
+**再実行が必要な場合**:
+全件再取得するには `data/completed/BLDN_FULL.txt` を削除してから実行。
 
 ### JV-Link rc=-303 修復
 rc=-303（ファイル存在確認エラー）= JVNextCoreがJRA-VANサーバー確認に失敗。
