@@ -419,6 +419,11 @@ class ChihouRaceImporter:
             )
         if not values:
             return {}
+        # (race_id, horse_number) 重複を dedup（後勝ち）
+        dedup_e: dict[tuple[int, int], dict] = {}
+        for v in values:
+            dedup_e[(v["race_id"], v["horse_number"])] = v
+        values = list(dedup_e.values())
         update_cols = [
             "jockey_id",
             "trainer_id",
@@ -509,6 +514,12 @@ class ChihouRaceImporter:
             )
         if not values:
             return [], 0
+        # (race_id, horse_id) 重複を dedup（後勝ち）— ON CONFLICT DO UPDATE は同一キーが
+        # 同一 INSERT に複数あると CardinalityViolationError になるため
+        dedup: dict[tuple[int, int], dict] = {}
+        for v in values:
+            dedup[(v["race_id"], v["horse_id"])] = v
+        values = list(dedup.values())
         result_race_ids = list({v["race_id"] for v in values if v.get("finish_position")})
         update_cols = [
             "finish_position",
