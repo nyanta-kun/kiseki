@@ -18,7 +18,7 @@
   5. 各因子の重み付き合成 → 父(0.65) + 母父(0.35) 加重平均
 
 フォールバック:
-  - pedigrees 未登録 → SPEED_INDEX_MEAN（50.0）
+  - pedigrees 未登録 / sire IS NULL → 同レース出走馬（sire 既知）の平均指数
   - 種牡馬の実績サンプルなし → ニュートラル（50.0）
   - pedigrees テーブルが空 → 全馬ニュートラル（50.0）
 """
@@ -452,6 +452,8 @@ class PedigreeIndexCalculator(IndexCalculator):
     async def calculate(self, race_id: int, horse_id: int) -> float:
         """単一馬の血統指数を算出する。
 
+        sire IS NULL の場合は同レース平均を使うため calculate_batch に委譲する。
+
         Args:
             race_id: DB の races.id
             horse_id: DB の horses.id
@@ -459,30 +461,9 @@ class PedigreeIndexCalculator(IndexCalculator):
         Returns:
             血統指数（0-100）。データ未登録時は SPEED_INDEX_MEAN。
         """
-        await self._cache.ensure_loaded()
-
-        race_result = await self.db.execute(select(Race).where(Race.id == race_id))
-        race = race_result.scalar_one_or_none()
-        if not race:
-            return SPEED_INDEX_MEAN
-
-        ped_result = await self.db.execute(
-            select(Pedigree).where(Pedigree.horse_id == horse_id)
-        )
-        pedigree = ped_result.scalar_one_or_none()
-        if pedigree is None:
-            return SPEED_INDEX_MEAN
-
-        entry_result = await self.db.execute(
-            select(RaceEntry).where(
-                RaceEntry.race_id == race_id,
-                RaceEntry.horse_id == horse_id,
-            )
-        )
-        entry = entry_result.scalar_one_or_none()
-        weight_carried = float(entry.weight_carried) if entry and entry.weight_carried else None
-
-        return self._compute_score(pedigree, race, weight_carried)
+        batch = await self.calculate_batch(race_id)
+        v = batch.get(horse_id)
+        return v if v is not None else SPEED_INDEX_MEAN
 
     async def calculate_batch(self, race_id: int) -> dict[int, float | None]:
         """レース全馬の血統指数を一括算出する。
@@ -518,15 +499,28 @@ class PedigreeIndexCalculator(IndexCalculator):
             e.horse_id: (float(e.weight_carried) if e.weight_carried else None) for e in entries
         }
 
-        result: dict[int, float | None] = {}
+        known_scores: dict[int, float] = {}
+        null_sire_ids: list[int] = []
+
         for entry in entries:
             ped = ped_map.get(entry.horse_id)
-            if ped is None:
-                result[entry.horse_id] = None
+            if ped is None or ped.sire is None:
+                # pedigree 未登録 または sire NULL → 同レース平均で後処理
+                null_sire_ids.append(entry.horse_id)
             else:
-                result[entry.horse_id] = self._compute_score(
+                known_scores[entry.horse_id] = self._compute_score(
                     ped, race, weight_map.get(entry.horse_id)
                 )
+
+        # sire NULL 馬には同レース平均を割り当て（指数への影響をニュートラルにする）
+        race_avg: float = (
+            round(sum(known_scores.values()) / len(known_scores), 1)
+            if known_scores
+            else NEUTRAL
+        )
+        result: dict[int, float | None] = dict(known_scores)
+        for hid in null_sire_ids:
+            result[hid] = race_avg
 
         return result
 

@@ -129,7 +129,8 @@ logger = logging.getLogger(__name__)
 #   同レース内で計算できた馬の平均値を使用する（_fill_with_race_mean）。
 #   コース適性スコア式: time×0.9 + pos×0.1（v20の0.7→0.9に強化）
 #   理由: 計算不能馬=50.0固定では、実測値44の馬が「計算不能馬全員」より下位になる不合理が生じる
-COMPOSITE_VERSION = 21
+# v22: pedigree_index: sire IS NULL → 同レース平均（外国種牡馬・父不明をニュートラルに）
+COMPOSITE_VERSION = 22
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
