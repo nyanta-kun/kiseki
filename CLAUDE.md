@@ -168,26 +168,44 @@ Auth.js は `EncryptJWT`/`jwtDecrypt`（A256CBC-HS512）でセッションを暗
 
 **前提**: Windows 11はParallels VMとして動作。Mac側の `Z:\GitHub\kiseki\` にプロジェクトがマウント済み。
 
-### コマンド実行
+### コマンド実行（SSH推奨 — ウィンドウちらつきなし）
+
+**SSH接続を優先して使うこと**。`prlctl exec --current-user` はコマンド実行のたびに ConHost ウィンドウがちらつく。
+
 ```bash
-# PowerShellコマンド実行
+# SSH経由でPowerShellコマンド実行（推奨）
+ssh windows-vm "powershell -Command \"コマンド\""
+
+# ファイル転送（Mac→Windows）: Zドライブ経由（SSH不要）
+# WindowsからZ:\GitHub\kiseki\に直接アクセス可能
+
+# ログ確認
+ssh windows-vm "Get-Content C:\kiseki\windows-agent\jvlink_agent.log -Tail 50"
+```
+
+SSH接続設定（~/.ssh/config）:
+```
+Host windows-vm
+    HostName YUICHIROSUZDC35.local
+    User ysuzuki
+    IdentityFile ~/.ssh/id_ed25519
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+```
+
+**SSH接続できない場合（VM停止中・起動直後等）のフォールバック**:
+```bash
+# prlctl exec は --current-user なし（SYSTEM権限）を優先、なければ --current-user
+prlctl exec "Windows 11" powershell -Command "コマンド"
 prlctl exec "Windows 11" --current-user powershell -Command "コマンド"
-
-# ファイル転送（Mac→Windows）
-prlctl exec "Windows 11" --current-user powershell -Command "Copy-Item 'Z:\GitHub\kiseki\windows-agent\FILE.py' 'C:\kiseki\windows-agent\FILE.py' -Force"
-
-# Pythonスクリプト実行（複数行の場合はhere-string経由）
-prlctl exec "Windows 11" --current-user powershell -Command "
-@'
-import win32com.client
-print('test')
-'@ | Out-File -FilePath 'C:\kiseki\windows-agent\test.py' -Encoding utf8
-python C:\kiseki\windows-agent\test.py"
 ```
 
 ### ログ確認
 ```bash
-# Windows agentのログ（最新50行）
+# SSH経由（推奨）
+ssh windows-vm "Get-Content C:\kiseki\windows-agent\jvlink_agent.log -Tail 50"
+# フォールバック
 prlctl exec "Windows 11" --current-user powershell -Command "Get-Content 'C:\kiseki\windows-agent\jvlink_agent.log' -Tail 50"
 ```
 
@@ -252,54 +270,29 @@ pkill -9 -f "prlctl exec"
   - Windowsタスクスケジューラ（`kiseki-UmaConn-Realtime`）が毎朝9:00に自動起動
   - 自動停止: 最終レース発走+90分 or 21:30ハードストップ（先に来た方）
   - ウォッチドッグ: NVRTOpenハングを180秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
-  - タスク状態確認: `prlctl exec "Windows 11" --current-user powershell -Command "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
+  - タスク状態確認: `ssh windows-vm "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
 
 ### jvlink_agent.py 起動
 ※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
-※ `-WindowStyle Hidden` でウィンドウ非表示。ログは jvlink_agent.log で確認。
+※ SSH経由で実行するためウィンドウちらつきなし。ログは jvlink_agent.log で確認。
 ```bash
 # setupモード（全過去データ取得）
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode setup' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode setup' -WindowStyle Hidden -PassThru | Select-Object Id"
 
 # dailyモード（当日データ取得）
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode daily' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode daily' -WindowStyle Hidden -PassThru | Select-Object Id"
 
 # recentモード（指定年以降を取得、完了後に自動終了）
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode recent --from-year 2023' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode recent --from-year 2023' -WindowStyle Hidden -PassThru | Select-Object Id"
 
 # realtimeモード（オッズ・成績・出走取消を30秒間隔でポーリング、常駐）
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' -WindowStyle Hidden -PassThru | Select-Object Id"
 
 # odds-prefetchモード（前日発売オッズを1回取得して終了。VPS cronから1時間ごとに呼び出す）
-# --fetch-date を省略すると翌日のオッズを取得。指定する場合は YYYYMMDD 形式。
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode odds-prefetch' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode odds-prefetch' -WindowStyle Hidden -PassThru | Select-Object Id"
 
 # blod-umモード（pedigrees.sire NULL補完。2022年以前の馬が対象。1回のみ実行）
-prlctl exec "Windows 11" --current-user powershell -Command "
-  Start-Process -FilePath 'cmd.exe' \`
-    -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode blod-um' \`
-    -WindowStyle Hidden -PassThru
-"
+ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode blod-um' -WindowStyle Hidden -PassThru | Select-Object Id"
 ```
 
 ### blod-um モード 仕様（pedigrees.sire NULL 補完）
