@@ -134,6 +134,11 @@ class ChihouRaceImporter:
 
         # Phase2a: RAを1SQLでバルクupsert → raceキャッシュを構築
         if ra_parsed:
+            from collections import Counter
+            date_course = Counter(
+                (p.get("race_date", "?"), p.get("course", "?")) for p in ra_parsed
+            )
+            logger.warning(f"chihou RA parsed {len(ra_parsed)} records: {dict(date_course)}")
             try:
                 await self._bulk_upsert_races(ra_parsed)
                 stats["races"] = len(ra_parsed)
