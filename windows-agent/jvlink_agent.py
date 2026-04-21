@@ -85,7 +85,7 @@ logger = logging.getLogger("jvlink_agent")
 # 蓄積系 (JVOpen)
 DATASPEC_RACE = "RACE"   # レース情報(RA) + 馬毎レース情報(SE)
 DATASPEC_TOKU = "TOKU"   # 特別登録馬
-DATASPEC_DIFF = "TOKU"   # 出馬表(特別登録馬) ※"DIFF"は無効なDataSpec
+DATASPEC_DIFF = "DIFF"   # 全種別差分（UM/RA/SE/HN/SK等を含む、仕様書p.20で有効確認済み）
 DATASPEC_BLOD = "BLOD"   # 血統（旧形式: 繁殖登録番号 '20xxx'/'40xxx'）
 DATASPEC_BLDN = "BLDN"   # 血統（新形式: 繁殖登録番号 '11xxx'/'12xxx', 2023-08-08以降提供）
 DATASPEC_MING = "MING"   # 馬名意味由来
@@ -185,11 +185,6 @@ def init_jvlink(sid: str | None = None):
     try:
         import win32com.client
         jv = win32com.client.Dispatch("JVDTLab.JVLink")
-        # セットアップダイアログ・バルーン通知を非表示にする
-        try:
-            jv.JVSetUIProperties(False, False)
-        except Exception:
-            pass  # SDK バージョンによっては未対応でも問題なし
         rc = jv.JVInit(use_sid)
         if rc != 0:
             logger.error(f"JVInit failed: rc={rc}")
@@ -215,6 +210,7 @@ def fetch_stored_data(
     on_file_done=None,
     skip_file_fn=None,
     skip_cache: bool = False,
+    max_errors: int = 5,
 ) -> list[dict]:
     """
     蓄積系データを取得する (JVOpen)。
@@ -292,7 +288,7 @@ def fetch_stored_data(
     last_log_time = time.time()
     wait_count = 0
     error_count = 0
-    MAX_ERRORS = 5  # これを超えたら中断
+    MAX_ERRORS = max_errors  # これを超えたら中断
     session_closed = False  # JVClose 済みフラグ（二重クローズ防止）
 
     def _flush_file(fname: str) -> None:
@@ -393,9 +389,9 @@ def fetch_stored_data(
             if advance_from:
                 logger.info(
                     f"JVRead エラー後 JVClose。{current_file} の翌日 ({advance_from}) から "
-                    f"option=3 で再開... (エラー {error_count}/{MAX_ERRORS})"
+                    f"option=1 で再開... (エラー {error_count}/{MAX_ERRORS})"
                 )
-                result2 = jv.JVOpen(dataspec, advance_from, 4, 0, 0, "")
+                result2 = jv.JVOpen(dataspec, advance_from, 1, 0, 0, "")
             else:
                 logger.info(
                     f"JVRead エラー後 JVClose。option=1 でセッション再開を試みます... "
@@ -879,16 +875,20 @@ def _run_blod_only(jv) -> None:
 
 
 def _run_blod_um(jv) -> None:
-    """BLOD の UM（競走馬マスタ）レコードを全期間取得して pedigrees を更新する。
+    """DIFF の UM（競走馬マスタ）レコードを全期間取得して pedigrees を更新する。
 
     BLOD の SK sire_code は旧形式 '20xxx'/'40xxx' で breeding_horses に存在しないが、
     UM レコードは3代血統名をテキストとして直接保持するため breeding_code 依存なし。
     これにより 2022 年以前の馬の pedigrees.sire も埋めることができる。
+    BLOD DataSpec には UM レコードが含まれないため DIFF を使用する（仕様書p.20確認済み）。
     completed ファイルのキーは "BLOD_UM"（BLOD HN/SK 追跡とは独立）。
     """
     logger.info("=== BLOD-UM MODE: 競走馬マスタ（血統名テキスト）全期間取得 ===")
     COMPLETED_KEY = "BLOD_UM"
-    from_time = "19860101000000"
+    # option=4（セットアップ）では setup ファイル（UMXM*.jvd）はローカルキャッシュから提供される。
+    # UMXM2026039* ファイルのタイムスタンプは 20260403 なので from_time は 20260401 以前にする必要がある。
+    # 20260420（今日）にすると 20260403 < 20260420 で全 UM ファイルが除外され 0 件になる。
+    from_time = "20000101000000"  # option=1差分モードで全期間の UM レコードを取得
     completed = load_completed_files(COMPLETED_KEY)
     if completed:
         logger.info(f"[completed] 処理済みBLOD-UMファイル: {len(completed)} 件（スキップ対象）")
@@ -902,22 +902,33 @@ def _run_blod_um(jv) -> None:
         um_records = [r for r in file_records if r.get("rec_id") == "UM"]
         if not um_records:
             mark_file_completed(COMPLETED_KEY, filename)
+            completed.add(filename)
             return
         logger.info(f"  [{filename}] UM {len(um_records)} 件 → DB反映開始")
-        _post_in_batches("/api/import/bloodlines", um_records, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
+        _post_in_batches("/api/import/bloodlines", um_records, 200, BACKEND_URL, API_KEY, PENDING_DIR)
         total["um"] += len(um_records)
         total["files"] += 1
         mark_file_completed(COMPLETED_KEY, filename)
+        completed.add(filename)
         logger.info(
             f"  [{filename}] 完了 (累計: ファイル {total['files']} 本 / {total['um']} 件)"
         )
 
-    logger.info(f"Fetching BLOD UM from {from_time} (option=4, skip_cache=True)...")
+    # DIFN DataSpec + option=1（差分モード）を使用。
+    # option=4（setup）は DIFF/DIFN で応答なしになるため option=1 に変更。
+    # UM レコードは UMFW だけでなく BN/CH/KS/RA/SE 等あらゆるファイルに散在するため
+    # ファイル名フィルタはせず全ファイルを読んで rec_id="UM" のみを抽出する。
+    # ペンディング再送（前回 HTTP 413 等で失敗した bloodlines レコード）
+    from link_common import retry_pending as _retry_pending
+    _retry_pending(PENDING_DIR, BACKEND_URL, API_KEY)
+
+    logger.info(f"Fetching DIFN UM from {from_time} (option=1, skip_cache=True)...")
     fetch_stored_data(
-        jv, DATASPEC_BLOD, from_time, option=4,
+        jv, "DIFN", from_time, option=1,
         on_file_done=on_file_done,
         skip_file_fn=lambda fn: fn in completed,
         skip_cache=True,
+        max_errors=1000,
     )
     logger.info(
         f"BLOD-UM 取得完了: {total['files']} ファイル / "
@@ -925,15 +936,75 @@ def _run_blod_um(jv) -> None:
     )
 
 
+def _run_bldn_full(jv) -> None:
+    """BLDN セットアップデータ（全歴史分）を取得してDBへ送信する。
+
+    from_time="20000101000000"（BLDNサービス開始前）を指定すると JV-Link は
+    サーバー保持期間外とみなし、累積マスタファイル（571ファイル）のみを返す。
+    これにより 1986年以降の全馬の新形式 HN/SK レコードを約6秒で取得できる。
+
+    BLDN SK.sire_code は新形式 '11xxx' を使用。BLDN HN.breeding_code '11xxx' と
+    照合することで 2002〜2022年馬の pedigrees.sire NULL を解消できる。
+
+    完了ファイルは BLDN_FULL キーで管理（通常 BLDN とは独立）。
+    """
+    logger.info("=== BLDN-FULL MODE: 血統データ（新形式・全歴史セットアップ）取得 ===")
+    from_time = "20000101000000"  # BLDNサービス開始前 → 累積マスタのみ返る
+    COMPLETED_KEY = "BLDN_FULL"
+    completed = load_completed_files(COMPLETED_KEY)
+    if completed:
+        logger.info(f"[completed] 処理済みBLDN-FULLファイル: {len(completed)} 件（スキップ対象）")
+
+    total = {"hn_sk": 0, "files": 0, "skipped": 0}
+
+    def on_bldnfull_file_done(filename: str, file_records: list[dict]) -> None:
+        if filename in completed:
+            total["skipped"] += 1
+            return
+        hn_sk = [r for r in file_records if r.get("rec_id") in ("HN", "SK")]
+        if not hn_sk:
+            mark_file_completed(COMPLETED_KEY, filename)
+            return
+        logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB反映開始")
+        _post_in_batches("/api/import/bloodlines", hn_sk, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
+        total["hn_sk"] += len(hn_sk)
+        total["files"] += 1
+        mark_file_completed(COMPLETED_KEY, filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: ファイル {total['files']} 本 / {total['hn_sk']} 件)"
+        )
+
+    # Step 1: ダウンロード（初回実行時のみ必要。ローカルキャッシュがあればスキップ可能）
+    logger.info(f"Step1: BLDN-FULL ダウンロード (from={from_time}, option=4)...")
+    fetch_stored_data(jv, DATASPEC_BLDN, from_time, option=4, skip_cache=True)
+    logger.info("Step1 完了。")
+
+    # Step 2: ローカルキャッシュから読み取り・DB反映
+    logger.info(f"Step2: BLDN-FULL 読み取り (from={from_time}, option=4)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLDN, from_time, option=4,
+        on_file_done=on_bldnfull_file_done,
+        skip_file_fn=lambda fn: fn in completed,
+        skip_cache=True,
+    )
+    logger.info(
+        f"BLDN-FULL 取得完了: {total['files']} ファイル / "
+        f"{total['hn_sk']} 件をDBへ反映 / {total['skipped']} ファイルスキップ"
+    )
+
+
 def _run_bldn_only(jv) -> None:
-    """血統データ（BLDN・新形式）を取得してDBへ送信する。
+    """血統データ（BLDN・新形式・差分）を取得してDBへ送信する。
 
     BLDN は 2023-08-08 以降提供。旧形式 BLOD の SK sire_code は '20xxx'/'40xxx' で
     breeding_horses に存在しないため pedigrees.sire が NULL になるが、BLDN の SK は
     新形式 '11xxx'/'12xxx' を使用するため正しく名前解決できる。
+
+    option=4（ダイアログ無しセットアップ）はファイルのダウンロードのみ行い JVRead が
+    実レコードを返さない場合がある。BLOD-only と同様に option=4 後に option=3 で
+    ローカルキャッシュから実データを読み直す2段階方式を採用する。
     """
     logger.info("=== BLDN-ONLY MODE: 血統データ（新形式）取得 ===")
-    # BLDN は 2023-08-08 から提供。全過去馬のデータを新形式で含む。
     from_time = "20230801000000"
     completed_bldn = load_completed_files(DATASPEC_BLDN)
     if completed_bldn:
@@ -958,7 +1029,20 @@ def _run_bldn_only(jv) -> None:
             f"  [{filename}] 完了 (累計: ファイル {total_bldn['files']} 本 / {total_bldn['hn_sk']} 件)"
         )
 
-    logger.info(f"Fetching BLDN from {from_time} (option=4, ダイアログ無しセットアップ)...")
+    # Step 1: option=4 でダウンロード（初回実行時にローカルストレージへ格納する）
+    # コールバックなしで実行し、ファイルをローカルストレージへ書き込む。
+    logger.info(f"Step1: Fetching BLDN from {from_time} (option=4, ダウンロード)...")
+    fetch_stored_data(
+        jv, DATASPEC_BLDN, from_time, option=4,
+        skip_cache=True,
+    )
+    logger.info("Step1 完了（ダウンロード）。")
+
+    # Step 2: option=4 で再度開き、ローカルストレージから実レコードを読み取る。
+    # 初回（Step1）でファイルがローカルに格納済みのため、2回目以降は JVRead が
+    # 実際の HN/SK レコードを返す。option=3 は旧セットアップダイアログを表示するため
+    # 使用しない（63da746 で option=4 に統一済み）。
+    logger.info(f"Step2: Fetching BLDN from {from_time} (option=4, ローカルストレージ読み取り)...")
     fetch_stored_data(
         jv, DATASPEC_BLDN, from_time, option=4,
         on_file_done=on_bldn_file_done,
@@ -1156,9 +1240,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "blod", "blod-um", "bldn", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
+        choices=["all", "setup", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1184,7 +1268,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "recent", "daily", "blod", "blod-um", "bldn", "odds-prefetch", "all")
+    BULK_MODES = ("setup", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1236,6 +1320,12 @@ def main() -> None:
         report_status("done", message="BLDN fetch completed.")
         jv.JVClose()
         logger.info("bldn モード完了。終了します。")
+    elif args.mode == "bldn-full":
+        report_status("running", mode="bldn-full", message="Starting BLDN-FULL fetch (新形式血統・全歴史セットアップ)")
+        _run_bldn_full(jv)
+        report_status("done", message="BLDN-FULL fetch completed.")
+        jv.JVClose()
+        logger.info("bldn-full モード完了。終了します。")
     elif args.mode == "recent":
         report_status("running", mode="recent", message=f"Starting recent mode ({args.from_year}+)")
         run_recent(jv, from_year=args.from_year)

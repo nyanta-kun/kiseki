@@ -289,36 +289,43 @@ def retry_pending(
     pending_dir: Path,
     backend_url: str,
     api_key: str,
+    batch_size: int = 200,
 ) -> None:
-    """ペンディングキューをすべて並列リトライする。成功したファイルは削除する。
+    """ペンディングキューをすべてリトライする。成功したファイルは削除する。
+
+    大きなペンディングファイルは batch_size ずつ分割して送信する。
 
     Args:
         pending_dir: ペンディングファイルのルートディレクトリ
         backend_url: バックエンドのベースURL
         api_key: X-API-Key ヘッダーに設定するAPIキー
+        batch_size: 1リクエストに含めるレコード数上限
     """
     items = load_pending_all(pending_dir)
     if not items:
         logger.info("[pending] ペンディングキューは空です")
         return
 
-    logger.info(f"[pending] {len(items)} ファイルをリトライします (並列4)")
+    logger.info(f"[pending] {len(items)} ファイルをリトライします")
 
-    def _retry_one(item: tuple) -> tuple[bool, str, int, str, Path]:
-        """1ペンディングファイルをリトライする。"""
-        endpoint, path, records = item
-        ok = post_to_backend(endpoint, {"records": records}, backend_url, api_key)
-        return ok, path.name, len(records), endpoint, path
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_retry_one, item): item for item in items}
-        for future in as_completed(futures):
-            ok, name, count, endpoint, path = future.result()
-            if ok:
-                path.unlink()
-                logger.info(f"[pending] OK -> 削除: {name} ({count} records, {endpoint})")
-            else:
-                logger.warning(f"[pending] NG -> 残留: {name} ({count} records, {endpoint})")
+    for endpoint, path, records in items:
+        failed: list[dict] = []
+        for i in range(0, len(records), batch_size):
+            batch = records[i : i + batch_size]
+            ok = post_to_backend(endpoint, {"records": batch}, backend_url, api_key)
+            if not ok:
+                failed.extend(batch)
+        if not failed:
+            path.unlink()
+            logger.info(f"[pending] OK -> 削除: {path.name} ({len(records)} records, {endpoint})")
+        else:
+            # 失敗分のみファイルを上書きして残す
+            with path.open("w", encoding="utf-8") as f:
+                for rec in failed:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            logger.warning(
+                f"[pending] NG -> 残留: {path.name} ({len(failed)}/{len(records)} records, {endpoint})"
+            )
 
 
 # ---------------------------------------------------------------------------
