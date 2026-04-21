@@ -338,6 +338,8 @@ def _parse_time_diff(data: str, pos: int) -> Decimal | None:
     """
     from decimal import Decimal
 
+    if pos - 1 >= len(data):
+        return None
     sign_char = data[pos - 1]
     num_str = data[pos : pos + 3]
     try:
@@ -419,7 +421,10 @@ def parse_ra(data: str) -> dict[str, Any] | None:
     889   : 芝馬場状態コード (コード表2010)
     890   : ダート馬場状態コード (コード表2010)
     """
-    if len(data) < 1272:
+    # UmaConn diff (option=2) records are ~1133 bytes; JVLink full records are 1272 bytes.
+    # All critical fields (up to pos 978) are within 1133 bytes.
+    # record_update_type (pos 1270) returns "" → None for shorter records, which is fine.
+    if len(data) < 400:
         logger.warning(f"RA record too short: {len(data)} bytes")
         return None
 
@@ -534,7 +539,9 @@ def parse_se(data: str) -> dict[str, Any] | None:
     358-359: 4コーナー通過順位
     391-393: 後3ハロンタイム (3バイト, SST形式: "336"=33.6秒)
     """
-    if len(data) < 555:
+    # UmaConn diff (option=2) SE records are 379 bytes; JVLink full records are 555 bytes.
+    # Fields beyond pos 379 (last_3f, time_diff, running_style) return "" → None for UmaConn.
+    if len(data) < 200:
         logger.warning(f"SE record too short: {len(data)} bytes")
         return None
 
