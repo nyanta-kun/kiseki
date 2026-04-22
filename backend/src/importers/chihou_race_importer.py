@@ -422,7 +422,8 @@ class ChihouRaceImporter:
         # (race_id, horse_number) 重複を dedup（後勝ち）
         dedup_e: dict[tuple[int, int], dict] = {}
         for v in values:
-            dedup_e[(v["race_id"], v["horse_number"])] = v
+            key = (int(v["race_id"]), int(v["horse_number"]))
+            dedup_e[key] = v
         values = list(dedup_e.values())
         update_cols = [
             "jockey_id",
