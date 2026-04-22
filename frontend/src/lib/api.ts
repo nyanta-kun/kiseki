@@ -699,3 +699,27 @@ export async function fetchJraBuyingGuide(since = "20250101"): Promise<BuyingGui
 export async function fetchChihouBuyingGuide(since = "20250101"): Promise<BuyingGuide> {
   return get<BuyingGuide>(`/chihou/performance/buying-guide?since=${since}`, { next: { revalidate: 3600 } });
 }
+
+// ---------------------------------------------------------------------------
+// 勝率上位馬（当日 50%以上）
+// ---------------------------------------------------------------------------
+
+export type TopProbHorse = {
+  course_name: string;
+  race_number: number;
+  race_name: string | null;
+  post_time: string | null;
+  horse_number: number | null;
+  horse_name: string | null;
+  win_probability: number;
+  win_odds: number | null;
+  finish_position: number | null;
+};
+
+export async function fetchChihouTopProbability(date: string): Promise<TopProbHorse[]> {
+  return get<TopProbHorse[]>(`/chihou/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
+}
+
+export async function fetchJraTopProbability(date: string): Promise<TopProbHorse[]> {
+  return get<TopProbHorse[]>(`/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
+}

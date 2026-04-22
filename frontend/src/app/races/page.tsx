@@ -5,6 +5,7 @@ import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { RecommendView } from "@/components/RecommendView";
+import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -91,9 +92,12 @@ async function RaceList({ date }: { date: string }) {
   }
 
   const recommendPanel = (
-    <Suspense fallback={<RecommendSkeleton />}>
-      <RecommendView date={date} />
-    </Suspense>
+    <>
+      <JraTopProbabilityPanel date={date} />
+      <Suspense fallback={<RecommendSkeleton />}>
+        <RecommendView date={date} />
+      </Suspense>
+    </>
   );
 
   return <CourseTabView courseGroups={sortedGroups} recommendPanel={recommendPanel} />;

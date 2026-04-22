@@ -962,6 +962,7 @@ def run_realtime_monitor(nv) -> None:
     seen_results: set[str] = set()
     cycle = 0
     INCREMENTAL_EVERY = 10  # 約5分ごと（30秒×10）に蓄積系差分取得
+    _calc_triggered_today = False  # 当日指数算出トリガー済みフラグ（1日1回）
 
     # ---- ウォッチドッグスレッド ----
     _heartbeat = [time.time()]
@@ -1061,6 +1062,22 @@ def run_realtime_monitor(nv) -> None:
                 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
                 seen_results = set()
                 latest_post_time = _fetch_today_latest_post_time(today)
+                _calc_triggered_today = False  # 翌日分の算出トリガーをリセット
+                # 日付変更時に即時算出トリガー（出馬表が前日以前に取得済みの場合も確実に算出）
+                try:
+                    resp = requests.post(
+                        f"{BACKEND_URL}/api/import/chihou/calculate",
+                        params={"date": today},
+                        headers={"X-API-Key": API_KEY},
+                        timeout=10,
+                    )
+                    if resp.ok:
+                        logger.info(f"[calculate] 日付変更トリガー: date={today}")
+                        _calc_triggered_today = True
+                    else:
+                        logger.warning(f"[calculate] 日付変更トリガー失敗: {resp.status_code}")
+                except Exception as e:
+                    logger.warning(f"[calculate] 日付変更トリガー例外: {e}")
 
             # 自動停止チェック（最終レース+バッファ or ハードストップ）
             if _should_stop_realtime(latest_post_time):
@@ -1126,6 +1143,22 @@ def run_realtime_monitor(nv) -> None:
                 )
                 if incremental_total[0] > 0:
                     logger.info(f"蓄積差分取得完了: 合計 {incremental_total[0]} 件 DB 反映")
+                    # 未トリガーなら当日指数算出を自動キック（1日1回）
+                    if not _calc_triggered_today:
+                        try:
+                            resp = requests.post(
+                                f"{BACKEND_URL}/api/import/chihou/calculate",
+                                params={"date": today},
+                                headers={"X-API-Key": API_KEY},
+                                timeout=10,
+                            )
+                            if resp.ok:
+                                logger.info(f"[calculate] 地方指数算出トリガー送信完了: date={today}")
+                                _calc_triggered_today = True
+                            else:
+                                logger.warning(f"[calculate] 地方指数算出トリガー失敗: {resp.status_code}")
+                        except Exception as e:
+                            logger.warning(f"[calculate] 地方指数算出トリガー例外: {e}")
 
             # ----- オッズ取得 (0B31) -----
             all_odds: list[dict] = []
@@ -1166,7 +1199,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki UmaConn Agent（地方競馬データ取得）")
     parser.add_argument(
         "--mode",
-        choices=["setup", "daily", "recent", "realtime", "retry", "fetch-results"],
+        choices=["setup", "daily", "recent", "realtime", "retry", "fetch-results", "fetch-odds"],
         default="daily",
         help=(
             "動作モード: "
@@ -1175,7 +1208,8 @@ def main() -> None:
             "recent=指定年以降を取得, "
             "realtime=オッズをポーリング（0B31のみ）, "
             "retry=ペンディングキューをリトライ, "
-            "fetch-results=指定日の成績を0B12で取得（1回実行して終了）"
+            "fetch-results=指定日の成績を0B12で取得（1回実行して終了）, "
+            "fetch-odds=指定日のオッズを0B31で取得（1回実行して終了）"
         ),
     )
     parser.add_argument(
@@ -1190,7 +1224,7 @@ def main() -> None:
         type=str,
         default=None,
         metavar="YYYYMMDD",
-        help="fetch-results モードで結果を取得する対象日 (省略時は今日)",
+        help="fetch-results / fetch-odds モードで対象日を指定 (省略時は今日)",
     )
     args = parser.parse_args()
 
@@ -1262,6 +1296,30 @@ def main() -> None:
             else:
                 logger.info("成績データなし（レース未確定）")
         logger.info("fetch-results モード完了。終了します。")
+
+    elif args.mode == "fetch-odds":
+        target_date = args.fetch_date or datetime.now().strftime("%Y%m%d")
+        logger.info(f"=== FETCH-ODDS MODE: {target_date} のオッズを取得 ===")
+        race_keys = _fetch_today_race_keys(target_date)
+        if not race_keys:
+            logger.warning(f"{target_date} のレースキーが取得できませんでした")
+        else:
+            logger.info(f"レースキー: {len(race_keys)} 件")
+            all_odds: list[dict] = []
+            for i, race_key in enumerate(race_keys):
+                records = fetch_realtime_data(nv, RT_ODDS, race_key)
+                odds = [r for r in records if r.get("rec_id", "").startswith("O")]
+                if odds:
+                    logger.info(f"  [{i+1}/{len(race_keys)}] {race_key}: {len(odds)} 件")
+                    all_odds.extend(odds)
+                else:
+                    logger.debug(f"  [{i+1}/{len(race_keys)}] {race_key}: データなし")
+            if all_odds:
+                logger.info(f"オッズ送信: {len(all_odds)} 件 → chihou/odds へ送信")
+                post_to_backend(EP_ODDS, {"date": target_date, "records": all_odds}, BACKEND_URL, API_KEY)
+            else:
+                logger.info("オッズデータなし（0B31 にデータなし）")
+        logger.info("fetch-odds モード完了。終了します。")
 
 
 if __name__ == "__main__":

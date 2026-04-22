@@ -363,6 +363,74 @@ class OddsOut(BaseModel):
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
+
+class TopHorseOut(BaseModel):
+    course_name: str
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    horse_number: int | None
+    horse_name: str | None
+    win_probability: float
+    win_odds: float | None
+    finish_position: int | None
+
+
+@router.get("/top-probability")
+async def get_top_probability(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+    threshold: float = Query(0.5, description="勝率閾値（デフォルト0.5）"),
+) -> list[TopHorseOut]:
+    """指定日の勝率閾値以上の馬を発走時刻順で返す。"""
+    sql = _text("""
+        SELECT
+            r.course_name,
+            r.race_number,
+            r.race_name,
+            r.post_time,
+            re.horse_number,
+            h.name AS horse_name,
+            ci.win_probability,
+            oh.odds AS win_odds,
+            rr.finish_position
+        FROM keiba.races r
+        JOIN keiba.race_entries re ON re.race_id = r.id
+        JOIN keiba.horses h ON h.id = re.horse_id
+        JOIN keiba.calculated_indices ci
+            ON ci.race_id = r.id AND ci.horse_id = re.horse_id
+        LEFT JOIN LATERAL (
+            SELECT odds FROM keiba.odds_history
+            WHERE race_id = r.id
+              AND bet_type = 'win'
+              AND combination = re.horse_number::text
+            ORDER BY fetched_at DESC
+            LIMIT 1
+        ) oh ON TRUE
+        LEFT JOIN keiba.race_results rr
+            ON rr.race_id = r.id AND rr.horse_id = re.horse_id
+        WHERE r.date = :date
+          AND ci.win_probability >= :threshold
+        ORDER BY r.post_time ASC NULLS LAST, r.race_number ASC
+    """)
+    result = await db.execute(sql, {"date": date, "threshold": threshold})
+    rows = result.all()
+    return [
+        TopHorseOut(
+            course_name=r[0],
+            race_number=r[1],
+            race_name=r[2],
+            post_time=r[3],
+            horse_number=r[4],
+            horse_name=r[5],
+            win_probability=float(r[6]),
+            win_odds=float(r[7]) if r[7] is not None else None,
+            finish_position=r[8],
+        )
+        for r in rows
+    ]
+
+
 @router.get("/nearest-date")
 async def get_nearest_race_date(
     db: DbDep,

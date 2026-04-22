@@ -5,6 +5,7 @@ import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { ChihouRecommendPanel } from "@/components/ChihouRecommendPanel";
+import { ChihouTopProbabilityPanel } from "@/components/TopProbabilityPanel";
 
 export const metadata: Metadata = {
   title: "地方競馬 開催レース一覧 | GallopLab",
@@ -85,7 +86,12 @@ async function ChihouRaceList({ date }: { date: string }) {
   return (
     <CourseTabView
       courseGroups={courseGroups}
-      recommendPanel={<ChihouRecommendPanel date={date} />}
+      recommendPanel={
+        <>
+          <ChihouTopProbabilityPanel date={date} />
+          <ChihouRecommendPanel date={date} />
+        </>
+      }
       basePath="/chihou/races"
       hideRecommend={false}
     />
