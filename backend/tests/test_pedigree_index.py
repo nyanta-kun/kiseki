@@ -316,9 +316,11 @@ class TestCalculateSingleHorse:
     async def test_no_pedigree_returns_default(self) -> None:
         """血統データ未登録 → SPEED_INDEX_MEAN"""
         race = _make_mock_race(1)
+        entry = _make_mock_entry(101)
         exec_results = [
-            _make_execute_result(scalar_value=race),  # Race query
-            _make_execute_result(scalar_value=None),  # Pedigree query → None
+            _make_execute_result(scalar_value=race),         # Race query
+            _make_execute_result(scalars_all=[entry]),       # RaceEntry query
+            _make_execute_result(scalars_all=[]),            # Pedigree query → 空
         ]
         calc = self._make_calc_with_cache(exec_results)
         result = await calc.calculate(race_id=1, horse_id=101)
@@ -360,9 +362,9 @@ class TestCalculateSingleHorse:
         entry = _make_mock_entry(101, weight_carried=57.0)
         cache = _make_cache_with_data()
         exec_results = [
-            _make_execute_result(scalar_value=race),      # Race query
-            _make_execute_result(scalar_value=pedigree),  # Pedigree query
-            _make_execute_result(scalar_value=entry),     # RaceEntry query
+            _make_execute_result(scalar_value=race),       # Race query
+            _make_execute_result(scalars_all=[entry]),     # RaceEntry query
+            _make_execute_result(scalars_all=[pedigree]),  # Pedigree query
         ]
         calc = self._make_calc_with_cache(exec_results, cache=cache)
         result = await calc.calculate(race_id=1, horse_id=101)
@@ -427,7 +429,7 @@ class TestCalculateBatch:
         entries = [_make_mock_entry(101)]
         calc = self._build_batch_calc(race, entries, pedigrees=[])
         result = await calc.calculate_batch(race_id=1)
-        assert result[101] is None
+        assert result[101] == SPEED_INDEX_MEAN
 
     async def test_all_horse_ids_returned(self) -> None:
         """全馬の horse_id がキーとして返る"""
@@ -458,7 +460,7 @@ class TestCalculateBatch:
         pedigrees = [_make_mock_pedigree(101)]  # 102は血統なし
         calc = self._build_batch_calc(race, entries, pedigrees)
         result = await calc.calculate_batch(race_id=1)
-        assert result[102] is None
+        assert result[102] == SPEED_INDEX_MEAN
 
     async def test_all_scores_in_range(self) -> None:
         """全スコアが 0-100 範囲"""
