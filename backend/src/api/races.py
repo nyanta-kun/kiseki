@@ -397,8 +397,12 @@ async def get_top_probability(
         FROM keiba.races r
         JOIN keiba.race_entries re ON re.race_id = r.id
         JOIN keiba.horses h ON h.id = re.horse_id
-        JOIN keiba.calculated_indices ci
-            ON ci.race_id = r.id AND ci.horse_id = re.horse_id
+        JOIN LATERAL (
+            SELECT win_probability FROM keiba.calculated_indices
+            WHERE race_id = r.id AND horse_id = re.horse_id
+            ORDER BY version DESC, calculated_at DESC
+            LIMIT 1
+        ) ci ON TRUE
         LEFT JOIN LATERAL (
             SELECT odds FROM keiba.odds_history
             WHERE race_id = r.id

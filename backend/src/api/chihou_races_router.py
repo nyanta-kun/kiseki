@@ -138,8 +138,12 @@ async def get_chihou_top_probability(
         FROM chihou.races r
         JOIN chihou.race_entries re ON re.race_id = r.id
         JOIN chihou.horses h ON h.id = re.horse_id
-        JOIN chihou.calculated_indices ci
-            ON ci.race_id = r.id AND ci.horse_id = re.horse_id
+        JOIN LATERAL (
+            SELECT win_probability FROM chihou.calculated_indices
+            WHERE race_id = r.id AND horse_id = re.horse_id
+            ORDER BY version DESC, calculated_at DESC
+            LIMIT 1
+        ) ci ON TRUE
         LEFT JOIN LATERAL (
             SELECT odds FROM chihou.odds_history
             WHERE race_id = r.id
