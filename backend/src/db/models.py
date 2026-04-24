@@ -267,6 +267,12 @@ class RaceEntry(Base):
     jockey_apprentice_code: Mapped[str | None] = mapped_column(
         String(1), comment="騎手見習コード（0:なし,1=5kg減,2=3kg減,3=1kg減）"
     )
+    jvan_time_dm: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1), comment="JRA-VAN NEXT タイム型DM指数（例: 43.1）"
+    )
+    jvan_battle_dm: Mapped[int | None] = mapped_column(
+        Integer, comment="JRA-VAN NEXT 対戦型DM指数（整数）"
+    )
 
 
 class RacePayout(Base):

@@ -357,6 +357,83 @@ async def import_payouts(
     return {"imported": imported, "skipped": skipped}
 
 
+# -------------------------------------------------------------------
+# JRA-VAN NEXT DM指数インポート
+# -------------------------------------------------------------------
+
+class JvanDmRecord(BaseModel):
+    """JRA-VAN NEXT DM指数1件。"""
+
+    jravan_race_id: str  # 16文字 (例: "2026042503010501")
+    horse_number: int
+    jvan_time_dm: float | None = None
+    jvan_battle_dm: int | None = None
+
+
+class JvanDmRequest(BaseModel):
+    """JRA-VAN NEXT DM指数インポートリクエスト。"""
+
+    records: list[JvanDmRecord]
+
+
+@router.post("/jvan_dm")
+async def import_jvan_dm(
+    body: JvanDmRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """JRA-VAN NEXT のタイム型DM・対戦型DM指数を race_entries に格納する。
+
+    Windows Agent がローカルキャッシュ (1403/*.dat) から抽出したDM値を受信。
+    jravan_race_id + horse_number でエントリーを特定して UPDATE する。
+    """
+    from ..db.models import RaceEntry
+
+    if not body.records:
+        return {"updated": 0, "skipped": 0}
+
+    # jravan_race_id → races.id の一括解決
+    jravan_ids = list({r.jravan_race_id for r in body.records})
+    race_rows = await db.execute(
+        select(Race.id, Race.jravan_race_id).where(Race.jravan_race_id.in_(jravan_ids))
+    )
+    race_id_map: dict[str, int] = {r.jravan_race_id: r.id for r in race_rows}
+
+    # race_entry を (race_id, horse_number) キーで一括取得
+    found_race_ids = list(race_id_map.values())
+    if not found_race_ids:
+        return {"updated": 0, "skipped": len(body.records)}
+
+    entry_rows = await db.execute(
+        select(RaceEntry).where(RaceEntry.race_id.in_(found_race_ids))
+    )
+    entry_map: dict[tuple[int, int], RaceEntry] = {
+        (e.race_id, e.horse_number): e for e in entry_rows.scalars()
+    }
+
+    updated = 0
+    skipped = 0
+    for rec in body.records:
+        db_race_id = race_id_map.get(rec.jravan_race_id)
+        if db_race_id is None:
+            skipped += 1
+            continue
+        entry = entry_map.get((db_race_id, rec.horse_number))
+        if entry is None:
+            skipped += 1
+            continue
+        from decimal import Decimal
+        if rec.jvan_time_dm is not None:
+            entry.jvan_time_dm = Decimal(str(rec.jvan_time_dm))
+        if rec.jvan_battle_dm is not None:
+            entry.jvan_battle_dm = rec.jvan_battle_dm
+        updated += 1
+
+    await db.commit()
+    logger.info(f"import_jvan_dm: updated={updated}, skipped={skipped}")
+    return {"updated": updated, "skipped": skipped}
+
+
 @changes_router.post("/notify")
 async def notify_change(
     body: ChangeNotifyRequest,
