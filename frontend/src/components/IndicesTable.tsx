@@ -5,7 +5,7 @@ import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHisto
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndexBar } from "./IndexBar";
-import { cn, indexColor } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass } from "@/lib/utils";
 
 type Props = {
   indices: HorseIndex[];
@@ -289,6 +289,17 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
     reconnectInterval: 30_000,
   });
 
+  // 勝率・複勝率の均等比マップ（出走頭数正規化済み）
+  const winShareRatioMap = useMemo(() => {
+    const allProbs = indices.map((h) => h.win_probability);
+    return new Map(indices.map((h) => [h.horse_number, calcShareRatio(h.win_probability, allProbs)]));
+  }, [indices]);
+
+  const placeShareRatioMap = useMemo(() => {
+    const allProbs = indices.map((h) => h.place_probability);
+    return new Map(indices.map((h) => [h.horse_number, calcShareRatio(h.place_probability, allProbs)]));
+  }, [indices]);
+
   // 総合指数1位の馬番（ソート不問で固定）
   const topHorseNumber = useMemo(
     () =>
@@ -506,16 +517,32 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                         {horse.nb_course_rank === 1 ? "外◎" : "外○"}
                       </span>
                     )}
-                    {winPct && (
-                      <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
-                        単{winPct}%
-                      </span>
-                    )}
-                    {placePct && !finishLabel_ && (
-                      <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded">
-                        複{placePct}%
-                      </span>
-                    )}
+                    {winPct && (() => {
+                      const r = winShareRatioMap.get(horse.horse_number) ?? null;
+                      const cls = r === null ? "bg-blue-50 text-blue-600" :
+                        r >= 4.0 ? "bg-red-100 text-red-700 font-bold border border-red-200" :
+                        r >= 3.0 ? "bg-green-100 text-green-700 font-semibold border border-green-300" :
+                        r >= 2.0 ? "bg-yellow-50 text-yellow-700 border border-yellow-200" :
+                        "bg-blue-50 text-blue-600";
+                      return (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>
+                          単{winPct}%
+                        </span>
+                      );
+                    })()}
+                    {placePct && !finishLabel_ && (() => {
+                      const r = placeShareRatioMap.get(horse.horse_number) ?? null;
+                      const cls = r === null ? "bg-purple-50 text-purple-600" :
+                        r >= 2.5 ? "bg-purple-100 text-purple-800 font-bold border border-purple-300" :
+                        r >= 2.0 ? "bg-purple-50 text-purple-700 font-semibold border border-purple-200" :
+                        r >= 1.5 ? "bg-purple-50 text-purple-500 border border-purple-100" :
+                        "bg-gray-50 text-gray-400";
+                      return (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>
+                          複{placePct}%
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-[10px] text-gray-400">
                     {isExpanded ? "▲ 閉じる" : "▼ 詳細"}

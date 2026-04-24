@@ -103,6 +103,41 @@ export function raceClassBadgeClass(label: string | null): string {
   return "bg-gray-100 text-gray-600";
 }
 
+/**
+ * 確率シェアの均等比を算出する。
+ * 均等比 = (この馬の確率 / 全馬合計) × 頭数
+ * 1.0 = ランダム水準、2.0 = 均等の2倍、3.0以上 = 本命圏
+ */
+export function calcShareRatio(
+  prob: number | null,
+  allProbs: (number | null)[],
+): number | null {
+  if (prob === null || prob <= 0) return null;
+  const n = allProbs.length;
+  if (n === 0) return null;
+  const total = allProbs.reduce<number>((s, p) => s + (p ?? 0), 0);
+  if (total === 0) return null;
+  return (prob / total) * n;
+}
+
+/** 勝率の均等比 → テキスト色クラス（高いほど緑 → 赤で突出表現） */
+export function winShareClass(ratio: number | null): string {
+  if (ratio === null) return "text-gray-500";
+  if (ratio >= 4.0) return "text-red-600 font-bold";
+  if (ratio >= 3.0) return "text-green-600 font-semibold";
+  if (ratio >= 2.0) return "text-yellow-600";
+  return "text-gray-500";
+}
+
+/** 複勝率の均等比 → テキスト色クラス */
+export function placeShareClass(ratio: number | null): string {
+  if (ratio === null) return "text-gray-500";
+  if (ratio >= 2.5) return "text-purple-700 font-bold";
+  if (ratio >= 2.0) return "text-purple-600 font-semibold";
+  if (ratio >= 1.5) return "text-purple-400";
+  return "text-gray-500";
+}
+
 /** 条件戦クラスの短縮表記（バッジ用）"4歳以上2勝クラス" → "2勝" */
 export function raceClassShort(label: string | null): string | null {
   if (!label) return null;

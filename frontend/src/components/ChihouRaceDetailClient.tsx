@@ -9,7 +9,7 @@ import {
   buildChihouResultsWsUrl,
   fetchChihouHorseHistory,
 } from "@/lib/api";
-import { cn, indexColor } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
@@ -188,6 +188,16 @@ export function ChihouRaceDetailClient({
     const bv = (b[key as keyof ChihouHorseIndex] as number | null) ?? 0;
     return bv - av;
   });
+
+  const allWinProbs = horses.map((h) => h.win_probability);
+  const allPlaceProbs = horses.map((h) => h.place_probability);
+
+  const winShareRatioMap = new Map<number, number | null>(
+    horses.map((h) => [h.horse_id, calcShareRatio(h.win_probability, allWinProbs)])
+  );
+  const placeShareRatioMap = new Map<number, number | null>(
+    horses.map((h) => [h.horse_id, calcShareRatio(h.place_probability, allPlaceProbs)])
+  );
 
   const maxComposite = Math.max(...horses.map((h) => h.composite_index ?? 0));
   const compositeRankMap = new Map<number, number>(
@@ -411,12 +421,12 @@ export function ChihouRaceDetailClient({
                     </td>
 
                     {/* 勝率 */}
-                    <td className="py-2 px-1 text-right text-gray-600">
+                    <td className={`py-2 px-1 text-right tabular-nums ${winShareClass(winShareRatioMap.get(horse.horse_id) ?? null)}`}>
                       {pct(horse.win_probability)}
                     </td>
 
                     {/* 複率 */}
-                    <td className="py-2 px-1 text-right text-gray-600">
+                    <td className={`py-2 px-1 text-right tabular-nums ${placeShareClass(placeShareRatioMap.get(horse.horse_id) ?? null)}`}>
                       {pct(horse.place_probability)}
                     </td>
 
@@ -524,6 +534,16 @@ export function ChihouRaceDetailClient({
         <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2 space-y-0.5">
           <p>
             <span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）
+          </p>
+          <p>
+            勝率色: <span className="text-red-600 font-bold">赤</span>=4倍以上突出 /
+            {" "}<span className="text-green-600 font-semibold">緑</span>=3倍以上 /
+            {" "}<span className="text-yellow-600">黄</span>=2倍以上（頭数均等比）
+          </p>
+          <p>
+            複率色: <span className="text-purple-700 font-bold">濃紫</span>=2.5倍以上突出 /
+            {" "}<span className="text-purple-600 font-semibold">紫</span>=2倍以上 /
+            {" "}<span className="text-purple-400">薄紫</span>=1.5倍以上
           </p>
           <p>
             <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
