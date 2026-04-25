@@ -1124,6 +1124,7 @@ def run_realtime_monitor(nv) -> None:
                 incremental_total = [0]
 
                 def on_incremental_file(filename: str, file_records: list[dict]) -> None:
+                    _heartbeat[0] = time.time()  # 長時間fetch中にウォッチドッグが誤作動しないよう更新
                     filtered = _filter_race_records(file_records)
                     ra_se, hr = _split_race_hr(filtered)
                     if ra_se:
@@ -1170,6 +1171,7 @@ def run_realtime_monitor(nv) -> None:
             if all_odds:
                 logger.info(f"オッズ取得: {len(all_odds)} 件 / {len(race_keys)} レース → chihou/odds へ送信")
                 post_to_backend(EP_ODDS, {"date": today, "records": all_odds}, BACKEND_URL, API_KEY)
+                _heartbeat[0] = time.time()  # 長時間POST後にウォッチドッグが誤作動しないよう更新
 
             # ----- 0B12 フェッチをバックグラウンドで開始（前サイクルが完了している場合のみ） -----
             if _bg_done_event.is_set():
