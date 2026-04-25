@@ -41,6 +41,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+
+# WindowsシステムCA証明書をPython SSLに注入（Let's Encrypt E8等の新CAに対応）
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from dotenv import load_dotenv
 
 from link_common import (
