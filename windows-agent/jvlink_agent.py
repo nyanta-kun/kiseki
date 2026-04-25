@@ -661,6 +661,8 @@ def run_realtime_monitor(jv) -> None:
                 logger.debug("本日のレースキーが取得できませんでした")
             all_o1 = []
             for race_key in race_keys:
+                with _wd_lock:
+                    _last_heartbeat[0] = time.time()
                 odds_records = fetch_realtime_data(jv, RT_ODDS_WIN_PLACE, race_key)
                 o1 = [r for r in odds_records if r.get("rec_id") == "O1"]
                 all_o1.extend(o1)
@@ -702,6 +704,8 @@ def run_realtime_monitor(jv) -> None:
             new_results = []
             new_payouts = []
             for race_key in race_keys:
+                with _wd_lock:
+                    _last_heartbeat[0] = time.time()
                 result_records = fetch_realtime_data(jv, RT_RACE_INFO, race_key)
                 for rec in result_records:
                     rec_id = rec.get("rec_id")
