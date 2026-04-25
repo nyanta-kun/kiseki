@@ -111,7 +111,7 @@ UMACONN_EARLIEST: str = "20050101000000"
 # ---------------------------------------------------------------------------
 
 # NVRTOpen が応答しない場合にプロセスを強制終了するまでの秒数
-_REALTIME_WATCHDOG_TIMEOUT = 180
+_REALTIME_WATCHDOG_TIMEOUT = 600  # POST 120s × 複数バッチ + NVOpen 80s を許容
 
 # 最終レース発走後この分数が経過したら結果確定とみなして停止
 _REALTIME_RESULTS_BUFFER_MIN = 90
