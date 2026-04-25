@@ -19,13 +19,19 @@ from pathlib import Path
 
 import requests
 
+LOG_FILE = r"C:\kiseki\windows-agent\jvnext_dm_importer.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
 CACHE_ROOT = Path(r"C:\Users\ysuzuki\AppData\Local\JRA-VAN\NEXT\cache")
+PERSISTENT_STORE = Path(r"C:\kiseki\data\dm_1403")  # バッチ保存先（JVNextCore再起動後も残る）
 RECORD_LEN = 25  # 1頭あたりのDMレコード長
 LINE1_HEADER_LEN = 23  # Line1先頭のヘッダー部分長（DM種別+更新時刻等）
 
@@ -140,50 +146,89 @@ def build_jravan_race_id(date: str, course: str, kai: str, day: str, race_no: st
     return f"{date}{course}{kai}{day}{race_no}"
 
 
-def collect_dm_records(date: str, course_filter: str | None = None) -> list[dict]:
+def fetch_race_id_map(date: str, backend_url: str) -> dict[tuple[str, str], str]:
+    """Backend API から指定日のコース+レース番号→jravan_race_id マップを取得する。
+
+    Returns:
+        {("05", "01"): "2026042605020201", ...}
+    """
+    import urllib.request
+    url = f"{backend_url}/api/races?date={date}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            import json
+            data = json.loads(resp.read())
+        races = data.get("races", data) if isinstance(data, dict) else data
+        result: dict[tuple[str, str], str] = {}
+        for r in races:
+            rid = r.get("jravan_race_id", "")
+            if len(rid) == 16:
+                cc = rid[8:10]
+                rno = rid[14:16]
+                result[(cc, rno)] = rid
+        logger.info(f"API から {len(result)} レースのrace_idを取得")
+        return result
+    except Exception as e:
+        logger.warning(f"API race_id 取得失敗 ({url}): {e}")
+        return {}
+
+
+def collect_dm_records(
+    date: str,
+    course_filter: str | None = None,
+    backend_url: str = "https://api.galloplab.com",
+) -> list[dict]:
     """指定日の全1403ファイルからDMレコードを収集する。
+
+    live cache と persistent store の両方を検索する。
+    jravan_race_id は Backend API から取得（1402ファイル不要）。
 
     Returns:
         [{"jravan_race_id": "...", "horse_number": 1, "jvan_time_dm": 43.1, "jvan_battle_dm": 14}]
     """
-    pattern = str(CACHE_ROOT / "1403" / f"1403{date}*.dat")
-    dm_files = glob.glob(pattern)
+    # 検索対象: live cache + persistent store（重複はstemで除去）
+    seen_stems: set[str] = set()
+    dm_files: list[Path] = []
+    for search_dir in [CACHE_ROOT / "1403", PERSISTENT_STORE]:
+        for p in sorted(search_dir.glob(f"1403{date}*.dat")):
+            if p.stem not in seen_stems:
+                seen_stems.add(p.stem)
+                dm_files.append(p)
 
     if not dm_files:
-        logger.warning(f"No 1403 files found for date={date} (pattern={pattern})")
+        logger.warning(f"No 1403 files found for date={date}")
         return []
+
+    # API から race_id マップを取得（1402ファイル不要）
+    race_id_map = fetch_race_id_map(date, backend_url)
 
     records: list[dict] = []
 
-    for dm_path_str in sorted(dm_files):
-        dm_path = Path(dm_path_str)
+    for dm_path in dm_files:
         fname = dm_path.stem  # e.g. "1403202604250301"
 
-        # ファイル名から course と race_no を抽出
-        # 形式: 1403{YYYYMMDD}{CC}{RR}
         if len(fname) != 16:
             logger.warning(f"Unexpected filename length: {fname}")
             continue
 
         course_code = fname[12:14]  # e.g. "03"
-        race_no = fname[14:16]      # e.g. "01"
+        race_no_str = fname[14:16]  # e.g. "01"
 
         if course_filter and course_code != course_filter:
             continue
 
-        # 対応する1402ファイルを確認してkaiとdayを取得
-        entry_path = CACHE_ROOT / "1402" / f"1402{date}{course_code}{race_no}00.dat"
-        if not entry_path.exists():
-            logger.warning(f"1402 file not found: {entry_path}")
-            continue
-
-        header = parse_1402_header(entry_path)
-        if header is None:
-            logger.warning(f"Failed to parse 1402 header: {entry_path}")
-            continue
-
-        _, kai, day, _ = header
-        jravan_race_id = build_jravan_race_id(date, course_code, kai, day, race_no)
+        jravan_race_id = race_id_map.get((course_code, race_no_str))
+        if not jravan_race_id:
+            # APIにない場合は1402ファイルにフォールバック
+            entry_path = CACHE_ROOT / "1402" / f"1402{date}{course_code}{race_no_str}00.dat"
+            if entry_path.exists():
+                header = parse_1402_header(entry_path)
+                if header:
+                    _, kai, day, _ = header
+                    jravan_race_id = build_jravan_race_id(date, course_code, kai, day, race_no_str)
+            if not jravan_race_id:
+                logger.warning(f"race_id 解決不可: CC={course_code} R{race_no_str} — スキップ")
+                continue
 
         dm_map = load_1403_file(dm_path)
         if not dm_map:
@@ -210,7 +255,9 @@ def post_dm_records(records: list[dict], backend_url: str, api_key: str) -> dict
     url = f"{backend_url}/api/import/jvan_dm"
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
     payload = {"records": records}
-    resp = requests.post(url, json=payload, headers=headers, timeout=30)
+    # proxies={} でシステムプロキシ(mitmproxy)をバイパス
+    resp = requests.post(url, json=payload, headers=headers, timeout=30,
+                         proxies={"http": None, "https": None})
     resp.raise_for_status()
     return resp.json()
 
@@ -235,7 +282,7 @@ def main() -> None:
     logger.info(f"=== JRA-VAN NEXT DM インポート: date={args.date}, course={args.course or '全コース'} ===")
     logger.info(f"Backend: {backend_url}")
 
-    records = collect_dm_records(args.date, args.course)
+    records = collect_dm_records(args.date, args.course, backend_url=backend_url)
     if not records:
         logger.info("DM records なし（終了）")
         return
@@ -247,8 +294,11 @@ def main() -> None:
             logger.info(f"  [DRY-RUN] {r}")
         return
 
-    result = post_dm_records(records, backend_url, api_key)
-    logger.info(f"POST完了: {result}")
+    try:
+        result = post_dm_records(records, backend_url, api_key)
+        logger.info(f"POST完了: {result}")
+    except Exception as e:
+        logger.error(f"POST失敗: {e}")
 
 
 if __name__ == "__main__":
