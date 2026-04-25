@@ -37,6 +37,13 @@ from pathlib import Path
 
 import requests
 
+# WindowsシステムCA証明書をPython SSLに注入（Let's Encrypt E8等の新CAに対応）
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 # 環境変数読み込み
 from dotenv import load_dotenv
 
@@ -625,7 +632,25 @@ def run_realtime_monitor(jv) -> None:
     # 送信済み成績キー（重複防止）
     seen_results: set[str] = set()
 
+    # ウォッチドッグ: JVRTOpenがCOMレベルでハングした場合の強制終了
+    WATCHDOG_TIMEOUT = 600  # 秒（10分間ループが進捗しない場合は異常とみなす）
+    _last_heartbeat = [time.time()]
+    _wd_lock = threading.Lock()
+
+    def _watchdog():
+        while True:
+            time.sleep(30)
+            with _wd_lock:
+                elapsed = time.time() - _last_heartbeat[0]
+            if elapsed > WATCHDOG_TIMEOUT:
+                logger.error(f"ウォッチドッグ: realtimeループが{int(elapsed)}秒停止 → 強制終了")
+                os._exit(1)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+
     while True:
+        with _wd_lock:
+            _last_heartbeat[0] = time.time()
         try:
             # 日付をループ内で更新（日をまたいでも正しい日付を使う）
             today = datetime.now().strftime("%Y%m%d")
@@ -1128,6 +1153,77 @@ def run_recent(jv, from_year: int = 2023) -> None:
     )
 
 
+def run_fix_race(jv, from_date: str) -> None:
+    """指定日以降のRACEデータを差分取得する（option=1: from_time有効、数分で完了）。
+
+    --mode setup（option=4: 全期間スキャン、数時間ブロック）の代わりに使用する。
+    数週間〜数ヶ月前の成績・出馬表が未取得の場合の修復用。
+
+    【option=1 vs option=4の違い】
+    - option=1: from_time以降の差分のみ取得。JVOpenは数秒〜数分で完了。
+    - option=4: 全期間スキャン（from_time無視）。JVOpenが数時間ブロックする。
+
+    Args:
+        jv: JV-Link COMオブジェクト
+        from_date: 取得開始日 "YYYYMMDD"
+    """
+    from_time = f"{from_date}000000"
+    logger.info(f"=== FIX-RACE MODE: RACE差分取得 (option=1, from={from_time}) ===")
+    logger.info("※ option=1 で from_time 以降の差分のみ取得します（数分で完了）。")
+
+    completed = load_completed_files(DATASPEC_RACE)
+    if completed:
+        logger.info(f"[completed] 処理済みファイル: {len(completed)} 件（JVSkip対象）")
+
+    total_posted = {"ra_se": 0, "files": 0, "skipped": 0}
+
+    def on_race_file_done(filename: str, file_records: list[dict]) -> None:
+        if not file_records and filename not in completed:
+            mark_file_completed(DATASPEC_RACE, filename)
+            completed.add(filename)
+            total_posted["skipped"] += 1
+            return
+        if filename in completed:
+            total_posted["skipped"] += 1
+            return
+        filtered = _filter_race_records(file_records)
+        ra_se, hr = _split_race_hr(filtered)
+        if not ra_se and not hr:
+            logger.info(f"  [{filename}] RA/SE/HR なし ({len(file_records)} 件中) → 完了マーク")
+            mark_file_completed(DATASPEC_RACE, filename)
+            completed.add(filename)
+            return
+        if ra_se:
+            logger.info(
+                f"  [{filename}] RA/SE {len(ra_se)} 件 / 全 {len(file_records)} 件 → DB反映開始"
+            )
+            _post_in_batches("/api/import/races", ra_se, 500, BACKEND_URL, API_KEY, PENDING_DIR)
+            total_posted["ra_se"] += len(ra_se)
+        if hr:
+            logger.info(f"  [{filename}] HR {len(hr)} 件 → 払戻DB反映")
+            _post_hr_payouts(hr)
+        total_posted["files"] += 1
+        mark_file_completed(DATASPEC_RACE, filename)
+        completed.add(filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: ファイル {total_posted['files']} 本 / {total_posted['ra_se']} 件)"
+        )
+
+    def fix_skip_fn(filename: str) -> bool:
+        return filename in completed
+
+    logger.info(f"Fetching RACE (option=1, from={from_time})...")
+    fetch_stored_data(
+        jv, DATASPEC_RACE, from_time, option=1,
+        on_file_done=on_race_file_done, skip_file_fn=fix_skip_fn,
+        skip_cache=True,
+    )
+    logger.info(
+        f"FIX-RACE 完了: {total_posted['files']} ファイル / "
+        f"{total_posted['ra_se']} 件をDBへ反映 / {total_posted['skipped']} ファイルスキップ"
+    )
+
+
 # ---------------------------------------------------------------------------
 # コマンドポーリング / ステータス報告
 # ---------------------------------------------------------------------------
@@ -1240,9 +1336,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
+        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1258,6 +1354,13 @@ def main() -> None:
         metavar="YEAR",
         help="recent モードで取得する開始年 (default: 2023, 例: --from-year 2020)",
     )
+    parser.add_argument(
+        "--from-date",
+        type=str,
+        default=None,
+        metavar="YYYYMMDD",
+        help="fix-race モードで取得する開始日 (例: --from-date 20260207)",
+    )
     args = parser.parse_args()
 
     if not JRAVAN_SID and args.mode not in ("retry", "wait"):
@@ -1268,7 +1371,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "all")
+    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1302,6 +1405,15 @@ def main() -> None:
         run_setup(jv)
         report_status("idle", message="Setup completed. Entering command loop.")
         run_command_loop(jv)
+    elif args.mode == "fix-race":
+        if not args.from_date:
+            logger.error("fix-race モードには --from-date YYYYMMDD が必要です。")
+            sys.exit(1)
+        report_status("running", mode="fix-race", message=f"Starting fix-race mode (from={args.from_date})")
+        run_fix_race(jv, args.from_date)
+        report_status("done", message=f"Fix-race completed (from={args.from_date})")
+        jv.JVClose()
+        logger.info("fix-race モード完了。終了します。")
     elif args.mode == "blod":
         report_status("running", mode="blod", message="Starting BLOD-only fetch")
         _run_blod_only(jv)
