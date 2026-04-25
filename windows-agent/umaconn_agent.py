@@ -1121,6 +1121,7 @@ def run_realtime_monitor(nv) -> None:
 
             # ----- 蓄積系差分取得 (option=2) — 約5分ごとに確定成績をポーリング -----
             if cycle % INCREMENTAL_EVERY == 0:
+                _heartbeat[0] = time.time()  # NVOpen前にリセット（NVOpenは最大数分ブロック）
                 incremental_total = [0]
 
                 def on_incremental_file(filename: str, file_records: list[dict]) -> None:
