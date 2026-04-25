@@ -271,29 +271,94 @@ pkill -9 -f "prlctl exec"
   - 自動停止: 最終レース発走+90分 or 21:30ハードストップ（先に来た方）
   - ウォッチドッグ: NVRTOpenハングを180秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
   - タスク状態確認: `ssh windows-vm "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
+- **umaconn_agent の起動はデスクトップセッションが必須**（2026-04-21 確認）
+  - NVDTLab.dll はシステムトレイアイコン初期化のためデスクトップセッションが必要
+  - SSH経由の直接起動は `シェル通知アイコンが削除できません` エラーで初期化失敗する
+  - **手動起動は `kiseki-RunAdhoc` タスクスケジューラ経由を使うこと**（ちらつきなし・`prlctl exec` 不要）
+  ```bash
+  # ---- kiseki-RunAdhoc 経由の起動方法（推奨・ちらつきゼロ） ----
+  # adhoc_cmd.txt に「スクリプト名 + 引数のみ」を書く（cd不要・pythonw不要）
+  # run_adhoc.vbs が pythonw.exe で直接起動（cmd.exe を経由しない → コンソールウィンドウなし）
+
+  # recent モード（レース終了後の当日エントリ・結果取得）
+  ssh windows-vm "echo umaconn_agent.py --mode recent --from-year 2026 > C:\\kiseki\\windows-agent\\adhoc_cmd.txt && schtasks /run /tn kiseki-RunAdhoc"
+
+  # fetch-results モード（指定日の成績を0B12で取得）
+  ssh windows-vm "echo umaconn_agent.py --mode fetch-results --fetch-date 20260421 > C:\\kiseki\\windows-agent\\adhoc_cmd.txt && schtasks /run /tn kiseki-RunAdhoc"
+
+  # fetch-odds モード（指定日のオッズを0B31で取得）
+  ssh windows-vm "echo umaconn_agent.py --mode fetch-odds --fetch-date 20260421 > C:\\kiseki\\windows-agent\\adhoc_cmd.txt && schtasks /run /tn kiseki-RunAdhoc"
+
+  # ログ確認
+  ssh windows-vm "powershell -Command \"Get-Content 'C:\\kiseki\\windows-agent\\umaconn_agent.log' -Tail 10\""
+  ```
+  - **仕組み**: `kiseki-RunAdhoc` タスクは `InteractiveToken` フラグでデスクトップセッション内で `wscript.exe` を実行
+  - `run_adhoc.vbs` が `adhoc_cmd.txt` の1行目を読み取り、**`pythonw.exe`（コンソールウィンドウなし）** で直接起動
+  - `cmd.exe` を経由しないため Coherence モードでもちらつきゼロ
+  - `prlctl exec --current-user` および `python.exe`（コンソールあり）は使用禁止
 
 ### jvlink_agent.py 起動
-※ setup/daily/recent は完了後にターミナルが自動で閉じる。realtime は監視用のため開いたまま。
-※ SSH経由で実行するためウィンドウちらつきなし。ログは jvlink_agent.log で確認。
+※ **jvlink_agent は必ず RunAdhoc（kiseki-RunAdhoc タスクスケジューラ）経由で起動すること。**
+※ SSH + Start-Process では JVDTLab.dll がデスクトップセッションを取得できず JVOpen が無限ブロックする（2026-04-25 確認）。
+※ RunAdhoc は InteractiveToken でデスクトップセッション内に pythonw.exe を起動するためウィンドウちらつきなし。
+
 ```bash
-# setupモード（全過去データ取得）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode setup' -WindowStyle Hidden -PassThru | Select-Object Id"
+# ---- kiseki-RunAdhoc 経由の起動方法（全モード共通） ----
+# adhoc_cmd.txt に「スクリプト名 + 引数」を書き、schtasks /run で起動する
 
-# dailyモード（当日データ取得）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode daily' -WindowStyle Hidden -PassThru | Select-Object Id"
+# recentモード（今週分データ取得。完了後に自動終了）
+# ⚠️ option=2: 今週分のみ取得。数週間前のデータは届かない。
+ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\" -Value \"jvlink_agent.py --mode recent --from-year 2026\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 
-# recentモード（指定年以降を取得、完了後に自動終了）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode recent --from-year 2023' -WindowStyle Hidden -PassThru | Select-Object Id"
+# fix-raceモード（指定日以降のRACEデータ差分取得。過去欠損修復用）
+# ✅ option=1: from_time が有効。JVOpen は数分で完了。
+ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\" -Value \"jvlink_agent.py --mode fix-race --from-date 20260425\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 
 # realtimeモード（オッズ・成績・出走取消を30秒間隔でポーリング、常駐）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode realtime' -WindowStyle Hidden -PassThru | Select-Object Id"
+ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\" -Value \"jvlink_agent.py --mode realtime\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 
-# odds-prefetchモード（前日発売オッズを1回取得して終了。VPS cronから1時間ごとに呼び出す）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode odds-prefetch' -WindowStyle Hidden -PassThru | Select-Object Id"
+# setupモード（全過去データ取得。初回のみ）
+# ⚠️ option=4: from_time を無視して全期間スキャン。JVOpen呼び出し自体が数時間ブロックする。
+ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\" -Value \"jvlink_agent.py --mode setup\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 
-# blod-umモード（pedigrees.sire NULL補完。2022年以前の馬が対象。1回のみ実行）
-ssh windows-vm "Start-Process cmd.exe -ArgumentList '/c cd /d C:\kiseki\windows-agent && python jvlink_agent.py --mode blod-um' -WindowStyle Hidden -PassThru | Select-Object Id"
+# ログ確認
+ssh windows-vm "powershell -Command \"Get-Content 'C:\\kiseki\\windows-agent\\jvlink_agent.log' -Tail 20\""
 ```
+
+### jvlink_agent トラブルシューティング
+
+**JVOpen が無限ブロックする場合**（JVLinkAgent が外部接続を全くしない）:
+```bash
+# Step 1: 残存 JVNextCore プロセスを確認・kill
+ssh windows-vm "powershell -Command \"Get-Process JVNextCore -ErrorAction SilentlyContinue | Select-Object Id,CPU\""
+ssh windows-vm "powershell -Command \"Stop-Process -Name JVNextCore -Force -ErrorAction SilentlyContinue\""
+
+# Step 2: stale event ディレクトリをクリア
+ssh windows-vm "powershell -Command \"Remove-Item 'C:\\ProgramData\\JRA-VAN\\Data Lab\\event\\*' -Recurse -Force -ErrorAction SilentlyContinue\""
+
+# Step 3: JVLinkAgent を再起動
+ssh windows-vm "powershell -Command \"Restart-Service JVLinkAgent\""
+
+# Step 4: RunAdhoc 経由で再実行
+```
+
+**原因**: 以前の JVOpen 異常終了時に JVNextCore が残存し JVLinkAgent を占有する。複数の JVNextCore が残っていると（特に CPU が 100秒以上のもの）、新しい JVOpen リクエストを処理できなくなる。
+
+### JVOpen option の選択指針（重要）
+
+| 目的 | モード | option | from_time | 所要時間 |
+|------|--------|--------|-----------|----------|
+| 過去特定日の欠損修復 | `fix-race --from-date YYYYMMDD` | 1 | **有効** | 数分 |
+| 今週・直近分の取得 | `recent` | 2 | 今週分のみ | 数分 |
+| 全期間の初回取得 | `setup` | 4 | **無視** | 数時間 |
+
+- **`--mode setup` は初回セットアップ専用**。欠損修復・再取得には使わないこと。
+- **`--mode fix-race --from-date YYYYMMDD`** が過去データ修復の標準手順。
+- `--mode recent` は今週以前のデータは取得不可（option=2の制約）。
 
 ### blod-um モード 仕様（pedigrees.sire NULL 補完）
 
