@@ -270,8 +270,8 @@ class RaceEntry(Base):
     jvan_time_dm: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 1), comment="JRA-VAN NEXT タイム型DM指数（例: 43.1）"
     )
-    jvan_battle_dm: Mapped[int | None] = mapped_column(
-        Integer, comment="JRA-VAN NEXT 対戦型DM指数（整数）"
+    jvan_battle_dm: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 1), comment="JRA-VAN NEXT 対戦型DM指数スコア（例: 80.7）"
     )
 
 

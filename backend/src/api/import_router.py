@@ -367,7 +367,7 @@ class JvanDmRecord(BaseModel):
     jravan_race_id: str  # 16文字 (例: "2026042503010501")
     horse_number: int
     jvan_time_dm: float | None = None
-    jvan_battle_dm: int | None = None
+    jvan_battle_dm: float | None = None
 
 
 class JvanDmRequest(BaseModel):

@@ -353,7 +353,7 @@ class HorseIndexOut(BaseModel):
     km_rank: int | None = None         # kichiumaスピードスコアのレース内順位（1=最高）
     # JRA-VAN NEXT DM指数（タイム型・対戦型）
     jvan_time_dm: float | None = None
-    jvan_battle_dm: int | None = None
+    jvan_battle_dm: float | None = None
 
 
 class OddsOut(BaseModel):
@@ -736,7 +736,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             anagusa_index=_f(ci.anagusa_index),
             paddock_index=_f(ci.paddock_index),
             jvan_time_dm=_f(entry.jvan_time_dm),
-            jvan_battle_dm=int(entry.jvan_battle_dm) if entry.jvan_battle_dm is not None else None,
+            jvan_battle_dm=_f(entry.jvan_battle_dm),
         )
         for ci, entry, horse in unique_rows
     ]
