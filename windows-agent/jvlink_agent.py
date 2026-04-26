@@ -76,6 +76,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 CACHE_DIR = DATA_DIR / "cache"       # JVRead生データキャッシュ
 PENDING_DIR = DATA_DIR / "pending"   # POST失敗ペンディングキュー
 COMPLETED_DIR = DATA_DIR / "completed"  # ファイル単位の処理完了ログ
+SEEN_RESULTS_FILE = DATA_DIR / "seen_results.json"  # 送信済み成績キーの永続化
 
 # ログ設定
 logging.basicConfig(
@@ -627,6 +628,31 @@ def run_odds_prefetch(jv, fetch_date: str | None = None) -> None:
     logger.info("=== ODDS PREFETCH 完了 ===")
 
 
+def _load_seen_results(today: str) -> set:
+    """日付が一致する場合に永続化済み seen_results をロードする。"""
+    try:
+        if SEEN_RESULTS_FILE.exists():
+            with SEEN_RESULTS_FILE.open(encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == today:
+                keys = set(data.get("keys", []))
+                logger.info(f"[seen_results] {len(keys)}件 をロード (date={today})")
+                return keys
+    except Exception as e:
+        logger.warning(f"[seen_results] ロード失敗: {e}")
+    return set()
+
+
+def _save_seen_results(seen: set, today: str) -> None:
+    """送信済み成績キーをディスクに永続化する。"""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with SEEN_RESULTS_FILE.open("w", encoding="utf-8") as f:
+            json.dump({"date": today, "keys": list(seen)}, f)
+    except Exception as e:
+        logger.warning(f"[seen_results] 保存失敗: {e}")
+
+
 def run_realtime_monitor(jv) -> None:
     """リアルタイム監視ループ"""
     logger.info("=== Realtime monitor started ===")
@@ -634,8 +660,8 @@ def run_realtime_monitor(jv) -> None:
 
     # 送信済み出走取消キー（JVRTOpenが毎回全件返すため重複防止）
     seen_scratches: set[str] = set()
-    # 送信済み成績キー（重複防止）
-    seen_results: set[str] = set()
+    # 送信済み成績キー（重複防止 + 再起動時の重複送信防止のため永続化）
+    seen_results: set[str] = _load_seen_results(today)
 
     # ウォッチドッグ: JVRTOpenがCOMレベルでハングした場合の強制終了
     WATCHDOG_TIMEOUT = 600  # 秒（10分間ループが進捗しない場合は異常とみなす）
@@ -730,8 +756,8 @@ def run_realtime_monitor(jv) -> None:
                             pending_payout_keys.add(key)
                             new_payouts.append(rec)
             if new_results:
-                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信（バッチ200件）")
-                batch_size = 200
+                batch_size = 50
+                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信（バッチ{batch_size}件）")
                 result_keys_list = [rec["data"][:30] for rec in new_results]
                 for i in range(0, len(new_results), batch_size):
                     batch = new_results[i:i + batch_size]
@@ -740,12 +766,16 @@ def run_realtime_monitor(jv) -> None:
                     if ok:
                         logger.info(f"  POST /api/import/races batch {i//batch_size+1}: {len(batch)}件 -> OK")
                         seen_results.update(batch_keys)
+                        _save_seen_results(seen_results, today)
                     else:
                         logger.warning(f"  POST /api/import/races batch {i//batch_size+1}: {len(batch)}件 -> NG (次回再試行)")
+                    if i + batch_size < len(new_results):
+                        time.sleep(3)  # バッチ間インターバル（バックエンド負荷軽減）
             if new_payouts:
                 logger.info(f"払戻取得: {len(new_payouts)}件 (HR) → /api/import/payouts へ送信")
                 _post_hr_payouts(new_payouts)
-                seen_results.update(pending_payout_keys)  # pending保存あるので常に確認済みとする
+                seen_results.update(pending_payout_keys)
+                _save_seen_results(seen_results, today)
 
             time.sleep(30)  # 30秒間隔
 

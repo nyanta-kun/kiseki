@@ -73,7 +73,8 @@ def post_to_backend(
         resp = requests.post(
             f"{backend_url}{endpoint}",
             json=data,
-            headers={"X-API-Key": api_key},
+            # Connection: close でプール再利用を防ぎ stale SSL 接続 SSLError を回避
+            headers={"X-API-Key": api_key, "Connection": "close"},
             timeout=timeout,
         )
         if resp.status_code == 200:
