@@ -81,8 +81,11 @@ def post_to_backend(
         else:
             logger.warning(f"POST {endpoint} failed: {resp.status_code} {resp.text}")
             return False
-    except requests.exceptions.ConnectionError:
-        logger.error(f"Backend unreachable: {backend_url}")
+    except requests.exceptions.Timeout:
+        logger.error(f"POST timeout ({timeout}s): {endpoint}")
+        return False
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Backend unreachable: {backend_url} ({type(e).__name__})")
         return False
     except Exception as e:
         logger.error(f"POST error: {e}")

@@ -686,31 +686,32 @@ def run_realtime_monitor(jv) -> None:
                 if key not in seen_scratches:
                     seen_scratches.add(key)
                     new_scratches.append(rec)
-            for rec in new_scratches:
-                with _wd_lock:
-                    _last_heartbeat[0] = time.time()
-                logger.warning(f"出走取消検知: {rec['data'][:30]}")
-                post_to_backend("/api/changes/notify", {
-                    "change_type": "scratch",
-                    "raw_data": rec["data"],
-                    "detected_at": datetime.now().isoformat(),
-                }, BACKEND_URL, API_KEY)
+            if new_scratches:
+                logger.warning(f"出走取消検知: {len(new_scratches)}件（通知スキップ・ログのみ）")
+                for rec in new_scratches:
+                    logger.debug(f"  出走取消: {rec['data'][:30]}")
             if scratch_records and not new_scratches:
                 logger.debug(f"出走取消: {len(scratch_records)}件（送信済みスキップ）")
 
             # 馬体重
             weight_records = fetch_realtime_data(jv, RT_WEIGHT, today)
             if weight_records:
-                post_to_backend("/api/import/weights", {
+                ok = post_to_backend("/api/import/weights", {
                     "date": today,
                     "records": weight_records,
-                }, BACKEND_URL, API_KEY)
+                }, BACKEND_URL, API_KEY, timeout=300)
+                if ok:
+                    logger.info(f"  POST /api/import/weights {len(weight_records)}件 -> OK")
+                else:
+                    logger.warning(f"  POST /api/import/weights {len(weight_records)}件 -> NG")
 
             # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
             # 0B12 のキーは YYYYMMDDJJRR（12文字: 日付8+場所2+レース番号2）
             # 16文字レースキーから変換: race_key[:10] + race_key[14:]
             new_results = []
             new_payouts = []
+            pending_result_keys: set[str] = set()
+            pending_payout_keys: set[str] = set()
             for race_key in race_keys:
                 with _wd_lock:
                     _last_heartbeat[0] = time.time()
@@ -720,20 +721,31 @@ def run_realtime_monitor(jv) -> None:
                     rec_id = rec.get("rec_id")
                     if rec_id == "SE":
                         key = rec["data"][:30]  # 先頭30文字でユニーク識別
-                        if key not in seen_results:
-                            seen_results.add(key)
+                        if key not in seen_results and key not in pending_result_keys:
+                            pending_result_keys.add(key)
                             new_results.append(rec)
                     elif rec_id == "HR":
                         key = rec["data"][:30]
-                        if key not in seen_results:
-                            seen_results.add(key)
+                        if key not in seen_results and key not in pending_payout_keys:
+                            pending_payout_keys.add(key)
                             new_payouts.append(rec)
             if new_results:
-                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信")
-                post_to_backend("/api/import/races", {"records": new_results}, BACKEND_URL, API_KEY)
+                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信（バッチ200件）")
+                batch_size = 200
+                result_keys_list = [rec["data"][:30] for rec in new_results]
+                for i in range(0, len(new_results), batch_size):
+                    batch = new_results[i:i + batch_size]
+                    batch_keys = result_keys_list[i:i + batch_size]
+                    ok = post_to_backend("/api/import/races", {"records": batch}, BACKEND_URL, API_KEY, timeout=300)
+                    if ok:
+                        logger.info(f"  POST /api/import/races batch {i//batch_size+1}: {len(batch)}件 -> OK")
+                        seen_results.update(batch_keys)
+                    else:
+                        logger.warning(f"  POST /api/import/races batch {i//batch_size+1}: {len(batch)}件 -> NG (次回再試行)")
             if new_payouts:
                 logger.info(f"払戻取得: {len(new_payouts)}件 (HR) → /api/import/payouts へ送信")
                 _post_hr_payouts(new_payouts)
+                seen_results.update(pending_payout_keys)  # pending保存あるので常に確認済みとする
 
             time.sleep(30)  # 30秒間隔
 
