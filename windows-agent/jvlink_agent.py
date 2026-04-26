@@ -570,15 +570,20 @@ def run_daily_fetch(jv) -> None:
 
 
 def _fetch_today_race_keys(today: str) -> list[str]:
-    """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。"""
-    try:
-        resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=5)
-        if resp.status_code == 200:
-            races = resp.json()
-            keys = [r["jravan_race_id"] for r in races if r.get("jravan_race_id")]
-            return keys
-    except Exception as e:
-        logger.warning(f"レースキー取得失敗: {e}")
+    """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。SSL EOF等は3回リトライ。"""
+    for attempt in range(3):
+        try:
+            resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=10)
+            if resp.status_code == 200:
+                races = resp.json()
+                keys = [r["jravan_race_id"] for r in races if r.get("jravan_race_id")]
+                return keys
+        except Exception as e:
+            if attempt < 2:
+                logger.debug(f"レースキー取得リトライ({attempt+1}/3): {e}")
+                time.sleep(2)
+            else:
+                logger.warning(f"レースキー取得失敗(3回試行): {e}")
     return []
 
 
@@ -682,6 +687,8 @@ def run_realtime_monitor(jv) -> None:
                     seen_scratches.add(key)
                     new_scratches.append(rec)
             for rec in new_scratches:
+                with _wd_lock:
+                    _last_heartbeat[0] = time.time()
                 logger.warning(f"出走取消検知: {rec['data'][:30]}")
                 post_to_backend("/api/changes/notify", {
                     "change_type": "scratch",
@@ -700,13 +707,15 @@ def run_realtime_monitor(jv) -> None:
                 }, BACKEND_URL, API_KEY)
 
             # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
-            # 0B12 の正規キーは YYYYMMDDJJRR だが、16文字レースキーで呼んでも受理される場合がある
+            # 0B12 のキーは YYYYMMDDJJRR（12文字: 日付8+場所2+レース番号2）
+            # 16文字レースキーから変換: race_key[:10] + race_key[14:]
             new_results = []
             new_payouts = []
             for race_key in race_keys:
                 with _wd_lock:
                     _last_heartbeat[0] = time.time()
-                result_records = fetch_realtime_data(jv, RT_RACE_INFO, race_key)
+                result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                result_records = fetch_realtime_data(jv, RT_RACE_INFO, result_key)
                 for rec in result_records:
                     rec_id = rec.get("rec_id")
                     if rec_id == "SE":
