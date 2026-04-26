@@ -760,6 +760,8 @@ def run_realtime_monitor(jv) -> None:
                 logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信（バッチ{batch_size}件）")
                 result_keys_list = [rec["data"][:30] for rec in new_results]
                 for i in range(0, len(new_results), batch_size):
+                    with _wd_lock:
+                        _last_heartbeat[0] = time.time()  # バッチループ中のウォッチドッグ誤作動防止
                     batch = new_results[i:i + batch_size]
                     batch_keys = result_keys_list[i:i + batch_size]
                     ok = post_to_backend("/api/import/races", {"records": batch}, BACKEND_URL, API_KEY, timeout=300)
