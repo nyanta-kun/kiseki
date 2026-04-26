@@ -7,6 +7,7 @@ X-API-Key ヘッダーで簡易認証を行う。
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
@@ -422,7 +423,6 @@ async def import_jvan_dm(
         if entry is None:
             skipped += 1
             continue
-        from decimal import Decimal
         if rec.jvan_time_dm is not None:
             entry.jvan_time_dm = Decimal(str(rec.jvan_time_dm))
         if rec.jvan_battle_dm is not None:
