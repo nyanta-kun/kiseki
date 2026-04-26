@@ -426,7 +426,7 @@ async def import_jvan_dm(
         if rec.jvan_time_dm is not None:
             entry.jvan_time_dm = Decimal(str(rec.jvan_time_dm))
         if rec.jvan_battle_dm is not None:
-            entry.jvan_battle_dm = rec.jvan_battle_dm
+            entry.jvan_battle_dm = Decimal(str(rec.jvan_battle_dm))
         updated += 1
 
     await db.commit()
