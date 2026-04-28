@@ -1,13 +1,16 @@
 """推奨レース・馬券APIルーター
 
-GET /api/recommendations?date=YYYYMMDD
-  → Claude APIで生成した推奨を返す。DBに保存済みなら即返し、未生成なら生成してから返す。
+GET  /api/recommendations?date=YYYYMMDD
+  → DBに保存済みの推奨を返す。未生成の場合は空リスト。
 
-POST /api/recommendations/generate?date=YYYYMMDD
-  → 強制再生成（管理用）。X-API-Keyによる認証必須。
+GET  /api/recommendations/source?date=YYYYMMDD
+  → Claude定期エージェントが推奨選定に使うソースデータを返す（X-API-Key認証）。
+
+POST /api/recommendations/submit?date=YYYYMMDD
+  → Claude定期エージェントが選定した推奨5件を保存（X-API-Key認証）。
 
 POST /api/recommendations/update-results?date=YYYYMMDD
-  → 結果確定後の的中・払戻更新（daily_fetch.shから呼ばれる想定）。
+  → 結果確定後の的中・払戻更新。
 """
 
 from __future__ import annotations
@@ -24,7 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
-from ..services.recommender import generate_recommendations, update_results
+from ..services.recommender import (
+    collect_recommendation_source,
+    submit_recommendations,
+    update_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,14 +145,31 @@ def _to_out(rec: RaceRecommendation, race: Race) -> RecommendationOut:
 # ---------------------------------------------------------------------------
 
 
+class SubmitItem(BaseModel):
+    """Claude定期エージェントが提出する推奨1件。"""
+
+    rank: int
+    race_id: int
+    bet_type: str  # "win" | "place" | "quinella"
+    target_horse_numbers: list[int]
+    reason: str
+    confidence: float
+
+
+class SubmitRequest(BaseModel):
+    """提出ペイロード。"""
+
+    recommendations: list[SubmitItem]
+
+
 @router.get("", response_model=list[RecommendationOut])
 async def get_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
 ) -> list[RecommendationOut]:
-    """指定日の推奨レース・馬券を返す。
+    """指定日の推奨レース・馬券を返す（DB保存済みのもの）。
 
-    DBに保存済みであれば即返し。未生成の場合はClaude APIで生成してから返す。
+    Claude定期エージェントが未提出の場合は空リストを返す。
     """
     result = await db.execute(
         select(RaceRecommendation)
@@ -153,19 +177,9 @@ async def get_recommendations(
         .order_by(RaceRecommendation.rank)
     )
     recs = result.scalars().all()
-
-    if not recs:
-        # 未生成 → オンデマンド生成
-        try:
-            recs = await generate_recommendations(db, date)
-        except Exception as e:
-            logger.error("推奨オンデマンド生成失敗: %s", e)
-            raise HTTPException(status_code=503, detail=f"推奨生成に失敗しました: {e}")
-
     if not recs:
         return []
 
-    # レース情報を取得
     race_ids = [rec.race_id for rec in recs]
     races_result = await db.execute(select(Race).where(Race.id.in_(race_ids)))
     races_map: dict[int, Race] = {r.id: r for r in races_result.scalars().all()}
@@ -173,21 +187,43 @@ async def get_recommendations(
     return [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
 
 
-@router.post("/generate", response_model=list[RecommendationOut])
-async def force_generate(
+@router.get("/source")
+async def get_recommendation_source(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
     x_api_key: str = Header(..., alias="X-API-Key"),
+) -> dict[str, Any]:
+    """Claude定期エージェントが推奨選定に使うソースデータを返す。
+
+    指数・オッズ・外部指数（netkeiba/kichiuma）を含むレースリスト。
+    races_with_odds=0 の場合はエージェントは推奨生成をスキップする。
+    """
+    if x_api_key != settings.change_notify_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await collect_recommendation_source(db, date)
+
+
+@router.post("/submit", response_model=list[RecommendationOut])
+async def submit_recommendation(
+    db: DbDep,
+    payload: SubmitRequest,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+    x_api_key: str = Header(..., alias="X-API-Key"),
 ) -> list[RecommendationOut]:
-    """推奨を強制再生成する（管理用）。"""
+    """Claude定期エージェントが選定した推奨をDBに保存する。
+
+    既存レコードを削除して上書き。ハードフィルター・体言止め変換は
+    submit_recommendations() 内で適用される。
+    """
     if x_api_key != settings.change_notify_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    items = [item.model_dump() for item in payload.recommendations]
     try:
-        recs = await generate_recommendations(db, date)
+        recs = await submit_recommendations(db, date, items)
     except Exception as e:
-        logger.error("推奨強制生成失敗: %s", e)
-        raise HTTPException(status_code=503, detail=f"推奨生成に失敗しました: {e}")
+        logger.error("推奨提出失敗: %s", e)
+        raise HTTPException(status_code=500, detail=f"推奨保存に失敗しました: {e}")
 
     if not recs:
         return []
@@ -195,7 +231,6 @@ async def force_generate(
     race_ids = [rec.race_id for rec in recs]
     races_result = await db.execute(select(Race).where(Race.id.in_(race_ids)))
     races_map: dict[int, Race] = {r.id: r for r in races_result.scalars().all()}
-
     return [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
 
 

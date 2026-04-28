@@ -1,21 +1,23 @@
-"""地方競馬 Claude API推奨生成サービス
+"""地方競馬 推奨レース・馬券のソース提供 / 提出（Claude定期実行用）
 
-オッズなしで指数・信頼度から推奨を生成する。
-発走10分前にオッズを取得してbuy/pass判断を更新する。
+Claude.ai 定期エージェントが以下を行う：
+1. GET /api/chihou/recommendations/source?date=YYYYMMDD
+2. 推奨5件を選定（オッズなし、指数・信頼度・競馬場特性のみ）
+3. POST /api/chihou/recommendations/submit?date=YYYYMMDD
+
+このサービスは Anthropic API を呼び出さない（API課金なし）。
+発走10分前にオッズを取得してbuy/pass判断を更新する処理は維持する。
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import anthropic
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
 from ..db.chihou_models import (
     ChihouCalculatedIndex,
     ChihouHorse,
@@ -27,11 +29,8 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
-from .chihou_recommendation_prompt import CHIHOU_SYSTEM_PROMPT, CHIHOU_USER_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-sonnet-4-6"
 
 # buy/pass判断の期待値閾値
 _BUY_EV_THRESHOLD = 1.0
@@ -62,11 +61,6 @@ def _to_taigen_dome(text: str) -> str:
     if text.endswith("。"):
         joined += "。"
     return joined
-
-
-def _fmt_date(date_str: str) -> str:
-    """YYYYMMDD を YYYY-MM-DD 形式に変換する。"""
-    return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
 
 
 async def _fetch_external_consensus(
@@ -242,40 +236,23 @@ async def _collect_chihou_race_data(session: AsyncSession, date: str) -> list[di
     return race_data
 
 
-async def generate_chihou_recommendations(
-    session: AsyncSession, date: str
+async def submit_chihou_recommendations(
+    session: AsyncSession,
+    date: str,
+    items: list[dict[str, Any]],
 ) -> list[ChihouRaceRecommendation]:
-    """Claude APIで地方競馬推奨を生成しDBに保存して返す。"""
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY が設定されていません")
+    """Claude定期エージェントが選定した地方推奨5件をDBに保存する。
 
+    items は以下の形式:
+        [{"rank": int, "race_id": int, "bet_type": "win"|"place",
+          "target_horse_numbers": [int], "reason": str, "confidence": float}, ...]
+
+    既存レコードを削除して上書きする。体言止め変換のみ適用（オッズなしのためEVフィルター不可）。
+    """
     race_data = await _collect_chihou_race_data(session, date)
     if not race_data:
-        logger.warning("地方推奨生成: %s のレースデータなし", date)
+        logger.warning("地方推奨提出: %s のレースデータなし", date)
         return []
-
-    races_json = json.dumps(race_data, ensure_ascii=False, indent=2)
-    user_prompt = CHIHOU_USER_PROMPT_TEMPLATE.format(date=_fmt_date(date), races_json=races_json)
-
-    logger.info("地方Claude API 推奨生成開始: %s (%d レース)", date, len(race_data))
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    message = client.messages.create(
-        model=_MODEL,
-        max_tokens=2048,
-        system=CHIHOU_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    raw_text = next(b.text for b in message.content if hasattr(b, "text")).strip()
-    logger.debug("地方Claude APIレスポンス: %s", raw_text[:500])
-
-    try:
-        parsed = json.loads(raw_text)
-        items: list[dict[str, Any]] = parsed["recommendations"]
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error("地方Claude API パース失敗: %s\n%s", e, raw_text)
-        raise
 
     race_entry_map = {r["race_id"]: r for r in race_data}
 
@@ -316,8 +293,25 @@ async def generate_chihou_recommendations(
         records.append(rec)
 
     await session.commit()
-    logger.info("地方推奨生成完了: %s → %d 件保存", date, len(records))
+    logger.info("地方推奨提出完了: %s → %d 件保存（提出: %d件）", date, len(records), len(items))
     return records
+
+
+async def collect_chihou_recommendation_source(
+    session: AsyncSession, date: str
+) -> dict[str, Any]:
+    """Claude定期エージェントが地方推奨選定に使うソースデータを返す。
+
+    Returns:
+        {"date": YYYYMMDD, "races_total": int, "races": [...]}
+        races は _collect_chihou_race_data() の出力（指数・外部指数コンセンサス付き、オッズなし）
+    """
+    race_data = await _collect_chihou_race_data(session, date)
+    return {
+        "date": date,
+        "races_total": len(race_data),
+        "races": race_data,
+    }
 
 
 async def update_chihou_results(session: AsyncSession, date: str) -> int:

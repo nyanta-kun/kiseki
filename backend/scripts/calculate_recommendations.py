@@ -1,54 +1,28 @@
-"""推奨レース・馬券生成スクリプト
+"""【DEPRECATED】 推奨生成スクリプト
 
-毎朝8:00のcronから実行。当日のオッズ・指数をClaude APIに渡して推奨を生成・保存する。
+2026-04-28 以降、推奨生成は Claude.ai 定期エージェント（Routine）に移行済み。
+このスクリプトはもう使用されない。
 
-使用例:
-    uv run python scripts/calculate_recommendations.py           # 今日分
-    uv run python scripts/calculate_recommendations.py 20260405  # 指定日
+新しい流れ:
+    Claude Routine（毎朝08:00 JST）が
+      1. GET /api/recommendations/source?date=YYYYMMDD でソース取得
+      2. プロンプトに従い推奨5件を選定
+      3. POST /api/recommendations/submit?date=YYYYMMDD でDBに保存
+
+結果更新は scripts/update_recommendation_results.py を引き続き使用する。
 """
 
-import asyncio
-import logging
 import sys
-from datetime import datetime, timezone
-
-# scripts/ から src/ を参照できるようにパス追加
-sys.path.insert(0, "/app")
-
-from src.db.session import AsyncSessionLocal
-from src.services.recommender import generate_recommendations
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
 
 
-async def main() -> None:
-    if len(sys.argv) >= 2:
-        date = sys.argv[1]
-    else:
-        date = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
-
-    logger.info("推奨生成開始: date=%s", date)
-
-    async with AsyncSessionLocal() as session:
-        recs = await generate_recommendations(session, date)
-
-    if recs:
-        logger.info("推奨生成完了: %d 件", len(recs))
-        for rec in sorted(recs, key=lambda r: r.rank):
-            logger.info(
-                "  推奨%d: race_id=%d bet=%s confidence=%.2f",
-                rec.rank,
-                rec.race_id,
-                rec.bet_type,
-                rec.confidence,
-            )
-    else:
-        logger.warning("推奨が生成されませんでした")
+def main() -> None:
+    """エラー終了する（誤って cron から呼ばれた場合の保険）。"""
+    sys.stderr.write(
+        "[DEPRECATED] calculate_recommendations.py は廃止されました。\n"
+        "推奨生成は Claude.ai Routine に移行済み（POST /api/recommendations/submit）。\n"
+    )
+    sys.exit(2)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

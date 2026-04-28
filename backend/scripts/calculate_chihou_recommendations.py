@@ -1,55 +1,28 @@
-"""地方競馬推奨生成スクリプト（毎日10:00 cron）
+"""【DEPRECATED】 地方推奨生成スクリプト
 
-使い方:
-    python scripts/calculate_chihou_recommendations.py           # 今日分
-    python scripts/calculate_chihou_recommendations.py 20260408  # 指定日
+2026-04-28 以降、地方推奨生成は Claude.ai 定期エージェント（Routine）に移行済み。
+このスクリプトはもう使用されない。
 
-crontab設定例（VPS）:
-    # 毎日10:00 JST (01:00 UTC)
-    0 1 * * * cd /app && .venv/bin/python scripts/calculate_chihou_recommendations.py >> /app/logs/chihou_recommendations.log 2>&1
+新しい流れ:
+    Claude Routine（毎朝09:00 JST）が
+      1. GET /api/chihou/recommendations/source?date=YYYYMMDD でソース取得
+      2. プロンプトに従い推奨5件を選定
+      3. POST /api/chihou/recommendations/submit?date=YYYYMMDD でDBに保存
+
+結果更新は scripts/update_chihou_recommendation_results.py を引き続き使用する。
+オッズ判断更新は POST /api/chihou/recommendations/update-odds-decision を毎分cronで継続。
 """
-from __future__ import annotations
 
-import asyncio
-import logging
 import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
-
-from src.db.session import AsyncSessionLocal
-from src.services.chihou_recommender import generate_chihou_recommendations
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("chihou_recommendations")
-
-JST = timezone(timedelta(hours=9))
-
-
-async def run(date: str) -> None:
-    """指定日の地方競馬推奨を生成する。"""
-    async with AsyncSessionLocal() as db:
-        recs = await generate_chihou_recommendations(db, date)
-        logger.info("生成完了: %d 件", len(recs))
-        for r in recs:
-            logger.info(
-                "  rank=%d race_id=%d bet=%s confidence=%.2f",
-                r.rank,
-                r.race_id,
-                r.bet_type,
-                r.confidence,
-            )
 
 
 def main() -> None:
-    """エントリポイント。"""
-    date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(JST).strftime("%Y%m%d")
-    asyncio.run(run(date))
+    """エラー終了する（誤って cron から呼ばれた場合の保険）。"""
+    sys.stderr.write(
+        "[DEPRECATED] calculate_chihou_recommendations.py は廃止されました。\n"
+        "推奨生成は Claude.ai Routine に移行済み（POST /api/chihou/recommendations/submit）。\n"
+    )
+    sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
 """地方競馬推奨レース・馬券APIルーター
 
 GET  /api/chihou/recommendations?date=YYYYMMDD
-POST /api/chihou/recommendations/generate        (X-API-Key認証)
-POST /api/chihou/recommendations/update-results  (X-API-Key認証)
+GET  /api/chihou/recommendations/source              (X-API-Key認証)
+POST /api/chihou/recommendations/submit              (X-API-Key認証)
+POST /api/chihou/recommendations/update-results      (X-API-Key認証)
 POST /api/chihou/recommendations/update-odds-decision  (X-API-Key認証)
 """
 from __future__ import annotations
@@ -20,7 +21,8 @@ from ..config import settings
 from ..db.chihou_models import ChihouRace, ChihouRaceRecommendation
 from ..db.session import get_db
 from ..services.chihou_recommender import (
-    generate_chihou_recommendations,
+    collect_chihou_recommendation_source,
+    submit_chihou_recommendations,
     update_chihou_odds_decision,
     update_chihou_results,
 )
@@ -136,27 +138,38 @@ def _to_out(rec: ChihouRaceRecommendation, race: ChihouRace) -> ChihouRecommenda
 # ---------------------------------------------------------------------------
 
 
+class ChihouSubmitItem(BaseModel):
+    """Claude定期エージェントが提出する地方推奨1件。"""
+
+    rank: int
+    race_id: int
+    bet_type: str  # "win" | "place"
+    target_horse_numbers: list[int]
+    reason: str
+    confidence: float
+
+
+class ChihouSubmitRequest(BaseModel):
+    """提出ペイロード。"""
+
+    recommendations: list[ChihouSubmitItem]
+
+
 @router.get("", response_model=list[ChihouRecommendationOut])
 async def get_chihou_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
 ) -> list[ChihouRecommendationOut]:
-    """指定日の地方競馬推奨を返す。未生成の場合はオンデマンド生成。"""
+    """指定日の地方競馬推奨を返す（DB保存済みのもの）。
+
+    Claude定期エージェントが未提出の場合は空リストを返す。
+    """
     result = await db.execute(
         select(ChihouRaceRecommendation)
         .where(ChihouRaceRecommendation.date == date)
         .order_by(ChihouRaceRecommendation.rank)
     )
     recs = result.scalars().all()
-
-    if not recs:
-        try:
-            recs = await generate_chihou_recommendations(db, date)
-        except Exception as e:
-            logger.error("地方推奨オンデマンド生成失敗: %s", e)
-            # API過負荷・一時エラー時は空リストを返す（503でクライアントを壊さない）
-            return []
-
     if not recs:
         return []
 
@@ -167,21 +180,42 @@ async def get_chihou_recommendations(
     return [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
 
 
-@router.post("/generate", response_model=list[ChihouRecommendationOut])
-async def force_generate_chihou(
+@router.get("/source")
+async def get_chihou_recommendation_source(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
     x_api_key: str = Header(..., alias="X-API-Key"),
-) -> list[ChihouRecommendationOut]:
-    """地方推奨を強制再生成（管理用）。"""
+) -> dict[str, Any]:
+    """Claude定期エージェントが地方推奨選定に使うソースデータを返す。
+
+    オッズなし（指数・外部指数コンセンサスのみ）。
+    races_total=0 の場合エージェントは推奨生成をスキップする。
+    """
     if x_api_key != settings.change_notify_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")
+    return await collect_chihou_recommendation_source(db, date)
+
+
+@router.post("/submit", response_model=list[ChihouRecommendationOut])
+async def submit_chihou_recommendation(
+    db: DbDep,
+    payload: ChihouSubmitRequest,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+    x_api_key: str = Header(..., alias="X-API-Key"),
+) -> list[ChihouRecommendationOut]:
+    """Claude定期エージェントが選定した地方推奨をDBに保存する。"""
+    if x_api_key != settings.change_notify_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    items = [item.model_dump() for item in payload.recommendations]
     try:
-        recs = await generate_chihou_recommendations(db, date)
+        recs = await submit_chihou_recommendations(db, date, items)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"推奨生成に失敗しました: {e}")
+        logger.error("地方推奨提出失敗: %s", e)
+        raise HTTPException(status_code=500, detail=f"推奨保存に失敗しました: {e}")
     if not recs:
         return []
+
     race_ids = [rec.race_id for rec in recs]
     races_result = await db.execute(select(ChihouRace).where(ChihouRace.id.in_(race_ids)))
     races_map = {r.id: r for r in races_result.scalars().all()}

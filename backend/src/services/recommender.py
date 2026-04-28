@@ -1,23 +1,28 @@
-"""Claude APIを使った推奨レース・馬券生成サービス"""
+"""推奨レース・馬券のソース提供 / 提出（Claude定期実行用）
+
+Claude.ai の定期エージェント（Routine）が以下を行う：
+1. GET /api/recommendations/source?date=YYYYMMDD で当日の素材データを取得
+2. 推奨5件を選定
+3. POST /api/recommendations/submit?date=YYYYMMDD で投入
+
+このサービスは Anthropic API を呼び出さない（API課金なし）。
+ハードフィルター・体言止め変換は submit_recommendations() 内で適用する。
+"""
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
 from datetime import date as _date
 from typing import Any
 
-import anthropic
 from sqlalchemy import delete, func, select
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
 from ..db.models import CalculatedIndex, Horse, OddsHistory, Race, RaceEntry, RaceRecommendation
 from ..indices.composite import COMPOSITE_VERSION
-from .recommendation_prompt import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -97,8 +102,6 @@ async def _fetch_external_data_batch(
     return result
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-sonnet-4-6"
 
 # 文末の断定形を体言止めに変換するパターン
 _DANTEIKEI = [
@@ -332,58 +335,35 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     return race_data
 
 
-async def generate_recommendations(session: AsyncSession, date: str) -> list[RaceRecommendation]:
-    """Claude APIを呼び出して推奨を生成し、DBに保存して返す。
+async def submit_recommendations(
+    session: AsyncSession,
+    date: str,
+    items: list[dict[str, Any]],
+) -> list[RaceRecommendation]:
+    """Claude定期エージェントが選定した推奨5件をDBに保存する。
 
-    既存の推奨がある場合は削除して再生成する。
+    items は以下の形式:
+        [{"rank": 1, "race_id": int, "bet_type": "win"|"place"|"quinella",
+          "target_horse_numbers": [int, ...], "reason": str, "confidence": float}, ...]
+
+    保存前にハードフィルター・体言止め変換を適用する。
+    既存の推奨がある場合は削除して上書きする。
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY が設定されていません")
-
     race_data = await _collect_race_data(session, date)
     if not race_data:
-        logger.warning("推奨生成: %s のレースデータが見つかりません", date)
+        logger.warning("推奨提出: %s のレースデータが見つかりません", date)
         return []
 
     race_data_with_odds = [r for r in race_data if r["has_odds"]]
     if not race_data_with_odds:
-        logger.warning("推奨生成: %s のオッズデータが見つかりません", date)
+        logger.warning("推奨提出: %s のオッズデータが見つかりません", date)
         return []
-
-    races_json = json.dumps(race_data_with_odds, ensure_ascii=False, indent=2)
-    user_prompt = USER_PROMPT_TEMPLATE.format(date=_fmt_date(date), races_json=races_json)
-
-    logger.info("Claude API 推奨生成開始: %s (%d レース)", date, len(race_data_with_odds))
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    message = client.messages.create(
-        model=_MODEL,
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    raw_text = next(b.text for b in message.content if hasattr(b, "text")).strip()
-    logger.debug("Claude API レスポンス: %s", raw_text[:500])
-
-    # マークダウンコードブロック除去 → JSONブロック抽出
-    json_text = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
-    json_match = re.search(r"\{[\s\S]*\}", json_text)
-    if json_match:
-        json_text = json_match.group(0)
-
-    try:
-        parsed = json.loads(json_text)
-        items: list[dict[str, Any]] = parsed["recommendations"]
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error("Claude API レスポンスのパース失敗: %s\n%s", e, raw_text)
-        raise
 
     # オッズスナップショット（現在時刻）
     snapshot_at = datetime.now(tz=UTC)
     race_entry_map = {r["race_id"]: r for r in race_data_with_odds}
 
-    # 既存レコード削除 → 再生成
+    # 既存レコード削除 → 上書き
     await session.execute(
         delete(RaceRecommendation).where(RaceRecommendation.date == date)
     )
@@ -481,8 +461,25 @@ async def generate_recommendations(session: AsyncSession, date: str) -> list[Rac
         rank_counter += 1
 
     await session.commit()
-    logger.info("推奨生成完了: %s → %d 件保存（フィルター前: %d件）", date, len(records), len(items))
+    logger.info("推奨提出完了: %s → %d 件保存（提出: %d件）", date, len(records), len(items))
     return records
+
+
+async def collect_recommendation_source(session: AsyncSession, date: str) -> dict[str, Any]:
+    """Claude定期エージェントが推奨選定に使うソースデータを返す。
+
+    Returns:
+        {"date": YYYYMMDD, "races": [...], "races_with_odds": int}
+        races は _collect_race_data() の出力（指数・オッズ・外部指数付き）
+    """
+    race_data = await _collect_race_data(session, date)
+    races_with_odds = [r for r in race_data if r["has_odds"]]
+    return {
+        "date": date,
+        "races_total": len(race_data),
+        "races_with_odds": len(races_with_odds),
+        "races": races_with_odds,
+    }
 
 
 async def update_results(session: AsyncSession, date: str) -> int:
