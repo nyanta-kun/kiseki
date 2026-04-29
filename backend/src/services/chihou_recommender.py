@@ -2,7 +2,7 @@
 
 Claude.ai 定期エージェントが以下を行う：
 1. GET /api/chihou/recommendations/source?date=YYYYMMDD
-2. 推奨5件を選定（オッズなし、指数・信頼度・競馬場特性のみ）
+2. 条件を満たすすべてのレースを推奨として選定（オッズなし、指数・信頼度・競馬場特性のみ。件数上限なし）
 3. POST /api/chihou/recommendations/submit?date=YYYYMMDD
 
 このサービスは Anthropic API を呼び出さない（API課金なし）。
@@ -241,9 +241,9 @@ async def submit_chihou_recommendations(
     date: str,
     items: list[dict[str, Any]],
 ) -> list[ChihouRaceRecommendation]:
-    """Claude定期エージェントが選定した地方推奨5件をDBに保存する。
+    """Claude定期エージェントが選定した地方推奨をDBに保存する。
 
-    items は以下の形式:
+    items は以下の形式（件数上限なし）:
         [{"rank": int, "race_id": int, "bet_type": "win"|"place",
           "target_horse_numbers": [int], "reason": str, "confidence": float}, ...]
 
@@ -261,7 +261,7 @@ async def submit_chihou_recommendations(
     )
 
     records: list[ChihouRaceRecommendation] = []
-    for item in items[:5]:
+    for item in items:
         race_id = int(item["race_id"])
         race_entry = race_entry_map.get(race_id)
         if race_entry is None:

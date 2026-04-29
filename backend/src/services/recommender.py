@@ -2,7 +2,7 @@
 
 Claude.ai の定期エージェント（Routine）が以下を行う：
 1. GET /api/recommendations/source?date=YYYYMMDD で当日の素材データを取得
-2. 推奨5件を選定
+2. 条件を満たすすべてのレースを推奨として選定（件数上限なし）
 3. POST /api/recommendations/submit?date=YYYYMMDD で投入
 
 このサービスは Anthropic API を呼び出さない（API課金なし）。
@@ -340,9 +340,9 @@ async def submit_recommendations(
     date: str,
     items: list[dict[str, Any]],
 ) -> list[RaceRecommendation]:
-    """Claude定期エージェントが選定した推奨5件をDBに保存する。
+    """Claude定期エージェントが選定した推奨をDBに保存する。
 
-    items は以下の形式:
+    items は以下の形式（件数上限なし、ハードフィルター違反は自動除外）:
         [{"rank": 1, "race_id": int, "bet_type": "win"|"place"|"quinella",
           "target_horse_numbers": [int, ...], "reason": str, "confidence": float}, ...]
 
@@ -410,7 +410,7 @@ async def submit_recommendations(
 
     records: list[RaceRecommendation] = []
     rank_counter = 1
-    for item in items[:5]:
+    for item in items:
         race_id = int(item["race_id"])
         race_entry = race_entry_map.get(race_id)
         if race_entry is None:
