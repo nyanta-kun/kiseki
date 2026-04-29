@@ -1,24 +1,24 @@
 #!/bin/bash
-# 地方競馬指数算出トリガー
+# JRA指数算出トリガー
 #
 # 使い方:
-#   chihou_calculate_trigger.sh                # 当日 JST
-#   chihou_calculate_trigger.sh tomorrow       # 翌日 JST（前夜実行用）
-#   chihou_calculate_trigger.sh 20260430       # 指定日
+#   jra_calculate_trigger.sh                # 当日 JST
+#   jra_calculate_trigger.sh tomorrow       # 翌日 JST（前夜実行用）
+#   jra_calculate_trigger.sh 20260503       # 指定日
 #
-# VPS cron 推奨設定（前夜・当日朝の二重化）:
-#   0 13 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_calculate_trigger.sh tomorrow
-#     # 13:00 UTC = 22:00 JST 前夜 → 翌日分を算出（メイン）
-#   30 21 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_calculate_trigger.sh
-#     # 21:30 UTC = 06:30 JST 当日 → 前夜失敗時のリカバリ
+# 既存の daily_trigger.sh も $TOMORROW 分を計算するが、
+# 障害時の冗長化として独立した cron として用意。
+#
+# VPS cron 推奨設定:
+#   0 13 * * * /home/ysuzuki/GitHub/kiseki/scripts/jra_calculate_trigger.sh tomorrow
+#     # 13:00 UTC = 22:00 JST 前夜 → 翌日分を算出
 #
 # 指数算出は version-based upsert で冪等のため二重実行は無害。
-# umaconn_agent realtime の 0:00跨ぎイベントとも並走可。
 
 set -u
 
 BACKEND_URL="http://127.0.0.1:8003"
-LOG_FILE="/home/ysuzuki/GitHub/kiseki/logs/chihou_calculate_trigger.log"
+LOG_FILE="/home/ysuzuki/GitHub/kiseki/logs/jra_calculate_trigger.log"
 ENV_FILE="/home/ysuzuki/GitHub/kiseki/.env"
 
 log() {
@@ -63,10 +63,10 @@ case "$ARG" in
     ;;
 esac
 
-log "=== chihou_calculate_trigger.sh 開始 date=$DATE ($LABEL) ==="
+log "=== jra_calculate_trigger.sh 開始 date=$DATE ($LABEL) ==="
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$BACKEND_URL/api/import/chihou/calculate?date=$DATE" \
+  "$BACKEND_URL/api/import/calculate?date=$DATE" \
   -H "X-API-Key: $API_KEY" \
   --max-time 600)
 
@@ -75,10 +75,10 @@ BODY=$(echo "$RESPONSE" | head -n -1)
 
 if [ "$HTTP_CODE" = "200" ]; then
   log "指数算出キック成功 (バックグラウンド処理): date=$DATE"
-  log "  → 算出は数分かかる。完了確認は backend ログ '[chihou calculate] 完了' を参照"
+  log "  → 算出は数分かかる。完了確認は backend ログ '[calculate] 完了' を参照"
 else
   log "ERROR: 指数算出キック失敗 HTTP=$HTTP_CODE date=$DATE body=$(echo "$BODY" | head -c 200)"
   exit 1
 fi
 
-log "=== chihou_calculate_trigger.sh 完了 ==="
+log "=== jra_calculate_trigger.sh 完了 ==="
