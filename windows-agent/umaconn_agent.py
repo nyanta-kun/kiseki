@@ -71,7 +71,10 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_env_path)
 
 BACKEND_URL: str = os.getenv("UMACONN_BACKEND_URL", "http://YuichironoMacBook-Pro-6.local:8000")
-API_KEY: str = os.getenv("UMACONN_API_KEY", "")
+# HTTP API キー（バックエンドの X-API-Key ヘッダー用）
+API_KEY: str = os.getenv("CHANGE_NOTIFY_API_KEY", "")
+# UmaConn サービスキー（COM の NVSetServiceKey 用、JV-Link ライセンス）
+UMACONN_SERVICE_KEY: str = os.getenv("UMACONN_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # ローカルデータディレクトリ
@@ -223,12 +226,12 @@ def init_umaconn():
         # タイムアウト付き実行: NVSetServiceKey はサービスサーバーへのネットワーク接続を行い
         # サーバーが応答しない場合に数分以上ブロックすることがある。
         # スレッドで実行して最大60秒待機し、超過した場合は警告して続行する。
-        if API_KEY:
+        if UMACONN_SERVICE_KEY:
             _key_result: list = []
 
             def _set_key() -> None:
                 try:
-                    rc_key = nv.NVSetServiceKey(API_KEY)
+                    rc_key = nv.NVSetServiceKey(UMACONN_SERVICE_KEY)
                     _key_result.append(rc_key)
                 except Exception as e:  # noqa: BLE001
                     _key_result.append(f"error: {e}")
