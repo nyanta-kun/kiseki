@@ -162,12 +162,11 @@ async def get_chihou_recommendations(
 ) -> list[ChihouRecommendationOut]:
     """指定日の地方競馬推奨を返す（DB保存済みのもの）。
 
+    返却順は発走時刻順（post_time 昇順）。rank フィールドは推奨度順のまま保持。
     Claude定期エージェントが未提出の場合は空リストを返す。
     """
     result = await db.execute(
-        select(ChihouRaceRecommendation)
-        .where(ChihouRaceRecommendation.date == date)
-        .order_by(ChihouRaceRecommendation.rank)
+        select(ChihouRaceRecommendation).where(ChihouRaceRecommendation.date == date)
     )
     recs = result.scalars().all()
     if not recs:
@@ -177,7 +176,10 @@ async def get_chihou_recommendations(
     races_result = await db.execute(select(ChihouRace).where(ChihouRace.id.in_(race_ids)))
     races_map = {r.id: r for r in races_result.scalars().all()}
 
-    return [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
+    items = [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
+    # 発走時刻順にソート（post_time が None は末尾）
+    items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
+    return items
 
 
 @router.get("/source")
