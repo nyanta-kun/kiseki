@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from datetime import date as _date
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -721,7 +721,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     def _f(v) -> float | None:
         return float(v) if v is not None else None
 
-    def _adj(v: object, key: str) -> float | None:
+    def _adj(v: Any, key: str) -> float | None:
         """個別指数の表示用バイアス補正 (中央値=50 になるよう offset を加算)。
 
         composite_index は重み校正済みのため補正しない。
@@ -784,11 +784,11 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             .where(OddsHistory.bet_type == "win")
             .order_by(OddsHistory.combination, OddsHistory.fetched_at.desc())
         )
-        seen: set[str] = set()
+        seen_combos: set[str] = set()
         for combo, odds_val, _ in odds_rows.all():
-            if combo in seen:
+            if combo in seen_combos:
                 continue
-            seen.add(combo)
+            seen_combos.add(combo)
             try:
                 hn = int(combo)
             except (TypeError, ValueError):

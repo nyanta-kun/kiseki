@@ -48,7 +48,7 @@ DM 値が NULL の馬・レースではタグは空のまま (運用範囲は DM
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 # シグナル文字列定数 (UI 表示用にラベル付き、API では key を返す)
 SIGNAL_TRIPLE_MATCH = "三冠一致"
@@ -116,7 +116,7 @@ def _ranks_descending(values: list[float | None]) -> list[int | None]:
 
 
 def compute_dm_signals(
-    horses: list[_Horse],
+    horses: list[Any],
     popularity_map: dict[int, int] | None = None,
     win_odds_map: dict[int, float] | None = None,
 ) -> None:
