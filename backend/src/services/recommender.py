@@ -68,6 +68,13 @@ async def _fetch_external_data_batch(
             {"d": race_date, "c": sekito_code, "r": race.race_number},
         )).fetchall()
 
+        ag_rows = (await session.execute(
+            _text("SELECT horse_no, rank FROM sekito.anagusa"
+                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
+            {"d": race_date, "c": sekito_code, "r": race.race_number},
+        )).fetchall()
+        anagusa_ranks = {hn: r for hn, r in ag_rows if r in ("A", "B", "C")}
+
         nb_course: dict[int, float] = {}
         nb_ave: dict[int, float] = {}
         for horse_no, idx_course, idx_ave in nb_rows:
@@ -90,12 +97,16 @@ async def _fetch_external_data_batch(
         nb_ave_ranks = _rank(nb_ave)
         km_ranks = _rank(km_score)
 
-        all_horses = set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys())
+        all_horses = (
+            set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys())
+            | set(anagusa_ranks.keys())
+        )
         result[race.id] = {
             hn: {
                 "nb_course_rank": nb_course_ranks.get(hn),
                 "nb_ave_rank": nb_ave_ranks.get(hn),
                 "km_rank": km_ranks.get(hn),
+                "anagusa_rank": anagusa_ranks.get(hn),
             }
             for hn in all_horses
         }
@@ -264,6 +275,10 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 "nb_course_rank": ext.get("nb_course_rank"),
                 "nb_ave_rank": ext.get("nb_ave_rank"),
                 "km_rank": ext.get("km_rank"),
+                # JV-Next DM 指数 (DMシグナル算出に使用)
+                "jvan_time_dm": _f(entry.jvan_time_dm),
+                "jvan_battle_dm": _f(entry.jvan_battle_dm),
+                "anagusa_rank": ext.get("anagusa_rank"),
             })
 
         if not horses:
@@ -316,6 +331,34 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 if idx_rank is not None and odds_rank is not None
                 else None
             )
+
+        # DM シグナルタグをレース全頭に付与（軸/穴/警戒）
+        # ベース指数とは独立した「タグ」レイヤ。バックテスト実証 (ROI 最大 188.8%)
+        from types import SimpleNamespace
+
+        from ..indices.dm_signals import compute_dm_signals
+        sig_objs = [
+            SimpleNamespace(
+                horse_number=h["horse_number"],
+                composite_index=h["composite_index"] or 0.0,
+                jvan_time_dm=h.get("jvan_time_dm"),
+                jvan_battle_dm=h.get("jvan_battle_dm"),
+                anagusa_rank=h.get("anagusa_rank"),
+                dm_signals=None,
+            )
+            for h in horses
+        ]
+        # 人気は odds_rank_map をそのまま流用 (1=最人気)
+        compute_dm_signals(
+            sig_objs,
+            popularity_map={obj.horse_number: odds_rank_map[obj.horse_number]
+                            for obj in sig_objs if obj.horse_number in odds_rank_map},
+            win_odds_map={h["horse_number"]: h["win_odds"]
+                          for h in horses if h.get("win_odds") is not None},
+        )
+        sig_by_hn = {obj.horse_number: (obj.dm_signals or []) for obj in sig_objs}
+        for h in horses:
+            h["dm_signals"] = sig_by_hn.get(h["horse_number"], [])
 
         race_data.append({
             "race_id": race.id,

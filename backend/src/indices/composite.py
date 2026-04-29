@@ -45,6 +45,7 @@ from .frame_bias import FrameBiasCalculator
 from .going_pedigree import GoingPedigreeIndexCalculator
 from .jockey import JockeyIndexCalculator
 from .jockey_trainer_combo import JockeyTrainerComboIndexCalculator
+from .jvan_dm import JvanBattleDmCalculator, JvanTimeDmCalculator
 from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
 from .paddock import PaddockIndexCalculator
@@ -130,7 +131,11 @@ logger = logging.getLogger(__name__)
 #   コース適性スコア式: time×0.9 + pos×0.1（v20の0.7→0.9に強化）
 #   理由: 計算不能馬=50.0固定では、実測値44の馬が「計算不能馬全員」より下位になる不合理が生じる
 # v22: pedigree_index: sire IS NULL → 同レース平均（外国種牡馬・父不明をニュートラルに）
-COMPOSITE_VERSION = 22
+# v23: JV-Next DM 指数 (タイム型・対戦型) を追加 (2026-04-29)
+#   protocol_dm_orchestrator で過去全期間のDMデータ取得が可能になったため、
+#   別系統の情報源として組み込み。初期重み jvan_time_dm=0.05 / jvan_battle_dm=0.05。
+#   要バックテスト・重み最適化 (Nelder-Mead)。
+COMPOSITE_VERSION = 23
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -232,6 +237,8 @@ class CompositeIndexCalculator:
         self._distance_change = DistanceChangeIndexCalculator(db)
         self._jockey_trainer_combo = JockeyTrainerComboIndexCalculator(db)
         self._going_pedigree = GoingPedigreeIndexCalculator(db)
+        self._jvan_time_dm = JvanTimeDmCalculator(db)
+        self._jvan_battle_dm = JvanBattleDmCalculator(db)
 
     # ------------------------------------------------------------------
     # 公開インターフェース
@@ -293,6 +300,8 @@ class CompositeIndexCalculator:
             _run(DistanceChangeIndexCalculator),
             _run(JockeyTrainerComboIndexCalculator),
             _run(GoingPedigreeIndexCalculator),
+            _run(JvanTimeDmCalculator),
+            _run(JvanBattleDmCalculator),
             return_exceptions=True,
         )
 
@@ -301,6 +310,7 @@ class CompositeIndexCalculator:
             "pedigree", "training", "anagusa", "paddock", "rebound",
             "rivals_growth", "career_phase", "distance_change",
             "jockey_trainer_combo", "going_pedigree",
+            "jvan_time_dm", "jvan_battle_dm",
         ]
 
         def _safe(result: object, label: str) -> dict[int, float | None]:
@@ -316,6 +326,7 @@ class CompositeIndexCalculator:
             anagusa_map, paddock_map, rebound_map, rivals_growth_map,
             career_phase_map, distance_change_map, jockey_trainer_combo_map,
             going_pedigree_map,
+            jvan_time_dm_map, jvan_battle_dm_map,
         ) = [_fill_with_race_mean(_safe(r, lbl)) for r, lbl in zip(_parallel, _labels)]
 
         # セグメント別ウェイト（レース単位で1回だけ計算）
@@ -343,6 +354,8 @@ class CompositeIndexCalculator:
                 distance_change=distance_change_map.get(hid, DEFAULT_INDEX),
                 jockey_trainer_combo=jockey_trainer_combo_map.get(hid, DEFAULT_INDEX),
                 going_pedigree=going_pedigree_map.get(hid, DEFAULT_INDEX),
+                jvan_time_dm=jvan_time_dm_map.get(hid, DEFAULT_INDEX),
+                jvan_battle_dm=jvan_battle_dm_map.get(hid, DEFAULT_INDEX),
                 weights=seg_weights,
             )
             results.append({"horse_id": hid, **row})
@@ -439,6 +452,8 @@ class CompositeIndexCalculator:
         distance_change: float = DEFAULT_INDEX,
         jockey_trainer_combo: float = DEFAULT_INDEX,
         going_pedigree: float = DEFAULT_INDEX,
+        jvan_time_dm: float = DEFAULT_INDEX,
+        jvan_battle_dm: float = DEFAULT_INDEX,
         weights: dict | None = None,
     ) -> dict:
         """各指数から総合指数を算出する。
@@ -465,6 +480,8 @@ class CompositeIndexCalculator:
             distance_change: 距離変更適性指数（延長/短縮パターン別成績、中立=50）
             jockey_trainer_combo: 騎手×厩舎コンビ指数（コンビ勝率 vs 単独騎手勝率、中立=50）
             going_pedigree: 重馬場×血統指数（重/不良馬場での父系統適性、中立=50）
+            jvan_time_dm: JV-Next タイム型DM指数（外部指数・中立=50）
+            jvan_battle_dm: JV-Next 対戦型DM指数（外部指数・中立=50）
             weights: セグメント別ウェイト dict（None のとき INDEX_WEIGHTS を使用）
 
         Returns:
@@ -490,6 +507,8 @@ class CompositeIndexCalculator:
             + distance_change * w["distance_change"]
             + jockey_trainer_combo * w["jockey_trainer_combo"]
             + going_pedigree * w["going_pedigree"]
+            + jvan_time_dm * w.get("jvan_time_dm", 0.0)
+            + jvan_battle_dm * w.get("jvan_battle_dm", 0.0)
         )
 
         # 交互作用項ボーナス（top5 pedigree interactions from optimization）

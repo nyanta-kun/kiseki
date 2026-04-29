@@ -75,6 +75,13 @@ export type HorseIndex = {
   nb_course_rank: number | null;  // netkeibaコース適性指数のレース内順位（1=最高）
   nb_ave_rank: number | null;     // netkeibaタイム平均指数のレース内順位（1=最高）
   km_rank: number | null;         // kichiumaスピードスコアのレース内順位（1=最高）
+  // JRA-VAN NEXT DM 指数（タイム型・対戦型）
+  jvan_time_dm: number | null;
+  jvan_battle_dm: number | null;
+  // DM × 穴ぐさ × 既存指数 シグナルタグ（軸/穴/警戒）
+  // 値: "三冠一致" | "高得点鉄板" | "穴ぐさDM" | "DM大穴" |
+  //     "DM高オッズ" | "穴ぐさ+DMtime" | "人気下振れ" の組み合わせ
+  dm_signals: string[] | null;
 };
 
 export type OddsData = {

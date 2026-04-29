@@ -266,11 +266,20 @@ pkill -9 -f "prlctl exec"
   - 追加API_KEY不要。`NVSetServiceKey rc=-101`（2回目）は正常（既登録の意味）
   - **PC-KEIBA アプリ不要**。NVDTLab.dll（UmaConn SDK）は PC-KEIBA なしで直接動作（2026-04-13 実機確認）
   - 認証は `HKLM\SOFTWARE\WOW6432Node\RateBuster Co.,Ltd\UmaConn\3.5.4.0` で管理（PC-KEIBAのDB設定とは無関係）
-- **umaconn_agent realtimeモード 自動管理**（2026-04-18 実装済み）
+- **umaconn_agent realtimeモード 自動管理**（2026-04-18 実装・2026-04-28 安定化強化）
   - Windowsタスクスケジューラ（`kiseki-UmaConn-Realtime`）が毎朝9:00に自動起動
   - 自動停止: 最終レース発走+90分 or 21:30ハードストップ（先に来た方）
-  - ウォッチドッグ: NVRTOpenハングを180秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
+  - ウォッチドッグ: NVRTOpenハングを600秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
   - タスク状態確認: `ssh windows-vm "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
+- **realtime 安定化のためのバックアップ・監視タスク**（2026-04-28 追加）
+  - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
+    - realtime の 0B12 worker が止まっても結果取得を確実化
+    - スクリプト: `C:\kiseki\windows-agent\run_umaconn_fetch_results.vbs`
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime プロセス生存確認・不在なら `kiseki-UmaConn-Realtime` を再起動
+    - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
+    - ログ: `C:\kiseki\windows-agent\watchdog.log`
+  - **Why**: 4/27 の mitmproxy 停止由来 ProxyError 連発 + 4/26 jvlink_agent watchdog 600s誤発火事例（626/643秒）への対応
+  - **Windowsシステムプロキシは無効化済**（`netsh winhttp reset proxy` 完了）。再有効化する場合はバックエンドAPI到達不可になるので注意
 - **umaconn_agent の起動はデスクトップセッションが必須**（2026-04-21 確認）
   - NVDTLab.dll はシステムトレイアイコン初期化のためデスクトップセッションが必要
   - SSH経由の直接起動は `シェル通知アイコンが削除できません` エラーで初期化失敗する
@@ -482,6 +491,57 @@ SELECT COUNT(*) FROM keiba.pedigrees WHERE sire IS NULL;
 **再実行が必要な場合**:
 全件再取得するには `data/completed/BLDN_FULL.txt` を削除してから実行。
 
+### JV-Next 1403 (DM) 取得 — 2 つのオーケストレーター
+
+DM (タイム型・対戦型指数) の取得には 2 つの方式がある:
+
+| 方式 | スクリプト | UIアクセス | K=0 primary venue | 推奨度 |
+|------|---------|---------|------------|------|
+| **Protocol版** (新) | `backend/scripts/protocol_dm_orchestrator.py` | 不要 | ✅ 福島・新潟・中京・小倉 OK | 🟢 推奨 |
+| **Denma版** (旧) | `backend/scripts/dm_fetch_orchestrator.py` | CEF クリック必要 | ❌ 取得不可 (cross-pairing 仕様) | 🟡 fallback |
+
+#### Protocol 版 (新・基本)
+JV-Next の `POST /Browsing/GateServlet` プロトコルを直接利用 (DATA=`05900403{date}{CC}{NN}` で 1403 取得)。
+
+```bash
+cd backend
+# DB駆動: 過去30日内の未取得レースを自動検出して取得
+.venv/bin/python scripts/protocol_dm_orchestrator.py --from-db
+
+# K=0 primary venue を集中バックフィル (福島・新潟・中京・小倉)
+.venv/bin/python scripts/protocol_dm_orchestrator.py --from-db --courses 03,04,07,10 --since 20230101
+
+# 日付指定
+.venv/bin/python scripts/protocol_dm_orchestrator.py --dates 20260419,20260412 --courses 03,06,09
+
+# DRY RUN
+.venv/bin/python scripts/protocol_dm_orchestrator.py --from-db --dry-run
+```
+
+**動作**:
+1. DB から未取得日付・場リストを抽出
+2. Windows-side `protocol_dm_pipeline.py` を SSH 経由で実行
+3. パイプライン内で:
+   - JV-Next 起動状態確認 (停止時は起動)
+   - session KEY 確認 (probe 失敗時は pktmon で再抽出 ~30秒)
+   - DATA=`05900403YYYYMMDDCCNN` で全レース fetch
+   - 永続ストア (`C:\kiseki\data\dm_1403`) に zlib 圧縮保存
+   - `jvnext_dm_importer.py --all` で DB 反映
+
+**所要時間** (実測): 1日あたり ~65秒 (KEY refresh 30秒 + 12レース fetch ~3秒)
+
+**詳細**: `memory/jvnext_protocol.md` に完全プロトコル仕様。
+
+#### Denma 版 (旧・fallback)
+従来の Denma ページから denm リンクをクリックする方式。secondary venue / K=1単独場のみ対応:
+
+```bash
+.venv/bin/python scripts/dm_fetch_orchestrator.py --from-db
+```
+
+K=0 primary venue (福島・新潟・中京・小倉) は cross-pairing 仕様で取得できない (Denma リンクは大JJ secondary 側のみ DL される)。  
+→ K=0 primary には **必ず Protocol 版を使うこと**。
+
 ### JV-Link rc=-303 修復
 rc=-303（ファイル存在確認エラー）= JVNextCoreがJRA-VANサーバー確認に失敗。
 **最も確実な対処**: Windows VMの再起動。
@@ -574,3 +634,41 @@ for i in 1 2 3 4; do echo "=P${i}="; grep -E "\[.*\].*頭 \(累計" /tmp/v15_p${
 - MS6: 競馬新聞Web (PWA)
 - MS7: IPAT連携 + 収支管理
 - MS8: 全自動投票 + 継続最適化
+
+## DM 自動収集 LaunchAgent
+
+中央レース情報が DB に入った後、対応する DM 指数を自動取得する。
+
+- **LaunchAgent**: `~/Library/LaunchAgents/com.kiseki.dm-auto-fetch.plist`
+- **スクリプト**: `scripts/dm_auto_fetch.sh`
+- **オーケストレーター**: `backend/scripts/protocol_dm_orchestrator.py --from-db --courses 01..10`
+- **スケジュール**: 12:00 / 14:00 / 18:00 / 22:30 (毎日) + 8:00, 11:00 (土日)
+- **多重起動防止**: `/tmp/dm_auto_fetch.lock`
+
+```bash
+# 状態確認
+launchctl list com.kiseki.dm-auto-fetch
+# 手動実行
+/Users/ysuzuki/GitHub/kiseki/scripts/dm_auto_fetch.sh
+# ログ
+tail -f /Users/ysuzuki/GitHub/kiseki/logs/dm_auto_fetch.log
+```
+
+## DM × 穴ぐさ × 既存指数 シグナルタグ
+
+`backend/src/indices/dm_signals.py` で 7 種類のシグナルを馬ごとに付与。
+バックテスト実証 (3年・8,618レース・99.0%カバレッジ):
+
+| タグ | 条件 | 勝率 | ROI | n |
+|------|------|------|------|---|
+| 🔥三冠一致 | base=1 ∧ time=1 ∧ battle=1 | 39.1% | 84.9% | 1622 |
+| ⭐高得点鉄板 | composite≥60 ∧ battle≥65 | 46.5% | 101.2% | 86 |
+| 🏆穴ぐさDM | anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5 | 10.2% | **188.8%** | 49 |
+| ⚡DM大穴 | battle=1 ∧ 人気≥7 ∧ battle≥65 | 7.6% | 154.0% | 184 |
+| ⚡DM高オッズ | battle=1 ∧ オッズ≥10 ∧ time≤2 | 9.0% | 130.0% | 156 |
+| 💎anagusa+DMtime | anagusa=A ∧ time=1 | 9.4% | 103.5% | 106 |
+| ❌人気下振れ | 人気≤3 ∧ base≥4位 ∧ battle≥4位 | 15.3% | 73.9% | 3563 |
+
+API レスポンス: `HorseIndexOut.dm_signals: list[str]` (`/api/races/{id}/indices`)
+recommendations 用: `recommender.py` で各馬に付与し Claude プロンプトに渡す。
+ベース指数 (composite_index) はオッズ非依存のまま。シグナルはオッズ・人気・anagusa を組み合わせたフロント手前レイヤで生成する。

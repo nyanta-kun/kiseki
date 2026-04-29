@@ -30,6 +30,8 @@ from ..db.session import get_db
 from ..indices.buy_signal import jra_buy_signal
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
+from ..utils.constants import INDEX_DISPLAY_OFFSET
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
 
@@ -354,6 +356,9 @@ class HorseIndexOut(BaseModel):
     # JRA-VAN NEXT DM指数（タイム型・対戦型）
     jvan_time_dm: float | None = None
     jvan_battle_dm: float | None = None
+    # DM × 穴ぐさ × 既存指数 シグナルタグ（軸/穴/警戒）
+    # 詳細: src/indices/dm_signals.py
+    dm_signals: list[str] | None = None
 
 
 class OddsOut(BaseModel):
@@ -716,6 +721,17 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     def _f(v) -> float | None:
         return float(v) if v is not None else None
 
+    def _adj(v: object, key: str) -> float | None:
+        """個別指数の表示用バイアス補正 (中央値=50 になるよう offset を加算)。
+
+        composite_index は重み校正済みのため補正しない。
+        """
+        if v is None:
+            return None
+        offset = INDEX_DISPLAY_OFFSET.get(key, 0.0)
+        adjusted = float(v) + offset
+        return round(max(0.0, min(100.0, adjusted)), 1)
+
     horses = [
         HorseIndexOut(
             horse_id=horse.id,
@@ -724,17 +740,17 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             composite_index=float(ci.composite_index),
             win_probability=_f(ci.win_probability),
             place_probability=_f(ci.place_probability),
-            speed_index=_f(ci.speed_index),
-            last3f_index=_f(ci.last_3f_index),
-            course_aptitude=_f(ci.course_aptitude),
-            position_advantage=_f(ci.position_advantage),
-            jockey_index=_f(ci.jockey_index),
-            pace_index=_f(ci.pace_index),
-            rotation_index=_f(ci.rotation_index),
-            pedigree_index=_f(ci.pedigree_index),
-            training_index=_f(ci.training_index),
-            anagusa_index=_f(ci.anagusa_index),
-            paddock_index=_f(ci.paddock_index),
+            speed_index=_adj(ci.speed_index, "speed_index"),
+            last3f_index=_adj(ci.last_3f_index, "last_3f_index"),
+            course_aptitude=_adj(ci.course_aptitude, "course_aptitude"),
+            position_advantage=_adj(ci.position_advantage, "position_advantage"),
+            jockey_index=_adj(ci.jockey_index, "jockey_index"),
+            pace_index=_adj(ci.pace_index, "pace_index"),
+            rotation_index=_adj(ci.rotation_index, "rotation_index"),
+            pedigree_index=_adj(ci.pedigree_index, "pedigree_index"),
+            training_index=_adj(ci.training_index, "training_index"),
+            anagusa_index=_adj(ci.anagusa_index, "anagusa_index"),
+            paddock_index=_adj(ci.paddock_index, "paddock_index"),
             jvan_time_dm=_f(entry.jvan_time_dm),
             jvan_battle_dm=_f(entry.jvan_battle_dm),
         )
@@ -757,6 +773,37 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     # 穴馬スコア算出（指数下位でも特定個別指数が突出している度合い）
     _compute_upside_scores(horses)
 
+    # レース全馬の最新単勝オッズを 1 クエリで取得（人気・DM シグナル算出に使用）
+    horse_numbers = [h.horse_number for h in horses if h.horse_number is not None]
+    win_odds_map: dict[int, float | None] = {hn: None for hn in horse_numbers}
+    if horse_numbers:
+        # combination → fetched_at desc で最新のオッズを馬番ごとに取得
+        odds_rows = await db.execute(
+            select(OddsHistory.combination, OddsHistory.odds, OddsHistory.fetched_at)
+            .where(OddsHistory.race_id == race_id)
+            .where(OddsHistory.bet_type == "win")
+            .order_by(OddsHistory.combination, OddsHistory.fetched_at.desc())
+        )
+        seen: set[str] = set()
+        for combo, odds_val, _ in odds_rows.all():
+            if combo in seen:
+                continue
+            seen.add(combo)
+            try:
+                hn = int(combo)
+            except (TypeError, ValueError):
+                continue
+            if hn in win_odds_map and odds_val is not None:
+                win_odds_map[hn] = float(odds_val)
+
+    # DM シグナルタグ算出（オッズから人気を導出して付与）
+    popularity_map = popularity_from_odds(horse_numbers, win_odds_map)
+    compute_dm_signals(
+        horses,
+        popularity_map=popularity_map,
+        win_odds_map={k: v for k, v in win_odds_map.items() if v is not None},
+    )
+
     wp_list = [h.win_probability for h in horses if h.win_probability is not None]
     conf_data = calculate_race_confidence(
         composite_indices=[h.composite_index for h in horses],
@@ -764,20 +811,10 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         win_probabilities=wp_list or None,
     )
 
-    # トップ馬の最新単勝オッズ取得
+    # トップ馬 (composite 1位) の単勝オッズ
     top_win_odds: float | None = None
     if horses and horses[0].horse_number is not None:
-        odds_row = await db.execute(
-            select(OddsHistory.odds)
-            .where(OddsHistory.race_id == race_id)
-            .where(OddsHistory.bet_type == "win")
-            .where(OddsHistory.combination == str(horses[0].horse_number))
-            .order_by(OddsHistory.fetched_at.desc())
-            .limit(1)
-        )
-        odds_val = odds_row.scalar()
-        if odds_val is not None:
-            top_win_odds = float(odds_val)
+        top_win_odds = win_odds_map.get(horses[0].horse_number)
 
     rec_rank = calculate_recommend_rank(conf_data["score"], conf_data.get("win_prob_top"), top_win_odds)
 
