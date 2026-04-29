@@ -78,6 +78,74 @@ DM_HIGH_ODDS_TIME_RANK_MAX = 2
 POPULAR_DOWNSIDE_POP_MAX = 3
 POPULAR_DOWNSIDE_RANK_MIN = 4
 
+# =============================================================================
+# 条件別 信頼度フィルタ (バックテスト 2023-2026 / 8,362 レース実証)
+#
+# シグナルは条件によって ROI が大きくブレる。「信頼できる条件のみ発動」
+# させることで誤シグナル発信を防ぐ。
+# - course は「中山/東京/京都/阪神/...」のレース場名を使う
+# - surface は "芝" / "ダート" / "障害" の prefix
+# - distance は m
+# 詳細: scripts/backtest_dm_signal_segments.py 出力
+# =============================================================================
+
+# 三冠一致: 福島 (49%) / 阪神 (68%) / 京都 (70%) は ROI<80% で誤発信
+TRIPLE_MATCH_DENY_COURSES = {"福島", "阪神", "京都"}
+# 三冠一致: 芝マイル (69%) / ダート中距離 (70%) は ROI<80%
+TRIPLE_MATCH_DENY_SEGMENTS: set[tuple[str, str]] = {
+    ("芝", "マイル"),
+    ("ダート", "中距離"),
+}
+
+# 穴ぐさDM: 東京 (21%!) / 小倉 (58%) / 札幌 (60%) / 阪神 (79%) で逆効果
+ANAGUSA_DM_DENY_COURSES = {"東京", "小倉", "札幌", "阪神"}
+# 穴ぐさDM: 障害 / ダート×中距離 / 芝×中距離 は ROI<80%
+ANAGUSA_DM_DENY_SEGMENTS: set[tuple[str, str]] = {
+    ("障害", "長距離"),
+    ("障害", "中距離"),
+    ("障害", "マイル"),
+    ("障害", "スプリント"),
+    ("ダート", "中距離"),
+    ("芝", "中距離"),
+    ("ダート", "スプリント"),
+}
+
+# DM高オッズ: 芝×マイル (n=29) で ROI 0% — サンプル小だが極端なので除外
+DM_HIGH_ODDS_DENY_SEGMENTS: set[tuple[str, str]] = {
+    ("芝", "マイル"),
+}
+
+# 人気下振れ (警戒): 福島 (95%) / 小倉 (92%) / 阪神 (86%) / 京都 (85%) では
+# 警戒対象が実は来やすい (機械的消しは逆効果)。これらの場では警戒タグ非発動。
+POPULAR_DOWNSIDE_DENY_COURSES = {"福島", "小倉", "阪神", "京都"}
+
+
+def _dist_cat(distance: float | int | None) -> str | None:
+    """距離 → カテゴリ (スプリント/マイル/中距離/長距離)"""
+    if distance is None:
+        return None
+    d = float(distance)
+    if d <= 1400:
+        return "スプリント"
+    if d <= 1800:
+        return "マイル"
+    if d <= 2400:
+        return "中距離"
+    return "長距離"
+
+
+def _surface_cat(surface: str | None) -> str | None:
+    """サーフェイス文字列 → カテゴリ (芝/ダート/障害)"""
+    if not isinstance(surface, str):
+        return None
+    if surface.startswith("芝"):
+        return "芝"
+    if surface.startswith("ダ"):
+        return "ダート"
+    if surface.startswith("障"):
+        return "障害"
+    return None
+
 
 class _Horse(Protocol):
     """compute_dm_signals が必要とする最小インターフェース。
@@ -119,6 +187,9 @@ def compute_dm_signals(
     horses: list[Any],
     popularity_map: dict[int, int] | None = None,
     win_odds_map: dict[int, float] | None = None,
+    course_name: str | None = None,
+    surface: str | None = None,
+    distance: float | int | None = None,
 ) -> None:
     """各馬に DM シグナルタグを付与する (in-place)。
 
@@ -126,14 +197,19 @@ def compute_dm_signals(
         horses: HorseIndexOut のリスト (composite_index, jvan_time_dm,
                 jvan_battle_dm, anagusa_rank を持つこと)
         popularity_map: {horse_number: 人気} のマップ。
-                        渡されない場合は穴シグナル (ANAGUSA_DM/DM_BIG_DARK/
-                        POPULAR_DOWNSIDE) は付かない。
+                        渡されない場合は人気依存シグナルは付かない。
                         人気は 1 = 最人気 ... N = 最不人気。
         win_odds_map: {horse_number: 単勝オッズ} のマップ。
                       渡されない場合は DM_HIGH_ODDS は付かない。
+        course_name: レース場名 ("中山","東京",...)。条件別フィルタに使用。
+        surface: 馬場 ("芝","ダート","障害")。条件別フィルタに使用。
+        distance: 距離 (m)。条件別フィルタに使用。
 
     DM 値 (time/battle) のいずれかが NULL のレースではシグナルは付与されない
     (中途半端なシグナルを避けるため)。
+
+    条件 (course/surface/distance) が渡されない場合は条件絞り込みなし
+    (旧挙動互換)。
     """
     if not horses:
         return
@@ -154,6 +230,23 @@ def compute_dm_signals(
     pop = popularity_map or {}
     odds = win_odds_map or {}
 
+    # レース条件 (信頼度フィルタ用)
+    surf_cat = _surface_cat(surface)
+    dist_cat = _dist_cat(distance)
+    seg = (surf_cat, dist_cat) if surf_cat and dist_cat else None
+
+    # フィルタフラグ (False ならそのシグナル発動可)
+    deny_triple = (
+        (course_name in TRIPLE_MATCH_DENY_COURSES)
+        or (seg in TRIPLE_MATCH_DENY_SEGMENTS)
+    )
+    deny_anagusa_dm = (
+        (course_name in ANAGUSA_DM_DENY_COURSES)
+        or (seg in ANAGUSA_DM_DENY_SEGMENTS)
+    )
+    deny_high_odds = seg in DM_HIGH_ODDS_DENY_SEGMENTS
+    deny_popular_downside = course_name in POPULAR_DOWNSIDE_DENY_COURSES
+
     for i, h in enumerate(horses):
         br = base_ranks[i]
         tr = time_ranks[i]
@@ -169,23 +262,28 @@ def compute_dm_signals(
         tags: list[str] = []
 
         # 🔥 三冠一致: base=1 ∧ time=1 ∧ battle=1
-        if br == 1 and tr == 1 and ar == 1:
+        # 信頼度フィルタ: 福島/阪神/京都, 芝マイル, ダート中距離は除外
+        if br == 1 and tr == 1 and ar == 1 and not deny_triple:
             tags.append(SIGNAL_TRIPLE_MATCH)
 
         # ⭐ 高得点鉄板: composite≥60 ∧ battle≥65
+        # (segment 内一貫して ROI≥85% でフィルタ不要)
         if h.composite_index >= TOP_PREMIUM_BASE_MIN and battle_dm >= TOP_PREMIUM_BATTLE_MIN:
             tags.append(SIGNAL_TOP_PREMIUM)
 
         # 🏆 穴ぐさDM: anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5
+        # 信頼度フィルタ: 東京 (ROI 21%!) など除外
         if (
             anagusa in ("A", "B")
             and ar == 1
             and popularity is not None
             and popularity >= ANAGUSA_DM_POP_MIN
+            and not deny_anagusa_dm
         ):
             tags.append(SIGNAL_ANAGUSA_DM)
 
         # ⚡ DM大穴: battle=1 ∧ 人気≥7 ∧ battle値≥65
+        # (全 segment で ROI≥125% で安定。フィルタなし)
         if (
             ar == 1
             and popularity is not None
@@ -195,25 +293,29 @@ def compute_dm_signals(
             tags.append(SIGNAL_DM_BIG_DARK)
 
         # ⚡ DM高オッズ: battle=1 ∧ オッズ≥10 ∧ time≤2
+        # 信頼度フィルタ: 芝×マイル (ROI 0%) は除外
         if (
             ar == 1
             and win_odds is not None
             and win_odds >= DM_HIGH_ODDS_MIN
             and tr is not None
             and tr <= DM_HIGH_ODDS_TIME_RANK_MAX
+            and not deny_high_odds
         ):
             tags.append(SIGNAL_DM_HIGH_ODDS)
 
-        # 💎 穴ぐさ+DMtime: anagusa=A ∧ time=1
+        # 💎 穴ぐさ+DMtime: anagusa=A ∧ time=1 (フィルタなし)
         if anagusa == "A" and tr == 1:
             tags.append(SIGNAL_ANAGUSA_DM_TIME)
 
         # ❌ 人気下振れ: 人気≤3 ∧ base≥4位 ∧ battle≥4位
+        # 信頼度フィルタ: 福島/小倉/阪神/京都 では「警戒対象が実は来やすい」ため非発動
         if (
             popularity is not None
             and popularity <= POPULAR_DOWNSIDE_POP_MAX
             and br >= POPULAR_DOWNSIDE_RANK_MIN
             and ar >= POPULAR_DOWNSIDE_RANK_MIN
+            and not deny_popular_downside
         ):
             tags.append(SIGNAL_POPULAR_DOWNSIDE)
 

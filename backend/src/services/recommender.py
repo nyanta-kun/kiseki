@@ -349,12 +349,16 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             for h in horses
         ]
         # 人気は odds_rank_map をそのまま流用 (1=最人気)
+        # レース条件を渡して低信頼セグメントは自動除外
         compute_dm_signals(
             sig_objs,
             popularity_map={obj.horse_number: odds_rank_map[obj.horse_number]
                             for obj in sig_objs if obj.horse_number in odds_rank_map},
             win_odds_map={h["horse_number"]: h["win_odds"]
                           for h in horses if h.get("win_odds") is not None},
+            course_name=race.course_name,
+            surface=race.surface,
+            distance=race.distance,
         )
         sig_by_hn = {obj.horse_number: (obj.dm_signals or []) for obj in sig_objs}
         for h in horses:

@@ -207,3 +207,70 @@ def test_strongest_signal_combination() -> None:
     compute_dm_signals(horses, popularity_map={1: 1, 2: 2})
     assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])
     assert SIGNAL_TOP_PREMIUM in (horses[0].dm_signals or [])
+
+
+def test_triple_match_denied_by_course() -> None:
+    """三冠一致は福島/阪神/京都では低 ROI のため発動しない"""
+    horses = [
+        Horse(1, composite_index=55.0, jvan_time_dm=75.0, jvan_battle_dm=80.0),
+        Horse(2, composite_index=50.0, jvan_time_dm=65.0, jvan_battle_dm=70.0),
+    ]
+    compute_dm_signals(horses, popularity_map={1: 1, 2: 2}, course_name="福島")
+    assert SIGNAL_TRIPLE_MATCH not in (horses[0].dm_signals or [])
+
+
+def test_triple_match_denied_by_segment() -> None:
+    """三冠一致は芝×マイルでは低 ROI のため発動しない"""
+    horses = [
+        Horse(1, composite_index=55.0, jvan_time_dm=75.0, jvan_battle_dm=80.0),
+        Horse(2, composite_index=50.0, jvan_time_dm=65.0, jvan_battle_dm=70.0),
+    ]
+    compute_dm_signals(horses, popularity_map={1: 1, 2: 2},
+                       surface="芝", distance=1600)
+    assert SIGNAL_TRIPLE_MATCH not in (horses[0].dm_signals or [])
+
+
+def test_triple_match_allowed_in_safe_segment() -> None:
+    """三冠一致は芝×スプリントなら発動 (ROI 95%)"""
+    horses = [
+        Horse(1, composite_index=55.0, jvan_time_dm=75.0, jvan_battle_dm=80.0),
+        Horse(2, composite_index=50.0, jvan_time_dm=65.0, jvan_battle_dm=70.0),
+    ]
+    compute_dm_signals(horses, popularity_map={1: 1, 2: 2},
+                       course_name="新潟", surface="芝", distance=1200)
+    assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])
+
+
+def test_anagusa_dm_denied_in_tokyo() -> None:
+    """穴ぐさDM は東京 (ROI 21%) では発動しない"""
+    horses = [
+        Horse(1, composite_index=50.0, jvan_time_dm=70.0, jvan_battle_dm=80.0, anagusa_rank="A"),
+        Horse(2, composite_index=60.0, jvan_time_dm=72.0, jvan_battle_dm=70.0),
+    ]
+    compute_dm_signals(horses, popularity_map={1: 6, 2: 1}, course_name="東京")
+    assert SIGNAL_ANAGUSA_DM not in (horses[0].dm_signals or [])
+
+
+def test_popular_downside_denied_in_fukushima() -> None:
+    """人気下振れ警戒は福島 (ROI 95%) では発動しない (実は来やすい)"""
+    horses = [
+        Horse(1, composite_index=80.0, jvan_time_dm=70.0, jvan_battle_dm=70.0),
+        Horse(2, composite_index=75.0, jvan_time_dm=68.0, jvan_battle_dm=68.0),
+        Horse(3, composite_index=70.0, jvan_time_dm=66.0, jvan_battle_dm=66.0),
+        Horse(4, composite_index=65.0, jvan_time_dm=64.0, jvan_battle_dm=64.0),
+        Horse(5, composite_index=50.0, jvan_time_dm=50.0, jvan_battle_dm=50.0),
+    ]
+    compute_dm_signals(horses,
+                       popularity_map={5: 1, 1: 2, 2: 3, 3: 4, 4: 5},
+                       course_name="福島")
+    assert SIGNAL_POPULAR_DOWNSIDE not in (horses[4].dm_signals or [])
+
+
+def test_no_filter_when_no_race_info() -> None:
+    """course/surface/distance 省略時は旧挙動互換 (フィルタなし)"""
+    horses = [
+        Horse(1, composite_index=55.0, jvan_time_dm=75.0, jvan_battle_dm=80.0),
+        Horse(2, composite_index=50.0, jvan_time_dm=65.0, jvan_battle_dm=70.0),
+    ]
+    compute_dm_signals(horses, popularity_map={1: 1, 2: 2})
+    assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])

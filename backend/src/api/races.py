@@ -797,11 +797,15 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
                 win_odds_map[hn] = float(odds_val)
 
     # DM シグナルタグ算出（オッズから人気を導出して付与）
+    # 条件 (場/馬場/距離) を渡して低信頼セグメントを自動除外
     popularity_map = popularity_from_odds(horse_numbers, win_odds_map)
     compute_dm_signals(
         horses,
         popularity_map=popularity_map,
         win_odds_map={k: v for k, v in win_odds_map.items() if v is not None},
+        course_name=race.course_name,
+        surface=race.surface,
+        distance=race.distance,
     )
 
     wp_list = [h.win_probability for h in horses if h.win_probability is not None]
