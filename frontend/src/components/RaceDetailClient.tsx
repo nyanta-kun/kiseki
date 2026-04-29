@@ -47,6 +47,44 @@ const ANAGUSA_RANK_COLOR: Record<string, string> = {
   C: "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
 
+/**
+ * DM シグナルタグ → 短縮ラベル/色/ツールチップのマッピング
+ * バックテスト実証値: 99.0%カバレッジ・8,618レース・3年実績 (2023-2026)
+ *
+ * 表形式 (RaceDetailClient) では狭いスペースに複数バッジが並ぶため、
+ * 馬名カラム直後に短縮ラベル (2文字) で表示。スマホでも視認可能。
+ */
+const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
+  "三冠一致":      { label: "🔥三冠", cls: "bg-rose-100 text-rose-800 border-rose-300",          title: "総合・DMtime・DMbattle 全1位 (勝率39%/複勝72%)" },
+  "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",        title: "総合≥60 ∧ DM-battle≥65 (ROI 101%, 勝率47%)" },
+  "穴ぐさDM":      { label: "🏆穴DM", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "穴ぐさA/B ∧ DM-battle1位 ∧ 人気≥5 (ROI 189% / 最強)" },
+  "DM大穴":        { label: "⚡大穴", cls: "bg-purple-100 text-purple-800 border-purple-300",    title: "DM-battle1位 ∧ 人気≥7 ∧ battle≥65 (ROI 154%)" },
+  "DM高オッズ":    { label: "⚡高オ", cls: "bg-violet-100 text-violet-800 border-violet-300",    title: "DM-battle1位 ∧ 単勝≥10倍 ∧ DM-time≤2位 (ROI 130%)" },
+  "穴ぐさ+DMtime": { label: "💎穴T",  cls: "bg-cyan-100 text-cyan-800 border-cyan-300",          title: "穴ぐさA ∧ DM-time1位 (ROI 103%)" },
+  "人気下振れ":    { label: "❌警戒", cls: "bg-slate-200 text-slate-700 border-slate-400",       title: "人気≤3位だが総合・DM-battle両方が4位以下 (ROI 74%、軸候補から除外推奨)" },
+};
+
+function DmSignalBadges({ signals }: { signals: string[] | null | undefined }) {
+  if (!signals || signals.length === 0) return null;
+  return (
+    <>
+      {signals.map((sig) => {
+        const meta = DM_SIGNAL_META[sig];
+        if (!meta) return null;
+        return (
+          <span
+            key={sig}
+            title={meta.title}
+            className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap", meta.cls)}
+          >
+            {meta.label}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function horseNumToFrame(horseNum: number, totalHorses: number): number {
   if (totalHorses <= 8) return horseNum;
   const extra = totalHorses - 8;
@@ -356,6 +394,8 @@ export function RaceDetailClient({
                               {horse.nb_course_rank === 1 ? "外◎" : "外○"}
                             </span>
                           )}
+                          {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
+                          <DmSignalBadges signals={horse.dm_signals} />
                         </div>
                       </td>
 
