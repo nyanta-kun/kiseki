@@ -1302,8 +1302,9 @@ def main() -> None:
             if all_results:
                 ra_se, hr = _split_race_hr(all_results)
                 if ra_se:
+                    # nginx の client_max_body_size を超えないようバッチ分割（全場×全レース時に 700+ 件になる）
                     logger.info(f"成績送信: {len(ra_se)} 件 (RA/SE)")
-                    post_to_backend(EP_RACES, {"records": ra_se}, BACKEND_URL, API_KEY)
+                    _post_in_batches(EP_RACES, ra_se, 200, BACKEND_URL, API_KEY, PENDING_DIR)
                 if hr:
                     logger.info(f"払戻送信: {len(hr)} 件 (HR)")
                     _post_hr_payouts(hr)
