@@ -10,14 +10,25 @@ type NavItem = {
   matchPath: string;
 };
 
-const NAV_ITEMS: NavItem[] = [
-  { icon: "🏇", label: "レース", href: "/races", matchPath: "/races" },
-  { icon: "📊", label: "実績", href: "/results", matchPath: "/results" },
-  { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
-];
-
 export function BottomNav() {
   const pathname = usePathname();
+  const isChihou = pathname.startsWith("/chihou");
+
+  const NAV_ITEMS: NavItem[] = [
+    {
+      icon: "🏇",
+      label: "レース",
+      href: isChihou ? "/chihou/races" : "/races",
+      matchPath: isChihou ? "/chihou/races" : "/races",
+    },
+    {
+      icon: "📊",
+      label: "実績",
+      href: isChihou ? "/chihou/results" : "/results",
+      matchPath: isChihou ? "/chihou/results" : "/results",
+    },
+    { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
+  ];
 
   return (
     <nav

@@ -359,7 +359,9 @@ async def get_performance_summary(
 
     where_clause = " AND ".join(where_parts)
 
-    # ウィンドウ関数 CTE: 各レースのトップ馬 1 行 + 集約データを返す
+    # ウィンドウ関数 CTE: 各レースのトップ馬 1 行 + 集約データを返す。
+    # PostgreSQL は `ARRAY_AGG(... ORDER BY ...) OVER (...)` をサポートしないため、
+    # pred_rank を base CTE で確定 → race_agg で GROUP BY 集約 → 1位馬を出力する。
     rows = (
         await db.execute(
             text(f"""
@@ -368,7 +370,7 @@ async def get_performance_summary(
                     FROM keiba.calculated_indices
                     GROUP BY race_id, horse_id
                 ),
-                race_horses AS (
+                race_horses_base AS (
                     SELECT
                         r.id                AS race_id,
                         r.date              AS race_date,
@@ -387,20 +389,7 @@ async def get_performance_summary(
                         ROW_NUMBER() OVER (
                             PARTITION BY r.id
                             ORDER BY ci.composite_index DESC NULLS LAST
-                        ) AS pred_rank,
-                        ARRAY_AGG(ci.composite_index::float)
-                            OVER (PARTITION BY r.id)
-                            AS all_composite_indices,
-                        (ARRAY_AGG(ci.horse_id ORDER BY ci.composite_index DESC NULLS LAST)
-                            OVER (PARTITION BY r.id))[1:3]
-                            AS pred_top3_ids,
-                        ARRAY_REMOVE(
-                            ARRAY_AGG(
-                                CASE WHEN rr.finish_position <= 3
-                                     THEN ci.horse_id END
-                            ) OVER (PARTITION BY r.id),
-                            NULL
-                        ) AS actual_top3_ids
+                        ) AS pred_rank
                     FROM keiba.races r
                     JOIN keiba.calculated_indices ci ON ci.race_id = r.id
                     JOIN latest_v lv
@@ -411,15 +400,25 @@ async def get_performance_summary(
                         ON  rr.race_id  = r.id
                         AND rr.horse_id = ci.horse_id
                     WHERE {where_clause}
+                ),
+                race_agg AS (
+                    SELECT
+                        race_id,
+                        ARRAY_AGG(composite_index) AS all_composite_indices,
+                        ARRAY_AGG(horse_id) FILTER (WHERE pred_rank <= 3)        AS pred_top3_ids,
+                        ARRAY_AGG(horse_id) FILTER (WHERE finish_position <= 3)  AS actual_top3_ids
+                    FROM race_horses_base
+                    GROUP BY race_id
                 )
                 SELECT
-                    race_id, race_date, head_count, course_name, surface,
-                    distance, grade, race_type_code, prize_1st,
-                    horse_id, composite_index, finish_position, horse_number, win_odds,
-                    all_composite_indices, pred_top3_ids, actual_top3_ids
-                FROM race_horses
-                WHERE pred_rank = 1
-                ORDER BY race_date, race_id
+                    b.race_id, b.race_date, b.head_count, b.course_name, b.surface,
+                    b.distance, b.grade, b.race_type_code, b.prize_1st,
+                    b.horse_id, b.composite_index, b.finish_position, b.horse_number, b.win_odds,
+                    a.all_composite_indices, a.pred_top3_ids, a.actual_top3_ids
+                FROM race_horses_base b
+                JOIN race_agg a ON a.race_id = b.race_id
+                WHERE b.pred_rank = 1
+                ORDER BY b.race_date, b.race_id
             """),
             sql_params,
         )
