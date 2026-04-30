@@ -275,10 +275,14 @@ pkill -9 -f "prlctl exec"
   - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
     - realtime の 0B12 worker が止まっても結果取得を確実化
     - スクリプト: `C:\kiseki\windows-agent\run_umaconn_fetch_results.vbs`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime プロセス生存確認・不在なら `kiseki-UmaConn-Realtime` を再起動
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime プロセス生存確認・不在なら `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を再起動（2026-04-30 から jvlink も監視対象）
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
-  - **Why**: 4/27 の mitmproxy 停止由来 ProxyError 連発 + 4/26 jvlink_agent watchdog 600s誤発火事例（626/643秒）への対応
+  - `kiseki-EOD-Cleanup`: **毎日 23:00** に `jvlink_agent` / `umaconn_agent` の `--mode realtime` pythonw を強制終了（2026-04-30 新設）
+    - スクリプト: `C:\kiseki\windows-agent\run_eod_cleanup.vbs`
+    - 翌朝 9:00 起動が常にクリーンな状態になるための safety net（hung プロセスの跨ぎ防止）
+  - `run_jvlink_realtime.vbs` / `run_umaconn_realtime.vbs` は冪等（同種 realtime が既に走っていればスキップ）。watchdog × daily 9:00 の二重発火で多重生成しない
+  - **Why**: 4/27 の mitmproxy 停止由来 ProxyError 連発 + 4/26 jvlink_agent watchdog 600s誤発火事例（626/643秒）+ 2026-04-30 観測の jvlink_agent ゾンビ多重起動（4/28・4/29 の 9:00 起動分が残存し COM 競合）への対応
   - **Windowsシステムプロキシは無効化済**（`netsh winhttp reset proxy` 完了）。再有効化する場合はバックエンドAPI到達不可になるので注意
 - **umaconn_agent の起動はデスクトップセッションが必須**（2026-04-21 確認）
   - NVDTLab.dll はシステムトレイアイコン初期化のためデスクトップセッションが必要
