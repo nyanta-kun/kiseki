@@ -23,7 +23,21 @@ from ..db.session import get_db
 from ..indices.buy_signal import chihou_buy_signal
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
 from .ws_manager import chihou_results_manager
+
+
+def _adj_chihou(v: float | None, key: str) -> float | None:
+    """地方競馬 個別指数の表示用バイアス補正。
+
+    式: display = (raw + offset - 50) * scale + 50  → clip(0, 100)
+    composite_index は重み校正済みのため補正しない。
+    """
+    if v is None:
+        return None
+    offset, scale = CHIHOU_INDEX_DISPLAY_ADJUST.get(key, (0.0, 1.0))
+    adjusted = (float(v) + offset - 50.0) * scale + 50.0
+    return round(max(0.0, min(100.0, adjusted)), 1)
 
 router = APIRouter(prefix="/api/chihou/races", tags=["chihou-races"])
 DbDep = Annotated[AsyncSession, Depends(get_db)]
@@ -429,10 +443,10 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 place_probability=float(ci.place_probability) if ci.place_probability is not None else None,
                 speed_index=float(ci.speed_index) if ci.speed_index is not None else None,
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
-                jockey_index=float(ci.jockey_index) if ci.jockey_index is not None else None,
-                rotation_index=float(ci.rotation_index) if ci.rotation_index is not None else None,
-                last_margin_index=float(ci.last_margin_index) if ci.last_margin_index is not None else None,
-                place_ev_index=float(ci.place_ev_index) if ci.place_ev_index is not None else None,
+                jockey_index=_adj_chihou(float(ci.jockey_index) if ci.jockey_index is not None else None, "jockey_index"),
+                rotation_index=_adj_chihou(float(ci.rotation_index) if ci.rotation_index is not None else None, "rotation_index"),
+                last_margin_index=_adj_chihou(float(ci.last_margin_index) if ci.last_margin_index is not None else None, "last_margin_index"),
+                place_ev_index=_adj_chihou(float(ci.place_ev_index) if ci.place_ev_index is not None else None, "place_ev_index"),
                 external_consensus=consensus_map.get(horse_number) if (consensus_map and horse_number is not None) else None,
             )
         )

@@ -81,23 +81,52 @@ INDEX_WEIGHTS = {
 }
 
 # =============================================================================
-# 表示用 指数バイアス補正オフセット
+# 表示用 指数バイアス補正 (offset + scale)
 # =============================================================================
 # 各指数 calculator は本来「全馬平均=50」を想定するが、
-# 実装上の都合 (式の構成・特定馬層への偏り等) で中央値が大きくズレる指数がある。
+# 実装上の都合 (式の構成・特定馬層への偏り等) で中央値・スプレッドが
+# 他指数と大きくズレる指数がある。
 # 計算ロジックそのものは composite_index のウェイト最適化時に校正済みのため
-# 変更せず、API/フロント表示の段階でのみ「中央値=50」になるよう補正する。
+# 変更せず、API/フロント表示の段階でのみ補正する。
 #
-# Why: ユーザーが各個別指数を並べて比較したときに「pace=65 だから優秀」と
-# 誤解しやすい (実は全体中央値65なので 65 は普通)。表示用補正で並び比較を
-# 公平にする。バックテスト・recommendations 内部ロジックには影響しない。
+# 適用式:  display = (raw + offset - 50) * scale + 50  → clip(0, 100)
+#   - offset: 中央値を 50 にずらす
+#   - scale:  スプレッド (max - min) を他指数と揃えるため圧縮 (0 < scale ≦ 1)
 #
-# 補正値の根拠: keiba.calculated_indices v22 で 2024/01〜2026/04 の中央値を計測
-# (n=16550)。±2 以内のずれは無視。
+# Why: ユーザーが各個別指数を並べて比較したときに、jockey/rotation が
+# 0-100 をフルに使ってしまい、speed/last3f (40-60 程度) と比べて極端な値に
+# 見えていた。スプレッド計測 (n=36 races) で
+#   speed_index   平均スプレッド  21.8
+#   last3f_index  平均スプレッド  19.4
+#   pedigree      平均スプレッド  23.3
+#   jockey_index  平均スプレッド  35.9  → scale 0.60 で約 22 に圧縮
+#   rotation      平均スプレッド  52.8  → scale 0.40 で約 21 に圧縮
+# バックテスト・recommendations・composite_index 内部ロジックには影響しない。
+INDEX_DISPLAY_ADJUST: dict[str, tuple[float, float]] = {
+    # key                     (offset, scale)
+    "pace_index":              (-15.0, 1.0),   # median 65 → 50
+    "rotation_index":          (-16.0, 0.4),   # median 66 → 50, スプレッド 52 → 21
+    "rivals_growth_index":     (-21.0, 1.0),   # median 71 → 50
+    "jockey_index":            (  0.0, 0.6),   # mean 50, スプレッド 36 → 22
+}
+
+# 後方互換 (offset のみが必要な呼び出し元向け)
 INDEX_DISPLAY_OFFSET: dict[str, float] = {
-    "pace_index":          -15.0,  # median 65.0 → 50
-    "rotation_index":      -16.0,  # median 66.0 → 50
-    "rivals_growth_index": -21.0,  # median 71.4 → 50 (上昇相手)
+    k: v[0] for k, v in INDEX_DISPLAY_ADJUST.items()
+}
+
+# 地方競馬向け表示補正 (n=20 races で計測)
+#   speed_index   平均  30.8  spread 24.5  → speed は計算側で別途要調整 (今回は対象外)
+#   last3f_index  平均  46.2  spread 16.9  (近似 50, 補正不要)
+#   jockey_index  平均  47.5  spread 34.1  → scale 0.6 で約 20 に圧縮
+#   rotation      平均  52.7  spread 36.7  → scale 0.55 で約 20 に圧縮
+#   last_margin   平均  50.0  spread 32.9  → scale 0.6 で約 20 に圧縮
+#   place_ev      平均  45.3  spread 34.1  → scale 0.6 で約 20 に圧縮
+CHIHOU_INDEX_DISPLAY_ADJUST: dict[str, tuple[float, float]] = {
+    "jockey_index":       (  0.0, 0.6),
+    "rotation_index":     ( -3.0, 0.55),  # 平均 52.7 → 50, スプレッド圧縮
+    "last_margin_index":  (  0.0, 0.6),
+    "place_ev_index":     (  4.7, 0.6),   # 平均 45.3 → 50
 }
 
 # =============================================================================

@@ -31,7 +31,7 @@ from ..indices.buy_signal import jra_buy_signal
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
-from ..utils.constants import INDEX_DISPLAY_OFFSET
+from ..utils.constants import INDEX_DISPLAY_ADJUST
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
 
@@ -722,14 +722,17 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         return float(v) if v is not None else None
 
     def _adj(v: Any, key: str) -> float | None:
-        """個別指数の表示用バイアス補正 (中央値=50 になるよう offset を加算)。
+        """個別指数の表示用バイアス補正。
 
+        式: display = (raw + offset - 50) * scale + 50  → clip(0, 100)
+          - offset: 中央値を 50 に揃える (pace, rotation, rivals_growth)
+          - scale:  スプレッドを他指数と揃えるため圧縮 (jockey 0.6, rotation 0.4)
         composite_index は重み校正済みのため補正しない。
         """
         if v is None:
             return None
-        offset = INDEX_DISPLAY_OFFSET.get(key, 0.0)
-        adjusted = float(v) + offset
+        offset, scale = INDEX_DISPLAY_ADJUST.get(key, (0.0, 1.0))
+        adjusted = (float(v) + offset - 50.0) * scale + 50.0
         return round(max(0.0, min(100.0, adjusted)), 1)
 
     horses = [
