@@ -231,6 +231,11 @@ SOFTMAX_TEMPERATURE = 10.0
 
 # v26 LightGBM 設定
 _V26_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_lightgbm_rank.txt"
+# v26 アンサンブル重み: LGB スコアと v24 線形和の合成比
+# 重み比検証 (2026-05-02, 1072R) で 0.3/0.7 が三冠（複勝率 +0.67 / 単勝ROI +0.039
+# / 複勝ROI +0.025 vs LGB-only）。複勝率を維持しつつ配当を改善する最良バランス。
+V26_LGB_WEIGHT = 0.3
+V26_LINEAR_WEIGHT = 0.7
 _V26_FEATURE_NAMES: list[str] = [
     # sub-indices (17)
     "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
@@ -509,8 +514,11 @@ class CompositeIndexCalculator:
                 raw = model.predict(X)
                 lgb_indices = _scale_lgb_to_index(np.asarray(raw, dtype=float))
                 for r, idx in zip(results, lgb_indices):
-                    r["v24_composite_index"] = r["composite_index"]  # 互換: 線形和の値を退避
-                    r["composite_index"] = idx
+                    v24_score = r["composite_index"]  # 線形和の値（既に計算済み）
+                    r["v24_composite_index"] = v24_score
+                    r["composite_index"] = round(
+                        V26_LGB_WEIGHT * idx + V26_LINEAR_WEIGHT * v24_score, 1
+                    )
             except Exception as e:
                 logger.error(f"v26 LightGBM inference failed for race={race.id}: {e}")
                 # フォールバック: composite_index は v24 線形和のまま

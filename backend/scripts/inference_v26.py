@@ -123,8 +123,16 @@ def scale_to_index(scores: np.ndarray, race_ids: pd.Series) -> np.ndarray:
     return out
 
 
-async def upsert_v26(rows: list[dict]) -> int:
-    """v26 行を upsert（既存があれば composite/probabilities だけ更新）。"""
+async def upsert_v26(
+    rows: list[dict],
+    lgb_weight: float = 0.3,
+    linear_weight: float = 0.7,
+) -> int:
+    """v26 行を upsert（既存があれば composite/probabilities だけ更新）。
+
+    composite_index はアンサンブル: lgb_weight * LGB + linear_weight * v24線形和。
+    v24 行が存在しない場合は LGB スコアをそのまま使う。
+    """
     if not rows:
         return 0
 
@@ -160,6 +168,12 @@ async def upsert_v26(rows: list[dict]) -> int:
         for r in rows:
             key = (r["race_id"], r["horse_id"])
             v24 = v24_map.get(key)
+            lgb_score = float(r["composite_index"])
+            if v24 is not None and v24.composite_index is not None:
+                v24_score = float(v24.composite_index)
+                composite = round(lgb_weight * lgb_score + linear_weight * v24_score, 1)
+            else:
+                composite = round(lgb_score, 1)
             kw = {
                 "speed_index": v24.speed_index if v24 else None,
                 "last_3f_index": v24.last_3f_index if v24 else None,
@@ -178,7 +192,7 @@ async def upsert_v26(rows: list[dict]) -> int:
                 "distance_change_index": v24.distance_change_index if v24 else None,
                 "jockey_trainer_combo_index": v24.jockey_trainer_combo_index if v24 else None,
                 "going_pedigree_index": v24.going_pedigree_index if v24 else None,
-                "composite_index": Decimal(str(r["composite_index"])),
+                "composite_index": Decimal(str(composite)),
                 "win_probability": Decimal(str(r["win_probability"])),
                 "place_probability": Decimal(str(r["place_probability"])),
             }
@@ -208,6 +222,10 @@ async def main_async() -> None:
     p.add_argument("--end", required=True)
     p.add_argument("--model", default=str(DEFAULT_MODEL))
     p.add_argument("--batch-days", type=int, default=10, help="DBから日付をN日ずつ取得")
+    p.add_argument("--lgb-weight", type=float, default=0.3,
+                   help="アンサンブル LGB 重み (default 0.3)")
+    p.add_argument("--linear-weight", type=float, default=0.7,
+                   help="アンサンブル v24線形和 重み (default 0.7)")
     args = p.parse_args()
 
     logger.info(f"v26 推論: {args.start}〜{args.end}, model={args.model}")
@@ -255,12 +273,14 @@ async def main_async() -> None:
                 "place_probability": round(float(place_p[j]), 4),
             })
 
+    logger.info(f"アンサンブル重み: LGB={args.lgb_weight}, linear={args.linear_weight}")
+
     # batch upsert (1000件ずつ)
     batch_size = 1000
     total = 0
     for i in range(0, len(rec_list), batch_size):
         batch = rec_list[i:i + batch_size]
-        n = await upsert_v26(batch)
+        n = await upsert_v26(batch, args.lgb_weight, args.linear_weight)
         total += n
         if (i // batch_size) % 10 == 0:
             logger.info(f"upsert: {total:,}/{len(rec_list):,}")
