@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# LightGBM (v26 モデル) requires libgomp1 (OpenMP runtime)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install uv==0.6.10
 
 COPY pyproject.toml .
