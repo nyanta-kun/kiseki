@@ -3,66 +3,66 @@
     "label": "train",
     "n_races": 7245,
     "n_horses": 100363,
-    "top1_win_pct": 39.56,
-    "top1_place_pct": 70.63,
-    "top1_win_roi": 1.311
+    "top1_win_pct": 33.35,
+    "top1_place_pct": 64.42,
+    "top1_win_roi": 1.009
   },
   "valid": {
     "label": "valid",
     "n_races": 1650,
     "n_horses": 22626,
-    "top1_win_pct": 27.09,
-    "top1_place_pct": 59.64,
-    "top1_win_roi": 0.813
+    "top1_win_pct": 27.45,
+    "top1_place_pct": 59.88,
+    "top1_win_roi": 0.822
   },
   "test": {
     "label": "test",
     "n_races": 1068,
     "n_horses": 15236,
-    "top1_win_pct": 26.5,
-    "top1_place_pct": 60.96,
-    "top1_win_roi": 0.752
+    "top1_win_pct": 27.72,
+    "top1_place_pct": 61.14,
+    "top1_win_roi": 0.789
   },
   "feature_importance_top10": [
     {
       "feature": "jvan_battle_dm",
-      "gain": 47570
+      "gain": 34601
     },
     {
       "feature": "jvan_time_dm",
-      "gain": 11063
+      "gain": 14597
     },
     {
       "feature": "pedigree_index",
-      "gain": 6291
+      "gain": 5466
     },
     {
       "feature": "jockey_index",
-      "gain": 4733
+      "gain": 4271
     },
     {
       "feature": "course_aptitude",
-      "gain": 3251
-    },
-    {
-      "feature": "position_advantage",
-      "gain": 2136
-    },
-    {
-      "feature": "speed_index",
-      "gain": 1846
+      "gain": 2576
     },
     {
       "feature": "rotation_index",
-      "gain": 1821
+      "gain": 1549
     },
     {
       "feature": "last_3f_index",
-      "gain": 1811
+      "gain": 1538
     },
     {
-      "feature": "horse_weight",
-      "gain": 1540
+      "feature": "position_advantage",
+      "gain": 1338
+    },
+    {
+      "feature": "speed_index",
+      "gain": 1050
+    },
+    {
+      "feature": "horse_age",
+      "gain": 1009
     }
   ]
 }
