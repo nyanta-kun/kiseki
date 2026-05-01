@@ -93,6 +93,44 @@ class Jockey(Base):
     )
 
 
+class JockeyRunningStyleStats(Base):
+    """騎手戦法統計（v25 で導入、月次更新）。
+
+    直近 window_months ヶ月の race_results から各騎手の脚質割合を集計したもの。
+    pace_handicap v2 が「騎手主導の戦法予測」に使用する。
+    """
+
+    __tablename__ = "jockey_running_style_stats"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("jockey_id", "window_months", name="uq_jockey_style_window"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    jockey_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.jockeys.id"), nullable=False, index=True
+    )
+    window_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=24, comment="集計対象の月数（直近24ヶ月）"
+    )
+    total_rides: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="集計対象期間の騎乗数"
+    )
+    escape_rate: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), comment="逃げ率")
+    leader_rate: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), comment="先行率")
+    mid_rate: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), comment="中団率")
+    closer_rate: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), comment="後方率")
+    makuri_rate: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 3), comment="マクリ率（passing_1 - passing_4 ≥ 5）"
+    )
+    diversity: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 3), comment="戦法多様性 1 - Σpᵢ²（低=特化型, 高=柔軟型）"
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), comment="集計日時"
+    )
+
+
 class Trainer(Base):
     """調教師マスタ"""
 
