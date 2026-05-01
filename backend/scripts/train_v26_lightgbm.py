@@ -154,7 +154,13 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--objective", choices=["binary", "rank"], default="binary",
                    help="binary=3着以内分類, rank=LambdaRank")
-    p.add_argument("--num-leaves", type=int, default=63)
+    p.add_argument("--num-leaves", type=int, default=31)
+    p.add_argument("--max-depth", type=int, default=6)
+    p.add_argument("--min-data-in-leaf", type=int, default=100)
+    p.add_argument("--lambda-l1", type=float, default=0.1)
+    p.add_argument("--lambda-l2", type=float, default=0.1)
+    p.add_argument("--feature-fraction", type=float, default=0.7)
+    p.add_argument("--bagging-fraction", type=float, default=0.7)
     p.add_argument("--learning-rate", type=float, default=0.05)
     p.add_argument("--num-iterations", type=int, default=500)
     args = p.parse_args()
@@ -205,9 +211,13 @@ def main() -> None:
             "metric": "ndcg",
             "ndcg_eval_at": [1, 3],
             "num_leaves": args.num_leaves,
+            "max_depth": args.max_depth,
+            "min_data_in_leaf": args.min_data_in_leaf,
+            "lambda_l1": args.lambda_l1,
+            "lambda_l2": args.lambda_l2,
             "learning_rate": args.learning_rate,
-            "feature_fraction": 0.9,
-            "bagging_fraction": 0.8,
+            "feature_fraction": args.feature_fraction,
+            "bagging_fraction": args.bagging_fraction,
             "bagging_freq": 5,
             "verbose": -1,
         }
@@ -220,9 +230,13 @@ def main() -> None:
             "objective": "binary",
             "metric": "binary_logloss",
             "num_leaves": args.num_leaves,
+            "max_depth": args.max_depth,
+            "min_data_in_leaf": args.min_data_in_leaf,
+            "lambda_l1": args.lambda_l1,
+            "lambda_l2": args.lambda_l2,
             "learning_rate": args.learning_rate,
-            "feature_fraction": 0.9,
-            "bagging_fraction": 0.8,
+            "feature_fraction": args.feature_fraction,
+            "bagging_fraction": args.bagging_fraction,
             "bagging_freq": 5,
             "verbose": -1,
         }
