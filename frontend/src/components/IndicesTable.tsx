@@ -489,7 +489,6 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-sm text-gray-900 truncate">
                     {horse.horse_name}
-                    {isTop && <span className="ml-1 text-[10px] text-green-600 font-normal">◎ 本命</span>}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={cn("text-xs font-bold tabular-nums", indexColor(horse.composite_index))}>

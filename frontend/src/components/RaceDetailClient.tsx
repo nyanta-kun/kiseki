@@ -420,9 +420,6 @@ export function RaceDetailClient({
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className="text-gray-800 font-medium truncate block max-w-[110px]">
                             {horse.horse_name}
-                            {isTop && (
-                              <span className="ml-1 text-[9px] text-green-600 font-normal">◎</span>
-                            )}
                           </span>
                           {isAnagusa && (
                             <span className={cn(
@@ -763,20 +760,10 @@ export function RaceDetailClient({
                 </ul>
               </div>
 
-              {/* 馬名印 */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">🏆 その他</p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[10px] text-green-600 font-bold whitespace-nowrap shrink-0">◎</span>
-                    <span>レース内の指数1位馬</span>
-                  </li>
-                </ul>
-              </div>
-
               <p className="text-[10px] text-gray-500 italic pt-1 border-t border-gray-200">
                 ※ ROI = 100円賭けた時の平均回収額 / 100。1.0 以上で期待値プラス。
                 各バッジにマウスを合わせるとツールチップで詳細条件が表示されます。
+                表は composite_index 降順（上から指数1位）で表示されます。
               </p>
             </div>
           </details>
