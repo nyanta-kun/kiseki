@@ -22,6 +22,7 @@ from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Horse, OddsHistory, Race, RaceEntry, RaceRecommendation
+from ..indices.buy_signal import jra_horse_purchase_signal
 from ..indices.composite import COMPOSITE_VERSION
 
 # JRA 2桁コード → sekito course_code
@@ -295,6 +296,13 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             if len(ranked) >= 2
             else None
         )
+        # 上位2頭が3位以下から抜け出している差 (breakaway 指標)
+        # v26 検証: top2_t3_gap≥7 で上位2頭中穴オッズ → 単勝ROI 1.593
+        top2_t3_gap = (
+            round(ranked[1]["composite_index"] - ranked[2]["composite_index"], 2)
+            if len(ranked) >= 3
+            else None
+        )
 
         # 外部指数穴馬候補を計算（CI4位以下でnb_course_rank=1、またはNB1×KM1）
         ci_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(ranked)}
@@ -330,6 +338,16 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 odds_rank - idx_rank
                 if idx_rank is not None and odds_rank is not None
                 else None
+            )
+
+            # 購入シグナル (v26 breakaway ROI 検証ベース)
+            #   super_buy: 単勝ROI 1.593 (rank<=2 ∧ top2_t3_gap>=7 ∧ オッズ>=10)
+            #   buy:       単勝ROI 1.290 (rank<=2 ∧ top2_t3_gap>=5 ∧ オッズ>=10)
+            #   watch:     単勝ROI 1.042 (rank<=3 ∧ オッズ>=10)
+            h["purchase_signal"] = jra_horse_purchase_signal(
+                rank=idx_rank if idx_rank is not None else 99,
+                top2_t3_gap=top2_t3_gap if idx_rank is not None and idx_rank <= 2 else None,
+                win_odds=h.get("win_odds"),
             )
 
         # DM シグナルタグをレース全頭に付与（軸/穴/警戒）
@@ -375,6 +393,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             "grade": race.grade,
             "head_count": race.head_count,
             "gap_1_2": gap_1_2,
+            "top2_t3_gap": top2_t3_gap,
             "has_odds": bool(win_odds or place_odds),
             "horses": horses,
         })
@@ -417,8 +436,10 @@ async def submit_recommendations(
 
     # ---- ハードフィルター（Claude の指示無視を防ぐバックエンド側の安全網） ----
     # A: index_rank ≤ 3（external_dark_horse=True は例外）
-    # B: EV ≥ 1.0（bet_type に応じて ev_win / ev_place を確認）
-    # C: win_probability ≥ 0.05（単勝推奨のみ）
+    # B: EV ≥ 1.0（bet_type に応じて ev_win / ev_place を確認、purchase_signal=super_buy/buy は例外）
+    # C: win_probability ≥ 0.05（単勝推奨のみ、purchase_signal=super_buy/buy は例外）
+    # 例外: purchase_signal が super_buy/buy/watch のいずれかなら EV/勝率下限をスキップ
+    #   v26 検証で本シグナルは ROI ≥ 1.042 を実証済み (model EV 計算より信頼度高い)
     def _passes_hard_filter(item: dict[str, Any], race_entry: dict[str, Any], bet_type: str) -> bool:
         for hn in item.get("target_horse_numbers", []):
             horse = next((h for h in race_entry["horses"] if h["horse_number"] == hn), None)
@@ -426,6 +447,9 @@ async def submit_recommendations(
                 continue
             idx_rank = horse.get("index_rank")
             is_dark = horse.get("external_dark_horse", False)
+            purchase_signal = horse.get("purchase_signal")
+            has_strong_signal = purchase_signal in ("super_buy", "buy")
+            has_any_signal = purchase_signal in ("super_buy", "buy", "watch")
             ev_win = horse.get("ev_win")
             ev_place = horse.get("ev_place")
             win_prob = horse.get("win_probability") or 0.0
@@ -438,16 +462,16 @@ async def submit_recommendations(
                 )
                 return False
 
-            # B: EV下限
+            # B: EV下限 (purchase_signal で実証済み高ROI の馬は除外しない)
             ev = ev_win if bet_type == "win" else ev_place
-            if ev is not None and ev < 1.0:
+            if ev is not None and ev < 1.0 and not has_any_signal:
                 logger.warning(
                     "ハードフィルターB: 馬番%d EV=%.2f < 1.0 → 除外", hn, ev,
                 )
                 return False
 
-            # C: 勝率下限（単勝のみ）
-            if bet_type == "win" and not is_dark and win_prob < 0.05:
+            # C: 勝率下限（単勝のみ、purchase_signal=super_buy/buy 馬は除外しない）
+            if bet_type == "win" and not is_dark and not has_strong_signal and win_prob < 0.05:
                 logger.warning(
                     "ハードフィルターC: 馬番%d win_prob=%.4f < 0.05 → 除外", hn, win_prob,
                 )
