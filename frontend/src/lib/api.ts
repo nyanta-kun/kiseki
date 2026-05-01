@@ -82,6 +82,11 @@ export type HorseIndex = {
   // 値: "三冠一致" | "高得点鉄板" | "穴ぐさDM" | "DM大穴" |
   //     "DM高オッズ" | "穴ぐさ+DMtime" | "人気下振れ" の組み合わせ
   dm_signals: string[] | null;
+  // 購入シグナル（v26 breakaway ROI 検証ベース）
+  // "super_buy" | "buy" | "watch" | null
+  purchase_signal: "super_buy" | "buy" | "watch" | null;
+  // 表示補助: composite_index のレース内ランク (1=1位)
+  composite_rank: number | null;
 };
 
 export type OddsData = {

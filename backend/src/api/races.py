@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, Trainer
 from ..db.session import get_db
-from ..indices.buy_signal import jra_buy_signal
+from ..indices.buy_signal import jra_buy_signal, jra_horse_purchase_signal
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
@@ -359,6 +359,12 @@ class HorseIndexOut(BaseModel):
     # DM × 穴ぐさ × 既存指数 シグナルタグ（軸/穴/警戒）
     # 詳細: src/indices/dm_signals.py
     dm_signals: list[str] | None = None
+    # 購入シグナル（v26 ROI 検証ベース）
+    # "super_buy" | "buy" | "watch" | None
+    # 詳細: src/indices/buy_signal.py jra_horse_purchase_signal
+    purchase_signal: str | None = None
+    # 表示補助: composite_index のレース内ランク (1=1位)
+    composite_rank: int | None = None
 
 
 class OddsOut(BaseModel):
@@ -810,6 +816,20 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         surface=race.surface,
         distance=race.distance,
     )
+
+    # 購入シグナル算出（v26 breakaway ROI 検証ベース）
+    # horses は composite_index 降順なので index+1 = rank
+    # top2_t3_gap = 2位と3位の差。「上位2頭が3位以下から抜け出している」指標
+    top2_t3_gap: float | None = None
+    if len(horses) >= 3:
+        top2_t3_gap = horses[1].composite_index - horses[2].composite_index
+    for i, h in enumerate(horses):
+        h.composite_rank = i + 1
+        h.purchase_signal = jra_horse_purchase_signal(
+            rank=i + 1,
+            top2_t3_gap=top2_t3_gap if i + 1 <= 2 else None,
+            win_odds=win_odds_map.get(h.horse_number) if h.horse_number is not None else None,
+        )
 
     wp_list = [h.win_probability for h in horses if h.win_probability is not None]
     conf_data = calculate_race_confidence(
