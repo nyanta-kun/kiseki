@@ -85,6 +85,49 @@ function DmSignalBadges({ signals }: { signals: string[] | null | undefined }) {
   );
 }
 
+/**
+ * 購入シグナル (v26 breakaway 検証 2026-05-02 / 3年138,728 horse-races)。
+ * バッジは IndicesTable と統一。レース詳細ページの行内・末尾凡例で使用。
+ */
+const PURCHASE_SIGNAL_META: Record<
+  "super_buy" | "buy" | "watch",
+  { label: string; cls: string; title: string }
+> = {
+  super_buy: {
+    label: "🔥超推奨",
+    cls: "bg-rose-100 text-rose-800 border-rose-300",
+    title: "上位2頭抜け出し(2位vs3位差≥7) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.593",
+  },
+  buy: {
+    label: "◎推奨",
+    cls: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    title: "上位2頭抜け出し(2位vs3位差≥5) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.290",
+  },
+  watch: {
+    label: "○注目",
+    cls: "bg-sky-50 text-sky-700 border-sky-200",
+    title: "rank≤3 ∧ オッズ≥10 → 単勝ROI 1.042",
+  },
+};
+
+function PurchaseSignalBadge({
+  signal,
+}: {
+  signal: HorseIndex["purchase_signal"];
+}) {
+  if (!signal) return null;
+  const meta = PURCHASE_SIGNAL_META[signal];
+  if (!meta) return null;
+  return (
+    <span
+      title={meta.title}
+      className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap", meta.cls)}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 function horseNumToFrame(horseNum: number, totalHorses: number): number {
   if (totalHorses <= 8) return horseNum;
   const extra = totalHorses - 8;
@@ -396,6 +439,8 @@ export function RaceDetailClient({
                           )}
                           {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
                           <DmSignalBadges signals={horse.dm_signals} />
+                          {/* 購入シグナル (v26 breakaway ROI 検証ベース) */}
+                          <PurchaseSignalBadge signal={horse.purchase_signal} />
                         </div>
                       </td>
 
@@ -612,6 +657,129 @@ export function RaceDetailClient({
             </p>
             <p>行クリックで指数内訳・近走成績を表示</p>
           </div>
+
+          {/* バッジ凡例 (馬名横の 🔥◎○⚡💎❌ 等の意味) */}
+          <details className="mt-4 text-[11px] text-gray-600 border border-gray-200 rounded-md bg-gray-50">
+            <summary className="cursor-pointer font-bold px-3 py-2 select-none">
+              バッジ凡例（クリックで展開）
+            </summary>
+            <div className="px-3 pb-3 pt-1 space-y-3">
+              {/* 購入シグナル (v26) */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">
+                  🛒 購入シグナル <span className="font-normal text-gray-500 text-[10px]">(v26 breakaway 検証 / 3年138,728 horse-races)</span>
+                </p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.super_buy.cls)}>
+                      🔥超推奨
+                    </span>
+                    <span>
+                      上位2頭が3位以下から実力差つけて抜け出し（差≥7）&amp; 上位2頭で単勝オッズ≥10 →
+                      <span className="font-bold text-rose-700"> 単勝ROI 1.593</span>（年46R）
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.buy.cls)}>
+                      ◎推奨
+                    </span>
+                    <span>
+                      上位2頭抜け出し（差≥5）&amp; 上位2頭で単勝オッズ≥10 →
+                      <span className="font-bold text-emerald-700"> 単勝ROI 1.290</span>（年79R）
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.watch.cls)}>
+                      ○注目
+                    </span>
+                    <span>
+                      上位3頭で単勝オッズ≥10 → <span className="font-bold text-sky-700">単勝ROI 1.042</span>（年1786R）
+                    </span>
+                  </li>
+                </ul>
+                <p className="mt-1 ml-1 text-[10px] text-gray-500">
+                  ※ 1〜3 番人気（オッズ&lt;6）の指数1位は単勝ROI 0.85〜0.89 で確実マイナス → 見送り推奨
+                </p>
+              </div>
+
+              {/* DM シグナル */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">
+                  📊 DM シグナル <span className="font-normal text-gray-500 text-[10px]">(JV-Next DM × 穴ぐさ × 既存指数 / 3年8,618R)</span>
+                </p>
+                <ul className="space-y-1 ml-1">
+                  {Object.entries(DM_SIGNAL_META).map(([name, meta]) => (
+                    <li key={name} className="flex items-start gap-2">
+                      <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", meta.cls)}>
+                        {meta.label}
+                      </span>
+                      <span>{meta.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* 穴ぐさランク */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">⭐ 穴ぐさランク <span className="font-normal text-gray-500 text-[10px]">(専門紙 sekito.anagusa ピック)</span></p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", ANAGUSA_RANK_COLOR.A)}>
+                      ☆A
+                    </span>
+                    <span>最高評価ピック（穴推し本命）</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", ANAGUSA_RANK_COLOR.B)}>
+                      ☆B
+                    </span>
+                    <span>準本命の穴推し</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", ANAGUSA_RANK_COLOR.C)}>
+                      ☆C
+                    </span>
+                    <span>注目穴馬</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* 外部指数穴馬 */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">🎯 外部指数穴馬 <span className="font-normal text-gray-500 text-[10px]">(自指数4位以下だが netkeiba/kichiuma で上位)</span></p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
+                      外◎
+                    </span>
+                    <span>netkeiba コース指数 1位（自指数より外部評価が高い）</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
+                      外○
+                    </span>
+                    <span>netkeiba 上位2 × kichiuma 1位（外部指数一致）</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* 馬名印 */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">🏆 その他</p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className="text-[10px] text-green-600 font-bold whitespace-nowrap shrink-0">◎</span>
+                    <span>レース内の指数1位馬</span>
+                  </li>
+                </ul>
+              </div>
+
+              <p className="text-[10px] text-gray-500 italic pt-1 border-t border-gray-200">
+                ※ ROI = 100円賭けた時の平均回収額 / 100。1.0 以上で期待値プラス。
+                各バッジにマウスを合わせるとツールチップで詳細条件が表示されます。
+              </p>
+            </div>
+          </details>
         </section>
       </>
     </PaywallGate>
