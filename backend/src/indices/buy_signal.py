@@ -1,13 +1,20 @@
 """購入指針（Buy Signal）算出モジュール。
 
-過去の実績データに基づき、各レースの購入推奨度を3段階で算出する。
+過去の実績データに基づき、各レースの購入推奨度を算出する。
 
-JRA（2025-01以降, v17, 4,387レース実績）:
-    距離帯 × 指数1位オッズで判定。
-    短距離(〜1400m): ROI 84-85%（オッズ問わず） → "pass"
-    4.0倍以上 + マイル以上(1401m+): ROI 105.7%+ → "buy"
-    3.0-4.0倍 + マイル以上: ROI ~98% → "caution"
-    4.0倍未満: ROI 85-94% → "pass"
+JRA（v26 LightGBM ensemble 検証 2026-05-02, 3年/138,728 horse-races）:
+    指数1位馬の単勝オッズ・絶対値・2位差で判定。
+
+    レース全体 (jra_buy_signal):
+      [buy]   1位馬の単勝オッズ ≥ 10 → 単勝ROI 1.237 (n=442/3年)
+      [caution] 6 ≤ オッズ < 10 → 単勝ROI 約 1.0 (均衡)
+      [pass]  オッズ < 6 → 単勝ROI 0.85-0.89 (鉄板買いはマイナス)
+
+    馬個別 (jra_horse_purchase_signal):
+      [super_buy] rank=1 ∧ 2位差≥5 ∧ オッズ≥10  → 単勝ROI 1.480
+      [buy]       rank≤2 ∧ composite≥60 ∧ オッズ≥10  → 単勝ROI 1.129
+      [watch]     rank≤3 ∧ オッズ≥10  → 単勝ROI 1.042
+      [pass]      上記いずれにも該当しない
 
 地方（v8 P1実績 2023-04-16〜2024-04-16, 3,373R）:
     競馬場 × 期待値EV（推定勝率×単勝オッズ）の組み合わせで判定。
@@ -24,11 +31,19 @@ from __future__ import annotations
 # JRA 購入指針
 # ---------------------------------------------------------------------------
 
-def jra_buy_signal(distance: int, top_win_odds: float | None) -> str | None:
-    """JRA レースの購入指針を算出する。
+def jra_buy_signal(
+    distance: int,  # noqa: ARG001 互換のため残置（v26 では距離フィルタを使わない）
+    top_win_odds: float | None,
+) -> str | None:
+    """JRA レースの購入指針を算出する（レースレベル）。
+
+    v26 ensemble 検証 (2026-05-02) ベース:
+      - オッズ ≥ 10 → 単勝ROI 1.237 ⇒ "buy"
+      - 6 ≤ オッズ < 10 → 単勝ROI ~1.0 ⇒ "caution"
+      - オッズ < 6 → 単勝ROI 0.85-0.89 ⇒ "pass"
 
     Args:
-        distance: レース距離（メートル）
+        distance: レース距離（互換のため残置、未使用）
         top_win_odds: 指数1位馬の単勝オッズ（None = オッズ未取得）
 
     Returns:
@@ -36,17 +51,51 @@ def jra_buy_signal(distance: int, top_win_odds: float | None) -> str | None:
     """
     if top_win_odds is None:
         return None
-    # 短距離はオッズ問わず回収率が改善しない
-    if distance <= 1400:
-        return "pass"
-    # 低オッズは期待値マイナス
-    if top_win_odds < 3.0:
-        return "pass"
-    # 4倍以上 + マイル以上: ROI 105.7%+ で購入圏
-    if top_win_odds >= 4.0:
+    if top_win_odds >= 10.0:
         return "buy"
-    # 3.0-4.0倍 + マイル以上: ROI ~98% で損益ほぼ±0
-    return "caution"
+    if top_win_odds >= 6.0:
+        return "caution"
+    return "pass"
+
+
+def jra_horse_purchase_signal(
+    rank: int,
+    top2_t3_gap: float | None,
+    win_odds: float | None,
+) -> str | None:
+    """JRA レース内の個別馬の購入指針を算出する。
+
+    v26 ensemble breakaway 検証 (2026-05-02, 3年138,728 horse-races) ベース:
+      "上位2頭が3位以下から抜け出している" レースの上位2頭中穴馬が最強。
+
+      - super_buy: rank≤2 ∧ top2_t3_gap≥7 ∧ オッズ≥10  → 単勝ROI 1.593 (年46R)
+      - buy:       rank≤2 ∧ top2_t3_gap≥5 ∧ オッズ≥10  → 単勝ROI 1.290 (年79R)
+      - watch:     rank≤3 ∧ オッズ≥10                → 単勝ROI 1.042 (年1786R)
+      - pass:      上記いずれにも該当しない
+
+    特に rank=2 (2位馬) の中穴オッズが最強で、top2_t3_gap≥7 のとき単勝ROI 1.694。
+    1位馬は人気を集めやすく ROI が薄まるため、抜け出し予測下の2位馬が割安。
+
+    Args:
+        rank: レース内 composite_index ランク (1=1位)
+        top2_t3_gap: 2位と3位の composite_index 差 (rank≤2 のときのみ意味あり)
+        win_odds: 当該馬の単勝オッズ
+
+    Returns:
+        "super_buy" | "buy" | "watch" | None
+    """
+    if win_odds is None or win_odds < 10.0:
+        return None
+    # super_buy: 上位2頭抜け出し(差≥7)の中穴馬
+    if rank <= 2 and top2_t3_gap is not None and top2_t3_gap >= 7.0:
+        return "super_buy"
+    # buy: 上位2頭抜け出し(差≥5)の中穴馬
+    if rank <= 2 and top2_t3_gap is not None and top2_t3_gap >= 5.0:
+        return "buy"
+    # watch: 上位3頭の中穴ゾーン
+    if rank <= 3:
+        return "watch"
+    return None
 
 
 # ---------------------------------------------------------------------------

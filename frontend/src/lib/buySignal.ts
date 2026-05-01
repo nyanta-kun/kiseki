@@ -1,18 +1,44 @@
 export type BuySignal = "buy" | "caution" | "pass" | null | undefined;
+export type PurchaseSignal = "super_buy" | "buy" | "watch" | null | undefined;
 
 /**
- * JRA購入指針をフロントエンドで算出（詳細ページ用）
- * バックエンドのjra_buy_signalと同一ロジック
+ * JRA レースレベル購入指針をフロントエンドで算出（詳細ページ用）。
+ * バックエンドの jra_buy_signal と同一ロジック。
+ *
+ * v26 ensemble 検証 (2026-05-02) ベース:
+ *   オッズ ≥ 10 → buy (単勝ROI 1.237)
+ *   6 ≤ オッズ < 10 → caution (~1.0)
+ *   オッズ < 6 → pass (0.85-0.89, 鉄板買いはマイナス)
  */
 export function computeJraBuySignal(
-  distance: number,
+  _distance: number,
   topOdds: number | null,
 ): BuySignal {
   if (topOdds === null) return null;
-  if (distance <= 1400) return "pass";
-  if (topOdds < 3.0) return "pass";
-  if (topOdds >= 4.0) return "buy";
-  return "caution"; // 3.0 <= odds < 4.0
+  if (topOdds >= 10.0) return "buy";
+  if (topOdds >= 6.0) return "caution";
+  return "pass";
+}
+
+/**
+ * 個別馬の購入シグナルをフロントエンドで算出。
+ * バックエンドの jra_horse_purchase_signal と同一ロジック。
+ *
+ * v26 breakaway 検証 (2026-05-02):
+ *   super_buy: rank≤2 ∧ top2_t3_gap≥7 ∧ オッズ≥10 → 単勝ROI 1.593 (年46R)
+ *   buy:       rank≤2 ∧ top2_t3_gap≥5 ∧ オッズ≥10 → 単勝ROI 1.290 (年79R)
+ *   watch:     rank≤3 ∧ オッズ≥10               → 単勝ROI 1.042 (年1786R)
+ */
+export function computeHorsePurchaseSignal(
+  rank: number,
+  top2T3Gap: number | null,
+  winOdds: number | null,
+): PurchaseSignal {
+  if (winOdds === null || winOdds < 10.0) return null;
+  if (rank <= 2 && top2T3Gap !== null && top2T3Gap >= 7.0) return "super_buy";
+  if (rank <= 2 && top2T3Gap !== null && top2T3Gap >= 5.0) return "buy";
+  if (rank <= 3) return "watch";
+  return null;
 }
 
 // v8 P1実績（2023-04-16〜2024-04-16, 3,373R）に基づくコースグレード

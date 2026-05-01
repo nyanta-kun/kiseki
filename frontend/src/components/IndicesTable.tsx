@@ -556,6 +556,31 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                     {horse.dm_signals && horse.dm_signals.length > 0 && (
                       <DmSignalBadges signals={horse.dm_signals} />
                     )}
+                    {/* 購入シグナル（v26 breakaway ROI 検証 2026-05-02） */}
+                    {horse.purchase_signal === "super_buy" && (
+                      <span
+                        title="上位2頭抜け出し(差≥7) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.593"
+                        className="text-[10px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-800 border-rose-300"
+                      >
+                        🔥超推奨
+                      </span>
+                    )}
+                    {horse.purchase_signal === "buy" && (
+                      <span
+                        title="上位2頭抜け出し(差≥5) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.290"
+                        className="text-[10px] px-1 py-0.5 rounded border font-bold bg-emerald-100 text-emerald-800 border-emerald-300"
+                      >
+                        ◎推奨
+                      </span>
+                    )}
+                    {horse.purchase_signal === "watch" && (
+                      <span
+                        title="rank≤3 ∧ オッズ≥10 → 単勝ROI 1.042"
+                        className="text-[10px] px-1 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200"
+                      >
+                        ○注目
+                      </span>
+                    )}
                     {winPct && (() => {
                       const r = winShareRatioMap.get(horse.horse_number) ?? null;
                       const cls = r === null ? "bg-blue-50 text-blue-600" :
