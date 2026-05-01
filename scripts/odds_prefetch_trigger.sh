@@ -11,6 +11,7 @@
 
 BACKEND_URL="http://127.0.0.1:8003"  # VPS backend (galloplab-backend-1コンテナ)
 LOG_FILE="/home/ysuzuki/GitHub/kiseki/logs/odds_prefetch_trigger.log"
+ENV_FILE="/home/ysuzuki/GitHub/kiseki/.env"
 FETCH_DATE="${1:-}"  # 引数あれば使用、なければ翌日（agent側でデフォルト）
 
 log() {
@@ -18,6 +19,12 @@ log() {
 }
 
 log "=== odds_prefetch_trigger.sh 開始 ${FETCH_DATE:+(date=$FETCH_DATE)} ==="
+
+API_KEY=$(grep '^CHANGE_NOTIFY_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")
+if [ -z "$API_KEY" ]; then
+  log "ERROR: CHANGE_NOTIFY_API_KEY が .env に見つかりません"
+  exit 1
+fi
 
 # パラメータ組み立て
 if [ -n "$FETCH_DATE" ]; then
@@ -28,6 +35,7 @@ fi
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BACKEND_URL/api/agent/command" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d "{\"action\": \"odds_prefetch\", \"params\": $PARAMS}" \
   --max-time 10)
 
