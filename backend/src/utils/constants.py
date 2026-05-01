@@ -58,16 +58,22 @@ BASE_WEIGHT = 55.0  # 基準斤量
 #     過学習フラグ: なし
 #     テスト期間改善: 1位単勝ROI 86.1%→89.1% (+3.0%), 穴馬ROI 85.2%→95.8% (+10.6%), 3着内率 +0.3%
 #     主な変化: pedigree 15.7%→20.2% (+4.5%), course_aptitude 11.8%→10.4% (-1.4%)
+# v24: 展開ハンデ指数（pace_handicap）統合 (2026-05-01)
+#   pace (0.01346) + position_advantage (0.02173) を pace_handicap (0.04) に統合。
+#   合算 0.03519 → 0.04 に微増。展開ハンデは pace と position_advantage の機能を
+#   1指数で表現し、線形和では捉えられなかった相互作用（例: 速度上位×不利展開）を
+#   合成に効かせる。最適化前の暫定重み（バックテスト後に Nelder-Mead で再調整予定）。
 INDEX_WEIGHTS = {
     "speed":              0.09258,   # v17: Nelder-Mead (roi, λ=3.0, v15データ)
     "last_3f":            0.13735,   # v17
     "course_aptitude":    0.10415,   # v17
-    "pace":               0.01346,   # v17
+    "pace":               0.0,       # v24: 廃止 → pace_handicap に統合
+    "pace_handicap":      0.04000,   # v24: 展開ハンデ指数 (pace + position_advantage 統合)
     "jockey_trainer":     0.10023,   # v17
     "pedigree":           0.20217,   # v17: 15.7% → 20.2% (+4.5%)
     "rotation":           0.08403,   # v17
     "training":           0.02941,   # v17
-    "position_advantage": 0.02173,   # v17
+    "position_advantage": 0.0,       # v24: 廃止 → pace_handicap に統合
     "anagusa":            0.0000,
     "paddock":            0.0000,
     "disadvantage_bonus": 0.01489,   # v17（巻き返し指数 rebound）

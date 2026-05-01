@@ -30,13 +30,19 @@ import logging
 import math
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+import numpy as np
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceEntry
 from ..db.session import AsyncSessionLocal
 from ..utils.constants import INDEX_WEIGHTS, SPEED_INDEX_MEAN
+
+if TYPE_CHECKING:
+    import lightgbm as lgb
 from .anagusa import AnagusaIndexCalculator
 from .career_phase import CareerPhaseIndexCalculator
 from .course_aptitude import CourseAptitudeCalculator
@@ -48,6 +54,7 @@ from .jockey_trainer_combo import JockeyTrainerComboIndexCalculator
 from .jvan_dm import JvanBattleDmCalculator, JvanTimeDmCalculator
 from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
+from .pace_handicap import PaceHandicapCalculator
 from .paddock import PaddockIndexCalculator
 from .pedigree import PedigreeIndexCalculator
 from .rebound import ReboundIndexCalculator
@@ -135,7 +142,24 @@ logger = logging.getLogger(__name__)
 #   protocol_dm_orchestrator で過去全期間のDMデータ取得が可能になったため、
 #   別系統の情報源として組み込み。初期重み jvan_time_dm=0.05 / jvan_battle_dm=0.05。
 #   要バックテスト・重み最適化 (Nelder-Mead)。
-COMPOSITE_VERSION = 23
+# v24: 展開ハンデ指数 (pace_handicap) を導入 (2026-05-01)
+#   ミス分析（v22 14万行）で「指数1位ハズレの64%が差し・追込」が判明。
+#   PaceHandicapCalculator を新設し、脚質×ペース×コース×開催×枠×多頭数×前走HP
+#   リバウンドを統合した「展開ハンデ指数」を 1 指数化。重み 0.04。
+#   3年バックフィル(9856R)検証: 複勝率 +3.18% / 下位激走 -611件 / 単勝ROI -0.02
+# v25: 【廃止 2026-05-01】乗数式 + 騎手戦法統合
+#   chihou と同型の composite = ability × K_pace × K_jockey × K_condition × K_dark
+#   3年バックフィル(10130R)で複勝率-3.42、1位ハズレ中後方率+7.32 と大幅悪化。
+#   失敗原因: K の幅が小さすぎ ability_base (素能) が支配的になり、補正シグナルが弱化。
+#   詳細は memory/v25_multiplicative_failure.md。
+# v26: LightGBM LambdaRank で composite_index を予測 (2026-05-01)
+#   v24 までのサブ指数 17個 + レース・馬メタ情報を特徴量に LambdaRank 学習。
+#   test 期間 (2026-Q1, 1068R) で v24 比 複勝率+4.33pt, 1位ハズレ中後方率-4.44pt。
+#   sub-indices は v24 と同じロジックで計算し DB 保存、composite_index は LightGBM 予測値
+#   をレース内 min-max → 15-85 にスケールして保存する。
+#   モデル: backend/models/v26_lightgbm_rank.txt
+#   学習: scripts/train_v26_lightgbm.py
+COMPOSITE_VERSION = 26
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -205,6 +229,115 @@ def _segment_weights(surface: str | None, distance: int | None) -> dict:
 # Softmax 温度パラメータ（composite_index 10点差 → 約2.7倍の確率比）
 SOFTMAX_TEMPERATURE = 10.0
 
+# v26 LightGBM 設定
+_V26_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_lightgbm_rank.txt"
+_V26_FEATURE_NAMES: list[str] = [
+    # sub-indices (17)
+    "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
+    "rotation_index", "jockey_index", "pace_index", "pedigree_index",
+    "training_index", "anagusa_index", "paddock_index", "rebound_index",
+    "rivals_growth_index", "career_phase_index", "distance_change_index",
+    "jockey_trainer_combo_index", "going_pedigree_index",
+    # race meta (10)
+    "distance", "head_count", "is_turf", "is_dirt", "is_jump",
+    "is_good", "is_yaya", "is_heavy", "is_bad", "is_g1g2g3",
+    # horse meta (7)
+    "frame_number", "horse_age", "weight_carried", "horse_weight",
+    "weight_change", "jvan_time_dm", "jvan_battle_dm",
+]
+
+# v26 モデルのプロセス共有キャッシュ（lazy load）
+_v26_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+
+
+def _load_v26_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """LightGBM モデルを lazy load する。モデルファイルが無いと None を返す。"""
+    global _v26_model_cache
+    if _v26_model_cache is not None:
+        return _v26_model_cache
+    if not _V26_MODEL_PATH.exists():
+        logger.warning(f"v26 model not found: {_V26_MODEL_PATH}, fallback to v24 linear sum")
+        return None
+    try:
+        import lightgbm as lgb
+        _v26_model_cache = lgb.Booster(model_file=str(_V26_MODEL_PATH))
+        logger.info(f"v26 model loaded: {_V26_MODEL_PATH}")
+        return _v26_model_cache
+    except Exception as e:
+        logger.error(f"v26 model load failed: {e}")
+        return None
+
+
+def _build_v26_features(
+    results: list[dict],
+    race: Race,
+    entries_by_horse: dict[int, RaceEntry],
+    weight_change_by_horse: dict[int, int | None],
+) -> np.ndarray:
+    """v26 用の特徴量行列を作成する。学習時の ALL_FEATURES と同順。"""
+    surface = (race.surface or "").strip()
+    cond = (race.condition or "").strip()
+    grade = (race.grade or "").strip()
+
+    is_turf = 1 if surface.startswith("芝") else 0
+    is_dirt = 1 if surface.startswith("ダ") else 0
+    is_jump = 1 if surface.startswith("障") else 0
+    is_good = 1 if cond == "良" else 0
+    is_yaya = 1 if cond == "稍" else 0
+    is_heavy = 1 if cond == "重" else 0
+    is_bad = 1 if cond == "不" else 0
+    is_g123 = 1 if grade in ("G1", "G2", "G3") else 0
+    distance = float(race.distance or 0)
+    head_count = float(race.head_count or len(results))
+
+    rows: list[list[float]] = []
+    for r in results:
+        hid = r["horse_id"]
+        e = entries_by_horse.get(hid)
+        wc = weight_change_by_horse.get(hid)
+        rows.append([
+            float(r.get("speed_index", 50.0)),
+            float(r.get("last3f_index", 50.0)),
+            float(r.get("course_aptitude", 50.0)),
+            float(r.get("position_advantage", 50.0)),
+            float(r.get("rotation_index", 50.0)),
+            float(r.get("jockey_index", 50.0)),
+            float(r.get("pace_index", 50.0)),
+            float(r.get("pedigree_index", 50.0)),
+            float(r.get("training_index", 50.0)),
+            float(r.get("anagusa_index", 50.0)),
+            float(r.get("paddock_index", 50.0)),
+            float(r.get("rebound_index", 50.0)),
+            float(r.get("rivals_growth_index", 50.0)),
+            float(r.get("career_phase_index", 50.0)),
+            float(r.get("distance_change_index", 50.0)),
+            float(r.get("jockey_trainer_combo_index", 50.0)),
+            float(r.get("going_pedigree_index", 50.0)),
+            distance, head_count,
+            is_turf, is_dirt, is_jump,
+            is_good, is_yaya, is_heavy, is_bad, is_g123,
+            float(e.frame_number) if e and e.frame_number is not None else float("nan"),
+            float(e.horse_age) if e and e.horse_age is not None else float("nan"),
+            float(e.weight_carried) if e and e.weight_carried is not None else float("nan"),
+            float(e.horse_weight) if e and e.horse_weight is not None else float("nan"),
+            float(wc) if wc is not None else float("nan"),
+            float(e.jvan_time_dm) if e and e.jvan_time_dm is not None else 50.0,
+            float(e.jvan_battle_dm) if e and e.jvan_battle_dm is not None else 50.0,
+        ])
+    return np.asarray(rows, dtype=float)
+
+
+def _scale_lgb_to_index(scores: np.ndarray) -> list[float]:
+    """LightGBM 生スコアを 15-85 の indexに変換する（レース内 min-max）。"""
+    if len(scores) == 0:
+        return []
+    if len(scores) == 1:
+        return [50.0]
+    lo, hi = float(scores.min()), float(scores.max())
+    if hi - lo < 1e-9:
+        return [50.0] * len(scores)
+    return [round(15.0 + (float(s) - lo) / (hi - lo) * 70.0, 1) for s in scores]
+
 
 class CompositeIndexCalculator:
     """総合指数算出Agent。
@@ -227,6 +360,7 @@ class CompositeIndexCalculator:
         self._rotation = RotationIndexCalculator(db)
         self._jockey = JockeyIndexCalculator(db)
         self._pace = PaceIndexCalculator(db)
+        self._pace_handicap = PaceHandicapCalculator(db)
         self._pedigree = PedigreeIndexCalculator(db)
         self._training = TrainingIndexCalculator(db)
         self._anagusa = AnagusaIndexCalculator(db)
@@ -290,6 +424,7 @@ class CompositeIndexCalculator:
             _run(RotationIndexCalculator, speed_map=speed_map),
             _run(JockeyIndexCalculator),
             _run(PaceIndexCalculator),
+            _run(PaceHandicapCalculator),
             _run(PedigreeIndexCalculator),
             _run(TrainingIndexCalculator),
             _run(AnagusaIndexCalculator),
@@ -306,7 +441,7 @@ class CompositeIndexCalculator:
         )
 
         _labels = [
-            "last3f", "course", "frame", "rotation", "jockey", "pace",
+            "last3f", "course", "frame", "rotation", "jockey", "pace", "pace_handicap",
             "pedigree", "training", "anagusa", "paddock", "rebound",
             "rivals_growth", "career_phase", "distance_change",
             "jockey_trainer_combo", "going_pedigree",
@@ -322,7 +457,7 @@ class CompositeIndexCalculator:
         # None（計算不能）をレース内平均で埋める（全指数共通）
         (
             last3f_map, course_map, frame_map, rotation_map,
-            jockey_map, pace_map, pedigree_map, training_map,
+            jockey_map, pace_map, pace_handicap_map, pedigree_map, training_map,
             anagusa_map, paddock_map, rebound_map, rivals_growth_map,
             career_phase_map, distance_change_map, jockey_trainer_combo_map,
             going_pedigree_map,
@@ -344,6 +479,7 @@ class CompositeIndexCalculator:
                 rotation=rotation_map.get(hid, DEFAULT_INDEX),
                 jockey=jockey_map.get(hid, DEFAULT_INDEX),
                 pace=pace_map.get(hid, DEFAULT_INDEX),
+                pace_handicap=pace_handicap_map.get(hid, DEFAULT_INDEX),
                 pedigree=pedigree_map.get(hid, DEFAULT_INDEX),
                 training=training_map.get(hid, DEFAULT_INDEX),
                 anagusa=anagusa_map.get(hid, DEFAULT_INDEX),
@@ -359,6 +495,25 @@ class CompositeIndexCalculator:
                 weights=seg_weights,
             )
             results.append({"horse_id": hid, **row})
+
+        # v26: LightGBM で composite_index を上書き（モデルが読めれば）
+        model = _load_v26_model()
+        if model is not None and results:
+            # 重み変化計算用に過去成績取得（rebound と同じパターン）
+            wc_by_horse = await self._get_weight_change_map(
+                race.id, [r["horse_id"] for r in results]
+            )
+            entries_by_horse = {e.horse_id: e for e in entries}
+            try:
+                X = _build_v26_features(results, race, entries_by_horse, wc_by_horse)
+                raw = model.predict(X)
+                lgb_indices = _scale_lgb_to_index(np.asarray(raw, dtype=float))
+                for r, idx in zip(results, lgb_indices):
+                    r["v24_composite_index"] = r["composite_index"]  # 互換: 線形和の値を退避
+                    r["composite_index"] = idx
+            except Exception as e:
+                logger.error(f"v26 LightGBM inference failed for race={race.id}: {e}")
+                # フォールバック: composite_index は v24 線形和のまま
 
         # 全馬の指数が揃ってから勝率・複勝率を算出（softmax + Harville）
         self._attach_probabilities(results)
@@ -446,6 +601,7 @@ class CompositeIndexCalculator:
         training: float,
         anagusa: float,
         paddock: float,
+        pace_handicap: float = DEFAULT_INDEX,
         rebound: float = DEFAULT_INDEX,
         rivals_growth: float = DEFAULT_INDEX,
         career_phase: float = DEFAULT_INDEX,
@@ -489,11 +645,14 @@ class CompositeIndexCalculator:
         """
         w = weights if weights is not None else INDEX_WEIGHTS
 
+        # v24 線形和: composite = Σ wᵢ × xᵢ + 交互作用項ボーナス
+        # 乗数式 (v25) は JRA では補正シグナルが弱化し悪化したため線形和に戻している
         base_composite = (
             speed * w["speed"]
             + last3f * w["last_3f"]
             + course_aptitude * w["course_aptitude"]
             + pace * w["pace"]
+            + pace_handicap * w.get("pace_handicap", 0.0)
             + jockey * w["jockey_trainer"]
             + pedigree * w["pedigree"]
             + rotation * w["rotation"]
@@ -510,8 +669,7 @@ class CompositeIndexCalculator:
             + jvan_time_dm * w.get("jvan_time_dm", 0.0)
             + jvan_battle_dm * w.get("jvan_battle_dm", 0.0)
         )
-
-        # 交互作用項ボーナス（top5 pedigree interactions from optimization）
+        # 交互作用項ボーナス（v13 由来、pedigree との top5 相互作用）
         _INTER_W = 0.013333
         upside_bonus = (
             last3f * pedigree / 100.0 * _INTER_W
@@ -520,9 +678,9 @@ class CompositeIndexCalculator:
             + speed * pedigree / 100.0 * _INTER_W
             + rotation * pedigree / 100.0 * _INTER_W
         )
-
         composite = base_composite + upside_bonus
         composite = round(max(INDEX_MIN, min(INDEX_MAX, composite)), 1)
+        upside_bonus = round(upside_bonus, 3)
 
         return {
             "speed_index": round(speed, 1),
@@ -532,6 +690,7 @@ class CompositeIndexCalculator:
             "rotation_index": round(rotation, 1),
             "jockey_index": round(jockey, 1),
             "pace_index": round(pace, 1),
+            "pace_handicap_index": round(pace_handicap, 1),
             "pedigree_index": round(pedigree, 1),
             "training_index": round(training, 1),
             "anagusa_index": round(anagusa, 1),
@@ -633,6 +792,24 @@ class CompositeIndexCalculator:
             place_probs.append(min(pi + p2 + p3, 1.0))
 
         return place_probs
+
+    async def _get_weight_change_map(
+        self, race_id: int, horse_ids: list[int]
+    ) -> dict[int, int | None]:
+        """過去 race_results から馬体重増減を取得（前走の値）。"""
+        from ..db.models import RaceResult
+        if not horse_ids:
+            return {}
+        # 当該レース自体の race_results.weight_change が入っていれば使う
+        rows = (
+            await self.db.execute(
+                select(RaceResult.horse_id, RaceResult.weight_change).where(
+                    RaceResult.race_id == race_id,
+                    RaceResult.horse_id.in_(horse_ids),
+                )
+            )
+        ).all()
+        return {hid: wc for hid, wc in rows}
 
     async def _bulk_upsert_for_race(self, race_id: int, results: list[dict]) -> None:
         """レース全馬分を一括 upsert する（バックフィル高速化用）。

@@ -75,6 +75,20 @@ v8 変更点（CHIHOU_COMPOSITE_VERSION=8）:
       ② 外枠（頭数60%以上の枠番）: ROI差 +46%（先行時）→ K+=0.03
       ⑥ 騎手変更×上位騎手（jockey_index≥62）: ROI差 +16% → K+=0.03
   - 前走データは _rotation_batch と同じサブクエリパターンで取得
+
+v9 変更点（CHIHOU_COMPOSITE_VERSION=9）:
+  - 低指数馬券内パターン分析（2025-01〜2026-04, 5万件）に基づく修正
+  - 【発見①】騎手指数の大幅過小評価:
+      低composite馬でも jockey>=70 なら 28.3% 複勝率（jockey<40 は 8.0%）
+      現行 K_jockey max(0.05〜0.15) は効果不足 → 全コース約50-80%引き上げ
+      川崎・名古屋（max=0.05）が最低精度(54〜55%) → 最も効果を期待
+  - 【発見②】last_margin_index の過小評価:
+      speed<40 でも last_margin>=60 なら 19.4% 複勝率（margin低は 9.1%）
+      ABILITY_WEIGHTS の last_margin を 0.30→0.35 に増加（speed を 0.50→0.45 に減少）
+  - 【新設】K_margin（前走着差乗数）:
+      last_margin_index >= MARGIN_BOOST_THRESHOLD(60) のとき上方補正
+      K_margin ∈ [1.00, 1.08]。「前走ほぼ差なし」を独立シグナルとして評価
+    【新v9】composite = ability_base × K_jockey × K_rotation × K_dark × K_margin
 """
 
 from __future__ import annotations
@@ -102,7 +116,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 8
+CHIHOU_COMPOSITE_VERSION = 9
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -147,43 +161,48 @@ _INTERVAL_SCORE: list[tuple[int, int, float]] = [
 
 _FINISH_BONUS = {1: 15.0, 2: 10.0, 3: 7.0, 4: 3.0, 5: 3.0}
 
-# 総合指数 v7: 乗数方式
+# 総合指数 v7-: 乗数方式
 # ability_base = weighted_avg(speed, last3f, last_margin)
+# v9: speed 0.50→0.45, last_margin 0.30→0.35（last_marginの予測力が過小評価されていた）
 ABILITY_WEIGHTS = {
-    "speed":       0.50,
+    "speed":       0.45,
     "last3f":      0.20,
-    "last_margin": 0.30,
+    "last_margin": 0.35,
 }
 
 # K_rotation = clip(1.0 + (rotation_index - 50)/50 × ROTATION_MAX_EFFECT, ±ROTATION_MAX_EFFECT)
 ROTATION_MAX_EFFECT = 0.08
 
 # K_jockey = clip(1.0 + (jockey_index - 50)/50 × max_jk, ±max_jk)  コース別
-# グループA（馬能力重視）: max_jk 小
-# グループB（騎手補正維持）: max_jk 大
+# v9: 全コース約50-80%引き上げ（低composite馬でもjockey高なら複勝率が大幅上昇する実証に基づく）
 COURSE_JOCKEY_MAX: dict[str, float] = {
-    # グループA
-    "川崎":   0.05,
-    "佐賀":   0.05,
-    "高知":   0.05,
-    "名古屋": 0.05,
-    "門別":   0.05,
-    "大井":   0.08,
-    "船橋":   0.08,
-    "盛岡":   0.08,
-    "浦和":   0.12,
-    "姫路":   0.15,
-    # グループB
-    "金沢":   0.08,
-    "水沢":   0.10,
-    "園田":   0.08,
-    "笠松":   0.15,
+    "川崎":   0.10,  # v8: 0.05 → 騎手依存度を過小評価していた
+    "佐賀":   0.10,  # v8: 0.05
+    "高知":   0.10,  # v8: 0.05
+    "名古屋": 0.10,  # v8: 0.05
+    "門別":   0.10,  # v8: 0.05
+    "大井":   0.13,  # v8: 0.08
+    "船橋":   0.13,  # v8: 0.08
+    "盛岡":   0.13,  # v8: 0.08
+    "浦和":   0.18,  # v8: 0.12
+    "姫路":   0.22,  # v8: 0.15
+    "金沢":   0.13,  # v8: 0.08
+    "水沢":   0.15,  # v8: 0.10
+    "園田":   0.13,  # v8: 0.08
+    "笠松":   0.22,  # v8: 0.15
 }
-DEFAULT_JOCKEY_MAX = 0.08  # 未知コース用デフォルト
+DEFAULT_JOCKEY_MAX = 0.13  # v8: 0.08
 
 # 穴馬ポテンシャル乗数 K_dark（v8）
 DARK_HORSE_MAX_EFFECT = 0.20     # K_dark の最大値 = 1.0 + 0.20
 DARK_HORSE_JOCKEY_TOP = 62.0    # 上位騎手とみなす jockey_index 閾値（全体 top20%相当）
+
+# 前走着差乗数 K_margin（v9）
+# last_margin_index >= MARGIN_BOOST_THRESHOLD の場合に上方補正
+# 「前走着差が小さい（1着との差が少なかった）」を独立シグナルとして評価
+# K_margin ∈ [1.00, 1.0 + MARGIN_MAX_EFFECT]
+MARGIN_BOOST_THRESHOLD = 60.0  # このlast_margin_indexから効果発動
+MARGIN_MAX_EFFECT = 0.08       # K_margin の最大補正（=+8%）
 
 # Softmax 温度パラメータ
 SOFTMAX_TEMPERATURE = 10.0
@@ -438,10 +457,11 @@ class ChihouIndexCalculator:
         last_margin_map  = await self._last_margin_batch(race_date, entries)
         dark_horse_map   = await self._dark_horse_batch(race_date, race, entries, jockey_map)
 
-        # Step 1: composite_index を算出（v8乗数方式）
+        # Step 1: composite_index を算出（v9乗数方式）
         # ability_base = 馬固有の能力（タイム系3指数の加重平均）
-        # K_jockey / K_rotation = 小幅補正乗数（±max%）
+        # K_jockey / K_rotation = 補正乗数（v9: K_jockey max を全コース引き上げ）
         # K_dark = 穴馬ポテンシャル乗数（[1.00, 1.20]、前走後方・距離短縮等で上方補正）
+        # K_margin = 前走着差乗数（v9新設、[1.00, 1.08]、last_margin高で上方補正）
         w_sp = ABILITY_WEIGHTS["speed"]
         w_l3 = ABILITY_WEIGHTS["last3f"]
         w_lm = ABILITY_WEIGHTS["last_margin"]
@@ -477,7 +497,15 @@ class ChihouIndexCalculator:
             # 穴馬ポテンシャル乗数（前走後方・距離短縮・外枠・騎手強化）
             k_dark = dark_horse_map.get(hid, 1.0)
 
-            composite = _clip(ability_base * k_jockey * k_rotation * k_dark)
+            # 前走着差乗数（v9新設: last_margin_index >= 60 で上方補正）
+            # 「前走で1着とほぼ差がなかった」馬のポテンシャルを独立評価
+            if lm is not None and lm > MARGIN_BOOST_THRESHOLD:
+                k_margin = 1.0 + (lm - MARGIN_BOOST_THRESHOLD) / (100.0 - MARGIN_BOOST_THRESHOLD) * MARGIN_MAX_EFFECT
+                k_margin = min(k_margin, 1.0 + MARGIN_MAX_EFFECT)
+            else:
+                k_margin = 1.0
+
+            composite = _clip(ability_base * k_jockey * k_rotation * k_dark * k_margin)
             composite_inputs.append((hid, composite))
 
         # Softmax で単勝確率を推定 → Harville で複勝確率を算出
