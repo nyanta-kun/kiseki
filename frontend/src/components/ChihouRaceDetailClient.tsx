@@ -9,7 +9,7 @@ import {
   buildChihouResultsWsUrl,
   fetchChihouHorseHistory,
 } from "@/lib/api";
-import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
@@ -33,28 +33,6 @@ const CHIHOU_SUB_INDICES: { key: keyof ChihouHorseIndex; label: string }[] = [
   { key: "jockey_index",   label: "騎手"   },
   { key: "rotation_index", label: "ローテ" },
 ];
-
-function horseNumToFrame(horseNum: number, totalHorses: number): number {
-  if (totalHorses <= 8) return horseNum;
-  const extra = totalHorses - 8;
-  const singleFrames = 8 - extra;
-  if (horseNum <= singleFrames) return horseNum;
-  return singleFrames + Math.ceil((horseNum - singleFrames) / 2);
-}
-
-function frameColorClass(frame: number): string {
-  switch (frame) {
-    case 1: return "bg-white border border-gray-400 text-gray-800";
-    case 2: return "bg-gray-800 text-white";
-    case 3: return "bg-red-600 text-white";
-    case 4: return "bg-blue-600 text-white";
-    case 5: return "bg-yellow-400 text-gray-900";
-    case 6: return "bg-green-600 text-white";
-    case 7: return "bg-orange-500 text-white";
-    case 8: return "bg-pink-500 text-white";
-    default: return "bg-gray-200 text-gray-700";
-  }
-}
 
 function barWidth(v: number | null): string {
   if (v === null) return "0%";

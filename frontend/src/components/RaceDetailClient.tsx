@@ -12,7 +12,7 @@ import {
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndexBar } from "./IndexBar";
-import { cn, indexColor } from "@/lib/utils";
+import { cn, indexColor, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { HorseHistorySection } from "./HorseHistorySection";
 import { PaywallGate } from "@/components/PaywallGate";
 
@@ -126,28 +126,6 @@ function PurchaseSignalBadge({
       {meta.label}
     </span>
   );
-}
-
-function horseNumToFrame(horseNum: number, totalHorses: number): number {
-  if (totalHorses <= 8) return horseNum;
-  const extra = totalHorses - 8;
-  const singleFrames = 8 - extra;
-  if (horseNum <= singleFrames) return horseNum;
-  return singleFrames + Math.ceil((horseNum - singleFrames) / 2);
-}
-
-function frameColorClass(frame: number): string {
-  switch (frame) {
-    case 1: return "bg-white border border-gray-400 text-gray-800";
-    case 2: return "bg-gray-800 text-white";
-    case 3: return "bg-red-600 text-white";
-    case 4: return "bg-blue-600 text-white";
-    case 5: return "bg-yellow-400 text-gray-900";
-    case 6: return "bg-green-600 text-white";
-    case 7: return "bg-orange-500 text-white";
-    case 8: return "bg-pink-500 text-white";
-    default: return "bg-gray-200 text-gray-700";
-  }
 }
 
 function barWidth(v: number | null): string {
@@ -420,9 +398,6 @@ export function RaceDetailClient({
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className="text-gray-800 font-medium truncate block max-w-[110px]">
                             {horse.horse_name}
-                            {isTop && (
-                              <span className="ml-1 text-[9px] text-green-600 font-normal">◎</span>
-                            )}
                           </span>
                           {isAnagusa && (
                             <span className={cn(
@@ -763,20 +738,10 @@ export function RaceDetailClient({
                 </ul>
               </div>
 
-              {/* 馬名印 */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">🏆 その他</p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[10px] text-green-600 font-bold whitespace-nowrap shrink-0">◎</span>
-                    <span>レース内の指数1位馬</span>
-                  </li>
-                </ul>
-              </div>
-
               <p className="text-[10px] text-gray-500 italic pt-1 border-t border-gray-200">
                 ※ ROI = 100円賭けた時の平均回収額 / 100。1.0 以上で期待値プラス。
                 各バッジにマウスを合わせるとツールチップで詳細条件が表示されます。
+                表は composite_index 降順（上から指数1位）で表示されます。
               </p>
             </div>
           </details>
