@@ -1140,37 +1140,38 @@ def parse_hr(data: str) -> dict[str, Any] | None:
 # -------------------------------------------------------------------
 # TK レコード（特別登録馬, TOKU DataSpec）
 # -------------------------------------------------------------------
+# probe_toku.py Phase 4 実測値（2026-05-02）で確認済み。
+#
+# TK レコードは JVRead から Unicode 文字列として返される（RA/SE の Latin-1 変換と異なる）。
+# 各 Python 文字 = 1 Unicode コードポイント（全角文字も 1 Python char）。
+#
+# ヘッダー（0-indexed Python char 位置）:
+#   0- 1: "TK"
+#   2   : data_type
+#   3-10: created_date YYYYMMDD
+#  11-14: year YYYY
+#  15-18: month_day MMDD
+#  19-20: course_code
+#  21-22: kai
+#  23-24: day
+#  25-26: race_number
+#  27-31: ASCII フィールド（5 chars）
+#  32-121: レース名 Japanese Unicode + 　 パディング
+#  122+: ASCII フォニティックレース名、その他メタデータ
+#
+# 馬エントリーセクション（0-indexed 590 から、48 chars/頭）:
+#   0- 9: blood_reg (10 ASCII digits)
+#  10-16: intermediate_code (7 ASCII)
+#  17-34: horse_name (18 Japanese Unicode chars, 　 パディング)
+#     35: flag_byte ('0')
+#     36: age (1 digit, '0'=不明)
+#     37: sex ('1'=牡, '2'=牝, '3'=騸)
+#     38: east_west ('1'=東/美浦, '2'=西/栗東)
+#  39-43: trainer_code (5 ASCII digits)
+#  44-47: trainer_name (4 Japanese Unicode chars, 　 パディング)
 
-# JVDF v4.9 TK レコード バイト位置（1-indexed）
-# ヘッダー: 1-27 は RA/SE と共通
-# -----------------------------------------------------------------------
-# pos  28- 71: 競走名本題 (44 bytes = 全角22文字)
-# pos  72- 91: 競走名略称 (20 bytes)
-# pos  92-111: 競走名9文字 (20 bytes)
-# pos 112-115: 重賞回次 (4 bytes)
-# pos 116:     グレードコード (1 byte)
-# pos 117:     グレードコード外国 (1 byte)
-# pos 118-121: 距離 (4 bytes)
-# pos 122:     トラックコード (1 byte)
-# pos 123:     コース区分 (1 byte)
-# pos 124-125: 登録頭数 (2 bytes)
-# pos 126-127: 出走頭数（特別登録時は "00"）(2 bytes)
-# pos 128+:    馬エントリー繰り返し (63 bytes/頭)
-#   +0 - +9  (10 bytes): 血統登録番号
-#   +10- +45 (36 bytes): 馬名
-#   +46      ( 1 byte ): 性別コード
-#   +47- +48 ( 2 bytes): 馬齢
-#   +49      ( 1 byte ): 東西所属コード
-#   +50- +54 ( 5 bytes): 調教師コード
-#   +55- +62 ( 8 bytes): 調教師名略称
-# -----------------------------------------------------------------------
-# NOTE: probe_toku.py を実行してバイト位置を確認後、ズレがあれば修正すること。
-
-_TK_HORSE_OFFSET = 128  # 馬エントリー開始位置 (1-indexed)
-_TK_HORSE_SIZE = 63     # 1頭あたりバイト数
-
-# probe_toku.py の出力で実際のオフセットを確認した場合にここを更新:
-_TK_PROBED = False  # True になったら probe 済み確認済みを意味する
+_TK_HORSE_SECTION_START = 590  # 0-indexed Python char position（probe Phase 4 実測）
+_TK_ENTRY_SIZE = 48             # Python chars per horse entry（probe Phase 4 実測）
 
 _SEX_MAP_TK = {"1": "牡", "2": "牝", "3": "騸", "4": "牝", "5": "騸"}
 
@@ -1178,17 +1179,14 @@ _SEX_MAP_TK = {"1": "牡", "2": "牝", "3": "騸", "4": "牝", "5": "騸"}
 def parse_tk(data: str) -> list[dict[str, Any]]:
     """TKレコード（特別登録馬リスト）をパースし、馬エントリーのリストを返す。
 
-    JVDF v4.9 TOKU DataSpec の TK レコードを対象とする。
-    1 TK レコード = 1 レース分の登録馬全頭を含む。
+    TOKU DataSpec の TK レコードは Unicode 文字列（RA/SE と異なり Latin-1 変換不要）。
+    フィールド位置は probe_toku.py Phase 4（2026-05-02）で実測・確認済み。
 
     Returns:
-        馬エントリーdict のリスト（0 件の場合は空リスト）。
-        各エントリーは特別登録馬 1 頭分の情報を持つ。
-
-    NOTE: probe_toku.py でバイト位置を確認してから本番投入すること。
+        馬エントリー dict のリスト（0 件の場合は空リスト）。
     """
-    if len(data) < 130:
-        logger.warning(f"TK record too short: {len(data)} bytes")
+    if len(data) < _TK_HORSE_SECTION_START + _TK_ENTRY_SIZE:
+        logger.warning(f"TK record too short: {len(data)} chars")
         return []
 
     try:
@@ -1198,41 +1196,36 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
         if header["data_type"] == "0":  # 削除レコード
             return []
 
-        race_name = _decode(data, 28, 71)
-        grade_code = _s(data, 116, 116)
-        distance_raw = _s(data, 118, 121)
-        distance = int(distance_raw) if distance_raw.isdigit() and int(distance_raw) > 0 else None
-        track_code = _s(data, 122, 122)
-        reg_count_raw = _s(data, 124, 125)
-        reg_count = int(reg_count_raw) if reg_count_raw.isdigit() else 0
+        # レース名: 0-indexed 32 から 　 パディング除去
+        race_name = data[32:122].replace("　", "").strip() or None
+
+        # 馬エントリー数: セクション開始位置からデータ長で計算
+        n_entries = (len(data) - _TK_HORSE_SECTION_START) // _TK_ENTRY_SIZE
 
         entries: list[dict[str, Any]] = []
-        for i in range(reg_count):
-            base = _TK_HORSE_OFFSET - 1 + i * _TK_HORSE_SIZE  # 0-indexed
-            if base + _TK_HORSE_SIZE > len(data):
-                logger.debug(f"TK horse {i}: out of bounds (base={base} len={len(data)})")
-                break
+        for i in range(n_entries):
+            base = _TK_HORSE_SECTION_START + i * _TK_ENTRY_SIZE
+            seg = data[base : base + _TK_ENTRY_SIZE]
 
-            seg = data[base : base + _TK_HORSE_SIZE]
             blood_reg = seg[0:10].strip()
-            if not blood_reg:
+            if not blood_reg or not blood_reg.isdigit():
                 continue
 
-            try:
-                horse_name = seg[10:46].encode("latin-1").decode("cp932").strip()
-            except Exception:
-                horse_name = seg[10:46].strip()
+            horse_name = seg[17:35].replace("　", "").strip()
+            if not horse_name:
+                continue
 
-            sex_code = seg[46:47].strip()
-            age_raw = seg[47:49].strip()
-            age = int(age_raw) if age_raw.isdigit() and int(age_raw) > 0 else None
-            east_west = seg[49:50].strip() or None
-            trainer_code = seg[50:55].strip() or None
+            age_ch = seg[36]
+            age = int(age_ch) if age_ch.isdigit() and age_ch != "0" else None
 
-            try:
-                trainer_name = seg[55:63].encode("latin-1").decode("cp932").strip() or None
-            except Exception:
-                trainer_name = seg[55:63].strip() or None
+            sex_code = seg[37]
+            east_west = seg[38] if seg[38] in ("1", "2") else None
+
+            trainer_code = seg[39:44].strip() or None
+            if trainer_code and not trainer_code.isdigit():
+                trainer_code = None
+
+            trainer_name = seg[44:48].replace("　", "").strip() or None
 
             entries.append(
                 {
@@ -1242,16 +1235,16 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
                     "race_number": int(header["race_num"]) if header["race_num"].isdigit() else 0,
                     "jravan_horse_code": blood_reg,
                     "horse_name": horse_name,
-                    "sex": _SEX_MAP_TK.get(sex_code, sex_code) if sex_code else None,
+                    "sex": _SEX_MAP_TK.get(sex_code) if sex_code else None,
                     "age": age,
                     "east_west_code": east_west,
                     "jravan_trainer_code": trainer_code,
                     "trainer_name": trainer_name,
                     "data_type": header["data_type"],
                     "race_name": race_name,
-                    "grade_code": grade_code or None,
-                    "distance": distance,
-                    "track_code": track_code or None,
+                    "grade_code": None,
+                    "distance": None,
+                    "track_code": None,
                 }
             )
 

@@ -1,8 +1,7 @@
-"""TOKU DataSpec の TK レコード・バイト構造を確認する診断スクリプト。
+"""TOKU TK record Phase 4: py600-1200 を走査してblood_reg #1を見つける。
 
 実行方法（RunAdhoc 経由）:
   adhoc_cmd.txt に "probe_toku.py" を書いて kiseki-RunAdhoc を実行する。
-  出力は jvlink_agent.log ではなく probe_toku.log に書き出す。
 """
 import logging
 import os
@@ -16,104 +15,94 @@ from dotenv import load_dotenv
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
+log_path = Path(__file__).resolve().parent / "probe_toku.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("probe_toku.log", encoding="utf-8"),
+        logging.FileHandler(str(log_path), encoding="utf-8", mode="w"),
     ],
 )
 log = logging.getLogger("probe_toku")
 
 JRAVAN_SID = os.getenv("JRAVAN_SID", "")
 
-def _decode(raw: str, start: int, end: int) -> str:
-    """SJIS テキストフィールドを UTF-8 文字列に変換（1-indexed, inclusive）。"""
-    try:
-        return raw[start - 1 : end].encode("latin-1").decode("cp932").strip()
-    except Exception:
-        return raw[start - 1 : end].strip()
 
-def _s(raw: str, start: int, end: int) -> str:
-    return raw[start - 1 : end].strip()
+def is_blood_reg(data: str, py1: int) -> bool:
+    """Python position (1-indexed) から 10 chars が blood_reg 候補かチェック。
+    条件: 10桁ASCII数字 かつ 直前の char が数字でない。
+    """
+    idx = py1 - 1
+    if idx + 10 > len(data):
+        return False
+    if not all(0x30 <= ord(data[idx + i]) <= 0x39 for i in range(10)):
+        return False
+    if idx > 0 and 0x30 <= ord(data[idx - 1]) <= 0x39:
+        return False  # preceded by digit
+    return True
 
-def analyze_tk_record(data: str, idx: int) -> None:
-    """TK レコード 1 件のバイト構造を詳細ログ出力する。"""
-    log.info(f"\n{'='*60}")
-    log.info(f"TK record #{idx}  total_len={len(data)}")
 
-    # 共通ヘッダー (1-27)
-    log.info(f"  pos  1- 2 rec_id      = {_s(data,1,2)!r}")
-    log.info(f"  pos  3    data_type   = {_s(data,3,3)!r}")
-    log.info(f"  pos  4-11 created     = {_s(data,4,11)!r}")
-    log.info(f"  pos 12-15 year        = {_s(data,12,15)!r}")
-    log.info(f"  pos 16-19 month_day   = {_s(data,16,19)!r}")
-    log.info(f"  pos 20-21 course      = {_s(data,20,21)!r}")
-    log.info(f"  pos 22-23 kai         = {_s(data,22,23)!r}")
-    log.info(f"  pos 24-25 day         = {_s(data,24,25)!r}")
-    log.info(f"  pos 26-27 race_num    = {_s(data,26,27)!r}")
-
-    # レース情報フィールドを探索（28 から）
-    log.info(f"  pos 28-71  field_28_71  = {_decode(data,28,71)!r}")
-    log.info(f"  pos 72-91  field_72_91  = {_decode(data,72,91)!r}")
-    log.info(f"  pos 92-111 field_92_111 = {_decode(data,92,111)!r}")
-    log.info(f"  pos112-115 field112_115 = {_s(data,112,115)!r}")
-    log.info(f"  pos116     field116     = {_s(data,116,116)!r}")
-    log.info(f"  pos117     field117     = {_s(data,117,117)!r}")
-    log.info(f"  pos118-121 field118_121 = {_s(data,118,121)!r}")
-    log.info(f"  pos122     field122     = {_s(data,122,122)!r}")
-    log.info(f"  pos123     field123     = {_s(data,123,123)!r}")
-    log.info(f"  pos124-125 field124_125 = {_s(data,124,125)!r}  ← 登録頭数?")
-    log.info(f"  pos126-127 field126_127 = {_s(data,126,127)!r}")
-
-    # 128 以降: 馬エントリーを試す (63バイト固定想定)
-    HORSE_SIZE_CANDIDATES = [62, 63, 64]
-    for horse_size in HORSE_SIZE_CANDIDATES:
-        n_horses = int(_s(data, 124, 125) or "0") if _s(data, 124, 125).isdigit() else 0
-        if n_horses == 0:
+def show_block(data: str, py_start: int, length: int) -> None:
+    """py_start (1-indexed) から length 文字をコンパクト表示。"""
+    line_buf = []
+    for i in range(length):
+        p = py_start + i
+        if p > len(data):
             break
-        log.info(f"\n  --- horse_size={horse_size} candidate (n_horses={n_horses}) ---")
-        for i in range(min(n_horses, 3)):
-            base = 127 + i * horse_size  # 0-indexed → 1-indexed offset
-            if base + horse_size > len(data):
-                log.info(f"    horse {i}: out of bounds (base={base})")
-                break
-            entry = data[base : base + horse_size]
-            try:
-                blood_reg = _s(entry, 1, 10)
-                name = entry[10:46].encode("latin-1").decode("cp932").strip()
-                sex_code = entry[46:47].strip()
-                age = entry[47:49].strip()
-                east_west = entry[49:50].strip()
-                trainer_code = entry[50:55].strip()
-                trainer_name = entry[55:63].encode("latin-1").decode("cp932").strip() if horse_size >= 63 else ""
-                log.info(
-                    f"    horse {i}: blood={blood_reg!r} name={name!r} "
-                    f"sex={sex_code!r} age={age!r} ew={east_west!r} "
-                    f"t_code={trainer_code!r} t_name={trainer_name!r}"
-                )
-            except Exception as e:
-                log.info(f"    horse {i}: parse error {e}")
-        break  # 1候補のみ試す
+        b = ord(data[p - 1])
+        if b < 0x80 and b >= 0x20:
+            line_buf.append(chr(b))
+        elif b < 0x80:
+            line_buf.append('_')
+        else:
+            line_buf.append('J')  # Japanese char
+    # 60文字ずつ改行
+    s = "".join(line_buf)
+    for j in range(0, len(s), 80):
+        log.info(f"  py{py_start+j:5d}: {s[j:j+80]!r}")
 
-    # 生バイト（先頭160バイト）
-    log.info(f"\n  raw latin-1 (first 200):")
-    raw_bytes = data[:200].encode("latin-1") if len(data) >= 200 else data.encode("latin-1")
-    # 10バイトずつ区切って表示
-    for start in range(0, len(raw_bytes), 10):
-        chunk = raw_bytes[start:start+10]
-        hex_str = " ".join(f"{b:02x}" for b in chunk)
-        try:
-            txt = chunk.decode("cp932", errors="replace")
-        except Exception:
-            txt = "?"
-        log.info(f"    [{start+1:3d}-{start+len(chunk):3d}] {hex_str:<29} | {txt!r}")
+
+def analyze(data: str, idx: int) -> None:
+    log.info(f"{'='*60}")
+    log.info(f"TK #{idx} len={len(data)} race={data[19:27]!r}")
+
+    # py600-1200 をコンパクト表示
+    log.info("  --- py600-1200 compact (. = Japanese char) ---")
+    show_block(data, 600, 600)
+
+    # blood_reg を 1-indexed 位置で全探索
+    log.info("  --- blood_reg 候補探索 (py 509-21000, pre-non-digit) ---")
+    found = []
+    for p in range(509, min(len(data) - 9, 5000)):
+        if is_blood_reg(data, p):
+            found.append(p)
+    log.info(f"  blood_reg positions: {found[:40]}")
+    if len(found) >= 2:
+        gaps = [found[i+1] - found[i] for i in range(min(len(found)-1, 40))]
+        log.info(f"  gaps: {gaps[:40]}")
+
+    # 最初の 5 頭分の blood_reg と horse_name を表示 (offset 50 から 18 chars)
+    log.info("  --- first 5 horses ---")
+    for i, p in enumerate(found[:5]):
+        blood_reg = data[p-1:p+9]
+        name_raw = data[p+49:p+67]  # horse_name at +50, 18 chars
+        name_stripped = name_raw.strip()
+        # 調教師名候補: +68 から
+        trainer_raw = data[p+67:p+85]
+        trainer_stripped = trainer_raw.strip()
+        log.info(
+            f"  horse {i}: py{p} blood_reg={blood_reg!r} "
+            f"name={name_stripped!r} trainer?={trainer_stripped!r}"
+        )
+
+    # tail
+    tail = data[-50:]
+    log.info(f"  tail[-50:] ords: {[ord(c) for c in tail]}")
 
 
 def main() -> None:
     if not JRAVAN_SID:
-        log.error("JRAVAN_SID 未設定")
         sys.exit(1)
 
     jv = win32com.client.Dispatch("JVDTLab.JVLink.1")
@@ -123,19 +112,12 @@ def main() -> None:
         sys.exit(1)
     log.info(f"JVInit OK rc={rc}")
 
-    # 2週間前からの TOKU データを差分取得 (option=1)
     from_time = (datetime.now() - timedelta(days=14)).strftime("%Y%m%d") + "000000"
-    log.info(f"JVOpen TOKU from={from_time} option=1")
-
     result = jv.JVOpen("TOKU", from_time, 1, 0, 0, "")
-    if isinstance(result, tuple):
-        rc, n_files = result[0], result[1]
-    else:
-        rc, n_files = result, "?"
+    rc = result[0] if isinstance(result, tuple) else result
+    n_files = result[1] if isinstance(result, tuple) else "?"
     log.info(f"JVOpen rc={rc} files={n_files}")
-
     if rc < 0:
-        log.error(f"JVOpen error rc={rc}")
         jv.JVClose()
         return
 
@@ -146,28 +128,20 @@ def main() -> None:
         if ret_code == 0:
             break
         if ret_code < -3:
-            log.warning(f"JVRead error rc={ret_code}")
             break
         if ret_code in (-1, -3):
             continue
         data = r[1] if len(r) > 1 else ""
-        if not data:
-            continue
-        rec_id = data[:2]
-        if rec_id != "TK":
+        if not data or data[:2] != "TK":
             continue
         tk_count += 1
-        if tk_count <= 5:
-            analyze_tk_record(data, tk_count)
-        if tk_count >= 5:
-            log.info("5件分析完了 → 終了")
+        if tk_count <= 1:
+            analyze(data, tk_count)
+        if tk_count >= 1:
             break
 
-    if tk_count == 0:
-        log.warning("TK レコードが見つかりませんでした。TOKU DataSpec に TK レコードがない可能性があります。")
-
     jv.JVClose()
-    log.info(f"完了: TK {tk_count} 件分析")
+    log.info(f"完了: TK {tk_count} 件")
 
 
 if __name__ == "__main__":
