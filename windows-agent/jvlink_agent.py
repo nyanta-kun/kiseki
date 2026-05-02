@@ -664,7 +664,8 @@ def run_realtime_monitor(jv) -> None:
     seen_results: set[str] = _load_seen_results(today)
 
     # ウォッチドッグ: JVRTOpenがCOMレベルでハングした場合の強制終了
-    WATCHDOG_TIMEOUT = 600  # 秒（10分間ループが進捗しない場合は異常とみなす）
+    # 600s は通常のレース間隔待機 (10-15分) で誤発火していた (2026-04-26 17:19/20:45 強制終了)
+    WATCHDOG_TIMEOUT = 1800  # 秒（30分間ループが進捗しない場合は異常とみなす）
     _last_heartbeat = [time.time()]
     _wd_lock = threading.Lock()
 

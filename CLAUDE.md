@@ -9,14 +9,20 @@ JRA-VAN Data Lab SDKからデータを直接取得し、独自の競馬指数を
 ```
 Windows (Parallels) - Python 32bit + pywin32
   └─ JV-Link SDK (COM) → 全データ取得・オッズ・リアルタイム通知
-  └─ HTTP POST → Mac側 FastAPI
+  └─ HTTP POST → VPS FastAPI (api.galloplab.com)
 
-Mac (Docker) - Python 3.12 + FastAPI
-  └─ 指数算出エンジン（14 Agents）
-  └─ REST API + WebSocket
-  └─ Next.js Frontend (PWA)
+VPS (160.251.234.83) - Docker
+  ├─ galloplab-backend-1  :8003  FastAPI (kiseki)
+  ├─ galloplab-frontend-1 :3002  Next.js (kiseki)
+  ├─ sekito-backend-1     :5000  Node.js (sekito)
+  └─ sekito-frontend-1    :8080  Vue.js  (sekito)
 
-VPS - PostgreSQL（既存DB / keiba スキーマ）
+VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
+  ├─ keiba.*     — JRA レース・指数・オッズ
+  ├─ sekito.*    — 穴ぐさ・外部指数（netkeiba/kichiuma）
+  │   ├─ sekito.v_races   — keiba.races の sekito 向けビュー
+  │   └─ sekito.v_entries — keiba.race_entries + odds の sekito 向けビュー
+  └─ chihou.*    — 地方競馬（UmaConn経由）
 ```
 
 ## 技術スタック
@@ -269,7 +275,7 @@ pkill -9 -f "prlctl exec"
 - **umaconn_agent realtimeモード 自動管理**（2026-04-18 実装・2026-04-28 安定化強化）
   - Windowsタスクスケジューラ（`kiseki-UmaConn-Realtime`）が毎朝9:00に自動起動
   - 自動停止: 最終レース発走+90分 or 21:30ハードストップ（先に来た方）
-  - ウォッチドッグ: NVRTOpenハングを600秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰
+  - ウォッチドッグ: NVRTOpenハングを600秒で検知 → `os._exit(1)` 強制終了 → 翌朝9:00に自動復帰（umaconn_agent）
   - タスク状態確認: `ssh windows-vm "schtasks /query /tn 'kiseki-UmaConn-Realtime' /fo list"`
 - **realtime 安定化のためのバックアップ・監視タスク**（2026-04-28 追加）
   - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
@@ -283,6 +289,7 @@ pkill -9 -f "prlctl exec"
     - 翌朝 9:00 起動が常にクリーンな状態になるための safety net（hung プロセスの跨ぎ防止）
   - `run_jvlink_realtime.vbs` / `run_umaconn_realtime.vbs` は冪等（同種 realtime が既に走っていればスキップ）。watchdog × daily 9:00 の二重発火で多重生成しない
   - **Why**: 4/27 の mitmproxy 停止由来 ProxyError 連発 + 4/26 jvlink_agent watchdog 600s誤発火事例（626/643秒）+ 2026-04-30 観測の jvlink_agent ゾンビ多重起動（4/28・4/29 の 9:00 起動分が残存し COM 競合）への対応
+  - **jvlink_agent WATCHDOG_TIMEOUT**: 600s → **1800s**（2026-05-02）。レース間の30分待機ループで誤発火していたため延長
   - **Windowsシステムプロキシは無効化済**（`netsh winhttp reset proxy` 完了）。再有効化する場合はバックエンドAPI到達不可になるので注意
 - **umaconn_agent の起動はデスクトップセッションが必須**（2026-04-21 確認）
   - NVDTLab.dll はシステムトレイアイコン初期化のためデスクトップセッションが必要
