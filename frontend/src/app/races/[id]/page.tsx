@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { OddsData, RaceEntry, RaceResult, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, Race } from "@/lib/api";
+import { OddsData, RaceEntry, RaceResult, SpecialRegistration, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, fetchSpecialRegistrations, Race } from "@/lib/api";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { computeJraBuySignal } from "@/lib/buySignal";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { EntriesTable } from "@/components/EntriesTable";
+import { SpecialRegistrationsTable } from "@/components/SpecialRegistrationsTable";
 import { auth } from "@/auth";
 
 const BACKEND_URL =
@@ -63,13 +64,14 @@ export default async function RacePage({ params }: { params: Params }) {
   const date = race?.date ?? "";
   const raceNumber = race?.race_number ?? 1;
 
-  // 残り5つを並列取得
-  const [allRaces, initialResults, initialOdds, indicesResp, entries] = await Promise.all([
+  // 残り6つを並列取得
+  const [allRaces, initialResults, initialOdds, indicesResp, entries, specialRegs] = await Promise.all([
     date ? fetchRacesByDate(date).catch(() => [] as Race[]) : Promise.resolve([] as Race[]),
     fetchResults(raceId).catch(() => [] as RaceResult[]),
     fetchOdds(raceId).catch(() => ({ win: {}, place: {} } as OddsData)),
     fetchIndices(raceId).catch(() => null),
     fetchEntries(raceId).catch(() => [] as RaceEntry[]),
+    fetchSpecialRegistrations(raceId).catch(() => [] as SpecialRegistration[]),
   ]);
 
   // SiteHeader 直下〜画面下端を fixed で占有。DOM の flex 高さ計算に依存しない。
@@ -94,6 +96,17 @@ export default async function RacePage({ params }: { params: Params }) {
           <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
             {entries.length > 0 ? (
               <EntriesTable entries={entries} odds={initialOdds} />
+            ) : specialRegs.length > 0 ? (
+              <div className="bg-white rounded-xl border border-blue-200 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
+                  <span aria-hidden="true">📋</span>
+                  <span>特別登録馬（出馬表確定前）</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  出馬表確定後に枠番・騎手・指数が表示されます
+                </p>
+                <SpecialRegistrationsTable entries={specialRegs} />
+              </div>
             ) : (
               <div className="py-8 text-center text-gray-400">
                 <p className="text-3xl mb-2"><span aria-hidden="true">📊</span></p>

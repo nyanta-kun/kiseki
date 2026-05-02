@@ -523,6 +523,51 @@ class EntryChange(Base):
     )
 
 
+class SpecialRegistration(Base):
+    """特別登録馬（出馬表確定前の候補馬リスト）"""
+
+    __tablename__ = "special_registrations"
+
+    __table_args__ = (
+        UniqueConstraint("jravan_race_id", "jravan_horse_code", name="uq_special_reg_race_horse"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    jravan_race_id: Mapped[str] = mapped_column(
+        String(16), index=True, nullable=False,
+        comment="JRA-VANレースID（16文字: YYYYMMDDCCKKDDNN）",
+    )
+    race_date: Mapped[str] = mapped_column(
+        String(8), index=True, nullable=False,
+        comment="開催日 YYYYMMDD",
+    )
+    course_code: Mapped[str] = mapped_column(String(2), nullable=False, comment="場コード")
+    race_number: Mapped[int] = mapped_column(Integer, nullable=False, comment="レース番号")
+    jravan_horse_code: Mapped[str] = mapped_column(
+        String(10), nullable=False, comment="血統登録番号（horses.jravan_code と対応）",
+    )
+    horse_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="馬名")
+    sex: Mapped[str | None] = mapped_column(String(4), comment="性別（牡/牝/騸）")
+    age: Mapped[int | None] = mapped_column(Integer, comment="馬齢")
+    east_west_code: Mapped[str | None] = mapped_column(String(1), comment="東西所属コード")
+    jravan_trainer_code: Mapped[str | None] = mapped_column(String(5), comment="調教師コード")
+    trainer_name: Mapped[str | None] = mapped_column(String(50), comment="調教師名略称")
+    # TKレコードのデータ区分 (1=新規, 2=変更)
+    data_type: Mapped[str | None] = mapped_column(String(1), comment="データ区分")
+    # レース名（TKレコードから補完）
+    race_name: Mapped[str | None] = mapped_column(String(200), comment="競走名（TKレコード由来）")
+    grade_code: Mapped[str | None] = mapped_column(String(1), comment="グレードコード")
+    distance: Mapped[int | None] = mapped_column(Integer, comment="距離（m）")
+    track_code: Mapped[str | None] = mapped_column(String(2), comment="トラックコード")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), comment="登録日時",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), comment="更新日時",
+    )
+
+
 class RacecourseFeatures(Base):
     """競馬場コース特徴マスタ"""
 

@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..db.models import OddsHistory, Race, RacePayout, RaceResult
+from ..db.models import OddsHistory, Race, RacePayout, RaceResult, SpecialRegistration
 from ..db.session import AsyncSessionLocal, get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
 from ..indices.composite import CompositeIndexCalculator
@@ -432,6 +432,94 @@ async def import_jvan_dm(
     await db.commit()
     logger.info(f"import_jvan_dm: updated={updated}, skipped={skipped}")
     return {"updated": updated, "skipped": skipped}
+
+
+class TokuRecord(BaseModel):
+    """TK レコード由来の特別登録馬 1 頭分。"""
+
+    jravan_race_id: str
+    race_date: str
+    course_code: str
+    race_number: int
+    jravan_horse_code: str
+    horse_name: str
+    sex: str | None = None
+    age: int | None = None
+    east_west_code: str | None = None
+    jravan_trainer_code: str | None = None
+    trainer_name: str | None = None
+    data_type: str | None = None
+    race_name: str | None = None
+    grade_code: str | None = None
+    distance: int | None = None
+    track_code: str | None = None
+
+
+class TokuImportRequest(BaseModel):
+    """特別登録馬インポートリクエスト。"""
+
+    entries: list[TokuRecord]
+
+
+@router.post("/toku")
+async def import_toku(
+    body: TokuImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """特別登録馬（TK レコード）を special_registrations テーブルに格納する。
+
+    Windows Agent の run_toku から呼び出される。
+    同一 (jravan_race_id, jravan_horse_code) は UPSERT で更新する。
+    """
+    if not body.entries:
+        return {"upserted": 0, "skipped": 0}
+
+    rows = [
+        {
+            "jravan_race_id": e.jravan_race_id,
+            "race_date": e.race_date,
+            "course_code": e.course_code,
+            "race_number": e.race_number,
+            "jravan_horse_code": e.jravan_horse_code,
+            "horse_name": e.horse_name,
+            "sex": e.sex,
+            "age": e.age,
+            "east_west_code": e.east_west_code,
+            "jravan_trainer_code": e.jravan_trainer_code,
+            "trainer_name": e.trainer_name,
+            "data_type": e.data_type,
+            "race_name": e.race_name,
+            "grade_code": e.grade_code,
+            "distance": e.distance,
+            "track_code": e.track_code,
+        }
+        for e in body.entries
+    ]
+
+    stmt = pg_insert(SpecialRegistration).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_special_reg_race_horse",
+        set_={
+            "horse_name": stmt.excluded.horse_name,
+            "sex": stmt.excluded.sex,
+            "age": stmt.excluded.age,
+            "east_west_code": stmt.excluded.east_west_code,
+            "jravan_trainer_code": stmt.excluded.jravan_trainer_code,
+            "trainer_name": stmt.excluded.trainer_name,
+            "data_type": stmt.excluded.data_type,
+            "race_name": stmt.excluded.race_name,
+            "grade_code": stmt.excluded.grade_code,
+            "distance": stmt.excluded.distance,
+            "track_code": stmt.excluded.track_code,
+            "updated_at": func.now(),
+        },
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    logger.info(f"import_toku: upserted={len(rows)}")
+    return {"upserted": len(rows), "skipped": 0}
 
 
 @changes_router.post("/notify")

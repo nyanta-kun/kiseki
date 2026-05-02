@@ -259,6 +259,23 @@ export async function fetchEntries(raceId: number): Promise<RaceEntry[]> {
   return get<RaceEntry[]>(`/races/${raceId}/entries`, { next: { revalidate: 30 } });
 }
 
+export type SpecialRegistration = {
+  jravan_horse_code: string;
+  horse_name: string;
+  sex: string | null;
+  age: number | null;
+  trainer_name: string | null;
+  race_name: string | null;
+  grade_code: string | null;
+  distance: number | null;
+  track_code: string | null;
+};
+
+/** 特別登録馬一覧（出馬表確定前、TOKU DataSpec）→ 5分キャッシュ */
+export async function fetchSpecialRegistrations(raceId: number): Promise<SpecialRegistration[]> {
+  return get<SpecialRegistration[]>(`/races/${raceId}/special`, { next: { revalidate: 300 } });
+}
+
 /** 最近開催日検索（カレンダーナビゲーション用）→ 30 秒キャッシュ */
 export async function fetchNearestDate(
   fromDate: string,

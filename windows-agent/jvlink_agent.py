@@ -551,6 +551,13 @@ def run_daily_fetch(jv) -> None:
     records = fetch_stored_data(jv, DATASPEC_RACE, yesterday, option=2, on_file_done=on_daily_file_done)
     logger.info(f"Daily fetch complete: 全体 {len(records)} 件")
 
+    # 特別登録馬（TOKU）取得（出馬表未確定レースの事前情報）
+    logger.info("=== 特別登録馬（TOKU）取得 ===")
+    try:
+        run_toku(jv, from_date=(datetime.now() - timedelta(days=3)).strftime("%Y%m%d"))
+    except Exception as e:
+        logger.warning(f"TOKU 取得エラー（スキップ）: {e}")
+
     # 翌日（出馬表）と当日の指数を自動算出トリガー
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d")
     today_str = datetime.now().strftime("%Y%m%d")
@@ -1211,6 +1218,87 @@ def run_recent(jv, from_year: int = 2023) -> None:
     )
 
 
+def run_toku(jv, from_date: str | None = None) -> None:
+    """特別登録馬（TOKU DataSpec / TK レコード）を取得してバックエンドへ送信する。
+
+    出馬表（RACE DataSpec）確定前に翌週・翌々週分の特別登録馬データを取得するために使用。
+    option=1（差分）で実行する。from_date 未指定の場合は 14 日前から取得する。
+
+    Args:
+        jv: JV-Link COMオブジェクト
+        from_date: 取得開始日 YYYYMMDD（省略時: 2週間前）
+    """
+    try:
+        from jvlink_parser import parse_tk  # noqa: PLC0415
+    except ImportError:
+        logger.error("jvlink_parser.parse_tk が利用できません。toku モードをスキップします。")
+        return
+
+    if from_date is None:
+        from_time = (datetime.now() - timedelta(days=14)).strftime("%Y%m%d") + "000000"
+    else:
+        from_time = from_date + "000000"
+
+    logger.info(f"=== TOKU MODE: 特別登録馬取得 (option=1, from={from_time}) ===")
+
+    total_entries = 0
+    total_races = 0
+
+    completed = load_completed_files(DATASPEC_TOKU)
+
+    def on_toku_file_done(filename: str, file_records: list[dict]) -> None:
+        nonlocal total_entries, total_races
+        if not file_records and filename not in completed:
+            mark_file_completed(DATASPEC_TOKU, filename)
+            completed.add(filename)
+            return
+        if filename in completed:
+            return
+
+        tk_records = [r for r in file_records if r.get("rec_id") == "TK"]
+        if not tk_records:
+            mark_file_completed(DATASPEC_TOKU, filename)
+            completed.add(filename)
+            return
+
+        all_entries: list[dict] = []
+        for rec in tk_records:
+            entries = parse_tk(rec.get("data", ""))
+            all_entries.extend(entries)
+            if entries:
+                total_races += 1
+
+        if all_entries:
+            ok = post_to_backend(
+                "/api/import/toku",
+                {"entries": all_entries},
+                BACKEND_URL,
+                API_KEY,
+            )
+            if ok:
+                total_entries += len(all_entries)
+                logger.info(f"  [{filename}] TK {len(tk_records)} レース / {len(all_entries)} 頭 → OK")
+            else:
+                logger.warning(f"  [{filename}] POST失敗 → pending保存")
+                save_pending("/api/import/toku", {"entries": all_entries}, PENDING_DIR)
+
+        mark_file_completed(DATASPEC_TOKU, filename)
+        completed.add(filename)
+
+    def toku_skip_fn(filename: str) -> bool:
+        return filename in completed
+
+    fetch_stored_data(
+        jv, DATASPEC_TOKU, from_time, option=1,
+        on_file_done=on_toku_file_done,
+        skip_file_fn=toku_skip_fn,
+        skip_cache=True,
+    )
+    logger.info(
+        f"TOKU 完了: {total_races} レース / {total_entries} 頭をDBへ反映"
+    )
+
+
 def run_fix_race(jv, from_date: str) -> None:
     """指定日以降のRACEデータを差分取得する（option=1: from_time有効、数分で完了）。
 
@@ -1394,9 +1482,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "retry", "wait"],
+        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "toku", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, toku=特別登録馬取得(出馬表確定前), wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1429,7 +1517,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "all")
+    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "toku", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1515,6 +1603,12 @@ def main() -> None:
         report_status("done", message=f"Odds prefetch completed: {args.fetch_date or 'tomorrow'}")
         jv.JVClose()
         logger.info("odds-prefetch モード完了。終了します。")
+    elif args.mode == "toku":
+        report_status("running", mode="toku", message=f"特別登録馬取得開始: from={args.from_date or '2週間前'}")
+        run_toku(jv, from_date=args.from_date)
+        report_status("done", message="特別登録馬取得完了")
+        jv.JVClose()
+        logger.info("toku モード完了。終了します。")
     elif args.mode == "all":
         run_daily_fetch(jv)
         report_status("idle", message="Daily fetch done. Entering command loop + realtime.")

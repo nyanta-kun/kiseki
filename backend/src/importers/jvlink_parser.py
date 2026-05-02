@@ -1138,6 +1138,131 @@ def parse_hr(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# TK レコード（特別登録馬, TOKU DataSpec）
+# -------------------------------------------------------------------
+
+# JVDF v4.9 TK レコード バイト位置（1-indexed）
+# ヘッダー: 1-27 は RA/SE と共通
+# -----------------------------------------------------------------------
+# pos  28- 71: 競走名本題 (44 bytes = 全角22文字)
+# pos  72- 91: 競走名略称 (20 bytes)
+# pos  92-111: 競走名9文字 (20 bytes)
+# pos 112-115: 重賞回次 (4 bytes)
+# pos 116:     グレードコード (1 byte)
+# pos 117:     グレードコード外国 (1 byte)
+# pos 118-121: 距離 (4 bytes)
+# pos 122:     トラックコード (1 byte)
+# pos 123:     コース区分 (1 byte)
+# pos 124-125: 登録頭数 (2 bytes)
+# pos 126-127: 出走頭数（特別登録時は "00"）(2 bytes)
+# pos 128+:    馬エントリー繰り返し (63 bytes/頭)
+#   +0 - +9  (10 bytes): 血統登録番号
+#   +10- +45 (36 bytes): 馬名
+#   +46      ( 1 byte ): 性別コード
+#   +47- +48 ( 2 bytes): 馬齢
+#   +49      ( 1 byte ): 東西所属コード
+#   +50- +54 ( 5 bytes): 調教師コード
+#   +55- +62 ( 8 bytes): 調教師名略称
+# -----------------------------------------------------------------------
+# NOTE: probe_toku.py を実行してバイト位置を確認後、ズレがあれば修正すること。
+
+_TK_HORSE_OFFSET = 128  # 馬エントリー開始位置 (1-indexed)
+_TK_HORSE_SIZE = 63     # 1頭あたりバイト数
+
+# probe_toku.py の出力で実際のオフセットを確認した場合にここを更新:
+_TK_PROBED = False  # True になったら probe 済み確認済みを意味する
+
+_SEX_MAP_TK = {"1": "牡", "2": "牝", "3": "騸", "4": "牝", "5": "騸"}
+
+
+def parse_tk(data: str) -> list[dict[str, Any]]:
+    """TKレコード（特別登録馬リスト）をパースし、馬エントリーのリストを返す。
+
+    JVDF v4.9 TOKU DataSpec の TK レコードを対象とする。
+    1 TK レコード = 1 レース分の登録馬全頭を含む。
+
+    Returns:
+        馬エントリーdict のリスト（0 件の場合は空リスト）。
+        各エントリーは特別登録馬 1 頭分の情報を持つ。
+
+    NOTE: probe_toku.py でバイト位置を確認してから本番投入すること。
+    """
+    if len(data) < 130:
+        logger.warning(f"TK record too short: {len(data)} bytes")
+        return []
+
+    try:
+        header = _parse_common_header(data)
+        if not header or header["rec_id"] != "TK":
+            return []
+        if header["data_type"] == "0":  # 削除レコード
+            return []
+
+        race_name = _decode(data, 28, 71)
+        grade_code = _s(data, 116, 116)
+        distance_raw = _s(data, 118, 121)
+        distance = int(distance_raw) if distance_raw.isdigit() and int(distance_raw) > 0 else None
+        track_code = _s(data, 122, 122)
+        reg_count_raw = _s(data, 124, 125)
+        reg_count = int(reg_count_raw) if reg_count_raw.isdigit() else 0
+
+        entries: list[dict[str, Any]] = []
+        for i in range(reg_count):
+            base = _TK_HORSE_OFFSET - 1 + i * _TK_HORSE_SIZE  # 0-indexed
+            if base + _TK_HORSE_SIZE > len(data):
+                logger.debug(f"TK horse {i}: out of bounds (base={base} len={len(data)})")
+                break
+
+            seg = data[base : base + _TK_HORSE_SIZE]
+            blood_reg = seg[0:10].strip()
+            if not blood_reg:
+                continue
+
+            try:
+                horse_name = seg[10:46].encode("latin-1").decode("cp932").strip()
+            except Exception:
+                horse_name = seg[10:46].strip()
+
+            sex_code = seg[46:47].strip()
+            age_raw = seg[47:49].strip()
+            age = int(age_raw) if age_raw.isdigit() and int(age_raw) > 0 else None
+            east_west = seg[49:50].strip() or None
+            trainer_code = seg[50:55].strip() or None
+
+            try:
+                trainer_name = seg[55:63].encode("latin-1").decode("cp932").strip() or None
+            except Exception:
+                trainer_name = seg[55:63].strip() or None
+
+            entries.append(
+                {
+                    "jravan_race_id": header["jravan_race_id"],
+                    "race_date": header["race_date"],
+                    "course_code": header["course_code"],
+                    "race_number": int(header["race_num"]) if header["race_num"].isdigit() else 0,
+                    "jravan_horse_code": blood_reg,
+                    "horse_name": horse_name,
+                    "sex": _SEX_MAP_TK.get(sex_code, sex_code) if sex_code else None,
+                    "age": age,
+                    "east_west_code": east_west,
+                    "jravan_trainer_code": trainer_code,
+                    "trainer_name": trainer_name,
+                    "data_type": header["data_type"],
+                    "race_name": race_name,
+                    "grade_code": grade_code or None,
+                    "distance": distance,
+                    "track_code": track_code or None,
+                }
+            )
+
+        return entries
+
+    except Exception as e:
+        logger.error(f"TK parse error: {e} | data[:30]={data[:30]!r}")
+        return []
+
+
+# -------------------------------------------------------------------
 # レコード種別ディスパッチ
 # -------------------------------------------------------------------
 

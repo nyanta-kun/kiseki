@@ -25,7 +25,7 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, Trainer
+from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, SpecialRegistration, Trainer
 from ..db.session import get_db
 from ..indices.buy_signal import jra_buy_signal, jra_horse_purchase_signal
 from ..indices.composite import COMPOSITE_VERSION
@@ -289,6 +289,22 @@ class EntryOut(BaseModel):
     weight_carried: float | None
     horse_weight: int | None
     weight_change: int | None
+
+    model_config = {"from_attributes": True}
+
+
+class SpecialRegOut(BaseModel):
+    """特別登録馬エントリーレスポンス。"""
+
+    jravan_horse_code: str
+    horse_name: str
+    sex: str | None
+    age: int | None
+    trainer_name: str | None
+    race_name: str | None
+    grade_code: str | None
+    distance: int | None
+    track_code: str | None
 
     model_config = {"from_attributes": True}
 
@@ -670,6 +686,42 @@ async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
             )
         )
     return result
+
+
+@router.get("/{race_id}/special")
+async def get_special_registrations(race_id: int, db: DbDep) -> list[SpecialRegOut]:
+    """レースの特別登録馬一覧を返す（出馬表確定前用）。
+
+    TOKU DataSpec の TK レコード由来。出馬表 (race_entries) が存在する場合でも返す。
+    """
+    race_result = await db.execute(select(Race).where(Race.id == race_id))
+    race = race_result.scalar_one_or_none()
+    if not race or not race.jravan_race_id:
+        raise HTTPException(status_code=404, detail="Race not found")
+
+    rows = await db.execute(
+        select(SpecialRegistration)
+        .where(SpecialRegistration.jravan_race_id == race.jravan_race_id)
+        .order_by(SpecialRegistration.horse_name)
+    )
+    return [SpecialRegOut.model_validate(r) for r in rows.scalars()]
+
+
+@router.get("/date/{date}/special")
+async def list_special_registrations_by_date(date: str, db: DbDep) -> list[SpecialRegOut]:
+    """指定日（YYYYMMDD）の特別登録馬一覧を返す。
+
+    まだ races テーブルにエントリーがないレース（出馬表未確定）でも参照できる。
+    """
+    if len(date) != 8 or not date.isdigit():
+        raise HTTPException(status_code=400, detail="date must be YYYYMMDD")
+
+    rows = await db.execute(
+        select(SpecialRegistration)
+        .where(SpecialRegistration.race_date == date)
+        .order_by(SpecialRegistration.race_number, SpecialRegistration.horse_name)
+    )
+    return [SpecialRegOut.model_validate(r) for r in rows.scalars()]
 
 
 @router.get("/{race_id}/indices")
