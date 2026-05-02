@@ -5,7 +5,7 @@ import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHisto
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndexBar } from "./IndexBar";
-import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
 
 type Props = {
   indices: HorseIndex[];
@@ -73,30 +73,6 @@ function DmSignalBadges({ signals }: { signals: string[] }) {
   );
 }
 
-/** 枠番 → 馬番のマッピング（n頭立て）JRA標準方式 */
-function horseNumToFrame(horseNum: number, totalHorses: number): number {
-  if (totalHorses <= 8) return horseNum;
-  const extra = totalHorses - 8;
-  const singleFrames = 8 - extra;
-  if (horseNum <= singleFrames) return horseNum;
-  const remaining = horseNum - singleFrames;
-  return singleFrames + Math.ceil(remaining / 2);
-}
-
-/** 枠番 → 背景・文字色クラス（JRA標準8色）*/
-function frameColorClass(frame: number): string {
-  switch (frame) {
-    case 1: return "bg-white border border-gray-400 text-gray-800";
-    case 2: return "bg-gray-800 text-white";
-    case 3: return "bg-red-600 text-white";
-    case 4: return "bg-blue-600 text-white";
-    case 5: return "bg-yellow-400 text-gray-900";
-    case 6: return "bg-green-600 text-white";
-    case 7: return "bg-orange-500 text-white";
-    case 8: return "bg-pink-500 text-white";
-    default: return "bg-gray-200 text-gray-700";
-  }
-}
 
 /** 外部指数穴馬候補の判定
  * シミュレーション結果: 以下の条件でROIプラス実績

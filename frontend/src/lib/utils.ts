@@ -147,3 +147,46 @@ export function raceClassShort(label: string | null): string | null {
   if (label.includes("未勝利")) return "未勝利";
   return null;
 }
+
+/**
+ * 馬番 → 枠番（n頭立て、JRA標準方式）
+ * - 8頭以下: 1馬1枠
+ * - 9〜16頭: 全枠1頭から始め、外枠から順に2頭目を追加
+ * - 17頭: 7枠が3頭、他は2頭
+ * - 18頭: 7枠・8枠が3頭ずつ、他は2頭
+ */
+export function horseNumToFrame(horseNum: number, totalHorses: number): number {
+  if (totalHorses <= 8) return horseNum;
+
+  let counts: number[];
+  if (totalHorses <= 16) {
+    const extra = totalHorses - 8;
+    counts = Array.from({ length: 8 }, (_, i) => (i + 1 > 8 - extra ? 2 : 1));
+  } else if (totalHorses === 17) {
+    counts = [2, 2, 2, 2, 2, 2, 3, 2];
+  } else {
+    counts = [2, 2, 2, 2, 2, 2, 3, 3];
+  }
+
+  let cum = 0;
+  for (let waku = 1; waku <= 8; waku++) {
+    cum += counts[waku - 1];
+    if (horseNum <= cum) return waku;
+  }
+  return 8;
+}
+
+/** 枠番 → 背景・文字色クラス（JRA標準8色）*/
+export function frameColorClass(frame: number): string {
+  switch (frame) {
+    case 1: return "bg-white border border-gray-400 text-gray-800";
+    case 2: return "bg-gray-800 text-white";
+    case 3: return "bg-red-600 text-white";
+    case 4: return "bg-blue-600 text-white";
+    case 5: return "bg-yellow-400 text-gray-900";
+    case 6: return "bg-green-600 text-white";
+    case 7: return "bg-orange-500 text-white";
+    case 8: return "bg-pink-500 text-white";
+    default: return "bg-gray-200 text-gray-700";
+  }
+}
