@@ -481,17 +481,19 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             )
         )
 
-    # --- スイートスポット判定 (v10 win_probability ベース) ---
-    for h in horses:
-        h.is_sweet_spot = chihou_is_sweet_spot(
-            win_odds=h.win_odds,
-            win_probability=h.win_probability,
-            course_name=course_name,
-        )
-    # k≥3 の混戦レースは取り消す
-    if sum(1 for h in horses if h.is_sweet_spot) >= 3:
+    # --- スイートスポット判定 (v10 win_probability ベース・v10 デプロイ後のみ有効) ---
+    # CHIHOU_COMPOSITE_VERSION == 10 のときだけ評価する。
+    # v9 win_probability は検証していないため v9 では常に False。
+    if CHIHOU_COMPOSITE_VERSION == 10:
         for h in horses:
-            h.is_sweet_spot = False
+            h.is_sweet_spot = chihou_is_sweet_spot(
+                win_odds=h.win_odds,
+                win_probability=h.win_probability,
+                course_name=course_name,
+            )
+        if sum(1 for h in horses if h.is_sweet_spot) >= 3:
+            for h in horses:
+                h.is_sweet_spot = False
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None

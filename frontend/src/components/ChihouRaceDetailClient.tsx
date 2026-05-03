@@ -351,7 +351,6 @@ export function ChihouRaceDetailClient({
                           "font-medium truncate block max-w-[140px]",
                           horse.is_sweet_spot ? "text-red-600" : "text-gray-800"
                         )}>
-                          {horse.is_sweet_spot && <span className="mr-0.5">★</span>}
                           {horse.horse_name}
                         </span>
                         {horse.external_consensus === 2 && (
