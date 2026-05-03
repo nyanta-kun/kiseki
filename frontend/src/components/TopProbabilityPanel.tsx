@@ -57,7 +57,7 @@ function TopProbTable({ horses, accentColor }: { horses: TopProbHorse[]; accentC
                 {h.course_name}
               </td>
               <td className="py-2 px-1 text-center text-gray-500">{h.race_number}R</td>
-              <td className="py-2 px-1 font-semibold text-gray-800">
+              <td className="py-2 px-1 font-semibold text-gray-800 whitespace-nowrap">
                 <span className="text-xs text-gray-400 mr-1">{h.horse_number}番</span>
                 {h.horse_name ?? "-"}
               </td>
@@ -103,7 +103,7 @@ export async function ChihouTopProbabilityPanel({ date }: { date: string }) {
           style={{ background: "var(--chihou-primary)" }}
           aria-hidden="true"
         />
-        本日の注目馬（勝率50%以上）
+        本日の注目馬（勝率50%以上・単勝2倍以上）
       </h2>
       <TopProbTable horses={horses} accentColor="var(--chihou-primary)" />
     </div>

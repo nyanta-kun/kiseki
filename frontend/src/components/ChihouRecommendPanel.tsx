@@ -151,7 +151,7 @@ function SweetSpotCard({ rec }: { rec: ChihouRecommendation }) {
         {rec.target_horses.map((h) => (
           <div key={h.horse_number} className="flex items-center gap-2 text-sm">
             <span className="text-xs text-gray-500">⑤{h.horse_number}</span>
-            <span className="font-bold text-red-700">{h.horse_name ?? "-"}</span>
+            <span className="font-bold text-gray-900">{h.horse_name ?? "-"}</span>
             {h.win_odds != null && (
               <span className="text-xs bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded">
                 単勝 {h.win_odds.toFixed(1)}倍

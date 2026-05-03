@@ -174,6 +174,7 @@ async def get_chihou_top_probability(
             ON rr.race_id = r.id AND rr.horse_id = re.horse_id
         WHERE r.date = :date
           AND ci.win_probability >= :threshold
+          AND (oh.odds IS NULL OR oh.odds >= 2.0)
         ORDER BY r.post_time ASC NULLS LAST, r.race_number ASC
     """)
     result = await db.execute(sql, {"date": date, "threshold": threshold})
