@@ -418,7 +418,14 @@ def fetch_stored_data(
             read_count += 1
             wait_count = 0
             if not skip_current:
-                buff = _normalize_jvread(r[1])
+                raw = r[1]
+                # TK レコード（特別登録馬, TOKU DataSpec）は JVRead が Unicode 文字列で返すため
+                # _normalize_jvread (cp932→latin-1) を通すと漢字が 2 文字に膨張してバイト位置が
+                # ずれる。TK のときだけ正規化をスキップして parse_tk の Unicode 前提に合わせる。
+                if raw[:2] == "TK":
+                    buff = raw
+                else:
+                    buff = _normalize_jvread(raw)
                 rec_id = buff[:2]
                 file_records.append({"rec_id": rec_id, "data": buff})
 
