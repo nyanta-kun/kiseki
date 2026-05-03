@@ -116,7 +116,7 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 10  # v10 LightGBM ensemble (2026-05-03)
+CHIHOU_COMPOSITE_VERSION = 9  # v10 は inference 実行後に切り替える
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
