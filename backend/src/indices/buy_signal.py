@@ -162,6 +162,48 @@ def is_sweet_spot(
 
 
 # ---------------------------------------------------------------------------
+# 地方競馬 スイートスポット（v10 LightGBM win_probability ベース）
+# ---------------------------------------------------------------------------
+# v10 バックテスト（2026-01〜04, 4ヶ月）:
+#   EV 1.0-1.2 全体 ROI 1.047 (n=471)
+#   コース別 EV 1.0-2.0 × 単勝≥10 でROI陽性:
+#     浦和 2.956 / 水沢 1.634 / 笠松 1.430 / 園田 1.460 / 佐賀 1.379 / 高知 1.118
+#   ROI陰性コース（除外）: 名古屋/大井/船橋/川崎/金沢
+
+CHIHOU_SWEET_SPOT_MIN_ODDS: float = 10.0
+CHIHOU_SWEET_SPOT_MIN_EV: float = 1.0
+CHIHOU_SWEET_SPOT_MAX_EV: float = 2.0
+
+# v10 バックテストでROI陽性だった競馬場
+_CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
+    "浦和", "水沢", "笠松", "園田", "佐賀", "高知",
+    "姫路", "盛岡", "門別",  # データ不足・暫定
+})
+
+
+def chihou_is_sweet_spot(
+    win_odds: float | None,
+    win_probability: float | None,
+    course_name: str | None,
+) -> bool:
+    """地方競馬スイートスポット判定（v10 win_probability ベース）。
+
+    条件:
+      1. 単勝オッズ ≥ 10.0
+      2. EV (v10 win_probability × win_odds) ∈ [1.0, 2.0]
+      3. ROI陽性競馬場（v10バックテスト実証）
+    """
+    if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
+        return False
+    if win_probability is None:
+        return False
+    if course_name not in _CHIHOU_SWEET_SPOT_COURSES:
+        return False
+    ev = float(win_probability) * float(win_odds)
+    return CHIHOU_SWEET_SPOT_MIN_EV <= ev <= CHIHOU_SWEET_SPOT_MAX_EV
+
+
+# ---------------------------------------------------------------------------
 # 地方競馬 購入指針
 # ---------------------------------------------------------------------------
 

@@ -347,7 +347,11 @@ export function ChihouRaceDetailClient({
                     {/* 馬名 + 外部コンセンサスバッジ */}
                     <td className="py-2 px-1 whitespace-normal">
                       <div className="flex items-center gap-1">
-                        <span className="text-gray-800 font-medium truncate block max-w-[140px]">
+                        <span className={cn(
+                          "font-medium truncate block max-w-[140px]",
+                          horse.is_sweet_spot ? "text-red-600" : "text-gray-800"
+                        )}>
+                          {horse.is_sweet_spot && <span className="mr-0.5">★</span>}
                           {horse.horse_name}
                         </span>
                         {horse.external_consensus === 2 && (

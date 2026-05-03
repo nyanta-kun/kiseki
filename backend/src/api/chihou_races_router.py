@@ -20,7 +20,7 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..db.session import get_db
-from ..indices.buy_signal import chihou_buy_signal
+from ..indices.buy_signal import chihou_buy_signal, chihou_is_sweet_spot
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
@@ -87,6 +87,9 @@ class ChihouHorseIndexOut(BaseModel):
     last_margin_index: float | None = None  # 前走着差指数（0-100, 接戦=高評価, v5以降）
     place_ev_index: float | None = None  # 複勝期待値指数（EV>1.0→50超、v3以降）
     external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
+    win_odds: float | None = None          # 単勝オッズ（最新）
+    ev: float | None = None               # 期待値 win_probability × win_odds
+    is_sweet_spot: bool = False           # v10スイートスポット該当馬（赤字表示）
 
 
 class ChihouRaceRanks(BaseModel):
@@ -428,18 +431,43 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             for hn in ext_dict:
                 consensus_map[hn] = (1 if hn == kichi_top else 0) + (1 if hn == netk_top else 0)
 
+    # --- 全馬の最新単勝オッズを一括取得 ---
+    odds_result = await db.execute(
+        sql_text("""
+            SELECT DISTINCT ON (combination)
+                combination, odds
+            FROM chihou.odds_history
+            WHERE race_id = :rid AND bet_type = 'win'
+            ORDER BY combination, fetched_at DESC
+        """),
+        {"rid": race_id},
+    )
+    win_odds_map: dict[str, float] = {
+        combo: float(odds_val)
+        for combo, odds_val in odds_result.fetchall()
+        if odds_val is not None
+    }
+
+    # --- レース情報（head_count・course_name）取得 ---
+    race_row = await db.execute(select(ChihouRace).where(ChihouRace.id == race_id))
+    race_obj = race_row.scalar_one_or_none()
+    course_name: str | None = race_obj.course_name if race_obj else None
+
     horses = []
     for row in rows:
         ci: ChihouCalculatedIndex = row[0]
         horse_name: str = row[1]
         horse_number: int | None = row[2]
+        win_prob = float(ci.win_probability) if ci.win_probability is not None else None
+        wo = win_odds_map.get(str(horse_number)) if horse_number is not None else None
+        ev = round(win_prob * wo, 4) if (win_prob is not None and wo is not None) else None
         horses.append(
             ChihouHorseIndexOut(
                 horse_id=ci.horse_id,
                 horse_number=horse_number,
                 horse_name=horse_name,
                 composite_index=float(ci.composite_index) if ci.composite_index is not None else 0.0,
-                win_probability=float(ci.win_probability) if ci.win_probability is not None else None,
+                win_probability=win_prob,
                 place_probability=float(ci.place_probability) if ci.place_probability is not None else None,
                 speed_index=float(ci.speed_index) if ci.speed_index is not None else None,
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
@@ -448,8 +476,22 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 last_margin_index=_adj_chihou(float(ci.last_margin_index) if ci.last_margin_index is not None else None, "last_margin_index"),
                 place_ev_index=_adj_chihou(float(ci.place_ev_index) if ci.place_ev_index is not None else None, "place_ev_index"),
                 external_consensus=consensus_map.get(horse_number) if (consensus_map and horse_number is not None) else None,
+                win_odds=wo,
+                ev=ev,
             )
         )
+
+    # --- スイートスポット判定 (v10 win_probability ベース) ---
+    for h in horses:
+        h.is_sweet_spot = chihou_is_sweet_spot(
+            win_odds=h.win_odds,
+            win_probability=h.win_probability,
+            course_name=course_name,
+        )
+    # k≥3 の混戦レースは取り消す
+    if sum(1 for h in horses if h.is_sweet_spot) >= 3:
+        for h in horses:
+            h.is_sweet_spot = False
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None
@@ -457,27 +499,10 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         ci_list = [h.composite_index for h in horses]
         wp_list = [h.win_probability for h in horses if h.win_probability is not None]
 
-        # レース情報（head_count）取得
-        race_row = await db.execute(select(ChihouRace).where(ChihouRace.id == race_id))
-        race_obj = race_row.scalar_one_or_none()
-
         conf = calculate_race_confidence(ci_list, race_obj.head_count if race_obj else None, wp_list or None)
 
-        # トップ馬の単勝オッズを取得
-        top_horse = horses[0]  # すでに composite_index 降順ソート済み
-        top_win_odds: float | None = None
-        if top_horse.horse_number is not None:
-            odds_row = await db.execute(
-                select(ChihouOddsHistory.odds)
-                .where(ChihouOddsHistory.race_id == race_id)
-                .where(ChihouOddsHistory.bet_type == "win")
-                .where(ChihouOddsHistory.combination == str(top_horse.horse_number))
-                .order_by(ChihouOddsHistory.fetched_at.desc())
-                .limit(1)
-            )
-            odds_val = odds_row.scalar()
-            if odds_val is not None:
-                top_win_odds = float(odds_val)
+        top_horse = horses[0]  # composite_index 降順ソート済み
+        top_win_odds: float | None = win_odds_map.get(str(top_horse.horse_number)) if top_horse.horse_number is not None else None
 
         ranks = ChihouRaceRanks(
             score=conf["score"],

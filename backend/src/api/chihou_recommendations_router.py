@@ -21,6 +21,7 @@ from ..config import settings
 from ..db.chihou_models import ChihouRace, ChihouRaceRecommendation
 from ..db.session import get_db
 from ..services.chihou_recommender import (
+    build_chihou_sweet_spot_recommendations,
     collect_chihou_recommendation_source,
     submit_chihou_recommendations,
     update_chihou_odds_decision,
@@ -49,6 +50,9 @@ class ChihouTargetHorse(BaseModel):
     place_probability: float | None
     finish_position: int | None = None
     external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
+    win_odds: float | None = None
+    place_odds: float | None = None
+    ev: float | None = None  # win_probability × win_odds
 
 
 class ChihouRaceInfo(BaseModel):
@@ -130,6 +134,53 @@ def _to_out(rec: ChihouRaceRecommendation, race: ChihouRace) -> ChihouRecommenda
         result_payout=rec.result_payout,
         result_updated_at=rec.result_updated_at,
         created_at=rec.created_at,
+    )
+
+
+def _chihou_sweet_spot_to_out(c: dict[str, Any]) -> ChihouRecommendationOut:
+    """build_chihou_sweet_spot_recommendations() の dict → ChihouRecommendationOut 変換。"""
+    race_info = ChihouRaceInfo(
+        race_id=c["race_id"],
+        course_name=c["course_name"],
+        race_number=c["race_number"],
+        race_name=c.get("race_name"),
+        post_time=c.get("post_time"),
+        surface=c.get("surface"),
+        distance=c.get("distance"),
+        head_count=c.get("head_count"),
+    )
+    target = [
+        ChihouTargetHorse(
+            horse_number=h["horse_number"],
+            horse_name=h.get("horse_name"),
+            composite_index=h.get("composite_index"),
+            win_probability=h.get("win_probability"),
+            place_probability=h.get("place_probability"),
+            finish_position=h.get("finish_position"),
+            win_odds=h.get("win_odds"),
+            place_odds=h.get("place_odds"),
+            ev=h.get("ev"),
+        )
+        for h in c["target_horses"]
+    ]
+    return ChihouRecommendationOut(
+        id=c["id"],
+        rank=c["rank"],
+        race=race_info,
+        bet_type=c["bet_type"],
+        target_horses=target,
+        reason=c["reason"],
+        confidence=c["confidence"],
+        odds_decision=None,
+        odds_decision_at=None,
+        odds_decision_reason=None,
+        snapshot_win_odds=c.get("snapshot_win_odds"),
+        snapshot_place_odds=c.get("snapshot_place_odds"),
+        snapshot_at=c.get("snapshot_at"),
+        result_correct=c.get("result_correct"),
+        result_payout=c.get("result_payout"),
+        result_updated_at=c.get("result_updated_at"),
+        created_at=c["created_at"],
     )
 
 
@@ -247,3 +298,24 @@ async def update_chihou_odds_decision_endpoint(
         raise HTTPException(status_code=403, detail="Forbidden")
     count = await update_chihou_odds_decision(db)
     return {"updated": count}
+
+
+@router.get("/sweet-spot", response_model=list[ChihouRecommendationOut])
+async def get_chihou_sweet_spot_recommendations(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+) -> list[ChihouRecommendationOut]:
+    """地方競馬スイートスポット自動推奨を返す（最新オッズ反映・都度算出）。
+
+    抽出条件: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性競馬場 ∧ k≤2。
+    v10 LightGBM win_probability ベース。DB 保存なし。
+    浦和ROI2.96/水沢1.63/笠松1.43/園田1.46/佐賀1.38/高知1.12 (2026-01〜04)。
+    """
+    try:
+        candidates = await build_chihou_sweet_spot_recommendations(db, date)
+    except Exception as e:
+        logger.error("地方スイートスポット生成失敗: %s", e)
+        return []
+    items = [_chihou_sweet_spot_to_out(c) for c in candidates]
+    items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
+    return items

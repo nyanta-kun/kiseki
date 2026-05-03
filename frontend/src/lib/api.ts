@@ -603,6 +603,11 @@ export type ChihouHorseIndex = {
   rotation_index: number | null;
   /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
   external_consensus: number | null;
+  win_odds: number | null;
+  /** 期待値 win_probability × win_odds */
+  ev: number | null;
+  /** v10スイートスポット: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース */
+  is_sweet_spot: boolean;
 };
 
 export type ChihouRaceRanks = {
@@ -673,6 +678,9 @@ export type ChihouTargetHorse = {
   finish_position: number | null;
   /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
   external_consensus: number | null;
+  win_odds: number | null;
+  place_odds: number | null;
+  ev: number | null;
 };
 
 export type ChihouRecommendation = {
@@ -703,9 +711,14 @@ export type ChihouRecommendation = {
   created_at: string;
 };
 
-/** 地方競馬 推奨一覧 → 30秒キャッシュ */
+/** 地方競馬 推奨一覧（Claude Routine）→ 30秒キャッシュ */
 export async function fetchChihouRecommendations(date: string): Promise<ChihouRecommendation[]> {
   return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { next: { revalidate: 30 } });
+}
+
+/** 地方競馬スイートスポット自動推奨（v10 LightGBM）→ 30秒キャッシュ */
+export async function fetchChihouSweetSpotRecommendations(date: string): Promise<ChihouRecommendation[]> {
+  return get<ChihouRecommendation[]>(`/chihou/recommendations/sweet-spot?date=${date}`, { next: { revalidate: 30 } });
 }
 
 // ---------------------------------------------------------------------------

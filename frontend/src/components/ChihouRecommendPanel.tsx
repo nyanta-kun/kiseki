@@ -1,4 +1,4 @@
-import { ChihouRecommendation, fetchChihouRecommendations } from "@/lib/api";
+import { ChihouRecommendation, fetchChihouRecommendations, fetchChihouSweetSpotRecommendations } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
@@ -127,19 +127,61 @@ function RecommendCard({ rec }: { rec: ChihouRecommendation }) {
   );
 }
 
-export async function ChihouRecommendPanel({ date }: { date: string }) {
-  let recs: ChihouRecommendation[] = [];
-  try {
-    recs = await fetchChihouRecommendations(date);
-  } catch {
-    return (
-      <div className="text-center py-8 text-gray-400 text-sm">
-        推奨データを取得できませんでした
+function SweetSpotCard({ rec }: { rec: ChihouRecommendation }) {
+  const surface = rec.race.surface === "grass" ? "芝" : "ダ";
+  return (
+    <div className="bg-white rounded-xl border border-red-100 shadow-sm p-4 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-bold bg-red-600 text-white px-2 py-0.5 rounded-full">
+          ★ SS#{rec.rank}
+        </span>
+        <BetTypeBadge betType={rec.bet_type} />
+        <ResultBadge correct={rec.result_correct} payout={rec.result_payout} />
+        <span className="ml-auto text-xs text-gray-400">EV最大 ≈ {Math.round(rec.confidence * 100)}%信頼</span>
       </div>
-    );
-  }
+      <Link href={`/chihou/races/${rec.race.race_id}`} className="flex items-baseline gap-2 hover:underline">
+        <span className="text-sm font-semibold text-gray-800">
+          {rec.race.course_name} {rec.race.race_number}R
+        </span>
+        <span className="text-xs text-gray-500">
+          {formatPostTime(rec.race.post_time)} / {rec.race.distance}m{surface}
+        </span>
+      </Link>
+      <div className="space-y-1">
+        {rec.target_horses.map((h) => (
+          <div key={h.horse_number} className="flex items-center gap-2 text-sm">
+            <span className="text-xs text-gray-500">⑤{h.horse_number}</span>
+            <span className="font-bold text-red-700">{h.horse_name ?? "-"}</span>
+            {h.win_odds != null && (
+              <span className="text-xs bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded">
+                単勝 {h.win_odds.toFixed(1)}倍
+              </span>
+            )}
+            {h.ev != null && (
+              <span className="text-xs bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold">
+                EV {h.ev.toFixed(2)}
+              </span>
+            )}
+            {h.finish_position != null && (
+              <span className="text-xs text-gray-400">{h.finish_position}着</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-  if (recs.length === 0) {
+export async function ChihouRecommendPanel({ date }: { date: string }) {
+  const [recs, sweetSpots] = await Promise.allSettled([
+    fetchChihouRecommendations(date),
+    fetchChihouSweetSpotRecommendations(date),
+  ]);
+
+  const recList: ChihouRecommendation[] = recs.status === "fulfilled" ? recs.value : [];
+  const sweetList: ChihouRecommendation[] = sweetSpots.status === "fulfilled" ? sweetSpots.value : [];
+
+  if (recList.length === 0 && sweetList.length === 0) {
     return (
       <div className="text-center py-8 text-gray-400">
         <p className="text-2xl mb-2">🏇</p>
@@ -150,13 +192,36 @@ export async function ChihouRecommendPanel({ date }: { date: string }) {
   }
 
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-gray-400 text-right">
-        ※ 毎日10:00に指数から自動生成。発走10分前にオッズ判断を更新。
-      </p>
-      {recs.map((rec) => (
-        <RecommendCard key={rec.id} rec={rec} />
-      ))}
+    <div className="space-y-4">
+      {/* スイートスポット自動推奨 */}
+      {sweetList.length > 0 && (
+        <section>
+          <h3 className="text-xs font-bold text-red-600 mb-2 flex items-center gap-1">
+            ★ スイートスポット自動推奨
+            <span className="font-normal text-gray-400">（v10 LGB / EV 1.0-2.0）</span>
+          </h3>
+          <div className="space-y-2">
+            {sweetList.map((rec) => (
+              <SweetSpotCard key={`ss-${rec.id}`} rec={rec} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Claude Routine 推奨 */}
+      {recList.length > 0 && (
+        <section>
+          <h3 className="text-xs font-bold text-gray-500 mb-2">Claude AI 推奨</h3>
+          <p className="text-xs text-gray-400 text-right mb-2">
+            ※ 毎日10:00に指数から自動生成。発走10分前にオッズ判断を更新。
+          </p>
+          <div className="space-y-3">
+            {recList.map((rec) => (
+              <RecommendCard key={rec.id} rec={rec} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
