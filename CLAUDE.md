@@ -686,6 +686,36 @@ API レスポンス: `HorseIndexOut.dm_signals: list[str]` (`/api/races/{id}/ind
 recommendations 用: `recommender.py` で各馬に付与し Claude プロンプトに渡す。
 ベース指数 (composite_index) はオッズ非依存のまま。シグナルはオッズ・人気・anagusa を組み合わせたフロント手前レイヤで生成する。
 
+## スイートスポット自動推奨（JRA `/api/recommendations`）
+
+2026-05-03 から JRA 推奨は **Claude.ai Routine 廃止** → 機械的なスイートスポット条件で都度算出。
+3年バックテスト (2023-05〜2026-05, 4,983 馬) で単ROI **1.188** / 複ROI 0.826 を実証。
+
+**抽出条件**:
+```
+単勝オッズ ≥ 10.0
+∧ 期待値 (win_probability × win_odds) ∈ [1.2, 5.0]
+∧ 何らかのバッジ (DM signals / purchase_signal / 穴ぐさA/B/C(1位以外) / 外部指数穴馬)
+∧ レース内該当頭数 k ≤ 2 (混戦レース除外)
+```
+
+**実装**:
+- `backend/src/indices/buy_signal.py::is_sweet_spot()` 判定本体
+- `backend/src/services/recommender.py::build_sweet_spot_recommendations()` レース集約
+- `backend/src/api/recommendations.py::get_recommendations` 都度算出（DB保存しない）
+- `backend/src/api/races.py` `HorseIndexOut.is_sweet_spot` をレスポンスに付与
+- `frontend/src/components/IndicesTable.tsx` 該当馬名を **赤字 + ★** 表示
+
+**重要な観察**:
+- EV ≥ 4 で実勝率がモデル予測の 4.8〜6.5倍下振れ → 上限 5.0 必須
+- EV 1.5〜2.0 帯は calibration 谷間（単ROI 0.717）
+- k=3 で単ROI 0.935 → k≤2 制約で混戦レース除外
+- k=2 で「指数上位のみ採用」は逆効果（人気でオッズ圧縮）
+
+**地方競馬は対象外**。地方は引き続き Claude.ai Routine 経由（chihou_recommendations）。
+
+詳細・運用パターン: memory `sweet_spot_recommendations.md`
+
 ## DB 自動バックアップ運用
 
 VPS PostgreSQL `hrdb` (4.96GB) を Mac に毎日 03:30 JST 自動バックアップ。
