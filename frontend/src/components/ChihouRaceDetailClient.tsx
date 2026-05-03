@@ -355,7 +355,7 @@ export function ChihouRaceDetailClient({
                         </span>
                         {horse.is_place_bet && (
                           <span className="text-[9px] bg-blue-100 text-blue-700 border border-blue-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
-                            複勝◎
+                            複穴
                           </span>
                         )}
                         {horse.external_consensus === 2 && (
