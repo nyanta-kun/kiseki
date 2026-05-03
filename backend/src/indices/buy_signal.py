@@ -164,10 +164,10 @@ def is_sweet_spot(
 # ---------------------------------------------------------------------------
 # 地方競馬 スイートスポット（v10 LightGBM win_probability ベース）
 # ---------------------------------------------------------------------------
-# v10 バックテスト（2026-01〜04, 4ヶ月）:
-#   EV 1.0-1.2 全体 ROI 1.047 (n=471)
+# v10 バックテスト（3年・南関4場 2023-05〜2026-05）:
+#   浦和 EV 1.0-1.5: ROI 1.375 (n=395, tr:1.183 va:0.962 te:3.098)
 #   コース別 EV 1.0-2.0 × 単勝≥10 でROI陽性:
-#     浦和 2.956 / 水沢 1.634 / 笠松 1.430 / 園田 1.460 / 佐賀 1.379 / 高知 1.118
+#     浦和 1.375 / 水沢 1.634 / 笠松 1.430 / 園田 1.460 / 佐賀 1.379 / 高知 1.118
 #   ROI陰性コース（除外）: 名古屋/大井/船橋/川崎/金沢
 
 CHIHOU_SWEET_SPOT_MIN_ODDS: float = 10.0
@@ -179,6 +179,12 @@ _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
     "浦和", "水沢", "笠松", "園田", "佐賀", "高知",
     "姫路", "盛岡", "門別",  # データ不足・暫定
 })
+
+# 断然人気複勝推奨の1番人気オッズ閾値
+# バックテスト: 断然人気<2.5倍 × EV 1.2-2.0 → 複勝率19.1%, 推定複勝ROI 1.067 (te:1.178)
+CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.5
+CHIHOU_PLACE_BET_MIN_EV: float = 1.2
+CHIHOU_PLACE_BET_MAX_EV: float = 2.0
 
 
 def chihou_is_sweet_spot(
@@ -201,6 +207,34 @@ def chihou_is_sweet_spot(
         return False
     ev = float(win_probability) * float(win_odds)
     return CHIHOU_SWEET_SPOT_MIN_EV <= ev <= CHIHOU_SWEET_SPOT_MAX_EV
+
+
+def chihou_is_place_bet(
+    win_odds: float | None,
+    win_probability: float | None,
+    fav_odds: float | None,
+) -> bool:
+    """地方競馬 断然人気レース穴馬 複勝推奨判定（v10 win_probability ベース）。
+
+    1頭断然人気がいるレースで、指数がEV陽性の穴馬を複勝推奨。
+    地方競馬では断然人気馬が1着固定でも、2〜3着に人気薄が入りやすい構造がある。
+
+    条件:
+      1. 単勝オッズ ≥ 10.0
+      2. EV (v10 win_probability × win_odds) ∈ [1.2, 2.0]
+      3. 1番人気単勝オッズ < 2.5（断然人気レース）
+
+    バックテスト（3年・南関4場）:
+      断然人気<2.5倍 × EV 1.2-2.0 → 複勝率 19.1%, 推定複勝ROI 1.067 (test:1.178)
+    """
+    if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
+        return False
+    if win_probability is None:
+        return False
+    if fav_odds is None or fav_odds >= CHIHOU_PLACE_BET_FAV_ODDS_MAX:
+        return False
+    ev = float(win_probability) * float(win_odds)
+    return CHIHOU_PLACE_BET_MIN_EV <= ev <= CHIHOU_PLACE_BET_MAX_EV
 
 
 # ---------------------------------------------------------------------------

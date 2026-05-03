@@ -608,6 +608,8 @@ export type ChihouHorseIndex = {
   ev: number | null;
   /** v10スイートスポット: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース */
   is_sweet_spot: boolean;
+  /** 断然人気複勝推奨: 単勝≥10 ∧ EV 1.2-2.0 ∧ 1番人気<2.5倍 */
+  is_place_bet: boolean;
 };
 
 export type ChihouRaceRanks = {

@@ -20,7 +20,7 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..db.session import get_db
-from ..indices.buy_signal import chihou_buy_signal, chihou_is_sweet_spot
+from ..indices.buy_signal import chihou_buy_signal, chihou_is_place_bet, chihou_is_sweet_spot
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
@@ -90,6 +90,7 @@ class ChihouHorseIndexOut(BaseModel):
     win_odds: float | None = None          # 単勝オッズ（最新）
     ev: float | None = None               # 期待値 win_probability × win_odds
     is_sweet_spot: bool = False           # v10スイートスポット該当馬（赤字表示）
+    is_place_bet: bool = False            # 断然人気複勝推奨（断然人気×EV1.2-2.0）
 
 
 class ChihouRaceRanks(BaseModel):
@@ -481,10 +482,10 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             )
         )
 
-    # --- スイートスポット判定 (v10 win_probability ベース・v10 デプロイ後のみ有効) ---
+    # --- スイートスポット・複勝推奨判定 (v10 win_probability ベース) ---
     # CHIHOU_COMPOSITE_VERSION == 10 のときだけ評価する。
-    # v9 win_probability は検証していないため v9 では常に False。
     if CHIHOU_COMPOSITE_VERSION == 10:
+        # 単勝推奨（スイートスポット）
         for h in horses:
             h.is_sweet_spot = chihou_is_sweet_spot(
                 win_odds=h.win_odds,
@@ -494,6 +495,19 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         if sum(1 for h in horses if h.is_sweet_spot) >= 3:
             for h in horses:
                 h.is_sweet_spot = False
+
+        # 断然人気複勝推奨: レース内最低単勝オッズ = 1番人気オッズの近似
+        fav_odds: float | None = min(win_odds_map.values()) if win_odds_map else None
+        for h in horses:
+            h.is_place_bet = chihou_is_place_bet(
+                win_odds=h.win_odds,
+                win_probability=h.win_probability,
+                fav_odds=fav_odds,
+            )
+        # 混戦レース（複勝推奨が4頭以上）は除外
+        if sum(1 for h in horses if h.is_place_bet) >= 4:
+            for h in horses:
+                h.is_place_bet = False
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None
