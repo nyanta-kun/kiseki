@@ -475,9 +475,6 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                     }
                   >
                     {horse.horse_name}
-                    {horse.is_sweet_spot && (
-                      <span className="ml-1 text-[10px] font-bold text-red-600">★</span>
-                    )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={cn("text-xs font-bold tabular-nums", indexColor(horse.composite_index))}>
