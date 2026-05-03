@@ -62,8 +62,14 @@ export function RaceSubHeader({
                 {race.post_time && (
                   <span className="ml-1.5 font-medium text-white/90">{formatPostTime(race.post_time)} 発走</span>
                 )}
-                {" · "}{surfaceIcon(race.surface)} {race.surface} {race.distance}m
-                {race.condition ? ` · ${race.condition}` : ""}
+                {race.is_special_only ? (
+                  <> · 特別登録{race.special_horse_count > 0 ? ` ${race.special_horse_count}頭` : ""}</>
+                ) : (
+                  <>
+                    {" · "}{surfaceIcon(race.surface)} {race.surface} {race.distance}m
+                    {race.condition ? ` · ${race.condition}` : ""}
+                  </>
+                )}
               </p>
             )}
           </div>

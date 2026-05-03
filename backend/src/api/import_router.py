@@ -20,6 +20,7 @@ from ..config import settings
 from ..db.models import OddsHistory, Race, RacePayout, RaceResult, SpecialRegistration
 from ..db.session import AsyncSessionLocal, get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
+from ..importers.jvlink_parser import COURSE_NAMES
 from ..indices.composite import CompositeIndexCalculator
 from ..services.recommender import update_results as update_recommendation_results
 from .races import _fetch_results_payload
@@ -496,6 +497,27 @@ async def import_toku(
         }
         for e in body.entries
     ]
+
+    # races テーブルに placeholder を作る（出馬表確定前のレースを一覧/詳細で引けるように）。
+    # 既存レコードあればスキップ。出馬表確定後の RA 取込で UPDATE される。
+    race_seen: dict[str, dict] = {}
+    for e in body.entries:
+        if e.jravan_race_id in race_seen:
+            continue
+        race_seen[e.jravan_race_id] = {
+            "jravan_race_id": e.jravan_race_id,
+            "date": e.race_date,
+            "course": e.course_code,
+            "course_name": COURSE_NAMES.get(e.course_code, e.course_code),
+            "race_number": e.race_number,
+            "race_name": e.race_name,
+            "surface": "",
+            "distance": e.distance or 0,
+        }
+    if race_seen:
+        race_stmt = pg_insert(Race).values(list(race_seen.values()))
+        race_stmt = race_stmt.on_conflict_do_nothing(index_elements=["jravan_race_id"])
+        await db.execute(race_stmt)
 
     stmt = pg_insert(SpecialRegistration).values(rows)
     stmt = stmt.on_conflict_do_update(

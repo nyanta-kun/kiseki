@@ -41,6 +41,8 @@ export type Race = {
   top_horse_name: string | null;     // 指数1位馬名（結果確定後）
   top_horse_finish: number | null;   // 指数1位馬の確定着順（取消はnull）
   result_confirmed: boolean;         // レース結果確定済み
+  is_special_only: boolean;          // 出馬表未確定で特別登録のみ
+  special_horse_count: number;       // 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
 };
 
 export type RaceResult = {

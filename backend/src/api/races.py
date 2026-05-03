@@ -283,6 +283,8 @@ class RaceOut(BaseModel):
     top_horse_name: str | None = None    # 指数1位馬名（結果確定後）
     top_horse_finish: int | None = None  # 指数1位馬の確定着順（取消の場合はnull）
     result_confirmed: bool = False       # レース結果確定済み（いずれかの馬に着順あり）
+    is_special_only: bool = False        # 出馬表未確定で特別登録のみ存在
+    special_horse_count: int = 0         # 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
 
     model_config = {"from_attributes": True}
 
@@ -626,6 +628,21 @@ async def list_races(
     # has_anagusa: sekito.anagusa のピック有無で判定（スコア閾値でなく実ピック）
     anagusa_picks_set = await _anagusa_picks_for_date(db, date)
 
+    # 特別登録馬の頭数（jravan_race_id 単位で COUNT）
+    special_count_map: dict[str, int] = {}
+    if races:
+        jravan_ids = [r.jravan_race_id for r in races if r.jravan_race_id]
+        if jravan_ids:
+            sp_rows = await db.execute(
+                select(
+                    SpecialRegistration.jravan_race_id,
+                    func.count(SpecialRegistration.jravan_horse_code).label("c"),
+                )
+                .where(SpecialRegistration.jravan_race_id.in_(jravan_ids))
+                .group_by(SpecialRegistration.jravan_race_id)
+            )
+            special_count_map = {jid: int(c) for jid, c in sp_rows.all()}
+
     result_list = []
     for r in races:
         out = RaceOut.model_validate(r)
@@ -633,6 +650,11 @@ async def list_races(
         sekito_code = _JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         out.result_confirmed = r.id in confirmed_race_ids
+        # 出馬表未確定（head_count NULL）かつ特別登録馬がある → 特別登録のみ
+        sp_count = special_count_map.get(r.jravan_race_id or "", 0)
+        if r.head_count is None and sp_count > 0:
+            out.is_special_only = True
+            out.special_horse_count = sp_count
         if r.id in race_top_horse_num:
             out.top_horse_number = race_top_horse_num[r.id]
         if r.id in top_horse_result_map:
@@ -664,7 +686,18 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
     race = result.scalar_one_or_none()
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
-    return RaceOut.model_validate(race)
+    out = RaceOut.model_validate(race)
+    # 特別登録のみ判定（出馬表未確定）
+    if race.head_count is None and race.jravan_race_id:
+        sp_count_row = await db.execute(
+            select(func.count(SpecialRegistration.jravan_horse_code))
+            .where(SpecialRegistration.jravan_race_id == race.jravan_race_id)
+        )
+        sp_count = int(sp_count_row.scalar_one())
+        if sp_count > 0:
+            out.is_special_only = True
+            out.special_horse_count = sp_count
+    return out
 
 
 @router.get("/{race_id}/entries")
