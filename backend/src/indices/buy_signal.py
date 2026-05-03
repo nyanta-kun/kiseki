@@ -181,8 +181,8 @@ _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
 })
 
 # 断然人気複勝推奨の1番人気オッズ閾値
-# バックテスト: 断然人気<2.5倍 × EV 1.2-2.0 → 複勝率19.1%, 推定複勝ROI 1.067 (te:1.178)
-CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.5
+# バックテスト: 断然人気<2.0倍 × EV 1.2-2.0 → 複勝率20.6%, 推定複勝ROI 1.067 (n=4969/3yr)
+CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.0
 CHIHOU_PLACE_BET_MIN_EV: float = 1.2
 CHIHOU_PLACE_BET_MAX_EV: float = 2.0
 
@@ -222,10 +222,10 @@ def chihou_is_place_bet(
     条件:
       1. 単勝オッズ ≥ 10.0
       2. EV (v10 win_probability × win_odds) ∈ [1.2, 2.0]
-      3. 1番人気単勝オッズ < 2.5（断然人気レース）
+      3. 1番人気単勝オッズ < 2.0（断然人気レース）
 
-    バックテスト（3年・南関4場）:
-      断然人気<2.5倍 × EV 1.2-2.0 → 複勝率 19.1%, 推定複勝ROI 1.067 (test:1.178)
+    バックテスト（3年・全地方）:
+      断然人気<2.0倍 × EV 1.2-2.0 → 複勝率 20.6%, 推定複勝ROI 1.067 (n=4969)
     """
     if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
         return False
