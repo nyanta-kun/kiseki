@@ -588,11 +588,11 @@ async def build_sweet_spot_recommendations(
             select(RaceResult).where(RaceResult.race_id.in_(race_ids_all))
         )
         # race_id × horse_id → {finish_position, win_odds, place_odds}
-        for rr in rr_result.scalars().all():
-            results_map[(rr.race_id, rr.horse_id)] = {
-                "finish_position": rr.finish_position,
-                "win_odds": float(rr.win_odds) if rr.win_odds is not None else None,
-                "place_odds": float(rr.place_odds) if rr.place_odds is not None else None,
+        for rr_obj in rr_result.scalars().all():
+            results_map[(rr_obj.race_id, rr_obj.horse_id)] = {
+                "finish_position": rr_obj.finish_position,
+                "win_odds": float(rr_obj.win_odds) if rr_obj.win_odds is not None else None,
+                "place_odds": float(rr_obj.place_odds) if rr_obj.place_odds is not None else None,
             }
 
     # race_id × horse_number → horse_id の解決マップ (RaceEntry から)

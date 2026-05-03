@@ -528,7 +528,7 @@ class SpecialRegistration(Base):
 
     __tablename__ = "special_registrations"
 
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("jravan_race_id", "jravan_horse_code", name="uq_special_reg_race_horse"),
         {"schema": SCHEMA},
     )
