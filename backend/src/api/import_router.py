@@ -457,9 +457,18 @@ class TokuRecord(BaseModel):
 
 
 class TokuImportRequest(BaseModel):
-    """特別登録馬インポートリクエスト。"""
+    """特別登録馬インポートリクエスト。
 
-    entries: list[TokuRecord]
+    entries: 通常 POST（jvlink_agent の on_toku_file_done から送信）
+    records: retry_pending が {"records": batch} 形式で再送する場合に使用
+    """
+
+    entries: list[TokuRecord] | None = None
+    records: list[TokuRecord] | None = None
+
+    @property
+    def all_entries(self) -> list[TokuRecord]:
+        return self.entries or self.records or []
 
 
 @router.post("/toku")
@@ -473,7 +482,8 @@ async def import_toku(
     Windows Agent の run_toku から呼び出される。
     同一 (jravan_race_id, jravan_horse_code) は UPSERT で更新する。
     """
-    if not body.entries:
+    entries = body.all_entries
+    if not entries:
         return {"upserted": 0, "skipped": 0}
 
     rows = [
@@ -495,7 +505,7 @@ async def import_toku(
             "distance": e.distance,
             "track_code": e.track_code,
         }
-        for e in body.entries
+        for e in entries
     ]
 
     # races テーブルに placeholder を作る（出馬表確定前のレースを一覧/詳細で引けるように）。
@@ -515,7 +525,7 @@ async def import_toku(
     }
 
     race_seen: dict[str, dict] = {}
-    for e in body.entries:
+    for e in entries:
         if e.jravan_race_id in race_seen:
             continue
         race_seen[e.jravan_race_id] = {

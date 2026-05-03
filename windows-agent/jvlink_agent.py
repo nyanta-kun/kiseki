@@ -1287,7 +1287,7 @@ def run_toku(jv, from_date: str | None = None) -> None:
                 logger.info(f"  [{filename}] TK {len(tk_records)} レース / {len(all_entries)} 頭 → OK")
             else:
                 logger.warning(f"  [{filename}] POST失敗 → pending保存")
-                save_pending("/api/import/toku", {"entries": all_entries}, PENDING_DIR)
+                save_pending("/api/import/toku", all_entries, PENDING_DIR)
 
         mark_file_completed(DATASPEC_TOKU, filename)
         completed.add(filename)
