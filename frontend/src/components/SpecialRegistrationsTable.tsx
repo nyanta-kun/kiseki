@@ -10,7 +10,7 @@ const TRACK_LABELS: Record<string, string> = {
 
 const GRADE_LABELS: Record<string, string> = {
   "A": "G1", "B": "G2", "C": "G3", "D": "J.G1", "E": "J.G2", "F": "J.G3",
-  "L": "L", "OP": "OP", "E": "OP特",
+  "L": "L", "OP": "OP",
 };
 
 type Props = {

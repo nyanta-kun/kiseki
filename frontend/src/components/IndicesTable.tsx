@@ -463,8 +463,21 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
                 {/* 馬名・指数バー */}
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm text-gray-900 truncate">
+                  <div
+                    className={cn(
+                      "font-semibold text-sm truncate",
+                      horse.is_sweet_spot ? "text-red-600" : "text-gray-900"
+                    )}
+                    title={
+                      horse.is_sweet_spot
+                        ? `スイートスポット該当: 単勝≥10 ∧ 期待値 ${horse.expected_value?.toFixed(2)} ∧ バッジあり (3年バックテスト 単ROI 1.182)`
+                        : undefined
+                    }
+                  >
                     {horse.horse_name}
+                    {horse.is_sweet_spot && (
+                      <span className="ml-1 text-[10px] font-bold text-red-600">★</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className={cn("text-xs font-bold tabular-nums", indexColor(horse.composite_index))}>

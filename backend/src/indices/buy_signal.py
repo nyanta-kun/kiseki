@@ -99,6 +99,69 @@ def jra_horse_purchase_signal(
 
 
 # ---------------------------------------------------------------------------
+# スイートスポット判定（単勝≥10 ∧ 期待値 1.2-5.0 ∧ バッジあり）
+# ---------------------------------------------------------------------------
+# 3年バックテスト (2023-05〜2026-05, 4,983 馬) で実証:
+#   勝率 5.66% / 単ROI 1.182 / 複ROI 0.836
+#
+# EV ≥ 4 はモデル予測勝率と実勝率の乖離が 4.8〜6.5 倍と大きく外れ値リスクが高い。
+# EV ≤ 1.2 もモデル較正に難があり期待値プラスが取れない。
+# EV 1.2〜5.0 のレンジ内 + 何らかのバッジで安定的にプラス収支。
+
+SWEET_SPOT_MIN_ODDS: float = 10.0
+SWEET_SPOT_MIN_EV: float = 1.2
+SWEET_SPOT_MAX_EV: float = 5.0
+
+
+def is_sweet_spot(
+    win_odds: float | None,
+    win_probability: float | None,
+    composite_rank: int | None,
+    dm_signals: list[str] | None,
+    purchase_signal: str | None,
+    anagusa_rank: str | None,
+    nb_course_rank: int | None,
+    nb_ave_rank: int | None,
+    km_rank: int | None,
+) -> bool:
+    """スイートスポット該当判定。
+
+    条件:
+      1. 単勝オッズ ≥ 10.0
+      2. 期待値 (win_probability × win_odds) ∈ [1.2, 5.0]
+      3. 何らかのバッジあり:
+         - DM signals 1個以上 / 購入シグナル (super_buy/buy/watch)
+         - 穴ぐさ A/B/C ピック (composite 1位以外)
+         - 外部指数穴馬 (composite 4位以下 ∧ (NB course=1 or (NB ave≤2 ∧ KM=1)))
+    """
+    if win_odds is None or win_odds < SWEET_SPOT_MIN_ODDS:
+        return False
+    if win_probability is None:
+        return False
+    ev = float(win_probability) * float(win_odds)
+    if ev < SWEET_SPOT_MIN_EV or ev > SWEET_SPOT_MAX_EV:
+        return False
+
+    # バッジ判定
+    if dm_signals:
+        return True
+    if purchase_signal in ("super_buy", "buy", "watch"):
+        return True
+    if (
+        anagusa_rank in ("A", "B", "C")
+        and composite_rank is not None
+        and composite_rank >= 2
+    ):
+        return True
+    if composite_rank is not None and composite_rank >= 4:
+        if nb_course_rank == 1:
+            return True
+        if nb_ave_rank is not None and nb_ave_rank <= 2 and km_rank == 1:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # 地方競馬 購入指針
 # ---------------------------------------------------------------------------
 

@@ -87,6 +87,12 @@ export type HorseIndex = {
   purchase_signal: "super_buy" | "buy" | "watch" | null;
   // 表示補助: composite_index のレース内ランク (1=1位)
   composite_rank: number | null;
+  // 期待値 (= win_probability × win_odds)。オッズ未取得時は null
+  expected_value: number | null;
+  // スイートスポット該当フラグ
+  // 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
+  // 3年バックテスト 単ROI 1.182 / 複ROI 0.836
+  is_sweet_spot: boolean;
 };
 
 export type OddsData = {

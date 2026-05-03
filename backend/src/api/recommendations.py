@@ -28,6 +28,7 @@ from ..config import settings
 from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
 from ..services.recommender import (
+    build_sweet_spot_recommendations,
     collect_recommendation_source,
     submit_recommendations,
     update_results,
@@ -162,29 +163,72 @@ class SubmitRequest(BaseModel):
     recommendations: list[SubmitItem]
 
 
+def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
+    """build_sweet_spot_recommendations() が返す dict を RecommendationOut に変換。"""
+    race_info = RaceInfo(
+        race_id=c["race_id"],
+        course_name=c["course_name"],
+        race_number=c["race_number"],
+        race_name=c.get("race_name"),
+        post_time=c.get("post_time"),
+        surface=c.get("surface"),
+        distance=c.get("distance"),
+        grade=c.get("grade"),
+        head_count=c.get("head_count"),
+    )
+    target = [
+        TargetHorse(
+            horse_number=h["horse_number"],
+            horse_name=h.get("horse_name"),
+            composite_index=h.get("composite_index"),
+            win_probability=h.get("win_probability"),
+            place_probability=h.get("place_probability"),
+            ev_win=h.get("ev_win"),
+            ev_place=h.get("ev_place"),
+            win_odds=h.get("win_odds"),
+            place_odds=h.get("place_odds"),
+            finish_position=h.get("finish_position"),
+        )
+        for h in c["target_horses"]
+    ]
+    return RecommendationOut(
+        id=c["id"],
+        rank=c["rank"],
+        race=race_info,
+        bet_type=c["bet_type"],
+        target_horses=target,
+        snapshot_win_odds=c.get("snapshot_win_odds"),
+        snapshot_place_odds=c.get("snapshot_place_odds"),
+        snapshot_at=c.get("snapshot_at"),
+        reason=c["reason"],
+        confidence=c["confidence"],
+        result_correct=c.get("result_correct"),
+        result_payout=c.get("result_payout"),
+        result_updated_at=c.get("result_updated_at"),
+        created_at=c["created_at"],
+    )
+
+
 @router.get("", response_model=list[RecommendationOut])
 async def get_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
 ) -> list[RecommendationOut]:
-    """指定日の推奨レース・馬券を返す（DB保存済みのもの）。
+    """指定日のスイートスポット自動推奨を返す（最新オッズ反映）。
 
-    返却順は発走時刻順（post_time 昇順）。rank フィールドは推奨度順のまま保持。
-    Claude定期エージェントが未提出の場合は空リストを返す。
+    抽出条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ バッジあり ∧ レース内 k≤2。
+    呼び出しごとに最新オッズで再判定するため、出走直前まで反映される。
+    Claude.ai Routine の AI 推奨は使わない（DBの race_recommendations は無視）。
+
+    返却順は発走時刻順（post_time 昇順）。rank は最大EV降順で連番。
+    3年バックテスト実証: 単ROI 1.188 / 複ROI 0.826。
     """
-    result = await db.execute(
-        select(RaceRecommendation).where(RaceRecommendation.date == date)
-    )
-    recs = result.scalars().all()
-    if not recs:
+    try:
+        candidates = await build_sweet_spot_recommendations(db, date)
+    except Exception as e:
+        logger.error("sweet spot 推奨生成失敗: %s", e)
         return []
-
-    race_ids = [rec.race_id for rec in recs]
-    races_result = await db.execute(select(Race).where(Race.id.in_(race_ids)))
-    races_map: dict[int, Race] = {r.id: r for r in races_result.scalars().all()}
-
-    items = [_to_out(rec, races_map[rec.race_id]) for rec in recs if rec.race_id in races_map]
-    # 発走時刻順にソート（post_time が None は末尾）
+    items = [_sweet_spot_to_out(c) for c in candidates]
     items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
     return items
 

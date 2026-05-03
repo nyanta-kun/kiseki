@@ -25,9 +25,19 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import CalculatedIndex, Horse, Jockey, OddsHistory, Race, RaceEntry, RaceResult, SpecialRegistration, Trainer
+from ..db.models import (
+    CalculatedIndex,
+    Horse,
+    Jockey,
+    OddsHistory,
+    Race,
+    RaceEntry,
+    RaceResult,
+    SpecialRegistration,
+    Trainer,
+)
 from ..db.session import get_db
-from ..indices.buy_signal import jra_buy_signal, jra_horse_purchase_signal
+from ..indices.buy_signal import is_sweet_spot, jra_buy_signal, jra_horse_purchase_signal
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
@@ -381,6 +391,12 @@ class HorseIndexOut(BaseModel):
     purchase_signal: str | None = None
     # 表示補助: composite_index のレース内ランク (1=1位)
     composite_rank: int | None = None
+    # 期待値 (= win_probability × win_odds)。オッズ未取得時は None
+    expected_value: float | None = None
+    # スイートスポット該当（3年バックテスト 単ROI 1.182 / 複ROI 0.836）
+    # 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
+    # （DM signals / purchase_signal / 穴ぐさA/B/C(1位以外) / 外部指数穴馬）
+    is_sweet_spot: bool = False
 
 
 class OddsOut(BaseModel):
@@ -877,11 +893,35 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         top2_t3_gap = horses[1].composite_index - horses[2].composite_index
     for i, h in enumerate(horses):
         h.composite_rank = i + 1
+        wo = win_odds_map.get(h.horse_number) if h.horse_number is not None else None
         h.purchase_signal = jra_horse_purchase_signal(
             rank=i + 1,
             top2_t3_gap=top2_t3_gap if i + 1 <= 2 else None,
-            win_odds=win_odds_map.get(h.horse_number) if h.horse_number is not None else None,
+            win_odds=wo,
         )
+        # 期待値 (win_probability × win_odds) — オッズ未取得時は None
+        if wo is not None and h.win_probability is not None:
+            h.expected_value = round(float(h.win_probability) * float(wo), 4)
+        # スイートスポット判定 (単勝≥10 ∧ 期待値 1.2-5.0 ∧ バッジあり)
+        h.is_sweet_spot = is_sweet_spot(
+            win_odds=wo,
+            win_probability=h.win_probability,
+            composite_rank=h.composite_rank,
+            dm_signals=h.dm_signals,
+            purchase_signal=h.purchase_signal,
+            anagusa_rank=h.anagusa_rank,
+            nb_course_rank=h.nb_course_rank,
+            nb_ave_rank=h.nb_ave_rank,
+            km_rank=h.km_rank,
+        )
+
+    # 多頭該当(≥3頭)の混戦レースは sweet spot 判定を取り消す
+    # 3年バックテスト: k=3 で単ROI 0.935 / k≥3 累積で ROI 改善幅 +0.006
+    # → k≤2 のレースのみ赤字判定を残す
+    sweet_count = sum(1 for h in horses if h.is_sweet_spot)
+    if sweet_count >= 3:
+        for h in horses:
+            h.is_sweet_spot = False
 
     wp_list = [h.win_probability for h in horses if h.win_probability is not None]
     conf_data = calculate_race_confidence(
