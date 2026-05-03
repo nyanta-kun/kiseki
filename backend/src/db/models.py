@@ -560,6 +560,13 @@ class SpecialRegistration(Base):
     grade_code: Mapped[str | None] = mapped_column(String(1), comment="グレードコード")
     distance: Mapped[int | None] = mapped_column(Integer, comment="距離（m）")
     track_code: Mapped[str | None] = mapped_column(String(2), comment="トラックコード")
+    expected_jockey_name: Mapped[str | None] = mapped_column(
+        String(50),
+        comment="想定騎手名（netkeiba shutuba.html スクレイピング由来。出馬表確定前の参考値）",
+    )
+    expected_jockey_fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="想定騎手取得タイムスタンプ",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="登録日時",
     )
