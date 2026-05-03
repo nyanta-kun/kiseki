@@ -1275,9 +1275,6 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
 
             trainer_name = seg[39:43].replace("　", "").strip() or None
 
-            weight_str = seg[43:45].strip()
-            # 斤量自体は special_registrations では未保持だが、将来の拡張用に保持しておく
-
             entries.append(
                 {
                     "jravan_race_id": header["jravan_race_id"],
