@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
+import { LiveStreamButton } from "@/components/LiveStreamButton";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 const HIDE_HEADER_PATHS = new Set(["/", "/login"]);
@@ -52,6 +53,7 @@ export function SiteHeader({ isAdmin }: Props) {
           </span>
         )}
         <div className="flex-1 min-w-0" />
+        <LiveStreamButton />
         <AppNav isAdmin={isAdmin} />
       </div>
     </header>
