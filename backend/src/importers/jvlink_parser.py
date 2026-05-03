@@ -1156,7 +1156,17 @@ def parse_hr(data: str) -> dict[str, Any] | None:
 #  23-24: day
 #  25-26: race_number
 #  32-119: レース名（全角 88 chars、　 パディング）
-#  120以降: フォニティック英字レース名、その他メタデータ
+#  120以降: フォニティック英字レース名（120 chars 程度パディング）、略称
+#
+# レースメタ領域（0-indexed 固定 ASCII 位置）:
+#  505     : グレードコード (A=G1, B=G2, C=G3, L=L, E=条件/特別, F=Jpn1 等)
+#  506-507 : 馬齢条件コード（12=3歳, 14=4歳以上 等、コード表2005）
+#  508     : 1 char（用途未確定）
+#  509-511 : 馬種条件コード等（用途未確定）
+#  512-526 : 賞金等（15 chars）
+#  527-530 : 距離 (m, 4 ASCII digits)
+#  531-532 : トラックコード（コード表2009: 10-19=芝, 20-29=ダート, 51-=障害）
+#  533     : コース区分（A/B/C/D = 内回り/外回り等の識別）
 #
 # 馬エントリーセクション（0-indexed 547 から、48 chars/頭、可変件数）:
 #   0- 1: 馬番 (2 ASCII digits, "00" or 非数字なら終了)
@@ -1170,9 +1180,17 @@ def parse_hr(data: str) -> dict[str, Any] | None:
 #  39-42: 訓練師名 (4 Japanese Unicode chars, 　 パディング)
 #  43-44: 斤量 (2 ASCII digits, kg)
 #  45-47: 末尾 3 chars
+#
+# 騎手情報は TK には含まれない（特別登録時点では騎手未確定）。
 
 _TK_HORSE_SECTION_START = 547  # 0-indexed Python char 位置（probe 2026-05-04 実測）
 _TK_ENTRY_SIZE = 48             # 1 馬エントリー = 48 chars
+
+_TK_GRADE_POS = 505
+_TK_DISTANCE_POS = 527  # 4 chars
+_TK_TRACK_POS = 531     # 2 chars
+
+_TK_VALID_GRADES = set("ABCDEFGHL")  # 仕様上のグレードコード文字
 
 _SEX_MAP_TK = {"1": "牡", "2": "牝", "3": "騸"}
 
@@ -1198,8 +1216,32 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
         if header["data_type"] == "0":  # 削除レコード
             return []
 
-        # レース名: 0-indexed 32 から 88 chars、　 パディング除去
-        race_name = data[32:120].replace("　", "").strip() or None
+        # レース名: pos 32 から「メイン名 60 chars」+「副題 28 chars」の 2 フィールド構造。
+        # 副題があれば「メイン名（副題）」形式で結合。
+        main_name = data[32:92].replace("　", "").strip()
+        sub_name = data[92:120].replace("　", "").strip()
+        if main_name:
+            race_name = f"{main_name}（{sub_name}）" if sub_name else main_name
+        else:
+            race_name = None
+
+        # レースメタ領域（固定 ASCII 位置）
+        race_grade_code = None
+        race_distance: int | None = None
+        race_track_code = None
+        if len(data) > _TK_TRACK_POS + 1:
+            grade_ch = data[_TK_GRADE_POS]
+            if grade_ch in _TK_VALID_GRADES:
+                race_grade_code = grade_ch
+            distance_str = data[_TK_DISTANCE_POS : _TK_DISTANCE_POS + 4]
+            if distance_str.isdigit():
+                d = int(distance_str)
+                # 0 や明らかに不正な値は除外
+                if 800 <= d <= 4500:
+                    race_distance = d
+            track_str = data[_TK_TRACK_POS : _TK_TRACK_POS + 2]
+            if track_str.isdigit():
+                race_track_code = track_str
 
         entries: list[dict[str, Any]] = []
         i = 0
@@ -1251,9 +1293,9 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
                     "trainer_name": trainer_name,
                     "data_type": header["data_type"],
                     "race_name": race_name,
-                    "grade_code": None,
-                    "distance": None,
-                    "track_code": None,
+                    "grade_code": race_grade_code,
+                    "distance": race_distance,
+                    "track_code": race_track_code,
                 }
             )
             i += 1

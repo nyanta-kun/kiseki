@@ -500,6 +500,20 @@ async def import_toku(
 
     # races テーブルに placeholder を作る（出馬表確定前のレースを一覧/詳細で引けるように）。
     # 既存レコードあればスキップ。出馬表確定後の RA 取込で UPDATE される。
+    # surface は track_code から推定（10-19=芝, 20-29=ダート, 51-=障害）。
+    def _surface_from_track(tc: str | None) -> str:
+        if not tc or len(tc) < 1:
+            return ""
+        t = tc[0]
+        return "芝" if t == "1" else ("ダ" if t == "2" else ("障" if t == "5" else ""))
+
+    # TK の grade_code (1 char) → races.grade 表示用文字列
+    _GRADE_LABEL = {
+        "A": "G1", "B": "G2", "C": "G3",
+        "D": "J.G1", "E": None, "F": "J.G3",  # E は条件/特別なので grade NULL
+        "L": "Listed",
+    }
+
     race_seen: dict[str, dict] = {}
     for e in body.entries:
         if e.jravan_race_id in race_seen:
@@ -511,8 +525,9 @@ async def import_toku(
             "course_name": COURSE_NAMES.get(e.course_code, e.course_code),
             "race_number": e.race_number,
             "race_name": e.race_name,
-            "surface": "",
+            "surface": _surface_from_track(e.track_code),
             "distance": e.distance or 0,
+            "grade": _GRADE_LABEL.get(e.grade_code or "", None),
         }
     if race_seen:
         race_stmt = pg_insert(Race).values(list(race_seen.values()))
