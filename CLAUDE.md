@@ -685,3 +685,41 @@ tail -f /Users/ysuzuki/GitHub/kiseki/logs/dm_auto_fetch.log
 API レスポンス: `HorseIndexOut.dm_signals: list[str]` (`/api/races/{id}/indices`)
 recommendations 用: `recommender.py` で各馬に付与し Claude プロンプトに渡す。
 ベース指数 (composite_index) はオッズ非依存のまま。シグナルはオッズ・人気・anagusa を組み合わせたフロント手前レイヤで生成する。
+
+## DB 自動バックアップ運用
+
+VPS PostgreSQL `hrdb` (4.96GB) を Mac に毎日 03:30 JST 自動バックアップ。
+詳細・リストア手順は `docs/backup-restore.md` 参照。
+
+- 実行スクリプト: `scripts/backup_hrdb.sh`
+- launchd: `~/Library/LaunchAgents/com.kiseki.db-backup.plist`
+- 保存先: `~/kiseki-backups/{daily,weekly,monthly}/`
+- 世代: 日次 7・週次 4・月次 12 (合計 ≒ 12〜15GB)
+- ログ: `~/kiseki-backups/backup.log` / `logs/db_backup_launchd.log`
+- 圧縮: `pg_dump -Fc -Z 9` で 4.96GB → 516MB (10.4%)
+
+### 状態確認
+
+```bash
+launchctl list com.kiseki.db-backup           # LastExitStatus 確認
+ls -lh ~/kiseki-backups/daily/                # 直近 dump
+tail -30 ~/kiseki-backups/backup.log          # 実行ログ
+```
+
+### 手動実行
+
+```bash
+/Users/ysuzuki/GitHub/kiseki/scripts/backup_hrdb.sh
+```
+
+### リストア時の注意
+
+VPS は PostgreSQL 16.13 / dump 形式 v1.15。Mac の `pg_restore` は **16 系必須** (`/opt/homebrew/opt/postgresql@16/bin/pg_restore`)。14 系では `unsupported version` エラー。
+
+### Mac スリープ時
+
+`StartCalendarInterval` 単独では Mac スリープ中の発火はスキップされる。深夜稼働必須なら:
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00
+```
