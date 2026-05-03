@@ -28,7 +28,7 @@ from ..db.chihou_models import (
     ChihouRaceRecommendation,
     ChihouRaceResult,
 )
-from ..indices.buy_signal import chihou_is_sweet_spot
+from ..indices.buy_signal import chihou_is_sweet_spot, chihou_low_odds_trust_level
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 
 logger = logging.getLogger(__name__)
@@ -655,6 +655,14 @@ async def build_chihou_sweet_spot_recommendations(
     now = datetime.now(tz=UTC)
     candidates: list[dict[str, Any]] = []
 
+    def _attach_finish(h: dict[str, Any], race_id: int) -> None:
+        rr: ChihouRaceResult | None = results_map.get((race_id, h["horse_number"]))
+        h["finish_position"] = rr.finish_position if rr else None
+        if rr and rr.win_odds is not None:
+            h["win_odds"] = float(rr.win_odds)
+        if rr and rr.place_odds is not None:
+            h["place_odds"] = float(rr.place_odds)
+
     for race in races:
         horse_rows = indices_map.get(race.id, [])
         if not horse_rows:
@@ -664,100 +672,161 @@ async def build_chihou_sweet_spot_recommendations(
         if not win_odds:
             continue  # オッズ未取得レースは対象外
 
-        sweet_horses = []
+        sweet_horses: list[dict[str, Any]] = []
+        low_trusted: list[dict[str, Any]] = []
+        low_untrusted: list[dict[str, Any]] = []
+
         for ci, entry, horse in horse_rows:
             hn = entry.horse_number
             wo = win_odds.get(str(hn)) if hn is not None else None
             win_prob = float(ci.win_probability) if ci.win_probability is not None else None
+            base = {
+                "horse_number": hn,
+                "horse_name": horse.name,
+                "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
+                "win_probability": round(win_prob, 4) if win_prob is not None else None,
+                "place_probability": round(float(ci.place_probability), 4) if ci.place_probability else None,
+                "win_odds": wo,
+                "place_odds": place_odds.get(str(hn)) if hn is not None else None,
+                "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
+            }
             if chihou_is_sweet_spot(wo, win_prob, race.course_name):
-                sweet_horses.append({
-                    "horse_number": hn,
-                    "horse_name": horse.name,
-                    "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
-                    "win_probability": round(win_prob, 4) if win_prob is not None else None,
-                    "place_probability": round(float(ci.place_probability), 4) if ci.place_probability else None,
-                    "win_odds": wo,
-                    "place_odds": place_odds.get(str(hn)) if hn is not None else None,
-                    "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
-                })
+                sweet_horses.append({**base})
+                continue
+            level = chihou_low_odds_trust_level(wo)
+            if level == "trusted":
+                low_trusted.append({**base})
+            elif level == "untrusted":
+                low_untrusted.append({**base})
 
-        # k≥3 の混戦は除外
-        if not sweet_horses or len(sweet_horses) >= 3:
-            continue
+        # ---- 高オッズ穴狙い（既存）: k≥3 の混戦は除外 ----
+        if sweet_horses and len(sweet_horses) < 3:
+            for h in sweet_horses:
+                _attach_finish(h, race.id)
+            max_ev = max((h["ev"] or 0.0) for h in sweet_horses)
+            any_finished = any(h["finish_position"] is not None for h in sweet_horses)
+            result_correct: bool | None = None
+            result_payout: int | None = None
+            if any_finished:
+                winning = [h for h in sweet_horses if h["finish_position"] == 1]
+                if winning:
+                    result_correct = True
+                    w = winning[0].get("win_odds")
+                    result_payout = int(round(float(w) * 100)) if w is not None else None
+                else:
+                    result_correct = False
+                    result_payout = 0
 
-        # 確定結果で finish_position を付与
-        for h in sweet_horses:
-            rr: ChihouRaceResult | None = results_map.get((race.id, h["horse_number"]))
-            h["finish_position"] = rr.finish_position if rr else None
-            if rr and rr.win_odds is not None:
-                h["win_odds"] = float(rr.win_odds)
-            if rr and rr.place_odds is not None:
-                h["place_odds"] = float(rr.place_odds)
+            confidence = 0.65 if max_ev >= 1.8 else (0.60 if max_ev >= 1.4 else 0.55)
+            reason = (
+                "地方v10スイートスポット：単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース。"
+                "（v10バックテスト浦和ROI2.96/水沢1.63/笠松1.43/園田1.46/佐賀1.38/高知1.12） "
+                + " / ".join(
+                    f"{h['horse_number']}番{h.get('horse_name') or ''}"
+                    f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
+                    for h in sweet_horses
+                )
+            )
+            candidates.append({
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "head_count": race.head_count,
+                "bet_type": "win",
+                "category": "sweet_spot",
+                "target_horses": sweet_horses,
+                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                "snapshot_at": now,
+                "reason": reason,
+                "confidence": confidence,
+                "max_ev": max_ev,
+                "result_correct": result_correct,
+                "result_payout": result_payout,
+                "result_updated_at": now if any_finished else None,
+                "created_at": now,
+            })
 
-        max_ev = max((h["ev"] or 0.0) for h in sweet_horses)
+        # ---- 低オッズ本命（信頼/不信頼）: 各カテゴリ最低オッズ馬1頭のみ採用 ----
+        for category, horses, base_reason in (
+            (
+                "low_odds_trusted",
+                low_trusted,
+                "信頼できる本命：単勝<1.5（バックテスト的中率約70%）。"
+                "ROIは構造的に1.0未満（控除率分の損失帯）— 予想の参考表示。",
+            ),
+            (
+                "low_odds_untrusted",
+                low_untrusted,
+                "信頼できない本命：1.5≤単勝<2.0（バックテスト的中率約48%）。"
+                "ROIは0.81。半分は外れる帯。",
+            ),
+        ):
+            if not horses:
+                continue
+            horses.sort(key=lambda h: (h.get("win_odds") or 9.99))
+            chosen = horses[0]
+            _attach_finish(chosen, race.id)
+            picked = [chosen]
+            any_finished = chosen["finish_position"] is not None
+            result_correct = None
+            result_payout = None
+            if any_finished:
+                if chosen["finish_position"] == 1:
+                    result_correct = True
+                    w = chosen.get("win_odds")
+                    result_payout = int(round(float(w) * 100)) if w is not None else None
+                else:
+                    result_correct = False
+                    result_payout = 0
+            badge = (
+                f"{chosen['horse_number']}番{chosen.get('horse_name') or ''}"
+                f"(単{(chosen.get('win_odds') or 0):.1f}"
+                f"/v10勝率{((chosen.get('win_probability') or 0) * 100):.0f}%)"
+            )
+            candidates.append({
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "head_count": race.head_count,
+                "bet_type": "win",
+                "category": category,
+                "target_horses": picked,
+                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                "snapshot_at": now,
+                "reason": f"{base_reason} {badge}",
+                # confidence は信頼=0.7 / 不信頼=0.45 の固定値（バックテストの hit 率に近い値）
+                "confidence": 0.70 if category == "low_odds_trusted" else 0.45,
+                "max_ev": chosen.get("ev") or 0.0,
+                "result_correct": result_correct,
+                "result_payout": result_payout,
+                "result_updated_at": now if any_finished else None,
+                "created_at": now,
+            })
 
-        # 結果判定
-        any_finished = any(h["finish_position"] is not None for h in sweet_horses)
-        result_correct: bool | None = None
-        result_payout: int | None = None
-        if any_finished:
-            winning = [h for h in sweet_horses if h["finish_position"] == 1]
-            if winning:
-                result_correct = True
-                w = winning[0].get("win_odds")
-                result_payout = int(round(float(w) * 100)) if w is not None else None
-            else:
-                result_correct = False
-                result_payout = 0
-
-        # confidence: EV ベース
-        if max_ev >= 1.8:
-            confidence = 0.65
-        elif max_ev >= 1.4:
-            confidence = 0.60
-        else:
-            confidence = 0.55
-
-        badge_parts = [
-            f"{h['horse_number']}番{h.get('horse_name') or ''}"
-            f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
-            for h in sweet_horses
-        ]
-        reason = (
-            "地方v10スイートスポット：単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース。"
-            "（v10バックテスト浦和ROI2.96/水沢1.63/笠松1.43/園田1.46/佐賀1.38/高知1.12） "
-            + " / ".join(badge_parts)
-        )
-
-        candidates.append({
-            "race_id": race.id,
-            "course_name": race.course_name,
-            "race_number": race.race_number,
-            "race_name": race.race_name,
-            "post_time": race.post_time,
-            "surface": race.surface,
-            "distance": race.distance,
-            "head_count": race.head_count,
-            "bet_type": "win",
-            "target_horses": sweet_horses,
-            "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
-            "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
-            "snapshot_at": now,
-            "reason": reason,
-            "confidence": confidence,
-            "max_ev": max_ev,
-            "result_correct": result_correct,
-            "result_payout": result_payout,
-            "result_updated_at": now if any_finished else None,
-            "created_at": now,
-        })
-
-    # EV 降順で rank 付与、id は -race_id (DB 主キーと衝突しない負値)
-    candidates.sort(key=lambda x: -x["max_ev"])
+    # category × max_ev 降順で rank 付与
+    _CATEGORY_ORDER = {"sweet_spot": 0, "low_odds_trusted": 1, "low_odds_untrusted": 2}
+    candidates.sort(key=lambda x: (_CATEGORY_ORDER.get(x.get("category", ""), 99), -x["max_ev"]))
     for i, c in enumerate(candidates, start=1):
         c["rank"] = i
-        c["id"] = -c["race_id"]
+        c["id"] = -c["race_id"] * 10 - _CATEGORY_ORDER.get(c.get("category", ""), 0)
         c.pop("max_ev", None)
 
-    logger.info("地方スイートスポット推奨: %s → %d 件", date, len(candidates))
+    logger.info(
+        "地方スイートスポット推奨: %s → 計%d件 (sweet_spot=%d, low_trusted=%d, low_untrusted=%d)",
+        date,
+        len(candidates),
+        sum(1 for c in candidates if c.get("category") == "sweet_spot"),
+        sum(1 for c in candidates if c.get("category") == "low_odds_trusted"),
+        sum(1 for c in candidates if c.get("category") == "low_odds_untrusted"),
+    )
     return candidates

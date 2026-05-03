@@ -238,6 +238,36 @@ def chihou_is_place_bet(
 
 
 # ---------------------------------------------------------------------------
+# 地方競馬 低オッズ本命（単勝<2.0）信頼度分割
+# ---------------------------------------------------------------------------
+# バックテスト（3年・全地方・約16,000サンプル）:
+#   単勝 < 1.5         : hit 69.7% / 単勝ROI 0.85 (n=6,715) → 信頼できる
+#   1.5 ≤ 単勝 < 2.0   : hit 47.7% / 単勝ROI 0.81 (n=9,606) → 信頼できない
+#   index_rank の影響は小さく（オッズと相関）、オッズ単一軸の方がデータ的に明瞭。
+#   ROI は構造的に常に 1.0 未満（控除率分の損失帯）= 推奨は「予想の参考」として扱う。
+
+CHIHOU_LOW_ODDS_MAX: float = 2.0
+CHIHOU_LOW_ODDS_TRUST_THRESHOLD: float = 1.5
+
+
+def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
+    """地方競馬 単勝<2.0 帯の本命を信頼度で分類する。
+
+    Returns:
+        "trusted"   — 単勝 < 1.5（バックテスト的中率 約 70%）
+        "untrusted" — 1.5 ≤ 単勝 < 2.0（同 約 48%）
+        None        — 範囲外
+    """
+    if win_odds is None:
+        return None
+    if win_odds < CHIHOU_LOW_ODDS_TRUST_THRESHOLD:
+        return "trusted"
+    if win_odds < CHIHOU_LOW_ODDS_MAX:
+        return "untrusted"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 地方競馬 購入指針
 # ---------------------------------------------------------------------------
 

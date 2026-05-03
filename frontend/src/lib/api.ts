@@ -581,11 +581,9 @@ export async function fetchOddsData(
 }
 
 export async function fetchRecommendations(date: string): Promise<Recommendation[]> {
-  const res = await fetch(`${BASE_URL}/recommendations?date=${date}`, {
-    cache: "no-store",
+  return get<Recommendation[]>(`/recommendations?date=${date}`, {
+    next: { revalidate: 60 },
   });
-  if (!res.ok) throw new Error(`fetchRecommendations failed: ${res.status}`);
-  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -687,6 +685,12 @@ export type ChihouTargetHorse = {
   ev: number | null;
 };
 
+/** 地方競馬スイートスポット推奨カテゴリ。 */
+export type ChihouRecommendCategory =
+  | "sweet_spot"          // 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
+  | "low_odds_trusted"    // 信頼できる本命 (単勝<1.5)
+  | "low_odds_untrusted"; // 信頼できない本命 (1.5≤単勝<2.0)
+
 export type ChihouRecommendation = {
   id: number;
   rank: number;
@@ -700,6 +704,7 @@ export type ChihouRecommendation = {
     distance: number | null;
   };
   bet_type: string;
+  category: ChihouRecommendCategory | null;
   target_horses: ChihouTargetHorse[];
   reason: string;
   confidence: number;
@@ -715,14 +720,29 @@ export type ChihouRecommendation = {
   created_at: string;
 };
 
-/** 地方競馬 推奨一覧（Claude Routine）→ 30秒キャッシュ */
+export type ChihouCategorySummary = {
+  n_total: number;
+  n_settled: number;
+  n_hits: number;
+  hit_rate: number | null;
+  win_roi: number | null;
+};
+
+export type ChihouSweetSpotResponse = {
+  items: ChihouRecommendation[];
+  summaries: Partial<Record<ChihouRecommendCategory, ChihouCategorySummary>>;
+};
+
+/** 地方競馬 推奨一覧（Claude Routine）→ 60秒キャッシュ */
 export async function fetchChihouRecommendations(date: string): Promise<ChihouRecommendation[]> {
-  return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { next: { revalidate: 30 } });
+  return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { next: { revalidate: 60 } });
 }
 
-/** 地方競馬スイートスポット自動推奨（v10 LightGBM）→ 30秒キャッシュ */
-export async function fetchChihouSweetSpotRecommendations(date: string): Promise<ChihouRecommendation[]> {
-  return get<ChihouRecommendation[]>(`/chihou/recommendations/sweet-spot?date=${date}`, { next: { revalidate: 30 } });
+/** 地方競馬スイートスポット自動推奨（v10 LightGBM）→ 60秒キャッシュ
+ *  3カテゴリ（高オッズ穴 / 信頼本命 / 不信頼本命）+ カテゴリ別当日集計を返す。
+ */
+export async function fetchChihouSweetSpotRecommendations(date: string): Promise<ChihouSweetSpotResponse> {
+  return get<ChihouSweetSpotResponse>(`/chihou/recommendations/sweet-spot?date=${date}`, { next: { revalidate: 60 } });
 }
 
 // ---------------------------------------------------------------------------

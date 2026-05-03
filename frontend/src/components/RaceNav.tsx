@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import type { Race } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -52,8 +51,6 @@ export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
   const prevRace = currentIdx > 0 ? sortedRaces[currentIdx - 1] : null;
   const nextRace = currentIdx < sortedRaces.length - 1 ? sortedRaces[currentIdx + 1] : null;
 
-  const router = useRouter();
-
   return (
     <div className="border-t border-white/10">
       <div className="max-w-3xl mx-auto">
@@ -63,6 +60,7 @@ export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
           {prevRace ? (
             <Link
               href={`${basePath}/${prevRace.id}`}
+              prefetch={true}
               className={`flex-shrink-0 flex items-center gap-0.5 ${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-[11px] transition-colors`}
               aria-label={`前のレース: ${prevRace.course_name} ${prevRace.race_number}R`}
             >
@@ -115,6 +113,7 @@ export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
           {nextRace ? (
             <Link
               href={`${basePath}/${nextRace.id}`}
+              prefetch={true}
               className={`flex-shrink-0 flex items-center gap-0.5 ${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-[11px] transition-colors`}
               aria-label={`次のレース: ${nextRace.course_name} ${nextRace.race_number}R`}
             >
@@ -136,26 +135,44 @@ export function RaceNav({ currentRaceId, races, basePath = "/races" }: Props) {
           <div className="flex gap-1 px-4 w-fit mx-auto">
           {(courseGroups[activeCourse] ?? []).sort((a, b) => a.race_number - b.race_number).map((race) => {
             const isCurrent = race.id === currentRaceId;
-            return (
-              <button
-                key={race.id}
-                aria-pressed={isCurrent}
-                aria-label={`${race.race_number}R${race.has_indices ? "（指数あり）" : ""}`}
-                onClick={() => router.push(`${basePath}/${race.id}`)}
-                className={cn(
-                  "flex-shrink-0 text-xs px-2 py-1 min-h-[28px] rounded transition-colors whitespace-nowrap",
-                  isCurrent
-                    ? `bg-white ${isChihou ? "text-green-900" : "text-blue-900"} font-bold`
-                    : race.has_indices
-                    ? `${isChihou ? "text-green-100" : "text-blue-100"} hover:text-white hover:bg-white/10`
-                    : `${isChihou ? "text-green-200/60 hover:text-green-100" : "text-blue-300/50 hover:text-blue-200"} hover:bg-white/5`
-                )}
-              >
+            const className = cn(
+              "flex-shrink-0 text-xs px-2 py-1 min-h-[28px] rounded transition-colors whitespace-nowrap inline-flex items-center justify-center",
+              isCurrent
+                ? `bg-white ${isChihou ? "text-green-900" : "text-blue-900"} font-bold`
+                : race.has_indices
+                ? `${isChihou ? "text-green-100" : "text-blue-100"} hover:text-white hover:bg-white/10`
+                : `${isChihou ? "text-green-200/60 hover:text-green-100" : "text-blue-300/50 hover:text-blue-200"} hover:bg-white/5`
+            );
+            const inner = (
+              <>
                 {race.race_number}R
                 {race.has_indices && !isCurrent && (
                   <span className={`ml-0.5 text-[9px] ${isChihou ? "text-green-200" : "text-blue-300"}`} aria-hidden="true">✓</span>
                 )}
-              </button>
+              </>
+            );
+            if (isCurrent) {
+              return (
+                <span
+                  key={race.id}
+                  aria-current="page"
+                  aria-label={`${race.race_number}R${race.has_indices ? "（指数あり）" : ""}`}
+                  className={className}
+                >
+                  {inner}
+                </span>
+              );
+            }
+            return (
+              <Link
+                key={race.id}
+                href={`${basePath}/${race.id}`}
+                prefetch={false}
+                aria-label={`${race.race_number}R${race.has_indices ? "（指数あり）" : ""}`}
+                className={className}
+              >
+                {inner}
+              </Link>
             );
           })}
           </div>

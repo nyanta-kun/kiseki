@@ -1,4 +1,10 @@
-import { ChihouRecommendation, fetchChihouRecommendations, fetchChihouSweetSpotRecommendations } from "@/lib/api";
+import {
+  ChihouCategorySummary,
+  ChihouRecommendation,
+  ChihouRecommendCategory,
+  fetchChihouRecommendations,
+  fetchChihouSweetSpotRecommendations,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
@@ -127,17 +133,55 @@ function RecommendCard({ rec }: { rec: ChihouRecommendation }) {
   );
 }
 
+type SweetSpotTheme = {
+  border: string;
+  badgeBg: string;
+  badgeLabel: string;
+  oddsBg: string;
+  evBg: string;
+};
+
+const SWEET_SPOT_THEME: Record<ChihouRecommendCategory, SweetSpotTheme> = {
+  sweet_spot: {
+    border: "border-red-100",
+    badgeBg: "bg-red-600",
+    badgeLabel: "★ SS",
+    oddsBg: "bg-orange-50 text-orange-700 border-orange-200",
+    evBg: "bg-red-50 text-red-600 border-red-200",
+  },
+  low_odds_trusted: {
+    border: "border-emerald-100",
+    badgeBg: "bg-emerald-600",
+    badgeLabel: "🟢 信頼",
+    oddsBg: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    evBg: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
+  low_odds_untrusted: {
+    border: "border-amber-100",
+    badgeBg: "bg-amber-500",
+    badgeLabel: "🟡 不信頼",
+    oddsBg: "bg-amber-50 text-amber-700 border-amber-200",
+    evBg: "bg-amber-50 text-amber-700 border-amber-200",
+  },
+};
+
 function SweetSpotCard({ rec }: { rec: ChihouRecommendation }) {
   const surface = rec.race.surface === "grass" ? "芝" : "ダ";
+  const category: ChihouRecommendCategory = rec.category ?? "sweet_spot";
+  const theme = SWEET_SPOT_THEME[category];
   return (
-    <div className="bg-white rounded-xl border border-red-100 shadow-sm p-4 space-y-2">
+    <div className={cn("bg-white rounded-xl border shadow-sm p-4 space-y-2", theme.border)}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-bold bg-red-600 text-white px-2 py-0.5 rounded-full">
-          ★ SS#{rec.rank}
+        <span className={cn("text-xs font-bold text-white px-2 py-0.5 rounded-full", theme.badgeBg)}>
+          {theme.badgeLabel}#{rec.rank}
         </span>
         <BetTypeBadge betType={rec.bet_type} />
         <ResultBadge correct={rec.result_correct} payout={rec.result_payout} />
-        <span className="ml-auto text-xs text-gray-400">EV最大 ≈ {Math.round(rec.confidence * 100)}%信頼</span>
+        <span className="ml-auto text-xs text-gray-400">
+          {category === "sweet_spot"
+            ? `EV最大 ≈ ${Math.round(rec.confidence * 100)}%信頼`
+            : `想定的中率 ${Math.round(rec.confidence * 100)}%`}
+        </span>
       </div>
       <Link href={`/chihou/races/${rec.race.race_id}`} className="flex items-baseline gap-2 hover:underline">
         <span className="text-sm font-semibold text-gray-800">
@@ -153,13 +197,18 @@ function SweetSpotCard({ rec }: { rec: ChihouRecommendation }) {
             <span className="text-xs text-gray-500">⑤{h.horse_number}</span>
             <span className="font-bold text-gray-900">{h.horse_name ?? "-"}</span>
             {h.win_odds != null && (
-              <span className="text-xs bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded">
+              <span className={cn("text-xs border px-1.5 py-0.5 rounded", theme.oddsBg)}>
                 単勝 {h.win_odds.toFixed(1)}倍
               </span>
             )}
-            {h.ev != null && (
-              <span className="text-xs bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold">
+            {category === "sweet_spot" && h.ev != null && (
+              <span className={cn("text-xs border px-1.5 py-0.5 rounded font-bold", theme.evBg)}>
                 EV {h.ev.toFixed(2)}
+              </span>
+            )}
+            {category !== "sweet_spot" && h.win_probability != null && (
+              <span className={cn("text-xs border px-1.5 py-0.5 rounded", theme.evBg)}>
+                v10勝率 {(h.win_probability * 100).toFixed(0)}%
               </span>
             )}
             {h.finish_position != null && (
@@ -172,6 +221,45 @@ function SweetSpotCard({ rec }: { rec: ChihouRecommendation }) {
   );
 }
 
+function CategorySummaryStrip({
+  summary,
+  category,
+}: {
+  summary: ChihouCategorySummary | undefined;
+  category: ChihouRecommendCategory;
+}) {
+  if (!summary || summary.n_total === 0) return null;
+  const isPending = summary.n_settled === 0;
+  const hitText =
+    summary.hit_rate != null ? `${(summary.hit_rate * 100).toFixed(1)}%` : "—";
+  const roiText = summary.win_roi != null ? summary.win_roi.toFixed(2) : "—";
+  const accent =
+    category === "sweet_spot"
+      ? "text-red-700 bg-red-50 border-red-100"
+      : category === "low_odds_trusted"
+        ? "text-emerald-700 bg-emerald-50 border-emerald-100"
+        : "text-amber-700 bg-amber-50 border-amber-100";
+  return (
+    <div className={cn("text-[11px] border rounded-md px-2 py-1 flex items-center gap-2", accent)}>
+      <span className="font-bold">本日合計</span>
+      {isPending ? (
+        <span>確定 0/{summary.n_total} 件（発走後に集計）</span>
+      ) : (
+        <>
+          <span>
+            的中 {summary.n_hits}/{summary.n_settled} ({hitText})
+          </span>
+          <span className="text-gray-400">|</span>
+          <span>単勝ROI {roiText}</span>
+          {summary.n_settled < summary.n_total && (
+            <span className="text-gray-400">/ 残{summary.n_total - summary.n_settled}件</span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export async function ChihouRecommendPanel({ date }: { date: string }) {
   const [recs, sweetSpots] = await Promise.allSettled([
     fetchChihouRecommendations(date),
@@ -179,7 +267,20 @@ export async function ChihouRecommendPanel({ date }: { date: string }) {
   ]);
 
   const recList: ChihouRecommendation[] = recs.status === "fulfilled" ? recs.value : [];
-  const sweetList: ChihouRecommendation[] = sweetSpots.status === "fulfilled" ? sweetSpots.value : [];
+  const sweetResp =
+    sweetSpots.status === "fulfilled" ? sweetSpots.value : { items: [], summaries: {} };
+  const sweetList = sweetResp.items;
+  const summaries = sweetResp.summaries;
+
+  const byCategory: Record<ChihouRecommendCategory, ChihouRecommendation[]> = {
+    sweet_spot: [],
+    low_odds_trusted: [],
+    low_odds_untrusted: [],
+  };
+  for (const rec of sweetList) {
+    const c = (rec.category ?? "sweet_spot") as ChihouRecommendCategory;
+    if (byCategory[c]) byCategory[c].push(rec);
+  }
 
   if (recList.length === 0 && sweetList.length === 0) {
     return (
@@ -191,24 +292,75 @@ export async function ChihouRecommendPanel({ date }: { date: string }) {
     );
   }
 
+  const categorySections: Array<{
+    key: ChihouRecommendCategory;
+    title: string;
+    titleClass: string;
+    note: string;
+    items: ChihouRecommendation[];
+  }> = [
+    {
+      key: "sweet_spot",
+      title: "★ 高オッズ穴狙い（スイートスポット）",
+      titleClass: "text-red-600",
+      note: "v10 LGB ∧ 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2",
+      items: byCategory.sweet_spot,
+    },
+    {
+      key: "low_odds_trusted",
+      title: "🟢 信頼できる本命（単勝<1.5）",
+      titleClass: "text-emerald-700",
+      note: "バックテスト的中率 約70% / 単勝ROI≈0.85（控除率分のマイナス）",
+      items: byCategory.low_odds_trusted,
+    },
+    {
+      key: "low_odds_untrusted",
+      title: "🟡 信頼できない本命（1.5≤単勝<2.0）",
+      titleClass: "text-amber-700",
+      note: "バックテスト的中率 約48% / 単勝ROI≈0.81。半分は外れる帯",
+      items: byCategory.low_odds_untrusted,
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      {/* スイートスポット自動推奨 */}
       {sweetList.length > 0 && (
         <section>
-          <h3 className="text-xs font-bold text-red-600 mb-2 flex items-center gap-1">
-            ★ スイートスポット自動推奨
-            <span className="font-normal text-gray-400">（v10 LGB / EV 1.0-2.0）</span>
-          </h3>
-          <div className="space-y-2">
-            {sweetList.map((rec) => (
-              <SweetSpotCard key={`ss-${rec.id}`} rec={rec} />
-            ))}
+          <p className="text-[10px] text-gray-400 leading-snug mb-2">
+            ※ 単勝&lt;2.0 の本命は構造的に単勝ROIが1.0未満（控除率分の損失帯）。
+            「儲かる買い目」ではなく「予想の参考」としてご利用ください。
+          </p>
+          <div className="space-y-4">
+            {categorySections.map((section) =>
+              section.items.length === 0 ? null : (
+                <div key={section.key}>
+                  <h3
+                    className={cn(
+                      "text-xs font-bold mb-1 flex items-center gap-1",
+                      section.titleClass,
+                    )}
+                  >
+                    {section.title}
+                    <span className="font-normal text-gray-400">（{section.note}）</span>
+                  </h3>
+                  <div className="mb-2">
+                    <CategorySummaryStrip
+                      summary={summaries[section.key]}
+                      category={section.key}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    {section.items.map((rec) => (
+                      <SweetSpotCard key={`ss-${rec.id}`} rec={rec} />
+                    ))}
+                  </div>
+                </div>
+              ),
+            )}
           </div>
         </section>
       )}
 
-      {/* Claude Routine 推奨 */}
       {recList.length > 0 && (
         <section>
           <h3 className="text-xs font-bold text-gray-500 mb-2">Claude AI 推奨</h3>

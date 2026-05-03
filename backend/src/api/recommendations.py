@@ -15,7 +15,9 @@ POST /api/recommendations/update-results?date=YYYYMMDD
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -209,6 +211,28 @@ def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
     )
 
 
+_SWEET_SPOT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_SWEET_SPOT_LOCKS: dict[str, asyncio.Lock] = {}
+_SWEET_SPOT_TTL_SEC = 60.0
+
+
+async def _build_sweet_spot_cached(
+    db: AsyncSession, date: str
+) -> list[dict[str, Any]]:
+    now = time.monotonic()
+    cached = _SWEET_SPOT_CACHE.get(date)
+    if cached and now - cached[0] < _SWEET_SPOT_TTL_SEC:
+        return cached[1]
+    lock = _SWEET_SPOT_LOCKS.setdefault(date, asyncio.Lock())
+    async with lock:
+        cached = _SWEET_SPOT_CACHE.get(date)
+        if cached and time.monotonic() - cached[0] < _SWEET_SPOT_TTL_SEC:
+            return cached[1]
+        result = await build_sweet_spot_recommendations(db, date)
+        _SWEET_SPOT_CACHE[date] = (time.monotonic(), result)
+        return result
+
+
 @router.get("", response_model=list[RecommendationOut])
 async def get_recommendations(
     db: DbDep,
@@ -222,9 +246,11 @@ async def get_recommendations(
 
     返却順は発走時刻順（post_time 昇順）。rank は最大EV降順で連番。
     3年バックテスト実証: 単ROI 1.188 / 複ROI 0.826。
+
+    プロセス内 60 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
     """
     try:
-        candidates = await build_sweet_spot_recommendations(db, date)
+        candidates = await _build_sweet_spot_cached(db, date)
     except Exception as e:
         logger.error("sweet spot 推奨生成失敗: %s", e)
         return []

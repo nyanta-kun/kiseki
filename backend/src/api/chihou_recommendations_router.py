@@ -8,7 +8,9 @@ POST /api/chihou/recommendations/update-odds-decision  (X-API-Key認証)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -75,6 +77,9 @@ class ChihouRecommendationOut(BaseModel):
     rank: int
     race: ChihouRaceInfo
     bet_type: str
+    # カテゴリ: "sweet_spot"=高オッズ穴 / "low_odds_trusted"=信頼本命 /
+    #           "low_odds_untrusted"=不信頼本命 / null=既存DB保存推奨
+    category: str | None = None
     target_horses: list[ChihouTargetHorse]
     reason: str
     confidence: float
@@ -90,6 +95,23 @@ class ChihouRecommendationOut(BaseModel):
     result_payout: int | None
     result_updated_at: datetime | None
     created_at: datetime
+
+
+class ChihouCategorySummary(BaseModel):
+    """カテゴリ単位の当日確定済み集計。"""
+
+    n_total: int           # カテゴリ抽出された推奨数
+    n_settled: int         # 結果確定済みの件数
+    n_hits: int            # 1着的中件数
+    hit_rate: float | None # n_settled > 0 の時のみ
+    win_roi: float | None  # 単勝ROI（払戻 / (n_settled × 100円）, n_settled > 0 の時のみ
+
+
+class ChihouSweetSpotResponse(BaseModel):
+    """スイートスポット推奨 + カテゴリ別 当日合計集計のレスポンス。"""
+
+    items: list[ChihouRecommendationOut]
+    summaries: dict[str, ChihouCategorySummary]
 
 
 def _to_out(rec: ChihouRaceRecommendation, race: ChihouRace) -> ChihouRecommendationOut:
@@ -168,6 +190,7 @@ def _chihou_sweet_spot_to_out(c: dict[str, Any]) -> ChihouRecommendationOut:
         rank=c["rank"],
         race=race_info,
         bet_type=c["bet_type"],
+        category=c.get("category"),
         target_horses=target,
         reason=c["reason"],
         confidence=c["confidence"],
@@ -182,6 +205,43 @@ def _chihou_sweet_spot_to_out(c: dict[str, Any]) -> ChihouRecommendationOut:
         result_updated_at=c.get("result_updated_at"),
         created_at=c["created_at"],
     )
+
+
+def _summarize_by_category(
+    items: list[ChihouRecommendationOut],
+) -> dict[str, ChihouCategorySummary]:
+    """カテゴリ単位で当日合計集計を作る。
+
+    n_settled: result_updated_at が None でない件数（=結果確定済み）。
+    n_hits: result_correct == True の件数。
+    win_roi: 払戻総額 / (n_settled × 100円)。bet_type=="win" のみ。
+    """
+    grouped: dict[str, list[ChihouRecommendationOut]] = {}
+    for it in items:
+        if not it.category:
+            continue
+        grouped.setdefault(it.category, []).append(it)
+
+    out: dict[str, ChihouCategorySummary] = {}
+    for category, recs in grouped.items():
+        n_total = len(recs)
+        settled = [r for r in recs if r.result_updated_at is not None]
+        n_settled = len(settled)
+        n_hits = sum(1 for r in settled if r.result_correct is True)
+        hit_rate = (n_hits / n_settled) if n_settled else None
+        if n_settled and all(r.bet_type == "win" for r in settled):
+            payout_sum = sum((r.result_payout or 0) for r in settled)
+            win_roi = payout_sum / (n_settled * 100)
+        else:
+            win_roi = None
+        out[category] = ChihouCategorySummary(
+            n_total=n_total,
+            n_settled=n_settled,
+            n_hits=n_hits,
+            hit_rate=hit_rate,
+            win_roi=win_roi,
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -300,22 +360,50 @@ async def update_chihou_odds_decision_endpoint(
     return {"updated": count}
 
 
-@router.get("/sweet-spot", response_model=list[ChihouRecommendationOut])
+_CHIHOU_SWEET_SPOT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_CHIHOU_SWEET_SPOT_LOCKS: dict[str, asyncio.Lock] = {}
+_CHIHOU_SWEET_SPOT_TTL_SEC = 60.0
+
+
+async def _build_chihou_sweet_spot_cached(
+    db: AsyncSession, date: str
+) -> list[dict[str, Any]]:
+    now = time.monotonic()
+    cached = _CHIHOU_SWEET_SPOT_CACHE.get(date)
+    if cached and now - cached[0] < _CHIHOU_SWEET_SPOT_TTL_SEC:
+        return cached[1]
+    lock = _CHIHOU_SWEET_SPOT_LOCKS.setdefault(date, asyncio.Lock())
+    async with lock:
+        cached = _CHIHOU_SWEET_SPOT_CACHE.get(date)
+        if cached and time.monotonic() - cached[0] < _CHIHOU_SWEET_SPOT_TTL_SEC:
+            return cached[1]
+        result = await build_chihou_sweet_spot_recommendations(db, date)
+        _CHIHOU_SWEET_SPOT_CACHE[date] = (time.monotonic(), result)
+        return result
+
+
+@router.get("/sweet-spot", response_model=ChihouSweetSpotResponse)
 async def get_chihou_sweet_spot_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
-) -> list[ChihouRecommendationOut]:
+) -> ChihouSweetSpotResponse:
     """地方競馬スイートスポット自動推奨を返す（最新オッズ反映・都度算出）。
 
-    抽出条件: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性競馬場 ∧ k≤2。
-    v10 LightGBM win_probability ベース。DB 保存なし。
-    浦和ROI2.96/水沢1.63/笠松1.43/園田1.46/佐賀1.38/高知1.12 (2026-01〜04)。
+    返却内容:
+      - items: 全カテゴリの推奨を並べたリスト（category フィールドで識別）
+        * sweet_spot         — 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
+        * low_odds_trusted   — 信頼できる本命 (単勝<1.5)
+        * low_odds_untrusted — 信頼できない本命 (1.5≤単勝<2.0)
+      - summaries: カテゴリ別の当日確定済み件数・的中数・的中率・単勝ROI
+
+    プロセス内 60 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
     """
     try:
-        candidates = await build_chihou_sweet_spot_recommendations(db, date)
+        candidates = await _build_chihou_sweet_spot_cached(db, date)
     except Exception as e:
         logger.error("地方スイートスポット生成失敗: %s", e)
-        return []
+        return ChihouSweetSpotResponse(items=[], summaries={})
     items = [_chihou_sweet_spot_to_out(c) for c in candidates]
     items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
-    return items
+    summaries = _summarize_by_category(items)
+    return ChihouSweetSpotResponse(items=items, summaries=summaries)
