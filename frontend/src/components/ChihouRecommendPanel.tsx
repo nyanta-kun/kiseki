@@ -31,14 +31,17 @@ function ResultCell({
   correct,
   payout,
   finishPos,
+  betType,
 }: {
   correct: boolean | null;
   payout: number | null;
   finishPos?: number | null;
+  betType?: string;
 }) {
   if (correct === null) {
     return <span className="text-xs text-gray-300">—</span>;
   }
+  // 的中（単勝=1着 / 複勝=1〜3着）
   if (correct) {
     return (
       <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700">
@@ -48,6 +51,19 @@ function ResultCell({
             ({finishPos}着)
           </span>
         )}
+      </span>
+    );
+  }
+  // 単勝外れだが馬券圏（2-3着） — 複勝なら的中していたケース
+  const isPlaceZone =
+    betType === "win" && finishPos != null && finishPos >= 2 && finishPos <= 3;
+  if (isPlaceZone) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-[1px] rounded">
+        △ 複圏
+        <span className="text-[10px] font-normal text-sky-600">
+          {finishPos}着
+        </span>
       </span>
     );
   }
@@ -243,6 +259,26 @@ function CategorySummaryStrip({
   );
 }
 
+function FinishBadge({ pos }: { pos: number }) {
+  if (pos === 1) {
+    return (
+      <span className="ml-1.5 text-[10px] font-bold px-1 py-[0.5px] rounded bg-amber-100 text-amber-700 border border-amber-200">
+        🥇 1着
+      </span>
+    );
+  }
+  if (pos === 2 || pos === 3) {
+    return (
+      <span className="ml-1.5 text-[10px] font-bold px-1 py-[0.5px] rounded bg-sky-50 text-sky-700 border border-sky-200">
+        {pos === 2 ? "🥈" : "🥉"} {pos}着
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1.5 text-[10px] text-gray-400">{pos}着</span>
+  );
+}
+
 function HorseInline({
   rec,
 }: {
@@ -264,11 +300,7 @@ function HorseInline({
                 v10勝率{(h.win_probability * 100).toFixed(0)}%
               </span>
             )}
-          {h.finish_position != null && (
-            <span className="ml-1.5 text-[10px] text-gray-400">
-              {h.finish_position}着
-            </span>
-          )}
+          {h.finish_position != null && <FinishBadge pos={h.finish_position} />}
         </div>
       ))}
     </div>
@@ -376,6 +408,11 @@ function CategoryTable({
           <tbody>
             {sorted.map((rec) => {
               const surface = rec.race.surface === "grass" ? "芝" : "ダ";
+              const finishes = rec.target_horses
+                .map((h) => h.finish_position)
+                .filter((p): p is number => p != null);
+              const bestFinish =
+                finishes.length > 0 ? Math.min(...finishes) : null;
               return (
                 <tr
                   key={rec.id}
@@ -416,6 +453,8 @@ function CategoryTable({
                     <ResultCell
                       correct={rec.result_correct}
                       payout={rec.result_payout}
+                      finishPos={bestFinish}
+                      betType={rec.bet_type}
                     />
                   </td>
                 </tr>
@@ -479,6 +518,7 @@ function LegacyRecRow({ rec }: { rec: ChihouRecommendation }) {
           correct={rec.result_correct}
           payout={rec.result_payout}
           finishPos={horse?.finish_position}
+          betType={rec.bet_type}
         />
       </td>
     </tr>
