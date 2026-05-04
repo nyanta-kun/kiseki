@@ -45,6 +45,42 @@ class Horse(Base):
     )
 
 
+class ProvisionalHorse(Base):
+    """JV-Link未登録の暫定馬マスタ（netkeiba スクレイプ由来）
+
+    競走馬登録完了前の2歳馬を一時保持する。
+    JV-Link から SE レコード（初出走）が届いた時点で keiba.horses とマージし
+    merged_horse_id をセットする。
+    """
+
+    __tablename__ = "provisional_horses"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    netkeiba_horse_id: Mapped[str] = mapped_column(
+        String(20), unique=True, index=True, comment="netkeibaの馬ID（血統登録番号と一致することが多い）"
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False, index=True, comment="馬名（カタカナ）")
+    birth_year: Mapped[int | None] = mapped_column(Integer, comment="生産年")
+    birth_date: Mapped[str | None] = mapped_column(String(8), comment="生年月日 YYYYMMDD")
+    sex: Mapped[str | None] = mapped_column(String(10), comment="性別")
+    coat_color: Mapped[str | None] = mapped_column(String(20), comment="毛色")
+    sire_name: Mapped[str | None] = mapped_column(String(100), comment="父馬名")
+    dam_name: Mapped[str | None] = mapped_column(String(100), comment="母馬名")
+    broodmare_sire_name: Mapped[str | None] = mapped_column(String(100), comment="母父馬名")
+    trainer_name: Mapped[str | None] = mapped_column(String(100), comment="調教師名")
+    owner_name: Mapped[str | None] = mapped_column(String(100), comment="馬主名")
+    farm_name: Mapped[str | None] = mapped_column(String(100), comment="生産牧場名")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+    merged_horse_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.horses.id"), nullable=True, comment="JV-Link登録後の keiba.horses.id"
+    )
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Pedigree(Base):
     """血統情報"""
 

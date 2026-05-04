@@ -21,6 +21,7 @@ from ..db.models import OddsHistory, Race, RacePayout, RaceResult, SpecialRegist
 from ..db.session import AsyncSessionLocal, get_db
 from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
 from ..importers.jvlink_parser import COURSE_NAMES
+from ..importers.provisional_horse_importer import upsert_provisional_horses
 from ..indices.composite import CompositeIndexCalculator
 from ..services.recommender import update_results as update_recommendation_results
 from .races import _fetch_results_payload
@@ -265,6 +266,43 @@ async def import_bloodlines(
     stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_bloodlines: {stats}")
+    return {"ok": True, "stats": stats}
+
+
+class ProvisionalHorseRecord(BaseModel):
+    netkeiba_horse_id: str
+    name: str
+    birth_year: int | None = None
+    birth_date: str | None = None
+    sex: str | None = None
+    coat_color: str | None = None
+    sire_name: str | None = None
+    dam_name: str | None = None
+    broodmare_sire_name: str | None = None
+    trainer_name: str | None = None
+    owner_name: str | None = None
+    farm_name: str | None = None
+
+
+class ProvisionalHorsesImportRequest(BaseModel):
+    horses: list[ProvisionalHorseRecord]
+
+
+@router.post("/provisional-horses")
+async def import_provisional_horses(
+    body: ProvisionalHorsesImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """netkeiba スクレイプ馬データを provisional_horses へ UPSERT する。
+
+    JV-Link 未登録の2歳馬（競走馬登録前）を暫定保存する。
+    初出走時（SE レコード到着時）に自動で keiba.horses へマージされる。
+    """
+    records = [r.model_dump() for r in body.horses]
+    stats = await upsert_provisional_horses(db, records)
+    await db.commit()
+    logger.info("import_provisional_horses: %s", stats)
     return {"ok": True, "stats": stats}
 
 

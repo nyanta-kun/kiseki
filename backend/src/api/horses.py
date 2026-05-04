@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import CalculatedIndex, Horse, NetkeibaRaceExtra, Race, RaceResult
+from ..db.models import CalculatedIndex, Horse, NetkeibaRaceExtra, ProvisionalHorse, Race, RaceResult
 from ..db.session import get_db
 from ..indices.composite import COMPOSITE_VERSION
 
@@ -37,6 +37,71 @@ class RaceHistoryEntry(BaseModel):
     win_popularity: int | None
     composite_index: float | None
     remarks: str | None
+
+
+@router.get("/known-ids")
+async def get_known_horse_ids(
+    birth_year: int = Query(description="生産年（例: 2024）"),
+    db: DbDep = ...,
+) -> dict:
+    """keiba.horses と provisional_horses の両方で既知の netkeiba horse_id セットを返す。
+
+    scrape_netkeiba_2yo.py が一覧走査の早期終了判定に使用する。
+    horse_id 先頭4桁が生産年と一致するものを対象とする。
+    """
+    prefix = str(birth_year)
+
+    # keiba.horses: jravan_code = netkeiba horse_id と同一形式
+    jravan_rows = await db.execute(
+        select(Horse.jravan_code).where(
+            Horse.jravan_code.like(f"{prefix}%")
+        )
+    )
+    ids: set[str] = {r.jravan_code for r in jravan_rows if r.jravan_code}
+
+    # provisional_horses: netkeiba_horse_id
+    prov_rows = await db.execute(
+        select(ProvisionalHorse.netkeiba_horse_id).where(
+            ProvisionalHorse.netkeiba_horse_id.like(f"{prefix}%")
+        )
+    )
+    ids.update(r.netkeiba_horse_id for r in prov_rows)
+
+    return {"birth_year": birth_year, "ids": sorted(ids)}
+
+
+@router.get("/provisional")
+async def list_provisional_horses(
+    birth_year: int | None = Query(None, description="生産年フィルタ"),
+    unmerged_only: bool = Query(True, description="未マージのみ返す"),
+    db: DbDep = ...,
+) -> list[dict]:
+    """暫定馬マスタ一覧を返す（管理・確認用）。"""
+    stmt = select(ProvisionalHorse)
+    if birth_year:
+        stmt = stmt.where(ProvisionalHorse.birth_year == birth_year)
+    if unmerged_only:
+        stmt = stmt.where(ProvisionalHorse.merged_horse_id.is_(None))
+    stmt = stmt.order_by(ProvisionalHorse.name)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "netkeiba_horse_id": r.netkeiba_horse_id,
+            "name": r.name,
+            "birth_year": r.birth_year,
+            "birth_date": r.birth_date,
+            "sex": r.sex,
+            "sire_name": r.sire_name,
+            "dam_name": r.dam_name,
+            "trainer_name": r.trainer_name,
+            "owner_name": r.owner_name,
+            "farm_name": r.farm_name,
+            "merged_horse_id": r.merged_horse_id,
+            "merged_at": r.merged_at.isoformat() if r.merged_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{horse_id}/history")
