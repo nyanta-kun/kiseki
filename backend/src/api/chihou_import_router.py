@@ -39,6 +39,48 @@ ApiKeyDep = Annotated[None, Depends(verify_api_key)]
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
+async def _fill_loser_place_odds_from_history(
+    db: AsyncSession, race_ids: list[int]
+) -> int:
+    """対象レースの race_results.place_odds NULL 行を odds_history で補完する。
+
+    HR 払戻は 1〜3着馬のみで、4着以下は永続化されない。本処理は同一バッチで
+    取り込んだレースの着外馬についても、odds_history の発走前最終 place オッズで
+    place_odds を埋める。
+
+    Returns:
+        補完した行数。
+    """
+    if not race_ids:
+        return 0
+
+    # race_id × horse_number の最新 place オッズを取得し、NULL 行を一括 UPDATE する。
+    sql = """
+        WITH latest AS (
+            SELECT DISTINCT ON (oh.race_id, oh.combination)
+                oh.race_id,
+                oh.combination AS horse_no_str,
+                oh.odds
+            FROM chihou.odds_history oh
+            WHERE oh.race_id = ANY(:race_ids)
+              AND oh.bet_type = 'place'
+              AND oh.odds IS NOT NULL
+            ORDER BY oh.race_id, oh.combination, oh.fetched_at DESC
+        )
+        UPDATE chihou.race_results AS rr
+        SET place_odds = latest.odds
+        FROM latest
+        WHERE rr.race_id = latest.race_id
+          AND rr.horse_number::text = latest.horse_no_str
+          AND rr.finish_position IS NOT NULL
+          AND rr.place_odds IS NULL
+    """
+    from sqlalchemy import text as _text
+
+    result = await db.execute(_text(sql), {"race_ids": race_ids})
+    return result.rowcount or 0
+
+
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
@@ -219,6 +261,17 @@ async def chihou_import_payouts(
             result = results_map.get((race_db_id, horse_number))
             if result is not None:
                 result.place_odds = odds_val
+
+    # 5. 着外馬の place_odds を odds_history の発走前最終スナップショットで補完
+    #    HR 払戻は 1〜3着のみ → そのままだと race_results.place_odds の充足率が
+    #    ~4% 止まり。複勝ROI バックテストの母集団確保のため全馬永続化する。
+    affected_race_ids = list({r for r, _, _ in place_updates}) if place_updates else []
+    if affected_race_ids:
+        filled = await _fill_loser_place_odds_from_history(db, affected_race_ids)
+        if filled:
+            logger.info(
+                "chihou_import_payouts: filled %d loser place_odds from odds_history", filled
+            )
 
     await db.commit()
     logger.info("chihou_import_payouts: imported=%d, skipped=%d", imported, skipped)

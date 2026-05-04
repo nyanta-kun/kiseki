@@ -102,9 +102,10 @@ class ChihouCategorySummary(BaseModel):
 
     n_total: int           # カテゴリ抽出された推奨数
     n_settled: int         # 結果確定済みの件数
-    n_hits: int            # 1着的中件数
+    n_hits: int            # 的中件数（win=1着, place=1〜3着）
     hit_rate: float | None # n_settled > 0 の時のみ
-    win_roi: float | None  # 単勝ROI（払戻 / (n_settled × 100円）, n_settled > 0 の時のみ
+    win_roi: float | None  # ROI（bet_type に応じ単勝/複勝）。n_settled > 0 の時のみ
+    bet_type: str | None = None  # "win" | "place" — フロント側のラベル表示用
 
 
 class ChihouSweetSpotResponse(BaseModel):
@@ -229,17 +230,23 @@ def _summarize_by_category(
         n_settled = len(settled)
         n_hits = sum(1 for r in settled if r.result_correct is True)
         hit_rate = (n_hits / n_settled) if n_settled else None
-        if n_settled and all(r.bet_type == "win" for r in settled):
-            payout_sum = sum((r.result_payout or 0) for r in settled)
-            win_roi = payout_sum / (n_settled * 100)
+        bet_type = recs[0].bet_type if recs else None
+        # bet_type が混在する場合はフィールドを None にする（混乱回避）
+        if any(r.bet_type != bet_type for r in recs):
+            bet_type = None
+        if n_settled and bet_type in ("win", "place"):
+            # result_payout が None（払戻オッズ未取得）の的中は ROI 計算から除外
+            payouts = [r.result_payout for r in settled if r.result_payout is not None]
+            roi = sum(payouts) / (len(payouts) * 100) if payouts else None
         else:
-            win_roi = None
+            roi = None
         out[category] = ChihouCategorySummary(
             n_total=n_total,
             n_settled=n_settled,
             n_hits=n_hits,
             hit_rate=hit_rate,
-            win_roi=win_roi,
+            win_roi=roi,
+            bet_type=bet_type,
         )
     return out
 

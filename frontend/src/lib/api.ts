@@ -688,6 +688,7 @@ export type ChihouTargetHorse = {
 /** 地方競馬スイートスポット推奨カテゴリ。 */
 export type ChihouRecommendCategory =
   | "sweet_spot"          // 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
+  | "place_bet"           // 複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ EV 1.2-2.0、複勝買い)
   | "low_odds_trusted"    // 信頼できる本命 (単勝<1.5)
   | "low_odds_untrusted"; // 信頼できない本命 (1.5≤単勝<2.0)
 
@@ -725,7 +726,8 @@ export type ChihouCategorySummary = {
   n_settled: number;
   n_hits: number;
   hit_rate: number | null;
-  win_roi: number | null;
+  win_roi: number | null;          // bet_type に応じた ROI（単勝 or 複勝）
+  bet_type: "win" | "place" | null;
 };
 
 export type ChihouSweetSpotResponse = {

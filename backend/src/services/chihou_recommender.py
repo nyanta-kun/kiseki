@@ -28,7 +28,12 @@ from ..db.chihou_models import (
     ChihouRaceRecommendation,
     ChihouRaceResult,
 )
-from ..indices.buy_signal import chihou_is_sweet_spot, chihou_low_odds_trust_level
+from ..indices.buy_signal import (
+    CHIHOU_PLACE_BET_FAV_ODDS_MAX,
+    chihou_is_place_bet,
+    chihou_is_sweet_spot,
+    chihou_low_odds_trust_level,
+)
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 
 logger = logging.getLogger(__name__)
@@ -672,7 +677,11 @@ async def build_chihou_sweet_spot_recommendations(
         if not win_odds:
             continue  # オッズ未取得レースは対象外
 
+        # 1番人気単勝オッズ（place_bet 判定用）
+        fav_odds = min(win_odds.values()) if win_odds else None
+
         sweet_horses: list[dict[str, Any]] = []
+        place_bet_horses: list[dict[str, Any]] = []
         low_trusted: list[dict[str, Any]] = []
         low_untrusted: list[dict[str, Any]] = []
 
@@ -690,9 +699,11 @@ async def build_chihou_sweet_spot_recommendations(
                 "place_odds": place_odds.get(str(hn)) if hn is not None else None,
                 "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
             }
+            # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(wo, win_prob, race.course_name):
                 sweet_horses.append({**base})
-                continue
+            if chihou_is_place_bet(wo, win_prob, fav_odds):
+                place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
                 low_trusted.append({**base})
@@ -739,6 +750,67 @@ async def build_chihou_sweet_spot_recommendations(
                 "bet_type": "win",
                 "category": "sweet_spot",
                 "target_horses": sweet_horses,
+                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                "snapshot_at": now,
+                "reason": reason,
+                "confidence": confidence,
+                "max_ev": max_ev,
+                "result_correct": result_correct,
+                "result_payout": result_payout,
+                "result_updated_at": now if any_finished else None,
+                "created_at": now,
+            })
+
+        # ---- 複穴（place_bet）: 断然人気R × 単勝≥10 ∧ EV1.2-2.0 を複勝買い ----
+        # k≥3 の混戦は除外（高オッズ穴と同様）
+        if place_bet_horses and len(place_bet_horses) < 3:
+            for h in place_bet_horses:
+                _attach_finish(h, race.id)
+            max_ev = max((h["ev"] or 0.0) for h in place_bet_horses)
+            any_finished = any(h["finish_position"] is not None for h in place_bet_horses)
+            result_correct: bool | None = None
+            result_payout: int | None = None
+            if any_finished:
+                placed = [
+                    h for h in place_bet_horses
+                    if h["finish_position"] is not None and h["finish_position"] <= 3
+                ]
+                if placed:
+                    result_correct = True
+                    # 払戻は的中馬のうち最も早く確定した馬の place_odds を採用
+                    placed.sort(key=lambda x: x["finish_position"])
+                    p_odds = placed[0].get("place_odds")
+                    result_payout = (
+                        int(round(float(p_odds) * 100)) if p_odds is not None else None
+                    )
+                else:
+                    result_correct = False
+                    result_payout = 0
+
+            confidence = 0.65 if max_ev >= 1.8 else 0.55
+            reason = (
+                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍 ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
+                f"（30日実勢 hit≈22%・複勝ROI≈0.78 / バックテスト hit 20.6%・推定複ROI 1.067。"
+                f"ROI は控除率分マイナス帯 — 予想の参考用） "
+                + " / ".join(
+                    f"{h['horse_number']}番{h.get('horse_name') or ''}"
+                    f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
+                    for h in place_bet_horses
+                )
+            )
+            candidates.append({
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "head_count": race.head_count,
+                "bet_type": "place",
+                "category": "place_bet",
+                "target_horses": place_bet_horses,
                 "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
                 "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
                 "snapshot_at": now,
@@ -814,7 +886,12 @@ async def build_chihou_sweet_spot_recommendations(
             })
 
     # category × max_ev 降順で rank 付与
-    _CATEGORY_ORDER = {"sweet_spot": 0, "low_odds_trusted": 1, "low_odds_untrusted": 2}
+    _CATEGORY_ORDER = {
+        "sweet_spot": 0,
+        "place_bet": 1,
+        "low_odds_trusted": 2,
+        "low_odds_untrusted": 3,
+    }
     candidates.sort(key=lambda x: (_CATEGORY_ORDER.get(x.get("category", ""), 99), -x["max_ev"]))
     for i, c in enumerate(candidates, start=1):
         c["rank"] = i
@@ -822,10 +899,11 @@ async def build_chihou_sweet_spot_recommendations(
         c.pop("max_ev", None)
 
     logger.info(
-        "地方スイートスポット推奨: %s → 計%d件 (sweet_spot=%d, low_trusted=%d, low_untrusted=%d)",
+        "地方スイートスポット推奨: %s → 計%d件 (sweet_spot=%d, place_bet=%d, low_trusted=%d, low_untrusted=%d)",
         date,
         len(candidates),
         sum(1 for c in candidates if c.get("category") == "sweet_spot"),
+        sum(1 for c in candidates if c.get("category") == "place_bet"),
         sum(1 for c in candidates if c.get("category") == "low_odds_trusted"),
         sum(1 for c in candidates if c.get("category") == "low_odds_untrusted"),
     )
