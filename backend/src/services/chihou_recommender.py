@@ -769,8 +769,8 @@ async def build_chihou_sweet_spot_recommendations(
                 _attach_finish(h, race.id)
             max_ev = max((h["ev"] or 0.0) for h in place_bet_horses)
             any_finished = any(h["finish_position"] is not None for h in place_bet_horses)
-            result_correct: bool | None = None
-            result_payout: int | None = None
+            result_correct = None
+            result_payout = None
             if any_finished:
                 placed = [
                     h for h in place_bet_horses

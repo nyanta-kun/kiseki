@@ -78,7 +78,7 @@ async def _fill_loser_place_odds_from_history(
     from sqlalchemy import text as _text
 
     result = await db.execute(_text(sql), {"race_ids": race_ids})
-    return result.rowcount or 0
+    return getattr(result, "rowcount", 0) or 0
 
 
 # -------------------------------------------------------------------
