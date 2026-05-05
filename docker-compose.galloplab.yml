@@ -70,6 +70,8 @@ services:
       - AUTH_URL=https://galloplab.com/api/auth
       # バックエンドAPI認証（サーバーサイドからの内部呼び出し用）
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
+      # ブラウザからバックエンドAPIへの直接アクセス用（オッズ・成績ポーリング / WebSocket）
+      - NEXT_PUBLIC_API_URL=https://api.galloplab.com
     tmpfs:
       - /tmp
       - /home/appuser/.cache/uv

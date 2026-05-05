@@ -374,16 +374,21 @@ export async function fetchChihouPerformanceSummary(
   return get<ChihouPerformanceSummary>(`/chihou/performance/summary${qs}`, { next: { revalidate: 300 } });
 }
 
-export function buildOddsWsUrl(raceId: number): string {
-  if (typeof window === "undefined") return "";
+function _wsBase(): string {
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
-  if (explicit) {
-    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
-    return `${base}/api/races/${raceId}/odds/ws`;
+  if (explicit) return explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl) {
+    const base = apiUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+    return base.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
   }
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const host = window.location.host;
-  return `${proto}://${host}/api/races/${raceId}/odds/ws`;
+  return `${proto}://${window.location.host}`;
+}
+
+export function buildOddsWsUrl(raceId: number): string {
+  if (typeof window === "undefined") return "";
+  return `${_wsBase()}/api/races/${raceId}/odds/ws`;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,26 +494,22 @@ export type ShareRangeStats = {
 
 export function buildResultsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
-  const explicit = process.env.NEXT_PUBLIC_WS_URL;
-  if (explicit) {
-    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
-    return `${base}/api/races/${raceId}/results/ws`;
-  }
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const host = window.location.host;
-  return `${proto}://${host}/api/races/${raceId}/results/ws`;
+  return `${_wsBase()}/api/races/${raceId}/results/ws`;
 }
 
 export function buildChihouResultsWsUrl(raceId: number): string {
   if (typeof window === "undefined") return "";
-  const explicit = process.env.NEXT_PUBLIC_WS_URL;
-  if (explicit) {
-    const base = explicit.replace(/\/api\/?$/, "").replace(/\/$/, "");
-    return `${base}/api/chihou/races/${raceId}/results/ws`;
-  }
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const host = window.location.host;
-  return `${proto}://${host}/api/chihou/races/${raceId}/results/ws`;
+  return `${_wsBase()}/api/chihou/races/${raceId}/results/ws`;
+}
+
+/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし）*/
+export async function fetchOddsBrowser(raceId: number): Promise<OddsData> {
+  return get<OddsData>(`/races/${raceId}/odds`, { cache: "no-store" });
+}
+
+/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし）*/
+export async function fetchResultsBrowser(raceId: number): Promise<RaceResult[]> {
+  return get<RaceResult[]>(`/races/${raceId}/results`, { cache: "no-store" });
 }
 
 // ---------------------------------------------------------------------------

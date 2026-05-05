@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   HorseIndex,
   OddsData,
@@ -8,6 +8,8 @@ import {
   buildOddsWsUrl,
   buildResultsWsUrl,
   fetchHorseHistory,
+  fetchOddsBrowser,
+  fetchResultsBrowser,
 } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
@@ -250,6 +252,23 @@ export function RaceDetailClient({
     }
   }, []);
   useWebSocket(oddsWsUrl, handleOddsMessage, { reconnectInterval: 30_000 });
+
+  // HTTP ポーリング（30秒間隔でオッズ・成績のみ更新、画面全体の再レンダリングなし）
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const [newOdds, newResults] = await Promise.all([
+          fetchOddsBrowser(raceId),
+          fetchResultsBrowser(raceId),
+        ]);
+        setOdds(newOdds);
+        if (newResults.length > 0) setResultsMap(toResultsMap(newResults));
+      } catch {
+        // ネットワーク障害時は無視（次回ポーリングで回復）
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [raceId]);
 
   const totalHorses = indices.length;
 

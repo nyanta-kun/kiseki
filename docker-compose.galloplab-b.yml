@@ -71,6 +71,7 @@ services:
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
       - AUTH_URL=https://galloplab.com/api/auth
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
+      - NEXT_PUBLIC_API_URL=https://api.galloplab.com
     tmpfs:
       - /tmp
       - /home/appuser/.cache/uv
