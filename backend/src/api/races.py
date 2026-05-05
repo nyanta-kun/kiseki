@@ -242,7 +242,8 @@ async def _fetch_external_ranks(db: AsyncSession, race: Race) -> dict[int, dict[
 
 async def _anagusa_picks_for_date(db: AsyncSession, date: str) -> set[tuple[str, int]]:
     """指定日の sekito.anagusa ピック有無を (sekito_code, race_no) セットで返す。"""
-    race_date = _date(int(date[:4]), int(date[4:6]), int(date[6:8]))
+    d = date.replace("-", "")  # YYYY-MM-DD と YYYYMMDD の両方に対応
+    race_date = _date(int(d[:4]), int(d[4:6]), int(d[6:8]))
     result = await db.execute(
         _text("SELECT course_code, race_no FROM sekito.anagusa WHERE date = :d"),
         {"d": race_date},
