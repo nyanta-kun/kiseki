@@ -28,7 +28,7 @@ admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 # ---------------------------------------------------------------------------
 # 認証依存関数
 # ---------------------------------------------------------------------------
-def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
+def verify_api_key(x_api_key: Annotated[str, Header(alias="X-API-Key")] = "") -> None:
     """X-API-Key ヘッダーを検証する。
 
     本番環境ではAPIキーが必須。開発環境では未設定時に認証省略。
@@ -40,7 +40,15 @@ def verify_api_key(x_api_key: Annotated[str, Header()] = "") -> None:
                 detail="API key not configured",
             )
         return  # 開発環境では認証省略
-    if x_api_key != settings.change_notify_api_key:
+    received = x_api_key.strip()
+    expected = settings.change_notify_api_key.strip()
+    if received != expected:
+        logger.warning(
+            "API key mismatch: received=%r (len=%d) expected_len=%d",
+            received[:8] + "..." if received else "(empty)",
+            len(received),
+            len(expected),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
