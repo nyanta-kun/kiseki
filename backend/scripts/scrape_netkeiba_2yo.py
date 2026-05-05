@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -53,6 +54,7 @@ NETKEIBA_PASS = os.environ.get("NETKEIBA_PASS") or os.environ.get("NETKEIBA_PASS
 
 LIST_URL = "https://db.netkeiba.com/"
 DETAIL_URL = "https://db.netkeiba.com/horse/{horse_id}/"
+PED_URL = "https://db.netkeiba.com/horse/ped/{horse_id}/"
 LOGIN_URL = "https://regist.netkeiba.com/account/"
 
 STATE_DIR = Path(__file__).parent.parent / ".scrape_state"
@@ -238,8 +240,84 @@ def collect_new_horse_ids(
 # 詳細ページ取得
 # ---------------------------------------------------------------------------
 
+def _parse_name_from_td_text(raw: str) -> str:
+    """血統テーブルのtdテキストから馬名だけを抽出する。
+    例: 'ゴールドドリーム2013 鹿毛Halo系' → 'ゴールドドリーム'
+        'フレンチデピュティFrench Deputy(米)1992 栗毛' → 'フレンチデピュティ'
+        'ゴールドドリーム\\n\\t\\tHalo系' → 'ゴールドドリーム'
+    """
+    # [血統][産駒][FNo.x] 等のブラケット・FNo表記を除去
+    raw = re.sub(r'\[.*?\]', '', raw)
+    raw = re.sub(r'FNo\.\S*', '', raw)
+    # 改行・タブで分割し、最初の非空行を馬名として使う
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # 4桁年以降を除去
+        line = re.sub(r'\d{4}.*', '', line)
+        # 英字・記号（系統名等）を除去
+        line = re.sub(r'[A-Za-z()（）]+.*$', '', line)
+        line = line.strip()
+        if line:
+            return line
+    return ''
+
+
+def fetch_blood_from_ped_page(client: httpx.Client, horse_id: str) -> dict[str, str]:
+    """血統ページ（/horse/ped/{id}/）から父・母・母父を取得する。
+
+    blood_table.detail の構造:
+      - rowspan=16 の最初のtd = 父
+      - rowspan=16 の2番目のtd = 母
+      - 母の直後のtd (rowspan=8) = 母父
+    """
+    try:
+        resp = client.get(PED_URL.format(horse_id=horse_id))
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        text = _decode(resp.content)
+
+        # rowspan="16" のtdを正規表現で抽出（BeautifulSoupなしで処理）
+        td_pattern = re.compile(
+            r'<td[^>]+rowspan="16"[^>]*>(.*?)</td>',
+            re.DOTALL
+        )
+        matches_16 = td_pattern.findall(text)
+
+        result = {}
+        for i, html in enumerate(matches_16[:2]):
+            name = _parse_name_from_td_text(re.sub(r'<[^>]+>', '', html).strip())
+            if name:
+                if i == 0:
+                    result["sire_name"] = name
+                else:
+                    result["dam_name"] = name
+
+        # 母父: rowspan="8" のうち、dam_name の直後に現れるもの
+        td8_pattern = re.compile(
+            r'<td[^>]+rowspan="8"[^>]*>(.*?)</td>',
+            re.DOTALL
+        )
+        # 母のtd位置以降で最初のrowspan=8を母父とする
+        if "dam_name" in result:
+            dam_td_pos = text.find(result["dam_name"])
+            after_dam = text[dam_td_pos:] if dam_td_pos >= 0 else ""
+            m8 = td8_pattern.search(after_dam)
+            if m8:
+                name = _parse_name_from_td_text(re.sub(r'<[^>]+>', '', m8.group(1)).strip())
+                if name:
+                    result["broodmare_sire_name"] = name
+
+        return result
+    except Exception as e:
+        logger.warning("血統ページ取得失敗 %s: %s", horse_id, e)
+        return {}
+
+
 def fetch_horse_detail(client: httpx.Client, horse_id: str) -> dict[str, Any]:
-    """馬詳細ページから基本情報・血統を取得する。"""
+    """馬詳細ページから基本情報を取得し、血統ページから父・母・母父を取得する。"""
     url = DETAIL_URL.format(horse_id=horse_id)
     resp = client.get(url)
     if resp.status_code == 404:
@@ -275,7 +353,13 @@ def fetch_horse_detail(client: httpx.Client, horse_id: str) -> dict[str, Any]:
             result["birth_date"] = f"{y}{int(mo):02d}{int(d):02d}"
 
     # 性別・毛色
-    sex_color_raw = _td_after_th("性齢") or _td_after_th("性別") or _td_after_th("性毛色")
+    # 詳細ページでは <th>性齢</th> がない場合が多く、
+    # <p class="txt_01">現役　牡2歳　栗毛</p> に含まれる
+    sex_color_raw = (
+        _td_after_th("性齢") or _td_after_th("性別") or _td_after_th("性毛色")
+        or re.search(r'class="txt_01"[^>]*>([^<]+)', text, re.DOTALL) and
+        re.search(r'class="txt_01"[^>]*>([^<]+)', text, re.DOTALL).group(1)
+    )
     if sex_color_raw:
         for sex_key in ("牡", "牝", "セン", "騸"):
             if sex_key in sex_color_raw:
@@ -290,15 +374,9 @@ def fetch_horse_detail(client: httpx.Client, horse_id: str) -> dict[str, Any]:
     result["owner_name"] = _td_after_th("馬主")
     result["farm_name"] = _td_after_th("生産者") or _td_after_th("生産牧場")
 
-    # 血統テーブル（父・母・母父）
-    blood_section = text[text.find("blood_table"):text.find("blood_table") + 3000] if "blood_table" in text else text
-    pedigree_links = re.findall(r'<a href="/horse/\d+/"[^>]*>([^<]+)</a>', blood_section)
-    if len(pedigree_links) >= 1:
-        result["sire_name"] = pedigree_links[0].strip()
-    if len(pedigree_links) >= 2:
-        result["dam_name"] = pedigree_links[1].strip()
-    if len(pedigree_links) >= 4:
-        result["broodmare_sire_name"] = pedigree_links[3].strip()
+    # 血統（父・母・母父）は血統ページから取得
+    blood = fetch_blood_from_ped_page(client, horse_id)
+    result.update(blood)
 
     return result
 
@@ -338,6 +416,125 @@ def post_provisional_horses(horses: list[dict[str, Any]]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# DB直接更新（--fix-existing 用）
+# ---------------------------------------------------------------------------
+
+def _get_db_conn() -> psycopg2.extensions.connection:
+    """環境変数から DB 接続を作成する。"""
+    db_url = os.environ.get("DATABASE_URL", "")
+    if db_url:
+        return psycopg2.connect(db_url)
+    return psycopg2.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=int(os.environ.get("DB_PORT", "5432")),
+        user=os.environ.get("DB_USER", "postgres"),
+        password=os.environ.get("DB_PASSWORD", ""),
+        dbname=os.environ.get("DB_NAME", "hrdb"),
+    )
+
+
+def fix_existing_horses(birth_year: int, dry_run: bool) -> None:
+    """provisional_horses の既存レコードを netkeiba から再取得して更新する。
+
+    主に sire_name / dam_name / sex が欠落・誤っているレコードを修正するために使う。
+    merged_horse_id が設定済みのレコードは変更しない。
+    """
+    conn = _get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT netkeiba_horse_id, name
+                FROM keiba.provisional_horses
+                WHERE birth_year = %s
+                  AND merged_horse_id IS NULL
+                ORDER BY netkeiba_horse_id
+                """,
+                (birth_year,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    logger.info("再取得対象: %d 頭 (birth_year=%d)", len(rows), birth_year)
+    if not rows:
+        return
+
+    client = create_session()
+    updated = 0
+    failed = 0
+
+    for i, (horse_id, name) in enumerate(rows):
+        logger.info("[%d/%d] 再取得: %s (%s)", i + 1, len(rows), name, horse_id)
+        try:
+            detail = fetch_horse_detail(client, horse_id)
+        except Exception as e:
+            logger.warning("取得失敗 %s: %s", horse_id, e)
+            failed += 1
+            time.sleep(WAIT_BETWEEN_DETAILS)
+            continue
+
+        if not detail:
+            logger.warning("データなし → スキップ: %s", horse_id)
+            failed += 1
+            time.sleep(WAIT_BETWEEN_DETAILS)
+            continue
+
+        if dry_run:
+            logger.info(
+                "[dry-run] %s → sex=%s, sire=%s, dam=%s, dam_sire=%s",
+                name, detail.get("sex"), detail.get("sire_name"),
+                detail.get("dam_name"), detail.get("broodmare_sire_name"),
+            )
+            updated += 1
+        else:
+            conn = _get_db_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE keiba.provisional_horses
+                        SET sex = %s,
+                            coat_color = %s,
+                            sire_name = %s,
+                            dam_name = %s,
+                            broodmare_sire_name = %s,
+                            trainer_name = %s,
+                            owner_name = %s,
+                            farm_name = %s,
+                            updated_at = NOW()
+                        WHERE netkeiba_horse_id = %s
+                          AND merged_horse_id IS NULL
+                        """,
+                        (
+                            detail.get("sex"),
+                            detail.get("coat_color"),
+                            detail.get("sire_name"),
+                            detail.get("dam_name"),
+                            detail.get("broodmare_sire_name"),
+                            detail.get("trainer_name"),
+                            detail.get("owner_name"),
+                            detail.get("farm_name"),
+                            horse_id,
+                        ),
+                    )
+                    conn.commit()
+                logger.info("更新: %s → sex=%s, sire=%s, dam=%s",
+                            name, detail.get("sex"), detail.get("sire_name"), detail.get("dam_name"))
+                updated += 1
+            except Exception as e:
+                conn.rollback()
+                logger.error("DB更新失敗 %s: %s", horse_id, e)
+                failed += 1
+            finally:
+                conn.close()
+
+        time.sleep(WAIT_BETWEEN_DETAILS)
+
+    logger.info("完了: 更新=%d, 失敗=%d", updated, failed)
+
+
+# ---------------------------------------------------------------------------
 # メイン
 # ---------------------------------------------------------------------------
 
@@ -349,9 +546,18 @@ def main() -> None:
                         help="前回状態を無視して全件走査（初回 or リセット時）")
     parser.add_argument("--dry-run", action="store_true",
                         help="DB登録せず件数のみ表示")
+    parser.add_argument("--fix-existing", action="store_true",
+                        help="一覧走査をスキップし、既存の provisional_horses を netkeiba から再取得して更新する")
     args = parser.parse_args()
 
     birth_year = args.year
+
+    # --fix-existing: 既存データを再取得して更新（一覧走査はスキップ）
+    if args.fix_existing:
+        logger.info("=== 既存 provisional_horses 再取得モード (birth_year=%d) ===", birth_year)
+        fix_existing_horses(birth_year, args.dry_run)
+        return
+
     state = load_state(birth_year)
     last_known_id = f"{birth_year}000000" if args.full_scan else state["last_known_id"]
     logger.info(
