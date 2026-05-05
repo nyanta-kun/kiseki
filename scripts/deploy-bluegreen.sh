@@ -99,6 +99,8 @@ fi
 # -------------------------------------------------------------------
 log "Phase 3: 本番スロット切り替え（ports 3002/8003）..."
 log "  ※ イメージは Phase 0 で pull 済みのため高速切り替え"
+# compose 管理外（手動起動等）の同名コンテナを先に削除してコンフリクトを防ぐ
+docker rm -f galloplab-backend-1 galloplab-frontend-1 2>/dev/null || true
 docker compose -f "$COMPOSE_PROD" up -d --force-recreate
 
 log "Phase 3: 本番 backend ヘルスチェック待機..."
