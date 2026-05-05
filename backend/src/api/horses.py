@@ -42,7 +42,7 @@ class RaceHistoryEntry(BaseModel):
 @router.get("/known-ids")
 async def get_known_horse_ids(
     birth_year: int = Query(description="生産年（例: 2024）"),
-    db: DbDep = ...,
+    db: DbDep = None,  # type: ignore[assignment]
 ) -> dict:
     """keiba.horses と provisional_horses の両方で既知の netkeiba horse_id セットを返す。
 
@@ -74,7 +74,7 @@ async def get_known_horse_ids(
 async def list_provisional_horses(
     birth_year: int | None = Query(None, description="生産年フィルタ"),
     unmerged_only: bool = Query(True, description="未マージのみ返す"),
-    db: DbDep = ...,
+    db: DbDep = None,  # type: ignore[assignment]
 ) -> list[dict]:
     """暫定馬マスタ一覧を返す（管理・確認用）。"""
     stmt = select(ProvisionalHorse)
