@@ -306,7 +306,7 @@ function CategoryTable({
         <table className="min-w-max text-xs border-collapse whitespace-nowrap">
           <thead>
             <tr className="border-b border-gray-100 text-gray-500">
-              <th className="text-left py-1 px-1.5 font-normal w-[6.5rem]">発走</th>
+              <th className="text-left py-1 pr-2 pl-1.5 font-normal w-14">発走</th>
               <th className="text-left py-1 px-1.5 font-normal">レース</th>
               <th className="text-left py-1 px-1.5 font-normal">推奨馬</th>
               <th className="text-right py-1 px-1.5 font-normal w-12">単</th>
@@ -324,7 +324,7 @@ function CategoryTable({
               const bestFinish = finishes.length > 0 ? Math.min(...finishes) : null;
               return (
                 <tr key={rec.id} className="border-b border-gray-50 hover:bg-gray-50/50">
-                  <td className="py-1.5 px-1.5 align-top text-gray-500 whitespace-nowrap">
+                  <td className="py-1.5 pr-2 pl-1.5 align-top text-gray-500 whitespace-nowrap">
                     {formatPostTime(rec.race.post_time)}
                   </td>
                   <td className="py-1.5 px-1.5 align-top">
@@ -356,7 +356,7 @@ function LegacyRecRow({ rec }: { rec: ChihouRecommendation }) {
   const horse = rec.target_horses[0];
   return (
     <tr className="border-b border-gray-50 hover:bg-gray-50/50">
-      <td className="py-1.5 px-1.5 align-top text-gray-500 whitespace-nowrap">
+      <td className="py-1.5 pr-2 pl-1.5 align-top text-gray-500 whitespace-nowrap">
         {formatPostTime(rec.race.post_time)}
       </td>
       <td className="py-1.5 px-1.5 align-top">
@@ -522,7 +522,7 @@ export function ChihouRecommendPanelClient({
             <table className="min-w-max text-xs border-collapse whitespace-nowrap">
               <thead>
                 <tr className="border-b border-gray-100 text-gray-500">
-                  <th className="text-left py-1 px-1.5 font-normal w-[6.5rem]">発走</th>
+                  <th className="text-left py-1 pr-2 pl-1.5 font-normal w-14">発走</th>
                   <th className="text-left py-1 px-1.5 font-normal">レース</th>
                   <th className="text-left py-1 px-1.5 font-normal">推奨</th>
                   <th className="text-left py-1 px-1.5 font-normal w-16">判断</th>
