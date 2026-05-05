@@ -151,7 +151,7 @@ function VenueSummaryTable({ items }: { items: ChihouRecommendation[] }) {
   ];
   return (
     <div className="overflow-x-auto -mx-2 px-2">
-      <table className="min-w-full text-xs border-collapse">
+      <table className="min-w-max text-xs border-collapse whitespace-nowrap">
         <thead>
           <tr className="border-b border-gray-200">
             <th className="text-left py-1.5 px-2 font-medium text-gray-500 sticky left-0 bg-white">競馬場</th>
@@ -303,7 +303,7 @@ function CategoryTable({
       </div>
       <p className="text-[10px] text-gray-400 mb-1.5">{note}</p>
       <div className={cn("overflow-x-auto -mx-2 px-2 border-t", CATEGORY_ACCENT[category].split(" ")[2])}>
-        <table className="min-w-full text-xs border-collapse">
+        <table className="min-w-max text-xs border-collapse whitespace-nowrap">
           <thead>
             <tr className="border-b border-gray-100 text-gray-500">
               <th className="text-left py-1 px-1.5 font-normal w-[6.5rem]">発走</th>
@@ -519,7 +519,7 @@ export function ChihouRecommendPanelClient({
             毎日10:00に指数から自動生成。発走10分前にオッズ判断を更新。
           </p>
           <div className="overflow-x-auto -mx-2 px-2 border-t border-gray-100">
-            <table className="min-w-full text-xs border-collapse">
+            <table className="min-w-max text-xs border-collapse whitespace-nowrap">
               <thead>
                 <tr className="border-b border-gray-100 text-gray-500">
                   <th className="text-left py-1 px-1.5 font-normal w-[6.5rem]">発走</th>

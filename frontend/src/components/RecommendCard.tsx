@@ -110,7 +110,7 @@ export function RecommendCard({ rec }: Props) {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="min-w-max text-xs whitespace-nowrap">
               <thead>
                 <tr className="text-gray-400 border-b border-gray-100">
                   <th className="text-left py-1 pr-2 font-medium w-6">番</th>
