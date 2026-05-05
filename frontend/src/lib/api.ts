@@ -587,6 +587,11 @@ export async function fetchRecommendations(date: string): Promise<Recommendation
   });
 }
 
+/** ブラウザ側ポーリング専用: JRA推奨を毎回サーバーから取得（キャッシュなし）*/
+export async function fetchRecommendationsBrowser(date: string): Promise<Recommendation[]> {
+  return get<Recommendation[]>(`/recommendations?date=${date}`, { cache: "no-store" });
+}
+
 // ---------------------------------------------------------------------------
 // 地方競馬 型定義
 // ---------------------------------------------------------------------------
@@ -746,6 +751,16 @@ export async function fetchChihouRecommendations(date: string): Promise<ChihouRe
  */
 export async function fetchChihouSweetSpotRecommendations(date: string): Promise<ChihouSweetSpotResponse> {
   return get<ChihouSweetSpotResponse>(`/chihou/recommendations/sweet-spot?date=${date}`, { next: { revalidate: 60 } });
+}
+
+/** ブラウザ側ポーリング専用: 地方推奨一覧（キャッシュなし）*/
+export async function fetchChihouRecommendationsBrowser(date: string): Promise<ChihouRecommendation[]> {
+  return get<ChihouRecommendation[]>(`/chihou/recommendations?date=${date}`, { cache: "no-store" });
+}
+
+/** ブラウザ側ポーリング専用: 地方スイートスポット推奨（キャッシュなし）*/
+export async function fetchChihouSweetSpotRecommendationsBrowser(date: string): Promise<ChihouSweetSpotResponse> {
+  return get<ChihouSweetSpotResponse>(`/chihou/recommendations/sweet-spot?date=${date}`, { cache: "no-store" });
 }
 
 // ---------------------------------------------------------------------------
