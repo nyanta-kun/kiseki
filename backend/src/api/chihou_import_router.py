@@ -29,6 +29,7 @@ from .import_router import (
     WeightRequest,
     verify_api_key,
 )
+from ..services.chihou_recommender import update_chihou_results
 from .ws_manager import chihou_results_manager
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,26 @@ async def chihou_import_races(
         payload = await _fetch_chihou_results_payload(race_id, db)
         if payload:
             await chihou_results_manager.broadcast(race_id, payload)  # type: ignore[arg-type]
+
+    if result_race_ids:
+        # 成績確定レースの日付を取得し、地方推奨の的中・払戻をバックグラウンド更新
+        dates_result = await db.execute(
+            select(ChihouRace.date).where(ChihouRace.id.in_(result_race_ids)).distinct()
+        )
+        confirmed_dates = [row[0] for row in dates_result.fetchall()]
+
+        async def _update_chihou_results_bg(dates: list[str]) -> None:
+            async with AsyncSessionLocal() as bg_session:
+                for date in dates:
+                    try:
+                        n = await update_chihou_results(bg_session, date)
+                        await bg_session.commit()
+                        logger.info("地方推奨結果自動更新: date=%s updated=%d", date, n)
+                    except Exception as e:
+                        logger.warning("地方推奨結果自動更新失敗: date=%s err=%s", date, e)
+
+        import asyncio
+        asyncio.ensure_future(_update_chihou_results_bg(confirmed_dates))
 
     return {"ok": True, "stats": stats}
 
