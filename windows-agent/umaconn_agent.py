@@ -623,6 +623,7 @@ def _fetch_today_latest_post_time(date: str) -> int | None:
         resp = requests.get(
             f"{BACKEND_URL}/api/chihou/races",
             params={"date": date},
+            headers={"Connection": "close"},
             timeout=5,
         )
         if resp.status_code == 200:
@@ -680,6 +681,7 @@ def _fetch_today_race_keys(date: str) -> list[str]:
         resp = requests.get(
             f"{BACKEND_URL}/api/chihou/races/race-keys",
             params={"date": date},
+            headers={"Connection": "close"},
             timeout=5,
         )
         if resp.status_code == 200:

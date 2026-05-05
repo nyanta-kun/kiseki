@@ -219,6 +219,7 @@ def fetch_stored_data(
     skip_file_fn=None,
     skip_cache: bool = False,
     max_errors: int = 5,
+    stop_event=None,
 ) -> list[dict]:
     """
     蓄積系データを取得する (JVOpen)。
@@ -240,6 +241,8 @@ def fetch_stored_data(
         skip_cache: Trueの場合キャッシュの読み書きをスキップし、全レコードの
                     メモリ蓄積も行わない。on_file_done コールバックで逐次処理する
                     大量データ取得時（recentモード等）に使用する。
+        stop_event: threading.Event | None。セットされるとファイル完了後に
+                    graceful stop する。jvlink_historical.py の時間制限実装に使用。
     """
     # キャッシュ確認
     if not skip_cache:
@@ -329,6 +332,13 @@ def fetch_stored_data(
                     f"({len(file_records)} 件) → 次ファイル: {new_file}"
                 )
                 _flush_file(current_file)
+                # 時間制限による graceful stop（ファイル完了単位で停止）
+                if stop_event is not None and stop_event.is_set():
+                    logger.info("[stop_event] ファイル完了後に graceful stop します。")
+                    if not session_closed:
+                        jv.JVClose()
+                        session_closed = True
+                    break
             current_file = new_file
             # skip_file_fn が True を返すファイルは JVSkip で即スキップを試みる。
             # JVSkip が失敗した場合は skip_current=True でレコード蓄積を抑制する。
@@ -588,7 +598,7 @@ def _fetch_today_race_keys(today: str) -> list[str]:
     """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。SSL EOF等は3回リトライ。"""
     for attempt in range(3):
         try:
-            resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=10)
+            resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=10, headers={"Connection": "close"})
             if resp.status_code == 200:
                 races = resp.json()
                 keys = [r["jravan_race_id"] for r in races if r.get("jravan_race_id")]
@@ -1410,7 +1420,7 @@ def poll_command() -> dict | None:
     try:
         resp = requests.get(
             f"{BACKEND_URL}/api/agent/command",
-            headers={"X-API-Key": API_KEY},
+            headers={"X-API-Key": API_KEY, "Connection": "close"},
             timeout=10,
         )
         if resp.status_code == 200:
