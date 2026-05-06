@@ -182,9 +182,8 @@ _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
 
 # 断然人気複勝推奨の1番人気オッズ閾値
 # バックテスト: 断然人気<2.0倍 × EV 1.2-2.0 → 複勝率20.6%, 推定複勝ROI 1.067 (n=4969/3yr)
-# 30日実勢 hit 21.8% / 複勝ROI 0.78 → バックテスト比大幅低下
-# 2026-05-07: 閾値を 2.0 → 1.7 に絞る（より明確な断然人気レースのみ対象）
-CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 1.7
+# オッズ変動でレース直前に対象が確定する性質上、閾値は緩めに保つ
+CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.0
 CHIHOU_PLACE_BET_MIN_EV: float = 1.2
 CHIHOU_PLACE_BET_MAX_EV: float = 2.0
 

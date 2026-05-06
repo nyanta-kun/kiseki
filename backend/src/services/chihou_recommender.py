@@ -781,8 +781,9 @@ async def build_chihou_sweet_spot_recommendations(
 
             confidence = 0.65 if max_ev >= 1.8 else 0.55
             reason = (
-                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍（断然人気） ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
-                f"（バックテスト hit 20.6%・推定複ROI 1.067） "
+                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍 ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
+                f"（30日実勢 hit≈22%・複勝ROI≈0.78 / バックテスト hit 20.6%・推定複ROI 1.067。"
+                f"ROI は控除率分マイナス帯 — 予想の参考用） "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
