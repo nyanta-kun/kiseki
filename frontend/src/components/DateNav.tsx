@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 
@@ -13,12 +13,13 @@ type Props = {
 
 export function DateNav({ currentDate, prevDate, nextDate, basePath = "/races" }: Props) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const dateInputRef = useRef<HTMLInputElement>(null);
   const today = todayYYYYMMDD();
   const isToday = currentDate === today;
   const isChihou = basePath.startsWith("/chihou");
 
-  const go = (date: string) => router.push(`${basePath}?date=${date}`);
+  const go = (date: string) => startTransition(() => router.push(`${basePath}?date=${date}`));
 
   const toInputValue = (d: string) =>
     `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
@@ -33,22 +34,26 @@ export function DateNav({ currentDate, prevDate, nextDate, basePath = "/races" }
     }
   };
 
+  const navBtnCls = `${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0`;
+
   return (
-    <div className="max-w-3xl mx-auto flex items-center justify-between px-4 pb-2 gap-2">
+    <div className={`max-w-3xl mx-auto flex items-center justify-between px-4 pb-2 gap-2 transition-opacity ${isPending ? "opacity-60" : ""}`}>
       {/* 前開催 */}
       <button
         onClick={() => prevDate && go(prevDate)}
-        disabled={!prevDate}
-        aria-disabled={!prevDate}
+        disabled={!prevDate || isPending}
+        aria-disabled={!prevDate || isPending}
         aria-label="前の開催日へ"
-        className={`${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0`}
+        className={navBtnCls}
       >
         <span aria-hidden="true">←</span> 前開催
       </button>
 
       {/* 中央: 今日ボタン + 日付 + カレンダーアイコン */}
       <div className="flex items-center gap-2 min-w-0">
-        {!isToday && (
+        {isPending ? (
+          <span className="text-[11px] text-white/70 flex-shrink-0 animate-pulse">読込中…</span>
+        ) : !isToday && (
           <button
             onClick={() => go(today)}
             className={`text-[11px] px-2 py-0.5 rounded border ${isChihou ? "border-green-300 text-green-100" : "border-blue-400 text-blue-200"} hover:bg-white/10 transition-colors flex-shrink-0`}
@@ -63,7 +68,8 @@ export function DateNav({ currentDate, prevDate, nextDate, basePath = "/races" }
         <div className="relative flex-shrink-0">
           <button
             onClick={openPicker}
-            className={`${isChihou ? "text-green-200" : "text-blue-300"} hover:text-white transition-colors text-base leading-none`}
+            disabled={isPending}
+            className={`${isChihou ? "text-green-200" : "text-blue-300"} hover:text-white transition-colors text-base leading-none disabled:opacity-50`}
             aria-label="日付を選択"
           >
             📅
@@ -87,10 +93,10 @@ export function DateNav({ currentDate, prevDate, nextDate, basePath = "/races" }
       {/* 翌開催 */}
       <button
         onClick={() => nextDate && go(nextDate)}
-        disabled={!nextDate}
-        aria-disabled={!nextDate}
+        disabled={!nextDate || isPending}
+        aria-disabled={!nextDate || isPending}
         aria-label="次の開催日へ"
-        className={`${isChihou ? "text-green-100" : "text-blue-200"} hover:text-white text-sm px-2 py-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0`}
+        className={navBtnCls}
       >
         翌開催 <span aria-hidden="true">→</span>
       </button>
