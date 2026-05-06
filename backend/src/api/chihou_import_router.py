@@ -23,13 +23,13 @@ from ..importers.chihou_pedigree_importer import ChihouPedigreeImporter
 from ..importers.chihou_race_importer import ChihouRaceImporter
 from ..importers.jvlink_parser import parse_hr
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, ChihouIndexCalculator
+from ..services.chihou_recommender import update_chihou_results
 from .chihou_races_router import _fetch_chihou_results_payload
 from .import_router import (
     ImportRequest,
     WeightRequest,
     verify_api_key,
 )
-from ..services.chihou_recommender import update_chihou_results
 from .ws_manager import chihou_results_manager
 
 logger = logging.getLogger(__name__)
