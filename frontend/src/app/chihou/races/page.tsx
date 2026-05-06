@@ -7,6 +7,23 @@ import { DateNav } from "@/components/DateNav";
 import { ChihouRecommendPanel } from "@/components/ChihouRecommendPanel";
 import { ChihouTopProbabilityPanel } from "@/components/TopProbabilityPanel";
 
+function ChihouRecommendSkeleton() {
+  return (
+    <div className="space-y-3 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="推奨データ読み込み中">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="h-9 bg-gray-200 rounded-t-xl" />
+          <div className="px-4 py-3 space-y-2">
+            <div className="h-4 bg-gray-100 rounded w-3/4" />
+            <div className="h-4 bg-gray-100 rounded w-1/2" />
+            <div className="h-3 bg-gray-100 rounded w-full mt-2" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export const metadata: Metadata = {
   title: "地方競馬 開催レース一覧 | GallopLab",
   description: "本日の地方競馬開催レース指数一覧",
@@ -89,7 +106,9 @@ async function ChihouRaceList({ date }: { date: string }) {
       recommendPanel={
         <>
           <ChihouTopProbabilityPanel date={date} />
-          <ChihouRecommendPanel date={date} />
+          <Suspense fallback={<ChihouRecommendSkeleton />}>
+            <ChihouRecommendPanel date={date} />
+          </Suspense>
         </>
       }
       basePath="/chihou/races"
