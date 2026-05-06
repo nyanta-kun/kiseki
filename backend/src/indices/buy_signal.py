@@ -182,15 +182,23 @@ _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
 
 # 断然人気複勝推奨の1番人気オッズ閾値
 # バックテスト: 断然人気<2.0倍 × EV 1.2-2.0 → 複勝率20.6%, 推定複勝ROI 1.067 (n=4969/3yr)
-CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.0
+# 30日実勢 hit 21.8% / 複勝ROI 0.78 → バックテスト比大幅低下
+# 2026-05-07: 閾値を 2.0 → 1.7 に絞る（より明確な断然人気レースのみ対象）
+CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 1.7
 CHIHOU_PLACE_BET_MIN_EV: float = 1.2
 CHIHOU_PLACE_BET_MAX_EV: float = 2.0
+
+
+# 高オッズ穴狙いで複勝率が極端に低い馬を除外するための最低複勝率
+# モデルが「ほぼ複圏に入れない」と予測する馬（place_prob < 0.12）は EV 計算が不安定
+CHIHOU_SWEET_SPOT_MIN_PLACE_PROB: float = 0.12
 
 
 def chihou_is_sweet_spot(
     win_odds: float | None,
     win_probability: float | None,
     course_name: str | None,
+    place_probability: float | None = None,
 ) -> bool:
     """地方競馬スイートスポット判定（v10 win_probability ベース）。
 
@@ -198,6 +206,7 @@ def chihou_is_sweet_spot(
       1. 単勝オッズ ≥ 10.0
       2. EV (v10 win_probability × win_odds) ∈ [1.0, 2.0]
       3. ROI陽性競馬場（v10バックテスト実証）
+      4. v10 複勝率 ≥ 0.12（極端な外れ馬を除外）
     """
     if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
         return False
@@ -206,7 +215,12 @@ def chihou_is_sweet_spot(
     if course_name not in _CHIHOU_SWEET_SPOT_COURSES:
         return False
     ev = float(win_probability) * float(win_odds)
-    return CHIHOU_SWEET_SPOT_MIN_EV <= ev <= CHIHOU_SWEET_SPOT_MAX_EV
+    if not (CHIHOU_SWEET_SPOT_MIN_EV <= ev <= CHIHOU_SWEET_SPOT_MAX_EV):
+        return False
+    # 複勝率が極端に低い馬はモデルが「残れない」と判断しているケースで除外
+    if place_probability is not None and float(place_probability) < CHIHOU_SWEET_SPOT_MIN_PLACE_PROB:
+        return False
+    return True
 
 
 def chihou_is_place_bet(

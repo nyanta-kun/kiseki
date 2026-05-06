@@ -617,35 +617,25 @@ async def build_chihou_sweet_spot_recommendations(
         seen.add(key)
         indices_map.setdefault(ci.race_id, []).append((ci, entry, horse))
 
-    # 最新単勝・複勝オッズを一括取得（DISTINCT ON）
-    odds_result = await session.execute(
+    # 最新単勝・複勝オッズを1クエリで一括取得（win + place を同時に fetch）
+    all_odds_result = await session.execute(
         text("""
-            SELECT DISTINCT ON (race_id, combination)
-                race_id, combination, odds
+            SELECT DISTINCT ON (race_id, bet_type, combination)
+                race_id, bet_type, combination, odds
             FROM chihou.odds_history
-            WHERE race_id = ANY(:race_ids) AND bet_type = 'win'
-            ORDER BY race_id, combination, fetched_at DESC
+            WHERE race_id = ANY(:race_ids) AND bet_type IN ('win', 'place')
+            ORDER BY race_id, bet_type, combination, fetched_at DESC
         """),
         {"race_ids": race_ids},
     )
     win_odds_by_race: dict[int, dict[str, float]] = {}
-    for race_id, combo, odds_val in odds_result.fetchall():
-        if odds_val is not None:
-            win_odds_by_race.setdefault(race_id, {})[combo] = float(odds_val)
-
-    place_odds_result = await session.execute(
-        text("""
-            SELECT DISTINCT ON (race_id, combination)
-                race_id, combination, odds
-            FROM chihou.odds_history
-            WHERE race_id = ANY(:race_ids) AND bet_type = 'place'
-            ORDER BY race_id, combination, fetched_at DESC
-        """),
-        {"race_ids": race_ids},
-    )
     place_odds_by_race: dict[int, dict[str, float]] = {}
-    for race_id, combo, odds_val in place_odds_result.fetchall():
-        if odds_val is not None:
+    for race_id, bet_type, combo, odds_val in all_odds_result.fetchall():
+        if odds_val is None:
+            continue
+        if bet_type == "win":
+            win_odds_by_race.setdefault(race_id, {})[combo] = float(odds_val)
+        else:
             place_odds_by_race.setdefault(race_id, {})[combo] = float(odds_val)
 
     # レース結果（確定後の払戻確認用）
@@ -699,8 +689,9 @@ async def build_chihou_sweet_spot_recommendations(
                 "place_odds": place_odds.get(str(hn)) if hn is not None else None,
                 "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
             }
+            place_prob_raw = float(ci.place_probability) if ci.place_probability is not None else None
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
-            if chihou_is_sweet_spot(wo, win_prob, race.course_name):
+            if chihou_is_sweet_spot(wo, win_prob, race.course_name, place_prob_raw):
                 sweet_horses.append({**base})
             if chihou_is_place_bet(wo, win_prob, fav_odds):
                 place_bet_horses.append({**base})
@@ -790,9 +781,8 @@ async def build_chihou_sweet_spot_recommendations(
 
             confidence = 0.65 if max_ev >= 1.8 else 0.55
             reason = (
-                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍 ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
-                f"（30日実勢 hit≈22%・複勝ROI≈0.78 / バックテスト hit 20.6%・推定複ROI 1.067。"
-                f"ROI は控除率分マイナス帯 — 予想の参考用） "
+                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍（断然人気） ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
+                f"（バックテスト hit 20.6%・推定複ROI 1.067） "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
