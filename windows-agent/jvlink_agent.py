@@ -249,6 +249,8 @@ def fetch_stored_data(
         cached = load_cache(dataspec, from_time, option, CACHE_DIR)
         if cached is not None:
             logger.info(f"[cache] キャッシュ使用: {dataspec} from={from_time} opt={option} ({len(cached)} records)")
+            if on_file_done:
+                on_file_done("(cached)", cached)
             return cached
 
     # キャッシュなし → JVOpenで取得
