@@ -1316,6 +1316,38 @@ def run_toku(jv, from_date: str | None = None) -> None:
     )
 
 
+def run_weekly_preview(jv) -> None:
+    """水曜夕方の週次プレビュー取得（RA レース情報 + 特別登録馬）。
+
+    出馬表確定前（水曜 19:00 想定）に実行し、以下を取得する:
+    1. RACE DataSpec の RA レコード: 全レース（非特別競走含む）のレース名・クラスを DB へ反映
+    2. TOKU DataSpec の TK レコード: 特別競走の登録馬リスト
+    SE（馬毎レース情報）は出馬表確定前のため取得しない。
+    """
+    logger.info("=== 週次プレビュー取得（水曜想定・出馬表確定前）===")
+
+    # RACE DataSpec - RA レコードのみ（SE は除く）
+    logger.info("--- RA レース情報取得（全レース名・クラス更新）---")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
+
+    def on_race_preview_file_done(filename: str, file_records: list[dict]) -> None:
+        ra_only = [r for r in file_records if r.get("rec_id") == "RA"]
+        if ra_only:
+            logger.info(f"  [{filename}] RA {len(ra_only)} 件 → レース情報更新")
+            _post_in_batches("/api/import/races", ra_only, 500, BACKEND_URL, API_KEY, PENDING_DIR)
+
+    fetch_stored_data(jv, DATASPEC_RACE, yesterday, option=2, on_file_done=on_race_preview_file_done)
+
+    # TOKU DataSpec - 特別登録馬
+    logger.info("--- 特別登録馬（TOKU）取得 ---")
+    try:
+        run_toku(jv, from_date=(datetime.now() - timedelta(days=3)).strftime("%Y%m%d"))
+    except Exception as e:
+        logger.warning(f"TOKU 取得エラー（スキップ）: {e}")
+
+    logger.info("=== 週次プレビュー取得完了 ===")
+
+
 def run_fix_race(jv, from_date: str) -> None:
     """指定日以降のRACEデータを差分取得する（option=1: from_time有効、数分で完了）。
 
@@ -1499,9 +1531,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "toku", "retry", "wait"],
+        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "toku", "weekly-preview", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, toku=特別登録馬取得(出馬表確定前), wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, toku=特別登録馬取得(出馬表確定前), weekly-preview=水曜想定取得(全レース名+特別登録馬), wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1534,7 +1566,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "toku", "all")
+    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "toku", "weekly-preview", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1626,6 +1658,12 @@ def main() -> None:
         report_status("done", message="特別登録馬取得完了")
         jv.JVClose()
         logger.info("toku モード完了。終了します。")
+    elif args.mode == "weekly-preview":
+        report_status("running", mode="weekly_preview", message="週次プレビュー取得開始（RA全レース情報 + TOKU特別登録馬）")
+        run_weekly_preview(jv)
+        report_status("done", message="週次プレビュー取得完了")
+        jv.JVClose()
+        logger.info("weekly-preview モード完了。終了します。")
     elif args.mode == "all":
         run_daily_fetch(jv)
         report_status("idle", message="Daily fetch done. Entering command loop + realtime.")
