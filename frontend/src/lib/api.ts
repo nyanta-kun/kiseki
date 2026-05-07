@@ -647,14 +647,14 @@ export async function fetchChihouRace(raceId: number): Promise<Race> {
   return get<Race>(`/chihou/races/${raceId}`, { next: { revalidate: 300 } });
 }
 
-/** 地方競馬 前後開催日検索 → 30秒キャッシュ */
+/** 地方競馬 前後開催日検索 → 600秒キャッシュ（前後日付はほぼ変化しない） */
 export async function fetchChihouNearestDate(
   fromDate: string,
   direction: "prev" | "next",
 ): Promise<{ date: string }> {
   return get<{ date: string }>(
     `/chihou/races/nearest-date?from=${fromDate}&direction=${direction}`,
-    { next: { revalidate: 30 } },
+    { next: { revalidate: 600 } },
   );
 }
 
