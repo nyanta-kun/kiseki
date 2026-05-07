@@ -1507,6 +1507,10 @@ def run_command_loop(jv) -> None:
                     )
                     run_recent(jv, from_year=from_year)
                     report_status("idle", message=f"Recent fetch completed (from_year={from_year})")
+                elif action == "weekly_preview":
+                    report_status("running", mode="weekly_preview", message="週次プレビュー取得開始（RA全レース情報 + TOKU特別登録馬）")
+                    run_weekly_preview(jv)
+                    report_status("idle", message="週次プレビュー取得完了")
                 elif action == "stop":
                     report_status("done", message="Stopped by command from Mac")
                     logger.info("[command] stop受信 → 終了")
