@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchChihouRacesByDate, fetchChihouNearestDate } from "@/lib/api";
+import { fetchChihouRacesByDate, fetchChihouNearestDate, fetchChihouTopProbability } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
@@ -31,25 +31,30 @@ export const metadata: Metadata = {
 
 type SearchParams = Promise<{ date?: string }>;
 
+/** 前後開催日を非同期フェッチして DateNav をレンダリング（ページシェルのブロッキングを排除） */
+async function DateNavAsync({ date, basePath }: { date: string; basePath: string }) {
+  const [prevDate, nextDate] = await Promise.all([
+    fetchChihouNearestDate(date, "prev").then((r) => r.date).catch(() => null),
+    fetchChihouNearestDate(date, "next").then((r) => r.date).catch(() => null),
+  ]);
+  return <DateNav currentDate={date} prevDate={prevDate} nextDate={nextDate} basePath={basePath} />;
+}
+
 export default async function ChihouRacesPage({ searchParams }: { searchParams: SearchParams }) {
   const { date } = await searchParams;
   const targetDate = date ?? todayYYYYMMDD();
 
-  const [prevDate, nextDate] = await Promise.all([
-    fetchChihouNearestDate(targetDate, "prev").then((r) => r.date).catch(() => null),
-    fetchChihouNearestDate(targetDate, "next").then((r) => r.date).catch(() => null),
-  ]);
-
   return (
     <div className="min-h-screen" style={{ background: "#f0faf4" }}>
-      {/* 日付ナビゲーション */}
+      {/* DateNav: nearest-date フェッチを非同期化 → ページシェルを即ストリーム */}
       <div style={{ background: "var(--chihou-primary-mid)" }} className="shadow-sm">
-        <DateNav
-          currentDate={targetDate}
-          prevDate={prevDate}
-          nextDate={nextDate}
-          basePath="/chihou/races"
-        />
+        <Suspense
+          fallback={
+            <DateNav currentDate={targetDate} prevDate={null} nextDate={null} basePath="/chihou/races" />
+          }
+        >
+          <DateNavAsync date={targetDate} basePath="/chihou/races" />
+        </Suspense>
       </div>
 
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
@@ -66,7 +71,12 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
 async function ChihouRaceList({ date }: { date: string }) {
   let races;
   try {
-    races = await fetchChihouRacesByDate(date);
+    // races と top-probability を並列フェッチ
+    // top-prob は ChihouTopProbabilityPanel でも呼ばれるが Next.js fetch が重複排除するため追加レイテンシなし
+    [races] = await Promise.all([
+      fetchChihouRacesByDate(date),
+      fetchChihouTopProbability(date).catch(() => []),
+    ]);
   } catch {
     return (
       <div className="text-center py-12 text-gray-400">
@@ -105,7 +115,10 @@ async function ChihouRaceList({ date }: { date: string }) {
       courseGroups={courseGroups}
       recommendPanel={
         <>
-          <ChihouTopProbabilityPanel date={date} />
+          {/* 独自 Suspense: ChihouRaceList の Suspense を TopProb に波及させない（Promise.all でプリフェッチ済みのため即座に解決） */}
+          <Suspense fallback={null}>
+            <ChihouTopProbabilityPanel date={date} />
+          </Suspense>
           <Suspense fallback={<ChihouRecommendSkeleton />}>
             <ChihouRecommendPanel date={date} />
           </Suspense>
