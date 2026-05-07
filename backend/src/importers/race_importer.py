@@ -396,7 +396,11 @@ class RaceImporter:
             )
         if not values:
             return {}
+        # frame_number / horse_number はdata_type=1(出走馬名表)では0だが
+        # data_type=2(出馬表確定)で確定値に更新する必要があるため update_cols に含める
         update_cols = [
+            "frame_number",
+            "horse_number",
             "jockey_id",
             "trainer_id",
             "weight_carried",
@@ -411,12 +415,12 @@ class RaceImporter:
         ]
         stmt = insert(RaceEntry).values(values)
         returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
-            index_elements=["race_id", "horse_number"],
+            index_elements=["race_id", "horse_id"],
             set_={col: stmt.excluded[col] for col in update_cols},
-        ).returning(RaceEntry.id, RaceEntry.race_id, RaceEntry.horse_number)
+        ).returning(RaceEntry.id, RaceEntry.race_id, RaceEntry.horse_id)
         entry_map: dict[tuple[int, int], int] = {}
-        for entry_id, race_id, horse_num in (await self.db.execute(returning_stmt)):
-            entry_map[(race_id, horse_num)] = entry_id
+        for entry_id, race_id, horse_id in (await self.db.execute(returning_stmt)):
+            entry_map[(race_id, horse_id)] = entry_id
         return entry_map
 
     async def _bulk_upsert_results(
@@ -441,7 +445,7 @@ class RaceImporter:
             horse_num = p.get("horse_number") or 0
             if not race_id or not horse_id:
                 continue
-            entry_id = entry_map.get((race_id, horse_num))
+            entry_id = entry_map.get((race_id, horse_id))
             if not entry_id:
                 continue
             finish_time_raw = p.get("finish_time")
