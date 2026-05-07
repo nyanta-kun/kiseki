@@ -1019,6 +1019,26 @@ def run_realtime_monitor(nv) -> None:
     _bg_result_buf: list[dict] = []
     _bg_done_event = threading.Event()
     _bg_done_event.set()  # 初期状態: 完了済み（処理中でない）
+    _bg_heartbeat = [time.time()]  # bg worker の最終活動時刻（レースキーごとに更新）
+    _BG_WORKER_TIMEOUT = 1200  # 20分: 36キー×30秒IDLE_TIMEOUT=18分の最悪ケースを超えたら強制終了
+
+    def _bg_watchdog() -> None:
+        """bg worker の NVRTOpen ハング監視。
+        main ループが正常でも bg worker が NVRTOpen でスタックするケースを検知する。
+        """
+        while True:
+            time.sleep(60)
+            if not _bg_done_event.is_set():  # タスク実行中のみ監視
+                elapsed = time.time() - _bg_heartbeat[0]
+                if elapsed > _BG_WORKER_TIMEOUT:
+                    logger.error(
+                        f"bg worker watchdog: {elapsed:.0f}秒間レースキー処理なし"
+                        f" → NVRTOpen ハング疑い → 強制終了"
+                    )
+                    os._exit(1)
+
+    threading.Thread(target=_bg_watchdog, daemon=True, name="bg-watchdog").start()
+    logger.info(f"bg worker watchdog 起動: {_BG_WORKER_TIMEOUT}秒無応答で強制終了")
 
     def _bg_nv2_worker() -> None:
         """常駐バックグラウンドワーカー。NVLink インスタンスを一度だけ作成して再利用する。"""
@@ -1029,6 +1049,10 @@ def run_realtime_monitor(nv) -> None:
             if rc != 0:
                 logger.error(f"bg worker: NVInit failed rc={rc}")
                 return
+            # NVRTOpen には NVSetServiceKey が必要（main nv と独立したオブジェクトのため個別に設定）
+            if UMACONN_SERVICE_KEY:
+                rc_key = nv2.NVSetServiceKey(UMACONN_SERVICE_KEY)
+                logger.info(f"bg worker (0B12): NVSetServiceKey rc={rc_key}")
             logger.info("bg worker (0B12): NVLink initialized")
             while True:
                 try:
@@ -1041,6 +1065,7 @@ def run_realtime_monitor(nv) -> None:
                         break
                     _bg_result_buf.clear()
                     for race_key in keys:
+                        _bg_heartbeat[0] = time.time()  # レースキーごとにリセット（NVRTOpenハング検知用）
                         for rec in fetch_realtime_data(nv2, RT_RESULT, race_key):
                             if rec.get("rec_id") in ("RA", "SE", "HR"):
                                 _bg_result_buf.append(rec)
