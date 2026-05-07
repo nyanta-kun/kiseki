@@ -279,6 +279,19 @@ function EvInline({ rec }: { rec: ChihouRecommendation }) {
   );
 }
 
+function computePlaceRoi(items: ChihouRecommendation[]): number | null {
+  const settled = items.filter((r) => r.result_updated_at != null);
+  if (settled.length === 0) return null;
+  let payoutSum = 0;
+  for (const rec of settled) {
+    const placed = rec.target_horses
+      .filter((h) => h.finish_position != null && h.finish_position <= 3 && h.place_odds != null)
+      .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99));
+    if (placed.length > 0) payoutSum += Math.round((placed[0].place_odds ?? 0) * 100);
+  }
+  return payoutSum / (settled.length * 100);
+}
+
 function CategoryTable({
   category, items, summary, title, note, titleClass,
 }: {
@@ -291,7 +304,8 @@ function CategoryTable({
 }) {
   if (items.length === 0) return null;
   const sorted = [...items].sort((a, b) => (a.race.post_time ?? "").localeCompare(b.race.post_time ?? ""));
-  const isPlace = category === "place_bet";
+  const showPlace = category === "place_bet" || category === "sweet_spot";
+  const placeRoi = category === "sweet_spot" ? computePlaceRoi(sorted) : null;
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2 mb-1">
@@ -299,7 +313,16 @@ function CategoryTable({
           {title}
           <span className="ml-1.5 text-gray-400 font-normal">({items.length}件)</span>
         </h3>
-        <CategorySummaryStrip summary={summary} />
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          <CategorySummaryStrip summary={summary} />
+          {placeRoi != null && (
+            <span className="text-[11px] text-gray-600">
+              複ROI <span className={cn("font-bold", placeRoi >= 1 ? "text-emerald-600" : "text-gray-400")}>
+                {placeRoi.toFixed(2)}
+              </span>
+            </span>
+          )}
+        </div>
       </div>
       <p className="text-[10px] text-gray-400 mb-1.5">{note}</p>
       <div className={cn("overflow-x-auto -mx-2 px-2 border-t", CATEGORY_ACCENT[category].split(" ")[2])}>
@@ -309,7 +332,7 @@ function CategoryTable({
               <th className="text-left py-1 px-1.5 font-normal">レース</th>
               <th className="text-left py-1 px-1.5 font-normal">推奨馬</th>
               <th className="text-right py-1 px-1.5 font-normal w-12">単</th>
-              {isPlace && <th className="text-right py-1 px-1.5 font-normal w-12">複</th>}
+              {showPlace && <th className="text-right py-1 px-1.5 font-normal w-12">複</th>}
               {(category === "sweet_spot" || category === "place_bet") && (
                 <th className="text-right py-1 px-1.5 font-normal w-12">EV</th>
               )}
@@ -332,7 +355,7 @@ function CategoryTable({
                   </td>
                   <td className="py-1.5 px-1.5 align-top"><HorseInline rec={rec} /></td>
                   <td className="py-1.5 px-1.5 align-top"><OddsInline rec={rec} field="win_odds" /></td>
-                  {isPlace && <td className="py-1.5 px-1.5 align-top"><OddsInline rec={rec} field="place_odds" /></td>}
+                  {showPlace && <td className="py-1.5 px-1.5 align-top"><OddsInline rec={rec} field="place_odds" /></td>}
                   {(category === "sweet_spot" || category === "place_bet") && (
                     <td className="py-1.5 px-1.5 align-top"><EvInline rec={rec} /></td>
                   )}
@@ -451,7 +474,7 @@ export function ChihouRecommendPanelClient({
       } catch {
         // ネットワーク障害時は無視（次回ポーリングで回復）
       }
-    }, 30_000);
+    }, 20_000);
     return () => clearInterval(timer);
   }, [date]);
 

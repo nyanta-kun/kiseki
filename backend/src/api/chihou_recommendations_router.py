@@ -369,7 +369,7 @@ async def update_chihou_odds_decision_endpoint(
 
 _CHIHOU_SWEET_SPOT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CHIHOU_SWEET_SPOT_LOCKS: dict[str, asyncio.Lock] = {}
-_CHIHOU_SWEET_SPOT_TTL_SEC = 60.0
+_CHIHOU_SWEET_SPOT_TTL_SEC = 30.0
 
 
 async def _build_chihou_sweet_spot_cached(
