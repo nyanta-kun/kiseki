@@ -17,6 +17,7 @@ ARG NEXT_PUBLIC_PAID_MODE
 ENV NEXT_PUBLIC_PAID_MODE=$NEXT_PUBLIC_PAID_MODE
 ARG NEXT_PUBLIC_GA_ID
 ENV NEXT_PUBLIC_GA_ID=$NEXT_PUBLIC_GA_ID
+ENV CI=true
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN corepack enable && pnpm build
