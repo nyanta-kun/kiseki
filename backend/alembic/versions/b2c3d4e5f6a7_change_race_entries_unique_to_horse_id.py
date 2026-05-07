@@ -1,7 +1,7 @@
 """Change race_entries unique constraint from (race_id, horse_number) to (race_id, horse_id)
 
 Revision ID: b2c3d4e5f6a7
-Revises: z5a6b7c8d9e0
+Revises: d1e2f3a4b5c6
 Create Date: 2026-05-07
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from alembic import op
 
 revision: str = "b2c3d4e5f6a7"
-down_revision: str = "z5a6b7c8d9e0"
+down_revision: str = "d1e2f3a4b5c6"
 
 
 def upgrade() -> None:
