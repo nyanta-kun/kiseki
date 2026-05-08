@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   ChihouHorseIndex,
   ChihouRaceRanks,
@@ -8,6 +8,7 @@ import {
   RaceResult,
   buildChihouResultsWsUrl,
   fetchChihouHorseHistory,
+  fetchChihouOddsBrowser,
 } from "@/lib/api";
 import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
@@ -139,6 +140,21 @@ export function ChihouRaceDetailClient({
     () => toResultsMap(initialResults)
   );
   const hasResults = resultsMap.size > 0;
+
+  // オッズは 30 秒ごとにポーリング（UmaConn が約 1 分おきに更新する）
+  const [odds, setOdds] = useState<OddsData>(initialOdds);
+  useEffect(() => {
+    if (!mounted) return;
+    const timer = setInterval(async () => {
+      try {
+        const newOdds = await fetchChihouOddsBrowser(raceId);
+        setOdds(newOdds);
+      } catch {
+        // ignore
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [raceId, mounted]);
 
   const wsUrl = mounted ? buildChihouResultsWsUrl(raceId) : null;
   const handleWsMessage = useCallback((data: unknown) => {
@@ -310,7 +326,7 @@ export function ChihouRaceDetailClient({
                 const isWin = finishPos === 1;
                 const isPlace = finishPos !== undefined && finishPos !== null && finishPos <= 3;
                 const winOdds = horse.horse_number !== null
-                  ? (initialOdds.win[horse.horse_number.toString()] ?? null)
+                  ? (odds.win[horse.horse_number.toString()] ?? null)
                   : null;
                 const ev =
                   horse.win_probability !== null && winOdds !== null
