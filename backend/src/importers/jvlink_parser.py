@@ -1229,10 +1229,15 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
         race_grade_code = None
         race_distance: int | None = None
         race_track_code = None
+        race_type_code = None  # 馬齢条件コード（pos 506-507, 0-indexed）
         if len(data) > _TK_TRACK_POS + 1:
             grade_ch = data[_TK_GRADE_POS]
             if grade_ch in _TK_VALID_GRADES:
                 race_grade_code = grade_ch
+            # 馬齢条件コード: pos 506-507（コード表2005: 11=2歳, 12=3歳, 13=3歳以上, 14=4歳以上 等）
+            age_cond = data[506:508]
+            if age_cond.isdigit():
+                race_type_code = age_cond
             distance_str = data[_TK_DISTANCE_POS : _TK_DISTANCE_POS + 4]
             if distance_str.isdigit():
                 d = int(distance_str)
@@ -1293,6 +1298,7 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
                     "grade_code": race_grade_code,
                     "distance": race_distance,
                     "track_code": race_track_code,
+                    "race_type_code": race_type_code,
                 }
             )
             i += 1
