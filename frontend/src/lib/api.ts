@@ -673,6 +673,11 @@ export async function fetchChihouOdds(raceId: number): Promise<OddsData> {
   return get<OddsData>(`/chihou/races/${raceId}/odds`, { next: { revalidate: 30 } });
 }
 
+/** ブラウザ側ポーリング専用: 地方競馬オッズ（キャッシュなし）*/
+export async function fetchChihouOddsBrowser(raceId: number): Promise<OddsData> {
+  return get<OddsData>(`/chihou/races/${raceId}/odds`, { cache: "no-store" });
+}
+
 // ---------------------------------------------------------------------------
 // 地方競馬 推奨
 // ---------------------------------------------------------------------------
