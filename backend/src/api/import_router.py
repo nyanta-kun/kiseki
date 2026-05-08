@@ -492,6 +492,7 @@ class TokuRecord(BaseModel):
     grade_code: str | None = None
     distance: int | None = None
     track_code: str | None = None
+    race_type_code: str | None = None  # 馬齢条件コード（TK pos 506-507 由来）
 
 
 class TokuImportRequest(BaseModel):
@@ -576,10 +577,22 @@ async def import_toku(
             "surface": _surface_from_track(e.track_code),
             "distance": e.distance or 0,
             "grade": _GRADE_LABEL.get(e.grade_code or "", None),
+            "race_type_code": e.race_type_code,
         }
     if race_seen:
         race_stmt = pg_insert(Race).values(list(race_seen.values()))
-        race_stmt = race_stmt.on_conflict_do_nothing(index_elements=["jravan_race_id"])
+        # race_type_code は RA 取込後に正式値で上書きされる。
+        # TOKU 由来の値（馬齢条件コード）は race_class_label の部分表示に使用する。
+        # 既存レコードに race_type_code が未設定の場合のみ補完する（RA 上書き保護）。
+        race_stmt = race_stmt.on_conflict_do_update(
+            index_elements=["jravan_race_id"],
+            set_={
+                "race_type_code": func.coalesce(
+                    Race.__table__.c.race_type_code,
+                    race_stmt.excluded.race_type_code,
+                ),
+            },
+        )
         await db.execute(race_stmt)
 
     stmt = pg_insert(SpecialRegistration).values(rows)

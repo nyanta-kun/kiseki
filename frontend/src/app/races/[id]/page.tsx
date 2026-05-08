@@ -105,7 +105,10 @@ export default async function RacePage({ params }: { params: Params }) {
                 <p className="text-xs text-gray-500">
                   出馬表確定後に枠番・騎手・指数が表示されます
                 </p>
-                <SpecialRegistrationsTable entries={specialRegs} />
+                <SpecialRegistrationsTable
+                  entries={specialRegs}
+                  raceName={race?.race_name ?? race?.race_class_label}
+                />
               </div>
             ) : (
               <div className="py-8 text-center text-gray-400">
