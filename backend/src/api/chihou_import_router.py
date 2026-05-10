@@ -40,6 +40,46 @@ ApiKeyDep = Annotated[None, Depends(verify_api_key)]
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
+async def _fill_win_odds_from_history(
+    db: AsyncSession, race_ids: list[int]
+) -> int:
+    """対象レースの race_results.win_odds NULL 行を odds_history で補完する。
+
+    0B12 速報成績の SE レコードは win_odds="0000"（未確定）で届くことがある。
+    odds_history（bet_type='win'）の発走前最終スナップショットで補完する。
+
+    Returns:
+        補完した行数。
+    """
+    if not race_ids:
+        return 0
+
+    from sqlalchemy import text as _text
+
+    sql = """
+        WITH latest AS (
+            SELECT DISTINCT ON (oh.race_id, oh.combination)
+                oh.race_id,
+                oh.combination AS horse_no_str,
+                oh.odds
+            FROM chihou.odds_history oh
+            WHERE oh.race_id = ANY(:race_ids)
+              AND oh.bet_type = 'win'
+              AND oh.odds IS NOT NULL
+            ORDER BY oh.race_id, oh.combination, oh.fetched_at DESC
+        )
+        UPDATE chihou.race_results AS rr
+        SET win_odds = latest.odds
+        FROM latest
+        WHERE rr.race_id = latest.race_id
+          AND rr.horse_number::text = latest.horse_no_str
+          AND rr.finish_position IS NOT NULL
+          AND rr.win_odds IS NULL
+    """
+    result = await db.execute(_text(sql), {"race_ids": race_ids})
+    return getattr(result, "rowcount", 0) or 0
+
+
 async def _fill_loser_place_odds_from_history(
     db: AsyncSession, race_ids: list[int]
 ) -> int:
@@ -121,6 +161,13 @@ async def chihou_import_races(
             await chihou_results_manager.broadcast(race_id, payload)  # type: ignore[arg-type]
 
     if result_race_ids:
+        # 0B12 速報成績の SE レコードは win_odds="0000" で届くことがある。odds_history で補完。
+        async with AsyncSessionLocal() as fill_session:
+            filled_win = await _fill_win_odds_from_history(fill_session, result_race_ids)
+            if filled_win:
+                await fill_session.commit()
+                logger.info("chihou_import_races: filled %d win_odds from odds_history", filled_win)
+
         # 成績確定レースの日付を取得し、地方推奨の的中・払戻をバックグラウンド更新
         dates_result = await db.execute(
             select(ChihouRace.date).where(ChihouRace.id.in_(result_race_ids)).distinct()
@@ -292,6 +339,13 @@ async def chihou_import_payouts(
         if filled:
             logger.info(
                 "chihou_import_payouts: filled %d loser place_odds from odds_history", filled
+            )
+        # 0B12 速報成績の SE レコードは win_odds="0000" で届くことがある。
+        # 同レースの odds_history（bet_type='win'）の最終スナップで補完する。
+        filled_win = await _fill_win_odds_from_history(db, affected_race_ids)
+        if filled_win:
+            logger.info(
+                "chihou_import_payouts: filled %d win_odds from odds_history", filled_win
             )
 
     await db.commit()
