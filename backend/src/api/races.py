@@ -573,8 +573,10 @@ async def list_races(
         for rid, ci, wp, hn in idx_rows_all:
             by_race[rid].append((float(ci), hn))
         for rid, entries in by_race.items():
-            best = max(entries, key=lambda x: x[0])
-            race_top_horse_num[rid] = best[1]
+            valid = [(ci, hn) for ci, hn in entries if hn]
+            if valid:
+                best = max(valid, key=lambda x: x[0])
+                race_top_horse_num[rid] = best[1]
 
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
 
@@ -715,6 +717,7 @@ async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
         .outerjoin(Jockey, RaceEntry.jockey_id == Jockey.id)
         .outerjoin(Trainer, RaceEntry.trainer_id == Trainer.id)
         .where(RaceEntry.race_id == race_id)
+        .where(RaceEntry.horse_number > 0)
         .order_by(RaceEntry.horse_number)
     )
     entries_result = await db.execute(stmt)
@@ -810,6 +813,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
         .where(CalculatedIndex.race_id == race_id)
         .where(CalculatedIndex.version == use_version)
+        .where(RaceEntry.horse_number > 0)
         .order_by(CalculatedIndex.composite_index.desc().nullslast())
     )
     rows_result = await db.execute(stmt)
