@@ -95,7 +95,8 @@ class ChihouOddsImporter:
             if rec_id not in ("O1", "O2", "O3", "O4", "O5", "O6", "O7", "O8"):
                 continue
             try:
-                parsed = parse_odds(rec["data"])
+                data = rec["data"]
+                parsed = parse_odds(data)
                 if not parsed:
                     continue
 

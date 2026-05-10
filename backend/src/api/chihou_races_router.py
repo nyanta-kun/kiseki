@@ -67,6 +67,7 @@ class ChihouRaceOut(BaseModel):
     recommend_rank: str | None = None    # S / A / B / C
     buy_signal: str | None = None        # "buy" | "caution" | "pass"
     top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
+    result_confirmed: bool = False        # 成績確定済み（JRA RaceOut と互換）
 
     model_config = {"from_attributes": True}
 
@@ -284,6 +285,15 @@ async def get_chihou_races_by_date(
                     latest_win_odds[rid] = float(odds)
                 seen_races.add(rid)
 
+    # --- 成績確定レース取得（finish_position が存在するレース）---
+    confirmed_rows = await db.execute(
+        select(ChihouRaceResult.race_id)
+        .where(ChihouRaceResult.race_id.in_(race_ids))
+        .where(ChihouRaceResult.finish_position.isnot(None))
+        .distinct()
+    )
+    confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
+
     # --- 信頼度・推奨度算出 ---
     confidence_data: dict[int, dict] = {}
     for rid, entries in race_index_rows.items():
@@ -326,6 +336,7 @@ async def get_chihou_races_by_date(
                 confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
             ),
             top_win_odds=latest_win_odds.get(race.id),
+            result_confirmed=race.id in confirmed_race_ids,
         )
         for race in races
     ]
