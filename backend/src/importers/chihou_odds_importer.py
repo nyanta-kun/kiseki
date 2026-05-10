@@ -90,29 +90,40 @@ class ChihouOddsImporter:
         now = datetime.now()
         affected_race_ids: set[int] = set()
 
+        _debug_printed = False
         for rec in records:
             rec_id = rec.get("rec_id", "")
             if rec_id not in ("O1", "O2", "O3", "O4", "O5", "O6", "O7", "O8"):
                 continue
             try:
-                parsed = parse_odds(rec["data"])
+                data = rec["data"]
+                parsed = parse_odds(data)
+                if not _debug_printed:
+                    print(f"[CHIHOU_ODDS_DEBUG] rec_id={rec_id!r} data_len={len(data)} data[:30]={data[:30]!r} parsed={parsed is not None}", flush=True)
+                    if parsed:
+                        print(f"[CHIHOU_ODDS_DEBUG] jravan_race_id={parsed['jravan_race_id']!r}", flush=True)
+                    _debug_printed = True
                 if not parsed:
                     continue
 
                 race_db_id = await self._get_race_id(parsed["jravan_race_id"])
                 if race_db_id is None:
+                    print(f"[CHIHOU_ODDS_DEBUG] Race not found: {parsed['jravan_race_id']!r}", flush=True)
                     logger.warning(f"Race not found for odds: {parsed['jravan_race_id']}")
                     continue
 
                 rows = self._extract_odds_rows(
                     rec_id, rec["data"], parsed["bet_type"], race_db_id, now
                 )
+                if not _debug_printed or True:
+                    print(f"[CHIHOU_ODDS_DEBUG] race_db_id={race_db_id} rows_count={len(rows)}", flush=True)
                 if rows:
                     await self.db.execute(insert(ChihouOddsHistory), rows)
                     stats["saved"] += len(rows)
                     affected_race_ids.add(race_db_id)
 
             except Exception as e:
+                print(f"[CHIHOU_ODDS_DEBUG] Exception: {e}", flush=True)
                 logger.error(f"Odds import error rec_id={rec_id}: {e}")
                 stats["errors"] += 1
 
