@@ -29,6 +29,8 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
   const recRank    = race.recommend_rank  ?? null;
   const buySignal  = race.buy_signal ?? null;
   const postTime   = formatPostTime(race.post_time);
+  const isChihou   = basePath.startsWith("/chihou");
+  const activeColor = isChihou ? "var(--chihou-primary)" : "var(--primary)";
 
   return (
     <Link
@@ -39,7 +41,7 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
         {/* R番号: 結果確定後はグレー */}
         <div
           className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-white text-sm"
-          style={{ background: race.result_confirmed ? "#9ca3af" : "var(--primary)" }}
+          style={{ background: race.result_confirmed ? "#9ca3af" : activeColor }}
         >
           {race.race_number}R
         </div>
