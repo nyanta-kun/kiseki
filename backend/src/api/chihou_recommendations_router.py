@@ -57,6 +57,18 @@ class ChihouTargetHorse(BaseModel):
     ev: float | None = None  # win_probability × win_odds
 
 
+class RaceConcentration(BaseModel):
+    """レース内の複勝確率集中度。
+
+    top2_share > 0.873 → high (1位複勝ヒット率 76.5%)
+    top2_share ≤ 0.715 → low  (1位複勝ヒット率 57.0%)
+    """
+
+    top2_share: float | None       # 上位2頭の複勝確率シェア
+    hhi: float | None              # ハーフィンダール指数
+    confidence_level: str | None   # "high" | "medium" | "low"
+
+
 class ChihouRaceInfo(BaseModel):
     """レース概要情報。"""
 
@@ -83,6 +95,7 @@ class ChihouRecommendationOut(BaseModel):
     target_horses: list[ChihouTargetHorse]
     reason: str
     confidence: float
+    race_concentration: RaceConcentration | None = None
     # 10分前オッズ判断
     odds_decision: str | None  # "buy" | "pass" | None
     odds_decision_at: datetime | None
@@ -186,12 +199,23 @@ def _chihou_sweet_spot_to_out(c: dict[str, Any]) -> ChihouRecommendationOut:
         )
         for h in c["target_horses"]
     ]
+    raw_conc = c.get("race_concentration")
+    concentration = (
+        RaceConcentration(
+            top2_share=raw_conc.get("top2_share"),
+            hhi=raw_conc.get("hhi"),
+            confidence_level=raw_conc.get("confidence_level"),
+        )
+        if raw_conc
+        else None
+    )
     return ChihouRecommendationOut(
         id=c["id"],
         rank=c["rank"],
         race=race_info,
         bet_type=c["bet_type"],
         category=c.get("category"),
+        race_concentration=concentration,
         target_horses=target,
         reason=c["reason"],
         confidence=c["confidence"],

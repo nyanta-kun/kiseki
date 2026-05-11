@@ -6,6 +6,7 @@ import {
   ChihouRecommendation,
   ChihouRecommendCategory,
   ChihouSweetSpotResponse,
+  RaceConcentration,
   fetchChihouRecommendationsBrowser,
   fetchChihouSweetSpotRecommendationsBrowser,
 } from "@/lib/api";
@@ -267,6 +268,24 @@ function OddsInline({ rec, field }: { rec: ChihouRecommendation; field: "win_odd
   );
 }
 
+function ConcentrationBadge({ conc }: { conc: RaceConcentration | null }) {
+  if (!conc || !conc.confidence_level) return null;
+  const cfg = {
+    high:   { label: "集中◎", cls: "text-emerald-700 bg-emerald-50 border-emerald-200", title: `top2シェア ${((conc.top2_share ?? 0) * 100).toFixed(0)}% — 1位複勝ヒット率 約76%` },
+    medium: { label: "集中△", cls: "text-gray-500 bg-gray-50 border-gray-200",         title: `top2シェア ${((conc.top2_share ?? 0) * 100).toFixed(0)}% — 1位複勝ヒット率 約65-70%` },
+    low:    { label: "分散▼", cls: "text-amber-700 bg-amber-50 border-amber-200",       title: `top2シェア ${((conc.top2_share ?? 0) * 100).toFixed(0)}% — 1位複勝ヒット率 約57%` },
+  } as const;
+  const { label, cls, title } = cfg[conc.confidence_level];
+  return (
+    <span
+      className={cn("inline-block text-[10px] font-semibold px-1 py-[1px] rounded border leading-tight", cls)}
+      title={title}
+    >
+      {label}
+    </span>
+  );
+}
+
 function EvInline({ rec }: { rec: ChihouRecommendation }) {
   return (
     <div className="space-y-0.5 text-right">
@@ -336,6 +355,7 @@ function CategoryTable({
               {(category === "sweet_spot" || category === "place_bet") && (
                 <th className="text-right py-1 px-1.5 font-normal w-12">EV</th>
               )}
+              <th className="text-center py-1 px-1.5 font-normal w-16" title="複勝確率の集中度: ◎=高信頼(ヒット率76%) △=中 ▼=低(ヒット率57%)">信頼度</th>
               <th className="text-left py-1 px-1.5 font-normal w-20">結果</th>
             </tr>
           </thead>
@@ -359,6 +379,9 @@ function CategoryTable({
                   {(category === "sweet_spot" || category === "place_bet") && (
                     <td className="py-1.5 px-1.5 align-top"><EvInline rec={rec} /></td>
                   )}
+                  <td className="py-1.5 px-1.5 align-middle text-center">
+                    <ConcentrationBadge conc={rec.race_concentration} />
+                  </td>
                   <td className="py-1.5 px-1.5 align-top whitespace-nowrap">
                     <ResultCell correct={rec.result_correct} payout={rec.result_payout} finishPos={bestFinish} betType={rec.bet_type} />
                   </td>

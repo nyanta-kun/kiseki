@@ -703,6 +703,13 @@ export type ChihouRecommendCategory =
   | "low_odds_trusted"    // 信頼できる本命 (単勝<1.5)
   | "low_odds_untrusted"; // 信頼できない本命 (1.5≤単勝<2.0)
 
+/** レース内の複勝確率集中度。top2_share>0.873=high(76.5%ヒット率) / ≤0.715=low(57%) */
+export type RaceConcentration = {
+  top2_share: number | null;
+  hhi: number | null;
+  confidence_level: "high" | "medium" | "low" | null;
+};
+
 export type ChihouRecommendation = {
   id: number;
   rank: number;
@@ -720,6 +727,7 @@ export type ChihouRecommendation = {
   target_horses: ChihouTargetHorse[];
   reason: string;
   confidence: number;
+  race_concentration: RaceConcentration | null;
   odds_decision: "buy" | "pass" | null;
   odds_decision_at: string | null;
   odds_decision_reason: string | null;
