@@ -716,7 +716,13 @@ def run_realtime_monitor(jv) -> None:
             # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
             race_keys = _fetch_today_race_keys(today)
             if not race_keys:
-                logger.debug("本日のレースキーが取得できませんでした")
+                # JRAレースなし（平日等）: JVRTOpen をスキップ。
+                # JVRTOpen は JRA レースのない日に 30 分ハングすることがある（COM レベルのタイムアウト）。
+                # race_keys が空なら出走取消・馬体重・成績の監視も不要なので
+                # 30秒待機して次のイテレーションへ進む。
+                logger.debug("本日のJRAレースなし: JVRTOpen をスキップ（30秒後再試行）")
+                time.sleep(30)
+                continue
             all_o1 = []
             for race_key in race_keys:
                 with _wd_lock:
