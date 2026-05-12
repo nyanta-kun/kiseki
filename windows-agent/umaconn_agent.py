@@ -125,10 +125,14 @@ UMACONN_EARLIEST: str = "20050101000000"
 _REALTIME_WATCHDOG_TIMEOUT = 600  # POST 120s × 複数バッチ + NVOpen 80s を許容
 
 # 最終レース発走後この分数が経過したら結果確定とみなして停止
-_REALTIME_RESULTS_BUFFER_MIN = 90
+# UmaConn は当日の SENV（蓄積成績）ファイルを概ね 23:10 JST に公開する。
+# 最終レース 20:50 JST から 150 分 = 23:20 JST まで待機することで確実に取得できる。
+_REALTIME_RESULTS_BUFFER_MIN = 150
 
 # ハードストップ時刻（この時刻以降は無条件で停止）
-_REALTIME_HARD_STOP_HOUR = 21
+# 旧値 21:30 は最終レース(20:50)+90分=22:20 より早く発動し、23:10 JST 公開の
+# SENV ファイルを取り損ねていた。23:30 に延長して当日中に成績を取得する。
+_REALTIME_HARD_STOP_HOUR = 23
 _REALTIME_HARD_STOP_MIN = 30
 
 # chihou エンドポイント
