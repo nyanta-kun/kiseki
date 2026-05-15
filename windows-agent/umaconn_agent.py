@@ -1070,7 +1070,8 @@ def run_realtime_monitor(nv) -> None:
                     _bg_result_buf.clear()
                     for race_key in keys:
                         _bg_heartbeat[0] = time.time()  # レースキーごとにリセット（NVRTOpenハング検知用）
-                        for rec in fetch_realtime_data(nv2, RT_RESULT, race_key):
+                        result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                        for rec in fetch_realtime_data(nv2, RT_RESULT, result_key):
                             if rec.get("rec_id") in ("RA", "SE", "HR"):
                                 _bg_result_buf.append(rec)
                     _bg_done_event.set()
@@ -1323,13 +1324,14 @@ def main() -> None:
             logger.info(f"レースキー: {len(race_keys)} 件")
             all_results: list[dict] = []
             for i, race_key in enumerate(race_keys):
-                records = fetch_realtime_data(nv, RT_RESULT, race_key)
+                result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                records = fetch_realtime_data(nv, RT_RESULT, result_key)
                 recs = [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
                 if recs:
-                    logger.info(f"  [{i+1}/{len(race_keys)}] {race_key}: {len(recs)} 件")
+                    logger.info(f"  [{i+1}/{len(race_keys)}] {result_key}: {len(recs)} 件")
                     all_results.extend(recs)
                 else:
-                    logger.debug(f"  [{i+1}/{len(race_keys)}] {race_key}: データなし")
+                    logger.debug(f"  [{i+1}/{len(race_keys)}] {result_key}: データなし")
             if all_results:
                 ra_se, hr = _split_race_hr(all_results)
                 if ra_se:
