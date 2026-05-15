@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from typing import Annotated
 
@@ -612,16 +613,27 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
-    # has_indices チェック
-    idx_check = await db.execute(
-        select(
-            exists().where(
-                ChihouCalculatedIndex.race_id == race_id,
-                ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION,
+    # has_indices + result_confirmed チェック（並列）
+    idx_check, confirmed_check = await asyncio.gather(
+        db.execute(
+            select(
+                exists().where(
+                    ChihouCalculatedIndex.race_id == race_id,
+                    ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION,
+                )
             )
-        )
+        ),
+        db.execute(
+            select(
+                exists().where(
+                    ChihouRaceResult.race_id == race_id,
+                    ChihouRaceResult.finish_position.isnot(None),
+                )
+            )
+        ),
     )
     has_indices: bool = idx_check.scalar() or False
+    result_confirmed: bool = confirmed_check.scalar() or False
 
     return ChihouRaceOut(
         id=race.id,
@@ -637,6 +649,7 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         head_count=race.head_count,
         post_time=race.post_time,
         has_indices=has_indices,
+        result_confirmed=result_confirmed,
         buy_signal=chihou_buy_signal(race.course_name),
     )
 

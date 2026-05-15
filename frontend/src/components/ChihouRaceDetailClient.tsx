@@ -136,6 +136,7 @@ export function ChihouRaceDetailClient({
   buySignal,
 }: Props) {
   const mounted = useIsMounted();
+  const [resultsList, setResultsList] = useState<RaceResult[]>(initialResults);
   const [resultsMap, setResultsMap] = useState<Map<number, number | null>>(
     () => toResultsMap(initialResults)
   );
@@ -159,7 +160,9 @@ export function ChihouRaceDetailClient({
   const wsUrl = mounted ? buildChihouResultsWsUrl(raceId) : null;
   const handleWsMessage = useCallback((data: unknown) => {
     if (Array.isArray(data) && data.length > 0) {
-      setResultsMap(toResultsMap(data as RaceResult[]));
+      const results = data as RaceResult[];
+      setResultsList(results);
+      setResultsMap(toResultsMap(results));
     }
   }, []);
   const { isConnected: wsConnected } = useWebSocket(wsUrl, handleWsMessage);
@@ -504,7 +507,7 @@ export function ChihouRaceDetailClient({
           <div className="mt-4 pt-3 border-t border-gray-100">
             <h3 className="text-xs font-semibold text-gray-500 mb-2">確定着順</h3>
             <div className="space-y-1">
-              {initialResults
+              {resultsList
                 .filter((r) => r.finish_position !== null)
                 .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99))
                 .slice(0, 5)
