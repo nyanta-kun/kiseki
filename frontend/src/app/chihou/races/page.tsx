@@ -1,6 +1,12 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchChihouRacesByDate, fetchChihouNearestDate, fetchChihouTopProbability } from "@/lib/api";
+import {
+  fetchChihouRacesByDate,
+  fetchChihouNearestDate,
+  fetchChihouTopProbability,
+  fetchChihouRecommendations,
+  fetchChihouSweetSpotRecommendations,
+} from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
@@ -59,7 +65,8 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
 
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
         <h1 className="sr-only">地方競馬 開催レース一覧</h1>
-        <Suspense fallback={<RaceListSkeleton />}>
+        {/* key={targetDate}: 日付切り替え時に古いコンテンツを即クリアしスケルトンを表示する */}
+        <Suspense key={targetDate} fallback={<RaceListSkeleton />}>
           <ChihouRaceList date={targetDate} />
         </Suspense>
       </main>
@@ -71,11 +78,13 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
 async function ChihouRaceList({ date }: { date: string }) {
   let races;
   try {
-    // races と top-probability を並列フェッチ
-    // top-prob は ChihouTopProbabilityPanel でも呼ばれるが Next.js fetch が重複排除するため追加レイテンシなし
+    // races と推奨系を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
+    // ChihouTopProbabilityPanel / ChihouRecommendPanel での同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchChihouRacesByDate(date),
       fetchChihouTopProbability(date).catch(() => []),
+      fetchChihouRecommendations(date).catch(() => []),
+      fetchChihouSweetSpotRecommendations(date).catch(() => ({ items: [], summaries: {} })),
     ]);
   } catch {
     return (

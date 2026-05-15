@@ -717,14 +717,23 @@ async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
+    # 確定出走表（horse_number > 0）が存在するか確認
+    has_confirmed = await db.scalar(
+        select(func.count()).select_from(RaceEntry)
+        .where(RaceEntry.race_id == race_id)
+        .where(RaceEntry.horse_number > 0)
+    )
+    # 確定済みなら horse_number > 0 のみ、未確定なら 0 も含む（想定表）
+    hn_filter = RaceEntry.horse_number > 0 if has_confirmed else RaceEntry.horse_number >= 0
+
     stmt = (
         select(RaceEntry, Horse, Jockey, Trainer)
         .join(Horse, RaceEntry.horse_id == Horse.id)
         .outerjoin(Jockey, RaceEntry.jockey_id == Jockey.id)
         .outerjoin(Trainer, RaceEntry.trainer_id == Trainer.id)
         .where(RaceEntry.race_id == race_id)
-        .where(RaceEntry.horse_number > 0)
-        .order_by(RaceEntry.horse_number)
+        .where(hn_filter)
+        .order_by(RaceEntry.horse_number, Horse.name)
     )
     entries_result = await db.execute(stmt)
     entries = entries_result.all()

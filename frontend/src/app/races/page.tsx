@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchRecommendations } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
@@ -32,7 +32,8 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
 
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
         <h1 className="sr-only">開催レース一覧</h1>
-        <Suspense fallback={<RaceListSkeleton />}>
+        {/* key={targetDate}: 日付切り替え時に古いコンテンツを即クリアしスケルトンを表示する */}
+        <Suspense key={targetDate} fallback={<RaceListSkeleton />}>
           <RaceList date={targetDate} />
         </Suspense>
       </main>
@@ -64,7 +65,12 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    races = await fetchRacesByDate(date);
+    // 推奨系を並列プリフェッチ: JraTopProbabilityPanel / RecommendView での同一フェッチはキャッシュから即解決する
+    [races] = await Promise.all([
+      fetchRacesByDate(date),
+      fetchJraTopProbability(date).catch(() => []),
+      fetchRecommendations(date).catch(() => []),
+    ]);
   } catch {
     return (
       <div className="text-center py-12 text-gray-400">

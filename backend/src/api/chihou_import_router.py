@@ -205,7 +205,7 @@ async def chihou_import_odds(
     records = [r.model_dump() for r in body.records]
     stats = await importer.import_records(records)
     await db.commit()
-    logger.info("chihou_import_odds stats: %s", stats)
+    print(f"[chihou_odds] stats={stats}", flush=True)
     return {"ok": True, "stats": stats}
 
 

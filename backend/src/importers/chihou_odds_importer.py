@@ -102,7 +102,8 @@ class ChihouOddsImporter:
 
                 race_db_id = await self._get_race_id(parsed["jravan_race_id"])
                 if race_db_id is None:
-                    logger.warning(f"Race not found for odds: {parsed['jravan_race_id']}")
+                    print(f"[chihou_odds] Race not found: {parsed['jravan_race_id']}", flush=True)
+                    stats["errors"] += 1
                     continue
 
                 rows = self._extract_odds_rows(
