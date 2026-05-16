@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchRecommendations } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchRecommendations, fetchAnagusaRules } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { RecommendView } from "@/components/RecommendView";
 import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
+import { AnagusaRuleView } from "@/components/AnagusaRuleView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -65,11 +66,12 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    // 推奨系を並列プリフェッチ: JraTopProbabilityPanel / RecommendView での同一フェッチはキャッシュから即解決する
+    // 推奨系を並列プリフェッチ: 各パネルでの同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchRacesByDate(date),
       fetchJraTopProbability(date).catch(() => []),
       fetchRecommendations(date).catch(() => []),
+      fetchAnagusaRules(date).catch(() => []),
     ]);
   } catch {
     return (
@@ -116,6 +118,10 @@ async function RaceList({ date }: { date: string }) {
 
   const recommendPanel = (
     <>
+      {/* 穴ぐさ条件ルール推奨（rank_A × 場/面/距離ルール） */}
+      <Suspense fallback={<AnagusaSkeleton />}>
+        <AnagusaRuleView date={date} />
+      </Suspense>
       {/* TopProbabilityPanel を独立した Suspense で囲み RecommendView と並列ストリーミング */}
       <Suspense>
         <JraTopProbabilityPanel date={date} />
@@ -146,5 +152,11 @@ function RecommendSkeleton() {
         <div key={i} className="h-52 bg-gray-100 rounded-xl" />
       ))}
     </div>
+  );
+}
+
+function AnagusaSkeleton() {
+  return (
+    <div className="h-24 bg-gray-100 rounded-xl animate-pulse motion-reduce:animate-none" aria-busy="true" />
   );
 }

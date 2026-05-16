@@ -593,6 +593,44 @@ export async function fetchRecommendationsBrowser(date: string): Promise<Recomme
 }
 
 // ---------------------------------------------------------------------------
+// 穴ぐさルール推奨
+// ---------------------------------------------------------------------------
+
+export type AnagusaRuleItem = {
+  rule_label: string;
+  rule_desc: string;
+  bet_type: "place" | "win_place";
+  race_id: number;
+  course_name: string;
+  race_number: number;
+  race_name: string | null;
+  post_time: string | null;
+  distance: number;
+  surface: string;
+  horse_number: number;
+  horse_name: string | null;
+  win_odds: number | null;
+  place_odds: number | null;
+  popularity: number | null;
+  is_preferred_pop: boolean;
+  finish_position: number | null;
+  backtest_place_roi: number;
+  backtest_win_roi: number | null;
+  backtest_n: number;
+  snapshot_at: string | null;
+};
+
+export async function fetchAnagusaRules(date: string): Promise<AnagusaRuleItem[]> {
+  return get<AnagusaRuleItem[]>(`/recommendations/anagusa-rules?date=${date}`, {
+    next: { revalidate: 60 },
+  });
+}
+
+export async function fetchAnagusaRulesBrowser(date: string): Promise<AnagusaRuleItem[]> {
+  return get<AnagusaRuleItem[]>(`/recommendations/anagusa-rules?date=${date}`, { cache: "no-store" });
+}
+
+// ---------------------------------------------------------------------------
 // 地方競馬 型定義
 // ---------------------------------------------------------------------------
 

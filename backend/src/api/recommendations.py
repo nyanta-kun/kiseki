@@ -30,6 +30,7 @@ from ..config import settings
 from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
 from ..services.recommender import (
+    build_anagusa_rule_recommendations,
     build_sweet_spot_recommendations,
     collect_recommendation_source,
     submit_recommendations,
@@ -257,6 +258,74 @@ async def get_recommendations(
     items = [_sweet_spot_to_out(c) for c in candidates]
     items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
     return items
+
+
+class AnagusaRuleItem(BaseModel):
+    """穴ぐさルール推奨1馬券のレスポンス。"""
+
+    rule_label: str
+    rule_desc: str
+    bet_type: str  # "place" | "win_place"
+    race_id: int
+    course_name: str
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    distance: int
+    surface: str
+    horse_number: int
+    horse_name: str | None
+    win_odds: float | None
+    place_odds: float | None
+    popularity: int | None
+    is_preferred_pop: bool  # 人気4-6（最優先条件）
+    finish_position: int | None
+    backtest_place_roi: float
+    backtest_win_roi: float | None
+    backtest_n: int
+    snapshot_at: datetime | None
+
+
+_ANAGUSA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_ANAGUSA_LOCKS: dict[str, asyncio.Lock] = {}
+_ANAGUSA_TTL_SEC = 60.0
+
+
+async def _build_anagusa_cached(db: AsyncSession, date: str) -> list[dict[str, Any]]:
+    now = time.monotonic()
+    cached = _ANAGUSA_CACHE.get(date)
+    if cached and now - cached[0] < _ANAGUSA_TTL_SEC:
+        return cached[1]
+    lock = _ANAGUSA_LOCKS.setdefault(date, asyncio.Lock())
+    async with lock:
+        cached = _ANAGUSA_CACHE.get(date)
+        if cached and time.monotonic() - cached[0] < _ANAGUSA_TTL_SEC:
+            return cached[1]
+        result = await build_anagusa_rule_recommendations(db, date)
+        _ANAGUSA_CACHE[date] = (time.monotonic(), result)
+        return result
+
+
+@router.get("/anagusa-rules", response_model=list[AnagusaRuleItem])
+async def get_anagusa_rule_recommendations(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+) -> list[AnagusaRuleItem]:
+    """穴ぐさ条件ルールに基づく推奨馬を返す（都度算出）。
+
+    Rule1: 東京×芝×1201-1800m × rank_A → 複勝
+    Rule2: 新潟×芝×1601-1800m × rank_A → 単+複
+    Rule3: 京都×芝×~1200m × rank_A → 単+複
+    Rule4: 京都×ダ×1601-1800m × rank_A → 単+複
+    人気4-6が最優先（is_preferred_pop=true）。
+    3年バックテスト複ROI: 1.030〜1.168。
+    """
+    try:
+        items = await _build_anagusa_cached(db, date)
+    except Exception as e:
+        logger.error("穴ぐさルール推奨生成失敗: %s", e)
+        return []
+    return [AnagusaRuleItem(**item) for item in items]
 
 
 @router.get("/source")
