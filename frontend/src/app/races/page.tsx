@@ -1,10 +1,9 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchRecommendations, fetchAnagusaRules } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { RecommendView } from "@/components/RecommendView";
 import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
 import { AnagusaRuleView } from "@/components/AnagusaRuleView";
 
@@ -70,7 +69,6 @@ async function RaceList({ date }: { date: string }) {
     [races] = await Promise.all([
       fetchRacesByDate(date),
       fetchJraTopProbability(date).catch(() => []),
-      fetchRecommendations(date).catch(() => []),
       fetchAnagusaRules(date).catch(() => []),
     ]);
   } catch {
@@ -122,12 +120,8 @@ async function RaceList({ date }: { date: string }) {
       <Suspense fallback={<AnagusaSkeleton />}>
         <AnagusaRuleView date={date} />
       </Suspense>
-      {/* TopProbabilityPanel を独立した Suspense で囲み RecommendView と並列ストリーミング */}
       <Suspense>
         <JraTopProbabilityPanel date={date} />
-      </Suspense>
-      <Suspense fallback={<RecommendSkeleton />}>
-        <RecommendView date={date} />
       </Suspense>
     </>
   );
@@ -140,16 +134,6 @@ function RaceListSkeleton() {
     <div className="space-y-2 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="読み込み中">
       {Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="h-16 bg-gray-100 rounded-lg" />
-      ))}
-    </div>
-  );
-}
-
-function RecommendSkeleton() {
-  return (
-    <div className="space-y-3 animate-pulse motion-reduce:animate-none" aria-busy="true">
-      {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="h-52 bg-gray-100 rounded-xl" />
       ))}
     </div>
   );
