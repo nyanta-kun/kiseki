@@ -2,8 +2,9 @@
 
 import { SignJWT } from "jose";
 import { cookies } from "next/headers";
-import { signIn } from "@/auth";
 
+// パスワード検証のみを行い、Google OAuth の開始はクライアントに委ねる。
+// Server Action 内で signIn() を呼ぶと Auth.js beta.30 で MissingCSRF エラーになるため。
 export async function verifyPasswordAndRedirect(
   callbackUrl: string,
   formData: FormData
@@ -30,12 +31,11 @@ export async function verifyPasswordAndRedirect(
     path: "/",
   });
 
-  // new URL() でパースしてパス部分のみを抽出（ホスト部分を完全に無視し、オープンリダイレクトを防止）
+  // new URL() でパースしてパス部分のみを抽出（オープンリダイレクト防止）
   let safeCallback = "/races";
   if (callbackUrl) {
     try {
       const parsed = new URL(callbackUrl, "http://localhost");
-      // pathname + search + hash のみ使用（ホストは無視）
       const path = parsed.pathname + parsed.search + parsed.hash;
       if (path.startsWith("/")) {
         safeCallback = path;
@@ -45,7 +45,6 @@ export async function verifyPasswordAndRedirect(
     }
   }
 
-  await signIn("google", { redirectTo: safeCallback });
-
-  return null;
+  // "__verified__:{callbackUrl}" を返してクライアントに Google OAuth 開始を指示
+  return `__verified__:${safeCallback}`;
 }
