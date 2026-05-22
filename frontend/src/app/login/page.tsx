@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import Image from "next/image";
+import { signIn } from "next-auth/react";
 import { verifyPasswordAndRedirect } from "./actions";
 
 function LoginForm() {
@@ -16,6 +17,15 @@ function LoginForm() {
     },
     null
   );
+
+  const isVerified = errorMessage?.startsWith("__verified__:");
+
+  useEffect(() => {
+    if (isVerified) {
+      const cbUrl = errorMessage!.slice("__verified__:".length);
+      signIn("google", { callbackUrl: cbUrl });
+    }
+  }, [isVerified, errorMessage]);
 
   return (
     <div
@@ -78,15 +88,19 @@ function LoginForm() {
                 }}
               />
 
-              {errorMessage && (
+              {isVerified ? (
+                <p className="text-blue-300 text-sm bg-blue-500/20 border border-blue-400/30 rounded-lg px-3 py-2">
+                  Googleへリダイレクト中...
+                </p>
+              ) : errorMessage ? (
                 <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
                   {errorMessage}
                 </p>
-              )}
+              ) : null}
 
               <button
                 type="submit"
-                disabled={isPending}
+                disabled={isPending || !!isVerified}
                 className="w-full flex items-center justify-center gap-3 font-semibold py-3 rounded-xl transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   background: isPending
@@ -96,10 +110,10 @@ function LoginForm() {
                   boxShadow: isPending ? "none" : "0 0 20px rgba(0,180,255,0.3)",
                 }}
               >
-                {isPending ? (
+                {isPending || isVerified ? (
                   <>
                     <SpinnerIcon />
-                    認証中...
+                    {isVerified ? "Googleへ移動中..." : "認証中..."}
                   </>
                 ) : (
                   <>

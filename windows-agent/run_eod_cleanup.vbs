@@ -1,4 +1,4 @@
-' kiseki end-of-day cleanup (daily 23:00)
+' kiseki end-of-day cleanup (daily 23:45)
 '
 ' Forcibly terminate any kiseki agent realtime pythonw processes still alive
 ' so the next morning's 9:00 schedule starts from a clean state.
@@ -9,6 +9,9 @@
 '
 ' This is the safety net for hung COM/JV-Link/NV calls that the in-process
 ' watchdogs (jvlink 1800s, umaconn 600s) sometimes fail to interrupt.
+'
+' NOTE: Task trigger is set to 23:45 (not 23:00) so UmaConn can process
+'   the SENV race results files published at ~23:10 JST before being killed.
 
 On Error Resume Next
 

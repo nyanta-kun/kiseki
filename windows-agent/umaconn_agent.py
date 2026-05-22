@@ -125,10 +125,14 @@ UMACONN_EARLIEST: str = "20050101000000"
 _REALTIME_WATCHDOG_TIMEOUT = 600  # POST 120s × 複数バッチ + NVOpen 80s を許容
 
 # 最終レース発走後この分数が経過したら結果確定とみなして停止
-_REALTIME_RESULTS_BUFFER_MIN = 90
+# UmaConn は当日の SENV（蓄積成績）ファイルを概ね 23:10 JST に公開する。
+# 最終レース 20:50 JST から 150 分 = 23:20 JST まで待機することで確実に取得できる。
+_REALTIME_RESULTS_BUFFER_MIN = 150
 
 # ハードストップ時刻（この時刻以降は無条件で停止）
-_REALTIME_HARD_STOP_HOUR = 21
+# 旧値 21:30 は最終レース(20:50)+90分=22:20 より早く発動し、23:10 JST 公開の
+# SENV ファイルを取り損ねていた。23:30 に延長して当日中に成績を取得する。
+_REALTIME_HARD_STOP_HOUR = 23
 _REALTIME_HARD_STOP_MIN = 30
 
 # chihou エンドポイント
@@ -1066,7 +1070,8 @@ def run_realtime_monitor(nv) -> None:
                     _bg_result_buf.clear()
                     for race_key in keys:
                         _bg_heartbeat[0] = time.time()  # レースキーごとにリセット（NVRTOpenハング検知用）
-                        for rec in fetch_realtime_data(nv2, RT_RESULT, race_key):
+                        result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                        for rec in fetch_realtime_data(nv2, RT_RESULT, result_key):
                             if rec.get("rec_id") in ("RA", "SE", "HR"):
                                 _bg_result_buf.append(rec)
                     _bg_done_event.set()
@@ -1319,13 +1324,14 @@ def main() -> None:
             logger.info(f"レースキー: {len(race_keys)} 件")
             all_results: list[dict] = []
             for i, race_key in enumerate(race_keys):
-                records = fetch_realtime_data(nv, RT_RESULT, race_key)
+                result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                records = fetch_realtime_data(nv, RT_RESULT, result_key)
                 recs = [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
                 if recs:
-                    logger.info(f"  [{i+1}/{len(race_keys)}] {race_key}: {len(recs)} 件")
+                    logger.info(f"  [{i+1}/{len(race_keys)}] {result_key}: {len(recs)} 件")
                     all_results.extend(recs)
                 else:
-                    logger.debug(f"  [{i+1}/{len(race_keys)}] {race_key}: データなし")
+                    logger.debug(f"  [{i+1}/{len(race_keys)}] {result_key}: データなし")
             if all_results:
                 ra_se, hr = _split_race_hr(all_results)
                 if ra_se:

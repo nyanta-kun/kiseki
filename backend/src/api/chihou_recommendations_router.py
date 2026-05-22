@@ -15,7 +15,8 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +58,18 @@ class ChihouTargetHorse(BaseModel):
     ev: float | None = None  # win_probability × win_odds
 
 
+class RaceConcentration(BaseModel):
+    """レース内の複勝確率集中度。
+
+    top2_share > 0.873 → high (1位複勝ヒット率 76.5%)
+    top2_share ≤ 0.715 → low  (1位複勝ヒット率 57.0%)
+    """
+
+    top2_share: float | None       # 上位2頭の複勝確率シェア
+    hhi: float | None              # ハーフィンダール指数
+    confidence_level: str | None   # "high" | "medium" | "low"
+
+
 class ChihouRaceInfo(BaseModel):
     """レース概要情報。"""
 
@@ -83,6 +96,7 @@ class ChihouRecommendationOut(BaseModel):
     target_horses: list[ChihouTargetHorse]
     reason: str
     confidence: float
+    race_concentration: RaceConcentration | None = Field(...)  # Required: FastAPIのexclude_defaultsで除外させない
     # 10分前オッズ判断
     odds_decision: str | None  # "buy" | "pass" | None
     odds_decision_at: datetime | None
@@ -144,6 +158,7 @@ def _to_out(rec: ChihouRaceRecommendation, race: ChihouRace) -> ChihouRecommenda
         rank=rec.rank,
         race=race_info,
         bet_type=rec.bet_type,
+        race_concentration=None,
         target_horses=target,
         reason=rec.reason,
         confidence=rec.confidence,
@@ -186,12 +201,23 @@ def _chihou_sweet_spot_to_out(c: dict[str, Any]) -> ChihouRecommendationOut:
         )
         for h in c["target_horses"]
     ]
+    raw_conc = c.get("race_concentration")
+    concentration = (
+        RaceConcentration(
+            top2_share=raw_conc.get("top2_share"),
+            hhi=raw_conc.get("hhi"),
+            confidence_level=raw_conc.get("confidence_level"),
+        )
+        if raw_conc
+        else None
+    )
     return ChihouRecommendationOut(
         id=c["id"],
         rank=c["rank"],
         race=race_info,
         bet_type=c["bet_type"],
         category=c.get("category"),
+        race_concentration=concentration,
         target_horses=target,
         reason=c["reason"],
         confidence=c["confidence"],
@@ -389,11 +415,11 @@ async def _build_chihou_sweet_spot_cached(
         return result
 
 
-@router.get("/sweet-spot", response_model=ChihouSweetSpotResponse)
+@router.get("/sweet-spot")
 async def get_chihou_sweet_spot_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
-) -> ChihouSweetSpotResponse:
+) -> JSONResponse:
     """地方競馬スイートスポット自動推奨を返す（最新オッズ反映・都度算出）。
 
     返却内容:
@@ -404,13 +430,17 @@ async def get_chihou_sweet_spot_recommendations(
       - summaries: カテゴリ別の当日確定済み件数・的中数・的中率・単勝ROI
 
     プロセス内 60 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
+    JSONResponse で直接返すことで Pydantic の exclude_defaults を回避し
+    race_concentration フィールドが null でも確実に含まれる。
     """
     try:
         candidates = await _build_chihou_sweet_spot_cached(db, date)
     except Exception as e:
         logger.error("地方スイートスポット生成失敗: %s", e)
-        return ChihouSweetSpotResponse(items=[], summaries={})
+        return JSONResponse(content={"items": [], "summaries": {}})
     items = [_chihou_sweet_spot_to_out(c) for c in candidates]
     items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
     summaries = _summarize_by_category(items)
-    return ChihouSweetSpotResponse(items=items, summaries=summaries)
+    response = ChihouSweetSpotResponse(items=items, summaries=summaries)
+    dumped = response.model_dump(mode="json")
+    return JSONResponse(content=dumped)

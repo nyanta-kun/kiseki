@@ -581,26 +581,32 @@ async def list_races(
     indexed_ids = {rid for rid in best_versions if race_indices.get(rid)}
 
     # トップ馬の最新単勝オッズをバッチ取得
+    # tuple_(race_id, combination) IN + DISTINCT ON で特定(レース×馬番)ペアの最新オッズのみ取得。
+    # 変更前: race_id IN (全IndexedレースID) で全win履歴を取得しPythonフィルタ → 最大数万行
+    # 変更後: (race_id, combination) IN (36ペア以内) + DISTINCT ON → 最大36行
     top_horse_win_odds: dict[int, float] = {}
-    if indexed_ids:
-        odds_rows = await db.execute(
-            select(
-                OddsHistory.race_id,
-                OddsHistory.combination,
-                OddsHistory.odds,
-                OddsHistory.fetched_at,
+    if race_top_horse_num:
+        top_pairs = [
+            (rid, str(hn))
+            for rid, hn in race_top_horse_num.items()
+            if hn is not None
+        ]
+        if top_pairs:
+            odds_stmt = (
+                select(OddsHistory.race_id, OddsHistory.odds)
+                .distinct(OddsHistory.race_id)  # DISTINCT ON (race_id)
+                .where(
+                    tuple_(OddsHistory.race_id, OddsHistory.combination).in_(top_pairs)
+                )
+                .where(OddsHistory.bet_type == "win")
+                .order_by(OddsHistory.race_id, OddsHistory.fetched_at.desc())
             )
-            .where(OddsHistory.race_id.in_(list(indexed_ids)))
-            .where(OddsHistory.bet_type == "win")
-            .order_by(OddsHistory.race_id, OddsHistory.fetched_at.desc())
-        )
-        seen_races_odds: set[int] = set()
-        for rid, combo, odds, _ in odds_rows.all():
-            top_hn = race_top_horse_num.get(rid)
-            if top_hn is not None and combo == str(top_hn) and rid not in seen_races_odds:
-                if odds is not None:
-                    top_horse_win_odds[rid] = float(odds)
-                seen_races_odds.add(rid)
+            odds_result = await db.execute(odds_stmt)
+            top_horse_win_odds = {
+                int(rid): float(odds)
+                for rid, odds in odds_result.all()
+                if odds is not None
+            }
 
     # 指数1位馬の成績をバッチ取得（取消馬は finish_position=null のまま返る）
     top_horse_result_map: dict[int, tuple[int | None, str]] = {}  # race_id → (finish_position, horse_name)
@@ -711,14 +717,23 @@ async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
+    # 確定出走表（horse_number > 0）が存在するか確認
+    has_confirmed = await db.scalar(
+        select(func.count()).select_from(RaceEntry)
+        .where(RaceEntry.race_id == race_id)
+        .where(RaceEntry.horse_number > 0)
+    )
+    # 確定済みなら horse_number > 0 のみ、未確定なら 0 も含む（想定表）
+    hn_filter = RaceEntry.horse_number > 0 if has_confirmed else RaceEntry.horse_number >= 0
+
     stmt = (
         select(RaceEntry, Horse, Jockey, Trainer)
         .join(Horse, RaceEntry.horse_id == Horse.id)
         .outerjoin(Jockey, RaceEntry.jockey_id == Jockey.id)
         .outerjoin(Trainer, RaceEntry.trainer_id == Trainer.id)
         .where(RaceEntry.race_id == race_id)
-        .where(RaceEntry.horse_number > 0)
-        .order_by(RaceEntry.horse_number)
+        .where(hn_filter)
+        .order_by(RaceEntry.horse_number, Horse.name)
     )
     entries_result = await db.execute(stmt)
     entries = entries_result.all()

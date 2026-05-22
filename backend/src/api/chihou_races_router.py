@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, tuple_
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -262,28 +263,39 @@ async def get_chihou_races_by_date(
         top_horse_numbers[rid] = best[2]  # horse_number
 
     # --- 最新単勝オッズ取得（トップ馬対象） ---
-    # odds_history から各レースの最新 win オッズを取得し Python 側でトップ馬を絞り込む
+    # DISTINCT ON (race_id) + tuple_ IN でトップ馬のみを DB 側で絞り込む
     latest_win_odds: dict[int, float] = {}
     if indexed_race_ids:
-        odds_rows = await db.execute(
-            select(
-                ChihouOddsHistory.race_id,
-                ChihouOddsHistory.combination,
-                ChihouOddsHistory.odds,
-                ChihouOddsHistory.fetched_at,
+        top_pairs = [
+            (rid, str(hn))
+            for rid, hn in top_horse_numbers.items()
+            if hn is not None
+        ]
+        if top_pairs:
+            odds_stmt = (
+                select(ChihouOddsHistory.race_id, ChihouOddsHistory.odds)
+                .distinct(ChihouOddsHistory.race_id)
+                .where(
+                    tuple_(ChihouOddsHistory.race_id, ChihouOddsHistory.combination).in_(top_pairs)
+                )
+                .where(ChihouOddsHistory.bet_type == "win")
+                .order_by(ChihouOddsHistory.race_id, ChihouOddsHistory.fetched_at.desc())
             )
-            .where(ChihouOddsHistory.race_id.in_(list(indexed_race_ids)))
-            .where(ChihouOddsHistory.bet_type == "win")
-            .order_by(ChihouOddsHistory.race_id, ChihouOddsHistory.fetched_at.desc())
-        )
-        # 各 race_id のトップ馬のみ最新オッズを保持
-        seen_races: set[int] = set()
-        for rid, combo, odds, _ in odds_rows.all():
-            top_hn = top_horse_numbers.get(rid)
-            if top_hn is not None and combo == str(top_hn) and rid not in seen_races:
-                if odds is not None:
-                    latest_win_odds[rid] = float(odds)
-                seen_races.add(rid)
+            odds_result = await db.execute(odds_stmt)
+            latest_win_odds = {
+                int(rid): float(odds)
+                for rid, odds in odds_result.all()
+                if odds is not None
+            }
+
+    # --- 成績確定レース取得（finish_position が存在するレース）---
+    confirmed_rows = await db.execute(
+        select(ChihouRaceResult.race_id)
+        .where(ChihouRaceResult.race_id.in_(race_ids))
+        .where(ChihouRaceResult.finish_position.isnot(None))
+        .distinct()
+    )
+    confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
 
     # --- 成績確定レース取得（finish_position が存在するレース）---
     confirmed_rows = await db.execute(
@@ -610,16 +622,27 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
 
-    # has_indices チェック
-    idx_check = await db.execute(
-        select(
-            exists().where(
-                ChihouCalculatedIndex.race_id == race_id,
-                ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION,
+    # has_indices + result_confirmed チェック（並列）
+    idx_check, confirmed_check = await asyncio.gather(
+        db.execute(
+            select(
+                exists().where(
+                    ChihouCalculatedIndex.race_id == race_id,
+                    ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION,
+                )
             )
-        )
+        ),
+        db.execute(
+            select(
+                exists().where(
+                    ChihouRaceResult.race_id == race_id,
+                    ChihouRaceResult.finish_position.isnot(None),
+                )
+            )
+        ),
     )
     has_indices: bool = idx_check.scalar() or False
+    result_confirmed: bool = confirmed_check.scalar() or False
 
     return ChihouRaceOut(
         id=race.id,
@@ -635,6 +658,7 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         head_count=race.head_count,
         post_time=race.post_time,
         has_indices=has_indices,
+        result_confirmed=result_confirmed,
         buy_signal=chihou_buy_signal(race.course_name),
     )
 

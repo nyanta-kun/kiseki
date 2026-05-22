@@ -1,11 +1,11 @@
 ' kiseki JV-Link realtime launcher (fire-and-forget)
 '
 ' This script is invoked by:
-'   - kiseki-JVLink-Realtime task (daily 9:00)
+'   - kiseki-JVLink-Realtime task (weekdays 9:00, weekends 7:00)
 '   - kiseki-UmaConn-Watchdog task (every 5min, when realtime is missing)
 '
 ' Behavior:
-'   1. Bail out if outside 9:00-22:00.
+'   1. Bail out if outside start-22:00 (weekends start=7:00, weekdays start=9:00).
 '   2. Skip if jvlink_agent --mode realtime is already running (idempotent restart).
 '   3. Otherwise, launch pythonw detached (Wait=False) so this VBS exits immediately.
 '      The previous Do-While+Wait=True design caused the wscript to hang forever
@@ -14,9 +14,15 @@
 
 On Error Resume Next
 
-Dim h
+Dim h, wd, startHour
 h = Hour(Now)
-If h < 9 Or h >= 22 Then WScript.Quit
+wd = Weekday(Now)  ' 1=Sunday, 7=Saturday
+If wd = 1 Or wd = 7 Then
+    startHour = 7
+Else
+    startHour = 9
+End If
+If h < startHour Or h >= 22 Then WScript.Quit
 
 Dim wmi, procs, alreadyRunning
 Set wmi = GetObject("winmgmts:\\.\root\cimv2")

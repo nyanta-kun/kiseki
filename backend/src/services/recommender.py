@@ -855,3 +855,155 @@ async def update_results(session: AsyncSession, date: str) -> int:
     await session.commit()
     logger.info("推奨結果更新: %s → %d 件", date, updated)
     return updated
+
+
+# ---------------------------------------------------------------------------
+# 穴ぐさルール推奨
+# ---------------------------------------------------------------------------
+
+# バックテスト実証済みルール（3年 2023/5/17-2026/5/15, surface='芝'/'ダ' 正確版）
+_ANAGUSA_RULES: list[dict[str, Any]] = [
+    {
+        "label": "Rule1",
+        "desc": "東京×芝×1201-1800m",
+        "course_name": "東京",
+        "surface": "芝",
+        "dist_lo": 1201,
+        "dist_hi": 1800,
+        "bet": "place",  # 複勝
+        "backtest_place_roi": 1.044,
+        "backtest_win_roi": None,
+        "backtest_n": 174,
+    },
+    {
+        "label": "Rule2",
+        "desc": "新潟×芝×1601-1800m",
+        "course_name": "新潟",
+        "surface": "芝",
+        "dist_lo": 1601,
+        "dist_hi": 1800,
+        "bet": "win_place",  # 単+複
+        "backtest_place_roi": 1.168,
+        "backtest_win_roi": 1.604,
+        "backtest_n": 28,
+    },
+    {
+        "label": "Rule3",
+        "desc": "京都×芝×~1200m",
+        "course_name": "京都",
+        "surface": "芝",
+        "dist_lo": 0,
+        "dist_hi": 1200,
+        "bet": "win_place",  # 単+複
+        "backtest_place_roi": 1.030,
+        "backtest_win_roi": 1.209,
+        "backtest_n": 43,
+    },
+    {
+        "label": "Rule4",
+        "desc": "京都×ダ×1601-1800m",
+        "course_name": "京都",
+        "surface": "ダ",
+        "dist_lo": 1601,
+        "dist_hi": 1800,
+        "bet": "win_place",  # 単+複
+        "backtest_place_roi": 1.161,
+        "backtest_win_roi": 1.472,
+        "backtest_n": 150,
+    },
+]
+
+
+async def build_anagusa_rule_recommendations(
+    session: AsyncSession, date: str
+) -> list[dict[str, Any]]:
+    """穴ぐさ条件ルールに基づく推奨馬を生成する（オッズ反映・都度算出）。
+
+    抽出条件: sekito.anagusa rank_A × コース/surface/距離ルール。
+    人気4-6番が最優先（pop4-6で複ROI 1.192〜1.425の実証値あり）。
+    レース結果が確定している場合は finish_position・確定オッズも返す。
+    """
+    race_data = await _collect_race_data(session, date)
+    if not race_data:
+        return []
+
+    now = datetime.now(UTC)
+
+    # レース結果を一括取得
+    race_ids_all = [r["race_id"] for r in race_data]
+    results_map: dict[tuple[int, int], dict[str, Any]] = {}
+    entry_map: dict[tuple[int, int], int] = {}
+    if race_ids_all:
+        rr_result = await session.execute(
+            select(RaceResult).where(RaceResult.race_id.in_(race_ids_all))
+        )
+        for rr_obj in rr_result.scalars().all():
+            results_map[(rr_obj.race_id, rr_obj.horse_id)] = {
+                "finish_position": rr_obj.finish_position,
+                "win_odds": float(rr_obj.win_odds) if rr_obj.win_odds is not None else None,
+                "place_odds": float(rr_obj.place_odds) if rr_obj.place_odds is not None else None,
+            }
+        entries_result = await session.execute(
+            select(RaceEntry.race_id, RaceEntry.horse_number, RaceEntry.horse_id)
+            .where(RaceEntry.race_id.in_(race_ids_all))
+        )
+        for race_id, hn, hid in entries_result.all():
+            if hn is not None:
+                entry_map[(race_id, hn)] = hid
+
+    items: list[dict[str, Any]] = []
+    for race in race_data:
+        race_surface = (race.get("surface") or "").strip()
+        race_dist = race.get("distance") or 0
+
+        for rule in _ANAGUSA_RULES:
+            if (
+                race["course_name"] != rule["course_name"]
+                or race_surface != rule["surface"]
+                or not (rule["dist_lo"] <= race_dist <= rule["dist_hi"])
+            ):
+                continue
+
+            # rank_A 馬を抽出
+            a_horses = [h for h in race["horses"] if h.get("anagusa_rank") == "A"]
+            if not a_horses:
+                break  # このレースに rank_A 馬なし
+
+            for h in a_horses:
+                pop = h.get("odds_rank")  # 単勝オッズ順位 = 人気
+
+                # 確定結果取得
+                horse_id = entry_map.get((race["race_id"], h["horse_number"]))
+                rr = results_map.get((race["race_id"], horse_id)) if horse_id else None
+                finish_pos = rr["finish_position"] if rr else None
+                final_win = rr["win_odds"] if rr and rr.get("win_odds") is not None else h.get("win_odds")
+                final_place = rr["place_odds"] if rr and rr.get("place_odds") is not None else h.get("place_odds")
+
+                items.append({
+                    "rule_label": rule["label"],
+                    "rule_desc": rule["desc"],
+                    "bet_type": rule["bet"],
+                    "race_id": race["race_id"],
+                    "course_name": race["course_name"],
+                    "race_number": race["race_number"],
+                    "race_name": race.get("race_name"),
+                    "post_time": race.get("post_time"),
+                    "distance": race_dist,
+                    "surface": race_surface,
+                    "horse_number": h["horse_number"],
+                    "horse_name": h.get("horse_name"),
+                    "win_odds": final_win,
+                    "place_odds": final_place,
+                    "popularity": pop,
+                    "is_preferred_pop": (pop is not None and 4 <= pop <= 6),
+                    "finish_position": finish_pos,
+                    "backtest_place_roi": rule["backtest_place_roi"],
+                    "backtest_win_roi": rule.get("backtest_win_roi"),
+                    "backtest_n": rule["backtest_n"],
+                    "snapshot_at": now,
+                })
+            break  # 1レースに対して1ルールのみ適用
+
+    # 発走時刻順・ルール順ソート
+    items.sort(key=lambda x: (x["post_time"] is None, x["post_time"] or "", x["rule_label"]))
+    return items

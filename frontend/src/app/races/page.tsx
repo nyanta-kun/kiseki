@@ -1,11 +1,11 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate } from "@/lib/api";
-import { todayYYYYMMDD } from "@/lib/utils";
+import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules } from "@/lib/api";
+import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { RecommendView } from "@/components/RecommendView";
 import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
+import { AnagusaRuleView } from "@/components/AnagusaRuleView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -21,24 +21,42 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
   const { date } = await searchParams;
   const targetDate = date ?? todayYYYYMMDD();
 
-  const [prevDate, nextDate] = await Promise.all([
-    fetchNearestDate(targetDate, "prev").then((r) => r.date).catch(() => null),
-    fetchNearestDate(targetDate, "next").then((r) => r.date).catch(() => null),
-  ]);
-
   return (
     <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
-      {/* 日付ナビゲーション */}
+      {/* 日付ナビゲーション: 前後開催日の取得を Suspense 内で非同期化しスケルトンを即時表示 */}
       <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
-        <DateNav currentDate={targetDate} prevDate={prevDate} nextDate={nextDate} />
+        <Suspense fallback={<DateNavSkeleton currentDate={targetDate} />}>
+          <DateNavLoader currentDate={targetDate} />
+        </Suspense>
       </div>
 
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-4">
         <h1 className="sr-only">開催レース一覧</h1>
-        <Suspense fallback={<RaceListSkeleton />}>
+        {/* key={targetDate}: 日付切り替え時に古いコンテンツを即クリアしスケルトンを表示する */}
+        <Suspense key={targetDate} fallback={<RaceListSkeleton />}>
           <RaceList date={targetDate} />
         </Suspense>
       </main>
+    </div>
+  );
+}
+
+/** 前後開催日を取得してから DateNav を描画する非同期 RSC */
+async function DateNavLoader({ currentDate }: { currentDate: string }) {
+  const [prevDate, nextDate] = await Promise.all([
+    fetchNearestDate(currentDate, "prev").then((r) => r.date).catch(() => null),
+    fetchNearestDate(currentDate, "next").then((r) => r.date).catch(() => null),
+  ]);
+  return <DateNav currentDate={currentDate} prevDate={prevDate} nextDate={nextDate} />;
+}
+
+/** 前後開催日取得中に表示するスケルトン（現在日付は即時表示） */
+function DateNavSkeleton({ currentDate }: { currentDate: string }) {
+  return (
+    <div className="max-w-3xl mx-auto flex items-center justify-between px-4 pb-2 gap-2">
+      <span className="text-blue-200 text-sm px-2 opacity-40 flex-shrink-0">← 前開催</span>
+      <span className="text-white text-sm font-medium whitespace-nowrap">{formatDate(currentDate)}</span>
+      <span className="text-blue-200 text-sm px-2 opacity-40 flex-shrink-0">翌開催 →</span>
     </div>
   );
 }
@@ -47,7 +65,12 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    races = await fetchRacesByDate(date);
+    // 推奨系を並列プリフェッチ: 各パネルでの同一フェッチはキャッシュから即解決する
+    [races] = await Promise.all([
+      fetchRacesByDate(date),
+      fetchJraTopProbability(date).catch(() => []),
+      fetchAnagusaRules(date).catch(() => []),
+    ]);
   } catch {
     return (
       <div className="text-center py-12 text-gray-400">
@@ -93,9 +116,12 @@ async function RaceList({ date }: { date: string }) {
 
   const recommendPanel = (
     <>
-      <JraTopProbabilityPanel date={date} />
-      <Suspense fallback={<RecommendSkeleton />}>
-        <RecommendView date={date} />
+      {/* 穴ぐさ条件ルール推奨（rank_A × 場/面/距離ルール） */}
+      <Suspense fallback={<AnagusaSkeleton />}>
+        <AnagusaRuleView date={date} />
+      </Suspense>
+      <Suspense>
+        <JraTopProbabilityPanel date={date} />
       </Suspense>
     </>
   );
@@ -113,12 +139,8 @@ function RaceListSkeleton() {
   );
 }
 
-function RecommendSkeleton() {
+function AnagusaSkeleton() {
   return (
-    <div className="space-y-3 animate-pulse motion-reduce:animate-none" aria-busy="true">
-      {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="h-52 bg-gray-100 rounded-xl" />
-      ))}
-    </div>
+    <div className="h-24 bg-gray-100 rounded-xl animate-pulse motion-reduce:animate-none" aria-busy="true" />
   );
 }

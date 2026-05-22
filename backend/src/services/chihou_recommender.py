@@ -41,6 +41,38 @@ logger = logging.getLogger(__name__)
 # buy/pass判断の期待値閾値
 _BUY_EV_THRESHOLD = 1.0
 
+
+def calc_race_concentration(place_probs: list[float]) -> dict[str, object]:
+    """レース内の複勝確率集中度を計算する。
+
+    30,451レース検証で判明した分位点:
+      Q1≤0.715 → 低信頼 (1位複勝ヒット率 57%)
+      Q4>0.873 → 高信頼 (1位複勝ヒット率 76.5%)
+    """
+    if len(place_probs) < 2:
+        return {"top2_share": None, "hhi": None, "confidence_level": None}
+
+    total = sum(place_probs)
+    if total <= 0:
+        return {"top2_share": None, "hhi": None, "confidence_level": None}
+
+    shares = sorted([p / total for p in place_probs], reverse=True)
+    top2_share = shares[0] + shares[1]
+    hhi = sum(s * s for s in shares)
+
+    if top2_share > 0.873:
+        confidence_level = "high"
+    elif top2_share > 0.715:
+        confidence_level = "medium"
+    else:
+        confidence_level = "low"
+
+    return {
+        "top2_share": round(top2_share, 3),
+        "hhi": round(hhi, 4),
+        "confidence_level": confidence_level,
+    }
+
 _DANTEIKEI = [
     re.compile(r"だ$"),
     re.compile(r"だろう$"),
@@ -670,6 +702,14 @@ async def build_chihou_sweet_spot_recommendations(
         # 1番人気単勝オッズ（place_bet 判定用）
         fav_odds = min(win_odds.values()) if win_odds else None
 
+        # 複勝確率集中度（信頼度算出）
+        place_probs = [
+            float(ci.place_probability)
+            for ci, _, _ in horse_rows
+            if ci.place_probability is not None and ci.place_probability > 0
+        ]
+        race_concentration = calc_race_concentration(place_probs)
+
         sweet_horses: list[dict[str, Any]] = []
         place_bet_horses: list[dict[str, Any]] = []
         low_trusted: list[dict[str, Any]] = []
@@ -740,6 +780,7 @@ async def build_chihou_sweet_spot_recommendations(
                 "head_count": race.head_count,
                 "bet_type": "win",
                 "category": "sweet_spot",
+                "race_concentration": race_concentration,
                 "target_horses": sweet_horses,
                 "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
                 "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
@@ -801,6 +842,7 @@ async def build_chihou_sweet_spot_recommendations(
                 "head_count": race.head_count,
                 "bet_type": "place",
                 "category": "place_bet",
+                "race_concentration": race_concentration,
                 "target_horses": place_bet_horses,
                 "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
                 "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
@@ -862,6 +904,7 @@ async def build_chihou_sweet_spot_recommendations(
                 "head_count": race.head_count,
                 "bet_type": "win",
                 "category": category,
+                "race_concentration": race_concentration,
                 "target_horses": picked,
                 "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
                 "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},

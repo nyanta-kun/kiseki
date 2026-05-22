@@ -8,13 +8,21 @@ type Props = {
 
 export function EntriesTable({ entries, odds }: Props) {
   const total = entries.length;
-  const sorted = [...entries].sort((a, b) => a.horse_number - b.horse_number);
+  // 想定表モード: horse_number が未確定（= 0）の場合は馬名順で表示済み（APIがソート済み）
+  const isYoso = entries.length > 0 && entries.every((e) => e.horse_number === 0);
+  const sorted = isYoso
+    ? entries  // APIが Horse.name 順でソート済み
+    : [...entries].sort((a, b) => a.horse_number - b.horse_number);
 
   return (
     <div className="bg-white rounded-lg border border-gray-100 overflow-hidden">
       <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-700">出走馬一覧</h2>
-        <span className="text-xs text-gray-400">{total}頭 · 指数算出前</span>
+        <h2 className="text-sm font-semibold text-gray-700">
+          {isYoso ? "想定馬一覧" : "出走馬一覧"}
+        </h2>
+        <span className="text-xs text-gray-400">
+          {total}頭 · {isYoso ? "馬番未確定" : "指数算出前"}
+        </span>
       </div>
 
       <div className="divide-y divide-gray-50">
@@ -27,12 +35,12 @@ export function EntriesTable({ entries, odds }: Props) {
 
           return (
             <div key={entry.id} className="flex items-center gap-3 px-3 py-2.5">
-              {/* 馬番（枠番色） */}
+              {/* 馬番（枠番色）: 想定表は「−」表示 */}
               <div className={cn(
                 "flex-shrink-0 w-7 h-7 rounded-full text-xs flex items-center justify-center font-bold",
-                frameColorClass(frameNum)
+                isYoso ? "bg-gray-100 text-gray-400" : frameColorClass(frameNum)
               )}>
-                {entry.horse_number}
+                {isYoso ? "−" : entry.horse_number}
               </div>
 
               {/* 馬名・騎手 */}
