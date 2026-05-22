@@ -297,15 +297,6 @@ async def get_chihou_races_by_date(
     )
     confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
 
-    # --- 成績確定レース取得（finish_position が存在するレース）---
-    confirmed_rows = await db.execute(
-        select(ChihouRaceResult.race_id)
-        .where(ChihouRaceResult.race_id.in_(race_ids))
-        .where(ChihouRaceResult.finish_position.isnot(None))
-        .distinct()
-    )
-    confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
-
     # --- 信頼度・推奨度算出 ---
     confidence_data: dict[int, dict] = {}
     for rid, entries in race_index_rows.items():
