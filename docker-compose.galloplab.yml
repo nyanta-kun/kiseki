@@ -75,6 +75,11 @@ services:
     tmpfs:
       - /tmp
       - /home/appuser/.cache/uv
+    volumes:
+      - type: tmpfs
+        target: /app/.next/cache
+        tmpfs:
+          mode: 0777
     depends_on:
       backend:
         condition: service_healthy
