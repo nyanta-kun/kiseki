@@ -75,6 +75,7 @@ services:
     tmpfs:
       - /tmp
       - /home/appuser/.cache/uv
+      - /app/.next/cache
     depends_on:
       backend:
         condition: service_healthy
