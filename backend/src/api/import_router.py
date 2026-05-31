@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db.models import OddsHistory, Race, RacePayout, RaceResult, SpecialRegistration
 from ..db.session import AsyncSessionLocal, get_db
-from ..importers import ChangeHandler, OddsImporter, PedigreeImporter, RaceImporter
+from ..importers import (
+    ChangeHandler,
+    OddsImporter,
+    PedigreeImporter,
+    RaceImporter,
+    TrainingImporter,
+)
 from ..importers.jvlink_parser import COURSE_NAMES
 from ..importers.provisional_horse_importer import upsert_provisional_horses
 from ..indices.composite import CompositeIndexCalculator
@@ -266,6 +272,25 @@ async def import_bloodlines(
     stats = await importer.import_records(records)
     await db.commit()
     logger.info(f"import_bloodlines: {stats}")
+    return {"ok": True, "stats": stats}
+
+
+@router.post("/training")
+async def import_training(
+    body: ImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """HC（坂路）/ WC（ウッドチップ）調教レコードを取り込む。
+
+    Windows Agent の chokyo モードから raw レコード（{rec_id, data}）で送信される。
+    parse_hc / parse_wc でパースし keiba.slope_training / wood_training へ UPSERT する。
+    """
+    importer = TrainingImporter(db)
+    records = [r.model_dump() for r in body.records]
+    stats = await importer.import_records(records)
+    await db.commit()
+    logger.info(f"import_training: {stats}")
     return {"ok": True, "stats": stats}
 
 

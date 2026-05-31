@@ -1138,6 +1138,155 @@ def parse_hr(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# 調教レコード（HC=坂路 / WC=ウッドチップ, SLOP/WOOD DataSpec）
+# -------------------------------------------------------------------
+TRAINING_CENTER_MAP: dict[str, str] = {"0": "美浦", "1": "栗東"}
+WOOD_COURSE_MAP: dict[str, str] = {"0": "A", "1": "B", "2": "C", "3": "D", "4": "E"}
+
+
+def _t10(data: str, start: int, end: int) -> Decimal | None:
+    """調教タイム（1/10秒単位の固定長数値）を秒の Decimal に変換する。
+
+    JVDF 仕様: 合計タイム4バイト=999.9秒、ラップ3バイト=99.9秒。
+    いずれも 1/10 秒単位の整数表現（"0535"→53.5秒, "125"→12.5秒）。
+    測定不良時は 全ゼロ（"0000"/"000"）がセットされる → None を返す。
+    """
+    raw = data[start - 1 : end].strip()
+    if not raw or not raw.isdigit():
+        return None
+    v = int(raw)
+    if v == 0:
+        return None
+    return Decimal(v) / 10
+
+
+def parse_hc(data: str) -> dict[str, Any] | None:
+    """HCレコード（坂路調教, SLOP DataSpec）をパースする。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト, レコード長60）:
+      1- 2: "HC"
+      3   : データ区分（0=削除レコード）
+      4-11: データ作成年月日
+     12   : トレセン区分（0:美浦 1:栗東）
+     13-20: 調教年月日 YYYYMMDD
+     21-24: 調教時刻 HHMM
+     25-34: 血統登録番号（10バイト）
+     35-38: 4ハロンタイム合計（4バイト, 999.9秒）
+     39-41: ラップ(800M-600M)（3バイト, 99.9秒）
+     42-45: 3ハロンタイム合計（4バイト）
+     46-48: ラップ(600M-400M)（3バイト）
+     49-52: 2ハロンタイム合計（4バイト）
+     53-55: ラップ(400M-200M)（3バイト）
+     56-58: ラップ(200M-0M)（3バイト）
+
+    Returns:
+        {"rec_id": "HC", "center": "0", "training_date": "YYYYMMDD",
+         "training_time": "HHMM", "blood_reg_no": str(10),
+         "time_4f"/"time_3f"/"time_2f": Decimal|None (秒),
+         "lap_800_600"/"lap_600_400"/"lap_400_200"/"lap_200_0": Decimal|None (秒)}
+        または None（短すぎ・削除レコード・血統登録番号なし）
+    """
+    if len(data) < 58:
+        logger.warning(f"HC record too short: {len(data)} bytes")
+        return None
+    try:
+        if _s(data, 1, 2) != "HC":
+            return None
+        if _s(data, 3, 3) == "0":  # 削除レコード
+            return None
+        blood_reg_no = _s(data, 25, 34)
+        if not blood_reg_no:
+            return None
+        return {
+            "rec_id": "HC",
+            "center": _s(data, 12, 12),
+            "training_date": _s(data, 13, 20),
+            "training_time": _s(data, 21, 24),
+            "blood_reg_no": blood_reg_no,
+            "time_4f": _t10(data, 35, 38),
+            "lap_800_600": _t10(data, 39, 41),
+            "time_3f": _t10(data, 42, 45),
+            "lap_600_400": _t10(data, 46, 48),
+            "time_2f": _t10(data, 49, 52),
+            "lap_400_200": _t10(data, 53, 55),
+            "lap_200_0": _t10(data, 56, 58),
+        }
+    except Exception as e:
+        logger.error(f"HC parse error: {e} | data[:40]={data[:40]!r}")
+        return None
+
+
+def parse_wc(data: str) -> dict[str, Any] | None:
+    """WCレコード（ウッドチップ調教, WOOD DataSpec）をパースする。
+
+    2021年7月27日以降の美浦ウッドチップ調教のみ提供される。
+
+    JVDF v4.9 フィールド位置（1-indexed バイト, レコード長105）:
+      1- 2: "WC"
+      3   : データ区分（0=削除レコード）
+      4-11: データ作成年月日
+     12   : トレセン区分（0:美浦 1:栗東）
+     13-20: 調教年月日 YYYYMMDD
+     21-24: 調教時刻 HHMM
+     25-34: 血統登録番号（10バイト）
+     35   : コース（0:A 1:B 2:C 3:D 4:E）
+     36   : 馬場周り（0:右 1:左）
+     37   : 予備
+     38-41/45-48/.../94-97: 各ハロンタイム合計（4バイト, 999.9秒）
+     42-44/49-51/.../98-100/101-103: 各区間ラップ（3バイト, 99.9秒）
+
+    Returns:
+        {"rec_id": "WC", "center", "training_date", "training_time",
+         "blood_reg_no", "wood_course", "wood_direction",
+         "time_10f"..."time_2f" (Decimal|None 秒),
+         "lap_2000_1800"..."lap_200_0" (Decimal|None 秒)}
+        または None（短すぎ・削除レコード・血統登録番号なし）
+    """
+    if len(data) < 103:
+        logger.warning(f"WC record too short: {len(data)} bytes")
+        return None
+    try:
+        if _s(data, 1, 2) != "WC":
+            return None
+        if _s(data, 3, 3) == "0":  # 削除レコード
+            return None
+        blood_reg_no = _s(data, 25, 34)
+        if not blood_reg_no:
+            return None
+        return {
+            "rec_id": "WC",
+            "center": _s(data, 12, 12),
+            "training_date": _s(data, 13, 20),
+            "training_time": _s(data, 21, 24),
+            "blood_reg_no": blood_reg_no,
+            "wood_course": _s(data, 35, 35),
+            "wood_direction": _s(data, 36, 36),
+            "time_10f": _t10(data, 38, 41),
+            "lap_2000_1800": _t10(data, 42, 44),
+            "time_9f": _t10(data, 45, 48),
+            "lap_1800_1600": _t10(data, 49, 51),
+            "time_8f": _t10(data, 52, 55),
+            "lap_1600_1400": _t10(data, 56, 58),
+            "time_7f": _t10(data, 59, 62),
+            "lap_1400_1200": _t10(data, 63, 65),
+            "time_6f": _t10(data, 66, 69),
+            "lap_1200_1000": _t10(data, 70, 72),
+            "time_5f": _t10(data, 73, 76),
+            "lap_1000_800": _t10(data, 77, 79),
+            "time_4f": _t10(data, 80, 83),
+            "lap_800_600": _t10(data, 84, 86),
+            "time_3f": _t10(data, 87, 90),
+            "lap_600_400": _t10(data, 91, 93),
+            "time_2f": _t10(data, 94, 97),
+            "lap_400_200": _t10(data, 98, 100),
+            "lap_200_0": _t10(data, 101, 103),
+        }
+    except Exception as e:
+        logger.error(f"WC parse error: {e} | data[:40]={data[:40]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
 # TK レコード（特別登録馬, TOKU DataSpec）
 # -------------------------------------------------------------------
 # probe_toku.py 実測（2026-05-04）で確認済み。
@@ -1342,6 +1491,8 @@ def parse_record(rec: dict[str, str]) -> dict[str, Any] | None:
         "SK": parse_sk,
         "UM": parse_um,
         "HR": parse_hr,
+        "HC": parse_hc,
+        "WC": parse_wc,
     }
     parser = parsers.get(rec_id)
     if parser is None:
