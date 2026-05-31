@@ -1170,6 +1170,64 @@ def _run_bldn_only(jv) -> None:
     )
 
 
+def run_chokyo(jv, from_date: str | None = None) -> None:
+    """調教データ（坂路 SLOP=HC / ウッド WOOD=WC）を取得して DB へ送信する。
+
+    収録範囲（JV-Data4901 仕様）:
+      - SLOP(坂路): 2003年以降・美浦栗東両方
+      - WOOD(ウッド): 2021-07-27以降・美浦のみ
+
+    引数:
+      from_date: "YYYYMMDD"。指定時は option=1（差分）で当該日以降のみ取得（probe/日次用）。
+                 None の場合は option=4（セットアップ）で全期間取得（初回バックフィル用・長時間）。
+
+    各 DataSpec の HC/WC レコードのみ抽出し /api/import/training へ batch 送信する。
+    完了ファイルは {SLOP,WOOD}_CHOKYO キーで個別管理する。
+    """
+    if from_date:
+        from_time = f"{from_date}000000"
+        option = 1
+        logger.info(f"=== CHOKYO MODE: 調教データ差分取得 (from={from_date}, option=1) ===")
+    else:
+        from_time = "20030101000000"
+        option = 4
+        logger.info("=== CHOKYO MODE: 調教データ全期間取得 (option=4 setup・長時間) ===")
+
+    for dataspec in (DATASPEC_SLOP, DATASPEC_WOOD):
+        completed_key = f"{dataspec}_CHOKYO"
+        completed = load_completed_files(completed_key)
+        if completed:
+            logger.info(f"[completed] 処理済み {completed_key} ファイル: {len(completed)} 件（スキップ対象）")
+        total = {"recs": 0, "files": 0, "skipped": 0}
+
+        def on_file_done(filename: str, file_records: list, _ck=completed_key, _comp=completed, _t=total) -> None:
+            if filename in _comp:
+                _t["skipped"] += 1
+                return
+            recs = [r for r in file_records if r.get("rec_id") in ("HC", "WC")]
+            if not recs:
+                mark_file_completed(_ck, filename)
+                return
+            _post_in_batches("/api/import/training", recs, 2000, BACKEND_URL, API_KEY, PENDING_DIR)
+            _t["recs"] += len(recs)
+            _t["files"] += 1
+            mark_file_completed(_ck, filename)
+            logger.info(f"  [{filename}] HC/WC {len(recs)} 件 → DB反映 (累計 {_t['files']}本/{_t['recs']}件)")
+
+        logger.info(f"{dataspec} 取得開始 (from={from_time}, option={option})...")
+        fetch_stored_data(
+            jv, dataspec, from_time, option=option,
+            on_file_done=on_file_done,
+            skip_file_fn=lambda fn, _c=completed: fn in _c,
+            skip_cache=True,
+            max_errors=1000,
+        )
+        logger.info(
+            f"{dataspec} 取得完了: {total['files']} ファイル / "
+            f"{total['recs']} 件をDBへ反映 / {total['skipped']} スキップ"
+        )
+
+
 def run_recent(jv, from_year: int = 2023) -> None:
     """直近データを取得する（option=2: 今週分のファイルのみ）。
 
@@ -1543,9 +1601,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki JV-Link Agent")
     parser.add_argument(
         "--mode",
-        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "toku", "weekly-preview", "retry", "wait"],
+        choices=["all", "setup", "fix-race", "blod", "blod-um", "bldn", "bldn-full", "recent", "daily", "realtime", "odds-prefetch", "toku", "weekly-preview", "chokyo", "retry", "wait"],
         default="all",
-        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, toku=特別登録馬取得(出馬表確定前), weekly-preview=水曜想定取得(全レース名+特別登録馬), wait=コマンド待ち受けモード)",
+        help="動作モード (default: all, fix-race=指定日以降のRACE差分取得(option=1, 数分で完了。setupの代替), blod=血統旧形式HN/SK, blod-um=BLOD全期間UM取得(2022以前pedigrees.sire補完), bldn=血統新形式(pedigrees.sire解決用), bldn-full=BLDN全歴史累積(セットアップ571ファイル/高速), odds-prefetch=前日発売オッズ取得, toku=特別登録馬取得(出馬表確定前), weekly-preview=水曜想定取得(全レース名+特別登録馬), chokyo=調教データ取得(坂路SLOP/ウッドWOOD。--from-dateで差分option=1/省略で全期間setup), wait=コマンド待ち受けモード)",
     )
     parser.add_argument(
         "--fetch-date",
@@ -1566,7 +1624,7 @@ def main() -> None:
         type=str,
         default=None,
         metavar="YYYYMMDD",
-        help="fix-race モードで取得する開始日 (例: --from-date 20260207)",
+        help="fix-race / chokyo モードで取得する開始日 (例: --from-date 20260207)",
     )
     args = parser.parse_args()
 
@@ -1578,7 +1636,7 @@ def main() -> None:
     # - realtime: SID1（常時接続維持）
     # - setup/recent/daily/blod/odds-prefetch: SID2（蓄積系専用）
     # SID2未設定の場合は全モードでSID1を使用（従来通り）
-    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "toku", "weekly-preview", "all")
+    BULK_MODES = ("setup", "fix-race", "recent", "daily", "blod", "blod-um", "bldn", "bldn-full", "odds-prefetch", "toku", "weekly-preview", "chokyo", "all")
     use_sid = JRAVAN_SID_2 if (JRAVAN_SID_2 and args.mode in BULK_MODES) else JRAVAN_SID
     if JRAVAN_SID_2:
         sid_role = "SID2(蓄積系専用)" if args.mode in BULK_MODES else "SID1(realtime専用)"
@@ -1676,6 +1734,12 @@ def main() -> None:
         report_status("done", message="週次プレビュー取得完了")
         jv.JVClose()
         logger.info("weekly-preview モード完了。終了します。")
+    elif args.mode == "chokyo":
+        report_status("running", mode="chokyo", message=f"調教データ取得開始 (from={args.from_date or '全期間setup'})")
+        run_chokyo(jv, from_date=args.from_date)
+        report_status("done", message="調教データ取得完了")
+        jv.JVClose()
+        logger.info("chokyo モード完了。終了します。")
     elif args.mode == "all":
         run_daily_fetch(jv)
         report_status("idle", message="Daily fetch done. Entering command loop + realtime.")

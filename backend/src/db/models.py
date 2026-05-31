@@ -915,3 +915,84 @@ class AppSettings(Base):
         comment="最終更新日時",
     )
     updated_by: Mapped[str | None] = mapped_column(String(100), comment="更新者メールアドレス")
+
+
+class SlopeTraining(Base):
+    """坂路調教（HCレコード, SLOP DataSpec / 2003年以降・美浦栗東両方）
+
+    血統登録番号（horses.jravan_code）で馬に紐付く。馬登録前に調教データが
+    届く場合があるため FK でなく blood_reg_no をインデックス付き文字列で保持。
+    タイムは秒単位（Numeric(4,1)）。測定不良（全ゼロ）の区間は NULL。
+    """
+
+    __tablename__ = "slope_training"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint(
+            "blood_reg_no", "training_date", "training_time", "center",
+            name="uq_slope_training_key",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    blood_reg_no: Mapped[str] = mapped_column(
+        String(10), index=True, comment="血統登録番号（horses.jravan_code と一致）"
+    )
+    training_date: Mapped[str] = mapped_column(String(8), index=True, comment="調教年月日 YYYYMMDD")
+    training_time: Mapped[str | None] = mapped_column(String(4), comment="調教時刻 HHMM")
+    center: Mapped[str | None] = mapped_column(String(1), comment="トレセン区分（0:美浦 1:栗東）")
+    time_4f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="4ハロン合計タイム（秒）")
+    lap_800_600: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 800-600M（秒）")
+    time_3f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="3ハロン合計タイム（秒）")
+    lap_600_400: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 600-400M（秒）")
+    time_2f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="2ハロン合計タイム（秒）")
+    lap_400_200: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 400-200M（秒）")
+    lap_200_0: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 200-0M（終い1F・秒）")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WoodTraining(Base):
+    """ウッドチップ調教（WCレコード, WOOD DataSpec / 2021-07-27以降・美浦のみ）
+
+    SlopeTraining と同様に血統登録番号で紐付く。距離ごとの合計タイムと
+    区間ラップ（2000M〜終い1F）を保持。測定不良区間は NULL。
+    """
+
+    __tablename__ = "wood_training"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint(
+            "blood_reg_no", "training_date", "training_time", "center",
+            name="uq_wood_training_key",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    blood_reg_no: Mapped[str] = mapped_column(
+        String(10), index=True, comment="血統登録番号（horses.jravan_code と一致）"
+    )
+    training_date: Mapped[str] = mapped_column(String(8), index=True, comment="調教年月日 YYYYMMDD")
+    training_time: Mapped[str | None] = mapped_column(String(4), comment="調教時刻 HHMM")
+    center: Mapped[str | None] = mapped_column(String(1), comment="トレセン区分（0:美浦 1:栗東）")
+    wood_course: Mapped[str | None] = mapped_column(String(1), comment="コース（0:A〜4:E）")
+    wood_direction: Mapped[str | None] = mapped_column(String(1), comment="馬場周り（0:右 1:左）")
+    time_10f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="10ハロン合計（秒）")
+    lap_2000_1800: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 2000-1800M")
+    time_9f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="9ハロン合計（秒）")
+    lap_1800_1600: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 1800-1600M")
+    time_8f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="8ハロン合計（秒）")
+    lap_1600_1400: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 1600-1400M")
+    time_7f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="7ハロン合計（秒）")
+    lap_1400_1200: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 1400-1200M")
+    time_6f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="6ハロン合計（秒）")
+    lap_1200_1000: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 1200-1000M")
+    time_5f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="5ハロン合計（秒）")
+    lap_1000_800: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 1000-800M")
+    time_4f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="4ハロン合計（秒）")
+    lap_800_600: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 800-600M")
+    time_3f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="3ハロン合計（秒）")
+    lap_600_400: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 600-400M")
+    time_2f: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), comment="2ハロン合計（秒）")
+    lap_400_200: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 400-200M")
+    lap_200_0: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 200-0M（終い1F・秒）")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
