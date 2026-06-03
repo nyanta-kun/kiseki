@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { OddsData, RaceEntry, RaceResult, SpecialRegistration, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, fetchSpecialRegistrations, Race } from "@/lib/api";
+import { OddsData, RaceEntry, RaceResult, SpecialRegistration, ProjectedEntry, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, fetchSpecialRegistrations, fetchProjectedEntries, Race } from "@/lib/api";
 import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { computeJraBuySignal } from "@/lib/buySignal";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { EntriesTable } from "@/components/EntriesTable";
 import { SpecialRegistrationsTable } from "@/components/SpecialRegistrationsTable";
+import { ProjectedEntriesTable } from "@/components/ProjectedEntriesTable";
 import { auth } from "@/auth";
 
 const BACKEND_URL =
@@ -65,13 +66,14 @@ export default async function RacePage({ params }: { params: Params }) {
   const raceNumber = race?.race_number ?? 1;
 
   // 残り6つを並列取得
-  const [allRaces, initialResults, initialOdds, indicesResp, entries, specialRegs] = await Promise.all([
+  const [allRaces, initialResults, initialOdds, indicesResp, entries, specialRegs, projectedEntries] = await Promise.all([
     date ? fetchRacesByDate(date).catch(() => [] as Race[]) : Promise.resolve([] as Race[]),
     fetchResults(raceId).catch(() => [] as RaceResult[]),
     fetchOdds(raceId).catch(() => ({ win: {}, place: {} } as OddsData)),
     fetchIndices(raceId).catch(() => null),
     fetchEntries(raceId).catch(() => [] as RaceEntry[]),
     fetchSpecialRegistrations(raceId).catch(() => [] as SpecialRegistration[]),
+    fetchProjectedEntries(raceId).catch(() => [] as ProjectedEntry[]),
   ]);
 
   // SiteHeader 直下〜画面下端を fixed で占有。DOM の flex 高さ計算に依存しない。
@@ -107,6 +109,20 @@ export default async function RacePage({ params }: { params: Params }) {
                 </p>
                 <SpecialRegistrationsTable
                   entries={specialRegs}
+                  raceName={race?.race_name ?? race?.race_class_label}
+                />
+              </div>
+            ) : projectedEntries.length > 0 ? (
+              <div className="bg-white rounded-xl border border-emerald-200 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                  <span aria-hidden="true">📝</span>
+                  <span>出走想定（出馬表確定前・netkeiba）</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  確定前の参考値です。出馬表確定後に枠番・指数が表示されます
+                </p>
+                <ProjectedEntriesTable
+                  entries={projectedEntries}
                   raceName={race?.race_name ?? race?.race_class_label}
                 />
               </div>

@@ -30,6 +30,7 @@ from ..db.models import (
     Horse,
     Jockey,
     OddsHistory,
+    ProjectedEntry,
     Race,
     RaceEntry,
     RaceResult,
@@ -286,6 +287,8 @@ class RaceOut(BaseModel):
     result_confirmed: bool = False       # レース結果確定済み（いずれかの馬に着順あり）
     is_special_only: bool = False        # 出馬表未確定で特別登録のみ存在
     special_horse_count: int = 0         # 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
+    is_projected_only: bool = False      # 出馬表未確定で netkeiba 出走想定のみ存在
+    projected_horse_count: int = 0       # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
 
     model_config = {"from_attributes": True}
 
@@ -320,6 +323,23 @@ class SpecialRegOut(BaseModel):
     track_code: str | None
 
     model_config = {"from_attributes": True}
+
+
+class ProjectedEntryOut(BaseModel):
+    """出走想定馬エントリーレスポンス（netkeiba 由来・全レース）。"""
+
+    netkeiba_race_id: str
+    horse_name: str
+    sex_age: str | None
+    expected_jockey_name: str | None
+    race_name: str | None
+
+    model_config = {"from_attributes": True}
+
+
+def _jv_to_netkeiba_id(jravan_race_id: str) -> str:
+    """JV-Link 16文字 race_id → netkeiba 12文字 race_id（MMDD を除く）。"""
+    return jravan_race_id[0:4] + jravan_race_id[8:16]
 
 
 class ResultOut(BaseModel):
@@ -652,6 +672,21 @@ async def list_races(
             )
             special_count_map = {jid: int(c) for jid, c in sp_rows.all()}
 
+    # 出走想定（netkeiba 由来）の頭数（netkeiba_race_id 単位で COUNT）
+    projected_count_map: dict[str, int] = {}
+    if races:
+        nk_ids = [_jv_to_netkeiba_id(r.jravan_race_id) for r in races if r.jravan_race_id]
+        if nk_ids:
+            pj_rows = await db.execute(
+                select(
+                    ProjectedEntry.netkeiba_race_id,
+                    func.count(ProjectedEntry.id).label("c"),
+                )
+                .where(ProjectedEntry.netkeiba_race_id.in_(nk_ids))
+                .group_by(ProjectedEntry.netkeiba_race_id)
+            )
+            projected_count_map = {nid: int(c) for nid, c in pj_rows.all()}
+
     result_list = []
     for r in races:
         out = RaceOut.model_validate(r)
@@ -664,6 +699,12 @@ async def list_races(
         if r.head_count is None and sp_count > 0:
             out.is_special_only = True
             out.special_horse_count = sp_count
+        elif r.head_count is None and r.jravan_race_id:
+            # 特別登録が無い未確定レースは netkeiba 出走想定を見る
+            pj_count = projected_count_map.get(_jv_to_netkeiba_id(r.jravan_race_id), 0)
+            if pj_count > 0:
+                out.is_projected_only = True
+                out.projected_horse_count = pj_count
         if r.id in race_top_horse_num:
             out.top_horse_number = race_top_horse_num[r.id]
         if r.id in top_horse_result_map:
@@ -696,7 +737,7 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
     out = RaceOut.model_validate(race)
-    # 特別登録のみ判定（出馬表未確定）
+    # 特別登録 / 出走想定のみ判定（出馬表未確定）
     if race.head_count is None and race.jravan_race_id:
         sp_count_row = await db.execute(
             select(func.count(SpecialRegistration.jravan_horse_code))
@@ -706,6 +747,15 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
         if sp_count > 0:
             out.is_special_only = True
             out.special_horse_count = sp_count
+        else:
+            pj_count_row = await db.execute(
+                select(func.count(ProjectedEntry.id))
+                .where(ProjectedEntry.netkeiba_race_id == _jv_to_netkeiba_id(race.jravan_race_id))
+            )
+            pj_count = int(pj_count_row.scalar_one())
+            if pj_count > 0:
+                out.is_projected_only = True
+                out.projected_horse_count = pj_count
     return out
 
 
@@ -790,6 +840,40 @@ async def list_special_registrations_by_date(date: str, db: DbDep) -> list[Speci
         .order_by(SpecialRegistration.race_number, SpecialRegistration.horse_name)
     )
     return [SpecialRegOut.model_validate(r) for r in rows.scalars()]
+
+
+@router.get("/{race_id}/projected")
+async def get_projected_entries(race_id: int, db: DbDep) -> list[ProjectedEntryOut]:
+    """レースの出走想定馬一覧を返す（netkeiba 由来・出馬表確定前用）。
+
+    新馬・未勝利・条件戦も含む全レース対象。races.jravan_race_id を netkeiba 形式に
+    変換して projected_entries と突き合わせる。
+    """
+    race_result = await db.execute(select(Race).where(Race.id == race_id))
+    race = race_result.scalar_one_or_none()
+    if not race or not race.jravan_race_id:
+        raise HTTPException(status_code=404, detail="Race not found")
+
+    rows = await db.execute(
+        select(ProjectedEntry)
+        .where(ProjectedEntry.netkeiba_race_id == _jv_to_netkeiba_id(race.jravan_race_id))
+        .order_by(ProjectedEntry.horse_name)
+    )
+    return [ProjectedEntryOut.model_validate(r) for r in rows.scalars()]
+
+
+@router.get("/date/{date}/projected")
+async def list_projected_entries_by_date(date: str, db: DbDep) -> list[ProjectedEntryOut]:
+    """指定日（YYYYMMDD）の出走想定馬一覧を返す。"""
+    if len(date) != 8 or not date.isdigit():
+        raise HTTPException(status_code=400, detail="date must be YYYYMMDD")
+
+    rows = await db.execute(
+        select(ProjectedEntry)
+        .where(ProjectedEntry.race_date == date)
+        .order_by(ProjectedEntry.race_number, ProjectedEntry.horse_name)
+    )
+    return [ProjectedEntryOut.model_validate(r) for r in rows.scalars()]
 
 
 @router.get("/{race_id}/indices")
