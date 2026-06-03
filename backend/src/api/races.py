@@ -668,6 +668,7 @@ async def list_races(
                     func.count(SpecialRegistration.jravan_horse_code).label("c"),
                 )
                 .where(SpecialRegistration.jravan_race_id.in_(jravan_ids))
+                .where(SpecialRegistration.source != "netkeiba")
                 .group_by(SpecialRegistration.jravan_race_id)
             )
             special_count_map = {jid: int(c) for jid, c in sp_rows.all()}
@@ -742,6 +743,7 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
         sp_count_row = await db.execute(
             select(func.count(SpecialRegistration.jravan_horse_code))
             .where(SpecialRegistration.jravan_race_id == race.jravan_race_id)
+            .where(SpecialRegistration.source != "netkeiba")
         )
         sp_count = int(sp_count_row.scalar_one())
         if sp_count > 0:
@@ -820,6 +822,7 @@ async def get_special_registrations(race_id: int, db: DbDep) -> list[SpecialRegO
     rows = await db.execute(
         select(SpecialRegistration)
         .where(SpecialRegistration.jravan_race_id == race.jravan_race_id)
+        .where(SpecialRegistration.source != "netkeiba")
         .order_by(SpecialRegistration.horse_name)
     )
     return [SpecialRegOut.model_validate(r) for r in rows.scalars()]
@@ -837,6 +840,7 @@ async def list_special_registrations_by_date(date: str, db: DbDep) -> list[Speci
     rows = await db.execute(
         select(SpecialRegistration)
         .where(SpecialRegistration.race_date == date)
+        .where(SpecialRegistration.source != "netkeiba")
         .order_by(SpecialRegistration.race_number, SpecialRegistration.horse_name)
     )
     return [SpecialRegOut.model_validate(r) for r in rows.scalars()]

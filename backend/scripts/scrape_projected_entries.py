@@ -154,9 +154,33 @@ ON CONFLICT (jravan_race_id) DO NOTHING
 """
 
 
+# sekito(POG出走予定)は keiba.special_registrations を読むため、想定馬をここにも登録する。
+# source='netkeiba' で TOKU(特別登録)と区別。既存 TOKU 行は触らない(DO NOTHING)。
+# jravan_horse_code には血統登録番号(=netkeiba_horse_id, 10桁)を入れる。
+SPECIAL_SQL = """
+INSERT INTO keiba.special_registrations
+  (jravan_race_id, race_date, course_code, race_number,
+   jravan_horse_code, horse_name, sex, age, race_name, source, updated_at)
+VALUES %s
+ON CONFLICT ON CONSTRAINT uq_special_reg_race_horse DO NOTHING
+"""
+
+
 def jravan_from(date: str, netkeiba_race_id: str) -> str:
     """race_date(YYYYMMDD) + netkeiba_id(YYYY+CC+KK+DD+RR) → jravan_race_id(16)。"""
     return date + netkeiba_race_id[4:]
+
+
+def _split_sex_age(sex_age: str | None) -> tuple[str | None, int | None]:
+    """"牝3" → ("牝", 3)。"""
+    if not sex_age:
+        return None, None
+    m = re.match(r"^(牡|牝|セ|騸|せん)?\s*(\d+)?", sex_age)
+    if not m:
+        return None, None
+    sex = m.group(1)
+    age = int(m.group(2)) if m.group(2) else None
+    return sex, age
 
 
 def _dsn() -> str:
@@ -167,13 +191,14 @@ def _dsn() -> str:
     )
 
 
-def save_db(results: list[dict]) -> tuple[int, int]:
-    """想定馬を projected_entries に、レースを keiba.races(placeholder) に UPSERT。
+def save_db(results: list[dict]) -> tuple[int, int, int]:
+    """想定馬を projected_entries / special_registrations に、レースを races に UPSERT。
 
-    戻り値: (想定馬行数, placeholder races 投入試行数)
+    戻り値: (想定馬行数, placeholder races 数, special_registrations 投入行数)
     """
     horse_rows = []
     race_rows = []
+    special_rows = []
     for r in results:
         if not r["horses"]:
             continue
@@ -188,8 +213,16 @@ def save_db(results: list[dict]) -> tuple[int, int]:
                 r["race_name"], h["netkeiba_horse_id"], h["horse_name"],
                 h["sex_age"], h["expected_jockey"],
             ))
+            # special_registrations は血統登録番号(=netkeiba_horse_id)が必須
+            if h["netkeiba_horse_id"]:
+                sex, age = _split_sex_age(h["sex_age"])
+                special_rows.append((
+                    jid, r["date"], r["course_code"], r["race_number"],
+                    h["netkeiba_horse_id"], h["horse_name"], sex, age,
+                    r["race_name"], "netkeiba",
+                ))
     if not horse_rows:
-        return 0, 0
+        return 0, 0, 0
     conn = psycopg2.connect(_dsn())
     with conn, conn.cursor() as cur:
         if race_rows:
@@ -197,8 +230,11 @@ def save_db(results: list[dict]) -> tuple[int, int]:
                            template="(%s,%s,%s,%s,%s,%s,%s,%s,%s)")
         execute_values(cur, UPSERT_SQL, horse_rows,
                        template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
+        if special_rows:
+            execute_values(cur, SPECIAL_SQL, special_rows,
+                           template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
     conn.close()
-    return len(horse_rows), len(race_rows)
+    return len(horse_rows), len(race_rows), len(special_rows)
 
 
 def next_weekend() -> list[str]:
@@ -271,8 +307,10 @@ def main() -> int:
     if args.dry_run:
         logger.info("--dry-run のため DB 保存はスキップ")
     else:
-        n_h, n_r = save_db(results)
-        logger.info("DB 保存: projected_entries %d 行 / races placeholder %d 件", n_h, n_r)
+        n_h, n_r, n_s = save_db(results)
+        logger.info(
+            "DB 保存: projected_entries %d 行 / races placeholder %d 件 / "
+            "special_registrations(netkeiba) %d 行", n_h, n_r, n_s)
     return 0
 
 
