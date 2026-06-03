@@ -611,6 +611,47 @@ class SpecialRegistration(Base):
     )
 
 
+class ProjectedEntry(Base):
+    """出走想定馬（netkeiba 由来・全レース対象）
+
+    JV-Link の TOKU（特別登録）は特別競走しか含まないため、新馬・未勝利・条件戦を
+    含む全レースの出走想定を netkeiba から取得して保持する。確定出馬表前の参考値。
+    """
+
+    __tablename__ = "projected_entries"
+
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("netkeiba_race_id", "horse_name", name="uq_projected_race_horse"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    netkeiba_race_id: Mapped[str] = mapped_column(
+        String(12), index=True, nullable=False,
+        comment="netkeiba レースID（12文字: YYYY+CC+KK+DD+RR）",
+    )
+    race_date: Mapped[str] = mapped_column(
+        String(8), index=True, nullable=False, comment="開催日 YYYYMMDD",
+    )
+    course_code: Mapped[str] = mapped_column(String(2), nullable=False, comment="JRA場コード")
+    race_number: Mapped[int] = mapped_column(Integer, nullable=False, comment="レース番号")
+    race_name: Mapped[str | None] = mapped_column(String(200), comment="競走名（netkeiba由来）")
+    netkeiba_horse_id: Mapped[str | None] = mapped_column(
+        String(12), comment="netkeiba 馬ID（db.netkeiba.com/horse/）",
+    )
+    horse_name: Mapped[str] = mapped_column(String(100), nullable=False, comment="馬名")
+    sex_age: Mapped[str | None] = mapped_column(String(8), comment="性齢（例: 牝3）")
+    expected_jockey_name: Mapped[str | None] = mapped_column(
+        String(50), comment="想定騎手名（未定時は NULL）",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), comment="登録日時",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), comment="更新日時",
+    )
+
+
 class RacecourseFeatures(Base):
     """競馬場コース特徴マスタ"""
 

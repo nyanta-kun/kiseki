@@ -71,7 +71,11 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
             ) : (
               <>
                 <span>{surfaceIcon(race.surface)} {race.surface} {race.distance}m</span>
-                {race.head_count && <span>{race.head_count}頭</span>}
+                {race.head_count ? (
+                  <span>{race.head_count}頭</span>
+                ) : race.is_projected_only ? (
+                  <span>想定{race.projected_horse_count}頭</span>
+                ) : null}
                 {race.condition && <span>馬場:{race.condition}</span>}
               </>
             )}
@@ -84,6 +88,11 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
             {race.is_special_only && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium whitespace-nowrap">
                 📋 特別登録
+              </span>
+            )}
+            {race.is_projected_only && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium whitespace-nowrap">
+                📝 出走想定
               </span>
             )}
             {/* 上段: 購入指針・穴ぐさを横並び */}

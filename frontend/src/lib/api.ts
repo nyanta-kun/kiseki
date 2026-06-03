@@ -43,6 +43,8 @@ export type Race = {
   result_confirmed: boolean;         // レース結果確定済み
   is_special_only: boolean;          // 出馬表未確定で特別登録のみ
   special_horse_count: number;       // 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
+  is_projected_only?: boolean;       // 出馬表未確定で netkeiba 出走想定のみ
+  projected_horse_count?: number;    // 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
 };
 
 export type RaceResult = {
@@ -282,6 +284,19 @@ export type SpecialRegistration = {
 /** 特別登録馬一覧（出馬表確定前、TOKU DataSpec）→ 5分キャッシュ */
 export async function fetchSpecialRegistrations(raceId: number): Promise<SpecialRegistration[]> {
   return get<SpecialRegistration[]>(`/races/${raceId}/special`, { next: { revalidate: 300 } });
+}
+
+export type ProjectedEntry = {
+  netkeiba_race_id: string;
+  horse_name: string;
+  sex_age: string | null;
+  expected_jockey_name: string | null;
+  race_name: string | null;
+};
+
+/** 出走想定馬一覧（netkeiba 由来・全レース・出馬表確定前）→ 5分キャッシュ */
+export async function fetchProjectedEntries(raceId: number): Promise<ProjectedEntry[]> {
+  return get<ProjectedEntry[]>(`/races/${raceId}/projected`, { next: { revalidate: 300 } });
 }
 
 /** 最近開催日検索（カレンダーナビゲーション用）→ 30 秒キャッシュ */
