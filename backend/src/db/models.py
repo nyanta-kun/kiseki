@@ -603,6 +603,10 @@ class SpecialRegistration(Base):
     expected_jockey_fetched_at: Mapped[datetime | None] = mapped_column(
         DateTime, comment="想定騎手取得タイムスタンプ",
     )
+    source: Mapped[str] = mapped_column(
+        String(10), server_default="toku",
+        comment="由来: toku(JV-Link特別登録) / netkeiba(出走想定スクレイプ)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="登録日時",
     )
