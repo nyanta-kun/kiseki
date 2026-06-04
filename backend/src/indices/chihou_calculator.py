@@ -391,9 +391,11 @@ _LGB_FEATURE_NAMES: list[str] = [
     "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
     "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
 ]
-_PROD_LGB_PATH = Path(__file__).resolve().parents[2] / "models" / "chihou_prod_lgb.txt"
-_prod_lgb_cache: Any = None
-_prod_lgb_tried = False
+_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.txt"          # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.txt"  # is_win: 較正済 win_prob
+_prod_lgb_cache: dict[str, Any] = {}
+_prod_lgb_tried: set[str] = set()
 
 
 def _use_lgb() -> bool:
@@ -401,23 +403,35 @@ def _use_lgb() -> bool:
     return os.getenv("CHIHOU_USE_LGB", "1") not in ("0", "false", "False")
 
 
-def _load_prod_lgb() -> Any:
-    """本番LGBモデルを lazy load（プロセス共有キャッシュ）。不在/失敗時 None。"""
-    global _prod_lgb_cache, _prod_lgb_tried
-    if _prod_lgb_cache is not None or _prod_lgb_tried:
-        return _prod_lgb_cache
-    _prod_lgb_tried = True
-    if not _PROD_LGB_PATH.exists():
-        logger.warning("chihou prod LGB not found: %s, fallback to linear", _PROD_LGB_PATH)
+def _load_booster(key: str, path: Path) -> Any:
+    """LGB Booster を lazy load（プロセス共有キャッシュ）。不在/失敗時 None。"""
+    if key in _prod_lgb_cache:
+        return _prod_lgb_cache[key]
+    if key in _prod_lgb_tried:
+        return None
+    _prod_lgb_tried.add(key)
+    if not path.exists():
+        logger.warning("chihou prod LGB not found: %s, fallback to linear", path)
         return None
     try:
         import lightgbm as lgb
-        _prod_lgb_cache = lgb.Booster(model_file=str(_PROD_LGB_PATH))
-        logger.info("chihou prod LGB loaded: %s", _PROD_LGB_PATH)
-        return _prod_lgb_cache
+        booster = lgb.Booster(model_file=str(path))
+        _prod_lgb_cache[key] = booster
+        logger.info("chihou prod LGB loaded: %s", path)
+        return booster
     except Exception as e:  # noqa: BLE001
-        logger.error("chihou prod LGB load failed: %s", e)
+        logger.error("chihou prod LGB load failed (%s): %s", path, e)
         return None
+
+
+def _load_prod_lgb() -> Any:
+    """is_top3 ヘッド（composite ランキング & place_probability 用）。"""
+    return _load_booster("top3", _PROD_LGB_PATH)
+
+
+def _load_prod_lgb_win() -> Any:
+    """is_win ヘッド（較正済 win_probability 用）。"""
+    return _load_booster("win", _PROD_LGB_WIN_PATH)
 
 
 def _scale_to_index_local(scores: list[float]) -> list[float]:
@@ -610,35 +624,51 @@ class ChihouIndexCalculator:
             composite = _clip(ability_base * k_jockey * k_rotation * k_dark * k_margin)
             composite_inputs.append((hid, composite))
 
-        # 本番 LightGBM（純LGB）で composite を上書き。
+        # 本番 LightGBM（Phase2: 単複ヘッド分離＋確率較正）。
         # サブ指数(speed/last3f/jockey/rotation/last_margin)はそのまま保存し、
-        # 合議の composite_index と確率のみ LGB 由来に置換する。
-        # モデル不在・推論失敗・CHIHOU_USE_LGB=0 のときは線形 composite を維持。
-        model = _load_prod_lgb() if _use_lgb() else None
-        if model is not None and composite_inputs:
+        #   composite_index   = is_top3 ヘッドのレース内 index（ランキング、Phase1検証済edge維持）
+        #   win_probability   = is_win ヘッドの較正済 生確率（softmax は使わない）
+        #   place_probability = is_top3 ヘッドの較正済 生確率（Harville は使わない）
+        # モデル不在・推論失敗・CHIHOU_USE_LGB=0 のときは線形 composite + softmax/Harville に
+        # フォールバックする。
+        win_probs: list[float] | None = None
+        place_probs: list[float] | None = None
+        top3_model = _load_prod_lgb() if _use_lgb() else None
+        win_model = _load_prod_lgb_win() if _use_lgb() else None
+        if top3_model is not None and composite_inputs:
             try:
                 import numpy as np
 
-                feats = _build_lgb_features(
-                    entries, race, speed_map, last3f_map,
-                    jockey_map, rotation_map, last_margin_map,
+                X = np.asarray(
+                    _build_lgb_features(
+                        entries, race, speed_map, last3f_map,
+                        jockey_map, rotation_map, last_margin_map,
+                    ),
+                    dtype=float,
                 )
-                raw = model.predict(np.asarray(feats, dtype=float))
-                lgb_index = _scale_to_index_local([float(x) for x in raw])
+                raw_t3 = [float(x) for x in top3_model.predict(X)]
+                lgb_index = _scale_to_index_local(raw_t3)
                 # composite_inputs は entries と同順。hid 対応を保って置換する。
                 composite_inputs = [
                     (entries[i].horse_id, _clip(lgb_index[i])) for i in range(len(entries))
                 ]
+                if win_model is not None:
+                    raw_win = [float(x) for x in win_model.predict(X)]
+                    # 較正済みヘッドの生確率をそのまま採用（0-1 にクリップ）
+                    win_probs = [min(1.0, max(0.0, p)) for p in raw_win]
+                    place_probs = [min(1.0, max(0.0, p)) for p in raw_t3]
             except Exception as e:  # noqa: BLE001
                 logger.error(
                     "chihou prod LGB inference failed (race_id=%d): %s, fallback to linear",
                     race_id, e,
                 )
+                win_probs = place_probs = None
 
-        # Softmax で単勝確率を推定 → Harville で複勝確率を算出
-        comp_values = [v for _, v in composite_inputs]
-        win_probs   = _softmax(comp_values, SOFTMAX_TEMPERATURE)
-        place_probs = _harville_place_probs(win_probs)
+        # 較正ヘッド未使用時は 線形/LGB-index の Softmax + Harville にフォールバック
+        if win_probs is None or place_probs is None:
+            comp_values = [v for _, v in composite_inputs]
+            win_probs = _softmax(comp_values, SOFTMAX_TEMPERATURE)
+            place_probs = _harville_place_probs(win_probs)
 
         # Step 2: place_ev_index を算出（参考列として保存。composite には含まない）
         # オッズは race_results から取得（直前レースでは None → DB に NULL を格納）

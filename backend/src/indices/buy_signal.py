@@ -170,84 +170,65 @@ def is_sweet_spot(
 #     浦和 1.375 / 水沢 1.634 / 笠松 1.430 / 園田 1.460 / 佐賀 1.379 / 高知 1.118
 #   ROI陰性コース（除外）: 名古屋/大井/船橋/川崎/金沢
 
+# Phase2 (2026-06-05): sweet_spot を「EVゲート」から検証済みのランキング規則へ移行。
+# 較正済 win_probability(is_win生確率, ECE 0.0024) では高オッズ馬の honest EV は
+# 概ね <1 となり、旧 EV∈[1.0,2.0] ゲートは機能しない。Phase1 のクリーンOOS検証で
+# 黒字だったのは EVゲートでなく「指数1位 × 単勝10-30倍 × 割安場」(5seed ROI 1.17)
+# というランキング規則だったため、これを sweet_spot の定義とする。
 CHIHOU_SWEET_SPOT_MIN_ODDS: float = 10.0
-CHIHOU_SWEET_SPOT_MIN_EV: float = 1.0
-CHIHOU_SWEET_SPOT_MAX_EV: float = 2.0
+CHIHOU_SWEET_SPOT_MAX_ODDS: float = 30.0  # 30倍超は分散大・ROI崩壊(03 検証)
 
-# v10 バックテストでROI陽性だった競馬場
+# Phase1 検証で 単勝10-30倍 ROI陽性だった割安場（浦和/金沢/高知が牽引、笠松/盛岡含む）
 _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
-    "浦和", "水沢", "笠松", "園田", "佐賀", "高知",
-    "姫路", "盛岡", "門別",  # データ不足・暫定
+    "浦和", "金沢", "高知", "笠松", "盛岡",
 })
 
-# 断然人気複勝推奨の1番人気オッズ閾値
-# バックテスト: 断然人気<2.0倍 × EV 1.2-2.0 → 複勝率20.6%, 推定複勝ROI 1.067 (n=4969/3yr)
-# オッズ変動でレース直前に対象が確定する性質上、閾値は緩めに保つ
+# 断然人気複勝推奨の1番人気オッズ閾値（断然人気レースの value 穴）
 CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.0
-CHIHOU_PLACE_BET_MIN_EV: float = 1.2
-CHIHOU_PLACE_BET_MAX_EV: float = 2.0
-
-
-# 高オッズ穴狙いで複勝率が極端に低い馬を除外するための最低複勝率
-# モデルが「ほぼ複圏に入れない」と予測する馬（place_prob < 0.12）は EV 計算が不安定
-CHIHOU_SWEET_SPOT_MIN_PLACE_PROB: float = 0.12
+# place_bet も EV ゲートから「指数上位の穴」ランキング規則へ移行（複勝は妙味薄=参考用途）
+CHIHOU_PLACE_BET_MAX_INDEX_RANK: int = 3
 
 
 def chihou_is_sweet_spot(
+    index_rank: int | None,
     win_odds: float | None,
-    win_probability: float | None,
     course_name: str | None,
-    place_probability: float | None = None,
 ) -> bool:
-    """地方競馬スイートスポット判定（v10 win_probability ベース）。
+    """地方競馬スイートスポット判定（Phase2: ランキング規則）。
 
-    条件:
-      1. 単勝オッズ ≥ 10.0
-      2. EV (v10 win_probability × win_odds) ∈ [1.0, 2.0]
-      3. ROI陽性競馬場（v10バックテスト実証）
-      4. v10 複勝率 ≥ 0.12（極端な外れ馬を除外）
+    条件（Phase1 クリーンOOS検証, 5seed 単勝ROI 1.17）:
+      1. 指数(composite)1位
+      2. 単勝オッズ ∈ [10.0, 30.0)
+      3. 割安場（浦和/金沢/高知/笠松/盛岡）
     """
-    if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
+    if index_rank != 1:
         return False
-    if win_probability is None:
+    if win_odds is None or not (CHIHOU_SWEET_SPOT_MIN_ODDS <= float(win_odds) < CHIHOU_SWEET_SPOT_MAX_ODDS):
         return False
-    if course_name not in _CHIHOU_SWEET_SPOT_COURSES:
-        return False
-    ev = float(win_probability) * float(win_odds)
-    if not (CHIHOU_SWEET_SPOT_MIN_EV <= ev <= CHIHOU_SWEET_SPOT_MAX_EV):
-        return False
-    # 複勝率が極端に低い馬はモデルが「残れない」と判断しているケースで除外
-    if place_probability is not None and float(place_probability) < CHIHOU_SWEET_SPOT_MIN_PLACE_PROB:
-        return False
-    return True
+    return course_name in _CHIHOU_SWEET_SPOT_COURSES
 
 
 def chihou_is_place_bet(
+    index_rank: int | None,
     win_odds: float | None,
-    win_probability: float | None,
     fav_odds: float | None,
 ) -> bool:
-    """地方競馬 断然人気レース穴馬 複勝推奨判定（v10 win_probability ベース）。
+    """地方競馬 断然人気レース穴馬 複勝推奨判定（Phase2: ランキング規則）。
 
-    1頭断然人気がいるレースで、指数がEV陽性の穴馬を複勝推奨。
-    地方競馬では断然人気馬が1着固定でも、2〜3着に人気薄が入りやすい構造がある。
+    1頭断然人気がいるレースで、指数上位の単勝高オッズ馬を複勝推奨（複圏の value 穴）。
+    地方競馬では断然人気馬が1着固定でも 2〜3着に人気薄が入りやすい構造がある。
+    複勝は控除率分の赤字帯（03 検証）のため「予想の参考」用途。
 
     条件:
-      1. 単勝オッズ ≥ 10.0
-      2. EV (v10 win_probability × win_odds) ∈ [1.2, 2.0]
-      3. 1番人気単勝オッズ < 2.0（断然人気レース）
-
-    バックテスト（3年・全地方）:
-      断然人気<2.0倍 × EV 1.2-2.0 → 複勝率 20.6%, 推定複勝ROI 1.067 (n=4969)
+      1. 1番人気単勝オッズ < 2.0（断然人気レース）
+      2. 対象馬 単勝オッズ ≥ 10.0
+      3. 指数(composite)上位（rank ≤ 3）
     """
-    if win_odds is None or win_odds < CHIHOU_SWEET_SPOT_MIN_ODDS:
+    if fav_odds is None or float(fav_odds) >= CHIHOU_PLACE_BET_FAV_ODDS_MAX:
         return False
-    if win_probability is None:
+    if win_odds is None or float(win_odds) < CHIHOU_SWEET_SPOT_MIN_ODDS:
         return False
-    if fav_odds is None or fav_odds >= CHIHOU_PLACE_BET_FAV_ODDS_MAX:
-        return False
-    ev = float(win_probability) * float(win_odds)
-    return CHIHOU_PLACE_BET_MIN_EV <= ev <= CHIHOU_PLACE_BET_MAX_EV
+    return index_rank is not None and index_rank <= CHIHOU_PLACE_BET_MAX_INDEX_RANK
 
 
 # ---------------------------------------------------------------------------

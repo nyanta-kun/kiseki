@@ -1,5 +1,5 @@
 {
-  "head": "is_top3",
+  "head": "is_win",
   "features": [
     "speed_index",
     "last3f_index",
@@ -31,71 +31,71 @@
   "feature_importance": [
     {
       "feature": "last_margin_index",
-      "gain": 198541
+      "gain": 95649
     },
     {
       "feature": "jockey_index",
-      "gain": 102842
+      "gain": 63585
     },
     {
       "feature": "speed_index",
-      "gain": 48972
-    },
-    {
-      "feature": "head_count",
-      "gain": 35354
-    },
-    {
-      "feature": "horse_age",
-      "gain": 21011
+      "gain": 32755
     },
     {
       "feature": "horse_weight",
-      "gain": 18157
+      "gain": 16606
     },
     {
       "feature": "last3f_index",
-      "gain": 17767
+      "gain": 13241
+    },
+    {
+      "feature": "horse_age",
+      "gain": 12181
     },
     {
       "feature": "rotation_index",
-      "gain": 13167
+      "gain": 10296
     },
     {
-      "feature": "weight_carried",
-      "gain": 10046
-    },
-    {
-      "feature": "distance",
-      "gain": 8049
+      "feature": "head_count",
+      "gain": 9699
     },
     {
       "feature": "weight_change",
-      "gain": 7451
+      "gain": 6583
+    },
+    {
+      "feature": "weight_carried",
+      "gain": 6037
+    },
+    {
+      "feature": "distance",
+      "gain": 5575
     },
     {
       "feature": "frame_number",
-      "gain": 3807
+      "gain": 3254
     },
     {
       "feature": "is_bad",
-      "gain": 602
+      "gain": 301
     },
     {
       "feature": "is_good",
-      "gain": 422
+      "gain": 299
     },
     {
       "feature": "is_heavy",
-      "gain": 145
-    },
-    {
-      "feature": "is_turf",
-      "gain": 23
+      "gain": 223
     },
     {
       "feature": "is_dirt",
-      "gain": 10
+      "gain": 19
+    },
+    {
+      "feature": "is_turf",
+      "gain": 8
     }
   ]
 }
