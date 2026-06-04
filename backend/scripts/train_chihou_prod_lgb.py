@@ -1,11 +1,12 @@
-"""地方競馬 本番用 LightGBM 学習スクリプト（17特徴量・純LGB）
+"""地方競馬 本番用 LightGBM 学習スクリプト（21特徴量・純LGB）
 
 本番リアルタイム取込パス（chihou_calculator.calculate_and_save）が読み込む
-プロダクションモデルを学習・保存する。履歴系特徴(improving_form等)は
-ライブ計算コスト/skew回避のため使わず、calculate_and_save 内で追加クエリ
-なしに構築できる17特徴量のみを使う。
+プロダクションモデルを学習・保存する。Phase3 で履歴系4特徴
+(improving_form/track_win_rate/class_drop_ratio/prev_pace_ratio)を追加。
+これらは calculate_and_save 内の _history_features_batch でライブ計算され、
+本スクリプトの add_historical_features と同一意味論で算出する（train/serve 整合）。
 
-特徴量(17): サブ指数5 + レースメタ7 + 馬メタ5
+特徴量(21): サブ指数5 + レースメタ7 + 馬メタ5 + 履歴系4(Phase3)
 2ヘッド構成（Phase2: 単複ヘッド分離＋確率較正）:
   - is_top3 ヘッド → composite ランキング & place_probability  (models/chihou_prod_lgb.txt)
   - is_win  ヘッド → win_probability(較正済)                   (models/chihou_prod_lgb_win.txt)
@@ -56,10 +57,20 @@ FEATURES = [
     "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
     "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
 ]
+# Phase3: 履歴系4特徴を追加（calculator._history_features_batch と同一意味論）
+HIST_FEATURES = ["improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio"]
+FEATURES = FEATURES + HIST_FEATURES
+
+# train_chihou_v11 の履歴特徴計算を再利用（serve 側 _history_features_batch と整合）
+from scripts.train_chihou_v11_lightgbm import (  # noqa: E402
+    add_historical_features,
+    fetch_hist,
+)
 
 BASE_QUERY = """
 SELECT
-    ci.race_id, r.date, r.surface, r.condition, r.distance, r.head_count,
+    ci.race_id, r.date, r.course_name, r.prize_1st AS curr_prize,
+    re.horse_id, r.surface, r.condition, r.distance, r.head_count,
     re.frame_number, re.horse_age, re.weight_carried,
     COALESCE(re.horse_weight, 500) AS horse_weight,
     COALESCE(re.weight_change, 0)  AS weight_change,
@@ -119,7 +130,17 @@ def featurize(df: pd.DataFrame) -> pd.DataFrame:
     df["is_heavy"] = (c == "重").astype(int)
     df["is_bad"] = (c == "不").astype(int)
     for col in FEATURES:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        if col in df.columns:  # 履歴系は add_historical_features 後に付与
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    return df
+
+
+def prep(conn, df_raw: pd.DataFrame, df_hist: pd.DataFrame) -> pd.DataFrame:
+    """featurize + 履歴系4特徴付与 + 欠損補完（train/serve 整合）。"""
+    df = featurize(df_raw)
+    df = add_historical_features(df, df_hist)
+    for col in HIST_FEATURES:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(-1.0)
     return df
 
 
@@ -147,19 +168,20 @@ def main() -> None:
         f"password={os.getenv('DB_PASSWORD')}"
     )
     conn = psycopg2.connect(dsn)
+    df_hist = fetch_hist(conn)  # 履歴特徴用（全期間 race_results）
 
     if args.oos_check:
         # train前半 / test後半 で sanity（出荷モデルとは別）
         cut = "20250630"
-        tr = featurize(fetch(conn, args.start, cut))
-        te = featurize(fetch(conn, "20250701", args.end))
+        tr = prep(conn, fetch(conn, args.start, cut), df_hist)
+        te = prep(conn, fetch(conn, "20250701", args.end), df_hist)
         ytr = (pd.to_numeric(tr["finish_position"], errors="coerce") <= 3).astype(int).values
         m = lgb.train(PARAMS, lgb.Dataset(tr[FEATURES].values.astype(float), ytr, feature_name=FEATURES),
                       num_boost_round=NUM_ROUNDS)
         _eval_top1(te, m.predict(te[FEATURES].values.astype(float)), "OOS-check(test 2025.7+)")
 
     # ── 出荷モデル: 全期間で学習（単勝/複勝 2ヘッド） ──
-    df = featurize(fetch(conn, args.start, args.end))
+    df = prep(conn, fetch(conn, args.start, args.end), df_hist)
     conn.close()
     logger.info("学習データ: %d行 %dレース (%s〜%s)", len(df), df["race_id"].nunique(), args.start, args.end)
 

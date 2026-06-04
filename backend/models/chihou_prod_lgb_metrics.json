@@ -17,9 +17,13 @@
     "horse_age",
     "weight_carried",
     "horse_weight",
-    "weight_change"
+    "weight_change",
+    "improving_form",
+    "track_win_rate",
+    "class_drop_ratio",
+    "prev_pace_ratio"
   ],
-  "n_features": 17,
+  "n_features": 21,
   "train_range": [
     "20230101",
     "20260605"
@@ -31,71 +35,87 @@
   "feature_importance": [
     {
       "feature": "last_margin_index",
-      "gain": 198541
+      "gain": 204072
     },
     {
       "feature": "jockey_index",
-      "gain": 102842
+      "gain": 95903
     },
     {
       "feature": "speed_index",
-      "gain": 48972
+      "gain": 38281
     },
     {
       "feature": "head_count",
-      "gain": 35354
+      "gain": 34307
     },
     {
-      "feature": "horse_age",
-      "gain": 21011
+      "feature": "class_drop_ratio",
+      "gain": 28942
     },
     {
-      "feature": "horse_weight",
-      "gain": 18157
+      "feature": "track_win_rate",
+      "gain": 24683
     },
     {
       "feature": "last3f_index",
-      "gain": 17767
+      "gain": 16876
+    },
+    {
+      "feature": "prev_pace_ratio",
+      "gain": 16324
+    },
+    {
+      "feature": "horse_age",
+      "gain": 16134
+    },
+    {
+      "feature": "horse_weight",
+      "gain": 14908
+    },
+    {
+      "feature": "improving_form",
+      "gain": 11139
     },
     {
       "feature": "rotation_index",
-      "gain": 13167
+      "gain": 9543
     },
     {
       "feature": "weight_carried",
-      "gain": 10046
-    },
-    {
-      "feature": "distance",
-      "gain": 8049
+      "gain": 8609
     },
     {
       "feature": "weight_change",
-      "gain": 7451
+      "gain": 6796
+    },
+    {
+      "feature": "distance",
+      "gain": 6419
     },
     {
       "feature": "frame_number",
-      "gain": 3807
+      "gain": 3649
     },
     {
       "feature": "is_bad",
-      "gain": 602
+      "gain": 574
     },
     {
       "feature": "is_good",
-      "gain": 422
+      "gain": 413
     },
     {
       "feature": "is_heavy",
-      "gain": 145
+      "gain": 166
     },
     {
       "feature": "is_turf",
-      "gain": 23
+      "gain": 24
     },
     {
       "feature": "is_dirt",
-      "gain": 10
+      "gain": 5
     }
   ]
 }

@@ -385,11 +385,13 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 # モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
 # -----------------------------------------------------------------------
 
-# 17特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致させること）
+# 21特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
+# Phase3: 末尾に履歴系4特徴を追加（_history_features_batch で算出）。
 _LGB_FEATURE_NAMES: list[str] = [
     "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
     "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
     "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
+    "improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 _PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.txt"          # is_top3: composite & place_prob
@@ -453,8 +455,13 @@ def _build_lgb_features(
     jockey_map: dict[int, float],
     rotation_map: dict[int, float],
     last_margin_map: dict[int, float | None],
+    hist_feat_map: dict[int, list[float]] | None = None,
 ) -> list[list[float]]:
-    """17特徴量の行列を学習時と同順で構築する（追加クエリなし）。"""
+    """21特徴量の行列を学習時と同順で構築する。
+
+    sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map
+    (_history_features_batch の出力) から付与する。None の馬は不明値で埋める。
+    """
     surface = (race.surface or "")
     cond = (race.condition or "")
     is_turf = 1.0 if "芝" in surface else 0.0
@@ -465,10 +472,14 @@ def _build_lgb_features(
     distance = float(race.distance or 0)
     head_count = float(race.head_count or len(entries))
 
+    hist_feat_map = hist_feat_map or {}
+    # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
+    default_hist = [-1.0, -1.0, 0.0, -1.0]
     rows: list[list[float]] = []
     for e in entries:
         hid = e.horse_id
         lm = last_margin_map.get(hid)
+        hist = hist_feat_map.get(hid, default_hist)
         rows.append([
             float(speed_map.get(hid, INDEX_NEUTRAL)),
             float(last3f_map.get(hid, INDEX_NEUTRAL)),
@@ -482,6 +493,7 @@ def _build_lgb_features(
             float(e.weight_carried) if e.weight_carried is not None else 0.0,
             float(e.horse_weight) if e.horse_weight is not None else 500.0,
             float(e.weight_change) if e.weight_change is not None else 0.0,
+            float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
         ])
     return rows
 
@@ -639,10 +651,11 @@ class ChihouIndexCalculator:
             try:
                 import numpy as np
 
+                hist_feat_map = await self._history_features_batch(race_date, race, entries)
                 X = np.asarray(
                     _build_lgb_features(
                         entries, race, speed_map, last3f_map,
-                        jockey_map, rotation_map, last_margin_map,
+                        jockey_map, rotation_map, last_margin_map, hist_feat_map,
                     ),
                     dtype=float,
                 )
@@ -1439,6 +1452,78 @@ class ChihouIndexCalculator:
                 z = -(td - mean_val) / stdev
                 result[hid] = _clip(z * 10.0 + INDEX_NEUTRAL)
 
+        return result
+
+    async def _history_features_batch(
+        self,
+        race_date: str,
+        race: ChihouRace,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, list[float]]:
+        """履歴系4特徴 (improving_form / track_win_rate / class_drop_ratio /
+        prev_pace_ratio) を一括算出する。
+
+        train 側 scripts/train_chihou_v11_lightgbm.add_historical_features と
+        同一の意味論にすること（train/serve skew 防止）。すべて当該レース開始前の
+        過去走のみ参照（date < race_date）でリークなし。
+
+        Returns:
+            hid -> [improving_form, track_win_rate, class_drop_ratio, prev_pace_ratio]
+        """
+        horse_ids = [e.horse_id for e in entries]
+        curr_prize = float(race.prize_1st or 0)
+        if curr_prize < 1.0:
+            curr_prize = 1.0
+        curr_course = race.course_name
+
+        # 過去走（直近順）を一括取得。track_win_rate のため全件（上限 100）。
+        q = text("""
+            SELECT rr.horse_id, r.date, r.course_name, r.prize_1st,
+                   r.head_count, rr.finish_position, rr.passing_1
+            FROM chihou.race_results rr
+            JOIN chihou.races r ON r.id = rr.race_id
+            WHERE rr.horse_id = ANY(:hids)
+              AND r.date < :before
+              AND r.course != :banei
+              AND COALESCE(rr.abnormality_code, 0) = 0
+              AND rr.finish_position IS NOT NULL
+            ORDER BY rr.horse_id, r.date DESC, rr.race_id DESC
+        """)
+        rows = await self.db.execute(
+            q, {"hids": horse_ids, "before": race_date, "banei": BANEI_COURSE_CODE},
+        )
+        hist: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for r in rows.mappings():
+            if len(hist[r["horse_id"]]) < 100:
+                hist[r["horse_id"]].append(dict(r))
+
+        result: dict[int, list[float]] = {}
+        for hid in horse_ids:
+            recs = hist.get(hid, [])  # 直近順
+            # improving_form: 直近2走で着順改善
+            if len(recs) >= 2 and recs[0]["finish_position"] is not None and recs[1]["finish_position"] is not None:
+                improving = 1.0 if int(recs[0]["finish_position"]) < int(recs[1]["finish_position"]) else 0.0
+            else:
+                improving = -1.0
+            # prev_pace_ratio: 前走 passing_1 / head_count
+            if recs and recs[0]["passing_1"] is not None and recs[0]["head_count"]:
+                prev_pace = min(1.0, max(0.0, float(recs[0]["passing_1"]) / float(recs[0]["head_count"])))
+            else:
+                prev_pace = -1.0
+            # class_drop_ratio: (前走賞金 - 今走賞金) / 今走賞金
+            if recs and recs[0]["prize_1st"] is not None:
+                cdr = (float(recs[0]["prize_1st"]) - curr_prize) / curr_prize
+                cdr = min(5.0, max(-2.0, cdr))
+            else:
+                cdr = 0.0
+            # track_win_rate: 同コース過去走の勝率（3走以上）
+            track = [x for x in recs if x["course_name"] == curr_course]
+            if len(track) >= 3:
+                wins = sum(1 for x in track if int(x["finish_position"]) == 1)
+                twr = min(1.0, max(0.0, wins / len(track)))
+            else:
+                twr = -1.0
+            result[hid] = [improving, twr, cdr, prev_pace]
         return result
 
     # ===================================================================

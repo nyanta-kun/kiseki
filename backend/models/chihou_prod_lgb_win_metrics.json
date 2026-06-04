@@ -17,9 +17,13 @@
     "horse_age",
     "weight_carried",
     "horse_weight",
-    "weight_change"
+    "weight_change",
+    "improving_form",
+    "track_win_rate",
+    "class_drop_ratio",
+    "prev_pace_ratio"
   ],
-  "n_features": 17,
+  "n_features": 21,
   "train_range": [
     "20230101",
     "20260605"
@@ -31,71 +35,87 @@
   "feature_importance": [
     {
       "feature": "last_margin_index",
-      "gain": 95649
+      "gain": 99388
     },
     {
       "feature": "jockey_index",
-      "gain": 63585
+      "gain": 59359
+    },
+    {
+      "feature": "track_win_rate",
+      "gain": 25886
     },
     {
       "feature": "speed_index",
-      "gain": 32755
+      "gain": 24232
+    },
+    {
+      "feature": "class_drop_ratio",
+      "gain": 18828
     },
     {
       "feature": "horse_weight",
-      "gain": 16606
+      "gain": 13478
     },
     {
       "feature": "last3f_index",
-      "gain": 13241
+      "gain": 11415
+    },
+    {
+      "feature": "prev_pace_ratio",
+      "gain": 10952
     },
     {
       "feature": "horse_age",
-      "gain": 12181
-    },
-    {
-      "feature": "rotation_index",
-      "gain": 10296
+      "gain": 9159
     },
     {
       "feature": "head_count",
-      "gain": 9699
+      "gain": 8524
+    },
+    {
+      "feature": "improving_form",
+      "gain": 7005
+    },
+    {
+      "feature": "rotation_index",
+      "gain": 6375
     },
     {
       "feature": "weight_change",
-      "gain": 6583
+      "gain": 5220
     },
     {
       "feature": "weight_carried",
-      "gain": 6037
+      "gain": 4279
     },
     {
       "feature": "distance",
-      "gain": 5575
+      "gain": 4195
     },
     {
       "feature": "frame_number",
-      "gain": 3254
-    },
-    {
-      "feature": "is_bad",
-      "gain": 301
+      "gain": 3002
     },
     {
       "feature": "is_good",
-      "gain": 299
+      "gain": 236
+    },
+    {
+      "feature": "is_bad",
+      "gain": 183
     },
     {
       "feature": "is_heavy",
-      "gain": 223
+      "gain": 169
     },
     {
       "feature": "is_dirt",
-      "gain": 19
+      "gain": 21
     },
     {
       "feature": "is_turf",
-      "gain": 8
+      "gain": 10
     }
   ]
 }
