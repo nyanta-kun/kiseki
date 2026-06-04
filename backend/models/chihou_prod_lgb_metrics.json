@@ -1,0 +1,100 @@
+{
+  "features": [
+    "speed_index",
+    "last3f_index",
+    "jockey_index",
+    "rotation_index",
+    "last_margin_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_good",
+    "is_heavy",
+    "is_bad",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change"
+  ],
+  "n_features": 17,
+  "train_range": [
+    "20230101",
+    "20260605"
+  ],
+  "n_rows": 311801,
+  "n_races": 30384,
+  "num_rounds": 400,
+  "seed": 0,
+  "feature_importance": [
+    {
+      "feature": "last_margin_index",
+      "gain": 198695
+    },
+    {
+      "feature": "jockey_index",
+      "gain": 103889
+    },
+    {
+      "feature": "speed_index",
+      "gain": 48610
+    },
+    {
+      "feature": "head_count",
+      "gain": 35589
+    },
+    {
+      "feature": "horse_age",
+      "gain": 20763
+    },
+    {
+      "feature": "horse_weight",
+      "gain": 18422
+    },
+    {
+      "feature": "last3f_index",
+      "gain": 17765
+    },
+    {
+      "feature": "rotation_index",
+      "gain": 13020
+    },
+    {
+      "feature": "weight_carried",
+      "gain": 9968
+    },
+    {
+      "feature": "distance",
+      "gain": 8098
+    },
+    {
+      "feature": "weight_change",
+      "gain": 7575
+    },
+    {
+      "feature": "frame_number",
+      "gain": 3709
+    },
+    {
+      "feature": "is_bad",
+      "gain": 584
+    },
+    {
+      "feature": "is_good",
+      "gain": 466
+    },
+    {
+      "feature": "is_heavy",
+      "gain": 167
+    },
+    {
+      "feature": "is_turf",
+      "gain": 23
+    },
+    {
+      "feature": "is_dirt",
+      "gain": 7
+    }
+  ]
+}
