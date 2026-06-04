@@ -6,8 +6,10 @@
 なしに構築できる17特徴量のみを使う。
 
 特徴量(17): サブ指数5 + レースメタ7 + 馬メタ5
-目的変数: 3着以内 binary
-出力: models/chihou_prod_lgb.txt （+ chihou_prod_lgb_metrics.json）
+2ヘッド構成（Phase2: 単複ヘッド分離＋確率較正）:
+  - is_top3 ヘッド → composite ランキング & place_probability  (models/chihou_prod_lgb.txt)
+  - is_win  ヘッド → win_probability(較正済)                   (models/chihou_prod_lgb_win.txt)
+  生 binary 出力がほぼ完璧に較正される(Phase2: win ECE 0.0024)ため isotonic は不要。
 
 クリーンOOS検証は scripts/chihou_model_compare.py 側で実施済み
 (LGB17特徴 top1勝率 33.9% vs linear 29.9% / market 46.1%)。
@@ -156,34 +158,40 @@ def main() -> None:
                       num_boost_round=NUM_ROUNDS)
         _eval_top1(te, m.predict(te[FEATURES].values.astype(float)), "OOS-check(test 2025.7+)")
 
-    # ── 出荷モデル: 全期間で学習 ──
+    # ── 出荷モデル: 全期間で学習（単勝/複勝 2ヘッド） ──
     df = featurize(fetch(conn, args.start, args.end))
     conn.close()
     logger.info("学習データ: %d行 %dレース (%s〜%s)", len(df), df["race_id"].nunique(), args.start, args.end)
 
-    y = (pd.to_numeric(df["finish_position"], errors="coerce") <= 3).astype(int).values
     X = df[FEATURES].values.astype(float)
-    model = lgb.train(PARAMS, lgb.Dataset(X, y, feature_name=FEATURES), num_boost_round=NUM_ROUNDS)
-
-    _eval_top1(df, model.predict(X), "train(in-sample)")
-
-    model_path = MODELS_DIR / "chihou_prod_lgb.txt"
-    model.save_model(str(model_path))
-    importance = sorted(zip(FEATURES, model.feature_importance(importance_type="gain")), key=lambda x: -x[1])
-    metrics = {
-        "features": FEATURES,
-        "n_features": len(FEATURES),
-        "train_range": [args.start, args.end],
-        "n_rows": len(df),
-        "n_races": int(df["race_id"].nunique()),
-        "num_rounds": NUM_ROUNDS,
-        "seed": PARAMS["seed"],
-        "feature_importance": [{"feature": f, "gain": int(g)} for f, g in importance],
-    }
-    with open(MODELS_DIR / "chihou_prod_lgb_metrics.json", "w") as fh:
-        json.dump(metrics, fh, indent=2, ensure_ascii=False)
-    logger.info("保存完了: %s", model_path)
-    logger.info("特徴量重要度 top8: %s", [f"{f}:{g}" for f, g in importance[:8]])
+    fp = pd.to_numeric(df["finish_position"], errors="coerce")
+    # composite ランキング & place_probability 用: 複勝(3着以内)ヘッド
+    # win_probability(較正) 用: 単勝(1着)ヘッド。is_win 生出力はほぼ完璧に較正される
+    # (Phase2 実験: ECE 0.0024) ため isotonic は不要。
+    heads = [
+        ("chihou_prod_lgb",      "is_top3", (fp <= 3).astype(int).values),
+        ("chihou_prod_lgb_win",  "is_win",  (fp == 1).astype(int).values),
+    ]
+    for out_name, label, y in heads:
+        model = lgb.train(PARAMS, lgb.Dataset(X, y, feature_name=FEATURES), num_boost_round=NUM_ROUNDS)
+        _eval_top1(df, model.predict(X), f"train in-sample[{label}]")
+        model.save_model(str(MODELS_DIR / f"{out_name}.txt"))
+        importance = sorted(zip(FEATURES, model.feature_importance(importance_type="gain")), key=lambda x: -x[1])
+        metrics = {
+            "head": label,
+            "features": FEATURES,
+            "n_features": len(FEATURES),
+            "train_range": [args.start, args.end],
+            "n_rows": len(df),
+            "n_races": int(df["race_id"].nunique()),
+            "num_rounds": NUM_ROUNDS,
+            "seed": PARAMS["seed"],
+            "feature_importance": [{"feature": f, "gain": int(g)} for f, g in importance],
+        }
+        with open(MODELS_DIR / f"{out_name}_metrics.json", "w") as fh:
+            json.dump(metrics, fh, indent=2, ensure_ascii=False)
+        logger.info("保存完了[%s]: %s.txt  重要度top5=%s",
+                    label, out_name, [f"{f}:{g}" for f, g in importance[:5]])
 
 
 if __name__ == "__main__":

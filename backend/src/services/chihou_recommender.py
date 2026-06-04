@@ -715,6 +715,18 @@ async def build_chihou_sweet_spot_recommendations(
         low_trusted: list[dict[str, Any]] = []
         low_untrusted: list[dict[str, Any]] = []
 
+        # composite_index でレース内順位（降順・同値は先着）。sweet_spot/place_bet の
+        # ランキング規則（Phase2）で使用する。
+        _ranked = sorted(
+            (r for r in horse_rows if r[0].composite_index is not None),
+            key=lambda r: float(r[0].composite_index),
+            reverse=True,
+        )
+        rank_by_hn: dict[int, int] = {}
+        for _r, (_ci, _entry, _horse) in enumerate(_ranked):
+            if _entry.horse_number is not None:
+                rank_by_hn[_entry.horse_number] = _r + 1
+
         for ci, entry, horse in horse_rows:
             hn = entry.horse_number
             wo = win_odds.get(str(hn)) if hn is not None else None
@@ -729,11 +741,11 @@ async def build_chihou_sweet_spot_recommendations(
                 "place_odds": place_odds.get(str(hn)) if hn is not None else None,
                 "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
             }
-            place_prob_raw = float(ci.place_probability) if ci.place_probability is not None else None
+            idx_rank = rank_by_hn.get(hn) if hn is not None else None
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
-            if chihou_is_sweet_spot(wo, win_prob, race.course_name, place_prob_raw):
+            if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            if chihou_is_place_bet(wo, win_prob, fav_odds):
+            if chihou_is_place_bet(idx_rank, wo, fav_odds):
                 place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
