@@ -95,8 +95,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, case, func, select, text
@@ -116,7 +118,10 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 10  # v10 LightGBM (2026-05-03 本番切り替え)
+# version=10。2026-06-05 から composite/win_prob を本番 LightGBM(純LGB,17特徴)で算出。
+# それ以前の version=10 は実体が v9 線形だった（inference_chihou_v10 は取込パス未組込）。
+# 詳細: 末尾「本番 LightGBM」セクション / scripts/train_chihou_prod_lgb.py。
+CHIHOU_COMPOSITE_VERSION = 10
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -371,6 +376,103 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 
 
 # -----------------------------------------------------------------------
+# 本番 LightGBM（純LGB）— version=10 の composite/win_prob を LGB 出力で書く
+#
+# 2026-06-05: 本番 version=10 は実は v9 線形 softmax だった（inference_chihou_v10
+# は取込パスに未組込）。クリーンOOS比較(scripts/chihou_model_compare.py)で
+# 純LGB(17特徴)が線形を全方位で上回ることを確認(top1勝率 29.9%→33.9%, market46.1%)
+# したため、取込パスに純LGBを組み込む。履歴系4特徴は Phase3 で別途評価。
+# モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
+# -----------------------------------------------------------------------
+
+# 17特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致させること）
+_LGB_FEATURE_NAMES: list[str] = [
+    "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
+    "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
+    "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
+]
+_PROD_LGB_PATH = Path(__file__).resolve().parents[2] / "models" / "chihou_prod_lgb.txt"
+_prod_lgb_cache: Any = None
+_prod_lgb_tried = False
+
+
+def _use_lgb() -> bool:
+    """環境変数 CHIHOU_USE_LGB で本番LGBを切替（既定: 有効）。"""
+    return os.getenv("CHIHOU_USE_LGB", "1") not in ("0", "false", "False")
+
+
+def _load_prod_lgb() -> Any:
+    """本番LGBモデルを lazy load（プロセス共有キャッシュ）。不在/失敗時 None。"""
+    global _prod_lgb_cache, _prod_lgb_tried
+    if _prod_lgb_cache is not None or _prod_lgb_tried:
+        return _prod_lgb_cache
+    _prod_lgb_tried = True
+    if not _PROD_LGB_PATH.exists():
+        logger.warning("chihou prod LGB not found: %s, fallback to linear", _PROD_LGB_PATH)
+        return None
+    try:
+        import lightgbm as lgb
+        _prod_lgb_cache = lgb.Booster(model_file=str(_PROD_LGB_PATH))
+        logger.info("chihou prod LGB loaded: %s", _PROD_LGB_PATH)
+        return _prod_lgb_cache
+    except Exception as e:  # noqa: BLE001
+        logger.error("chihou prod LGB load failed: %s", e)
+        return None
+
+
+def _scale_to_index_local(scores: list[float]) -> list[float]:
+    """レース内 min-max → 15-85（inference_chihou_v10.scale_to_index と同方式）。"""
+    if len(scores) <= 1:
+        return [50.0] * len(scores)
+    lo = min(scores)
+    hi = max(scores)
+    if hi - lo < 1e-9:
+        return [50.0] * len(scores)
+    return [15.0 + (s - lo) / (hi - lo) * 70.0 for s in scores]
+
+
+def _build_lgb_features(
+    entries: list[ChihouRaceEntry],
+    race: ChihouRace,
+    speed_map: dict[int, float],
+    last3f_map: dict[int, float],
+    jockey_map: dict[int, float],
+    rotation_map: dict[int, float],
+    last_margin_map: dict[int, float | None],
+) -> list[list[float]]:
+    """17特徴量の行列を学習時と同順で構築する（追加クエリなし）。"""
+    surface = (race.surface or "")
+    cond = (race.condition or "")
+    is_turf = 1.0 if "芝" in surface else 0.0
+    is_dirt = 1.0 if "ダ" in surface else 0.0
+    is_good = 1.0 if cond == "良" else 0.0
+    is_heavy = 1.0 if cond == "重" else 0.0
+    is_bad = 1.0 if cond == "不" else 0.0
+    distance = float(race.distance or 0)
+    head_count = float(race.head_count or len(entries))
+
+    rows: list[list[float]] = []
+    for e in entries:
+        hid = e.horse_id
+        lm = last_margin_map.get(hid)
+        rows.append([
+            float(speed_map.get(hid, INDEX_NEUTRAL)),
+            float(last3f_map.get(hid, INDEX_NEUTRAL)),
+            float(jockey_map.get(hid, INDEX_NEUTRAL)),
+            float(rotation_map.get(hid, INDEX_NEUTRAL)),
+            float(lm) if lm is not None else INDEX_NEUTRAL,
+            distance, head_count,
+            is_turf, is_dirt, is_good, is_heavy, is_bad,
+            float(e.frame_number) if e.frame_number is not None else 0.0,
+            float(e.horse_age) if e.horse_age is not None else 0.0,
+            float(e.weight_carried) if e.weight_carried is not None else 0.0,
+            float(e.horse_weight) if e.horse_weight is not None else 500.0,
+            float(e.weight_change) if e.weight_change is not None else 0.0,
+        ])
+    return rows
+
+
+# -----------------------------------------------------------------------
 # メインクラス
 # -----------------------------------------------------------------------
 
@@ -507,6 +609,31 @@ class ChihouIndexCalculator:
 
             composite = _clip(ability_base * k_jockey * k_rotation * k_dark * k_margin)
             composite_inputs.append((hid, composite))
+
+        # 本番 LightGBM（純LGB）で composite を上書き。
+        # サブ指数(speed/last3f/jockey/rotation/last_margin)はそのまま保存し、
+        # 合議の composite_index と確率のみ LGB 由来に置換する。
+        # モデル不在・推論失敗・CHIHOU_USE_LGB=0 のときは線形 composite を維持。
+        model = _load_prod_lgb() if _use_lgb() else None
+        if model is not None and composite_inputs:
+            try:
+                import numpy as np
+
+                feats = _build_lgb_features(
+                    entries, race, speed_map, last3f_map,
+                    jockey_map, rotation_map, last_margin_map,
+                )
+                raw = model.predict(np.asarray(feats, dtype=float))
+                lgb_index = _scale_to_index_local([float(x) for x in raw])
+                # composite_inputs は entries と同順。hid 対応を保って置換する。
+                composite_inputs = [
+                    (entries[i].horse_id, _clip(lgb_index[i])) for i in range(len(entries))
+                ]
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "chihou prod LGB inference failed (race_id=%d): %s, fallback to linear",
+                    race_id, e,
+                )
 
         # Softmax で単勝確率を推定 → Harville で複勝確率を算出
         comp_values = [v for _, v in composite_inputs]
