@@ -97,6 +97,7 @@ import logging
 import math
 import os
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -454,7 +455,7 @@ def _build_lgb_features(
     last3f_map: dict[int, float],
     jockey_map: dict[int, float],
     rotation_map: dict[int, float],
-    last_margin_map: dict[int, float | None],
+    last_margin_map: Mapping[int, float | None],
     hist_feat_map: dict[int, list[float]] | None = None,
 ) -> list[list[float]]:
     """21特徴量の行列を学習時と同順で構築する。
@@ -657,7 +658,7 @@ class ChihouIndexCalculator:
                         entries, race, speed_map, last3f_map,
                         jockey_map, rotation_map, last_margin_map, hist_feat_map,
                     ),
-                    dtype=float,
+                    dtype=np.float64,
                 )
                 raw_t3 = [float(x) for x in top3_model.predict(X)]
                 lgb_index = _scale_to_index_local(raw_t3)
