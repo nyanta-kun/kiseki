@@ -500,23 +500,28 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     # --- スイートスポット・複勝推奨判定 (v10 win_probability ベース) ---
     # CHIHOU_COMPOSITE_VERSION == 10 のときだけ評価する。
     if CHIHOU_COMPOSITE_VERSION == 10:
-        # 単勝推奨（スイートスポット）
-        for h in horses:
+        # composite_index でレース内順位を付与（降順・同値は先着）
+        _ranked = sorted(
+            (i for i, h in enumerate(horses) if h.composite_index is not None),
+            key=lambda i: horses[i].composite_index,
+            reverse=True,
+        )
+        _rank_of: dict[int, int] = {i: r + 1 for r, i in enumerate(_ranked)}
+
+        # 単勝推奨（スイートスポット: 指数1位 × 単勝10-30倍 × 割安場）
+        for i, h in enumerate(horses):
             h.is_sweet_spot = chihou_is_sweet_spot(
+                index_rank=_rank_of.get(i),
                 win_odds=h.win_odds,
-                win_probability=h.win_probability,
                 course_name=course_name,
             )
-        if sum(1 for h in horses if h.is_sweet_spot) >= 3:
-            for h in horses:
-                h.is_sweet_spot = False
 
         # 断然人気複勝推奨: レース内最低単勝オッズ = 1番人気オッズの近似
         fav_odds: float | None = min(win_odds_map.values()) if win_odds_map else None
-        for h in horses:
+        for i, h in enumerate(horses):
             h.is_place_bet = chihou_is_place_bet(
+                index_rank=_rank_of.get(i),
                 win_odds=h.win_odds,
-                win_probability=h.win_probability,
                 fav_odds=fav_odds,
             )
         # 混戦レース（複勝推奨が4頭以上）は除外

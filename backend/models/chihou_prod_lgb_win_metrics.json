@@ -1,0 +1,121 @@
+{
+  "head": "is_win",
+  "features": [
+    "speed_index",
+    "last3f_index",
+    "jockey_index",
+    "rotation_index",
+    "last_margin_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_good",
+    "is_heavy",
+    "is_bad",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "improving_form",
+    "track_win_rate",
+    "class_drop_ratio",
+    "prev_pace_ratio"
+  ],
+  "n_features": 21,
+  "train_range": [
+    "20230101",
+    "20260605"
+  ],
+  "n_rows": 311801,
+  "n_races": 30384,
+  "num_rounds": 400,
+  "seed": 0,
+  "feature_importance": [
+    {
+      "feature": "last_margin_index",
+      "gain": 99388
+    },
+    {
+      "feature": "jockey_index",
+      "gain": 59359
+    },
+    {
+      "feature": "track_win_rate",
+      "gain": 25886
+    },
+    {
+      "feature": "speed_index",
+      "gain": 24232
+    },
+    {
+      "feature": "class_drop_ratio",
+      "gain": 18828
+    },
+    {
+      "feature": "horse_weight",
+      "gain": 13478
+    },
+    {
+      "feature": "last3f_index",
+      "gain": 11415
+    },
+    {
+      "feature": "prev_pace_ratio",
+      "gain": 10952
+    },
+    {
+      "feature": "horse_age",
+      "gain": 9159
+    },
+    {
+      "feature": "head_count",
+      "gain": 8524
+    },
+    {
+      "feature": "improving_form",
+      "gain": 7005
+    },
+    {
+      "feature": "rotation_index",
+      "gain": 6375
+    },
+    {
+      "feature": "weight_change",
+      "gain": 5220
+    },
+    {
+      "feature": "weight_carried",
+      "gain": 4279
+    },
+    {
+      "feature": "distance",
+      "gain": 4195
+    },
+    {
+      "feature": "frame_number",
+      "gain": 3002
+    },
+    {
+      "feature": "is_good",
+      "gain": 236
+    },
+    {
+      "feature": "is_bad",
+      "gain": 183
+    },
+    {
+      "feature": "is_heavy",
+      "gain": 169
+    },
+    {
+      "feature": "is_dirt",
+      "gain": 21
+    },
+    {
+      "feature": "is_turf",
+      "gain": 10
+    }
+  ]
+}

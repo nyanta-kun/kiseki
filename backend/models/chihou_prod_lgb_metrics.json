@@ -1,0 +1,121 @@
+{
+  "head": "is_top3",
+  "features": [
+    "speed_index",
+    "last3f_index",
+    "jockey_index",
+    "rotation_index",
+    "last_margin_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_good",
+    "is_heavy",
+    "is_bad",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "improving_form",
+    "track_win_rate",
+    "class_drop_ratio",
+    "prev_pace_ratio"
+  ],
+  "n_features": 21,
+  "train_range": [
+    "20230101",
+    "20260605"
+  ],
+  "n_rows": 311801,
+  "n_races": 30384,
+  "num_rounds": 400,
+  "seed": 0,
+  "feature_importance": [
+    {
+      "feature": "last_margin_index",
+      "gain": 204072
+    },
+    {
+      "feature": "jockey_index",
+      "gain": 95903
+    },
+    {
+      "feature": "speed_index",
+      "gain": 38281
+    },
+    {
+      "feature": "head_count",
+      "gain": 34307
+    },
+    {
+      "feature": "class_drop_ratio",
+      "gain": 28942
+    },
+    {
+      "feature": "track_win_rate",
+      "gain": 24683
+    },
+    {
+      "feature": "last3f_index",
+      "gain": 16876
+    },
+    {
+      "feature": "prev_pace_ratio",
+      "gain": 16324
+    },
+    {
+      "feature": "horse_age",
+      "gain": 16134
+    },
+    {
+      "feature": "horse_weight",
+      "gain": 14908
+    },
+    {
+      "feature": "improving_form",
+      "gain": 11139
+    },
+    {
+      "feature": "rotation_index",
+      "gain": 9543
+    },
+    {
+      "feature": "weight_carried",
+      "gain": 8609
+    },
+    {
+      "feature": "weight_change",
+      "gain": 6796
+    },
+    {
+      "feature": "distance",
+      "gain": 6419
+    },
+    {
+      "feature": "frame_number",
+      "gain": 3649
+    },
+    {
+      "feature": "is_bad",
+      "gain": 574
+    },
+    {
+      "feature": "is_good",
+      "gain": 413
+    },
+    {
+      "feature": "is_heavy",
+      "gain": 166
+    },
+    {
+      "feature": "is_turf",
+      "gain": 24
+    },
+    {
+      "feature": "is_dirt",
+      "gain": 5
+    }
+  ]
+}

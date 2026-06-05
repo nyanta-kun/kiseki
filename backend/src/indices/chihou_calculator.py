@@ -95,8 +95,11 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, case, func, select, text
@@ -116,7 +119,10 @@ logger = logging.getLogger(__name__)
 # 定数
 # -----------------------------------------------------------------------
 
-CHIHOU_COMPOSITE_VERSION = 10  # v10 LightGBM (2026-05-03 本番切り替え)
+# version=10。2026-06-05 から composite/win_prob を本番 LightGBM(純LGB,17特徴)で算出。
+# それ以前の version=10 は実体が v9 線形だった（inference_chihou_v10 は取込パス未組込）。
+# 詳細: 末尾「本番 LightGBM」セクション / scripts/train_chihou_prod_lgb.py。
+CHIHOU_COMPOSITE_VERSION = 10
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -371,6 +377,129 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 
 
 # -----------------------------------------------------------------------
+# 本番 LightGBM（純LGB）— version=10 の composite/win_prob を LGB 出力で書く
+#
+# 2026-06-05: 本番 version=10 は実は v9 線形 softmax だった（inference_chihou_v10
+# は取込パスに未組込）。クリーンOOS比較(scripts/chihou_model_compare.py)で
+# 純LGB(17特徴)が線形を全方位で上回ることを確認(top1勝率 29.9%→33.9%, market46.1%)
+# したため、取込パスに純LGBを組み込む。履歴系4特徴は Phase3 で別途評価。
+# モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
+# -----------------------------------------------------------------------
+
+# 21特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
+# Phase3: 末尾に履歴系4特徴を追加（_history_features_batch で算出）。
+_LGB_FEATURE_NAMES: list[str] = [
+    "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
+    "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
+    "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
+    "improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio",
+]
+_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.txt"          # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.txt"  # is_win: 較正済 win_prob
+_prod_lgb_cache: dict[str, Any] = {}
+_prod_lgb_tried: set[str] = set()
+
+
+def _use_lgb() -> bool:
+    """環境変数 CHIHOU_USE_LGB で本番LGBを切替（既定: 有効）。"""
+    return os.getenv("CHIHOU_USE_LGB", "1") not in ("0", "false", "False")
+
+
+def _load_booster(key: str, path: Path) -> Any:
+    """LGB Booster を lazy load（プロセス共有キャッシュ）。不在/失敗時 None。"""
+    if key in _prod_lgb_cache:
+        return _prod_lgb_cache[key]
+    if key in _prod_lgb_tried:
+        return None
+    _prod_lgb_tried.add(key)
+    if not path.exists():
+        logger.warning("chihou prod LGB not found: %s, fallback to linear", path)
+        return None
+    try:
+        import lightgbm as lgb
+        booster = lgb.Booster(model_file=str(path))
+        _prod_lgb_cache[key] = booster
+        logger.info("chihou prod LGB loaded: %s", path)
+        return booster
+    except Exception as e:  # noqa: BLE001
+        logger.error("chihou prod LGB load failed (%s): %s", path, e)
+        return None
+
+
+def _load_prod_lgb() -> Any:
+    """is_top3 ヘッド（composite ランキング & place_probability 用）。"""
+    return _load_booster("top3", _PROD_LGB_PATH)
+
+
+def _load_prod_lgb_win() -> Any:
+    """is_win ヘッド（較正済 win_probability 用）。"""
+    return _load_booster("win", _PROD_LGB_WIN_PATH)
+
+
+def _scale_to_index_local(scores: list[float]) -> list[float]:
+    """レース内 min-max → 15-85（inference_chihou_v10.scale_to_index と同方式）。"""
+    if len(scores) <= 1:
+        return [50.0] * len(scores)
+    lo = min(scores)
+    hi = max(scores)
+    if hi - lo < 1e-9:
+        return [50.0] * len(scores)
+    return [15.0 + (s - lo) / (hi - lo) * 70.0 for s in scores]
+
+
+def _build_lgb_features(
+    entries: list[ChihouRaceEntry],
+    race: ChihouRace,
+    speed_map: dict[int, float],
+    last3f_map: dict[int, float],
+    jockey_map: dict[int, float],
+    rotation_map: dict[int, float],
+    last_margin_map: Mapping[int, float | None],
+    hist_feat_map: dict[int, list[float]] | None = None,
+) -> list[list[float]]:
+    """21特徴量の行列を学習時と同順で構築する。
+
+    sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map
+    (_history_features_batch の出力) から付与する。None の馬は不明値で埋める。
+    """
+    surface = (race.surface or "")
+    cond = (race.condition or "")
+    is_turf = 1.0 if "芝" in surface else 0.0
+    is_dirt = 1.0 if "ダ" in surface else 0.0
+    is_good = 1.0 if cond == "良" else 0.0
+    is_heavy = 1.0 if cond == "重" else 0.0
+    is_bad = 1.0 if cond == "不" else 0.0
+    distance = float(race.distance or 0)
+    head_count = float(race.head_count or len(entries))
+
+    hist_feat_map = hist_feat_map or {}
+    # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
+    default_hist = [-1.0, -1.0, 0.0, -1.0]
+    rows: list[list[float]] = []
+    for e in entries:
+        hid = e.horse_id
+        lm = last_margin_map.get(hid)
+        hist = hist_feat_map.get(hid, default_hist)
+        rows.append([
+            float(speed_map.get(hid, INDEX_NEUTRAL)),
+            float(last3f_map.get(hid, INDEX_NEUTRAL)),
+            float(jockey_map.get(hid, INDEX_NEUTRAL)),
+            float(rotation_map.get(hid, INDEX_NEUTRAL)),
+            float(lm) if lm is not None else INDEX_NEUTRAL,
+            distance, head_count,
+            is_turf, is_dirt, is_good, is_heavy, is_bad,
+            float(e.frame_number) if e.frame_number is not None else 0.0,
+            float(e.horse_age) if e.horse_age is not None else 0.0,
+            float(e.weight_carried) if e.weight_carried is not None else 0.0,
+            float(e.horse_weight) if e.horse_weight is not None else 500.0,
+            float(e.weight_change) if e.weight_change is not None else 0.0,
+            float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
+        ])
+    return rows
+
+
+# -----------------------------------------------------------------------
 # メインクラス
 # -----------------------------------------------------------------------
 
@@ -508,10 +637,52 @@ class ChihouIndexCalculator:
             composite = _clip(ability_base * k_jockey * k_rotation * k_dark * k_margin)
             composite_inputs.append((hid, composite))
 
-        # Softmax で単勝確率を推定 → Harville で複勝確率を算出
-        comp_values = [v for _, v in composite_inputs]
-        win_probs   = _softmax(comp_values, SOFTMAX_TEMPERATURE)
-        place_probs = _harville_place_probs(win_probs)
+        # 本番 LightGBM（Phase2: 単複ヘッド分離＋確率較正）。
+        # サブ指数(speed/last3f/jockey/rotation/last_margin)はそのまま保存し、
+        #   composite_index   = is_top3 ヘッドのレース内 index（ランキング、Phase1検証済edge維持）
+        #   win_probability   = is_win ヘッドの較正済 生確率（softmax は使わない）
+        #   place_probability = is_top3 ヘッドの較正済 生確率（Harville は使わない）
+        # モデル不在・推論失敗・CHIHOU_USE_LGB=0 のときは線形 composite + softmax/Harville に
+        # フォールバックする。
+        win_probs: list[float] | None = None
+        place_probs: list[float] | None = None
+        top3_model = _load_prod_lgb() if _use_lgb() else None
+        win_model = _load_prod_lgb_win() if _use_lgb() else None
+        if top3_model is not None and composite_inputs:
+            try:
+                import numpy as np
+
+                hist_feat_map = await self._history_features_batch(race_date, race, entries)
+                X = np.asarray(
+                    _build_lgb_features(
+                        entries, race, speed_map, last3f_map,
+                        jockey_map, rotation_map, last_margin_map, hist_feat_map,
+                    ),
+                    dtype=np.float64,
+                )
+                raw_t3 = [float(x) for x in top3_model.predict(X)]
+                lgb_index = _scale_to_index_local(raw_t3)
+                # composite_inputs は entries と同順。hid 対応を保って置換する。
+                composite_inputs = [
+                    (entries[i].horse_id, _clip(lgb_index[i])) for i in range(len(entries))
+                ]
+                if win_model is not None:
+                    raw_win = [float(x) for x in win_model.predict(X)]
+                    # 較正済みヘッドの生確率をそのまま採用（0-1 にクリップ）
+                    win_probs = [min(1.0, max(0.0, p)) for p in raw_win]
+                    place_probs = [min(1.0, max(0.0, p)) for p in raw_t3]
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "chihou prod LGB inference failed (race_id=%d): %s, fallback to linear",
+                    race_id, e,
+                )
+                win_probs = place_probs = None
+
+        # 較正ヘッド未使用時は 線形/LGB-index の Softmax + Harville にフォールバック
+        if win_probs is None or place_probs is None:
+            comp_values = [v for _, v in composite_inputs]
+            win_probs = _softmax(comp_values, SOFTMAX_TEMPERATURE)
+            place_probs = _harville_place_probs(win_probs)
 
         # Step 2: place_ev_index を算出（参考列として保存。composite には含まない）
         # オッズは race_results から取得（直前レースでは None → DB に NULL を格納）
@@ -1282,6 +1453,78 @@ class ChihouIndexCalculator:
                 z = -(td - mean_val) / stdev
                 result[hid] = _clip(z * 10.0 + INDEX_NEUTRAL)
 
+        return result
+
+    async def _history_features_batch(
+        self,
+        race_date: str,
+        race: ChihouRace,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, list[float]]:
+        """履歴系4特徴 (improving_form / track_win_rate / class_drop_ratio /
+        prev_pace_ratio) を一括算出する。
+
+        train 側 scripts/train_chihou_v11_lightgbm.add_historical_features と
+        同一の意味論にすること（train/serve skew 防止）。すべて当該レース開始前の
+        過去走のみ参照（date < race_date）でリークなし。
+
+        Returns:
+            hid -> [improving_form, track_win_rate, class_drop_ratio, prev_pace_ratio]
+        """
+        horse_ids = [e.horse_id for e in entries]
+        curr_prize = float(race.prize_1st or 0)
+        if curr_prize < 1.0:
+            curr_prize = 1.0
+        curr_course = race.course_name
+
+        # 過去走（直近順）を一括取得。track_win_rate のため全件（上限 100）。
+        q = text("""
+            SELECT rr.horse_id, r.date, r.course_name, r.prize_1st,
+                   r.head_count, rr.finish_position, rr.passing_1
+            FROM chihou.race_results rr
+            JOIN chihou.races r ON r.id = rr.race_id
+            WHERE rr.horse_id = ANY(:hids)
+              AND r.date < :before
+              AND r.course != :banei
+              AND COALESCE(rr.abnormality_code, 0) = 0
+              AND rr.finish_position IS NOT NULL
+            ORDER BY rr.horse_id, r.date DESC, rr.race_id DESC
+        """)
+        rows = await self.db.execute(
+            q, {"hids": horse_ids, "before": race_date, "banei": BANEI_COURSE_CODE},
+        )
+        hist: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for r in rows.mappings():
+            if len(hist[r["horse_id"]]) < 100:
+                hist[r["horse_id"]].append(dict(r))
+
+        result: dict[int, list[float]] = {}
+        for hid in horse_ids:
+            recs = hist.get(hid, [])  # 直近順
+            # improving_form: 直近2走で着順改善
+            if len(recs) >= 2 and recs[0]["finish_position"] is not None and recs[1]["finish_position"] is not None:
+                improving = 1.0 if int(recs[0]["finish_position"]) < int(recs[1]["finish_position"]) else 0.0
+            else:
+                improving = -1.0
+            # prev_pace_ratio: 前走 passing_1 / head_count
+            if recs and recs[0]["passing_1"] is not None and recs[0]["head_count"]:
+                prev_pace = min(1.0, max(0.0, float(recs[0]["passing_1"]) / float(recs[0]["head_count"])))
+            else:
+                prev_pace = -1.0
+            # class_drop_ratio: (前走賞金 - 今走賞金) / 今走賞金
+            if recs and recs[0]["prize_1st"] is not None:
+                cdr = (float(recs[0]["prize_1st"]) - curr_prize) / curr_prize
+                cdr = min(5.0, max(-2.0, cdr))
+            else:
+                cdr = 0.0
+            # track_win_rate: 同コース過去走の勝率（3走以上）
+            track = [x for x in recs if x["course_name"] == curr_course]
+            if len(track) >= 3:
+                wins = sum(1 for x in track if int(x["finish_position"]) == 1)
+                twr = min(1.0, max(0.0, wins / len(track)))
+            else:
+                twr = -1.0
+            result[hid] = [improving, twr, cdr, prev_pace]
         return result
 
     # ===================================================================
