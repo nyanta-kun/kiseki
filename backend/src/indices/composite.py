@@ -251,8 +251,17 @@ _V26_FEATURE_NAMES: list[str] = [
     "weight_change", "jvan_time_dm", "jvan_battle_dm",
 ]
 
+# is_win 較正ヘッド（win_probability 較正用, 2026-06-05）
+# softmax(composite) は OOS ECE 0.033・最上位decile +16pt 過信。is_win binary LGB の
+# 生出力＋レース内正規化で OOS ECE 0.0026 とほぼ完璧に較正される（scripts/jra_calibration_ab.py）。
+# composite_index のランキングは従来どおり（rank/ensemble）維持し、確率のみ較正値に置換する。
+# 学習: scripts/train_jra_iswin_head.py
+_V26_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_iswin_calib.txt"
+
 # v26 モデルのプロセス共有キャッシュ（lazy load）
 _v26_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_iswin_load_attempted: bool = False
 
 
 def _load_v26_model() -> lgb.Booster | None:  # type: ignore[name-defined]
@@ -270,6 +279,27 @@ def _load_v26_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return _v26_model_cache
     except Exception as e:
         logger.error(f"v26 model load failed: {e}")
+        return None
+
+
+def _load_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """is_win 較正ヘッドを lazy load する。無ければ None（softmax フォールバック）。"""
+    global _iswin_model_cache, _iswin_load_attempted
+    if _iswin_model_cache is not None:
+        return _iswin_model_cache
+    if _iswin_load_attempted:
+        return None
+    _iswin_load_attempted = True
+    if not _V26_ISWIN_MODEL_PATH.exists():
+        logger.warning(f"iswin calib model not found: {_V26_ISWIN_MODEL_PATH}, win_probability は softmax")
+        return None
+    try:
+        import lightgbm as lgb
+        _iswin_model_cache = lgb.Booster(model_file=str(_V26_ISWIN_MODEL_PATH))
+        logger.info(f"iswin calib model loaded: {_V26_ISWIN_MODEL_PATH}")
+        return _iswin_model_cache
+    except Exception as e:
+        logger.error(f"iswin calib model load failed: {e}")
         return None
 
 
@@ -501,17 +531,24 @@ class CompositeIndexCalculator:
             )
             results.append({"horse_id": hid, **row})
 
-        # v26: LightGBM で composite_index を上書き（モデルが読めれば）
-        model = _load_v26_model()
-        if model is not None and results:
+        # v26 特徴量を1度だけ構築し、composite上書き(rank)と win較正(is_win)で共有
+        X_v26: np.ndarray | None = None
+        if results:
             # 重み変化計算用に過去成績取得（rebound と同じパターン）
             wc_by_horse = await self._get_weight_change_map(
                 race.id, [r["horse_id"] for r in results]
             )
             entries_by_horse = {e.horse_id: e for e in entries}
             try:
-                X = _build_v26_features(results, race, entries_by_horse, wc_by_horse)
-                raw = model.predict(X)
+                X_v26 = _build_v26_features(results, race, entries_by_horse, wc_by_horse)
+            except Exception as e:
+                logger.error(f"v26 feature build failed for race={race.id}: {e}")
+
+        # v26: LightGBM で composite_index を上書き（モデルが読めれば）
+        model = _load_v26_model()
+        if model is not None and X_v26 is not None:
+            try:
+                raw = model.predict(X_v26)
                 lgb_indices = _scale_lgb_to_index(np.asarray(raw, dtype=float))
                 for r, idx in zip(results, lgb_indices):
                     v24_score = r["composite_index"]  # 線形和の値（既に計算済み）
@@ -523,8 +560,22 @@ class CompositeIndexCalculator:
                 logger.error(f"v26 LightGBM inference failed for race={race.id}: {e}")
                 # フォールバック: composite_index は v24 線形和のまま
 
-        # 全馬の指数が揃ってから勝率・複勝率を算出（softmax + Harville）
-        self._attach_probabilities(results)
+        # is_win 較正ヘッドで win_probability を較正（softmax の最上位過信を解消）
+        # composite_index ランキングは上で確定済み。確率のみ較正値に置換する。
+        calib_win: list[float] | None = None
+        iswin = _load_iswin_model()
+        if iswin is not None and X_v26 is not None:
+            try:
+                raw_w = np.asarray(iswin.predict(X_v26), dtype=float)
+                raw_w = np.clip(raw_w, 1e-9, 1.0)
+                total = float(raw_w.sum())
+                if total > 0:
+                    calib_win = [float(x) for x in (raw_w / total)]  # レース内正規化(Σ=1)
+            except Exception as e:
+                logger.error(f"v26 iswin calibration failed for race={race.id}: {e}")
+
+        # 全馬の指数が揃ってから勝率・複勝率を算出（較正win or softmax + Harville）
+        self._attach_probabilities(results, win_override=calib_win)
 
         # バルク upsert（1 SELECT/レース + add_all で馬ごと N 往復を回避）
         await self._bulk_upsert_for_race(race_id, results)
@@ -714,17 +765,24 @@ class CompositeIndexCalculator:
         }
 
     @staticmethod
-    def _attach_probabilities(results: list[dict]) -> None:
-        """全馬の composite_index から勝率・複勝率を算出して results に追記する。
+    def _attach_probabilities(
+        results: list[dict], win_override: list[float] | None = None
+    ) -> None:
+        """全馬の勝率・複勝率を算出して results に追記する。
 
-        勝率: Softmax(composite_index / SOFTMAX_TEMPERATURE)
-        複勝率: Harville 公式で上位3着以内確率を近似
+        勝率: is_win 較正ヘッドの正規化出力（win_override）があればそれを使用。
+              無ければ Softmax(composite_index / SOFTMAX_TEMPERATURE) にフォールバック。
+        複勝率: Harville 公式で上位3着以内確率を近似（採用した勝率分布から計算）。
 
         Args:
             results: _compute_composite の戻り値リスト（in-place 更新）
+            win_override: is_win 較正ヘッドのレース内正規化勝率（順は results と一致）。
         """
         scores = [r["composite_index"] for r in results]
-        win_probs = CompositeIndexCalculator._softmax(scores)
+        if win_override is not None and len(win_override) == len(results):
+            win_probs = win_override
+        else:
+            win_probs = CompositeIndexCalculator._softmax(scores)
         place_probs = CompositeIndexCalculator._harville_place_probs(win_probs)
 
         for row, wp, pp in zip(results, win_probs, place_probs):

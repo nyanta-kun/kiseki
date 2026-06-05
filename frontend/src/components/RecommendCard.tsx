@@ -10,6 +10,18 @@ const BET_LABEL: Record<string, string> = {
   win: "単勝",
   place: "複勝",
   quinella: "馬連",
+  trifecta: "3連複",
+};
+
+/** Tier バッジのスタイル（的中重視: S 鉄板 / A 信頼 / B 複勝圏） */
+const TIER_STYLE: Record<string, { bg: string; text: string; label: string }> = {
+  S: { bg: "bg-red-500", text: "text-white", label: "S 鉄板" },
+  A: { bg: "bg-orange-500", text: "text-white", label: "A 信頼" },
+  B: { bg: "bg-sky-500", text: "text-white", label: "B 複勝圏" },
+  // 以下は旧 sweet_spot/3連複（現在は降格・通常は出力されない）
+  SS: { bg: "bg-red-600", text: "text-white", label: "SS" },
+  "3F-2軸": { bg: "bg-purple-500", text: "text-white", label: "3F-2軸" },
+  "3F-BOX": { bg: "bg-purple-100", text: "text-purple-700", label: "3F-BOX" },
 };
 
 /** "1025" → "10:25" */
@@ -52,9 +64,11 @@ function posColor(p: number | null | undefined): string {
 }
 
 export function RecommendCard({ rec }: Props) {
-  const { race, target_horses, bet_type, reason, confidence, snapshot_at } = rec;
+  const { race, target_horses, bet_type, tier, ticket_combos, points, roi_basis, is_verified, value_candidates, reason, confidence, snapshot_at } = rec;
   const betLabel = BET_LABEL[bet_type] ?? bet_type;
   const postTime = fmtTime(race.post_time);
+  const tierStyle = tier ? TIER_STYLE[tier] : null;
+  const isTrifecta = bet_type === "trifecta";
   const snapshotTime = snapshot_at
     ? new Date(snapshot_at).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" })
     : null;
@@ -99,16 +113,53 @@ export function RecommendCard({ rec }: Props) {
       <div className="px-4 py-3 space-y-3">
         {/* 推奨馬テーブル */}
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">推奨馬券</span>
+            {/* Tier バッジ */}
+            {tierStyle && (
+              <span className={cn("px-2 py-0.5 rounded-full text-xs font-bold", tierStyle.bg, tierStyle.text)}>
+                {tierStyle.label}
+              </span>
+            )}
             <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
               {betLabel}
             </span>
+            {/* 点数・ROI */}
+            {points != null && (
+              <span className="text-[11px] text-gray-500">{points}点</span>
+            )}
+            {roi_basis != null && (
+              <span className="text-[11px] font-bold text-emerald-600">ROI実証{roi_basis.toFixed(2)}</span>
+            )}
+            {is_verified === false && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">仮説</span>
+            )}
             {snapshotTime && (
-              <span className="text-[10px] text-gray-400 ml-auto">{snapshotTime}時点オッズ</span>
+              <span className="text-[10px] text-gray-400 ml-auto">{snapshotTime}時点</span>
             )}
           </div>
 
+          {/* 3連複: 組み合わせ一覧 */}
+          {isTrifecta && ticket_combos && ticket_combos.length > 0 && (
+            <div className="mb-2">
+              <div className="flex flex-wrap gap-1">
+                {ticket_combos.map((combo, i) => {
+                  const nums = [...combo].sort((a, b) => a - b);
+                  const comboStr = nums.join("-");
+                  return (
+                    <span
+                      key={i}
+                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-200"
+                    >
+                      {comboStr}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 対象馬テーブル */}
           <div className="overflow-x-auto">
             <table className="min-w-max text-xs whitespace-nowrap">
               <thead>
@@ -119,9 +170,9 @@ export function RecommendCard({ rec }: Props) {
                   <th className="text-right py-1 pr-2 font-medium">勝率</th>
                   <th className="text-right py-1 pr-2 font-medium">複率</th>
                   <th className="text-right py-1 pr-2 font-medium">単勝</th>
-                  <th className="text-right py-1 pr-2 font-medium">複勝</th>
+                  {!isTrifecta && <th className="text-right py-1 pr-2 font-medium">複勝</th>}
                   <th className="text-right py-1 pr-2 font-medium">単EV</th>
-                  <th className="text-right py-1 pr-2 font-medium">複EV</th>
+                  {!isTrifecta && <th className="text-right py-1 pr-2 font-medium">複EV</th>}
                   {hasFinish && <th className="text-right py-1 font-medium">着順</th>}
                 </tr>
               </thead>
@@ -138,9 +189,9 @@ export function RecommendCard({ rec }: Props) {
                     <td className="py-1.5 pr-2 text-right text-gray-600">{fmtPct(h.win_probability)}</td>
                     <td className="py-1.5 pr-2 text-right text-gray-600">{fmtPct(h.place_probability)}</td>
                     <td className="py-1.5 pr-2 text-right text-gray-600">{fmtOdds(h.win_odds)}</td>
-                    <td className="py-1.5 pr-2 text-right text-gray-600">{fmtOdds(h.place_odds)}</td>
+                    {!isTrifecta && <td className="py-1.5 pr-2 text-right text-gray-600">{fmtOdds(h.place_odds)}</td>}
                     <td className={cn("py-1.5 pr-2 text-right", evColor(h.ev_win))}>{fmtEV(h.ev_win)}</td>
-                    <td className={cn("py-1.5 pr-2 text-right", evColor(h.ev_place))}>{fmtEV(h.ev_place)}</td>
+                    {!isTrifecta && <td className={cn("py-1.5 pr-2 text-right", evColor(h.ev_place))}>{fmtEV(h.ev_place)}</td>}
                     {hasFinish && (
                       <td className="py-1.5 text-right">
                         <span className={cn("px-1.5 py-0.5 rounded text-[11px]", posColor(h.finish_position))}>
@@ -182,6 +233,35 @@ export function RecommendCard({ rec }: Props) {
           <p className="text-[11px] font-bold text-blue-600 mb-0.5">推奨理由</p>
           <p className="text-xs text-gray-700 leading-relaxed">{reason}</p>
         </div>
+
+        {/* 妙味候補（穴・収支保証なし） */}
+        {value_candidates && value_candidates.length > 0 && (
+          <div className="bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+            <p className="text-[11px] font-bold text-amber-600 mb-1">
+              妙味候補<span className="font-normal text-amber-500">（穴・収支保証なし）</span>
+            </p>
+            <div className="space-y-1">
+              {value_candidates.map((v) => (
+                <div key={v.horse_number} className="flex items-center gap-1.5 flex-wrap text-xs">
+                  <span className="font-bold text-gray-700">{v.horse_number}</span>
+                  <span className="text-gray-800">{v.horse_name ?? "—"}</span>
+                  <span className="text-gray-500">{fmtOdds(v.win_odds)}</span>
+                  {v.index_rank != null && (
+                    <span className="text-[10px] text-gray-400">指数{v.index_rank}位</span>
+                  )}
+                  {v.badges.map((b, i) => (
+                    <span
+                      key={i}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium"
+                    >
+                      {b}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 結果カード（レース後） */}
         {hasResult && (

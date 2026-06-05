@@ -30,8 +30,9 @@ from ..db.models import (
     RaceRecommendation,
     RaceResult,
 )
-from ..indices.buy_signal import is_sweet_spot, jra_horse_purchase_signal
+from ..indices.buy_signal import is_sweet_spot, jra_horse_purchase_signal, jra_race_ticket
 from ..indices.composite import COMPOSITE_VERSION
+from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -311,6 +312,25 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             if len(ranked) >= 3
             else None
         )
+        # win_probability ベースの gap12（bet-structure-guide.md の競馬版適用）
+        # gap12_prob が大きい = 1位と2位の確率差が明確 = 2頭軸戦略が有効
+        ranked_by_prob = sorted(
+            [h for h in horses if h.get("win_probability") is not None],
+            key=lambda h: h["win_probability"],
+            reverse=True,
+        )
+        gap12_prob = (
+            round(
+                float(ranked_by_prob[0]["win_probability"])
+                - float(ranked_by_prob[1]["win_probability"]),
+                4,
+            )
+            if len(ranked_by_prob) >= 2
+            else None
+        )
+        win_prob_rank1 = (
+            float(ranked[0].get("win_probability") or 0) if ranked else None
+        )
 
         # 外部指数穴馬候補を計算（CI4位以下でnb_course_rank=1、またはNB1×KM1）
         ci_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(ranked)}
@@ -402,6 +422,9 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             "head_count": race.head_count,
             "gap_1_2": gap_1_2,
             "top2_t3_gap": top2_t3_gap,
+            "gap12_prob": gap12_prob,
+            "win_prob_rank1": win_prob_rank1,
+            "ranked_horses": ranked,
             "has_odds": bool(win_odds or place_odds),
             "horses": horses,
         })
@@ -611,6 +634,8 @@ async def build_sweet_spot_recommendations(
         if not race["has_odds"]:
             continue
         horses = race["horses"]
+        ranked_horses = race.get("ranked_horses") or []
+
         # 各馬の sweet spot 判定
         sweet_horses: list[dict[str, Any]] = []
         for h in horses:
@@ -627,24 +652,43 @@ async def build_sweet_spot_recommendations(
             ):
                 sweet_horses.append(h)
 
-        # k≥3 のレースは混戦のため除外（k=3 で単ROI 0.935）
-        if not sweet_horses or len(sweet_horses) >= 3:
+        # 単勝系: k≥3 のレースは除外（k=3 で単ROI 0.935）
+        if sweet_horses and len(sweet_horses) >= 3:
+            sweet_horses = []
+
+        # 統合買い目ランク判定（bet-structure-guide.md 体系）
+        ticket = jra_race_ticket(
+            gap_1_2=race.get("gap_1_2"),
+            gap12_prob=race.get("gap12_prob"),
+            top2_t3_gap=race.get("top2_t3_gap"),
+            win_prob_rank1=race.get("win_prob_rank1"),
+            ranked_horses=ranked_horses,
+            sweet_horses=sweet_horses,
+            head_count=race.get("head_count"),
+            course_name=race.get("course_name"),
+        )
+        if ticket is None:
             continue
 
-        # target_horses 構築 (TargetHorse 互換)
+        tier = ticket["tier"]
+        bet_type = ticket["bet_type"]
+
+        # target_horses 構築（結果付き）
         target_horses: list[dict[str, Any]] = []
         snapshot_win_odds: dict[str, float] = {}
         snapshot_place_odds: dict[str, float] = {}
         max_ev = 0.0
-        for h in sweet_horses:
-            # レース結果から finish_position / 確定オッズを取得
-            horse_id = entry_map.get((race["race_id"], h["horse_number"]))
+        hn_to_horse = {h["horse_number"]: h for h in horses}
+
+        for hn in ticket["target_horse_numbers"]:
+            h = hn_to_horse.get(hn)
+            if h is None:
+                continue
+            horse_id = entry_map.get((race["race_id"], hn))
             rr = results_map.get((race["race_id"], horse_id)) if horse_id else None
             finish_pos = rr["finish_position"] if rr else None
-            # 確定オッズ (race_results) があればそちらを優先（odds_history は変動値）
             final_win = rr["win_odds"] if rr and rr.get("win_odds") is not None else h.get("win_odds")
             final_place = rr["place_odds"] if rr and rr.get("place_odds") is not None else h.get("place_odds")
-            # 確定オッズで EV を再計算
             ev_win = (
                 round(float(h["win_probability"]) * float(final_win), 3)
                 if h.get("win_probability") is not None and final_win is not None
@@ -655,22 +699,20 @@ async def build_sweet_spot_recommendations(
                 if h.get("place_probability") is not None and final_place is not None
                 else h.get("ev_place")
             )
-
             target_horses.append({
-                "horse_number": h["horse_number"],
-                "horse_name": h["horse_name"],
-                "composite_index": h["composite_index"],
-                "win_probability": h["win_probability"],
-                "place_probability": h["place_probability"],
+                "horse_number": hn,
+                "horse_name": h.get("horse_name"),
+                "composite_index": h.get("composite_index"),
+                "win_probability": h.get("win_probability"),
+                "place_probability": h.get("place_probability"),
                 "ev_win": ev_win,
                 "ev_place": ev_place,
                 "win_odds": final_win,
                 "place_odds": final_place,
                 "finish_position": finish_pos,
             })
-            ev = ev_win or 0.0
-            if ev and ev > max_ev:
-                max_ev = ev
+            if ev_win and ev_win > max_ev:
+                max_ev = ev_win
 
         for h in horses:
             hn_str = str(h["horse_number"])
@@ -679,33 +721,18 @@ async def build_sweet_spot_recommendations(
             if h.get("place_odds") is not None:
                 snapshot_place_odds[hn_str] = float(h["place_odds"])
 
-        # reason 構築（バッジ列挙）
-        badge_parts: list[str] = []
-        for h in sweet_horses:
-            tags: list[str] = []
-            if h.get("dm_signals"):
-                tags.extend(h["dm_signals"])
-            if h.get("purchase_signal") == "super_buy":
-                tags.append("🔥超推奨")
-            elif h.get("purchase_signal") == "buy":
-                tags.append("◎推奨")
-            elif h.get("purchase_signal") == "watch":
-                tags.append("○注目")
-            if h.get("anagusa_rank") in ("A", "B", "C"):
-                tags.append(f"穴{h['anagusa_rank']}")
-            if h.get("external_dark_horse"):
-                tags.append("外部穴")
-            badge_parts.append(
-                f"{h['horse_number']}番{h.get('horse_name') or ''} "
-                f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev_win') or 0):.2f}/{','.join(tags)})"
-            )
-        reason = (
-            "スイートスポット自動推奨：単勝≥10 ∧ 期待値 1.2-5.0 ∧ バッジあり一頭。"
-            "（3年実証 単ROI 1.188 / k≤2 両方買い） " + " / ".join(badge_parts)
-        )
+        reason = ticket["rationale"]
+        if not ticket["is_verified"]:
+            reason = f"[仮説・未実証] {reason}"
 
-        # confidence は EV 値ベース (max EV 1.2→0.55, 2.0→0.65, 3.0+→0.72)
-        if max_ev >= 3.0:
+        # confidence: 実証済みは tier 別固定値、仮説は低め
+        if not ticket["is_verified"]:
+            confidence = 0.40
+        elif tier == "SS":
+            confidence = 0.75
+        elif tier == "S":
+            confidence = 0.68
+        elif max_ev >= 3.0:
             confidence = 0.72
         elif max_ev >= 2.0:
             confidence = 0.65
@@ -714,22 +741,33 @@ async def build_sweet_spot_recommendations(
         else:
             confidence = 0.55
 
-        # 結果集計 (bet_type=win): 対象馬のいずれかが1着なら的中
-        # レース未確定 (finish_position が全 None) なら result_correct=None
-        any_finished = any(t["finish_position"] is not None for t in target_horses)
+        # 結果集計
+        finish_map = {t["horse_number"]: t["finish_position"] for t in target_horses}
+        any_finished = any(p is not None for p in finish_map.values())
         result_correct: bool | None = None
         result_payout: int | None = None
         result_updated_at: datetime | None = None
+
         if any_finished:
-            winning = [t for t in target_horses if t["finish_position"] == 1]
-            if winning:
-                result_correct = True
-                # payout = 単勝オッズ × 100 円ベース (複数頭が1着想定なし)
-                w = winning[0].get("win_odds")
-                result_payout = int(round(float(w) * 100)) if w is not None else None
+            if bet_type == "win":
+                # 単勝: 対象馬のいずれかが1着
+                winning = [t for t in target_horses if t["finish_position"] == 1]
+                if winning:
+                    result_correct = True
+                    w = winning[0].get("win_odds")
+                    result_payout = int(round(float(w) * 100)) if w is not None else None
+                else:
+                    result_correct = False
+                    result_payout = 0
             else:
-                result_correct = False
-                result_payout = 0
+                # 3連複: ticket_combos のうち1組でも全馬1-3着内なら的中
+                placed = {hn for hn, pos in finish_map.items() if pos is not None and pos <= 3}
+                hit_combo = next(
+                    (c for c in ticket["ticket_combos"] if set(c) <= placed),
+                    None,
+                )
+                result_correct = hit_combo is not None
+                result_payout = 0  # 払戻は race_payouts から別途取得するため暫定0
             result_updated_at = now
 
         candidates.append({
@@ -742,7 +780,12 @@ async def build_sweet_spot_recommendations(
             "distance": race.get("distance"),
             "grade": race.get("grade"),
             "head_count": race.get("head_count"),
-            "bet_type": "win",
+            "bet_type": bet_type,
+            "tier": tier,
+            "ticket_combos": ticket["ticket_combos"],
+            "points": ticket["points"],
+            "roi_basis": ticket.get("roi_basis"),
+            "is_verified": ticket["is_verified"],
             "target_horses": target_horses,
             "snapshot_win_odds": snapshot_win_odds,
             "snapshot_place_odds": snapshot_place_odds,
@@ -762,6 +805,207 @@ async def build_sweet_spot_recommendations(
         c["id"] = -c["race_id"]
         c["created_at"] = now
         c.pop("max_ev", None)
+
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# 的中重視 推奨エンジン（2026-06-05 統一）
+# ---------------------------------------------------------------------------
+# OOS検証(scripts/jra_verify_signals.py)で、JRA単一レースの「価値(ROI>1)」を謳う
+# バッジ(sweet_spot/super_buy/DM穴/高得点鉄板)は全て OOS で脆弱・主張未再現と判明。
+# 一方 recommend_rank(堅さ)/confidence/anagusa順序/三冠一致 は 1位馬の的中率が単調で妥当。
+# → 推奨エンジンを「1レース1推奨＝指数1位馬 ＋ 的中重視の信頼度tier」に再定義する。
+#   価値系は「妙味候補(収支保証なし)」の注記に降格(value_candidates)。
+#
+# tier(=recommend_rank, OOS test 1位馬実績):
+#   S 鉄板  : 指数1位が断然人気(単勝<1.5)        勝率67% / 複勝93% → 単勝
+#   A 信頼軸: confidence_score>=80              勝率34% / 複勝71% → 単勝
+#   B 複勝圏: confidence_score>=65              勝率26% / 複勝64% → 複勝
+#   C 混戦  : 上記以外                          勝率23%        → 推奨しない(見送り)
+
+_HIT_TIER_BET: dict[str, str] = {"S": "win", "A": "win", "B": "place"}
+_HIT_TIER_CONFIDENCE: dict[str, float] = {"S": 0.85, "A": 0.65, "B": 0.50}
+_HIT_TIER_LABEL: dict[str, str] = {
+    "S": "鉄板（断然人気）", "A": "信頼軸", "B": "複勝圏",
+}
+
+
+def _value_badges(h: dict[str, Any]) -> list[str]:
+    """馬の『妙味候補』バッジ（収支保証なし・注記用）を集める。"""
+    badges: list[str] = []
+    for tag in (h.get("dm_signals") or []):
+        badges.append(tag)
+    ar = h.get("anagusa_rank")
+    if ar in ("A", "B", "C") and (h.get("index_rank") or 99) >= 2:
+        badges.append(f"穴ぐさ{ar}")
+    if h.get("external_dark_horse"):
+        badges.append("外部穴")
+    return badges
+
+
+async def build_hit_tier_recommendations(
+    session: AsyncSession, date: str
+) -> list[dict[str, Any]]:
+    """的中重視 推奨を生成する（指定日の最新オッズ反映・都度算出）。
+
+    1レース1推奨 = 指数1位馬 ＋ 信頼度tier(recommend_rank)。混戦(C)は推奨しない。
+    価値系バッジは value_candidates（妙味候補・収支保証なし）として副次表示する。
+    DB には保存せず、API 呼び出し時に都度算出する。
+    """
+    race_data = await _collect_race_data(session, date)
+    if not race_data:
+        return []
+
+    now = datetime.now(UTC)
+
+    # 結果・horse_id 解決マップ（settlement 用）
+    race_ids_all = [r["race_id"] for r in race_data]
+    results_map: dict[tuple[int, int], dict[str, Any]] = {}
+    entry_map: dict[tuple[int, int], int] = {}
+    if race_ids_all:
+        rr_result = await session.execute(
+            select(RaceResult).where(RaceResult.race_id.in_(race_ids_all))
+        )
+        for rr_obj in rr_result.scalars().all():
+            results_map[(rr_obj.race_id, rr_obj.horse_id)] = {
+                "finish_position": rr_obj.finish_position,
+                "win_odds": float(rr_obj.win_odds) if rr_obj.win_odds is not None else None,
+                "place_odds": float(rr_obj.place_odds) if rr_obj.place_odds is not None else None,
+            }
+        entries_result = await session.execute(
+            select(RaceEntry.race_id, RaceEntry.horse_number, RaceEntry.horse_id)
+            .where(RaceEntry.race_id.in_(race_ids_all))
+        )
+        for race_id, hn, hid in entries_result.all():
+            if hn is not None:
+                entry_map[(race_id, hn)] = hid
+
+    candidates: list[dict[str, Any]] = []
+    for race in race_data:
+        if not race["has_odds"]:
+            continue
+        horses = race["horses"]
+        ranked = race.get("ranked_horses") or []
+        if not ranked:
+            continue
+
+        comp = [h["composite_index"] for h in horses if h["composite_index"] is not None]
+        wps = [h["win_probability"] for h in horses if h.get("win_probability") is not None]
+        conf = calculate_race_confidence(comp, race.get("head_count"), wps or None)
+
+        top1 = ranked[0]
+        top_odds = top1.get("win_odds")
+        tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds)
+        if tier == "C":
+            continue  # 混戦は本命不在 → 推奨しない（的中重視）
+
+        bet_type = _HIT_TIER_BET[tier]
+
+        # 本命（指数1位馬）の settlement
+        horse_id = entry_map.get((race["race_id"], top1["horse_number"]))
+        rr = results_map.get((race["race_id"], horse_id)) if horse_id else None
+        finish_pos = rr["finish_position"] if rr else None
+        final_win = rr["win_odds"] if rr and rr.get("win_odds") is not None else top1.get("win_odds")
+        final_place = rr["place_odds"] if rr and rr.get("place_odds") is not None else top1.get("place_odds")
+
+        target_horses = [{
+            "horse_number": top1["horse_number"],
+            "horse_name": top1.get("horse_name"),
+            "composite_index": top1.get("composite_index"),
+            "win_probability": top1.get("win_probability"),
+            "place_probability": top1.get("place_probability"),
+            "ev_win": top1.get("ev_win"),
+            "ev_place": top1.get("ev_place"),
+            "win_odds": final_win,
+            "place_odds": final_place,
+            "finish_position": finish_pos,
+        }]
+
+        # 妙味候補（収支保証なし・注記）: 本命以外でバッジを持つ馬
+        value_candidates: list[dict[str, Any]] = []
+        for h in horses:
+            if h["horse_number"] == top1["horse_number"]:
+                continue
+            badges = _value_badges(h)
+            if not badges:
+                continue
+            value_candidates.append({
+                "horse_number": h["horse_number"],
+                "horse_name": h.get("horse_name"),
+                "win_odds": h.get("win_odds"),
+                "index_rank": h.get("index_rank"),
+                "badges": badges,
+            })
+
+        snapshot_win_odds = {
+            str(h["horse_number"]): float(h["win_odds"])
+            for h in horses if h.get("win_odds") is not None
+        }
+        snapshot_place_odds = {
+            str(h["horse_number"]): float(h["place_odds"])
+            for h in horses if h.get("place_odds") is not None
+        }
+
+        wp = top1.get("win_probability")
+        pp = top1.get("place_probability")
+        reason = (
+            f"指数1位 {top1.get('horse_name') or ''}（{_HIT_TIER_LABEL[tier]}）"
+            f"想定勝率{wp * 100:.0f}% 複勝率{pp * 100:.0f}%"
+            if wp is not None and pp is not None
+            else f"指数1位 {top1.get('horse_name') or ''}（{_HIT_TIER_LABEL[tier]}）"
+        )
+        if value_candidates:
+            reason += f"。妙味候補{len(value_candidates)}頭（穴・収支保証なし）"
+
+        # 結果判定
+        result_correct: bool | None = None
+        result_payout: int | None = None
+        result_updated_at = None
+        if finish_pos is not None:
+            if bet_type == "win":
+                result_correct = finish_pos == 1
+                result_payout = int(round(float(final_win) * 100)) if (result_correct and final_win) else 0
+            else:  # place
+                result_correct = finish_pos <= 3
+                result_payout = int(round(float(final_place) * 100)) if (result_correct and final_place) else 0
+            result_updated_at = now
+
+        candidates.append({
+            "race_id": race["race_id"],
+            "course_name": race["course_name"],
+            "race_number": race["race_number"],
+            "race_name": race.get("race_name"),
+            "post_time": race.get("post_time"),
+            "surface": race.get("surface"),
+            "distance": race.get("distance"),
+            "grade": race.get("grade"),
+            "head_count": race.get("head_count"),
+            "bet_type": bet_type,
+            "tier": tier,
+            "ticket_combos": [[top1["horse_number"]]],
+            "points": 1,
+            "roi_basis": None,
+            "is_verified": True,  # 的中率は OOS 検証済み（tier別単調）。ROIは謳わない
+            "target_horses": target_horses,
+            "value_candidates": value_candidates,
+            "snapshot_win_odds": snapshot_win_odds,
+            "snapshot_place_odds": snapshot_place_odds,
+            "snapshot_at": now,
+            "reason": reason,
+            "confidence": _HIT_TIER_CONFIDENCE[tier],
+            "result_correct": result_correct,
+            "result_payout": result_payout,
+            "result_updated_at": result_updated_at,
+        })
+
+    # tier 優先（S>A>B）→ confidence 降順で rank 付け
+    tier_order = {"S": 0, "A": 1, "B": 2}
+    candidates.sort(key=lambda c: (tier_order.get(c["tier"], 9), -c["confidence"]))
+    for i, c in enumerate(candidates, start=1):
+        c["rank"] = i
+        c["id"] = -c["race_id"]
+        c["created_at"] = now
 
     return candidates
 

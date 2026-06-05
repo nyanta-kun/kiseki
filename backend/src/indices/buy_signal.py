@@ -27,6 +27,8 @@ JRA（v26 LightGBM ensemble 検証 2026-05-02, 3年/138,728 horse-races）:
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 # ---------------------------------------------------------------------------
 # JRA 購入指針
 # ---------------------------------------------------------------------------
@@ -259,6 +261,211 @@ def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
     if win_odds < CHIHOU_LOW_ODDS_MAX:
         return "untrusted"
     return None
+
+
+# ---------------------------------------------------------------------------
+# JRA 統合買い目推奨（ランク体系）
+# ---------------------------------------------------------------------------
+# bet-structure-guide.md の思想を競馬に適用:
+#   gap12（指数1位〜2位の確率差）で軸の確度を評価し、券種と点数まで決定する。
+#
+# Tier 定義（単勝系はバックテスト実証済み、3連複系は仮説・暫定閾値）:
+#   SS   : super_buy ∧ sweet_spot               → 単勝   ROI 1.48 実証
+#   S    : buy       ∧ sweet_spot               → 単勝   ROI 1.29 実証
+#   A    : sweet_spot                           → 単勝   ROI 1.19 実証
+#   3F-2軸: gap_1_2≥8 ∧ top2_t3_gap≥5 ∧ DM穴 → 3連複2軸×3頭(3点) 仮説
+#   3F-BOX: 混戦(prob<0.25) ∧ DM有             → 3連複BOX3(1点)   仮説
+
+
+class JraRaceTicket(TypedDict):
+    """JRAレースの統合買い目推奨。1レースにつき1枚。"""
+
+    tier: str
+    """ランク: "SS" / "S" / "A" / "3F-2軸" / "3F-BOX"。"""
+
+    bet_type: str
+    """馬券種別: "win" / "trifecta"。"""
+
+    target_horse_numbers: list[int]
+    """対象馬番リスト（単勝: 対象馬、3連複: 軸＋ひも全馬番）。"""
+
+    ticket_combos: list[list[int]]
+    """実際の組み合わせ（単勝: [[馬番]]×N / 3連複: [[1,2,3],[1,2,4],...]）。"""
+
+    points: int
+    """合計点数。"""
+
+    rationale: str
+    """主要シグナルの説明。"""
+
+    roi_basis: float | None
+    """バックテスト実証ROI（None=未実証の仮説）。"""
+
+    is_verified: bool
+    """バックテスト実証済みか。False の場合は仮説として扱う。"""
+
+
+# 3連複2軸戦略の閾値（バックテスト確定 2026-05-29）
+# grid search: gap≥8 t3≥3 → n=297, hit=57(19.2%), ROI=3.606
+# win_prob 条件は影響なし（DM穴条件で自然にフィルタ済み）
+_3F_2AX_GAP_1_2_MIN: float = 8.0
+_3F_2AX_TOP2_T3_GAP_MIN: float = 3.0
+
+# 3連複BOX3の閾値（バックテスト確定 2026-05-29）
+# prob<0.25 gap12<0.06 福島除外 → n=496, hit=27(5.4%), ROI=4.660
+_3F_BOX_WIN_PROB_MAX: float = 0.25
+_3F_BOX_GAP12_PROB_MAX: float = 0.06
+
+# 3F-BOX 除外コース（全消しコース: 福島=ROI 0.0, 新潟は borderline）
+_3F_BOX_DENY_COURSES: frozenset[str] = frozenset({"福島"})
+
+# DM穴系シグナル（3連複戦略の発動条件）
+_DM_DARK_SIGNALS: frozenset[str] = frozenset({
+    "穴ぐさDM", "DM大穴", "DM高オッズ", "穴ぐさ+DMtime",
+})
+
+
+def jra_race_ticket(
+    gap_1_2: float | None,
+    gap12_prob: float | None,
+    top2_t3_gap: float | None,
+    win_prob_rank1: float | None,
+    ranked_horses: list[dict],
+    sweet_horses: list[dict],
+    head_count: int | None,
+    course_name: str | None = None,
+) -> JraRaceTicket | None:
+    """JRAレースの統合買い目推奨を決定する。
+
+    複数シグナルを1つの Tier に統合し「何を何点買うか」まで出力する。
+    優先順位: SS > S > A > 3F-2軸 > 3F-BOX。
+
+    Args:
+        gap_1_2: composite_index の1位〜2位差（recommender.pyで計算済み）
+        gap12_prob: win_probability の1位〜2位差
+        top2_t3_gap: composite_index の2位〜3位差
+        win_prob_rank1: 指数1位馬の win_probability
+        ranked_horses: composite_index降順のレース馬リスト（各馬は dict）
+        sweet_horses: sweet_spot=True の馬リスト（purchase_signal 含む）
+        head_count: 出走頭数
+        course_name: 競馬場名（3F-BOX除外コース判定に使用）
+
+    Returns:
+        JraRaceTicket（推奨あり）/ None（条件不一致）
+    """
+    if not ranked_horses:
+        return None
+
+    # --- 単勝系: SS / S / A ---
+    if sweet_horses:
+        ss_horses = [h for h in sweet_horses if h.get("purchase_signal") == "super_buy"]
+        s_horses = [h for h in sweet_horses if h.get("purchase_signal") == "buy"]
+
+        def _win_ticket(tier: str, targets: list[dict], roi: float) -> JraRaceTicket:
+            numbers = [h["horse_number"] for h in targets]
+            return JraRaceTicket(
+                tier=tier,
+                bet_type="win",
+                target_horse_numbers=numbers,
+                ticket_combos=[[n] for n in numbers],
+                points=len(numbers),
+                rationale=_win_rationale(targets),
+                roi_basis=roi,
+                is_verified=True,
+            )
+
+        if ss_horses:
+            return _win_ticket("SS", ss_horses, 1.48)
+        if s_horses:
+            return _win_ticket("S", s_horses, 1.29)
+        return _win_ticket("A", sweet_horses, 1.19)
+
+    # --- 3連複系: 3F-2軸 ---
+    # ⚠️ OOS再検証で破綻 (2026-06-05, scripts/jra_trifecta_backtest.py):
+    #   旧主張 gap≥8 t3≥3 → n=297/ROI 3.606 は再現せず。本番条件(SS/S/A非該当 ∧ DM穴 ∧
+    #   gap_1_2≥8 ∧ top2_t3_gap≥3)では3年でわずか2レースしか発火せず的中0。
+    #   → is_verified=False(仮説)へ降格。発火が極小のため実質非運用。
+    has_dm_dark = any(
+        bool(set(h.get("dm_signals") or []) & _DM_DARK_SIGNALS)
+        for h in ranked_horses
+    )
+    has_dm_any = any(h.get("dm_signals") for h in ranked_horses)
+
+    if (
+        len(ranked_horses) >= 5
+        and gap_1_2 is not None and gap_1_2 >= _3F_2AX_GAP_1_2_MIN
+        and top2_t3_gap is not None and top2_t3_gap >= _3F_2AX_TOP2_T3_GAP_MIN
+        and has_dm_dark
+    ):
+        ax1 = ranked_horses[0]["horse_number"]
+        ax2 = ranked_horses[1]["horse_number"]
+        # ひも: 3〜5位（最大3頭、出走頭数-2を超えない）
+        himo_max = min(3, len(ranked_horses) - 2)
+        himo = [ranked_horses[i]["horse_number"] for i in range(2, 2 + himo_max)]
+        combos = [[ax1, ax2, h] for h in himo]
+        return JraRaceTicket(
+            tier="3F-2軸",
+            bet_type="trifecta",
+            target_horse_numbers=[ax1, ax2, *himo],
+            ticket_combos=combos,
+            points=len(combos),
+            rationale=(
+                f"2頭抜け出し(gap={gap_1_2:.1f} t3={top2_t3_gap:.1f}) × DM穴シグナル"
+                f" → {ax1}-{ax2}軸×3着{himo}流し"
+            ),
+            roi_basis=None,
+            is_verified=False,
+        )
+
+    # --- 3連複系: 3F-BOX ---
+    # ⚠️ OOS再検証で未確証 (2026-06-05, scripts/jra_trifecta_backtest.py):
+    #   旧主張 prob<0.25 gap12<0.06 福島除外 → n=496/ROI 4.660 は再現せず。
+    #   FULL n=139 ROI 1.535(CI[0.62,2.65]跨ぎ) → OOS test n=72 ROI 0.803(drop1 0.396)。
+    #   高配当1本依存で黒字確証なし → is_verified=False(仮説)へ降格。
+    if (
+        len(ranked_horses) >= 3
+        and course_name not in _3F_BOX_DENY_COURSES
+        and win_prob_rank1 is not None and win_prob_rank1 < _3F_BOX_WIN_PROB_MAX
+        and (gap12_prob is None or gap12_prob < _3F_BOX_GAP12_PROB_MAX)
+        and has_dm_any
+    ):
+        top3 = [ranked_horses[i]["horse_number"] for i in range(3)]
+        return JraRaceTicket(
+            tier="3F-BOX",
+            bet_type="trifecta",
+            target_horse_numbers=top3,
+            ticket_combos=[top3],
+            points=1,
+            rationale=(
+                f"混戦(1位prob={win_prob_rank1:.2f} gap12={gap12_prob:.3f}) × DMシグナル"
+                f" → {top3[0]}-{top3[1]}-{top3[2]}BOX"
+            ),
+            roi_basis=None,
+            is_verified=False,
+        )
+
+    return None
+
+
+def _win_rationale(targets: list[dict]) -> str:
+    parts = []
+    for h in targets:
+        tags: list[str] = []
+        sig = h.get("purchase_signal")
+        if sig == "super_buy":
+            tags.append("2頭抜け出し+中穴")
+        elif sig == "buy":
+            tags.append("抜け出し+中穴")
+        dm = h.get("dm_signals")
+        if dm:
+            tags.extend(dm[:2])
+        if h.get("anagusa_rank") in ("A", "B", "C"):
+            tags.append(f"穴{h['anagusa_rank']}")
+        parts.append(
+            f"{h['horse_number']}番 EV{(h.get('ev_win') or 0):.2f}"
+            + (f"[{','.join(tags)}]" if tags else "")
+        )
+    return "単勝: " + " / ".join(parts)
 
 
 # ---------------------------------------------------------------------------
