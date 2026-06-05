@@ -556,11 +556,29 @@ export type RecommendationRace = {
   head_count: number | null;
 };
 
+/** 妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。 */
+export type ValueCandidate = {
+  horse_number: number;
+  horse_name: string | null;
+  win_odds: number | null;
+  index_rank: number | null;
+  badges: string[];
+};
+
 export type Recommendation = {
   id: number;
   rank: number;
   race: RecommendationRace;
-  bet_type: "win" | "place" | "quinella";
+  bet_type: "win" | "place" | "trifecta";
+  /** 的中重視tier: S 鉄板 / A 信頼軸 / B 複勝圏（旧 SS/3F は降格済） */
+  tier: "S" | "A" | "B" | "SS" | "3F-2軸" | "3F-BOX" | null;
+  /** 実際の買い目組み合わせ 単勝: [[馬番]] / 3連複: [[1,2,3],[1,2,4],...] */
+  ticket_combos: number[][] | null;
+  points: number | null;
+  roi_basis: number | null;
+  is_verified: boolean | null;
+  /** 妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。 */
+  value_candidates: ValueCandidate[] | null;
   target_horses: RecommendationHorse[];
   snapshot_win_odds: Record<string, number> | null;
   snapshot_place_odds: Record<string, number> | null;

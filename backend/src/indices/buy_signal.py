@@ -27,6 +27,8 @@ JRA（v26 LightGBM ensemble 検証 2026-05-02, 3年/138,728 horse-races）:
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 # ---------------------------------------------------------------------------
 # JRA 購入指針
 # ---------------------------------------------------------------------------
@@ -273,8 +275,6 @@ def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
 #   A    : sweet_spot                           → 単勝   ROI 1.19 実証
 #   3F-2軸: gap_1_2≥8 ∧ top2_t3_gap≥5 ∧ DM穴 → 3連複2軸×3頭(3点) 仮説
 #   3F-BOX: 混戦(prob<0.25) ∧ DM有             → 3連複BOX3(1点)   仮説
-
-from typing import TypedDict
 
 
 class JraRaceTicket(TypedDict):
