@@ -31,7 +31,7 @@ from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
 from ..services.recommender import (
     build_anagusa_rule_recommendations,
-    build_sweet_spot_recommendations,
+    build_hit_tier_recommendations,
     collect_recommendation_source,
     submit_recommendations,
     update_results,
@@ -78,6 +78,16 @@ class RaceInfo(BaseModel):
     head_count: int | None
 
 
+class ValueCandidate(BaseModel):
+    """妙味候補（収支保証なし・注記）。的中重視推奨の副次情報。"""
+
+    horse_number: int
+    horse_name: str | None
+    win_odds: float | None
+    index_rank: int | None
+    badges: list[str]
+
+
 class RecommendationOut(BaseModel):
     """推奨1件のレスポンス。"""
 
@@ -85,6 +95,19 @@ class RecommendationOut(BaseModel):
     rank: int
     race: RaceInfo
     bet_type: str
+    # 統合ランク体系 (bet-structure-guide.md 準拠)
+    tier: str | None = None
+    """ランク: SS / S / A (単勝実証済み) / 3F-2軸 / 3F-BOX (3連複仮説)。"""
+    ticket_combos: list[list[int]] | None = None
+    """実際の買い目組み合わせ (単勝: [[馬番]] / 3連複: [[1,2,3],[1,2,4],...]）。"""
+    points: int | None = None
+    """合計点数。"""
+    roi_basis: float | None = None
+    """バックテスト実証ROI (None=仮説)。"""
+    is_verified: bool | None = None
+    """バックテスト実証済みか。"""
+    value_candidates: list[ValueCandidate] | None = None
+    """妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。"""
     target_horses: list[TargetHorse]
     snapshot_win_odds: dict[str, float] | None
     snapshot_place_odds: dict[str, float] | None
@@ -199,6 +222,11 @@ def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
         rank=c["rank"],
         race=race_info,
         bet_type=c["bet_type"],
+        tier=c.get("tier"),
+        ticket_combos=c.get("ticket_combos"),
+        points=c.get("points"),
+        roi_basis=c.get("roi_basis"),
+        is_verified=c.get("is_verified"),
         target_horses=target,
         snapshot_win_odds=c.get("snapshot_win_odds"),
         snapshot_place_odds=c.get("snapshot_place_odds"),
@@ -212,25 +240,39 @@ def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
     )
 
 
-_SWEET_SPOT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_SWEET_SPOT_LOCKS: dict[str, asyncio.Lock] = {}
-_SWEET_SPOT_TTL_SEC = 60.0
+def _hit_tier_to_out(c: dict[str, Any]) -> RecommendationOut:
+    """build_hit_tier_recommendations() が返す dict を RecommendationOut に変換。"""
+    out = _sweet_spot_to_out(c)
+    out.value_candidates = [
+        ValueCandidate(
+            horse_number=v["horse_number"],
+            horse_name=v.get("horse_name"),
+            win_odds=v.get("win_odds"),
+            index_rank=v.get("index_rank"),
+            badges=v.get("badges", []),
+        )
+        for v in (c.get("value_candidates") or [])
+    ]
+    return out
 
 
-async def _build_sweet_spot_cached(
-    db: AsyncSession, date: str
-) -> list[dict[str, Any]]:
+_HIT_TIER_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_HIT_TIER_LOCKS: dict[str, asyncio.Lock] = {}
+_HIT_TIER_TTL_SEC = 60.0
+
+
+async def _build_hit_tier_cached(db: AsyncSession, date: str) -> list[dict[str, Any]]:
     now = time.monotonic()
-    cached = _SWEET_SPOT_CACHE.get(date)
-    if cached and now - cached[0] < _SWEET_SPOT_TTL_SEC:
+    cached = _HIT_TIER_CACHE.get(date)
+    if cached and now - cached[0] < _HIT_TIER_TTL_SEC:
         return cached[1]
-    lock = _SWEET_SPOT_LOCKS.setdefault(date, asyncio.Lock())
+    lock = _HIT_TIER_LOCKS.setdefault(date, asyncio.Lock())
     async with lock:
-        cached = _SWEET_SPOT_CACHE.get(date)
-        if cached and time.monotonic() - cached[0] < _SWEET_SPOT_TTL_SEC:
+        cached = _HIT_TIER_CACHE.get(date)
+        if cached and time.monotonic() - cached[0] < _HIT_TIER_TTL_SEC:
             return cached[1]
-        result = await build_sweet_spot_recommendations(db, date)
-        _SWEET_SPOT_CACHE[date] = (time.monotonic(), result)
+        result = await build_hit_tier_recommendations(db, date)
+        _HIT_TIER_CACHE[date] = (time.monotonic(), result)
         return result
 
 
@@ -239,23 +281,21 @@ async def get_recommendations(
     db: DbDep,
     date: str = Query(..., description="開催日 YYYYMMDD"),
 ) -> list[RecommendationOut]:
-    """指定日のスイートスポット自動推奨を返す（最新オッズ反映）。
+    """指定日の的中重視 自動推奨を返す（最新オッズ反映）。
 
-    抽出条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ バッジあり ∧ レース内 k≤2。
-    呼び出しごとに最新オッズで再判定するため、出走直前まで反映される。
-    Claude.ai Routine の AI 推奨は使わない（DBの race_recommendations は無視）。
+    2026-06-05 再定義: OOS検証で JRA 単一レースの価値(ROI)系バッジは全て脆弱と判明したため、
+    推奨エンジンを「1レース1推奨＝指数1位馬 ＋ 信頼度tier(S鉄板/A信頼/B複勝圏)」へ変更。
+    混戦(C)は推奨しない。価値系は value_candidates（妙味候補・収支保証なし）に降格。
+    tier別1位馬の的中率は OOS で単調(S勝率67%/複勝93% … A34/71 … B26/64)。
 
-    返却順は発走時刻順（post_time 昇順）。rank は最大EV降順で連番。
-    3年バックテスト実証: 単ROI 1.188 / 複ROI 0.826。
-
-    プロセス内 60 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
+    返却順は発走時刻順（post_time 昇順）。プロセス内60秒キャッシュ + フロント60秒 revalidate。
     """
     try:
-        candidates = await _build_sweet_spot_cached(db, date)
+        candidates = await _build_hit_tier_cached(db, date)
     except Exception as e:
-        logger.error("sweet spot 推奨生成失敗: %s", e)
+        logger.error("的中tier 推奨生成失敗: %s", e)
         return []
-    items = [_sweet_spot_to_out(c) for c in candidates]
+    items = [_hit_tier_to_out(c) for c in candidates]
     items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
     return items
 
