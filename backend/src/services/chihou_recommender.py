@@ -45,9 +45,13 @@ _BUY_EV_THRESHOLD = 1.0
 def calc_race_concentration(place_probs: list[float]) -> dict[str, object]:
     """レース内の複勝確率集中度を計算する。
 
-    30,451レース検証で判明した分位点:
-      Q1≤0.715 → 低信頼 (1位複勝ヒット率 57%)
-      Q4>0.873 → 高信頼 (1位複勝ヒット率 76.5%)
+    ⚠️ 閾値再較正 (2026-06-05): Phase2 で place_probability を較正(is_top3)に
+    変えた結果、旧閾値(>0.873/>0.715)では全レースが "low" に張り付いて定数化した。
+    新較正確率での OOS検証(2025.7-2026.6, 10,883R)の top2_share 五分位 ×
+    1位複勝率に基づき再較正:
+      top2_share > 0.42 → high   (1位複勝率 ~82%)
+      top2_share > 0.36 → medium (1位複勝率 ~69-73%)
+      それ以下          → low    (1位複勝率 ~53-61%)
     """
     if len(place_probs) < 2:
         return {"top2_share": None, "hhi": None, "confidence_level": None}
@@ -60,9 +64,9 @@ def calc_race_concentration(place_probs: list[float]) -> dict[str, object]:
     top2_share = shares[0] + shares[1]
     hhi = sum(s * s for s in shares)
 
-    if top2_share > 0.873:
+    if top2_share > 0.42:
         confidence_level = "high"
-    elif top2_share > 0.715:
+    elif top2_share > 0.36:
         confidence_level = "medium"
     else:
         confidence_level = "low"
