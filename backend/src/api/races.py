@@ -688,6 +688,20 @@ async def list_races(
             )
             projected_count_map = {nid: int(c) for nid, c in pj_rows.all()}
 
+    # 出走確定済みレース: 確定出馬表（horse_number > 0）を持つ race_id 集合。
+    # head_count が NULL のまま確定するケースがあるため、確定エントリの有無を
+    # 権威ある確定判定として使い、確定後は特別登録/出走想定バッジを出さない。
+    confirmed_entry_ids: set[int] = set()
+    if race_ids:
+        entry_stmt = (
+            select(RaceEntry.race_id)
+            .where(RaceEntry.race_id.in_(race_ids))
+            .where(RaceEntry.horse_number > 0)
+            .distinct()
+        )
+        entry_result = await db.execute(entry_stmt)
+        confirmed_entry_ids = {row[0] for row in entry_result.all()}
+
     result_list = []
     for r in races:
         out = RaceOut.model_validate(r)
@@ -695,12 +709,14 @@ async def list_races(
         sekito_code = _JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         out.result_confirmed = r.id in confirmed_race_ids
-        # 出馬表未確定（head_count NULL）かつ特別登録馬がある → 特別登録のみ
+        # 出馬表未確定（head_count NULL かつ確定出馬表が無い）レースのみ
+        # 特別登録/出走想定を立てる。確定エントリがあれば確定後とみなし通常表示。
+        is_unconfirmed = r.head_count is None and r.id not in confirmed_entry_ids
         sp_count = special_count_map.get(r.jravan_race_id or "", 0)
-        if r.head_count is None and sp_count > 0:
+        if is_unconfirmed and sp_count > 0:
             out.is_special_only = True
             out.special_horse_count = sp_count
-        elif r.head_count is None and r.jravan_race_id:
+        elif is_unconfirmed and r.jravan_race_id:
             # 特別登録が無い未確定レースは netkeiba 出走想定を見る
             pj_count = projected_count_map.get(_jv_to_netkeiba_id(r.jravan_race_id), 0)
             if pj_count > 0:
@@ -738,8 +754,15 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
     if not race:
         raise HTTPException(status_code=404, detail="Race not found")
     out = RaceOut.model_validate(race)
-    # 特別登録 / 出走想定のみ判定（出馬表未確定）
-    if race.head_count is None and race.jravan_race_id:
+    # 特別登録 / 出走想定のみ判定（出馬表未確定）。確定出馬表
+    # （horse_number > 0）があれば確定後とみなしバッジは出さない。
+    has_confirmed = await db.scalar(
+        select(func.count())
+        .select_from(RaceEntry)
+        .where(RaceEntry.race_id == race.id)
+        .where(RaceEntry.horse_number > 0)
+    )
+    if race.head_count is None and race.jravan_race_id and not has_confirmed:
         sp_count_row = await db.execute(
             select(func.count(SpecialRegistration.jravan_horse_code))
             .where(SpecialRegistration.jravan_race_id == race.jravan_race_id)
