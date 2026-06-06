@@ -450,6 +450,16 @@ def parse_ra(data: str) -> dict[str, Any] | None:
 
         grade_code = _s(data, 615, 615)
 
+        # 競走条件コード（コード表2007）: pos 623-637 に 2歳/3歳/4歳/5歳以上/最若年
+        # の5スロット（各3桁）。新馬=701 等。出走可能な最若年の条件が
+        # クラス判定の基準になるため、若い順スロットの最初の有効値を採る。
+        race_condition_code = None
+        for _pos in (623, 626, 629, 632, 635):
+            _code = _s(data, _pos, _pos + 2)
+            if _code and _code not in ("000", ""):
+                race_condition_code = _code
+                break
+
         return {
             "jravan_race_id": header["jravan_race_id"],
             "race_date": header["race_date"],  # 開催日 YYYYMMDD
@@ -473,6 +483,7 @@ def parse_ra(data: str) -> dict[str, Any] | None:
             "post_time": _s(data, 874, 877) or None,  # 発走時刻 hhmm形式 (例: "1025")
             # 競走情報
             "race_type_code": _s(data, 617, 618),
+            "race_condition_code": race_condition_code,  # コード表2007（新馬/未勝利/勝クラス）
             "weight_type_code": _s(data, 622, 622),
             "prev_grade_code": _s(data, 616, 616) or None,
             # 賞金（百円単位、0はNone）

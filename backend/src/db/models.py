@@ -216,6 +216,10 @@ class Race(Base):
         String(2),
         comment="競走種別コード（コード表2005: 11=2歳,12=3歳,13=3歳以上,14=4歳以上,20=障害等）",
     )
+    race_condition_code: Mapped[str | None] = mapped_column(
+        String(3),
+        comment="競走条件コード（コード表2007: 701=新馬,702=未出走,703=未勝利,005=1勝,010=2勝,016=3勝,999=OP）",
+    )
     weight_type_code: Mapped[str | None] = mapped_column(
         String(1), comment="重量種別コード（コード表2008: 1=馬齢,2=定量,3=別定,4=ハンデ）"
     )
@@ -261,10 +265,12 @@ class Race(Base):
 
     @property
     def race_class_label(self) -> str | None:
-        """条件戦のクラスラベルを算出する（例: '3歳未勝利', '4歳以上2勝クラス'）。
+        """条件戦のクラスラベルを算出する（例: 'メイクデビュー', '3歳未勝利', '4歳以上2勝クラス'）。
 
         grade が設定されている場合（G1/G2/G3/OP特別等）は None を返す。
-        race_type_code と prize_1st（百円単位）からクラスを判定。
+        race_condition_code（コード表2007）があれば優先し、新馬/未勝利/勝クラスを
+        正確に判定する。未取得（旧データ）の場合は race_type_code + prize_1st の
+        賞金推定にフォールバックする。
         """
         if self.grade:
             return None
@@ -278,6 +284,26 @@ class Race(Base):
             "19": "障害4歳以上",
         }
         age = _AGE.get(self.race_type_code or "", "")
+
+        # 競走条件コード（コード表2007）優先。新馬/未勝利/各勝クラスを正確に区別。
+        code = self.race_condition_code
+        if code:
+            if code == "701":  # 新馬
+                return "メイクデビュー"
+            _COND_2007: dict[str, str] = {
+                "702": "未出走",
+                "703": "未勝利",
+                "005": "1勝クラス",
+                "010": "2勝クラス",
+                "016": "3勝クラス",
+                "999": "オープン",
+            }
+            cls2007 = _COND_2007.get(code)
+            if cls2007:
+                if age and cls2007 != "オープン":
+                    return f"{age}{cls2007}"
+                return cls2007
+            # 旧式賞金クラス（001-100 等）は賞金推定へフォールバック
 
         if not self.prize_1st:
             return age or None
