@@ -66,6 +66,28 @@ def _year4(year_str: str) -> str:
     return year_str[:4]
 
 
+def _dedup_races_by_id(ra_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """RAレコードを jravan_race_id ごとに最後の1件へ集約する（後勝ち）。
+
+    差分ファイルは同一レースの複数データ区分（出走馬名表/出馬表/成績）を含み得る。
+    同一 conflict キーが1 INSERT...ON CONFLICT 内に複数あると PostgreSQL が
+    「cannot affect row a second time」で失敗し、バッチ全体が書き込まれないため、
+    バルクupsert前に重複を排除する。後勝ちにより、より新しいデータ区分が残る。
+
+    Args:
+        ra_list: parse_ra 済みレコードのリスト
+
+    Returns:
+        jravan_race_id がユニークなリスト（入力順を保持、各キーは最後の出現を採用）
+    """
+    deduped: dict[str, dict[str, Any]] = {}
+    for p in ra_list:
+        rid = p.get("jravan_race_id")
+        if rid:
+            deduped[rid] = p
+    return list(deduped.values())
+
+
 class RaceImporter:
     """RA/SEレコードをDBに取り込むクラス。"""
 
@@ -219,7 +241,14 @@ class RaceImporter:
         """RAレコードを1 SQLでバルクupsertし、_race_cacheを更新する。
 
         個別ループ（N SQL）→ 1 SQL に変換することでVPS RTTを大幅削減。
+
+        差分ファイルには同一 jravan_race_id のレコード（出走馬名表→出馬表→成績の
+        各データ区分）が複数含まれることがある。同一 conflict キーが1 INSERT 内に
+        2 行あると PostgreSQL の ON CONFLICT DO UPDATE が
+        「cannot affect row a second time」で失敗し、バッチ全体が書き込まれない。
+        そのため jravan_race_id ごとに最後の1件へ集約する（後勝ち=より新しい区分）。
         """
+        ra_list = _dedup_races_by_id(ra_list)
         values = [
             {
                 "jravan_race_id": p["jravan_race_id"],
