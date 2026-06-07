@@ -54,9 +54,9 @@ def test_triple_match() -> None:
 
 
 def test_top_premium() -> None:
-    """composite≥60 ∧ battle≥65 → 高得点鉄板"""
+    """composite≥60 ∧ battle≥65 ∧ composite順位≤2 → 高得点鉄板"""
     horses = [
-        Horse(1, composite_index=62.0, jvan_time_dm=70.0, jvan_battle_dm=68.0),
+        Horse(1, composite_index=62.0, jvan_time_dm=70.0, jvan_battle_dm=68.0),  # comp2位
         Horse(2, composite_index=55.0, jvan_time_dm=70.0, jvan_battle_dm=70.0),  # base<60
         Horse(3, composite_index=70.0, jvan_time_dm=60.0, jvan_battle_dm=60.0),  # battle<65
     ]
@@ -64,6 +64,22 @@ def test_top_premium() -> None:
     assert SIGNAL_TOP_PREMIUM in (horses[0].dm_signals or [])
     assert SIGNAL_TOP_PREMIUM not in (horses[1].dm_signals or [])
     assert SIGNAL_TOP_PREMIUM not in (horses[2].dm_signals or [])
+
+
+def test_top_premium_rank_capped_to_two() -> None:
+    """絶対しきい値を満たす馬が3頭以上いても composite 上位2頭のみに限定される。
+
+    鉄板印の乱発防止 (2026-06-07)。
+    """
+    horses = [
+        Horse(1, composite_index=75.0, jvan_time_dm=70.0, jvan_battle_dm=80.0),  # comp1位 ◎
+        Horse(2, composite_index=70.0, jvan_time_dm=70.0, jvan_battle_dm=78.0),  # comp2位 ◎
+        Horse(3, composite_index=65.0, jvan_time_dm=70.0, jvan_battle_dm=70.0),  # comp3位 → 閾値満たすが除外
+        Horse(4, composite_index=62.0, jvan_time_dm=70.0, jvan_battle_dm=66.0),  # comp4位 → 同上
+    ]
+    compute_dm_signals(horses)
+    got = [h.horse_number for h in horses if SIGNAL_TOP_PREMIUM in (h.dm_signals or [])]
+    assert got == [1, 2], f"上位2頭のみのはず: {got}"
 
 
 def test_anagusa_dm() -> None:
