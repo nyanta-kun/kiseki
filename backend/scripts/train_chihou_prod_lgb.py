@@ -59,7 +59,11 @@ FEATURES = [
 ]
 # Phase3: 履歴系4特徴を追加（calculator._history_features_batch と同一意味論）
 HIST_FEATURES = ["improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio"]
-FEATURES = FEATURES + HIST_FEATURES
+# Phase4(2026-06-07): 外部指数(kichiuma sp_score / netkeiba idx_ave)を入力特徴に統合。
+# 5seed×2cutoff OOS A/B で top1勝率+0.8〜1.3pt / 複勝率+1.6〜2.4pt 改善（scripts/ab_chihou_external_features.py）。
+# 発走前公表値=リークなし。レース内z・順位/頭数・欠損フラグ。chihou_calculator._build_lgb_features と同順。
+EXT_FEATURES = ["kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing"]
+FEATURES = FEATURES + HIST_FEATURES + EXT_FEATURES
 
 # train_chihou_v11 の履歴特徴計算を再利用（serve 側 _history_features_batch と整合）
 from scripts.train_chihou_v11_lightgbm import (  # noqa: E402
@@ -79,11 +83,23 @@ SELECT
     COALESCE(ci.jockey_index, 50.0)      AS jockey_index,
     COALESCE(ci.rotation_index, 50.0)    AS rotation_index,
     COALESCE(ci.last_margin_index, 50.0) AS last_margin_index,
-    rr.finish_position, rr.win_odds
+    rr.finish_position, rr.win_odds,
+    -- Phase4: 外部指数(発走前公表値)。netkeiba idx_ave は '*' を除去して数値化・is_time_index=true 限定。
+    CASE WHEN nk.idx_ave ~ '^-?[0-9]+\\*?$'
+         THEN regexp_replace(nk.idx_ave, '\\*', '')::float ELSE NULL END AS nk_idx,
+    kc.sp_score AS kc_sp
 FROM chihou.calculated_indices ci
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
+LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+LEFT JOIN sekito.netkeiba nk
+  ON nk.course_code = rc.code AND nk.date = to_date(r.date, 'YYYYMMDD')
+     AND nk.race_no = r.race_number AND nk.horse_no = re.horse_number
+     AND nk.is_time_index = true
+LEFT JOIN sekito.kichiuma kc
+  ON kc.course_code = rc.code AND kc.date = to_date(r.date, 'YYYYMMDD')
+     AND kc.race_no = r.race_number AND kc.horse_no = re.horse_number
 WHERE ci.version = %(ver)s
   AND r.course != '83'
   AND r.head_count >= 6
@@ -135,12 +151,39 @@ def featurize(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_external_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Phase4: 外部指数(kichiuma sp_score / netkeiba idx_ave)をレース内正規化特徴に変換。
+
+    chihou_calculator._build_lgb_features と完全一致させること（train/serve parity）:
+      kc_sp_z / nk_idx_z : レース内z (欠損→0)
+      kc_rank_n / nk_rank_n: レース内順位(降順min)/頭数 (0=最良, 欠損→0.5)
+      ext_missing: 両外部指数欠損フラグ
+    """
+    df = df.copy()
+    df["nk_idx"] = pd.to_numeric(df.get("nk_idx"), errors="coerce")
+    df["kc_sp"] = pd.to_numeric(df.get("kc_sp"), errors="coerce")
+
+    def zscore(s: pd.Series) -> pd.Series:
+        sd = s.std()
+        return (s - s.mean()) / sd if sd and sd > 0 else s * 0.0
+
+    g = df.groupby("race_id")
+    df["kc_sp_z"] = g["kc_sp"].transform(zscore).fillna(0.0)
+    df["nk_idx_z"] = g["nk_idx"].transform(zscore).fillna(0.0)
+    hc = pd.to_numeric(df["head_count"], errors="coerce").clip(lower=1)
+    df["kc_rank_n"] = ((g["kc_sp"].rank(ascending=False, method="min") - 1) / hc).fillna(0.5)
+    df["nk_rank_n"] = ((g["nk_idx"].rank(ascending=False, method="min") - 1) / hc).fillna(0.5)
+    df["ext_missing"] = (df["kc_sp"].isna() & df["nk_idx"].isna()).astype(int)
+    return df
+
+
 def prep(conn, df_raw: pd.DataFrame, df_hist: pd.DataFrame) -> pd.DataFrame:
-    """featurize + 履歴系4特徴付与 + 欠損補完（train/serve 整合）。"""
+    """featurize + 履歴系4特徴付与 + 外部指数特徴 + 欠損補完（train/serve 整合）。"""
     df = featurize(df_raw)
     df = add_historical_features(df, df_hist)
     for col in HIST_FEATURES:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(-1.0)
+    df = add_external_features(df)
     return df
 
 

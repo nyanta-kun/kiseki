@@ -386,13 +386,14 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 # モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
 # -----------------------------------------------------------------------
 
-# 21特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
-# Phase3: 末尾に履歴系4特徴を追加（_history_features_batch で算出）。
+# 26特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
+# Phase3: 履歴系4特徴。Phase4(2026-06-07): 外部指数5特徴を末尾に追加（_build_ext_features で算出）。
 _LGB_FEATURE_NAMES: list[str] = [
     "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
     "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
     "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
     "improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio",
+    "kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 _PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.txt"          # is_top3: composite & place_prob
@@ -448,6 +449,58 @@ def _scale_to_index_local(scores: list[float]) -> list[float]:
     return [15.0 + (s - lo) / (hi - lo) * 70.0 for s in scores]
 
 
+def _compute_ext_features(
+    entries: list[ChihouRaceEntry],
+    ext_raw: Mapping[int, tuple[float | None, float | None]] | None,
+    head_count: float,
+) -> dict[int, list[float]]:
+    """外部指数(kichiuma sp_score / netkeiba idx_ave)→レース内正規化5特徴。
+
+    train 側 scripts/train_chihou_prod_lgb.add_external_features と完全一致させること:
+      kc_sp_z / nk_idx_z : レース内z(標本std ddof=1, 欠損→0)
+      kc_rank_n / nk_rank_n: 降順min順位/頭数(0=最良, 欠損→0.5)
+      ext_missing: 両欠損フラグ
+    返り値: {horse_id: [kc_sp_z, nk_idx_z, kc_rank_n, nk_rank_n, ext_missing]}
+    """
+    ext_raw = ext_raw or {}
+    kc = {e.horse_id: (ext_raw.get(e.horse_id) or (None, None))[0] for e in entries}
+    nk = {e.horse_id: (ext_raw.get(e.horse_id) or (None, None))[1] for e in entries}
+    hc = head_count if head_count and head_count >= 1 else 1.0
+
+    def _z(vals: dict[int, float | None]) -> dict[int, float]:
+        present = [v for v in vals.values() if v is not None]
+        out = {hid: 0.0 for hid in vals}
+        n = len(present)
+        if n >= 2:
+            mean = sum(present) / n
+            var = sum((v - mean) ** 2 for v in present) / (n - 1)  # 標本分散(pandas std)
+            sd = var ** 0.5
+            if sd > 0:
+                for hid, v in vals.items():
+                    if v is not None:
+                        out[hid] = (v - mean) / sd
+        return out
+
+    def _rank_n(vals: dict[int, float | None]) -> dict[int, float]:
+        present = [v for v in vals.values() if v is not None]
+        out = {hid: 0.5 for hid in vals}  # 欠損→0.5
+        for hid, v in vals.items():
+            if v is not None:
+                rank = 1 + sum(1 for o in present if o > v)  # 降順min順位
+                out[hid] = (rank - 1) / hc
+        return out
+
+    kc_z, nk_z = _z(kc), _z(nk)
+    kc_r, nk_r = _rank_n(kc), _rank_n(nk)
+    return {
+        e.horse_id: [
+            kc_z[e.horse_id], nk_z[e.horse_id], kc_r[e.horse_id], nk_r[e.horse_id],
+            1.0 if (kc[e.horse_id] is None and nk[e.horse_id] is None) else 0.0,
+        ]
+        for e in entries
+    }
+
+
 def _build_lgb_features(
     entries: list[ChihouRaceEntry],
     race: ChihouRace,
@@ -457,11 +510,13 @@ def _build_lgb_features(
     rotation_map: dict[int, float],
     last_margin_map: Mapping[int, float | None],
     hist_feat_map: dict[int, list[float]] | None = None,
+    ext_raw: Mapping[int, tuple[float | None, float | None]] | None = None,
 ) -> list[list[float]]:
-    """21特徴量の行列を学習時と同順で構築する。
+    """26特徴量の行列を学習時と同順で構築する。
 
     sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map
-    (_history_features_batch の出力) から付与する。None の馬は不明値で埋める。
+    (_history_features_batch の出力)、外部指数5特徴は ext_raw から付与する。
+    None の馬は不明値で埋める。
     """
     surface = (race.surface or "")
     cond = (race.condition or "")
@@ -476,11 +531,13 @@ def _build_lgb_features(
     hist_feat_map = hist_feat_map or {}
     # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
     default_hist = [-1.0, -1.0, 0.0, -1.0]
+    ext_map = _compute_ext_features(entries, ext_raw, head_count)
     rows: list[list[float]] = []
     for e in entries:
         hid = e.horse_id
         lm = last_margin_map.get(hid)
         hist = hist_feat_map.get(hid, default_hist)
+        ext = ext_map[hid]
         rows.append([
             float(speed_map.get(hid, INDEX_NEUTRAL)),
             float(last3f_map.get(hid, INDEX_NEUTRAL)),
@@ -495,6 +552,7 @@ def _build_lgb_features(
             float(e.horse_weight) if e.horse_weight is not None else 500.0,
             float(e.weight_change) if e.weight_change is not None else 0.0,
             float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
+            float(ext[0]), float(ext[1]), float(ext[2]), float(ext[3]), float(ext[4]),
         ])
     return rows
 
@@ -653,10 +711,11 @@ class ChihouIndexCalculator:
                 import numpy as np
 
                 hist_feat_map = await self._history_features_batch(race_date, race, entries)
+                ext_raw = await self._fetch_external_raw(race_id, entries)
                 X = np.asarray(
                     _build_lgb_features(
                         entries, race, speed_map, last3f_map,
-                        jockey_map, rotation_map, last_margin_map, hist_feat_map,
+                        jockey_map, rotation_map, last_margin_map, hist_feat_map, ext_raw,
                     ),
                     dtype=np.float64,
                 )
@@ -861,6 +920,49 @@ class ChihouIndexCalculator:
             q, {"race_id": race_id, "horse_ids": horse_ids}
         )
         return {int(r["horse_id"]): float(r["win_odds"]) for r in rows.mappings()}
+
+    async def _fetch_external_raw(
+        self,
+        race_id: int,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, tuple[float | None, float | None]]:
+        """Phase4: sekito.kichiuma / sekito.netkeiba から外部指数の生値を取得する。
+
+        train 側 scripts/train_chihou_prod_lgb.BASE_QUERY と同一の結合・解析:
+          netkeiba idx_ave は '*' 除去して数値化・is_time_index=true 限定。
+        Returns: horse_id → (kichiuma sp_score, netkeiba idx_ave)。未取得は (None, None)。
+        外部スクレイプ供給が無いレースは全馬 (None,None) となり ext_missing=1 で安全縮退。
+        """
+        num_to_id = {e.horse_number: e.horse_id for e in entries if e.horse_number is not None}
+        if not num_to_id:
+            return {}
+        q = text("""
+            SELECT re.horse_number,
+                   k.sp_score,
+                   CASE WHEN n.idx_ave ~ '^-?[0-9]+\\*?$'
+                        THEN regexp_replace(n.idx_ave, '\\*', '')::float ELSE NULL END AS idx_ave
+            FROM chihou.races r
+            LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+            JOIN chihou.race_entries re ON re.race_id = r.id
+            LEFT JOIN sekito.kichiuma k
+              ON k.date = TO_DATE(r.date, 'YYYYMMDD') AND k.course_code = rc.code
+                 AND k.race_no = r.race_number AND k.horse_no = re.horse_number
+            LEFT JOIN sekito.netkeiba n
+              ON n.date = TO_DATE(r.date, 'YYYYMMDD') AND n.course_code = rc.code
+                 AND n.race_no = r.race_number AND n.horse_no = re.horse_number
+                 AND n.is_time_index = true
+            WHERE r.id = :race_id
+        """)
+        rows = await self.db.execute(q, {"race_id": race_id})
+        out: dict[int, tuple[float | None, float | None]] = {}
+        for r in rows.mappings():
+            hid = num_to_id.get(r["horse_number"])
+            if hid is None:
+                continue
+            sp = float(r["sp_score"]) if r["sp_score"] is not None else None
+            idx = float(r["idx_ave"]) if r["idx_ave"] is not None else None
+            out[hid] = (sp, idx)
+        return out
 
     # ===================================================================
     # スピード指数
