@@ -11,9 +11,11 @@
     → 軸固定で複勝・三連複に厚く
 
   TOP_PREMIUM (⭐ 高得点鉄板):
-    composite_index ≥60 ∧ jvan_battle_dm ≥65
-    勝率 46.5% / 複勝 74.4% / ROI 101.2% / n=86
+    composite_index ≥60 ∧ jvan_battle_dm ≥65 ∧ composite順位 ≤2
+    勝率 46.5% / 複勝 74.4% / ROI 101.2% / n=86 (順位条件追加前のバックテスト値)
     → 単勝フラット買いでもプラス収支
+    ※ 絶対しきい値のみだと強メンバー戦で多数該当し鉄板印が乱発するため
+      (実測2026: 2頭以上66.6%/最大6頭)、composite上位2頭に限定 (2026-06-07)
 
 穴シグナル (妙味):
   ANAGUSA_DM (🏆 穴ぐさDM・最強):
@@ -62,6 +64,12 @@ SIGNAL_POPULAR_DOWNSIDE = "人気下振れ"
 # 高得点鉄板しきい値 (バックテスト確定)
 TOP_PREMIUM_BASE_MIN = 60.0
 TOP_PREMIUM_BATTLE_MIN = 65.0
+# 高得点鉄板の発動頭数上限 (レース内 composite 順位の上限)。
+# 絶対しきい値だけだと強メンバー戦で多数該当し「鉄板印」が乱発する
+# (実測 2026 DM揃い1,421R: 2頭以上 66.6% / 3頭以上 30.5% / 最大6頭)。
+# composite 上位 N 頭に限定して「抜けた本命」の意味を保つ。
+# 2 にすると鉄板印(高得点鉄板 ∪ 三冠一致)を持つ頭数は 99.9% のレースで ≤2 になる。
+TOP_PREMIUM_RANK_MAX = 2
 
 # 穴ぐさDM 人気しきい値
 ANAGUSA_DM_POP_MIN = 5
@@ -266,9 +274,14 @@ def compute_dm_signals(
         if br == 1 and tr == 1 and ar == 1 and not deny_triple:
             tags.append(SIGNAL_TRIPLE_MATCH)
 
-        # ⭐ 高得点鉄板: composite≥60 ∧ battle≥65
-        # (segment 内一貫して ROI≥85% でフィルタ不要)
-        if h.composite_index >= TOP_PREMIUM_BASE_MIN and battle_dm >= TOP_PREMIUM_BATTLE_MIN:
+        # ⭐ 高得点鉄板: composite≥60 ∧ battle≥65 ∧ composite順位≤2
+        # 絶対しきい値だけだと強メンバー戦で多数該当し鉄板印が乱発するため、
+        # レース内 composite 上位 TOP_PREMIUM_RANK_MAX 頭に限定する。
+        if (
+            h.composite_index >= TOP_PREMIUM_BASE_MIN
+            and battle_dm >= TOP_PREMIUM_BATTLE_MIN
+            and br <= TOP_PREMIUM_RANK_MAX
+        ):
             tags.append(SIGNAL_TOP_PREMIUM)
 
         # 🏆 穴ぐさDM: anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5
