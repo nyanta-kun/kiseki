@@ -1693,14 +1693,14 @@ class ChihouIndexCalculator:
 
         result: dict[int, tuple[float, float]] = {}
         for hid in horse_ids:
-            a = agg.get(hid)
-            if not a or a["wet_cnt"] < 2:
-                result[hid] = (0.0, (min(a["wet_cnt"], 20.0) / 20.0) if a else 0.0)
+            ag: dict[str, float] | None = agg.get(hid)
+            if not ag or ag["wet_cnt"] < 2:
+                result[hid] = (0.0, (min(ag["wet_cnt"], 20.0) / 20.0) if ag else 0.0)
                 continue
-            base = a["all_sum"] / max(a["all_cnt"], 1.0)
-            wetperf = a["wet_sum"] / max(a["wet_cnt"], 1.0)
+            base = ag["all_sum"] / max(ag["all_cnt"], 1.0)
+            wetperf = ag["wet_sum"] / max(ag["wet_cnt"], 1.0)
             apt = max(-1.0, min(1.0, wetperf - base))
-            result[hid] = (apt, min(a["wet_cnt"], 20.0) / 20.0)
+            result[hid] = (apt, min(ag["wet_cnt"], 20.0) / 20.0)
         return result
 
     # ===================================================================
