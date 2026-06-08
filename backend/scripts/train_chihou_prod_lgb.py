@@ -63,7 +63,34 @@ HIST_FEATURES = ["improving_form", "track_win_rate", "class_drop_ratio", "prev_p
 # 5seed×2cutoff OOS A/B で top1勝率+0.8〜1.3pt / 複勝率+1.6〜2.4pt 改善（scripts/ab_chihou_external_features.py）。
 # 発走前公表値=リークなし。レース内z・順位/頭数・欠損フラグ。chihou_calculator._build_lgb_features と同順。
 EXT_FEATURES = ["kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing"]
-FEATURES = FEATURES + HIST_FEATURES + EXT_FEATURES
+# Phase5(2026-06-08): 馬場コンディション関連特徴(リーン4本)。
+# 良/稍/重/不 の単体グラデーション(track_wetness)は gain≈0(コンディションの時計効果は
+# speed_index の条件別 par_time で既に吸収済み)のため不採用。価値は「馬個体の道悪適性 ×
+# 脚質交互」に集約。全て発走前算出・リークなし point-in-time。
+# A/B(5seed×2cutoff 決定論OOS, scripts/ab_chihou_track_condition.py AB_LEAN=1):
+# 全体 top1勝率/複勝率 ともに微増(+0.04〜0.13pt)・悪化なし。serve 側は
+# chihou_calculator._wet_apt_batch / _build_lgb_features と同順・同意味論にすること。
+#   pace_x_wet           : 先行度(prev_pace_ratio, 不明→0.5) × track_wetness
+#   horse_wet_apt        : 過去道悪走スコア − 過去全走スコア(≥2道悪走, else 0, field正規化着順)
+#   horse_wet_apt_active : horse_wet_apt × (現在 重/不 か)
+#   horse_wet_runs       : 過去道悪経験数 min(n,20)/20
+TRACK_FEATURES = ["pace_x_wet", "horse_wet_apt", "horse_wet_apt_active", "horse_wet_runs"]
+FEATURES = FEATURES + HIST_FEATURES + EXT_FEATURES + TRACK_FEATURES
+
+WET_CONDS = ("重", "不")
+WETNESS_MAP = {"良": 0.0, "稍": 1.0, "重": 2.0, "不": 3.0}
+
+HIST_COND_QUERY = """
+SELECT rr.horse_id, r.id AS race_id, r.date, r.condition,
+       rr.finish_position, r.head_count
+FROM chihou.race_results rr
+JOIN chihou.races r ON r.id = rr.race_id
+WHERE r.course != '83'
+  AND r.date >= '20220101'
+  AND COALESCE(rr.abnormality_code, 0) = 0
+  AND rr.finish_position IS NOT NULL
+ORDER BY rr.horse_id, r.date, r.id
+"""
 
 # train_chihou_v11 の履歴特徴計算を再利用（serve 側 _history_features_batch と整合）
 from scripts.train_chihou_v11_lightgbm import (  # noqa: E402
@@ -177,13 +204,71 @@ def add_external_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def fetch_hist_cond(conn) -> pd.DataFrame:
+    """馬場適性算出用の履歴（condition 込み）を取得する。"""
+    cur = conn.cursor()
+    cur.execute(HIST_COND_QUERY)
+    cols = [d[0] for d in cur.description]
+    df = pd.DataFrame(cur.fetchall(), columns=cols)
+    cur.close()
+    return df
+
+
+def compute_wet_apt_table(hist: pd.DataFrame) -> pd.DataFrame:
+    """履歴から馬の道悪適性を point-in-time(現走前累積)で算出する。
+
+    serve 側 chihou_calculator._wet_apt_batch と同一意味論にすること。
+    返り値: (horse_id, race_id) を index とする [horse_wet_apt, horse_wet_runs]。
+    """
+    h = hist.copy()
+    h["fp"] = pd.to_numeric(h["finish_position"], errors="coerce")
+    h["hc"] = pd.to_numeric(h["head_count"], errors="coerce")
+    h["score"] = (1.0 - (h["fp"] - 1.0) / (h["hc"] - 1.0)).clip(0.0, 1.0)
+    h.loc[h["hc"] < 2, "score"] = np.nan  # 頭数<2 はスコア無効
+    h["wet"] = h["condition"].isin(WET_CONDS).astype(float)
+    h = h.sort_values(["horse_id", "date", "race_id"]).reset_index(drop=True)
+    g = h.groupby("horse_id")
+    h["valid"] = h["score"].notna().astype(float)
+    h["s"] = h["score"].fillna(0.0)
+    h["all_cnt"] = g["valid"].cumsum() - h["valid"]          # 現走前の有効走数
+    h["all_sum"] = g["s"].cumsum() - h["s"]
+    h["wscore"] = h["s"] * h["wet"]
+    h["wet_valid"] = h["valid"] * h["wet"]
+    h["wet_cnt"] = g["wet_valid"].cumsum() - h["wet_valid"]  # 現走前の道悪有効走数
+    h["wet_sum"] = g["wscore"].cumsum() - h["wscore"]
+    base = h["all_sum"] / h["all_cnt"].clip(lower=1)
+    wetperf = h["wet_sum"] / h["wet_cnt"].clip(lower=1)
+    h["horse_wet_apt"] = np.where(h["wet_cnt"] >= 2, (wetperf - base).clip(-1.0, 1.0), 0.0)
+    h["horse_wet_runs"] = h["wet_cnt"].clip(upper=20) / 20.0
+    return h.set_index(["horse_id", "race_id"])[["horse_wet_apt", "horse_wet_runs"]]
+
+
+def add_track_features(df: pd.DataFrame, apt_tbl: pd.DataFrame) -> pd.DataFrame:
+    """馬場コンディション関連特徴(リーン4本)を付与する（serve と同順・同意味論）。
+
+    track_wetness はモデル特徴には含めず交互作用の素材としてのみ内部利用する。
+    """
+    df = df.copy()
+    cond = df["condition"].fillna("").astype(str)
+    wetness = cond.map(WETNESS_MAP).fillna(1.0)  # 不明→稍(中立)
+    pace = pd.to_numeric(df.get("prev_pace_ratio"), errors="coerce")
+    pace = pace.where(pace >= 0, 0.5)            # 不明(-1)→中立0.5
+    df["pace_x_wet"] = pace * wetness
+    df = df.join(apt_tbl, on=["horse_id", "race_id"], how="left")
+    df["horse_wet_apt"] = df["horse_wet_apt"].fillna(0.0)
+    df["horse_wet_runs"] = df["horse_wet_runs"].fillna(0.0)
+    df["horse_wet_apt_active"] = df["horse_wet_apt"] * (wetness >= 2).astype(float)
+    return df
+
+
 def prep(conn, df_raw: pd.DataFrame, df_hist: pd.DataFrame) -> pd.DataFrame:
-    """featurize + 履歴系4特徴付与 + 外部指数特徴 + 欠損補完（train/serve 整合）。"""
+    """featurize + 履歴系4特徴 + 外部指数特徴 + 馬場特徴 + 欠損補完（train/serve 整合）。"""
     df = featurize(df_raw)
     df = add_historical_features(df, df_hist)
     for col in HIST_FEATURES:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(-1.0)
     df = add_external_features(df)
+    df = add_track_features(df, compute_wet_apt_table(fetch_hist_cond(conn)))
     return df
 
 
