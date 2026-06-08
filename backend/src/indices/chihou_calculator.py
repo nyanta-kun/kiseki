@@ -127,6 +127,10 @@ CHIHOU_COMPOSITE_VERSION = 10
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
 
+# 馬場コンディション（Phase5 馬場特徴用）。train 側 train_chihou_prod_lgb と一致させること。
+WET_CONDS = ("重", "不")
+WETNESS_MAP = {"良": 0.0, "稍": 1.0, "重": 2.0, "不": 3.0}
+
 # 指数デフォルト（データ不足時）
 INDEX_NEUTRAL = 50.0
 INDEX_MIN = 0.0
@@ -511,12 +515,13 @@ def _build_lgb_features(
     last_margin_map: Mapping[int, float | None],
     hist_feat_map: dict[int, list[float]] | None = None,
     ext_raw: Mapping[int, tuple[float | None, float | None]] | None = None,
+    wet_apt_map: Mapping[int, tuple[float, float]] | None = None,
 ) -> list[list[float]]:
-    """26特徴量の行列を学習時と同順で構築する。
+    """30特徴量の行列を学習時と同順で構築する。
 
     sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map
-    (_history_features_batch の出力)、外部指数5特徴は ext_raw から付与する。
-    None の馬は不明値で埋める。
+    (_history_features_batch の出力)、外部指数5特徴は ext_raw、馬場特徴4(Phase5)は
+    wet_apt_map (_wet_apt_batch の出力)から付与する。None の馬は不明値で埋める。
     """
     surface = (race.surface or "")
     cond = (race.condition or "")
@@ -528,7 +533,12 @@ def _build_lgb_features(
     distance = float(race.distance or 0)
     head_count = float(race.head_count or len(entries))
 
+    # Phase5 馬場特徴の素材（train add_track_features と一致）
+    wetness = WETNESS_MAP.get(cond, 1.0)  # 不明→稍(中立)
+    wet_active = 1.0 if wetness >= 2 else 0.0
+
     hist_feat_map = hist_feat_map or {}
+    wet_apt_map = wet_apt_map or {}
     # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
     default_hist = [-1.0, -1.0, 0.0, -1.0]
     ext_map = _compute_ext_features(entries, ext_raw, head_count)
@@ -538,6 +548,10 @@ def _build_lgb_features(
         lm = last_margin_map.get(hid)
         hist = hist_feat_map.get(hid, default_hist)
         ext = ext_map[hid]
+        # 馬場特徴: pace_x_wet / horse_wet_apt / horse_wet_apt_active / horse_wet_runs
+        pace = float(hist[3])             # prev_pace_ratio (不明=-1)
+        pace = pace if pace >= 0 else 0.5  # 不明→中立0.5
+        wet_apt, wet_runs = wet_apt_map.get(hid, (0.0, 0.0))
         rows.append([
             float(speed_map.get(hid, INDEX_NEUTRAL)),
             float(last3f_map.get(hid, INDEX_NEUTRAL)),
@@ -553,6 +567,7 @@ def _build_lgb_features(
             float(e.weight_change) if e.weight_change is not None else 0.0,
             float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
             float(ext[0]), float(ext[1]), float(ext[2]), float(ext[3]), float(ext[4]),
+            pace * wetness, float(wet_apt), float(wet_apt) * wet_active, float(wet_runs),
         ])
     return rows
 
@@ -712,10 +727,12 @@ class ChihouIndexCalculator:
 
                 hist_feat_map = await self._history_features_batch(race_date, race, entries)
                 ext_raw = await self._fetch_external_raw(race_id, entries)
+                wet_apt_map = await self._wet_apt_batch(race_date, entries)
                 X = np.asarray(
                     _build_lgb_features(
                         entries, race, speed_map, last3f_map,
                         jockey_map, rotation_map, last_margin_map, hist_feat_map, ext_raw,
+                        wet_apt_map,
                     ),
                     dtype=np.float64,
                 )
@@ -1627,6 +1644,63 @@ class ChihouIndexCalculator:
             else:
                 twr = -1.0
             result[hid] = [improving, twr, cdr, prev_pace]
+        return result
+
+    async def _wet_apt_batch(
+        self,
+        race_date: str,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, tuple[float, float]]:
+        """馬の道悪適性 (horse_wet_apt, horse_wet_runs) を一括算出する（Phase5）。
+
+        train 側 scripts/train_chihou_prod_lgb.compute_wet_apt_table と同一意味論。
+        当該レース開始前(date < race_date)の過去走のみ参照でリークなし。
+        score = 1 − (着順−1)/(頭数−1)（field正規化, 頭数≥2）。
+        horse_wet_apt = 道悪走(重/不)の平均score − 全走の平均score（道悪≥2走, else 0, [-1,1]）。
+        horse_wet_runs = min(道悪走数, 20)/20。
+
+        Returns:
+            hid -> (horse_wet_apt, horse_wet_runs)
+        """
+        horse_ids = [e.horse_id for e in entries]
+        q = text("""
+            SELECT rr.horse_id, r.condition, rr.finish_position, r.head_count
+            FROM chihou.race_results rr
+            JOIN chihou.races r ON r.id = rr.race_id
+            WHERE rr.horse_id = ANY(:hids)
+              AND r.date < :before
+              AND r.course != :banei
+              AND COALESCE(rr.abnormality_code, 0) = 0
+              AND rr.finish_position IS NOT NULL
+              AND r.head_count >= 2
+        """)
+        rows = await self.db.execute(
+            q, {"hids": horse_ids, "before": race_date, "banei": BANEI_COURSE_CODE},
+        )
+        agg: dict[int, dict[str, float]] = defaultdict(
+            lambda: {"all_cnt": 0.0, "all_sum": 0.0, "wet_cnt": 0.0, "wet_sum": 0.0}
+        )
+        for r in rows.mappings():
+            hc = float(r["head_count"])
+            fp = float(r["finish_position"])
+            score = max(0.0, min(1.0, 1.0 - (fp - 1.0) / (hc - 1.0)))
+            a = agg[r["horse_id"]]
+            a["all_cnt"] += 1.0
+            a["all_sum"] += score
+            if r["condition"] in WET_CONDS:
+                a["wet_cnt"] += 1.0
+                a["wet_sum"] += score
+
+        result: dict[int, tuple[float, float]] = {}
+        for hid in horse_ids:
+            ag: dict[str, float] | None = agg.get(hid)
+            if not ag or ag["wet_cnt"] < 2:
+                result[hid] = (0.0, (min(ag["wet_cnt"], 20.0) / 20.0) if ag else 0.0)
+                continue
+            base = ag["all_sum"] / max(ag["all_cnt"], 1.0)
+            wetperf = ag["wet_sum"] / max(ag["wet_cnt"], 1.0)
+            apt = max(-1.0, min(1.0, wetperf - base))
+            result[hid] = (apt, min(ag["wet_cnt"], 20.0) / 20.0)
         return result
 
     # ===================================================================

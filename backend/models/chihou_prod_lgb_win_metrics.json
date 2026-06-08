@@ -21,9 +21,18 @@
     "improving_form",
     "track_win_rate",
     "class_drop_ratio",
-    "prev_pace_ratio"
+    "prev_pace_ratio",
+    "kc_sp_z",
+    "nk_idx_z",
+    "kc_rank_n",
+    "nk_rank_n",
+    "ext_missing",
+    "pace_x_wet",
+    "horse_wet_apt",
+    "horse_wet_apt_active",
+    "horse_wet_runs"
   ],
-  "n_features": 21,
+  "n_features": 30,
   "train_range": [
     "20230101",
     "20260605"
@@ -34,88 +43,124 @@
   "seed": 0,
   "feature_importance": [
     {
-      "feature": "last_margin_index",
-      "gain": 99388
+      "feature": "kc_sp_z",
+      "gain": 115103
     },
     {
       "feature": "jockey_index",
-      "gain": 59359
+      "gain": 46368
+    },
+    {
+      "feature": "last_margin_index",
+      "gain": 36049
+    },
+    {
+      "feature": "kc_rank_n",
+      "gain": 34568
+    },
+    {
+      "feature": "nk_idx_z",
+      "gain": 20372
     },
     {
       "feature": "track_win_rate",
-      "gain": 25886
-    },
-    {
-      "feature": "speed_index",
-      "gain": 24232
+      "gain": 18916
     },
     {
       "feature": "class_drop_ratio",
-      "gain": 18828
+      "gain": 11655
     },
     {
       "feature": "horse_weight",
-      "gain": 13478
+      "gain": 10918
     },
     {
-      "feature": "last3f_index",
-      "gain": 11415
+      "feature": "speed_index",
+      "gain": 9757
     },
     {
       "feature": "prev_pace_ratio",
-      "gain": 10952
-    },
-    {
-      "feature": "horse_age",
-      "gain": 9159
+      "gain": 8518
     },
     {
       "feature": "head_count",
-      "gain": 8524
+      "gain": 8460
     },
     {
-      "feature": "improving_form",
-      "gain": 7005
+      "feature": "last3f_index",
+      "gain": 6918
     },
     {
-      "feature": "rotation_index",
-      "gain": 6375
+      "feature": "horse_wet_runs",
+      "gain": 5842
+    },
+    {
+      "feature": "nk_rank_n",
+      "gain": 5442
+    },
+    {
+      "feature": "horse_age",
+      "gain": 5152
     },
     {
       "feature": "weight_change",
-      "gain": 5220
+      "gain": 4051
     },
     {
-      "feature": "weight_carried",
-      "gain": 4279
+      "feature": "rotation_index",
+      "gain": 3764
     },
     {
       "feature": "distance",
-      "gain": 4195
+      "gain": 3316
+    },
+    {
+      "feature": "horse_wet_apt",
+      "gain": 3049
+    },
+    {
+      "feature": "ext_missing",
+      "gain": 2990
+    },
+    {
+      "feature": "improving_form",
+      "gain": 2931
     },
     {
       "feature": "frame_number",
-      "gain": 3002
+      "gain": 2635
     },
     {
-      "feature": "is_good",
-      "gain": 236
+      "feature": "weight_carried",
+      "gain": 1789
     },
     {
-      "feature": "is_bad",
-      "gain": 183
+      "feature": "pace_x_wet",
+      "gain": 1784
+    },
+    {
+      "feature": "horse_wet_apt_active",
+      "gain": 1508
     },
     {
       "feature": "is_heavy",
-      "gain": 169
+      "gain": 95
     },
     {
-      "feature": "is_dirt",
-      "gain": 21
+      "feature": "is_bad",
+      "gain": 80
+    },
+    {
+      "feature": "is_good",
+      "gain": 48
     },
     {
       "feature": "is_turf",
-      "gain": 10
+      "gain": 0
+    },
+    {
+      "feature": "is_dirt",
+      "gain": 0
     }
   ]
 }
