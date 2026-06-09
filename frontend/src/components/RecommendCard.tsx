@@ -257,6 +257,24 @@ export function RecommendCard({ rec }: Props) {
                       {b}
                     </span>
                   ))}
+                  {v.is_place_axis && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">
+                      🎯複勝＋ワイド軸
+                      {v.wide_partner_horse_number != null && `(相手${v.wide_partner_horse_number}番=本命)`}
+                    </span>
+                  )}
+                  {v.is_place_axis && v.finish_position != null && (
+                    <span
+                      className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                        v.finish_position <= 3
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-gray-100 text-gray-500"
+                      )}
+                    >
+                      {v.finish_position <= 3 ? `複勝圏${v.finish_position}着` : `${v.finish_position}着`}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

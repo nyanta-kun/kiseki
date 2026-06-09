@@ -30,7 +30,12 @@ from ..db.models import (
     RaceRecommendation,
     RaceResult,
 )
-from ..indices.buy_signal import is_sweet_spot, jra_horse_purchase_signal, jra_race_ticket
+from ..indices.buy_signal import (
+    is_sweet_spot,
+    jra_horse_purchase_signal,
+    jra_is_place_axis,
+    jra_race_ticket,
+)
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 
@@ -342,8 +347,17 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         )
         odds_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(win_odds_sorted)}
 
+        # place_probability レース内順位（高オッズ穴 複勝＋ワイド軸の k≤2 絞り用, 1=最高）
+        pp_sorted = sorted(
+            [h for h in horses if h.get("place_probability") is not None],
+            key=lambda h: h["place_probability"],
+            reverse=True,
+        )
+        pp_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(pp_sorted)}
+
         for h in horses:
             ci_rank = ci_rank_map.get(h["horse_number"], 99)
+            h["place_prob_rank"] = pp_rank_map.get(h["horse_number"])
             nb_cr = h.get("nb_course_rank")
             nb_ar = h.get("nb_ave_rank")
             km_r = h.get("km_rank")
@@ -923,6 +937,10 @@ async def build_hit_tier_recommendations(
         }]
 
         # 妙味候補（収支保証なし・注記）: 本命以外でバッジを持つ馬
+        # 高オッズ穴 複勝＋ワイド軸（2026-06-09 検証, memory: highodds_place_wide_recommendation）:
+        #   軸 = 単勝≥10 × composite上位4 × place_prob上位2 × バッジ。
+        #   複勝(軸)的中~27%/複ROI0.89・ワイド軸×モデル1位 ROI1.05。ワイド相手は
+        #   composite1位＝本命(top1) なので「妙味軸を複勝＋本命とのワイドで結ぶ」になる。
         value_candidates: list[dict[str, Any]] = []
         for h in horses:
             if h["horse_number"] == top1["horse_number"]:
@@ -930,12 +948,27 @@ async def build_hit_tier_recommendations(
             badges = _value_badges(h)
             if not badges:
                 continue
+            is_axis = jra_is_place_axis(
+                win_odds=h.get("win_odds"),
+                composite_rank=h.get("index_rank"),
+                place_prob_rank=h.get("place_prob_rank"),
+                anagusa_rank=h.get("anagusa_rank"),
+                nb_ave_rank=h.get("nb_ave_rank"),
+                km_rank=h.get("km_rank"),
+                dm_signals=h.get("dm_signals"),
+            )
+            vc_hid = entry_map.get((race["race_id"], h["horse_number"]))
+            vc_rr = results_map.get((race["race_id"], vc_hid)) if vc_hid else None
             value_candidates.append({
                 "horse_number": h["horse_number"],
                 "horse_name": h.get("horse_name"),
                 "win_odds": h.get("win_odds"),
                 "index_rank": h.get("index_rank"),
                 "badges": badges,
+                # 高オッズ穴 複勝＋ワイド軸（軸のみ・相手=本命=composite1位）
+                "is_place_axis": is_axis,
+                "wide_partner_horse_number": top1["horse_number"] if is_axis else None,
+                "finish_position": vc_rr["finish_position"] if vc_rr else None,
             })
 
         snapshot_win_odds = {
@@ -957,6 +990,13 @@ async def build_hit_tier_recommendations(
         )
         if value_candidates:
             reason += f"。妙味候補{len(value_candidates)}頭（穴・収支保証なし）"
+        axis_vcs = [v for v in value_candidates if v.get("is_place_axis")]
+        if axis_vcs:
+            axis_desc = "・".join(
+                f"{v['horse_number']}番(単勝{float(v.get('win_odds') or 0):.0f}倍)"
+                for v in axis_vcs
+            )
+            reason += f"。高オッズ穴 複勝＋ワイド軸{axis_desc}×本命{top1['horse_number']}番"
 
         # 結果判定
         result_correct: bool | None = None
