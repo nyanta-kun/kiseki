@@ -164,6 +164,135 @@ def is_sweet_spot(
 
 
 # ---------------------------------------------------------------------------
+# JRA 高オッズ穴 複勝＋ワイド軸 推奨（2026-06-09・単勝EVゲートsweet_spotを置換）
+# ---------------------------------------------------------------------------
+# バックテスト検証 (memory: highodds_place_wide_recommendation / ハーネス
+# scripts/jra_badge_lift.py・wide_axis_bt.py・oos_ci.py):
+#   軸 = 単勝≥10 × composite上位4 × バッジ × place_probability上位2(レース内)
+#     複勝(軸)          : 的中~27% / 複ROI 0.89 (2025 OOS分割一貫, CI[0.76,1.02])
+#     ワイド軸×モデル1位 : 的中~17% / ROI 1.05 (前後半一貫, CI[0.80,1.33])
+#   ※相手は「人気1番」でなく「モデルcomposite1位」が最良(モデルと市場の乖離が価値)。
+#   ※モデル絞り(comp上位4)で複勝圏的中率は無条件比で倍増(10.6→24-27%)。
+#   ※edgeは薄くCIは1を跨ぐ・v26 in-sample 楽観含み。複勝は高的中アンカー、
+#     ワイド軸が数少ない+EV。地方は同構造でも黒字化しないため非適用(JRA限定)。
+
+HIGHODDS_MIN_ODDS: float = 10.0
+HIGHODDS_MAX_COMP_RANK: int = 4   # モデルcomposite レース内順位の上限
+HIGHODDS_MAX_PP_RANK: int = 2     # place_probability レース内順位の上限(k≤2絞り)
+
+
+def jra_highodds_has_badge(
+    anagusa_rank: str | None,
+    nb_ave_rank: int | None,
+    km_rank: int | None,
+    dm_signals: list[str] | None,
+) -> bool:
+    """高オッズ穴 軸の「バッジ(直交シグナル)」判定。
+
+    バックテストの badge_any 定義に対応:
+      穴ぐさ A/B/C ∪ netkeiba(idx_ave)順位≤3 ∪ kichiuma(sp_score)順位≤3 ∪ DMシグナルあり
+    (バックテストの DM battle 順位≤2 は本番では dm_signals 有無で近似する)。
+    """
+    if anagusa_rank in ("A", "B", "C"):
+        return True
+    if nb_ave_rank is not None and nb_ave_rank <= 3:
+        return True
+    if km_rank is not None and km_rank <= 3:
+        return True
+    if dm_signals:
+        return True
+    return False
+
+
+def jra_is_place_axis(
+    win_odds: float | None,
+    composite_rank: int | None,
+    place_prob_rank: int | None,
+    anagusa_rank: str | None,
+    nb_ave_rank: int | None,
+    km_rank: int | None,
+    dm_signals: list[str] | None,
+) -> bool:
+    """JRA 高オッズ穴の複勝＋ワイド軸「軸馬」該当判定。
+
+    条件(検証済):
+      1. 単勝オッズ ≥ 10.0
+      2. composite レース内順位 ≤ 4（モデル絞り）
+      3. place_probability レース内順位 ≤ 2（k≤2 絞り）
+      4. バッジあり（jra_highodds_has_badge）
+    """
+    if win_odds is None or float(win_odds) < HIGHODDS_MIN_ODDS:
+        return False
+    if composite_rank is None or composite_rank > HIGHODDS_MAX_COMP_RANK:
+        return False
+    if place_prob_rank is None or place_prob_rank > HIGHODDS_MAX_PP_RANK:
+        return False
+    return jra_highodds_has_badge(anagusa_rank, nb_ave_rank, km_rank, dm_signals)
+
+
+class JraHighOddsPick(TypedDict):
+    """JRA 高オッズ穴 複勝＋ワイド軸 推奨（軸1頭につき1枚）。"""
+
+    axis_horse_number: int
+    """軸馬番（高オッズ穴）。"""
+
+    axis_win_odds: float
+    """軸の単勝オッズ。"""
+
+    place_bet: bool
+    """複勝(軸)を推奨するか（常に True）。"""
+
+    wide_partner_horse_number: int | None
+    """ワイド相手＝モデルcomposite1位の馬番（軸自身が1位なら None）。"""
+
+    rationale: str
+    """バッジ等の説明。"""
+
+
+def jra_build_highodds_pick(
+    axis_horse: dict,
+    comp_rank1_horse_number: int | None,
+) -> JraHighOddsPick:
+    """軸馬 dict から複勝＋ワイド軸の推奨を構築する。
+
+    Args:
+        axis_horse: 軸馬 dict（horse_number / win_odds / anagusa_rank / dm_signals 等）
+        comp_rank1_horse_number: レースの composite 1位馬番（ワイド相手）
+
+    Returns:
+        JraHighOddsPick
+    """
+    axis_no = int(axis_horse["horse_number"])
+    partner = (
+        comp_rank1_horse_number
+        if comp_rank1_horse_number is not None and int(comp_rank1_horse_number) != axis_no
+        else None
+    )
+    tags: list[str] = []
+    if axis_horse.get("anagusa_rank") in ("A", "B", "C"):
+        tags.append(f"穴{axis_horse['anagusa_rank']}")
+    dm = axis_horse.get("dm_signals")
+    if dm:
+        tags.extend(list(dm)[:2])
+    if axis_horse.get("nb_ave_rank") is not None and int(axis_horse["nb_ave_rank"]) <= 3:
+        tags.append("netkeiba上位")
+    if axis_horse.get("km_rank") is not None and int(axis_horse["km_rank"]) <= 3:
+        tags.append("kichiuma上位")
+    rationale = (
+        f"{axis_no}番 単勝{float(axis_horse.get('win_odds') or 0):.1f}倍 高オッズ穴"
+        + (f"[{','.join(tags)}]" if tags else "")
+        + (f" → 複勝＋ワイド軸(相手{partner}番=モデル1位)" if partner else " → 複勝")
+    )
+    return JraHighOddsPick(
+        axis_horse_number=axis_no,
+        axis_win_odds=float(axis_horse.get("win_odds") or 0.0),
+        place_bet=True,
+        wide_partner_horse_number=partner,
+        rationale=rationale,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 地方競馬 スイートスポット（v10 LightGBM win_probability ベース）
 # ---------------------------------------------------------------------------
 # v10 バックテスト（3年・南関4場 2023-05〜2026-05）:

@@ -563,6 +563,12 @@ export type ValueCandidate = {
   win_odds: number | null;
   index_rank: number | null;
   badges: string[];
+  /** 高オッズ穴 複勝＋ワイド軸の「軸」該当（単勝≥10×指数上位4×複勝確率上位2×バッジ）。 */
+  is_place_axis?: boolean;
+  /** ワイド相手＝モデル指数1位（=本命）の馬番。 */
+  wide_partner_horse_number?: number | null;
+  /** 確定着順（レース後表示用）。 */
+  finish_position?: number | null;
 };
 
 export type Recommendation = {
