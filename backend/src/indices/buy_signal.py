@@ -230,6 +230,46 @@ def jra_is_place_axis(
     return jra_highodds_has_badge(anagusa_rank, nb_ave_rank, km_rank, dm_signals)
 
 
+# ---------------------------------------------------------------------------
+# JRA 人気薄リランカー軸（2026-06-11・上記 jra_is_place_axis を置換する本番条件）
+# ---------------------------------------------------------------------------
+# 検証 (memory: upset_place_extraction.md):
+#   軸 = 単勝[10,15) × 非オッズリランカー上位1/3(学習期閾値) × バッジ
+#     A2(バッジ>=1): 2026純フォワード精度 35.3% (帯base27.0%) / 約8頭/日
+#     A3(バッジ>=2): 精度 32.7-39.6% / 約3頭/日 → tier="strong"
+#   発走前オッズ(-10分)判定でも34.8%。15倍超は精度が構造的に落ちるため帯外。
+#   リランカー実体は src/indices/upset_reranker.py（オッズ非使用 logistic）。
+
+UPSET_AXIS_BAND_MIN: float = 10.0
+UPSET_AXIS_BAND_MAX: float = 15.0
+
+
+def jra_upset_axis_tier(
+    win_odds: float | None,
+    ns_score: float | None,
+    ns_threshold: float | None,
+    badge_cnt: int | None,
+) -> str | None:
+    """JRA 人気薄複勝圏リランカー軸の判定。
+
+    Args:
+        win_odds: 単勝オッズ。
+        ns_score: リランカー非オッズスコア（UpsetReranker.score_race の ns）。
+        ns_threshold: 学習期帯内 2/3 分位の採用閾値（アーティファクト保持値）。
+        badge_cnt: バッジ数（穴ぐさ + netkeiba≤3 + kichiuma≤3 + DM battle≤2）。
+
+    Returns:
+        "strong"(バッジ>=2) / "standard"(バッジ>=1) / None(非該当)。
+    """
+    if win_odds is None or not (UPSET_AXIS_BAND_MIN <= float(win_odds) < UPSET_AXIS_BAND_MAX):
+        return None
+    if ns_score is None or ns_threshold is None or ns_score < ns_threshold:
+        return None
+    if badge_cnt is None or badge_cnt < 1:
+        return None
+    return "strong" if badge_cnt >= 2 else "standard"
+
+
 class JraHighOddsPick(TypedDict):
     """JRA 高オッズ穴 複勝＋ワイド軸 推奨（軸1頭につき1枚）。"""
 

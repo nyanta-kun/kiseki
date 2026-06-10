@@ -33,11 +33,12 @@ from ..db.models import (
 from ..indices.buy_signal import (
     is_sweet_spot,
     jra_horse_purchase_signal,
-    jra_is_place_axis,
     jra_race_ticket,
+    jra_upset_axis_tier,
 )
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..indices.upset_reranker import get_upset_reranker
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -294,6 +295,19 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 "jvan_time_dm": _f(entry.jvan_time_dm),
                 "jvan_battle_dm": _f(entry.jvan_battle_dm),
                 "anagusa_rank": ext.get("anagusa_rank"),
+                # サブ指数 (人気薄リランカー upset_reranker の特徴量)
+                "speed_index": _f(ci.speed_index),
+                "adjusted_speed_index": _f(ci.adjusted_speed_index),
+                "last_3f_index": _f(ci.last_3f_index),
+                "course_aptitude": _f(ci.course_aptitude),
+                "distance_aptitude": _f(ci.distance_aptitude),
+                "position_advantage": _f(ci.position_advantage),
+                "jockey_index": _f(ci.jockey_index),
+                "pace_index": _f(ci.pace_index),
+                "rotation_index": _f(ci.rotation_index),
+                "rebound_index": _f(ci.rebound_index),
+                "career_phase_index": _f(ci.career_phase_index),
+                "distance_change_index": _f(ci.distance_change_index),
             })
 
         if not horses:
@@ -858,6 +872,110 @@ def _value_badges(h: dict[str, Any]) -> list[str]:
     return badges
 
 
+def _build_upset_only_candidate(
+    race: dict[str, Any],
+    horses: list[dict[str, Any]],
+    top1: dict[str, Any],
+    upset_tier_map: dict[int, str | None],
+    entry_map: dict[tuple[int, int], int],
+    results_map: dict[tuple[int, int], dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any] | None:
+    """混戦(C)レース用: 人気薄リランカー軸のみの「穴軸」推奨を構築する。
+
+    混戦は本命推奨を出さないが、人気薄の複勝圏好走はレースの76%で起きる常態であり
+    混戦こそ穴の主戦場。軸の複勝＋本命(composite1位)とのワイドを提示する。
+    検証: A2 精度~35% / 発走前オッズ判定34.8% (memory: upset_place_extraction)。
+    """
+    axis = [h for h in horses if upset_tier_map.get(h["horse_number"])]
+    if not axis:
+        return None
+
+    target_horses: list[dict[str, Any]] = []
+    value_candidates: list[dict[str, Any]] = []
+    n_hit = 0
+    settled = False
+    payout = 0
+    for h in axis:
+        hid = entry_map.get((race["race_id"], h["horse_number"]))
+        rr = results_map.get((race["race_id"], hid)) if hid else None
+        fp = rr["finish_position"] if rr else None
+        final_win = rr["win_odds"] if rr and rr.get("win_odds") is not None else h.get("win_odds")
+        final_place = (
+            rr["place_odds"] if rr and rr.get("place_odds") is not None else h.get("place_odds")
+        )
+        if fp is not None:
+            settled = True
+            if fp <= 3:
+                n_hit += 1
+                payout += int(round(float(final_place or 0) * 100))
+        target_horses.append({
+            "horse_number": h["horse_number"],
+            "horse_name": h.get("horse_name"),
+            "composite_index": h.get("composite_index"),
+            "win_probability": h.get("win_probability"),
+            "place_probability": h.get("place_probability"),
+            "ev_win": h.get("ev_win"),
+            "ev_place": h.get("ev_place"),
+            "win_odds": final_win,
+            "place_odds": final_place,
+            "finish_position": fp,
+        })
+        value_candidates.append({
+            "horse_number": h["horse_number"],
+            "horse_name": h.get("horse_name"),
+            "win_odds": h.get("win_odds"),
+            "index_rank": h.get("index_rank"),
+            "badges": _value_badges(h),
+            "is_place_axis": True,
+            "upset_tier": upset_tier_map.get(h["horse_number"]),
+            "wide_partner_horse_number": top1["horse_number"],
+            "finish_position": fp,
+        })
+
+    axis_desc = "・".join(
+        f"{h['horse_number']}番(単勝{float(h.get('win_odds') or 0):.0f}倍)" for h in axis
+    )
+    reason = (
+        f"混戦・本命見送り。穴軸{axis_desc}"
+        f"（単勝10-15倍×リランカー上位×バッジ・複勝圏精度~35%検証）"
+        f"＋ワイド相手{top1['horse_number']}番=指数1位"
+    )
+    return {
+        "race_id": race["race_id"],
+        "course_name": race["course_name"],
+        "race_number": race["race_number"],
+        "race_name": race.get("race_name"),
+        "post_time": race.get("post_time"),
+        "surface": race.get("surface"),
+        "distance": race.get("distance"),
+        "grade": race.get("grade"),
+        "head_count": race.get("head_count"),
+        "bet_type": "place",
+        "tier": "穴",
+        "ticket_combos": [[h["horse_number"]] for h in axis],
+        "points": len(axis),
+        "roi_basis": None,
+        "is_verified": True,  # 的中精度は純フォワード検証済み。ROIは謳わない
+        "target_horses": target_horses,
+        "value_candidates": value_candidates,
+        "snapshot_win_odds": {
+            str(h["horse_number"]): float(h["win_odds"])
+            for h in horses if h.get("win_odds") is not None
+        },
+        "snapshot_place_odds": {
+            str(h["horse_number"]): float(h["place_odds"])
+            for h in horses if h.get("place_odds") is not None
+        },
+        "snapshot_at": now,
+        "reason": reason,
+        "confidence": 0.35,  # A2 複勝圏精度の実測値
+        "result_correct": (n_hit >= 1) if settled else None,
+        "result_payout": payout if settled else None,
+        "result_updated_at": now if settled else None,
+    }
+
+
 async def build_hit_tier_recommendations(
     session: AsyncSession, date: str
 ) -> list[dict[str, Any]]:
@@ -872,6 +990,7 @@ async def build_hit_tier_recommendations(
         return []
 
     now = datetime.now(UTC)
+    upset_reranker = get_upset_reranker()  # アーティファクト未配置なら None=軸判定オフ
 
     # 結果・horse_id 解決マップ（settlement 用）
     race_ids_all = [r["race_id"] for r in race_data]
@@ -911,8 +1030,38 @@ async def build_hit_tier_recommendations(
         top1 = ranked[0]
         top_odds = top1.get("win_odds")
         tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds)
+
+        # 人気薄リランカー軸スコア（C レースでも算出する: 混戦こそ穴の主戦場）
+        # 2026-06-11 検証 (memory: upset_place_extraction):
+        #   軸 = 単勝[10,15) × 非オッズリランカー上位1/3 × バッジ。
+        #   2026純フォワード精度35.3%（発走前オッズ判定34.8%）・バッジ2+で"strong"。
+        upset_scores = (
+            upset_reranker.score_race(horses, race.get("head_count"))
+            if upset_reranker
+            else {}
+        )
+        upset_tier_map: dict[int, str | None] = {}
+        for h in horses:
+            us = upset_scores.get(h["horse_number"])
+            upset_tier_map[h["horse_number"]] = (
+                jra_upset_axis_tier(
+                    win_odds=h.get("win_odds"),
+                    ns_score=us["ns"],
+                    ns_threshold=upset_reranker.threshold if upset_reranker else None,
+                    badge_cnt=us["badge_cnt"],
+                )
+                if us
+                else None
+            )
+
         if tier == "C":
-            continue  # 混戦は本命不在 → 推奨しない（的中重視）
+            # 混戦は本命推奨を出さないが、穴軸該当馬がいれば「穴軸」推奨を出す
+            upset_only = _build_upset_only_candidate(
+                race, horses, top1, upset_tier_map, entry_map, results_map, now
+            )
+            if upset_only:
+                candidates.append(upset_only)
+            continue
 
         bet_type = _HIT_TIER_BET[tier]
 
@@ -936,27 +1085,17 @@ async def build_hit_tier_recommendations(
             "finish_position": finish_pos,
         }]
 
-        # 妙味候補（収支保証なし・注記）: 本命以外でバッジを持つ馬
-        # 高オッズ穴 複勝＋ワイド軸（2026-06-09 検証, memory: highodds_place_wide_recommendation）:
-        #   軸 = 単勝≥10 × composite上位4 × place_prob上位2 × バッジ。
-        #   複勝(軸)的中~27%/複ROI0.89・ワイド軸×モデル1位 ROI1.05。ワイド相手は
-        #   composite1位＝本命(top1) なので「妙味軸を複勝＋本命とのワイドで結ぶ」になる。
+        # 妙味候補（収支保証なし・注記）: 本命以外でバッジ or 穴軸該当の馬
+        # ワイド相手は composite1位＝本命(top1)（ワイド軸×モデル1位 ROI1.05, 2026-06-09）。
         value_candidates: list[dict[str, Any]] = []
         for h in horses:
             if h["horse_number"] == top1["horse_number"]:
                 continue
             badges = _value_badges(h)
-            if not badges:
+            upset_tier = upset_tier_map.get(h["horse_number"])
+            if not badges and upset_tier is None:
                 continue
-            is_axis = jra_is_place_axis(
-                win_odds=h.get("win_odds"),
-                composite_rank=h.get("index_rank"),
-                place_prob_rank=h.get("place_prob_rank"),
-                anagusa_rank=h.get("anagusa_rank"),
-                nb_ave_rank=h.get("nb_ave_rank"),
-                km_rank=h.get("km_rank"),
-                dm_signals=h.get("dm_signals"),
-            )
+            is_axis = upset_tier is not None
             vc_hid = entry_map.get((race["race_id"], h["horse_number"]))
             vc_rr = results_map.get((race["race_id"], vc_hid)) if vc_hid else None
             value_candidates.append({
@@ -967,6 +1106,7 @@ async def build_hit_tier_recommendations(
                 "badges": badges,
                 # 高オッズ穴 複勝＋ワイド軸（軸のみ・相手=本命=composite1位）
                 "is_place_axis": is_axis,
+                "upset_tier": upset_tier,
                 "wide_partner_horse_number": top1["horse_number"] if is_axis else None,
                 "finish_position": vc_rr["finish_position"] if vc_rr else None,
             })
@@ -1039,8 +1179,8 @@ async def build_hit_tier_recommendations(
             "result_updated_at": result_updated_at,
         })
 
-    # tier 優先（S>A>B）→ confidence 降順で rank 付け
-    tier_order = {"S": 0, "A": 1, "B": 2}
+    # tier 優先（S>A>B>穴）→ confidence 降順で rank 付け
+    tier_order = {"S": 0, "A": 1, "B": 2, "穴": 3}
     candidates.sort(key=lambda c: (tier_order.get(c["tier"], 9), -c["confidence"]))
     for i, c in enumerate(candidates, start=1):
         c["rank"] = i
