@@ -35,6 +35,7 @@ from ..indices.buy_signal import (
     chihou_low_odds_trust_level,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
+from ..indices.chihou_upset import get_chihou_upset_reranker
 
 logger = logging.getLogger(__name__)
 
@@ -105,15 +106,13 @@ def _to_taigen_dome(text: str) -> str:
     return joined
 
 
-async def _fetch_external_consensus(
+async def _fetch_external_raw(
     session: AsyncSession, race_ids: list[int]
-) -> dict[int, dict[int, int]]:
-    """sekito.kichiuma / sekito.netkeiba から外部指数コンセンサスを取得する。
+) -> dict[int, dict[int, tuple[float | None, float | None]]]:
+    """sekito.kichiuma / sekito.netkeiba の生スコアを馬単位で取得する。
 
     Returns:
-        dict[race_id, dict[horse_number, external_consensus]]
-        external_consensus: 0〜2（kichiuma/netkeibaのうち何本が1位と一致するか）
-        レース自体に外部データが存在しない場合は race_id がキーに含まれない。
+        dict[race_id, dict[horse_number, (kichiuma sp_score, netkeiba idx_ave)]]
     """
     if not race_ids:
         return {}
@@ -154,6 +153,20 @@ async def _fetch_external_consensus(
             float(sp_score) if sp_score is not None else None,
             float(idx_ave) if idx_ave is not None else None,
         )
+    return raw
+
+
+async def _fetch_external_consensus(
+    session: AsyncSession, race_ids: list[int]
+) -> dict[int, dict[int, int]]:
+    """sekito.kichiuma / sekito.netkeiba から外部指数コンセンサスを取得する。
+
+    Returns:
+        dict[race_id, dict[horse_number, external_consensus]]
+        external_consensus: 0〜2（kichiuma/netkeibaのうち何本が1位と一致するか）
+        レース自体に外部データが存在しない場合は race_id がキーに含まれない。
+    """
+    raw = await _fetch_external_raw(session, race_ids)
 
     result: dict[int, dict[int, int]] = {}
     for race_id, horse_map in raw.items():
@@ -683,6 +696,10 @@ async def build_chihou_sweet_spot_recommendations(
         if _rr.horse_number is not None:
             results_map[(_rr.race_id, _rr.horse_number)] = _rr
 
+    # 穴軸複勝（upset_place）用: 外部生スコア + リランカー
+    upset_reranker = get_chihou_upset_reranker()  # アーティファクト未配置なら None
+    ext_raw = await _fetch_external_raw(session, race_ids) if upset_reranker else {}
+
     now = datetime.now(tz=UTC)
     candidates: list[dict[str, Any]] = []
 
@@ -718,6 +735,37 @@ async def build_chihou_sweet_spot_recommendations(
         place_bet_horses: list[dict[str, Any]] = []
         low_trusted: list[dict[str, Any]] = []
         low_untrusted: list[dict[str, Any]] = []
+        upset_axis: list[dict[str, Any]] = []
+
+        # 穴軸複勝（upset_place）: 人気薄リランカー スコア算出
+        # 2026-06-11 検証 (memory: upset_place_extraction 地方編):
+        #   単勝[10,15) × 非オッズスコア上位1/4 × 外部バッジ(吉馬/netkeiba上位3)
+        #   test(3分割凍結評価)精度37.5% CI[0.352,0.399] / 発走前-10分 30.7%（市場同数23.3%）
+        upset_scores: dict[int, Any] = {}
+        if upset_reranker is not None:
+            ext_map = ext_raw.get(race.id, {})
+            upset_rows = []
+            for _ci, _entry, _horse in horse_rows:
+                _hn = _entry.horse_number
+                if _hn is None:
+                    continue
+                _kc, _nk = ext_map.get(_hn, (None, None))
+                upset_rows.append({
+                    "horse_number": _hn,
+                    "win_odds": win_odds.get(str(_hn)),
+                    "speed_index": float(_ci.speed_index) if _ci.speed_index is not None else None,
+                    "last3f_index": float(_ci.last3f_index) if _ci.last3f_index is not None else None,
+                    "jockey_index": float(_ci.jockey_index) if _ci.jockey_index is not None else None,
+                    "rotation_index": (
+                        float(_ci.rotation_index) if _ci.rotation_index is not None else None
+                    ),
+                    "last_margin_index": (
+                        float(_ci.last_margin_index) if _ci.last_margin_index is not None else None
+                    ),
+                    "kc_sp": _kc,
+                    "nk_idx": _nk,
+                })
+            upset_scores = upset_reranker.score_race(upset_rows, race.head_count)
 
         # composite_index でレース内順位（降順・同値は先着）。sweet_spot/place_bet の
         # ランキング規則（Phase2）で使用する。
@@ -756,6 +804,13 @@ async def build_chihou_sweet_spot_recommendations(
                 low_trusted.append({**base})
             elif level == "untrusted":
                 low_untrusted.append({**base})
+            us = upset_scores.get(hn) if hn is not None else None
+            if us is not None and upset_reranker is not None:
+                u_tier = upset_reranker.axis_tier(wo, us["ns"], us["badge_cnt"])
+                if u_tier:
+                    upset_axis.append(
+                        {**base, "_ns": us["ns"], "_tier": u_tier, "_badge": us["badge_cnt"]}
+                    )
 
         # ---- 高オッズ穴狙い（既存）: k≥3 の混戦は除外 ----
         if sweet_horses and len(sweet_horses) < 3:
@@ -872,6 +927,70 @@ async def build_chihou_sweet_spot_recommendations(
                 "created_at": now,
             })
 
+        # ---- 穴軸複勝（upset_place）: 人気薄リランカー軸（2026-06-11 検証） ----
+        # レース内は ns 上位2頭まで。的中精度特化（複勝ROI≈0.83 は参考表示）。
+        if upset_axis:
+            upset_axis.sort(key=lambda h: -h["_ns"])
+            upset_picks = upset_axis[:2]
+            for h in upset_picks:
+                _attach_finish(h, race.id)
+            any_finished = any(h["finish_position"] is not None for h in upset_picks)
+            result_correct = None
+            result_payout = None
+            if any_finished:
+                placed = [
+                    h for h in upset_picks
+                    if h["finish_position"] is not None and h["finish_position"] <= 3
+                ]
+                if placed:
+                    result_correct = True
+                    placed.sort(key=lambda x: x["finish_position"])
+                    p_odds = placed[0].get("place_odds")
+                    result_payout = (
+                        int(round(float(p_odds) * 100)) if p_odds is not None else None
+                    )
+                else:
+                    result_correct = False
+                    result_payout = 0
+
+            max_ns = max(h["_ns"] for h in upset_picks)
+            reason = (
+                "地方 穴軸複勝（人気薄リランカー）：単勝10-15倍 × 非オッズスコア上位1/4 × "
+                "外部バッジ（吉馬/netkeiba上位3）。"
+                "検証: 確定オッズ的中37.5%・発走前-10分30.7%（市場同数23.3%比 +7pt）。"
+                "複勝ROI≈0.83 — 的中精度特化・予想の参考用。 "
+                + " / ".join(
+                    f"{h['horse_number']}番{h.get('horse_name') or ''}"
+                    f"(単{(h.get('win_odds') or 0):.1f}/バッジ{h['_badge']}"
+                    f"{'★' if h['_tier'] == 'strong' else ''})"
+                    for h in upset_picks
+                )
+            )
+            candidates.append({
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "head_count": race.head_count,
+                "bet_type": "place",
+                "category": "upset_place",
+                "race_concentration": race_concentration,
+                "target_horses": upset_picks,
+                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                "snapshot_at": now,
+                "reason": reason,
+                "confidence": 0.50,
+                "max_ev": max_ns,
+                "result_correct": result_correct,
+                "result_payout": result_payout,
+                "result_updated_at": now if any_finished else None,
+                "created_at": now,
+            })
+
         # ---- 低オッズ本命（信頼/不信頼）: 各カテゴリ最低オッズ馬1頭のみ採用 ----
         for category, horses, base_reason in (
             (
@@ -939,8 +1058,9 @@ async def build_chihou_sweet_spot_recommendations(
     _CATEGORY_ORDER = {
         "sweet_spot": 0,
         "place_bet": 1,
-        "low_odds_trusted": 2,
-        "low_odds_untrusted": 3,
+        "upset_place": 2,
+        "low_odds_trusted": 3,
+        "low_odds_untrusted": 4,
     }
     candidates.sort(key=lambda x: (_CATEGORY_ORDER.get(x.get("category", ""), 99), -x["max_ev"]))
     for i, c in enumerate(candidates, start=1):
@@ -949,11 +1069,13 @@ async def build_chihou_sweet_spot_recommendations(
         c.pop("max_ev", None)
 
     logger.info(
-        "地方スイートスポット推奨: %s → 計%d件 (sweet_spot=%d, place_bet=%d, low_trusted=%d, low_untrusted=%d)",
+        "地方スイートスポット推奨: %s → 計%d件 (sweet_spot=%d, place_bet=%d, upset=%d, "
+        "low_trusted=%d, low_untrusted=%d)",
         date,
         len(candidates),
         sum(1 for c in candidates if c.get("category") == "sweet_spot"),
         sum(1 for c in candidates if c.get("category") == "place_bet"),
+        sum(1 for c in candidates if c.get("category") == "upset_place"),
         sum(1 for c in candidates if c.get("category") == "low_odds_trusted"),
         sum(1 for c in candidates if c.get("category") == "low_odds_untrusted"),
     )

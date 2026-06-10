@@ -25,6 +25,7 @@ function formatPostTime(t: string | null): string {
 const CATEGORY_LABEL: Record<ChihouRecommendCategory, string> = {
   sweet_spot: "★ 穴",
   place_bet: "◆ 複穴",
+  upset_place: "🎯 穴軸",
   low_odds_trusted: "🟢 信頼",
   low_odds_untrusted: "🟡 不信頼",
 };
@@ -32,6 +33,7 @@ const CATEGORY_LABEL: Record<ChihouRecommendCategory, string> = {
 const CATEGORY_ACCENT: Record<ChihouRecommendCategory, string> = {
   sweet_spot: "text-red-700 bg-red-50 border-red-100",
   place_bet: "text-blue-700 bg-blue-50 border-blue-100",
+  upset_place: "text-rose-700 bg-rose-50 border-rose-100",
   low_odds_trusted: "text-emerald-700 bg-emerald-50 border-emerald-100",
   low_odds_untrusted: "text-amber-700 bg-amber-50 border-amber-100",
 };
@@ -101,7 +103,8 @@ function buildVenueStats(
     n_total: 0, n_settled: 0, n_hits: 0, payout_sum: 0, payout_count: 0, bet_type: null,
   });
   const emptyRow = (): Record<ChihouRecommendCategory, VenueCellStat> => ({
-    sweet_spot: empty(), place_bet: empty(), low_odds_trusted: empty(), low_odds_untrusted: empty(),
+    sweet_spot: empty(), place_bet: empty(), upset_place: empty(),
+    low_odds_trusted: empty(), low_odds_untrusted: empty(),
   });
   for (const rec of items) {
     const cat = (rec.category ?? "sweet_spot") as ChihouRecommendCategory;
@@ -148,7 +151,7 @@ function VenueSummaryTable({ items }: { items: ChihouRecommendation[] }) {
   if (stats.size === 0) return null;
   const venues = Array.from(stats.keys()).sort();
   const cats: ChihouRecommendCategory[] = [
-    "sweet_spot", "place_bet", "low_odds_trusted", "low_odds_untrusted",
+    "sweet_spot", "place_bet", "upset_place", "low_odds_trusted", "low_odds_untrusted",
   ];
   return (
     <div className="overflow-x-auto -mx-2 px-2">
@@ -323,7 +326,7 @@ function CategoryTable({
 }) {
   if (items.length === 0) return null;
   const sorted = [...items].sort((a, b) => (a.race.post_time ?? "").localeCompare(b.race.post_time ?? ""));
-  const showPlace = category === "place_bet" || category === "sweet_spot";
+  const showPlace = category === "place_bet" || category === "sweet_spot" || category === "upset_place";
   const placeRoi = category === "sweet_spot" ? computePlaceRoi(sorted) : null;
   return (
     <div>
@@ -450,6 +453,12 @@ const SECTIONS: Array<{
     note: "1番人気<2.0 ∧ 単勝≥10 ∧ EV 1.2-2.0。30日実勢 hit≈22% / 複勝ROI≈0.78（控除率分マイナス・予想の参考）",
   },
   {
+    key: "upset_place",
+    title: "🎯 穴軸複勝（人気薄リランカー）",
+    titleClass: "text-rose-700",
+    note: "単勝10-15倍 × 非オッズスコア上位1/4 × 外部バッジ。検証: 確定オッズ的中37.5% / 発走前-10分30.7%（市場同数23.3%・複勝ROI≈0.83・的中精度特化）",
+  },
+  {
     key: "low_odds_trusted",
     title: "🟢 信頼できる本命（単勝<1.5）",
     titleClass: "text-emerald-700",
@@ -504,6 +513,7 @@ export function ChihouRecommendPanelClient({
   const byCategory: Record<ChihouRecommendCategory, ChihouRecommendation[]> = {
     sweet_spot: [],
     place_bet: [],
+    upset_place: [],
     low_odds_trusted: [],
     low_odds_untrusted: [],
   };

@@ -18,6 +18,7 @@ const TIER_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   S: { bg: "bg-red-500", text: "text-white", label: "S 鉄板" },
   A: { bg: "bg-orange-500", text: "text-white", label: "A 信頼" },
   B: { bg: "bg-sky-500", text: "text-white", label: "B 複勝圏" },
+  穴: { bg: "bg-rose-500", text: "text-white", label: "穴軸" },
   // 以下は旧 sweet_spot/3連複（現在は降格・通常は出力されない）
   SS: { bg: "bg-red-600", text: "text-white", label: "SS" },
   "3F-2軸": { bg: "bg-purple-500", text: "text-white", label: "3F-2軸" },
@@ -259,7 +260,7 @@ export function RecommendCard({ rec }: Props) {
                   ))}
                   {v.is_place_axis && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">
-                      🎯複勝＋ワイド軸
+                      🎯複勝＋ワイド軸{v.upset_tier === "strong" && "★強"}
                       {v.wide_partner_horse_number != null && `(相手${v.wide_partner_horse_number}番=本命)`}
                     </span>
                   )}

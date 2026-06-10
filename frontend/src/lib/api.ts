@@ -563,8 +563,10 @@ export type ValueCandidate = {
   win_odds: number | null;
   index_rank: number | null;
   badges: string[];
-  /** 高オッズ穴 複勝＋ワイド軸の「軸」該当（単勝≥10×指数上位4×複勝確率上位2×バッジ）。 */
+  /** 高オッズ穴 複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/3×バッジ）。 */
   is_place_axis?: boolean;
+  /** 軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+) / null。 */
+  upset_tier?: string | null;
   /** ワイド相手＝モデル指数1位（=本命）の馬番。 */
   wide_partner_horse_number?: number | null;
   /** 確定着順（レース後表示用）。 */
@@ -777,6 +779,7 @@ export type ChihouTargetHorse = {
 export type ChihouRecommendCategory =
   | "sweet_spot"          // 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
   | "place_bet"           // 複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ EV 1.2-2.0、複勝買い)
+  | "upset_place"         // 穴軸複勝 (単勝10-15倍×人気薄リランカー×外部バッジ、的中精度特化)
   | "low_odds_trusted"    // 信頼できる本命 (単勝<1.5)
   | "low_odds_untrusted"; // 信頼できない本命 (1.5≤単勝<2.0)
 

@@ -86,9 +86,11 @@ class ValueCandidate(BaseModel):
     win_odds: float | None
     index_rank: int | None
     badges: list[str]
-    # 高オッズ穴 複勝＋ワイド軸（2026-06-09・検証 memory: highodds_place_wide_recommendation）
+    # 高オッズ穴 複勝＋ワイド軸（2026-06-11・検証 memory: upset_place_extraction）
     is_place_axis: bool = False
-    """複勝＋ワイド軸の「軸」該当（単勝≥10×composite上位4×place_prob上位2×バッジ）。"""
+    """複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/4×バッジ）。"""
+    upset_tier: str | None = None
+    """軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+・test精度~33%) / None。"""
     wide_partner_horse_number: int | None = None
     """ワイド相手＝モデルcomposite1位（=本命）の馬番。"""
     finish_position: int | None = None
@@ -258,6 +260,7 @@ def _hit_tier_to_out(c: dict[str, Any]) -> RecommendationOut:
             index_rank=v.get("index_rank"),
             badges=v.get("badges", []),
             is_place_axis=v.get("is_place_axis", False),
+            upset_tier=v.get("upset_tier"),
             wide_partner_horse_number=v.get("wide_partner_horse_number"),
             finish_position=v.get("finish_position"),
         )
