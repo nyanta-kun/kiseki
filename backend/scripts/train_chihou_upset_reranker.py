@@ -1,7 +1,8 @@
 """地方競馬 人気薄(単勝10-15倍)複勝圏リランカー 学習スクリプト.
 
 検証記録: memory upset_place_extraction.md 地方編 (2026-06-11)
-  - test OOS(2026-01〜06) A2=37.4% (帯base31.8%) / 発走前オッズでも30-32% (市場20-27%)
+  - train/val/test 3分割再実施: test A2=37.5% CI[0.352,0.399] / 発走前-10分 30.7% (市場23.3%)
+  - ウォークフォワード3fold 34.8/35.1/37.1%で全fold市場超え
   - v10 モデル確率は train_range が全期間(in-sample)のため特徴に使わない
 
 実行:
@@ -45,6 +46,9 @@ DSN = (
 )
 
 ARTIFACT_PATH = _root / "models" / "chihou_upset_reranker.v1.json"
+
+# 採用閾値の分位。train/val/test 3分割の検証期間で {0.50, 2/3, 0.75} から選定
+THRESHOLD_QUANTILE: float = 0.75
 
 SQL = r"""
 SELECT ci.race_id, r.date::int date, r.head_count hc,
@@ -116,7 +120,7 @@ def fit(uni: pd.DataFrame) -> dict:
         (uni.win_odds >= CHIHOU_UPSET_BAND_MIN) & (uni.win_odds < CHIHOU_UPSET_BAND_MAX)
     ]
     ns_band = model.predict_proba(sc.transform(band[FEATURES].fillna(med)))[:, 1]
-    threshold = float(np.quantile(ns_band, 2 / 3))
+    threshold = float(np.quantile(ns_band, THRESHOLD_QUANTILE))
 
     return {
         "version": 1,
@@ -193,7 +197,7 @@ def main() -> None:
             artifact["validation"] = validate(artifact, recent)
             artifact["validation"]["note"] = "in-sample reference (trained on full period)"
 
-    print(f"threshold(band ns 2/3 quantile): {artifact['threshold']:.4f}")
+    print(f"threshold(band ns {THRESHOLD_QUANTILE} quantile): {artifact['threshold']:.4f}")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(artifact, ensure_ascii=False, indent=1))

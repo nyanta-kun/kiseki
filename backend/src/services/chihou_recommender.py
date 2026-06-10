@@ -739,8 +739,8 @@ async def build_chihou_sweet_spot_recommendations(
 
         # 穴軸複勝（upset_place）: 人気薄リランカー スコア算出
         # 2026-06-11 検証 (memory: upset_place_extraction 地方編):
-        #   単勝[10,15) × 非オッズスコア上位1/3 × 外部バッジ(吉馬/netkeiba上位3)
-        #   確定オッズ精度37.4% / 発走前オッズでも30-32%（市場同数20-27%比 +4〜13pt）
+        #   単勝[10,15) × 非オッズスコア上位1/4 × 外部バッジ(吉馬/netkeiba上位3)
+        #   test(3分割凍結評価)精度37.5% CI[0.352,0.399] / 発走前-10分 30.7%（市場同数23.3%）
         upset_scores: dict[int, Any] = {}
         if upset_reranker is not None:
             ext_map = ext_raw.get(race.id, {})
@@ -955,9 +955,9 @@ async def build_chihou_sweet_spot_recommendations(
 
             max_ns = max(h["_ns"] for h in upset_picks)
             reason = (
-                "地方 穴軸複勝（人気薄リランカー）：単勝10-15倍 × 非オッズスコア上位1/3 × "
+                "地方 穴軸複勝（人気薄リランカー）：単勝10-15倍 × 非オッズスコア上位1/4 × "
                 "外部バッジ（吉馬/netkeiba上位3）。"
-                "検証: 確定オッズ的中37%・発走前オッズ30-32%（市場同数20-27%比 +4〜13pt）。"
+                "検証: 確定オッズ的中37.5%・発走前-10分30.7%（市場同数23.3%比 +7pt）。"
                 "複勝ROI≈0.83 — 的中精度特化・予想の参考用。 "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"

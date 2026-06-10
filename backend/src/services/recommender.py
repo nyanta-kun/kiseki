@@ -885,7 +885,7 @@ def _build_upset_only_candidate(
 
     混戦は本命推奨を出さないが、人気薄の複勝圏好走はレースの76%で起きる常態であり
     混戦こそ穴の主戦場。軸の複勝＋本命(composite1位)とのワイドを提示する。
-    検証: A2 精度~35% / 発走前オッズ判定34.8% (memory: upset_place_extraction)。
+    検証: A2 test精度33.1% / 発走前オッズ判定35.3% (memory: upset_place_extraction)。
     """
     axis = [h for h in horses if upset_tier_map.get(h["horse_number"])]
     if not axis:
@@ -938,7 +938,7 @@ def _build_upset_only_candidate(
     )
     reason = (
         f"混戦・本命見送り。穴軸{axis_desc}"
-        f"（単勝10-15倍×リランカー上位×バッジ・複勝圏精度~35%検証）"
+        f"（単勝10-15倍×リランカー上位×バッジ・複勝圏精度~33%検証）"
         f"＋ワイド相手{top1['horse_number']}番=指数1位"
     )
     return {
@@ -1033,8 +1033,8 @@ async def build_hit_tier_recommendations(
 
         # 人気薄リランカー軸スコア（C レースでも算出する: 混戦こそ穴の主戦場）
         # 2026-06-11 検証 (memory: upset_place_extraction):
-        #   軸 = 単勝[10,15) × 非オッズリランカー上位1/3 × バッジ。
-        #   2026純フォワード精度35.3%（発走前オッズ判定34.8%）・バッジ2+で"strong"。
+        #   軸 = 単勝[10,15) × 非オッズリランカー上位1/4 × バッジ。
+        #   test(3分割凍結評価)精度33.1%・発走前オッズ判定35.3%・バッジ2+で"strong"。
         upset_scores = (
             upset_reranker.score_race(horses, race.get("head_count"))
             if upset_reranker

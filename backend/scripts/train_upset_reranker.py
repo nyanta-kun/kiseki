@@ -1,9 +1,10 @@
 """人気薄(単勝10-15倍)複勝圏リランカー 学習スクリプト.
 
 「人気がない馬が3着以内に好走する馬」の抽出器（精度特化・ROI目的でない）。
-検証記録: memory upset_place_extraction.md (2026-06-11)
-  - ウォークフォワード4fold / 2026純フォワード精度35.3% (帯base27.0%)
-  - 発走前オッズ(-10分)判定でも34.8%（実運用入力で成立）
+検証記録: memory upset_place_extraction.md (2026-06-11・3分割プロトコルで再実施済)
+  - train(〜2025-06)/val(2025-07〜12: 帯・閾値分位の選択専用)/test(2026-01〜06: 凍結1回評価)
+  - test: A2 精度33.1% CI[0.283,0.381] (帯base27.0%・市場同数29.0%)
+  - 発走前オッズ(-10分)判定: 35.3% (帯base24.2%・市場同数26.1%)
   - エッジの源泉は外部指数バッジ（吉馬2024+/netkeiba2025+のため過去foldは検証不能）
 
 オッズを特徴に使わない logistic 回帰（市場の写像化を防ぎ、帯内の並べ替えに特化）。
@@ -52,6 +53,9 @@ DSN = (
 )
 
 ARTIFACT_PATH = _root / "models" / "upset_reranker.v1.json"
+
+# 採用閾値の分位。train/val/test 3分割の検証期間で {0.50, 2/3, 0.75} から選定
+THRESHOLD_QUANTILE: float = 0.75
 
 SQL = """
 WITH m(jra,sek) AS (VALUES
@@ -132,10 +136,11 @@ def fit(uni: pd.DataFrame, feats: list[str]) -> dict:
     model = LogisticRegression(max_iter=2000, C=0.5)
     model.fit(sc.transform(x), uni.top3)
 
-    # 閾値 = 帯[10,15) 内 ns スコアの学習期 2/3 分位（上位1/3 を採用）
+    # 閾値 = 帯[10,15) 内 ns スコアの学習期 3/4 分位（上位1/4 を採用）
+    # q=0.75 は train/val/test 3分割の検証期間(2025-07〜12)グリッドで選定 (2026-06-11)
     band = uni[(uni.win_odds >= UPSET_BAND_MIN) & (uni.win_odds < UPSET_BAND_MAX)]
     ns_band = model.predict_proba(sc.transform(band[feats].fillna(med)))[:, 1]
-    threshold = float(np.quantile(ns_band, 2 / 3))
+    threshold = float(np.quantile(ns_band, THRESHOLD_QUANTILE))
 
     return {
         "version": 1,
@@ -222,7 +227,7 @@ def main() -> None:
             artifact["validation"]["note"] = "in-sample reference (trained on full period)"
 
     print(f"features({len(artifact['features'])}): {artifact['features']}")
-    print(f"threshold(band ns 2/3 quantile): {artifact['threshold']:.4f}")
+    print(f"threshold(band ns {THRESHOLD_QUANTILE} quantile): {artifact['threshold']:.4f}")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

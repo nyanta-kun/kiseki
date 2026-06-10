@@ -88,9 +88,9 @@ class ValueCandidate(BaseModel):
     badges: list[str]
     # 高オッズ穴 複勝＋ワイド軸（2026-06-11・検証 memory: upset_place_extraction）
     is_place_axis: bool = False
-    """複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/3×バッジ）。"""
+    """複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/4×バッジ）。"""
     upset_tier: str | None = None
-    """軸の強度: "strong"(バッジ2+・精度~33-40%) / "standard"(バッジ1+・精度~35%) / None。"""
+    """軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+・test精度~33%) / None。"""
     wide_partner_horse_number: int | None = None
     """ワイド相手＝モデルcomposite1位（=本命）の馬番。"""
     finish_position: int | None = None
