@@ -662,6 +662,17 @@ def parse_odds(data: str) -> dict[str, Any] | None:
 
     個別オッズの展開は odds_importer で行う。
     ここではレースIDと券種のみ抽出し raw_data を保持する。
+
+    JVDF v4.9 速報系 DataSpec (JVRTOpen) と対応レコード種別ID:
+      0B31 → O1: 単勝・複勝・枠連 (962バイト)
+      0B32 → O2: 馬連 (2042バイト, 153組×13byte: 組番4+オッズ6+人気順3)
+      0B33 → O3: ワイド (2654バイト, 153組×17byte: 組番4+最低5+最高5+人気順3)
+      0B34 → O4: 馬単 (4031バイト, 306組×13byte: 組番4+オッズ6+人気順3)
+      0B35 → O5: 三連複 (12293バイト, 816組×15byte: 組番6+オッズ6+人気順3)
+      0B36 → O6: 三連単 (83285バイト, 4896組×17byte: 組番6+オッズ7+人気順4)
+
+    ※ 旧コードで O4=馬連, O5=ワイド, O6=馬単, O7=三連複, O8=三連単 と誤記されていたが
+      正しい JVDF 仕様では O2=馬連, O3=ワイド, O4=馬単, O5=三連複, O6=三連単 (2024-08-07確認)
     """
     if len(data) < 27:
         return None
@@ -671,15 +682,14 @@ def parse_odds(data: str) -> dict[str, Any] | None:
         if rec_id not in ("O1", "O2", "O3", "O4", "O5", "O6"):
             return None
 
+        # JVDF v4.9 仕様書 p.8-12 準拠 (2024-08-07版で確認)
         bet_type_map = {
-            "O1": "win",  # 単勝
-            "O2": "place",  # 複勝
-            "O3": "bracket_quinella",  # 枠連
-            "O4": "quinella",  # 馬連
-            "O5": "quinella_place",  # ワイド
-            "O6": "exacta",  # 馬単
-            "O7": "trio",  # 三連複
-            "O8": "trifecta",  # 三連単
+            "O1": "win",              # 単勝・複勝・枠連 (O1 レコードに3種混在)
+            "O2": "quinella",         # 馬連 (2042バイト, 153組)
+            "O3": "quinella_place",   # ワイド (2654バイト, 153組)
+            "O4": "exacta",           # 馬単 (4031バイト, 306組)
+            "O5": "trio",             # 三連複 (12293バイト, 816組)
+            "O6": "trifecta",         # 三連単 (83285バイト, 4896組)
         }
 
         header = _parse_common_header(data)

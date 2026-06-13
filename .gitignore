@@ -35,6 +35,8 @@ windows-agent/test_*.py
 data/raw/
 data/processed/
 *.csv
+backend/data/roi100/
+backend/data/roi100/*.pkl
 
 # Node.js
 node_modules/
