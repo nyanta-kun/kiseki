@@ -563,12 +563,16 @@ export type ValueCandidate = {
   win_odds: number | null;
   index_rank: number | null;
   badges: string[];
-  /** 高オッズ穴 複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/3×バッジ）。 */
+  /** 複勝EVモデルの人気薄1頭軸該当（単勝10倍+×較正複勝率フロア×EV最大の1頭）。 */
   is_place_axis?: boolean;
-  /** 軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+) / null。 */
+  /** 軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+/0) / null。 */
   upset_tier?: string | null;
   /** ワイド相手＝モデル指数1位（=本命）の馬番。 */
   wide_partner_horse_number?: number | null;
+  /** 複勝EVモデルの較正済み複勝圏確率（軸該当馬のみ）。 */
+  place_prob_cal?: number | null;
+  /** 複勝EV = 較正複勝率 × 複勝最低オッズ近似（軸該当馬のみ）。 */
+  place_ev?: number | null;
   /** 確定着順（レース後表示用）。 */
   finish_position?: number | null;
 };

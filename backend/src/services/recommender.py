@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..betting.place_ev import get_place_ev_model
 from ..db.models import (
     CalculatedIndex,
     Horse,
@@ -34,11 +35,9 @@ from ..indices.buy_signal import (
     is_sweet_spot,
     jra_horse_purchase_signal,
     jra_race_ticket,
-    jra_upset_axis_tier,
 )
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
-from ..indices.upset_reranker import get_upset_reranker
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -877,15 +876,16 @@ def _build_upset_only_candidate(
     horses: list[dict[str, Any]],
     top1: dict[str, Any],
     upset_tier_map: dict[int, str | None],
+    place_pick_map: dict[int, Any],
     entry_map: dict[tuple[int, int], int],
     results_map: dict[tuple[int, int], dict[str, Any]],
     now: datetime,
 ) -> dict[str, Any] | None:
-    """混戦(C)レース用: 人気薄リランカー軸のみの「穴軸」推奨を構築する。
+    """混戦(C)レース用: 複勝EVモデルの人気薄1頭「穴軸」推奨を構築する。
 
     混戦は本命推奨を出さないが、人気薄の複勝圏好走はレースの76%で起きる常態であり
     混戦こそ穴の主戦場。軸の複勝＋本命(composite1位)とのワイドを提示する。
-    検証: A2 test精度33.1% / 発走前オッズ判定35.3% (memory: upset_place_extraction)。
+    検証: 複勝EVモデル test 的中25.5% / 2026純フォワード26.6% (memory: place_ev_model)。
     """
     axis = [h for h in horses if upset_tier_map.get(h["horse_number"])]
     if not axis:
@@ -921,6 +921,7 @@ def _build_upset_only_candidate(
             "place_odds": final_place,
             "finish_position": fp,
         })
+        ev_pick = place_pick_map.get(h["horse_number"])
         value_candidates.append({
             "horse_number": h["horse_number"],
             "horse_name": h.get("horse_name"),
@@ -930,15 +931,20 @@ def _build_upset_only_candidate(
             "is_place_axis": True,
             "upset_tier": upset_tier_map.get(h["horse_number"]),
             "wide_partner_horse_number": top1["horse_number"],
+            "place_prob_cal": ev_pick["place_probability"] if ev_pick else None,
+            "place_ev": ev_pick["expected_value"] if ev_pick else None,
             "finish_position": fp,
         })
 
     axis_desc = "・".join(
-        f"{h['horse_number']}番(単勝{float(h.get('win_odds') or 0):.0f}倍)" for h in axis
+        f"{h['horse_number']}番(単勝{float(h.get('win_odds') or 0):.0f}倍"
+        f"・複勝率{float((place_pick_map.get(h['horse_number']) or {}).get('place_probability') or 0) * 100:.0f}%"
+        f"・EV{float((place_pick_map.get(h['horse_number']) or {}).get('expected_value') or 0):.2f})"
+        for h in axis
     )
     reason = (
-        f"混戦・本命見送り。穴軸{axis_desc}"
-        f"（単勝10-15倍×リランカー上位×バッジ・複勝圏精度~33%検証）"
+        f"混戦・本命見送り。人気薄1頭 穴軸{axis_desc}"
+        f"（単勝10倍+×較正複勝率フロア×EV最大・複勝圏精度~26%検証）"
         f"＋ワイド相手{top1['horse_number']}番=指数1位"
     )
     return {
@@ -990,7 +996,7 @@ async def build_hit_tier_recommendations(
         return []
 
     now = datetime.now(UTC)
-    upset_reranker = get_upset_reranker()  # アーティファクト未配置なら None=軸判定オフ
+    place_ev_model = get_place_ev_model()  # アーティファクト未配置なら None=軸判定オフ
 
     # 結果・horse_id 解決マップ（settlement 用）
     race_ids_all = [r["race_id"] for r in race_data]
@@ -1031,33 +1037,29 @@ async def build_hit_tier_recommendations(
         top_odds = top1.get("win_odds")
         tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds)
 
-        # 人気薄リランカー軸スコア（C レースでも算出する: 混戦こそ穴の主戦場）
-        # 2026-06-11 検証 (memory: upset_place_extraction):
-        #   軸 = 単勝[10,15) × 非オッズリランカー上位1/4 × バッジ。
-        #   test(3分割凍結評価)精度33.1%・発走前オッズ判定35.3%・バッジ2+で"strong"。
-        upset_scores = (
-            upset_reranker.score_race(horses, race.get("head_count"))
-            if upset_reranker
-            else {}
+        # 複勝EVモデル: 毎レース人気薄1頭を選定（C レースでも算出: 混戦こそ穴の主戦場）
+        # 2026-06-13 検証 (memory: place_ev_model):
+        #   較正P(logistic+isotonic・オッズ込)×複勝オッズ近似でEV算出し、
+        #   的中率フロア(P_cal>=0.20)を満たす候補からEV最大の1頭を選ぶ。
+        #   test 的中25.5%/複ROI0.795・2026純フォワード26.6%。ROIは+EVでなく精度/表示用途。
+        place_pick = (
+            place_ev_model.pick_race(horses, race.get("head_count"))
+            if place_ev_model
+            else None
         )
+        # downstream 互換: 軸該当馬は selected pick 1頭のみ。tier はバッジ強度で表す。
         upset_tier_map: dict[int, str | None] = {}
-        for h in horses:
-            us = upset_scores.get(h["horse_number"])
-            upset_tier_map[h["horse_number"]] = (
-                jra_upset_axis_tier(
-                    win_odds=h.get("win_odds"),
-                    ns_score=us["ns"],
-                    ns_threshold=upset_reranker.threshold if upset_reranker else None,
-                    badge_cnt=us["badge_cnt"],
-                )
-                if us
-                else None
-            )
+        place_pick_map: dict[int, Any] = {}
+        if place_pick is not None:
+            hn = place_pick["horse_number"]
+            upset_tier_map[hn] = "strong" if place_pick["badge_cnt"] >= 2 else "standard"
+            place_pick_map[hn] = place_pick
 
         if tier == "C":
             # 混戦は本命推奨を出さないが、穴軸該当馬がいれば「穴軸」推奨を出す
             upset_only = _build_upset_only_candidate(
-                race, horses, top1, upset_tier_map, entry_map, results_map, now
+                race, horses, top1, upset_tier_map, place_pick_map,
+                entry_map, results_map, now
             )
             if upset_only:
                 candidates.append(upset_only)
@@ -1096,6 +1098,7 @@ async def build_hit_tier_recommendations(
             if not badges and upset_tier is None:
                 continue
             is_axis = upset_tier is not None
+            ev_pick = place_pick_map.get(h["horse_number"])
             vc_hid = entry_map.get((race["race_id"], h["horse_number"]))
             vc_rr = results_map.get((race["race_id"], vc_hid)) if vc_hid else None
             value_candidates.append({
@@ -1104,10 +1107,13 @@ async def build_hit_tier_recommendations(
                 "win_odds": h.get("win_odds"),
                 "index_rank": h.get("index_rank"),
                 "badges": badges,
-                # 高オッズ穴 複勝＋ワイド軸（軸のみ・相手=本命=composite1位）
+                # 複勝EVモデルの軸（軸=毎レース1頭・相手=本命=composite1位）
                 "is_place_axis": is_axis,
                 "upset_tier": upset_tier,
                 "wide_partner_horse_number": top1["horse_number"] if is_axis else None,
+                # 較正複勝圏確率と複勝EV（軸該当馬のみ非None）
+                "place_prob_cal": ev_pick["place_probability"] if ev_pick else None,
+                "place_ev": ev_pick["expected_value"] if ev_pick else None,
                 "finish_position": vc_rr["finish_position"] if vc_rr else None,
             })
 
@@ -1133,10 +1139,12 @@ async def build_hit_tier_recommendations(
         axis_vcs = [v for v in value_candidates if v.get("is_place_axis")]
         if axis_vcs:
             axis_desc = "・".join(
-                f"{v['horse_number']}番(単勝{float(v.get('win_odds') or 0):.0f}倍)"
+                f"{v['horse_number']}番(単勝{float(v.get('win_odds') or 0):.0f}倍"
+                f"・複勝率{float(v.get('place_prob_cal') or 0) * 100:.0f}%"
+                f"・EV{float(v.get('place_ev') or 0):.2f})"
                 for v in axis_vcs
             )
-            reason += f"。高オッズ穴 複勝＋ワイド軸{axis_desc}×本命{top1['horse_number']}番"
+            reason += f"。人気薄1頭 複勝＋ワイド軸{axis_desc}×本命{top1['horse_number']}番"
 
         # 結果判定
         result_correct: bool | None = None

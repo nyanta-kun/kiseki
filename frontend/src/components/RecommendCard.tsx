@@ -261,6 +261,9 @@ export function RecommendCard({ rec }: Props) {
                   {v.is_place_axis && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold">
                       🎯複勝＋ワイド軸{v.upset_tier === "strong" && "★強"}
+                      {v.place_prob_cal != null &&
+                        ` 複勝率${Math.round(v.place_prob_cal * 100)}%`}
+                      {v.place_ev != null && `・EV${v.place_ev.toFixed(2)}`}
                       {v.wide_partner_horse_number != null && `(相手${v.wide_partner_horse_number}番=本命)`}
                     </span>
                   )}
