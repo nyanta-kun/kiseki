@@ -388,7 +388,7 @@ class OddsImporter:
         Returns:
             OddsHistory 行の辞書リスト
         """
-        rows = []
+        rows: list[dict] = []
         data_start = EXOTIC_HEADER_SIZE  # 0-indexed: pos 52(1-indexed) = index 51(0-indexed)
         limit = max_combos if max_combos is not None else n_combos
 
