@@ -86,13 +86,17 @@ class ValueCandidate(BaseModel):
     win_odds: float | None
     index_rank: int | None
     badges: list[str]
-    # 高オッズ穴 複勝＋ワイド軸（2026-06-11・検証 memory: upset_place_extraction）
+    # 複勝EVモデルの人気薄1頭軸（2026-06-13・検証 memory: place_ev_model）
     is_place_axis: bool = False
-    """複勝＋ワイド軸の「軸」該当（単勝[10,15)×人気薄リランカー上位1/4×バッジ）。"""
+    """複勝＋ワイド軸の「軸」該当（単勝10倍+×較正複勝率フロア×EV最大の1頭）。"""
     upset_tier: str | None = None
-    """軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+・test精度~33%) / None。"""
+    """軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+/0) / None。"""
     wide_partner_horse_number: int | None = None
     """ワイド相手＝モデルcomposite1位（=本命）の馬番。"""
+    place_prob_cal: float | None = None
+    """複勝EVモデルの較正済み複勝圏確率（軸該当馬のみ・memory: place_ev_model）。"""
+    place_ev: float | None = None
+    """複勝EV = 較正複勝率 × 複勝最低オッズ近似（軸該当馬のみ）。"""
     finish_position: int | None = None
     """確定着順（レース後表示用）。"""
 
@@ -262,6 +266,8 @@ def _hit_tier_to_out(c: dict[str, Any]) -> RecommendationOut:
             is_place_axis=v.get("is_place_axis", False),
             upset_tier=v.get("upset_tier"),
             wide_partner_horse_number=v.get("wide_partner_horse_number"),
+            place_prob_cal=v.get("place_prob_cal"),
+            place_ev=v.get("place_ev"),
             finish_position=v.get("finish_position"),
         )
         for v in (c.get("value_candidates") or [])
