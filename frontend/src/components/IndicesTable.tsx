@@ -537,6 +537,15 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                         {horse.nb_course_rank === 1 ? "外◎" : "外○"}
                       </span>
                     )}
+                    {/* 複勝EVモデルの人気薄1頭軸（毎レース最大1頭） */}
+                    {horse.is_place_ev_axis && (
+                      <span
+                        title={`複勝EV軸: 単勝≥10 ∧ 較正複勝率${Math.round((horse.place_ev_prob ?? 0) * 100)}% ∧ 複勝最低≥2.0倍 のEV最大1頭（複勝EV ${horse.place_ev_value?.toFixed(2)}）`}
+                        className="text-[10px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-700 border-rose-300"
+                      >
+                        🎯複勝軸{horse.place_ev_prob != null && ` ${Math.round(horse.place_ev_prob * 100)}%`}
+                      </span>
+                    )}
                     {/* DM シグナルタグ */}
                     {horse.dm_signals && horse.dm_signals.length > 0 && (
                       <DmSignalBadges signals={horse.dm_signals} />

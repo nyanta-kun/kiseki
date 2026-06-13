@@ -25,6 +25,7 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..betting.place_ev import SUB_INDEX_COLUMNS, get_place_ev_model
 from ..db.models import (
     CalculatedIndex,
     Horse,
@@ -422,6 +423,12 @@ class HorseIndexOut(BaseModel):
     # 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
     # （DM signals / purchase_signal / 穴ぐさA/B/C(1位以外) / 外部指数穴馬）
     is_sweet_spot: bool = False
+    # 複勝EVモデルが選んだ「人気薄1頭 複勝EV軸」該当（毎レース最大1頭・memory: place_ev_model）
+    # 条件: 単勝≥10 ∧ 較正複勝率≥フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭
+    is_place_ev_axis: bool = False
+    # 複勝EV軸の較正複勝圏確率と複勝EV（is_place_ev_axis=True の馬のみ）
+    place_ev_prob: float | None = None
+    place_ev_value: float | None = None
 
 
 class OddsOut(BaseModel):
@@ -1039,6 +1046,27 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             if hn in win_odds_map and odds_val is not None:
                 win_odds_map[hn] = float(odds_val)
 
+    # 複勝オッズ（最低値）も同様に最新を取得（複勝EV軸の 2.0倍フィルタ・EV算出に使用）
+    place_odds_map: dict[int, float | None] = {hn: None for hn in horse_numbers}
+    if horse_numbers:
+        place_rows = await db.execute(
+            select(OddsHistory.combination, OddsHistory.odds, OddsHistory.fetched_at)
+            .where(OddsHistory.race_id == race_id)
+            .where(OddsHistory.bet_type == "place")
+            .order_by(OddsHistory.combination, OddsHistory.fetched_at.desc())
+        )
+        seen_place: set[str] = set()
+        for combo, odds_val, _ in place_rows.all():
+            if combo in seen_place:
+                continue
+            seen_place.add(combo)
+            try:
+                hn = int(combo)
+            except (TypeError, ValueError):
+                continue
+            if hn in place_odds_map and odds_val is not None:
+                place_odds_map[hn] = float(odds_val)
+
     # DM シグナルタグ算出（オッズから人気を導出して付与）
     # 条件 (場/馬場/距離) を渡して低信頼セグメントを自動除外
     popularity_map = popularity_from_odds(horse_numbers, win_odds_map)
@@ -1088,6 +1116,43 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     if sweet_count >= 3:
         for h in horses:
             h.is_sweet_spot = False
+
+    # 複勝EVモデルの「人気薄1頭 複勝EV軸」判定（memory: place_ev_model）
+    # recommender と同一の特徴・選定（較正P フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭）。
+    place_ev_model = get_place_ev_model()
+    if place_ev_model is not None:
+        ci_by_hn = {entry.horse_number: ci for ci, entry, _ in unique_rows}
+        ev_inputs: list[dict[str, Any]] = []
+        for h in horses:
+            if h.horse_number is None:
+                continue
+            ci = ci_by_hn.get(h.horse_number)
+            d: dict[str, Any] = {
+                "horse_number": h.horse_number,
+                "win_odds": win_odds_map.get(h.horse_number),
+                "place_odds": place_odds_map.get(h.horse_number),
+                "composite_index": h.composite_index,
+                "win_probability": h.win_probability,
+                "place_probability": h.place_probability,
+                "surface": race.surface,
+                "distance": race.distance,
+                "anagusa_rank": h.anagusa_rank,
+                "nb_ave_rank": h.nb_ave_rank,
+                "km_rank": h.km_rank,
+                "jvan_time_dm": h.jvan_time_dm,
+                "jvan_battle_dm": h.jvan_battle_dm,
+            }
+            for c in SUB_INDEX_COLUMNS:
+                d[c] = float(getattr(ci, c)) if ci and getattr(ci, c, None) is not None else None
+            ev_inputs.append(d)
+        pick = place_ev_model.pick_race(ev_inputs, race.head_count)
+        if pick is not None:
+            for h in horses:
+                if h.horse_number == pick["horse_number"]:
+                    h.is_place_ev_axis = True
+                    h.place_ev_prob = pick["place_probability"]
+                    h.place_ev_value = pick["expected_value"]
+                    break
 
     wp_list = [h.win_probability for h in horses if h.win_probability is not None]
     conf_data = calculate_race_confidence(

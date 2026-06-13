@@ -97,6 +97,11 @@ export type HorseIndex = {
   // 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
   // 3年バックテスト 単ROI 1.182 / 複ROI 0.836
   is_sweet_spot: boolean;
+  // 複勝EVモデルの「人気薄1頭 複勝EV軸」該当（毎レース最大1頭）
+  // 条件: 単勝≥10 ∧ 較正複勝率≥フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭
+  is_place_ev_axis?: boolean;
+  place_ev_prob?: number | null;   // 較正複勝圏確率
+  place_ev_value?: number | null;  // 複勝EV
 };
 
 export type OddsData = {
