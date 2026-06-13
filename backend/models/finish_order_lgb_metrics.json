@@ -1,0 +1,74 @@
+{
+  "train": {
+    "start": "20230101",
+    "end": "20250630"
+  },
+  "valid": {
+    "start": "20250701",
+    "end": "20251231"
+  },
+  "seeds": [
+    42,
+    123,
+    456,
+    789,
+    1024
+  ],
+  "features": [
+    "win_probability",
+    "horse_weight",
+    "weight_carried",
+    "weight_change",
+    "frame_number",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "speed_index",
+    "last_3f_index",
+    "jockey_index",
+    "course_aptitude",
+    "pace_index",
+    "rotation_index"
+  ],
+  "metrics": {
+    "place": [
+      {
+        "label": "valid_place_seed42",
+        "log_loss": 0.349162,
+        "top1_place_pct": 59.03,
+        "n_races": 1650
+      },
+      {
+        "label": "valid_place_seed123",
+        "log_loss": 0.348815,
+        "top1_place_pct": 59.39,
+        "n_races": 1650
+      },
+      {
+        "label": "valid_place_seed456",
+        "log_loss": 0.348702,
+        "top1_place_pct": 59.58,
+        "n_races": 1650
+      },
+      {
+        "label": "valid_place_seed789",
+        "log_loss": 0.34888,
+        "top1_place_pct": 59.27,
+        "n_races": 1650
+      },
+      {
+        "label": "valid_place_seed1024",
+        "log_loss": 0.348912,
+        "top1_place_pct": 59.33,
+        "n_races": 1650
+      }
+    ],
+    "show": []
+  }
+}

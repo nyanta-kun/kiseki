@@ -110,23 +110,38 @@ DATASPEC_WOOD = "WOOD"   # ウッドチップ調教
 # ※              0B14/0B15/0B16 は YYYYMMDD（開催日）
 # ※ 0B31 を日付キー（YYYYMMDD）で呼ぶと rc=-114（key パラメータ不正）
 RT_RACE_INFO = "0B12"    # 速報成績（払戻確定後）
-RT_ODDS_WIN_PLACE = "0B31"  # 速報オッズ（単複枠）key=レースキー16文字
+RT_ODDS_WIN_PLACE = "0B31"  # 速報オッズ（単複枠 O1レコード）key=レースキー16文字
 RT_WEIGHT = "0B11"       # 速報馬体重 key=YYYYMMDDJJRR（JVWatchEvent経由）
 RT_SCRATCH = "0B15"      # 速報レース情報（出走取消・騎手変更等）key=YYYYMMDD
+
+# エキゾチックオッズ速報系 DataSpec (JVDF v4.9 仕様書 2024-08-07版 確認済み)
+# 0B31=単複枠(O1), 0B32=馬連(O2), 0B33=ワイド(O3), 0B34=馬単(O4),
+# 0B35=三連複(O5), 0B36=三連単(O6)
+# key 形式: YYYYMMDDJJKKHHRR（レースキー16文字）
+RT_ODDS_QUINELLA = "0B32"      # 速報オッズ（馬連 O2レコード, 2042バイト）
+RT_ODDS_WIDE = "0B33"          # 速報オッズ（ワイド O3レコード, 2654バイト）
+RT_ODDS_EXACTA = "0B34"        # 速報オッズ（馬単 O4レコード, 4031バイト）
+RT_ODDS_TRIO = "0B35"          # 速報オッズ（三連複 O5レコード, 12293バイト）
+RT_ODDS_TRIFECTA = "0B36"      # 速報オッズ（三連単 O6レコード, 83285バイト）
+
+# エキゾチックオッズ取得の発走前絞り込み閾値（分）
+# 発走 EXOTIC_ODDS_WINDOW_MINUTES 以内のレースのみ 0B32〜0B36 をポーリングする
+# 背景: 三連単は1レース×1スナップショット = 4896組。全36レース毎回だと1日50M行超になる
+# 発走前30分 × 最大6レース同時 → 約3万組/スナップショット × 288回/日 ≒ 860万行/日
+# これは設計上限 1000万行以内で許容範囲
+EXOTIC_ODDS_WINDOW_MINUTES = 30
 
 # レコード種別IDとデータ内容の対応
 RECORD_TYPES = {
     "RA": "レース情報",
     "SE": "馬毎レース情報",
     "HR": "払戻情報",
-    "O1": "単勝オッズ",
-    "O2": "複勝オッズ",
-    "O3": "枠連オッズ",
-    "O4": "馬連オッズ",
-    "O5": "ワイドオッズ",
-    "O6": "馬単オッズ",
-    "O7": "三連複オッズ",
-    "O8": "三連単オッズ",
+    "O1": "単複枠オッズ",
+    "O2": "馬連オッズ",
+    "O3": "ワイドオッズ",
+    "O4": "馬単オッズ",
+    "O5": "三連複オッズ",
+    "O6": "三連単オッズ",
     "WE": "馬体重",
     "AV": "出走取消",
     "JC": "騎手変更",
@@ -614,6 +629,57 @@ def _fetch_today_race_keys(today: str) -> list[str]:
     return []
 
 
+def _fetch_upcoming_race_keys(today: str, window_minutes: int) -> list[str]:
+    """本日のレースのうち発走前 window_minutes 分以内のレースキーを返す。
+
+    エキゾチックオッズ（0B32〜0B36）は三連単で最大4896組/レースと大容量のため、
+    全レースを毎30秒ポーリングするとDB行数が 1日1000万行を超える。
+    発走前 window_minutes 分以内に絞ることで対象レース数を大幅に削減する。
+
+    Args:
+        today: 対象日 YYYYMMDD
+        window_minutes: 発走前何分以内のレースを対象とするか（例: 30）
+
+    Returns:
+        発走前 window_minutes 分以内のレースの jravan_race_id リスト（空リスト可）
+    """
+    try:
+        resp = requests.get(
+            f"{BACKEND_URL}/api/races",
+            params={"date": today},
+            timeout=10,
+            headers={"Connection": "close"},
+        )
+        if resp.status_code != 200:
+            return []
+
+        races = resp.json()
+        now = datetime.now()
+        upcoming = []
+
+        for r in races:
+            race_id = r.get("jravan_race_id")
+            post_time_str = r.get("post_time")  # "hhmm" 形式, 例: "1025"
+            if not race_id or not post_time_str or len(post_time_str) < 4:
+                continue
+            try:
+                hh = int(post_time_str[:2])
+                mm = int(post_time_str[2:4])
+                post_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                minutes_until = (post_dt - now).total_seconds() / 60
+                # 発走前 window_minutes 分以内かつまだ発走していない（-5分の余裕）
+                if -5 <= minutes_until <= window_minutes:
+                    upcoming.append(race_id)
+            except (ValueError, OverflowError):
+                continue
+
+        return upcoming
+
+    except Exception as e:
+        logger.debug(f"upcoming_race_keys 取得失敗（スキップ）: {e}")
+        return []
+
+
 def run_odds_prefetch(jv, fetch_date: str | None = None) -> None:
     """指定日（デフォルト: 翌日）の前日発売オッズを取得してバックエンドへ送信する。
 
@@ -736,6 +802,45 @@ def run_realtime_monitor(jv) -> None:
                     "date": today,
                     "records": all_o1,
                 }, BACKEND_URL, API_KEY)
+
+            # エキゾチックオッズ取得（0B32〜0B36: 馬連/ワイド/馬単/三連複/三連単）
+            # データ量削減のため発走前 EXOTIC_ODDS_WINDOW_MINUTES 分以内のレースに限定する
+            # 三連単(O6): 4896組/レース × 全36レース毎30秒 = 1日5000万行超 → 絞り必須
+            # 発走前30分 × 最大6レース → 最大 ~3万組/スナップショット × 288回 ≒ 860万行/日
+            upcoming_keys = _fetch_upcoming_race_keys(today, EXOTIC_ODDS_WINDOW_MINUTES)
+            if upcoming_keys:
+                exotic_records = []
+                exotic_dataspecs = [
+                    (RT_ODDS_QUINELLA, "O2"),    # 馬連
+                    (RT_ODDS_WIDE, "O3"),        # ワイド
+                    (RT_ODDS_EXACTA, "O4"),      # 馬単
+                    (RT_ODDS_TRIO, "O5"),        # 三連複
+                    (RT_ODDS_TRIFECTA, "O6"),    # 三連単
+                ]
+                for race_key in upcoming_keys:
+                    with _wd_lock:
+                        _last_heartbeat[0] = time.time()
+                    for dataspec, expected_rec_id in exotic_dataspecs:
+                        recs = fetch_realtime_data(jv, dataspec, race_key)
+                        exotic_records.extend(
+                            r for r in recs if r.get("rec_id") == expected_rec_id
+                        )
+                if exotic_records:
+                    logger.info(
+                        f"エキゾチックオッズ取得: {len(exotic_records)}件"
+                        f" / {len(upcoming_keys)}レース（発走前{EXOTIC_ODDS_WINDOW_MINUTES}分以内）"
+                    )
+                    post_to_backend("/api/import/odds", {
+                        "date": today,
+                        "records": exotic_records,
+                    }, BACKEND_URL, API_KEY)
+                else:
+                    logger.debug(
+                        f"エキゾチックオッズ: データなし"
+                        f" ({len(upcoming_keys)}レース対象, 発売前の可能性)"
+                    )
+            else:
+                logger.debug("エキゾチックオッズ: 発走前30分以内のレースなし（スキップ）")
 
             # 出走取消チェック（重複送信防止）
             scratch_records = fetch_realtime_data(jv, RT_SCRATCH, today)

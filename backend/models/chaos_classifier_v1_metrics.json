@@ -1,0 +1,391 @@
+{
+  "results": {
+    "a": {
+      "target": "target_a",
+      "n_train": 8637,
+      "n_test": 2586,
+      "n_fresh": 600,
+      "auc_mean": 0.7113,
+      "auc_seeds": [
+        0.7116,
+        0.7131,
+        0.7094,
+        0.7097,
+        0.7127
+      ],
+      "lift_test": [
+        {
+          "top_pct": 10,
+          "n": 258,
+          "hit_rate": 0.4574,
+          "lift_hit_rate": 2.342,
+          "avg_payout": 503689,
+          "lift_payout_density": 3.598
+        },
+        {
+          "top_pct": 20,
+          "n": 517,
+          "hit_rate": 0.3733,
+          "lift_hit_rate": 1.912,
+          "avg_payout": 337509,
+          "lift_payout_density": 2.411
+        },
+        {
+          "top_pct": 30,
+          "n": 775,
+          "hit_rate": 0.3432,
+          "lift_hit_rate": 1.758,
+          "avg_payout": 281239,
+          "lift_payout_density": 2.009
+        }
+      ],
+      "lift_fresh": [
+        {
+          "top_pct": 10,
+          "n": 60,
+          "hit_rate": 0.3333,
+          "lift_hit_rate": 1.667,
+          "avg_payout": 180925,
+          "lift_payout_density": 1.781
+        },
+        {
+          "top_pct": 20,
+          "n": 120,
+          "hit_rate": 0.325,
+          "lift_hit_rate": 1.625,
+          "avg_payout": 175595,
+          "lift_payout_density": 1.728
+        },
+        {
+          "top_pct": 30,
+          "n": 180,
+          "hit_rate": 0.3222,
+          "lift_hit_rate": 1.611,
+          "avg_payout": 160748,
+          "lift_payout_density": 1.582
+        }
+      ],
+      "simple_rules": {
+        "heads14_handicap": {
+          "n": 757,
+          "selection_rate": 0.293,
+          "hit_rate": 0.218,
+          "base_hit_rate": 0.1953,
+          "lift": 1.116,
+          "avg_payout": 209346
+        },
+        "odds_top1_ge35": {
+          "n": 432,
+          "selection_rate": 0.167,
+          "hit_rate": 0.3495,
+          "base_hit_rate": 0.1953,
+          "lift": 1.79,
+          "avg_payout": 363587
+        }
+      },
+      "feature_importance_top10": [
+        {
+          "feature": "odds_entropy",
+          "gain": 5166.18
+        },
+        {
+          "feature": "head_count",
+          "gain": 1226.29
+        },
+        {
+          "feature": "odds_top3_sum",
+          "gain": 998.28
+        },
+        {
+          "feature": "wp_mkt_corr",
+          "gain": 814.83
+        },
+        {
+          "feature": "wp_top3_sum",
+          "gain": 652.7
+        },
+        {
+          "feature": "wp_top1",
+          "gain": 635.02
+        },
+        {
+          "feature": "n_over10",
+          "gain": 519.72
+        },
+        {
+          "feature": "odds_gap23",
+          "gain": 487.32
+        },
+        {
+          "feature": "odds_gap12",
+          "gain": 484.0
+        },
+        {
+          "feature": "odds_top1",
+          "gain": 455.51
+        }
+      ],
+      "positive_rate_train": 0.2108,
+      "positive_rate_test": 0.1953
+    },
+    "b": {
+      "target": "target_b",
+      "n_train": 8637,
+      "n_test": 2586,
+      "n_fresh": 600,
+      "auc_mean": 0.7151,
+      "auc_seeds": [
+        0.7172,
+        0.7141,
+        0.7109,
+        0.7194,
+        0.7142
+      ],
+      "lift_test": [
+        {
+          "top_pct": 10,
+          "n": 258,
+          "hit_rate": 0.376,
+          "lift_hit_rate": 2.272,
+          "avg_payout": 518131,
+          "lift_payout_density": 3.701
+        },
+        {
+          "top_pct": 20,
+          "n": 517,
+          "hit_rate": 0.3269,
+          "lift_hit_rate": 1.975,
+          "avg_payout": 325221,
+          "lift_payout_density": 2.323
+        },
+        {
+          "top_pct": 30,
+          "n": 775,
+          "hit_rate": 0.3071,
+          "lift_hit_rate": 1.855,
+          "avg_payout": 279101,
+          "lift_payout_density": 1.994
+        }
+      ],
+      "lift_fresh": [
+        {
+          "top_pct": 10,
+          "n": 60,
+          "hit_rate": 0.3,
+          "lift_hit_rate": 1.782,
+          "avg_payout": 156497,
+          "lift_payout_density": 1.54
+        },
+        {
+          "top_pct": 20,
+          "n": 120,
+          "hit_rate": 0.275,
+          "lift_hit_rate": 1.634,
+          "avg_payout": 178819,
+          "lift_payout_density": 1.76
+        },
+        {
+          "top_pct": 30,
+          "n": 180,
+          "hit_rate": 0.2611,
+          "lift_hit_rate": 1.551,
+          "avg_payout": 147943,
+          "lift_payout_density": 1.456
+        }
+      ],
+      "simple_rules": {
+        "heads14_handicap": {
+          "n": 757,
+          "selection_rate": 0.293,
+          "hit_rate": 0.1863,
+          "base_hit_rate": 0.1655,
+          "lift": 1.125,
+          "avg_payout": 209346
+        },
+        "odds_top1_ge35": {
+          "n": 432,
+          "selection_rate": 0.167,
+          "hit_rate": 0.2986,
+          "base_hit_rate": 0.1655,
+          "lift": 1.804,
+          "avg_payout": 363587
+        }
+      },
+      "feature_importance_top10": [
+        {
+          "feature": "odds_entropy",
+          "gain": 4505.29
+        },
+        {
+          "feature": "odds_top3_sum",
+          "gain": 967.86
+        },
+        {
+          "feature": "head_count",
+          "gain": 913.16
+        },
+        {
+          "feature": "wp_mkt_corr",
+          "gain": 752.16
+        },
+        {
+          "feature": "n_over10",
+          "gain": 543.25
+        },
+        {
+          "feature": "wp_top1",
+          "gain": 540.37
+        },
+        {
+          "feature": "wp_top3_sum",
+          "gain": 471.54
+        },
+        {
+          "feature": "wp_entropy",
+          "gain": 438.04
+        },
+        {
+          "feature": "odds_gap23",
+          "gain": 424.19
+        },
+        {
+          "feature": "odds_gap12",
+          "gain": 416.07
+        }
+      ],
+      "positive_rate_train": 0.1813,
+      "positive_rate_test": 0.1655
+    },
+    "c": {
+      "target": "target_c",
+      "n_train": 8637,
+      "n_test": 2586,
+      "n_fresh": 600,
+      "auc_mean": 0.6981,
+      "auc_seeds": [
+        0.6989,
+        0.6989,
+        0.6964,
+        0.698,
+        0.6982
+      ],
+      "lift_test": [
+        {
+          "top_pct": 10,
+          "n": 258,
+          "hit_rate": 0.7171,
+          "lift_hit_rate": 1.715,
+          "avg_payout": 481562,
+          "lift_payout_density": 3.44
+        },
+        {
+          "top_pct": 20,
+          "n": 517,
+          "hit_rate": 0.6634,
+          "lift_hit_rate": 1.587,
+          "avg_payout": 326824,
+          "lift_payout_density": 2.335
+        },
+        {
+          "top_pct": 30,
+          "n": 775,
+          "hit_rate": 0.6232,
+          "lift_hit_rate": 1.491,
+          "avg_payout": 283768,
+          "lift_payout_density": 2.027
+        }
+      ],
+      "lift_fresh": [
+        {
+          "top_pct": 10,
+          "n": 60,
+          "hit_rate": 0.65,
+          "lift_hit_rate": 1.461,
+          "avg_payout": 125500,
+          "lift_payout_density": 1.235
+        },
+        {
+          "top_pct": 20,
+          "n": 120,
+          "hit_rate": 0.6583,
+          "lift_hit_rate": 1.479,
+          "avg_payout": 136587,
+          "lift_payout_density": 1.344
+        },
+        {
+          "top_pct": 30,
+          "n": 180,
+          "hit_rate": 0.6389,
+          "lift_hit_rate": 1.436,
+          "avg_payout": 137764,
+          "lift_payout_density": 1.356
+        }
+      ],
+      "simple_rules": {
+        "heads14_handicap": {
+          "n": 757,
+          "selection_rate": 0.293,
+          "hit_rate": 0.4122,
+          "base_hit_rate": 0.418,
+          "lift": 0.986,
+          "avg_payout": 209346
+        },
+        "odds_top1_ge35": {
+          "n": 432,
+          "selection_rate": 0.167,
+          "hit_rate": 0.6412,
+          "base_hit_rate": 0.418,
+          "lift": 1.534,
+          "avg_payout": 363587
+        }
+      },
+      "feature_importance_top10": [
+        {
+          "feature": "odds_entropy",
+          "gain": 5675.38
+        },
+        {
+          "feature": "odds_top3_sum",
+          "gain": 2051.05
+        },
+        {
+          "feature": "wp_mkt_corr",
+          "gain": 1032.8
+        },
+        {
+          "feature": "odds_top1",
+          "gain": 872.69
+        },
+        {
+          "feature": "odds_gap12",
+          "gain": 563.53
+        },
+        {
+          "feature": "wp_top3_sum",
+          "gain": 545.37
+        },
+        {
+          "feature": "odds_gap23",
+          "gain": 465.19
+        },
+        {
+          "feature": "wp_top1",
+          "gain": 451.79
+        },
+        {
+          "feature": "wp_entropy",
+          "gain": 290.6
+        },
+        {
+          "feature": "distance",
+          "gain": 218.39
+        }
+      ],
+      "positive_rate_train": 0.4396,
+      "positive_rate_test": 0.418
+    }
+  },
+  "adopted_target": "a",
+  "adopted_reason": "三連単>=100,000円は明確な高配当基準で事前予測可能性と配当妙味のバランスが良い",
+  "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/chaos_classifier_v1.txt"
+}
