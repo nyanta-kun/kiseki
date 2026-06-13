@@ -110,6 +110,25 @@ def test_pick_race_respects_floor() -> None:
     assert m.pick_race(horses, head_count=12) is None
 
 
+def test_pick_race_filters_low_place_odds() -> None:
+    """複勝最低オッズ < min_place_odds(2.0) の馬は実オッズ優先で除外する。"""
+    m = _toy_model()  # min_place_odds=2.0
+    # 単勝12倍でフロアは満たすが、実複勝オッズ1.8倍(<2.0)の人気薄1頭のみ
+    horses = [
+        {"horse_number": 3, "win_odds": 2.0, "composite_index": 80.0,
+         "place_probability": 0.6, "win_probability": 0.4, "surface": "芝"},
+        {"horse_number": 7, "win_odds": 12.0, "composite_index": 55.0,
+         "place_probability": 0.25, "win_probability": 0.08, "surface": "芝",
+         "place_odds": 1.8},
+    ]
+    # 実複勝1.8倍で除外 → 推奨なし
+    assert m.pick_race(horses, head_count=12) is None
+    # 実複勝2.5倍なら採用される
+    horses[1]["place_odds"] = 2.5
+    pick = m.pick_race(horses, head_count=12)
+    assert pick is not None and pick["horse_number"] == 7
+
+
 def test_pick_race_empty_when_no_underdogs() -> None:
     """人気薄がいないレースは None。"""
     m = _toy_model()

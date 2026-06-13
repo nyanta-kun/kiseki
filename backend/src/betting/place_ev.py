@@ -36,6 +36,11 @@ from typing import Any, TypedDict
 # 人気薄ユニバース下限。バックテストはすべて >=10 倍で実施。
 UNDERDOG_MIN_ODDS: float = 10.0
 
+# 複勝最低オッズ下限。複勝が 2.0 倍未満（=ほぼ元返し）になる馬は妙味が薄いため
+# 推奨対象から除外する（ユーザー要件 2026-06-13）。実オッズが取れれば実値、
+# 無ければ近似値で判定する。
+MIN_PLACE_ODDS: float = 2.0
+
 # 学習・serving 共通のサブ指数列（upset_reranker と同じソース）。
 SUB_INDEX_COLUMNS: tuple[str, ...] = (
     "speed_index", "adjusted_speed_index", "last_3f_index", "course_aptitude",
@@ -113,6 +118,7 @@ class PlaceEvModel:
         self.cal_y: list[float] = artifact["calibration"]["y"]
         self.odds_impute: list[float] = artifact["odds_impute"]
         self.min_odds: float = artifact.get("min_odds", UNDERDOG_MIN_ODDS)
+        self.min_place_odds: float = artifact.get("min_place_odds", MIN_PLACE_ODDS)
         self.trained_at: str = artifact.get("trained_at", "")
 
     def _logit_prob(self, feat: dict[str, float | None]) -> float:
@@ -222,11 +228,26 @@ class PlaceEvModel:
     ) -> PlacePick | None:
         """レースで推奨する人気薄1頭を返す。
 
-        的中率フロア(P_cal >= floor)を満たす候補の中から EV 最大を選ぶ。
-        満たす候補が無ければ None(=このレースは推奨なし)。
+        的中率フロア(P_cal >= floor) かつ 複勝最低オッズ >= min_place_odds(既定2.0)
+        を満たす候補の中から EV 最大を選ぶ。満たす候補が無ければ None(=推奨なし)。
+        複勝オッズは実オッズ(horse["place_odds"])が取れればそれを、無ければ近似値を使う。
         """
+        place_actual = {
+            h["horse_number"]: h.get("place_odds")
+            for h in horses
+            if h.get("place_odds") is not None
+        }
         picks = self.score_race(horses, head_count)
-        eligible = [p for p in picks.values() if p["meets_floor"]]
+        eligible = []
+        for hn, p in picks.items():
+            if not p["meets_floor"]:
+                continue
+            place_odds = place_actual.get(hn)
+            if place_odds is None:
+                place_odds = p["place_odds_hat"]
+            if float(place_odds) < self.min_place_odds:
+                continue
+            eligible.append(p)
         if not eligible:
             return None
         return max(eligible, key=lambda p: p["expected_value"])

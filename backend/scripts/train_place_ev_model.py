@@ -39,7 +39,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from src.betting.place_ev import SUB_INDEX_COLUMNS, UNDERDOG_MIN_ODDS
+from src.betting.place_ev import MIN_PLACE_ODDS, SUB_INDEX_COLUMNS, UNDERDOG_MIN_ODDS
 
 DSN = (
     f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
@@ -165,6 +165,7 @@ def fit(uni: pd.DataFrame, feats: list[str], floor: float) -> dict:
         "trained_at": datetime.now(UTC).isoformat(),
         "n_train": int(len(uni)),
         "min_odds": UNDERDOG_MIN_ODDS,
+        "min_place_odds": MIN_PLACE_ODDS,
         "floor": floor,
         "features": feats,
         "median": {f: float(med[f]) for f in feats},
