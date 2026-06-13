@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules, fetchRecommendations } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
 import { AnagusaRuleView } from "@/components/AnagusaRuleView";
+import { RecommendView } from "@/components/RecommendView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -70,6 +71,7 @@ async function RaceList({ date }: { date: string }) {
       fetchRacesByDate(date),
       fetchJraTopProbability(date).catch(() => []),
       fetchAnagusaRules(date).catch(() => []),
+      fetchRecommendations(date).catch(() => []),
     ]);
   } catch {
     return (
@@ -116,6 +118,10 @@ async function RaceList({ date }: { date: string }) {
 
   const recommendPanel = (
     <>
+      {/* 期待値・指数から算出した推奨（本命tier + 人気薄1頭 複勝EV軸・memory: place_ev_model） */}
+      <Suspense fallback={<AnagusaSkeleton />}>
+        <RecommendView date={date} />
+      </Suspense>
       {/* 穴ぐさ条件ルール推奨（rank_A × 場/面/距離ルール） */}
       <Suspense fallback={<AnagusaSkeleton />}>
         <AnagusaRuleView date={date} />
