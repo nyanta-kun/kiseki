@@ -82,14 +82,20 @@ def query_missing_dates(courses: list[str], since: str | None,
         quoted = ", ".join(f"'{c}'" for c in courses)
         course_filter = f"AND r.course IN ({quoted})"
 
+    # 全頭NULLのレースが存在する (date, course) のみ対象にする。
+    # 取消・除外馬による永続的な1-2頭NULLをmissingと誤検出しないため。
     sql = text(f"""
         SELECT DISTINCT r.date, r.course
         FROM keiba.races r
-        JOIN keiba.race_entries re ON re.race_id = r.id
-        WHERE re.jvan_time_dm IS NULL
-          AND r.date >= :since
+        WHERE r.date >= :since
           AND r.date <= :until
           {course_filter}
+          AND r.id IN (
+            SELECT race_id
+            FROM keiba.race_entries
+            GROUP BY race_id
+            HAVING COUNT(*) = COUNT(CASE WHEN jvan_time_dm IS NULL THEN 1 END)
+          )
         ORDER BY r.date, r.course
     """)
 
