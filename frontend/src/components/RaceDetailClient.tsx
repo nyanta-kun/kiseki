@@ -415,7 +415,11 @@ export function RaceDetailClient({
                       {/* 馬名 + バッジ */}
                       <td className="py-2 px-1 whitespace-normal">
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-gray-800 font-medium truncate block max-w-[110px]">
+                          <span className={cn(
+                            "font-medium truncate block max-w-[110px]",
+                            horse.is_sweet_spot ? "text-red-600" : "text-gray-800"
+                          )}>
+                            {horse.is_sweet_spot && <span className="mr-0.5">★</span>}
                             {horse.horse_name}
                           </span>
                           {isAnagusa && (
@@ -429,6 +433,15 @@ export function RaceDetailClient({
                           {isExtDark && (
                             <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold">
                               {horse.nb_course_rank === 1 ? "外◎" : "外○"}
+                            </span>
+                          )}
+                          {/* 複勝EVモデルの人気薄1頭軸（毎レース最大1頭） */}
+                          {horse.is_place_ev_axis && (
+                            <span
+                              title={`複勝EV軸: 単勝≥10 ∧ 較正複勝率${Math.round((horse.place_ev_prob ?? 0) * 100)}% ∧ 複勝最低≥2.0倍 のEV最大1頭（複勝EV ${horse.place_ev_value?.toFixed(2)}）`}
+                              className="text-[9px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-700 border-rose-300"
+                            >
+                              🎯複勝軸{horse.place_ev_prob != null && ` ${Math.round(horse.place_ev_prob * 100)}%`}
                             </span>
                           )}
                           {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
