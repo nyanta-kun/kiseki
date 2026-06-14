@@ -668,9 +668,9 @@ export function RaceDetailClient({
                   .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99))
                   .slice(0, 5)
                   .map((r) => (
-                    <div key={r.horse_name} className="flex items-center gap-2 text-xs">
+                    <div key={r.horse_name} className="grid text-xs" style={{ gridTemplateColumns: "2.5rem 7rem 1fr 1fr" }}>
                       <span className={cn(
-                        "min-w-[2.5rem] text-center text-[11px] py-0.5 rounded font-bold",
+                        "text-center text-[11px] py-0.5 rounded font-bold",
                         r.finish_position === 1 ? "bg-yellow-100 text-yellow-800" :
                         r.finish_position === 2 ? "bg-gray-100 text-gray-700" :
                         r.finish_position === 3 ? "bg-orange-100 text-orange-700" :
@@ -678,13 +678,13 @@ export function RaceDetailClient({
                       )}>
                         {r.finish_position}着
                       </span>
-                      <span className="font-medium text-gray-800">{r.horse_name}</span>
-                      {r.finish_time !== null && (
-                        <span className="text-gray-400 tabular-nums">{formatTime(r.finish_time)}</span>
-                      )}
-                      {r.last_3f !== null && (
-                        <span className="text-gray-400 tabular-nums">後3F {r.last_3f.toFixed(1)}</span>
-                      )}
+                      <span className="font-medium text-gray-800 truncate px-1">{r.horse_name}</span>
+                      <span className="text-gray-400 tabular-nums">
+                        {r.finish_time !== null ? formatTime(r.finish_time) : ""}
+                      </span>
+                      <span className="text-gray-400 tabular-nums">
+                        {r.last_3f !== null ? `後3F ${r.last_3f.toFixed(1)}` : ""}
+                      </span>
                     </div>
                   ))}
               </div>
@@ -702,12 +702,55 @@ export function RaceDetailClient({
             <p>行クリックで指数内訳・近走成績を表示</p>
           </div>
 
-          {/* バッジ凡例 (馬名横の 🔥◎○⚡💎❌ 等の意味) */}
+          {/* バッジ凡例 */}
           <details className="mt-4 text-[11px] text-gray-600 border border-gray-200 rounded-md bg-gray-50">
             <summary className="cursor-pointer font-bold px-3 py-2 select-none">
               バッジ凡例（クリックで展開）
             </summary>
             <div className="px-3 pb-3 pt-1 space-y-3">
+
+              {/* 複勝EV軸 */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">
+                  複勝軸 <span className="font-normal text-gray-500 text-[10px]">(複勝EVモデル / 毎レース最大1頭)</span>
+                </p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-amber-100 text-amber-800 border-amber-400">
+                      💎💎複勝軸
+                    </span>
+                    <span>穴ぐさA ∧ DM-time 1〜2位 <span className="font-bold text-amber-700">（最高信頼 / 3年単ROI 1.15〜1.21）</span></span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-amber-100 text-amber-800 border-amber-400">
+                      💎複勝軸
+                    </span>
+                    <span>穴ぐさA ∧ DM-time 3〜5位（高信頼）</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-rose-100 text-rose-700 border-rose-300">
+                      🎯複勝軸
+                    </span>
+                    <span>単勝≥10 ∧ 較正複勝率≥20% ∧ 複勝≥2.0倍 のEV最大1頭</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* スイートスポット */}
+              <div>
+                <p className="font-bold text-gray-700 mb-1">
+                  ★ スイートスポット <span className="font-normal text-gray-500 text-[10px]">(3年単ROI 1.188)</span>
+                </p>
+                <ul className="space-y-1 ml-1">
+                  <li className="flex items-start gap-2">
+                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-red-50 text-red-600 border-red-200">
+                      ★
+                    </span>
+                    <span>単勝≥10 ∧ EV 1.2〜5.0 ∧ 何らかのバッジあり ∧ レース内該当≤2頭</span>
+                  </li>
+                </ul>
+              </div>
+
               {/* 購入シグナル (v26) */}
               <div>
                 <p className="font-bold text-gray-700 mb-1">
@@ -719,7 +762,7 @@ export function RaceDetailClient({
                       🔥超推奨
                     </span>
                     <span>
-                      上位2頭が3位以下から実力差つけて抜け出し（差≥7）&amp; 上位2頭で単勝オッズ≥10 →
+                      上位2頭が3位以下から差をつけて抜け出し（差≥7）∧ 上位2頭で単勝≥10 →
                       <span className="font-bold text-rose-700"> 単勝ROI 1.593</span>（年46R）
                     </span>
                   </li>
@@ -728,7 +771,7 @@ export function RaceDetailClient({
                       ◎推奨
                     </span>
                     <span>
-                      上位2頭抜け出し（差≥5）&amp; 上位2頭で単勝オッズ≥10 →
+                      上位2頭抜け出し（差≥5）∧ 上位2頭で単勝≥10 →
                       <span className="font-bold text-emerald-700"> 単勝ROI 1.290</span>（年79R）
                     </span>
                   </li>
@@ -737,12 +780,12 @@ export function RaceDetailClient({
                       ○注目
                     </span>
                     <span>
-                      上位3頭で単勝オッズ≥10 → <span className="font-bold text-sky-700">単勝ROI 1.042</span>（年1786R）
+                      上位3頭で単勝≥10 → <span className="font-bold text-sky-700">単勝ROI 1.042</span>（年1786R）
                     </span>
                   </li>
                 </ul>
                 <p className="mt-1 ml-1 text-[10px] text-gray-500">
-                  ※ 1〜3 番人気（オッズ&lt;6）の指数1位は単勝ROI 0.85〜0.89 で確実マイナス → 見送り推奨
+                  ※ 1〜3番人気（オッズ&lt;6）の指数1位は単勝ROI 0.85〜0.89 → 見送り推奨
                 </p>
               </div>
 
@@ -790,13 +833,13 @@ export function RaceDetailClient({
 
               {/* 外部指数穴馬 */}
               <div>
-                <p className="font-bold text-gray-700 mb-1">🎯 外部指数穴馬 <span className="font-normal text-gray-500 text-[10px]">(自指数4位以下だが netkeiba/kichiuma で上位)</span></p>
+                <p className="font-bold text-gray-700 mb-1">外部指数 <span className="font-normal text-gray-500 text-[10px]">(自指数4位以下だが netkeiba/kichiuma で上位)</span></p>
                 <ul className="space-y-1 ml-1">
                   <li className="flex items-start gap-2">
                     <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
                       外◎
                     </span>
-                    <span>netkeiba コース指数 1位（自指数より外部評価が高い）</span>
+                    <span>netkeiba コース指数 1位</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
@@ -808,7 +851,7 @@ export function RaceDetailClient({
               </div>
 
               <p className="text-[10px] text-gray-500 italic pt-1 border-t border-gray-200">
-                ※ ROI = 100円賭けた時の平均回収額 / 100。1.0 以上で期待値プラス。
+                ※ ROI = 100円賭けた時の平均回収額 / 100。1.0以上で期待値プラス。
                 各バッジにマウスを合わせるとツールチップで詳細条件が表示されます。
                 表は composite_index 降順（上から指数1位）で表示されます。
               </p>
