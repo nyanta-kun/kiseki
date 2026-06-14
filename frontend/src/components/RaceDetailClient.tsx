@@ -417,9 +417,9 @@ export function RaceDetailClient({
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className={cn(
                             "font-medium truncate block max-w-[110px]",
-                            horse.is_sweet_spot ? "text-red-600" : "text-gray-800"
+                            horse.is_sweet_spot && !horse.is_place_ev_axis ? "text-red-600" : "text-gray-800"
                           )}>
-                            {horse.is_sweet_spot && <span className="mr-0.5">★</span>}
+                            {horse.is_sweet_spot && !horse.is_place_ev_axis && <span className="mr-0.5">★</span>}
                             {horse.horse_name}
                           </span>
                           {isAnagusa && (
