@@ -415,13 +415,17 @@ export function RaceDetailClient({
                       {/* 馬名 + バッジ */}
                       <td className="py-2 px-1 whitespace-normal">
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span className={cn(
-                            "font-medium truncate block max-w-[110px]",
-                            horse.is_sweet_spot && !horse.is_place_ev_axis ? "text-red-600" : "text-gray-800"
-                          )}>
-                            {horse.is_sweet_spot && !horse.is_place_ev_axis && <span className="mr-0.5">★</span>}
+                          <span className="text-gray-800 font-medium truncate block max-w-[110px]">
                             {horse.horse_name}
                           </span>
+                          {horse.is_sweet_spot && (
+                            <span
+                              title="スイートスポット: 単勝≥10 ∧ EV 1.2-5.0 ∧ バッジあり ∧ k≤2"
+                              className="text-[9px] px-1 py-0.5 rounded border font-bold bg-red-50 text-red-600 border-red-200"
+                            >
+                              ★
+                            </span>
+                          )}
                           {isAnagusa && (
                             <span className={cn(
                               "text-[9px] px-1 py-0.5 rounded border font-bold",
