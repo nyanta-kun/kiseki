@@ -291,6 +291,14 @@ export function RaceDetailClient({
     [indices]
   );
 
+  // DM-time ランクマップ（1=最高・null は除外）
+  const timeDmRankMap = useMemo(() => {
+    const withDm = [...indices]
+      .filter((h) => h.jvan_time_dm != null)
+      .sort((a, b) => (b.jvan_time_dm ?? 0) - (a.jvan_time_dm ?? 0));
+    return new Map(withDm.map((h, i) => [h.horse_number, i + 1]));
+  }, [indices]);
+
   const sorted = useMemo(() => {
     return [...indices].sort((a, b) => {
       if (sortKey === "finish" && hasResults) {
@@ -440,14 +448,25 @@ export function RaceDetailClient({
                             </span>
                           )}
                           {/* 複勝EVモデルの人気薄1頭軸（毎レース最大1頭） */}
-                          {horse.is_place_ev_axis && (
-                            <span
-                              title={`複勝EV軸: 単勝≥10 ∧ 較正複勝率${Math.round((horse.place_ev_prob ?? 0) * 100)}% ∧ 複勝最低≥2.0倍 のEV最大1頭（複勝EV ${horse.place_ev_value?.toFixed(2)}）`}
-                              className="text-[9px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-700 border-rose-300"
-                            >
-                              🎯複勝軸
-                            </span>
-                          )}
+                          {horse.is_place_ev_axis && (() => {
+                            const timeDmRank = timeDmRankMap.get(horse.horse_number) ?? 99;
+                            const isHighConf = horse.anagusa_rank === "A" && timeDmRank <= 2;
+                            return isHighConf ? (
+                              <span
+                                title={`高信頼複勝軸: 穴ぐさA ∧ DM-time ${timeDmRank}位（3年検証 単ROI 1.15〜1.21）`}
+                                className="text-[9px] px-1 py-0.5 rounded border font-bold bg-amber-100 text-amber-800 border-amber-400"
+                              >
+                                💎複勝軸
+                              </span>
+                            ) : (
+                              <span
+                                title={`複勝EV軸: 単勝≥10 ∧ 較正複勝率${Math.round((horse.place_ev_prob ?? 0) * 100)}% ∧ 複勝最低≥2.0倍 のEV最大1頭（複勝EV ${horse.place_ev_value?.toFixed(2)}）`}
+                                className="text-[9px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-700 border-rose-300"
+                              >
+                                🎯複勝軸
+                              </span>
+                            );
+                          })()}
                           {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
                           <DmSignalBadges signals={horse.dm_signals} />
                           {/* 購入シグナル (v26 breakaway ROI 検証ベース) */}
