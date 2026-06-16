@@ -227,7 +227,7 @@ export default function KeirinPage() {
       const data = await fetchKeirinPicks(toISODate(d));
       setPicks(data);
     } catch {
-      setError("ピックの取得に失敗しました。バックエンドの KEIRIN_DB_PATH 設定を確認してください。");
+      setError("ピックの取得に失敗しました。バックエンドの接続を確認してください。");
       setPicks([]);
     } finally {
       setLoading(false);
