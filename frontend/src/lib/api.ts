@@ -963,6 +963,7 @@ export type KeirinSummary = {
   year: KeirinPeriodSummary;
   test: KeirinPeriodSummary;
   test_from: string;
+  test_to: string;
 };
 
 export async function fetchKeirinPicks(date: string): Promise<KeirinPick[]> {

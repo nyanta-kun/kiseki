@@ -220,7 +220,7 @@ function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: P
 }
 
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
-  const testLabel = `${fmtDate(summary.test_from)}〜`;
+  const testLabel = `${fmtDate(summary.test_from)}〜${fmtDate(summary.test_to)}`;
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
       <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
@@ -242,7 +242,7 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <SummaryRow label="当日" data={summary.today} />
             <SummaryRow label="当月" data={summary.month} />
             <SummaryRow label="当年" data={summary.year} />
-            <SummaryRow label="テスト期間" sub={testLabel} data={summary.test} />
+            <SummaryRow label="検証期間" sub={testLabel} data={summary.test} />
           </tbody>
         </table>
       </div>
