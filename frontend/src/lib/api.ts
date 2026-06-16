@@ -915,3 +915,57 @@ export async function fetchChihouTopProbability(date: string): Promise<TopProbHo
 export async function fetchJraTopProbability(date: string): Promise<TopProbHorse[]> {
   return get<TopProbHorse[]>(`/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
 }
+
+// ---------------------------------------------------------------------------
+// 競輪
+// ---------------------------------------------------------------------------
+
+export type KeirinEntry = {
+  frame_no: number;
+  name: string | null;
+  race_point: number | null;
+  style: string | null;
+  line_pos: number | null;
+  finish_order: number | null;
+  player_class: string | null;
+};
+
+export type KeirinPick = {
+  id: number;
+  race_key: string;
+  venue_name: string;
+  race_no: number;
+  grade: string | null;
+  race_type: string | null;
+  start_at: string | null;
+  status: number;
+  rank: string;
+  pred_combo: string | null;
+  n_combos: number | null;
+  hit: boolean;
+  payout: number;
+  bet_amount: number;
+  entries: KeirinEntry[];
+};
+
+export type KeirinPeriodSummary = {
+  n_picks: number;
+  n_hits: number;
+  total_bet: number;
+  total_payout: number;
+  roi: number | null;
+};
+
+export type KeirinSummary = {
+  today: KeirinPeriodSummary;
+  month: KeirinPeriodSummary;
+  year: KeirinPeriodSummary;
+};
+
+export async function fetchKeirinPicks(date: string): Promise<KeirinPick[]> {
+  return get<KeirinPick[]>(`/keirin/picks?date=${date}`, { cache: "no-store" });
+}
+
+export async function fetchKeirinSummary(): Promise<KeirinSummary> {
+  return get<KeirinSummary>(`/keirin/summary`, { cache: "no-store" });
+}

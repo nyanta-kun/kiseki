@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     netkeiba_user_id: str = ""
     netkeiba_password: str = ""
 
+    # --- Keirin ---
+    keirin_db_path: str = ""
+
     # --- Auth (Auth.js / NextAuth.js) ---
     auth_secret: str = ""
     auth_password: str = ""

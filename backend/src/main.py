@@ -18,6 +18,7 @@ from .api.races import router as races_router
 from .api.recommendations import router as recommendations_router
 from .api.users import admin_router as users_admin_router
 from .api.users import router as users_router
+from .api.keirin_router import router as keirin_router
 from .api.yoso_router import router as yoso_router
 from .config import settings
 
@@ -69,6 +70,7 @@ app.include_router(chihou_horses_router)       # GET  /api/chihou/horses/*
 app.include_router(chihou_races_router)        # GET  /api/chihou/races/*
 app.include_router(chihou_performance_router)      # GET  /api/chihou/performance/*
 app.include_router(chihou_recommendations_router)  # GET/POST /api/chihou/recommendations
+app.include_router(keirin_router)                  # GET /api/keirin/*
 
 # MS2以降で順次有効化:
 # from .api import indices, newspaper

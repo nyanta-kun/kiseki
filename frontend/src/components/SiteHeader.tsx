@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import Image from "next/image";
+import { Bike } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { LiveStreamButton } from "@/components/LiveStreamButton";
@@ -53,6 +55,13 @@ export function SiteHeader({ isAdmin }: Props) {
           </span>
         )}
         <div className="flex-1 min-w-0" />
+        <Link
+          href="/keirin"
+          aria-label="競輪ピックへ"
+          className="flex items-center justify-center w-9 h-9 rounded-md hover:bg-white/10 transition-colors text-white"
+        >
+          <Bike size={20} aria-hidden="true" />
+        </Link>
         <LiveStreamButton />
         <AppNav isAdmin={isAdmin} />
       </div>
