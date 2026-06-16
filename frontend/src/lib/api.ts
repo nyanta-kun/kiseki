@@ -961,6 +961,8 @@ export type KeirinSummary = {
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
+  test: KeirinPeriodSummary;
+  test_from: string;
 };
 
 export async function fetchKeirinPicks(date: string): Promise<KeirinPick[]> {

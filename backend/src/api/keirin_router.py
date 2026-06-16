@@ -221,9 +221,12 @@ async def _aggregate(
     }
 
 
+_TEST_FROM = "2026-03-16"  # lgbm_wt_eval の test_from（モデル更新時に合わせて変更）
+
+
 @router.get("/summary")
 async def get_summary(db: AsyncSession = Depends(get_db)) -> JSONResponse:
-    """当日 / 当月 / 当年の投資・回収サマリーを返す。"""
+    """当日 / 当月 / 当年 / テスト期間の投資・回収サマリーを返す。"""
     today = _today_jst()
     today_str = today.isoformat()
     month_prefix = today.strftime("%Y-%m")
@@ -233,6 +236,8 @@ async def get_summary(db: AsyncSession = Depends(get_db)) -> JSONResponse:
         "today": await _aggregate(db, "race_date = :d", {"d": today_str}),
         "month": await _aggregate(db, "race_date LIKE :d", {"d": f"{month_prefix}-%"}),
         "year":  await _aggregate(db, "race_date LIKE :d", {"d": f"{year_prefix}-%"}),
+        "test":  await _aggregate(db, "race_date >= :d", {"d": _TEST_FROM}),
+        "test_from": _TEST_FROM,
     }
 
     return JSONResponse(content=result)
