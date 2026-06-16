@@ -937,7 +937,7 @@ export type KeirinPick = {
   race_no: number;
   grade: string | null;
   race_type: string | null;
-  start_at: string | null;
+  start_at: number | string | null;
   status: number;
   rank: string;
   pred_combo: string | null;

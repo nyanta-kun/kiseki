@@ -39,6 +39,18 @@ function fmtDate(iso: string): string {
   return iso.slice(0, 7).replace("-", "/");
 }
 
+function fmtStartAt(startAt: number | string | null): string | null {
+  if (startAt == null) return null;
+  const ts = typeof startAt === "number" ? startAt : parseInt(String(startAt), 10);
+  if (isNaN(ts)) return null;
+  return new Date(ts * 1000).toLocaleTimeString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 定数
 // ---------------------------------------------------------------------------
@@ -97,6 +109,7 @@ function HitBadge({ hit, payout, bet }: { hit: boolean; payout: number; bet: num
 
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 px-4 py-2">出走情報なし</p>;
+  const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -110,7 +123,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
           </tr>
         </thead>
         <tbody>
-          {entries.map((e) => (
+          {sorted.map((e) => (
             <tr key={e.frame_no} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
               <td className="px-3 py-1.5 font-bold text-center text-gray-700">{e.frame_no}</td>
               <td className="px-3 py-1.5 text-gray-800">{e.name ?? "—"}</td>
@@ -157,9 +170,9 @@ function PickCard({ pick }: { pick: KeirinPick }) {
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 text-sm">{pick.venue_name}</span>
             <span className="font-semibold text-gray-800 text-sm">{pick.race_no}R</span>
-            {pick.start_at && (
+            {fmtStartAt(pick.start_at) && (
               <span className="font-semibold text-gray-800 text-sm">
-                {String(pick.start_at).slice(0, 5)}
+                {fmtStartAt(pick.start_at)}
               </span>
             )}
             {(pick.grade || pick.race_type) && (
