@@ -154,16 +154,19 @@ function PickCard({ pick }: { pick: KeirinPick }) {
       <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
         <RankBadge rank={pick.rank} />
         <div className="flex-1 min-w-0">
-          <span className="font-semibold text-gray-800 text-sm">{pick.venue_name}</span>
-          <span className="text-gray-500 text-xs ml-2">
-            {pick.race_no}R {pick.grade ?? ""} {pick.race_type ?? ""}
-          </span>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="font-semibold text-gray-800 text-sm">{pick.venue_name}</span>
+            <span className="font-semibold text-gray-800 text-sm">{pick.race_no}R</span>
+            {pick.start_at && (
+              <span className="font-semibold text-gray-800 text-sm">
+                {String(pick.start_at).slice(0, 5)}
+              </span>
+            )}
+            {(pick.grade || pick.race_type) && (
+              <span className="text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+            )}
+          </div>
         </div>
-        {pick.start_at && (
-          <span className="text-xs text-gray-400 flex-shrink-0">
-            {String(pick.start_at).slice(0, 5)}
-          </span>
-        )}
       </div>
 
       <div className="px-4 py-2 border-b border-gray-50 flex items-center gap-3">
