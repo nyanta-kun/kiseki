@@ -258,34 +258,29 @@ export default function KeirinPage() {
   const [loadingPicks, setLoadingPicks] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPicks = useCallback(async (d: string) => {
+  const loadData = useCallback(async (d: string) => {
     setLoadingPicks(true);
     setError(null);
-    try {
-      setPicks(await fetchKeirinPicks(toISODate(d)));
-    } catch {
+    const iso = toISODate(d);
+    const [picksResult, summaryResult] = await Promise.allSettled([
+      fetchKeirinPicks(iso),
+      fetchKeirinSummary(iso),
+    ]);
+    if (picksResult.status === "fulfilled") {
+      setPicks(picksResult.value);
+    } else {
       setError("ピックの取得に失敗しました。");
       setPicks([]);
-    } finally {
-      setLoadingPicks(false);
     }
-  }, []);
-
-  const loadSummary = useCallback(async () => {
-    try {
-      setSummary(await fetchKeirinSummary());
-    } catch {
-      /* サマリー失敗はサイレント — ピックは表示する */
+    if (summaryResult.status === "fulfilled") {
+      setSummary(summaryResult.value);
     }
+    setLoadingPicks(false);
   }, []);
 
   useEffect(() => {
-    loadPicks(date);
-  }, [date, loadPicks]);
-
-  useEffect(() => {
-    loadSummary();
-  }, [loadSummary]);
+    loadData(date);
+  }, [date, loadData]);
 
   const isToday = date === todayYYYYMMDD();
 

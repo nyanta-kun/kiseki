@@ -969,6 +969,7 @@ export async function fetchKeirinPicks(date: string): Promise<KeirinPick[]> {
   return get<KeirinPick[]>(`/keirin/picks?date=${date}`, { cache: "no-store" });
 }
 
-export async function fetchKeirinSummary(): Promise<KeirinSummary> {
-  return get<KeirinSummary>(`/keirin/summary`, { cache: "no-store" });
+export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> {
+  const q = date ? `?date=${date}` : "";
+  return get<KeirinSummary>(`/keirin/summary${q}`, { cache: "no-store" });
 }
