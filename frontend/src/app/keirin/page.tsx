@@ -248,30 +248,31 @@ function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: P
 }
 
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
-  const testLabel = `${fmtDate(summary.test_from)}〜${fmtDate(summary.test_to)}`;
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
       <div className="px-3 sm:px-4 py-2 border-b border-gray-100 bg-gray-50">
         <h2 className="text-sm font-semibold text-gray-700">投資・回収サマリー</h2>
       </div>
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-gray-100">
-            <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 font-medium">期間</th>
-            <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">件数</th>
-            <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">的中</th>
-            <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">投資</th>
-            <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">回収</th>
-            <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">回収率</th>
-          </tr>
-        </thead>
-        <tbody>
-          <SummaryRow label="当日" data={summary.today} />
-          <SummaryRow label="当月" data={summary.month} />
-          <SummaryRow label="当年" data={summary.year} />
-          <SummaryRow label="検証期間" sub={testLabel} data={summary.test} />
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-100">
+              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 font-medium">期間</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">件数</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">的中</th>
+              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">投資</th>
+              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">回収</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">回収率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <SummaryRow label="当日" data={summary.today} />
+            <SummaryRow label="当月" data={summary.month} />
+            <SummaryRow label="当年" data={summary.year} />
+            <SummaryRow label="検証期間" data={summary.test} />
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
