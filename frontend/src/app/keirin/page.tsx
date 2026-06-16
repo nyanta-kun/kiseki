@@ -166,9 +166,14 @@ function PickCard({ pick }: { pick: KeirinPick }) {
         )}
       </div>
 
-      {/* 買い目 */}
-      <div className="px-4 py-2 border-b border-gray-50">
-        <span className="text-sm font-medium text-gray-700">{comboLabel ?? "—"}</span>
+      {/* 買い目 + 合成オッズ */}
+      <div className="px-4 py-2 border-b border-gray-50 flex items-center gap-3">
+        <span className="text-sm font-medium text-gray-700 flex-1">{comboLabel ?? "—"}</span>
+        {pick.synth_odds != null && (
+          <span className="text-xs text-gray-500 flex-shrink-0">
+            合成 <span className="font-semibold text-gray-700">{pick.synth_odds.toFixed(1)}</span>倍
+          </span>
+        )}
       </div>
 
       {/* 出走表 */}

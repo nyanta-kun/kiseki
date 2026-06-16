@@ -942,6 +942,7 @@ export type KeirinPick = {
   rank: string;
   pred_combo: string | null;
   n_combos: number | null;
+  synth_odds: number | null;
   hit: boolean;
   payout: number;
   bet_amount: number;
