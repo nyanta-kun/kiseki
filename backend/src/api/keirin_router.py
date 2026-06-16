@@ -101,7 +101,7 @@ async def get_picks(
             SELECT
               ph.id,
               ph.race_key,
-              REPLACE(ph.race_key, '#W', '') AS base_key,
+              SPLIT_PART(ph.race_key, '#', 1) AS base_key,
               ph.rank,
               ph.pred_combo,
               ph.n_combos,
@@ -117,7 +117,7 @@ async def get_picks(
               vi.name AS venue_name
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
-              ON REPLACE(ph.race_key, '#W', '') = wr.race_key
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             JOIN keirin.venue_info vi
               ON wr.venue_id = vi.venue_code
             WHERE ph.race_date = :date
