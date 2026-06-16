@@ -44,11 +44,12 @@ function formatROI(roi: number | null): string {
 // ---------------------------------------------------------------------------
 
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  SS: { bg: "#b45309", text: "#fff", label: "SS" },
-  S:  { bg: "#1d4ed8", text: "#fff", label: "S" },
-  A:  { bg: "#15803d", text: "#fff", label: "A" },
-  B:  { bg: "#6b7280", text: "#fff", label: "B" },
-  WIDE: { bg: "#7c3aed", text: "#fff", label: "W" },
+  SS:    { bg: "#b45309", text: "#fff", label: "SS" },
+  S:     { bg: "#1d4ed8", text: "#fff", label: "S" },
+  A:     { bg: "#15803d", text: "#fff", label: "A" },
+  B:     { bg: "#6b7280", text: "#fff", label: "B" },
+  WIDE:  { bg: "#7c3aed", text: "#fff", label: "W" },
+  "7PLUS": { bg: "#0891b2", text: "#fff", label: "7+" },
 };
 
 // ---------------------------------------------------------------------------
@@ -141,12 +142,12 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
 function PickCard({ pick }: { pick: KeirinPick }) {
   const isSettled = pick.status === 3;
   const isWide = pick.rank === "WIDE";
+  const is7Plus = pick.rank === "7PLUS";
 
-  const comboLabel = isWide
-    ? `ワイド: ${pick.pred_combo}`
-    : pick.pred_combo
-      ? `3連単: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
-      : pick.pred_combo;
+  const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
+  const comboLabel = pick.pred_combo
+    ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
+    : undefined;
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
