@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Bike, HelpCircle } from "lucide-react";
+import { Bike, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
@@ -313,10 +313,19 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
 }
 
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">投資・回収サマリー</h2>
+      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 flex-1">投資・回収サマリー</h2>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded"
+          aria-label={expanded ? "ランク詳細を閉じる" : "ランク詳細を開く"}
+        >
+          {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          <span className="hidden sm:inline">{expanded ? "閉じる" : "ランク別"}</span>
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">
@@ -331,14 +340,14 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             </tr>
           </thead>
           <tbody>
-            <SummaryRow label="当日" data={summary.today} showRanks />
-            <SummaryRow label="当月" data={summary.month} showRanks />
-            <SummaryRow label="当年" data={summary.year} showRanks />
+            <SummaryRow label="当日" data={summary.today} showRanks={expanded} />
+            <SummaryRow label="当月" data={summary.month} showRanks={expanded} />
+            <SummaryRow label="当年" data={summary.year} showRanks={expanded} />
             <SummaryRow
               label="HOLD精度"
               sub={summary.test_from && summary.test_to ? `${summary.test_from}〜${summary.test_to}` : undefined}
               data={summary.test}
-              showRanks
+              showRanks={expanded}
             />
           </tbody>
         </table>
