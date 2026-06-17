@@ -220,9 +220,7 @@ async def _aggregate(
     )).mappings().one_or_none()
 
     if not row:
-        base = {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None}
-        base["by_rank"] = {}
-        return base
+        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None, "by_rank": {}}
 
     n_picks = int(row["n_picks"] or 0)
     n_hits = int(row["n_hits"] or 0)
