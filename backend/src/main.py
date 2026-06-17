@@ -13,12 +13,12 @@ from .api.chihou_recommendations_router import router as chihou_recommendations_
 from .api.horses import router as horses_router
 from .api.import_router import changes_router
 from .api.import_router import router as import_router
+from .api.keirin_router import router as keirin_router
 from .api.performance import router as performance_router
 from .api.races import router as races_router
 from .api.recommendations import router as recommendations_router
 from .api.users import admin_router as users_admin_router
 from .api.users import router as users_router
-from .api.keirin_router import router as keirin_router
 from .api.yoso_router import router as yoso_router
 from .config import settings
 
