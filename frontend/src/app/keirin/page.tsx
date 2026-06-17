@@ -80,10 +80,7 @@ function RankBadge({ rank }: { rank: string }) {
   );
 }
 
-function HitBadge({ hit, payout, bet }: { hit: boolean; payout: number; bet: number }) {
-  if (payout === 0 && !hit) {
-    return <span className="text-xs text-gray-400">未確定</span>;
-  }
+function HitBadge({ hit, payout, bet, isSettled }: { hit: boolean; payout: number; bet: number; isSettled: boolean }) {
   if (hit) {
     return (
       <div className="flex items-center gap-2 flex-wrap">
@@ -91,18 +88,22 @@ function HitBadge({ hit, payout, bet }: { hit: boolean; payout: number; bet: num
           ✓ 的中
         </span>
         <span className="text-xs text-gray-600">
-          ¥{bet.toLocaleString()} → <span className="font-semibold text-emerald-600">¥{payout.toLocaleString()}</span>
-          <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>
+          {bet > 0 && <>¥{bet.toLocaleString()} → </>}
+          <span className="font-semibold text-emerald-600">¥{payout.toLocaleString()}</span>
+          {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
         </span>
       </div>
     );
+  }
+  if (!isSettled) {
+    return <span className="text-xs text-gray-400">未確定</span>;
   }
   return (
     <div className="flex items-center gap-2">
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-600 border border-red-200">
         ✗ 不的中
       </span>
-      <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>
+      {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
     </div>
   );
 }
@@ -132,7 +133,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}
             </td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center">
-              {e.finish_order != null ? (
+              {e.finish_order != null && e.finish_order > 0 ? (
                 <span
                   className={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 rounded-full text-xs font-bold
                     ${e.finish_order === 1 ? "bg-amber-400 text-white" :
@@ -140,6 +141,8 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
                 >
                   {e.finish_order}
                 </span>
+              ) : e.finish_order === 0 ? (
+                <span className="text-xs text-gray-400">失</span>
               ) : (
                 <span className="text-gray-300">—</span>
               )}
@@ -203,9 +206,9 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 
       <EntryTable entries={pick.entries} />
 
-      {isSettled && isPurchased && (
+      {(isSettled || pick.hit) && isPurchased && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} />
+          <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} />
         </div>
       )}
     </div>
