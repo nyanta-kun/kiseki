@@ -227,7 +227,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 
       <EntryTable entries={pick.entries} />
 
-      {(isSettled || pick.hit) && (isPurchased || (isMiwokuri && isSettled)) && (
+      {(isSettled || pick.hit) && (isPurchased || isSettled) && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} />
         </div>
