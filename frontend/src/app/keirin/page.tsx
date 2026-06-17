@@ -68,7 +68,17 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
 // サブコンポーネント
 // ---------------------------------------------------------------------------
 
-function RankBadge({ rank }: { rank: string }) {
+function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
+  if (miwokuri) {
+    return (
+      <span
+        style={{ background: "#9ca3af", color: "#fff" }}
+        className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0"
+      >
+        非
+      </span>
+    );
+  }
   const s = RANK_STYLE[rank] ?? { bg: "#6b7280", text: "#fff", label: rank };
   return (
     <span
@@ -82,14 +92,21 @@ function RankBadge({ rank }: { rank: string }) {
 
 function HitBadge({ hit, payout, bet, isSettled }: { hit: boolean; payout: number; bet: number; isSettled: boolean }) {
   if (hit) {
+    const isGami = bet > 0 && payout < bet;
     return (
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-300">
-          ✓ 的中
-        </span>
+        {isGami ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700 border border-orange-300">
+            ガ 的中
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-300">
+            ✓ 的中
+          </span>
+        )}
         <span className="text-xs text-gray-600">
           {bet > 0 && <>¥{bet.toLocaleString()} → </>}
-          <span className="font-semibold text-emerald-600">¥{payout.toLocaleString()}</span>
+          <span className={`font-semibold ${isGami ? "text-orange-600" : "text-emerald-600"}`}>¥{payout.toLocaleString()}</span>
           {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
         </span>
       </div>
@@ -172,7 +189,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
     <div className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
       {/* ヘッダー行 */}
       <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
-        <RankBadge rank={pick.rank} />
+        <RankBadge rank={pick.rank} miwokuri={isMiwokuri} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
@@ -185,11 +202,6 @@ function PickCard({ pick }: { pick: KeirinPick }) {
             )}
           </div>
         </div>
-        {isMiwokuri && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-gray-200 text-gray-500 flex-shrink-0">
-            見送り
-          </span>
-        )}
       </div>
 
       {/* 買い目行 */}
@@ -206,7 +218,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 
       <EntryTable entries={pick.entries} />
 
-      {(isSettled || pick.hit) && isPurchased && (
+      {(isSettled || pick.hit) && (isPurchased || (isMiwokuri && isSettled)) && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} />
         </div>
