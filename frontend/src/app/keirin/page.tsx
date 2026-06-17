@@ -379,7 +379,7 @@ export default function KeirinPage() {
   }, []);
 
   useEffect(() => {
-    loadData(date);
+    void loadData(date); // eslint-disable-line react-hooks/set-state-in-effect
   }, [date, loadData]);
 
   const isToday = date === todayYYYYMMDD();

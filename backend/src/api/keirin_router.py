@@ -7,15 +7,9 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 """
 from __future__ import annotations
 
-from datetime import date as Date, datetime, timezone, timedelta
+from datetime import date as Date
+from datetime import datetime, timedelta, timezone
 from typing import Any
-
-_JST = timezone(timedelta(hours=9))
-
-
-def _today_jst() -> Date:
-    return datetime.now(_JST).date()
-
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -23,6 +17,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+
+_JST = timezone(timedelta(hours=9))
+
+
+def _today_jst() -> Date:
+    return datetime.now(_JST).date()
 
 router = APIRouter(prefix="/api/keirin", tags=["keirin"])
 
@@ -312,7 +312,6 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
         suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "7SS" / "7S" / "7A"
         rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
         if rank_key not in by_rank:
-            rv = float(r["roi"]) if r["roi"] is not None else None
             by_rank[rank_key] = _make_period_dict(
                 int(r["n_picks"] or 0),
                 int(r["n_hits"] or 0),
