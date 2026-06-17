@@ -315,11 +315,11 @@ export default function KeirinPage() {
   const isToday = date === todayYYYYMMDD();
 
   return (
-    <div className="max-w-3xl mx-auto px-3 sm:px-4 py-4 space-y-4">
+    <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 space-y-4">
       {/* タイトル */}
       <div className="flex items-center gap-2">
-        <Bike size={20} className="text-blue-600" />
-        <h1 className="text-lg font-bold text-gray-800">競輪ピック</h1>
+        <Bike size={22} className="text-blue-500" />
+        <h1 className="text-xl font-extrabold tracking-widest text-gray-950">KEIRIN</h1>
       </div>
 
       {/* サマリー */}

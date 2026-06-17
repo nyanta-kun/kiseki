@@ -211,7 +211,8 @@ async def _aggregate(
     n_hits = int(row["n_hits"] or 0)
     total_bet = int(row["total_bet"] or 0)
     total_payout = int(row["total_payout"] or 0)
-    roi = round(total_payout / total_bet, 3) if total_bet > 0 else None
+    # total_payout=0 かつ total_bet>0 は払戻データ未格納を示す → None
+    roi = round(total_payout / total_bet, 3) if (total_bet > 0 and total_payout > 0) else None
     return {
         "n_picks": n_picks,
         "n_hits": n_hits,
