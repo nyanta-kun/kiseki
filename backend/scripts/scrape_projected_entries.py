@@ -144,13 +144,16 @@ ON CONFLICT (netkeiba_race_id, horse_name) DO UPDATE SET
 
 # keiba.races へ出馬表確定前の placeholder 行を作る（一覧/詳細で引けるように）。
 # TOKU 取込と同じ ON CONFLICT(jravan_race_id) パターン。確定 RA 取込で上書きされるよう
-# 既存行は触らない（DO NOTHING）。sekito.v_races（keiba.races のビュー）にも自動反映される。
+# 確定 RA 取込で上書きされるよう race_name は変えない。
+# surface/distance は NULL の場合のみ scraper 値で補完する。
 RACES_SQL = """
 INSERT INTO keiba.races
   (jravan_race_id, date, course, course_name, race_number, race_name,
    surface, distance, registered_count)
 VALUES %s
-ON CONFLICT (jravan_race_id) DO NOTHING
+ON CONFLICT (jravan_race_id) DO UPDATE SET
+  surface  = COALESCE(keiba.races.surface,  EXCLUDED.surface),
+  distance = COALESCE(keiba.races.distance, EXCLUDED.distance)
 """
 
 
