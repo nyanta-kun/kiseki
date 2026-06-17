@@ -69,22 +69,24 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
 // ---------------------------------------------------------------------------
 
 function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
+  const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
   if (miwokuri) {
     return (
-      <span
-        style={{ background: "#9ca3af", color: "#fff" }}
-        className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0"
-      >
+      <span style={{ background: "#9ca3af", color: "#fff" }} className={badgeCls}>
+        ガ
+      </span>
+    );
+  }
+  const s = RANK_STYLE[rank];
+  if (!s) {
+    return (
+      <span style={{ background: "#9ca3af", color: "#fff" }} className={badgeCls}>
         非
       </span>
     );
   }
-  const s = RANK_STYLE[rank] ?? { bg: "#6b7280", text: "#fff", label: rank };
   return (
-    <span
-      style={{ background: s.bg, color: s.text }}
-      className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0"
-    >
+    <span style={{ background: s.bg, color: s.text }} className={badgeCls}>
       {s.label}
     </span>
   );
