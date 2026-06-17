@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary } from "@/lib/api";
@@ -366,6 +366,13 @@ export default function KeirinPage() {
   const [summary, setSummary] = useState<KeirinSummary | null>(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const openPicker = () => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    try { input.showPicker(); } catch { input.click(); }
+  };
 
   const loadData = useCallback(async (d: string) => {
     setLoadingPicks(true);
@@ -423,7 +430,39 @@ export default function KeirinPage() {
         >
           ← 前日
         </button>
-        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{fmtYMD(date)}</span>
+        <div className="flex items-center gap-2">
+          {!isToday && (
+            <button
+              onClick={() => setDate(todayYYYYMMDD())}
+              className="text-[11px] px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            >
+              今日
+            </button>
+          )}
+          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{fmtYMD(date)}</span>
+          <div className="relative">
+            <button
+              onClick={openPicker}
+              className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors text-base leading-none"
+              aria-label="日付を選択"
+            >
+              📅
+            </button>
+            <input
+              key={date}
+              ref={dateInputRef}
+              type="date"
+              aria-hidden="true"
+              tabIndex={-1}
+              className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+              defaultValue={toISODate(date)}
+              onChange={(e) => {
+                const v = e.target.value.replace(/-/g, "");
+                if (v.length === 8) setDate(v);
+              }}
+            />
+          </div>
+        </div>
         <button
           onClick={() => setDate(nextDay(date))}
           disabled={isToday}
