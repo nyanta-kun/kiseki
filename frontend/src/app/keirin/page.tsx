@@ -213,8 +213,16 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 }
 
 type PeriodData = KeirinSummary["today"];
+type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: PeriodData }) {
+const RANK_ORDER = ["SS", "S", "A"] as const;
+const RANK_BADGE_STYLE: Record<string, string> = {
+  SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  S:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  A:  "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
+};
+
+function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
   const roiColor = data.roi == null
     ? "text-gray-400"
     : data.roi >= 1.0
@@ -223,35 +231,84 @@ function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: P
   const hitRate = data.n_picks > 0
     ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
     : "—";
+  const badgeClass = RANK_BADGE_STYLE[rankKey] ?? "bg-gray-100 text-gray-600";
 
   return (
-    <tr className="border-b border-gray-100 dark:border-gray-700 last:border-0">
-      {/* 期間 */}
-      <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
-        {label}
-        {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
+    <tr className="border-b border-gray-50 dark:border-gray-800 last:border-0 bg-gray-50/50 dark:bg-gray-800/30">
+      <td className="py-1 px-2 sm:px-3">
+        <span className="flex items-center gap-1.5 pl-3">
+          <span className={`inline-flex items-center justify-center w-6 h-5 rounded text-xs font-bold ${badgeClass}`}>
+            {rankKey}
+          </span>
+        </span>
       </td>
-      {/* 件数 */}
-      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+      <td className="py-1 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         {data.n_picks}
       </td>
-      {/* 的中 */}
-      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+      <td className="py-1 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         {data.n_hits}
-        <span className="text-xs text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
+        <span className="text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
       </td>
-      {/* 投資・回収: sm以上のみ表示 */}
-      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+      <td className="hidden sm:table-cell py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         ¥{data.total_bet.toLocaleString()}
       </td>
-      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+      <td className="hidden sm:table-cell py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         ¥{data.total_payout.toLocaleString()}
       </td>
-      {/* 回収率 */}
-      <td className={`py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm tabular-nums ${roiColor}`}>
+      <td className={`py-1 px-1.5 sm:px-3 text-right text-xs tabular-nums ${roiColor}`}>
         {formatROI(data.roi)}
       </td>
     </tr>
+  );
+}
+
+function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: string; data: PeriodData; showRanks?: boolean }) {
+  const roiColor = data.roi == null
+    ? "text-gray-400"
+    : data.roi >= 1.0
+      ? "text-emerald-600 font-semibold"
+      : "text-red-500";
+  const hitRate = data.n_picks > 0
+    ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
+    : "—";
+  const byRank = data.by_rank ?? {};
+  const hasRanks = showRanks && RANK_ORDER.some(r => (byRank[r]?.n_picks ?? 0) > 0);
+
+  return (
+    <>
+      <tr className="border-b border-gray-100 dark:border-gray-700">
+        {/* 期間 */}
+        <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
+          {label}
+          {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
+        </td>
+        {/* 件数 */}
+        <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+          {data.n_picks}
+        </td>
+        {/* 的中 */}
+        <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+          {data.n_hits}
+          <span className="text-xs text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
+        </td>
+        {/* 投資・回収: sm以上のみ表示 */}
+        <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+          ¥{data.total_bet.toLocaleString()}
+        </td>
+        <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+          ¥{data.total_payout.toLocaleString()}
+        </td>
+        {/* 回収率 */}
+        <td className={`py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm tabular-nums ${roiColor}`}>
+          {formatROI(data.roi)}
+        </td>
+      </tr>
+      {hasRanks && RANK_ORDER.map(rk => {
+        const rd = byRank[rk];
+        if (!rd || rd.n_picks === 0) return null;
+        return <RankSubRow key={rk} rankKey={rk} data={rd} />;
+      })}
+    </>
   );
 }
 
@@ -274,10 +331,15 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             </tr>
           </thead>
           <tbody>
-            <SummaryRow label="当日" data={summary.today} />
-            <SummaryRow label="当月" data={summary.month} />
-            <SummaryRow label="当年" data={summary.year} />
-            <SummaryRow label="稼働以降" sub={summary.test_from ? `${summary.test_from}〜` : undefined} data={summary.test} />
+            <SummaryRow label="当日" data={summary.today} showRanks />
+            <SummaryRow label="当月" data={summary.month} showRanks />
+            <SummaryRow label="当年" data={summary.year} showRanks />
+            <SummaryRow
+              label="HOLD精度"
+              sub={summary.test_from && summary.test_to ? `${summary.test_from}〜${summary.test_to}` : undefined}
+              data={summary.test}
+              showRanks
+            />
           </tbody>
         </table>
       </div>

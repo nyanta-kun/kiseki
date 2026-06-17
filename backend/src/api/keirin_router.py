@@ -188,6 +188,17 @@ async def get_picks(
 # summary
 # ---------------------------------------------------------------------------
 
+def _make_period_dict(n_picks: int, n_hits: int, total_bet: int, total_payout: int) -> dict:
+    roi = round(total_payout / total_bet, 3) if (total_bet > 0 and total_payout > 0) else None
+    return {
+        "n_picks": n_picks,
+        "n_hits": n_hits,
+        "total_bet": total_bet,
+        "total_payout": total_payout,
+        "roi": roi,
+    }
+
+
 async def _aggregate(
     db: AsyncSession,
     where: str,
@@ -209,31 +220,115 @@ async def _aggregate(
     )).mappings().one_or_none()
 
     if not row:
-        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None}
+        base = {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None}
+        base["by_rank"] = {}
+        return base
 
     n_picks = int(row["n_picks"] or 0)
     n_hits = int(row["n_hits"] or 0)
     total_bet = int(row["total_bet"] or 0)
     total_payout = int(row["total_payout"] or 0)
-    # total_payout=0 かつ total_bet>0 は払戻データ未格納を示す → None
-    roi = round(total_payout / total_bet, 3) if (total_bet > 0 and total_payout > 0) else None
-    return {
-        "n_picks": n_picks,
-        "n_hits": n_hits,
-        "total_bet": total_bet,
-        "total_payout": total_payout,
-        "roi": roi,
+    result = _make_period_dict(n_picks, n_hits, total_bet, total_payout)
+
+    # ランク別集計
+    rank_rows = (await db.execute(
+        text(f"""
+            SELECT
+              rank,
+              COUNT(*)                                                  AS n_picks,
+              SUM(hit)                                                  AS n_hits,
+              COALESCE(SUM(bet_amount), 0)                              AS total_bet,
+              COALESCE(SUM(CASE WHEN hit = 1 THEN payout ELSE 0 END), 0) AS total_payout
+            FROM keirin.picks_history
+            WHERE {where}
+              AND NOT COALESCE(miwokuri, FALSE)
+              AND bet_amount > 0
+              AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
+            GROUP BY rank
+        """),
+        params,
+    )).mappings().all()
+
+    by_rank: dict[str, dict] = {}
+    for r in rank_rows:
+        key = str(r["rank"]).replace("7PLUS_", "")
+        by_rank[key] = _make_period_dict(
+            int(r["n_picks"] or 0),
+            int(r["n_hits"] or 0),
+            int(r["total_bet"] or 0),
+            int(r["total_payout"] or 0),
+        )
+    result["by_rank"] = by_rank
+    return result
+
+
+async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
+    """keirin.model_evaluation から最新のバックテスト結果を返す。
+    ランク別行（model_name に '#7SS'/'#7S'/'#7A' サフィックス付き）も by_rank に含める。
+    """
+    row = (await db.execute(
+        text("""
+            SELECT n_picks, n_hits, total_bet, total_payout, roi,
+                   period_from, period_to
+            FROM keirin.model_evaluation
+            WHERE period_type = :pt
+              AND model_name NOT LIKE '%#7%'
+            ORDER BY evaluated_at DESC
+            LIMIT 1
+        """),
+        {"pt": period_type},
+    )).mappings().one_or_none()
+
+    if not row:
+        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
+                "period_from": None, "period_to": None, "by_rank": {}}
+
+    roi_val = float(row["roi"]) if row["roi"] is not None else None
+    result = {
+        "n_picks":      int(row["n_picks"] or 0),
+        "n_hits":       int(row["n_hits"] or 0),
+        "total_bet":    int(row["total_bet"] or 0),
+        "total_payout": int(row["total_payout"] or 0),
+        "roi":          round(roi_val, 3) if roi_val is not None else None,
+        "period_from":  row["period_from"],
+        "period_to":    row["period_to"],
     }
 
+    # ランク別行を取得（model_name サフィックスで識別）
+    rank_rows = (await db.execute(
+        text("""
+            SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
+            FROM keirin.model_evaluation
+            WHERE period_type = :pt
+              AND model_name LIKE '%#7%'
+            ORDER BY evaluated_at DESC
+        """),
+        {"pt": period_type},
+    )).mappings().all()
 
-_TEST_FROM = "2025-07-01"  # 検証期間 開始
-_TEST_TO   = "2026-02-28"  # 検証期間 終了
+    # 同一 evaluated_at の最新セットのみ使用（ランクキーに重複があれば最新を優先）
+    by_rank: dict[str, dict] = {}
+    for r in rank_rows:
+        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "7SS" / "7S" / "7A"
+        rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
+        if rank_key not in by_rank:
+            rv = float(r["roi"]) if r["roi"] is not None else None
+            by_rank[rank_key] = _make_period_dict(
+                int(r["n_picks"] or 0),
+                int(r["n_hits"] or 0),
+                int(r["total_bet"] or 0),
+                int(r["total_payout"] or 0),
+            )
+
+    result["by_rank"] = by_rank
+    return result
 
 
 @router.get("/summary")
 async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
-    """当日 / 当月 / 当年 / 検証期間の投資・回収サマリーを返す。
+    """当日 / 当月 / 当年 / HOLD期間バックテストのサマリーを返す。
     date（YYYY-MM-DD）を指定するとその日付を基準に当日/当月/当年を集計する。
+    test フィールドは keirin.model_evaluation の最新 HOLD 期間評価を使用する。
     """
     try:
         today = Date.fromisoformat(date) if date else _today_jst()
@@ -243,13 +338,15 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     month_prefix = today.strftime("%Y-%m")
     year_prefix = str(today.year)
 
+    model_eval = await _get_model_eval(db, period_type="HOLD")
+
     result = {
         "today": await _aggregate(db, "race_date = :d", {"d": today_str}),
         "month": await _aggregate(db, "race_date LIKE :d", {"d": f"{month_prefix}-%"}),
         "year":  await _aggregate(db, "race_date LIKE :d", {"d": f"{year_prefix}-%"}),
-        "test":  await _aggregate(db, "race_date BETWEEN :f AND :t", {"f": _TEST_FROM, "t": _TEST_TO}),
-        "test_from": _TEST_FROM,
-        "test_to": _TEST_TO,
+        "test":       model_eval,
+        "test_from":  model_eval.get("period_from"),
+        "test_to":    model_eval.get("period_to"),
     }
 
     return JSONResponse(content=result)
