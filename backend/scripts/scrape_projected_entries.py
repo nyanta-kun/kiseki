@@ -79,7 +79,7 @@ def login() -> requests.Session:
 def list_race_ids(s: requests.Session, date: str) -> list[str]:
     """開催日 YYYYMMDD の全 race_id（12桁）を返す。"""
     r = s.get(RACE_LIST.format(date=date), timeout=TIMEOUT)
-    html = r.content.decode("euc-jp", errors="replace")
+    html = r.content.decode("utf-8", errors="replace")
     return sorted(set(re.findall(r"race_id=(\d{12})", html)))
 
 
@@ -287,7 +287,7 @@ def main() -> int:
             n_race += 1
             try:
                 html = s.get(SHUTUBA.format(race_id=rid), timeout=TIMEOUT).content.decode(
-                    "euc-jp", errors="replace")
+                    "utf-8", errors="replace")
             except Exception as e:  # noqa: BLE001
                 logger.error("  %s fetch失敗: %s", rid, e)
                 time.sleep(SLEEP_SEC)
