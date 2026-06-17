@@ -223,6 +223,18 @@ def save_db(results: list[dict]) -> tuple[int, int, int]:
                 ))
     if not horse_rows:
         return 0, 0, 0
+    # ON CONFLICT DO UPDATE は同一バッチ内の重複行をエラーにするため事前に排除する
+    # キー: (netkeiba_race_id, horse_name) = インデックス 0, 3 ではなく 0, 7
+    # tuple順: (netkeiba_race_id, date, course_code, race_number, race_name,
+    #           netkeiba_horse_id, horse_name, sex_age, expected_jockey)
+    seen_horse: set[tuple] = set()
+    deduped_horse_rows = []
+    for row in horse_rows:
+        key = (row[0], row[6])  # netkeiba_race_id, horse_name
+        if key not in seen_horse:
+            seen_horse.add(key)
+            deduped_horse_rows.append(row)
+    horse_rows = deduped_horse_rows
     conn = psycopg2.connect(_dsn())
     with conn, conn.cursor() as cur:
         if race_rows:
