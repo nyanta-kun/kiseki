@@ -109,26 +109,26 @@ function HitBadge({ hit, payout, bet }: { hit: boolean; payout: number; bet: num
 
 
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
-  if (!entries.length) return <p className="text-xs text-gray-400 px-3 py-2">出走情報なし</p>;
+  if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
   return (
     <table className="w-full">
       <thead>
-        <tr className="border-b border-gray-100">
-          <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 text-xs w-7 sm:w-8">車</th>
-          <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 text-xs">選手名</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 text-xs w-9 sm:w-12">戦法</th>
-          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 text-xs w-11 sm:w-14">指数</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 text-xs w-8 sm:w-10">着</th>
+        <tr className="border-b border-gray-100 dark:border-gray-700">
+          <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-7 sm:w-8">車</th>
+          <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs">選手名</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-9 sm:w-12">戦法</th>
+          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14">指数</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-8 sm:w-10">着</th>
         </tr>
       </thead>
       <tbody>
         {sorted.map((e) => (
-          <tr key={e.frame_no} className="border-b border-gray-50 last:border-0">
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 font-bold text-center text-xs sm:text-sm text-gray-700">{e.frame_no}</td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800">{e.name ?? "—"}</td>
-            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 text-xs">{e.style ?? "—"}</td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700">
+          <tr key={e.frame_no} className="border-b border-gray-50 dark:border-gray-700 last:border-0">
+            <td className="px-2 sm:px-3 py-1 sm:py-1.5 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
+            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800 dark:text-gray-100">{e.name ?? "—"}</td>
+            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 dark:text-gray-400 text-xs">{e.style ?? "—"}</td>
+            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}
             </td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center">
@@ -166,19 +166,19 @@ function PickCard({ pick }: { pick: KeirinPick }) {
   const startTime = fmtStartAt(pick.start_at);
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
+    <div className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
       {/* ヘッダー行 */}
-      <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 border-b border-gray-100">
+      <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
         <RankBadge rank={pick.rank} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
-            <span className="font-semibold text-gray-800 text-sm">{pick.venue_name}</span>
-            <span className="font-semibold text-gray-800 text-sm">{pick.race_no}R</span>
+            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
+            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
             {startTime && (
-              <span className="font-semibold text-gray-800 text-sm">{startTime}</span>
+              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
             )}
             {(pick.grade || pick.race_type) && (
-              <span className="text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
             )}
           </div>
         </div>
@@ -190,13 +190,13 @@ function PickCard({ pick }: { pick: KeirinPick }) {
       </div>
 
       {/* 買い目行 */}
-      <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 flex items-center gap-2 sm:gap-3">
-        <span className="text-xs sm:text-sm font-medium text-gray-700 flex-1 min-w-0 break-words">
+      <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 sm:gap-3">
+        <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
           {comboLabel ?? "—"}
         </span>
         {pick.synth_odds != null && !isMiwokuri && (
-          <span className="text-xs text-gray-500 flex-shrink-0">
-            合成 <span className="font-semibold text-gray-700">{pick.synth_odds.toFixed(1)}</span>倍
+          <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+            合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
           </span>
         )}
       </div>
@@ -204,7 +204,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
       <EntryTable entries={pick.entries} />
 
       {isSettled && isPurchased && (
-        <div className="px-3 sm:px-4 py-2 border-t border-gray-100 bg-gray-50">
+        <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} />
         </div>
       )}
@@ -225,26 +225,26 @@ function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: P
     : "—";
 
   return (
-    <tr className="border-b border-gray-100 last:border-0">
+    <tr className="border-b border-gray-100 dark:border-gray-700 last:border-0">
       {/* 期間 */}
-      <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 font-medium">
+      <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
         {label}
-        {sub && <span className="block text-xs text-gray-400 font-normal">{sub}</span>}
+        {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
       </td>
       {/* 件数 */}
-      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 tabular-nums">
+      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
         {data.n_picks}
       </td>
       {/* 的中 */}
-      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 tabular-nums">
+      <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
         {data.n_hits}
-        <span className="text-xs text-gray-400 ml-0.5">({hitRate})</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
       </td>
       {/* 投資・回収: sm以上のみ表示 */}
-      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 tabular-nums">
+      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
         ¥{data.total_bet.toLocaleString()}
       </td>
-      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 tabular-nums">
+      <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
         ¥{data.total_payout.toLocaleString()}
       </td>
       {/* 回収率 */}
@@ -257,27 +257,27 @@ function SummaryRow({ label, sub, data }: { label: string; sub?: string; data: P
 
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 bg-gray-50">
-        <h2 className="text-sm font-semibold text-gray-700">投資・回収サマリー</h2>
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">投資・回収サマリー</h2>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-gray-100">
-              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 font-medium">期間</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">件数</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">的中</th>
-              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">投資</th>
-              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 font-medium">回収</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 font-medium">回収率</th>
+            <tr className="border-b border-gray-100 dark:border-gray-700">
+              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
+              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">投資</th>
+              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
             </tr>
           </thead>
           <tbody>
             <SummaryRow label="当日" data={summary.today} />
             <SummaryRow label="当月" data={summary.month} />
             <SummaryRow label="当年" data={summary.year} />
-            <SummaryRow label="検証期間" data={summary.test} />
+            <SummaryRow label="稼働以降" sub={summary.test_from ? `${summary.test_from}〜` : undefined} data={summary.test} />
           </tbody>
         </table>
       </div>
@@ -285,8 +285,6 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// ヘルプセクション
 // ---------------------------------------------------------------------------
 // メインページ
 // ---------------------------------------------------------------------------
@@ -329,10 +327,10 @@ export default function KeirinPage() {
       {/* タイトル */}
       <div className="flex items-center gap-2">
         <Bike size={22} className="text-blue-500" />
-        <h1 className="text-xl font-extrabold tracking-widest text-gray-950">KEIRIN</h1>
+        <h1 className="text-xl font-extrabold tracking-widest text-gray-900 dark:text-white">KEIRIN</h1>
         <Link
           href="/keirin/help"
-          className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 transition-colors"
+          className="ml-auto flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
         >
           <HelpCircle size={15} />
           推奨ガイド
@@ -350,15 +348,15 @@ export default function KeirinPage() {
       <div className="flex items-center justify-between">
         <button
           onClick={() => setDate(prevDay(date))}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 text-gray-600"
+          className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200"
         >
           ← 前日
         </button>
-        <span className="text-sm font-medium text-gray-700">{fmtYMD(date)}</span>
+        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{fmtYMD(date)}</span>
         <button
           onClick={() => setDate(nextDay(date))}
           disabled={isToday}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 text-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           翌日 →
         </button>
