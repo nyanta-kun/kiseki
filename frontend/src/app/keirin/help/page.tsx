@@ -12,13 +12,13 @@ const RANKS = [
     label: "7SS",
     title: "SSランク",
     subtitle: "7車以上 ｜ 三連複 ｜ 厳選1〜3点",
-    hold: "137.0%",
-    val: "159.8%",
+    hold: "137.8%",
+    val: "158.8%",
     condition: "gap12 ≥ 0.07 かつ ガミ目カット後の残り点数 ≤ 3",
     detail:
       "全買い目のうちオッズ5倍未満のものを除外し、残った買い目が1〜3点のレースのみ購入。点数が絞られるほど高回収。",
     breakdown: [
-      { label: "1点残り", roi: "2,105.9%", count: "22R/月" },
+      { label: "1点残り", roi: "2,105.9%", count: "0.2R/日" },
       { label: "2点残り", roi: "440.7%", count: "1.6R/日" },
       { label: "3点残り", roi: "105.9%", count: "14.7R/日" },
     ],
@@ -30,8 +30,8 @@ const RANKS = [
     label: "7S",
     title: "Sランク",
     subtitle: "7車以上 ｜ 三連複 ｜ 全相手流し",
-    hold: "~143%",
-    val: "129.9%(S/A合算)",
+    hold: "138.8%",
+    val: "132.9%",
     condition: "全買い目オッズ min ≥ 5.0倍（ガミ無し） かつ gap12 ≥ 0.10",
     detail:
       "軸1・2位間の確率差が0.10以上で、かつ全買い目が5倍以上のレース。高い確信度で全相手に流す。",
@@ -44,68 +44,30 @@ const RANKS = [
     label: "7A",
     title: "Aランク",
     subtitle: "7車以上 ｜ 三連複 ｜ 全相手流し",
-    hold: "~138%",
-    val: "129.9%(S/A合算)",
+    hold: "99.4%",
+    val: "100.7%",
     condition: "全買い目オッズ min ≥ 5.0倍（ガミ無し） かつ gap12 ∈ [0.07, 0.10)",
     detail:
-      "ガミ無し条件を満たしつつ gap12 がAランク域。Sランクより件数が約7倍多く分散投資に適する。",
+      "ガミ無し条件を満たしつつ gap12 がAランク域。SS/Sより件数が多く分散投資向きだが回収率は±0%付近。",
     breakdown: [],
     investment: "全相手点数 × 100円/レース",
   },
-  {
-    key: "SS",
-    bg: "#b45309",
-    label: "SS",
-    title: "SS・Sランク（6車以下）",
-    subtitle: "6車以下 ｜ 三連単 / 三連複",
-    hold: "—",
-    val: "—",
-    condition: "モデルスコア上位＋独自条件（詳細非公開）",
-    detail: "6車以下レース向けの高優先度推奨。三連単または三連複で購入。",
-    breakdown: [],
-    investment: "指定点数 × 100円",
-  },
-  {
-    key: "WIDE",
-    bg: "#7c3aed",
-    label: "W",
-    title: "WIDEランク",
-    subtitle: "ワイド",
-    hold: "—",
-    val: "—",
-    condition: "上位2車の確率差が小さくオッズ妙味のあるレース",
-    detail: "三連系では拾いにくいレースでワイドに特化した推奨。",
-    breakdown: [],
-    investment: "指定点数 × 100円",
-  },
-  {
-    key: "B",
-    bg: "#6b7280",
-    label: "B",
-    title: "Bランク",
-    subtitle: "補助推奨",
-    hold: "—",
-    val: "—",
-    condition: "条件を部分的に満たすレース",
-    detail: "SS/S/A条件を一部満たすが確信度がやや低い。参考として表示。",
-    breakdown: [],
-    investment: "指定点数 × 100円",
-  },
 ];
 
+// SS月別ROI: VAL(2025-07〜2026-02)=lgbm_wt_train_only / HOLD(2026-03〜)=lgbm_wt
 const MONTHLY_ROI = [
-  { month: "2025-07", roi: "206.5%" },
-  { month: "2025-08", roi: "186.5%" },
-  { month: "2025-09", roi: "132.2%" },
-  { month: "2025-10", roi: "139.3%" },
-  { month: "2025-11", roi: "127.1%" },
-  { month: "2025-12", roi: "179.6%" },
-  { month: "2026-01", roi: "152.3%" },
-  { month: "2026-02", roi: "156.9%" },
-  { month: "2026-03", roi: "138.6%" },
-  { month: "2026-04", roi: "134.9%" },
-  { month: "2026-05", roi: "145.4%" },
-  { month: "2026-06", roi: "117.4%（部分）" },
+  { month: "2025-07", roi: "201.6%" },
+  { month: "2025-08", roi: "190.2%" },
+  { month: "2025-09", roi: "114.7%" },
+  { month: "2025-10", roi: "142.2%" },
+  { month: "2025-11", roi: "124.3%" },
+  { month: "2025-12", roi: "177.5%" },
+  { month: "2026-01", roi: "155.0%" },
+  { month: "2026-02", roi: "170.3%" },
+  { month: "2026-03", roi: "118.1%" },
+  { month: "2026-04", roi: "142.4%" },
+  { month: "2026-05", roi: "155.7%" },
+  { month: "2026-06", roi: "130.1%（〜16日）" },
 ];
 
 const TERMS = [
@@ -123,11 +85,11 @@ const TERMS = [
   },
   {
     term: "HOLD ROI",
-    def: "学習データ外の直近期間（2026-03〜2026-06）での回収率。モデルのリークがない最も信頼性の高い指標。",
+    def: "学習データ外の直近期間（2026-03〜2026-06-16）での回収率。lgbm_wt（TRAIN+VAL学習）を使用。モデルのリークがない最も信頼性の高い指標。",
   },
   {
     term: "VAL ROI",
-    def: "検証期間（2025-07〜2026-02）での回収率。学習時に参照しない期間で算出。",
+    def: "検証期間（2025-07〜2026-02）での回収率。lgbm_wt_train_only（TRAIN期間のみ学習）を使用。戦略設計・チューニングに用いた期間。",
   },
   {
     term: "三連複",
@@ -168,17 +130,17 @@ export default function KeirinHelpPage() {
         <div className="grid grid-cols-2 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
             <p className="text-xs text-gray-500">SSランク HOLD回収率</p>
-            <p className="text-lg font-bold text-emerald-600">137%</p>
-            <p className="text-xs text-gray-400">16.5R/日 ・ 1,716R検証</p>
+            <p className="text-lg font-bold text-emerald-600">137.8%</p>
+            <p className="text-xs text-gray-400">16.0R/日 ・ 1,732R検証</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">S/Aランク HOLD回収率</p>
-            <p className="text-lg font-bold text-emerald-600">138%</p>
-            <p className="text-xs text-gray-400">12.9R/日 ・ 1,381R検証</p>
+            <p className="text-xs text-gray-500">Sランク HOLD回収率</p>
+            <p className="text-lg font-bold text-emerald-600">138.8%</p>
+            <p className="text-xs text-gray-400">11.1R/日 ・ 1,199R検証</p>
           </div>
         </div>
         <p className="text-xs text-gray-400">
-          ★ HOLD = 学習期間外（2026-03〜06）のリーク無し検証。全12ヶ月黒字。
+          ★ HOLD = 学習期間外（2026-03〜06-16）のリーク無し検証。全12ヶ月黒字（SSランク）。
         </p>
       </section>
 
@@ -289,7 +251,7 @@ export default function KeirinHelpPage() {
         <h2 className="text-sm font-bold text-amber-800">注意事項</h2>
         <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
           <li>バックテスト結果は過去データによるもの。将来の回収率を保証しない。</li>
-          <li>3バイアス修正済み（欠車生存バイアス・6車以下混入・週次再学習リーク）。</li>
+          <li>バックテストは3種のバイアス（欠車生存・出走数誤算入・再学習リーク）を除去済み。</li>
           <li>オッズは推奨生成時点のもの。購入前に最新オッズを確認推奨。</li>
           <li>欠車（出走取消）があった場合、軸欠車はレース無効（返還）、相手欠車はその目のみ除外。</li>
           <li>SSとS/Aは同一レースに重複して出ることがある（別条件）。両方独立して購入。</li>
