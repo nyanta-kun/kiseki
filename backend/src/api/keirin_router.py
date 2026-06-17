@@ -215,6 +215,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(miwokuri, FALSE)
               AND bet_amount > 0
+              AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
         """),
         params,
     )).mappings().one_or_none()
