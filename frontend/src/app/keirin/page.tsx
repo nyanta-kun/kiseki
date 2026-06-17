@@ -180,7 +180,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   );
 }
 
-function PickCard({ pick }: { pick: KeirinPick }) {
+function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = pick.status === 3;
   const isWide = pick.rank === "WIDE";
   const is7Plus = pick.rank.startsWith("7PLUS");
@@ -195,7 +195,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
   const startTime = fmtStartAt(pick.start_at);
 
   return (
-    <div className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
+    <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
       {/* ヘッダー行 */}
       <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
         <RankBadge rank={pick.rank} miwokuri={isMiwokuri} betAmount={pick.bet_amount} />
@@ -227,7 +227,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 
       <EntryTable entries={pick.entries} />
 
-      {(isSettled || pick.hit) && (isPurchased || isSettled) && (
+      {isPurchased && (isSettled || pick.hit) && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} />
         </div>
@@ -384,6 +384,21 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
 // メインページ
 // ---------------------------------------------------------------------------
 
+function nextPickId(picks: KeirinPick[]): string | null {
+  const nowSec = Date.now() / 1000;
+  const upcoming = picks
+    .filter((p) => {
+      const ts = typeof p.start_at === "number" ? p.start_at : parseInt(String(p.start_at ?? ""), 10);
+      return !isNaN(ts) && ts > nowSec && p.status < 3;
+    })
+    .sort((a, b) => {
+      const ta = typeof a.start_at === "number" ? a.start_at : parseInt(String(a.start_at ?? ""), 10);
+      const tb = typeof b.start_at === "number" ? b.start_at : parseInt(String(b.start_at ?? ""), 10);
+      return ta - tb;
+    });
+  return upcoming.length > 0 ? `pick-${upcoming[0].id}` : null;
+}
+
 export default function KeirinPage() {
   const [date, setDate] = useState(todayYYYYMMDD());
   const [picks, setPicks] = useState<KeirinPick[]>([]);
@@ -391,6 +406,8 @@ export default function KeirinPage() {
   const [loadingPicks, setLoadingPicks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
+  const isToday = date === todayYYYYMMDD();
+  const nextId = isToday ? nextPickId(picks) : null;
 
   const openPicker = () => {
     const input = dateInputRef.current;
@@ -422,10 +439,8 @@ export default function KeirinPage() {
     void loadData(date); // eslint-disable-line react-hooks/set-state-in-effect
   }, [date, loadData]);
 
-  const isToday = date === todayYYYYMMDD();
-
   return (
-    <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 space-y-4">
+    <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 pb-20 space-y-4">
       {/* タイトル */}
       <div className="flex items-center gap-2">
         <Bike size={22} className="text-blue-500" />
@@ -517,10 +532,46 @@ export default function KeirinPage() {
       ) : (
         <div className="space-y-3">
           {picks.map((p) => (
-            <PickCard key={p.id} pick={p} />
+            <PickCard key={p.id} pick={p} cardId={`pick-${p.id}`} />
           ))}
         </div>
       )}
+
+      {/* スティッキーボトムナビ */}
+      <div
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700"
+      >
+        <div className="flex items-center justify-between max-w-3xl mx-auto px-3 py-2 gap-2">
+          <button
+            onClick={() => setDate(prevDay(date))}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 text-center"
+          >
+            ← 前日
+          </button>
+          {nextId ? (
+            <button
+              onClick={() => {
+                document.getElementById(nextId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              className="flex-[2] px-3 py-1.5 rounded-lg border border-blue-400 dark:border-blue-500 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-center truncate"
+            >
+              次のレース ↓
+            </button>
+          ) : (
+            <div className="flex-[2] px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 text-center">
+              {isToday ? "終了" : fmtYMD(date)}
+            </div>
+          )}
+          <button
+            onClick={() => setDate(nextDay(date))}
+            disabled={isToday}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-center"
+          >
+            翌日 →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
