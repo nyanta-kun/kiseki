@@ -63,7 +63,7 @@ class KeirinWtEntry(KeirinBase):
     """winticket 出走表エントリー"""
 
     __tablename__ = "wt_entries"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_key", "frame_no", name="uq_wt_entries_key_frame"),
         {"schema": KEIRIN_SCHEMA},
     )
@@ -109,7 +109,7 @@ class KeirinWtOdds(KeirinBase):
     """winticket オッズ（最終）"""
 
     __tablename__ = "wt_odds"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_key", "bet_type", "combination", name="uq_wt_odds"),
         {"schema": KEIRIN_SCHEMA},
     )
@@ -128,7 +128,7 @@ class KeirinWtOddsSnapshot(KeirinBase):
     """winticket オッズスナップショット（朝・宵等）"""
 
     __tablename__ = "wt_odds_snapshot"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint(
             "race_key", "bet_type", "combination", "snapshot_type",
             name="uq_wt_odds_snapshot",
@@ -151,7 +151,7 @@ class KeirinWtWeather(KeirinBase):
     """競輪場の気象データ（Open-Meteo 由来）"""
 
     __tablename__ = "wt_weather"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("venue_id", "dt_hour", name="uq_wt_weather"),
         {"schema": KEIRIN_SCHEMA},
     )
@@ -170,7 +170,7 @@ class KeirinPicksHistory(KeirinBase):
     """競輪 AI ピック履歴・実績"""
 
     __tablename__ = "picks_history"
-    __table_args__ = (
+    __table_args__ = (  # type: ignore[assignment]
         UniqueConstraint("race_key", name="uq_picks_history_race_key"),
         {"schema": KEIRIN_SCHEMA},
     )
