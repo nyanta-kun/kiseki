@@ -109,6 +109,7 @@ async def get_picks(
               ph.payout,
               ph.bet_amount,
               ph.route,
+              COALESCE(ph.miwokuri, FALSE) AS miwokuri,
               wr.race_no,
               wr.grade,
               wr.race_type,
@@ -165,6 +166,7 @@ async def get_picks(
             "hit": bool(r["hit"]),
             "payout": r["payout"] or 0,
             "bet_amount": r["bet_amount"] or 0,
+            "miwokuri": bool(r["miwokuri"]),
             "entries": [
                 {
                     "frame_no": e["frame_no"],
@@ -200,6 +202,8 @@ async def _aggregate(
               COALESCE(SUM(CASE WHEN hit = 1 THEN payout ELSE 0 END), 0) AS total_payout
             FROM keirin.picks_history
             WHERE {where}
+              AND NOT COALESCE(miwokuri, FALSE)
+              AND bet_amount > 0
         """),
         params,
     )).mappings().one_or_none()

@@ -107,6 +107,7 @@ function HitBadge({ hit, payout, bet }: { hit: boolean; payout: number; bet: num
   );
 }
 
+
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
@@ -154,6 +155,8 @@ function PickCard({ pick }: { pick: KeirinPick }) {
   const isSettled = pick.status === 3;
   const isWide = pick.rank === "WIDE";
   const is7Plus = pick.rank.startsWith("7PLUS");
+  const isMiwokuri = pick.miwokuri;
+  const isPurchased = !isMiwokuri && pick.bet_amount > 0;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
@@ -163,7 +166,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
   const startTime = fmtStartAt(pick.start_at);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+    <div className={`bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
       {/* ヘッダー行 */}
       <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 border-b border-gray-100">
         <RankBadge rank={pick.rank} />
@@ -179,6 +182,11 @@ function PickCard({ pick }: { pick: KeirinPick }) {
             )}
           </div>
         </div>
+        {isMiwokuri && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-gray-200 text-gray-500 flex-shrink-0">
+            見送り
+          </span>
+        )}
       </div>
 
       {/* 買い目行 */}
@@ -186,7 +194,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
         <span className="text-xs sm:text-sm font-medium text-gray-700 flex-1 min-w-0 break-words">
           {comboLabel ?? "—"}
         </span>
-        {pick.synth_odds != null && (
+        {pick.synth_odds != null && !isMiwokuri && (
           <span className="text-xs text-gray-500 flex-shrink-0">
             合成 <span className="font-semibold text-gray-700">{pick.synth_odds.toFixed(1)}</span>倍
           </span>
@@ -195,7 +203,7 @@ function PickCard({ pick }: { pick: KeirinPick }) {
 
       <EntryTable entries={pick.entries} />
 
-      {isSettled && (
+      {isSettled && isPurchased && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 bg-gray-50">
           <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} />
         </div>
