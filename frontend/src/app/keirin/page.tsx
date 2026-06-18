@@ -196,10 +196,16 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   );
 }
 
+// コンポーネント外に置くことで react-hooks/purity を回避
+function computeIsSettled(status: number, startAt: number | string | null): boolean {
+  if (status === 3) return true;
+  const sec = typeof startAt === "number" ? startAt : parseInt(String(startAt ?? ""), 10);
+  // VPS同期遅延を考慮し発走から90分後も確定とみなす
+  return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
+}
+
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
-  // status=3 が確定。VPS同期遅延を考慮し発走から90分後も確定とみなす
-  const startAtSec = typeof pick.start_at === "number" ? pick.start_at : parseInt(String(pick.start_at ?? ""), 10);
-  const isSettled = pick.status === 3 || (!isNaN(startAtSec) && startAtSec + 5400 < Date.now() / 1000);
+  const isSettled = computeIsSettled(pick.status, pick.start_at);
   const isWide = pick.rank === "WIDE";
   const is7Plus = pick.rank.startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
