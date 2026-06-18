@@ -92,11 +92,35 @@ function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
   );
 }
 
-function HitBadge({ hit, payout, bet, isSettled, isReference }: {
-  hit: boolean; payout: number; bet: number; isSettled: boolean; isReference?: boolean;
+function HitBadge({ hit, payout, bet, isSettled, isReference, isMiwokuri }: {
+  hit: boolean; payout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean;
 }) {
+  if (isMiwokuri) {
+    if (!isSettled) return <span className="text-xs text-gray-400">未確定</span>;
+    if (hit && payout > 0) {
+      return (
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200">
+            見送り 的中
+          </span>
+          <span className="text-xs font-semibold text-purple-600">¥{payout.toLocaleString()}</span>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>
+        {payout > 0 && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            実際払戻 <span className="font-semibold">¥{payout.toLocaleString()}</span>
+          </span>
+        )}
+      </div>
+    );
+  }
+
   if (isReference) {
-    // 非推奨レース: 的中/不的中バッジなし・参考払い戻し金額のみ表示
+    // 非推奨(参考)レース
     return (
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-400 dark:text-gray-500">参考払戻</span>
@@ -107,7 +131,7 @@ function HitBadge({ hit, payout, bet, isSettled, isReference }: {
     );
   }
 
-  // 推奨レース
+  // 推奨・購入済みレース
   if (hit) {
     const isGami = bet > 0 && payout < bet;
     return (
@@ -133,12 +157,18 @@ function HitBadge({ hit, payout, bet, isSettled, isReference }: {
     return <span className="text-xs text-gray-400">未確定</span>;
   }
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-600 border border-red-200">
         ✗ 不的中
       </span>
       {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
-      <span className="text-xs text-gray-400">払戻 —</span>
+      {payout > 0 ? (
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          実際払戻 <span className="font-semibold">¥{payout.toLocaleString()}</span>
+        </span>
+      ) : (
+        <span className="text-xs text-gray-400">払戻 —</span>
+      )}
     </div>
   );
 }
@@ -200,7 +230,11 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
 function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
   hit: boolean; payout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
 }) {
-  if (isMiwokuri) return null;
+  if (isMiwokuri) {
+    if (hit && payout > 0) return <span className="text-xs text-purple-500">見送 ¥{payout.toLocaleString()}</span>;
+    if (payout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">実際 ¥{payout.toLocaleString()}</span>;
+    return null;
+  }
   if (isPurchased) {
     if (hit) {
       const isGami = bet > 0 && payout < bet;
@@ -210,6 +244,7 @@ function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
         </span>
       );
     }
+    if (payout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">実際 ¥{payout.toLocaleString()}</span>;
     return <span className="text-xs text-red-500 font-semibold">✗</span>;
   }
   if (payout > 0) {
@@ -220,7 +255,7 @@ function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
 
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at);
-  const [collapsed, setCollapsed] = useState(isSettled);
+  const [collapsed, setCollapsed] = useState(true);
   const isWide = pick.rank === "WIDE";
   const is7Plus = pick.rank.startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
@@ -292,9 +327,16 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 
           <EntryTable entries={pick.entries} />
 
-          {!isMiwokuri && (isSettled || pick.hit) && (
+          {(isSettled || pick.hit) && (
             <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-              <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} isReference={!isPurchased} />
+              <HitBadge
+                hit={pick.hit}
+                payout={pick.payout}
+                bet={pick.bet_amount}
+                isSettled={isSettled}
+                isReference={!isPurchased && !isMiwokuri}
+                isMiwokuri={isMiwokuri}
+              />
             </div>
           )}
         </>
