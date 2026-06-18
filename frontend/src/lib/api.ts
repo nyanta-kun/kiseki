@@ -947,6 +947,7 @@ export type KeirinPick = {
   payout: number;
   bet_amount: number;
   miwokuri: boolean;
+  prerace_gami: number | null;
   entries: KeirinEntry[];
 };
 
