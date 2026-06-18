@@ -92,64 +92,65 @@ function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
   );
 }
 
+function TrioPayout({ amount }: { amount: number }) {
+  if (amount <= 0) return <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">払戻 —</span>;
+  return (
+    <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums flex-shrink-0">
+      三連複 <span className="font-semibold text-gray-700 dark:text-gray-200">¥{amount.toLocaleString()}</span>
+    </span>
+  );
+}
+
 function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwokuri }: {
   hit: boolean; payout: number; trioPayout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean;
 }) {
   if (isMiwokuri) {
     if (!isSettled) return <span className="text-xs text-gray-400">未確定</span>;
-    if (hit && trioPayout > 0) {
-      return (
-        <div className="flex items-center gap-2">
+    return (
+      <div className="flex items-center justify-between w-full gap-2">
+        {hit ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200">
             見送り 的中
           </span>
-          <span className="text-xs font-semibold text-purple-600">¥{trioPayout.toLocaleString()}</span>
-        </div>
-      );
-    }
-    return (
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>
-        {trioPayout > 0 && (
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            三連複払戻 <span className="font-semibold">¥{trioPayout.toLocaleString()}</span>
-          </span>
+        ) : (
+          <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>
         )}
+        <TrioPayout amount={trioPayout} />
       </div>
     );
   }
 
   if (isReference) {
-    // 非推奨(参考)レース
     return (
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400 dark:text-gray-500">三連複払戻</span>
-        <span className={`text-xs font-semibold ${trioPayout > 0 ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-500"}`}>
-          {trioPayout > 0 ? `¥${trioPayout.toLocaleString()}` : "—"}
-        </span>
+      <div className="flex items-center justify-between w-full gap-2">
+        <span className="text-xs text-gray-400 dark:text-gray-500">参考</span>
+        <TrioPayout amount={trioPayout} />
       </div>
     );
   }
 
-  // 推奨・購入済みレース
+  // 購入済みレース
   if (hit) {
     const isGami = bet > 0 && payout < bet;
     return (
-      <div className="flex items-center gap-2 flex-wrap">
-        {isGami ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700 border border-orange-300">
-            ガ 的中
+      <div className="flex items-center justify-between w-full gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isGami ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700 border border-orange-300">
+              ガ 的中
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-300">
+              ✓ 的中
+            </span>
+          )}
+          <span className="text-xs text-gray-600">
+            {bet > 0 && <>¥{bet.toLocaleString()} → </>}
+            <span className={`font-semibold ${isGami ? "text-orange-600" : "text-emerald-600"}`}>¥{payout.toLocaleString()}</span>
+            {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
           </span>
-        ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-300">
-            ✓ 的中
-          </span>
-        )}
-        <span className="text-xs text-gray-600">
-          {bet > 0 && <>¥{bet.toLocaleString()} → </>}
-          <span className={`font-semibold ${isGami ? "text-orange-600" : "text-emerald-600"}`}>¥{payout.toLocaleString()}</span>
-          {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
-        </span>
+        </div>
+        <TrioPayout amount={trioPayout} />
       </div>
     );
   }
@@ -157,18 +158,14 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
     return <span className="text-xs text-gray-400">未確定</span>;
   }
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-600 border border-red-200">
-        ✗ 不的中
-      </span>
-      {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
-      {trioPayout > 0 ? (
-        <span className="text-xs text-gray-500 dark:text-gray-400">
-          三連複払戻 <span className="font-semibold">¥{trioPayout.toLocaleString()}</span>
+    <div className="flex items-center justify-between w-full gap-2">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-600 border border-red-200">
+          ✗ 不的中
         </span>
-      ) : (
-        <span className="text-xs text-gray-400">払戻 —</span>
-      )}
+        {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
+      </div>
+      <TrioPayout amount={trioPayout} />
     </div>
   );
 }
@@ -230,27 +227,35 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
 function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri }: {
   hit: boolean; payout: number; trioPayout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
 }) {
+  const trioEl = trioPayout > 0
+    ? <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">¥{trioPayout.toLocaleString()}</span>
+    : null;
+
   if (isMiwokuri) {
-    if (hit && trioPayout > 0) return <span className="text-xs text-purple-500">見送 ¥{trioPayout.toLocaleString()}</span>;
-    if (trioPayout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
-    return null;
+    const label = hit
+      ? <span className="text-xs text-purple-500 font-semibold">見送 的中</span>
+      : <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>;
+    if (!trioEl) return label;
+    return <div className="flex items-center gap-1.5 flex-shrink-0">{label}{trioEl}</div>;
   }
+
   if (isPurchased) {
     if (hit) {
       const isGami = bet > 0 && payout < bet;
-      return (
+      const hitEl = (
         <span className={`text-xs font-semibold ${isGami ? "text-orange-500" : "text-emerald-600 dark:text-emerald-400"}`}>
           ✓ ¥{payout.toLocaleString()}
         </span>
       );
+      if (!trioEl) return hitEl;
+      return <div className="flex items-center gap-1.5 flex-shrink-0">{hitEl}{trioEl}</div>;
     }
-    if (trioPayout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
-    return <span className="text-xs text-red-500 font-semibold">✗</span>;
+    const missEl = <span className="text-xs text-red-500 font-semibold">✗</span>;
+    if (!trioEl) return missEl;
+    return <div className="flex items-center gap-1.5 flex-shrink-0">{missEl}{trioEl}</div>;
   }
-  if (trioPayout > 0) {
-    return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
-  }
-  return null;
+
+  return trioEl;
 }
 
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
