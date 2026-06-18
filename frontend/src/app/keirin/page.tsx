@@ -150,7 +150,7 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
             {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
           </span>
         </div>
-        <TrioPayout amount={trioPayout} />
+        {trioPayout > 0 && <TrioPayout amount={trioPayout} />}
       </div>
     );
   }
