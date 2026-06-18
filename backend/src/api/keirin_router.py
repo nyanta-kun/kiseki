@@ -191,7 +191,7 @@ async def get_picks(
 # ---------------------------------------------------------------------------
 
 def _make_period_dict(n_picks: int, n_hits: int, total_bet: int, total_payout: int) -> dict:
-    roi = round(total_payout / total_bet, 3) if (total_bet > 0 and total_payout > 0) else None
+    roi = round(total_payout / total_bet, 3) if total_bet > 0 else None
     return {
         "n_picks": n_picks,
         "n_hits": n_hits,
@@ -199,6 +199,12 @@ def _make_period_dict(n_picks: int, n_hits: int, total_bet: int, total_payout: i
         "total_payout": total_payout,
         "roi": roi,
     }
+
+
+_SETTLED_COND = """(
+    wr.status = 3
+    OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
+)"""
 
 
 async def _aggregate(
@@ -209,15 +215,18 @@ async def _aggregate(
     row = (await db.execute(
         text(f"""
             SELECT
-              COUNT(*)                                                  AS n_picks,
-              SUM(hit)                                                  AS n_hits,
-              COALESCE(SUM(bet_amount), 0)                              AS total_bet,
-              COALESCE(SUM(CASE WHEN hit = 1 THEN payout ELSE 0 END), 0) AS total_payout
-            FROM keirin.picks_history
+              COUNT(*)                                                          AS n_picks,
+              SUM(ph.hit)                                                       AS n_hits,
+              COALESCE(SUM(ph.bet_amount), 0)                                   AS total_bet,
+              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
-              AND NOT COALESCE(miwokuri, FALSE)
-              AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
-              AND (prerace_gami IS NULL OR prerace_gami >= 5.0)
+              AND NOT COALESCE(ph.miwokuri, FALSE)
+              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
@@ -235,17 +244,20 @@ async def _aggregate(
     rank_rows = (await db.execute(
         text(f"""
             SELECT
-              rank,
-              COUNT(*)                                                  AS n_picks,
-              SUM(hit)                                                  AS n_hits,
-              COALESCE(SUM(bet_amount), 0)                              AS total_bet,
-              COALESCE(SUM(CASE WHEN hit = 1 THEN payout ELSE 0 END), 0) AS total_payout
-            FROM keirin.picks_history
+              ph.rank                                                            AS rank,
+              COUNT(*)                                                           AS n_picks,
+              SUM(ph.hit)                                                        AS n_hits,
+              COALESCE(SUM(ph.bet_amount), 0)                                    AS total_bet,
+              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)  AS total_payout
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
-              AND NOT COALESCE(miwokuri, FALSE)
-              AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
-              AND (prerace_gami IS NULL OR prerace_gami >= 5.0)
-            GROUP BY rank
+              AND NOT COALESCE(ph.miwokuri, FALSE)
+              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND {_SETTLED_COND}
+            GROUP BY ph.rank
         """),
         params,
     )).mappings().all()
@@ -341,9 +353,9 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     model_eval = await _get_model_eval(db, period_type="HOLD")
 
     result = {
-        "today": await _aggregate(db, "race_date = :d", {"d": today_str}),
-        "month": await _aggregate(db, "race_date LIKE :d", {"d": f"{month_prefix}-%"}),
-        "year":  await _aggregate(db, "race_date LIKE :d", {"d": f"{year_prefix}-%"}),
+        "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),
+        "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}),
+        "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}),
         "test":       model_eval,
         "test_from":  model_eval.get("period_from"),
         "test_to":    model_eval.get("period_to"),

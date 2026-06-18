@@ -197,8 +197,30 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
   return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
 }
 
+function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
+  hit: boolean; payout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
+}) {
+  if (isMiwokuri) return null;
+  if (isPurchased) {
+    if (hit) {
+      const isGami = bet > 0 && payout < bet;
+      return (
+        <span className={`text-xs font-semibold ${isGami ? "text-orange-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+          ✓ ¥{payout.toLocaleString()}
+        </span>
+      );
+    }
+    return <span className="text-xs text-red-500 font-semibold">✗</span>;
+  }
+  if (payout > 0) {
+    return <span className="text-xs text-gray-400 dark:text-gray-500">参考 ¥{payout.toLocaleString()}</span>;
+  }
+  return null;
+}
+
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at);
+  const [collapsed, setCollapsed] = useState(isSettled);
   const isWide = pick.rank === "WIDE";
   const is7Plus = pick.rank.startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
@@ -213,8 +235,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 
   return (
     <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
-      {/* ヘッダー行 */}
-      <div className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
+      {/* ヘッダー行（クリックで折りたたみトグル） */}
+      <button
+        type="button"
+        onClick={() => setCollapsed(v => !v)}
+        className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
+      >
         <RankBadge rank={pick.rank} miwokuri={isMiwokuri} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
@@ -228,37 +254,50 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
           </div>
         </div>
-      </div>
-
-      {/* 買い目行 */}
-      <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 sm:gap-3">
-        <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
-          {comboLabel ?? "—"}
-        </span>
-        {pick.synth_odds != null && !isMiwokuri && (
-          <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
-            合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
-          </span>
+        {/* 折りたたみ時: 結果サマリーをインライン表示 */}
+        {collapsed && isSettled && (
+          <CollapsedResult hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} />
         )}
-        {pick.prerace_gami != null && !isMiwokuri && (
-          pick.prerace_gami >= 5.0 ? (
-            <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
-              直前 {pick.prerace_gami.toFixed(1)}倍✓
-            </span>
-          ) : (
-            <span className="text-xs flex-shrink-0 text-orange-500 dark:text-orange-400 font-medium">
-              直前 {pick.prerace_gami.toFixed(1)}倍⚠
-            </span>
-          )
-        )}
-      </div>
+        <ChevronDown
+          size={15}
+          className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
+        />
+      </button>
 
-      <EntryTable entries={pick.entries} />
+      {/* 展開時コンテンツ */}
+      {!collapsed && (
+        <>
+          {/* 買い目行 */}
+          <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 sm:gap-3">
+            <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
+              {comboLabel ?? "—"}
+            </span>
+            {pick.synth_odds != null && !isMiwokuri && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
+              </span>
+            )}
+            {pick.prerace_gami != null && !isMiwokuri && (
+              pick.prerace_gami >= 5.0 ? (
+                <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
+                  直前 {pick.prerace_gami.toFixed(1)}倍✓
+                </span>
+              ) : (
+                <span className="text-xs flex-shrink-0 text-orange-500 dark:text-orange-400 font-medium">
+                  直前 {pick.prerace_gami.toFixed(1)}倍⚠
+                </span>
+              )
+            )}
+          </div>
 
-      {!isMiwokuri && (isSettled || pick.hit) && (
-        <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} isReference={!isPurchased} />
-        </div>
+          <EntryTable entries={pick.entries} />
+
+          {!isMiwokuri && (isSettled || pick.hit) && (
+            <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} isReference={!isPurchased} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
