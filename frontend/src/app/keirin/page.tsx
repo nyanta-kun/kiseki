@@ -99,7 +99,22 @@ function RankBadge({ rank, miwokuri, betAmount }: { rank: string; miwokuri?: boo
   );
 }
 
-function HitBadge({ hit, payout, bet, isSettled }: { hit: boolean; payout: number; bet: number; isSettled: boolean }) {
+function HitBadge({ hit, payout, bet, isSettled, isReference }: {
+  hit: boolean; payout: number; bet: number; isSettled: boolean; isReference?: boolean;
+}) {
+  if (isReference) {
+    // 非推奨レース: 的中/不的中バッジなし・参考払い戻し金額のみ表示
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-400 dark:text-gray-500">参考払戻</span>
+        <span className={`text-xs font-semibold ${payout > 0 ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-500"}`}>
+          {payout > 0 ? `¥${payout.toLocaleString()}` : "—"}
+        </span>
+      </div>
+    );
+  }
+
+  // 推奨レース
   if (hit) {
     const isGami = bet > 0 && payout < bet;
     return (
@@ -130,6 +145,7 @@ function HitBadge({ hit, payout, bet, isSettled }: { hit: boolean; payout: numbe
         ✗ 不的中
       </span>
       {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
+      <span className="text-xs text-gray-400">払戻 —</span>
     </div>
   );
 }
@@ -238,9 +254,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 
       <EntryTable entries={pick.entries} />
 
-      {isPurchased && (isSettled || pick.hit) && (
+      {!isMiwokuri && (isSettled || pick.hit) && (
         <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} />
+          <HitBadge hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isSettled={isSettled} isReference={!isPurchased} />
         </div>
       )}
     </div>
