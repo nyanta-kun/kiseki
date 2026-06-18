@@ -945,6 +945,7 @@ export type KeirinPick = {
   synth_odds: number | null;
   hit: boolean;
   payout: number;
+  trio_payout: number;
   bet_amount: number;
   miwokuri: boolean;
   prerace_gami: number | null;

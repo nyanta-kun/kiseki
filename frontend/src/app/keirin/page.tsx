@@ -92,27 +92,27 @@ function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
   );
 }
 
-function HitBadge({ hit, payout, bet, isSettled, isReference, isMiwokuri }: {
-  hit: boolean; payout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean;
+function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwokuri }: {
+  hit: boolean; payout: number; trioPayout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean;
 }) {
   if (isMiwokuri) {
     if (!isSettled) return <span className="text-xs text-gray-400">未確定</span>;
-    if (hit && payout > 0) {
+    if (hit && trioPayout > 0) {
       return (
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200">
             見送り 的中
           </span>
-          <span className="text-xs font-semibold text-purple-600">¥{payout.toLocaleString()}</span>
+          <span className="text-xs font-semibold text-purple-600">¥{trioPayout.toLocaleString()}</span>
         </div>
       );
     }
     return (
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>
-        {payout > 0 && (
+        {trioPayout > 0 && (
           <span className="text-xs text-gray-500 dark:text-gray-400">
-            実際払戻 <span className="font-semibold">¥{payout.toLocaleString()}</span>
+            三連複払戻 <span className="font-semibold">¥{trioPayout.toLocaleString()}</span>
           </span>
         )}
       </div>
@@ -123,9 +123,9 @@ function HitBadge({ hit, payout, bet, isSettled, isReference, isMiwokuri }: {
     // 非推奨(参考)レース
     return (
       <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400 dark:text-gray-500">参考払戻</span>
-        <span className={`text-xs font-semibold ${payout > 0 ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-500"}`}>
-          {payout > 0 ? `¥${payout.toLocaleString()}` : "—"}
+        <span className="text-xs text-gray-400 dark:text-gray-500">三連複払戻</span>
+        <span className={`text-xs font-semibold ${trioPayout > 0 ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-500"}`}>
+          {trioPayout > 0 ? `¥${trioPayout.toLocaleString()}` : "—"}
         </span>
       </div>
     );
@@ -162,9 +162,9 @@ function HitBadge({ hit, payout, bet, isSettled, isReference, isMiwokuri }: {
         ✗ 不的中
       </span>
       {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
-      {payout > 0 ? (
+      {trioPayout > 0 ? (
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          実際払戻 <span className="font-semibold">¥{payout.toLocaleString()}</span>
+          三連複払戻 <span className="font-semibold">¥{trioPayout.toLocaleString()}</span>
         </span>
       ) : (
         <span className="text-xs text-gray-400">払戻 —</span>
@@ -227,12 +227,12 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
   return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
 }
 
-function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
-  hit: boolean; payout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
+function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri }: {
+  hit: boolean; payout: number; trioPayout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
 }) {
   if (isMiwokuri) {
-    if (hit && payout > 0) return <span className="text-xs text-purple-500">見送 ¥{payout.toLocaleString()}</span>;
-    if (payout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">実際 ¥{payout.toLocaleString()}</span>;
+    if (hit && trioPayout > 0) return <span className="text-xs text-purple-500">見送 ¥{trioPayout.toLocaleString()}</span>;
+    if (trioPayout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
     return null;
   }
   if (isPurchased) {
@@ -244,11 +244,11 @@ function CollapsedResult({ hit, payout, bet, isPurchased, isMiwokuri }: {
         </span>
       );
     }
-    if (payout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">実際 ¥{payout.toLocaleString()}</span>;
+    if (trioPayout > 0) return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
     return <span className="text-xs text-red-500 font-semibold">✗</span>;
   }
-  if (payout > 0) {
-    return <span className="text-xs text-gray-400 dark:text-gray-500">参考 ¥{payout.toLocaleString()}</span>;
+  if (trioPayout > 0) {
+    return <span className="text-xs text-gray-400 dark:text-gray-500">三連複 ¥{trioPayout.toLocaleString()}</span>;
   }
   return null;
 }
@@ -291,7 +291,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         </div>
         {/* 折りたたみ時: 結果サマリーをインライン表示 */}
         {collapsed && isSettled && (
-          <CollapsedResult hit={pick.hit} payout={pick.payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} />
+          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} />
         )}
         <ChevronDown
           size={15}
@@ -332,6 +332,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               <HitBadge
                 hit={pick.hit}
                 payout={pick.payout}
+                trioPayout={pick.trio_payout}
                 bet={pick.bet_amount}
                 isSettled={isSettled}
                 isReference={!isPurchased && !isMiwokuri}
