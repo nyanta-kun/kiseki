@@ -101,9 +101,19 @@ function TrioPayout({ amount }: { amount: number }) {
   );
 }
 
-function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwokuri }: {
-  hit: boolean; payout: number; trioPayout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean;
+function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwokuri, isGamiSkip }: {
+  hit: boolean; payout: number; trioPayout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean; isGamiSkip?: boolean;
 }) {
+  if (isGamiSkip) {
+    if (!isSettled) return <span className="text-xs text-orange-400 dark:text-orange-500">ガミ落ち</span>;
+    return (
+      <div className="flex items-center justify-between w-full gap-2">
+        <span className="text-xs text-orange-400 dark:text-orange-500">ガミ条件落ち</span>
+        <TrioPayout amount={trioPayout} />
+      </div>
+    );
+  }
+
   if (isMiwokuri) {
     if (!isSettled) return <span className="text-xs text-gray-400">未確定</span>;
     return (
@@ -224,12 +234,18 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
   return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
 }
 
-function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri }: {
-  hit: boolean; payout: number; trioPayout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean;
+function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri, isGamiSkip }: {
+  hit: boolean; payout: number; trioPayout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean; isGamiSkip?: boolean;
 }) {
   const trioEl = trioPayout > 0
     ? <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">¥{trioPayout.toLocaleString()}</span>
     : null;
+
+  if (isGamiSkip) {
+    const label = <span className="text-xs text-orange-400 dark:text-orange-500">ガミ落ち</span>;
+    if (!trioEl) return label;
+    return <div className="flex items-center gap-1.5 flex-shrink-0">{label}{trioEl}</div>;
+  }
 
   if (isMiwokuri) {
     const label = hit
@@ -265,6 +281,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = pick.rank.startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
+  const isGamiSkip = !isPurchased && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
@@ -274,7 +291,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const startTime = fmtStartAt(pick.start_at);
 
   return (
-    <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri ? " opacity-55" : ""}`}>
+    <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri || isGamiSkip ? " opacity-55" : ""}`}>
       {/* ヘッダー行（クリックで折りたたみトグル） */}
       <button
         type="button"
@@ -296,7 +313,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         </div>
         {/* 折りたたみ時: 結果サマリーをインライン表示 */}
         {collapsed && isSettled && (
-          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} />
+          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
         )}
         <ChevronDown
           size={15}
@@ -340,8 +357,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 trioPayout={pick.trio_payout}
                 bet={pick.bet_amount}
                 isSettled={isSettled}
-                isReference={!isPurchased && !isMiwokuri}
+                isReference={!isPurchased && !isMiwokuri && !isGamiSkip}
                 isMiwokuri={isMiwokuri}
+                isGamiSkip={isGamiSkip}
               />
             </div>
           )}
