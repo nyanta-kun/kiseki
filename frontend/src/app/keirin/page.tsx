@@ -281,7 +281,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = pick.rank.startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  const isGamiSkip = pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
+  const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
