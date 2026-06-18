@@ -216,7 +216,6 @@ async def _aggregate(
             FROM keirin.picks_history
             WHERE {where}
               AND NOT COALESCE(miwokuri, FALSE)
-              AND bet_amount > 0
               AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
               AND (prerace_gami IS NULL OR prerace_gami >= 5.0)
         """),
@@ -244,7 +243,6 @@ async def _aggregate(
             FROM keirin.picks_history
             WHERE {where}
               AND NOT COALESCE(miwokuri, FALSE)
-              AND bet_amount > 0
               AND rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_A')
               AND (prerace_gami IS NULL OR prerace_gami >= 5.0)
             GROUP BY rank
