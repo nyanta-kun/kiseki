@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -538,9 +538,12 @@ export default function KeirinPage() {
   const [summary, setSummary] = useState<KeirinSummary | null>(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const isToday = date === todayYYYYMMDD();
   const nextId = isToday ? nextPickId(picks) : null;
+  const hasCand = picks.some((p) => p.race_key.includes("#CAND"));
 
   const openPicker = () => {
     const input = dateInputRef.current;
@@ -567,6 +570,20 @@ export default function KeirinPage() {
     }
     setLoadingPicks(false);
   }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const result = await refreshKeirinPicks(toISODate(date));
+      setRefreshMsg(result.message);
+      await loadData(date);
+    } catch {
+      setRefreshMsg("採点更新に失敗しました");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [date, loadData]);
 
   useEffect(() => {
     void loadData(date); // eslint-disable-line react-hooks/set-state-in-effect
@@ -643,6 +660,22 @@ export default function KeirinPage() {
           翌日 →
         </button>
       </div>
+
+      {/* 採点更新ボタン：#CAND レコードがある場合のみ表示 */}
+      {hasCand && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex-1 px-3 py-2 rounded-lg border border-orange-300 dark:border-orange-600 text-sm font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {refreshing ? "採点中…" : "⚡ 採点更新"}
+          </button>
+          {refreshMsg && (
+            <span className="text-xs text-gray-500 dark:text-gray-400">{refreshMsg}</span>
+          )}
+        </div>
+      )}
 
       {/* エラー */}
       {error && (

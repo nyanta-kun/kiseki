@@ -338,6 +338,163 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     return result
 
 
+@router.post("/refresh")
+async def refresh_picks(
+    date: str = "",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """指定日の #CAND エントリを採点して確定エントリに変換する。
+
+    VPS cron が失敗した場合のフォールバック。
+    wt_entries の finish_order と wt_odds の払戻を元に採点する。
+    結果未確定レース（finish_order 不足）はスキップ。
+    """
+    import re as _re
+    target = date or _today_jst().isoformat()
+
+    cand_rows = (await db.execute(
+        text("""
+            SELECT race_key, rank, pred_combo, n_combos, miwokuri, prerace_gami
+            FROM keirin.picks_history
+            WHERE race_date = :date
+              AND race_key LIKE '%#CAND'
+              AND route = 'wt'
+        """),
+        {"date": target},
+    )).mappings().all()
+
+    if not cand_rows:
+        return JSONResponse(content={"message": "採点対象の#CANDレコードがありません", "n_scored": 0})
+
+    to_delete: list[str] = []
+    to_insert: list[dict] = []
+
+    for row in cand_rows:
+        base_key = row["race_key"].rsplit("#", 1)[0]
+        rank = row["rank"]
+        pred_combo = row["pred_combo"] or ""
+
+        store_key = (
+            f"{base_key}#7SS" if rank == "7PLUS_SS"
+            else f"{base_key}#7S" if rank == "7PLUS_S"
+            else f"{base_key}#7A"
+        )
+
+        try:
+            parts = pred_combo.split("-")
+            p1, p2 = int(parts[0]), int(parts[1])
+            thirds = [int(x) for x in parts[2].split(",")] if len(parts) >= 3 else []
+        except (ValueError, IndexError):
+            continue
+
+        finish_rows = (await db.execute(
+            text("""
+                SELECT frame_no FROM keirin.wt_entries
+                WHERE race_key = :rk AND finish_order BETWEEN 1 AND 3
+                ORDER BY finish_order
+            """),
+            {"rk": base_key},
+        )).fetchall()
+
+        order_list = [int(r[0]) for r in finish_rows]
+        if len(order_list) < 3:
+            continue
+
+        top3 = frozenset(order_list[:3])
+
+        runner_rows = (await db.execute(
+            text("SELECT frame_no FROM keirin.wt_entries WHERE race_key = :rk AND finish_order >= 1"),
+            {"rk": base_key},
+        )).fetchall()
+        runners = {int(r[0]) for r in runner_rows}
+
+        if p1 not in runners or p2 not in runners:
+            continue
+        valid_thirds = [t for t in thirds if t in runners]
+        if not valid_thirds:
+            continue
+
+        odds_rows = (await db.execute(
+            text("""
+                SELECT combination, odds_value
+                FROM keirin.wt_odds
+                WHERE race_key = :rk AND bet_type = 'trio'
+            """),
+            {"rk": base_key},
+        )).mappings().all()
+
+        trio_map: dict = {}
+        for odds_row in odds_rows:
+            try:
+                nums = [int(p) for p in _re.split(r"[-=→]", str(odds_row["combination"])) if p]
+                trio_map[frozenset(nums)] = int(round(float(odds_row["odds_value"]) * 100))
+            except (ValueError, TypeError):
+                continue
+
+        hit = False
+        pay = 0
+        for t in valid_thirds:
+            key = frozenset((p1, p2, t))
+            if key == top3:
+                pay = trio_map.get(key, 0)
+                hit = True
+                break
+
+        trio_pay = trio_map.get(top3, 0)
+        prerace_gami = row["prerace_gami"]
+        is_gami_skip = prerace_gami is not None and float(prerace_gami) < 5.0
+
+        to_delete.append(row["race_key"])
+        to_insert.append({
+            "race_date": target,
+            "race_key": store_key,
+            "rank": rank,
+            "pred_combo": pred_combo,
+            "n_combos": row["n_combos"] or 0,
+            "hit": 1 if hit else 0,
+            "payout": 0 if is_gami_skip else (pay if hit else 0),
+            "trio_payout": trio_pay,
+            "bet_amount": 0,
+            "miwokuri": bool(row["miwokuri"]),
+            "prerace_gami": float(prerace_gami) if prerace_gami is not None else None,
+        })
+
+    if not to_insert:
+        return JSONResponse(content={"message": "採点対象レースの確定データがありません", "n_scored": 0})
+
+    await db.execute(
+        text("DELETE FROM keirin.picks_history WHERE race_key = ANY(:keys)"),
+        {"keys": to_delete},
+    )
+    for s in to_insert:
+        await db.execute(
+            text("""
+                INSERT INTO keirin.picks_history
+                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout,
+                     bet_amount, route, miwokuri, prerace_gami)
+                VALUES
+                    (:race_date, :race_key, :rank, :pred_combo, :n_combos, :hit, :payout,
+                     :trio_payout, :bet_amount, 'wt', :miwokuri, :prerace_gami)
+                ON CONFLICT (race_key) DO UPDATE SET
+                    hit = EXCLUDED.hit,
+                    payout = EXCLUDED.payout,
+                    trio_payout = EXCLUDED.trio_payout,
+                    rank = EXCLUDED.rank
+            """),
+            s,
+        )
+    await db.commit()
+
+    n_hits = sum(1 for s in to_insert if s["hit"])
+    total_payout = sum(s["payout"] for s in to_insert)
+    return JSONResponse(content={
+        "n_scored": len(to_insert),
+        "n_hits": n_hits,
+        "total_payout": total_payout,
+        "message": f"{len(to_insert)}件採点完了 (的中{n_hits}件)",
+    })
+
+
 @router.get("/summary")
 async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """当日 / 当月 / 当年 / HOLD期間バックテストのサマリーを返す。
