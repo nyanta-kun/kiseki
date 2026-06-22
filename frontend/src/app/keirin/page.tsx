@@ -68,11 +68,19 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
 // サブコンポーネント
 // ---------------------------------------------------------------------------
 
-function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
+function RankBadge({ rank, miwokuri, gamiStatus }: { rank: string; miwokuri?: boolean; gamiStatus?: "ok" | "ng" | null }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
+
+  // ジャッジ済みの場合、緑(OK) or 橙(NG)の ring を外側に付ける
+  const ringStyle: React.CSSProperties | undefined = gamiStatus === "ok"
+    ? { outline: "2px solid #10b981", outlineOffset: "2px" }
+    : gamiStatus === "ng"
+      ? { outline: "2px solid #f97316", outlineOffset: "2px" }
+      : undefined;
+
   if (miwokuri) {
     return (
-      <span style={{ background: "#9ca3af", color: "#fff" }} className={badgeCls}>
+      <span style={{ background: "#9ca3af", color: "#fff", ...ringStyle }} className={badgeCls}>
         ガ
       </span>
     );
@@ -80,13 +88,13 @@ function RankBadge({ rank, miwokuri }: { rank: string; miwokuri?: boolean }) {
   const s = RANK_STYLE[rank];
   if (!s) {
     return (
-      <span style={{ background: "#9ca3af", color: "#fff" }} className={badgeCls}>
+      <span style={{ background: "#9ca3af", color: "#fff", ...ringStyle }} className={badgeCls}>
         非
       </span>
     );
   }
   return (
-    <span style={{ background: s.bg, color: s.text }} className={badgeCls}>
+    <span style={{ background: s.bg, color: s.text, ...ringStyle }} className={badgeCls}>
       {s.label}
     </span>
   );
@@ -282,6 +290,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
+  const gamiStatus: "ok" | "ng" | null = !isMiwokuri && pick.prerace_gami != null
+    ? pick.prerace_gami >= 5.0 ? "ok" : "ng"
+    : null;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
@@ -298,7 +309,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        <RankBadge rank={pick.rank} miwokuri={isMiwokuri} />
+        <RankBadge rank={pick.rank} miwokuri={isMiwokuri} gamiStatus={gamiStatus} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
@@ -311,9 +322,19 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
           </div>
         </div>
-        {/* 折りたたみ時: 結果サマリーをインライン表示 */}
+        {/* 折りたたみ時: 結果サマリー or ガミ判定チップをインライン表示 */}
         {collapsed && isSettled && (
           <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
+        )}
+        {collapsed && !isSettled && gamiStatus === "ok" && (
+          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex-shrink-0">
+            {pick.prerace_gami!.toFixed(1)}倍✓
+          </span>
+        )}
+        {collapsed && !isSettled && gamiStatus === "ng" && (
+          <span className="text-xs text-orange-500 dark:text-orange-400 font-medium flex-shrink-0">
+            {pick.prerace_gami!.toFixed(1)}倍⚠
+          </span>
         )}
         <ChevronDown
           size={15}
