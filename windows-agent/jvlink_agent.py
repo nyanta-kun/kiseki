@@ -1275,28 +1275,53 @@ def _run_bldn_only(jv) -> None:
     )
 
 
-def run_chokyo(jv, from_date: str | None = None) -> None:
+def _chokyo_file_date(filename: str) -> str | None:
+    """調教ファイル名から調教年月日(YYYYMMDD)を抽出する。
+
+    ファイル名形式: [HC|WC] + トレセン2文字(WW/EW/MW等) + 調教年月日8桁 + 作成日8桁 + 時刻6桁 + .jvd
+      例: "HCWW2026053020260530102421.jvd" → "20260530"
+    抽出できない場合は None。
+    """
+    head = filename[:2]
+    if head not in ("HC", "WC"):
+        return None
+    date = filename[4:12]
+    return date if len(date) == 8 and date.isdigit() else None
+
+
+def run_chokyo(jv, from_date: str | None = None, setup: bool = False) -> None:
     """調教データ（坂路 SLOP=HC / ウッド WOOD=WC）を取得して DB へ送信する。
 
     収録範囲（JV-Data4901 仕様）:
       - SLOP(坂路): 2003年以降・美浦栗東両方
-      - WOOD(ウッド): 2021-07-27以降・美浦のみ
+      - WOOD(ウッド): 2021-07-27以降（実機では栗東も取得可）
 
     引数:
-      from_date: "YYYYMMDD"。指定時は option=1（差分）で当該日以降のみ取得（probe/日次用）。
-                 None の場合は option=4（セットアップ）で全期間取得（初回バックフィル用・長時間）。
+      from_date: "YYYYMMDD"。
+      setup: True で option=4（セットアップ・全期間スキャン）。from_date 指定時は
+             ファイル名日付が from_date 未満のファイルを JVSkip で読み飛ばす
+             （= 必要期間だけ処理して時間短縮）。差分(option=1)は約1年保持のため
+             2年以上前の歴史取得には setup=True が必須。
+      setup=False かつ from_date 指定時は option=1（差分・日次/直近用）。
 
     各 DataSpec の HC/WC レコードのみ抽出し /api/import/training へ batch 送信する。
     完了ファイルは {SLOP,WOOD}_CHOKYO キーで個別管理する。
     """
-    if from_date:
+    if setup:
+        from_time = "20030101000000"
+        option = 4
+        floor = from_date  # None なら全期間
+        logger.info(f"=== CHOKYO MODE: setup取得 (option=4, 日付フロア={floor or '無し(全期間)'}) ===")
+    elif from_date:
         from_time = f"{from_date}000000"
         option = 1
-        logger.info(f"=== CHOKYO MODE: 調教データ差分取得 (from={from_date}, option=1) ===")
+        floor = None
+        logger.info(f"=== CHOKYO MODE: 差分取得 (from={from_date}, option=1) ===")
     else:
         from_time = "20030101000000"
         option = 4
-        logger.info("=== CHOKYO MODE: 調教データ全期間取得 (option=4 setup・長時間) ===")
+        floor = None
+        logger.info("=== CHOKYO MODE: 全期間取得 (option=4 setup・長時間) ===")
 
     for dataspec in (DATASPEC_SLOP, DATASPEC_WOOD):
         completed_key = f"{dataspec}_CHOKYO"
@@ -1319,11 +1344,20 @@ def run_chokyo(jv, from_date: str | None = None) -> None:
             mark_file_completed(_ck, filename)
             logger.info(f"  [{filename}] HC/WC {len(recs)} 件 → DB反映 (累計 {_t['files']}本/{_t['recs']}件)")
 
+        def skip_fn(fn: str, _c=completed, _floor=floor) -> bool:
+            if fn in _c:
+                return True
+            if _floor:
+                d = _chokyo_file_date(fn)
+                if d is not None and d < _floor:
+                    return True
+            return False
+
         logger.info(f"{dataspec} 取得開始 (from={from_time}, option={option})...")
         fetch_stored_data(
             jv, dataspec, from_time, option=option,
             on_file_done=on_file_done,
-            skip_file_fn=lambda fn, _c=completed: fn in _c,
+            skip_file_fn=skip_fn,
             skip_cache=True,
             max_errors=1000,
         )
@@ -1731,6 +1765,11 @@ def main() -> None:
         metavar="YYYYMMDD",
         help="fix-race / chokyo モードで取得する開始日 (例: --from-date 20260207)",
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="chokyo モードで option=4(セットアップ・全期間スキャン)を使う。--from-date併用でその日付以降のファイルのみ処理(歴史バックフィル用)",
+    )
     args = parser.parse_args()
 
     if not JRAVAN_SID and args.mode not in ("retry", "wait"):
@@ -1840,8 +1879,8 @@ def main() -> None:
         jv.JVClose()
         logger.info("weekly-preview モード完了。終了します。")
     elif args.mode == "chokyo":
-        report_status("running", mode="chokyo", message=f"調教データ取得開始 (from={args.from_date or '全期間setup'})")
-        run_chokyo(jv, from_date=args.from_date)
+        report_status("running", mode="chokyo", message=f"調教データ取得開始 (setup={args.setup}, from={args.from_date or '-'})")
+        run_chokyo(jv, from_date=args.from_date, setup=args.setup)
         report_status("done", message="調教データ取得完了")
         jv.JVClose()
         logger.info("chokyo モード完了。終了します。")
