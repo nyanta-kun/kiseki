@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
 
-_WEBHOOK_BASE = "http://host.docker.internal:8010"
+_WEBHOOK_BASE = "http://172.18.0.1:8010"
 
 _JST = timezone(timedelta(hours=9))
 
