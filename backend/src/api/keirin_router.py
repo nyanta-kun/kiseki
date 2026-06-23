@@ -11,12 +11,15 @@ from datetime import date as Date
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+
+_WEBHOOK_BASE = "http://host.docker.internal:8010"
 
 _JST = timezone(timedelta(hours=9))
 
@@ -493,6 +496,28 @@ async def refresh_picks(
         "total_payout": total_payout,
         "message": f"{len(to_insert)}件採点完了 (的中{n_hits}件)",
     })
+
+
+@router.post("/fetch-odds")
+async def trigger_fetch_odds() -> JSONResponse:
+    """発走前ガミ判定を即時実行する（keirinホスト側スクリプトをバックグラウンド起動）。"""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(f"{_WEBHOOK_BASE}/fetch-odds", timeout=10.0)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as exc:
+        return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)
+
+
+@router.post("/fetch-results")
+async def trigger_fetch_results() -> JSONResponse:
+    """当日結果を即時取得する（keirinホスト側スクリプトをバックグラウンド起動）。"""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(f"{_WEBHOOK_BASE}/fetch-results", timeout=10.0)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as exc:
+        return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)
 
 
 @router.get("/summary")

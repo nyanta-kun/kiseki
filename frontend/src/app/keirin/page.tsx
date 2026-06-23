@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, type KeirinPick, type KeirinSummary } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -561,6 +561,9 @@ export default function KeirinPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  const [fetchingOdds, setFetchingOdds] = useState(false);
+  const [fetchingResults, setFetchingResults] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const isToday = date === todayYYYYMMDD();
   const nextId = isToday ? nextPickId(picks) : null;
@@ -603,6 +606,34 @@ export default function KeirinPage() {
       setRefreshMsg("採点更新に失敗しました");
     } finally {
       setRefreshing(false);
+    }
+  }, [date, loadData]);
+
+  const handleFetchOdds = useCallback(async () => {
+    setFetchingOdds(true);
+    setActionMsg(null);
+    try {
+      const result = await triggerKeirinFetchOdds();
+      setActionMsg(result.ok ? "オッズ更新を開始しました（約30秒後に再読込）" : `エラー: ${result.message}`);
+      if (result.ok) setTimeout(() => void loadData(date), 35000);
+    } catch {
+      setActionMsg("オッズ更新に失敗しました");
+    } finally {
+      setFetchingOdds(false);
+    }
+  }, [date, loadData]);
+
+  const handleFetchResults = useCallback(async () => {
+    setFetchingResults(true);
+    setActionMsg(null);
+    try {
+      const result = await triggerKeirinFetchResults();
+      setActionMsg(result.ok ? "結果取得を開始しました（約60秒後に再読込）" : `エラー: ${result.message}`);
+      if (result.ok) setTimeout(() => void loadData(date), 65000);
+    } catch {
+      setActionMsg("結果取得に失敗しました");
+    } finally {
+      setFetchingResults(false);
     }
   }, [date, loadData]);
 
@@ -729,34 +760,59 @@ export default function KeirinPage() {
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
         className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700"
       >
-        <div className="flex items-center justify-between max-w-3xl mx-auto px-3 py-2 gap-2">
-          <button
-            onClick={() => setDate(prevDay(date))}
-            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 text-center"
-          >
-            ← 前日
-          </button>
-          {nextId ? (
+        <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
+          {/* 行1: 日付ナビ */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                document.getElementById(nextId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              className="flex-[2] px-3 py-1.5 rounded-lg border border-blue-400 dark:border-blue-500 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-center truncate"
+              onClick={() => setDate(prevDay(date))}
+              className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 text-center"
             >
-              次のレース ↓
+              ← 前日
             </button>
-          ) : (
-            <div className="flex-[2] px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 text-center">
-              {isToday ? "終了" : fmtYMD(date)}
+            {nextId ? (
+              <button
+                onClick={() => {
+                  document.getElementById(nextId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="flex-[2] px-3 py-1.5 rounded-lg border border-blue-400 dark:border-blue-500 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-center truncate"
+              >
+                次のレース ↓
+              </button>
+            ) : (
+              <div className="flex-[2] px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 text-center">
+                {isToday ? "終了" : fmtYMD(date)}
+              </div>
+            )}
+            <button
+              onClick={() => setDate(nextDay(date))}
+              disabled={isToday}
+              className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-center"
+            >
+              翌日 →
+            </button>
+          </div>
+          {/* 行2: 今日のみ — オッズ更新・結果取得 */}
+          {isToday && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleFetchOdds}
+                disabled={fetchingOdds}
+                className="flex-1 px-2 py-1.5 rounded-lg border border-cyan-300 dark:border-cyan-600 text-xs font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center"
+              >
+                {fetchingOdds ? "更新中…" : "📊 オッズ更新"}
+              </button>
+              <button
+                onClick={handleFetchResults}
+                disabled={fetchingResults}
+                className="flex-1 px-2 py-1.5 rounded-lg border border-violet-300 dark:border-violet-600 text-xs font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center"
+              >
+                {fetchingResults ? "取得中…" : "📋 結果取得"}
+              </button>
+              {actionMsg && (
+                <span className="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">{actionMsg}</span>
+              )}
             </div>
           )}
-          <button
-            onClick={() => setDate(nextDay(date))}
-            disabled={isToday}
-            className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-center"
-          >
-            翌日 →
-          </button>
         </div>
       </div>
     </div>

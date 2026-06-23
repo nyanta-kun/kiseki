@@ -987,3 +987,19 @@ export async function refreshKeirinPicks(date: string): Promise<{ n_scored: numb
   if (!res.ok) throw new Error(`refresh failed: ${res.status}`);
   return res.json();
 }
+
+export async function triggerKeirinFetchOdds(): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/fetch-odds`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  return res.json();
+}
+
+export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/fetch-results`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  return res.json();
+}
