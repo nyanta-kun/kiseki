@@ -127,6 +127,7 @@ async def get_picks(
             JOIN keirin.venue_info vi
               ON wr.venue_id = vi.venue_code
             WHERE ph.race_date = :date
+              AND ph.rank != 'GAMI'
             ORDER BY wr.start_at, ph.id
         """),
         {"date": target},
