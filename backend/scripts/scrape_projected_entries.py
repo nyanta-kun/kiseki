@@ -41,7 +41,7 @@ UA = (
     "(KHTML, like Gecko) Version/17.5 Safari/605.1.15"
 )
 LOGIN_PAGE = "https://regist.netkeiba.com/account/?pid=login"
-LOGIN_POST = "https://regist.netkeiba.com/account/"
+LOGIN_POST = "https://regist.netkeiba.com/"
 RACE_LIST = "https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={date}"
 SHUTUBA = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
 SLEEP_SEC = 2.0
@@ -65,9 +65,9 @@ def login() -> requests.Session:
     s.get(LOGIN_PAGE, timeout=TIMEOUT)
     s.post(
         LOGIN_POST,
-        data={"pid": "login", "action": "auth", "return_url2": "", "mem_tp": "",
+        data={"pid": "login", "action": "auth", "rtn_url": "",
               "login_id": uid, "pswd": pw},
-        headers={"Referer": LOGIN_PAGE},
+        headers={"Referer": "https://regist.netkeiba.com/?pid=login"},
         timeout=TIMEOUT,
     )
     if "nkauth" not in s.cookies:
