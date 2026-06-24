@@ -642,7 +642,7 @@ export default function KeirinPage() {
   }, [date, loadData]);
 
   return (
-    <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 pb-20 space-y-4">
+    <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 pb-44 md:pb-20 space-y-4">
       {/* タイトル */}
       <div className="flex items-center gap-2">
         <Bike size={22} className="text-blue-500" />
@@ -757,8 +757,8 @@ export default function KeirinPage() {
 
       {/* スティッキーボトムナビ */}
       <div
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-        className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700"
+        style={{ paddingBottom: "4px" }}
+        className="fixed bottom-14 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 md:bottom-0"
       >
         <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
           {/* 行1: 日付ナビ */}

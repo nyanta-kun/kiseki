@@ -14,6 +14,7 @@ export function AppNav({ isAdmin }: Props) {
     { label: "レース", href: isChihou ? "/chihou/races" : "/races", matchPath: isChihou ? "/chihou/races" : "/races" },
     { label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { label: "予想", href: "/yoso", matchPath: "/yoso" },
+    { label: "競輪", href: "/keirin", matchPath: "/keirin" },
     { label: "マイページ", href: "/my", matchPath: "/my" },
   ];
 

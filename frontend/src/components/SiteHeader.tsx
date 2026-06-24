@@ -2,11 +2,9 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { Bike } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { LiveStreamButton } from "@/components/LiveStreamButton";
-import { todayYYYYMMDD } from "@/lib/utils";
 
 const HIDE_HEADER_PATHS = new Set(["/", "/login"]);
 
@@ -16,29 +14,21 @@ type Props = {
 
 export function SiteHeader({ isAdmin }: Props) {
   const pathname = usePathname();
-  const router = useRouter();
   if (HIDE_HEADER_PATHS.has(pathname)) return null;
 
   const isChihou = pathname.startsWith("/chihou");
+  const isKeirin = pathname.startsWith("/keirin");
   const headerBg = isChihou ? "var(--chihou-primary)" : "var(--primary)";
 
-  const handleLogoClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-    const date = params.get("date") ?? todayYYYYMMDD();
-    const target = isChihou ? `/races?date=${date}` : `/chihou/races?date=${date}`;
-    router.push(target);
-  };
-
-  const toggleLabel = isChihou ? "中央競馬へ切り替え" : "地方競馬へ切り替え";
+  const logoHref = isChihou ? "/chihou/races" : "/races";
 
   return (
     <header style={{ background: headerBg }} className="sticky top-0 z-10 shadow-md">
       <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-        <button
-          onClick={handleLogoClick}
-          aria-label={toggleLabel}
-          className="flex-shrink-0 opacity-90 hover:opacity-100 transition-opacity cursor-pointer"
+        <Link
+          href={logoHref}
+          aria-label="GallopLab トップへ"
+          className="flex-shrink-0 opacity-90 hover:opacity-100 transition-opacity"
         >
           <Image
             src="/images/logo.png"
@@ -48,20 +38,18 @@ export function SiteHeader({ isAdmin }: Props) {
             className="select-none h-8 w-auto"
             priority
           />
-        </button>
+        </Link>
         {isChihou && (
           <span className="text-green-100 text-xs font-medium px-2 py-0.5 rounded-full border border-green-400/60 bg-green-800/40 flex-shrink-0">
             地方
           </span>
         )}
+        {isKeirin && (
+          <span className="text-cyan-100 text-xs font-medium px-2 py-0.5 rounded-full border border-cyan-400/60 bg-cyan-800/40 flex-shrink-0">
+            競輪
+          </span>
+        )}
         <div className="flex-1 min-w-0" />
-        <Link
-          href="/keirin"
-          aria-label="競輪ピックへ"
-          className="flex items-center justify-center w-9 h-9 rounded-md hover:bg-white/10 transition-colors text-white"
-        >
-          <Bike size={20} aria-hidden="true" />
-        </Link>
         <LiveStreamButton />
         <AppNav isAdmin={isAdmin} />
       </div>

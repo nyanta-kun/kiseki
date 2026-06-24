@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { auth } from "@/auth";
 import { SiteHeader } from "@/components/SiteHeader";
+import { BottomNav } from "@/components/BottomNav";
 import { Footer } from "@/components/Footer";
 import ServiceWorkerRegister from "./sw-register";
 import "./globals.css";
@@ -111,10 +112,11 @@ export default async function RootLayout({
         {/* 共有ヘッダー（/ と /login では非表示） */}
         <SiteHeader isAdmin={isAdmin} />
 
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 flex flex-col pb-14 md:pb-0">
           {children}
         </div>
         {paidMode && <Footer />}
+        <BottomNav />
         <ServiceWorkerRegister />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
