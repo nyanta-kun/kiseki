@@ -16,10 +16,11 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
   const isChihou = pathname.startsWith("/chihou");
 
   const NAV_ITEMS = [
-    { icon: "🏇", label: "レース", href: isChihou ? "/chihou/races" : "/races", matchPath: isChihou ? "/chihou/races" : "/races" },
+    { icon: "🏇", label: "中央競馬", href: "/races", matchPath: "/races" },
+    { icon: "🏘", label: "地方競馬", href: "/chihou/races", matchPath: "/chihou" },
+    { icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" },
     { icon: "📊", label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
-    { icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" },
     { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
   ];
   const isOpen = openedOnPath === pathname;

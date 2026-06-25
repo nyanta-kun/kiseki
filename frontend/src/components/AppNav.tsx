@@ -11,10 +11,11 @@ export function AppNav({ isAdmin }: Props) {
   const isChihou = pathname.startsWith("/chihou");
 
   const NAV_ITEMS = [
-    { label: "レース", href: isChihou ? "/chihou/races" : "/races", matchPath: isChihou ? "/chihou/races" : "/races" },
+    { label: "中央", href: "/races", matchPath: "/races" },
+    { label: "地方", href: "/chihou/races", matchPath: "/chihou" },
+    { label: "競輪", href: "/keirin", matchPath: "/keirin" },
     { label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { label: "予想", href: "/yoso", matchPath: "/yoso" },
-    { label: "競輪", href: "/keirin", matchPath: "/keirin" },
     { label: "マイページ", href: "/my", matchPath: "/my" },
   ];
 
