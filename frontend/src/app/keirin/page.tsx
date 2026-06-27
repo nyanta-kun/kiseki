@@ -61,7 +61,7 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
   "7PLUS_SS": { bg: "#d97706", text: "#fff", label: "7SS" },
   "7PLUS_S":  { bg: "#0891b2", text: "#fff", label: "7S" },
-  "7PLUS_A":  { bg: "#0d9488", text: "#fff", label: "7A" },
+  // "7PLUS_A" 廃止済み（2026-06-28）
 };
 
 // ---------------------------------------------------------------------------
@@ -393,11 +393,10 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-const RANK_ORDER = ["SS", "S", "A"] as const;
+const RANK_ORDER = ["SS", "S"] as const;
 const RANK_BADGE_STYLE: Record<string, string> = {
   SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   S:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
-  A:  "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
