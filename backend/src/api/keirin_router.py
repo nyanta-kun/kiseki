@@ -94,50 +94,108 @@ async def _calc_synth_odds(
 @router.get("/picks")
 async def get_picks(
     date: str = "",
+    include_all: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """指定日（YYYY-MM-DD）の推奨ピック一覧を返す。"""
+    """指定日（YYYY-MM-DD）の推奨ピック一覧を返す。
+    include_all=true の場合は推奨外レースも含む全レースを返す。
+    """
     target = date or _today_jst().isoformat()
 
-    rows = (await db.execute(
-        text("""
-            SELECT
-              ph.id,
-              ph.race_key,
-              SPLIT_PART(ph.race_key, '#', 1) AS base_key,
-              ph.rank,
-              ph.pred_combo,
-              ph.n_combos,
-              ph.hit,
-              ph.payout,
-              ph.trio_payout,
-              ph.bet_amount,
-              ph.route,
-              COALESCE(ph.miwokuri, FALSE) AS miwokuri,
-              ph.prerace_gami,
-              wr.race_no,
-              wr.grade,
-              wr.race_type,
-              wr.start_at,
-              wr.status,
-              vi.name AS venue_name
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            JOIN keirin.venue_info vi
-              ON wr.venue_id = vi.venue_code
-            WHERE ph.race_date = :date
-              AND ph.rank != 'GAMI'
-            ORDER BY wr.start_at, ph.id
-        """),
-        {"date": target},
-    )).mappings().all()
+    if include_all:
+        rows = (await db.execute(
+            text("""
+                SELECT
+                  wr.race_key                AS base_key,
+                  wr.race_no,
+                  wr.grade,
+                  wr.race_type,
+                  wr.start_at,
+                  wr.status,
+                  wr.n_entries,
+                  vi.name                    AS venue_name,
+                  ph.id,
+                  ph.race_key                AS ph_race_key,
+                  ph.rank,
+                  ph.pred_combo,
+                  ph.n_combos,
+                  ph.hit,
+                  ph.payout,
+                  ph.trio_payout,
+                  ph.bet_amount,
+                  ph.route,
+                  COALESCE(ph.miwokuri, FALSE) AS miwokuri,
+                  ph.prerace_gami
+                FROM keirin.wt_races wr
+                JOIN keirin.venue_info vi
+                  ON wr.venue_id = vi.venue_code
+                LEFT JOIN LATERAL (
+                  SELECT * FROM keirin.picks_history ph2
+                  WHERE SPLIT_PART(ph2.race_key, '#', 1) = wr.race_key
+                    AND ph2.race_date = :date
+                    AND ph2.rank != 'GAMI'
+                  ORDER BY
+                    CASE ph2.rank
+                      WHEN '7PLUS_SS'   THEN 1
+                      WHEN '7PLUS_S'    THEN 2
+                      WHEN '7PLUS_CAND' THEN 3
+                      ELSE 4
+                    END
+                  LIMIT 1
+                ) ph ON TRUE
+                WHERE wr.race_date = :date
+                ORDER BY wr.start_at, wr.race_no
+            """),
+            {"date": target},
+        )).mappings().all()
+    else:
+        rows = (await db.execute(
+            text("""
+                SELECT
+                  ph.id,
+                  ph.race_key,
+                  SPLIT_PART(ph.race_key, '#', 1) AS base_key,
+                  ph.rank,
+                  ph.pred_combo,
+                  ph.n_combos,
+                  ph.hit,
+                  ph.payout,
+                  ph.trio_payout,
+                  ph.bet_amount,
+                  ph.route,
+                  COALESCE(ph.miwokuri, FALSE) AS miwokuri,
+                  ph.prerace_gami,
+                  wr.race_no,
+                  wr.grade,
+                  wr.race_type,
+                  wr.start_at,
+                  wr.status,
+                  wr.n_entries,
+                  vi.name AS venue_name
+                FROM keirin.picks_history ph
+                JOIN keirin.wt_races wr
+                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+                JOIN keirin.venue_info vi
+                  ON wr.venue_id = vi.venue_code
+                WHERE ph.race_date = :date
+                  AND ph.rank != 'GAMI'
+                ORDER BY wr.start_at, ph.id
+            """),
+            {"date": target},
+        )).mappings().all()
 
     picks = []
     for r in rows:
         base_key = r["base_key"]
-        is_wide = r["rank"] == "WIDE"
-        synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
+        has_pick = r["rank"] is not None
+
+        if has_pick:
+            is_wide = r["rank"] == "WIDE"
+            race_key = r["ph_race_key"] if include_all else r["race_key"]
+            synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
+        else:
+            race_key = base_key
+            synth_odds = None
 
         entries = (await db.execute(
             text("""
@@ -158,23 +216,25 @@ async def get_picks(
 
         picks.append({
             "id": r["id"],
-            "race_key": r["race_key"],
+            "race_key": race_key,
+            "has_pick": has_pick,
             "venue_name": r["venue_name"],
             "race_no": r["race_no"],
             "grade": r["grade"],
             "race_type": r["race_type"],
             "start_at": r["start_at"],
             "status": r["status"],
+            "n_entries": r["n_entries"],
             "rank": r["rank"],
-            "pred_combo": r["pred_combo"],
-            "n_combos": r["n_combos"],
+            "pred_combo": r["pred_combo"] if has_pick else None,
+            "n_combos": r["n_combos"] if has_pick else None,
             "synth_odds": synth_odds,
-            "hit": bool(r["hit"]),
-            "payout": r["payout"] or 0,
-            "trio_payout": r["trio_payout"] or 0,
-            "bet_amount": r["bet_amount"] or 0,
-            "miwokuri": bool(r["miwokuri"]),
-            "prerace_gami": float(r["prerace_gami"]) if r["prerace_gami"] is not None else None,
+            "hit": bool(r["hit"]) if has_pick else False,
+            "payout": (r["payout"] or 0) if has_pick else 0,
+            "trio_payout": (r["trio_payout"] or 0) if has_pick else 0,
+            "bet_amount": (r["bet_amount"] or 0) if has_pick else 0,
+            "miwokuri": bool(r["miwokuri"]) if has_pick else False,
+            "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
             "entries": [
                 {
                     "frame_no": e["frame_no"],

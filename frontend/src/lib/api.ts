@@ -931,15 +931,17 @@ export type KeirinEntry = {
 };
 
 export type KeirinPick = {
-  id: number;
+  id: number | null;
   race_key: string;
+  has_pick: boolean;
   venue_name: string;
   race_no: number;
   grade: string | null;
   race_type: string | null;
   start_at: number | string | null;
   status: number;
-  rank: string;
+  n_entries: number | null;
+  rank: string | null;
   pred_combo: string | null;
   n_combos: number | null;
   synth_odds: number | null;
@@ -970,8 +972,9 @@ export type KeirinSummary = {
   test_to: string;
 };
 
-export async function fetchKeirinPicks(date: string): Promise<KeirinPick[]> {
-  return get<KeirinPick[]>(`/keirin/picks?date=${date}`, { cache: "no-store" });
+export async function fetchKeirinPicks(date: string, includeAll = false): Promise<KeirinPick[]> {
+  const q = includeAll ? `&include_all=true` : "";
+  return get<KeirinPick[]>(`/keirin/picks?date=${date}${q}`, { cache: "no-store" });
 }
 
 export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> {

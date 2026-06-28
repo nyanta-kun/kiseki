@@ -283,11 +283,32 @@ function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri
   return trioEl;
 }
 
+function NoPickRow({ pick }: { pick: KeirinPick }) {
+  const startTime = fmtStartAt(pick.start_at);
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-100 dark:border-gray-700/50 opacity-60">
+      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
+      <div className="flex items-center gap-1.5 flex-1 min-w-0 text-xs text-gray-500 dark:text-gray-400">
+        <span className="font-medium text-gray-600 dark:text-gray-300">{pick.venue_name}</span>
+        <span>{pick.race_no}R</span>
+        {startTime && <span>{startTime}</span>}
+        {(pick.grade || pick.race_type) && (
+          <span className="text-gray-400 dark:text-gray-500">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+        )}
+        {pick.n_entries != null && (
+          <span className="text-gray-400 dark:text-gray-500">{pick.n_entries}車</span>
+        )}
+      </div>
+      <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0">推奨外</span>
+    </div>
+  );
+}
+
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at);
   const [collapsed, setCollapsed] = useState(true);
   const isWide = pick.rank === "WIDE";
-  const is7Plus = pick.rank.startsWith("7PLUS");
+  const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
@@ -296,6 +317,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
     : null;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
+  const rankStr = pick.rank ?? "";
   const comboLabel = pick.pred_combo
     ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
@@ -310,7 +332,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        <RankBadge rank={pick.rank} miwokuri={isMiwokuri} gamiStatus={gamiStatus} />
+        <RankBadge rank={rankStr} miwokuri={isMiwokuri} gamiStatus={gamiStatus} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
@@ -542,6 +564,7 @@ function nextPickId(picks: KeirinPick[]): string | null {
   const nowSec = Date.now() / 1000;
   const upcoming = picks
     .filter((p) => {
+      if (!p.has_pick || p.id == null) return false;
       const ts = typeof p.start_at === "number" ? p.start_at : parseInt(String(p.start_at ?? ""), 10);
       return !isNaN(ts) && ts > nowSec && p.status < 3;
     })
@@ -580,7 +603,7 @@ export default function KeirinPage() {
     setError(null);
     const iso = toISODate(d);
     const [picksResult, summaryResult] = await Promise.allSettled([
-      fetchKeirinPicks(iso),
+      fetchKeirinPicks(iso, true),
       fetchKeirinSummary(iso),
     ]);
     if (picksResult.status === "fulfilled") {
@@ -748,10 +771,13 @@ export default function KeirinPage() {
           この日のピックはありません
         </div>
       ) : (
-        <div className="space-y-3">
-          {picks.map((p) => (
-            <PickCard key={p.id} pick={p} cardId={`pick-${p.id}`} />
-          ))}
+        <div className="space-y-2">
+          {picks.map((p, idx) => {
+            if (!p.has_pick) {
+              return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
+            }
+            return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
+          })}
         </div>
       )}
 
