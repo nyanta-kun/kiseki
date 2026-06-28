@@ -15,10 +15,8 @@
 set -u
 
 PROJECT_ROOT="/home/ysuzuki/GitHub/kiseki"
-BACKEND_DIR="$PROJECT_ROOT/backend"
-PYTHON="$BACKEND_DIR/.venv/bin/python"
-SCRIPT="$BACKEND_DIR/scripts/anagusa_discord_notify.py"
 LOG_FILE="$PROJECT_ROOT/logs/anagusa_notify.log"
+CONTAINER="galloplab-backend-1"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -30,16 +28,16 @@ DRY_RUN="${1:-}"
 
 log "=== anagusa_notify.sh 開始 ==="
 
-if [ ! -f "$PYTHON" ]; then
-  log "ERROR: Python venv not found: $PYTHON"
+if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+  log "ERROR: コンテナが起動していません: $CONTAINER"
   exit 1
 fi
 
 if [ -n "$DRY_RUN" ]; then
   log "DRY-RUN モード"
-  "$PYTHON" "$SCRIPT" --dry-run >> "$LOG_FILE" 2>&1
+  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py --dry-run >> "$LOG_FILE" 2>&1
 else
-  "$PYTHON" "$SCRIPT" >> "$LOG_FILE" 2>&1
+  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py >> "$LOG_FILE" 2>&1
 fi
 
 RC=$?

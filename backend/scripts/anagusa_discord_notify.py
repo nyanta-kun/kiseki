@@ -18,8 +18,11 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from dotenv import load_dotenv
-load_dotenv(_root.parent / ".env")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_root.parent / ".env")
+except ImportError:
+    pass  # Dockerコンテナ内では環境変数がenv_fileで注入済み
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
