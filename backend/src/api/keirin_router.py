@@ -232,6 +232,7 @@ async def _aggregate(
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
         params,
@@ -262,6 +263,7 @@ async def _aggregate(
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
         """),

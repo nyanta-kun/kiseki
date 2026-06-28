@@ -59,8 +59,9 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   B:         { bg: "#6b7280", text: "#fff", label: "B" },
   WIDE:      { bg: "#7c3aed", text: "#fff", label: "W" },
   "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
-  "7PLUS_SS": { bg: "#d97706", text: "#fff", label: "7SS" },
-  "7PLUS_S":  { bg: "#0891b2", text: "#fff", label: "7S" },
+  "7PLUS_SS":   { bg: "#d97706", text: "#fff", label: "7SS" },
+  "7PLUS_S":    { bg: "#0891b2", text: "#fff", label: "7S" },
+  "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // "7PLUS_A" 廃止済み（2026-06-28）
 };
 
