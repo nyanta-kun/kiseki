@@ -284,22 +284,35 @@ function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri
 }
 
 function NoPickRow({ pick }: { pick: KeirinPick }) {
+  const [collapsed, setCollapsed] = useState(true);
   const startTime = fmtStartAt(pick.start_at);
   return (
-    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-100 dark:border-gray-700/50 opacity-60">
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
-      <div className="flex items-center gap-1.5 flex-1 min-w-0 text-xs text-gray-500 dark:text-gray-400">
-        <span className="font-medium text-gray-600 dark:text-gray-300">{pick.venue_name}</span>
-        <span>{pick.race_no}R</span>
-        {startTime && <span>{startTime}</span>}
-        {(pick.grade || pick.race_type) && (
-          <span className="text-gray-400 dark:text-gray-500">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
-        )}
-        {pick.n_entries != null && (
-          <span className="text-gray-400 dark:text-gray-500">{pick.n_entries}車</span>
-        )}
-      </div>
-      <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0">推奨外</span>
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75">
+      <button
+        type="button"
+        onClick={() => setCollapsed(v => !v)}
+        className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
+      >
+        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+            <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
+            <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
+            {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
+            {(pick.grade || pick.race_type) && (
+              <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+            )}
+          </div>
+        </div>
+        <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">推奨外</span>
+        <ChevronDown
+          size={15}
+          className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
+        />
+      </button>
+      {!collapsed && (
+        <EntryTable entries={pick.entries} />
+      )}
     </div>
   );
 }
