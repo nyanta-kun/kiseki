@@ -102,6 +102,9 @@ export type HorseIndex = {
   is_place_ev_axis?: boolean;
   place_ev_prob?: number | null;   // 較正複勝圏確率
   place_ev_value?: number | null;  // 複勝EV
+  // 夏穴バッジ（牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 × 夏競馬場）
+  // 3年バックテスト 単ROI 2.133
+  is_natsu_ana?: boolean;
 };
 
 export type OddsData = {

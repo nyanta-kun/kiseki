@@ -429,6 +429,9 @@ class HorseIndexOut(BaseModel):
     # 複勝EV軸の較正複勝圏確率と複勝EV（is_place_ev_axis=True の馬のみ）
     place_ev_prob: float | None = None
     place_ev_value: float | None = None
+    # 夏穴バッジ（牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 × 夏競馬場）
+    # 3年バックテスト: 単ROI 2.133 (n=539)
+    is_natsu_ana: bool = False
 
 
 class OddsOut(BaseModel):
@@ -1116,6 +1119,34 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     if sweet_count >= 3:
         for h in horses:
             h.is_sweet_spot = False
+
+    # 夏穴バッジ判定（memory: backtest_summer_lightweight.py）
+    # 牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 × 夏競馬場(6-9月・非中央4場)
+    _summer_month = race.date[4:6] if race.date and len(race.date) >= 6 else ""
+    _is_summer_race = (
+        _summer_month in ("06", "07", "08", "09")
+        and race.course not in ("05", "06", "08", "09")
+        and race.surface == "芝"
+    )
+    if _is_summer_race:
+        _entry_horse_by_hn = {entry.horse_number: (entry, horse) for _, entry, horse in unique_rows}
+        for h in horses:
+            if h.horse_number is None:
+                continue
+            _eh = _entry_horse_by_hn.get(h.horse_number)
+            if _eh is None:
+                continue
+            _entry, _horse = _eh
+            _pop = popularity_map.get(h.horse_number, 0)
+            if (
+                _horse.sex in ("牡", "セ")
+                and _entry.horse_weight is not None
+                and _entry.horse_weight <= 470
+                and _entry.weight_change is not None
+                and -6 <= _entry.weight_change <= -4
+                and _pop >= 7
+            ):
+                h.is_natsu_ana = True
 
     # 複勝EVモデルの「人気薄1頭 複勝EV軸」判定（memory: place_ev_model）
     # recommender と同一の特徴・選定（較正P フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭）。

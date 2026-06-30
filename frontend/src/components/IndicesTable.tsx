@@ -575,6 +575,15 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
                         ○注目
                       </span>
                     )}
+                    {/* 夏穴バッジ（牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 単ROI 2.133） */}
+                    {horse.is_natsu_ana && (
+                      <span
+                        title="夏穴: 牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 (3年バックテスト 単ROI 2.133)"
+                        className="text-[10px] px-1 py-0.5 rounded border font-bold bg-orange-100 text-orange-800 border-orange-300"
+                      >
+                        🌊夏穴
+                      </span>
+                    )}
                     {winPct && (() => {
                       const r = winShareRatioMap.get(horse.horse_number) ?? null;
                       const cls = r === null ? "bg-blue-50 text-blue-600" :
