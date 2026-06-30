@@ -46,7 +46,16 @@ COURSE_NAMES = {
 }
 
 QUERY = text("""
-WITH odds_ranked AS (
+WITH target_races AS (
+  SELECT id FROM keiba.races WHERE date = :race_date
+),
+odds_latest AS (
+  SELECT race_id, MAX(fetched_at) AS max_ft
+  FROM keiba.odds_history
+  WHERE bet_type = 'win' AND race_id IN (SELECT id FROM target_races)
+  GROUP BY race_id
+),
+odds_ranked AS (
   SELECT
     oh.race_id,
     oh.combination AS horse_number_str,
@@ -56,17 +65,8 @@ WITH odds_ranked AS (
       ORDER BY oh.odds ASC NULLS LAST
     ) AS pop_rank
   FROM keiba.odds_history oh
+  JOIN odds_latest ol ON ol.race_id = oh.race_id AND ol.max_ft = oh.fetched_at
   WHERE oh.bet_type = 'win'
-    AND oh.fetched_at = (
-      SELECT MAX(fetched_at)
-      FROM keiba.odds_history oh2
-      WHERE oh2.race_id = oh.race_id AND oh2.bet_type = 'win'
-    )
-),
-latest_odds AS (
-  SELECT DISTINCT ON (race_id, horse_number_str)
-    race_id, horse_number_str, win_odds, pop_rank
-  FROM odds_ranked
 ),
 race_ranks AS (
   SELECT
