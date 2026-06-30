@@ -391,6 +391,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
               </span>
             )}
+            {pick.gap23 != null && !isMiwokuri && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{(pick.gap23 * 100).toFixed(1)}</span>pt
+              </span>
+            )}
             {pick.prerace_gami != null && !isMiwokuri && (
               pick.prerace_gami >= 5.0 ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">

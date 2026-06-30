@@ -945,6 +945,7 @@ export type KeirinPick = {
   pred_combo: string | null;
   n_combos: number | null;
   synth_odds: number | null;
+  gap23: number | null;
   hit: boolean;
   payout: number;
   trio_payout: number;
