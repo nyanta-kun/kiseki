@@ -96,7 +96,7 @@ SELECT
 FROM keiba.race_entries re
 JOIN keiba.races r     ON r.id = re.race_id
 JOIN keiba.horses h    ON h.id = re.horse_id
-LEFT JOIN latest_odds lo
+LEFT JOIN odds_ranked lo
     ON lo.race_id = r.id
    AND lo.horse_number_str = CAST(re.horse_number AS TEXT)
 LEFT JOIN race_ranks rr
