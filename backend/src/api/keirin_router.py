@@ -294,7 +294,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
-              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -325,7 +325,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
-              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 5.0)
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -511,7 +511,7 @@ async def refresh_picks(
 
         trio_pay = trio_map.get(top3, 0)
         prerace_gami = row["prerace_gami"]
-        is_gami_skip = prerace_gami is not None and float(prerace_gami) < 5.0
+        is_gami_skip = prerace_gami is not None and float(prerace_gami) < 7.0
 
         to_delete.append(row["race_key"])
         to_insert.append({
