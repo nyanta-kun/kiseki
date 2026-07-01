@@ -293,6 +293,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
@@ -323,6 +324,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
+              AND (ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
