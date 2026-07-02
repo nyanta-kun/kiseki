@@ -3,6 +3,7 @@ import Image from "next/image";
 import { auth } from "@/auth";
 import { LogoutButton } from "@/components/LogoutButton";
 import { RedeemCodeForm } from "./RedeemCodeForm";
+import { KeirinSettings } from "./KeirinSettings";
 
 export const metadata = {
   title: "マイページ | GallopLab",
@@ -159,7 +160,10 @@ export default async function MyPage() {
           </div>
         </section>
 
-        {/* 4. ログアウト */}
+        {/* 4. 競輪 表示設定 */}
+        <KeirinSettings />
+
+        {/* 5. ログアウト */}
         <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
           <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
             <span className="w-1 h-4 rounded inline-block" style={{ background: "var(--primary)" }} />

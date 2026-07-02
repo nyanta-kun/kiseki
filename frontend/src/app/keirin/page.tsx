@@ -594,6 +594,8 @@ function nextPickId(picks: KeirinPick[]): string | null {
   return upcoming.length > 0 ? `pick-${upcoming[0].id}` : null;
 }
 
+const HIDE_NOPICK_KEY = "keirin:hideNoPickRows";
+
 export default function KeirinPage() {
   const [date, setDate] = useState(todayYYYYMMDD());
   const [picks, setPicks] = useState<KeirinPick[]>([]);
@@ -605,6 +607,7 @@ export default function KeirinPage() {
   const [fetchingOdds, setFetchingOdds] = useState(false);
   const [fetchingResults, setFetchingResults] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [hideNoPickRows, setHideNoPickRows] = useState(false);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const isToday = date === todayYYYYMMDD();
   const nextId = isToday ? nextPickId(picks) : null;
@@ -681,6 +684,15 @@ export default function KeirinPage() {
   useEffect(() => {
     void loadData(date); // eslint-disable-line react-hooks/set-state-in-effect
   }, [date, loadData]);
+
+  useEffect(() => {
+    setHideNoPickRows(localStorage.getItem(HIDE_NOPICK_KEY) === "true");
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === HIDE_NOPICK_KEY) setHideNoPickRows(e.newValue === "true");
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   return (
     <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 pb-44 md:pb-20 space-y-4">
@@ -792,6 +804,7 @@ export default function KeirinPage() {
         <div className="space-y-2">
           {picks.map((p, idx) => {
             if (!p.has_pick) {
+              if (hideNoPickRows) return null;
               return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
             }
             return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
