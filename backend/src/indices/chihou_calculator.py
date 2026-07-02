@@ -122,7 +122,7 @@ logger = logging.getLogger(__name__)
 # version=10。2026-06-05 から composite/win_prob を本番 LightGBM(純LGB,17特徴)で算出。
 # それ以前の version=10 は実体が v9 線形だった（inference_chihou_v10 は取込パス未組込）。
 # 詳細: 末尾「本番 LightGBM」セクション / scripts/train_chihou_prod_lgb.py。
-CHIHOU_COMPOSITE_VERSION = 10
+CHIHOU_COMPOSITE_VERSION = 11
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -393,15 +393,19 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 # 26特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
 # Phase3: 履歴系4特徴。Phase4(2026-06-07): 外部指数5特徴を末尾に追加（_build_ext_features で算出）。
 _LGB_FEATURE_NAMES: list[str] = [
+    # 30 base features (v10)
     "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
     "distance", "head_count", "is_turf", "is_dirt", "is_good", "is_heavy", "is_bad",
     "frame_number", "horse_age", "weight_carried", "horse_weight", "weight_change",
     "improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio",
     "kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing",
+    "pace_x_wet", "horse_wet_apt", "horse_wet_apt_active", "horse_wet_runs",
+    # 5 market features (v11)
+    "odds_rank_n", "speed_mkt_gap", "kc_mkt_gap", "is_heavy_fav", "is_dark_horse",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.txt"          # is_top3: composite & place_prob
-_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.txt"  # is_win: 較正済 win_prob
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v11_35feat.txt"  # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.txt"     # is_win: 較正済 win_prob
 _prod_lgb_cache: dict[str, Any] = {}
 _prod_lgb_tried: set[str] = set()
 
@@ -516,12 +520,13 @@ def _build_lgb_features(
     hist_feat_map: dict[int, list[float]] | None = None,
     ext_raw: Mapping[int, tuple[float | None, float | None]] | None = None,
     wet_apt_map: Mapping[int, tuple[float, float]] | None = None,
+    odds_map_race: dict[int, float] | None = None,
 ) -> list[list[float]]:
-    """30特徴量の行列を学習時と同順で構築する。
+    """35特徴量の行列を学習時と同順で構築する（v11: +5市場乖離特徴）。
 
-    sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map
-    (_history_features_batch の出力)、外部指数5特徴は ext_raw、馬場特徴4(Phase5)は
-    wet_apt_map (_wet_apt_batch の出力)から付与する。None の馬は不明値で埋める。
+    sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map、
+    外部指数5特徴は ext_raw、馬場特徴4(Phase5)は wet_apt_map、
+    市場乖離5特徴(v11)は odds_map_race から付与する。None の馬は不明値で埋める。
     """
     surface = (race.surface or "")
     cond = (race.condition or "")
@@ -542,6 +547,24 @@ def _build_lgb_features(
     # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
     default_hist = [-1.0, -1.0, 0.0, -1.0]
     ext_map = _compute_ext_features(entries, ext_raw, head_count)
+
+    # ── 市場乖離5特徴（v11）: train add_market_features と同方式 ──
+    # odds_rank_n: レース内オッズ昇順ランク/頭数 (0=1番人気=best, 欠損→0.5)
+    odds_raw = {e.horse_id: (odds_map_race or {}).get(e.horse_id) for e in entries}
+    present_odds = [(hid, v) for hid, v in odds_raw.items() if v is not None and v > 0.0]
+    odds_rank: dict[int, float] = {e.horse_id: 0.5 for e in entries}  # 欠損デフォルト
+    if present_odds:
+        sorted_odds = sorted(present_odds, key=lambda x: x[1])  # 昇順（低オッズ=1番人気=rank1）
+        for rank0, (hid, _) in enumerate(sorted_odds):
+            odds_rank[hid] = rank0 / max(head_count, 1.0)
+
+    # speed_rank_n: speed_index 降順ランク/頭数 (0=最高速度=best)
+    speed_vals = [(e.horse_id, float(speed_map.get(e.horse_id, INDEX_NEUTRAL))) for e in entries]
+    sorted_speed = sorted(speed_vals, key=lambda x: -x[1])  # 降順（高速度=rank1）
+    speed_rank: dict[int, float] = {}
+    for rank0, (hid, _) in enumerate(sorted_speed):
+        speed_rank[hid] = rank0 / max(head_count, 1.0)
+
     rows: list[list[float]] = []
     for e in entries:
         hid = e.horse_id
@@ -552,6 +575,17 @@ def _build_lgb_features(
         pace = float(hist[3])             # prev_pace_ratio (不明=-1)
         pace = pace if pace >= 0 else 0.5  # 不明→中立0.5
         wet_apt, wet_runs = wet_apt_map.get(hid, (0.0, 0.0))
+
+        # 市場乖離特徴
+        orn = odds_rank[hid]   # odds_rank_n
+        srn = speed_rank[hid]  # speed_rank_n
+        kc_rn = float(ext[2])  # kc_rank_n (add_external_features と同位置)
+        speed_mkt_gap = max(-1.0, min(1.0, orn - srn))
+        kc_mkt_gap    = max(-1.0, min(1.0, orn - kc_rn))
+        # 断然人気/穴馬フラグ: オッズ順位で近似（popularity との相関は高い）
+        is_heavy_fav = 1.0 if orn <= 1.0 / max(head_count, 1.0) else 0.0  # 1〜2番人気相当
+        is_dark_horse = 1.0 if orn >= 6.0 / max(head_count, 1.0) else 0.0  # 7番人気以上相当
+
         rows.append([
             float(speed_map.get(hid, INDEX_NEUTRAL)),
             float(last3f_map.get(hid, INDEX_NEUTRAL)),
@@ -568,6 +602,8 @@ def _build_lgb_features(
             float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
             float(ext[0]), float(ext[1]), float(ext[2]), float(ext[3]), float(ext[4]),
             pace * wetness, float(wet_apt), float(wet_apt) * wet_active, float(wet_runs),
+            # v11 市場乖離5特徴
+            orn, speed_mkt_gap, kc_mkt_gap, is_heavy_fav, is_dark_horse,
         ])
     return rows
 
@@ -721,6 +757,10 @@ class ChihouIndexCalculator:
         place_probs: list[float] | None = None
         top3_model = _load_prod_lgb() if _use_lgb() else None
         win_model = _load_prod_lgb_win() if _use_lgb() else None
+        # v11: 市場乖離特徴のため odds_map を LGB 推論前にフェッチする
+        if odds_map is None:
+            odds_map = await self._fetch_win_odds(race_id, entries)
+
         if top3_model is not None and composite_inputs:
             try:
                 import numpy as np
@@ -732,7 +772,7 @@ class ChihouIndexCalculator:
                     _build_lgb_features(
                         entries, race, speed_map, last3f_map,
                         jockey_map, rotation_map, last_margin_map, hist_feat_map, ext_raw,
-                        wet_apt_map,
+                        wet_apt_map, odds_map_race=odds_map,
                     ),
                     dtype=np.float64,
                 )
@@ -761,9 +801,6 @@ class ChihouIndexCalculator:
             place_probs = _harville_place_probs(win_probs)
 
         # Step 2: place_ev_index を算出（参考列として保存。composite には含まない）
-        # オッズは race_results から取得（直前レースでは None → DB に NULL を格納）
-        if odds_map is None:
-            odds_map = await self._fetch_win_odds(race_id, entries)
         place_ev_map: dict[int, float] = {}
         for idx, entry in enumerate(entries):
             hid = entry.horse_id
