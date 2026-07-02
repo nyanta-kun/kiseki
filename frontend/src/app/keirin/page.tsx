@@ -324,9 +324,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 5.0;
+  const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
   const gamiStatus: "ok" | "ng" | null = !isMiwokuri && pick.prerace_gami != null
-    ? pick.prerace_gami >= 5.0 ? "ok" : "ng"
+    ? pick.prerace_gami >= 7.0 ? "ok" : "ng"
     : null;
 
   const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
@@ -397,7 +397,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               </span>
             )}
             {pick.prerace_gami != null && !isMiwokuri && (
-              pick.prerace_gami >= 5.0 ? (
+              pick.prerace_gami >= 7.0 ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
                   直前 {pick.prerace_gami.toFixed(1)}倍✓
                 </span>
