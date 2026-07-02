@@ -404,8 +404,8 @@ _LGB_FEATURE_NAMES: list[str] = [
     "odds_rank_n", "speed_mkt_gap", "kc_mkt_gap", "is_heavy_fav", "is_dark_horse",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v11_35feat.txt"  # is_top3: composite & place_prob
-_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.txt"     # is_win: 較正済 win_prob
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v11_35feat.txt"      # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.v11_35feat.txt"  # is_win: 較正済 win_prob (v11)
 _prod_lgb_cache: dict[str, Any] = {}
 _prod_lgb_tried: set[str] = set()
 

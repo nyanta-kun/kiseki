@@ -703,6 +703,15 @@ def main() -> None:
                 with open(MODELS_DIR / "chihou_prod_lgb.v11_35feat_metrics.json", "w") as fh:
                     json.dump(result_json, fh, indent=2, ensure_ascii=False)
                 print(f"\n  モデル保存完了: {out_path}")
+
+                # win ヘッド (is_win) も35特徴で保存
+                logger.info("win ヘッドを全期間学習して保存中 (35特徴, is_win)...")
+                y_win = (fp_all == 1).astype(int).values
+                win_model = train_binary_control(X_all_35, y_win, seed=0, feature_names=ALL_FEATURES)
+                win_out = MODELS_DIR / "chihou_prod_lgb_win.v11_35feat.txt"
+                win_model.save_model(str(win_out))
+                logger.info("win モデル保存完了: %s", win_out)
+                print(f"  win モデル保存完了: {win_out}")
         else:
             print("  → 採用基準未達。市場乖離特徴の追加効果は確認できず。現行モデル維持。")
 

@@ -61,143 +61,143 @@
   "feature_importance": [
     {
       "feature": "odds_rank_n",
-      "gain": 412475
+      "gain": 414094
     },
     {
       "feature": "is_dark_horse",
-      "gain": 157878
+      "gain": 158151
     },
     {
       "feature": "is_heavy_fav",
-      "gain": 97758
+      "gain": 95218
     },
     {
       "feature": "head_count",
-      "gain": 22353
+      "gain": 22360
     },
     {
       "feature": "kc_sp_z",
-      "gain": 13913
+      "gain": 14487
     },
     {
       "feature": "kc_mkt_gap",
-      "gain": 12721
+      "gain": 12474
     },
     {
       "feature": "kc_rank_n",
-      "gain": 10915
+      "gain": 10880
     },
     {
       "feature": "last_margin_index",
-      "gain": 7859
+      "gain": 8215
     },
     {
       "feature": "speed_mkt_gap",
-      "gain": 6548
-    },
-    {
-      "feature": "jockey_index",
-      "gain": 6547
+      "gain": 6743
     },
     {
       "feature": "speed_index",
-      "gain": 6067
+      "gain": 6303
+    },
+    {
+      "feature": "jockey_index",
+      "gain": 6251
     },
     {
       "feature": "last3f_index",
-      "gain": 5638
+      "gain": 5177
     },
     {
       "feature": "weight_change",
-      "gain": 5266
+      "gain": 5071
     },
     {
       "feature": "horse_weight",
-      "gain": 4694
-    },
-    {
-      "feature": "nk_idx_z",
-      "gain": 4435
+      "gain": 4723
     },
     {
       "feature": "class_drop_ratio",
-      "gain": 4045
+      "gain": 4395
+    },
+    {
+      "feature": "nk_idx_z",
+      "gain": 4298
     },
     {
       "feature": "prev_pace_ratio",
-      "gain": 3203
-    },
-    {
-      "feature": "horse_age",
-      "gain": 3150
+      "gain": 3606
     },
     {
       "feature": "weight_carried",
-      "gain": 2862
+      "gain": 3093
+    },
+    {
+      "feature": "horse_age",
+      "gain": 2973
     },
     {
       "feature": "horse_wet_apt",
-      "gain": 2771
+      "gain": 2615
     },
     {
       "feature": "track_win_rate",
-      "gain": 2683
+      "gain": 2594
     },
     {
       "feature": "distance",
-      "gain": 2350
-    },
-    {
-      "feature": "nk_rank_n",
-      "gain": 2092
+      "gain": 2373
     },
     {
       "feature": "rotation_index",
-      "gain": 2053
+      "gain": 2222
     },
     {
-      "feature": "horse_wet_runs",
-      "gain": 1856
-    },
-    {
-      "feature": "horse_wet_apt_active",
-      "gain": 1811
+      "feature": "nk_rank_n",
+      "gain": 2016
     },
     {
       "feature": "pace_x_wet",
-      "gain": 1602
+      "gain": 1835
+    },
+    {
+      "feature": "horse_wet_runs",
+      "gain": 1785
+    },
+    {
+      "feature": "horse_wet_apt_active",
+      "gain": 1732
     },
     {
       "feature": "frame_number",
-      "gain": 1570
+      "gain": 1661
     },
     {
       "feature": "improving_form",
-      "gain": 456
+      "gain": 617
     },
     {
       "feature": "is_bad",
-      "gain": 373
+      "gain": 328
     },
     {
       "feature": "is_heavy",
-      "gain": 167
+      "gain": 109
     },
     {
       "feature": "is_good",
-      "gain": 68
+      "gain": 87
     },
     {
       "feature": "ext_missing",
-      "gain": 53
+      "gain": 84
     },
     {
       "feature": "is_turf",
-      "gain": 10
+      "gain": 13
     },
     {
       "feature": "is_dirt",
-      "gain": 9
+      "gain": 0
     }
   ]
 }
