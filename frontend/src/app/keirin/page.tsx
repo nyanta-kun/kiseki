@@ -801,15 +801,38 @@ export default function KeirinPage() {
           この日のピックはありません
         </div>
       ) : (
-        <div className="space-y-2">
-          {picks.map((p, idx) => {
-            if (!p.has_pick) {
-              if (hideNoPickRows) return null;
-              return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
-            }
-            return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
-          })}
-        </div>
+        <>
+          {picks.some(p => !p.has_pick) && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-gray-400">推奨外を非表示</span>
+              <button
+                role="switch"
+                aria-checked={hideNoPickRows}
+                onClick={() => {
+                  const next = !hideNoPickRows;
+                  setHideNoPickRows(next);
+                  localStorage.setItem(HIDE_NOPICK_KEY, String(next));
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                  hideNoPickRows ? "bg-blue-500" : "bg-gray-300"
+                }`}
+              >
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                  hideNoPickRows ? "translate-x-5" : "translate-x-1"
+                }`} />
+              </button>
+            </div>
+          )}
+          <div className="space-y-2">
+            {picks.map((p, idx) => {
+              if (!p.has_pick) {
+                if (hideNoPickRows) return null;
+                return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
+              }
+              return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
+            })}
+          </div>
+        </>
       )}
 
       {/* スティッキーボトムナビ */}
