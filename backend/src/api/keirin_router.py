@@ -496,7 +496,8 @@ async def refresh_picks(
         for odds_row in odds_rows:
             try:
                 nums = [int(p) for p in _re.split(r"[-=→]", str(odds_row["combination"])) if p]
-                trio_map[frozenset(nums)] = int(round(float(odds_row["odds_value"]) * 100))
+                # 公式払戻金は10円単位に切り捨て。round()で浮動小数点誤差を吸収してから10円に丸める
+                trio_map[frozenset(nums)] = round(float(odds_row["odds_value"]) * 100) // 10 * 10
             except (ValueError, TypeError):
                 continue
 
