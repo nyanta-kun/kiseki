@@ -1010,3 +1010,43 @@ export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; messag
   });
   return res.json();
 }
+
+export type KeirinStatItem = {
+  date: string;
+  n_picks: number;
+  n_hits: number;
+  total_bet: number;
+  total_payout: number;
+  roi: number | null;
+  cum_bet: number;
+  cum_payout: number;
+  cum_roi: number | null;
+  cum_month_roi: number | null;
+  cum_month_bet: number;
+  cum_month_payout: number;
+  cum_year_roi: number | null;
+  cum_year_bet: number;
+  cum_year_payout: number;
+};
+
+export type KeirinStatsResponse = {
+  items: KeirinStatItem[];
+  period_summary: {
+    n_picks: number;
+    n_hits: number;
+    total_bet: number;
+    total_payout: number;
+    roi: number | null;
+  };
+};
+
+export async function fetchKeirinStats(
+  fromDate: string,
+  toDate: string,
+  granularity: "daily" | "monthly",
+): Promise<KeirinStatsResponse> {
+  return get<KeirinStatsResponse>(
+    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}`,
+    { cache: "no-store" },
+  );
+}

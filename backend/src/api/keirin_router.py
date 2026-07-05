@@ -588,6 +588,143 @@ async def trigger_fetch_results() -> JSONResponse:
         return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)
 
 
+@router.get("/stats")
+async def get_stats(
+    from_date: str = "",
+    to_date: str = "",
+    granularity: str = "daily",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """日別 / 月別の投資・回収・累積ROI推移を返す。
+
+    granularity: "daily"（日別）または "monthly"（月別）
+    from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
+    """
+    today = _today_jst()
+    if to_date:
+        try:
+            to_dt = Date.fromisoformat(to_date)
+        except ValueError:
+            to_dt = today
+    else:
+        to_dt = today
+
+    if from_date:
+        try:
+            from_dt = Date.fromisoformat(from_date)
+        except ValueError:
+            from_dt = today - timedelta(days=29)
+    else:
+        from_dt = today - timedelta(days=29)
+
+    if granularity == "monthly":
+        date_expr = "TO_CHAR(ph.race_date::DATE, 'YYYY-MM')"
+    else:
+        date_expr = "ph.race_date"
+
+    _STATS_COND = """
+        AND NOT COALESCE(ph.miwokuri, FALSE)
+        AND (ph.rank = '7PLUS_SS' OR ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
+        AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
+        AND ph.race_key NOT LIKE '%#CAND'
+        AND (
+            wr.status = 3
+            OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
+        )
+    """
+
+    rows = (await db.execute(
+        text(f"""
+            SELECT
+                {date_expr}                                                           AS bucket,
+                COUNT(*)                                                              AS n_picks,
+                COALESCE(SUM(ph.hit), 0)                                              AS n_hits,
+                COALESCE(SUM(ph.bet_amount), 0)                                       AS total_bet,
+                COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)     AS total_payout
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+            WHERE ph.race_date BETWEEN :from_date AND :to_date
+            {_STATS_COND}
+            GROUP BY {date_expr}
+            ORDER BY {date_expr}
+        """),
+        {"from_date": from_dt.isoformat(), "to_date": to_dt.isoformat()},
+    )).mappings().all()
+
+    # 月別・年別累積を Python 側で計算
+    items = []
+    cum_bet = 0
+    cum_payout = 0
+    month_acc: dict[str, dict[str, int]] = {}
+    year_acc: dict[str, dict[str, int]] = {}
+
+    for r in rows:
+        bucket = str(r["bucket"])
+        n_picks = int(r["n_picks"] or 0)
+        n_hits = int(r["n_hits"] or 0)
+        total_bet = int(r["total_bet"] or 0)
+        total_payout = int(r["total_payout"] or 0)
+
+        cum_bet += total_bet
+        cum_payout += total_payout
+        cum_roi = round(cum_payout / cum_bet, 3) if cum_bet > 0 else None
+
+        # 月キー: YYYY-MM
+        month_key = bucket[:7]
+        if month_key not in month_acc:
+            month_acc[month_key] = {"bet": 0, "payout": 0}
+        month_acc[month_key]["bet"] += total_bet
+        month_acc[month_key]["payout"] += total_payout
+        m_bet = month_acc[month_key]["bet"]
+        m_pay = month_acc[month_key]["payout"]
+        cum_month_roi = round(m_pay / m_bet, 3) if m_bet > 0 else None
+
+        # 年キー: YYYY
+        year_key = bucket[:4]
+        if year_key not in year_acc:
+            year_acc[year_key] = {"bet": 0, "payout": 0}
+        year_acc[year_key]["bet"] += total_bet
+        year_acc[year_key]["payout"] += total_payout
+        y_bet = year_acc[year_key]["bet"]
+        y_pay = year_acc[year_key]["payout"]
+        cum_year_roi = round(y_pay / y_bet, 3) if y_bet > 0 else None
+
+        items.append({
+            "date": bucket,
+            "n_picks": n_picks,
+            "n_hits": n_hits,
+            "total_bet": total_bet,
+            "total_payout": total_payout,
+            "roi": round(total_payout / total_bet, 3) if total_bet > 0 else None,
+            "cum_bet": cum_bet,
+            "cum_payout": cum_payout,
+            "cum_roi": cum_roi,
+            "cum_month_roi": cum_month_roi,
+            "cum_month_bet": m_bet,
+            "cum_month_payout": m_pay,
+            "cum_year_roi": cum_year_roi,
+            "cum_year_bet": y_bet,
+            "cum_year_payout": y_pay,
+        })
+
+    period_bet = cum_bet
+    period_payout = cum_payout
+    period_picks = sum(i["n_picks"] for i in items)
+    period_hits = sum(i["n_hits"] for i in items)
+
+    return JSONResponse(content={
+        "items": items,
+        "period_summary": {
+            "n_picks": period_picks,
+            "n_hits": period_hits,
+            "total_bet": period_bet,
+            "total_payout": period_payout,
+            "roi": round(period_payout / period_bet, 3) if period_bet > 0 else None,
+        },
+    })
+
+
 @router.get("/summary")
 async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """当日 / 当月 / 当年 / HOLD期間バックテストのサマリーを返す。

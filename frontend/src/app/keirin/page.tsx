@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
@@ -700,13 +700,23 @@ export default function KeirinPage() {
       <div className="flex items-center gap-2">
         <Bike size={22} className="text-blue-500" />
         <h1 className="text-xl font-extrabold tracking-widest text-gray-900 dark:text-white">KEIRIN</h1>
-        <Link
-          href="/keirin/help"
-          className="ml-auto flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-        >
-          <HelpCircle size={15} />
-          推奨ガイド
-        </Link>
+        <div className="ml-auto flex items-center gap-3">
+          <Link
+            href="/keirin/stats"
+            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            aria-label="成績グラフ"
+          >
+            <BarChart2 size={16} />
+            <span className="hidden sm:inline">成績グラフ</span>
+          </Link>
+          <Link
+            href="/keirin/help"
+            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+          >
+            <HelpCircle size={15} />
+            <span className="hidden sm:inline">推奨ガイド</span>
+          </Link>
+        </div>
       </div>
 
       {/* サマリー */}
