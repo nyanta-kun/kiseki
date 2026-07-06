@@ -75,7 +75,25 @@ EXT_FEATURES = ["kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing"]
 #   horse_wet_apt_active : horse_wet_apt × (現在 重/不 か)
 #   horse_wet_runs       : 過去道悪経験数 min(n,20)/20
 TRACK_FEATURES = ["pace_x_wet", "horse_wet_apt", "horse_wet_apt_active", "horse_wet_runs"]
-FEATURES = FEATURES + HIST_FEATURES + EXT_FEATURES + TRACK_FEATURES
+# Phase6(2026-07-07): コーナー位置/脚質・調教師成績・乗替 9特徴。
+# A/B(5seed×2cutoff 決定論OOS, scripts/ab_chihou_corner_trainer.py):
+# +all で top1勝率 +0.66/+0.85pt・複勝率 +0.59/+0.68pt(両cutoff全seed改善・★std超)。
+# 全て point-in-time(現走前の履歴のみ)・リークなし。serve 側は
+# chihou_calculator._corner_features_batch / _trainer_features_batch と同意味論にすること。
+#   c_early_n     : 過去走の序盤コーナー位置/頭数の平均 (0=先頭, 欠損→0.5)
+#   c_late_gain_n : 過去走の (最終コーナー位置−着順)/頭数 の平均 (+=末脚, 欠損→0)
+#   c_makuri_n    : 過去走の (序盤−最終コーナー)/頭数 の平均 (+=まくり, 欠損→0)
+#   c_runs        : コーナー有効走数 min(n,20)/20
+#   front_density : レース内の先行型(c_early_n≤0.3 かつ 経験あり)割合
+#   tr_win_rate   : 調教師 平滑化勝率 (wins+0.08*30)/(runs+30)・前日までの累積
+#   tr_top3_rate  : 調教師 平滑化複勝率 (top3+0.25*30)/(runs+30)
+#   tr_runs_n     : min(runs,1000)/1000
+#   jk_change     : 前走騎手と異なる=1 (初出走→0)
+CORNER_FEATURES = ["c_early_n", "c_late_gain_n", "c_makuri_n", "c_runs", "front_density"]
+TRAINER_FEATURES = ["tr_win_rate", "tr_top3_rate", "tr_runs_n"]
+JKCHG_FEATURES = ["jk_change"]
+CT_FEATURES = CORNER_FEATURES + TRAINER_FEATURES + JKCHG_FEATURES
+FEATURES = FEATURES + HIST_FEATURES + EXT_FEATURES + TRACK_FEATURES + CT_FEATURES
 
 WET_CONDS = ("重", "不")
 WETNESS_MAP = {"良": 0.0, "稍": 1.0, "重": 2.0, "不": 3.0}
@@ -261,14 +279,130 @@ def add_track_features(df: pd.DataFrame, apt_tbl: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+HIST_FULL_QUERY = """
+SELECT rr.horse_id, r.id AS race_id, r.date, r.head_count, rr.finish_position,
+       rr.passing_1, rr.passing_2, rr.passing_3, rr.passing_4,
+       rr.jockey_id, re.trainer_id
+FROM chihou.race_results rr
+JOIN chihou.races r ON r.id = rr.race_id
+LEFT JOIN chihou.race_entries re
+  ON re.race_id = rr.race_id AND re.horse_id = rr.horse_id
+WHERE r.course != '83'
+  AND COALESCE(rr.abnormality_code, 0) = 0
+  AND rr.finish_position IS NOT NULL
+ORDER BY rr.horse_id, r.date, r.id
+"""
+
+
+def fetch_hist_full(conn) -> pd.DataFrame:
+    """コーナー/調教師/乗替特徴算出用の全履歴（passing/jockey/trainer 込み）。"""
+    cur = conn.cursor()
+    cur.execute(HIST_FULL_QUERY)
+    cols = [d[0] for d in cur.description]
+    df = pd.DataFrame(cur.fetchall(), columns=cols)
+    cur.close()
+    return df
+
+
+def compute_corner_table(hist: pd.DataFrame) -> pd.DataFrame:
+    """(horse_id, race_id) → コーナー特徴4 + jk_change。現走前の累積のみ使用。
+
+    serve 側 chihou_calculator._corner_features_batch と同一意味論にすること。
+    """
+    h = hist.copy()
+    for c in ("passing_1", "passing_2", "passing_3", "passing_4",
+              "finish_position", "head_count"):
+        h[c] = pd.to_numeric(h[c], errors="coerce")
+    early = h["passing_2"].fillna(h["passing_1"]).fillna(h["passing_3"])
+    late = h["passing_4"].fillna(h["passing_3"])
+    hc = h["head_count"].clip(lower=2)
+    h["early_n"] = ((early - 1) / (hc - 1)).clip(0, 1)
+    h["late_gain"] = ((late - h["finish_position"]) / hc).clip(-1, 1)
+    h["makuri"] = ((early - late) / hc).clip(-1, 1)
+    h["valid"] = (early.notna() & late.notna()).astype(float)
+
+    h = h.sort_values(["horse_id", "date", "race_id"]).reset_index(drop=True)
+    g = h.groupby("horse_id")
+    for src, dst in (("early_n", "c_early_n"), ("late_gain", "c_late_gain_n"),
+                     ("makuri", "c_makuri_n")):
+        v = h[src].fillna(0.0) * h["valid"]
+        cnt = g["valid"].cumsum() - h["valid"]
+        s = v.groupby(h["horse_id"]).cumsum() - v
+        h[dst] = s / cnt.clip(lower=1)
+        h.loc[cnt < 1, dst] = np.nan
+    cnt = g["valid"].cumsum() - h["valid"]
+    h["c_runs"] = cnt.clip(upper=20) / 20.0
+
+    prev_jk = g["jockey_id"].shift(1)
+    h["jk_change"] = ((prev_jk.notna()) & (prev_jk != h["jockey_id"])).astype(float)
+
+    return h.set_index(["horse_id", "race_id"])[
+        ["c_early_n", "c_late_gain_n", "c_makuri_n", "c_runs", "jk_change"]]
+
+
+def compute_trainer_table(hist: pd.DataFrame) -> pd.DataFrame:
+    """(trainer_id, date) → 前日までの累積成績（当日レース間リーク回避）。
+
+    serve 側 chihou_calculator._trainer_features_batch と同一意味論にすること。
+    """
+    h = hist[hist["trainer_id"].notna()].copy()
+    h["fp"] = pd.to_numeric(h["finish_position"], errors="coerce")
+    h["win"] = (h["fp"] == 1).astype(float)
+    h["top3"] = (h["fp"] <= 3).astype(float)
+    day = (h.groupby(["trainer_id", "date"])
+             .agg(runs=("fp", "size"), wins=("win", "sum"), top3s=("top3", "sum"))
+             .reset_index()
+             .sort_values(["trainer_id", "date"]))
+    g = day.groupby("trainer_id")
+    day["cum_runs"] = g["runs"].cumsum() - day["runs"]
+    day["cum_wins"] = g["wins"].cumsum() - day["wins"]
+    day["cum_top3"] = g["top3s"].cumsum() - day["top3s"]
+    k = 30.0
+    day["tr_win_rate"] = (day["cum_wins"] + 0.08 * k) / (day["cum_runs"] + k)
+    day["tr_top3_rate"] = (day["cum_top3"] + 0.25 * k) / (day["cum_runs"] + k)
+    day["tr_runs_n"] = day["cum_runs"].clip(upper=1000) / 1000.0
+    return day.set_index(["trainer_id", "date"])[
+        ["tr_win_rate", "tr_top3_rate", "tr_runs_n"]]
+
+
+def build_ct_tables(conn) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """コーナー/調教師特徴テーブル一式を構築する（prep から利用）。"""
+    hist_full = fetch_hist_full(conn)
+    corner_tbl = compute_corner_table(hist_full)
+    trainer_tbl = compute_trainer_table(hist_full)
+    trainer_map = hist_full[["horse_id", "race_id", "trainer_id"]].drop_duplicates()
+    return corner_tbl, trainer_tbl, trainer_map
+
+
+def add_corner_trainer_features(df: pd.DataFrame, corner_tbl: pd.DataFrame,
+                                trainer_tbl: pd.DataFrame,
+                                trainer_map: pd.DataFrame) -> pd.DataFrame:
+    """Phase6 の9特徴を付与する（train/serve 整合・欠損は中立値）。"""
+    df = df.copy()
+    df = df.join(corner_tbl, on=["horse_id", "race_id"], how="left")
+    df["c_early_n"] = df["c_early_n"].fillna(0.5)
+    for c in ("c_late_gain_n", "c_makuri_n", "c_runs", "jk_change"):
+        df[c] = df[c].fillna(0.0)
+    is_front = ((df["c_early_n"] <= 0.3) & (df["c_runs"] > 0)).astype(float)
+    df["front_density"] = is_front.groupby(df["race_id"]).transform("mean")
+
+    df = df.merge(trainer_map, on=["horse_id", "race_id"], how="left")
+    df = df.join(trainer_tbl, on=["trainer_id", "date"], how="left")
+    df["tr_win_rate"] = df["tr_win_rate"].fillna(0.08)
+    df["tr_top3_rate"] = df["tr_top3_rate"].fillna(0.25)
+    df["tr_runs_n"] = df["tr_runs_n"].fillna(0.0)
+    return df
+
+
 def prep(conn, df_raw: pd.DataFrame, df_hist: pd.DataFrame) -> pd.DataFrame:
-    """featurize + 履歴系4特徴 + 外部指数特徴 + 馬場特徴 + 欠損補完（train/serve 整合）。"""
+    """featurize + 履歴系4特徴 + 外部指数特徴 + 馬場特徴 + CT9特徴 + 欠損補完（train/serve 整合）。"""
     df = featurize(df_raw)
     df = add_historical_features(df, df_hist)
     for col in HIST_FEATURES:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(-1.0)
     df = add_external_features(df)
     df = add_track_features(df, compute_wet_apt_table(fetch_hist_cond(conn)))
+    df = add_corner_trainer_features(df, *build_ct_tables(conn))
     return df
 
 

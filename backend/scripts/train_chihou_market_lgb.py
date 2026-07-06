@@ -34,8 +34,8 @@
   モデルが独立に学習できる。
 
 ■ OOS 評価（学習・検証・テスト汚染防止）
-  cutoff1: train ≤ 20250630  / test 20250701〜20260702
-  cutoff2: train ≤ 20241231  / test 20250101〜20260702
+  cutoff1: train ≤ 20250630  / test 20250701〜20260706
+  cutoff2: train ≤ 20241231  / test 20250101〜20260706
   5 seeds × 2 cutoffs = 10 評価点 (deterministic=True で seed 再現)
 
 ■ 3カテゴリ評価指標
@@ -76,9 +76,11 @@ from scripts.train_chihou_prod_lgb import (  # noqa: E402
     CHIHOU_V9_VERSION,
     FEATURES as PROD_FEATURES,
     HIST_FEATURES,
+    add_corner_trainer_features,
     add_external_features,
     add_historical_features,  # re-exported from train_chihou_v11_lightgbm
     add_track_features,
+    build_ct_tables,
     compute_wet_apt_table,
     featurize,
     fetch_hist,               # re-exported from train_chihou_v11_lightgbm
@@ -96,9 +98,9 @@ MODELS_DIR.mkdir(exist_ok=True)
 # ─────────────────────────────────────────────
 # cutoff: モデルの学習終了日。この日以降のデータはテスト期間（学習に一切使わない）
 CUTOFFS = [
-    {"cutoff": "20250630", "test_start": "20250701", "test_end": "20260702",
+    {"cutoff": "20250630", "test_start": "20250701", "test_end": "20260706",
      "label": "cut1(〜25/06)"},
-    {"cutoff": "20241231", "test_start": "20250101", "test_end": "20260702",
+    {"cutoff": "20241231", "test_start": "20250101", "test_end": "20260706",
      "label": "cut2(〜24/12)"},
 ]
 TRAIN_DATA_START = "20230101"  # 全期間の学習開始日
@@ -279,6 +281,7 @@ def prep(conn, df_raw: pd.DataFrame, df_hist: pd.DataFrame) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(-1.0)
     df = add_external_features(df)
     df = add_track_features(df, compute_wet_apt_table(fetch_hist_cond(conn)))
+    df = add_corner_trainer_features(df, *build_ct_tables(conn))  # Phase6 CT9特徴
     df = add_market_features(df)   # 市場乖離特徴（新規追加）
 
     # market relevance ラベルを付与
@@ -505,21 +508,23 @@ def main() -> None:
     logger.info("履歴特徴テーブル読み込み中...")
     df_hist_global = fetch_hist(conn)
     apt_tbl = compute_wet_apt_table(fetch_hist_cond(conn))
+    ct_tables = build_ct_tables(conn)  # Phase6 CT9特徴用（conn close 前に構築）
 
     # ─── 全期間データを一括取得 ───
-    logger.info("全期間データ取得: %s 〜 %s", TRAIN_DATA_START, "20260702")
-    df_all_raw = fetch(conn, TRAIN_DATA_START, "20260702")
+    logger.info("全期間データ取得: %s 〜 %s", TRAIN_DATA_START, "20260706")
+    df_all_raw = fetch(conn, TRAIN_DATA_START, "20260706")
     conn.close()
     logger.info("  → %d 馬行 / %d レース", len(df_all_raw), df_all_raw["race_id"].nunique())
 
     # ─── 特徴量付与（全期間一括） ───
-    logger.info("特徴量付与中 (featurize + hist + ext + track + market)...")
+    logger.info("特徴量付与中 (featurize + hist + ext + track + ct + market)...")
     df_all_raw = featurize(df_all_raw)
     df_all_raw = add_historical_features(df_all_raw, df_hist_global)
     for col in HIST_FEATURES:
         df_all_raw[col] = pd.to_numeric(df_all_raw[col], errors="coerce").fillna(-1.0)
     df_all_raw = add_external_features(df_all_raw)
     df_all_raw = add_track_features(df_all_raw, apt_tbl)
+    df_all_raw = add_corner_trainer_features(df_all_raw, *ct_tables)
     df_all_raw = add_market_features(df_all_raw)
     logger.info("特徴量付与完了: %d 特徴量", len(ALL_FEATURES))
 
@@ -675,7 +680,7 @@ def main() -> None:
                 y_all    = (fp_all <= 3).astype(int).values
                 X_all_35 = df_all_s[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
                 final_model = train_binary_control(X_all_35, y_all, seed=0)
-                out_path = MODELS_DIR / "chihou_prod_lgb.v11_35feat.txt"
+                out_path = MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"
                 final_model.save_model(str(out_path))
                 logger.info("保存完了: %s", out_path)
 
@@ -688,19 +693,19 @@ def main() -> None:
                     print(f"    {feat:<28} {gain:>10,}")
 
                 result_json = {
-                    "model": "chihou_prod_lgb.v11_35feat",
+                    "model": "chihou_prod_lgb.v12_44feat",
                     "objective": "binary",
                     "head": "is_top3",
                     "features": ALL_FEATURES,
                     "market_features": MARKET_FEATURES,
                     "n_features": len(ALL_FEATURES),
-                    "train_range": [TRAIN_DATA_START, "20260702"],
+                    "train_range": [TRAIN_DATA_START, "20260706"],
                     "seeds": SEEDS,
                     "feature_importance": [
                         {"feature": f, "gain": int(g)} for f, g in importance
                     ],
                 }
-                with open(MODELS_DIR / "chihou_prod_lgb.v11_35feat_metrics.json", "w") as fh:
+                with open(MODELS_DIR / "chihou_prod_lgb.v12_44feat_metrics.json", "w") as fh:
                     json.dump(result_json, fh, indent=2, ensure_ascii=False)
                 print(f"\n  モデル保存完了: {out_path}")
 
@@ -708,7 +713,7 @@ def main() -> None:
                 logger.info("win ヘッドを全期間学習して保存中 (35特徴, is_win)...")
                 y_win = (fp_all == 1).astype(int).values
                 win_model = train_binary_control(X_all_35, y_win, seed=0, feature_names=ALL_FEATURES)
-                win_out = MODELS_DIR / "chihou_prod_lgb_win.v11_35feat.txt"
+                win_out = MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"
                 win_model.save_model(str(win_out))
                 logger.info("win モデル保存完了: %s", win_out)
                 print(f"  win モデル保存完了: {win_out}")

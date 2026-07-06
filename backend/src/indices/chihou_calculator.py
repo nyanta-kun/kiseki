@@ -121,8 +121,10 @@ logger = logging.getLogger(__name__)
 
 # version=10。2026-06-05 から composite/win_prob を本番 LightGBM(純LGB,17特徴)で算出。
 # それ以前の version=10 は実体が v9 線形だった（inference_chihou_v10 は取込パス未組込）。
+# version=11 (2026-07-02): 市場乖離5特徴を追加した 35特徴 LGB。
+# version=12 (2026-07-07): コーナー/調教師/乗替9特徴を追加した 44特徴 LGB (Phase6)。
 # 詳細: 末尾「本番 LightGBM」セクション / scripts/train_chihou_prod_lgb.py。
-CHIHOU_COMPOSITE_VERSION = 11
+CHIHOU_COMPOSITE_VERSION = 12
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -390,8 +392,9 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 # モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
 # -----------------------------------------------------------------------
 
-# 26特徴量（scripts/train_chihou_prod_lgb.py の FEATURES と完全一致・同順にすること）
-# Phase3: 履歴系4特徴。Phase4(2026-06-07): 外部指数5特徴を末尾に追加（_build_ext_features で算出）。
+# 44特徴量（scripts/train_chihou_prod_lgb.py の FEATURES + market5 と完全一致・同順にすること）
+# Phase3: 履歴系4特徴。Phase4(2026-06-07): 外部指数5特徴。Phase5: 馬場4特徴。
+# Phase6(2026-07-07): コーナー/調教師/乗替9特徴（_corner_features_batch / _trainer_features_batch）。
 _LGB_FEATURE_NAMES: list[str] = [
     # 30 base features (v10)
     "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
@@ -400,12 +403,15 @@ _LGB_FEATURE_NAMES: list[str] = [
     "improving_form", "track_win_rate", "class_drop_ratio", "prev_pace_ratio",
     "kc_sp_z", "nk_idx_z", "kc_rank_n", "nk_rank_n", "ext_missing",
     "pace_x_wet", "horse_wet_apt", "horse_wet_apt_active", "horse_wet_runs",
+    # 9 corner/trainer/jkchg features (v12/Phase6)
+    "c_early_n", "c_late_gain_n", "c_makuri_n", "c_runs", "front_density",
+    "tr_win_rate", "tr_top3_rate", "tr_runs_n", "jk_change",
     # 5 market features (v11)
     "odds_rank_n", "speed_mkt_gap", "kc_mkt_gap", "is_heavy_fav", "is_dark_horse",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v11_35feat.txt"      # is_top3: composite & place_prob
-_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.v11_35feat.txt"  # is_win: 較正済 win_prob (v11)
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"      # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"  # is_win: 較正済 win_prob (v12)
 _prod_lgb_cache: dict[str, Any] = {}
 _prod_lgb_tried: set[str] = set()
 
@@ -521,11 +527,14 @@ def _build_lgb_features(
     ext_raw: Mapping[int, tuple[float | None, float | None]] | None = None,
     wet_apt_map: Mapping[int, tuple[float, float]] | None = None,
     odds_map_race: dict[int, float] | None = None,
+    corner_map: Mapping[int, tuple[float, float, float, float, float]] | None = None,
+    trainer_feat_map: Mapping[int, tuple[float, float, float]] | None = None,
 ) -> list[list[float]]:
-    """35特徴量の行列を学習時と同順で構築する（v11: +5市場乖離特徴）。
+    """44特徴量の行列を学習時と同順で構築する（v12: +9 CT特徴）。
 
     sub指数・レース/馬メタ(17)はクエリ不要。履歴系4特徴は hist_feat_map、
     外部指数5特徴は ext_raw、馬場特徴4(Phase5)は wet_apt_map、
+    CT9特徴(Phase6)は corner_map/trainer_feat_map、
     市場乖離5特徴(v11)は odds_map_race から付与する。None の馬は不明値で埋める。
     """
     surface = (race.surface or "")
@@ -544,9 +553,21 @@ def _build_lgb_features(
 
     hist_feat_map = hist_feat_map or {}
     wet_apt_map = wet_apt_map or {}
+    corner_map = corner_map or {}
+    trainer_feat_map = trainer_feat_map or {}
     # 履歴系4特徴の不明値（train の fillna(-1.0) と一致。class_drop は不明=0）
     default_hist = [-1.0, -1.0, 0.0, -1.0]
     ext_map = _compute_ext_features(entries, ext_raw, head_count)
+
+    # Phase6: front_density = レース内の先行型(c_early_n≤0.3 かつ 経験あり)割合
+    # train add_corner_trainer_features と同一意味論（欠損馬は c_early_n=0.5/c_runs=0 扱い）
+    _CT_DEFAULT = (0.5, 0.0, 0.0, 0.0, 0.0)  # (c_early_n, c_late_gain_n, c_makuri_n, c_runs, jk_change)
+    n_front = 0
+    for e in entries:
+        ce, _, _, cr, _ = corner_map.get(e.horse_id, _CT_DEFAULT)
+        if ce <= 0.3 and cr > 0:
+            n_front += 1
+    front_density = n_front / len(entries) if entries else 0.0
 
     # ── 市場乖離5特徴（v11）: train add_market_features と同方式 ──
     # odds_rank_n: レース内オッズ昇順ランク/頭数 (0=1番人気=best, 欠損→0.5)
@@ -571,6 +592,9 @@ def _build_lgb_features(
         lm = last_margin_map.get(hid)
         hist = hist_feat_map.get(hid, default_hist)
         ext = ext_map[hid]
+        # Phase6 CT特徴（train の fillna と一致: early=0.5 / trainer=事前分布 0.08,0.25）
+        ct = corner_map.get(hid, _CT_DEFAULT)
+        tf = trainer_feat_map.get(hid, (0.08, 0.25, 0.0))
         # 馬場特徴: pace_x_wet / horse_wet_apt / horse_wet_apt_active / horse_wet_runs
         pace = float(hist[3])             # prev_pace_ratio (不明=-1)
         pace = pace if pace >= 0 else 0.5  # 不明→中立0.5
@@ -602,6 +626,9 @@ def _build_lgb_features(
             float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]),
             float(ext[0]), float(ext[1]), float(ext[2]), float(ext[3]), float(ext[4]),
             pace * wetness, float(wet_apt), float(wet_apt) * wet_active, float(wet_runs),
+            # v12 CT9特徴（Phase6: コーナー/調教師/乗替）
+            float(ct[0]), float(ct[1]), float(ct[2]), float(ct[3]), front_density,
+            float(tf[0]), float(tf[1]), float(tf[2]), float(ct[4]),
             # v11 市場乖離5特徴
             orn, speed_mkt_gap, kc_mkt_gap, is_heavy_fav, is_dark_horse,
         ])
@@ -768,11 +795,14 @@ class ChihouIndexCalculator:
                 hist_feat_map = await self._history_features_batch(race_date, race, entries)
                 ext_raw = await self._fetch_external_raw(race_id, entries)
                 wet_apt_map = await self._wet_apt_batch(race_date, entries)
+                corner_map = await self._corner_features_batch(race_date, entries)
+                trainer_feat_map = await self._trainer_features_batch(race_date, entries)
                 X = np.asarray(
                     _build_lgb_features(
                         entries, race, speed_map, last3f_map,
                         jockey_map, rotation_map, last_margin_map, hist_feat_map, ext_raw,
                         wet_apt_map, odds_map_race=odds_map,
+                        corner_map=corner_map, trainer_feat_map=trainer_feat_map,
                     ),
                     dtype=np.float64,
                 )
@@ -1739,6 +1769,128 @@ class ChihouIndexCalculator:
             apt = max(-1.0, min(1.0, wetperf - base))
             result[hid] = (apt, min(ag["wet_cnt"], 20.0) / 20.0)
         return result
+
+    async def _corner_features_batch(
+        self,
+        race_date: str,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, tuple[float, float, float, float, float]]:
+        """コーナー位置/脚質4特徴 + jk_change を一括算出する（Phase6）。
+
+        train 側 scripts/train_chihou_prod_lgb.compute_corner_table と同一意味論。
+        当該レース開始前(date < race_date)の過去走のみ参照でリークなし。
+          early = COALESCE(passing_2, passing_1, passing_3) / late = COALESCE(passing_4, passing_3)
+          c_early_n     = mean((early-1)/(head_count-1))  [0,1]
+          c_late_gain_n = mean((late-着順)/head_count)     [-1,1]
+          c_makuri_n    = mean((early-late)/head_count)    [-1,1]
+          c_runs        = min(有効走数,20)/20
+          jk_change     = 直近走の騎手と今回騎手が異なる=1
+
+        Returns:
+            hid -> (c_early_n, c_late_gain_n, c_makuri_n, c_runs, jk_change)
+        """
+        horse_ids = [e.horse_id for e in entries]
+        curr_jockey = {e.horse_id: e.jockey_id for e in entries}
+        q = text("""
+            SELECT rr.horse_id, r.date, rr.race_id, r.head_count, rr.finish_position,
+                   rr.passing_1, rr.passing_2, rr.passing_3, rr.passing_4, rr.jockey_id
+            FROM chihou.race_results rr
+            JOIN chihou.races r ON r.id = rr.race_id
+            WHERE rr.horse_id = ANY(:hids)
+              AND r.date < :before
+              AND r.course != :banei
+              AND COALESCE(rr.abnormality_code, 0) = 0
+              AND rr.finish_position IS NOT NULL
+            ORDER BY rr.horse_id, r.date DESC, rr.race_id DESC
+        """)
+        rows = await self.db.execute(
+            q, {"hids": horse_ids, "before": race_date, "banei": BANEI_COURSE_CODE},
+        )
+        agg: dict[int, dict[str, float]] = defaultdict(
+            lambda: {"n": 0.0, "early": 0.0, "gain": 0.0, "makuri": 0.0}
+        )
+        last_jockey: dict[int, Any] = {}
+        for r in rows.mappings():
+            hid = r["horse_id"]
+            if hid not in last_jockey:  # 直近走（date DESC 順の先頭）
+                last_jockey[hid] = r["jockey_id"]
+            early = r["passing_2"] if r["passing_2"] is not None else (
+                r["passing_1"] if r["passing_1"] is not None else r["passing_3"])
+            late = r["passing_4"] if r["passing_4"] is not None else r["passing_3"]
+            if early is None or late is None:
+                continue
+            hc = max(float(r["head_count"] or 2), 2.0)
+            fp = float(r["finish_position"])
+            a = agg[hid]
+            a["n"] += 1.0
+            a["early"] += max(0.0, min(1.0, (float(early) - 1.0) / (hc - 1.0)))
+            a["gain"] += max(-1.0, min(1.0, (float(late) - fp) / hc))
+            a["makuri"] += max(-1.0, min(1.0, (float(early) - float(late)) / hc))
+
+        result: dict[int, tuple[float, float, float, float, float]] = {}
+        for hid in horse_ids:
+            jk = 0.0
+            if hid in last_jockey and last_jockey[hid] is not None \
+                    and last_jockey[hid] != curr_jockey.get(hid):
+                jk = 1.0
+            ag: dict[str, float] | None = agg.get(hid)
+            if not ag or ag["n"] < 1:
+                result[hid] = (0.5, 0.0, 0.0, 0.0, jk)
+                continue
+            n = ag["n"]
+            result[hid] = (
+                ag["early"] / n, ag["gain"] / n, ag["makuri"] / n,
+                min(n, 20.0) / 20.0, jk,
+            )
+        return result
+
+    async def _trainer_features_batch(
+        self,
+        race_date: str,
+        entries: list[ChihouRaceEntry],
+    ) -> dict[int, tuple[float, float, float]]:
+        """調教師 point-in-time 成績3特徴を一括算出する（Phase6）。
+
+        train 側 scripts/train_chihou_prod_lgb.compute_trainer_table と同一意味論
+        （前日までの累積・平滑化 k=30・事前分布 win 0.08 / top3 0.25）。
+
+        Returns:
+            hid -> (tr_win_rate, tr_top3_rate, tr_runs_n)
+        """
+        trainer_ids = sorted({e.trainer_id for e in entries if e.trainer_id is not None})
+        stats: dict[Any, tuple[float, float, float]] = {}
+        if trainer_ids:
+            q = text("""
+                SELECT re.trainer_id,
+                       COUNT(*)                                          AS runs,
+                       SUM((rr.finish_position = 1)::int)                AS wins,
+                       SUM((rr.finish_position <= 3)::int)               AS top3s
+                FROM chihou.race_results rr
+                JOIN chihou.races r ON r.id = rr.race_id
+                JOIN chihou.race_entries re
+                  ON re.race_id = rr.race_id AND re.horse_id = rr.horse_id
+                WHERE re.trainer_id = ANY(:tids)
+                  AND r.date < :before
+                  AND r.course != :banei
+                  AND COALESCE(rr.abnormality_code, 0) = 0
+                  AND rr.finish_position IS NOT NULL
+                GROUP BY re.trainer_id
+            """)
+            rows = await self.db.execute(
+                q, {"tids": trainer_ids, "before": race_date, "banei": BANEI_COURSE_CODE},
+            )
+            k = 30.0
+            for r in rows.mappings():
+                runs = float(r["runs"])
+                stats[r["trainer_id"]] = (
+                    (float(r["wins"]) + 0.08 * k) / (runs + k),
+                    (float(r["top3s"]) + 0.25 * k) / (runs + k),
+                    min(runs, 1000.0) / 1000.0,
+                )
+        default = (0.08, 0.25, 0.0)
+        return {
+            e.horse_id: stats.get(e.trainer_id, default) for e in entries
+        }
 
     # ===================================================================
     # 共通クエリヘルパー
