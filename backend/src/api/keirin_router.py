@@ -653,7 +653,7 @@ async def get_stats(
     )).mappings().all()
 
     # 月別・年別累積を Python 側で計算
-    items = []
+    items: list[dict[str, Any]] = []
     cum_bet = 0
     cum_payout = 0
     month_acc: dict[str, dict[str, int]] = {}
