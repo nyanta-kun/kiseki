@@ -1,25 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const LS_KEY = "keirin:hideNoPickRows";
 
-export function KeirinSettings() {
-  const [hide, setHide] = useState(false);
-  const [mounted, setMounted] = useState(false);
+function subscribe(cb: () => void) {
+  window.addEventListener("storage", cb);
+  return () => window.removeEventListener("storage", cb);
+}
 
-  useEffect(() => {
-    setHide(localStorage.getItem(LS_KEY) === "true");
-    setMounted(true);
-  }, []);
+export function KeirinSettings() {
+  const hide = useSyncExternalStore(
+    subscribe,
+    () => localStorage.getItem(LS_KEY) === "true",
+    () => false,
+  );
 
   const toggle = () => {
-    const next = !hide;
-    setHide(next);
-    localStorage.setItem(LS_KEY, String(next));
+    localStorage.setItem(LS_KEY, String(!hide));
+    window.dispatchEvent(new StorageEvent("storage", { key: LS_KEY }));
   };
 
-  if (!mounted) return null;
+  if (typeof window === "undefined") return null;
 
   return (
     <section className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">

@@ -710,8 +710,8 @@ async def get_stats(
 
     period_bet = cum_bet
     period_payout = cum_payout
-    period_picks = sum(i["n_picks"] for i in items)
-    period_hits = sum(i["n_hits"] for i in items)
+    period_picks = sum(int(i["n_picks"]) for i in items)
+    period_hits = sum(int(i["n_hits"]) for i in items)
 
     return JSONResponse(content={
         "items": items,
