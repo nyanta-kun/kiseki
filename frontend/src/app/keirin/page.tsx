@@ -324,7 +324,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  const isGamiSkip = !isMiwokuri && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
+  // SSはガミ目カット済み（定義上ガミ目なし）→ gami判定不適用。Sのみ対象。
+  const isGamiSkip = !isMiwokuri && pick.rank !== "7PLUS_SS" && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
   const gamiStatus: "ok" | "ng" | null = !isMiwokuri && pick.prerace_gami != null
     ? pick.prerace_gami >= 7.0 ? "ok" : "ng"
     : null;
