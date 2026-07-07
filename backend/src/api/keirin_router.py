@@ -293,7 +293,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
-              AND (ph.rank = '7PLUS_SS' OR ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
+              AND ph.bet_amount > 0
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
@@ -324,7 +324,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
-              AND (ph.rank = '7PLUS_SS' OR ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
+              AND ph.bet_amount > 0
               AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
@@ -515,6 +515,7 @@ async def refresh_picks(
         # SSはガミ目カット済みのためgami判定不適用。Sのみ対象。
         is_gami_skip = rank != "7PLUS_SS" and prerace_gami is not None and float(prerace_gami) < 7.0
 
+        is_skip = bool(row["miwokuri"]) or is_gami_skip
         to_delete.append(row["race_key"])
         to_insert.append({
             "race_date": target,
@@ -523,10 +524,10 @@ async def refresh_picks(
             "pred_combo": pred_combo,
             "n_combos": row["n_combos"] or 0,
             "hit": 1 if hit else 0,
-            "payout": 0 if is_gami_skip else (pay if hit else 0),
+            "payout": 0 if is_skip else (pay if hit else 0),
             "trio_payout": trio_pay,
-            "bet_amount": 0,
-            "miwokuri": bool(row["miwokuri"]),
+            "bet_amount": 0 if is_skip else (row["n_combos"] or 0) * 100,
+            "miwokuri": is_skip,
             "prerace_gami": float(prerace_gami) if prerace_gami is not None else None,
         })
 
@@ -624,7 +625,7 @@ async def get_stats(
 
     _STATS_COND = """
         AND NOT COALESCE(ph.miwokuri, FALSE)
-        AND (ph.rank = '7PLUS_SS' OR ph.prerace_gami IS NULL OR ph.prerace_gami >= 7.0)
+        AND ph.bet_amount > 0
         AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
         AND ph.race_key NOT LIKE '%#CAND'
         AND (
