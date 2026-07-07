@@ -133,7 +133,18 @@ SELECT
     CASE WHEN nk.idx_ave ~ '^-?[0-9]+\\*?$'
          THEN regexp_replace(nk.idx_ave, '\\*', '')::float ELSE NULL END AS nk_idx,
     kc.sp_score AS kc_sp
-FROM chihou.calculated_indices ci
+FROM (
+    -- v9 優先・なければ最新 version のサブ指数を使う。
+    -- v9 バックフィルは 2026-05-04 で停止しており、それ以降は本番 live 行(v10+)で補完する。
+    -- サブ指数の計算式は v9 以降不変（v9 vs v10 重複 32万行で jockey/rotation/margin 完全一致・
+    -- speed/last3f は par_time 算出時点差の平均0.23のみ。2026-07-07 検証）。
+    SELECT DISTINCT ON (race_id, horse_id)
+        race_id, horse_id, speed_index, last3f_index, jockey_index,
+        rotation_index, last_margin_index
+    FROM chihou.calculated_indices
+    WHERE version >= %(ver)s
+    ORDER BY race_id, horse_id, (version = %(ver)s) DESC, version DESC
+) ci
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
@@ -145,8 +156,7 @@ LEFT JOIN sekito.netkeiba nk
 LEFT JOIN sekito.kichiuma kc
   ON kc.course_code = rc.code AND kc.date = to_date(r.date, 'YYYYMMDD')
      AND kc.race_no = r.race_number AND kc.horse_no = re.horse_number
-WHERE ci.version = %(ver)s
-  AND r.course != '83'
+WHERE r.course != '83'
   AND r.head_count >= 6
   AND r.date BETWEEN %(start)s AND %(end)s
   AND COALESCE(rr.abnormality_code, 0) = 0
