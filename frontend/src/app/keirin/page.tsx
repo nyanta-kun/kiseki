@@ -324,9 +324,14 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  // SSはガミ目カット済み（定義上ガミ目なし）→ gami判定不適用。Sのみ対象。
-  const isGamiSkip = !isMiwokuri && pick.rank !== "7PLUS_SS" && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
-  const gamiStatus: "ok" | "ng" | null = !isMiwokuri && pick.prerace_gami != null
+  // ガミ落ち = オッズ条件（三連複 <7倍）で購入不成立になった候補。
+  // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
+  // 見送り行は prerace_gami<7 を「ガミ落ち」として灰色の見送りと区別する。
+  // 未購入なら SS も対象（購入済み SS はカット後最安値が prerace_gami のため <7 にならない）。
+  // prerace_gami>=7 の見送りは別条件（合成オッズ/gap23/gap12）不成立 → 通常の見送り表示。
+  const pgBelow = pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
+  const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_SS");
+  const gamiStatus: "ok" | "ng" | null = pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= 7.0 ? "ok" : "ng"
     : null;
 
@@ -346,7 +351,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        <RankBadge rank={rankStr} miwokuri={isMiwokuri} gamiStatus={gamiStatus} />
+        {/* ガミ落ちはランクバッジを残す（推奨候補だった事実を表示）＋橙リング */}
+        <RankBadge rank={rankStr} miwokuri={isMiwokuri && !isGamiSkip} gamiStatus={gamiStatus} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
