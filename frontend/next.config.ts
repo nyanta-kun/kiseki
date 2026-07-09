@@ -54,10 +54,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // HTML ページはキャッシュしない（デプロイ後の Server Action ハッシュ不一致防止）
+        // HTML ページは毎回サーバーで鮮度検証（デプロイ後の Server Action ハッシュ不一致防止）。
+        // no-store だと iOS Safari の bfcache/Page Cache 対象外になりタブ復帰・戻る操作が
+        // 毎回フル再読み込みになるため、no-cache（再検証必須・保存は許可）に緩和。
         source: "/((?!_next/static|_next/image|favicon).*)",
         headers: [
-          { key: "Cache-Control", value: "no-store, must-revalidate" },
+          { key: "Cache-Control", value: "private, no-cache" },
           ...securityHeaders,
         ],
       },
