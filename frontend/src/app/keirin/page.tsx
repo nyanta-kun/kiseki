@@ -10,6 +10,9 @@ import { todayYYYYMMDD } from "@/lib/utils";
 // ユーティリティ
 // ---------------------------------------------------------------------------
 
+// ガミ足切り閾値（keirin側と揃える）: レース単位 min(全目)≥7.0（2026-07-10 SS/S→R置き換え）
+const GAMI_THRESHOLD = 7.0;
+
 function fmtYMD(yyyymmdd: string): string {
   if (yyyymmdd.length !== 8) return yyyymmdd;
   return `${yyyymmdd.slice(0, 4)}/${yyyymmdd.slice(4, 6)}/${yyyymmdd.slice(6, 8)}`;
@@ -59,10 +62,15 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   B:         { bg: "#6b7280", text: "#fff", label: "B" },
   WIDE:      { bg: "#7c3aed", text: "#fff", label: "W" },
   "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
-  "7PLUS_SS":   { bg: "#d97706", text: "#fff", label: "7SS" },
-  "7PLUS_S":    { bg: "#0891b2", text: "#fff", label: "7S" },
+  // 2026-07-10〜: SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
+  // S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単1着固定フォーメーション・S+は200円/点増額）。
+  // 旧SS/S（買い目カット方式）は廃止済み・過去実績の表示互換のため「旧」表記で残す。
+  "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
+  "7PLUS_ST":   { bg: "#1d4ed8", text: "#fff", label: "S" },
+  "7PLUS_STP":  { bg: "#4338ca", text: "#fff", label: "S+" },
+  "7PLUS_SS":   { bg: "#a8a29e", text: "#fff", label: "旧SS" },
+  "7PLUS_S":    { bg: "#a8a29e", text: "#fff", label: "旧S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
-  // "7PLUS_A" 廃止済み（2026-06-28）
 };
 
 // ---------------------------------------------------------------------------
@@ -324,21 +332,24 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  // ガミ落ち = オッズ条件（三連複 <7倍）で購入不成立になった候補。
+  // ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
   // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
-  // 見送り行は prerace_gami<7 を「ガミ落ち」として灰色の見送りと区別する。
-  // 未購入なら SS も対象（購入済み SS はカット後最安値が prerace_gami のため <7 にならない）。
-  // prerace_gami>=7 の見送りは別条件（合成オッズ/gap23/gap12）不成立 → 通常の見送り表示。
-  const pgBelow = pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < 7.0;
+  // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
+  // 未購入なら SS も対象（購入済み SS はカット後最安値が prerace_gami のため 閾値未満 にならない）。
+  // prerace_gami>=閾値 の見送りは別条件（合成オッズ/gap23/gap12）不成立 → 通常の見送り表示。
+  const gamiThr = GAMI_THRESHOLD;
+  const pgBelow = pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < gamiThr;
   const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_SS");
   const gamiStatus: "ok" | "ng" | null = pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
-    ? pick.prerace_gami >= 7.0 ? "ok" : "ng"
+    ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
 
-  const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const rankStr = pick.rank ?? "";
+  // 三連単S/S+ (7PLUS_ST/STP) の pred_combo は「3連単F: 1→2,3→全」形式（券種プレフィックス込み）
+  const isST = rankStr.startsWith("7PLUS_ST");
+  const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
-    ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
+    ? `${isST ? pick.pred_combo : `${betTypeLabel}: ${pick.pred_combo}`}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
 
   const startTime = fmtStartAt(pick.start_at);
@@ -404,7 +415,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               </span>
             )}
             {pick.prerace_gami != null && !isMiwokuri && (
-              pick.prerace_gami >= 7.0 ? (
+              pick.prerace_gami >= gamiThr ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
                   直前 {pick.prerace_gami.toFixed(1)}倍✓
                 </span>
@@ -441,10 +452,15 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-const RANK_ORDER = ["SS", "S"] as const;
+// by_rank キー: "R"=SS / "ST"・"STP"=三連単S/S+（2026-07-10〜）/ "SS"・"S"=旧カット方式（過去実績）
+const RANK_ORDER = ["R", "ST", "STP", "SS", "S"] as const;
+const RANK_LABEL: Record<string, string> = { R: "SS", ST: "S", STP: "S+", SS: "旧SS", S: "旧S" };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
-  S:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  R:   "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  ST:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  STP: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
+  SS:  "bg-stone-100 text-stone-500 dark:bg-stone-800/60 dark:text-stone-400",
+  S:   "bg-stone-100 text-stone-500 dark:bg-stone-800/60 dark:text-stone-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
@@ -462,8 +478,8 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
     <tr className="border-b border-gray-50 dark:border-gray-800 last:border-0 bg-gray-50/50 dark:bg-gray-800/30">
       <td className="py-1 px-2 sm:px-3">
         <span className="flex items-center gap-1.5 pl-3">
-          <span className={`inline-flex items-center justify-center w-6 h-5 rounded text-xs font-bold ${badgeClass}`}>
-            {rankKey}
+          <span className={`inline-flex items-center justify-center min-w-6 px-1 h-5 rounded text-xs font-bold ${badgeClass}`}>
+            {RANK_LABEL[rankKey] ?? rankKey}
           </span>
         </span>
       </td>

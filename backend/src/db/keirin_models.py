@@ -186,4 +186,4 @@ class KeirinPicksHistory(KeirinBase):
     payout: Mapped[int] = mapped_column(Integer, default=0, comment="払戻金額(円)")
     bet_amount: Mapped[int | None] = mapped_column(Integer, comment="投資金額(円)")
     route: Mapped[str] = mapped_column(String(10), default="ks", comment="データソース(ks/wt)")
-    prerace_gami: Mapped[float | None] = mapped_column(Numeric(6, 2), comment="発走15分前の三連複最安オッズ(≥5.0=ガミOK/<5.0=条件落ち/NULL=未チェック)")
+    prerace_gami: Mapped[float | None] = mapped_column(Numeric(6, 2), comment="発走15分前の三連複最安オッズ(閾値7.0以上=ガミOK/未満=条件落ち/NULL=未チェック)")

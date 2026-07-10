@@ -137,10 +137,13 @@ async def get_picks(
                     AND ph2.rank != 'GAMI'
                   ORDER BY
                     CASE ph2.rank
-                      WHEN '7PLUS_SS'   THEN 1
-                      WHEN '7PLUS_S'    THEN 2
-                      WHEN '7PLUS_CAND' THEN 3
-                      ELSE 4
+                      WHEN '7PLUS_R'    THEN 1
+                      WHEN '7PLUS_STP'  THEN 2
+                      WHEN '7PLUS_ST'   THEN 3
+                      WHEN '7PLUS_SS'   THEN 4
+                      WHEN '7PLUS_S'    THEN 5
+                      WHEN '7PLUS_CAND' THEN 6
+                      ELSE 7
                     END
                   LIMIT 1
                 ) ph ON TRUE
@@ -294,7 +297,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
+              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -325,7 +328,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
+              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -446,6 +449,7 @@ async def refresh_picks(
         store_key = (
             f"{base_key}#7SS" if rank == "7PLUS_SS"
             else f"{base_key}#7S" if rank == "7PLUS_S"
+            else f"{base_key}#7R" if rank == "7PLUS_R"
             else f"{base_key}#7A"
         )
 
@@ -512,7 +516,8 @@ async def refresh_picks(
 
         trio_pay = trio_map.get(top3, 0)
         prerace_gami = row["prerace_gami"]
-        # SSはガミ目カット済みのためgami判定不適用。Sのみ対象。
+        # SS（旧カット方式・過去日互換）はガミ目カット済みのためgami判定不適用。
+        # S（過去日互換）/ R（2026-07-10〜 レース単位・全目min≥7.0）は閾値7.0で見送り判定。
         is_gami_skip = rank != "7PLUS_SS" and prerace_gami is not None and float(prerace_gami) < 7.0
 
         is_skip = bool(row["miwokuri"]) or is_gami_skip
@@ -626,7 +631,7 @@ async def get_stats(
     _STATS_COND = """
         AND NOT COALESCE(ph.miwokuri, FALSE)
         AND ph.bet_amount > 0
-        AND ph.rank IN ('7PLUS_SS', '7PLUS_S')
+        AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
         AND ph.race_key NOT LIKE '%#CAND'
         AND (
             wr.status = 3
