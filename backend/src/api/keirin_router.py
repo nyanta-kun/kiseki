@@ -306,13 +306,30 @@ async def _aggregate(
     )).mappings().one_or_none()
 
     if not row:
-        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None, "by_rank": {}}
+        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
+                "n_candidates": 0, "by_rank": {}}
 
     n_picks = int(row["n_picks"] or 0)
     n_hits = int(row["n_hits"] or 0)
     total_bet = int(row["total_bet"] or 0)
     total_payout = int(row["total_payout"] or 0)
     result = _make_period_dict(n_picks, n_hits, total_bet, total_payout)
+
+    # 総候補レース数（オッズ条件で落ちる前・指数条件のみで挙がった候補=購入+見送りの distinct レース数）
+    cand_row = (await db.execute(
+        text(f"""
+            SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+            WHERE {where}
+              AND ph.route = 'wt'
+              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP', '7PLUS_CAND')
+              AND {_SETTLED_COND}
+        """),
+        params,
+    )).mappings().one_or_none()
+    result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
     # ランク別集計
     rank_rows = (await db.execute(

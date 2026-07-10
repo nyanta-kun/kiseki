@@ -491,6 +491,7 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
           </span>
         </span>
       </td>
+      <td />
       <td className="py-1 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         {data.n_picks}
       </td>
@@ -530,6 +531,10 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
         <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
           {label}
           {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
+        </td>
+        {/* 候補（オッズ条件前の総候補レース数） */}
+        <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-400 dark:text-gray-500 tabular-nums">
+          {data.n_candidates ?? "—"}
         </td>
         {/* 件数 */}
         <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-700 dark:text-gray-200 tabular-nums">
@@ -581,6 +586,7 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
           <thead>
             <tr className="border-b border-gray-100 dark:border-gray-700">
               <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
               <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">投資</th>

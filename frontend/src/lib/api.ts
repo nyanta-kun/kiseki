@@ -961,6 +961,8 @@ export type KeirinPick = {
 
 export type KeirinPeriodSummary = {
   n_picks: number;
+  /** オッズ条件で落ちる前の総候補レース数（指数条件のみ・購入+見送り） */
+  n_candidates?: number;
   n_hits: number;
   total_bet: number;
   total_payout: number;
