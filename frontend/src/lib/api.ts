@@ -967,7 +967,7 @@ export type KeirinPeriodSummary = {
   total_bet: number;
   total_payout: number;
   roi: number | null;
-  by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null }>;
+  by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null; n_candidates?: number }>;
 };
 
 export type KeirinSummary = {

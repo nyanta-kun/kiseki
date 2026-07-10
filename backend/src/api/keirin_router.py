@@ -363,6 +363,32 @@ async def _aggregate(
             int(r["total_bet"] or 0),
             int(r["total_payout"] or 0),
         )
+
+    # ランク別候補数（指数条件のみ・オッズ条件前）
+    # SS: gap12>=0.10 ∧ gap23>=1pt / S: gap12>=0.15 / S+: gap12>=0.25 ∧ gap34>=0.04
+    rank_cand_row = (await db.execute(
+        text(f"""
+            SELECT
+              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.10 AND ph.gap23 >= 1.0
+                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_r,
+              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.15
+                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_st,
+              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.25 AND ph.gap34 >= 0.04
+                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_stp
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+            WHERE {where}
+              AND ph.route = 'wt'
+              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP', '7PLUS_CAND')
+              AND {_SETTLED_COND}
+        """),
+        params,
+    )).mappings().one_or_none()
+    if rank_cand_row:
+        for key, col in (("R", "cand_r"), ("ST", "cand_st"), ("STP", "cand_stp")):
+            if key in by_rank:
+                by_rank[key]["n_candidates"] = int(rank_cand_row[col] or 0)
     result["by_rank"] = by_rank
     return result
 
@@ -444,7 +470,7 @@ async def refresh_picks(
 
     cand_rows = (await db.execute(
         text("""
-            SELECT race_key, rank, pred_combo, n_combos, miwokuri, prerace_gami
+            SELECT race_key, rank, pred_combo, n_combos, miwokuri, prerace_gami, gap12, gap23, gap34
             FROM keirin.picks_history
             WHERE race_date = :date
               AND race_key LIKE '%#CAND'
@@ -566,6 +592,9 @@ async def refresh_picks(
             "bet_amount": 0 if is_skip else (row["n_combos"] or 0) * 100,
             "miwokuri": is_skip,
             "prerace_gami": float(prerace_gami) if prerace_gami is not None else None,
+            "gap12": float(row["gap12"]) if row["gap12"] is not None else None,
+            "gap23": float(row["gap23"]) if row["gap23"] is not None else None,
+            "gap34": float(row["gap34"]) if row["gap34"] is not None else None,
         })
 
     if not to_insert:
@@ -579,11 +608,11 @@ async def refresh_picks(
         await db.execute(
             text("""
                 INSERT INTO keirin.picks_history
-                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout, trifecta_payout,
+                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout, trifecta_payout, gap12, gap23, gap34,
                      bet_amount, route, miwokuri, prerace_gami)
                 VALUES
                     (:race_date, :race_key, :rank, :pred_combo, :n_combos, :hit, :payout,
-                     :trio_payout, :trifecta_payout, :bet_amount, 'wt', :miwokuri, :prerace_gami)
+                     :trio_payout, :trifecta_payout, :gap12, :gap23, :gap34, :bet_amount, 'wt', :miwokuri, :prerace_gami)
                 ON CONFLICT (race_key) DO UPDATE SET
                     hit = EXCLUDED.hit,
                     payout = EXCLUDED.payout,

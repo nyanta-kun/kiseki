@@ -491,7 +491,10 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
           </span>
         </span>
       </td>
-      <td />
+      {/* ランク別候補数（指数条件のみ・オッズ条件前） */}
+      <td className="py-1 px-1.5 sm:px-3 text-right text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+        {data.n_candidates ?? "—"}
+      </td>
       <td className="py-1 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
         {data.n_picks}
       </td>
