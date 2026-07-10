@@ -75,7 +75,7 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
 // サブコンポーネント
 // ---------------------------------------------------------------------------
 
-function RankBadge({ rank, miwokuri, gamiStatus }: { rank: string; miwokuri?: boolean; gamiStatus?: "ok" | "ng" | null }) {
+function RankBadge({ rank, gamiStatus }: { rank: string; gamiStatus?: "ok" | "ng" | null }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
 
   // ジャッジ済みの場合、緑(OK) or 橙(NG)の ring を外側に付ける
@@ -85,13 +85,8 @@ function RankBadge({ rank, miwokuri, gamiStatus }: { rank: string; miwokuri?: bo
       ? { outline: "2px solid #f97316", outlineOffset: "2px" }
       : undefined;
 
-  if (miwokuri) {
-    return (
-      <span style={{ background: "#9ca3af", color: "#fff", ...ringStyle }} className={badgeCls}>
-        ガ
-      </span>
-    );
-  }
+  // 見送り行も常に元表示（rank=7PLUS_CAND→「候補」）。見送り理由は右側の
+  // 「見送り」「ガミ落ち」表示で判別する（旧「ガ」バッジは紛らわしいため廃止）。
   const s = RANK_STYLE[rank];
   if (!s) {
     return (
@@ -376,8 +371,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        {/* ガミ落ちはランクバッジを残す（推奨候補だった事実を表示）＋橙リング */}
-        <RankBadge rank={rankStr} miwokuri={isMiwokuri && !isGamiSkip} gamiStatus={gamiStatus} />
+        {/* 左バッジは常に元表示（購入=SS/S/S+・見送り=候補）。理由は右側表示で判別 */}
+        <RankBadge rank={rankStr} gamiStatus={gamiStatus} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
