@@ -349,9 +349,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 未購入なら SS も対象（購入済み SS はカット後最安値が prerace_gami のため 閾値未満 にならない）。
   // prerace_gami>=閾値 の見送りは別条件（合成オッズ/gap23/gap12）不成立 → 通常の見送り表示。
   const gamiThr = GAMI_THRESHOLD;
-  const pgBelow = pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < gamiThr;
+  // 三連単行(S/S+)の prerace_gami は三連複基準の値のためガミ判定に使わない
+  // （三連単のガミ条件は三連単オッズ min≥10 で判定済み・購入行にガミ落ちは存在しない）
+  const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
+  const pgBelow = !isTrifectaRow && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < gamiThr;
   const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_SS");
-  const gamiStatus: "ok" | "ng" | null = pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
+  const gamiStatus: "ok" | "ng" | null = !isTrifectaRow && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
 
@@ -425,7 +428,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{(pick.gap23 * 100).toFixed(1)}</span>pt
               </span>
             )}
-            {pick.prerace_gami != null && !isMiwokuri && (
+            {pick.prerace_gami != null && !isMiwokuri && !isTrifectaRow && (
               pick.prerace_gami >= gamiThr ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
                   直前 {pick.prerace_gami.toFixed(1)}倍✓
