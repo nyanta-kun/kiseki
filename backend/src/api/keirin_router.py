@@ -99,6 +99,8 @@ async def get_picks(
 ) -> JSONResponse:
     """指定日（YYYY-MM-DD）の推奨ピック一覧を返す。
     include_all=true の場合は推奨外レースも含む全レースを返す。
+    同一レースに複数の購入行（SS=三連複とS/S+=三連単の併存）がある場合は
+    行ごとに返す（1レース1行に絞ると片方の的中が一覧から見えなくなるため）。
     """
     target = date or _today_jst().isoformat()
 
@@ -131,24 +133,20 @@ async def get_picks(
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
-                LEFT JOIN LATERAL (
-                  SELECT * FROM keirin.picks_history ph2
-                  WHERE SPLIT_PART(ph2.race_key, '#', 1) = wr.race_key
-                    AND ph2.race_date = :date
-                    AND ph2.route = 'wt'
-                    AND ph2.rank != 'GAMI'
-                  ORDER BY
-                    CASE ph2.rank
+                LEFT JOIN keirin.picks_history ph
+                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+                 AND ph.race_date = :date
+                 AND ph.route = 'wt'
+                 AND ph.rank != 'GAMI'
+                WHERE wr.race_date = :date
+                ORDER BY wr.start_at, wr.race_no,
+                    CASE ph.rank
                       WHEN '7PLUS_R'    THEN 1
                       WHEN '7PLUS_STP'  THEN 2
                       WHEN '7PLUS_ST'   THEN 3
                       WHEN '7PLUS_CAND' THEN 4
                       ELSE 5
                     END
-                  LIMIT 1
-                ) ph ON TRUE
-                WHERE wr.race_date = :date
-                ORDER BY wr.start_at, wr.race_no
             """),
             {"date": target},
         )).mappings().all()
