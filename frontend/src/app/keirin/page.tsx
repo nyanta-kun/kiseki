@@ -62,14 +62,14 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   B:         { bg: "#6b7280", text: "#fff", label: "B" },
   WIDE:      { bg: "#7c3aed", text: "#fff", label: "W" },
   "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
-  // 2026-07-10〜: SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
+  // 2026-07〜: SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
   // S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単1着固定フォーメーション・S+は200円/点増額）。
-  // 旧SS/S（買い目カット方式）は廃止済み・過去実績の表示互換のため「旧」表記で残す。
+  // 7PLUS_SS/7PLUS_S は廃止済み旧方式の過去実績行（2026-06以前）。
   "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
   "7PLUS_ST":   { bg: "#1d4ed8", text: "#fff", label: "S" },
   "7PLUS_STP":  { bg: "#4338ca", text: "#fff", label: "S+" },
-  "7PLUS_SS":   { bg: "#a8a29e", text: "#fff", label: "旧SS" },
-  "7PLUS_S":    { bg: "#a8a29e", text: "#fff", label: "旧S" },
+  "7PLUS_SS":   { bg: "#a8a29e", text: "#fff", label: "SS" },
+  "7PLUS_S":    { bg: "#a8a29e", text: "#fff", label: "S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
@@ -452,15 +452,13 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "R"=SS / "ST"・"STP"=三連単S/S+（2026-07-10〜）/ "SS"・"S"=旧カット方式（過去実績）
-const RANK_ORDER = ["R", "ST", "STP", "SS", "S"] as const;
-const RANK_LABEL: Record<string, string> = { R: "SS", ST: "S", STP: "S+", SS: "旧SS", S: "旧S" };
+// by_rank キー: "R"=SS / "ST"・"STP"=三連単S/S+（2026-07〜の現行体系のみ表示）
+const RANK_ORDER = ["R", "ST", "STP"] as const;
+const RANK_LABEL: Record<string, string> = { R: "SS", ST: "S", STP: "S+" };
 const RANK_BADGE_STYLE: Record<string, string> = {
   R:   "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   ST:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
   STP: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
-  SS:  "bg-stone-100 text-stone-500 dark:bg-stone-800/60 dark:text-stone-400",
-  S:   "bg-stone-100 text-stone-500 dark:bg-stone-800/60 dark:text-stone-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
