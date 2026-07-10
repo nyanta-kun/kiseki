@@ -134,16 +134,15 @@ async def get_picks(
                   SELECT * FROM keirin.picks_history ph2
                   WHERE SPLIT_PART(ph2.race_key, '#', 1) = wr.race_key
                     AND ph2.race_date = :date
+                    AND ph2.route = 'wt'
                     AND ph2.rank != 'GAMI'
                   ORDER BY
                     CASE ph2.rank
                       WHEN '7PLUS_R'    THEN 1
                       WHEN '7PLUS_STP'  THEN 2
                       WHEN '7PLUS_ST'   THEN 3
-                      WHEN '7PLUS_SS'   THEN 4
-                      WHEN '7PLUS_S'    THEN 5
-                      WHEN '7PLUS_CAND' THEN 6
-                      ELSE 7
+                      WHEN '7PLUS_CAND' THEN 4
+                      ELSE 5
                     END
                   LIMIT 1
                 ) ph ON TRUE
@@ -183,6 +182,7 @@ async def get_picks(
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
                 WHERE ph.race_date = :date
+                  AND ph.route = 'wt'
                   AND ph.rank != 'GAMI'
                 ORDER BY wr.start_at, ph.id
             """),
@@ -297,7 +297,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -328,7 +328,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -631,7 +631,7 @@ async def get_stats(
     _STATS_COND = """
         AND NOT COALESCE(ph.miwokuri, FALSE)
         AND ph.bet_amount > 0
-        AND ph.rank IN ('7PLUS_SS', '7PLUS_S', '7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+        AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
         AND ph.race_key NOT LIKE '%#CAND'
         AND (
             wr.status = 3

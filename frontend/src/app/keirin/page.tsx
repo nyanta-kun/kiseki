@@ -64,12 +64,10 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
   // 2026-07〜: SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
   // S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単1着固定フォーメーション・S+は200円/点増額）。
-  // 7PLUS_SS/7PLUS_S は廃止済み旧方式の過去実績行（2026-06以前）。
+  // 旧方式(7PLUS_SS/7PLUS_S)の行は全期間を新方式で再構築済みのため存在しない。
   "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
   "7PLUS_ST":   { bg: "#1d4ed8", text: "#fff", label: "S" },
   "7PLUS_STP":  { bg: "#4338ca", text: "#fff", label: "S+" },
-  "7PLUS_SS":   { bg: "#a8a29e", text: "#fff", label: "SS" },
-  "7PLUS_S":    { bg: "#a8a29e", text: "#fff", label: "S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
