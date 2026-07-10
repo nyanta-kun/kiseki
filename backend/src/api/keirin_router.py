@@ -122,6 +122,7 @@ async def get_picks(
                   ph.hit,
                   ph.payout,
                   ph.trio_payout,
+                  ph.trifecta_payout,
                   ph.bet_amount,
                   ph.route,
                   COALESCE(ph.miwokuri, FALSE) AS miwokuri,
@@ -164,6 +165,7 @@ async def get_picks(
                   ph.hit,
                   ph.payout,
                   ph.trio_payout,
+                  ph.trifecta_payout,
                   ph.bet_amount,
                   ph.route,
                   COALESCE(ph.miwokuri, FALSE) AS miwokuri,
@@ -237,6 +239,7 @@ async def get_picks(
             "hit": bool(r["hit"]) if has_pick else False,
             "payout": (r["payout"] or 0) if has_pick else 0,
             "trio_payout": (r["trio_payout"] or 0) if has_pick else 0,
+            "trifecta_payout": (r["trifecta_payout"] or 0) if has_pick else 0,
             "bet_amount": (r["bet_amount"] or 0) if has_pick else 0,
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
@@ -505,6 +508,19 @@ async def refresh_picks(
             except (ValueError, TypeError):
                 continue
 
+        trifecta_rows = (await db.execute(
+            text("""
+                SELECT combination, odds_value
+                FROM keirin.wt_odds
+                WHERE race_key = :rk AND bet_type = 'trifecta'
+                  AND combination = :combo
+            """),
+            {"rk": base_key, "combo": "-".join(map(str, order_list[:3]))},
+        )).mappings().all()
+        trifecta_pay = 0
+        if trifecta_rows and trifecta_rows[0]["odds_value"]:
+            trifecta_pay = round(float(trifecta_rows[0]["odds_value"]) * 100) // 10 * 10
+
         hit = False
         pay = 0
         for t in valid_thirds:
@@ -531,6 +547,7 @@ async def refresh_picks(
             "hit": 1 if hit else 0,
             "payout": 0 if is_skip else (pay if hit else 0),
             "trio_payout": trio_pay,
+            "trifecta_payout": trifecta_pay,
             "bet_amount": 0 if is_skip else (row["n_combos"] or 0) * 100,
             "miwokuri": is_skip,
             "prerace_gami": float(prerace_gami) if prerace_gami is not None else None,
@@ -547,11 +564,11 @@ async def refresh_picks(
         await db.execute(
             text("""
                 INSERT INTO keirin.picks_history
-                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout,
+                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout, trifecta_payout,
                      bet_amount, route, miwokuri, prerace_gami)
                 VALUES
                     (:race_date, :race_key, :rank, :pred_combo, :n_combos, :hit, :payout,
-                     :trio_payout, :bet_amount, 'wt', :miwokuri, :prerace_gami)
+                     :trio_payout, :trifecta_payout, :bet_amount, 'wt', :miwokuri, :prerace_gami)
                 ON CONFLICT (race_key) DO UPDATE SET
                     hit = EXCLUDED.hit,
                     payout = EXCLUDED.payout,

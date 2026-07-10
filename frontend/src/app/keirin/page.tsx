@@ -107,24 +107,31 @@ function RankBadge({ rank, miwokuri, gamiStatus }: { rank: string; miwokuri?: bo
   );
 }
 
-function TrioPayout({ amount }: { amount: number }) {
-  if (amount <= 0) return <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">払戻 —</span>;
+function PayoutInfo({ trio, trifecta }: { trio: number; trifecta?: number }) {
+  if (trio <= 0 && (trifecta ?? 0) <= 0) {
+    return <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">払戻 —</span>;
+  }
   return (
     <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums flex-shrink-0">
-      三連複 <span className="font-semibold text-gray-700 dark:text-gray-200">¥{amount.toLocaleString()}</span>
+      {trio > 0 && (
+        <>三連複 <span className="font-semibold text-gray-700 dark:text-gray-200">¥{trio.toLocaleString()}</span></>
+      )}
+      {(trifecta ?? 0) > 0 && (
+        <>{trio > 0 && <span className="mx-1 text-gray-300 dark:text-gray-600">|</span>}三連単 <span className="font-semibold text-gray-700 dark:text-gray-200">¥{(trifecta ?? 0).toLocaleString()}</span></>
+      )}
     </span>
   );
 }
 
-function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwokuri, isGamiSkip }: {
-  hit: boolean; payout: number; trioPayout: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean; isGamiSkip?: boolean;
+function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isReference, isMiwokuri, isGamiSkip }: {
+  hit: boolean; payout: number; trioPayout: number; trifectaPayout?: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean; isGamiSkip?: boolean;
 }) {
   if (isGamiSkip) {
     if (!isSettled) return <span className="text-xs text-orange-400 dark:text-orange-500">ガミ落ち</span>;
     return (
       <div className="flex items-center justify-between w-full gap-2">
         <span className="text-xs text-orange-400 dark:text-orange-500">ガミ条件落ち</span>
-        <TrioPayout amount={trioPayout} />
+        <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />
       </div>
     );
   }
@@ -140,7 +147,7 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
         ) : (
           <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>
         )}
-        <TrioPayout amount={trioPayout} />
+        <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />
       </div>
     );
   }
@@ -149,7 +156,7 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
     return (
       <div className="flex items-center justify-between w-full gap-2">
         <span className="text-xs text-gray-400 dark:text-gray-500">参考</span>
-        <TrioPayout amount={trioPayout} />
+        <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />
       </div>
     );
   }
@@ -175,7 +182,7 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
             {bet > 0 && <span className="text-gray-400 ml-1">({(payout / bet).toFixed(1)}倍)</span>}
           </span>
         </div>
-        {trioPayout > 0 && <TrioPayout amount={trioPayout} />}
+        {trioPayout > 0 && <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />}
       </div>
     );
   }
@@ -190,7 +197,7 @@ function HitBadge({ hit, payout, trioPayout, bet, isSettled, isReference, isMiwo
         </span>
         {bet > 0 && <span className="text-xs text-gray-400">¥{bet.toLocaleString()}</span>}
       </div>
-      <TrioPayout amount={trioPayout} />
+      <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />
     </div>
   );
 }
@@ -249,11 +256,17 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
   return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
 }
 
-function CollapsedResult({ hit, payout, trioPayout, bet, isPurchased, isMiwokuri, isGamiSkip }: {
-  hit: boolean; payout: number; trioPayout: number; bet: number; isPurchased: boolean; isMiwokuri: boolean; isGamiSkip?: boolean;
+function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurchased, isMiwokuri, isGamiSkip }: {
+  hit: boolean; payout: number; trioPayout: number; trifectaPayout?: number; bet: number; isPurchased: boolean; isMiwokuri: boolean; isGamiSkip?: boolean;
 }) {
-  const trioEl = trioPayout > 0
-    ? <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">¥{trioPayout.toLocaleString()}</span>
+  const tp = trifectaPayout ?? 0;
+  const trioEl = (trioPayout > 0 || tp > 0)
+    ? (
+      <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+        {trioPayout > 0 && <>複¥{trioPayout.toLocaleString()}</>}
+        {tp > 0 && <>{trioPayout > 0 && " "}単¥{tp.toLocaleString()}</>}
+      </span>
+    )
     : null;
 
   if (isGamiSkip) {
@@ -376,7 +389,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         </div>
         {/* 折りたたみ時: 結果サマリー or ガミ判定チップをインライン表示 */}
         {collapsed && isSettled && (
-          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
+          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
         )}
         {collapsed && !isSettled && gamiStatus === "ok" && (
           <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex-shrink-0">
@@ -433,6 +446,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 hit={pick.hit}
                 payout={pick.payout}
                 trioPayout={pick.trio_payout}
+                trifectaPayout={pick.trifecta_payout}
                 bet={pick.bet_amount}
                 isSettled={isSettled}
                 isReference={!isPurchased && !isMiwokuri && !isGamiSkip}
