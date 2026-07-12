@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     Integer,
@@ -178,12 +179,42 @@ class KeirinPicksHistory(KeirinBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_date: Mapped[str] = mapped_column(String(10), nullable=False, comment="開催日")
-    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー")
-    rank: Mapped[str] = mapped_column(String(10), nullable=False, comment="ランク(SS/S/A/B/7PLUS等)")
+    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー(base#CAND/#7R/#7ST等)")
+    rank: Mapped[str] = mapped_column(String(10), nullable=False, comment="ランク(7PLUS_R/7PLUS_ST/7PLUS_STP/7PLUS_CAND)")
     pred_combo: Mapped[str | None] = mapped_column(Text, comment="買い目文字列")
     n_combos: Mapped[int | None] = mapped_column(Integer, comment="点数")
     hit: Mapped[int] = mapped_column(Integer, default=0, comment="的中フラグ")
     payout: Mapped[int] = mapped_column(Integer, default=0, comment="払戻金額(円)")
+    trio_payout: Mapped[int | None] = mapped_column(Integer, comment="三連複払戻(参考値・migration g3h4i5j6k7l8)")
+    trifecta_payout: Mapped[int | None] = mapped_column(Integer, comment="三連単払戻(参考値・migration h4i5j6k7l8m9)")
     bet_amount: Mapped[int | None] = mapped_column(Integer, comment="投資金額(円)")
     route: Mapped[str] = mapped_column(String(10), default="ks", comment="データソース(ks/wt)")
+    miwokuri: Mapped[bool | None] = mapped_column(Boolean, comment="見送りフラグ(migration d2e3f4a5b6c7)")
     prerace_gami: Mapped[float | None] = mapped_column(Numeric(6, 2), comment="発走15分前の三連複最安オッズ(閾値7.0以上=ガミOK/未満=条件落ち/NULL=未チェック)")
+    gap12: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="指数1-2位の予測確率差(0-1スケール・migration i5j6k7l8m9n0)")
+    gap23: Mapped[float | None] = mapped_column(Numeric(8, 4), comment="指数2-3位の予測確率差(★ptスケール=×100済み・migration j6k7l8m9n0p1)")
+    gap34: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="指数3-4位の予測確率差(0-1スケール・migration i5j6k7l8m9n0)")
+
+
+class KeirinModelEvaluation(KeirinBase):
+    """モデル・戦略バックテスト評価（save_model_eval.py が書込・summary API が参照）"""
+
+    __tablename__ = "model_evaluation"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("model_name", "period_type", name="uq_model_eval_model_period"),
+        {"schema": KEIRIN_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(50), nullable=False, comment="モデル名(ランク別は #7R/#7ST/#7STP サフィックス)")
+    period_from: Mapped[str] = mapped_column(String(10), nullable=False, comment="期間開始")
+    period_to: Mapped[str] = mapped_column(String(10), nullable=False, comment="期間終了")
+    period_type: Mapped[str] = mapped_column(String(10), nullable=False, comment="VAL/HOLD")
+    n_picks: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_hits: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_bet: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_payout: Mapped[int] = mapped_column(Integer, nullable=False)
+    roi: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), comment="評価実行日時"
+    )

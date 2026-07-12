@@ -387,8 +387,14 @@ async def _aggregate(
     )).mappings().one_or_none()
     if rank_cand_row:
         for key, col in (("R", "cand_r"), ("ST", "cand_st"), ("STP", "cand_stp")):
+            n_cand = int(rank_cand_row[col] or 0)
             if key in by_rank:
-                by_rank[key]["n_candidates"] = int(rank_cand_row[col] or 0)
+                by_rank[key]["n_candidates"] = n_cand
+            elif n_cand > 0:
+                # 候補はあったが全て見送り（購入0件）のランクも返す。
+                # （購入行の有無でキー自体が消えると「候補数の可視化」が短期間表示で機能しない）
+                by_rank[key] = _make_period_dict(0, 0, 0, 0)
+                by_rank[key]["n_candidates"] = n_cand
     result["by_rank"] = by_rank
     return result
 
@@ -455,182 +461,37 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
 
 
 @router.post("/refresh")
-async def refresh_picks(
-    date: str = "",
-    db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
-    """指定日の #CAND エントリを採点して確定エントリに変換する。
+async def refresh_picks(date: str = "") -> JSONResponse:
+    """当日採点を keirin ホスト側の正本スクリプトで即時実行する（webhook 中継）。
 
-    VPS cron が失敗した場合のフォールバック。
-    wt_entries の finish_order と wt_odds の払戻を元に採点する。
-    結果未確定レース（finish_order 不足）はスキップ。
+    旧実装はこの API 内で独自採点していたが、prerace_decisions を正本とする
+    keirin 側 notify_results_wt.py と判定が二重実装になり、新ランク体系
+    (7PLUS_ST/STP・S+ 200円/点) への追随漏れ・rank='7PLUS_CAND' のまま
+    書き戻してサマリー集計から漏れるバグを抱えていたため、2026-07-12 に
+    keirin-webhook /fetch-results（intraday_results_wt.sh →
+    notify_results_wt.py）への中継に一本化した。
+    採点は常に「当日」に対して行われる（過去日の再採点は keirin 側で
+    scripts/notify_results_wt.py を直接実行すること）。
     """
-    import re as _re
-    target = date or _today_jst().isoformat()
-
-    cand_rows = (await db.execute(
-        text("""
-            SELECT race_key, rank, pred_combo, n_combos, miwokuri, prerace_gami, gap12, gap23, gap34
-            FROM keirin.picks_history
-            WHERE race_date = :date
-              AND race_key LIKE '%#CAND'
-              AND route = 'wt'
-        """),
-        {"date": target},
-    )).mappings().all()
-
-    if not cand_rows:
-        return JSONResponse(content={"message": "採点対象の#CANDレコードがありません", "n_scored": 0})
-
-    to_delete: list[str] = []
-    to_insert: list[dict] = []
-
-    for row in cand_rows:
-        base_key = row["race_key"].rsplit("#", 1)[0]
-        rank = row["rank"]
-        pred_combo = row["pred_combo"] or ""
-
-        store_key = (
-            f"{base_key}#7SS" if rank == "7PLUS_SS"
-            else f"{base_key}#7S" if rank == "7PLUS_S"
-            else f"{base_key}#7R" if rank == "7PLUS_R"
-            else f"{base_key}#7A"
+    today = _today_jst().isoformat()
+    note = ""
+    if date and date != today:
+        note = f"（注: 採点は当日({today})分のみ実行されます。過去日({date})の再採点は keirin 側スクリプトで行ってください）"
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(f"{_WEBHOOK_BASE}/fetch-results", timeout=10.0)
+            body = r.json()
+            msg = str(body.get("message", "採点ジョブを起動しました"))
+            return JSONResponse(
+                content={"ok": bool(body.get("ok", r.status_code < 400)),
+                         "message": msg + note},
+                status_code=r.status_code,
+            )
+    except Exception as exc:
+        return JSONResponse(
+            content={"ok": False, "message": f"採点ジョブの起動に失敗しました: {exc}"},
+            status_code=503,
         )
-
-        try:
-            parts = pred_combo.split("-")
-            p1, p2 = int(parts[0]), int(parts[1])
-            thirds = [int(x) for x in parts[2].split(",")] if len(parts) >= 3 else []
-        except (ValueError, IndexError):
-            continue
-
-        finish_rows = (await db.execute(
-            text("""
-                SELECT frame_no FROM keirin.wt_entries
-                WHERE race_key = :rk AND finish_order BETWEEN 1 AND 3
-                ORDER BY finish_order
-            """),
-            {"rk": base_key},
-        )).fetchall()
-
-        order_list = [int(r[0]) for r in finish_rows]
-        if len(order_list) < 3:
-            continue
-
-        top3 = frozenset(order_list[:3])
-
-        runner_rows = (await db.execute(
-            text("SELECT frame_no FROM keirin.wt_entries WHERE race_key = :rk AND finish_order >= 1"),
-            {"rk": base_key},
-        )).fetchall()
-        runners = {int(r[0]) for r in runner_rows}
-
-        if p1 not in runners or p2 not in runners:
-            continue
-        valid_thirds = [t for t in thirds if t in runners]
-        if not valid_thirds:
-            continue
-
-        odds_rows = (await db.execute(
-            text("""
-                SELECT combination, odds_value
-                FROM keirin.wt_odds
-                WHERE race_key = :rk AND bet_type = 'trio'
-            """),
-            {"rk": base_key},
-        )).mappings().all()
-
-        trio_map: dict = {}
-        for odds_row in odds_rows:
-            try:
-                nums = [int(p) for p in _re.split(r"[-=→]", str(odds_row["combination"])) if p]
-                # 公式払戻金は10円単位に切り捨て。round()で浮動小数点誤差を吸収してから10円に丸める
-                trio_map[frozenset(nums)] = round(float(odds_row["odds_value"]) * 100) // 10 * 10
-            except (ValueError, TypeError):
-                continue
-
-        trifecta_rows = (await db.execute(
-            text("""
-                SELECT combination, odds_value
-                FROM keirin.wt_odds
-                WHERE race_key = :rk AND bet_type = 'trifecta'
-                  AND combination = :combo
-            """),
-            {"rk": base_key, "combo": "-".join(map(str, order_list[:3]))},
-        )).mappings().all()
-        trifecta_pay = 0
-        if trifecta_rows and trifecta_rows[0]["odds_value"]:
-            trifecta_pay = round(float(trifecta_rows[0]["odds_value"]) * 100) // 10 * 10
-
-        hit = False
-        pay = 0
-        for t in valid_thirds:
-            key = frozenset((p1, p2, t))
-            if key == top3:
-                pay = trio_map.get(key, 0)
-                hit = True
-                break
-
-        trio_pay = trio_map.get(top3, 0)
-        prerace_gami = row["prerace_gami"]
-        # SS（旧カット方式・過去日互換）はガミ目カット済みのためgami判定不適用。
-        # S（過去日互換）/ R（2026-07-10〜 レース単位・全目min≥7.0）は閾値7.0で見送り判定。
-        is_gami_skip = rank != "7PLUS_SS" and prerace_gami is not None and float(prerace_gami) < 7.0
-
-        is_skip = bool(row["miwokuri"]) or is_gami_skip
-        to_delete.append(row["race_key"])
-        to_insert.append({
-            "race_date": target,
-            "race_key": store_key,
-            "rank": rank,
-            "pred_combo": pred_combo,
-            "n_combos": row["n_combos"] or 0,
-            "hit": 1 if hit else 0,
-            "payout": 0 if is_skip else (pay if hit else 0),
-            "trio_payout": trio_pay,
-            "trifecta_payout": trifecta_pay,
-            "bet_amount": 0 if is_skip else (row["n_combos"] or 0) * 100,
-            "miwokuri": is_skip,
-            "prerace_gami": float(prerace_gami) if prerace_gami is not None else None,
-            "gap12": float(row["gap12"]) if row["gap12"] is not None else None,
-            "gap23": float(row["gap23"]) if row["gap23"] is not None else None,
-            "gap34": float(row["gap34"]) if row["gap34"] is not None else None,
-        })
-
-    if not to_insert:
-        return JSONResponse(content={"message": "採点対象レースの確定データがありません", "n_scored": 0})
-
-    await db.execute(
-        text("DELETE FROM keirin.picks_history WHERE race_key = ANY(:keys)"),
-        {"keys": to_delete},
-    )
-    for s in to_insert:
-        await db.execute(
-            text("""
-                INSERT INTO keirin.picks_history
-                    (race_date, race_key, rank, pred_combo, n_combos, hit, payout, trio_payout, trifecta_payout, gap12, gap23, gap34,
-                     bet_amount, route, miwokuri, prerace_gami)
-                VALUES
-                    (:race_date, :race_key, :rank, :pred_combo, :n_combos, :hit, :payout,
-                     :trio_payout, :trifecta_payout, :gap12, :gap23, :gap34, :bet_amount, 'wt', :miwokuri, :prerace_gami)
-                ON CONFLICT (race_key) DO UPDATE SET
-                    hit = EXCLUDED.hit,
-                    payout = EXCLUDED.payout,
-                    trio_payout = EXCLUDED.trio_payout,
-                    rank = EXCLUDED.rank
-            """),
-            s,
-        )
-    await db.commit()
-
-    n_hits = sum(1 for s in to_insert if s["hit"])
-    total_payout = sum(s["payout"] for s in to_insert)
-    return JSONResponse(content={
-        "n_scored": len(to_insert),
-        "n_hits": n_hits,
-        "total_payout": total_payout,
-        "message": f"{len(to_insert)}件採点完了 (的中{n_hits}件)",
-    })
 
 
 @router.post("/fetch-odds")
@@ -725,6 +586,39 @@ async def get_stats(
     cum_payout = 0
     month_acc: dict[str, dict[str, int]] = {}
     year_acc: dict[str, dict[str, int]] = {}
+
+    # ウィンドウ開始日が月初/年初でない場合、cum_month/cum_year が「表示期間内の累積」に
+    # なってしまいラベル（当月累計/当年累計）と乖離する。ウィンドウ前の同月・同年分を
+    # 先に集計して seed し、真のカレンダー累積にする（2026-07-12）。
+    if (from_dt.month, from_dt.day) != (1, 1):
+        month_start = from_dt.replace(day=1)
+        year_start = from_dt.replace(month=1, day=1)
+        pre_rows = (await db.execute(
+            text(f"""
+                SELECT
+                    TO_CHAR(ph.race_date::DATE, 'YYYY-MM')                           AS month_key,
+                    COALESCE(SUM(ph.bet_amount), 0)                                   AS total_bet,
+                    COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout
+                FROM keirin.picks_history ph
+                JOIN keirin.wt_races wr
+                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+                WHERE ph.race_date >= :year_start AND ph.race_date < :from_date
+                {_STATS_COND}
+                GROUP BY 1
+            """),
+            {"year_start": year_start.isoformat(), "from_date": from_dt.isoformat()},
+        )).mappings().all()
+        for pr in pre_rows:
+            mk = str(pr["month_key"])
+            bet_v, pay_v = int(pr["total_bet"] or 0), int(pr["total_payout"] or 0)
+            yk = mk[:4]
+            year_acc.setdefault(yk, {"bet": 0, "payout": 0})
+            year_acc[yk]["bet"] += bet_v
+            year_acc[yk]["payout"] += pay_v
+            if mk >= month_start.strftime("%Y-%m"):
+                month_acc.setdefault(mk, {"bet": 0, "payout": 0})
+                month_acc[mk]["bet"] += bet_v
+                month_acc[mk]["payout"] += pay_v
 
     for r in rows:
         bucket = str(r["bucket"])
