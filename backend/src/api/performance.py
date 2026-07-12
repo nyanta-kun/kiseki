@@ -14,9 +14,10 @@ calculated_indices の composite_index 予測 vs race_results の実際着順を
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime as _datetime
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
@@ -478,7 +479,7 @@ async def get_performance_summary(
         #    race_payouts の確定払戻（place_odds_map 登録済み）は上書きしない。
         pair_rids = [r.race_id for r in rows if r.horse_number is not None]
         pair_hns = [int(r.horse_number) for r in rows if r.horse_number is not None]
-        fallback_rows = []
+        fallback_rows: Sequence[Any] = []
         if pair_rids:
             fallback_rows = (
                 await db.execute(
