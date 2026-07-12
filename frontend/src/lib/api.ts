@@ -989,7 +989,7 @@ export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> 
   return get<KeirinSummary>(`/keirin/summary${q}`, { cache: "no-store" });
 }
 
-export async function refreshKeirinPicks(date: string): Promise<{ n_scored: number; n_hits: number; total_payout: number; message: string }> {
+export async function refreshKeirinPicks(date: string): Promise<{ ok: boolean; message: string }> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/refresh?date=${date}`, {
     method: "POST",
     cache: "no-store",

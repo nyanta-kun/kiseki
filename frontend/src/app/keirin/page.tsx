@@ -55,16 +55,11 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 定数
 // ---------------------------------------------------------------------------
 
+// 現行ランク体系（2026-07-10〜）のみ。SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
+// S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単1着固定フォーメーション・S+は200円/点増額）。
+// 旧方式(7PLUS_SS/7PLUS_S・素のSS/S/A/B/WIDE)の行は全期間再構築済み or route='ks' で API に現れない。
+// 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  SS:        { bg: "#b45309", text: "#fff", label: "SS" },
-  S:         { bg: "#1d4ed8", text: "#fff", label: "S" },
-  A:         { bg: "#15803d", text: "#fff", label: "A" },
-  B:         { bg: "#6b7280", text: "#fff", label: "B" },
-  WIDE:      { bg: "#7c3aed", text: "#fff", label: "W" },
-  "7PLUS":   { bg: "#0891b2", text: "#fff", label: "7+" },
-  // 2026-07〜: SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）、
-  // S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単1着固定フォーメーション・S+は200円/点増額）。
-  // 旧方式(7PLUS_SS/7PLUS_S)の行は全期間を新方式で再構築済みのため存在しない。
   "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
   "7PLUS_ST":   { bg: "#1d4ed8", text: "#fff", label: "S" },
   "7PLUS_STP":  { bg: "#4338ca", text: "#fff", label: "S+" },
@@ -334,8 +329,6 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at);
   const [collapsed, setCollapsed] = useState(true);
-  const isWide = pick.rank === "WIDE";
-  const is7Plus = (pick.rank ?? "").startsWith("7PLUS");
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   // ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
@@ -348,7 +341,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // （三連単のガミ条件は三連単オッズ min≥10 で判定済み・購入行にガミ落ちは存在しない）
   const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
   const pgBelow = !isTrifectaRow && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < gamiThr;
-  const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_SS");
+  // 購入済み R(SS) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
+  // 旧 "7PLUS_SS"（廃止済み内部名）への参照は 2026-07-12 に現行 "7PLUS_R" へ更新。
+  const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_R");
   const gamiStatus: "ok" | "ng" | null = !isTrifectaRow && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -356,7 +351,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const rankStr = pick.rank ?? "";
   // 三連単S/S+ (7PLUS_ST/STP) の pred_combo は「3連単F: 1→2,3→全」形式（券種プレフィックス込み）
   const isST = rankStr.startsWith("7PLUS_ST");
-  const betTypeLabel = isWide ? "ワイド" : is7Plus ? "3連複" : pick.rank === "SS" ? "3連単" : "3連複";
+  const betTypeLabel = "3連複"; // ST行は pred_combo に券種込みのため未使用。R/CAND は常に3連複
   const comboLabel = pick.pred_combo
     ? `${isST ? pick.pred_combo : `${betTypeLabel}: ${pick.pred_combo}`}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
@@ -420,7 +415,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
             {pick.gap23 != null && !isMiwokuri && (
               <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
-                g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{(pick.gap23 * 100).toFixed(1)}</span>pt
+                {/* gap23 は DB 格納時点で pt スケール（gap12/gap34 と異なり ×100 済み） */}
+                g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.gap23.toFixed(1)}</span>pt
               </span>
             )}
             {pick.prerace_gami != null && !isMiwokuri && !isTrifectaRow && (
@@ -525,7 +521,10 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
     ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
     : "—";
   const byRank = data.by_rank ?? {};
-  const hasRanks = showRanks && RANK_ORDER.some(r => (byRank[r]?.n_picks ?? 0) > 0);
+  // 購入0件でも候補があったランクは行を出す（候補数可視化のため。API側も購入0件ランクを返す）
+  const hasRanks = showRanks && RANK_ORDER.some(
+    r => (byRank[r]?.n_picks ?? 0) > 0 || (byRank[r]?.n_candidates ?? 0) > 0,
+  );
 
   return (
     <>
@@ -562,7 +561,7 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
       </tr>
       {hasRanks && RANK_ORDER.map(rk => {
         const rd = byRank[rk];
-        if (!rd || rd.n_picks === 0) return null;
+        if (!rd || (rd.n_picks === 0 && (rd.n_candidates ?? 0) === 0)) return null;
         return <RankSubRow key={rk} rankKey={rk} data={rd} />;
       })}
     </>

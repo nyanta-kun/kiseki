@@ -32,8 +32,9 @@ function addDays(iso: string, days: number): string {
 }
 
 function todayISO(): string {
-  const now = new Date(new Date().toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" }));
-  return now.toISOString().slice(0, 10);
+  // JST の今日。toLocaleDateString("sv-SE") は YYYY-MM-DD を直接返す
+  // （Date への再パース→toISOString は実行環境 TZ で日付がずれるため使わない）
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
 function formatROI(roi: number | null): string {
