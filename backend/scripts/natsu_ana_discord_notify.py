@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
@@ -160,7 +161,11 @@ def build_message(picks: list[dict], target_date: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=date.today().strftime("%Y%m%d"))
+    # コンテナはUTCのため date.today() だと JST 朝の実行時に前日になり得る。JST固定で当日を求める
+    parser.add_argument(
+        "--date",
+        default=datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d"),
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="Discord送信せず標準出力のみ")
     args = parser.parse_args()
