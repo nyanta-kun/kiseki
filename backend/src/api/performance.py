@@ -471,28 +471,35 @@ async def get_performance_summary(
 
         # 2. odds_history で不足分を補完。
         #    payout_covered_race_ids 外のレース（未確定）に加え、
-        #    カバー済みレースでも着外馬は race_payouts に存在しないため全 race_ids を対象とする。
+        #    カバー済みレースでも着外馬は race_payouts に存在しないため補完が必要。
+        #    実際に参照されるのは各レース予測1位馬の (race_id, horse_number) のみ
+        #    なので、そのペアだけを LATERAL + index で直接引く
+        #    （旧: 全馬×全スナップショットの ROW_NUMBER 走査で90日集計に約130秒）。
         #    race_payouts の確定払戻（place_odds_map 登録済み）は上書きしない。
-        fallback_rows = (
-            await db.execute(
-                text("""
-                    SELECT race_id, combination::int AS horse_number, odds
-                    FROM (
-                        SELECT race_id, combination, odds,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY race_id, combination
-                                   ORDER BY fetched_at DESC
-                               ) AS rn
-                        FROM keiba.odds_history
-                        WHERE bet_type = 'place'
-                          AND combination ~ '^[0-9]+$'
-                          AND race_id = ANY(:race_ids)
-                    ) t
-                    WHERE rn = 1
-                """),
-                {"race_ids": race_ids},
-            )
-        ).fetchall()
+        pair_rids = [r.race_id for r in rows if r.horse_number is not None]
+        pair_hns = [int(r.horse_number) for r in rows if r.horse_number is not None]
+        fallback_rows = []
+        if pair_rids:
+            fallback_rows = (
+                await db.execute(
+                    text("""
+                        SELECT p.race_id, p.horse_number, oh.odds
+                        FROM unnest(
+                            CAST(:pair_rids AS int[]), CAST(:pair_hns AS int[])
+                        ) AS p(race_id, horse_number)
+                        CROSS JOIN LATERAL (
+                            SELECT odds
+                            FROM keiba.odds_history
+                            WHERE race_id = p.race_id
+                              AND bet_type = 'place'
+                              AND combination = p.horse_number::text
+                            ORDER BY fetched_at DESC
+                            LIMIT 1
+                        ) oh
+                    """),
+                    {"pair_rids": pair_rids, "pair_hns": pair_hns},
+                )
+            ).fetchall()
         for pr in fallback_rows:
             key = (pr.race_id, pr.horse_number)
             if key not in place_odds_map:  # race_payouts の確定払戻を上書きしない
