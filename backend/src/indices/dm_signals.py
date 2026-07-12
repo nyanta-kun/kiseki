@@ -198,6 +198,7 @@ def compute_dm_signals(
     course_name: str | None = None,
     surface: str | None = None,
     distance: float | int | None = None,
+    exclude_horse_numbers: set[int] | None = None,
 ) -> None:
     """各馬に DM シグナルタグを付与する (in-place)。
 
@@ -212,9 +213,12 @@ def compute_dm_signals(
         course_name: レース場名 ("中山","東京",...)。条件別フィルタに使用。
         surface: 馬場 ("芝","ダート","障害")。条件別フィルタに使用。
         distance: 距離 (m)。条件別フィルタに使用。
+        exclude_horse_numbers: 出走取消・発走除外馬の馬番セット。
+                               シグナル判定・順位計算の母集団から除外する
+                               (取消馬の DM 欠損でレース全体が全消しになるのを防ぐ)。
 
     DM 値 (time/battle) のいずれかが NULL のレースではシグナルは付与されない
-    (中途半端なシグナルを避けるため)。
+    (中途半端なシグナルを避けるため)。除外馬はこの判定にも含めない。
 
     条件 (course/surface/distance) が渡されない場合は条件絞り込みなし
     (旧挙動互換)。
@@ -225,6 +229,12 @@ def compute_dm_signals(
     # 全馬の dm_signals を [] に初期化 (None だと未計算と区別できない)
     for h in horses:
         h.dm_signals = []
+
+    # 取消・除外馬を母集団から外す（dm_signals は [] のまま）
+    excluded = exclude_horse_numbers or set()
+    horses = [h for h in horses if h.horse_number not in excluded]
+    if not horses:
+        return
 
     # DM データがレース内で揃っているか確認 (1頭でも NULL ならスキップ)
     if any(h.jvan_time_dm is None or h.jvan_battle_dm is None for h in horses):

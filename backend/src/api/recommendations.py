@@ -203,7 +203,7 @@ class SubmitRequest(BaseModel):
 
 
 def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
-    """build_sweet_spot_recommendations() が返す dict を RecommendationOut に変換。"""
+    """推奨候補 dict（build_hit_tier_recommendations 系の共通スキーマ）を RecommendationOut に変換。"""
     race_info = RaceInfo(
         race_id=c["race_id"],
         course_name=c["course_name"],

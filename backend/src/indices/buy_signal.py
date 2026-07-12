@@ -115,6 +115,25 @@ SWEET_SPOT_MIN_EV: float = 1.2
 SWEET_SPOT_MAX_EV: float = 5.0
 
 
+def is_external_dark_horse(
+    composite_rank: int | None,
+    nb_course_rank: int | None,
+    nb_ave_rank: int | None,
+    km_rank: int | None,
+) -> bool:
+    """外部指数穴馬判定（単一の真実源。フロントは API のフラグを表示するだけ）。
+
+    シミュレーション実績:
+      - CI4位以下 ∧ netkeibaコース指数1位: 単勝ROI +105〜355%（平場芝）
+      - CI4位以下 ∧ NB上位2 ∧ KM1位: 単勝ROI +126%（芝）
+    """
+    if composite_rank is None or composite_rank < 4:
+        return False
+    if nb_course_rank == 1:
+        return True
+    return nb_ave_rank is not None and nb_ave_rank <= 2 and km_rank == 1
+
+
 def is_sweet_spot(
     win_odds: float | None,
     win_probability: float | None,
@@ -155,11 +174,8 @@ def is_sweet_spot(
         and composite_rank >= 2
     ):
         return True
-    if composite_rank is not None and composite_rank >= 4:
-        if nb_course_rank == 1:
-            return True
-        if nb_ave_rank is not None and nb_ave_rank <= 2 and km_rank == 1:
-            return True
+    if is_external_dark_horse(composite_rank, nb_course_rank, nb_ave_rank, km_rank):
+        return True
     return False
 
 

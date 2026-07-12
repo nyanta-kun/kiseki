@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..betting.place_ev import SUB_INDEX_COLUMNS, get_place_ev_model
 from ..db.models import (
     CalculatedIndex,
+    EntryChange,
     Horse,
     Jockey,
     OddsHistory,
@@ -39,7 +40,12 @@ from ..db.models import (
     Trainer,
 )
 from ..db.session import get_db
-from ..indices.buy_signal import is_sweet_spot, jra_buy_signal, jra_horse_purchase_signal
+from ..indices.buy_signal import (
+    is_external_dark_horse,
+    is_sweet_spot,
+    jra_buy_signal,
+    jra_horse_purchase_signal,
+)
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
@@ -423,6 +429,9 @@ class HorseIndexOut(BaseModel):
     # 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
     # （DM signals / purchase_signal / 穴ぐさA/B/C(1位以外) / 外部指数穴馬）
     is_sweet_spot: bool = False
+    # 外部指数穴馬該当（CI4位以下 ∧ (NBコース1位 or (NB総合≤2 ∧ KM1位))）
+    # フロントの「外◎/外○」バッジはこのフラグを表示する（判定の単一真実源は buy_signal.py）
+    is_ext_dark_horse: bool = False
     # 複勝EVモデルが選んだ「人気薄1頭 複勝EV軸」該当（毎レース最大1頭・memory: place_ev_model）
     # 条件: 単勝≥10 ∧ 較正複勝率≥フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭
     is_place_ev_axis: bool = False
@@ -1070,6 +1079,29 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             if hn in place_odds_map and odds_val is not None:
                 place_odds_map[hn] = float(odds_val)
 
+    # 出走取消・発走除外馬を収集（DMシグナルの母集団から除外する）
+    # 取消馬は race_entries に残存し、DM 欠損だと「1頭でも NULL → レース全馬
+    # シグナルなし」判定でレース全体のシグナルが消えるため
+    scratched_hns: set[int] = set()
+    ec_rows = await db.execute(
+        select(EntryChange.horse_id)
+        .where(EntryChange.race_id == race_id)
+        .where(EntryChange.change_type == "scratch")
+    )
+    scratched_ids = {r for (r,) in ec_rows.all() if r is not None}
+    if scratched_ids:
+        scratched_hns |= {
+            e.horse_number
+            for _, e, _ in unique_rows
+            if e.horse_id in scratched_ids and e.horse_number is not None
+        }
+    rr_abn_rows = await db.execute(
+        select(RaceResult.horse_number)
+        .where(RaceResult.race_id == race_id)
+        .where(RaceResult.abnormality_code.in_([1, 2]))
+    )
+    scratched_hns |= {hn for (hn,) in rr_abn_rows.all() if hn is not None}
+
     # DM シグナルタグ算出（オッズから人気を導出して付与）
     # 条件 (場/馬場/距離) を渡して低信頼セグメントを自動除外
     popularity_map = popularity_from_odds(horse_numbers, win_odds_map)
@@ -1080,6 +1112,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         course_name=race.course_name,
         surface=race.surface,
         distance=race.distance,
+        exclude_horse_numbers=scratched_hns,
     )
 
     # 購入シグナル算出（v26 breakaway ROI 検証ベース）
@@ -1107,6 +1140,13 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             dm_signals=h.dm_signals,
             purchase_signal=h.purchase_signal,
             anagusa_rank=h.anagusa_rank,
+            nb_course_rank=h.nb_course_rank,
+            nb_ave_rank=h.nb_ave_rank,
+            km_rank=h.km_rank,
+        )
+        # 外部指数穴馬バッジ（フロントの「外◎/外○」表示用）
+        h.is_ext_dark_horse = is_external_dark_horse(
+            composite_rank=h.composite_rank,
             nb_course_rank=h.nb_course_rank,
             nb_ave_rank=h.nb_ave_rank,
             km_rank=h.km_rank,

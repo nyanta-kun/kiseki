@@ -190,6 +190,41 @@ def test_no_signals_when_dm_missing() -> None:
     assert horses[1].dm_signals == []
 
 
+def test_scratched_horse_excluded_from_population() -> None:
+    """取消馬（DM欠損）を exclude_horse_numbers で除外すれば残りの馬にシグナルが付く"""
+    horses = [
+        Horse(1, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),  # 取消馬
+        Horse(2, composite_index=75.0, jvan_time_dm=80.0, jvan_battle_dm=80.0),
+        Horse(3, composite_index=60.0, jvan_time_dm=60.0, jvan_battle_dm=60.0),
+    ]
+    compute_dm_signals(
+        horses,
+        popularity_map={2: 1, 3: 2},
+        exclude_horse_numbers={1},
+    )
+    # 取消馬はシグナルなし（空リスト）のまま
+    assert horses[0].dm_signals == []
+    # 残りの馬は取消馬を除いた母集団で判定され、シグナルが付く
+    assert SIGNAL_TRIPLE_MATCH in (horses[1].dm_signals or [])
+
+
+def test_scratched_horse_excluded_from_ranks() -> None:
+    """除外馬は順位計算にも含まれない（除外馬が1位相当でも残り馬が rank=1 になる）"""
+    horses = [
+        Horse(1, composite_index=90.0, jvan_time_dm=90.0, jvan_battle_dm=90.0),  # 取消馬（最強）
+        Horse(2, composite_index=75.0, jvan_time_dm=80.0, jvan_battle_dm=80.0),
+        Horse(3, composite_index=60.0, jvan_time_dm=60.0, jvan_battle_dm=60.0),
+    ]
+    compute_dm_signals(
+        horses,
+        popularity_map={2: 1, 3: 2},
+        exclude_horse_numbers={1},
+    )
+    # 除外馬を除くと馬番2が base/time/battle すべて1位 → 三冠一致
+    assert SIGNAL_TRIPLE_MATCH in (horses[1].dm_signals or [])
+    assert horses[0].dm_signals == []
+
+
 def test_no_popularity_skips_popularity_signals() -> None:
     """popularity_map なしなら 人気依存タグ (ANAGUSA_DM/DM_BIG_DARK/POPULAR_DOWNSIDE) は発動しない"""
     horses = [
