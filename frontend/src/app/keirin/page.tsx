@@ -88,6 +88,22 @@ function nextDay(yyyymmdd: string): string {
   return d.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
+// 月移動（月末日超過は移動先の月末にクランプ。例: 3/31 → 2/28）
+function addMonths(yyyymmdd: string, delta: number): string {
+  const y = parseInt(yyyymmdd.slice(0, 4), 10);
+  const m = parseInt(yyyymmdd.slice(4, 6), 10) - 1;
+  const day = parseInt(yyyymmdd.slice(6, 8), 10);
+  const lastDay = new Date(Date.UTC(y, m + delta + 1, 0)).getUTCDate();
+  const d = new Date(Date.UTC(y, m + delta, Math.min(day, lastDay)));
+  return d.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+// 未来日は今日にクランプ（YYYYMMDD は文字列比較で大小判定可能）
+function clampToToday(yyyymmdd: string): string {
+  const today = todayYYYYMMDD();
+  return yyyymmdd > today ? today : yyyymmdd;
+}
+
 function formatROI(roi: number | null): string {
   if (roi == null) return "—";
   return (roi * 100).toFixed(1) + "%";
@@ -713,24 +729,77 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
 }
 
 // ---------------------------------------------------------------------------
-// メインページ
+// 日付ナビ（前月・前日・今日・日付指定・翌日・翌月）
 // ---------------------------------------------------------------------------
 
-function nextPickId(picks: KeirinPick[]): string | null {
-  const nowSec = Date.now() / 1000;
-  const upcoming = picks
-    .filter((p) => {
-      if (!p.has_pick || p.id == null) return false;
-      const ts = typeof p.start_at === "number" ? p.start_at : parseInt(String(p.start_at ?? ""), 10);
-      return !isNaN(ts) && ts > nowSec && p.status < 3;
-    })
-    .sort((a, b) => {
-      const ta = typeof a.start_at === "number" ? a.start_at : parseInt(String(a.start_at ?? ""), 10);
-      const tb = typeof b.start_at === "number" ? b.start_at : parseInt(String(b.start_at ?? ""), 10);
-      return ta - tb;
-    });
-  return upcoming.length > 0 ? `pick-${upcoming[0].id}` : null;
+const DATE_NAV_BTN_CLS =
+  "px-2 sm:px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-xs sm:text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-center whitespace-nowrap flex-shrink-0";
+
+function DateNav({ date, onChange }: { date: string; onChange: (d: string) => void }) {
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const isToday = date === todayYYYYMMDD();
+
+  const openPicker = () => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    try { input.showPicker(); } catch { input.click(); }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-1 sm:gap-2">
+      <button onClick={() => onChange(addMonths(date, -1))} className={DATE_NAV_BTN_CLS} aria-label="前月">
+        ≪<span className="hidden sm:inline"> 前月</span>
+      </button>
+      <button onClick={() => onChange(prevDay(date))} className={DATE_NAV_BTN_CLS} aria-label="前日">
+        ←<span className="hidden sm:inline"> 前日</span>
+      </button>
+      {/* 中央: 今日ボタン（非今日時のみ）+ 日付表示（タップでピッカー） */}
+      <div className="flex items-center justify-center gap-1.5 sm:gap-2 flex-1 min-w-0">
+        {!isToday && (
+          <button
+            onClick={() => onChange(todayYYYYMMDD())}
+            className="text-[11px] px-1.5 sm:px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors whitespace-nowrap flex-shrink-0"
+          >
+            今日
+          </button>
+        )}
+        <div className="relative min-w-0">
+          <button
+            onClick={openPicker}
+            className="flex items-center gap-1 text-xs sm:text-sm font-semibold text-gray-800 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap"
+            aria-label="日付を選択"
+          >
+            {fmtYMD(date)}
+            <span className="text-sm leading-none">📅</span>
+          </button>
+          <input
+            key={date}
+            ref={dateInputRef}
+            type="date"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+            defaultValue={toISODate(date)}
+            onChange={(e) => {
+              const v = e.target.value.replace(/-/g, "");
+              if (v.length === 8) onChange(v);
+            }}
+          />
+        </div>
+      </div>
+      <button onClick={() => onChange(nextDay(date))} disabled={isToday} className={DATE_NAV_BTN_CLS} aria-label="翌日">
+        <span className="hidden sm:inline">翌日 </span>→
+      </button>
+      <button onClick={() => onChange(clampToToday(addMonths(date, 1)))} disabled={isToday} className={DATE_NAV_BTN_CLS} aria-label="翌月">
+        <span className="hidden sm:inline">翌月 </span>≫
+      </button>
+    </div>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// メインページ
+// ---------------------------------------------------------------------------
 
 const HIDE_NOPICK_KEY = "keirin:hideNoPickRows";
 
@@ -746,16 +815,8 @@ export default function KeirinPage() {
   const [fetchingResults, setFetchingResults] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [hideNoPickRows, setHideNoPickRows] = useState(false);
-  const dateInputRef = useRef<HTMLInputElement>(null);
   const isToday = date === todayYYYYMMDD();
-  const nextId = isToday ? nextPickId(picks) : null;
   const hasCand = picks.some((p) => p.race_key.includes("#CAND"));
-
-  const openPicker = () => {
-    const input = dateInputRef.current;
-    if (!input) return;
-    try { input.showPicker(); } catch { input.click(); }
-  };
 
   const loadData = useCallback(async (d: string) => {
     setLoadingPicks(true);
@@ -820,7 +881,7 @@ export default function KeirinPage() {
   }, [date, loadData]);
 
   useEffect(() => {
-    void loadData(date); // eslint-disable-line react-hooks/set-state-in-effect
+    void loadData(date);
   }, [date, loadData]);
 
   useEffect(() => {
@@ -865,70 +926,7 @@ export default function KeirinPage() {
       )}
 
       {/* 日付ナビ */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => setDate(prevDay(date))}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200"
-        >
-          ← 前日
-        </button>
-        <div className="flex items-center gap-2">
-          {!isToday && (
-            <button
-              onClick={() => setDate(todayYYYYMMDD())}
-              className="text-[11px] px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
-              今日
-            </button>
-          )}
-          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{fmtYMD(date)}</span>
-          <div className="relative">
-            <button
-              onClick={openPicker}
-              className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors text-base leading-none"
-              aria-label="日付を選択"
-            >
-              📅
-            </button>
-            <input
-              key={date}
-              ref={dateInputRef}
-              type="date"
-              aria-hidden="true"
-              tabIndex={-1}
-              className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-              defaultValue={toISODate(date)}
-              onChange={(e) => {
-                const v = e.target.value.replace(/-/g, "");
-                if (v.length === 8) setDate(v);
-              }}
-            />
-          </div>
-        </div>
-        <button
-          onClick={() => setDate(nextDay(date))}
-          disabled={isToday}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          翌日 →
-        </button>
-      </div>
-
-      {/* 採点更新ボタン：#CAND レコードがある場合のみ表示 */}
-      {hasCand && (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex-1 px-3 py-2 rounded-lg border border-orange-300 dark:border-orange-600 text-sm font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {refreshing ? "採点中…" : "⚡ 採点更新"}
-          </button>
-          {refreshMsg && (
-            <span className="text-xs text-gray-500 dark:text-gray-400">{refreshMsg}</span>
-          )}
-        </div>
-      )}
+      <DateNav date={date} onChange={setDate} />
 
       {/* エラー */}
       {error && (
@@ -991,57 +989,45 @@ export default function KeirinPage() {
         className="fixed bottom-14 left-0 right-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-t border-gray-200 dark:border-gray-700 md:bottom-0"
       >
         <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
-          {/* 行1: 日付ナビ */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setDate(prevDay(date))}
-              className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 text-center"
-            >
-              ← 前日
-            </button>
-            {nextId ? (
-              <button
-                onClick={() => {
-                  document.getElementById(nextId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-                className="flex-[2] px-3 py-1.5 rounded-lg border border-blue-400 dark:border-blue-500 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-center truncate"
-              >
-                次のレース ↓
-              </button>
-            ) : (
-              <div className="flex-[2] px-3 py-1.5 text-sm text-gray-400 dark:text-gray-500 text-center">
-                {isToday ? "終了" : fmtYMD(date)}
-              </div>
-            )}
-            <button
-              onClick={() => setDate(nextDay(date))}
-              disabled={isToday}
-              className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-center"
-            >
-              翌日 →
-            </button>
-          </div>
-          {/* 行2: 今日のみ — オッズ更新・結果取得 */}
-          {isToday && (
+          {/* 行1: 日付ナビ（前月・前日・今日・日付指定・翌日・翌月） */}
+          <DateNav date={date} onChange={setDate} />
+          {/* 行2: アクション（採点更新・オッズ更新・結果取得） */}
+          {(hasCand || isToday) && (
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleFetchOdds}
-                disabled={fetchingOdds}
-                className="flex-1 px-2 py-1.5 rounded-lg border border-cyan-300 dark:border-cyan-600 text-xs font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center"
-              >
-                {fetchingOdds ? "更新中…" : "📊 オッズ更新"}
-              </button>
-              <button
-                onClick={handleFetchResults}
-                disabled={fetchingResults}
-                className="flex-1 px-2 py-1.5 rounded-lg border border-violet-300 dark:border-violet-600 text-xs font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center"
-              >
-                {fetchingResults ? "取得中…" : "📋 結果取得"}
-              </button>
-              {actionMsg && (
-                <span className="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">{actionMsg}</span>
+              {hasCand && (
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  className="flex-1 px-2 py-1.5 rounded-lg border border-orange-300 dark:border-orange-600 text-xs font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
+                >
+                  {refreshing ? "採点中…" : "⚡ 採点更新"}
+                </button>
+              )}
+              {isToday && (
+                <>
+                  <button
+                    onClick={handleFetchOdds}
+                    disabled={fetchingOdds}
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-cyan-300 dark:border-cyan-600 text-xs font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
+                  >
+                    {fetchingOdds ? "更新中…" : "📊 オッズ更新"}
+                  </button>
+                  <button
+                    onClick={handleFetchResults}
+                    disabled={fetchingResults}
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-violet-300 dark:border-violet-600 text-xs font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
+                  >
+                    {fetchingResults ? "取得中…" : "📋 結果取得"}
+                  </button>
+                </>
               )}
             </div>
+          )}
+          {/* アクション実行メッセージ */}
+          {(refreshMsg || actionMsg) && (
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight text-center">
+              {refreshMsg ?? actionMsg}
+            </p>
           )}
         </div>
       </div>
