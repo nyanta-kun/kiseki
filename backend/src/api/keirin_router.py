@@ -129,7 +129,9 @@ async def get_picks(
                   ph.route,
                   COALESCE(ph.miwokuri, FALSE) AS miwokuri,
                   ph.prerace_gami,
-                  ph.gap23
+                  ph.gap12,
+                  ph.gap23,
+                  ph.gap34
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
@@ -168,7 +170,9 @@ async def get_picks(
                   ph.route,
                   COALESCE(ph.miwokuri, FALSE) AS miwokuri,
                   ph.prerace_gami,
+                  ph.gap12,
                   ph.gap23,
+                  ph.gap34,
                   wr.race_no,
                   wr.grade,
                   wr.race_type,
@@ -241,7 +245,9 @@ async def get_picks(
             "bet_amount": (r["bet_amount"] or 0) if has_pick else 0,
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
+            "gap12": float(r["gap12"]) if (has_pick and r.get("gap12") is not None) else None,
             "gap23": float(r["gap23"]) if (has_pick and r.get("gap23") is not None) else None,
+            "gap34": float(r["gap34"]) if (has_pick and r.get("gap34") is not None) else None,
             "entries": [
                 {
                     "frame_no": e["frame_no"],

@@ -13,6 +13,60 @@ import { todayYYYYMMDD } from "@/lib/utils";
 // ガミ足切り閾値（keirin側と揃える）: レース単位 min(全目)≥7.0（2026-07-10 SS/S→R置き換え）
 const GAMI_THRESHOLD = 7.0;
 
+// 候補ランク判定閾値（keirin側 notify_prerace_wt.py の定数と揃える）
+// SS(7PLUS_R):   gap12≥0.10 ∧ gap23≥1pt ∧ 三連複min≥7（オッズ条件は発走前確定）
+// S(7PLUS_ST):   gap12≥0.15 ∧ 三連単min≥10
+// S+(7PLUS_STP): S条件 ∧ gap12≥0.25 ∧ gap34≥0.04（200円/点に増額）
+const SS_GAP12 = 0.10;
+const SS_GAP23_PT = 1.0;
+const S_GAP12 = 0.15;
+const SP_GAP12 = 0.25;
+const SP_GAP34 = 0.04;
+
+type CandRank = "SS" | "S" | "S+";
+
+// 候補(7PLUS_CAND)が指数条件上なり得るランク。オッズ条件（三連複min≥7 / 三連単min≥10）
+// は発走前まで未確定のため、ここでは gap 条件のみで可能性を判定する。
+// S と S+ は gap 条件で排他（S+ 成立時は S にならない）。SS は S/S+ と併存し得る
+// （SS=三連複・S/S+=三連単の別行購入）。gap 未取得（過去日等）は空を返す。
+function candPossibleRanks(pick: KeirinPick): CandRank[] {
+  if (pick.rank !== "7PLUS_CAND" || pick.gap12 == null) return [];
+  const ranks: CandRank[] = [];
+  if (pick.gap12 >= SS_GAP12 && (pick.gap23 == null || pick.gap23 >= SS_GAP23_PT)) {
+    ranks.push("SS");
+  }
+  if (pick.gap12 >= S_GAP12) {
+    if (pick.gap12 >= SP_GAP12 && pick.gap34 != null && pick.gap34 >= SP_GAP34) {
+      ranks.push("S+");
+    } else {
+      ranks.push("S");
+    }
+  }
+  return ranks;
+}
+
+// 候補の pred_combo「p1-p2-t1,t2,..」をパースする（三連複フォーメーション）
+function parseCandCombo(pred: string | null): { p1: string; p2: string; thirds: string[] } | null {
+  if (!pred || pred.includes(":")) return null;
+  const parts = pred.split("-");
+  if (parts.length < 3) return null;
+  const thirds = parts[2].split(",").filter(Boolean);
+  if (!parts[0] || !parts[1] || thirds.length === 0) return null;
+  return { p1: parts[0], p2: parts[1], thirds };
+}
+
+// ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
+// 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
+// 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
+// 三連単行(S/S+)の prerace_gami は三連複基準の値のためガミ判定に使わない
+// （三連単のガミ条件は三連単オッズ min≥10 で判定済み・購入行にガミ落ちは存在しない）。
+// 購入済み R(SS) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
+function computeGamiSkip(pick: KeirinPick): boolean {
+  const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
+  const pgBelow = !isTrifectaRow && pick.prerace_gami != null && pick.prerace_gami < GAMI_THRESHOLD;
+  return pgBelow && (pick.miwokuri || pick.rank !== "7PLUS_R");
+}
+
 function fmtYMD(yyyymmdd: string): string {
   if (yyyymmdd.length !== 8) return yyyymmdd;
   return `${yyyymmdd.slice(0, 4)}/${yyyymmdd.slice(4, 6)}/${yyyymmdd.slice(6, 8)}`;
@@ -69,6 +123,46 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
 // ---------------------------------------------------------------------------
 // サブコンポーネント
 // ---------------------------------------------------------------------------
+
+// 候補ランクチップ（該当し得るランクの表示。RANK_STYLE と同系色のアウトライン表示）
+const CAND_RANK_CHIP_STYLE: Record<CandRank, string> = {
+  "SS": "border-amber-500 text-amber-600 dark:text-amber-400",
+  "S":  "border-blue-600 text-blue-600 dark:text-blue-400",
+  "S+": "border-indigo-500 text-indigo-600 dark:text-indigo-400",
+};
+
+function CandRankChip({ rank }: { rank: CandRank }) {
+  return (
+    <span className={`inline-flex items-center justify-center min-w-5 px-1 h-4 rounded border text-[10px] font-bold flex-shrink-0 ${CAND_RANK_CHIP_STYLE[rank]}`}>
+      {rank}
+    </span>
+  );
+}
+
+// 候補行のランク別買い目（SS=三連複全目 / S・S+=三連単1着固定フォーメーション）
+function CandBuyLines({ ranks, combo }: { ranks: CandRank[]; combo: { p1: string; p2: string; thirds: string[] } }) {
+  const stRank = ranks.find((r) => r === "S" || r === "S+");
+  return (
+    <div className="flex-1 min-w-0 space-y-0.5">
+      {ranks.includes("SS") && (
+        <div className="flex items-center gap-1.5 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200">
+          <CandRankChip rank="SS" />
+          <span className="break-words min-w-0">
+            3連複: {combo.p1}-{combo.p2}-{combo.thirds.join(",")} ({combo.thirds.length}点)
+          </span>
+        </div>
+      )}
+      {stRank && (
+        <div className="flex items-center gap-1.5 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200">
+          <CandRankChip rank={stRank} />
+          <span className="break-words min-w-0">
+            3連単F: {combo.p1}→{combo.p2},{combo.thirds[0]}→全 ({combo.thirds.length * 2}点・{stRank === "S+" ? 200 : 100}円/点)
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RankBadge({ rank, gamiStatus }: { rank: string; gamiStatus?: "ok" | "ng" | null }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
@@ -331,24 +425,17 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const [collapsed, setCollapsed] = useState(true);
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
-  // ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
-  // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
-  // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
-  // 未購入なら SS も対象（購入済み SS はカット後最安値が prerace_gami のため 閾値未満 にならない）。
-  // prerace_gami>=閾値 の見送りは別条件（合成オッズ/gap23/gap12）不成立 → 通常の見送り表示。
   const gamiThr = GAMI_THRESHOLD;
-  // 三連単行(S/S+)の prerace_gami は三連複基準の値のためガミ判定に使わない
-  // （三連単のガミ条件は三連単オッズ min≥10 で判定済み・購入行にガミ落ちは存在しない）
   const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
-  const pgBelow = !isTrifectaRow && pick.prerace_gami !== null && pick.prerace_gami !== undefined && pick.prerace_gami < gamiThr;
-  // 購入済み R(SS) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
-  // 旧 "7PLUS_SS"（廃止済み内部名）への参照は 2026-07-12 に現行 "7PLUS_R" へ更新。
-  const isGamiSkip = pgBelow && (isMiwokuri || pick.rank !== "7PLUS_R");
+  const isGamiSkip = computeGamiSkip(pick);
   const gamiStatus: "ok" | "ng" | null = !isTrifectaRow && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
 
   const rankStr = pick.rank ?? "";
+  // 候補行: 指数条件上なり得るランクと、ランク別買い目（SS=三連複 / S・S+=三連単F）
+  const candRanks = candPossibleRanks(pick);
+  const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
   // 三連単S/S+ (7PLUS_ST/STP) の pred_combo は「3連単F: 1→2,3→全」形式（券種プレフィックス込み）
   const isST = rankStr.startsWith("7PLUS_ST");
   const betTypeLabel = "3連複"; // ST行は pred_combo に券種込みのため未使用。R/CAND は常に3連複
@@ -368,6 +455,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
       >
         {/* 左バッジは常に元表示（購入=SS/S/S+・見送り=候補）。理由は右側表示で判別 */}
         <RankBadge rank={rankStr} gamiStatus={gamiStatus} />
+        {/* 候補行: 指数条件上なり得るランクをチップで表示 */}
+        {candRanks.length > 0 && !isGamiSkip && (
+          <span className="flex items-center gap-1 flex-shrink-0">
+            {candRanks.map((cr) => <CandRankChip key={cr} rank={cr} />)}
+          </span>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
@@ -403,11 +496,15 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
       {/* 展開時コンテンツ */}
       {!collapsed && (
         <>
-          {/* 買い目行 */}
+          {/* 買い目行（候補行はランク別買い目・それ以外は確定買い目） */}
           <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 sm:gap-3">
-            <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
-              {comboLabel ?? "—"}
-            </span>
+            {candRanks.length > 0 && candCombo ? (
+              <CandBuyLines ranks={candRanks} combo={candCombo} />
+            ) : (
+              <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
+                {comboLabel ?? "—"}
+              </span>
+            )}
             {pick.synth_odds != null && !isMiwokuri && (
               <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
                 合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
@@ -851,7 +948,7 @@ export default function KeirinPage() {
         </div>
       ) : (
         <>
-          {picks.some(p => !p.has_pick) && (
+          {picks.some(p => !p.has_pick || computeGamiSkip(p)) && (
             <div className="flex items-center justify-end gap-2">
               <span className="text-xs text-gray-400">推奨外を非表示</span>
               <button
@@ -878,6 +975,8 @@ export default function KeirinPage() {
                 if (hideNoPickRows) return null;
                 return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
               }
+              // ガミ落ち（オッズ条件で推奨外確定）も「推奨外を非表示」スイッチで隠す
+              if (hideNoPickRows && computeGamiSkip(p)) return null;
               return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
             })}
           </div>

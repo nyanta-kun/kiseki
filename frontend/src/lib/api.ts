@@ -954,7 +954,12 @@ export type KeirinPick = {
   pred_combo: string | null;
   n_combos: number | null;
   synth_odds: number | null;
+  /** 指数1-2位の予測確率差（0-1スケール） */
+  gap12: number | null;
+  /** 指数2-3位の予測確率差（ptスケール=×100済み） */
   gap23: number | null;
+  /** 指数3-4位の予測確率差（0-1スケール） */
+  gap34: number | null;
   hit: boolean;
   payout: number;
   trio_payout: number;
