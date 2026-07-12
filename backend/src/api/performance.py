@@ -775,40 +775,8 @@ async def get_odds_data(
     for row in rows:
         race_groups[row.race_id].append(row)
 
-    # --- 複勝オッズを odds_history のみから取得（感度分析専用） ---
-    # race_payouts は3着以内の馬しか記録しないため「着外予測1位馬」のオッズが欠落し、
-    # 分母が着馬のみになって ROI が大幅に過大評価される。
-    # odds_history（事前オッズ）は着否にかかわらず全馬を記録するため感度分析に適している。
-    # odds_history のカバレッジは 2026/03/28 以降のため、それ以前は has_place_odds=False になる。
-    race_ids = list(race_groups.keys())
-    place_odds_map: dict[tuple[int, int], float] = {}
-    if race_ids:
-        history_rows = (
-            await db.execute(
-                text("""
-                    SELECT race_id, combination::int AS horse_number, odds
-                    FROM (
-                        SELECT race_id, combination, odds,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY race_id, combination
-                                   ORDER BY fetched_at DESC
-                               ) AS rn
-                        FROM keiba.odds_history
-                        WHERE bet_type = 'place'
-                          AND combination ~ '^[0-9]+$'
-                          AND race_id = ANY(:race_ids)
-                    ) t
-                    WHERE rn = 1
-                """),
-                {"race_ids": race_ids},
-            )
-        ).fetchall()
-        for pr in history_rows:
-            place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
-
-    # --- レースごとに予測1位馬のデータを抽出 ---
-    result: list[OddsDataPoint] = []
-
+    # --- レースごとに予測1位馬を確定 ---
+    predicted_winners: list[tuple[int, Any]] = []  # (race_id, 予測1位馬の行)
     for race_id, horses in race_groups.items():
         # 条件フィルタ（Python側）
         sample = horses[0]
@@ -829,8 +797,53 @@ async def get_odds_data(
         sorted_by_pred = sorted(
             valid, key=lambda h: float(h.composite_index), reverse=True
         )
-        predicted_winner = sorted_by_pred[0]
+        predicted_winners.append((race_id, sorted_by_pred[0]))
 
+    # --- 複勝オッズを odds_history のみから取得（感度分析専用） ---
+    # race_payouts は3着以内の馬しか記録しないため「着外予測1位馬」のオッズが欠落し、
+    # 分母が着馬のみになって ROI が大幅に過大評価される。
+    # odds_history（事前オッズ）は着否にかかわらず全馬を記録するため感度分析に適している。
+    # odds_history のカバレッジは 2026/03/28 以降のため、それ以前は has_place_odds=False になる。
+    # 実際に参照されるのは各レース予測1位馬の (race_id, horse_number) のみなので、
+    # そのペアだけを LATERAL + index で直接引く
+    # （旧: 全馬×全スナップショットの ROW_NUMBER 走査で今月分でも約30秒）。
+    pair_rids = [
+        rid for rid, h in predicted_winners if h.horse_number is not None
+    ]
+    pair_hns = [
+        int(h.horse_number)
+        for _, h in predicted_winners
+        if h.horse_number is not None
+    ]
+    place_odds_map: dict[tuple[int, int], float] = {}
+    if pair_rids:
+        history_rows = (
+            await db.execute(
+                text("""
+                    SELECT p.race_id, p.horse_number, oh.odds
+                    FROM unnest(
+                        CAST(:pair_rids AS int[]), CAST(:pair_hns AS int[])
+                    ) AS p(race_id, horse_number)
+                    CROSS JOIN LATERAL (
+                        SELECT odds
+                        FROM keiba.odds_history
+                        WHERE race_id = p.race_id
+                          AND bet_type = 'place'
+                          AND combination = p.horse_number::text
+                        ORDER BY fetched_at DESC
+                        LIMIT 1
+                    ) oh
+                """),
+                {"pair_rids": pair_rids, "pair_hns": pair_hns},
+            )
+        ).fetchall()
+        for pr in history_rows:
+            place_odds_map[(pr.race_id, pr.horse_number)] = float(pr.odds)
+
+    # --- レースごとに予測1位馬のデータを抽出 ---
+    result: list[OddsDataPoint] = []
+
+    for race_id, predicted_winner in predicted_winners:
         win_pos = int(predicted_winner.finish_position)
         win_hit = win_pos == 1
         place_hit = win_pos <= 3
