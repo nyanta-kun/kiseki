@@ -1,6 +1,13 @@
 """地方競馬 直近30日 sweet_spot / place_bet / low_odds の実勢集計
 
-API レスポンスの summaries と同等のロジックを DB 直接で計算する。
+本番配信ロジック（src/indices/buy_signal.py の Phase2 ランキング規則）を
+そのまま import して DB 直接で実勢を計算する。
+条件をこのスクリプト内に複製しないことで、本番との乖離（旧: EVゲート9場の
+Phase1 条件が残存し、配信中の推奨と別母集団を集計していた）を防ぐ。
+
+注意:
+  - win_odds/place_odds は race_results の確定オッズを使用する。
+    本番配信は発走前オッズ判定のため、境界近傍で若干の差異が出うる。
 
 使い方:
   cd backend
@@ -11,8 +18,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
@@ -24,25 +32,18 @@ load_dotenv(_root.parent / ".env")
 import pandas as pd
 import psycopg2
 
+from src.indices.buy_signal import (
+    chihou_is_place_bet,
+    chihou_is_sweet_spot,
+    chihou_low_odds_trust_level,
+)
+from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
+
 DSN = (
     f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
     f"dbname={os.getenv('DB_NAME')} user={os.getenv('DB_USER')} "
     f"password={os.getenv('DB_PASSWORD')}"
 )
-
-# 推奨ロジックと同じ閾値
-SWEET_SPOT_COURSES = {"浦和", "水沢", "笠松", "園田", "佐賀", "高知", "姫路", "盛岡", "門別"}
-SS_MIN_ODDS = 10.0
-SS_MIN_EV = 1.0
-SS_MAX_EV = 2.0
-
-PB_FAV_ODDS_MAX = 2.0  # 1番人気 < 2.0
-PB_MIN_EV = 1.2
-PB_MAX_EV = 2.0
-
-LOW_ODDS_TRUSTED_MAX = 1.5  # 単勝 < 1.5
-LOW_ODDS_UNTRUSTED_MAX = 2.0  # 1.5 ≤ 単勝 < 2.0
-
 
 SQL = """
 SELECT
@@ -50,6 +51,7 @@ SELECT
     r.date,
     r.course_name,
     re.horse_number,
+    ci.composite_index::float       AS composite_index,
     ci.win_probability::float       AS win_probability,
     ci.place_probability::float     AS place_probability,
     rr.win_odds::float              AS win_odds,
@@ -61,7 +63,7 @@ JOIN chihou.race_entries re
     ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 JOIN chihou.race_results rr
     ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
-WHERE ci.version = 10
+WHERE ci.version = %s
   AND r.course != '83'
   AND r.head_count >= 6
   AND r.date >= %s
@@ -74,46 +76,64 @@ ORDER BY r.date, r.id, re.horse_number
 """
 
 
+def _apply_production_rules(df: pd.DataFrame) -> pd.DataFrame:
+    """本番の chihou_recommender と同じ順位・カテゴリ判定を各行に付与する。"""
+    df = df.copy()
+    # composite_index でレース内順位（降順・同値は先着）— recommender の rank_by_hn と同一
+    df["idx_rank"] = (
+        df.groupby("race_id")["composite_index"]
+        .rank(method="first", ascending=False)
+        .astype("Int64")
+    )
+    # 1番人気オッズ（レース内最低単勝）
+    df["fav_odds"] = df.groupby("race_id")["win_odds"].transform("min")
+
+    df["is_sweet_spot"] = df.apply(
+        lambda x: chihou_is_sweet_spot(
+            int(x["idx_rank"]) if pd.notna(x["idx_rank"]) else None,
+            x["win_odds"],
+            x["course_name"],
+        ),
+        axis=1,
+    )
+    df["is_place_bet"] = df.apply(
+        lambda x: chihou_is_place_bet(
+            int(x["idx_rank"]) if pd.notna(x["idx_rank"]) else None,
+            x["win_odds"],
+            x["fav_odds"],
+        ),
+        axis=1,
+    )
+    df["low_odds_level"] = df["win_odds"].map(chihou_low_odds_trust_level)
+    return df
+
+
 def aggregate_period(df: pd.DataFrame, label: str) -> None:
     print(f"\n{'='*70}")
     print(f"  {label}  ({df['date'].min()} 〜 {df['date'].max()}, レース数 {df.groupby(['date','race_id']).ngroups:,})")
     print('='*70)
-    df = df.copy()
-    df["ev"] = df["win_probability"] * df["win_odds"]
 
-    # ---------- sweet_spot: 単勝>=10 ∧ EV1.0-2.0 ∧ 9場 ∧ k<=2 (sweet該当馬数) ----------
-    ss_mask = (
-        (df["win_odds"] >= SS_MIN_ODDS)
-        & (df["ev"] >= SS_MIN_EV)
-        & (df["ev"] <= SS_MAX_EV)
-        & (df["course_name"].isin(SWEET_SPOT_COURSES))
-    )
-    ss = df[ss_mask].copy()
-    # k<=2 制約: レース内 sweet 該当馬数 が 1〜2 のみ採用
+    # ---------- sweet_spot (Phase2): 指数1位 ∧ 単勝10-30倍 ∧ 割安5場 ∧ k<=2 ----------
+    ss = df[df["is_sweet_spot"]].copy()
     ss_k = ss.groupby("race_id").size()
     ss = ss[ss["race_id"].isin(ss_k[ss_k <= 2].index)]
-    print_block("sweet_spot (高オッズ穴)", ss, bet="win")
+    print_block("sweet_spot (Phase2: 指数1位×10-30倍×割安5場)", ss, bet="win")
 
     # ---------- low_odds_trusted: 単勝<1.5、最低オッズ馬1頭/レース ----------
-    lo_t = df[df["win_odds"] < LOW_ODDS_TRUSTED_MAX]
+    lo_t = df[df["low_odds_level"] == "trusted"]
     lo_t = lo_t.sort_values(["race_id", "win_odds"]).drop_duplicates("race_id", keep="first")
     print_block("low_odds_trusted (単勝<1.5)", lo_t, bet="win")
 
     # ---------- low_odds_untrusted: 1.5<=単勝<2.0、最低オッズ馬1頭/レース ----------
-    lo_u = df[(df["win_odds"] >= LOW_ODDS_TRUSTED_MAX) & (df["win_odds"] < LOW_ODDS_UNTRUSTED_MAX)]
+    lo_u = df[df["low_odds_level"] == "untrusted"]
     lo_u = lo_u.sort_values(["race_id", "win_odds"]).drop_duplicates("race_id", keep="first")
     print_block("low_odds_untrusted (1.5<=単勝<2.0)", lo_u, bet="win")
 
-    # ---------- place_bet (複穴): 1番人気<2.0 ∧ 単勝>=10 ∧ EV1.2-2.0、複勝買い ----------
-    fav = df.sort_values(["race_id", "win_odds"]).groupby("race_id").first()["win_odds"]
-    target_races = fav[fav < PB_FAV_ODDS_MAX].index
-    pb = df[
-        (df["race_id"].isin(target_races))
-        & (df["win_odds"] >= SS_MIN_ODDS)
-        & (df["ev"] >= PB_MIN_EV)
-        & (df["ev"] <= PB_MAX_EV)
-    ]
-    print_block("place_bet (複穴: 断然人気R × EV1.2-2.0 × 複勝)", pb, bet="place")
+    # ---------- place_bet (Phase2): 断然人気R × 単勝>=10 × 指数3位以内 ∧ k<=2 ----------
+    pb = df[df["is_place_bet"]].copy()
+    pb_k = pb.groupby("race_id").size()
+    pb = pb[pb["race_id"].isin(pb_k[pb_k <= 2].index)]
+    print_block("place_bet (Phase2: 断然人気R×単勝>=10×指数3位以内)", pb, bet="place")
 
 
 def print_block(label: str, sub: pd.DataFrame, bet: str) -> None:
@@ -150,12 +170,16 @@ def main() -> None:
     p.add_argument("--days", type=int, default=30)
     args = p.parse_args()
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
     start = today - timedelta(days=args.days)
 
-    print(f"DB接続中... 期間: {start.strftime('%Y%m%d')} 〜 {today.strftime('%Y%m%d')}")
+    print(f"DB接続中... 期間: {start.strftime('%Y%m%d')} 〜 {today.strftime('%Y%m%d')} (version={CHIHOU_COMPOSITE_VERSION})")
     conn = psycopg2.connect(DSN)
-    df = pd.read_sql(SQL, conn, params=(start.strftime("%Y%m%d"), today.strftime("%Y%m%d")))
+    df = pd.read_sql(
+        SQL,
+        conn,
+        params=(CHIHOU_COMPOSITE_VERSION, start.strftime("%Y%m%d"), today.strftime("%Y%m%d")),
+    )
     conn.close()
 
     print(f"取得: {len(df):,}馬 / レース {df.groupby(['date','race_id']).ngroups:,}")
@@ -163,6 +187,7 @@ def main() -> None:
         return
 
     df["date"] = df["date"].astype(str)
+    df = _apply_production_rules(df)
 
     # 全期間
     aggregate_period(df, f"直近{args.days}日")

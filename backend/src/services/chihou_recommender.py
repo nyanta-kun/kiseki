@@ -832,8 +832,9 @@ async def build_chihou_sweet_spot_recommendations(
 
             confidence = 0.65 if max_ev >= 1.8 else (0.60 if max_ev >= 1.4 else 0.55)
             reason = (
-                "地方v10スイートスポット：単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース。"
-                "（v10バックテスト浦和ROI2.96/水沢1.63/笠松1.43/園田1.46/佐賀1.38/高知1.12） "
+                "地方スイートスポット（Phase2）：指数1位 ∧ 単勝10〜30倍 ∧ "
+                "割安場（浦和/金沢/高知/笠松/盛岡）。"
+                "（クリーンOOS検証 5seed 単勝ROI 1.17） "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
@@ -865,7 +866,7 @@ async def build_chihou_sweet_spot_recommendations(
                 "created_at": now,
             })
 
-        # ---- 複穴（place_bet）: 断然人気R × 単勝≥10 ∧ EV1.2-2.0 を複勝買い ----
+        # ---- 複穴（place_bet）: 断然人気R × 単勝≥10 × 指数3位以内 を複勝買い ----
         # k≥3 の混戦は除外（高オッズ穴と同様）
         if place_bet_horses and len(place_bet_horses) < 3:
             for h in place_bet_horses:
@@ -893,9 +894,9 @@ async def build_chihou_sweet_spot_recommendations(
 
             confidence = 0.65 if max_ev >= 1.8 else 0.55
             reason = (
-                f"地方v10複穴：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍 ∧ 単勝≥10 ∧ EV 1.2-2.0 の複勝買い。"
-                f"（30日実勢 hit≈22%・複勝ROI≈0.78 / バックテスト hit 20.6%・推定複ROI 1.067。"
-                f"ROI は控除率分マイナス帯 — 予想の参考用） "
+                f"地方複穴（Phase2）：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍の断然人気R ∧ "
+                f"単勝≥10 ∧ 指数3位以内 の複勝買い。"
+                f"（複勝は控除率分マイナス帯 — 予想の参考用） "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"

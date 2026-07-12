@@ -424,12 +424,15 @@ async def get_chihou_sweet_spot_recommendations(
 
     返却内容:
       - items: 全カテゴリの推奨を並べたリスト（category フィールドで識別）
-        * sweet_spot         — 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
+        * sweet_spot         — 高オッズ穴狙い Phase2 (指数1位 ∧ 単勝10-30倍 ∧ 割安5場 ∧ k≤2)
+        * place_bet          — 断然人気R複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内 ∧ k≤2)
+        * upset_place        — 穴軸複勝（人気薄リランカー軸）
         * low_odds_trusted   — 信頼できる本命 (単勝<1.5)
         * low_odds_untrusted — 信頼できない本命 (1.5≤単勝<2.0)
-      - summaries: カテゴリ別の当日確定済み件数・的中数・的中率・単勝ROI
+      - summaries: カテゴリ別の当日確定済み件数・的中数・的中率・ROI
+        （bet_type="place" のカテゴリは win_roi に複勝ROIが入る）
 
-    プロセス内 60 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
+    プロセス内 30 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
     JSONResponse で直接返すことで Pydantic の exclude_defaults を回避し
     race_concentration フィールドが null でも確実に含まれる。
     """

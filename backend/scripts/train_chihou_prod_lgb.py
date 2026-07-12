@@ -1,24 +1,29 @@
-"""地方競馬 本番用 LightGBM 学習スクリプト（21特徴量・純LGB）
+"""地方競馬 LightGBM 学習スクリプト（ベース特徴量セット定義 + 学習基盤）
 
-本番リアルタイム取込パス（chihou_calculator.calculate_and_save）が読み込む
-プロダクションモデルを学習・保存する。Phase3 で履歴系4特徴
-(improving_form/track_win_rate/class_drop_ratio/prev_pace_ratio)を追加。
-これらは calculate_and_save 内の _history_features_batch でライブ計算され、
-本スクリプトの add_historical_features と同一意味論で算出する（train/serve 整合）。
+⚠️ 本番モデルの更新はこのスクリプト単体では行われない。
+   本番（chihou_calculator.py）がロードするのは v12_44feat モデル
+   (models/chihou_prod_lgb.v12_44feat.txt / chihou_prod_lgb_win.v12_44feat.txt) で、
+   これを学習・保存するのは scripts/train_chihou_market_lgb.py（本スクリプトの
+   FEATURES/prep を import し、市場乖離5特徴を追加して44特徴で学習する）。
+   本スクリプトを単体実行すると無サフィックスの models/chihou_prod_lgb.txt を
+   上書きするが、そのファイルは本番からロードされない（旧世代の遺物）。
 
-特徴量(21): サブ指数5 + レースメタ7 + 馬メタ5 + 履歴系4(Phase3)
+役割:
+  - ベース特徴量セット（FEATURES: base17 + 履歴4 + 外部5 + 馬場4 + CT9 = 39）と
+    前処理（prep / add_historical_features）の定義元
+  - 履歴系特徴は calculate_and_save 内の _history_features_batch と同一意味論
+    （train/serve 整合）
+
 2ヘッド構成（Phase2: 単複ヘッド分離＋確率較正）:
-  - is_top3 ヘッド → composite ランキング & place_probability  (models/chihou_prod_lgb.txt)
-  - is_win  ヘッド → win_probability(較正済)                   (models/chihou_prod_lgb_win.txt)
-  生 binary 出力がほぼ完璧に較正される(Phase2: win ECE 0.0024)ため isotonic は不要。
+  - is_top3 ヘッド → composite ランキング & place_probability
+  - is_win  ヘッド → win_probability(較正済)。生 binary 出力がほぼ完璧に
+    較正される(Phase2: win ECE 0.0024)ため isotonic は不要。
 
-クリーンOOS検証は scripts/chihou_model_compare.py 側で実施済み
-(LGB17特徴 top1勝率 33.9% vs linear 29.9% / market 46.1%)。
-本スクリプトは出荷用に全期間で学習する（将来は月次再学習で更新）。
-
-使い方:
+本番モデル再学習の手順:
   cd backend
-  .venv/bin/python scripts/train_chihou_prod_lgb.py
+  .venv/bin/python scripts/train_chihou_market_lgb.py   # ← 本番 v12 モデルを更新
+
+（本スクリプト単体の実行はベースモデルの実験用途のみ）
   .venv/bin/python scripts/train_chihou_prod_lgb.py --start 20230101 --end 20260605 --oos-check
 """
 from __future__ import annotations
