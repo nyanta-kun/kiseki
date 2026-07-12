@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime as _datetime
+from datetime import timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -307,12 +308,13 @@ async def get_performance_summary(
     - 信頼度（HIGH/MID/LOW）別内訳・月次推移・ディメンション別集計を含む
     - フィルタ: 期間・競馬場・馬場・距離帯・条件（複数選択可）
 
-    デフォルト集計期間: 前年1月1日〜今日
+    デフォルト集計期間: 直近3ヶ月〜今日
+    （旧: 前年1月1日〜。1年半分の集計で応答が60秒を超えていたため短縮）
     """
     # --- デフォルト日付 ---
     today = _today_jst()
     if from_date is None:
-        from_date = f"{today.year - 1}0101"
+        from_date = (today - timedelta(days=90)).strftime("%Y%m%d")
     if to_date is None:
         to_date = today.strftime("%Y%m%d")
 
