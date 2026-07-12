@@ -30,13 +30,15 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 # non-root ユーザーで実行（セキュリティベストプラクティス）
-RUN addgroup --system nodejs && adduser --system --ingroup nodejs nextjs
+# ⚠️ chown は COPY --chown で行う。COPY 後の `chown -R /app` は約66MBの
+#    レイヤ複製を毎ビルド生成し docker pull を遅くしていた（2026-07-12 修正）
+RUN addgroup --system nodejs && adduser --system --ingroup nodejs nextjs && \
+    mkdir -p .next/cache && chown -R nextjs:nodejs /app
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-RUN mkdir -p .next/cache && chown -R nextjs:nodejs /app
 USER nextjs
 
 EXPOSE 3000
