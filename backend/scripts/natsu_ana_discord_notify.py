@@ -37,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.db.session import sync_engine as engine
+from src.indices.composite import COMPOSITE_VERSION
 from src.utils.discord import send
 
 # 夏競馬場コード（非東京・中山・京都・阪神）
@@ -69,6 +70,14 @@ odds_ranked AS (
   JOIN odds_latest ol ON ol.race_id = oh.race_id AND ol.max_ft = oh.fetched_at
   WHERE oh.bet_type = 'win'
 ),
+race_versions AS (
+  -- API (races.py get_indices) と同じレース単位 capped 方式:
+  -- レースの最新 version を本番 COMPOSITE_VERSION で上限キャップする
+  SELECT race_id, LEAST(MAX(version), :composite_version) AS use_version
+  FROM keiba.calculated_indices
+  WHERE race_id IN (SELECT id FROM target_races)
+  GROUP BY race_id
+),
 race_ranks AS (
   SELECT
     ci.race_id,
@@ -76,7 +85,7 @@ race_ranks AS (
     ci.composite_index,
     RANK() OVER (PARTITION BY ci.race_id ORDER BY ci.composite_index DESC) AS idx_rank
   FROM keiba.calculated_indices ci
-  WHERE ci.version = (SELECT MAX(version) FROM keiba.calculated_indices)
+  JOIN race_versions rv ON rv.race_id = ci.race_id AND ci.version = rv.use_version
 )
 SELECT
     r.id              AS race_id,
@@ -113,14 +122,19 @@ WHERE r.date = :race_date
   AND re.weight_change IS NOT NULL
   AND re.weight_change BETWEEN -6 AND -4
   AND re.horse_number > 0
-  AND COALESCE(lo.pop_rank, 99) >= 7
+  -- pop_rank NULL（オッズ未取得）は除外する。API側 (popularity_from_odds) と同じ
+  -- 「欠損時はシグナル発動回避」の安全側フォールバックに統一
+  AND lo.pop_rank >= 7
 ORDER BY r.course, r.race_number, re.horse_number
 """)
 
 
 def fetch_picks(target_date: str) -> list[dict]:
     with Session(engine) as db:
-        rows = db.execute(QUERY, {"race_date": target_date}).fetchall()
+        rows = db.execute(
+            QUERY,
+            {"race_date": target_date, "composite_version": COMPOSITE_VERSION},
+        ).fetchall()
     return [row._asdict() for row in rows]
 
 

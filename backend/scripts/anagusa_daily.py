@@ -17,7 +17,8 @@ import argparse
 import logging
 import os
 import sys
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # SQLAlchemy のエコーログをインポート前に抑制
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
@@ -40,7 +41,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="穴ぐさ期待度日次レポート")
     parser.add_argument(
         "--date",
-        default=date.today().strftime("%Y%m%d"),
+        default=datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d"),
         help="対象日 (YYYYMMDD, default: today)",
     )
     parser.add_argument(

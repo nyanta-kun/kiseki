@@ -14,8 +14,9 @@ calculated_indices の composite_index 予測 vs race_results の実際着順を
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date as _date
+from datetime import datetime as _datetime
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -27,6 +28,13 @@ from ..db.session import get_db
 from ..indices.confidence import calculate_race_confidence
 
 router = APIRouter(prefix="/api/performance", tags=["performance"])
+
+_JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst():
+    """JST基準の今日を返す（コンテナはUTCのため naive date.today() は朝9時前に前日になる）。"""
+    return _datetime.now(_JST).date()
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
@@ -302,7 +310,7 @@ async def get_performance_summary(
     デフォルト集計期間: 前年1月1日〜今日
     """
     # --- デフォルト日付 ---
-    today = _date.today()
+    today = _today_jst()
     if from_date is None:
         from_date = f"{today.year - 1}0101"
     if to_date is None:
@@ -662,7 +670,7 @@ async def get_odds_data(
 ) -> list[OddsDataPoint]:
     """各レースの予測1位馬のオッズと的中データを返す（オッズ感度分析用）。"""
     # --- デフォルト日付（今月1日〜今日）---
-    today = _date.today()
+    today = _today_jst()
     if from_date is None:
         from_date = f"{today.year}{str(today.month).zfill(2)}01"
     if to_date is None:

@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.db.session import sync_engine as engine
+from src.indices.composite import COMPOSITE_VERSION
 from src.utils.discord import send
 
 COURSE_MAP_SQL = """
@@ -42,14 +43,23 @@ COURSE_MAP_SQL = """
 
 # 穴ぐさA/B × 指数順位 2位以内（3年検証: 複勝率32%, 複勝ROI 1.048, 単勝ROI 1.31）
 QUERY = text(f"""
-WITH race_ranks AS (
+WITH race_versions AS (
+  -- API (races.py get_indices) と同じレース単位 capped 方式:
+  -- レースの最新 version を本番 COMPOSITE_VERSION で上限キャップする
+  -- （グローバル MAX だと新バージョンのバックフィル進行中に未計算レースが通知から漏れる）
+  SELECT ci.race_id, LEAST(MAX(ci.version), :composite_version) AS use_version
+  FROM keiba.calculated_indices ci
+  JOIN keiba.races r2 ON r2.id = ci.race_id AND r2.date = :race_date_str
+  GROUP BY ci.race_id
+),
+race_ranks AS (
   SELECT
     ci.race_id,
     ci.horse_id,
     ci.composite_index,
     RANK() OVER (PARTITION BY ci.race_id ORDER BY ci.composite_index DESC) AS idx_rank
   FROM keiba.calculated_indices ci
-  WHERE ci.version = (SELECT MAX(version) FROM keiba.calculated_indices)
+  JOIN race_versions rv ON rv.race_id = ci.race_id AND ci.version = rv.use_version
 )
 SELECT
     r.id              AS race_id,
@@ -105,6 +115,7 @@ def fetch_picks(target_date: str) -> list[dict]:
         rows = db.execute(QUERY, {
             "race_date": race_date_str,
             "race_date_str": target_date,
+            "composite_version": COMPOSITE_VERSION,
         }).fetchall()
     return [row._asdict() for row in rows]
 
