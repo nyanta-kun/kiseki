@@ -4,9 +4,8 @@
 # 毎朝 sekito 穴ぐさスクレイプ後に実行し、
 # 穴ぐさA/B かつ v26指数2位以内の馬がいれば Discord に通知する。
 #
-# VPS cron 設定:
-#   30 23 * * * /home/ysuzuki/GitHub/kiseki/scripts/anagusa_notify.sh
-#   # 23:30 UTC = 08:30 JST
+# VPS cron 設定（ホストはJST。ログはcron側のリダイレクトで一元管理）:
+#   30 8 * * * /home/ysuzuki/GitHub/kiseki/scripts/anagusa_notify.sh >> /home/ysuzuki/GitHub/kiseki/logs/anagusa_notify.log 2>&1
 #
 # 手動実行:
 #   /home/ysuzuki/GitHub/kiseki/scripts/anagusa_notify.sh
@@ -14,14 +13,10 @@
 
 set -u
 
-PROJECT_ROOT="/home/ysuzuki/GitHub/kiseki"
-LOG_FILE="$PROJECT_ROOT/logs/anagusa_notify.log"
 CONTAINER="galloplab-backend-1"
 
-mkdir -p "$(dirname "$LOG_FILE")"
-
 log() {
-  echo "$(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $1"
 }
 
 DRY_RUN="${1:-}"
@@ -35,9 +30,9 @@ fi
 
 if [ -n "$DRY_RUN" ]; then
   log "DRY-RUN モード"
-  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py --dry-run >> "$LOG_FILE" 2>&1
+  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py --dry-run 2>&1
 else
-  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py >> "$LOG_FILE" 2>&1
+  docker exec "$CONTAINER" uv run python /app/scripts/anagusa_discord_notify.py 2>&1
 fi
 
 RC=$?
