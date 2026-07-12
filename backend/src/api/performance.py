@@ -376,9 +376,13 @@ async def get_performance_summary(
         await db.execute(
             text(f"""
                 WITH latest_v AS (
-                    SELECT race_id, horse_id, MAX(version) AS max_version
-                    FROM keiba.calculated_indices
-                    GROUP BY race_id, horse_id
+                    -- 対象期間のレースのみに絞る（無条件だと全年分の GROUP BY が
+                    -- 毎リクエスト約24秒の固定コストになる）
+                    SELECT ci.race_id, ci.horse_id, MAX(ci.version) AS max_version
+                    FROM keiba.calculated_indices ci
+                    JOIN keiba.races r2 ON r2.id = ci.race_id
+                    WHERE r2.date >= :from_date AND r2.date <= :to_date
+                    GROUP BY ci.race_id, ci.horse_id
                 ),
                 race_horses_base AS (
                     SELECT
@@ -691,12 +695,15 @@ async def get_odds_data(
     conditions = _split(condition)
 
     # --- 各 (race_id, horse_id) の最新バージョンサブクエリ ---
+    # 対象期間のレースのみに絞る（無条件だと全年分の GROUP BY が毎回走り重い）
     latest_version_sq = (
         select(
             CalculatedIndex.race_id.label("lv_race_id"),
             CalculatedIndex.horse_id.label("lv_horse_id"),
             func.max(CalculatedIndex.version).label("lv_max_version"),
         )
+        .join(Race, Race.id == CalculatedIndex.race_id)
+        .where(Race.date >= from_date, Race.date <= to_date)
         .group_by(CalculatedIndex.race_id, CalculatedIndex.horse_id)
         .subquery()
     )
