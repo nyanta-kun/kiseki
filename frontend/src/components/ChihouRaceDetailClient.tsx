@@ -10,7 +10,7 @@ import {
   fetchChihouHorseHistory,
   fetchChihouOddsBrowser,
 } from "@/lib/api";
-import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
@@ -62,7 +62,7 @@ function winOddsColorClass(odds: number | null): string {
 function evColorClass(ev: number | null): string {
   if (ev === null) return "text-gray-400";
   if (ev >= 1.5) return "text-green-600 font-bold";
-  if (ev >= 1.2) return "text-green-500 font-semibold";
+  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "text-green-500 font-semibold";
   if (ev >= 1.0) return "text-gray-600";
   return "text-gray-400";
 }

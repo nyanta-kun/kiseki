@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { HorseIndex, OddsData, RaceHistoryEntry, buildOddsWsUrl, fetchHorseHistory } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
+import { DmSignalBadges } from "@/components/DmSignalBadges";
 import { IndexBar } from "./IndexBar";
 import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
 
@@ -37,55 +38,6 @@ const ANAGUSA_RANK_COLOR: Record<string, string> = {
   B: "bg-orange-50 text-orange-600 border-orange-200",
   C: "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
-
-/**
- * DM シグナルタグ → ラベル/色/ツールチップのマッピング
- * バックテスト実証値: 99.0%カバレッジ・8,618レース・3年実績 (2023-2026)
- */
-const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
-  "三冠一致":      { label: "🔥三冠", cls: "bg-rose-100 text-rose-800 border-rose-300",     title: "総合・DMtime・DMbattle 全1位 (勝率39%/複勝72%)" },
-  "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",  title: "総合≥60 ∧ DM-battle≥65 (ROI 101%, 勝率47%)" },
-  "穴ぐさDM":      { label: "🏆穴DM", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "穴ぐさA/B ∧ DM-battle1位 ∧ 人気≥5 (ROI 189% / 最強)" },
-  "DM大穴":        { label: "⚡大穴", cls: "bg-purple-100 text-purple-800 border-purple-300", title: "DM-battle1位 ∧ 人気≥7 ∧ battle≥65 (ROI 154%)" },
-  "DM高オッズ":    { label: "⚡高オ", cls: "bg-violet-100 text-violet-800 border-violet-300", title: "DM-battle1位 ∧ 単勝≥10倍 ∧ DM-time≤2位 (ROI 130%)" },
-  "穴ぐさ+DMtime": { label: "💎穴T",  cls: "bg-cyan-100 text-cyan-800 border-cyan-300",       title: "穴ぐさA ∧ DM-time1位 (ROI 103%)" },
-  "人気下振れ":    { label: "❌警戒", cls: "bg-slate-200 text-slate-700 border-slate-400",   title: "人気≤3位だが総合・DM-battle両方が4位以下 (ROI 74%、軸候補から除外推奨)" },
-};
-
-function DmSignalBadges({ signals }: { signals: string[] }) {
-  if (!signals.length) return null;
-  return (
-    <>
-      {signals.map((sig) => {
-        const meta = DM_SIGNAL_META[sig];
-        if (!meta) return null;
-        return (
-          <span
-            key={sig}
-            title={meta.title}
-            className={cn("text-[10px] px-1 py-0.5 rounded border font-bold", meta.cls)}
-          >
-            {meta.label}
-          </span>
-        );
-      })}
-    </>
-  );
-}
-
-
-/** 外部指数穴馬候補の判定
- * シミュレーション結果: 以下の条件でROIプラス実績
- *   - CI4位以下 + netkeibaコース指数1位: 単勝ROI +105〜355%（平場芝）
- *   - CI4位以下 + NB上位2 + KM1位 + 芝: 単勝ROI +126%
- */
-function isExternalDarkHorse(horse: HorseIndex, compositeRank: number): boolean {
-  if (compositeRank < 4) return false;
-  const nbCr = horse.nb_course_rank;
-  const nbAr = horse.nb_ave_rank;
-  const kmR = horse.km_rank;
-  return nbCr === 1 || (nbAr !== null && nbAr <= 2 && kmR === 1);
-}
 
 function finishLabel(pos: number | null | undefined): string {
   if (pos == null) return "";
@@ -418,8 +370,8 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
           // 指数4位以降でupsideスコアが高い = 穴候補
           const compositeRank = compositeRankMap.get(horse.horse_number) ?? 99;
           const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
-          // 外部指数穴馬候補
-          const isExtDark = !isTop && isExternalDarkHorse(horse, compositeRank);
+          // 外部指数穴馬候補（判定はAPI: is_ext_dark_horse）
+          const isExtDark = !isTop && (horse.is_ext_dark_horse ?? false);
           // 足切り: トップ差20以上 or (差15以上かつ5位以下)
           const gapFromTop = maxComposite - (horse.composite_index ?? 0);
           const isCutOff = gapFromTop >= 20 || (gapFromTop >= 15 && compositeRank >= 5);

@@ -13,8 +13,9 @@ import {
 } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
+import { DmSignalBadges, DM_SIGNAL_META } from "@/components/DmSignalBadges";
 import { IndexBar } from "./IndexBar";
-import { cn, indexColor, horseNumToFrame, frameColorClass } from "@/lib/utils";
+import { cn, indexColor, horseNumToFrame, frameColorClass, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
 import { HorseHistorySection } from "./HorseHistorySection";
 import { PaywallGate } from "@/components/PaywallGate";
 
@@ -48,44 +49,6 @@ const ANAGUSA_RANK_COLOR: Record<string, string> = {
   B: "bg-orange-50 text-orange-600 border-orange-200",
   C: "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
-
-/**
- * DM シグナルタグ → 短縮ラベル/色/ツールチップのマッピング
- * バックテスト実証値: 99.0%カバレッジ・8,618レース・3年実績 (2023-2026)
- *
- * 表形式 (RaceDetailClient) では狭いスペースに複数バッジが並ぶため、
- * 馬名カラム直後に短縮ラベル (2文字) で表示。スマホでも視認可能。
- */
-const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
-  "三冠一致":      { label: "🔥三冠", cls: "bg-rose-100 text-rose-800 border-rose-300",          title: "総合・DMtime・DMbattle 全1位 (勝率39%/複勝72%)" },
-  "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",        title: "総合≥60 ∧ DM-battle≥65 (ROI 101%, 勝率47%)" },
-  "穴ぐさDM":      { label: "🏆穴DM", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "穴ぐさA/B ∧ DM-battle1位 ∧ 人気≥5 (ROI 189% / 最強)" },
-  "DM大穴":        { label: "⚡大穴", cls: "bg-purple-100 text-purple-800 border-purple-300",    title: "DM-battle1位 ∧ 人気≥7 ∧ battle≥65 (ROI 154%)" },
-  "DM高オッズ":    { label: "⚡高オ", cls: "bg-violet-100 text-violet-800 border-violet-300",    title: "DM-battle1位 ∧ 単勝≥10倍 ∧ DM-time≤2位 (ROI 130%)" },
-  "穴ぐさ+DMtime": { label: "💎穴T",  cls: "bg-cyan-100 text-cyan-800 border-cyan-300",          title: "穴ぐさA ∧ DM-time1位 (ROI 103%)" },
-  "人気下振れ":    { label: "❌警戒", cls: "bg-slate-200 text-slate-700 border-slate-400",       title: "人気≤3位だが総合・DM-battle両方が4位以下 (ROI 74%、軸候補から除外推奨)" },
-};
-
-function DmSignalBadges({ signals }: { signals: string[] | null | undefined }) {
-  if (!signals || signals.length === 0) return null;
-  return (
-    <>
-      {signals.map((sig) => {
-        const meta = DM_SIGNAL_META[sig];
-        if (!meta) return null;
-        return (
-          <span
-            key={sig}
-            title={meta.title}
-            className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap", meta.cls)}
-          >
-            {meta.label}
-          </span>
-        );
-      })}
-    </>
-  );
-}
 
 /**
  * 購入シグナル (v26 breakaway 検証 2026-05-02 / 3年138,728 horse-races)。
@@ -150,7 +113,7 @@ function winOddsColorClass(odds: number | null): string {
 function evColorClass(ev: number | null): string {
   if (ev === null) return "text-gray-400";
   if (ev >= 1.5) return "text-green-600 font-bold";
-  if (ev >= 1.2) return "text-green-500 font-semibold";
+  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "text-green-500 font-semibold";
   if (ev >= 1.0) return "text-gray-600";
   return "text-gray-400";
 }
@@ -161,12 +124,6 @@ function finishBadgeClass(pos: number | null | undefined): string {
   if (pos === 2) return "bg-gray-100 text-gray-700 font-bold px-1 rounded";
   if (pos === 3) return "bg-orange-100 text-orange-700 font-bold px-1 rounded";
   return "text-gray-400";
-}
-
-function isExternalDarkHorse(horse: HorseIndex, compositeRank: number): boolean {
-  if (compositeRank < 4) return false;
-  return horse.nb_course_rank === 1 ||
-    (horse.nb_ave_rank !== null && horse.nb_ave_rank <= 2 && horse.km_rank === 1);
 }
 
 function toResultsMap(results: RaceResult[]): Map<number, number | null> {
@@ -392,9 +349,8 @@ export function RaceDetailClient({
                   const frameNum = horseNumToFrame(horse.horse_number, totalHorses);
                   const cutOff = isCutOff(horse);
                   const isTop = horse.horse_number === topHorseNumber;
-                  const compositeRank = compositeRankMap.get(horse.horse_number) ?? 99;
                   const isAnagusa = horse.anagusa_rank !== null && !isTop;
-                  const isExtDark = !isTop && isExternalDarkHorse(horse, compositeRank);
+                  const isExtDark = !isTop && (horse.is_ext_dark_horse ?? false);
                   const isExpanded = expandedHorse === horse.horse_number;
 
                   const rows = [
@@ -482,7 +438,7 @@ export function RaceDetailClient({
                             }
                           })()}
                           {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
-                          <DmSignalBadges signals={horse.dm_signals} />
+                          <DmSignalBadges signals={horse.dm_signals} compact />
                           {/* 購入シグナル (v26 breakaway ROI 検証ベース) */}
                           <PurchaseSignalBadge signal={horse.purchase_signal} />
                         </div>

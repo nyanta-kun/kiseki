@@ -675,59 +675,79 @@ tail -f /Users/ysuzuki/GitHub/kiseki/logs/dm_auto_fetch.log
 | タグ | 条件 | 勝率 | ROI | n |
 |------|------|------|------|---|
 | 🔥三冠一致 | base=1 ∧ time=1 ∧ battle=1 | 39.1% | 84.9% | 1622 |
-| ⭐高得点鉄板 | composite≥60 ∧ battle≥65 | 46.5% | 101.2% | 86 |
+| ⭐高得点鉄板 | composite≥60 ∧ battle≥65 ∧ **composite順位≤2** | 46.5% | 101.2% | 86 |
 | 🏆穴ぐさDM | anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5 | 10.2% | **188.8%** | 49 |
 | ⚡DM大穴 | battle=1 ∧ 人気≥7 ∧ battle≥65 | 7.6% | 154.0% | 184 |
 | ⚡DM高オッズ | battle=1 ∧ オッズ≥10 ∧ time≤2 | 9.0% | 130.0% | 156 |
 | 💎anagusa+DMtime | anagusa=A ∧ time=1 | 9.4% | 103.5% | 106 |
 | ❌人気下振れ | 人気≤3 ∧ base≥4位 ∧ battle≥4位 | 15.3% | 73.9% | 3563 |
 
+上表に加えて **コース/セグメント別 deny フィルタ**（低信頼セグメントで非発動、2026-06-07）が
+実装されている: 三冠一致=福島/阪神/京都・芝マイル・ダ中距離、穴ぐさDM=東京/小倉/札幌/阪神ほか、
+DM高オッズ=芝マイル、人気下振れ=福島/小倉/阪神/京都。詳細は `dm_signals.py` 参照。
+また**出走取消・発走除外馬はシグナル判定・順位計算の母集団から除外**される
+（取消馬のDM欠損で「1頭でもNULL→レース全馬シグナルなし」が誤発動するのを防ぐ）。
+
 API レスポンス: `HorseIndexOut.dm_signals: list[str]` (`/api/races/{id}/indices`)
-recommendations 用: `recommender.py` で各馬に付与し Claude プロンプトに渡す。
+recommendations 用: `recommender.py` で各馬に付与。
 ベース指数 (composite_index) はオッズ非依存のまま。シグナルはオッズ・人気・anagusa を組み合わせたフロント手前レイヤで生成する。
+フロントのバッジ定義は `frontend/src/components/DmSignalBadges.tsx`（共通モジュール・単一定義）。
 
-## スイートスポット自動推奨（JRA `/api/recommendations`）
+## JRA 推奨エンジン（`/api/recommendations` = 的中重視 hit_tier 方式）
 
-2026-05-03 から JRA 推奨は **Claude.ai Routine 廃止** → 機械的なスイートスポット条件で都度算出。
-3年バックテスト (2023-05〜2026-05, 4,983 馬) で単ROI **1.188** / 複ROI 0.826 を実証。
+2026-06-05 から JRA 推奨は **hit_tier 方式**（1レース1推奨 = 指数1位馬 + 的中率tier）。
+OOS検証（`scripts/jra_verify_signals.py`）で「価値(ROI>1)」を謳うバッジ（旧sweet_spot集約・
+super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため、推奨本体は的中重視に再定義し、
+価値系は `value_candidates`（妙味候補・収支保証なし）の注記へ降格した。
 
-**抽出条件**:
-```
-単勝オッズ ≥ 10.0
-∧ 期待値 (win_probability × win_odds) ∈ [1.2, 5.0]
-∧ 何らかのバッジ (DM signals / purchase_signal / 穴ぐさA/B/C(1位以外) / 外部指数穴馬)
-∧ レース内該当頭数 k ≤ 2 (混戦レース除外)
-```
+**tier（=recommend_rank、OOS test 1位馬実績）**:
+| tier | 条件 | 実績 | bet |
+|---|---|---|---|
+| S 鉄板 | 指数1位が断然人気（単勝<1.5） | 勝率67% / 複勝93% | 単勝 |
+| A 信頼軸 | confidence_score ≥ 80 | 勝率34% / 複勝71% | 単勝 |
+| B 複勝圏 | confidence_score ≥ 65 | 複勝64% | 複勝 |
+| C 混戦 | 上記以外 | — | 推奨しない（見送り） |
 
 **実装**:
-- `backend/src/indices/buy_signal.py::is_sweet_spot()` 判定本体
-- `backend/src/services/recommender.py::build_sweet_spot_recommendations()` レース集約
-- `backend/src/api/recommendations.py::get_recommendations` 都度算出（DB保存しない）
-- `backend/src/api/races.py` `HorseIndexOut.is_sweet_spot` をレスポンスに付与
-- `frontend/src/components/IndicesTable.tsx` 該当馬名を **赤字 + ★** 表示
+- `backend/src/services/recommender.py::build_hit_tier_recommendations()` 推奨本体
+- `backend/src/services/recommender.py::_value_badges()` 妙味候補バッジ（DM signals / 穴ぐさ非1位 / 外部指数穴馬）
+- `backend/src/api/recommendations.py::get_recommendations` 都度算出（DB保存なし・60秒プロセス内キャッシュ）
 
-**重要な観察**:
+**個別馬の sweet_spot 表示**（推奨エンジンとは別・`/indices` 専用）:
+- `backend/src/indices/buy_signal.py::is_sweet_spot()` — 単勝≥10 ∧ EV∈[1.2,5.0] ∧ バッジ ∧ k≤2
+- `backend/src/api/races.py` `HorseIndexOut.is_sweet_spot` に付与、`IndicesTable.tsx` で該当馬名を**赤字**表示
+- 3年バックテスト 単ROI 1.182 だが OOS 検証では脆弱（memory `jra_signal_verification.md`）。
+  表示バッジとしてのみ維持し、推奨エンジンには使わない
+
+**重要な観察**（is_sweet_spot の EV ゲート設計根拠）:
 - EV ≥ 4 で実勝率がモデル予測の 4.8〜6.5倍下振れ → 上限 5.0 必須
-- EV 1.5〜2.0 帯は calibration 谷間（単ROI 0.717）
 - k=3 で単ROI 0.935 → k≤2 制約で混戦レース除外
-- k=2 で「指数上位のみ採用」は逆効果（人気でオッズ圧縮）
 
-**地方競馬は対象外**。地方は引き続き Claude.ai Routine 経由（chihou_recommendations）。
+**地方競馬は対象外**（下記の別系統）。
 
-詳細・運用パターン: memory `sweet_spot_recommendations.md`
+詳細: memory `recommendations_feature.md` / `jra_signal_verification.md`
 
 ## 地方競馬 推奨カテゴリ（`/api/chihou/recommendations/sweet-spot`）
 
-JRA とは別系統で、**4 カテゴリ** を都度算出して返す（オッズ取得後に毎リクエスト計算）。
+JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッズ取得後に毎リクエスト計算・
+30秒プロセス内キャッシュ）。
 
-| カテゴリ | bet | 条件 | 30日実勢 |
-|---|---|---|---|
-| `sweet_spot` 高オッズ穴 | 単勝 | 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2 | hit 7.3% / 単ROI 1.36 |
-| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ EV 1.2-2.0 ∧ k≤2 | hit 21.8% / 複ROI 0.78 |
-| `low_odds_trusted` 信頼本命 | 単勝 | 単勝<1.5 | hit 71% / 単ROI 0.87 |
-| `low_odds_untrusted` 不信頼本命 | 単勝 | 1.5≤単勝<2.0 | hit 49% / 単ROI 0.82 |
+**Phase2（2026-06-05, commit `909124ac`）で sweet_spot / place_bet は EVゲートから
+ランキング規則へ全面移行済み**。較正済 win_probability では高オッズ馬の honest EV が
+概ね <1 となり旧 EV ゲートは機能しない。Phase1 クリーンOOSで黒字だったのは
+「指数1位 × 単勝10-30倍 × 割安場」のランキング規則だったため、これを定義とする。
 
-`sweet_spot` と `place_bet` は同一馬が両方に入ることを許容（並列）。低オッズ系とは構造的に排他。
+| カテゴリ | bet | 条件（Phase2 現行） |
+|---|---|---|
+| `sweet_spot` 高オッズ穴 | 単勝 | **指数1位 ∧ 単勝10〜30倍 ∧ 割安5場（浦和/金沢/高知/笠松/盛岡）**（5seed 単ROI 1.17） |
+| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ **指数3位以内** ∧ k≤2 |
+| `upset_place` 穴軸複勝 | 複勝 | 人気薄リランカー軸（単勝[10,15)×非オッズスコア×外部バッジ） |
+| `low_odds_trusted` 信頼本命 | 単勝 | 単勝<1.5（hit 約70% / 単ROI 0.8台） |
+| `low_odds_untrusted` 不信頼本命 | 単勝 | 1.5≤単勝<2.0（hit 約48% / 単ROI 0.8台） |
+
+- 判定本体: `backend/src/indices/buy_signal.py::chihou_is_sweet_spot() / chihou_is_place_bet() / chihou_low_odds_trust_level()`
+- `sweet_spot` と `place_bet` は同一馬が両方に入ることを許容（並列）。低オッズ系とは構造的に排他
+- 実勢集計: `scripts/aggregate_chihou_recent.py` は上記の本番判定関数を import して同一条件で集計する
 
 **API レスポンス構造**:
 ```
@@ -748,7 +768,7 @@ ChihouSweetSpotResponse {
 ### 推奨パネル UI（`/chihou/races` の推奨タブ）
 
 - カテゴリ別 **コンパクト table**（カードではなく一覧表形式）
-- 上部に **競馬場別 当日サマリ table**（rows=場 × cols=4カテゴリ、各セル: hits/n + ROI）
+- 上部に **競馬場別 当日サマリ table**（rows=場 × cols=5カテゴリ、各セル: hits/n + ROI）
 - 着順バッジ: 1着=🥇金 / 2-3着=🥈🥉青 / 4着以下=灰
 - 単勝推奨で 2-3 着の場合「△ 複圏」青系バッジ（複勝なら馬券になったケースが分かる）
 - レース名から `/chihou/races/{id}` 詳細ページへリンク

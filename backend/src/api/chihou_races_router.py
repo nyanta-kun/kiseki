@@ -640,6 +640,49 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
     has_indices: bool = idx_check.scalar() or False
     result_confirmed: bool = confirmed_check.scalar() or False
 
+    # 一覧エンドポイントと同一の判定にするため recommend_rank を算出して渡す
+    # （以前は course_name のみの粗い判定でフロント側が独自再計算していた）
+    recommend_rank: str | None = None
+    if has_indices:
+        idx_rows = await db.execute(
+            select(
+                ChihouCalculatedIndex.composite_index,
+                ChihouCalculatedIndex.win_probability,
+                ChihouRaceEntry.horse_number,
+            )
+            .join(
+                ChihouRaceEntry,
+                (ChihouRaceEntry.race_id == ChihouCalculatedIndex.race_id)
+                & (ChihouRaceEntry.horse_id == ChihouCalculatedIndex.horse_id),
+            )
+            .where(ChihouCalculatedIndex.race_id == race_id)
+            .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
+        )
+        entries = [
+            (float(ci) if ci is not None else 0.0, wp, hn)
+            for ci, wp, hn in idx_rows.all()
+        ]
+        if entries:
+            ci_list = [e[0] for e in entries]
+            wp_list = [float(e[1]) for e in entries if e[1] is not None]
+            conf = calculate_race_confidence(ci_list, race.head_count, wp_list or None)
+            top_hn = max(entries, key=lambda x: x[0])[2]
+            top_win_odds: float | None = None
+            if top_hn is not None:
+                odds_row = await db.execute(
+                    select(ChihouOddsHistory.odds)
+                    .where(ChihouOddsHistory.race_id == race_id)
+                    .where(ChihouOddsHistory.bet_type == "win")
+                    .where(ChihouOddsHistory.combination == str(top_hn))
+                    .order_by(ChihouOddsHistory.fetched_at.desc())
+                    .limit(1)
+                )
+                odds_val = odds_row.scalar()
+                top_win_odds = float(odds_val) if odds_val is not None else None
+            recommend_rank = calculate_recommend_rank(
+                conf["score"], conf.get("win_prob_top"), top_win_odds
+            )
+
     return ChihouRaceOut(
         id=race.id,
         date=race.date,
@@ -655,7 +698,8 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         post_time=race.post_time,
         has_indices=has_indices,
         result_confirmed=result_confirmed,
-        buy_signal=chihou_buy_signal(race.course_name),
+        recommend_rank=recommend_rank,
+        buy_signal=chihou_buy_signal(race.course_name, recommend_rank),
     )
 
 

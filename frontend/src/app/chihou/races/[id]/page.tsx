@@ -12,7 +12,6 @@ import {
 } from "@/lib/api";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { ChihouRaceDetailClient } from "@/components/ChihouRaceDetailClient";
-import { computeChihouBuySignal } from "@/lib/buySignal";
 
 type Params = Promise<{ id: string }>;
 
@@ -91,7 +90,7 @@ async function ChihouRaceBodyAsync({ raceId }: { raceId: number }) {
         initialResults={initialResults}
         initialOdds={initialOdds}
         ranks={indicesResp.ranks ?? null}
-        buySignal={computeChihouBuySignal(race?.course_name ?? "", indicesResp.ranks?.recommend_rank)}
+        buySignal={race?.buy_signal ?? null}
       />
 
       <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">

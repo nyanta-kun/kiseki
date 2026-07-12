@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Recommendation } from "@/lib/api";
-import { cn, surfaceIcon } from "@/lib/utils";
+import { cn, surfaceIcon, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
 
 type Props = {
   rec: Recommendation;
@@ -51,7 +51,7 @@ function fmtPos(p: number | null | undefined): string {
 /** EV値に応じた色クラス */
 function evColor(ev: number | null | undefined): string {
   if (ev == null) return "text-gray-400";
-  if (ev >= 1.2) return "text-emerald-600 font-bold";
+  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "text-emerald-600 font-bold";
   if (ev >= 1.0) return "text-amber-600";
   return "text-gray-500";
 }

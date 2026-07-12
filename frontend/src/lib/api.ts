@@ -97,6 +97,8 @@ export type HorseIndex = {
   // 条件: 単勝≥10 ∧ 期待値 1.2-5.0 ∧ 何らかのバッジ
   // 3年バックテスト 単ROI 1.182 / 複ROI 0.836
   is_sweet_spot: boolean;
+  // 外部指数穴馬フラグ（外◎/外○バッジ）。判定はバックエンド buy_signal.py が単一真実源
+  is_ext_dark_horse?: boolean;
   // 複勝EVモデルの「人気薄1頭 複勝EV軸」該当（毎レース最大1頭）
   // 条件: 単勝≥10 ∧ 較正複勝率≥フロア ∧ 複勝最低オッズ≥2.0 のEV最大1頭
   is_place_ev_axis?: boolean;
@@ -698,14 +700,18 @@ export type ChihouHorseIndex = {
   last3f_index: number | null;
   jockey_index: number | null;
   rotation_index: number | null;
+  /** 前走着差指数（バックエンドは返しているが現状UI未表示） */
+  last_margin_index?: number | null;
+  /** 複勝期待値指数（バックエンドは返しているが現状UI未表示） */
+  place_ev_index?: number | null;
   /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
   external_consensus: number | null;
   win_odds: number | null;
   /** 期待値 win_probability × win_odds */
   ev: number | null;
-  /** v10スイートスポット: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性コース */
+  /** スイートスポット（Phase2: 指数1位 ∧ 単勝10-30倍 ∧ 割安5場） */
   is_sweet_spot: boolean;
-  /** 断然人気複勝推奨: 単勝≥10 ∧ EV 1.2-2.0 ∧ 1番人気<2.5倍 */
+  /** 断然人気R複穴（Phase2: 1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内） */
   is_place_bet: boolean;
 };
 

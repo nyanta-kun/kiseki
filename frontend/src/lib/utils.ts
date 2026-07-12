@@ -60,10 +60,13 @@ export function calcEV(
   return winOdds * winProbability;
 }
 
+/** EV 強調表示のしきい値（バックエンド sweet_spot の EV 下限 1.2 と同値） */
+export const EV_HIGHLIGHT_THRESHOLD = 1.2;
+
 /** 期待値の評価クラス */
 export function evClass(ev: number | null): string {
   if (ev === null) return "";
-  if (ev >= 1.2) return "ev-badge-high";
+  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "ev-badge-high";
   if (ev >= 0.9) return "ev-badge-mid";
   return "ev-badge-low";
 }
@@ -71,7 +74,7 @@ export function evClass(ev: number | null): string {
 /** 期待値の評価ラベル */
 export function evLabel(ev: number | null): string {
   if (ev === null) return "-";
-  if (ev >= 1.2) return `▲ ${ev.toFixed(2)}`;
+  if (ev >= EV_HIGHLIGHT_THRESHOLD) return `▲ ${ev.toFixed(2)}`;
   if (ev >= 0.9) return ev.toFixed(2);
   return ev.toFixed(2);
 }

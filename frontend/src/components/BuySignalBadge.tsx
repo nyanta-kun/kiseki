@@ -1,8 +1,8 @@
 "use client";
 
-import type { BuySignal } from "@/lib/buySignal";
-export type { BuySignal } from "@/lib/buySignal";
-export { computeJraBuySignal, computeChihouBuySignal } from "@/lib/buySignal";
+// 購入指針はバックエンド（src/indices/buy_signal.py）が単一の真実源。
+// フロントは API の race.buy_signal をそのまま表示する（判定ロジックの再実装禁止）。
+export type BuySignal = "buy" | "caution" | "pass" | null | undefined;
 
 type Size = "sm" | "md";
 
@@ -54,8 +54,8 @@ export function BuySignalBadge({ signal, size = "sm", showLabel = false }: Props
 
 /** 購入指針の説明文（レース詳細パネル内で使用） */
 export const BUY_SIGNAL_DESC: Record<NonNullable<BuySignal>, string> = {
-  buy:     "高ROIコース × EV最適帯（1.0–2.0）。過去実績 ROI 85%超。積極的な購入を推奨。",
-  caution: "コースROIまたはEVが最適条件から外れています。詳細を確認の上判断してください。",
-  pass:    "低ROIコース、またはEVが最適帯（1.0–2.0）から大きく外れています。見送り推奨。",
+  buy:     "バックテストでROI良好な条件（JRA: 指数1位が単勝10倍以上 / 地方: 好ROI場×推奨ランク上位）。",
+  caution: "条件が最適帯から外れています。詳細を確認の上判断してください。",
+  pass:    "バックテストでROI不良な条件（低オッズ本命買い・低ROI場など）。見送り推奨。",
 };
 
