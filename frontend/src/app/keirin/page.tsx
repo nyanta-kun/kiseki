@@ -433,8 +433,10 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
     : null;
 
   const rankStr = pick.rank ?? "";
-  // 候補行: 指数条件上なり得るランクと、ランク別買い目（SS=三連複 / S・S+=三連単F）
-  const candRanks = candPossibleRanks(pick);
+  // 候補行: 指数条件上なり得るランクと、ランク別買い目（SS=三連複 / S・S+=三連単F）。
+  // ガミ落ち確定行は「ガミ落ち」表示を優先し候補ランクは出さない
+  // （三連単S/S+は独立判定のため成立時は別の #7ST 行として表示される）。
+  const candRanks = isGamiSkip ? [] : candPossibleRanks(pick);
   const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
   // 三連単S/S+ (7PLUS_ST/STP) の pred_combo は「3連単F: 1→2,3→全」形式（券種プレフィックス込み）
   const isST = rankStr.startsWith("7PLUS_ST");
@@ -456,7 +458,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         {/* 左バッジは常に元表示（購入=SS/S/S+・見送り=候補）。理由は右側表示で判別 */}
         <RankBadge rank={rankStr} gamiStatus={gamiStatus} />
         {/* 候補行: 指数条件上なり得るランクをチップで表示 */}
-        {candRanks.length > 0 && !isGamiSkip && (
+        {candRanks.length > 0 && (
           <span className="flex items-center gap-1 flex-shrink-0">
             {candRanks.map((cr) => <CandRankChip key={cr} rank={cr} />)}
           </span>
