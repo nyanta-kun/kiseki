@@ -405,6 +405,8 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
   const startTime = fmtStartAt(pick.start_at);
+  const isSettled = computeIsSettled(pick.status, pick.start_at);
+  const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75">
       <button
@@ -423,6 +425,13 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             )}
           </div>
         </div>
+        {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用） */}
+        {collapsed && isSettled && hasPayout && (
+          <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">
+            {pick.trio_payout > 0 && <>複¥{pick.trio_payout.toLocaleString()}</>}
+            {(pick.trifecta_payout ?? 0) > 0 && <>{pick.trio_payout > 0 && " "}単¥{(pick.trifecta_payout ?? 0).toLocaleString()}</>}
+          </span>
+        )}
         <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">推奨外</span>
         <ChevronDown
           size={15}
@@ -430,7 +439,15 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
         />
       </button>
       {!collapsed && (
-        <EntryTable entries={pick.entries} />
+        <>
+          <EntryTable entries={pick.entries} />
+          {isSettled && (
+            <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-400 dark:text-gray-500">推奨外</span>
+              <PayoutInfo trio={pick.trio_payout} trifecta={pick.trifecta_payout} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );

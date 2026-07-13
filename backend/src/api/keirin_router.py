@@ -223,6 +223,40 @@ async def get_picks(
             {"race_key": base_key},
         )).mappings().all()
 
+        # 推奨外レース・採点前の候補行でも、レース確定後は三連複/三連単の払戻を表示する。
+        # picks_history に未記録（0円）の場合は wt_odds の最終オッズ×100 から算出
+        # （10円単位切り捨て。実払戻との一致は 2026-07-12 に検証済み）。
+        trio_pay = int(r["trio_payout"] or 0) if has_pick else 0
+        trifecta_pay = int(r["trifecta_payout"] or 0) if has_pick else 0
+        if trio_pay == 0 or trifecta_pay == 0:
+            top3 = sorted(
+                (e for e in entries
+                 if e["finish_order"] is not None and 1 <= e["finish_order"] <= 3),
+                key=lambda e: e["finish_order"],
+            )
+            if len(top3) == 3:
+                frames = [int(e["frame_no"]) for e in top3]
+                trio_comb = "-".join(map(str, sorted(frames)))
+                tri_comb = "-".join(map(str, frames))
+                odds_rows = (await db.execute(
+                    text("""
+                        SELECT bet_type, odds_value
+                        FROM keirin.wt_odds
+                        WHERE race_key = :bk
+                          AND ((bet_type = 'trio' AND combination = :tc)
+                            OR (bet_type = 'trifecta' AND combination = :fc))
+                    """),
+                    {"bk": base_key, "tc": trio_comb, "fc": tri_comb},
+                )).mappings().all()
+                for o in odds_rows:
+                    if not o["odds_value"]:
+                        continue
+                    pay = int(round(float(o["odds_value"]) * 100)) // 10 * 10
+                    if o["bet_type"] == "trio" and trio_pay == 0:
+                        trio_pay = pay
+                    elif o["bet_type"] == "trifecta" and trifecta_pay == 0:
+                        trifecta_pay = pay
+
         picks.append({
             "id": r["id"],
             "race_key": race_key,
@@ -240,8 +274,8 @@ async def get_picks(
             "synth_odds": synth_odds,
             "hit": bool(r["hit"]) if has_pick else False,
             "payout": (r["payout"] or 0) if has_pick else 0,
-            "trio_payout": (r["trio_payout"] or 0) if has_pick else 0,
-            "trifecta_payout": (r["trifecta_payout"] or 0) if has_pick else 0,
+            "trio_payout": trio_pay,
+            "trifecta_payout": trifecta_pay,
             "bet_amount": (r["bet_amount"] or 0) if has_pick else 0,
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
