@@ -118,6 +118,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
   // U=波乱ライン連れ込み・ペーパートレード検証中（集計対象外）
   "7PLUS_U":    { bg: "#0e7490", text: "#fff", label: "U" },
+  // M=◎不一致×システム◎・ペーパートレード検証中（集計対象外）
+  "7PLUS_M":    { bg: "#7c3aed", text: "#fff", label: "M" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
