@@ -46,12 +46,9 @@ function parseCandCombo(pred: string | null): { p1: string; p2: string; thirds: 
 // ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
 // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
 // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
-// 三連単行(S/S+)の prerace_gami は三連複基準の値のためガミ判定に使わない
-// （三連単のガミ条件は三連単オッズ min≥10 で判定済み・購入行にガミ落ちは存在しない）。
 // 購入済み R(SS) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
 function computeGamiSkip(pick: KeirinPick): boolean {
-  const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
-  const pgBelow = !isTrifectaRow && pick.prerace_gami != null && pick.prerace_gami < GAMI_THRESHOLD;
+  const pgBelow = pick.prerace_gami != null && pick.prerace_gami < GAMI_THRESHOLD;
   return pgBelow && (pick.miwokuri || pick.rank !== "7PLUS_R");
 }
 
@@ -114,13 +111,11 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // ---------------------------------------------------------------------------
 
 // 現行ランク体系（2026-07-10〜）。SS = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入）。
-// S/S+ = "7PLUS_ST"/"7PLUS_STP"（三連単F）は 2026-07-15 に全廃 — スタイルは過去日の履歴表示用に残す。
+// S/S+（7PLUS_ST/STP・三連単F）は 2026-07-15 に全廃（過去分もDBから削除済み）。
 // 旧方式(7PLUS_SS/7PLUS_S・素のSS/S/A/B/WIDE)の行は全期間再構築済み or route='ks' で API に現れない。
 // 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
   "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "SS" },
-  "7PLUS_ST":   { bg: "#1d4ed8", text: "#fff", label: "S" },
-  "7PLUS_STP":  { bg: "#4338ca", text: "#fff", label: "S+" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
@@ -436,9 +431,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
-  const isTrifectaRow = (pick.rank ?? "").startsWith("7PLUS_ST");
   const isGamiSkip = computeGamiSkip(pick);
-  const gamiStatus: "ok" | "ng" | null = !isTrifectaRow && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
+  const gamiStatus: "ok" | "ng" | null = pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
 
@@ -447,12 +441,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // ガミ落ち確定行は「ガミ落ち」表示を優先し候補ランクは出さない。
   const candRanks = isGamiSkip ? [] : candPossibleRanks(pick);
   const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
-  // 過去日の三連単S/S+行 (7PLUS_ST/STP・2026-07-15全廃) の pred_combo は
-  // 「3連単F: 1→2,3→全」形式（券種プレフィックス込み）
-  const isST = rankStr.startsWith("7PLUS_ST");
-  const betTypeLabel = "3連複"; // ST行は pred_combo に券種込みのため未使用。R/CAND は常に3連複
   const comboLabel = pick.pred_combo
-    ? `${isST ? pick.pred_combo : `${betTypeLabel}: ${pick.pred_combo}`}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
+    ? `3連複: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
 
   const startTime = fmtStartAt(pick.start_at);
@@ -465,7 +455,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        {/* 左バッジは常に元表示（購入=SS/S/S+・見送り=候補）。理由は右側表示で判別 */}
+        {/* 左バッジは常に元表示（購入=SS・見送り=候補）。理由は右側表示で判別 */}
         <RankBadge rank={rankStr} gamiStatus={gamiStatus} />
         {/* 候補行: 指数条件上なり得るランクをチップで表示 */}
         {candRanks.length > 0 && (
@@ -528,7 +518,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.gap23.toFixed(1)}</span>pt
               </span>
             )}
-            {pick.prerace_gami != null && !isMiwokuri && !isTrifectaRow && (
+            {pick.prerace_gami != null && !isMiwokuri && (
               pick.prerace_gami >= gamiThr ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
                   直前 {pick.prerace_gami.toFixed(1)}倍✓
@@ -567,14 +557,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "R"=SS。"ST"・"STP"=三連単S/S+ は 2026-07-15 に全廃
-// （過去日を含む集計期間での履歴表示のためラベルは残す）
-const RANK_ORDER = ["R", "ST", "STP"] as const;
-const RANK_LABEL: Record<string, string> = { R: "SS", ST: "S", STP: "S+" };
+// by_rank キー: "R"=SS のみ（S/S+=ST/STP は 2026-07-15 に全廃・集計対象外）
+const RANK_ORDER = ["R"] as const;
+const RANK_LABEL: Record<string, string> = { R: "SS" };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  R:   "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
-  ST:  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
-  STP: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
+  R: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {

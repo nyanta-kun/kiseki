@@ -99,8 +99,7 @@ async def get_picks(
 ) -> JSONResponse:
     """指定日（YYYY-MM-DD）の推奨ピック一覧を返す。
     include_all=true の場合は推奨外レースも含む全レースを返す。
-    同一レースに複数の購入行（SS=三連複とS/S+=三連単の併存）がある場合は
-    行ごとに返す（1レース1行に絞ると片方の的中が一覧から見えなくなるため）。
+    S/S+（7PLUS_ST/STP）は 2026-07-15 に全廃（過去分もDB・集計から削除済み）。
     """
     target = date or _today_jst().isoformat()
 
@@ -144,10 +143,8 @@ async def get_picks(
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
                       WHEN '7PLUS_R'    THEN 1
-                      WHEN '7PLUS_STP'  THEN 2
-                      WHEN '7PLUS_ST'   THEN 3
-                      WHEN '7PLUS_CAND' THEN 4
-                      ELSE 5
+                      WHEN '7PLUS_CAND' THEN 2
+                      ELSE 3
                     END
             """),
             {"date": target},
@@ -338,7 +335,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+              AND ph.rank = '7PLUS_R'
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -364,7 +361,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP', '7PLUS_CAND')
+              AND ph.rank IN ('7PLUS_R', '7PLUS_CAND')
               AND {_SETTLED_COND}
         """),
         params,
@@ -386,7 +383,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+              AND ph.rank = '7PLUS_R'
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -418,7 +415,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP', '7PLUS_CAND')
+              AND ph.rank IN ('7PLUS_R', '7PLUS_CAND')
               AND {_SETTLED_COND}
         """),
         params,
@@ -593,7 +590,7 @@ async def get_stats(
     _STATS_COND = """
         AND NOT COALESCE(ph.miwokuri, FALSE)
         AND ph.bet_amount > 0
-        AND ph.rank IN ('7PLUS_R', '7PLUS_ST', '7PLUS_STP')
+        AND ph.rank = '7PLUS_R'
         AND ph.race_key NOT LIKE '%#CAND'
         AND (
             wr.status = 3
