@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Bike } from "lucide-react";
 
 // ---------------------------------------------------------------------------
-// 静的データ（ランク体系 2026-07-10〜 / 検証はクリーン分割: 学習 2022-12〜2026-03・
+// 静的データ（ランク体系 2026-07-10〜・S/S+は2026-07-15全廃 / 検証はクリーン分割: 学習 2022-12〜2026-03・
 // 時系列CV検証・テスト 2026-04〜06（学習未使用）・2026-07〜 本番フォワード）
 // ---------------------------------------------------------------------------
 
@@ -20,54 +20,28 @@ const RANKS = [
       "「どの相手が来ても7倍以上つく」レースだけを、指数1・2位を軸に全相手へ流す。的中条件は軸2車が3着以内に入ることだけ（3着は誰でもよい）ため的中率が高く、順当決着で配当が安いレースはレースごと見送る。",
     investment: "全相手点数 × 100円/レース（7車=500円）",
   },
-  {
-    key: "S",
-    bg: "#1d4ed8",
-    label: "S",
-    title: "Sランク",
-    subtitle: "7車以上 ｜ 三連単フォーメーション ｜ 1着固定",
-    test: "142.1%",
-    testSub: "10.0R/日・910R・的中19.0%",
-    condition: "全目オッズ min ≥ 10倍 かつ gap12 ≥ 0.15",
-    detail:
-      "1着=指数1位固定・2着=指数2,3位・3着=全通りの三連単フォーメーション。的中条件は「1着が指数1位 かつ 2着が指数2,3位」。gap12が大きい=1位の1着信頼度が高いレースに限定し、全目10倍以上のレース単位ガミ条件で安配当レースを除外する。",
-    investment: "2×(車数-2)点 × 100円/レース（7車=1,000円）",
-  },
-  {
-    key: "S+",
-    bg: "#4338ca",
-    label: "S+",
-    title: "S+（Sランク増額）",
-    subtitle: "7車以上 ｜ 三連単フォーメーション ｜ 増額200円/点",
-    test: "237.2%",
-    testSub: "1.9R/日・169R・的中27.2%",
-    condition: "Sの条件 かつ gap12 ≥ 0.25 かつ gap34 ≥ 0.04",
-    detail:
-      "Sランクのうち、1位が突出し（gap12≥0.25）かつ2着候補（指数2,3位）が4位以下と明確に離れているレース。的中率・回収率ともSランク内で最良の帯のため、賭金を2倍（200円/点）に増額する。",
-    investment: "2×(車数-2)点 × 200円/レース（7車=2,000円）",
-  },
 ];
 
 // クリーン検証 月別（テスト 2026-04〜06 = 学習未使用 / 2026-07〜 = 本番フォワード）
 const MONTHLY = [
-  { month: "2026-04", ss: "210.1%", s: "139.7%", kind: "テスト" },
-  { month: "2026-05", ss: "192.3%", s: "163.1%", kind: "テスト" },
-  { month: "2026-06", ss: "242.7%", s: "123.7%", kind: "テスト" },
-  { month: "2026-07", ss: "163.2%", s: "181.0%", kind: "フォワード（〜7/9）" },
+  { month: "2026-04", ss: "210.1%", kind: "テスト" },
+  { month: "2026-05", ss: "192.3%", kind: "テスト" },
+  { month: "2026-06", ss: "242.7%", kind: "テスト" },
+  { month: "2026-07", ss: "163.2%", kind: "フォワード（〜7/9）" },
 ];
 
 const TERMS = [
   {
     term: "gap12",
-    def: "AIモデルが予測した「指数1位の3着内確率 − 2位の確率」の差。大きいほど軸の優位性が高い。SSは≥0.10、Sは≥0.15、S+は≥0.25。",
+    def: "AIモデルが予測した「指数1位の3着内確率 − 2位の確率」の差。大きいほど軸の優位性が高い。SSは≥0.10。",
   },
   {
-    term: "gap23 / gap34",
-    def: "指数2位と3位の確率差（gap23・SSの条件）／3位と4位の確率差（gap34・S+の条件）。2着候補の質を測る。",
+    term: "gap23",
+    def: "指数2位と3位の確率差（SSの条件）。2着候補の質を測る。",
   },
   {
     term: "ガミ条件（レース単位）",
-    def: "購入する全買い目の最低オッズによるレース選別。1目でも閾値未満（SS=7倍・S=10倍）ならレースごと見送る。順当決着で配当が安すぎるレースを外すことが回収率の源泉。買い目単位のカットは行わない。",
+    def: "購入する全買い目の最低オッズによるレース選別。1目でも閾値未満（SS=7倍）ならレースごと見送る。順当決着で配当が安すぎるレースを外すことが回収率の源泉。買い目単位のカットは行わない。",
   },
   {
     term: "テスト回収率",
@@ -78,8 +52,8 @@ const TERMS = [
     def: "2026-07-01 以降の前向き検証。本番モデル（学習 ≤2026-06-30）にとって完全に未知の期間。",
   },
   {
-    term: "三連複 / 三連単F",
-    def: "三連複=1〜3着を順不同で当てる（SS）。三連単F=着順まで指定するフォーメーション買い（S/S+・1着固定×2着2頭×3着全通り）。",
+    term: "三連複",
+    def: "三連複=1〜3着を順不同で当てる（SS）。",
   },
 ];
 
@@ -114,16 +88,11 @@ export default function KeirinHelpPage() {
           候補は毎朝8:00（日中）と16:00（夜の部）に生成し、最終判定は発走15分前のオッズで確定します。
           モデルは 2026-06-30 以前のデータのみで学習（学習/検証/テストを時系列分割・リークなし）。
         </p>
-        <div className="grid grid-cols-2 gap-2 pt-1">
+        <div className="grid grid-cols-1 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
             <p className="text-xs text-gray-500">SSランク テスト回収率</p>
             <p className="text-lg font-bold text-emerald-600">213.9%</p>
             <p className="text-xs text-gray-400">3.8R/日 ・ 345R ・ 的中33.3%</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">Sランク テスト回収率</p>
-            <p className="text-lg font-bold text-emerald-600">142.1%</p>
-            <p className="text-xs text-gray-400">10.0R/日 ・ 910R ・ 的中19.0%</p>
           </div>
         </div>
         <p className="text-xs text-gray-400">
@@ -178,7 +147,6 @@ export default function KeirinHelpPage() {
               <tr className="border-b border-gray-100">
                 <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">月</th>
                 <th className="py-1.5 px-3 text-right text-xs text-gray-500 font-medium">SS（三連複）</th>
-                <th className="py-1.5 px-3 text-right text-xs text-gray-500 font-medium">S計（三連単）</th>
                 <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">区分</th>
               </tr>
             </thead>
@@ -187,7 +155,6 @@ export default function KeirinHelpPage() {
                 <tr key={m.month} className="border-b border-gray-50 last:border-0">
                   <td className="py-1.5 px-3 text-gray-600">{m.month.replace("-", "/")}</td>
                   <td className="py-1.5 px-3 text-right font-semibold text-emerald-600">{m.ss}</td>
-                  <td className="py-1.5 px-3 text-right font-semibold text-emerald-600">{m.s}</td>
                   <td className="py-1.5 px-3 text-gray-400 text-xs">{m.kind}</td>
                 </tr>
               ))}
@@ -215,9 +182,8 @@ export default function KeirinHelpPage() {
         <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
           <li>バックテスト結果は過去データによるもの。将来の回収率を保証しない。</li>
           <li>ガミ判定は発走15分前オッズで行うため、最終オッズ基準の検証値とは対象の出入りが多少ある。</li>
-          <li>三連単（S/S+）は分散が大きく単月赤字が起こり得る。週次〜月次での評価を推奨。</li>
           <li>欠車（出走取消）は、軸欠車=レース無効（返還）、相手欠車=その目のみ除外として扱う。</li>
-          <li>SSとS/S+は同一レースに重複して出ることがある（券種が別）。両方独立して購入。</li>
+          <li>S/S+ランク（三連単F）は優位性が確認できなかったため 2026-07-15 に廃止。過去の購入実績のみ履歴表示される。</li>
           <li>本ランク体系のlive検証開始: 2026-07-10〜。それ以前の期間も全て現行体系の条件で遡及再判定した実績を表示している（旧・買い目カット方式の行は存在しない）。</li>
         </ul>
       </section>

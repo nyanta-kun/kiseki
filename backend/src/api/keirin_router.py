@@ -405,16 +405,14 @@ async def _aggregate(
         )
 
     # ランク別候補数（指数条件のみ・オッズ条件前）
-    # SS: gap12>=0.10 ∧ gap23>=1pt / S: gap12>=0.15 / S+: gap12>=0.25 ∧ gap34>=0.04
+    # SS: gap12>=0.10 ∧ gap23>=1pt
+    # ※ S/S+（7PLUS_ST/STP）は 2026-07-15 に全廃。購入済み過去行の by_rank 集計は
+    #   上のランク別集計で引き続き返すが、前向きの候補数は SS のみ算出する。
     rank_cand_row = (await db.execute(
         text(f"""
             SELECT
               COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.10 AND ph.gap23 >= 1.0
-                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_r,
-              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.15
-                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_st,
-              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.25 AND ph.gap34 >= 0.04
-                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_stp
+                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_r
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
@@ -426,15 +424,14 @@ async def _aggregate(
         params,
     )).mappings().one_or_none()
     if rank_cand_row:
-        for key, col in (("R", "cand_r"), ("ST", "cand_st"), ("STP", "cand_stp")):
-            n_cand = int(rank_cand_row[col] or 0)
-            if key in by_rank:
-                by_rank[key]["n_candidates"] = n_cand
-            elif n_cand > 0:
-                # 候補はあったが全て見送り（購入0件）のランクも返す。
-                # （購入行の有無でキー自体が消えると「候補数の可視化」が短期間表示で機能しない）
-                by_rank[key] = _make_period_dict(0, 0, 0, 0)
-                by_rank[key]["n_candidates"] = n_cand
+        n_cand = int(rank_cand_row["cand_r"] or 0)
+        if "R" in by_rank:
+            by_rank["R"]["n_candidates"] = n_cand
+        elif n_cand > 0:
+            # 候補はあったが全て見送り（購入0件）のランクも返す。
+            # （購入行の有無でキー自体が消えると「候補数の可視化」が短期間表示で機能しない）
+            by_rank["R"] = _make_period_dict(0, 0, 0, 0)
+            by_rank["R"]["n_candidates"] = n_cand
     result["by_rank"] = by_rank
     return result
 
@@ -472,12 +469,15 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     }
 
     # ランク別行を取得（model_name サフィックスで識別）
+    # S/S+（#7ST/#7STP）は 2026-07-15 に全廃 — 残存する過去評価行は表示しない
     rank_rows = (await db.execute(
         text("""
             SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
             FROM keirin.model_evaluation
             WHERE period_type = :pt
               AND model_name LIKE '%#7%'
+              AND model_name NOT LIKE '%#7ST%'
+              AND model_name NOT LIKE '%#7STP%'
             ORDER BY evaluated_at DESC
         """),
         {"pt": period_type},
