@@ -13,9 +13,9 @@ const RANKS = [
     label: "SS",
     title: "SSランク",
     subtitle: "7車以上 ｜ 三連複 ｜ 全目購入",
-    test: "94.4%",
-    testSub: "1.1R/日・103R・的中30.1%（実精算）",
-    condition: "全目オッズ min ≥ 7.0倍 かつ gap12 ≥ 0.10 かつ gap23 ≥ 1pt",
+    test: "77.4%",
+    testSub: "1.7R/日・157R・的中26.1%（実精算）",
+    condition: "全目オッズ min ≥ 7.0倍 かつ gap12 ≥ 0.10 かつ gap23 ≥ 1pt かつ 非選抜レース",
     detail:
       "「どの相手が来ても7倍以上つく」レースだけを、指数1・2位を軸に全相手へ流す。的中条件は軸2車が3着以内に入ることだけ（3着は誰でもよい）ため的中率が高く、順当決着で配当が安いレースはレースごと見送る。",
     investment: "全相手点数 × 100円/レース（7車=500円）",
@@ -24,10 +24,10 @@ const RANKS = [
 
 // クリーン検証 月別（テスト 2026-04〜06 = 学習未使用 / 2026-07〜 = 本番フォワード）
 const MONTHLY = [
-  { month: "2026-04", ss: "98.7%", kind: "テスト" },
-  { month: "2026-05", ss: "57.2%", kind: "テスト" },
-  { month: "2026-06", ss: "151.5%", kind: "テスト" },
-  { month: "2026-07", ss: "126.5%", kind: "フォワード（〜7/9）" },
+  { month: "2026-04", ss: "89.9%", kind: "テスト" },
+  { month: "2026-05", ss: "57.9%", kind: "テスト" },
+  { month: "2026-06", ss: "87.8%", kind: "テスト" },
+  { month: "2026-07", ss: "98.6%", kind: "フォワード（〜7/9）" },
 ];
 
 const TERMS = [
@@ -95,8 +95,8 @@ export default function KeirinHelpPage() {
         <div className="grid grid-cols-1 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
             <p className="text-xs text-gray-500">SSランク テスト回収率（実精算）</p>
-            <p className="text-lg font-bold text-amber-600">94.4%</p>
-            <p className="text-xs text-gray-400">1.1R/日 ・ 103R ・ 的中30.1%</p>
+            <p className="text-lg font-bold text-amber-600">77.4%</p>
+            <p className="text-xs text-gray-400">1.7R/日 ・ 157R ・ 的中26.1%</p>
           </div>
         </div>
         <p className="text-xs text-gray-400">
@@ -186,6 +186,7 @@ export default function KeirinHelpPage() {
         <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
           <li>バックテスト結果は過去データによるもの。将来の回収率を保証しない。</li>
           <li>表示回収率は実精算方式（落車・失格は外れ計上・欠車のみ返還）。テスト期間の実精算ROIは100%未満であり、現体系は損益分岐圏で運用・検証中。</li>
+          <li>2026-07-16 に4分戦見送り・ライン格差増額（200円/点）を廃止（実精算再検証で検証期間間の再現性なし）。現行の見送り条件は選抜レースのみ。</li>
           <li>ガミ判定は発走15分前オッズで行うため、最終オッズ基準の検証値とは対象の出入りが多少ある。</li>
           <li>欠車（出走取消）は、軸欠車=レース無効（返還）、相手欠車=その目のみ除外として扱う。</li>
           <li>S/S+ランク（三連単F）は優位性が確認できなかったため 2026-07-15 に廃止。過去の購入実績のみ履歴表示される。</li>
