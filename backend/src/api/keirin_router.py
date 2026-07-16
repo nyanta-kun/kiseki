@@ -475,6 +475,7 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
             FROM keirin.model_evaluation
             WHERE period_type = :pt
               AND model_name NOT LIKE '%#7%'
+              AND model_name NOT LIKE '%#6S1'
             ORDER BY evaluated_at DESC
             LIMIT 1
         """),
@@ -503,7 +504,7 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
             SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
             FROM keirin.model_evaluation
             WHERE period_type = :pt
-              AND model_name LIKE '%#7%'
+              AND (model_name LIKE '%#7%' OR model_name LIKE '%#6S1')
               AND model_name NOT LIKE '%#7ST%'
               AND model_name NOT LIKE '%#7STP%'
             ORDER BY evaluated_at DESC
