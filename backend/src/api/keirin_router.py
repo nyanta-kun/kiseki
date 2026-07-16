@@ -166,7 +166,6 @@ async def get_picks(
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
-                      WHEN 'SIX_S1'     THEN 1
                       WHEN '7PLUS_CAND' THEN 2
                       ELSE 3
                     END
@@ -342,10 +341,8 @@ _SETTLED_COND = """(
 
 # 内部rank → by_rank キー（表示ランク）のマッピング
 _RANK_KEY_MAP = {
-    "SIX_S1": "S1",   # 新S1（6車三連単・2026-07-16 旧7PLUS_Rを置換）
-    "7PLUS_U": "U",
-    "7PLUS_M": "M",
-    "7PLUS_A": "A",
+    "7PLUS_U": "U",   # 表示 S2
+    "7PLUS_M": "M",   # 表示 S3（2026-07-17 新定義: 不一致×gap12≥0.10）
 }
 
 
@@ -354,8 +351,8 @@ async def _aggregate(
     where: str,
     params: dict[str, Any],
 ) -> dict:
-    # 2026-07-16 旧S1（7PLUS_R・実賭け）全廃 → 全ランクがペーパー（名目賭金）。
-    # トップラインは4ランク（S1=SIX_S1 / S2=7PLUS_U / S3=7PLUS_M / A=7PLUS_A）の名目合算。
+    # 2026-07-17〜: 現行ランクは S2/S3 の2ペーパーのみ（S1=SIX_S1 / A=7PLUS_A は全廃・
+    # 行はアーカイブ退避済み）。トップラインは2ランクの名目合算。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -369,7 +366,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -386,7 +383,7 @@ async def _aggregate(
     total_payout = int(row["total_payout"] or 0)
     result = _make_period_dict(n_picks, n_hits, total_bet, total_payout)
 
-    # 総候補レース数（判定前候補+見送り含む・4ペーパーランクの distinct レース数）
+    # 総候補レース数（判定前候補+見送り含む・2ペーパーランクの distinct レース数）
     cand_row = (await db.execute(
         text(f"""
             SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
@@ -395,15 +392,14 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
               AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）
-    # S1=SIX_S1（6車三連単・2026-07-16 旧S1置換）/ S2=7PLUS_U / S3=7PLUS_M / A=7PLUS_A
+    # ランク別集計（全てペーパー・名目賭金）: S2=7PLUS_U / S3=7PLUS_M
     rank_rows = (await db.execute(
         text(f"""
             SELECT
@@ -418,7 +414,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -437,7 +433,7 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #6S1/#7U/#7M/#7A 行を書き込む）
+    # （write_candidates_wt が候補時点で #7U/#7M 行を書き込む）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
@@ -447,7 +443,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
               AND {_SETTLED_COND}
             GROUP BY ph.rank
         """),
@@ -466,7 +462,7 @@ async def _aggregate(
 
 async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     """keirin.model_evaluation から最新のバックテスト結果を返す。
-    ランク別行（model_name に '#7SS'/'#7S'/'#7A' サフィックス付き）も by_rank に含める。
+    ランク別行（model_name に '#7U'/'#7M' サフィックス付き）も by_rank に含める。
     """
     row = (await db.execute(
         text("""
@@ -498,15 +494,18 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     }
 
     # ランク別行を取得（model_name サフィックスで識別）
-    # S/S+（#7ST/#7STP）は 2026-07-15 に全廃 — 残存する過去評価行は表示しない
+    # S/S+（#7ST/#7STP）2026-07-15 全廃・S1（#6S1）/A（#7A）2026-07-17 全廃 —
+    # 残存する過去評価行は表示しない（save_model_eval 再実行で行自体も削除される）
     rank_rows = (await db.execute(
         text("""
             SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
             FROM keirin.model_evaluation
             WHERE period_type = :pt
-              AND (model_name LIKE '%#7%' OR model_name LIKE '%#6S1')
+              AND model_name LIKE '%#7%'
               AND model_name NOT LIKE '%#7ST%'
               AND model_name NOT LIKE '%#7STP%'
+              AND model_name NOT LIKE '%#7A'
+              AND model_name NOT LIKE '%#7R'
             ORDER BY evaluated_at DESC
         """),
         {"pt": period_type},
@@ -515,11 +514,8 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     # 同一 evaluated_at の最新セットのみ使用（ランクキーに重複があれば最新を優先）
     by_rank: dict[str, dict] = {}
     for r in rank_rows:
-        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "6S1" / "7U" / "7M" / "7A"
-        if suffix == "6S1":
-            rank_key = "S1"  # 新S1（6車三連単）
-        else:
-            rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
+        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "7U" / "7M"
+        rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
         if rank_key not in by_rank:
             by_rank[rank_key] = _make_period_dict(
                 int(r["n_picks"] or 0),

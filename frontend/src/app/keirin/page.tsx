@@ -48,11 +48,11 @@ function parseCandCombo(pred: string | null): { p1: string; p2: string; thirds: 
 // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
 // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
 // 購入済み R(S1) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
-// ペーパー検証ランク（S2/S3/A）はガミ閾値と無関係のため対象外
+// ペーパー検証ランク（S2/S3）はガミ閾値と無関係のため対象外
 // （同一レースのS1系判定で prerace_gami が書き込まれ得るが、ガミ落ち扱いにしない）。
 function computeGamiSkip(pick: KeirinPick): boolean {
   const pgBelow = pick.prerace_gami != null && pick.prerace_gami < GAMI_THRESHOLD;
-  const paperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M" || pick.rank === "7PLUS_A";
+  const paperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M";
   return pgBelow && !paperRank && (pick.miwokuri || pick.rank !== "7PLUS_R");
 }
 
@@ -114,22 +114,17 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 定数
 // ---------------------------------------------------------------------------
 
-// 現行ランク体系（2026-07-16 名称整理: SS→S1 / U→S2 / M→S3・A 新設。内部rankコードは不変）。
-// S1 = 内部rank "7PLUS_R"（三連複・レース単位min≥7・全目購入・唯一の実賭けランク）。
-// S/S+（7PLUS_ST/STP・三連単F）は 2026-07-15 に全廃（過去分もDBから削除済み）。
-// 旧・廃止済みAランク（7PLUS_A・〜2026-06-19）は picks_history_a_archive へ退避済み。
+// 現行ランク体系（2026-07-17〜: S2/S3 の2ペーパーランクのみ）。
+// S1（SIX_S1・6車三連単）と A（7PLUS_A・一致波乱二連単）は正規プロトコル再検証で
+// 不合格のため 2026-07-17 全廃（行は picks_history_r_archive / _a_archive へ退避済み）。
+// 旧S1(7PLUS_R・7車三連複)は 2026-07-16 全廃・S/S+（7PLUS_ST/STP）は 2026-07-15 全廃。
 // 旧方式(7PLUS_SS/7PLUS_S・素のSS/S/A/B/WIDE)の行は全期間再構築済み or route='ks' で API に現れない。
 // 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  // S1=6車三連単（モデル1→2→3,4位・2点・gap12≥0.11）2026-07-16 旧S1(7PLUS_R)を置換・ペーパー
-  "SIX_S1":     { bg: "#d97706", text: "#fff", label: "S1" },
-  // 旧S1(7PLUS_R・7車三連複)は 2026-07-16 全廃・過去行は picks_history_r_archive へ退避済み
   // S2=波乱ライン連れ込み・ペーパートレード検証中（集計対象外）
   "7PLUS_U":    { bg: "#0e7490", text: "#fff", label: "S2" },
-  // S3=◎不一致×システム◎・ペーパートレード検証中（集計対象外）
+  // S3=◎不一致×システム◎×gap12≥0.10（2026-07-17 新定義）・ペーパートレード検証中
   "7PLUS_M":    { bg: "#7c3aed", text: "#fff", label: "S3" },
-  // A=◎一致×波乱×別ライン先頭軸の二連単（2026-07-16 新設・ペーパートレード検証中）
-  "7PLUS_A":    { bg: "#059669", text: "#fff", label: "A" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
@@ -170,7 +165,7 @@ function RankBadge({ rank, purchased }: { rank: string; purchased?: boolean }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
 
   // 購入対象（買い目確定・ペーパーは記録確定）になったら緑の○で囲う。
-  // 全ランク統一（S1=直前オッズ判定成立、S2/S3/A=15分前判定 buy 成立）。
+  // 全ランク統一（S2/S3=15分前判定 buy 成立）。
   const ringStyle: React.CSSProperties | undefined = purchased
     ? { outline: "2px solid #10b981", outlineOffset: "2px" }
     : undefined;
@@ -444,10 +439,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（S1/S2/S3/A・全ランク）は旧S1の三連複ガミ閾値と無関係のため
+  // ペーパー検証ランク（S2/S3）は旧S1の三連複ガミ閾値と無関係のため
   // ガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "SIX_S1" || pick.rank === "7PLUS_U"
-    || pick.rank === "7PLUS_M" || pick.rank === "7PLUS_A";
+  const isPaperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -464,9 +458,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
   const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
-  // 券種ラベル: A=二連単（"軸>相手,..."）・S1=三連単（"1着>2着>3着候補,..."）・他=三連複
-  const betTypeLabel = rankStr === "7PLUS_A" ? "2連単"
-    : rankStr === "SIX_S1" ? "3連単" : "3連複";
+  // 券種ラベル: 現行ランク（S2/S3）は三連複のみ
+  const betTypeLabel = "3連複";
   const comboLabel = pick.pred_combo
     ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
@@ -586,15 +579,13 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "S1"=6車三連単 / "U"=S2 / "M"=S3 / "A"=A（全てペーパー検証・名目賭金）。
-// 2026-07-16 旧S1（7PLUS_R・実賭け）全廃 → トップラインは4ランクの名目合算。
-const RANK_ORDER = ["S1", "U", "M", "A"] as const;
-const RANK_LABEL: Record<string, string> = { S1: "S1", U: "S2", M: "S3", A: "A" };
+// by_rank キー: "U"=S2 / "M"=S3（全てペーパー検証・名目賭金）。
+// 2026-07-17 S1(SIX_S1)/A(7PLUS_A) 全廃 → トップラインは2ランクの名目合算。
+const RANK_ORDER = ["U", "M"] as const;
+const RANK_LABEL: Record<string, string> = { U: "S2", M: "S3" };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  S1: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   U: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   M: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
-  A: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
