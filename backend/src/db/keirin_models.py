@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    REAL,
     Boolean,
     DateTime,
     Float,
@@ -105,6 +106,13 @@ class KeirinWtEntry(KeirinBase):
     n_lines: Mapped[int | None] = mapped_column(Integer, comment="ライン数")
     finish_order: Mapped[int | None] = mapped_column(Integer, comment="着順(0=欠車/失格)")
     factor: Mapped[str | None] = mapped_column(Text, comment="着因")
+    res_standing: Mapped[int | None] = mapped_column(
+        Integer, comment="このレースでS（スタンディング先頭）を取ったか（0/1・結果確定後に記録）"
+    )
+    res_back: Mapped[int | None] = mapped_column(
+        Integer, comment="このレースでB（バック先頭）を取ったか（0/1・結果確定後に記録）"
+    )
+    final_half: Mapped[float | None] = mapped_column(REAL, comment="上がりタイム（秒）")
 
 
 class KeirinWtOdds(KeirinBase):
