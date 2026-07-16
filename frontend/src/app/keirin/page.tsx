@@ -491,18 +491,27 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
           </div>
         </div>
-        {/* 折りたたみ時: 結果サマリー or ガミ判定チップをインライン表示 */}
+        {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}
         {collapsed && isSettled && (
           <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
         )}
-        {collapsed && !isSettled && gamiStatus === "ok" && (
-          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex-shrink-0">
-            {pick.prerace_gami!.toFixed(1)}倍✓
-          </span>
-        )}
-        {collapsed && !isSettled && gamiStatus === "ng" && (
-          <span className="text-xs text-orange-500 dark:text-orange-400 font-medium flex-shrink-0">
-            {pick.prerace_gami!.toFixed(1)}倍⚠
+        {collapsed && !isSettled && (gamiStatus != null || (pick.synth_odds != null && !isMiwokuri)) && (
+          <span className="text-xs flex items-center gap-1.5 flex-shrink-0 tabular-nums">
+            {gamiStatus === "ok" && (
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                最低{pick.prerace_gami!.toFixed(1)}✓
+              </span>
+            )}
+            {gamiStatus === "ng" && (
+              <span className="text-orange-500 dark:text-orange-400 font-medium">
+                最低{pick.prerace_gami!.toFixed(1)}⚠
+              </span>
+            )}
+            {pick.synth_odds != null && !isMiwokuri && (
+              <span className="text-gray-500 dark:text-gray-400">
+                合成<span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>
+              </span>
+            )}
           </span>
         )}
         <ChevronDown
@@ -537,11 +546,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             {pick.prerace_gami != null && !isMiwokuri && !isPaperRank && (
               pick.prerace_gami >= gamiThr ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
-                  直前 {pick.prerace_gami.toFixed(1)}倍✓
+                  最低 {pick.prerace_gami.toFixed(1)}倍✓
                 </span>
               ) : (
                 <span className="text-xs flex-shrink-0 text-orange-500 dark:text-orange-400 font-medium">
-                  直前 {pick.prerace_gami.toFixed(1)}倍⚠
+                  最低 {pick.prerace_gami.toFixed(1)}倍⚠
                 </span>
               )
             )}

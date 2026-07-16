@@ -34,25 +34,39 @@ router = APIRouter(prefix="/api/keirin", tags=["keirin"])
 # 合成オッズ計算
 # ---------------------------------------------------------------------------
 
-def _parse_combinations(pred_combo: str | None, is_wide: bool) -> list[str]:
-    """pred_combo 文字列を個別組み合わせキーのリストに変換する。
+def _parse_combinations(pred_combo: str | None, is_wide: bool) -> tuple[list[str], str | None]:
+    """pred_combo 文字列を (組み合わせキーのリスト, 券種) に変換する。
 
-    - WIDE: '4-2' → ['2-4'] (車番を昇順にソート)
-    - 3連単: '1-4-3,5,2' → ['1-4-3', '1-4-5', '1-4-2']
+    wt_odds_snapshot の combination 表記に合わせる:
+    - 三連複（S1/S2/S3・'1-4-3,5,2'）→ ['1=3=4', '1=4=5', '1=2=4'] / 'trio'（昇順=区切り）
+    - 二連単（A・'1>3,4,5'）        → ['1-3', '1-4', '1-5'] / 'exacta'（着順どおり-区切り）
+    - WIDE（'4-2'）                 → ['2-4'] / 'quinella'（昇順）
+    ※ 旧実装は三連複の買い目に trifecta（三連単・1順序のみ）のオッズを使っており
+      合成オッズを過大表示していた（2026-07-16 修正）。
     """
     if not pred_combo:
-        return []
-    parts = pred_combo.split("-")
-    if is_wide and len(parts) == 2:
-        a, b = sorted([parts[0].strip(), parts[1].strip()], key=int)
-        return [f"{a}-{b}"]
-    if len(parts) >= 2:
-        axis1, axis2 = parts[0].strip(), parts[1].strip()
-        thirds = parts[2].split(",") if len(parts) > 2 else []
-        if thirds:
-            return [f"{axis1}-{axis2}-{t.strip()}" for t in thirds]
-        return [f"{axis1}-{axis2}"]
-    return []
+        return [], None
+    try:
+        if ">" in pred_combo:  # A（二連単）: "軸>相手1,相手2,..."
+            axis, rest = pred_combo.split(">", 1)
+            partners = [p.strip() for p in rest.split(",")
+                        if p.strip() and p.strip().isdigit()]
+            return [f"{int(axis)}-{p}" for p in partners], "exacta"
+        parts = pred_combo.split("-")
+        if is_wide and len(parts) == 2:
+            a, b = sorted([parts[0].strip(), parts[1].strip()], key=int)
+            return [f"{a}-{b}"], "quinella"
+        if len(parts) >= 3:
+            a1, a2 = parts[0].strip(), parts[1].strip()
+            thirds = [t.strip() for t in parts[2].split(",") if t.strip()]
+            combos = ["=".join(sorted([a1, a2, t], key=int)) for t in thirds]
+            return combos, "trio"
+        if len(parts) == 2:
+            a, b = sorted([parts[0].strip(), parts[1].strip()], key=int)
+            return [f"{a}-{b}"], "quinella"
+    except (ValueError, TypeError):
+        return [], None
+    return [], None
 
 
 async def _calc_synth_odds(
@@ -62,11 +76,9 @@ async def _calc_synth_odds(
     is_wide: bool,
 ) -> float | None:
     """朝オッズから合成オッズ（= 1 / Σ(1/odds)）を計算して返す。データ不足時は None。"""
-    combos = _parse_combinations(pred_combo, is_wide)
-    if not combos:
+    combos, bet_type = _parse_combinations(pred_combo, is_wide)
+    if not combos or bet_type is None:
         return None
-
-    bet_type = "quinella" if is_wide else "trifecta"
     rows = (await db.execute(
         text("""
             SELECT combination, odds_value
