@@ -585,8 +585,6 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   M: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   A: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
 };
-// ペーパー検証ランク（賭けなし・名目値）の注記対象
-const PAPER_RANK_KEYS = new Set(["U", "M", "A"]);
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
   const roiColor = data.roi == null
@@ -606,9 +604,6 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
           <span className={`inline-flex items-center justify-center min-w-6 px-1 h-5 rounded text-xs font-bold ${badgeClass}`}>
             {RANK_LABEL[rankKey] ?? rankKey}
           </span>
-          {PAPER_RANK_KEYS.has(rankKey) && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500">検証</span>
-          )}
         </span>
       </td>
       {/* ランク別候補数（指数条件のみ・オッズ条件前） */}
@@ -724,8 +719,10 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <SummaryRow label="当日" data={summary.today} showRanks={expanded} />
             <SummaryRow label="当月" data={summary.month} showRanks={expanded} />
             <SummaryRow label="当年" data={summary.year} showRanks={expanded} />
+            {/* 検証期間 = 学習に使っていない期間のバックテスト（HOLD・2026-06-30以前で固定）。
+                2026-07以降の本番フォワード分は当日/当月/当年サマリー側で表示 */}
             <SummaryRow
-              label="HOLD精度"
+              label="検証期間"
               sub={summary.test_from && summary.test_to ? `${summary.test_from}〜${summary.test_to}` : undefined}
               data={summary.test}
               showRanks={expanded}
