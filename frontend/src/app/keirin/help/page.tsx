@@ -12,14 +12,14 @@ const RANKS = [
     key: "S1",
     bg: "#d97706",
     label: "S1",
-    title: "S1ランク（旧SS・実賭け）",
-    subtitle: "7車 ｜ 三連複 ｜ 全目購入",
-    test: "67.3%",
-    testSub: "1.6R/日・189R・的中24.3%（実精算・条件見直し検討中）",
-    condition: "全目オッズ min ≥ 7.0倍 かつ gap12 ≥ 0.10 かつ gap23 ≥ 1pt かつ 非選抜レース",
+    title: "S1ランク（6車三連単／ペーパー検証中・2026-07-16再定義）",
+    subtitle: "6車 ｜ 三連単 1位→2位→3,4位 2点 ｜ 検証記録のみ・賭けなし",
+    test: "110.4%",
+    testSub: "3独立窓 110.4/102.9/113.4%・的中15〜21%・約1.5R/日（実精算・ペーパー）",
+    condition: "6車立て かつ gap12 ≥ 0.11（凍結値・条件は2つのみ）",
     detail:
-      "「どの相手が来ても7倍以上つく」レースだけを、指数1・2位を軸に全相手へ流す。的中条件は軸2車が3着以内に入ることだけ（3着は誰でもよい）ため的中率が高く、順当決着で配当が安いレースはレースごと見送る。唯一の実賭けランク。",
-    investment: "全相手点数 × 100円/レース（7車=500円）",
+      "モデル1位の勝率が全車立てで最も高い6車（勝率約46%）で、着順まで指定した三連単2点（1位→2位→3位・4位）を買う。同じ買い目相当の三連複はROI60%台に沈む一方、三連単のみが3窓すべてで100%を超える＝6車三連単は流動性が薄く、モデルの着順精度が市場価格に織り込まれていない歪みを取る戦略。旧S1（7車三連複・実賭け）は検証期間ROI67.3%・代替条件の全探索でも黒字条件なしのため2026-07-16に全廃した。",
+    investment: "ペーパートレード（名目 100円/点 × 2点）",
   },
   {
     key: "S2",
@@ -66,34 +66,25 @@ const RANKS = [
 ];
 
 // クリーン検証 月別（テスト 2026-04〜06 = 学習未使用 / 2026-07〜 = 本番フォワード）
+// 新S1（6車三連単・gap12≥0.11）の独立検証窓別成績（実精算・2026-07-16検証）
 const MONTHLY = [
-  { month: "2026-03", ss: "27.6%", kind: "検証" },
-  { month: "2026-04", ss: "63.2%", kind: "検証" },
-  { month: "2026-05", ss: "83.4%", kind: "検証" },
-  { month: "2026-06", ss: "94.2%", kind: "検証" },
-  { month: "2026-07", ss: "76.5%", kind: "フォワード（〜7/15）" },
+  { month: "2025-10〜12", ss: "113.4%", kind: "検証窓3（137R・的中20.4%）" },
+  { month: "2026-01〜04", ss: "102.9%", kind: "検証窓2（164R・的中15.2%）" },
+  { month: "2026-04〜07", ss: "110.4%", kind: "検証窓1（148R・的中19.6%）" },
 ];
 
 const TERMS = [
   {
     term: "gap12",
-    def: "AIモデルが予測した「指数1位の3着内確率 − 2位の確率」の差。大きいほど軸の優位性が高い。S1は≥0.10。",
-  },
-  {
-    term: "gap23",
-    def: "指数2位と3位の確率差（S1の条件）。2着候補の質を測る。",
+    def: "AIモデルが予測した「指数1位の3着内確率 − 2位の確率」の差。大きいほど軸の優位性が高い。S1（6車）は≥0.11。",
   },
   {
     term: "指数エントロピー",
     def: "レース内の予測確率分布の混戦度（S2/S3/Aの条件・≥1.84）。大きいほど「どの車も来うる」波乱見込みレース。",
   },
   {
-    term: "ガミ条件（レース単位）",
-    def: "購入する全買い目の最低オッズによるレース選別。1目でも閾値未満（S1=7倍）ならレースごと見送る。順当決着で配当が安すぎるレースを外すことが回収率の源泉。買い目単位のカットは行わない。",
-  },
-  {
     term: "ペーパートレード",
-    def: "実際には賭けず、発走15分前に確定した買い目を記録して成績だけを追う検証方式（S2/S3/A）。live実測で優位性が確認できたランクのみ実賭けに昇格する。",
+    def: "実際には賭けず、発走15分前に確定した買い目を記録して成績だけを追う検証方式（現在は全ランク）。live実測で優位性が確認できたランクのみ実賭けに昇格する。",
   },
   {
     term: "テスト回収率",
@@ -108,8 +99,8 @@ const TERMS = [
     def: "2026-07-01 以降の前向き検証。本番モデル（学習 ≤2026-06-30）にとって完全に未知の期間。",
   },
   {
-    term: "三連複・二連単",
-    def: "三連複=1〜3着を順不同で当てる（S1/S2/S3）。二連単=1着と2着を着順どおりに当てる（A）。",
+    term: "三連複・二連単・三連単",
+    def: "三連複=1〜3着を順不同で当てる（S2/S3）。二連単=1着と2着を着順どおりに当てる（A）。三連単=1〜3着を着順どおりに当てる（S1）。",
   },
 ];
 
@@ -146,9 +137,9 @@ export default function KeirinHelpPage() {
         </p>
         <div className="grid grid-cols-2 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">S1ランク 検証期間回収率（実精算・実賭け）</p>
-            <p className="text-lg font-bold text-amber-600">67.3%</p>
-            <p className="text-xs text-gray-400">1.6R/日 ・ 189R ・ 的中24.3%</p>
+            <p className="text-xs text-gray-500">S1ランク（6車三連単）検証回収率（実精算・ペーパー）</p>
+            <p className="text-lg font-bold text-amber-600">110.4%</p>
+            <p className="text-xs text-gray-400">約1.5R/日 ・ 的中15〜21% ・ 3窓全て100%超</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
             <p className="text-xs text-gray-500">Aランク 検証期間回収率（実精算・ペーパー）</p>
@@ -157,8 +148,8 @@ export default function KeirinHelpPage() {
           </div>
         </div>
         <p className="text-xs text-gray-400">
-          ★ 検証期間 = 2026-06-30以前（S1は2026-03-01〜・S2/S3/Aは2026-04-13〜）。
-          2026-07以降は本番フォワード。S2/S3/A はペーパートレード（賭けなし・記録のみ）検証中。
+          ★ 検証期間 = 2026-06-30以前（S2/S3/Aは2026-04-13〜。S1は3独立窓 2025-10〜12/2026-01〜04/2026-04〜07で検証）。
+          2026-07以降は本番フォワード。全ランクがペーパートレード（賭けなし・記録のみ）検証中。
         </p>
       </section>
 
@@ -195,27 +186,27 @@ export default function KeirinHelpPage() {
         ))}
       </section>
 
-      {/* 月別回収率 */}
+      {/* S1 検証窓別回収率 */}
       <section className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
-          <h2 className="text-sm font-bold text-gray-800">月別回収率（クリーン検証）</h2>
+          <h2 className="text-sm font-bold text-gray-800">S1（6車三連単）検証窓別回収率</h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            テスト = 学習未使用期間 ／ フォワード = 本番モデルの前向き検証
+            各窓とも学習期間外のOOS検証（窓ごとに専用評価モデルを学習・リークなし・実精算）
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">月</th>
-                <th className="py-1.5 px-3 text-right text-xs text-gray-500 font-medium">S1（三連複）</th>
-                <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">区分</th>
+                <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">期間</th>
+                <th className="py-1.5 px-3 text-right text-xs text-gray-500 font-medium">回収率</th>
+                <th className="py-1.5 px-3 text-left text-xs text-gray-500 font-medium">内訳</th>
               </tr>
             </thead>
             <tbody>
               {MONTHLY.map((m) => (
                 <tr key={m.month} className="border-b border-gray-50 last:border-0">
-                  <td className="py-1.5 px-3 text-gray-600">{m.month.replace("-", "/")}</td>
+                  <td className="py-1.5 px-3 text-gray-600">{m.month}</td>
                   <td className="py-1.5 px-3 text-right font-semibold text-emerald-600">{m.ss}</td>
                   <td className="py-1.5 px-3 text-gray-400 text-xs">{m.kind}</td>
                 </tr>
@@ -243,16 +234,12 @@ export default function KeirinHelpPage() {
         <h2 className="text-sm font-bold text-amber-800">注意事項</h2>
         <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
           <li>バックテスト結果は過去データによるもの。将来の回収率を保証しない。</li>
-          <li>2026-07-16 にランク名称を整理: SS→S1、U→S2、M→S3、A新設。定義・条件は名称変更前と同一（S1=旧SS）。</li>
-          <li>2026-07-16 に指数へ競走得点トレンド4特徴を追加（選手の成長・好不調を反映／モデル44特徴化）。本ページの検証数値は新指数で全期間再計算済み。S1はROI低迷のため条件見直しを検討中。</li>
-          <li>表示回収率は実精算方式（落車・失格は外れ計上・欠車のみ返還）。S1のテスト期間の実精算ROIは100%未満であり、現体系は損益分岐圏で運用・検証中。</li>
-          <li>S2/S3/A はペーパートレード（実際の賭けなし・記録のみ）。live 100R 以上の実測で採否判定する。集計サマリー（投資・回収）には含めない。</li>
-          <li>Aランクの過去実績（2026-04-13〜）はOOS評価モデルによる遡及再判定。買い目は発走前オッズ盤面基準・落車失格は外れ計上・欠車（出走取消）は返還として構築。</li>
-          <li>2026-07-16 に4分戦見送り・ライン格差増額（200円/点）を廃止（実精算再検証で検証期間間の再現性なし）。現行の見送り条件は選抜レースのみ。</li>
-          <li>ガミ判定は発走15分前オッズで行うため、最終オッズ基準の検証値とは対象の出入りが多少ある。</li>
-          <li>欠車（出走取消）は、軸欠車=レース無効（返還）、相手欠車=その目のみ除外として扱う。</li>
-          <li>S/S+ランク（三連単F）・旧Aランク（買い目カット方式）は優位性が確認できなかったため廃止済み。</li>
-          <li>本ランク体系のlive検証開始: 2026-07-10〜。それ以前の期間も全て現行体系の条件で遡及再判定した実績を表示している（旧・買い目カット方式の行は存在しない）。</li>
+          <li>2026-07-16 にランク体系を再編: SS→S1、U→S2、M→S3、A新設。同日、旧S1（7車三連複・実賭け）は検証期間ROI 67.3%・代替条件の全探索（3独立窓×18条件・6/9車・三連単高配当）でも黒字条件なしのため<b>完全廃止</b>し、新S1（6車三連単・ペーパー）に置き換えた。旧S1の実績行はアーカイブへ退避済み。</li>
+          <li>現在は<b>全ランクがペーパートレード</b>（実際の賭けなし・記録のみ）。live 100R 以上の実測で優位性が確認できたランクのみ実賭けに昇格する。</li>
+          <li>2026-07-16 に指数へ競走得点トレンド4特徴を追加（選手の成長・好不調を反映／モデル44特徴化）。本ページの検証数値は新指数で再計算済み。</li>
+          <li>表示回収率は実精算方式（落車・失格は外れ計上・欠車のみ返還。軸欠車=レース返還・相手欠車=当該目のみ返還）。</li>
+          <li>S1/A の過去実績はOOS評価モデルによる遡及再判定（買い目は発走前オッズ盤面基準）。S2/S3 も同一方式で検証期間分を構築。</li>
+          <li>S/S+ランク（三連単F）・旧Aランク（買い目カット方式）・旧S1（7車三連複）は優位性が確認できなかったため廃止済み。</li>
         </ul>
       </section>
 

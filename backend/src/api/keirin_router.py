@@ -166,7 +166,7 @@ async def get_picks(
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
-                      WHEN '7PLUS_R'    THEN 1
+                      WHEN 'SIX_S1'     THEN 1
                       WHEN '7PLUS_CAND' THEN 2
                       ELSE 3
                     END
@@ -340,12 +340,22 @@ _SETTLED_COND = """(
     OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
 )"""
 
+# 内部rank → by_rank キー（表示ランク）のマッピング
+_RANK_KEY_MAP = {
+    "SIX_S1": "S1",   # 新S1（6車三連単・2026-07-16 旧7PLUS_Rを置換）
+    "7PLUS_U": "U",
+    "7PLUS_M": "M",
+    "7PLUS_A": "A",
+}
+
 
 async def _aggregate(
     db: AsyncSession,
     where: str,
     params: dict[str, Any],
 ) -> dict:
+    # 2026-07-16 旧S1（7PLUS_R・実賭け）全廃 → 全ランクがペーパー（名目賭金）。
+    # トップラインは4ランク（S1=SIX_S1 / S2=7PLUS_U / S3=7PLUS_M / A=7PLUS_A）の名目合算。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -359,7 +369,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank = '7PLUS_R'
+              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -376,7 +386,7 @@ async def _aggregate(
     total_payout = int(row["total_payout"] or 0)
     result = _make_period_dict(n_picks, n_hits, total_bet, total_payout)
 
-    # 総候補レース数（オッズ条件で落ちる前・指数条件のみで挙がった候補=購入+見送りの distinct レース数）
+    # 総候補レース数（判定前候補+見送り含む・4ペーパーランクの distinct レース数）
     cand_row = (await db.execute(
         text(f"""
             SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
@@ -385,17 +395,15 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_R', '7PLUS_CAND')
+              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
               AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計
-    # S1（7PLUS_R）= 実賭け。S2/S3/A（7PLUS_U/M/A）= ペーパー検証（名目賭金）。
-    # ペーパーは上段のトップライン合計（rank='7PLUS_R'のみ）には含めず、
-    # by_rank のサブ行としてのみ返す（2026-07-16 ランク名称整理・A新設）。
+    # ランク別集計（全てペーパー・名目賭金）
+    # S1=SIX_S1（6車三連単・2026-07-16 旧S1置換）/ S2=7PLUS_U / S3=7PLUS_M / A=7PLUS_A
     rank_rows = (await db.execute(
         text(f"""
             SELECT
@@ -410,7 +418,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_R', '7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -420,7 +428,7 @@ async def _aggregate(
 
     by_rank: dict[str, dict] = {}
     for r in rank_rows:
-        key = str(r["rank"]).replace("7PLUS_", "")
+        key = _RANK_KEY_MAP.get(str(r["rank"]), str(r["rank"]))
         by_rank[key] = _make_period_dict(
             int(r["n_picks"] or 0),
             int(r["n_hits"] or 0),
@@ -428,37 +436,8 @@ async def _aggregate(
             int(r["total_payout"] or 0),
         )
 
-    # ランク別候補数（指数条件のみ・オッズ条件前）
-    # SS: gap12>=0.10 ∧ gap23>=1pt
-    # ※ S/S+（7PLUS_ST/STP）は 2026-07-15 に全廃。購入済み過去行の by_rank 集計は
-    #   上のランク別集計で引き続き返すが、前向きの候補数は SS のみ算出する。
-    rank_cand_row = (await db.execute(
-        text(f"""
-            SELECT
-              COUNT(DISTINCT CASE WHEN ph.gap12 >= 0.10 AND ph.gap23 >= 1.0
-                    THEN SPLIT_PART(ph.race_key, '#', 1) END) AS cand_r
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE {where}
-              AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_R', '7PLUS_CAND')
-              AND {_SETTLED_COND}
-        """),
-        params,
-    )).mappings().one_or_none()
-    if rank_cand_row:
-        n_cand = int(rank_cand_row["cand_r"] or 0)
-        if "R" in by_rank:
-            by_rank["R"]["n_candidates"] = n_cand
-        elif n_cand > 0:
-            # 候補はあったが全て見送り（購入0件）のランクも返す。
-            # （購入行の有無でキー自体が消えると「候補数の可視化」が短期間表示で機能しない）
-            by_rank["R"] = _make_period_dict(0, 0, 0, 0)
-            by_rank["R"]["n_candidates"] = n_cand
-
-    # ペーパーランク（S2/S3/A）の候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7U/#7M/#7A 行を書き込む・2026-07-16〜）
+    # ランク別候補数 = 見送り含む全行の distinct レース数
+    # （write_candidates_wt が候補時点で #6S1/#7U/#7M/#7A 行を書き込む）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
@@ -468,14 +447,14 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND ph.rank IN ('SIX_S1', '7PLUS_U', '7PLUS_M', '7PLUS_A')
               AND {_SETTLED_COND}
             GROUP BY ph.rank
         """),
         params,
     )).mappings().all()
     for r in paper_cand_rows:
-        key = str(r["rank"]).replace("7PLUS_", "")
+        key = _RANK_KEY_MAP.get(str(r["rank"]), str(r["rank"]))
         n_cand = int(r["n_candidates"] or 0)
         if key not in by_rank and n_cand > 0:
             by_rank[key] = _make_period_dict(0, 0, 0, 0)
@@ -535,8 +514,11 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     # 同一 evaluated_at の最新セットのみ使用（ランクキーに重複があれば最新を優先）
     by_rank: dict[str, dict] = {}
     for r in rank_rows:
-        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "7SS" / "7S" / "7A"
-        rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
+        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "6S1" / "7U" / "7M" / "7A"
+        if suffix == "6S1":
+            rank_key = "S1"  # 新S1（6車三連単）
+        else:
+            rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
         if rank_key not in by_rank:
             by_rank[rank_key] = _make_period_dict(
                 int(r["n_picks"] or 0),

@@ -121,7 +121,9 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 旧方式(7PLUS_SS/7PLUS_S・素のSS/S/A/B/WIDE)の行は全期間再構築済み or route='ks' で API に現れない。
 // 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  "7PLUS_R":    { bg: "#d97706", text: "#fff", label: "S1" },
+  // S1=6車三連単（モデル1→2→3,4位・2点・gap12≥0.11）2026-07-16 旧S1(7PLUS_R)を置換・ペーパー
+  "SIX_S1":     { bg: "#d97706", text: "#fff", label: "S1" },
+  // 旧S1(7PLUS_R・7車三連複)は 2026-07-16 全廃・過去行は picks_history_r_archive へ退避済み
   // S2=波乱ライン連れ込み・ペーパートレード検証中（集計対象外）
   "7PLUS_U":    { bg: "#0e7490", text: "#fff", label: "S2" },
   // S3=◎不一致×システム◎・ペーパートレード検証中（集計対象外）
@@ -442,9 +444,10 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（S2/S3/A）は三連複ガミ閾値と無関係（Aは二連単5-50倍帯が条件）
-  // のため、S1系のガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M" || pick.rank === "7PLUS_A";
+  // ペーパー検証ランク（S1/S2/S3/A・全ランク）は旧S1の三連複ガミ閾値と無関係のため
+  // ガミ判定チップ（✓/⚠）を表示しない
+  const isPaperRank = pick.rank === "SIX_S1" || pick.rank === "7PLUS_U"
+    || pick.rank === "7PLUS_M" || pick.rank === "7PLUS_A";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -461,8 +464,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
   const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
-  // A（7PLUS_A）のみ二連単（pred_combo は "軸>相手1,相手2,..."）。それ以外は三連複
-  const betTypeLabel = rankStr === "7PLUS_A" ? "2連単" : "3連複";
+  // 券種ラベル: A=二連単（"軸>相手,..."）・S1=三連単（"1着>2着>3着候補,..."）・他=三連複
+  const betTypeLabel = rankStr === "7PLUS_A" ? "2連単"
+    : rankStr === "SIX_S1" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
     ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
@@ -582,13 +586,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "R"=S1（実賭け）/ "U"=S2・"M"=S3・"A"=A（ペーパー検証・名目賭金）。
-// ペーパーは上段のトップライン合計（S1のみ）には含まれずサブ行として表示する。
-// S/S+（ST/STP）は 2026-07-15 に全廃・集計対象外。
-const RANK_ORDER = ["R", "U", "M", "A"] as const;
-const RANK_LABEL: Record<string, string> = { R: "S1", U: "S2", M: "S3", A: "A" };
+// by_rank キー: "S1"=6車三連単 / "U"=S2 / "M"=S3 / "A"=A（全てペーパー検証・名目賭金）。
+// 2026-07-16 旧S1（7PLUS_R・実賭け）全廃 → トップラインは4ランクの名目合算。
+const RANK_ORDER = ["S1", "U", "M", "A"] as const;
+const RANK_LABEL: Record<string, string> = { S1: "S1", U: "S2", M: "S3", A: "A" };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  R: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  S1: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   U: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   M: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   A: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
