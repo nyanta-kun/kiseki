@@ -651,10 +651,8 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
     ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
     : "—";
   const byRank = data.by_rank ?? {};
-  // 購入0件でも候補があったランクは行を出す（候補数可視化のため。API側も購入0件ランクを返す）
-  const hasRanks = showRanks && RANK_ORDER.some(
-    r => (byRank[r]?.n_picks ?? 0) > 0 || (byRank[r]?.n_candidates ?? 0) > 0,
-  );
+  // ランク別展開時は全ランク行を常に表示する（0件でも省略しない・2026-07-16）
+  const hasRanks = showRanks;
 
   return (
     <>
@@ -690,8 +688,11 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
         </td>
       </tr>
       {hasRanks && RANK_ORDER.map(rk => {
-        const rd = byRank[rk];
-        if (!rd || (rd.n_picks === 0 && (rd.n_candidates ?? 0) === 0)) return null;
+        // 0件のランクもゼロ埋めで表示する（省略しない）
+        const rd = byRank[rk] ?? {
+          n_picks: 0, n_hits: 0, total_bet: 0, total_payout: 0,
+          roi: null, n_candidates: 0,
+        };
         return <RankSubRow key={rk} rankKey={rk} data={rd} />;
       })}
     </>
