@@ -34,13 +34,15 @@ router = APIRouter(prefix="/api/keirin", tags=["keirin"])
 # 合成オッズ計算
 # ---------------------------------------------------------------------------
 
-def _parse_combinations(pred_combo: str | None, is_wide: bool) -> tuple[list[str], str | None]:
-    """pred_combo 文字列を (組み合わせキーのリスト, 券種) に変換する。
+def _parse_combinations(pred_combo: str | None, is_wide: bool) -> tuple[list[list[str]], str | None]:
+    """pred_combo 文字列を (買い目ごとのキー候補リスト, 券種) に変換する。
 
-    wt_odds_snapshot の combination 表記に合わせる:
-    - 三連複（S1/S2/S3・'1-4-3,5,2'）→ ['1=3=4', '1=4=5', '1=2=4'] / 'trio'（昇順=区切り）
-    - 二連単（A・'1>3,4,5'）        → ['1-3', '1-4', '1-5'] / 'exacta'（着順どおり-区切り）
-    - WIDE（'4-2'）                 → ['2-4'] / 'quinella'（昇順）
+    wt_odds_snapshot の combination 表記は収集経路で混在するため
+    （旧Mac収集: trio='1=2=6' / VPS収集: trio='1-2-3'）、順不同券種は
+    両区切りのキー候補を返し、照合側でいずれか一致した方を使う。
+    - 三連複（S1/S2/S3・'1-4-3,5,2'）→ [['1=3=4','1-3-4'], ...] / 'trio'（昇順）
+    - 二連単（A・'1>3,4,5'）        → [['1-3'], ['1-4'], ['1-5']] / 'exacta'（着順どおり）
+    - WIDE（'4-2'）                 → [['2-4','2=4']] / 'quinella'（昇順）
     ※ 旧実装は三連複の買い目に trifecta（三連単・1順序のみ）のオッズを使っており
       合成オッズを過大表示していた（2026-07-16 修正）。
     """
@@ -51,19 +53,22 @@ def _parse_combinations(pred_combo: str | None, is_wide: bool) -> tuple[list[str
             axis, rest = pred_combo.split(">", 1)
             partners = [p.strip() for p in rest.split(",")
                         if p.strip() and p.strip().isdigit()]
-            return [f"{int(axis)}-{p}" for p in partners], "exacta"
+            return [[f"{int(axis)}-{p}"] for p in partners], "exacta"
         parts = pred_combo.split("-")
         if is_wide and len(parts) == 2:
             a, b = sorted([parts[0].strip(), parts[1].strip()], key=int)
-            return [f"{a}-{b}"], "quinella"
+            return [[f"{a}-{b}", f"{a}={b}"]], "quinella"
         if len(parts) >= 3:
             a1, a2 = parts[0].strip(), parts[1].strip()
             thirds = [t.strip() for t in parts[2].split(",") if t.strip()]
-            combos = ["=".join(sorted([a1, a2, t], key=int)) for t in thirds]
-            return combos, "trio"
+            legs = []
+            for t in thirds:
+                s = sorted([a1, a2, t], key=int)
+                legs.append(["=".join(s), "-".join(s)])
+            return legs, "trio"
         if len(parts) == 2:
             a, b = sorted([parts[0].strip(), parts[1].strip()], key=int)
-            return [f"{a}-{b}"], "quinella"
+            return [[f"{a}-{b}", f"{a}={b}"]], "quinella"
     except (ValueError, TypeError):
         return [], None
     return [], None
@@ -76,9 +81,10 @@ async def _calc_synth_odds(
     is_wide: bool,
 ) -> float | None:
     """朝オッズから合成オッズ（= 1 / Σ(1/odds)）を計算して返す。データ不足時は None。"""
-    combos, bet_type = _parse_combinations(pred_combo, is_wide)
-    if not combos or bet_type is None:
+    legs, bet_type = _parse_combinations(pred_combo, is_wide)
+    if not legs or bet_type is None:
         return None
+    combos = [k for leg in legs for k in leg]
     rows = (await db.execute(
         text("""
             SELECT combination, odds_value
@@ -92,7 +98,13 @@ async def _calc_synth_odds(
     )).mappings().all()
 
     odds_map = {r["combination"]: r["odds_value"] for r in rows if r["odds_value"]}
-    matched = [odds_map[c] for c in combos if c in odds_map]
+    # 買い目ごとにキー候補（=区切り/-区切り）のうち存在する方を1つだけ採用（二重計上防止）
+    matched = []
+    for leg in legs:
+        for key in leg:
+            if key in odds_map:
+                matched.append(odds_map[key])
+                break
     if not matched:
         return None
 
