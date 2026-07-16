@@ -444,7 +444,10 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  const gamiStatus: "ok" | "ng" | null = pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
+  // ペーパー検証ランク（S2/S3/A）は三連複ガミ閾値と無関係（Aは二連単5-50倍帯が条件）
+  // のため、S1系のガミ判定チップ（✓/⚠）を表示しない
+  const isPaperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M" || pick.rank === "7PLUS_A";
+  const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
 
@@ -532,7 +535,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 g23 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.gap23.toFixed(1)}</span>pt
               </span>
             )}
-            {pick.prerace_gami != null && !isMiwokuri && (
+            {pick.prerace_gami != null && !isMiwokuri && !isPaperRank && (
               pick.prerace_gami >= gamiThr ? (
                 <span className="text-xs flex-shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
                   直前 {pick.prerace_gami.toFixed(1)}倍✓
