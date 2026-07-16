@@ -14,8 +14,8 @@ const RANKS = [
     label: "S1",
     title: "S1ランク（旧SS・実賭け）",
     subtitle: "7車 ｜ 三連複 ｜ 全目購入",
-    test: "77.4%",
-    testSub: "1.7R/日・157R・的中26.1%（実精算）",
+    test: "67.3%",
+    testSub: "1.6R/日・189R・的中24.3%（実精算・条件見直し検討中）",
     condition: "全目オッズ min ≥ 7.0倍 かつ gap12 ≥ 0.10 かつ gap23 ≥ 1pt かつ 非選抜レース",
     detail:
       "「どの相手が来ても7倍以上つく」レースだけを、指数1・2位を軸に全相手へ流す。的中条件は軸2車が3着以内に入ることだけ（3着は誰でもよい）ため的中率が高く、順当決着で配当が安いレースはレースごと見送る。唯一の実賭けランク。",
@@ -27,8 +27,8 @@ const RANKS = [
     label: "S2",
     title: "S2ランク（旧U・波乱ライン連れ込み／ペーパー検証中）",
     subtitle: "7車 ｜ 三連複 2車軸流し ｜ 検証記録のみ・賭けなし",
-    test: "110.9%",
-    testSub: "テスト窓110.9% / 検証窓118.9%（実精算・ペーパー）",
+    test: "127.7%",
+    testSub: "検証期間90R・的中14.4%（実精算・ペーパー）",
     condition:
       "指数エントロピー ≥ 1.84 かつ 盤面min三連複 ≥ 4.3 かつ 穴（市場4-7位∧モデル3位内∧ライン先頭/番手）× 同ライン「逃」相方 ｜ 目オッズ ≥ 15倍のみ",
     detail:
@@ -41,8 +41,8 @@ const RANKS = [
     label: "S3",
     title: "S3ランク（旧M・◎不一致×システム◎／ペーパー検証中）",
     subtitle: "7車 ｜ 三連複 2車軸流し ｜ 検証記録のみ・賭けなし",
-    test: "121.8%",
-    testSub: "テスト窓121.8%(48R) / 検証窓120.9%(244R)（実精算・ペーパー）",
+    test: "78.9%",
+    testSub: "検証期間35R・的中8.6%（n小のため参考値・ペーパー）",
     condition:
       "WINTICKET◎ ≠ システム◎（モデル1位）かつ 指数エントロピー ≥ 1.84 かつ 盤面min三連複 ≥ 4.3 ｜ システム◎×同ライン「逃」相方の三連複流し・目オッズ ≥ 15倍のみ",
     detail:
@@ -55,8 +55,8 @@ const RANKS = [
     label: "A",
     title: "Aランク（◎一致×波乱×別ライン先頭・二連単／ペーパー検証中）",
     subtitle: "7車 ｜ 二連単 軸→全流し ｜ 検証記録のみ・賭けなし",
-    test: "100.2%",
-    testSub: "約10R/日・的中16.9%（窓1 100.2% / 窓2 96.7%・実精算）",
+    test: "93.2%",
+    testSub: "約9R/日・727R・的中15.7%（実精算・ペーパー）",
     condition:
       "WINTICKET◎ = システム◎（一致）かつ 指数エントロピー ≥ 1.84 ｜ 軸 = ◎と別ラインの先頭のうち競走得点最上位 ｜ 二連単 軸→全のうち目オッズ 5〜50倍のみ",
     detail:
@@ -67,10 +67,11 @@ const RANKS = [
 
 // クリーン検証 月別（テスト 2026-04〜06 = 学習未使用 / 2026-07〜 = 本番フォワード）
 const MONTHLY = [
-  { month: "2026-04", ss: "89.9%", kind: "テスト" },
-  { month: "2026-05", ss: "57.9%", kind: "テスト" },
-  { month: "2026-06", ss: "87.8%", kind: "テスト" },
-  { month: "2026-07", ss: "98.6%", kind: "フォワード（〜7/9）" },
+  { month: "2026-03", ss: "27.6%", kind: "検証" },
+  { month: "2026-04", ss: "63.2%", kind: "検証" },
+  { month: "2026-05", ss: "83.4%", kind: "検証" },
+  { month: "2026-06", ss: "94.2%", kind: "検証" },
+  { month: "2026-07", ss: "76.5%", kind: "フォワード（〜7/15）" },
 ];
 
 const TERMS = [
@@ -145,19 +146,19 @@ export default function KeirinHelpPage() {
         </p>
         <div className="grid grid-cols-2 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">S1ランク テスト回収率（実精算・実賭け）</p>
-            <p className="text-lg font-bold text-amber-600">77.4%</p>
-            <p className="text-xs text-gray-400">1.7R/日 ・ 157R ・ 的中26.1%</p>
+            <p className="text-xs text-gray-500">S1ランク 検証期間回収率（実精算・実賭け）</p>
+            <p className="text-lg font-bold text-amber-600">67.3%</p>
+            <p className="text-xs text-gray-400">1.6R/日 ・ 189R ・ 的中24.3%</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">Aランク テスト回収率（実精算・ペーパー）</p>
-            <p className="text-lg font-bold text-emerald-600">100.2%</p>
-            <p className="text-xs text-gray-400">約10R/日 ・ 921R ・ 的中16.9%</p>
+            <p className="text-xs text-gray-500">Aランク 検証期間回収率（実精算・ペーパー）</p>
+            <p className="text-lg font-bold text-emerald-600">93.2%</p>
+            <p className="text-xs text-gray-400">約9R/日 ・ 727R ・ 的中15.7%</p>
           </div>
         </div>
         <p className="text-xs text-gray-400">
-          ★ テスト = 学習に未使用の 2026-04〜06（91日）。2026-07以降は本番フォワード検証。
-          S2/S3/A はペーパートレード（賭けなし・記録のみ）検証中。
+          ★ 検証期間 = 2026-06-30以前（S1は2026-03-01〜・S2/S3/Aは2026-04-13〜）。
+          2026-07以降は本番フォワード。S2/S3/A はペーパートレード（賭けなし・記録のみ）検証中。
         </p>
       </section>
 
@@ -243,6 +244,7 @@ export default function KeirinHelpPage() {
         <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
           <li>バックテスト結果は過去データによるもの。将来の回収率を保証しない。</li>
           <li>2026-07-16 にランク名称を整理: SS→S1、U→S2、M→S3、A新設。定義・条件は名称変更前と同一（S1=旧SS）。</li>
+          <li>2026-07-16 に指数へ競走得点トレンド4特徴を追加（選手の成長・好不調を反映／モデル44特徴化）。本ページの検証数値は新指数で全期間再計算済み。S1はROI低迷のため条件見直しを検討中。</li>
           <li>表示回収率は実精算方式（落車・失格は外れ計上・欠車のみ返還）。S1のテスト期間の実精算ROIは100%未満であり、現体系は損益分岐圏で運用・検証中。</li>
           <li>S2/S3/A はペーパートレード（実際の賭けなし・記録のみ）。live 100R 以上の実測で採否判定する。集計サマリー（投資・回収）には含めない。</li>
           <li>Aランクの過去実績（2026-04-13〜）はOOS評価モデルによる遡及再判定。買い目は発走前オッズ盤面基準・落車失格は外れ計上・欠車（出走取消）は返還として構築。</li>
