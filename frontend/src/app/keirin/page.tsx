@@ -574,13 +574,19 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "R"=S1 のみ（S/S+=ST/STP は 2026-07-15 に全廃・集計対象外。
-// S2/S3/A はペーパー検証中のため実賭けサマリーに含めない）
-const RANK_ORDER = ["R"] as const;
-const RANK_LABEL: Record<string, string> = { R: "S1" };
+// by_rank キー: "R"=S1（実賭け）/ "U"=S2・"M"=S3・"A"=A（ペーパー検証・名目賭金）。
+// ペーパーは上段のトップライン合計（S1のみ）には含まれずサブ行として表示する。
+// S/S+（ST/STP）は 2026-07-15 に全廃・集計対象外。
+const RANK_ORDER = ["R", "U", "M", "A"] as const;
+const RANK_LABEL: Record<string, string> = { R: "S1", U: "S2", M: "S3", A: "A" };
 const RANK_BADGE_STYLE: Record<string, string> = {
   R: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  U: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
+  M: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
+  A: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
 };
+// ペーパー検証ランク（賭けなし・名目値）の注記対象
+const PAPER_RANK_KEYS = new Set(["U", "M", "A"]);
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
   const roiColor = data.roi == null
@@ -600,6 +606,9 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
           <span className={`inline-flex items-center justify-center min-w-6 px-1 h-5 rounded text-xs font-bold ${badgeClass}`}>
             {RANK_LABEL[rankKey] ?? rankKey}
           </span>
+          {PAPER_RANK_KEYS.has(rankKey) && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500">検証</span>
+          )}
         </span>
       </td>
       {/* ランク別候補数（指数条件のみ・オッズ条件前） */}

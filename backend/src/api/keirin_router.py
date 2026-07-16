@@ -369,6 +369,9 @@ async def _aggregate(
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
     # ランク別集計
+    # S1（7PLUS_R）= 実賭け。S2/S3/A（7PLUS_U/M/A）= ペーパー検証（名目賭金）。
+    # ペーパーは上段のトップライン合計（rank='7PLUS_R'のみ）には含めず、
+    # by_rank のサブ行としてのみ返す（2026-07-16 ランク名称整理・A新設）。
     rank_rows = (await db.execute(
         text(f"""
             SELECT
@@ -383,7 +386,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank = '7PLUS_R'
+              AND ph.rank IN ('7PLUS_R', '7PLUS_U', '7PLUS_M', '7PLUS_A')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -429,6 +432,31 @@ async def _aggregate(
             # （購入行の有無でキー自体が消えると「候補数の可視化」が短期間表示で機能しない）
             by_rank["R"] = _make_period_dict(0, 0, 0, 0)
             by_rank["R"]["n_candidates"] = n_cand
+
+    # ペーパーランク（S2/S3/A）の候補数 = 見送り含む全行の distinct レース数
+    # （write_candidates_wt が候補時点で #7U/#7M/#7A 行を書き込む・2026-07-16〜）
+    paper_cand_rows = (await db.execute(
+        text(f"""
+            SELECT ph.rank AS rank,
+                   COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+            WHERE {where}
+              AND ph.route = 'wt'
+              AND ph.rank IN ('7PLUS_U', '7PLUS_M', '7PLUS_A')
+              AND {_SETTLED_COND}
+            GROUP BY ph.rank
+        """),
+        params,
+    )).mappings().all()
+    for r in paper_cand_rows:
+        key = str(r["rank"]).replace("7PLUS_", "")
+        n_cand = int(r["n_candidates"] or 0)
+        if key not in by_rank and n_cand > 0:
+            by_rank[key] = _make_period_dict(0, 0, 0, 0)
+        if key in by_rank:
+            by_rank[key]["n_candidates"] = n_cand
     result["by_rank"] = by_rank
     return result
 
