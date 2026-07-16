@@ -164,18 +164,16 @@ function CandBuyLines({ ranks, combo }: { ranks: CandRank[]; combo: { p1: string
   );
 }
 
-function RankBadge({ rank, gamiStatus }: { rank: string; gamiStatus?: "ok" | "ng" | null }) {
+function RankBadge({ rank, purchased }: { rank: string; purchased?: boolean }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
 
-  // ジャッジ済みの場合、緑(OK) or 橙(NG)の ring を外側に付ける
-  const ringStyle: React.CSSProperties | undefined = gamiStatus === "ok"
+  // 購入対象（買い目確定・ペーパーは記録確定）になったら緑の○で囲う。
+  // 全ランク統一（S1=直前オッズ判定成立、S2/S3/A=15分前判定 buy 成立）。
+  const ringStyle: React.CSSProperties | undefined = purchased
     ? { outline: "2px solid #10b981", outlineOffset: "2px" }
-    : gamiStatus === "ng"
-      ? { outline: "2px solid #f97316", outlineOffset: "2px" }
-      : undefined;
+    : undefined;
 
-  // 見送り行も常に元表示（rank=7PLUS_CAND→「候補」）。見送り理由は右側の
-  // 「見送り」「ガミ落ち」表示で判別する（旧「ガ」バッジは紛らわしいため廃止）。
+  // 見送り行も常に元表示。見送り理由は右側の「見送り」「ガミ落ち」表示で判別する。
   const s = RANK_STYLE[rank];
   if (!s) {
     return (
@@ -456,6 +454,13 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // ガミ落ち確定行は「ガミ落ち」表示を優先し候補ランクは出さない。
   const candRanks = isGamiSkip ? [] : candPossibleRanks(pick);
   const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
+  // バッジ表示はランク名を直接出す（S2/S3/A と統一・2026-07-16）:
+  // S1候補（7PLUS_CAND ∧ gap条件成立）は「候補」ではなく S1 バッジで表示し、
+  // 直前オッズ判定で購入対象になったら緑○で囲う（RankBadge purchased）。
+  const displayRank = rankStr === "7PLUS_CAND" && candRanks.includes("S1") ? "7PLUS_R" : rankStr;
+  // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
+  // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
+  const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
   // A（7PLUS_A）のみ二連単（pred_combo は "軸>相手1,相手2,..."）。それ以外は三連複
   const betTypeLabel = rankStr === "7PLUS_A" ? "2連単" : "3連複";
   const comboLabel = pick.pred_combo
@@ -472,14 +477,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        {/* 左バッジは常に元表示（購入=S1・見送り=候補）。理由は右側表示で判別 */}
-        <RankBadge rank={rankStr} gamiStatus={gamiStatus} />
-        {/* 候補行: 指数条件上なり得るランクをチップで表示 */}
-        {candRanks.length > 0 && (
-          <span className="flex items-center gap-1 flex-shrink-0">
-            {candRanks.map((cr) => <CandRankChip key={cr} rank={cr} />)}
-          </span>
-        )}
+        {/* 左バッジ = ランク名の直接表示（全ランク統一）。購入対象は緑○で囲う */}
+        <RankBadge rank={displayRank} purchased={isBuyConfirmed} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
