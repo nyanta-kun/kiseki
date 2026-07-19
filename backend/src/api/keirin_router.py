@@ -341,6 +341,7 @@ _SETTLED_COND = """(
 
 # 内部rank → by_rank キー（表示ランク）のマッピング
 _RANK_KEY_MAP = {
+    "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
     "7PLUS_U": "U",   # 表示 S2
     "7PLUS_M": "M",   # 表示 S3（2026-07-17 新定義: 不一致×gap12≥0.10）
 }
@@ -351,8 +352,8 @@ async def _aggregate(
     where: str,
     params: dict[str, Any],
 ) -> dict:
-    # 2026-07-17〜: 現行ランクは S2/S3 の2ペーパーのみ（S1=SIX_S1 / A=7PLUS_A は全廃・
-    # 行はアーカイブ退避済み）。トップラインは2ランクの名目合算。
+    # 2026-07-19〜: 現行ランクは S1/S2/S3 の3ペーパー（旧新S1=SIX_S1 / A=7PLUS_A は全廃・
+    # 行はアーカイブ退避済み）。トップラインは3ランクの名目合算。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -366,7 +367,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -392,14 +393,14 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
               AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）: S2=7PLUS_U / S3=7PLUS_M
+    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / S2=7PLUS_U / S3=7PLUS_M
     rank_rows = (await db.execute(
         text(f"""
             SELECT
@@ -414,7 +415,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -433,7 +434,7 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7U/#7M 行を書き込む）
+    # （write_candidates_wt が候補時点で #7S1/#7U/#7M 行を書き込む）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
@@ -443,7 +444,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
               AND {_SETTLED_COND}
             GROUP BY ph.rank
         """),
