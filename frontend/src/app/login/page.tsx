@@ -1,31 +1,21 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
-import { verifyPasswordAndRedirect } from "./actions";
 
 function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/races";
+  const error = searchParams.get("error");
 
-  const [errorMessage, formAction, isPending] = useActionState(
-    async (_prev: string | null, formData: FormData) => {
-      return await verifyPasswordAndRedirect(callbackUrl, formData);
-    },
-    null
-  );
-
-  const isVerified = errorMessage?.startsWith("__verified__:");
-
-  useEffect(() => {
-    if (isVerified) {
-      const cbUrl = errorMessage!.slice("__verified__:".length);
-      signIn("google", { callbackUrl: cbUrl });
-    }
-  }, [isVerified, errorMessage]);
+  const errorMessage =
+    error === "account_suspended"
+      ? "このGoogleアカウントは登録されていません。管理者にお問い合わせください。"
+      : error
+      ? "ログインに失敗しました。もう一度お試しください。"
+      : null;
 
   return (
     <div
@@ -69,60 +59,28 @@ function LoginForm() {
         >
           <div className="px-8 py-8 space-y-5">
             <p className="text-white/90 text-xs text-center leading-relaxed">
-              合言葉を入力後、Googleアカウントで認証してください
+              登録済みのGoogleアカウントでログインしてください
             </p>
 
-            <form action={formAction} className="space-y-4">
-              <label htmlFor="password" className="sr-only">合言葉</label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                placeholder="合言葉を入力"
-                required
-                autoComplete="current-password"
-                className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-[#00aaee]/60 transition-all"
-                style={{
-                  background: "rgba(255,255,255,0.10)",
-                  border: "1px solid rgba(100,160,220,0.40)",
-                }}
-              />
+            {errorMessage && (
+              <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
+                {errorMessage}
+              </p>
+            )}
 
-              {isVerified ? (
-                <p className="text-blue-300 text-sm bg-blue-500/20 border border-blue-400/30 rounded-lg px-3 py-2">
-                  Googleへリダイレクト中...
-                </p>
-              ) : errorMessage ? (
-                <p className="text-red-300 text-sm bg-red-500/20 border border-red-400/30 rounded-lg px-3 py-2">
-                  {errorMessage}
-                </p>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={isPending || !!isVerified}
-                className="w-full flex items-center justify-center gap-3 font-semibold py-3 rounded-xl transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  background: isPending
-                    ? "rgba(0,100,180,0.6)"
-                    : "linear-gradient(135deg, #00aaee 0%, #0055cc 100%)",
-                  color: "#fff",
-                  boxShadow: isPending ? "none" : "0 0 20px rgba(0,180,255,0.3)",
-                }}
-              >
-                {isPending || isVerified ? (
-                  <>
-                    <SpinnerIcon />
-                    {isVerified ? "Googleへ移動中..." : "認証中..."}
-                  </>
-                ) : (
-                  <>
-                    <GoogleIcon />
-                    Googleでログイン
-                  </>
-                )}
-              </button>
-            </form>
+            <button
+              type="button"
+              onClick={() => signIn("google", { callbackUrl })}
+              className="w-full flex items-center justify-center gap-3 font-semibold py-3 rounded-xl transition-all text-sm"
+              style={{
+                background: "linear-gradient(135deg, #00aaee 0%, #0055cc 100%)",
+                color: "#fff",
+                boxShadow: "0 0 20px rgba(0,180,255,0.3)",
+              }}
+            >
+              <GoogleIcon />
+              Googleでログイン
+            </button>
 
             <p className="text-center text-[#00c8ff]/70 text-xs">
               Powered by GallopLab
@@ -152,26 +110,6 @@ function GoogleIcon() {
       <path
         d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"
         fill="#EA4335"
-      />
-    </svg>
-  );
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      className="animate-spin"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
       />
     </svg>
   );

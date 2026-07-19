@@ -120,6 +120,13 @@ class UpsertUserRequest(BaseModel):
     image_url: str | None = None
 
 
+class CreateUserRequest(BaseModel):
+    """ユーザー事前登録リクエスト（管理者用）"""
+
+    email: str
+    role: str = "member"
+
+
 class UserResponse(BaseModel):
     """ユーザーレスポンス"""
 
@@ -227,35 +234,81 @@ async def upsert_user(
     _: ApiKeyDep,
     db: DbDep,
 ) -> UserResponse:
-    """ログイン時にユーザーを upsert する。
+    """ログイン時にユーザーを検証・更新する（ホワイトリスト方式・新規作成なし）。
 
-    - 初回ログイン: 新規作成。admin_emails に含まれる場合 role=admin を付与。
-    - 以降: last_login_at・name・image_url を更新。role は変更しない。
+    事前に管理画面（POST /api/admin/users）でメールアドレスが登録済みの
+    ユーザーのみログインを許可する。email で照合し、未登録なら404で拒否する
+    （合言葉を廃止した代わりの入口ゲート）。
+
+    - 初回ログイン（google_sub未設定）: google_sub をこのログインで確定・紐付け。
+    - 既にgoogle_sub確定済み: 一致確認（別Googleアカウントでの乗っ取り防止）。
+    - 以降共通: last_login_at・name・image_url を更新。role は変更しない。
     """
-    result = await db.execute(select(User).where(User.google_sub == body.google_sub))
+    result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     now = datetime.now(UTC)
 
     if user is None:
-        role = "admin" if body.email in settings.admin_email_list else "member"
-        user = User(
-            google_sub=body.google_sub,
-            email=body.email,
-            name=body.name,
-            image_url=body.image_url,
-            role=role,
-            is_active=True,
-            last_login_at=now,
+        logger.warning("未登録メールでのログイン試行: %s", body.email)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="このメールアドレスは登録されていません",
         )
-        db.add(user)
-        logger.info("新規ユーザー登録: %s (role=%s)", body.email, role)
-    else:
-        user.name = body.name
-        user.image_url = body.image_url
-        user.last_login_at = now
+
+    if user.google_sub is None:
+        user.google_sub = body.google_sub
+        logger.info("初回ログイン・google_sub紐付け: %s", body.email)
+    elif user.google_sub != body.google_sub:
+        logger.warning(
+            "google_sub不一致でログイン拒否: email=%s expected=%s...  actual=%s...",
+            body.email, user.google_sub[:8], body.google_sub[:8],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="このメールアドレスは別のGoogleアカウントに紐付けられています",
+        )
+
+    user.name = body.name
+    user.image_url = body.image_url
+    user.last_login_at = now
 
     await db.commit()
     await db.refresh(user)
+    return await _make_user_response(user, db)
+
+
+@admin_router.post("/users", response_model=UserResponse)
+async def create_user(
+    body: CreateUserRequest,
+    _: ApiKeyDep,
+    __: AdminRoleDep,
+    db: DbDep,
+) -> UserResponse:
+    """ユーザーをメールアドレスのみで事前登録する（管理者用・ログイン前）。
+
+    google_sub は初回ログイン時に upsert 側で確定させる。
+    """
+    if body.role not in ("member", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="role は member または admin のみ有効",
+        )
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="このメールアドレスは既に登録されています",
+        )
+    user = User(
+        google_sub=None,
+        email=body.email,
+        role=body.role,
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info("ユーザー事前登録: %s (role=%s)", body.email, body.role)
     return await _make_user_response(user, db)
 
 

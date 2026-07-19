@@ -767,8 +767,9 @@ class User(Base):
     __table_args__ = {"schema": SCHEMA}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    google_sub: Mapped[str] = mapped_column(
-        String(255), unique=True, nullable=False, comment="Google subject ID（不変）"
+    google_sub: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True,
+        comment="Google subject ID（不変）。事前登録済み・未ログインの間はNULL",
     )
     email: Mapped[str] = mapped_column(
         String(255), unique=True, nullable=False, comment="メールアドレス"

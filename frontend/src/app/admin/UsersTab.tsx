@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { updateUser } from "./actions";
+import { useActionState, useState } from "react";
+import { createUser, updateUser } from "./actions";
 import type { User, InvitationCode } from "./AdminTabs";
 import { CodesTab } from "./CodesTab";
 
@@ -26,12 +26,60 @@ interface UsersTabProps {
 
 export function UsersTab({ users, codes }: UsersTabProps) {
   const [page, setPage] = useState(0);
+  const [addUserResult, addUserAction, isAddingUser] = useActionState(
+    async (_prev: { error?: string } | null, formData: FormData) => {
+      const result = await createUser(formData);
+      if (!result.error) {
+        const form = document.getElementById("add-user-form") as HTMLFormElement | null;
+        form?.reset();
+      }
+      return result;
+    },
+    null
+  );
 
   const totalPages = Math.ceil(users.length / PAGE_SIZE);
   const pageUsers = users.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-8">
+      {/* ユーザー事前登録（パスワードレス化: ログイン前にメールアドレスをホワイトリスト登録） */}
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-800">ユーザー追加（事前登録）</h2>
+          <p className="text-xs text-gray-400 mt-1">
+            登録済みメールアドレスのGoogleアカウントのみログインできます。
+          </p>
+        </div>
+        <form id="add-user-form" action={addUserAction} className="px-6 py-4 flex flex-wrap items-center gap-3">
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="user@example.com"
+            className="flex-1 min-w-[220px] px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          <select
+            name="role"
+            defaultValue="member"
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button
+            type="submit"
+            disabled={isAddingUser}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {isAddingUser ? "追加中..." : "追加"}
+          </button>
+          {addUserResult?.error && (
+            <span className="text-xs text-red-600">{addUserResult.error}</span>
+          )}
+        </form>
+      </div>
+
       {/* ユーザーテーブル */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">

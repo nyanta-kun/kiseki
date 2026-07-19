@@ -6,6 +6,34 @@ const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 const API_KEY = process.env.INTERNAL_API_KEY ?? "";
 
+export async function createUser(
+  formData: FormData
+): Promise<{ error?: string }> {
+  const email = (formData.get("email") as string | null)?.trim();
+  const role = (formData.get("role") as string | null) ?? "member";
+
+  if (!email) {
+    return { error: "メールアドレスを入力してください" };
+  }
+
+  const res = await fetch(`${BACKEND_URL}/admin/users`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": API_KEY,
+    },
+    body: JSON.stringify({ email, role }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: (body as { detail?: string }).detail ?? "登録に失敗しました" };
+  }
+
+  revalidatePath("/admin");
+  return {};
+}
+
 export async function updateUser(
   userId: number,
   patch: { role?: string; is_active?: boolean }
