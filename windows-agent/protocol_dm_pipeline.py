@@ -52,7 +52,10 @@ LOG_FILE = Path(r"C:\kiseki\data\protocol_pipeline.log")
 DATA_PREFIX = "05900403"  # 1403 (DM) 用 prefix
 
 # pktmon filter IPs (next5.jra-van.jp / app / jra-van)
-JRAVAN_IPS = ["211.6.76.165", "211.6.76.173", "211.6.76.162"]
+# 注意: JRA-VAN NEXT5 サーバーの実IPはCDN/ロードバランサ経由で変動する
+# (2026-04-29確認時は211.6.76.x、2026-07-04確認では148.109.52.x に変わっていた)。
+# IP固定フィルタだと無音で全滅するため、ポート80のみでフィルタする。
+JRAVAN_IPS: list[str] = []
 
 # プローブ対象 (KEY 有効性確認)
 PROBE_DATA = "0500030320260502"  # 開催情報リスト (FLG=1, 84b 程度返る)
@@ -123,11 +126,18 @@ def stop_jvnext():
 # pktmon 制御
 # ---------------------------------------------------------------------------
 def pktmon_setup_filters():
-    """3つの JRA-VAN IP で pktmon フィルタを設定."""
+    """pktmon フィルタを設定. JRA-VAN サーバーIPはCDN経由で変動するため
+    IP固定でなくポート80のみでフィルタする (JRAVAN_IPS指定時はIP絞り込みも追加)."""
     subprocess.run([PKTMON_EXE, "filter", "remove"], capture_output=True, timeout=10)
-    for i, ip in enumerate(JRAVAN_IPS):
+    if JRAVAN_IPS:
+        for i, ip in enumerate(JRAVAN_IPS):
+            subprocess.run(
+                [PKTMON_EXE, "filter", "add", f"JRAVAN{i+1}", "-i", ip, "-p", "80"],
+                capture_output=True, timeout=10,
+            )
+    else:
         subprocess.run(
-            [PKTMON_EXE, "filter", "add", f"JRAVAN{i+1}", "-i", ip, "-p", "80"],
+            [PKTMON_EXE, "filter", "add", "JRAVANPORT80", "-p", "80"],
             capture_output=True, timeout=10,
         )
 
@@ -141,27 +151,65 @@ def pktmon_start():
     )
 
 
+def _extract_key_from_reassembled_streams(pcap_path: Path) -> str | None:
+    """PCAP を TCP ストリーム単位で seq 順に再組み立てしてから KEY を検索する.
+
+    auth 応答は複数 TCP セグメントに分割されるため、生バイト連結
+    (パケット間に pcap レコードヘッダ等が挟まる) では正規表現が
+    セグメント境界をまたぐ KEY 文字列を検出できない。
+    """
+    try:
+        from scapy.all import rdpcap, TCP, IP, Raw
+    except ImportError:
+        return None
+    try:
+        pkts = rdpcap(str(pcap_path))
+    except Exception:
+        return None
+    from collections import defaultdict
+    streams: dict[tuple[str, int], list[tuple[int, bytes]]] = defaultdict(list)
+    for p in pkts:
+        if not (p.haslayer(Raw) and p.haslayer(TCP) and p.haslayer(IP)):
+            continue
+        tcp = p[TCP]
+        if tcp.sport != 80:
+            continue
+        streams[(p[IP].src, tcp.dport)].append((tcp.seq, bytes(p[Raw].load)))
+    for segs in streams.values():
+        segs.sort(key=lambda t: t[0])
+        body = b"".join(s for _, s in segs)
+        m = KEY_PATTERN.search(body)
+        if m:
+            return m.group(1).decode("ascii")
+    return None
+
+
 def pktmon_stop_and_extract_key() -> str | None:
     """pktmon 停止 → ETL を解析して KEY 抽出."""
     subprocess.run([PKTMON_EXE, "stop"], capture_output=True, timeout=15)
     if not PKTMON_ETL.exists():
         return None
-    # 直接 ETL を生バイトスキャン (PCAP 変換が遅いので)
+    # 直接 ETL を生バイトスキャン (稀に境界をまたがず1パケットに収まるケースの高速パス)
     data = PKTMON_ETL.read_bytes()
     m = KEY_PATTERN.search(data)
     if m:
         return m.group(1).decode("ascii")
-    # フォールバック: PCAP 変換して解析
+    # PCAP 変換して TCP ストリーム再組み立てで解析 (本命経路)
     PKTMON_PCAP.unlink(missing_ok=True)
     subprocess.run(
         [PKTMON_EXE, "etl2pcap", str(PKTMON_ETL), "-o", str(PKTMON_PCAP)],
         capture_output=True, timeout=60,
     )
-    if PKTMON_PCAP.exists():
-        data = PKTMON_PCAP.read_bytes()
-        m = KEY_PATTERN.search(data)
-        if m:
-            return m.group(1).decode("ascii")
+    if not PKTMON_PCAP.exists():
+        return None
+    key = _extract_key_from_reassembled_streams(PKTMON_PCAP)
+    if key:
+        return key
+    # 最終フォールバック: PCAP 生バイトスキャン
+    data = PKTMON_PCAP.read_bytes()
+    m = KEY_PATTERN.search(data)
+    if m:
+        return m.group(1).decode("ascii")
     return None
 
 
