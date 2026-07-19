@@ -937,6 +937,10 @@ export type KeirinEntry = {
   line_pos: number | null;
   finish_order: number | null;
   player_class: string | null;
+  /** 単勝モデル(lgbm_wt_win)の予測確率（%） */
+  pred_win_pct: number | null;
+  /** 複勝(3着内)モデルの予測確率（%） */
+  pred_top3_pct: number | null;
 };
 
 export type KeirinPick = {
