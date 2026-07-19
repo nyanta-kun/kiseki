@@ -13,6 +13,16 @@ import { todayYYYYMMDD } from "@/lib/utils";
 // ガミ足切り閾値（keirin側と揃える）: レース単位 min(全目)≥7.0（2026-07-10 SS/S→R置き換え）
 const GAMI_THRESHOLD = 7.0;
 
+// Number.prototype.toFixed は浮動小数点誤差で四捨五入に失敗することがある
+// （例: (15.45).toFixed(1) === "15.4"。15.45は内部的に15.449999...として
+// 保持されるため）。目安として表示する合成オッズ等はEpsilon補正した
+// Math.roundで先に小数第1位に丸めてからtoFixedする。
+function formatRoundHalfUp(value: number, decimals = 1): string {
+  const factor = 10 ** decimals;
+  const rounded = Math.round((value + Number.EPSILON) * factor) / factor;
+  return rounded.toFixed(decimals);
+}
+
 // pred_win_pct/pred_top3_pct（選手ごと独立モデルの生確率）をレース内合計が
 // 一定値になるよう補正するためのロジット空間シフト。個々の確率は0〜1に留まる
 // （sigmoidの値域による）ため、単純な比例配分と違い100%への頭打ちが起きにくい。
@@ -557,7 +567,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
             {pick.synth_odds != null && !isMiwokuri && (
               <span className="text-gray-500 dark:text-gray-400">
-                合成<span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>
+                合成<span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>
               </span>
             )}
           </span>
@@ -582,7 +592,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
             {pick.synth_odds != null && !isMiwokuri && (
               <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
-                合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{pick.synth_odds.toFixed(1)}</span>倍
+                合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>倍
               </span>
             )}
             {pick.gap23 != null && !isMiwokuri && (
