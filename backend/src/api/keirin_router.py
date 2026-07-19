@@ -80,7 +80,14 @@ async def _calc_synth_odds(
     pred_combo: str | None,
     is_wide: bool,
 ) -> float | None:
-    """朝オッズから合成オッズ（= 1 / Σ(1/odds)）を計算して返す。データ不足時は None。"""
+    """直近スナップショットのオッズから合成オッズ（= 1 / Σ(1/odds)）を計算して返す。データ不足時は None。
+
+    wt_odds_snapshot は当日 morning(8時台)〜h20(20時台) まで複数回収集される。
+    朝の時点では大半の組み合わせが Winticket 側の未確定プレースホルダ(9999.9倍)の
+    ままであり、snapshot_type を 'morning' に固定すると意味のない値になりやすい
+    （例: 全4点が9999.9のまま→合成2500.0倍という無情報値。2026-07-20 発覚）。
+    そのレース・券種で収集済みの最新スナップショットを使う。
+    """
     legs, bet_type = _parse_combinations(pred_combo, is_wide)
     if not legs or bet_type is None:
         return None
@@ -92,7 +99,10 @@ async def _calc_synth_odds(
             WHERE race_key = :rk
               AND bet_type = :bt
               AND combination = ANY(:combos)
-              AND snapshot_type = 'morning'
+              AND snapshot_at = (
+                SELECT MAX(snapshot_at) FROM keirin.wt_odds_snapshot
+                WHERE race_key = :rk AND bet_type = :bt
+              )
         """),
         {"rk": race_key, "bt": bet_type, "combos": combos},
     )).mappings().all()
