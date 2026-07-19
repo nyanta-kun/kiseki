@@ -13,6 +13,31 @@ import { todayYYYYMMDD } from "@/lib/utils";
 // ガミ足切り閾値（keirin側と揃える）: レース単位 min(全目)≥7.0（2026-07-10 SS/S→R置き換え）
 const GAMI_THRESHOLD = 7.0;
 
+// pred_win_pct/pred_top3_pct（選手ごと独立モデルの生確率）をレース内合計が
+// 一定値になるよう補正するためのロジット空間シフト。個々の確率は0〜1に留まる
+// （sigmoidの値域による）ため、単純な比例配分と違い100%への頭打ちが起きにくい。
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+function logit(p: number): number {
+  const eps = 1e-6;
+  const c = Math.min(Math.max(p, eps), 1 - eps);
+  return Math.log(c / (1 - c));
+}
+// probs（0〜1の生確率配列）に対し、Σ sigmoid(logit(p_i)+shift) = target となる
+// shift を二分探索で求める。target は 0 < target < probs.length である必要がある。
+function solveLogitShift(probs: number[], target: number): number {
+  let lo = -50;
+  let hi = 50;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const sum = probs.reduce((s, p) => s + sigmoid(logit(p) + mid), 0);
+    if (sum < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // 候補ランク判定閾値（keirin側 notify_prerace_wt.py の定数と揃える）
 // S1(7PLUS_R・旧称SS): gap12≥0.10 ∧ gap23≥1pt ∧ 三連複min≥7（オッズ条件は発走前確定）
 // ※ 2026-07-16 ランク名称整理: SS→S1 / U→S2 / M→S3・A 新設（内部rankコードは不変）
@@ -288,16 +313,21 @@ function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isR
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
-  // pred_win_pct/pred_top3_pct は選手ごと独立モデルの生確率でレース内合計の保証がないため、
-  // レース単位で合計100%(単勝)/合計min(出走数,3)*100%(複勝)に按分し直して表示する。
-  const winSum = entries.reduce((s, e) => s + (e.pred_win_pct ?? 0), 0);
-  const top3Sum = entries.reduce((s, e) => s + (e.pred_top3_pct ?? 0), 0);
-  const top3Target = Math.min(entries.length, 3) * 100;
-  const normWin = (v: number | null) => (v != null && winSum > 0 ? (v / winSum) * 100 : null);
-  // 複勝（3着以内）確率は論理上100%を超えられないため、按分後にクランプする
-  // （少数の選手に予測が極端に偏るレースでは按分だけだと100%超になり得る）。
+  // pred_win_pct/pred_top3_pct は選手ごと独立モデルの生確率でレース内合計の保証がない
+  // （実例: 単勝合計9.7%・複勝合計43.9%等）。単純な比例配分（線形スケール）だと
+  // 必要な補正倍率が大きく(例: 複勝は約6.8倍)個々の値が100%を超えて頭打ちが頻発するため、
+  // ロジット(対数オッズ)空間で一律シフトしてからシグモイドで戻す方式でレース内合計を
+  // 単勝=100%・複勝=min(出走数,3)*100%に補正する。シグモイドの性質上100%は超えない。
+  const winProbs = entries.map((e) => (e.pred_win_pct ?? 0) / 100);
+  const top3Probs = entries.map((e) => (e.pred_top3_pct ?? 0) / 100);
+  const winShift = winProbs.some((p) => p > 0) ? solveLogitShift(winProbs, 1) : null;
+  const top3Shift = top3Probs.some((p) => p > 0)
+    ? solveLogitShift(top3Probs, Math.min(entries.length, 3))
+    : null;
+  const normWin = (v: number | null) =>
+    v != null && winShift != null ? 100 * sigmoid(logit(v / 100) + winShift) : null;
   const normTop3 = (v: number | null) =>
-    v != null && top3Sum > 0 ? Math.min((v / top3Sum) * top3Target, 100) : null;
+    v != null && top3Shift != null ? 100 * sigmoid(logit(v / 100) + top3Shift) : null;
   return (
     <table className="w-full">
       <thead>
