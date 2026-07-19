@@ -288,6 +288,16 @@ function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isR
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
+  // pred_win_pct/pred_top3_pct は選手ごと独立モデルの生確率でレース内合計の保証がないため、
+  // レース単位で合計100%(単勝)/合計min(出走数,3)*100%(複勝)に按分し直して表示する。
+  const winSum = entries.reduce((s, e) => s + (e.pred_win_pct ?? 0), 0);
+  const top3Sum = entries.reduce((s, e) => s + (e.pred_top3_pct ?? 0), 0);
+  const top3Target = Math.min(entries.length, 3) * 100;
+  const normWin = (v: number | null) => (v != null && winSum > 0 ? (v / winSum) * 100 : null);
+  // 複勝（3着以内）確率は論理上100%を超えられないため、按分後にクランプする
+  // （少数の選手に予測が極端に偏るレースでは按分だけだと100%超になり得る）。
+  const normTop3 = (v: number | null) =>
+    v != null && top3Sum > 0 ? Math.min((v / top3Sum) * top3Target, 100) : null;
   return (
     <table className="w-full">
       <thead>
@@ -308,10 +318,10 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800 dark:text-gray-100">{e.name ?? "—"}</td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 dark:text-gray-400 text-xs">{e.style ?? "—"}</td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
-              {e.pred_win_pct != null ? `${e.pred_win_pct.toFixed(1)}%` : "—"}
+              {normWin(e.pred_win_pct) != null ? `${normWin(e.pred_win_pct)!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
-              {e.pred_top3_pct != null ? `${e.pred_top3_pct.toFixed(1)}%` : "—"}
+              {normTop3(e.pred_top3_pct) != null ? `${normTop3(e.pred_top3_pct)!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}
