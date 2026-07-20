@@ -358,6 +358,7 @@ _RANK_KEY_MAP = {
     "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
     "7PLUS_U": "U",   # 表示 S2
     "7PLUS_M": "M",   # 表示 S3（2026-07-17 新定義: 不一致×gap12≥0.10）
+    "SEVEN_S4": "S4",  # 表示 S4（2026-07-21 新設: 単勝×複勝指数トップ3重なり軸×波乱度選出）
 }
 
 
@@ -366,8 +367,8 @@ async def _aggregate(
     where: str,
     params: dict[str, Any],
 ) -> dict:
-    # 2026-07-19〜: 現行ランクは S1/S2/S3 の3ペーパー（旧新S1=SIX_S1 / A=7PLUS_A は全廃・
-    # 行はアーカイブ退避済み）。トップラインは3ランクの名目合算。
+    # 2026-07-21〜: 現行ランクは S1/S2/S3/S4 の4ペーパー（旧新S1=SIX_S1 / A=7PLUS_A は全廃・
+    # 行はアーカイブ退避済み）。トップラインは4ランクの名目合算。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -381,7 +382,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -407,7 +408,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
               AND {_SETTLED_COND}
         """),
         params,
@@ -429,7 +430,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -458,7 +459,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M')
+              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
               AND {_SETTLED_COND}
             GROUP BY ph.rank
         """),
