@@ -180,20 +180,29 @@ const PRESETS: { key: Preset; label: string }[] = [
 
 type Granularity = "daily" | "monthly";
 type CumMode = "period" | "month" | "year";
+type RankFilter = "all" | "S1" | "SS" | "S";
+
+const RANK_FILTERS: { key: RankFilter; label: string }[] = [
+  { key: "all", label: "全体" },
+  { key: "S1", label: "S1" },
+  { key: "SS", label: "SS" },
+  { key: "S", label: "S" },
+];
 
 export default function KeirinStatsPage() {
   const [preset, setPreset] = useState<Preset>("30d");
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [cumMode, setCumMode] = useState<CumMode>("month");
+  const [rankFilter, setRankFilter] = useState<RankFilter>("all");
   const [from, setFrom] = useState(() => calcRange("30d").from);
   const [to, setTo] = useState(() => calcRange("30d").to);
   const [data, setData] = useState<KeirinStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async (f: string, t: string, g: Granularity) => {
+  const load = useCallback(async (f: string, t: string, g: Granularity, rank: RankFilter) => {
     setLoading(true);
     try {
-      const res = await fetchKeirinStats(f, t, g);
+      const res = await fetchKeirinStats(f, t, g, rank);
       setData(res);
     } catch {
       setData(null);
@@ -203,8 +212,8 @@ export default function KeirinStatsPage() {
   }, []);
 
   useEffect(() => {
-    void load(from, to, granularity);
-  }, [from, to, granularity, load]);
+    void load(from, to, granularity, rankFilter);
+  }, [from, to, granularity, rankFilter, load]);
 
   function applyPreset(p: Preset) {
     setPreset(p);
@@ -254,6 +263,9 @@ export default function KeirinStatsPage() {
 
   const maxBet = Math.max(...(data?.items ?? []).map(i => Math.max(i.total_bet, i.total_payout)), 1);
   const yAxisMax = Math.ceil(maxBet / 5000) * 5000 + 5000;
+
+  const rankLabel = RANK_FILTERS.find(r => r.key === rankFilter)?.label ?? "全体";
+  const chartTitle = rankFilter === "all" ? "全体の投資・回収推移" : `${rankLabel} の投資・回収推移`;
 
   return (
     <div className="w-full sm:max-w-4xl sm:mx-auto px-3 sm:px-4 py-4 pb-20 space-y-4">
@@ -309,6 +321,24 @@ export default function KeirinStatsPage() {
           </div>
         )}
 
+        {/* ランク */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">ランク</span>
+          {RANK_FILTERS.map(r => (
+            <button
+              key={r.key}
+              onClick={() => setRankFilter(r.key)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                rankFilter === r.key
+                  ? "bg-blue-500 text-white"
+                  : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+
         {/* 粒度・累積モード */}
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-1.5">
@@ -348,6 +378,7 @@ export default function KeirinStatsPage() {
 
       {/* メイングラフ */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
+        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{chartTitle}</p>
         {loading ? (
           <div className="h-64 flex items-center justify-center text-gray-400 text-sm animate-pulse">読み込み中…</div>
         ) : chartData.length === 0 ? (
@@ -413,7 +444,7 @@ export default function KeirinStatsPage() {
       {/* 期間サマリー */}
       {data && (
         <SummaryCard
-          label={`選択期間（${from} 〜 ${to}）`}
+          label={`${rankLabel} ・ 選択期間（${from} 〜 ${to}）`}
           {...data.period_summary}
         />
       )}
@@ -421,10 +452,10 @@ export default function KeirinStatsPage() {
       {/* 当月・当年サマリー */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {monthSummary && monthSummary.total_bet > 0 && (
-          <SummaryCard label="当月累積" {...monthSummary} />
+          <SummaryCard label={`${rankLabel} ・ 当月累積`} {...monthSummary} />
         )}
         {yearSummary && yearSummary.total_bet > 0 && (
-          <SummaryCard label="当年累積" {...yearSummary} />
+          <SummaryCard label={`${rankLabel} ・ 当年累積`} {...yearSummary} />
         )}
       </div>
     </div>

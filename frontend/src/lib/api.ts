@@ -971,6 +971,10 @@ export type KeirinPick = {
   bet_amount: number;
   miwokuri: boolean;
   prerace_gami: number | null;
+  /** SEVEN_S4の内訳ラベル("SS"|"S")。S1等では null */
+  gate_label?: string | null;
+  /** 最終表示ランク文字列（"S1"|"SS"|"S"等） */
+  display_rank?: string;
   entries: KeirinEntry[];
 };
 
@@ -1062,9 +1066,11 @@ export async function fetchKeirinStats(
   fromDate: string,
   toDate: string,
   granularity: "daily" | "monthly",
+  rank?: "S1" | "SS" | "S" | "all",
 ): Promise<KeirinStatsResponse> {
+  const rankQuery = rank ? `&rank=${rank}` : "";
   return get<KeirinStatsResponse>(
-    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}`,
+    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}`,
     { cache: "no-store" },
   );
 }

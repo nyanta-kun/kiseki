@@ -164,7 +164,8 @@ async def get_picks(
                   ph.prerace_gami,
                   ph.gap12,
                   ph.gap23,
-                  ph.gap34
+                  ph.gap34,
+                  ph.gate_label
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
@@ -203,6 +204,7 @@ async def get_picks(
                   ph.gap12,
                   ph.gap23,
                   ph.gap34,
+                  ph.gate_label,
                   wr.race_no,
                   wr.grade,
                   wr.race_type,
@@ -301,6 +303,7 @@ async def get_picks(
             "status": r["status"],
             "n_entries": r["n_entries"],
             "rank": r["rank"],
+            "display_rank": _display_rank(str(r["rank"]), r["gate_label"]) if has_pick else None,
             "pred_combo": r["pred_combo"] if has_pick else None,
             "n_combos": r["n_combos"] if has_pick else None,
             "synth_odds": synth_odds,
@@ -314,6 +317,7 @@ async def get_picks(
             "gap12": float(r["gap12"]) if (has_pick and r.get("gap12") is not None) else None,
             "gap23": float(r["gap23"]) if (has_pick and r.get("gap23") is not None) else None,
             "gap34": float(r["gap34"]) if (has_pick and r.get("gap34") is not None) else None,
+            "gate_label": r["gate_label"] if has_pick else None,
             "entries": [
                 {
                     "frame_no": e["frame_no"],
@@ -354,12 +358,29 @@ _SETTLED_COND = """(
 )"""
 
 # 内部rank → by_rank キー（表示ランク）のマッピング
+# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / SS / S の3ランク。
+# SEVEN_S4 は gate_label（軸2車とWINTICKET公式◎◯の重なり数）で SS/S に分岐する。
 _RANK_KEY_MAP = {
     "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
-    "7PLUS_U": "U",   # 表示 S2
-    "7PLUS_M": "M",   # 表示 S3（2026-07-17 新定義: 不一致×gap12≥0.10）
-    "SEVEN_S4": "S4",  # 表示 S4（2026-07-21 新設: 単勝×複勝指数トップ3重なり軸×波乱度選出）
 }
+
+
+def _display_rank(rank: str, gate_label: str | None) -> str:
+    """DB の内部 rank + gate_label から、フロントエンドが表示に使う表示ランク文字列を返す。
+
+    - SEVEN_S1                        → "S1"
+    - SEVEN_S4 かつ gate_label='SS'   → "SS"（軸2車がWT公式◎◯と2車とも不一致）
+    - SEVEN_S4 かつ gate_label='S'    → "S"（軸2車の片方だけがWT公式◎◯と一致）
+    - それ以外（廃止済みランクの残骸データ等）→ 元の rank 文字列をそのまま返す
+    """
+    if rank == "SEVEN_S1":
+        return "S1"
+    if rank == "SEVEN_S4":
+        if gate_label == "SS":
+            return "SS"
+        if gate_label == "S":
+            return "S"
+    return rank
 
 
 async def _aggregate(
@@ -367,8 +388,9 @@ async def _aggregate(
     where: str,
     params: dict[str, Any],
 ) -> dict:
-    # 2026-07-21〜: 現行ランクは S1/S2/S3/S4 の4ペーパー（旧新S1=SIX_S1 / A=7PLUS_A は全廃・
-    # 行はアーカイブ退避済み）。トップラインは4ランクの名目合算。
+    # 2026-07-21〜: 現行ランクは S1(SEVEN_S1) / SS・S(SEVEN_S4をgate_labelで分岐) の3ペーパー
+    # （旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ退避済み）。
+    # トップラインは SEVEN_S1 + SEVEN_S4 の名目合算。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -382,7 +404,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
+              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -408,18 +430,19 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
+              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
               AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / S2=7PLUS_U / S3=7PLUS_M
+    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / SS・S=SEVEN_S4（gate_labelで分岐）
     rank_rows = (await db.execute(
         text(f"""
             SELECT
               ph.rank                                                            AS rank,
+              ph.gate_label                                                      AS gate_label,
               COUNT(*)                                                           AS n_picks,
               SUM(ph.hit)                                                        AS n_hits,
               COALESCE(SUM(ph.bet_amount), 0)                                    AS total_bet,
@@ -430,17 +453,17 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
+              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
-            GROUP BY ph.rank
+            GROUP BY ph.rank, ph.gate_label
         """),
         params,
     )).mappings().all()
 
     by_rank: dict[str, dict] = {}
     for r in rank_rows:
-        key = _RANK_KEY_MAP.get(str(r["rank"]), str(r["rank"]))
+        key = _display_rank(str(r["rank"]), r["gate_label"])
         by_rank[key] = _make_period_dict(
             int(r["n_picks"] or 0),
             int(r["n_hits"] or 0),
@@ -449,24 +472,25 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7S1/#7U/#7M 行を書き込む）
+    # （write_candidates_wt が候補時点で #7S1/#7S4 行を書き込む）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
+                   ph.gate_label AS gate_label,
                    COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', '7PLUS_U', '7PLUS_M', 'SEVEN_S4')
+              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
               AND {_SETTLED_COND}
-            GROUP BY ph.rank
+            GROUP BY ph.rank, ph.gate_label
         """),
         params,
     )).mappings().all()
     for r in paper_cand_rows:
-        key = _RANK_KEY_MAP.get(str(r["rank"]), str(r["rank"]))
+        key = _display_rank(str(r["rank"]), r["gate_label"])
         n_cand = int(r["n_candidates"] or 0)
         if key not in by_rank and n_cand > 0:
             by_rank[key] = _make_period_dict(0, 0, 0, 0)
@@ -510,8 +534,10 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
     }
 
     # ランク別行を取得（model_name サフィックスで識別）
-    # S/S+（#7ST/#7STP）2026-07-15 全廃・S1（#6S1）/A（#7A）2026-07-17 全廃 —
-    # 残存する過去評価行は表示しない（save_model_eval 再実行で行自体も削除される）
+    # S/S+（#7ST/#7STP）2026-07-15 全廃・S1（#6S1）/A（#7A）2026-07-17 全廃・
+    # S2/S3（#7U/#7M）2026-07-21 全廃 —
+    # 残存する過去評価行は表示しない（save_model_eval 再実行で行自体も削除される。
+    # VPS本番に古い評価行が残っていても表示に混ざらないための安全策として明示的に除外する）
     rank_rows = (await db.execute(
         text("""
             SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
@@ -522,6 +548,8 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
               AND model_name NOT LIKE '%#7STP%'
               AND model_name NOT LIKE '%#7A'
               AND model_name NOT LIKE '%#7R'
+              AND model_name NOT LIKE '%#7U'
+              AND model_name NOT LIKE '%#7M'
             ORDER BY evaluated_at DESC
         """),
         {"pt": period_type},
@@ -605,12 +633,15 @@ async def get_stats(
     from_date: str = "",
     to_date: str = "",
     granularity: str = "daily",
+    rank: str = "all",
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """日別 / 月別の投資・回収・累積ROI推移を返す。
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
+    rank: 集計対象ランク。"S1"（SEVEN_S1）/ "SS"（SEVEN_S4 かつ gate_label='SS'）/
+          "S"（SEVEN_S4 かつ gate_label='S'）/ "all"（既定値・S1+SEVEN_S4全体）。
     """
     today = _today_jst()
     if to_date:
@@ -634,10 +665,21 @@ async def get_stats(
     else:
         date_expr = "ph.race_date"
 
-    _STATS_COND = """
+    # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
+    # （rank文字列をそのままSQLへ埋め込まない）
+    if rank == "S1":
+        _RANK_COND = "ph.rank = 'SEVEN_S1'"
+    elif rank == "SS":
+        _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'SS'"
+    elif rank == "S":
+        _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'S'"
+    else:
+        _RANK_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S4')"
+
+    _STATS_COND = f"""
         AND NOT COALESCE(ph.miwokuri, FALSE)
         AND ph.bet_amount > 0
-        AND ph.rank = '7PLUS_R'
+        AND {_RANK_COND}
         AND ph.race_key NOT LIKE '%#CAND'
         AND (
             wr.status = 3

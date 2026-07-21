@@ -83,12 +83,11 @@ function parseCandCombo(pred: string | null): { p1: string; p2: string; thirds: 
 // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
 // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
 // 購入済み R(S1) は全目min≥閾値が購入条件のため prerace_gami<閾値 にならない（書込時不変条件）。
-// ペーパー検証ランク（S2/S3）はガミ閾値と無関係のため対象外
+// ペーパー検証ランク（S2/S3）はガミ閾値と無関係のため対象外だった（2026-07-21全廃で消滅）。
 // （同一レースのS1系判定で prerace_gami が書き込まれ得るが、ガミ落ち扱いにしない）。
 function computeGamiSkip(pick: KeirinPick): boolean {
   const pgBelow = pick.prerace_gami != null && pick.prerace_gami < GAMI_THRESHOLD;
-  const paperRank = pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M";
-  return pgBelow && !paperRank && (pick.miwokuri || pick.rank !== "7PLUS_R");
+  return pgBelow && (pick.miwokuri || pick.rank !== "7PLUS_R");
 }
 
 function fmtYMD(yyyymmdd: string): string {
@@ -149,9 +148,16 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 定数
 // ---------------------------------------------------------------------------
 
-// 現行ランク体系（2026-07-21〜: S1/S2/S3/S4 の4ペーパーランク）。
+// 現行ランク体系（2026-07-21〜: S1/SS/S の3ペーパーランク）。
 // S1は新設計（win軸1着固定×3着内モデル相手2車・SEVEN_S1）で2026-07-19導入。
-// S4は単勝×複勝指数トップ3重なり軸×波乱度選出（三連複2軸総流し・SEVEN_S4）で2026-07-21導入。
+// SS/Sは単勝×複勝指数トップ3重なり軸×波乱度選出（三連複2軸総流し・SEVEN_S4）を
+// WINTICKET公式◎◯との軸重なり数で分割した表示ランク（2026-07-21導入）:
+//   軸2車がWT◎◯と全く重ならない → SS（全期間 対象943R・的中率39.4%・ROI232.8%）
+//   軸2車の片方だけがWT◎◯と重なる → S（全期間 対象8,984R・的中率36.0%・ROI120.6%）
+// 内部rankカラムはSS/Sいずれも SEVEN_S4 のまま。区別は gate_label(SS|S) で行い、
+// バックエンドが計算した pick.display_rank(S1|SS|S) をそのままキーに使う。
+// S2(7PLUS_U)/S3(7PLUS_M)は対象レース数・的中率・期待値の観点で継続困難と判断し
+// 2026-07-21 全廃（行は picks_history_u_archive / _m_archive へ退避済み・新規生成なし）。
 // 旧新S1（SIX_S1・6車三連単）と A（7PLUS_A・一致波乱二連単）は正規プロトコル再検証で
 // 不合格のため 2026-07-17 全廃（行は picks_history_r_archive / _a_archive へ退避済み）。
 // 旧S1(7PLUS_R・7車三連複)・#CAND書き込みは 2026-07-16 全廃・S/S+（7PLUS_ST/STP）は 2026-07-15 全廃
@@ -160,13 +166,11 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
   // S1=win軸1着固定×3着内モデル相手2車（2026-07-19新設計）・ペーパートレード検証中
-  "SEVEN_S1":   { bg: "#ea580c", text: "#fff", label: "S1" },
-  // S2=波乱ライン連れ込み・ペーパートレード検証中（集計対象外）
-  "7PLUS_U":    { bg: "#0e7490", text: "#fff", label: "S2" },
-  // S3=◎不一致×システム◎×gap12≥0.10（2026-07-17 新定義）・ペーパートレード検証中
-  "7PLUS_M":    { bg: "#7c3aed", text: "#fff", label: "S3" },
-  // S4=単勝×複勝指数トップ3重なり軸×波乱度選出・三連複2軸総流し（2026-07-21新設）・ペーパートレード検証中
-  "SEVEN_S4":   { bg: "#16a34a", text: "#fff", label: "S4" },
+  "S1":         { bg: "#ea580c", text: "#fff", label: "S1" },
+  // SS=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）・ペーパートレード検証中
+  "SS":         { bg: "#ca8a04", text: "#fff", label: "SS" },
+  // S=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）・ペーパートレード検証中
+  "S":          { bg: "#16a34a", text: "#fff", label: "S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
 
@@ -207,7 +211,7 @@ function RankBadge({ rank, purchased }: { rank: string; purchased?: boolean }) {
   const badgeCls = "inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0";
 
   // 購入対象（買い目確定・ペーパーは記録確定）になったら緑の○で囲う。
-  // 全ランク統一（S2/S3=15分前判定 buy 成立）。
+  // 全ランク統一（SS/S=15分前判定 buy 成立）。
   const ringStyle: React.CSSProperties | undefined = purchased
     ? { outline: "2px solid #10b981", outlineOffset: "2px" }
     : undefined;
@@ -504,10 +508,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（S1/S2/S3/S4）は旧S1の三連複ガミ閾値と無関係のため
+  // ペーパー検証ランク（S1/SS/S。2026-07-21にS2/S3全廃）は旧S1の三連複ガミ閾値と無関係のため
   // ガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "7PLUS_U" || pick.rank === "7PLUS_M"
-    || pick.rank === "SEVEN_S4";
+  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "SEVEN_S4";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -517,14 +520,17 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // ガミ落ち確定行は「ガミ落ち」表示を優先し候補ランクは出さない。
   const candRanks = isGamiSkip ? [] : candPossibleRanks(pick);
   const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
-  // バッジ表示はランク名を直接出す（S2/S3/A と統一・2026-07-16）:
+  // バッジ表示はランク名を直接出す（2026-07-16に導入・2026-07-21にSS/S再編でAPI側の
+  // display_rank(S1/SS/S)をそのまま使う方式へ変更）:
   // S1候補（7PLUS_CAND ∧ gap条件成立）は「候補」ではなく S1 バッジで表示し、
   // 直前オッズ判定で購入対象になったら緑○で囲う（RankBadge purchased）。
-  const displayRank = rankStr === "7PLUS_CAND" && candRanks.includes("S1") ? "7PLUS_R" : rankStr;
+  const badgeRank = rankStr === "7PLUS_CAND" && candRanks.includes("S1")
+    ? "7PLUS_R"
+    : (pick.display_rank ?? rankStr);
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
   const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
-  // 券種ラベル: S1（win軸新設計）のみ三連単、S2/S3は三連複
+  // 券種ラベル: S1（win軸新設計）のみ三連単、SS/S（SEVEN_S4）は三連複
   const betTypeLabel = rankStr === "SEVEN_S1" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
     ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
@@ -540,8 +546,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
         onClick={() => setCollapsed(v => !v)}
         className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
       >
-        {/* 左バッジ = ランク名の直接表示（全ランク統一）。購入対象は緑○で囲う */}
-        <RankBadge rank={displayRank} purchased={isBuyConfirmed} />
+        {/* 左バッジ = display_rank(S1/SS/S)の直接表示（全ランク統一）。購入対象は緑○で囲う */}
+        <RankBadge rank={badgeRank} purchased={isBuyConfirmed} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
             <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
@@ -645,17 +651,17 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "S1"=win軸新設計 / "U"=S2 / "M"=S3 / "S4"=単勝×複勝指数重なり軸×波乱度選出
-// （全てペーパー検証・名目賭金）。
+// by_rank キー: "S1"=win軸新設計 / "SS"=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出 /
+// "S"=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（全てペーパー検証・名目賭金）。
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S4導入
-// → トップラインは4ランクの名目合算。
-const RANK_ORDER = ["S1", "U", "M", "S4"] as const;
-const RANK_LABEL: Record<string, string> = { S1: "S1", U: "S2", M: "S3", S4: "S4" };
+// 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S4をgate_label(SS/S)でSS/Sの2ランクへ再編
+// → トップラインは3ランクの名目合算。
+const RANK_ORDER = ["S1", "SS", "S"] as const;
+const RANK_LABEL: Record<string, string> = { S1: "S1", SS: "SS", S: "S" };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
-  U: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
-  M: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
-  S4: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
+  SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  S: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
 };
 
 function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
