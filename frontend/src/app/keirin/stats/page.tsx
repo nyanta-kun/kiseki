@@ -184,9 +184,9 @@ type RankFilter = "all" | "S1" | "SS" | "S";
 
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
-  { key: "S1", label: "S1" },
   { key: "SS", label: "SS" },
   { key: "S", label: "S" },
+  { key: "S1", label: "S1" },
 ];
 
 export default function KeirinStatsPage() {

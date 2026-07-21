@@ -656,7 +656,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S4導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S4をgate_label(SS/S)でSS/Sの2ランクへ再編
 // → トップラインは3ランクの名目合算。
-const RANK_ORDER = ["S1", "SS", "S"] as const;
+const RANK_ORDER = ["SS", "S", "S1"] as const;
 const RANK_LABEL: Record<string, string> = { S1: "S1", SS: "SS", S: "S" };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
