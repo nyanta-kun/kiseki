@@ -651,20 +651,29 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "S1"=win軸新設計 / "SS"=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出 /
-// "S"=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（全てペーパー検証・名目賭金）。
+// by_rank キー: "S1"=win軸新設計 / "SS+"=SEVEN_S4のうちSSでさらに軸2車に各グレード
+// 最上位クラス(S1/A1)を含まない観察用サブランク / "SS"=SEVEN_S4のうち軸2車がWT◎◯と
+// 全く重ならない選出 / "S"=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出
+// （全てペーパー検証・名目賭金）。
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S4導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S4をgate_label(SS/S)でSS/Sの2ランクへ再編
-// → トップラインは3ランクの名目合算。
-const RANK_ORDER = ["SS", "S", "S1"] as const;
-const RANK_LABEL: Record<string, string> = { S1: "S1", SS: "SS", S: "S" };
+// 2026-07-23 SS内の軸級班denyフィルター通過分をSS+として観察用に追加（買い目は変更なし）
+// → トップラインは4ランク（SS+はSSの内訳のため合算には含めない）の名目合算。
+const RANK_ORDER = ["SS+", "SS", "S", "S1"] as const;
+const RANK_LABEL: Record<string, string> = { S1: "S1", "SS+": "SS+", SS: "SS", S: "S" };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
+  "SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
   SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   S: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
 };
 
-function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
+/** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */
+function mobileColClass(showAll: boolean): string {
+  return showAll ? "table-cell" : "hidden sm:table-cell";
+}
+
+function RankSubRow({ rankKey, data, showAll }: { rankKey: string; data: RankStats; showAll: boolean }) {
   const roiColor = data.roi == null
     ? "text-gray-400"
     : data.roi >= 1.0
@@ -695,11 +704,14 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
         {data.n_hits}
         <span className="text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
       </td>
-      <td className="hidden sm:table-cell py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+      <td className={`${mobileColClass(showAll)} py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums`}>
         ¥{data.total_bet.toLocaleString()}
       </td>
-      <td className="hidden sm:table-cell py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+      <td className={`${mobileColClass(showAll)} py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums`}>
         ¥{data.total_payout.toLocaleString()}
+      </td>
+      <td className={`${mobileColClass(showAll)} py-1 px-3 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums`}>
+        {data.max_payout != null ? `¥${data.max_payout.toLocaleString()}` : "—"}
       </td>
       <td className={`py-1 px-1.5 sm:px-3 text-right text-xs tabular-nums ${roiColor}`}>
         {formatROI(data.roi)}
@@ -708,7 +720,7 @@ function RankSubRow({ rankKey, data }: { rankKey: string; data: RankStats }) {
   );
 }
 
-function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: string; data: PeriodData; showRanks?: boolean }) {
+function SummaryRow({ label, sub, data, showRanks, showAll }: { label: string; sub?: string; data: PeriodData; showRanks?: boolean; showAll: boolean }) {
   const roiColor = data.roi == null
     ? "text-gray-400"
     : data.roi >= 1.0
@@ -742,12 +754,15 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
           {data.n_hits}
           <span className="text-xs text-gray-400 dark:text-gray-500 ml-0.5">({hitRate})</span>
         </td>
-        {/* 投資・回収: sm以上のみ表示 */}
-        <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+        {/* 投資・回収・最大払戻: sm以上または「すべて」表示時のみ表示 */}
+        <td className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums`}>
           ¥{data.total_bet.toLocaleString()}
         </td>
-        <td className="hidden sm:table-cell py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+        <td className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums`}>
           ¥{data.total_payout.toLocaleString()}
+        </td>
+        <td className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-sm text-gray-700 dark:text-gray-200 tabular-nums`}>
+          {data.max_payout != null ? `¥${data.max_payout.toLocaleString()}` : "—"}
         </td>
         {/* 回収率 */}
         <td className={`py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm tabular-nums ${roiColor}`}>
@@ -758,9 +773,9 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
         // 0件のランクもゼロ埋めで表示する（省略しない）
         const rd = byRank[rk] ?? {
           n_picks: 0, n_hits: 0, total_bet: 0, total_payout: 0,
-          roi: null, n_candidates: 0,
+          roi: null, n_candidates: 0, max_payout: null,
         };
-        return <RankSubRow key={rk} rankKey={rk} data={rd} />;
+        return <RankSubRow key={rk} rankKey={rk} data={rd} showAll={showAll} />;
       })}
     </>
   );
@@ -768,10 +783,22 @@ function SummaryRow({ label, sub, data, showRanks }: { label: string; sub?: stri
 
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
   const [expanded, setExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center">
+      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center gap-1">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 flex-1">投資・回収サマリー</h2>
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className={`sm:hidden flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
+            showAll
+              ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+              : "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400"
+          }`}
+          aria-label={showAll ? "省略表示に戻す" : "すべての項目を表示"}
+        >
+          すべて
+        </button>
         <button
           onClick={() => setExpanded(v => !v)}
           className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded"
@@ -789,15 +816,16 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
-              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">投資</th>
-              <th className="hidden sm:table-cell py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>投資</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>回収</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap`}>期間最大払戻</th>
               <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
             </tr>
           </thead>
           <tbody>
-            <SummaryRow label="当日" data={summary.today} showRanks={expanded} />
-            <SummaryRow label="当月" data={summary.month} showRanks={expanded} />
-            <SummaryRow label="当年" data={summary.year} showRanks={expanded} />
+            <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} />
+            <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} />
+            <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} />
             {/* 検証期間 = 学習に使っていない期間のバックテスト（HOLD・2026-06-30以前で固定）。
                 2026-07以降の本番フォワード分は当日/当月/当年サマリー側で表示 */}
             <SummaryRow
@@ -805,6 +833,7 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               sub={summary.test_from && summary.test_to ? `${summary.test_from}〜${summary.test_to}` : undefined}
               data={summary.test}
               showRanks={expanded}
+              showAll={showAll}
             />
           </tbody>
         </table>

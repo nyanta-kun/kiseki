@@ -986,7 +986,9 @@ export type KeirinPeriodSummary = {
   total_bet: number;
   total_payout: number;
   roi: number | null;
-  by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null; n_candidates?: number }>;
+  /** 期間内の的中1件あたり最大払戻（円）。的中0件の場合はnull */
+  max_payout?: number | null;
+  by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null; n_candidates?: number; max_payout?: number | null }>;
 };
 
 export type KeirinSummary = {

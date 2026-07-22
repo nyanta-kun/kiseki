@@ -341,7 +341,10 @@ async def get_picks(
 # summary
 # ---------------------------------------------------------------------------
 
-def _make_period_dict(n_picks: int, n_hits: int, total_bet: int, total_payout: int) -> dict:
+def _make_period_dict(
+    n_picks: int, n_hits: int, total_bet: int, total_payout: int,
+    max_payout: int | None = None,
+) -> dict:
     roi = round(total_payout / total_bet, 3) if total_bet > 0 else None
     return {
         "n_picks": n_picks,
@@ -349,6 +352,7 @@ def _make_period_dict(n_picks: int, n_hits: int, total_bet: int, total_payout: i
         "total_bet": total_bet,
         "total_payout": total_payout,
         "roi": roi,
+        "max_payout": max_payout,
     }
 
 
@@ -369,6 +373,8 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
     """DB の内部 rank + gate_label から、フロントエンドが表示に使う表示ランク文字列を返す。
 
     - SEVEN_S1                        → "S1"
+    - SEVEN_S4 かつ gate_label='SS+'  → "SS+"（軸2車がWT公式◎◯と2車とも不一致・
+                                          かつ軸に各グレード最上位クラスS1/A1を含まない・2026-07-23新設の観察用サブランク）
     - SEVEN_S4 かつ gate_label='SS'   → "SS"（軸2車がWT公式◎◯と2車とも不一致）
     - SEVEN_S4 かつ gate_label='S'    → "S"（軸2車の片方だけがWT公式◎◯と一致）
     - それ以外（廃止済みランクの残骸データ等）→ 元の rank 文字列をそのまま返す
@@ -376,6 +382,8 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
     if rank == "SEVEN_S1":
         return "S1"
     if rank == "SEVEN_S4":
+        if gate_label == "SS+":
+            return "SS+"
         if gate_label == "SS":
             return "SS"
         if gate_label == "S":
@@ -397,7 +405,8 @@ async def _aggregate(
               COUNT(*)                                                          AS n_picks,
               SUM(ph.hit)                                                       AS n_hits,
               COALESCE(SUM(ph.bet_amount), 0)                                   AS total_bet,
-              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout
+              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout,
+              MAX(CASE WHEN ph.hit = 1 THEN ph.payout ELSE NULL END)            AS max_payout
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
@@ -413,13 +422,14 @@ async def _aggregate(
 
     if not row:
         return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
-                "n_candidates": 0, "by_rank": {}}
+                "max_payout": None, "n_candidates": 0, "by_rank": {}}
 
     n_picks = int(row["n_picks"] or 0)
     n_hits = int(row["n_hits"] or 0)
     total_bet = int(row["total_bet"] or 0)
     total_payout = int(row["total_payout"] or 0)
-    result = _make_period_dict(n_picks, n_hits, total_bet, total_payout)
+    max_payout = int(row["max_payout"]) if row["max_payout"] is not None else None
+    result = _make_period_dict(n_picks, n_hits, total_bet, total_payout, max_payout)
 
     # 総候補レース数（判定前候補+見送り含む・2ペーパーランクの distinct レース数）
     cand_row = (await db.execute(
@@ -446,7 +456,8 @@ async def _aggregate(
               COUNT(*)                                                           AS n_picks,
               SUM(ph.hit)                                                        AS n_hits,
               COALESCE(SUM(ph.bet_amount), 0)                                    AS total_bet,
-              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)  AS total_payout
+              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)  AS total_payout,
+              MAX(CASE WHEN ph.hit = 1 THEN ph.payout ELSE NULL END)             AS max_payout
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
@@ -469,6 +480,7 @@ async def _aggregate(
             int(r["n_hits"] or 0),
             int(r["total_bet"] or 0),
             int(r["total_payout"] or 0),
+            int(r["max_payout"]) if r["max_payout"] is not None else None,
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
@@ -520,11 +532,12 @@ async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
 
     if not row:
         return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
-                "period_from": None, "period_to": None, "by_rank": {}}
+                "max_payout": None, "period_from": None, "period_to": None, "by_rank": {}}
 
     roi_val = float(row["roi"]) if row["roi"] is not None else None
     result = {
         "n_picks":      int(row["n_picks"] or 0),
+        "max_payout":   None,  # model_evaluation にはmax_payout非保持（HOLDバックテスト集計のため）
         "n_hits":       int(row["n_hits"] or 0),
         "total_bet":    int(row["total_bet"] or 0),
         "total_payout": int(row["total_payout"] or 0),
