@@ -149,7 +149,10 @@ function SummaryCard({ label, n_picks, n_hits, total_bet, total_payout, roi }: {
 // 期間プリセット
 // ---------------------------------------------------------------------------
 
-type Preset = "7d" | "30d" | "90d" | "thisMonth" | "thisYear" | "custom";
+type Preset = "7d" | "30d" | "90d" | "thisMonth" | "thisYear" | "all" | "custom";
+
+// honest全期間データの起点（S1/S4のquarters walk-forward再構築が対象とする期間と統一）
+const ALL_TIME_FROM = "2024-01-01";
 
 function calcRange(preset: Preset): { from: string; to: string } {
   const to = todayISO();
@@ -162,6 +165,7 @@ function calcRange(preset: Preset): { from: string; to: string } {
       return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`, to };
     }
     case "thisYear":  return { from: `${new Date(to).getFullYear()}-01-01`, to };
+    case "all":    return { from: ALL_TIME_FROM, to };
     default:       return { from: addDays(to, -29), to };
   }
 }
@@ -172,6 +176,7 @@ const PRESETS: { key: Preset; label: string }[] = [
   { key: "90d", label: "90日" },
   { key: "thisMonth", label: "当月" },
   { key: "thisYear", label: "当年" },
+  { key: "all", label: "全期間" },
   { key: "custom", label: "指定" },
 ];
 
@@ -218,6 +223,8 @@ export default function KeirinStatsPage() {
 
   function applyPreset(p: Preset) {
     setPreset(p);
+    // 全期間は日次だと900日超のバーになり読めないため月次表示をデフォルトにする
+    if (p === "all") setGranularity("monthly");
     if (p !== "custom") {
       const { from: f, to: t } = calcRange(p);
       setFrom(f);
