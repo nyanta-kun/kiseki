@@ -6,6 +6,7 @@ import { ArrowLeft, BarChart2 } from "lucide-react";
 import {
   ComposedChart,
   Bar,
+  Cell,
   Line,
   XAxis,
   YAxis,
@@ -237,6 +238,8 @@ export default function KeirinStatsPage() {
       投資額: item.total_bet,
       回収額: item.total_payout,
       [roiKey]: cumROI,
+      // 回収額バーの色分け用（期間ROIが100%未満=赤・null=賭けなしで通常色）
+      _belowHundred: item.roi != null && item.roi < 1,
     };
   });
 
@@ -426,7 +429,11 @@ export default function KeirinStatsPage() {
               />
               <ReferenceLine yAxisId="right" y={1} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
               <Bar yAxisId="left" dataKey="投資額" fill="#d1d5db" radius={[2, 2, 0, 0]} maxBarSize={28} />
-              <Bar yAxisId="left" dataKey="回収額" fill="#34d399" radius={[2, 2, 0, 0]} maxBarSize={28} />
+              <Bar yAxisId="left" dataKey="回収額" fill="#34d399" radius={[2, 2, 0, 0]} maxBarSize={28}>
+                {chartData.map(d => (
+                  <Cell key={d.date} fill={d._belowHundred ? "#ef4444" : "#34d399"} />
+                ))}
+              </Bar>
               <Line
                 yAxisId="right"
                 type="monotone"
