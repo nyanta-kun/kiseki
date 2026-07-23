@@ -188,11 +188,11 @@ export default function KeirinHelpPage() {
           候補は毎朝8:00（日中）と16:00（夜の部）に生成し、最終判定は発走15分前のオッズで確定します。
           モデルは 2026-06-30 以前のデータのみで学習（学習/検証/テストを時系列分割・リークなし）。
         </p>
-        <div className="grid grid-cols-3 gap-2 pt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-            <p className="text-xs text-gray-500">S1 テスト回収率</p>
-            <p className="text-lg font-bold text-amber-600">146.0%</p>
-            <p className="text-xs text-gray-400">15.3R/日 ・ 的中18.2%</p>
+            <p className="text-xs text-gray-500">SS+ 全期間回収率</p>
+            <p className="text-lg font-bold" style={{ color: "#a16207" }}>362.1%</p>
+            <p className="text-xs text-gray-400">365R ・ 的中40.8%</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-2.5 text-center">
             <p className="text-xs text-gray-500">SS 全期間回収率</p>
@@ -204,10 +204,15 @@ export default function KeirinHelpPage() {
             <p className="text-lg font-bold text-green-600">120.6%</p>
             <p className="text-xs text-gray-400">8,984R ・ 的中36.0%</p>
           </div>
+          <div className="bg-gray-50 rounded-lg p-2.5 text-center">
+            <p className="text-xs text-gray-500">S1 テスト回収率</p>
+            <p className="text-lg font-bold text-amber-600">146.0%</p>
+            <p className="text-xs text-gray-400">15.3R/日 ・ 的中18.2%</p>
+          </div>
         </div>
         <p className="text-xs text-gray-400">
-          全期間実績（S1=2026-07-22・SS/S=2026-07-20・実精算）: S1 182.5%(6,426R) ／ SS 232.8%(943R) ／ S 120.6%(8,984R)。
-          SS/Sは正規プロトコルのテスト分割を経ていない全期間honest実績（詳細は各ランク説明参照）。
+          全期間実績（SS+/SS/S=2026-07-23・S1=2026-07-22・実精算）: SS+ 362.1%(365R) ／ SS 232.8%(943R) ／ S 120.6%(8,984R) ／ S1 182.5%(6,426R)。
+          SS+/SS/Sは正規プロトコルのテスト分割を経ていない全期間honest実績（詳細は各ランク説明参照）。
         </p>
         <p className="text-xs text-gray-400">
           ★ 正規プロトコル = 学習〜2025-03-31・検証 2025-04-01〜2026-03-31（条件選択）・テスト 2026-04-01〜07-15（1回評価）。
