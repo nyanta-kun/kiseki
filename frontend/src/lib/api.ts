@@ -941,6 +941,8 @@ export type KeirinEntry = {
   pred_win_pct: number | null;
   /** 複勝(3着内)モデルの予測確率（%） */
   pred_top3_pct: number | null;
+  /** WINTICKET公式予想印（0=無印, 1〜4=印あり） */
+  prediction_mark: number | null;
 };
 
 export type KeirinPick = {

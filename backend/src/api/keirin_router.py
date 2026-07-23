@@ -249,7 +249,8 @@ async def get_picks(
                   finish_order,
                   player_class,
                   pred_win_pct,
-                  pred_top3_pct
+                  pred_top3_pct,
+                  prediction_mark
                 FROM keirin.wt_entries
                 WHERE race_key = :race_key
                 ORDER BY frame_no
@@ -329,6 +330,7 @@ async def get_picks(
                     "player_class": e["player_class"],
                     "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
                     "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None,
+                    "prediction_mark": e["prediction_mark"],
                 }
                 for e in entries
             ],

@@ -330,6 +330,17 @@ function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isR
 }
 
 
+// WINTICKET公式予想印: 1=◎ 2=◯ 3=△ 4=× 0(または未設定)=無印
+function wtMarkSymbol(mark: number | null): string {
+  switch (mark) {
+    case 1: return "◎";
+    case 2: return "◯";
+    case 3: return "△";
+    case 4: return "×";
+    default: return "—";
+  }
+}
+
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => {
@@ -360,6 +371,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
         <tr className="border-b border-gray-100 dark:border-gray-700">
           <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-7 sm:w-8">車</th>
           <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs">選手名</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-6 sm:w-8">W</th>
           <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-9 sm:w-12">戦法</th>
           <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
           <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
@@ -372,6 +384,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
           <tr key={e.frame_no} className="border-b border-gray-50 dark:border-gray-700 last:border-0">
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800 dark:text-gray-100">{e.name ?? "—"}</td>
+            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 dark:text-gray-400 text-xs">{e.style ?? "—"}</td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normWin(e.pred_win_pct) != null ? `${normWin(e.pred_win_pct)!.toFixed(1)}%` : "—"}
