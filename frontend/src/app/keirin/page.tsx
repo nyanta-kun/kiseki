@@ -332,7 +332,13 @@ function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isR
 
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
-  const sorted = [...entries].sort((a, b) => (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity));
+  const sorted = [...entries].sort((a, b) => {
+    const winDiff = (b.pred_win_pct ?? -Infinity) - (a.pred_win_pct ?? -Infinity);
+    if (winDiff !== 0) return winDiff;
+    const top3Diff = (b.pred_top3_pct ?? -Infinity) - (a.pred_top3_pct ?? -Infinity);
+    if (top3Diff !== 0) return top3Diff;
+    return (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity);
+  });
   // pred_win_pct/pred_top3_pct は選手ごと独立モデルの生確率でレース内合計の保証がない
   // （実例: 単勝合計9.7%・複勝合計43.9%等）。単純な比例配分（線形スケール）だと
   // 必要な補正倍率が大きく(例: 複勝は約6.8倍)個々の値が100%を超えて頭打ちが頻発するため、
