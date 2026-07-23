@@ -165,11 +165,13 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 旧方式(7PLUS_SS/7PLUS_S・素のSS/S/A/B/WIDE)の行は全期間再構築済み or route='ks' で API に現れない。
 // 未知 rank は RankBadge が「非」フォールバック表示する。
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  // S1=win軸1着固定×3着内モデル相手2車（2026-07-19新設計）・ペーパートレード検証中
+  // S1=win軸1着固定×3着内モデル相手2車（2026-07-19新設計）
   "S1":         { bg: "#ea580c", text: "#fff", label: "S1" },
-  // SS=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）・ペーパートレード検証中
+  // SS+=SS内、軸2車の級班に各グレード最上位(S1/A1)を含まない観察用サブランク（2026-07-23追加）
+  "SS+":        { bg: "#a16207", text: "#fff", label: "SS+" },
+  // SS=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）
   "SS":         { bg: "#ca8a04", text: "#fff", label: "SS" },
-  // S=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）・ペーパートレード検証中
+  // S=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）
   "S":          { bg: "#16a34a", text: "#fff", label: "S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
 };
