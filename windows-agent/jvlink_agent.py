@@ -611,73 +611,44 @@ def run_daily_fetch(jv) -> None:
             logger.warning(f"指数算出トリガー送信エラー: date={calc_date} error={e}")
 
 
-def _fetch_today_race_keys(today: str) -> list[str]:
-    """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。SSL EOF等は3回リトライ。"""
+def _fetch_today_races(today: str) -> list[dict]:
+    """バックエンドAPIから本日のレース一覧（生データ）を取得する。SSL EOF等は3回リトライ。
+
+    realtimeループはこれを1サイクルにつき1回だけ呼び出し、race_keys / upcoming_keys /
+    pending_result_keys をすべてここから導出する（以前は用途ごとに `/api/races` を
+    2回叩いていたが、1回にまとめてバックエンド負荷を下げる）。
+    """
     for attempt in range(3):
         try:
             resp = requests.get(f"{BACKEND_URL}/api/races", params={"date": today}, timeout=10, headers={"Connection": "close"})
             if resp.status_code == 200:
-                races = resp.json()
-                keys = [r["jravan_race_id"] for r in races if r.get("jravan_race_id")]
-                return keys
+                return resp.json()
         except Exception as e:
             if attempt < 2:
-                logger.debug(f"レースキー取得リトライ({attempt+1}/3): {e}")
+                logger.debug(f"レース一覧取得リトライ({attempt+1}/3): {e}")
                 time.sleep(2)
             else:
-                logger.warning(f"レースキー取得失敗(3回試行): {e}")
+                logger.warning(f"レース一覧取得失敗(3回試行): {e}")
     return []
 
 
-def _fetch_upcoming_race_keys(today: str, window_minutes: int) -> list[str]:
-    """本日のレースのうち発走前 window_minutes 分以内のレースキーを返す。
+def _fetch_today_race_keys(today: str) -> list[str]:
+    """バックエンドAPIから本日のレースキー（jravan_race_id）一覧を取得する。"""
+    return [r["jravan_race_id"] for r in _fetch_today_races(today) if r.get("jravan_race_id")]
 
-    エキゾチックオッズ（0B32〜0B36）は三連単で最大4896組/レースと大容量のため、
-    全レースを毎30秒ポーリングするとDB行数が 1日1000万行を超える。
-    発走前 window_minutes 分以内に絞ることで対象レース数を大幅に削減する。
 
-    Args:
-        today: 対象日 YYYYMMDD
-        window_minutes: 発走前何分以内のレースを対象とするか（例: 30）
-
-    Returns:
-        発走前 window_minutes 分以内のレースの jravan_race_id リスト（空リスト可）
-    """
+def _minutes_until_post(post_time_str: str | None, now: datetime | None = None) -> float | None:
+    """post_time ("hhmm") から現在時刻までの分数を返す（負値=発走済み）。取得不可なら None。"""
+    if not post_time_str or len(post_time_str) < 4:
+        return None
+    now = now or datetime.now()
     try:
-        resp = requests.get(
-            f"{BACKEND_URL}/api/races",
-            params={"date": today},
-            timeout=10,
-            headers={"Connection": "close"},
-        )
-        if resp.status_code != 200:
-            return []
-
-        races = resp.json()
-        now = datetime.now()
-        upcoming = []
-
-        for r in races:
-            race_id = r.get("jravan_race_id")
-            post_time_str = r.get("post_time")  # "hhmm" 形式, 例: "1025"
-            if not race_id or not post_time_str or len(post_time_str) < 4:
-                continue
-            try:
-                hh = int(post_time_str[:2])
-                mm = int(post_time_str[2:4])
-                post_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-                minutes_until = (post_dt - now).total_seconds() / 60
-                # 発走前 window_minutes 分以内かつまだ発走していない（-5分の余裕）
-                if -5 <= minutes_until <= window_minutes:
-                    upcoming.append(race_id)
-            except (ValueError, OverflowError):
-                continue
-
-        return upcoming
-
-    except Exception as e:
-        logger.debug(f"upcoming_race_keys 取得失敗（スキップ）: {e}")
-        return []
+        hh = int(post_time_str[:2])
+        mm = int(post_time_str[2:4])
+        post_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        return (post_dt - now).total_seconds() / 60
+    except (ValueError, OverflowError):
+        return None
 
 
 def run_odds_prefetch(jv, fetch_date: str | None = None) -> None:
@@ -754,6 +725,9 @@ def run_realtime_monitor(jv) -> None:
     seen_scratches: set[str] = set()
     # 送信済み成績キー（重複防止 + 再起動時の重複送信防止のため永続化）
     seen_results: set[str] = _load_seen_results(today)
+    # 払戻(HR)確定を検知したレースキー。以後0B12問い合わせから除外し、
+    # 発走前レースと合わせて0B12の走査対象を「発走済み・未確定」のみに絞る。
+    finalized_race_keys: set[str] = set()
 
     # ウォッチドッグ: JVRTOpenがCOMレベルでハングした場合の強制終了
     # 600s は通常のレース間隔待機 (10-15分) で誤発火していた (2026-04-26 17:19/20:45 強制終了)
@@ -780,7 +754,10 @@ def run_realtime_monitor(jv) -> None:
             today = datetime.now().strftime("%Y%m%d")
             # 速報オッズ取得（0B31: レースキー単位）
             # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
-            race_keys = _fetch_today_race_keys(today)
+            # race_keys / upcoming_keys / result_query_race_keys はすべてここで1回だけ取得した
+            # レース一覧から導出する（以前は用途ごとに `/api/races` を2回叩いていた）
+            races_today = _fetch_today_races(today)
+            race_keys = [r["jravan_race_id"] for r in races_today if r.get("jravan_race_id")]
             if not race_keys:
                 # JRAレースなし（平日等）: JVRTOpen をスキップ。
                 # JVRTOpen は JRA レースのない日に 30 分ハングすることがある（COM レベルのタイムアウト）。
@@ -807,7 +784,12 @@ def run_realtime_monitor(jv) -> None:
             # データ量削減のため発走前 EXOTIC_ODDS_WINDOW_MINUTES 分以内のレースに限定する
             # 三連単(O6): 4896組/レース × 全36レース毎30秒 = 1日5000万行超 → 絞り必須
             # 発走前30分 × 最大6レース → 最大 ~3万組/スナップショット × 288回 ≒ 860万行/日
-            upcoming_keys = _fetch_upcoming_race_keys(today, EXOTIC_ODDS_WINDOW_MINUTES)
+            upcoming_keys = [
+                r["jravan_race_id"] for r in races_today
+                if r.get("jravan_race_id")
+                and (m := _minutes_until_post(r.get("post_time"))) is not None
+                and -5 <= m <= EXOTIC_ODDS_WINDOW_MINUTES
+            ]
             if upcoming_keys:
                 exotic_records = []
                 exotic_dataspecs = [
@@ -869,14 +851,23 @@ def run_realtime_monitor(jv) -> None:
                 else:
                     logger.warning(f"  POST /api/import/weights {len(weight_records)}件 -> NG")
 
-            # 速報成績（払戻確定後）: 各レースキーで 0B12 を試行
+            # 速報成績（払戻確定後）: 発走済み・未確定のレースキーのみ 0B12 を試行
             # 0B12 のキーは YYYYMMDDJJRR（12文字: 日付8+場所2+レース番号2）
             # 16文字レースキーから変換: race_key[:10] + race_key[14:]
+            # 未発走レースへの問い合わせは無駄なCOM呼び出しになり、確定済みレースへの
+            # 再問い合わせも同様に無駄なため、両方を除外して走査対象を「発走済み・未確定」
+            # のみに絞る。これによりサイクルが短く保たれ、確定直後のレースを早く検知できる。
+            result_query_race_keys = [
+                r["jravan_race_id"] for r in races_today
+                if r.get("jravan_race_id")
+                and r["jravan_race_id"] not in finalized_race_keys
+                and ((m := _minutes_until_post(r.get("post_time"))) is None or m <= 0)
+            ]
             new_results = []
             new_payouts = []
             pending_result_keys: set[str] = set()
             pending_payout_keys: set[str] = set()
-            for race_key in race_keys:
+            for race_key in result_query_race_keys:
                 with _wd_lock:
                     _last_heartbeat[0] = time.time()
                 result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
@@ -889,6 +880,9 @@ def run_realtime_monitor(jv) -> None:
                             pending_result_keys.add(key)
                             new_results.append(rec)
                     elif rec_id == "HR":
+                        # 払戻レコード = そのレースは確定済み。以後このレースキーの
+                        # 0B12問い合わせをスキップして走査対象を縮小する。
+                        finalized_race_keys.add(race_key)
                         key = rec["data"][:30]
                         if key not in seen_results and key not in pending_payout_keys:
                             pending_payout_keys.add(key)

@@ -31,6 +31,7 @@ UmaConn 固有の仕様:
 """
 
 import argparse
+import json
 import logging
 import os
 import queue
@@ -672,14 +673,14 @@ def _should_stop_realtime(latest_post_time: int | None) -> bool:
     return False
 
 
-def _fetch_today_race_keys(date: str) -> list[str]:
-    """バックエンド API から指定日の地方競馬レースキー一覧を取得する。
+def _fetch_today_race_keys_detailed(date: str) -> list[dict]:
+    """バックエンド API から指定日の地方競馬レースキー一覧を取得する（post_time 付き）。
 
     Args:
         date: 対象日（YYYYMMDD）
 
     Returns:
-        UmaConn レースキー（umaconn_race_id、16 文字文字列）のリスト
+        [{"id": int, "race_key": str, "post_time": str | None}, ...]
     """
     try:
         resp = requests.get(
@@ -689,13 +690,45 @@ def _fetch_today_race_keys(date: str) -> list[str]:
             timeout=5,
         )
         if resp.status_code == 200:
-            races = resp.json()
-            keys = [r["race_key"] for r in races if r.get("race_key")]
-            logger.debug(f"レースキー取得: {len(keys)} 件 ({date})")
-            return keys
+            races = [r for r in resp.json() if r.get("race_key")]
+            logger.debug(f"レースキー取得: {len(races)} 件 ({date})")
+            return races
     except Exception as e:
         logger.warning(f"レースキー取得失敗: {e}")
     return []
+
+
+def _fetch_today_race_keys(date: str) -> list[str]:
+    """バックエンド API から指定日の地方競馬レースキー一覧を取得する。
+
+    Args:
+        date: 対象日（YYYYMMDD）
+
+    Returns:
+        UmaConn レースキー（umaconn_race_id、16 文字文字列）のリスト
+    """
+    return [r["race_key"] for r in _fetch_today_race_keys_detailed(date)]
+
+
+def _race_has_started(post_time: str | int | None, buffer_min: int = 0) -> bool:
+    """発走時刻を過ぎているか判定する。
+
+    0B12（速報成績）は発走前のレースに問い合わせても結果が来ないため、
+    NVRTOpen が「オープンには成功したがデータが来ない」状態になり
+    IDLE_TIMEOUT（30秒）を毎回消費しうる（最悪ケース: 全レース×30秒）。
+    post_time であらかじめ絞り込むことで無駄な待機を避ける。
+
+    post_time が取得できない場合は安全側に倒して True（問い合わせ対象に含める）を返す。
+    """
+    if not post_time:
+        return True
+    try:
+        pt = int(post_time)
+        hh, mm = divmod(pt, 100)
+        post_dt = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
+        return datetime.now() >= post_dt - timedelta(minutes=buffer_min)
+    except (ValueError, TypeError):
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -952,6 +985,47 @@ def run_recent(nv, from_year: int = 2023) -> None:
     )
 
 
+def run_chokyo_probe(nv, from_date: str, option: int = 1) -> None:
+    """地方競馬 SLOP(坂路調教) データの実機probe（2026-07-23調査）。
+
+    kiseki backend にはまだ chihou 向け調教テーブル/importer が存在しないため、
+    本番へは一切POSTせず、HC/WC レコードをローカルJSONに保存するのみに留める。
+    データの有無・件数・レイアウトを確認してから本実装(schema/importer)へ進む。
+
+    Args:
+        nv: UmaConn COM オブジェクト
+        from_date: "YYYYMMDD"。この日以降を取得する。
+        option: 1=通常, 2=今週, 3=セットアップ（UmaConn仕様）。SLOPが1で rc=-1 の場合 3 を試す。
+    """
+    from_time = f"{from_date}000000"
+    logger.info(f"=== CHOKYO-PROBE MODE: SLOP取得 (from={from_date}, option={option}) ===")
+
+    all_hc_wc: list[dict] = []
+    rec_id_counts: dict[str, int] = {}
+
+    def on_file_done(filename: str, file_records: list[dict]) -> None:
+        for r in file_records:
+            rid = r.get("rec_id", "??")
+            rec_id_counts[rid] = rec_id_counts.get(rid, 0) + 1
+        hc_wc = [r for r in file_records if r.get("rec_id") in ("HC", "WC")]
+        all_hc_wc.extend(hc_wc)
+        logger.info(f"  [{filename}] 全{len(file_records)}件 / HC+WC {len(hc_wc)}件 (累計 {len(all_hc_wc)}件)")
+
+    fetch_stored_data(
+        nv, DATASPEC_SLOP, from_time, option=option,
+        on_file_done=on_file_done,
+        skip_cache=True,
+    )
+
+    logger.info(f"rec_id別件数: {rec_id_counts}")
+    logger.info(f"HC+WC 合計: {len(all_hc_wc)} 件")
+
+    out_path = DATA_DIR / f"chokyo_probe_{from_date}.json"
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(all_hc_wc, f, ensure_ascii=False)
+    logger.info(f"probe結果を保存: {out_path} ({len(all_hc_wc)}件)")
+
+
 # ---------------------------------------------------------------------------
 # 動作モード: realtime
 # ---------------------------------------------------------------------------
@@ -977,6 +1051,9 @@ def run_realtime_monitor(nv) -> None:
     today = datetime.now().strftime("%Y%m%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
     seen_results: set[str] = set()
+    # 払戻(HR)確定を検知したレースキー。以後0B12問い合わせから除外し、
+    # 発走前レースと合わせて bg worker の走査対象を「発走済み・未確定」のみに絞る。
+    finalized_races: set[str] = set()
     cycle = 0
     INCREMENTAL_EVERY = 10  # 約5分ごと（30秒×10）に蓄積系差分取得
     _calc_triggered_today = False  # 当日指数算出トリガー済みフラグ（1日1回）
@@ -1074,6 +1151,10 @@ def run_realtime_monitor(nv) -> None:
                         for rec in fetch_realtime_data(nv2, RT_RESULT, result_key):
                             if rec.get("rec_id") in ("RA", "SE", "HR"):
                                 _bg_result_buf.append(rec)
+                                if rec.get("rec_id") == "HR":
+                                    # 払戻レコード = そのレースは確定済み。以後このレースキーの
+                                    # 0B12問い合わせをスキップして走査対象を縮小する。
+                                    finalized_races.add(race_key)
                     _bg_done_event.set()
                 except queue.Empty:
                     continue
@@ -1104,6 +1185,7 @@ def run_realtime_monitor(nv) -> None:
                 today = current_date
                 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d") + "000000"
                 seen_results = set()
+                finalized_races = set()
                 latest_post_time = _fetch_today_latest_post_time(today)
                 _calc_triggered_today = False  # 翌日分の算出トリガーをリセット
                 # 日付変更時に即時算出トリガー（出馬表が前日以前に取得済みの場合も確実に算出）
@@ -1139,10 +1221,21 @@ def run_realtime_monitor(nv) -> None:
                     )
                     latest_post_time = new_latest
 
-            # 本日のレースキーを取得
-            race_keys = _fetch_today_race_keys(today)
+            # 本日のレースキーを取得（post_time 付き）
+            race_key_info = _fetch_today_race_keys_detailed(today)
+            race_keys = [r["race_key"] for r in race_key_info]
             if not race_keys:
                 logger.debug("本日の地方競馬レースキーが取得できませんでした")
+
+            # 0B12（速報成績）対象: 発走済み かつ 未確定（HR未受信）のレースのみに絞る。
+            # 未発走レースへの問い合わせは NVRTOpen の IDLE_TIMEOUT(30秒)を毎回消費しうるため
+            # サーバー・COM双方の負荷になる上、bg worker の1周が長引いて確定直後のレースの
+            # 検知が遅れる。絞り込むことで走査対象が小さく保たれ、確定後すぐに検知できる。
+            pending_result_keys = [
+                r["race_key"] for r in race_key_info
+                if r["race_key"] not in finalized_races
+                and _race_has_started(r.get("post_time"))
+            ]
 
             # ----- 前サイクルの 0B12 結果を処理 -----
             if _bg_done_event.is_set() and _bg_result_buf:
@@ -1219,7 +1312,10 @@ def run_realtime_monitor(nv) -> None:
 
             # ----- 0B12 フェッチをバックグラウンドで開始（前サイクルが完了している場合のみ） -----
             if _bg_done_event.is_set():
-                _start_bg_results_fetch(race_keys)
+                if pending_result_keys:
+                    _start_bg_results_fetch(pending_result_keys)
+                else:
+                    logger.debug("0B12 対象レースなし（未発走 or 確定済みのみ）")
             else:
                 logger.debug("0B12 前サイクルのフェッチがまだ実行中 — 今回はスキップ")
 
@@ -1245,7 +1341,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki UmaConn Agent（地方競馬データ取得）")
     parser.add_argument(
         "--mode",
-        choices=["setup", "daily", "recent", "realtime", "retry", "fetch-results", "fetch-odds"],
+        choices=["setup", "daily", "recent", "realtime", "retry", "fetch-results", "fetch-odds", "chokyo-probe"],
         default="daily",
         help=(
             "動作モード: "
@@ -1255,8 +1351,23 @@ def main() -> None:
             "realtime=オッズをポーリング（0B31のみ）, "
             "retry=ペンディングキューをリトライ, "
             "fetch-results=指定日の成績を0B12で取得（1回実行して終了）, "
-            "fetch-odds=指定日のオッズを0B31で取得（1回実行して終了）"
+            "fetch-odds=指定日のオッズを0B31で取得（1回実行して終了）, "
+            "chokyo-probe=SLOP(坂路調教)データの実機probe（--from-date必須・DBには書かずローカルJSON保存のみ）"
         ),
+    )
+    parser.add_argument(
+        "--from-date",
+        type=str,
+        default=None,
+        metavar="YYYYMMDD",
+        help="chokyo-probe モードで取得開始日を指定",
+    )
+    parser.add_argument(
+        "--slop-option",
+        type=int,
+        default=1,
+        choices=[1, 2, 3],
+        help="chokyo-probe モードの NVOpen option (1=通常/2=今週/3=セットアップ、default=1)",
     )
     parser.add_argument(
         "--from-year",
@@ -1313,6 +1424,15 @@ def main() -> None:
         report_status("running", mode="realtime", message="Starting UmaConn realtime monitor")
         run_realtime_monitor(nv)
         report_status("done", message="UmaConn realtime monitor stopped.")
+
+    elif args.mode == "chokyo-probe":
+        if not args.from_date:
+            logger.error("chokyo-probe モードには --from-date が必須です")
+            return
+        report_status("running", mode="chokyo-probe", message=f"SLOP probe from={args.from_date}")
+        run_chokyo_probe(nv, args.from_date, option=args.slop_option)
+        report_status("done", message="chokyo-probe completed.")
+        logger.info("chokyo-probe モード完了。終了します。")
 
     elif args.mode == "fetch-results":
         target_date = args.fetch_date or datetime.now().strftime("%Y%m%d")

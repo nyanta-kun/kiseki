@@ -202,16 +202,21 @@ async def get_chihou_race_keys(
     date: str = Query(..., description="開催日 YYYYMMDD"),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """指定日の地方競馬レースキー（umaconn_race_id）一覧を返す。UmaConnエージェント用。"""
+    """指定日の地方競馬レースキー（umaconn_race_id）一覧を返す。UmaConnエージェント用。
+
+    post_time もあわせて返す。realtimeループが発走済みのレースだけに0B12（速報成績）
+    問い合わせを絞り込むために使う（未発走レースへの無駄なポーリングを避け、
+    確定直後のレースをより早く検知するため）。
+    """
     result = await db.execute(
-        select(ChihouRace.id, ChihouRace.umaconn_race_id)
+        select(ChihouRace.id, ChihouRace.umaconn_race_id, ChihouRace.post_time)
         .where(ChihouRace.date == date)
         .where(ChihouRace.umaconn_race_id.isnot(None))
         .where(ChihouRace.course != BANEI_COURSE_CODE)
         .order_by(ChihouRace.race_number)
     )
     rows = result.all()
-    return [{"id": row[0], "race_key": row[1]} for row in rows]
+    return [{"id": row[0], "race_key": row[1], "post_time": row[2]} for row in rows]
 
 
 @router.get("")
@@ -523,6 +528,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 index_rank=_rank_of.get(i),
                 win_odds=h.win_odds,
                 fav_odds=fav_odds,
+                head_count=race_obj.head_count if race_obj else None,
             )
         # 混戦レース（複勝推奨が4頭以上）は除外
         if sum(1 for h in horses if h.is_place_bet) >= 4:
