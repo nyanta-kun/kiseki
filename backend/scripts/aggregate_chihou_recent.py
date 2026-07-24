@@ -50,42 +50,48 @@ SELECT
     r.id   AS race_id,
     r.date,
     r.course_name,
+    r.head_count,
     re.horse_number,
     ci.composite_index::float       AS composite_index,
     ci.win_probability::float       AS win_probability,
     ci.place_probability::float     AS place_probability,
     rr.win_odds::float              AS win_odds,
     rr.place_odds::float            AS place_odds,
-    rr.finish_position
+    rr.finish_position,
+    COALESCE(rr.abnormality_code, 0) AS abnormality_code
 FROM chihou.calculated_indices ci
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re
     ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
-JOIN chihou.race_results rr
+LEFT JOIN chihou.race_results rr
     ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
 WHERE ci.version = %s
   AND r.course != '83'
   AND r.head_count >= 6
   AND r.date >= %s
   AND r.date <= %s
-  AND rr.finish_position IS NOT NULL
-  AND rr.win_odds IS NOT NULL
-  AND rr.win_odds::float >= 1.0
-  AND COALESCE(rr.abnormality_code, 0) = 0
 ORDER BY r.date, r.id, re.horse_number
 """
+# 2026-07-23 監査で判明した生存者バイアスの修正:
+# 旧SQLは race_results を INNER JOIN + 完走/正常決着フィルタ済みの状態で
+# idx_rank を計算していたため、本番の1位馬が出走取消/失格になると
+# バックテスト上だけ2位馬が繰り上がって1位扱いになっていた
+# （本番 chihou_recommender.rank_by_hn は出走予定馬全体で順位を確定する）。
+# 修正後は LEFT JOIN で出走予定馬全体を母集団に idx_rank を計算し、
+# 的中判定・ROI集計の段階でのみ「確定済み・正常決着」に絞り込む。
 
 
 def _apply_production_rules(df: pd.DataFrame) -> pd.DataFrame:
     """本番の chihou_recommender と同じ順位・カテゴリ判定を各行に付与する。"""
     df = df.copy()
-    # composite_index でレース内順位（降順・同値は先着）— recommender の rank_by_hn と同一
+    # composite_index でレース内順位（降順・同値は先着）— recommender の rank_by_hn と同一。
+    # 出走取消・失格馬も含む出走予定馬全体を母集団にする（本番と同一の母集団定義）。
     df["idx_rank"] = (
         df.groupby("race_id")["composite_index"]
         .rank(method="first", ascending=False)
         .astype("Int64")
     )
-    # 1番人気オッズ（レース内最低単勝）
+    # 1番人気オッズ（レース内最低単勝、確定オッズのある馬のみ＝取消馬は自動除外）
     df["fav_odds"] = df.groupby("race_id")["win_odds"].transform("min")
 
     df["is_sweet_spot"] = df.apply(
@@ -101,6 +107,7 @@ def _apply_production_rules(df: pd.DataFrame) -> pd.DataFrame:
             int(x["idx_rank"]) if pd.notna(x["idx_rank"]) else None,
             x["win_odds"],
             x["fav_odds"],
+            int(x["head_count"]) if pd.notna(x["head_count"]) else None,
         ),
         axis=1,
     )
@@ -109,28 +116,40 @@ def _apply_production_rules(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_period(df: pd.DataFrame, label: str) -> None:
+    n_races_field = df.groupby(["date", "race_id"]).ngroups
+    settled = df[
+        df["finish_position"].notna()
+        & (df["abnormality_code"] == 0)
+        & df["win_odds"].notna()
+        & (df["win_odds"] >= 1.0)
+    ]
+    n_races_settled = settled.groupby(["date", "race_id"]).ngroups
     print(f"\n{'='*70}")
-    print(f"  {label}  ({df['date'].min()} 〜 {df['date'].max()}, レース数 {df.groupby(['date','race_id']).ngroups:,})")
+    print(
+        f"  {label}  ({df['date'].min()} 〜 {df['date'].max()}, "
+        f"出走表 {n_races_field:,}R / 確定済 {n_races_settled:,}R)"
+    )
     print('='*70)
 
+    # idx_rank は出走予定馬全体（取消・失格含む）で確定済み。以降は確定結果のみで判定・集計する。
     # ---------- sweet_spot (Phase2): 指数1位 ∧ 単勝10-30倍 ∧ 割安5場 ∧ k<=2 ----------
-    ss = df[df["is_sweet_spot"]].copy()
+    ss = settled[settled["is_sweet_spot"]].copy()
     ss_k = ss.groupby("race_id").size()
     ss = ss[ss["race_id"].isin(ss_k[ss_k <= 2].index)]
     print_block("sweet_spot (Phase2: 指数1位×10-30倍×割安5場)", ss, bet="win")
 
     # ---------- low_odds_trusted: 単勝<1.5、最低オッズ馬1頭/レース ----------
-    lo_t = df[df["low_odds_level"] == "trusted"]
+    lo_t = settled[settled["low_odds_level"] == "trusted"]
     lo_t = lo_t.sort_values(["race_id", "win_odds"]).drop_duplicates("race_id", keep="first")
     print_block("low_odds_trusted (単勝<1.5)", lo_t, bet="win")
 
     # ---------- low_odds_untrusted: 1.5<=単勝<2.0、最低オッズ馬1頭/レース ----------
-    lo_u = df[df["low_odds_level"] == "untrusted"]
+    lo_u = settled[settled["low_odds_level"] == "untrusted"]
     lo_u = lo_u.sort_values(["race_id", "win_odds"]).drop_duplicates("race_id", keep="first")
     print_block("low_odds_untrusted (1.5<=単勝<2.0)", lo_u, bet="win")
 
     # ---------- place_bet (Phase2): 断然人気R × 単勝>=10 × 指数3位以内 ∧ k<=2 ----------
-    pb = df[df["is_place_bet"]].copy()
+    pb = settled[settled["is_place_bet"]].copy()
     pb_k = pb.groupby("race_id").size()
     pb = pb[pb["race_id"].isin(pb_k[pb_k <= 2].index)]
     print_block("place_bet (Phase2: 断然人気R×単勝>=10×指数3位以内)", pb, bet="place")

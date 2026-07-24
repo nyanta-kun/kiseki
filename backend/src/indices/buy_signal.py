@@ -374,6 +374,11 @@ _CHIHOU_SWEET_SPOT_COURSES: frozenset[str] = frozenset({
 CHIHOU_PLACE_BET_FAV_ODDS_MAX: float = 2.0
 # place_bet も EV ゲートから「指数上位の穴」ランキング規則へ移行（複勝は妙味薄=参考用途）
 CHIHOU_PLACE_BET_MAX_INDEX_RANK: int = 3
+# 複勝は出走7頭以下だと2着までしか払い戻されない(JRA/NAR共通ルール)。
+# 3着入着でも複勝は不的中となるため、複勝関連の推奨は8頭以上に限定する。
+# 2026-07-23 発見: is_place_bet に頭数ゲートがなく、6-7頭立てで3着入着馬を
+# 誤って複勝的中として扱いうる状態だった(backtest honest ROIも同様の混入あり)。
+CHIHOU_PLACE_MIN_HEAD_COUNT: int = 8
 
 
 def chihou_is_sweet_spot(
@@ -399,6 +404,7 @@ def chihou_is_place_bet(
     index_rank: int | None,
     win_odds: float | None,
     fav_odds: float | None,
+    head_count: int | None = None,
 ) -> bool:
     """地方競馬 断然人気レース穴馬 複勝推奨判定（Phase2: ランキング規則）。
 
@@ -410,7 +416,11 @@ def chihou_is_place_bet(
       1. 1番人気単勝オッズ < 2.0（断然人気レース）
       2. 対象馬 単勝オッズ ≥ 10.0
       3. 指数(composite)上位（rank ≤ 3）
+      4. 出走頭数 ≥ 8（7頭以下は複勝が2着までしか払い戻されないため対象外。
+         head_count=None の場合も安全側でFalse）
     """
+    if head_count is None or head_count < CHIHOU_PLACE_MIN_HEAD_COUNT:
+        return False
     if fav_odds is None or float(fav_odds) >= CHIHOU_PLACE_BET_FAV_ODDS_MAX:
         return False
     if win_odds is None or float(win_odds) < CHIHOU_SWEET_SPOT_MIN_ODDS:

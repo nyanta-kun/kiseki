@@ -30,6 +30,7 @@ from ..db.chihou_models import (
 )
 from ..indices.buy_signal import (
     CHIHOU_PLACE_BET_FAV_ODDS_MAX,
+    CHIHOU_PLACE_MIN_HEAD_COUNT,
     chihou_is_place_bet,
     chihou_is_sweet_spot,
     chihou_low_odds_trust_level,
@@ -797,7 +798,7 @@ async def build_chihou_sweet_spot_recommendations(
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            if chihou_is_place_bet(idx_rank, wo, fav_odds):
+            if chihou_is_place_bet(idx_rank, wo, fav_odds, race.head_count):
                 place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
@@ -805,7 +806,12 @@ async def build_chihou_sweet_spot_recommendations(
             elif level == "untrusted":
                 low_untrusted.append({**base})
             us = upset_scores.get(hn) if hn is not None else None
-            if us is not None and upset_reranker is not None:
+            if (
+                us is not None
+                and upset_reranker is not None
+                and race.head_count is not None
+                and race.head_count >= CHIHOU_PLACE_MIN_HEAD_COUNT
+            ):
                 u_tier = upset_reranker.axis_tier(wo, us["ns"], us["badge_cnt"])
                 if u_tier:
                     upset_axis.append(

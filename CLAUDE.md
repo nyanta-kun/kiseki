@@ -739,8 +739,8 @@ JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッ
 
 | カテゴリ | bet | 条件（Phase2 現行） |
 |---|---|---|
-| `sweet_spot` 高オッズ穴 | 単勝 | **指数1位 ∧ 単勝10〜30倍 ∧ 割安5場（浦和/金沢/高知/笠松/盛岡）**（5seed 単ROI 1.17） |
-| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ **指数3位以内** ∧ k≤2 |
+| `sweet_spot` 高オッズ穴 | 単勝 | **指数1位 ∧ 単勝10〜30倍 ∧ 割安5場（浦和/金沢/高知/笠松/盛岡）**（旧 5seed 単ROI 1.17 ※要注意・下記参照） |
+| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ **指数3位以内** ∧ k≤2 ∧ **頭数≥8** |
 | `upset_place` 穴軸複勝 | 複勝 | 人気薄リランカー軸（単勝[10,15)×非オッズスコア×外部バッジ） |
 | `low_odds_trusted` 信頼本命 | 単勝 | 単勝<1.5（hit 約70% / 単ROI 0.8台） |
 | `low_odds_untrusted` 不信頼本命 | 単勝 | 1.5≤単勝<2.0（hit 約48% / 単ROI 0.8台） |
@@ -748,6 +748,50 @@ JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッ
 - 判定本体: `backend/src/indices/buy_signal.py::chihou_is_sweet_spot() / chihou_is_place_bet() / chihou_low_odds_trust_level()`
 - `sweet_spot` と `place_bet` は同一馬が両方に入ることを許容（並列）。低オッズ系とは構造的に排他
 - 実勢集計: `scripts/aggregate_chihou_recent.py` は上記の本番判定関数を import して同一条件で集計する
+
+**⚠️ 生存者バイアス監査・修正（2026-07-23）**: 旧バックテスト系スクリプトは
+`race_results` を INNER JOIN し「完走・正常決着馬のみ」で idx_rank（指数順位）を
+再計算していたため、本番の指数1位馬が出走取消/失格になると2位馬が繰り上がって
+1位扱いになる生存者バイアスを含んでいた（本番 `chihou_recommender.rank_by_hn` は
+出走予定馬全体で順位を確定するため、この乖離は起きない）。`aggregate_chihou_recent.py`
+と `backtest_chihou_sweetspot.py`（新設）は出走予定馬全体（LEFT JOIN）で idx_rank
+を計算してから確定結果のみに絞り込むよう修正済み。v10全期間(2024-01〜2026-07,
+32,976レース)で honest 再計算した結果、**sweet_spot 単ROI 1.028→0.983
+（黒字→ほぼ損益分岐）**、**place_bet 複ROI 1.056→1.046** に低下（idx_rankが変化した
+レースは全体の11.7%）。
+
+**⚠️⚠️ walk-forward honest再構築でさらに深刻な結果（2026-07-23、
+`backend/scripts/chihou_rebuild_walkforward.py`）**: 本番モデル(v12)は
+2023-01〜直近の全期間を1回だけ学習した単一モデルを、backfillで2024-01以降の
+全historical raceにretroactivelyに適用している＝「モデルの学習パラメータ自体が
+対象レースより未来のデータを反映している」model-vintage look-ahead が存在した
+（keirinの「モデルが賢くなるたびに過去分析がリークする」問題と同型）。四半期ごとに
+その時点までのデータだけで学習しなおした vintage別モデルで2024-10〜2026-07の
+全8四半期(24,067レース)を honest再評価した結果、**sweet_spot該当レースが0件**
+（Phase0時点のn=381→0）。**sweet_spotの「黒字」主張は生存者バイアス修正後もなお
+model-vintage look-aheadにほぼ全面的に依存していたと判断される。** place_betは
+複勝ROI 0.987（Phase0の1.046から低下、ほぼ損益分岐で残存）。
+sweet_spotは事実上エッジなしとして扱うこと。
+
+**Phase2 非効率性の系統的スイープ（2026-07-23、`backend/scripts/chihou_walkforward_sweep.py`）**:
+walk-forward honest予測(24,069レース)を場×指数順位帯・オッズ帯・市場一致状況・
+距離帯等で153セグメントに系統的に分解して調査した結果、ほぼ全セグメントがROI
+0.6〜0.9台に収束（控除率にほぼ支配される）。ROI≥1.10の候補は5件のみで、いずれも
+n=46〜123の小標本（多重比較の必然として説明可能）。唯一注目すべきは**高知の
+「断然人気R×指数上位×単勝≥10」複勝母集団(n=105, 複勝ROI 1.291)**だが、
+TEST_START(2026-07-01〜)以降の新規データで一度きり評価するまでは採用しないこと。
+現行データ・特徴量セットでは近い将来にrobustな黒字戦略を見つけるのは構造的に
+困難という前提でtier設計を進めるべき（keirinの「控除率の壁」と同型の結論）。
+
+**⚠️ 複勝7頭以下ルールの母集団バグ・本番修正済み（2026-07-23、ユーザー指摘）**:
+複勝は出走7頭以下だと2着までしか払い戻されない(JRA/NAR共通ルール)。
+`chihou_is_place_bet()`にはこのゲートがなく、6-7頭立てで3着入着馬を誤って複勝
+的中扱いしうる状態だった（`upset_place`も同型の穴）。`CHIHOU_PLACE_MIN_HEAD_COUNT=8`
+未満(Noneも含む)は必ずFalseを返すよう本番修正済み（`chihou_recommender.py`/
+`chihou_races_router.py`全呼び出し元更新、walk-forward/backtest系スクリプトも同様に
+修正・再検証済み）。修正後の最終honest数値: **place_bet 複勝ROI = 0.972**
+（n=1,066、walk-forward全8四半期）。
+詳細: memory `chihou_survivor_bias_audit_2026_07_23.md`
 
 **API レスポンス構造**:
 ```
@@ -781,7 +825,7 @@ ChihouSweetSpotResponse {
 |---|---|
 | `backend/scripts/aggregate_chihou_recent.py --days 30` | 直近30日の各カテゴリ実勢 hit_rate / ROI を DB 直接集計 |
 | `backend/scripts/backfill_chihou_place_odds.py` | 過去 race_results の place_odds NULL を odds_history で補完 |
-| `backend/scripts/backtest_chihou_sweetspot.py` | sweet_spot 条件のバックテスト |
+| `backend/scripts/backtest_chihou_sweetspot.py --version N [--show-bias]` | sweet_spot/place_bet の honest バックテスト（本番同一母集団・2026-07-23新設） |
 | `backend/scripts/backtest_chihou_low_odds.py` | low_odds 信頼/不信頼分割の検証 |
 
 ## DB 自動バックアップ運用
