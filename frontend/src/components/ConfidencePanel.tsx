@@ -1,11 +1,9 @@
 "use client";
 
 import { RaceConfidence } from "@/lib/api";
-import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 
 type Props = {
   confidence: RaceConfidence;
-  buySignal?: "buy" | "caution" | "pass" | null;
 };
 
 const RANK_CONF: Record<string, { bg: string; text: string; border: string }> = {
@@ -13,6 +11,16 @@ const RANK_CONF: Record<string, { bg: string; text: string; border: string }> = 
   A: { bg: "bg-green-100",  text: "text-green-700",  border: "border-green-300"  },
   B: { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" },
   C: { bg: "bg-gray-100",   text: "text-gray-500",   border: "border-gray-200"   },
+};
+
+// recommend_rank(=市場一致×指数信頼度で再設計・2026-07-25)の意味
+// [[jra_axis_market_agree_redesign]]: S/A/B は指数1位が単勝1番人気と一致する馬のみ、
+// Cは市場が指数1位を支持していない「見送り」。ROI保証ではなく的中率tier。
+const RECOMMEND_MEANING: Record<string, string> = {
+  S: "最強軸（断然人気 または 市場一致×高信頼、1位馬勝率45-51%）",
+  A: "信頼軸（市場一致×中信頼、1位馬勝率33-40%）",
+  B: "準軸（市場一致×通常信頼、1位馬勝率27-35%、複勝向き）",
+  C: "混戦・見送り（市場が指数1位を支持せず、1位馬勝率15-26%）",
 };
 
 function RankBadge({ rank }: { rank: string }) {
@@ -24,70 +32,27 @@ function RankBadge({ rank }: { rank: string }) {
   );
 }
 
-export function ConfidencePanel({ confidence, buySignal }: Props) {
+export function ConfidencePanel({ confidence }: Props) {
   const confRank = confidence.rank ?? "C";
   const recRank  = confidence.recommend_rank ?? "C";
 
-  const ev =
-    confidence.win_prob_top != null && confidence.top_win_odds != null
-      ? confidence.win_prob_top * confidence.top_win_odds
-      : null;
-  const evZone =
-    ev === null ? null
-    : ev >= 2.0 ? { label: "大穴注意", cls: "text-orange-500" }
-    : ev >= 1.0 ? { label: "最適帯",   cls: "text-green-600"  }
-    : ev >= 0.8 ? { label: "過剰人気", cls: "text-yellow-600" }
-    :             { label: "過剰人気", cls: "text-red-500"     };
-
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
-      {/* 購入指針 */}
-      {buySignal !== undefined && (
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-gray-400 whitespace-nowrap">購入指針</span>
-          <BuySignalBadge signal={buySignal} size="sm" />
-          {buySignal && (
-            <span className="text-[10px] text-gray-400 leading-tight">{BUY_SIGNAL_DESC[buySignal]}</span>
-          )}
-        </div>
-      )}
+      {/* 購入指針: 推奨tier（指数1位馬の市場一致×信頼度、的中重視） */}
+      <div className="flex items-start gap-2">
+        <span className="text-[10px] text-gray-400 whitespace-nowrap pt-0.5">購入指針</span>
+        <RankBadge rank={recRank} />
+        <span className="text-[10px] text-gray-500 leading-tight">{RECOMMEND_MEANING[recRank] ?? RECOMMEND_MEANING.C}</span>
+      </div>
 
-      {/* 指数信頼度 + EV 横並び */}
-      <div className="flex items-center gap-3 pt-1.5 border-t border-gray-50 flex-wrap">
-        {/* 信頼度 */}
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
-          <RankBadge rank={confRank} />
-          <span className="text-gray-600 whitespace-nowrap">{confidence.score}pt</span>
-          <span className="text-gray-400 whitespace-nowrap">
-            差{confidence.gap_1_2.toFixed(1)}/{confidence.gap_1_3.toFixed(1)}
-          </span>
-        </div>
-
-        <div className="w-px h-4 bg-gray-200 flex-shrink-0" />
-
-        {/* EV */}
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <span className="text-gray-400 whitespace-nowrap">期待値 EV</span>
-          <RankBadge rank={recRank} />
-          {ev !== null ? (
-            <>
-              <span className={`font-bold whitespace-nowrap ${evZone?.cls ?? ""}`}>
-                {ev.toFixed(2)}
-              </span>
-              {evZone && (
-                <span className={`whitespace-nowrap ${evZone.cls}`}>{evZone.label}</span>
-              )}
-              {confidence.win_prob_top != null && confidence.top_win_odds != null && (
-                <span className="text-gray-400 whitespace-nowrap">
-                  ({Math.round(confidence.win_prob_top * 100)}%×{confidence.top_win_odds.toFixed(1)}倍)
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="text-gray-400">オッズ未取得</span>
-          )}
-        </div>
+      {/* 指数信頼度（参考値: gapベースの生スコア） */}
+      <div className="flex items-center gap-1.5 pt-1.5 border-t border-gray-50 text-[10px]">
+        <span className="text-gray-400 whitespace-nowrap">指数信頼度（参考）</span>
+        <RankBadge rank={confRank} />
+        <span className="text-gray-600 whitespace-nowrap">{confidence.score}pt</span>
+        <span className="text-gray-400 whitespace-nowrap">
+          差{confidence.gap_1_2.toFixed(1)}/{confidence.gap_1_3.toFixed(1)}
+        </span>
       </div>
     </div>
   );

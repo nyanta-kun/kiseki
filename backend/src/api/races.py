@@ -767,6 +767,9 @@ async def list_races(
                 top_odds,
             )
             out.top_win_odds = top_odds
+            # jra_buy_signalはOOS testでbuy単ROI 0.705(claim1.237から乖離、CI非有意)と
+            # 検証済みのため2026-07-25よりフロント表示は廃止([[jra_axis_market_agree_redesign]])。
+            # フィールド自体はAPI互換のため残置（フロントJRA側は参照しない）。
             out.buy_signal = jra_buy_signal(r.distance, top_odds)
         result_list.append(out)
     return result_list

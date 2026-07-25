@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  */
 export const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
   "三冠一致":      { label: "🔥三冠", cls: "bg-rose-100 text-rose-800 border-rose-300",          title: "総合・DMtime・DMbattle 全1位 (勝率39%/複勝72%)" },
-  "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",        title: "総合≥60 ∧ DM-battle≥65 ∧ 総合2位以内 (ROI 101%, 勝率47%)" },
+  "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",        title: "総合≥60 ∧ DM-battle≥65 ∧ 総合2位以内 (勝率26-27%/複勝率59-60%、両窓で安定。単勝回収率は保証しない軸候補シグナル)" },
   "複数指数一致穴": { label: "🔍複数穴", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battleのうち2つ以上が上位評価、複勝的中約20%)" },
   "指数一致穴":    { label: "指数穴",  cls: "bg-violet-100 text-violet-800 border-violet-300",    title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 上記情報源のうち1つが上位評価、複勝的中約20%)" },
   "人気下振れ":    { label: "❌警戒", cls: "bg-slate-200 text-slate-700 border-slate-400",       title: "人気≤3位だが総合・DM-battle両方が4位以下 (ROI 74%、軸候補から除外推奨)" },

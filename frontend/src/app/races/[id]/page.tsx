@@ -148,10 +148,7 @@ export default async function RacePage({ params }: { params: Params }) {
       <main id="main-content" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
           {/* 信頼度パネル */}
-          <ConfidencePanel
-            confidence={confidence}
-            buySignal={race?.buy_signal ?? null}
-          />
+          <ConfidencePanel confidence={confidence} />
 
           {/* 指数テーブル（成績WebSocketで自動更新） */}
           <RaceDetailClient

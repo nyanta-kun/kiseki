@@ -95,10 +95,10 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
                 📝 出走想定
               </span>
             )}
-            {/* 上段: 購入指針・穴ぐさを横並び */}
-            {!race.is_special_only && (buySignal || race.has_anagusa) && (
+            {/* 上段: 購入指針・穴ぐさを横並び（JRAはbuySignal廃止・[[jra_axis_market_agree_redesign]]） */}
+            {!race.is_special_only && ((buySignal && isChihou) || race.has_anagusa) && (
               <div className="flex items-center gap-0.5">
-                {buySignal && <BuySignalBadge signal={buySignal} size="sm" />}
+                {buySignal && isChihou && <BuySignalBadge signal={buySignal} size="sm" />}
                 {race.has_anagusa && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium whitespace-nowrap">
                     ☆穴
@@ -114,7 +114,7 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
                     信{confRank}
                   </span>
                   <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
-                    EV{recRank}
+                    {isChihou ? "EV" : "推奨"}{recRank}
                   </span>
                   <span className="text-[9px] text-gray-400 tabular-nums">{race.confidence_score}pt</span>
                 </div>
