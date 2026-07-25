@@ -361,18 +361,21 @@ def run_block(df: pd.DataFrame, label: str, rng: np.random.Generator) -> None:
             st = _roi_ci(gg, rng)
             print(f"     {str(b):<10}{st['n']:>6}{st['win']:>6.1f}%{st['roi']:>8.3f}{st['drop1']:>8.3f}")
 
-    # ④ DM signals 単一「穴」タグ (2026-07-25全面簡素化・軸/警戒タグは廃止)
-    # ⚠️ 「穴」は「単勝ROI」ではなく「複勝的中率の分離」を狙ったタグ
-    # ([[jra_upset_badge_redesign]])のため主張値は複勝的中率(claim列は単ROI専用のため"-")
-    print("\n--- ④ dm_signals「穴」タグ: 該当馬の成績 (claim はコメント値) ---")
-    dm_tags = ["穴"]
+    # ④ DM signals「穴」「特穴」タグ (2026-07-25簡素化・2026-07-26特穴追加)
+    # ⚠️ 「穴」は「単勝ROI」でなく「複勝的中率の分離」狙い([[jra_upset_badge_redesign]])。
+    # 「特穴」は単勝ROI狙い([[jra_anagusa_elite_signal]]、claim=1.417 FULL期間実績)。
+    print("\n--- ④ dm_signals「穴」「特穴」タグ: 該当馬の成績 (claim はコメント値) ---")
+    dm_tags = ["穴", "特穴"]
+    dm_claims = {"特穴": 1.417}
     print(f"  {'タグ':<14}{'n':>6}{'勝率':>7}{'複勝':>7}{'単ROI':>7}{'drop1':>7}{'95%CI':>15}{'主張':>8}")
     for tag in dm_tags:
         s = df[df["dm_signals"].apply(lambda xs: tag in xs)]
         st = _roi_ci(s, rng)
         star = " ★" if st["lo"] > 1.0 else (" ◯" if st["roi"] > 1.0 else "")
+        cv = dm_claims.get(tag)
+        claim_str = f"{cv:>8.3f}" if cv is not None else f"{'-':>8}"
         print(f"  {tag:<14}{st['n']:>6}{st['win']:>6.1f}%{st['plc']:>6.1f}%{st['roi']:>7.3f}"
-              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{'-':>8}{star}")
+              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{claim_str}{star}")
 
     # ⑤ anagusa_rank A/B/C (1位以外も含む全馬・外部ピック)
     print("\n--- ⑤ anagusa_rank A/B/C: 外部ピック馬の 単/複ROI (claim: A>B>C 単調・全<1) ---")

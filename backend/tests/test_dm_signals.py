@@ -1,7 +1,9 @@
-"""穴シグナル(SIGNAL_UPSET_CANDIDATE)算出ロジックのテスト
+"""穴シグナル(SIGNAL_UPSET_CANDIDATE/SIGNAL_ANAGUSA_ELITE)算出ロジックのテスト
 
 2026-07-25 全面簡素化([[jra_upset_badge_redesign]]): 軸/警戒タグは
 recommend_rankへの一本化に伴い廃止。穴タグも単一の「穴」マークに統合。
+2026-07-26 「特穴」追加([[jra_anagusa_elite_signal]]): 穴ぐさ×指数上位3×
+単勝10倍以上のROI狙いタグ。
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.indices.dm_signals import (
+    SIGNAL_ANAGUSA_ELITE,
     SIGNAL_UPSET_CANDIDATE,
     _ranks_descending,
     compute_dm_signals,
@@ -115,30 +118,43 @@ def test_upset_badge_counts_dm_battle_with_partial_coverage() -> None:
 
 
 def test_upset_badge_only_one_horse_per_race() -> None:
-    """複数頭がbadge_cnt>=1でも、レースにつきbadge_cnt最大の1頭のみタグが付く"""
+    """複数頭がbadge_cnt>=1でも、レースにつきbadge_cnt最大の1頭のみタグが付く
+
+    フィラー馬3頭で anagusa 馬の composite順位を4位以下に押し下げ、
+    特穴(composite上位3必須)が誤発火しないようにする。
+    """
     horses = [
         Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="A", nb_ave_rank=2),  # badge_cnt=2
         Horse(2, composite_index=45.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="B"),  # badge_cnt=1
         Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(4, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(5, composite_index=65.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(6, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),
     ]
-    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0})
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0, 4: 3.0, 5: 4.0, 6: 5.0})
     assert SIGNAL_UPSET_CANDIDATE in (horses[0].dm_signals or [])
     assert (horses[1].dm_signals or []) == []
     assert (horses[2].dm_signals or []) == []
 
 
 def test_upset_badge_tie_break_by_composite_index() -> None:
-    """badge_cntが同点の場合はcomposite_indexが高い方が選ばれる"""
+    """badge_cntが同点の場合はcomposite_indexが高い方が選ばれる
+
+    フィラー馬3頭で anagusa 馬の composite順位を4位以下に押し下げる。
+    """
     horses = [
         Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="A"),  # badge_cnt=1, composite低い
         Horse(2, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="B"),  # badge_cnt=1, composite高い
         Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(4, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(5, composite_index=65.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(6, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),
     ]
-    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0})
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0, 4: 3.0, 5: 4.0, 6: 5.0})
     assert (horses[0].dm_signals or []) == []
     assert SIGNAL_UPSET_CANDIDATE in (horses[1].dm_signals or [])
 
@@ -188,3 +204,85 @@ def test_scratched_horse_excluded_from_population() -> None:
 def test_empty_horses_list() -> None:
     """空リストでもエラーにならない"""
     compute_dm_signals([])
+
+
+# ---------------------------------------------------------------------------
+# 特穴 (SIGNAL_ANAGUSA_ELITE) — 2026-07-26 追加
+# 穴ぐさ(A/B/C) ∧ composite順位≤3 ∧ 単勝オッズ≥10。「穴」とは独立の条件。
+# ---------------------------------------------------------------------------
+
+
+def test_anagusa_elite_basic() -> None:
+    """穴ぐさ ∧ composite上位3 ∧ オッズ10倍以上 → 特穴"""
+    horses = [
+        Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),  # comp2位
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),  # comp1位
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),  # comp3位
+        Horse(4, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None),  # comp4位
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 2.0, 3: 20.0, 4: 30.0})
+    assert SIGNAL_ANAGUSA_ELITE in (horses[0].dm_signals or [])
+
+
+def test_anagusa_elite_requires_top3_composite() -> None:
+    """composite順位が4位以下では特穴が付かない"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),  # comp4位(下位)
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(3, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(4, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 2.0, 3: 3.0, 4: 4.0})
+    assert SIGNAL_ANAGUSA_ELITE not in (horses[0].dm_signals or [])
+
+
+def test_anagusa_elite_requires_min_odds() -> None:
+    """単勝オッズ10倍未満では特穴が付かない"""
+    horses = [
+        Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 9.9, 2: 2.0, 3: 3.0})
+    assert SIGNAL_ANAGUSA_ELITE not in (horses[0].dm_signals or [])
+
+
+def test_anagusa_elite_requires_anagusa_pick() -> None:
+    """穴ぐさピックがなければcomposite上位3・高オッズでも特穴は付かない"""
+    horses = [
+        Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 2.0, 3: 3.0})
+    assert (horses[0].dm_signals or []) == []
+
+
+def test_anagusa_elite_can_coexist_with_upset_candidate() -> None:
+    """特穴とbadge_cnt由来の穴は独立条件のため同一馬に両方付きうる"""
+    horses = [
+        Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=1, km_rank=1),  # badge_cnt=3・comp1位
+        Horse(2, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
+    signals = horses[0].dm_signals or []
+    assert SIGNAL_UPSET_CANDIDATE in signals
+    assert SIGNAL_ANAGUSA_ELITE in signals
+
+
+def test_anagusa_elite_multiple_horses_allowed() -> None:
+    """特穴は1レース複数頭に付与されうる(badge_cnt系と異なりK=1キャップなし)"""
+    horses = [
+        Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),  # comp2位
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="B"),  # comp1位
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),  # comp3位
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 11.0, 3: 20.0})
+    assert SIGNAL_ANAGUSA_ELITE in (horses[0].dm_signals or [])
+    assert SIGNAL_ANAGUSA_ELITE in (horses[1].dm_signals or [])

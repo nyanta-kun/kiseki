@@ -15,9 +15,17 @@ import { cn } from "@/lib/utils";
  * 「穴」: レース内で最も有力な穴候補1頭のみ(単勝≥10倍 ∧ 穴ぐさ/netkeiba/
  * kichiuma/DM-battleのうち1つ以上が上位評価、複勝的中約20%・両窓で安定)。
  * 複勝ROIは<1(控除率の壁)で「的中率の分離」用途、回収率の保証はない。
+ *
+ * 「特穴」(2026-07-26追加、[[jra_anagusa_elite_signal]]): 穴ぐさ(A/B/C) ∧
+ * 指数(composite)順位3位以内 ∧ 単勝オッズ10倍以上。「穴」と異なりROIを狙う
+ * タグ。実質2.5年(sekito.anagusaは2024-01以降のみ)のtrain+val/test 2窓で
+ * 単勝ROI 1.40前後が一貫(FULL n=535, 単ROI1.417, drop1=1.329)。95%信頼区間は
+ * わずかに1を跨ぐため回収率を保証するものではないが、「穴」より一段強い
+ * シグナルとして扱う。
  */
 export const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
   "穴": { label: "🔍穴", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battleのいずれかが上位評価、複勝的中約20%・回収率の保証はなし)" },
+  "特穴": { label: "💥特穴", cls: "bg-red-100 text-red-800 border-red-400 font-extrabold", title: "穴ぐさ(A/B/C) ∧ 指数順位3位以内 ∧ 単勝10倍以上(単勝ROI約1.4・2窓で一貫。ただし信頼区間はわずかに1を跨ぎ回収率を保証するものではない)" },
 };
 
 type Props = {

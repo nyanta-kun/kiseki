@@ -18,6 +18,17 @@ SIGNAL_UPSET_CANDIDATE (穴):
   の該当馬のうちレース内でbadge_cnt最大の1頭のみ（同点はcomposite_index降順）。
   複勝的中率は両窓で約20%(min_badge=1/2とも大差なし)。複勝ROIは母集団全体で
   <1(控除率の壁)であり、「回収率」でなく「的中率の頑健な分離」が目的。
+
+SIGNAL_ANAGUSA_ELITE (特穴、2026-07-26追加 [[jra_anagusa_elite_signal]]):
+  穴ぐさ(A/B/C) ∧ composite順位≤3 ∧ 単勝オッズ≥10。
+  「穴」と異なりROIを狙うタグ。sekito.anagusaは2024-01-06以降のみ蓄積のため
+  実質2.5年でのcomposite_rank閾値(2/3/4/5/6)×オッズ閾値(8/10/15)の
+  ロバストネススイープで、rank≤3の全組合せがtrain+val/testの両窓で単勝ROI>1
+  と一貫(rank=4以降は片方の窓で<1に崩れ効果が消失)。確定条件(rank≤3∧odds≥10)の
+  FULL期間(n=535): 単勝的中7.3%・単勝ROI1.417・drop1(最大配当1件除外)1.329
+  ・CI[0.96,1.90](95%信頼区間はわずかに1を跨ぐが2窓連続で方向一致・
+  drop1も1超を維持)。複勝ROIは0.99でほぼ損益分岐。1レースに複数該当は稀
+  (3%)なため上限キャップなし。
 """
 
 from __future__ import annotations
@@ -26,9 +37,14 @@ from typing import Any, Protocol
 
 # シグナル文字列定数 (UI 表示用にラベル付き、API では key を返す)
 SIGNAL_UPSET_CANDIDATE = "穴"
+SIGNAL_ANAGUSA_ELITE = "特穴"
 
 # 穴badge対象の単勝オッズ下限（is_sweet_spot/upset_reranker と同一閾値）
 UPSET_BADGE_MIN_ODDS = 10.0
+
+# 特穴しきい値（[[jra_anagusa_elite_signal]] ロバストネススイープで確定）
+ANAGUSA_ELITE_COMP_RANK_MAX = 3
+ANAGUSA_ELITE_MIN_ODDS = 10.0
 
 
 class _Horse(Protocol):
@@ -140,13 +156,33 @@ def compute_dm_signals(
             best_h, best_badge_cnt = h, badge_cnt
 
     if best_h is not None:
-        # 関数冒頭で全馬 dm_signals=[] 初期化済みのため実際は None にはならないが、
-        # 型上は list[str] | None のため防御的に narrow する
-        signals = best_h.dm_signals
-        if signals is None:
-            signals = []
-            best_h.dm_signals = signals
-        signals.append(SIGNAL_UPSET_CANDIDATE)
+        _append_signal(best_h, SIGNAL_UPSET_CANDIDATE)
+
+    # --- 特穴 (SIGNAL_ANAGUSA_ELITE): 穴ぐさ ∧ composite上位3 ∧ 単勝オッズ≥10 ---
+    # [[jra_anagusa_elite_signal]]: 「穴」とは独立の条件・ROI狙いのタグ。
+    # 1レースに複数該当することは稀(実測3%)なため上限キャップなし。
+    comp_ranks = _ranks_descending([h.composite_index for h in horses])
+    for i, h in enumerate(horses):
+        win_odds = odds.get(h.horse_number)
+        comp_rank = comp_ranks[i]
+        if (
+            h.anagusa_rank in ("A", "B", "C")
+            and comp_rank is not None
+            and comp_rank <= ANAGUSA_ELITE_COMP_RANK_MAX
+            and win_odds is not None
+            and win_odds >= ANAGUSA_ELITE_MIN_ODDS
+        ):
+            _append_signal(h, SIGNAL_ANAGUSA_ELITE)
+
+
+def _append_signal(h: _Horse, tag: str) -> None:
+    """h.dm_signals にタグを追加する。関数冒頭で []初期化済みのため実際は
+    None にはならないが、型上は list[str] | None のため防御的に narrow する。"""
+    signals = h.dm_signals
+    if signals is None:
+        signals = []
+        h.dm_signals = signals
+    signals.append(tag)
 
 
 def popularity_from_odds(

@@ -83,8 +83,8 @@ export type HorseIndex = {
   // JRA-VAN NEXT DM 指数（タイム型・対戦型）
   jvan_time_dm: number | null;
   jvan_battle_dm: number | null;
-  // DM × 穴ぐさ × 既存指数の「穴」候補タグ（2026-07-25全面簡素化・軸/警戒タグは廃止）
-  // 値: レース内最有力の穴候補1頭のみ "穴"（該当馬がいなければ空配列）
+  // DM × 穴ぐさ × 既存指数の穴候補タグ（2026-07-25全面簡素化・軸/警戒タグは廃止）
+  // 値: "穴"（レース内最有力の穴候補1頭のみ）| "特穴"（穴ぐさ×指数上位3×単勝10倍以上、2026-07-26追加）
   dm_signals: string[] | null;
   // 購入シグナル（v26 breakaway ROI 検証ベース）
   // "super_buy" | "buy" | "watch" | null
