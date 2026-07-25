@@ -1241,7 +1241,8 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         top_win_odds = win_odds_map.get(horses[0].horse_number)
 
     # 指数1位馬が単勝1番人気と一致するか（market_agree, [[jra_axis_market_agree_redesign]]）
-    market_agree = is_market_favorite(top_win_odds, list(win_odds_map.values()) or None)
+    all_win_odds = [o for o in win_odds_map.values() if o is not None]
+    market_agree = is_market_favorite(top_win_odds, all_win_odds or None)
 
     rec_rank = calculate_recommend_rank(
         conf_data["score"], conf_data.get("win_prob_top"), top_win_odds, market_agree

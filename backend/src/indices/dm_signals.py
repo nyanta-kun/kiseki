@@ -233,7 +233,8 @@ def compute_dm_signals(
             badge_cnt += 1
         if km_rank is not None and km_rank <= 3:
             badge_cnt += 1
-        if partial_battle_ranks[i] is not None and partial_battle_ranks[i] <= 2:
+        battle_rank_partial = partial_battle_ranks[i]
+        if battle_rank_partial is not None and battle_rank_partial <= 2:
             badge_cnt += 1
 
         if badge_cnt >= UPSET_BADGE_MULTI_MIN:
