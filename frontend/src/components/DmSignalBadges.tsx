@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
  * 旧4タグ(穴ぐさDM/DM大穴/DM高オッズ/穴ぐさ+DMtime)は小標本でOOS不安定だったため廃止し、
  * 4情報源(穴ぐさ/netkeiba/kichiuma/DM-battle)の一致数(badge_cnt)に一本化。
  * 単勝オッズ≥10の人気薄馬のみ対象。複勝ROIは<1(控除率の壁)で「的中率の分離」用途。
+ * 1レースにつきbadge_cnt最大の1頭のみに付与(複数頭に付くと判断が曖昧になるため、
+ * 複勝圏頭数キャップ案は合算的中率が基準未達で不採用・K=1に集約)。
  *
  * 注: 実装には表の条件に加えて「高得点鉄板の composite 順位≤2 キャップ」と
  * コース/セグメント別 deny フィルタがある（詳細は dm_signals.py 参照）。
@@ -18,8 +20,8 @@ import { cn } from "@/lib/utils";
 export const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
   "三冠一致":      { label: "🔥三冠", cls: "bg-rose-100 text-rose-800 border-rose-300",          title: "総合・DMtime・DMbattle 全1位 (勝率39%/複勝72%)" },
   "高得点鉄板":    { label: "⭐鉄板", cls: "bg-amber-100 text-amber-800 border-amber-300",        title: "総合≥60 ∧ DM-battle≥65 ∧ 総合2位以内 (ROI 101%, 勝率47%)" },
-  "複数指数一致穴": { label: "🔍複数穴", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "単勝≥10倍 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battleのうち2つ以上が上位評価 (複勝的中17-29%)" },
-  "指数一致穴":    { label: "指数穴",  cls: "bg-violet-100 text-violet-800 border-violet-300",    title: "単勝≥10倍 ∧ 上記情報源のうち1つが上位評価 (複勝的中12-24%)" },
+  "複数指数一致穴": { label: "🔍複数穴", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battleのうち2つ以上が上位評価、複勝的中約20%)" },
+  "指数一致穴":    { label: "指数穴",  cls: "bg-violet-100 text-violet-800 border-violet-300",    title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 上記情報源のうち1つが上位評価、複勝的中約20%)" },
   "人気下振れ":    { label: "❌警戒", cls: "bg-slate-200 text-slate-700 border-slate-400",       title: "人気≤3位だが総合・DM-battle両方が4位以下 (ROI 74%、軸候補から除外推奨)" },
 };
 

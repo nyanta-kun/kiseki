@@ -158,11 +158,11 @@ def _compute_upside_scores(horses: list[HorseIndexOut]) -> None:
         h.upside_score = round(raw_scores[i] / max_score, 4)
 
 
-async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
+async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, tuple[str, str | None]]:
     """sekito.anagusa からレースのピック情報を取得する。
 
     Returns:
-        {horse_no: rank} — A/B/C のいずれか
+        {horse_no: (rank, comment)} — rank は A/B/C のいずれか、comment は専門紙の推奨コメント（無ければNone）
     """
     sekito_code = _JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
@@ -170,12 +170,13 @@ async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, str]:
     race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
     result = await db.execute(
         _text(
-            "SELECT horse_no, rank FROM sekito.anagusa WHERE date = :d AND course_code = :c AND race_no = :r"
+            "SELECT horse_no, rank, comment FROM sekito.anagusa "
+            "WHERE date = :d AND course_code = :c AND race_no = :r"
         ),
         {"d": race_date, "c": sekito_code, "r": race.race_number},
     )
     rows = result.fetchall()
-    return {r[0]: r[1] for r in rows if r[1] in ("A", "B", "C")}
+    return {r[0]: (r[1], r[2]) for r in rows if r[1] in ("A", "B", "C")}
 
 
 def _parse_index_num(raw: str | None) -> float | None:
@@ -406,6 +407,7 @@ class HorseIndexOut(BaseModel):
     anagusa_index: float | None
     paddock_index: float | None
     anagusa_rank: str | None = None  # "A" / "B" / "C" / None（ピックなし）
+    anagusa_comment: str | None = None  # 穴ぐさ専門紙の推奨コメント（ピックありの場合のみ）
     upside_score: float | None = None  # 穴馬スコア（指数下位でも馬券になりやすい度合い）
     # 外部指数ランク（sekito.netkeiba / sekito.kichiuma）
     nb_course_rank: int | None = None  # netkeibaコース適性指数のレース内順位（1=最高）
@@ -1025,7 +1027,9 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     # sekito.anagusa からランク情報を付与
     picks = await _fetch_anagusa_picks(db, race)
     for h in horses:
-        h.anagusa_rank = picks.get(h.horse_number)
+        anagusa_pick = picks.get(h.horse_number)
+        if anagusa_pick is not None:
+            h.anagusa_rank, h.anagusa_comment = anagusa_pick
 
     # sekito.netkeiba / sekito.kichiuma から外部指数ランクを付与
     ext_ranks = await _fetch_external_ranks(db, race)

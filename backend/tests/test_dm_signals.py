@@ -285,6 +285,36 @@ def test_upset_badge_counts_dm_battle_with_partial_coverage() -> None:
     assert SIGNAL_SINGLE_SOURCE_MATCH in (horses[0].dm_signals or [])
 
 
+def test_upset_badge_only_one_horse_per_race() -> None:
+    """複数頭がbadge_cnt>=1でも、レースにつきbadge_cnt最大の1頭のみタグが付く
+    (2026-07-25追加改修: 合算100%基準を断念しK=1に絞り込み)"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=2),  # badge_cnt=2
+        Horse(2, composite_index=45.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="B"),  # badge_cnt=1
+        Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0})
+    assert SIGNAL_MULTI_SOURCE_MATCH in (horses[0].dm_signals or [])
+    assert (horses[1].dm_signals or []) == []
+    assert (horses[2].dm_signals or []) == []
+
+
+def test_upset_badge_tie_break_by_composite_index() -> None:
+    """badge_cntが同点の場合はcomposite_indexが高い方が選ばれる"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),  # badge_cnt=1, composite低い
+        Horse(2, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="B"),  # badge_cnt=1, composite高い
+        Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 2.0})
+    assert (horses[0].dm_signals or []) == []
+    assert SIGNAL_SINGLE_SOURCE_MATCH in (horses[1].dm_signals or [])
+
+
 def test_upset_badge_not_popularity_dependent() -> None:
     """穴badgeは popularity_map 非依存（win_odds_map のみで判定）"""
     horses = [

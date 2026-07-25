@@ -50,49 +50,6 @@ const ANAGUSA_RANK_COLOR: Record<string, string> = {
   C: "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
 
-/**
- * 購入シグナル (v26 breakaway 検証 2026-05-02 / 3年138,728 horse-races)。
- * バッジは IndicesTable と統一。レース詳細ページの行内・末尾凡例で使用。
- */
-const PURCHASE_SIGNAL_META: Record<
-  "super_buy" | "buy" | "watch",
-  { label: string; cls: string; title: string }
-> = {
-  super_buy: {
-    label: "🔥超推奨",
-    cls: "bg-rose-100 text-rose-800 border-rose-300",
-    title: "上位2頭抜け出し(2位vs3位差≥7) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.593",
-  },
-  buy: {
-    label: "◎推奨",
-    cls: "bg-emerald-100 text-emerald-800 border-emerald-300",
-    title: "上位2頭抜け出し(2位vs3位差≥5) ∧ rank≤2 ∧ オッズ≥10 → 単勝ROI 1.290",
-  },
-  watch: {
-    label: "○注目",
-    cls: "bg-sky-50 text-sky-700 border-sky-200",
-    title: "rank≤3 ∧ オッズ≥10 → 単勝ROI 1.042",
-  },
-};
-
-function PurchaseSignalBadge({
-  signal,
-}: {
-  signal: HorseIndex["purchase_signal"];
-}) {
-  if (!signal) return null;
-  const meta = PURCHASE_SIGNAL_META[signal];
-  if (!meta) return null;
-  return (
-    <span
-      title={meta.title}
-      className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap", meta.cls)}
-    >
-      {meta.label}
-    </span>
-  );
-}
-
 function barWidth(v: number | null): string {
   if (v === null) return "0%";
   return `${Math.max(0, Math.min(100, v))}%`;
@@ -248,14 +205,6 @@ export function RaceDetailClient({
     [indices]
   );
 
-  // DM-time ランクマップ（1=最高・null は除外）
-  const timeDmRankMap = useMemo(() => {
-    const withDm = [...indices]
-      .filter((h) => h.jvan_time_dm != null)
-      .sort((a, b) => (b.jvan_time_dm ?? 0) - (a.jvan_time_dm ?? 0));
-    return new Map(withDm.map((h, i) => [h.horse_number, i + 1]));
-  }, [indices]);
-
   const sorted = useMemo(() => {
     return [...indices].sort((a, b) => {
       if (sortKey === "finish" && hasResults) {
@@ -350,7 +299,6 @@ export function RaceDetailClient({
                   const cutOff = isCutOff(horse);
                   const isTop = horse.horse_number === topHorseNumber;
                   const isAnagusa = horse.anagusa_rank !== null && !isTop;
-                  const isExtDark = !isTop && (horse.is_ext_dark_horse ?? false);
                   const isExpanded = expandedHorse === horse.horse_number;
 
                   const rows = [
@@ -382,14 +330,6 @@ export function RaceDetailClient({
                           <span className="text-gray-800 font-medium truncate block max-w-[110px]">
                             {horse.horse_name}
                           </span>
-                          {horse.is_sweet_spot && (
-                            <span
-                              title="スイートスポット: 単勝≥10 ∧ EV 1.2-5.0 ∧ バッジあり ∧ k≤2"
-                              className="text-[9px] px-1 py-0.5 rounded border font-bold bg-red-50 text-red-600 border-red-200"
-                            >
-                              ★
-                            </span>
-                          )}
                           {isAnagusa && (
                             <span className={cn(
                               "text-[9px] px-1 py-0.5 rounded border font-bold",
@@ -398,49 +338,8 @@ export function RaceDetailClient({
                               ☆{horse.anagusa_rank}
                             </span>
                           )}
-                          {isExtDark && (
-                            <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold">
-                              {horse.nb_course_rank === 1 ? "外◎" : "外○"}
-                            </span>
-                          )}
-                          {/* 複勝EVモデルの人気薄1頭軸（毎レース最大1頭） */}
-                          {horse.is_place_ev_axis && (() => {
-                            const timeDmRank = timeDmRankMap.get(horse.horse_number) ?? 99;
-                            const isHighConf2 = horse.anagusa_rank === "A" && timeDmRank <= 2;
-                            const isHighConf5 = horse.anagusa_rank === "A" && timeDmRank <= 5;
-                            if (isHighConf2) {
-                              return (
-                                <span
-                                  title={`最高信頼複勝軸: 穴ぐさA ∧ DM-time ${timeDmRank}位（3年検証 単ROI 1.15〜1.21）`}
-                                  className="text-[9px] px-1 py-0.5 rounded border font-bold bg-amber-100 text-amber-800 border-amber-400"
-                                >
-                                  💎💎複勝軸
-                                </span>
-                              );
-                            } else if (isHighConf5) {
-                              return (
-                                <span
-                                  title={`高信頼複勝軸: 穴ぐさA ∧ DM-time ${timeDmRank}位`}
-                                  className="text-[9px] px-1 py-0.5 rounded border font-bold bg-amber-100 text-amber-800 border-amber-400"
-                                >
-                                  💎複勝軸
-                                </span>
-                              );
-                            } else {
-                              return (
-                                <span
-                                  title={`複勝EV軸: 単勝≥10 ∧ 較正複勝率${Math.round((horse.place_ev_prob ?? 0) * 100)}% ∧ 複勝最低≥2.0倍 のEV最大1頭（複勝EV ${horse.place_ev_value?.toFixed(2)}）`}
-                                  className="text-[9px] px-1 py-0.5 rounded border font-bold bg-rose-100 text-rose-700 border-rose-300"
-                                >
-                                  🎯複勝軸
-                                </span>
-                              );
-                            }
-                          })()}
-                          {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) */}
+                          {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) — 唯一のOOS実証済み買い/見送りバッジ群 */}
                           <DmSignalBadges signals={horse.dm_signals} compact />
-                          {/* 購入シグナル (v26 breakaway ROI 検証ベース) */}
-                          <PurchaseSignalBadge signal={horse.purchase_signal} />
                         </div>
                       </td>
 
@@ -575,6 +474,17 @@ export function RaceDetailClient({
                             </div>
                           </div>
 
+                          {/* 穴ぐさコメント（専門紙ピック時のみ） */}
+                          {horse.anagusa_rank && horse.anagusa_comment && (
+                            <div className={cn(
+                              "mb-3 px-2.5 py-2 rounded border text-[11px] leading-relaxed",
+                              ANAGUSA_RANK_COLOR[horse.anagusa_rank] ?? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                            )}>
+                              <span className="font-bold mr-1">☆{horse.anagusa_rank} 穴ぐさコメント</span>
+                              <span className="text-gray-700">{horse.anagusa_comment}</span>
+                            </div>
+                          )}
+
                           {/* 指数グリッド */}
                           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                             {SUB_INDICES.map(({ key, label }) => {
@@ -665,86 +575,6 @@ export function RaceDetailClient({
             </summary>
             <div className="px-3 pb-3 pt-1 space-y-3">
 
-              {/* 複勝EV軸 */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">
-                  複勝軸 <span className="font-normal text-gray-500 text-[10px]">(複勝EVモデル / 毎レース最大1頭)</span>
-                </p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-amber-100 text-amber-800 border-amber-400">
-                      💎💎複勝軸
-                    </span>
-                    <span>穴ぐさA ∧ DM-time 1〜2位 <span className="font-bold text-amber-700">（最高信頼 / 3年単ROI 1.15〜1.21）</span></span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-amber-100 text-amber-800 border-amber-400">
-                      💎複勝軸
-                    </span>
-                    <span>穴ぐさA ∧ DM-time 3〜5位（高信頼）</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-rose-100 text-rose-700 border-rose-300">
-                      🎯複勝軸
-                    </span>
-                    <span>単勝≥10 ∧ 較正複勝率≥20% ∧ 複勝≥2.0倍 のEV最大1頭</span>
-                  </li>
-                </ul>
-              </div>
-
-              {/* スイートスポット */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">
-                  ★ スイートスポット <span className="font-normal text-gray-500 text-[10px]">(3年単ROI 1.188)</span>
-                </p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0 bg-red-50 text-red-600 border-red-200">
-                      ★
-                    </span>
-                    <span>単勝≥10 ∧ EV 1.2〜5.0 ∧ 何らかのバッジあり ∧ レース内該当≤2頭</span>
-                  </li>
-                </ul>
-              </div>
-
-              {/* 購入シグナル (v26) */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">
-                  🛒 購入シグナル <span className="font-normal text-gray-500 text-[10px]">(v26 breakaway 検証 / 3年138,728 horse-races)</span>
-                </p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.super_buy.cls)}>
-                      🔥超推奨
-                    </span>
-                    <span>
-                      上位2頭が3位以下から差をつけて抜け出し（差≥7）∧ 上位2頭で単勝≥10 →
-                      <span className="font-bold text-rose-700"> 単勝ROI 1.593</span>（年46R）
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.buy.cls)}>
-                      ◎推奨
-                    </span>
-                    <span>
-                      上位2頭抜け出し（差≥5）∧ 上位2頭で単勝≥10 →
-                      <span className="font-bold text-emerald-700"> 単勝ROI 1.290</span>（年79R）
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", PURCHASE_SIGNAL_META.watch.cls)}>
-                      ○注目
-                    </span>
-                    <span>
-                      上位3頭で単勝≥10 → <span className="font-bold text-sky-700">単勝ROI 1.042</span>（年1786R）
-                    </span>
-                  </li>
-                </ul>
-                <p className="mt-1 ml-1 text-[10px] text-gray-500">
-                  ※ 1〜3番人気（オッズ&lt;6）の指数1位は単勝ROI 0.85〜0.89 → 見送り推奨
-                </p>
-              </div>
-
               {/* DM シグナル */}
               <div>
                 <p className="font-bold text-gray-700 mb-1">
@@ -783,25 +613,6 @@ export function RaceDetailClient({
                       ☆C
                     </span>
                     <span>注目穴馬</span>
-                  </li>
-                </ul>
-              </div>
-
-              {/* 外部指数穴馬 */}
-              <div>
-                <p className="font-bold text-gray-700 mb-1">外部指数 <span className="font-normal text-gray-500 text-[10px]">(自指数4位以下だが netkeiba/kichiuma で上位)</span></p>
-                <ul className="space-y-1 ml-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
-                      外◎
-                    </span>
-                    <span>netkeiba コース指数 1位</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1 py-0.5 rounded font-bold whitespace-nowrap shrink-0">
-                      外○
-                    </span>
-                    <span>netkeiba 上位2 × kichiuma 1位（外部指数一致）</span>
                   </li>
                 </ul>
               </div>

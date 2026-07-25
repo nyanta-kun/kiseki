@@ -24,11 +24,18 @@
   (穴ぐさ/netkeiba/kichiuma/DM battle)の**一致数(badge_cnt)**が単純な
   カウントのまま両窓で頑健・単調な複勝的中率の分離を示した
   (badge0=7-10%→badge1=14-16%→badge2+=17-21%、train/testとも大サンプルで一貫)
-  ため、これに一本化する:
-  MULTI_SOURCE_MATCH (🔍複数指数一致穴、badge_cnt≥2):
-    複勝的中 17-29%（指数順位1-3位で特に高い）
-  SINGLE_SOURCE_MATCH (指数一致穴、badge_cnt=1):
-    複勝的中 12-24%
+  ため、これに一本化する。
+
+  さらに2026-07-25追加改修: badge_cnt≥1の該当馬を全員タグ付けすると
+  1レースに複数頭つき購入判断が曖昧になる(ユーザー指摘)。複勝圏頭数
+  (8頭以上=3着まで/7頭以下=2着まで)で上位K頭にキャップする案を検証したが
+  (scripts/jra_upset_cap_verification.py)、K頭合算の複勝的中率はtrain/test
+  とも50〜70%台に留まり「合算100%以上」基準を満たせなかった。合算基準は
+  断念し、**1レースにつきbadge_cnt最大の1頭のみ**（同点はcomposite_index
+  降順）に絞る設計へ変更した:
+  MULTI_SOURCE_MATCH (🔍複数指数一致穴、該当馬のbadge_cnt≥2):
+  SINGLE_SOURCE_MATCH (指数一致穴、該当馬のbadge_cnt=1):
+    1レース1頭のみ・複勝的中 約20%(両窓で安定、min_badge=1/2とも大差なし)
   対象母集団は単勝オッズ≥10の人気薄馬のみ（is_sweet_spot/upset_reranker等と
   同じ閾値）。badge_cntの4情報源のうちDM battle≤2は、その馬のいるレースで
   DM対戦型指数が2頭以上揃っている場合のみカウントする(全頭DM必須の
@@ -217,7 +224,17 @@ def compute_dm_signals(
     # --- 穴badge (MULTI/SINGLE_SOURCE_MATCH): DM完全揃い不要・部分カバレッジでも計算 ---
     # DM battle は「そのレースで2頭以上値がある」場合のみランクを算出し、badge_cnt に含める。
     # 全馬DM必須の軸/警戒シグナルと異なりカバレッジを落とさない設計([[jra_upset_badge_redesign]])。
+    #
+    # ⚠️ 2026-07-25 追加再設計: badge_cnt>=1 の該当馬を全員タグ付けすると1レースに
+    # 複数頭つき購入判断が曖昧になる（ユーザー指摘）。複勝圏頭数(8頭以上=3着まで、
+    # 7頭以下=2着まで)でキャップする案を検証したが、上位K頭の複勝的中率合算は
+    # train/testとも50〜70%台に留まり100%基準を満たせなかった([[jra_upset_badge_redesign]]
+    # 検証: scripts/jra_upset_cap_verification.py)。合算基準は断念し、
+    # **1レースにつき badge_cnt 最大の1頭のみ**（同点は composite_index 降順）に
+    # 絞る設計へ変更。複勝的中率は約20%(両窓で安定)。
     partial_battle_ranks = _ranks_descending([h.jvan_battle_dm for h in horses])
+    best_h: _Horse | None = None
+    best_badge_cnt = 0
     for i, h in enumerate(horses):
         win_odds = odds.get(h.horse_number)
         if win_odds is None or win_odds < UPSET_BADGE_MIN_ODDS:
@@ -236,11 +253,23 @@ def compute_dm_signals(
         battle_rank_partial = partial_battle_ranks[i]
         if battle_rank_partial is not None and battle_rank_partial <= 2:
             badge_cnt += 1
+        if badge_cnt < 1:
+            continue
 
-        if badge_cnt >= UPSET_BADGE_MULTI_MIN:
-            h.dm_signals.append(SIGNAL_MULTI_SOURCE_MATCH)
-        elif badge_cnt == 1:
-            h.dm_signals.append(SIGNAL_SINGLE_SOURCE_MATCH)
+        if best_h is None or badge_cnt > best_badge_cnt or (
+            badge_cnt == best_badge_cnt and h.composite_index > best_h.composite_index
+        ):
+            best_h, best_badge_cnt = h, badge_cnt
+
+    if best_h is not None:
+        tag = SIGNAL_MULTI_SOURCE_MATCH if best_badge_cnt >= UPSET_BADGE_MULTI_MIN else SIGNAL_SINGLE_SOURCE_MATCH
+        # 関数冒頭で全馬 dm_signals=[] 初期化済みのため実際は None にはならないが、
+        # 型上は list[str] | None のため防御的に narrow する
+        signals = best_h.dm_signals
+        if signals is None:
+            signals = []
+            best_h.dm_signals = signals
+        signals.append(tag)
 
     # DM データがレース内で揃っているか確認 (1頭でも NULL なら軸/警戒シグナルはスキップ)
     if any(h.jvan_time_dm is None or h.jvan_battle_dm is None for h in horses):

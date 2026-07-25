@@ -74,6 +74,7 @@ export type HorseIndex = {
   anagusa_index: number | null;
   paddock_index: number | null;
   anagusa_rank: string | null;  // "A" | "B" | "C" | null（ピックなし）
+  anagusa_comment: string | null;  // 穴ぐさ専門紙の推奨コメント（ピックありの場合のみ）
   upside_score: number | null;  // 穴馬スコア 0〜1（指数下位でも馬券になりやすい度合い）
   // 外部指数ランク（sekito.netkeiba / sekito.kichiuma）
   nb_course_rank: number | null;  // netkeibaコース適性指数のレース内順位（1=最高）
