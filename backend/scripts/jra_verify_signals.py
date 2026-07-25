@@ -14,7 +14,7 @@ JRA の各表示シグナルが OOS で主張通りに機能しているか(tier
   ① jra_buy_signal           (buy/caution/pass)            レース1位馬の単ROI
   ② jra_horse_purchase_signal(super_buy/buy/watch)         馬個別の単ROI
   ③ is_sweet_spot (JRA)      (odds≥10 ∧ EV∈[1.2,5.0] ∧ バッジ ∧ k≤2)
-  ④ dm_signals 5タグ         各タグの 勝率/複勝/単ROI（2026-07-25穴タグ再設計）
+  ④ dm_signals「穴」タグ     単一タグ該当馬の 勝率/複勝/単ROI（2026-07-25全面簡素化）
   ⑤ anagusa_rank A/B/C       外部ピックの 単/複ROI
   ⑥ 外部指数穴馬 (nb/km)     external_dark_horse の的中/ROI
   ⑦ confidence_rank / recommend_rank (地方と共有・JRA未検証の疑い)  1位馬の勝率単調性
@@ -361,21 +361,18 @@ def run_block(df: pd.DataFrame, label: str, rng: np.random.Generator) -> None:
             st = _roi_ci(gg, rng)
             print(f"     {str(b):<10}{st['n']:>6}{st['win']:>6.1f}%{st['roi']:>8.3f}{st['drop1']:>8.3f}")
 
-    # ④ DM signals 5タグ (各タグ該当馬、2026-07-25穴タグ再設計)
-    # ⚠️ 複数指数一致穴/指数一致穴は「単勝ROI」ではなく「複勝的中率の分離」を狙った
-    # タグ([[jra_upset_badge_redesign]])のため主張値は複勝的中率(claim列は単ROI専用のため"-")
-    print("\n--- ④ dm_signals 5タグ: 各タグ該当馬の成績 (claim はコメント値) ---")
-    dm_tags = ["三冠一致", "高得点鉄板", "複数指数一致穴", "指数一致穴", "人気下振れ"]
-    dm_claims = {"三冠一致": 0.849, "高得点鉄板": 1.012, "人気下振れ": 0.739}
+    # ④ DM signals 単一「穴」タグ (2026-07-25全面簡素化・軸/警戒タグは廃止)
+    # ⚠️ 「穴」は「単勝ROI」ではなく「複勝的中率の分離」を狙ったタグ
+    # ([[jra_upset_badge_redesign]])のため主張値は複勝的中率(claim列は単ROI専用のため"-")
+    print("\n--- ④ dm_signals「穴」タグ: 該当馬の成績 (claim はコメント値) ---")
+    dm_tags = ["穴"]
     print(f"  {'タグ':<14}{'n':>6}{'勝率':>7}{'複勝':>7}{'単ROI':>7}{'drop1':>7}{'95%CI':>15}{'主張':>8}")
     for tag in dm_tags:
         s = df[df["dm_signals"].apply(lambda xs: tag in xs)]
         st = _roi_ci(s, rng)
         star = " ★" if st["lo"] > 1.0 else (" ◯" if st["roi"] > 1.0 else "")
-        cv = dm_claims.get(tag)
-        claim_str = f"{cv:>8.3f}" if cv is not None else f"{'-':>8}"
         print(f"  {tag:<14}{st['n']:>6}{st['win']:>6.1f}%{st['plc']:>6.1f}%{st['roi']:>7.3f}"
-              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{claim_str}{star}")
+              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{'-':>8}{star}")
 
     # ⑤ anagusa_rank A/B/C (1位以外も含む全馬・外部ピック)
     print("\n--- ⑤ anagusa_rank A/B/C: 外部ピック馬の 単/複ROI (claim: A>B>C 単調・全<1) ---")

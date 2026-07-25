@@ -338,7 +338,7 @@ export function RaceDetailClient({
                               ☆{horse.anagusa_rank}
                             </span>
                           )}
-                          {/* DM × 穴ぐさ × 既存指数のシグナルタグ (軸/穴/警戒) — 唯一のOOS実証済み買い/見送りバッジ群 */}
+                          {/* 穴候補（レース内最有力1頭のみ・軸信頼度は購入指針パネルのrecommend_rankに一本化） */}
                           <DmSignalBadges signals={horse.dm_signals} compact />
                         </div>
                       </td>
@@ -575,10 +575,10 @@ export function RaceDetailClient({
             </summary>
             <div className="px-3 pb-3 pt-1 space-y-3">
 
-              {/* DM シグナル */}
+              {/* 穴候補 */}
               <div>
                 <p className="font-bold text-gray-700 mb-1">
-                  📊 DM シグナル <span className="font-normal text-gray-500 text-[10px]">(JV-Next DM × 穴ぐさ × 既存指数 / 3年8,618R)</span>
+                  📊 穴候補 <span className="font-normal text-gray-500 text-[10px]">(JV-Next DM × 穴ぐさ × 既存指数、レース1頭のみ)</span>
                 </p>
                 <ul className="space-y-1 ml-1">
                   {Object.entries(DM_SIGNAL_META).map(([name, meta]) => (
