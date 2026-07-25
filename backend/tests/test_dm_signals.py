@@ -45,6 +45,14 @@ def test_ranks_descending_with_none() -> None:
     assert _ranks_descending([50.0, None, 30.0, 80.0]) == [2, None, 3, 1]
 
 
+def _fillers(numbers: list[int]) -> list[Horse]:
+    """comp順位を押し下げるための高composite馬(特穴条件との誤発火回避用)。"""
+    return [
+        Horse(n, composite_index=100.0 - i, jvan_time_dm=None, jvan_battle_dm=None)
+        for i, n in enumerate(numbers)
+    ]
+
+
 def test_popularity_from_odds() -> None:
     odds_map = {1: 5.5, 2: 2.1, 3: 8.0, 4: None, 5: 8.0}
     pops = popularity_from_odds([1, 2, 3, 4, 5], odds_map)
@@ -62,11 +70,15 @@ def test_popularity_from_odds() -> None:
 
 
 def test_upset_candidate_with_two_sources() -> None:
-    """単勝≥10 ∧ 穴ぐさABC + netkeiba上位3 の2ソース一致 → 穴"""
+    """単勝≥10 ∧ 穴ぐさABC + netkeiba上位3 の2ソース一致 → 穴
+
+    (comp順位を4位以下にするフィラー馬を追加し、特穴条件の誤発火を回避)
+    """
     horses = [
         Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="A", nb_ave_rank=2),
         Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        *_fillers([3, 4, 5]),
     ]
     compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
     assert SIGNAL_UPSET_CANDIDATE in (horses[0].dm_signals or [])
@@ -79,6 +91,7 @@ def test_upset_candidate_with_one_source() -> None:
         Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="B"),
         Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        *_fillers([3, 4, 5]),
     ]
     compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
     assert SIGNAL_UPSET_CANDIDATE in (horses[0].dm_signals or [])
@@ -165,6 +178,7 @@ def test_upset_badge_not_popularity_dependent() -> None:
         Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="A", nb_ave_rank=2),
         Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        *_fillers([3, 4, 5]),
     ]
     compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0}, popularity_map=None)
     assert SIGNAL_UPSET_CANDIDATE in (horses[0].dm_signals or [])
@@ -189,6 +203,7 @@ def test_scratched_horse_excluded_from_population() -> None:
         Horse(2, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="B"),
         Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        *_fillers([4, 5, 6]),
     ]
     compute_dm_signals(
         horses,
@@ -261,8 +276,9 @@ def test_anagusa_elite_requires_anagusa_pick() -> None:
     assert (horses[0].dm_signals or []) == []
 
 
-def test_anagusa_elite_can_coexist_with_upset_candidate() -> None:
-    """特穴とbadge_cnt由来の穴は独立条件のため同一馬に両方付きうる"""
+def test_anagusa_elite_suppresses_upset_candidate_on_same_horse() -> None:
+    """特穴は穴の上位互換のため、同一馬が両方の条件を満たしても特穴のみ表示する
+    (2026-07-26追加: ユーザー指示により穴を非表示化)"""
     horses = [
         Horse(1, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
               anagusa_rank="A", nb_ave_rank=1, km_rank=1),  # badge_cnt=3・comp1位
@@ -270,8 +286,24 @@ def test_anagusa_elite_can_coexist_with_upset_candidate() -> None:
     ]
     compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
     signals = horses[0].dm_signals or []
-    assert SIGNAL_UPSET_CANDIDATE in signals
     assert SIGNAL_ANAGUSA_ELITE in signals
+    assert SIGNAL_UPSET_CANDIDATE not in signals
+
+
+def test_upset_candidate_kept_when_different_horse_gets_elite() -> None:
+    """穴の該当馬と特穴の該当馬が別なら、穴はそのまま表示される"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              nb_ave_rank=2, km_rank=2),  # badge_cnt=2(穴ぐさ無し)・comp下位 → 穴で勝つ
+        Horse(2, composite_index=90.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A"),  # badge_cnt=1・comp1位 → 特穴のみ
+        Horse(3, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+        Horse(4, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 12.0, 3: 3.0, 4: 4.0})
+    assert SIGNAL_UPSET_CANDIDATE in (horses[0].dm_signals or [])
+    assert SIGNAL_ANAGUSA_ELITE in (horses[1].dm_signals or [])
+    assert SIGNAL_UPSET_CANDIDATE not in (horses[1].dm_signals or [])
 
 
 def test_anagusa_elite_multiple_horses_allowed() -> None:

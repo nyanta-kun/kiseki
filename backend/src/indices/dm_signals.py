@@ -174,6 +174,12 @@ def compute_dm_signals(
         ):
             _append_signal(h, SIGNAL_ANAGUSA_ELITE)
 
+    # 特穴は穴の上位互換のため、同一馬に両方付いた場合は特穴のみ表示する
+    if best_h is not None and SIGNAL_ANAGUSA_ELITE in (best_h.dm_signals or []):
+        best_h.dm_signals = [
+            s for s in (best_h.dm_signals or []) if s != SIGNAL_UPSET_CANDIDATE
+        ]
+
 
 def _append_signal(h: _Horse, tag: str) -> None:
     """h.dm_signals にタグを追加する。関数冒頭で []初期化済みのため実際は
