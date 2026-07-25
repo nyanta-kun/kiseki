@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.indices.confidence import calculate_race_confidence
+from src.indices.confidence import (
+    calculate_race_confidence,
+    calculate_recommend_rank,
+    is_market_favorite,
+)
 
 # ---------------------------------------------------------------------------
 # 正常系テスト
@@ -216,3 +220,64 @@ class TestInputVariations:
         assert 0 <= result["score"] <= 100
         assert result["label"] in {"HIGH", "MID", "LOW"}
         assert result["gap_1_2"] == pytest.approx(6.5)
+
+
+# ---------------------------------------------------------------------------
+# is_market_favorite のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestIsMarketFavorite:
+    """is_market_favorite（指数1位馬が単勝1番人気と一致するか）のテスト。"""
+
+    def test_none_when_top_odds_missing(self) -> None:
+        assert is_market_favorite(None, [1.5, 3.0, 5.0]) is None
+
+    def test_none_when_all_odds_missing(self) -> None:
+        assert is_market_favorite(1.5, None) is None
+        assert is_market_favorite(1.5, []) is None
+
+    def test_true_when_top_is_lowest_odds(self) -> None:
+        assert is_market_favorite(1.5, [1.5, 3.0, 5.0]) is True
+
+    def test_false_when_top_is_not_lowest_odds(self) -> None:
+        assert is_market_favorite(3.0, [1.5, 3.0, 5.0]) is False
+
+    def test_true_on_tie(self) -> None:
+        """同オッズで最低値に並ぶ場合は一致扱い。"""
+        assert is_market_favorite(1.5, [1.5, 1.5, 5.0]) is True
+
+
+# ---------------------------------------------------------------------------
+# calculate_recommend_rank のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateRecommendRank:
+    """calculate_recommend_rank（market_agree再設計後）のテスト。"""
+
+    def test_odds_under_1_5_always_s(self) -> None:
+        """断然人気(単勝<1.5)は market_agree/confidence_score を問わず S。"""
+        assert calculate_recommend_rank(30, win_odds_top=1.2, market_agree=False) == "S"
+        assert calculate_recommend_rank(90, win_odds_top=1.2, market_agree=None) == "S"
+
+    def test_market_agree_none_falls_back_to_legacy(self) -> None:
+        """market_agree計算不能時は confidence_score のみの旧ロジック。"""
+        assert calculate_recommend_rank(85, win_odds_top=3.0, market_agree=None) == "A"
+        assert calculate_recommend_rank(70, win_odds_top=3.0, market_agree=None) == "B"
+        assert calculate_recommend_rank(40, win_odds_top=3.0, market_agree=None) == "C"
+
+    def test_market_disagree_always_c(self) -> None:
+        """市場乖離は confidence_score が高くても C（断然人気override以外）。"""
+        assert calculate_recommend_rank(95, win_odds_top=3.0, market_agree=False) == "C"
+        assert calculate_recommend_rank(50, win_odds_top=3.0, market_agree=False) == "C"
+
+    def test_market_agree_tiers_by_confidence_score(self) -> None:
+        """市場一致時は confidence_score で S/A/B に分岐する。"""
+        assert calculate_recommend_rank(85, win_odds_top=3.0, market_agree=True) == "S"
+        assert calculate_recommend_rank(70, win_odds_top=3.0, market_agree=True) == "A"
+        assert calculate_recommend_rank(40, win_odds_top=3.0, market_agree=True) == "B"
+
+    def test_default_market_agree_is_none(self) -> None:
+        """market_agree未指定時は旧ロジック相当（後方互換）。"""
+        assert calculate_recommend_rank(85, win_odds_top=3.0) == "A"

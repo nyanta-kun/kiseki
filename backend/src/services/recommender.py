@@ -37,7 +37,7 @@ from ..indices.buy_signal import (
     jra_horse_purchase_signal,
 )
 from ..indices.composite import COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank, is_market_favorite
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -437,6 +437,8 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 jvan_time_dm=h.get("jvan_time_dm"),
                 jvan_battle_dm=h.get("jvan_battle_dm"),
                 anagusa_rank=h.get("anagusa_rank"),
+                nb_ave_rank=h.get("nb_ave_rank"),
+                km_rank=h.get("km_rank"),
                 dm_signals=None,
             )
             for h in horses
@@ -651,16 +653,22 @@ async def collect_recommendation_source(session: AsyncSession, date: str) -> dic
 # → 推奨エンジンを「1レース1推奨＝指数1位馬 ＋ 的中重視の信頼度tier」に再定義する。
 #   価値系は「妙味候補(収支保証なし)」の注記に降格(value_candidates)。
 #
-# tier(=recommend_rank, OOS test 1位馬実績):
-#   S 鉄板  : 指数1位が断然人気(単勝<1.5)        勝率67% / 複勝93% → 単勝
-#   A 信頼軸: confidence_score>=80              勝率34% / 複勝71% → 単勝
-#   B 複勝圏: confidence_score>=65              勝率26% / 複勝64% → 複勝
-#   C 混戦  : 上記以外                          勝率23%        → 推奨しない(見送り)
+# tier(=recommend_rank, [[jra_axis_market_agree_redesign]] 2026-07-25再定義):
+#   ⚠️ 3年+完全OOSのセグメント異質性分析で、市場一致(指数1位馬が単勝1番人気とも
+#   一致)が confidence_score(指数gap) より支配的な分離要因と判明。
+#   confidence_score>=80 でも市場が乖離していれば的中率21-24%まで落ちる一方、
+#   市場一致なら confidence_score<65 でも27-35%を維持する。market_agree を
+#   第一分岐、confidence_score を第二分岐に再構成(is_market_favorite 参照)。
+#
+#   S 最強軸: 断然人気(単勝<1.5) または 市場一致∧confidence_score>=80  勝率45-51% → 単勝
+#   A 信頼軸: 市場一致 ∧ confidence_score>=65                          勝率33-40% → 単勝
+#   B 準軸  : 市場一致 ∧ confidence_score<65                           勝率27-35% → 複勝
+#   C 混戦  : 市場乖離（confidence問わず）                              勝率15-26% → 推奨しない(見送り)
 
 _HIT_TIER_BET: dict[str, str] = {"S": "win", "A": "win", "B": "place"}
 _HIT_TIER_CONFIDENCE: dict[str, float] = {"S": 0.85, "A": 0.65, "B": 0.50}
 _HIT_TIER_LABEL: dict[str, str] = {
-    "S": "鉄板（断然人気）", "A": "信頼軸", "B": "複勝圏",
+    "S": "最強軸（市場一致）", "A": "信頼軸", "B": "準軸",
 }
 
 
@@ -732,7 +740,9 @@ async def build_hit_tier_recommendations(
 
         top1 = ranked[0]
         top_odds = top1.get("win_odds")
-        tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds)
+        all_odds = [h["win_odds"] for h in horses if h.get("win_odds") is not None]
+        market_agree = is_market_favorite(top_odds, all_odds or None)
+        tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds, market_agree)
 
         # 複勝EVモデル: 毎レース人気薄1頭を選定（C レースでも算出: 混戦こそ穴の主戦場）
         # 2026-06-13 検証 (memory: place_ev_model):

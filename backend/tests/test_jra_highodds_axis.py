@@ -28,7 +28,7 @@ def test_badge_any_sources() -> None:
     assert jra_highodds_has_badge(None, 3, None, None) is True   # netkeiba 順位≤3
     assert jra_highodds_has_badge(None, 4, None, None) is False  # netkeiba 順位>3
     assert jra_highodds_has_badge(None, None, 1, None) is True   # kichiuma 順位≤3
-    assert jra_highodds_has_badge(None, None, None, ["DM大穴"]) is True
+    assert jra_highodds_has_badge(None, None, None, ["複数指数一致穴"]) is True
     assert jra_highodds_has_badge(None, None, None, []) is False
     assert jra_highodds_has_badge(None, None, None, None) is False
 
@@ -57,7 +57,7 @@ def test_axis_rejects_no_badge() -> None:
 
 
 def test_build_pick_with_partner() -> None:
-    axis = {"horse_number": 7, "win_odds": 14.2, "anagusa_rank": "A", "dm_signals": ["DM大穴"]}
+    axis = {"horse_number": 7, "win_odds": 14.2, "anagusa_rank": "A", "dm_signals": ["複数指数一致穴"]}
     pick = jra_build_highodds_pick(axis, comp_rank1_horse_number=3)
     assert pick["axis_horse_number"] == 7
     assert pick["place_bet"] is True

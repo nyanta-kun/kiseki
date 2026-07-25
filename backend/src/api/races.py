@@ -47,7 +47,7 @@ from ..indices.buy_signal import (
     jra_horse_purchase_signal,
 )
 from ..indices.composite import COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank, is_market_favorite
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from .ws_manager import manager as ws_manager
@@ -756,6 +756,9 @@ async def list_races(
             out.confidence_score = conf["score"]
             out.confidence_label = conf["label"]
             out.confidence_rank = conf["rank"]
+            # 一覧系はトップ馬オッズのみ取得（全馬オッズ取得は過去に数万行/リクエストの
+            # 性能劣化を招いたため意図的に避けている）→ market_agree は計算不能(None)の
+            # まま渡し、calculate_recommend_rank の旧ロジックフォールバックに委ねる。
             out.recommend_rank = calculate_recommend_rank(
                 conf["score"],
                 conf.get("win_prob_top"),
@@ -1237,7 +1240,12 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     if horses and horses[0].horse_number is not None:
         top_win_odds = win_odds_map.get(horses[0].horse_number)
 
-    rec_rank = calculate_recommend_rank(conf_data["score"], conf_data.get("win_prob_top"), top_win_odds)
+    # 指数1位馬が単勝1番人気と一致するか（market_agree, [[jra_axis_market_agree_redesign]]）
+    market_agree = is_market_favorite(top_win_odds, list(win_odds_map.values()) or None)
+
+    rec_rank = calculate_recommend_rank(
+        conf_data["score"], conf_data.get("win_prob_top"), top_win_odds, market_agree
+    )
 
     return IndicesResponse(
         horses=horses,

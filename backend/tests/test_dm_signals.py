@@ -5,11 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.indices.dm_signals import (
-    SIGNAL_ANAGUSA_DM,
-    SIGNAL_ANAGUSA_DM_TIME,
-    SIGNAL_DM_BIG_DARK,
-    SIGNAL_DM_HIGH_ODDS,
+    SIGNAL_MULTI_SOURCE_MATCH,
     SIGNAL_POPULAR_DOWNSIDE,
+    SIGNAL_SINGLE_SOURCE_MATCH,
     SIGNAL_TOP_PREMIUM,
     SIGNAL_TRIPLE_MATCH,
     _ranks_descending,
@@ -27,6 +25,8 @@ class Horse:
     jvan_time_dm: float | None
     jvan_battle_dm: float | None
     anagusa_rank: str | None = None
+    nb_ave_rank: int | None = None
+    km_rank: int | None = None
     dm_signals: list[str] | None = field(default=None)
 
 
@@ -82,89 +82,6 @@ def test_top_premium_rank_capped_to_two() -> None:
     assert got == [1, 2], f"上位2頭のみのはず: {got}"
 
 
-def test_anagusa_dm() -> None:
-    """anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5 → 穴ぐさDM"""
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=70.0, jvan_battle_dm=80.0, anagusa_rank="A"),
-        Horse(2, composite_index=60.0, jvan_time_dm=72.0, jvan_battle_dm=75.0, anagusa_rank=None),
-        Horse(3, composite_index=55.0, jvan_time_dm=68.0, jvan_battle_dm=70.0, anagusa_rank="A"),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 6, 2: 1, 3: 4})
-    assert SIGNAL_ANAGUSA_DM in (horses[0].dm_signals or [])  # A + battle=1 + pop=6
-    assert SIGNAL_ANAGUSA_DM not in (horses[2].dm_signals or [])  # A + battle≠1
-
-
-def test_anagusa_dm_skipped_when_popular() -> None:
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=70.0, jvan_battle_dm=80.0, anagusa_rank="A"),
-        Horse(2, composite_index=60.0, jvan_time_dm=72.0, jvan_battle_dm=70.0),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 2, 2: 1})  # 人気2は穴ではない
-    assert SIGNAL_ANAGUSA_DM not in (horses[0].dm_signals or [])
-
-
-def test_dm_big_dark() -> None:
-    """battle=1 ∧ 人気≥7 ∧ battle値≥65 → DM大穴"""
-    horses = [
-        Horse(1, composite_index=40.0, jvan_time_dm=60.0, jvan_battle_dm=70.0),  # battle値65以上
-        Horse(2, composite_index=80.0, jvan_time_dm=70.0, jvan_battle_dm=68.0),
-        Horse(3, composite_index=60.0, jvan_time_dm=65.0, jvan_battle_dm=66.0),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 8, 2: 1, 3: 2})
-    assert SIGNAL_DM_BIG_DARK in (horses[0].dm_signals or [])
-
-
-def test_dm_big_dark_battle_value_required() -> None:
-    """battle値が65未満なら大穴にならない"""
-    horses = [
-        Horse(1, composite_index=40.0, jvan_time_dm=50.0, jvan_battle_dm=55.0),  # battle値<65
-        Horse(2, composite_index=80.0, jvan_time_dm=70.0, jvan_battle_dm=50.0),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 8, 2: 1})
-    assert SIGNAL_DM_BIG_DARK not in (horses[0].dm_signals or [])
-
-
-def test_dm_high_odds() -> None:
-    """battle=1 ∧ オッズ≥10 ∧ time≤2 → DM高オッズ"""
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=70.0, jvan_battle_dm=75.0),
-        Horse(2, composite_index=60.0, jvan_time_dm=75.0, jvan_battle_dm=70.0),
-        Horse(3, composite_index=70.0, jvan_time_dm=68.0, jvan_battle_dm=68.0),
-    ]
-    # 1番馬: time=2位 (75 vs 70)、battle=1位、オッズ12.0 → タグつく
-    compute_dm_signals(
-        horses,
-        popularity_map={1: 6, 2: 1, 3: 2},
-        win_odds_map={1: 12.0, 2: 2.0, 3: 4.0},
-    )
-    assert SIGNAL_DM_HIGH_ODDS in (horses[0].dm_signals or [])
-
-
-def test_dm_high_odds_requires_time_le_2() -> None:
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=60.0, jvan_battle_dm=80.0),  # time=3位
-        Horse(2, composite_index=60.0, jvan_time_dm=70.0, jvan_battle_dm=70.0),
-        Horse(3, composite_index=70.0, jvan_time_dm=72.0, jvan_battle_dm=68.0),
-    ]
-    compute_dm_signals(
-        horses,
-        popularity_map={1: 6, 2: 1, 3: 2},
-        win_odds_map={1: 12.0, 2: 2.0, 3: 4.0},
-    )
-    assert SIGNAL_DM_HIGH_ODDS not in (horses[0].dm_signals or [])
-
-
-def test_anagusa_dm_time() -> None:
-    """anagusa=A ∧ time=1 → 穴ぐさ+DMtime"""
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=80.0, jvan_battle_dm=70.0, anagusa_rank="A"),
-        Horse(2, composite_index=60.0, jvan_time_dm=70.0, jvan_battle_dm=80.0, anagusa_rank="B"),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 5, 2: 1})
-    assert SIGNAL_ANAGUSA_DM_TIME in (horses[0].dm_signals or [])
-    assert SIGNAL_ANAGUSA_DM_TIME not in (horses[1].dm_signals or [])  # B(not A) + time≠1
-
-
 def test_popular_downside() -> None:
     """人気≤3 ∧ base≥4位 ∧ battle≥4位 → 人気下振れ"""
     horses = [
@@ -181,13 +98,15 @@ def test_popular_downside() -> None:
 
 
 def test_no_signals_when_dm_missing() -> None:
+    """DM完全揃い必須の軸/警戒シグナルはDM欠損レースで付かない（穴badgeはDM欠損でも計算対象）。"""
     horses = [
         Horse(1, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=70.0),
         Horse(2, composite_index=70.0, jvan_time_dm=65.0, jvan_battle_dm=65.0),
     ]
     compute_dm_signals(horses, popularity_map={1: 1, 2: 2})
-    assert horses[0].dm_signals == []
-    assert horses[1].dm_signals == []
+    assert SIGNAL_TRIPLE_MATCH not in (horses[0].dm_signals or [])
+    assert SIGNAL_TOP_PREMIUM not in (horses[0].dm_signals or [])
+    assert SIGNAL_POPULAR_DOWNSIDE not in (horses[0].dm_signals or [])
 
 
 def test_scratched_horse_excluded_from_population() -> None:
@@ -223,21 +142,6 @@ def test_scratched_horse_excluded_from_ranks() -> None:
     # 除外馬を除くと馬番2が base/time/battle すべて1位 → 三冠一致
     assert SIGNAL_TRIPLE_MATCH in (horses[1].dm_signals or [])
     assert horses[0].dm_signals == []
-
-
-def test_no_popularity_skips_popularity_signals() -> None:
-    """popularity_map なしなら 人気依存タグ (ANAGUSA_DM/DM_BIG_DARK/POPULAR_DOWNSIDE) は発動しない"""
-    horses = [
-        Horse(1, composite_index=80.0, jvan_time_dm=80.0, jvan_battle_dm=80.0, anagusa_rank="A"),
-        Horse(2, composite_index=70.0, jvan_time_dm=70.0, jvan_battle_dm=70.0),
-    ]
-    compute_dm_signals(horses, popularity_map=None)
-    # 三冠一致と高得点鉄板は人気非依存なので発動する
-    assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])
-    assert SIGNAL_TOP_PREMIUM in (horses[0].dm_signals or [])
-    # 人気依存のものは発動しない
-    assert SIGNAL_ANAGUSA_DM not in (horses[0].dm_signals or [])
-    assert SIGNAL_DM_BIG_DARK not in (horses[0].dm_signals or [])
 
 
 def test_popularity_from_odds() -> None:
@@ -292,16 +196,6 @@ def test_triple_match_allowed_in_safe_segment() -> None:
     assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])
 
 
-def test_anagusa_dm_denied_in_tokyo() -> None:
-    """穴ぐさDM は東京 (ROI 21%) では発動しない"""
-    horses = [
-        Horse(1, composite_index=50.0, jvan_time_dm=70.0, jvan_battle_dm=80.0, anagusa_rank="A"),
-        Horse(2, composite_index=60.0, jvan_time_dm=72.0, jvan_battle_dm=70.0),
-    ]
-    compute_dm_signals(horses, popularity_map={1: 6, 2: 1}, course_name="東京")
-    assert SIGNAL_ANAGUSA_DM not in (horses[0].dm_signals or [])
-
-
 def test_popular_downside_denied_in_fukushima() -> None:
     """人気下振れ警戒は福島 (ROI 95%) では発動しない (実は来やすい)"""
     horses = [
@@ -325,3 +219,78 @@ def test_no_filter_when_no_race_info() -> None:
     ]
     compute_dm_signals(horses, popularity_map={1: 1, 2: 2})
     assert SIGNAL_TRIPLE_MATCH in (horses[0].dm_signals or [])
+
+
+# ---------------------------------------------------------------------------
+# 穴badge (MULTI/SINGLE_SOURCE_MATCH) — 2026-07-25 再設計
+# [[jra_upset_badge_redesign]]: 4情報源(穴ぐさ/netkeiba/kichiuma/DM-battle)の
+# 一致数(badge_cnt)を単勝オッズ≥10の馬にのみ付与する。
+# ---------------------------------------------------------------------------
+
+
+def test_multi_source_match_two_sources() -> None:
+    """単勝≥10 ∧ 穴ぐさABC + netkeiba上位3 の2ソース一致 → 複数指数一致穴"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=2),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
+    assert SIGNAL_MULTI_SOURCE_MATCH in (horses[0].dm_signals or [])
+    assert SIGNAL_SINGLE_SOURCE_MATCH not in (horses[0].dm_signals or [])
+
+
+def test_single_source_match_one_source() -> None:
+    """単勝≥10 ∧ 情報源1つのみ一致 → 指数一致穴（複数指数一致穴ではない）"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="B"),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0})
+    assert SIGNAL_SINGLE_SOURCE_MATCH in (horses[0].dm_signals or [])
+    assert SIGNAL_MULTI_SOURCE_MATCH not in (horses[0].dm_signals or [])
+
+
+def test_upset_badge_requires_min_odds() -> None:
+    """単勝10倍未満は badge_cnt が高くても対象外（人気薄限定）"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=1, km_rank=1),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 8.0, 2: 2.0})
+    assert (horses[0].dm_signals or []) == []
+
+
+def test_upset_badge_no_signal_without_win_odds_map() -> None:
+    """win_odds_map なしでは対象オッズ判定ができないため穴badgeは付かない"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=1),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses)
+    assert (horses[0].dm_signals or []) == []
+
+
+def test_upset_badge_counts_dm_battle_with_partial_coverage() -> None:
+    """DM battle が一部の馬にしかなくても(全頭DM必須の三冠一致等と異なり)badge_cntに使える"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=90.0),  # battle最上位
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=50.0),
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None),  # DM欠損でも可
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 2.0, 3: 20.0})
+    assert SIGNAL_SINGLE_SOURCE_MATCH in (horses[0].dm_signals or [])
+
+
+def test_upset_badge_not_popularity_dependent() -> None:
+    """穴badgeは popularity_map 非依存（win_odds_map のみで判定）"""
+    horses = [
+        Horse(1, composite_index=40.0, jvan_time_dm=None, jvan_battle_dm=None,
+              anagusa_rank="A", nb_ave_rank=2),
+        Horse(2, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None),
+    ]
+    compute_dm_signals(horses, win_odds_map={1: 15.0, 2: 2.0}, popularity_map=None)
+    assert SIGNAL_MULTI_SOURCE_MATCH in (horses[0].dm_signals or [])

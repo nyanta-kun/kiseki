@@ -13,11 +13,11 @@ const BET_LABEL: Record<string, string> = {
   trifecta: "3連複",
 };
 
-/** Tier バッジのスタイル（的中重視: S 鉄板 / A 信頼 / B 複勝圏） */
+/** Tier バッジのスタイル（的中重視・市場一致ベース再設計: S 最強軸 / A 信頼軸 / B 準軸） */
 const TIER_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  S: { bg: "bg-red-500", text: "text-white", label: "S 鉄板" },
-  A: { bg: "bg-orange-500", text: "text-white", label: "A 信頼" },
-  B: { bg: "bg-sky-500", text: "text-white", label: "B 複勝圏" },
+  S: { bg: "bg-red-500", text: "text-white", label: "S 最強軸" },
+  A: { bg: "bg-orange-500", text: "text-white", label: "A 信頼軸" },
+  B: { bg: "bg-sky-500", text: "text-white", label: "B 準軸" },
   穴: { bg: "bg-rose-500", text: "text-white", label: "穴軸" },
   // 以下は旧 sweet_spot/3連複（現在は降格・通常は出力されない）
   SS: { bg: "bg-red-600", text: "text-white", label: "SS" },

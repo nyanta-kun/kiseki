@@ -1,10 +1,8 @@
 """DM (JV-Next タイム型・対戦型) シグナルタグ算出モジュール
 
 合成ウェイトに混ぜず、特定条件を満たす馬に「軸」「穴」「警戒」タグを付与する。
-バックテスト (scripts/backtest_dm.py / backtest_dm_signal.py / backtest_combined_signals.py) で
-99.0%カバレッジ・8,618レース・3年実績で実証された7種類のシグナル:
 
-軸シグナル (信頼度):
+軸シグナル (信頼度、バックテスト実証済み・3年8,618レース):
   TRIPLE_MATCH (🔥 三冠一致):
     base_rank=1 ∧ time_rank=1 ∧ battle_rank=1
     勝率 39.1% / 複勝 71.6% / ROI 84.9% / n=1,622
@@ -17,26 +15,26 @@
     ※ 絶対しきい値のみだと強メンバー戦で多数該当し鉄板印が乱発するため
       (実測2026: 2頭以上66.6%/最大6頭)、composite上位2頭に限定 (2026-06-07)
 
-穴シグナル (妙味):
-  ANAGUSA_DM (🏆 穴ぐさDM・最強):
-    anagusa∈{A,B} ∧ battle_rank=1 ∧ 人気≥5
-    勝率 10.2% / 複勝 20.4% / ROI 188.8% / n=49
-    → 3独立情報源 (穴ぐさ人手, DM AI, 既存指数) 一致の穴推奨
-
-  DM_BIG_DARK (⚡ DM大穴):
-    battle_rank=1 ∧ 人気≥7 ∧ jvan_battle_dm≥65
-    勝率 7.6% / 複勝 20.1% / ROI 154.0% / n=184
-    → 大穴単勝 (オッズ高め)
-
-  DM_HIGH_ODDS (⚡ DM高オッズ):
-    battle_rank=1 ∧ win_odds≥10 ∧ time_rank≤2
-    勝率 9.0% / 複勝 25.0% / ROI 130.0% / n=156
-    → オッズベースの中穴
-
-  ANAGUSA_DM_TIME (💎 穴ぐさ+DMtime):
-    anagusa=A ∧ time_rank=1
-    勝率 9.4% / 複勝 24.5% / ROI 103.5% / n=106
-    → サンプル多めの穴シグナル
+穴シグナル (⚠️ 2026-07-25 再設計 [[jra_upset_badge_redesign]]):
+  旧: ANAGUSA_DM/DM_BIG_DARK/DM_HIGH_ODDS/ANAGUSA_DM_TIME の4タグ（各々が
+  anagusa/netkeiba/kichiuma/DM battleの一部を狭いAND条件で組み合わせ、
+  場・距離帯ごとにdeny filterを個別に貼り付けていた）は、OOS検証
+  (jra_verify_signals.py)でn=10〜184と小標本になりがちで有意性が不安定
+  だったため廃止。3年+完全OOSのセグメント異質性分析で、4情報源
+  (穴ぐさ/netkeiba/kichiuma/DM battle)の**一致数(badge_cnt)**が単純な
+  カウントのまま両窓で頑健・単調な複勝的中率の分離を示した
+  (badge0=7-10%→badge1=14-16%→badge2+=17-21%、train/testとも大サンプルで一貫)
+  ため、これに一本化する:
+  MULTI_SOURCE_MATCH (🔍複数指数一致穴、badge_cnt≥2):
+    複勝的中 17-29%（指数順位1-3位で特に高い）
+  SINGLE_SOURCE_MATCH (指数一致穴、badge_cnt=1):
+    複勝的中 12-24%
+  対象母集団は単勝オッズ≥10の人気薄馬のみ（is_sweet_spot/upset_reranker等と
+  同じ閾値）。badge_cntの4情報源のうちDM battle≤2は、その馬のいるレースで
+  DM対戦型指数が2頭以上揃っている場合のみカウントする(全頭DM必須の
+  TRIPLE_MATCH/TOP_PREMIUM と異なりカバレッジを落とさない設計)。
+  複勝ROIはこの母集団では全セグメントで<1(控除率の壁)であり、
+  「回収率」でなく「的中率の頑健な分離」を目的としたタグである点に注意。
 
 警戒シグナル:
   POPULAR_DOWNSIDE (❌ 人気下振れ):
@@ -45,7 +43,8 @@
     → 人気だが両指数で評価低い人気馬。軸から外す対象
 
 API レスポンスにタグを付与し、フロントエンドでバッジ表示する想定。
-DM 値が NULL の馬・レースではタグは空のまま (運用範囲は DM 揃いレースのみ)。
+TRIPLE_MATCH/TOP_PREMIUM/POPULAR_DOWNSIDEは全馬DM値必須(中途半端なシグナルを
+避けるため)。MULTI_SOURCE_MATCH/SINGLE_SOURCE_MATCHはDM値が部分欠損でも計算する。
 """
 
 from __future__ import annotations
@@ -55,10 +54,8 @@ from typing import Any, Protocol
 # シグナル文字列定数 (UI 表示用にラベル付き、API では key を返す)
 SIGNAL_TRIPLE_MATCH = "三冠一致"
 SIGNAL_TOP_PREMIUM = "高得点鉄板"
-SIGNAL_ANAGUSA_DM = "穴ぐさDM"
-SIGNAL_DM_BIG_DARK = "DM大穴"
-SIGNAL_DM_HIGH_ODDS = "DM高オッズ"
-SIGNAL_ANAGUSA_DM_TIME = "穴ぐさ+DMtime"
+SIGNAL_MULTI_SOURCE_MATCH = "複数指数一致穴"
+SIGNAL_SINGLE_SOURCE_MATCH = "指数一致穴"
 SIGNAL_POPULAR_DOWNSIDE = "人気下振れ"
 
 # 高得点鉄板しきい値 (バックテスト確定)
@@ -71,16 +68,10 @@ TOP_PREMIUM_BATTLE_MIN = 65.0
 # 2 にすると鉄板印(高得点鉄板 ∪ 三冠一致)を持つ頭数は 99.9% のレースで ≤2 になる。
 TOP_PREMIUM_RANK_MAX = 2
 
-# 穴ぐさDM 人気しきい値
-ANAGUSA_DM_POP_MIN = 5
-
-# DM大穴 人気しきい値・battle値しきい値
-DM_BIG_DARK_POP_MIN = 7
-DM_BIG_DARK_BATTLE_MIN = 65.0
-
-# DM高オッズ オッズしきい値・time順位上限
-DM_HIGH_ODDS_MIN = 10.0
-DM_HIGH_ODDS_TIME_RANK_MAX = 2
+# 穴badge対象の単勝オッズ下限（is_sweet_spot/upset_reranker と同一閾値）
+UPSET_BADGE_MIN_ODDS = 10.0
+# badge_cnt→タグの閾値（[[jra_upset_badge_redesign]] セグメント分析で確定）
+UPSET_BADGE_MULTI_MIN = 2
 
 # 人気下振れ 人気上限・指数下限
 POPULAR_DOWNSIDE_POP_MAX = 3
@@ -103,24 +94,6 @@ TRIPLE_MATCH_DENY_COURSES = {"福島", "阪神", "京都"}
 TRIPLE_MATCH_DENY_SEGMENTS: set[tuple[str, str]] = {
     ("芝", "マイル"),
     ("ダート", "中距離"),
-}
-
-# 穴ぐさDM: 東京 (21%!) / 小倉 (58%) / 札幌 (60%) / 阪神 (79%) で逆効果
-ANAGUSA_DM_DENY_COURSES = {"東京", "小倉", "札幌", "阪神"}
-# 穴ぐさDM: 障害 / ダート×中距離 / 芝×中距離 は ROI<80%
-ANAGUSA_DM_DENY_SEGMENTS: set[tuple[str, str]] = {
-    ("障害", "長距離"),
-    ("障害", "中距離"),
-    ("障害", "マイル"),
-    ("障害", "スプリント"),
-    ("ダート", "中距離"),
-    ("芝", "中距離"),
-    ("ダート", "スプリント"),
-}
-
-# DM高オッズ: 芝×マイル (n=29) で ROI 0% — サンプル小だが極端なので除外
-DM_HIGH_ODDS_DENY_SEGMENTS: set[tuple[str, str]] = {
-    ("芝", "マイル"),
 }
 
 # 人気下振れ (警戒): 福島 (95%) / 小倉 (92%) / 阪神 (86%) / 京都 (85%) では
@@ -167,6 +140,8 @@ class _Horse(Protocol):
     jvan_time_dm: float | None
     jvan_battle_dm: float | None
     anagusa_rank: str | None
+    nb_ave_rank: int | None
+    km_rank: int | None
     dm_signals: list[str] | None
 
 
@@ -236,7 +211,37 @@ def compute_dm_signals(
     if not horses:
         return
 
-    # DM データがレース内で揃っているか確認 (1頭でも NULL ならスキップ)
+    pop = popularity_map or {}
+    odds = win_odds_map or {}
+
+    # --- 穴badge (MULTI/SINGLE_SOURCE_MATCH): DM完全揃い不要・部分カバレッジでも計算 ---
+    # DM battle は「そのレースで2頭以上値がある」場合のみランクを算出し、badge_cnt に含める。
+    # 全馬DM必須の軸/警戒シグナルと異なりカバレッジを落とさない設計([[jra_upset_badge_redesign]])。
+    partial_battle_ranks = _ranks_descending([h.jvan_battle_dm for h in horses])
+    for i, h in enumerate(horses):
+        win_odds = odds.get(h.horse_number)
+        if win_odds is None or win_odds < UPSET_BADGE_MIN_ODDS:
+            continue
+        # nb_ave_rank/km_rank は getattr で防御的に読む（Protocol非準拠の
+        # 呼び出し元(旧集計スクリプト等)でも badge_cnt 計算が落ちないように）
+        nb_ave_rank = getattr(h, "nb_ave_rank", None)
+        km_rank = getattr(h, "km_rank", None)
+        badge_cnt = 0
+        if h.anagusa_rank in ("A", "B", "C"):
+            badge_cnt += 1
+        if nb_ave_rank is not None and nb_ave_rank <= 3:
+            badge_cnt += 1
+        if km_rank is not None and km_rank <= 3:
+            badge_cnt += 1
+        if partial_battle_ranks[i] is not None and partial_battle_ranks[i] <= 2:
+            badge_cnt += 1
+
+        if badge_cnt >= UPSET_BADGE_MULTI_MIN:
+            h.dm_signals.append(SIGNAL_MULTI_SOURCE_MATCH)
+        elif badge_cnt == 1:
+            h.dm_signals.append(SIGNAL_SINGLE_SOURCE_MATCH)
+
+    # DM データがレース内で揃っているか確認 (1頭でも NULL なら軸/警戒シグナルはスキップ)
     if any(h.jvan_time_dm is None or h.jvan_battle_dm is None for h in horses):
         return
 
@@ -244,9 +249,6 @@ def compute_dm_signals(
     base_ranks = _ranks_descending([h.composite_index for h in horses])
     time_ranks = _ranks_descending([h.jvan_time_dm for h in horses])
     battle_ranks = _ranks_descending([h.jvan_battle_dm for h in horses])
-
-    pop = popularity_map or {}
-    odds = win_odds_map or {}
 
     # レース条件 (信頼度フィルタ用)
     surf_cat = _surface_cat(surface)
@@ -258,11 +260,6 @@ def compute_dm_signals(
         (course_name in TRIPLE_MATCH_DENY_COURSES)
         or (seg in TRIPLE_MATCH_DENY_SEGMENTS)
     )
-    deny_anagusa_dm = (
-        (course_name in ANAGUSA_DM_DENY_COURSES)
-        or (seg in ANAGUSA_DM_DENY_SEGMENTS)
-    )
-    deny_high_odds = seg in DM_HIGH_ODDS_DENY_SEGMENTS
     deny_popular_downside = course_name in POPULAR_DOWNSIDE_DENY_COURSES
 
     for i, h in enumerate(horses):
@@ -273,16 +270,12 @@ def compute_dm_signals(
             continue
 
         battle_dm = h.jvan_battle_dm or 0.0
-        anagusa = h.anagusa_rank
         popularity = pop.get(h.horse_number)
-        win_odds = odds.get(h.horse_number)
-
-        tags: list[str] = []
 
         # 🔥 三冠一致: base=1 ∧ time=1 ∧ battle=1
         # 信頼度フィルタ: 福島/阪神/京都, 芝マイル, ダート中距離は除外
         if br == 1 and tr == 1 and ar == 1 and not deny_triple:
-            tags.append(SIGNAL_TRIPLE_MATCH)
+            h.dm_signals.append(SIGNAL_TRIPLE_MATCH)
 
         # ⭐ 高得点鉄板: composite≥60 ∧ battle≥65 ∧ composite順位≤2
         # 絶対しきい値だけだと強メンバー戦で多数該当し鉄板印が乱発するため、
@@ -292,44 +285,7 @@ def compute_dm_signals(
             and battle_dm >= TOP_PREMIUM_BATTLE_MIN
             and br <= TOP_PREMIUM_RANK_MAX
         ):
-            tags.append(SIGNAL_TOP_PREMIUM)
-
-        # 🏆 穴ぐさDM: anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5
-        # 信頼度フィルタ: 東京 (ROI 21%!) など除外
-        if (
-            anagusa in ("A", "B")
-            and ar == 1
-            and popularity is not None
-            and popularity >= ANAGUSA_DM_POP_MIN
-            and not deny_anagusa_dm
-        ):
-            tags.append(SIGNAL_ANAGUSA_DM)
-
-        # ⚡ DM大穴: battle=1 ∧ 人気≥7 ∧ battle値≥65
-        # (全 segment で ROI≥125% で安定。フィルタなし)
-        if (
-            ar == 1
-            and popularity is not None
-            and popularity >= DM_BIG_DARK_POP_MIN
-            and battle_dm >= DM_BIG_DARK_BATTLE_MIN
-        ):
-            tags.append(SIGNAL_DM_BIG_DARK)
-
-        # ⚡ DM高オッズ: battle=1 ∧ オッズ≥10 ∧ time≤2
-        # 信頼度フィルタ: 芝×マイル (ROI 0%) は除外
-        if (
-            ar == 1
-            and win_odds is not None
-            and win_odds >= DM_HIGH_ODDS_MIN
-            and tr is not None
-            and tr <= DM_HIGH_ODDS_TIME_RANK_MAX
-            and not deny_high_odds
-        ):
-            tags.append(SIGNAL_DM_HIGH_ODDS)
-
-        # 💎 穴ぐさ+DMtime: anagusa=A ∧ time=1 (フィルタなし)
-        if anagusa == "A" and tr == 1:
-            tags.append(SIGNAL_ANAGUSA_DM_TIME)
+            h.dm_signals.append(SIGNAL_TOP_PREMIUM)
 
         # ❌ 人気下振れ: 人気≤3 ∧ base≥4位 ∧ battle≥4位
         # 信頼度フィルタ: 福島/小倉/阪神/京都 では「警戒対象が実は来やすい」ため非発動
@@ -340,9 +296,7 @@ def compute_dm_signals(
             and ar >= POPULAR_DOWNSIDE_RANK_MIN
             and not deny_popular_downside
         ):
-            tags.append(SIGNAL_POPULAR_DOWNSIDE)
-
-        h.dm_signals = tags
+            h.dm_signals.append(SIGNAL_POPULAR_DOWNSIDE)
 
 
 def popularity_from_odds(

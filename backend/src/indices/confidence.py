@@ -20,47 +20,75 @@ def score_to_rank(score: int) -> str:
     return "C"
 
 
+def is_market_favorite(win_odds_top: float | None, all_win_odds: list[float] | None) -> bool | None:
+    """指数1位馬が単勝オッズでもレース内最低オッズ（1番人気）と一致するか。
+
+    market_agree（[[jra_axis_market_agree_redesign]]）の入力。全馬オッズが
+    揃っていない場合（発走直前以外・取得不能時）は None を返し、呼び出し側で
+    `calculate_recommend_rank` の market_agree=None フォールバックに委ねる。
+    """
+    if win_odds_top is None or not all_win_odds:
+        return None
+    return win_odds_top <= min(all_win_odds)
+
+
 def calculate_recommend_rank(
     confidence_score: int,
     win_prob_top: float | None = None,
     win_odds_top: float | None = None,
+    market_agree: bool | None = None,
 ) -> str:
     """推奨度ランク（=本命の堅さ・信頼度tier）を算出する (S/A/B/C)。
 
-    ⚠️ 再定義 (2026-06-05): 旧ロジックは EV=win_prob×odds の閾値(EV>2.0等)で
-    判定していたが、Phase2 で win_probability を較正(is_win)に変えた結果、
-    OOS検証(2025.7-2026.6, 10,883R)で **完全に逆転**した
-    (旧S=勝率14.4% / 旧C=勝率43.6%・ROIもS優位なし)。EVベース価値選別は
-    回収率に直結しないことも判明済みのため EVゲートを廃止し、検証で1位馬勝率が
-    単調になる「信頼度tier」へ再定義する。
+    ⚠️ 再定義 (2026-07-25, [[jra_axis_market_agree_redesign]]): 3年+完全OOS
+    (2025.7-2026.7) のセグメント異質性分析で、confidence_score（指数gapベース）
+    単独より「指数1位馬が単勝オッズでも1番人気と一致するか(market_agree)」の方が
+    的中率の分離が支配的と判明。市場乖離グループ(的中15〜26%)と市場一致グループ
+    (的中27〜51%)がほぼ重ならず、confidence_score>=80の最上位ですら市場が
+    支持していなければ最下位の市場一致グループより弱い
+    （train+val: S×乖離21.4% < C×一致27.0%、testでも同様の逆転）。
+    market_agree を第一分岐、confidence_score を第二分岐に再構成する。
 
-    検証済み tier（1位=composite最上位馬の勝率 / 複勝率）:
-      S 鉄板 : 指数1位が断然人気(単勝<1.5)      → 70.5% / 92.2%
-      A 信頼 : confidence_score >= 80 (conf S)   → 41.0% / 72.7%
-      B      : confidence_score >= 65 (conf A)   → 24.4% / 57.1%
-      C 混戦 : 上記以外                          → ~20%
+    検証済み tier（1位=composite最上位馬の勝率、train+val / testOOS）:
+      S 最強軸: 断然人気(単勝<1.5) または (市場一致 ∧ confidence_score>=80) → 45〜51% / 70%+(断然人気時)
+      A 信頼軸: 市場一致 ∧ confidence_score>=65                              → 33〜40%
+      B 準軸  : 市場一致 ∧ confidence_score<65                               → 27〜35%
+      C 混戦  : 市場乖離（confidence問わず）                                  → 15〜26%
+      market_agree=None（全馬オッズ未取得）時は旧ロジック（confidence_scoreのみ）にフォールバック。
 
     ※ 高オッズの「妙味穴」は別軸（is_sweet_spot・回収率重視）。recommend_rank は
        「的中重視の本命の堅さ」。統一取捨: sweet_spot馬がいれば妙味穴(単勝) >
-       recommend S 鉄板 > A 信頼軸 > 見送り。
+       recommend S 最強軸 > A 信頼軸 > 見送り。
 
     Args:
         confidence_score: 信頼度スコア (0-100)
         win_prob_top:     予測1位馬の勝率（互換のため残置・未使用）
         win_odds_top:     予測1位馬（composite最上位）の単勝オッズ。None=未取得
+        market_agree:     指数1位馬が単勝1番人気と一致するか。`is_market_favorite()`で算出。
+                           None=全馬オッズ未取得で計算不能
 
     Returns:
         "S" | "A" | "B" | "C"
     """
-    # S: 指数1位が断然人気（単勝 < 1.5）= 鉄板本命
+    # S: 指数1位が断然人気（単勝 < 1.5）= 鉄板本命（market_agree を問わず優先）
     if win_odds_top is not None and win_odds_top < 1.5:
         return "S"
-    # 以降は信頼度スコアのみ（オッズ未取得でも評価可能）
+
+    if market_agree is None:
+        # 全馬オッズ未取得等で market_agree 計算不能 → 旧ロジック（confidence_score のみ）
+        if confidence_score >= 80:
+            return "A"
+        if confidence_score >= 65:
+            return "B"
+        return "C"
+
+    if not market_agree:
+        return "C"
     if confidence_score >= 80:
-        return "A"
+        return "S"
     if confidence_score >= 65:
-        return "B"
-    return "C"
+        return "A"
+    return "B"
 
 
 def calculate_race_confidence(

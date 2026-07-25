@@ -14,7 +14,7 @@ JRA の各表示シグナルが OOS で主張通りに機能しているか(tier
   ① jra_buy_signal           (buy/caution/pass)            レース1位馬の単ROI
   ② jra_horse_purchase_signal(super_buy/buy/watch)         馬個別の単ROI
   ③ is_sweet_spot (JRA)      (odds≥10 ∧ EV∈[1.2,5.0] ∧ バッジ ∧ k≤2)
-  ④ dm_signals 7タグ         各タグの 勝率/複勝/単ROI
+  ④ dm_signals 5タグ         各タグの 勝率/複勝/単ROI（2026-07-25穴タグ再設計）
   ⑤ anagusa_rank A/B/C       外部ピックの 単/複ROI
   ⑥ 外部指数穴馬 (nb/km)     external_dark_horse の的中/ROI
   ⑦ confidence_rank / recommend_rank (地方と共有・JRA未検証の疑い)  1位馬の勝率単調性
@@ -57,6 +57,7 @@ from src.indices.buy_signal import (  # noqa: E402
 from src.indices.confidence import (  # noqa: E402
     calculate_race_confidence,
     calculate_recommend_rank,
+    is_market_favorite,
 )
 from src.indices.dm_signals import compute_dm_signals  # noqa: E402
 
@@ -225,6 +226,8 @@ def annotate(df: pd.DataFrame, ext: dict) -> pd.DataFrame:
             jvan_time_dm=float(r.jvan_time_dm) if pd.notna(r.jvan_time_dm) else None,
             jvan_battle_dm=float(r.jvan_battle_dm) if pd.notna(r.jvan_battle_dm) else None,
             anagusa_rank=r.anagusa_rank,
+            nb_ave_rank=r.nb_ave_rank,
+            km_rank=r.km_rank,
             dm_signals=None,
         ) for r in g.itertuples()]
         odds_map = {int(r.horse_number): float(r.win_odds)
@@ -275,7 +278,12 @@ def annotate(df: pd.DataFrame, ext: dict) -> pd.DataFrame:
         conf = calculate_race_confidence(comp, head_count, wp_list or None)
         g["confidence_rank"] = conf["rank"]
         g["confidence_label"] = conf["label"]
-        g["recommend_rank"] = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds)
+        all_odds = [float(x) for x in g["win_odds"].tolist() if pd.notna(x)]
+        market_agree = is_market_favorite(top_odds, all_odds or None)
+        g["market_agree"] = market_agree
+        g["recommend_rank"] = calculate_recommend_rank(
+            conf["score"], conf.get("win_prob_top"), top_odds, market_agree
+        )
         parts.append(g)
     return pd.concat(parts, ignore_index=True)
 
@@ -353,18 +361,21 @@ def run_block(df: pd.DataFrame, label: str, rng: np.random.Generator) -> None:
             st = _roi_ci(gg, rng)
             print(f"     {str(b):<10}{st['n']:>6}{st['win']:>6.1f}%{st['roi']:>8.3f}{st['drop1']:>8.3f}")
 
-    # ④ DM signals 7タグ (各タグ該当馬)
-    print("\n--- ④ dm_signals 7タグ: 各タグ該当馬の成績 (claim はコメント値) ---")
-    dm_tags = ["三冠一致", "高得点鉄板", "穴ぐさDM", "DM大穴", "DM高オッズ", "穴ぐさ+DMtime", "人気下振れ"]
-    dm_claims = {"三冠一致": 0.849, "高得点鉄板": 1.012, "穴ぐさDM": 1.888, "DM大穴": 1.540,
-                 "DM高オッズ": 1.300, "穴ぐさ+DMtime": 1.035, "人気下振れ": 0.739}
+    # ④ DM signals 5タグ (各タグ該当馬、2026-07-25穴タグ再設計)
+    # ⚠️ 複数指数一致穴/指数一致穴は「単勝ROI」ではなく「複勝的中率の分離」を狙った
+    # タグ([[jra_upset_badge_redesign]])のため主張値は複勝的中率(claim列は単ROI専用のため"-")
+    print("\n--- ④ dm_signals 5タグ: 各タグ該当馬の成績 (claim はコメント値) ---")
+    dm_tags = ["三冠一致", "高得点鉄板", "複数指数一致穴", "指数一致穴", "人気下振れ"]
+    dm_claims = {"三冠一致": 0.849, "高得点鉄板": 1.012, "人気下振れ": 0.739}
     print(f"  {'タグ':<14}{'n':>6}{'勝率':>7}{'複勝':>7}{'単ROI':>7}{'drop1':>7}{'95%CI':>15}{'主張':>8}")
     for tag in dm_tags:
         s = df[df["dm_signals"].apply(lambda xs: tag in xs)]
         st = _roi_ci(s, rng)
         star = " ★" if st["lo"] > 1.0 else (" ◯" if st["roi"] > 1.0 else "")
+        cv = dm_claims.get(tag)
+        claim_str = f"{cv:>8.3f}" if cv is not None else f"{'-':>8}"
         print(f"  {tag:<14}{st['n']:>6}{st['win']:>6.1f}%{st['plc']:>6.1f}%{st['roi']:>7.3f}"
-              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{dm_claims[tag]:>8.3f}{star}")
+              f"{st['drop1']:>7.3f}  [{st['lo']:.2f},{st['hi']:.2f}]{claim_str}{star}")
 
     # ⑤ anagusa_rank A/B/C (1位以外も含む全馬・外部ピック)
     print("\n--- ⑤ anagusa_rank A/B/C: 外部ピック馬の 単/複ROI (claim: A>B>C 単調・全<1) ---")
