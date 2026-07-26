@@ -1,0 +1,254 @@
+{
+  "note": "参考値・信頼度低め。odds_history蓄積が約5ヶ月・全体1093レースしかなく、Phase3の確認期間検証(diagnostic 8,377/confirmation 1,905)と比べて統計的信頼性が大幅に低い。単一hold-out分割(前後半)による簡易一貫性チェックであり、二段階honest検証(診断/確認)ではない。",
+  "min_snapshots_filter": 10,
+  "explore_fraction": 0.6,
+  "n_races_explore": 656,
+  "n_races_confirm": 437,
+  "explore_date_range": [
+    "20260328",
+    "20260607"
+  ],
+  "confirm_date_range": [
+    "20260607",
+    "20260719"
+  ],
+  "quartile_bounds_from_explore": [
+    0.810025,
+    1.0,
+    1.0
+  ],
+  "section1_quartile": {
+    "explore": {
+      "Q1(最も下げた)": {
+        "n": 164,
+        "n_settled": 164,
+        "place_hit_rate": 0.6098,
+        "win_hit_rate": 0.2439,
+        "mean_ratio": 0.668
+      },
+      "Q2": {
+        "n": 396,
+        "n_settled": 396,
+        "place_hit_rate": 0.6237,
+        "win_hit_rate": 0.2879,
+        "mean_ratio": 0.9614
+      },
+      "Q3": {
+        "n": 0,
+        "n_settled": 0,
+        "place_hit_rate": null,
+        "win_hit_rate": null,
+        "mean_ratio": null
+      },
+      "Q4(最も上がった)": {
+        "n": 96,
+        "n_settled": 96,
+        "place_hit_rate": 0.4792,
+        "win_hit_rate": 0.2083,
+        "mean_ratio": 1.1821
+      }
+    },
+    "confirm": {
+      "Q1(最も下げた)": {
+        "n": 170,
+        "n_settled": 170,
+        "place_hit_rate": 0.6118,
+        "win_hit_rate": 0.2765,
+        "mean_ratio": 0.6688
+      },
+      "Q2": {
+        "n": 200,
+        "n_settled": 200,
+        "place_hit_rate": 0.535,
+        "win_hit_rate": 0.245,
+        "mean_ratio": 0.9488
+      },
+      "Q3": {
+        "n": 0,
+        "n_settled": 0,
+        "place_hit_rate": null,
+        "win_hit_rate": null,
+        "mean_ratio": null
+      },
+      "Q4(最も上がった)": {
+        "n": 67,
+        "n_settled": 67,
+        "place_hit_rate": 0.5373,
+        "win_hit_rate": 0.209,
+        "mean_ratio": 1.2602
+      }
+    }
+  },
+  "q1_minus_q4_gap": {
+    "explore": 0.1306,
+    "confirm": 0.07450000000000001
+  },
+  "section2_tier_split": {
+    "thresholds_from_explore": {
+      "S": 1.0,
+      "C+": 1.0,
+      "B": 0.9286,
+      "C": 1.0,
+      "A": 0.9751000000000001
+    },
+    "explore": {
+      "S": {
+        "tier": "S",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 80,
+          "n_settled": 80,
+          "place_hit_rate": 0.7625
+        },
+        "high_ratio(上がった)": {
+          "n": 17,
+          "n_settled": 17,
+          "place_hit_rate": 0.7647
+        },
+        "gap": -0.0022000000000000908
+      },
+      "A": {
+        "tier": "A",
+        "threshold": 0.9751,
+        "low_ratio(下げた)": {
+          "n": 52,
+          "n_settled": 52,
+          "place_hit_rate": 0.6346
+        },
+        "high_ratio(上がった)": {
+          "n": 52,
+          "n_settled": 52,
+          "place_hit_rate": 0.7115
+        },
+        "gap": -0.07689999999999997
+      },
+      "B": {
+        "tier": "B",
+        "threshold": 0.9286,
+        "low_ratio(下げた)": {
+          "n": 87,
+          "n_settled": 87,
+          "place_hit_rate": 0.5862
+        },
+        "high_ratio(上がった)": {
+          "n": 86,
+          "n_settled": 86,
+          "place_hit_rate": 0.7326
+        },
+        "gap": -0.14639999999999997
+      },
+      "C+": {
+        "tier": "C+",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 106,
+          "n_settled": 106,
+          "place_hit_rate": 0.6226
+        },
+        "high_ratio(上がった)": {
+          "n": 22,
+          "n_settled": 22,
+          "place_hit_rate": 0.2727
+        },
+        "gap": 0.34990000000000004
+      },
+      "C": {
+        "tier": "C",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 122,
+          "n_settled": 122,
+          "place_hit_rate": 0.4262
+        },
+        "high_ratio(上がった)": {
+          "n": 32,
+          "n_settled": 32,
+          "place_hit_rate": 0.3438
+        },
+        "gap": 0.08240000000000003
+      }
+    },
+    "confirm": {
+      "S": {
+        "tier": "S",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 50,
+          "n_settled": 50,
+          "place_hit_rate": 0.78
+        },
+        "high_ratio(上がった)": {
+          "n": 7,
+          "n_settled": 7,
+          "place_hit_rate": 0.5714
+        },
+        "gap": 0.2086,
+        "reproduced": false
+      },
+      "A": {
+        "tier": "A",
+        "threshold": 0.9751,
+        "low_ratio(下げた)": {
+          "n": 44,
+          "n_settled": 44,
+          "place_hit_rate": 0.6136
+        },
+        "high_ratio(上がった)": {
+          "n": 24,
+          "n_settled": 24,
+          "place_hit_rate": 0.75
+        },
+        "gap": -0.13639999999999997,
+        "reproduced": false
+      },
+      "B": {
+        "tier": "B",
+        "threshold": 0.9286,
+        "low_ratio(下げた)": {
+          "n": 59,
+          "n_settled": 59,
+          "place_hit_rate": 0.5763
+        },
+        "high_ratio(上がった)": {
+          "n": 33,
+          "n_settled": 33,
+          "place_hit_rate": 0.5152
+        },
+        "gap": 0.06110000000000004,
+        "reproduced": false
+      },
+      "C+": {
+        "tier": "C+",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 91,
+          "n_settled": 91,
+          "place_hit_rate": 0.5495
+        },
+        "high_ratio(上がった)": {
+          "n": 21,
+          "n_settled": 21,
+          "place_hit_rate": 0.4762
+        },
+        "gap": 0.07329999999999998,
+        "reproduced": false
+      },
+      "C": {
+        "tier": "C",
+        "threshold": 1.0,
+        "low_ratio(下げた)": {
+          "n": 85,
+          "n_settled": 85,
+          "place_hit_rate": 0.4235
+        },
+        "high_ratio(上がった)": {
+          "n": 23,
+          "n_settled": 23,
+          "place_hit_rate": 0.5217
+        },
+        "gap": -0.09820000000000007,
+        "reproduced": false
+      }
+    }
+  }
+}
