@@ -1,0 +1,104 @@
+{
+  "note": "参考値・信頼度低め。odds_history蓄積が約5ヶ月・全体1126レースしかなく、Phase3の確認期間検証(diagnostic 8,377/confirmation 1,905)と比べて統計的信頼性が大幅に低い。単一hold-out分割(前後半)による簡易一貫性チェックであり、二段階honest検証(診断/確認)ではない。本番実装はしない。",
+  "skip_counts": {
+    "active_lt_8": 2,
+    "market_odds_incomplete": 0,
+    "included_races": 1126
+  },
+  "min_active_horses": 8,
+  "explore_fraction": 0.6,
+  "n_horses_explore": 9573,
+  "n_horses_confirm": 6072,
+  "n_races_explore": 676,
+  "n_races_confirm": 450,
+  "health_check": {
+    "n_races": 1126,
+    "harville_sum_mean": 3.0,
+    "harville_sum_min": 2.999997,
+    "harville_sum_max": 3.000003,
+    "harville_sum_stdev": 1e-06,
+    "market_sum_mean": 3.0,
+    "market_sum_min": 2.999995,
+    "market_sum_max": 3.000003
+  },
+  "quartile_bounds_from_explore": [
+    -0.003548,
+    0.015632,
+    0.040988
+  ],
+  "quartile_stats": {
+    "explore": {
+      "Q1(市場<理論・最も割安寄り)": {
+        "n": 2394,
+        "n_settled": 2394,
+        "place_hit_rate": 0.4883,
+        "mean_score": -0.105089,
+        "mean_market_place_prob": 0.4153,
+        "mean_harville_place_prob": 0.5204
+      },
+      "Q2": {
+        "n": 2393,
+        "n_settled": 2393,
+        "place_hit_rate": 0.0852,
+        "mean_score": 0.007186,
+        "mean_market_place_prob": 0.0831,
+        "mean_harville_place_prob": 0.0759
+      },
+      "Q3": {
+        "n": 2393,
+        "n_settled": 2393,
+        "place_hit_rate": 0.1141,
+        "mean_score": 0.026775,
+        "mean_market_place_prob": 0.1338,
+        "mean_harville_place_prob": 0.107
+      },
+      "Q4(市場>理論・最も割高寄り)": {
+        "n": 2393,
+        "n_settled": 2393,
+        "place_hit_rate": 0.1613,
+        "mean_score": 0.071172,
+        "mean_market_place_prob": 0.2151,
+        "mean_harville_place_prob": 0.1439
+      }
+    },
+    "confirm": {
+      "Q1(市場<理論・最も割安寄り)": {
+        "n": 1536,
+        "n_settled": 1536,
+        "place_hit_rate": 0.472,
+        "mean_score": -0.105433,
+        "mean_market_place_prob": 0.4317,
+        "mean_harville_place_prob": 0.5371
+      },
+      "Q2": {
+        "n": 1328,
+        "n_settled": 1328,
+        "place_hit_rate": 0.0934,
+        "mean_score": 0.007976,
+        "mean_market_place_prob": 0.0947,
+        "mean_harville_place_prob": 0.0867
+      },
+      "Q3": {
+        "n": 1724,
+        "n_settled": 1724,
+        "place_hit_rate": 0.1235,
+        "mean_score": 0.027312,
+        "mean_market_place_prob": 0.1301,
+        "mean_harville_place_prob": 0.1028
+      },
+      "Q4(市場>理論・最も割高寄り)": {
+        "n": 1484,
+        "n_settled": 1484,
+        "place_hit_rate": 0.1954,
+        "mean_score": 0.070261,
+        "mean_market_place_prob": 0.227,
+        "mean_harville_place_prob": 0.1567
+      }
+    }
+  },
+  "q4_minus_q1_gap": {
+    "explore": -0.327,
+    "confirm": -0.27659999999999996
+  },
+  "gap_reproduced": false
+}

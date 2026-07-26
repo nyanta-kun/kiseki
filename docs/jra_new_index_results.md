@@ -13,6 +13,8 @@
 | 3 | 市場混戦度スコア(HHI/Shannon Entropy)による見送り判定強化 | 診断期間(2023-07〜2025-12, n=8,377)で探索→確認期間(2026-01〜07, n=1,905)で固定閾値のまま再現検証 | ✅ **既存tier方式への上乗せとして有効。確認期間で再現済み**（tier=C内をentropy_norm中央値分割で複勝的中率11〜13pt分離） | **本番実装済み**(2026-07-26デプロイ)。chihou/keirin展開は今後検討 |
 | 4-A | オッズ時系列特徴（締切直前の下げ足） | 単一時系列2分割・予備検証 (探索656R/確認437R, n=1,093) | ⚠️ **信頼度低い参考値。本番実装せず。** 方向性(下げ馬の的中率高)は両期間一致もQ1-Q4差が13.1pt→7.5ptに半減、tier内追加分離はn≥100かつ同符号再現0件 | 見送り（odds_history蓄積(1年以上・数千レース)を待って再検証） |
 | 4-B | 調教データ(坂路)特徴量 | 拡張窓(2025-07〜2026-07, train1924R/valid431R/test1200R)で複数seed(5)平均＋test集合bootstrap 95%CI＋drop1 | 🟡 **full8はぎりぎり有意(95%CI [+0.30,+2.33]pt)だが単一窓限定。simple5は非有意。本番実装せず** | 保留（次の独立test窓での再現確認・3年backfill実現後に再評価） |
+| 5-A | Plackett-Luce複勝確率 | 全期間(2023-05〜2026-07, n=149,751頭/10,800R)でECE比較・訓練/テスト両期間検証 | ✅ **ECEが現行ヒューリスティック比で約1/3に改善(0.024→0.007-0.009)、訓練/テスト一貫。既存composite.pyに同一実装あり流用可能** | **実装を提案・ユーザー判断待ち**。chihou/keirin展開は今後検討 |
+| 5-B | 複数券種オッズ裁定機会 | 単一時系列2分割・予備検証(探索676R/確認450R, n=1,126) | ⚠️ **証拠不十分。本番実装せず。** mispricing Q1は人気馬集中のアーチファクトと判明・既存tierと重複。Q2〜Q4は単調再現あるがオッズ水準交絡未統制・ROI未計算 | 見送り（odds_history蓄積後に層別・ROI評価で再検証） |
 
 ## Phase 1: 新規特徴量7種 詳細結果
 
@@ -180,3 +182,58 @@ Q1-Q4差: 探索用13.1pt→確認用7.5pt（方向は一致するが幅がほ�
 **評価更新**: simple5単独は依然としてノイズと区別できない。full8は統計的有意性の閾値をぎりぎり超えたが、効果量が小さくCI下限がゼロに近接する「弱い有意」であり、**単一test窓(2026-03-16〜07-26)のみの検証**にとどまる。プロジェクトの過去事例（地方競馬sweet_spotのmodel-vintage look-ahead崩壊等）が示す通り、単一窓での有意性は次の独立窓で再現しないことがある。**「有望だが未確証」から「full8はぎりぎり有意だが単一窓限定・要再現確認」へ評価を更新。無条件の本番統合は依然として推奨しない**。次の独立test窓（2026-07-27以降の新規データ）でfull8のCIが再びゼロを跨がないか確認するwalk-forward再検証を先に行うべき。
 
 関連ファイル: `backend/scripts/jra_phase4b_chokyo_statistical_verification.py`・`backend/models/v26_phase4b_bootstrap_drop1.json`
+
+## Phase 4-B 追記: 3年backfillハング原因の切り分け結果（断念）
+
+過去2回の失敗ログを精査した結果、**「realtimeとの競合」仮説は否定された**:
+- 2026-05-31 11:49起動 → JVOpen呼び出し後7日間ログ無反応
+- 2026-06-07 23:55起動（realtime完全停止・EOD-Cleanup直後の「クリーンな夜間単独窓」）→ こちらも呼び出し後ログ無反応のまま約7週間放置（誰も気づかず2026-07-26まで生存）
+
+どちらもJVOpen()呼び出し内でPythonレベルのログを一切出さずに無期限ブロックしており、環境条件を変えても再現した。原因はローカルリソース競合でなく、JV-VANサーバー側/SDK側の`CHOKYO`データスペック×`option=4`(setup)の組み合わせ自体の構造的問題である可能性が高い。**ユーザー判断により3回目の再試行は断念**、Phase4-Bは現状の14ヶ月窓で保留とする。詳細: memory `jvlink_issues.md`・`training_data_integration.md`。
+
+## Phase 5-A: Plackett-Luce複勝確率 ✅ 実装を提案
+
+### 背景
+本番`inference_v26.py`の`place_probability`は「簡易: place_p = win_p × 3」というクリップ付きヒューリスティック（コメントに明記済み）で理論的根拠がない。Web調査Phase2で計画されたPlackett-Luce理論導出を実装・検証した。
+
+### 検証方法
+- 実装: `backend/scripts/jra_place_probability_plackett_luce.py`（研究用、DB書き込みなし）。Plackett-Luceの逐次選択式(P(1着)/P(2着)/P(3着))をO(n³)で計算
+- テスト: `backend/tests/test_plackett_luce.py`（33件全pass）。全順列列挙のブルートフォース検証(4〜6頭)・既存`composite.py::CompositeIndexCalculator._harville_place_probs`(v24系で既に稼働中、数式的に同一)とのクロスチェック含む
+- 対象: 2023-05-01〜2026-07-26、JRA10場・head_count≥8、149,751頭/10,800レース
+
+### 結果
+**健全性チェック**: 全10,800レースでP(3着以内)合計=3.000000(理論値3.0との最大乖離2.66e-15)。実装は正しい。
+
+**ECE比較**（現行ヒューリスティック vs Plackett-Luce）:
+| 期間 | n | ECE ヒューリスティック | ECE Plackett-Luce | Brier ヒューリスティック | Brier PL |
+|---|---|---|---|---|---|
+| 全期間 | 149,751 | 0.0247 | **0.0072** | 0.1407 | 0.1387 |
+| 訓練期間相当(2023-05〜2025-06) | 100,363 | 0.0248 | **0.0075** | 0.1405 | 0.1386 |
+| テスト期間(2026-01〜07) | 26,762 | 0.0243 | **0.0092** | 0.1400 | 0.1376 |
+
+ECEは訓練・テスト両期間で一貫して約1/3に改善。最上位decile(本命馬中心)でヒューリスティックは予測70.8%対実測60.4%(-10.4pt乖離)だがPLは予測61.4%対実測60.4%(-1.1pt)と大幅改善。事前仮説「多頭数・人気薄で乖離大」は反証され、実際は**少頭数・上位人気ほど乖離が大きい**（win_p×3のクリップで本命馬の情報が失われるため）。
+
+### 結論・実装コスト
+**本番`inference_v26.py`のplace_probability計算式を置き換える価値がある。** 実装コストは低い: 既に`composite.py::_harville_place_probs`として数式同一の実装が本番稼働中のため、新規実装ではなく既存ロジックの流用・移植で足りる。計算コストも1レース数ミリ秒・全期間149,751頭で約8秒と軽量。注意点: `inference_v26.py`のFETCH_SQLは現状abnormality_codeでフィルタしておらず取消馬が残存する場合があるため、本番導入時はworthsプール(softmax対象集合)から取消馬を除外する処理を確認する必要がある。
+
+**→ 本番実装は未実施。ユーザー判断待ち。**
+
+関連ファイル: `backend/scripts/jra_place_probability_plackett_luce.py`・`backend/tests/test_plackett_luce.py`・`backend/models/v26_place_probability_pl_calibration.json`
+
+## Phase 5-B: 複数券種オッズ裁定機会 ⚠️ 証拠不十分
+
+### データ制約
+`odds_history`は2026-03-28開始・約5ヶ月分(JRA10場head_count≥8で1,126レース)のみで、Phase3級の二段階honest検証は不可能。単一時系列2分割の予備検証にとどめた。
+
+### 検証方法
+- 実装: `backend/scripts/jra_odds_cross_bettype_arbitrage.py`（研究用、DB書き込みなし）。既存の共有実装`src/betting/odds_model.py::_harville_place_probs`/`harville_win_probs_from_odds`をそのまま再利用
+- テスト: `backend/tests/test_harville_place_probability.py`（16件全pass）
+- `mispricing_score = 市場複勝implied確率 − Harville理論複勝確率`を算出、四分位で探索用(676R)→確認用(450R)の一貫性を確認
+
+### 結果
+健全性チェックは良好(P(3着以内)合計=3.000000)。しかし**mispricing_scoreが最も負に大きいQ1(48%的中)は、単に単勝オッズが極端に低い断然人気馬が集中しているアーチファクト**と判明——Harvilleの乗法公式が市場implied値より人気馬の複勝確率を高く見積もる構造的な癖であり、既存の市場一致ベースtierと重複する情報にすぎない。Q1を除いたQ2→Q3→Q4では探索用8.5%→11.4%→16.1%、確認用9.3%→12.3%→19.5%と両窓で単調増加・再現しているが、オッズ水準(人気度)との交絡を統制しておらず、複勝ROIでの評価も未実施。
+
+### 結論
+**裁定機会が存在すると結論づけるには証拠不十分。本番実装は推奨しない。** odds_historyが1〜2年分蓄積されPhase3水準の検証が可能になった段階で、オッズ水準による層別・複勝ROI評価を行えば、Q2〜Q4の単調パターンが独立エッジか単なる人気度の別表現かを判別できる可能性がある。
+
+関連ファイル: `backend/scripts/jra_odds_cross_bettype_arbitrage.py`・`backend/tests/test_harville_place_probability.py`・`backend/models/v26_odds_arbitrage_analysis.json`
