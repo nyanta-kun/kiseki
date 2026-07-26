@@ -193,7 +193,7 @@ Q1-Q4差: 探索用13.1pt→確認用7.5pt（方向は一致するが幅がほ�
 
 どちらもJVOpen()呼び出し内でPythonレベルのログを一切出さずに無期限ブロックしており、環境条件を変えても再現した。原因はローカルリソース競合でなく、JV-VANサーバー側/SDK側の`CHOKYO`データスペック×`option=4`(setup)の組み合わせ自体の構造的問題である可能性が高い。**ユーザー判断により3回目の再試行は断念**、Phase4-Bは現状の14ヶ月窓で保留とする。詳細: memory `jvlink_issues.md`・`training_data_integration.md`。
 
-## Phase 5-A: Plackett-Luce複勝確率 ✅ 実装を提案
+## Phase 5-A: Plackett-Luce複勝確率 ✅ 本番実装済み
 
 ### 背景
 本番`inference_v26.py`の`place_probability`は「簡易: place_p = win_p × 3」というクリップ付きヒューリスティック（コメントに明記済み）で理論的根拠がない。Web調査Phase2で計画されたPlackett-Luce理論導出を実装・検証した。
