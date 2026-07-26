@@ -47,7 +47,12 @@ from ..indices.buy_signal import (
     jra_horse_purchase_signal,
 )
 from ..indices.composite import COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank, is_market_favorite
+from ..indices.confidence import (
+    calculate_market_chaos,
+    calculate_race_confidence,
+    calculate_recommend_rank,
+    is_market_favorite,
+)
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from .ws_manager import manager as ws_manager
@@ -1250,9 +1255,11 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     # 指数1位馬が単勝1番人気と一致するか（market_agree, [[jra_axis_market_agree_redesign]]）
     all_win_odds = [o for o in win_odds_map.values() if o is not None]
     market_agree = is_market_favorite(top_win_odds, all_win_odds or None)
+    # 市場混戦度（entropy_norm）: tier=C を C+/C に分割する（Phase3, 2026-07-26）
+    entropy_norm = calculate_market_chaos(all_win_odds).get("entropy_norm")
 
     rec_rank = calculate_recommend_rank(
-        conf_data["score"], conf_data.get("win_prob_top"), top_win_odds, market_agree
+        conf_data["score"], conf_data.get("win_prob_top"), top_win_odds, market_agree, entropy_norm
     )
 
     return IndicesResponse(

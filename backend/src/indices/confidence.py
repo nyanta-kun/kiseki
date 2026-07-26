@@ -6,7 +6,49 @@ DBアクセスなし・純粋関数として実装。
 
 from __future__ import annotations
 
+import math
 import statistics
+
+# tier別 entropy_norm 中央値閾値（Phase3 市場混戦度分析で検証済み、
+# memory: jra_new_index_web_research_2026_07_26 / docs: jra_new_index_results.md）。
+# 診断期間(2023-07〜2025-12)の中央値をそのまま固定し、確認期間(2026-01〜07)で
+# 再現確認済み（tier=Cを本閾値で分割すると複勝的中率が11〜13pt分離）。
+ENTROPY_THRESHOLDS: dict[str, float] = {
+    "S": 0.6951,
+    "A": 0.7414,
+    "B": 0.7564,
+    "C": 0.7757,
+}
+
+
+def calculate_market_chaos(win_odds: list[float]) -> dict[str, float | None]:
+    """単勝オッズから市場混戦度（HHI・正規化Shannon entropy）を算出する。
+
+    全馬の単勝オッズから implied probability（控除率補正込み）を求め、
+    HHI（1に近いほど本命一強）と entropy_norm（0〜1、1に近いほど大混戦）を返す。
+    有効オッズが3頭未満の場合は算出不能として None を返す。
+
+    Args:
+        win_odds: 出走馬の単勝オッズリスト（None・1.0未満の異常値は無視）
+
+    Returns:
+        {"hhi": float | None, "entropy_norm": float | None}
+    """
+    valid = [o for o in win_odds if o is not None and o >= 1.0]
+    if len(valid) < 3:
+        return {"hhi": None, "entropy_norm": None}
+
+    implied = [1.0 / o for o in valid]
+    total = sum(implied)
+    if total <= 0:
+        return {"hhi": None, "entropy_norm": None}
+
+    probs = [q / total for q in implied]
+    hhi = sum(p * p for p in probs)
+    shannon = -sum(p * math.log(p) for p in probs if p > 0)
+    entropy_norm = shannon / math.log(len(probs))
+
+    return {"hhi": round(hhi, 4), "entropy_norm": round(entropy_norm, 4)}
 
 
 def score_to_rank(score: int) -> str:
@@ -37,8 +79,9 @@ def calculate_recommend_rank(
     win_prob_top: float | None = None,
     win_odds_top: float | None = None,
     market_agree: bool | None = None,
+    entropy_norm: float | None = None,
 ) -> str:
-    """推奨度ランク（=本命の堅さ・信頼度tier）を算出する (S/A/B/C)。
+    """推奨度ランク（=本命の堅さ・信頼度tier）を算出する (S/A/B/C/C+)。
 
     ⚠️ 再定義 (2026-07-25, [[jra_axis_market_agree_redesign]]): 3年+完全OOS
     (2025.7-2026.7) のセグメント異質性分析で、confidence_score（指数gapベース）
@@ -60,15 +103,24 @@ def calculate_recommend_rank(
        「的中重視の本命の堅さ」。統一取捨: sweet_spot馬がいれば妙味穴(単勝) >
        recommend S 最強軸 > A 信頼軸 > 見送り。
 
+    ⚠️ 追加 (2026-07-26, Phase3 市場混戦度分析 [[jra_new_index_web_research_2026_07_26]]):
+    tier=C（市場乖離）はさらに entropy_norm（単勝オッズの正規化Shannon entropy、
+    `calculate_market_chaos()`参照）で分割できることを診断期間・確認期間の両方で
+    確認済み。entropy_norm < ENTROPY_THRESHOLDS["C"]（まだ市場内で本命寄りに
+    拮抗している）の場合は "C+"（準見送り、複勝的中率約55%）として区別し、
+    それ以外（真の大混戦、複勝的中率約43%）は従来通り "C"（見送り）とする。
+
     Args:
         confidence_score: 信頼度スコア (0-100)
         win_prob_top:     予測1位馬の勝率（互換のため残置・未使用）
         win_odds_top:     予測1位馬（composite最上位）の単勝オッズ。None=未取得
         market_agree:     指数1位馬が単勝1番人気と一致するか。`is_market_favorite()`で算出。
                            None=全馬オッズ未取得で計算不能
+        entropy_norm:     レースの市場混戦度（`calculate_market_chaos()`で算出）。
+                           None=算出不能（tier=C内のC+分割は行わずCのまま）
 
     Returns:
-        "S" | "A" | "B" | "C"
+        "S" | "A" | "B" | "C" | "C+"
     """
     # S: 指数1位が断然人気（単勝 < 1.5）= 鉄板本命（market_agree を問わず優先）
     if win_odds_top is not None and win_odds_top < 1.5:
@@ -80,15 +132,19 @@ def calculate_recommend_rank(
             return "A"
         if confidence_score >= 65:
             return "B"
-        return "C"
-
-    if not market_agree:
-        return "C"
-    if confidence_score >= 80:
+        tier = "C"
+    elif not market_agree:
+        tier = "C"
+    elif confidence_score >= 80:
         return "S"
-    if confidence_score >= 65:
+    elif confidence_score >= 65:
         return "A"
-    return "B"
+    else:
+        return "B"
+
+    if entropy_norm is not None and entropy_norm < ENTROPY_THRESHOLDS["C"]:
+        return "C+"
+    return tier
 
 
 def calculate_race_confidence(

@@ -130,7 +130,7 @@ export type RaceConfidence = {
   score: number;
   label: "HIGH" | "MID" | "LOW";
   rank: "S" | "A" | "B" | "C";
-  recommend_rank: "S" | "A" | "B" | "C";
+  recommend_rank: "S" | "A" | "B" | "C" | "C+";
   gap_1_2: number;
   gap_1_3: number;
   head_count: number;
@@ -592,8 +592,8 @@ export type Recommendation = {
   rank: number;
   race: RecommendationRace;
   bet_type: "win" | "place" | "trifecta";
-  /** 的中重視tier（市場一致ベース再設計）: S 最強軸 / A 信頼軸 / B 準軸（旧 SS/3F は降格済） */
-  tier: "S" | "A" | "B" | "SS" | "3F-2軸" | "3F-BOX" | null;
+  /** 的中重視tier（市場一致ベース再設計）: S 最強軸 / A 信頼軸 / B 準軸 / C+ 準見送り（旧 SS/3F は降格済） */
+  tier: "S" | "A" | "B" | "C+" | "SS" | "3F-2軸" | "3F-BOX" | null;
   /** 実際の買い目組み合わせ 単勝: [[馬番]] / 3連複: [[1,2,3],[1,2,4],...] */
   ticket_combos: number[][] | null;
   points: number | null;
@@ -607,6 +607,10 @@ export type Recommendation = {
   snapshot_at: string | null;
   reason: string;
   confidence: number;
+  /** tier固定値でなくレース単位の連続値スコア(confidence_score - entropy_norm*30) */
+  priority_score: number;
+  /** 市場混戦度(0〜1、1に近いほど大混戦、算出不能時null) Phase3で追加 */
+  entropy_norm: number | null;
   result_correct: boolean | null;
   result_payout: number | null;
   result_updated_at: string | null;

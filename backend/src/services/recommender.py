@@ -37,7 +37,12 @@ from ..indices.buy_signal import (
     jra_horse_purchase_signal,
 )
 from ..indices.composite import COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank, is_market_favorite
+from ..indices.confidence import (
+    calculate_market_chaos,
+    calculate_race_confidence,
+    calculate_recommend_rank,
+    is_market_favorite,
+)
 
 # JRA 2桁コード → sekito course_code
 _JRA_TO_SEKITO: dict[str, str] = {
@@ -663,13 +668,21 @@ async def collect_recommendation_source(session: AsyncSession, date: str) -> dic
 #   S 最強軸: 断然人気(単勝<1.5) または 市場一致∧confidence_score>=80  勝率45-51% → 単勝
 #   A 信頼軸: 市場一致 ∧ confidence_score>=65                          勝率33-40% → 単勝
 #   B 準軸  : 市場一致 ∧ confidence_score<65                           勝率27-35% → 複勝
-#   C 混戦  : 市場乖離（confidence問わず）                              勝率15-26% → 推奨しない(見送り)
+#   C+準見送り: 市場乖離 ∧ entropy_norm<0.7757（まだ拮抗）             複勝的中率約55% → 複勝
+#   C 混戦  : 市場乖離 ∧ entropy_norm>=0.7757（真の大混戦）            複勝的中率約43% → 推奨しない(見送り)
+#
+# C+ は Phase3 市場混戦度分析（[[jra_new_index_web_research_2026_07_26]]、
+# docs/jra_new_index_results.md）で追加。診断期間(2023-07〜2025-12)で発見した
+# entropy_norm中央値閾値を確認期間(2026-01〜07)でもそのまま適用し再現確認済み。
 
-_HIT_TIER_BET: dict[str, str] = {"S": "win", "A": "win", "B": "place"}
-_HIT_TIER_CONFIDENCE: dict[str, float] = {"S": 0.85, "A": 0.65, "B": 0.50}
+_HIT_TIER_BET: dict[str, str] = {"S": "win", "A": "win", "B": "place", "C+": "place"}
+_HIT_TIER_CONFIDENCE: dict[str, float] = {"S": 0.85, "A": 0.65, "B": 0.50, "C+": 0.40}
 _HIT_TIER_LABEL: dict[str, str] = {
-    "S": "最強軸（市場一致）", "A": "信頼軸", "B": "準軸",
+    "S": "最強軸（市場一致）", "A": "信頼軸", "B": "準軸", "C+": "準見送り（要注意）",
 }
+# entropy_norm によるペナルティ係数（Phase3で検証済み、confidence_score - entropy_norm*30
+# を同tier内の並び替えキーに使うと Risk-Coverage が既存tier単独より一貫して改善する）
+_ENTROPY_PENALTY_WEIGHT = 30.0
 
 
 def _value_badges(h: dict[str, Any]) -> list[str]:
@@ -742,7 +755,12 @@ async def build_hit_tier_recommendations(
         top_odds = top1.get("win_odds")
         all_odds = [h["win_odds"] for h in horses if h.get("win_odds") is not None]
         market_agree = is_market_favorite(top_odds, all_odds or None)
-        tier = calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_odds, market_agree)
+        chaos = calculate_market_chaos(all_odds or [])
+        entropy_norm = chaos.get("entropy_norm")
+        tier = calculate_recommend_rank(
+            conf["score"], conf.get("win_prob_top"), top_odds, market_agree, entropy_norm
+        )
+        priority_score = conf["score"] - (entropy_norm or 0.0) * _ENTROPY_PENALTY_WEIGHT
 
         # 複勝EVモデル: 毎レース人気薄1頭を選定（C レースでも算出: 混戦こそ穴の主戦場）
         # 2026-06-13 検証 (memory: place_ev_model):
@@ -763,9 +781,11 @@ async def build_hit_tier_recommendations(
             place_pick_map[hn] = place_pick
 
         if tier == "C":
-            # 混戦は本命を出さない。複勝EV軸は毎レース1頭のため単独「穴軸」カードは作らず、
-            # 推奨リストには載せない（ユーザー要件 2026-06-13）。
-            # 該当馬はレース詳細ページのバッジで識別できる（races API の is_place_ev_axis）。
+            # 真の大混戦(entropy_norm高)は本命を出さない。"C+"(entropy_norm低・準見送り)は
+            # 下で bet_type="place" として推奨リストに残る（Phase3, 2026-07-26）。
+            # 複勝EV軸は毎レース1頭のため単独「穴軸」カードは作らず、推奨リストには載せない
+            # （ユーザー要件 2026-06-13）。該当馬はレース詳細ページのバッジで識別できる
+            # （races API の is_place_ev_axis）。
             continue
 
         bet_type = _HIT_TIER_BET[tier]
@@ -885,14 +905,18 @@ async def build_hit_tier_recommendations(
             "snapshot_at": now,
             "reason": reason,
             "confidence": _HIT_TIER_CONFIDENCE[tier],
+            "priority_score": round(priority_score, 1),
+            "entropy_norm": entropy_norm,
             "result_correct": result_correct,
             "result_payout": result_payout,
             "result_updated_at": result_updated_at,
         })
 
     # tier 優先（S>A>B>穴）→ confidence 降順で rank 付け
-    tier_order = {"S": 0, "A": 1, "B": 2, "穴": 3}
-    candidates.sort(key=lambda c: (tier_order.get(c["tier"], 9), -c["confidence"]))
+    # tier優先(S>A>B>C+)→ 同tier内は priority_score(confidence_score - entropy_norm*30)
+    # 降順（Phase3で検証済み。confidenceは tier固定値のため同tier内では無意味だった）
+    tier_order = {"S": 0, "A": 1, "B": 2, "C+": 3, "穴": 4}
+    candidates.sort(key=lambda c: (tier_order.get(c["tier"], 9), -c["priority_score"]))
     for i, c in enumerate(candidates, start=1):
         c["rank"] = i
         c["id"] = -c["race_id"]

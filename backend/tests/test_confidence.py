@@ -8,6 +8,8 @@ from __future__ import annotations
 import pytest
 
 from src.indices.confidence import (
+    ENTROPY_THRESHOLDS,
+    calculate_market_chaos,
     calculate_race_confidence,
     calculate_recommend_rank,
     is_market_favorite,
@@ -281,3 +283,77 @@ class TestCalculateRecommendRank:
     def test_default_market_agree_is_none(self) -> None:
         """market_agree未指定時は旧ロジック相当（後方互換）。"""
         assert calculate_recommend_rank(85, win_odds_top=3.0) == "A"
+
+    def test_entropy_norm_omitted_keeps_plain_c(self) -> None:
+        """entropy_norm未指定時は従来通りC（後方互換、C+へは分割されない）。"""
+        assert calculate_recommend_rank(50, win_odds_top=3.0, market_agree=False) == "C"
+
+    def test_low_entropy_c_becomes_c_plus(self) -> None:
+        """市場乖離かつentropy_normがC閾値未満なら C+（準見送り）。"""
+        low = ENTROPY_THRESHOLDS["C"] - 0.01
+        assert (
+            calculate_recommend_rank(50, win_odds_top=3.0, market_agree=False, entropy_norm=low)
+            == "C+"
+        )
+
+    def test_high_entropy_c_stays_c(self) -> None:
+        """市場乖離かつentropy_normがC閾値以上なら真の大混戦としてC。"""
+        high = ENTROPY_THRESHOLDS["C"] + 0.01
+        assert (
+            calculate_recommend_rank(50, win_odds_top=3.0, market_agree=False, entropy_norm=high)
+            == "C"
+        )
+
+    def test_entropy_norm_only_affects_c_path(self) -> None:
+        """S/A/Bに分類される場合はentropy_normを渡してもtierは変わらない。"""
+        low = ENTROPY_THRESHOLDS["S"] - 0.01
+        assert (
+            calculate_recommend_rank(85, win_odds_top=3.0, market_agree=True, entropy_norm=low)
+            == "S"
+        )
+
+    def test_odds_under_1_5_ignores_entropy(self) -> None:
+        """断然人気(単勝<1.5)は entropy_norm を渡してもSのまま。"""
+        assert (
+            calculate_recommend_rank(30, win_odds_top=1.2, market_agree=False, entropy_norm=0.99)
+            == "S"
+        )
+
+
+# ---------------------------------------------------------------------------
+# calculate_market_chaos のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateMarketChaos:
+    """calculate_market_chaos（HHI/entropy_norm算出）のテスト。"""
+
+    def test_insufficient_odds_returns_none(self) -> None:
+        """有効オッズが3頭未満なら算出不能（None, None）。"""
+        result = calculate_market_chaos([1.5, 3.0])
+        assert result == {"hhi": None, "entropy_norm": None}
+
+    def test_empty_list_returns_none(self) -> None:
+        result = calculate_market_chaos([])
+        assert result == {"hhi": None, "entropy_norm": None}
+
+    def test_filters_invalid_odds(self) -> None:
+        """None・1.0未満の異常値は無視される。1.5/3.0/5.0の3件で算出される。"""
+        result = calculate_market_chaos([1.5, 3.0, 5.0, 0.5])  # 0.5 は異常値として除外
+        assert result["hhi"] is not None
+        assert result["entropy_norm"] is not None
+
+    def test_uniform_odds_gives_high_entropy(self) -> None:
+        """全馬同オッズ(=均等)なら entropy_norm はほぼ1.0(理論上の最大混戦)。"""
+        result = calculate_market_chaos([5.0, 5.0, 5.0, 5.0])
+        assert result["entropy_norm"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_lopsided_odds_gives_low_entropy(self) -> None:
+        """1頭が断然人気で残りが大穴なら entropy_norm は低い(本命一強)。"""
+        result = calculate_market_chaos([1.1, 50.0, 80.0, 99.0])
+        assert result["entropy_norm"] < 0.5
+
+    def test_hhi_and_entropy_norm_in_valid_range(self) -> None:
+        result = calculate_market_chaos([2.0, 4.0, 6.0, 10.0, 20.0])
+        assert 0.0 < result["hhi"] <= 1.0
+        assert 0.0 <= result["entropy_norm"] <= 1.0
