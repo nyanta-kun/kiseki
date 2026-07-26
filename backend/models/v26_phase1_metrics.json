@@ -1,0 +1,429 @@
+{
+  "config": {
+    "train": [
+      "20230501",
+      "20250630"
+    ],
+    "valid": [
+      "20250701",
+      "20251231"
+    ],
+    "test": [
+      "20260101",
+      "20260430"
+    ],
+    "history_range": [
+      "20150101",
+      "20260430"
+    ],
+    "collateral_lookback": 3,
+    "k_shrink": 20,
+    "new_features": [
+      "corner_stretch_regression",
+      "bounce_score",
+      "pace_index_pci",
+      "collateral_form",
+      "nicks_score",
+      "peak_weight_proximity",
+      "jockey_trainer_combo"
+    ]
+  },
+  "baseline": {
+    "label": "baseline",
+    "n_features": 34,
+    "train": {
+      "label": "baseline-train",
+      "n_races": 7245,
+      "n_horses": 100363,
+      "top1_win_pct": 30.79,
+      "top1_place_pct": 64.39,
+      "top1_win_roi": 0.903
+    },
+    "valid": {
+      "label": "baseline-valid",
+      "n_races": 1650,
+      "n_horses": 22626,
+      "top1_win_pct": 27.76,
+      "top1_place_pct": 60.3,
+      "top1_win_roi": 0.819
+    },
+    "test": {
+      "label": "baseline-test",
+      "n_races": 1068,
+      "n_horses": 15236,
+      "top1_win_pct": 26.22,
+      "top1_place_pct": 60.96,
+      "top1_win_roi": 0.724
+    },
+    "feature_importance": [
+      {
+        "feature": "jvan_battle_dm",
+        "gain": 68216.52675738186
+      },
+      {
+        "feature": "jvan_time_dm",
+        "gain": 33333.564349770546
+      },
+      {
+        "feature": "head_count",
+        "gain": 10521.499074548483
+      },
+      {
+        "feature": "jockey_index",
+        "gain": 9468.666709065437
+      },
+      {
+        "feature": "pedigree_index",
+        "gain": 7049.976672410965
+      },
+      {
+        "feature": "course_aptitude",
+        "gain": 4235.7350261211395
+      },
+      {
+        "feature": "position_advantage",
+        "gain": 3970.323991417885
+      },
+      {
+        "feature": "rotation_index",
+        "gain": 3832.296350002289
+      },
+      {
+        "feature": "last_3f_index",
+        "gain": 3796.219553232193
+      },
+      {
+        "feature": "speed_index",
+        "gain": 2888.018385529518
+      },
+      {
+        "feature": "horse_weight",
+        "gain": 2712.9294531941414
+      },
+      {
+        "feature": "horse_age",
+        "gain": 2325.70471906662
+      },
+      {
+        "feature": "career_phase_index",
+        "gain": 2261.884328007698
+      },
+      {
+        "feature": "pace_index",
+        "gain": 2049.704127371311
+      },
+      {
+        "feature": "anagusa_index",
+        "gain": 2014.3778726905584
+      },
+      {
+        "feature": "jockey_trainer_combo_index",
+        "gain": 1886.0351839065552
+      },
+      {
+        "feature": "training_index",
+        "gain": 1612.1335629224777
+      },
+      {
+        "feature": "weight_change",
+        "gain": 1560.1686503887177
+      },
+      {
+        "feature": "distance",
+        "gain": 1188.0024094581604
+      },
+      {
+        "feature": "frame_number",
+        "gain": 963.9743037223816
+      },
+      {
+        "feature": "rivals_growth_index",
+        "gain": 871.4604407548904
+      },
+      {
+        "feature": "weight_carried",
+        "gain": 761.4211773872375
+      },
+      {
+        "feature": "going_pedigree_index",
+        "gain": 590.5850739479065
+      },
+      {
+        "feature": "distance_change_index",
+        "gain": 570.5452992916107
+      },
+      {
+        "feature": "is_jump",
+        "gain": 279.90339756011963
+      },
+      {
+        "feature": "is_g1g2g3",
+        "gain": 228.90030884742737
+      },
+      {
+        "feature": "is_dirt",
+        "gain": 207.0525996685028
+      },
+      {
+        "feature": "rebound_index",
+        "gain": 173.45005917549133
+      },
+      {
+        "feature": "is_turf",
+        "gain": 156.22238087654114
+      },
+      {
+        "feature": "is_yaya",
+        "gain": 87.198979139328
+      },
+      {
+        "feature": "is_good",
+        "gain": 33.24213933944702
+      },
+      {
+        "feature": "is_heavy",
+        "gain": 19.341100215911865
+      },
+      {
+        "feature": "is_bad",
+        "gain": 12.58549976348877
+      },
+      {
+        "feature": "paddock_index",
+        "gain": 0.0
+      }
+    ],
+    "new_feature_ranks": []
+  },
+  "extended": {
+    "label": "extended",
+    "n_features": 41,
+    "train": {
+      "label": "extended-train",
+      "n_races": 7245,
+      "n_horses": 100363,
+      "top1_win_pct": 31.35,
+      "top1_place_pct": 65.92,
+      "top1_win_roi": 0.913
+    },
+    "valid": {
+      "label": "extended-valid",
+      "n_races": 1650,
+      "n_horses": 22626,
+      "top1_win_pct": 28.48,
+      "top1_place_pct": 59.88,
+      "top1_win_roi": 0.82
+    },
+    "test": {
+      "label": "extended-test",
+      "n_races": 1068,
+      "n_horses": 15236,
+      "top1_win_pct": 26.59,
+      "top1_place_pct": 60.39,
+      "top1_win_roi": 0.723
+    },
+    "feature_importance": [
+      {
+        "feature": "jvan_battle_dm",
+        "gain": 74511.39707243443
+      },
+      {
+        "feature": "jvan_time_dm",
+        "gain": 29117.045221984386
+      },
+      {
+        "feature": "head_count",
+        "gain": 10390.467036008835
+      },
+      {
+        "feature": "jockey_index",
+        "gain": 7532.546909302473
+      },
+      {
+        "feature": "pedigree_index",
+        "gain": 6529.488258719444
+      },
+      {
+        "feature": "last_3f_index",
+        "gain": 3615.642085790634
+      },
+      {
+        "feature": "rotation_index",
+        "gain": 3562.205093860626
+      },
+      {
+        "feature": "position_advantage",
+        "gain": 3480.5261553376913
+      },
+      {
+        "feature": "pace_index_pci",
+        "gain": 3331.2059025764465
+      },
+      {
+        "feature": "course_aptitude",
+        "gain": 3240.824742078781
+      },
+      {
+        "feature": "jockey_trainer_combo",
+        "gain": 2795.465563800186
+      },
+      {
+        "feature": "speed_index",
+        "gain": 2552.969119787216
+      },
+      {
+        "feature": "horse_weight",
+        "gain": 2307.992865562439
+      },
+      {
+        "feature": "collateral_form",
+        "gain": 2266.9569813013077
+      },
+      {
+        "feature": "anagusa_index",
+        "gain": 2036.639581978321
+      },
+      {
+        "feature": "corner_stretch_regression",
+        "gain": 2009.3607176542282
+      },
+      {
+        "feature": "career_phase_index",
+        "gain": 1932.0660408139229
+      },
+      {
+        "feature": "horse_age",
+        "gain": 1750.0891110897064
+      },
+      {
+        "feature": "nicks_score",
+        "gain": 1575.6465860009193
+      },
+      {
+        "feature": "pace_index",
+        "gain": 1556.2654621601105
+      },
+      {
+        "feature": "training_index",
+        "gain": 1313.207799911499
+      },
+      {
+        "feature": "jockey_trainer_combo_index",
+        "gain": 1201.1050362586975
+      },
+      {
+        "feature": "rivals_growth_index",
+        "gain": 979.8368836641312
+      },
+      {
+        "feature": "bounce_score",
+        "gain": 973.06272149086
+      },
+      {
+        "feature": "weight_change",
+        "gain": 943.0232169628143
+      },
+      {
+        "feature": "distance",
+        "gain": 929.4910119771957
+      },
+      {
+        "feature": "frame_number",
+        "gain": 807.2911171913147
+      },
+      {
+        "feature": "peak_weight_proximity",
+        "gain": 623.4214084148407
+      },
+      {
+        "feature": "weight_carried",
+        "gain": 614.7714450955391
+      },
+      {
+        "feature": "distance_change_index",
+        "gain": 466.09617948532104
+      },
+      {
+        "feature": "going_pedigree_index",
+        "gain": 378.27808904647827
+      },
+      {
+        "feature": "is_g1g2g3",
+        "gain": 275.35686111450195
+      },
+      {
+        "feature": "rebound_index",
+        "gain": 129.81999921798706
+      },
+      {
+        "feature": "is_turf",
+        "gain": 119.55368900299072
+      },
+      {
+        "feature": "is_yaya",
+        "gain": 116.49851036071777
+      },
+      {
+        "feature": "is_dirt",
+        "gain": 79.03200149536133
+      },
+      {
+        "feature": "is_jump",
+        "gain": 25.774409294128418
+      },
+      {
+        "feature": "is_bad",
+        "gain": 18.49429988861084
+      },
+      {
+        "feature": "is_good",
+        "gain": 17.25432014465332
+      },
+      {
+        "feature": "is_heavy",
+        "gain": 13.970940113067627
+      },
+      {
+        "feature": "paddock_index",
+        "gain": 0.0
+      }
+    ],
+    "new_feature_ranks": [
+      {
+        "feature": "pace_index_pci",
+        "rank": 9,
+        "gain": 3331.2059025764465
+      },
+      {
+        "feature": "jockey_trainer_combo",
+        "rank": 11,
+        "gain": 2795.465563800186
+      },
+      {
+        "feature": "collateral_form",
+        "rank": 14,
+        "gain": 2266.9569813013077
+      },
+      {
+        "feature": "corner_stretch_regression",
+        "rank": 16,
+        "gain": 2009.3607176542282
+      },
+      {
+        "feature": "nicks_score",
+        "rank": 19,
+        "gain": 1575.6465860009193
+      },
+      {
+        "feature": "bounce_score",
+        "rank": 24,
+        "gain": 973.06272149086
+      },
+      {
+        "feature": "peak_weight_proximity",
+        "rank": 28,
+        "gain": 623.4214084148407
+      }
+    ]
+  }
+}

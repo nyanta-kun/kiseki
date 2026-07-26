@@ -1,0 +1,671 @@
+{
+  "diagnostic_period": [
+    "20230701",
+    "20251231"
+  ],
+  "confirmation_period": [
+    "20260101",
+    "20260723"
+  ],
+  "n_races_diagnostic": 8377,
+  "n_races_confirmation": 1905,
+  "section_a": {
+    "diagnostic": {
+      "S": {
+        "n_races": 1460,
+        "n_settled": 1460,
+        "top1_place_pct": 0.8014,
+        "top1_win_pct": 0.4932,
+        "win_roi": 0.9065,
+        "n_win_bets": 1460,
+        "place_roi_ref": 1.1687,
+        "n_place_bets_ref": 1170
+      },
+      "A": {
+        "n_races": 1433,
+        "n_settled": 1433,
+        "top1_place_pct": 0.6999,
+        "top1_win_pct": 0.3685,
+        "win_roi": 0.8552,
+        "n_win_bets": 1433,
+        "place_roi_ref": 1.2655,
+        "n_place_bets_ref": 1003
+      },
+      "B": {
+        "n_races": 1737,
+        "n_settled": 1737,
+        "top1_place_pct": 0.6442,
+        "top1_win_pct": 0.3132,
+        "win_roi": 0.8023,
+        "n_win_bets": 1737,
+        "place_roi_ref": 1.3532,
+        "n_place_bets_ref": 1119
+      },
+      "C": {
+        "n_races": 3747,
+        "n_settled": 3747,
+        "top1_place_pct": 0.4959,
+        "top1_win_pct": 0.194,
+        "win_roi": 0.9747,
+        "n_win_bets": 3747,
+        "place_roi_ref": 1.8139,
+        "n_place_bets_ref": 1858
+      }
+    },
+    "confirmation": {
+      "S": {
+        "n_races": 282,
+        "n_settled": 282,
+        "top1_place_pct": 0.7837,
+        "top1_win_pct": 0.4681,
+        "win_roi": 0.8,
+        "n_win_bets": 282,
+        "place_roi_ref": 1.1399,
+        "n_place_bets_ref": 218
+      },
+      "A": {
+        "n_races": 315,
+        "n_settled": 315,
+        "top1_place_pct": 0.673,
+        "top1_win_pct": 0.3333,
+        "win_roi": 0.761,
+        "n_win_bets": 315,
+        "place_roi_ref": 1.2244,
+        "n_place_bets_ref": 205
+      },
+      "B": {
+        "n_races": 425,
+        "n_settled": 425,
+        "top1_place_pct": 0.6329,
+        "top1_win_pct": 0.2894,
+        "win_roi": 0.7454,
+        "n_win_bets": 425,
+        "place_roi_ref": 1.3144,
+        "n_place_bets_ref": 263
+      },
+      "C": {
+        "n_races": 883,
+        "n_settled": 883,
+        "top1_place_pct": 0.4892,
+        "top1_win_pct": 0.1721,
+        "win_roi": 0.8386,
+        "n_win_bets": 883,
+        "place_roi_ref": 1.7147,
+        "n_place_bets_ref": 430
+      }
+    }
+  },
+  "section_c": {
+    "diagnostic_universe_n": 8377,
+    "confirmation_universe_n": 1905,
+    "diagnostic_curves": {
+      "(a)confidence単独": [
+        {
+          "coverage_pct": 10,
+          "n": 838,
+          "place_hit_rate": 0.7852
+        },
+        {
+          "coverage_pct": 20,
+          "n": 1675,
+          "place_hit_rate": 0.7493
+        },
+        {
+          "coverage_pct": 30,
+          "n": 2513,
+          "place_hit_rate": 0.7254
+        },
+        {
+          "coverage_pct": 40,
+          "n": 3351,
+          "place_hit_rate": 0.7043
+        },
+        {
+          "coverage_pct": 50,
+          "n": 4188,
+          "place_hit_rate": 0.692
+        },
+        {
+          "coverage_pct": 60,
+          "n": 5026,
+          "place_hit_rate": 0.6797
+        },
+        {
+          "coverage_pct": 70,
+          "n": 5864,
+          "place_hit_rate": 0.6635
+        },
+        {
+          "coverage_pct": 80,
+          "n": 6702,
+          "place_hit_rate": 0.6462
+        },
+        {
+          "coverage_pct": 90,
+          "n": 7539,
+          "place_hit_rate": 0.6311
+        },
+        {
+          "coverage_pct": 100,
+          "n": 8377,
+          "place_hit_rate": 0.6148
+        }
+      ],
+      "(b)現行tier複合": [
+        {
+          "coverage_pct": 10,
+          "n": 838,
+          "place_hit_rate": 0.8079
+        },
+        {
+          "coverage_pct": 20,
+          "n": 1675,
+          "place_hit_rate": 0.7785
+        },
+        {
+          "coverage_pct": 30,
+          "n": 2513,
+          "place_hit_rate": 0.7533
+        },
+        {
+          "coverage_pct": 40,
+          "n": 3351,
+          "place_hit_rate": 0.7401
+        },
+        {
+          "coverage_pct": 50,
+          "n": 4188,
+          "place_hit_rate": 0.7218
+        },
+        {
+          "coverage_pct": 60,
+          "n": 5026,
+          "place_hit_rate": 0.7008
+        },
+        {
+          "coverage_pct": 70,
+          "n": 5864,
+          "place_hit_rate": 0.6814
+        },
+        {
+          "coverage_pct": 80,
+          "n": 6702,
+          "place_hit_rate": 0.6589
+        },
+        {
+          "coverage_pct": 90,
+          "n": 7539,
+          "place_hit_rate": 0.6359
+        },
+        {
+          "coverage_pct": 100,
+          "n": 8377,
+          "place_hit_rate": 0.6148
+        }
+      ],
+      "(c)混戦度ペナルティ": [
+        {
+          "coverage_pct": 10,
+          "n": 838,
+          "place_hit_rate": 0.8115
+        },
+        {
+          "coverage_pct": 20,
+          "n": 1675,
+          "place_hit_rate": 0.7707
+        },
+        {
+          "coverage_pct": 30,
+          "n": 2513,
+          "place_hit_rate": 0.7382
+        },
+        {
+          "coverage_pct": 40,
+          "n": 3351,
+          "place_hit_rate": 0.718
+        },
+        {
+          "coverage_pct": 50,
+          "n": 4188,
+          "place_hit_rate": 0.6999
+        },
+        {
+          "coverage_pct": 60,
+          "n": 5026,
+          "place_hit_rate": 0.6844
+        },
+        {
+          "coverage_pct": 70,
+          "n": 5864,
+          "place_hit_rate": 0.6659
+        },
+        {
+          "coverage_pct": 80,
+          "n": 6702,
+          "place_hit_rate": 0.6503
+        },
+        {
+          "coverage_pct": 90,
+          "n": 7539,
+          "place_hit_rate": 0.6344
+        },
+        {
+          "coverage_pct": 100,
+          "n": 8377,
+          "place_hit_rate": 0.6148
+        }
+      ],
+      "(d)tier複合+混戦度": [
+        {
+          "coverage_pct": 10,
+          "n": 838,
+          "place_hit_rate": 0.8341
+        },
+        {
+          "coverage_pct": 20,
+          "n": 1675,
+          "place_hit_rate": 0.7964
+        },
+        {
+          "coverage_pct": 30,
+          "n": 2513,
+          "place_hit_rate": 0.7624
+        },
+        {
+          "coverage_pct": 40,
+          "n": 3351,
+          "place_hit_rate": 0.7443
+        },
+        {
+          "coverage_pct": 50,
+          "n": 4188,
+          "place_hit_rate": 0.7252
+        },
+        {
+          "coverage_pct": 60,
+          "n": 5026,
+          "place_hit_rate": 0.7027
+        },
+        {
+          "coverage_pct": 70,
+          "n": 5864,
+          "place_hit_rate": 0.6837
+        },
+        {
+          "coverage_pct": 80,
+          "n": 6702,
+          "place_hit_rate": 0.66
+        },
+        {
+          "coverage_pct": 90,
+          "n": 7539,
+          "place_hit_rate": 0.6372
+        },
+        {
+          "coverage_pct": 100,
+          "n": 8377,
+          "place_hit_rate": 0.6148
+        }
+      ]
+    },
+    "confirmation_curves": {
+      "(a)confidence単独": [
+        {
+          "coverage_pct": 10,
+          "n": 190,
+          "place_hit_rate": 0.7526
+        },
+        {
+          "coverage_pct": 20,
+          "n": 381,
+          "place_hit_rate": 0.6955
+        },
+        {
+          "coverage_pct": 30,
+          "n": 572,
+          "place_hit_rate": 0.6818
+        },
+        {
+          "coverage_pct": 40,
+          "n": 762,
+          "place_hit_rate": 0.6772
+        },
+        {
+          "coverage_pct": 50,
+          "n": 952,
+          "place_hit_rate": 0.6639
+        },
+        {
+          "coverage_pct": 60,
+          "n": 1143,
+          "place_hit_rate": 0.6465
+        },
+        {
+          "coverage_pct": 70,
+          "n": 1334,
+          "place_hit_rate": 0.6372
+        },
+        {
+          "coverage_pct": 80,
+          "n": 1524,
+          "place_hit_rate": 0.622
+        },
+        {
+          "coverage_pct": 90,
+          "n": 1714,
+          "place_hit_rate": 0.6114
+        },
+        {
+          "coverage_pct": 100,
+          "n": 1905,
+          "place_hit_rate": 0.5953
+        }
+      ],
+      "(b)現行tier複合": [
+        {
+          "coverage_pct": 10,
+          "n": 190,
+          "place_hit_rate": 0.8053
+        },
+        {
+          "coverage_pct": 20,
+          "n": 381,
+          "place_hit_rate": 0.7585
+        },
+        {
+          "coverage_pct": 30,
+          "n": 572,
+          "place_hit_rate": 0.7273
+        },
+        {
+          "coverage_pct": 40,
+          "n": 762,
+          "place_hit_rate": 0.7139
+        },
+        {
+          "coverage_pct": 50,
+          "n": 952,
+          "place_hit_rate": 0.6943
+        },
+        {
+          "coverage_pct": 60,
+          "n": 1143,
+          "place_hit_rate": 0.6649
+        },
+        {
+          "coverage_pct": 70,
+          "n": 1334,
+          "place_hit_rate": 0.6522
+        },
+        {
+          "coverage_pct": 80,
+          "n": 1524,
+          "place_hit_rate": 0.6365
+        },
+        {
+          "coverage_pct": 90,
+          "n": 1714,
+          "place_hit_rate": 0.6173
+        },
+        {
+          "coverage_pct": 100,
+          "n": 1905,
+          "place_hit_rate": 0.5953
+        }
+      ],
+      "(c)混戦度ペナルティ": [
+        {
+          "coverage_pct": 10,
+          "n": 190,
+          "place_hit_rate": 0.8211
+        },
+        {
+          "coverage_pct": 20,
+          "n": 381,
+          "place_hit_rate": 0.7375
+        },
+        {
+          "coverage_pct": 30,
+          "n": 572,
+          "place_hit_rate": 0.6923
+        },
+        {
+          "coverage_pct": 40,
+          "n": 762,
+          "place_hit_rate": 0.6798
+        },
+        {
+          "coverage_pct": 50,
+          "n": 952,
+          "place_hit_rate": 0.6733
+        },
+        {
+          "coverage_pct": 60,
+          "n": 1143,
+          "place_hit_rate": 0.6597
+        },
+        {
+          "coverage_pct": 70,
+          "n": 1334,
+          "place_hit_rate": 0.6409
+        },
+        {
+          "coverage_pct": 80,
+          "n": 1524,
+          "place_hit_rate": 0.6253
+        },
+        {
+          "coverage_pct": 90,
+          "n": 1714,
+          "place_hit_rate": 0.6167
+        },
+        {
+          "coverage_pct": 100,
+          "n": 1905,
+          "place_hit_rate": 0.5953
+        }
+      ],
+      "(d)tier複合+混戦度": [
+        {
+          "coverage_pct": 10,
+          "n": 190,
+          "place_hit_rate": 0.8316
+        },
+        {
+          "coverage_pct": 20,
+          "n": 381,
+          "place_hit_rate": 0.7743
+        },
+        {
+          "coverage_pct": 30,
+          "n": 572,
+          "place_hit_rate": 0.729
+        },
+        {
+          "coverage_pct": 40,
+          "n": 762,
+          "place_hit_rate": 0.7192
+        },
+        {
+          "coverage_pct": 50,
+          "n": 952,
+          "place_hit_rate": 0.7006
+        },
+        {
+          "coverage_pct": 60,
+          "n": 1143,
+          "place_hit_rate": 0.6658
+        },
+        {
+          "coverage_pct": 70,
+          "n": 1334,
+          "place_hit_rate": 0.6514
+        },
+        {
+          "coverage_pct": 80,
+          "n": 1524,
+          "place_hit_rate": 0.6404
+        },
+        {
+          "coverage_pct": 90,
+          "n": 1714,
+          "place_hit_rate": 0.6196
+        },
+        {
+          "coverage_pct": 100,
+          "n": 1905,
+          "place_hit_rate": 0.5953
+        }
+      ]
+    },
+    "diagnostic_curve_means": {
+      "(a)confidence単独": 0.6891499999999999,
+      "(b)現行tier複合": 0.70934,
+      "(c)混戦度ペナルティ": 0.69881,
+      "(d)tier複合+混戦度": 0.71608
+    },
+    "confirmation_curve_means": {
+      "(a)confidence単独": 0.65834,
+      "(b)現行tier複合": 0.68655,
+      "(c)混戦度ペナルティ": 0.6741900000000001,
+      "(d)tier複合+混戦度": 0.69272
+    },
+    "best_curve_diagnostic": "(d)tier複合+混戦度"
+  },
+  "section_b": {
+    "thresholds_from_diagnostic": {
+      "B": 0.7564329622748651,
+      "A": 0.7413854042916888,
+      "S": 0.6951351594843503,
+      "C": 0.7757124652185895
+    },
+    "diagnostic": {
+      "S": {
+        "tier": "S",
+        "threshold": 0.6951,
+        "low_entropy": {
+          "n": 730,
+          "n_settled": 730,
+          "place_hit_rate": 0.8836
+        },
+        "high_entropy": {
+          "n": 730,
+          "n_settled": 730,
+          "place_hit_rate": 0.7192
+        },
+        "gap": 0.1644000000000001
+      },
+      "A": {
+        "tier": "A",
+        "threshold": 0.7414,
+        "low_entropy": {
+          "n": 717,
+          "n_settled": 717,
+          "place_hit_rate": 0.7699
+        },
+        "high_entropy": {
+          "n": 716,
+          "n_settled": 716,
+          "place_hit_rate": 0.6299
+        },
+        "gap": 0.14
+      },
+      "B": {
+        "tier": "B",
+        "threshold": 0.7564,
+        "low_entropy": {
+          "n": 869,
+          "n_settled": 869,
+          "place_hit_rate": 0.7043
+        },
+        "high_entropy": {
+          "n": 868,
+          "n_settled": 868,
+          "place_hit_rate": 0.5841
+        },
+        "gap": 0.12020000000000008
+      },
+      "C": {
+        "tier": "C",
+        "threshold": 0.7757,
+        "low_entropy": {
+          "n": 1874,
+          "n_settled": 1874,
+          "place_hit_rate": 0.5539
+        },
+        "high_entropy": {
+          "n": 1873,
+          "n_settled": 1873,
+          "place_hit_rate": 0.4378
+        },
+        "gap": 0.11609999999999993
+      }
+    },
+    "confirmation": {
+      "S": {
+        "tier": "S",
+        "threshold": 0.6951,
+        "low_entropy": {
+          "n": 144,
+          "n_settled": 144,
+          "place_hit_rate": 0.875
+        },
+        "high_entropy": {
+          "n": 138,
+          "n_settled": 138,
+          "place_hit_rate": 0.6884
+        },
+        "gap": 0.1866,
+        "reproduced": true
+      },
+      "A": {
+        "tier": "A",
+        "threshold": 0.7414,
+        "low_entropy": {
+          "n": 168,
+          "n_settled": 168,
+          "place_hit_rate": 0.7679
+        },
+        "high_entropy": {
+          "n": 147,
+          "n_settled": 147,
+          "place_hit_rate": 0.5646
+        },
+        "gap": 0.20330000000000004,
+        "reproduced": true
+      },
+      "B": {
+        "tier": "B",
+        "threshold": 0.7564,
+        "low_entropy": {
+          "n": 229,
+          "n_settled": 229,
+          "place_hit_rate": 0.7424
+        },
+        "high_entropy": {
+          "n": 196,
+          "n_settled": 196,
+          "place_hit_rate": 0.5051
+        },
+        "gap": 0.23729999999999996,
+        "reproduced": true
+      },
+      "C": {
+        "tier": "C",
+        "threshold": 0.7757,
+        "low_entropy": {
+          "n": 442,
+          "n_settled": 442,
+          "place_hit_rate": 0.552
+        },
+        "high_entropy": {
+          "n": 441,
+          "n_settled": 441,
+          "place_hit_rate": 0.4263
+        },
+        "gap": 0.12570000000000003,
+        "reproduced": true
+      }
+    }
+  }
+}
