@@ -998,18 +998,14 @@ export type KeirinPeriodSummary = {
 };
 
 export type KeirinSummary = {
+  /** 2026-07-27〜: S1(7車)+S4(7車)+S9(9車)をまとめて集計。by_rankに7車・9車の
+   *  ランクが両方並ぶ（S1/SS+/SS/S/S9-SS+/S9-SS/S9-S） */
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
   test: KeirinPeriodSummary;
   test_from: string;
   test_to: string;
-  /** S9(9車立て・独立ランク・2026-07-26導入)。S1/S4のトップライン合算には含まれない別集計 */
-  s9?: {
-    today: KeirinPeriodSummary;
-    month: KeirinPeriodSummary;
-    year: KeirinPeriodSummary;
-  };
 };
 
 export async function fetchKeirinPicks(date: string, includeAll = false): Promise<KeirinPick[]> {

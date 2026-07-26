@@ -684,21 +684,19 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S4導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S4をgate_label(SS/S)でSS/Sの2ランクへ再編
 // 2026-07-23 SS内の軸級班denyフィルター通過分をSS+として観察用に追加（買い目は変更なし）
-// → トップラインは4ランク（SS+はSSの内訳のため合算には含めない）の名目合算。
-const RANK_ORDER = ["SS+", "SS", "S", "S1"] as const;
-const RANK_LABEL: Record<string, string> = { S1: "S1", "SS+": "SS+", SS: "SS", S: "S" };
+// 2026-07-27 S9(9車立て・独立ランク)をトップライン（当日/当月/当年）に統合。
+// ランク別展開では7車(SS+/SS/S/S1)・9車(S9-SS+/S9-SS/S9-S)を同じ一覧内に並べて
+// 確認できるようにする（表示ラベルは9車側にS9接頭辞を残し混同を防ぐ）。
+const RANK_ORDER = ["SS+", "SS", "S", "S1", "S9-SS+", "S9-SS", "S9-S"] as const;
+const RANK_LABEL: Record<string, string> = {
+  S1: "S1", "SS+": "SS+", SS: "SS", S: "S",
+  "S9-SS+": "S9 SS+", "S9-SS": "S9 SS", "S9-S": "S9 S",
+};
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
   "SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
   SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   S: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
-};
-
-// S9(9車立て・独立ランク・2026-07-26導入)のランク別内訳。S4の"SS+"/"SS"/"S"とは
-// by_rankキーが"S9-SS+"等で別物のため、専用の順序・ラベル・色を用意する。
-const S9_RANK_ORDER = ["S9-SS+", "S9-SS", "S9-S"] as const;
-const S9_RANK_LABEL: Record<string, string> = { "S9-SS+": "SS+", "S9-SS": "SS", "S9-S": "S" };
-const S9_RANK_BADGE_STYLE: Record<string, string> = {
   "S9-SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
   "S9-SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
   "S9-S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
@@ -877,65 +875,6 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               showRanks={expanded}
               showAll={showAll}
             />
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// S9(9車立て・独立ランク・2026-07-26導入)の投資・回収サマリー。
-// S1/S4のトップライン合算には含めない方針（Option B）のため別カードで表示する。
-// 検証期間(model_evaluation HOLDバックテスト)行はS9にはまだ無いため省略。
-function S9SummaryCard({ summary }: { summary: KeirinSummary }) {
-  const [expanded, setExpanded] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-  if (!summary.s9) return null;
-  return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center gap-1">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 flex-1">投資・回収サマリー（9車 S9）</h2>
-        <button
-          onClick={() => setShowAll(v => !v)}
-          className={`sm:hidden flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
-            showAll
-              ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
-              : "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400"
-          }`}
-          aria-label={showAll ? "省略表示に戻す" : "すべての項目を表示"}
-        >
-          すべて
-        </button>
-        <button
-          onClick={() => setExpanded(v => !v)}
-          className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded"
-          aria-label={expanded ? "ランク詳細を閉じる" : "ランク詳細を開く"}
-        >
-          {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-          <span className="hidden sm:inline">{expanded ? "閉じる" : "ランク別"}</span>
-        </button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-100 dark:border-gray-700">
-              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>投資</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>回収</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap`}>期間最大払戻</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <SummaryRow label="当日" data={summary.s9.today} showRanks={expanded} showAll={showAll}
-              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
-            <SummaryRow label="当月" data={summary.s9.month} showRanks={expanded} showAll={showAll}
-              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
-            <SummaryRow label="当年" data={summary.s9.year} showRanks={expanded} showAll={showAll}
-              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
           </tbody>
         </table>
       </div>
@@ -1135,10 +1074,7 @@ export default function KeirinPage() {
 
       {/* サマリー */}
       {summary ? (
-        <>
-          <SummaryCard summary={summary} />
-          <S9SummaryCard summary={summary} />
-        </>
+        <SummaryCard summary={summary} />
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 h-24 animate-pulse" />
       )}
