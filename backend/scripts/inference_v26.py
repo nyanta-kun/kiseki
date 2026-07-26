@@ -36,6 +36,7 @@ from sqlalchemy import select, text
 
 from src.db.models import CalculatedIndex
 from src.db.session import AsyncSessionLocal
+from src.indices.composite import CompositeIndexCalculator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("v26_inference")
@@ -72,7 +73,7 @@ SELECT
     ci.jockey_trainer_combo_index, ci.going_pedigree_index,
     r.distance, r.head_count, r.surface, r.condition, r.grade,
     re.frame_number, re.horse_age, re.weight_carried, re.horse_weight,
-    rr.weight_change,
+    rr.weight_change, rr.abnormality_code,
     re.jvan_time_dm, re.jvan_battle_dm
 FROM keiba.calculated_indices ci
 JOIN keiba.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
@@ -248,6 +249,18 @@ async def main_async() -> None:
         return
 
     df = pd.DataFrame(rows, columns=cols)
+
+    # 出走取消・発走除外馬(abnormality_code 1/2)は win/place 確率算出のプール
+    # (softmax・Harville)から除外する。残すと他馬の確率が不当に薄まる
+    # (2026-07-26, Plackett-Luce導入時に発見・修正)。
+    ab = pd.to_numeric(df["abnormality_code"], errors="coerce").fillna(0)
+    n_scratched = int(ab.isin([1, 2]).sum())
+    if n_scratched:
+        logger.info(f"出走取消・除外馬を除外: {n_scratched}件")
+    df = df[~ab.isin([1, 2])].reset_index(drop=True)
+    if df.empty:
+        return
+
     df = featurize(df)
 
     X = df[ALL_FEATURES].values
@@ -255,6 +268,12 @@ async def main_async() -> None:
     indices = scale_to_index(raw_scores, df["race_id"])
 
     # win_probability はレース内 softmax(temperature=10)
+    # place_probability は Harville 公式（Plackett-Luce型の逐次選択モデル）で
+    # 3着以内確率を理論的に算出する。従来の「win_p×3」ヒューリスティックは
+    # 本命馬(win_pが高い)でクリップにより過大評価する歪みがあり、ECE検証で
+    # Harville化により約1/3に改善することを確認済み
+    # (backend/scripts/jra_place_probability_plackett_luce.py, 2026-07-26)。
+    # 実装は v24 の CompositeIndexCalculator._harville_place_probs を流用。
     df["score"] = indices
     rec_list = []
     for rid, idx in df.groupby("race_id").indices.items():
@@ -262,8 +281,7 @@ async def main_async() -> None:
         s_t = scores / 10.0
         ex = np.exp(s_t - s_t.max())
         win_p = ex / ex.sum()
-        # 簡易: place_p = win_p × 3 (上限1.0)
-        place_p = np.clip(win_p * 3.0, 0.0, 1.0)
+        place_p = np.array(CompositeIndexCalculator._harville_place_probs(win_p.tolist()))
         for j, i in enumerate(idx):
             rec_list.append({
                 "race_id": int(df.loc[i, "race_id"]),

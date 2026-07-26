@@ -13,7 +13,7 @@
 | 3 | 市場混戦度スコア(HHI/Shannon Entropy)による見送り判定強化 | 診断期間(2023-07〜2025-12, n=8,377)で探索→確認期間(2026-01〜07, n=1,905)で固定閾値のまま再現検証 | ✅ **既存tier方式への上乗せとして有効。確認期間で再現済み**（tier=C内をentropy_norm中央値分割で複勝的中率11〜13pt分離） | **本番実装済み**(2026-07-26デプロイ)。chihou/keirin展開は今後検討 |
 | 4-A | オッズ時系列特徴（締切直前の下げ足） | 単一時系列2分割・予備検証 (探索656R/確認437R, n=1,093) | ⚠️ **信頼度低い参考値。本番実装せず。** 方向性(下げ馬の的中率高)は両期間一致もQ1-Q4差が13.1pt→7.5ptに半減、tier内追加分離はn≥100かつ同符号再現0件 | 見送り（odds_history蓄積(1年以上・数千レース)を待って再検証） |
 | 4-B | 調教データ(坂路)特徴量 | 拡張窓(2025-07〜2026-07, train1924R/valid431R/test1200R)で複数seed(5)平均＋test集合bootstrap 95%CI＋drop1 | 🟡 **full8はぎりぎり有意(95%CI [+0.30,+2.33]pt)だが単一窓限定。simple5は非有意。本番実装せず** | 保留（次の独立test窓での再現確認・3年backfill実現後に再評価） |
-| 5-A | Plackett-Luce複勝確率 | 全期間(2023-05〜2026-07, n=149,751頭/10,800R)でECE比較・訓練/テスト両期間検証 | ✅ **ECEが現行ヒューリスティック比で約1/3に改善(0.024→0.007-0.009)、訓練/テスト一貫。既存composite.pyに同一実装あり流用可能** | **実装を提案・ユーザー判断待ち**。chihou/keirin展開は今後検討 |
+| 5-A | Plackett-Luce複勝確率 | 全期間(2023-05〜2026-07, n=149,751頭/10,800R)でECE比較・訓練/テスト両期間検証 | ✅ **ECEが現行ヒューリスティック比で約1/3に改善(0.024→0.007-0.009)、訓練/テスト一貫** | **本番実装済み**(2026-07-26デプロイ・141,852行backfill完了)。chihou/keirin展開は今後検討 |
 | 5-B | 複数券種オッズ裁定機会 | 単一時系列2分割・予備検証(探索676R/確認450R, n=1,126) | ⚠️ **証拠不十分。本番実装せず。** mispricing Q1は人気馬集中のアーチファクトと判明・既存tierと重複。Q2〜Q4は単調再現あるがオッズ水準交絡未統制・ROI未計算 | 見送り（odds_history蓄積後に層別・ROI評価で再検証） |
 
 ## Phase 1: 新規特徴量7種 詳細結果
@@ -216,9 +216,17 @@ ECEは訓練・テスト両期間で一貫して約1/3に改善。最上位decil
 ### 結論・実装コスト
 **本番`inference_v26.py`のplace_probability計算式を置き換える価値がある。** 実装コストは低い: 既に`composite.py::_harville_place_probs`として数式同一の実装が本番稼働中のため、新規実装ではなく既存ロジックの流用・移植で足りる。計算コストも1レース数ミリ秒・全期間149,751頭で約8秒と軽量。注意点: `inference_v26.py`のFETCH_SQLは現状abnormality_codeでフィルタしておらず取消馬が残存する場合があるため、本番導入時はworthsプール(softmax対象集合)から取消馬を除外する処理を確認する必要がある。
 
-**→ 本番実装は未実施。ユーザー判断待ち。**
+### 本番実装完了（2026-07-26）
 
-関連ファイル: `backend/scripts/jra_place_probability_plackett_luce.py`・`backend/tests/test_plackett_luce.py`・`backend/models/v26_place_probability_pl_calibration.json`
+`backend/scripts/inference_v26.py`の`place_probability`計算を、既存`CompositeIndexCalculator._harville_place_probs`（v24系で稼働中の実装）呼び出しに置き換えた。あわせて、FETCH_SQLに`abnormality_code`が含まれておらず出走取消・除外馬がwin/place確率算出のプール(softmax分母)に混入しうる問題を発見・修正（取消・除外馬をpandas DataFrame段階でフィルタしてから確率計算する）。
+
+**全期間backfill実施**: `--start 20230506 --end 20260426`（v24 sub-indices が存在する範囲＝v26のフィーチャーソースとして利用可能な全期間）で141,852行を再計算・upsert。健全性チェック: head_count≥8のレースはplace_probability合計≈3.0、head_count<8のレースは≈2.0(JRAの複勝払戻ルール通り)を確認済み。
+
+**判明した既知の制約（別問題として今後対応）**: `keiba.calculated_indices`のversion=24(v26のフィーチャーソース)は**2026-04-26でbackfillが停止**しており、それ以降の日付はinference_v26.pyで処理できない(取得0行)。ただし2026-04-26以降の日付は、レース登録時にリアルタイムで動く`CompositeIndexCalculator`(COMPOSITE_VERSION=26で直接書き込み、`_attach_probabilities`で最初からHarville式を使用)がplace_probabilityを算出しているため、実害はない(元々正しい値が入っている)。今回のバグは「inference_v26.pyのLGBアンサンブル後処理が、既に正しかったHarville値を誤った簡易ヒューリスティックで上書きしていた」という**退行(regression)**であり、影響範囲はv24が存在する2023-05〜2026-04の期間に限定されていたことが検証で確認された。v24 backfillが2026-04-26で止まっている点自体は別途調査が必要。
+
+検証: Ruff・pytest(backend全893件)クリーン。mypy既存エラー3件は変更前から存在し今回の変更とは無関係。
+
+関連ファイル: `backend/scripts/jra_place_probability_plackett_luce.py`・`backend/tests/test_plackett_luce.py`・`backend/models/v26_place_probability_pl_calibration.json`・`backend/scripts/inference_v26.py`（本番修正）
 
 ## Phase 5-B: 複数券種オッズ裁定機会 ⚠️ 証拠不十分
 
