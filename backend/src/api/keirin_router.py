@@ -463,6 +463,9 @@ async def _aggregate(
     result = _make_period_dict(n_picks, n_hits, total_bet, total_payout, max_payout)
 
     # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）
+    # write_candidates_wt が朝の候補選定時点で書き込む行を数えるため、結果確定前
+    # （_SETTLED_COND）でもカウント対象に含める（2026-07-27: 朝時点でカウントされない
+    # 不具合修正・的中/回収額はレース確定後でないと分からないため他の集計とは分離）。
     cand_row = (await db.execute(
         text(f"""
             SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
@@ -472,7 +475,6 @@ async def _aggregate(
             WHERE {where}
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
-              AND {_SETTLED_COND}
         """),
         params,
     )).mappings().one_or_none()
@@ -515,7 +517,8 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7S1/#7S4/#9S9 行を書き込む）
+    # （write_candidates_wt が候補時点で #7S1/#7S4/#9S9 行を書き込む。結果確定前でも
+    # カウント対象に含める＝上の cand_row と同じ理由で _SETTLED_COND は付けない）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
@@ -527,7 +530,6 @@ async def _aggregate(
             WHERE {where}
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
-              AND {_SETTLED_COND}
             GROUP BY ph.rank, ph.gate_label
         """),
         params,
