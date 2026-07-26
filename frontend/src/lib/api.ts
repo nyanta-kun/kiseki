@@ -1076,7 +1076,7 @@ export async function fetchKeirinStats(
   fromDate: string,
   toDate: string,
   granularity: "daily" | "monthly",
-  rank?: "S1" | "SS" | "S" | "all",
+  rank?: "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S" | "S9" | "all",
 ): Promise<KeirinStatsResponse> {
   const rankQuery = rank ? `&rank=${rank}` : "";
   return get<KeirinStatsResponse>(

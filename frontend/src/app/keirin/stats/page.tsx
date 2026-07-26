@@ -186,13 +186,16 @@ const PRESETS: { key: Preset; label: string }[] = [
 
 type Granularity = "daily" | "monthly";
 type CumMode = "period" | "month" | "year";
-type RankFilter = "all" | "S1" | "SS" | "S";
+type RankFilter = "all" | "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S";
 
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
   { key: "SS", label: "SS" },
   { key: "S", label: "S" },
   { key: "S1", label: "S1" },
+  { key: "S9SS+", label: "S9-SS+" },
+  { key: "S9SS", label: "S9-SS" },
+  { key: "S9S", label: "S9-S" },
 ];
 
 export default function KeirinStatsPage() {
