@@ -379,6 +379,9 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
                                           かつ軸に各グレード最上位クラスS1/A1を含まない・2026-07-23新設の観察用サブランク）
     - SEVEN_S4 かつ gate_label='SS'   → "SS"（軸2車がWT公式◎◯と2車とも不一致）
     - SEVEN_S4 かつ gate_label='S'    → "S"（軸2車の片方だけがWT公式◎◯と一致）
+    - NINE_S9 かつ gate_label='SS+'/'SS'/'S' → "S9-SS+"/"S9-SS"/"S9-S"
+      （S4の9車立て版・独立ランク。2026-07-26導入。SS+/SS/Sの意味はS4と同じだが
+      表示ランクにS9-接頭辞を付けてS4のSS+/SS/Sと区別する）
     - それ以外（廃止済みランクの残骸データ等）→ 元の rank 文字列をそのまま返す
     """
     if rank == "SEVEN_S1":
@@ -390,17 +393,31 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
             return "SS"
         if gate_label == "S":
             return "S"
+    if rank == "NINE_S9":
+        if gate_label == "SS+":
+            return "S9-SS+"
+        if gate_label == "SS":
+            return "S9-SS"
+        if gate_label == "S":
+            return "S9-S"
     return rank
+
+
+_RANKS_S1S4 = "('SEVEN_S1', 'SEVEN_S4')"
+_RANKS_S9 = "('NINE_S9')"
 
 
 async def _aggregate(
     db: AsyncSession,
     where: str,
     params: dict[str, Any],
+    rank_filter: str = _RANKS_S1S4,
 ) -> dict:
     # 2026-07-21〜: 現行ランクは S1(SEVEN_S1) / SS・S(SEVEN_S4をgate_labelで分岐) の3ペーパー
     # （旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ退避済み）。
     # トップラインは SEVEN_S1 + SEVEN_S4 の名目合算。
+    # rank_filter: 2026-07-26〜 S9(NINE_S9・独立ランク)集計にも本関数を再利用するため
+    # 対象rankをパラメータ化（既定は従来通りS1+S4）。
     row = (await db.execute(
         text(f"""
             SELECT
@@ -415,7 +432,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
+              AND ph.rank IN {rank_filter}
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -433,7 +450,7 @@ async def _aggregate(
     max_payout = int(row["max_payout"]) if row["max_payout"] is not None else None
     result = _make_period_dict(n_picks, n_hits, total_bet, total_payout, max_payout)
 
-    # 総候補レース数（判定前候補+見送り含む・2ペーパーランクの distinct レース数）
+    # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）
     cand_row = (await db.execute(
         text(f"""
             SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
@@ -442,7 +459,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
+              AND ph.rank IN {rank_filter}
               AND {_SETTLED_COND}
         """),
         params,
@@ -466,7 +483,7 @@ async def _aggregate(
             WHERE {where}
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
-              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
+              AND ph.rank IN {rank_filter}
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank, ph.gate_label
@@ -486,7 +503,7 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7S1/#7S4 行を書き込む）
+    # （write_candidates_wt が候補時点で #7S1/#7S4/#9S9 行を書き込む）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
@@ -497,7 +514,7 @@ async def _aggregate(
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
             WHERE {where}
               AND ph.route = 'wt'
-              AND ph.rank IN ('SEVEN_S1', 'SEVEN_S4')
+              AND ph.rank IN {rank_filter}
               AND {_SETTLED_COND}
             GROUP BY ph.rank, ph.gate_label
         """),
@@ -682,12 +699,21 @@ async def get_stats(
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）
+    # S9(9車立て・独立ランク・2026-07-26導入)は既定の"all"合算には含めない（Option B方針）。
     if rank == "S1":
         _RANK_COND = "ph.rank = 'SEVEN_S1'"
     elif rank == "SS":
         _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'SS'"
     elif rank == "S":
         _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'S'"
+    elif rank == "S9SS+":
+        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'"
+    elif rank == "S9SS":
+        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'"
+    elif rank == "S9S":
+        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'"
+    elif rank == "S9":
+        _RANK_COND = "ph.rank = 'NINE_S9'"
     else:
         _RANK_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S4')"
 
@@ -850,6 +876,13 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         "test":       model_eval,
         "test_from":  model_eval.get("period_from"),
         "test_to":    model_eval.get("period_to"),
+        # S9(9車立て・独立ランク・2026-07-26導入)はS1/S4のトップライン合算に含めず
+        # 別セクションとして返す（Option B・独立ランク方針）。
+        "s9": {
+            "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}, rank_filter=_RANKS_S9),
+            "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}, rank_filter=_RANKS_S9),
+            "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}, rank_filter=_RANKS_S9),
+        },
     }
 
     return JSONResponse(content=result)

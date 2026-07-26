@@ -174,6 +174,11 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // S=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）
   "S":          { bg: "#16a34a", text: "#fff", label: "S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
+  // S9=S4の9車立て版（独立ランク・2026-07-26導入）。SS+/SS/Sの意味はS4と同じだが
+  // 買い目コスト(7点流し=700円)・母集団が異なるため色調も別系統（青系）にして区別する。
+  "S9-SS+":     { bg: "#1e40af", text: "#fff", label: "S9SS+" },
+  "S9-SS":      { bg: "#2563eb", text: "#fff", label: "S9SS" },
+  "S9-S":       { bg: "#0891b2", text: "#fff", label: "S9S" },
 };
 
 // ---------------------------------------------------------------------------
@@ -689,12 +694,25 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   S: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
 };
 
+// S9(9車立て・独立ランク・2026-07-26導入)のランク別内訳。S4の"SS+"/"SS"/"S"とは
+// by_rankキーが"S9-SS+"等で別物のため、専用の順序・ラベル・色を用意する。
+const S9_RANK_ORDER = ["S9-SS+", "S9-SS", "S9-S"] as const;
+const S9_RANK_LABEL: Record<string, string> = { "S9-SS+": "SS+", "S9-SS": "SS", "S9-S": "S" };
+const S9_RANK_BADGE_STYLE: Record<string, string> = {
+  "S9-SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
+  "S9-SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  "S9-S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
+};
+
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */
 function mobileColClass(showAll: boolean): string {
   return showAll ? "table-cell" : "hidden sm:table-cell";
 }
 
-function RankSubRow({ rankKey, data, showAll }: { rankKey: string; data: RankStats; showAll: boolean }) {
+function RankSubRow({ rankKey, data, showAll, labelMap = RANK_LABEL, badgeStyleMap = RANK_BADGE_STYLE }: {
+  rankKey: string; data: RankStats; showAll: boolean;
+  labelMap?: Record<string, string>; badgeStyleMap?: Record<string, string>;
+}) {
   const roiColor = data.roi == null
     ? "text-gray-400"
     : data.roi >= 1.0
@@ -703,14 +721,14 @@ function RankSubRow({ rankKey, data, showAll }: { rankKey: string; data: RankSta
   const hitRate = data.n_picks > 0
     ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
     : "—";
-  const badgeClass = RANK_BADGE_STYLE[rankKey] ?? "bg-gray-100 text-gray-600";
+  const badgeClass = badgeStyleMap[rankKey] ?? "bg-gray-100 text-gray-600";
 
   return (
     <tr className="border-b border-gray-50 dark:border-gray-800 last:border-0 bg-gray-50/50 dark:bg-gray-800/30">
       <td className="py-1 px-2 sm:px-3">
         <span className="flex items-center gap-1.5 pl-3">
           <span className={`inline-flex items-center justify-center min-w-6 px-1 h-5 rounded text-xs font-bold ${badgeClass}`}>
-            {RANK_LABEL[rankKey] ?? rankKey}
+            {labelMap[rankKey] ?? rankKey}
           </span>
         </span>
       </td>
@@ -741,7 +759,10 @@ function RankSubRow({ rankKey, data, showAll }: { rankKey: string; data: RankSta
   );
 }
 
-function SummaryRow({ label, sub, data, showRanks, showAll }: { label: string; sub?: string; data: PeriodData; showRanks?: boolean; showAll: boolean }) {
+function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORDER, rankLabelMap = RANK_LABEL, rankBadgeStyleMap = RANK_BADGE_STYLE }: {
+  label: string; sub?: string; data: PeriodData; showRanks?: boolean; showAll: boolean;
+  rankOrder?: readonly string[]; rankLabelMap?: Record<string, string>; rankBadgeStyleMap?: Record<string, string>;
+}) {
   const roiColor = data.roi == null
     ? "text-gray-400"
     : data.roi >= 1.0
@@ -790,13 +811,13 @@ function SummaryRow({ label, sub, data, showRanks, showAll }: { label: string; s
           {formatROI(data.roi)}
         </td>
       </tr>
-      {hasRanks && RANK_ORDER.map(rk => {
+      {hasRanks && rankOrder.map(rk => {
         // 0件のランクもゼロ埋めで表示する（省略しない）
         const rd = byRank[rk] ?? {
           n_picks: 0, n_hits: 0, total_bet: 0, total_payout: 0,
           roi: null, n_candidates: 0, max_payout: null,
         };
-        return <RankSubRow key={rk} rankKey={rk} data={rd} showAll={showAll} />;
+        return <RankSubRow key={rk} rankKey={rk} data={rd} showAll={showAll} labelMap={rankLabelMap} badgeStyleMap={rankBadgeStyleMap} />;
       })}
     </>
   );
@@ -856,6 +877,65 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               showRanks={expanded}
               showAll={showAll}
             />
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// S9(9車立て・独立ランク・2026-07-26導入)の投資・回収サマリー。
+// S1/S4のトップライン合算には含めない方針（Option B）のため別カードで表示する。
+// 検証期間(model_evaluation HOLDバックテスト)行はS9にはまだ無いため省略。
+function S9SummaryCard({ summary }: { summary: KeirinSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  if (!summary.s9) return null;
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+      <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center gap-1">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 flex-1">投資・回収サマリー（9車 S9）</h2>
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className={`sm:hidden flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
+            showAll
+              ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+              : "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400"
+          }`}
+          aria-label={showAll ? "省略表示に戻す" : "すべての項目を表示"}
+        >
+          すべて
+        </button>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded"
+          aria-label={expanded ? "ランク詳細を閉じる" : "ランク詳細を開く"}
+        >
+          {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          <span className="hidden sm:inline">{expanded ? "閉じる" : "ランク別"}</span>
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-100 dark:border-gray-700">
+              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>投資</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>回収</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap`}>期間最大払戻</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <SummaryRow label="当日" data={summary.s9.today} showRanks={expanded} showAll={showAll}
+              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
+            <SummaryRow label="当月" data={summary.s9.month} showRanks={expanded} showAll={showAll}
+              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
+            <SummaryRow label="当年" data={summary.s9.year} showRanks={expanded} showAll={showAll}
+              rankOrder={S9_RANK_ORDER} rankLabelMap={S9_RANK_LABEL} rankBadgeStyleMap={S9_RANK_BADGE_STYLE} />
           </tbody>
         </table>
       </div>
@@ -1055,7 +1135,10 @@ export default function KeirinPage() {
 
       {/* サマリー */}
       {summary ? (
-        <SummaryCard summary={summary} />
+        <>
+          <SummaryCard summary={summary} />
+          <S9SummaryCard summary={summary} />
+        </>
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 h-24 animate-pulse" />
       )}
