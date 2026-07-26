@@ -4,6 +4,8 @@
 
 背景・全体設計方針: `memory/jra_new_index_web_research_2026_07_26.md`（Web調査6分野の統合レポート）
 
+chihou(地方競馬)展開の検証結果: `docs/chihou_expansion_from_jra_results.md`
+
 ## サマリー表
 
 | Phase | 施策 | 検証方法 | 結果 | chihou/keirin展開 |

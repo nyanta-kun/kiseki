@@ -1,0 +1,289 @@
+{
+  "full_period": [
+    "20230101",
+    "20260726"
+  ],
+  "diagnostic_period": [
+    "20230101",
+    "20250630"
+  ],
+  "confirmation_period": [
+    "20250630",
+    "20260726"
+  ],
+  "n_races_diagnostic": 17999,
+  "n_races_confirmation": 13403,
+  "min_head_count": 8,
+  "min_sample_for_conclusion": 100,
+  "section_a": {
+    "sweet_spot": {
+      "diagnostic": {
+        "n": 693,
+        "hit_rate": 0.0649,
+        "roi": 0.9697,
+        "n_roi": 693
+      },
+      "confirmation": {
+        "n": 405,
+        "hit_rate": 0.0667,
+        "roi": 0.9452,
+        "n_roi": 405
+      }
+    },
+    "place_bet": {
+      "diagnostic": {
+        "n": 9343,
+        "hit_rate": 0.2462,
+        "roi": 2.5,
+        "n_roi": 6
+      },
+      "confirmation": {
+        "n": 6636,
+        "hit_rate": 0.2643,
+        "roi": 1.0754,
+        "n_roi": 1887
+      }
+    },
+    "low_odds_trusted": {
+      "diagnostic": {
+        "n": 3706,
+        "hit_rate": 0.6856,
+        "roi": 0.8437,
+        "n_roi": 3706
+      },
+      "confirmation": {
+        "n": 3010,
+        "hit_rate": 0.6957,
+        "roi": 0.852,
+        "n_roi": 3010
+      }
+    },
+    "low_odds_untrusted": {
+      "diagnostic": {
+        "n": 5416,
+        "hit_rate": 0.4747,
+        "roi": 0.8009,
+        "n_roi": 5416
+      },
+      "confirmation": {
+        "n": 4331,
+        "hit_rate": 0.4883,
+        "roi": 0.8206,
+        "n_roi": 4331
+      }
+    }
+  },
+  "section_b": {
+    "sweet_spot": {
+      "category": "sweet_spot",
+      "bet_type": "win",
+      "threshold": 0.7286,
+      "diagnostic_overall": {
+        "n": 693,
+        "hit_rate": 0.0649,
+        "roi": 0.9697,
+        "n_roi": 693
+      },
+      "confirmation_overall": {
+        "n": 405,
+        "hit_rate": 0.0667,
+        "roi": 0.9452,
+        "n_roi": 405
+      },
+      "diagnostic_low": {
+        "n": 349,
+        "hit_rate": 0.0573,
+        "roi": 0.9246,
+        "n_roi": 349
+      },
+      "diagnostic_high": {
+        "n": 344,
+        "hit_rate": 0.0727,
+        "roi": 1.0154,
+        "n_roi": 344
+      },
+      "confirmation_low": {
+        "n": 194,
+        "hit_rate": 0.0722,
+        "roi": 0.9804,
+        "n_roi": 194
+      },
+      "confirmation_high": {
+        "n": 211,
+        "hit_rate": 0.0616,
+        "roi": 0.9128,
+        "n_roi": 211
+      },
+      "diagnostic_gap": -0.0154,
+      "confirmation_gap": 0.0106,
+      "enough_n": true,
+      "reproduced": false
+    },
+    "place_bet": {
+      "category": "place_bet",
+      "bet_type": "place",
+      "threshold": 0.6177,
+      "diagnostic_overall": {
+        "n": 9343,
+        "hit_rate": 0.2462,
+        "roi": 2.5,
+        "n_roi": 6
+      },
+      "confirmation_overall": {
+        "n": 6636,
+        "hit_rate": 0.2643,
+        "roi": 1.0754,
+        "n_roi": 1887
+      },
+      "diagnostic_low": {
+        "n": 4674,
+        "hit_rate": 0.2612,
+        "roi": 2.0,
+        "n_roi": 2
+      },
+      "diagnostic_high": {
+        "n": 4669,
+        "hit_rate": 0.2311,
+        "roi": 2.75,
+        "n_roi": 4
+      },
+      "confirmation_low": {
+        "n": 3598,
+        "hit_rate": 0.2857,
+        "roi": 1.0475,
+        "n_roi": 1082
+      },
+      "confirmation_high": {
+        "n": 3038,
+        "hit_rate": 0.239,
+        "roi": 1.1128,
+        "n_roi": 805
+      },
+      "diagnostic_gap": 0.0301,
+      "confirmation_gap": 0.0467,
+      "enough_n": true,
+      "reproduced": true
+    },
+    "low_odds_trusted": {
+      "category": "low_odds_trusted",
+      "bet_type": "win",
+      "threshold": 0.5534,
+      "diagnostic_overall": {
+        "n": 3706,
+        "hit_rate": 0.6856,
+        "roi": 0.8437,
+        "n_roi": 3706
+      },
+      "confirmation_overall": {
+        "n": 3010,
+        "hit_rate": 0.6957,
+        "roi": 0.852,
+        "n_roi": 3010
+      },
+      "diagnostic_low": {
+        "n": 1854,
+        "hit_rate": 0.7567,
+        "roi": 0.8687,
+        "n_roi": 1854
+      },
+      "diagnostic_high": {
+        "n": 1852,
+        "hit_rate": 0.6145,
+        "roi": 0.8186,
+        "n_roi": 1852
+      },
+      "confirmation_low": {
+        "n": 1576,
+        "hit_rate": 0.7684,
+        "roi": 0.8823,
+        "n_roi": 1576
+      },
+      "confirmation_high": {
+        "n": 1434,
+        "hit_rate": 0.6158,
+        "roi": 0.8186,
+        "n_roi": 1434
+      },
+      "diagnostic_gap": 0.1422,
+      "confirmation_gap": 0.1526,
+      "enough_n": true,
+      "reproduced": true
+    },
+    "low_odds_untrusted": {
+      "category": "low_odds_untrusted",
+      "bet_type": "win",
+      "threshold": 0.6714,
+      "diagnostic_overall": {
+        "n": 5416,
+        "hit_rate": 0.4747,
+        "roi": 0.8009,
+        "n_roi": 5416
+      },
+      "confirmation_overall": {
+        "n": 4331,
+        "hit_rate": 0.4883,
+        "roi": 0.8206,
+        "n_roi": 4331
+      },
+      "diagnostic_low": {
+        "n": 2711,
+        "hit_rate": 0.5146,
+        "roi": 0.8451,
+        "n_roi": 2711
+      },
+      "diagnostic_high": {
+        "n": 2705,
+        "hit_rate": 0.4348,
+        "roi": 0.7567,
+        "n_roi": 2705
+      },
+      "confirmation_low": {
+        "n": 2361,
+        "hit_rate": 0.51,
+        "roi": 0.8354,
+        "n_roi": 2361
+      },
+      "confirmation_high": {
+        "n": 1970,
+        "hit_rate": 0.4624,
+        "roi": 0.8029,
+        "n_roi": 1970
+      },
+      "diagnostic_gap": 0.0798,
+      "confirmation_gap": 0.0476,
+      "enough_n": true,
+      "reproduced": true
+    }
+  },
+  "section_c": {
+    "threshold_q25": 0.6865,
+    "diagnostic_low": {
+      "n": 2812,
+      "hit_rate": 0.1913,
+      "roi": 0.653,
+      "n_roi": 2812
+    },
+    "diagnostic_high": {
+      "n": 8459,
+      "hit_rate": 0.1835,
+      "roi": 0.7319,
+      "n_roi": 8459
+    },
+    "confirmation_low": {
+      "n": 2032,
+      "hit_rate": 0.188,
+      "roi": 0.6084,
+      "n_roi": 2032
+    },
+    "confirmation_high": {
+      "n": 5642,
+      "hit_rate": 0.1969,
+      "roi": 0.7238,
+      "n_roi": 5642
+    },
+    "diagnostic_gap": 0.0078,
+    "confirmation_gap": -0.0089,
+    "enough_n": true,
+    "reproduced": false
+  }
+}
