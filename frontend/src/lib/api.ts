@@ -1072,13 +1072,16 @@ export type KeirinStatsResponse = {
   };
 };
 
+export type KeirinStatsRank = "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S" | "S9" | "all";
+
 export async function fetchKeirinStats(
   fromDate: string,
   toDate: string,
   granularity: "daily" | "monthly",
-  rank?: "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S" | "S9" | "all",
+  rank?: KeirinStatsRank | KeirinStatsRank[],
 ): Promise<KeirinStatsResponse> {
-  const rankQuery = rank ? `&rank=${rank}` : "";
+  const rankValue = Array.isArray(rank) ? rank.join(",") : rank;
+  const rankQuery = rankValue ? `&rank=${encodeURIComponent(rankValue)}` : "";
   return get<KeirinStatsResponse>(
     `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}`,
     { cache: "no-store" },

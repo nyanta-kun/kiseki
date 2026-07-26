@@ -684,9 +684,11 @@ async def get_stats(
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
-    rank: 集計対象ランク。"S1"（SEVEN_S1）/ "SS"（SEVEN_S4 かつ gate_label='SS'）/
+    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "SS,S9SS+"）。
+          "S1"（SEVEN_S1）/ "SS"（SEVEN_S4 かつ gate_label='SS'）/
           "S"（SEVEN_S4 かつ gate_label='S'）/ "S9SS+"・"S9SS"・"S9S"（NINE_S9の
           gate_label別）/ "S9"（NINE_S9全体）/ "all"（既定値・S1+SEVEN_S4+NINE_S9全体）。
+          "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
     """
     today = _today_jst()
     if to_date:
@@ -711,25 +713,27 @@ async def get_stats(
         date_expr = "ph.race_date"
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
-    # （rank文字列をそのままSQLへ埋め込まない）
-    # 2026-07-27〜: 既定の"all"はS1+S4+S9をまとめて集計する（/summaryと同じ方針。
-    # 個別ランクで見たい場合はS1/SS/S/S9SS+/S9SS/S9S/S9を指定する）。
-    if rank == "S1":
-        _RANK_COND = "ph.rank = 'SEVEN_S1'"
-    elif rank == "SS":
-        _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'SS'"
-    elif rank == "S":
-        _RANK_COND = "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'S'"
-    elif rank == "S9SS+":
-        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'"
-    elif rank == "S9SS":
-        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'"
-    elif rank == "S9S":
-        _RANK_COND = "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'"
-    elif rank == "S9":
-        _RANK_COND = "ph.rank = 'NINE_S9'"
+    # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
+    # OR条件として結合する（例: "SS,S9SS+" → SEVEN_S4のSS or NINE_S9のSS+）。
+    # 2026-07-27〜: 既定の"all"はS1+S4+S9をまとめて集計する（/summaryと同じ方針）。
+    _RANK_COND_MAP = {
+        "S1": "ph.rank = 'SEVEN_S1'",
+        "SS": "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'SS'",
+        "S": "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'S'",
+        "S9SS+": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'",
+        "S9SS": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'",
+        "S9S": "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'",
+        "S9": "ph.rank = 'NINE_S9'",
+    }
+    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S4', 'NINE_S9')"
+    _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
+    if not _requested_keys or "all" in _requested_keys:
+        _RANK_COND = _ALL_COND
     else:
-        _RANK_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S4', 'NINE_S9')"
+        _matched_conds = [_RANK_COND_MAP[k] for k in _requested_keys if k in _RANK_COND_MAP]
+        # 複数条件はOR結合するため、AND {_RANK_COND} の文脈で優先順位が壊れないよう
+        # 常に外側を括弧で囲む（単一条件でも一貫性のため同様に囲む）
+        _RANK_COND = "(" + " OR ".join(f"({c})" for c in _matched_conds) + ")" if _matched_conds else _ALL_COND
 
     _STATS_COND = f"""
         AND NOT COALESCE(ph.miwokuri, FALSE)
