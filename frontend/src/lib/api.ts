@@ -1075,6 +1075,20 @@ export type KeirinStatsResponse = {
 
 export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS" | "9S" | "S9" | "7A" | "9A" | "all";
 
+// netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
+export type NetkeirinRankKey = "_global" | "S1" | "7SS" | "7S" | "7A" | "9SS" | "9S" | "9A";
+
+export type NetkeirinSetting = {
+  rank_key: NetkeirinRankKey;
+  enabled: boolean;
+  title_template: string;
+  comment_template: string;
+};
+
+export async function fetchNetkeirinSettings(): Promise<NetkeirinSetting[]> {
+  return get<NetkeirinSetting[]>(`/keirin/netkeirin-settings`, { cache: "no-store" });
+}
+
 export async function fetchKeirinStats(
   fromDate: string,
   toDate: string,

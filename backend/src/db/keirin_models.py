@@ -204,6 +204,22 @@ class KeirinPicksHistory(KeirinBase):
     gap34: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="指数3-4位の予測確率差(0-1スケール・migration i5j6k7l8m9n0)")
 
 
+class KeirinNetkeirinSetting(KeirinBase):
+    """netkeirin（ウマい車券）自動入稿のランク別ON/OFF・タイトル/コメントテンプレート
+    （migration s2t3u4v5w6x7）。rank_key='_global' は全体ON/OFFの特殊行。"""
+
+    __tablename__ = "netkeirin_settings"
+    __table_args__ = {"schema": KEIRIN_SCHEMA}
+
+    rank_key: Mapped[str] = mapped_column(
+        String(10), primary_key=True, comment="S1/7SS/7S/7A/9SS/9S/9A、または全体行'_global'"
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="自動入稿ON/OFF")
+    title_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="タイトルテンプレート")
+    comment_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="コメントテンプレート")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+
+
 class KeirinModelEvaluation(KeirinBase):
     """モデル・戦略バックテスト評価（save_model_eval.py が書込・summary API が参照）"""
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
+import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
@@ -1079,6 +1079,14 @@ export default function KeirinPage() {
           >
             <HelpCircle size={15} />
             <span className="hidden sm:inline">推奨ガイド</span>
+          </Link>
+          <Link
+            href="/keirin/settings"
+            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            aria-label="入稿設定"
+          >
+            <Settings size={15} />
+            <span className="hidden sm:inline">入稿設定</span>
           </Link>
         </div>
       </div>

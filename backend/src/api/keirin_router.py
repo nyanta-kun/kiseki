@@ -14,10 +14,14 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from pydantic import BaseModel
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
+from .import_router import ApiKeyDep
 
 _WEBHOOK_BASE = "http://172.18.0.1:8010"
 
@@ -918,3 +922,78 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     }
 
     return JSONResponse(content=result)
+
+
+# ---------------------------------------------------------------------------
+# netkeirin（ウマい車券）自動入稿設定
+# ---------------------------------------------------------------------------
+
+# 表示ランク一覧（_display_rank()の出力と一致・S1/7SS/7S/7A/9SS/9S/9A）。
+# '_global' は全体ON/OFFを表す特殊行。
+NETKEIRIN_RANK_KEYS = ("_global", "S1", "7SS", "7S", "7A", "9SS", "9S", "9A")
+
+
+class NetkeirinSettingOut(BaseModel):
+    rank_key: str
+    enabled: bool
+    title_template: str
+    comment_template: str
+
+
+class NetkeirinSettingIn(BaseModel):
+    rank_key: str
+    enabled: bool
+    title_template: str
+    comment_template: str
+
+
+@router.get("/netkeirin-settings")
+async def get_netkeirin_settings(db: AsyncSession = Depends(get_db)) -> list[NetkeirinSettingOut]:
+    """netkeirin自動入稿のランク別ON/OFF・タイトル/コメントテンプレート一覧を返す。"""
+    rows = (await db.execute(select(KeirinNetkeirinSetting))).scalars().all()
+    return [
+        NetkeirinSettingOut(
+            rank_key=r.rank_key,
+            enabled=r.enabled,
+            title_template=r.title_template,
+            comment_template=r.comment_template,
+        )
+        for r in rows
+    ]
+
+
+@router.put("/netkeirin-settings")
+async def update_netkeirin_settings(
+    body: list[NetkeirinSettingIn],
+    _: ApiKeyDep,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """netkeirin自動入稿設定を一括更新する（upsert・rank_keyはallowlist検証）。"""
+    for item in body:
+        if item.rank_key not in NETKEIRIN_RANK_KEYS:
+            return JSONResponse(
+                content={"ok": False, "message": f"不正なrank_key: {item.rank_key}"},
+                status_code=400,
+            )
+    for item in body:
+        stmt = (
+            pg_insert(KeirinNetkeirinSetting)
+            .values(
+                rank_key=item.rank_key,
+                enabled=item.enabled,
+                title_template=item.title_template,
+                comment_template=item.comment_template,
+            )
+            .on_conflict_do_update(
+                index_elements=["rank_key"],
+                set_={
+                    "enabled": item.enabled,
+                    "title_template": item.title_template,
+                    "comment_template": item.comment_template,
+                    "updated_at": func.now(),
+                },
+            )
+        )
+        await db.execute(stmt)
+    await db.commit()
+    return JSONResponse(content={"ok": True, "updated": len(body)})
