@@ -977,9 +977,9 @@ export type KeirinPick = {
   bet_amount: number;
   miwokuri: boolean;
   prerace_gami: number | null;
-  /** SEVEN_S4の内訳ラベル("SS"|"S")。S1等では null */
+  /** SEVEN_S7の内訳ラベル("SS"|"S")。S1等では null */
   gate_label?: string | null;
-  /** 最終表示ランク文字列（"S1"|"SS"|"S"等） */
+  /** 最終表示ランク文字列（"S1"|"7SS"|"7S"等） */
   display_rank?: string;
   entries: KeirinEntry[];
 };
@@ -998,8 +998,8 @@ export type KeirinPeriodSummary = {
 };
 
 export type KeirinSummary = {
-  /** 2026-07-27〜: S1(7車)+S4(7車)+S9(9車)をまとめて集計。by_rankに7車・9車の
-   *  ランクが両方並ぶ（S1/SS+/SS/S/S9-SS+/S9-SS/S9-S） */
+  /** 2026-07-27〜: S1(7車)+S7(7車)+S9(9車)をまとめて集計。by_rankに7車・9車の
+   *  ランクが両方並ぶ（S1/7SS+/7SS/7S/9SS+/9SS/9S） */
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
@@ -1072,7 +1072,7 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S" | "S9" | "all";
+export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "S9" | "all";
 
 export async function fetchKeirinStats(
   fromDate: string,

@@ -148,14 +148,17 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 定数
 // ---------------------------------------------------------------------------
 
-// 現行ランク体系（2026-07-21〜: S1/SS/S の3ペーパーランク）。
+// 現行ランク体系（2026-07-21〜: S1/7SS/7S の3ペーパーランク）。
 // S1は新設計（win軸1着固定×3着内モデル相手2車・SEVEN_S1）で2026-07-19導入。
-// SS/Sは単勝×複勝指数トップ3重なり軸×波乱度選出（三連複2軸総流し・SEVEN_S4）を
+// 7SS/7Sは単勝×複勝指数トップ3重なり軸×波乱度選出（三連複2軸総流し・SEVEN_S7）を
 // WINTICKET公式◎◯との軸重なり数で分割した表示ランク（2026-07-21導入）:
-//   軸2車がWT◎◯と全く重ならない → SS（全期間 対象943R・的中率39.4%・ROI232.8%）
-//   軸2車の片方だけがWT◎◯と重なる → S（全期間 対象8,984R・的中率36.0%・ROI120.6%）
-// 内部rankカラムはSS/Sいずれも SEVEN_S4 のまま。区別は gate_label(SS|S) で行い、
-// バックエンドが計算した pick.display_rank(S1|SS|S) をそのままキーに使う。
+//   軸2車がWT◎◯と全く重ならない → 7SS（全期間 対象943R・的中率39.4%・ROI232.8%）
+//   軸2車の片方だけがWT◎◯と重なる → 7S（全期間 対象8,984R・的中率36.0%・ROI120.6%）
+// 内部rankカラムは7SS/7Sいずれも SEVEN_S7 のまま。区別は gate_label(SS|S) で行い、
+// バックエンドが計算した pick.display_rank(S1|7SS|7S) をそのままキーに使う。
+// 2026-07-27: 内部名S4→S7へ統一し、表示ランクにも対象車数の接頭辞（7 or 9）を
+// 揃えて付与した（旧表示 SS+/SS/S・S9-SS+/S9-SS/S9-S は内部名との対応が
+// 分かりにくく混乱の原因になっていたため。keirinリポジトリのsrc/strategy_wt.pyと揃える）。
 // S2(7PLUS_U)/S3(7PLUS_M)は対象レース数・的中率・期待値の観点で継続困難と判断し
 // 2026-07-21 全廃（行は picks_history_u_archive / _m_archive へ退避済み・新規生成なし）。
 // 旧新S1（SIX_S1・6車三連単）と A（7PLUS_A・一致波乱二連単）は正規プロトコル再検証で
@@ -167,18 +170,18 @@ function fmtStartAt(startAt: number | string | null): string | null {
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
   // S1=win軸1着固定×3着内モデル相手2車（2026-07-19新設計）
   "S1":         { bg: "#ea580c", text: "#fff", label: "S1" },
-  // SS+=SS内、軸2車の級班に各グレード最上位(S1/A1)を含まない観察用サブランク（2026-07-23追加）
-  "SS+":        { bg: "#a16207", text: "#fff", label: "SS+" },
-  // SS=SEVEN_S4のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）
-  "SS":         { bg: "#ca8a04", text: "#fff", label: "SS" },
-  // S=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）
-  "S":          { bg: "#16a34a", text: "#fff", label: "S" },
+  // 7SS+=7SS内、軸2車の級班に各グレード最上位(S1/A1)を含まない観察用サブランク（2026-07-23追加）
+  "7SS+":       { bg: "#a16207", text: "#fff", label: "7SS+" },
+  // 7SS=SEVEN_S7のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）
+  "7SS":        { bg: "#ca8a04", text: "#fff", label: "7SS" },
+  // 7S=SEVEN_S7のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）
+  "7S":         { bg: "#16a34a", text: "#fff", label: "7S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
-  // S9=S4の9車立て版（独立ランク・2026-07-26導入）。SS+/SS/Sの意味はS4と同じだが
+  // S9=S7の9車立て版（独立ランク・2026-07-26導入）。SS+/SS/Sの意味はS7と同じだが
   // 買い目コスト(7点流し=700円)・母集団が異なるため色調も別系統（青系）にして区別する。
-  "S9-SS+":     { bg: "#1e40af", text: "#fff", label: "S9SS+" },
-  "S9-SS":      { bg: "#2563eb", text: "#fff", label: "S9SS" },
-  "S9-S":       { bg: "#0891b2", text: "#fff", label: "S9S" },
+  "9SS+":       { bg: "#1e40af", text: "#fff", label: "9SS+" },
+  "9SS":        { bg: "#2563eb", text: "#fff", label: "9SS" },
+  "9S":         { bg: "#0891b2", text: "#fff", label: "9S" },
 };
 
 // ---------------------------------------------------------------------------
@@ -534,9 +537,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（S1/SS/S。2026-07-21にS2/S3全廃）は旧S1の三連複ガミ閾値と無関係のため
+  // ペーパー検証ランク（S1/7SS/7S。2026-07-21にS2/S3全廃）は旧S1の三連複ガミ閾値と無関係のため
   // ガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "SEVEN_S4";
+  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "SEVEN_S7";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -547,7 +550,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const candRanks = isGamiSkip ? [] : candPossibleRanks(pick);
   const candCombo = candRanks.length > 0 ? parseCandCombo(pick.pred_combo) : null;
   // バッジ表示はランク名を直接出す（2026-07-16に導入・2026-07-21にSS/S再編でAPI側の
-  // display_rank(S1/SS/S)をそのまま使う方式へ変更）:
+  // display_rank(S1/7SS/7S)をそのまま使う方式へ変更）:
   // S1候補（7PLUS_CAND ∧ gap条件成立）は「候補」ではなく S1 バッジで表示し、
   // 直前オッズ判定で購入対象になったら緑○で囲う（RankBadge purchased）。
   const badgeRank = rankStr === "7PLUS_CAND" && candRanks.includes("S1")
@@ -556,7 +559,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
   const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
-  // 券種ラベル: S1（win軸新設計）のみ三連単、SS/S（SEVEN_S4）は三連複
+  // 券種ラベル: S1（win軸新設計）のみ三連単、7SS/7S（SEVEN_S7）は三連複
   const betTypeLabel = rankStr === "SEVEN_S1" ? "3連単" : "3連複";
   const comboLabel = pick.pred_combo
     ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
@@ -677,29 +680,30 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "S1"=win軸新設計 / "SS+"=SEVEN_S4のうちSSでさらに軸2車に各グレード
-// 最上位クラス(S1/A1)を含まない観察用サブランク / "SS"=SEVEN_S4のうち軸2車がWT◎◯と
-// 全く重ならない選出 / "S"=SEVEN_S4のうち軸2車の片方だけがWT◎◯と重なる選出
+// by_rank キー: "S1"=win軸新設計 / "7SS+"=SEVEN_S7のうち7SSでさらに軸2車に各グレード
+// 最上位クラス(S1/A1)を含まない観察用サブランク / "7SS"=SEVEN_S7のうち軸2車がWT◎◯と
+// 全く重ならない選出 / "7S"=SEVEN_S7のうち軸2車の片方だけがWT◎◯と重なる選出
 // （全てペーパー検証・名目賭金）。
-// 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S4導入
-// 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S4をgate_label(SS/S)でSS/Sの2ランクへ再編
-// 2026-07-23 SS内の軸級班denyフィルター通過分をSS+として観察用に追加（買い目は変更なし）
+// 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S7導入
+// 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S7をgate_label(SS/S)で7SS/7Sの2ランクへ再編
+// 2026-07-23 7SS内の軸級班denyフィルター通過分を7SS+として観察用に追加（買い目は変更なし）
 // 2026-07-27 S9(9車立て・独立ランク)をトップライン（当日/当月/当年）に統合。
-// ランク別展開では7車(SS+/SS/S/S1)・9車(S9-SS+/S9-SS/S9-S)を同じ一覧内に並べて
-// 確認できるようにする（表示ラベルは9車側にS9接頭辞を残し混同を防ぐ）。
-const RANK_ORDER = ["SS+", "SS", "S", "S1", "S9-SS+", "S9-SS", "S9-S"] as const;
+// 同日、内部名S4→S7へ統一し表示ランクにも対象車数の接頭辞（7 or 9）を揃えて付与。
+// ランク別展開では7車(7SS+/7SS/7S/S1)・9車(9SS+/9SS/9S)を同じ一覧内に並べて
+// 確認できるようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
+const RANK_ORDER = ["7SS+", "7SS", "7S", "S1", "9SS+", "9SS", "9S"] as const;
 const RANK_LABEL: Record<string, string> = {
-  S1: "S1", "SS+": "SS+", SS: "SS", S: "S",
-  "S9-SS+": "S9 SS+", "S9-SS": "S9 SS", "S9-S": "S9 S",
+  S1: "S1", "7SS+": "7SS+", "7SS": "7SS", "7S": "7S",
+  "9SS+": "9SS+", "9SS": "9SS", "9S": "9S",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
-  "SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
-  SS: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
-  S: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
-  "S9-SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
-  "S9-SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
-  "S9-S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
+  "7SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
+  "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+  "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
+  "9SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
+  "9SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

@@ -131,7 +131,7 @@ async def _calc_synth_odds(
 # サマリー集計とも齟齬が生じていた）を拾ってしまう。allowlist方式にすることで
 # 将来同種の残留が発生しても自動的に非表示になる（サマリー側の_aggregate()と
 # 対象ランクを揃えることでも齟齬を防ぐ）。
-_VALID_PICK_RANKS = "('SEVEN_S1', 'SEVEN_S4', 'NINE_S9', '7PLUS_CAND')"
+_VALID_PICK_RANKS = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', '7PLUS_CAND')"
 
 
 @router.get("/picks")
@@ -373,8 +373,12 @@ _SETTLED_COND = """(
 )"""
 
 # 内部rank → by_rank キー（表示ランク）のマッピング
-# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / SS / S の3ランク。
-# SEVEN_S4 は gate_label（軸2車とWINTICKET公式◎◯の重なり数）で SS/S に分岐する。
+# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / 7SS+ / 7SS / 7S の4ランク。
+# SEVEN_S7（旧SEVEN_S4）は gate_label（軸2車とWINTICKET公式◎◯の重なり数）でSS+/SS/Sに
+# 分岐し、表示時に対象車数の接頭辞「7」を付ける。
+# 2026-07-27: 内部名S4→S7へ統一（表示に一度も出てこない「S4」という名前と実際の
+# 表示ランク(SS+/SS/S)が食い違い混乱の原因になっていたため。keirin リポジトリの
+# src/strategy_wt.py と揃える）。
 _RANK_KEY_MAP = {
     "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
 }
@@ -384,39 +388,39 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
     """DB の内部 rank + gate_label から、フロントエンドが表示に使う表示ランク文字列を返す。
 
     - SEVEN_S1                        → "S1"
-    - SEVEN_S4 かつ gate_label='SS+'  → "SS+"（軸2車がWT公式◎◯と2車とも不一致・
+    - SEVEN_S7 かつ gate_label='SS+'  → "7SS+"（軸2車がWT公式◎◯と2車とも不一致・
                                           かつ軸に各グレード最上位クラスS1/A1を含まない・2026-07-23新設の観察用サブランク）
-    - SEVEN_S4 かつ gate_label='SS'   → "SS"（軸2車がWT公式◎◯と2車とも不一致）
-    - SEVEN_S4 かつ gate_label='S'    → "S"（軸2車の片方だけがWT公式◎◯と一致）
-    - NINE_S9 かつ gate_label='SS+'/'SS'/'S' → "S9-SS+"/"S9-SS"/"S9-S"
-      （S4の9車立て版・独立ランク。2026-07-26導入。SS+/SS/Sの意味はS4と同じだが
-      表示ランクにS9-接頭辞を付けてS4のSS+/SS/Sと区別する）
+    - SEVEN_S7 かつ gate_label='SS'   → "7SS"（軸2車がWT公式◎◯と2車とも不一致）
+    - SEVEN_S7 かつ gate_label='S'    → "7S"（軸2車の片方だけがWT公式◎◯と一致）
+    - NINE_S9 かつ gate_label='SS+'/'SS'/'S' → "9SS+"/"9SS"/"9S"
+      （S7の9車立て版・独立ランク。2026-07-26導入。SS+/SS/Sの意味はS7と同じだが
+      表示ランクの接頭辞（7 or 9）で対象車数を区別する）
     - それ以外（廃止済みランクの残骸データ等）→ 元の rank 文字列をそのまま返す
     """
     if rank == "SEVEN_S1":
         return "S1"
-    if rank == "SEVEN_S4":
+    if rank == "SEVEN_S7":
         if gate_label == "SS+":
-            return "SS+"
+            return "7SS+"
         if gate_label == "SS":
-            return "SS"
+            return "7SS"
         if gate_label == "S":
-            return "S"
+            return "7S"
     if rank == "NINE_S9":
         if gate_label == "SS+":
-            return "S9-SS+"
+            return "9SS+"
         if gate_label == "SS":
-            return "S9-SS"
+            return "9SS"
         if gate_label == "S":
-            return "S9-S"
+            return "9S"
     return rank
 
 
-# 2026-07-27: ユーザー要望によりトップライン（当日/当月/当年）は7車(S1/S4)+
+# 2026-07-27: ユーザー要望によりトップライン（当日/当月/当年）は7車(S1/S7)+
 # 9車(S9)をまとめて表示し、「ランク別」展開時に7車・9車の各ランクを
 # 一覧で確認できるようにする（表示テーブル自体はOption Bのまま独立ランクとして
 # 保持しつつ、サマリーの合算範囲だけ広げる）。
-_RANKS_ALL = "('SEVEN_S1', 'SEVEN_S4', 'NINE_S9')"
+_RANKS_ALL = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9')"
 
 
 async def _aggregate(
@@ -425,9 +429,9 @@ async def _aggregate(
     params: dict[str, Any],
     rank_filter: str = _RANKS_ALL,
 ) -> dict:
-    # 2026-07-21〜: 現行ランクは S1(SEVEN_S1) / SS・S(SEVEN_S4をgate_labelで分岐) の3ペーパー
+    # 2026-07-21〜: 現行ランクは S1(SEVEN_S1) / 7SS・7S(SEVEN_S7をgate_labelで分岐) の3ペーパー
     # （旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ退避済み）。
-    # 2026-07-27〜: トップラインは S1(SEVEN_S1) + S4(SEVEN_S4) + S9(NINE_S9) の名目合算。
+    # 2026-07-27〜: トップラインは S1(SEVEN_S1) + S7(SEVEN_S7) + S9(NINE_S9) の名目合算。
     # rank_filter: 個別ランクだけの集計にも本関数を再利用できるようパラメータ化
     # （既定は現行有効ランク全て）。
     row = (await db.execute(
@@ -480,7 +484,7 @@ async def _aggregate(
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / SS・S=SEVEN_S4（gate_labelで分岐）
+    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / 7SS・7S=SEVEN_S7（gate_labelで分岐）
     rank_rows = (await db.execute(
         text(f"""
             SELECT
@@ -686,10 +690,10 @@ async def get_stats(
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
-    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "SS,S9SS+"）。
-          "S1"（SEVEN_S1）/ "SS"（SEVEN_S4 かつ gate_label='SS'）/
-          "S"（SEVEN_S4 かつ gate_label='S'）/ "S9SS+"・"S9SS"・"S9S"（NINE_S9の
-          gate_label別）/ "S9"（NINE_S9全体）/ "all"（既定値・S1+SEVEN_S4+NINE_S9全体）。
+    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9SS+"）。
+          "S1"（SEVEN_S1）/ "7SS"（SEVEN_S7 かつ gate_label='SS'）/
+          "7S"（SEVEN_S7 かつ gate_label='S'）/ "9SS+"・"9SS"・"9S"（NINE_S9の
+          gate_label別）/ "S9"（NINE_S9全体）/ "all"（既定値・S1+SEVEN_S7+NINE_S9全体）。
           "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
     """
     today = _today_jst()
@@ -716,18 +720,18 @@ async def get_stats(
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
-    # OR条件として結合する（例: "SS,S9SS+" → SEVEN_S4のSS or NINE_S9のSS+）。
-    # 2026-07-27〜: 既定の"all"はS1+S4+S9をまとめて集計する（/summaryと同じ方針）。
+    # OR条件として結合する（例: "7SS,9SS+" → SEVEN_S7のSS or NINE_S9のSS+）。
+    # 2026-07-27〜: 既定の"all"はS1+S7+S9をまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
         "S1": "ph.rank = 'SEVEN_S1'",
-        "SS": "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'SS'",
-        "S": "ph.rank = 'SEVEN_S4' AND ph.gate_label = 'S'",
-        "S9SS+": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'",
-        "S9SS": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'",
-        "S9S": "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'",
+        "7SS": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'SS'",
+        "7S": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'S'",
+        "9SS+": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'",
+        "9SS": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'",
+        "9S": "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'",
         "S9": "ph.rank = 'NINE_S9'",
     }
-    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S4', 'NINE_S9')"
+    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S7', 'NINE_S9')"
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
     if not _requested_keys or "all" in _requested_keys:
         _RANK_COND = _ALL_COND
@@ -889,9 +893,9 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 
     model_eval = await _get_model_eval(db, period_type="HOLD")
 
-    # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S4+S9を
+    # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S7+S9を
     # まとめて集計する。by_rank（_aggregate内部で_display_rank()により算出）には
-    # S1/SS+/SS/S（7車）とS9-SS+/S9-SS/S9-S（9車）が同じ辞書に並ぶため、
+    # S1/7SS+/7SS/7S（7車）と9SS+/9SS/9S（9車）が同じ辞書に並ぶため、
     # フロントエンドの「ランク別」展開でまとめて確認できる。
     result = {
         "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),

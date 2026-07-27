@@ -151,7 +151,7 @@ function SummaryCard({ label, n_picks, n_hits, total_bet, total_payout, roi }: {
 
 type Preset = "7d" | "30d" | "90d" | "thisMonth" | "thisYear" | "all" | "custom";
 
-// honest全期間データの起点（S1/S4のquarters walk-forward再構築が対象とする期間と統一）
+// honest全期間データの起点（S1/S7のquarters walk-forward再構築が対象とする期間と統一）
 const ALL_TIME_FROM = "2024-01-01";
 
 function calcRange(preset: Preset): { from: string; to: string } {
@@ -186,16 +186,16 @@ const PRESETS: { key: Preset; label: string }[] = [
 
 type Granularity = "daily" | "monthly";
 type CumMode = "period" | "month" | "year";
-type RankFilter = "all" | "S1" | "SS" | "S" | "S9SS+" | "S9SS" | "S9S";
+type RankFilter = "all" | "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S";
 
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
-  { key: "SS", label: "SS" },
-  { key: "S", label: "S" },
+  { key: "7SS", label: "7SS" },
+  { key: "7S", label: "7S" },
   { key: "S1", label: "S1" },
-  { key: "S9SS+", label: "S9-SS+" },
-  { key: "S9SS", label: "S9-SS" },
-  { key: "S9S", label: "S9-S" },
+  { key: "9SS+", label: "9SS+" },
+  { key: "9SS", label: "9SS" },
+  { key: "9S", label: "9S" },
 ];
 
 export default function KeirinStatsPage() {
