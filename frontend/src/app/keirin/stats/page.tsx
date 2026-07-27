@@ -196,7 +196,7 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "9SS+", label: "9SS+" },
   { key: "9SS", label: "9SS" },
   { key: "9S", label: "9S" },
-  // 7A/9A（境界ランク・2026-07-27導入）。"全体"には含まれない（/summaryと同じ方針）。
+  // 7A/9A（境界ランク・2026-07-27導入）。"全体"にも含まれる（/summaryと同じ方針）。
   { key: "7A", label: "7A" },
   { key: "9A", label: "9A" },
 ];

@@ -998,18 +998,11 @@ export type KeirinPeriodSummary = {
 };
 
 export type KeirinSummary = {
-  /** 2026-07-27〜: S1(7車)+S7(7車)+S9(9車)をまとめて集計。by_rankに7車・9車の
-   *  ランクが両方並ぶ（S1/7SS+/7SS/7S/9SS+/9SS/9S） */
+  /** 2026-07-27〜: S1(7車)+S7(7車)+S9(9車)+7A/9A(境界ランク)をまとめて集計。
+   *  by_rankに7車・9車のランクが並ぶ（S1/7SS+/7SS/7S/7A/9SS+/9SS/9S/9A） */
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
-  /** 7A/9A（S7/S9の境界ランク・2026-07-27導入）。ROIがS1/S7/S9より明確に低いため
-   *  トップライン（today/month/year）には含めず別集計として返る。by_rankに7A/9A。 */
-  boundary: {
-    today: KeirinPeriodSummary;
-    month: KeirinPeriodSummary;
-    year: KeirinPeriodSummary;
-  };
   test: KeirinPeriodSummary;
   test_from: string;
   test_to: string;

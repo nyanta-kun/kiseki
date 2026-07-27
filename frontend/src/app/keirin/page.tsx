@@ -694,29 +694,24 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 2026-07-23 7SS内の軸級班denyフィルター通過分を7SS+として観察用に追加（買い目は変更なし）
 // 2026-07-27 S9(9車立て・独立ランク)をトップライン（当日/当月/当年）に統合。
 // 同日、内部名S4→S7へ統一し表示ランクにも対象車数の接頭辞（7 or 9）を揃えて付与。
-// ランク別展開では7車(7SS+/7SS/7S/S1)・9車(9SS+/9SS/9S)を同じ一覧内に並べて
+// 同日、7A/9A（S7/S9の境界ランク）を新設。当初はROIの違いを踏まえ専用の別テーブルに
+// 分離していたが、表示が煩雑とのユーザー要望により同日中にトップラインへ統合した。
+// ランク別展開では7車(7SS+/7SS/7S/7A/S1)・9車(9SS+/9SS/9S/9A)を同じ一覧内に並べて
 // 確認できるようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
-const RANK_ORDER = ["7SS+", "7SS", "7S", "S1", "9SS+", "9SS", "9S"] as const;
+const RANK_ORDER = ["7SS+", "7SS", "7S", "7A", "S1", "9SS+", "9SS", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  S1: "S1", "7SS+": "7SS+", "7SS": "7SS", "7S": "7S",
-  "9SS+": "9SS+", "9SS": "9SS", "9S": "9S",
+  S1: "S1", "7SS+": "7SS+", "7SS": "7SS", "7S": "7S", "7A": "7A",
+  "9SS+": "9SS+", "9SS": "9SS", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
   "7SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
   "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
+  "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
   "9SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
   "9SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
-};
-
-// 7A/9A（S7/S9の境界ランク・2026-07-27導入）。ROIがS1/S7/S9より明確に低いため
-// トップラインには含めず、SummaryCard内に別テーブルとして表示する。
-const BOUNDARY_RANK_ORDER = ["7A", "9A"] as const;
-const BOUNDARY_RANK_LABEL: Record<string, string> = { "7A": "7A", "9A": "9A" };
-const BOUNDARY_RANK_BADGE_STYLE: Record<string, string> = {
-  "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
 };
 
@@ -893,38 +888,6 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               showRanks={expanded}
               showAll={showAll}
             />
-          </tbody>
-        </table>
-      </div>
-
-      {/* 7A/9A（境界ランク）: トップラインとは別集計・別テーブルで表示する
-          （ROIがS1/S7/S9より明確に低いため、ヘッダーROIを薄めない設計） */}
-      <div className="px-3 sm:px-4 py-1.5 border-t border-b border-gray-100 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/40">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-          境界ランク（7A/9A・ボリューム拡大枠）
-        </h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-100 dark:border-gray-700">
-              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>投資</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>回収</th>
-              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap`}>期間最大払戻</th>
-              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <SummaryRow label="当日" data={summary.boundary.today} showRanks={expanded} showAll={showAll}
-              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
-            <SummaryRow label="当月" data={summary.boundary.month} showRanks={expanded} showAll={showAll}
-              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
-            <SummaryRow label="当年" data={summary.boundary.year} showRanks={expanded} showAll={showAll}
-              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
           </tbody>
         </table>
       </div>

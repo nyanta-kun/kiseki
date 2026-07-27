@@ -427,11 +427,9 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
 # 9車(S9)をまとめて表示し、「ランク別」展開時に7車・9車の各ランクを
 # 一覧で確認できるようにする（表示テーブル自体はOption Bのまま独立ランクとして
 # 保持しつつ、サマリーの合算範囲だけ広げる）。
-_RANKS_ALL = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9')"
-
-# 7A/9A（S7/S9の境界ランク・2026-07-27導入）はROIがS1/S7/S9より明確に低いため、
-# トップライン（_RANKS_ALL）には含めず別集計にする（フロントの別カードで表示）。
-_RANKS_BOUNDARY = "('SEVEN_7A', 'NINE_9A')"
+# 同日、7A/9A（S7/S9の境界ランク）を専用の別集計として追加したが、表示が煩雑との
+# ユーザー要望により同日中にトップラインへ統合（by_rankの一覧に7A/9Aも並べる）。
+_RANKS_ALL = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A')"
 
 
 async def _aggregate(
@@ -705,8 +703,8 @@ async def get_stats(
           "S1"（SEVEN_S1）/ "7SS"（SEVEN_S7 かつ gate_label='SS'）/
           "7S"（SEVEN_S7 かつ gate_label='S'）/ "9SS+"・"9SS"・"9S"（NINE_S9の
           gate_label別）/ "S9"（NINE_S9全体）/ "7A"（SEVEN_7A・境界ランク）/
-          "9A"（NINE_9A・境界ランク）/ "all"（既定値・S1+SEVEN_S7+NINE_S9全体、
-          7A/9Aは含まない。トップライン=/summaryと揃える）。
+          "9A"（NINE_9A・境界ランク）/ "all"（既定値・S1+SEVEN_S7+NINE_S9+7A+9A全体。
+          トップライン=/summaryと揃える）。
           "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
     """
     today = _today_jst()
@@ -734,7 +732,7 @@ async def get_stats(
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
     # OR条件として結合する（例: "7SS,9SS+" → SEVEN_S7のSS or NINE_S9のSS+）。
-    # 2026-07-27〜: 既定の"all"はS1+S7+S9をまとめて集計する（/summaryと同じ方針）。
+    # 2026-07-27〜: 既定の"all"はS1+S7+S9+7A+9Aをまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
         "S1": "ph.rank = 'SEVEN_S1'",
         "7SS": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'SS'",
@@ -746,7 +744,7 @@ async def get_stats(
         "7A": "ph.rank = 'SEVEN_7A'",
         "9A": "ph.rank = 'NINE_9A'",
     }
-    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S7', 'NINE_S9')"
+    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A')"
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
     if not _requested_keys or "all" in _requested_keys:
         _RANK_COND = _ALL_COND
@@ -908,21 +906,15 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 
     model_eval = await _get_model_eval(db, period_type="HOLD")
 
-    # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S7+S9を
+    # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S7+S9+7A+9Aを
     # まとめて集計する。by_rank（_aggregate内部で_display_rank()により算出）には
-    # S1/7SS+/7SS/7S（7車）と9SS+/9SS/9S（9車）が同じ辞書に並ぶため、
-    # フロントエンドの「ランク別」展開でまとめて確認できる。
-    # 2026-07-27〜: 7A/9A（境界ランク）はROIがS1/S7/S9より明確に低いため、トップライン
-    # とは別の "boundary" セクションとして返す（フロントは別カードで表示する）。
+    # S1/7SS+/7SS/7S/7A（7車）と9SS+/9SS/9S/9A（9車）が同じ辞書に並ぶため、
+    # フロントエンドの「ランク別」展開でまとめて確認できる（7A/9Aを専用の別集計に
+    # 分離していたが、表示が煩雑とのユーザー要望により同日中に統合した）。
     result = {
         "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),
         "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}),
         "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}),
-        "boundary": {
-            "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}, rank_filter=_RANKS_BOUNDARY),
-            "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}, rank_filter=_RANKS_BOUNDARY),
-            "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}, rank_filter=_RANKS_BOUNDARY),
-        },
         "test":       model_eval,
         "test_from":  model_eval.get("period_from"),
         "test_to":    model_eval.get("period_to"),
