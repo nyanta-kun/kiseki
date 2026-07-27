@@ -186,7 +186,7 @@ const PRESETS: { key: Preset; label: string }[] = [
 
 type Granularity = "daily" | "monthly";
 type CumMode = "period" | "month" | "year";
-type RankFilter = "all" | "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S";
+type RankFilter = "all" | "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "7A" | "9A";
 
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
@@ -196,6 +196,9 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "9SS+", label: "9SS+" },
   { key: "9SS", label: "9SS" },
   { key: "9S", label: "9S" },
+  // 7A/9A（境界ランク・2026-07-27導入）。"全体"には含まれない（/summaryと同じ方針）。
+  { key: "7A", label: "7A" },
+  { key: "9A", label: "9A" },
 ];
 
 export default function KeirinStatsPage() {

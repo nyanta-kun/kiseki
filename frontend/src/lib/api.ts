@@ -1003,6 +1003,13 @@ export type KeirinSummary = {
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
+  /** 7A/9A（S7/S9の境界ランク・2026-07-27導入）。ROIがS1/S7/S9より明確に低いため
+   *  トップライン（today/month/year）には含めず別集計として返る。by_rankに7A/9A。 */
+  boundary: {
+    today: KeirinPeriodSummary;
+    month: KeirinPeriodSummary;
+    year: KeirinPeriodSummary;
+  };
   test: KeirinPeriodSummary;
   test_from: string;
   test_to: string;
@@ -1072,7 +1079,7 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "S9" | "all";
+export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "S9" | "7A" | "9A" | "all";
 
 export async function fetchKeirinStats(
   fromDate: string,

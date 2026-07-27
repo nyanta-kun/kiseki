@@ -182,6 +182,11 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "9SS+":       { bg: "#1e40af", text: "#fff", label: "9SS+" },
   "9SS":        { bg: "#2563eb", text: "#fff", label: "9SS" },
   "9S":         { bg: "#0891b2", text: "#fff", label: "9S" },
+  // 7A/9A=S7/S9の境界ランク（3ゲート/2ゲート中1つだけ不合格・2026-07-27導入）。
+  // ROIはS7/S9より明確に低いためトップラインには含めず、彩度を落とした色で
+  // 「境界」であることを視覚的にも区別する。
+  "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
+  "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
 };
 
 // ---------------------------------------------------------------------------
@@ -706,6 +711,15 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
 };
 
+// 7A/9A（S7/S9の境界ランク・2026-07-27導入）。ROIがS1/S7/S9より明確に低いため
+// トップラインには含めず、SummaryCard内に別テーブルとして表示する。
+const BOUNDARY_RANK_ORDER = ["7A", "9A"] as const;
+const BOUNDARY_RANK_LABEL: Record<string, string> = { "7A": "7A", "9A": "9A" };
+const BOUNDARY_RANK_BADGE_STYLE: Record<string, string> = {
+  "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
+  "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
+};
+
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */
 function mobileColClass(showAll: boolean): string {
   return showAll ? "table-cell" : "hidden sm:table-cell";
@@ -879,6 +893,38 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
               showRanks={expanded}
               showAll={showAll}
             />
+          </tbody>
+        </table>
+      </div>
+
+      {/* 7A/9A（境界ランク）: トップラインとは別集計・別テーブルで表示する
+          （ROIがS1/S7/S9より明確に低いため、ヘッダーROIを薄めない設計） */}
+      <div className="px-3 sm:px-4 py-1.5 border-t border-b border-gray-100 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/40">
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+          境界ランク（7A/9A・ボリューム拡大枠）
+        </h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-100 dark:border-gray-700">
+              <th className="py-1.5 px-2 sm:px-3 text-left text-xs text-gray-500 dark:text-gray-400 font-medium">期間</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">候補</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">件数</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">的中</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>投資</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium`}>回収</th>
+              <th className={`${mobileColClass(showAll)} py-1.5 px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap`}>期間最大払戻</th>
+              <th className="py-1.5 px-1.5 sm:px-3 text-right text-xs text-gray-500 dark:text-gray-400 font-medium">回収率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <SummaryRow label="当日" data={summary.boundary.today} showRanks={expanded} showAll={showAll}
+              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
+            <SummaryRow label="当月" data={summary.boundary.month} showRanks={expanded} showAll={showAll}
+              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
+            <SummaryRow label="当年" data={summary.boundary.year} showRanks={expanded} showAll={showAll}
+              rankOrder={BOUNDARY_RANK_ORDER} rankLabelMap={BOUNDARY_RANK_LABEL} rankBadgeStyleMap={BOUNDARY_RANK_BADGE_STYLE} />
           </tbody>
         </table>
       </div>
