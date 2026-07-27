@@ -999,7 +999,8 @@ export type KeirinPeriodSummary = {
 
 export type KeirinSummary = {
   /** 2026-07-27〜: S1(7車)+S7(7車)+S9(9車)+7A/9A(境界ランク)をまとめて集計。
-   *  by_rankに7車・9車のランクが並ぶ（S1/7SS+/7SS/7S/7A/9SS+/9SS/9S/9A） */
+   *  by_rankに7車・9車のランクが並ぶ（S1/7SS/7S/7A/9SS/9S/9A）。
+   *  観察用サブランク"SS+"はサンプル不足のため同日中にSSへ統合・廃止済み。 */
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
@@ -1072,7 +1073,7 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "S9" | "7A" | "9A" | "all";
+export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS" | "9S" | "S9" | "7A" | "9A" | "all";
 
 export async function fetchKeirinStats(
   fromDate: string,

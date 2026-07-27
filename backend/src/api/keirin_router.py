@@ -373,12 +373,13 @@ _SETTLED_COND = """(
 )"""
 
 # 内部rank → by_rank キー（表示ランク）のマッピング
-# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / 7SS+ / 7SS / 7S の4ランク。
-# SEVEN_S7（旧SEVEN_S4）は gate_label（軸2車とWINTICKET公式◎◯の重なり数）でSS+/SS/Sに
+# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / 7SS / 7S / 7A の4ランク。
+# SEVEN_S7（旧SEVEN_S4）は gate_label（軸2車とWINTICKET公式◎◯の重なり数）でSS/Sに
 # 分岐し、表示時に対象車数の接頭辞「7」を付ける。
 # 2026-07-27: 内部名S4→S7へ統一（表示に一度も出てこない「S4」という名前と実際の
-# 表示ランク(SS+/SS/S)が食い違い混乱の原因になっていたため。keirin リポジトリの
-# src/strategy_wt.py と揃える）。
+# 表示ランク(SS/S)が食い違い混乱の原因になっていたため。keirin リポジトリの
+# src/strategy_wt.py と揃える）。同日、観察用サブランク"SS+"はサンプル不足のため
+# SSへ統合・廃止した。
 _RANK_KEY_MAP = {
     "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
 }
@@ -388,12 +389,13 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
     """DB の内部 rank + gate_label から、フロントエンドが表示に使う表示ランク文字列を返す。
 
     - SEVEN_S1                        → "S1"
-    - SEVEN_S7 かつ gate_label='SS+'  → "7SS+"（軸2車がWT公式◎◯と2車とも不一致・
-                                          かつ軸に各グレード最上位クラスS1/A1を含まない・2026-07-23新設の観察用サブランク）
-    - SEVEN_S7 かつ gate_label='SS'   → "7SS"（軸2車がWT公式◎◯と2車とも不一致）
+    - SEVEN_S7 かつ gate_label='SS'   → "7SS"（軸2車がWT公式◎◯と2車とも不一致。
+      2026-07-23〜07-27はさらに軸級班で"SS+"観察用サブランクへ分岐していたが、
+      サンプル数不足のため廃止・SSへ統合済み。既存picks_historyのgate_label='SS+'
+      行も'SS'へ一括更新済みのため、このマッピングにSS+分岐はもう存在しない）
     - SEVEN_S7 かつ gate_label='S'    → "7S"（軸2車の片方だけがWT公式◎◯と一致）
-    - NINE_S9 かつ gate_label='SS+'/'SS'/'S' → "9SS+"/"9SS"/"9S"
-      （S7の9車立て版・独立ランク。2026-07-26導入。SS+/SS/Sの意味はS7と同じだが
+    - NINE_S9 かつ gate_label='SS'/'S' → "9SS"/"9S"
+      （S7の9車立て版・独立ランク。2026-07-26導入。SS/Sの意味はS7と同じだが
       表示ランクの接頭辞（7 or 9）で対象車数を区別する）
     - SEVEN_7A → "7A"（S7の境界ランク・3ゲート中1つだけ不合格。2026-07-27導入。
       gate_labelによるサブランク分岐なし＝単一ランク）
@@ -403,15 +405,11 @@ def _display_rank(rank: str, gate_label: str | None) -> str:
     if rank == "SEVEN_S1":
         return "S1"
     if rank == "SEVEN_S7":
-        if gate_label == "SS+":
-            return "7SS+"
         if gate_label == "SS":
             return "7SS"
         if gate_label == "S":
             return "7S"
     if rank == "NINE_S9":
-        if gate_label == "SS+":
-            return "9SS+"
         if gate_label == "SS":
             return "9SS"
         if gate_label == "S":
@@ -699,9 +697,9 @@ async def get_stats(
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
-    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9SS+"）。
+    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9SS"）。
           "S1"（SEVEN_S1）/ "7SS"（SEVEN_S7 かつ gate_label='SS'）/
-          "7S"（SEVEN_S7 かつ gate_label='S'）/ "9SS+"・"9SS"・"9S"（NINE_S9の
+          "7S"（SEVEN_S7 かつ gate_label='S'）/ "9SS"・"9S"（NINE_S9の
           gate_label別）/ "S9"（NINE_S9全体）/ "7A"（SEVEN_7A・境界ランク）/
           "9A"（NINE_9A・境界ランク）/ "all"（既定値・S1+SEVEN_S7+NINE_S9+7A+9A全体。
           トップライン=/summaryと揃える）。
@@ -731,13 +729,12 @@ async def get_stats(
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
-    # OR条件として結合する（例: "7SS,9SS+" → SEVEN_S7のSS or NINE_S9のSS+）。
+    # OR条件として結合する（例: "7SS,9SS" → SEVEN_S7のSS or NINE_S9のSS）。
     # 2026-07-27〜: 既定の"all"はS1+S7+S9+7A+9Aをまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
         "S1": "ph.rank = 'SEVEN_S1'",
         "7SS": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'SS'",
         "7S": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'S'",
-        "9SS+": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS+'",
         "9SS": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'",
         "9S": "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'",
         "S9": "ph.rank = 'NINE_S9'",
@@ -908,7 +905,7 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 
     # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S7+S9+7A+9Aを
     # まとめて集計する。by_rank（_aggregate内部で_display_rank()により算出）には
-    # S1/7SS+/7SS/7S/7A（7車）と9SS+/9SS/9S/9A（9車）が同じ辞書に並ぶため、
+    # S1/7SS/7S/7A（7車）と9SS/9S/9A（9車）が同じ辞書に並ぶため、
     # フロントエンドの「ランク別」展開でまとめて確認できる（7A/9Aを専用の別集計に
     # 分離していたが、表示が煩雑とのユーザー要望により同日中に統合した）。
     result = {

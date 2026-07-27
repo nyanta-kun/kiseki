@@ -157,8 +157,10 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // 内部rankカラムは7SS/7Sいずれも SEVEN_S7 のまま。区別は gate_label(SS|S) で行い、
 // バックエンドが計算した pick.display_rank(S1|7SS|7S) をそのままキーに使う。
 // 2026-07-27: 内部名S4→S7へ統一し、表示ランクにも対象車数の接頭辞（7 or 9）を
-// 揃えて付与した（旧表示 SS+/SS/S・S9-SS+/S9-SS/S9-S は内部名との対応が
+// 揃えて付与した（旧表示 SS/S・S9-SS/S9-S は内部名との対応が
 // 分かりにくく混乱の原因になっていたため。keirinリポジトリのsrc/strategy_wt.pyと揃える）。
+// 同日、SS内の観察用サブランク"SS+"（軸2車の級班に各グレード最上位を含まない
+// サブセット）はサンプル数不足のため廃止し、SSへ統合した。
 // S2(7PLUS_U)/S3(7PLUS_M)は対象レース数・的中率・期待値の観点で継続困難と判断し
 // 2026-07-21 全廃（行は picks_history_u_archive / _m_archive へ退避済み・新規生成なし）。
 // 旧新S1（SIX_S1・6車三連単）と A（7PLUS_A・一致波乱二連単）は正規プロトコル再検証で
@@ -170,21 +172,19 @@ function fmtStartAt(startAt: number | string | null): string | null {
 const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = {
   // S1=win軸1着固定×3着内モデル相手2車（2026-07-19新設計）
   "S1":         { bg: "#ea580c", text: "#fff", label: "S1" },
-  // 7SS+=7SS内、軸2車の級班に各グレード最上位(S1/A1)を含まない観察用サブランク（2026-07-23追加）
-  "7SS+":       { bg: "#a16207", text: "#fff", label: "7SS+" },
-  // 7SS=SEVEN_S7のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）
+  // 7SS=SEVEN_S7のうち軸2車がWT◎◯と全く重ならない選出（2026-07-21再編）。
+  // 2026-07-23〜07-27は軸級班による観察用サブランク"SS+"を分岐していたが、
+  // サンプル数不足のため廃止・統合済み。
   "7SS":        { bg: "#ca8a04", text: "#fff", label: "7SS" },
   // 7S=SEVEN_S7のうち軸2車の片方だけがWT◎◯と重なる選出（2026-07-21再編）
   "7S":         { bg: "#16a34a", text: "#fff", label: "7S" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
-  // S9=S7の9車立て版（独立ランク・2026-07-26導入）。SS+/SS/Sの意味はS7と同じだが
+  // S9=S7の9車立て版（独立ランク・2026-07-26導入）。SS/Sの意味はS7と同じだが
   // 買い目コスト(7点流し=700円)・母集団が異なるため色調も別系統（青系）にして区別する。
-  "9SS+":       { bg: "#1e40af", text: "#fff", label: "9SS+" },
   "9SS":        { bg: "#2563eb", text: "#fff", label: "9SS" },
   "9S":         { bg: "#0891b2", text: "#fff", label: "9S" },
   // 7A/9A=S7/S9の境界ランク（3ゲート/2ゲート中1つだけ不合格・2026-07-27導入）。
-  // ROIはS7/S9より明確に低いためトップラインには含めず、彩度を落とした色で
-  // 「境界」であることを視覚的にも区別する。
+  // 彩度を落とした色でS7/S9とはやや区別する。
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
   "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
 };
@@ -685,31 +685,29 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
-// by_rank キー: "S1"=win軸新設計 / "7SS+"=SEVEN_S7のうち7SSでさらに軸2車に各グレード
-// 最上位クラス(S1/A1)を含まない観察用サブランク / "7SS"=SEVEN_S7のうち軸2車がWT◎◯と
+// by_rank キー: "S1"=win軸新設計 / "7SS"=SEVEN_S7のうち軸2車がWT◎◯と
 // 全く重ならない選出 / "7S"=SEVEN_S7のうち軸2車の片方だけがWT◎◯と重なる選出
 // （全てペーパー検証・名目賭金）。
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S7導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S7をgate_label(SS/S)で7SS/7Sの2ランクへ再編
-// 2026-07-23 7SS内の軸級班denyフィルター通過分を7SS+として観察用に追加（買い目は変更なし）
+// 2026-07-23 7SS内の軸級班denyフィルター通過分を7SS+として観察用に追加していたが、
+// サンプル数不足のため2026-07-27にSSへ統合・廃止した。
 // 2026-07-27 S9(9車立て・独立ランク)をトップライン（当日/当月/当年）に統合。
 // 同日、内部名S4→S7へ統一し表示ランクにも対象車数の接頭辞（7 or 9）を揃えて付与。
 // 同日、7A/9A（S7/S9の境界ランク）を新設。当初はROIの違いを踏まえ専用の別テーブルに
 // 分離していたが、表示が煩雑とのユーザー要望により同日中にトップラインへ統合した。
-// ランク別展開では7車(7SS+/7SS/7S/7A/S1)・9車(9SS+/9SS/9S/9A)を同じ一覧内に並べて
+// ランク別展開では7車(7SS/7S/7A/S1)・9車(9SS/9S/9A)を同じ一覧内に並べて
 // 確認できるようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
-const RANK_ORDER = ["7SS+", "7SS", "7S", "7A", "S1", "9SS+", "9SS", "9S", "9A"] as const;
+const RANK_ORDER = ["7SS", "7S", "7A", "S1", "9SS", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  S1: "S1", "7SS+": "7SS+", "7SS": "7SS", "7S": "7S", "7A": "7A",
-  "9SS+": "9SS+", "9SS": "9SS", "9S": "9S", "9A": "9A",
+  S1: "S1", "7SS": "7SS", "7S": "7S", "7A": "7A",
+  "9SS": "9SS", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
-  "7SS+": "bg-amber-200 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300",
   "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
-  "9SS+": "bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300",
   "9SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",

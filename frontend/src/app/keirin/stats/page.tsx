@@ -186,14 +186,13 @@ const PRESETS: { key: Preset; label: string }[] = [
 
 type Granularity = "daily" | "monthly";
 type CumMode = "period" | "month" | "year";
-type RankFilter = "all" | "S1" | "7SS" | "7S" | "9SS+" | "9SS" | "9S" | "7A" | "9A";
+type RankFilter = "all" | "S1" | "7SS" | "7S" | "9SS" | "9S" | "7A" | "9A";
 
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
   { key: "7SS", label: "7SS" },
   { key: "7S", label: "7S" },
   { key: "S1", label: "S1" },
-  { key: "9SS+", label: "9SS+" },
   { key: "9SS", label: "9SS" },
   { key: "9S", label: "9S" },
   // 7A/9A（境界ランク・2026-07-27導入）。"全体"にも含まれる（/summaryと同じ方針）。
