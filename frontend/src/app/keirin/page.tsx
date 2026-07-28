@@ -569,9 +569,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（S1/7SS/7S。2026-07-21にS2/S3全廃）は旧S1の三連複ガミ閾値と無関係のため
+  // ペーパー検証ランク（S1/7SS/7S/9SS/9S/7A/9A。2026-07-21にS2/S3全廃・2026-07-28に
+  // S9/7A/9Aも候補時点書き込みに対応）は旧S1の三連複ガミ閾値と無関係のため
   // ガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "SEVEN_S7";
+  const isPaperRank = pick.rank === "SEVEN_S1" || pick.rank === "SEVEN_S7"
+    || pick.rank === "NINE_S9" || pick.rank === "SEVEN_7A" || pick.rank === "NINE_9A";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
