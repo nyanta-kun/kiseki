@@ -7,6 +7,7 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 """
 from __future__ import annotations
 
+import re
 from datetime import date as Date
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -684,6 +685,40 @@ async def trigger_fetch_results() -> JSONResponse:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(f"{_WEBHOOK_BASE}/fetch-results", timeout=10.0)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as exc:
+        return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)
+
+
+_RACE_KEY_RE = re.compile(r"^\d{8}_\d{2}_\d{2}$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class SubmitRaceIn(BaseModel):
+    race_key: str
+    date: str
+    session: str
+
+
+@router.post("/submit-race")
+async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
+    """指定レース1件のみをnetkeirinへピンポイント入稿する（keirinホスト側の通常入稿
+    スクリプト(netkeirin_submit_wt.py --race-key)をrace_key絞り込みで起動する中継。
+    ON/OFF・テンプレート・ゲート・重複送信防止は通常の日次/夕方バッチと完全に同一ルール）。
+    """
+    if not _RACE_KEY_RE.match(body.race_key):
+        return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"}, status_code=400)
+    if not _DATE_RE.match(body.date):
+        return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"}, status_code=400)
+    if body.session not in ("morning", "evening"):
+        return JSONResponse(content={"ok": False, "message": f"不正なsession: {body.session}"}, status_code=400)
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{_WEBHOOK_BASE}/submit-race",
+                json={"race_key": body.race_key, "date": body.date, "session": body.session},
+                timeout=10.0,
+            )
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as exc:
         return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)

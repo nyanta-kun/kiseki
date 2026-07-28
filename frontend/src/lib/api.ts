@@ -1044,6 +1044,21 @@ export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; messag
   return res.json();
 }
 
+/** 指定レース1件のみをnetkeirinへピンポイント入稿する（通常入稿と同一ルール・race_key絞り込み）。 */
+export async function triggerKeirinSubmitRace(
+  raceKey: string,
+  date: string,
+  session: "morning" | "evening",
+): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/submit-race`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ race_key: raceKey, date, session }),
+    cache: "no-store",
+  });
+  return res.json();
+}
+
 export type KeirinStatItem = {
   date: string;
   n_picks: number;

@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, type KeirinPick, type KeirinSummary } from "@/lib/api";
+import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
+import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, triggerKeirinSubmitRace, type KeirinPick, type KeirinSummary } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -142,6 +142,24 @@ function fmtStartAt(startAt: number | string | null): string | null {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+// race_key は "YYYYMMDD_場コード_レース番号" 形式（keirinリポジトリ側と共通仕様）
+function raceKeyToISODate(raceKey: string): string {
+  return `${raceKey.slice(0, 4)}-${raceKey.slice(4, 6)}-${raceKey.slice(6, 8)}`;
+}
+
+// netkeirin入稿は朝バッチ(19時未満の発走)/夕バッチ(19時以降の発走)で候補ファイルが
+// 分かれる（evening_picks_wt.sh --start-from-hour 19）ため、発走時刻からsessionを判定する
+function submitSessionFromStartAt(startAt: number | string | null): "morning" | "evening" {
+  if (startAt == null) return "morning";
+  const ts = typeof startAt === "number" ? startAt : parseInt(String(startAt), 10);
+  if (isNaN(ts)) return "morning";
+  const hour = parseInt(
+    new Date(ts * 1000).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", hour12: false }),
+    10,
+  );
+  return hour >= 19 ? "evening" : "morning";
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +556,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at);
   const [collapsed, setCollapsed] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const isMiwokuri = pick.miwokuri;
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
@@ -572,56 +592,98 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 
   const startTime = fmtStartAt(pick.start_at);
 
+  const handleSubmitRace = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (submitting) return;
+    setSubmitting(true);
+    setSubmitMsg(null);
+    try {
+      const result = await triggerKeirinSubmitRace(
+        pick.race_key,
+        raceKeyToISODate(pick.race_key),
+        submitSessionFromStartAt(pick.start_at),
+      );
+      setSubmitMsg(result.ok ? "このレースの入稿を開始しました（結果はDiscordで確認してください）" : `エラー: ${result.message}`);
+    } catch {
+      setSubmitMsg("入稿リクエストに失敗しました");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [pick.race_key, pick.start_at, submitting]);
+
+  useEffect(() => {
+    if (!submitMsg) return;
+    const t = setTimeout(() => setSubmitMsg(null), 6000);
+    return () => clearTimeout(t);
+  }, [submitMsg]);
+
   return (
     <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri || isGamiSkip ? " opacity-55" : ""}`}>
-      {/* ヘッダー行（クリックで折りたたみトグル） */}
-      <button
-        type="button"
-        onClick={() => setCollapsed(v => !v)}
-        className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
-      >
-        {/* 左バッジ = display_rank(S1/SS/S)の直接表示（全ランク統一）。購入対象は緑○で囲う */}
-        <RankBadge rank={badgeRank} purchased={isBuyConfirmed} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
-            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
-            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
-            {startTime && (
-              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
-            )}
-            {(pick.grade || pick.race_type) && (
-              <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
-            )}
+      {/* ヘッダー行（クリックで折りたたみトグル + 右端にピンポイント入稿アイコン） */}
+      <div className={`w-full flex items-center gap-1 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(v => !v)}
+          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+        >
+          {/* 左バッジ = display_rank(S1/SS/S)の直接表示（全ランク統一）。購入対象は緑○で囲う */}
+          <RankBadge rank={badgeRank} purchased={isBuyConfirmed} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
+              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
+              {startTime && (
+                <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
+              )}
+              {(pick.grade || pick.race_type) && (
+                <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              )}
+            </div>
           </div>
-        </div>
-        {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}
-        {collapsed && isSettled && (
-          <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
-        )}
-        {collapsed && !isSettled && (gamiStatus != null || (pick.synth_odds != null && !isMiwokuri)) && (
-          <span className="text-xs flex items-center gap-1.5 flex-shrink-0 tabular-nums">
-            {gamiStatus === "ok" && (
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                最低{pick.prerace_gami!.toFixed(1)}✓
-              </span>
-            )}
-            {gamiStatus === "ng" && (
-              <span className="text-orange-500 dark:text-orange-400 font-medium">
-                最低{pick.prerace_gami!.toFixed(1)}⚠
-              </span>
-            )}
-            {pick.synth_odds != null && !isMiwokuri && (
-              <span className="text-gray-500 dark:text-gray-400">
-                合成<span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>
-              </span>
-            )}
-          </span>
-        )}
-        <ChevronDown
-          size={15}
-          className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
-        />
-      </button>
+          {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}
+          {collapsed && isSettled && (
+            <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
+          )}
+          {collapsed && !isSettled && (gamiStatus != null || (pick.synth_odds != null && !isMiwokuri)) && (
+            <span className="text-xs flex items-center gap-1.5 flex-shrink-0 tabular-nums">
+              {gamiStatus === "ok" && (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                  最低{pick.prerace_gami!.toFixed(1)}✓
+                </span>
+              )}
+              {gamiStatus === "ng" && (
+                <span className="text-orange-500 dark:text-orange-400 font-medium">
+                  最低{pick.prerace_gami!.toFixed(1)}⚠
+                </span>
+              )}
+              {pick.synth_odds != null && !isMiwokuri && (
+                <span className="text-gray-500 dark:text-gray-400">
+                  合成<span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>
+                </span>
+              )}
+            </span>
+          )}
+          <ChevronDown
+            size={15}
+            className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmitRace}
+          disabled={submitting}
+          title="このレースのみnetkeirinへピンポイント入稿"
+          aria-label="このレースのみnetkeirinへピンポイント入稿"
+          className="flex-shrink-0 p-1 rounded text-gray-400 hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Send size={14} className={submitting ? "animate-pulse" : ""} />
+        </button>
+      </div>
+      {submitMsg && (
+        <p className="px-3 sm:px-4 py-1 text-[11px] text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
+          {submitMsg}
+        </p>
+      )}
 
       {/* 展開時コンテンツ */}
       {!collapsed && (
