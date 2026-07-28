@@ -122,28 +122,28 @@ export default function NetkeirinSettingsPage() {
       <div className="flex items-center gap-3">
         <Link
           href="/keirin"
-          className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+          className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
         >
           <ArrowLeft size={16} />
           戻る
         </Link>
         <div className="flex items-center gap-2 ml-1">
           <Bike size={20} className="text-blue-500" />
-          <h1 className="text-lg font-extrabold tracking-widest text-gray-950">KEIRIN</h1>
-          <span className="text-sm font-semibold text-gray-500">入稿設定</span>
+          <h1 className="text-lg font-extrabold tracking-widest text-gray-950 dark:text-white">KEIRIN</h1>
+          <span className="text-sm font-semibold text-gray-500 dark:text-gray-400">入稿設定</span>
         </div>
       </div>
 
-      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
         netkeirin（ウマい車券）への下書き自動入稿を、予想ランクごとに ON/OFF・タイトル・
         コメントのテンプレートで制御します。コメント末尾には、そのレースの出走選手ごとの
         1着率・3着内率テーブルが自動的に追加されます。
-        テンプレートには <code className="bg-gray-100 px-1 rounded">{"{venue}"}</code>{" "}
-        <code className="bg-gray-100 px-1 rounded">{"{race_no}"}</code>{" "}
-        <code className="bg-gray-100 px-1 rounded">{"{rank}"}</code>{" "}
-        <code className="bg-gray-100 px-1 rounded">{"{date}"}</code>{" "}
-        <code className="bg-gray-100 px-1 rounded">{"{axis1}"}</code>{" "}
-        <code className="bg-gray-100 px-1 rounded">{"{axis2}"}</code>{" "}
+        テンプレートには <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{venue}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{race_no}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{rank}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{date}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis1}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis2}"}</code>{" "}
         が使えます（S1は axis1=軸・axis2=相手1）。
       </p>
 
