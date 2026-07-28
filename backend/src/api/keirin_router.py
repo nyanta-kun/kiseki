@@ -705,8 +705,14 @@ async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
     """指定レース1件のみをnetkeirinへピンポイント入稿する（keirinホスト側の通常入稿
     スクリプト(netkeirin_submit_wt.py --race-key)をrace_key絞り込みで起動する中継。
     ON/OFF・テンプレート・ゲート・重複送信防止は通常の日次/夕方バッチと完全に同一ルール）。
+
+    /keirin/picks 等が返す race_key は候補種別を示す "#CAND"/"#7S7" 等のサフィックスを
+    含む場合がある（本ルーター内の各クエリが SPLIT_PART(race_key, '#', 1) で剥がしている
+    のと同じ理由）。keirin側の候補ファイルはサフィックス無しの物理レースキーのみを持つため、
+    ここでも同様に剥がしてから検証・中継する。
     """
-    if not _RACE_KEY_RE.match(body.race_key):
+    base_race_key = body.race_key.split("#", 1)[0]
+    if not _RACE_KEY_RE.match(base_race_key):
         return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"}, status_code=400)
     if not _DATE_RE.match(body.date):
         return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"}, status_code=400)
@@ -716,7 +722,7 @@ async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{_WEBHOOK_BASE}/submit-race",
-                json={"race_key": body.race_key, "date": body.date, "session": body.session},
+                json={"race_key": base_race_key, "date": body.date, "session": body.session},
                 timeout=10.0,
             )
             return JSONResponse(content=r.json(), status_code=r.status_code)

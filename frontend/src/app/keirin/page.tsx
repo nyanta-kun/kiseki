@@ -144,9 +144,16 @@ function fmtStartAt(startAt: number | string | null): string | null {
   });
 }
 
-// race_key は "YYYYMMDD_場コード_レース番号" 形式（keirinリポジトリ側と共通仕様）
+// race_key は "YYYYMMDD_場コード_レース番号" 形式（keirinリポジトリ側と共通仕様）。
+// API側（/keirin/picks等）は候補種別を示す"#CAND"/"#7S7"等のサフィックスを付けて返す
+// ことがあるため、netkeirin側の物理レースキーと突き合わせる際は先に剥がす。
+function baseRaceKey(raceKey: string): string {
+  return raceKey.split("#")[0];
+}
+
 function raceKeyToISODate(raceKey: string): string {
-  return `${raceKey.slice(0, 4)}-${raceKey.slice(4, 6)}-${raceKey.slice(6, 8)}`;
+  const base = baseRaceKey(raceKey);
+  return `${base.slice(0, 4)}-${base.slice(4, 6)}-${base.slice(6, 8)}`;
 }
 
 // netkeirin入稿は朝バッチ(19時未満の発走)/夕バッチ(19時以降の発走)で候補ファイルが
@@ -599,7 +606,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
     setSubmitMsg(null);
     try {
       const result = await triggerKeirinSubmitRace(
-        pick.race_key,
+        baseRaceKey(pick.race_key),
         raceKeyToISODate(pick.race_key),
         submitSessionFromStartAt(pick.start_at),
       );
