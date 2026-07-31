@@ -7,6 +7,7 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import date as Date
 from datetime import datetime, timedelta, timezone
@@ -137,6 +138,56 @@ async def _calc_synth_odds(
 # 将来同種の残留が発生しても自動的に非表示になる（サマリー側の_aggregate()と
 # 対象ランクを揃えることでも齟齬を防ぐ）。
 _VALID_PICK_RANKS = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A', '7PLUS_CAND')"
+
+# ---------------------------------------------------------------------------
+# 推奨外レースの仮想買い目（hypo_*）— 2026-07-31新設
+#
+# keirin repo src/strategy_wt.py の s7_select_axis/s7_field_entropy/
+# s7_wt_overlap_n と同一ロジックのPython移植（モデル・オッズ不要・
+# wt_entries.pred_win_pct/pred_top3_pct/prediction_mark のみから計算できるため
+# kiseki backend単独で完結する。keirin repoへの問い合わせ不要）。
+# 閾値(S7_AXIS_SUM_MAX等)はモデル生出力(0-1)で較正されているため、
+# pred_win_pct/pred_top3_pct（0-100のパーセント値）は使う側で/100すること。
+# ---------------------------------------------------------------------------
+
+def _hypo_select_axis(
+    win_probs: dict[int, float], top3_probs: dict[int, float],
+) -> tuple[int, int, float] | None:
+    if not win_probs or not top3_probs or len(win_probs) < 3 or len(top3_probs) < 3:
+        return None
+    win_top3 = {f for f, _ in sorted(win_probs.items(), key=lambda kv: -kv[1])[:3]}
+    place_top3 = {f for f, _ in sorted(top3_probs.items(), key=lambda kv: -kv[1])[:3]}
+    overlap = win_top3 & place_top3
+    if not overlap:
+        return None
+    if len(overlap) >= 2:
+        cands = sorted(overlap, key=lambda f: -top3_probs[f])
+        axis1, axis2 = cands[0], cands[1]
+    else:
+        axis1 = next(iter(overlap))
+        rest = sorted((f for f in top3_probs if f != axis1), key=lambda f: -top3_probs[f])
+        if not rest:
+            return None
+        axis2 = rest[0]
+    return axis1, axis2, top3_probs[axis1] + top3_probs[axis2]
+
+
+def _hypo_field_entropy(top3_probs: dict[int, float]) -> float:
+    vals = list(top3_probs.values())
+    total = sum(vals)
+    if total <= 0:
+        return 0.0
+    ent = 0.0
+    for v in vals:
+        s = max(v / total, 1e-9)
+        ent -= s * math.log(s)
+    return ent
+
+
+def _hypo_wt_overlap_n(axis1: int, axis2: int, honmei: int | None, taikou: int | None) -> int | None:
+    if honmei is None or taikou is None:
+        return None
+    return len({axis1, axis2} & {honmei, taikou})
 
 
 @router.get("/picks")
@@ -306,6 +357,25 @@ async def get_picks(
                     elif o["bet_type"] == "trifecta" and trifecta_pay == 0:
                         trifecta_pay = pay
 
+        # 推奨外レースの仮想買い目（hypo_*）。7/9車のみ・軸選定可能な場合のみ非null。
+        hypo_axis1 = hypo_axis2 = hypo_others = hypo_axis_sum = hypo_entropy = hypo_wt_overlap_n = None
+        if not has_pick and r["n_entries"] in (7, 9):
+            win_probs = {int(e["frame_no"]): float(e["pred_win_pct"]) for e in entries
+                         if e["pred_win_pct"] is not None}
+            top3_probs = {int(e["frame_no"]): float(e["pred_top3_pct"]) for e in entries
+                          if e["pred_top3_pct"] is not None}
+            sel = _hypo_select_axis(win_probs, top3_probs)
+            if sel is not None:
+                hypo_axis1, hypo_axis2, hypo_axis_sum = sel
+                hypo_others = sorted(
+                    int(e["frame_no"]) for e in entries
+                    if int(e["frame_no"]) not in (hypo_axis1, hypo_axis2)
+                )
+                hypo_entropy = _hypo_field_entropy(top3_probs)
+                honmei = next((int(e["frame_no"]) for e in entries if e["prediction_mark"] == 1), None)
+                taikou = next((int(e["frame_no"]) for e in entries if e["prediction_mark"] == 2), None)
+                hypo_wt_overlap_n = _hypo_wt_overlap_n(hypo_axis1, hypo_axis2, honmei, taikou)
+
         picks.append({
             "id": r["id"],
             "race_key": race_key,
@@ -333,6 +403,12 @@ async def get_picks(
             "gap23": float(r["gap23"]) if (has_pick and r.get("gap23") is not None) else None,
             "gap34": float(r["gap34"]) if (has_pick and r.get("gap34") is not None) else None,
             "gate_label": r["gate_label"] if has_pick else None,
+            "hypo_axis1": hypo_axis1,
+            "hypo_axis2": hypo_axis2,
+            "hypo_others": hypo_others,
+            "hypo_axis_sum": hypo_axis_sum,
+            "hypo_entropy": hypo_entropy,
+            "hypo_wt_overlap_n": hypo_wt_overlap_n,
             "entries": [
                 {
                     "frame_no": e["frame_no"],
@@ -621,10 +697,18 @@ _RACE_KEY_RE = re.compile(r"^\d{8}_\d{2}_\d{2}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+_MANUAL_RANK_KEYS = ("7SS", "7S", "7A", "9SS", "9S", "9A")  # S1は全廃済みのため対象外
+
+
 class SubmitRaceIn(BaseModel):
     race_key: str
     date: str
     session: str
+    # 推奨外レースの手動入稿用（2026-07-31新設）。3つとも指定時のみ有効。
+    # 未指定なら従来通りkeirin側の候補JSON検索に任せる（推奨レースの挙動は不変）。
+    rank_key: str | None = None
+    axis1: int | None = None
+    axis2: int | None = None
 
 
 @router.post("/submit-race")
@@ -632,6 +716,11 @@ async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
     """指定レース1件のみをnetkeirinへピンポイント入稿する（keirinホスト側の通常入稿
     スクリプト(netkeirin_submit_wt.py --race-key)をrace_key絞り込みで起動する中継。
     ON/OFF・テンプレート・ゲート・重複送信防止は通常の日次/夕方バッチと完全に同一ルール）。
+
+    rank_key/axis1/axis2 が揃っている場合は、推奨外レース（has_pick=false）を
+    ユーザーがダイアログでランク選択して手動入稿するケース。keirin側の候補JSON
+    検索を経由せず、指定した軸2車・ランクで直接入稿する
+    （netkeirin_submit_wt.py --manual-rank-key/--axis1/--axis2）。
 
     /keirin/picks 等が返す race_key は候補種別を示す "#CAND"/"#7S7" 等のサフィックスを
     含む場合がある（本ルーター内の各クエリが SPLIT_PART(race_key, '#', 1) で剥がしている
@@ -645,13 +734,20 @@ async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
         return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"}, status_code=400)
     if body.session not in ("morning", "evening"):
         return JSONResponse(content={"ok": False, "message": f"不正なsession: {body.session}"}, status_code=400)
+
+    payload: dict[str, Any] = {"race_key": base_race_key, "date": body.date, "session": body.session}
+    if body.rank_key is not None or body.axis1 is not None or body.axis2 is not None:
+        if body.rank_key not in _MANUAL_RANK_KEYS:
+            return JSONResponse(content={"ok": False, "message": f"不正なrank_key: {body.rank_key}"}, status_code=400)
+        if body.axis1 is None or body.axis2 is None or body.axis1 == body.axis2:
+            return JSONResponse(content={"ok": False, "message": "axis1/axis2が不正です"}, status_code=400)
+        payload["rank_key"] = body.rank_key
+        payload["axis1"] = body.axis1
+        payload["axis2"] = body.axis2
+
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{_WEBHOOK_BASE}/submit-race",
-                json={"race_key": base_race_key, "date": body.date, "session": body.session},
-                timeout=10.0,
-            )
+            r = await client.post(f"{_WEBHOOK_BASE}/submit-race", json=payload, timeout=10.0)
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as exc:
         return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)

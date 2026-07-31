@@ -981,6 +981,13 @@ export type KeirinPick = {
   gate_label?: string | null;
   /** 最終表示ランク文字列（"S1"|"7SS"|"7S"等） */
   display_rank?: string;
+  /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
+  hypo_axis1: number | null;
+  hypo_axis2: number | null;
+  hypo_others: number[] | null;
+  hypo_axis_sum: number | null;
+  hypo_entropy: number | null;
+  hypo_wt_overlap_n: number | null;
   entries: KeirinEntry[];
 };
 
@@ -1042,15 +1049,25 @@ export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; messag
 }
 
 /** 指定レース1件のみをnetkeirinへピンポイント入稿する（通常入稿と同一ルール・race_key絞り込み）。 */
+/** 推奨外レースの手動入稿用ランク（S1は全廃済みのため対象外）。 */
+export type ManualKeirinRankKey = "7SS" | "7S" | "7A" | "9SS" | "9S" | "9A";
+
 export async function triggerKeirinSubmitRace(
   raceKey: string,
   date: string,
   session: "morning" | "evening",
+  manual?: { rankKey: ManualKeirinRankKey; axis1: number; axis2: number },
 ): Promise<{ ok: boolean; message: string }> {
+  const body: Record<string, unknown> = { race_key: raceKey, date, session };
+  if (manual) {
+    body.rank_key = manual.rankKey;
+    body.axis1 = manual.axis1;
+    body.axis2 = manual.axis2;
+  }
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/submit-race`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ race_key: raceKey, date, session }),
+    body: JSON.stringify(body),
     cache: "no-store",
   });
   return res.json();

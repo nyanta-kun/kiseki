@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, triggerKeirinSubmitRace, type KeirinPick, type KeirinSummary } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, triggerKeirinSubmitRace, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -509,44 +509,166 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
   return trioEl;
 }
 
+// 推奨外レースの手動入稿で選べるランク（S1は全廃済み・買い目構造が異なるため対象外）。
+// 車数(n_entries)ごとに候補を絞り込む。表示ラベルはkeirin側RANK_CONFIGSの
+// stake_per_line/n_carsに揃えて注記する（7車=2,000円/点・9車=1,400円/点、いずれも共通）。
+const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
+  7: [
+    { key: "7SS", label: "7SS" },
+    { key: "7S", label: "7S" },
+    { key: "7A", label: "7A" },
+  ],
+  9: [
+    { key: "9SS", label: "9SS" },
+    { key: "9S", label: "9S" },
+    { key: "9A", label: "9A" },
+  ],
+};
+
+function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => void }) {
+  const nCars = pick.n_entries === 9 ? 9 : 7;
+  const options = MANUAL_SUBMIT_RANKS[nCars];
+  const [rankKey, setRankKey] = useState<ManualKeirinRankKey>(options[0].key);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleSubmit = async () => {
+    if (pick.hypo_axis1 == null || pick.hypo_axis2 == null || submitting) return;
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const r = await triggerKeirinSubmitRace(
+        baseRaceKey(pick.race_key),
+        raceKeyToISODate(pick.race_key),
+        submitSessionFromStartAt(pick.start_at),
+        { rankKey, axis1: pick.hypo_axis1, axis2: pick.hypo_axis2 },
+      );
+      setResult(r);
+    } catch {
+      setResult({ ok: false, message: "入稿リクエストに失敗しました" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-900 rounded-xl shadow-lg w-full max-w-sm p-4 sm:p-5"
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">
+          推奨外レースの入稿ランクを選択
+        </h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          {pick.venue_name}{pick.race_no}R（軸 {pick.hypo_axis1}-{pick.hypo_axis2}・{nCars}車立て）。
+          選んだランクのテンプレート文言で入稿します（賭け方・点数はランクにより変わりません）。
+        </p>
+        <div className="flex gap-2 mb-4">
+          {options.map(o => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => setRankKey(o.key)}
+              className={`flex-1 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
+                rankKey === o.key
+                  ? "bg-blue-500 border-blue-500 text-white"
+                  : "border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {result && (
+          <p className={`text-xs mb-3 ${result.ok ? "text-gray-500 dark:text-gray-400" : "text-red-500"}`}>
+            {result.ok ? "このレースの入稿を開始しました（結果はDiscordで確認してください）" : `エラー: ${result.message}`}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            閉じる
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || result?.ok}
+            className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-600"
+          >
+            {submitting ? "送信中…" : "このランクで入稿"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const startTime = fmtStartAt(pick.start_at);
   const isSettled = computeIsSettled(pick.status, pick.start_at);
   const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
+  const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75">
-      <button
-        type="button"
-        onClick={() => setCollapsed(v => !v)}
-        className={`w-full flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800 text-left${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}
-      >
-        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
-            <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
-            <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
-            {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
-            {(pick.grade || pick.race_type) && (
-              <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
-            )}
+      <div className={`w-full flex items-center gap-1 px-1 sm:px-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(v => !v)}
+          className="flex-1 min-w-0 flex items-center gap-2 px-2 sm:px-3 py-2 text-left"
+        >
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+              <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
+              <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
+              {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
+              {(pick.grade || pick.race_type) && (
+                <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              )}
+            </div>
           </div>
-        </div>
-        {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用） */}
-        {collapsed && isSettled && hasPayout && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">
-            {pick.trio_payout > 0 && <>複¥{pick.trio_payout.toLocaleString()}</>}
-            {(pick.trifecta_payout ?? 0) > 0 && <>{pick.trio_payout > 0 && " "}単¥{(pick.trifecta_payout ?? 0).toLocaleString()}</>}
-          </span>
+          {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用） */}
+          {collapsed && isSettled && hasPayout && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">
+              {pick.trio_payout > 0 && <>複¥{pick.trio_payout.toLocaleString()}</>}
+              {(pick.trifecta_payout ?? 0) > 0 && <>{pick.trio_payout > 0 && " "}単¥{(pick.trifecta_payout ?? 0).toLocaleString()}</>}
+            </span>
+          )}
+          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">推奨外</span>
+          <ChevronDown
+            size={15}
+            className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
+          />
+        </button>
+        {hasHypo && !isSettled && (
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            title="ランクを選んでnetkeirinへ入稿"
+            aria-label="ランクを選んでnetkeirinへ入稿"
+            className="flex-shrink-0 p-1 mr-1 rounded text-gray-400 hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400"
+          >
+            <Send size={14} />
+          </button>
         )}
-        <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">推奨外</span>
-        <ChevronDown
-          size={15}
-          className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
-        />
-      </button>
+      </div>
       {!collapsed && (
         <>
+          {hasHypo && (
+            <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 text-xs">
+              <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">参考買い目</span>
+              <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+                3連複: {pick.hypo_axis1}={pick.hypo_axis2}-{(pick.hypo_others ?? []).join(",")}
+                {" "}({(pick.hypo_others ?? []).length}点)
+              </span>
+            </div>
+          )}
           <EntryTable entries={pick.entries} />
           {isSettled && (
             <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center justify-between gap-2">
@@ -556,6 +678,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
           )}
         </>
       )}
+      {dialogOpen && <SubmitRankDialog pick={pick} onClose={() => setDialogOpen(false)} />}
     </div>
   );
 }
