@@ -10,17 +10,18 @@ import { saveNetkeirinSettings } from "./actions";
 // 定数
 // ---------------------------------------------------------------------------
 
-const RANK_ORDER: NetkeirinRankKey[] = ["S1", "7SS", "7S", "7A", "9SS", "9S", "9A"];
+// 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は対象外
+// （backend/src/api/keirin_router.py の NETKEIRIN_RANK_KEYS と揃える）。
+// 7SS は2026-07-31新設の独立ランク（波乱軸選出・穴レース検知）。
+const RANK_ORDER: NetkeirinRankKey[] = ["7S", "7A", "9S", "9A", "7SS"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
-  S1: "S1（三連単2点流し）",
-  "7SS": "7SS（7車・三連複2軸流し5点）",
   "7S": "7S（7車・三連複2軸流し5点）",
   "7A": "7A（7車・境界ランク）",
-  "9SS": "9SS（9車・三連複2軸流し7点）",
   "9S": "9S（9車・三連複2軸流し7点）",
   "9A": "9A（9車・境界ランク）",
+  "7SS": "7SS（波乱軸選出・穴レース検知・三連複2軸流し5点・モデル非依存の独立戦略）",
 };
 
 // プレビュー用のテンプレート変数置換（keirin側 netkeirin_submit_wt.py と同じ
@@ -90,7 +91,16 @@ export default function NetkeirinSettingsPage() {
         if (cancelled) return;
         const next: EditState = { _global: emptyRow("_global") };
         for (const rank of RANK_ORDER) next[rank] = emptyRow(rank);
-        for (const row of data) next[row.rank_key] = row;
+        // 全廃済みランク（S1/9SS等）の過去分の行がDBに残っている場合があるため、
+        // 現行ランク（RANK_ORDER + '_global'）以外は取り込まない。取り込んでしまうと
+        // 保存時のObject.values(rows)に混入し、バックエンドのNETKEIRIN_RANK_KEYS
+        // allowlist検証で保存リクエスト全体が400エラーになってしまうため
+        // （2026-08-01是正: S1='S1'/9SS='9SS'の既存行(enabled=false)で実際に確認）。
+        for (const row of data) {
+          if (row.rank_key === "_global" || (RANK_ORDER as string[]).includes(row.rank_key)) {
+            next[row.rank_key] = row;
+          }
+        }
         setRows(next);
       } catch {
         if (!cancelled) setError("設定の取得に失敗しました");
@@ -144,7 +154,7 @@ export default function NetkeirinSettingsPage() {
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{date}"}</code>{" "}
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis1}"}</code>{" "}
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis2}"}</code>{" "}
-        が使えます（S1は axis1=軸・axis2=相手1）。
+        が使えます（axis1・axis2は各ランクの三連複2軸流しの軸2車）。
       </p>
 
       {loading && (

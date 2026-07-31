@@ -187,8 +187,19 @@ class KeirinPicksHistory(KeirinBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_date: Mapped[str] = mapped_column(String(10), nullable=False, comment="開催日")
-    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー(base#CAND/#7R/#7ST等)")
-    rank: Mapped[str] = mapped_column(String(10), nullable=False, comment="ランク(7PLUS_R/7PLUS_ST/7PLUS_STP/7PLUS_CAND)")
+    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー(base#CAND/#7S/#7A/#9S/#9A/#7SS等)")
+    rank: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment=(
+            "ランク。現行有効値: RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS/7PLUS_CAND"
+            "（2026-08-01〜。keirin側commit f31f84bの全面改名に追随・"
+            "backend/src/api/keirin_router.py の _PAPER_RANK_LABELS が単一正本）。"
+            "旧名SEVEN_S7/SEVEN_7A/NINE_S9/NINE_9A、全廃済みのSEVEN_S1/SIX_S1/"
+            "7PLUS_R/7PLUS_ST/7PLUS_STP/7PLUS_U/7PLUS_M 等は過去データの残骸として"
+            "残ることがあるが、API側のallowlistで表示・集計対象から除外される"
+        ),
+    )
     pred_combo: Mapped[str | None] = mapped_column(Text, comment="買い目文字列")
     n_combos: Mapped[int | None] = mapped_column(Integer, comment="点数")
     hit: Mapped[int] = mapped_column(Integer, default=0, comment="的中フラグ")
@@ -212,7 +223,13 @@ class KeirinNetkeirinSetting(KeirinBase):
     __table_args__ = {"schema": KEIRIN_SCHEMA}
 
     rank_key: Mapped[str] = mapped_column(
-        String(10), primary_key=True, comment="S1/7SS/7S/7A/9SS/9S/9A、または全体行'_global'"
+        String(10),
+        primary_key=True,
+        comment=(
+            "7S/7A/9S/9A/7SS、または全体行'_global'（2026-08-01〜。"
+            "S1・9SSは全廃済みのため新規保存対象外だが、過去分の行(enabled=false)が"
+            "残っていることがある）"
+        ),
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="自動入稿ON/OFF")
     title_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="タイトルテンプレート")

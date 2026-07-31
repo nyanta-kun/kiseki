@@ -977,9 +977,10 @@ export type KeirinPick = {
   bet_amount: number;
   miwokuri: boolean;
   prerace_gami: number | null;
-  /** SEVEN_S7の内訳ラベル("SS"|"S")。S1等では null */
+  /** 過去のgate_label分岐（"SS"|"S"）の名残。2026-08-01〜表示ランクの決定には
+   *  使わない（keirin側commit e994758で分岐廃止・常に"S"）。分析用に保持。 */
   gate_label?: string | null;
-  /** 最終表示ランク文字列（"S1"|"7SS"|"7S"等） */
+  /** 最終表示ランク文字列（"7S"|"7A"|"9S"|"9A"|"7SS"等） */
   display_rank?: string;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
   hypo_axis1: number | null;
@@ -1005,9 +1006,10 @@ export type KeirinPeriodSummary = {
 };
 
 export type KeirinSummary = {
-  /** 2026-07-27〜: S1(7車)+S7(7車)+S9(9車)+7A/9A(境界ランク)をまとめて集計。
-   *  by_rankに7車・9車のランクが並ぶ（S1/7SS/7S/7A/9SS/9S/9A）。
-   *  観察用サブランク"SS+"はサンプル不足のため同日中にSSへ統合・廃止済み。 */
+  /** 2026-08-01〜: RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS の5ランクをまとめて集計。
+   *  by_rankにこれら全ランクが並ぶ（表示ラベル 7S/7A/9S/9A/7SS）。
+   *  gate_labelによるSS/S分岐は廃止済み（keirin側commit e994758・2026-07-31）。
+   *  RANK_7SSは波乱軸選出・穴レース検知のための独立戦略（同日新設・モデル非依存）。 */
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
@@ -1049,8 +1051,13 @@ export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; messag
 }
 
 /** 指定レース1件のみをnetkeirinへピンポイント入稿する（通常入稿と同一ルール・race_key絞り込み）。 */
-/** 推奨外レースの手動入稿用ランク（S1は全廃済みのため対象外）。 */
-export type ManualKeirinRankKey = "7SS" | "7S" | "7A" | "9SS" | "9S" | "9A";
+/** 推奨外レースの手動入稿用ランク。
+ * S1（2026-07-31全廃）に加え、旧gate_label分岐由来の7SS/9SS（同日廃止）も対象外。
+ * RANK_7SS（新設の独立ランク）は軸選定ロジックが異なる（race_point×WT公式印ベース）
+ * ため、kiseki側の推奨外レース仮想買い目（単勝/複勝指数トップ3重なり方式）とは
+ * 一致せず、誤った軸の入稿を避けるためあえて対象外にしている（backend/src/api/
+ * keirin_router.py の _MANUAL_RANK_KEYS と揃える）。 */
+export type ManualKeirinRankKey = "7S" | "7A" | "9S" | "9A";
 
 export async function triggerKeirinSubmitRace(
   raceKey: string,
@@ -1102,10 +1109,12 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "S1" | "7SS" | "7S" | "9SS" | "9S" | "S9" | "7A" | "9A" | "all";
+export type KeirinStatsRank = "7S" | "7A" | "9S" | "9A" | "7SS" | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
-export type NetkeirinRankKey = "_global" | "S1" | "7SS" | "7S" | "7A" | "9SS" | "9S" | "9A";
+// 2026-08-01〜: S1・9SSは全廃済みのため対象外（backend/src/api/keirin_router.py の
+// NETKEIRIN_RANK_KEYS と揃える）。
+export type NetkeirinRankKey = "_global" | "7S" | "7A" | "9S" | "9A" | "7SS";
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;

@@ -131,13 +131,62 @@ async def _calc_synth_odds(
 # picks
 # ---------------------------------------------------------------------------
 
-# 現行有効ランク（表示対象の allowlist）。denylist（rank != 'GAMI'等）だと
-# 廃止済みランクの残留行（2026-07-27発覚: 2026-07-21に全廃したはずの
+# ---------------------------------------------------------------------------
+# 集計対象ランクの単一正本（2026-08-01 是正）
+#
+# 【障害の経緯】keirin リポジトリ（別リポジトリ・commit f31f84b, 2026-07-31）が
+# ランク体系を全面改名した（内部rank名を "RANK_" + 表示ラベル方式へ統一。
+# 旧 SEVEN_S7→RANK_7S・SEVEN_7A→RANK_7A・NINE_S9→RANK_9S・NINE_9A→RANK_9A。
+# 表示ラベル自体（7S/7A/9S/9A）は変更なし）。kiseki 側は旧rank名でDBを検索し
+# 続けていたため picks_history の新データ（RANK_7S 等）を一切拾えず、Web表示が
+# 「データがありません」になっていた（2026-08-01発覚・本セクションで是正）。
+#
+# 同時に、2026-07-31 keirin側で新設された RANK_7SS（波乱軸選出・穴レース検知。
+# race_point/WINTICKET公式印/ライン構成のみで判定するモデル非依存の独立戦略。
+# 旧「SEVEN_S7 かつ gate_label='SS'」だった7SS/9SSとは無関係の別物）をここで
+# 初めて kiseki 側に追加した（ユーザー要望「7SS の追加を行ったため VPS の
+# 7SS 表示も有効にして下さい」への対応）。
+#
+# また、旧実装の _display_rank() は SEVEN_S7/NINE_S9 を gate_label('SS'/'S') で
+# 7SS/9SS・7S/9S に分岐していたが、この分岐は keirin側 commit e994758
+# （2026-07-31）で廃止済み（rank_7s_gate_label() は常に "S" のみを返す。
+# 既存行の gate_label も 'S' へ一括更新済み）。kiseki側もこれに追随し、
+# gate_label による表示分岐を完全に廃止して rank→表示ラベルの単純な1対1
+# マッピングへ変更した（gate_label カラム自体は過去データ分析用に DB からは
+# 削除しない）。
+#
+# 【単一正本】keirin側 src/strategy_wt.py の CURRENT_PAPER_RANKS が正本
+# （別リポジトリのため import 不可・以下の辞書へ手動で複製する）。
+# _VALID_PICK_RANKS / _RANKS_ALL / _display_rank() は全てこの辞書から導出し、
+# ランク名の二重管理を避ける（新ランクの追加/廃止時は _PAPER_RANK_LABELS の
+# みを更新すればよい設計とする。同じ名前を複数箇所にハードコードし直す運用が
+# 今回の障害の一因だったため）。
+#
+# 全廃済み（picks_history に残っていても表示・集計対象から除外する残骸）:
+#   SEVEN_S1（win軸1着固定×3着内モデル相手2車・三連単2点流し。2026-07-31全廃）
+#   SIX_S1 / 7PLUS_R / 7PLUS_U / 7PLUS_M / 7PLUS_ST / 7PLUS_STP（いずれも既に全廃済み）
+# ---------------------------------------------------------------------------
+_PAPER_RANK_LABELS: dict[str, str] = {
+    "RANK_7S": "7S",
+    "RANK_7A": "7A",
+    "RANK_9S": "9S",
+    "RANK_9A": "9A",
+    "RANK_7SS": "7SS",
+}
+
+# 候補行（判定前・見送り含む生候補）。ペーパーランクの1つではないが、
+# write_candidates_wt.py が現在も書き込んでおり表示・集計対象に含める必要がある
+# 特殊値（朝時点で rank='7PLUS_CAND' として書き込まれ、発走前オッズ確定時に
+# 上記いずれかのランクへ判定・上書きされる）。
+_CANDIDATE_RANK = "7PLUS_CAND"
+
+# picks 一覧 API（/keirin/picks）の allowlist。denylist方式（rank != 'GAMI'等）だと
+# 全廃済みランクの残留行（2026-07-27発覚: 2026-07-21に全廃したはずの
 # 7PLUS_U/7PLUS_M が27行アーカイブ未済のまま残り「非」バッジで表示され、
 # サマリー集計とも齟齬が生じていた）を拾ってしまう。allowlist方式にすることで
 # 将来同種の残留が発生しても自動的に非表示になる（サマリー側の_aggregate()と
 # 対象ランクを揃えることでも齟齬を防ぐ）。
-_VALID_PICK_RANKS = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A', '7PLUS_CAND')"
+_VALID_PICK_RANKS = "(" + ", ".join(f"'{r}'" for r in (*_PAPER_RANK_LABELS, _CANDIDATE_RANK)) + ")"
 
 # ---------------------------------------------------------------------------
 # 推奨外レースの仮想買い目（hypo_*）— 2026-07-31新設
@@ -388,7 +437,7 @@ async def get_picks(
             "status": r["status"],
             "n_entries": r["n_entries"],
             "rank": r["rank"],
-            "display_rank": _display_rank(str(r["rank"]), r["gate_label"]) if has_pick else None,
+            "display_rank": _display_rank(str(r["rank"])) if has_pick else None,
             "pred_combo": r["pred_combo"] if has_pick else None,
             "n_combos": r["n_combos"] if has_pick else None,
             "synth_odds": synth_odds,
@@ -453,62 +502,33 @@ _SETTLED_COND = """(
     OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
 )"""
 
-# 内部rank → by_rank キー（表示ランク）のマッピング
-# 2026-07-21〜: S2(7PLUS_U)/S3(7PLUS_M) は全廃。現行は S1 / 7SS / 7S / 7A の4ランク。
-# SEVEN_S7（旧SEVEN_S4）は gate_label（軸2車とWINTICKET公式◎◯の重なり数）でSS/Sに
-# 分岐し、表示時に対象車数の接頭辞「7」を付ける。
-# 2026-07-27: 内部名S4→S7へ統一（表示に一度も出てこない「S4」という名前と実際の
-# 表示ランク(SS/S)が食い違い混乱の原因になっていたため。keirin リポジトリの
-# src/strategy_wt.py と揃える）。同日、観察用サブランク"SS+"はサンプル不足のため
-# SSへ統合・廃止した。
-_RANK_KEY_MAP = {
-    "SEVEN_S1": "S1",  # 表示 S1（2026-07-19 新設計: win軸1着固定×3着内モデル相手2車）
-}
+def _display_rank(rank: str) -> str:
+    """DB の内部 rank から、フロントエンドが表示に使う表示ランク文字列を返す。
 
+    2026-08-01〜: keirin側のランク全面改名（内部rank="RANK_"+表示ラベル方式へ
+    統一。commit f31f84b）に伴い、_PAPER_RANK_LABELS の単純な1対1マッピングへ
+    一本化した。
 
-def _display_rank(rank: str, gate_label: str | None) -> str:
-    """DB の内部 rank + gate_label から、フロントエンドが表示に使う表示ランク文字列を返す。
+    旧実装は SEVEN_S7/NINE_S9 を gate_label('SS'/'S') で 7SS/9SS・7S/9S に
+    分岐していたが、この分岐は keirin側 commit e994758（2026-07-31）で廃止済み
+    （rank_7s_gate_label() は常に "S" のみを返す。既存行の gate_label も 'S' へ
+    一括更新済み）。gate_label カラム自体はDBに残っており過去データ分析用に
+    保持するが、表示ランクの決定には一切使わない。
 
-    - SEVEN_S1                        → "S1"
-    - SEVEN_S7 かつ gate_label='SS'   → "7SS"（軸2車がWT公式◎◯と2車とも不一致。
-      2026-07-23〜07-27はさらに軸級班で"SS+"観察用サブランクへ分岐していたが、
-      サンプル数不足のため廃止・SSへ統合済み。既存picks_historyのgate_label='SS+'
-      行も'SS'へ一括更新済みのため、このマッピングにSS+分岐はもう存在しない）
-    - SEVEN_S7 かつ gate_label='S'    → "7S"（軸2車の片方だけがWT公式◎◯と一致）
-    - NINE_S9 かつ gate_label='SS'/'S' → "9SS"/"9S"
-      （S7の9車立て版・独立ランク。2026-07-26導入。SS/Sの意味はS7と同じだが
-      表示ランクの接頭辞（7 or 9）で対象車数を区別する）
-    - SEVEN_7A → "7A"（S7の境界ランク・3ゲート中1つだけ不合格。2026-07-27導入。
-      gate_labelによるサブランク分岐なし＝単一ランク）
-    - NINE_9A → "9A"（S9の境界ランク・2ゲート中1つだけ不合格。2026-07-27導入）
-    - それ以外（廃止済みランクの残骸データ等）→ 元の rank 文字列をそのまま返す
+    未知の rank（全廃済みランクの残骸データ等）は元の rank 文字列をそのまま
+    返す（呼び出し側は _VALID_PICK_RANKS/_RANKS_ALL のallowlistで事前に
+    除外している想定のため、通常この分岐には到達しない）。
     """
-    if rank == "SEVEN_S1":
-        return "S1"
-    if rank == "SEVEN_S7":
-        if gate_label == "SS":
-            return "7SS"
-        if gate_label == "S":
-            return "7S"
-    if rank == "NINE_S9":
-        if gate_label == "SS":
-            return "9SS"
-        if gate_label == "S":
-            return "9S"
-    if rank == "SEVEN_7A":
-        return "7A"
-    if rank == "NINE_9A":
-        return "9A"
-    return rank
+    return _PAPER_RANK_LABELS.get(rank, rank)
 
 
-# 2026-07-27: ユーザー要望によりトップライン（当日/当月/当年）は7車(S1/S7)+
-# 9車(S9)をまとめて表示し、「ランク別」展開時に7車・9車の各ランクを
-# 一覧で確認できるようにする（表示テーブル自体はOption Bのまま独立ランクとして
-# 保持しつつ、サマリーの合算範囲だけ広げる）。
-# 同日、7A/9A（S7/S9の境界ランク）を専用の別集計として追加したが、表示が煩雑との
-# ユーザー要望により同日中にトップラインへ統合（by_rankの一覧に7A/9Aも並べる）。
-_RANKS_ALL = "('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A')"
+# トップライン（当日/当月/当年）は現行有効ランク全て（7S/7A/9S/9A/7SS）をまとめて
+# 表示する（2026-07-27にユーザー要望で7車+9車+境界ランクを統合した方針を継続。
+# 2026-08-01、RANK_7SS（新設の独立ランク・波乱軸選出/穴レース検知）を追加＝
+# ユーザー要望「7SS の追加を行ったため VPS の 7SS 表示も有効にして下さい」への
+# 対応）。by_rank（_aggregate内部で_display_rank()により算出）にはこれら全ランク
+# が同じ辞書に並ぶため、フロントエンドの「ランク別」展開でまとめて確認できる。
+_RANKS_ALL = "(" + ", ".join(f"'{r}'" for r in _PAPER_RANK_LABELS) + ")"
 
 
 async def _aggregate(
@@ -517,9 +537,10 @@ async def _aggregate(
     params: dict[str, Any],
     rank_filter: str = _RANKS_ALL,
 ) -> dict:
-    # 2026-07-21〜: 現行ランクは S1(SEVEN_S1) / 7SS・7S(SEVEN_S7をgate_labelで分岐) の3ペーパー
-    # （旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ退避済み）。
-    # 2026-07-27〜: トップラインは S1(SEVEN_S1) + S7(SEVEN_S7) + S9(NINE_S9) の名目合算。
+    # 2026-08-01〜: 現行ランクは _PAPER_RANK_LABELS の5ランク（RANK_7S/RANK_7A/
+    # RANK_9S/RANK_9A/RANK_7SS）。gate_labelによる表示分岐は廃止済み（_display_rank
+    # 参照）。旧S1(SEVEN_S1)・旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ
+    # 退避 or 残骸のまま（allowlist方式のため自動的に集計対象から除外される）。
     # rank_filter: 個別ランクだけの集計にも本関数を再利用できるようパラメータ化
     # （既定は現行有効ランク全て）。
     row = (await db.execute(
@@ -572,12 +593,16 @@ async def _aggregate(
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）: S1=SEVEN_S1 / 7SS・7S=SEVEN_S7（gate_labelで分岐）
+    # ランク別集計（全てペーパー・名目賭金）: RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS の5ランク。
+    # 2026-08-01〜: gate_labelはもう表示ランクを分岐しない（_display_rank参照）ため
+    # GROUP BY からも外す。gate_labelでGROUP BYしたまま_display_rank()で複数行が
+    # 同じ表示キーに収束すると、Python側のdict代入（by_rank[key] = ...）が
+    # 後勝ちで上書きしてしまい集計が欠落する事故になるため（例: RANK_7Sは
+    # gate_label='S'/'SS'の2行に分かれて残っているが、表示上は"7S"1つに統合される）。
     rank_rows = (await db.execute(
         text(f"""
             SELECT
               ph.rank                                                            AS rank,
-              ph.gate_label                                                      AS gate_label,
               COUNT(*)                                                           AS n_picks,
               SUM(ph.hit)                                                        AS n_hits,
               COALESCE(SUM(ph.bet_amount), 0)                                    AS total_bet,
@@ -592,14 +617,14 @@ async def _aggregate(
               AND ph.rank IN {rank_filter}
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
-            GROUP BY ph.rank, ph.gate_label
+            GROUP BY ph.rank
         """),
         params,
     )).mappings().all()
 
     by_rank: dict[str, dict] = {}
     for r in rank_rows:
-        key = _display_rank(str(r["rank"]), r["gate_label"])
+        key = _display_rank(str(r["rank"]))
         by_rank[key] = _make_period_dict(
             int(r["n_picks"] or 0),
             int(r["n_hits"] or 0),
@@ -609,12 +634,12 @@ async def _aggregate(
         )
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #7S1/#7S4/#9S9 行を書き込む。結果確定前でも
+    # （write_candidates_wt が候補時点で #CAND 行（rank='7PLUS_CAND'）を書き込み、
+    # 発走前オッズ確定時に #7S/#7A/#9S/#9A 等へ上書きされる。結果確定前でも
     # カウント対象に含める＝上の cand_row と同じ理由で _SETTLED_COND は付けない）
     paper_cand_rows = (await db.execute(
         text(f"""
             SELECT ph.rank AS rank,
-                   ph.gate_label AS gate_label,
                    COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
@@ -622,12 +647,12 @@ async def _aggregate(
             WHERE {where}
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
-            GROUP BY ph.rank, ph.gate_label
+            GROUP BY ph.rank
         """),
         params,
     )).mappings().all()
     for r in paper_cand_rows:
-        key = _display_rank(str(r["rank"]), r["gate_label"])
+        key = _display_rank(str(r["rank"]))
         n_cand = int(r["n_candidates"] or 0)
         if key not in by_rank and n_cand > 0:
             by_rank[key] = _make_period_dict(0, 0, 0, 0)
@@ -697,7 +722,15 @@ _RACE_KEY_RE = re.compile(r"^\d{8}_\d{2}_\d{2}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-_MANUAL_RANK_KEYS = ("7SS", "7S", "7A", "9SS", "9S", "9A")  # S1は全廃済みのため対象外
+# 推奨外レースの手動入稿で選べるランク。
+# S1（2026-07-31全廃）に加え、旧gate_label分岐由来の7SS/9SS（同日廃止・SSはSへ
+# 統合済み）も対象外。RANK_7SS（2026-07-31新設の独立ランク）はkiseki側で
+# hypo軸選定（_hypo_select_axis、単勝/複勝指数トップ3重なり方式＝S7/S9と同じ
+# ロジック）を実装済みだが、これは実際の7SSの軸選定（race_point単独top1×
+# WT公式印◯△✕由来の別ロジック・rank_7ss_select_axis）とは異なるため、誤った
+# 軸を「7SS」として入稿してしまうリスクを避けてあえて対象外にしている
+# （2026-08-01時点の判断。7SS専用のhypo軸ロジックを別途移植すれば追加可能）。
+_MANUAL_RANK_KEYS = ("7S", "7A", "9S", "9A")
 
 
 class SubmitRaceIn(BaseModel):
@@ -722,7 +755,7 @@ async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
     検索を経由せず、指定した軸2車・ランクで直接入稿する
     （netkeirin_submit_wt.py --manual-rank-key/--axis1/--axis2）。
 
-    /keirin/picks 等が返す race_key は候補種別を示す "#CAND"/"#7S7" 等のサフィックスを
+    /keirin/picks 等が返す race_key は候補種別を示す "#CAND"/"#7S" 等のサフィックスを
     含む場合がある（本ルーター内の各クエリが SPLIT_PART(race_key, '#', 1) で剥がしている
     のと同じ理由）。keirin側の候補ファイルはサフィックス無しの物理レースキーのみを持つため、
     ここでも同様に剥がしてから検証・中継する。
@@ -765,12 +798,14 @@ async def get_stats(
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
-    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9SS"）。
-          "S1"（SEVEN_S1）/ "7SS"（SEVEN_S7 かつ gate_label='SS'）/
-          "7S"（SEVEN_S7 かつ gate_label='S'）/ "9SS"・"9S"（NINE_S9の
-          gate_label別）/ "S9"（NINE_S9全体）/ "7A"（SEVEN_7A・境界ランク）/
-          "9A"（NINE_9A・境界ランク）/ "all"（既定値・S1+SEVEN_S7+NINE_S9+7A+9A全体。
+    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9S"）。
+          "7S"（RANK_7S）/ "7A"（RANK_7A・境界ランク）/ "9S"（RANK_9S）/
+          "9A"（RANK_9A・境界ランク）/ "7SS"（RANK_7SS・波乱軸選出/穴レース検知、
+          2026-07-31新設の独立ランク）/ "all"（既定値・全ランク合算。
           トップライン=/summaryと揃える）。
+          2026-08-01〜: gate_label('SS'/'S')による7SS/9SSの分岐は
+          keirin側commit e994758（2026-07-31）で廃止済みのため、
+          "7SS" は上記の新設独立ランクのみを指す（旧"9SS"は廃止・対象外）。
           "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
     """
     today = _today_jst()
@@ -797,19 +832,18 @@ async def get_stats(
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
-    # OR条件として結合する（例: "7SS,9SS" → SEVEN_S7のSS or NINE_S9のSS）。
-    # 2026-07-27〜: 既定の"all"はS1+S7+S9+7A+9Aをまとめて集計する（/summaryと同じ方針）。
+    # OR条件として結合する（例: "7SS,9S" → RANK_7SS or RANK_9S）。
+    # 2026-08-01〜: gate_labelによる分岐は廃止済み・内部rankは_PAPER_RANK_LABELSの
+    # 5ランクへ全面改名済みのため、それぞれ単純な等価条件になる。
+    # 既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
-        "S1": "ph.rank = 'SEVEN_S1'",
-        "7SS": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'SS'",
-        "7S": "ph.rank = 'SEVEN_S7' AND ph.gate_label = 'S'",
-        "9SS": "ph.rank = 'NINE_S9' AND ph.gate_label = 'SS'",
-        "9S": "ph.rank = 'NINE_S9' AND ph.gate_label = 'S'",
-        "S9": "ph.rank = 'NINE_S9'",
-        "7A": "ph.rank = 'SEVEN_7A'",
-        "9A": "ph.rank = 'NINE_9A'",
+        "7S": "ph.rank = 'RANK_7S'",
+        "7A": "ph.rank = 'RANK_7A'",
+        "9S": "ph.rank = 'RANK_9S'",
+        "9A": "ph.rank = 'RANK_9A'",
+        "7SS": "ph.rank = 'RANK_7SS'",
     }
-    _ALL_COND = "ph.rank IN ('SEVEN_S1', 'SEVEN_S7', 'NINE_S9', 'SEVEN_7A', 'NINE_9A')"
+    _ALL_COND = f"ph.rank IN {_RANKS_ALL}"
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
     if not _requested_keys or "all" in _requested_keys:
         _RANK_COND = _ALL_COND
@@ -986,9 +1020,13 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 # netkeirin（ウマい車券）自動入稿設定
 # ---------------------------------------------------------------------------
 
-# 表示ランク一覧（_display_rank()の出力と一致・S1/7SS/7S/7A/9SS/9S/9A）。
+# 表示ランク一覧（_display_rank()の出力と一致・7S/7A/9S/9A/7SS）。
 # '_global' は全体ON/OFFを表す特殊行。
-NETKEIRIN_RANK_KEYS = ("_global", "S1", "7SS", "7S", "7A", "9SS", "9S", "9A")
+# 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は
+# 対象外。DBには過去分のnetkeirin_settings行（rank_key='S1'/'9SS'、いずれも
+# enabled=false）が残るが、新規保存時のバリデーション対象からは外す
+# （フロントエンド側もこれらを画面に表示しない）。
+NETKEIRIN_RANK_KEYS = ("_global", "7S", "7A", "9S", "9A", "7SS")
 
 
 class NetkeirinSettingOut(BaseModel):
