@@ -767,19 +767,17 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 同日、内部名S4→S7へ統一し表示ランクにも対象車数の接頭辞（7 or 9）を揃えて付与。
 // 同日、7A/9A（S7/S9の境界ランク）を新設。当初はROIの違いを踏まえ専用の別テーブルに
 // 分離していたが、表示が煩雑とのユーザー要望により同日中にトップラインへ統合した。
-// ランク別展開では7車(7SS/7S/7A/S1)・9車(9SS/9S/9A)を同じ一覧内に並べて
-// 確認できるようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
-const RANK_ORDER = ["7SS", "7S", "7A", "S1", "9SS", "9S", "9A"] as const;
+// ランク別展開では7車(7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できるようにする
+// （表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
+// 2026-07-31: 7SS/9SS/S1はサンプル不足・非表示要望によりランク別展開から除外
+// （内部rank/gate_labelでの集計自体は継続。表示のみの変更）。
+const RANK_ORDER = ["7S", "7A", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  S1: "S1", "7SS": "7SS", "7S": "7S", "7A": "7A",
-  "9SS": "9SS", "9S": "9S", "9A": "9A",
+  "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  S1: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
-  "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
-  "9SS": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
 };
@@ -948,15 +946,6 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} />
             <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} />
             <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} />
-            {/* 検証期間 = 学習に使っていない期間のバックテスト（HOLD・2026-06-30以前で固定）。
-                2026-07以降の本番フォワード分は当日/当月/当年サマリー側で表示 */}
-            <SummaryRow
-              label="検証期間"
-              sub={summary.test_from && summary.test_to ? `${summary.test_from}〜${summary.test_to}` : undefined}
-              data={summary.test}
-              showRanks={expanded}
-              showAll={showAll}
-            />
           </tbody>
         </table>
       </div>

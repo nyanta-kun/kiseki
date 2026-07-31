@@ -561,79 +561,6 @@ async def _aggregate(
     return result
 
 
-async def _get_model_eval(db: AsyncSession, period_type: str = "HOLD") -> dict:
-    """keirin.model_evaluation から最新のバックテスト結果を返す。
-    ランク別行（model_name に '#7U'/'#7M' サフィックス付き）も by_rank に含める。
-    """
-    row = (await db.execute(
-        text("""
-            SELECT n_picks, n_hits, total_bet, total_payout, roi,
-                   period_from, period_to
-            FROM keirin.model_evaluation
-            WHERE period_type = :pt
-              AND model_name NOT LIKE '%#7%'
-              AND model_name NOT LIKE '%#6S1'
-            ORDER BY evaluated_at DESC
-            LIMIT 1
-        """),
-        {"pt": period_type},
-    )).mappings().one_or_none()
-
-    if not row:
-        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
-                "max_payout": None, "period_from": None, "period_to": None, "by_rank": {}}
-
-    roi_val = float(row["roi"]) if row["roi"] is not None else None
-    result = {
-        "n_picks":      int(row["n_picks"] or 0),
-        "max_payout":   None,  # model_evaluation にはmax_payout非保持（HOLDバックテスト集計のため）
-        "n_hits":       int(row["n_hits"] or 0),
-        "total_bet":    int(row["total_bet"] or 0),
-        "total_payout": int(row["total_payout"] or 0),
-        "roi":          round(roi_val, 3) if roi_val is not None else None,
-        "period_from":  row["period_from"],
-        "period_to":    row["period_to"],
-    }
-
-    # ランク別行を取得（model_name サフィックスで識別）
-    # S/S+（#7ST/#7STP）2026-07-15 全廃・S1（#6S1）/A（#7A）2026-07-17 全廃・
-    # S2/S3（#7U/#7M）2026-07-21 全廃 —
-    # 残存する過去評価行は表示しない（save_model_eval 再実行で行自体も削除される。
-    # VPS本番に古い評価行が残っていても表示に混ざらないための安全策として明示的に除外する）
-    rank_rows = (await db.execute(
-        text("""
-            SELECT model_name, n_picks, n_hits, total_bet, total_payout, roi
-            FROM keirin.model_evaluation
-            WHERE period_type = :pt
-              AND model_name LIKE '%#7%'
-              AND model_name NOT LIKE '%#7ST%'
-              AND model_name NOT LIKE '%#7STP%'
-              AND model_name NOT LIKE '%#7A'
-              AND model_name NOT LIKE '%#7R'
-              AND model_name NOT LIKE '%#7U'
-              AND model_name NOT LIKE '%#7M'
-            ORDER BY evaluated_at DESC
-        """),
-        {"pt": period_type},
-    )).mappings().all()
-
-    # 同一 evaluated_at の最新セットのみ使用（ランクキーに重複があれば最新を優先）
-    by_rank: dict[str, dict] = {}
-    for r in rank_rows:
-        suffix = str(r["model_name"]).rsplit("#", 1)[-1]  # "7U" / "7M"
-        rank_key = suffix.replace("7", "", 1) if suffix.startswith("7") else suffix
-        if rank_key not in by_rank:
-            by_rank[rank_key] = _make_period_dict(
-                int(r["n_picks"] or 0),
-                int(r["n_hits"] or 0),
-                int(r["total_bet"] or 0),
-                int(r["total_payout"] or 0),
-            )
-
-    result["by_rank"] = by_rank
-    return result
-
-
 @router.post("/refresh")
 async def refresh_picks(date: str = "") -> JSONResponse:
     """当日採点を keirin ホスト側の正本スクリプトで即時実行する（webhook 中継）。
@@ -934,9 +861,8 @@ async def get_stats(
 
 @router.get("/summary")
 async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
-    """当日 / 当月 / 当年 / HOLD期間バックテストのサマリーを返す。
+    """当日 / 当月 / 当年のサマリーを返す。
     date（YYYY-MM-DD）を指定するとその日付を基準に当日/当月/当年を集計する。
-    test フィールドは keirin.model_evaluation の最新 HOLD 期間評価を使用する。
     """
     try:
         today = Date.fromisoformat(date) if date else _today_jst()
@@ -945,8 +871,6 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     today_str = today.isoformat()
     month_prefix = today.strftime("%Y-%m")
     year_prefix = str(today.year)
-
-    model_eval = await _get_model_eval(db, period_type="HOLD")
 
     # 2026-07-27〜: today/month/year は既定(rank_filter=_RANKS_ALL)でS1+S7+S9+7A+9Aを
     # まとめて集計する。by_rank（_aggregate内部で_display_rank()により算出）には
@@ -957,9 +881,6 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),
         "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}),
         "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}),
-        "test":       model_eval,
-        "test_from":  model_eval.get("period_from"),
-        "test_to":    model_eval.get("period_to"),
     }
 
     return JSONResponse(content=result)
