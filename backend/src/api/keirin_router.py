@@ -166,12 +166,13 @@ async def _calc_synth_odds(
 #   SEVEN_S1（win軸1着固定×3着内モデル相手2車・三連単2点流し。2026-07-31全廃）
 #   SIX_S1 / 7PLUS_R / 7PLUS_U / 7PLUS_M / 7PLUS_ST / 7PLUS_STP（いずれも既に全廃済み）
 # ---------------------------------------------------------------------------
+# 定義順 = Web 全体の表示順（7SS/7S/7A/9S/9A。ユーザー指定・2026-08-01）。
 _PAPER_RANK_LABELS: dict[str, str] = {
+    "RANK_7SS": "7SS",
     "RANK_7S": "7S",
     "RANK_7A": "7A",
     "RANK_9S": "9S",
     "RANK_9A": "9A",
-    "RANK_7SS": "7SS",
 }
 
 # 候補行（判定前・見送り含む生候補）。ペーパーランクの1つではないが、
@@ -837,11 +838,11 @@ async def get_stats(
     # 5ランクへ全面改名済みのため、それぞれ単純な等価条件になる。
     # 既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
+        "7SS": "ph.rank = 'RANK_7SS'",
         "7S": "ph.rank = 'RANK_7S'",
         "7A": "ph.rank = 'RANK_7A'",
         "9S": "ph.rank = 'RANK_9S'",
         "9A": "ph.rank = 'RANK_9A'",
-        "7SS": "ph.rank = 'RANK_7SS'",
     }
     _ALL_COND = f"ph.rank IN {_RANKS_ALL}"
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
@@ -1020,13 +1021,15 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 # netkeirin（ウマい車券）自動入稿設定
 # ---------------------------------------------------------------------------
 
-# 表示ランク一覧（_display_rank()の出力と一致・7S/7A/9S/9A/7SS）。
+# 表示ランク一覧（_display_rank()の出力と一致・7SS/7S/7A/9S/9A）。
+# 並び順は Web 全体で 7SS/7S/7A/9S/9A に統一（ユーザー指定・2026-08-01。
+# frontend の RANK_ORDER / RANK_FILTERS と同一基準）。
 # '_global' は全体ON/OFFを表す特殊行。
 # 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は
 # 対象外。DBには過去分のnetkeirin_settings行（rank_key='S1'/'9SS'、いずれも
 # enabled=false）が残るが、新規保存時のバリデーション対象からは外す
 # （フロントエンド側もこれらを画面に表示しない）。
-NETKEIRIN_RANK_KEYS = ("_global", "7S", "7A", "9S", "9A", "7SS")
+NETKEIRIN_RANK_KEYS = ("_global", "7SS", "7S", "7A", "9S", "9A")
 
 
 class NetkeirinSettingOut(BaseModel):

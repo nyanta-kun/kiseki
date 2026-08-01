@@ -910,18 +910,21 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 2026-08-01: 内部rank名の全面改名（RANK_*方式）に追随するとともに、同じ
 // "7SS"という表示ラベルで新設された独立ランク RANK_7SS（波乱軸選出・穴レース
 // 検知・モデル非依存）をランク別展開へ追加した（ユーザー要望「7SS の追加を
-// 行ったため VPS の 7SS 表示も有効にして下さい」への対応）。7SSは的中率重視の
-// S7/S9系とは設計思想が異なる（見せ場・高配当検知が目的）ため末尾に配置する。
-// ランク別展開では7車(7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できるようにする
-// （表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
-const RANK_ORDER = ["7S", "7A", "9S", "9A", "7SS"] as const;
+// 行ったため VPS の 7SS 表示も有効にして下さい」への対応）。
+// 並び順は 7SS/7S/7A/9S/9A に統一する（ユーザー指定・2026-08-01）。当初は
+// 「7SSは設計思想が異なるので末尾」としていたが、表示ラベルの辞書順・
+// 車数まとまり（7車系→9車系）と揃え、サマリー/ランク別展開/入稿設定など
+// Web上の全ランク列挙でこの順序を単一の基準とする。
+// ランク別展開では7車(7SS/7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できる
+// ようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
+const RANK_ORDER = ["7SS", "7S", "7A", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A", "7SS": "7SS",
+  "7SS": "7SS", "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
+  "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
-  "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
 };
