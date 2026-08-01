@@ -159,7 +159,24 @@ logger = logging.getLogger(__name__)
 #   をレース内 min-max → 15-85 にスケールして保存する。
 #   モデル: backend/models/v26_lightgbm_rank.txt
 #   学習: scripts/train_v26_lightgbm.py
-COMPOSITE_VERSION = 26
+# v27: 順位回帰 + 着外率ヘッドの合成へ転換 (2026-08-02)
+#   ランキング品質レビュー（memory: jra_rank_quality_redesign_2026_08_02）で
+#   v26 の「0.3*LGB + 0.7*v24線形和」は比較9候補中で最下位クラスと判明した:
+#     - LGB 部分**単独**が全指標で v26 本番を上回る＝線形和 0.7 が純粋な足枷
+#     - LambdaRank は「上位を当てる」目的関数であり全順位の並びには最適でない
+#   代わりに **レース内正規化着順の回帰 (reg_rank)** を土台に、
+#   本番投入済みの **着外率ヘッド (out_probability)** で下位を押し下げる:
+#       composite_raw = z(reg_rank_score) - 0.5 * z(out_probability)   ※z はレース内標準化
+#       composite_index = レース内 min-max → 15〜85
+#   honest test 2026-01〜08 (2,046R) v26 比:
+#     1位馬 勝率 27.08%→28.40% / 複勝率 59.38%→61.00% / NDCG@3 0.4975→0.5071
+#     レース内 Spearman 0.4783→0.5094 / 3着内馬を下位30%に沈める率 10.43%→9.29%
+#   独立窓 2025年通年でも Spearman 0.4932→0.5020 と改善方向は一致。
+#   ※ ROI は改善しない見込み（控除率の壁・memory: jra_out_rate_3head_verification_2026_08_02）。
+#     価値は表示順・足切り・推奨tierの精度に限定される。
+#   モデル: backend/models/jra_reg_rank_lgb.txt + backend/models/jra_out_rate_lgb.txt
+#   学習: scripts/train_jra_reg_rank.py / scripts/train_jra_out_rate.py
+COMPOSITE_VERSION = 27
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -229,13 +246,8 @@ def _segment_weights(surface: str | None, distance: int | None) -> dict:
 # Softmax 温度パラメータ（composite_index 10点差 → 約2.7倍の確率比）
 SOFTMAX_TEMPERATURE = 10.0
 
-# v26 LightGBM 設定
-_V26_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_lightgbm_rank.txt"
-# v26 アンサンブル重み: LGB スコアと v24 線形和の合成比
-# 重み比検証 (2026-05-02, 1072R) で 0.3/0.7 が三冠（複勝率 +0.67 / 単勝ROI +0.039
-# / 複勝ROI +0.025 vs LGB-only）。複勝率を維持しつつ配当を改善する最良バランス。
-V26_LGB_WEIGHT = 0.3
-V26_LINEAR_WEIGHT = 0.7
+# v26/v27 共通の特徴量セット（v26 LGB は v27 で使用しなくなったが、
+# 着外率ヘッド・順位回帰ヘッド・is_win 較正ヘッドが同じ 34 列を共有する）
 _V26_FEATURE_NAMES: list[str] = [
     # sub-indices (17)
     "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
@@ -273,30 +285,41 @@ OUT_PROB_FEATURE_NAMES: list[str] = list(_V26_FEATURE_NAMES)
 # Web の足切り（グレーアウト）閾値。この値以上の着外率の馬を「足切り候補」とする。
 OUT_PROB_CUTOFF = 0.80
 
+# v27 順位回帰ヘッド（composite_index の土台）
+# 目的変数はレース内正規化着順（0=1着 … 1=最下位）。小さいほど上位。
+# 学習: scripts/train_jra_reg_rank.py
+_REG_RANK_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "jra_reg_rank_lgb.txt"
+
+# v27 合成係数: composite_raw = z(-reg_rank) - V27_OUT_WEIGHT * z(out_probability)
+# 0.0/0.3/0.5/0.8 を honest 2窓で比較し 0.5 が上位・下位・全体のバランス最良。
+V27_OUT_WEIGHT = 0.5
+
+# v27 スケール係数。
+# ⚠️ レース内 min-max（15〜85 固定）にしてはいけない。composite_index の
+# 「レース内ばらつき」は `confidence.py::calculate_race_confidence` の
+# 指数差スコア・分散スコアの入力であり、全レースを同じ幅に正規化すると
+# 混戦度の情報が消えて tier 判定が壊れる（実測: S tier 19.0%→30.2% に膨張）。
+# そこで **レース内順位は検証済みの z 合成のまま**、幅だけは reg_rank 予測の
+# 絶対的なばらつき（レースごとに異なる）に比例させる:
+#     composite = 50 + z_blend * V27_INDEX_SCALE * sd_race(reg_rank)
+# V27_INDEX_SCALE は「平均レース内 sd」を v26 相当（9.24）に合わせる値。
+#   reg_rank 予測のレース内 sd 平均 = 0.1670 → 9.24 / 0.1670 ≒ 55.3
+V27_INDEX_SCALE = 55.3
+
+# レース内 sd の下限。reg_rank が全馬ほぼ同値の縮退ケースで幅がゼロになり、
+# 着外率による並び替えまで消えてしまうのを防ぐ（実データの 5% 分位は 0.115 なので
+# 通常レースでは発動しない）。
+V27_MIN_SPREAD = 0.02
+
+_reg_rank_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_reg_rank_load_attempted: bool = False
+
 # v26 モデルのプロセス共有キャッシュ（lazy load）
-_v26_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _iswin_load_attempted: bool = False
 _out_prob_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _out_prob_load_attempted: bool = False
 
-
-def _load_v26_model() -> lgb.Booster | None:  # type: ignore[name-defined]
-    """LightGBM モデルを lazy load する。モデルファイルが無いと None を返す。"""
-    global _v26_model_cache
-    if _v26_model_cache is not None:
-        return _v26_model_cache
-    if not _V26_MODEL_PATH.exists():
-        logger.warning(f"v26 model not found: {_V26_MODEL_PATH}, fallback to v24 linear sum")
-        return None
-    try:
-        import lightgbm as lgb
-        _v26_model_cache = lgb.Booster(model_file=str(_V26_MODEL_PATH))
-        logger.info(f"v26 model loaded: {_V26_MODEL_PATH}")
-        return _v26_model_cache
-    except Exception as e:
-        logger.error(f"v26 model load failed: {e}")
-        return None
 
 
 def _load_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
@@ -339,6 +362,84 @@ def _load_out_prob_model() -> lgb.Booster | None:  # type: ignore[name-defined]
     except Exception as e:
         logger.error(f"out_rate model load failed: {e}")
         return None
+
+
+def _load_reg_rank_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """順位回帰ヘッド（v27 の土台）を lazy load する。無ければ None。"""
+    global _reg_rank_model_cache, _reg_rank_load_attempted
+    if _reg_rank_model_cache is not None:
+        return _reg_rank_model_cache
+    if _reg_rank_load_attempted:
+        return None
+    _reg_rank_load_attempted = True
+    if not _REG_RANK_MODEL_PATH.exists():
+        logger.warning(
+            f"reg_rank model not found: {_REG_RANK_MODEL_PATH}, composite は v24 線形和にフォールバック"
+        )
+        return None
+    try:
+        import lightgbm as lgb
+        _reg_rank_model_cache = lgb.Booster(model_file=str(_REG_RANK_MODEL_PATH))
+        logger.info(f"reg_rank model loaded: {_REG_RANK_MODEL_PATH}")
+        return _reg_rank_model_cache
+    except Exception as e:
+        logger.error(f"reg_rank model load failed: {e}")
+        return None
+
+
+def _zscore(values: np.ndarray) -> np.ndarray:
+    """レース内標準化。分散ゼロ（全馬同値）のときは全て 0 を返す。"""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+    sd = float(arr.std())
+    if sd < 1e-12:
+        return np.zeros_like(arr)
+    return (arr - float(arr.mean())) / sd
+
+
+def blend_v27(
+    reg_rank_scores: np.ndarray | list[float],
+    out_probs: np.ndarray | list[float] | None,
+    out_weight: float = V27_OUT_WEIGHT,
+    scale: float = V27_INDEX_SCALE,
+) -> list[float]:
+    """v27 の composite_index を算出する（レース単位・純関数）。
+
+    reg_rank は「正規化着順の予測値」なので **小さいほど上位**。符号を反転して
+    「大きいほど上位」に揃えたうえで、着外率の z スコアを引いて下位を押し下げる。
+
+        z_blend         = z( z(-reg_rank) - out_weight * z(out_prob) )
+        composite_index = 50 + z_blend * scale * sd_race(reg_rank)   → clip(0, 100)
+
+    レース内順位は z 合成（検証済み）で決まり、**幅**はそのレースでの reg_rank 予測の
+    絶対的なばらつきに比例する。min-max で 15〜85 に固定してしまうと全レースが同じ幅になり、
+    `confidence.py::calculate_race_confidence` の分散スコア・指数差スコアが機能しなくなる。
+
+    Args:
+        reg_rank_scores: 順位回帰ヘッドの予測値（小さいほど上位）
+        out_probs: 着外率（None または長さ不一致なら着外率補正なし）
+        out_weight: 着外率 z スコアの重み
+        scale: 指数スケール（平均レース内 sd を v26 相当に合わせる係数）
+
+    Returns:
+        composite_index のリスト（reg_rank_scores と同順）
+    """
+    reg = np.asarray(reg_rank_scores, dtype=float)
+    if reg.size == 0:
+        return []
+    if reg.size == 1:
+        return [50.0]
+
+    raw = _zscore(-reg)
+    if out_probs is not None and len(out_probs) == len(reg):
+        raw = raw - out_weight * _zscore(np.asarray(out_probs, dtype=float))
+    z_blend = _zscore(raw)
+
+    # レースごとに異なる「並びの明確さ」。縮退時も着外率の並びが消えないよう下限を置く
+    spread = max(float(np.std(reg)), V27_MIN_SPREAD)
+    vals = 50.0 + z_blend * scale * spread
+    return [round(float(np.clip(v, INDEX_MIN, INDEX_MAX)), 1) for v in vals]
 
 
 def _build_v26_features(
@@ -398,18 +499,6 @@ def _build_v26_features(
             float(e.jvan_battle_dm) if e and e.jvan_battle_dm is not None else 50.0,
         ])
     return np.asarray(rows, dtype=float)
-
-
-def _scale_lgb_to_index(scores: np.ndarray) -> list[float]:
-    """LightGBM 生スコアを 15-85 の indexに変換する（レース内 min-max）。"""
-    if len(scores) == 0:
-        return []
-    if len(scores) == 1:
-        return [50.0]
-    lo, hi = float(scores.min()), float(scores.max())
-    if hi - lo < 1e-9:
-        return [50.0] * len(scores)
-    return [round(15.0 + (float(s) - lo) / (hi - lo) * 70.0, 1) for s in scores]
 
 
 class CompositeIndexCalculator:
@@ -582,20 +671,29 @@ class CompositeIndexCalculator:
             except Exception as e:
                 logger.error(f"v26 feature build failed for race={race.id}: {e}")
 
-        # v26: LightGBM で composite_index を上書き（モデルが読めれば）
-        model = _load_v26_model()
-        if model is not None and X_v26 is not None:
+        # 着外率（6着以下確率）。Web の足切り判定と v27 の下位補正に使う
+        out_probs: list[float] | None = None
+        out_model = _load_out_prob_model()
+        if out_model is not None and X_v26 is not None:
             try:
-                raw = model.predict(X_v26)
-                lgb_indices = _scale_lgb_to_index(np.asarray(raw, dtype=float))
-                for r, idx in zip(results, lgb_indices):
-                    v24_score = r["composite_index"]  # 線形和の値（既に計算済み）
-                    r["v24_composite_index"] = v24_score
-                    r["composite_index"] = round(
-                        V26_LGB_WEIGHT * idx + V26_LINEAR_WEIGHT * v24_score, 1
-                    )
+                raw_out = np.clip(np.asarray(out_model.predict(X_v26), dtype=float), 0.0, 1.0)
+                out_probs = [float(v) for v in raw_out]
+                for r, po in zip(results, out_probs):
+                    r["out_probability"] = round(po, 4)
             except Exception as e:
-                logger.error(f"v26 LightGBM inference failed for race={race.id}: {e}")
+                logger.error(f"out_probability inference failed for race={race.id}: {e}")
+
+        # v27: 順位回帰 + 着外率の合成で composite_index を上書き（モデルが読めれば）
+        reg_model = _load_reg_rank_model()
+        if reg_model is not None and X_v26 is not None:
+            try:
+                reg_scores = np.asarray(reg_model.predict(X_v26), dtype=float)
+                v27_indices = blend_v27(reg_scores, out_probs)
+                for r, idx in zip(results, v27_indices):
+                    r["v24_composite_index"] = r["composite_index"]  # 線形和（参考値）
+                    r["composite_index"] = idx
+            except Exception as e:
+                logger.error(f"v27 composite inference failed for race={race.id}: {e}")
                 # フォールバック: composite_index は v24 線形和のまま
 
         # is_win 較正ヘッドで win_probability を較正（softmax の最上位過信を解消）
@@ -611,16 +709,6 @@ class CompositeIndexCalculator:
                     calib_win = [float(x) for x in (raw_w / total)]  # レース内正規化(Σ=1)
             except Exception as e:
                 logger.error(f"v26 iswin calibration failed for race={race.id}: {e}")
-
-        # 着外率（6着以下確率）。Web の足切り（グレーアウト）判定に使う
-        out_model = _load_out_prob_model()
-        if out_model is not None and X_v26 is not None:
-            try:
-                raw_out = np.asarray(out_model.predict(X_v26), dtype=float)
-                for r, po in zip(results, raw_out):
-                    r["out_probability"] = round(float(np.clip(po, 0.0, 1.0)), 4)
-            except Exception as e:
-                logger.error(f"out_probability inference failed for race={race.id}: {e}")
 
         # 全馬の指数が揃ってから勝率・複勝率を算出（較正win or softmax + Harville）
         self._attach_probabilities(results, win_override=calib_win)

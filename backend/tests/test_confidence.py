@@ -8,7 +8,9 @@ from __future__ import annotations
 import pytest
 
 from src.indices.confidence import (
+    DEFAULT_GAP_FULL_SCORE,
     ENTROPY_THRESHOLDS,
+    JRA_GAP_FULL_SCORE,
     calculate_market_chaos,
     calculate_race_confidence,
     calculate_recommend_rank,
@@ -357,3 +359,43 @@ class TestCalculateMarketChaos:
         result = calculate_market_chaos([2.0, 4.0, 6.0, 10.0, 20.0])
         assert 0.0 < result["hhi"] <= 1.0
         assert 0.0 <= result["entropy_norm"] <= 1.0
+
+
+class TestGapFullScoreCalibration:
+    """指数差スコアの較正係数（v27 スケール対応, 2026-08-02）。"""
+
+    def test_defaults(self) -> None:
+        assert DEFAULT_GAP_FULL_SCORE == 10.0
+        assert JRA_GAP_FULL_SCORE == 6.0
+
+    def test_default_is_backwards_compatible(self) -> None:
+        """引数を渡さない場合は従来通り（地方の tier 分布を壊さない）"""
+        a = calculate_race_confidence([70.0, 60.0, 55.0], head_count=8)
+        b = calculate_race_confidence(
+            [70.0, 60.0, 55.0], head_count=8, gap_full_score=DEFAULT_GAP_FULL_SCORE
+        )
+        assert a["score"] == b["score"]
+
+    def test_smaller_divisor_gives_higher_score(self) -> None:
+        """係数を小さくすると同じ指数差でも指数差スコアが上がる
+
+        v27 は 1位-2位の差が v26 比で約0.75倍に縮むため、
+        JRA 側は 6.0 を渡してスケール差を吸収する。
+        """
+        wide = calculate_race_confidence(
+            [62.0, 60.0, 58.0], head_count=8, gap_full_score=JRA_GAP_FULL_SCORE
+        )
+        narrow = calculate_race_confidence(
+            [62.0, 60.0, 58.0], head_count=8, gap_full_score=DEFAULT_GAP_FULL_SCORE
+        )
+        assert wide["score"] > narrow["score"]
+
+    def test_gap_score_is_capped(self) -> None:
+        """指数差が大きくても指数差スコアは満点で頭打ち（両係数で同点になる）"""
+        a = calculate_race_confidence(
+            [95.0, 20.0, 10.0], head_count=8, gap_full_score=JRA_GAP_FULL_SCORE
+        )
+        b = calculate_race_confidence(
+            [95.0, 20.0, 10.0], head_count=8, gap_full_score=DEFAULT_GAP_FULL_SCORE
+        )
+        assert a["score"] == b["score"]

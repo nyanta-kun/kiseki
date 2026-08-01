@@ -48,6 +48,7 @@ from ..indices.buy_signal import (
 )
 from ..indices.composite import COMPOSITE_VERSION, OUT_PROB_CUTOFF
 from ..indices.confidence import (
+    JRA_GAP_FULL_SCORE,
     calculate_market_chaos,
     calculate_race_confidence,
     calculate_recommend_rank,
@@ -764,7 +765,10 @@ async def list_races(
             out.top_horse_name = hname
         if r.id in indexed_ids:
             wp_list = race_win_probs.get(r.id) or None
-            conf = calculate_race_confidence(race_indices[r.id], r.head_count, wp_list)
+            conf = calculate_race_confidence(
+                race_indices[r.id], r.head_count, wp_list,
+                gap_full_score=JRA_GAP_FULL_SCORE,
+            )
             top_odds = top_horse_win_odds.get(r.id)
             out.confidence_score = conf["score"]
             out.confidence_label = conf["label"]
@@ -1256,6 +1260,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         composite_indices=[h.composite_index for h in horses],
         head_count=race.head_count,
         win_probabilities=wp_list or None,
+        gap_full_score=JRA_GAP_FULL_SCORE,
     )
 
     # トップ馬 (composite 1位) の単勝オッズ

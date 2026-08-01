@@ -1,0 +1,73 @@
+{
+  "objective": "regression on race-normalized finish rank (0=1st, 1=last)",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20251231"
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    172,
+    203,
+    265
+  ],
+  "refit_rounds": 203,
+  "features": [
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm"
+  ],
+  "test": {
+    "period": [
+      "20260104",
+      "20260801"
+    ],
+    "n": 28324,
+    "n_races": 2046,
+    "spearman_by_race": 0.50865,
+    "rmse": 0.26335
+  },
+  "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/jra_reg_rank_lgb.txt",
+  "refit_period": [
+    "20230506",
+    "20260801"
+  ]
+}

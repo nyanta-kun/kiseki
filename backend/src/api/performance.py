@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import CalculatedIndex, Race, RaceResult
 from ..db.session import get_db
-from ..indices.confidence import calculate_race_confidence
+from ..indices.confidence import JRA_GAP_FULL_SCORE, calculate_race_confidence
 
 router = APIRouter(prefix="/api/performance", tags=["performance"])
 
@@ -519,7 +519,9 @@ async def get_performance_summary(
         if not all_indices or row.finish_position is None:
             continue
 
-        conf = calculate_race_confidence(all_indices, row.head_count)
+        conf = calculate_race_confidence(
+            all_indices, row.head_count, gap_full_score=JRA_GAP_FULL_SCORE
+        )
 
         win_pos = int(row.finish_position)
         win_hit = win_pos == 1

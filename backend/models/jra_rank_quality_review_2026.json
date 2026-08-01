@@ -1,0 +1,145 @@
+{
+  "test_year": "2026",
+  "blend_valid_weights": [
+    0.75,
+    1.0,
+    1.0
+  ],
+  "test_period": [
+    "20260104",
+    "20260801"
+  ],
+  "n_races": 2046,
+  "results": {
+    "prod_composite": {
+      "HEAD_top1_win": 0.2708,
+      "HEAD_top1_place": 0.5938,
+      "HEAD_winner_in_top3": 0.5899,
+      "HEAD_ndcg3": 0.4975,
+      "TAIL_bot3_out_rate": 0.8449,
+      "TAIL_winner_in_bot3": 0.0489,
+      "TAIL_placer_in_bot30pct": 0.1043,
+      "TAIL_bot30pct_out_rate": 0.8378,
+      "ALL_spearman": 0.4783,
+      "ALL_winner_pos": 0.2251,
+      "ALL_placer_pos": 0.2808
+    },
+    "v26_lgb_only": {
+      "HEAD_top1_win": 0.2757,
+      "HEAD_top1_place": 0.6012,
+      "HEAD_winner_in_top3": 0.6056,
+      "HEAD_ndcg3": 0.5036,
+      "TAIL_bot3_out_rate": 0.8514,
+      "TAIL_winner_in_bot3": 0.0469,
+      "TAIL_placer_in_bot30pct": 0.0949,
+      "TAIL_bot30pct_out_rate": 0.8492,
+      "ALL_spearman": 0.4933,
+      "ALL_winner_pos": 0.2186,
+      "ALL_placer_pos": 0.2742
+    },
+    "p_win": {
+      "HEAD_top1_win": 0.2717,
+      "HEAD_top1_place": 0.5958,
+      "HEAD_winner_in_top3": 0.607,
+      "HEAD_ndcg3": 0.5033,
+      "TAIL_bot3_out_rate": 0.8516,
+      "TAIL_winner_in_bot3": 0.044,
+      "TAIL_placer_in_bot30pct": 0.095,
+      "TAIL_bot30pct_out_rate": 0.8479,
+      "ALL_spearman": 0.4844,
+      "ALL_winner_pos": 0.2177,
+      "ALL_placer_pos": 0.2749
+    },
+    "p_top3": {
+      "HEAD_top1_win": 0.2717,
+      "HEAD_top1_place": 0.5978,
+      "HEAD_winner_in_top3": 0.6012,
+      "HEAD_ndcg3": 0.5035,
+      "TAIL_bot3_out_rate": 0.8561,
+      "TAIL_winner_in_bot3": 0.0415,
+      "TAIL_placer_in_bot30pct": 0.0945,
+      "TAIL_bot30pct_out_rate": 0.8499,
+      "ALL_spearman": 0.4965,
+      "ALL_winner_pos": 0.2183,
+      "ALL_placer_pos": 0.2721
+    },
+    "neg_p_out": {
+      "HEAD_top1_win": 0.2678,
+      "HEAD_top1_place": 0.5958,
+      "HEAD_winner_in_top3": 0.5929,
+      "HEAD_ndcg3": 0.4998,
+      "TAIL_bot3_out_rate": 0.8612,
+      "TAIL_winner_in_bot3": 0.0425,
+      "TAIL_placer_in_bot30pct": 0.0934,
+      "TAIL_bot30pct_out_rate": 0.8518,
+      "ALL_spearman": 0.5039,
+      "ALL_winner_pos": 0.225,
+      "ALL_placer_pos": 0.273
+    },
+    "blend_equal": {
+      "HEAD_top1_win": 0.2747,
+      "HEAD_top1_place": 0.6002,
+      "HEAD_winner_in_top3": 0.6036,
+      "HEAD_ndcg3": 0.5065,
+      "TAIL_bot3_out_rate": 0.8571,
+      "TAIL_winner_in_bot3": 0.042,
+      "TAIL_placer_in_bot30pct": 0.0921,
+      "TAIL_bot30pct_out_rate": 0.8513,
+      "ALL_spearman": 0.5002,
+      "ALL_winner_pos": 0.2186,
+      "ALL_placer_pos": 0.2717
+    },
+    "blend_valid": {
+      "HEAD_top1_win": 0.2747,
+      "HEAD_top1_place": 0.6022,
+      "HEAD_winner_in_top3": 0.6022,
+      "HEAD_ndcg3": 0.5058,
+      "TAIL_bot3_out_rate": 0.8571,
+      "TAIL_winner_in_bot3": 0.043,
+      "TAIL_placer_in_bot30pct": 0.0915,
+      "TAIL_bot30pct_out_rate": 0.8519,
+      "ALL_spearman": 0.5009,
+      "ALL_winner_pos": 0.2188,
+      "ALL_placer_pos": 0.2716
+    },
+    "lambdarank_grad": {
+      "HEAD_top1_win": 0.2791,
+      "HEAD_top1_place": 0.6007,
+      "HEAD_winner_in_top3": 0.6046,
+      "HEAD_ndcg3": 0.5053,
+      "TAIL_bot3_out_rate": 0.855,
+      "TAIL_winner_in_bot3": 0.043,
+      "TAIL_placer_in_bot30pct": 0.0965,
+      "TAIL_bot30pct_out_rate": 0.8492,
+      "ALL_spearman": 0.4941,
+      "ALL_winner_pos": 0.218,
+      "ALL_placer_pos": 0.2737
+    },
+    "reg_rank": {
+      "HEAD_top1_win": 0.2835,
+      "HEAD_top1_place": 0.61,
+      "HEAD_winner_in_top3": 0.5958,
+      "HEAD_ndcg3": 0.5053,
+      "TAIL_bot3_out_rate": 0.8574,
+      "TAIL_winner_in_bot3": 0.0445,
+      "TAIL_placer_in_bot30pct": 0.0944,
+      "TAIL_bot30pct_out_rate": 0.8503,
+      "ALL_spearman": 0.5086,
+      "ALL_winner_pos": 0.2252,
+      "ALL_placer_pos": 0.2734
+    },
+    "head_tail_stack": {
+      "HEAD_top1_win": 0.2771,
+      "HEAD_top1_place": 0.6041,
+      "HEAD_winner_in_top3": 0.6051,
+      "HEAD_ndcg3": 0.5068,
+      "TAIL_bot3_out_rate": 0.8566,
+      "TAIL_winner_in_bot3": 0.042,
+      "TAIL_placer_in_bot30pct": 0.0955,
+      "TAIL_bot30pct_out_rate": 0.8502,
+      "ALL_spearman": 0.4991,
+      "ALL_winner_pos": 0.2192,
+      "ALL_placer_pos": 0.2723
+    }
+  }
+}

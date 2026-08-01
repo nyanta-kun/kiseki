@@ -38,6 +38,7 @@ from ..indices.buy_signal import (
 )
 from ..indices.composite import COMPOSITE_VERSION
 from ..indices.confidence import (
+    JRA_GAP_FULL_SCORE,
     calculate_market_chaos,
     calculate_race_confidence,
     calculate_recommend_rank,
@@ -749,7 +750,10 @@ async def build_hit_tier_recommendations(
 
         comp = [h["composite_index"] for h in horses if h["composite_index"] is not None]
         wps = [h["win_probability"] for h in horses if h.get("win_probability") is not None]
-        conf = calculate_race_confidence(comp, race.get("head_count"), wps or None)
+        conf = calculate_race_confidence(
+            comp, race.get("head_count"), wps or None,
+            gap_full_score=JRA_GAP_FULL_SCORE,
+        )
 
         top1 = ranked[0]
         top_odds = top1.get("win_odds")

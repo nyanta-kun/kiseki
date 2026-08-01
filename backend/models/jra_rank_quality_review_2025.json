@@ -1,0 +1,132 @@
+{
+  "test_year": "2025",
+  "blend_valid_weights": [
+    1.0,
+    0.75,
+    1.0
+  ],
+  "test_period": [
+    "20250105",
+    "20251228"
+  ],
+  "n_races": 3455,
+  "results": {
+    "prod_composite": {
+      "HEAD_top1_win": 0.2912,
+      "HEAD_top1_place": 0.6119,
+      "HEAD_winner_in_top3": 0.611,
+      "HEAD_ndcg3": 0.5067,
+      "TAIL_bot3_out_rate": 0.8507,
+      "TAIL_winner_in_bot3": 0.0405,
+      "TAIL_placer_in_bot30pct": 0.1011,
+      "TAIL_bot30pct_out_rate": 0.8455,
+      "ALL_spearman": 0.4932,
+      "ALL_winner_pos": 0.216,
+      "ALL_placer_pos": 0.2812
+    },
+    "p_win": {
+      "HEAD_top1_win": 0.2781,
+      "HEAD_top1_place": 0.5896,
+      "HEAD_winner_in_top3": 0.6078,
+      "HEAD_ndcg3": 0.4971,
+      "TAIL_bot3_out_rate": 0.8487,
+      "TAIL_winner_in_bot3": 0.0423,
+      "TAIL_placer_in_bot30pct": 0.1029,
+      "TAIL_bot30pct_out_rate": 0.8427,
+      "ALL_spearman": 0.482,
+      "ALL_winner_pos": 0.2214,
+      "ALL_placer_pos": 0.2851
+    },
+    "p_top3": {
+      "HEAD_top1_win": 0.2793,
+      "HEAD_top1_place": 0.5919,
+      "HEAD_winner_in_top3": 0.6064,
+      "HEAD_ndcg3": 0.5007,
+      "TAIL_bot3_out_rate": 0.8543,
+      "TAIL_winner_in_bot3": 0.0411,
+      "TAIL_placer_in_bot30pct": 0.0992,
+      "TAIL_bot30pct_out_rate": 0.8475,
+      "ALL_spearman": 0.4923,
+      "ALL_winner_pos": 0.2212,
+      "ALL_placer_pos": 0.281
+    },
+    "neg_p_out": {
+      "HEAD_top1_win": 0.2758,
+      "HEAD_top1_place": 0.5965,
+      "HEAD_winner_in_top3": 0.5855,
+      "HEAD_ndcg3": 0.4948,
+      "TAIL_bot3_out_rate": 0.8545,
+      "TAIL_winner_in_bot3": 0.0408,
+      "TAIL_placer_in_bot30pct": 0.1001,
+      "TAIL_bot30pct_out_rate": 0.8479,
+      "ALL_spearman": 0.4966,
+      "ALL_winner_pos": 0.227,
+      "ALL_placer_pos": 0.2831
+    },
+    "blend_equal": {
+      "HEAD_top1_win": 0.2813,
+      "HEAD_top1_place": 0.5962,
+      "HEAD_winner_in_top3": 0.6017,
+      "HEAD_ndcg3": 0.5001,
+      "TAIL_bot3_out_rate": 0.8562,
+      "TAIL_winner_in_bot3": 0.0405,
+      "TAIL_placer_in_bot30pct": 0.0986,
+      "TAIL_bot30pct_out_rate": 0.8481,
+      "ALL_spearman": 0.4963,
+      "ALL_winner_pos": 0.2213,
+      "ALL_placer_pos": 0.2808
+    },
+    "blend_valid": {
+      "HEAD_top1_win": 0.2796,
+      "HEAD_top1_place": 0.5968,
+      "HEAD_winner_in_top3": 0.6012,
+      "HEAD_ndcg3": 0.4997,
+      "TAIL_bot3_out_rate": 0.8567,
+      "TAIL_winner_in_bot3": 0.0408,
+      "TAIL_placer_in_bot30pct": 0.0985,
+      "TAIL_bot30pct_out_rate": 0.848,
+      "ALL_spearman": 0.4965,
+      "ALL_winner_pos": 0.2217,
+      "ALL_placer_pos": 0.2808
+    },
+    "lambdarank_grad": {
+      "HEAD_top1_win": 0.2761,
+      "HEAD_top1_place": 0.5881,
+      "HEAD_winner_in_top3": 0.6122,
+      "HEAD_ndcg3": 0.5002,
+      "TAIL_bot3_out_rate": 0.8519,
+      "TAIL_winner_in_bot3": 0.044,
+      "TAIL_placer_in_bot30pct": 0.1003,
+      "TAIL_bot30pct_out_rate": 0.8449,
+      "ALL_spearman": 0.492,
+      "ALL_winner_pos": 0.2209,
+      "ALL_placer_pos": 0.2828
+    },
+    "reg_rank": {
+      "HEAD_top1_win": 0.2781,
+      "HEAD_top1_place": 0.602,
+      "HEAD_winner_in_top3": 0.5931,
+      "HEAD_ndcg3": 0.4981,
+      "TAIL_bot3_out_rate": 0.8545,
+      "TAIL_winner_in_bot3": 0.0437,
+      "TAIL_placer_in_bot30pct": 0.1021,
+      "TAIL_bot30pct_out_rate": 0.8485,
+      "ALL_spearman": 0.5022,
+      "ALL_winner_pos": 0.2272,
+      "ALL_placer_pos": 0.2831
+    },
+    "head_tail_stack": {
+      "HEAD_top1_win": 0.2796,
+      "HEAD_top1_place": 0.5971,
+      "HEAD_winner_in_top3": 0.602,
+      "HEAD_ndcg3": 0.4999,
+      "TAIL_bot3_out_rate": 0.8538,
+      "TAIL_winner_in_bot3": 0.0417,
+      "TAIL_placer_in_bot30pct": 0.0992,
+      "TAIL_bot30pct_out_rate": 0.8471,
+      "ALL_spearman": 0.496,
+      "ALL_winner_pos": 0.2211,
+      "ALL_placer_pos": 0.2816
+    }
+  }
+}

@@ -725,6 +725,42 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **地方競馬は対象外**（下記の別系統）。
 
+### 総合指数 v27（順位回帰 + 着外率合成・2026-08-02）
+
+`COMPOSITE_VERSION = 27`。v26 の「LGB LambdaRank 0.3 + v24線形和 0.7」を廃止し、
+**レース内正規化着順の回帰（reg_rank）** を土台に **着外率ヘッド** で下位を押し下げる方式へ転換。
+
+```
+z_blend         = z( z(-reg_rank) - 0.5 * z(out_probability) )
+composite_index = 50 + z_blend * 55.3 * sd_race(reg_rank)   → clip(0, 100)
+```
+
+- モデル: `models/jra_reg_rank_lgb.txt`（学習 `scripts/train_jra_reg_rank.py`）+ `models/jra_out_rate_lgb.txt`
+- 全期間バックフィル: `scripts/inference_v27.py`（v26 行のサブ指数を流用・冪等）
+- honest test 2026-01〜08 (2,046R) の v26 比:
+  1位馬 勝率 27.08→28.40% / 複勝率 59.38→61.00% / NDCG@3 0.4975→0.5071 /
+  レース内 Spearman 0.4783→0.5094 / 3着内馬を下位30%に沈める率 10.43→9.29%
+- **min-max で 15〜85 に固定してはいけない**。composite のレース内ばらつきは
+  `confidence.py::calculate_race_confidence` の分散・指数差スコアの入力であり、
+  固定すると tier S が 19.0%→30.2% に膨張する。上式のとおり幅は reg_rank の実ばらつきに比例させる
+- v27 は 1位-2位差が v26 比 約0.75倍に縮むため、JRA 側は `JRA_GAP_FULL_SCORE = 6.0` を
+  `calculate_race_confidence(gap_full_score=...)` に渡してスケール差を吸収する
+  （地方は `DEFAULT_GAP_FULL_SCORE = 10.0` のまま。実測で tier 分布が v26 と一致）
+- **ROI は改善しない**（控除率の壁）。価値は表示順・足切り・推奨tierの精度に限定される
+
+⚠️ **バックフィル済みの過去分は in-sample**。本番モデルは全期間 refit のため、
+DB の composite_index / out_probability を使って過去の ROI・的中率を評価してはいけない。
+honest 評価は walk-forward スクリプト（`scripts/jra_rank_quality_review.py` 等）で行う。
+
+### 指数（特徴量）の死活監視
+
+`scripts/check_feature_health.py` が月次ばらつき・欠損率から DEAD / SHIFT / SPARSE を検出する。
+既知の問題:
+- `paddock_index`: 上流 netkeiba スクレイプが 2026-05 に停止。**v26 学習期間中も全月 sd=0** でモデル寄与ゼロ
+- `going_pedigree_index`: **レース当日に算出すると必ず全馬 50**。算出時点で `races.condition` が
+  未確定（重/不でない）ため早期 return する。後日バックフィルしたレースだけ値が入る
+- `rebound_index`: 2026-04 以降ばらつきが単調減少（sd 2.79→0.57）。要調査
+
 ### 着外率による足切り（Web グレーアウト・2026-08-02）
 
 Web の「足切り候補」グレーアウトは **総合指数のトップ差ルールを廃止し、着外率（6着以下確率）** に置き換えた。

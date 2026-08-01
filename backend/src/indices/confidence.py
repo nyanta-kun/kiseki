@@ -9,6 +9,19 @@ from __future__ import annotations
 import math
 import statistics
 
+# 指数差スコアが満点になる「1位と2〜3位の加重差」。
+# 総合指数のスケール（レース内の広がり）に依存する較正値。
+#   - DEFAULT (10.0): 地方競馬など従来スケール向け。「指数の標準偏差≈10」を基準にした値
+#   - JRA_V27 (6.0) : JRA v27（順位回帰+着外率合成）向け。
+#     v27 は指数分布が対称的になり 1位-2位の差が v26 比で約 0.75 倍に縮む。
+#     10.0 のままだと confidence_score が下振れし tier S が 19.0%→8.4% に半減する。
+#     6.0 にすると v26 の分布（平均 63.2 / S 19.0% / A以上 46.7%）をほぼ再現する
+#     （実測: 平均 63.5 / S 20.0% / A以上 46.7%、test 2026-01〜08 2,046R）。
+#     ※ tier の閾値（S>=80, A>=65）は OOS 検証済みのため動かさず、
+#        スケール差だけをこの係数で吸収する。
+DEFAULT_GAP_FULL_SCORE: float = 10.0
+JRA_GAP_FULL_SCORE: float = 6.0
+
 # tier別 entropy_norm 中央値閾値（Phase3 市場混戦度分析で検証済み、
 # memory: jra_new_index_web_research_2026_07_26 / docs: jra_new_index_results.md）。
 # 診断期間(2023-07〜2025-12)の中央値をそのまま固定し、確認期間(2026-01〜07)で
@@ -151,6 +164,7 @@ def calculate_race_confidence(
     composite_indices: list[float],
     head_count: int | None,
     win_probabilities: list[float] | None = None,
+    gap_full_score: float = DEFAULT_GAP_FULL_SCORE,
 ) -> dict:
     """レース信頼度スコアを算出する（0〜100）。
 
@@ -165,6 +179,8 @@ def calculate_race_confidence(
         head_count:        出走頭数。None の場合はリスト長を使用
         win_probabilities: 全出走馬の勝率リスト（composite_indices と対応順）。
                            None の場合は勝率集中スコアをスキップ
+        gap_full_score:    指数差スコアが満点になる加重差。総合指数のスケールに合わせる。
+                           JRA v27 は `JRA_GAP_FULL_SCORE`、地方は既定値を使う
 
     Returns:
         score (int 0-100), label (HIGH/MID/LOW), rank (S/A/B/C),
@@ -189,8 +205,8 @@ def calculate_race_confidence(
     gap_1_2 = sorted_idx[0] - sorted_idx[1] if len(sorted_idx) >= 2 else 0.0
     gap_1_3 = sorted_idx[0] - sorted_idx[2] if len(sorted_idx) >= 3 else gap_1_2
     weighted_gap = gap_1_2 * 0.7 + gap_1_3 * 0.3
-    # 10点差で満点（指数の標準偏差≈10 を基準）
-    gap_score = min(weighted_gap / 10.0, 1.0) * 40.0
+    # gap_full_score 点差で満点（指数スケールに依存する較正値。上部の定数コメント参照）
+    gap_score = min(weighted_gap / gap_full_score, 1.0) * 40.0
 
     # --- 頭数スコア (20点) ---
     # 8頭以下=満点, 18頭=0点
