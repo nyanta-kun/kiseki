@@ -6,6 +6,10 @@ composite_index として CalculatedIndex に upsert する。
 使い方:
     python scripts/inference_v26.py --start 20230501 --end 20260501
     python scripts/inference_v26.py --model models/v26_lightgbm_rank.txt --concurrency 16
+
+注意: 本スクリプトは composite_index / win_probability / place_probability のみ更新する。
+新規行を作成した場合 out_probability は NULL のままなので、実行後に
+`scripts/backfill_jra_out_probability.py` を同期間で流すこと（Web の足切り表示に使われる）。
 """
 
 from __future__ import annotations

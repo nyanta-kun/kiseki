@@ -1,0 +1,130 @@
+{
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20251231"
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    212,
+    171,
+    320
+  ],
+  "refit_rounds": 212,
+  "base_out_rate": 0.6336,
+  "features": [
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm"
+  ],
+  "test": {
+    "period": [
+      "20260104",
+      "20260801"
+    ],
+    "n": 28324,
+    "n_races": 2046,
+    "logloss": 0.54061,
+    "cutoff_stats": [
+      {
+        "threshold": 0.65,
+        "excluded_pct": 0.5258,
+        "excluded_actual_out_rate": 0.8196,
+        "missed_top3_pct": 0.2016,
+        "missed_win_pct": 0.1451
+      },
+      {
+        "threshold": 0.7,
+        "excluded_pct": 0.4545,
+        "excluded_actual_out_rate": 0.8397,
+        "missed_top3_pct": 0.1478,
+        "missed_win_pct": 0.1041
+      },
+      {
+        "threshold": 0.75,
+        "excluded_pct": 0.3786,
+        "excluded_actual_out_rate": 0.8611,
+        "missed_top3_pct": 0.102,
+        "missed_win_pct": 0.0728
+      },
+      {
+        "threshold": 0.78,
+        "excluded_pct": 0.3325,
+        "excluded_actual_out_rate": 0.8751,
+        "missed_top3_pct": 0.0773,
+        "missed_win_pct": 0.0586
+      },
+      {
+        "threshold": 0.8,
+        "excluded_pct": 0.2991,
+        "excluded_actual_out_rate": 0.8863,
+        "missed_top3_pct": 0.063,
+        "missed_win_pct": 0.0479
+      },
+      {
+        "threshold": 0.82,
+        "excluded_pct": 0.2661,
+        "excluded_actual_out_rate": 0.8964,
+        "missed_top3_pct": 0.0522,
+        "missed_win_pct": 0.0425
+      },
+      {
+        "threshold": 0.85,
+        "excluded_pct": 0.2135,
+        "excluded_actual_out_rate": 0.9125,
+        "missed_top3_pct": 0.0342,
+        "missed_win_pct": 0.0249
+      },
+      {
+        "threshold": 0.9,
+        "excluded_pct": 0.1199,
+        "excluded_actual_out_rate": 0.9364,
+        "missed_top3_pct": 0.013,
+        "missed_win_pct": 0.0093
+      }
+    ]
+  },
+  "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/jra_out_rate_lgb.txt",
+  "refit_period": [
+    "20230506",
+    "20260801"
+  ]
+}

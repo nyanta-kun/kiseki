@@ -62,6 +62,11 @@ export type HorseIndex = {
   composite_index: number;
   win_probability: number | null;
   place_probability: number | null;
+  // 着外率予測（6着以下・オッズ非使用モデル models/jra_out_rate_lgb.txt）
+  out_probability: number | null;
+  // 足切り候補（グレーアウト表示）= out_probability >= 0.80
+  // 判定の単一真実源はバックエンド（composite.py OUT_PROB_CUTOFF）
+  is_cut_off: boolean;
   speed_index: number | null;
   last3f_index: number | null;
   course_aptitude: number | null;

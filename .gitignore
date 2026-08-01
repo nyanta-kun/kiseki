@@ -37,6 +37,8 @@ data/processed/
 *.csv
 backend/data/roi100/
 backend/data/roi100/*.pkl
+# 検証用の予測キャッシュ（再生成可能・大きい）
+backend/models/*_preds*.pkl
 
 # Node.js
 node_modules/

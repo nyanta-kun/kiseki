@@ -725,6 +725,20 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **地方競馬は対象外**（下記の別系統）。
 
+### 着外率による足切り（Web グレーアウト・2026-08-02）
+
+Web の「足切り候補」グレーアウトは **総合指数のトップ差ルールを廃止し、着外率（6着以下確率）** に置き換えた。
+
+- モデル: `backend/models/jra_out_rate_lgb.txt`（LightGBM binary・特徴量は v26 と同一34列・**オッズ/人気は不使用**）
+- 学習: `backend/scripts/train_jra_out_rate.py` / バックフィル: `backend/scripts/backfill_jra_out_probability.py`
+- 保存先: `keiba.calculated_indices.out_probability`（本番算出は `composite.py` が毎回同時に書き込む）
+- 閾値: `composite.py::OUT_PROB_CUTOFF = 0.80` → API が `HorseIndexOut.is_cut_off` として返す（**判定の単一真実源**）
+- honest 検証（test 2026-01〜08 / 2,046R）: 除外30% ・除外馬の実着外率 88.6% ・**1着取りこぼし 4.8%**
+  （旧・指数差ルールは 除外55% で 1着を 16.8% 取りこぼしていた）。2025年独立追試でも同一挙動＝較正が安定
+- **着外率は ROI を作らない**（全帯 0.54〜0.84）。足切り・見送り判定にのみ使うこと。
+  詳細: memory `jra_out_rate_3head_verification_2026_08_02.md`
+- `inference_v26.py` は out_probability を更新しないため、実行後は同期間で backfill を流すこと
+
 詳細: memory `recommendations_feature.md` / `jra_signal_verification.md`
 
 ## 地方競馬 推奨カテゴリ（`/api/chihou/recommendations/sweet-spot`）

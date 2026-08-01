@@ -258,10 +258,27 @@ _V26_FEATURE_NAMES: list[str] = [
 # 学習: scripts/train_jra_iswin_head.py
 _V26_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_iswin_calib.txt"
 
+# 着外率（6着以下確率）ヘッド（2026-08-02）
+# 検証: memory jra_out_rate_3head_verification_2026_08_02
+#   - ROI は作らない（全帯 0.54〜0.84）が足切り判定としては極めて有効
+#   - p_out >= OUT_PROB_CUTOFF(0.80) で 除外30% / 1着取りこぼし5.0%
+#     （旧・指数差ルールは 除外55% で 1着を 16.8% 取りこぼしていた）
+#   - 独立2年（2025 / 2026）で除外率・取りこぼし率がほぼ一致＝較正が安定
+# 学習: scripts/train_jra_out_rate.py
+_OUT_PROB_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "jra_out_rate_lgb.txt"
+
+# 着外率ヘッドの特徴量（v26 と同一の 34 列・同順）
+OUT_PROB_FEATURE_NAMES: list[str] = list(_V26_FEATURE_NAMES)
+
+# Web の足切り（グレーアウト）閾値。この値以上の着外率の馬を「足切り候補」とする。
+OUT_PROB_CUTOFF = 0.80
+
 # v26 モデルのプロセス共有キャッシュ（lazy load）
 _v26_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _iswin_load_attempted: bool = False
+_out_prob_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_out_prob_load_attempted: bool = False
 
 
 def _load_v26_model() -> lgb.Booster | None:  # type: ignore[name-defined]
@@ -300,6 +317,27 @@ def _load_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return _iswin_model_cache
     except Exception as e:
         logger.error(f"iswin calib model load failed: {e}")
+        return None
+
+
+def _load_out_prob_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """着外率ヘッドを lazy load する。無ければ None（out_probability は未算出）。"""
+    global _out_prob_model_cache, _out_prob_load_attempted
+    if _out_prob_model_cache is not None:
+        return _out_prob_model_cache
+    if _out_prob_load_attempted:
+        return None
+    _out_prob_load_attempted = True
+    if not _OUT_PROB_MODEL_PATH.exists():
+        logger.warning(f"out_rate model not found: {_OUT_PROB_MODEL_PATH}, out_probability は None")
+        return None
+    try:
+        import lightgbm as lgb
+        _out_prob_model_cache = lgb.Booster(model_file=str(_OUT_PROB_MODEL_PATH))
+        logger.info(f"out_rate model loaded: {_OUT_PROB_MODEL_PATH}")
+        return _out_prob_model_cache
+    except Exception as e:
+        logger.error(f"out_rate model load failed: {e}")
         return None
 
 
@@ -573,6 +611,16 @@ class CompositeIndexCalculator:
                     calib_win = [float(x) for x in (raw_w / total)]  # レース内正規化(Σ=1)
             except Exception as e:
                 logger.error(f"v26 iswin calibration failed for race={race.id}: {e}")
+
+        # 着外率（6着以下確率）。Web の足切り（グレーアウト）判定に使う
+        out_model = _load_out_prob_model()
+        if out_model is not None and X_v26 is not None:
+            try:
+                raw_out = np.asarray(out_model.predict(X_v26), dtype=float)
+                for r, po in zip(results, raw_out):
+                    r["out_probability"] = round(float(np.clip(po, 0.0, 1.0)), 4)
+            except Exception as e:
+                logger.error(f"out_probability inference failed for race={race.id}: {e}")
 
         # 全馬の指数が揃ってから勝率・複勝率を算出（較正win or softmax + Harville）
         self._attach_probabilities(results, win_override=calib_win)
@@ -927,6 +975,7 @@ class CompositeIndexCalculator:
                 "composite_index": _d(row.get("composite_index")),
                 "win_probability": _d(row.get("win_probability")),
                 "place_probability": _d(row.get("place_probability")),
+                "out_probability": _d(row.get("out_probability")),
             }
             if hid in existing_map:
                 existing = existing_map[hid]
@@ -1002,6 +1051,7 @@ class CompositeIndexCalculator:
             existing.composite_index = _d("composite_index")
             existing.win_probability = _d("win_probability")
             existing.place_probability = _d("place_probability")
+            existing.out_probability = _d("out_probability")
             existing.calculated_at = datetime.now()
         else:
             record = CalculatedIndex(
@@ -1028,5 +1078,6 @@ class CompositeIndexCalculator:
                 composite_index=_d("composite_index"),
                 win_probability=_d("win_probability"),
                 place_probability=_d("place_probability"),
+                out_probability=_d("out_probability"),
             )
             self.db.add(record)

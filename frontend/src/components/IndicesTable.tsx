@@ -273,12 +273,6 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
     [indices],
   );
 
-  // 総合指数の最大値（足切り判定用）
-  const maxComposite = useMemo(
-    () => Math.max(...indices.map((h) => h.composite_index ?? 0)),
-    [indices],
-  );
-
   // 総合指数ランクマップ（O(n log n) → O(1) lookup）
   const compositeRankMap = useMemo(() => {
     const sortedByIndex = [...indices].sort((a, b) => b.composite_index - a.composite_index);
@@ -351,7 +345,7 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
 
       {/* 足切り凡例 */}
       <p className="text-[10px] text-gray-400 mb-2">
-        <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
+        <span className="opacity-50">グレー</span>=足切り候補（着外率80%以上）
       </p>
 
       {/* 馬カード一覧 */}
@@ -372,9 +366,8 @@ export function IndicesTable({ indices, results, initialOdds, raceId }: Props) {
           const isUpsideCandidate = !isTop && compositeRank >= 4 && (horse.upside_score ?? 0) >= 0.6;
           // 外部指数穴馬候補（判定はAPI: is_ext_dark_horse）
           const isExtDark = !isTop && (horse.is_ext_dark_horse ?? false);
-          // 足切り: トップ差20以上 or (差15以上かつ5位以下)
-          const gapFromTop = maxComposite - (horse.composite_index ?? 0);
-          const isCutOff = gapFromTop >= 20 || (gapFromTop >= 15 && compositeRank >= 5);
+          // 足切り: 着外率（6着以下確率）が閾値以上。判定はバックエンド（is_cut_off）
+          const isCutOff = horse.is_cut_off ?? false;
 
           const finishPos = results?.get(horse.horse_number);
           const finishLabel_ = finishLabel(finishPos);

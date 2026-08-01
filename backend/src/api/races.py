@@ -46,7 +46,7 @@ from ..indices.buy_signal import (
     jra_buy_signal,
     jra_horse_purchase_signal,
 )
-from ..indices.composite import COMPOSITE_VERSION
+from ..indices.composite import COMPOSITE_VERSION, OUT_PROB_CUTOFF
 from ..indices.confidence import (
     calculate_market_chaos,
     calculate_race_confidence,
@@ -399,6 +399,12 @@ class HorseIndexOut(BaseModel):
     composite_index: float
     win_probability: float | None  # 勝率予測
     place_probability: float | None  # 複勝率予測（3着以内）
+    # 着外率予測（6着以下）。models/jra_out_rate_lgb.txt（オッズ非使用）
+    out_probability: float | None = None
+    # 足切り候補（Web でグレーアウト表示する馬）= out_probability >= OUT_PROB_CUTOFF(0.80)
+    # honest 検証: 除外30% / 1着取りこぼし5.0%（旧・指数差ルールは 除外55% / 取りこぼし16.8%）
+    # 詳細: memory/jra_out_rate_3head_verification_2026_08_02.md
+    is_cut_off: bool = False
     # 単体指数
     speed_index: float | None
     last3f_index: float | None
@@ -1015,6 +1021,11 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             composite_index=float(ci.composite_index),
             win_probability=_f(ci.win_probability),
             place_probability=_f(ci.place_probability),
+            out_probability=_f(ci.out_probability),
+            is_cut_off=(
+                ci.out_probability is not None
+                and float(ci.out_probability) >= OUT_PROB_CUTOFF
+            ),
             speed_index=_adj(ci.speed_index, "speed_index"),
             last3f_index=_adj(ci.last_3f_index, "last_3f_index"),
             course_aptitude=_adj(ci.course_aptitude, "course_aptitude"),

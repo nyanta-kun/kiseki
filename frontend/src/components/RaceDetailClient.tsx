@@ -186,16 +186,6 @@ export function RaceDetailClient({
 
   const totalHorses = indices.length;
 
-  const maxComposite = useMemo(
-    () => Math.max(...indices.map((h) => h.composite_index ?? 0)),
-    [indices]
-  );
-
-  const compositeRankMap = useMemo(() => {
-    const sorted = [...indices].sort((a, b) => (b.composite_index ?? 0) - (a.composite_index ?? 0));
-    return new Map(sorted.map((h, i) => [h.horse_number, i + 1]));
-  }, [indices]);
-
   const topHorseNumber = useMemo(
     () =>
       indices.reduce(
@@ -226,10 +216,9 @@ export function RaceDetailClient({
     });
   }, [indices, sortKey, hasResults, resultsMap]);
 
+  /** 足切り判定は着外率（6着以下確率）ベース。単一真実源はバックエンド（is_cut_off）。 */
   function isCutOff(horse: HorseIndex): boolean {
-    const gap = maxComposite - (horse.composite_index ?? 0);
-    const rank = compositeRankMap.get(horse.horse_number) ?? 999;
-    return gap >= 20 || (gap >= 15 && rank >= 5);
+    return horse.is_cut_off ?? false;
   }
 
   const colSpan = hasResults ? 12 : 11;
@@ -563,7 +552,7 @@ export function RaceDetailClient({
               <span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）
             </p>
             <p>
-              <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
+              <span className="opacity-50">グレー</span>=足切り候補（着外率80%以上）
             </p>
             <p>行クリックで指数内訳・近走成績を表示</p>
           </div>

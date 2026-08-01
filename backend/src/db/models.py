@@ -558,6 +558,9 @@ class CalculatedIndex(Base):
     )
     win_probability: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), comment="単勝確率")
     place_probability: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), comment="複勝確率")
+    out_probability: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 4), comment="着外確率（6着以下・Web足切り判定用。models/jra_out_rate_lgb.txt）"
+    )
     calculated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="指数算出日時"
     )
