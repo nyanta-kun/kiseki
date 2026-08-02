@@ -63,8 +63,10 @@ DEAD_SD_THRESHOLD = 0.01
 SHIFT_RATIO = 3.0
 # フォールバック値の占有率がこれを超えたら DEGENERATE
 DEGENERATE_RATE = 0.90
-# フォールバック占有率が過去中央値より何ポイント増えたら DECLINE とみなすか
+# フォールバック占有率が基準より何ポイント増えたら DECLINE とみなすか
 DECLINE_DELTA = 0.15
+# 直近月として扱うのに必要な最低行数。これ未満は「まだ月の途中」とみなし判定から外す
+MIN_ROWS_PER_MONTH = 3000
 # 0/1 フラグが片側に振り切っているとみなす割合
 FLAG_CONSTANT_RATE = 0.99
 
@@ -101,6 +103,10 @@ FLAG_FEATURES = {
 KNOWN_ISSUES: dict[str, str] = {
     "nk_idx_z": "上流 sekito.netkeiba スクレイプが 2026-05-10 に停止（memory: netkeiba_scrape_stopped_2026_05）",
     "nk_rank_n": "同上",
+    # 障害ではなく地方競馬の構造。芝コースを持つのは盛岡だけで、開催の 99% 以上がダート。
+    # 片側に振り切っているのが正常なので、CONSTANT_1 で騒がせない。
+    "is_turf": "地方は芝コースが盛岡のみで開催の99%以上がダート。片側に寄るのが正常",
+    "is_dirt": "同上",
 }
 
 
@@ -153,10 +159,29 @@ def analyse(df: pd.DataFrame, months: int) -> tuple[pd.DataFrame, list[str], lis
         rows.append(rec)
     stat = pd.DataFrame(rows)
 
+    # 月の途中（行数が極端に少ない月）は判定から外す。
+    # そのまま入れると「まだ数日分しかない月」の値で誤検知する。
+    stat = stat[stat["n"] >= MIN_ROWS_PER_MONTH].reset_index(drop=True)
+    if stat.empty:
+        return stat, [], []
+
     alerts: list[str] = []
     known: list[str] = []
     tail = stat.tail(months)
     past = stat.iloc[:-months] if len(stat) > months else stat
+
+    def baseline(col: str) -> float | None:
+        """比較基準。12ヶ月以上あれば**前年同月**、無ければ過去中央値。
+
+        `prev_pace_ratio` のように夏に上がり冬に下がる季節性を持つ特徴があり
+        （2025年も2026年も同じ形）、過去中央値と比べると毎年夏に誤検知する。
+        """
+        cur_ym = str(stat["ym"].iloc[-1])
+        prev_ym = f"{int(cur_ym[:4]) - 1}{cur_ym[4:]}"
+        row = stat[stat["ym"] == prev_ym]
+        if not row.empty:
+            return float(row[col].iloc[0])
+        return float(past[col].median()) if len(past) >= 3 else None
 
     for c in ALL_FEATURES:
         key_sd = f"sd_{c}"
@@ -178,12 +203,12 @@ def analyse(df: pd.DataFrame, months: int) -> tuple[pd.DataFrame, list[str], lis
             fb_rate = float(tail[key_fb].max())
             if fb_rate > DEGENERATE_RATE:
                 msgs.append(f"DEGENERATE 欠損フォールバック占有率 {fb_rate:.1%}（実質情報なし）")
-            elif len(past) >= 3:
-                fb_med = float(past[key_fb].median())
+            else:
+                base = baseline(key_fb)
                 fb_cur = float(tail[key_fb].iloc[-1])
-                if fb_cur - fb_med > DECLINE_DELTA:
-                    msgs.append(f"DECLINE    フォールバック占有率 {fb_med:.1%}→{fb_cur:.1%}"
-                                f"（上流の供給劣化）")
+                if base is not None and fb_cur - base > DECLINE_DELTA:
+                    msgs.append(f"DECLINE    フォールバック占有率 {base:.1%}→{fb_cur:.1%}"
+                                f"（前年同月比・上流の供給劣化）")
 
         key_flag = f"flag_{c}"
         if key_flag in stat.columns:
