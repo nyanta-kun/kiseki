@@ -340,6 +340,30 @@ pkill -9 -f "prlctl exec"
   - `cmd.exe` を経由しないため Coherence モードでもちらつきゼロ
   - `prlctl exec --current-user` および `python.exe`（コンソールあり）は使用禁止
 
+### エージェント運用の落とし穴（2026-08-02 実地で踏んだもの）
+
+**① SSH 経由の `Start-Process` はセッション断でプロセスが道連れになる**
+`ssh windows-vm "powershell -Command Start-Process pythonw ..."` で起動した realtime は
+**SSH コマンドが戻った瞬間に死ぬ**（1サイクルだけログを出して消える）。
+常駐させるものは必ず **タスクスケジューラ経由**で起動すること:
+```bash
+ssh windows-vm 'schtasks /run /tn kiseki-JVLink-Realtime'
+# または RunAdhoc（adhoc_cmd.txt 経由）
+```
+
+**② プロセス数の確認は `Name='pythonw.exe'` で必ず絞る**
+`Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match "jvlink_agent.py"}` は
+**そのクエリを実行している cmd.exe / powershell.exe 自身にマッチする**（コマンドラインに
+文字列が含まれるため）。常に2件多く見え、「多重起動している」と誤診する。正しくは:
+```powershell
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "pythonw.exe" -and $_.CommandLine -match "jvlink_agent" }
+```
+
+**③ 起動タスクとウォッチドッグの同時発火で多重起動しうる**
+ランチャ VBS の「実行中か調べる→起動する」は check-then-act の競合。
+`data\launcher_{jvlink,umaconn}.lock` の更新時刻で 60 秒以内の二重起動を抑止し、
+起動4秒後に重複を検出したら最古の1本だけ残すようにしている（2026-08-02 追加）。
+
 ### jvlink_agent.py 起動
 ※ **jvlink_agent は必ず RunAdhoc（kiseki-RunAdhoc タスクスケジューラ）経由で起動すること。**
 ※ SSH + Start-Process では JVDTLab.dll がデスクトップセッションを取得できず JVOpen が無限ブロックする（2026-04-25 確認）。
