@@ -19,8 +19,21 @@ import statistics
 #     （実測: 平均 63.5 / S 20.0% / A以上 46.7%、test 2026-01〜08 2,046R）。
 #     ※ tier の閾値（S>=80, A>=65）は OOS 検証済みのため動かさず、
 #        スケール差だけをこの係数で吸収する。
+#   - CHIHOU (12.0): 地方 v13（min-max 廃止・中心化線形スケール C=40）向け。下記参照。
 DEFAULT_GAP_FULL_SCORE: float = 10.0
 JRA_GAP_FULL_SCORE: float = 6.0
+CHIHOU_GAP_FULL_SCORE: float = 12.0
+
+# 分散スコアが満点になる「レース内 composite の標準偏差」。
+# 2026-08-02 の実測で、この閾値が地方では**完全に飽和して定数化**していたことが判明した:
+#   地方 v10/v12（min-max 15-85）は全レースで幅が 70.00 固定 → 平均 sd 23.6 で
+#   **100% のレースが満点**。指数差スコアも 63% が満点になり、100点中65点が機能せず、
+#   結果として **97% のレースが tier S** という状態だった（memory:
+#   chihou_logic_review_2026_08_02）。JRA v27 でも 77% が満点で飽和寄り。
+# 地方 v13 では composite を中心化線形スケール（50 + 40*(p − レース内平均)）に変更し、
+# 本閾値を 16.0 にすることで分散スコアを非飽和にする。
+DEFAULT_DISPERSION_FULL_SCORE: float = 8.0
+CHIHOU_DISPERSION_FULL_SCORE: float = 16.0
 
 # tier別 entropy_norm 中央値閾値（Phase3 市場混戦度分析で検証済み、
 # memory: jra_new_index_web_research_2026_07_26 / docs: jra_new_index_results.md）。
@@ -165,6 +178,7 @@ def calculate_race_confidence(
     head_count: int | None,
     win_probabilities: list[float] | None = None,
     gap_full_score: float = DEFAULT_GAP_FULL_SCORE,
+    dispersion_full_score: float = DEFAULT_DISPERSION_FULL_SCORE,
 ) -> dict:
     """レース信頼度スコアを算出する（0〜100）。
 
@@ -180,7 +194,10 @@ def calculate_race_confidence(
         win_probabilities: 全出走馬の勝率リスト（composite_indices と対応順）。
                            None の場合は勝率集中スコアをスキップ
         gap_full_score:    指数差スコアが満点になる加重差。総合指数のスケールに合わせる。
-                           JRA v27 は `JRA_GAP_FULL_SCORE`、地方は既定値を使う
+                           JRA v27 は `JRA_GAP_FULL_SCORE`、地方 v13 は `CHIHOU_GAP_FULL_SCORE`
+        dispersion_full_score:
+                           分散スコアが満点になるレース内標準偏差。同じくスケール依存。
+                           地方 v13 は `CHIHOU_DISPERSION_FULL_SCORE`
 
     Returns:
         score (int 0-100), label (HIGH/MID/LOW), rank (S/A/B/C),
@@ -216,8 +233,8 @@ def calculate_race_confidence(
     dispersion_score = 0.0
     if len(sorted_idx) >= 2:
         std_dev = statistics.stdev(sorted_idx)
-        # 標準偏差8を満点閾値
-        dispersion_score = min(std_dev / 8.0, 1.0) * 25.0
+        # dispersion_full_score で満点（指数スケールに依存する較正値。上部の定数コメント参照）
+        dispersion_score = min(std_dev / dispersion_full_score, 1.0) * 25.0
 
     # --- 勝率集中スコア (15点) ---
     win_prob_concentration_score = 0.0

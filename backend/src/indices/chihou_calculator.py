@@ -124,7 +124,19 @@ logger = logging.getLogger(__name__)
 # version=11 (2026-07-02): 市場乖離5特徴を追加した 35特徴 LGB。
 # version=12 (2026-07-07): コーナー/調教師/乗替9特徴を追加した 44特徴 LGB (Phase6)。
 # 詳細: 末尾「本番 LightGBM」セクション / scripts/train_chihou_prod_lgb.py。
-CHIHOU_COMPOSITE_VERSION = 12
+# version=13 (2026-08-02): composite のスケールを min-max 15-85 から
+#   中心化線形（50 + CHIHOU_INDEX_SCALE * (p − レース内平均)）へ変更。
+#   モデル・特徴量は v12 と同一で、**レース内の順位は一切変わらない**。
+#   目的は信頼度 tier の復旧（旧方式は 97% のレースが tier S に張り付いていた）と、
+#   v10 で止まっていた履歴バックフィルを 44特徴モデルで作り直すこと。
+#   詳細は `_scale_to_index_local` の docstring 参照。
+CHIHOU_COMPOSITE_VERSION = 13
+
+# composite の表示スケール係数。レース内平均からの差に掛ける。
+# 40.0 は「JRA v27 と同程度のレース内の幅（平均約28〜30）」になるよう選んだ値。
+# tier の較正は confidence.CHIHOU_GAP_FULL_SCORE / CHIHOU_DISPERSION_FULL_SCORE 側で行う
+# （表示スケールと tier 較正を分離しているので、片方を変えたらもう片方も比例で直すこと）。
+CHIHOU_INDEX_SCALE = 40.0
 
 # ばんえい競馬のコースコード
 BANEI_COURSE_CODE = "83"
@@ -453,14 +465,35 @@ def _load_prod_lgb_win() -> Any:
 
 
 def _scale_to_index_local(scores: list[float]) -> list[float]:
-    """レース内 min-max → 15-85（inference_chihou_v10.scale_to_index と同方式）。"""
+    """レース内の中心化線形スケール → 50 + CHIHOU_INDEX_SCALE * (p − レース内平均)。
+
+    v13 で **min-max 15-85 を廃止した**（2026-08-02）。
+
+    Why:
+      旧方式は全レースを同じ幅（15〜85）に正規化するため、レース内 composite の
+      幅が**常にぴったり 70.00（sd=0.000）**になっていた。その結果
+      `confidence.calculate_race_confidence` の
+        - 分散スコア(25点): 100% のレースで満点＝完全な定数
+        - 指数差スコア(40点): 63% のレースで満点
+      となり、100点中65点が情報を失って **97% のレースが tier S** に張り付いていた
+      （DB 実測 v10 / 2026-01〜06 6,496R）。JRA も v27 実装時に同じ理由で
+      min-max を禁止している（memory: jra_rank_quality_redesign_2026_08_02）。
+
+    新方式はレース本来のばらつき（p_top3 のレース内分散）をそのまま指数の幅に反映する。
+    honest 検証（2026-01〜06 6,418R）での tier 分布と1位馬勝率:
+      旧 min-max        : S 97% / A 3% / B 0% / C 0%   （分離不能）
+      新 C=40 + 較正閾値 : S 22% / A 46% / B 25% / C 7%（S 58.2% → C 32.3%・単調）
+
+    NOTE: min-max も本方式も単調変換なので **レース内の順位は一切変わらない**。
+    変わるのは指数の絶対値と、それを入力にする信頼度 tier だけである。
+    """
     if len(scores) <= 1:
         return [50.0] * len(scores)
-    lo = min(scores)
-    hi = max(scores)
-    if hi - lo < 1e-9:
-        return [50.0] * len(scores)
-    return [15.0 + (s - lo) / (hi - lo) * 70.0 for s in scores]
+    mean = sum(scores) / len(scores)
+    return [
+        min(100.0, max(0.0, 50.0 + CHIHOU_INDEX_SCALE * (s - mean)))
+        for s in scores
+    ]
 
 
 def _compute_ext_features(

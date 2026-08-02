@@ -203,11 +203,29 @@ export function ChihouRaceDetailClient({
       .map((h, i) => [h.horse_id, i + 1])
   );
 
+  // 足切り（グレーアウト）閾値。指数 v13 のスケールに合わせて再較正した値
+  // （backend/scripts/chihou_cutoff_review.py・honest test 2026-01〜06 / 6,418R）。
+  //
+  // v12 までの composite はレース内 min-max 15〜85（幅が常に 70）で、旧閾値 20/15/5 は
+  // **82.1% の馬を足切りし 1着馬の 35.3% / 3着内馬の 56.8% を捨てていた**。
+  // v13 はレース内の実際のばらつきを残すスケール（幅 平均 29.2）に変わったため、
+  // 同じ数値のままだと今度は逆にほぼ機能しなくなる。下記は較正後の実測:
+  //
+  //   ルール            除外率   除外馬の着外率   1着取りこぼし  3着内取りこぼし
+  //   旧 20/15/順位5     82.1%      79.9%         35.3%        56.8%
+  //   新 30/24/順位7     31.2%      93.6%          2.9%         6.9%   ← 採用
+  //
+  // 参考: JRA の着外率モデルは 除外30% / 除外馬の実着外率 88.6% / 1着取りこぼし 4.8%。
+  // ⚠️ composite のスケール（CHIHOU_INDEX_SCALE）を変えたら必ずここも測り直すこと。
+  const CUT_GAP_HARD = 30;
+  const CUT_GAP_SOFT = 24;
+  const CUT_RANK_MIN = 7;
+
   function isCutOff(horse: ChihouHorseIndex): boolean {
     if (horse.composite_index === null) return false;
     const gap = maxComposite - horse.composite_index;
     const rank = compositeRankMap.get(horse.horse_id) ?? 999;
-    return gap >= 20 || (gap >= 15 && rank >= 5);
+    return gap >= CUT_GAP_HARD || (gap >= CUT_GAP_SOFT && rank >= CUT_RANK_MIN);
   }
 
   const colSpan = hasResults ? 12 : 11;
