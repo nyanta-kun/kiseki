@@ -166,9 +166,18 @@ async def _calc_synth_odds(
 #   SEVEN_S1（win軸1着固定×3着内モデル相手2車・三連単2点流し。2026-07-31全廃）
 #   SIX_S1 / 7PLUS_R / 7PLUS_U / 7PLUS_M / 7PLUS_ST / 7PLUS_STP（いずれも既に全廃済み）
 # ---------------------------------------------------------------------------
-# 定義順 = Web 全体の表示順（7SS/7S/7A/9S/9A。ユーザー指定・2026-08-01）。
+# 定義順 = Web 全体の表示順（7S/7A/9S/9A）。
+#
+# 【2026-08-02】RANK_7SS（波乱軸選出・穴レース検知）を全廃した（ユーザー判断）。
+# live実績が picks_history 全期間 n=16,298 で ROI 73.5%、2026年の月次も
+# 94.4/61.0/56.3/61.1/69.3/70.2/60.3% と1月以外すべて控除率75%を大きく下回り、
+# 有効な推奨として成立していなかったため。picks_history の RANK_7SS 行も
+# 同日削除済み（退避: keirin repo data/backup/
+# picks_history_rank_7ss_before_abolition_20260802.csv）。
+# 将来「期待できる推奨条件」が見つかった場合はこの辞書へ1行戻せば
+# Web表示・集計・netkeirin設定すべてが復活する（keirin側の候補生成停止も
+# 併せて解除すること）。
 _PAPER_RANK_LABELS: dict[str, str] = {
-    "RANK_7SS": "7SS",
     "RANK_7S": "7S",
     "RANK_7A": "7A",
     "RANK_9S": "9S",
@@ -525,7 +534,7 @@ def _display_rank(rank: str) -> str:
 
 # トップライン（当日/当月/当年）は現行有効ランク全て（7S/7A/9S/9A/7SS）をまとめて
 # 表示する（2026-07-27にユーザー要望で7車+9車+境界ランクを統合した方針を継続。
-# 2026-08-01、RANK_7SS（新設の独立ランク・波乱軸選出/穴レース検知）を追加＝
+# 2026-08-01にRANK_7SSを追加したが、2026-08-02に全廃した（上記 _PAPER_RANK_LABELS 参照）＝
 # ユーザー要望「7SS の追加を行ったため VPS の 7SS 表示も有効にして下さい」への
 # 対応）。by_rank（_aggregate内部で_display_rank()により算出）にはこれら全ランク
 # が同じ辞書に並ぶため、フロントエンドの「ランク別」展開でまとめて確認できる。
@@ -539,7 +548,7 @@ async def _aggregate(
     rank_filter: str = _RANKS_ALL,
 ) -> dict:
     # 2026-08-01〜: 現行ランクは _PAPER_RANK_LABELS の5ランク（RANK_7S/RANK_7A/
-    # RANK_9S/RANK_9A/RANK_7SS）。gate_labelによる表示分岐は廃止済み（_display_rank
+    # RANK_9S/RANK_9A）。gate_labelによる表示分岐は廃止済み（_display_rank
     # 参照）。旧S1(SEVEN_S1)・旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ
     # 退避 or 残骸のまま（allowlist方式のため自動的に集計対象から除外される）。
     # rank_filter: 個別ランクだけの集計にも本関数を再利用できるようパラメータ化
@@ -594,7 +603,7 @@ async def _aggregate(
     )).mappings().one_or_none()
     result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
 
-    # ランク別集計（全てペーパー・名目賭金）: RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS の5ランク。
+    # ランク別集計（全てペーパー・名目賭金）: RANK_7S/RANK_7A/RANK_9S/RANK_9A の4ランク。
     # 2026-08-01〜: gate_labelはもう表示ランクを分岐しない（_display_rank参照）ため
     # GROUP BY からも外す。gate_labelでGROUP BYしたまま_display_rank()で複数行が
     # 同じ表示キーに収束すると、Python側のdict代入（by_rank[key] = ...）が
@@ -799,14 +808,12 @@ async def get_stats(
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
-    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7SS,9S"）。
+    rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7A,9S"）。
           "7S"（RANK_7S）/ "7A"（RANK_7A・境界ランク）/ "9S"（RANK_9S）/
-          "9A"（RANK_9A・境界ランク）/ "7SS"（RANK_7SS・波乱軸選出/穴レース検知、
-          2026-07-31新設の独立ランク）/ "all"（既定値・全ランク合算。
+          "9A"（RANK_9A・境界ランク）/ "all"（既定値・全ランク合算。
           トップライン=/summaryと揃える）。
-          2026-08-01〜: gate_label('SS'/'S')による7SS/9SSの分岐は
-          keirin側commit e994758（2026-07-31）で廃止済みのため、
-          "7SS" は上記の新設独立ランクのみを指す（旧"9SS"は廃止・対象外）。
+          2026-08-02〜: "7SS"（RANK_7SS・波乱軸選出/穴レース検知）は全廃したため
+          受け付けない（旧gate_label由来の"9SS"も2026-07-31に廃止済み）。
           "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
     """
     today = _today_jst()
@@ -833,12 +840,11 @@ async def get_stats(
 
     # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
-    # OR条件として結合する（例: "7SS,9S" → RANK_7SS or RANK_9S）。
+    # OR条件として結合する（例: "7A,9S" → RANK_7A or RANK_9S）。
     # 2026-08-01〜: gate_labelによる分岐は廃止済み・内部rankは_PAPER_RANK_LABELSの
     # 5ランクへ全面改名済みのため、それぞれ単純な等価条件になる。
     # 既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
     _RANK_COND_MAP = {
-        "7SS": "ph.rank = 'RANK_7SS'",
         "7S": "ph.rank = 'RANK_7S'",
         "7A": "ph.rank = 'RANK_7A'",
         "9S": "ph.rank = 'RANK_9S'",
@@ -1021,15 +1027,16 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 # netkeirin（ウマい車券）自動入稿設定
 # ---------------------------------------------------------------------------
 
-# 表示ランク一覧（_display_rank()の出力と一致・7SS/7S/7A/9S/9A）。
-# 並び順は Web 全体で 7SS/7S/7A/9S/9A に統一（ユーザー指定・2026-08-01。
+# 表示ランク一覧（_display_rank()の出力と一致・7S/7A/9S/9A）。
+# 並び順は Web 全体で 7S/7A/9S/9A に統一（2026-08-02に7SS全廃。
 # frontend の RANK_ORDER / RANK_FILTERS と同一基準）。
 # '_global' は全体ON/OFFを表す特殊行。
 # 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は
-# 対象外。DBには過去分のnetkeirin_settings行（rank_key='S1'/'9SS'、いずれも
+# 対象外。2026-08-02に7SSも全廃したため同様に除外した。
+# DBには過去分のnetkeirin_settings行（rank_key='S1'/'9SS'/'7SS'、いずれも
 # enabled=false）が残るが、新規保存時のバリデーション対象からは外す
 # （フロントエンド側もこれらを画面に表示しない）。
-NETKEIRIN_RANK_KEYS = ("_global", "7SS", "7S", "7A", "9S", "9A")
+NETKEIRIN_RANK_KEYS = ("_global", "7S", "7A", "9S", "9A")
 
 
 class NetkeirinSettingOut(BaseModel):

@@ -187,16 +187,16 @@ class KeirinPicksHistory(KeirinBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     race_date: Mapped[str] = mapped_column(String(10), nullable=False, comment="開催日")
-    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー(base#CAND/#7S/#7A/#9S/#9A/#7SS等)")
+    race_key: Mapped[str] = mapped_column(String(35), nullable=False, comment="レースキー(base#CAND/#7S/#7A/#9S/#9A等)")
     rank: Mapped[str] = mapped_column(
         String(10),
         nullable=False,
         comment=(
-            "ランク。現行有効値: RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS/7PLUS_CAND"
+            "ランク。現行有効値: RANK_7S/RANK_7A/RANK_9S/RANK_9A/7PLUS_CAND"
             "（2026-08-01〜。keirin側commit f31f84bの全面改名に追随・"
             "backend/src/api/keirin_router.py の _PAPER_RANK_LABELS が単一正本）。"
-            "旧名SEVEN_S7/SEVEN_7A/NINE_S9/NINE_9A、全廃済みのSEVEN_S1/SIX_S1/"
-            "7PLUS_R/7PLUS_ST/7PLUS_STP/7PLUS_U/7PLUS_M 等は過去データの残骸として"
+            "旧名SEVEN_S7/SEVEN_7A/NINE_S9/NINE_9A、全廃済みのRANK_7SS(2026-08-02)/"
+            "SEVEN_S1/SIX_S1/7PLUS_R/7PLUS_ST/7PLUS_STP/7PLUS_U/7PLUS_M 等は残骸として"
             "残ることがあるが、API側のallowlistで表示・集計対象から除外される"
         ),
     )
@@ -226,8 +226,8 @@ class KeirinNetkeirinSetting(KeirinBase):
         String(10),
         primary_key=True,
         comment=(
-            "7S/7A/9S/9A/7SS、または全体行'_global'（2026-08-01〜。"
-            "S1・9SSは全廃済みのため新規保存対象外だが、過去分の行(enabled=false)が"
+            "7S/7A/9S/9A、または全体行'_global'（2026-08-02〜。"
+            "S1・9SS・7SSは全廃済みのため新規保存対象外だが、過去分の行(enabled=false)が"
             "残っていることがある）"
         ),
     )

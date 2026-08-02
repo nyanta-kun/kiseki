@@ -188,14 +188,12 @@ function submitSessionFromStartAt(startAt: number | string | null): "morning" | 
 // 常に"S"のみを返す。既存行のgate_labelも'S'へ一括更新済み）。7S/9Sはそれぞれ
 // 単一ランクとなり、"9SS"という表示は現在は存在しない。
 //
-// 【7SSの表示ラベルが指す意味が変わったことに注意】上記の分岐廃止により
-// "7SS"という表示ラベルはWEB上で一時的に空席になったが、同じ2026-07-31付で
-// keirin側が RANK_7SS（波乱軸選出・穴レース検知）という全く新しい独立戦略を
-// 導入し、同じ表示ラベル"7SS"を再利用した。新7SSは単勝×複勝指数のモデル出力を
-// 一切使わず、race_point（競走得点）・WINTICKET公式印・ライン構成のみで軸を
-// 選ぶモデル非依存の戦略（見せ場・高配当検知が目的でROI改善は非目標。
-// TEST(2024-01〜2026-07)honest実績 ROI70-72%・的中時最高配当354.2倍）。
-// 旧7SS（SEVEN_S7のgate_label='SS'内訳）とは軸選定ロジックも意味も無関係。
+// 【2026-08-02: 表示ラベル"7SS"は現在どのランクも指さない】上記の分岐廃止で
+// 旧7SS（SEVEN_S7のgate_label='SS'内訳）が消えた後、同じラベルを再利用して
+// RANK_7SS（波乱軸選出・穴レース検知・モデル非依存）を導入していたが、
+// live実績 n=16,298・ROI73.5%（2026年の月次も1月以外すべて70%以下）と
+// 控除率75%を下回り続けたためユーザー判断で全廃した。picks_history の
+// RANK_7SS 行も削除済み。将来の再設定に備え keirin 側の判定ロジックは残置。
 //
 // S1（win軸1着固定×3着内モデル相手2車・三連単2点流し・旧SEVEN_S1）は
 // 2026-07-31にkeirin側で全廃済み（このためRANK_STYLE/RANK_ORDER等からも除去）。
@@ -217,11 +215,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 2026-07-31にゲート数を3→2へ簡素化）。彩度を落とした色で7S/9Sとはやや区別する。
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
   "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
-  // 7SS=RANK_7SS（2026-07-31新設の独立ランク・波乱軸選出/穴レース検知）。
-  // race_point/WINTICKET公式印/ライン構成のみで判定するモデル非依存の戦略で、
-  // 旧「SEVEN_S7 かつ gate_label='SS'」だった7SS（上記参照・現在は廃止しSへ吸収）
-  // とは軸選定ロジック・意味とも無関係の別物。色は旧7SSと同じ配色を再利用。
-  "7SS":        { bg: "#ca8a04", text: "#fff", label: "7SS" },
+  // 7SS=RANK_7SS（波乱軸選出/穴レース検知）は 2026-08-02 に全廃したため定義を削除。
+  // live実績 n=16,298・ROI73.5% と控除率75%を下回り続けたため（ユーザー判断）。
 };
 
 // ---------------------------------------------------------------------------
@@ -704,11 +699,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS。2026-08-01〜
-  // 内部rank名の全面改名に追随・旧S1(SEVEN_S1)は2026-07-31全廃のため対象から除去）
-  // は旧S1（廃止済み）の三連複ガミ閾値と無関係のためガミ判定チップ（✓/⚠）を表示しない
+  // ペーパー検証ランク（RANK_7S/RANK_7A/RANK_9S/RANK_9A。2026-08-01〜内部rank名の
+  // 全面改名に追随・旧S1(SEVEN_S1)は2026-07-31全廃・RANK_7SSは2026-08-02全廃のため
+  // 対象から除去）は旧S1（廃止済み）の三連複ガミ閾値と無関係のため
+  // ガミ判定チップ（✓/⚠）を表示しない
   const isPaperRank = pick.rank === "RANK_7S" || pick.rank === "RANK_7A"
-    || pick.rank === "RANK_9S" || pick.rank === "RANK_9A" || pick.rank === "RANK_7SS";
+    || pick.rank === "RANK_9S" || pick.rank === "RANK_9A";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -895,8 +891,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
 // by_rank キー: "7S"=RANK_7S（単勝×複勝指数トップ3重なり軸×波乱度選出）/
 // "7A"=RANK_7Sの境界ランク / "9S"=RANK_9S（7Sの9車立て版） / "9A"=RANK_9Sの境界
-// ランク / "7SS"=RANK_7SS（波乱軸選出・穴レース検知、モデル非依存の独立戦略）
-// （全てペーパー検証・名目賭金）。
+// ランク（全てペーパー検証・名目賭金）。
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S7導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S7をgate_label(SS/S)で7SS/7Sの2ランクへ再編
 // 2026-07-23 7SS内の軸級班denyフィルター通過分を7SS+として観察用に追加していたが、
@@ -907,22 +902,19 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 分離していたが、表示が煩雑とのユーザー要望により同日中にトップラインへ統合した。
 // 2026-07-31: keirin側でgate_label('SS'/'S')による7SS/9SS・7S/9Sの分岐が廃止され
 // 単一ランク化（旧7SS/9SSはS/9Sへ吸収）。同日、旧S1(SEVEN_S1)は全廃。
-// 2026-08-01: 内部rank名の全面改名（RANK_*方式）に追随するとともに、同じ
-// "7SS"という表示ラベルで新設された独立ランク RANK_7SS（波乱軸選出・穴レース
-// 検知・モデル非依存）をランク別展開へ追加した（ユーザー要望「7SS の追加を
-// 行ったため VPS の 7SS 表示も有効にして下さい」への対応）。
-// 並び順は 7SS/7S/7A/9S/9A に統一する（ユーザー指定・2026-08-01）。当初は
-// 「7SSは設計思想が異なるので末尾」としていたが、表示ラベルの辞書順・
-// 車数まとまり（7車系→9車系）と揃え、サマリー/ランク別展開/入稿設定など
-// Web上の全ランク列挙でこの順序を単一の基準とする。
-// ランク別展開では7車(7SS/7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できる
+// 2026-08-01: 内部rank名の全面改名（RANK_*方式）に追随するとともに、独立ランク
+// RANK_7SS をランク別展開へ追加した。
+// 2026-08-02: その RANK_7SS を全廃（ROI73.5%・n=16,298）。並び順は 7S/7A/9S/9A。
+// 表示ラベルの辞書順・車数まとまり（7車系→9車系）と揃え、サマリー/ランク別展開/
+// 入稿設定など Web上の全ランク列挙でこの順序を単一の基準とする。
+// ランク別展開では7車(7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できる
 // ようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
-const RANK_ORDER = ["7SS", "7S", "7A", "9S", "9A"] as const;
+// 2026-08-02: 7SS（波乱軸選出）を全廃したため一覧から除去した。
+const RANK_ORDER = ["7S", "7A", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7SS": "7SS", "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A",
+  "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
-  "7SS": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
