@@ -869,7 +869,7 @@ paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴*
 `CHIHOU_TEST_START=YYYYMMDD` で固定可（過去分析の再現用）。VAL_END は TEST_START の前日に追随。
 
 **月次サイクル**（`scripts/chihou_monthly_rollover.py` / LaunchAgent
-`com.kiseki.chihou-monthly-rollover` が毎月1日 05:00 に実行）:
+`com.kiseki.chihou-monthly-rollover` が**毎月1日 03:18** に実行）:
 
 | フェーズ | 内容 | 自動 |
 |---|---|---|
@@ -885,6 +885,19 @@ paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴*
 - **指数1位の勝率は季節性が強い**（7月は 2024 41.3% / 2025 43.7% / 2026 42.2% なのに
   1月は 45.6〜49.7%）。前月を冬場の窓と比べて「劣化した」と誤読しないこと。
   レポートは同月比較の表を自動で付ける
+
+**03:18 という時刻の根拠**: LaunchAgent は Mac がスリープ中だと発火しない
+（復帰時に遅延実行はされるが電源オフだと走らない）。日次起床の直後に置いている。
+DBバックアップ（`com.kiseki.db-backup`）は **03:30〜04:15（実測45分）** VPS へ重い
+`pg_dump` を投げるので、その**前**に終わらせて競合を避ける（本ジョブは約2分）。
+
+```bash
+# 深夜の自動起床（DBバックアップと月次ローリングの両方をカバーする。要 sudo・1回だけ）
+sudo pmset repeat wakeorpoweron MTWRFSU 03:15:00
+pmset -g sched          # 設定確認
+```
+⚠️ `pmset repeat` は**繰り返しスケジュールを1つしか持てない**。別の用途で上書きすると
+バックアップとローリングの両方が起床しなくなる。plist は `scripts/launchagents/` に複製あり。
 
 - **本番モデルの学習終端は `TRAIN_DATA_END` = `TEST_START` の前日**（`train_chihou_market_lgb.py`)。
   2026-08-03 以前は `"20260706"` がハードコードされており **TEST 期間の 257レースを学習に含んでいた**ため是正した
