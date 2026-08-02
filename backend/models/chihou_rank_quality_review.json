@@ -1,0 +1,290 @@
+{
+  "test_start": "20260101",
+  "test_end": "20260630",
+  "out_threshold": 5,
+  "n_features": 44,
+  "n_races": 6418,
+  "n_rows": 66421,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "results": {
+    "bin_top3(現行と同目的)": {
+      "HEAD_top1_win": 0.4624,
+      "HEAD_top1_place": 0.7661,
+      "HEAD_winner_in_top3": 0.7783,
+      "HEAD_ndcg3": 0.652,
+      "TAIL_bot3_out_rate": 0.8742,
+      "TAIL_winner_in_bot3": 0.0335,
+      "TAIL_placer_in_bot30pct": 0.0848,
+      "ALL_spearman": 0.5822,
+      "ALL_winner_pos": 0.1573,
+      "ALL_placer_pos": 0.2593
+    },
+    "bin_win": {
+      "HEAD_top1_win": 0.4642,
+      "HEAD_top1_place": 0.7646,
+      "HEAD_winner_in_top3": 0.7806,
+      "HEAD_ndcg3": 0.6526,
+      "TAIL_bot3_out_rate": 0.8731,
+      "TAIL_winner_in_bot3": 0.0346,
+      "TAIL_placer_in_bot30pct": 0.0848,
+      "ALL_spearman": 0.5761,
+      "ALL_winner_pos": 0.1567,
+      "ALL_placer_pos": 0.2599
+    },
+    "neg_p_out": {
+      "HEAD_top1_win": 0.4596,
+      "HEAD_top1_place": 0.7644,
+      "HEAD_winner_in_top3": 0.7769,
+      "HEAD_ndcg3": 0.6513,
+      "TAIL_bot3_out_rate": 0.8739,
+      "TAIL_winner_in_bot3": 0.0354,
+      "TAIL_placer_in_bot30pct": 0.0848,
+      "ALL_spearman": 0.5845,
+      "ALL_winner_pos": 0.1595,
+      "ALL_placer_pos": 0.2596
+    },
+    "reg_rank": {
+      "HEAD_top1_win": 0.4579,
+      "HEAD_top1_place": 0.7644,
+      "HEAD_winner_in_top3": 0.7747,
+      "HEAD_ndcg3": 0.6496,
+      "TAIL_bot3_out_rate": 0.8737,
+      "TAIL_winner_in_bot3": 0.0369,
+      "TAIL_placer_in_bot30pct": 0.0856,
+      "ALL_spearman": 0.589,
+      "ALL_winner_pos": 0.1608,
+      "ALL_placer_pos": 0.2603
+    },
+    "lambdarank": {
+      "HEAD_top1_win": 0.4639,
+      "HEAD_top1_place": 0.765,
+      "HEAD_winner_in_top3": 0.7817,
+      "HEAD_ndcg3": 0.6534,
+      "TAIL_bot3_out_rate": 0.8742,
+      "TAIL_winner_in_bot3": 0.034,
+      "TAIL_placer_in_bot30pct": 0.0833,
+      "ALL_spearman": 0.5789,
+      "ALL_winner_pos": 0.1564,
+      "ALL_placer_pos": 0.2593
+    },
+    "blend reg-0.3out": {
+      "HEAD_top1_win": 0.4582,
+      "HEAD_top1_place": 0.7636,
+      "HEAD_winner_in_top3": 0.7759,
+      "HEAD_ndcg3": 0.6506,
+      "TAIL_bot3_out_rate": 0.8748,
+      "TAIL_winner_in_bot3": 0.0371,
+      "TAIL_placer_in_bot30pct": 0.0846,
+      "ALL_spearman": 0.5889,
+      "ALL_winner_pos": 0.1603,
+      "ALL_placer_pos": 0.2599
+    },
+    "blend reg-0.5out": {
+      "HEAD_top1_win": 0.4589,
+      "HEAD_top1_place": 0.7643,
+      "HEAD_winner_in_top3": 0.7773,
+      "HEAD_ndcg3": 0.651,
+      "TAIL_bot3_out_rate": 0.8755,
+      "TAIL_winner_in_bot3": 0.0363,
+      "TAIL_placer_in_bot30pct": 0.0843,
+      "ALL_spearman": 0.5888,
+      "ALL_winner_pos": 0.1601,
+      "ALL_placer_pos": 0.2597
+    },
+    "blend reg-0.8out": {
+      "HEAD_top1_win": 0.4593,
+      "HEAD_top1_place": 0.7649,
+      "HEAD_winner_in_top3": 0.7789,
+      "HEAD_ndcg3": 0.6516,
+      "TAIL_bot3_out_rate": 0.8754,
+      "TAIL_winner_in_bot3": 0.0361,
+      "TAIL_placer_in_bot30pct": 0.0845,
+      "ALL_spearman": 0.5883,
+      "ALL_winner_pos": 0.1597,
+      "ALL_placer_pos": 0.2596
+    },
+    "blend reg+0.3t3-0.3out": {
+      "HEAD_top1_win": 0.4601,
+      "HEAD_top1_place": 0.7644,
+      "HEAD_winner_in_top3": 0.7766,
+      "HEAD_ndcg3": 0.6513,
+      "TAIL_bot3_out_rate": 0.8753,
+      "TAIL_winner_in_bot3": 0.0355,
+      "TAIL_placer_in_bot30pct": 0.0841,
+      "ALL_spearman": 0.5886,
+      "ALL_winner_pos": 0.1594,
+      "ALL_placer_pos": 0.2595
+    },
+    "prod_db(in-sample参考)": {
+      "HEAD_top1_win": 0.3967,
+      "HEAD_top1_place": 0.7172,
+      "HEAD_winner_in_top3": 0.7222,
+      "HEAD_ndcg3": 0.6063,
+      "TAIL_bot3_out_rate": 0.8481,
+      "TAIL_winner_in_bot3": 0.0513,
+      "TAIL_placer_in_bot30pct": 0.1049,
+      "ALL_spearman": 0.528,
+      "ALL_winner_pos": 0.1941,
+      "ALL_placer_pos": 0.281
+    }
+  },
+  "paired_bootstrap_vs_bin_top3": {
+    "bin_win": {
+      "top1_win": [
+        0.00171,
+        -0.0014,
+        0.00499
+      ],
+      "top1_place": [
+        -0.00156,
+        -0.00421,
+        0.00109
+      ],
+      "spearman": [
+        -0.0061,
+        -0.00728,
+        -0.00487
+      ]
+    },
+    "neg_p_out": {
+      "top1_win": [
+        -0.0028,
+        -0.00608,
+        0.00047
+      ],
+      "top1_place": [
+        -0.00171,
+        -0.00467,
+        0.00125
+      ],
+      "spearman": [
+        0.00232,
+        0.00131,
+        0.00328
+      ]
+    },
+    "reg_rank": {
+      "top1_win": [
+        -0.00452,
+        -0.00779,
+        -0.00109
+      ],
+      "top1_place": [
+        -0.00171,
+        -0.00483,
+        0.00125
+      ],
+      "spearman": [
+        0.00679,
+        0.00532,
+        0.00822
+      ]
+    },
+    "lambdarank": {
+      "top1_win": [
+        0.0014,
+        -0.00187,
+        0.00467
+      ],
+      "top1_place": [
+        -0.00109,
+        -0.0039,
+        0.00156
+      ],
+      "spearman": [
+        -0.00325,
+        -0.00432,
+        -0.00209
+      ]
+    },
+    "blend reg-0.3out": {
+      "top1_win": [
+        -0.00421,
+        -0.00732,
+        -0.00093
+      ],
+      "top1_place": [
+        -0.00249,
+        -0.0053,
+        0.00031
+      ],
+      "spearman": [
+        0.00676,
+        0.0054,
+        0.00803
+      ]
+    },
+    "blend reg-0.5out": {
+      "top1_win": [
+        -0.00358,
+        -0.0067,
+        -0.00031
+      ],
+      "top1_place": [
+        -0.00187,
+        -0.00499,
+        0.00094
+      ],
+      "spearman": [
+        0.00665,
+        0.00534,
+        0.00787
+      ]
+    },
+    "blend reg-0.8out": {
+      "top1_win": [
+        -0.00312,
+        -0.00623,
+        0.00016
+      ],
+      "top1_place": [
+        -0.00125,
+        -0.00421,
+        0.00156
+      ],
+      "spearman": [
+        0.00614,
+        0.00488,
+        0.00735
+      ]
+    },
+    "blend reg+0.3t3-0.3out": {
+      "top1_win": [
+        -0.00234,
+        -0.00483,
+        0.00031
+      ],
+      "top1_place": [
+        -0.00171,
+        -0.00421,
+        0.00078
+      ],
+      "spearman": [
+        0.00646,
+        0.00526,
+        0.00755
+      ]
+    },
+    "prod_db(in-sample参考)": {
+      "top1_win": [
+        -0.06575,
+        -0.0762,
+        -0.05547
+      ],
+      "top1_place": [
+        -0.04892,
+        -0.0589,
+        -0.03895
+      ],
+      "spearman": [
+        -0.05417,
+        -0.05826,
+        -0.05001
+      ]
+    }
+  }
+}

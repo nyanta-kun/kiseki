@@ -1,0 +1,188 @@
+{
+  "test_start": "20260101",
+  "test_end": "20260630",
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "n_races": 6418,
+  "rules": [
+    {
+      "label": "現行ルール(旧スケール) 20/15/5",
+      "scale": "comp_old",
+      "cut_rate": 0.8207,
+      "cut_out_rate": 0.7993,
+      "winner_cut_rate": 0.3531,
+      "placer_cut_rate": 0.568
+    },
+    {
+      "label": "現行ルールを新スケールにそのまま適用 20/15/5",
+      "scale": "comp_new",
+      "cut_rate": 0.6098,
+      "cut_out_rate": 0.8726,
+      "winner_cut_rate": 0.1372,
+      "placer_cut_rate": 0.2679
+    },
+    {
+      "label": "新スケール 40のみ",
+      "scale": "comp_new",
+      "cut_rate": 0.0,
+      "cut_out_rate": NaN,
+      "winner_cut_rate": 0.0,
+      "placer_cut_rate": 0.0
+    },
+    {
+      "label": "新スケール 35/30/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.0645,
+      "cut_out_rate": 0.9626,
+      "winner_cut_rate": 0.0019,
+      "placer_cut_rate": 0.0083
+    },
+    {
+      "label": "新スケール 32/26/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.2439,
+      "cut_out_rate": 0.9387,
+      "winner_cut_rate": 0.0207,
+      "placer_cut_rate": 0.0516
+    },
+    {
+      "label": "新スケール 30/24/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.3474,
+      "cut_out_rate": 0.9248,
+      "winner_cut_rate": 0.0392,
+      "placer_cut_rate": 0.0901
+    },
+    {
+      "label": "新スケール 28/22/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.4385,
+      "cut_out_rate": 0.9107,
+      "winner_cut_rate": 0.059,
+      "placer_cut_rate": 0.135
+    },
+    {
+      "label": "新スケール 26/20/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.5116,
+      "cut_out_rate": 0.896,
+      "winner_cut_rate": 0.0832,
+      "placer_cut_rate": 0.1835
+    },
+    {
+      "label": "新スケール 24/18/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.5607,
+      "cut_out_rate": 0.8848,
+      "winner_cut_rate": 0.1097,
+      "placer_cut_rate": 0.2228
+    },
+    {
+      "label": "新スケール 30/24/順位7",
+      "scale": "comp_new",
+      "cut_rate": 0.3123,
+      "cut_out_rate": 0.9358,
+      "winner_cut_rate": 0.0294,
+      "placer_cut_rate": 0.0692
+    },
+    {
+      "label": "新スケール 28/22/順位7",
+      "scale": "comp_new",
+      "cut_rate": 0.374,
+      "cut_out_rate": 0.9276,
+      "winner_cut_rate": 0.0406,
+      "placer_cut_rate": 0.0934
+    },
+    {
+      "label": "新スケール 26/20/順位7",
+      "scale": "comp_new",
+      "cut_rate": 0.4163,
+      "cut_out_rate": 0.9207,
+      "winner_cut_rate": 0.051,
+      "placer_cut_rate": 0.1139
+    },
+    {
+      "label": "新スケール 14/10/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.7046,
+      "cut_out_rate": 0.841,
+      "winner_cut_rate": 0.2161,
+      "placer_cut_rate": 0.3864
+    },
+    {
+      "label": "新スケール 10/7/順位5",
+      "scale": "comp_new",
+      "cut_rate": 0.7857,
+      "cut_out_rate": 0.8118,
+      "winner_cut_rate": 0.3033,
+      "placer_cut_rate": 0.51
+    },
+    {
+      "label": "着外率モデル p_out>=0.90",
+      "scale": "p_out",
+      "cut_rate": 0.1464,
+      "cut_out_rate": 0.9711,
+      "winner_cut_rate": 0.0064,
+      "placer_cut_rate": 0.0146
+    },
+    {
+      "label": "着外率モデル p_out>=0.88",
+      "scale": "p_out",
+      "cut_rate": 0.1823,
+      "cut_out_rate": 0.9637,
+      "winner_cut_rate": 0.01,
+      "placer_cut_rate": 0.0228
+    },
+    {
+      "label": "着外率モデル p_out>=0.86",
+      "scale": "p_out",
+      "cut_rate": 0.2181,
+      "cut_out_rate": 0.9575,
+      "winner_cut_rate": 0.0138,
+      "placer_cut_rate": 0.032
+    },
+    {
+      "label": "着外率モデル p_out>=0.84",
+      "scale": "p_out",
+      "cut_rate": 0.254,
+      "cut_out_rate": 0.9502,
+      "winner_cut_rate": 0.0201,
+      "placer_cut_rate": 0.0436
+    },
+    {
+      "label": "着外率モデル p_out>=0.82",
+      "scale": "p_out",
+      "cut_rate": 0.2884,
+      "cut_out_rate": 0.9448,
+      "winner_cut_rate": 0.0246,
+      "placer_cut_rate": 0.0549
+    },
+    {
+      "label": "着外率モデル p_out>=0.80",
+      "scale": "p_out",
+      "cut_rate": 0.32,
+      "cut_out_rate": 0.9393,
+      "winner_cut_rate": 0.0299,
+      "placer_cut_rate": 0.067
+    },
+    {
+      "label": "着外率モデル p_out>=0.75",
+      "scale": "p_out",
+      "cut_rate": 0.3907,
+      "cut_out_rate": 0.9266,
+      "winner_cut_rate": 0.0487,
+      "placer_cut_rate": 0.0989
+    },
+    {
+      "label": "着外率モデル p_out>=0.70",
+      "scale": "p_out",
+      "cut_rate": 0.4468,
+      "cut_out_rate": 0.9151,
+      "winner_cut_rate": 0.0646,
+      "placer_cut_rate": 0.1308
+    }
+  ]
+}
