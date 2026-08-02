@@ -142,6 +142,9 @@ RT_RACE_INFO = "0B12"    # 速報成績（払戻確定後）
 RT_ODDS_WIN_PLACE = "0B31"  # 速報オッズ（単複枠 O1レコード）key=レースキー16文字
 RT_WEIGHT = "0B11"       # 速報馬体重 key=YYYYMMDDJJRR（JVWatchEvent経由）
 RT_SCRATCH = "0B15"      # 速報レース情報（出走取消・騎手変更等）key=YYYYMMDD
+RT_TRACK_COND = "0B14"   # 速報開催情報（WE=天候馬場状態）key=YYYYMMDD
+                         # 当日朝（実測 06:55）に配信され、発走前に馬場状態が分かる
+                         # 唯一の経路。RA の馬場状態は成績確定後にしか入らない
 
 # エキゾチックオッズ速報系 DataSpec (JVDF v4.9 仕様書 2024-08-07版 確認済み)
 # 0B31=単複枠(O1), 0B32=馬連(O2), 0B33=ワイド(O3), 0B34=馬単(O4),
@@ -758,6 +761,9 @@ def run_realtime_monitor(jv) -> None:
     # 発走前レースと合わせて0B12の走査対象を「発走済み・未確定」のみに絞る。
     finalized_race_keys: set[str] = set()
 
+    # 直近に POST した WE レコード群のシグネチャ（同内容の再送を避ける）
+    last_we_signature: list[str] = [""]
+
     # ウォッチドッグ: JVRTOpenがCOMレベルでハングした場合の強制終了
     # 600s は通常のレース間隔待機 (10-15分) で誤発火していた (2026-04-26 17:19/20:45 強制終了)
     WATCHDOG_TIMEOUT = 1800  # 秒（30分間ループが進捗しない場合は異常とみなす）
@@ -855,6 +861,26 @@ def run_realtime_monitor(jv) -> None:
                     )
             else:
                 logger.debug("エキゾチックオッズ: 発走前30分以内のレースなし（スキップ）")
+
+            # 天候・馬場状態（WE / 0B14）: 発走前に races.condition / weather を確定させる。
+            # これが無いと当日の指数算出で going_pedigree_index が全馬ニュートラルになる。
+            # 内容が変わったときだけ POST する（WE は同じ内容が繰り返し配信されるため）。
+            we_records = [
+                r for r in fetch_realtime_data(jv, RT_TRACK_COND, today)
+                if r.get("rec_id") == "WE"
+            ]
+            if we_records:
+                we_sig = "|".join(sorted(r["data"][:40] for r in we_records))
+                if we_sig != last_we_signature[0]:
+                    ok = post_to_backend("/api/import/track-conditions", {
+                        "date": today,
+                        "records": we_records,
+                    }, BACKEND_URL, API_KEY, timeout=120)
+                    if ok:
+                        last_we_signature[0] = we_sig
+                        logger.info(f"馬場状態取得: {len(we_records)}件 (WE) -> OK")
+                    else:
+                        logger.warning(f"馬場状態取得: {len(we_records)}件 (WE) -> NG（次回再試行）")
 
             # 出走取消チェック（重複送信防止）
             scratch_records = fetch_realtime_data(jv, RT_SCRATCH, today)

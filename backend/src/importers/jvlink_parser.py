@@ -514,6 +514,57 @@ def parse_ra(data: str) -> dict[str, Any] | None:
 # -------------------------------------------------------------------
 
 
+def parse_we(data: str) -> dict[str, Any] | None:
+    """WEレコード（天候馬場状態）をパースする。
+
+    速報系 `0B14`（速報開催情報・一括）で **当日朝（実測 06:55）に配信される**。
+    RA の馬場状態は成績確定後にしか入らないため、発走前に馬場状態を知る唯一の経路。
+
+    フィールド位置は仕様書にフィールド表が無いため、2026-08-02 に実機の
+    `probe_track_condition.py` で同定した（3場×初期状態/天候変更/馬場変更の6件を
+    DB の確定値と突き合わせて全一致を確認）:
+
+      1- 2: "WE"
+      3   : データ区分
+      4-11: データ作成年月日 YYYYMMDD
+     12-15: 開催年
+     16-19: 開催月日
+     20-21: 競馬場コード
+     22-23: 開催回
+     24-25: 開催日目
+     26-33: 発表月日時分 MMDDHHMI（初期状態は "00000000"）
+     34   : 変更識別 1:天候馬場初期状態 / 2:天候変更 / 3:馬場状態変更
+     35   : 天候状態コード（コード表2011）
+     36   : 芝馬場状態コード（コード表2010）
+     37   : ダート馬場状態コード
+     38   : 天候状態（変更前）
+     39   : 芝馬場状態（変更前）
+     40   : ダート馬場状態（変更前）
+
+    「変更なし」の項目はコード "0"（未設定）で送られてくるため、
+    呼び出し側は発表時刻順に **非 "0" の項目だけを上書き適用** すること。
+
+    Args:
+        data: WEレコード1件分の文字列（Latin-1 で1文字=1バイト）
+
+    Returns:
+        パース結果 dict。WEレコードでない場合は None。
+    """
+    if len(data) < 40 or data[:2] != "WE":
+        return None
+
+    announced = _s(data, 26, 33)
+    return {
+        "date": _s(data, 12, 15) + _s(data, 16, 19),  # YYYYMMDD（開催日）
+        "course": _s(data, 20, 21),
+        "announced_at": None if announced in ("", "00000000") else announced,
+        "change_type": _s(data, 34, 34),  # 1:初期 / 2:天候変更 / 3:馬場変更
+        "weather": WEATHER_MAP.get(_s(data, 35, 35)),
+        "turf_condition": CONDITION_MAP.get(_s(data, 36, 36)),
+        "dirt_condition": CONDITION_MAP.get(_s(data, 37, 37)),
+    }
+
+
 def parse_se(data: str) -> dict[str, Any] | None:
     """SEレコード（馬毎レース情報）をパースする。
 

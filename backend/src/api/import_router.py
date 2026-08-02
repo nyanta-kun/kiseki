@@ -26,7 +26,7 @@ from ..importers import (
     RaceImporter,
     TrainingImporter,
 )
-from ..importers.jvlink_parser import COURSE_NAMES
+from ..importers.jvlink_parser import COURSE_NAMES, parse_we
 from ..importers.provisional_horse_importer import upsert_provisional_horses
 from ..indices.composite import CompositeIndexCalculator
 from ..services.recommender import update_results as update_recommendation_results
@@ -89,6 +89,13 @@ class ChangeNotifyRequest(BaseModel):
     change_type: str  # "scratch" | "jockey_change"
     raw_data: str
     detected_at: str  # ISO8601
+
+
+class TrackConditionRequest(BaseModel):
+    """天候馬場状態レコード（WE / 速報系 0B14）。"""
+
+    date: str
+    records: list[JvRecord]
 
 
 class WeightRequest(BaseModel):
@@ -253,6 +260,69 @@ async def import_weights(
     stats = await importer.import_records(records)
     await db.commit()
     return {"ok": True, "stats": stats}
+
+
+@router.post("/track-conditions")
+async def import_track_conditions(
+    body: TrackConditionRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """WEレコード（天候馬場状態）から races.condition / weather を発走前に更新する。
+
+    RA の馬場状態は成績確定後にしか入らないため、当日の指数算出時点では
+    馬場状態が不明だった（`going_pedigree_index` が全馬ニュートラルに固定される）。
+    WE は当日朝（実測 06:55）に配信されるため、これを取り込めば発走前に確定する。
+
+    WE は **開催（競馬場）単位** で、芝とダートで別々の馬場状態を持つ。
+    「変更なし」の項目は None で来るので、発表時刻順に非 None のみ上書き適用し、
+    最終状態をその日のその競馬場の全レースへ、`surface` に応じて反映する。
+    """
+    parsed = [
+        p for p in (parse_we(r.data) for r in body.records) if p is not None
+    ]
+    if not parsed:
+        return {"ok": True, "updated": 0, "note": "WEレコードなし"}
+
+    # (date, course) ごとに発表時刻順で最終状態を畳み込む。
+    # announced_at=None（初期状態）を先頭に置き、以降を時刻順に適用する。
+    latest: dict[tuple[str, str], dict[str, str | None]] = {}
+    for p in sorted(parsed, key=lambda x: (x["announced_at"] or "")):
+        key = (p["date"], p["course"])
+        cur = latest.setdefault(key, {"weather": None, "turf": None, "dirt": None})
+        if p["weather"]:
+            cur["weather"] = p["weather"]
+        if p["turf_condition"]:
+            cur["turf"] = p["turf_condition"]
+        if p["dirt_condition"]:
+            cur["dirt"] = p["dirt_condition"]
+
+    updated = 0
+    for (date, course), st in latest.items():
+        races = (
+            await db.execute(
+                select(Race).where(Race.date == date, Race.course == course)
+            )
+        ).scalars().all()
+        for race in races:
+            surface = (race.surface or "").strip()
+            # 障害は芝・ダートを併用するが、JRA の発表上は芝馬場状態に従う
+            cond = st["dirt"] if surface.startswith("ダ") else st["turf"]
+            changed = False
+            if cond and race.condition != cond:
+                race.condition = cond
+                changed = True
+            if st["weather"] and race.weather != st["weather"]:
+                race.weather = st["weather"]
+                changed = True
+            if changed:
+                updated += 1
+
+    await db.commit()
+    logger.info(
+        f"[track-conditions] date={body.date} 開催={len(latest)} 更新={updated}レース"
+    )
+    return {"ok": True, "updated": updated, "venues": len(latest)}
 
 
 @router.post("/bloodlines")
