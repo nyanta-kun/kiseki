@@ -1,0 +1,141 @@
+{
+  "start": "20260701",
+  "end": "20260731",
+  "source": "db",
+  "rule": {
+    "gap_hard": 30.0,
+    "gap_soft": 24.0,
+    "rank_min": 7
+  },
+  "overall": {
+    "races": 1217,
+    "horses": 12396,
+    "cut_rate": 0.3110680864795095,
+    "cut_out_rate": 0.9385373443983402,
+    "winner_cut_rate": 0.023809523809523808,
+    "placer_cut_rate": 0.06487818231590474,
+    "avg_head_count": 10.212818405916188
+  },
+  "by_venue": [
+    {
+      "races": 60,
+      "horses": 648,
+      "cut_rate": 0.33487654320987653,
+      "cut_out_rate": 0.9539170506912442,
+      "winner_cut_rate": 0.016666666666666666,
+      "placer_cut_rate": 0.054945054945054944,
+      "avg_head_count": 10.85,
+      "course_name": "佐賀"
+    },
+    {
+      "races": 129,
+      "horses": 1477,
+      "cut_rate": 0.2728503723764387,
+      "cut_out_rate": 0.9478908188585607,
+      "winner_cut_rate": 0.007751937984496124,
+      "placer_cut_rate": 0.05426356589147287,
+      "avg_head_count": 11.472868217054264,
+      "course_name": "名古屋"
+    },
+    {
+      "races": 171,
+      "horses": 1712,
+      "cut_rate": 0.3405373831775701,
+      "cut_out_rate": 0.9365351629502573,
+      "winner_cut_rate": 0.023391812865497075,
+      "placer_cut_rate": 0.07212475633528265,
+      "avg_head_count": 10.04093567251462,
+      "course_name": "園田"
+    },
+    {
+      "races": 92,
+      "horses": 1108,
+      "cut_rate": 0.37545126353790614,
+      "cut_out_rate": 0.9375,
+      "winner_cut_rate": 0.03260869565217391,
+      "placer_cut_rate": 0.09420289855072464,
+      "avg_head_count": 12.076086956521738,
+      "course_name": "大井"
+    },
+    {
+      "races": 118,
+      "horses": 1178,
+      "cut_rate": 0.3140916808149406,
+      "cut_out_rate": 0.927027027027027,
+      "winner_cut_rate": 0.059322033898305086,
+      "placer_cut_rate": 0.07627118644067797,
+      "avg_head_count": 9.991525423728813,
+      "course_name": "川崎"
+    },
+    {
+      "races": 59,
+      "horses": 627,
+      "cut_rate": 0.26953748006379585,
+      "cut_out_rate": 0.9526627218934911,
+      "winner_cut_rate": 0.03389830508474576,
+      "placer_cut_rate": 0.04519774011299435,
+      "avg_head_count": 10.661016949152541,
+      "course_name": "浦和"
+    },
+    {
+      "races": 141,
+      "horses": 1427,
+      "cut_rate": 0.2592852137351086,
+      "cut_out_rate": 0.9567567567567568,
+      "winner_cut_rate": 0.02127659574468085,
+      "placer_cut_rate": 0.037825059101654845,
+      "avg_head_count": 10.134751773049645,
+      "course_name": "盛岡"
+    },
+    {
+      "races": 82,
+      "horses": 701,
+      "cut_rate": 0.2553495007132668,
+      "cut_out_rate": 0.9273743016759777,
+      "winner_cut_rate": 0.012195121951219513,
+      "placer_cut_rate": 0.052845528455284556,
+      "avg_head_count": 8.560975609756097,
+      "course_name": "笠松"
+    },
+    {
+      "races": 30,
+      "horses": 295,
+      "cut_rate": 0.288135593220339,
+      "cut_out_rate": 0.9294117647058824,
+      "winner_cut_rate": 0.0,
+      "placer_cut_rate": 0.06666666666666667,
+      "avg_head_count": 9.833333333333334,
+      "course_name": "船橋"
+    },
+    {
+      "races": 86,
+      "horses": 813,
+      "cut_rate": 0.3198031980319803,
+      "cut_out_rate": 0.9423076923076923,
+      "winner_cut_rate": 0.0,
+      "placer_cut_rate": 0.05813953488372093,
+      "avg_head_count": 9.476744186046512,
+      "course_name": "金沢"
+    },
+    {
+      "races": 164,
+      "horses": 1567,
+      "cut_rate": 0.3356732610082961,
+      "cut_out_rate": 0.9372623574144486,
+      "winner_cut_rate": 0.03048780487804878,
+      "placer_cut_rate": 0.06707317073170732,
+      "avg_head_count": 9.597560975609756,
+      "course_name": "門別"
+    },
+    {
+      "races": 85,
+      "horses": 843,
+      "cut_rate": 0.32977461447212336,
+      "cut_out_rate": 0.9100719424460432,
+      "winner_cut_rate": 0.023255813953488372,
+      "placer_cut_rate": 0.09803921568627451,
+      "avg_head_count": 9.964705882352941,
+      "course_name": "高知"
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "test_start": "20260101",
+  "test_end": "20260630",
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "jra_coverage": 0.5772,
+  "n_races": 6418,
+  "results": {
+    "base44(現行)": {
+      "HEAD_top1_win": 0.4621,
+      "HEAD_top1_place": 0.766,
+      "HEAD_winner_in_top3": 0.7778,
+      "HEAD_ndcg3": 0.6518,
+      "TAIL_bot3_out_rate": 0.8744,
+      "TAIL_winner_in_bot3": 0.034,
+      "TAIL_placer_in_bot30pct": 0.0843,
+      "ALL_spearman": 0.582,
+      "ALL_winner_pos": 0.1575,
+      "ALL_placer_pos": 0.2594
+    },
+    "base44 +JRA戦歴8": {
+      "HEAD_top1_win": 0.4624,
+      "HEAD_top1_place": 0.7643,
+      "HEAD_winner_in_top3": 0.78,
+      "HEAD_ndcg3": 0.6524,
+      "TAIL_bot3_out_rate": 0.8734,
+      "TAIL_winner_in_bot3": 0.0346,
+      "TAIL_placer_in_bot30pct": 0.0846,
+      "ALL_spearman": 0.5824,
+      "ALL_winner_pos": 0.1571,
+      "ALL_placer_pos": 0.2594
+    },
+    "base39(市場なし)": {
+      "HEAD_top1_win": 0.3964,
+      "HEAD_top1_place": 0.71,
+      "HEAD_winner_in_top3": 0.7191,
+      "HEAD_ndcg3": 0.6011,
+      "TAIL_bot3_out_rate": 0.8483,
+      "TAIL_winner_in_bot3": 0.0488,
+      "TAIL_placer_in_bot30pct": 0.1051,
+      "ALL_spearman": 0.5221,
+      "ALL_winner_pos": 0.1947,
+      "ALL_placer_pos": 0.2841
+    },
+    "base39 +JRA戦歴8": {
+      "HEAD_top1_win": 0.3998,
+      "HEAD_top1_place": 0.7093,
+      "HEAD_winner_in_top3": 0.7183,
+      "HEAD_ndcg3": 0.6018,
+      "TAIL_bot3_out_rate": 0.849,
+      "TAIL_winner_in_bot3": 0.0502,
+      "TAIL_placer_in_bot30pct": 0.1048,
+      "ALL_spearman": 0.5248,
+      "ALL_winner_pos": 0.1934,
+      "ALL_placer_pos": 0.2835
+    }
+  },
+  "paired_bootstrap_vs_base": {
+    "base44 +JRA戦歴8": {
+      "top1_win": [
+        0.00031,
+        -0.00187,
+        0.00265
+      ],
+      "top1_place": [
+        -0.00171,
+        -0.00374,
+        0.00031
+      ],
+      "spearman": [
+        0.00043,
+        -0.00021,
+        0.00104
+      ]
+    },
+    "base39 +JRA戦歴8": {
+      "top1_win": [
+        0.00343,
+        -0.00156,
+        0.00841
+      ],
+      "top1_place": [
+        -0.00078,
+        -0.00608,
+        0.00467
+      ],
+      "spearman": [
+        0.00275,
+        0.00122,
+        0.00425
+      ]
+    }
+  }
+}

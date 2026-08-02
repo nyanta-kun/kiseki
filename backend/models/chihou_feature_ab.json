@@ -1,0 +1,150 @@
+{
+  "test_start": "20260101",
+  "test_end": "20260630",
+  "out_threshold": 5,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "n_races": 6418,
+  "variants": {
+    "base44(現行)": 44,
+    "base44 -dead2": 42,
+    "base44 +new6": 50,
+    "base44 -dead2 +new6": 48,
+    "base44 serve時nk欠損": 44
+  },
+  "results": {
+    "base44(現行)": {
+      "HEAD_top1_win": 0.4624,
+      "HEAD_top1_place": 0.7661,
+      "HEAD_winner_in_top3": 0.7783,
+      "HEAD_ndcg3": 0.652,
+      "TAIL_bot3_out_rate": 0.8742,
+      "TAIL_winner_in_bot3": 0.0335,
+      "TAIL_placer_in_bot30pct": 0.0848,
+      "ALL_spearman": 0.5822,
+      "ALL_winner_pos": 0.1573,
+      "ALL_placer_pos": 0.2593
+    },
+    "base44 -dead2": {
+      "HEAD_top1_win": 0.462,
+      "HEAD_top1_place": 0.7646,
+      "HEAD_winner_in_top3": 0.7784,
+      "HEAD_ndcg3": 0.652,
+      "TAIL_bot3_out_rate": 0.8747,
+      "TAIL_winner_in_bot3": 0.0338,
+      "TAIL_placer_in_bot30pct": 0.0843,
+      "ALL_spearman": 0.5823,
+      "ALL_winner_pos": 0.1572,
+      "ALL_placer_pos": 0.2592
+    },
+    "base44 +new6": {
+      "HEAD_top1_win": 0.4642,
+      "HEAD_top1_place": 0.7655,
+      "HEAD_winner_in_top3": 0.7789,
+      "HEAD_ndcg3": 0.6524,
+      "TAIL_bot3_out_rate": 0.8739,
+      "TAIL_winner_in_bot3": 0.0346,
+      "TAIL_placer_in_bot30pct": 0.0851,
+      "ALL_spearman": 0.5824,
+      "ALL_winner_pos": 0.1571,
+      "ALL_placer_pos": 0.2592
+    },
+    "base44 -dead2 +new6": {
+      "HEAD_top1_win": 0.4632,
+      "HEAD_top1_place": 0.7658,
+      "HEAD_winner_in_top3": 0.778,
+      "HEAD_ndcg3": 0.6523,
+      "TAIL_bot3_out_rate": 0.8745,
+      "TAIL_winner_in_bot3": 0.0341,
+      "TAIL_placer_in_bot30pct": 0.0844,
+      "ALL_spearman": 0.5825,
+      "ALL_winner_pos": 0.1571,
+      "ALL_placer_pos": 0.2592
+    },
+    "base44 serve時nk欠損": {
+      "HEAD_top1_win": 0.4642,
+      "HEAD_top1_place": 0.7664,
+      "HEAD_winner_in_top3": 0.7784,
+      "HEAD_ndcg3": 0.6524,
+      "TAIL_bot3_out_rate": 0.8741,
+      "TAIL_winner_in_bot3": 0.0338,
+      "TAIL_placer_in_bot30pct": 0.0845,
+      "ALL_spearman": 0.5824,
+      "ALL_winner_pos": 0.1567,
+      "ALL_placer_pos": 0.2591
+    }
+  },
+  "paired_bootstrap_vs_base": {
+    "base44 -dead2": {
+      "top1_win": [
+        -0.00047,
+        -0.00265,
+        0.00171
+      ],
+      "top1_place": [
+        -0.00156,
+        -0.00343,
+        0.00031
+      ],
+      "spearman": [
+        7e-05,
+        -0.00063,
+        0.00074
+      ]
+    },
+    "base44 +new6": {
+      "top1_win": [
+        0.00171,
+        -0.00031,
+        0.00374
+      ],
+      "top1_place": [
+        -0.00062,
+        -0.00249,
+        0.00125
+      ],
+      "spearman": [
+        0.00025,
+        -0.00037,
+        0.00084
+      ]
+    },
+    "base44 -dead2 +new6": {
+      "top1_win": [
+        0.00078,
+        -0.00171,
+        0.00312
+      ],
+      "top1_place": [
+        -0.00031,
+        -0.00249,
+        0.00171
+      ],
+      "spearman": [
+        0.00035,
+        -0.00034,
+        0.00105
+      ]
+    },
+    "base44 serve時nk欠損": {
+      "top1_win": [
+        0.00171,
+        0.00016,
+        0.00343
+      ],
+      "top1_place": [
+        0.00031,
+        -0.00093,
+        0.00156
+      ],
+      "spearman": [
+        0.0002,
+        -0.00036,
+        0.00074
+      ]
+    }
+  }
+}

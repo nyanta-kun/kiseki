@@ -1,0 +1,135 @@
+{
+  "test_start": "20260101",
+  "test_end": "20260630",
+  "out_threshold": 5,
+  "n_features": 39,
+  "n_races": 6418,
+  "n_rows": 66421,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "results": {
+    "bin_top3(現行と同目的)": {
+      "HEAD_top1_win": 0.3995,
+      "HEAD_top1_place": 0.7105,
+      "HEAD_winner_in_top3": 0.72,
+      "HEAD_ndcg3": 0.6013,
+      "TAIL_bot3_out_rate": 0.8493,
+      "TAIL_winner_in_bot3": 0.0488,
+      "TAIL_placer_in_bot30pct": 0.1051,
+      "ALL_spearman": 0.5225,
+      "ALL_winner_pos": 0.1937,
+      "ALL_placer_pos": 0.2843
+    },
+    "bin_win": {
+      "HEAD_top1_win": 0.395,
+      "HEAD_top1_place": 0.6977,
+      "HEAD_winner_in_top3": 0.7199,
+      "HEAD_ndcg3": 0.5957,
+      "TAIL_bot3_out_rate": 0.8439,
+      "TAIL_winner_in_bot3": 0.048,
+      "TAIL_placer_in_bot30pct": 0.1068,
+      "ALL_spearman": 0.5076,
+      "ALL_winner_pos": 0.1924,
+      "ALL_placer_pos": 0.2875
+    },
+    "neg_p_out": {
+      "HEAD_top1_win": 0.3934,
+      "HEAD_top1_place": 0.7105,
+      "HEAD_winner_in_top3": 0.7141,
+      "HEAD_ndcg3": 0.5995,
+      "TAIL_bot3_out_rate": 0.8486,
+      "TAIL_winner_in_bot3": 0.0519,
+      "TAIL_placer_in_bot30pct": 0.1073,
+      "ALL_spearman": 0.5271,
+      "ALL_winner_pos": 0.1971,
+      "ALL_placer_pos": 0.2845
+    },
+    "reg_rank": {
+      "HEAD_top1_win": 0.3972,
+      "HEAD_top1_place": 0.7091,
+      "HEAD_winner_in_top3": 0.711,
+      "HEAD_ndcg3": 0.5994,
+      "TAIL_bot3_out_rate": 0.8494,
+      "TAIL_winner_in_bot3": 0.0513,
+      "TAIL_placer_in_bot30pct": 0.1081,
+      "ALL_spearman": 0.5335,
+      "ALL_winner_pos": 0.1981,
+      "ALL_placer_pos": 0.2849
+    },
+    "lambdarank": {
+      "HEAD_top1_win": 0.4068,
+      "HEAD_top1_place": 0.7116,
+      "HEAD_winner_in_top3": 0.7287,
+      "HEAD_ndcg3": 0.6054,
+      "TAIL_bot3_out_rate": 0.8498,
+      "TAIL_winner_in_bot3": 0.0441,
+      "TAIL_placer_in_bot30pct": 0.1034,
+      "ALL_spearman": 0.5234,
+      "ALL_winner_pos": 0.187,
+      "ALL_placer_pos": 0.2826
+    },
+    "blend reg-0.3out": {
+      "HEAD_top1_win": 0.3973,
+      "HEAD_top1_place": 0.7097,
+      "HEAD_winner_in_top3": 0.71,
+      "HEAD_ndcg3": 0.5991,
+      "TAIL_bot3_out_rate": 0.8494,
+      "TAIL_winner_in_bot3": 0.0511,
+      "TAIL_placer_in_bot30pct": 0.1076,
+      "ALL_spearman": 0.5331,
+      "ALL_winner_pos": 0.1977,
+      "ALL_placer_pos": 0.2844
+    },
+    "blend reg-0.5out": {
+      "HEAD_top1_win": 0.3958,
+      "HEAD_top1_place": 0.7085,
+      "HEAD_winner_in_top3": 0.7097,
+      "HEAD_ndcg3": 0.5986,
+      "TAIL_bot3_out_rate": 0.8497,
+      "TAIL_winner_in_bot3": 0.0516,
+      "TAIL_placer_in_bot30pct": 0.1075,
+      "ALL_spearman": 0.5328,
+      "ALL_winner_pos": 0.1976,
+      "ALL_placer_pos": 0.2844
+    },
+    "blend reg-0.8out": {
+      "HEAD_top1_win": 0.3967,
+      "HEAD_top1_place": 0.7102,
+      "HEAD_winner_in_top3": 0.711,
+      "HEAD_ndcg3": 0.5992,
+      "TAIL_bot3_out_rate": 0.8497,
+      "TAIL_winner_in_bot3": 0.0513,
+      "TAIL_placer_in_bot30pct": 0.1069,
+      "ALL_spearman": 0.5325,
+      "ALL_winner_pos": 0.1973,
+      "ALL_placer_pos": 0.2841
+    },
+    "blend reg+0.3t3-0.3out": {
+      "HEAD_top1_win": 0.3997,
+      "HEAD_top1_place": 0.7121,
+      "HEAD_winner_in_top3": 0.7133,
+      "HEAD_ndcg3": 0.6009,
+      "TAIL_bot3_out_rate": 0.8497,
+      "TAIL_winner_in_bot3": 0.0508,
+      "TAIL_placer_in_bot30pct": 0.1069,
+      "ALL_spearman": 0.5326,
+      "ALL_winner_pos": 0.1962,
+      "ALL_placer_pos": 0.2839
+    },
+    "prod_db(in-sample参考)": {
+      "HEAD_top1_win": 0.3967,
+      "HEAD_top1_place": 0.7172,
+      "HEAD_winner_in_top3": 0.7222,
+      "HEAD_ndcg3": 0.6063,
+      "TAIL_bot3_out_rate": 0.8481,
+      "TAIL_winner_in_bot3": 0.0513,
+      "TAIL_placer_in_bot30pct": 0.1049,
+      "ALL_spearman": 0.528,
+      "ALL_winner_pos": 0.1941,
+      "ALL_placer_pos": 0.281
+    }
+  }
+}
