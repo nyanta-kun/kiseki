@@ -4,8 +4,14 @@
 <dict>
   <key>Label</key>
   <string>com.kiseki.chihou-monthly-rollover</string>
-  <!-- 毎月1日 05:00。先月を一度きり評価 → 台帳記録 → 再学習まで。
-       コミット・デプロイ・backfill は人が実行する（レポート末尾に手順を出力）。 -->
+  <!-- 毎月1日 03:18。先月を一度きり評価 → 台帳記録 → 再学習まで。
+       コミット・デプロイ・backfill は人が実行する（レポート末尾に手順を出力）。
+
+       時刻の根拠: Mac がスリープしていると発火しないため、
+       `sudo pmset repeat wakeorpoweron MTWRFSU 03:15:00` の日次起床の直後に置く。
+       DBバックアップ(com.kiseki.db-backup)は 03:30〜04:15（実測45分）VPS へ
+       重い pg_dump を投げるので、その**前**に終わらせて競合を避ける
+       （本ジョブは evaluate+retrain で約2分）。 -->
   <key>ProgramArguments</key>
   <array>
     <string>/Users/ysuzuki/GitHub/kiseki/backend/.venv/bin/python</string>
@@ -16,8 +22,8 @@
   <key>StartCalendarInterval</key>
   <dict>
     <key>Day</key><integer>1</integer>
-    <key>Hour</key><integer>5</integer>
-    <key>Minute</key><integer>0</integer>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>18</integer>
   </dict>
   <key>StandardOutPath</key>
   <string>/Users/ysuzuki/GitHub/kiseki/logs/chihou_monthly_rollover.log</string>
