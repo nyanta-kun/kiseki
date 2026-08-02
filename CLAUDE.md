@@ -861,16 +861,36 @@ paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴*
 | 区分 | 期間 | 用途 |
 |---|---|---|
 | TRAIN | 〜 **2025-06-30** (`TRAIN_END`) | 学習のみ |
-| VAL | **2025-07-01 〜 2026-06-30** | 探索・A/B を繰り返してよい（既に6回以上使われ焼けている） |
-| TEST | **2026-07-01 〜** (`TEST_START`) | 一度きり評価。使ったら `record_test_usage()` で台帳に記録 |
+| VAL | **2025-07-01 〜 TEST_START の前日** | 探索・A/B を繰り返してよい（既に6回以上使われ焼けている） |
+| TEST | **当月1日 〜** (`TEST_START`・月次ローリング) | 一度きり評価。使ったら `record_test_usage()` で台帳に記録 |
+
+**TEST_START は「当月1日」で月次ローリング**（2026-08-03 に固定値 20260701 から変更）。
+固定すると学習終端も固定されモデルが古くなるため、日付から導いて毎月自動で前進させる。
+`CHIHOU_TEST_START=YYYYMMDD` で固定可（過去分析の再現用）。VAL_END は TEST_START の前日に追随。
+
+**月次サイクル**（`scripts/chihou_monthly_rollover.py` / LaunchAgent
+`com.kiseki.chihou-monthly-rollover` が毎月1日 05:00 に実行）:
+
+| フェーズ | 内容 | 自動 |
+|---|---|---|
+| `evaluate` | **先月**を一度きり評価し台帳へ記録。DB の指数値は前回サイクルの backfill（先々月までで学習したモデル）が書いたものなので**この時点では honest** | ✅ |
+| `retrain` | 先月までを含めて再学習。旧モデルは `data/backup/model_YYYYMMDD/` へ退避 | ✅ |
+| `backfill` | v13 を全期間再計算し DB を新モデルへ揃える | ❌ **人が実行** |
+
+- **順序に意味がある**。先に再学習すると評価が in-sample になる
+- ⚠️ **`backfill` はデプロイ後に実行する**。先に走らせると DB=新モデル / live=旧モデルの
+  新旧混在になる（`feedback_full_period_migration`）
+- コミット・デプロイ・backfill を自動化していないのは、モデル差し替えとデプロイが
+  外向きの操作だから。レポート（`backend/docs/monthly_rollover/YYYYMM.md`）末尾に手順が出る
+- **指数1位の勝率は季節性が強い**（7月は 2024 41.3% / 2025 43.7% / 2026 42.2% なのに
+  1月は 45.6〜49.7%）。前月を冬場の窓と比べて「劣化した」と誤読しないこと。
+  レポートは同月比較の表を自動で付ける
 
 - **本番モデルの学習終端は `TRAIN_DATA_END` = `TEST_START` の前日**（`train_chihou_market_lgb.py`)。
   2026-08-03 以前は `"20260706"` がハードコードされており **TEST 期間の 257レースを学習に含んでいた**ため是正した
 - `TRAIN_DATA_START = "20230101"` は**宣言値で実効は 2024-01-01**。学習クエリが
   `calculated_indices version>=9` を要求する一方サブ指数が 2024-01 からしか無く、2023年は0行
 - 再学習は `train_chihou_market_lgb.py --refit-only`（A/B 判定を経由せず2ヘッドを学習・保存）
-- ⚠️ TEST_START を動かさない限りモデルは古くなる。**TEST を消費して評価を終えたら
-  TEST_START を進めたうえで再学習する**こと
 - 検証スクリプト群（`chihou_rank_quality_review.py` 等）の `test` は
   **2026-01〜06 = プロトコル上は VAL の一部**。TEST とは別物なので混同しないこと
 

@@ -18,18 +18,48 @@
 from __future__ import annotations
 
 import datetime
+import os
 from pathlib import Path
 
-# 学習に使ってよい期間の上限（この日以前のデータのみで学習する）
+# 学習に使ってよい期間の上限（この日以前のデータのみで学習する）。
+# 検証スクリプトが honest 再学習をするときの固定境界。ここは動かさない。
 TRAIN_END: str = "20250630"
 
-# 条件探索・A/Bスイープに使ってよい期間（2026-07-23監査時点で「既に焼けている」区間）
+# 条件探索・A/Bスイープに使ってよい期間の開始日
+# （2026-07-23監査時点で「既に焼けている」区間）
 VAL_START: str = "20250701"
-VAL_END: str = "20260630"
 
-# 一度きり評価用の test 期間。2026-07-23時点で未使用（walk-forward運用開始日）。
-# ここを条件探索・閾値スイープに使い回さないこと。
-TEST_START: str = "20260701"
+
+def _default_test_start(today: datetime.date | None = None) -> str:
+    """一度きり評価用 test 期間の開始日 = **当月1日**。
+
+    2026-08-03 に固定値 "20260701" から月次ローリングへ変更した。
+
+    Why:
+      TEST_START を固定すると、本番モデルの学習終端（= TEST_START の前日）も
+      固定され、**モデルが月を追うごとに古くなる**。かといって都度手で動かすと
+      忘れる。「当月は未使用のまま残し、先月までは学習に使う」を日付から導けば
+      状態を持たずに月次で自動更新できる。
+
+    運用（`scripts/chihou_monthly_rollover.py` が毎月1日に実行）:
+      1. 先月を **その時点でデプロイ済みのモデル**で一度きり評価し台帳に記録
+         （そのモデルは先々月までで学習されているので評価は honest）
+      2. 先月までを含めて再学習
+      3. デプロイ後に v13 を再バックフィル
+
+    再現性のため `CHIHOU_TEST_START=YYYYMMDD` で固定できる
+    （過去の分析を当時の境界で再現したいときに使う）。
+    """
+    d = today or datetime.date.today()
+    return d.replace(day=1).strftime("%Y%m%d")
+
+
+TEST_START: str = os.getenv("CHIHOU_TEST_START") or _default_test_start()
+
+# 探索に使ってよい期間の終わり = TEST_START の前日（TEST_START に追随して伸びる）
+VAL_END: str = (
+    datetime.datetime.strptime(TEST_START, "%Y%m%d").date() - datetime.timedelta(days=1)
+).strftime("%Y%m%d")
 
 # VAL_START〜today を使い回した過去の意思決定履歴（2026-07-23 監査時点で判明分・網羅ではない）
 BURNED_DECISIONS: list[tuple[str, str]] = [
@@ -59,7 +89,7 @@ def record_test_usage(decision: str, script: str, note: str = "") -> None:
     if not _LEDGER_PATH.exists():
         _LEDGER_PATH.write_text(
             "# chihou TEST_START 使用履歴台帳\n\n"
-            f"TEST_START={TEST_START} 以降のデータを採否判断に使った記録。"
+            "TEST_START（当月1日・月次ローリング）以降のデータを採否判断に使った記録。"
             "同一期間を条件探索に使い回さないための追跡台帳。\n\n"
         )
     with _LEDGER_PATH.open("a") as f:

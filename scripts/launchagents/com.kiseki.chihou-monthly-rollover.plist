@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.chihou-monthly-rollover</string>
+  <!-- 毎月1日 05:00。先月を一度きり評価 → 台帳記録 → 再学習まで。
+       コミット・デプロイ・backfill は人が実行する（レポート末尾に手順を出力）。 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ysuzuki/GitHub/kiseki/backend/.venv/bin/python</string>
+    <string>scripts/chihou_monthly_rollover.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/backend</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key><integer>1</integer>
+    <key>Hour</key><integer>5</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/chihou_monthly_rollover.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/chihou_monthly_rollover.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
