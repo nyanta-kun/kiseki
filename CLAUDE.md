@@ -87,6 +87,12 @@ class IndexCalculator(ABC):
 | `0B31` | 速報単複枠オッズ（O1レコード）| レースキー16文字 |
 | `0B15` | 速報レース情報（出走取消・騎手変更等）| YYYYMMDD |
 
+- **0B12 は RA/SE/HR を返す。RA には馬場状態・天候・ラップ・前半3F が入っている**
+  （2026-08-02 以前は SE/HR しか拾っておらず、`races.condition` が週次の蓄積系取込まで
+  NULL のままだったため当日の `going_pedigree_index` が全馬ニュートラルになっていた）
+- 発走前 RA（データ区分 1:出走馬名表 / 2:出馬表）は馬場状態等が空。`race_importer` は
+  condition/weather/first_3f/last_3f_race/lap_times/finishers_count を COALESCE で
+  **非 NULL のときだけ更新**し、確定値を空データで潰さないようにしている
 - O1レコードには単勝・複勝・枠連の3種が含まれる（O2=馬連、O3=ワイド、O4=枠連 ではない）
 - 複勝オッズは最低倍率（low）を使用（最高倍率は参考値）
 - realtimeループは約30秒ごとに全36レースキーで各DataSpecをポーリング
