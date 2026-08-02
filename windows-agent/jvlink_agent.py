@@ -906,7 +906,16 @@ def run_realtime_monitor(jv) -> None:
                 result_records = fetch_realtime_data(jv, RT_RACE_INFO, result_key)
                 for rec in result_records:
                     rec_id = rec.get("rec_id")
-                    if rec_id == "SE":
+                    if rec_id == "RA":
+                        # 成績確定後の RA には馬場状態・天候・ラップ・前半3F が入っている。
+                        # 取り込まないと keiba.races.condition は週次の蓄積系取込
+                        # (--mode recent) まで NULL のままになり、当日の指数算出で
+                        # going_pedigree_index が全馬ニュートラルになる（2026-08-02 判明）。
+                        key = rec["data"][:30]
+                        if key not in seen_results and key not in pending_result_keys:
+                            pending_result_keys.add(key)
+                            new_results.append(rec)
+                    elif rec_id == "SE":
                         key = rec["data"][:30]  # 先頭30文字でユニーク識別
                         if key not in seen_results and key not in pending_result_keys:
                             pending_result_keys.add(key)
@@ -921,7 +930,7 @@ def run_realtime_monitor(jv) -> None:
                             new_payouts.append(rec)
             if new_results:
                 batch_size = 50
-                logger.info(f"成績取得: {len(new_results)}件 (SE) → /api/import/races へ送信（バッチ{batch_size}件）")
+                logger.info(f"成績取得: {len(new_results)}件 (RA/SE) → /api/import/races へ送信（バッチ{batch_size}件）")
                 result_keys_list = [rec["data"][:30] for rec in new_results]
                 for i in range(0, len(new_results), batch_size):
                     with _wd_lock:

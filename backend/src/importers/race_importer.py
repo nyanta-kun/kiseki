@@ -10,7 +10,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -311,10 +311,26 @@ class RaceImporter:
             "prev_grade_code",
             "prev_post_time",
         ]
+        # 発走前 RA（データ区分 1:出走馬名表 / 2:出馬表）は馬場状態・天候・ラップが空。
+        # そのまま上書きすると、成績確定後 RA で入った値を NULL に戻してしまうため、
+        # 「レース後にしか確定しない列」は COALESCE で非 NULL のときだけ更新する。
+        # （2026-08-02: realtime 0B12 の RA 取り込みを追加した際に必要になったガード）
+        _POST_RACE_ONLY_COLS = frozenset({
+            "condition", "weather", "first_3f", "last_3f_race", "lap_times",
+            "finishers_count",
+        })
         stmt = insert(Race).values(values)
+        set_ = {
+            col: (
+                func.coalesce(stmt.excluded[col], Race.__table__.c[col])
+                if col in _POST_RACE_ONLY_COLS
+                else stmt.excluded[col]
+            )
+            for col in update_cols
+        }
         returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["jravan_race_id"],
-            set_={col: stmt.excluded[col] for col in update_cols},
+            set_=set_,
         ).returning(Race.id, Race.jravan_race_id)
         for race_id, jravan_id in (await self.db.execute(returning_stmt)):
             self._race_cache[jravan_id] = race_id
