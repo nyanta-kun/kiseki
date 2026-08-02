@@ -891,13 +891,9 @@ paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴*
 DBバックアップ（`com.kiseki.db-backup`）は **03:30〜04:15（実測45分）** VPS へ重い
 `pg_dump` を投げるので、その**前**に終わらせて競合を避ける（本ジョブは約2分）。
 
-```bash
-# 深夜の自動起床（DBバックアップと月次ローリングの両方をカバーする。要 sudo・1回だけ）
-sudo pmset repeat wakeorpoweron MTWRFSU 03:15:00
-pmset -g sched          # 設定確認
-```
-⚠️ `pmset repeat` は**繰り返しスケジュールを1つしか持てない**。別の用途で上書きすると
-バックアップとローリングの両方が起床しなくなる。plist は `scripts/launchagents/` に複製あり。
+自動起床は **2026-08-03 に設定済み**（`sudo pmset repeat wakeorpoweron MTWRFSU 03:15:00`）。
+詳細と注意点は「DB 自動バックアップ運用 › Mac スリープ時」を参照。
+plist は `scripts/launchagents/` に複製あり。
 
 - **本番モデルの学習終端は `TRAIN_DATA_END` = `TEST_START` の前日**（`train_chihou_market_lgb.py`)。
   2026-08-03 以前は `"20260706"` がハードコードされており **TEST 期間の 257レースを学習に含んでいた**ため是正した
@@ -1074,10 +1070,17 @@ tail -30 ~/kiseki-backups/backup.log          # 実行ログ
 
 VPS は PostgreSQL 16.13 / dump 形式 v1.15。Mac の `pg_restore` は **16 系必須** (`/opt/homebrew/opt/postgresql@16/bin/pg_restore`)。14 系では `unsupported version` エラー。
 
-### Mac スリープ時
+### Mac スリープ時（**2026-08-03 設定済み**）
 
-`StartCalendarInterval` 単独では Mac スリープ中の発火はスキップされる。深夜稼働必須なら:
+`launchd` はスリープで逃した `StartCalendarInterval` を復帰時に実行する（cron と違い
+スキップはしない）が、**電源オフだと走らない**。そのため日次の自動起床を設定してある:
 
 ```bash
-sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00
+sudo pmset repeat wakeorpoweron MTWRFSU 03:15:00   # 設定済み
+pmset -g sched                                     # 確認
 ```
+
+深夜の実行チェーン: **03:15 起床 → 03:18 地方の月次ローリング（毎月1日）→ 03:30 本バックアップ（毎日・約45分）**。
+
+⚠️ `pmset repeat` は**繰り返しスケジュールを1つしか持てない**。別の時刻で上書きすると
+バックアップと月次ローリングの**両方**が起床しなくなる。変更するときは両方を見ること。
