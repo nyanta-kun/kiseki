@@ -856,6 +856,24 @@ v12（44特徴）が過去に一度も適用されていなかった。honest �
 paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴**で、market 5本を外すと
 44特徴モデルも v10 と同水準（0.3995）まで落ちる。
 
+### 学習・検証・テスト期間（`src/chihou_protocol.py` が正）
+
+| 区分 | 期間 | 用途 |
+|---|---|---|
+| TRAIN | 〜 **2025-06-30** (`TRAIN_END`) | 学習のみ |
+| VAL | **2025-07-01 〜 2026-06-30** | 探索・A/B を繰り返してよい（既に6回以上使われ焼けている） |
+| TEST | **2026-07-01 〜** (`TEST_START`) | 一度きり評価。使ったら `record_test_usage()` で台帳に記録 |
+
+- **本番モデルの学習終端は `TRAIN_DATA_END` = `TEST_START` の前日**（`train_chihou_market_lgb.py`)。
+  2026-08-03 以前は `"20260706"` がハードコードされており **TEST 期間の 257レースを学習に含んでいた**ため是正した
+- `TRAIN_DATA_START = "20230101"` は**宣言値で実効は 2024-01-01**。学習クエリが
+  `calculated_indices version>=9` を要求する一方サブ指数が 2024-01 からしか無く、2023年は0行
+- 再学習は `train_chihou_market_lgb.py --refit-only`（A/B 判定を経由せず2ヘッドを学習・保存）
+- ⚠️ TEST_START を動かさない限りモデルは古くなる。**TEST を消費して評価を終えたら
+  TEST_START を進めたうえで再学習する**こと
+- 検証スクリプト群（`chihou_rank_quality_review.py` 等）の `test` は
+  **2026-01〜06 = プロトコル上は VAL の一部**。TEST とは別物なので混同しないこと
+
 - バックフィル: `scripts/inference_chihou_v13.py --start 20240101 --end YYYYMMDD`
   - `race_results` は **LEFT JOIN**（出走取消・失格も母集団に含む）。本番 `rank_by_hn` と
     母集団を揃えるため。学習用 `BASE_QUERY` は完走馬のみなので流用してはいけない

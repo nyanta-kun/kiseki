@@ -34,8 +34,8 @@
   モデルが独立に学習できる。
 
 ■ OOS 評価（学習・検証・テスト汚染防止）
-  cutoff1: train ≤ 20250630  / test 20250701〜20260706
-  cutoff2: train ≤ 20241231  / test 20250101〜20260706
+  cutoff1: train ≤ 20250630  / test 20250701〜TRAIN_DATA_END
+  cutoff2: train ≤ 20241231  / test 20250101〜TRAIN_DATA_END
   5 seeds × 2 cutoffs = 10 評価点 (deterministic=True で seed 再現)
 
 ■ 3カテゴリ評価指標
@@ -56,6 +56,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import lightgbm as lgb
@@ -72,6 +73,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(_root.parent / ".env")
 
 # 既存 prod スクリプトから履歴系特徴計算を再利用
+from src.chihou_protocol import TEST_START  # noqa: E402
 from scripts.train_chihou_prod_lgb import (  # noqa: E402
     CHIHOU_V9_VERSION,
     FEATURES as PROD_FEATURES,
@@ -96,14 +98,29 @@ MODELS_DIR.mkdir(exist_ok=True)
 # ─────────────────────────────────────────────
 # OOS 評価期間定義（データ汚染防止）
 # ─────────────────────────────────────────────
+# 学習開始日。**宣言上は 2023-01-01 だが実効は 2024-01-01**。
+# 学習クエリが chihou.calculated_indices の version>=9 を要求する一方、
+# サブ指数は 2024-01-01 以降しか存在しないため、2023年は1行も拾えない
+# （実測 2024年 133,916行 / 2025年 136,915行 / 2023年 0行）。
+TRAIN_DATA_START = "20230101"
+
+# 学習に使ってよい最終日 = TEST_START の前日。
+# 2026-08-03 まで終端が "20260706" にハードコードされており、
+# TEST_START(20260701) を **6日超過**して TEST 期間の 257レース（2,648行）を
+# 学習に含めていた。一度きり評価用の TEST を汚さないよう protocol から導出して打ち切る。
+# ※ 代償として直近データがモデルに入らない。TEST を消費して評価を終えたら
+#    TEST_START を進めたうえで再学習すること（TEST_START を動かさない限り古くなる）。
+TRAIN_DATA_END = (
+    datetime.strptime(TEST_START, "%Y%m%d") - timedelta(days=1)
+).strftime("%Y%m%d")
+
 # cutoff: モデルの学習終了日。この日以降のデータはテスト期間（学習に一切使わない）
 CUTOFFS = [
-    {"cutoff": "20250630", "test_start": "20250701", "test_end": "20260706",
+    {"cutoff": "20250630", "test_start": "20250701", "test_end": TRAIN_DATA_END,
      "label": "cut1(〜25/06)"},
-    {"cutoff": "20241231", "test_start": "20250101", "test_end": "20260706",
+    {"cutoff": "20241231", "test_start": "20250101", "test_end": TRAIN_DATA_END,
      "label": "cut2(〜24/12)"},
 ]
-TRAIN_DATA_START = "20230101"  # 全期間の学習開始日
 SEEDS = [0, 1, 2, 3, 4]       # 5 seeds for robustness
 NUM_ROUNDS = 400
 
@@ -495,6 +512,60 @@ def train_binary_control(X_tr: np.ndarray, y_tr_bin: np.ndarray,
 # メイン: Option A — binary 30特徴 vs binary 35特徴（+市場乖離）A/B テスト
 # ─────────────────────────────────────────────
 
+def save_production_models(df_all_raw: pd.DataFrame) -> None:
+    """TRAIN_DATA_START〜TRAIN_DATA_END で本番2ヘッドを学習して保存する。
+
+    A/B 判定（市場乖離特徴の採否）とは独立した処理。`--refit-only` から呼ぶと
+    A/B を回さずに再学習だけできる。特徴量パイプラインは A/B と共通なので
+    train/serve parity は維持される。
+    """
+    logger.info("全期間モデルを学習して保存中 (44特徴, binary is_top3)...")
+    df_all_s = df_all_raw.sort_values("race_id").reset_index(drop=True)
+    fp_all = pd.to_numeric(df_all_s["finish_position"], errors="coerce")
+    y_all = (fp_all <= 3).astype(int).values
+    x_all = df_all_s[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
+
+    final_model = train_binary_control(x_all, y_all, seed=0)
+    out_path = MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"
+    final_model.save_model(str(out_path))
+    logger.info("保存完了: %s", out_path)
+
+    importance = sorted(
+        zip(ALL_FEATURES, final_model.feature_importance(importance_type="gain")),
+        key=lambda x: -x[1],
+    )
+    print("\n  特徴量重要度 top15 (gain):")
+    for feat, gain in importance[:15]:
+        print(f"    {feat:<28} {gain:>10,}")
+
+    result_json = {
+        "model": "chihou_prod_lgb.v12_44feat",
+        "objective": "binary",
+        "head": "is_top3",
+        "features": ALL_FEATURES,
+        "market_features": MARKET_FEATURES,
+        "n_features": len(ALL_FEATURES),
+        "train_range": [TRAIN_DATA_START, TRAIN_DATA_END],
+        "train_end_reason": f"TEST_START({TEST_START}) の前日で打ち切り",
+        "effective_train_start": "20240101",
+        "n_rows": int(len(df_all_s)),
+        "n_races": int(df_all_s["race_id"].nunique()),
+        "seeds": SEEDS,
+        "feature_importance": [{"feature": f, "gain": int(g)} for f, g in importance],
+    }
+    with open(MODELS_DIR / "chihou_prod_lgb.v12_44feat_metrics.json", "w") as fh:
+        json.dump(result_json, fh, indent=2, ensure_ascii=False)
+    print(f"\n  モデル保存完了: {out_path}")
+
+    logger.info("win ヘッドを全期間学習して保存中 (44特徴, is_win)...")
+    y_win = (fp_all == 1).astype(int).values
+    win_model = train_binary_control(x_all, y_win, seed=0, feature_names=ALL_FEATURES)
+    win_out = MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"
+    win_model.save_model(str(win_out))
+    logger.info("win モデル保存完了: %s", win_out)
+    print(f"  win モデル保存完了: {win_out}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description="地方競馬 市場乖離特徴追加 A/B テスト (binary 30 vs 35特徴)"
@@ -503,6 +574,9 @@ def main() -> None:
                    help="A/B で 35特徴が優位な場合に本番モデルを保存する")
     p.add_argument("--cutoff-index", type=int, default=None, choices=[0, 1],
                    help="0 or 1 で cutoff を 1 つだけ指定（デバッグ用）")
+    p.add_argument("--refit-only", action="store_true",
+                   help="A/B を回さず本番モデルの再学習・保存だけ行う"
+                        "（学習期間の変更や上流データ復旧後の作り直し用）")
     args = p.parse_args()
 
     dsn = (
@@ -518,8 +592,9 @@ def main() -> None:
     ct_tables = build_ct_tables(conn)  # Phase6 CT9特徴用（conn close 前に構築）
 
     # ─── 全期間データを一括取得 ───
-    logger.info("全期間データ取得: %s 〜 %s", TRAIN_DATA_START, "20260706")
-    df_all_raw = fetch(conn, TRAIN_DATA_START, "20260706")
+    logger.info("全期間データ取得: %s 〜 %s (TEST_START=%s の前日で打ち切り)",
+                TRAIN_DATA_START, TRAIN_DATA_END, TEST_START)
+    df_all_raw = fetch(conn, TRAIN_DATA_START, TRAIN_DATA_END)
     conn.close()
     logger.info("  → %d 馬行 / %d レース", len(df_all_raw), df_all_raw["race_id"].nunique())
 
@@ -552,6 +627,11 @@ def main() -> None:
     ]
 
     all_results: list[dict] = []
+    if args.refit_only:
+        logger.info("--refit-only: A/B をスキップして本番モデルを再学習する")
+        save_production_models(df_all_raw)
+        return
+
     cutoff_list = CUTOFFS if args.cutoff_index is None else [CUTOFFS[args.cutoff_index]]
     sep = "=" * 76
 
@@ -681,49 +761,7 @@ def main() -> None:
         if all_pass:
             print("  → 採用基準クリア。--save-model で本番モデルを保存可能。")
             if args.save_model:
-                logger.info("全期間モデルを学習して保存中 (35特徴, binary)...")
-                df_all_s = df_all_raw.sort_values("race_id").reset_index(drop=True)
-                fp_all   = pd.to_numeric(df_all_s["finish_position"], errors="coerce")
-                y_all    = (fp_all <= 3).astype(int).values
-                X_all_35 = df_all_s[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
-                final_model = train_binary_control(X_all_35, y_all, seed=0)
-                out_path = MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"
-                final_model.save_model(str(out_path))
-                logger.info("保存完了: %s", out_path)
-
-                importance = sorted(
-                    zip(ALL_FEATURES, final_model.feature_importance(importance_type="gain")),
-                    key=lambda x: -x[1]
-                )
-                print("\n  特徴量重要度 top15 (gain):")
-                for feat, gain in importance[:15]:
-                    print(f"    {feat:<28} {gain:>10,}")
-
-                result_json = {
-                    "model": "chihou_prod_lgb.v12_44feat",
-                    "objective": "binary",
-                    "head": "is_top3",
-                    "features": ALL_FEATURES,
-                    "market_features": MARKET_FEATURES,
-                    "n_features": len(ALL_FEATURES),
-                    "train_range": [TRAIN_DATA_START, "20260706"],
-                    "seeds": SEEDS,
-                    "feature_importance": [
-                        {"feature": f, "gain": int(g)} for f, g in importance
-                    ],
-                }
-                with open(MODELS_DIR / "chihou_prod_lgb.v12_44feat_metrics.json", "w") as fh:
-                    json.dump(result_json, fh, indent=2, ensure_ascii=False)
-                print(f"\n  モデル保存完了: {out_path}")
-
-                # win ヘッド (is_win) も35特徴で保存
-                logger.info("win ヘッドを全期間学習して保存中 (35特徴, is_win)...")
-                y_win = (fp_all == 1).astype(int).values
-                win_model = train_binary_control(X_all_35, y_win, seed=0, feature_names=ALL_FEATURES)
-                win_out = MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"
-                win_model.save_model(str(win_out))
-                logger.info("win モデル保存完了: %s", win_out)
-                print(f"  win モデル保存完了: {win_out}")
+                save_production_models(df_all_raw)
         else:
             print("  → 採用基準未達。市場乖離特徴の追加効果は確認できず。現行モデル維持。")
 

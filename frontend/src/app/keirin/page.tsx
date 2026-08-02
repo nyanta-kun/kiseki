@@ -79,6 +79,37 @@ function parseCandCombo(pred: string | null): { p1: string; p2: string; thirds: 
   return { p1: parts[0], p2: parts[1], thirds };
 }
 
+// 三連複2軸総流しの「相手（3着候補）」を複勝(3着内)予測確率の降順に並べ替える。
+//
+// keirin 側が組み立てる並びは車番昇順で優先順位の意味を持たない
+// （write_candidates_wt.py::_third_list / notify_prerace_wt.py::_u_third_list）。
+// 2軸固定の三連複は「残り1枠を誰が埋めるか」なので、各車の pred_top3_pct 降順が
+// そのまま買い目ごとの的中寄与の順になる。購入は均等のため並び順は買い方に影響せず
+// 表示上の情報付与のみ（点数・組み合わせの中身は不変）。
+// EntryTable のロジットシフト補正は単調変換のため順位は生確率のままで一致する。
+// 確率欠損車は末尾へ回し、同値・全欠損時は元の車番昇順を保つ。
+function sortThirdsByTop3(thirds: number[], entries: KeirinPick["entries"]): number[] {
+  const top3 = new Map(entries.map((e) => [e.frame_no, e.pred_top3_pct]));
+  return thirds
+    .map((car, i) => ({ car, i, p: top3.get(car) ?? null }))
+    .sort((a, b) => {
+      if (a.p == null && b.p == null) return a.i - b.i;
+      if (a.p == null) return 1;
+      if (b.p == null) return -1;
+      return b.p - a.p || a.i - b.i;
+    })
+    .map((x) => x.car);
+}
+
+// pred_combo「a1=a2-t1,t2,..」の相手部分を sortThirdsByTop3 で並べ替えて返す。
+// 旧ランクの別形式（S1の "p1-p2-t.."・旧Aの "axis>t.."）や欠損はそのまま返す。
+function reorderComboByTop3(pred: string, entries: KeirinPick["entries"]): string {
+  const m = /^(\d+)=(\d+)-(\d+(?:,\d+)*)$/.exec(pred.trim());
+  if (!m) return pred;
+  const thirds = m[3].split(",").map(Number);
+  return `${m[1]}=${m[2]}-${sortThirdsByTop3(thirds, entries).join(",")}`;
+}
+
 // ガミ落ち = オッズ条件（三連複 <閾値倍）で購入不成立になった候補。
 // 未購入行は採点で全て miwokuri=TRUE になるため（2026-07-08 正本化）、
 // 見送り行は prerace_gami<閾値 を「ガミ落ち」として灰色の見送りと区別する。
@@ -671,7 +702,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 text-xs">
               <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">参考買い目</span>
               <span className="text-gray-500 dark:text-gray-400 tabular-nums">
-                3連複: {pick.hypo_axis1}={pick.hypo_axis2}-{(pick.hypo_others ?? []).join(",")}
+                3連複: {pick.hypo_axis1}={pick.hypo_axis2}-{sortThirdsByTop3(pick.hypo_others ?? [], pick.entries).join(",")}
                 {" "}({(pick.hypo_others ?? []).length}点)
               </span>
             </div>
@@ -729,7 +760,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // （API側の_VALID_PICK_RANKSからもSEVEN_S1は除外済みのため到達し得ない）。
   const betTypeLabel = "3連複";
   const comboLabel = pick.pred_combo
-    ? `${betTypeLabel}: ${pick.pred_combo}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
+    ? `${betTypeLabel}: ${reorderComboByTop3(pick.pred_combo, pick.entries)}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
     : undefined;
 
   const startTime = fmtStartAt(pick.start_at);
