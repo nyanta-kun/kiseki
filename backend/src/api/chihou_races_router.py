@@ -23,7 +23,12 @@ from ..db.chihou_models import (
 from ..db.session import get_db
 from ..indices.buy_signal import chihou_buy_signal, chihou_is_place_bet, chihou_is_sweet_spot
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
-from ..indices.confidence import calculate_race_confidence, calculate_recommend_rank
+from ..indices.confidence import (
+    CHIHOU_DISPERSION_FULL_SCORE,
+    CHIHOU_GAP_FULL_SCORE,
+    calculate_race_confidence,
+    calculate_recommend_rank,
+)
 from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
 from .ws_manager import chihou_results_manager
 
@@ -312,6 +317,8 @@ async def get_chihou_races_by_date(
             ci_list,
             race_obj.head_count if race_obj else None,
             wp_list or None,
+            gap_full_score=CHIHOU_GAP_FULL_SCORE,
+            dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
         )
         top_wp = conf.get("win_prob_top")
         win_odds = latest_win_odds.get(rid)
@@ -541,7 +548,13 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         ci_list = [h.composite_index for h in horses]
         wp_list = [h.win_probability for h in horses if h.win_probability is not None]
 
-        conf = calculate_race_confidence(ci_list, race_obj.head_count if race_obj else None, wp_list or None)
+        conf = calculate_race_confidence(
+            ci_list,
+            race_obj.head_count if race_obj else None,
+            wp_list or None,
+            gap_full_score=CHIHOU_GAP_FULL_SCORE,
+            dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
+        )
 
         top_horse = horses[0]  # composite_index 降順ソート済み
         top_win_odds: float | None = win_odds_map.get(str(top_horse.horse_number)) if top_horse.horse_number is not None else None
@@ -671,7 +684,13 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         if entries:
             ci_list = [e[0] for e in entries]
             wp_list = [float(e[1]) for e in entries if e[1] is not None]
-            conf = calculate_race_confidence(ci_list, race.head_count, wp_list or None)
+            conf = calculate_race_confidence(
+                ci_list,
+                race.head_count,
+                wp_list or None,
+                gap_full_score=CHIHOU_GAP_FULL_SCORE,
+                dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
+            )
             top_hn = max(entries, key=lambda x: x[0])[2]
             top_win_odds: float | None = None
             if top_hn is not None:

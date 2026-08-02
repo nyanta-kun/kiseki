@@ -822,6 +822,76 @@ Web の「足切り候補」グレーアウトは **総合指数のトップ差�
 
 詳細: memory `recommendations_feature.md` / `jra_signal_verification.md`
 
+## 地方競馬 総合指数 v13（min-max 廃止 + 全期間バックフィル・2026-08-02）
+
+`CHIHOU_COMPOSITE_VERSION = 13`。**モデルと44特徴は v12 と完全に同一**
+（`chihou_prod_lgb.v12_44feat.txt` をそのまま使用）。変えたのは 2 点だけ。
+
+**① composite のスケール（min-max 15-85 を廃止）**
+```
+composite = clip(50 + CHIHOU_INDEX_SCALE(=40) * (p_top3 − レース内平均), 0, 100)
+```
+- 旧方式はレース内 min-max → 15〜85 固定のため、**全レースで幅がぴったり 70.00（sd=0.000）**
+  になり、`confidence.calculate_race_confidence` の
+  **分散スコア(25点)が 100% のレースで満点＝完全な定数**・指数差スコア(40点)も 63% が満点。
+  100点中65点が情報を失い、**97% のレースが tier S** に張り付いていた（DB 実測 6,496R）
+- **min-max は禁止**。JRA v27 も同じ理由で禁止している（memory `jra_rank_quality_redesign_2026_08_02`）
+- tier 較正は表示スケールと分離し `confidence.CHIHOU_GAP_FULL_SCORE=12.0` /
+  `CHIHOU_DISPERSION_FULL_SCORE=16.0` で吸収する。
+  **片方（C か閾値）だけ変えると tier 分布が壊れる。必ず比例させること**
+- honest 検証（2026-01〜06 / 6,418R）の tier 分布と1位馬勝率:
+  旧 S 97%/A 3%/B 0%/C 0%（分離不能） → 新 **S 22%/A 45%/B 26%/C 6%（S 58.2% → C 33.2%・単調）**
+- **min-max も中心化線形も単調変換なのでレース内の順位は一切変わらない**。変わるのは tier だけ
+
+**② 全期間バックフィル（v10 → v13）**
+DB の履歴は **version=10（30特徴・市場特徴なし）で止まっており**、本番が serve している
+v12（44特徴）が過去に一度も適用されていなかった。honest 比較（train ≤2025-06 / test 2026-01〜06）:
+
+| 指標 | v10相当(DB実測) | 44特徴モデル | 差 |
+|---|---|---|---|
+| 1位馬 勝率 | 0.3967 | 0.4624 | **+6.6pt** |
+| 1位馬 複勝率 | 0.7172 | 0.7661 | +4.9pt |
+| レース内 Spearman | 0.5280 | 0.5822 | +0.054 |
+
+paired bootstrap で全て有意。**差の実体は市場（オッズ）特徴**で、market 5本を外すと
+44特徴モデルも v10 と同水準（0.3995）まで落ちる。
+
+- バックフィル: `scripts/inference_chihou_v13.py --start 20240101 --end YYYYMMDD`
+  - `race_results` は **LEFT JOIN**（出走取消・失格も母集団に含む）。本番 `rank_by_hn` と
+    母集団を揃えるため。学習用 `BASE_QUERY` は完走馬のみなので流用してはいけない
+  - VPS 負荷対策で `--batch-size` / `--sleep` 分割コミット
+- ⚠️ **バックフィルした過去分は in-sample**（全期間1回学習モデルの遡及適用＝model-vintage
+  look-ahead）。**DB の composite_index / win_probability で過去の ROI・的中率を評価しない**こと。
+  honest 評価は `chihou_rebuild_walkforward.py` 等の walk-forward で行う
+
+### 検証・監視スクリプト（2026-08-02 新設）
+
+| スクリプト | 用途 |
+|---|---|
+| `scripts/check_chihou_feature_health.py` | 44特徴の DEAD/SHIFT/DEGENERATE/DECLINE 検出。学習と同じ `prep` を通して「モデルが実際に見ている値」を検査する |
+| `scripts/chihou_rank_quality_review.py` | HEAD/TAIL/ALL 分離のランキング品質比較 + レース単位 paired bootstrap |
+| `scripts/chihou_feature_ab.py` | 特徴量セットの A/B（死んだ特徴の除去・新規列の追加） |
+| `scripts/chihou_composite_scale_review.py` | composite スケール係数と tier 較正閾値の掃引 |
+| `scripts/inference_chihou_v13.py` | v13 バッチ推論・全期間バックフィル |
+
+### 検証済みの否定結果（再検証不要）
+
+- **外部指数 netkeiba（`nk_idx_z` / `nk_rank_n`）は 2026-06 以降フォールバック占有率100%＝死んでいる**
+  が、**実害なし**。serve 時欠損を再現した A/B で top1勝率 +0.0017（むしろ僅かに改善）、
+  2特徴を落としても −0.0005（有意差なし）。kichiuma は 95%→76% に劣化中で要監視
+- **未使用の高充足列6本（賞金クラス・ナイター・減量騎手・重量種別）は効果なし**。
+  top1勝率 +0.0017 [CI −0.0003, +0.0037] で有意差なし → 不採用
+- **目的関数の変更は地方では割に合わない**。`reg_rank`（JRA v27 の採用形）は
+  Spearman を +0.0068 改善する一方 **top1勝率を −0.0045 悪化させる**（どちらも有意）。
+  JRA では両方改善したが地方はトレードオフ。現行 `is_top3` 二値が HEAD の最適点
+- **JRA戦歴のクロス活用は市場に織り込み済みで不採用**（`scripts/chihou_jra_history_ab.py`）。
+  地方出走馬の 57.7% に JRA 出走歴があり point-in-time 8特徴を作れるが、
+  本番構成では top1勝率 +0.0003（ns）。**市場特徴を外した土台でだけ Spearman +0.0028 が有意**
+  ＝情報は本物だがオッズが完全に織り込んでいる
+- **着外率ヘッド（out_probability）の新設も不採用**。同じ除外率で較正済みの指数差ルールと同等
+  （31%帯: ルール 93.6/2.9/6.9 vs モデル 93.9/3.0/6.7）。alembic 移行に見合わない。
+  **JRA で「指数差→着外率モデル」が効いたのはモデルの力でなく旧ルールの較正崩れが原因**の可能性が高い
+
 ## 地方競馬 推奨カテゴリ（`/api/chihou/recommendations/sweet-spot`）
 
 JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッズ取得後に毎リクエスト計算・
