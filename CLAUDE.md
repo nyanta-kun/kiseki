@@ -194,7 +194,10 @@ ssh windows-vm "Get-Content C:\kiseki\windows-agent\jvlink_agent.log -Tail 50"
 SSH接続設定（~/.ssh/config）:
 ```
 Host windows-vm
-    HostName YUICHIROSUZDC35.local
+    # 2026-08-02: mDNS (.local) の名前解決が落ちて ssh も prlctl exec も到達不能になった。
+    # Parallels 共有ネットワークの IP を直接使う。変わったら `prlctl list -f` で確認する。
+    # mDNS 名で繋ぎたい場合は windows-vm-mdns（同設定で HostName が .local）を使う。
+    HostName 10.211.55.6
     User ysuzuki
     IdentityFile ~/.ssh/id_ed25519
     StrictHostKeyChecking no
@@ -283,10 +286,22 @@ pkill -9 -f "prlctl exec"
   - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
     - realtime の 0B12 worker が止まっても結果取得を確実化
     - スクリプト: `C:\kiseki\windows-agent\run_umaconn_fetch_results.vbs`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime プロセス生存確認・不在なら `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を再起動（2026-04-30 から jvlink も監視対象）
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加）
+    - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
+    - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
+      **15分以上更新されていない**場合、taskkill してから再起動する
+      - Why: 2026-08-02 に JVRTOpen が COM レベルでハングし、**プロセス内ウォッチドッグスレッドごと
+        凍結**して `os._exit(1)` が発火せず、約95分オッズ取得が死んだ。生存確認だけでは検知できない
+      - ハートビートは各エージェントのウォッチドッグスレッドが30秒ごとに書き出す
+        （`write_heartbeat_file()`）。ファイルが無い場合はストール判定をスキップ（旧版との互換）
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
-  - `kiseki-EOD-Cleanup`: **毎日 23:00** に `jvlink_agent` / `umaconn_agent` の `--mode realtime` pythonw を強制終了（2026-04-30 新設）
+  - `kiseki-EOD-Cleanup`: **毎日 23:45** に以下を強制終了（2026-04-30 新設・2026-08-02 拡張）
+    - [A] `jvlink_agent` / `umaconn_agent` の `--mode realtime`（起動日時を問わず）
+    - [B] 同エージェントの**モードを問わず前日以前に起動したプロセス**（ゾンビ掃除）
+      - 2026-08-02 の障害: `--mode daily` が 7/16 から17日間ハングし JV-Link を占有、
+        当日の realtime がオッズを1件も取得できなかった。旧実装は realtime しか掃除しなかった
+      - 同日起動の正規バックフィル（`jvlink_historical` 等）は巻き添えにしない
     - スクリプト: `C:\kiseki\windows-agent\run_eod_cleanup.vbs`
     - 翌朝 9:00 起動が常にクリーンな状態になるための safety net（hung プロセスの跨ぎ防止）
   - `run_jvlink_realtime.vbs` / `run_umaconn_realtime.vbs` は冪等（同種 realtime が既に走っていればスキップ）。watchdog × daily 9:00 の二重発火で多重生成しない

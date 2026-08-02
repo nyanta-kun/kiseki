@@ -73,6 +73,35 @@ API_KEY = os.getenv("CHANGE_NOTIFY_API_KEY", "")
 
 # ローカルデータディレクトリ
 DATA_DIR = Path(__file__).resolve().parent / "data"
+
+# ---------------------------------------------------------------------------
+# 外部ウォッチドッグ用ハートビートファイル
+# ---------------------------------------------------------------------------
+# 2026-08-02 の障害: realtime プロセスは生存したまま JVRTOpen が COM レベルで固まり、
+# **プロセス内ウォッチドッグスレッドごと停止**したため os._exit(1) が発火せず、
+# 「プロセスは存在するがオッズを1件も取得しない」状態が約95分続いた。
+# プロセス存在チェックだけの外部ウォッチドッグでは検知できないため、
+# ウォッチドッグスレッドが定期的にこのファイルを更新し、
+# `run_realtime_watchdog.vbs` が **更新が止まったこと** を見て kill→再起動する。
+HEARTBEAT_FILE = DATA_DIR / "realtime_heartbeat_jvlink.txt"
+
+
+def write_heartbeat_file(path: Path, loop_elapsed: float) -> None:
+    """外部ウォッチドッグ向けにハートビートを書き出す（失敗しても無視）。
+
+    Args:
+        path: 書き出し先
+        loop_elapsed: メインループ最終進捗からの経過秒
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"{datetime.now().isoformat(timespec='seconds')}\t{int(loop_elapsed)}\n",
+            encoding="ascii",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 CACHE_DIR = DATA_DIR / "cache"       # JVRead生データキャッシュ
 PENDING_DIR = DATA_DIR / "pending"   # POST失敗ペンディングキュー
 COMPLETED_DIR = DATA_DIR / "completed"  # ファイル単位の処理完了ログ
@@ -740,6 +769,9 @@ def run_realtime_monitor(jv) -> None:
             time.sleep(30)
             with _wd_lock:
                 elapsed = time.time() - _last_heartbeat[0]
+            # 外部ウォッチドッグ用。COM ハングでこのスレッドごと固まると更新が止まり、
+            # run_realtime_watchdog.vbs が stale を検知して kill→再起動する
+            write_heartbeat_file(HEARTBEAT_FILE, elapsed)
             if elapsed > WATCHDOG_TIMEOUT:
                 logger.error(f"ウォッチドッグ: realtimeループが{int(elapsed)}秒停止 → 強制終了")
                 os._exit(1)

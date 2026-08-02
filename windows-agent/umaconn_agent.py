@@ -83,6 +83,24 @@ UMACONN_SERVICE_KEY: str = os.getenv("UMACONN_API_KEY", "")
 
 _AGENT_DIR = Path(__file__).resolve().parent
 DATA_DIR = _AGENT_DIR / "data"
+
+# 外部ウォッチドッグ用ハートビート（2026-08-02 の JV-Link 障害を受けて追加）
+# プロセス内ウォッチドッグは COM ハング時にスレッドごと止まり os._exit が発火しないことがある。
+# run_realtime_watchdog.vbs が **このファイルの更新停止** を見て kill→再起動する。
+HEARTBEAT_FILE = DATA_DIR / "realtime_heartbeat_umaconn.txt"
+
+
+def write_heartbeat_file(path, loop_elapsed: float) -> None:
+    """外部ウォッチドッグ向けにハートビートを書き出す（失敗しても無視）。"""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"{datetime.now().isoformat(timespec='seconds')}\t{int(loop_elapsed)}\n",
+            encoding="ascii",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 CACHE_DIR: Path = DATA_DIR / "chihou_cache"
 COMPLETED_DIR: Path = DATA_DIR / "chihou_completed"
 PENDING_DIR: Path = DATA_DIR / "chihou_pending"
@@ -1065,6 +1083,8 @@ def run_realtime_monitor(nv) -> None:
         while True:
             time.sleep(30)
             elapsed = time.time() - _heartbeat[0]
+            # 外部ウォッチドッグ用。COM ハングでこのスレッドごと固まると更新が止まる
+            write_heartbeat_file(HEARTBEAT_FILE, elapsed)
             if elapsed > _REALTIME_WATCHDOG_TIMEOUT:
                 logger.error(
                     f"ウォッチドッグ: {elapsed:.0f}秒間無応答 → bg worker をシャットダウン後に強制終了"
