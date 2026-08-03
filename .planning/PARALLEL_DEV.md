@@ -131,14 +131,14 @@ worktree 内を二重スキャンするのを防ぐため。`KISEKI_WT_ROOT` で
 
 ## 6. 残作業（本ハーネス導入後に推奨）
 
-| # | 内容 | 理由 |
-|---|---|---|
-| 1 | `main` の未コミット 12 件を整理（退避 or ブランチ化 or gitignore） | trunk をクリーンにしないと鉄則1が守れない |
-| 2 | マージ済みローカルブランチ 7 本を削除 | `pd_status.sh` の「削除可能」欄に一覧が出る |
-| 3 | `f2g3h4i5j6k7_add_trio_payout_to_picks_history.py` をリネーム | ファイル名接頭辞と revision ID の不一致を解消 |
-| 4 | 稼働中 9 ブランチの棚卸し（`integrate.sh --plan` で順序決定 → 統合 or 破棄） | 長命ブランチほど衝突が増える |
-| 5 | GitHub の branch protection で `guards` を required check に設定 | ガードをすり抜けさせない。ただし `guards` で実際にビルドを止められるのは Alembic 整合チェックのみ（柱判定は情報提供で、Step Summary に出るだけ） |
-| 6 | `MIGRATION_CHECK_STRICT=1` を CI で有効化（残作業3の完了後） | 命名不一致を再発させない。鉄則5 の `<日時>_<柱>` 形式は接頭辞一致で検査するため STRICT でも通ることを確認済み |
+| # | 状態 | 内容 | 備考 |
+|---|---|---|---|
+| 1 | ✅ 完了 | `main` の未コミットを整理 | 調査メモ9件を `inputs/` へ追跡（#51）。残るは `backend/data/` の JSON 1件のみ |
+| 2 | ✅ 完了 | マージ済みローカルブランチを削除 | 7本削除。リモート側の同名ブランチは未削除 |
+| 3 | ✅ 完了 | `f2g3h4i5j6k7_add_trio_payout_to_picks_history.py` をリネーム | `g3h4i5j6k7l8_*` へ。同一接頭辞のファイルが2つ存在し、片方が親の名前のままだった。ファイル内部（docstring・revision・down_revision）は元から正しく、リビジョン連鎖に誤りはなかった |
+| 4 | ⬜ 未着手 | 稼働中ブランチの棚卸し（`integrate.sh --plan` で順序決定 → 統合 or 破棄） | 長命ブランチほど衝突が増える。10本中4本が柱をまたいでいる |
+| 5 | ⬜ 未着手 | GitHub の branch protection で `guards` を required check に設定 | ガードをすり抜けさせない。ただし `guards` で実際にビルドを止められるのは Alembic 整合チェックのみ（柱判定は情報提供で、Step Summary に出るだけ） |
+| 6 | ✅ 完了 | `MIGRATION_CHECK_STRICT=1` を CI で有効化 | 残作業3の完了により命名不一致が 0 件になったため有効化。鉄則5 の `<日時>_<柱>` 形式は接頭辞一致で検査するため通る |
 
 ---
 
