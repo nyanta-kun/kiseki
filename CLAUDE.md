@@ -44,6 +44,83 @@ VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
 - 環境変数: .env に記載、コードにハードコードしない
 - Git: .env は絶対にコミットしない
 
+## 並列開発プロトコル（複数 Claude Code セッションを同時に走らせる場合）
+
+**同じフォルダで複数の Claude Code を動かしてはいけない。** 作業ツリー（未コミット変更・
+インデックス）が共有され、片方のチェックアウトがもう片方の作業を破壊する。
+並列作業は必ず **worktree で物理的に隔離**する。
+
+### 3本柱とファイル所有
+
+kiseki は競輪 / 中央競馬 / 地方競馬が 1 リポジトリに同居する。判定の唯一の情報源は
+`scripts/dev/pillars.sh` の `pillar_of`。
+
+| 柱 | 主な担当 |
+|---|---|
+| `keirin` | `api/keirin_router.py`, `api/yoso_router.py`, `db/keirin_models.py`, `netkeirin/` |
+| `chihou` | `api/chihou_*.py`, `db/chihou_models.py`, `importers/chihou_*.py`, `indices/chihou_*.py`, `services/chihou_*.py`, `chihou_protocol.py` |
+| `jra` | `indices/`(chihou以外), `importers/`(chihou以外), `windows-agent/`, `api/{races,horses,performance,recommendations,agent_router,import_router}.py` |
+| `shared` | `db/models.py`, `db/session.py`, **`backend/alembic/`**, `utils/`, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, `.github/`, `CLAUDE.md` |
+
+**`shared` を触る作業は並列にしない。** 単独 PR で最優先に main へ入れ、他ブランチはその後に rebase する。
+
+### 基本フロー
+
+```bash
+# 1. 改修要望を並列可能なタスクに分解（Wave 構成が出る）
+/pd-split 競輪の並び予想を修正し、地方のLightGBM特徴量を追加し、中央の指数重みを再最適化したい
+
+# 2. 柱ごとに隔離された worktree を作る
+bash scripts/dev/wt.sh new keirin narabi-fix
+# → ../kiseki-wt/keirin/narabi-fix に feat/keirin-narabi-fix が作られる
+#    そのフォルダで「別の」Claude Code を起動して作業する
+
+# 3. 作業後、コミット前に必ず
+/pd-preflight
+
+# 4. 完了したら統合PMが順次マージ
+/pd-integrate
+```
+
+### 鉄則
+
+1. **`main` では作業しない。** main は常にクリーンでデプロイ可能な trunk として保つ。
+   作業は必ず worktree 上の feature ブランチで行う。
+2. **1 ブランチ = 1 柱。** 柱をまたぐ変更は分割する。
+3. **Alembic を並列生成しない。** 同一 Wave で複数タスクがマイグレーションを作る計画は禁止。
+   新規 revision は `--rev-id "$(date +%Y%m%d%H%M)_<柱>"` で明示指定する
+   （既存の `a1b2c3...z5a6b7` 連番形式は枯渇済み・ファイル名重複を起こしているため使わない）。
+4. **着手前に衝突を偵察する。** `bash scripts/dev/scan_collisions.sh`
+5. **マージは順次。** 1本マージ → 検証 → 残りを rebase → 次。並列マージ禁止。
+6. **衝突は後発ブランチ側で rebase 解決する。** 統合先で無理に解決しない。
+
+### ツール一覧
+
+| コマンド | 用途 |
+|---|---|
+| `/pd-status` | 全体状況（worktree・稼働ブランチ・柱・Alembic） |
+| `/pd-split <要望>` | 要望を並列タスクへ分解（`task-splitter`） |
+| `/pd-new <柱> <トピック>` | worktree + ブランチ作成（事前に衝突偵察） |
+| `/pd-preflight` | コミット前の総合チェック |
+| `/pd-integrate` | 順次マージ統合（`pm-integrator`） |
+
+| サブエージェント | 役割 |
+|---|---|
+| `task-splitter` | 要望を低衝突な独立タスクへ分解 |
+| `conflict-scout` | 着手前の衝突偵察 |
+| `migration-guard` | Alembic head 分岐の検査・修復 |
+| `pm-integrator` | 統合の統括（順序決定・順次マージ・検証） |
+
+| スクリプト | 用途 |
+|---|---|
+| `scripts/dev/wt.sh` | worktree の new / list / sync / rm |
+| `scripts/dev/check_migrations.sh` | Alembic head・ID重複・親不明の検査 |
+| `scripts/dev/check_ownership.sh` | 変更ファイルの柱判定・shared 警告 |
+| `scripts/dev/scan_collisions.sh` | ブランチ間の同一ファイル変更を検出 |
+| `scripts/dev/preflight.sh` | コミット前の総合チェック |
+| `scripts/dev/integrate.sh` | 順次マージ（`--plan` / `--dry-run` 対応） |
+| `scripts/dev/pd_status.sh` | ダッシュボード |
+
 ## DBスキーマ構成
 - `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ
 - `sekito.anagusa` — 穴ぐさピック情報（date, course_code, race_no, horse_no, rank A/B/C）

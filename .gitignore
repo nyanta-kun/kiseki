@@ -28,8 +28,18 @@ BLOD_cache.jsonl
 windows-agent/debug_*.py
 windows-agent/test_*.py
 
-# Claude Code メモリ
-.claude/
+# Claude Code
+# エージェント定義とスラッシュコマンドは「並列開発ハーネス」の本体であり、
+# 全 worktree / 全セッションで共有される必要があるため追跡対象にする。
+# ローカル権限設定・スキル・キャッシュは各自の環境依存なので追跡しない。
+.claude/*
+!.claude/agents/
+!.claude/commands/
+.claude/settings.local.json
+
+# worktree をリポジトリ内に置いた場合の保険
+# (推奨はリポジトリ外: ../kiseki-wt/。scripts/dev/wt.sh 参照)
+.worktrees/
 
 # データファイル（生データ・一時ファイル）
 data/raw/

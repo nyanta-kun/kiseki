@@ -12,6 +12,34 @@ on:
     branches: [main]
 
 jobs:
+  guards:
+    name: Guards (並列開発ガード)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0   # merge-base を取るため全履歴が必要
+
+      # このジョブで実際にビルドを止められるのは下の Alembic 整合チェックだけ。
+      # 柱(pillar)判定は OWNERSHIP_STRICT=1 のときのみ失敗を返す設計で、CI では
+      # 有効化していない (柱をまたぐ正当な PR まで落としてしまうため)。
+      # 強制ではなくレビュー材料として Step Summary に出す。
+      - name: Alembic 整合チェック (head 単一 / ID 重複 / 親不明)
+        run: bash scripts/dev/check_migrations.sh
+
+      - name: 柱(pillar)所属レポート (情報提供・ビルドは止めない)
+        run: |
+          {
+            echo '## 柱(pillar)所属レポート'
+            echo
+            echo '> 情報提供のみ。ここでの警告は CI を落としません。'
+            echo '> 強制したい場合はローカルで `OWNERSHIP_STRICT=1 bash scripts/dev/check_ownership.sh`。'
+            echo
+            echo '```'
+            bash scripts/dev/check_ownership.sh "origin/${{ github.base_ref || 'main' }}" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   backend:
     name: Backend (Python)
     runs-on: ubuntu-latest
@@ -87,7 +115,7 @@ jobs:
 
   build-backend:
     name: Build & Push Backend Image
-    needs: [backend, frontend]
+    needs: [guards, backend, frontend]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
@@ -118,7 +146,7 @@ jobs:
 
   build-frontend:
     name: Build & Push Frontend Image
-    needs: [backend, frontend]
+    needs: [guards, backend, frontend]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
