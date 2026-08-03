@@ -237,6 +237,55 @@ class KeirinNetkeirinSetting(KeirinBase):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
+class KeirinNetkeirinSalesDaily(KeirinBase):
+    """netkeirin「ウマい車券」予想家成績・売上（日別）
+    （https://umaiaggre.yosoka.netkeiba.com/tool_keirin/result/yosoka_result.html を
+    list_detail=day でスクレイピングして格納。集計対象日はレース開催日、通常は
+    翌日10時頃に確定値が反映される。売上は速報値であり後日修正され得るため
+    UPSERT で毎回上書きする。migration <TBD>）。"""
+
+    __tablename__ = "netkeirin_sales_daily"
+    __table_args__ = {"schema": KEIRIN_SCHEMA}
+
+    sale_date: Mapped[str] = mapped_column(String(8), primary_key=True, comment="集計ID(YYYYMMDD・開催日)")
+
+    n_predictions: Mapped[int | None] = mapped_column(Integer, comment="予想数")
+    n_predictions_staked: Mapped[int | None] = mapped_column(Integer, comment="予想数(賭け金あり)")
+    n_hits_incl_garami: Mapped[int | None] = mapped_column(Integer, comment="的中(ガミ含む)")
+    n_hits_excl_garami: Mapped[int | None] = mapped_column(Integer, comment="的中(ガミ除く)")
+    n_miss: Mapped[int | None] = mapped_column(Integer, comment="外れ")
+    stake_amount: Mapped[int | None] = mapped_column(Integer, comment="賭け金(円)")
+    payout_amount: Mapped[int | None] = mapped_column(Integer, comment="払戻金額(円)")
+    hit_rate_pct: Mapped[float | None] = mapped_column(Float, comment="的中率(%)")
+    recovery_rate_pct: Mapped[float | None] = mapped_column(Float, comment="回収率(%)")
+
+    n_sold: Mapped[int | None] = mapped_column(Integer, comment="販売個数")
+    sold_points: Mapped[int | None] = mapped_column(Integer, comment="販売pt")
+    sold_paid_points: Mapped[int | None] = mapped_column(Integer, comment="販売有償pt")
+    avg_sold_points: Mapped[float | None] = mapped_column(Float, comment="平均販売pt")
+    avg_sold_minutes: Mapped[float | None] = mapped_column(Float, comment="平均販売分(発走前分数の平均)")
+    avg_sold_hour: Mapped[float | None] = mapped_column(Float, comment="平均販売時")
+
+    axis1_rate_1st: Mapped[float | None] = mapped_column(Float, comment="◎1着率(%)")
+    axis1_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="◎2着率(%)")
+    axis1_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="◎3着率(%)")
+    mark2_count: Mapped[int | None] = mapped_column(Integer, comment="〇件数")
+    mark2_rate_1st: Mapped[float | None] = mapped_column(Float, comment="〇1着率(%)")
+    mark2_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="〇2着率(%)")
+    mark2_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="〇3着率(%)")
+    mark3_count: Mapped[int | None] = mapped_column(Integer, comment="▲件数")
+    mark3_rate_1st: Mapped[float | None] = mapped_column(Float, comment="▲1着率(%)")
+    mark3_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="▲2着率(%)")
+    mark3_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="▲3着率(%)")
+    mark123_count: Mapped[int | None] = mapped_column(Integer, comment="◎〇▲件数")
+    transition_axis1_to_mark2_pct: Mapped[float | None] = mapped_column(Float, comment="◎→〇率(%)")
+    transition_axis1_to_mark3_pct: Mapped[float | None] = mapped_column(Float, comment="◎→▲率(%)")
+    transition_mark2_to_axis1_pct: Mapped[float | None] = mapped_column(Float, comment="〇→◎率(%)")
+    transition_mark3_to_axis1_pct: Mapped[float | None] = mapped_column(Float, comment="▲→◎率(%)")
+
+    collected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="収集日時")
+
+
 class KeirinModelEvaluation(KeirinBase):
     """モデル・戦略バックテスト評価（save_model_eval.py が書込・summary API が参照）"""
 

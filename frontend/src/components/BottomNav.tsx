@@ -10,15 +10,20 @@ type NavItem = {
   matchPath: string;
 };
 
-const NAV_ITEMS: NavItem[] = [
-  { icon: "🏇", label: "中央", href: "/races", matchPath: "/races" },
-  { icon: "🏘", label: "地方", href: "/chihou/races", matchPath: "/chihou" },
-  { icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" },
-  { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
-];
+// 競輪は admin 限定（2026-08-03・AppNav/HamburgerMenu/proxy.ts と同基準）。
+// netkeirin入稿トリガー等を含むため一般メンバーには導線を出さない。
+function navItems(isAdmin: boolean): NavItem[] {
+  return [
+    { icon: "🏇", label: "中央", href: "/races", matchPath: "/races" },
+    { icon: "🏘", label: "地方", href: "/chihou/races", matchPath: "/chihou" },
+    ...(isAdmin ? [{ icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
+    { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
+  ];
+}
 
-export function BottomNav() {
+export function BottomNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
+  const NAV_ITEMS = navItems(isAdmin);
 
   return (
     <nav

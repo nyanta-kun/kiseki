@@ -59,6 +59,18 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // 競輪は admin ロールのみ（2026-08-03・ユーザー指示）。
+  // netkeirin（ウマい車券）への入稿トリガー・入稿設定の編集といった外部サービスへ
+  // 影響する操作を含むページ群のため、一般メンバーには開放しない。
+  // ⚠️ これはあくまで **画面（Next.js ルート）** のガードである。バックエンドの
+  // /api/keirin/* は現時点で無認証で、ブラウザから api.galloplab.com へ直接
+  // 呼ばれる構成のため、このガードだけではAPIを保護できない（別途対応が必要）。
+  if (pathname.startsWith("/keirin")) {
+    if (token.role !== "admin") {
+      return NextResponse.redirect(new URL("/races", req.nextUrl.origin));
+    }
+  }
+
   return NextResponse.next();
 }
 

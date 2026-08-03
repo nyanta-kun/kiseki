@@ -3,7 +3,15 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, refreshKeirinPicks, triggerKeirinFetchOdds, triggerKeirinFetchResults, triggerKeirinSubmitRace, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
+// 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
+// 詳細は app/keirin/actions.ts の冒頭コメント参照。
+import {
+  refreshKeirinPicksAction as refreshKeirinPicks,
+  triggerKeirinFetchOddsAction as triggerKeirinFetchOdds,
+  triggerKeirinFetchResultsAction as triggerKeirinFetchResults,
+  triggerKeirinSubmitRaceAction as triggerKeirinSubmitRace,
+} from "./actions";
 import { todayYYYYMMDD } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -246,6 +254,10 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 2026-07-31にゲート数を3→2へ簡素化）。彩度を落とした色で7S/9Sとはやや区別する。
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
   "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
+  // 7B=RANK_7B（◎◯一致だが順序・相手で不一致・三連複3点・2026-08-03導入）。
+  // 7S/7Aとは母集団が排他（7B=overlap2 / 7S・7A=overlap0,1）で買い目点数も
+  // 異なる（3点 vs 5点）ため、独立した色調（琥珀系）で区別する。
+  "7B":         { bg: "#b45309", text: "#fff", label: "7B" },
   // 7SS=RANK_7SS（波乱軸選出/穴レース検知）は 2026-08-02 に全廃したため定義を削除。
   // live実績 n=16,298・ROI73.5% と控除率75%を下回り続けたため（ユーザー判断）。
 };
@@ -556,6 +568,7 @@ const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: stri
   7: [
     { key: "7S", label: "7S" },
     { key: "7A", label: "7A" },
+    { key: "7B", label: "7B" },
   ],
   9: [
     { key: "9S", label: "9S" },
@@ -941,13 +954,14 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // ランク別展開では7車(7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できる
 // ようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
 // 2026-08-02: 7SS（波乱軸選出）を全廃したため一覧から除去した。
-const RANK_ORDER = ["7S", "7A", "9S", "9A"] as const;
+const RANK_ORDER = ["7S", "7A", "7B", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7S": "7S", "7A": "7A", "9S": "9S", "9A": "9A",
+  "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
+  "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
 };

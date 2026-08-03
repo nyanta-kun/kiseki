@@ -180,6 +180,11 @@ async def _calc_synth_odds(
 _PAPER_RANK_LABELS: dict[str, str] = {
     "RANK_7S": "7S",
     "RANK_7A": "7A",
+    # RANK_7B: 2026-08-03 新設。軸2車がWT公式印◎◯と完全一致するが、順序
+    # （モデル1位≠◎）と相手（△を買い目から除外）で市場と不一致なレース。
+    # 7S/7A が枯渇（overlap∈{0,1}が18〜23%まで低下）したことへの増枠。
+    # 三連複の相手絞り3点で 7S/7A の5点総流しとは点数が異なる。
+    "RANK_7B": "7B",
     "RANK_9S": "9S",
     "RANK_9A": "9A",
 }
@@ -673,7 +678,7 @@ async def _aggregate(
 
 
 @router.post("/refresh")
-async def refresh_picks(date: str = "") -> JSONResponse:
+async def refresh_picks(_: ApiKeyDep, date: str = "") -> JSONResponse:
     """当日採点を keirin ホスト側の正本スクリプトで即時実行する（webhook 中継）。
 
     旧実装はこの API 内で独自採点していたが、prerace_decisions を正本とする
@@ -707,7 +712,7 @@ async def refresh_picks(date: str = "") -> JSONResponse:
 
 
 @router.post("/fetch-odds")
-async def trigger_fetch_odds() -> JSONResponse:
+async def trigger_fetch_odds(_: ApiKeyDep) -> JSONResponse:
     """発走前ガミ判定を即時実行する（keirinホスト側スクリプトをバックグラウンド起動）。"""
     try:
         async with httpx.AsyncClient() as client:
@@ -718,7 +723,7 @@ async def trigger_fetch_odds() -> JSONResponse:
 
 
 @router.post("/fetch-results")
-async def trigger_fetch_results() -> JSONResponse:
+async def trigger_fetch_results(_: ApiKeyDep) -> JSONResponse:
     """当日結果を即時取得する（keirinホスト側スクリプトをバックグラウンド起動）。"""
     try:
         async with httpx.AsyncClient() as client:
@@ -755,7 +760,7 @@ class SubmitRaceIn(BaseModel):
 
 
 @router.post("/submit-race")
-async def trigger_submit_race(body: SubmitRaceIn) -> JSONResponse:
+async def trigger_submit_race(body: SubmitRaceIn, _: ApiKeyDep) -> JSONResponse:
     """指定レース1件のみをnetkeirinへピンポイント入稿する（keirinホスト側の通常入稿
     スクリプト(netkeirin_submit_wt.py --race-key)をrace_key絞り込みで起動する中継。
     ON/OFF・テンプレート・ゲート・重複送信防止は通常の日次/夕方バッチと完全に同一ルール）。
@@ -992,6 +997,88 @@ async def get_stats(
             "total_bet": period_bet,
             "total_payout": period_payout,
             "roi": round(period_payout / period_bet, 3) if period_bet > 0 else None,
+        },
+    })
+
+
+@router.get("/netkeirin-sales")
+async def get_netkeirin_sales(
+    from_date: str = "",
+    to_date: str = "",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """netkeirin「ウマい車券」二軸探偵の日別成績・売上推移を返す
+    （keirin.netkeirin_sales_daily。scripts/scrape_netkeirin_sales.py が
+    umaiaggre.yosoka.netkeiba.com から日次収集）。
+
+    from_date / to_date: YYYY-MM-DD 形式。省略時は直近90日。
+    通常集計はレース日の翌日に確定するため、直近1〜2日分は欠落 or 未確定値のことがある。
+    """
+    today = _today_jst()
+    try:
+        to_dt = Date.fromisoformat(to_date) if to_date else today
+    except ValueError:
+        to_dt = today
+    try:
+        from_dt = Date.fromisoformat(from_date) if from_date else today - timedelta(days=89)
+    except ValueError:
+        from_dt = today - timedelta(days=89)
+
+    rows = (await db.execute(
+        text("""
+            SELECT
+                sale_date, n_predictions, n_predictions_staked,
+                n_hits_incl_garami, n_hits_excl_garami, n_miss,
+                stake_amount, payout_amount, hit_rate_pct, recovery_rate_pct,
+                n_sold, sold_points, sold_paid_points,
+                avg_sold_points, avg_sold_minutes, avg_sold_hour
+            FROM keirin.netkeirin_sales_daily
+            WHERE sale_date BETWEEN :from_date AND :to_date
+            ORDER BY sale_date
+        """),
+        {
+            "from_date": from_dt.strftime("%Y%m%d"),
+            "to_date": to_dt.strftime("%Y%m%d"),
+        },
+    )).mappings().all()
+
+    items: list[dict[str, Any]] = []
+    total_stake = total_payout = total_sold_points = total_n_sold = 0
+    for r in rows:
+        sd = str(r["sale_date"])
+        stake = int(r["stake_amount"] or 0)
+        payout = int(r["payout_amount"] or 0)
+        total_stake += stake
+        total_payout += payout
+        total_sold_points += int(r["sold_points"] or 0)
+        total_n_sold += int(r["n_sold"] or 0)
+        items.append({
+            "date": f"{sd[0:4]}-{sd[4:6]}-{sd[6:8]}",
+            "n_predictions": r["n_predictions"],
+            "n_predictions_staked": r["n_predictions_staked"],
+            "n_hits_incl_garami": r["n_hits_incl_garami"],
+            "n_hits_excl_garami": r["n_hits_excl_garami"],
+            "n_miss": r["n_miss"],
+            "stake_amount": stake,
+            "payout_amount": payout,
+            "hit_rate_pct": r["hit_rate_pct"],
+            "recovery_rate_pct": r["recovery_rate_pct"],
+            "n_sold": r["n_sold"],
+            "sold_points": r["sold_points"],
+            "sold_paid_points": r["sold_paid_points"],
+            "avg_sold_points": r["avg_sold_points"],
+            "avg_sold_minutes": r["avg_sold_minutes"],
+            "avg_sold_hour": r["avg_sold_hour"],
+        })
+
+    return JSONResponse(content={
+        "items": items,
+        "period_summary": {
+            "total_stake": total_stake,
+            "total_payout": total_payout,
+            "recovery_rate_pct": round(total_payout / total_stake * 100, 1) if total_stake > 0 else None,
+            "total_sold_points": total_sold_points,
+            "total_n_sold": total_n_sold,
         },
     })
 

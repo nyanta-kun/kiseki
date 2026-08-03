@@ -18,7 +18,8 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
   const NAV_ITEMS = [
     { icon: "🏇", label: "中央競馬", href: "/races", matchPath: "/races" },
     { icon: "🏘", label: "地方競馬", href: "/chihou/races", matchPath: "/chihou" },
-    { icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" },
+    // 競輪は admin 限定（2026-08-03・AppNav/BottomNav/proxy.ts と同基準）
+    ...(isAdmin ? [{ icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
     { icon: "📊", label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
     { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },

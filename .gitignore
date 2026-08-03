@@ -58,3 +58,7 @@ node_modules/
 
 # Docker
 docker-compose.override.yml
+
+# 個人情報を含む書類（本リポジトリは PUBLIC のため追跡しない）
+# 例: 副業許可申請書（氏名・押印・勤務先・契約条件・第三者の氏名を含む）
+netkeirin/*.pdf

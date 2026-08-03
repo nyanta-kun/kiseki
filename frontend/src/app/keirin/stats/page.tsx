@@ -17,6 +17,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { fetchKeirinStats, type KeirinStatItem, type KeirinStatsResponse } from "@/lib/api";
+import { fetchNetkeirinSales, type NetkeirinSalesResponse } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -189,14 +190,16 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は対象外
 // （backend/src/api/keirin_router.py の get_stats/_RANK_COND_MAP と揃える）。
 // 2026-08-02〜: 7SS（波乱軸選出・穴レース検知）も全廃したため対象外。
-type RankFilter = "all" | "7S" | "7A" | "9S" | "9A";
+type RankFilter = "all" | "7S" | "7A" | "7B" | "9S" | "9A";
 
-// 並び順は 7S/7A/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
+// 並び順は 7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
   { key: "7S", label: "7S" },
   // 7A/9A（境界ランク・2026-07-27導入）。"全体"にも含まれる（/summaryと同じ方針）。
   { key: "7A", label: "7A" },
+  // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）
+  { key: "7B", label: "7B" },
   { key: "9S", label: "9S" },
   { key: "9A", label: "9A" },
 ];
@@ -211,6 +214,11 @@ export default function KeirinStatsPage() {
   const [data, setData] = useState<KeirinStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // netkeirin（ウマい車券）二軸探偵の売上推移。ランク別ではないため
+  // rankFilters/granularityとは独立に、選択期間（from/to）だけで再取得する。
+  const [salesData, setSalesData] = useState<NetkeirinSalesResponse | null>(null);
+  const [salesLoading, setSalesLoading] = useState(false);
+
   const load = useCallback(async (f: string, t: string, g: Granularity, ranks: RankFilter[]) => {
     setLoading(true);
     try {
@@ -223,9 +231,25 @@ export default function KeirinStatsPage() {
     }
   }, []);
 
+  const loadSales = useCallback(async (f: string, t: string) => {
+    setSalesLoading(true);
+    try {
+      const res = await fetchNetkeirinSales(f, t);
+      setSalesData(res);
+    } catch {
+      setSalesData(null);
+    } finally {
+      setSalesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load(from, to, granularity, rankFilters);
   }, [from, to, granularity, rankFilters, load]);
+
+  useEffect(() => {
+    void loadSales(from, to);
+  }, [from, to, loadSales]);
 
   // ランクフィルタのトグル（複数選択可）。「全体」は排他、それ以外は積み上げ選択。
   // 選択がゼロになる場合は「全体」に自動復帰する。
@@ -293,6 +317,15 @@ export default function KeirinStatsPage() {
 
   const maxBet = Math.max(...(data?.items ?? []).map(i => Math.max(i.total_bet, i.total_payout)), 1);
   const yAxisMax = Math.ceil(maxBet / 5000) * 5000 + 5000;
+
+  // netkeirin売上グラフ用データ変換（販売pt棒 + 回収率(%)線）
+  const salesChartData = (salesData?.items ?? []).map(item => ({
+    date: item.date,
+    販売pt: item.sold_points ?? 0,
+    回収率: item.recovery_rate_pct,
+  }));
+  const maxSoldPoints = Math.max(...(salesData?.items ?? []).map(i => i.sold_points ?? 0), 1);
+  const salesYAxisMax = Math.ceil(maxSoldPoints / 100) * 100 + 100;
 
   const rankLabel = rankFilters.includes("all")
     ? "全体"
@@ -492,6 +525,91 @@ export default function KeirinStatsPage() {
         )}
         {yearSummary && yearSummary.total_bet > 0 && (
           <SummaryCard label={`${rankLabel} ・ 当年累積`} {...yearSummary} />
+        )}
+      </div>
+
+      {/* netkeirin（ウマい車券）二軸探偵 売上推移 */}
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
+        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
+          netkeirin 売上推移（販売pt・回収率）
+        </p>
+        {salesLoading ? (
+          <div className="h-64 flex items-center justify-center text-gray-400 text-sm animate-pulse">読み込み中…</div>
+        ) : salesChartData.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+            データなし（通常集計はレース日の翌日反映・売上は速報値）
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={salesChartData} margin={{ top: 8, right: 48, left: 8, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                yAxisId="left"
+                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tickLine={false}
+                width={44}
+                domain={[0, salesYAxisMax]}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tick={{ fontSize: 10, fill: "#60a5fa" }}
+                tickLine={false}
+                tickFormatter={v => `${v}%`}
+                width={44}
+                domain={[0, "auto"]}
+              />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
+              <ReferenceLine yAxisId="right" y={100} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
+              <Bar yAxisId="left" dataKey="販売pt" fill="#a5b4fc" radius={[2, 2, 0, 0]} maxBarSize={28} />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="回収率"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+        {salesData && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">販売個数</p>
+              <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+                {salesData.period_summary.total_n_sold.toLocaleString()}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">販売pt合計</p>
+              <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+                {salesData.period_summary.total_sold_points.toLocaleString()}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">投資/回収</p>
+              <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+                {formatYen(salesData.period_summary.total_stake)} / {formatYen(salesData.period_summary.total_payout)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">回収率</p>
+              <p className={`text-sm font-bold tabular-nums ${
+                (salesData.period_summary.recovery_rate_pct ?? 0) >= 100 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+              }`}>
+                {salesData.period_summary.recovery_rate_pct != null ? `${salesData.period_summary.recovery_rate_pct}%` : "—"}
+              </p>
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -116,7 +116,7 @@ export default async function RootLayout({
           {children}
         </div>
         {paidMode && <Footer />}
-        <BottomNav />
+        <BottomNav isAdmin={isAdmin} />
         <ServiceWorkerRegister />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
