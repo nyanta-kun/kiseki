@@ -204,7 +204,13 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "9A", label: "9A" },
 ];
 
+// 成績（予想の投資・回収）と売上（netkeirinの販売実績）は性質もフィルタ条件も
+// 異なるため、同一ページ内でタブ分割する（2026-08-03・ユーザー指摘）。
+// 期間フィルタは両タブ共通、ランク/粒度/累積ROIは成績タブ専用。
+type StatsTab = "performance" | "sales";
+
 export default function KeirinStatsPage() {
+  const [tab, setTab] = useState<StatsTab>("performance");
   const [preset, setPreset] = useState<Preset>("30d");
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [cumMode, setCumMode] = useState<CumMode>("month");
@@ -340,15 +346,25 @@ export default function KeirinStatsPage() {
           <ArrowLeft size={18} />
         </Link>
         <BarChart2 size={20} className="text-blue-500" />
-        <h1 className="text-lg font-extrabold tracking-widest text-gray-900 dark:text-white">成績・売上</h1>
-        {/* 売上セクションはページ最下部にあり、スクロールしないと存在に気づけない
-            （2026-08-03 ユーザー指摘）。上部からのページ内リンクを置く。 */}
-        <a
-          href="#netkeirin-sales"
-          className="ml-auto text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
-        >
-          netkeirin 売上へ ↓
-        </a>
+        <h1 className="text-lg font-extrabold tracking-widest text-gray-900 dark:text-white">成績／売上</h1>
+      </div>
+
+      {/* タブ切り替え（成績 / 売上） */}
+      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
+        {([["performance", "成績"], ["sales", "売上"]] as [StatsTab, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            aria-current={tab === key ? "page" : undefined}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              tab === key
+                ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* コントロール */}
@@ -394,7 +410,8 @@ export default function KeirinStatsPage() {
           </div>
         )}
 
-        {/* ランク */}
+        {/* ランク（成績タブ専用。売上はランク別集計が存在しない） */}
+        {tab === "performance" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">ランク</span>
           {RANK_FILTERS.map(r => (
@@ -411,8 +428,10 @@ export default function KeirinStatsPage() {
             </button>
           ))}
         </div>
+        )}
 
-        {/* 粒度・累積モード */}
+        {/* 粒度・累積モード（成績タブ専用） */}
+        {tab === "performance" && (
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-400 dark:text-gray-500">粒度</span>
@@ -447,8 +466,11 @@ export default function KeirinStatsPage() {
             ))}
           </div>
         </div>
+        )}
       </div>
 
+      {/* ── 成績タブ ───────────────────────────────────────── */}
+      {tab === "performance" && (<>
       {/* メイングラフ */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{chartTitle}</p>
@@ -535,14 +557,11 @@ export default function KeirinStatsPage() {
           <SummaryCard label={`${rankLabel} ・ 当年累積`} {...yearSummary} />
         )}
       </div>
+      </>)}
 
-      {/* netkeirin（ウマい車券）二軸探偵 売上推移
-          id は上部の「売上へ」ページ内リンクの飛び先（ページ下部にあり
-          スクロールしないと気づけなかったため・2026-08-03 ユーザー指摘）。 */}
-      <div
-        id="netkeirin-sales"
-        className="scroll-mt-20 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4"
-      >
+      {/* ── 売上タブ ───────────────────────────────────────── */}
+      {tab === "sales" && (
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
           netkeirin 売上推移（販売pt・回収率）
         </p>
@@ -624,7 +643,32 @@ export default function KeirinStatsPage() {
             </div>
           </div>
         )}
+        {/* 売上金額（= 販売有償pt × 30%）。総販売ptではなく**有償pt**が対象。
+            料率はバックエンド NETKEIRIN_REVENUE_RATE が正で、APIが算出済みの
+            値をそのまま表示する（フロントで再計算しない）。 */}
+        {salesData && (
+          <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-end justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                販売有償pt（売上対象）
+              </p>
+              <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+                {salesData.period_summary.total_sold_paid_points.toLocaleString()}
+                <span className="text-xs font-normal text-gray-400 ml-1">
+                  × {(salesData.period_summary.revenue_rate * 100).toFixed(0)}%
+                </span>
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-400 dark:text-gray-500">売上金額</p>
+              <p className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                {`¥${salesData.period_summary.total_revenue_yen.toLocaleString()}`}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
+      )}
     </div>
   );
 }

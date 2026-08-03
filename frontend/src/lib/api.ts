@@ -1121,6 +1121,8 @@ export type NetkeirinSalesItem = {
   avg_sold_points: number | null;
   avg_sold_minutes: number | null;
   avg_sold_hour: number | null;
+  /** 売上金額(円) = sold_paid_points * revenue_rate（バックエンドで算出）。 */
+  revenue_yen: number;
 };
 
 export type NetkeirinSalesResponse = {
@@ -1130,7 +1132,12 @@ export type NetkeirinSalesResponse = {
     total_payout: number;
     recovery_rate_pct: number | null;
     total_sold_points: number;
+    total_sold_paid_points: number;
     total_n_sold: number;
+    /** 販売有償ptに対する予想家取り分（0.30）。 */
+    revenue_rate: number;
+    /** 期間の売上金額(円) = total_sold_paid_points * revenue_rate。 */
+    total_revenue_yen: number;
   };
 };
 

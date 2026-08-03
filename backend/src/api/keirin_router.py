@@ -1001,6 +1001,13 @@ async def get_stats(
     })
 
 
+# netkeirin「ウマい車券」の販売有償ptに対する予想家取り分（2026-08-03・ユーザー提供）。
+# 売上金額 = sold_paid_points * NETKEIRIN_REVENUE_RATE。
+# 無償pt分は収益にならないため sold_points（総販売pt）ではなく
+# **sold_paid_points（有償pt）** に掛けること。
+NETKEIRIN_REVENUE_RATE = 0.30
+
+
 @router.get("/netkeirin-sales")
 async def get_netkeirin_sales(
     from_date: str = "",
@@ -1044,6 +1051,7 @@ async def get_netkeirin_sales(
 
     items: list[dict[str, Any]] = []
     total_stake = total_payout = total_sold_points = total_n_sold = 0
+    total_sold_paid_points = 0
     for r in rows:
         sd = str(r["sale_date"])
         stake = int(r["stake_amount"] or 0)
@@ -1051,6 +1059,7 @@ async def get_netkeirin_sales(
         total_stake += stake
         total_payout += payout
         total_sold_points += int(r["sold_points"] or 0)
+        total_sold_paid_points += int(r["sold_paid_points"] or 0)
         total_n_sold += int(r["n_sold"] or 0)
         items.append({
             "date": f"{sd[0:4]}-{sd[4:6]}-{sd[6:8]}",
@@ -1066,6 +1075,7 @@ async def get_netkeirin_sales(
             "n_sold": r["n_sold"],
             "sold_points": r["sold_points"],
             "sold_paid_points": r["sold_paid_points"],
+            "revenue_yen": round(int(r["sold_paid_points"] or 0) * NETKEIRIN_REVENUE_RATE),
             "avg_sold_points": r["avg_sold_points"],
             "avg_sold_minutes": r["avg_sold_minutes"],
             "avg_sold_hour": r["avg_sold_hour"],
@@ -1078,7 +1088,10 @@ async def get_netkeirin_sales(
             "total_payout": total_payout,
             "recovery_rate_pct": round(total_payout / total_stake * 100, 1) if total_stake > 0 else None,
             "total_sold_points": total_sold_points,
+            "total_sold_paid_points": total_sold_paid_points,
             "total_n_sold": total_n_sold,
+            "revenue_rate": NETKEIRIN_REVENUE_RATE,
+            "total_revenue_yen": round(total_sold_paid_points * NETKEIRIN_REVENUE_RATE),
         },
     })
 
