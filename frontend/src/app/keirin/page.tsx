@@ -1309,13 +1309,17 @@ export default function KeirinPage() {
         <Bike size={22} className="text-blue-500" />
         <h1 className="text-xl font-extrabold tracking-widest text-gray-900 dark:text-white">KEIRIN</h1>
         <div className="ml-auto flex items-center gap-3">
+          {/* 2026-08-03: netkeirin売上推移を /keirin/stats に追加したのに合わせ、
+              ラベルを「成績グラフ」→「成績・売上」へ変更し、**モバイルでも常時表示**する
+              （他2つと同じ hidden sm:inline だとモバイルではアイコンのみになり、
+              売上ページへの導線が事実上見つけられなかった＝ユーザー指摘）。 */}
           <Link
             href="/keirin/stats"
-            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-            aria-label="成績グラフ"
+            className="flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
+            aria-label="成績・売上グラフ"
           >
             <BarChart2 size={16} />
-            <span className="hidden sm:inline">成績グラフ</span>
+            <span>成績・売上</span>
           </Link>
           <Link
             href="/keirin/help"

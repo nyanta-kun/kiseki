@@ -340,7 +340,15 @@ export default function KeirinStatsPage() {
           <ArrowLeft size={18} />
         </Link>
         <BarChart2 size={20} className="text-blue-500" />
-        <h1 className="text-lg font-extrabold tracking-widest text-gray-900 dark:text-white">成績グラフ</h1>
+        <h1 className="text-lg font-extrabold tracking-widest text-gray-900 dark:text-white">成績・売上</h1>
+        {/* 売上セクションはページ最下部にあり、スクロールしないと存在に気づけない
+            （2026-08-03 ユーザー指摘）。上部からのページ内リンクを置く。 */}
+        <a
+          href="#netkeirin-sales"
+          className="ml-auto text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+        >
+          netkeirin 売上へ ↓
+        </a>
       </div>
 
       {/* コントロール */}
@@ -528,8 +536,13 @@ export default function KeirinStatsPage() {
         )}
       </div>
 
-      {/* netkeirin（ウマい車券）二軸探偵 売上推移 */}
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
+      {/* netkeirin（ウマい車券）二軸探偵 売上推移
+          id は上部の「売上へ」ページ内リンクの飛び先（ページ下部にあり
+          スクロールしないと気づけなかったため・2026-08-03 ユーザー指摘）。 */}
+      <div
+        id="netkeirin-sales"
+        className="scroll-mt-20 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4"
+      >
         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
           netkeirin 売上推移（販売pt・回収率）
         </p>
