@@ -224,6 +224,10 @@ export default function KeirinStatsPage() {
   // rankFilters/granularityとは独立に、選択期間（from/to）だけで再取得する。
   const [salesData, setSalesData] = useState<NetkeirinSalesResponse | null>(null);
   const [salesLoading, setSalesLoading] = useState(false);
+  // 売上タブの粒度。成績タブの granularity とは別 state にする
+  //（成績側はサーバー集計で API 再取得を伴うのに対し、売上はフロントで畳むだけ。
+  //  共有すると売上の切り替えのたびに成績APIを無駄に再取得してしまう）。
+  const [salesGranularity, setSalesGranularity] = useState<Granularity>("daily");
 
   const load = useCallback(async (f: string, t: string, g: Granularity, ranks: RankFilter[]) => {
     setLoading(true);
@@ -324,13 +328,39 @@ export default function KeirinStatsPage() {
   const maxBet = Math.max(...(data?.items ?? []).map(i => Math.max(i.total_bet, i.total_payout)), 1);
   const yAxisMax = Math.ceil(maxBet / 5000) * 5000 + 5000;
 
-  // netkeirin売上グラフ用データ変換（販売pt棒 + 回収率(%)線）
-  const salesChartData = (salesData?.items ?? []).map(item => ({
-    date: item.date,
-    販売pt: item.sold_points ?? 0,
-    回収率: item.recovery_rate_pct,
+  // netkeirin売上グラフ用データ変換（販売pt棒 + 回収率(%)線）。
+  // 月別は API を叩き直さずフロントで日別を畳む（売上は1日1行しか無く軽量なため）。
+  // ⚠️ 回収率は月内の平均ではなく **合計払戻 / 合計賭け金** で再計算すること
+  //    （日別の率を平均すると賭け金の小さい日が過大に効いて実勢とズレる）。
+  const salesRows = (() => {
+    const items = salesData?.items ?? [];
+    if (salesGranularity === "daily") {
+      return items.map(i => ({
+        key: i.date,
+        soldPoints: i.sold_points ?? 0,
+        stake: i.stake_amount,
+        payout: i.payout_amount,
+      }));
+    }
+    const byMonth = new Map<string, { soldPoints: number; stake: number; payout: number }>();
+    for (const i of items) {
+      const m = i.date.slice(0, 7);
+      const cur = byMonth.get(m) ?? { soldPoints: 0, stake: 0, payout: 0 };
+      cur.soldPoints += i.sold_points ?? 0;
+      cur.stake += i.stake_amount;
+      cur.payout += i.payout_amount;
+      byMonth.set(m, cur);
+    }
+    return [...byMonth.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, v]) => ({ key, ...v }));
+  })();
+  const salesChartData = salesRows.map(r => ({
+    date: r.key,
+    販売pt: r.soldPoints,
+    回収率: r.stake > 0 ? Math.round((r.payout / r.stake) * 1000) / 10 : null,
   }));
-  const maxSoldPoints = Math.max(...(salesData?.items ?? []).map(i => i.sold_points ?? 0), 1);
+  const maxSoldPoints = Math.max(...salesRows.map(r => r.soldPoints), 1);
   const salesYAxisMax = Math.ceil(maxSoldPoints / 100) * 100 + 100;
 
   const rankLabel = rankFilters.includes("all")
@@ -562,9 +592,28 @@ export default function KeirinStatsPage() {
       {/* ── 売上タブ ───────────────────────────────────────── */}
       {tab === "sales" && (
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
-        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
-          netkeirin 売上推移（販売pt・回収率）
-        </p>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+            netkeirin 売上推移（販売pt・回収率）
+          </p>
+          {/* 粒度切り替え（売上タブ専用・フロントで日別を月別に畳む） */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-400 dark:text-gray-500">粒度</span>
+            {(["daily", "monthly"] as const).map(g => (
+              <button
+                key={g}
+                onClick={() => setSalesGranularity(g)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  salesGranularity === g
+                    ? "bg-gray-700 dark:bg-gray-200 text-white dark:text-gray-900"
+                    : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+              >
+                {g === "daily" ? "日別" : "月別"}
+              </button>
+            ))}
+          </div>
+        </div>
         {salesLoading ? (
           <div className="h-64 flex items-center justify-center text-gray-400 text-sm animate-pulse">読み込み中…</div>
         ) : salesChartData.length === 0 ? (
