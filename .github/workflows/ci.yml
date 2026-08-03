@@ -24,7 +24,12 @@ jobs:
       # 柱(pillar)判定は OWNERSHIP_STRICT=1 のときのみ失敗を返す設計で、CI では
       # 有効化していない (柱をまたぐ正当な PR まで落としてしまうため)。
       # 強制ではなくレビュー材料として Step Summary に出す。
-      - name: Alembic 整合チェック (head 単一 / ID 重複 / 親不明)
+      # STRICT=1 で命名不一致 (ファイル名接頭辞 != revision ID) も失敗扱いにする。
+      # 既存の不一致1件は解消済みで、鉄則5 の `<日時>_<柱>` 形式は接頭辞一致で
+      # 検査するため通る。追跡性を保つ最後の砦なので緩めないこと。
+      - name: Alembic 整合チェック (head 単一 / ID 重複 / 親不明 / 命名一致)
+        env:
+          MIGRATION_CHECK_STRICT: "1"
         run: bash scripts/dev/check_migrations.sh
 
       - name: 柱(pillar)所属レポート (情報提供・ビルドは止めない)
