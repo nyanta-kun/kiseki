@@ -86,13 +86,44 @@ bash scripts/dev/wt.sh new keirin narabi-fix
 
 1. **`main` では作業しない。** main は常にクリーンでデプロイ可能な trunk として保つ。
    作業は必ず worktree 上の feature ブランチで行う。
+   **2026-08-03 から branch protection で機械的に強制**している（下記）。
 2. **1 ブランチ = 1 柱。** 柱をまたぐ変更は分割する。
 3. **Alembic を並列生成しない。** 同一 Wave で複数タスクがマイグレーションを作る計画は禁止。
    新規 revision は `--rev-id "$(date +%Y%m%d%H%M)_<柱>"` で明示指定する
    （既存の `a1b2c3...z5a6b7` 連番形式は枯渇済み・ファイル名重複を起こしているため使わない）。
+   このID形式は `check_migrations.sh` の**接頭辞一致**チェックを通る（`split("_")[0]` 比較ではない）。
 4. **着手前に衝突を偵察する。** `bash scripts/dev/scan_collisions.sh`
 5. **マージは順次。** 1本マージ → 検証 → 残りを rebase → 次。並列マージ禁止。
 6. **衝突は後発ブランチ側で rebase 解決する。** 統合先で無理に解決しない。
+
+### branch protection（2026-08-03 設定）
+
+`main` は保護済み。**直接 push はできない**（push 時点では CI 未実行で required check が
+通らないため）。変更は必ず PR 経由で入れる。
+
+| 設定 | 値 |
+|---|---|
+| required status check | `Guards (並列開発ガード)` のみ |
+| `enforce_admins` | `true`（管理者も対象） |
+| required reviews | なし（1人開発のためレビュアーが立てられない） |
+| `strict`（最新追従の強制） | `false`（毎回の rebase を強制しない） |
+| force push / branch 削除 | 禁止 |
+
+障害対応などで直接 push が必要な場合は一時解除する:
+```bash
+gh api -X DELETE repos/nyanta-kun/kiseki/branches/main/protection   # 解除
+# 作業後に再設定（contexts は check-run 名と完全一致させること）
+gh api -X PUT repos/nyanta-kun/kiseki/branches/main/protection --input - <<'EOF'
+{"required_status_checks":{"strict":false,"contexts":["Guards (並列開発ガード)"]},
+ "enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,
+ "allow_force_pushes":false,"allow_deletions":false}
+EOF
+```
+管理者を常に素通しにしたい場合は `enforce_admins` を `false` にする。
+
+**`guards` ジョブでビルドを止められるのは Alembic 整合チェックのみ**。柱(pillar)判定は
+`OWNERSHIP_STRICT` 未設定時に必ず 0 を返す設計で、CI では Step Summary へのレポート出力に
+留めている（柱をまたぐ正当な PR まで落としてしまうため）。
 
 ### ツール一覧
 
@@ -117,9 +148,26 @@ bash scripts/dev/wt.sh new keirin narabi-fix
 | `scripts/dev/check_migrations.sh` | Alembic head・ID重複・親不明の検査 |
 | `scripts/dev/check_ownership.sh` | 変更ファイルの柱判定・shared 警告 |
 | `scripts/dev/scan_collisions.sh` | ブランチ間の同一ファイル変更を検出 |
-| `scripts/dev/preflight.sh` | コミット前の総合チェック |
+| `scripts/dev/preflight.sh` | コミット前の総合チェック（下記の注意点あり） |
 | `scripts/dev/integrate.sh` | 順次マージ（`--plan` / `--dry-run` 対応） |
 | `scripts/dev/pd_status.sh` | ダッシュボード |
+
+### ハーネス実装上の注意点（実運用で踏んだもの・2026-08-03）
+
+- **`preflight.sh` の Python 実行系**: `uv` を優先し、無ければ `backend/.venv/bin` を使う。
+  **この Mac には `uv` が入っていない**ため、フォールバックが無いと ruff/mypy/pytest が
+  一度も走らないまま「✓ 通過」を返す。実行系が両方とも無い場合は skip ではなく**失敗**扱い。
+- **検査の起動条件はファイル種別で判定する**（`^backend/` のような粗い判定にしない）。
+  `backend/data/` の生成物や `backend/models/` の学習済みモデルを置いただけで
+  ruff/mypy/pytest が起動してしまうため。未追跡ファイルは対象に**含める**
+  （新規追加した `.py` / `.ts` も検査するため）。
+- **`scan_collisions.sh` は常に exit 0**。同じファイルを触ること自体は違反ではなく、
+  ここで落とすと作業中ブランチや消し忘れブランチがあるだけで preflight が通らなくなる。
+  `preflight.sh` のブロック条件にしてはいけない。
+- **`mapfile` を使わない**。macOS 標準の bash 3.2 には無く、CI（bash 5）では気づけない。
+- **`integrate.sh` のロールバックは `HEAD~1` ではなくマージ前の SHA へ戻す**。
+  「Already up to date」等でマージコミットが作られなかった場合、`HEAD~1` は統合先の
+  既存コミットを指すため `reset --hard` が無関係な作業を破壊する。
 
 ## DBスキーマ構成
 - `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ
@@ -369,7 +417,7 @@ pkill -9 -f "prlctl exec"
   - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
     - realtime の 0B12 worker が止まっても結果取得を確実化
     - スクリプト: `C:\kiseki\windows-agent\run_umaconn_fetch_results.vbs`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加）
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加）
     - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
     - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
       **15分以上更新されていない**場合、taskkill してから再起動する
@@ -377,8 +425,26 @@ pkill -9 -f "prlctl exec"
         凍結**して `os._exit(1)` が発火せず、約95分オッズ取得が死んだ。生存確認だけでは検知できない
       - ハートビートは各エージェントのウォッチドッグスレッドが30秒ごとに書き出す
         （`write_heartbeat_file()`）。ファイルが無い場合はストール判定をスキップ（旧版との互換）
+    - **[3] サービス停止**: `JVLinkAgent` Windows サービスが停止していれば起動する（2026-08-03 追加）
+      - Why: サービスが止まっていると JVRTOpen/JVOpen は**エラーログを一切出さずに黙って失敗**する。
+        このときエージェントのプロセスは生存し heartbeat も更新され続けるため、
+        **[1] でも [2] でも検知できない独立した第3の障害モード**
+      - **`net start` を直接呼んではいけない**。watchdog タスクは `RunLevel=Limited` で動作し、
+        JVLinkAgent の ACL は `SERVICE_START(RP)` を `BA`/`SY` にしか与えていない
+        （`IU` には無い: `D:...(A;;CCLCSWLOCRRC;;;IU)...`）。非昇格の `net start` はアクセス拒否になり、
+        さらに `sh.Run(..., 0, False)` は結果を待たないため**失敗が一切表面化しない**
+        （「starting」とログに残るのに何も起きない）
+      - → `RunLevel=Highest` の専用タスク **`kiseki-Start-JVLinkAgent`** へ委譲する
+        - 登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_start_jvlinkagent_task.ps1`
+        - トリガー無し。watchdog からの `schtasks /run` でのみ起動する
+        - 削除: `schtasks /delete /tn kiseki-Start-JVLinkAgent /f`
+      - 実機検証済み（2026-08-03）: 停止 → 検知 → 昇格起動 → `Running` 復旧。稼働中は no-op でログも出さない
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
+    - **`register_start_jvlinkagent_task.ps1` は UTF-8 BOM 付きで保存すること**。PowerShell 5.1 は
+      BOM 無し UTF-8 を ANSI として読むため、日本語コメントが壊れて構文エラーになる。
+      また `New-ScheduledTaskAction -Execute` は**絶対パス必須**（Task Scheduler は PATH を解決せず、
+      `"net.exe"` だと `LastTaskResult=2` = ERROR_FILE_NOT_FOUND で無言で失敗する）
   - `kiseki-EOD-Cleanup`: **毎日 23:45** に以下を強制終了（2026-04-30 新設・2026-08-02 拡張）
     - [A] `jvlink_agent` / `umaconn_agent` の `--mode realtime`（起動日時を問わず）
     - [B] 同エージェントの**モードを問わず前日以前に起動したプロセス**（ゾンビ掃除）
