@@ -11,6 +11,8 @@
 ' [1] MISSING  : process not found            -> run the restart task
 ' [2] STALLED  : process alive but the heartbeat file has not been updated for
 '                STALL_MINUTES               -> terminate the process, then restart
+' [3] SERVICE  : the JVLinkAgent Windows service is not running
+'                                             -> start the service
 '
 ' Why [2] exists (2026-08-02 incident):
 '   jvlink_agent realtime stayed alive but JVRTOpen hung at the COM level and froze
@@ -18,6 +20,14 @@
 '   was dead for ~95 minutes while the process looked healthy to a presence check.
 '   The agents' watchdog threads now touch data\realtime_heartbeat_*.txt every 30s;
 '   if that stops, everything is frozen and only an external kill can recover it.
+'
+' Why [3] exists:
+'   A stopped JVLinkAgent service silences JVRTOpen/JVOpen without producing any
+'   error log. The agent process stays alive and its watchdog thread keeps touching
+'   the heartbeat file, so BOTH [1] and [2] see a perfectly healthy agent while no
+'   data arrives at all. This is a third, independent failure mode and needs its own
+'   probe. (Ported from fix/migration-down-revision, 2026-05-23 — a branch whose name
+'   had nothing to do with its contents, which is why it sat unmerged for months.)
 '
 ' The launcher VBS is itself idempotent (skips if already running) so a stray
 ' double-fire is harmless.
@@ -54,8 +64,33 @@ Function IsStalled(hbPath)
     If DateDiff("n", f.DateLastModified, Now) >= STALL_MINUTES Then IsStalled = True
 End Function
 
-Dim wmi, procs
+Dim wmi
 Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+
+' ---- [3] SERVICE: JVLinkAgent サービスが止まっていれば起動する ----
+' プロセス確認より先に行う。サービスが落ちている状態でエージェントだけ再起動しても
+' JVRTOpen は黙って失敗し続けるため、土台を先に戻す。
+' エージェント自体の再起動は [1]/[2] に委ねる（サービス復帰後も JV-Link を掴み直せない
+' 場合は、次の tick で heartbeat が止まり STALLED として回収される）。
+'
+' 起動を schtasks 経由にしている理由（ここを net start に戻してはいけない）:
+'   本 watchdog タスク kiseki-UmaConn-Watchdog は RunLevel=Limited で動く。
+'   JVLinkAgent の ACL は SERVICE_START(RP) を BA(Administrators)/SY にしか与えて
+'   おらず、IU(Interactive Users) には無い。したがって非昇格の net start は
+'   アクセス拒否で失敗する。さらに sh.Run(..., 0, False) は結果を待たないため、
+'   その失敗はログにもコンソールにも一切現れない（「starting」と記録されるのに
+'   実際には何も起きない）。RunLevel=Highest の専用タスクに委譲して回避する。
+'   タスク登録: windows-agent/register_start_jvlinkagent_task.ps1
+Dim svcs, svc
+Set svcs = wmi.ExecQuery("SELECT * FROM Win32_Service WHERE Name='JVLinkAgent'")
+For Each svc In svcs
+    If LCase(svc.State) <> "running" Then
+        WriteLog "JVLinkAgent service is '" & svc.State & "' -> requesting elevated start (JVRTOpen fails silently while stopped)"
+        sh.Run "schtasks /run /tn kiseki-Start-JVLinkAgent", 0, False
+    End If
+Next
+
+Dim procs
 Set procs = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='pythonw.exe'")
 
 Dim umaFound, jvFound, umaPid, jvPid
