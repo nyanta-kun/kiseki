@@ -1025,63 +1025,21 @@ export async function fetchKeirinPicks(date: string, includeAll = false): Promis
   return get<KeirinPick[]>(`/keirin/picks?date=${date}${q}`, { cache: "no-store" });
 }
 
+// refreshKeirinPicks / triggerKeirinFetchOdds / triggerKeirinFetchResults /
+// triggerKeirinSubmitRace は 2026-08-03 に app/keirin/actions.ts の Server Action へ
+// 移行した（バックエンドに ApiKeyDep を付けたため、APIキーをサーバー側に保持する
+// 必要がある。ブラウザから直接叩く実装は残さない）。
 export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> {
   const q = date ? `?date=${date}` : "";
   return get<KeirinSummary>(`/keirin/summary${q}`, { cache: "no-store" });
 }
 
-export async function refreshKeirinPicks(date: string): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/refresh?date=${date}`, {
-    method: "POST",
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`refresh failed: ${res.status}`);
-  return res.json();
-}
-
-export async function triggerKeirinFetchOdds(): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/fetch-odds`, {
-    method: "POST",
-    cache: "no-store",
-  });
-  return res.json();
-}
-
-export async function triggerKeirinFetchResults(): Promise<{ ok: boolean; message: string }> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/fetch-results`, {
-    method: "POST",
-    cache: "no-store",
-  });
-  return res.json();
-}
-
-/** 指定レース1件のみをnetkeirinへピンポイント入稿する（通常入稿と同一ルール・race_key絞り込み）。 */
 /** 推奨外レースの手動入稿用ランク。
  * S1（2026-07-31全廃）・旧gate_label分岐由来の7SS/9SS（同日廃止）に加え、
  * RANK_7SS（波乱軸選出・穴レース検知）も 2026-08-02 に全廃したため対象外
  * （backend/src/api/keirin_router.py の _MANUAL_RANK_KEYS と揃える）。 */
-export type ManualKeirinRankKey = "7S" | "7A" | "9S" | "9A";
+export type ManualKeirinRankKey = "7S" | "7A" | "7B" | "9S" | "9A";
 
-export async function triggerKeirinSubmitRace(
-  raceKey: string,
-  date: string,
-  session: "morning" | "evening",
-  manual?: { rankKey: ManualKeirinRankKey; axis1: number; axis2: number },
-): Promise<{ ok: boolean; message: string }> {
-  const body: Record<string, unknown> = { race_key: raceKey, date, session };
-  if (manual) {
-    body.rank_key = manual.rankKey;
-    body.axis1 = manual.axis1;
-    body.axis2 = manual.axis2;
-  }
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/keirin/submit-race`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  return res.json();
-}
 
 export type KeirinStatItem = {
   date: string;
@@ -1112,12 +1070,12 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "7S" | "7A" | "9S" | "9A" | "all";
+export type KeirinStatsRank = "7S" | "7A" | "7B" | "9S" | "9A" | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
 // 2026-08-02〜: S1・9SS・7SSは全廃済みのため対象外（backend/src/api/keirin_router.py の
 // NETKEIRIN_RANK_KEYS と揃える）。
-export type NetkeirinRankKey = "_global" | "7S" | "7A" | "9S" | "9A";
+export type NetkeirinRankKey = "_global" | "7S" | "7A" | "7B" | "9S" | "9A";
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;
@@ -1140,6 +1098,52 @@ export async function fetchKeirinStats(
   const rankQuery = rankValue ? `&rank=${encodeURIComponent(rankValue)}` : "";
   return get<KeirinStatsResponse>(
     `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}`,
+    { cache: "no-store" },
+  );
+}
+
+// netkeirin（ウマい車券）二軸探偵の日別成績・売上。
+// scripts/scrape_netkeirin_sales.py が umaiaggre.yosoka.netkeiba.com から日次収集。
+export type NetkeirinSalesItem = {
+  date: string;
+  n_predictions: number | null;
+  n_predictions_staked: number | null;
+  n_hits_incl_garami: number | null;
+  n_hits_excl_garami: number | null;
+  n_miss: number | null;
+  stake_amount: number;
+  payout_amount: number;
+  hit_rate_pct: number | null;
+  recovery_rate_pct: number | null;
+  n_sold: number | null;
+  sold_points: number | null;
+  sold_paid_points: number | null;
+  avg_sold_points: number | null;
+  avg_sold_minutes: number | null;
+  avg_sold_hour: number | null;
+};
+
+export type NetkeirinSalesResponse = {
+  items: NetkeirinSalesItem[];
+  period_summary: {
+    total_stake: number;
+    total_payout: number;
+    recovery_rate_pct: number | null;
+    total_sold_points: number;
+    total_n_sold: number;
+  };
+};
+
+export async function fetchNetkeirinSales(
+  fromDate?: string,
+  toDate?: string,
+): Promise<NetkeirinSalesResponse> {
+  const params = new URLSearchParams();
+  if (fromDate) params.set("from_date", fromDate);
+  if (toDate) params.set("to_date", toDate);
+  const qs = params.toString();
+  return get<NetkeirinSalesResponse>(
+    `/keirin/netkeirin-sales${qs ? `?${qs}` : ""}`,
     { cache: "no-store" },
   );
 }

@@ -13,7 +13,9 @@ export function AppNav({ isAdmin }: Props) {
   const NAV_ITEMS = [
     { label: "中央", href: "/races", matchPath: "/races" },
     { label: "地方", href: "/chihou/races", matchPath: "/chihou" },
-    { label: "競輪", href: "/keirin", matchPath: "/keirin" },
+    // 競輪は admin 限定（2026-08-03）。netkeirin入稿トリガー等を含むため
+    // proxy.ts でもルートガードしている。ここはリンクを出さないための表示制御。
+    ...(isAdmin ? [{ label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
     { label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { label: "予想", href: "/yoso", matchPath: "/yoso" },
     { label: "マイページ", href: "/my", matchPath: "/my" },
