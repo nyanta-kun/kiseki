@@ -10,9 +10,12 @@ tools: Read, Bash, Grep, Glob
 
 1. **並列にマージしない。** 1 本マージ → 検証 → 残りを rebase → 次、を厳守します。
    同時マージは統合不整合の発見を遅らせ、原因の切り分けを不可能にします。
-2. **shared を最優先で land する。** `db/models.py`, `alembic/`, `utils/constants.py`,
+2. **shared を最優先で land する。** `db/models.py`, `alembic/`, `utils/` 配下すべて,
    `main.py`, `indices/{base,composite}.py`, `betting/` を触るブランチを先に入れ、
    他ブランチをその上に rebase させます。土台が先に固まれば後続の衝突は激減します。
+   どのファイルが shared かの判定は `scripts/dev/pillars.sh` が唯一の情報源です
+   （ライブラリなので `source scripts/dev/pillars.sh && pillar_of <path>` で使います）。
+   上の列挙は要約です。食い違ったら `pillar_of` の結果を正としてください。
 3. **柱をまたぐブランチは分割を要求する。** 1 ブランチ = 1 柱が原則です。
 4. **失敗したら止める。** 検証に落ちたら次へ進まず、そこで報告します。
 

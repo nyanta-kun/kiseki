@@ -1,7 +1,7 @@
 ---
 description: コミット/PR 前の総合チェック（Alembic・柱所属・衝突・lint・型・テスト）
 argument-hint: [--quick]
-allowed-tools: Bash(bash scripts/dev/*), Bash(git *)
+allowed-tools: Bash(bash scripts/dev/preflight.sh:*), Bash(bash scripts/dev/check_migrations.sh:*), Bash(bash scripts/dev/check_ownership.sh:*), Bash(bash scripts/dev/scan_collisions.sh:*), Bash(git *)
 ---
 
 コミット前チェックを実行します。

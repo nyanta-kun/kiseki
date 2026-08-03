@@ -1,7 +1,7 @@
 ---
 description: 複数の改修要望を、柱ごとの並列実行可能なタスクに分解して worktree 計画を出す
 argument-hint: <改修したい内容を列挙>
-allowed-tools: Read, Grep, Glob, Bash(git *), Bash(bash scripts/dev/*)
+allowed-tools: Read, Grep, Glob, Bash(git *), Bash(bash scripts/dev/scan_collisions.sh:*), Bash(bash scripts/dev/pd_status.sh:*), Bash(source scripts/dev/pillars.sh:*)
 ---
 
 改修要望: $ARGUMENTS

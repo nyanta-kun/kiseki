@@ -1,7 +1,7 @@
 ---
 description: 完了ブランチを順次マージして main に統合する（統合PMを起動）
 argument-hint: [ブランチ名...] 省略時は全稼働ブランチから順序を提案
-allowed-tools: Bash(bash scripts/dev/*), Bash(git *)
+allowed-tools: Bash(bash scripts/dev/pd_status.sh:*), Bash(bash scripts/dev/integrate.sh:*), Bash(bash scripts/dev/scan_collisions.sh:*), Bash(bash scripts/dev/check_migrations.sh:*), Bash(bash scripts/dev/wt.sh:*), Bash(git *)
 ---
 
 統合対象: $ARGUMENTS

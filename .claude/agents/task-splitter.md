@@ -15,9 +15,16 @@ kiseki は 3 本柱が 1 リポジトリに同居しています。
 | keirin (競輪) | `backend/src/api/keirin_router.py`, `api/yoso_router.py`, `db/keirin_models.py`, `netkeirin/` |
 | chihou (地方競馬) | `api/chihou_*.py`, `db/chihou_models.py`, `importers/chihou_*.py`, `indices/chihou_*.py`, `services/chihou_*.py`, `chihou_protocol.py` |
 | jra (中央競馬) | `indices/` (chihou以外), `importers/` (chihou以外), `windows-agent/`, `api/{races,horses,performance,recommendations,agent_router,import_router}.py` |
-| **shared (高衝突)** | `db/models.py`, `db/session.py`, **`backend/alembic/`**, `utils/constants.py`, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, `.github/`, `CLAUDE.md` |
+| **shared (高衝突)** | `db/models.py`, `db/session.py`, **`backend/alembic/`**, **`utils/` 配下すべて**, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, `.github/`, `CLAUDE.md` |
 
-判定は `bash scripts/dev/pillars.sh` の `pillar_of` が唯一の情報源です。迷ったら実行して確認してください。
+判定の唯一の情報源は `scripts/dev/pillars.sh` の `pillar_of` です。上の表は要約にすぎないので、
+**迷ったら必ず実行して確認してください**（`pillars.sh` は関数を定義するライブラリです。
+`bash` で実行しても何も起きません。必ず `source` すること）。
+
+```bash
+source scripts/dev/pillars.sh
+pillar_of backend/src/api/keirin_router.py   # -> keirin
+```
 
 ## あなたの仕事
 

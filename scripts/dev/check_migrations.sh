@@ -57,9 +57,12 @@ for fn in sorted(os.listdir(versions_dir)):
     revs.setdefault(rev, []).append(fn)
     downs[rev] = (fn, down)
 
-    prefix = fn.split("_")[0]
-    if prefix != rev:
-        warnings.append(f"[命名不一致] {fn}: ファイル名接頭辞 '{prefix}' != revision '{rev}'")
+    # ファイル名は alembic の既定テンプレート `<revision>_<slug>.py`。
+    # split("_")[0] で比べてはいけない: revision ID 自体が `_` を含む形式
+    # (CLAUDE.md 鉄則5 の `202608031430_keirin` など) だと、正しく命名された
+    # ファイルまで不一致と判定してしまう。接頭辞一致で見る。
+    if not (fn.startswith(rev + "_") or fn == rev + ".py"):
+        warnings.append(f"[命名不一致] {fn}: ファイル名が revision '{rev}' で始まっていません")
 
 # 1. revision ID 重複
 for rev, files in revs.items():
