@@ -19,8 +19,17 @@ QUICK=0
 BASE="origin/main"
 git rev-parse --verify "$BASE" >/dev/null 2>&1 || BASE="main"
 MB="$(git merge-base HEAD "$BASE" 2>/dev/null || echo "$BASE")"
+# コミット済み差分 + 未コミット変更 + 未追跡ファイル。
+# 未追跡を含めるのは意図的: 新規追加した .py / .ts はまだ追跡されていなくても
+# lint / 型検査の対象にしなければならない。
 CHANGED="$( { git diff --name-only "$MB"...HEAD; git diff --name-only HEAD; \
               git ls-files --others --exclude-standard; } | sort -u )"
+
+# 検査の起動条件は「そのツールが実際に読むファイル」で判定する。
+# `^backend/` のような粗い判定にすると、backend/data/ の生成物や
+# backend/models/ の学習済みモデルを置いただけで ruff/mypy/pytest が走る。
+BACKEND_PAT='^backend/.*\.py$|^backend/(pyproject\.toml|uv\.lock|alembic\.ini)$'
+FRONTEND_PAT='^frontend/.*\.(ts|tsx|js|jsx|mjs|cjs)$|^frontend/(package\.json|pnpm-lock\.yaml|tsconfig\.json|next\.config[^/]*)$'
 
 FAILED=""
 step() { echo; echo "────────────────────────────────────────"; echo "▶ $1"; echo "────────────────────────────────────────"; }
@@ -37,34 +46,60 @@ step "3/5 他ブランチとの衝突スキャン (情報提供のみ・ブロ�
 # ブランチや削除し忘れたローカルブランチがあるだけで preflight が通らなくなる。
 bash scripts/dev/scan_collisions.sh || true
 
-if echo "$CHANGED" | grep -q '^backend/'; then
-  step "4/5 Backend (ruff / mypy / pytest)"
-  if command -v uv >/dev/null 2>&1; then
-    ( cd backend && uv run ruff check . ); mark $? "ruff"
-    ( cd backend && uv run mypy src/ --ignore-missing-imports ); mark $? "mypy"
+# Python ツールの実行方法を解決する。CI と同じ uv を最優先し、
+# uv が入っていない開発機では既存の backend/.venv を使う。
+# どちらも無ければ「未検査のまま通過」を避けるため失敗させる。
+BACKEND_RUNNER=""
+if command -v uv >/dev/null 2>&1; then
+  BACKEND_RUNNER="uv"
+elif [ -x "backend/.venv/bin/ruff" ] && [ -x "backend/.venv/bin/mypy" ]; then
+  BACKEND_RUNNER="venv"
+fi
+
+py_tool() {   # py_tool <tool> [args...]  — backend/ 配下で実行する
+  local tool="$1"; shift
+  if [ "$BACKEND_RUNNER" = "uv" ]; then
+    ( cd backend && uv run "$tool" "$@" )
+  else
+    ( cd backend && ".venv/bin/$tool" "$@" )
+  fi
+}
+
+if echo "$CHANGED" | grep -qE "$BACKEND_PAT"; then
+  if [ -n "$BACKEND_RUNNER" ]; then
+    step "4/5 Backend (ruff / mypy / pytest) — 実行系: $BACKEND_RUNNER"
+    py_tool ruff check .; mark $? "ruff"
+    py_tool mypy src/ --ignore-missing-imports; mark $? "mypy"
     if [ "$QUICK" -eq 0 ]; then
-      ( cd backend && DATABASE_URL="postgresql://test:test@localhost:5432/test" API_KEY=test-key API_ENV=test \
-        uv run pytest tests/ -q --tb=short ); mark $? "pytest"
+      DATABASE_URL="postgresql://test:test@localhost:5432/test" API_KEY=test-key API_ENV=test \
+        py_tool pytest tests/ -q --tb=short; mark $? "pytest"
     else
       echo "(--quick: pytest をスキップ)"
     fi
   else
-    echo "[skip] uv が見つかりません"
+    step "4/5 Backend — 実行系が見つかりません"
+    echo "[!] uv も backend/.venv も無いため ruff / mypy / pytest を実行できませんでした。"
+    echo "    検査せずに通過させると preflight の意味が無くなるため失敗として扱います。"
+    echo "    uv を導入するか、backend/ で仮想環境を作成してください。"
+    mark 1 "Python 実行系が無い (Backend 未検査)"
   fi
 else
-  step "4/5 Backend — 変更なしのためスキップ"
+  step "4/5 Backend — 対象ファイルの変更なしのためスキップ"
 fi
 
-if echo "$CHANGED" | grep -q '^frontend/'; then
+if echo "$CHANGED" | grep -qE "$FRONTEND_PAT"; then
   step "5/5 Frontend (eslint / tsc)"
   if command -v pnpm >/dev/null 2>&1; then
     ( cd frontend && pnpm lint ); mark $? "eslint"
     ( cd frontend && pnpm exec tsc --noEmit ); mark $? "tsc"
   else
-    echo "[skip] pnpm が見つかりません"
+    echo "[!] pnpm が見つからないため eslint / tsc を実行できませんでした。"
+    echo "    検査せずに通過させると preflight の意味が無くなるため失敗として扱います。"
+    echo "    pnpm を PATH に通してから再実行してください。"
+    mark 1 "pnpm が見つからない (Frontend 未検査)"
   fi
 else
-  step "5/5 Frontend — 変更なしのためスキップ"
+  step "5/5 Frontend — 対象ファイルの変更なしのためスキップ"
 fi
 
 echo
