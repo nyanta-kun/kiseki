@@ -44,8 +44,16 @@ plan_order() {
 
 if [ "${1:-}" = "--plan" ]; then
   shift
-  mapfile -t BRS < <(git for-each-ref --format='%(refname:short)' refs/heads | grep -vE '^(main|master)$')
+  # macOS 標準の bash 3.2 には mapfile が無いため read ループで配列を作る
+  BRS=()
+  while IFS= read -r _br; do
+    [ -n "$_br" ] && BRS+=("$_br")
+  done < <(git for-each-ref --format='%(refname:short)' refs/heads | grep -vE '^(main|master)$')
   [ $# -gt 0 ] && BRS=("$@")
+  if [ "${#BRS[@]}" -eq 0 ]; then
+    echo "統合対象のブランチがありません (base: $BASE)"
+    exit 0
+  fi
   echo "=== 推奨マージ順序 (base: $BASE) ==="
   i=1
   while IFS=$'\t' read -r br pl; do
@@ -72,31 +80,53 @@ for br in "$@"; do
   echo "▶ $br  (柱: $(branch_pillars "$br"))"
   echo "════════════════════════════════════════"
 
+  # マージ前の HEAD を記録する。ロールバックは必ずこの SHA へ戻す。
+  # HEAD~1 で戻してはいけない: 「Already up to date」等でマージコミットが
+  # 作られなかった場合、HEAD~1 は統合先の既存コミットを指すため、
+  # reset --hard が無関係な作業を破壊する。
+  BEFORE="$(git rev-parse HEAD)"
+
   if ! git merge --no-commit --no-ff "$br" >/dev/null 2>&1; then
     echo "  ✗ 衝突を検出しました。競合ファイル:"
     git diff --name-only --diff-filter=U | sed 's/^/      /'
-    git merge --abort 2>/dev/null
+    git merge --abort 2>/dev/null || git reset --hard "$BEFORE" >/dev/null
     echo "  → $br 側で 'git rebase $CUR' を実行し、解決してから再試行してください。"
     exit 1
   fi
 
   if [ "$DRY" -eq 1 ]; then
     echo "  ✓ クリーンにマージ可能"
-    git merge --abort 2>/dev/null || git reset --hard HEAD >/dev/null
+    git merge --abort 2>/dev/null || git reset --hard "$BEFORE" >/dev/null
     continue
   fi
 
-  git commit --no-edit >/dev/null || true
+  # MERGE_HEAD が無い = 取り込むものが無かった (既にマージ済み)。
+  # ここで commit すると失敗するので、スキップして次へ進む。
+  if [ ! -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    echo "  - 取り込む変更がありません (既にマージ済み)。スキップします。"
+    continue
+  fi
+
+  if ! git commit --no-edit >/dev/null; then
+    echo "  ✗ マージコミットの作成に失敗しました。統合を中止します。" >&2
+    git merge --abort 2>/dev/null || git reset --hard "$BEFORE" >/dev/null
+    exit 1
+  fi
   echo "  ✓ マージしました"
+
+  rollback() {
+    echo "  → $BEFORE へ戻します"
+    git reset --hard "$BEFORE"
+  }
 
   if ! bash scripts/dev/check_migrations.sh; then
     echo "  ✗ マイグレーション整合に失敗。マージを取り消します。"
-    git reset --hard HEAD~1; exit 1
+    rollback; exit 1
   fi
 
   if ! bash scripts/dev/preflight.sh --quick; then
     echo "  ✗ 統合後の検証に失敗。マージを取り消します。"
-    git reset --hard HEAD~1; exit 1
+    rollback; exit 1
   fi
   echo "  ✓ 検証通過"
 done

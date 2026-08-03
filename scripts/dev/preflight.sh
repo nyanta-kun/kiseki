@@ -32,8 +32,10 @@ bash scripts/dev/check_migrations.sh; mark $? "check_migrations"
 step "2/5 柱(pillar)所属チェック"
 bash scripts/dev/check_ownership.sh; mark $? "check_ownership"
 
-step "3/5 他ブランチとの衝突スキャン"
-bash scripts/dev/scan_collisions.sh; mark $? "scan_collisions"
+step "3/5 他ブランチとの衝突スキャン (情報提供のみ・ブロックしない)"
+# 同じファイルを触っていること自体は違反ではない。ここで落とすと、作業中の
+# ブランチや削除し忘れたローカルブランチがあるだけで preflight が通らなくなる。
+bash scripts/dev/scan_collisions.sh || true
 
 if echo "$CHANGED" | grep -q '^backend/'; then
   step "4/5 Backend (ruff / mypy / pytest)"

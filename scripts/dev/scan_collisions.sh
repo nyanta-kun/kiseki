@@ -8,6 +8,11 @@
 # 使い方:
 #   bash scripts/dev/scan_collisions.sh            # 現ブランチ vs 他の全ブランチ
 #   bash scripts/dev/scan_collisions.sh --all      # 全ブランチ総当たり (PM 用)
+#
+# 本スクリプトは *情報提供* であり合否判定ではない。同じファイルを触っている
+# こと自体は違反ではなく (同一ファイルの別箇所なら綺麗にマージされる)、
+# 「注意して見るべき組」を人間に示すのが目的。したがって衝突を検出しても
+# 終了コードは常に 0 を返す。preflight のブロック条件にしてはいけない。
 # ============================================================================
 set -uo pipefail
 
@@ -43,8 +48,13 @@ report_pair() {
 
 if [ "${1:-}" = "--all" ]; then
   echo "=== 全ブランチ総当たり衝突スキャン (base: $BASE) ==="
-  mapfile -t BRS < <(active_branches)
+  # macOS 標準の bash 3.2 には mapfile が無いため read ループで配列を作る
+  BRS=()
+  while IFS= read -r _br; do
+    [ -n "$_br" ] && BRS+=("$_br")
+  done < <(active_branches)
   found=0
+  [ "${#BRS[@]}" -eq 0 ] && { echo "  比較対象のブランチがありません。"; exit 0; }
   for ((i=0; i<${#BRS[@]}; i++)); do
     for ((j=i+1; j<${#BRS[@]}; j++)); do
       out="$(report_pair "${BRS[i]}" "${BRS[j]}")"
@@ -52,6 +62,7 @@ if [ "${1:-}" = "--all" ]; then
     done
   done
   [ "$found" -eq 0 ] && echo "  重複ファイルなし。全ブランチは安全に並列マージできます。"
+  exit 0
 else
   CUR="$(git rev-parse --abbrev-ref HEAD)"
   echo "=== '$CUR' と他ブランチの衝突スキャン (base: $BASE) ==="
@@ -62,4 +73,5 @@ else
     [ -n "$out" ] && { echo "$out"; found=1; }
   done < <(active_branches)
   [ "$found" -eq 0 ] && echo "  重複ファイルなし。安全にマージできます。"
+  exit 0
 fi
