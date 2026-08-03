@@ -12,6 +12,20 @@ on:
     branches: [main]
 
 jobs:
+  guards:
+    name: Guards (並列開発ガード)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0   # merge-base を取るため全履歴が必要
+
+      - name: Alembic 整合チェック (head 単一 / ID 重複 / 親不明)
+        run: bash scripts/dev/check_migrations.sh
+
+      - name: 柱(pillar)所属チェック
+        run: bash scripts/dev/check_ownership.sh "origin/${{ github.base_ref || 'main' }}"
+
   backend:
     name: Backend (Python)
     runs-on: ubuntu-latest
@@ -87,7 +101,7 @@ jobs:
 
   build-backend:
     name: Build & Push Backend Image
-    needs: [backend, frontend]
+    needs: [guards, backend, frontend]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
@@ -118,7 +132,7 @@ jobs:
 
   build-frontend:
     name: Build & Push Frontend Image
-    needs: [backend, frontend]
+    needs: [guards, backend, frontend]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
