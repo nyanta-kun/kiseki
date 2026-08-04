@@ -6,6 +6,16 @@
 ' Targets:
 '   [A] jvlink_agent.py / umaconn_agent.py  --mode realtime   (any age)
 '   [B] jvlink_agent.py / umaconn_agent.py  ANY mode, started BEFORE today
+'   [C] jvlink_historical.py                started BEFORE today
+'
+' Why [C] exists (2026-08-05 incident):
+'   jvlink_historical was deliberately excluded from [B] so a same-day backfill would
+'   not be killed mid-run. That left it with NO reclamation path at all: the realtime
+'   watchdog only covers realtime, and its own --time-limit is a graceful stop at file
+'   boundaries which never fires while JVOpen itself blocks. A run started
+'   2026-08-04 16:23 was still inside JVOpen 11.7 hours later.
+'   Same-day hangs are now reclaimed by run_historical.vbs (HUNG_MINUTES, every 4h);
+'   [C] is the day-boundary net, matching what [B] does for the other agents.
 '
 ' Why [B] exists (2026-08-02 incident):
 '   `jvlink_agent.py --mode daily` had been hung since 2026-07-16 (17 days, 13h CPU)
@@ -81,16 +91,21 @@ End If
 killed = 0
 For Each p In procs
     If Not IsNull(p.CommandLine) Then
-        Dim isAgent, isRealtime, isStale, reason
+        Dim isAgent, isBatch, isRealtime, isStale, isOldBatch, reason
         isAgent = (InStr(p.CommandLine, "jvlink_agent.py") > 0) Or _
                   (InStr(p.CommandLine, "umaconn_agent.py") > 0)
+        isBatch = (InStr(LCase(p.CommandLine), "jvlink_historical") > 0)
         isRealtime = isAgent And (InStr(p.CommandLine, "realtime") > 0)
         isStale = isAgent And (ProcDateStr(p.CreationDate) <> "") And _
                   (ProcDateStr(p.CreationDate) < todayStr)
+        ' [C] 日跨ぎの historical。同日分は run_historical.vbs (HUNG_MINUTES) が回収する
+        isOldBatch = isBatch And (ProcDateStr(p.CreationDate) <> "") And _
+                     (ProcDateStr(p.CreationDate) < todayStr)
 
         reason = ""
         If isRealtime Then reason = "realtime"
         If isStale Then reason = "stale(started " & ProcDateStr(p.CreationDate) & ")"
+        If isOldBatch Then reason = "historical stale(started " & ProcDateStr(p.CreationDate) & ")"
 
         If reason <> "" Then
             WriteLog "EOD cleanup [" & reason & "]: terminating PID=" & _
