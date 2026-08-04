@@ -1,4 +1,4 @@
-# kiseki UmaConn Realtime Agent - Windows タスクスケジューラ登録スクリプト
+﻿# kiseki UmaConn Realtime Agent - Windows タスクスケジューラ登録スクリプト
 #
 # 使い方（管理者権限の PowerShell で実行）:
 #   powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\setup_task_scheduler.ps1

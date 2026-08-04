@@ -1,4 +1,4 @@
-# kiseki JV-Link 週次エントリー取得タスク登録
+﻿# kiseki JV-Link 週次エントリー取得タスク登録
 #
 # 使い方（管理者権限の PowerShell で実行）:
 #   powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\setup_weekly_entry_tasks.ps1
