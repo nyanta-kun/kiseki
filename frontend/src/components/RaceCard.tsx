@@ -52,8 +52,8 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
             <span className="font-semibold text-gray-800 truncate">
               {race.race_name ?? race.race_class_label ?? `${race.race_number}R`}
             </span>
-            {/* 注目馬（穴馬複勝）がいるレース */}
-            {race.has_open_place && (
+            {/* 注目馬（人気薄の複勝圏候補）がいるレース */}
+            {race.has_place_pick && (
               <span
                 className="text-amber-500 text-sm leading-none"
                 title="注目馬（複勝）あり"

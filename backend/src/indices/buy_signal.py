@@ -27,7 +27,7 @@ JRA（v26 LightGBM ensemble 検証 2026-05-02, 3年/138,728 horse-races）:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
 # ---------------------------------------------------------------------------
@@ -460,32 +460,40 @@ def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 地方競馬 穴馬複勝（開いたレース）— 注目馬の本体
+# 地方競馬 注目馬 — 人気薄なのに複勝圏に来る馬（的中率特化）
 # ---------------------------------------------------------------------------
 # 検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
-#   walk-forward honest（model-vintage leak・生存者バイアスなし）で
-#   DISCOVERY 2026-01〜04 / HOLDOUT 2026-05〜07 に分けて検証した。
 #
-#   探索 n=337 複勝ROI 1.320 / 確認 n=339 複勝ROI 1.120 / 通算 n=676 ROI 1.220
-#   確認期間のみの単一検定 p=0.0033（帰無＝同帯の非開放レース 0.648）
-#   探索側も 77 セルのボンフェローニ補正後で有意（p=0.0001 < 0.00065）
-#   7ヶ月すべて ROI>1.0。払戻中央値 7.6 倍で、上位10件を除いても ROI 1.035
+# ## この条件が答えているもの
+#   「発走前6番人気以下の馬が3着以内に来る」条件を絞り込めるか。
+#   **収支ではなく的中率の指標**。ROI は 0.9〜1.1 で黒字は確立していない。
 #
-# 効いているのは「複勝圏の枠を人気馬が何頭で埋めてしまうか」。
-# 複勝の払戻は単勝オッズから素朴に類推されやすいが、
-# 「単勝オッズ→複勝確率」の対応は場の集中度で変わる。
-# 断然人気が1枠を固定するレースと誰も抜けていないレースでは、
-# 同じ40倍馬の複勝確率が違う。複勝プールがこれを織り込みきれていない。
+# ## 実測（2026-04-07〜07-31・発走5分前オッズのみ・walk-forward honest 指数）
+#   母集団（発走前6番人気以下）        : 複勝圏率 11.79%  (n=21,670)
+#   本条件（指数3位内 × シェア<0.63） : 複勝圏率 51.5%   (n=103) = **4.37倍**
+#     探索 2026-04-07〜06-30 : 51.4%
+#     確認 2026-07-01〜07-31 : 51.6%   ← 一度きり評価でほぼ完全に再現
+#     二項検定 p = 1.0e-22（母集団比）。複勝ROI 1.110 [0.886, 1.345]
+#   発生頻度: 年325本 ≒ 月27頭・1レースあたり 1.08 頭
 #
-# ⚠️ この条件に **モデル指数（composite_index）を混ぜてはいけない**。
-#    実測で逆行する（穴馬10-30倍で 指数3位内 0.688 / 指数6位以下 0.798）。
+# ## 前身の条件をなぜ捨てたか（重要な教訓）
+#   旧 `chihou_is_open_place()`（単勝30-50倍 × シェア<0.63）は **確定オッズで
+#   条件を判定していた**。賭け時に確定オッズは分からないため look-ahead であり、
+#   発走前オッズで測り直すと複勝ROI 1.22 → **0.85** に崩壊した。
+#   選ばれた馬のオッズは発走までに中央値 ×1.48 に流れ、58.8% が最終50倍超になる。
+#   「確定で30-50倍に収まる馬」＝「流れなかった馬」を選ぶ条件付けになっていた
+#   （drift<1.0 の馬だけなら複勝率 0.225 / ROI 1.337、drift>=1.3 なら 0.056 / 0.585）。
 #
-# ⚠️ 既存 `chihou_is_place_bet()` は断然人気レース（fav<2.0）を要求するが、
-#    実測では断然人気レースが最悪（0.680）、混戦が最良（0.804）で**逆向き**。
-#    確認期間での既存条件相当は ROI 0.696 と無条件(0.756)すら下回る。
+#   → **この条件は人気・シェアとも発走前スナップショットだけで判定する。**
+#      確定オッズを使ってはいけない。
+#
+# ## シェア≥0.63（開いていないレース）を採らない理由
+#   探索 37.7% → 確認 25.7% と落ちる。母集団の3倍はあるが再現性が弱い。
 
-CHIHOU_OPEN_PLACE_MIN_ODDS: float = 30.0
-CHIHOU_OPEN_PLACE_MAX_ODDS: float = 50.0
+# 「6番人気以下」の下限（発走前オッズ昇順の順位）
+CHIHOU_PICK_MIN_POP_RANK: int = 6
+# 指数がこの順位以内であること
+CHIHOU_PICK_MAX_INDEX_RANK: int = 3
 # 市場含意確率（1/オッズをレース内で正規化）の上位3頭合計がこの値未満なら「開いたレース」
 CHIHOU_OPEN_RACE_MAX_TOP3_SHARE: float = 0.63
 
@@ -516,31 +524,57 @@ def chihou_market_top3_share(win_odds: Iterable[float | None]) -> float | None:
     return sum(probs[:3])
 
 
-def chihou_is_open_place(
-    win_odds: float | None,
+def chihou_popularity_ranks(pre_odds_by_hn: Mapping[int, float | None]) -> dict[int, int]:
+    """発走前単勝オッズから人気順位を作る（1 = 最も買われている）。
+
+    ⚠️ **確定オッズを渡してはいけない。** 賭け時に得られる情報だけで判定するのが
+    この条件の前提（前身の条件はここを誤って崩壊した）。
+
+    Args:
+        pre_odds_by_hn: 馬番 → 発走前単勝オッズ（None・1.0未満は順位を付けない）
+
+    Returns:
+        馬番 → 人気順位。同着オッズは馬番の小さい方を上位とする。
+    """
+    valid = [
+        (hn, float(o)) for hn, o in pre_odds_by_hn.items()
+        if o is not None and float(o) >= 1.0
+    ]
+    valid.sort(key=lambda x: (x[1], x[0]))
+    return {hn: i + 1 for i, (hn, _o) in enumerate(valid)}
+
+
+def chihou_is_place_pick(
+    pop_rank: int | None,
+    index_rank: int | None,
     top3_share: float | None,
     head_count: int | None,
 ) -> bool:
-    """地方競馬 穴馬複勝推奨（開いたレース）の判定。
+    """地方競馬 注目馬（人気薄の複勝圏候補）の判定。
 
     条件:
       1. 出走 8 頭以上（7頭以下は複勝が2着までしか払い戻されないため対象外）
-      2. 単勝オッズ ∈ [30.0, 50.0)
-      3. 市場上位3頭シェア < 0.63（開いたレース）
+      2. **発走前** 6番人気以下
+      3. 指数（composite_index）3位以内
+      4. 市場上位3頭シェア < 0.63（上位が抜けていない「開いたレース」）
+
+    実測 複勝圏率 51.5%（母集団 11.79% の 4.37倍・探索51.4%/確認51.6%）。
+    **的中率の指標であって収支の保証ではない**（複勝ROI 1.110 [0.886, 1.345]）。
 
     Args:
-        win_odds: 対象馬の単勝オッズ
-        top3_share: `chihou_market_top3_share()` の戻り値
+        pop_rank: 発走前オッズによる人気順位（`chihou_popularity_ranks()`）
+        index_rank: composite_index のレース内順位（1 = 最上位）
+        top3_share: `chihou_market_top3_share()` の戻り値（発走前オッズから）
         head_count: 出走頭数
 
     Returns:
-        複勝で買う推奨に該当するか
+        注目馬（複勝）に該当するか
     """
     if head_count is None or head_count < CHIHOU_PLACE_MIN_HEAD_COUNT:
         return False
-    if win_odds is None or not (
-        CHIHOU_OPEN_PLACE_MIN_ODDS <= float(win_odds) < CHIHOU_OPEN_PLACE_MAX_ODDS
-    ):
+    if pop_rank is None or pop_rank < CHIHOU_PICK_MIN_POP_RANK:
+        return False
+    if index_rank is None or index_rank > CHIHOU_PICK_MAX_INDEX_RANK:
         return False
     if top3_share is None:
         return False

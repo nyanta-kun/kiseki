@@ -29,14 +29,15 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..indices.buy_signal import (
-    CHIHOU_OPEN_PLACE_MAX_ODDS,
-    CHIHOU_OPEN_PLACE_MIN_ODDS,
     CHIHOU_OPEN_RACE_MAX_TOP3_SHARE,
+    CHIHOU_PICK_MAX_INDEX_RANK,
+    CHIHOU_PICK_MIN_POP_RANK,
     CHIHOU_PLACE_MIN_HEAD_COUNT,
-    chihou_is_open_place,
+    chihou_is_place_pick,
     chihou_is_sweet_spot,
     chihou_low_odds_trust_level,
     chihou_market_top3_share,
+    chihou_popularity_ranks,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_upset import get_chihou_upset_reranker
@@ -729,9 +730,11 @@ async def build_chihou_sweet_spot_recommendations(
         if not win_odds:
             continue  # オッズ未取得レースは対象外
 
-        # 市場上位3頭シェア（複穴＝開いたレースの判定用）。最終オッズでなくても
-        # 安定している（締切5分前の判定が最終と 98.6% 一致）ので都度算出でよい。
-        top3_share = chihou_market_top3_share(win_odds.values())
+        # 注目馬（複穴）判定用。人気順位・シェアともこの時点の最新オッズから作る。
+        # ⚠️ 確定オッズを使ってはいけない（前身の条件がそれで崩壊した）。
+        _odds_by_hn = {int(k): v for k, v in win_odds.items() if str(k).isdigit()}
+        top3_share = chihou_market_top3_share(_odds_by_hn.values())
+        pop_ranks = chihou_popularity_ranks(_odds_by_hn)
 
         # 複勝確率集中度（信頼度算出）
         place_probs = [
@@ -807,9 +810,13 @@ async def build_chihou_sweet_spot_recommendations(
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            # 複穴（2026-08-05 差し替え）: 開いたレース × 単勝30-50倍 × 8頭以上。
-            # モデル指数（idx_rank）は**使わない**。実測で逆行するため。
-            if chihou_is_open_place(wo, top3_share, race.head_count):
+            # 複穴（注目馬）: 発走前6番人気以下 × 指数3位内 × 開いたレース × 8頭以上
+            if chihou_is_place_pick(
+                pop_ranks.get(hn) if hn is not None else None,
+                idx_rank,
+                top3_share,
+                race.head_count,
+            ):
                 place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
@@ -883,12 +890,13 @@ async def build_chihou_sweet_spot_recommendations(
                 "created_at": now,
             })
 
-        # ---- 複穴（place_bet）: 開いたレース × 単勝30-50倍 を複勝買い ----
-        # 2026-08-05 差し替え。旧条件（断然人気R × 指数3位以内）は実測で最下層だった
-        # （確認期間 複勝ROI 0.696 < 無条件 0.756）。検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
+        # ---- 複穴（place_bet）: 人気薄の複勝圏候補を複勝買い ----
+        # 発走前6番人気以下 × 指数3位内 × 開いたレース × 8頭以上。
+        # 複勝圏率 51.5%（母集団 11.79% の 4.37倍・探索51.4%/確認51.6%）。
+        # **的中率の指標であって収支の保証ではない**（複勝ROI 1.110 [0.886,1.345]）。
+        # 検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
         #
-        # ⚠️ 頭数ゲート（旧 k<3）は付けない。検証した条件には無く、1レース平均 1.54 頭が
-        #    該当する（4頭該当するレースもある）。ゲートを足すと検証した母集団と変わる。
+        # ⚠️ 頭数ゲート（旧 k<3）は付けない。検証した条件に無く、1レース平均 1.08 頭。
         if place_bet_horses:
             for h in place_bet_horses:
                 _attach_finish(h, race.id)
@@ -913,15 +921,15 @@ async def build_chihou_sweet_spot_recommendations(
                     result_correct = False
                     result_payout = 0
 
-            # EV はこの条件の根拠ではない（モデルを使わないため）。信頼度は固定にする。
-            confidence = 0.60
+            # EV は根拠ではない（的中率で選ぶ条件）。信頼度は実測の複勝圏率を入れる。
+            confidence = 0.515
             reason = (
-                f"地方複穴：上位人気が抜けていない開いたレース"
-                f"（市場上位3頭シェア {top3_share:.2f} < {CHIHOU_OPEN_RACE_MAX_TOP3_SHARE:.2f}）の "
-                f"単勝{CHIHOU_OPEN_PLACE_MIN_ODDS:.0f}〜{CHIHOU_OPEN_PLACE_MAX_ODDS:.0f}倍・"
-                f"{CHIHOU_PLACE_MIN_HEAD_COUNT}頭立て以上を複勝買い。"
-                f"walk-forward 検証 複勝ROI 1.22（n=676・7ヶ月連続で1.0超）。"
-                f"前向き確認中のため参考情報。 "
+                f"注目馬（複勝）：発走前{CHIHOU_PICK_MIN_POP_RANK}番人気以下 ∧ "
+                f"指数{CHIHOU_PICK_MAX_INDEX_RANK}位以内 ∧ 上位が抜けていない開いたレース"
+                f"（市場上位3頭シェア {top3_share:.2f} < {CHIHOU_OPEN_RACE_MAX_TOP3_SHARE:.2f}）∧ "
+                f"{CHIHOU_PLACE_MIN_HEAD_COUNT}頭立て以上。"
+                f"実測 複勝圏率 51.5%（人気薄全体 11.8% の 4.4倍）。"
+                f"的中率の指標であり収支は保証しない。 "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f})"

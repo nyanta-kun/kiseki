@@ -390,8 +390,8 @@ export function ChihouRaceDetailClient({
                         )}>
                           {horse.horse_name}
                         </span>
-                        {/* 注目馬（穴馬複勝: 開いたレース × 単勝30-50倍） */}
-                        {horse.is_open_place && (
+                        {/* 注目馬（発走前6番人気以下 × 指数3位内 × 開いたレース） */}
+                        {horse.is_place_pick && (
                           <span
                             className="text-amber-500 text-sm leading-none"
                             title="注目馬（複勝）"
