@@ -204,6 +204,39 @@ class IndexCalculator(ABC):
 - JV-Linkは同時1接続のみ。TARGET使用時はスクリプトを停止すること
 - JVRead 戻り値: 0=EOF, -1=ファイル切り替わり(継続), -3=ダウンロード中(待機), <-3=エラー
 
+### サーバーメンテナンス窓では JVOpen を呼ばない（2026-08-04）
+
+**JRA-VAN の定期メンテナンスは毎月第一火曜 8:00〜15:00**（公式FAQ）。
+この間に `JVOpen` を呼ぶと `rc=-504`（サーバーメンテナンス中）が返るが、問題はそこではなく、
+**JV-Link がモーダルダイアログを出してデスクトップセッションを掴む**こと。
+エージェントは `pythonw.exe` 起動でダイアログを閉じる者がいないため COM がブロックする。
+
+> 実測 2026-08-04 13:41: JVOpen が **1193秒（約20分）**待たされた末に -504。
+> `jvlink_historical` の `time_limit=7200` 秒の処理枠をそれだけで食い潰した。
+
+したがって「rc を見てから諦める」では足りない。**既知の窓では最初から呼ばない**。
+
+- 判定: `windows-agent/jvlink_maintenance.py` / テスト: `windows-agent/tests/test_jvlink_maintenance.py`
+- 窓は `.env` の `JVLINK_MAINTENANCE_WINDOWS` で設定。**既定は `TUE 08:00-15:00`**
+  - 書式（カンマ区切りで混在可）: `TUE 08:00-15:00`（毎週）/ `1ST-TUE 08:00-15:00`（毎月第一）/
+    `2026-09-10 09:00-12:00`（特定日・臨時メンテ用）
+  - 公式記載は「第一火曜」だが**それ以外の火曜にも観測されている**ため既定は毎週火曜。
+    JRA は火曜に開催しないので、失うのは同日の蓄積系バックフィル枠だけ
+  - 開始時刻ちょうどは窓の**中**、終了時刻ちょうどは窓の**外**。日跨ぎ指定は未対応
+  - 窓を広げるときは**開催日と重ならないこと**（realtime の JVRTOpen も止まる）
+
+**JVOpen 戻り値は分類して扱う**。従来は `rc<0` を一律 ERROR にしていたため、
+待てば直る -504 と復旧作業が要る -303 がログ上で区別できなかった。
+
+| 区分 | rc | 扱い |
+|---|---|---|
+| `no_data` | -1 | INFO・正常 |
+| `maintenance` | -504, -431 | WARNING。その回は丸ごと見送り、次回実行に委ねる |
+| `transient` | -402, -403, -411〜-413, -421, -502, -503 | WARNING。次回実行に委ねる |
+| `fatal` | -303, -111 等（未知のコードも含む） | ERROR |
+
+`-413` = 通信確立不可（ネットワーク／セキュリティソフト）。VM の DNS 不安定時に出る。
+
 ### 速報系データスペック（JVRTOpen）
 | DataSpec | 内容 | key形式 |
 |----------|------|---------|
@@ -417,7 +450,13 @@ pkill -9 -f "prlctl exec"
   - `kiseki-UmaConn-FetchResults`: **5分おき** (10:00-22:30) に `umaconn_agent.py --mode fetch-results --fetch-date {today}` を自動実行
     - realtime の 0B12 worker が止まっても結果取得を確実化
     - スクリプト: `C:\kiseki\windows-agent\run_umaconn_fetch_results.vbs`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加）
+    - **多重起動禁止**（2026-08-04 追加）。実行中なら起動しない。`STUCK_MINUTES`(30分) 超は taskkill
+      - Why: 所要時間はレース数に比例し、46レースあった 2026-08-04 は **1回21分**（17:28→17:49）
+        かかった。ガードが無かったため **4本が同時に走り**（16:35/16:46/16:52/16:56）
+        UmaConn COM を奪い合って `NVSetServiceKey` が60秒タイムアウト。最古は41分居座った
+      - 回収に `taskkill`(=`TerminateProcess`) を使うのは意図的。`DLL_PROCESS_DETACH` を
+        走らせないので UmaConn の FastMM リークダイアログを出さずに落とせる（下記参照）
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加）
     - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
     - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
       **15分以上更新されていない**場合、taskkill してから再起動する
@@ -425,6 +464,13 @@ pkill -9 -f "prlctl exec"
         凍結**して `os._exit(1)` が発火せず、約95分オッズ取得が死んだ。生存確認だけでは検知できない
       - ハートビートは各エージェントのウォッチドッグスレッドが30秒ごとに書き出す
         （`write_heartbeat_file()`）。ファイルが無い場合はストール判定をスキップ（旧版との互換）
+      - **起動猶予がある**（2026-08-04 追加）。heartbeat ファイルは**プロセスをまたいで使い回される**ため、
+        起動直後のプロセスは「前のプロセスが残した古いファイル」で判定されてしまう。
+        最初の heartbeat が出るのは起動30秒後で、初期化が詰まればさらに遅れる。
+        → heartbeat が古くても**プロセス起動から 15分経っていなければ猶予**する。
+        本当に固まっていれば猶予明けに捕まえられるので取りこぼしは無い。起動時刻が読めない場合は停止扱い（安全側）
+        - Why: これが無いと、上記の COM 競合と噛み合って「起動 → 15分でkill → 再起動」を
+          延々と繰り返す（2026-08-04 16:55 / 17:48 に実際に発生）
     - **[3] サービス停止**: `JVLinkAgent` Windows サービスが停止していれば起動する（2026-08-03 追加）
       - Why: サービスが止まっていると JVRTOpen/JVOpen は**エラーログを一切出さずに黙って失敗**する。
         このときエージェントのプロセスは生存し heartbeat も更新され続けるため、
@@ -439,12 +485,18 @@ pkill -9 -f "prlctl exec"
         - トリガー無し。watchdog からの `schtasks /run` でのみ起動する
         - 削除: `schtasks /delete /tn kiseki-Start-JVLinkAgent /f`
       - 実機検証済み（2026-08-03）: 停止 → 検知 → 昇格起動 → `Running` 復旧。稼働中は no-op でログも出さない
+    - **[4] 日跨ぎ**: **前日以前に起動した** realtime を taskkill して再起動する（2026-08-04 追加）
+      - Why: `kiseki-EOD-Cleanup` が 8/2・8/3 と2晩連続で無言死し（下記エンコーディングの項）、
+        8/2 11:57 起動の jvlink realtime が **8/4 まで3日間**居座った。
+        これは **[1]（プロセスは在る）・[2]（heartbeat は新鮮）・[3]（サービスは Running）の
+        いずれでも検知できない**。EOD cleanup が唯一の網だったが、それが落ちていた
+      - realtime は 9:00 か本 watchdog（9:00-22:30）でしか起動しないので、
+        起動日が今日より前なら定義上「残り物」
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
-    - **`register_start_jvlinkagent_task.ps1` は UTF-8 BOM 付きで保存すること**。PowerShell 5.1 は
-      BOM 無し UTF-8 を ANSI として読むため、日本語コメントが壊れて構文エラーになる。
-      また `New-ScheduledTaskAction -Execute` は**絶対パス必須**（Task Scheduler は PATH を解決せず、
+    - `New-ScheduledTaskAction -Execute` は**絶対パス必須**（Task Scheduler は PATH を解決せず、
       `"net.exe"` だと `LastTaskResult=2` = ERROR_FILE_NOT_FOUND で無言で失敗する）
+    - スクリプトのエンコーディングは下記「Windows スクリプトのエンコーディング規約」に従うこと
   - `kiseki-EOD-Cleanup`: **毎日 23:45** に以下を強制終了（2026-04-30 新設・2026-08-02 拡張）
     - [A] `jvlink_agent` / `umaconn_agent` の `--mode realtime`（起動日時を問わず）
     - [B] 同エージェントの**モードを問わず前日以前に起動したプロセス**（ゾンビ掃除）
@@ -453,10 +505,34 @@ pkill -9 -f "prlctl exec"
       - 同日起動の正規バックフィル（`jvlink_historical` 等）は巻き添えにしない
     - スクリプト: `C:\kiseki\windows-agent\run_eod_cleanup.vbs`
     - 翌朝 9:00 起動が常にクリーンな状態になるための safety net（hung プロセスの跨ぎ防止）
+    - **これ自身が落ちうる**。2026-08-02〜03 にエンコーディング由来のコンパイルエラーで
+      2晩連続 `exit 1`・ログ0行のまま何もしなかった（上記「Windows スクリプトのエンコーディング規約」）。
+      開始マーカー `EOD cleanup start.` を必ず書くようにしてあるので、
+      **watchdog.log にこの行が無い日は EOD cleanup が起動すらしていない**
+    - 取りこぼしは watchdog **[4] 日跨ぎ**が翌日回収する（二重の網）
+    - `On Error Resume Next` 下でエラーを記録する関数は、**入口で `Err.Clear` すること**。
+      呼び出し元の Err が残っていると「エラーを報告するための関数」が自分の Err チェックで
+      弾かれ、記録したい失敗のときだけ何も書けない
   - `run_jvlink_realtime.vbs` / `run_umaconn_realtime.vbs` は冪等（同種 realtime が既に走っていればスキップ）。watchdog × daily 9:00 の二重発火で多重生成しない
   - **Why**: 4/27 の mitmproxy 停止由来 ProxyError 連発 + 4/26 jvlink_agent watchdog 600s誤発火事例（626/643秒）+ 2026-04-30 観測の jvlink_agent ゾンビ多重起動（4/28・4/29 の 9:00 起動分が残存し COM 競合）への対応
   - **jvlink_agent WATCHDOG_TIMEOUT**: 600s → **1800s**（2026-05-02）。レース間の30分待機ループで誤発火していたため延長
   - **Windowsシステムプロキシは無効化済**（`netsh winhttp reset proxy` 完了）。再有効化する場合はバックエンドAPI到達不可になるので注意
+- **UmaConn の NVLink は必ず解放してからプロセスを終えること**（2026-08-04）
+  - NVDTLab.dll は Delphi/FastMM 製で、解放し忘れると `DLL_PROCESS_DETACH` で
+    「Unexpected Memory Leak」**モーダルダイアログ**を出す。`pythonw.exe` には閉じる者が
+    いないためプロセスが終われず、**UmaConn COM を掴んだまま居座る**。
+    次に起動したエージェントの NV 呼び出しがブロックされ（`NVSetServiceKey: 60秒タイムアウト`）、
+    それがまたウォッチドッグの `os._exit` を誘発する**自己増殖ループ**になる
+  - ダイアログに出る `TNVLink` の個数 = 生存インスタンス数。realtime は main の `nv` と
+    bg worker の `nv2` の**2本**を持つので x2、fetch-results 等は x1
+  - `umaconn_agent.release_nvlink()`（`NVClose` → 参照破棄 → `gc.collect()`）を必ず通す。
+    `gc.collect()` まで行うのは、解放をインタプリタ終了時（＝ダイアログの発火位置）に
+    持ち越さないため
+  - `os._exit()` は `atexit` も `finally` も走らせない。**強制終了の直前に明示的に解放する**
+    （`_exit_after_release()`）。`nv2` は生成した STA スレッド自身に閉じさせる必要があるため
+    キュー経由で依頼し、完了を Event で待つ（10秒でタイムアウトして main の解放へ進む）
+  - **外部から回収するときは `taskkill /F`**（`TerminateProcess`）。DLL detach を走らせないので
+    ダイアログを出さずに落とせる
 - **umaconn_agent の起動はデスクトップセッションが必須**（2026-04-21 確認）
   - NVDTLab.dll はシステムトレイアイコン初期化のためデスクトップセッションが必要
   - SSH経由の直接起動は `シェル通知アイコンが削除できません` エラーで初期化失敗する
@@ -482,6 +558,51 @@ pkill -9 -f "prlctl exec"
   - `run_adhoc.vbs` が `adhoc_cmd.txt` の1行目を読み取り、**`pythonw.exe`（コンソールウィンドウなし）** で直接起動
   - `cmd.exe` を経由しないため Coherence モードでもちらつきゼロ
   - `prlctl exec --current-user` および `python.exe`（コンソールあり）は使用禁止
+
+### Windows スクリプトのエンコーディング規約（2026-08-04・本番を止めた実バグ）
+
+`cscript` と PowerShell 5.1 は **BOM 無し UTF-8 を CP932(ANSI) として読む**。
+日本語の最終バイトが CP932 の先行バイト範囲 (`0x81-0x9F` / `0xE0-0xFC`) に当たると、
+その文字が**次の1バイトを飲み込む**。
+
+| 対象 | ルール | 破ったときの壊れ方 |
+|---|---|---|
+| 行終端 | **CRLF 必須**（`windows-agent/.gitattributes` で強制） | LF だと改行が飲まれ、次の行がコメントに吸収される |
+| 文字列リテラル | **ASCII のみ** | `"` が飲まれて文字列が閉じず構文エラー |
+| コメント | 日本語で可（CRLF が前提） | — |
+| `.ps1` / `.bat` | UTF-8 **BOM** を付ければ文字列リテラルも日本語で可 | — |
+| `.vbs` | **BOM は効かない**。ASCII で書くしかない | — |
+
+```
+' ...から yyyymmdd を取り出す      LF  : ... e3 81 99 | 0a       ← 0x99 が LF を食う
+Function ProcDateStr(wmiDate)          → この行がコメントに吸収され Exit Function が宙に浮く
+
+' ...から yyyymmdd を取り出す      CRLF: ... e3 81 99 | 0d | 0a  ← 0x99 は CR を食う。LF は無事
+```
+
+**実害の記録**:
+- `run_eod_cleanup.vbs` — `6c6c75b`(2026-08-02) のコメント追加でコンパイルエラーになり、
+  wscript が `exit 1` で即死。**ログを1行も残さない**まま毎晩のゾンビ掃除が停止し、
+  realtime が3日間居座った（上記 watchdog [4] の背景）
+- `setup_task_scheduler.ps1` / `setup_weekly_entry_tasks.ps1` — BOM 無しで日本語文字列リテラルを
+  含み、**PowerShell パーサでパース不能**だった（`'&&' は有効なステートメント区切りではありません` /
+  `終わりの '}' が存在しません`）。前者の `&&` は文字列内にあり、文字化けで文字列が閉じなかった結果
+
+**検査**: `windows-agent/tests/test_windows_script_encoding.py`（CRLF / 行末先行バイト / 文字列リテラル ASCII）
+
+⚠️ **`eol=crlf` 導入前に作られた worktree / clone は作り直しが必要**。
+フィルタはチェックアウト時にしか走らないので、既にあるファイルは LF のまま残る。
+`git add --renormalize` では**直らない**（index を直すだけで作業ツリーは LF のまま。
+Windows への配備は作業ツリーから scp するので、それでは配備物が壊れたままになる）。
+
+```bash
+rm -f windows-agent/*.vbs windows-agent/*.ps1 windows-agent/*.bat
+git checkout -- windows-agent/
+```
+
+**VBS の構文検査（副作用ゼロ）**: VBScript は全体をコンパイルしてから実行するので、
+最初に通る場所に `WScript.Quit 0` を差し込めば構文だけ検査できる。
+`Option Explicit` は他の実行文より前になければならないのでその直後に入れること。
 
 ### エージェント運用の落とし穴（2026-08-02 実地で踏んだもの）
 
