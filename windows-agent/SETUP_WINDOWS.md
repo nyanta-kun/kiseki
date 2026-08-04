@@ -79,11 +79,51 @@ JRAVAN_SID=your-jravan-sid-here
 
 # APIキー（Mac側の .env と同じ値を設定）
 CHANGE_NOTIFY_API_KEY=
+
+# JRA-VAN メンテナンス窓（省略可。既定は "TUE 08:00-15:00"）
+# この時間帯は JVOpen / JVRTOpen を一切呼ばない
+JVLINK_MAINTENANCE_WINDOWS=TUE 08:00-15:00
 ```
 
 > **注意**: Windows側の `.env` は Mac側と同じリポジトリの `.env` を参照する実装になっている。
 > `jvlink_agent.py` は `../.env`（親ディレクトリ）を読み込む。
 > `C:\kiseki\windows-agent\` に配置した場合、`C:\kiseki\.env` が読み込まれる。
+
+### JVLINK_MAINTENANCE_WINDOWS
+
+メンテナンス中に JVOpen を呼ぶと、JV-Link が**モーダルダイアログ**を出して
+デスクトップセッションを掴む。エージェントは `pythonw.exe` 起動でダイアログを閉じる者が
+いないため、COM がそのまま数十分ブロックしたうえで `rc=-504` を返す。
+
+> 実測（2026-08-04）: JVOpen が **1193秒**待たされた末に -504。
+> `jvlink_historical` の `time_limit=7200` 秒の処理枠をそれだけで使い切った。
+
+そのため rc を見てから諦めるのでは足りず、**既知の窓では最初から呼ばない**。
+
+書式はカンマ区切りで、3 形式を混在できる:
+
+| 指定 | 意味 |
+|---|---|
+| `TUE 08:00-15:00` | 毎週火曜（**既定値**） |
+| `1ST-TUE 08:00-15:00` | 毎月第一火曜（JRA-VAN 公式 FAQ の記載） |
+| `2026-09-10 09:00-12:00` | 特定日（臨時メンテナンスの一時追加用） |
+
+既定を「毎月第一火曜」ではなく「毎週火曜」にしているのは、公式記載以外の火曜にも
+ダイアログが観測されているため。**JRA は火曜に開催しない**ので、火曜日中の蓄積系
+バックフィル枠を捨てても実害が小さく、安全側に倒せる。
+
+- 開始時刻ちょうどは窓の**中**、終了時刻ちょうどは窓の**外**
+- 日跨ぎ（`23:00-02:00` のような開始 >= 終了）は未対応
+- 書式が壊れている場合は既定値へフォールバックし警告を出す。
+  「窓なし」に倒すとダイアログ地獄に戻るため
+- 窓を広げるときは**開催日と重ならないこと**。realtime の JVRTOpen も止まる
+
+判定ロジックは `windows-agent/jvlink_maintenance.py`、テストは
+`windows-agent/tests/test_jvlink_maintenance.py`（標準ライブラリのみで動くので Mac 上で実行可）。
+
+```bash
+python3 -m pytest windows-agent/tests/test_jvlink_maintenance.py
+```
 
 ---
 

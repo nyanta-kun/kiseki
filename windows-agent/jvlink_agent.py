@@ -47,6 +47,7 @@ except ImportError:
 # 環境変数読み込み
 from dotenv import load_dotenv
 
+import jvlink_maintenance as jvm
 from link_common import (
     _normalize_jvread,
     post_to_backend,
@@ -300,6 +301,12 @@ def fetch_stored_data(
                 on_file_done("(cached)", cached)
             return cached
 
+    # メンテナンス窓中は JVOpen を呼ばない（jvlink_maintenance の docstring 参照）。
+    # キャッシュ判定の後に置いているのは、キャッシュで済む取得まで止めないため。
+    if reason := jvm.skip_reason(f"JVOpen({dataspec})", logger=logger):
+        logger.warning(reason)
+        return []
+
     # キャッシュなし → JVOpenで取得
     # JVOpen は長時間ブロックする場合があるため、別スレッドでハートビートを出力する
     logger.info(f"JVOpen 呼び出し開始: dataspec={dataspec}, from={from_time}, option={option}")
@@ -335,7 +342,7 @@ def fetch_stored_data(
         logger.info(f"JVOpen 戻り値: rc={rc}")
 
     if rc < 0:
-        logger.error(f"JVOpen エラー: rc={rc}")
+        jvm.log_open_failure(logger, f"JVOpen({dataspec})", rc)
         return []
 
     logger.info(f"JVRead ループ開始 (rc={rc} ファイル)")
@@ -784,12 +791,29 @@ def run_realtime_monitor(jv) -> None:
 
     threading.Thread(target=_watchdog, daemon=True).start()
 
+    # メンテナンス窓に入ったことを1回だけログするためのフラグ（30秒ごとの連投を防ぐ）
+    in_maintenance = [False]
+
     while True:
         with _wd_lock:
             _last_heartbeat[0] = time.time()
         try:
             # 日付をループ内で更新（日をまたいでも正しい日付を使う）
             today = datetime.now().strftime("%Y%m%d")
+
+            # メンテナンス窓中は JVRTOpen を打たない。JRA は火曜に開催しないため
+            # 既定の窓で失うデータは無いが、窓を広げる場合は開催日と重ならないこと。
+            # ハートビートはこのループ先頭で更新済みなので外部ウォッチドッグは発火しない。
+            reason = jvm.skip_reason("realtime", logger=logger)
+            if reason:
+                if not in_maintenance[0]:
+                    logger.warning(reason)
+                    in_maintenance[0] = True
+                time.sleep(60)
+                continue
+            if in_maintenance[0]:
+                logger.info("メンテナンス窓を抜けました。realtime を再開します。")
+                in_maintenance[0] = False
             # 速報オッズ取得（0B31: レースキー単位）
             # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
             # race_keys / upcoming_keys / result_query_race_keys はすべてここで1回だけ取得した
