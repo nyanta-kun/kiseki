@@ -31,6 +31,7 @@ UmaConn 固有の仕様:
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -277,6 +278,46 @@ def init_umaconn():
         logger.error(f"UmaConn initialization error: {e}")
         logger.error("Python 32bit 版で実行していますか？ UmaConn はインストール済みですか？")
         sys.exit(1)
+
+
+def release_nvlink(nv, label: str = "nv"):
+    """NVLink COM オブジェクトを確実に解放する。戻り値は常に None。
+
+    使い方（呼び出し側の参照も必ず落とすこと）::
+
+        nv = release_nvlink(nv, "main")
+
+    Why（2026-08-04 の障害）:
+        解放しないままプロセスが終わると、NVDTLab.dll (Delphi/FastMM) が
+        DLL_PROCESS_DETACH で「Unexpected Memory Leak」**モーダルダイアログ**を出す。
+        エージェントは pythonw.exe 起動でダイアログを閉じる者がいないため、
+        プロセスはそこで止まったまま UmaConn COM を掴んで居座る。
+        次に起動したエージェントの NV 呼び出しがブロックされ（実測:
+        `NVSetServiceKey: 60秒タイムアウト`）、それがまたウォッチドッグの
+        os._exit を誘発する自己増殖ループになる。
+
+        実測: 5分おきの fetch-results が終了できずに4本積み上がり、
+        realtime も約10分ごとに os._exit(1) していた（同日3回）。
+
+        リークダイアログに出る TNVLink の個数は生存インスタンス数と一致する。
+        realtime は main の nv と bg worker の nv2 の2本を持つため x2 になる。
+
+    Note:
+        gc.collect() まで行うのは、pythoncom の参照が落ちて DLL 側の解放が確定するのを
+        インタプリタ終了時ではなく**この時点で**済ませるため。終了処理に持ち越すと
+        上記ダイアログの発火位置に戻ってしまう。
+    """
+    if nv is None:
+        return None
+    try:
+        nv.NVClose()
+    except Exception as e:  # noqa: BLE001
+        # 既に閉じている / COM が死んでいる場合。解放自体は続行する
+        logger.debug(f"[release] {label}: NVClose 失敗 ({e})")
+    del nv
+    gc.collect()
+    logger.info(f"[release] {label}: NVLink を解放しました")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1120,35 @@ def run_realtime_monitor(nv) -> None:
     # ---- ウォッチドッグスレッド ----
     _heartbeat = [time.time()]
 
+    def _exit_after_release(reason: str) -> None:
+        """NVLink を2本とも解放してから os._exit(1) する。
+
+        Why: os._exit は atexit も finally も走らせないため、ここで明示的に解放しないと
+        NVDTLab.dll が終了時にリークダイアログを出し、プロセスが終われなくなる
+        （release_nvlink の docstring 参照）。
+
+        解放は2本ある:
+          - bg worker の nv2 … 生成したスレッド (STA) 自身に閉じさせる必要があるため
+                               キューに None を送り、完了を Event で待つ
+          - main の nv       … このスレッドから直接解放する
+
+        従来は bg worker への通知しか無く、main の nv が必ず1本漏れていた。
+        """
+        logger.error(f"ウォッチドッグ: {reason} → NVLink を解放して強制終了します")
+        try:
+            _bg_task_queue.put_nowait(None)
+        except Exception:  # noqa: BLE001
+            # キューが詰まっている＝bg worker が固まっている。nv2 は諦めて先へ進む
+            logger.warning("ウォッチドッグ: bg worker への停止通知に失敗（キュー満杯）")
+        # bg worker が nv2 を閉じ切るのを待つ。固まっていても打ち切って main の解放へ進む
+        if not _bg_closed_event.wait(timeout=_BG_CLOSE_WAIT_SEC):
+            logger.warning(
+                f"ウォッチドッグ: bg worker の解放待ちが {_BG_CLOSE_WAIT_SEC}秒でタイムアウト"
+            )
+        release_nvlink(nv, "main")
+        logger.error("ウォッチドッグ: os._exit(1) 実行")
+        os._exit(1)
+
     def _watchdog() -> None:
         while True:
             time.sleep(30)
@@ -1086,18 +1156,7 @@ def run_realtime_monitor(nv) -> None:
             # 外部ウォッチドッグ用。COM ハングでこのスレッドごと固まると更新が止まる
             write_heartbeat_file(HEARTBEAT_FILE, elapsed)
             if elapsed > _REALTIME_WATCHDOG_TIMEOUT:
-                logger.error(
-                    f"ウォッチドッグ: {elapsed:.0f}秒間無応答 → bg worker をシャットダウン後に強制終了"
-                )
-                # bg worker に None を送って NVClose を呼ばせ COM オブジェクトを正常解放する
-                # (os._exit だけだと COM サーバー側が TNVLink リークダイアログを表示する)
-                try:
-                    _bg_task_queue.put_nowait(None)
-                except Exception:  # noqa: BLE001
-                    pass
-                time.sleep(3)  # bg worker の COM 解放を待つ
-                logger.error("ウォッチドッグ: os._exit(1) 実行")
-                os._exit(1)
+                _exit_after_release(f"{elapsed:.0f}秒間無応答")
 
     threading.Thread(target=_watchdog, daemon=True, name="watchdog").start()
     logger.info(
@@ -1120,6 +1179,11 @@ def run_realtime_monitor(nv) -> None:
     _bg_result_buf: list[dict] = []
     _bg_done_event = threading.Event()
     _bg_done_event.set()  # 初期状態: 完了済み（処理中でない）
+    # bg worker が nv2 を解放し終えたことの通知。_exit_after_release が待つ。
+    # NVLink は生成したスレッド(STA)自身に閉じさせる必要があるため、他スレッドから
+    # 直接 NVClose せずここで同期する。
+    _bg_closed_event = threading.Event()
+    _BG_CLOSE_WAIT_SEC = 10
     _bg_heartbeat = [time.time()]  # bg worker の最終活動時刻（レースキーごとに更新）
     _BG_WORKER_TIMEOUT = 1200  # 20分: 36キー×30秒IDLE_TIMEOUT=18分の最悪ケースを超えたら強制終了
 
@@ -1132,17 +1196,18 @@ def run_realtime_monitor(nv) -> None:
             if not _bg_done_event.is_set():  # タスク実行中のみ監視
                 elapsed = time.time() - _bg_heartbeat[0]
                 if elapsed > _BG_WORKER_TIMEOUT:
-                    logger.error(
-                        f"bg worker watchdog: {elapsed:.0f}秒間レースキー処理なし"
-                        f" → NVRTOpen ハング疑い → 強制終了"
+                    # 従来はここで素の os._exit(1) を撃っており、nv2 と main の nv を
+                    # 2本とも漏らしていた（リークダイアログの TNVLink x 2 はこの経路）
+                    _exit_after_release(
+                        f"bg worker が {elapsed:.0f}秒間レースキー処理なし (NVRTOpen ハング疑い)"
                     )
-                    os._exit(1)
 
     threading.Thread(target=_bg_watchdog, daemon=True, name="bg-watchdog").start()
     logger.info(f"bg worker watchdog 起動: {_BG_WORKER_TIMEOUT}秒無応答で強制終了")
 
     def _bg_nv2_worker() -> None:
         """常駐バックグラウンドワーカー。NVLink インスタンスを一度だけ作成して再利用する。"""
+        nv2 = None
         try:
             import win32com.client  # noqa: PLC0415
             nv2 = win32com.client.Dispatch("NVDTLabLib.NVLink")
@@ -1159,10 +1224,7 @@ def run_realtime_monitor(nv) -> None:
                 try:
                     keys = _bg_task_queue.get(timeout=120)
                     if keys is None:  # shutdown signal
-                        try:
-                            nv2.NVClose()
-                        except Exception:  # noqa: BLE001
-                            pass
+                        nv2 = release_nvlink(nv2, "bg worker nv2")
                         break
                     _bg_result_buf.clear()
                     for race_key in keys:
@@ -1181,7 +1243,10 @@ def run_realtime_monitor(nv) -> None:
         except Exception as e:  # noqa: BLE001
             logger.error(f"bg worker error: {e}")
         finally:
-            _bg_done_event.set()  # エラー時もブロック解除
+            # どの経路で抜けても nv2 を残さない（NVInit 失敗・例外・shutdown いずれも）
+            nv2 = release_nvlink(nv2, "bg worker nv2")
+            _bg_done_event.set()   # エラー時もブロック解除
+            _bg_closed_event.set()  # _exit_after_release の待ちを解除
 
     threading.Thread(target=_bg_nv2_worker, daemon=True, name="bg-0b12-persistent").start()
 
@@ -1418,7 +1483,21 @@ def main() -> None:
         return
 
     nv = init_umaconn()
+    try:
+        _run_mode(args, nv)
+    finally:
+        # 全モード共通の出口。従来はどのモードも解放せずに main() を抜けており、
+        # NVLink の解放がインタプリタ終了時までずれ込んでいた。そこは
+        # NVDTLab.dll がリークダイアログを出す位置そのもので、fetch-results が
+        # 5分おきに終了できず積み上がる原因になっていた。
+        nv = release_nvlink(nv, "main")
 
+
+def _run_mode(args: argparse.Namespace, nv) -> None:
+    """--mode に応じた処理を実行する。
+
+    NVLink の解放は呼び出し側 (main) の finally が行う。ここでは行わないこと。
+    """
     if args.mode == "setup":
         report_status("running", mode="setup", message="Starting UmaConn setup mode")
         run_setup(nv)

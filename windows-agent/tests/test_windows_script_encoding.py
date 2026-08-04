@@ -49,8 +49,14 @@ def test_uses_crlf_line_endings(path: Path) -> None:
     ]
     assert not lone_lf, (
         f"{path.name}: CRLF でない行があります (行 {lone_lf[:10]})。"
-        " .gitattributes の eol=crlf が効いていません。"
-        " `git add --renormalize windows-agent/` を実行してください。"
+        " .gitattributes の eol=crlf が作業ツリーに適用されていません。"
+        " eol=crlf の導入前に作られた worktree / clone では必ず起きる"
+        "（フィルタはチェックアウト時に走るので、既にあるファイルは LF のまま残る）。"
+        " 作業ツリーを作り直してください:\n"
+        "    rm -f windows-agent/*.vbs windows-agent/*.ps1 windows-agent/*.bat\n"
+        "    git checkout -- windows-agent/\n"
+        " `git add --renormalize` では直らない（index を直すだけで作業ツリーは LF のまま。"
+        " Windows への配備は作業ツリーから scp するため、それでは配備物が壊れたままになる）。"
     )
 
 
