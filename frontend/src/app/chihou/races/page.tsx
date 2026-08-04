@@ -3,15 +3,15 @@ import type { Metadata } from "next";
 import {
   fetchChihouRacesByDate,
   fetchChihouNearestDate,
-  fetchChihouTopProbability,
   fetchChihouRecommendations,
   fetchChihouSweetSpotRecommendations,
+  fetchChihouFeaturedPlace,
 } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
 import { ChihouRecommendPanel } from "@/components/ChihouRecommendPanel";
-import { ChihouTopProbabilityPanel } from "@/components/TopProbabilityPanel";
+import { ChihouFeaturedPlacePanel } from "@/components/ChihouFeaturedPlacePanel";
 
 function ChihouRecommendSkeleton() {
   return (
@@ -79,10 +79,10 @@ async function ChihouRaceList({ date }: { date: string }) {
   let races;
   try {
     // races と推奨系を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
-    // ChihouTopProbabilityPanel / ChihouRecommendPanel での同一フェッチはキャッシュから即解決する
+    // ChihouFeaturedPlacePanel / ChihouRecommendPanel での同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchChihouRacesByDate(date),
-      fetchChihouTopProbability(date).catch(() => []),
+      fetchChihouFeaturedPlace(date).catch(() => []),
       fetchChihouRecommendations(date).catch(() => []),
       fetchChihouSweetSpotRecommendations(date).catch(() => ({ items: [], summaries: {} })),
     ]);
@@ -124,9 +124,9 @@ async function ChihouRaceList({ date }: { date: string }) {
       courseGroups={courseGroups}
       recommendPanel={
         <>
-          {/* 独自 Suspense: ChihouRaceList の Suspense を TopProb に波及させない（Promise.all でプリフェッチ済みのため即座に解決） */}
+          {/* 独自 Suspense: ChihouRaceList の Suspense を注目馬に波及させない（Promise.all でプリフェッチ済みのため即座に解決） */}
           <Suspense fallback={null}>
-            <ChihouTopProbabilityPanel date={date} />
+            <ChihouFeaturedPlacePanel date={date} />
           </Suspense>
           <Suspense fallback={<ChihouRecommendSkeleton />}>
             <ChihouRecommendPanel date={date} />

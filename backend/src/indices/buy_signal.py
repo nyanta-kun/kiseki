@@ -27,6 +27,7 @@ JRA（v26 LightGBM ensemble 検証 2026-05-02, 3年/138,728 horse-races）:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TypedDict
 
 # ---------------------------------------------------------------------------
@@ -456,6 +457,94 @@ def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
     if win_odds < CHIHOU_LOW_ODDS_MAX:
         return "untrusted"
     return None
+
+
+# ---------------------------------------------------------------------------
+# 地方競馬 穴馬複勝（開いたレース）— 注目馬の本体
+# ---------------------------------------------------------------------------
+# 検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
+#   walk-forward honest（model-vintage leak・生存者バイアスなし）で
+#   DISCOVERY 2026-01〜04 / HOLDOUT 2026-05〜07 に分けて検証した。
+#
+#   探索 n=337 複勝ROI 1.320 / 確認 n=339 複勝ROI 1.120 / 通算 n=676 ROI 1.220
+#   確認期間のみの単一検定 p=0.0033（帰無＝同帯の非開放レース 0.648）
+#   探索側も 77 セルのボンフェローニ補正後で有意（p=0.0001 < 0.00065）
+#   7ヶ月すべて ROI>1.0。払戻中央値 7.6 倍で、上位10件を除いても ROI 1.035
+#
+# 効いているのは「複勝圏の枠を人気馬が何頭で埋めてしまうか」。
+# 複勝の払戻は単勝オッズから素朴に類推されやすいが、
+# 「単勝オッズ→複勝確率」の対応は場の集中度で変わる。
+# 断然人気が1枠を固定するレースと誰も抜けていないレースでは、
+# 同じ40倍馬の複勝確率が違う。複勝プールがこれを織り込みきれていない。
+#
+# ⚠️ この条件に **モデル指数（composite_index）を混ぜてはいけない**。
+#    実測で逆行する（穴馬10-30倍で 指数3位内 0.688 / 指数6位以下 0.798）。
+#
+# ⚠️ 既存 `chihou_is_place_bet()` は断然人気レース（fav<2.0）を要求するが、
+#    実測では断然人気レースが最悪（0.680）、混戦が最良（0.804）で**逆向き**。
+#    確認期間での既存条件相当は ROI 0.696 と無条件(0.756)すら下回る。
+
+CHIHOU_OPEN_PLACE_MIN_ODDS: float = 30.0
+CHIHOU_OPEN_PLACE_MAX_ODDS: float = 50.0
+# 市場含意確率（1/オッズをレース内で正規化）の上位3頭合計がこの値未満なら「開いたレース」
+CHIHOU_OPEN_RACE_MAX_TOP3_SHARE: float = 0.63
+
+
+def chihou_market_top3_share(win_odds: Iterable[float | None]) -> float | None:
+    """レースの「市場上位3頭シェア」を算出する。
+
+    1/オッズをレース内で正規化した市場含意確率の、上位3頭の合計。
+    小さいほど「誰も抜けていない開いたレース」。
+
+    最終オッズでなくても安定している（締切5分前の判定が最終と 98.6% 一致）ため、
+    発走前のスナップショットで判定してよい。
+
+    Args:
+        win_odds: レース内全馬の単勝オッズ（None・1.0未満は無効値として捨てる）
+
+    Returns:
+        上位3頭シェア（0〜1）。有効オッズが3頭未満なら None。
+    """
+    valid = [float(o) for o in win_odds if o is not None and float(o) >= 1.0]
+    if len(valid) < 3:
+        return None
+    inv = [1.0 / o for o in valid]
+    total = sum(inv)
+    if total <= 0:
+        return None
+    probs = sorted((v / total for v in inv), reverse=True)
+    return sum(probs[:3])
+
+
+def chihou_is_open_place(
+    win_odds: float | None,
+    top3_share: float | None,
+    head_count: int | None,
+) -> bool:
+    """地方競馬 穴馬複勝推奨（開いたレース）の判定。
+
+    条件:
+      1. 出走 8 頭以上（7頭以下は複勝が2着までしか払い戻されないため対象外）
+      2. 単勝オッズ ∈ [30.0, 50.0)
+      3. 市場上位3頭シェア < 0.63（開いたレース）
+
+    Args:
+        win_odds: 対象馬の単勝オッズ
+        top3_share: `chihou_market_top3_share()` の戻り値
+        head_count: 出走頭数
+
+    Returns:
+        複勝で買う推奨に該当するか
+    """
+    if head_count is None or head_count < CHIHOU_PLACE_MIN_HEAD_COUNT:
+        return False
+    if win_odds is None or not (
+        CHIHOU_OPEN_PLACE_MIN_ODDS <= float(win_odds) < CHIHOU_OPEN_PLACE_MAX_ODDS
+    ):
+        return False
+    if top3_share is None:
+        return False
+    return float(top3_share) < CHIHOU_OPEN_RACE_MAX_TOP3_SHARE
 
 
 # ---------------------------------------------------------------------------

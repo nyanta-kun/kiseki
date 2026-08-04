@@ -29,11 +29,14 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..indices.buy_signal import (
-    CHIHOU_PLACE_BET_FAV_ODDS_MAX,
+    CHIHOU_OPEN_PLACE_MAX_ODDS,
+    CHIHOU_OPEN_PLACE_MIN_ODDS,
+    CHIHOU_OPEN_RACE_MAX_TOP3_SHARE,
     CHIHOU_PLACE_MIN_HEAD_COUNT,
-    chihou_is_place_bet,
+    chihou_is_open_place,
     chihou_is_sweet_spot,
     chihou_low_odds_trust_level,
+    chihou_market_top3_share,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_upset import get_chihou_upset_reranker
@@ -617,10 +620,15 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
 
 
 # ---------------------------------------------------------------------------
-# スイートスポット自動推奨（v10 win_probability ベース）
+# スイートスポット自動推奨
 # ---------------------------------------------------------------------------
 
-_CHIHOU_V10_VERSION = 10
+# ⚠️ 以前ここは `10` にハードコードされていた（v10 win_probability ベースだった名残）。
+# 指数は v13 まで進んでおり **v10 は 2026-07 でほぼ、2026-08 以降は 1 行も生成されていない**。
+# その結果このエンドポイントは 2026-07 頃から全カテゴリ 0 件を返し続けていた
+# （レースは取れるが指数が引けず `if not horse_rows: continue` で全件スキップされる）。
+# 現行バージョンに追従させる。
+_CHIHOU_RECO_INDEX_VERSION = _CHIHOU_COMPOSITE_VERSION
 
 
 async def build_chihou_sweet_spot_recommendations(
@@ -654,7 +662,7 @@ async def build_chihou_sweet_spot_recommendations(
         .join(ChihouHorse, ChihouHorse.id == ChihouCalculatedIndex.horse_id)
         .where(
             ChihouCalculatedIndex.race_id.in_(race_ids),
-            ChihouCalculatedIndex.version == _CHIHOU_V10_VERSION,
+            ChihouCalculatedIndex.version == _CHIHOU_RECO_INDEX_VERSION,
         )
         .order_by(ChihouCalculatedIndex.race_id, ChihouCalculatedIndex.composite_index.desc())
     )
@@ -721,8 +729,9 @@ async def build_chihou_sweet_spot_recommendations(
         if not win_odds:
             continue  # オッズ未取得レースは対象外
 
-        # 1番人気単勝オッズ（place_bet 判定用）
-        fav_odds = min(win_odds.values()) if win_odds else None
+        # 市場上位3頭シェア（複穴＝開いたレースの判定用）。最終オッズでなくても
+        # 安定している（締切5分前の判定が最終と 98.6% 一致）ので都度算出でよい。
+        top3_share = chihou_market_top3_share(win_odds.values())
 
         # 複勝確率集中度（信頼度算出）
         place_probs = [
@@ -798,7 +807,9 @@ async def build_chihou_sweet_spot_recommendations(
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            if chihou_is_place_bet(idx_rank, wo, fav_odds, race.head_count):
+            # 複穴（2026-08-05 差し替え）: 開いたレース × 単勝30-50倍 × 8頭以上。
+            # モデル指数（idx_rank）は**使わない**。実測で逆行するため。
+            if chihou_is_open_place(wo, top3_share, race.head_count):
                 place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
@@ -872,9 +883,13 @@ async def build_chihou_sweet_spot_recommendations(
                 "created_at": now,
             })
 
-        # ---- 複穴（place_bet）: 断然人気R × 単勝≥10 × 指数3位以内 を複勝買い ----
-        # k≥3 の混戦は除外（高オッズ穴と同様）
-        if place_bet_horses and len(place_bet_horses) < 3:
+        # ---- 複穴（place_bet）: 開いたレース × 単勝30-50倍 を複勝買い ----
+        # 2026-08-05 差し替え。旧条件（断然人気R × 指数3位以内）は実測で最下層だった
+        # （確認期間 複勝ROI 0.696 < 無条件 0.756）。検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
+        #
+        # ⚠️ 頭数ゲート（旧 k<3）は付けない。検証した条件には無く、1レース平均 1.54 頭が
+        #    該当する（4頭該当するレースもある）。ゲートを足すと検証した母集団と変わる。
+        if place_bet_horses:
             for h in place_bet_horses:
                 _attach_finish(h, race.id)
             max_ev = max((h["ev"] or 0.0) for h in place_bet_horses)
@@ -898,14 +913,18 @@ async def build_chihou_sweet_spot_recommendations(
                     result_correct = False
                     result_payout = 0
 
-            confidence = 0.65 if max_ev >= 1.8 else 0.55
+            # EV はこの条件の根拠ではない（モデルを使わないため）。信頼度は固定にする。
+            confidence = 0.60
             reason = (
-                f"地方複穴（Phase2）：1番人気<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}倍の断然人気R ∧ "
-                f"単勝≥10 ∧ 指数3位以内 の複勝買い。"
-                f"（複勝は控除率分マイナス帯 — 予想の参考用） "
+                f"地方複穴：上位人気が抜けていない開いたレース"
+                f"（市場上位3頭シェア {top3_share:.2f} < {CHIHOU_OPEN_RACE_MAX_TOP3_SHARE:.2f}）の "
+                f"単勝{CHIHOU_OPEN_PLACE_MIN_ODDS:.0f}〜{CHIHOU_OPEN_PLACE_MAX_ODDS:.0f}倍・"
+                f"{CHIHOU_PLACE_MIN_HEAD_COUNT}頭立て以上を複勝買い。"
+                f"walk-forward 検証 複勝ROI 1.22（n=676・7ヶ月連続で1.0超）。"
+                f"前向き確認中のため参考情報。 "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
-                    f"(単{(h.get('win_odds') or 0):.1f}/EV{(h.get('ev') or 0):.2f})"
+                    f"(単{(h.get('win_odds') or 0):.1f})"
                     for h in place_bet_horses
                 )
             )

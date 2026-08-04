@@ -390,6 +390,16 @@ export function ChihouRaceDetailClient({
                         )}>
                           {horse.horse_name}
                         </span>
+                        {/* 注目馬（穴馬複勝: 開いたレース × 単勝30-50倍） */}
+                        {horse.is_open_place && (
+                          <span
+                            className="text-amber-500 text-sm leading-none"
+                            title="注目馬（複勝）"
+                            aria-label="注目馬"
+                          >
+                            ★
+                          </span>
+                        )}
                         {horse.is_place_bet && (
                           <span className="text-[9px] bg-blue-100 text-blue-700 border border-blue-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
                             複穴

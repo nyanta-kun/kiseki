@@ -24,7 +24,9 @@ function formatPostTime(t: string | null): string {
 
 const CATEGORY_LABEL: Record<ChihouRecommendCategory, string> = {
   sweet_spot: "★ 穴",
-  place_bet: "◆ 複穴",
+  // 複穴 = 開いたレース × 単勝30-50倍（2026-08-05 に条件を差し替え）。
+  // 注目馬パネル・レース一覧/詳細の★と同じシグナル。
+  place_bet: "★ 複穴",
   upset_place: "🎯 穴軸",
   low_odds_trusted: "🟢 信頼",
   low_odds_untrusted: "🟡 不信頼",
