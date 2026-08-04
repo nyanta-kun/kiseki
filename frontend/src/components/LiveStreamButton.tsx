@@ -15,6 +15,15 @@ const STREAMS = [
     href: "https://keiba.rakuten.co.jp/livemovie?l-id=keiba_header_liveMovie",
     icon: "🐎",
   },
+  // WINTICKET は X-Frame-Options: DENY を返すため iframe 埋め込み不可
+  // （ページ内プレイヤー化・Picture-in-Picture の直接実装はできない）。
+  // 別タブで開けば、ブラウザ標準の PiP でこのサイトと並べて視聴できる。
+  {
+    label: "競輪",
+    source: "winticket.jp",
+    href: "https://www.winticket.jp/keirin/live",
+    icon: "🚴",
+  },
 ] as const;
 
 export function LiveStreamButton() {
