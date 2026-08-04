@@ -77,13 +77,51 @@ Function IsStaleProc(wmiDate)
     If Left(wmiDate, 8) < todayStr Then IsStaleProc = True
 End Function
 
+' ---- WMI の CreationDate を VBScript の日付に変換する（失敗時は Empty） ----
+Function WmiDateToDate(wmiDate)
+    WmiDateToDate = Empty
+    If IsNull(wmiDate) Then Exit Function
+    If Len(wmiDate) < 14 Then Exit Function
+    On Error Resume Next
+    WmiDateToDate = DateSerial(CInt(Mid(wmiDate, 1, 4)), CInt(Mid(wmiDate, 5, 2)), CInt(Mid(wmiDate, 7, 2))) _
+                  + TimeSerial(CInt(Mid(wmiDate, 9, 2)), CInt(Mid(wmiDate, 11, 2)), CInt(Mid(wmiDate, 13, 2)))
+    If Err.Number <> 0 Then
+        WmiDateToDate = Empty
+        Err.Clear
+    End If
+    On Error Goto 0
+End Function
+
 ' ---- heartbeat が STALL_MINUTES 以上更新されていなければ True ----
-Function IsStalled(hbPath)
+'
+' 起動直後のプロセスに猶予を与える（2026-08-04 追加）:
+'   heartbeat ファイルはプロセスをまたいで使い回される。エージェントが最初の
+'   heartbeat を書くのは起動から30秒後で、初期化 (NVInit / NVSetServiceKey) が
+'   長引くとさらに遅れる。そのため起動直後のプロセスは **前のプロセスが残した
+'   古いファイル** で判定されてしまい、まだ何も悪いことをしていないのに
+'   「STALLED」として殺される。
+'   実測 2026-08-04: UmaConn の COM 競合で初期化が詰まり、起動→15分でkill→再起動
+'   を繰り返した (16:55 / 17:48)。
+'
+'   → heartbeat が古くても、プロセス起動から STALL_MINUTES 経っていなければ猶予する。
+'     「本当に固まっている」なら猶予明けに改めて捕まえられるので取りこぼしはない。
+Function IsStalled(hbPath, wmiCreationDate)
     IsStalled = False
     If Not fso.FileExists(hbPath) Then Exit Function   ' 旧版エージェント等: 判定不能→触らない
     Dim f
     Set f = fso.GetFile(hbPath)
-    If DateDiff("n", f.DateLastModified, Now) >= STALL_MINUTES Then IsStalled = True
+    If DateDiff("n", f.DateLastModified, Now) < STALL_MINUTES Then Exit Function  ' 新鮮 → 正常
+
+    ' heartbeat は古い。それが今のプロセスの責任かどうかを起動時刻で切り分ける。
+    Dim startedAt
+    startedAt = WmiDateToDate(wmiCreationDate)
+    If IsEmpty(startedAt) Then
+        IsStalled = True   ' 起動時刻が読めない場合は従来どおり停止扱い
+        Exit Function
+    End If
+    If DateDiff("n", startedAt, Now) < STALL_MINUTES Then Exit Function  ' 猶予中
+
+    IsStalled = True
 End Function
 
 Dim wmi
@@ -115,23 +153,27 @@ Next
 Dim procs
 Set procs = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='pythonw.exe'")
 
-Dim umaFound, jvFound, umaPid, jvPid, umaStale, jvStale
+Dim umaFound, jvFound, umaPid, jvPid, umaStale, jvStale, umaBorn, jvBorn
 umaFound = False
 jvFound = False
 umaPid = 0
 jvPid = 0
 umaStale = False
 jvStale = False
+umaBorn = Null
+jvBorn = Null
 For Each p In procs
     If Not IsNull(p.CommandLine) Then
         If InStr(p.CommandLine, "umaconn_agent.py") > 0 And InStr(p.CommandLine, "realtime") > 0 Then
             umaFound = True
             umaPid = p.ProcessId
+            umaBorn = p.CreationDate
             umaStale = IsStaleProc(p.CreationDate)
         End If
         If InStr(p.CommandLine, "jvlink_agent.py") > 0 And InStr(p.CommandLine, "realtime") > 0 Then
             jvFound = True
             jvPid = p.ProcessId
+            jvBorn = p.CreationDate
             jvStale = IsStaleProc(p.CreationDate)
         End If
     End If
@@ -158,7 +200,7 @@ hbUma = "C:\kiseki\windows-agent\data\realtime_heartbeat_umaconn.txt"
 hbJv  = "C:\kiseki\windows-agent\data\realtime_heartbeat_jvlink.txt"
 
 If umaFound Then
-    If IsStalled(hbUma) Then
+    If IsStalled(hbUma, umaBorn) Then
         WriteLog "umaconn realtime STALLED (heartbeat > " & STALL_MINUTES & "min) -> terminating PID=" & umaPid
         sh.Run "taskkill /PID " & umaPid & " /F", 0, True
         umaFound = False
@@ -166,7 +208,7 @@ If umaFound Then
 End If
 
 If jvFound Then
-    If IsStalled(hbJv) Then
+    If IsStalled(hbJv, jvBorn) Then
         WriteLog "jvlink realtime STALLED (heartbeat > " & STALL_MINUTES & "min) -> terminating PID=" & jvPid
         sh.Run "taskkill /PID " & jvPid & " /F", 0, True
         jvFound = False

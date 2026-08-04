@@ -8,6 +8,12 @@ cscript と PowerShell 5.1 は BOM 無し UTF-8 を CP932(ANSI) として読む�
 CRLF なら飲み込まれるのは CR だけで LF が生き残るため、この事故は起きない。
 詳細は windows-agent/.gitattributes を参照。
 
+**CRLF が守るのは改行だけ**であることに注意。行の途中は CP932 として誤読された
+ままなので、**文字列リテラルの中に日本語を書いてはいけない**。誤読の結果として
+`"` が飲み込まれると文字列が閉じず、そこで構文エラーになる
+（2026-08-04 にこの検査用のテストスクリプト自身で踏んだ）。
+コメントは行末まで読み飛ばされるだけなので日本語で問題ない。
+
     python3 -m pytest windows-agent/tests/test_windows_script_encoding.py
 """
 
@@ -76,4 +82,74 @@ def test_no_line_ends_with_cp932_lead_byte_before_lone_lf(path: Path) -> None:
     assert not broken, (
         f"{path.name}: LF 終端かつ末尾が CP932 先行バイトの行があります (行 {broken[:10]})。"
         " cscript / PowerShell が次行を飲み込みます。"
+    )
+
+
+def _string_literal_spans(line: str) -> list[str]:
+    """VBScript / PowerShell の 1 行から二重引用符文字列の中身を取り出す。
+
+    VBScript は文字列中の `""` で引用符自身を表すため、閉じ引用符の直後がまた
+    引用符ならエスケープとみなして継続する。行コメント (`'` / `#`) の外だけを見る。
+    """
+    spans: list[str] = []
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if ch in ("'", "#"):
+            break  # ここから行末まではコメント
+        if ch != '"':
+            i += 1
+            continue
+        i += 1
+        buf: list[str] = []
+        while i < n:
+            if line[i] == '"':
+                if i + 1 < n and line[i + 1] == '"':
+                    buf.append('"')
+                    i += 2
+                    continue
+                i += 1
+                break
+            buf.append(line[i])
+            i += 1
+        spans.append("".join(buf))
+    return spans
+
+
+UTF8_BOM = b"\xef\xbb\xbf"
+
+
+@pytest.mark.parametrize("path", _scripts(), ids=lambda p: p.name)
+def test_no_non_ascii_inside_string_literals(path: Path) -> None:
+    """文字列リテラルに非 ASCII を入れないこと。
+
+    CRLF は改行を守るだけで、行の途中は CP932 として誤読されたまま。誤読で `"` が
+    飲み込まれると文字列が閉じず構文エラーになる。コメントは行末まで読み飛ばされる
+    ので日本語で構わない。
+
+    例外: **BOM 付き** の .ps1 / .bat。PowerShell 5.1 は BOM があれば UTF-8 として
+    正しく読むため誤読が起きない。
+    .vbs には逃げ道が無い（cscript は .vbs の UTF-8 BOM を認識しないことを実機で確認済み。
+    有効なのは CP932 と UTF-16LE のみで、どちらも git で扱いづらい）。
+    """
+    raw = path.read_bytes()
+    if path.suffix.lower() in (".ps1", ".bat") and raw.startswith(UTF8_BOM):
+        pytest.skip("BOM 付きなので PowerShell が UTF-8 として正しく読む")
+
+    bad: list[tuple[int, str]] = []
+    text = raw.decode("utf-8", errors="replace")
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for span in _string_literal_spans(line):
+            if any(ord(c) > 0x7F for c in span):
+                bad.append((lineno, span))
+    hint = (
+        " .ps1 なら UTF-8 BOM を付ければ解決する（CLAUDE.md 記載の規約）。"
+        if path.suffix.lower() in (".ps1", ".bat")
+        else " .vbs は BOM が効かないので ASCII で書くしかない。"
+    )
+    assert not bad, (
+        f"{path.name}: 文字列リテラルに非 ASCII があります {bad[:5]}。"
+        " cscript / PowerShell 5.1 は CP932 として読むため、引用符が飲み込まれて"
+        " 構文エラーになりうる。日本語で説明したい場合はコメント行に書くこと。"
+        + hint
     )
