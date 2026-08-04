@@ -21,7 +21,13 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..db.session import get_db
-from ..indices.buy_signal import chihou_buy_signal, chihou_is_place_bet, chihou_is_sweet_spot
+from ..indices.buy_signal import (
+    chihou_buy_signal,
+    chihou_is_open_place,
+    chihou_is_place_bet,
+    chihou_is_sweet_spot,
+    chihou_market_top3_share,
+)
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import (
     CHIHOU_DISPERSION_FULL_SCORE,
@@ -74,6 +80,7 @@ class ChihouRaceOut(BaseModel):
     buy_signal: str | None = None        # "buy" | "caution" | "pass"
     top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
     result_confirmed: bool = False        # 成績確定済み（JRA RaceOut と互換）
+    has_open_place: bool = False          # 穴馬複勝（開いたレース）該当馬がいる → ★表示
 
     model_config = {"from_attributes": True}
 
@@ -98,6 +105,7 @@ class ChihouHorseIndexOut(BaseModel):
     ev: float | None = None               # 期待値 win_probability × win_odds
     is_sweet_spot: bool = False           # v10スイートスポット該当馬（赤字表示）
     is_place_bet: bool = False            # 断然人気複勝推奨（断然人気×EV1.2-2.0）
+    is_open_place: bool = False           # 穴馬複勝（開いたレース×30-50倍）→ ★表示
 
 
 class ChihouRaceRanks(BaseModel):
@@ -200,6 +208,131 @@ async def get_chihou_top_probability(
         )
         for r in rows
     ]
+
+
+class ChihouFeaturedPlaceOut(BaseModel):
+    """地方競馬 注目馬（穴馬複勝）1頭ぶん。"""
+
+    race_id: int
+    course_name: str
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    head_count: int | None
+    horse_number: int | None
+    horse_name: str | None
+    win_odds: float | None
+    place_odds: float | None
+    top3_share: float
+    finish_position: int | None
+
+
+@router.get("/featured-place")
+async def get_chihou_featured_place(
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+    db: AsyncSession = Depends(get_db),
+) -> list[ChihouFeaturedPlaceOut]:
+    """指定日の「注目馬（穴馬複勝）」を発走時刻順で返す。
+
+    条件は `chihou_is_open_place()`（開いたレース × 単勝30-50倍 × 8頭以上）。
+    検証根拠は docs/chihou_darkhorse_feasibility_2026_08_05.md。
+
+    モデル指数は使わない。実測でモデル指数はこの条件下で逆行するため
+    （穴馬10-30倍で 指数3位内 0.688 / 指数6位以下 0.798）。
+    """
+    races_result = await db.execute(
+        select(ChihouRace)
+        .where(ChihouRace.date == date)
+        .where(ChihouRace.course != BANEI_COURSE_CODE)
+        .order_by(ChihouRace.post_time.asc().nullslast(), ChihouRace.race_number)
+    )
+    races = list(races_result.scalars().all())
+    if not races:
+        return []
+    race_ids = [r.id for r in races]
+
+    # 全馬の最新単勝・複勝オッズ
+    odds_rows = await db.execute(
+        select(
+            ChihouOddsHistory.race_id,
+            ChihouOddsHistory.bet_type,
+            ChihouOddsHistory.combination,
+            ChihouOddsHistory.odds,
+        )
+        .distinct(
+            ChihouOddsHistory.race_id,
+            ChihouOddsHistory.bet_type,
+            ChihouOddsHistory.combination,
+        )
+        .where(ChihouOddsHistory.race_id.in_(race_ids))
+        .where(ChihouOddsHistory.bet_type.in_(("win", "place")))
+        .order_by(
+            ChihouOddsHistory.race_id,
+            ChihouOddsHistory.bet_type,
+            ChihouOddsHistory.combination,
+            ChihouOddsHistory.fetched_at.desc(),
+        )
+    )
+    win_by_race: dict[int, dict[str, float]] = defaultdict(dict)
+    place_by_race: dict[int, dict[str, float]] = defaultdict(dict)
+    for rid, bet_type, combo, odds_val in odds_rows.all():
+        if odds_val is None:
+            continue
+        target = win_by_race if bet_type == "win" else place_by_race
+        target[int(rid)][str(combo)] = float(odds_val)
+
+    # 馬名と着順
+    name_rows = await db.execute(
+        select(ChihouRaceEntry.race_id, ChihouRaceEntry.horse_number, ChihouHorse.name)
+        .join(ChihouHorse, ChihouHorse.id == ChihouRaceEntry.horse_id)
+        .where(ChihouRaceEntry.race_id.in_(race_ids))
+    )
+    name_map: dict[tuple[int, int], str] = {
+        (int(rid), int(hn)): nm for rid, hn, nm in name_rows.all() if hn is not None
+    }
+    result_rows = await db.execute(
+        select(
+            ChihouRaceResult.race_id,
+            ChihouRaceResult.horse_number,
+            ChihouRaceResult.finish_position,
+        ).where(ChihouRaceResult.race_id.in_(race_ids))
+    )
+    finish_map: dict[tuple[int, int], int | None] = {
+        (int(rid), int(hn)): fp for rid, hn, fp in result_rows.all() if hn is not None
+    }
+
+    out: list[ChihouFeaturedPlaceOut] = []
+    for race in races:
+        win_odds = win_by_race.get(race.id)
+        if not win_odds:
+            continue
+        share = chihou_market_top3_share(win_odds.values())
+        if share is None:
+            continue
+        for combo, odds_val in sorted(win_odds.items(), key=lambda kv: kv[1]):
+            if not chihou_is_open_place(odds_val, share, race.head_count):
+                continue
+            try:
+                hn = int(combo)
+            except ValueError:
+                continue
+            out.append(
+                ChihouFeaturedPlaceOut(
+                    race_id=race.id,
+                    course_name=race.course_name,
+                    race_number=race.race_number,
+                    race_name=race.race_name,
+                    post_time=race.post_time,
+                    head_count=race.head_count,
+                    horse_number=hn,
+                    horse_name=name_map.get((race.id, hn)),
+                    win_odds=odds_val,
+                    place_odds=place_by_race.get(race.id, {}).get(combo),
+                    top3_share=round(share, 3),
+                    finish_position=finish_map.get((race.id, hn)),
+                )
+            )
+    return out
 
 
 @router.get("/race-keys")
@@ -307,6 +440,34 @@ async def get_chihou_races_by_date(
     )
     confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
 
+    # --- 穴馬複勝（開いたレース）該当レースの判定 ---
+    # 上位3頭シェアの算出に全馬の最新単勝オッズが要る（トップ馬だけでは足りない）。
+    # 1 クエリで当日ぶんをまとめて取り、レース単位で畳む。
+    all_win_odds: dict[int, list[float]] = defaultdict(list)
+    all_odds_rows = await db.execute(
+        select(ChihouOddsHistory.race_id, ChihouOddsHistory.combination, ChihouOddsHistory.odds)
+        .distinct(ChihouOddsHistory.race_id, ChihouOddsHistory.combination)
+        .where(ChihouOddsHistory.race_id.in_(race_ids))
+        .where(ChihouOddsHistory.bet_type == "win")
+        .order_by(
+            ChihouOddsHistory.race_id,
+            ChihouOddsHistory.combination,
+            ChihouOddsHistory.fetched_at.desc(),
+        )
+    )
+    for rid, _combo, odds_val in all_odds_rows.all():
+        if odds_val is not None:
+            all_win_odds[int(rid)].append(float(odds_val))
+
+    open_place_race_ids: set[int] = set()
+    for race in races:
+        odds_list = all_win_odds.get(race.id)
+        if not odds_list:
+            continue
+        share = chihou_market_top3_share(odds_list)
+        if any(chihou_is_open_place(o, share, race.head_count) for o in odds_list):
+            open_place_race_ids.add(race.id)
+
     # --- 信頼度・推奨度算出 ---
     confidence_data: dict[int, dict] = {}
     for rid, entries in race_index_rows.items():
@@ -352,6 +513,7 @@ async def get_chihou_races_by_date(
             ),
             top_win_odds=latest_win_odds.get(race.id),
             result_confirmed=race.id in confirmed_race_ids,
+            has_open_place=race.id in open_place_race_ids,
         )
         for race in races
     ]
@@ -541,6 +703,14 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         if sum(1 for h in horses if h.is_place_bet) >= 4:
             for h in horses:
                 h.is_place_bet = False
+
+    # --- 穴馬複勝（開いたレース × 単勝30-50倍）---
+    # 指数バージョンに依存しない（この条件はモデル指数を使わない。
+    # 実測でモデル指数は逆行するため意図的に混ぜていない）。
+    _top3_share = chihou_market_top3_share(win_odds_map.values())
+    _head_count = race_obj.head_count if race_obj else None
+    for h in horses:
+        h.is_open_place = chihou_is_open_place(h.win_odds, _top3_share, _head_count)
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None

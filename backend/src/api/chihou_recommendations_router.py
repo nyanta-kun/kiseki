@@ -425,7 +425,7 @@ async def get_chihou_sweet_spot_recommendations(
     返却内容:
       - items: 全カテゴリの推奨を並べたリスト（category フィールドで識別）
         * sweet_spot         — 高オッズ穴狙い Phase2 (指数1位 ∧ 単勝10-30倍 ∧ 割安5場 ∧ k≤2)
-        * place_bet          — 断然人気R複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内 ∧ k≤2)
+        * place_bet          — 複穴 (開いたレース: 市場上位3頭シェア<0.63 ∧ 単勝30-50倍 ∧ 8頭以上)
         * upset_place        — 穴軸複勝（人気薄リランカー軸）
         * low_odds_trusted   — 信頼できる本命 (単勝<1.5)
         * low_odds_untrusted — 信頼できない本命 (1.5≤単勝<2.0)
