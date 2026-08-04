@@ -1,0 +1,11 @@
+# エージェントのログ・生成物はコミットしない。
+#
+# Why: umaconn_agent / jvlink_agent はモジュールレベルで logging に FileHandler を
+# 付けるため、**import しただけでログファイルが生成される**。
+# windows-agent/tests/ は umaconn_agent を import して検証するので、
+# テストを1回走らせるだけで windows-agent/*.log が現れる。
+# これを `git add -A` で拾って空のログを1本コミットしてしまった（2026-08-04, #59）。
+*.log
+
+# 実行時の状態（heartbeat / lock / completed / pending / キャッシュ）
+data/
