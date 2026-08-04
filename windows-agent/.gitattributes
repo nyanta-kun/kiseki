@@ -1,0 +1,25 @@
+# Windows スクリプトは必ず CRLF で配置する。
+#
+# Why（2026-08-04 に本番を止めた実バグ）:
+#   cscript / PowerShell 5.1 は BOM 無し UTF-8 を **CP932(ANSI) として読む**。
+#   日本語コメント行の末尾文字の最終バイトが CP932 の先行バイト範囲
+#   (0x81-0x9F / 0xE0-0xFC) に当たると、その文字が**次の1バイトを飲み込む**。
+#
+#   LF 単独だと飲み込まれるのは改行そのもの:
+#       "...取り出す" + LF   =  ... e3 81 99 | 0a      ← 0x99 が 0a を食う
+#       → 次の行がコメントに吸収され、Function 宣言ごと消える
+#
+#   CRLF なら飲み込まれるのは CR だけで、LF が行終端として生き残る:
+#       "...取り出す" + CRLF =  ... e3 81 99 | 0d | 0a ← 0x99 は 0d を食う。0a は無事
+#
+#   実害: run_eod_cleanup.vbs が 2026-08-02 のコメント追加以降コンパイルエラーになり、
+#   wscript が exit 1 で即死。ログを1行も残さないまま毎晩の realtime ゾンビ掃除が
+#   停止し、8/2 11:57 起動の jvlink realtime が 8/4 まで3日間居座った。
+#
+#   UTF-8 BOM では直らない（実測: cscript は .vbs の UTF-8 BOM を認識しない）。
+#   有効なのは CRLF・CP932・UTF-16LE の3つで、git で扱えるのは CRLF だけ。
+#
+# 破ると静かに壊れる。検査は windows-agent/tests/test_windows_script_encoding.py。
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
