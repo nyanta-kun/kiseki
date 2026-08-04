@@ -45,8 +45,8 @@ export type Race = {
   special_horse_count: number;       // 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
   is_projected_only?: boolean;       // 出馬表未確定で netkeiba 出走想定のみ
   projected_horse_count?: number;    // 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
-  /** 地方のみ: 穴馬複勝（開いたレース×単勝30-50倍）該当馬がいる → レース名の右に★ */
-  has_open_place?: boolean;
+  /** 地方のみ: 注目馬（人気薄の複勝圏候補）がいる → レース名の右に★ */
+  has_place_pick?: boolean;
 };
 
 export type RaceResult = {
@@ -724,8 +724,8 @@ export type ChihouHorseIndex = {
   is_sweet_spot: boolean;
   /** 断然人気R複穴（Phase2: 1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内） */
   is_place_bet: boolean;
-  /** 注目馬＝穴馬複勝（開いたレース ∧ 単勝30-50倍 ∧ 8頭以上）→ 馬名の右に★ */
-  is_open_place?: boolean;
+  /** 注目馬（発走前6番人気以下 ∧ 指数3位内 ∧ 開いたレース ∧ 8頭以上）→ 馬名の右に★ */
+  is_place_pick?: boolean;
 };
 
 export type ChihouRaceRanks = {
@@ -948,6 +948,10 @@ export type ChihouFeaturedPlaceHorse = {
   place_odds: number | null;
   /** 市場上位3頭シェア。小さいほど「開いたレース」 */
   top3_share: number;
+  /** 発走前オッズによる人気順位 */
+  popularity: number | null;
+  /** composite_index のレース内順位 */
+  index_rank: number | null;
   finish_position: number | null;
 };
 
