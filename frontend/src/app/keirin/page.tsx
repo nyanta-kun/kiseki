@@ -258,8 +258,12 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 7S/7Aとは母集団が排他（7B=overlap2 / 7S・7A=overlap0,1）で買い目点数も
   // 異なる（3点 vs 5点）ため、独立した色調（琥珀系）で区別する。
   "7B":         { bg: "#b45309", text: "#fff", label: "7B" },
-  // 7SS=RANK_7SS（波乱軸選出/穴レース検知）は 2026-08-02 に全廃したため定義を削除。
-  // live実績 n=16,298・ROI73.5% と控除率75%を下回り続けたため（ユーザー判断）。
+  // 7SS=RANK_7SS（entropy不合格×軸2車が同一ライン・2026-08-05新設）。
+  // ⚠️ 2026-08-02に全廃した旧RANK_7SS（波乱軸選出/穴レース検知・ROI73.5%）とは
+  // 無関係の別戦略で、名前だけを引き継いでいる（picks_historyの旧7SS行は0件）。
+  // 買い目は7S/7Aと同じ三連複2軸+総流し5点だが、確認窓ROI 85.9%と現行最良のため
+  // 最上位ランク。7Sと同系（緑）でより濃い色にして「7Sの上」であることを示す。
+  "7SS":        { bg: "#15803d", text: "#fff", label: "7SS" },
 };
 
 // ---------------------------------------------------------------------------
@@ -559,9 +563,11 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 
 // 推奨外レースの手動入稿で選べるランク。
 // S1は2026-07-31全廃・買い目構造が異なるため対象外。旧gate_label分岐由来の
-// 7SS/9SS（同日廃止・SはSへ統合済み）も対象外。RANK_7SS（新設の独立ランク）は
-// 軸選定ロジックが本ダイアログのhypo軸算出（単勝×複勝指数トップ3重なり方式）と
-// 異なるため誤入稿防止であえて含めていない（api.ts の ManualKeirinRankKey 参照）。
+// 7SS/9SS（同日廃止・SはSへ統合済み）も対象外。
+// RANK_7SS（2026-08-05新設）は軸選定・買い目とも7S/7Aと同一なので技術的には
+// 手動入稿できるが、netkeirinの「自信あり」タグ（7SSのみ付与・上限1件/日と推定）を
+// 手動分で消費すると自動入稿側が落ちるため、あえて含めていない
+// （api.ts の ManualKeirinRankKey 参照）。
 // 車数(n_entries)ごとに候補を絞り込む。表示ラベルはkeirin側RANK_CONFIGSの
 // stake_per_line/n_carsに揃えて注記する（7車=2,000円/点・9車=1,400円/点、いずれも共通）。
 const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
@@ -743,11 +749,14 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const isPurchased = !isMiwokuri && pick.bet_amount > 0;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
-  // ペーパー検証ランク（RANK_7S/RANK_7A/RANK_9S/RANK_9A。2026-08-01〜内部rank名の
-  // 全面改名に追随・旧S1(SEVEN_S1)は2026-07-31全廃・RANK_7SSは2026-08-02全廃のため
-  // 対象から除去）は旧S1（廃止済み）の三連複ガミ閾値と無関係のため
-  // ガミ判定チップ（✓/⚠）を表示しない
-  const isPaperRank = pick.rank === "RANK_7S" || pick.rank === "RANK_7A"
+  // ペーパー検証ランク（RANK_7SS/RANK_7S/RANK_7A/RANK_9S/RANK_9A。2026-08-01〜
+  // 内部rank名の全面改名に追随・旧S1(SEVEN_S1)は2026-07-31全廃）は旧S1（廃止済み）
+  // の三連複ガミ閾値と無関係のためガミ判定チップ（✓/⚠）を表示しない。
+  // RANK_7B は買い目を3点に絞る性質上ガミ判定を使う運用のため意図的に含めない。
+  // ⚠️ RANK_7SS は 2026-08-02 に全廃した旧同名ランクではなく 2026-08-05 新設の
+  // 別戦略（entropy不合格×同一ライン）。買い目は7S/7Aと同じ5点流し。
+  const isPaperRank = pick.rank === "RANK_7SS" || pick.rank === "RANK_7S"
+    || pick.rank === "RANK_7A"
     || pick.rank === "RANK_9S" || pick.rank === "RANK_9A";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
@@ -954,11 +963,16 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // ランク別展開では7車(7S/7A)・9車(9S/9A)を同じ一覧内に並べて確認できる
 // ようにする（表示ラベルの先頭数字が対象車数を表し混同を防ぐ）。
 // 2026-08-02: 7SS（波乱軸選出）を全廃したため一覧から除去した。
-const RANK_ORDER = ["7S", "7A", "7B", "9S", "9A"] as const;
+// 2026-08-05: 同じ "7SS" ラベルに**別戦略**（entropy不合格×軸2車が同一ライン）を
+// 新設したため先頭へ戻した（keirin PR#10 `cb419d4`。旧7SSとは無関係で
+// picks_history の旧7SS行は0件のため成績は混ざらない）。7SS>7S>7A の順で
+// 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
+const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
+  "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
+  "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
   "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",

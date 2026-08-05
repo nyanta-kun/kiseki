@@ -13,11 +13,16 @@ import { saveNetkeirinSettings } from "./actions";
 // 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は対象外
 // （backend/src/api/keirin_router.py の NETKEIRIN_RANK_KEYS と揃える）。
 // 2026-08-02〜: 7SS（波乱軸選出・穴レース検知）も全廃したため対象外。
-// 並び順は Web 全体で 7S/7A/9S/9A に統一。
-const RANK_ORDER: NetkeirinRankKey[] = ["7S", "7A", "7B", "9S", "9A"];
+// 2026-08-05〜: 同じ "7SS" ラベルで別戦略を新設したため復活（keirin PR#10）。
+// ⚠️ netkeirin_settings に旧7SSの行（enabled=false・title「穴の二軸」）が残っている
+// ため、この画面で有効化しないと新7SSは自動入稿されない（_is_enabled は行が
+// 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
+// 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
+const RANK_ORDER: NetkeirinRankKey[] = ["7SS", "7S", "7A", "7B", "9S", "9A"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
+  "7SS": "7SS（7車・三連複2軸流し5点・最上位/「自信あり」付与）",
   "7S": "7S（7車・三連複2軸流し5点）",
   "7A": "7A（7車・境界ランク）",
   "9S": "9S（9車・三連複2軸流し7点）",

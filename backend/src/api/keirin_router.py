@@ -177,7 +177,16 @@ async def _calc_synth_odds(
 # 将来「期待できる推奨条件」が見つかった場合はこの辞書へ1行戻せば
 # Web表示・集計・netkeirin設定すべてが復活する（keirin側の候補生成停止も
 # 併せて解除すること）。
+#
+# 【2026-08-05】RANK_7SS を新設（keirin PR#10 `cb419d4`）。上記で全廃した
+# 旧 RANK_7SS（波乱軸選出・穴レース検知・モデル非依存）とは**無関係の別戦略**で、
+# 名前だけを引き継いだもの。新定義は「7S のゲートのうち entropy だけ不合格
+# （= 荒れ）∧ 軸1と軸2が同一ライン（wt_entries.line_group 一致）」で、買い目は
+# 7S/7A と同じ三連複 軸2車+総流し5点。確認窓（2024-07〜2025-06・掃引未使用）で
+# 1.90件/日・的中41.2%・ROI 85.9% と現行ランク中で最良のため最上位に置く。
+# picks_history の旧7SS行は 2026-08-02 に全削除済み（0件）なので成績は混ざらない。
 _PAPER_RANK_LABELS: dict[str, str] = {
+    "RANK_7SS": "7SS",
     "RANK_7S": "7S",
     "RANK_7A": "7A",
     # RANK_7B: 2026-08-03 新設。軸2車がWT公式印◎◯と完全一致するが、順序
@@ -745,6 +754,16 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # WT公式印◯△✕由来の別ロジック・rank_7ss_select_axis）とは異なるため、誤った
 # 軸を「7SS」として入稿してしまうリスクを避けてあえて対象外にしている
 # （2026-08-01時点の判断。7SS専用のhypo軸ロジックを別途移植すれば追加可能）。
+#
+# 【2026-08-05】新設の RANK_7SS（entropy不合格×同一ライン）は軸選定・買い目とも
+# 7S/7A と同一なので技術的には追加できるが、netkeirin の「自信あり」タグ
+# （7SSのみ付与・上限1件/日と推定）を手動入稿で消費すると自動入稿側が落ちるため
+# あえて対象外のままにしている。
+#
+# ⚠️ 既知の不一致（2026-08-03 の 7B 新設以来）: フロントの MANUAL_SUBMIT_RANKS と
+# api.ts の ManualKeirinRankKey は "7B" を含むが、ここには無いため 7B を選ぶと
+# 400「不正なrank_key」になる。7B は hypo軸（_hypo_select_axis）と本番の軸選定が
+# 一致するか未確認のため、確認せずに許可はしない（open_tasks_register 参照）。
 _MANUAL_RANK_KEYS = ("7S", "7A", "9S", "9A")
 
 
@@ -814,12 +833,16 @@ async def get_stats(
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
     rank: 集計対象ランク。カンマ区切りで複数指定可（例: "7A,9S"）。
-          "7S"（RANK_7S）/ "7A"（RANK_7A・境界ランク）/ "9S"（RANK_9S）/
-          "9A"（RANK_9A・境界ランク）/ "all"（既定値・全ランク合算。
+          受け付ける値は _PAPER_RANK_LABELS の表示ラベル（2026-08-05時点で
+          "7SS"/"7S"/"7A"/"7B"/"9S"/"9A"）と "all"（既定値・全ランク合算。
           トップライン=/summaryと揃える）。
-          2026-08-02〜: "7SS"（RANK_7SS・波乱軸選出/穴レース検知）は全廃したため
-          受け付けない（旧gate_label由来の"9SS"も2026-07-31に廃止済み）。
-          "all" が含まれる、または未知の値のみの場合は全体扱いにフォールバックする。
+          "7SS" は 2026-08-02 に旧ランク（波乱軸選出）を全廃したあと
+          2026-08-05 に別戦略（entropy不合格×同一ライン）として再設定したもの。
+          旧gate_label由来の "9SS" は 2026-07-31 に廃止済みで受け付けない。
+          ⚠️ "all" が含まれる、または**未知の値のみ**の場合は全体扱いに
+          フォールバックする（エラーにはならない）。この仕様のせいで
+          2026-08-03〜08-05 のあいだ、統計ページで "7B" を選ぶと全ランクの
+          数字が表示されていた（_RANK_COND_MAP に 7B が無かったため）。
     """
     today = _today_jst()
     if to_date:
@@ -847,13 +870,18 @@ async def get_stats(
     # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
     # OR条件として結合する（例: "7A,9S" → RANK_7A or RANK_9S）。
     # 2026-08-01〜: gate_labelによる分岐は廃止済み・内部rankは_PAPER_RANK_LABELSの
-    # 5ランクへ全面改名済みのため、それぞれ単純な等価条件になる。
-    # 既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
+    # 単純な等価条件になる。既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
+    #
+    # 【2026-08-05 是正】ここは _PAPER_RANK_LABELS とは別に手書きの辞書を持っており、
+    # 2026-08-03 に新設した 7B が追加されないまま放置されていた。未知キーは
+    # `_matched_conds` が空になり **黙って _ALL_COND（全ランク）へフォールバック**
+    # するため、統計ページで「7B」を選ぶと全ランクの数字が 7B として表示されていた
+    # （エラーも警告も出ない）。ランク名の二重管理をやめ _PAPER_RANK_LABELS から
+    # 導出する（同辞書のコメントが宣言している「新ランク追加時はここだけ直せばよい」
+    # 設計を実際に満たすため）。
     _RANK_COND_MAP = {
-        "7S": "ph.rank = 'RANK_7S'",
-        "7A": "ph.rank = 'RANK_7A'",
-        "9S": "ph.rank = 'RANK_9S'",
-        "9A": "ph.rank = 'RANK_9A'",
+        label: f"ph.rank = '{internal}'"
+        for internal, label in _PAPER_RANK_LABELS.items()
     }
     _ALL_COND = f"ph.rank IN {_RANKS_ALL}"
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
@@ -1127,16 +1155,16 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 # netkeirin（ウマい車券）自動入稿設定
 # ---------------------------------------------------------------------------
 
-# 表示ランク一覧（_display_rank()の出力と一致・7S/7A/9S/9A）。
-# 並び順は Web 全体で 7S/7A/9S/9A に統一（2026-08-02に7SS全廃。
-# frontend の RANK_ORDER / RANK_FILTERS と同一基準）。
+# 表示ランク一覧（_display_rank()の出力と一致）。並び順は _PAPER_RANK_LABELS の
+# 定義順＝Web 全体の表示順（frontend の RANK_ORDER / RANK_FILTERS と同一基準）。
 # '_global' は全体ON/OFFを表す特殊行。
-# 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は
-# 対象外。2026-08-02に7SSも全廃したため同様に除外した。
-# DBには過去分のnetkeirin_settings行（rank_key='S1'/'9SS'/'7SS'、いずれも
-# enabled=false）が残るが、新規保存時のバリデーション対象からは外す
-# （フロントエンド側もこれらを画面に表示しない）。
-NETKEIRIN_RANK_KEYS = ("_global", "7S", "7A", "9S", "9A")
+#
+# 【2026-08-05 是正】ここも手書きのタプルで、2026-08-03 新設の 7B が抜けたまま
+# だった（設定画面から 7B の入稿ON/OFF・文面を保存しようとすると 400 になる）。
+# _PAPER_RANK_LABELS から導出してランク名の二重管理をやめる。
+# DBには過去分の行（rank_key='S1'/'9SS' 等・enabled=false）が残るが、新規保存時の
+# バリデーション対象からは自動的に外れる（フロントも画面に表示しない）。
+NETKEIRIN_RANK_KEYS = ("_global", *_PAPER_RANK_LABELS.values())
 
 
 class NetkeirinSettingOut(BaseModel):
