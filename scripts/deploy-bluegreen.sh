@@ -62,11 +62,12 @@ docker compose -f "$COMPOSE_CAND" up -d
 # -------------------------------------------------------------------
 log "Phase 2: 候補 backend ヘルスチェック待機..."
 CAND_STATUS="unknown"
-for i in $(seq 1 36); do
-  sleep 5
+for i in $(seq 1 90); do
+  # 先に判定してから待つ。既に healthy なら待たずに抜ける
   CAND_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_BACKEND_CAND" 2>/dev/null || echo "unknown")
-  log "  backend-b: $CAND_STATUS ($i/36)"
-  if [ "$CAND_STATUS" = "healthy" ]; then break; fi
+  if [ "$CAND_STATUS" = "healthy" ]; then log "  backend-b: healthy ($i/90)"; break; fi
+  [ $((i % 5)) -eq 1 ] && log "  backend-b: $CAND_STATUS ($i/90)"
+  sleep 2
 done
 
 if [ "$CAND_STATUS" != "healthy" ]; then
@@ -79,11 +80,12 @@ fi
 
 log "Phase 2: 候補 frontend ヘルスチェック待機..."
 CAND_FE_STATUS="unknown"
-for i in $(seq 1 24); do
-  sleep 5
+for i in $(seq 1 60); do
+  # 先に判定してから待つ。既に healthy なら待たずに抜ける
   CAND_FE_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_FRONTEND_CAND" 2>/dev/null || echo "unknown")
-  log "  frontend-b: $CAND_FE_STATUS ($i/24)"
-  if [ "$CAND_FE_STATUS" = "healthy" ]; then break; fi
+  if [ "$CAND_FE_STATUS" = "healthy" ]; then log "  frontend-b: healthy ($i/60)"; break; fi
+  [ $((i % 5)) -eq 1 ] && log "  frontend-b: $CAND_FE_STATUS ($i/60)"
+  sleep 2
 done
 
 if [ "$CAND_FE_STATUS" != "healthy" ]; then
@@ -105,11 +107,12 @@ docker compose -f "$COMPOSE_PROD" up -d --force-recreate
 
 log "Phase 3: 本番 backend ヘルスチェック待機..."
 PROD_STATUS="unknown"
-for i in $(seq 1 24); do
-  sleep 5
+for i in $(seq 1 60); do
+  # 先に判定してから待つ。既に healthy なら待たずに抜ける
   PROD_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_BACKEND_PROD" 2>/dev/null || echo "unknown")
-  log "  backend-1: $PROD_STATUS ($i/24)"
-  if [ "$PROD_STATUS" = "healthy" ]; then break; fi
+  if [ "$PROD_STATUS" = "healthy" ]; then log "  backend-1: healthy ($i/60)"; break; fi
+  [ $((i % 5)) -eq 1 ] && log "  backend-1: $PROD_STATUS ($i/60)"
+  sleep 2
 done
 
 if [ "$PROD_STATUS" != "healthy" ]; then
