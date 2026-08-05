@@ -111,6 +111,7 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       - name: Build
+        if: github.event_name == 'pull_request'
         run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: "http://localhost:8000"
@@ -148,6 +149,7 @@ jobs:
           tags: ghcr.io/${{ github.repository }}/backend:main
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
+          provenance: false
 
   build-frontend:
     name: Build & Push Frontend Image
@@ -184,6 +186,7 @@ jobs:
             NEXT_PUBLIC_GA_ID=${{ vars.NEXT_PUBLIC_GA_ID }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+          provenance: false
 
   deploy:
     name: Deploy to galloplab.com
