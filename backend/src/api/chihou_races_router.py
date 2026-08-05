@@ -55,6 +55,41 @@ def _adj_chihou(v: float | None, key: str) -> float | None:
 router = APIRouter(prefix="/api/chihou/races", tags=["chihou-races"])
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
+# 「発走時刻以前の最新オッズ」を全馬ぶん取る SQL。
+#
+# ⚠️ 素直に `DISTINCT ON (race_id, combination) ... ORDER BY fetched_at DESC` と書くと、
+#    当日ぶん 12 万行を読んでディスクソート（external merge）が走り 850ms かかる。
+#    odds_history は 9.4GB / 3200万行あり、1レースあたり約 700 スナップショットあるため。
+#
+#    `ix_chihou_odds_history_race_type_combo_time (race_id, bet_type, combination,
+#    fetched_at DESC)` に完全に乗せるため、出走馬ごとの LATERAL + LIMIT 1 にしている。
+#    これならインデックスの先頭 1 件を引くだけで済む。
+#
+# `{bet_types}` に "'win'" もしくは "'win', 'place'" を format で入れて使う
+# （bet_type はインデックスの第2キーなので、種別ごとに引く方が速い）。
+LATEST_ODDS_SQL = """
+    SELECT r.id AS race_id, bt.bet_type, e.horse_number::text AS combination, o.odds
+    FROM chihou.races r
+    JOIN chihou.race_entries e ON e.race_id = r.id AND e.horse_number IS NOT NULL
+    CROSS JOIN (VALUES ({bet_types})) AS bt(bet_type)
+    CROSS JOIN LATERAL (
+        SELECT oh.odds
+        FROM chihou.odds_history oh
+        WHERE oh.race_id = r.id
+          AND oh.bet_type = bt.bet_type
+          AND oh.combination = e.horse_number::text
+          AND (
+            r.post_time !~ '^[0-9]{{4}}$'
+            OR oh.fetched_at <= (
+                to_timestamp(r.date || r.post_time, 'YYYYMMDDHH24MI') - interval '9 hours'
+            )
+          )
+        ORDER BY oh.fetched_at DESC
+        LIMIT 1
+    ) o
+    WHERE r.id = ANY(:race_ids)
+"""
+
 
 class ChihouRaceOut(BaseModel):
     """地方競馬レース情報レスポンス（JRA Race 型互換）"""
@@ -261,21 +296,7 @@ async def get_chihou_featured_place(
     #    （実測: 発走5分前なら n=106 拾える条件が、最新スナップだと n=43 に落ちた）。
     #    発走前に見る限りこの条件は no-op なので、ライブ表示の挙動は変わらない。
     odds_rows = await db.execute(
-        sql_text("""
-            SELECT DISTINCT ON (o.race_id, o.bet_type, o.combination)
-                   o.race_id, o.bet_type, o.combination, o.odds
-            FROM chihou.odds_history o
-            JOIN chihou.races r ON r.id = o.race_id
-            WHERE o.race_id = ANY(:race_ids)
-              AND o.bet_type IN ('win', 'place')
-              AND (
-                r.post_time !~ '^[0-9]{4}$'
-                OR o.fetched_at <= (
-                    to_timestamp(r.date || r.post_time, 'YYYYMMDDHH24MI') - interval '9 hours'
-                )
-              )
-            ORDER BY o.race_id, o.bet_type, o.combination, o.fetched_at DESC
-        """),
+        sql_text(LATEST_ODDS_SQL.format(bet_types="'win', 'place'")),
         {"race_ids": race_ids},
     )
     win_by_race: dict[int, dict[str, float]] = defaultdict(dict)
@@ -494,24 +515,10 @@ async def get_chihou_races_by_date(
     # 発走時刻以前の最新オッズを使う（理由は featured-place と同じ）
     all_win_odds: dict[int, dict[int, float]] = defaultdict(dict)
     all_odds_rows = await db.execute(
-        sql_text("""
-            SELECT DISTINCT ON (o.race_id, o.combination)
-                   o.race_id, o.combination, o.odds
-            FROM chihou.odds_history o
-            JOIN chihou.races r ON r.id = o.race_id
-            WHERE o.race_id = ANY(:race_ids)
-              AND o.bet_type = 'win'
-              AND (
-                r.post_time !~ '^[0-9]{4}$'
-                OR o.fetched_at <= (
-                    to_timestamp(r.date || r.post_time, 'YYYYMMDDHH24MI') - interval '9 hours'
-                )
-              )
-            ORDER BY o.race_id, o.combination, o.fetched_at DESC
-        """),
+        sql_text(LATEST_ODDS_SQL.format(bet_types="'win'")),
         {"race_ids": race_ids},
     )
-    for rid, combo, odds_val in all_odds_rows.all():
+    for rid, _bet_type, combo, odds_val in all_odds_rows.all():
         if odds_val is not None and str(combo).isdigit():
             all_win_odds[int(rid)][int(combo)] = float(odds_val)
 
