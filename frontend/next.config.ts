@@ -40,6 +40,19 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: "standalone",
   reactCompiler: true,
+  // 型チェックは `next build` の中で走らせない。
+  //
+  // CI の frontend ジョブが `pnpm exec tsc --noEmit` を独立したステップとして実行しており、
+  // deploy ジョブはその成功を needs で要求している。`next build` の中でもう一度
+  // 型チェックするのは**純粋な二度手間**で、GitHub Actions の runner では
+  // 1 ビルドあたり約 20 秒を捨てていた（ローカル実測 17.5s → 13.7s。runner は約4.6倍遅い）。
+  //
+  // ⚠️ CI から `tsc --noEmit` のステップを消してはいけない。消すと型エラーが
+  //    誰にも検出されなくなる（このフラグは検査を抑制するのではなく完全に飛ばす）。
+  //
+  // なお Next.js 16 では `eslint` 設定キーが廃止され `next build` は ESLint を
+  // 実行しないため、ESLint 側には同種の設定は不要。
+  typescript: { ignoreBuildErrors: true },
   // next-pwa injects webpack config; turbopack: {} tells Next.js 16 this is intentional
   turbopack: {},
   images: {
