@@ -190,11 +190,15 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-01〜: S1（2026-07-31全廃）・9SS（gate_label分岐廃止に伴い消滅）は対象外
 // （backend/src/api/keirin_router.py の get_stats/_RANK_COND_MAP と揃える）。
 // 2026-08-02〜: 7SS（波乱軸選出・穴レース検知）も全廃したため対象外。
-type RankFilter = "all" | "7S" | "7A" | "7B" | "9S" | "9A";
+// 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
+// 新設したため復活（keirin PR#10。旧7SSとは無関係・picks_historyの旧行は0件）。
+type RankFilter = "all" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A";
 
-// 並び順は 7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
+// 並び順は 7SS/7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
+  // 7SS（最上位・entropy不合格×同一ライン・2026-08-05導入）
+  { key: "7SS", label: "7SS" },
   { key: "7S", label: "7S" },
   // 7A/9A（境界ランク・2026-07-27導入）。"全体"にも含まれる（/summaryと同じ方針）。
   { key: "7A", label: "7A" },
