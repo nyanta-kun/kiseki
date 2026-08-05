@@ -3,28 +3,21 @@ import type { Metadata } from "next";
 import {
   fetchChihouRacesByDate,
   fetchChihouNearestDate,
-  fetchChihouRecommendations,
-  fetchChihouSweetSpotRecommendations,
   fetchChihouFeaturedPlace,
 } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { ChihouRecommendPanel } from "@/components/ChihouRecommendPanel";
 import { ChihouFeaturedPlacePanel } from "@/components/ChihouFeaturedPlacePanel";
 
 function ChihouRecommendSkeleton() {
   return (
-    <div className="space-y-3 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="推奨データ読み込み中">
+    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="注目馬読み込み中">
+      <div className="h-4 bg-gray-200 rounded w-1/2 mb-3" />
+      <div className="h-3 bg-gray-100 rounded w-full mb-1" />
+      <div className="h-3 bg-gray-100 rounded w-3/4 mb-4" />
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-          <div className="h-9 bg-gray-200 rounded-t-xl" />
-          <div className="px-4 py-3 space-y-2">
-            <div className="h-4 bg-gray-100 rounded w-3/4" />
-            <div className="h-4 bg-gray-100 rounded w-1/2" />
-            <div className="h-3 bg-gray-100 rounded w-full mt-2" />
-          </div>
-        </div>
+        <div key={i} className="h-8 bg-gray-50 rounded mb-1.5" />
       ))}
     </div>
   );
@@ -78,13 +71,11 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
 async function ChihouRaceList({ date }: { date: string }) {
   let races;
   try {
-    // races と推奨系を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
-    // ChihouFeaturedPlacePanel / ChihouRecommendPanel での同一フェッチはキャッシュから即解決する
+    // races と注目馬を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
+    // ChihouFeaturedPlacePanel での同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchChihouRacesByDate(date),
       fetchChihouFeaturedPlace(date).catch(() => []),
-      fetchChihouRecommendations(date).catch(() => []),
-      fetchChihouSweetSpotRecommendations(date).catch(() => ({ items: [], summaries: {} })),
     ]);
   } catch {
     return (
@@ -123,15 +114,12 @@ async function ChihouRaceList({ date }: { date: string }) {
     <CourseTabView
       courseGroups={courseGroups}
       recommendPanel={
-        <>
-          {/* 独自 Suspense: ChihouRaceList の Suspense を注目馬に波及させない（Promise.all でプリフェッチ済みのため即座に解決） */}
-          <Suspense fallback={null}>
-            <ChihouFeaturedPlacePanel date={date} />
-          </Suspense>
-          <Suspense fallback={<ChihouRecommendSkeleton />}>
-            <ChihouRecommendPanel date={date} />
-          </Suspense>
-        </>
+        // 推奨タブは注目馬のみ（2026-08-05）。
+        // 旧 ChihouRecommendPanel（高オッズ穴/穴軸/低オッズ本命など5カテゴリ）は
+        // 検証で ROI・的中率とも根拠が弱く、表示コストだけ高かったため外した。
+        <Suspense fallback={<ChihouRecommendSkeleton />}>
+          <ChihouFeaturedPlacePanel date={date} />
+        </Suspense>
       }
       basePath="/chihou/races"
       hideRecommend={false}
