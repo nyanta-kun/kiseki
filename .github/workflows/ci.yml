@@ -120,7 +120,7 @@ jobs:
 
   build-backend:
     name: Build & Push Backend Image
-    needs: [guards, backend, frontend]
+    needs: []
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
@@ -151,7 +151,7 @@ jobs:
 
   build-frontend:
     name: Build & Push Frontend Image
-    needs: [guards, backend, frontend]
+    needs: []
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
@@ -187,7 +187,7 @@ jobs:
 
   deploy:
     name: Deploy to galloplab.com
-    needs: [build-backend, build-frontend]
+    needs: [build-backend, build-frontend, guards, backend, frontend]
     runs-on: ubuntu-latest
     # GitHub Environments の required_reviewers で承認ゲートを設定可能（INF-014）
     # Settings > Environments > production > Required reviewers に承認者を追加することを推奨
