@@ -18,7 +18,7 @@ import { saveNetkeirinSettings } from "./actions";
 // ため、この画面で有効化しないと新7SSは自動入稿されない（_is_enabled は行が
 // 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
 // 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
-const RANK_ORDER: NetkeirinRankKey[] = ["7SS", "7S", "7A", "7B", "9S", "9A"];
+const RANK_ORDER: NetkeirinRankKey[] = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
@@ -28,6 +28,9 @@ const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   "9S": "9S（9車・三連複2軸流し7点）",
   "7B": "7B（◎◯一致・順序/相手で不一致・相手絞り3点）",
   "9A": "9A（9車・境界ランク）",
+  // 7H1 は唯一の2券種ランク。プレビューの {axis1}/{axis2} は他ランク向けの変数で、
+  // 7H1 の入稿タイトル・本文はレース非依存の固定文（変数を使わない）。
+  "7H1": "7H1（7車・穴推奨/本命バスト型・三連単F8点+三連複BOX・「穴狙い」付与）",
 };
 
 // プレビュー用のテンプレート変数置換（keirin側 netkeirin_submit_wt.py と同じ

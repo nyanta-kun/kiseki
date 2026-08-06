@@ -264,6 +264,11 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 買い目は7S/7Aと同じ三連複2軸+総流し5点だが、確認窓ROI 85.9%と現行最良のため
   // 最上位ランク。7Sと同系（緑）でより濃い色にして「7Sの上」であることを示す。
   "7SS":        { bg: "#15803d", text: "#fff", label: "7SS" },
+  // 7H1=RANK_7H1（穴推奨・本命バスト型・2026-08-06新設）。既存6ランクとは系統が
+  // 違う（S/A/B＝的中率重視の予想ベース、H＝穴狙い）ため色系統も分ける（紫）。
+  // **唯一の2券種ランク**（三連単フォーメーション8点 + 三連複BOX 4〜10点）で、
+  // 本命とその同ラインを買い目から丸ごと落とすため他ランクと買い方が正反対。
+  "7H1":        { bg: "#7e22ce", text: "#fff", label: "7H1" },
 };
 
 // ---------------------------------------------------------------------------
@@ -755,9 +760,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // RANK_7B は買い目を3点に絞る性質上ガミ判定を使う運用のため意図的に含めない。
   // ⚠️ RANK_7SS は 2026-08-02 に全廃した旧同名ランクではなく 2026-08-05 新設の
   // 別戦略（entropy不合格×同一ライン）。買い目は7S/7Aと同じ5点流し。
+  // RANK_7H1（穴推奨）も対象。ガミ閾値は三連複の最低倍率に対する条件で、
+  // 三連単フォーメーションとの併せ買いには意味を持たない。
   const isPaperRank = pick.rank === "RANK_7SS" || pick.rank === "RANK_7S"
     || pick.rank === "RANK_7A"
-    || pick.rank === "RANK_9S" || pick.rank === "RANK_9A";
+    || pick.rank === "RANK_9S" || pick.rank === "RANK_9A"
+    || pick.rank === "RANK_7H1";
   const gamiStatus: "ok" | "ng" | null = !isPaperRank && pick.prerace_gami != null && (!isMiwokuri || isGamiSkip)
     ? pick.prerace_gami >= gamiThr ? "ok" : "ng"
     : null;
@@ -777,12 +785,20 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
   const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
-  // 券種ラベル: 旧S1（win軸新設計・三連単）は2026-07-31全廃済み。現行ランク
-  // （RANK_7S/RANK_7A/RANK_9S/RANK_9A/RANK_7SS）は全て三連複のため固定表示でよい
+  // 券種ラベル: 旧S1（win軸新設計・三連単）は2026-07-31全廃済み。三連複ランク
+  // （RANK_7S/RANK_7A/RANK_7B/RANK_9S/RANK_9A/RANK_7SS）は固定表示でよい
   // （API側の_VALID_PICK_RANKSからもSEVEN_S1は除外済みのため到達し得ない）。
-  const betTypeLabel = "3連複";
+  //
+  // RANK_7H1（穴推奨）だけは**2券種**（三連単フォーメーション + 三連複BOX）で、
+  // pred_combo が既に "三複:… / 三単:…" と券種名込みの形で入っている。
+  // ここで "3連複:" を前置すると三連単の目まで三連複と表示され**買い目を偽る**ので、
+  // 7H1 は前置せずそのまま出す（reorderComboByTop3 も形式不一致で素通しになる）。
+  const is7h1 = pick.rank === "RANK_7H1";
+  const nCombosSuffix = pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : "";
   const comboLabel = pick.pred_combo
-    ? `${betTypeLabel}: ${reorderComboByTop3(pick.pred_combo, pick.entries)}${pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : ""}`
+    ? (is7h1
+      ? `${pick.pred_combo}${nCombosSuffix}`
+      : `3連複: ${reorderComboByTop3(pick.pred_combo, pick.entries)}${nCombosSuffix}`)
     : undefined;
 
   const startTime = fmtStartAt(pick.start_at);
@@ -967,9 +983,12 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 新設したため先頭へ戻した（keirin PR#10 `cb419d4`。旧7SSとは無関係で
 // picks_history の旧7SS行は0件のため成績は混ざらない）。7SS>7S>7A の順で
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
-const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A"] as const;
+// 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
+// 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
+const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1"] as const;
 const RANK_LABEL: Record<string, string> = {
   "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
+  "7H1": "7H1",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -978,6 +997,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
+  "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

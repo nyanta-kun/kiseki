@@ -1101,7 +1101,7 @@ export type KeirinStatsResponse = {
   };
 };
 
-export type KeirinStatsRank = "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "all";
+export type KeirinStatsRank = "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
 // 2026-08-02〜: S1・9SS・旧7SSは全廃済みのため対象外（backend/src/api/keirin_router.py の
@@ -1109,7 +1109,8 @@ export type KeirinStatsRank = "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "all";
 // 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
 // 新設したため復活。旧7SSの設定行（enabled=false）がDBに残っているので、
 // 設定画面で有効化しないと自動入稿されない点に注意。
-export type NetkeirinRankKey = "_global" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A";
+// 2026-08-06〜: 7H1（穴推奨・本命バスト型・三連単F+三連複BOXの2券種）を追加。
+export type NetkeirinRankKey = "_global" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1";
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;
