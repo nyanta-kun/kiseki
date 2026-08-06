@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
@@ -793,9 +794,14 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // pred_combo が既に "三複:… / 三単:…" と券種名込みの形で入っている。
   // ここで "3連複:" を前置すると三連単の目まで三連複と表示され**買い目を偽る**ので、
   // 7H1 は前置せずそのまま出す（reorderComboByTop3 も形式不一致で素通しになる）。
+  //
+  // さらに全目の列挙（1レース18目）は画面上ほぼ読めないため、券種ごとに
+  // フォーメーション表記へ畳んで**行を分けて**出す（multiBetLines）。
+  // 畳めない構造や "見送り" などは null が返るので、下の従来表示へ落ちる。
   const is7h1 = pick.rank === "RANK_7H1";
   const nCombosSuffix = pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : "";
-  const comboLabel = pick.pred_combo
+  const multiBetLines = pick.pred_combo ? formatMultiBetComboLines(pick.pred_combo) : null;
+  const comboLabel = pick.pred_combo && !multiBetLines
     ? (is7h1
       ? `${pick.pred_combo}${nCombosSuffix}`
       : `3連複: ${reorderComboByTop3(pick.pred_combo, pick.entries)}${nCombosSuffix}`)
@@ -903,6 +909,14 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
           <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 sm:gap-3">
             {candRanks.length > 0 && candCombo ? (
               <CandBuyLines ranks={candRanks} combo={candCombo} />
+            ) : multiBetLines ? (
+              // 2券種併買（7H1）は券種ごとに改行する。横に繋げると折り返した時に
+              // どちらの券種の買い目か読めなくなるため。
+              <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
+                {multiBetLines.map((l) => (
+                  <span key={l} className="block">{l}</span>
+                ))}
+              </span>
             ) : (
               <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 flex-1 min-w-0 break-words">
                 {comboLabel ?? "—"}
