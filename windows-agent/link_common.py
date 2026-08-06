@@ -27,6 +27,51 @@ logger = logging.getLogger(__name__)
 # 際限なく肥大する（2026-08-06 実測: umaconn_agent.log が 195MB）。
 LOG_MAX_BYTES = 20 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
+# ローテーション失敗後、次に試すまでの待ち時間（秒）
+LOG_ROLLOVER_RETRY_INTERVAL = 300.0
+
+
+class SharedFileRotatingHandler(logging.handlers.RotatingFileHandler):
+    """他プロセスとログファイルを共有していても壊れない RotatingFileHandler。
+
+    Windows では他プロセスが開いているファイルを ``os.rename`` できず、
+    ローテーションが ``PermissionError`` (WinError 32) になる。
+    本プロジェクトのログは**常に複数プロセスで共有されている**:
+
+      - ``umaconn_agent.log`` — realtime 常駐 + 5分おきの fetch-results
+      - ``jvlink_agent.log``  — realtime 常駐 + 一発実行モード (weekly-preview 等)
+
+    素の RotatingFileHandler だと、この失敗が ``handleError`` 経由で
+    stderr に延々と出るうえ、``shouldRollover`` は真のままなので
+    **1行ごとに rename を試みる**（失敗し続けるだけの syscall が毎行走る）。
+
+    そこで失敗は握りつぶして追記を続け、次の試行まで間隔を空ける。
+    上限を一時的に超えるが、EOD cleanup 後など単独で開いている瞬間に必ず成功する。
+    ログを1行も落とさないことを、上限の厳密さより優先する。
+    """
+
+    def __init__(self, *args, retry_interval: float = LOG_ROLLOVER_RETRY_INTERVAL, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._retry_interval = retry_interval
+        self._next_rollover_attempt = 0.0
+
+    def shouldRollover(self, record):  # noqa: N802 - logging の命名に合わせる
+        """サイズ超過でも、直近に失敗していたら間隔が空くまで試さない。"""
+        if time.time() < self._next_rollover_attempt:
+            return False
+        return super().shouldRollover(record)
+
+    def doRollover(self):  # noqa: N802 - logging の命名に合わせる
+        """ローテーションする。他プロセスが掴んでいる場合は諦めて追記を続ける。"""
+        try:
+            super().doRollover()
+            self._next_rollover_attempt = 0.0
+        except OSError:
+            # 退避に失敗した = 他プロセスが開いている。ストリームが閉じられた
+            # 可能性があるので開き直してから追記を続ける。
+            self._next_rollover_attempt = time.time() + self._retry_interval
+            if self.stream is None or self.stream.closed:
+                self.stream = self._open()
 
 
 def rotating_log_handler(
@@ -36,7 +81,7 @@ def rotating_log_handler(
 ) -> logging.Handler:
     """サイズローテーション付きのファイルログハンドラを返す。
 
-    既にサイズを超えているファイルは、最初のログ出力時に .1 へ退避される。
+    既に上限を超えているファイルは、最初のログ出力時に .1 へ退避される。
 
     Args:
         path: ログファイルのパス
@@ -44,9 +89,9 @@ def rotating_log_handler(
         backup_count: 保持する世代数
 
     Returns:
-        設定済みの RotatingFileHandler
+        設定済みの SharedFileRotatingHandler
     """
-    return logging.handlers.RotatingFileHandler(
+    return SharedFileRotatingHandler(
         str(path),
         maxBytes=max_bytes,
         backupCount=backup_count,
