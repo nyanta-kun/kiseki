@@ -6,6 +6,10 @@ jvlink_agent.py と umaconn_agent.py で共有するロジック。
 
 import json
 import logging
+import logging.handlers
+import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +17,113 @@ from pathlib import Path
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# ログハンドラ
+# ---------------------------------------------------------------------------
+
+# エージェントは常駐かつ 30 秒周期でログを書くため、素の FileHandler だと
+# 際限なく肥大する（2026-08-06 実測: umaconn_agent.log が 195MB）。
+LOG_MAX_BYTES = 20 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
+
+def rotating_log_handler(
+    path: str | Path,
+    max_bytes: int = LOG_MAX_BYTES,
+    backup_count: int = LOG_BACKUP_COUNT,
+) -> logging.Handler:
+    """サイズローテーション付きのファイルログハンドラを返す。
+
+    既にサイズを超えているファイルは、最初のログ出力時に .1 へ退避される。
+
+    Args:
+        path: ログファイルのパス
+        max_bytes: 1ファイルあたりの上限バイト数
+        backup_count: 保持する世代数
+
+    Returns:
+        設定済みの RotatingFileHandler
+    """
+    return logging.handlers.RotatingFileHandler(
+        str(path),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# JVOpen / NVOpen ブロック監視
+# ---------------------------------------------------------------------------
+
+class BlockingCallGuard:
+    """COM 呼び出しがハングしたらプロセスごと落とすウォッチドッグ。
+
+    JVOpen は COM レベルでブロックするため、呼び出しスレッドからは中断できない。
+    別スレッドから ``os._exit`` するしか回収手段がない。
+
+    ``os._exit`` を使うのは意図的。``sys.exit`` は呼び出しスレッドの例外なので
+    COM でブロックしているスレッドには届かず、``atexit`` / ``finally`` を走らせると
+    JV-Link / UmaConn が DLL detach でモーダルダイアログを出しうる。
+
+    Why: 2026-08-06 に ``jvlink_agent.py --mode weekly-preview`` の JVOpen が
+    23.3 時間返らず、JV-Link は同時1接続のみのため 4 時間おきの
+    ``jvlink_historical`` が丸2日間 1 ファイルも取得できなかった。
+    realtime ループにはウォッチドッグがあったが、一発実行モードには無かった。
+
+    Example:
+        with BlockingCallGuard("JVOpen(RACE)", 3600, logger):
+            rc = jv.JVOpen(...)
+    """
+
+    def __init__(
+        self,
+        label: str,
+        timeout: float,
+        log: logging.Logger,
+        heartbeat_interval: float = 30.0,
+    ) -> None:
+        """
+        Args:
+            label: ログに出す呼び出し名
+            timeout: この秒数を超えたらプロセスを強制終了する（0以下で無効）
+            log: ログ出力先
+            heartbeat_interval: 経過時間をログに出す間隔（秒）
+        """
+        self._label = label
+        self._timeout = timeout
+        self._log = log
+        self._interval = heartbeat_interval
+        self._done = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "BlockingCallGuard":
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._done.set()
+
+    def _watch(self) -> None:
+        start = time.time()
+        while not self._done.wait(timeout=self._interval):
+            elapsed = time.time() - start
+            if 0 < self._timeout <= elapsed:
+                self._log.error(
+                    f"{self._label} が {int(elapsed)}秒 返りません "
+                    f"(上限 {int(self._timeout)}秒) → プロセスを強制終了します"
+                )
+                # ログを失わないよう明示的に flush してから落とす
+                for h in logging.getLogger().handlers:
+                    try:
+                        h.flush()
+                    except Exception:  # noqa: BLE001 - 終了直前なので握りつぶす
+                        pass
+                os._exit(1)
+            self._log.info(f"  {self._label} 待機中... 経過={int(elapsed)}秒")
 
 
 # ---------------------------------------------------------------------------
