@@ -61,6 +61,7 @@ from link_common import (
     load_cache,
     save_pending,
     retry_pending,
+    rotating_log_handler,
     report_status as _lc_report_status,
 )
 
@@ -115,7 +116,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("umaconn_agent.log", encoding="utf-8"),
+        rotating_log_handler("umaconn_agent.log"),
     ],
 )
 logger = logging.getLogger("umaconn_agent")

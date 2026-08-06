@@ -49,6 +49,7 @@ from dotenv import load_dotenv
 
 import jvlink_maintenance as jvm
 from link_common import (
+    BlockingCallGuard,
     _normalize_jvread,
     post_to_backend,
     _post_in_batches,
@@ -57,6 +58,7 @@ from link_common import (
     save_pending,
     load_pending_all,
     retry_pending,
+    rotating_log_handler,
     report_status as _lc_report_status,
 )
 
@@ -114,10 +116,18 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("jvlink_agent.log", encoding="utf-8"),
+        rotating_log_handler("jvlink_agent.log"),
     ],
 )
 logger = logging.getLogger("jvlink_agent")
+
+# JVOpen がこの秒数を超えて返らなければハングとみなしプロセスごと落とす。
+# JV-Link は同時1接続のみなので、ここで居座ると他の全取得が止まる。
+# 2026-08-05 18:00 の weekly-preview は 23.3 時間返らず、丸2日間 jvlink_historical を
+# 巻き添えにした（realtime ループにはウォッチドッグがあったが一発実行モードには無かった）。
+# option=4（セットアップ）だけは数時間ブロックしうるため別枠にする。
+JVOPEN_TIMEOUT_DIFF = int(os.getenv("JVOPEN_TIMEOUT_DIFF", "3600"))
+JVOPEN_TIMEOUT_SETUP = int(os.getenv("JVOPEN_TIMEOUT_SETUP", "21600"))
 
 # JV-Link データ種別ID
 # 蓄積系 (JVOpen)
@@ -308,23 +318,13 @@ def fetch_stored_data(
         return []
 
     # キャッシュなし → JVOpenで取得
-    # JVOpen は長時間ブロックする場合があるため、別スレッドでハートビートを出力する
     logger.info(f"JVOpen 呼び出し開始: dataspec={dataspec}, from={from_time}, option={option}")
-    _jvopen_done = threading.Event()
 
-    def _heartbeat():
-        start = time.time()
-        while not _jvopen_done.is_set():
-            _jvopen_done.wait(timeout=30)
-            if not _jvopen_done.is_set():
-                elapsed = int(time.time() - start)
-                logger.info(f"JVOpen 待機中... 経過={elapsed}秒 (JVOpen がブロッキング中)")
-
-    hb = threading.Thread(target=_heartbeat, daemon=True)
-    hb.start()
-
-    result = jv.JVOpen(dataspec, from_time, option, 0, 0, "")
-    _jvopen_done.set()
+    # 上限を超えたら BlockingCallGuard がプロセスごと落とす。COM でブロックしている
+    # スレッドは中断できないので、外から os._exit するしか回収手段がない。
+    timeout = JVOPEN_TIMEOUT_SETUP if option == 4 else JVOPEN_TIMEOUT_DIFF
+    with BlockingCallGuard(f"JVOpen({dataspec})", timeout, logger):
+        result = jv.JVOpen(dataspec, from_time, option, 0, 0, "")
 
     if isinstance(result, tuple):
         rc = result[0]

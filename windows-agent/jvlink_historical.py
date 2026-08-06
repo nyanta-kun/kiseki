@@ -51,10 +51,12 @@ except ImportError:
 
 import jvlink_maintenance as jvm
 from link_common import (
+    BlockingCallGuard,
     _normalize_jvread,
     _post_in_batches,
     post_to_backend,
     retry_pending,
+    rotating_log_handler,
     save_pending,
 )
 
@@ -78,10 +80,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(str(_SCRIPT_DIR / "historical_agent.log"), encoding="utf-8"),
+        rotating_log_handler(_SCRIPT_DIR / "historical_agent.log"),
     ],
 )
 logger = logging.getLogger("historical")
+
+# JVOpen がこの秒数を超えて返らなければハングとみなしプロセスごと落とす。
+# option=1（差分）は CLAUDE.md の指針どおり数分で完了する想定なので 1 時間で十分。
+# option=4（セットアップ）は数時間ブロックしうるため個別に緩める（_fetch_with_stop 参照）。
+JVOPEN_TIMEOUT_DIFF = int(os.getenv("JVOPEN_TIMEOUT_DIFF", "3600"))
+JVOPEN_TIMEOUT_SETUP = int(os.getenv("JVOPEN_TIMEOUT_SETUP", "21600"))
 
 # completed ファイルキー
 # RACE は jvlink_agent.py の "RACE" キーと共有（両スクリプト間でスキップが有効）
@@ -259,22 +267,12 @@ def _fetch_with_stop(
 
     logger.info(f"JVOpen 開始: dataspec={dataspec}, from_time={from_time}, option={option}")
 
-    # JVOpen はブロッキングのためハートビートスレッドで状況を記録
-    _jvopen_done = threading.Event()
-
-    def _heartbeat():
-        start = time.time()
-        while not _jvopen_done.is_set():
-            _jvopen_done.wait(timeout=30)
-            if not _jvopen_done.is_set():
-                elapsed = int(time.time() - start)
-                logger.info(f"  JVOpen 待機中... 経過={elapsed}秒 (ダウンロード中)")
-
-    hb = threading.Thread(target=_heartbeat, daemon=True)
-    hb.start()
-
-    result = jv.JVOpen(dataspec, from_time, option, 0, 0, "")
-    _jvopen_done.set()
+    # JVOpen はブロッキングのため、別スレッドで経過を記録しつつ上限を監視する。
+    # 上限で落とすのは、JV-Link が同時1接続しか持てず、ここで居座ると
+    # 他のバックフィルも realtime も全て巻き添えになるため（BlockingCallGuard 参照）。
+    timeout = JVOPEN_TIMEOUT_SETUP if option == 4 else JVOPEN_TIMEOUT_DIFF
+    with BlockingCallGuard(f"JVOpen({dataspec})", timeout, logger):
+        result = jv.JVOpen(dataspec, from_time, option, 0, 0, "")
 
     if isinstance(result, tuple):
         rc = result[0]
