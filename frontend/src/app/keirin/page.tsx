@@ -769,6 +769,29 @@ function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => 
   );
 }
 
+// ---------------------------------------------------------------------------
+// 開催（会場×日）種別ごとのカード背景
+//
+// ユーザー要望「netkeirin入稿単位の開催に合わせ、カード背景を分ける。
+// モーニング・通常・ミッドナイト」。**デイとナイターは「通常」としてまとめる**
+// （4種のうち色は3系統）。種別の判定は backend `keirin_meeting.py` が正本で、
+// netkeirin 入稿の波（朝7:00 / 昼13:00 / 夕18:00）と境界を揃えてある。
+//
+// ⚠️ 発走時刻が取れない開催は null で来る。**その場合は色を付けない**
+//    （分からないものをどれかに倒すと実際と違う色が付いて誤読の元になる）。
+// ⚠️ 薄い色にとどめる。カードは見送り(opacity-55)・結果バッジ・足切りなど
+//    既に状態を色で表しており、背景を濃くするとそちらが読めなくなる。
+const MEETING_CARD_BG: Record<string, string> = {
+  morning: "bg-amber-50/70 dark:bg-amber-950/20",      // モーニング
+  day: "bg-white dark:bg-gray-900",                     // 通常（デイ）
+  nighter: "bg-white dark:bg-gray-900",                 // 通常（ナイター）
+  midnight: "bg-indigo-50/70 dark:bg-indigo-950/25",    // ミッドナイト
+};
+
+function meetingBg(t: KeirinPick["meeting_type"]): string {
+  return (t && MEETING_CARD_BG[t]) || "bg-white dark:bg-gray-900";
+}
+
 function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -777,7 +800,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
   const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
   const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75">
+    <div className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75`}>
       <div className={`w-full flex items-center gap-1 px-1 sm:px-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
         <button
           type="button"
@@ -936,7 +959,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   }, [submitMsg]);
 
   return (
-    <div id={cardId} className={`bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri || isGamiSkip ? " opacity-55" : ""}`}>
+    <div id={cardId} className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri || isGamiSkip ? " opacity-55" : ""}`}>
       {/* ヘッダー行（クリックで折りたたみトグル + 右端にピンポイント入稿アイコン） */}
       <div className={`w-full flex items-center gap-1 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
         <button

@@ -1027,6 +1027,10 @@ export type KeirinPick = {
   hypo_axis_sum: number | null;
   hypo_entropy: number | null;
   hypo_wt_overlap_n: number | null;
+  /** 開催（会場×日）の種別。**その開催の第1レース**の発走時刻で決まる。
+   *  発走時刻が取れない開催は null（色を付けない）。
+   *  netkeirin 入稿の波と境界を揃えてある（backend `keirin_meeting.py` 参照）。 */
+  meeting_type: "morning" | "day" | "nighter" | "midnight" | null;
   /** netkeirin へ**入稿した時点の**買い目と金額配分。未入稿なら null。
    *  傾斜配分は入稿時点の想定オッズから決まるため後から再現できないので、
    *  keirin 側が入稿の瞬間に保存した値をそのまま表示する（再計算しない）。 */
