@@ -195,6 +195,24 @@ class IndexCalculator(ABC):
 - 出走取消/除外 → そのレース全馬を再算出
 - 騎手変更 → 該当馬の騎手指数 + 全馬の展開指数を再算出
 - 斤量変更 → 該当馬のスピード指数のみ再算出
+- **馬体重の到着 → そのレースを再算出**（`/api/import/weights`・2026-08-08 実装）
+
+### 馬体重による再算出（当日の指数が馬体重なしのままになるのを防ぐ）
+
+`horse_weight` / `weight_change` は総合指数 v27 の特徴量だが、**当日の一括算出は
+VPS cron の 07:30 JST 一回きり**（`scripts/jra_calculate_trigger.sh`）で、
+**馬体重が届くのは発走の約1時間前**（realtime の `0B11`）。以前は取り込むだけで
+再算出しなかったため、当日の指数は最後まで馬体重なしだった
+（実測でレース内 sd が約半分に潰れる）。
+
+`import_weights` は取込の前後で**レースごとの `horse_weight` 充足数**を比較し、
+**増えたレースだけ** `CompositeIndexCalculator.calculate_and_save()` を
+BackgroundTask で走らせる。realtime は同じ 0B11 を約30秒ごとに投げてくるので、
+**「増えた分だけ」という差分条件が無いと全レースを延々と再算出し続ける**。
+検査: `backend/tests/test_weight_recalc_trigger.py`（差分条件を潰すと落ちることを確認済み）。
+
+⚠️ **過去日の `calculated_indices` と当日朝の値を比べてはいけない。**
+過去分はレース後にバックフィルされた行で馬体重が入っており、当日朝より必ず分散が大きい。
 
 ## JRA-VAN データ取得
 - TARGETは使用しない。JV-Link SDKを直接Pythonから操作
@@ -978,23 +996,21 @@ tail -f /Users/ysuzuki/GitHub/kiseki/logs/dm_auto_fetch.log
 
 ## DM × 穴ぐさ × 既存指数 シグナルタグ
 
-`backend/src/indices/dm_signals.py` で 7 種類のシグナルを馬ごとに付与。
-バックテスト実証 (3年・8,618レース・99.0%カバレッジ):
+`backend/src/indices/dm_signals.py` は **2 タグのみ**を付与する。**1レースにつき「穴」は最大1頭**。
 
-| タグ | 条件 | 勝率 | ROI | n |
-|------|------|------|------|---|
-| 🔥三冠一致 | base=1 ∧ time=1 ∧ battle=1 | 39.1% | 84.9% | 1622 |
-| ⭐高得点鉄板 | composite≥60 ∧ battle≥65 ∧ **composite順位≤2** | 46.5% | 101.2% | 86 |
-| 🏆穴ぐさDM | anagusa∈{A,B} ∧ battle=1 ∧ 人気≥5 | 10.2% | **188.8%** | 49 |
-| ⚡DM大穴 | battle=1 ∧ 人気≥7 ∧ battle≥65 | 7.6% | 154.0% | 184 |
-| ⚡DM高オッズ | battle=1 ∧ オッズ≥10 ∧ time≤2 | 9.0% | 130.0% | 156 |
-| 💎anagusa+DMtime | anagusa=A ∧ time=1 | 9.4% | 103.5% | 106 |
-| ❌人気下振れ | 人気≤3 ∧ base≥4位 ∧ battle≥4位 | 15.3% | 73.9% | 3563 |
+| タグ | 条件 | ねらい |
+|------|------|------|
+| 穴 (`SIGNAL_UPSET_CANDIDATE`) | 単勝≥10 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battle のいずれか1つ以上が上位評価 → そのうち **badge_cnt 最大の1頭のみ**（同点は composite 降順） | 的中率の頑健な分離（複勝約20%）。**ROIではない** |
+| 特穴 (`SIGNAL_ANAGUSA_ELITE`) | 穴ぐさ(A/B/C) ∧ composite順位≤3 ∧ 単勝≥10 | 単勝ROI狙い（FULL n=535 で 1.417・drop1 1.329） |
 
-上表に加えて **コース/セグメント別 deny フィルタ**（低信頼セグメントで非発動、2026-06-07）が
-実装されている: 三冠一致=福島/阪神/京都・芝マイル・ダ中距離、穴ぐさDM=東京/小倉/札幌/阪神ほか、
-DM高オッズ=芝マイル、人気下振れ=福島/小倉/阪神/京都。詳細は `dm_signals.py` 参照。
-また**出走取消・発走除外馬はシグナル判定・順位計算の母集団から除外**される
+⚠️ **「7種シグナル」(🔥三冠一致・⭐高得点鉄板・🏆穴ぐさDM・⚡DM大穴・⚡DM高オッズ・
+💎anagusa+DMtime・❌人気下振れ) は 2026-07-25 に全廃**（`jra_upset_badge_redesign`）。
+軸の信頼度は `recommend_rank`（`confidence.py` の market_agree ベース tier）へ一本化され、
+狭いAND条件・小標本(n=10〜184)でOOS不安定だった軸/警戒シグナルは撤去された。
+**コース別 deny フィルタも同時に消滅している**。旧タグ名で grep しても実装は無い。
+本番実測（2026-08-08 / 462頭）も `穴`28・`特穴`1 のみで、旧7種は1件も出ない＝正常。
+
+**出走取消・発走除外馬はシグナル判定・順位計算の母集団から除外**される
 （取消馬のDM欠損で「1頭でもNULL→レース全馬シグナルなし」が誤発動するのを防ぐ）。
 
 API レスポンス: `HorseIndexOut.dm_signals: list[str]` (`/api/races/{id}/indices`)
@@ -1009,13 +1025,26 @@ OOS検証（`scripts/jra_verify_signals.py`）で「価値(ROI>1)」を謳うバ
 super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため、推奨本体は的中重視に再定義し、
 価値系は `value_candidates`（妙味候補・収支保証なし）の注記へ降格した。
 
-**tier（=recommend_rank、OOS test 1位馬実績）**:
-| tier | 条件 | 実績 | bet |
+**tier（=recommend_rank）**。判定の単一真実源は
+`backend/src/indices/confidence.py::calculate_recommend_rank`。
+
+⚠️ **2026-07-25 に再設計済み**（`jra_axis_market_agree_redesign`）。3年+完全OOSの
+セグメント異質性分析で、confidence_score 単独より
+**「指数1位馬が単勝1番人気とも一致するか」(`market_agree`) の方が的中率の分離を支配する**
+と判明したため、**market_agree が第一分岐・confidence_score は第二分岐**になった
+（confidence_score≥80 でも市場が支持していなければ最下位の市場一致グループより弱い）。
+
+| tier | 条件 | 1位馬勝率 | bet |
 |---|---|---|---|
-| S 鉄板 | 指数1位が断然人気（単勝<1.5） | 勝率67% / 複勝93% | 単勝 |
-| A 信頼軸 | confidence_score ≥ 80 | 勝率34% / 複勝71% | 単勝 |
-| B 複勝圏 | confidence_score ≥ 65 | 複勝64% | 複勝 |
-| C 混戦 | 上記以外 | — | 推奨しない（見送り） |
+| S 最強軸 | **単勝<1.5**（market_agree 不問）**または** market_agree ∧ confidence ≥ 80 | 45〜51%（断然人気時 70%+） | 単勝 |
+| A 信頼軸 | market_agree ∧ confidence ≥ 65 | 33〜40% | 単勝 |
+| B 準軸 | market_agree ∧ confidence < 65 | 27〜35% | 複勝 |
+| C+ 準見送り | 市場乖離 ∧ entropy_norm < 閾値（市場内では本命寄り） | 複勝約55% | 複勝 |
+| C 混戦 | 市場乖離（真の大混戦） | 15〜26% | 推奨しない（見送り） |
+
+**「S = 単勝<1.5」だけではない。** market_agree が立っていれば単勝5倍台でも S になりうる
+（2026-08-08 札幌4R で実際に発生: 指数1位=単勝1番人気 5.1倍）。
+`market_agree=None`（全馬オッズ未取得）のときのみ confidence_score だけの旧ロジックへ落ちる。
 
 **実装**:
 - `backend/src/services/recommender.py::build_hit_tier_recommendations()` 推奨本体
