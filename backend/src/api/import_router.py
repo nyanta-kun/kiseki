@@ -17,7 +17,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..db.models import OddsHistory, Race, RacePayout, RaceResult, SpecialRegistration
+from ..db.models import (
+    OddsHistory,
+    Race,
+    RaceEntry,
+    RacePayout,
+    RaceResult,
+    SpecialRegistration,
+)
 from ..db.session import AsyncSessionLocal, get_db
 from ..importers import (
     ChangeHandler,
@@ -245,21 +252,64 @@ async def import_odds(
     return {"ok": True, "stats": stats}
 
 
+async def _weight_coverage_by_race(db: AsyncSession, date: str) -> dict[int, int]:
+    """指定日のレースごとに horse_weight が入っている出走馬数を返す。"""
+    rows = await db.execute(
+        select(RaceEntry.race_id, func.count(RaceEntry.horse_weight))
+        .join(Race, Race.id == RaceEntry.race_id)
+        .where(Race.date == date)
+        .group_by(RaceEntry.race_id)
+    )
+    return {race_id: count for race_id, count in rows.all()}
+
+
+async def _recalculate_races(race_ids: list[int]) -> None:
+    """指定レースの総合指数を再算出する（独立セッション）。"""
+    async with AsyncSessionLocal() as db:
+        calc = CompositeIndexCalculator(db)
+        for race_id in race_ids:
+            try:
+                await calc.calculate_and_save(race_id)
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"[recalc] 失敗: race_id={race_id} error={e}", exc_info=True)
+        logger.info(f"[recalc] 馬体重反映で {len(race_ids)} レースを再算出")
+
+
 @router.post("/weights")
 async def import_weights(
     body: WeightRequest,
+    background_tasks: BackgroundTasks,
     _: ApiKeyDep,
     db: DbDep,
 ) -> dict:
     """馬体重レコード（WE, SEの一部）を取り込む。
 
     WEレコードはSEと同じ馬情報を持つため RaceImporter で処理。
+
+    馬体重が新たに入ったレースはその場で再算出する。`horse_weight` /
+    `weight_change` は総合指数 v27 の特徴量だが、当日の一括算出は VPS cron の
+    07:30 JST 一回きりで、馬体重が届くのは発走の約1時間前。ここで拾わないと
+    当日の指数は最後まで馬体重なしのまま（レース内 sd が実測で約半分に潰れる）。
+
+    realtime ループは同じ 0B11 を約30秒ごとに投げてくるので、**充足数が増えた
+    レースだけ**を対象にする。全馬そろったあとの再送では差分が出ず再算出は走らない。
     """
+    before = await _weight_coverage_by_race(db, body.date)
+
     importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
     stats = await importer.import_records(records)
     await db.commit()
-    return {"ok": True, "stats": stats}
+
+    after = await _weight_coverage_by_race(db, body.date)
+    changed = [rid for rid, cnt in after.items() if cnt > before.get(rid, 0)]
+    if changed:
+        background_tasks.add_task(_recalculate_races, changed)
+        logger.info(f"[recalc] 馬体重が増えたレースを再算出登録: {len(changed)} 件 date={body.date}")
+
+    return {"ok": True, "stats": stats, "recalculated_races": len(changed)}
 
 
 @router.post("/track-conditions")
