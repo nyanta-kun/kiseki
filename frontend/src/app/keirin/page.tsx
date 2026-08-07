@@ -270,6 +270,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // **唯一の2券種ランク**（三連単フォーメーション8点 + 三連複BOX 4〜10点）で、
   // 本命とその同ラインを買い目から丸ごと落とすため他ランクと買い方が正反対。
   "7H1":        { bg: "#7e22ce", text: "#fff", label: "7H1" },
+  // 7C=RANK_7C（ベースモデル・終日の二軸・2026-08-07新設）。件数が最多になる。
+  "7C":         { bg: "#0d9488", text: "#fff", label: "7C" },
 };
 
 // ---------------------------------------------------------------------------
@@ -574,8 +576,10 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 // 手動入稿できるが、netkeirinの「自信あり」タグ（7SSのみ付与・上限1件/日と推定）を
 // 手動分で消費すると自動入稿側が落ちるため、あえて含めていない
 // （api.ts の ManualKeirinRankKey 参照）。
-// 車数(n_entries)ごとに候補を絞り込む。表示ラベルはkeirin側RANK_CONFIGSの
-// stake_per_line/n_carsに揃えて注記する（7車=2,000円/点・9車=1,400円/点、いずれも共通）。
+// 車数(n_entries)ごとに候補を絞り込む。
+// 賭け金は 2026-08-07 に全ランク「1レース10,000円を点数で均等割り」へ統一した
+// （keirin 側 strategy_wt.unit_stake が単一正本）。7車5点=2,000円/点・
+// 9車7点=1,400円/点となり、統一前の固定単価と同じ値になる。
 const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
   7: [
     { key: "7S", label: "7S" },
@@ -999,10 +1003,11 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1"] as const;
+const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7C"] as const;
 const RANK_LABEL: Record<string, string> = {
   "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
   "7H1": "7H1",
+  "7C": "7C",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -1012,6 +1017,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
   "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",
+  "7C": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */
