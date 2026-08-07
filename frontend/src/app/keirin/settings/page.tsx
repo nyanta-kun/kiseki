@@ -19,7 +19,7 @@ import { saveNetkeirinSettings } from "./actions";
 // 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
 // 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
-// （7H1 > 7SS > 7S > 7A > 7B > 7C）。ここは設定画面の表示順。
+// （7H1 > 7SS > 7S > 7A > 7C > 7B）。ここは設定画面の表示順。
 const RANK_ORDER: NetkeirinRankKey[] = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {

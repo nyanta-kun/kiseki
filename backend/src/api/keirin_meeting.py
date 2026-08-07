@@ -57,7 +57,9 @@ def meeting_type_of_first_hour(first_race_hour: float | int | None) -> str | Non
 
 def first_hour_jst(start_at: str | int | None) -> float | None:
     """`wt_races.start_at`（UNIX秒の文字列）から JST の「時」を返す。"""
-    if start_at in (None, ""):
+    # `start_at in (None, "")` だと mypy が None を絞り込めず int() で型エラーになる
+    # （main に元からあった唯一の mypy エラー。2026-08-08 是正）。
+    if start_at is None or start_at == "":
         return None
     try:
         return ((int(start_at) + 9 * 3600) % 86400) / 3600

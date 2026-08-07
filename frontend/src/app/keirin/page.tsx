@@ -712,11 +712,15 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 // 賭け金は 2026-08-07 に全ランク「1レース10,000円を点数で均等割り」へ統一した
 // （keirin 側 strategy_wt.unit_stake が単一正本）。7車5点=2,000円/点・
 // 9車7点=1,400円/点となり、統一前の固定単価と同じ値になる。
+// ⚠️ 7B は 2026-08-03 の新設以来ここに載っていたが、backend の
+// `_MANUAL_RANK_KEYS` には無いため**選ぶと必ず 400 で落ちていた**（2026-08-08 是正）。
+// backend 側が意図的に外している（hypo軸と本番の 7B 軸選定が一致するか未確認）ので、
+// 選択肢の方を落とす。7B を手動入稿したくなったら先に軸の一致を確認し、
+// backend の `_MANUAL_RANK_KEYS` と両方へ足すこと。
 const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
   7: [
     { key: "7S", label: "7S" },
     { key: "7A", label: "7A" },
-    { key: "7B", label: "7B" },
   ],
   9: [
     { key: "9S", label: "9S" },

@@ -113,6 +113,18 @@ class KeirinWtEntry(KeirinBase):
         Integer, comment="このレースでB（バック先頭）を取ったか（0/1・結果確定後に記録）"
     )
     final_half: Mapped[float | None] = mapped_column(REAL, comment="上がりタイム（秒）")
+    # 🔴 実 DB には存在するのにモデルに無かった列（2026-08-08 追加）。
+    #    migration n0p1q2r3s4t5 で追加済みで keirin_router も raw SQL で読んでいるが、
+    #    ORM モデルが実スキーマの部分集合のままだと
+    #    `alembic revision --autogenerate` が **DROP COLUMN を生成しうる**。
+    #    ⚠️ 値は当方モデル（lgbm_wt_win / lgbm_wt）の予測確率。WINTICKET の
+    #      表示値ではない（keirin 側 favbust_features.py の同旨コメント参照）。
+    pred_win_pct: Mapped[float | None] = mapped_column(
+        Numeric(5, 1), comment="単勝率(%)＝lgbm_wt_win の予測確率（migration n0p1q2r3s4t5）"
+    )
+    pred_top3_pct: Mapped[float | None] = mapped_column(
+        Numeric(5, 1), comment="複勝率(%)＝lgbm_wt(eval) の予測確率（migration n0p1q2r3s4t5）"
+    )
 
 
 class KeirinWtOdds(KeirinBase):
@@ -213,6 +225,17 @@ class KeirinPicksHistory(KeirinBase):
     gap12: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="指数1-2位の予測確率差(0-1スケール・migration i5j6k7l8m9n0)")
     gap23: Mapped[float | None] = mapped_column(Numeric(8, 4), comment="指数2-3位の予測確率差(★ptスケール=×100済み・migration j6k7l8m9n0p1)")
     gap34: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="指数3-4位の予測確率差(0-1スケール・migration i5j6k7l8m9n0)")
+    # 🔴 実 DB には存在するのにモデルに無かった列（2026-08-08 追加・上の wt_entries と同じ理由）。
+    #    migration l8m9n0p1q2r3 で追加済みで keirin_router も raw SQL で読んでいる。
+    gate_label: Mapped[str | None] = mapped_column(
+        String(10), comment="ゲート判定ラベル（migration l8m9n0p1q2r3）"
+    )
+    win_rank: Mapped[int | None] = mapped_column(
+        Integer, comment="単勝指数の順位（migration l8m9n0p1q2r3）"
+    )
+    ratio: Mapped[float | None] = mapped_column(
+        Numeric(6, 4), comment="比率（migration l8m9n0p1q2r3）"
+    )
 
 
 class KeirinNetkeirinSetting(KeirinBase):
