@@ -1098,7 +1098,11 @@ export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> 
  * S1（2026-07-31全廃）・旧gate_label分岐由来の7SS/9SS（同日廃止）に加え、
  * RANK_7SS（波乱軸選出・穴レース検知）も 2026-08-02 に全廃したため対象外
  * （backend/src/api/keirin_router.py の _MANUAL_RANK_KEYS と揃える）。 */
-export type ManualKeirinRankKey = "7S" | "7A" | "7B" | "9S" | "9A";
+// ⚠️ backend の `keirin_router._MANUAL_RANK_KEYS` と**必ず一致**させること。
+// ここに backend が受け付けないキーを載せると、UI では選べるのに送信すると
+// 必ず 400「不正なrank_key」になる（2026-08-03〜08-08 の間 "7B" が実際にそうなっていた）。
+// 一致は backend/tests/test_keirin_rank_consistency.py が機械的に検査する。
+export type ManualKeirinRankKey = "7S" | "7A" | "9S" | "9A";
 
 
 export type KeirinStatItem = {

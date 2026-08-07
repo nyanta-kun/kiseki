@@ -849,10 +849,15 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # （7SSのみ付与・上限1件/日と推定）を手動入稿で消費すると自動入稿側が落ちるため
 # あえて対象外のままにしている。
 #
-# ⚠️ 既知の不一致（2026-08-03 の 7B 新設以来）: フロントの MANUAL_SUBMIT_RANKS と
-# api.ts の ManualKeirinRankKey は "7B" を含むが、ここには無いため 7B を選ぶと
-# 400「不正なrank_key」になる。7B は hypo軸（_hypo_select_axis）と本番の軸選定が
-# 一致するか未確認のため、確認せずに許可はしない（open_tasks_register 参照）。
+# 【2026-08-08 解消】以前はフロントの MANUAL_SUBMIT_RANKS と api.ts の
+# ManualKeirinRankKey が "7B" を含む一方ここには無く、**UI で選べるのに送信すると
+# 必ず 400「不正なrank_key」**になっていた（2026-08-03 の 7B 新設以来）。
+# 7B は hypo軸（_hypo_select_axis）と本番の軸選定が一致するか未確認なので
+# ここへ足すのではなく、フロントの選択肢から 7B を落として解消した。
+# 7B を手動入稿したくなったら先に軸の一致を確認し、フロントと両方へ足すこと。
+#
+# ⚠️ この tuple は**フロントの MANUAL_SUBMIT_RANKS / ManualKeirinRankKey の
+#    上位集合**でなければならない。test_keirin_rank_consistency.py が検査する。
 _MANUAL_RANK_KEYS = ("7S", "7A", "9S", "9A")
 
 

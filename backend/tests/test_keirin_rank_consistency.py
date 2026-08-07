@@ -133,3 +133,39 @@ def test_manual_submit_ranks_are_a_subset_of_labels():
         f"_MANUAL_RANK_KEYS に表示ランク外のキー: {sorted(set(_MANUAL_RANK_KEYS) - LABELS)}"
     assert "7H1" not in _MANUAL_RANK_KEYS, \
         "7H1 は2券種のため手動入稿（軸2車指定）では表現できない"
+
+
+def test_frontend_manual_submit_ranks_match_backend():
+    """🔴 フロントの手動入稿の選択肢が backend の許可リストと一致すること。
+
+    2026-08-03 の 7B 新設から 2026-08-08 まで、フロントの `MANUAL_SUBMIT_RANKS` と
+    `ManualKeirinRankKey` は "7B" を含む一方 backend の `_MANUAL_RANK_KEYS` には
+    無く、**UI では選べるのに送信すると必ず 400「不正なrank_key」**になっていた。
+
+    既存の `test_manual_submit_ranks_are_a_subset_of_labels` は backend 内部の
+    包含関係しか見ておらず、フロントとの一致は検査範囲外だったため検出できなかった。
+
+    backend が受け付けないキーをフロントが出してはいけない（押すたびにエラー）。
+    逆向き（backend にあってフロントに無い）は「まだ UI を作っていない」だけなので許す。
+    """
+    text = _read("app/keirin/page.tsx")
+    m = re.search(
+        r"const MANUAL_SUBMIT_RANKS:[^=]*=\s*\{(.*?)\n\};", text, re.DOTALL)
+    assert m, "page.tsx の MANUAL_SUBMIT_RANKS が見つからない（定義の書き方を変えたら本テストも追随させること）"
+    front = set(re.findall(r'key:\s*"([^"]+)"', m.group(1)))
+    assert front, "MANUAL_SUBMIT_RANKS から key を1件も抽出できなかった"
+
+    allowed = set(_MANUAL_RANK_KEYS)
+    assert front <= allowed, (
+        f"フロントが backend の許可外ランクを選ばせている: {sorted(front - allowed)}。"
+        " 送信すると必ず 400 になる。backend の _MANUAL_RANK_KEYS へ足すか、"
+        " フロントの選択肢から外すこと")
+
+    # 型（ManualKeirinRankKey）も同じ集合であること
+    api = _read("lib/api.ts")
+    tm = re.search(r"export type ManualKeirinRankKey\s*=\s*([^;]+);", api)
+    assert tm, "api.ts の ManualKeirinRankKey が見つからない"
+    typed = set(re.findall(r'"([^"]+)"', tm.group(1)))
+    assert typed == allowed, (
+        f"ManualKeirinRankKey({sorted(typed)}) が backend の "
+        f"_MANUAL_RANK_KEYS({sorted(allowed)}) と一致しない")
