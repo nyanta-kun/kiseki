@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
 from .import_router import ApiKeyDep
+from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
 
 
 def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
@@ -407,6 +408,25 @@ async def get_picks(
             {"date": target},
         )).mappings().all()
 
+    # 開催（会場×日）の種別。**その開催の第1レース**の発走時刻で決まるので、
+    # 推奨レースだけを見ても分からない（当日の全レースから最小を取る必要がある）。
+    meeting_type: dict[str, str] = {}
+    _first: dict[str, float] = {}
+    _venue_of: dict[str, str] = {}
+    for m in (await db.execute(
+        text("SELECT race_key, venue_id, start_at FROM keirin.wt_races WHERE race_date = :date"),
+        {"date": target},
+    )).mappings().all():
+        _venue_of[m["race_key"]] = str(m["venue_id"])
+        h = first_hour_jst(m["start_at"])
+        if h is not None:
+            v = str(m["venue_id"])
+            _first[v] = min(_first.get(v, 1e9), h)
+    for rk, v in _venue_of.items():
+        t = meeting_type_of_first_hour(_first.get(v))
+        if t:
+            meeting_type[rk] = t
+
     # 入稿時の買い目・金額配分（keirin 側が**入稿の瞬間に**保存した値）。
     # 傾斜配分は入稿時点の想定オッズから決まるため**あとから再現できない**ので、
     # ここは記録を読むだけにする（再計算してはいけない）。
@@ -543,6 +563,7 @@ async def get_picks(
             "hypo_axis_sum": hypo_axis_sum,
             "hypo_entropy": hypo_entropy,
             "hypo_wt_overlap_n": hypo_wt_overlap_n,
+            "meeting_type": meeting_type.get(base_key),
             "submitted_bet": _parse_bet_detail(
                 submitted.get((base_key, (r["rank"] or "").replace("RANK_", "")))),
             "entries": [
