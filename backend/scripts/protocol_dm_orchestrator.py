@@ -173,7 +173,7 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
                    f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} " +
                    " ".join(flags)]
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
             except subprocess.TimeoutExpired:
                 log(f"  TIMEOUT for CC={cc}")
                 results["per_call"].append({"cc": cc, "error": "timeout"})
@@ -200,7 +200,7 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
             cmd = ["ssh", "windows-vm",
                    "C:\\Python312-32\\python.exe C:\\\\kiseki\\\\windows-agent\\\\jvnext_dm_importer.py --all"]
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout * 2)
+                r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout * 2)
                 # 完了行を抽出
                 for line in r.stdout.splitlines()[-5:]:
                     log(f"    {line.strip()}")
@@ -223,7 +223,7 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
                f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} " +
                " ".join(flags)]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired:
             log(f"  TIMEOUT for {date_str}")
             continue
