@@ -975,6 +975,8 @@ export type KeirinEntry = {
   race_point: number | null;
   style: string | null;
   line_pos: number | null;
+  /** ライン（同じ値の車が同一ライン）。winticket の linePrediction 由来 */
+  line_group: string | number | null;
   finish_order: number | null;
   player_class: string | null;
   /** 単勝モデル(lgbm_wt_win)の予測確率（%） */
@@ -1025,7 +1027,27 @@ export type KeirinPick = {
   hypo_axis_sum: number | null;
   hypo_entropy: number | null;
   hypo_wt_overlap_n: number | null;
+  /** netkeirin へ**入稿した時点の**買い目と金額配分。未入稿なら null。
+   *  傾斜配分は入稿時点の想定オッズから決まるため後から再現できないので、
+   *  keirin 側が入稿の瞬間に保存した値をそのまま表示する（再計算しない）。 */
+  submitted_bet: KeirinSubmittedBet | null;
   entries: KeirinEntry[];
+};
+
+export type KeirinSubmittedBetLine = {
+  /** "3連複" | "3連単" */
+  bet_type: string;
+  /** "1=2=5"（3連複・着順なし） / "1-2-5"（3連単・着順あり） */
+  combo: string;
+  stake: number;
+};
+
+export type KeirinSubmittedBet = {
+  total: number;
+  /** 金額配分の出どころ: blend=朝オッズ×モデル / odds=朝オッズのみ /
+   *  model=モデルのみ / equal=均等。均等固定のランクは null */
+  source: string | null;
+  lines: KeirinSubmittedBetLine[];
 };
 
 export type KeirinPeriodSummary = {

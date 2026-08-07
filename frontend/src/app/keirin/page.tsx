@@ -437,6 +437,101 @@ function wtMarkSymbol(mark: number | null): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ライン構成（winticket の linePrediction 由来 wt_entries.line_group）
+//
+// 表に列を足すのではなく1行に畳む。競輪のラインは「1-4-7 / 2-5 / 3」という
+// 並びで読むものであり、行ごとに散らすと隊列が読めない。
+// ---------------------------------------------------------------------------
+function buildLines(entries: KeirinPick["entries"]): number[][] {
+  const groups = new Map<string, KeirinPick["entries"]>();
+  const solo: number[][] = [];
+  for (const e of entries) {
+    const g = e.line_group == null || e.line_group === "" ? null : String(e.line_group);
+    if (g == null) {
+      solo.push([e.frame_no]);
+      continue;
+    }
+    const cur = groups.get(g);
+    if (cur) cur.push(e);
+    else groups.set(g, [e]);
+  }
+  const lines = [...groups.values()].map((members) =>
+    [...members]
+      // 隊列は line_pos（先頭=1）順。欠けている場合だけ車番で代用する。
+      .sort((a, b) => (a.line_pos ?? 99) - (b.line_pos ?? 99) || a.frame_no - b.frame_no)
+      .map((m) => m.frame_no),
+  );
+  // 単騎も1車のラインとして同列に並べる（先頭車番順）。
+  return [...lines, ...solo].sort((a, b) => a[0] - b[0]);
+}
+
+function LineRow({ entries }: { entries: KeirinPick["entries"] }) {
+  const lines = buildLines(entries);
+  // line_group が全車未取得のレース（ライン予想が未公開）は行ごと出さない。
+  if (!lines.length || lines.every((l) => l.length === 1)) return null;
+  return (
+    <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 text-xs">
+      <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">ライン</span>
+      <span className="font-medium text-gray-700 dark:text-gray-200 break-words">
+        {lines.map((l) => l.join("-")).join(" / ")}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 入稿した買い目と金額配分
+//
+// 🔴 **表示するのは記録であって再計算ではない。** 傾斜配分の金額は入稿時点の
+//    想定オッズから決まるため、あとから同じ値を出すことはできない。
+//    keirin 側が入稿の瞬間に保存した bet_detail をそのまま並べる。
+// ---------------------------------------------------------------------------
+const BET_SOURCE_JP: Record<string, string> = {
+  blend: "朝オッズ×モデル",
+  odds: "朝オッズ",
+  model: "モデルのみ",
+  equal: "均等",
+};
+
+function SubmittedBetBlock({ bet }: { bet: NonNullable<KeirinPick["submitted_bet"]> }) {
+  // 金額の大きい順。傾斜配分では「どこに厚く置いたか」が読みたい情報なので、
+  // 車番順よりも配分順のほうが目的に合う。
+  const lines = [...bet.lines].sort((a, b) => b.stake - a.stake || a.combo.localeCompare(b.combo));
+  const multiType = new Set(lines.map((l) => l.bet_type)).size > 1;
+  return (
+    <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700">
+      <div className="flex items-baseline gap-2 mb-1">
+        <span className="text-xs font-medium text-gray-600 dark:text-gray-300">入稿した買い目</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+          計 {bet.total.toLocaleString()}円 / {lines.length}点
+        </span>
+        {bet.source && BET_SOURCE_JP[bet.source] && (
+          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+            配分: {BET_SOURCE_JP[bet.source]}
+          </span>
+        )}
+      </div>
+      <ul className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-0.5">
+        {lines.map((l) => (
+          <li
+            key={`${l.bet_type}:${l.combo}`}
+            className="flex items-baseline justify-between gap-2 text-xs tabular-nums"
+          >
+            <span className="text-gray-700 dark:text-gray-200 truncate">
+              {multiType && <span className="text-gray-400 dark:text-gray-500 mr-1">{l.bet_type}</span>}
+              {l.combo}
+            </span>
+            <span className="text-gray-600 dark:text-gray-300 flex-shrink-0">
+              {l.stake.toLocaleString()}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => {
@@ -732,6 +827,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
               </span>
             </div>
           )}
+          <LineRow entries={pick.entries} />
+
           <EntryTable entries={pick.entries} />
           {isSettled && (
             <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center justify-between gap-2">
@@ -963,6 +1060,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               />
             </div>
           )}
+
+          {pick.submitted_bet && <SubmittedBetBlock bet={pick.submitted_bet} />}
         </>
       )}
     </div>
