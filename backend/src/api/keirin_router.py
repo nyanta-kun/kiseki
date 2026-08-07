@@ -7,6 +7,7 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from datetime import date as Date
@@ -24,6 +25,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
 from .import_router import ApiKeyDep
+
+
+def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
+    """`keirin.netkeirin_submissions.bet_detail` を読む。
+
+    生成元は keirin `scripts/netkeirin_submit_wt.py::build_bet_detail`。形式:
+        {"total": 10000, "source": "blend",
+         "lines": [{"bet_type": "3連複", "combo": "1=2=5", "stake": 4100}, ...]}
+
+    ⚠️ **壊れていたら None を返して黙って落とす。** ここは表示のおまけであって、
+       レース一覧そのものを 500 にしてよい情報ではない。
+    """
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+        lines = [
+            {"bet_type": str(x["bet_type"]), "combo": str(x["combo"]), "stake": int(x["stake"])}
+            for x in d["lines"]
+        ]
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not lines:
+        return None
+    return {"total": int(d.get("total") or sum(x["stake"] for x in lines)),
+            "source": d.get("source"), "lines": lines}
+
 
 _WEBHOOK_BASE = "http://172.18.0.1:8010"
 
@@ -379,6 +407,22 @@ async def get_picks(
             {"date": target},
         )).mappings().all()
 
+    # 入稿時の買い目・金額配分（keirin 側が**入稿の瞬間に**保存した値）。
+    # 傾斜配分は入稿時点の想定オッズから決まるため**あとから再現できない**ので、
+    # ここは記録を読むだけにする（再計算してはいけない）。
+    submitted = {
+        (m["race_key"], m["rank_key"]): m["bet_detail"]
+        for m in (await db.execute(
+            text("""
+                SELECT ns.race_key, ns.rank_key, ns.bet_detail
+                FROM keirin.netkeirin_submissions ns
+                JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
+                WHERE wr.race_date = :date
+            """),
+            {"date": target},
+        )).mappings().all()
+    }
+
     picks = []
     for r in rows:
         base_key = r["base_key"]
@@ -400,6 +444,7 @@ async def get_picks(
                   race_point,
                   style,
                   line_pos,
+                  line_group,
                   finish_order,
                   player_class,
                   pred_win_pct,
@@ -498,6 +543,8 @@ async def get_picks(
             "hypo_axis_sum": hypo_axis_sum,
             "hypo_entropy": hypo_entropy,
             "hypo_wt_overlap_n": hypo_wt_overlap_n,
+            "submitted_bet": _parse_bet_detail(
+                submitted.get((base_key, (r["rank"] or "").replace("RANK_", "")))),
             "entries": [
                 {
                     "frame_no": e["frame_no"],
@@ -505,6 +552,7 @@ async def get_picks(
                     "race_point": e["race_point"],
                     "style": e["style"],
                     "line_pos": e["line_pos"],
+                    "line_group": e["line_group"],
                     "finish_order": e["finish_order"],
                     "player_class": e["player_class"],
                     "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
