@@ -1044,6 +1044,9 @@ export type KeirinSubmittedBetLine = {
   /** "1=2=5"（3連複・着順なし） / "1-2-5"（3連単・着順あり） */
   combo: string;
   stake: number;
+  /** **入稿時点の**オッズ。配分の根拠そのもの。取れなかった場合は null
+   *  （0 にすると「オッズ0倍」と読めてしまうので null で残している） */
+  odds: number | null;
 };
 
 export type KeirinSubmittedBet = {
