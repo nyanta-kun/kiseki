@@ -496,11 +496,33 @@ const BET_SOURCE_JP: Record<string, string> = {
   equal: "均等",
 };
 
-function SubmittedBetBlock({ bet }: { bet: NonNullable<KeirinPick["submitted_bet"]> }) {
+// 確定した着順から「当たった目」の表記を作る。3連複は昇順 "a=b=c"、
+// 3連単は着順どおり "1着-2着-3着"。`bet_detail.combo` と同じ書き方に揃える。
+// ⚠️ **着順が入っていないうちは null を返す**。未確定のまま色を付けると
+//    「外れた」と読めてしまう（I-34 と同じ理由）。
+function winningCombos(entries: KeirinPick["entries"]): Set<string> | null {
+  const byOrder = new Map<number, number>();
+  for (const e of entries) {
+    const o = e.finish_order ?? 0;
+    if (o >= 1 && o <= 3) byOrder.set(o, e.frame_no);
+  }
+  if (byOrder.size !== 3) return null;
+  const [a, b, c] = [byOrder.get(1)!, byOrder.get(2)!, byOrder.get(3)!];
+  return new Set([
+    [a, b, c].slice().sort((x, y) => x - y).join("="),   // 3連複
+    `${a}-${b}-${c}`,                                     // 3連単
+  ]);
+}
+
+function SubmittedBetBlock({ bet, entries }: {
+  bet: NonNullable<KeirinPick["submitted_bet"]>;
+  entries: KeirinPick["entries"];
+}) {
   // 金額の大きい順。傾斜配分では「どこに厚く置いたか」が読みたい情報なので、
   // 車番順よりも配分順のほうが目的に合う。
   const lines = [...bet.lines].sort((a, b) => b.stake - a.stake || a.combo.localeCompare(b.combo));
   const multiType = new Set(lines.map((l) => l.bet_type)).size > 1;
+  const winners = winningCombos(entries);
   return (
     <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700">
       <div className="flex items-baseline gap-2 mb-1">
@@ -520,11 +542,18 @@ function SubmittedBetBlock({ bet }: { bet: NonNullable<KeirinPick["submitted_bet
             key={`${l.bet_type}:${l.combo}`}
             className="flex items-baseline justify-between gap-2 text-xs tabular-nums"
           >
-            <span className="text-gray-700 dark:text-gray-200 truncate">
+            <span
+              className={`truncate ${winners?.has(l.combo)
+                ? "text-red-600 dark:text-red-400 font-bold"
+                : "text-gray-700 dark:text-gray-200"}`}
+            >
               {multiType && <span className="text-gray-400 dark:text-gray-500 mr-1">{l.bet_type}</span>}
               {l.combo}
             </span>
             <span className="text-gray-600 dark:text-gray-300 flex-shrink-0">
+              {l.odds != null && (
+                <span className="text-gray-400 dark:text-gray-500 mr-1.5">{l.odds.toFixed(1)}倍</span>
+              )}
               {l.stake.toLocaleString()}
             </span>
           </li>
@@ -611,6 +640,14 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
 }
 
 // コンポーネント外に置くことで react-hooks/purity を回避
+// 🔴 **結果が取り込めているか**。発走した／時間が過ぎた だけでは「不的中」と
+//    言い切れない（確定〜こちらの取込までの間は結果が空なので、そのまま出すと
+//    当たったレースまで「不的中」と表示される。ユーザー指摘 2026-08-07）。
+//    着順が入っているかで判定するのが唯一確実。
+function hasResult(entries: KeirinPick["entries"]): boolean {
+  return entries.some((e) => (e.finish_order ?? 0) >= 1);
+}
+
 function computeIsSettled(status: number, startAt: number | string | null): boolean {
   if (status === 3) return true;
   const sec = typeof startAt === "number" ? startAt : parseInt(String(startAt ?? ""), 10);
@@ -796,7 +833,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const startTime = fmtStartAt(pick.start_at);
-  const isSettled = computeIsSettled(pick.status, pick.start_at);
+  // 発走済みでも結果未取込のうちは「未確定」。不的中を出すのは確定後だけ。
+  const isSettled = computeIsSettled(pick.status, pick.start_at) && hasResult(pick.entries);
   const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
   const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
   return (
@@ -871,7 +909,11 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
 }
 
 function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
-  const isSettled = computeIsSettled(pick.status, pick.start_at);
+  // 発走済みでも結果未取込のうちは「未確定」。不的中を出すのは確定後だけ
+  // （ユーザー指摘 2026-08-07。サマリー側の集計は従来どおりで変えない）。
+  const isRaceOver = computeIsSettled(pick.status, pick.start_at);
+  const isSettled = isRaceOver && hasResult(pick.entries);
+  const isPendingResult = isRaceOver && !isSettled;
   const [collapsed, setCollapsed] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
@@ -982,6 +1024,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             </div>
           </div>
           {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}
+          {collapsed && isPendingResult && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">未確定</span>
+          )}
           {collapsed && isSettled && (
             <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
           )}
@@ -1072,6 +1117,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
 
           <EntryTable entries={pick.entries} />
 
+          {isPendingResult && !pick.hit && (
+            <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <span className="text-xs text-gray-400 dark:text-gray-500">未確定（結果の取込待ち）</span>
+            </div>
+          )}
           {(isSettled || pick.hit) && (
             <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <HitBadge
@@ -1088,7 +1138,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             </div>
           )}
 
-          {pick.submitted_bet && <SubmittedBetBlock bet={pick.submitted_bet} />}
+          {pick.submitted_bet && (
+            <SubmittedBetBlock bet={pick.submitted_bet} entries={pick.entries} />
+          )}
         </>
       )}
     </div>

@@ -43,7 +43,11 @@ def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
     try:
         d = json.loads(raw)
         lines = [
-            {"bet_type": str(x["bet_type"]), "combo": str(x["combo"]), "stake": int(x["stake"])}
+            {"bet_type": str(x["bet_type"]), "combo": str(x["combo"]),
+             "stake": int(x["stake"]),
+             # 入稿時点のオッズ。⚠️ 取れなかった場合は **null のまま**返す
+             # （0 にすると表示側で「オッズ0倍」と読めてしまう）。
+             "odds": (float(x["odds"]) if x.get("odds") else None)}
             for x in d["lines"]
         ]
     except (ValueError, TypeError, KeyError):
