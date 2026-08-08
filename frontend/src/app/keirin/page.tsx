@@ -835,6 +835,21 @@ function meetingBg(t: KeirinPick["meeting_type"]): string {
   return (t && MEETING_CARD_BG[t]) || "bg-white dark:bg-gray-900";
 }
 
+// ヘッダー行の背景。⚠️ **ここを塗らないと開催種別の色は見えない。**
+// カード外側に MEETING_CARD_BG を当てても、ヘッダーが bg-gray-50 を
+// 上から塗るため色が完全に隠れていた（2026-08-07 の色分けが効いていなかった原因）。
+// 本文より一段濃くして、折りたたみ時でも種別が分かるようにする。
+const MEETING_HEADER_BG: Record<string, string> = {
+  morning: "bg-amber-100/80 dark:bg-amber-950/40",     // モーニング
+  day: "bg-gray-50 dark:bg-gray-800",                   // 通常（デイ）
+  nighter: "bg-gray-50 dark:bg-gray-800",               // 通常（ナイター）
+  midnight: "bg-indigo-100/80 dark:bg-indigo-950/45",   // ミッドナイト
+};
+
+function meetingHeaderBg(t: KeirinPick["meeting_type"]): string {
+  return (t && MEETING_HEADER_BG[t]) || "bg-gray-50 dark:bg-gray-800";
+}
+
 function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -845,7 +860,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
   const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
   return (
     <div className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75`}>
-      <div className={`w-full flex items-center gap-1 px-1 sm:px-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
+      <div className={`w-full flex items-center gap-1 px-1 sm:px-2 ${meetingHeaderBg(pick.meeting_type)}${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
         <button
           type="button"
           onClick={() => setCollapsed(v => !v)}
@@ -1009,7 +1024,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   return (
     <div id={cardId} className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden${isMiwokuri || isGamiSkip ? " opacity-55" : ""}`}>
       {/* ヘッダー行（クリックで折りたたみトグル + 右端にピンポイント入稿アイコン） */}
-      <div className={`w-full flex items-center gap-1 px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-800${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
+      <div className={`w-full flex items-center gap-1 px-3 sm:px-4 py-2 ${meetingHeaderBg(pick.meeting_type)}${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
         <button
           type="button"
           onClick={() => setCollapsed(v => !v)}
