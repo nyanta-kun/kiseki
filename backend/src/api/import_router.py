@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +33,7 @@ from ..importers import (
     RaceImporter,
     TrainingImporter,
 )
-from ..importers.jvlink_parser import COURSE_NAMES, parse_we
+from ..importers.jvlink_parser import COURSE_NAMES, parse_we, parse_wh
 from ..importers.provisional_horse_importer import upsert_provisional_horses
 from ..indices.composite import CompositeIndexCalculator
 from ..services.recommender import update_results as update_recommendation_results
@@ -277,6 +277,37 @@ async def _recalculate_races(race_ids: list[int]) -> None:
         logger.info(f"[recalc] 馬体重反映で {len(race_ids)} レースを再算出")
 
 
+async def _apply_wh_records(db: AsyncSession, records: list[dict]) -> int:
+    """WH（速報馬体重）を race_entries.horse_weight / weight_change へ反映する。
+
+    Returns: 更新した出走馬数。
+    """
+    updated = 0
+    for rec in records:
+        parsed = parse_wh(rec.get("data", ""))
+        if not parsed:
+            continue
+
+        race_id = (await db.execute(
+            select(Race.id).where(Race.jravan_race_id == parsed["jravan_race_id"])
+        )).scalar_one_or_none()
+        if race_id is None:
+            continue
+
+        for e in parsed["entries"]:
+            if e["horse_weight"] is None:
+                # "000"=出走取消 / "999"=計量不能。既存値を None で潰さない。
+                continue
+            result = await db.execute(
+                update(RaceEntry)
+                .where(RaceEntry.race_id == race_id)
+                .where(RaceEntry.horse_number == e["horse_number"])
+                .values(horse_weight=e["horse_weight"], weight_change=e["weight_change"])
+            )
+            updated += getattr(result, "rowcount", 0) or 0
+    return updated
+
+
 @router.post("/weights")
 async def import_weights(
     body: WeightRequest,
@@ -284,23 +315,33 @@ async def import_weights(
     _: ApiKeyDep,
     db: DbDep,
 ) -> dict:
-    """馬体重レコード（WE, SEの一部）を取り込む。
+    """馬体重レコード（0B11 の WH / 一部 SE）を取り込む。
 
-    WEレコードはSEと同じ馬情報を持つため RaceImporter で処理。
+    ⚠️ **2026-08-08 まで WH は捨てられていた。** 本エンドポイントは受け取った
+    レコードを RaceImporter へ渡すだけで、RaceImporter は rec_id が RA/SE の
+    ものしか見ない。0B11 が返すのは全て WH なので、23件/回が毎回まるごと無視され
+    200 が返っていた。結果 `race_entries.horse_weight` は 0B12（確定成績）経由で
+    **1〜3着馬にしか**入らず、v27 の特徴量 `horse_weight` / `weight_change` は
+    当日の指数算出で常に欠損していた（レース内 sd が実測で約半分に潰れる）。
 
-    馬体重が新たに入ったレースはその場で再算出する。`horse_weight` /
-    `weight_change` は総合指数 v27 の特徴量だが、当日の一括算出は VPS cron の
-    07:30 JST 一回きりで、馬体重が届くのは発走の約1時間前。ここで拾わないと
-    当日の指数は最後まで馬体重なしのまま（レース内 sd が実測で約半分に潰れる）。
+    馬体重が新たに入ったレースはその場で再算出する。当日の一括算出は VPS cron の
+    07:30 JST 一回きりで、馬体重が届くのは発走の約1時間前なので、ここで拾わないと
+    当日の指数は最後まで馬体重なしのままになる。
 
     realtime ループは同じ 0B11 を約30秒ごとに投げてくるので、**充足数が増えた
     レースだけ**を対象にする。全馬そろったあとの再送では差分が出ず再算出は走らない。
     """
     before = await _weight_coverage_by_race(db, body.date)
 
-    importer = RaceImporter(db)  # type: ignore[arg-type]
     records = [r.model_dump() for r in body.records]
-    stats = await importer.import_records(records)
+    wh_records = [r for r in records if r.get("rec_id") == "WH"]
+    other_records = [r for r in records if r.get("rec_id") != "WH"]
+
+    wh_updated = await _apply_wh_records(db, wh_records)
+
+    importer = RaceImporter(db)  # type: ignore[arg-type]
+    stats = await importer.import_records(other_records)
+    stats["weights"] = wh_updated
     await db.commit()
 
     after = await _weight_coverage_by_race(db, body.date)

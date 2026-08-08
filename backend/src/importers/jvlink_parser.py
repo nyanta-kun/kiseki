@@ -704,6 +704,101 @@ def parse_se(data: str) -> dict[str, Any] | None:
 
 
 # -------------------------------------------------------------------
+# 馬体重レコード（WH・速報 0B11）
+# -------------------------------------------------------------------
+
+# WH の馬毎情報1件のバイト長。馬番2 + 馬名36 + 馬体重3 + 増減符号1 + 増減差3。
+_WH_ENTRY_LEN = 45
+# 馬毎情報の開始位置（1-indexed）。共通ヘッダー27 + 発表月日時分8 の直後。
+_WH_ENTRIES_FROM = 36
+# 1レコードに載る最大頭数。
+_WH_MAX_ENTRIES = 18
+
+
+def parse_wh(data: str) -> dict[str, Any] | None:
+    """WHレコード（速報馬体重・DataSpec 0B11）をパースする。
+
+    ⚠️ **このパーサが無かったため、0B11 は本番で一度も取り込まれていなかった**
+    （2026-08-08 判明）。`/api/import/weights` は受け取ったレコードを
+    RaceImporter へ渡すだけで、RaceImporter は rec_id が RA/SE のものしか
+    見ないため、WH は毎回まるごと捨てられて 200 が返っていた。結果として
+    `race_entries.horse_weight` は 0B12（確定成績）経由で **1〜3着馬にしか**
+    入らず、総合指数 v27 の特徴量 `horse_weight` / `weight_change` は
+    当日の算出時に常に欠損していた。
+
+    レイアウト（実レコードから確認・2026-08-08）:
+        1-27   : 共通ヘッダー（RA/SE と同じ）
+        28-35  : 発表月日時分 (MMDDHHMI)
+        36以降 : 馬毎情報 × 18
+                   +0  馬番 (2)
+                   +2  馬名 (36, 全角18文字)
+                   +38 馬体重 (3, kg。"999"=計量不能 / "000"=出走取消)
+                   +41 増減符号 (1, "+" / "-" / " ")
+                   +42 増減差 (3, kg)
+
+        例: "...010105010000000001ルージュエピック…486 00002セラサイト…"
+            馬番01 / 486kg / 増減なし、馬番02 …
+
+    Returns:
+        {"jravan_race_id", "race_date", "announced_at", "entries": [
+            {"horse_number", "horse_name", "horse_weight", "weight_change"}, ...
+        ]} または None（フォーマット不正・該当馬なし）
+    """
+    if len(data) < _WH_ENTRIES_FROM:
+        logger.warning(f"WH record too short: {len(data)} bytes")
+        return None
+
+    try:
+        header = _parse_common_header(data)
+        if not header or header["rec_id"] != "WH":
+            return None
+
+        entries: list[dict[str, Any]] = []
+        for i in range(_WH_MAX_ENTRIES):
+            start = _WH_ENTRIES_FROM + i * _WH_ENTRY_LEN
+            if start + _WH_ENTRY_LEN - 1 > len(data):
+                break
+
+            num_raw = _s(data, start, start + 1)
+            if not num_raw.isdigit() or int(num_raw) == 0:
+                # 出走頭数に満たない残り枠は馬番が空 or "00"。以降も無いので打ち切る。
+                break
+
+            hw_raw = _s(data, start + 38, start + 40)
+            horse_weight = (
+                int(hw_raw) if hw_raw.isdigit() and int(hw_raw) not in (0, 999) else None
+            )
+
+            # 増減は parse_se と同じ扱いにそろえる（符号 + 3桁）。
+            wc_sign = data[start + 40]  # 1-indexed の +41 → 0-indexed は +40
+            wc_val_raw = _s(data, start + 42, start + 44)
+            weight_change: int | None = None
+            if wc_val_raw.isdigit() and wc_sign in ("+", "-", " "):
+                wc_val = int(wc_val_raw)
+                weight_change = -wc_val if wc_sign == "-" else wc_val
+
+            entries.append({
+                "horse_number": int(num_raw),
+                "horse_name": _decode(data, start + 2, start + 37),
+                "horse_weight": horse_weight,
+                "weight_change": weight_change,
+            })
+
+        if not entries:
+            return None
+
+        return {
+            "jravan_race_id": header["jravan_race_id"],
+            "race_date": header["race_date"],
+            "announced_at": _s(data, 28, 35),
+            "entries": entries,
+        }
+    except Exception as e:
+        logger.error(f"WH parse error: {e} | data[:30]={data[:30]!r}")
+        return None
+
+
+# -------------------------------------------------------------------
 # オッズレコード（O1-O6）
 # -------------------------------------------------------------------
 

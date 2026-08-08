@@ -21,24 +21,31 @@ def _weights_body(date: str = "20260808"):
     return body
 
 
-async def _call_import_weights(before: dict[int, int], after: dict[int, int]):
+async def _call_import_weights(
+    before: dict[int, int], after: dict[int, int], records: list | None = None
+):
     """import_weights を呼び、BackgroundTasks に積まれた再算出対象を返す。"""
     db = AsyncMock()
     background = MagicMock()
     coverage = iter([before, after])
+    body = _weights_body()
+    body.records = records or []
 
     with (
         patch.object(
             import_router, "_weight_coverage_by_race", AsyncMock(side_effect=lambda *_: next(coverage))
         ),
         patch.object(import_router, "RaceImporter") as importer_cls,
+        patch.object(import_router, "_apply_wh_records", AsyncMock(return_value=0)) as apply_wh,
     ):
         importer_cls.return_value.import_records = AsyncMock(return_value={"entries": 0})
         result = await import_router.import_weights(
-            body=_weights_body(), background_tasks=background, _=None, db=db
+            body=body, background_tasks=background, _=None, db=db
         )
 
     scheduled = [c.args for c in background.add_task.call_args_list]
+    result["_wh_seen"] = apply_wh.await_args.args[1] if apply_wh.await_args else None
+    result["_importer_seen"] = importer_cls.return_value.import_records.await_args.args[0]
     return result, scheduled
 
 
@@ -104,3 +111,42 @@ async def test_recalculate_races_continues_after_one_failure():
 
     assert calc.calculate_and_save.await_count == 2
     session.rollback.assert_awaited_once()
+
+
+class _Rec:
+    """JvRecord.model_dump() 相当。"""
+
+    def __init__(self, rec_id: str, data: str = "x"):
+        self._d = {"rec_id": rec_id, "data": data}
+
+    def model_dump(self):
+        return dict(self._d)
+
+
+@pytest.mark.asyncio
+async def test_wh_records_go_to_the_weight_applier_not_the_race_importer():
+    """WH は専用経路へ渡す。
+
+    2026-08-08 まで WH は RaceImporter へ丸投げされており、RaceImporter は
+    rec_id が RA/SE のものしか見ないため **毎回まるごと捨てられて 200 が返って
+    いた**（0B11 が返すのは全て WH）。振り分けが壊れると同じ無言の取りこぼしに
+    戻るので、経路そのものを固定する。
+    """
+    result, _ = await _call_import_weights(
+        before={}, after={}, records=[_Rec("WH"), _Rec("WH"), _Rec("SE")]
+    )
+
+    assert [r["rec_id"] for r in result["_wh_seen"]] == ["WH", "WH"]
+    assert [r["rec_id"] for r in result["_importer_seen"]] == ["SE"]
+    assert "weights" in result["stats"]
+
+
+@pytest.mark.asyncio
+async def test_wh_only_payload_never_reaches_race_importer():
+    """0B11 の実態（全件 WH）で RaceImporter が空呼び出しになること。"""
+    result, _ = await _call_import_weights(
+        before={}, after={}, records=[_Rec("WH") for _ in range(23)]
+    )
+
+    assert len(result["_wh_seen"]) == 23
+    assert result["_importer_seen"] == []

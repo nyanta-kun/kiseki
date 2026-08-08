@@ -205,6 +205,16 @@ VPS cron の 07:30 JST 一回きり**（`scripts/jra_calculate_trigger.sh`）で
 再算出しなかったため、当日の指数は最後まで馬体重なしだった
 （実測でレース内 sd が約半分に潰れる）。
 
+🔴 **さらにその手前で、0B11 は本番で一度も取り込まれていなかった**（2026-08-08 判明）。
+`0B11` が返すのは**全て `WH` レコード**だが、`import_weights` は受け取った分を
+`RaceImporter` へ渡すだけで、`RaceImporter` は `rec_id` が `RA`/`SE` のものしか見ない。
+そのため 23件/回が毎回まるごと捨てられ **200 が返り続けていた**。
+`race_entries.horse_weight` は 0B12（確定成績）経由で **1〜3着馬にしか**入っておらず、
+「馬体重あり」に見えたのは結果取込の副産物だった。
+`parse_wh()` を新設して `WH` を専用経路へ振り分ける（`_apply_wh_records`）。
+**振り分けが壊れると同じ無言の取りこぼしに戻る**ので
+`test_weight_recalc_trigger.py` で経路自体を固定している。
+
 `import_weights` は取込の前後で**レースごとの `horse_weight` 充足数**を比較し、
 **増えたレースだけ** `CompositeIndexCalculator.calculate_and_save()` を
 BackgroundTask で走らせる。realtime は同じ 0B11 を約30秒ごとに投げてくるので、
