@@ -20,7 +20,8 @@ import { saveNetkeirinSettings } from "./actions";
 // 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
 // （7H1 > 7SS > 7S > 7A > 7C > 7B）。ここは設定画面の表示順。
-const RANK_ORDER: NetkeirinRankKey[] = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7C"];
+const RANK_ORDER: NetkeirinRankKey[] =
+  ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "9H1", "7C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
@@ -33,6 +34,8 @@ const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   // 7H1 は唯一の2券種ランク。プレビューの {axis1}/{axis2} は他ランク向けの変数で、
   // 7H1 の入稿タイトル・本文はレース非依存の固定文（変数を使わない）。
   "7H1": "7H1（7車・穴推奨/本命バスト型・三連単F8点+三連複BOX・「穴狙い」付与）",
+  // 9H1 も 7H1 と同じくレース非依存の固定文（プレビューの {axis1}/{axis2} は使わない）。
+  "9H1": "9H1（9車・穴推奨/高配当狙い・三連単フォーメーション6点・「穴狙い」付与）",
   "7C": "7C（7車・ベースモデル/終日の二軸・三連複 軸2車＋相手4〜5点・他ランクと併存）",
 };
 

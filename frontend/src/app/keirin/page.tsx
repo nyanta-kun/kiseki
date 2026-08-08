@@ -270,6 +270,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // **唯一の2券種ランク**（三連単フォーメーション8点 + 三連複BOX 4〜10点）で、
   // 本命とその同ラインを買い目から丸ごと落とすため他ランクと買い方が正反対。
   "7H1":        { bg: "#7e22ce", text: "#fff", label: "7H1" },
+  // 9H1 も穴推奨系なので 7H1 と同系色。車数が違うので明度で分ける。
+  "9H1":        { bg: "#a855f7", text: "#fff", label: "9H1" },
   // 7C=RANK_7C（ベースモデル・終日の二軸・2026-08-07新設）。件数が最多になる。
   "7C":         { bg: "#0d9488", text: "#fff", label: "7C" },
 };
@@ -1181,10 +1183,11 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7C"] as const;
+const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "9H1", "7C"] as const;
 const RANK_LABEL: Record<string, string> = {
   "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
   "7H1": "7H1",
+  "9H1": "9H1",
   "7C": "7C",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
@@ -1195,6 +1198,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
   "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",
+  "9H1": "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-400",
   "7C": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
 };
 

@@ -192,7 +192,8 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-02〜: 7SS（波乱軸選出・穴レース検知）も全廃したため対象外。
 // 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
 // 新設したため復活（keirin PR#10。旧7SSとは無関係・picks_historyの旧行は0件）。
-type RankFilter = "all" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7C";
+type RankFilter =
+  | "all" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "9H1" | "7C";
 
 // 並び順は 7SS/7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
@@ -209,6 +210,9 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   // 7H1（穴推奨・本命バスト型・三連単F+三連複BOXの2券種・2026-08-06導入）。
   // 的中率重視のS/A/Bとは系統が違うため末尾に置く。
   { key: "7H1", label: "7H1" },
+  // 9H1（穴推奨・9車高配当・三連単フォーメーション6点・2026-08-08導入）。
+  // 7H1 と同じ穴推奨系だが車数で母集団が排他なので隣に置く。
+  { key: "9H1", label: "9H1" },
   { key: "7C", label: "7C" },
 ];
 
