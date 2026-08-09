@@ -567,6 +567,50 @@ def _split_race_hr(records: list[dict]) -> tuple[list[dict], list[dict]]:
     return ra_se, hr
 
 
+def classify_rt_result_records(
+    records: list[dict],
+    seen_results: set[str],
+    pending_result_keys: set[str],
+    pending_payout_keys: set[str],
+) -> tuple[list[dict], list[dict], bool, bool]:
+    """0B12（速報成績）の1レース分の応答を仕分ける。
+
+    realtime ループから切り出した純関数。`pending_*` は呼び出し側の集合を
+    その場で更新する（同一巡回内の他レースとキーを共有するため）。
+
+    Returns:
+        (new_ra_se, new_hr, found_new_race_record, payout_seen)
+
+        - found_new_race_record: 未取得の RA/SE がこの応答に含まれていたか。
+          False かつ払戻確定済みなら「全馬分を取り切った」と判断してよい。
+        - payout_seen: HR（払戻）がこの応答に含まれていたか。
+
+    ⚠️ HR の有無だけでレースを打ち切ってはいけない。0B12 は確定直後の応答に
+    「RA + 上位3頭の SE + HR」しか載せず、残りの SE は遅れて届く
+    （2026-08-08 に全36レースが3頭分しか入らない障害として発現）。
+    """
+    new_ra_se: list[dict] = []
+    new_hr: list[dict] = []
+    found_new_race_record = False
+    payout_seen = False
+
+    for rec in records:
+        rec_id = rec.get("rec_id")
+        key = rec["data"][:30]  # 先頭30文字でユニーク識別（SE は 枠番+馬番 まで含む）
+        if rec_id in ("RA", "SE"):
+            if key not in seen_results and key not in pending_result_keys:
+                pending_result_keys.add(key)
+                new_ra_se.append(rec)
+                found_new_race_record = True
+        elif rec_id == "HR":
+            payout_seen = True
+            if key not in seen_results and key not in pending_payout_keys:
+                pending_payout_keys.add(key)
+                new_hr.append(rec)
+
+    return new_ra_se, new_hr, found_new_race_record, payout_seen
+
+
 def _post_hr_payouts(hr_records: list[dict]) -> None:
     """HR レコードを parse_hr でパースして /api/import/payouts へ送信する。
 
@@ -764,9 +808,18 @@ def run_realtime_monitor(jv) -> None:
     seen_scratches: set[str] = set()
     # 送信済み成績キー（重複防止 + 再起動時の重複送信防止のため永続化）
     seen_results: set[str] = _load_seen_results(today)
-    # 払戻(HR)確定を検知したレースキー。以後0B12問い合わせから除外し、
-    # 発走前レースと合わせて0B12の走査対象を「発走済み・未確定」のみに絞る。
+    # 払戻(HR)確定を検知し、かつ「その後の巡回で新しい RA/SE が出なくなった」レースキー。
+    # 以後0B12問い合わせから除外し、発走前レースと合わせて0B12の走査対象を
+    # 「発走済み・未確定」のみに絞る。
+    #
+    # ⚠️ HR を見た瞬間に打ち切ってはいけない。0B12 は確定直後の応答に
+    # 「RA + 上位3頭の SE + HR」しか載せず、残りの SE は数十秒〜数分遅れて届く。
+    # HR で即除外すると全レースが3頭分しか入らない（2026-08-08 に実際に発生。
+    # 蓄積系 JVOpen が生きていた頃は週次取込が埋めていたため表面化しなかった）。
     finalized_race_keys: set[str] = set()
+    # HR は見たが SE が出そろっていない可能性のあるレースキー。
+    # 次の巡回で新しい RA/SE が1件も出なければ finalized へ移す。
+    payout_seen_race_keys: set[str] = set()
 
     # 直近に POST した WE レコード群のシグネチャ（同内容の再送を避ける）
     last_we_signature: list[str] = [""]
@@ -954,30 +1007,21 @@ def run_realtime_monitor(jv) -> None:
                     _last_heartbeat[0] = time.time()
                 result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
                 result_records = fetch_realtime_data(jv, RT_RACE_INFO, result_key)
-                for rec in result_records:
-                    rec_id = rec.get("rec_id")
-                    if rec_id == "RA":
-                        # 成績確定後の RA には馬場状態・天候・ラップ・前半3F が入っている。
-                        # 取り込まないと keiba.races.condition は週次の蓄積系取込
-                        # (--mode recent) まで NULL のままになり、当日の指数算出で
-                        # going_pedigree_index が全馬ニュートラルになる（2026-08-02 判明）。
-                        key = rec["data"][:30]
-                        if key not in seen_results and key not in pending_result_keys:
-                            pending_result_keys.add(key)
-                            new_results.append(rec)
-                    elif rec_id == "SE":
-                        key = rec["data"][:30]  # 先頭30文字でユニーク識別
-                        if key not in seen_results and key not in pending_result_keys:
-                            pending_result_keys.add(key)
-                            new_results.append(rec)
-                    elif rec_id == "HR":
-                        # 払戻レコード = そのレースは確定済み。以後このレースキーの
-                        # 0B12問い合わせをスキップして走査対象を縮小する。
-                        finalized_race_keys.add(race_key)
-                        key = rec["data"][:30]
-                        if key not in seen_results and key not in pending_payout_keys:
-                            pending_payout_keys.add(key)
-                            new_payouts.append(rec)
+                # 成績確定後の RA には馬場状態・天候・ラップ・前半3F が入っている。
+                # 取り込まないと keiba.races.condition は週次の蓄積系取込
+                # (--mode recent) まで NULL のままになり、当日の指数算出で
+                # going_pedigree_index が全馬ニュートラルになる（2026-08-02 判明）。
+                ra_se, hr, found_new_race_record, payout_seen = classify_rt_result_records(
+                    result_records, seen_results, pending_result_keys, pending_payout_keys
+                )
+                new_results.extend(ra_se)
+                new_payouts.extend(hr)
+                if payout_seen:
+                    payout_seen_race_keys.add(race_key)
+                # 払戻確定済み ∧ この巡回で新しい RA/SE が1件も出なかった
+                # → 全馬分を取り切ったとみなして以後の問い合わせを打ち切る。
+                if race_key in payout_seen_race_keys and not found_new_race_record:
+                    finalized_race_keys.add(race_key)
             if new_results:
                 batch_size = 50
                 logger.info(f"成績取得: {len(new_results)}件 (RA/SE) → /api/import/races へ送信（バッチ{batch_size}件）")
