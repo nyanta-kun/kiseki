@@ -32,9 +32,9 @@ const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   "7B": "7B（◎◯一致・順序/相手で不一致・相手絞り3点）",
   "9A": "9A（9車・境界ランク）",
   // 7H1 は唯一の2券種ランク。プレビューの {axis1}/{axis2} は他ランク向けの変数で、
-  // 7H1 の入稿タイトル・本文はレース非依存の固定文（変数を使わない）。
+  // 7H1 の本文では使わない（タイトルは 2026-08-09 から {shape} でレース依存になった）。
   "7H1": "7H1（7車・穴推奨/本命バスト型・三連単F8点+三連複BOX・「穴狙い」付与）",
-  // 9H1 も 7H1 と同じくレース非依存の固定文（プレビューの {axis1}/{axis2} は使わない）。
+  // 9H1 も 7H1 と同じく本文は固定文（プレビューの {axis1}/{axis2} は使わない）。
   "9H1": "9H1（9車・穴推奨/高配当狙い・三連単フォーメーション6点・「穴狙い」付与）",
   "7C": "7C（7車・ベースモデル/終日の二軸・三連複 軸2車＋相手4〜5点・他ランクと併存）",
 };
@@ -47,6 +47,13 @@ const PREVIEW_VARS: Record<string, string> = {
   "{date}": "2026-07-28",
   "{axis1}": "1",
   "{axis2}": "2",
+  // {shape} / {shape_note} の実文言は keirin 側 src/race_shape.py（SHAPE_TITLES /
+  // SHAPE_NOTES）がランク×レース構造ごとに決める。{stake_note} は実際に入稿する
+  // 買い目（均等か傾斜か）から決まる。ここで実文言のコピーを持つと、あちらを直した
+  // ときに黙って食い違うので、プレビューでは差し込み位置だけを示す。
+  "{shape}": "（レース見解）",
+  "{shape_note}": "（レース見解の1〜2文）",
+  "{stake_note}": "（賭け金の配分の説明）",
 };
 
 function applyPreview(template: string, rank: string): string {
@@ -169,7 +176,22 @@ export default function NetkeirinSettingsPage() {
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{date}"}</code>{" "}
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis1}"}</code>{" "}
         <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{axis2}"}</code>{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{shape}"}</code>{" "}
         が使えます（axis1・axis2は各ランクの三連複2軸流しの軸2車）。
+        <br />
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{shape}"}</code>{" "}
+        はレースの構造（1車抜け／二枚看板／同ライン／別線対決／先行争い／混戦）から
+        自動で選ばれる見解の一言です。文言はランクごとに決まっており、ここでは変更できません。
+        タイトルは「狙い｜{"{shape}"}」の形を推奨します（会場・R番号は netkeirin の一覧に
+        別途表示されるため、タイトルに入れると重複します）。
+        <br />
+        見解本文では{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{shape_note}"}</code>{" "}
+        （同じ構造判定を1〜2文にしたもの）と{" "}
+        <code className="bg-gray-100 text-gray-700 px-1 rounded">{"{stake_note}"}</code>{" "}
+        （実際に入稿する買い目が均等か傾斜かに応じた配分の説明）が使えます。
+        本文の冒頭は netkeirin 側でプレビュー表示されうるため、
+        <strong>軸2車の車番は冒頭に置かない</strong>でください。
       </p>
 
       {loading && (
@@ -226,7 +248,7 @@ export default function NetkeirinSettingsPage() {
                       value={row.title_template}
                       onChange={(e) => update(rank, { title_template: e.target.value })}
                       className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                      placeholder="{venue}{race_no}R 二軸探偵"
+                      placeholder="自信の二軸｜{shape}"
                     />
                     {row.title_template && (
                       <p className="text-xs text-gray-400 mt-1 truncate">
