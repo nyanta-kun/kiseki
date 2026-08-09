@@ -24,9 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
+from ..services.keirin_marquee import is_marquee_race
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
-from ..services.keirin_marquee import is_marquee_race
 
 
 def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
