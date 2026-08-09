@@ -20,8 +20,8 @@ kiseki 側の呼び出し元:
 レスポンスは {"ok": bool, "message": str} 固定（frontend api.ts が参照）。
 
 systemd unit（/etc/systemd/system/keirin-webhook.service）:
-  ExecStart=/home/ysuzuki/keirin/.venv/bin/python3 scripts/keirin_webhook.py
-  EnvironmentFile=/home/ysuzuki/keirin/.env.webhook  (KEIRIN_DB_URL を供給)
+  ExecStart=/home/ysuzuki/GitHub/kiseki/keirin/.venv/bin/python3 scripts/keirin_webhook.py
+  EnvironmentFile=/home/ysuzuki/GitHub/kiseki/keirin/.env.webhook  (KEIRIN_DB_URL を供給)
 """
 
 from __future__ import annotations
