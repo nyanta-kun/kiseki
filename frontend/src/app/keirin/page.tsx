@@ -187,6 +187,23 @@ function fmtStartAt(startAt: number | string | null): string | null {
 // race_key は "YYYYMMDD_場コード_レース番号" 形式（keirinリポジトリ側と共通仕様）。
 // API側（/keirin/picks等）は候補種別を示す"#CAND"/"#7S7"等のサフィックスを付けて返す
 // ことがあるため、netkeirin側の物理レースキーと突き合わせる際は先に剥がす。
+// 看板レース（決勝・特選クラス）の判定。入稿時の目視チェック用に★を出す。
+//
+// 🔴 判定の正本は **keirin リポジトリの `src/marquee.py`**（自動入稿が使う）。
+//    別リポジトリなので import できず、キーワードをここに写している。
+//    **片方だけ変えると★と実際の入稿対象が食い違う**ので、変えるときは両方見ること。
+//
+// ⚠️ 「準決勝」は「決勝」を部分一致で拾うため必ず除外する。
+//    除外し忘れると準決勝（全体の約14.5%）に★が付いて意味を失う。
+const MARQUEE_KEYWORDS = ["決勝", "特選", "選抜", "特秀"] as const;
+const MARQUEE_EXCLUDE = ["準決勝"] as const;
+
+export function isMarqueeRace(raceType: string | null | undefined): boolean {
+  if (!raceType) return false;
+  if (MARQUEE_EXCLUDE.some(k => raceType.includes(k))) return false;
+  return MARQUEE_KEYWORDS.some(k => raceType.includes(k));
+}
+
 function baseRaceKey(raceKey: string): string {
   return raceKey.split("#")[0];
 }
@@ -871,6 +888,9 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
               <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
               <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
+              {isMarqueeRace(pick.race_type) && (
+                <span className="text-amber-500/70 dark:text-amber-400/70 text-sm" title="看板レース（決勝・特選クラス）">★</span>
+              )}
               {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
               {(pick.grade || pick.race_type) && (
                 <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
@@ -1036,6 +1056,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
               <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
               <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
+              {isMarqueeRace(pick.race_type) && (
+                <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
+              )}
               {startTime && (
                 <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
               )}
