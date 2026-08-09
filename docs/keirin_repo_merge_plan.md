@@ -61,6 +61,43 @@ kiseki/
 - keirin の `Deploy to VPS`（models を Release から取得して scp）を kiseki 側へ移設
 - keirin リポジトリの CI は停止（アーカイブ化）
 
+## 🔴 Mac も移行対象（VPSだけではない）
+
+**学習は Mac で行い、モデルを VPS へ配布している。** VPS は 1.9GB しかなく
+LightGBM の再学習を回せないため。Mac の crontab に keirin のジョブが2本ある。
+
+| cron | 内容 |
+|---|---|
+| `30 23 * * 0`（**日曜 23:30**） | `weekly_retrain_wt.sh` → `sync_models_to_vps.sh` |
+| `5 0 1 * *`（毎月1日 00:05） | `ensure_monthly_vintage.sh`（月次凍結vintage） |
+
+Mac 側の実体: `data/models` **402MB** / `.venv` **395MB**
+（VPS の 212MB / 549MB とは別物。学習用なので中身が違う）
+
+⚠️ **Mac を移行し忘れると、週次再学習が旧パスで走り続ける。**
+移植後の `~/GitHub/kiseki/keirin` にコードが入る一方、学習は
+`~/GitHub/keirin` の**古いコード**で回り、そこで作られたモデルが VPS へ
+配布される——「コードは新しいのにモデルは古いコード由来」という
+最も気づきにくい形の不整合になる。
+
+⚠️ **次の週次再学習は 2026-08-16(日) 23:30。** それまでに Mac 側を切り替えること。
+   今夜（08-10 月曜）の切替とは衝突しない。
+
+### Mac 側の手順（VPS と同じ形）
+
+```bash
+cd ~/GitHub/kiseki && git pull origin main
+mv ~/GitHub/keirin/data  ~/GitHub/kiseki/keirin/data
+mv ~/GitHub/keirin/.venv ~/GitHub/kiseki/keirin/.venv
+mv ~/GitHub/keirin ~/GitHub/keirin.bak     # ロールバック用に残す
+
+# crontab の2行を書き換え（パスを kiseki/keirin へ）
+crontab -l > ~/crontab_mac_before_keirin_merge_$(date +%Y%m%d).txt
+```
+
+⚠️ Mac の crontab は `KEIRIN_HOME` を使っておらず**絶対パス直書き**。
+   VPS のように1行では切り替わらないので、2行とも直すこと。
+
 ## 🔴 切替の窓と手順（夜間）
 
 **窓: 23:45 〜 翌 06:00。** この間に動く keirin の cron は 00:40 のバックフィルのみ。
