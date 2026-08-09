@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code local settings
+.claude/
+
+# 環境変数（シークレット含む）
+.env
+.env.local
+
+# データファイル（大容量・再生成可能）
+data/keirin.db
+data/keirin.db-shm
+data/keirin.db-wal
+data/raw/
+data/features/
+data/processed/
+data/logs/
+
+# モデルファイル: lgbm_v4 と lgbm.pkl のみ保持
+data/models/*.pkl
+!data/models/lgbm_v4.pkl
+!data/models/lgbm.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# 波乱ゲート カット定数（週次再計測・再生成可能）
+data/models/upset_cuts_wt.json
+
+# モデル世代退避・メタ（再生成可能・ローカル）
+data/models/archive/
+data/models/*.meta.json
+
+# 予想ファイル（日次生成・再生成可能）
+data/picks/
+
+# 発走前判定の正本（VPS実行時生成・CIデプロイの git stash -u に持ち去られないよう ignore 必須）
+# 2026-07-08 判明: push毎のCIデプロイ(stash -u, popなし)が本ファイルを削除していた
+data/prerace_decisions_*.json*
+data/prerace_notified_*.json*
+data/feature_cache/
+
+# 同じ理由で ignore が要る実行時状態ファイル（2026-08-08 追加）。
+# 上の 2026-07-08 の対処は**そのとき判明した2ファイルにしか適用されておらず**、
+# 同じ性質の残り4ファイルが漏れていた。VPS の stash 75件を掘って実際に
+# 持ち去られていたものを洗い出した（`git show 'stash@{N}^3' --stat` の集計）:
+#   data/notify_race_result.lock      21回
+#   data/notified_race_results.json   13回
+#   data/netkeirin_session.json        5回
+#   data/netkeirin_venue_codes.json    5回
+# ⚠️ ignore していないと deploy の `git stash -u` が作業ツリーから消し、
+#    **pop されない**ので永久に戻らない。実害:
+#      - notified_race_results.json … 通知済みの記録が消え、同じレースを再通知しうる
+#      - netkeirin_session.json     … ログインセッションが消え、次の入稿でログインし直しになる
+#      - *.lock                     … 多重実行の抑止が外れる
+data/notified_race_results.json
+data/notify_race_result.lock
+data/netkeirin_session.json
+data/netkeirin_venue_codes.json
+
+# スクレイパの出力（再生成可能・exp_*.py の分析でしか使わない）。
+# 上の4件を手で足したあと、ソース走査のテストがさらにこの2件を検出した
+# ＝「気づいたものだけ足す」運用では取りこぼすことの実例。
+# scrape_physicals_wt.py / scrape_winticket_ex_stats.py が生成する。
+data/player_physicals.csv
+data/player_ex_stats.csv

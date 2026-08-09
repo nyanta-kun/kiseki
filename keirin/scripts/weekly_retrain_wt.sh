@@ -1,0 +1,168 @@
+#!/bin/bash
+# 毎週日曜23:30実行（winticketルート）: wtモデル再学習
+# H-1対応: ①holdout評価(昇格せず・監視用) → ②全データ再学習で配信モデル(lgbm_wt)生成
+#          → ③カット再計測 → ④世代退避(ロールバック用)
+set -e
+set -o pipefail   # L-5: | tee が python の終了コードをマスクしないように
+export PATH="/usr/sbin:/sbin:$PATH"
+# KEIRIN_DB_URL は crontab または実行前に export して設定すること
+cd "$(dirname "$0")/.."
+DATE=$(date +%Y-%m-%d)
+LOG_DIR="data/logs"
+mkdir -p "$LOG_DIR" data/models/archive
+LOG="$LOG_DIR/train_wt_${DATE}.log"
+
+# --- 多重起動防止（2026-07-31 D-2判断: 追加する）---
+# 週1回のcronのみなら重複可能性は低いが、学習は数時間かかるため、手動での
+# 再実行等が前回インスタンスと重なると lgbm_wt.pkl 等モデルファイルへの同時
+# 書き込みや④世代退避(archive)コピーが競合し、壊れたモデルが配信される恐れが
+# ある（2026-07-08 prerace_decisions/notified 同時消失事故と同型のリスク）。
+# 本スクリプトはMac cronで実行されるが、macOSには flock(1) コマンドが存在しない
+# ことを確認済み（2026-07-31, ローカルで `which flock` → not found。VPSの4スクリプト
+# は util-linux の flock が使えるためそちらを使用）。そのため mkdir の原子性を
+# 利用したPIDロックで代替する。
+LOCK_DIR="$LOG_DIR/weekly_retrain_wt.lockdir"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  OLD_PID=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+  if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "[$(date '+%H:%M:%S')] [weekly_retrain_wt] 前回実行(PID $OLD_PID)が継続中のためスキップします（${LOCK_DIR}）。" \
+      | tee -a "$LOG_DIR/lock_skips.log" >&2
+    exit 0
+  fi
+  echo "[$(date '+%H:%M:%S')] [weekly_retrain_wt] 古いロック（PID ${OLD_PID:-不明} は不在）を検出。奪って続行します（${LOCK_DIR}）。" \
+    | tee -a "$LOG_DIR/lock_skips.log" >&2
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# --- KEIRIN_DB_URL 必須チェック（2026-07-31 D-1）---
+# database.py の get_connection() は KEIRIN_DB_URL 未設定時に RuntimeError を送出する
+# 設計だが、train-wt 自体も get_connection() 経由でデータを取得するため、変数が
+# 消えると学習が空振りしつつ気付きにくい形で失敗しうる。ここで早期に検知して中断する。
+if [[ -z "${KEIRIN_DB_URL:-}" ]]; then
+  echo "[$(date '+%H:%M:%S')] [FATAL] KEIRIN_DB_URL が未設定です。weekly_retrain_wt.sh を中断します。" \
+    | tee -a "$LOG" >&2
+  # Discord Webhook URL は .env から直接読む実装（src/notify/discord.py::_load_webhook_url）
+  # のため、DB接続が無くても通知は送信できる（通知経路はKEIRIN_DB_URLに依存しない）。
+  if .venv/bin/python3 -c "
+from src.notify.discord import send
+ok = send('🚨 **[weekly_retrain_wt.sh] KEIRIN_DB_URL が未設定のため処理を中断しました。**\ncrontabの環境変数設定を確認してください。', channel='system')
+raise SystemExit(0 if ok else 1)
+" 2>&1 | tee -a "$LOG"; then
+    echo "[$(date '+%H:%M:%S')] Discordへ中断を通知しました。" | tee -a "$LOG" >&2
+  else
+    echo "[$(date '+%H:%M:%S')] [FATAL] Discord通知にも失敗しました（.envのDISCORD_WEBHOOK_URL_SYSTEM未設定などが原因の可能性）。cronログ（標準エラー）で検知してください。" \
+      | tee -a "$LOG" >&2
+  fi
+  exit 1
+fi
+
+# テスト分割は直近約90日前（ホールドアウト評価用）
+if [[ "$(uname)" == "Darwin" ]]; then
+  TEST_FROM=$(date -v-90d +%Y-%m-%d)
+else
+  TEST_FROM=$(date -d "90 days ago" +%Y-%m-%d)
+fi
+
+echo "[$(date '+%H:%M:%S')] === winticket週次再学習 $DATE (test-from=$TEST_FROM) ===" | tee -a "$LOG"
+
+# ① ホールドアウト評価モデル（監視用・--no-promote で本番 lgbm_wt は汚さない）
+echo "[$(date '+%H:%M:%S')] ① holdout評価（直近90日をテスト）..." | tee -a "$LOG"
+# 前回 eval の AUC を比較用に退避（初回は存在しなくてよい）
+PREV_EVAL_META="data/models/lgbm_wt_eval.meta.json"
+PREV_AUC=$(python3 -c "import json,sys; print(json.load(open('$PREV_EVAL_META')).get('test_auc_holdout') or '')" 2>/dev/null || echo "")
+# 学習開始 2022-12-01（全期間）。2026-07-18に一時「2024-04-01短縮」としたが、
+# 原因はDNF/欠車(finish_order<1)がsb_dyn特徴のローリング計算を汚染するバグで
+# あり、ラベル不足（0埋め希釈）ではなかった。バグ修正後は全期間データで
+# ΔAUC+0.0127・3着内+1.02pt（短縮版と同等以上・データ量1.6倍）を確認済み
+# （2026-07-19・exp_window_ab_48f.py）。以後は全期間で学習する。
+.venv/bin/python3 -m src.cli.main train-wt \
+  --from 2022-12-01 --test-from "$TEST_FROM" --save-as lgbm_wt_eval --no-promote \
+  2>&1 | tee -a "$LOG"
+
+# ①' 品質ゲート: holdout AUC が絶対下限未満 or 前回比で大幅悪化なら本番昇格を中止
+#     （正常終了＝無条件で lgbm_wt 上書き→rsync 配布 だった構造への安全弁・2026-07-12）
+AUC_GATE_MIN="${AUC_GATE_MIN:-0.75}"       # 絶対下限（直近実績 ~0.77）
+AUC_GATE_MAX_DROP="${AUC_GATE_MAX_DROP:-0.02}"  # 前回比の許容悪化幅
+python3 - "$AUC_GATE_MIN" "$AUC_GATE_MAX_DROP" "$PREV_AUC" <<'PYGATE' 2>&1 | tee -a "$LOG"
+import json, sys
+auc_min, max_drop = float(sys.argv[1]), float(sys.argv[2])
+prev = float(sys.argv[3]) if sys.argv[3] else None
+meta = json.load(open("data/models/lgbm_wt_eval.meta.json"))
+auc = meta.get("test_auc_holdout")
+if auc is None:
+    print(f"[gate] holdout AUC が meta に無い → 昇格中止")
+    sys.exit(1)
+if auc < auc_min:
+    print(f"[gate] AUC {auc:.4f} < 下限 {auc_min} → 昇格中止")
+    sys.exit(1)
+if prev is not None and prev - auc > max_drop:
+    print(f"[gate] AUC {auc:.4f} が前回 {prev:.4f} から {prev-auc:.4f} 悪化 (> {max_drop}) → 昇格中止")
+    sys.exit(1)
+print(f"[gate] AUC {auc:.4f} OK (下限 {auc_min} / 前回 {prev})")
+PYGATE
+
+# ② 配信モデル: 全データで再学習して lgbm_wt を更新（H-1）
+echo "[$(date '+%H:%M:%S')] ② 配信用: 全データ再学習 → lgbm_wt ..." | tee -a "$LOG"
+.venv/bin/python3 -m src.cli.main train-wt \
+  --from 2022-12-01 --full-refit --save-as lgbm_wt \
+  2>&1 | tee -a "$LOG"
+
+# ②' 1着専用モデル(lgbm_wt_win)再学習（2026-07-19導入・S1軸選定/S3 win_rank・ratioゲート用）
+# 週次再学習の対象外だと lgbm_wt だけが進化し lgbm_wt_win が陳腐化するため追加。
+# lgbm_wt と同じ①holdout評価→AUCゲート→②全データ再学習の手順を踏む。
+echo "[$(date '+%H:%M:%S')] ②' 1着モデル: holdout評価 → lgbm_wt_win_eval ..." | tee -a "$LOG"
+PREV_WIN_EVAL_META="data/models/lgbm_wt_win_eval.meta.json"
+PREV_WIN_AUC=$(python3 -c "import json,sys; print(json.load(open('$PREV_WIN_EVAL_META')).get('test_auc_holdout') or '')" 2>/dev/null || echo "")
+.venv/bin/python3 -m src.cli.main train-wt \
+  --from 2022-12-01 --test-from "$TEST_FROM" --target win --save-as lgbm_wt_win_eval --no-promote \
+  2>&1 | tee -a "$LOG"
+
+# 1着モデルの品質ゲート（下限は観測AUC~0.82-0.83より低めに設定。top3より高精度な特性を踏まえた値）
+WIN_AUC_GATE_MIN="${WIN_AUC_GATE_MIN:-0.78}"
+WIN_AUC_GATE_MAX_DROP="${WIN_AUC_GATE_MAX_DROP:-0.02}"
+WIN_GATE_OK=1
+python3 - "$WIN_AUC_GATE_MIN" "$WIN_AUC_GATE_MAX_DROP" "$PREV_WIN_AUC" <<'PYGATE' 2>&1 | tee -a "$LOG" || WIN_GATE_OK=0
+import json, sys
+auc_min, max_drop = float(sys.argv[1]), float(sys.argv[2])
+prev = float(sys.argv[3]) if sys.argv[3] else None
+meta = json.load(open("data/models/lgbm_wt_win_eval.meta.json"))
+auc = meta.get("test_auc_holdout")
+if auc is None:
+    print(f"[gate] 1着モデル holdout AUC が meta に無い → 昇格中止")
+    sys.exit(1)
+if auc < auc_min:
+    print(f"[gate] 1着モデル AUC {auc:.4f} < 下限 {auc_min} → 昇格中止")
+    sys.exit(1)
+if prev is not None and prev - auc > max_drop:
+    print(f"[gate] 1着モデル AUC {auc:.4f} が前回 {prev:.4f} から {prev-auc:.4f} 悪化 (> {max_drop}) → 昇格中止")
+    sys.exit(1)
+print(f"[gate] 1着モデル AUC {auc:.4f} OK (下限 {auc_min} / 前回 {prev})")
+PYGATE
+
+if [[ "$WIN_GATE_OK" == "1" ]]; then
+  echo "[$(date '+%H:%M:%S')] ②' 1着モデル: 配信用 全データ再学習 → lgbm_wt_win ..." | tee -a "$LOG"
+  .venv/bin/python3 -m src.cli.main train-wt \
+    --from 2022-12-01 --full-refit --target win --save-as lgbm_wt_win --no-promote \
+    2>&1 | tee -a "$LOG"
+  cp -f data/models/lgbm_wt_win.pkl        "data/models/archive/lgbm_wt_win_${DATE}.pkl"        2>/dev/null || true
+  cp -f data/models/lgbm_wt_win.meta.json  "data/models/archive/lgbm_wt_win_${DATE}.meta.json"  2>/dev/null || true
+else
+  echo "[$(date '+%H:%M:%S')] ②' 1着モデル品質ゲート不合格 → lgbm_wt_win 更新スキップ（旧モデル維持）" | tee -a "$LOG"
+fi
+
+# ③ 波乱ゲート top3_sum カット定数を配信モデルの分布で再計測（test期間除外）
+echo "[$(date '+%H:%M:%S')] ③ 波乱カット定数を再計測..." | tee -a "$LOG"
+.venv/bin/python3 scripts/recompute_upset_cuts_wt.py --to "$TEST_FROM" \
+  2>&1 | tee -a "$LOG" \
+  || echo "[$(date '+%H:%M:%S')] カット再計測に失敗/単調性NG（既定値を維持・処理は継続）"
+
+# ④ 世代退避（M-5・ロールバック/再現用。モデル・メタ・カットを日付付きで保存）
+echo "[$(date '+%H:%M:%S')] ④ 世代退避 → data/models/archive/ ..." | tee -a "$LOG"
+cp -f data/models/lgbm_wt.pkl        "data/models/archive/lgbm_wt_${DATE}.pkl"        2>/dev/null || true
+cp -f data/models/lgbm_wt.meta.json  "data/models/archive/lgbm_wt_${DATE}.meta.json"  2>/dev/null || true
+cp -f data/models/upset_cuts_wt.json "data/models/archive/upset_cuts_wt_${DATE}.json" 2>/dev/null || true
+
+echo "[$(date '+%H:%M:%S')] === 完了 ===" | tee -a "$LOG"

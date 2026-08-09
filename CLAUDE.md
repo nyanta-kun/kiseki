@@ -57,7 +57,7 @@ kiseki は競輪 / 中央競馬 / 地方競馬が 1 リポジトリに同居す�
 
 | 柱 | 主な担当 |
 |---|---|
-| `keirin` | `api/keirin_router.py`, `api/yoso_router.py`, `db/keirin_models.py`, `netkeirin/` |
+| `keirin` | **`keirin/`（2026-08-10 に別リポジトリから統合）**, `api/keirin_router.py`, `api/yoso_router.py`, `db/keirin_models.py`, `netkeirin/` |
 | `chihou` | `api/chihou_*.py`, `db/chihou_models.py`, `importers/chihou_*.py`, `indices/chihou_*.py`, `services/chihou_*.py`, `chihou_protocol.py` |
 | `jra` | `indices/`(chihou以外), `importers/`(chihou以外), `windows-agent/`, `api/{races,horses,performance,recommendations,agent_router,import_router}.py` |
 | `shared` | `db/models.py`, `db/session.py`, **`backend/alembic/`**, `utils/`, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, `.github/`, `CLAUDE.md` |
@@ -168,6 +168,28 @@ EOF
 - **`integrate.sh` のロールバックは `HEAD~1` ではなくマージ前の SHA へ戻す**。
   「Already up to date」等でマージコミットが作られなかった場合、`HEAD~1` は統合先の
   既存コミットを指すため `reset --hard` が無関係な作業を破壊する。
+
+## 競輪（keirin/）— 2026-08-10 に別リポジトリから統合
+
+`nyanta-kun/keirin` を `keirin/` へ移植した。デプロイと CI/CD の一本化が目的。
+経緯と手順は `docs/keirin_repo_merge_plan.md` / `keirin/MIGRATION.md`。
+
+- **履歴は移植元リポジトリにある**（最終SHA `50a6658`）。`git blame` はそちらで見る
+- **`keirin/data/` と `keirin/.venv` は git 管理外**。VPS 上の実体を使う
+  （モデル 212MB・実行時状態 159MB・venv 549MB）
+- 日次バッチは **Docker ではなくホスト上の素 cron**（kiseki の JRA/地方バッチと同じ方式）。
+  `KEIRIN_HOME` を crontab の環境変数で切り替える
+- ⚠️ **入稿・採点経路は壊れても例外が出ない箇所が多い。**
+  変更後は翌朝の `[marquee]` ログと `netkeirin_submissions` の件数を必ず突き合わせる
+
+### 看板レース（決勝・特選クラス）
+
+売上は看板レースに集中する（2026-08-08 実測: 当日売上の84%）。
+**看板レースとその前後には必ず推奨を出す**方針（2026-08-09 ユーザー決定）。
+
+- 判定の正本: `backend/src/services/keirin_marquee.py`（API が `is_marquee` を返す）
+- ⚠️ `keirin/src/marquee.py`（入稿の実行側）と**二重管理**。統合完了後は前者へ一本化する
+- ⚠️ **「準決勝」は「決勝」を部分一致で拾う**。除外しないと全体の約14.5%が看板になる
 
 ## DBスキーマ構成
 - `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ

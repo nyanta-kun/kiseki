@@ -74,3 +74,11 @@ docker-compose.override.yml
 # 個人情報を含む書類（本リポジトリは PUBLIC のため追跡しない）
 # 例: 副業許可申請書（氏名・押印・勤務先・契約条件・第三者の氏名を含む）
 netkeirin/*.pdf
+
+# --- keirin（2026-08-10 統合）---
+# 実行時状態とモデルは VPS 上の実体を使う（git には入れない）。
+# 旧 keirin リポジトリは data/picks の PDF 等を誤って追跡しており
+# 履歴が 291MB まで膨らんでいた。同じことを繰り返さない。
+keirin/data/
+keirin/.venv/
+keirin/*.log
