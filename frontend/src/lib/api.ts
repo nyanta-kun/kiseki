@@ -995,6 +995,8 @@ export type KeirinPick = {
   race_no: number;
   grade: string | null;
   race_type: string | null;
+  /** 看板レース（決勝・特選クラス）。判定はAPI側（services/keirin_marquee.py）が正本。 */
+  is_marquee?: boolean;
   start_at: number | string | null;
   status: number;
   n_entries: number | null;
