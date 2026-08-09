@@ -820,6 +820,16 @@ def run_realtime_monitor(jv) -> None:
     # HR は見たが SE が出そろっていない可能性のあるレースキー。
     # 次の巡回で新しい RA/SE が1件も出なければ finalized へ移す。
     payout_seen_race_keys: set[str] = set()
+    # 打ち切ったレースを定期的に呼び戻す時刻。
+    #
+    # ⚠️ 「1巡回(30秒)空だったら出そろった」では足りない。実測では確定直後に
+    # RA + 上位3頭の SE + HR が来たあと、残りの SE は**数十分〜数時間**遅れて
+    # 0B12 に載る（2026-08-09 17:10 の probe で全レース SE 7〜18 を確認。
+    # 一方その日の realtime は各レース 4〜6件で止まっていた）。
+    # 打ち切りを完全に諦めると1巡回あたり36回の JVRTOpen が増えて巡回が延びるため、
+    # 「打ち切る・ただし定期的に全部呼び戻す」にしている。
+    _FINALIZED_RESWEEP_INTERVAL = 600  # 秒
+    next_finalized_resweep = time.time() + _FINALIZED_RESWEEP_INTERVAL
 
     # 直近に POST した WE レコード群のシグネチャ（同内容の再送を避ける）
     last_we_signature: list[str] = [""]
@@ -992,6 +1002,14 @@ def run_realtime_monitor(jv) -> None:
             # 未発走レースへの問い合わせは無駄なCOM呼び出しになり、確定済みレースへの
             # 再問い合わせも同様に無駄なため、両方を除外して走査対象を「発走済み・未確定」
             # のみに絞る。これによりサイクルが短く保たれ、確定直後のレースを早く検知できる。
+            #
+            # ただし打ち切ったレースは _FINALIZED_RESWEEP_INTERVAL ごとに呼び戻す。
+            # 遅れて載る SE を取りに行くため（詳細は finalized_race_keys の宣言部）。
+            if time.time() >= next_finalized_resweep:
+                if finalized_race_keys:
+                    logger.info(f"確定済みレースの再走査: {len(finalized_race_keys)}件を対象へ戻します")
+                    finalized_race_keys.clear()
+                next_finalized_resweep = time.time() + _FINALIZED_RESWEEP_INTERVAL
             result_query_race_keys = [
                 r["jravan_race_id"] for r in races_today
                 if r.get("jravan_race_id")
