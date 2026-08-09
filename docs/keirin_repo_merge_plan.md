@@ -129,6 +129,71 @@ cd ~/GitHub/kiseki/keirin && PYTHONPATH=. .venv/bin/python3 \
 #    KEIRIN_HOME=/home/ysuzuki/GitHub/kiseki/keirin
 ```
 
+### 実行用ランブック（2026-08-10 確定・コピペ可）
+
+**PR #91 マージ済みなので VPS には既に `~/GitHub/kiseki/keirin` がある。**
+本番は `KEIRIN_HOME=/home/ysuzuki/keirin` のままで無影響。
+
+```bash
+# ===== VPS（23:45〜翌06:00 の間に実行）=====
+ssh sekito
+
+# 0. 退避（ロールバックの生命線）
+crontab -l > ~/crontab_before_keirin_merge_$(date +%Y%m%d).txt
+cd ~/GitHub/kiseki && git pull origin main
+
+# 1. 走っているものが無いことを確認（あれば終わるまで待つ）
+pgrep -af "keirin/(scripts|src)" || echo "クリア"
+
+# 2. 古いロックを掃除（残っていると多重起動防止が誤作動する）
+rm -f ~/keirin/data/*.lock
+
+# 3. 実行時状態と venv を「移動」（コピーしない・mv は同一FS内なので一瞬）
+mv ~/keirin/data  ~/GitHub/kiseki/keirin/data
+mv ~/keirin/.venv ~/GitHub/kiseki/keirin/.venv
+
+# 4. 認証セッションが移ったことを確認（無いと入稿が全滅するがログに出ない）
+ls -l ~/GitHub/kiseki/keirin/data/netkeirin_session.json
+
+# 5. 疎通確認（DBは読むが書かない）
+cd ~/GitHub/kiseki/keirin && KEIRIN_DB_URL="$KEIRIN_DB_URL" PYTHONPATH=. \
+  .venv/bin/python3 scripts/submit_marquee_wt.py --dry-run
+
+# 6. cron を切替（KEIRIN_HOME の1行だけ）
+crontab -e
+#   KEIRIN_HOME=/home/ysuzuki/keirin
+#   ↓
+#   KEIRIN_HOME=/home/ysuzuki/GitHub/kiseki/keirin
+
+# 7. 確認（旧パスが残っていないこと＝二重入稿の防止）
+crontab -l | grep KEIRIN_HOME
+crontab -l | grep -c "/home/ysuzuki/keirin/"     # 0 であること
+
+# 8. 旧構成は消さない（ロールバック用に残す）
+mv ~/keirin ~/keirin.bak
+```
+
+**翌朝の確認（必須）**
+```bash
+grep -a "\[marquee\]" ~/GitHub/kiseki/keirin/data/logs/cron.log | tail
+PGPASSWORD=... psql -h localhost -U hrdb_user -d hrdb -c \
+  "SELECT COUNT(*) FROM keirin.netkeirin_submissions WHERE submitted_at >= CURRENT_DATE;"
+```
+⚠️ 入稿・採点は**壊れても例外が出ない**。件数を必ず前日と比べること。
+
+```bash
+# ===== Mac（2026-08-16(日) 23:30 の週次再学習より前に）=====
+crontab -l > ~/crontab_mac_before_keirin_merge_$(date +%Y%m%d).txt
+cd ~/GitHub/kiseki && git pull origin main
+mv ~/GitHub/keirin/data  ~/GitHub/kiseki/keirin/data
+mv ~/GitHub/keirin/.venv ~/GitHub/kiseki/keirin/.venv
+mv ~/GitHub/keirin ~/GitHub/keirin.bak
+
+crontab -e   # ⚠️ Mac は絶対パス直書き。**2行とも**書き換える
+#   /Users/ysuzuki/GitHub/keirin/scripts/... → /Users/ysuzuki/GitHub/kiseki/keirin/scripts/...
+crontab -l | grep -c "GitHub/keirin/"        # 0 であること
+```
+
 ### ロールバック
 `crontab` を退避ファイルから書き戻し、`~/keirin.bak` を `~/keirin` へ戻す。
 **旧構成を消さずに残すのが要点**（`KEIRIN_HOME` の切替だけで往復できる）。
