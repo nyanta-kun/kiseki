@@ -26,6 +26,7 @@ from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
+from ..services.keirin_marquee import is_marquee_race
 
 
 def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
@@ -548,6 +549,10 @@ async def get_picks(
             "race_no": r["race_no"],
             "grade": r["grade"],
             "race_type": r["race_type"],
+            # 看板レース（決勝・特選クラス）。Web一覧の★表示に使う。
+            # 判定の kiseki 側正本は services/keirin_marquee.py
+            # （⚠️ keirin リポジトリ src/marquee.py と二重管理・両方見ること）
+            "is_marquee": is_marquee_race(r["race_type"]),
             "start_at": r["start_at"],
             "status": r["status"],
             "n_entries": r["n_entries"],
