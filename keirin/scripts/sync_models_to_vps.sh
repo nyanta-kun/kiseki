@@ -42,7 +42,11 @@ DATE_STAMP=$(date +%Y-%m-%d)
 LOG="$LOG_DIR/sync_models_to_vps_${DATE_STAMP}.log"
 
 REMOTE_HOST="sekito"
-REMOTE_DIR="~/keirin/data/models/"
+# 2026-08-10 の kiseki 統合で VPS 側の keirin は ~/keirin から移動した。
+# ⚠️ ここはローカルのパス解決（cd "$(dirname "$0")/.."）と違い**リモートの絶対パス**なので、
+#    ディレクトリを動かしても自動では追随しない。旧パスのままだと rsync が
+#    「宛先が無い」で失敗し、モデル配布だけが静かに止まる。
+REMOTE_DIR="~/GitHub/kiseki/keirin/data/models/"
 
 DRY_RUN=0
 for arg in "$@"; do

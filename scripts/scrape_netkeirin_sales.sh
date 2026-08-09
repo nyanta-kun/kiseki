@@ -4,7 +4,7 @@
 # 【実行場所: VPS（Macではない）】 2026-08-03 にMac LaunchAgent構成から変更した。
 # 理由: このツールの認証には netkeirin 入稿ツールと同じ資格情報
 # （NETKEIRIN_LOGIN_ID / NETKEIRIN_PASSWORD）が必要で、それは VPS の
-# /home/ysuzuki/keirin/.env にのみ存在する。Mac側へ資格情報を複製するより、
+# /home/ysuzuki/GitHub/kiseki/keirin/.env にのみ存在する。Mac側へ資格情報を複製するより、
 # 既に同じ資格情報で netkeirin_submit_wt.py を動かしている VPS で実行する方が
 # 秘密情報の置き場所を増やさずに済む（ユーザー判断・B案）。
 #
@@ -20,7 +20,8 @@ set -u
 set -o pipefail   # tee が python の終了コードをマスクしないように
 
 KISEKI_DIR="/home/ysuzuki/GitHub/kiseki"
-KEIRIN_DIR="/home/ysuzuki/keirin"
+# 2026-08-10 の kiseki 統合で keirin は ~/keirin から $KISEKI_DIR/keirin へ移動した。
+KEIRIN_DIR="$KISEKI_DIR/keirin"
 PYTHON="$KEIRIN_DIR/.venv/bin/python"
 SCRIPT="$KISEKI_DIR/backend/scripts/scrape_netkeirin_sales.py"
 LOG_FILE="$KISEKI_DIR/logs/scrape_netkeirin_sales.log"
