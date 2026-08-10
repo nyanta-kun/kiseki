@@ -49,8 +49,11 @@ import live_report_wt as lr
 # 重複排除は netkeirin 入稿側だけで行う。
 # 2026-08-08: 穴推奨 RANK_9H1（9車・高配当狙い）を新設。7H1 とは**車数で母集団が
 # 完全に排他**（7H1=7車ちょうど / 9H1=9車ちょうど）。
+# 2026-08-10: 穴推奨 RANK_7H2（印なし2軸・高配当）を新設。7H1 と同じ7車立てなので
+# **母集団は排他ではない**（重なりは 7H1 側の 49.2%）。picks_history には両方の
+# 行が入り、netkeirin の入稿だけが優先順位（7H1 > 7H2）で1レース1商品に絞られる。
 CURRENT_RANK_NAMES = {"RANK_7SS", "RANK_7S", "RANK_7A", "RANK_7B", "RANK_9S",
-                      "RANK_9A", "RANK_7H1", "RANK_7C", "RANK_9H1"}
+                      "RANK_9A", "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {

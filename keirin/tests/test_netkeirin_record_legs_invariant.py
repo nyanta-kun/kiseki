@@ -46,7 +46,8 @@ def _has_stake_source(cfg: dict) -> bool:
 
 def _is_prebuilt_legs(cfg: dict) -> bool:
     """候補正規化側で legs を組み終えていて `_legs_for_record` を通らない経路か。"""
-    return bool(cfg.get("multi_bet") or cfg.get("formation_bet") or cfg.get("tilt_stakes"))
+    return bool(cfg.get("multi_bet") or cfg.get("multi_bet_7h2")
+                or cfg.get("formation_bet") or cfg.get("tilt_stakes"))
 
 
 @pytest.mark.parametrize("rank_key", sorted(RANK_CONFIGS))

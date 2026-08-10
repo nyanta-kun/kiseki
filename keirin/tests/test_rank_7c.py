@@ -175,7 +175,7 @@ def test_daily_select_does_not_dedupe_against_other_ranks():
 # ── netkeirin 入稿の優先順位・賭け金解決 ──────────────────────────────
 
 def test_netkeirin_priority_order():
-    """優先順位 7H1 > 7SS > 7S > 7A > **7C > 7B**（2026-08-07 ユーザー指定）。
+    """優先順位 7H1 > 7H2 > 7SS > 7S > 7A > **7C > 7B**。
 
     RANK_ORDER は dict の定義順なので、順序が入れ替わると黙って優先度が変わる。
 
@@ -186,7 +186,10 @@ def test_netkeirin_priority_order():
     from scripts import netkeirin_submit_wt as ns
     # 9車ランクは7車ランクと母集団が排他なので、優先順位の検査から外す
     order = [r for r in ns.RANK_ORDER if r not in ("9S", "9A", "9H1")]
-    assert order == ["7H1", "7SS", "7S", "7A", "7C", "7B"]
+    # 2026-08-10: 穴推奨 7H2 を 7H1 の直後に置いた（ユーザー判断）。7H1 は本番実測
+    # ROI 80.3%・的中18.3% で 7H2(72.2%) より良いので 7H1 を守る。重なるのは
+    # 7H1 側の 49.2%。犠牲は 7SS(−73.7%) / 7B(−11.0%) / 7C(−4.5%)。
+    assert order == ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7B"]
 
 
 def test_netkeirin_priority_order_9car():
@@ -452,7 +455,11 @@ def test_documented_priority_order_matches_rank_configs():
     checked = 0
     for p in targets:
         text = p.read_text(encoding="utf-8")
-        if "7H1 > 7SS" not in text:
+        # 🔴 検知の目印は「先頭ランク + 区切り」だけにする。ランクを間に挿すと
+        #    `7H1 > 7SS` のような**隣接2ランクの並び**は成立しなくなり、
+        #    このテストは「どのファイルにも表記が無い」＝照合0件で落ちる
+        #    （2026-08-10 に 7H2 を挿入して実際に踏んだ）。
+        if "7H1 > " not in text:
             continue
         checked += 1
         assert expected in text, (
