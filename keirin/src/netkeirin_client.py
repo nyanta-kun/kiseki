@@ -204,8 +204,24 @@ def expand_bet(bet_kind: str, groups: list[list[int]]) -> set:
     raise ValueError(f"未対応のbet_kind: {bet_kind}")
 
 
+# 承認制のとき `_post_goods` が返す netkeirin_race_id の接頭辞。
+# 実際には POST していないので本物の race_id と**必ず区別できる形**にする。
+# ここを race_id と同じ形にすると、未送信の行を送信済みと誤認して
+# 二重入稿防止（`_already_submitted`）が壊れる。
+PROPOSED_PREFIX = "PROPOSED:"
+
+
 class NetkeirinClient:
-    def __init__(self) -> None:
+    def __init__(self, propose_only: bool = False) -> None:
+        """propose_only=True なら **netkeirin へ一切 POST しない**。
+
+        承認制（`netkeirin_settings._global.require_approval`）のときに使う。
+        入稿案だけ作り、人が確認画面で承認してから本当に送る。
+
+        🔴 ログインもしない。承認制の朝バッチで毎回ログインすると、
+           出さないのにセッションだけ消費する。
+        """
+        self.propose_only = propose_only
         self.session = requests.Session()
         self._load_cookies()
 
@@ -456,11 +472,84 @@ class NetkeirinClient:
             kaime=kaime, act_type=act_type,
         )
 
+    def delete_pick(self, item_id: str) -> tuple[bool, str]:
+        """公開待ちの下書きを削除する（`action=delete`）。
+
+        `item_id` は `race_auth.html` の削除ボタン `id="act-yoso_delete_{item_id}"`
+        から取る（`{goods_id}_{user_id}` 形式・race_id とは別物）。
+        仕様と実機確認は `docs/netkeirin-input-api-spec.md` 7.4/7.5。
+
+        ⚠️ **公開済みの商品に効くかは未確認**。仕様に記載があるのは公開待ちのみ。
+           呼び出し側は公開前のものだけ対象にすること。
+        """
+        if self.propose_only:
+            # 入稿案は netkeirin に存在しないので削除する相手がいない。
+            return True, f"{PROPOSED_PREFIX}{item_id}"
+        if not item_id:
+            return False, "item_id が空です"
+        try:
+            r = self.session.post(
+                POST_GOODS_URL,
+                data={"output": "json", "action": "delete", "item_id": item_id},
+                timeout=15,
+            )
+            r.raise_for_status()
+            resp = r.json()
+        except (requests.RequestException, ValueError) as e:
+            return False, f"削除リクエスト失敗: {e}"
+        if resp.get("status") != "OK":
+            return False, f"削除失敗: {resp}"
+        return True, str(resp.get("item_id") or item_id)
+
+    def fetch_item_ids(self) -> dict[str, str]:
+        """`race_auth.html`（公開待ち一覧）から {race_id: item_id} を作る。
+
+        削除には item_id が要るが、入稿時のレスポンスには含まれない
+        （`_post_goods` が返すのは race_id）。そのため削除の直前に引き直す。
+
+        削除ボタンは `id="act-yoso_delete_{item_id}"`。同じ行に race_id を含む
+        リンク（`race_id=...` もしくは `#race_{race_id}`）があるので突き合わせる。
+        """
+        try:
+            r = self.session.get(RACE_AUTH_URL, timeout=15)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            print(f"[netkeirin] race_auth取得失敗: {e}")
+            return {}
+        soup = BeautifulSoup(r.text, "html.parser")
+        out: dict[str, str] = {}
+        for btn in soup.find_all(id=re.compile(r"^act-yoso_delete_")):
+            item_id = str(btn.get("id", "")).replace("act-yoso_delete_", "", 1)
+            if not item_id:
+                continue
+            row = btn
+            race_id = None
+            # 同じ行（祖先を数段たどる）の中から race_id らしき数字列を拾う
+            for _ in range(6):
+                row = row.parent
+                if row is None:
+                    break
+                m = re.search(r"race_id=(\d{10,})", str(row))
+                if m:
+                    race_id = m.group(1)
+                    break
+            if race_id:
+                out[race_id] = item_id
+        return out
+
     def _post_goods(
         self, *, race_id: str, n_cars: int, mark: dict[str, str],
         title: str, comment: str, kaime: list[dict], act_type: str,
     ) -> tuple[bool, str]:
-        """api_post_goods.html への POST（action=add）本体。"""
+        """api_post_goods.html への POST（action=add）本体。
+
+        🔴 承認制（propose_only）のときは**ここで止める**。送信の分岐は
+           submit_pick / submit_pick_multi / 手動経路の3か所にあり、
+           そこを個別に触ると片方だけ抜ける（2026-08-08 の 9H1 と同型の事故）。
+           唯一の POST 地点である本メソッドで止めるのが最も漏れにくい。
+        """
+        if self.propose_only:
+            return True, f"{PROPOSED_PREFIX}{race_id}"
         payload = {
             "output": "json",
             "action": "add",
