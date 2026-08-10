@@ -1145,6 +1145,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             )}
           </div>
 
+          {/* 🔴 ライン構成は**確定前後を問わず**出す（2026-08-10）。
+              NoPickRow には最初から入っていたが PickCard には無く、
+              推奨レースだけ隊列が読めない状態だった。line_group は
+              wt_entries に残るので確定後も同じ内容を出せる。 */}
+          <LineRow entries={pick.entries} />
+
           <EntryTable entries={pick.entries} />
 
           {isPendingResult && !pick.hit && (
@@ -1488,6 +1494,10 @@ export default function KeirinPage() {
   const [hideNoPickRows, setHideNoPickRows] = useState(false);
   const isToday = date === todayYYYYMMDD();
   const hasCand = picks.some((p) => p.race_key.includes("#CAND"));
+  // 隠せる行（ピック無し・ガミ落ちで推奨外が確定した行）がある日だけ切替を出す。
+  // 判定は一覧側の描画条件と**同じ式**にすること（片方だけ直すと、ボタンは
+  // 出るのに何も隠れない／隠れるのにボタンが無い、という食い違いになる）。
+  const hasHideableRows = picks.some((p) => !p.has_pick || computeGamiSkip(p));
 
   const loadData = useCallback(async (d: string) => {
     setLoadingPicks(true);
@@ -1631,27 +1641,6 @@ export default function KeirinPage() {
         </div>
       ) : (
         <>
-          {picks.some(p => !p.has_pick || computeGamiSkip(p)) && (
-            <div className="flex items-center justify-end gap-2">
-              <span className="text-xs text-gray-400">推奨外を非表示</span>
-              <button
-                role="switch"
-                aria-checked={hideNoPickRows}
-                onClick={() => {
-                  const next = !hideNoPickRows;
-                  setHideNoPickRows(next);
-                  localStorage.setItem(HIDE_NOPICK_KEY, String(next));
-                }}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                  hideNoPickRows ? "bg-blue-500" : "bg-gray-300"
-                }`}
-              >
-                <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-                  hideNoPickRows ? "translate-x-5" : "translate-x-1"
-                }`} />
-              </button>
-            </div>
-          )}
           <div className="space-y-2">
             {picks.map((p, idx) => {
               if (!p.has_pick) {
@@ -1674,8 +1663,8 @@ export default function KeirinPage() {
         <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
           {/* 行1: 日付ナビ（前月・前日・今日・日付指定・翌日・翌月） */}
           <DateNav date={date} onChange={setDate} />
-          {/* 行2: アクション（採点更新・オッズ更新・結果取得） */}
-          {(hasCand || isToday) && (
+          {/* 行2: アクション（採点更新・オッズ更新・結果取得・推奨外の表示切替） */}
+          {(hasCand || isToday || hasHideableRows) && (
             <div className="flex items-center gap-2">
               {hasCand && (
                 <button
@@ -1703,6 +1692,27 @@ export default function KeirinPage() {
                     {fetchingResults ? "取得中…" : "📋 結果取得"}
                   </button>
                 </>
+              )}
+              {/* 推奨外（ピック無し・ガミ落ち）の表示切替。
+                  ⚠️ ラベルは**現在の状態**を書く（「非表示にする」ではなく「非表示中」）。
+                     トグルは押した後の状態を書くか今の状態を書くかで意味が反転するため。 */}
+              {hasHideableRows && (
+                <button
+                  type="button"
+                  aria-pressed={hideNoPickRows}
+                  onClick={() => {
+                    const next = !hideNoPickRows;
+                    setHideNoPickRows(next);
+                    localStorage.setItem(HIDE_NOPICK_KEY, String(next));
+                  }}
+                  className={`flex-1 px-2 py-1.5 rounded-lg border text-xs font-semibold text-center whitespace-nowrap transition-colors ${
+                    hideNoPickRows
+                      ? "border-blue-500 dark:border-blue-400 text-white bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700"
+                      : "border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  {hideNoPickRows ? "🙈 推奨外 非表示中" : "👁 推奨外 表示中"}
+                </button>
               )}
             </div>
           )}
