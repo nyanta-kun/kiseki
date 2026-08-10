@@ -116,6 +116,16 @@ PROD_FILES=(
   # `|| echo ...継続` で握り潰すので **ログ1行だけ残して 9H1 が永久に0件**になる。
   # 抜けは tests/test_model_sync_coverage.py が機械的に検出する。
   "lgbm_upset_screen.pkl"
+  # 2026-08-11 追加: 最終三連複オッズの予測モデル（7車/9車・`src/odds_prediction.py`）。
+  # ⚠️ **.pkl ではなく LightGBM のテキスト形式**で、読み込みも `load_model()` ではなく
+  #    `lgb.Booster(model_file=...)` なので、`tests/test_model_sync_coverage.py` の
+  #    従来の走査（load_model の第1引数を AST で拾う）には**引っかからない**。
+  #    そのため同テストへ専用の検査を足してある。名前を変えるときは両方直すこと。
+  # 無くても入稿は止まらない（WARNING を出して従来の傾斜配分へ落ちる）が、
+  # **黙って実質的中率が 3〜5pt 落ちた状態で回り続ける**ので配布漏れは実害になる。
+  "odds_trio_n7.txt"
+  "odds_trio_n9.txt"
+  "odds_trio_meta.json"
 )
 # CI（GitHub Actions）がデプロイ時に取得する最小セット。
 # GitHub Actions は Mac のローカルファイルへ到達できないため、
@@ -166,7 +176,13 @@ VINTAGE_FILES=(
   "$MODEL_DIR"/lgbm_wt_favbust_m[0-9][0-9][0-9][0-9].meta.json
 )
 shopt -u nullglob
-FILES+=("${VINTAGE_FILES[@]}")
+# ⚠️ macOS 標準の bash 3.2 では `set -u` 下で **空配列の展開が unbound variable になる**
+#    （bash 4.4+ では通る）。vintage モデルが1本も無い環境（新規 clone・worktree）で
+#    `VINTAGE_FILES[@]: unbound variable` で落ちていた。CI は bash 5 なので気づけない。
+#    CLAUDE.md の「mapfile を使わない」と同じ、bash 3.2 起因の罠。
+if [[ ${#VINTAGE_FILES[@]} -gt 0 ]]; then
+  FILES+=("${VINTAGE_FILES[@]}")
+fi
 
 N_PROD=$(( ${#PROD_FILES[@]} + ${#EXTRA_FILES[@]} - ${#MISSING[@]} ))
 N_VINTAGE=${#VINTAGE_FILES[@]}

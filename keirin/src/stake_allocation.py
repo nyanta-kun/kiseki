@@ -48,6 +48,7 @@ LANDING_LAMBDA = 0.5
 
 # 重みの出どころ。ログと dry-run 表示に使う（どの経路で走ったか分からないと
 # 「朝オッズが取れていない」ことに気づけない）。
+SOURCE_PREDICTED = "predicted"   # 構造モデルの予測オッズ（2026-08-11〜・最優先）
 SOURCE_BLEND = "blend"
 SOURCE_ODDS = "odds"
 SOURCE_MODEL = "model"
@@ -75,6 +76,7 @@ def landing_weights(
     morning_odds: dict[int, float] | None,
     top3_probs: dict[int, float] | None,
     lam: float = LANDING_LAMBDA,
+    predicted_odds: dict[int, float] | None = None,
 ) -> tuple[dict[int, float], str]:
     """3列目の車ごとの重み（賭け金はこれに比例させる）と、その出どころを返す。
 
@@ -82,11 +84,28 @@ def landing_weights(
     morning_odds: {3列目の車番: その点の朝の三連複オッズ}。欠けていてよい
     top3_probs:   {車番: モデルの3着内率 0-1}。欠けていてよい
 
+    predicted_odds: {3列目の車番: 構造モデルが予測した最終三連複オッズ}。
+                  `src.odds_prediction` が出す。**あれば最優先で単独採用する**。
+
     重みは「その点の当たりやすさ」に比例する。賭け金をこれに比例させると
     全点の払戻がそろい、どの点で決まっても元返し以上になりやすくなる。
+
+    🔴 **予測オッズは p3 と blend しない。** 予測オッズは重要度の約7割が p3 由来
+       （`lp_pl` 44% + `lp_prod` 26%）なので、相乗平均を取ると p3 を二重計上して
+       薄まる。honest 検証（7Cゲート内 4,670R・掃引/確認）の実質的中率:
+
+           現行 blend(朝, p3)   30.49 / 30.64
+           blend(予測, p3)      34.26 / 34.22
+           **予測オッズ単独      39.64 / 37.99**
+
+       朝の板より優先するのは、朝の板が買う点すべてに揃うのが **8.9%** しかなく、
+       揃っても最終との ±2倍以内が 59.3%（予測オッズは 91.5%）だから。
+       詳細は `src/odds_prediction.py` の冒頭。
     """
     if not legs:
         raise ValueError("legs が空です")
+    if _usable_odds(legs, predicted_odds):
+        return {t: 1.0 / predicted_odds[t] for t in legs}, SOURCE_PREDICTED
     has_o, has_p = _usable_odds(legs, morning_odds), _usable_probs(legs, top3_probs)
     if has_o and has_p:
         return ({t: (1.0 / morning_odds[t]) ** lam * top3_probs[t] ** (1.0 - lam)
@@ -141,9 +160,11 @@ def tilted_stakes(
     budget: int = BUDGET_DEFAULT,
     unit: int = UNIT_DEFAULT,
     lam: float = LANDING_LAMBDA,
+    predicted_odds: dict[int, float] | None = None,
 ) -> tuple[dict[int, int], str]:
     """買う相手ごとの賭け金と、重みの出どころを返す。"""
-    weights, source = landing_weights(legs, morning_odds, top3_probs, lam)
+    weights, source = landing_weights(legs, morning_odds, top3_probs, lam,
+                                      predicted_odds=predicted_odds)
     return allocate_budget(weights, budget, unit), source
 
 
