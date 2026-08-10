@@ -558,20 +558,35 @@ def _load_candidates(target_date: str, session: str, file_key: str) -> list[dict
     #    「ファイルが無いから入稿しない」だと、朝の入稿からも波で除外されている
     #    ミッドナイトが**その日まるごと商品ゼロ**になる。予想自体は朝に全開催ぶん
     #    出来ているので、それを使って出すほうが必ず良い。
+    #
+    # 🔴 **判定は「存在するか」ではなく「中身があるか」**（2026-08-10 是正）。
+    #    夜の再生成は**その波の開催だけ**を作り直すので、その波に該当が無いランクは
+    #    `[]`（2バイト）を書き出す。存在チェックだけだと、この空ファイルが
+    #    **朝の候補を無言で隠す**。実害の記録:
+    #      2026-08-10 の 7A は 朝956バイト(1件) / 夜2バイト(0件) で、夕方の実行は
+    #      7A・7SS についてログを1行も出さずに終わっていた（他ランクは
+    #      「発走済み◯件を除外」等が出るので、無言なのが唯一の手がかりだった）。
+    #    この日は該当が朝の波で入稿済みだったため実害ゼロだったが、朝の候補が
+    #    夕方の波の開催に含まれていれば**その商品が丸ごと消える**。
     prefixes = {"evening": "_night", "noon": "_noon"}
     candidates = []
     if session in prefixes:
         candidates.append(picks_dir /
                           f"wave_picks_wt_{target_date}{prefixes[session]}_{file_key}_candidates.json")
     candidates.append(picks_dir / f"wave_picks_wt_{target_date}_{file_key}_candidates.json")
-    path = next((p for p in candidates if p.exists()), None)
-    if path is None:
-        return []
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"[netkeirin_submit] {path.name} 読み込み失敗: {e}", flush=True)
-        return []
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[netkeirin_submit] {path.name} 読み込み失敗: {e}", flush=True)
+            continue
+        if rows:
+            return rows
+        # 空だったことは残す。無言だと「なぜ入稿ゼロか」を追えない。
+        print(f"[netkeirin_submit] {path.name} は0件（次の候補ファイルへ）", flush=True)
+    return []
 
 
 def _load_settings() -> dict[str, dict]:
