@@ -82,6 +82,7 @@ from src.race_shape import (
     solve_logit_shift,
     stake_note_text,
 )
+from src.odds_prediction import try_predicted_odds_for_legs
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.strategy_wt import (
     RACE_BUDGET,
@@ -668,8 +669,9 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
          "lines": [{"bet_type": "3連複", "combo": "1=2=5", "stake": 4100,
                     "odds": 8.3}, ...]}
 
-    `source` は金額配分の出どころ（blend / odds / model / equal・
+    `source` は金額配分の出どころ（predicted / blend / odds / model / equal・
     `src.stake_allocation` 参照）。均等配分のランクは None。
+    `predicted` は構造モデルの予測オッズ（`src.odds_prediction`）。
 
     `odds` は**入稿時点の**オッズ（三連複は frozenset・三連単は tuple がキー）。
     🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
@@ -840,9 +842,13 @@ def _build_tilted_legs(
     board = _load_trio_board(race_key)
     morning = {t: board.get(frozenset({axis1, axis2, t})) for t in partners}
     morning = {t: o for t, o in morning.items() if o}
+    # 構造モデルの予測オッズ（7車/9車）。使えないときは None が返り従来経路へ落ちる。
+    # 🔴 落ちたことは WARNING で必ずログに出る（無言のフォールバックにしない）。
+    predicted = try_predicted_odds_for_legs(race_key, axis1, axis2, partners)
     stakes, source = tilted_stakes(
         partners, morning, _load_top3_probs(race_key),
         budget=int(cfg.get("stake_budget") or RACE_BUDGET),
+        predicted_odds=predicted,
     )
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[axis1], [axis2], cars], stake)
             for stake, cars in group_by_stake(stakes)]

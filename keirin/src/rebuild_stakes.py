@@ -109,5 +109,12 @@ def stakes_for_combos(
         got = {t: board.get(frozenset({axis1, axis2, t})) for t in thirds}
         if all(v for v in got.values()):
             morning = got
+    # 🔴 ここに `src.odds_prediction` の予測オッズを渡してはいけない（2026-08-11）。
+    #    本番の入稿経路（netkeirin_submit_wt._build_tilted_legs）は渡しているが、
+    #    再構築は **その日の時点で得られた情報だけ**で組み直すためのもの。
+    #    オッズ予測モデルは全期間で1回学習しており、過去レースへ遡って当てると
+    #    model-vintage look-ahead になる（[[keirin_highpay_payout_ceiling_2026_08_06]]・
+    #    [[chihou_survivor_bias_audit_2026_07_23]] と同型）。
+    #    再構築で使いたくなったら、まず vintage 別モデルを用意すること。
     stakes, _ = tilted_stakes(thirds, morning, top3_probs, budget=budget)
     return {frozenset({axis1, axis2, t}): stakes[t] for t in thirds}
