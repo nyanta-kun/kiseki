@@ -598,6 +598,28 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_7H1", "", "")
 
+    # 7H2=穴推奨・印なし2軸（2026-08-10導入）:
+    # decisions キー {rk}#7H2（decision=buy）を picks に注入する（slot="seven_7h2"）。
+    # 7H1 と同じ2券種なので `combos` ではなく `legs_trio` の有無で購入判定する。
+    for _key, _dec in decisions.items():
+        if not _key.endswith("#7H2") or _dec.get("decision") != "buy":
+            continue
+        if not _dec.get("legs_trio"):
+            continue
+        _rk = _key[:-4]
+        if not _rk.startswith(dc):
+            continue
+        try:
+            _, _code, _rno = _rk.split("_")
+        except ValueError:
+            continue
+        _venue = code2name.get(_code)
+        if _venue is None:
+            continue
+        _pk = (_venue, int(_rno), "seven_7h2")
+        if _pk not in picks:
+            picks[_pk] = ("RANK_7H2", "", "")
+
     # 9H1=穴推奨・9車高配当（2026-08-08導入）:
     # decisions キー {rk}#9H1（decision=buy）を picks に注入する（slot="nine_9h1"）。
     # ⚠️ **三連単フォーメーションの単一券種**。7H1 と違い `legs` 1本だけを見る。
@@ -696,6 +718,7 @@ def _main_inner(date):
     results_7a = []           # 7A=S7の境界ランク（ペーパー）行 — ヘッダー合計には含めず別集計（2026-07-27導入）
     results_7b = []           # 7B=◎◯一致×順序/相手不一致（ペーパー）行 — ヘッダー合計には含めず別集計（2026-08-03導入）
     results_7h1 = []          # 7H1=穴推奨・本命バスト型（2券種）行 — ヘッダー合計には含めず別集計（2026-08-06導入）
+    results_7h2 = []          # 7H2=穴推奨・印なし2軸（2券種）行 — 同上（2026-08-10導入）
     results_9h1 = []          # 9H1=穴推奨・9車高配当（三連単単一券種）行 — 同上（2026-08-08導入）
     results_7c = []           # 7C=ベースモデル・終日の二軸（ペーパー）行 — ヘッダー合計には含めず別集計（2026-08-07導入）
     results_9a = []           # 9A=S9の境界ランク（ペーパー）行 — ヘッダー合計には含めず別集計（2026-07-27導入）
@@ -721,6 +744,7 @@ def _main_inner(date):
     # 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入。ヘッダー合計には含めない）
     p7bb = p7br = p7bh = 0
     p7h1b = p7h1r = p7h1h = 0   # 7H1（穴推奨）の 購入額 / 払戻 / 的中数
+    p7h2b = p7h2r = p7h2h = 0   # 7H2（穴推奨・印なし2軸）の 購入額 / 払戻 / 的中数
     p9h1b = p9h1r = p9h1h = 0   # 9H1（穴推奨・9車）の 購入額 / 払戻 / 的中数
     # 7C（ベースモデル・終日の二軸・2026-08-07導入。ヘッダー合計には含めない）
     # ⚠️ **賭け金が可変**（予算枠÷点数）なので購入額は decision の stake から積む。
@@ -1295,6 +1319,90 @@ def _main_inner(date):
                                 *gap_map.get(rk, (None, None, None)), None))
                 continue
 
+            if _slot == "seven_7h2":
+                # ── 7H2（穴推奨・印なし2軸・2026-08-10導入）採点 ──
+                # judge_rank_7h2/_process_rank_7h2_candidates と対。正本は
+                # decisions の {rk}#7H2。返還処理なし。
+                #
+                # 7H1 と同じ2券種なので採点式も同じ:
+                #   三連複と三連単をそれぞれ判定し、**払戻は合算**して payout に入れる。
+                #   trio_payout / trifecta_payout には **100円あたりの確定配当**
+                #   （賭け金に依存しない生の値）を入れる。ここに実払戻額を入れると
+                #   同じ列が他ランクと違う意味になり Web が二重表示になる
+                #   （7H1 で 2026-08-08 に実際に起きた）。
+                #
+                # ⚠️ 三連単が的中しても三連複が的中するとは限らない。7H2 の三連複は
+                #    ◎を除いたプールのBOXで、三連単の相手は◎を含む総流しなので、
+                #    **三連単だけ的中する組み合わせが存在する**。両方を独立に見る。
+                dec_h2 = decisions.get(rk + "#7H2")
+                if not dec_h2 or dec_h2.get("decision") not in ("buy", "skip"):
+                    print(f"[notify_results_wt] 7H2判定記録なし {rk}: 不計上", flush=True)
+                    continue
+                is_buy = dec_h2.get("decision") == "buy" and bool(dec_h2.get("legs_trio"))
+                h2_rows = conn.execute(
+                    "SELECT frame_no FROM wt_entries WHERE race_key=? "
+                    "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)
+                ).fetchall()
+                h2_order = [int(r[0]) for r in h2_rows]
+                if len(h2_order) < 3:
+                    continue
+                h2_top3 = frozenset(h2_order[:3])
+                h2_trio_odds = pm.get(rk, {}).get(("trio", h2_top3), 0)
+                h2_tf_odds = pm.get(rk, {}).get(("trifecta", tuple(h2_order[:3])), 0)
+
+                if is_buy:
+                    legs_trio = [frozenset(int(x) for x in str(t).split("="))
+                                 for t in dec_h2.get("legs_trio") or []]
+                    legs_tf = [str(t) for t in dec_h2.get("legs_tf") or []]
+                    u_trio = int(dec_h2.get("stake_trio") or 0)
+                    u_tf = int(dec_h2.get("stake_tf") or 0)
+                    hit_trio = h2_top3 in legs_trio
+                    hit_tf = "-".join(map(str, h2_order[:3])) in legs_tf
+                    # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
+                    h2_pay_trio = h2_trio_odds * u_trio // 100 if hit_trio else 0
+                    h2_pay_tf = h2_tf_odds * u_tf // 100 if hit_tf else 0
+                    h2_pay = h2_pay_trio + h2_pay_tf
+                    h2_hit = hit_trio or hit_tf
+                    h2_bet = int(dec_h2.get("bet_amount")
+                                 or (u_trio * len(legs_trio) + u_tf * len(legs_tf)))
+                    h2_n = len(legs_trio) + len(legs_tf)
+                    h2_pred = ("三複:" + ",".join(dec_h2.get("legs_trio") or [])
+                               + " / 三単:" + ",".join(legs_tf))
+                else:
+                    h2_hit = False
+                    h2_pay = h2_pay_trio = h2_pay_tf = 0
+                    h2_bet = 0
+                    h2_n = 0
+                    h2_pred = "見送り"
+                h2_tstr = ptime
+                _h2_stt = start_map.get(rk)
+                if _h2_stt:
+                    try:
+                        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                        h2_tstr = _dt.fromtimestamp(
+                            int(_h2_stt), tz=_tz(_td(hours=9))).strftime("%H:%M")
+                    except (ValueError, TypeError):
+                        pass
+                if is_buy:
+                    if h2_hit:
+                        _kind = ("三複+三単" if h2_pay_trio and h2_pay_tf
+                                 else ("三単" if h2_pay_tf else "三複"))
+                        h2_mark = f"◎ {_kind} ¥{h2_pay:,}"
+                    else:
+                        h2_mark = "×"
+                    results_7h2.append(
+                        f"[7H2] {venue} {race_no}R {h2_tstr}"
+                        f"  実:{'-'.join(map(str, h2_order[:3]))}  {h2_mark}")
+                    p7h2b += h2_bet
+                    if h2_hit:
+                        p7h2r += h2_pay
+                        p7h2h += 1
+                history.append((target_date, f"{rk}#7H2", "RANK_7H2", h2_pred, h2_n,
+                                int(h2_hit), h2_pay, h2_trio_odds, h2_tf_odds, h2_bet,
+                                not is_buy, None,
+                                *gap_map.get(rk, (None, None, None)), None))
+                continue
+
             if _slot == "nine_9h1":
                 # ── 9H1（穴推奨・9車の高配当狙い・2026-08-08導入）採点 ──
                 # judge_rank_9h1/_process_rank_9h1_candidates と対。正本は
@@ -1674,12 +1782,13 @@ def _main_inner(date):
     # 7H1（穴推奨・本命バスト型・2026-08-06導入）。三連単+三連複の2券種を合算した行。
     # 既存6ランク（予想ベース）とは目的が違うのでヘッダー合計には含めない。
     h1_line = _rank_line("7H1(穴推奨/2券種)", len(results_7h1), p7h1b, p7h1r, p7h1h)
+    h2_line = _rank_line("7H2(穴推奨/2券種)", len(results_7h2), p7h2b, p7h2r, p7h2h)
     h9_line = _rank_line("9H1(穴推奨/9車)", len(results_9h1), p9h1b, p9h1r, p9h1h)
     # 7C（ベースモデル・終日の二軸・2026-08-07導入）。件数が最多になるランク。
     c7_line = _rank_line("7C(ベース/相手可変)", len(results_7c), p7cb, p7cr, p7ch)
     # 7SS（波乱軸選出・RANK_7SS）は 2026-08-02 に全廃したため Discord 行も削除した。
     for _l in (s1_line, old7ssp_line, old7ss_line, s7s_line, a7_line, b7_line,
-               c7_line, h1_line, h9_line, r_line, ss_line, s_line):
+               c7_line, h1_line, h2_line, h9_line, r_line, ss_line, s_line):
         if _l:
             rank_lines.append(_l)
 
@@ -1688,7 +1797,7 @@ def _main_inner(date):
         msg += "\n" + "\n".join(rank_lines)
     msg += "\n```\n" + "\n".join(
         total_7plus + results_7plus_s1 + results_7plus_s7 + results_7a + results_7b
-        + results_7c + results_7h1 + results_9h1) + "\n```"
+        + results_7c + results_7h1 + results_7h2 + results_9h1) + "\n```"
 
     if skipped_dns:
         msg += f"\n※欠車返還によりレース無効: {skipped_dns}件（軸欠車/全相手欠車・損益不計上）"
@@ -1736,6 +1845,7 @@ def _main_inner(date):
           f"7A(ペーパー) {len(results_7a)}R 的中{p7ah} / "
           f"7B(ペーパー) {len(results_7b)}R 的中{p7bh} / "
           f"7H1(穴推奨) {len(results_7h1)}R 的中{p7h1h} / "
+          f"7H2(穴推奨) {len(results_7h2)}R 的中{p7h2h} / "
           f"9H1(穴推奨/9車) {len(results_9h1)}R 的中{p9h1h} / "
           f"S9(ペーパー) {len(results_s9)}R / "
           f"9A(ペーパー) {len(results_9a)}R 的中{p9ah} / "

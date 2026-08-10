@@ -148,6 +148,16 @@ echo "[$(date '+%H:%M:%S')] 7H1（穴推奨）候補を夕方データで再生�
   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 7H1候補の夕方再生成に失敗（他ランクには影響しないため継続）"
 
+# 7H2（穴推奨・印なし2軸）も夕方データで作り直す。7H2 の軸は WT公式印の
+# 付いていない車から選ぶので、朝に印が未確定だったレースは朝の生成では
+# 印なし集合が正しく取れていない（全車フォールバックになる）。
+# 出力は _night 側で、昼→夜の順に読んで race_key で重複排除される。
+echo "[$(date '+%H:%M:%S')] 7H2（穴推奨・印なし2軸）候補を夕方データで再生成..."
+.venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
+  --out "data/picks/wave_picks_wt_${TODAY}_night_s7h2_candidates.json" \
+  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+  || echo "[$(date '+%H:%M:%S')] 7H2候補の夕方再生成に失敗（他ランクには影響しないため継続）"
+
 # 9H1（穴推奨・9車高配当）も夕方データで作り直す。9H1 の選別に使う波乱スコアは
 # ライン構成と WT公式印を見るので、朝に印・ラインが未確定だったレースは朝の生成で
 # 拾えていない。出力は _night 側で、昼→夜の順に読んで race_key で重複排除される。

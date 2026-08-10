@@ -1790,6 +1790,227 @@ def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# RANK_7H2 — 穴推奨「印なし2軸・高配当」（2026-08-10 新設・7車立て専用）
+#
+# 【7H1 との違い】7H1 は「モデルもWT◎も推す本命が飛ぶ」と読んだレースを選び、
+#   その本命を買い目から落とす。7H2 は**本命の生死を予測しない**。
+#   代わりに「**軸2車をWT公式印の付いていない車に限定する**」ことで、
+#   軸2車というブランドを保ったまま配当帯そのものを移す。
+#   母集団も選別条件も買い目も別物で、重なるのは 7H1 の 49.2% にとどまる。
+#
+# 【なぜ印なしか】`wt_entries.prediction_mark` は**オッズ無しで朝から確定する
+#   人気の代理**（◎1/◯2/△3/×4 が各1車、残りが 0＝印なし）。
+#   「モデルは評価しているが公式印が付いていない車」＝有力だが人気薄。
+#   🔴 **モデル上位2車の2軸流し（＝既存ランクの形）では >=300倍 が
+#      全十分位で 0.00回/100R**。高配当はまさに軸2車が飛んだときに出るので、
+#      確信の上位2車では原理的に届かない。ここが本ランクの存在理由。
+#
+# 【選別】2条件のみ。**どちらもオッズを使わない**ので朝の入稿に間に合う。
+#   (1) 7車ちょうど
+#   (2) モデル3着内率の正規化エントロピー >= RANK_7H2_ENTROPY_MIN（＝荒れる読み）
+#
+# 【買い目】1レース RACE_BUDGET 円。
+#   軸1（1着固定）= 印なし × モデル**1着率**最大   … 1着の順序を決めるのは単勝率
+#   軸2           = 印なし × モデル**3着内率**最大 … m2/m3 との差は全閾値で ns
+#   相手          = 残り5車（**総流し**。WT◎もここに入る）
+#
+#   三連単フォーメーション（倍購入・10点 × RANK_7H2_TF_UNIT 円）
+#       軸1 → 軸2 → 相手5車   （軸2を2着に置く5点）
+#       軸1 → 相手5車 → 軸2   （軸2を3着に置く5点）
+#   三連複BOX（10点 × 残予算/10）
+#       プール = 軸1・軸2 + 相手のうち**WT◎を除く**上位3車 の5車
+#
+#   ⚠️ **三連単は倍購入・三連複は◎を外す**、が設計の要（2026-08-10 ユーザー指定・実測で裏づけ済み）:
+#     - 倍購入(P1+P2) の **ROI は P1 単独・P2 単独と構造的に同じ**（72.3/72.0/72.2%）。
+#       効くのは >=300倍 の頻度が 0.33/0.38 → **0.71回** と倍になること、
+#       および片アーム依存の分散が消えること（前向き窓で P1 96.4% / P2 50.2% と割れた）。
+#     - 三連複に◎を入れると生の的中は 20.75→26.84% と上がるが、増える分はほぼガミで
+#       **実質的中は 9.25→9.00% と下がる**。netkeirin はガミを不的中として数えるので外す。
+#     - 三連複を軸2頭ながし4点にすると 的中 6.19% / ROI 68.86% で BOX に劣る。
+#
+# 【実測】設計期間 2025-07-01〜2026-05-07（n=3,957・7車の上位20%・12.72件/日）
+#   と、**設計時に存在しなかった前向き窓** 2026-05-08〜08-04（n=1,229）で一度きり評価:
+#
+#   | 窓 | 的中 | 実質的中 | ROI | >=300倍/100R | 30万円+ |
+#   |---|---|---|---|---|---|
+#   | 設計期間 | 20.75% | 4.07% | 72.16% | 0.71回 | 27件 |
+#   | 前向き窓 | 22.62% | 3.42% | 74.03% | 0.65回 |  8件 |
+#
+#   前半/後半に割った確認窓でも H2−H0（印なし限定の効果）は
+#   150倍+ / 300倍+ の両方で有意（前半 +0.86/+0.66・後半 +0.96/+0.56）。
+#
+# 【✂️ 検証して落としたもの — 再提案しない】
+#   - **6車・9車への展開**: 6車は高エントロピー帯で的中0件。9車は paired bootstrap で
+#     T>=100 が **−0.71回 [−1.34,−0.08] と有意にマイナス**（独立CIの比較では
+#     成立に見えたが撤回した）。**高配当商品は7車専用**。
+#   - **9車でのエントロピー絞り込み**: 7車と逆に働く（>=300倍 0.28→0.00回）。
+#     504通りあって元々分散が大きく、追加の絞り込みは母数を枯らすだけ。
+#   - **軸2を m2(2着率)/m3(3着率) にする**: 全閾値で ns。既存モデルだけで済む
+#     3着内率(pp3)のままでよい（**連帯ヘッドは不要**）。
+#   - **三連複プールの並びに m3 を使う**: pp3 並びと ROI 72.16 vs 72.14%・
+#     30万+ 27件で同値。連帯ヘッドという新しいモデル依存を増やす価値がない。
+#
+# 【⚠️ ROI は評価軸にしない】的中が稀なため ROI の CI が壊滅的に広い
+#   （77.88% [46.3, 116.5]）。**評価軸は >=300倍 の頻度**（CI が 0 を除外できる）。
+#   `P(配当>=T) <= ROI/T` より頻度には算術的上限があり、レース選別では超えられない
+#   （memory `keirin_highpay_payout_ceiling_2026_08_06`）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+RANK_7H2_NE = 7                    # 対象車数（7車ちょうど）
+# モデル3着内率の正規化エントロピーの下限。
+# **日ごとの相対順位ではなく全体の絶対閾値**を使う（7H1 と同じ理由。
+# 日次の相対順位で切り直すと切り捨てにより系統的に少なくなる）。
+#
+# 🔴 **この値はモデルの較正に依存する。** 検証（walk-forward の4ヘッド予測）で
+#    設計期間 2025-07-01〜2026-05-07 の7車 19,782件の80%点は **1.8485** だったが、
+#    **本番の経路（月次vintage `lgbm_wt_eval_mYYMM`）で測り直すと 1.8534**
+#    （2026-05〜07・n=5,911）で、1.8485 のままだと該当率が 20.0%→22.3% になる。
+#    **検証パイプラインの閾値をそのまま定数にすると壊れる**という既知の型
+#    （memory `keirin_step3_dutch_7a_gate_impl_2026_08_09`）。本番経路の値を採る。
+#
+# ⚠️ 月ごとの振れは大きい（p80: 2026-05 1.8463 / 06 1.8420 / **07 1.8642**）。
+#    7月のような分布が高い月は該当率が 29% まで上がる。**これは異常ではない**
+#    ので、単月の件数だけを見て閾値をいじらないこと。
+# ⚠️ モデルを再学習したら `scripts/check_7h2_threshold.py` で分布を確認し、
+#    ずれていれば更新すること。
+RANK_7H2_ENTROPY_MIN = 1.8534
+RANK_7H2_LEGS_N = 5                # 相手（残り5車＝総流し）
+RANK_7H2_TRIO_POOL_MAX = 5         # 三連複BOXに使うプール上限車数（→最大10点）
+# 三連単の1点あたり（円）。**この値が 7H2 の賭け金の単一正本**で、記録側と
+# 入稿側の両方がここから導出される（7H1 で二重管理の食い違いを起こした教訓）。
+#
+# 【900円を選んだ根拠】単価で動くのは「実質的中率」と「高額払戻の大きさ」だけで、
+# **ROI は完全に不動**（設計期間 3,957R で単価を振っても 72.16〜72.17%）:
+#
+#   三連単単価 | 三連単枠/三連複枠 |  ROI  | 実質的中 |  30万円+
+#   ----------|-----------------|-------|---------|--------
+#    **900円** |  9,000 / 1,000  | 72.16% |  4.07%  | 27件
+#      700円   |  7,000 / 3,000  | 72.17% |  9.25%  | 22件
+#      500円   |  5,000 / 5,000  | 72.17% | 13.44%  | 13件
+#
+# 7H2 は**高配当狙いのランク**（既存 S/A/B/C が的中率側を担当している）ため、
+# 存在理由に合わせて高額側の 900円 を採る（2026-08-10 ユーザー判断・7H1 と同じ思想）。
+# 的中体験を優先したくなったら下げてよいが、**そのとき 30万円+ は半減する**。
+RANK_7H2_TF_UNIT = 900
+# ⚠️ 同じ値のリテラル再定義にしない（RANK_7C_BUDGET・RANK_7H1 と同じ理由）。
+RANK_7H2_BUDGET_CAP = RACE_BUDGET  # 1レースの購入上限（円）
+RANK_7H2_UNIT = STAKE_UNIT         # 最低賭け金単位（円）
+#: WT公式印「◎」の prediction_mark 値。
+#: 🔴 **印が付かない車は 0 であって NaN ではない。**`isnan()` で判定すると
+#:    印なし集合が常に空になり、規則が「制約なし」へ**黙って退化する**
+#:    （2026-08-10 の検証で実際に踏み、H0/H1/H2 が全セル完全一致して気付いた）。
+WT_MARK_HONMEI = 1
+WT_MARK_NONE = 0
+
+
+def rank_7h2_entropy(top3_probs: dict[int, float]) -> float:
+    """モデル3着内率をレース内で正規化したエントロピー。
+
+    値が大きいほど「どの車が3着以内に来るか読めない」＝荒れる読み。
+    `exp_highpay_*` の検証と同じ式（正規化してからシャノンエントロピー）。
+    """
+    vals = [max(float(v), 0.0) for v in top3_probs.values()]
+    total = sum(vals)
+    if total <= 0:
+        return 0.0
+    return -sum((v / total) * math.log(max(v / total, 1e-9)) for v in vals)
+
+
+def rank_7h2_unmarked(marks: dict[int, float | int | None]) -> list[int]:
+    """WT公式印の付いていない車（prediction_mark == 0）。
+
+    2車未満しか取れないレースは**全車を候補にフォールバック**する
+    （検証と同じ挙動。印の欠測で買い目が組めなくなるのを防ぐ）。
+    """
+    um = [f for f, v in marks.items()
+          if v is not None and int(v) == WT_MARK_NONE]
+    return sorted(um) if len(um) >= 2 else sorted(marks)
+
+
+def rank_7h2_axes(win_probs: dict[int, float], top3_probs: dict[int, float],
+                  marks: dict[int, float | int | None],
+                  ) -> tuple[int, int, list[int]] | None:
+    """(軸1, 軸2, 相手) を返す。組めない場合は None。
+
+    軸1 は**1着率**最大（1着の順序を決めるのは単勝率であって3着内率ではない）、
+    軸2 は**3着内率**最大。どちらも印なし集合の中から選ぶ。
+    相手は残りの車を3着内率の降順（7車立てなら5車＝総流しなので順序は
+    三連単の点数に影響しないが、三連複プールの選抜に効く）。
+    """
+    um = [f for f in rank_7h2_unmarked(marks) if f in win_probs and f in top3_probs]
+    if len(um) < 2:
+        return None
+    a1 = max(um, key=lambda f: win_probs[f])
+    a2 = max((f for f in um if f != a1), key=lambda f: top3_probs[f])
+    legs = sorted((f for f in top3_probs if f not in (a1, a2)),
+                  key=lambda f: -top3_probs[f])[:RANK_7H2_LEGS_N]
+    if not legs:
+        return None
+    return a1, a2, legs
+
+
+def rank_7h2_build_legs(win_probs: dict[int, float], top3_probs: dict[int, float],
+                        marks: dict[int, float | int | None],
+                        ) -> tuple[list[frozenset], list[str]]:
+    """(三連複の目, 三連単の目) を返す。組めない場合は空リスト。
+
+    三連単は**倍購入**（軸2を2着に置く5点 + 3着に置く5点＝10点）。
+    三連複は◎を除いたプール上位5車のBOX（最大10点）。
+    """
+    ax = rank_7h2_axes(win_probs, top3_probs, marks)
+    if ax is None:
+        return [], []
+    a1, a2, legs = ax
+    honmei = next((f for f, v in marks.items()
+                   if v is not None and int(v) == WT_MARK_HONMEI), None)
+    pool = ([a1, a2] + [f for f in legs if f != honmei])[:RANK_7H2_TRIO_POOL_MAX]
+    trio = ([frozenset(c) for c in _combinations(pool, 3)] if len(pool) >= 3 else [])
+    tf = ([f"{a1}-{a2}-{c}" for c in legs]
+          + [f"{a1}-{c}-{a2}" for c in legs])
+    return trio, tf
+
+
+def rank_7h2_stakes(n_trio: int, n_tf: int) -> tuple[int, int, int]:
+    """(三連複の1点あたり, 三連単の1点あたり, 合計購入額) を返す。
+
+    **合計は必ず RANK_7H2_BUDGET_CAP 以下**になる。三連単を単価固定で買い、
+    残りを三連複へ均等割りする（7H1 と同じ方式）。
+    """
+    uf = RANK_7H2_TF_UNIT if n_tf > 0 else 0
+    # 欠車などで点数が想定より多いと単価固定では枠を食い破る。
+    # 三連複に最低 1点100円を残せるところまで 100円ずつ落とす。
+    while uf and uf * n_tf + RANK_7H2_UNIT * max(n_trio, 0) > RANK_7H2_BUDGET_CAP:
+        uf -= RANK_7H2_UNIT
+    rem = max(0, RANK_7H2_BUDGET_CAP - uf * max(n_tf, 0))
+    ut = (rem // n_trio) // RANK_7H2_UNIT * RANK_7H2_UNIT if n_trio > 0 else 0
+    if ut < RANK_7H2_UNIT:
+        ut = 0
+    total = ut * n_trio + uf * n_tf
+    if total > RANK_7H2_BUDGET_CAP:      # 到達しない想定だが不変条件として守る
+        raise ValueError(f"7H2 の購入額が上限を超えました: {total}円")
+    return ut, uf, total
+
+
+def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
+    """当日の候補から 7H2 を選出する。
+
+    candidates の各要素に必要なキー:
+      `n_entries`(=7) / `entropy`（3着内率の正規化エントロピー） /
+      `legs_trio` / `legs_tf`（買い目。空なら除外）
+
+    **選別は `RANK_7H2_ENTROPY_MIN` の絶対閾値で行う**（日ごとの相対順位ではない）。
+    件数は開催規模にそのまま比例する（実測 12.7件/日）。
+    """
+    elig = [c for c in candidates
+            if c.get("n_entries") == RANK_7H2_NE
+            and c.get("entropy") is not None
+            and float(c["entropy"]) >= RANK_7H2_ENTROPY_MIN
+            and c.get("legs_trio") and c.get("legs_tf")]
+    elig.sort(key=lambda c: -float(c["entropy"]))
+    return elig
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # RANK_7C — ベースモデル「終日の二軸」（2026-08-07 新設・7車立て専用）
 #
 # 【why】既存6ランクは合計 13.1件/日 しか対象がなく、しかも二軸的中率は
@@ -1856,7 +2077,7 @@ def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
 #   複数ランクの行を持てる**（実データでも 7H1 と 7B が共存している）。したがって
 #   **候補生成・記録の段階では重複を排除しない**（ユーザー判断: 重なりは気にしない）。
 #   重複排除は **netkeirin 入稿でのみ**行う（1レース1商品という外部仕様のため）。
-#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7SS > 7S > 7A > 7C > 7B）。
+#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7B）。
 #   実測の重なりは 2.4〜3.2件/日で、入稿に残る 7C は 16.7件/日。
 #
 # memory: keirin_base_model_two_axis_2026_08_07
@@ -2254,6 +2475,11 @@ CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
     # 穴推奨系（2026-08-06〜）。既存6ランク（予想ベース・的中率重視）とは
     # 目的が違うため in_header_total=False（ヘッダー合計に混ぜない）。
     PaperRankSpec("RANK_7H1", "#7H1", "7H1", in_header_total=False, in_live_report=True),
+    # 印なし2軸・高配当（2026-08-10〜）。7H1 と同じ7車立てなので**母集団は排他ではない**
+    # （重なりは 7H1 側の 49.2%）。netkeirin は1レース1商品なので、重複したレースは
+    # 入稿の優先順位（scripts/netkeirin_submit_wt.py の RANK_CONFIGS 定義順）で
+    # 7H1 が取り 7H2 が降りる。picks_history には**両方の行が入る**（記録は独立）。
+    PaperRankSpec("RANK_7H2", "#7H2", "7H2", in_header_total=False, in_live_report=True),
     # 9車・高配当狙い（2026-08-08〜）。7H1 と同じ穴推奨系だが**車数が違うので
     # 母集団は完全に排他**（7H1=7車ちょうど / 9H1=9車ちょうど）。
     PaperRankSpec("RANK_9H1", "#9H1", "9H1", in_header_total=False, in_live_report=True),

@@ -40,6 +40,8 @@ from src.scraper.winticket import WinticketScraper
 from src.notify.discord import send
 from src.strategy_wt import (
     rank_7h1_stakes,
+    RANK_7H2_NE,
+    rank_7h2_stakes,
     rank_9h1_stakes,
     RANK_9H1_NE,
     RANK_9H1_SCORE_MIN,
@@ -2360,6 +2362,209 @@ def _process_rank_7h1_candidates(today: str, now_unix: int,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# RANK_7H2（穴推奨・印なし2軸の高配当）— 2026-08-10 新設
+#
+# 7H1 と同じ **三連単+三連複の2券種**。候補JSONは
+# `scripts/build_7h2_candidates.py` が朝に生成し、買い目（legs_trio / legs_tf）と
+# 賭け金（stake_trio / stake_tf）まで確定させてある。
+# ここでは**盤面（欠車）だけを見て**買える目に絞り、賭け金を張り直す。
+#
+# 欠車の扱い:
+#   - **軸1（三連単の1着固定車）が盤面に無い → レース無効（見送り）**
+#   - **軸2が盤面に無い → レース無効**（買い目10点すべてが軸2を含むので全滅する）
+#   - 相手が欠けた → その目だけ落として購入継続（賭け金は残った点数で再計算）
+#
+# ⚠️ 7H1 の「本命が欠車したら見送り」に相当する防御は 7H2 には要らない。
+#    7H2 は本命の生死を予測していないので、◎が欠けても選別の前提は崩れない
+#    （◎は三連単の相手として買っているだけで、欠ければその目が落ちる）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _load_rank_7h2_candidates(today: str) -> list[dict]:
+    """当日の7H2候補 JSON（昼 + 夜）を読み込む。"""
+    picks_dir = Path(__file__).parent.parent / "data" / "picks"
+    out: list[dict] = []
+    seen: set[str] = set()
+    for fname in (f"wave_picks_wt_{today}_s7h2_candidates.json",
+                  f"wave_picks_wt_{today}_night_s7h2_candidates.json"):
+        fp = picks_dir / fname
+        if not fp.exists():
+            continue
+        try:
+            for c in json.loads(fp.read_text(encoding="utf-8")):
+                rk = c.get("race_key")
+                if rk and rk not in seen:
+                    seen.add(rk)
+                    out.append(c)
+        except Exception as e:
+            logger.warning("7H2候補 JSON 読み込み失敗 %s: %s", fp.name, e)
+    return out
+
+
+def judge_rank_7h2(cand: dict, trio_lookup: dict, tf_lookup: dict) -> tuple[str, dict]:
+    """7H2 の発走前判定（純関数・DB非依存）。
+
+    returns (decision, detail)。decision は "buy" / "skip" / "不明"。
+    "不明" は盤面が取れていない場合で、呼び出し側は次回に再試行する。
+    """
+    detail: dict = {"legs_trio": [], "legs_tf": [], "stake_trio": 0, "stake_tf": 0,
+                    "bet_amount": 0, "axis1": cand.get("axis1"),
+                    "axis2": cand.get("axis2"), "skip_reason": None,
+                    "dropped_trio": 0, "dropped_tf": 0}
+    if not trio_lookup or not tf_lookup:
+        return "不明", detail
+
+    legs_trio_all = [str(x) for x in (cand.get("legs_trio") or [])]
+    legs_tf_all = [str(x) for x in (cand.get("legs_tf") or [])]
+    if not legs_trio_all or not legs_tf_all:
+        detail["skip_reason"] = "候補に買い目が無い"
+        return "skip", detail
+
+    # 盤面は三連複(frozenset キー)と三連単(tuple キー)の**両方**から作る。
+    # `_parse_combo_key` は ordered=False で frozenset を返すので、tuple だけを
+    # 見ると三連複側を1件も拾えず board が空になり、ガードが無言で素通りする
+    # （7H1 実装時に実際に踏んだ）。
+    board: set[int] = set()
+    for lookup in (trio_lookup, tf_lookup):
+        for k in lookup:
+            if isinstance(k, (tuple, frozenset)):
+                board |= {int(x) for x in k}
+    for label, car in (("軸1", cand.get("axis1")), ("軸2", cand.get("axis2"))):
+        if car is not None and board and int(car) not in board:
+            detail["skip_reason"] = f"{label}{car}番が盤面に無い（欠車）"
+            return "skip", detail
+
+    legs_trio = [t for t in legs_trio_all
+                 if _parse_combo_key(t, False) in trio_lookup]
+    legs_tf = [t for t in legs_tf_all if _parse_combo_key(t, True) in tf_lookup]
+    detail["dropped_trio"] = len(legs_trio_all) - len(legs_trio)
+    detail["dropped_tf"] = len(legs_tf_all) - len(legs_tf)
+    if not legs_trio or not legs_tf:
+        detail["skip_reason"] = "欠車により買い目が全滅"
+        return "skip", detail
+
+    u_trio, u_tf, total = rank_7h2_stakes(len(legs_trio), len(legs_tf))
+    if not u_trio or not u_tf:
+        detail["skip_reason"] = "点数過多で100円未満になる"
+        return "skip", detail
+    detail.update(legs_trio=legs_trio, legs_tf=legs_tf, stake_trio=u_trio,
+                  stake_tf=u_tf, bet_amount=total)
+    return "buy", detail
+
+
+def _insert_rank_7h2_pick(race_key: str, race_date: str, detail: dict) -> None:
+    """7H2 の記録行 {base}#7H2 を picks_history に反映する（7H1 と同形式）。"""
+    store_key = race_key + "#7H2"
+    pred = ("三複:" + ",".join(detail["legs_trio"])
+            + " / 三単:" + ",".join(detail["legs_tf"]))
+    n = len(detail["legs_trio"]) + len(detail["legs_tf"])
+    bet = int(detail["bet_amount"])
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO picks_history "
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
+                " trio_payout,trifecta_payout,bet_amount,route,miwokuri) "
+                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False)",
+                (race_date, store_key, "RANK_7H2", pred, n, bet),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning("7H2 pick 書き込み失敗 %s: %s", race_key, e)
+
+
+def _build_rank_7h2_message(cand: dict, ri: dict, detail: dict) -> str:
+    """Discord 通知本文。"""
+    lines = [
+        f"**【7H2 穴推奨・印なし2軸】{cand.get('venue_name')}{cand.get('race_no')}R**",
+        f"軸 {detail.get('axis1')}番（{cand.get('axis1_name') or ''}）"
+        f"-{detail.get('axis2')}番（{cand.get('axis2_name') or ''}）"
+        "＝どちらも公式印なし",
+        f"エントロピー {float(cand.get('entropy') or 0):.4f}",
+        "",
+        f"三連複 {len(detail['legs_trio'])}点 × {detail['stake_trio']}円",
+        "　" + (fold_trio_box(detail["legs_trio"]) or " ".join(detail["legs_trio"])),
+        f"三連単 {len(detail['legs_tf'])}点 × {detail['stake_tf']}円",
+        "　" + " ".join(detail["legs_tf"]),
+        f"合計 {detail['bet_amount']:,}円",
+    ]
+    if detail["dropped_trio"] or detail["dropped_tf"]:
+        lines.append(f"（欠車により 三複{detail['dropped_trio']}点 / "
+                     f"三単{detail['dropped_tf']}点 を除外）")
+    return "\n".join(lines)
+
+
+def _process_rank_7h2_candidates(today: str, now_unix: int,
+                                 notified: set[str]) -> tuple[list, set]:
+    """7H2候補の発走前判定・記録・通知メッセージ生成。"""
+    cands = _load_rank_7h2_candidates(today)
+    if not cands:
+        return [], set()
+    race_info_map = _load_race_info([c["race_key"] for c in cands if "race_key" in c])
+
+    in_window: list[tuple[dict, dict]] = []
+    for cand in cands:
+        rk = cand.get("race_key")
+        if not rk or f"{rk}#7H2" in notified:
+            continue
+        ri = race_info_map.get(rk)
+        if ri is None or ri.get("n_entries") != RANK_7H2_NE:
+            continue
+        notify_at = int(ri["start_at"]) - NOTIFY_BEFORE_START_SEC
+        if notify_at <= now_unix < notify_at + NOTIFY_WINDOW_SEC:
+            in_window.append((cand, ri))
+    if not in_window:
+        return [], set()
+
+    scraper = WinticketScraper(request_interval=1.0)
+    messages: list[tuple[str, str]] = []
+    newly_done: set[str] = set()
+    for cand, ri in in_window:
+        rk = cand["race_key"]
+        key = f"{rk}#7H2"
+        try:
+            odds_data = scraper.fetch_odds(
+                venue_id=ri["venue_id"], race_date=ri["race_date"],
+                race_no=ri["race_no"], cup_id=ri["cup_id"],
+                day_index=ri["day_index"])
+        except Exception as e:
+            logger.warning("fetch_odds 失敗(7H2) %s: %s", rk, e)
+            odds_data = None
+        if odds_data is None:
+            print(f"[prerace] {rk} 7H2候補 → オッズ取得不可（次回再試行）", flush=True)
+            time.sleep(0.3)
+            continue
+
+        decision, detail = judge_rank_7h2(
+            cand, _build_odds_lookup(odds_data, "trio"),
+            _build_odds_lookup(odds_data, "trifecta"))
+        if decision == "不明":
+            print(f"[prerace] {rk} 7H2候補 → 盤面取得不可（次回再試行）", flush=True)
+            time.sleep(0.3)
+            continue
+
+        # ⚠️ **detail は丸ごと保存する**。採点（notify_results_wt.py の
+        #    _slot=="seven_7h2"）が legs_trio / legs_tf / stake_trio / stake_tf /
+        #    bet_amount をここから読むため、1つでも間引くと黙って採点できなくなる。
+        _save_decision(today, key, {
+            "decision": decision, "rank": "RANK_7H2", "paper": True,
+            "entropy": cand.get("entropy"),
+            **detail,
+        })
+        if decision == "buy":
+            _insert_rank_7h2_pick(rk, today, detail)
+            messages.append((key, _build_rank_7h2_message(cand, ri, detail)))
+            print(f"[prerace] {rk} 7H2候補 → buy（三複{len(detail['legs_trio'])}点+"
+                  f"三単{len(detail['legs_tf'])}点・{detail['bet_amount']}円）", flush=True)
+        else:
+            _mark_paper_miwokuri(rk, "#7H2")
+            print(f"[prerace] {rk} 7H2候補 → skip: {detail.get('skip_reason')}", flush=True)
+        newly_done.add(key)
+        time.sleep(0.3)
+    return messages, newly_done
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # RANK_9H1（穴推奨・9車・高配当狙い）— 2026-08-08 新設
 #
 # 7H1 と同じ穴推奨系だが **9車ちょうど**が対象で、券種は**三連単フォーメーション
@@ -3302,6 +3507,15 @@ def main():
         newly_done |= rank_7h1_done
     except Exception as e:
         logger.exception("7H1候補処理失敗（他ランク通知には影響しない）: %s", e)
+
+    # ── 7H2候補（穴推奨・印なし2軸・三連単10点+三連複BOX）処理 ────────────────
+    try:
+        rank_7h2_messages, rank_7h2_done = _process_rank_7h2_candidates(
+            today, now_unix, notified)
+        messages += rank_7h2_messages
+        newly_done |= rank_7h2_done
+    except Exception as e:
+        logger.exception("7H2候補処理失敗（他ランク通知には影響しない）: %s", e)
 
     # ── 9H1候補（穴推奨・9車高配当・三連単フォーメーション6点）処理 ───────────
     try:

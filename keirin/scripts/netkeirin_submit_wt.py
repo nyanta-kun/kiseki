@@ -86,9 +86,10 @@ from src.stake_allocation import group_by_stake, tilted_stakes
 from src.strategy_wt import (
     RACE_BUDGET,
     RANK_7H1_TF_UNIT,
-    rank_9h1_stakes,
     rank_7h1_trio_stakes,
+    rank_7h2_stakes,
     rank_7s_gate_label,
+    rank_9h1_stakes,
     unit_stake,
 )
 
@@ -181,7 +182,7 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-07 ユーザー指定）: **7H1 > 7SS > 7S > 7A > 7C > 7B**。
+#    優先順位（2026-08-07 ユーザー指定）: **7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7B**。
 #    ⚠️ 同日中に 7B を 7C の**後ろ**へ動かした。7C との重複では 7C が実質的中率で
 #      上回る（39.0% vs 31.6%）一方、7B は 7C が拾わないレースを 3.14件/日 持つ。
 #      「重複は 7C・独自は 7B」を優先順位だけで実現している。
@@ -206,6 +207,29 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "本命が飛ぶときは番手も一緒に飛ぶ傾向があるためです。\n\n"
                 "買い目は三連単と三連複の併せ買い。"
                 "三連単で大きな配当を狙い、三連複で的中を拾う組み立てにしています。\n\n"
+                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
+            )},
+    # 7H2（2026-08-10新設・穴推奨「印なし2軸・高配当」）。7H1 と同じ2券種だが
+    # **三連単が単一のフォーメーションで表現できない**（軸2を2着に置く5点と
+    # 3着に置く5点の"倍購入"で、1つの1着列×2着列×3着列に畳むと
+    # a1-c-c' が20点混入して30点になる）。よって **kaime に
+    # 三連単フォーメーションを2行**入れる（`multi_bet_7h2`）。
+    # netkeirin の kaime は配列なので submit は1回で済む。
+    # 🔴 **7H1 の直後**＝重複したレース（7H1 の 49.2%）は 7H1 が取る。
+    #    7H1 は本番実測 ROI 80.3%・的中18.3% で 7H2(72.2%) より良いため
+    #    （2026-08-10 ユーザー判断）。犠牲は 7SS(−73.7%)・7B(−11.0%)・7C(−4.5%)。
+    "7H2": {"file_key": "s7h2", "n_cars": 7, "multi_bet_7h2": True, "gate_filter": None,
+            "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
+            # ⚠️ 暫定文面（2026-08-10）。ユーザーが別途調整する。
+            "default_comment": (
+                "本日の穴狙いをお届けします。\n\n"
+                "どの選手が上位に来るか読みづらい、荒れやすいと判断したレースだけを"
+                "選んでいます。\n\n"
+                "軸の2車は、公式予想で印の付いていない選手から選びました。"
+                "力はあるのに人気が集まっていない組み合わせを狙う形です。\n\n"
+                "買い目は三連単と三連複の併せ買い。"
+                "三連単は軸2車目を2着・3着の両方に置いて厚めに取り、"
+                "三連複で的中を拾う組み立てにしています。\n\n"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
     # 9H1（2026-08-08新設・穴推奨「9車・高配当狙い」）。三連単フォーメーション
@@ -687,7 +711,8 @@ def _bet_detail_odds(race_key: str, cfg: dict, use_trifecta: bool = False) -> di
     """
     base = str(race_key).split("#")[0]
     odds: dict = dict(_load_trio_board(base))
-    if cfg.get("multi_bet") or cfg.get("formation_bet") or use_trifecta:
+    if (cfg.get("multi_bet") or cfg.get("multi_bet_7h2")
+            or cfg.get("formation_bet") or use_trifecta):
         odds.update(_load_trifecta_board(base))
     return odds
 
@@ -1003,6 +1028,94 @@ def _dutch_point_legs(
     return legs, result
 
 
+def _normalize_7h2_candidate(
+    cand: dict, cfg: dict, race_key: str | None = None,
+) -> tuple[list[BetLeg], dict[int, str], int, int]:
+    """7H2 候補から (買い目行, 印, 軸1車番, 軸2車番) を返す。
+
+    🔴 **三連単は1つのフォーメーションに畳めない。** 買い目は
+    「軸1→軸2→相手5車」と「軸1→相手5車→軸2」の**倍購入10点**で、
+    1着列×2着列×3着列に畳むと `軸1-相手-相手` が20点混入して30点になる。
+    よって三連単フォーメーションの行を **2行**出す（kaime は配列なので submit は1回）。
+
+    印（7H1 の規則に合わせる）:
+      ◎ = 軸1（1着固定）/ ○ = 軸2 / △ = 相手（買っている車）
+      買い目に入っていない車は印なし(--)
+
+    ⚠️ 賭け金は候補JSONの値ではなく `RANK_7H2_TF_UNIT` から**入稿時点で決め直す**
+       （7H1 で記録側と入稿側の単価が食い違った事故の再発防止）。
+       三連複は残予算の均等割り。**7H1 のようなオッズ傾斜配分はしない**——
+       検証した構成（均等）から外れるため。
+    """
+    legs_tf = [str(x) for x in (cand.get("legs_tf") or [])]
+    trio_legs = [frozenset(int(x) for x in _SEP_RE.split(str(c)))
+                 for c in (cand.get("legs_trio") or [])]
+    trio_legs = [t for t in trio_legs if len(t) == 3]
+    if not legs_tf or not trio_legs:
+        raise ValueError("7H2 の買い目が空です")
+
+    axis1, axis2, partners = _split_7h2_tf(legs_tf)
+    stake_trio, stake_tf, _total = rank_7h2_stakes(len(trio_legs), len(legs_tf))
+    if not stake_trio or not stake_tf:
+        raise ValueError(f"7H2 の賭け金が組めません: 三複{len(trio_legs)}点 / "
+                         f"三単{len(legs_tf)}点")
+
+    legs: list[BetLeg] = [
+        # 軸2を2着に置く5点
+        BetLeg(BET_KIND_TRIFECTA_FORMATION,
+               [[axis1], [axis2], sorted(partners)], stake_tf),
+        # 軸2を3着に置く5点
+        BetLeg(BET_KIND_TRIFECTA_FORMATION,
+               [[axis1], sorted(partners), [axis2]], stake_tf),
+    ]
+    # 三連複は目ごとに1行（BOXは車群でしか表現できず任意の部分集合を作れない）。
+    for t in sorted(trio_legs, key=sorted):
+        legs.append(BetLeg(BET_KIND_TRIO_BOX, [sorted(t)], stake_trio))
+
+    marks: dict[int, str] = {axis1: "◎", axis2: "○"}
+    for c in sorted(partners):
+        marks.setdefault(c, "△")
+    for t in trio_legs:
+        for c in sorted(t):
+            marks.setdefault(c, "△")
+    return legs, marks, axis1, axis2
+
+
+def _split_7h2_tf(legs_tf: list[str]) -> tuple[int, int, list[int]]:
+    """7H2 の三連単10点から (軸1, 軸2, 相手) を復元し、点数の一致まで検証する。
+
+    倍購入なので、各目は `軸1-軸2-相手` か `軸1-相手-軸2` のどちらか。
+    **復元した構成から組み直した目が元と完全一致しなければ落とす**
+    （7H1 のフォーメーション復元検証と同じ思想。買い目を偽って入稿しない）。
+    """
+    parsed = []
+    for s in legs_tf:
+        parts = [int(x) for x in str(s).split("-")]
+        if len(parts) != 3:
+            raise ValueError(f"三連単の目の形式が不正です: {s!r}")
+        parsed.append(tuple(parts))
+    firsts = {p[0] for p in parsed}
+    if len(firsts) != 1:
+        raise ValueError(f"7H2 の1着は1車固定のはずです: {sorted(firsts)}")
+    axis1 = firsts.pop()
+    # 🔴 軸2は「**すべての目に現れる**車」。2着列と3着列の積集合ではない——
+    #    倍購入なので 2着列も3着列も {軸2} ∪ 相手 で、積集合は全車になる
+    #    （実装時にこれを取り違えて全レースで落ちた）。
+    #    相手は各目に1回だけ現れるので、全目に居るのは軸1と軸2だけ。
+    common = set.intersection(*({p[1], p[2]} for p in parsed))
+    if len(common) != 1:
+        raise ValueError(f"7H2 の軸2が特定できません（全目に共通={sorted(common)}）")
+    axis2 = common.pop()
+    partners = sorted(({p[1] for p in parsed} | {p[2] for p in parsed}) - {axis2})
+    rebuilt = ({(axis1, axis2, c) for c in partners}
+               | {(axis1, c, axis2) for c in partners})
+    if rebuilt != set(parsed):
+        raise ValueError(
+            f"7H2 の買い目復元が一致しません（元{len(set(parsed))}点 / "
+            f"復元{len(rebuilt)}点）: 軸{axis1}-{axis2} 相手{partners}")
+    return axis1, axis2, partners
+
+
 def _normalize_multi_candidate(
     cand: dict, cfg: dict, race_key: str | None = None,
 ) -> tuple[list[BetLeg], dict[int, str], int, int, str | None]:
@@ -1147,6 +1260,7 @@ def _process_rank(
     n_submitted = 0
     failures: list[str] = []
     is_multi = bool(cfg.get("multi_bet"))
+    is_multi_7h2 = bool(cfg.get("multi_bet_7h2"))
     is_formation = bool(cfg.get("formation_bet"))
 
     # 衝突の扱いはランクによって意味が違う。**排他設計のランク**（7SS/7S/7A/7B/9S/
@@ -1178,6 +1292,9 @@ def _process_rank(
         try:
             if is_multi:
                 legs, marks, axis1, axis2_or_p1, tilt_source = _normalize_multi_candidate(
+                    cand, cfg, race_key.split("#")[0])
+            elif is_multi_7h2:
+                legs, marks, axis1, axis2_or_p1 = _normalize_7h2_candidate(
                     cand, cfg, race_key.split("#")[0])
             elif is_formation:
                 legs, marks, axis1, axis2_or_p1 = _normalize_formation_candidate(
