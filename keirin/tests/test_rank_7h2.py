@@ -33,10 +33,14 @@ from src.netkeirin_client import (  # noqa: E402
 )
 from src.strategy_wt import (  # noqa: E402
     RANK_7H2_BUDGET_CAP,
+    RANK_7H2_ENTROPY_MIN,
+    RANK_7H2_HONMEI_SHARE_MAX,
     RANK_7H2_TF_UNIT,
     rank_7h2_axes,
     rank_7h2_build_legs,
+    rank_7h2_daily_select,
     rank_7h2_entropy,
+    rank_7h2_honmei_share,
     rank_7h2_stakes,
     rank_7h2_unmarked,
 )
@@ -226,3 +230,54 @@ def test_entropy_is_scale_invariant():
     a = {i: v for i, v in TOP3.items()}
     b = {i: v * 0.5 for i, v in TOP3.items()}
     assert rank_7h2_entropy(a) == pytest.approx(rank_7h2_entropy(b))
+
+
+# ── 5. ◎の3着内率シェアによる選別（2026-08-10 追加）─────────────────────
+
+
+def test_honmei_share_is_relative_to_race_total():
+    """◎の3着内率 ÷ 全7車の3着内率合計。絶対値ではない。"""
+    share = rank_7h2_honmei_share(TOP3, MARKS)
+    assert share == pytest.approx(TOP3[1] / sum(TOP3.values()))
+
+
+def test_honmei_share_is_none_without_honmei():
+    """◎が居ない盤面は None（選別で落ちる）。0.0 を返して素通ししない。"""
+    no_hon = {f: (0 if v == 1 else v) for f, v in MARKS.items()}
+    assert rank_7h2_honmei_share(TOP3, no_hon) is None
+
+
+def _cand_with(entropy: float, share: float) -> dict:
+    c = _cand()
+    c.update(entropy=entropy, honmei_share=share)
+    return c
+
+
+def test_daily_select_drops_thick_honmei():
+    """🔴 ◎が厚いレースは落とす。
+
+    7H2 の軸2車は印なし＝人気薄なので、◎が本当に厚いレースでは
+    印なし勢が3着以内に入る余地がない（3窓すべてで最上位帯の的中率が最低）。
+    """
+    ok = _cand_with(RANK_7H2_ENTROPY_MIN, RANK_7H2_HONMEI_SHARE_MAX)
+    ng = _cand_with(RANK_7H2_ENTROPY_MIN, RANK_7H2_HONMEI_SHARE_MAX + 0.001)
+    got = rank_7h2_daily_select([ok, ng])
+    assert got == [ok], "◎シェアが上限を超えた候補が残っている"
+
+
+def test_daily_select_requires_both_gates():
+    """エントロピー条件と◎シェア条件は **AND**。片方だけ通っても採らない。"""
+    ent_ng = _cand_with(RANK_7H2_ENTROPY_MIN - 0.001, 0.10)
+    share_ng = _cand_with(1.95, RANK_7H2_HONMEI_SHARE_MAX + 0.05)
+    assert rank_7h2_daily_select([ent_ng, share_ng]) == []
+
+
+def test_daily_select_drops_missing_share():
+    """`honmei_share` が無い/None の候補は落とす（fail-closed）。
+
+    ここを素通しにすると、◎が取れない日だけ**選別が黙って緩む**。
+    """
+    c = _cand()
+    c["entropy"] = 1.95
+    c.pop("honmei_share", None)
+    assert rank_7h2_daily_select([c]) == []

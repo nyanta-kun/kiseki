@@ -1875,6 +1875,37 @@ RANK_7H2_NE = 7                    # 対象車数（7車ちょうど）
 #    ずれていれば更新すること。
 RANK_7H2_ENTROPY_MIN = 1.8534
 RANK_7H2_LEGS_N = 5                # 相手（残り5車＝総流し）
+# ◎（WT本命）の3着内率シェア＝ pred_top3(◎) / Σ pred_top3(全7車) の上限。
+# **この値より大きいレースは対象外**にする（2026-08-10 追加）。
+#
+# 【why】7H2 が買う軸2車は印なし＝人気薄なので、**◎が本当に厚いレースでは
+# 印なし勢が3着以内に入る余地がない**。実測でも◎シェアの5分位で的中率が
+# 掃引窓 31.3→18.4% / 確認窓 32.9→14.6% / 前向き窓 35.3→15.8% と
+# **3窓すべてで最上位帯が明確に悪い**。
+#
+# 【なぜ◎単独か】印の合算（◎○ / ◎○▲ / ◎○▲△）も測ったが、**足すほど効果が薄れる**:
+#   最上位帯−最下位帯の的中率差（掃引/確認/前向き）
+#     ◎のみ      12.9 / 18.3 / 19.5 pt   ← 最も鋭い
+#     ◎○        12.2 / 13.4 / 15.6 pt
+#     ◎○▲       8.6 /  4.5 / 12.9 pt
+#     ◎○▲△      5.8 /  5.6 /  4.9 pt   ← ほぼ無意味
+#   ▲△は「印は付いたが中位」の車で、7H2 の脅威にならないため分母を薄めるだけ。
+#
+# 【上位20%を切ったときの実測】設計期間 3,957→3,165R / 前向き窓 1,229→997R
+#   的中率  24.16→26.10%（設計） / 27.10→29.69%（前向き）
+#   ROI     72.10→80.10%（設計） / 77.43→77.93%（前向き）
+#   100倍+   69→64件（設計・母数の減り20%より緩やか） / 21→15件（前向き）
+# ⚠️ **30%以上は切らない**。前向き窓で ROI 77.9→75.3%・100倍+ 15→12件と
+#    目減りが加速する。40%/50% で ROI が戻るのは標本が薄くなった揺れ。
+#
+# ⚠️ 切る帯は「当たらないが**当たれば高い**」帯でもある（捨てる帯の三連単的中の
+#    配当中央値 107〜233倍）。的中率と高配当のトレードオフを 20% だけ買っている。
+#
+# 🔴 **本番経路（月次vintage）で較正した値**。検証パイプラインの 0.2452 を
+#    そのまま使うと除外率が 17.3% にしかならない（RANK_7H2_ENTROPY_MIN と同じ罠）。
+#    月ごとの p80 は 0.2423〜0.2442 と安定している。
+#    再学習したら `scripts/check_7h2_threshold.py` で確認すること。
+RANK_7H2_HONMEI_SHARE_MAX = 0.2430
 RANK_7H2_TRIO_POOL_MAX = 5         # 三連複BOXに使うプール上限車数（→最大10点）
 # 三連単の1点あたり（円）。**この値が 7H2 の賭け金の単一正本**で、記録側と
 # 入稿側の両方がここから導出される（7H1 で二重管理の食い違いを起こした教訓）。
@@ -1924,6 +1955,20 @@ def rank_7h2_entropy(top3_probs: dict[int, float]) -> float:
     if total <= 0:
         return 0.0
     return -sum((v / total) * math.log(max(v / total, 1e-9)) for v in vals)
+
+
+def rank_7h2_honmei_share(top3_probs: dict[int, float],
+                          marks: dict[int, float | int | None]) -> float | None:
+    """◎（WT本命）の3着内率が、レース全体の3着内率に占める割合。
+
+    ◎が居ない／確率が取れない場合は None（＝選別で落とす）。
+    """
+    hon = next((f for f, v in marks.items()
+                if v is not None and int(v) == WT_MARK_HONMEI), None)
+    total = sum(float(v) for v in top3_probs.values())
+    if hon is None or hon not in top3_probs or total <= 0:
+        return None
+    return float(top3_probs[hon]) / total
 
 
 def rank_7h2_unmarked(marks: dict[int, float | int | None]) -> list[int]:
@@ -2006,15 +2051,20 @@ def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
 
     candidates の各要素に必要なキー:
       `n_entries`(=7) / `entropy`（3着内率の正規化エントロピー） /
+      `honmei_share`（◎の3着内率シェア） /
       `legs_trio` / `legs_tf`（買い目。空なら除外）
 
-    **選別は `RANK_7H2_ENTROPY_MIN` の絶対閾値で行う**（日ごとの相対順位ではない）。
-    件数は開催規模にそのまま比例する（実測 12.7件/日）。
+    **選別は絶対閾値2つで行う**（日ごとの相対順位ではない）。
+      (1) エントロピー >= RANK_7H2_ENTROPY_MIN      … 荒れる読み（全7車の約20%）
+      (2) ◎の3着内率シェア <= RANK_7H2_HONMEI_SHARE_MAX … ◎が厚すぎない（上位20%を除外）
+    件数は開催規模にそのまま比例する（実測 12.7 → **約10.2件/日**）。
     """
     elig = [c for c in candidates
             if c.get("n_entries") == RANK_7H2_NE
             and c.get("entropy") is not None
             and float(c["entropy"]) >= RANK_7H2_ENTROPY_MIN
+            and c.get("honmei_share") is not None
+            and float(c["honmei_share"]) <= RANK_7H2_HONMEI_SHARE_MAX
             and c.get("legs_trio") and c.get("legs_tf")]
     elig.sort(key=lambda c: -float(c["entropy"]))
     return elig

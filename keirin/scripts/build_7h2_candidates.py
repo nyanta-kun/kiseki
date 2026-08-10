@@ -16,7 +16,8 @@
 1. 対象日の7車レースと出走表を DB から取得
 2. 本番モデル（`lgbm_wt_eval` / `_win`）で選手単位の予測を作る
    （**連帯ヘッド `ptop2` は不要**。軸2も三連複プールも 3着内率で決まる）
-3. `strategy_wt.rank_7h2_entropy()` で3着内率の正規化エントロピー
+3. `strategy_wt.rank_7h2_entropy()` で3着内率の正規化エントロピーと、
+   `rank_7h2_honmei_share()` で◎の3着内率シェア
 4. `strategy_wt.rank_7h2_build_legs()` で買い目（三連単F 倍購入10点 + 三連複BOX）
 5. `strategy_wt.rank_7h2_daily_select()` で絶対閾値により選別
 
@@ -53,7 +54,7 @@ from src.preprocessing.feature_wt import (  # noqa: E402
 )
 from src.strategy_wt import (  # noqa: E402
     RANK_7H2_NE, rank_7h2_build_legs, rank_7h2_daily_select, rank_7h2_entropy,
-    rank_7h2_stakes,
+    rank_7h2_honmei_share, rank_7h2_stakes,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
 
@@ -124,6 +125,8 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str) -> list
             "start_time": m.get("start_at"), "race_type": m.get("race_type"),
             "n_entries": RANK_7H2_NE,
             "entropy": round(rank_7h2_entropy(top3), 6),
+            "honmei_share": (None if (_hs := rank_7h2_honmei_share(top3, marks)) is None
+                             else round(_hs, 6)),
             "axis1": a1, "axis2": a2,
             "axis1_name": name_of.get(a1), "axis2_name": name_of.get(a2),
             "n_unmarked": len(ax),
@@ -167,7 +170,7 @@ def main() -> None:
     for c in cands:
         print(f"  {c['venue_name']}{c['race_no']}R  "
               f"軸{c['axis1']}({c['axis1_name']})-{c['axis2']}({c['axis2_name']}) "
-              f"エントロピー{c['entropy']:.4f}  "
+              f"エントロピー{c['entropy']:.4f} ◎シェア{c['honmei_share']:.4f}  "
               f"三連複{len(c['legs_trio'])}点×{c['stake_trio']}円 + "
               f"三連単{len(c['legs_tf'])}点×{c['stake_tf']}円 = {c['bet_amount']}円")
 
