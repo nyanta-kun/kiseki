@@ -124,9 +124,16 @@ def test_honmei_is_still_bought_in_trifecta():
 
 
 def test_stakes_fit_in_budget():
+    """🔴 三連複300円は**ガミ対策**（2026-08-10 ユーザー指示）。
+
+    1レース10,000円なので、三連複のみの的中で投資を上回るには
+    「三連複オッズ >= 10,000 / 単価」が要る。100円だと100倍以上が必要で、
+    三連複のみ的中の配当は中央20.7倍しかないため **96.9% がガミ**になる。
+    300円なら33.3倍以上で済み 69.7% まで下がる。
+    """
     u_trio, u_tf, total = rank_7h2_stakes(10, 10)
-    assert u_tf == RANK_7H2_TF_UNIT == 900
-    assert u_trio == 100
+    assert u_tf == RANK_7H2_TF_UNIT == 700
+    assert u_trio == 300, "三連複が薄いと当たっても netkeirin 表示は不的中になる"
     assert total == 10_000 <= RANK_7H2_BUDGET_CAP
 
 
