@@ -65,6 +65,30 @@ def _axes(entry: dict) -> tuple[int, int] | None:
     return int(riders[0]["frame_no"]), int(riders[1]["frame_no"])
 
 
+def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
+    """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
+
+    🔴 これは人手の入稿ではなく**自動入稿**なので「手動入稿」と書かない。
+       2026-08-11 に「netkeirin手動入稿 … 1件」が16通届き、
+       自動で埋めた分を人が出したものと誤読しかねない状態だった。
+    """
+    from src.netkeirin_client import RACE_AUTH_URL
+    from src.notify.discord import send
+
+    head = f"🏁 **[netkeirin自動入稿] {date} 看板レース: 成功{len(done)}件"
+    head += f"・失敗{len(failed)}件**" if failed else "**"
+    body = ""
+    if done:
+        body += "\n" + " / ".join(done)
+    if failed:
+        body += "\n⚠️ 失敗: " + " / ".join(failed)
+    body += f"\n確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。"
+    try:
+        send(head + body, channel="netkeirin")
+    except Exception as e:  # noqa: BLE001 — 通知失敗で入稿結果を失わない
+        print(f"[marquee] Discord通知失敗: {e}", flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("date", nargs="?", default=datetime.now(JST).strftime("%Y-%m-%d"))
@@ -116,6 +140,8 @@ def main() -> int:
         return 0
 
     ok = ng = 0
+    done: list[str] = []
+    failed: list[str] = []
     for r in sorted(targets, key=lambda x: int(x["start_at"] or 0)):
         e = allidx.get(r["race_key"])
         if not e:
@@ -134,7 +160,11 @@ def main() -> int:
         session = "morning" if h < 12 else ("noon" if h < 18 else "evening")
         cmd = [sys.executable, "scripts/netkeirin_submit_wt.py", date, session,
                "--marquee", "--race-key", r["race_key"],
-               "--manual-rank-key", rank, "--axis1", str(ax[0]), "--axis2", str(ax[1])]
+               "--manual-rank-key", rank, "--axis1", str(ax[0]), "--axis2", str(ax[1]),
+               # 🔴 子プロセスに通知させない。1レース1プロセスなので、各々が通知すると
+               #    「手動入稿・1件」が件数ぶん飛ぶ（2026-08-11 に16通届いた実害）。
+               #    まとめて1通を本スクリプト末尾で送る。
+               "--no-notify"]
         if args.dry_run:
             cmd.append("--dry-run")
         print(f"[marquee] {e.get('venue_name')}{r['race_no']}R "
@@ -142,12 +172,17 @@ def main() -> int:
         p = subprocess.run(cmd, capture_output=True, text=True,
                            cwd=str(Path(__file__).resolve().parent.parent))
         sys.stdout.write(p.stdout)
+        label = f"{e.get('venue_name')}{r['race_no']}R({rank})"
         if p.returncode == 0 and "入稿失敗" not in p.stdout:
             ok += 1
+            done.append(label)
         else:
             ng += 1
+            failed.append(label)
             sys.stderr.write(p.stderr)
     print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件）", flush=True)
+    if not args.dry_run and (done or failed):
+        _notify_summary(date, done, failed)
     return 0
 
 

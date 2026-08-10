@@ -1656,6 +1656,11 @@ def main() -> None:
     )
     parser.add_argument("--axis1", type=int, default=None, help="--manual-rank-key指定時の軸1車番")
     parser.add_argument("--axis2", type=int, default=None, help="--manual-rank-key指定時の軸2車番")
+    # 🔴 呼び出し側でまとめて通知するとき用（`submit_marquee_wt.py` が使う）。
+    #    看板レースは1レース1プロセスで起動するので、各プロセスが通知すると
+    #    「手動入稿・1件」が件数ぶん飛ぶ（2026-08-11 に16通届いた）。
+    parser.add_argument("--no-notify", action="store_true",
+                        help="Discord通知を抑止する（呼び出し側でまとめて通知する場合）")
     args = parser.parse_args()
 
     target_date, session = args.target_date, args.session
@@ -1684,7 +1689,10 @@ def main() -> None:
         if args.dry_run:
             print(f"[dry-run][manual] {target_date} {session}: 完了（生成{n}件）", flush=True)
             return
-        if n > 0:
+        if args.no_notify:
+            print(f"[netkeirin_submit][auto] {target_date} {session}: "
+                  f"通知は呼び出し側へ委譲（成功{n}件・失敗{len(failures)}件）", flush=True)
+        elif n > 0:
             try:
                 send(
                     f"📮 **[netkeirin手動入稿] {target_date}（{SESSION_LABEL_JP[session]}）: "
@@ -1699,7 +1707,8 @@ def main() -> None:
                      + " / ".join(failures), channel="netkeirin")
             except Exception as e:
                 print(f"[netkeirin_submit] Discord通知失敗: {e}", flush=True)
-        print(f"[netkeirin_submit][manual] {target_date} {session}: 完了（成功{n}件・失敗{len(failures)}件）",
+        tag = "auto" if args.no_notify else "manual"
+        print(f"[netkeirin_submit][{tag}] {target_date} {session}: 完了（成功{n}件・失敗{len(failures)}件）",
               flush=True)
         return
 
