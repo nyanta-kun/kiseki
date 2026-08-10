@@ -1278,6 +1278,7 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         line_score_features, race_signals,
         rank_7s_daily_select, rank_7s_field_entropy, rank_7s_select_axis, rank_7s_wt_mark3_overlap_n,
         rank_7s_wt_overlap_n, rank_7a_daily_select,
+        rank_7a_market_agree_pool,
         rank_7a_top2_threshold, rank_7a_top2_gate, load_7a_pool_axis_sums,
         rank_7b_daily_select, rank_7b_order_disagree, rank_7b_select_legs,
         rank_7c_daily_select, rank_7c_select_axis, rank_7c_select_legs,
@@ -2014,6 +2015,34 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         history += [c["axis_sum"] for c in rank_7a_pool if c.get("axis_sum") is not None]
         top2_threshold = rank_7a_top2_threshold(history)
         rank_7a_candidates, rank_7a_skipped = rank_7a_top2_gate(rank_7a_pool, top2_threshold)
+
+        # ── 7A の市場合意枠（overlap==2 で 7B が取らない帯・2026-08-11 追加）──
+        # 🔴 **既存 7A のプールと混ぜない**。閾値は自プールの q20 で独立に出す。
+        #    混ぜると overlap==2 の堅い分布に引きずられて既存 7A の閾値まで動く。
+        # 🔴 7B のスライス（順序一致 ∧ 準決勝）は `rank_7a_market_agree_pool` が
+        #    除外している。netkeirin の優先順位は 7A > 7B なので、含めると
+        #    7A が 7B のレースを奪う（7B は3窓で ROI 82〜83% を保った唯一の切り口）。
+        rank_7a_ma_pool = rank_7a_market_agree_pool(rank_7s_raw_candidates)
+        rank_7a_ma_candidates: list = []
+        if rank_7a_ma_pool:
+            ma_pool_suffix = ("_night_s7a_ma_pool.json" if is_night
+                              else "_s7a_ma_pool.json")
+            ma_pool_path = (Path(output_path).parent
+                            / f"wave_picks_wt_{target_date}{ma_pool_suffix}")
+            with open(ma_pool_path, "w", encoding="utf-8") as f:
+                json.dump(rank_7a_ma_pool, f, ensure_ascii=False, indent=2)
+            ma_history = load_7a_pool_axis_sums(
+                Path(output_path).parent, target_date,
+                suffixes=("_s7a_ma_pool.json", "_night_s7a_ma_pool.json"))
+            ma_history += [c["axis_sum"] for c in rank_7a_ma_pool
+                           if c.get("axis_sum") is not None]
+            ma_threshold = rank_7a_top2_threshold(ma_history)
+            rank_7a_ma_candidates, ma_skipped = rank_7a_top2_gate(
+                rank_7a_ma_pool, ma_threshold)
+            click.echo(f"[7A市場合意枠] axis_sum<={ma_threshold:.4f} "
+                       f"(n_hist={len(ma_history)}) → 購入{len(rank_7a_ma_candidates)}件 "
+                       f"/ 見送り{len(ma_skipped)}件 (プール{len(rank_7a_ma_pool)}件)")
+            rank_7a_candidates = rank_7a_candidates + rank_7a_ma_candidates
 
         rank_7a_suffix = "_night_s7a_candidates.json" if is_night else "_s7a_candidates.json"
         rank_7a_path = Path(output_path).parent / f"wave_picks_wt_{target_date}{rank_7a_suffix}"

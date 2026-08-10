@@ -1032,7 +1032,8 @@ def rank_7a_top2_threshold(
 
 
 def load_7a_pool_axis_sums(
-    picks_dir, before_date: str, days: int = RANK_7A_TOP2_GATE_LOOKBACK_DAYS
+    picks_dir, before_date: str, days: int = RANK_7A_TOP2_GATE_LOOKBACK_DAYS,
+    suffixes: tuple[str, ...] = ("_s7a_pool.json", "_night_s7a_pool.json"),
 ) -> list[float]:
     """`_s7a_pool.json`（ゲート**前**のプール）から直近 days 日の axis_sum を集める。
 
@@ -1041,6 +1042,10 @@ def load_7a_pool_axis_sums(
     picks_history が毎朝書き換わる。
 
     ファイルが無い日は飛ばす。読めない日があっても呼び出し元を止めない。
+
+    suffixes: 読むプールファイルの接尾辞。市場合意枠（overlap==2）は
+      **別プール**（`_s7a_ma_pool.json`）で閾値を出す。同じプールに混ぜると
+      分布がずれて**既存 7A の閾値まで動く**（`RANK_7A_MARKET_AGREE` のコメント参照）。
     """
     import json as _json
     from datetime import date as _date
@@ -1054,7 +1059,7 @@ def load_7a_pool_axis_sums(
     out: list[float] = []
     for i in range(1, days + 1):
         d = (base - _timedelta(days=i)).isoformat()
-        for suffix in ("_s7a_pool.json", "_night_s7a_pool.json"):
+        for suffix in suffixes:
             p = _Path(picks_dir) / f"wave_picks_wt_{d}{suffix}"
             if not p.exists():
                 continue
@@ -1163,6 +1168,114 @@ def rank_7a_daily_select(
             pool.append(c)
     if top2_threshold is not None:
         pool, _ = rank_7a_top2_gate(pool, top2_threshold)
+    return sorted(pool, key=lambda c: c["axis_sum"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7A の市場合意枠（`wt_overlap_n == 2`・2026-08-11 追加・ユーザー指示）
+#
+# 【背景】被覆マップ上、`overlap == 2`（モデルの軸2車が WT の ◎○ と完全一致）は
+#   7B の枠で、その 7B は **順序一致 ∧ race_type=="準決勝"** まで絞り込まれている。
+#   残り（一般・選抜・特選…や順序不一致）は**どのランクにも入らない空白**だった。
+#   2026-08-10 の川崎4R/6R/7R がこれに当たり、ユーザーが手動で 7A として入稿した。
+#
+# 【何を足すか】`overlap == 2` かつ **7B が取らない**もののうち、
+#   **7A と同じ形**（axis_sum だけ不合格・entropy は合格）だけを 7A へ足す。
+#   買い方も 7A と同一（三連複 軸2車 + 相手5点総流し・傾斜配分）＝手動入稿と同じ形。
+#
+# 🔴 **既存 7A のプールとゲート閾値には混ぜない。**
+#   7A の低配当見送りゲートは「直近プールの axis_sum q20」で閾値を決める。
+#   `overlap == 2` は市場が完全合意した堅い群で axis_sum の分布がずれるため、
+#   同じプールに入れると**既存 7A の閾値まで動いて選ばれるレースが変わる**。
+#   別プール（`_s7a_ma_pool.json`）で独立に閾値を出し、候補リストだけを結合する。
+#
+# 🔴 **7B の定義と完全に排他にする。** netkeirin の優先順位は 7A > 7B なので、
+#   ここで 7B のスライスを含めると **7A が 7B のレースを奪う**。7B は
+#   ROI 82〜83% を3窓で保った唯一の切り口なので、絶対に食わせない。
+#
+# ⚠️ **この帯は既に測定されており、控除率の壁を越えない。**
+#     overlap=2 全体        … 的中 56.3% / ROI 72.4% / 配当中央 4.0倍 / ガミ率 60.2%
+#     空白3 全件(48.5件/日) … 確認窓 ROI 74.3% [71.6, 76.7]
+#   （memory: keirin_7car_coverage_gaps_2026_08_05 / strategy_wt の 7B 定義部）
+#   **ユーザーが実測を承知のうえで採用を指示**（2026-08-11）。的中体験を重視した
+#   商品判断であり、ROI 改善を意図したものではない。畳むときは
+#   `RANK_7A_MARKET_AGREE = False` の1行で止まる。
+#
+# 【件数】実測（2026-07-29〜08-10 の生候補13日分）:
+#     7A の形 かつ overlap∈{0,1}（現行プール）     3.23件/日
+#     7A の形 かつ overlap==2 で 7B 非該当（追加） 27.69件/日 ← ゲート前
+#   ゲート（自プールの q20）通過後は 5〜6件/日 の想定。**ゲートを外すと28件/日**に
+#   なり 7A の性格がこの帯に置き換わるので、広げるときは件数を必ず確認すること。
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: 市場合意枠（overlap==2）を 7A に含めるか。False で従来どおり overlap∈{0,1} のみ。
+RANK_7A_MARKET_AGREE = True
+
+#: この日以降のレースにだけ適用する（YYYY-MM-DD）。
+#
+# 🔴 **過去を書き換えないため**の境界。7A の過去実績（ROI 80.1%）は
+#    overlap∈{0,1} だけで積まれたもので、そこへ ROI 72〜74% の帯を遡って
+#    混ぜると Web の 7A 実績が別物になる。
+# 🔴 **live と rebuild の両方がこの境界を見る。** 毎朝 08:40 の
+#    `reconcile_walkforward_tail.sh` は前日ぶんの `#7A` 行を**一旦全削除してから**
+#    再構築するので、rebuild 側にこの枝が無いと **live が書いた行が毎晩消える**
+#    （2026-08-06 に 7A/7B で実際に起きた rebuild×live 混在と同型）。
+RANK_7A_MARKET_AGREE_FROM = "2026-08-11"
+
+
+def rank_7a_race_date(c: dict) -> str:
+    """候補の開催日を "YYYY-MM-DD" で返す。取れなければ空文字。
+
+    live の生候補（`_s7_raw_candidates.json`）は `race_date` を持たず
+    `race_key`（"20260810_34_04"）しか無い一方、rebuild 側は `race_date` を持つ。
+    **両方で同じ判定をする**ためにここで吸収する（片方だけ日付が取れないと、
+    live と rebuild で選ばれるレースが変わって毎晩 picks_history が書き換わる）。
+    """
+    d = c.get("race_date")
+    if d:
+        return str(d)
+    rk = str(c.get("race_key") or "")
+    head = rk.split("_")[0]
+    if len(head) == 8 and head.isdigit():
+        return f"{head[:4]}-{head[4:6]}-{head[6:]}"
+    return ""
+
+
+def rank_7a_market_agree_active(race_date: str | None) -> bool:
+    """その日付で市場合意枠が有効か。日付不明なら**無効**（安全側）。"""
+    if not RANK_7A_MARKET_AGREE or not race_date:
+        return False
+    return str(race_date) >= RANK_7A_MARKET_AGREE_FROM
+
+
+def rank_7a_is_7b_slice(c: dict) -> bool:
+    """7B が取るスライス（overlap==2 ∧ 順序一致 ∧ race_type が 7B 指定）か。
+
+    🔴 `RANK_7B_RACE_TYPES` は**完全一致**で判定する（部分一致にすると
+       "チャレンジ準決勝"/"ガールズ準決勝" という未検証の母集団が約30%混入する。
+       7B 定義部のコメント参照）。
+    """
+    return (c.get("wt_overlap_n") == 2
+            and not c.get("order_disagree")
+            and c.get("race_type") in RANK_7B_RACE_TYPES)
+
+
+def rank_7a_market_agree_pool(candidates: list[dict]) -> list[dict]:
+    """市場合意枠（overlap==2 で 7B が取らない）のうち 7A と同じ形のものを返す。
+
+    形の条件は `rank_7a_daily_select` と同一（axis_sum だけ不合格・entropy 合格）。
+    ゲートは掛けない（呼び出し側が**自プールの**閾値で掛ける）。
+    """
+    pool = []
+    for c in candidates:
+        if not rank_7a_market_agree_active(rank_7a_race_date(c)):
+            continue
+        if c.get("wt_overlap_n") != 2 or rank_7a_is_7b_slice(c):
+            continue
+        axis_ok = c["axis_sum"] <= RANK_7S_AXIS_SUM_MAX
+        ent_ok = c.get("entropy", float("inf")) <= RANK_7S_ENTROPY_MAX
+        if (not axis_ok) and ent_ok:
+            pool.append(c)
     return sorted(pool, key=lambda c: c["axis_sum"])
 
 

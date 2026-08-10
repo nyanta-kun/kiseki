@@ -74,6 +74,7 @@ from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, pr
 from src.strategy_wt import (
     RANK_7A_STAKE, unit_stake, rank_7s_field_entropy, rank_7s_select_axis, rank_7s_wt_mark3_overlap_n,
     rank_7s_wt_overlap_n, rank_7a_daily_select, rank_7a_gate_chronological,
+    rank_7a_market_agree_pool,
 )
 
 N_CAR = 7
@@ -246,6 +247,19 @@ def build_rows(model_name: str, date_from: str, date_to: str,
     _pool = rank_7a_daily_select(candidates)
     _selected = (rank_7a_gate_chronological(_pool, pool_history)
                  if apply_top2_gate else _pool)
+    # 【2026-08-11】市場合意枠（overlap==2 で 7B が取らない帯）。
+    # 🔴 **live と同じ枝を rebuild にも持たせる。** 毎朝 08:40 の
+    #    `reconcile_walkforward_tail.sh` は前日ぶんの `#7A` 行を一旦全削除してから
+    #    書き直すので、ここに枝が無いと **live が書いた行が毎晩消える**
+    #    （2026-08-06 に 7A/7B で起きた rebuild×live 混在と同型）。
+    # 🔴 プールと閾値は**既存 7A と分けて**持つ（混ぜると既存 7A の閾値まで動く）。
+    #    `RANK_7A_MARKET_AGREE_FROM` より前の日付は `rank_7a_market_agree_pool`
+    #    自身が落とすので、過去実績は書き換わらない。
+    _ma_pool = rank_7a_market_agree_pool(candidates)
+    if _ma_pool:
+        _ma_hist: list[tuple[str, float]] = []
+        _selected = _selected + (rank_7a_gate_chronological(_ma_pool, _ma_hist)
+                                 if apply_top2_gate else _ma_pool)
     for c_ in _selected:
         axis1, axis2 = c_["axis1"], c_["axis2"]
         trio = c_["trio"]
