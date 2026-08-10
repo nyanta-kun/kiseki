@@ -140,3 +140,40 @@ def test_guard_detects_a_removed_entry():
         and not ((m := _VINTAGE_NAME_RE.match(n)) and m.group("base") in vintage)
     }
     assert "lgbm_upset_screen" in uncovered
+
+
+# ---------------------------------------------------------------------------
+# オッズ予測モデル（2026-08-11 追加）
+# ---------------------------------------------------------------------------
+# 上の走査は `load_model("...")` の第1引数（= data/models/{name}.pkl）を拾う設計で、
+# **LightGBM テキスト形式を `lgb.Booster(model_file=...)` で読むモデルは対象外**。
+# `src/odds_prediction.py` はその形なので、専用に配布リストとの対応を固定する。
+#
+# 配布漏れの怖さ: 無くても入稿は止まらず WARNING を出して従来配分へ落ちるだけなので、
+# **黙って実質的中率が 3〜5pt 落ちた状態で回り続ける**（[[keirin_odds_prediction_model_2026_08_11]]）。
+def test_odds_prediction_models_are_distributed():
+    from src import odds_prediction as op
+
+    sync = SYNC_SCRIPT.read_text(encoding="utf-8")
+    expected = {f"odds_trio_n{n}.txt" for n in op.SUPPORTED_N_CAR}
+    expected.add(op.META_PATH.name)
+    missing = sorted(n for n in expected if f'"{n}"' not in sync)
+    assert not missing, (
+        f"{missing} が sync_models_to_vps.sh の転送対象にありません。"
+        "配布されないと予測オッズが使われず、黙って実質的中率が落ちます"
+    )
+
+
+def test_odds_prediction_model_path_matches_sync_list():
+    """`load_model()` が組み立てるファイル名と配布リストの名前が一致すること。
+
+    片方だけ改名すると、コードは動くのに配布されない（or 逆）状態になる。
+    """
+    from src import odds_prediction as op
+
+    for n in op.SUPPORTED_N_CAR:
+        expected = op.MODEL_DIR / f"odds_trio_n{n}.txt"
+        assert expected.name in SYNC_SCRIPT.read_text(encoding="utf-8")
+        assert expected.parent == op.META_PATH.parent, (
+            "モデルと meta が別ディレクトリを向いている"
+        )
