@@ -94,9 +94,27 @@ _FIXTURE = """\
 """
 
 
+@pytest.fixture(autouse=True)
+def isolated_picks_dir(tmp_path, monkeypatch):
+    """買い目ファイルの置き場を一時ディレクトリへ差し替える。
+
+    🔴 **本番の data/picks/ へ書いてはいけない。** 2026-08-11 まで、これらのテストは
+       実ディレクトリへ fixture を書いて `unlink` していた。fixture の日付には
+       **実在日**（2026-07-12 / 2026-07-01）が使われており、同名の本番ファイルが
+       あれば**上書きしてから削除**していた（両日ともたまたま不在で助かっていた）。
+
+    ⚠️ 併せて **VPS でだけ落ちる**問題も解消する。`_parse_picks_full` は
+       `wave_picks_wt_{date}.txt` と `_night.txt` の**両方**を読むので、
+       VPS に実データ `wave_picks_wt_2026-07-12_night.txt` があると
+       fixture 以外の行が混ざり件数が合わなくなっていた。
+    """
+    monkeypatch.setattr(nr, "PICKS_DIR", tmp_path)
+    return tmp_path
+
+
 @pytest.fixture()
-def fixture_picks_file():
-    path = Path(nr.__file__).resolve().parent.parent / "data" / "picks" / f"wave_picks_wt_{_FIXTURE_DATE}.txt"
+def fixture_picks_file(isolated_picks_dir):
+    path = nr.PICKS_DIR / f"wave_picks_wt_{_FIXTURE_DATE}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_FIXTURE, encoding="utf-8")
     try:
@@ -130,7 +148,7 @@ _WIDE_FIXTURE = """\
 
 def test_parse_picks_full_wide_coexists_with_main():
     """7PLUS_R時代の日付(2026-07-10〜07-15)のSSランクは 7PLUS_R。廃止済みS/Aランクは無視。"""
-    path = Path(nr.__file__).resolve().parent.parent / "data" / "picks" / f"wave_picks_wt_{_WIDE_DATE}.txt"
+    path = nr.PICKS_DIR / f"wave_picks_wt_{_WIDE_DATE}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_WIDE_FIXTURE, encoding="utf-8")
     try:
@@ -147,7 +165,7 @@ def test_parse_picks_full_wide_coexists_with_main():
 def test_parse_picks_full_abolished_after_20260716():
     """旧S1全廃日(2026-07-16)以降の日付では SS セクションを無視する。"""
     date = "2099-12-29"
-    path = Path(nr.__file__).resolve().parent.parent / "data" / "picks" / f"wave_picks_wt_{date}.txt"
+    path = nr.PICKS_DIR / f"wave_picks_wt_{date}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_WIDE_FIXTURE.replace(_WIDE_DATE, date), encoding="utf-8")
     try:
@@ -160,7 +178,7 @@ def test_parse_picks_full_abolished_after_20260716():
 def test_parse_picks_full_old_date_ss_is_legacy():
     """旧日付(2026-07-10 より前)のSSランクは旧カット方式 7PLUS_SS として互換維持。"""
     old_date = "2026-07-01"
-    path = Path(nr.__file__).resolve().parent.parent / "data" / "picks" / f"wave_picks_wt_{old_date}.txt"
+    path = nr.PICKS_DIR / f"wave_picks_wt_{old_date}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_WIDE_FIXTURE.replace(_WIDE_DATE, old_date), encoding="utf-8")
     try:
@@ -187,7 +205,7 @@ _B_ONLY = """\
 
 def test_results_b_only_not_filemissing(monkeypatch):
     import sys as _sys
-    path = Path(nr.__file__).resolve().parent.parent / "data" / "picks" / f"wave_picks_wt_{_B_ONLY_DATE}.txt"
+    path = nr.PICKS_DIR / f"wave_picks_wt_{_B_ONLY_DATE}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_B_ONLY, encoding="utf-8")
     msgs = []
@@ -205,3 +223,53 @@ def test_results_b_only_not_filemissing(monkeypatch):
     assert msgs, "通知が送られていない"
     assert "見つかりません" not in msgs[0], "Bランクのみを『ファイル無し』と誤通知している"
     assert "採点対象なし" in msgs[0] or "推奨買い目" in msgs[0]
+
+
+# ---------------------------------------------------------------------------
+# 再発防止（2026-08-11）
+# ---------------------------------------------------------------------------
+def test_tests_never_touch_the_real_picks_dir():
+    """このテストファイルが**本番の data/picks/ を直接組み立てない**こと。
+
+    2026-08-11 まで、各テストは実ディレクトリへ fixture を書いて `unlink` していた。
+    fixture の日付に**実在日**（2026-07-12 / 2026-07-01）が使われており、
+    同名の本番ファイルがあれば**上書きしてから削除**していた
+    （両日ともたまたま不在で助かっていた）。
+    """
+    src = Path(__file__).read_text(encoding="utf-8")
+    # 実パスの組み立て（`... / "data" / "picks"`）が本文に無いこと。
+    # 説明用にこの文字列自体を書くと自己検知するので、分割して比較する。
+    needle = '"data" / ' + '"picks"'
+    body = "\n".join(
+        line for line in src.splitlines()
+        if not line.lstrip().startswith("#") and "needle" not in line
+    )
+    assert needle not in body, (
+        "テストが本番の picks ディレクトリを直接指しています。"
+        "nr.PICKS_DIR を monkeypatch した一時ディレクトリを使ってください"
+    )
+
+
+def test_picks_dir_is_module_level_constant():
+    """`PICKS_DIR` がモジュール定数で、差し替え可能であること。
+
+    関数の中でパスを組むと monkeypatch できず、テストが本番ディレクトリへ
+    書きに行く状態へ戻ってしまう。実際に参照している箇所も定数経由か確かめる。
+    """
+    import ast
+    import inspect
+
+    assert hasattr(nr, "PICKS_DIR")
+    src = inspect.getsource(nr)
+    tree = ast.parse(src)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        for node in ast.walk(fn):
+            # `... / "data" / "picks"` を関数内で組み立てていないこと
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                right = node.right
+                if isinstance(right, ast.Constant) and right.value == "picks":
+                    raise AssertionError(
+                        f"{fn.name} が picks のパスを自前で組み立てています"
+                        "（PICKS_DIR を使ってください）")

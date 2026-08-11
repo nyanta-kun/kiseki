@@ -57,6 +57,16 @@ _PAPER_SUFFIXES = tuple(spec.suffix for spec in CURRENT_PAPER_RANKS) + tuple(
 )
 
 
+# 公開買い目ファイルの置き場。
+# 🔴 **モジュール定数にしてある**のは、テストが一時ディレクトリへ差し替えられるように
+#    するため。関数の中で `Path(__file__).parent.parent / "data" / "picks"` を組むと
+#    差し替えられず、テストが**本番の picks ディレクトリへ書いて消す**ことになる。
+#    実際 2026-08-11 まではそうなっており、fixture の日付に実在日
+#    （2026-07-12 / 2026-07-01）が使われていたため、同名の本番ファイルがあれば
+#    上書き→削除されていた（たまたま両日とも不在で助かっていた）。
+PICKS_DIR = Path(__file__).parent.parent / "data" / "picks"
+
+
 def _parse_picks_full(target_date: str) -> dict:
     """公開買い目ファイルから {(venue, race_no, slot): (rank, time, combo_str)}
 
@@ -65,7 +75,7 @@ def _parse_picks_full(target_date: str) -> dict:
     （夜レースは start≥19時で昼と発走時刻が重ならず race_no 衝突なし）。
     slot は "wide"(ワイド1点)/"main"(SS/S/A)。同一レースで両プロダクトが並立するため分離。
     """
-    base = Path(__file__).parent.parent / "data" / "picks"
+    base = PICKS_DIR
     picks = {}
     for fname in (f"wave_picks_wt_{target_date}.txt", f"wave_picks_wt_{target_date}_night.txt"):
         p = base / fname
@@ -155,7 +165,7 @@ def _write_miwokuri(target_date: str, purchased_base_keys: set[str], conn, pm: d
         return 0
     if pm is None:
         pm = {}
-    picks_dir = Path(__file__).parent.parent / "data" / "picks"
+    picks_dir = PICKS_DIR
     candidates: list[dict] = []
     for fname in (
         f"wave_picks_wt_{target_date}_candidates.json",
@@ -401,7 +411,7 @@ def _main_inner(date):
     picks = _parse_picks_full(target_date)
     if not picks and not has_buy_decisions:
         # ファイル不在(真のエラー) と 7+車推奨0件(静かな日・正常) を区別する
-        picks_file = Path(__file__).parent.parent / "data" / "picks" / f"wave_picks_wt_{target_date}.txt"
+        picks_file = PICKS_DIR / f"wave_picks_wt_{target_date}.txt"
         if not picks_file.exists():
             emit(f"⚠️ 競輪AI[wt] [{target_date}] 予想ファイルが見つかりません")
         else:
@@ -668,7 +678,7 @@ def _main_inner(date):
     # （gap12/gap34 もここから取得して picks_history に永続化する）
     _cand_keys_extra: set[str] = set()
     gap_map: dict[str, tuple[float | None, float | None, float | None]] = {}  # rk -> (gap12, gap34, gap23_pt)
-    _picks_dir = Path(__file__).parent.parent / "data" / "picks"
+    _picks_dir = PICKS_DIR
     for _fname in (f"wave_picks_wt_{target_date}_candidates.json", f"wave_picks_wt_{target_date}_night_candidates.json"):
         _p = _picks_dir / _fname
         if _p.exists():
