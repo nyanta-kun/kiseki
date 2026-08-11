@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Sequence
 from datetime import date as Date
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -288,6 +289,61 @@ _CANDIDATE_RANK = "7PLUS_CAND"
 # 対象ランクを揃えることでも齟齬を防ぐ）。
 _VALID_PICK_RANKS = "(" + ", ".join(f"'{r}'" for r in (*_PAPER_RANK_LABELS, _CANDIDATE_RANK)) + ")"
 
+
+def _finish_top3_frames(entries: Sequence[Any]) -> list[int] | None:
+    """確定した1〜3着の車番を着順で返す。未確定・欠けているなら None。"""
+    top3 = sorted(
+        (e for e in entries
+         if e["finish_order"] is not None and 1 <= e["finish_order"] <= 3),
+        key=lambda e: e["finish_order"],
+    )
+    if len(top3) != 3:
+        return None
+    return [int(e["frame_no"]) for e in top3]
+
+
+def _submitted_pick_result(
+    bet: dict[str, Any] | None, finish_frames: list[int] | None,
+    trio_pay: int, trifecta_pay: int,
+) -> dict[str, Any]:
+    """入稿記録だけの行（picks_history に無い）の買い目・投資・的中・払戻を組む。
+
+    ランクのゲートを通っていないレースは `picks_history` に行が立たず、採点バッチも
+    走らない。そのため **入稿の原本（`bet_detail`）と確定結果から直に組み立てる**。
+
+    ⚠️ **買い目は再構成しない。** 入稿の瞬間に保存した combo と stake をそのまま使う。
+       傾斜配分は入稿時点の想定オッズで決まるので後から再現できない。
+    ⚠️ combo の区切りは券種で違う（三連複 `1=2=4` / 三連単 `1-2-4`）。
+       ここを取り違えると**当たっているのに不的中**になる（表示だけ静かに壊れる）。
+    """
+    lines = (bet or {}).get("lines") or []
+    combos = [str(x["combo"]) for x in lines]
+    out: dict[str, Any] = {
+        "pred_combo": " ".join(combos) or None,
+        "n_combos": len(lines) or None,
+        "bet_amount": sum(int(x["stake"]) for x in lines),
+        "hit": False,
+        "payout": 0,
+    }
+    if not lines or not finish_frames:
+        return out
+
+    win_trio = "=".join(map(str, sorted(finish_frames)))
+    win_trifecta = "-".join(map(str, finish_frames))
+    payout = 0
+    for x in lines:
+        combo = str(x["combo"])
+        stake = int(x["stake"])
+        # 100円あたりの払戻 × 賭け金/100。10円未満は切り捨てない
+        # （trio_pay 自体が既に10円単位で丸めてある）。
+        if combo == win_trio:
+            payout += trio_pay * stake // 100
+        elif combo == win_trifecta:
+            payout += trifecta_pay * stake // 100
+    out["hit"] = payout > 0
+    out["payout"] = payout
+    return out
+
 # ---------------------------------------------------------------------------
 # 推奨外レースの仮想買い目（hypo_*）— 2026-07-31新設
 #
@@ -364,8 +420,12 @@ async def get_picks(
                   wr.n_entries,
                   vi.name                    AS venue_name,
                   ph.id,
-                  ph.race_key                AS ph_race_key,
-                  ph.rank,
+                  COALESCE(ph.race_key, wr.race_key) AS ph_race_key,
+                  -- 入稿だけのレース（ゲート未通過）も推奨として出す。
+                  -- 既定ビューと同じ扱いにしないと、同じレースが
+                  -- 「全レース表示」でだけ推奨外に見える。
+                  COALESCE(ph.rank, 'RANK_' || ns.rank_key) AS rank,
+                  (ph.id IS NULL AND ns.rank_key IS NOT NULL) AS submission_only,
                   ph.pred_combo,
                   ph.n_combos,
                   ph.hit,
@@ -388,6 +448,14 @@ async def get_picks(
                  AND ph.race_date = :date
                  AND ph.route = 'wt'
                  AND ph.rank IN {_VALID_PICK_RANKS}
+                -- 生きている入稿のうち最新の1件（取消は論理削除なので除外する）
+                LEFT JOIN LATERAL (
+                    SELECT rank_key
+                    FROM keirin.netkeirin_submissions x
+                    WHERE x.race_key = wr.race_key AND x.deleted_at IS NULL
+                    ORDER BY x.submitted_at DESC
+                    LIMIT 1
+                ) ns ON TRUE
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
@@ -404,6 +472,7 @@ async def get_picks(
                   ph.id,
                   ph.race_key,
                   SPLIT_PART(ph.race_key, '#', 1) AS base_key,
+                  FALSE AS submission_only,
                   ph.rank,
                   ph.pred_combo,
                   ph.n_combos,
@@ -434,7 +503,61 @@ async def get_picks(
                 WHERE ph.race_date = :date
                   AND ph.route = 'wt'
                   AND ph.rank IN {_VALID_PICK_RANKS}
-                ORDER BY wr.start_at, ph.id
+
+                UNION ALL
+
+                -- 🔴 **手動・穴埋めで入稿したレースも推奨として出す**（2026-08-11）。
+                --    ランクのゲートを通っていないと `picks_history` に行が立たないため、
+                --    実際に商品として売っているのに一覧にも成績にも現れなかった。
+                --    実測でこれが 135 レース（売上シェアの7割）に達していた。
+                --    ⚠️ 買い目・的中・投資額は `netkeirin_submissions.bet_detail`
+                --       （入稿の瞬間に保存した原本）から組み立てる。再計算しない。
+                SELECT
+                  NULL::int                  AS id,
+                  ns.race_key                AS race_key,
+                  ns.race_key                AS base_key,
+                  TRUE                       AS submission_only,
+                  'RANK_' || ns.rank_key     AS rank,
+                  NULL::text                 AS pred_combo,
+                  NULL::int                  AS n_combos,
+                  NULL::int                  AS hit,
+                  NULL::int                  AS payout,
+                  NULL::int                  AS trio_payout,
+                  NULL::int                  AS trifecta_payout,
+                  NULL::int                  AS bet_amount,
+                  'wt'                       AS route,
+                  FALSE                      AS miwokuri,
+                  NULL::numeric              AS prerace_gami,
+                  NULL::numeric              AS gap12,
+                  NULL::numeric              AS gap23,
+                  NULL::numeric              AS gap34,
+                  ns.gate_label,
+                  wr.race_no,
+                  wr.grade,
+                  wr.race_type,
+                  wr.start_at,
+                  wr.status,
+                  wr.n_entries,
+                  vi.name                    AS venue_name
+                FROM keirin.netkeirin_submissions ns
+                JOIN keirin.wt_races wr
+                  ON wr.race_key = ns.race_key
+                JOIN keirin.venue_info vi
+                  ON wr.venue_id = vi.venue_code
+                WHERE wr.race_date = :date
+                  -- 取消済みは商品ではない（論理削除なので行は残っている）
+                  AND ns.deleted_at IS NULL
+                  -- 同じレースが picks_history にもあるなら、そちらが本体。
+                  -- ⚠️ ランク名で突き合わせてはいけない。穴埋めは 7A/9A を名乗るため
+                  --    「7C 候補のレースを 7A で入稿した分」が二重に出る。
+                  AND NOT EXISTS (
+                    SELECT 1 FROM keirin.picks_history ph2
+                    WHERE SPLIT_PART(ph2.race_key, '#', 1) = ns.race_key
+                      AND ph2.race_date = :date
+                      AND ph2.route = 'wt'
+                      AND ph2.rank IN {_VALID_PICK_RANKS}
+                  )
+                ORDER BY start_at, id
             """),
             {"date": target},
         )).mappings().all()
@@ -478,11 +601,15 @@ async def get_picks(
     for r in rows:
         base_key = r["base_key"]
         has_pick = r["rank"] is not None
+        # 入稿記録だけの行（ゲート未通過で picks_history に無い）。
+        submission_only = bool(r.get("submission_only"))
 
         if has_pick:
             is_wide = r["rank"] == "WIDE"
             race_key = r["ph_race_key"] if include_all else r["race_key"]
-            synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
+            # 合成オッズは picks_history の pred_combo が前提。入稿だけの行には無い。
+            synth_odds = (None if submission_only
+                          else await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide))
         else:
             race_key = base_key
             synth_odds = None
@@ -508,19 +635,18 @@ async def get_picks(
             {"race_key": base_key},
         )).mappings().all()
 
+        # 確定した上位3着（レース未確定なら None）。払戻の算出と、入稿だけの行の
+        # 的中判定の両方で使う。
+        finish_frames = _finish_top3_frames(entries)
+
         # 推奨外レース・採点前の候補行でも、レース確定後は三連複/三連単の払戻を表示する。
         # picks_history に未記録（0円）の場合は wt_odds の最終オッズ×100 から算出
         # （10円単位切り捨て。実払戻との一致は 2026-07-12 に検証済み）。
         trio_pay = int(r["trio_payout"] or 0) if has_pick else 0
         trifecta_pay = int(r["trifecta_payout"] or 0) if has_pick else 0
         if trio_pay == 0 or trifecta_pay == 0:
-            top3 = sorted(
-                (e for e in entries
-                 if e["finish_order"] is not None and 1 <= e["finish_order"] <= 3),
-                key=lambda e: e["finish_order"],
-            )
-            if len(top3) == 3:
-                frames = [int(e["frame_no"]) for e in top3]
+            if finish_frames:
+                frames = finish_frames
                 trio_comb = "-".join(map(str, sorted(frames)))
                 tri_comb = "-".join(map(str, frames))
                 odds_rows = (await db.execute(
@@ -541,6 +667,13 @@ async def get_picks(
                         trio_pay = pay
                     elif o["bet_type"] == "trifecta" and trifecta_pay == 0:
                         trifecta_pay = pay
+
+        # 入稿の原本（keirin 側が入稿の瞬間に保存した買い目と金額配分）。
+        submitted_bet = _parse_bet_detail(
+            submitted.get((base_key, (r["rank"] or "").replace("RANK_", ""))))
+        # 入稿だけの行は、買い目・投資・的中・払戻をその原本と確定結果から組む。
+        sub_result = (_submitted_pick_result(submitted_bet, finish_frames, trio_pay, trifecta_pay)
+                      if submission_only else None)
 
         # 推奨外レースの仮想買い目（hypo_*）。7/9車のみ・軸選定可能な場合のみ非null。
         hypo_axis1 = hypo_axis2 = hypo_others = hypo_axis_sum = hypo_entropy = hypo_wt_overlap_n = None
@@ -578,14 +711,22 @@ async def get_picks(
             "n_entries": r["n_entries"],
             "rank": r["rank"],
             "display_rank": _display_rank(str(r["rank"])) if has_pick else None,
-            "pred_combo": r["pred_combo"] if has_pick else None,
-            "n_combos": r["n_combos"] if has_pick else None,
+            "pred_combo": (sub_result["pred_combo"] if sub_result
+                           else (r["pred_combo"] if has_pick else None)),
+            "n_combos": (sub_result["n_combos"] if sub_result
+                         else (r["n_combos"] if has_pick else None)),
             "synth_odds": synth_odds,
-            "hit": bool(r["hit"]) if has_pick else False,
-            "payout": (r["payout"] or 0) if has_pick else 0,
+            "hit": (sub_result["hit"] if sub_result
+                    else (bool(r["hit"]) if has_pick else False)),
+            "payout": (sub_result["payout"] if sub_result
+                       else ((r["payout"] or 0) if has_pick else 0)),
             "trio_payout": trio_pay,
             "trifecta_payout": trifecta_pay,
-            "bet_amount": (r["bet_amount"] or 0) if has_pick else 0,
+            "bet_amount": (sub_result["bet_amount"] if sub_result
+                           else ((r["bet_amount"] or 0) if has_pick else 0)),
+            # ゲートを通っていない入稿（手動・看板の穴埋め）であることを表に出す。
+            # 混ぜたまま出すと「ランクの成績」と読まれてしまう。
+            "submission_only": submission_only,
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
             "gap12": float(r["gap12"]) if (has_pick and r.get("gap12") is not None) else None,
@@ -599,8 +740,7 @@ async def get_picks(
             "hypo_entropy": hypo_entropy,
             "hypo_wt_overlap_n": hypo_wt_overlap_n,
             "meeting_type": meeting_type.get(base_key),
-            "submitted_bet": _parse_bet_detail(
-                submitted.get((base_key, (r["rank"] or "").replace("RANK_", "")))),
+            "submitted_bet": submitted_bet,
             "entries": [
                 {
                     "frame_no": e["frame_no"],

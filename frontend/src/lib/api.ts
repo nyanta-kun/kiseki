@@ -1022,6 +1022,11 @@ export type KeirinPick = {
   gate_label?: string | null;
   /** 最終表示ランク文字列（"7S"|"7A"|"9S"|"9A"等） */
   display_rank?: string;
+  /** ランクのゲートを通らず入稿したレース（手動入稿・看板の穴埋め）。
+   *  picks_history に行が無いので、買い目・投資・的中は入稿記録
+   *  （netkeirin_submissions.bet_detail）と確定結果から組み立てている。
+   *  ⚠️ ランクの成績として読まないこと（同じ 7A でも別経路）。 */
+  submission_only?: boolean;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
   hypo_axis1: number | null;
   hypo_axis2: number | null;
