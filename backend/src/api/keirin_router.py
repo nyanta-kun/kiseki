@@ -1975,6 +1975,9 @@ class ApprovalIn(BaseModel):
     # 取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする。
     # 既定 False。承認では無視する（keirin 側の CLI も cancel 以外では弾く）。
     force: bool = False
+    # 取消専用。date で指定した日の**全場・全件**を対象にする。
+    # 🔴 date が無ければ受け付けない（過去分まで巻き込むため）。
+    all_venues: bool = False
 
 
 async def _call_webhook(path: str, payload: dict) -> JSONResponse:
@@ -2016,22 +2019,45 @@ async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
 async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
     """入稿を取り消す（netkeirin の下書きを削除・記録は論理削除）。
 
-    ⚠️ 場単位は受け付けない（まとめて消す事故を避けるため keirin 側でも拒否する）。
+    レース単位（race_key + rank_key）／場単位（date + venue_name）／
+    その日の全件（date + all_venues）を受け付ける。
+
+    🔴 **場単位・全件は 2026-08-12 に追加した**（元は「まとめて消す事故を避ける」
+       ため承認のみだった）。事故防止は**画面の二段確認と件数表示**に移してある。
+       API 側は **date 必須**で範囲を縛る —— 日付の無い全件取消は絶対に通さない。
+    ⚠️ 対象は生きている下書き（proposed / submitted）。取消済みは含めない。
     ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
+    ⚠️ **一括では force を使わない。** 失敗した分は明細で返すので、
+       netkeirin 側に無いものは画面から1件ずつ強制取消すること。
 
     `force=true` は **netkeirin を触らず記録だけ取消にする**。netkeirin 側で先に
     下書きを消していると item_id が引けず、従来はそこで止まって **DB も更新されない**
     ままだった（取消したはずの行が残り、自動穴埋めの重複判定にも引っかかる）。
     """
-    if not (body.race_key and body.rank_key):
-        return JSONResponse(content={"ok": False, "message": "race_key と rank_key が必要です"},
-                            status_code=400)
-    base = body.race_key.split("#", 1)[0]
-    if not _RACE_KEY_RE.match(base):
-        return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
-                            status_code=400)
-    return await _call_webhook(
-        "/cancel", {"race_key": base, "rank_key": body.rank_key, "force": body.force})
+    if body.race_key and body.rank_key:
+        base = body.race_key.split("#", 1)[0]
+        if not _RACE_KEY_RE.match(base):
+            return JSONResponse(
+                content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
+                status_code=400)
+        return await _call_webhook(
+            "/cancel", {"race_key": base, "rank_key": body.rank_key, "force": body.force})
+
+    if body.date and (body.venue_name or body.all_venues):
+        if not _DATE_RE.match(body.date):
+            return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
+                                status_code=400)
+        payload: dict[str, Any] = {"date": body.date}
+        if body.venue_name:
+            payload["venue_name"] = body.venue_name
+        if body.all_venues:
+            payload["all_venues"] = True
+        return await _call_webhook("/cancel", payload)
+
+    return JSONResponse(
+        content={"ok": False,
+                 "message": "race_key+rank_key か date+venue_name か date+all_venues が必要です"},
+        status_code=400)
 
 
 class ApprovalModeIn(BaseModel):

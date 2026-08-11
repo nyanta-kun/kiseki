@@ -77,10 +77,16 @@ def test_force_is_cancel_only():
     assert "--force は cancel 専用です" in src
 
 
-def test_venue_scope_is_approve_only():
-    """取消は場単位を受け付けないこと（まとめて消す事故を避ける）。"""
+def test_all_scope_requires_date():
+    """🔴 日付の無い全件取消は絶対に通さない（過去分まで巻き込む）。
+
+    2026-08-12 に取消の場単位・全件を解禁した（元は「まとめて消す事故を避ける」
+    ため承認のみだった）。事故防止は画面の二段確認へ移したが、
+    **範囲の縛りだけはコード側に残す**。
+    """
     src = inspect.getsource(cli.main)
-    assert '"場単位は承認のみ対応です"' in src or "場単位は承認のみ" in src
+    assert '"--all には --date が必要です"' in src
+    assert '"--all は cancel 専用です"' in src
 
 
 def test_venue_query_filters_by_proposed_status():

@@ -188,13 +188,20 @@ class Handler(BaseHTTPRequestHandler):
             # 記録を実態へ合わせるための最後の手段（取消専用・CLI側でも検証する）。
             if action == "cancel" and bool(body.get("force")):
                 cmd.append("--force")
-        elif date and venue:
+        elif date and (venue or body.get("all_venues")):
             if not _DATE_RE.match(str(date)):
                 return {"ok": False, "message": f"invalid date: {date}"}, 400
-            cmd += ["--date", str(date), "--venue", str(venue)]
+            cmd += ["--date", str(date)]
+            if venue:
+                cmd += ["--venue", str(venue)]
+            # 全場・全件の取消（2026-08-12）。🔴 **日付は必ず付ける**
+            #    （CLI 側でも --date 無しの --all は弾く。二重に縛る）。
+            if action == "cancel" and body.get("all_venues"):
+                cmd.append("--all")
         else:
             return {"ok": False,
-                    "message": "race_key+rank_key か date+venue_name が必要です"}, 400
+                    "message": "race_key+rank_key か date+venue_name"
+                               "（取消は date+all_venues も可）が必要です"}, 400
 
         log.info("triggered /%s %s", action, cmd[-4:])
         env = dict(os.environ, PYTHONPATH=".")

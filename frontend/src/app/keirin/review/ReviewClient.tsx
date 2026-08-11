@@ -15,7 +15,9 @@ import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
 import {
   approveKeirinRaceAction,
   approveKeirinVenueAction,
+  cancelKeirinAllAction,
   cancelKeirinSubmissionAction,
+  cancelKeirinVenueAction,
   setKeirinApprovalModeAction,
 } from "../actions";
 
@@ -285,6 +287,8 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
   //    強制取消の口をここで初めて出す。常時出すと、netkeirin に残っている
   //    商品を消したつもりで記録だけ消す事故につながる。
   const [forceTargets, setForceTargets] = useState<Record<string, boolean>>({});
+  // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
+  const nAliveAll = useMemo(() => items.filter((p) => p.status !== "deleted").length, [items]);
 
   const byVenue = useMemo(() => {
     const m = new Map<string, KeirinProposal[]>();
@@ -338,6 +342,29 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
         <span className="text-sm">
           未入稿 <span className="font-semibold">{nProposed}</span> 件
         </span>
+        {/* 🔴 この日の下書きを全部消す。最も戻しにくい操作なので、
+            件数を出したうえで **確認を2回** 挟む。日付は必ず添える
+            （API・CLI の両方でも日付無しの全件取消は弾く）。 */}
+        {nAliveAll > 0 && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (!window.confirm(
+                `${date} の下書きを全件（${nAliveAll}件）取り消します。\n\n`
+                + "netkeirin の公開待ち下書きもすべて削除されます。\n"
+                + "この操作は元に戻せません。よろしいですか？",
+              )) return;
+              if (!window.confirm(
+                `最終確認：${date} の ${nAliveAll}件 をすべて取り消します。`,
+              )) return;
+              run(() => cancelKeirinAllAction(date));
+            }}
+            className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+          >
+            この日を全件取消（{nAliveAll}件）
+          </button>
+        )}
         <label className="ml-auto flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -374,6 +401,8 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
 
       {byVenue.map(([venue, races]) => {
         const nProp = races.filter((r) => r.status === "proposed").length;
+        // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
+        const nAlive = races.filter((r) => r.status !== "deleted").length;
         return (
           <section key={venue} className="mb-6">
             <div className="mb-2 flex items-center gap-3">
@@ -389,6 +418,25 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
                   className="rounded bg-blue-700 px-3 py-1 text-xs text-white disabled:opacity-50"
                 >
                   この場をまとめて入稿（{nProp}件）
+                </button>
+              )}
+              {/* 🔴 まとめて消す操作。件数を出したうえで二段で確認する
+                  （元は事故防止のため用意していなかった機能）。 */}
+              {nAlive > 0 && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    if (!window.confirm(
+                      `${venue} の下書き ${nAlive}件 を取り消します。\n\n`
+                      + "netkeirin の公開待ち下書きも削除されます。よろしいですか？",
+                    )) return;
+                    if (!window.confirm(`本当に ${venue} の ${nAlive}件 を取り消しますか？`)) return;
+                    run(() => cancelKeirinVenueAction(date, venue));
+                  }}
+                  className="rounded border border-red-400 px-3 py-1 text-xs text-red-700 disabled:opacity-50 dark:border-red-600 dark:text-red-300"
+                >
+                  この場をまとめて取消（{nAlive}件）
                 </button>
               )}
             </div>
