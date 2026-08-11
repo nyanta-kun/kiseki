@@ -315,6 +315,69 @@ class KeirinNetkeirinSalesDaily(KeirinBase):
     collected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="収集日時")
 
 
+class KeirinNetkeirinSalesRace(KeirinBase):
+    """netkeirin「ウマい車券」予想家成績・売上（レース別）
+
+    日別（KeirinNetkeirinSalesDaily）と同じページを list_detail=race で取得したもの。
+    指標列は日別と同一で、集計IDだけが 12桁（YYYYMMDD+場コード2桁+レース番号2桁）になる。
+
+    「どのレースが売れたか／当たったか」は日別を再集計しても復元できないため別テーブル
+    として一次資料のまま保持する。`race_key`(YYYYMMDD_VV_RR) は kiseki 側の
+    keirin.wt_races（発走時刻→開催時間帯）・keirin.picks_history（ランク）と結合する
+    ための派生列（netkeirin の場コードは venue_info.venue_code と同一体系・2026-08-11 確認）。
+    migration 202608111400_keirin。
+    """
+
+    __tablename__ = "netkeirin_sales_race"
+    __table_args__ = {"schema": KEIRIN_SCHEMA}
+
+    race_id: Mapped[str] = mapped_column(
+        String(12), primary_key=True, comment="集計ID(YYYYMMDD+場コード2桁+レース番号2桁)")
+    race_date: Mapped[str] = mapped_column(String(8), nullable=False, comment="開催日(YYYYMMDD)")
+    venue_code: Mapped[str] = mapped_column(String(2), nullable=False, comment="場コード")
+    race_no: Mapped[int] = mapped_column(Integer, nullable=False, comment="レース番号")
+    race_key: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="kiseki側キー(YYYYMMDD_VV_RR)")
+    race_label: Mapped[str | None] = mapped_column(
+        String(120), comment="集計名(例: 08/10 四日市 Ａ級 準決勝)")
+
+    n_predictions: Mapped[int | None] = mapped_column(Integer, comment="予想数")
+    n_predictions_staked: Mapped[int | None] = mapped_column(Integer, comment="予想数(賭け金あり)")
+    n_hits_incl_garami: Mapped[int | None] = mapped_column(Integer, comment="的中(ガミ含む)")
+    n_hits_excl_garami: Mapped[int | None] = mapped_column(Integer, comment="的中(ガミ除く)")
+    n_miss: Mapped[int | None] = mapped_column(Integer, comment="外れ")
+    stake_amount: Mapped[int | None] = mapped_column(Integer, comment="賭け金(円)")
+    payout_amount: Mapped[int | None] = mapped_column(Integer, comment="払戻金額(円)")
+    hit_rate_pct: Mapped[float | None] = mapped_column(Float, comment="的中率(%)")
+    recovery_rate_pct: Mapped[float | None] = mapped_column(Float, comment="回収率(%)")
+
+    n_sold: Mapped[int | None] = mapped_column(Integer, comment="販売個数")
+    sold_points: Mapped[int | None] = mapped_column(Integer, comment="販売pt")
+    sold_paid_points: Mapped[int | None] = mapped_column(Integer, comment="販売有償pt")
+    avg_sold_points: Mapped[float | None] = mapped_column(Float, comment="平均販売pt")
+    avg_sold_minutes: Mapped[float | None] = mapped_column(Float, comment="平均販売分(締切までの残り分数の平均)")
+    avg_sold_hour: Mapped[float | None] = mapped_column(Float, comment="平均販売時(締切までの残り時間)")
+
+    axis1_rate_1st: Mapped[float | None] = mapped_column(Float, comment="◎1着率(%)")
+    axis1_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="◎2着率(%)")
+    axis1_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="◎3着率(%)")
+    mark2_count: Mapped[int | None] = mapped_column(Integer, comment="〇件数")
+    mark2_rate_1st: Mapped[float | None] = mapped_column(Float, comment="〇1着率(%)")
+    mark2_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="〇2着率(%)")
+    mark2_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="〇3着率(%)")
+    mark3_count: Mapped[int | None] = mapped_column(Integer, comment="▲件数")
+    mark3_rate_1st: Mapped[float | None] = mapped_column(Float, comment="▲1着率(%)")
+    mark3_rate_2nd: Mapped[float | None] = mapped_column(Float, comment="▲2着率(%)")
+    mark3_rate_3rd: Mapped[float | None] = mapped_column(Float, comment="▲3着率(%)")
+    mark123_count: Mapped[int | None] = mapped_column(Integer, comment="◎〇▲件数")
+    transition_axis1_to_mark2_pct: Mapped[float | None] = mapped_column(Float, comment="◎→〇率(%)")
+    transition_axis1_to_mark3_pct: Mapped[float | None] = mapped_column(Float, comment="◎→▲率(%)")
+    transition_mark2_to_axis1_pct: Mapped[float | None] = mapped_column(Float, comment="〇→◎率(%)")
+    transition_mark3_to_axis1_pct: Mapped[float | None] = mapped_column(Float, comment="▲→◎率(%)")
+
+    collected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), comment="収集日時")
+
+
 class KeirinModelEvaluation(KeirinBase):
     """モデル・戦略バックテスト評価（save_model_eval.py が書込・summary API が参照）"""
 
