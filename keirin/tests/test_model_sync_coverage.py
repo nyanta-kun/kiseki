@@ -39,18 +39,27 @@ SYNC_SCRIPT = ROOT / "scripts" / "sync_models_to_vps.sh"
 PIPELINES = ("daily_picks_wt.sh", "evening_picks_wt.sh")
 
 _SCRIPT_RE = re.compile(r"scripts/([a-z0-9_]+\.py)")
+# パイプラインは `-m src.cli.main <サブコマンド>` でも python を起動する。
+# ⚠️ 従来はこの経路を走査しておらず、`wave-picks-wt` が読む
+#    lgbm_wt_win / lgbm_wt_bad / lgbm_wt_top2 は**検査の外**だった
+#    （たまたま配布リストに載っていただけ）。2026-08-12 に対象へ加えた。
+_MODULE_RE = re.compile(r"-m\s+(src\.cli\.main)\b")
 _ARRAY_RE = re.compile(r"^(PROD_FILES|EXTRA_FILES)=\((.*?)\)", re.MULTILINE | re.DOTALL)
 _VINTAGE_GLOB_RE = re.compile(r'"\$MODEL_DIR"/([a-z0-9_]+)_m\[0-9\]\[0-9\]\[0-9\]\[0-9\]\.pkl')
 _VINTAGE_NAME_RE = re.compile(r"^(?P<base>[a-z0-9_]+)_m\d{4}$")
 
 
 def _pipeline_scripts() -> set[Path]:
-    """朝夕パイプラインが起動する python スクリプト。"""
+    """朝夕パイプラインが起動する python スクリプト（`-m src.cli.main` を含む）。"""
     found: set[Path] = set()
     for sh in PIPELINES:
         text = (ROOT / "scripts" / sh).read_text(encoding="utf-8")
         for name in _SCRIPT_RE.findall(text):
             path = ROOT / "scripts" / name
+            if path.exists():
+                found.add(path)
+        for module in _MODULE_RE.findall(text):
+            path = ROOT / Path(module.replace(".", "/")).with_suffix(".py")
             if path.exists():
                 found.add(path)
     return found

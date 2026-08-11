@@ -981,6 +981,8 @@ export type KeirinEntry = {
   player_class: string | null;
   /** 単勝モデル(lgbm_wt_win)の予測確率（%） */
   pred_win_pct: number | null;
+  /** 2着内(連対)モデル(lgbm_wt_top2)の予測確率（%）。2026-08-12 以降のレースのみ */
+  pred_top2_pct: number | null;
   /** 複勝(3着内)モデルの予測確率（%） */
   pred_top3_pct: number | null;
   /** WINTICKET公式予想印（0=無印, 1〜4=印あり） */
@@ -1436,6 +1438,8 @@ export interface KeirinProposalEntry {
   prediction_mark: number | null;
   /** モデルの1着率（%） */
   pred_win_pct: number | null;
+  /** モデルの2着内率（%）。列追加（2026-08-12）以降のレースのみ値が入る */
+  pred_top2_pct: number | null;
   /** モデルの3着内率（%） */
   pred_top3_pct: number | null;
 }

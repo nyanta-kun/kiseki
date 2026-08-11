@@ -107,6 +107,11 @@ PROD_FILES=(
   "lgbm_wt_train_only.pkl" "lgbm_wt_train_only.meta.json"
   "lgbm_wt_win.pkl" "lgbm_wt_win.meta.json"
   "lgbm_wt_bad.pkl" "lgbm_wt_bad.meta.json"
+  # 2026-08-12 追加: Web表示専用の2着内率モデル（wave-picks-wt が読む）。
+  # 候補選定・ゲートには使わないので、無くても入稿は止まらない
+  # ＝**画面から2着内率が消えるだけで誰も気づかない**。配布漏れに注意。
+  "lgbm_wt_top2.pkl" "lgbm_wt_top2.meta.json"
+  "lgbm_wt_top2_eval.pkl" "lgbm_wt_top2_eval.meta.json"
   "lgbm_wt_eval.pkl" "lgbm_wt_eval.meta.json"
   "lgbm_wt_win_eval.pkl" "lgbm_wt_win_eval.meta.json"
   "lgbm_wt_favbust.pkl" "lgbm_wt_favbust.meta.json"
@@ -127,16 +132,29 @@ PROD_FILES=(
   "odds_trio_n9.txt"
   "odds_trio_meta.json"
 )
-# CI（GitHub Actions）がデプロイ時に取得する最小セット。
-# GitHub Actions は Mac のローカルファイルへ到達できないため、
-# ここで Releases へ上げておくことで **マージと同時にコードとモデルが揃う**。
-# rsync（VPSへの直接配布）はそのまま残す＝二重経路で、どちらか一方が
-# 失敗してもVPSが不整合にならないようにする。
+# 🔴 **GitHub Releases への配布は 2026-08-12 に停止した（既定 OFF）。**
+#
+# 元の意図は「CI がデプロイ時に取得する最小セットを置き、マージと同時にコードと
+# モデルを揃える」だったが、
+#
+#   1. **`nyanta-kun/kiseki` は public リポジトリ**。Release アセットは
+#      **誰でもダウンロードできる**。本番の学習済みモデルをそのまま公開していた
+#   2. **取得する側が存在しない**。`.github/workflows/` に `models-latest` を
+#      参照する記述は1つも無く、VPS への配布は rsync が単独で担っている
+#
+# つまり公開する利益はゼロで、リスクだけがあった（2026-08-12 に実際に
+# Release が作られ、本番4モデル8ファイルが公開状態になったため削除した）。
+#
+# 再開するなら **リポジトリを private にする**か、**Release ではない非公開の
+# 配布先**（VPS 上の配布ディレクトリ等）を用意してからにすること。
+# その場合は `SYNC_MODELS_TO_RELEASES=1` を明示的に立てる。
+UPLOAD_TO_RELEASES="${SYNC_MODELS_TO_RELEASES:-0}"
 RELEASE_TAG="models-latest"
 RELEASE_FILES=(
   "lgbm_wt.pkl" "lgbm_wt.meta.json"
   "lgbm_wt_win.pkl" "lgbm_wt_win.meta.json"
   "lgbm_wt_bad.pkl" "lgbm_wt_bad.meta.json"
+  "lgbm_wt_top2.pkl" "lgbm_wt_top2.meta.json"
 )
 EXTRA_FILES=("upset_cuts_wt.json")
 
@@ -230,30 +248,45 @@ if [[ -n "$CHECKSUM_DIFF" ]]; then
 fi
 log "検証(1/2) OK: 全ファイルのチェックサムが一致しました。"
 
-# (b) ファイル数照合: VPS側の対象パターンファイル数がローカルの想定数と一致するか
-# ⚠️ **転送 glob と この検証 regex は必ずセットで更新すること。**
-#    モデルの新しい"種類"を足すと、転送は成功しているのにここだけ取り残されて
-#    「VPS側ファイル数が下回っています」と誤報する。2026-08-06 に
-#    `lgbm_wt_bad`（差64）と `lgbm_wt_favbust`（差60）で2回踏んだ。
-log "検証(2/2): VPS側ファイル数を照合中..."
-REMOTE_COUNT=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$REMOTE_HOST" \
-  "ls ${REMOTE_DIR} 2>/dev/null | grep -E '^(lgbm_wt(_train_only|_win|_bad|_eval|_win_eval|_favbust)?\.(pkl|meta\.json)|lgbm_wt_(eval|win|bad|favbust)_m[0-9]{4}\.(pkl|meta\.json)|upset_cuts_wt\.json)$' | wc -l | tr -d ' '" \
-  2>>"$LOG" || echo "")
-if [[ -z "$REMOTE_COUNT" ]]; then
-  notify_failure "VPS側ファイル数の取得に失敗しました（SSH到達不可の可能性）。転送自体は完了している可能性があります。"
+# (b) 実在確認: **転送した1件1件が VPS 側に在るか**を名前で突き合わせる。
+#
+# 🔴 2026-08-12 に「パターンに一致する**件数**の比較」から書き換えた。
+#    旧実装は転送リストとは別に検証用の regex を手で持っており、
+#    **モデルの種類を足すたびに2箇所を揃える必要**があった（スクリプト自身が
+#    その旨を警告していたが、それでも 2026-08-06 に `lgbm_wt_bad`・
+#    `lgbm_wt_favbust` で2回踏んでいる）。
+#    実際 `lgbm_upset_screen.pkl`(08-08 追加)・`odds_trio_*`(08-11 追加) の4件は
+#    **転送されているのに regex 側へ入っておらず**、件数がちょうど釣り合って
+#    いるあいだだけ検査が通っていた。2着内モデルを足した時点で釣り合いが崩れ、
+#    転送も照合も成功しているのに「不足」と誤報した。
+#
+#    名前で突き合わせれば **転送リストが唯一の正本**になり、二重管理が消える。
+log "検証(2/2): VPS側に転送物が実在するか照合中..."
+REMOTE_LS=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$REMOTE_HOST" \
+  "ls -1 ${REMOTE_DIR} 2>/dev/null" 2>>"$LOG" || echo "")
+if [[ -z "$REMOTE_LS" ]]; then
+  notify_failure "VPS側のファイル一覧を取得できませんでした（SSH到達不可の可能性）。転送自体は完了している可能性があります。"
   exit 1
 fi
-if [[ "$REMOTE_COUNT" -lt "$N_TOTAL" ]]; then
-  notify_failure "VPS側ファイル数(${REMOTE_COUNT})がローカル転送対象数(${N_TOTAL})を下回っています。"
+MISSING_REMOTE=()
+for f in "${FILES[@]}"; do
+  # 完全一致で探す（部分一致だと lgbm_wt.pkl が lgbm_wt_win.pkl に当たる）
+  grep -qxF "$(basename "$f")" <<<"$REMOTE_LS" || MISSING_REMOTE+=("$(basename "$f")")
+done
+if [[ ${#MISSING_REMOTE[@]} -gt 0 ]]; then
+  log "[検証NG] VPS側に見つからないファイル(${#MISSING_REMOTE[@]}件): ${MISSING_REMOTE[*]}"
+  notify_failure "転送したはずのファイル${#MISSING_REMOTE[@]}件がVPS側にありません: ${MISSING_REMOTE[*]}"
   exit 1
 fi
-log "検証(2/2) OK: VPS側ファイル数=${REMOTE_COUNT}（ローカル転送対象=${N_TOTAL}、VPS側は他バージョンも含み得るため >= であれば正常）"
+log "検証(2/2) OK: 転送した${N_TOTAL}件すべてがVPS側に存在します。"
 
-# --- GitHub Releases へのアップロード（CI がデプロイ時に取得する） ---
-# ここを忘れると CI 側は古いモデルを配ってしまうため、rsync と同じ実行で必ず行う。
+# --- GitHub Releases へのアップロード（既定 OFF・上記の理由を必ず読むこと） ---
 # gh 不在・認証なし・ネットワーク断でも rsync 自体は成功しているので、
 # ここでの失敗は警告に留めて全体は成功扱いにする（VPSへの配布は完了している）。
-if [[ "$DRY_RUN" -eq 1 ]]; then
+if [[ "$UPLOAD_TO_RELEASES" != "1" ]]; then
+  log "Releases への配布は無効です（public リポジトリへモデルを公開しないため）。"
+  log "  有効化するには SYNC_MODELS_TO_RELEASES=1。**先にリポジトリの公開範囲を確認すること**。"
+elif [[ "$DRY_RUN" -eq 1 ]]; then
   log "[dry-run] GitHub Releases へのアップロードはスキップします"
 elif ! command -v gh >/dev/null 2>&1; then
   log "[警告] gh CLI が無いため Releases へのアップロードをスキップしました。"

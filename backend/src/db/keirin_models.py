@@ -125,6 +125,12 @@ class KeirinWtEntry(KeirinBase):
     pred_top3_pct: Mapped[float | None] = mapped_column(
         Numeric(5, 1), comment="複勝率(%)＝lgbm_wt(eval) の予測確率（migration n0p1q2r3s4t5）"
     )
+    # 2着内率（連対率）。上2つと同じく当方モデル（lgbm_wt_top2）の出力で、
+    # 書き込みも同じ経路（wave-picks-wt）。migration 202608120700_keirin で追加。
+    # ⚠️ 値が入るのは追加以降に算出したレースだけ。過去分は NULL。
+    pred_top2_pct: Mapped[float | None] = mapped_column(
+        Numeric(5, 1), comment="2着内率(%)＝lgbm_wt_top2 の予測確率（migration 202608120700_keirin）"
+    )
 
 
 class KeirinWtOdds(KeirinBase):

@@ -569,6 +569,22 @@ S4(SEVEN_S4)は今後の予想データのベースと位置づけ、軸2車がW
 - 過去分（2024-01-01〜）は `scripts/backfill_index_pct_wt.py` で四半期walk-forwardモデルを使い
   リークなしで一括反映済み（491,582/705,079件・2026-07-19実施）
 
+**【2026-08-12・2着内率を追加】** 同じ経路で **2着内率（連対率）** を出す。
+`lgbm_wt_top2`（ターゲット `top2_flag`・holdout AUC 0.8077）→ `wt_entries.pred_top2_pct`。
+表示は kiseki の `/keirin` レース詳細と `/keirin/review`（承認画面）の両方。
+
+- 🔴 **表示専用**。候補選定・ゲート・買い目には一切使わない。モデルが無ければ
+  `pred_top2` を None のままにして進む（表示が「—」になるだけで入稿は止まらない）
+- 🔴 **`FEATURE_COLS_WT` は変更していない**（既存60特徴のまま学習ターゲットだけ差し替え）。
+  したがって他モデルの再学習は不要
+- PG側は kiseki alembic `202608120700_keirin`。SQLite側は `migrate_db()`
+- 週次再学習（`weekly_retrain_wt.sh` ②''）と VPS 配布（`sync_models_to_vps.sh`）にも追加済み。
+  ⚠️ 配布が漏れると**画面から2着内率が消えるだけで誰も気づかない**（入稿は止まらない）。
+  `tests/test_model_sync_coverage.py` は同日から `-m src.cli.main` 経路も走査する
+- ⚠️ **過去分のバックフィルはしていない**。vintage モデルが無く、本番モデル（全期間
+  full-refit）を過去へ遡及適用すると in-sample になるため。値が入るのは導入後に
+  `wave-picks-wt` が回ったレースだけで、それ以前は NULL（「—」）
+
 **【重要・設計原則】`wt_entries.race_point`を表示専用の値で上書きしてはならない**。
 2026-06-18のcommitで、この列（`feature_wt.py`の`score_rank`/`score_mean`/`score_std`/
 `score_z`という実モデル学習特徴量の入力）を`pred_prob_pct`（AI予測確率）で上書きする

@@ -14,7 +14,7 @@
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
-import { fetchKeirinApprovalMode, fetchKeirinProposals } from "@/lib/api";
+import { fetchKeirinProposals } from "@/lib/api";
 
 import ReviewClient from "./ReviewClient";
 
@@ -36,17 +36,17 @@ export default async function KeirinReviewPage({
   const { date } = await searchParams;
   const target = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? (date as string) : todayJst();
 
-  const [proposals, mode] = await Promise.all([
-    fetchKeirinProposals(target).catch(() => ({ date: target, n_proposed: 0, items: [] })),
-    fetchKeirinApprovalMode().catch(() => ({ require_approval: false })),
-  ]);
+  // 承認制の ON/OFF は 2026-08-12 に `/admin` の設定タブへ移した（この画面は
+  // レースを見て承認する作業に専念する）。ここで取得・表示する必要はない。
+  const proposals = await fetchKeirinProposals(target).catch(() => ({
+    date: target, n_proposed: 0, items: [],
+  }));
 
   return (
     <ReviewClient
       date={target}
       items={proposals.items}
       nProposed={proposals.n_proposed}
-      requireApproval={mode.require_approval}
     />
   );
 }
