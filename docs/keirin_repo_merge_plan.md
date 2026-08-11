@@ -214,7 +214,11 @@ crontab -l | grep -c "GitHub/keirin/"        # 0 であること
 
 ## 統合後に消える二重管理
 
-- 看板レース判定（`backend/src/services/keirin_marquee.py` と
-  keirin `src/marquee.py`）→ **前者を唯一の正本にする**
+- ✅ 看板レース判定 — **2026-08-11 に一本化済み**。
+  `backend/src/services/keirin_marquee.py` が唯一の正本で、
+  keirin `src/marquee.py` は `importlib` でそのファイルを読み込んで束縛する。
+  写し戻りは両リポジトリ側のテスト（AST 検査）が機械的に禁じる。
+  ⚠️ `sys.path` に `backend/` を足す方式は不可（keirin にも `src` があり衝突する）。
+  ⚠️ 正本に標準ライブラリ以外の import を足すと入稿側だけが落ちる
 - CI・デプロイ経路
 - リポジトリ運用（worktree・ブランチ保護・PR フロー）

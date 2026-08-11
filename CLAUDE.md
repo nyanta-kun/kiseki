@@ -187,8 +187,13 @@ EOF
 売上は看板レースに集中する（2026-08-08 実測: 当日売上の84%）。
 **看板レースとその前後には必ず推奨を出す**方針（2026-08-09 ユーザー決定）。
 
-- 判定の正本: `backend/src/services/keirin_marquee.py`（API が `is_marquee` を返す）
-- ⚠️ `keirin/src/marquee.py`（入稿の実行側）と**二重管理**。統合完了後は前者へ一本化する
+- 判定の**唯一の正本**: `backend/src/services/keirin_marquee.py`（API が `is_marquee` を返す）
+- 入稿の実行側 `keirin/src/marquee.py` は**その正本をファイル読み込みして束縛する**
+  （2026-08-11 一本化）。キーワードをそちらへ写すと `test_marquee.py` /
+  `test_keirin_marquee.py` が落ちる。「前後1R」の展開だけが keirin 側の責務
+- ⚠️ **正本には標準ライブラリ以外を import しない**。keirin は自分の venv
+  （FastAPI も SQLAlchemy も無い）からこのファイルを直接読むため、依存を足すと
+  **Web は無事なまま入稿だけが落ちる**
 - ⚠️ **「準決勝」は「決勝」を部分一致で拾う**。除外しないと全体の約14.5%が看板になる
 
 ## DBスキーマ構成
