@@ -34,6 +34,7 @@ from ..services.keirin_sales_analysis import (
     build_origin_breakdown,
     build_races,
     build_rank_breakdown,
+    build_route_breakdown,
     build_summary,
 )
 from .import_router import ApiKeyDep
@@ -1289,7 +1290,11 @@ async def get_netkeirin_analysis(
         from_dt = Date.fromisoformat(from_date) if from_date else today - timedelta(days=29)
     except ValueError:
         from_dt = today - timedelta(days=29)
-    params = {"from_date": from_dt.strftime("%Y%m%d"), "to_date": to_dt.strftime("%Y%m%d")}
+    params = {
+        "from_date": from_dt.strftime("%Y%m%d"), "to_date": to_dt.strftime("%Y%m%d"),
+        # picks_history.race_date は 'YYYY-MM-DD'（他と書式が違う）
+        "from_iso": from_dt.isoformat(), "to_iso": to_dt.isoformat(),
+    }
 
     daily_rows = (await db.execute(
         text("""
@@ -1324,6 +1329,18 @@ async def get_netkeirin_analysis(
                 WHERE netkeirin_race_id IS NOT NULL
                 ORDER BY netkeirin_race_id,
                          (deleted_at IS NULL) DESC, submitted_at DESC
+            ),
+            -- そのレースに **何らかの** ランク候補が立っていたか（ランク名は問わない）。
+            -- 🔴 `picks_history.race_key` は `20260801_13_05#7C` とランク接尾辞つきなので
+            --    接尾辞を落として突き合わせる。**ランク名で等値結合してはいけない**
+            --    ―― 看板の穴埋めは 7A/9A を名乗るため、7C 候補のレースを 7A で
+            --    入稿した分が「候補なし」に見えてしまう（2026-08-11 に実際に誤読した）。
+            candidate AS (
+                SELECT split_part(race_key, '#', 1) AS base_key,
+                       string_agg(DISTINCT replace(rank, 'RANK_', ''), ',' ORDER BY replace(rank, 'RANK_', '')) AS detected_ranks
+                FROM keirin.picks_history
+                WHERE race_date BETWEEN :from_iso AND :to_iso
+                GROUP BY 1
             )
             SELECT s.race_id, s.race_key, s.race_date, s.venue_code, s.race_no, s.race_label,
                    s.n_hits_incl_garami, s.n_hits_excl_garami,
@@ -1333,11 +1350,13 @@ async def get_netkeirin_analysis(
                    v.name AS venue_name,
                    sub.rank_key AS rank,
                    sub.origin AS origin,
+                   c.detected_ranks,
                    m.first_start_at
             FROM keirin.netkeirin_sales_race s
             LEFT JOIN keirin.venue_info v ON v.venue_code = s.venue_code
             LEFT JOIN submission sub ON sub.netkeirin_race_id = s.race_id
             LEFT JOIN meeting_first m ON m.ymd = s.race_date AND m.venue_id = s.venue_code
+            LEFT JOIN candidate c ON c.base_key = s.race_key
             WHERE s.race_date BETWEEN :from_date AND :to_date
             ORDER BY s.race_date, s.race_id
         """),
@@ -1363,6 +1382,7 @@ async def get_netkeirin_analysis(
         "leadtime": build_leadtime_buckets(races),
         "by_rank": build_rank_breakdown(races),
         "by_origin": build_origin_breakdown(races),
+        "by_route": build_route_breakdown(races),
         "revenue_rate": NETKEIRIN_REVENUE_RATE,
     })
 

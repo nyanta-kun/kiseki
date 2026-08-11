@@ -1252,6 +1252,17 @@ export type KeirinMeetingType = "morning" | "day" | "nighter" | "midnight";
  */
 export type KeirinSubmissionOrigin = "rank" | "marquee_fill" | "manual" | "unknown";
 
+/**
+ * 入稿の**経路**。`origin`（呼び出し経路）に「候補があったか」を掛け合わせたもの。
+ *
+ * 🔴 origin だけでは**失敗モードが2つ混ざる**（2026-08-11 に実際に誤読した）。
+ * - `gate`         ゲートを通った入稿
+ * - `renamed`      候補はあったのに**別ランク名義で**入稿された
+ * - `no_candidate` 候補が一切ない真の穴埋め
+ * - `unknown`      入稿記録なし
+ */
+export type KeirinSubmissionRoute = "gate" | "renamed" | "no_candidate" | "unknown";
+
 export type KeirinSalesDailyPoint = {
   date: string;
   n_predictions: number;
@@ -1285,6 +1296,10 @@ export type KeirinSalesRacePoint = {
   rank: string | null;
   /** 入稿の出自。⚠️ ランクだけで経路を判断しないこと。 */
   origin: KeirinSubmissionOrigin;
+  /** そのレースに立っていた候補ランク（"7C" / "7B,7C"）。無ければ null。 */
+  detected_ranks: string | null;
+  /** 入稿経路（出自 × 候補の有無）。 */
+  route: KeirinSubmissionRoute;
   meeting_type: KeirinMeetingType | null;
   hit: boolean;
   hit_excl_garami: boolean;
@@ -1345,6 +1360,8 @@ export type KeirinSalesAnalysisResponse = {
   by_rank: Array<KeirinSalesBucket & { rank: string; by_origin: KeirinSalesOriginBucket[] }>;
   /** 出自別（ゲート通過 / 穴埋め / 手動）の内訳。 */
   by_origin: KeirinSalesOriginBucket[];
+  /** 経路別（ゲート通過 / 名義違い / 真の穴埋め）の内訳。 */
+  by_route: Array<KeirinSalesBucket & { route: KeirinSubmissionRoute }>;
   revenue_rate: number;
 };
 

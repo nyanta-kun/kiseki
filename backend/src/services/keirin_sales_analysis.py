@@ -41,6 +41,40 @@ ORIGIN_UNKNOWN = "unknown"
 # 表示順。売上の主役である穴埋めを2番目に置く。
 ORIGIN_ORDER = [ORIGIN_RANK, ORIGIN_MARQUEE_FILL, ORIGIN_MANUAL, ORIGIN_UNKNOWN]
 
+# 入稿の「経路」（2026-08-11 追加）。`origin`（＝呼び出し経路）だけでは
+# **失敗モードが2つ混ざる**ため、候補の有無を掛け合わせて3つに割る。
+#
+# | 経路 | 意味 | 実測(08-01〜08-10) |
+# |---|---|---|
+# | `gate`         | ゲートを通った入稿（origin=rank） | 107R / 売上25.4% / 表示的中29.0% / 回収0.702 |
+# | `renamed`      | **候補はあったのに別ランク名義で入稿**   | 30R / 24.4% / 13.3% / 0.301 |
+# | `no_candidate` | 候補が一切ない真の穴埋め           | 57R / 46.8% / 15.8% / 0.350 |
+#
+# 🔴 **`detected_ranks` は DB に列を足さずに求める。** picks_history から
+#    「そのレースに何らかの候補が立っていたか」を引けば足りるし、そちらは
+#    **過去分にも遡って効く**。入稿時に記録しようとすると、候補検索を一切
+#    経由しない手動経路（`_process_manual`）に検索を足すことになり、
+#    金の出る経路に失敗モードを増やす。
+ROUTE_GATE = "gate"
+ROUTE_RENAMED = "renamed"
+ROUTE_NO_CANDIDATE = "no_candidate"
+ROUTE_UNKNOWN = "unknown"  # 入稿記録そのものが無い
+ROUTE_ORDER = [ROUTE_GATE, ROUTE_RENAMED, ROUTE_NO_CANDIDATE, ROUTE_UNKNOWN]
+
+
+def classify_route(origin: str | None, detected_ranks: str | None) -> str:
+    """1レースの入稿経路を判定する。
+
+    ⚠️ `detected_ranks` は **ランク名で等値結合してはいけない**（呼び出し側の責務）。
+       看板の穴埋めは 7A/9A を名乗るため、7C 候補のレースを 7A で入稿した分が
+       「候補なし」に見えてしまう。**同一レースに候補があったか**だけを見ること。
+    """
+    if not origin or origin == ORIGIN_UNKNOWN:
+        return ROUTE_UNKNOWN
+    if origin == ORIGIN_RANK:
+        return ROUTE_GATE
+    return ROUTE_RENAMED if detected_ranks else ROUTE_NO_CANDIDATE
+
 
 def pearson(xs: list[float], ys: list[float]) -> float | None:
     """ピアソンの積率相関係数。標本不足・分散ゼロなら None。"""
@@ -118,6 +152,9 @@ def build_races(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             # 入稿記録が無いレースは「rank と決めつけない」。混ぜるとゲート通過分の
             # 成績が薄まる（この画面が分けたかったものそのもの）。
             "origin": r.get("origin") or ORIGIN_UNKNOWN,
+            # そのレースに立っていた候補ランク（"7C" / "7B,7C"）。無ければ None。
+            "detected_ranks": r.get("detected_ranks"),
+            "route": classify_route(r.get("origin"), r.get("detected_ranks")),
             "meeting_type": r.get("meeting_type"),
             "hit": hits_incl > 0,
             "hit_excl_garami": hits_excl > 0,
@@ -266,6 +303,30 @@ def build_origin_breakdown(races: list[dict[str, Any]]) -> list[dict[str, Any]]:
         (_finalize(b, total_sales) for b in agg.values()),
         # 既知の出自は定義順、未知の値が増えても末尾に落として消さない。
         key=lambda x: (order.get(x["origin"], len(ORIGIN_ORDER)), x["origin"]),
+    )
+
+
+def build_route_breakdown(races: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """入稿**経路**別（ゲート通過 / 名義違い / 真の穴埋め）の売上・的中。
+
+    `build_origin_breakdown` が「どの経路の関数が呼ばれたか」を見るのに対し、
+    こちらは **候補の有無まで掛け合わせて失敗モードを分ける**。
+
+    分ける価値: 名義違い（`renamed`）は「ゲートは立っていたのに別の商品として
+    出した」ケースで、真の穴埋め（`no_candidate`）とは打ち手がまったく違う
+    （前者はランクの付け替え、後者はそもそも出すかどうかの判断）。
+    実測ではどちらも表示的中率が正常系の半分以下だが、売上は
+    24.4% / 46.8% と両方大きい。
+    """
+    total_sales = sum(r["sold_paid_points"] for r in races)
+    agg: dict[str, dict[str, Any]] = {}
+    for r in races:
+        key = r.get("route") or ROUTE_UNKNOWN
+        _accumulate(agg.setdefault(key, _empty_bucket("route", key)), r)
+    order = {k: i for i, k in enumerate(ROUTE_ORDER)}
+    return sorted(
+        (_finalize(b, total_sales) for b in agg.values()),
+        key=lambda x: (order.get(x["route"], len(ROUTE_ORDER)), x["route"]),
     )
 
 
