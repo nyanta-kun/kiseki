@@ -7,9 +7,25 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 from pathlib import Path
 
 import pytest
+
+# このスクリプトは VPS 上の **keirin の venv** で動くため、`requests` は backend の
+# 依存に入っていない（CI の backend ジョブでは import できない）。検査したいのは
+# HTTP を伴わないパース部分だけなので、未導入なら最小のスタブを挿してから読み込む。
+# ⚠️ ここで「未導入なら skip」にしてはいけない。CI で一度も走らない検査は
+#    通っているように見えるだけで何も守らない。
+try:  # pragma: no cover - 実行環境依存
+    import requests  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - CI の backend ジョブがこちら
+    _stub = types.ModuleType("requests")
+    # スクリプトが module レベルで参照するのはこの2つだけ（型注釈と except 節）。
+    _stub.Session = object  # type: ignore[attr-defined]
+    _stub.RequestException = Exception  # type: ignore[attr-defined]
+    sys.modules["requests"] = _stub
 
 _SPEC = importlib.util.spec_from_file_location(
     "scrape_netkeirin_sales",
