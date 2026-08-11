@@ -198,6 +198,16 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
         <div>
           <span className="text-gray-500">期待値</span>{" "}
           {p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
+          {/* 🔴 予測オッズ由来が混ざっているなら黙って出さない。
+              板の実測値と同じ顔で並べると「実際にこの払戻」と読まれる。 */}
+          {p.odds_has_predicted && (
+            <span
+              className="ml-1 text-[10px] text-indigo-500 dark:text-indigo-300"
+              title="板に無いオッズをオッズ生成モデルの予測値で補って計算しています"
+            >
+              *予測含む
+            </span>
+          )}
         </div>
       </div>
       {p.gami_risk && (
@@ -241,7 +251,9 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
                         {l.stake.toLocaleString()}円
                       </td>
                       <td className="py-0.5 pr-3 text-right tabular-nums text-gray-500">
-                        {l.odds === null ? "オッズ未取得" : `${l.odds.toFixed(1)}倍`}
+                        {l.odds === null
+                          ? "オッズ未取得"
+                          : `${l.odds.toFixed(1)}倍${l.odds_source === "predicted" ? "（予測）" : ""}`}
                       </td>
                       <td className="py-0.5 text-right tabular-nums">
                         {l.odds === null ? "—" : yen(l.stake * l.odds)}

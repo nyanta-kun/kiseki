@@ -61,7 +61,11 @@ def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
              "stake": int(x["stake"]),
              # 入稿時点のオッズ。⚠️ 取れなかった場合は **null のまま**返す
              # （0 にすると表示側で「オッズ0倍」と読めてしまう）。
-             "odds": (float(x["odds"]) if x.get("odds") else None)}
+             "odds": (float(x["odds"]) if x.get("odds") else None),
+             # "board"（実際に付いていた板）/ "predicted"（構造モデルの生成値）/
+             # None（どちらも無い＝不明）。🔴 **表示で必ず区別する。**
+             # 予測値を板と同じ顔で出すと「実際のオッズ」と読まれる。
+             "odds_source": (str(x["odds_source"]) if x.get("odds_source") else None)}
             for x in d["lines"]
         ]
     except (ValueError, TypeError, KeyError):
@@ -1934,6 +1938,9 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "bet_detail": detail,
             # 期待値は表示のみ。購入判断には使わないこと（上記 docstring 参照）
             "expected_value": _expected_value(lines, top3),
+            # 最低払戻・最高払戻・期待値に**予測オッズが混ざっているか**。
+            # 🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。
+            "odds_has_predicted": any(x.get("odds_source") == "predicted" for x in lines),
             "min_payout": lo,
             "max_payout": hi,
             # ガミ＝当たっても投資を下回る。最低払戻が投資額未満なら必ず起きうる

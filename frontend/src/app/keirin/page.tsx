@@ -554,8 +554,19 @@ function SubmittedBetBlock({ bet, entries }: {
               {l.combo}
             </span>
             <span className="text-gray-600 dark:text-gray-300 flex-shrink-0">
+              {/* 🔴 予測オッズは板と区別して出す。同じ顔で並べると
+                  「実際に付いていたオッズ」と読まれる。 */}
               {l.odds != null && (
-                <span className="text-gray-400 dark:text-gray-500 mr-1.5">{l.odds.toFixed(1)}倍</span>
+                <span
+                  className={`mr-1.5 ${l.odds_source === "predicted"
+                    ? "text-indigo-400 dark:text-indigo-300"
+                    : "text-gray-400 dark:text-gray-500"}`}
+                  title={l.odds_source === "predicted"
+                    ? "板に無かったため、オッズ生成モデルの予測値を表示しています"
+                    : undefined}
+                >
+                  {l.odds.toFixed(1)}倍{l.odds_source === "predicted" && "*"}
+                </span>
               )}
               {l.stake.toLocaleString()}
             </span>

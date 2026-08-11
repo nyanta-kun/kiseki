@@ -1054,6 +1054,13 @@ export type KeirinSubmittedBetLine = {
   /** **入稿時点の**オッズ。配分の根拠そのもの。取れなかった場合は null
    *  （0 にすると「オッズ0倍」と読めてしまうので null で残している） */
   odds: number | null;
+  /** オッズの出どころ。
+   *  - `board` … 実際に板に付いていた値
+   *  - `predicted` … 板に無く、構造モデル（src.odds_prediction）が生成した値
+   *  - `null` … どちらも無い（三連単は予測できないのでここに落ちる）
+   *  🔴 **表示では必ず区別する。** 予測値を板と同じ顔で出すと
+   *     「実際に付いていたオッズ」と読まれる。 */
+  odds_source?: "board" | "predicted" | null;
 };
 
 export type KeirinSubmittedBet = {
@@ -1454,7 +1461,9 @@ export interface KeirinProposal {
   bet_detail: {
     total: number;
     source: string | null;
-    lines: { bet_type: string; combo: string; stake: number; odds: number | null }[];
+    // 買い目の1点。⚠️ 一覧側（KeirinSubmittedBetLine）と**同じ形**にすること。
+    // 別々に書いていたため odds_source の追加が片側だけになり型エラーで気づいた。
+    lines: KeirinSubmittedBetLine[];
   } | null;
   /**
    * 見込み回収率（1.0 で収支トントン）。オッズが1点でも欠けると null。
@@ -1470,6 +1479,9 @@ export interface KeirinProposal {
   max_payout: number | null;
   /** 最低払戻が投資額を下回る＝当たってもガミになりうる。 */
   gami_risk: boolean | null;
+  /** 最低払戻・最高払戻・期待値に予測オッズが混ざっているか。
+   *  🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。 */
+  odds_has_predicted?: boolean;
   netkeirin_race_id: string | null;
   proposed_at: string | null;
   approved_at: string | null;
