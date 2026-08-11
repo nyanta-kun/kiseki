@@ -30,18 +30,24 @@ CHANGED="$( { git diff --name-only "$MB"...HEAD; git diff --name-only HEAD; \
 # backend/models/ の学習済みモデルを置いただけで ruff/mypy/pytest が走る。
 BACKEND_PAT='^backend/.*\.py$|^backend/(pyproject\.toml|uv\.lock|alembic\.ini)$'
 FRONTEND_PAT='^frontend/.*\.(ts|tsx|js|jsx|mjs|cjs)$|^frontend/(package\.json|pnpm-lock\.yaml|tsconfig\.json|next\.config[^/]*)$'
+# 🔴 keirin は 2026-08-10 に統合されたが preflight に入っておらず、**CI だけが
+#    落とす**状態だった（2026-08-12 に実際に往復した: bet_detail の形を変えて
+#    preflight は通ったのに CI の Keirin ジョブで既存テストが落ちた）。
+#    デプロイ経路は VPS のリポジトリを直接使うので、ここを見ないと
+#    「手元で通ったのに本番の入稿だけ壊れる」が起こりうる。
+KEIRIN_PAT='^keirin/.*\.py$|^keirin/(requirements[^/]*\.txt|pytest\.ini|pyproject\.toml)$'
 
 FAILED=""
 step() { echo; echo "────────────────────────────────────────"; echo "▶ $1"; echo "────────────────────────────────────────"; }
 mark() { [ "$1" -ne 0 ] && FAILED="${FAILED}  - $2"$'\n'; }
 
-step "1/5 Alembic マイグレーション整合"
+step "1/6 Alembic マイグレーション整合"
 bash scripts/dev/check_migrations.sh; mark $? "check_migrations"
 
-step "2/5 柱(pillar)所属チェック"
+step "2/6 柱(pillar)所属チェック"
 bash scripts/dev/check_ownership.sh; mark $? "check_ownership"
 
-step "3/5 他ブランチとの衝突スキャン (情報提供のみ・ブロックしない)"
+step "3/6 他ブランチとの衝突スキャン (情報提供のみ・ブロックしない)"
 # 同じファイルを触っていること自体は違反ではない。ここで落とすと、作業中の
 # ブランチや削除し忘れたローカルブランチがあるだけで preflight が通らなくなる。
 bash scripts/dev/scan_collisions.sh || true
@@ -67,7 +73,7 @@ py_tool() {   # py_tool <tool> [args...]  — backend/ 配下で実行する
 
 if echo "$CHANGED" | grep -qE "$BACKEND_PAT"; then
   if [ -n "$BACKEND_RUNNER" ]; then
-    step "4/5 Backend (ruff / mypy / pytest) — 実行系: $BACKEND_RUNNER"
+    step "4/6 Backend (ruff / mypy / pytest) — 実行系: $BACKEND_RUNNER"
     py_tool ruff check .; mark $? "ruff"
     py_tool mypy src/ --ignore-missing-imports; mark $? "mypy"
     if [ "$QUICK" -eq 0 ]; then
@@ -77,18 +83,18 @@ if echo "$CHANGED" | grep -qE "$BACKEND_PAT"; then
       echo "(--quick: pytest をスキップ)"
     fi
   else
-    step "4/5 Backend — 実行系が見つかりません"
+    step "4/6 Backend — 実行系が見つかりません"
     echo "[!] uv も backend/.venv も無いため ruff / mypy / pytest を実行できませんでした。"
     echo "    検査せずに通過させると preflight の意味が無くなるため失敗として扱います。"
     echo "    uv を導入するか、backend/ で仮想環境を作成してください。"
     mark 1 "Python 実行系が無い (Backend 未検査)"
   fi
 else
-  step "4/5 Backend — 対象ファイルの変更なしのためスキップ"
+  step "4/6 Backend — 対象ファイルの変更なしのためスキップ"
 fi
 
 if echo "$CHANGED" | grep -qE "$FRONTEND_PAT"; then
-  step "5/5 Frontend (eslint / tsc)"
+  step "5/6 Frontend (eslint / tsc)"
   if command -v pnpm >/dev/null 2>&1; then
     ( cd frontend && pnpm lint ); mark $? "eslint"
     ( cd frontend && pnpm exec tsc --noEmit ); mark $? "tsc"
@@ -99,7 +105,24 @@ if echo "$CHANGED" | grep -qE "$FRONTEND_PAT"; then
     mark 1 "pnpm が見つからない (Frontend 未検査)"
   fi
 else
-  step "5/5 Frontend — 対象ファイルの変更なしのためスキップ"
+  step "5/6 Frontend — 対象ファイルの変更なしのためスキップ"
+fi
+
+if echo "$CHANGED" | grep -qE "$KEIRIN_PAT"; then
+  step "6/6 Keirin (pytest)"
+  # keirin は自前の venv を持つ（backend とは別。LightGBM 等の重い依存があり
+  # backend の venv では動かない）。無ければ **skip ではなく失敗**にする
+  # ——「未検査のまま通過」は preflight の意味を無くす。
+  if [ -x "keirin/.venv/bin/python" ]; then
+    ( cd keirin && PYTHONPATH=. .venv/bin/python -m pytest tests/ -q ); mark $? "keirin pytest"
+  else
+    echo "[!] keirin/.venv が無いため keirin のテストを実行できませんでした。"
+    echo "    検査せずに通過させると preflight の意味が無くなるため失敗として扱います。"
+    echo "    keirin/ で仮想環境を作るか、VPS 上で実行してください。"
+    mark 1 "keirin/.venv が無い (Keirin 未検査)"
+  fi
+else
+  step "6/6 Keirin — 対象ファイルの変更なしのためスキップ"
 fi
 
 echo
