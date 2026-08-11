@@ -4,9 +4,14 @@
 
 ## 移植元
 
-- リポジトリ: `nyanta-kun/keirin`（アーカイブとして保持）
+- リポジトリ: `nyanta-kun/keirin` — **2026-08-11 に GitHub 上でアーカイブ済み（read-only）**
 - ブランチ: `master`
 - **最終コミット: `50a6658e744d06fbade890398e4858635bcebbe1`**
+  （アーカイブ時点の master と一致＝統合後にあちらへ入ったものは無い）
+
+⚠️ **あちらへ push・PR はできない（read-only）。** 変更は kiseki 側だけに入れること。
+未マージのまま残した feature ブランチが9本あるが、アーカイブは削除ではないので
+内容は読める（`gh api repos/nyanta-kun/keirin/compare/master...<branch>`）。
 
 ## 方式: 新規移植（subtree ではない）
 
