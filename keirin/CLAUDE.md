@@ -30,7 +30,8 @@
   **kiseki ルートの `CLAUDE.md`** が正本
 
 ⚠️ **移植元 `nyanta-kun/keirin` は履歴（`git blame`）のためだけに残してある。**
-そちらへ push・PR してはいけない。反映されるのは kiseki 側だけ。
+**2026-08-11 にアーカイブ（read-only）済みなので push・PR はできない。**
+反映されるのは kiseki 側だけ。
 
 ⚠️ **VPS への反映は kiseki の `deploy` ジョブが行う**
 （main への push で `cd ~/GitHub/kiseki && git fetch && git reset --hard origin/main`）。
