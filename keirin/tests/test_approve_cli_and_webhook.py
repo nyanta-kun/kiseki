@@ -47,13 +47,34 @@ def test_run_continues_after_failure(monkeypatch):
 
 
 def test_cancel_uses_cancel_function(monkeypatch):
-    seen: list[str] = []
+    seen: list[tuple[str, bool]] = []
     monkeypatch.setattr(cli, "cancel_submission",
-                        lambda rk, rank: (seen.append(rk), (True, "deleted"))[1])
+                        lambda rk, rank, force=False: (seen.append((rk, force)),
+                                                       (True, "deleted"))[1])
     monkeypatch.setattr(cli, "approve_and_submit",
                         lambda rk, rank: pytest.fail("cancel で承認関数が呼ばれました"))
     out = cli._run("cancel", [("20260811_13_01", "7C")])
-    assert out["ok"] is True and seen == ["20260811_13_01"]
+    assert out["ok"] is True and seen == [("20260811_13_01", False)]
+
+
+def test_cancel_passes_force_through(monkeypatch):
+    """強制取消（netkeirin を触らず記録だけ合わせる）が CLI から素通しされること。
+
+    ここが落ちると、画面の「強制取消」が**ただの取消として実行され**、
+    netkeirin に見つからないまま再び失敗して記録が置き去りになる。
+    """
+    seen: list[tuple[str, bool]] = []
+    monkeypatch.setattr(cli, "cancel_submission",
+                        lambda rk, rank, force=False: (seen.append((rk, force)),
+                                                       (True, "forced"))[1])
+    out = cli._run("cancel", [("20260811_13_01", "7C")], force=True)
+    assert out["ok"] is True and seen == [("20260811_13_01", True)]
+
+
+def test_force_is_cancel_only():
+    """--force は承認では受け付けないこと（承認に「強制」は無い）。"""
+    src = inspect.getsource(cli.main)
+    assert "--force は cancel 専用です" in src
 
 
 def test_venue_scope_is_approve_only():

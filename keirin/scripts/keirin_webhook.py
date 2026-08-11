@@ -184,6 +184,10 @@ class Handler(BaseHTTPRequestHandler):
             if not _RACE_KEY_RE.match(str(race_key)):
                 return {"ok": False, "message": f"invalid race_key: {race_key}"}, 400
             cmd += ["--race-key", str(race_key), "--rank-key", str(rank_key)]
+            # 強制取消。netkeirin 側で先に消してしまい記録だけ残ったときに、
+            # 記録を実態へ合わせるための最後の手段（取消専用・CLI側でも検証する）。
+            if action == "cancel" and bool(body.get("force")):
+                cmd.append("--force")
         elif date and venue:
             if not _DATE_RE.match(str(date)):
                 return {"ok": False, "message": f"invalid date: {date}"}, 400

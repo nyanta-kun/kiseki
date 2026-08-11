@@ -1965,6 +1965,9 @@ class ApprovalIn(BaseModel):
     rank_key: str | None = None
     date: str | None = None
     venue_name: str | None = None
+    # 取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする。
+    # 既定 False。承認では無視する（keirin 側の CLI も cancel 以外では弾く）。
+    force: bool = False
 
 
 async def _call_webhook(path: str, payload: dict) -> JSONResponse:
@@ -2008,6 +2011,10 @@ async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
 
     ⚠️ 場単位は受け付けない（まとめて消す事故を避けるため keirin 側でも拒否する）。
     ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
+
+    `force=true` は **netkeirin を触らず記録だけ取消にする**。netkeirin 側で先に
+    下書きを消していると item_id が引けず、従来はそこで止まって **DB も更新されない**
+    ままだった（取消したはずの行が残り、自動穴埋めの重複判定にも引っかかる）。
     """
     if not (body.race_key and body.rank_key):
         return JSONResponse(content={"ok": False, "message": "race_key と rank_key が必要です"},
@@ -2016,7 +2023,8 @@ async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
     if not _RACE_KEY_RE.match(base):
         return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
                             status_code=400)
-    return await _call_webhook("/cancel", {"race_key": base, "rank_key": body.rank_key})
+    return await _call_webhook(
+        "/cancel", {"race_key": base, "rank_key": body.rank_key, "force": body.force})
 
 
 class ApprovalModeIn(BaseModel):

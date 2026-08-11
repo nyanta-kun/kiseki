@@ -144,5 +144,32 @@ docker image prune -a -f
 AFTER=$(docker system df --format '{{.Size}}' 2>/dev/null | head -1 || echo "不明")
 log "  イメージ領域: $BEFORE → $AFTER"
 
+# -------------------------------------------------------------------
+# Phase 5: keirin webhook サービスの再起動
+# -------------------------------------------------------------------
+# 🔴 **これを忘れると承認・取消が無反応になる。**
+#    `keirin-webhook.service` は systemd の常駐プロセスで、Docker の外にいる。
+#    `git reset --hard` でソースが新しくなっても**古いコードのまま動き続ける**ため、
+#    新しく足したルート（/approve・/cancel）だけが 404 になる。
+#    2026-08-11 に実際に起きた: 06:51 起動のプロセスが 14:12 更新のコードを読まず、
+#    確認画面から承認しても何も起きなかった（memory keirin_webhook_stale_process）。
+#
+# ⚠️ **`/health` では絶対に検知できない。** 旧コードでも生きているので死活監視は緑のまま。
+#    しかも `/submit-race` は旧コードにもあるため「一部だけ動く」状態になり誤診しやすい。
+#
+# ⚠️ デプロイ全体を失敗にはしない。Web 本体は既に切り替わっており、
+#    ここで exit 1 にすると成功したデプロイが失敗として扱われる。
+#    失敗したら**目立つ警告**を出して手動再起動を促す。
+log "Phase 5: keirin-webhook を再起動..."
+if sudo -n systemctl restart keirin-webhook 2>/dev/null; then
+  sleep 1
+  WEBHOOK_STARTED=$(systemctl show keirin-webhook -p ExecMainStartTimestamp --value 2>/dev/null || echo "不明")
+  log "  keirin-webhook 再起動 OK（起動: ${WEBHOOK_STARTED}）"
+else
+  err "keirin-webhook の再起動に失敗しました。"
+  err "  → 承認・取消が古いコードのまま動く可能性があります。"
+  err "  → 手動で: sudo systemctl restart keirin-webhook"
+fi
+
 docker compose -f "$COMPOSE_PROD" ps
 log "=== デプロイ完了: https://galloplab.com/ ==="

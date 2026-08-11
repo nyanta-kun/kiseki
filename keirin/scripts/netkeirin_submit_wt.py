@@ -2014,7 +2014,7 @@ def _n_cars_from_marks(marks: dict[int, str]) -> int:
     return len(marks)
 
 
-def cancel_submission(race_key: str, rank_key: str) -> tuple[bool, str]:
+def cancel_submission(race_key: str, rank_key: str, force: bool = False) -> tuple[bool, str]:
     """入稿を取り消す。netkeirin の下書きを削除し、記録は**論理削除**する。
 
     🔴 行を消してはいけない。`bet_detail` は「何をいくらで買ったか」の唯一の
@@ -2022,6 +2022,14 @@ def cancel_submission(race_key: str, rank_key: str) -> tuple[bool, str]:
 
     ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは
        未確認なので、呼び出し側（確認画面）は公開前だけ対象にすること。
+
+    `force=True` は **netkeirin 側の削除をあきらめて DB だけ取消にする**。
+    🔴 netkeirin 側で先に下書きを消していると `fetch_item_ids()` に出てこず、
+       従来はそこで止まって **DB も更新されないまま**だった。取消したはずの
+       レースが記録上は生きているので、自動穴埋めの重複判定にも引っかかり
+       出し直せない（2026-08-11 に4件を手で UPDATE して対処した）。
+       ⚠️ **netkeirin に残っている商品を消す手段ではない。**
+          記録を実態へ合わせるための最後の手段として、画面から明示的に使う。
     """
     with get_connection() as conn:
         row = conn.execute(
@@ -2035,15 +2043,21 @@ def cancel_submission(race_key: str, rank_key: str) -> tuple[bool, str]:
 
     item_msg = "netkeirin へは未送信のため削除不要"
     if row["status"] == STATUS_SUBMITTED:
-        client = NetkeirinClient(propose_only=False)
-        # item_id は入稿レスポンスに含まれないので、削除の直前に引き直す。
-        item_id = client.fetch_item_ids().get(str(row["netkeirin_race_id"]))
-        if not item_id:
-            return False, ("netkeirin の公開待ち一覧に該当が見つかりません"
-                           "（既に公開済み・または既に削除済みの可能性）")
-        ok, item_msg = client.delete_pick(item_id)
-        if not ok:
-            return False, item_msg
+        if force:
+            # netkeirin へは触らない。記録だけを実態へ合わせる。
+            item_msg = "強制取消（netkeirin 側は操作していません）"
+        else:
+            client = NetkeirinClient(propose_only=False)
+            # item_id は入稿レスポンスに含まれないので、削除の直前に引き直す。
+            item_id = client.fetch_item_ids().get(str(row["netkeirin_race_id"]))
+            if not item_id:
+                return False, ("netkeirin の公開待ち一覧に該当が見つかりません"
+                               "（既に公開済み・または既に削除済みの可能性）。"
+                               "netkeirin 側で既に消しているなら「強制取消」で"
+                               "記録だけを合わせてください")
+            ok, item_msg = client.delete_pick(item_id)
+            if not ok:
+                return False, item_msg
 
     now = datetime.now(JST).replace(tzinfo=None)
     with get_connection() as conn:

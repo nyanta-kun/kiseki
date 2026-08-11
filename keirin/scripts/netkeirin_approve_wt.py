@@ -58,12 +58,15 @@ def _proposals_for_venue(date: str, venue_name: str) -> list[tuple[str, str]]:
     return [(r["race_key"], r["rank_key"]) for r in rows]
 
 
-def _run(action: str, targets: list[tuple[str, str]]) -> dict:
-    fn = approve_and_submit if action == "approve" else cancel_submission
+def _run(action: str, targets: list[tuple[str, str]], force: bool = False) -> dict:
     results = []
     for race_key, rank_key in targets:
         try:
-            ok, message = fn(race_key, rank_key)
+            if action == "approve":
+                ok, message = approve_and_submit(race_key, rank_key)
+            else:
+                # force は取消専用。netkeirin 側を触らず記録だけ実態へ合わせる。
+                ok, message = cancel_submission(race_key, rank_key, force=force)
         except Exception as e:  # noqa: BLE001 — 1件の失敗で残りを止めない
             ok, message = False, f"例外: {e}"
         results.append({"race_key": race_key, "rank_key": rank_key,
@@ -80,7 +83,15 @@ def main() -> int:
     ap.add_argument("--rank-key")
     ap.add_argument("--date")
     ap.add_argument("--venue")
+    ap.add_argument(
+        "--force", action="store_true",
+        help="取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする"
+             "（netkeirin で先に消してしまい記録が残ったときの最後の手段）")
     args = ap.parse_args()
+    if args.force and args.action != "cancel":
+        print(json.dumps({"ok": False, "message": "--force は cancel 専用です"},
+                         ensure_ascii=False))
+        return 2
 
     if args.race_key and args.rank_key:
         targets = [(args.race_key, args.rank_key)]
@@ -100,7 +111,7 @@ def main() -> int:
             ensure_ascii=False))
         return 2
 
-    out = _run(args.action, targets)
+    out = _run(args.action, targets, force=args.force)
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1
 
