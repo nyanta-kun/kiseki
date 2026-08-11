@@ -196,7 +196,8 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
 // 新設したため復活（keirin PR#10。旧7SSとは無関係・picks_historyの旧行は0件）。
 type RankFilter =
-  | "all" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C";
+  | "all" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C"
+  | "7H3";
 
 // 並び順は 7SS/7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [

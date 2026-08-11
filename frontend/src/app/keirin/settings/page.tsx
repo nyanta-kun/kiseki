@@ -19,9 +19,9 @@ import { saveNetkeirinSettings } from "./actions";
 // 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
 // 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
-// （7H1 > 7SS > 7S > 7A > 7C > 7B）。ここは設定画面の表示順。
+// （7H1 > 7H2 > 9H1 > 7SS > 7S > 7A > 7C > 7H3 > 7B）。ここは設定画面の表示順。
 const RANK_ORDER: NetkeirinRankKey[] =
-  ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7H2", "9H1", "7C"];
+  ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7H2", "9H1", "7H3", "7C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
@@ -37,6 +37,9 @@ const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   "7H2": "7H2（7車・穴推奨/印なし2軸・三連単10点×700円+三連複BOX10点×300円・「穴狙い」付与）",
   // 9H1 も 7H1 と同じく本文は固定文（プレビューの {axis1}/{axis2} は使わない）。
   "9H1": "9H1（9車・穴推奨/高配当狙い・三連単フォーメーション6点・「穴狙い」付与）",
+  // 7H3 は三連単の単一券種。軸2車を**2着・3着**に置き1着は相手に任せるので、
+  // 「軸が勝つ」と読む他ランクとは狙いが逆であることが分かる文言にする。
+  "7H3": "7H3（7車・穴推奨/本命連対どまり型・看板外限定・三連単F最大6点・「穴狙い」付与）",
   "7C": "7C（7車・ベースモデル/終日の二軸・三連複 軸2車＋相手4〜5点・他ランクと併存）",
 };
 
