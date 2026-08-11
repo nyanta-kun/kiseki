@@ -67,10 +67,19 @@ def upgrade() -> None:
                   server_default=sa.text(f"'{STATUS_SUBMITTED}'")),
         schema=SCHEMA,
     )
-    for col in ("title", "comment", "netkeirin_item_id"):
-        op.add_column(SUBMISSIONS, sa.Column(col, sa.Text(), nullable=True), schema=SCHEMA)
-    for col in ("proposed_at", "approved_at", "deleted_at"):
-        op.add_column(SUBMISSIONS, sa.Column(col, sa.DateTime(), nullable=True), schema=SCHEMA)
+    # ⚠️ ループで足さず**1列ずつ書く**。tests/test_keirin_model_schema_sync.py は
+    #    `op.add_column(<表>, sa.Column("<列>"...))` を AST で拾ってモデルとの
+    #    取りこぼしを検査するが、ループ変数だと列名が解決できず**検査から漏れる**。
+    op.add_column(SUBMISSIONS, sa.Column("title", sa.Text(), nullable=True), schema=SCHEMA)
+    op.add_column(SUBMISSIONS, sa.Column("comment", sa.Text(), nullable=True), schema=SCHEMA)
+    op.add_column(SUBMISSIONS, sa.Column("netkeirin_item_id", sa.Text(), nullable=True),
+                  schema=SCHEMA)
+    op.add_column(SUBMISSIONS, sa.Column("proposed_at", sa.DateTime(), nullable=True),
+                  schema=SCHEMA)
+    op.add_column(SUBMISSIONS, sa.Column("approved_at", sa.DateTime(), nullable=True),
+                  schema=SCHEMA)
+    op.add_column(SUBMISSIONS, sa.Column("deleted_at", sa.DateTime(), nullable=True),
+                  schema=SCHEMA)
 
     # 確認画面は「その日の入稿案」を status で引く。日付は race_key の先頭8桁。
     op.create_index(

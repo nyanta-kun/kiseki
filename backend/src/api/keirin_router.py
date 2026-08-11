@@ -1344,3 +1344,261 @@ async def update_netkeirin_settings(
         await db.execute(stmt)
     await db.commit()
     return JSONResponse(content={"ok": True, "updated": len(body)})
+
+
+# ---------------------------------------------------------------------------
+# 入稿案の確認・承認（2026-08-11）
+# ---------------------------------------------------------------------------
+# 朝の入稿前に「オッズ・推奨買い目・コメント」を確認したい、という要望で
+# netkeirin 入稿へ承認制を入れた。keirin 側がバッチで **入稿案**（netkeirin へは
+# 送らない行・status='proposed'）を作り、ここがそれを画面へ渡す。
+#
+# 読み取りは keirin スキーマを**直接**見る（webhook を経由しない）。
+# 書き込み（承認・取消）だけは netkeirin のセッションが要るので webhook 経由。
+STATUS_PROPOSED = "proposed"
+STATUS_SUBMITTED = "submitted"
+STATUS_DELETED = "deleted"
+
+
+def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
+    """買い目の **最低払戻 / 最高払戻**（円）。オッズが1つでも欠けたら None。
+
+    🔴 一部だけで計算してはいけない。欠けた点が最安だった場合に
+       「最低払戻」を実際より高く見せることになり、確認の役に立たない。
+    """
+    if not lines or any(x.get("odds") in (None, 0) for x in lines):
+        return None, None
+    rets = [float(x["stake"]) * float(x["odds"]) for x in lines]
+    return min(rets), max(rets)
+
+
+def _trio_probabilities(top3_pct: dict[int, float]) -> dict[frozenset, float]:
+    """3着内率から三連複の各目の確率をつくる（レース内で正規化）。
+
+    keirin `src/odds_prediction.py` の PROD と同じ作り方。厳密な同時確率では
+    ないが、レース内の相対比較には足りる。
+    """
+    cars = [c for c, v in top3_pct.items() if v and v > 0]
+    if len(cars) < 3:
+        return {}
+    raw: dict[frozenset, float] = {}
+    for i in range(len(cars)):
+        for j in range(i + 1, len(cars)):
+            for k in range(j + 1, len(cars)):
+                a, b, c = cars[i], cars[j], cars[k]
+                raw[frozenset((a, b, c))] = (
+                    top3_pct[a] / 100 * top3_pct[b] / 100 * top3_pct[c] / 100)
+    z = sum(raw.values())
+    return {k: v / z for k, v in raw.items()} if z > 0 else {}
+
+
+def _expected_value(lines: list[dict], top3_pct: dict[int, float]) -> float | None:
+    """買い目全体の期待値（回収率の見込み・1.0 で収支トントン）。
+
+    ⚠️ **購入判断の根拠に使ってはいけない。** 競輪の市場は効率的で、モデル由来の
+       期待値による選別は繰り返し否定されている（keirin_gami_race_gate_rejected /
+       keirin_trifecta_ev_closed）。ここで出すのは**異常値の検知**が目的。
+       実用上は「最低払戻がガミ域に入っていないか」を見るほうが確実。
+    """
+    if not lines or any(x.get("odds") in (None, 0) for x in lines):
+        return None
+    probs = _trio_probabilities(top3_pct)
+    if not probs:
+        return None
+    total = sum(float(x["stake"]) for x in lines)
+    if total <= 0:
+        return None
+    ev = 0.0
+    for x in lines:
+        # 三連複の combo は "1=2=5"。三連単（"-" 区切り）は着順があり
+        # ここの確率モデルでは扱えないので None を返す。
+        if "-" in str(x["combo"]):
+            return None
+        try:
+            cars = frozenset(int(c) for c in str(x["combo"]).split("="))
+        except ValueError:
+            return None
+        p = probs.get(cars)
+        if p is None:
+            return None
+        ev += p * float(x["stake"]) * float(x["odds"])
+    return ev / total
+
+
+@router.get("/proposals")
+async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """指定日の入稿案・入稿済みを、確認画面が必要とする情報つきで返す。
+
+    返すもの:
+      - 入稿内容（タイトル・コメント・買い目と金額配分）
+      - 期待値・最低払戻・最高払戻
+      - 選手ごとの各入着率（1着率・3着内率）と WT印・競走得点・ライン
+    """
+    target = date or _today_jst().isoformat()
+    if not _DATE_RE.match(target):
+        return JSONResponse(content={"ok": False, "message": f"不正な日付: {target}"},
+                            status_code=400)
+    ymd = target.replace("-", "")
+
+    rows = (await db.execute(text("""
+        SELECT s.race_key, s.rank_key, s.status, s.session, s.venue_name, s.race_no,
+               s.axis1, s.axis2, s.title, s.comment, s.bet_detail,
+               s.netkeirin_race_id, s.proposed_at, s.approved_at, s.deleted_at,
+               r.start_at, r.grade, r.race_type, r.n_entries
+        FROM keirin.netkeirin_submissions s
+        LEFT JOIN keirin.wt_races r ON r.race_key = s.race_key
+        WHERE s.race_key LIKE :pat
+        ORDER BY r.start_at NULLS LAST, s.venue_name, s.race_no
+    """), {"pat": f"{ymd}%"})).mappings().all()
+    if not rows:
+        return JSONResponse(content={"date": target, "items": []})
+
+    keys = sorted({r["race_key"] for r in rows})
+    ent_rows = (await db.execute(text("""
+        SELECT race_key, frame_no, name, race_point, style, line_group, line_pos,
+               player_class, prediction_mark, pred_win_pct, pred_top3_pct
+        FROM keirin.wt_entries WHERE race_key = ANY(:keys) ORDER BY frame_no
+    """), {"keys": keys})).mappings().all()
+    by_race: dict[str, list[dict]] = {}
+    for e in ent_rows:
+        by_race.setdefault(e["race_key"], []).append(dict(e))
+
+    items = []
+    for r in rows:
+        detail = _parse_bet_detail(r["bet_detail"])
+        lines = detail["lines"] if detail else []
+        entries = by_race.get(r["race_key"], [])
+        top3 = {int(e["frame_no"]): float(e["pred_top3_pct"])
+                for e in entries if e["pred_top3_pct"] is not None}
+        lo, hi = _payout_range(lines)
+        items.append({
+            "race_key": r["race_key"],
+            "rank_key": r["rank_key"],
+            "status": r["status"] or STATUS_SUBMITTED,
+            "session": r["session"],
+            "venue_name": r["venue_name"],
+            "race_no": r["race_no"],
+            "grade": r["grade"],
+            "race_type": r["race_type"],
+            "is_marquee": is_marquee_race(r["race_type"]),
+            "start_at": r["start_at"],
+            "n_entries": r["n_entries"],
+            "axis1": r["axis1"],
+            "axis2": r["axis2"],
+            "title": r["title"],
+            "comment": r["comment"],
+            "bet_detail": detail,
+            # 期待値は表示のみ。購入判断には使わないこと（上記 docstring 参照）
+            "expected_value": _expected_value(lines, top3),
+            "min_payout": lo,
+            "max_payout": hi,
+            # ガミ＝当たっても投資を下回る。最低払戻が投資額未満なら必ず起きうる
+            "gami_risk": (bool(detail and lo is not None and lo < detail["total"])
+                          if detail and lo is not None else None),
+            "netkeirin_race_id": r["netkeirin_race_id"],
+            "proposed_at": r["proposed_at"].isoformat() if r["proposed_at"] else None,
+            "approved_at": r["approved_at"].isoformat() if r["approved_at"] else None,
+            "deleted_at": r["deleted_at"].isoformat() if r["deleted_at"] else None,
+            "entries": [
+                {"frame_no": e["frame_no"], "name": e["name"],
+                 "race_point": float(e["race_point"]) if e["race_point"] is not None else None,
+                 "style": e["style"], "line_group": e["line_group"],
+                 "line_pos": e["line_pos"], "player_class": e["player_class"],
+                 "prediction_mark": e["prediction_mark"],
+                 "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
+                 "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None}
+                for e in entries
+            ],
+        })
+    n_proposed = sum(1 for x in items if x["status"] == STATUS_PROPOSED)
+    return JSONResponse(content={"date": target, "n_proposed": n_proposed, "items": items})
+
+
+class ApprovalIn(BaseModel):
+    """レース単位（race_key + rank_key）か場単位（date + venue_name）。"""
+
+    race_key: str | None = None
+    rank_key: str | None = None
+    date: str | None = None
+    venue_name: str | None = None
+
+
+async def _call_webhook(path: str, payload: dict) -> JSONResponse:
+    try:
+        async with httpx.AsyncClient() as client:
+            # 承認は netkeirin への POST を伴い同期で走る。webhook 側は
+            # timeout=180 なので、こちらはそれより長く待つ。
+            r = await client.post(f"{_WEBHOOK_BASE}{path}", json=payload, timeout=200.0)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as exc:
+        return JSONResponse(content={"ok": False, "message": str(exc)}, status_code=503)
+
+
+@router.post("/approve")
+async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
+    """入稿案を承認して netkeirin へ送る（レース単位 / 場単位）。
+
+    🔴 keirin 側は**保存済みの買い目をそのまま**送る。ここで買い目を組み直したり
+       渡したりしない（確認画面で見たものと違うものが入稿される）。
+    """
+    if body.race_key and body.rank_key:
+        base = body.race_key.split("#", 1)[0]
+        if not _RACE_KEY_RE.match(base):
+            return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
+                                status_code=400)
+        return await _call_webhook("/approve", {"race_key": base, "rank_key": body.rank_key})
+    if body.date and body.venue_name:
+        if not _DATE_RE.match(body.date):
+            return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
+                                status_code=400)
+        return await _call_webhook("/approve",
+                                   {"date": body.date, "venue_name": body.venue_name})
+    return JSONResponse(
+        content={"ok": False, "message": "race_key+rank_key か date+venue_name が必要です"},
+        status_code=400)
+
+
+@router.post("/cancel")
+async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
+    """入稿を取り消す（netkeirin の下書きを削除・記録は論理削除）。
+
+    ⚠️ 場単位は受け付けない（まとめて消す事故を避けるため keirin 側でも拒否する）。
+    ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
+    """
+    if not (body.race_key and body.rank_key):
+        return JSONResponse(content={"ok": False, "message": "race_key と rank_key が必要です"},
+                            status_code=400)
+    base = body.race_key.split("#", 1)[0]
+    if not _RACE_KEY_RE.match(base):
+        return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
+                            status_code=400)
+    return await _call_webhook("/cancel", {"race_key": base, "rank_key": body.rank_key})
+
+
+class ApprovalModeIn(BaseModel):
+    require_approval: bool
+
+
+@router.get("/approval-mode")
+async def get_approval_mode(db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    row = (await db.execute(text(
+        "SELECT require_approval FROM keirin.netkeirin_settings WHERE rank_key = '_global'"
+    ))).mappings().first()
+    return JSONResponse(content={"require_approval": bool(row["require_approval"]) if row else False})
+
+
+@router.put("/approval-mode")
+async def set_approval_mode(body: ApprovalModeIn, _: ApiKeyDep,
+                            db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """承認制の ON/OFF。
+
+    承認制は一時運用の想定なので、**画面から戻せる**ようにしてある
+    （コード変更もデプロイも要らない）。
+    ⚠️ ON にすると承認するまで netkeirin へ何も出ない。
+    """
+    await db.execute(text(
+        "UPDATE keirin.netkeirin_settings SET require_approval = :v, updated_at = NOW() "
+        "WHERE rank_key = '_global'"
+    ), {"v": body.require_approval})
+    await db.commit()
+    return JSONResponse(content={"ok": True, "require_approval": body.require_approval})
