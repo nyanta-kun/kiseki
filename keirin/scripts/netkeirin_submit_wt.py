@@ -114,6 +114,17 @@ STATUS_PROPOSED = "proposed"
 STATUS_SUBMITTED = "submitted"
 STATUS_DELETED = "deleted"
 
+# netkeirin_submissions.origin（入稿の出自）。マイグレーション 202608111930_keirin。
+# 🔴 **`rank_key` では経路を判別できない。** 看板レースの穴埋め
+#    （`submit_marquee_wt.py`）は `RANK_BY_CARS = {7:"7A", 9:"9A"}` により
+#    7A/9A を名乗って入稿するため、本来のゲート通過分と同じキーで混ざる。
+#    実測 2026-08-01〜08-10 で **7A 入稿52件中49件（94%）が穴埋め**だった。
+#    経路ごとの成績（穴埋めは表示的中率14.9%・回収0.333／ゲート通過は29.0%・0.702）を
+#    分けて見るために、**入稿した時点で出自を記録する**。
+ORIGIN_RANK = "rank"                  # ランクのゲートを通った自動入稿
+ORIGIN_MARQUEE_FILL = "marquee_fill"  # 看板レースの穴埋め（--marquee）
+ORIGIN_MANUAL = "manual"              # 手動入稿（Web /submit-race → --manual-rank-key のみ）
+
 # session → その回で入稿する開催の波（`src/meeting_wave.py`）。
 # 🔴 **1つの開催は必ず1つの波でしか入稿されない**。netkeirin は公開後に
 #    差し替えられないので、二重に出すと先の商品が消える。
@@ -794,6 +805,7 @@ def _record_submission(
     gate_label: str | None, axis1: int, axis2: int, netkeirin_race_id: str,
     bet_detail: str | None = None,
     title: str | None = None, comment: str | None = None,
+    origin: str = ORIGIN_RANK,
 ) -> None:
     """入稿（または入稿案）を記録する。
 
@@ -803,6 +815,10 @@ def _record_submission(
 
     `title` / `comment` は確認画面が表示・編集するために保存する。
     従来は保存しておらず、あとから文面を再現できなかった。
+
+    `origin` は入稿の出自（`ORIGIN_*`）。**status と違って呼び出し元にしか
+    分からない**（同じ rank_key でゲート通過と穴埋めの両方があるため）ので、
+    ここで導出せず引数で受ける。既定は `rank`＝ゲート通過。
     """
     proposed = str(netkeirin_race_id).startswith(PROPOSED_PREFIX)
     status = STATUS_PROPOSED if proposed else STATUS_SUBMITTED
@@ -813,11 +829,11 @@ def _record_submission(
             "INSERT OR REPLACE INTO netkeirin_submissions "
             "(race_key,rank_key,session,venue_name,race_no,gate_label,axis1,axis2,"
             "netkeirin_race_id,bet_detail,status,title,comment,proposed_at,approved_at,"
-            "deleted_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "deleted_at,origin) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2,
              race_id, bet_detail, status, title, comment,
-             now if proposed else None, None if proposed else now, None),
+             now if proposed else None, None if proposed else now, None, origin),
         )
         conn.commit()
 
@@ -1540,6 +1556,8 @@ def _process_rank(
                     _bet_detail_odds(race_key, cfg, use_trifecta),
                     marks=record_marks),
                 title=title, comment=comment,
+                # ここはランクのゲートを通った自動経路のみ（_process_rank）。
+                origin=ORIGIN_RANK,
             )
             if claimed_races is not None:
                 claimed_races.add(race_key)
@@ -1701,13 +1719,17 @@ def _process_manual(
     if ok:
         record_legs = legs if tilt_source else _legs_for_record(
             cfg, axis1, axis2, partners, _stake_per_line(cfg, len(partners)))
+        # 🔴 手動経路は**ゲートを通っていない**。`--marquee` なら看板の穴埋め、
+        #    そうでなければ Web からの手動入稿。どちらも `rank` にしてはいけない
+        #    （それをやると 7A/9A に穴埋めが混ざり、ランクの成績が測れなくなる）。
         _record_submission(race_key, rank_key, session, venue_name, race_no, gate_label,
                            axis1, axis2, msg,
                            bet_detail=build_bet_detail(
                                record_legs, tilt_source, _bet_detail_odds(race_key, cfg),
                                marks={**{c: "△" for c in partners},
                                       axis1: "◎", axis2: "○"}),
-                           title=title, comment=comment)
+                           title=title, comment=comment,
+                           origin=ORIGIN_MARQUEE_FILL if marquee else ORIGIN_MANUAL)
         print(f"[netkeirin_submit][manual] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)
         return 1, []
     print(f"[netkeirin_submit][manual] 入稿失敗 {venue_name}{race_no}R ({rank_key}): {msg}", flush=True)

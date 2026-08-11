@@ -14,6 +14,7 @@ from src.services.keirin_sales_analysis import (
     build_daily,
     build_leadtime_buckets,
     build_link_check,
+    build_origin_breakdown,
     build_races,
     build_rank_breakdown,
     build_summary,
@@ -47,6 +48,7 @@ def _race_row(race_id: str, **kw):
         "race_no": int(race_id[10:12]),
         "race_label": "08/10 四日市 Ａ級 準決勝",
         "rank": "7S",
+        "origin": "rank",
         "meeting_type": "day",
         "n_hits_incl_garami": 1,
         "n_hits_excl_garami": 1,
@@ -189,6 +191,81 @@ def test_ランク別ガミ率は的中に対する割合():
     assert a["n_hits"] == 2
     assert a["garami_rate"] == pytest.approx(0.5)
     assert a["hit_rate"] == pytest.approx(2 / 3, abs=1e-4)  # 率は小数4桁に丸めて返す
+
+
+# ---------------------------------------------------------------------------
+# 出自別（看板レースの穴埋めとゲート通過の分離）
+# ---------------------------------------------------------------------------
+
+def test_出自別に分けるとランク別では見えない差が出る():
+    """🔴 この関数が存在する理由そのもの。
+
+    看板の穴埋めは `RANK_BY_CARS={7:"7A",9:"9A"}` により 7A を名乗って入稿される。
+    ランクで割ると「7A は売れるのに当たらない」に見えるが、それは
+    ランクの性質ではなく経路の混在。
+    """
+    races = build_races([
+        # ゲートを通った 7A：当たる
+        _race_row("202608104801", rank="7A", origin="rank",
+                  n_hits_incl_garami=1, n_hits_excl_garami=1, sold_paid_points=600),
+        # 同じ 7A を名乗る穴埋め：当たらないが売れる
+        _race_row("202608104802", rank="7A", origin="marquee_fill",
+                  n_hits_incl_garami=0, n_hits_excl_garami=0, sold_paid_points=3000),
+        _race_row("202608104803", rank="7A", origin="marquee_fill",
+                  n_hits_incl_garami=0, n_hits_excl_garami=0, sold_paid_points=6400),
+    ])
+    by_origin = {b["origin"]: b for b in build_origin_breakdown(races)}
+    assert by_origin["rank"]["hit_rate"] == 1.0
+    assert by_origin["marquee_fill"]["hit_rate"] == 0.0
+    # 売上シェアは穴埋めが圧倒的（現実と同じ構図）
+    assert by_origin["marquee_fill"]["sales_share"] == pytest.approx(9400 / 10000)
+    assert by_origin["rank"]["sales_share"] == pytest.approx(600 / 10000)
+
+    # ランク別に畳むと差が消える（＝畳んだ数字だけ見てはいけない）
+    (rank_row,) = build_rank_breakdown(races)
+    assert rank_row["rank"] == "7A"
+    assert rank_row["hit_rate"] == pytest.approx(1 / 3, abs=1e-4)
+
+
+def test_ランク別は出自の内訳を持つ():
+    races = build_races([
+        _race_row("202608104801", rank="7A", origin="rank"),
+        _race_row("202608104802", rank="7A", origin="marquee_fill"),
+    ])
+    (row,) = build_rank_breakdown(races)
+    assert [b["origin"] for b in row["by_origin"]] == ["rank", "marquee_fill"]
+    assert sum(b["n_races"] for b in row["by_origin"]) == row["n_races"]
+
+
+def test_出自の並びは朝令暮改しない():
+    """系列が減っても順序が動かないこと（rank → marquee_fill → manual → unknown）。"""
+    races = build_races([
+        _race_row("202608104804", origin="unknown"),
+        _race_row("202608104803", origin="manual"),
+        _race_row("202608104802", origin="marquee_fill"),
+        _race_row("202608104801", origin="rank"),
+    ])
+    assert [b["origin"] for b in build_origin_breakdown(races)] == [
+        "rank", "marquee_fill", "manual", "unknown",
+    ]
+
+
+def test_入稿記録が無いレースはrankに混ぜない():
+    """混ぜるとゲート通過分の成績が薄まる。この画面が分けたかったものそのもの。"""
+    (r,) = build_races([_race_row("202608104801", origin=None)])
+    assert r["origin"] == "unknown"
+    assert build_origin_breakdown([r])[0]["origin"] == "unknown"
+
+
+def test_未知の出自が来ても落とさない():
+    """値が増えたときに黙って消えると売上の合計が合わなくなる。"""
+    races = build_races([
+        _race_row("202608104801", origin="rank", sold_paid_points=100),
+        _race_row("202608104802", origin="future_kind", sold_paid_points=900),
+    ])
+    out = build_origin_breakdown(races)
+    assert [b["origin"] for b in out] == ["rank", "future_kind"]  # 未知は末尾
+    assert sum(b["sold_paid_points"] for b in out) == 1000
 
 
 # ---------------------------------------------------------------------------

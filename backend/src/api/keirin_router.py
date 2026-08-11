@@ -26,10 +26,12 @@ from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
 from ..services.keirin_marquee import is_marquee_race
 from ..services.keirin_sales_analysis import (
+    ORIGIN_RANK,
     build_correlations,
     build_daily,
     build_leadtime_buckets,
     build_link_check,
+    build_origin_breakdown,
     build_races,
     build_rank_breakdown,
     build_summary,
@@ -1262,7 +1264,12 @@ async def get_netkeirin_analysis(
     レース別には kiseki 側の情報を結合して返す:
       - keirin.wt_races              … 開催の第1R発走時刻 → 開催時間帯
                                        （判定は keirin_meeting.py が正本）
-      - keirin.netkeirin_submissions … 入稿ランク（netkeirin 側には無い断面）
+      - keirin.netkeirin_submissions … 入稿ランクと**出自**（netkeirin 側には無い断面）
+
+    🔴 **ランク別だけ見ても経路は分からない。** 看板レースの穴埋め入稿は
+       `RANK_BY_CARS={7:"7A",9:"9A"}` により 7A/9A を名乗るため、
+       `rank_key` にはゲート通過分と穴埋めが混ざる（実測で 7A の94%が穴埋め）。
+       `origin`（migration 202608111930_keirin）で割ること。
     どちらも **LEFT JOIN**。結合できないレース（入稿記録が無い・出走表未取得）を
     落とすと売上の合計が netkeirin の実績と合わなくなる。
 
@@ -1312,7 +1319,7 @@ async def get_netkeirin_analysis(
             -- なりうる。DISTINCT ON で「生きている入稿を優先し、同じなら新しい方」に畳む。
             submission AS (
                 SELECT DISTINCT ON (netkeirin_race_id)
-                       netkeirin_race_id, rank_key, deleted_at
+                       netkeirin_race_id, rank_key, origin, deleted_at
                 FROM keirin.netkeirin_submissions
                 WHERE netkeirin_race_id IS NOT NULL
                 ORDER BY netkeirin_race_id,
@@ -1325,6 +1332,7 @@ async def get_netkeirin_analysis(
                    s.avg_sold_minutes, s.avg_sold_hour,
                    v.name AS venue_name,
                    sub.rank_key AS rank,
+                   sub.origin AS origin,
                    m.first_start_at
             FROM keirin.netkeirin_sales_race s
             LEFT JOIN keirin.venue_info v ON v.venue_code = s.venue_code
@@ -1354,6 +1362,7 @@ async def get_netkeirin_analysis(
         "link_check": build_link_check(daily),
         "leadtime": build_leadtime_buckets(races),
         "by_rank": build_rank_breakdown(races),
+        "by_origin": build_origin_breakdown(races),
         "revenue_rate": NETKEIRIN_REVENUE_RATE,
     })
 
@@ -1562,7 +1571,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     ymd = target.replace("-", "")
 
     rows = (await db.execute(text("""
-        SELECT s.race_key, s.rank_key, s.status, s.session, s.venue_name, s.race_no,
+        SELECT s.race_key, s.rank_key, s.origin, s.status, s.session, s.venue_name, s.race_no,
                s.axis1, s.axis2, s.title, s.comment, s.bet_detail,
                s.netkeirin_race_id, s.proposed_at, s.approved_at, s.deleted_at,
                r.start_at, r.grade, r.race_type, r.n_entries
@@ -1595,6 +1604,9 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         items.append({
             "race_key": r["race_key"],
             "rank_key": r["rank_key"],
+            # 入稿の出自。承認者が「これはゲートを通っていない商品」と分かるように
+            # 返す（穴埋めは 7A/9A を名乗るため rank_key では区別できない）。
+            "origin": r["origin"] or ORIGIN_RANK,
             "status": r["status"] or STATUS_SUBMITTED,
             "session": r["session"],
             "venue_name": r["venue_name"],
