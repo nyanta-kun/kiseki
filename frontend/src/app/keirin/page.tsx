@@ -1611,43 +1611,6 @@ export default function KeirinPage() {
       {/* 日付ナビ */}
       <DateNav date={date} onChange={setDate} />
 
-      {/* 場フィルタ。一番左が「全て」。開催が2場以上ある日だけ出す
-          （1場しかない日に出しても選択肢にならない）。
-          場名は日によって数が変わるので横スクロールさせる。 */}
-      {venues.length > 1 && (
-        <div className="-mx-1 overflow-x-auto">
-          <div className="flex gap-1.5 px-1 pb-1 w-max">
-            <button
-              type="button"
-              aria-pressed={venueFilter === null}
-              onClick={() => setVenueFilter(null)}
-              className={
-                venueFilter === null
-                  ? "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-blue-600 text-white"
-                  : "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800"
-              }
-            >
-              全て
-            </button>
-            {venues.map((v) => (
-              <button
-                key={v}
-                type="button"
-                aria-pressed={venueFilter === v}
-                onClick={() => setVenueFilter((cur) => (cur === v ? null : v))}
-                className={
-                  venueFilter === v
-                    ? "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-blue-600 text-white"
-                    : "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800"
-                }
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* エラー */}
       {error && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-3 text-sm text-amber-700">
@@ -1690,14 +1653,18 @@ export default function KeirinPage() {
         <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
           {/* 行1: 日付ナビ（前月・前日・今日・日付指定・翌日・翌月） */}
           <DateNav date={date} onChange={setDate} />
-          {/* 行2: アクション（採点更新・推奨外の表示切替） */}
-          {(hasCand || hasHideableRows) && (
-            <div className="flex items-center gap-2">
+          {/* 行2: アクション（採点更新・推奨外の表示切替・場フィルタ）
+              ⚠️ 場の数は日によって変わる（当日6場など）ので **折り返す**。
+                 横スクロールにすると右側の場が画面外に隠れ、押せることに気づけない。
+                 折り返す都合で既存2ボタンの flex-1（横幅いっぱいに伸ばす）は外し、
+                 内容ぶんの自然幅にしてある。 */}
+          {(hasCand || hasHideableRows || venues.length > 1) && (
+            <div className="flex flex-wrap items-center gap-1.5">
               {hasCand && (
                 <button
                   onClick={handleRefresh}
                   disabled={refreshing}
-                  className="flex-1 px-2 py-1.5 rounded-lg border border-orange-300 dark:border-orange-600 text-xs font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
+                  className="shrink-0 px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-600 text-xs font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
                 >
                   {refreshing ? "採点中…" : "⚡ 採点更新"}
                 </button>
@@ -1714,7 +1681,7 @@ export default function KeirinPage() {
                     setHideNoPickRows(next);
                     localStorage.setItem(HIDE_NOPICK_KEY, String(next));
                   }}
-                  className={`flex-1 px-2 py-1.5 rounded-lg border text-xs font-semibold text-center whitespace-nowrap transition-colors ${
+                  className={`shrink-0 px-2.5 py-1.5 rounded-lg border text-xs font-semibold text-center whitespace-nowrap transition-colors ${
                     hideNoPickRows
                       ? "border-blue-500 dark:border-blue-400 text-white bg-blue-500 dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700"
                       : "border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -1722,6 +1689,39 @@ export default function KeirinPage() {
                 >
                   {hideNoPickRows ? "🙈 推奨外 非表示中" : "👁 推奨外 表示中"}
                 </button>
+              )}
+              {/* 場フィルタ。**一番左が「全て」**。開催が2場以上ある日だけ出す
+                  （1場しかない日は選択肢にならない）。 */}
+              {venues.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    aria-pressed={venueFilter === null}
+                    onClick={() => setVenueFilter(null)}
+                    className={`shrink-0 px-2.5 py-1.5 rounded-lg border text-xs font-semibold whitespace-nowrap transition-colors ${
+                      venueFilter === null
+                        ? "border-blue-500 dark:border-blue-400 text-white bg-blue-500 dark:bg-blue-600"
+                        : "border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    }`}
+                  >
+                    全て
+                  </button>
+                  {venues.map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      aria-pressed={venueFilter === v}
+                      onClick={() => setVenueFilter((cur) => (cur === v ? null : v))}
+                      className={`shrink-0 px-2.5 py-1.5 rounded-lg border text-xs font-semibold whitespace-nowrap transition-colors ${
+                        venueFilter === v
+                          ? "border-blue-500 dark:border-blue-400 text-white bg-blue-500 dark:bg-blue-600"
+                          : "border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           )}
