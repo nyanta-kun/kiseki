@@ -1228,3 +1228,80 @@ export async function fetchNetkeirinSales(
     { cache: "no-store" },
   );
 }
+
+// ---------------------------------------------------------------------------
+// 入稿案の確認（2026-08-11）
+// ---------------------------------------------------------------------------
+/** `keirin.netkeirin_submissions` の状態。 */
+export type KeirinProposalStatus = "proposed" | "submitted" | "deleted";
+
+export interface KeirinProposalEntry {
+  frame_no: number;
+  name: string | null;
+  race_point: number | null;
+  style: string | null;
+  line_group: number | null;
+  line_pos: number | null;
+  player_class: string | null;
+  prediction_mark: number | null;
+  /** モデルの1着率（%） */
+  pred_win_pct: number | null;
+  /** モデルの3着内率（%） */
+  pred_top3_pct: number | null;
+}
+
+export interface KeirinProposal {
+  race_key: string;
+  rank_key: string;
+  status: KeirinProposalStatus;
+  session: string | null;
+  venue_name: string;
+  race_no: number;
+  grade: string | null;
+  race_type: string | null;
+  is_marquee: boolean;
+  start_at: number | null;
+  n_entries: number | null;
+  axis1: number | null;
+  axis2: number | null;
+  title: string | null;
+  comment: string | null;
+  bet_detail: {
+    total: number;
+    source: string | null;
+    lines: { bet_type: string; combo: string; stake: number; odds: number | null }[];
+  } | null;
+  /**
+   * 見込み回収率（1.0 で収支トントン）。オッズが1点でも欠けると null。
+   *
+   * ⚠️ **購入判断の根拠に使わないこと。** 競輪の市場は効率的で、モデル由来の
+   *    期待値による選別は繰り返し否定されている。異常値の検知が目的で、
+   *    実用上は「最低払戻がガミ域に入っていないか」を見るほうが確実。
+   */
+  expected_value: number | null;
+  /** 当たったときの最低払戻（円）。オッズが1点でも欠けると null。 */
+  min_payout: number | null;
+  /** 当たったときの最高払戻（円）。 */
+  max_payout: number | null;
+  /** 最低払戻が投資額を下回る＝当たってもガミになりうる。 */
+  gami_risk: boolean | null;
+  netkeirin_race_id: string | null;
+  proposed_at: string | null;
+  approved_at: string | null;
+  deleted_at: string | null;
+  entries: KeirinProposalEntry[];
+}
+
+export interface KeirinProposalsResponse {
+  date: string;
+  n_proposed: number;
+  items: KeirinProposal[];
+}
+
+export async function fetchKeirinProposals(date: string): Promise<KeirinProposalsResponse> {
+  return get<KeirinProposalsResponse>(`/keirin/proposals?date=${date}`, { cache: "no-store" });
+}
+
+export async function fetchKeirinApprovalMode(): Promise<{ require_approval: boolean }> {
+  return get<{ require_approval: boolean }>("/keirin/approval-mode", { cache: "no-store" });
+}
