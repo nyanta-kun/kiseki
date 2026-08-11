@@ -98,6 +98,10 @@ class Handler(BaseHTTPRequestHandler):
             ok, message, status = self._handle_submit_race()
             self._respond(status, {"ok": ok, "message": message})
             return
+        elif self.path in ("/approve", "/cancel"):
+            payload, status = self._handle_approval(self.path.lstrip("/"))
+            self._respond(status, payload)
+            return
         else:
             self._respond(404, {"ok": False, "message": f"unknown path: {self.path}"})
             return
@@ -153,6 +157,56 @@ class Handler(BaseHTTPRequestHandler):
             extra_env={"PYTHONPATH": "."},
         )
         return ok, message, 200
+
+    def _handle_approval(self, action: str) -> tuple[dict, int]:
+        """入稿案の承認・取消。**同期実行して結果をそのまま返す。**
+
+        他のエンドポイントのように背景起動（`_spawn`）にすると
+        「開始しました」しか返せない。確認画面は承認の成否をその場で
+        見せる必要がある（承認したのに出ていない、が最も困る）。
+
+        1レースあたり netkeirin への POST は1回なので同期で足りる。
+        場単位はレース数ぶん増えるので余裕を持ったタイムアウトを置く。
+        """
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            return {"ok": False, "message": "invalid JSON body"}, 400
+
+        cmd = [str(KEIRIN_HOME / ".venv" / "bin" / "python3"),
+               "scripts/netkeirin_approve_wt.py", action]
+        race_key = body.get("race_key")
+        rank_key = body.get("rank_key")
+        date = body.get("date")
+        venue = body.get("venue_name")
+        if race_key and rank_key:
+            if not _RACE_KEY_RE.match(str(race_key)):
+                return {"ok": False, "message": f"invalid race_key: {race_key}"}, 400
+            cmd += ["--race-key", str(race_key), "--rank-key", str(rank_key)]
+        elif date and venue:
+            if not _DATE_RE.match(str(date)):
+                return {"ok": False, "message": f"invalid date: {date}"}, 400
+            cmd += ["--date", str(date), "--venue", str(venue)]
+        else:
+            return {"ok": False,
+                    "message": "race_key+rank_key か date+venue_name が必要です"}, 400
+
+        log.info("triggered /%s %s", action, cmd[-4:])
+        env = dict(os.environ, PYTHONPATH=".")
+        try:
+            p = subprocess.run(cmd, cwd=str(KEIRIN_HOME), env=env,
+                               capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "message": "タイムアウトしました（180秒）"}, 504
+        out = (p.stdout or "").strip().splitlines()
+        for line in reversed(out):
+            try:
+                return json.loads(line), 200
+            except json.JSONDecodeError:
+                continue
+        return {"ok": False,
+                "message": f"結果を解釈できません: {(p.stderr or p.stdout)[:300]}"}, 500
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
