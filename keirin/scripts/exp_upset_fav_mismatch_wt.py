@@ -20,7 +20,7 @@ doc18セマンティクス:
   - 払戻: wt_odds の最終オッズ（上限値）
 
 実行:
-  cd /Users/ysuzuki/GitHub/keirin
+  cd ~/GitHub/kiseki/keirin
   python3 scripts/exp_upset_fav_mismatch_wt.py
 """
 import sys

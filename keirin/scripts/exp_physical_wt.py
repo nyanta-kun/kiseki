@@ -31,16 +31,10 @@ import sys
 import re
 from pathlib import Path
 
-# ワークツリー内でも本番DBを参照できるよう、リポジトリルートを特定する。
-_script_dir = Path(__file__).resolve().parent
-_candidates = [
-    _script_dir.parent,
-    Path("/Users/ysuzuki/GitHub/keirin"),
-]
-for _repo_root in _candidates:
-    _db = _repo_root / "data" / "keirin.db"
-    if _db.exists() and _db.stat().st_size > 10_000:
-        break
+# リポジトリルートは自ファイルの位置から導く（scripts/ の親）。
+# 2026-08-11: 旧実装の「keirin.db がある方を選ぶ」候補リストは、DB が
+# 廃止済み（2026-07-22）で常に旧 keirin リポジトリの絶対パスへ落ちていた。
+_repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_repo_root))
 
 import numpy as np

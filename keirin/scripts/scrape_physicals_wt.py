@@ -41,18 +41,12 @@ robots.txt は /pc/ を ALLOW。2 req/sec 遵守。
 import sys, re, time, csv, argparse
 from pathlib import Path
 
-# ワークツリー内でも本番DBを参照できるよう、リポジトリルートを特定する。
-# 本スクリプトは scripts/ に置かれているため、親の親がリポジトリルート候補。
-# keirin.db が data/ 配下に存在するディレクトリを優先的に使用する。
-_script_dir = Path(__file__).resolve().parent
-_candidates = [
-    _script_dir.parent,                                      # 同一ツリーのルート
-    Path("/Users/ysuzuki/GitHub/keirin"),                    # 本番リポジトリ（絶対パス）
-]
-for _repo_root in _candidates:
-    _db = _repo_root / "data" / "keirin.db"
-    if _db.exists() and _db.stat().st_size > 10_000:
-        break
+# リポジトリルートは自ファイルの位置から導く（scripts/ の親）。
+# 2026-08-11: 旧実装は「data/keirin.db がある方を選ぶ」候補リストで、
+# 見つからないと最後の候補＝旧 keirin リポジトリの絶対パスへ落ちていた。
+# ローカル SQLite は 2026-07-22 に廃止済みで keirin.db は存在しないため、
+# 実際には常に旧パスが選ばれ、統合でそこが消えた今は出力先ごと壊れる。
+_repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_repo_root))
 
 import requests

@@ -6,7 +6,7 @@ pre-race オッズ確認・Discord 通知（毎分 cron で実行）
 現在オッズを winticket からリアルタイム取得し、Discord へ通知する。
 
 cron 設定（crontab -e に追加）:
-  * * * * * cd /Users/ysuzuki/GitHub/keirin && .venv/bin/python3 scripts/notify_prerace_wt.py >> /tmp/prerace.log 2>&1
+  * * * * * cd ~/GitHub/kiseki/keirin && .venv/bin/python3 scripts/notify_prerace_wt.py >> /tmp/prerace.log 2>&1
 
 通知ウィンドウ: start_at - 900秒 ≤ now < start_at - 840秒（1分間）
   競輪の購入締切は発走 5 分前 → 締切 10 分前 = 発走 15 分前（900秒前）に通知

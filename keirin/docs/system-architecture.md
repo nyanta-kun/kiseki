@@ -186,7 +186,7 @@ winticket.jp (PRELOADED_STATE JSON / SSR)
 
 ## 毎朝の自動実行フロー（本番稼働中・2026-08-01に8:00単一バッチへ一本化・crontab反映済み）
 
-**VPS（`/home/ysuzuki/keirin`）が自前でcronを実行**（Mac側はweekly_retrain_wt.shのみ）。
+**VPS（`/home/ysuzuki/GitHub/kiseki/keirin`）が自前でcronを実行**（Mac側はweekly_retrain_wt.shのみ）。
 
 **2026-08-01: 「7:00(日中)+16:00(夜)」の2段階生成は撤回し、8:00の単一バッチへ
 一本化した**（ユーザー判断。根拠: 直近92日(2026-05-01〜07-31)で1日の最初の発走が
@@ -303,20 +303,22 @@ crontab（変更漏れの温床）からスクリプト側に一本化した。�
 
 **Mac crontab への反映は 2026-08-01 に完了した**（ユーザー承認のうえ実施。
 反映前の内容は Mac 上の `~/crontab_mac_backup_20260801.txt` に保全）。
-適用した差分:
+適用した差分（⚠️ **パスは 2026-08-10 の kiseki 統合で `~/GitHub/keirin` から
+`~/GitHub/kiseki/keirin` へ移設済み**。以下は現行パスに直して記載している。
+当時の実際の crontab は旧パスだった。退避 `~/crontab_mac_before_keirin_merge_20260810.txt`）:
 
 ```
 # 変更前（〜2026-08-01）:
-30 23 * * 0 /Users/ysuzuki/GitHub/keirin/scripts/weekly_retrain_wt.sh \
-  >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1 && \
-  rsync -av <個別ファイルを明示列挙...> sekito:~/keirin/data/models/ \
-  >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+30 23 * * 0 ~/GitHub/kiseki/keirin/scripts/weekly_retrain_wt.sh \
+  >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1 && \
+  rsync -av <個別ファイルを明示列挙...> sekito:~/GitHub/kiseki/keirin/data/models/ \
+  >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
 
 # 変更後（現行・2026-08-01〜）:
-30 23 * * 0 /Users/ysuzuki/GitHub/keirin/scripts/weekly_retrain_wt.sh \
-  >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1 && \
-  /Users/ysuzuki/GitHub/keirin/scripts/sync_models_to_vps.sh \
-  >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+30 23 * * 0 ~/GitHub/kiseki/keirin/scripts/weekly_retrain_wt.sh \
+  >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1 && \
+  ~/GitHub/kiseki/keirin/scripts/sync_models_to_vps.sh \
+  >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
 ```
 
 あわせて `scripts/ensure_monthly_vintage.sh`（不足月の学習 + VPS配布）を月初に
@@ -325,8 +327,8 @@ crontab（変更漏れの温床）からスクリプト側に一本化した。�
 `reconcile_walkforward_tail.sh`(00:50・現在PAUSED) より前）:
 
 ```
-5 0 1 * * /Users/ysuzuki/GitHub/keirin/scripts/ensure_monthly_vintage.sh \
-  >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+5 0 1 * * ~/GitHub/kiseki/keirin/scripts/ensure_monthly_vintage.sh \
+  >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
 ```
 
 これにより、月次vintageモデルが「学習はされるが配布されない」「月が替わった

@@ -18,22 +18,14 @@ import sys
 import re
 from pathlib import Path
 
-# ワークツリーから実行する場合でもメインリポジトリの src/ を使う
+# リポジトリルートは自ファイルの位置から導く（scripts/ の親）。
+# 2026-08-11: 旧実装は「keirin.db が十分大きい方のツリーを使う」分岐で、
+# DB 廃止（2026-07-22）後は常に旧 keirin リポジトリの絶対パスへ逃げていた。
+# kiseki 統合後はワークツリーでも自分のツリーが正しい（DB は VPS PG で共通）。
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_CANDIDATE = _SCRIPT_DIR.parent  # worktree root or main repo root
-# メインリポジトリの keirin.db が存在するかで判定
-if not (_REPO_CANDIDATE / "data" / "keirin.db").exists() or \
-   not (_REPO_CANDIDATE / "data" / "keirin.db").stat().st_size > 10_000_000:
-    # worktree の keirin.db は空なので main repo を探す
-    _MAIN_REPO = Path("/Users/ysuzuki/GitHub/keirin")
-    if _MAIN_REPO.exists():
-        sys.path.insert(0, str(_MAIN_REPO))
-        sys.path.insert(0, str(_MAIN_REPO / "scripts"))
-    else:
-        sys.path.insert(0, str(_REPO_CANDIDATE))
-else:
-    sys.path.insert(0, str(_REPO_CANDIDATE))
-    sys.path.insert(0, str(_REPO_CANDIDATE / "scripts"))
+_REPO_ROOT = _SCRIPT_DIR.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 import numpy as np
 import pandas as pd

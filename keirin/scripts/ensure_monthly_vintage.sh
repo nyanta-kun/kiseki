@@ -26,8 +26,8 @@
 # crontabへの組み込みは別途PM/ユーザー確認の上で実施すること（本スクリプトの新設
 # 自体はcrontabを変更しない）。推奨エントリ（月初 00:05 = 週次retrain(日曜23:30)と
 # 重ならず、かつreconcile_walkforward_tail.sh(00:50, 現在PAUSED)より確実に前）:
-#   5 0 1 * * /Users/ysuzuki/GitHub/keirin/scripts/ensure_monthly_vintage.sh \
-#     >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+#   5 0 1 * * ~/GitHub/kiseki/keirin/scripts/ensure_monthly_vintage.sh \
+#     >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
 set -euo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
 

@@ -22,10 +22,10 @@
 #
 # crontabへの組み込み例（このスクリプト自体はcrontabを変更しない。
 # 変更は別途PM/ユーザー判断で実施すること）:
-#   30 23 * * 0 /Users/ysuzuki/GitHub/keirin/scripts/weekly_retrain_wt.sh \
-#     >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1 && \
-#     /Users/ysuzuki/GitHub/keirin/scripts/sync_models_to_vps.sh \
-#     >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+#   30 23 * * 0 ~/GitHub/kiseki/keirin/scripts/weekly_retrain_wt.sh \
+#     >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1 && \
+#     ~/GitHub/kiseki/keirin/scripts/sync_models_to_vps.sh \
+#     >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
 #
 # 注意: 本スクリプトは実際のrsync転送を行う。crontabの変更・実運用への
 # 組み込みはPM/ユーザーが確認の上で実施すること（このファイルの新設のみで

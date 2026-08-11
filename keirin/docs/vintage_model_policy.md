@@ -167,8 +167,8 @@ S7/S9/7A/9Aは同一のインターフェース（`--dry-run`/`--tail-only`/
    備える。**Mac crontab への組み込みは 2026-08-01 にユーザー承認のうえ完了済み**
    （下記エントリをそのまま登録した）:
    ```
-   5 0 1 * * /Users/ysuzuki/GitHub/keirin/scripts/ensure_monthly_vintage.sh \
-     >> /Users/ysuzuki/GitHub/keirin/data/logs/cron.log 2>&1
+   5 0 1 * * ~/GitHub/kiseki/keirin/scripts/ensure_monthly_vintage.sh \
+     >> ~/GitHub/kiseki/keirin/data/logs/cron.log 2>&1
    ```
    （月初00:05実行。週次retrain(日曜23:30)と重ならず、`reconcile_walkforward_tail.sh`
    の00:50 VPS cron（現在PAUSED）や08:00の`daily_picks_wt.sh`より確実に前に完了させる

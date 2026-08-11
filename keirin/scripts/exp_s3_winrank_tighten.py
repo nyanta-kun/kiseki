@@ -13,7 +13,7 @@ win_rank閾値そのものの引き上げ・買い目オッズ下限の引き上
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/Users/ysuzuki/GitHub/keirin")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.exp_composite_prob_diff_wt import (
     GAP12_MIN, LEG_MIN_ODDS, TEST_FROM, TEST_TO, VAL_FROM, VAL_TO, WIN_RANK_MIN,

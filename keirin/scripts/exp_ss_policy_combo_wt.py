@@ -34,7 +34,7 @@
 ポリシー間比較は同一リサンプルを共有するペアドブートストラップ。
 
 使い方:
-  cd /Users/ysuzuki/GitHub/keirin
+  cd ~/GitHub/kiseki/keirin
   .venv/bin/python scripts/exp_ss_policy_combo_wt.py
 """
 import pickle

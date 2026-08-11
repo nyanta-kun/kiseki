@@ -16,9 +16,9 @@ from pathlib import Path
 from collections import defaultdict
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
+# 2026-08-11: ワークツリー時に旧 keirin リポジトリの絶対パスへ逃がす分岐を削除。
+# kiseki 統合後はワークツリーでも自分のツリーが正しい（DB は VPS PG で共通）。
 _REPO_ROOT = _SCRIPT_DIR.parent
-if ".claude/worktrees" in str(_REPO_ROOT):
-    _REPO_ROOT = Path("/Users/ysuzuki/GitHub/keirin")
 sys.path.insert(0, str(_REPO_ROOT))
 
 from src.database import get_connection

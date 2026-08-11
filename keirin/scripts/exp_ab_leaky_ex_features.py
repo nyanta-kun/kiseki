@@ -48,7 +48,7 @@ DB へは読み取り専用（SELECT のみ）。picks_history・data/models/ �
 削除はこのスクリプト自身ではなく別途手動で行う）。
 
 使い方:
-    cd /Users/ysuzuki/GitHub/keirin
+    cd ~/GitHub/kiseki/keirin
     .venv/bin/python scripts/exp_ab_leaky_ex_features.py --months 6
     .venv/bin/python scripts/exp_ab_leaky_ex_features.py --months 6 --skip-train  # 学習済みab46_*を再利用
     .venv/bin/python scripts/exp_ab_leaky_ex_features.py --cleanup  # ab46_*一時モデルを削除するのみ
