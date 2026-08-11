@@ -29,6 +29,18 @@ from typing import Any
 # （2〜3点の相関は必ず ±1 付近に出て、読み手を確実に誤らせる）。
 MIN_SAMPLES_FOR_CORRELATION = 5
 
+# 入稿の出自（`keirin.netkeirin_submissions.origin` / migration 202608111930_keirin）。
+# 🔴 **ランク別の集計だけでは経路を分けられない。** 看板レースの穴埋め入稿は
+#    keirin `submit_marquee_wt.py` の `RANK_BY_CARS={7:"7A",9:"9A"}` により
+#    7A/9A を名乗るため、`rank` に両方が混ざる（実測で 7A の94%が穴埋め）。
+ORIGIN_RANK = "rank"
+ORIGIN_MARQUEE_FILL = "marquee_fill"
+ORIGIN_MANUAL = "manual"
+# 入稿記録そのものが無いレース。origin の値ではなく「結合できなかった」印。
+ORIGIN_UNKNOWN = "unknown"
+# 表示順。売上の主役である穴埋めを2番目に置く。
+ORIGIN_ORDER = [ORIGIN_RANK, ORIGIN_MARQUEE_FILL, ORIGIN_MANUAL, ORIGIN_UNKNOWN]
+
 
 def pearson(xs: list[float], ys: list[float]) -> float | None:
     """ピアソンの積率相関係数。標本不足・分散ゼロなら None。"""
@@ -103,6 +115,9 @@ def build_races(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "race_no": int(r["race_no"]),
             "label": r.get("race_label"),
             "rank": r.get("rank"),
+            # 入稿記録が無いレースは「rank と決めつけない」。混ぜるとゲート通過分の
+            # 成績が薄まる（この画面が分けたかったものそのもの）。
+            "origin": r.get("origin") or ORIGIN_UNKNOWN,
             "meeting_type": r.get("meeting_type"),
             "hit": hits_incl > 0,
             "hit_excl_garami": hits_excl > 0,
@@ -203,33 +218,85 @@ def build_leadtime_buckets(races: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _empty_bucket(key_name: str, key_value: str) -> dict[str, Any]:
+    return {
+        key_name: key_value, "n_races": 0, "n_hits": 0, "n_garami": 0,
+        "n_sold": 0, "sold_paid_points": 0, "stake_amount": 0, "payout_amount": 0,
+    }
+
+
+def _accumulate(bucket: dict[str, Any], r: dict[str, Any]) -> None:
+    bucket["n_races"] += 1
+    bucket["n_hits"] += 1 if r["hit"] else 0
+    bucket["n_garami"] += 1 if r["is_garami"] else 0
+    bucket["n_sold"] += r["n_sold"]
+    bucket["sold_paid_points"] += r["sold_paid_points"]
+    bucket["stake_amount"] += r["stake_amount"]
+    bucket["payout_amount"] += r["payout_amount"]
+
+
+def _finalize(bucket: dict[str, Any], total_sales: int) -> dict[str, Any]:
+    bucket["hit_rate"] = _rate(bucket["n_hits"], bucket["n_races"])
+    bucket["garami_rate"] = _rate(bucket["n_garami"], bucket["n_hits"])
+    bucket["recovery_rate"] = _rate(bucket["payout_amount"], bucket["stake_amount"])
+    # 売上シェア。「どれだけ当たるか」より「どれだけ売れているか」が
+    # 商品ミックスの判断材料になるため必ず添える。
+    bucket["sales_share"] = _rate(bucket["sold_paid_points"], total_sales)
+    return bucket
+
+
+def build_origin_breakdown(races: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """入稿の**出自**別の売上・的中（2026-08-11 新設）。
+
+    ランク別（`build_rank_breakdown`）では見えない断面。看板レースの穴埋めは
+    7A/9A を名乗って入稿されるため、ランクで割ると
+    「7A は売れるのに当たらない」という**ランクの性質ではない結論**が出る。
+
+    実測 2026-08-01〜08-10:
+        ゲート通過 107R / 売上25.4% / 表示的中29.0% / 回収0.702
+        穴埋め      87R / 売上**71.2%** / 表示的中14.9% / 回収0.333
+    """
+    total_sales = sum(r["sold_paid_points"] for r in races)
+    agg: dict[str, dict[str, Any]] = {}
+    for r in races:
+        key = r.get("origin") or ORIGIN_UNKNOWN
+        _accumulate(agg.setdefault(key, _empty_bucket("origin", key)), r)
+    order = {k: i for i, k in enumerate(ORIGIN_ORDER)}
+    return sorted(
+        (_finalize(b, total_sales) for b in agg.values()),
+        # 既知の出自は定義順、未知の値が増えても末尾に落として消さない。
+        key=lambda x: (order.get(x["origin"], len(ORIGIN_ORDER)), x["origin"]),
+    )
+
+
 def build_rank_breakdown(races: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """kiseki の入稿ランク別の売上・的中・ガミ。
 
-    netkeirin 側にランクの概念は無いので、`race_key` で picks_history と結合して
-    初めて作れる断面。**この画面が既存の PDF ダッシュボードに勝てる唯一の点**なので
-    ランク未判明（＝入稿していないレース）も `未入稿` として必ず残す。
+    netkeirin 側にランクの概念は無いので、入稿記録と結合して初めて作れる断面。
+    ランク未判明（＝入稿記録が無いレース）も `未入稿` として必ず残す。
+
+    ⚠️ **ランク単位の行だけを読んではいけない。** 7A/9A にはゲート通過分と
+       看板レースの穴埋めが混ざる（実測で 7A の94%が穴埋め）。各行は
+       `by_origin` に出自別の内訳を持つので、そちらまで見ること。
+       全体の経路比較は `build_origin_breakdown()`。
     """
+    total_sales = sum(r["sold_paid_points"] for r in races)
     agg: dict[str, dict[str, Any]] = {}
+    sub: dict[tuple[str, str], dict[str, Any]] = {}
     for r in races:
         key = r.get("rank") or "未入稿"
-        a = agg.setdefault(key, {
-            "rank": key, "n_races": 0, "n_hits": 0, "n_garami": 0,
-            "n_sold": 0, "sold_paid_points": 0, "stake_amount": 0, "payout_amount": 0,
-        })
-        a["n_races"] += 1
-        a["n_hits"] += 1 if r["hit"] else 0
-        a["n_garami"] += 1 if r["is_garami"] else 0
-        a["n_sold"] += r["n_sold"]
-        a["sold_paid_points"] += r["sold_paid_points"]
-        a["stake_amount"] += r["stake_amount"]
-        a["payout_amount"] += r["payout_amount"]
+        _accumulate(agg.setdefault(key, _empty_bucket("rank", key)), r)
+        origin = r.get("origin") or ORIGIN_UNKNOWN
+        _accumulate(sub.setdefault((key, origin), _empty_bucket("origin", origin)), r)
+
+    order = {k: i for i, k in enumerate(ORIGIN_ORDER)}
     out = []
-    for a in agg.values():
-        a["hit_rate"] = _rate(a["n_hits"], a["n_races"])
-        a["garami_rate"] = _rate(a["n_garami"], a["n_hits"])
-        a["recovery_rate"] = _rate(a["payout_amount"], a["stake_amount"])
-        out.append(a)
+    for rank_key, a in agg.items():
+        a["by_origin"] = sorted(
+            (_finalize(b, total_sales) for (rk, _o), b in sub.items() if rk == rank_key),
+            key=lambda x: (order.get(x["origin"], len(ORIGIN_ORDER)), x["origin"]),
+        )
+        out.append(_finalize(a, total_sales))
     out.sort(key=lambda x: (-x["sold_paid_points"], x["rank"]))
     return out
 

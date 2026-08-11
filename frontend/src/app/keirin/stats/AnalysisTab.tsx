@@ -16,7 +16,7 @@
  * ⚠️ API が返す率はすべて 0〜1 の小数。表示側で ×100 する（formatPct）。
  */
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -29,7 +29,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { KeirinMeetingType, KeirinSalesAnalysisResponse } from "@/lib/api";
+import type {
+  KeirinMeetingType,
+  KeirinSalesAnalysisResponse,
+  KeirinSubmissionOrigin,
+} from "@/lib/api";
 import { formatCoef, formatDelta, formatPct, formatYen } from "./format";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +63,27 @@ const MEETING_COLORS: Record<string, string> = {
 const MEETING_ORDER: (KeirinMeetingType | "unknown")[] = [
   "morning", "day", "nighter", "midnight", "unknown",
 ];
+// 入稿の出自。⚠️ ランク別だけを読むと「7Aは売れるのに当たらない」という
+// **ランクの性質ではない結論**が出る（7A入稿の94%が看板の穴埋め）。
+const ORIGIN_LABELS: Record<KeirinSubmissionOrigin, string> = {
+  rank: "ゲート通過",
+  marquee_fill: "看板の穴埋め",
+  manual: "手動入稿",
+  unknown: "入稿記録なし",
+};
+const ORIGIN_NOTES: Record<KeirinSubmissionOrigin, string> = {
+  rank: "ランクの条件を満たして自動入稿されたもの",
+  marquee_fill: "看板レースの取りこぼしを埋めた入稿。7A/9A を名乗るためランク別では分離できない",
+  manual: "Web から手動で入稿したもの",
+  unknown: "売上はあるが入稿記録と結び付かなかったレース",
+};
+const ORIGIN_STYLES: Record<KeirinSubmissionOrigin, string> = {
+  rank: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  marquee_fill: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  manual: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+  unknown: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+};
+
 const MEETING_LABELS: Record<string, string> = {
   morning: "モーニング",
   day: "デイ",
@@ -492,16 +517,65 @@ export default function AnalysisTab({ data, loading }: {
         )}
       </Card>
 
+      {/* ── 出自別（この画面の核心） ───────────────────── */}
+      <Card
+        title="入稿の出自別 売上 × 成績"
+        note="ゲートを通った入稿と、看板レースの取りこぼしを埋めた入稿を分けたもの。穴埋めは 7A/9A を名乗って入稿されるため、下のランク別表だけでは分離できない。的中率はガミ含む（当たった数）。"
+      >
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-xs min-w-[560px]">
+            <thead>
+              <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
+                <th className="text-left font-normal py-1.5 px-2">出自</th>
+                <th className="text-right font-normal py-1.5 px-2">レース</th>
+                <th className="text-right font-normal py-1.5 px-2">売上pt</th>
+                <th className="text-right font-normal py-1.5 px-2">売上シェア</th>
+                <th className="text-right font-normal py-1.5 px-2">的中率</th>
+                <th className="text-right font-normal py-1.5 px-2">回収率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.by_origin.map(o => (
+                <tr key={o.origin} className="border-b border-gray-50 dark:border-gray-800 last:border-0">
+                  <td className="py-1.5 px-2">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${ORIGIN_STYLES[o.origin]}`}>
+                      {ORIGIN_LABELS[o.origin] ?? o.origin}
+                    </span>
+                    <span className="block text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                      {ORIGIN_NOTES[o.origin]}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">{o.n_races}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100 align-top">{o.sold_paid_points.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">{formatPct(o.sales_share, 1)}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">
+                    {formatPct(o.hit_rate, 0)}<span className="text-gray-400 ml-0.5">({o.n_hits})</span>
+                  </td>
+                  <td className={`py-1.5 px-2 text-right tabular-nums font-semibold align-top ${
+                    (o.recovery_rate ?? 0) >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                  }`}>{formatPct(o.recovery_rate, 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       {/* ── ランク別（kiseki 側の断面） ─────────────────── */}
       <Card
         title="入稿ランク別 売上 × 成績"
-        note="netkeirin 側にランクの概念は無く、kiseki の入稿記録（netkeirin_submissions）と突き合わせて初めて出せる断面。どのランクが売れていて、そのランクは当たっているのかを見る。「未入稿」は入稿記録と結び付かなかったレース。"
+        note="netkeirin 側にランクの概念は無く、kiseki の入稿記録（netkeirin_submissions）と突き合わせて初めて出せる断面。「未入稿」は入稿記録と結び付かなかったレース。"
       >
+        <p className="text-[11px] leading-relaxed border-l-2 border-amber-400 pl-2 text-amber-700 dark:text-amber-400 mb-2">
+          ⚠️ ランクの行だけを読まないこと。看板レースの穴埋めは 7A/9A を名乗って入稿されるため、
+          その2つには<strong>ゲート通過分と穴埋めが混ざる</strong>。内訳を下段に出しているので、
+          ランクの実力を見るときは「ゲート通過」の行を読むこと。
+        </p>
         <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-xs min-w-[520px]">
+          <table className="w-full text-xs min-w-[560px]">
             <thead>
               <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
-                <th className="text-left font-normal py-1.5 px-2">ランク</th>
+                <th className="text-left font-normal py-1.5 px-2">ランク / 出自</th>
                 <th className="text-right font-normal py-1.5 px-2">レース</th>
                 <th className="text-right font-normal py-1.5 px-2">販売個数</th>
                 <th className="text-right font-normal py-1.5 px-2">売上pt</th>
@@ -512,19 +586,39 @@ export default function AnalysisTab({ data, loading }: {
             </thead>
             <tbody>
               {data.by_rank.map(r => (
-                <tr key={r.rank} className="border-b border-gray-50 dark:border-gray-800 last:border-0">
-                  <td className="py-1.5 px-2 font-semibold text-gray-700 dark:text-gray-200">{r.rank}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{r.n_races}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{r.n_sold.toLocaleString()}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100">{r.sold_paid_points.toLocaleString()}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">
-                    {formatPct(r.hit_rate, 0)}<span className="text-gray-400 ml-0.5">({r.n_hits})</span>
-                  </td>
-                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatPct(r.garami_rate, 0)}</td>
-                  <td className={`py-1.5 px-2 text-right tabular-nums font-semibold ${
-                    (r.recovery_rate ?? 0) >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
-                  }`}>{formatPct(r.recovery_rate, 0)}</td>
-                </tr>
+                <Fragment key={r.rank}>
+                  <tr className="border-b border-gray-50 dark:border-gray-800">
+                    <td className="py-1.5 px-2 font-semibold text-gray-700 dark:text-gray-200">{r.rank}</td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{r.n_races}</td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{r.n_sold.toLocaleString()}</td>
+                    <td className="py-1.5 px-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100">{r.sold_paid_points.toLocaleString()}</td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">
+                      {formatPct(r.hit_rate, 0)}<span className="text-gray-400 ml-0.5">({r.n_hits})</span>
+                    </td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatPct(r.garami_rate, 0)}</td>
+                    <td className={`py-1.5 px-2 text-right tabular-nums font-semibold ${
+                      (r.recovery_rate ?? 0) >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                    }`}>{formatPct(r.recovery_rate, 0)}</td>
+                  </tr>
+                  {/* 出自が1種類しかないランクは内訳を出さない（同じ数字が2行並ぶだけ） */}
+                  {r.by_origin.length > 1 && r.by_origin.map(o => (
+                    <tr key={`${r.rank}-${o.origin}`} className="border-b border-gray-50 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/30">
+                      <td className="py-1 px-2 pl-5 text-[11px] text-gray-500 dark:text-gray-400">
+                        └ {ORIGIN_LABELS[o.origin] ?? o.origin}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums text-[11px] text-gray-500 dark:text-gray-400">{o.n_races}</td>
+                      <td className="py-1 px-2 text-right tabular-nums text-[11px] text-gray-500 dark:text-gray-400">{o.n_sold.toLocaleString()}</td>
+                      <td className="py-1 px-2 text-right tabular-nums text-[11px] text-gray-600 dark:text-gray-300">{o.sold_paid_points.toLocaleString()}</td>
+                      <td className="py-1 px-2 text-right tabular-nums text-[11px] text-gray-500 dark:text-gray-400">
+                        {formatPct(o.hit_rate, 0)}<span className="text-gray-400 ml-0.5">({o.n_hits})</span>
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums text-[11px] text-gray-500 dark:text-gray-400">{formatPct(o.garami_rate, 0)}</td>
+                      <td className={`py-1 px-2 text-right tabular-nums text-[11px] ${
+                        (o.recovery_rate ?? 0) >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-red-400"
+                      }`}>{formatPct(o.recovery_rate, 0)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -553,7 +647,14 @@ export default function AnalysisTab({ data, loading }: {
                   <td className="py-1.5 px-2 text-gray-700 dark:text-gray-200">
                     {r.label ?? `${r.venue_name ?? r.venue_code} ${r.race_no}R`}
                   </td>
-                  <td className="py-1.5 px-2 text-gray-500 dark:text-gray-400 whitespace-nowrap">{r.rank ?? "—"}</td>
+                  <td className="py-1.5 px-2 whitespace-nowrap">
+                    <span className="text-gray-500 dark:text-gray-400">{r.rank ?? "—"}</span>
+                    {r.origin !== "rank" && (
+                      <span className={`ml-1 px-1 py-0.5 rounded text-[10px] ${ORIGIN_STYLES[r.origin]}`}>
+                        {r.origin === "marquee_fill" ? "穴埋め" : ORIGIN_LABELS[r.origin]}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 px-2 text-center whitespace-nowrap">
                     {r.hit ? (
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${

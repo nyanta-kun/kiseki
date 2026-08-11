@@ -1238,6 +1238,20 @@ export async function fetchNetkeirinSales(
 /** 開催時間帯。判定の正本は backend `api/keirin_meeting.py`。 */
 export type KeirinMeetingType = "morning" | "day" | "nighter" | "midnight";
 
+/**
+ * 入稿の出自（`keirin.netkeirin_submissions.origin`）。
+ *
+ * 🔴 **rank_key では経路を判別できない。** 看板レースの穴埋め入稿は
+ *    keirin `submit_marquee_wt.py` の `RANK_BY_CARS={7:"7A",9:"9A"}` により
+ *    7A/9A を名乗るため、ランク別集計にはゲート通過分と穴埋めが混ざる
+ *    （実測 2026-08-01〜08-10 で 7A 入稿52件中49件＝94%が穴埋め）。
+ * - `rank`         ゲートを通った自動入稿
+ * - `marquee_fill` 看板レースの穴埋め
+ * - `manual`       手動入稿
+ * - `unknown`      入稿記録と結合できなかった（origin の値ではない）
+ */
+export type KeirinSubmissionOrigin = "rank" | "marquee_fill" | "manual" | "unknown";
+
 export type KeirinSalesDailyPoint = {
   date: string;
   n_predictions: number;
@@ -1269,6 +1283,8 @@ export type KeirinSalesRacePoint = {
   label: string | null;
   /** 入稿ランク（7S/7A/…）。入稿記録が無ければ null。 */
   rank: string | null;
+  /** 入稿の出自。⚠️ ランクだけで経路を判断しないこと。 */
+  origin: KeirinSubmissionOrigin;
   meeting_type: KeirinMeetingType | null;
   hit: boolean;
   hit_excl_garami: boolean;
@@ -1326,21 +1342,29 @@ export type KeirinSalesAnalysisResponse = {
   } | null;
   /** リードタイム(時間)ごとの売上pt。時間帯キーは存在するものだけ入る。 */
   leadtime: Array<{ lead_hours: number } & Partial<Record<KeirinMeetingType | "unknown", number>>>;
-  by_rank: Array<{
-    rank: string;
-    n_races: number;
-    n_hits: number;
-    n_garami: number;
-    n_sold: number;
-    sold_paid_points: number;
-    stake_amount: number;
-    payout_amount: number;
-    hit_rate: number | null;
-    garami_rate: number | null;
-    recovery_rate: number | null;
-  }>;
+  by_rank: Array<KeirinSalesBucket & { rank: string; by_origin: KeirinSalesOriginBucket[] }>;
+  /** 出自別（ゲート通過 / 穴埋め / 手動）の内訳。 */
+  by_origin: KeirinSalesOriginBucket[];
   revenue_rate: number;
 };
+
+/** 売上×成績の集計バケット（ランク別・出自別で共通）。 */
+export type KeirinSalesBucket = {
+  n_races: number;
+  n_hits: number;
+  n_garami: number;
+  n_sold: number;
+  sold_paid_points: number;
+  stake_amount: number;
+  payout_amount: number;
+  hit_rate: number | null;
+  garami_rate: number | null;
+  recovery_rate: number | null;
+  /** 期間全体の売上に占める割合（0〜1）。 */
+  sales_share: number | null;
+};
+
+export type KeirinSalesOriginBucket = KeirinSalesBucket & { origin: KeirinSubmissionOrigin };
 
 export async function fetchKeirinSalesAnalysis(
   fromDate?: string,
@@ -1380,6 +1404,8 @@ export interface KeirinProposalEntry {
 export interface KeirinProposal {
   race_key: string;
   rank_key: string;
+  /** 入稿の出自。`marquee_fill` はゲートを通っていない穴埋め商品。 */
+  origin: KeirinSubmissionOrigin;
   status: KeirinProposalStatus;
   session: string | null;
   venue_name: string;
