@@ -175,7 +175,7 @@ def test_daily_select_does_not_dedupe_against_other_ranks():
 # ── netkeirin 入稿の優先順位・賭け金解決 ──────────────────────────────
 
 def test_netkeirin_priority_order():
-    """優先順位 7H1 > 7H2 > 7SS > 7S > 7A > **7C > 7B**。
+    """優先順位 7H1 > 7H2 > 7SS > 7S > 7A > **7C > 7H3 > 7B**。
 
     RANK_ORDER は dict の定義順なので、順序が入れ替わると黙って優先度が変わる。
 
@@ -189,7 +189,10 @@ def test_netkeirin_priority_order():
     # 2026-08-10: 穴推奨 7H2 を 7H1 の直後に置いた（ユーザー判断）。7H1 は本番実測
     # ROI 80.3%・的中18.3% で 7H2(72.2%) より良いので 7H1 を守る。重なるのは
     # 7H1 側の 49.2%。犠牲は 7SS(−73.7%) / 7B(−11.0%) / 7C(−4.5%)。
-    assert order == ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7B"]
+    # 2026-08-12: 穴推奨 7H3（本命連対どまり型・三連単）を **7C の後ろ**へ挿入した。
+    # 7H3 は表示的中5%の高配当商品なので、重複したレースは的中体験を担う 7C に譲る。
+    # 7B は準決勝限定なので 7H3 とは母集団が排他＝この2つの前後関係は成績に効かない。
+    assert order == ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7H3", "7B"]
 
 
 def test_netkeirin_priority_order_9car():

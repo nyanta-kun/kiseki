@@ -258,6 +258,15 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 9H1候補生成に失敗（他ランクには影響しないため継続）"
 
+# --- 7H3（穴推奨・本命連対どまり型／三連単の高配当）候補生成（2026-08-12 新設）---
+# 7H1/7H2/9H1 と違い**レース単位の学習モデルを持たない**。既存の3着内率と
+# 1着率だけで決まる（軸積 >= 0.70 かつ看板でも準決勝でもないレース）。
+# ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
+# 選別後は 5〜6件/日。0件の日は正常。
+.venv/bin/python3 scripts/build_7h3_candidates.py --date "$TODAY" \
+  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+  || echo "[$(date '+%H:%M:%S')] 7H3候補生成に失敗（他ランクには影響しないため継続）"
+
 # 「朝夕の推奨」Discord通知（notify_picks.py）は2026-07-31にユーザー要望により廃止。
 # 発走15分前の個別通知（notify_prerace_wt.py）のみ残す。
 

@@ -75,6 +75,9 @@ TITLE_TEMPLATES: dict[str, str] = {
     "7H1": "穴狙いの二軸｜{shape}",
     "7H2": "穴狙いの二軸｜{shape}",
     "9H1": "穴狙いの二軸｜{shape}",
+    # 7H3 も「二軸」で正しい。軸2車は**来ると読んでいる**車で、
+    # 置く着順が2〜3着なだけ（1着だけを相手に任せる）。
+    "7H3": "穴狙いの二軸｜{shape}",
 }
 
 
@@ -122,7 +125,8 @@ def _body() -> str:
 #    ランクを増減したら TITLE_TEMPLATES と揃っているか `_check_consistency` が見る。
 COMMENT_TEMPLATES: dict[str, str] = {
     rank: _body()
-    for rank in ("7S", "9S", "7A", "9A", "7B", "7C", "7SS", "7H1", "7H2", "9H1")
+    for rank in ("7S", "9S", "7A", "9A", "7B", "7C", "7SS", "7H1", "7H2", "9H1",
+                 "7H3")
 }
 
 
