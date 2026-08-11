@@ -41,7 +41,7 @@ combo(3頭の frozenset)が wt_odds(trio) に存在する分だけ bet を計上
 (存在しないcomboは投資額に含めない。的中判定は着順から独立に決まる)。
 
 Usage:
-    cd /Users/ysuzuki/GitHub/keirin
+    cd ~/GitHub/kiseki/keirin
     .venv/bin/python3 scripts/exp_pattern_axis_roi_matrix.py
 """
 import re

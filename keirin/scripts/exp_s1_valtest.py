@@ -14,7 +14,7 @@ import numpy as np
 
 SP = Path(__file__).resolve().parent
 sys.path.insert(0, str(SP))
-sys.path.insert(0, "/Users/ysuzuki/GitHub/keirin")
+sys.path.insert(0, str(SP.parent))
 
 from exp_s1_v2 import collect  # 6車/7車レース収集（tri_pay/trio_pay/order3/frames/gap12）
 

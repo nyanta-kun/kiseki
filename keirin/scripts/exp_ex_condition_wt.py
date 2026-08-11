@@ -15,7 +15,7 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 if ".claude/worktrees" in str(_REPO_ROOT):
-    _REPO_ROOT = Path("/Users/ysuzuki/GitHub/keirin")
+    _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 

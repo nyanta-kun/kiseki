@@ -11,7 +11,7 @@ exp_s2_u_tighten.py（フレッシュ学習の簡易モデル）ではbaseline�
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/Users/ysuzuki/GitHub/keirin")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.models.trainer import load_model
 from scripts.exp_ranks_valtest import (

@@ -1,5 +1,14 @@
 # keirin リポジトリを kiseki へ統合する計画（2026-08-10 策定）
 
+> ## ✅ 実施済み（2026-08-10 移設・cron切替 / 2026-08-11 二重管理の解消）
+>
+> **本ドキュメントは実行記録として残している。手順として実行しないこと。**
+> 以下に出てくる `~/keirin`・`~/GitHub/keirin` は**移設元**の旧パスで、
+> 現在はどちらも `.bak` として退避してある（ロールバック用）。
+> 現行パスは **VPS `/home/ysuzuki/GitHub/kiseki/keirin` / Mac
+> `~/GitHub/kiseki/keirin`**。実施結果と踏んだ落とし穴はメモリ
+> `keirin_cutover_done_2026_08_10` / `keirin_repo_merge_2026_08_10` を見ること。
+
 ## 目的
 
 `nyanta-kun/keirin` を `nyanta-kun/kiseki` へ取り込み、**デプロイと CI/CD を一本化**する。

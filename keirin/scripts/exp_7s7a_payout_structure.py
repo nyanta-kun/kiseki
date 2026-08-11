@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-REPO = Path("/Users/ysuzuki/GitHub/keirin")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from src.strategy_wt import (  # noqa: E402

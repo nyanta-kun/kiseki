@@ -20,7 +20,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-REPO = Path("/Users/ysuzuki/GitHub/keirin")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 CACHE = REPO / "data" / "exp_cache" / "pair_axis_dataset_v2.pkl"

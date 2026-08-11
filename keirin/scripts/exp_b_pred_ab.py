@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 
-REPO = Path("/Users/ysuzuki/GitHub/keirin")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 

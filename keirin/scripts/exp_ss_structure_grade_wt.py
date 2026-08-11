@@ -12,7 +12,7 @@
 （窓ごとに境界を引き直すと「方向一致」の判定ができないため）。
 
 使い方:
-  cd /Users/ysuzuki/GitHub/keirin
+  cd ~/GitHub/kiseki/keirin
   .venv/bin/python scripts/exp_ss_structure_grade_wt.py            # キャッシュ利用
   .venv/bin/python scripts/exp_ss_structure_grade_wt.py --refresh  # collect し直し
 

@@ -11,7 +11,7 @@ top3_gap(p1-p2)>=0.15・三連単2点流し(軸→p1→p2, 軸→p2→p1)・目�
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/Users/ysuzuki/GitHub/keirin")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.exp_s1_win_axis_trifecta import (
     TRAIN_FROM, TRAIN_TO, VAL_FROM, VAL_TO, TEST_FROM, TEST_TO,

@@ -17,42 +17,27 @@
 
 更新時は「最終更新」日付と「更新履歴」テーブルも必ず記入する。
 
-## ブランチ運用（2026-08-04〜・PR 必須）
+## ブランチ運用（2026-08-10〜・**kiseki の PR フローに統合済み**）
 
-**`master` へ直接 push してはいけない。変更は必ず PR 経由で入れる。**
-2026-08-04 に branch protection を設定した（kiseki と同じ方式）。
+🔴 **keirin は 2026-08-10 に `nyanta-kun/kiseki` の `keirin/` へ統合された。**
+このディレクトリ単独のリポジトリ・ブランチ・CI・デプロイはもう存在しない。
 
-| 設定 | 値 |
-|---|---|
-| required status check | `Test (Python 3.12)` のみ |
-| `enforce_admins` | `true`（管理者も対象） |
-| required reviews | なし（1人開発のためレビュアーが立てられない） |
-| `strict`（最新追従の強制） | `false` |
-| force push / branch 削除 | 禁止 |
+- 作業ブランチは **kiseki のルート**で切る（`main` では作業しない）。
+  柱は `keirin`。PR → `Guards (並列開発ガード)` を含む CI 通過 → マージ
+- CI は kiseki の `.github/workflows/ci.yml` の **`Keirin (Python)` ジョブ**
+  （`working-directory: keirin`）。旧リポジトリの `Test (Python 3.12)` は無い
+- 詳細な規約（branch protection・worktree 隔離・Alembic の作法）は
+  **kiseki ルートの `CLAUDE.md`** が正本
 
-```bash
-git checkout -b feat/<トピック>     # or fix/ docs/
-# 変更 → テスト（.venv/bin/python -m pytest tests/ -q）
-git push -u origin feat/<トピック>
-gh pr create --title "..." --body "..."
-```
+⚠️ **移植元 `nyanta-kun/keirin` は履歴（`git blame`）のためだけに残してある。**
+そちらへ push・PR してはいけない。反映されるのは kiseki 側だけ。
 
-**push 時点では CI 未実行で required check が通らないため、直接 push は機械的に弾かれる。**
-障害対応などで直接 push が必要な場合は一時解除する:
+⚠️ **VPS への反映は kiseki の `deploy` ジョブが行う**
+（main への push で `cd ~/GitHub/kiseki && git fetch && git reset --hard origin/main`）。
+keirin の cron は**その同じチェックアウト**を実行するので、
+**main へマージした時点で VPS の keirin も入れ替わる**。
+`ssh sekito` して手で `git pull` する必要はない（reset --hard で上書きされる）。
 
-```bash
-gh api -X DELETE repos/nyanta-kun/keirin/branches/master/protection   # 解除
-# 作業後に再設定（contexts は check-run 名と完全一致させること）
-gh api -X PUT repos/nyanta-kun/keirin/branches/master/protection --input - <<'EOF'
-{"required_status_checks":{"strict":false,"contexts":["Test (Python 3.12)"]},
- "enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,
- "allow_force_pushes":false,"allow_deletions":false}
-EOF
-```
-
-⚠️ **`.github/workflows/ci.yml` の `deploy` ジョブが master への push で VPS へ自動デプロイする**
-（`if: github.ref == 'refs/heads/master' && github.event_name == 'push'`）。
-PR では走らないため、**マージした時点でVPSへ反映される**ことを前提に PR を出すこと。
 モデルファイル（`data/models/*.pkl`）は git 管理外なので、特徴量セットを変更した PR を
 マージするときは **`scripts/sync_models_to_vps.sh` によるモデル配布とタイミングを合わせる**
 （コードだけ先に入るとVPS側で `load_model` が特徴量数不一致で落ちる）。
@@ -581,7 +566,7 @@ race_point=0.0（デビュー戦等未点数選手・欠損扱いへ修正）・
 ## Mac / VPS データアーキテクチャ（2026-07-22 VPS PG一本化完了・確定）
 
 **VPS PostgreSQL（`hrdb`.`keirin`スキーマ）が唯一の本番データソース**。
-VPS（`/home/ysuzuki/keirin`・GitHubの本リポジトリと同一cloneが常駐）が
+VPS（`/home/ysuzuki/GitHub/kiseki/keirin`・2026-08-10 の統合で `~/keirin` から移設）が
 daily_picks_wt.sh/evening_picks_wt.sh/notify_prerace_wt.py（毎分・8-23時）等の
 cronを自前で実行し、日次データ収集・ライブ判定・通知を独立して行っている。
 `wt_races`はVPS PGで2022-12-01〜当日まで欠損なし。
@@ -614,9 +599,10 @@ Mac対話シェルも `~/.zshrc` に `KEIRIN_DB_URL=postgresql://...@sekito-stab
 - `rebuild_*_walkforward.py` 系スクリプトのコメントに残る「ローカルSQLite=
   完全な履歴」「PG側は直近数ヶ月のみのミラー」等の記述は2026-06-20以前の
   旧アーキテクチャ前提で、現在は不正確。読む・改修する際は鵜呑みにしないこと。
-- keirinスクリプトをMacで修正した場合、VPS本番に反映するには必ず`git push`→
-  `ssh sekito "cd /home/ysuzuki/keirin && git pull"`まで実施すること。VPSの
-  cronはVPS上の別checkoutを実行するため、Macでの編集だけでは本番挙動は変わらない。
+- keirinスクリプトをMacで修正した場合、**kiseki の main へマージするまで本番挙動は
+  変わらない**（VPSのcronはVPS上の別checkout `~/GitHub/kiseki/keirin` を実行するため）。
+  2026-08-10 の統合以降、反映は kiseki CI の `deploy` ジョブが
+  `git reset --hard origin/main` で自動的に行う。手で `git pull` する必要はない。
 - **【2026-07-22追記・2026-07-29訂正】`wt_odds`はVPS PG側こそ不完全だった**
   （`wt_races`とは逆パターン）。VPS PGの`wt_odds`は2026-06-01以降のミラーのみで
   2024〜2026-05分が丸ごと欠落しており、ローカルMac SQLiteだけが2022-12-01〜の

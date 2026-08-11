@@ -2,7 +2,7 @@
 # 30分ごと実行: 当日の確定結果を kiseki に反映
 #
 # crontab 設定例（8:30〜23:00 の毎時 00分と 30分）:
-#   0,30 8-23 * * * cd /Users/ysuzuki/GitHub/keirin && KEIRIN_DB_URL=... .venv/bin/bash scripts/results_check_wt.sh >> data/logs/results_check.log 2>&1
+#   0,30 8-23 * * * cd ~/GitHub/kiseki/keirin && KEIRIN_DB_URL=... .venv/bin/bash scripts/results_check_wt.sh >> data/logs/results_check.log 2>&1
 #
 # 処理内容:
 #   1. collect-wt --date TODAY: 確定済みレースの finish_order / wt_odds を更新
