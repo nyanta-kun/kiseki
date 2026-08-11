@@ -576,6 +576,10 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   const normTop3 = makeRaceNormalizer(
     entries.map((e) => e.pred_top3_pct), Math.min(entries.length, 3));
   return (
+    // 🔴 数値列が4本（単勝率・2着内率・複勝率・競走得点）になり、狭い端末では
+    //    テーブルが card 幅を超える。**ページごと横スクロールさせない**ため、
+    //    ここで内側スクロールに閉じ込める（`feedback_fixed_layout`）。
+    <div className="overflow-x-auto">
     <table className="w-full">
       <thead>
         <tr className="border-b border-gray-100 dark:border-gray-700">
@@ -630,6 +634,7 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
