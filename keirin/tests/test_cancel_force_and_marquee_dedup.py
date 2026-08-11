@@ -165,3 +165,76 @@ def test_既に取消済みならforceでも何もしない(monkeypatch):
     assert ok is True
     assert "既に取消済み" in msg
     assert not any("UPDATE" in s for s, _ in conn.executed)
+
+
+# ---------------------------------------------------------------------------
+# ③ 場単位・全件の取消（2026-08-12 解禁）
+# ---------------------------------------------------------------------------
+
+class _CaptureConn:
+    """実行された SQL とパラメータを捕まえるだけの接続スタブ。"""
+
+    def __init__(self):
+        self.sql = ""
+        self.params: list = []
+
+    def execute(self, sql, params=()):
+        self.sql, self.params = sql, list(params)
+
+        class _C:
+            @staticmethod
+            def fetchall():
+                return []
+        return _C()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _capture_cancelable(monkeypatch, venue):
+    import scripts.netkeirin_approve_wt as cli
+    conn = _CaptureConn()
+    monkeypatch.setattr(cli, "get_connection", lambda: conn)
+    cli._cancelable("2026-08-12", venue)
+    return conn
+
+
+def test_取消対象は生きている下書きだけ(monkeypatch):
+    """🔴 取消済み（deleted）を含めると「N件取消しました」の N が実態より多く出る。
+    論理削除なので行は残っている。"""
+    conn = _capture_cancelable(monkeypatch, "平塚")
+    assert "COALESCE(status, 'submitted') <> ?" in conn.sql, "取消済みを除外していません"
+    assert "deleted" in conn.params
+
+
+def test_全件取消でも日付で必ず絞る(monkeypatch):
+    """🔴 venue を省いた（＝全場）ときも日付の条件が残ること。
+    ここが外れると**全期間の下書きが対象**になる。"""
+    conn = _capture_cancelable(monkeypatch, None)
+    assert "race_key LIKE ?" in conn.sql, "日付で絞っていません（過去分まで巻き込みます）"
+    assert "20260812%" in conn.params
+    # ⚠️ 単なる部分一致にしない。`ORDER BY venue_name` にも当たってしまう
+    #    （実際にこれで一度誤検知した）。**WHERE 句の形**で見る。
+    assert "venue_name = ?" not in conn.sql, "全場のはずが場で絞っています"
+
+
+def test_場単位では場でも絞る(monkeypatch):
+    conn = _capture_cancelable(monkeypatch, "平塚")
+    assert "venue_name = ?" in conn.sql
+    assert "平塚" in conn.params
+    assert "20260812%" in conn.params, "場を指定しても日付の絞り込みは必要です"
+
+
+def test_一括取消はforceを既定で渡さない():
+    """🔴 まとめて『記録だけ消す』のは事故。失敗は明細で返し、
+    強制取消は画面から1件ずつ行う。"""
+    import scripts.netkeirin_approve_wt as cli
+    tree = ast.parse(inspect.getsource(cli.main))
+    consts = {n.value for n in ast.walk(tree)
+              if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    assert "--force は cancel 専用です" in consts
+    assert "--all は cancel 専用です" in consts
+    assert "--all には --date が必要です" in consts

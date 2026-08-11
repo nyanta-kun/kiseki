@@ -139,7 +139,6 @@ export async function approveKeirinVenueAction(
 /**
  * 入稿を取り消す。netkeirin の下書きを削除し、記録は論理削除する。
  *
- * ⚠️ 場単位は用意していない（まとめて消す事故を避けるため、API 側も拒否する）。
  * ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
  *
  * `force` は **netkeirin を触らず記録だけ取消にする**最後の手段。
@@ -152,6 +151,31 @@ export async function cancelKeirinSubmissionAction(
   force = false,
 ): Promise<ApprovalResult> {
   return postApproval("/keirin/cancel", { race_key: raceKey, rank_key: rankKey, force });
+}
+
+/**
+ * 場単位でまとめて取り消す（その日のその場の生きている下書きすべて）。
+ *
+ * 🔴 **元は用意していなかった**（まとめて消す事故を避けるため API 側も拒否していた）。
+ *    2026-08-12 にユーザー要望で追加。事故防止は**呼び出し側の二段確認と件数表示**が担う。
+ * ⚠️ 一括では force を使わない。netkeirin 側に無いものは失敗として明細で返るので、
+ *    1件ずつ強制取消すること（まとめて記録だけ消す事故を避ける）。
+ */
+export async function cancelKeirinVenueAction(
+  date: string,
+  venueName: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/cancel", { date, venue_name: venueName });
+}
+
+/**
+ * その日の下書きを**全件**取り消す。
+ *
+ * 🔴 **最も戻しにくい操作。** 呼び出す前に必ず件数を見せて二段で確認すること。
+ * 🔴 date は必須（API・CLI の両方でも日付無しは弾く）。過去分まで巻き込まないため。
+ */
+export async function cancelKeirinAllAction(date: string): Promise<ApprovalResult> {
+  return postApproval("/keirin/cancel", { date, all_venues: true });
 }
 
 /**
