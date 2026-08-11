@@ -17,7 +17,9 @@ from src.services.keirin_sales_analysis import (
     build_origin_breakdown,
     build_races,
     build_rank_breakdown,
+    build_route_breakdown,
     build_summary,
+    classify_route,
     pearson,
 )
 
@@ -49,6 +51,7 @@ def _race_row(race_id: str, **kw):
         "race_label": "08/10 四日市 Ａ級 準決勝",
         "rank": "7S",
         "origin": "rank",
+        "detected_ranks": None,
         "meeting_type": "day",
         "n_hits_incl_garami": 1,
         "n_hits_excl_garami": 1,
@@ -266,6 +269,51 @@ def test_未知の出自が来ても落とさない():
     out = build_origin_breakdown(races)
     assert [b["origin"] for b in out] == ["rank", "future_kind"]  # 未知は末尾
     assert sum(b["sold_paid_points"] for b in out) == 1000
+
+
+# ---------------------------------------------------------------------------
+# 経路（出自 × 候補の有無）
+# ---------------------------------------------------------------------------
+
+def test_名義違いと真の穴埋めを分ける():
+    """🔴 origin だけでは失敗モードが2つ混ざる（2026-08-11 に実際に誤読した）。
+
+    - 候補が立っていたのに別ランク名義で入稿 → `renamed`（ランクの付け替えで直る）
+    - 候補が一切ないレースへ出した          → `no_candidate`（出すかの判断そのもの）
+    """
+    assert classify_route("rank", None) == "gate"
+    assert classify_route("rank", "7C") == "gate"
+    assert classify_route("marquee_fill", "7C") == "renamed"
+    assert classify_route("marquee_fill", None) == "no_candidate"
+    assert classify_route("manual", "7B,7C") == "renamed"
+    assert classify_route("manual", None) == "no_candidate"
+    assert classify_route(None, "7C") == "unknown"
+    assert classify_route("unknown", None) == "unknown"
+
+
+def test_候補がありさえすれば名義が違っても検出できる():
+    """候補ランクと入稿ランクを**等値比較してはいけない**。
+    穴埋めは 7A を名乗るので、7C 候補のレースが「候補なし」に見えてしまう。"""
+    (r,) = build_races([
+        _race_row("202608104801", rank="7A", origin="marquee_fill", detected_ranks="7C"),
+    ])
+    assert r["route"] == "renamed"
+    assert r["detected_ranks"] == "7C"
+
+
+def test_経路別の並びと合計():
+    races = build_races([
+        _race_row("202608104801", origin="rank", sold_paid_points=100),
+        _race_row("202608104802", origin="marquee_fill", detected_ranks="7C",
+                  sold_paid_points=200),
+        _race_row("202608104803", origin="marquee_fill", sold_paid_points=300),
+        _race_row("202608104804", origin=None, sold_paid_points=400),
+    ])
+    out = build_route_breakdown(races)
+    assert [b["route"] for b in out] == ["gate", "renamed", "no_candidate", "unknown"]
+    assert [b["sold_paid_points"] for b in out] == [100, 200, 300, 400]
+    assert sum(b["n_races"] for b in out) == len(races)
+    assert out[1]["sales_share"] == pytest.approx(0.2)
 
 
 # ---------------------------------------------------------------------------

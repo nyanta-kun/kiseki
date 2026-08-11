@@ -33,6 +33,7 @@ import type {
   KeirinMeetingType,
   KeirinSalesAnalysisResponse,
   KeirinSubmissionOrigin,
+  KeirinSubmissionRoute,
 } from "@/lib/api";
 import { formatCoef, formatDelta, formatPct, formatYen } from "./format";
 
@@ -81,6 +82,27 @@ const ORIGIN_STYLES: Record<KeirinSubmissionOrigin, string> = {
   rank: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
   marquee_fill: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
   manual: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+  unknown: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+};
+
+// 入稿の経路（出自 × 候補の有無）。origin だけだと「名義違い」と
+// 「真の穴埋め」が混ざり、打ち手が違うのに同じ箱に入ってしまう。
+const ROUTE_LABELS: Record<KeirinSubmissionRoute, string> = {
+  gate: "ゲート通過",
+  renamed: "別ランク名義",
+  no_candidate: "真の穴埋め",
+  unknown: "入稿記録なし",
+};
+const ROUTE_NOTES: Record<KeirinSubmissionRoute, string> = {
+  gate: "候補が立ち、そのランク名義で入稿されたもの（正常系）",
+  renamed: "候補は立っていたのに別のランク名義で入稿された。ランクの付け替えで直せる",
+  no_candidate: "候補が一切ないレースへ出した入稿。出すかどうかの判断そのものが対象",
+  unknown: "売上はあるが入稿記録と結び付かなかったレース",
+};
+const ROUTE_STYLES: Record<KeirinSubmissionRoute, string> = {
+  gate: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  renamed: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
+  no_candidate: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
   unknown: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
 };
 
@@ -517,7 +539,51 @@ export default function AnalysisTab({ data, loading }: {
         )}
       </Card>
 
-      {/* ── 出自別（この画面の核心） ───────────────────── */}
+      {/* ── 経路別（この画面の核心） ───────────────────── */}
+      <Card
+        title="入稿の経路別 売上 × 成績"
+        note="「どの経路の関数が呼ばれたか（出自）」に「そのレースに候補が立っていたか」を掛け合わせて、失敗モードを2つに割ったもの。名義違いはランクの付け替えで直せるが、真の穴埋めは出すかどうかの判断そのもの。的中率はガミ含む。"
+      >
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-xs min-w-[560px]">
+            <thead>
+              <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
+                <th className="text-left font-normal py-1.5 px-2">経路</th>
+                <th className="text-right font-normal py-1.5 px-2">レース</th>
+                <th className="text-right font-normal py-1.5 px-2">売上pt</th>
+                <th className="text-right font-normal py-1.5 px-2">売上シェア</th>
+                <th className="text-right font-normal py-1.5 px-2">的中率</th>
+                <th className="text-right font-normal py-1.5 px-2">回収率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.by_route.map(o => (
+                <tr key={o.route} className="border-b border-gray-50 dark:border-gray-800 last:border-0">
+                  <td className="py-1.5 px-2">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${ROUTE_STYLES[o.route]}`}>
+                      {ROUTE_LABELS[o.route] ?? o.route}
+                    </span>
+                    <span className="block text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                      {ROUTE_NOTES[o.route]}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">{o.n_races}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100 align-top">{o.sold_paid_points.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">{formatPct(o.sales_share, 1)}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-gray-600 dark:text-gray-300 align-top">
+                    {formatPct(o.hit_rate, 0)}<span className="text-gray-400 ml-0.5">({o.n_hits})</span>
+                  </td>
+                  <td className={`py-1.5 px-2 text-right tabular-nums font-semibold align-top ${
+                    (o.recovery_rate ?? 0) >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                  }`}>{formatPct(o.recovery_rate, 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* ── 出自別（呼び出し経路そのもの） ───────────────── */}
       <Card
         title="入稿の出自別 売上 × 成績"
         note="ゲートを通った入稿と、看板レースの取りこぼしを埋めた入稿を分けたもの。穴埋めは 7A/9A を名乗って入稿されるため、下のランク別表だけでは分離できない。的中率はガミ含む（当たった数）。"
@@ -649,10 +715,14 @@ export default function AnalysisTab({ data, loading }: {
                   </td>
                   <td className="py-1.5 px-2 whitespace-nowrap">
                     <span className="text-gray-500 dark:text-gray-400">{r.rank ?? "—"}</span>
-                    {r.origin !== "rank" && (
-                      <span className={`ml-1 px-1 py-0.5 rounded text-[10px] ${ORIGIN_STYLES[r.origin]}`}>
-                        {r.origin === "marquee_fill" ? "穴埋め" : ORIGIN_LABELS[r.origin]}
+                    {r.route !== "gate" && (
+                      <span className={`ml-1 px-1 py-0.5 rounded text-[10px] ${ROUTE_STYLES[r.route]}`}>
+                        {ROUTE_LABELS[r.route]}
                       </span>
+                    )}
+                    {/* 名義違いは「本来どのランクの候補だったか」まで出さないと直せない */}
+                    {r.route === "renamed" && r.detected_ranks && (
+                      <span className="ml-1 text-[10px] text-gray-400">候補 {r.detected_ranks}</span>
                     )}
                   </td>
                   <td className="py-1.5 px-2 text-center whitespace-nowrap">
