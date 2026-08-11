@@ -83,3 +83,94 @@ export async function triggerKeirinSubmitRaceAction(
   }
   return post("/keirin/submit-race", body);
 }
+
+/**
+ * 入稿案の承認・取消・承認制の切替（2026-08-11 新設）。
+ *
+ * 承認は netkeirin への POST を伴い **同期で** 走る（keirin 側 webhook が
+ * `subprocess.run(timeout=180)`）。確認画面は承認の成否をその場で出す必要があるため
+ * 背景起動にしていない。よってここも待ち時間が長くなりうる。
+ *
+ * 🔴 承認しても **買い目は再計算されない**。keirin 側が入稿案の時点で保存した
+ *    買い目をそのまま送る。画面で見たものと違うものが入稿されては確認の意味がない。
+ */
+export type ApprovalResult = Result & {
+  n_ok?: number;
+  n_ng?: number;
+  results?: { race_key: string; rank_key: string; ok: boolean; message: string }[];
+};
+
+async function postApproval(path: string, body: unknown): Promise<ApprovalResult> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+  try {
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      method: "POST",
+      headers: { "X-API-Key": API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as ApprovalResult & { detail?: string };
+    if (!res.ok) {
+      return { ok: false, message: json.message ?? json.detail ?? `失敗しました (${res.status})` };
+    }
+    return { ...json, ok: json.ok ?? true, message: json.message ?? "実行しました" };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "通信に失敗しました" };
+  }
+}
+
+/** レース単位で承認して netkeirin へ入稿する。 */
+export async function approveKeirinRaceAction(
+  raceKey: string,
+  rankKey: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/approve", { race_key: raceKey, rank_key: rankKey });
+}
+
+/** 場単位でまとめて承認する（その日のその場の入稿案すべて）。 */
+export async function approveKeirinVenueAction(
+  date: string,
+  venueName: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/approve", { date, venue_name: venueName });
+}
+
+/**
+ * 入稿を取り消す。netkeirin の下書きを削除し、記録は論理削除する。
+ *
+ * ⚠️ 場単位は用意していない（まとめて消す事故を避けるため、API 側も拒否する）。
+ * ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
+ */
+export async function cancelKeirinSubmissionAction(
+  raceKey: string,
+  rankKey: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/cancel", { race_key: raceKey, rank_key: rankKey });
+}
+
+/**
+ * 承認制の ON/OFF。
+ *
+ * 承認制は一時運用の想定なので画面から自動入稿へ戻せるようにしてある。
+ * ⚠️ ON にすると承認するまで netkeirin へ何も出ない。
+ */
+export async function setKeirinApprovalModeAction(requireApproval: boolean): Promise<Result> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+  try {
+    const res = await fetch(`${BACKEND_URL}/keirin/approval-mode`, {
+      method: "PUT",
+      headers: { "X-API-Key": API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ require_approval: requireApproval }),
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as Partial<Result> & { detail?: string };
+    if (!res.ok) {
+      return { ok: false, message: json.message ?? json.detail ?? `失敗しました (${res.status})` };
+    }
+    return { ok: true, message: requireApproval ? "承認制にしました" : "自動入稿に戻しました" };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "通信に失敗しました" };
+  }
+}

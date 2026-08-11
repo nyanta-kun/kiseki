@@ -257,6 +257,12 @@ class KeirinNetkeirinSetting(KeirinBase):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="自動入稿ON/OFF")
     title_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="タイトルテンプレート")
     comment_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="コメントテンプレート")
+    # 承認制（migration 202608110900_keirin）。`_global` 行の値だけを見る。
+    # ON にすると入稿バッチは netkeirin へ出さず「入稿案」だけ作り、
+    # 確認画面で承認したものだけが送られる。一時運用の想定なので画面から戻せる。
+    require_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        comment="承認制（_global 行のみ有効・ONだと承認するまで netkeirin へ出ない）")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
