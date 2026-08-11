@@ -1139,6 +1139,12 @@ export type KeirinStatsResponse = {
     total_payout: number;
     roi: number | null;
   };
+  /** 手動・穴埋め入稿を含めた集計か。 */
+  include_manual?: boolean;
+  /** 含めた場合に、買い目が記録されておらず集計から外した件数。
+   *  ⚠️ `bet_detail` の保存開始は 2026-08-07。それ以前の手動入稿は
+   *  「入稿した事実」しか残っておらず金額を復元できない。 */
+  manual_missing_bet_detail?: number;
 };
 
 export type KeirinStatsRank =
@@ -1172,11 +1178,15 @@ export async function fetchKeirinStats(
   toDate: string,
   granularity: "daily" | "monthly",
   rank?: KeirinStatsRank | KeirinStatsRank[],
+  /** ランクのゲートを通っていない入稿（手動・看板の穴埋め）を含めるか。
+   *  ⚠️ 含めると数字の意味が変わる（false=ランクの実力 / true=実際の収支）。 */
+  includeManual = false,
 ): Promise<KeirinStatsResponse> {
   const rankValue = Array.isArray(rank) ? rank.join(",") : rank;
   const rankQuery = rankValue ? `&rank=${encodeURIComponent(rankValue)}` : "";
+  const manualQuery = includeManual ? "&include_manual=true" : "";
   return get<KeirinStatsResponse>(
-    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}`,
+    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}${manualQuery}`,
     { cache: "no-store" },
   );
 }
