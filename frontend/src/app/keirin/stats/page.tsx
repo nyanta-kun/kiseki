@@ -18,6 +18,9 @@ import {
 } from "recharts";
 import { fetchKeirinStats, type KeirinStatItem, type KeirinStatsResponse } from "@/lib/api";
 import { fetchNetkeirinSales, type NetkeirinSalesResponse } from "@/lib/api";
+import { fetchKeirinSalesAnalysis, type KeirinSalesAnalysisResponse } from "@/lib/api";
+import AnalysisTab from "./AnalysisTab";
+import { formatYen } from "./format";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -44,11 +47,7 @@ function formatROI(roi: number | null): string {
   return (roi * 100).toFixed(1) + "%";
 }
 
-function formatYen(val: number): string {
-  if (val >= 1_000_000) return `¥${(val / 10000).toFixed(0)}万`;
-  if (val >= 10_000) return `¥${(val / 10000).toFixed(1)}万`;
-  return `¥${val.toLocaleString()}`;
-}
+// formatYen は ./format から import している（分析タブと共用・負数の桁圧縮バグ修正済み）。
 
 // ---------------------------------------------------------------------------
 // カスタム tooltip
@@ -112,33 +111,37 @@ function SummaryCard({ label, n_picks, n_hits, total_bet, total_payout, roi }: {
   const roiColor = roi == null ? "text-gray-400" : roi >= 1.0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500";
   const profit = total_payout - total_bet;
 
+  // ⚠️ 各セルに min-w-0 が要る。grid の子は既定で min-width:auto のため、
+  //    中身が縮まずカードの外へはみ出す（2026-08-11 に損益/ROI で実際に発生）。
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
-      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{label}</p>
+      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 break-words">{label}</p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-gray-400 dark:text-gray-500">推奨/的中</p>
+          {/* 折り返しを許す。nowrap にすると桁が増えたときに隣の列へ重なる。 */}
           <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">
             {n_picks}<span className="text-xs font-normal text-gray-400 ml-0.5">件</span>
             <span className="text-gray-400 mx-0.5">/</span>
             {n_hits}<span className="text-xs font-normal text-gray-400 ml-0.5">({hitRate})</span>
           </p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-gray-400 dark:text-gray-500">投資</p>
           <p className="text-sm font-bold text-gray-800 dark:text-gray-100 tabular-nums">{formatYen(total_bet)}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-gray-400 dark:text-gray-500">回収</p>
           <p className={`text-sm font-bold tabular-nums ${total_payout >= total_bet ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
             {formatYen(total_payout)}
           </p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-gray-400 dark:text-gray-500">損益 / ROI</p>
+          {/* 損益と ROI は改行を許す。1行に押し込むと桁数の多い日にはみ出す。 */}
           <p className={`text-sm font-bold tabular-nums ${roiColor}`}>
             {profit >= 0 ? "+" : ""}{formatYen(profit)}
-            <span className="text-xs ml-1">({formatROI(roi)})</span>
+            <span className="text-xs ml-1 font-normal">({formatROI(roi)})</span>
           </p>
         </div>
       </div>
@@ -219,7 +222,14 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
 // 成績（予想の投資・回収）と売上（netkeirinの販売実績）は性質もフィルタ条件も
 // 異なるため、同一ページ内でタブ分割する（2026-08-03・ユーザー指摘）。
 // 期間フィルタは両タブ共通、ランク/粒度/累積ROIは成績タブ専用。
-type StatsTab = "performance" | "sales";
+// 2026-08-11: 「分析」タブを追加（netkeirin のレース別データを使った売上×的中の相関）。
+type StatsTab = "performance" | "sales" | "analysis";
+
+const STATS_TABS: [StatsTab, string][] = [
+  ["performance", "成績"],
+  ["sales", "売上"],
+  ["analysis", "分析"],
+];
 
 export default function KeirinStatsPage() {
   const [tab, setTab] = useState<StatsTab>("performance");
@@ -240,6 +250,10 @@ export default function KeirinStatsPage() {
   //（成績側はサーバー集計で API 再取得を伴うのに対し、売上はフロントで畳むだけ。
   //  共有すると売上の切り替えのたびに成績APIを無駄に再取得してしまう）。
   const [salesGranularity, setSalesGranularity] = useState<Granularity>("daily");
+
+  // 分析タブ。レース別データを含むため応答が重く、開いたときだけ取りに行く。
+  const [analysis, setAnalysis] = useState<KeirinSalesAnalysisResponse | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const load = useCallback(async (f: string, t: string, g: Granularity, ranks: RankFilter[]) => {
     setLoading(true);
@@ -265,6 +279,17 @@ export default function KeirinStatsPage() {
     }
   }, []);
 
+  const loadAnalysis = useCallback(async (f: string, t: string) => {
+    setAnalysisLoading(true);
+    try {
+      setAnalysis(await fetchKeirinSalesAnalysis(f, t));
+    } catch {
+      setAnalysis(null);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load(from, to, granularity, rankFilters);
   }, [from, to, granularity, rankFilters, load]);
@@ -272,6 +297,11 @@ export default function KeirinStatsPage() {
   useEffect(() => {
     void loadSales(from, to);
   }, [from, to, loadSales]);
+
+  useEffect(() => {
+    if (tab !== "analysis") return;
+    void loadAnalysis(from, to);
+  }, [tab, from, to, loadAnalysis]);
 
   // ランクフィルタのトグル（複数選択可）。「全体」は排他、それ以外は積み上げ選択。
   // 選択がゼロになる場合は「全体」に自動復帰する。
@@ -393,7 +423,7 @@ export default function KeirinStatsPage() {
 
       {/* タブ切り替え（成績 / 売上） */}
       <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
-        {([["performance", "成績"], ["sales", "売上"]] as [StatsTab, string][]).map(([key, label]) => (
+        {STATS_TABS.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -730,6 +760,9 @@ export default function KeirinStatsPage() {
         )}
       </div>
       )}
+
+      {/* ── 分析タブ ───────────────────────────────────────── */}
+      {tab === "analysis" && <AnalysisTab data={analysis} loading={analysisLoading} />}
     </div>
   );
 }

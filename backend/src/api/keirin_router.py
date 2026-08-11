@@ -25,6 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
 from ..services.keirin_marquee import is_marquee_race
+from ..services.keirin_sales_analysis import (
+    build_correlations,
+    build_daily,
+    build_leadtime_buckets,
+    build_link_check,
+    build_races,
+    build_rank_breakdown,
+    build_summary,
+)
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
 
@@ -1234,6 +1243,118 @@ async def get_netkeirin_sales(
             "revenue_rate": NETKEIRIN_REVENUE_RATE,
             "total_revenue_yen": round(total_sold_paid_points * NETKEIRIN_REVENUE_RATE),
         },
+    })
+
+
+@router.get("/netkeirin-analysis")
+async def get_netkeirin_analysis(
+    from_date: str = "",
+    to_date: str = "",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """netkeirin の売上 × 成績の相関分析（成績／売上ページの「分析」タブ）。
+
+    一次資料は2つのテーブル:
+      - keirin.netkeirin_sales_daily … 日別（相関・ガミ推移・前日比）
+      - keirin.netkeirin_sales_race  … レース別（どのレースが売れた／当たった）
+    どちらも scripts/scrape_netkeirin_sales.py が毎日10:30に前日分を UPSERT する。
+
+    レース別には kiseki 側の情報を結合して返す:
+      - keirin.wt_races              … 開催の第1R発走時刻 → 開催時間帯
+                                       （判定は keirin_meeting.py が正本）
+      - keirin.netkeirin_submissions … 入稿ランク（netkeirin 側には無い断面）
+    どちらも **LEFT JOIN**。結合できないレース（入稿記録が無い・出走表未取得）を
+    落とすと売上の合計が netkeirin の実績と合わなくなる。
+
+    ⚠️ ランクの結合キーは `netkeirin_submissions.netkeirin_race_id`（netkeirin の
+       12桁レースID そのもの）を使う。**`picks_history.race_key` は使えない**
+       ―― あちらのキーは `20260801_13_05#7C` のようにランク接尾辞が付いており、
+       1レースが複数ランクで並ぶ（＝どれを入稿したかが決まらない）。
+
+    from_date / to_date: YYYY-MM-DD。省略時は直近30日。
+    """
+    today = _today_jst()
+    try:
+        to_dt = Date.fromisoformat(to_date) if to_date else today
+    except ValueError:
+        to_dt = today
+    try:
+        from_dt = Date.fromisoformat(from_date) if from_date else today - timedelta(days=29)
+    except ValueError:
+        from_dt = today - timedelta(days=29)
+    params = {"from_date": from_dt.strftime("%Y%m%d"), "to_date": to_dt.strftime("%Y%m%d")}
+
+    daily_rows = (await db.execute(
+        text("""
+            SELECT sale_date, n_predictions, n_hits_incl_garami, n_hits_excl_garami,
+                   stake_amount, payout_amount, n_sold, sold_points, sold_paid_points
+            FROM keirin.netkeirin_sales_daily
+            WHERE sale_date BETWEEN :from_date AND :to_date
+            ORDER BY sale_date
+        """),
+        params,
+    )).mappings().all()
+
+    # 開催（日×会場）の第1R発走時刻。wt_races.start_at は UNIX 秒の文字列なので
+    # 最小値＝第1R。ここでは時刻だけ取り、種別への変換は keirin_meeting.py に任せる。
+    race_rows = (await db.execute(
+        text("""
+            WITH meeting_first AS (
+                SELECT replace(race_date, '-', '') AS ymd,
+                       venue_id,
+                       MIN(start_at::bigint) AS first_start_at
+                FROM keirin.wt_races
+                WHERE replace(race_date, '-', '') BETWEEN :from_date AND :to_date
+                  AND start_at IS NOT NULL AND start_at <> ''
+                GROUP BY 1, 2
+            ),
+            -- 入稿ランク。PK は (race_key, rank_key) なので理屈の上では1レース複数行に
+            -- なりうる。DISTINCT ON で「生きている入稿を優先し、同じなら新しい方」に畳む。
+            submission AS (
+                SELECT DISTINCT ON (netkeirin_race_id)
+                       netkeirin_race_id, rank_key, deleted_at
+                FROM keirin.netkeirin_submissions
+                WHERE netkeirin_race_id IS NOT NULL
+                ORDER BY netkeirin_race_id,
+                         (deleted_at IS NULL) DESC, submitted_at DESC
+            )
+            SELECT s.race_id, s.race_key, s.race_date, s.venue_code, s.race_no, s.race_label,
+                   s.n_hits_incl_garami, s.n_hits_excl_garami,
+                   s.stake_amount, s.payout_amount,
+                   s.n_sold, s.sold_points, s.sold_paid_points,
+                   s.avg_sold_minutes, s.avg_sold_hour,
+                   v.name AS venue_name,
+                   sub.rank_key AS rank,
+                   m.first_start_at
+            FROM keirin.netkeirin_sales_race s
+            LEFT JOIN keirin.venue_info v ON v.venue_code = s.venue_code
+            LEFT JOIN submission sub ON sub.netkeirin_race_id = s.race_id
+            LEFT JOIN meeting_first m ON m.ymd = s.race_date AND m.venue_id = s.venue_code
+            WHERE s.race_date BETWEEN :from_date AND :to_date
+            ORDER BY s.race_date, s.race_id
+        """),
+        params,
+    )).mappings().all()
+
+    races_src = [
+        {**dict(r), "meeting_type": meeting_type_of_first_hour(first_hour_jst(r["first_start_at"]))}
+        for r in race_rows
+    ]
+
+    daily = build_daily([dict(r) for r in daily_rows])
+    races = build_races(races_src)
+
+    return JSONResponse(content={
+        "from_date": from_dt.isoformat(),
+        "to_date": to_dt.isoformat(),
+        "summary": build_summary(daily, races),
+        "daily": daily,
+        "races": races,
+        "correlations": build_correlations(daily, races),
+        "link_check": build_link_check(daily),
+        "leadtime": build_leadtime_buckets(races),
+        "by_rank": build_rank_breakdown(races),
+        "revenue_rate": NETKEIRIN_REVENUE_RATE,
     })
 
 

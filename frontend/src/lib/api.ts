@@ -1230,6 +1230,133 @@ export async function fetchNetkeirinSales(
 }
 
 // ---------------------------------------------------------------------------
+// netkeirin 売上 × 成績の相関分析（2026-08-11）
+// ---------------------------------------------------------------------------
+// ⚠️ 率はすべて **0〜1 の小数**（%ではない）。表示側で ×100 すること。
+//    サイトの列が % 表記なので取り違えやすい。
+
+/** 開催時間帯。判定の正本は backend `api/keirin_meeting.py`。 */
+export type KeirinMeetingType = "morning" | "day" | "nighter" | "midnight";
+
+export type KeirinSalesDailyPoint = {
+  date: string;
+  n_predictions: number;
+  /** 的中（ガミ含む）＝買い目が当たった数。 */
+  n_hits_incl_garami: number;
+  /** 的中（ガミ除く）＝払戻＞賭け金だった数。netkeirin 表示の「的中」はこちら。 */
+  n_hits_excl_garami: number;
+  n_garami: number;
+  hit_rate_incl: number | null;
+  hit_rate_excl: number | null;
+  /** 的中のうちガミだった割合。的中0件の日は null（0%ではない）。 */
+  garami_rate: number | null;
+  n_sold: number;
+  sold_points: number;
+  /** 販売有償pt。収益になるのはこちらだけ。 */
+  sold_paid_points: number;
+  stake_amount: number;
+  payout_amount: number;
+  recovery_rate: number | null;
+};
+
+export type KeirinSalesRacePoint = {
+  race_id: string;
+  race_key: string;
+  date: string;
+  venue_code: string;
+  venue_name: string | null;
+  race_no: number;
+  label: string | null;
+  /** 入稿ランク（7S/7A/…）。入稿記録が無ければ null。 */
+  rank: string | null;
+  meeting_type: KeirinMeetingType | null;
+  hit: boolean;
+  hit_excl_garami: boolean;
+  is_garami: boolean;
+  n_sold: number;
+  sold_points: number;
+  sold_paid_points: number;
+  stake_amount: number;
+  payout_amount: number;
+  recovery_rate: number | null;
+  /** 締切の何時間前に売れたか（0=締切直前）。 */
+  lead_hours: number | null;
+  lead_minutes: number | null;
+};
+
+export type KeirinSalesAnalysisResponse = {
+  from_date: string;
+  to_date: string;
+  summary: {
+    n_days: number;
+    n_races: number;
+    n_predictions: number;
+    n_hits_incl_garami: number;
+    n_hits_excl_garami: number;
+    n_garami: number;
+    hit_rate_incl: number | null;
+    hit_rate_excl: number | null;
+    garami_rate: number | null;
+    n_sold: number;
+    sold_points: number;
+    sold_paid_points: number;
+    stake_amount: number;
+    payout_amount: number;
+    recovery_rate: number | null;
+    latest: (KeirinSalesDailyPoint & {
+      /** 前日比。初日は null。 */
+      delta: Record<"sold_paid_points" | "sold_points" | "n_sold" | "n_predictions", number> | null;
+    }) | null;
+  };
+  daily: KeirinSalesDailyPoint[];
+  races: KeirinSalesRacePoint[];
+  /** 標本不足・分散ゼロなら null。 */
+  correlations: Record<
+    | "n_races_x_hit_rate" | "n_races_x_n_sold" | "n_races_x_sales"
+    | "hit_rate_x_sales" | "race_sales_x_hit" | "race_buyers_x_hit",
+    number | null
+  >;
+  link_check: {
+    date: string;
+    recent_days: number;
+    baseline_from: string;
+    baseline_to: string;
+    metrics: Record<string, { latest: number; recent_avg: number; delta_ratio: number | null }>;
+    linked: boolean;
+  } | null;
+  /** リードタイム(時間)ごとの売上pt。時間帯キーは存在するものだけ入る。 */
+  leadtime: Array<{ lead_hours: number } & Partial<Record<KeirinMeetingType | "unknown", number>>>;
+  by_rank: Array<{
+    rank: string;
+    n_races: number;
+    n_hits: number;
+    n_garami: number;
+    n_sold: number;
+    sold_paid_points: number;
+    stake_amount: number;
+    payout_amount: number;
+    hit_rate: number | null;
+    garami_rate: number | null;
+    recovery_rate: number | null;
+  }>;
+  revenue_rate: number;
+};
+
+export async function fetchKeirinSalesAnalysis(
+  fromDate?: string,
+  toDate?: string,
+): Promise<KeirinSalesAnalysisResponse> {
+  const params = new URLSearchParams();
+  if (fromDate) params.set("from_date", fromDate);
+  if (toDate) params.set("to_date", toDate);
+  const qs = params.toString();
+  return get<KeirinSalesAnalysisResponse>(
+    `/keirin/netkeirin-analysis${qs ? `?${qs}` : ""}`,
+    { cache: "no-store" },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 入稿案の確認（2026-08-11）
 // ---------------------------------------------------------------------------
 /** `keirin.netkeirin_submissions` の状態。 */

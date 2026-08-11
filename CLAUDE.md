@@ -196,6 +196,38 @@ EOF
   **Web は無事なまま入稿だけが落ちる**
 - ⚠️ **「準決勝」は「決勝」を部分一致で拾う**。除外しないと全体の約14.5%が看板になる
 
+### netkeirin 売上データと「分析」タブ（2026-08-11）
+
+netkeirin の分析支援ツール「予想家成績状況」
+（`umaiaggre.yosoka.netkeiba.com/tool_keirin/result/yosoka_result.html`）を
+**日別とレース別の2粒度**でスクレイピングし、`/keirin/stats` の「分析」タブで
+売上×的中の相関を見る。
+
+| 粒度 | テーブル | 使う画面 |
+|---|---|---|
+| 日別（`list_detail=day`） | `keirin.netkeirin_sales_daily` | 売上タブ |
+| レース別（`list_detail=race`） | `keirin.netkeirin_sales_race` | 分析タブ |
+
+- 取得は `scripts/scrape_netkeirin_sales.sh`（**VPS cron 毎日10:30**・引数なしで両方）。
+  「通常集計日はレース日の翌日」「売上は速報値」のため毎回 UPSERT で上書きする
+- **列構成は日別とレース別で完全に同一**。違うのは集計IDの桁数だけ（8桁 / 12桁）なので、
+  振り分けを間違えても全列が埋まり値も自然に見える。`tests/test_scrape_netkeirin_sales.py`
+  が `re.fullmatch` の振り分けを固定している
+- レース別の集計ID `202608104808` → `race_key` `20260810_48_08` を派生列として持つ。
+  **netkeirin の場コードは `keirin.venue_info.venue_code` と同一体系**（2026-08-11 確認）
+- ⚠️ **ランクの結合キーは `netkeirin_submissions.netkeirin_race_id`**。
+  `picks_history.race_key` は `20260801_13_05#7C` とランク接尾辞つきで
+  1レースが複数ランクに並ぶため使えない
+- ⚠️ **「的中」は2種類ある**。`n_hits_incl_garami`（買い目が当たった）と
+  `n_hits_excl_garami`（払戻＞賭け金・**netkeirin の表示的中率はこちら**）。
+  差がガミ。相関・タイムラインはガミ含む、サマリーの的中率は両方出す
+- ⚠️ **売上は `sold_paid_points`（販売*有償*pt）**。`sold_points` には無償ptが混ざり
+  収益にならない（`NETKEIRIN_REVENUE_RATE` を掛ける対象も有償pt）
+- 計算本体は `backend/src/services/keirin_sales_analysis.py`（DB にも FastAPI にも
+  依存しない純関数）。API は `GET /api/keirin/netkeirin-analysis`
+- 開催時間帯の判定は `api/keirin_meeting.py` が正本。発走時刻が取れない開催は
+  `unknown` として積み、勝手にどれかへ倒さない
+
 ## DBスキーマ構成
 - `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ
 - `sekito.anagusa` — 穴ぐさピック情報（date, course_code, race_no, horse_no, rank A/B/C）

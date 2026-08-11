@@ -1,5 +1,10 @@
 #!/bin/bash
-# netkeirin「ウマい車券」予想家成績・売上（日別）スクレイピング
+# netkeirin「ウマい車券」予想家成績・売上スクレイピング（日別 + レース別）
+#
+# 引数なしで実行すると **前日分を日別・レース別の両方** 取得する
+# （python 側 --detail の既定が both。2026-08-11 にレース別を追加）。
+#   日別   → keirin.netkeirin_sales_daily … 売上タブ
+#   レース別 → keirin.netkeirin_sales_race  … 成績／売上ページの「分析」タブ
 #
 # 【実行場所: VPS（Macではない）】 2026-08-03 にMac LaunchAgent構成から変更した。
 # 理由: このツールの認証には netkeirin 入稿ツールと同じ資格情報
