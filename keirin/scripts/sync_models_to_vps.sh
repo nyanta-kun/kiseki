@@ -107,6 +107,11 @@ PROD_FILES=(
   "lgbm_wt_train_only.pkl" "lgbm_wt_train_only.meta.json"
   "lgbm_wt_win.pkl" "lgbm_wt_win.meta.json"
   "lgbm_wt_bad.pkl" "lgbm_wt_bad.meta.json"
+  # 2026-08-12 追加: Web表示専用の2着内率モデル（wave-picks-wt が読む）。
+  # 候補選定・ゲートには使わないので、無くても入稿は止まらない
+  # ＝**画面から2着内率が消えるだけで誰も気づかない**。配布漏れに注意。
+  "lgbm_wt_top2.pkl" "lgbm_wt_top2.meta.json"
+  "lgbm_wt_top2_eval.pkl" "lgbm_wt_top2_eval.meta.json"
   "lgbm_wt_eval.pkl" "lgbm_wt_eval.meta.json"
   "lgbm_wt_win_eval.pkl" "lgbm_wt_win_eval.meta.json"
   "lgbm_wt_favbust.pkl" "lgbm_wt_favbust.meta.json"
@@ -137,6 +142,7 @@ RELEASE_FILES=(
   "lgbm_wt.pkl" "lgbm_wt.meta.json"
   "lgbm_wt_win.pkl" "lgbm_wt_win.meta.json"
   "lgbm_wt_bad.pkl" "lgbm_wt_bad.meta.json"
+  "lgbm_wt_top2.pkl" "lgbm_wt_top2.meta.json"
 )
 EXTRA_FILES=("upset_cuts_wt.json")
 
@@ -237,7 +243,7 @@ log "検証(1/2) OK: 全ファイルのチェックサムが一致しました�
 #    `lgbm_wt_bad`（差64）と `lgbm_wt_favbust`（差60）で2回踏んだ。
 log "検証(2/2): VPS側ファイル数を照合中..."
 REMOTE_COUNT=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$REMOTE_HOST" \
-  "ls ${REMOTE_DIR} 2>/dev/null | grep -E '^(lgbm_wt(_train_only|_win|_bad|_eval|_win_eval|_favbust)?\.(pkl|meta\.json)|lgbm_wt_(eval|win|bad|favbust)_m[0-9]{4}\.(pkl|meta\.json)|upset_cuts_wt\.json)$' | wc -l | tr -d ' '" \
+  "ls ${REMOTE_DIR} 2>/dev/null | grep -E '^(lgbm_wt(_train_only|_win|_bad|_eval|_win_eval|_favbust|_top2|_top2_eval)?\.(pkl|meta\.json)|lgbm_wt_(eval|win|bad|favbust)_m[0-9]{4}\.(pkl|meta\.json)|upset_cuts_wt\.json)$' | wc -l | tr -d ' '" \
   2>>"$LOG" || echo "")
 if [[ -z "$REMOTE_COUNT" ]]; then
   notify_failure "VPS側ファイル数の取得に失敗しました（SSH到達不可の可能性）。転送自体は完了している可能性があります。"

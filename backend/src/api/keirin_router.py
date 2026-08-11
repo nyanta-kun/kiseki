@@ -743,6 +743,7 @@ async def get_picks(
                   finish_order,
                   player_class,
                   pred_win_pct,
+                  pred_top2_pct,
                   pred_top3_pct,
                   prediction_mark
                 FROM keirin.wt_entries
@@ -869,6 +870,8 @@ async def get_picks(
                     "finish_order": e["finish_order"],
                     "player_class": e["player_class"],
                     "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
+                    # 2着内率。列追加（2026-08-12）以降に算出したレースだけ値が入る
+                    "pred_top2_pct": float(e["pred_top2_pct"]) if e["pred_top2_pct"] is not None else None,
                     "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None,
                     "prediction_mark": e["prediction_mark"],
                 }
@@ -1901,7 +1904,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     keys = sorted({r["race_key"] for r in rows})
     ent_rows = (await db.execute(text("""
         SELECT race_key, frame_no, name, race_point, style, line_group, line_pos,
-               player_class, prediction_mark, pred_win_pct, pred_top3_pct
+               player_class, prediction_mark, pred_win_pct, pred_top2_pct, pred_top3_pct
         FROM keirin.wt_entries WHERE race_key = ANY(:keys) ORDER BY frame_no
     """), {"keys": keys})).mappings().all()
     by_race: dict[str, list[dict]] = {}
@@ -1957,6 +1960,8 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
                  "line_pos": e["line_pos"], "player_class": e["player_class"],
                  "prediction_mark": e["prediction_mark"],
                  "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
+                 # 2着内率。列追加（2026-08-12）以降に算出したレースだけ値が入る
+                 "pred_top2_pct": float(e["pred_top2_pct"]) if e["pred_top2_pct"] is not None else None,
                  "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None}
                 for e in entries
             ],

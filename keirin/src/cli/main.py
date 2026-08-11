@@ -1390,6 +1390,16 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         click.echo("[wt] lgbm_wt_win が見つかりません。M候補は gap12 単独ゲートで生成します。",
                    err=True)
 
+    # 2着内モデル（Web表示専用・2026-08-12〜）。候補選定・ゲートには一切使わない。
+    # 無ければ None のままにする（モデル配布前にコードだけ先行デプロイされても
+    # 壊れないこと。表示が「—」になるだけ）。
+    try:
+        top2_model = load_model("lgbm_wt_top2")
+        df["pred_top2"] = top2_model.predict_proba(X)[:, 1]
+    except FileNotFoundError:
+        df["pred_top2"] = None
+        click.echo("[wt] lgbm_wt_top2 が見つかりません。2着内率は表示されません。", err=True)
+
     # 大敗モデル（3ヘッド軸選定・2026-08-04〜）。7車立ての軸2選定にのみ使う。
     # 存在しなければ None のままにし、rank_7s_select_axis 側で従来の重なり方式へ
     # フォールバックする（モデル配布前にコードだけ先行デプロイされても壊れない）。
@@ -1404,20 +1414,21 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         click.echo("[wt] lgbm_wt_bad が見つかりません。7車の軸選定は従来の重なり方式で行います。",
                    err=True)
 
-    # Web表示用の単勝/複勝指数を wt_entries に書き込む（2026-07-19）。
-    # 候補選定と無関係に全出走馬分を更新するため、この位置（pred_prob/pred_win
-    # 算出直後・候補フィルタ前）で行う。
+    # Web表示用の単勝/2着内/複勝指数を wt_entries に書き込む（2026-07-19・
+    # 2着内は 2026-08-12 追加）。候補選定と無関係に全出走馬分を更新するため、
+    # この位置（pred_prob/pred_win/pred_top2 算出直後・候補フィルタ前）で行う。
     with get_connection() as _conn_idx:
         _idx_rows = [
             (
                 round(float(row.pred_win) * 100, 1) if pd.notna(row.pred_win) else None,
+                round(float(row.pred_top2) * 100, 1) if pd.notna(row.pred_top2) else None,
                 round(float(row.pred_prob) * 100, 1) if pd.notna(row.pred_prob) else None,
                 row.race_key, int(row.frame_no),
             )
             for row in df.itertuples(index=False)
         ]
         _conn_idx.executemany(
-            "UPDATE wt_entries SET pred_win_pct = ?, pred_top3_pct = ? "
+            "UPDATE wt_entries SET pred_win_pct = ?, pred_top2_pct = ?, pred_top3_pct = ? "
             "WHERE race_key = ? AND frame_no = ?",
             _idx_rows,
         )

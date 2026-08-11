@@ -497,7 +497,7 @@ def migrate_db():
 
         # Web表示用の単勝/複勝モデル指数（2026-07-19・wave-picks-wt生成時に書き込み）。
         # PG 側は kiseki alembic で追加（スキーマ管理ルール: 両側必須）
-        for _col in ("pred_win_pct REAL", "pred_top3_pct REAL"):
+        for _col in ("pred_win_pct REAL", "pred_top3_pct REAL", "pred_top2_pct REAL"):
             try:
                 conn.execute(f"ALTER TABLE wt_entries ADD COLUMN {_col}")
             except sqlite3.OperationalError:

@@ -153,6 +153,27 @@ else
   echo "[$(date '+%H:%M:%S')] ②' 1着モデル品質ゲート不合格 → lgbm_wt_win 更新スキップ（旧モデル維持）" | tee -a "$LOG"
 fi
 
+# ②'' 2着内モデル(lgbm_wt_top2)再学習（2026-08-12導入・**Web表示専用**）
+# 候補選定・ゲート・買い目には一切使わない。したがって品質ゲートで本番を止める
+# 必要はなく、holdout 評価は監視のためだけに残す（AUC は $LOG に出る）。
+# ⚠️ 週次再学習の対象に入れないと lgbm_wt/lgbm_wt_win だけが進化し、
+#    表示だけが古いモデルのまま取り残される（lgbm_wt_win を追加したときと同じ理由）。
+echo "[$(date '+%H:%M:%S')] ②'' 2着内モデル: holdout評価 → lgbm_wt_top2_eval ..." | tee -a "$LOG"
+.venv/bin/python3 -m src.cli.main train-wt \
+  --from 2022-12-01 --test-from "$TEST_FROM" --target top2 --save-as lgbm_wt_top2_eval --no-promote \
+  2>&1 | tee -a "$LOG" \
+  || echo "[$(date '+%H:%M:%S')] 2着内モデルのholdout評価に失敗（表示専用のため処理は継続）" | tee -a "$LOG"
+
+echo "[$(date '+%H:%M:%S')] ②'' 2着内モデル: 配信用 全データ再学習 → lgbm_wt_top2 ..." | tee -a "$LOG"
+if .venv/bin/python3 -m src.cli.main train-wt \
+    --from 2022-12-01 --full-refit --target top2 --save-as lgbm_wt_top2 --no-promote \
+    2>&1 | tee -a "$LOG"; then
+  cp -f data/models/lgbm_wt_top2.pkl       "data/models/archive/lgbm_wt_top2_${DATE}.pkl"       2>/dev/null || true
+  cp -f data/models/lgbm_wt_top2.meta.json "data/models/archive/lgbm_wt_top2_${DATE}.meta.json" 2>/dev/null || true
+else
+  echo "[$(date '+%H:%M:%S')] 2着内モデルの再学習に失敗（旧モデル維持・表示専用のため処理は継続）" | tee -a "$LOG"
+fi
+
 # ③ 波乱ゲート top3_sum カット定数を配信モデルの分布で再計測（test期間除外）
 echo "[$(date '+%H:%M:%S')] ③ 波乱カット定数を再計測..." | tee -a "$LOG"
 .venv/bin/python3 scripts/recompute_upset_cuts_wt.py --to "$TEST_FROM" \

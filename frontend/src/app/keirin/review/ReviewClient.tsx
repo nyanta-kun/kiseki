@@ -3,14 +3,23 @@
 /**
  * 入稿案の確認・承認 UI（2026-08-11 新設）。
  *
- * 場でまとめ、レースごとに「入稿内容・期待値・最低/最高払戻・選手ごとの各入着率」を
- * 出す。操作はレース単位の入稿／取消と、場単位のまとめ入稿。
+ * レースごとに「入稿内容・期待値・最低/最高払戻・選手ごとの各入着率」を出す。
+ * 操作はレース単位の入稿／取消と、場単位のまとめ入稿。
+ *
+ * 表示は **場別（場ごとに畳める）** と **発走時刻順** を切り替えられる
+ * （2026-08-12 追加）。当日の進行を追うときは時刻順、場をまとめて承認するときは
+ * 場別、と目的が違う。
+ *
+ * 🔴 **承認制の ON/OFF はこの画面にはない**（2026-08-12 に `/admin` の設定タブへ移動）。
+ *    確認・承認の作業画面に「承認制そのものを切る」スイッチが同居していると、
+ *    レースを見ている最中に誤って全体設定を倒しうる。
  */
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
+import { makeRaceNormalizer } from "@/lib/keirinProb";
 
 import {
   approveKeirinRaceAction,
@@ -18,10 +27,14 @@ import {
   cancelKeirinAllAction,
   cancelKeirinSubmissionAction,
   cancelKeirinVenueAction,
-  setKeirinApprovalModeAction,
 } from "../actions";
 
+import CommentBody from "./CommentBody";
+
 const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆" };
+
+/** 一覧の並べ方。場別は場ごとに畳める。 */
+type ViewMode = "venue" | "time";
 
 function yen(n: number | null | undefined): string {
   return n === null || n === undefined ? "—" : `${Math.round(n).toLocaleString()}円`;
@@ -37,11 +50,40 @@ function hhmm(startAt: number | null): string {
   });
 }
 
+/** 「—」or「12.3%」。正規化できない（全車欠損）ときは「—」。 */
+function pct(v: number | null): string {
+  return v == null ? "—" : `${v.toFixed(1)}%`;
+}
+
 function EntryTable({ entries, axis1, axis2 }: {
   entries: KeirinProposalEntry[];
   axis1: number | null;
   axis2: number | null;
 }) {
+  // 🔴 並びは**車番順ではなく強い順**（1着率 → 2着内率 → 3着内率 の降順）。
+  //    承認時に見たいのは「誰が上位か」で、車番は既に列にある。
+  //    欠損は末尾へ送り、全て同値なら車番順に落ち着かせる。
+  const sorted = useMemo(() => {
+    const cmp = (a: number | null, b: number | null) =>
+      (b ?? -Infinity) - (a ?? -Infinity);
+    return [...entries].sort(
+      (a, b) =>
+        cmp(a.pred_win_pct, b.pred_win_pct) ||
+        cmp(a.pred_top2_pct, b.pred_top2_pct) ||
+        cmp(a.pred_top3_pct, b.pred_top3_pct) ||
+        a.frame_no - b.frame_no,
+    );
+  }, [entries]);
+
+  // レース内合計を揃えてから出す（生確率のままだと1着率の合計が10%等になる）。
+  // ⚠️ netkeirin 入稿コメントの出走表と**同じ正規化**であること。片方だけ変えると
+  //    顧客に見せている表と承認画面の表が食い違う。
+  const normWin = makeRaceNormalizer(entries.map((e) => e.pred_win_pct), 1);
+  const normTop2 = makeRaceNormalizer(
+    entries.map((e) => e.pred_top2_pct), Math.min(entries.length, 2));
+  const normTop3 = makeRaceNormalizer(
+    entries.map((e) => e.pred_top3_pct), Math.min(entries.length, 3));
+
   if (entries.length === 0) return null;
   return (
     <div className="overflow-x-auto">
@@ -53,12 +95,14 @@ function EntryTable({ entries, axis1, axis2 }: {
             <th className="py-1 pr-2">印</th>
             <th className="py-1 pr-2 text-right">得点</th>
             <th className="py-1 pr-2 text-right">1着率</th>
+            {/* 2着内率は 2026-08-12 追加。それ以前のレースは「—」になる。 */}
+            <th className="py-1 pr-2 text-right">2着内率</th>
             <th className="py-1 pr-2 text-right">3着内率</th>
             <th className="py-1 pr-2">ライン</th>
           </tr>
         </thead>
         <tbody>
-          {entries.map((e) => {
+          {sorted.map((e) => {
             const isAxis = e.frame_no === axis1 || e.frame_no === axis2;
             return (
               <tr
@@ -74,10 +118,13 @@ function EntryTable({ entries, axis1, axis2 }: {
                   {e.race_point?.toFixed(2) ?? "—"}
                 </td>
                 <td className="py-0.5 pr-2 text-right tabular-nums">
-                  {e.pred_win_pct?.toFixed(1) ?? "—"}%
+                  {pct(normWin(e.pred_win_pct))}
                 </td>
                 <td className="py-0.5 pr-2 text-right tabular-nums">
-                  {e.pred_top3_pct?.toFixed(1) ?? "—"}%
+                  {pct(normTop2(e.pred_top2_pct))}
+                </td>
+                <td className="py-0.5 pr-2 text-right tabular-nums">
+                  {pct(normTop3(e.pred_top3_pct))}
                 </td>
                 <td className="py-0.5 pr-2">
                   {e.line_group ? `${e.line_group}-${e.line_pos ?? ""}` : "単騎"}
@@ -234,9 +281,9 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
           </div>
           <div>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-300">コメント</p>
-            <p className="whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">
-              {p.comment || "（未設定）"}
-            </p>
+            {/* コメントには HTML タグ入力（現状は出走表の <table> のみ）が混ざる。
+                生タグのままでは読めないので解釈して表として出す（CommentBody）。 */}
+            <CommentBody comment={p.comment} />
           </div>
           <div>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-300">
@@ -273,15 +320,16 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
   );
 }
 
-export default function ReviewClient({ date, items, nProposed, requireApproval }: {
+export default function ReviewClient({ date, items, nProposed }: {
   date: string;
   items: KeirinProposal[];
   nProposed: number;
-  requireApproval: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
-  const [mode, setMode] = useState(requireApproval);
+  const [view, setView] = useState<ViewMode>("venue");
+  // 畳んだ場。**既定は全て開いた状態**（畳むのは能動的な操作）。
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   // 通常の取消が「netkeirin 側に見つからない」で失敗したレース。
   // 🔴 そのとき **DB も更新されていない**（取消したはずの行が生き残る）。
   //    強制取消の口をここで初めて出す。常時出すと、netkeirin に残っている
@@ -299,6 +347,22 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
     }
     return [...m.entries()];
   }, [items]);
+
+  // 発走時刻順。⚠️ **発走時刻が取れない行を先頭に混ぜない**（`start_at` は
+  // null がありうる）。時刻不明はまとめて末尾へ送り、場・R番号で安定させる。
+  const byTime = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const at = a.start_at ?? Infinity;
+        const bt = b.start_at ?? Infinity;
+        return (
+          at - bt ||
+          a.venue_name.localeCompare(b.venue_name, "ja") ||
+          a.race_no - b.race_no
+        );
+      }),
+    [items],
+  );
 
   const run = (
     fn: () => Promise<{
@@ -325,6 +389,32 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
       if (r.ok) window.location.reload();
     });
   };
+
+  /** RaceCard 1枚分。場別・時刻順のどちらからも同じものを出す。 */
+  const raceCard = (p: KeirinProposal) => (
+    <RaceCard
+      key={`${p.race_key}-${p.rank_key}`}
+      p={p}
+      busy={pending}
+      onApprove={() => run(() => approveKeirinRaceAction(p.race_key, p.rank_key))}
+      onCancel={() => {
+        if (!window.confirm(`${p.venue_name}${p.race_no}R (${p.rank_key}) の入稿を取り消します。よろしいですか？`)) return;
+        run(
+          () => cancelKeirinSubmissionAction(p.race_key, p.rank_key),
+          `${p.race_key}-${p.rank_key}`,
+        );
+      }}
+      canForceCancel={!!forceTargets[`${p.race_key}-${p.rank_key}`]}
+      onForceCancel={() => {
+        if (!window.confirm(
+          `${p.venue_name}${p.race_no}R (${p.rank_key}) の記録だけを取消にします。\n\n`
+          + "netkeirin 側には何もしません。netkeirin にまだ商品が残っている場合は、\n"
+          + "先に netkeirin 側で削除してください。よろしいですか？",
+        )) return;
+        run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key, true));
+      }}
+    />
+  );
 
   return (
     <div className="mx-auto max-w-5xl p-4">
@@ -365,24 +455,30 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
             この日を全件取消（{nAliveAll}件）
           </button>
         )}
-        <label className="ml-auto flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={mode}
-            disabled={pending}
-            onChange={(e) => {
-              const next = e.target.checked;
-              setMode(next);
-              run(() => setKeirinApprovalModeAction(next));
-            }}
-          />
-          承認制にする
-        </label>
+        <div className="ml-auto flex rounded border border-gray-300 text-xs dark:border-gray-600">
+          {([["venue", "場別"], ["time", "発走時刻順"]] as const).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+              className={`px-3 py-1 first:rounded-l last:rounded-r ${view === v
+                ? "bg-blue-600 text-white"
+                : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <p className="mb-3 rounded bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-        承認制が OFF のときは、朝のバッチが従来どおり netkeirin へ下書きを自動作成します。
-        ON にすると、承認するまで netkeirin へは何も出ません。
+        承認制の ON/OFF は{" "}
+        <Link href="/admin" className="text-blue-600 underline dark:text-blue-400">
+          管理 → 設定
+        </Link>{" "}
+        にあります。OFF のときは朝のバッチが従来どおり netkeirin へ下書きを自動作成し、
+        ON にすると承認するまで netkeirin へは何も出ません。
         <br />
         期待値は<strong>異常値の検知が目的</strong>で、購入判断の根拠には使えません
         （市場は効率的で、モデル由来の期待値による選別は繰り返し否定されています）。
@@ -395,18 +491,30 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
         </p>
       )}
 
-      {byVenue.length === 0 && (
+      {items.length === 0 && (
         <p className="text-sm text-gray-500">この日の入稿はありません。</p>
       )}
 
-      {byVenue.map(([venue, races]) => {
+      {view === "time" && <div className="space-y-2">{byTime.map(raceCard)}</div>}
+
+      {view === "venue" && byVenue.map(([venue, races]) => {
         const nProp = races.filter((r) => r.status === "proposed").length;
         // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
         const nAlive = races.filter((r) => r.status !== "deleted").length;
+        const isOpen = !collapsed[venue];
         return (
           <section key={venue} className="mb-6">
             <div className="mb-2 flex items-center gap-3">
-              <h2 className="font-semibold">{venue}</h2>
+              {/* 見出しごと開閉のトグルにする（畳んだときに何件あるかは右に残す）。 */}
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setCollapsed((prev) => ({ ...prev, [venue]: isOpen }))}
+                className="flex items-center gap-1 font-semibold hover:text-blue-700 dark:hover:text-blue-300"
+              >
+                {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                {venue}
+              </button>
               <span className="text-xs text-gray-500">
                 {races.length}件（未入稿 {nProp}）
               </span>
@@ -440,32 +548,7 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
                 </button>
               )}
             </div>
-            <div className="space-y-2">
-              {races.map((p) => (
-                <RaceCard
-                  key={`${p.race_key}-${p.rank_key}`}
-                  p={p}
-                  busy={pending}
-                  onApprove={() => run(() => approveKeirinRaceAction(p.race_key, p.rank_key))}
-                  onCancel={() => {
-                    if (!window.confirm(`${p.venue_name}${p.race_no}R (${p.rank_key}) の入稿を取り消します。よろしいですか？`)) return;
-                    run(
-                      () => cancelKeirinSubmissionAction(p.race_key, p.rank_key),
-                      `${p.race_key}-${p.rank_key}`,
-                    );
-                  }}
-                  canForceCancel={!!forceTargets[`${p.race_key}-${p.rank_key}`]}
-                  onForceCancel={() => {
-                    if (!window.confirm(
-                      `${p.venue_name}${p.race_no}R (${p.rank_key}) の記録だけを取消にします。\n\n`
-                      + "netkeirin 側には何もしません。netkeirin にまだ商品が残っている場合は、\n"
-                      + "先に netkeirin 側で削除してください。よろしいですか？",
-                    )) return;
-                    run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key, true));
-                  }}
-                />
-              ))}
-            </div>
+            {isOpen && <div className="space-y-2">{races.map(raceCard)}</div>}
           </section>
         );
       })}

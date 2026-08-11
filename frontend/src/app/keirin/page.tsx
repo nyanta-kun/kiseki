@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
+import { makeRaceNormalizer } from "@/lib/keirinProb";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Settings, Send } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposals, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
@@ -30,30 +31,9 @@ function formatRoundHalfUp(value: number, decimals = 1): string {
   return rounded.toFixed(decimals);
 }
 
-// pred_win_pct/pred_top3_pct（選手ごと独立モデルの生確率）をレース内合計が
-// 一定値になるよう補正するためのロジット空間シフト。個々の確率は0〜1に留まる
-// （sigmoidの値域による）ため、単純な比例配分と違い100%への頭打ちが起きにくい。
-function sigmoid(x: number): number {
-  return 1 / (1 + Math.exp(-x));
-}
-function logit(p: number): number {
-  const eps = 1e-6;
-  const c = Math.min(Math.max(p, eps), 1 - eps);
-  return Math.log(c / (1 - c));
-}
-// probs（0〜1の生確率配列）に対し、Σ sigmoid(logit(p_i)+shift) = target となる
-// shift を二分探索で求める。target は 0 < target < probs.length である必要がある。
-function solveLogitShift(probs: number[], target: number): number {
-  let lo = -50;
-  let hi = 50;
-  for (let i = 0; i < 60; i++) {
-    const mid = (lo + hi) / 2;
-    const sum = probs.reduce((s, p) => s + sigmoid(logit(p) + mid), 0);
-    if (sum < target) lo = mid;
-    else hi = mid;
-  }
-  return (lo + hi) / 2;
-}
+// pred_win_pct/pred_top2_pct/pred_top3_pct（選手ごと独立モデルの生確率）を
+// レース内合計が一定値になるよう補正する。実装は `@/lib/keirinProb`（review
+// 画面・netkeirin 入稿コメントと同じ正規化を使うための単一正本）。
 
 // 候補ランク判定閾値（keirin側 notify_prerace_wt.py の定数と揃える）
 // S1(7PLUS_R・旧称SS): gap12≥0.10 ∧ gap23≥1pt ∧ 三連複min≥7（オッズ条件は発走前確定）
@@ -539,12 +519,14 @@ function SubmittedBetBlock({ bet, entries }: {
           </span>
         )}
       </div>
-      <ul className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-0.5">
+      {/* 買い目・オッズ・金額を**列として揃える**。
+          以前は1点ぶんを flex の justify-between で組んでいたため、オッズと金額の
+          境目が桁数（1.5倍 / 23.2倍）でずれて縦に読めなかった。
+          `li` を `display:contents` にして「買い目 / オッズ / 金額」の3セルを
+          外側の grid へ直接流し込み、オッズ・金額列を右寄せで固定する。 */}
+      <ul className="grid grid-cols-[repeat(2,minmax(0,1fr)_auto_auto)] sm:grid-cols-[repeat(3,minmax(0,1fr)_auto_auto)] gap-x-2 sm:gap-x-3 gap-y-0.5 text-xs tabular-nums">
         {lines.map((l) => (
-          <li
-            key={`${l.bet_type}:${l.combo}`}
-            className="flex items-baseline justify-between gap-2 text-xs tabular-nums"
-          >
+          <li key={`${l.bet_type}:${l.combo}`} className="contents">
             <span
               className={`truncate ${winners?.has(l.combo)
                 ? "text-red-600 dark:text-red-400 font-bold"
@@ -553,21 +535,19 @@ function SubmittedBetBlock({ bet, entries }: {
               {multiType && <span className="text-gray-400 dark:text-gray-500 mr-1">{l.bet_type}</span>}
               {l.combo}
             </span>
-            <span className="text-gray-600 dark:text-gray-300 flex-shrink-0">
-              {/* 🔴 予測オッズは板と区別して出す。同じ顔で並べると
-                  「実際に付いていたオッズ」と読まれる。 */}
-              {l.odds != null && (
-                <span
-                  className={`mr-1.5 ${l.odds_source === "predicted"
-                    ? "text-indigo-400 dark:text-indigo-300"
-                    : "text-gray-400 dark:text-gray-500"}`}
-                  title={l.odds_source === "predicted"
-                    ? "板に無かったため、オッズ生成モデルの予測値を表示しています"
-                    : undefined}
-                >
-                  {l.odds.toFixed(1)}倍{l.odds_source === "predicted" && "*"}
-                </span>
-              )}
+            {/* 🔴 予測オッズは板と区別して出す。同じ顔で並べると
+                「実際に付いていたオッズ」と読まれる。 */}
+            <span
+              className={`text-right ${l.odds_source === "predicted"
+                ? "text-indigo-400 dark:text-indigo-300"
+                : "text-gray-400 dark:text-gray-500"}`}
+              title={l.odds != null && l.odds_source === "predicted"
+                ? "板に無かったため、オッズ生成モデルの予測値を表示しています"
+                : undefined}
+            >
+              {l.odds != null && `${l.odds.toFixed(1)}倍${l.odds_source === "predicted" ? "*" : ""}`}
+            </span>
+            <span className="text-right text-gray-600 dark:text-gray-300">
               {l.stake.toLocaleString()}
             </span>
           </li>
@@ -582,25 +562,19 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   const sorted = [...entries].sort((a, b) => {
     const winDiff = (b.pred_win_pct ?? -Infinity) - (a.pred_win_pct ?? -Infinity);
     if (winDiff !== 0) return winDiff;
+    const top2Diff = (b.pred_top2_pct ?? -Infinity) - (a.pred_top2_pct ?? -Infinity);
+    if (top2Diff !== 0) return top2Diff;
     const top3Diff = (b.pred_top3_pct ?? -Infinity) - (a.pred_top3_pct ?? -Infinity);
     if (top3Diff !== 0) return top3Diff;
     return (b.race_point ?? -Infinity) - (a.race_point ?? -Infinity);
   });
-  // pred_win_pct/pred_top3_pct は選手ごと独立モデルの生確率でレース内合計の保証がない
-  // （実例: 単勝合計9.7%・複勝合計43.9%等）。単純な比例配分（線形スケール）だと
-  // 必要な補正倍率が大きく(例: 複勝は約6.8倍)個々の値が100%を超えて頭打ちが頻発するため、
-  // ロジット(対数オッズ)空間で一律シフトしてからシグモイドで戻す方式でレース内合計を
-  // 単勝=100%・複勝=min(出走数,3)*100%に補正する。シグモイドの性質上100%は超えない。
-  const winProbs = entries.map((e) => (e.pred_win_pct ?? 0) / 100);
-  const top3Probs = entries.map((e) => (e.pred_top3_pct ?? 0) / 100);
-  const winShift = winProbs.some((p) => p > 0) ? solveLogitShift(winProbs, 1) : null;
-  const top3Shift = top3Probs.some((p) => p > 0)
-    ? solveLogitShift(top3Probs, Math.min(entries.length, 3))
-    : null;
-  const normWin = (v: number | null) =>
-    v != null && winShift != null ? 100 * sigmoid(logit(v / 100) + winShift) : null;
-  const normTop3 = (v: number | null) =>
-    v != null && top3Shift != null ? 100 * sigmoid(logit(v / 100) + top3Shift) : null;
+  // レース内合計を 1着=100% / 2着内=min(出走数,2)*100% / 3着内=min(出走数,3)*100%
+  // に揃える（生確率のままだと単勝合計9.7%等になり読めない）。詳細は lib/keirinProb。
+  const normWin = makeRaceNormalizer(entries.map((e) => e.pred_win_pct), 1);
+  const normTop2 = makeRaceNormalizer(
+    entries.map((e) => e.pred_top2_pct), Math.min(entries.length, 2));
+  const normTop3 = makeRaceNormalizer(
+    entries.map((e) => e.pred_top3_pct), Math.min(entries.length, 3));
   return (
     <table className="w-full">
       <thead>
@@ -609,8 +583,11 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
           <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs">選手名</th>
           <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-6 sm:w-8">W</th>
           <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-9 sm:w-12">戦法</th>
-          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
-          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
+          {/* 2着内率（連対率）。1着率・3着内率と同じ経路のモデル出力（lgbm_wt_top2）。
+              2026-08-12 以前のレースは列が無かったので「—」になる。 */}
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">2着内率</th>
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
           <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">競走得点</th>
           <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-8 sm:w-10">着</th>
         </tr>
@@ -622,10 +599,13 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800 dark:text-gray-100">{e.name ?? "—"}</td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
             <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 dark:text-gray-400 text-xs">{e.style ?? "—"}</td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normWin(e.pred_win_pct) != null ? `${normWin(e.pred_win_pct)!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+              {normTop2(e.pred_top2_pct) != null ? `${normTop2(e.pred_top2_pct)!.toFixed(1)}%` : "—"}
+            </td>
+            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normTop3(e.pred_top3_pct) != null ? `${normTop3(e.pred_top3_pct)!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">

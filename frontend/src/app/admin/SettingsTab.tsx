@@ -2,11 +2,16 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { updatePaidMode } from "./actions";
+import { setKeirinApprovalModeAction } from "../keirin/actions";
+import { fetchKeirinApprovalMode } from "@/lib/api";
 
 type Setting = { key: string; value: string };
 
 export function SettingsTab() {
   const [paidMode, setPaidMode] = useState<boolean | null>(null);
+  // netkeirin の承認制。2026-08-12 に `/keirin/review` からここへ移した
+  // （確認・承認の作業画面に全体設定のスイッチが同居していると誤操作しうる）。
+  const [approvalMode, setApprovalMode] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
 
@@ -19,6 +24,9 @@ export function SettingsTab() {
         const pm = data.settings.find((s) => s.key === "PAID_MODE");
         setPaidMode(pm?.value === "true");
       }
+      // 取得に失敗しても他の設定は出す（null のままトグルは無効表示になる）。
+      const km = await fetchKeirinApprovalMode().catch(() => null);
+      setApprovalMode(km ? km.require_approval : null);
     } finally {
       setLoading(false);
     }
@@ -37,6 +45,19 @@ export function SettingsTab() {
         alert(`更新に失敗しました: ${result.error}`);
       } else {
         setPaidMode(newValue);
+      }
+    });
+  }
+
+  function handleApprovalToggle() {
+    if (approvalMode === null) return;
+    const newValue = !approvalMode;
+    startTransition(async () => {
+      const result = await setKeirinApprovalModeAction(newValue);
+      if (!result.ok) {
+        alert(`更新に失敗しました: ${result.message}`);
+      } else {
+        setApprovalMode(newValue);
       }
     });
   }
@@ -70,6 +91,39 @@ export function SettingsTab() {
           </button>
           <span className="text-sm text-gray-700">
             {paidMode ? "有効（ペイウォールON）" : "無効（ペイウォールOFF）"}
+          </span>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-bold text-[#0d1f35] mb-1">競輪 承認制（netkeirin 入稿）</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          ONにすると、朝のバッチは netkeirin へ出さず「入稿案」だけを作ります。
+          <a href="/keirin/review" className="text-blue-600 underline ml-1">確認・承認画面</a>
+          で承認するまで netkeirin へは何も出ません。OFF に戻すと従来どおり自動で下書きが作られます。
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleApprovalToggle}
+            disabled={isPending || approvalMode === null}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40 ${
+              approvalMode ? "bg-[#1a5c38]" : "bg-gray-300"
+            }`}
+            role="switch"
+            aria-checked={approvalMode ?? false}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                approvalMode ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+          <span className="text-sm text-gray-700">
+            {approvalMode === null
+              ? "取得できませんでした"
+              : approvalMode
+                ? "有効（承認するまで入稿しない）"
+                : "無効（自動入稿）"}
           </span>
         </div>
       </div>
