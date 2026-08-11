@@ -118,10 +118,18 @@ class BlockingCallGuard:
     ``jvlink_historical`` が丸2日間 1 ファイルも取得できなかった。
     realtime ループにはウォッチドッグがあったが、一発実行モードには無かった。
 
+    さらに **JV-Link のモーダルダイアログを自動で閉じる**（2026-08-12 追加）。
+    「返らない」原因の実態はハングではなくダイアログ待ちだったことがあり、
+    そのときは殺すのではなく押せば済む。詳細は ``jvlink_dialog_guard``。
+
     Example:
         with BlockingCallGuard("JVOpen(RACE)", 3600, logger):
             rc = jv.JVOpen(...)
     """
+
+    # ダイアログの有無を見に行く間隔（秒）。JVOpen が止まっている時間を
+    # 決めるので、心拍ログの間隔（既定30秒）とは別に短く取る。
+    DIALOG_POLL_INTERVAL = 5.0
 
     def __init__(
         self,
@@ -129,6 +137,7 @@ class BlockingCallGuard:
         timeout: float,
         log: logging.Logger,
         heartbeat_interval: float = 30.0,
+        dismiss_dialogs: bool = True,
     ) -> None:
         """
         Args:
@@ -136,11 +145,13 @@ class BlockingCallGuard:
             timeout: この秒数を超えたらプロセスを強制終了する（0以下で無効）
             log: ログ出力先
             heartbeat_interval: 経過時間をログに出す間隔（秒）
+            dismiss_dialogs: JV-Link のモーダルを自動で閉じるか
         """
         self._label = label
         self._timeout = timeout
         self._log = log
         self._interval = heartbeat_interval
+        self._dismiss = dismiss_dialogs
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -152,9 +163,25 @@ class BlockingCallGuard:
     def __exit__(self, exc_type, exc, tb) -> None:
         self._done.set()
 
+    def _try_dismiss(self) -> None:
+        """JV-Link のモーダルを閉じる。監視は本処理を壊してはいけないので握りつぶす。"""
+        if not self._dismiss:
+            return
+        try:
+            import jvlink_dialog_guard
+
+            jvlink_dialog_guard.dismiss(self._log)
+        except Exception as e:  # noqa: BLE001
+            self._log.warning(f"ダイアログ自動応答に失敗: {e!r}")
+
     def _watch(self) -> None:
         start = time.time()
-        while not self._done.wait(timeout=self._interval):
+        next_heartbeat = start + self._interval
+        while not self._done.wait(timeout=min(self.DIALOG_POLL_INTERVAL, self._interval)):
+            self._try_dismiss()
+            if time.time() < next_heartbeat:
+                continue
+            next_heartbeat = time.time() + self._interval
             elapsed = time.time() - start
             if 0 < self._timeout <= elapsed:
                 self._log.error(
