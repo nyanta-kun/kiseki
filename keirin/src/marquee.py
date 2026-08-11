@@ -9,42 +9,76 @@
 ユーザー決定（2026-08-09）: **看板レースとその前後には必ず推奨を出す**。
 目的関数は売上加重の的中率（ROI悪化は許容）。
 
-⚠️ 2026-08-09 時点では検出が実装されておらず、当日の看板レース11件は**手作業**で
-   入稿した。実際に和歌山GIII S級決勝・佐世保GI ガールズ決勝ともに、
-   朝の波と昼の波を消化しても**商品がゼロ**だった
-   （和歌山12Rは軸1の3着内率 95.6% と指数が最も自信を持っていたのに、
-     9車ランクのゲートで落ちていた）。
+## 判定の正本は kiseki 側（2026-08-11 一本化）
 
-## 判定
+    backend/src/services/keirin_marquee.py
 
-    看板   : race_type に 決勝 / 特選 / 選抜 / 特秀 のいずれかを含む
-    前後   : 看板レースの前後1レース（同一開催）
+看板判定は **自動入稿（このリポジトリ）と Web一覧の★表示**の2箇所で要る。
+keirin が別リポジトリだった間はキーワードを**両方に写して**いたが、
+kiseki へ統合されたのでファイルから直接読み込む形にした。
+**ここでキーワードを定義してはいけない**（写した瞬間に
+「★は付くのに入稿されない」またはその逆を作れる）。
+`tests/test_marquee.py::test_keywords_are_not_redefined_here` が機械的に禁じている。
 
-⚠️ **レース番号ではなく race_type で判定する**。最終Rが決勝とは限らず
-   （ガールズ決勝が6Rと12Rの両方に置かれる開催がある・2026-08-09 佐世保）、
-   逆に最終Rが一般戦のこともある。
+判定そのものの注意点（準決勝の部分一致・レース番号で判定しない等）は
+正本の docstring を見ること。
+
+## このモジュール固有の責務
+
+    前後 : 看板レースの前後1レース（同一開催）— `marquee_race_nos()`
+
+Web は★を付けるだけなので「前後」は要らず、入稿側だけが使う。
 """
 
 from __future__ import annotations
 
-MARQUEE_KEYWORDS = ("決勝", "特選", "選抜", "特秀")
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
 
-# 🔴 部分一致で拾ってしまう非・看板。**「準決勝」は「決勝」を含む**ので
-#    除外しないと対象が跳ねる（実測 準決勝は全体の 14.5%）。
-#    ユーザーが挙げた看板は「決勝・特選・チャレンジ決勝」で準決勝は含まない。
-MARQUEE_EXCLUDE = ("準決勝",)
+# keirin/src/marquee.py → parents[2] が kiseki のリポジトリルート。
+_CANONICAL = (Path(__file__).resolve().parents[2]
+              / "backend" / "src" / "services" / "keirin_marquee.py")
+
+_MODULE_NAME = "kiseki_keirin_marquee"
 
 
-def is_marquee_type(race_type: str | None) -> bool:
-    """race_type が看板レース（決勝・特選クラス）か。
+def _load_canonical() -> ModuleType:
+    """kiseki 側の正本をファイルから読み込む。
 
-    ⚠️ 除外を先に見る。「準決勝」は「決勝」を部分一致で拾うため。
+    ⚠️ `sys.path` に `backend/` を足す方式は使えない。keirin にも `src`
+       パッケージがあり **名前が衝突する**ため。正本は標準ライブラリ以外を
+       import しないので、ファイル指定の読み込みで安全に共有できる。
+
+    ⚠️ 見つからないときは**黙って自前定義へ落ちない**。フォールバックは
+       二重管理を静かに復活させ、ずれても誰も気づけない。
     """
-    if not race_type:
-        return False
-    if any(k in race_type for k in MARQUEE_EXCLUDE):
-        return False
-    return any(k in race_type for k in MARQUEE_KEYWORDS)
+    cached = sys.modules.get(_MODULE_NAME)
+    if cached is not None:
+        return cached
+    if not _CANONICAL.exists():
+        raise ImportError(
+            f"看板レース判定の正本が見つかりません: {_CANONICAL}\n"
+            "keirin は kiseki リポジトリ内（<kiseki>/keirin）で動かす前提です。"
+        )
+    spec = importlib.util.spec_from_file_location(_MODULE_NAME, _CANONICAL)
+    if spec is None or spec.loader is None:            # pragma: no cover - 実質起きない
+        raise ImportError(f"正本を読み込めません: {_CANONICAL}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_canonical = _load_canonical()
+
+MARQUEE_KEYWORDS = _canonical.MARQUEE_KEYWORDS
+MARQUEE_EXCLUDE = _canonical.MARQUEE_EXCLUDE
+
+# 正本の関数をそのまま束縛する（ラップし直すと分岐が生まれるため）。
+# kiseki 側の名前は `is_marquee_race`、keirin 側の呼び出し名は `is_marquee_type`。
+is_marquee_type = _canonical.is_marquee_race
 
 
 def marquee_race_nos(races: list[dict]) -> set[int]:

@@ -13,16 +13,28 @@
 1. 判定は **race_type**。レース番号（最終R＝決勝）で判定しない
    — ガールズ決勝が 6R と 12R の両方に置かれる開催が実在する（08-09 佐世保）
 2. 「前後」は看板の ±1R。**存在しないレース番号は返さない**
+3. 🔴 判定の定義を**ここで持たない**（2026-08-11 一本化）
+   — 正本は kiseki 側 `backend/src/services/keirin_marquee.py`
 """
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.marquee import is_marquee_type, marquee_race_nos  # noqa: E402
+from src.marquee import (  # noqa: E402
+    MARQUEE_EXCLUDE,
+    MARQUEE_KEYWORDS,
+    is_marquee_type,
+    marquee_race_nos,
+)
+
+_MARQUEE_PY = Path(__file__).resolve().parents[1] / "src" / "marquee.py"
+_CANONICAL_PY = (Path(__file__).resolve().parents[2]
+                 / "backend" / "src" / "services" / "keirin_marquee.py")
 
 
 def test_marquee_keywords() -> None:
@@ -71,3 +83,49 @@ def test_race_no_alone_does_not_qualify() -> None:
     """🔴 最終Rでも race_type が一般なら看板ではない。"""
     races = [{"race_no": n, "race_type": "一般"} for n in range(1, 13)]
     assert marquee_race_nos(races) == set()
+
+
+# ---- 一本化の不変条件（2026-08-11）--------------------------------------
+# keirin が別リポジトリだった間はキーワードを両方へ写していた。統合後に
+# 写し戻ると「★は付くのに入稿されない」（またはその逆）を静かに作れる。
+
+
+def test_keywords_are_not_redefined_here() -> None:
+    """🔴 `src/marquee.py` がキーワードを自前で定義していないこと。
+
+    ⚠️ 文字列 grep では docstring 中の「決勝 / 特選 …」という説明まで拾って
+       しまうので **AST で代入の右辺を見る**（過去に grep 方式の検査が
+       docstring を拾って偽陽性を出している）。
+    """
+    tree = ast.parse(_MARQUEE_PY.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if not names & {"MARQUEE_KEYWORDS", "MARQUEE_EXCLUDE"}:
+            continue
+        assert not isinstance(node.value, (ast.Tuple, ast.List, ast.Set)), (
+            f"{sorted(names)} をここで定義し直しています。"
+            f"正本は {_CANONICAL_PY} です（写すと二重管理が復活します）。"
+        )
+
+
+def test_judgement_is_not_reimplemented_here() -> None:
+    """🔴 判定関数を書き直していないこと（正本の束縛であること）。"""
+    tree = ast.parse(_MARQUEE_PY.read_text(encoding="utf-8"))
+    defined = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert "is_marquee_type" not in defined, (
+        "is_marquee_type をここで実装し直しています。"
+        f"正本 {_CANONICAL_PY} の関数をそのまま束縛してください。"
+    )
+
+
+def test_values_match_the_canonical_source() -> None:
+    """正本のファイルを直接読み、値が一致すること。"""
+    src = _CANONICAL_PY.read_text(encoding="utf-8")
+    ns: dict = {}
+    exec(compile(src, str(_CANONICAL_PY), "exec"), ns)   # noqa: S102 - 自リポジトリ内
+    assert MARQUEE_KEYWORDS == ns["MARQUEE_KEYWORDS"]
+    assert MARQUEE_EXCLUDE == ns["MARQUEE_EXCLUDE"]
+    for t in ("決勝", "特選", "準決勝", "一般", None):
+        assert is_marquee_type(t) == ns["is_marquee_race"](t), t

@@ -558,8 +558,8 @@ async def get_picks(
             "grade": r["grade"],
             "race_type": r["race_type"],
             # 看板レース（決勝・特選クラス）。Web一覧の★表示に使う。
-            # 判定の kiseki 側正本は services/keirin_marquee.py
-            # （⚠️ keirin リポジトリ src/marquee.py と二重管理・両方見ること）
+            # 判定の唯一の正本は services/keirin_marquee.py
+            # （入稿側 keirin/src/marquee.py もそこを読む・2026-08-11 一本化）
             "is_marquee": is_marquee_race(r["race_type"]),
             "start_at": r["start_at"],
             "status": r["status"],
