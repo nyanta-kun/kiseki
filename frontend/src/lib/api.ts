@@ -1022,6 +1022,11 @@ export type KeirinPick = {
   gate_label?: string | null;
   /** 最終表示ランク文字列（"7S"|"7A"|"9S"|"9A"等） */
   display_rank?: string;
+  /** ランクのゲートを通らず入稿したレース（手動入稿・看板の穴埋め）。
+   *  picks_history に行が無いので、買い目・投資・的中は入稿記録
+   *  （netkeirin_submissions.bet_detail）と確定結果から組み立てている。
+   *  ⚠️ ランクの成績として読まないこと（同じ 7A でも別経路）。 */
+  submission_only?: boolean;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
   hypo_axis1: number | null;
   hypo_axis2: number | null;
@@ -1134,6 +1139,12 @@ export type KeirinStatsResponse = {
     total_payout: number;
     roi: number | null;
   };
+  /** 手動・穴埋め入稿を含めた集計か。 */
+  include_manual?: boolean;
+  /** 含めた場合に、買い目が記録されておらず集計から外した件数。
+   *  ⚠️ `bet_detail` の保存開始は 2026-08-07。それ以前の手動入稿は
+   *  「入稿した事実」しか残っておらず金額を復元できない。 */
+  manual_missing_bet_detail?: number;
 };
 
 export type KeirinStatsRank =
@@ -1167,11 +1178,15 @@ export async function fetchKeirinStats(
   toDate: string,
   granularity: "daily" | "monthly",
   rank?: KeirinStatsRank | KeirinStatsRank[],
+  /** ランクのゲートを通っていない入稿（手動・看板の穴埋め）を含めるか。
+   *  ⚠️ 含めると数字の意味が変わる（false=ランクの実力 / true=実際の収支）。 */
+  includeManual = false,
 ): Promise<KeirinStatsResponse> {
   const rankValue = Array.isArray(rank) ? rank.join(",") : rank;
   const rankQuery = rankValue ? `&rank=${encodeURIComponent(rankValue)}` : "";
+  const manualQuery = includeManual ? "&include_manual=true" : "";
   return get<KeirinStatsResponse>(
-    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}`,
+    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}${manualQuery}`,
     { cache: "no-store" },
   );
 }

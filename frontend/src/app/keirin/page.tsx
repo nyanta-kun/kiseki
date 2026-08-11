@@ -1043,6 +1043,17 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               {pick.is_marquee && (
                 <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
+              {/* ランクのゲートを通らず入稿したレース（手動入稿・看板の穴埋め）。
+                  同じ 7A でも経路が違うので、混ぜたまま出すと「ランクの成績」と
+                  読まれてしまう（実測でゲート通過と回収率が倍近く違う）。 */}
+              {pick.submission_only && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                  title="ランクのゲートを通っていない入稿（手動・看板の穴埋め）。買い目と的中は入稿記録から表示しています"
+                >
+                  手動
+                </span>
+              )}
               {startTime && (
                 <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
               )}
@@ -1691,7 +1702,10 @@ export default function KeirinPage() {
               }
               // ガミ落ち（オッズ条件で推奨外確定）も「推奨外を非表示」スイッチで隠す
               if (hideNoPickRows && computeGamiSkip(p)) return null;
-              return <PickCard key={`pick-${p.id}-${p.race_key}`} pick={p} cardId={`pick-${p.id}`} />;
+              // 入稿だけの行は picks_history の id を持たない。キーは race_key で作る
+              // （id=null のまま並べると全部同じキーになり React が行を取り違える）。
+              const rowId = p.id ?? p.race_key;
+              return <PickCard key={`pick-${rowId}-${p.race_key}`} pick={p} cardId={`pick-${rowId}`} />;
             })}
           </div>
         </>
