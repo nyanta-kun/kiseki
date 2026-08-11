@@ -84,7 +84,11 @@ from src.race_shape import (
     solve_logit_shift,
     stake_note_text,
 )
-from src.odds_prediction import try_predicted_odds_for_legs
+from src.odds_prediction import (
+    OddsPredictionUnavailable,
+    predicted_trio_board,
+    try_predicted_odds_for_legs,
+)
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.strategy_wt import (
     RACE_BUDGET,
@@ -710,7 +714,8 @@ def _load_trifecta_board(race_key: str) -> dict[tuple[int, ...], float]:
 
 def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                      odds: dict | None = None,
-                     marks: dict[int, str] | None = None) -> str:
+                     marks: dict[int, str] | None = None,
+                     predicted_odds: dict | None = None) -> str:
     """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
 
     🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
@@ -731,8 +736,15 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     `odds` は**入稿時点の**オッズ（三連複は frozenset・三連単は tuple がキー）。
     🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
        なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
+
+    `predicted_odds` は板に無い目を埋めるための予測盤面（三連複のみ）。
+    埋めた点は `odds_source="predicted"` になり、板由来は `"board"`。
+    🔴 **板を上書きしない。** 板があるならそれが実際に付いていた値。
+    ⚠️ 区別を落として保存すると、予測値が「実際のオッズ」として読まれる。
+       表示側はこの印を見て「(予測)」を付ける。
     """
     odds = odds or {}
+    predicted_odds = predicted_odds or {}
     lines: list[dict[str, Any]] = []
     for leg in legs:
         for target in sorted(expand_bet(leg.bet_kind, leg.groups),
@@ -740,11 +752,18 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
             cars = sorted(target) if isinstance(target, frozenset) else list(target)
             sep = "=" if isinstance(target, frozenset) else "-"
             o = odds.get(target)
+            odds_source = "board" if o else None
+            if not o:
+                # 板に無い目だけ予測で埋める（三連複のキーは frozenset）。
+                o = predicted_odds.get(target)
+                odds_source = "predicted" if o else None
             lines.append({
                 "bet_type": _BET_TYPE_JP.get(leg.bet_kind, leg.bet_kind),
                 "combo": sep.join(str(c) for c in cars),
                 "stake": int(leg.stake_per_line),
                 "odds": round(float(o), 1) if o else None,
+                # 板 / 予測 / 不明（None）。**表示で区別するために必ず残す。**
+                "odds_source": odds_source,
             })
     payload: dict[str, Any] = {
         "total": sum(x["stake"] for x in lines), "source": source, "lines": lines,
@@ -798,6 +817,32 @@ def _bet_detail_odds(race_key: str, cfg: dict, use_trifecta: bool = False) -> di
             or cfg.get("formation_bet") or use_trifecta):
         odds.update(_load_trifecta_board(base))
     return odds
+
+
+def _predicted_trio_fill(race_key: str) -> dict:
+    """板に無い三連複の目を埋めるための予測盤面（`src.odds_prediction`）。
+
+    板（`wt_odds` / 朝の `wt_odds_snapshot`）は買った目を必ずしも網羅しない。
+    従来はそのまま `odds: null` で保存され、Web では「オッズ未取得」となり
+    **最低払戻も期待値も出せなかった**（実測で三連複85点が該当）。
+    予測オッズは構造だけから作れるので、板が無いときの表示を埋められる。
+
+    🔴 **表示のためだけに使う。金額配分には一切影響しない**
+       （`_bet_detail_odds` の戻り値は `build_bet_detail` の記録専用）。
+    🔴 **埋めた点は `odds_source="predicted"` として区別する。**
+       板の値と混ぜて出すと「実際に付いていたオッズ」と読まれる。
+    ⚠️ **三連単は埋めない。** このモデルが予測するのは三連複だけで、
+       着順の分だけ別物になる。作れないものを作らない。
+    ⚠️ 入稿を止めない。失敗したら**必ずログを残して**空を返す
+       （無言のフォールバックは検知できない）。
+    """
+    try:
+        return dict(predicted_trio_board(str(race_key).split("#")[0]))
+    except OddsPredictionUnavailable as e:
+        print(f"[odds-pred] {race_key}: 表示用の予測盤面を作れません: {e}", flush=True)
+    except Exception as e:  # noqa: BLE001 — 表示の補助で入稿を落とさない
+        print(f"[odds-pred] {race_key}: 表示用の予測盤面で想定外の失敗: {e!r}", flush=True)
+    return {}
 
 
 def _record_submission(
@@ -1554,7 +1599,8 @@ def _process_rank(
                 bet_detail=build_bet_detail(
                     record_legs, tilt_source,
                     _bet_detail_odds(race_key, cfg, use_trifecta),
-                    marks=record_marks),
+                    marks=record_marks,
+                    predicted_odds=_predicted_trio_fill(race_key)),
                 title=title, comment=comment,
                 # ここはランクのゲートを通った自動経路のみ（_process_rank）。
                 origin=ORIGIN_RANK,
@@ -1727,7 +1773,8 @@ def _process_manual(
                            bet_detail=build_bet_detail(
                                record_legs, tilt_source, _bet_detail_odds(race_key, cfg),
                                marks={**{c: "△" for c in partners},
-                                      axis1: "◎", axis2: "○"}),
+                                      axis1: "◎", axis2: "○"},
+                               predicted_odds=_predicted_trio_fill(race_key)),
                            title=title, comment=comment,
                            origin=ORIGIN_MARQUEE_FILL if marquee else ORIGIN_MANUAL)
         print(f"[netkeirin_submit][manual] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)

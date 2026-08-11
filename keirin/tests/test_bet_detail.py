@@ -125,8 +125,9 @@ def test_オッズを渡すと買い目に添えられる():
 def test_三連単のオッズはtupleキーで引く():
     legs = [BetLeg(BET_KIND_TRIFECTA_FORMATION, [[3], [4], [1]], 500)]
     d = _detail(legs, None, {(3, 4, 1): 128.5})
+    # `odds_source` は板/予測の区別（2026-08-12 追加）。板由来なので "board"。
     assert d["lines"][0] == {"bet_type": "3連単", "combo": "3-4-1",
-                             "stake": 500, "odds": 128.5}
+                             "stake": 500, "odds": 128.5, "odds_source": "board"}
 
 
 def test_オッズが取れなければNoneで残す():
