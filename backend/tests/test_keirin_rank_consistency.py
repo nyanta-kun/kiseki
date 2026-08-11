@@ -34,9 +34,45 @@ import pytest
 from src.api.keirin_router import _MANUAL_RANK_KEYS, _PAPER_RANK_LABELS
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "src"
+KEIRIN_STRATEGY = (Path(__file__).resolve().parents[2]
+                   / "keirin" / "src" / "strategy_wt.py")
 
 #: 表示ラベル（例: "7SS"/"7H1"）の集合。これが正本。
 LABELS = set(_PAPER_RANK_LABELS.values())
+
+
+def test_labels_match_keirin_current_paper_ranks():
+    """**上流の単一正本と一致すること**（2026-08-12 追加）。
+
+    `_PAPER_RANK_LABELS` は keirin 側 `CURRENT_PAPER_RANKS` の手動複製で、
+    このファイルの他のテストは全て「`_PAPER_RANK_LABELS` にあるものが
+    フロントにもあるか」だけを見ている。つまり **複製し忘れたランクは
+    どのテストからも要求されず、静かに Web から消える**。
+
+    実際 2026-08-12 に RANK_7H3 を新設したとき、keirin 側は完結していたのに
+    kiseki 側の複製を忘れ、**入稿設定画面に 7H3 が出ない**まま気づけなかった
+    （DB に行はあるのに画面のリストで捨てられていた）。ここで上流と突き合わせる。
+
+    ⚠️ keirin は import できない（別 venv・`src` パッケージ名の衝突）ので
+       ソースを読んで正規表現で拾う。書き方が変わったら落ちるが、
+       黙って消えるより落ちるほうがよい。
+    """
+    if not KEIRIN_STRATEGY.exists():        # keirin を含まないチェックアウト
+        pytest.skip(f"keirin が見つかりません: {KEIRIN_STRATEGY}")
+    text = KEIRIN_STRATEGY.read_text(encoding="utf-8")
+    block = re.search(
+        r"CURRENT_PAPER_RANKS: tuple\[PaperRankSpec, \.\.\.\] = \((.*?)\n\)",
+        text, re.DOTALL)
+    assert block, (
+        "keirin 側 CURRENT_PAPER_RANKS の宣言を見つけられなかった。"
+        "書き方が変わったならこのテストのパターンも更新すること。")
+    upstream = set(re.findall(r'PaperRankSpec\(\s*"[^"]+",\s*"#[^"]+",\s*"([^"]+)"',
+                              block.group(1)))
+    assert upstream, "CURRENT_PAPER_RANKS から表示ラベルを1つも拾えなかった"
+    assert upstream == LABELS, (
+        "keirin 側 CURRENT_PAPER_RANKS と kiseki 側 _PAPER_RANK_LABELS が食い違う。\n"
+        f"  keirin にあって kiseki に無い: {sorted(upstream - LABELS)}\n"
+        f"  kiseki にあって keirin に無い: {sorted(LABELS - upstream)}")
 
 
 def _read(rel: str) -> str:
