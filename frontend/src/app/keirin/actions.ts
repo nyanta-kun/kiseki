@@ -141,12 +141,17 @@ export async function approveKeirinVenueAction(
  *
  * ⚠️ 場単位は用意していない（まとめて消す事故を避けるため、API 側も拒否する）。
  * ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
+ *
+ * `force` は **netkeirin を触らず記録だけ取消にする**最後の手段。
+ * netkeirin 側で先に下書きを消していると item_id が引けず、従来はそこで止まって
+ * DB も更新されないままだった（取消したはずの行が残り、自動穴埋めでも出し直せない）。
  */
 export async function cancelKeirinSubmissionAction(
   raceKey: string,
   rankKey: string,
+  force = false,
 ): Promise<ApprovalResult> {
-  return postApproval("/keirin/cancel", { race_key: raceKey, rank_key: rankKey });
+  return postApproval("/keirin/cancel", { race_key: raceKey, rank_key: rankKey, force });
 }
 
 /**

@@ -101,8 +101,14 @@ def main() -> int:
         races = [dict(r) for r in conn.execute(
             "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id "
             "FROM wt_races WHERE race_date = ? ORDER BY venue_id, race_no", (date,))]
+        # 🔴 **取消（status='deleted'）した行は「出していない」扱いにする。**
+        #    取消は論理削除なので行が残る。除外しないと、一度取り消したレースを
+        #    自動穴埋めで出し直せず、毎回この場で手作業になる（2026-08-11 に発生）。
+        #    判定は `netkeirin_submit_wt.py::_already_submitted` と同じ条件にすること。
+        #    **2箇所で食い違っていた**のが原因で、あちらだけ正しく除外していた。
         submitted = {str(dict(r)["race_key"]).split("#")[0] for r in conn.execute(
-            "SELECT race_key FROM netkeirin_submissions")}
+            "SELECT race_key FROM netkeirin_submissions "
+            "WHERE COALESCE(status, 'submitted') <> 'deleted'")}
 
     if not races:
         print(f"[marquee] {date}: レースが無い", flush=True)

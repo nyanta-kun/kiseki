@@ -89,11 +89,14 @@ function EntryTable({ entries, axis1, axis2 }: {
   );
 }
 
-function RaceCard({ p, busy, onApprove, onCancel }: {
+function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel }: {
   p: KeirinProposal;
   busy: boolean;
   onApprove: () => void;
   onCancel: () => void;
+  /** 通常の取消が「netkeirin に見つからない」で失敗した後だけ true。 */
+  canForceCancel: boolean;
+  onForceCancel: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const d = p.bet_detail;
@@ -160,6 +163,20 @@ function RaceCard({ p, busy, onApprove, onCancel }: {
               className="rounded border border-red-300 px-3 py-1 text-xs text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
             >
               取消
+            </button>
+          )}
+          {/* 🔴 通常の取消が失敗したときにだけ出す。netkeirin 側で先に消していると
+              item_id が引けず、従来はそこで止まって **DB も更新されない**ままだった。
+              常時出すと「netkeirin に残っているのに記録だけ消す」事故になる。 */}
+          {canForceCancel && p.status !== "deleted" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onForceCancel}
+              title="netkeirin 側は操作せず、記録だけを取消にします"
+              className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+            >
+              強制取消（記録のみ）
             </button>
           )}
         </span>
@@ -251,6 +268,11 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [mode, setMode] = useState(requireApproval);
+  // 通常の取消が「netkeirin 側に見つからない」で失敗したレース。
+  // 🔴 そのとき **DB も更新されていない**（取消したはずの行が生き残る）。
+  //    強制取消の口をここで初めて出す。常時出すと、netkeirin に残っている
+  //    商品を消したつもりで記録だけ消す事故につながる。
+  const [forceTargets, setForceTargets] = useState<Record<string, boolean>>({});
 
   const byVenue = useMemo(() => {
     const m = new Map<string, KeirinProposal[]>();
@@ -262,7 +284,14 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
     return [...m.entries()];
   }, [items]);
 
-  const run = (fn: () => Promise<{ ok: boolean; message: string; n_ok?: number; n_ng?: number }>) => {
+  const run = (
+    fn: () => Promise<{
+      ok: boolean; message: string; n_ok?: number; n_ng?: number;
+      results?: { ok: boolean; message: string }[];
+    }>,
+    /** 失敗が「netkeirin に見つからない」だったときに強制取消を出すためのキー */
+    onNotFound?: string,
+  ) => {
     setMsg(null);
     startTransition(async () => {
       const r = await fn();
@@ -271,6 +300,11 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
           ? r.message
           : `成功${r.n_ok}件 / 失敗${r.n_ng ?? 0}件: ${r.message}`,
       );
+      // 明細側にしかメッセージが載らないので、両方を見て判定する
+      const detail = (r.results ?? []).map((x) => x.message).join(" ");
+      if (!r.ok && onNotFound && `${r.message} ${detail}`.includes("見つかりません")) {
+        setForceTargets((prev) => ({ ...prev, [onNotFound]: true }));
+      }
       // 状態が変わるのでサーバーから取り直す
       if (r.ok) window.location.reload();
     });
@@ -355,7 +389,19 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
                   onApprove={() => run(() => approveKeirinRaceAction(p.race_key, p.rank_key))}
                   onCancel={() => {
                     if (!window.confirm(`${p.venue_name}${p.race_no}R (${p.rank_key}) の入稿を取り消します。よろしいですか？`)) return;
-                    run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key));
+                    run(
+                      () => cancelKeirinSubmissionAction(p.race_key, p.rank_key),
+                      `${p.race_key}-${p.rank_key}`,
+                    );
+                  }}
+                  canForceCancel={!!forceTargets[`${p.race_key}-${p.rank_key}`]}
+                  onForceCancel={() => {
+                    if (!window.confirm(
+                      `${p.venue_name}${p.race_no}R (${p.rank_key}) の記録だけを取消にします。\n\n`
+                      + "netkeirin 側には何もしません。netkeirin にまだ商品が残っている場合は、\n"
+                      + "先に netkeirin 側で削除してください。よろしいですか？",
+                    )) return;
+                    run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key, true));
                   }}
                 />
               ))}
