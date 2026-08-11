@@ -698,7 +698,8 @@ def _load_trifecta_board(race_key: str) -> dict[tuple[int, ...], float]:
 
 
 def build_bet_detail(legs: list[BetLeg], source: str | None = None,
-                     odds: dict | None = None) -> str:
+                     odds: dict | None = None,
+                     marks: dict[int, str] | None = None) -> str:
     """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
 
     🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
@@ -734,7 +735,18 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 "stake": int(leg.stake_per_line),
                 "odds": round(float(o), 1) if o else None,
             })
-    payload = {"total": sum(x["stake"] for x in lines), "source": source, "lines": lines}
+    payload: dict[str, Any] = {
+        "total": sum(x["stake"] for x in lines), "source": source, "lines": lines,
+        # 🔴 **承認制で「そのまま送り直す」ための原本**。`lines` は展開済みなので
+        #    表示には十分だが、そこから買い目を組み直すと元の kaime と構造が
+        #    変わりうる（軸ながしが1点ずつのフォーメーションに化ける等）。
+        #    確認画面で見たものと違うものを入稿しては確認の意味が無いので、
+        #    送信に使った groups と marks を**そのまま**残す。
+        "legs": [{"bet_kind": lg.bet_kind,
+                  "groups": [list(g) for g in lg.groups],
+                  "stake": int(lg.stake_per_line)} for lg in legs],
+        "marks": {str(k): v for k, v in (marks or {}).items()},
+    }
     # ダッチ配分のときは保証倍率も一緒に残す（仕様書 §6 の前向き計測）。
     # 🔴 picks_history に列を足さずここへ入れているのは、**スキーマ変更を伴わずに
     #    記録したいから**。列が必要になったらここから移送できる。
@@ -1515,11 +1527,18 @@ def _process_rank(
             #    ここも上の送信分岐と同じく **legs の有無**だけで判定する。
             record_legs = legs if legs else _legs_for_record(
                 cfg, axis1, axis2_or_p1, partners, _stake_per_line(cfg, len(partners)))
+            # 🔴 印も原本として残す（承認時にそのまま送り直すため）。
+            #    `submit_pick` は印を**内部で**組むので、その経路では同じ規則
+            #    （軸=◎○・買った相手=△）をここで再現する。ずれると承認後に
+            #    確認画面と違う印で入稿される。
+            record_marks = marks if legs else {
+                **{c: "△" for c in partners}, axis1: "◎", axis2_or_p1: "○"}
             _record_submission(
                 race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2_or_p1, msg,
                 bet_detail=build_bet_detail(
                     record_legs, tilt_source,
-                    _bet_detail_odds(race_key, cfg, use_trifecta)),
+                    _bet_detail_odds(race_key, cfg, use_trifecta),
+                    marks=record_marks),
                 title=title, comment=comment,
             )
             if claimed_races is not None:
@@ -1685,7 +1704,9 @@ def _process_manual(
         _record_submission(race_key, rank_key, session, venue_name, race_no, gate_label,
                            axis1, axis2, msg,
                            bet_detail=build_bet_detail(
-                               record_legs, tilt_source, _bet_detail_odds(race_key, cfg)),
+                               record_legs, tilt_source, _bet_detail_odds(race_key, cfg),
+                               marks={**{c: "△" for c in partners},
+                                      axis1: "◎", axis2: "○"}),
                            title=title, comment=comment)
         print(f"[netkeirin_submit][manual] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)
         return 1, []
@@ -1882,6 +1903,135 @@ def main() -> None:
         flush=True,
     )
 
+
+
+
+# ---------------------------------------------------------------------------
+# 承認（入稿案 → netkeirin へ送信）と取消
+# ---------------------------------------------------------------------------
+def _load_proposal(race_key: str, rank_key: str) -> dict | None:
+    """入稿案（status='proposed'）を1件読む。無ければ None。"""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM netkeirin_submissions "
+            "WHERE race_key = ? AND rank_key = ? AND status = ?",
+            (race_key, rank_key, STATUS_PROPOSED),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _legs_from_bet_detail(detail: dict) -> tuple[list[BetLeg], dict[int, str]]:
+    """保存した原本から送信用の legs と marks を**そのまま**復元する。
+
+    🔴 `lines`（展開済み）から組み直してはいけない。軸ながしが1点ずつの
+       フォーメーションへ化けるなど、**確認画面で見たものと違う構造**で
+       入稿されうる。`legs`/`marks` は `build_bet_detail` が送信に使った値を
+       そのまま書き出したもの。
+    """
+    raw_legs = detail.get("legs") or []
+    if not raw_legs:
+        raise ValueError("bet_detail に legs がありません（古い形式の可能性）")
+    legs = [BetLeg(bet_kind=x["bet_kind"],
+                   groups=[list(g) for g in x["groups"]],
+                   stake_per_line=int(x["stake"]))
+            for x in raw_legs]
+    marks = {int(k): v for k, v in (detail.get("marks") or {}).items()}
+    if not marks:
+        raise ValueError("bet_detail に marks がありません（古い形式の可能性）")
+    return legs, marks
+
+
+def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
+    """入稿案を承認して netkeirin へ送る。**買い目は再計算しない。**
+
+    再計算すると、確認画面で見たものと違うものが出て確認の意味が無くなる
+    （配分は入稿時点のオッズ推定に依存するため、時刻が変われば値も変わる）。
+    """
+    row = _load_proposal(race_key, rank_key)
+    if row is None:
+        return False, f"入稿案が見つかりません: {race_key} / {rank_key}"
+    try:
+        detail = json.loads(row["bet_detail"] or "{}")
+        legs, marks = _legs_from_bet_detail(detail)
+    except (ValueError, json.JSONDecodeError) as e:
+        return False, f"入稿案を復元できません: {e}"
+
+    cfg = RANK_CONFIGS.get(rank_key) or {}
+    race_date = datetime.strptime(race_key[:8], "%Y%m%d").date()
+    try:
+        # 🔴 承認は必ず propose_only=False。ここで承認制のフラグを見てしまうと
+        #    「承認したのに送られない」になる。
+        ok, msg = NetkeirinClient(propose_only=False).submit_pick_multi(
+            race_date=race_date, venue_name=row["venue_name"],
+            race_no=int(row["race_no"]),
+            n_cars=int(cfg.get("n_cars") or 0) or _n_cars_from_marks(marks),
+            legs=legs, marks=marks,
+            title=row["title"] or "", comment=row["comment"] or "",
+            act_type=cfg.get(
+                "act_type",
+                ACT_TYPE_CONFIDENT if rank_key in CONFIDENT_RANKS else ACT_TYPE_DEFAULT),
+        )
+    except Exception as e:  # noqa: BLE001 — 1件の失敗で承認画面を落とさない
+        ok, msg = False, f"例外: {e}"
+    if not ok:
+        return False, str(msg)
+
+    now = datetime.now(JST).replace(tzinfo=None)
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE netkeirin_submissions SET status = ?, netkeirin_race_id = ?, "
+            "approved_at = ? WHERE race_key = ? AND rank_key = ?",
+            (STATUS_SUBMITTED, str(msg), now, race_key, rank_key),
+        )
+        conn.commit()
+    return True, str(msg)
+
+
+def _n_cars_from_marks(marks: dict[int, str]) -> int:
+    """ランク設定が無いときの保険。印は出走全車に付くので車数と一致する。"""
+    return len(marks)
+
+
+def cancel_submission(race_key: str, rank_key: str) -> tuple[bool, str]:
+    """入稿を取り消す。netkeirin の下書きを削除し、記録は**論理削除**する。
+
+    🔴 行を消してはいけない。`bet_detail` は「何をいくらで買ったか」の唯一の
+       正本で後から再現できず、消すと ROI・的中率の集計が壊れる。
+
+    ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは
+       未確認なので、呼び出し側（確認画面）は公開前だけ対象にすること。
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT netkeirin_race_id, status FROM netkeirin_submissions "
+            "WHERE race_key = ? AND rank_key = ?", (race_key, rank_key),
+        ).fetchone()
+    if row is None:
+        return False, f"入稿記録がありません: {race_key} / {rank_key}"
+    if row["status"] == STATUS_DELETED:
+        return True, "既に取消済みです"
+
+    item_msg = "netkeirin へは未送信のため削除不要"
+    if row["status"] == STATUS_SUBMITTED:
+        client = NetkeirinClient(propose_only=False)
+        # item_id は入稿レスポンスに含まれないので、削除の直前に引き直す。
+        item_id = client.fetch_item_ids().get(str(row["netkeirin_race_id"]))
+        if not item_id:
+            return False, ("netkeirin の公開待ち一覧に該当が見つかりません"
+                           "（既に公開済み・または既に削除済みの可能性）")
+        ok, item_msg = client.delete_pick(item_id)
+        if not ok:
+            return False, item_msg
+
+    now = datetime.now(JST).replace(tzinfo=None)
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE netkeirin_submissions SET status = ?, deleted_at = ? "
+            "WHERE race_key = ? AND rank_key = ?",
+            (STATUS_DELETED, now, race_key, rank_key),
+        )
+        conn.commit()
+    return True, item_msg
 
 if __name__ == "__main__":
     main()
