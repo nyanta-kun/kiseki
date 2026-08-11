@@ -41,9 +41,10 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,7 @@ from src.netkeirin_client import (
     BET_KIND_TRIO_BOX,
     BetLeg,
     NetkeirinClient,
+    PROPOSED_PREFIX,
     RACE_AUTH_URL,
     expand_bet,
 )
@@ -99,6 +101,18 @@ from src.strategy_wt import (
 _SEP_RE = re.compile(r"[-=]")
 
 SESSION_LABEL_JP = {"morning": "午前", "noon": "昼", "evening": "午後"}
+
+JST = timezone(timedelta(hours=9))
+
+# netkeirin_submissions.status。マイグレーション 202608110900_keirin と同じ値。
+# ⚠️ 文字列を各所に散らさない。ランク一覧の手書き二重管理で同日3箇所を事故らせた
+#    前例がある（keirin_netkeirin_7ss_submit_gap_2026_08_06）。
+# 確認・承認画面。Discord から直接飛べないと承認制の運用が回らない。
+REVIEW_URL = os.environ.get("KEIRIN_REVIEW_URL", "https://galloplab.com/keirin/review")
+
+STATUS_PROPOSED = "proposed"
+STATUS_SUBMITTED = "submitted"
+STATUS_DELETED = "deleted"
 
 # session → その回で入稿する開催の波（`src/meeting_wave.py`）。
 # 🔴 **1つの開催は必ず1つの波でしか入稿されない**。netkeirin は公開後に
@@ -610,13 +624,42 @@ def _is_enabled(settings: dict[str, dict], rank_key: str) -> bool:
     return True if row is None else bool(row["enabled"])
 
 
+def _approval_required() -> bool:
+    """承認制なら True（netkeirin へは出さず「入稿案」だけ作る）。
+
+    `netkeirin_settings._global.require_approval` の1点だけを見る。
+    画面から切り替えられるので、承認制をやめるときにコード変更もデプロイも要らない。
+
+    🔴 **fail-open（分からなければ False＝従来どおり自動入稿）**。
+       列が無い（migration 未適用）・DB が読めない、といった理由で承認制に倒すと
+       **入稿が全部止まったまま誰も気づかない**。承認制は運用者が明示的に
+       ONにするもので、事故で有効になってはいけない。
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT require_approval FROM netkeirin_settings WHERE rank_key = ?",
+                ("_global",),
+            ).fetchone()
+    except Exception as e:
+        print(f"[netkeirin_submit] require_approval 読み込み失敗"
+              f"（自動入稿として継続）: {e}", flush=True)
+        return False
+    return bool(row["require_approval"]) if row else False
+
+
 def _already_submitted(race_keys: list[str]) -> set[tuple[str, str]]:
     if not race_keys:
         return set()
     with get_connection() as conn:
         placeholders = ",".join("?" * len(race_keys))
+        # 🔴 取消（status='deleted'）した行は「出していない」扱いにする。
+        #    論理削除なので行は残っており、除外しないと出し直せない。
+        #    入稿案（'proposed'）は**含める**——同じレースへ案を二重に作らないため。
         rows = conn.execute(
-            f"SELECT race_key, rank_key FROM netkeirin_submissions WHERE race_key IN ({placeholders})",
+            f"SELECT race_key, rank_key FROM netkeirin_submissions "
+            f"WHERE race_key IN ({placeholders}) "
+            f"AND COALESCE(status, 'submitted') <> 'deleted'",
             race_keys,
         ).fetchall()
     return {(r["race_key"], r["rank_key"]) for r in rows}
@@ -738,15 +781,31 @@ def _record_submission(
     race_key: str, rank_key: str, session: str, venue_name: str, race_no: int,
     gate_label: str | None, axis1: int, axis2: int, netkeirin_race_id: str,
     bet_detail: str | None = None,
+    title: str | None = None, comment: str | None = None,
 ) -> None:
+    """入稿（または入稿案）を記録する。
+
+    `netkeirin_race_id` が `PROPOSED_PREFIX` で始まっていれば**まだ送っていない**
+    ＝入稿案。状態はここで導出する（呼び出し側に status を持たせると、
+    送信の分岐3か所のどれかで渡し忘れる）。
+
+    `title` / `comment` は確認画面が表示・編集するために保存する。
+    従来は保存しておらず、あとから文面を再現できなかった。
+    """
+    proposed = str(netkeirin_race_id).startswith(PROPOSED_PREFIX)
+    status = STATUS_PROPOSED if proposed else STATUS_SUBMITTED
+    race_id = str(netkeirin_race_id).removeprefix(PROPOSED_PREFIX)
+    now = datetime.now(JST).replace(tzinfo=None)
     with get_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO netkeirin_submissions "
             "(race_key,rank_key,session,venue_name,race_no,gate_label,axis1,axis2,"
-            "netkeirin_race_id,bet_detail) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "netkeirin_race_id,bet_detail,status,title,comment,proposed_at,approved_at,"
+            "deleted_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2,
-             netkeirin_race_id, bet_detail),
+             race_id, bet_detail, status, title, comment,
+             now if proposed else None, None if proposed else now, None),
         )
         conn.commit()
 
@@ -1212,7 +1271,7 @@ def _process_rank(
     rank_key: str, target_date: str, session: str, race_date, settings: dict[str, dict],
     already: set[tuple[str, str]], dry_run: bool, race_key_filter: str | None = None,
     claimed_races: set[str] | None = None, waves: dict[str, str] | None = None,
-    started: set[str] | None = None,
+    started: set[str] | None = None, propose_only: bool = False,
 ) -> tuple[int, list[str]]:
     cfg = RANK_CONFIGS[rank_key]
     if not _is_enabled(settings, rank_key):
@@ -1277,7 +1336,11 @@ def _process_rank(
     comment_template = ((setting or {}).get("comment_template")
                         or cfg.get("default_comment") or _DEFAULT_COMMENT_TEMPLATE)
 
-    client = NetkeirinClient() if not dry_run else None
+    # 承認制なら POST しないクライアントを使う（入稿案だけ作る）。
+    # ⚠️ ここで `_approval_required()` を引き直してはいけない。判定は main が
+    #    波の頭で1回だけ行い引数で渡す。ランクごとに引くと、途中で設定が
+    #    変わったとき同じ波の中で「送ったもの」と「案のまま」が混ざる。
+    client = NetkeirinClient(propose_only=propose_only) if not dry_run else None
     n_submitted = 0
     failures: list[str] = []
     is_multi = bool(cfg.get("multi_bet"))
@@ -1457,6 +1520,7 @@ def _process_rank(
                 bet_detail=build_bet_detail(
                     record_legs, tilt_source,
                     _bet_detail_odds(race_key, cfg, use_trifecta)),
+                title=title, comment=comment,
             )
             if claimed_races is not None:
                 claimed_races.add(race_key)
@@ -1596,7 +1660,7 @@ def _process_manual(
 
     try:
         if tilt_source:
-            ok, msg = NetkeirinClient().submit_pick_multi(
+            ok, msg = NetkeirinClient(propose_only=_approval_required()).submit_pick_multi(
                 race_date=race_date, venue_name=venue_name, race_no=race_no,
                 n_cars=cfg["n_cars"], legs=legs,
                 marks={**{c: "△" for c in partners}, axis1: "◎", axis2: "○"},
@@ -1605,7 +1669,7 @@ def _process_manual(
                           else ACT_TYPE_DEFAULT),
             )
         else:
-            ok, msg = NetkeirinClient().submit_pick(
+            ok, msg = NetkeirinClient(propose_only=_approval_required()).submit_pick(
                 race_date=race_date, venue_name=venue_name, race_no=race_no,
                 n_cars=cfg["n_cars"], bet_kind=cfg["bet_kind"],
                 axis1=axis1, axis2=axis2, partners=partners,
@@ -1621,7 +1685,8 @@ def _process_manual(
         _record_submission(race_key, rank_key, session, venue_name, race_no, gate_label,
                            axis1, axis2, msg,
                            bet_detail=build_bet_detail(
-                               record_legs, tilt_source, _bet_detail_odds(race_key, cfg)))
+                               record_legs, tilt_source, _bet_detail_odds(race_key, cfg)),
+                           title=title, comment=comment)
         print(f"[netkeirin_submit][manual] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)
         return 1, []
     print(f"[netkeirin_submit][manual] 入稿失敗 {venue_name}{race_no}R ({rank_key}): {msg}", flush=True)
@@ -1742,6 +1807,13 @@ def main() -> None:
         per_rank_raw[rank_key] = raw
         all_race_keys.update(c["race_key"] for c in raw)
 
+    # 🔴 承認制の判定は**波の頭で1回だけ**。ランクごとに引き直すと、途中で
+    #    設定が変わったときに同じ波の中で「送ったもの」と「案のまま」が混ざる。
+    propose_only = _approval_required()
+    if propose_only:
+        print("[netkeirin_submit] 承認制: netkeirin へは出さず入稿案のみ作ります",
+              flush=True)
+
     already = set() if args.force else _already_submitted(sorted(all_race_keys))
     if args.force:
         print('[netkeirin_submit] --force: 入稿済みのレースにも再送します'
@@ -1758,7 +1830,7 @@ def main() -> None:
         n, failures = _process_rank(
             rank_key, target_date, session, race_date, settings, already, args.dry_run,
             race_key_filter=args.race_key, claimed_races=claimed_races, waves=waves,
-            started=started,
+            started=started, propose_only=propose_only,
         )
         submitted_counts[rank_key] = n
         all_failures.extend(failures)
@@ -1771,12 +1843,22 @@ def main() -> None:
     session_jp = SESSION_LABEL_JP[session]
     if total > 0:
         breakdown = "・".join(f"{k}{v}件" for k, v in submitted_counts.items() if v > 0)
-        msg = (
-            f"📮 **[netkeirin入稿完了] {target_date}（{session_jp}）: "
-            f"{breakdown}（計{total}件）**\n"
-            f"確認: {RACE_AUTH_URL}\n"
-            f"内容を確認の上、公開してください。"
-        )
+        if propose_only:
+            # 承認制。netkeirin にはまだ何も出ていないので、netkeirin の
+            # 公開待ち一覧ではなく**自前の確認画面**へ誘導する。
+            msg = (
+                f"📝 **[netkeirin入稿案] {target_date}（{session_jp}）: "
+                f"{breakdown}（計{total}件）**\n"
+                f"確認・承認: {REVIEW_URL}\n"
+                f"⚠️ 承認するまで netkeirin へは出ません。"
+            )
+        else:
+            msg = (
+                f"📮 **[netkeirin入稿完了] {target_date}（{session_jp}）: "
+                f"{breakdown}（計{total}件）**\n"
+                f"確認: {RACE_AUTH_URL}\n"
+                f"内容を確認の上、公開してください。"
+            )
         if all_failures:
             msg += f"\n⚠️ 入稿失敗 {len(all_failures)}件: " + " / ".join(all_failures)
         try:
