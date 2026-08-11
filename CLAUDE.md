@@ -298,6 +298,11 @@ BackgroundTask で走らせる。realtime は同じ 0B11 を約30秒ごとに投
 **JV-Link がモーダルダイアログを出してデスクトップセッションを掴む**こと。
 エージェントは `pythonw.exe` 起動でダイアログを閉じる者がいないため COM がブロックする。
 
+> 2026-08-12 以降は `windows-agent/jvlink_dialog_guard.py` が `BlockingCallGuard` から
+> 自動応答するので、この型のブロックは自力で復帰する。ただし**窓では最初から呼ばない**
+> 方針は変えない（メンテナンス中は呼んでも無駄で、処理枠を食うだけのため）。
+> 同じ型の別事例と調べ方は「jvlink_agent トラブルシューティング」を参照。
+
 > 実測 2026-08-04 13:41: JVOpen が **1193秒（約20分）**待たされた末に -504。
 > `jvlink_historical` の `time_limit=7200` 秒の処理枠をそれだけで食い潰した。
 
@@ -749,22 +754,65 @@ ssh windows-vm "powershell -Command \"Get-Content 'C:\\kiseki\\windows-agent\\jv
 
 ### jvlink_agent トラブルシューティング
 
-**JVOpen が無限ブロックする場合**（JVLinkAgent が外部接続を全くしない）:
-```bash
-# Step 1: 残存 JVNextCore プロセスを確認・kill
-ssh windows-vm "powershell -Command \"Get-Process JVNextCore -ErrorAction SilentlyContinue | Select-Object Id,CPU\""
-ssh windows-vm "powershell -Command \"Stop-Process -Name JVNextCore -Force -ErrorAction SilentlyContinue\""
+#### JVOpen が無限ブロックする場合 — **まずモーダルダイアログを疑う**
 
-# Step 2: stale event ディレクトリをクリア
-ssh windows-vm "powershell -Command \"Remove-Item 'C:\\ProgramData\\JRA-VAN\\Data Lab\\event\\*' -Recurse -Force -ErrorAction SilentlyContinue\""
+> 🔴 **旧記述（「残存 JVNextCore を kill する」）は誤りだったので削除した。**
+> `JVNextCore.exe` は `C:\Program Files (x86)\JRA-VAN\NEXT5\` ＝ **JV-Next(DM取得アプリ)の
+> 実行体**で JV-Link Data Lab とは無関係。JVOpen 中に動くことはない（0プロセスのまま）。
+> kill しても JVOpen は直らず、DM 取得側を止めるだけ。
+> 2026-08-06〜08-12 に蓄積系が **6日間**止まったとき、この手順が最初の一手として
+> 書かれていたことが遠回りの一因になった。
 
-# Step 3: JVLinkAgent を再起動
-ssh windows-vm "powershell -Command \"Restart-Service JVLinkAgent\""
+**実績のある原因は「JV-Link がモーダルを出して押されるのを待っている」**。
+`pythonw.exe` には押す者がいないので永久に返らない。2026-08-06 の実例:
 
-# Step 4: RunAdhoc 経由で再実行
+```
+JRA-VAN DataLab.   (ウィンドウクラス #32770)
+  現在のバージョンより新しいバージョン(5.0.0)のJV-Linkが存在します。
+  新しいバージョンをダウンロードしますか？   [はい] [いいえ]
 ```
 
-**原因**: 以前の JVOpen 異常終了時に JVNextCore が残存し JVLinkAgent を占有する。複数の JVNextCore が残っていると（特に CPU が 100秒以上のもの）、新しい JVOpen リクエストを処理できなくなる。
+`windows-agent/jvlink_dialog_guard.py` が `BlockingCallGuard` から5秒ごとに自動応答する
+ようになったので**通常は自動復帰する**。それでも止まる場合の調べ方:
+
+```bash
+# 実測診断（JVOpen をワーカースレッドで呼び、接続・CPU・ウィンドウを記録する）
+ssh windows-vm 'powershell -NoProfile -Command "Set-Content -Path \"C:\kiseki\windows-agent\adhoc_cmd.txt\" -Value \"probe_jvopen_block.py TOKU 7 1\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
+scp windows-vm:C:/kiseki/windows-agent/probe_jvopen_block.log /tmp/  # 文面が出る
+
+# ダイアログ自動応答そのものの動作確認（合成ダイアログで押せるか）
+ssh windows-vm 'powershell -NoProfile -Command "Set-Content -Path \"C:\kiseki\windows-agent\adhoc_cmd.txt\" -Value \"selftest_dialog_guard.py\" -Encoding ASCII"'
+ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
+```
+
+🔴 **調べ方を間違えないための2点**（2026-08-12 に6日間誤診した原因そのもの）:
+
+- **`Process.MainWindowHandle` でダイアログの有無を判定してはいけない。**
+  この種のダイアログは非表示扱いで MainWindowHandle には出ない。
+  必ず `EnumWindows` で全トップレベルを列挙し `class=#32770` を探す
+- **SSH 経由の PowerShell からは対話セッションのウィンドウが見えない**（別ウィンドウ
+  ステーションになる。実測: 全デスクトップで1件しか見えず、正しくは114件）。
+  **ブロックしているプロセス自身から** `EnumWindows` すること
+
+**症状が「通信ゼロ・CPUゼロ・JVLinkAgent へ接続すらしない・再起動しても再発」でも
+ネットワーク障害とは限らない。** ダイアログはネットワークに出る**前**に出る。
+
+⚠️ ダイアログの「今後表示しない」チェックは**当てにできない**（実機で入れても再出現した）。
+⚠️ **「はい」を押してはいけない**（バージョンアップのダウンロードが始まる）。
+`jvlink_dialog_guard` は いいえ / No / キャンセル / Cancel / OK だけを押す。
+
+#### 効果が無かった対処（再試行しないこと）
+
+`event` ディレクトリのクリア / `JVLinkAgent` サービス再起動 / Windows VM の再起動 /
+`JVNextCore` の kill。到達性・ファイアウォール・認証・ディスク容量・DataSpec 固有・
+他プロセスとの競合・デスクトップセッション不在も**すべて否定済み**。
+
+#### JV-Link のバージョン
+
+**製品バージョン（5.0.0 等）とファイル版数は体系が別**。`JVDTLab.dll` の FileVersion は
+5.0.0 導入後も `1,1,8,0` のままなので**バージョン判定に使わないこと**。実体の更新は
+ファイルサイズと日付で見る（5.0.0 で 2616320 → 2620928 バイト）。
 
 ### JVOpen option の選択指針（重要）
 
@@ -952,18 +1000,31 @@ K=0 primary venue (福島・新潟・中京・小倉) は cross-pairing 仕様�
 → K=0 primary には **必ず Protocol 版を使うこと**。
 
 ### JV-Link rc=-303 修復
-rc=-303（ファイル存在確認エラー）= JVNextCoreがJRA-VANサーバー確認に失敗。
-**最も確実な対処**: Windows VMの再起動。
-```bash
-# Step 1: 修復スクリプト試行（JVNextCoreをkill+テスト）
-prlctl exec "Windows 11" --current-user powershell -Command "cd C:\kiseki\windows-agent; python fix_jvlink_303.py"
 
-# Step 2: それでも-303が続く場合はVM再起動
+rc=-303（ファイル存在確認エラー）。
+
+> ⚠️ 旧記述の「JVNextCore が JRA-VAN サーバー確認に失敗」という説明は**誤り**
+> （JVNextCore は JV-Next=DM取得アプリの実行体で JV-Link とは無関係。上記
+> 「jvlink_agent トラブルシューティング」参照）。`fix_jvlink_303.py` も
+> JVNextCore の kill を含むため、この用途では効果が無い。
+
+**まず `JVLinkAgent` サービスが動いているかを見る。** 2026-08-12 の実測では、
+サービスが停止した直後の JVOpen が -303 を返し、サービスを起こしたら復旧した。
+
+```bash
+# Step 1: サービスの状態を見る（停止していれば起こす）
+ssh windows-vm "powershell -NoProfile -Command \"(Get-Service JVLinkAgent).Status\""
+ssh windows-vm 'schtasks /run /tn kiseki-Start-JVLinkAgent'   # 昇格が要るので専用タスク経由
+
+# Step 2: それでも -303 が続く場合のみ VM 再起動
 # ※ prlctl restart は実際に再起動しない。必ず shutdown /r /t 0 を使うこと
-prlctl exec "Windows 11" --current-user powershell -Command "shutdown /r /t 0"
-until prlctl exec "Windows 11" --current-user powershell -Command "Write-Output 'ready'" 2>/dev/null | grep -q ready; do sleep 5; done
-# 再起動後、jvlink_agent --mode setup を再実行
+ssh windows-vm "shutdown /r /t 0"
+until ssh -o ConnectTimeout=5 windows-vm "powershell -NoProfile -Command \"Write-Output ready\"" 2>/dev/null | grep -q ready; do sleep 5; done
 ```
+
+⚠️ **再起動後に `--mode setup` を再実行しないこと**（旧記述の誤り）。setup は初回専用で
+JVOpen が数時間ブロックする。欠損修復は `--mode fix-race --from-date YYYYMMDD`
+（「JVOpen option の選択指針」参照）。
 
 ## 指数バックフィル運用ルール
 
