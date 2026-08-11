@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
+import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Settings, Send } from "lucide-react";
+import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposals, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
 import {
@@ -1491,6 +1491,12 @@ export default function KeirinPage() {
   //    そのままだと**1件も出ない画面**になって「壊れた」ように見える）。
   const [venueFilter, setVenueFilter] = useState<string | null>(null);
   const [hideNoPickRows, setHideNoPickRows] = useState(false);
+  // 承認制（netkeirin_settings._global.require_approval）と未承認の入稿案件数。
+  // ⚠️ 承認制が ON のときに承認を忘れると **その日の商品が1件も出ない**。
+  //    確認画面への導線と件数バッジをここに出すのがその唯一の常時サインになる
+  //    （Discord の催促は締切前に一度だけ・見落としうる）。
+  const [requireApproval, setRequireApproval] = useState(false);
+  const [nProposed, setNProposed] = useState(0);
 
   /** 表示中の日付に開催がある場（picks の出現順＝発走順）。 */
   const venues = useMemo(() => {
@@ -1555,6 +1561,25 @@ export default function KeirinPage() {
     setVenueFilter(null);
   }, [date]);
 
+  // 未承認バッジ。まず承認制かどうかだけを引き（軽い）、**ON のときだけ**
+  // 入稿案を取りに行く（/proposals は全レースの買い目・出走表を含んで重いため、
+  // 承認制 OFF の平常時にトップページへ乗せてはいけない）。
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const mode = await fetchKeirinApprovalMode().catch(() => ({ require_approval: false }));
+      if (!alive) return;
+      setRequireApproval(mode.require_approval);
+      if (!mode.require_approval) {
+        setNProposed(0);
+        return;
+      }
+      const p = await fetchKeirinProposals(toISODate(date)).catch(() => ({ n_proposed: 0 }));
+      if (alive) setNProposed(p.n_proposed);
+    })();
+    return () => { alive = false; };
+  }, [date]);
+
   useEffect(() => {
     setHideNoPickRows(localStorage.getItem(HIDE_NOPICK_KEY) === "true");
     const onStorage = (e: StorageEvent) => {
@@ -1582,6 +1607,33 @@ export default function KeirinPage() {
           >
             <BarChart2 size={16} />
             <span>成績・売上</span>
+          </Link>
+          {/* 入稿の確認・承認。2026-08-11 の新設時に導線を付け忘れており、URL を
+              直接打たないと辿り着けなかった（ユーザー指摘）。
+              ⚠️ 未承認が残っているときは**モバイルでもラベルを出す**。
+                 他と同じ hidden sm:inline にすると、承認しないとその日の商品が
+                 出ないという最も重い状態がアイコン1つに潰れる
+                 （成績・売上リンクで同じ失敗をしている）。 */}
+          <Link
+            href={`/keirin/review?date=${toISODate(date)}`}
+            className={`flex items-center gap-1 text-xs transition-colors ${
+              nProposed > 0
+                ? "font-semibold text-red-600 dark:text-red-400 hover:text-red-500"
+                : "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400"
+            }`}
+            aria-label={nProposed > 0 ? `入稿確認（未承認 ${nProposed} 件）` : "入稿確認"}
+          >
+            <ClipboardCheck size={15} />
+            <span className={nProposed > 0 ? "" : "hidden sm:inline"}>入稿確認</span>
+            {nProposed > 0 && (
+              <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                {nProposed}
+              </span>
+            )}
+            {/* 承認制 ON で未承認ゼロ＝全部さばけている、と分かるようにする */}
+            {requireApproval && nProposed === 0 && (
+              <span className="hidden sm:inline text-[10px] text-emerald-600 dark:text-emerald-400">承認済</span>
+            )}
           </Link>
           <Link
             href="/keirin/help"

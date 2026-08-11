@@ -7,6 +7,8 @@
  * 出す。操作はレース単位の入稿／取消と、場単位のまとめ入稿。
  */
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
 
@@ -260,6 +262,14 @@ export default function ReviewClient({ date, items, nProposed, requireApproval }
   return (
     <div className="mx-auto max-w-5xl p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        {/* 一覧へ戻る導線（設定・推奨ガイドと同じ形）。無いとブラウザの戻るしかない。 */}
+        <Link
+          href="/keirin"
+          className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+        >
+          <ArrowLeft size={16} />
+          戻る
+        </Link>
         <h1 className="text-lg font-semibold">入稿の確認・承認</h1>
         <span className="text-sm text-gray-500">{date}</span>
         <span className="text-sm">
