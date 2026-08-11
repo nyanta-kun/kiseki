@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, Settings, Send } from "lucide-react";
@@ -9,8 +9,6 @@ import { fetchKeirinPicks, fetchKeirinSummary, type KeirinPick, type KeirinSumma
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
 import {
   refreshKeirinPicksAction as refreshKeirinPicks,
-  triggerKeirinFetchOddsAction as triggerKeirinFetchOdds,
-  triggerKeirinFetchResultsAction as triggerKeirinFetchResults,
   triggerKeirinSubmitRaceAction as triggerKeirinSubmitRace,
 } from "./actions";
 import { todayYYYYMMDD } from "@/lib/utils";
@@ -1488,11 +1486,26 @@ export default function KeirinPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
-  const [fetchingOdds, setFetchingOdds] = useState(false);
-  const [fetchingResults, setFetchingResults] = useState(false);
-  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  // 表示中の日付に開催がある場だけを出すトグル。null = 全て。
+  // ⚠️ 日付を変えたら選択を解除する（前日に選んでいた場が翌日は無いことがあり、
+  //    そのままだと**1件も出ない画面**になって「壊れた」ように見える）。
+  const [venueFilter, setVenueFilter] = useState<string | null>(null);
   const [hideNoPickRows, setHideNoPickRows] = useState(false);
-  const isToday = date === todayYYYYMMDD();
+
+  /** 表示中の日付に開催がある場（picks の出現順＝発走順）。 */
+  const venues = useMemo(() => {
+    const seen: string[] = [];
+    for (const p of picks) {
+      if (p.venue_name && !seen.includes(p.venue_name)) seen.push(p.venue_name);
+    }
+    return seen;
+  }, [picks]);
+
+  /** 場フィルタ適用後のピック。null（全て）ならそのまま。 */
+  const shownPicks = useMemo(
+    () => (venueFilter ? picks.filter((p) => p.venue_name === venueFilter) : picks),
+    [picks, venueFilter],
+  );
   const hasCand = picks.some((p) => p.race_key.includes("#CAND"));
   // 隠せる行（ピック無し・ガミ落ちで推奨外が確定した行）がある日だけ切替を出す。
   // 判定は一覧側の描画条件と**同じ式**にすること（片方だけ直すと、ボタンは
@@ -1533,37 +1546,14 @@ export default function KeirinPage() {
     }
   }, [date, loadData]);
 
-  const handleFetchOdds = useCallback(async () => {
-    setFetchingOdds(true);
-    setActionMsg(null);
-    try {
-      const result = await triggerKeirinFetchOdds();
-      setActionMsg(result.ok ? "オッズ更新を開始しました（約30秒後に再読込）" : `エラー: ${result.message}`);
-      if (result.ok) setTimeout(() => void loadData(date), 35000);
-    } catch {
-      setActionMsg("オッズ更新に失敗しました");
-    } finally {
-      setFetchingOdds(false);
-    }
-  }, [date, loadData]);
-
-  const handleFetchResults = useCallback(async () => {
-    setFetchingResults(true);
-    setActionMsg(null);
-    try {
-      const result = await triggerKeirinFetchResults();
-      setActionMsg(result.ok ? "結果取得を開始しました（約60秒後に再読込）" : `エラー: ${result.message}`);
-      if (result.ok) setTimeout(() => void loadData(date), 65000);
-    } catch {
-      setActionMsg("結果取得に失敗しました");
-    } finally {
-      setFetchingResults(false);
-    }
-  }, [date, loadData]);
-
   useEffect(() => {
     void loadData(date);
   }, [date, loadData]);
+
+  // 日付が変わったら場の選択を解除する（上記の理由）
+  useEffect(() => {
+    setVenueFilter(null);
+  }, [date]);
 
   useEffect(() => {
     setHideNoPickRows(localStorage.getItem(HIDE_NOPICK_KEY) === "true");
@@ -1621,6 +1611,43 @@ export default function KeirinPage() {
       {/* 日付ナビ */}
       <DateNav date={date} onChange={setDate} />
 
+      {/* 場フィルタ。一番左が「全て」。開催が2場以上ある日だけ出す
+          （1場しかない日に出しても選択肢にならない）。
+          場名は日によって数が変わるので横スクロールさせる。 */}
+      {venues.length > 1 && (
+        <div className="-mx-1 overflow-x-auto">
+          <div className="flex gap-1.5 px-1 pb-1 w-max">
+            <button
+              type="button"
+              aria-pressed={venueFilter === null}
+              onClick={() => setVenueFilter(null)}
+              className={
+                venueFilter === null
+                  ? "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-blue-600 text-white"
+                  : "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800"
+              }
+            >
+              全て
+            </button>
+            {venues.map((v) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={venueFilter === v}
+                onClick={() => setVenueFilter((cur) => (cur === v ? null : v))}
+                className={
+                  venueFilter === v
+                    ? "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap bg-blue-600 text-white"
+                    : "px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800"
+                }
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* エラー */}
       {error && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-3 text-sm text-amber-700">
@@ -1642,7 +1669,7 @@ export default function KeirinPage() {
       ) : (
         <>
           <div className="space-y-2">
-            {picks.map((p, idx) => {
+            {shownPicks.map((p, idx) => {
               if (!p.has_pick) {
                 if (hideNoPickRows) return null;
                 return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
@@ -1663,8 +1690,8 @@ export default function KeirinPage() {
         <div className="max-w-3xl mx-auto px-3 py-2 space-y-1.5">
           {/* 行1: 日付ナビ（前月・前日・今日・日付指定・翌日・翌月） */}
           <DateNav date={date} onChange={setDate} />
-          {/* 行2: アクション（採点更新・オッズ更新・結果取得・推奨外の表示切替） */}
-          {(hasCand || isToday || hasHideableRows) && (
+          {/* 行2: アクション（採点更新・推奨外の表示切替） */}
+          {(hasCand || hasHideableRows) && (
             <div className="flex items-center gap-2">
               {hasCand && (
                 <button
@@ -1674,24 +1701,6 @@ export default function KeirinPage() {
                 >
                   {refreshing ? "採点中…" : "⚡ 採点更新"}
                 </button>
-              )}
-              {isToday && (
-                <>
-                  <button
-                    onClick={handleFetchOdds}
-                    disabled={fetchingOdds}
-                    className="flex-1 px-2 py-1.5 rounded-lg border border-cyan-300 dark:border-cyan-600 text-xs font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
-                  >
-                    {fetchingOdds ? "更新中…" : "📊 オッズ更新"}
-                  </button>
-                  <button
-                    onClick={handleFetchResults}
-                    disabled={fetchingResults}
-                    className="flex-1 px-2 py-1.5 rounded-lg border border-violet-300 dark:border-violet-600 text-xs font-semibold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50 disabled:cursor-not-allowed text-center whitespace-nowrap"
-                  >
-                    {fetchingResults ? "取得中…" : "📋 結果取得"}
-                  </button>
-                </>
               )}
               {/* 推奨外（ピック無し・ガミ落ち）の表示切替。
                   ⚠️ ラベルは**現在の状態**を書く（「非表示にする」ではなく「非表示中」）。
@@ -1717,9 +1726,9 @@ export default function KeirinPage() {
             </div>
           )}
           {/* アクション実行メッセージ */}
-          {(refreshMsg || actionMsg) && (
+          {refreshMsg && (
             <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight text-center">
-              {refreshMsg ?? actionMsg}
+              {refreshMsg}
             </p>
           )}
         </div>
