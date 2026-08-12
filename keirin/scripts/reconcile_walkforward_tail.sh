@@ -83,6 +83,9 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # RANK_7C（ベースモデル・終日の二軸・2026-08-07新設）は rebuild_7c_walkforward_pg.py
 # を同時に用意したのでここに含める。7C は eval モデルしか使わないため
 # bad の vintage が無い月でも窓が落ちない。
+# RANK_7H3（穴推奨・本命連対どまり型・2026-08-12新設）も同じ理由でここへ登録する。
+# 7H3 は eval/win の2モデルしか要らないので --skip-missing-models は不要。
+#
 # RANK_7H1（穴推奨・本命バスト型）は rebuild_7h1_walkforward_pg.py の実装
 # （2026-08-07 commit 89acd9a）と同時に登録すべきだったが漏れていた。
 # 2026-08-08 のレビューで検出し追加（それまで 7H1 の当月だけ live 行が残り、
@@ -92,7 +95,7 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # ⚠️ そのテストは**この for 行だけをパースする**。過去、全文の文字列一致で
 #    書かれていたため上のコメントに含まれる "7h1:7H1" を拾って未登録のまま
 #    PASS していた（＝安全網が丸ごと無効だった）。
-for spec in "7ss:7SS" "7s:7S" "7a:7A" "7b:7B" "7c:7C" "9s:9S" "9a:9A" "7h1:7H1"; do
+for spec in "7ss:7SS" "7s:7S" "7a:7A" "7b:7B" "7c:7C" "9s:9S" "9a:9A" "7h1:7H1" "7h3:7H3"; do
   script="${spec%%:*}"
   label="${spec##*:}"
   .venv/bin/python3 "scripts/rebuild_${script}_walkforward_pg.py" --tail-only 2>&1 | tee -a "$LOG" \
