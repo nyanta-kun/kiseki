@@ -16,7 +16,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
-import { fetchKeirinStats, type KeirinStatItem, type KeirinStatsResponse } from "@/lib/api";
+import { fetchKeirinStats, type KeirinStatItem, type KeirinStatsResponse, fetchKeirinSummary} from "@/lib/api";
 import { fetchNetkeirinSales, type NetkeirinSalesResponse } from "@/lib/api";
 import { fetchKeirinSalesAnalysis, type KeirinSalesAnalysisResponse } from "@/lib/api";
 import AnalysisTab from "./AnalysisTab";
@@ -244,6 +244,10 @@ export default function KeirinStatsPage() {
   const [includeManual, setIncludeManual] = useState(false);
   const [from, setFrom] = useState(() => calcRange("30d").from);
   const [to, setTo] = useState(() => calcRange("30d").to);
+  // 入稿対象OFFのランクは絞り込みチップからも外す（2026-08-12・ユーザー要望）。
+  // 一覧は /keirin/summary が返す（判定は netkeirin_settings.enabled の1点）。
+  // ⚠️ null のあいだ・古いAPIでは絞らない（fail-open）。
+  const [visibleRanks, setVisibleRanks] = useState<string[] | null>(null);
   const [data, setData] = useState<KeirinStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -295,6 +299,12 @@ export default function KeirinStatsPage() {
     } finally {
       setAnalysisLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void fetchKeirinSummary()
+      .then(r => setVisibleRanks(r.visible_ranks ?? null))
+      .catch(() => setVisibleRanks(null));
   }, []);
 
   useEffect(() => {
@@ -493,7 +503,7 @@ export default function KeirinStatsPage() {
         {tab === "performance" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">ランク</span>
-          {RANK_FILTERS.map(r => (
+          {RANK_FILTERS.filter(r => r.key === "all" || !visibleRanks || visibleRanks.includes(r.key)).map(r => (
             <button
               key={r.key}
               onClick={() => toggleRank(r.key)}
