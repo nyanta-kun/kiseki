@@ -581,43 +581,55 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
     // 🔴 数値列が4本（単勝率・2着内率・複勝率・競走得点）になり、狭い端末では
     //    テーブルが card 幅を超える。**ページごと横スクロールさせない**ため、
     //    ここで内側スクロールに閉じ込める（`feedback_fixed_layout`）。
+    //
+    // 🔴 **`w-full` にしてはいけない**（2026-08-12 修正）。`overflow-x-auto` の
+    //    内側で `w-full` を指定すると、テーブルは常に親幅ちょうどに収まるので
+    //    **横スクロールが一度も発生しない**。代わりに幅指定の無い列（選手名）が
+    //    限界まで潰され、iPhone 実機では**1文字ずつ縦積み**になって行高が
+    //    5倍近くまで伸びていた。`min-w-max` で内容の自然幅を確保し、
+    //    はみ出したぶんを実際にスクロールさせる。
+    //
+    //    ⚠️ `w-full` を**併記する**こと。`min-w-max` だけだと広い画面で
+    //       テーブルが内容幅のまま左に寄り、カード右側が空く。CSS では
+    //       min-width が width に優先するので、この2つで
+    //       「広い画面＝カード幅いっぱい / 狭い画面＝内容幅＋横スクロール」になる。
     <div className="overflow-x-auto">
-    <table className="w-full">
+    <table className="w-full min-w-max">
       <thead>
         <tr className="border-b border-gray-100 dark:border-gray-700">
-          <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-7 sm:w-8">車</th>
-          <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs">選手名</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-6 sm:w-8">W</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-9 sm:w-12">戦法</th>
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
+          <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-7 sm:w-8">車</th>
+          <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs whitespace-nowrap">選手名</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-6 sm:w-8">W</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-9 sm:w-12">戦法</th>
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
           {/* 2着内率（連対率）。1着率・3着内率と同じ経路のモデル出力（lgbm_wt_top2）。
               2026-08-12 以前のレースは列が無かったので「—」になる。 */}
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">2着内率</th>
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
-          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-11 sm:w-14 whitespace-nowrap">競走得点</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-400 text-xs w-8 sm:w-10">着</th>
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">2着内率</th>
+          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
+          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">競走得点</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-8 sm:w-10">着</th>
         </tr>
       </thead>
       <tbody>
         {sorted.map((e) => (
           <tr key={e.frame_no} className="border-b border-gray-50 dark:border-gray-700 last:border-0">
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm text-gray-800 dark:text-gray-100">{e.name ?? "—"}</td>
-            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
-            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center text-gray-500 dark:text-gray-400 text-xs">{e.style ?? "—"}</td>
-            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-2 sm:px-3 py-0.5 sm:py-1 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
+            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-xs sm:text-sm text-gray-800 dark:text-gray-100 whitespace-nowrap">{e.name ?? "—"}</td>
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-500 dark:text-gray-300 text-xs">{e.style ?? "—"}</td>
+            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normWin(e.pred_win_pct) != null ? `${normWin(e.pred_win_pct)!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normTop2(e.pred_top2_pct) != null ? `${normTop2(e.pred_top2_pct)!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-1.5 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {normTop3(e.pred_top3_pct) != null ? `${normTop3(e.pred_top3_pct)!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-2 sm:px-3 py-1 sm:py-1.5 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}
             </td>
-            <td className="px-1 sm:px-3 py-1 sm:py-1.5 text-center">
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center">
               {e.finish_order != null && e.finish_order > 0 ? (
                 <span
                   className={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 rounded-full text-xs font-bold
