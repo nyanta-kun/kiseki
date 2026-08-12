@@ -1463,6 +1463,13 @@ export interface KeirinProposal {
   grade: string | null;
   race_type: string | null;
   is_marquee: boolean;
+  /** 勝負アイコン「自信あり」に選ばれた1レース。netkeirin は1日1つしか付けられず、
+   *  当日全レースの期待値（予測オッズ × PLの三連複的中率）で1件だけ選ばれる。 */
+  is_confident: boolean;
+  /** 「自信あり」の選定に使った期待値（全点を予測オッズで統一）。
+   *  🔴 `expected_value`（板由来）とは別物。夜開催は朝の板が育っていないため、
+   *  終日を同じ土俵で比べるにはこちらを使う。 */
+  confident_ev: number | null;
   start_at: number | null;
   n_entries: number | null;
   axis1: number | null;

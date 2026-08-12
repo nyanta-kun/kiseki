@@ -178,6 +178,16 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
         <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-gray-800">
           {p.rank_key}
         </span>
+        {/* 勝負アイコン「自信あり」。**1日1レースだけ**なので目立たせる。
+            選定は keirin の pick_confident_race_wt.py（当日全レースの期待値比較）。 */}
+        {p.is_confident && (
+          <span
+            className="rounded bg-yellow-400 px-1.5 py-0.5 text-xs font-semibold text-yellow-950 dark:bg-yellow-500 dark:text-yellow-950"
+            title="本日の「自信あり」に選ばれたレース（期待値が当日最高）。netkeirin では1日1つしか付けられません"
+          >
+            ★自信
+          </span>
+        )}
         {p.is_marquee && (
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-200">
             看板
@@ -273,8 +283,16 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
         <div>
-          <span className="text-gray-500">期待値</span>{" "}
-          {p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
+          {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
+              統一したもの）。板由来の `expected_value` は夜開催で板が育っておらず
+              終日の比較に使えないため、選定の根拠にはならない。
+              選定前（confident_ev が未算出）のときだけ従来の板由来を出す。 */}
+          <span className="text-gray-500">
+            期待値{p.confident_ev !== null && <span className="text-[10px]">(予測)</span>}
+          </span>{" "}
+          {p.confident_ev !== null
+            ? p.confident_ev.toFixed(2)
+            : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
           {/* 🔴 予測オッズ由来が混ざっているなら黙って出さない。
               板の実測値と同じ顔で並べると「実際にこの払戻」と読まれる。 */}
           {p.odds_has_predicted && (

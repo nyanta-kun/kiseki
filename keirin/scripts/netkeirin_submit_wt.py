@@ -393,11 +393,21 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
 #    同じ「ランク一覧の二重管理」は kiseki 側でも繰り返し事故を起こしている。
 RANK_ORDER = list(RANK_CONFIGS)
 
-# 勝負アイコン「自信あり」を付けるランク（2026-08-05・ユーザー指示で 7SS のみ）。
-# 🔴 **単一正本にする**。傾斜配分の導入で submit_pick 経路と submit_pick_multi 経路の
-#    2箇所で判定するようになったため、`rank_key == "7SS"` を手書きで2つ持つと
-#    片方だけ直して静かに食い違う（本ファイルの RANK_ORDER で実際に起きた型）。
-CONFIDENT_RANKS = {"7SS"}
+# 勝負アイコン「自信あり」— **ランクでは決めない**（2026-08-13・ユーザー指示で変更）。
+#
+# netkeirin の「自信あり」は **1日に1つしか付けられない**。2026-08-05〜08-12 は
+# `CONFIDENT_RANKS = {"7SS"}` として 7SS の入稿すべてに付けていたため、
+# 7SS が複数出た日は**先に入稿したものが取っていた**（選定ではなかった）。
+#
+# 新仕様: 朝の日次バッチの入稿後に `scripts/pick_confident_race_wt.py` が
+# **当日全レースの期待値（予測オッズ × PL三連複確率）を比べて1件だけ**
+# `netkeirin_submissions.is_confident` を立てる。入稿・承認の経路はその列を
+# 読むだけで、自分で選び直さない。
+#
+# 🔴 **承認制が OFF のときは自信アイコンが付かない。** 直接入稿はレースごとに
+#    その場で netkeirin へ送るので、**当日全レースが出揃う前**に送信が終わる＝
+#    「一番良いレース」を知りようがない。netkeirin は公開後に差し替えできないため
+#    後から付け直すこともできない。承認制 ON が前提の仕組み。
 
 
 # ---------------------------------------------------------------------------
@@ -1644,13 +1654,11 @@ def _process_rank(
                     race_date=race_date, venue_name=venue_name, race_no=race_no,
                     n_cars=cfg["n_cars"], legs=legs, marks=marks,
                     title=title, comment=comment,
-                    # 「自信あり」は最上位の 7SS のみ。submit_pick は confident=True
-                    # から act_type を導くが submit_pick_multi は act_type 直指定なので、
-                    # 傾斜配分経路でも同じ勝負アイコンになるようここで合わせる。
-                    act_type=cfg.get(
-                        "act_type",
-                        ACT_TYPE_CONFIDENT if rank_key in CONFIDENT_RANKS
-                        else ACT_TYPE_DEFAULT),
+                    # 🔴 ここでは「自信あり」を付けない（2026-08-13〜）。選定は
+                    #    当日全レースが出揃ったあとに行うので、この時点では
+                    #    どれが最良か分からない。承認経路（approve_and_submit）が
+                    #    `is_confident` を読んで付ける。
+                    act_type=cfg.get("act_type", ACT_TYPE_DEFAULT),
                 )
             else:
                 ok, msg = client.submit_pick(
@@ -1661,9 +1669,8 @@ def _process_rank(
                     partners=partners,
                     stake_per_line=_stake_per_line(cfg, len(partners)),
                     title=title, comment=comment,
-                    # 「自信あり」は最上位の 7SS のみ（2026-08-05・ユーザー指示）。
-                    # 上限に当たれば client 側が type=0 で自動リトライする。
-                    confident=(rank_key in CONFIDENT_RANKS),
+                    # 🔴 ここでは付けない（上の multi 経路と同じ理由）。
+                    confident=False,
                 )
         except Exception as e:
             ok, msg = False, f"例外: {e}"
@@ -1840,8 +1847,8 @@ def _process_manual(
                 n_cars=cfg["n_cars"], legs=legs,
                 marks={**{c: "△" for c in partners}, axis1: "◎", axis2: "○"},
                 title=title, comment=comment,
-                act_type=(ACT_TYPE_CONFIDENT if rank_key in CONFIDENT_RANKS
-                          else ACT_TYPE_DEFAULT),
+                # 手動入稿は選定を経ていないので「自信あり」は付けない。
+                act_type=ACT_TYPE_DEFAULT,
             )
         else:
             ok, msg = NetkeirinClient(propose_only=_approval_required()).submit_pick(
@@ -2128,9 +2135,14 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
             n_cars=int(cfg.get("n_cars") or 0) or _n_cars_from_marks(marks),
             legs=legs, marks=marks,
             title=row["title"] or "", comment=row["comment"] or "",
+            # 🔴 「自信あり」は **選定済みの1レースだけ**（`is_confident`）。
+            #    ランクでは決めない（2026-08-13〜）。選ぶのは
+            #    `scripts/pick_confident_race_wt.py` で、ここは列を読むだけ。
+            #    ⚠️ ランク側が `act_type` を明示している場合（7T1 の「穴狙い」等）は
+            #       そちらを優先する。自信と穴狙いは同時に付けられない。
             act_type=cfg.get(
                 "act_type",
-                ACT_TYPE_CONFIDENT if rank_key in CONFIDENT_RANKS else ACT_TYPE_DEFAULT),
+                ACT_TYPE_CONFIDENT if row.get("is_confident") else ACT_TYPE_DEFAULT),
         )
     except Exception as e:  # noqa: BLE001 — 1件の失敗で承認画面を落とさない
         ok, msg = False, f"例外: {e}"
