@@ -41,6 +41,7 @@ from scripts.netkeirin_submit_wt import (  # noqa: E402
     cancel_submission,
 )
 from src.database import get_connection  # noqa: E402
+from src.submit_window import SUBMIT_DEADLINE_SEC, is_closed  # noqa: E402
 
 
 def _proposals_for_venue(date: str, venue_name: str) -> list[tuple[str, str]]:
@@ -84,9 +85,40 @@ def _cancelable(date: str, venue_name: str | None) -> list[tuple[str, str]]:
     return [(r["race_key"], r["rank_key"]) for r in rows]
 
 
+def _closed_race_keys(targets: list[tuple[str, str]]) -> set[str]:
+    """締切（発走15分前）を過ぎたレースの race_key。
+
+    🔴 **ここが実際の関門**。API 側（kiseki）はレース単位しか見ないので、
+       場単位・全件の一括操作はここで初めて締切に当たる。
+    """
+    from datetime import datetime
+
+    keys = sorted({rk.split("#")[0] for rk, _ in targets})
+    if not keys:
+        return set()
+    now = datetime.now().timestamp()
+    ph = ",".join("?" * len(keys))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT race_key, start_at FROM wt_races WHERE race_key IN ({ph})",
+            keys,
+        ).fetchall()
+    return {r["race_key"] for r in rows if is_closed(r["start_at"], now)}
+
+
 def _run(action: str, targets: list[tuple[str, str]], force: bool = False) -> dict:
     results = []
+    # 🔴 締切を過ぎたレースは netkeirin が受け付けない。**先に落として理由を返す**
+    #    （黙って成功扱いにすると、出ていないのに出したことになる）。
+    #    `force` は netkeirin を触らず記録だけ直すので締切に関係なく通す。
+    closed = set() if force else _closed_race_keys(targets)
     for race_key, rank_key in targets:
+        if race_key.split("#")[0] in closed:
+            results.append({
+                "race_key": race_key, "rank_key": rank_key, "ok": False,
+                "message": f"発走{SUBMIT_DEADLINE_SEC // 60}分前を過ぎているため操作できません",
+            })
+            continue
         try:
             if action == "approve":
                 ok, message = approve_and_submit(race_key, rank_key)

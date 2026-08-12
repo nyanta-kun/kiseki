@@ -14,8 +14,9 @@
  *    確認・承認の作業画面に「承認制そのものを切る」スイッチが同居していると、
  *    レースを見ている最中に誤って全体設定を倒しうる。
  */
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
@@ -138,9 +139,26 @@ function EntryTable({ entries, axis1, axis2 }: {
   );
 }
 
-function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel }: {
+/**
+ * 入稿・取消の締切（発走15分前）。
+ *
+ * 🔴 判定の正本は `backend/src/services/keirin_submission_window.py`。
+ *    ここは表示のためだけの写しで、**API 側でも必ず弾く**（画面を信用しない）。
+ *    値がずれたら `backend/tests/test_keirin_submission_window.py` が落ちる。
+ */
+const SUBMIT_DEADLINE_SEC = 15 * 60;
+
+/** 締切を過ぎているか。発走時刻が取れない行は「締切前」扱い（＝操作を許す）。 */
+function isClosed(startAt: number | null, nowSec: number): boolean {
+  if (startAt === null) return false;
+  return startAt - SUBMIT_DEADLINE_SEC - nowSec <= 0;
+}
+
+function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForceCancel }: {
   p: KeirinProposal;
   busy: boolean;
+  /** 発走15分前を過ぎた＝netkeirin が受け付けないので入稿・取消できない。 */
+  closed: boolean;
   onApprove: () => void;
   onCancel: () => void;
   /** 通常の取消が「netkeirin に見つからない」で失敗した後だけ true。 */
@@ -193,12 +211,21 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
         >
           {p.status === "proposed" ? "未入稿" : p.status === "submitted" ? "入稿済" : "取消"}
         </span>
+        {closed && p.status !== "deleted" && (
+          <span
+            className="rounded bg-gray-300 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-600 dark:text-gray-200"
+            title="発走15分前を過ぎたため netkeirin が入稿・取消を受け付けません"
+          >
+            締切
+          </span>
+        )}
         <span className="ml-auto flex gap-2">
           {p.status === "proposed" && (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || closed}
               onClick={onApprove}
+              title={closed ? "発走15分前を過ぎたため入稿できません" : undefined}
               className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-50"
             >
               このレースを入稿
@@ -207,8 +234,9 @@ function RaceCard({ p, busy, onApprove, onCancel, canForceCancel, onForceCancel 
           {p.status !== "deleted" && (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || closed}
               onClick={onCancel}
+              title={closed ? "発走15分前を過ぎたため取消できません" : undefined}
               className="rounded border border-red-300 px-3 py-1 text-xs text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
             >
               取消
@@ -325,8 +353,25 @@ export default function ReviewClient({ date, items, nProposed }: {
   items: KeirinProposal[];
   nProposed: number;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  /**
+   * 締切判定に使う現在時刻（秒）。
+   *
+   * 🔴 サーバー側で計算すると **描画した瞬間の値で固まる**。この画面は上から順に
+   *    確認していく作りで長時間開いたままになるため、開いている間に締切を跨ぐ。
+   *    30秒ごとに進めてボタンの活殺を追従させる。
+   * 🔴 初期値を `Date.now()` にすると SSR とクライアントで値が食い違い
+   *    hydration エラーになる。マウント後に入れる（それまでは締切前扱い）。
+   */
+  const [nowSec, setNowSec] = useState<number>(0);
+  useEffect(() => {
+    const tick = () => setNowSec(Math.floor(Date.now() / 1000));
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, []);
   const [view, setView] = useState<ViewMode>("venue");
   // 畳んだ場。**既定は全て開いた状態**（畳むのは能動的な操作）。
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -336,7 +381,10 @@ export default function ReviewClient({ date, items, nProposed }: {
   //    商品を消したつもりで記録だけ消す事故につながる。
   const [forceTargets, setForceTargets] = useState<Record<string, boolean>>({});
   // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
-  const nAliveAll = useMemo(() => items.filter((p) => p.status !== "deleted").length, [items]);
+  const nAliveAll = useMemo(
+    () => items.filter((p) => p.status !== "deleted" && !isClosed(p.start_at, nowSec)).length,
+    [items, nowSec],
+  );
 
   const byVenue = useMemo(() => {
     const m = new Map<string, KeirinProposal[]>();
@@ -385,8 +433,13 @@ export default function ReviewClient({ date, items, nProposed }: {
       if (!r.ok && onNotFound && `${r.message} ${detail}`.includes("見つかりません")) {
         setForceTargets((prev) => ({ ...prev, [onNotFound]: true }));
       }
-      // 状態が変わるのでサーバーから取り直す
-      if (r.ok) window.location.reload();
+      // 状態が変わるのでサーバーから取り直す。
+      // 🔴 `window.location.reload()` を使ってはいけない。ページ全体が再読込され
+      //    **スクロール位置が先頭へ戻る**。この画面は上から順に確認していく作りなので、
+      //    1件処理するたび先頭へ飛ばされると作業にならない（2026-08-13 修正）。
+      //    `router.refresh()` はサーバーコンポーネントを取り直して差分だけ描き替える
+      //    ので、位置も開閉状態も保たれる。
+      if (r.ok) router.refresh();
     });
   };
 
@@ -396,6 +449,7 @@ export default function ReviewClient({ date, items, nProposed }: {
       key={`${p.race_key}-${p.rank_key}`}
       p={p}
       busy={pending}
+      closed={isClosed(p.start_at, nowSec)}
       onApprove={() => run(() => approveKeirinRaceAction(p.race_key, p.rank_key))}
       onCancel={() => {
         if (!window.confirm(`${p.venue_name}${p.race_no}R (${p.rank_key}) の入稿を取り消します。よろしいですか？`)) return;
@@ -498,9 +552,14 @@ export default function ReviewClient({ date, items, nProposed }: {
       {view === "time" && <div className="space-y-2">{byTime.map(raceCard)}</div>}
 
       {view === "venue" && byVenue.map(([venue, races]) => {
-        const nProp = races.filter((r) => r.status === "proposed").length;
-        // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
-        const nAlive = races.filter((r) => r.status !== "deleted").length;
+        // 🔴 締切（発走15分前）を過ぎたレースは数に入れない。入れると
+        //    「N件をまとめて入稿」の N が実際に通る件数と食い違い、
+        //    押した後に「成功3件/失敗2件」と出て初めて分かることになる。
+        const nProp = races.filter(
+          (r) => r.status === "proposed" && !isClosed(r.start_at, nowSec)).length;
+        // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）で、かつ締切前。
+        const nAlive = races.filter(
+          (r) => r.status !== "deleted" && !isClosed(r.start_at, nowSec)).length;
         const isOpen = !collapsed[venue];
         return (
           <section key={venue} className="mb-6">

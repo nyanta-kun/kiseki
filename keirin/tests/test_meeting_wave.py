@@ -145,7 +145,7 @@ def test_発走済みのレースだけを拾う(monkeypatch):
         {"race_key": "past", "start_at": str(int(now - 3600))},
         {"race_key": "future", "start_at": str(int(now + 3600))},
     ])
-    assert sub._load_started_races("2026-08-07") == {"past"}
+    assert sub._load_closed_races("2026-08-07") == {"past"}
 
 
 def test_発走時刻不明は未発走扱い(monkeypatch):
@@ -154,7 +154,7 @@ def test_発走時刻不明は未発走扱い(monkeypatch):
         {"race_key": "unknown", "start_at": None},
         {"race_key": "broken", "start_at": "not-a-number"},
     ])
-    assert sub._load_started_races("2026-08-07") == set()
+    assert sub._load_closed_races("2026-08-07") == set()
 
 
 def test_発走時刻が全部欠けている開催は朝へ倒れる(monkeypatch):

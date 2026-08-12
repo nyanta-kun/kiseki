@@ -587,8 +587,8 @@ def _load_meeting_waves(target_date: str) -> dict[str, str]:
     return waves
 
 
-def _load_started_races(target_date: str) -> set[str]:
-    """**すでに発走した**レースの race_key。
+def _load_closed_races(target_date: str) -> set[str]:
+    """**入稿の締切（発走15分前）を過ぎた**レースの race_key。
 
     🔴 入稿は「まだ売れるレース」にしか意味がない。従来は入稿が朝の1回だけで
        第1レースより前に必ず終わっていたため誰も見ていなかったが、2026-08-07 に
@@ -597,23 +597,27 @@ def _load_started_races(target_date: str) -> set[str]:
        実際 2026-08-07 17時の再入稿で、朝の波に 岐阜4R(09:32)・6R(10:14) が
        未入稿のまま残っており、ガードが無ければそのまま出していた。
 
-    発走時刻が取れないレースは**発走していない扱い**にする（安全側＝出す）。
+    🔴 判定は「発走したか」ではなく**「発走15分前を過ぎたか」**
+       （2026-08-13 変更）。netkeirin は発走15分前を過ぎると商品を出せないので、
+       発走前でも締切後は出しても弾かれるだけ。閾値は
+       `src/submit_window.SUBMIT_DEADLINE_SEC`（正本は kiseki 側）。
+
+    発走時刻が取れないレースは**締切前**扱いにする（安全側＝出す）。
     情報が無いことを理由に商品を落とすと、黙って商品が消える。
     """
+    from src.submit_window import is_closed
+
     now = datetime.now().timestamp()
-    started: set[str] = set()
+    closed: set[str] = set()
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT race_key, start_at FROM wt_races WHERE race_date = ?",
             (target_date,),
         ).fetchall()
     for r in rows:
-        try:
-            if r["start_at"] and int(r["start_at"]) <= now:
-                started.add(r["race_key"])
-        except (TypeError, ValueError):
-            continue
-    return started
+        if is_closed(r["start_at"], now):
+            closed.add(r["race_key"])
+    return closed
 
 
 def _load_candidates(target_date: str, session: str, file_key: str) -> list[dict]:
@@ -703,13 +707,17 @@ def _already_submitted(race_keys: list[str]) -> set[tuple[str, str]]:
         return set()
     with get_connection() as conn:
         placeholders = ",".join("?" * len(race_keys))
-        # 🔴 取消（status='deleted'）した行は「出していない」扱いにする。
-        #    論理削除なので行は残っており、除外しないと出し直せない。
-        #    入稿案（'proposed'）は**含める**——同じレースへ案を二重に作らないため。
+        # 🔴 **取消（status='deleted'）も「その日は処理済み」として扱う**
+        #    （2026-08-13 変更・ユーザー判断）。race_key は日付を含むので、
+        #    ここに出てくる deleted 行は必ず**同じ日に人が取り消したもの**。
+        #    朝の波で取り消した商品を昼・夕の波が復活させると、
+        #    「確認して落としたはずのものが勝手に戻る」＝確認の意味が消える。
+        #    入稿案（'proposed'）を含めるのは従来どおり（案の二重作成を防ぐ）。
+        #    ⚠️ 取消したレースを出し直したいときは**手動入稿**を使う
+        #       （`--manual-rank-key`。あちらはこの判定を通らない）。
         rows = conn.execute(
             f"SELECT race_key, rank_key FROM netkeirin_submissions "
-            f"WHERE race_key IN ({placeholders}) "
-            f"AND COALESCE(status, 'submitted') <> 'deleted'",
+            f"WHERE race_key IN ({placeholders})",
             race_keys,
         ).fetchall()
     return {(r["race_key"], r["rank_key"]) for r in rows}
@@ -1439,17 +1447,17 @@ def _process_rank(
     #    ⚠️ 自分の波と**完全一致**で絞ると、発走時刻が前倒しに訂正された開催が
     #    通過済みの波へ移り、その日どの回からも入稿されない（2026-08-08 是正）。
     #    `waves_due_by()` で「自分の波 + 前の波」を対象にする。二重入稿は
-    #    `_already_submitted()` が、発走済みは直下の `started` が止める。
+    #    `_already_submitted()` が、締切超過は直下の `started` が止める。
     if waves is not None:
         due_waves = set(waves_due_by(SESSION_WAVE.get(session, WAVE_MORNING)))
         raw = [c for c in raw
                if waves.get(str(c.get("race_key", "")).split("#")[0], WAVE_MORNING) in due_waves]
-    # 発走済みのレースへは出さない（売れないので商品にならない）。
+    # 締切（発走15分前）を過ぎたレースへは出さない（netkeirin が受け付けない）。
     if started is not None:
         n_before = len(raw)
         raw = [c for c in raw if str(c.get("race_key", "")).split("#")[0] not in started]
         if len(raw) < n_before:
-            print(f"[netkeirin_submit] {rank_key}: 発走済み {n_before - len(raw)}件を除外",
+            print(f"[netkeirin_submit] {rank_key}: 締切超過 {n_before - len(raw)}件を除外",
                   flush=True)
     if not raw:
         return 0, []
@@ -1952,11 +1960,11 @@ def main() -> None:
         return
 
     waves = _load_meeting_waves(target_date)
-    started = _load_started_races(target_date)
+    started = _load_closed_races(target_date)
     want_wave = SESSION_WAVE[session]
     # 自分の波 + 取りこぼした過去の波（発走時刻が前倒しに訂正された開催の救済）。
     # 二重入稿は _already_submitted() が、終わったレースへの入稿は
-    # _load_started_races() が止めるので拾い直しても副作用は無い。
+    # _load_closed_races() が止めるので拾い直しても副作用は無い。
     due_waves = set(waves_due_by(want_wave))
     n_wave = sum(1 for w in waves.values() if w == want_wave)
     n_due = sum(1 for w in waves.values() if w in due_waves)
