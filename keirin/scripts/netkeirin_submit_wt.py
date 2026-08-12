@@ -509,11 +509,19 @@ def _stake_note_for(rank_key: str, legs: list[BetLeg]) -> str:
        固定で書くと**半分のレースで嘘になる**（仕様書 §4-6 実態一致の原則）。
        券種ごとに単価がばらついているかで判定する（7H1 は三連単と三連複で単価が
        違うのが正常なので、券種をまたいで比べてはいけない）。
+
+    🔴 **最小単位ぶんの差は「均等」とみなす**（`> STAKE_UNIT` で判定）。
+       均等配分でも予算が点数で割り切れなければ端数が1点に寄る
+       （10,000円/3点 → 3,400 / 3,300 / 3,300）。「単価が1種類か」で見ると
+       この端数だけで傾斜扱いになり、**均等に置いているのに「オッズに応じて
+       配分しています」と嘘の説明が出る**（2026-08-13 に 7T1 で実際に出た）。
     """
+    from src.strategy_wt import STAKE_UNIT
+
     by_kind: dict[str, set[int]] = {}
     for leg in legs:
         by_kind.setdefault(leg.bet_kind, set()).add(leg.stake_per_line)
-    tilted = any(len(v) > 1 for v in by_kind.values())
+    tilted = any(max(v) - min(v) > STAKE_UNIT for v in by_kind.values())
     return stake_note_text(rank_key, tilted)
 
 
