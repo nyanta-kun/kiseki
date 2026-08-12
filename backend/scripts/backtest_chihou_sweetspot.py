@@ -34,6 +34,7 @@ import pandas as pd
 import psycopg2
 
 from src.indices.buy_signal import chihou_is_place_bet, chihou_is_sweet_spot
+from src.services.chihou_place_odds_guard import filter_races_with_full_place_odds
 
 DSN = (
     f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
@@ -77,7 +78,9 @@ def _stats(sub: pd.DataFrame, bet: str) -> tuple[int, int, float]:
         hits = int(mask.sum())
         roi = float(sub.loc[mask, "win_odds"].sum()) / n if n else 0.0
     else:
-        valid = sub[sub["place_odds"].notna()]
+        # place_odds の欠損は着順と相関している（HR払戻は1〜3着しか埋めない）ため
+        # notna() で落とすと母集団が「当たり馬だけ」になる。全馬揃ったレースに限る。
+        valid, _audit = filter_races_with_full_place_odds(sub)
         n = len(valid)
         mask = valid["finish_position"].between(1, 3, inclusive="both")
         hits = int(mask.sum())

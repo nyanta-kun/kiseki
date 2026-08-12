@@ -38,6 +38,7 @@ from src.indices.buy_signal import (
     chihou_low_odds_trust_level,
 )
 from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION
+from src.services.chihou_place_odds_guard import filter_races_with_full_place_odds
 
 DSN = (
     f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
@@ -172,16 +173,18 @@ def print_block(label: str, sub: pd.DataFrame, bet: str) -> None:
         place_mask = sub["finish_position"].between(1, 3, inclusive="both")
         hits = int(place_mask.sum())
         n = len(sub)
-        # 複勝オッズが NULL ならスキップ
-        valid_place = sub[sub["place_odds"].notna()]
+        # place_odds の欠損は着順と相関している（HR払戻は1〜3着しか埋めない）。
+        # notna() で落とすだけだと母集団が「当たり馬だけ」になり ROI が壊れるため、
+        # 全馬に複勝オッズが揃っているレースだけを ROI の母集団にする。
+        valid_place, audit = filter_races_with_full_place_odds(sub)
+        print(f"\n  [{label}] place_bet")
         if not valid_place.empty:
             vp_hits = valid_place["finish_position"].between(1, 3, inclusive="both")
             roi = float(valid_place.loc[vp_hits, "place_odds"].sum()) / len(valid_place)
-            print(f"\n  [{label}] place_bet")
-            print(f"    n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  複勝ROI={roi:.3f}  (place_odds有 n={len(valid_place):,})")
+            print(f"    n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  複勝ROI={roi:.3f}  (ROI母集団 n={len(valid_place):,})")
         else:
-            print(f"\n  [{label}] place_bet")
-            print(f"    n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  (place_odds データなし)")
+            print(f"    n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  (複勝オッズが全馬揃ったレースなし → ROI 算出不可)")
+        print(audit.format())
 
 
 def main() -> None:

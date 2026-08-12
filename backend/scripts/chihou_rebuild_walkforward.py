@@ -64,6 +64,7 @@ from scripts.train_chihou_market_lgb import (  # noqa: E402
     train_binary_control,
 )
 from src.indices.buy_signal import chihou_is_place_bet, chihou_is_sweet_spot
+from src.services.chihou_place_odds_guard import filter_races_with_full_place_odds  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("chihou_walkforward")
@@ -306,11 +307,15 @@ def main() -> None:
             roi = float(sub.loc[mask, "win_odds"].sum()) / n if n else 0.0
             print(f"  [{label}] n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  単勝ROI={roi:.3f}")
         else:
-            valid = sub[sub["place_odds"].notna()]
+            # place_odds の欠損は着順と相関している（HR払戻は1〜3着しか埋めない）。
+            # notna() で落とすだけだと母集団が「当たり馬だけ」になり ROI が壊れる。
+            # 全馬揃っているレースだけを母集団にする。
+            valid, audit = filter_races_with_full_place_odds(sub)
             n = len(valid)
             hits = int(valid["finish_position"].between(1, 3, inclusive="both").sum())
             roi = float(valid.loc[valid["finish_position"].between(1, 3, inclusive="both"), "place_odds"].sum()) / n if n else 0.0
-            print(f"  [{label}] n={n:,}  hits={hits}  hit_rate={hits/n*100:.1f}%  複勝ROI={roi:.3f}")
+            print(f"  [{label}] n={n:,}  hits={hits}  hit_rate={hits/n*100 if n else 0:.1f}%  複勝ROI={roi:.3f}")
+            print(audit.format())
 
     print(f"\n{'='*74}\n  walk-forward honest 集計（全{len(quarters)}四半期・model-vintage leak なし）\n{'='*74}")
 
