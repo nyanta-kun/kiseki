@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from src.importers.chihou_race_importer import (
+    _ENTRY_LATE_ARRIVING_COLS,
     _POST_RACE_ONLY_COLS,
     ChihouRaceImporter,
     _finish_time_to_decimal,
@@ -226,3 +227,60 @@ class TestPostRaceOnlyColumnGuard:
             "condition", "weather", "first_3f", "last_3f_race",
             "lap_times", "finishers_count",
         }
+
+
+class TestEntryLateArrivingColumnGuard:
+    """race_entries の馬体重が発走前SEの再取り込みで消えないことを検査する。
+
+    馬体重は発走の約1時間前まで確定せず、発走前 SE では "000"/"999" で届いて
+    parse_se が None に落とす。無条件上書きだと蓄積系の再取得で実測 92〜95% の
+    充足が消える。ガードを外すと本テストが落ちる。
+    """
+
+    @staticmethod
+    async def _compiled_entry_sql() -> str:
+        from unittest.mock import MagicMock
+
+        execute_result = MagicMock()
+        execute_result.fetchall.return_value = []
+        execute_result.__iter__ = lambda self: iter([])
+        db = AsyncMock()
+        db.execute.return_value = execute_result
+
+        importer = ChihouRaceImporter(db)
+        importer._race_cache["RACE001"] = 1
+        importer._horse_cache["HORSE001"] = 10
+        se = {
+            "jravan_race_id": "RACE001",
+            "jravan_horse_code": "HORSE001",
+            "jravan_jockey_code": "",
+            "jravan_trainer_code": "",
+            "horse_number": 1,
+            "frame_number": 1,
+            "weight_carried": 55.0,
+            "horse_weight": None,
+            "weight_change": None,
+            "horse_age": 4,
+        }
+        await importer._bulk_upsert_entries([se])
+        stmt = db.execute.await_args_list[-1].args[0]
+        return str(stmt.compile(dialect=postgresql.dialect())).lower()
+
+    @pytest.mark.asyncio
+    async def test_horse_weight_uses_coalesce(self) -> None:
+        sql = await self._compiled_entry_sql()
+        for col in _ENTRY_LATE_ARRIVING_COLS:
+            assert f"coalesce(excluded.{col}, chihou.race_entries.{col})" in sql, (
+                f"{col} が COALESCE で保護されていない。"
+                "発走前SEの再取り込みで馬体重が消える"
+            )
+
+    @pytest.mark.asyncio
+    async def test_jockey_change_still_overwrites(self) -> None:
+        """騎手変更は反映する必要があるので jockey_id は素の上書きのままであること。"""
+        sql = await self._compiled_entry_sql()
+        assert "coalesce(excluded.jockey_id" not in sql
+        assert "jockey_id = excluded.jockey_id" in sql
+
+    def test_guard_covers_expected_columns(self) -> None:
+        assert _ENTRY_LATE_ARRIVING_COLS == {"horse_weight", "weight_change"}
