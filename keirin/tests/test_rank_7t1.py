@@ -334,6 +334,27 @@ def test_netkeirin_normalize_preserves_points_and_stakes():
     assert marks[3] == "△" and marks[5] == "△"
 
 
+def test_stake_note_says_equal_even_with_rounding_remainder():
+    """🔴 端数だけの差で「オッズに応じて配分」と**嘘の説明**を出さないこと。
+
+    10,000円を3点は 3,400 / 3,300 / 3,300 になる（最小単位100円）。
+    「単価が1種類か」で判定すると傾斜扱いになり、均等に置いているのに
+    顧客向け本文に「オッズに応じて配分しています」と出る（実際に出た）。
+    """
+    from scripts.netkeirin_submit_wt import (
+        RANK_CONFIGS, _normalize_7t1_candidate, _stake_note_for)
+
+    for n in (1, 2, 3, 4, 5):
+        legs_raw = [f"1-2-{c}" for c in range(3, 3 + n)]
+        cand = {"race_key": "20260813_11_01", "axis1": 1, "axis2": 2,
+                "partners": [int(x.split("-")[2]) for x in legs_raw],
+                "legs": legs_raw, "stakes": rank_7t1_stakes(legs_raw)}
+        rows, _m, _a1, _a2 = _normalize_7t1_candidate(cand, RANK_CONFIGS["7T1"])
+        note = _stake_note_for("7T1", rows)
+        assert "均等" in note, f"{n}点で均等と説明されない: {note}"
+        assert "オッズに応じて" not in note, f"{n}点で傾斜配分と誤説明: {note}"
+
+
 def test_netkeirin_normalize_rebuilds_stakes_when_json_is_stale():
     """候補JSONの stakes が買い目と食い違ったら**同じ関数で組み直す**こと。
 
