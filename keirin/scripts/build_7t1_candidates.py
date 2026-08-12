@@ -6,7 +6,9 @@
 1レース1万円の購入で **20万円以上の払戻**を狙う枠。的中体験は既存の三連複ランク
 （7C/7S/7A…）が担うので、**この枠は的中率を目的にしない**（実測 2.7%）。
 
-母集団は **看板レース × 3着内率の上位2車が別ライン** の7車立て（13.4本/日）。
+母集団は **上位クラス戦（決勝・準決勝・特選・選抜）× 3着内率の上位2車が別ライン**
+の7車立て（13.4本/日）。🔴 **「看板」ではない**（看板判定は準決勝を除外するが、
+7T1 は準決勝を含む。除くと 8.9本/日まで落ちる）。
 設計・実測は `src/strategy_wt.py` の RANK_7T1 セクションを見ること。
 
 ## 前身との違い（RANK_7H3・入稿実績0で廃止）
@@ -18,7 +20,10 @@
 
 点数と足切りを目的から導くために、全210通りの**予測オッズ**が必要:
 
-    払戻 >= 20万円  ⟺  当たった点のオッズ >= 20万 × 点数 / 1万
+    払戻 >= 20万円  ⟺  当たった点のオッズ >= 20万 ÷ 1点あたりの賭け金
+
+⚠️ 「1点あたりの賭け金」は 1万÷点数 ではなく `rank_7t1_min_stake(点数)`
+   （最低単位100円へ丸めた後の**最小額**）。
 
 `src/odds_prediction_tf.predict_board()` を使う。これは `data/models/odds_tf_n7.txt`
 （+ `odds_tf_meta.json`）を読むので、**モデルが配備されていないと候補が0件になる**。
@@ -32,7 +37,7 @@
 3. `odds_prediction_tf.predict_board()` で全210点の予測オッズ
 4. `strategy_wt.rank_7t1_select()` で軸2車と買い目（自己整合の点数）
 5. `strategy_wt.rank_7t1_stakes()` で**均等**配分の賭け金
-6. `strategy_wt.rank_7t1_daily_select()` で看板×別ラインに絞る
+6. `strategy_wt.rank_7t1_daily_select()` で上位クラス戦×別ラインに絞る
 
 出力する候補JSONの形式と保存先は既存ランクに合わせてあるので、
 `notify_prerace_wt.py` / `netkeirin_submit_wt.py` からは同じように読める。
@@ -204,7 +209,7 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
     if n_no_board:
         print(f"  予測オッズを作れなかったレース: {n_no_board}件")
     picked_all = rank_7t1_daily_select(cands)
-    print(f"看板×別ラインで {len(picked_all)}/{len(cands)}R を採用")
+    print(f"上位クラス戦×別ラインで {len(picked_all)}/{len(cands)}R を採用")
     for c in picked_all:
         print(f"  {c['race_key']} {c.get('venue_name')}{c.get('race_no')}R "
               f"[{c.get('race_type')}] 軸={c['axis1']}-{c['axis2']} "

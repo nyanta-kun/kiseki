@@ -3,7 +3,8 @@
 固定するのは「壊れても例外が出ない」不変条件だけを選んである
 （このリポジトリは入稿・採点経路が黙って壊れる事故を繰り返している）:
 
-1. **母集団**: 看板レースだけを通すこと。キーワードを写していないこと
+1. **母集団**: 上位クラス戦（決勝・**準決勝**・特選・選抜）だけを通すこと。
+   キーワードを写していないこと。看板判定（準決勝を除外する）と**混同しない**こと
 2. **母集団**: 3着内率の上位2車が別ラインのレースだけを通すこと
 3. **自己整合**: 買った点が全て「払戻 >= 目標額」に届く予測オッズであること
    ＝ この枠の設計そのもの。ここが崩れると商品の意味が消える
@@ -65,8 +66,8 @@ def _board(odds: float = 400.0) -> dict[tuple[int, int, int], float]:
 
 
 @pytest.mark.parametrize("race_type", ["決勝", "S級決勝", "特選", "選抜", "特秀"])
-def test_marquee_race_types_are_targets(race_type):
-    """前身 7H3 とは**母集団が真逆**。看板を通すこと。"""
+def test_upper_class_race_types_are_targets(race_type):
+    """前身 7H3 とは**母集団が真逆**。上位クラス戦を通すこと。"""
     assert rank_7t1_is_target_race_type(race_type) is True
 
 
@@ -75,16 +76,46 @@ def test_non_marquee_race_types_are_excluded(race_type):
     assert rank_7t1_is_target_race_type(race_type) is False
 
 
-def test_semifinal_is_excluded():
-    """「準決勝」は「決勝」を部分一致で拾うが、正本が除外している。
+def test_semifinal_is_a_target():
+    """🔴 **準決勝は対象に含む**（看板判定とはここが違う）。
 
-    ここで独自に判定すると正本と食い違う（CLAUDE.md が繰り返し警告している型）。
+    検証をこの定義で行っている。準決勝は母集団の33%を占め、成績は本体と
+    区別できない（20万超 2.17% vs 2.02%）。`marquee.is_marquee_type()` を
+    そのまま使うと準決勝が落ち、13.4→8.9本/日・20万超が3.6日→5.5日に1回まで
+    **頻度だけが落ちる**（実装時に実際に踏んだ）。
     """
-    assert rank_7t1_is_target_race_type("準決勝") is False
+    assert rank_7t1_is_target_race_type("準決勝") is True
+    assert rank_7t1_is_target_race_type("S級準決勝") is True
 
 
-def test_marquee_keywords_are_not_redefined_here():
-    """看板キーワードを 7T1 側で定義していないこと（二重管理の禁止）。
+def test_does_not_use_the_marquee_predicate():
+    """看板判定（準決勝を除外する）を**呼んで**いないこと。
+
+    🔴 ソースの文字列一致で見てはいけない。docstring が「使ってはいけない」と
+       説明のために名前を書くだけで落ちる（実際に落ちた）。AST で
+       **実際の import と呼び出しだけ**を見る。
+    """
+    import ast
+
+    src = (REPO / "src" / "strategy_wt.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef)
+              and n.name == "rank_7t1_is_target_race_type")
+    imported: set[str] = set()
+    called: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.ImportFrom):
+            imported |= {a.name for a in node.names}
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+    assert "is_marquee_type" not in imported | called, (
+        "7T1 が看板判定を使っている。準決勝が落ちて母集団が33%減る")
+    assert "MARQUEE_KEYWORDS" in imported, "正本からキーワードを束縛すること"
+
+
+def test_race_type_keywords_are_not_redefined_here():
+    """レース種別キーワードを 7T1 側で定義していないこと（二重管理の禁止）。
 
     写した瞬間に「★は付くのに入稿されない」またはその逆を作れる。
     """
@@ -243,8 +274,9 @@ def _cand(**kw) -> dict:
     return base
 
 
-def test_daily_select_requires_marquee_and_cross_line():
+def test_daily_select_requires_upper_class_and_cross_line():
     assert len(rank_7t1_daily_select([_cand()])) == 1
+    assert len(rank_7t1_daily_select([_cand(race_type="準決勝")])) == 1
     assert rank_7t1_daily_select([_cand(race_type="予選")]) == []
     assert rank_7t1_daily_select([_cand(is_cross_line=False)]) == []
     assert rank_7t1_daily_select([_cand(n_entries=9)]) == []
