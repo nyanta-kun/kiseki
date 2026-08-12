@@ -10,7 +10,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,19 @@ from ..db.chihou_models import (
 from .jvlink_parser import parse_ra, parse_se
 
 logger = logging.getLogger(__name__)
+
+# 発走前 RA（出走馬名表・出馬表）は馬場状態・天候・ラップ・上がりが空で届く。
+# そのまま上書きすると、成績確定後 RA で入った値を NULL に戻してしまうため、
+# 「レース後にしか確定しない列」は COALESCE で非 NULL のときだけ更新する。
+# JRA 側 `race_importer._POST_RACE_ONLY_COLS` と同じ趣旨のガード。
+#
+# ⚠️ これが無いと蓄積系(RACE dataspec)の再取得が破壊的になる。同一レースについて
+#    発走前ファイルと成績確定ファイルの両方が存在し、処理順は SDK 任せのため、
+#    発走前ファイルが後に来ると condition/weather が消える（2026-08-13 追加）。
+_POST_RACE_ONLY_COLS = frozenset({
+    "condition", "weather", "first_3f", "last_3f_race", "lap_times",
+    "finishers_count",
+})
 
 
 # -------------------------------------------------------------------
@@ -300,9 +313,17 @@ class ChihouRaceImporter:
             "prev_post_time",
         ]
         stmt = insert(ChihouRace).values(values)
+        set_ = {
+            col: (
+                func.coalesce(stmt.excluded[col], ChihouRace.__table__.c[col])
+                if col in _POST_RACE_ONLY_COLS
+                else stmt.excluded[col]
+            )
+            for col in update_cols
+        }
         returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["umaconn_race_id"],
-            set_={col: stmt.excluded[col] for col in update_cols},
+            set_=set_,
         ).returning(ChihouRace.id, ChihouRace.umaconn_race_id)
         for race_id, umaconn_id in (await self.db.execute(returning_stmt)):
             self._race_cache[umaconn_id] = race_id

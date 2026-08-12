@@ -10,8 +10,13 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
-from src.importers.chihou_race_importer import ChihouRaceImporter, _finish_time_to_decimal
+from src.importers.chihou_race_importer import (
+    _POST_RACE_ONLY_COLS,
+    ChihouRaceImporter,
+    _finish_time_to_decimal,
+)
 
 # ---------------------------------------------------------------------------
 # _finish_time_to_decimal
@@ -176,3 +181,48 @@ class TestChihouRaceImporterFieldMapping:
         query_str = str(first_call_arg).lower()
         assert "umaconn_code" in query_str
         assert "jravan" not in query_str
+
+
+# ---------------------------------------------------------------------------
+# 発走前RAによる上書き防止ガード（_POST_RACE_ONLY_COLS）
+# ---------------------------------------------------------------------------
+
+
+class TestPostRaceOnlyColumnGuard:
+    """蓄積系の再取得で condition/weather 等が NULL 上書きされないことを検査する。
+
+    発走前 RA（出走馬名表・出馬表）はこれらの列が空で届く。処理順は SDK 任せなので、
+    成績確定 RA の後に発走前 RA が来ても値が消えないよう COALESCE が要る。
+    ガードを外すと本テストが落ちる。
+    """
+
+    @staticmethod
+    async def _compiled_upsert_sql(mock_db: AsyncMock) -> str:
+        importer = ChihouRaceImporter(mock_db)
+        await importer._bulk_upsert_races([_make_ra_record()])
+        assert mock_db.execute.await_count >= 1
+        stmt = mock_db.execute.await_args_list[-1].args[0]
+        return str(stmt.compile(dialect=postgresql.dialect()))
+
+    @pytest.mark.asyncio
+    async def test_post_race_columns_use_coalesce(self, mock_db: AsyncMock) -> None:
+        sql = await self._compiled_upsert_sql(mock_db)
+        for col in _POST_RACE_ONLY_COLS:
+            assert f"coalesce(excluded.{col}, chihou.races.{col})" in sql.lower(), (
+                f"{col} が COALESCE で保護されていない。"
+                "発走前RAの再取り込みで確定値が NULL に戻る"
+            )
+
+    @pytest.mark.asyncio
+    async def test_other_columns_overwrite_plainly(self, mock_db: AsyncMock) -> None:
+        """確定/未確定に関わらず常に最新で良い列は素の上書きのままであること。"""
+        sql = (await self._compiled_upsert_sql(mock_db)).lower()
+        for col in ("race_name", "distance", "post_time", "head_count"):
+            assert f"coalesce(excluded.{col}" not in sql
+            assert f"{col} = excluded.{col}" in sql
+
+    def test_guard_covers_expected_columns(self) -> None:
+        assert _POST_RACE_ONLY_COLS == {
+            "condition", "weather", "first_3f", "last_3f_race",
+            "lap_times", "finishers_count",
+        }
