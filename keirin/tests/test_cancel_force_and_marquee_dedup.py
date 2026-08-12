@@ -47,27 +47,37 @@ def _sql_literals(path: Path, needle: str) -> list[str]:
     return out
 
 
-def test_穴埋めの重複判定が取消済みを除外する():
-    """🔴 これが無いと、取り消したレースを自動穴埋めで出し直せない。"""
+def test_穴埋めの重複判定が取消済みも処理済みとして扱う():
+    """🔴 **2026-08-13 に仕様を反転**（ユーザー判断）。
+
+    以前は取消済みを「出していない」扱いにして自動穴埋めで出し直していた。
+    しかし race_key は日付を含むので、ここに出る deleted 行は必ず
+    **同じ日に人が取り消したもの**。それを穴埋めが復活させると
+    「確認して落としたはずのものが勝手に戻る」＝確認の意味が消える。
+    """
     sqls = _sql_literals(MARQUEE, "FROM netkeirin_submissions")
     assert sqls, "submit_marquee_wt.py が netkeirin_submissions を読む SQL を見つけられません"
     joined = " ".join(sqls)
-    assert "deleted" in joined, (
-        "自動穴埋めの重複判定が status を見ていません。取消は論理削除なので行が残り、"
-        "除外しないと取り消したレースを出し直せません"
+    assert "deleted" not in joined, (
+        "自動穴埋めの重複判定が取消済みを除外しています。取り消したレースを"
+        "穴埋めが出し直してしまいます（出し直したいときは手動入稿を使う）"
     )
 
 
 def test_重複判定の条件が入稿側と揃っている():
-    """🔴 2箇所で条件が食い違っていたのが今回の原因。同じ式であることを縛る。"""
-    expected = "COALESCE(status, 'submitted') <> 'deleted'"
+    """🔴 2箇所で条件が食い違っていた前例がある（2026-08-11）。同じであることを縛る。
+
+    どちらも「その race_key の行があれば処理済み」＝status で絞らない。
+    """
     marquee = " ".join(_sql_literals(MARQUEE, "netkeirin_submissions"))
     submit = " ".join(
         n.value for n in ast.walk(ast.parse(inspect.getsource(m._already_submitted)))
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
     )
-    assert expected in marquee, f"submit_marquee_wt.py の条件が {expected} ではありません"
-    assert expected in submit, f"_already_submitted の条件が {expected} ではありません"
+    for label, sql in (("submit_marquee_wt.py", marquee), ("_already_submitted", submit)):
+        assert "deleted" not in sql, f"{label} が取消済みを除外しています"
+        assert "status" not in sql, (
+            f"{label} が status で絞っています。取消済みも処理済みとして扱う仕様です")
 
 
 # ---------------------------------------------------------------------------

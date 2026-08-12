@@ -120,17 +120,25 @@ def _sql_literals(fn_name: str) -> str:
     return " ".join(parts)
 
 
-def test_already_submitted_excludes_deleted():
-    """取消した行を「入稿済み」に数えないこと（数えると出し直せない）。
+def test_already_submitted_counts_deleted_as_handled():
+    """🔴 **2026-08-13 に仕様を反転**（ユーザー判断）。
+
+    取消した行も「その日は処理済み」に数える。race_key は日付を含むので
+    ここに出る deleted 行は必ず**同じ日に人が取り消したもの**であり、
+    朝の波で落とした商品を昼・夕の波が復活させると確認の意味が消える。
+
+    取り消したレースを出し直したいときは**手動入稿**を使う
+    （`--manual-rank-key`。あちらはこの判定を通らない）。
 
     コメントではなく **実際に発行する SQL** を見る。
     """
     sql = _sql_literals("_already_submitted")
-    assert "deleted" in sql, (
-        "_already_submitted の SQL が取消済みを除外していません"
-        "（取り消したレースを出し直せなくなります）"
+    assert "deleted" not in sql, (
+        "_already_submitted の SQL が取消済みを除外しています"
+        "（取り消したレースが次の波で復活します）"
     )
-    assert "status" in sql, "status 列を見ていません"
+    assert "status" not in sql, (
+        "status で絞っています。取消済みも処理済みとして扱う仕様です")
 
 
 def test_record_submission_derives_status_from_prefix():

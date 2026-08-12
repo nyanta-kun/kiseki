@@ -81,7 +81,7 @@ def waves_due_by(session_wave: str) -> tuple[str, ...]:
       逆（後ろへ動く）は後続の回が拾うので穴にならない。前倒しだけが落ちる。
 
     そこで自分の波より**前の波も対象に含める**。二重入稿は
-    `_already_submitted()` が、終わったレースへの入稿は `_load_started_races()` が
+    `_already_submitted()` が、終わったレースへの入稿は `_load_closed_races()` が
     それぞれ止めるので、拾い直しても副作用は無い。
 
     ⚠️ 逆に「後の波」を含めてはいけない。板が育つのを待つという波の目的そのもの

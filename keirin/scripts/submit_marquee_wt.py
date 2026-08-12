@@ -46,7 +46,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import get_connection  # noqa: E402
-from src.marquee import marquee_race_nos  # noqa: E402
+from src.marquee import marquee_race_nos
+from src.submit_window import is_closed  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
@@ -109,14 +110,15 @@ def main() -> int:
         races = [dict(r) for r in conn.execute(
             "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id "
             "FROM wt_races WHERE race_date = ? ORDER BY venue_id, race_no", (date,))]
-        # 🔴 **取消（status='deleted'）した行は「出していない」扱いにする。**
-        #    取消は論理削除なので行が残る。除外しないと、一度取り消したレースを
-        #    自動穴埋めで出し直せず、毎回この場で手作業になる（2026-08-11 に発生）。
-        #    判定は `netkeirin_submit_wt.py::_already_submitted` と同じ条件にすること。
-        #    **2箇所で食い違っていた**のが原因で、あちらだけ正しく除外していた。
+        # 🔴 **取消（status='deleted'）も「その日は処理済み」として扱う**
+        #    （2026-08-13 変更・ユーザー判断）。取消は論理削除なので行が残る。
+        #    人が確認して落とした看板レースを穴埋めが出し直すと、
+        #    「確認して落としたはずのものが勝手に戻る」＝確認の意味が消える。
+        #    判定は `netkeirin_submit_wt.py::_already_submitted` と**同じ条件**に
+        #    すること（2026-08-11 に片側だけ直して食い違わせた前例がある）。
+        #    `tests/test_marquee_fill_dedup_parity.py` が機械的に突き合わせている。
         submitted = {str(dict(r)["race_key"]).split("#")[0] for r in conn.execute(
-            "SELECT race_key FROM netkeirin_submissions "
-            "WHERE COALESCE(status, 'submitted') <> 'deleted'")}
+            "SELECT race_key FROM netkeirin_submissions")}
 
     if not races:
         print(f"[marquee] {date}: レースが無い", flush=True)
@@ -141,7 +143,9 @@ def main() -> int:
                 continue
             if r["race_key"] in submitted:
                 continue
-            if r.get("start_at") and int(r["start_at"]) <= now_ts:
+            # 締切（発走15分前）を過ぎたレースへは出さない。判定の正本は
+            # `src/submit_window`（kiseki 側の keirin_submission_window.py）。
+            if is_closed(r.get("start_at"), now_ts):
                 continue
             if int(r.get("n_entries") or 0) not in RANK_BY_CARS:
                 continue

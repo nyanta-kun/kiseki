@@ -11,8 +11,8 @@ import json
 import math
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta, timezone
 from datetime import date as Date
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -38,6 +38,7 @@ from ..services.keirin_sales_analysis import (
     build_route_breakdown,
     build_summary,
 )
+from ..services.keirin_submission_window import SUBMIT_DEADLINE_SEC, is_closed
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
 
@@ -2058,6 +2059,37 @@ class ApprovalIn(BaseModel):
     all_venues: bool = False
 
 
+async def _closed_races(race_keys: Sequence[str]) -> dict[str, bool]:
+    """race_key → 入稿の締切（発走15分前）を過ぎているか。
+
+    🔴 判定は `keirin_submission_window`（正本）に委ねる。ここで秒数を書かない。
+    """
+    if not race_keys:
+        return {}
+    now = datetime.now(UTC).timestamp()
+    out: dict[str, bool] = {}
+    async for db in get_db():
+        rows = (await db.execute(
+            text("SELECT race_key, start_at FROM keirin.wt_races "
+                 "WHERE race_key = ANY(:keys)"),
+            {"keys": list(race_keys)},
+        )).fetchall()
+        for r in rows:
+            out[r.race_key] = is_closed(r.start_at, now)
+        break
+    return out
+
+
+def _closed_response(labels: Sequence[str]) -> JSONResponse:
+    """締切超過で拒むときの応答。**理由と対象を必ず返す**（画面に出すため）。"""
+    n = SUBMIT_DEADLINE_SEC // 60
+    return JSONResponse(
+        content={"ok": False,
+                 "message": (f"発走{n}分前を過ぎているため操作できません: "
+                             f"{', '.join(labels)}")},
+        status_code=409)
+
+
 async def _call_webhook(path: str, payload: dict) -> JSONResponse:
     try:
         async with httpx.AsyncClient() as client:
@@ -2081,6 +2113,10 @@ async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
         if not _RACE_KEY_RE.match(base):
             return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
                                 status_code=400)
+        # 🔴 締切（発走15分前）を過ぎたら netkeirin が受け付けない。
+        #    押せてしまうと「押したのに出ていない」に見えるので手前で拒む。
+        if (await _closed_races([base])).get(base):
+            return _closed_response([base])
         return await _call_webhook("/approve", {"race_key": base, "rank_key": body.rank_key})
     if body.date and body.venue_name:
         if not _DATE_RE.match(body.date):
@@ -2118,6 +2154,11 @@ async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
             return JSONResponse(
                 content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
                 status_code=400)
+        # 🔴 締切後は netkeirin 側の下書き削除も効かない。ただし `force` は
+        #    **netkeirin を触らず記録だけ取消にする**ので締切に関係なく通す
+        #    （締切を過ぎた行を永久に片付けられなくなるのを避ける逃げ道）。
+        if not body.force and (await _closed_races([base])).get(base):
+            return _closed_response([base])
         return await _call_webhook(
             "/cancel", {"race_key": base, "rank_key": body.rank_key, "force": body.force})
 
