@@ -397,15 +397,26 @@ export default function KeirinStatsPage() {
       return items.map(i => ({
         key: i.date,
         soldPoints: i.sold_points ?? 0,
+        soldPaidPoints: i.sold_paid_points ?? 0,
+        // 🔴 null と 0 を混同しない。sold_paid_points が欠測の日を 0 として積むと
+        //    「その日は全部無償だった」という**静かな嘘**になる（棒の見た目は自然）。
+        paidKnown: i.sold_paid_points != null,
         stake: i.stake_amount,
         payout: i.payout_amount,
       }));
     }
-    const byMonth = new Map<string, { soldPoints: number; stake: number; payout: number }>();
+    const byMonth = new Map<string, {
+      soldPoints: number; soldPaidPoints: number; paidKnown: boolean;
+      stake: number; payout: number;
+    }>();
     for (const i of items) {
       const m = i.date.slice(0, 7);
-      const cur = byMonth.get(m) ?? { soldPoints: 0, stake: 0, payout: 0 };
+      const cur = byMonth.get(m)
+        ?? { soldPoints: 0, soldPaidPoints: 0, paidKnown: true, stake: 0, payout: 0 };
       cur.soldPoints += i.sold_points ?? 0;
+      cur.soldPaidPoints += i.sold_paid_points ?? 0;
+      // 月内に1日でも欠測があれば、その月の内訳は信用できない
+      cur.paidKnown = cur.paidKnown && i.sold_paid_points != null;
       cur.stake += i.stake_amount;
       cur.payout += i.payout_amount;
       byMonth.set(m, cur);
@@ -414,9 +425,14 @@ export default function KeirinStatsPage() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, v]) => ({ key, ...v }));
   })();
+  // 棒は「有償pt（下）＋ 無償pt（上）」の積み上げ。合計は従来の販売ptに一致する。
+  // 内訳が取れない期間は分割せず灰色の「内訳不明」として総販売ptを1本で積む
+  //（0として無償側へ倒すと欠測が見えなくなるため）。
   const salesChartData = salesRows.map(r => ({
     date: r.key,
-    販売pt: r.soldPoints,
+    販売有償pt: r.paidKnown ? r.soldPaidPoints : null,
+    販売無償pt: r.paidKnown ? Math.max(r.soldPoints - r.soldPaidPoints, 0) : null,
+    内訳不明: r.paidKnown ? null : r.soldPoints,
     回収率: r.stake > 0 ? Math.round((r.payout / r.stake) * 1000) / 10 : null,
   }));
   const maxSoldPoints = Math.max(...salesRows.map(r => r.soldPoints), 1);
@@ -692,7 +708,7 @@ export default function KeirinStatsPage() {
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-            netkeirin 売上推移（販売pt・回収率）
+            netkeirin 売上推移（販売pt＝有償/無償の内訳・回収率）
           </p>
           {/* 粒度切り替え（売上タブ専用・フロントで日別を月別に畳む） */}
           <div className="flex items-center gap-1.5">
@@ -747,7 +763,13 @@ export default function KeirinStatsPage() {
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
               <ReferenceLine yAxisId="right" y={100} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
-              <Bar yAxisId="left" dataKey="販売pt" fill="#a5b4fc" radius={[2, 2, 0, 0]} maxBarSize={28} />
+              {/* 販売ptの内訳。**有償ptを下に積む**（売上金額の対象はこちらで、
+                  無償ptは収益にならない）。stackId が同じ Bar は宣言順に下から
+                  積まれるので、有償→無償→内訳不明 の順を変えないこと。
+                  角丸は最上段だけに付ける（下段に付けると継ぎ目に隙間が出る）。 */}
+              <Bar yAxisId="left" dataKey="販売有償pt" stackId="sold" fill="#6366f1" maxBarSize={28} />
+              <Bar yAxisId="left" dataKey="販売無償pt" stackId="sold" fill="#c7d2fe" radius={[2, 2, 0, 0]} maxBarSize={28} />
+              <Bar yAxisId="left" dataKey="内訳不明" stackId="sold" fill="#d1d5db" radius={[2, 2, 0, 0]} maxBarSize={28} />
               <Line
                 yAxisId="right"
                 type="monotone"
