@@ -1377,6 +1377,15 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
 function SummaryCard({ summary }: { summary: KeirinSummary }) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  // 入稿対象OFFのランクは Web からも外す（2026-08-12・ユーザー要望）。
+  // 判定は API（`netkeirin_settings.enabled`）が持つので、/keirin/settings で
+  // トグルすればデプロイ無しで表示が追随する。
+  // ⚠️ `visible_ranks` を持たない古いAPIに当たったら絞らない（fail-open）。
+  //    ここを fail-closed にすると、API 側の追加を忘れた瞬間に全ランクが消える。
+  const visibleRankOrder = useMemo(() => {
+    const allow = summary.visible_ranks;
+    return allow ? RANK_ORDER.filter(r => allow.includes(r)) : RANK_ORDER;
+  }, [summary.visible_ranks]);
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
       <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center gap-1">
@@ -1416,9 +1425,12 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             </tr>
           </thead>
           <tbody>
-            <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} />
-            <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} />
-            <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} />
+            {/* 入稿対象OFFのランクは行ごと出さない（2026-08-12）。集計側でも
+                除外済みだが、ランク別展開は0件でも行を描くので明示的に絞る。
+                古いAPI（visible_ranks 無し）に当たったら絞らない＝fail-open。 */}
+            <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
+            <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
+            <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
           </tbody>
         </table>
       </div>

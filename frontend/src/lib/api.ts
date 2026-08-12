@@ -1094,6 +1094,9 @@ export type KeirinSummary = {
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
+  /** Web に出してよい表示ラベル（入稿対象ONのランクだけ・2026-08-12）。
+   *  未指定の古いAPIに当たったときは絞り込まない（fail-open）。 */
+  visible_ranks?: string[];
 };
 
 export async function fetchKeirinPicks(date: string, includeAll = false): Promise<KeirinPick[]> {

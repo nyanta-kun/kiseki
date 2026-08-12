@@ -365,6 +365,7 @@ async def _manual_submission_buckets(
                 WHERE SPLIT_PART(ph2.race_key, '#', 1) = ns.race_key
                   AND ph2.route = 'wt'
                   AND ph2.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph2')}
               )
         """),
         params,
@@ -580,6 +581,7 @@ async def get_picks(
                  AND ph.race_date = :date
                  AND ph.route = 'wt'
                  AND ph.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph')}
                 -- 生きている入稿のうち最新の1件（取消は論理削除なので除外する）
                 LEFT JOIN LATERAL (
                     SELECT rank_key
@@ -635,6 +637,7 @@ async def get_picks(
                 WHERE ph.race_date = :date
                   AND ph.route = 'wt'
                   AND ph.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph')}
 
                 UNION ALL
 
@@ -688,6 +691,7 @@ async def get_picks(
                       AND ph2.race_date = :date
                       AND ph2.route = 'wt'
                       AND ph2.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph2')}
                   )
                 ORDER BY start_at, id
             """),
@@ -950,6 +954,45 @@ def _display_rank(rank: str) -> str:
 _RANKS_ALL = "(" + ", ".join(f"'{r}'" for r in _PAPER_RANK_LABELS) + ")"
 
 
+# ---------------------------------------------------------------------------
+# 入稿対象OFFのランクは Web の集計・表示からも外す（2026-08-12・ユーザー要望）
+#
+# 「もう売っていないランクの成績が Web に並び続ける」のを避ける。判定は
+# `keirin.netkeirin_settings.enabled` の1点だけを見るので、`/keirin/settings`
+# でトグルすればコード変更もデプロイも要らずに表示が追随する。
+#
+# 🔴 **fail-open にする**（行が無い＝表示する）。keirin 側の
+#    `netkeirin_submit_wt._is_enabled()` と同じ規約で、片方だけ fail-closed に
+#    すると「入稿はされているのに Web には出ない」ランクが静かに生まれる。
+#
+# ⚠️ picks_history.rank は `RANK_7C`、netkeirin_settings.rank_key は `7C` と
+#    綴りが違う。`'RANK_' || rank_key` で突き合わせること。
+# ⚠️ 全廃済みランク（SEVEN_S1 等）は元々 allowlist（_RANKS_ALL）で落ちるので
+#    ここでは扱わない。
+_DISABLED_RANK_EXCLUSION = """NOT EXISTS (
+                SELECT 1 FROM keirin.netkeirin_settings s
+                WHERE 'RANK_' || s.rank_key = {alias}.rank AND s.enabled = FALSE
+              )"""
+
+
+def _enabled_rank_cond(alias: str = "ph") -> str:
+    """入稿対象OFFのランクを除外する WHERE 断片を返す。"""
+    return _DISABLED_RANK_EXCLUSION.format(alias=alias)
+
+
+async def visible_rank_labels(db: AsyncSession) -> list[str]:
+    """Web に出してよい表示ラベル（入稿対象ONのもの）を定義順で返す。
+
+    フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
+    ⚠️ ここも fail-open（`netkeirin_settings` に行が無いランクは出す）。
+    """
+    rows = (await db.execute(text(
+        "SELECT rank_key FROM keirin.netkeirin_settings WHERE enabled = FALSE"
+    ))).scalars().all()
+    off = {f"RANK_{k}" for k in rows}
+    return [label for internal, label in _PAPER_RANK_LABELS.items() if internal not in off]
+
+
 async def _aggregate(
     db: AsyncSession,
     where: str,
@@ -977,6 +1020,7 @@ async def _aggregate(
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
               AND ph.rank IN {rank_filter}
+              AND {_enabled_rank_cond()}
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
         """),
@@ -1007,6 +1051,7 @@ async def _aggregate(
             WHERE {where}
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
+              AND {_enabled_rank_cond()}
         """),
         params,
     )).mappings().one_or_none()
@@ -1034,6 +1079,7 @@ async def _aggregate(
               AND NOT COALESCE(ph.miwokuri, FALSE)
               AND ph.bet_amount > 0
               AND ph.rank IN {rank_filter}
+              AND {_enabled_rank_cond()}
               AND ph.race_key NOT LIKE '%#CAND'
               AND {_SETTLED_COND}
             GROUP BY ph.rank
@@ -1066,6 +1112,7 @@ async def _aggregate(
             WHERE {where}
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
+              AND {_enabled_rank_cond()}
             GROUP BY ph.rank
         """),
         params,
@@ -1722,6 +1769,10 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),
         "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}),
         "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}),
+        # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
+        # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
+        # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
+        "visible_ranks": await visible_rank_labels(db),
     }
 
     return JSONResponse(content=result)
