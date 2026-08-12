@@ -1160,7 +1160,7 @@ export type KeirinStatsResponse = {
 };
 
 export type KeirinStatsRank =
-  | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C" | "7H3"
+  | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C" | "7T1"
   | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
@@ -1172,10 +1172,11 @@ export type KeirinStatsRank =
 // 2026-08-06〜: 7H1（穴推奨・本命バスト型・三連単F+三連複BOXの2券種）を追加。
 // 2026-08-08〜: 9H1（穴推奨・9車高配当・三連単フォーメーション6点）を追加。
 // 2026-08-10〜: 7H2（穴推奨・印なし2軸・三連単倍購入10点+三連複BOX10点）を追加。
-// 2026-08-12〜: 7H3（穴推奨・本命連対どまり型・三連単フォーメーション最大6点）を追加。
+// 2026-08-12〜: 7H3（穴推奨・本命連対どまり型）を追加 → 2026-08-13 に全廃。
+// 2026-08-13〜: 7T1（三連単・高配当枠／看板×別ライン・点数可変）へ置換。
 export type NetkeirinRankKey =
   | "_global" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C"
-  | "7H3";
+  | "7T1";
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;

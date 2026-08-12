@@ -212,8 +212,8 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-12 現在）: **7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7H3 > 7B**
-#    （7C > 7B は 2026-08-07 ユーザー指定。7H3 は 2026-08-12 にその間へ挿入）。
+#    優先順位（2026-08-13 現在）: **7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7T1 > 7B**
+#    （7C > 7B は 2026-08-07 ユーザー指定。7T1 は 2026-08-13 にその間へ挿入）。
 #    ⚠️ 同日中に 7B を 7C の**後ろ**へ動かした。7C との重複では 7C が実質的中率で
 #      上回る（39.0% vs 31.6%）一方、7B は 7C が拾わないレースを 3.14件/日 持つ。
 #      「重複は 7C・独自は 7B」を優先順位だけで実現している。
@@ -338,27 +338,29 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             # タイトル・文面は **7A と同じ既定テンプレート**を使う（ユーザー指示
             # 2026-08-07）。したがって default_comment は持たない。
             },
-    # 7H3（2026-08-12新設・穴推奨「本命連対どまり型」）。三連単フォーメーション
-    # （1着=相手 × 2着=軸2車 × 3着=軸2車 ＝ 相手数×2 点）。
-    # 🔴 **点ごとに賭け金が違う**（Plackett-Luce 配分）ため 9H1 の `formation_bet`
-    #    ではなく専用の `formation_bet_7h3` を使い、1点=1行で送る。
-    # 🔴 **7C の後ろ・7B の前**。母集団は「看板でも準決勝でもない7車」なので
-    #    7C（全7車）とだけ重複する。重複時は 7C（実質的中率39.0%）に譲るのが
-    #    正しい（7H3 は表示的中5%の高配当商品で、的中体験は 7C が担う）。
-    #    7B は準決勝限定なので 7H3 とは母集団が排他＝順序は成績に影響しない。
+    # 7T1（2026-08-13新設・三連単の高配当枠）。三連単フォーメーション
+    # （1着=軸1 × 2着=軸2 × 3着=相手 ＝ 相手数そのもの・実測 平均2.0点）。
+    # 🔴 **1点=1行で送る**（`formation_bet_7t1`）。賭け金は均等だが、点数が
+    #    1〜5点と可変で 9H1 の `formation_bet`（1着1車固定・単一行）とは
+    #    3着列の組み方が違うため専用経路にしている。
+    # 🔴 **7C の後ろ・7B の前**。母集団は「看板 × 上位2車が別ライン」なので
+    #    看板を対象とする 7C と**同じレースを取り合う**。重複時は 7C
+    #    （実質的中率39.0%）に譲るのが正しい（7T1 は表示的中3%の高配当商品で、
+    #    的中体験は 7C が担う）。
     # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
     #    ため、導入時に enabled=false の行を明示投入すること。
-    "7H3": {"file_key": "s7h3", "n_cars": 7, "formation_bet_7h3": True, "gate_filter": None,
+    "7T1": {"file_key": "s7t1", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
             "overlap_expected": True,        # 7C との重複は設計どおり
             "default_comment": (
                 "本日の高配当狙いをお届けします。\n\n"
-                "当方の指数で上位2車がはっきり抜けたレースの中から、"
-                "看板レース以外だけを選んでいます。\n\n"
-                "狙いは「上位2車は3着以内に残るが、勝つのは別の選手」という決着です。"
-                "上位2車を2着・3着に置き、1着はそれ以外の選手に任せる組み立てにしました。\n\n"
-                "外れる日が続く買い方です。当たったときの大きさを狙う券種として"
-                "ご活用ください。レース直前の最終オッズをご自身でご確認ください。"
+                "看板レースの中から、当方の指数で上位に立つ2車が"
+                "別々のラインに分かれている一戦だけを選んでいます。\n\n"
+                "その2車を1着・2着に固定し、3着を手広く流さず少点数に絞りました。"
+                "1点あたりの金額を厚くして、当たったときの大きさを取りにいく組み立てです。\n\n"
+                "外れる日が続く買い方です。的中の回数ではなく、当たったときの"
+                "大きさを狙う券種としてご活用ください。"
+                "レース直前の最終オッズをご自身でご確認ください。"
             )},
     "7B":  {"file_key": "s7b", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
             "partners_key": "legs_7b", "tilt_stakes": True,
@@ -837,7 +839,7 @@ def _bet_detail_odds(race_key: str, cfg: dict, use_trifecta: bool = False) -> di
     base = str(race_key).split("#")[0]
     odds: dict = dict(_load_trio_board(base))
     if (cfg.get("multi_bet") or cfg.get("multi_bet_7h2")
-            or cfg.get("formation_bet") or cfg.get("formation_bet_7h3")
+            or cfg.get("formation_bet") or cfg.get("formation_bet_7t1")
             or use_trifecta):
         odds.update(_load_trifecta_board(base))
     return odds
@@ -1205,31 +1207,30 @@ def _dutch_point_legs(
     return legs, result
 
 
-def _normalize_7h3_candidate(
+def _normalize_7t1_candidate(
     cand: dict, cfg: dict, race_key: str | None = None,
 ) -> tuple[list[BetLeg], dict[int, str], int, int]:
-    """7H3 候補から (買い目行, 印, ◎車番, ○車番) を返す。
+    """7T1 候補から (買い目行, 印, ◎車番, ○車番) を返す。
 
-    7H3 は**三連単フォーメーションの単一券種**だが、9H1 と違い
-    **1着列が複数車**（相手）で 2着列＝3着列＝軸2車になる。したがって
-    `_normalize_formation_candidate`（1着1車固定を前提）は使えない。
+    7T1 は**三連単フォーメーション**（1着=軸1 / 2着=軸2 / 3着=相手1〜5車）。
+    9H1 の `_normalize_formation_candidate` と違い**点数が可変**で、点ごとに
+    行を分けたほうが netkeirin 上の表示が買い目と1対1になるため
+    `_dutch_point_legs` と同じく **1点=1行**（各着1車ずつ）で送る。
 
-    🔴 **点ごとに賭け金が違う**（Plackett-Luce 配分）ので、1つのフォーメーション
-       1行には畳めない。`_dutch_point_legs` と同じく **1点=1行**（各着1車ずつの
-       フォーメーション）で送る。
+    🔴 **賭け金は均等**。点数と足切りは「全点が等額のとき払戻が目標額に届く」
+       ことを前提に決めてある（`strategy_wt.rank_7t1_select`）。確率で
+       重み付けすると軽い点が目標に届かず、選別の前提が崩れる。
 
     🔴 **ダッチ配分（`_dutch_point_legs`）は使わない。** あれは低オッズ目を切って
-       買い目の集合を変えるが、7H3 の検証は「相手ごとに2点ずつ全部買う」形で
-       行っている（`docs/rank_7h3_design.md`）。切ると別の商品になる。
-       配分は候補生成時点の PL 確率で決めてあるので、朝の板の欠損にも依存しない。
+       買い目の集合を変えるが、7T1 は既に自己整合の足切りで点を選び切っている。
 
-    印: ◎○ = 軸2車（2〜3着に置く）/ △ = 相手（1着に置く）。
+    印: ◎ = 軸1（1着）/ ○ = 軸2（2着）/ △ = 相手（3着）。
     """
-    from src.strategy_wt import rank_7h3_stakes
+    from src.strategy_wt import rank_7t1_stakes
 
     legs_raw = [str(x) for x in (cand.get("legs") or [])]
-    if len(legs_raw) < 2:
-        raise ValueError(f"7H3 の買い目が {len(legs_raw)} 点しかありません: {legs_raw}")
+    if not legs_raw:
+        raise ValueError("7T1 の買い目が空です")
     axis1 = int(cand["axis1"])
     axis2 = int(cand["axis2"])
 
@@ -1237,7 +1238,7 @@ def _normalize_7h3_candidate(
     # （別式で埋めると記録側と入稿側が静かに食い違う。7H1 で実際に起きた型）。
     stakes = {str(k): int(v) for k, v in (cand.get("stakes") or {}).items()}
     if sorted(stakes) != sorted(legs_raw):
-        stakes = rank_7h3_stakes(legs_raw, None)
+        stakes = rank_7t1_stakes(legs_raw)
 
     legs: list[BetLeg] = []
     for leg in legs_raw:
@@ -1488,7 +1489,7 @@ def _process_rank(
     is_multi = bool(cfg.get("multi_bet"))
     is_multi_7h2 = bool(cfg.get("multi_bet_7h2"))
     is_formation = bool(cfg.get("formation_bet"))
-    is_7h3 = bool(cfg.get("formation_bet_7h3"))
+    is_7t1 = bool(cfg.get("formation_bet_7t1"))
 
     # 衝突の扱いはランクによって意味が違う。**排他設計のランク**（7SS/7S/7A/7B/9S/
     # 9A/7H1）で衝突が起きたのは想定外なので失敗として可視化する。一方 7C のような
@@ -1523,8 +1524,8 @@ def _process_rank(
             elif is_multi_7h2:
                 legs, marks, axis1, axis2_or_p1 = _normalize_7h2_candidate(
                     cand, cfg, race_key.split("#")[0])
-            elif is_7h3:
-                legs, marks, axis1, axis2_or_p1 = _normalize_7h3_candidate(
+            elif is_7t1:
+                legs, marks, axis1, axis2_or_p1 = _normalize_7t1_candidate(
                     cand, cfg, race_key.split("#")[0])
             elif is_formation:
                 legs, marks, axis1, axis2_or_p1 = _normalize_formation_candidate(
