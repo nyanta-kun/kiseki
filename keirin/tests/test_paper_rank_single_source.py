@@ -52,15 +52,19 @@ import live_report_wt as lr
 # 2026-08-10: 穴推奨 RANK_7H2（印なし2軸・高配当）を新設。7H1 と同じ7車立てなので
 # **母集団は排他ではない**（重なりは 7H1 側の 49.2%）。picks_history には両方の
 # 行が入り、netkeirin の入稿だけが優先順位（7H1 > 7H2）で1レース1商品に絞られる。
-# 2026-08-12: 穴推奨 RANK_7H3（本命連対どまり型・三連単の高配当）を新設。
-# 7車立てだが**母集団が「看板でも準決勝でもないレース」に限定**されるので、
-# 看板+準決勝を対象とする的中率商品とは排他。7H1/7H2 とは重なりうる。
+# 2026-08-12: 穴推奨 RANK_7H3（本命連対どまり型・三連単）を新設。
+# 2026-08-13: **RANK_7H3 を全廃し RANK_7T1（三連単・高配当枠）へ置換**。
+# 7H3 は選別が「軸積 >= 0.70」という確率の絶対閾値だったため、確率の出どころが
+# 変わると母集団が1.4倍になり崩壊した（入稿実績0）。7T1 は確率を相対順位でしか
+# 使わず、閾値は予測オッズ側に置く。母集団は **看板 × 上位2車が別ライン**で、
+# 看板を対象とする 7C と同じレースを取り合う（入稿は優先順位で 7C が先に取る）。
 CURRENT_RANK_NAMES = {"RANK_7SS", "RANK_7S", "RANK_7A", "RANK_7B", "RANK_9S",
                       "RANK_9A", "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
-                      "RANK_7H3"}
+                      "RANK_7T1"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {
+    "RANK_7H3",
     "SEVEN_S1", "SIX_S1", "7PLUS_U", "7PLUS_M", "7PLUS_R", "7PLUS_ST", "7PLUS_STP",
 }
 
@@ -216,6 +220,8 @@ def test_paper_suffixes_include_legacy_hash_suffix_ranks():
     """
     legacy_suffixed = {spec.suffix for spec in sw.ABOLISHED_PAPER_RANKS if spec.suffix}
     # "#7SS" は現行ランクのsuffixになったため legacy 側からは外れた。
+    # "#7H3" は 2026-08-13 全廃だが suffix=None で登録している（行を削除し再生成
+    # 経路も消したため保護不要）。したがってここには現れない。
     assert legacy_suffixed == {"#7S1", "#6S1"}
     for suffix in legacy_suffixed:
         assert suffix in nr._PAPER_SUFFIXES

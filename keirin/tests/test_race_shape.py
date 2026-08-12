@@ -147,13 +147,16 @@ EXPECTED_COVERAGE = {
     "7SS": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_MIXED},
     "7H1": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
     "7H2": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
-    "7H3": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
+    # 7T1 は選出条件が「上位2車が別ライン」なので **line は定義上発生しない**
+    # （7SS が split/clash を欠くのと同じ理由）。あえて欠かして
+    # `shape_title_text()` が警告を出せるようにしている。
+    "7T1": {SHAPE_SOLO, SHAPE_DUO, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
 }
 
 
 @pytest.mark.parametrize("table", [SHAPE_TITLES, SHAPE_NOTES])
 def test_every_rank_defines_the_common_shapes(table):
-    """7SS(split/clash) と 7A(solo) 以外は6ラベルすべてを持つこと。
+    """7SS(split/clash)・7A(solo)・7T1(line) 以外は6ラベルすべてを持つこと。
 
     タイトルと本文で**同じ網羅**であること。片方だけラベルを足すと、タイトルは
     構造を語っているのに本文は既定文、という食い違いが静かに生まれる。

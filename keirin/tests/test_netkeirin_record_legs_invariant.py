@@ -47,7 +47,7 @@ def _has_stake_source(cfg: dict) -> bool:
 def _is_prebuilt_legs(cfg: dict) -> bool:
     """候補正規化側で legs を組み終えていて `_legs_for_record` を通らない経路か。"""
     return bool(cfg.get("multi_bet") or cfg.get("multi_bet_7h2")
-                or cfg.get("formation_bet") or cfg.get("formation_bet_7h3")
+                or cfg.get("formation_bet") or cfg.get("formation_bet_7t1")
                 or cfg.get("tilt_stakes"))
 
 
@@ -82,16 +82,16 @@ def test_9h1は組み立て済み経路であること():
     assert _is_prebuilt_legs(cfg)
 
 
-def test_7h3は組み立て済み経路であること():
-    """7H3(三連単フォーメーション・点ごとに金額が違う)も legs 側で拾われること。
+def test_7t1は組み立て済み経路であること():
+    """7T1(三連単フォーメーション・点数が可変)も legs 側で拾われること。
 
     9H1 と同じ「単価を持たないランク」なので、guard から漏れると
     2026-08-09 の障害（入稿成功後に KeyError で記録されず後続ランクも止まる）が
-    そのまま再発する。7H3 は 9H1 と違い **1着列が複数車**なので
-    `formation_bet` ではなく `formation_bet_7h3` を持つ。
+    そのまま再発する。7T1 は 9H1 と違い **3着列の点数がレースごとに変わる**ので
+    `formation_bet` ではなく `formation_bet_7t1` を持つ。
     """
-    cfg = RANK_CONFIGS["7H3"]
-    assert cfg.get("formation_bet_7h3") is True
+    cfg = RANK_CONFIGS["7T1"]
+    assert cfg.get("formation_bet_7t1") is True
     assert not _has_stake_source(cfg)      # 単価を持たない＝guard に頼っている
     assert "bet_kind" not in cfg           # submit_pick 経路へ落ちたら KeyError になる
     assert _is_prebuilt_legs(cfg)
