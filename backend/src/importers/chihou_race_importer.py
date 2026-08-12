@@ -39,6 +39,14 @@ _POST_RACE_ONLY_COLS = frozenset({
     "finishers_count",
 })
 
+# race_entries 側の同種ガード。馬体重は発走の約1時間前まで確定しないため、
+# 発走前 SE では "000"/"999" で届き parse_se が None に落とす（jvlink_parser L625）。
+# 無条件上書きだと再取得のたびに実測 92〜95% の充足が消える。
+#
+# jockey_id / weight_carried 等は発走前から確定しており、騎手変更を反映する必要が
+# あるため素の上書きのままにする（COALESCE にすると変更が入らなくなる）。
+_ENTRY_LATE_ARRIVING_COLS = frozenset({"horse_weight", "weight_change"})
+
 
 # -------------------------------------------------------------------
 # 単位変換ヘルパー
@@ -462,9 +470,17 @@ class ChihouRaceImporter:
             "jockey_apprentice_code",
         ]
         stmt = insert(ChihouRaceEntry).values(values)
+        entry_set_ = {
+            col: (
+                func.coalesce(stmt.excluded[col], ChihouRaceEntry.__table__.c[col])
+                if col in _ENTRY_LATE_ARRIVING_COLS
+                else stmt.excluded[col]
+            )
+            for col in update_cols
+        }
         returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["race_id", "horse_number"],
-            set_={col: stmt.excluded[col] for col in update_cols},
+            set_=entry_set_,
         ).returning(
             ChihouRaceEntry.id, ChihouRaceEntry.race_id, ChihouRaceEntry.horse_number
         )
