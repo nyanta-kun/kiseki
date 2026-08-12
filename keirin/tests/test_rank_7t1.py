@@ -3,7 +3,7 @@
 固定するのは「壊れても例外が出ない」不変条件だけを選んである
 （このリポジトリは入稿・採点経路が黙って壊れる事故を繰り返している）:
 
-1. **母集団**: 上位クラス戦（決勝・**準決勝**・特選・選抜）だけを通すこと。
+1. **母集団**: 決勝系レース（決勝・**準決勝**・特選・選抜）だけを通すこと。
    キーワードを写していないこと。看板判定（準決勝を除外する）と**混同しない**こと
 2. **母集団**: 3着内率の上位2車が別ラインのレースだけを通すこと
 3. **自己整合**: 買った点が全て「払戻 >= 目標額」に届く予測オッズであること
@@ -66,13 +66,13 @@ def _board(odds: float = 400.0) -> dict[tuple[int, int, int], float]:
 
 
 @pytest.mark.parametrize("race_type", ["決勝", "S級決勝", "特選", "選抜", "特秀"])
-def test_upper_class_race_types_are_targets(race_type):
-    """前身 7H3 とは**母集団が真逆**。上位クラス戦を通すこと。"""
+def test_final_series_race_types_are_targets(race_type):
+    """前身 7H3 とは**母集団が真逆**。決勝系レースを通すこと。"""
     assert rank_7t1_is_target_race_type(race_type) is True
 
 
 @pytest.mark.parametrize("race_type", ["予選", "一般", "初日特別", "ガールズ", None])
-def test_non_marquee_race_types_are_excluded(race_type):
+def test_non_final_series_race_types_are_excluded(race_type):
     assert rank_7t1_is_target_race_type(race_type) is False
 
 
@@ -274,7 +274,7 @@ def _cand(**kw) -> dict:
     return base
 
 
-def test_daily_select_requires_upper_class_and_cross_line():
+def test_daily_select_requires_final_series_and_cross_line():
     assert len(rank_7t1_daily_select([_cand()])) == 1
     assert len(rank_7t1_daily_select([_cand(race_type="準決勝")])) == 1
     assert rank_7t1_daily_select([_cand(race_type="予選")]) == []
