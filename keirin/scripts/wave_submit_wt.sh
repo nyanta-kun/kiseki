@@ -52,4 +52,20 @@ echo "[$(date '+%H:%M:%S')] === netkeirin 入稿（波: ${SESSION}） $TODAY ===
 PYTHONPATH=. .venv/bin/python3 scripts/netkeirin_submit_wt.py "$TODAY" "$SESSION" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] netkeirin入稿(${SESSION})に失敗（継続）"
+
+# --- 看板レースの穴埋め（2026-08-12: 別 cron からこの波の中へ移設）---
+# 🔴 **必ずランク入稿の後に呼ぶこと**（1レース1商品なので、先に呼ぶと
+#    ランクが取るはずのレースを穴埋めが横取りする）。
+# 🔴 旧構成は cron で「波の20分後」（13:20 / 18:20）に別建てで走らせていたが、
+#    それは「波が20分以内に終わる」という暗黙の仮定に依存していた。同じ波の中で
+#    順に呼べば競合が構造的に消え、入稿データ作成と Discord 通知も同時になる。
+# ⚠️ 波ラベルは submit_marquee_wt.py が実行時刻の時から導く
+#    （h<12=morning / h<18=noon / else=evening）ので、noon は13時台・evening は
+#    18時台に走る限り $SESSION と一致する。**ここで --session を渡して上書きしない**
+#    （ミッドナイトを evening まで待たせる判定も同じ時刻を見ているため、
+#      片方だけ引数で動かすと判定と記録がずれる）。
+echo "[$(date '+%H:%M:%S')] 看板レースの穴埋め（波: ${SESSION}）..."
+PYTHONPATH=. .venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" \
+  2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
+  || echo "[$(date '+%H:%M:%S')] 看板穴埋め(${SESSION})に失敗（継続）"
 echo "[$(date '+%H:%M:%S')] === 入稿（波: ${SESSION}） 完了 ==="
