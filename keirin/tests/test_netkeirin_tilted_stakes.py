@@ -114,5 +114,18 @@ def test_新ランクへの付け忘れを検出する():
         assert cfg.get("tilt_stakes"), f"{key} に tilt_stakes が付いていません"
 
 
-def test_自信ありランクの正本は一つ():
-    assert sub.CONFIDENT_RANKS == {"7SS"}
+def test_自信ありはランクで決めない():
+    """🔴 **2026-08-13 に仕様変更**（ユーザー判断）。
+
+    netkeirin の「自信あり」は1日1つしか付けられない。旧仕様（7SS 全件）は
+    複数出た日に**先に入稿したものが取る**だけで選定になっていなかった。
+    新仕様は `scripts/pick_confident_race_wt.py` が当日全レースの期待値を比べて
+    `netkeirin_submissions.is_confident` を1件だけ立てる。
+
+    ランク名で決める実装へ**戻していないこと**を機械的に縛る。
+    """
+    assert not hasattr(sub, "CONFIDENT_RANKS"), (
+        "ランク名で自信ありを決める実装が復活しています（1日1件を守れません）")
+    src = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    approve = src[src.index("def approve_and_submit("):]
+    assert "is_confident" in approve, "承認経路が is_confident を読んでいません"

@@ -1964,7 +1964,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
 
     rows = (await db.execute(text("""
         SELECT s.race_key, s.rank_key, s.origin, s.status, s.session, s.venue_name, s.race_no,
-               s.axis1, s.axis2, s.title, s.comment, s.bet_detail,
+               s.axis1, s.axis2, s.title, s.comment, s.bet_detail, s.is_confident, s.confident_ev,
                s.netkeirin_race_id, s.proposed_at, s.approved_at, s.deleted_at,
                r.start_at, r.grade, r.race_type, r.n_entries
         FROM keirin.netkeirin_submissions s
@@ -2015,6 +2015,14 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "bet_detail": detail,
             # 期待値は表示のみ。購入判断には使わないこと（上記 docstring 参照）
             "expected_value": _expected_value(lines, top3),
+            # 勝負アイコン「自信あり」に選ばれた1レース（1日1件）。
+            # 選定は keirin の `pick_confident_race_wt.py`。
+            "is_confident": bool(r["is_confident"]),
+            # 「自信あり」の選定に使った期待値（全点を予測オッズで統一して計算）。
+            # 🔴 上の `expected_value` とは**別物**。あちらは板のオッズ由来で、
+            #    夜開催は朝の時点で板が育っていないため終日の比較には使えない。
+            "confident_ev": (float(r["confident_ev"])
+                             if r["confident_ev"] is not None else None),
             # 最低払戻・最高払戻・期待値に**予測オッズが混ざっているか**。
             # 🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。
             "odds_has_predicted": any(x.get("odds_source") == "predicted" for x in lines),
