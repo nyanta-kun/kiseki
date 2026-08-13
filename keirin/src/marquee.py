@@ -75,16 +75,25 @@ _canonical = _load_canonical()
 
 MARQUEE_KEYWORDS = _canonical.MARQUEE_KEYWORDS
 MARQUEE_EXCLUDE = _canonical.MARQUEE_EXCLUDE
+BIG_EVENT_KEYWORDS = _canonical.BIG_EVENT_KEYWORDS
 
 # 正本の関数をそのまま束縛する（ラップし直すと分岐が生まれるため）。
 # kiseki 側の名前は `is_marquee_race`、keirin 側の呼び出し名は `is_marquee_type`。
 is_marquee_type = _canonical.is_marquee_race
+is_big_event_type = _canonical.is_big_event_race
+# 🔴 穴埋めの対象判定はこれを使う（看板 or 大会の予選）。
+#    `is_marquee_type` を直接見ると大会の予選が漏れる。
+is_fill_target = _canonical.is_fill_target
 
 
 def marquee_race_nos(races: list[dict]) -> set[int]:
-    """同一開催のレース一覧から、看板レースとその前後のレース番号を返す。
+    """同一開催のレース一覧から、**穴埋め対象**とその前後のレース番号を返す。
 
     races: [{"race_no": int, "race_type": str|None}, …]（同一開催ぶん）
+
+    🔴 対象は**看板 または 大会（6日制の特別開催）の予選**（`is_fill_target`）。
+       2026-08-13 まで看板だけを見ており、GI級の開催（オールスター競輪・松山）で
+       **6R〜11R が丸ごと無推奨**になっていた。売上は他会場の5.0倍の場所だった。
 
     ⚠️ 「前後」は**レース番号の±1**。実際に隣接するレースが存在するかは
        呼び出し側が `races` に含まれるかで判断する（欠番があっても
@@ -92,7 +101,7 @@ def marquee_race_nos(races: list[dict]) -> set[int]:
     """
     present = {int(r["race_no"]) for r in races if r.get("race_no") is not None}
     marquee = {int(r["race_no"]) for r in races
-               if r.get("race_no") is not None and is_marquee_type(r.get("race_type"))}
+               if r.get("race_no") is not None and is_fill_target(r.get("race_type"))}
     out = set(marquee)
     for n in marquee:
         out |= {n - 1, n + 1}

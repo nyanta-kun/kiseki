@@ -1114,15 +1114,26 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               {pick.is_marquee && (
                 <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
-              {/* ランクのゲートを通らず入稿したレース（手動入稿・看板の穴埋め）。
-                  同じ 7A でも経路が違うので、混ぜたまま出すと「ランクの成績」と
-                  読まれてしまう（実測でゲート通過と回収率が倍近く違う）。 */}
-              {pick.submission_only && (
+              {/* ランクのゲートを通らず入稿したレース。同じ 7A でも経路が違うので、
+                  混ぜたまま出すと「ランクの成績」と読まれてしまう
+                  （実測でゲート通過と回収率が倍近く違う）。
+                  🔴 **`submission_only` だけで「手動」と出してはいけない。**
+                     看板の穴埋めは**自動**なのに手動と表示されていた（2026-08-13 是正）。
+                     出自(`origin`)で分ける。 */}
+              {pick.submission_only && pick.origin === "manual" && (
                 <span
-                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-                  title="ランクのゲートを通っていない入稿（手動・看板の穴埋め）。買い目と的中は入稿記録から表示しています"
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+                  title="手動で入稿したレース。買い目と的中は入稿記録から表示しています"
                 >
                   手動
+                </span>
+              )}
+              {pick.submission_only && pick.origin !== "manual" && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                  title="ランクのゲートを通っていない自動入稿（看板・大会の穴埋め）。買い目と的中は入稿記録から表示しています"
+                >
+                  穴埋め
                 </span>
               )}
               {startTime && (

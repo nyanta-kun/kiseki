@@ -39,14 +39,68 @@ from __future__ import annotations
 MARQUEE_KEYWORDS: tuple[str, ...] = ("決勝", "特選", "選抜", "特秀")
 MARQUEE_EXCLUDE: tuple[str, ...] = ("準決勝",)
 
+# ---------------------------------------------------------------------------
+# 大会（6日制の特別開催）の予選（2026-08-13 新設）
+#
+# GI/GII 級の開催は「一次予選 → 二次予選 → 準決勝 → 決勝」の形を取り、
+# 予選であっても注目度と売上が高い。実測（2026-08-11 松山・オールスター競輪）で
+# **1レースあたりの有償pt が他会場の5.0倍**だった。
+#
+# ところが従来の看板判定（決勝/特選/選抜）はこれらを拾わないため、
+# **最も売れる開催の予選に商品が1つも出ない**状態だった
+# （2026-08-13 松山 6R〜11R が丸ごと無推奨）。
+#
+# 🔴 **これは「看板」とは別概念**。看板は「売上が集まる決勝クラス」で、
+#    こちらは「大会の予選」。同じ MARQUEE_KEYWORDS へ混ぜると Web の★の
+#    意味が変わり、`rank_7t1_is_target_race_type`（決勝系レース）の母集団も
+#    動かしてしまうため、**別の関数に分ける**。
+#
+# ⚠️ **通常の「予選」を含めてはいけない。** 接頭辞の無い「予選」は
+#    282開催・2,264レースに現れる日常のレースで、含めると判定が意味を失う。
+#    ここに挙げるのは**接頭辞つきの形だけ**（一予選・二次予選Ａ 等）。
+#
+# ⚠️ 取りこぼし: 接頭辞の無い「予選」でも9車の開催が 33レース(5開催・1.5年)ある。
+#    race_type だけでは通常の予選と区別できないので拾わない（全体の約2%）。
+#    車数を見れば分けられるが、判定の signature を変えると
+#    共有している呼び出し側（Web の★・入稿バッチ）を全て触ることになる。
+#
+# ⚠️ **「特別選抜予選」は「選抜」を部分一致で拾うので既に看板**（ここには不要）。
+BIG_EVENT_KEYWORDS: tuple[str, ...] = (
+    "一予選", "二予選",          # 最頻（861 / 517 レース・2025-01 以降）
+    "一次予選", "二次予選",      # 「二次予選Ａ」「一次予選１」等
+    "東予選", "西予選",          # 東西対抗形式（「東予選(第１走)」等）
+)
+
 
 def is_marquee_race(race_type: str | None) -> bool:
     """race_type が看板レース（決勝・特選クラス）か。
 
     ⚠️ 除外を先に見る（「準決勝」が「決勝」を部分一致で拾うため）。
+    ⚠️ **大会の予選は含まない**（`is_big_event_race`）。看板は売上が集まる
+       決勝クラスを指す語で、意味が違う。
     """
     if not race_type:
         return False
     if any(k in race_type for k in MARQUEE_EXCLUDE):
         return False
     return any(k in race_type for k in MARQUEE_KEYWORDS)
+
+
+def is_big_event_race(race_type: str | None) -> bool:
+    """race_type が**大会（6日制の特別開催）の予選**か。
+
+    GI/GII 級の開催でしか出ない形式。看板ではないが注目度と売上が高いので、
+    **入稿の穴埋め対象としては看板と同じに扱う**（`is_fill_target`）。
+    """
+    if not race_type:
+        return False
+    return any(k in race_type for k in BIG_EVENT_KEYWORDS)
+
+
+def is_fill_target(race_type: str | None) -> bool:
+    """入稿の穴埋め対象か（看板 **または** 大会の予選）。
+
+    🔴 穴埋めの判定はここを使う。`is_marquee_race` を直接見ると
+       大会の予選が漏れる（2026-08-13 に実際に漏れた）。
+    """
+    return is_marquee_race(race_type) or is_big_event_race(race_type)
