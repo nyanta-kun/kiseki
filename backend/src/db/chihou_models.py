@@ -415,3 +415,139 @@ class ChihouRaceRecommendation(ChihouBase):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ChihouPlacePickRace(ChihouBase):
+    """地方競馬 注目馬の前向き記録（レース単位・発走前スナップショット）。
+
+    🔴 **後付けでは作れない記録**。`calculated_indices` の v14 行は当日 21:30 JST の
+    再算出で上書きされ、そのとき市場特徴の入力が確定オッズに変わる（台帳 5.4）。
+    つまり **日中ユーザーに提示された指数は DB に残らない**。凍結した運用点
+    （発走前6番人気以下 × 指数5位内 × 上位3頭シェア<0.63 × 8頭以上 → 最大2頭）が
+    正しかったかを確認する唯一の手段が、発走前に撮ったこのスナップショットになる。
+
+    推奨が出なかったレースも記録する。「出す/出さない」の判断自体が情報を持つ
+    （台帳 11.3: 推奨ありは人気薄が複勝圏に来る率 80.4% / 棄権は 51.0%）ため、
+    棄権側の実績を測れないと運用点の評価が片肺になる。
+    """
+
+    __tablename__ = "place_pick_races"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("race_id", name="uq_chihou_place_pick_races_race"),
+        {"schema": CHIHOU_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[str] = mapped_column(
+        String(8), nullable=False, index=True, comment="開催日（YYYYMMDD）"
+    )
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{CHIHOU_SCHEMA}.races.id"), nullable=False, index=True
+    )
+    course_name: Mapped[str | None] = mapped_column(String(20), comment="競馬場名")
+    race_number: Mapped[int | None] = mapped_column(Integer, comment="レース番号")
+    post_time: Mapped[str | None] = mapped_column(String(4), comment="発走時刻（hhmm）")
+    snapshot_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, comment="スナップショット時刻"
+    )
+    lead_minutes: Mapped[int | None] = mapped_column(
+        Integer, comment="発走まで何分の時点で撮ったか（正の値）"
+    )
+    index_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="CHIHOU_COMPOSITE_VERSION"
+    )
+    rule_version: Mapped[str] = mapped_column(
+        String(80), nullable=False, comment="判定ルールの署名（閾値を変えたら値が変わる）"
+    )
+    head_count_used: Mapped[int | None] = mapped_column(
+        Integer, comment="判定に使った頭数"
+    )
+    head_count_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        comment="registered_count で代替したか（発走前は通常 True）",
+    )
+    top3_share: Mapped[float | None] = mapped_column(
+        Float, comment="市場上位3頭の含意確率シェア（発走前オッズ）"
+    )
+    n_entries: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="出走表の頭数")
+    n_odds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="発走前単勝オッズが取れた頭数"
+    )
+    n_eligible: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="適格判定を通った頭数（絞り込み前）"
+    )
+    n_picked: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="実際に推奨した頭数（最大2）"
+    )
+    skip_reason: Mapped[str | None] = mapped_column(
+        String(30), comment="推奨0のとき理由（no_odds/no_index/closed_race/no_candidate 等）"
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    n_finishers: Mapped[int | None] = mapped_column(Integer, comment="確定した出走馬数（異常なし）")
+    race_hit: Mapped[bool | None] = mapped_column(
+        Boolean, comment="推奨馬のいずれかが複勝圏（3着以内）"
+    )
+    upset_placed: Mapped[bool | None] = mapped_column(
+        Boolean, comment="発走前6番人気以下の馬が複勝圏に入ったか（棄権判断の答え合わせ）"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChihouPlacePick(ChihouBase):
+    """地方競馬 注目馬の前向き記録（出走馬単位）。
+
+    **推奨馬だけでなくレースの全出走馬を記録する。** 指数そのものが上書きされる以上、
+    「指数2位内にしていたら」「最大1頭にしていたら」といった別案の事後評価も、
+    ここに全馬ぶんの指数と発走前オッズが残っていなければ二度とできない
+    （台帳 12.5 の保留仮説を前向きに検証するため）。
+    """
+
+    __tablename__ = "place_picks"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("race_id", "horse_number", name="uq_chihou_place_picks_race_horse"),
+        {"schema": CHIHOU_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pick_race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{CHIHOU_SCHEMA}.place_pick_races.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{CHIHOU_SCHEMA}.races.id"), nullable=False, index=True
+    )
+    horse_id: Mapped[int | None] = mapped_column(ForeignKey(f"{CHIHOU_SCHEMA}.horses.id"))
+    horse_number: Mapped[int] = mapped_column(Integer, nullable=False, comment="馬番")
+    horse_name: Mapped[str | None] = mapped_column(String(50), comment="馬名")
+    composite_index: Mapped[float | None] = mapped_column(
+        Float, comment="発走前に提示していた総合指数（上書き前の値）"
+    )
+    index_rank: Mapped[int | None] = mapped_column(Integer, comment="総合指数のレース内順位")
+    win_probability: Mapped[float | None] = mapped_column(Float)
+    place_probability: Mapped[float | None] = mapped_column(Float)
+    pre_win_odds: Mapped[float | None] = mapped_column(Float, comment="発走前単勝オッズ")
+    pre_place_odds: Mapped[float | None] = mapped_column(Float, comment="発走前複勝オッズ")
+    pop_rank: Mapped[int | None] = mapped_column(
+        Integer, comment="発走前オッズによる人気順位（確定人気ではない）"
+    )
+    is_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, comment="chihou_is_place_pick を通ったか"
+    )
+    is_picked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, comment="最大2頭の絞り込みで採用されたか"
+    )
+    pick_order: Mapped[int | None] = mapped_column(Integer, comment="採用順（1 or 2）")
+    finish_position: Mapped[int | None] = mapped_column(Integer, comment="確定着順")
+    abnormality_code: Mapped[int | None] = mapped_column(Integer, comment="異常区分")
+    final_win_odds: Mapped[float | None] = mapped_column(Float, comment="確定単勝オッズ")
+    final_win_popularity: Mapped[int | None] = mapped_column(Integer, comment="確定人気")
+    place_payout_odds: Mapped[float | None] = mapped_column(
+        Float, comment="複勝確定払戻倍率（100円あたり払戻÷100）"
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

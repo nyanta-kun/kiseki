@@ -1490,6 +1490,26 @@ ChihouSweetSpotResponse {
 ```
 `bet_type="place"` の場合 `win_roi` は複勝ROI を返す（フィールド名は互換のため維持）。
 
+### 注目馬の前向き記録（`chihou.place_pick_races` / `chihou.place_picks`・2026-08-14）
+
+注目馬（`chihou_is_place_pick`）の運用点は探索で選ばれた値で、確認窓が無い
+（HOLDOUT は開封済み）。**後付け集計もできない**——`calculated_indices` の現行 version 行は
+当日 21:30 JST の再算出で上書きされ、そのとき市場特徴の入力が確定オッズに変わるため、
+**日中ユーザーに提示された指数は DB に残らない**。そこで発走前に撮って保存する。
+
+- 本体: `backend/src/services/chihou_place_pick_log.py`
+- cron: `scripts/chihou_pick_snapshot_trigger.sh`（**毎分**）/ `chihou_pick_settle_trigger.sh`（日次 23:30 JST）
+- 集計: `backend/scripts/chihou_pick_log_report.py --start --end`
+- 🔴 **発走時刻を過ぎたレースは撮らない**（撮ると締切間際の資金移動が混ざり look-ahead になる）。
+  撮り逃しは記録から欠けるが、欠けている方が安全。テストで固定してある
+- ⚠️ **毎分で回すこと**。5分間隔だと発走6分前の窓を跨げないレースが出る
+- 推奨が出なかったレースも `skip_reason` 付きで記録する（棄権側の答え合わせに要る）。
+  推奨馬だけでなく**全出走馬**の指数を残す（別案の事後評価は上書き後には不可能）
+- 判定は必ず本番関数（`chihou_is_place_pick` / `chihou_select_place_picks`）を呼ぶ。
+  閾値は `rule_version` として毎行に埋まるので、変更しても世代が自動で分かれる
+
+詳細: `docs/chihou_rebuild_2026_08.md` 16章
+
 ### 複勝オッズ永続化
 
 `chihou.race_results.place_odds` は HR 払戻からだと 1〜3着のみで充足率28%だったため、`chihou.odds_history`（bet_type='place'）の発走前最終スナップショットで全馬補完する。
