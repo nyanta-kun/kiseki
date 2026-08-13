@@ -83,9 +83,24 @@ def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
     🔴 これは人手の入稿ではなく**自動入稿**なので「手動入稿」と書かない。
        2026-08-11 に「netkeirin手動入稿 … 1件」が16通届き、
        自動で埋めた分を人が出したものと誤読しかねない状態だった。
+
+    🔴 **承認制のときは1通も送らない**（2026-08-14・ユーザー判断）。
+       承認制では子プロセスが `propose_only=True` で走るので、作られるのは
+       netkeirin へ出ていない**入稿案（status='proposed'）**であって入稿ではない。
+       それを「自動入稿: 成功12件」と通知していたため、直前に出る
+       「[netkeirin入稿案]」と矛盾し、**承認制が効いていないように見えていた**。
+       入稿案の存在は承認催促の通知と `/keirin/review` が伝えるので、
+       ここから重ねて出す必要はない。ログには必ず残す（黙って消さない）。
     """
     from src.netkeirin_client import RACE_AUTH_URL
     from src.notify.discord import send
+
+    from scripts.netkeirin_submit_wt import _approval_required
+
+    if _approval_required():
+        print(f"[marquee] 承認制のため Discord 通知は出さない"
+              f"（入稿案 {len(done)}件・失敗 {len(failed)}件）", flush=True)
+        return
 
     head = f"🏁 **[netkeirin自動入稿] {date} 看板レース: 成功{len(done)}件"
     head += f"・失敗{len(failed)}件**" if failed else "**"
@@ -111,7 +126,7 @@ def main() -> int:
 
     with get_connection() as conn:
         races = [dict(r) for r in conn.execute(
-            "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id "
+            "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id, cup_grade "
             "FROM wt_races WHERE race_date = ? ORDER BY venue_id, race_no", (date,))]
         # 🔴 **取消（status='deleted'）も「その日は処理済み」として扱う**
         #    （2026-08-13 変更・ユーザー判断）。取消は論理削除なので行が残る。

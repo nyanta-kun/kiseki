@@ -129,3 +129,35 @@ def test_values_match_the_canonical_source() -> None:
     assert MARQUEE_EXCLUDE == ns["MARQUEE_EXCLUDE"]
     for t in ("決勝", "特選", "準決勝", "一般", None):
         assert is_marquee_type(t) == ns["is_marquee_race"](t), t
+
+
+def test_grade_covers_every_race_of_a_big_meeting():
+    """🔴 GIII 以上の開催は**全レース**が穴埋め対象（2026-08-14・ユーザー判断）。
+
+    2026-08-14 松山（オールスター競輪・GI・11R）の実データ。キーワード判定では
+    「選抜(1)」とその前後しか拾えず 7R〜11R が無推奨だった。
+    """
+    from src.marquee import marquee_race_nos
+
+    rs = [{"race_no": 1, "race_type": "一般", "cup_grade": 5},
+          {"race_no": 3, "race_type": "選抜(１)", "cup_grade": 5},
+          {"race_no": 7, "race_type": "準々Ｂ", "cup_grade": 5},
+          {"race_no": 11, "race_type": "シャイニングスター賞", "cup_grade": 5}]
+    assert marquee_race_nos(rs) == {1, 3, 7, 11}
+
+
+def test_without_grade_the_keyword_behaviour_is_unchanged():
+    """🔴 `cup_grade` が無い（NULL・古いレース）ときは従来どおり看板＋前後1R。"""
+    from src.marquee import marquee_race_nos
+
+    rs = [{"race_no": n, "race_type": t} for n, t in
+          ((1, "一般"), (2, "一般"), (3, "決勝"), (4, "一般"), (5, "一般"))]
+    assert marquee_race_nos(rs) == {2, 3, 4}
+
+
+def test_low_grade_meeting_is_not_expanded():
+    """FI/FII をグレードで拾わない（日常の開催が丸ごと対象になってしまう）。"""
+    from src.marquee import marquee_race_nos
+
+    rs = [{"race_no": n, "race_type": "一般", "cup_grade": 2} for n in range(1, 12)]
+    assert marquee_race_nos(rs) == set()

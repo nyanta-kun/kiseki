@@ -97,10 +97,37 @@ def is_big_event_race(race_type: str | None) -> bool:
     return any(k in race_type for k in BIG_EVENT_KEYWORDS)
 
 
-def is_fill_target(race_type: str | None) -> bool:
-    """入稿の穴埋め対象か（看板 **または** 大会の予選）。
+# 🔴 このグレード以上の開催は **全レース**を穴埋め対象にする（2026-08-14・ユーザー判断
+#    「グレードの競輪場はキーワードより優先」）。GIII(3) 以上＝ GIII/GII/GI/GP。
+#
+# なぜ race_type のキーワードでは足りないか:
+#   2026-08-14 松山（オールスター競輪・GI・11R）で、キーワードが拾えたのは
+#   「選抜(1)」の 3〜5R とその前後だけで **7R〜11R（準々Ａ/Ｂ・シャイニングスター賞）
+#   が丸ごと無推奨**だった。大会の番組名は開催ごとに自由度が高く、
+#   キーワードを足し続けても追いつかない。開催のグレードは番組名と違って
+#   構造化された値なので、そちらを先に見る。
+#
+# ⚠️ **キーワード判定は消さない**。`cup_grade` は 2026-08-14 に保存を始めた列で、
+#    それ以前のレースと取得に失敗した開催では NULL になる。NULL のときは
+#    従来どおりキーワードで判定する（fail-open ではなく従来動作へのフォールバック）。
+#
+# ⚠️ この定数は `keirin_cup_grade.BIG_EVENT_MIN_GRADE` と同じ値でなければならないが、
+#    **import してはいけない**（このファイルは keirin 側が自分の venv から
+#    直接読み込むため、標準ライブラリ以外に依存できない）。
+#    一致は `tests/test_keirin_marquee.py` が突き合わせている。
+FILL_ALL_MIN_GRADE = 3
+
+
+def is_fill_target(race_type: str | None, cup_grade: int | None = None) -> bool:
+    """入稿の穴埋め対象か。
+
+    判定の順序（**グレードが先**）:
+      1. 開催グレードが `FILL_ALL_MIN_GRADE` 以上 → **無条件で対象**（全レース）
+      2. それ以外 → 看板 **または** 大会の予選（race_type のキーワード）
 
     🔴 穴埋めの判定はここを使う。`is_marquee_race` を直接見ると
        大会の予選が漏れる（2026-08-13 に実際に漏れた）。
     """
+    if cup_grade is not None and int(cup_grade) >= FILL_ALL_MIN_GRADE:
+        return True
     return is_marquee_race(race_type) or is_big_event_race(race_type)

@@ -465,7 +465,14 @@ def _write_paper_candidates(target_date: str) -> None:
     except Exception as e:
         print(f"[write_candidates_wt] ペーパー候補書き込み失敗: {e}", flush=True)
         return
-    print(f"[write_candidates_wt] ペーパー候補(7S/7A/7SS/7B/9S/9A/7H1/9H1) {inserted}/{len(rows)} 件書き込み", flush=True)
+    # 🔴 ランク名は**実際に書いた行から出す**（手書きの一覧にしない）。
+    #    2026-08-14 まで "7S/7A/7SS/7B/9S/9A/7H1/9H1" とベタ書きされており、
+    #    9C を足しても 9S/9A を廃止してもログだけが古いままだった。
+    #    このログは「今日どのランクが候補を出したか」を確認する唯一の手段なので、
+    #    実体とズレると**登録漏れを見落とす**（実際に見落としかけた）。
+    written = sorted({r[1].replace("RANK_", "") for r in rows})
+    print(f"[write_candidates_wt] ペーパー候補({'/'.join(written) or 'なし'}) "
+          f"{inserted}/{len(rows)} 件書き込み", flush=True)
 
     # Mac（SQLiteモード）から実行された場合の VPS PG ミラー
     db_url = os.environ.get("KEIRIN_DB_URL")

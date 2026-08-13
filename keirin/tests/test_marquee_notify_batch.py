@@ -88,6 +88,11 @@ def test_summary_includes_success_and_failure(monkeypatch):
     import src.notify.discord as dc  # noqa: PLC0415
 
     monkeypatch.setattr(dc, "send", lambda msg, channel=None: sent.append((msg, channel)) or True)
+    # 🔴 承認制フラグを固定する（2026-08-14）。`_notify_summary` は文言を
+    #    `_approval_required()` で切り替えるようになったので、固定しないと
+    #    **本番DBの設定でテストの成否が変わる**（実際に承認制ONで落ちた）。
+    import scripts.netkeirin_submit_wt as ns  # noqa: PLC0415
+    monkeypatch.setattr(ns, "_approval_required", lambda: False)
     m._notify_summary("2026-08-11", ["前橋11R(7A)", "小倉9R(7S)"], ["大宮5R(7A)"])
     assert len(sent) == 1, f"1通にまとまっていません: {len(sent)}通"
     msg, channel = sent[0]
