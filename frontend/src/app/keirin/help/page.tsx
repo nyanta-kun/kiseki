@@ -327,11 +327,17 @@ export default async function KeirinHelpPage() {
           高額配当の出やすさに置いています。
         </p>
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1">
-          {ranks.filter((r) => r.roi).map((r) => (
+          {/* 🔴 有効なランクは**必ず全部出す**。新設で実績が無いものを黙って
+              間引くと「ガイドに載っていないランクが入稿されている」状態になる
+              （2026-08-14・7T1 と 9C が消えていたのをユーザーが指摘）。
+              数字が無いことは "—" と注記で伝える。 */}
+          {ranks.map((r) => (
             <div key={r.key} className="bg-gray-50 rounded-lg p-2.5 text-center">
               <p className="text-xs text-gray-500">{r.label} 全期間回収率</p>
-              <p className="text-lg font-bold" style={{ color: r.bg }}>{r.roi}</p>
-              <p className="text-xs text-gray-400">{r.races}</p>
+              <p className="text-lg font-bold" style={{ color: r.roi ? r.bg : "#9ca3af" }}>
+                {r.roi || "—"}
+              </p>
+              <p className="text-xs text-gray-400">{r.races || "実績集計前"}</p>
             </div>
           ))}
         </div>
@@ -340,7 +346,7 @@ export default async function KeirinHelpPage() {
           walk-forward再構築）。
           <b>7SS / 7S / 7A は買い目構造が同一</b>（三連複 軸2車+5点流し）で、
           全live記録（n=7,461・32ヶ月）では回収率の差は統計的に有意ではありません。
-          7T1・9C は新設のため全期間の再構築がまだ無く、タイルに出ません。
+          <b>7T1・9C は新設のため全期間の再構築がまだ無く、回収率は「—」</b>です（実績が貯まり次第この欄に入ります）。
         </p>
       </section>
 
