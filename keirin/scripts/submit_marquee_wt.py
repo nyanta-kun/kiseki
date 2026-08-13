@@ -83,18 +83,32 @@ def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
     🔴 これは人手の入稿ではなく**自動入稿**なので「手動入稿」と書かない。
        2026-08-11 に「netkeirin手動入稿 … 1件」が16通届き、
        自動で埋めた分を人が出したものと誤読しかねない状態だった。
+
+    🔴 **承認制のときは「自動入稿」と書かない**（2026-08-14 是正）。
+       承認制では子プロセスが `propose_only=True` で走るので、実際に作られるのは
+       netkeirin へ出ていない**入稿案（status='proposed'）**。それを
+       「自動入稿: 成功12件」と通知していたため、直前に出る「[netkeirin入稿案]」と
+       矛盾し、**承認制が効いていないように見えていた**（ユーザー指摘）。
+       挙動は正しく、誤っていたのは文言だけ。判定は入稿側と同じ関数を使う。
     """
     from src.netkeirin_client import RACE_AUTH_URL
     from src.notify.discord import send
 
-    head = f"🏁 **[netkeirin自動入稿] {date} 看板レース: 成功{len(done)}件"
+    from scripts.netkeirin_submit_wt import _approval_required
+
+    proposed = _approval_required()
+    label = "netkeirin入稿案" if proposed else "netkeirin自動入稿"
+    unit = "案" if proposed else "成功"
+    head = f"🏁 **[{label}] {date} 看板レース: {unit}{len(done)}件"
     head += f"・失敗{len(failed)}件**" if failed else "**"
     body = ""
     if done:
         body += "\n" + " / ".join(done)
     if failed:
         body += "\n⚠️ 失敗: " + " / ".join(failed)
-    body += f"\n確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。"
+    body += (f"\n確認: {RACE_AUTH_URL}\n"
+             + ("未承認のままでは netkeirin へ出ません。承認画面で確認してください。"
+                if proposed else "内容を確認の上、公開してください。"))
     try:
         send(head + body, channel="netkeirin")
     except Exception as e:  # noqa: BLE001 — 通知失敗で入稿結果を失わない
