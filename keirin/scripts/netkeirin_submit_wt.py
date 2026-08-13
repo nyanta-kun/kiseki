@@ -11,7 +11,8 @@ rank_key)への再送信は上書きされるだけなので、対象が重複�
 
 各ランクのON/OFF・タイトル/コメントのテンプレートは kiseki 側の入稿設定画面
 （/keirin/settings）で編集された keirin.netkeirin_settings を読む。OFFのランクは
-スキップする。コメント末尾には、そのレースの出走選手ごとの1着率・3着内率テーブルを
+スキップする。コメント末尾には、そのレースの出走選手ごとの1着率・2着内率・3着内率
+テーブルを
 自動付加する（数値はkiseki Web(/keirin)と同じロジット空間シフトによる正規化値）。
 
 入稿完了後、新規に登録した件数が1件以上あれば1本のDiscordサマリーを送る。
@@ -188,8 +189,8 @@ _MARQUEE_COMMENT_TEMPLATE = (
     "レース直前の実際のオッズをご自身でご確認いただき、必要に応じて配分を"
     "調整いただくと精度が上がります。\n\n"
     "【参考データ】\n"
-    "出走選手全員の1着率・3着内率です。三連単で購入される際の着順・買い目の"
-    "参考にご活用ください。"
+    "出走選手全員の1着率・2着内率・3着内率です。三連単・二車単で購入される際の"
+    "着順・買い目の参考にご活用ください。"
 )
 
 # ランク定義。file_key は候補JSON（wave_picks_wt_{date}[_night]_{file_key}_candidates.json）の
@@ -418,7 +419,7 @@ RANK_ORDER = list(RANK_CONFIGS)
 
 
 # ---------------------------------------------------------------------------
-# 選手成績表（1着率・3着内率）
+# 選手成績表（1着率・2着内率・3着内率）
 # frontend/src/app/keirin/page.tsx の sigmoid/logit/solveLogitShift と同一ロジックの
 # Python移植。pred_win_pct/pred_top3_pct（選手ごと独立モデルの生確率）はレース内合計が
 # 揃わないため、ロジット空間で一律シフトして単勝=100%・複勝=min(出走数,3)*100%に補正する。
@@ -432,55 +433,70 @@ _solve_logit_shift = solve_logit_shift
 
 
 def _build_entry_table(race_key: str, marks: dict[int, str]) -> str | None:
-    """出走選手ごとの印・1着率・3着内率（正規化値）をHTMLテーブルとして返す。
+    """出走選手ごとの印・1着率・2着内率・3着内率（正規化値）をHTMLテーブルで返す。
+
     指数未算出（pred_win_pct が全件NULL）のレースは None を返し呼び出し側で省略する。
     netkeirinのコメント欄はscript/style/iframe以外のHTMLタグを許容するため、
     tableタグで見やすく整形する（車番昇順）。
+
+    🔴 **2着内率は列ごと出し入れする**（2026-08-14 追加・ユーザー要望）。
+       `pred_top2_pct` は 2026-08-12 に導入した列で、
+       ①それ以前のレースはバックフィルしていない ②モデル未配布なら書かれない、
+       の2通りで欠ける。全件 NULL のときは**列自体を出さない**
+       （「―」だけの列を売り物のコメントに載せない）。
+       正規化の目標値も Web（page.tsx の `normTop2`）と揃えて min(出走数, 2)。
     """
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT frame_no, name, pred_win_pct, pred_top3_pct FROM wt_entries "
-            "WHERE race_key = ? ORDER BY frame_no",
+            "SELECT frame_no, name, pred_win_pct, pred_top2_pct, pred_top3_pct "
+            "FROM wt_entries WHERE race_key = ? ORDER BY frame_no",
             (race_key,),
         ).fetchall()
     entries = [dict(r) for r in rows]
     if not entries or all(e["pred_win_pct"] is None for e in entries):
         return None
 
+    has_top2 = any(e["pred_top2_pct"] is not None for e in entries)
     win_probs = [float(e["pred_win_pct"] or 0) / 100 for e in entries]
+    top2_probs = [float(e["pred_top2_pct"] or 0) / 100 for e in entries]
     top3_probs = [float(e["pred_top3_pct"] or 0) / 100 for e in entries]
     win_shift = _solve_logit_shift(win_probs, 1) if any(p > 0 for p in win_probs) else None
+    top2_shift = (
+        _solve_logit_shift(top2_probs, min(len(entries), 2))
+        if has_top2 and any(p > 0 for p in top2_probs) else None
+    )
     top3_shift = (
         _solve_logit_shift(top3_probs, min(len(entries), 3)) if any(p > 0 for p in top3_probs) else None
     )
 
+    def _pct(raw, prob, shift):
+        if shift is None or raw is None:
+            return "―"
+        return f"{100 * _sigmoid(_logit(prob) + shift):.1f}%"
+
     rows_html = []
-    for e, wp, tp in zip(entries, win_probs, top3_probs):
+    for e, wp, t2, tp in zip(entries, win_probs, top2_probs, top3_probs):
         frame_no = int(e["frame_no"])
         mark = html.escape(marks.get(frame_no, ""))
         name = html.escape(e["name"] or "―")
-        win_pct = (
-            100 * _sigmoid(_logit(wp) + win_shift)
-            if win_shift is not None and e["pred_win_pct"] is not None else None
-        )
-        top3_pct = (
-            100 * _sigmoid(_logit(tp) + top3_shift)
-            if top3_shift is not None and e["pred_top3_pct"] is not None else None
-        )
-        win_str = f"{win_pct:.1f}%" if win_pct is not None else "―"
-        top3_str = f"{top3_pct:.1f}%" if top3_pct is not None else "―"
+        cells = [f"{frame_no}", mark, name, _pct(e["pred_win_pct"], wp, win_shift)]
+        if has_top2:
+            cells.append(_pct(e["pred_top2_pct"], t2, top2_shift))
+        cells.append(_pct(e["pred_top3_pct"], tp, top3_shift))
         rows_html.append(
-            f"<tr><td align=\"center\">{frame_no}</td><td align=\"center\">{mark}</td>"
-            f"<td align=\"center\">{name}</td><td align=\"center\">{win_str}</td>"
-            f"<td align=\"center\">{top3_str}</td></tr>"
+            "<tr>" + "".join(f'<td align="center">{c}</td>' for c in cells) + "</tr>"
         )
 
+    heads = ["車番", "印", "選手名", "1着率"]
+    if has_top2:
+        heads.append("2着内率")
+    heads.append("3着内率")
     table = (
-        "<table><thead><tr><th>車番</th><th>印</th><th>選手名</th><th>1着率</th>"
-        "<th>3着内率</th></tr></thead>"
+        "<table><thead><tr>" + "".join(f"<th>{h}</th>" for h in heads) + "</tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody></table>"
     )
-    return f"【出走選手 1着率・3着内率】\n{table}"
+    label = "1着率・2着内率・3着内率" if has_top2 else "1着率・3着内率"
+    return f"【出走選手 {label}】\n{table}"
 
 
 # ---------------------------------------------------------------------------
