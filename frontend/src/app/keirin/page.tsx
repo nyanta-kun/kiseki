@@ -88,6 +88,65 @@ function sortThirdsByTop3(thirds: number[], entries: KeirinPick["entries"]): num
     .map((x) => x.car);
 }
 
+/**
+ * 買い目文字列から券種ラベルと本文を作る。
+ *
+ * 🔴 **ランク名で券種を決めてはいけない。** 以前は「7H1 以外は 3連複」という
+ *    白名簿で分岐しており、三連単ランクを足すたびに**買い目を偽った**
+ *    （2026-08-13 に 7T1 が「3連複: 7-3-2」と表示された。9H1 も同型）。
+ *    券種は**区切り文字**で決まる（三連複 `1=2=4` / 三連単 `1-2-4`）ので、
+ *    データから判定する。
+ *
+ * 入稿記録だけの行（`_submitted_pick_result`）は生の目を空白区切りで並べた
+ * `"1=5=6 1=5=9 1=2=5 …"` の形で来る。**全ての目が同じ2車を含むなら
+ * 「軸2車＝相手列」へ畳む**（1レース7点を横に並べても読めない）。
+ *
+ * 既に畳まれた形（`a=b-t1,t2,…`）や券種名込みの形（`三複:… / 三単:…`）は
+ * そのまま通す。
+ */
+function formatComboLabel(
+  pred: string, entries: KeirinPick["entries"],
+): { label: string | null; body: string } {
+  const raw = pred.trim();
+  // 券種名が既に入っている（7H1 の2券種・9H1 の "三単:…"）。前置しない。
+  if (/^三[複単]:/.test(raw)) return { label: null, body: raw };
+
+  const parts = raw.split(/[\s]+/).filter(Boolean);
+  // 既に畳まれた形はそのまま（相手の並べ替えだけ既存関数に任せる）。
+  if (parts.length === 1 && /^\d+=\d+-\d/.test(parts[0])) {
+    return { label: "3連複", body: reorderComboByTop3(parts[0], entries) };
+  }
+
+  const isTrio = parts.every((c) => /^\d+(=\d+){2}$/.test(c));
+  const isTrifecta = parts.every((c) => /^\d+(-\d+){2}$/.test(c));
+  if (!isTrio && !isTrifecta) return { label: null, body: raw };
+  const label = isTrio ? "3連複" : "3連単";
+  const sep = isTrio ? "=" : "-";
+  const combos = parts.map((c) => c.split(sep).map(Number));
+
+  // 全ての目に共通して現れる2車があれば「軸2車＝相手列」へ畳む。
+  // ⚠️ 三連単は**着順に意味がある**ので、1着・2着が全目で同じときだけ畳む
+  //    （共通2車が入れ替わる形は畳むと着順を偽る）。
+  if (isTrifecta) {
+    const [a1, a2] = combos[0];
+    if (combos.every((c) => c[0] === a1 && c[1] === a2)) {
+      const thirds = combos.map((c) => c[2]);
+      return { label, body: `${a1}-${a2}-${sortThirdsByTop3(thirds, entries).join(",")}` };
+    }
+    return { label, body: parts.join(" ") };
+  }
+  const counts = new Map<number, number>();
+  for (const c of combos) for (const car of new Set(c)) counts.set(car, (counts.get(car) ?? 0) + 1);
+  const common = [...counts.entries()]
+    .filter(([, n]) => n === combos.length).map(([car]) => car).sort((x, y) => x - y);
+  if (common.length !== 2) return { label, body: parts.join(" ") };
+  const [a1, a2] = common;
+  const thirds = combos.map((c) => c.find((car) => car !== a1 && car !== a2))
+    .filter((x): x is number => x != null);
+  if (thirds.length !== combos.length) return { label, body: parts.join(" ") };
+  return { label, body: `${a1}=${a2}=${sortThirdsByTop3(thirds, entries).join(",")}` };
+}
+
 // pred_combo「a1=a2-t1,t2,..」の相手部分を sortThirdsByTop3 で並べ替えて返す。
 // 旧ランクの別形式（S1の "p1-p2-t.."・旧Aの "axis>t.."）や欠損はそのまま返す。
 function reorderComboByTop3(pred: string, entries: KeirinPick["entries"]): string {
@@ -999,13 +1058,15 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // さらに全目の列挙（1レース18目）は画面上ほぼ読めないため、券種ごとに
   // フォーメーション表記へ畳んで**行を分けて**出す（multiBetLines）。
   // 畳めない構造や "見送り" などは null が返るので、下の従来表示へ落ちる。
-  const is7h1 = pick.rank === "RANK_7H1";
   const nCombosSuffix = pick.n_combos && pick.n_combos > 1 ? ` (${pick.n_combos}点)` : "";
   const multiBetLines = pick.pred_combo ? formatMultiBetComboLines(pick.pred_combo) : null;
-  const comboLabel = pick.pred_combo && !multiBetLines
-    ? (is7h1
-      ? `${pick.pred_combo}${nCombosSuffix}`
-      : `3連複: ${reorderComboByTop3(pick.pred_combo, pick.entries)}${nCombosSuffix}`)
+  // 🔴 券種は `formatComboLabel` が**買い目の区切り文字から**決める。
+  //    ランク名の白名簿に戻してはいけない（三連単ランクを足すたびに
+  //    「3連複: 7-3-2」のように買い目を偽る。2026-08-13 に 7T1 で再発した）。
+  const combo = pick.pred_combo && !multiBetLines
+    ? formatComboLabel(pick.pred_combo, pick.entries) : null;
+  const comboLabel = combo
+    ? `${combo.label ? `${combo.label}: ` : ""}${combo.body}${nCombosSuffix}`
     : undefined;
 
   const startTime = fmtStartAt(pick.start_at);
