@@ -82,6 +82,53 @@ QUARTERS: list[tuple[str, str, str]] = [
 # ダンプする列（下流の探索で使う可能性があるものだけに絞る）。
 # 特徴量そのものは 44 本あるが、条件探索でそれらを自由に使うと仮説空間が
 # 爆発して多重比較が制御できなくなるため、意図的に落とす。
+# 発走 N 分前の単勝オッズ スナップショット。
+# 発走時刻(post_time)は JST の hhmm、odds_history.fetched_at は **UTC** 保存なので
+# JST → UTC へ 9 時間戻して比較する（chihou_darkhorse_prerace.py と同一の扱い）。
+# odds_history は 2026-04-07 以降しか無いため、それ以前の期間では空になる。
+PRERACE_ODDS_QUERY = """
+WITH r AS (
+  SELECT id, (to_timestamp(date || post_time, 'YYYYMMDDHH24MI') - interval '9 hours') AS post_utc
+  FROM chihou.races
+  WHERE date BETWEEN %(start)s AND %(end)s AND course <> '83'
+    AND post_time ~ '^[0-9]{4}$'
+)
+SELECT DISTINCT ON (o.race_id, o.combination)
+       o.race_id, o.combination::int AS horse_number, o.odds AS pre_odds
+FROM r
+JOIN chihou.odds_history o
+  ON o.race_id = r.id AND o.bet_type = 'win'
+ AND o.combination ~ '^[0-9]+$'
+ AND o.fetched_at <= r.post_utc - (%(lead)s || ' minutes')::interval
+ORDER BY o.race_id, o.combination, o.fetched_at DESC
+"""
+
+
+def _apply_prerace_odds(df: pd.DataFrame, pre: pd.DataFrame) -> pd.DataFrame:
+    """市場特徴の入力を確定オッズから発走前オッズへ差し替える。
+
+    本番のライブ指数は odds_map を渡されないため市場特徴が中立値で動いているが、
+    仮に「発走前オッズを渡す」よう直した場合に何が起きるかを測るための差し替え。
+
+    確定オッズ(win_odds/win_popularity)は評価に使うので final_* へ退避する。
+    **全出走馬にスナップショットがあるレースだけ**を残す。1頭でも欠けると
+    レース内のオッズ順位が歪み、市場特徴が本番と別物になるため。
+    """
+    df = df.merge(pre, on=["race_id", "horse_number"], how="left")
+    full = df.groupby("race_id")["pre_odds"].transform(lambda s: s.notna().all())
+    dropped_races = df.loc[~full, "race_id"].nunique()
+    df = df[full].copy()
+    if dropped_races:
+        logger.info("  発走前オッズが全馬揃わないレースを除外: %d", dropped_races)
+    df["final_odds"] = df["win_odds"]
+    df["final_popularity"] = df["win_popularity"]
+    df["win_odds"] = df["pre_odds"]
+    df["win_popularity"] = (
+        df.groupby("race_id")["pre_odds"].rank(ascending=True, method="min").astype(int)
+    )
+    return df
+
+
 KEEP_COLS = [
     "race_id", "date", "quarter", "course_name", "horse_id", "horse_number",
     "head_count", "distance", "is_turf", "condition", "horse_age",
@@ -95,6 +142,18 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True, help="walk-forward honest 予測結果の出力 CSV パス")
     p.add_argument("--quarters", type=int, default=len(QUARTERS), help="先頭から何四半期処理するか")
+    p.add_argument(
+        "--prerace-lead",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "市場特徴の入力を『発走N分前のオッズ』に差し替える。"
+            "確定オッズ(=賭け時点で未知)を使った検証と、市場特徴なしで動いている本番との"
+            "中間、すなわち『実現可能な上限』を測るためのモード。"
+            "odds_history が 2026-04-07 以降しか無いためそれ以前は空になる"
+        ),
+    )
     p.add_argument(
         "--no-market",
         action="store_true",
@@ -160,6 +219,19 @@ def main() -> None:
         if n_races_test == 0:
             continue
 
+        if args.prerace_lead is not None:
+            pre = _fetch(
+                conn, PRERACE_ODDS_QUERY,
+                {"start": test_start, "end": test_end, "lead": str(args.prerace_lead)},
+            )
+            if pre.empty:
+                logger.warning("  発走前オッズなし（odds_history は 2026-04-07 以降）→ スキップ")
+                continue
+            df_test_raw = _apply_prerace_odds(df_test_raw, pre)
+            if df_test_raw.empty:
+                logger.warning("  発走前オッズが全馬揃うレースが無い → スキップ")
+                continue
+
         df_test = _featurize_full(df_test_raw, df_hist_global, apt_tbl, ct_tables)
         X_te = df_test[feature_set].fillna(0.0).values.astype(np.float64)
         df_test = df_test.copy()
@@ -172,6 +244,10 @@ def main() -> None:
         df_test["win_prob_rank_wf"] = (
             df_test.groupby("race_id")["win_prob_wf"].rank(method="first", ascending=False).astype(int)
         )
+        if args.prerace_lead is not None:
+            # 市場特徴の計算は済んだので、以降の評価は確定オッズに戻す
+            df_test["win_odds"] = df_test["final_odds"]
+            df_test["win_popularity"] = df_test["final_popularity"]
         df_test["fav_odds"] = df_test.groupby("race_id")["win_odds"].transform("min")
         df_test["quarter"] = f"{test_start}-{test_end}"
 
