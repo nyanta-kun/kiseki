@@ -129,6 +129,35 @@ def _apply_prerace_odds(df: pd.DataFrame, pre: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _neutralize_market_features(df: pd.DataFrame) -> pd.DataFrame:
+    """市場5特徴を「オッズが1件も無いとき」の値に置き換える。
+
+    本番のライブ指数は `calculate_and_save(race_id, odds_map=None)` で算出され、
+    `_fetch_win_odds` は `race_results.win_odds`（レース確定後にしか入らない）を
+    読むため、**発走前は市場特徴が常にこの状態**になる。
+    `chihou_calculator._build_lgb_features`(L609-644) と同じ値を再現する:
+
+        odds_rank_n   = 0.5 固定
+        speed_mkt_gap = clip(0.5 - speed_rank_n, -1, 1)
+        kc_mkt_gap    = clip(0.5 - kc_rank_n,    -1, 1)
+        is_heavy_fav  = 1 if 0.5 <= 1/head_count else 0   → 実質すべて 0
+        is_dark_horse = 1 if 0.5 >= 6/head_count else 0   → **12頭立て以上は全馬 1**
+
+    ⚠️ is_dark_horse は 12頭立て以上のとき全馬が 1 になる。
+    「穴馬フラグ」が頭数だけで決まる無意味な列に化けている。
+    """
+    df = df.copy()
+    hc = pd.to_numeric(df["head_count"], errors="coerce").clip(lower=1)
+    orn = 0.5
+    df["odds_rank_n"] = orn
+    df["speed_mkt_gap"] = (orn - df["speed_rank_n"]).clip(-1.0, 1.0)
+    df["kc_mkt_gap"] = (orn - df["kc_rank_n"]).clip(-1.0, 1.0)
+    df["is_heavy_fav"] = (orn <= 1.0 / hc).astype(float)
+    df["is_dark_horse"] = (orn >= 6.0 / hc).astype(float)
+    return df
+
+
+
 KEEP_COLS = [
     "race_id", "date", "quarter", "course_name", "horse_id", "horse_number",
     "head_count", "distance", "is_turf", "condition", "horse_age",
@@ -142,6 +171,16 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True, help="walk-forward honest 予測結果の出力 CSV パス")
     p.add_argument("--quarters", type=int, default=len(QUARTERS), help="先頭から何四半期処理するか")
+    p.add_argument(
+        "--serve-no-market",
+        action="store_true",
+        help=(
+            "**本番の条件を再現する**。市場特徴込み(ALL_FEATURES)で学習し、"
+            "予測時だけ市場特徴を中立値へ潰す。本番は odds_map を渡されないため"
+            "『市場込みで学習・市場なしで配信』という状態になっている。"
+            "--no-market（市場を使わずに学習）とは別物なので混同しないこと"
+        ),
+    )
     p.add_argument(
         "--upset-weight",
         type=float,
@@ -269,6 +308,9 @@ def main() -> None:
                 continue
 
         df_test = _featurize_full(df_test_raw, df_hist_global, apt_tbl, ct_tables)
+        if args.serve_no_market:
+            # 学習は市場込み、予測だけ中立値。これが本番で起きていること
+            df_test = _neutralize_market_features(df_test)
         X_te = df_test[feature_set].fillna(0.0).values.astype(np.float64)
         df_test = df_test.copy()
         df_test["composite_wf"] = m_top3.predict(X_te)
