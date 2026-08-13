@@ -1022,7 +1022,7 @@ export type KeirinPick = {
   /** 過去のgate_label分岐（"SS"|"S"）の名残。2026-08-01〜表示ランクの決定には
    *  使わない（keirin側commit e994758で分岐廃止・常に"S"）。分析用に保持。 */
   gate_label?: string | null;
-  /** 最終表示ランク文字列（"7S"|"7A"|"9S"|"9A"等） */
+  /** 最終表示ランク文字列（"7S"|"7A"|"9C"等） */
   display_rank?: string;
   /** ランクのゲートを通らず入稿したレース（手動入稿・看板の穴埋め）。
    *  picks_history に行が無いので、買い目・投資・的中は入稿記録
@@ -1132,7 +1132,7 @@ export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> 
 // ここに backend が受け付けないキーを載せると、UI では選べるのに送信すると
 // 必ず 400「不正なrank_key」になる（2026-08-03〜08-08 の間 "7B" が実際にそうなっていた）。
 // 一致は backend/tests/test_keirin_rank_consistency.py が機械的に検査する。
-export type ManualKeirinRankKey = "7S" | "7A" | "9S" | "9A";
+export type ManualKeirinRankKey = "7S" | "7A" | "7B" | "9C";
 
 
 export type KeirinStatItem = {
@@ -1171,7 +1171,7 @@ export type KeirinStatsResponse = {
 };
 
 export type KeirinStatsRank =
-  | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C" | "7T1"
+  | "7SS" | "7S" | "7A" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1"
   | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
@@ -1186,7 +1186,7 @@ export type KeirinStatsRank =
 // 2026-08-12〜: 7H3（穴推奨・本命連対どまり型）を追加 → 2026-08-13 に全廃。
 // 2026-08-13〜: 7T1（三連単・高配当枠／看板×別ライン・点数可変）へ置換。
 export type NetkeirinRankKey =
-  | "_global" | "7SS" | "7S" | "7A" | "7B" | "9S" | "9A" | "7H1" | "7H2" | "9H1" | "7C"
+  | "_global" | "7SS" | "7S" | "7A" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
   | "7T1";
 
 export type NetkeirinSetting = {
@@ -1284,7 +1284,7 @@ export type KeirinMeetingType = "morning" | "day" | "nighter" | "midnight";
  * 入稿の出自（`keirin.netkeirin_submissions.origin`）。
  *
  * 🔴 **rank_key では経路を判別できない。** 看板レースの穴埋め入稿は
- *    keirin `submit_marquee_wt.py` の `RANK_BY_CARS={7:"7A",9:"9A"}` により
+ *    keirin `submit_marquee_wt.py` の `RANK_BY_CARS={7:"7A",9:"9C"}` により
  *    7A/9A を名乗るため、ランク別集計にはゲート通過分と穴埋めが混ざる
  *    （実測 2026-08-01〜08-10 で 7A 入稿52件中49件＝94%が穴埋め）。
  * - `rank`         ゲートを通った自動入稿

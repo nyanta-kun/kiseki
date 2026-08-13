@@ -1285,7 +1285,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         rank_7c_is_lowpay_pattern, rank_7c_use_trifecta, rank_7c_buy_plan,
         RANK_7C_P3_SUM_MIN, RANK_7C_LEGS_MIN,
         rank_7ss_daily_select, rank_7ss_same_line,
-        rank_9s_daily_select, rank_9a_daily_select, ss_policy,
+        RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, RANK_9C_P3_SUM_MIN,
+        rank_9c_daily_select, ss_policy,
     )
     from pathlib import Path
 
@@ -2187,7 +2188,22 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                 _class_map_s9 = {int(r.frame_no): r.player_class
                                   for r in grp_sorted.itertuples(index=False)}
 
+                # 9C（9車ベースモデル・2026-08-14）用。軸と相手の選び方は 7C と同じ
+                # （`rank_7c_select_*` は車数に依存しない）。閾値だけ 9C 用。
+                _sel_9c = rank_7c_select_axis(top3_probs)
+                if _sel_9c:
+                    _others_9c = sorted(set(top3_probs) - {_sel_9c[0], _sel_9c[1]})
+                    _legs_9c = rank_7c_select_legs(_others_9c, top3_probs,
+                                                   p3_min=RANK_9C_LEG_P3_MIN)
+                else:
+                    _legs_9c = []
+
                 rank_9s_candidates.append({
+                    "n_entries": 9,
+                    "axis1_9c": _sel_9c[0] if _sel_9c else None,
+                    "axis2_9c": _sel_9c[1] if _sel_9c else None,
+                    "p3_sum_top2": round(_sel_9c[2], 6) if _sel_9c else None,
+                    "legs_9c": _legs_9c,
                     "race_key":   race_key,
                     "venue_name": _venue_name(venue_map, grp_sorted["venue_id"].iloc[0]),
                     "race_no":    int(grp_sorted["race_no"].iloc[0]),
@@ -2205,23 +2221,28 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
 
         rank_9s_raw_candidates = rank_9s_candidates
         rank_9s_raw_n = len(rank_9s_raw_candidates)
-        rank_9s_candidates = rank_9s_daily_select(rank_9s_raw_candidates)
 
-        rank_9s_suffix = "_night_s9_candidates.json" if out_stem.endswith("_night") else "_s9_candidates.json"
-        rank_9s_path = Path(output_path).parent / f"wave_picks_wt_{target_date}{rank_9s_suffix}"
-        with open(rank_9s_path, "w", encoding="utf-8") as f:
-            json.dump(rank_9s_candidates, f, ensure_ascii=False, indent=2)
-        click.echo(f"[保存先] {rank_9s_path}  (S9候補 {len(rank_9s_candidates)}件/{rank_9s_raw_n}件中"
-                   f"・9車entropy選出/ペーパー検証)")
-
-        # ── 9A候補（S9の境界ランク・2ゲート中1つだけ不合格・2026-07-27導入）──
-        rank_9a_candidates = rank_9a_daily_select(rank_9s_raw_candidates)
-        rank_9a_suffix = "_night_s9a_candidates.json" if out_stem.endswith("_night") else "_s9a_candidates.json"
-        rank_9a_path = Path(output_path).parent / f"wave_picks_wt_{target_date}{rank_9a_suffix}"
-        with open(rank_9a_path, "w", encoding="utf-8") as f:
-            json.dump(rank_9a_candidates, f, ensure_ascii=False, indent=2)
-        click.echo(f"[保存先] {rank_9a_path}  (9A候補 {len(rank_9a_candidates)}件/{rank_9s_raw_n}件中"
-                   f"・境界ランク/ペーパー検証)")
+        # ── 9C候補（9車のベースモデル・2026-08-14新設・旧 9S/9A を置換）──
+        # 旧 9S（entropy選出）/ 9A（境界ランク）は 2026-08-14 に全廃した。
+        # 9A は二軸的中 26.4% で「素直に p3上位2車を採る」(40.7%) より 14.3pt 低く、
+        # ゲートが逆効果だった。設計と検証は strategy_wt.RANK_9C セクション参照。
+        rank_9c_candidates = rank_9c_daily_select(rank_9s_raw_candidates)
+        rank_9c_suffix = ("_night_s9c_candidates.json" if out_stem.endswith("_night")
+                          else "_s9c_candidates.json")
+        rank_9c_path = Path(output_path).parent / f"wave_picks_wt_{target_date}{rank_9c_suffix}"
+        with open(rank_9c_path, "w", encoding="utf-8") as f:
+            json.dump(rank_9c_candidates, f, ensure_ascii=False, indent=2)
+        # 「黙って0件」を検知するため母集団の内訳を必ず出す（7B の race_type 欠損で
+        # 実際に踏んだ前例と同型の予防）。
+        _n9_no_p3 = sum(1 for c in rank_9s_raw_candidates if c.get("p3_sum_top2") is None)
+        _n9_sum_ok = sum(1 for c in rank_9s_raw_candidates
+                         if c.get("p3_sum_top2") is not None
+                         and float(c["p3_sum_top2"]) >= RANK_9C_P3_SUM_MIN)
+        click.echo(f"[保存先] {rank_9c_path}  (9C候補 {len(rank_9c_candidates)}件/"
+                   f"{rank_9s_raw_n}件中・上位2車の3着内率合計>={RANK_9C_P3_SUM_MIN} ∧ "
+                   f"相手{RANK_9C_LEGS_MIN}点以上)")
+        click.echo(f"[wt] 9C母集団: p3欠損={_n9_no_p3} 合計条件通過={_n9_sum_ok} "
+                   f"→ 相手{RANK_9C_LEGS_MIN}点以上={len(rank_9c_candidates)}")
 
     # ── 7SS候補（波乱軸選出・穴レース検知）は 2026-08-02 に全廃（ユーザー判断） ──
     # 導入(2026-07-31)時点の TEST ROI 71.0% は既に控除率75%を割っていたが「最高配当

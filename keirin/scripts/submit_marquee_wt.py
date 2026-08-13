@@ -53,7 +53,10 @@ JST = timezone(timedelta(hours=9))
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
 # 手動入稿で使うランク。ゲート表示の付かない中立のものを選ぶ
 # （看板レースは「必ず出す」ので「自信あり」を意味するランクは使わない）。
-RANK_BY_CARS = {7: "7A", 9: "9A"}
+# 🔴 9車は 2026-08-14 に 9A を廃止して 9C へ集約した。**ここを付け替え忘れると
+#    存在しないランク名で入稿し、Web にも成績にも出なくなる**（穴埋めは
+#    9A 入稿22件中12件を占めていた主経路）。
+RANK_BY_CARS = {7: "7A", 9: "9C"}
 
 
 def _load_allindex(date: str) -> dict[str, dict]:

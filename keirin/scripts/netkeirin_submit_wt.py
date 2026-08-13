@@ -120,7 +120,7 @@ STATUS_DELETED = "deleted"
 
 # netkeirin_submissions.origin（入稿の出自）。マイグレーション 202608111930_keirin。
 # 🔴 **`rank_key` では経路を判別できない。** 看板レースの穴埋め
-#    （`submit_marquee_wt.py`）は `RANK_BY_CARS = {7:"7A", 9:"9A"}` により
+#    （`submit_marquee_wt.py`）は `RANK_BY_CARS = {7:"7A", 9:"9C"}` により
 #    7A/9A を名乗って入稿するため、本来のゲート通過分と同じキーで混ざる。
 #    実測 2026-08-01〜08-10 で **7A 入稿52件中49件（94%）が穴埋め**だった。
 #    経路ごとの成績（穴埋めは表示的中率14.9%・回収0.333／ゲート通過は29.0%・0.702）を
@@ -303,8 +303,15 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     # 9車は相手7点＝ガミ境界が7.0倍で7車より条件が悪いので傾斜配分の対象。
     # ⚠️ 実測の主対象は7車（1,061R）で、9車は件数が薄く単独では検証していない。
     #    仕組みは券種・点数に依らず同じなので同じ扱いにしてある。
-    "9S":  {"file_key": "s9",  "n_cars": 9, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": "S", "tilt_stakes": True},
-    "9A":  {"file_key": "s9a", "n_cars": 9, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
+    # 9C（2026-08-14新設・旧 9S/9A を置換）。9車のベースモデル。
+    # 🔴 **7C の三連単切替は持たない**（9車では未検証）。三連複の軸2車流しのみ。
+    # ⚠️ 母集団は9車ちょうどなので7車ランクとは**論理的に排他**。
+    "9C":  {"file_key": "s9c", "n_cars": 9, "bet_kind": BET_KIND_TRIO_AXIS2,
+            "stake_budget": RACE_BUDGET, "gate_filter": None,
+            "axis_keys": ("axis1_9c", "axis2_9c"),
+            "partners_key": "legs_9c",
+            "overlap_expected": True,
+            "tilt_stakes": True},
     # 7C（2026-08-07新設・ベースモデル「終日の二軸」）。**必ず最下位に置くこと**。
     # 母集団が全7車レースで他ランクと排他ではないため、上位ランクが取った
     # レースは 7C が降りる。この衝突は**想定内**なので `overlap_expected` で
@@ -1723,7 +1730,7 @@ def _process_rank(
 # のためいずれも対象外。kiseki 側 _MANUAL_RANK_KEYS も ("7S","7A","9S","9A") で一致。
 # 7H1 も対象外。手動入稿は「軸2車を選んで総流し」というUIで、7H1 の買い目
 # （バスト予測モデルが決めるフォーメーション+BOX）は軸2車では表現できないため。
-MANUAL_ALLOWED_RANKS = ("7S", "7A", "7B", "9S", "9A")
+MANUAL_ALLOWED_RANKS = ("7S", "7A", "7B", "9C")
 
 
 def _resolve_race_info(race_key: str) -> tuple[str, int, int, str] | None:
