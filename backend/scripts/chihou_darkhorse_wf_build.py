@@ -52,6 +52,7 @@ from scripts.chihou_rebuild_walkforward import (  # noqa: E402
 )
 from scripts.train_chihou_market_lgb import (  # noqa: E402
     ALL_FEATURES,
+    PROD_FEATURES,
     CHIHOU_V9_VERSION,
     build_ct_tables,
     compute_wet_apt_table,
@@ -94,6 +95,15 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True, help="walk-forward honest 予測結果の出力 CSV パス")
     p.add_argument("--quarters", type=int, default=len(QUARTERS), help="先頭から何四半期処理するか")
+    p.add_argument(
+        "--no-market",
+        action="store_true",
+        help=(
+            "市場特徴5本を外して学習・予測する（PROD_FEATURES のみ）。"
+            "本番のライブ指数は odds_map を渡されないため市場特徴が常に中立値になる。"
+            "その条件を再現して条件の再現性を確かめるために使う"
+        ),
+    )
     args = p.parse_args()
     quarters = QUARTERS[: args.quarters]
 
@@ -103,6 +113,16 @@ def main() -> None:
         f"password={os.getenv('DB_PASSWORD')}"
     )
     conn = psycopg2.connect(dsn)
+
+    # 市場特徴を含めるか。本番のライブ指数は odds_map を渡されないため
+    # odds_rank_n / is_heavy_fav / is_dark_horse が常に中立値で動いている。
+    # --no-market はその条件を再現する（＝検証と本番の乖離を測る）。
+    feature_set = PROD_FEATURES if args.no_market else ALL_FEATURES
+    logger.info(
+        "特徴量セット: %s (%d本)",
+        "PROD_FEATURES(市場なし)" if args.no_market else "ALL_FEATURES(市場あり)",
+        len(feature_set),
+    )
 
     logger.info("補助テーブル読み込み中 (fetch_hist / apt_tbl / ct_tables)...")
     # いずれも「現走前の累積のみ」を参照する point-in-time 計算のため、
@@ -127,9 +147,9 @@ def main() -> None:
         df_train = _featurize_full(df_train_raw, df_hist_global, apt_tbl, ct_tables)
         df_train = df_train.sort_values("race_id").reset_index(drop=True)
         fp_tr = pd.to_numeric(df_train["finish_position"], errors="coerce")
-        X_tr = df_train[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
-        m_top3 = train_binary_control(X_tr, (fp_tr <= 3).astype(int).values, SEED, feature_names=ALL_FEATURES)
-        m_win = train_binary_control(X_tr, (fp_tr == 1).astype(int).values, SEED, feature_names=ALL_FEATURES)
+        X_tr = df_train[feature_set].fillna(0.0).values.astype(np.float64)
+        m_top3 = train_binary_control(X_tr, (fp_tr <= 3).astype(int).values, SEED, feature_names=feature_set)
+        m_win = train_binary_control(X_tr, (fp_tr == 1).astype(int).values, SEED, feature_names=feature_set)
 
         df_test_raw = _fetch(
             conn, FULL_POP_QUERY,
@@ -141,7 +161,7 @@ def main() -> None:
             continue
 
         df_test = _featurize_full(df_test_raw, df_hist_global, apt_tbl, ct_tables)
-        X_te = df_test[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
+        X_te = df_test[feature_set].fillna(0.0).values.astype(np.float64)
         df_test = df_test.copy()
         df_test["composite_wf"] = m_top3.predict(X_te)
         df_test["win_prob_wf"] = m_win.predict(X_te)
