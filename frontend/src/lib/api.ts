@@ -1029,6 +1029,10 @@ export type KeirinPick = {
    *  （netkeirin_submissions.bet_detail）と確定結果から組み立てている。
    *  ⚠️ ランクの成績として読まないこと（同じ 7A でも別経路）。 */
   submission_only?: boolean;
+  /** 入稿の出自（`rank` / `marquee_fill` / `manual`）。picks_history 由来の行は null。
+   *  🔴 `submission_only` は「picks_history に行が無い」だけで、
+   *  **看板の穴埋め（自動）と手動入稿を区別できない**。バッジはこちらで出し分ける。 */
+  origin?: string | null;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
   hypo_axis1: number | null;
   hypo_axis2: number | null;

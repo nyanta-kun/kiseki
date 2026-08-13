@@ -567,6 +567,8 @@ async def get_picks(
                   -- 「全レース表示」でだけ推奨外に見える。
                   COALESCE(ph.rank, 'RANK_' || ns.rank_key) AS rank,
                   (ph.id IS NULL AND ns.rank_key IS NOT NULL) AS submission_only,
+                  -- 入稿の出自。バッジ（穴埋め / 手動）の出し分けに使う。
+                  ns.origin                  AS origin,
                   ph.pred_combo,
                   ph.n_combos,
                   ph.hit,
@@ -615,6 +617,7 @@ async def get_picks(
                   ph.race_key,
                   SPLIT_PART(ph.race_key, '#', 1) AS base_key,
                   FALSE AS submission_only,
+                  NULL::varchar              AS origin,
                   ph.rank,
                   ph.pred_combo,
                   ph.n_combos,
@@ -660,6 +663,7 @@ async def get_picks(
                   ns.race_key                AS race_key,
                   ns.race_key                AS base_key,
                   TRUE                       AS submission_only,
+                  ns.origin                  AS origin,
                   'RANK_' || ns.rank_key     AS rank,
                   NULL::text                 AS pred_combo,
                   NULL::int                  AS n_combos,
@@ -872,6 +876,9 @@ async def get_picks(
             # ゲートを通っていない入稿（手動・看板の穴埋め）であることを表に出す。
             # 混ぜたまま出すと「ランクの成績」と読まれてしまう。
             "submission_only": submission_only,
+            # 入稿の出自。`submission_only` だけだと**看板の穴埋め（自動）も
+            # 手動入稿も同じに見える**ので、バッジの出し分けにはこちらを使う。
+            "origin": r.get("origin") or None,
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
             "gap12": float(r["gap12"]) if (has_pick and r.get("gap12") is not None) else None,
