@@ -755,6 +755,43 @@ recent procs: 0
 **初回実行は 2026-08-13 23:50**。翌朝以降、`backfill.log` と
 `chihou.race_payouts` / 欠損レース数の推移で進捗を確認すること。
 
+### 8.5d sekito スケジュールの修正（**実施済み・2026-08-13**）
+
+VPS（`ssh sekito` = 160.251.234.83）から直接適用した。
+admin API は `uid` ベース認証（`sekito.users` 照合）で、他人の uid を持ち出して
+認証するのは筋が悪いため **DB 更新 → `sekito-backend-1` 再起動**の経路を採った
+（スケジューラは起動時にしか `scripts_schedules` を読まない）。
+
+| id | script | 変更 |
+|---|---|---|
+| **63** | `bin/scrape/netkeiba-index` | cron `30 8 * * 6,0,1` → **`30 8 * * *`**（毎日） |
+| **56** | `bin/scrape/netkeiba --type nar --target horse_weight` | **無効化**（`is_enabled = false`） |
+
+**id=56 を止めた根拠**: 21:30 は開催終了後で netkeiba に馬体重が無く、2026-06 以降は
+**毎日 1,200 件超の `not_available` を書くだけ**になっていた。書き込み先の
+`sekito.races.is_horse_weight` は**リポジトリ全体で書き込みのみ・どこからも読まれていない**
+（`routes` / `frontend` に参照ゼロ）。NAR の馬体重が必要になったら**発走前の時間帯**で
+設計し直すこと。手動実行時のログでも `馬体重データなし` が全レースで出ており、
+時間帯の問題であることが裏付けられた。
+
+再起動後のログで反映を確認:
+
+```
+Loaded schedules ... {"id":63,"cron":"30 8 * * *","script":"bin/scrape/netkeiba-index","enabled":true}
+Skipping disabled schedule {"scheduleId":56,"scriptName":"bin/scrape/netkeiba"}
+```
+
+**次回の自動実行は 2026-08-14 08:30**（当日 08:30 は過ぎていたため 8/13 分は手動で補完）。
+
+⚠️ **コンテナ内で手動実行するときは `/opt/venv/bin/python3` を使うこと。**
+`sh -lc` のログインシェルは PATH をリセットして `/usr/bin/python3` を掴み、
+`ModuleNotFoundError: No module named 'pandas'` で落ちる（pandas は `/opt/venv` にある）。
+
+```bash
+ssh sekito "docker exec -d sekito-backend-1 sh -c 'cd /app && \
+  /opt/venv/bin/python3 scripts/bin/scrape/netkeiba-index --type nar > /tmp/nk.log 2>&1'"
+```
+
 ### 8.6 死活監視の穴を塞いだ（**実施済み**）
 
 netkeiba の縮退を `chihou_data_health_check.py` が**一度も検知していなかった**理由は 2 つ。
@@ -795,8 +832,8 @@ netkeiba の縮退を `chihou_data_health_check.py` が**一度も検知して�
 | 作業 | 必要な操作 |
 |---|---|
 | PR #128 のマージ・デプロイ | `gh pr merge 128 --merge` → galloplab デプロイ |
-| sekito スケジュール修正 | `PUT /api/admin/scripts_schedules/63` で cron を `30 8 * * 6,0,1` → `30 8 * * *` へ（**DB 直接 UPDATE ではなく API 経由**。`scheduler.reload()` が同時に走るため） |
-| id=56 の整理 | `30 21 * * *` の NAR 馬体重取得は毎日 1,200 件超の `not_available` を書くだけ。無効化するか発走前の時間帯へ移す |
+| ~~sekito スケジュール修正~~ | ✅ **実施済み**（8.5d） |
+| ~~id=56 の整理~~ | ✅ **実施済み**（8.5d・無効化） |
 
 **デプロイ後に実行する（Plan A）**
 
