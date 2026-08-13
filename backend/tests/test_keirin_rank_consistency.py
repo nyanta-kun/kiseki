@@ -98,6 +98,82 @@ def _extract(rel: str, pattern: str) -> set[str]:
     return _quoted(matches[0])
 
 
+def _ordered(fragment: str) -> list[str]:
+    """宣言の中の表示ラベルを**出現順**で拾う（順序を検査するため）。"""
+    return [s for s in re.findall(r'"([^"]+)"', fragment) if s in LABELS]
+
+
+def _extract_ordered(rel: str, pattern: str) -> list[str]:
+    text = _read(rel)
+    matches = re.findall(pattern, text, re.DOTALL)
+    assert len(matches) == 1, (
+        f"{rel} の宣言 `{pattern}` が {len(matches)} 件マッチした（1件であるべき）")
+    return _ordered(matches[0])
+
+
+def _submit_priority() -> list[str]:
+    """keirin 側 `netkeirin_submit_wt.RANK_CONFIGS` の定義順＝入稿の優先順位。"""
+    path = KEIRIN_STRATEGY.parent.parent / "scripts" / "netkeirin_submit_wt.py"
+    if not path.exists():
+        pytest.skip(f"keirin が見つかりません: {path}")
+    text = path.read_text(encoding="utf-8")
+    block = re.search(r"RANK_CONFIGS[^=]*=\s*\{(.*?)\n\}", text, re.DOTALL)
+    assert block, "RANK_CONFIGS の宣言を見つけられなかった"
+    order = re.findall(r'^\s{4}"([0-9A-Z]+)":', block.group(1), re.MULTILINE)
+    assert order, "RANK_CONFIGS からキーを1件も拾えなかった"
+    return order
+
+
+def test_display_order_is_by_car_count_then_submit_priority():
+    """🔴 表示順は「車数（7車→9車）＞入稿の優先順位」であること（2026-08-14）。
+
+    ユーザー指定の並び。以前は定義順が増築のたびに崩れ、7車と9車が
+    交互に並んでいた（7SS/7S/7A/9C/7T1/7C）。**入稿の優先順位は
+    keirin 側 `RANK_CONFIGS` の定義順が正本**なので、そこから導いて突き合わせる。
+
+    優先順位を入れ替えたのに表示順を直し忘れると、画面の並びが
+    「どの商品が先に取るか」を説明しなくなる。
+    """
+    priority = _submit_priority()
+    actual = list(_PAPER_RANK_LABELS.values())
+    assert set(actual) == set(priority), (
+        "表示ランクと入稿設定のランク集合が食い違う\n"
+        f"  表示のみ: {sorted(set(actual) - set(priority))}\n"
+        f"  入稿のみ: {sorted(set(priority) - set(actual))}")
+
+    def _cars(label: str) -> int:
+        return int(label[0])
+
+    expected = sorted(priority, key=lambda r: (_cars(r), priority.index(r)))
+    assert actual == expected, (
+        f"表示順が「車数＞優先順位」になっていない。\n"
+        f"  期待: {expected}\n  実際: {actual}")
+
+
+@pytest.mark.parametrize(("rel", "pattern"), [
+    ("app/keirin/page.tsx", r"const RANK_ORDER = \[([^\]]*)\]"),
+    ("app/keirin/settings/page.tsx",
+     r"const RANK_ORDER: NetkeirinRankKey\[\] =([^;]*);"),
+])
+def test_frontend_rank_order_matches_backend_order(rel, pattern):
+    """🔴 フロントの並びが backend の定義順と**同じ順序**であること。
+
+    既存の検査は集合の包含しか見ておらず、**並びのズレは素通り**していた
+    （実際 page.tsx と backend で 7C / 7T1 の前後が入れ替わっていた）。
+    """
+    assert _extract_ordered(rel, pattern) == list(_PAPER_RANK_LABELS.values()), \
+        f"{rel} の RANK_ORDER が backend の定義順と違う"
+
+
+def test_help_page_rank_order_matches_backend_order():
+    """ヘルプのカード順も同じ並びに保つ（説明を探す位置が画面ごとに変わらないように）。"""
+    text = _read("app/keirin/help/page.tsx")
+    order = [k for k in re.findall(r'^\s*key: "([^"]+)",', text, re.MULTILINE)
+             if k in LABELS]
+    assert order == list(_PAPER_RANK_LABELS.values()), \
+        "help/page.tsx のカード順が backend の定義順と違う"
+
+
 def test_stats_rank_type_covers_all_labels():
     """`KeirinStatsRank`（統計ページのランク絞り込み型）。
 

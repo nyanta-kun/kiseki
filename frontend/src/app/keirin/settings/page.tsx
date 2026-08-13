@@ -17,11 +17,11 @@ import { saveNetkeirinSettings } from "./actions";
 // ⚠️ netkeirin_settings に旧7SSの行（enabled=false・title「穴の二軸」）が残っている
 // ため、この画面で有効化しないと新7SSは自動入稿されない（_is_enabled は行が
 // 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
-// 並び順は Web 全体で 7SS/7S/7A/7B/9S/9A に統一。
+// 並び順は Web 全体で「車数（7車→9車）＞入稿の優先順位」に統一。
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
 // （7H1 > 7H2 > 9H1 > 7SS > 7S > 7A > 7C > 7T1 > 7B）。ここは設定画面の表示順。
 const RANK_ORDER: NetkeirinRankKey[] =
-  ["7SS", "7S", "7A", "7B", "9C", "7H1", "7H2", "9H1", "7T1", "7C"];
+  ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7T1", "7B", "9H1", "9C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
