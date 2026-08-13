@@ -66,7 +66,7 @@ from scripts.chihou_rank_quality_review import (  # noqa: E402
     connect,
     train_binary,
 )
-from scripts.inference_chihou_v13 import fetch_all_entrants  # noqa: E402
+from scripts.inference_chihou_v14 import fetch_all_entrants  # noqa: E402
 from scripts.train_chihou_market_lgb import ALL_FEATURES, fetch, prep  # noqa: E402
 from scripts.train_chihou_v11_lightgbm import fetch_hist  # noqa: E402
 from src.chihou_protocol import TEST_START, TRAIN_END, record_test_usage  # noqa: E402

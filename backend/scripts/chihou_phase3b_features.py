@@ -52,21 +52,23 @@ from scripts.train_chihou_v11_lightgbm import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("chihou_p3b")
 
-from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION  # noqa: E402
-
-# サブ指数(speed/last3f/jockey/rotation/last_margin)の取得元 version。
+# サブ指数(speed/last3f/jockey/rotation/last_margin)の取得**下限** version。
 #
-# 歴史的に v9 を読んでいたが、**v9 と現行 v13 はサブ指数が完全に同一**
-# （2026-08-13 実測: 共通 316,097 行で speed/last3f/jockey/rotation/last_margin
-# すべて差分ゼロ）。旧版は composite/win_probability の再計算で増えただけで、
-# サブ指数そのものは一度も変わっていない。
+# 学習クエリは
+#     WHERE version >= %(ver)s
+#     ORDER BY race_id, horse_id, (version = %(ver)s) DESC, version DESC
+# で各 (race, horse) の最新版を採るので、ここには「これ以上なら中身は同じ」と
+# 言える下限を置く。v9 以降サブ指数は一度も変わっていない
+# （2026-08-13 実測: v9 と v13 の共通 316,097 行で5列すべて差分ゼロ）。
 #
-# P2 で v1〜v12 を削除するため、現行版から読むよう付け替えた。
-# **数値をハードコードに戻さないこと**（次の版上げで再び古い版を掴む）。
-CHIHOU_SUBINDEX_VERSION = CHIHOU_COMPOSITE_VERSION
+# 🔴 **CHIHOU_COMPOSITE_VERSION を参照してはいけない。**
+# 版を上げた直後はその version の行がまだ DB に無く、`version >= 新版` が
+# 0 件になって学習が LightGBMError(num_data > 0) で落ちる（2026-08-14 に実際に踏んだ）。
+# バックフィルはデプロイ後にしか走らせられないので、この結合は必ず壊れる。
+CHIHOU_SUBINDEX_MIN_VERSION = 9
 
 # 後方互換エイリアス。旧名で import している分析スクリプトが多いため残す。
-CHIHOU_V9_VERSION = CHIHOU_SUBINDEX_VERSION
+CHIHOU_V9_VERSION = CHIHOU_SUBINDEX_MIN_VERSION
 
 # base21 + trainer_id/apprentice を取得
 BASE_QUERY = """

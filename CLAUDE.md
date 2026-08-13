@@ -1259,6 +1259,34 @@ Web の「足切り候補」グレーアウトは **総合指数のトップ差�
 
 詳細: memory `recommendations_feature.md` / `jra_signal_verification.md`
 
+## 地方競馬 総合指数 v14（市場乖離特徴の削除・2026-08-14）
+
+`CHIHOU_COMPOSITE_VERSION = 14`。**v13 から市場乖離5特徴**
+（`odds_rank_n` / `speed_mkt_gap` / `kc_mkt_gap` / `is_heavy_fav` / `is_dark_horse`）
+**を削除**し 39特徴にした。モデル: `chihou_prod_lgb.v14_39feat.txt`。
+
+🔴 **理由**: 本番は `calculate_and_save(race_id, odds_map=None)` で算出され、
+`_fetch_win_odds` は `race_results.win_odds`（レース確定後にしか入らない）を読む。
+つまり**発走前は市場5特徴が常に中立値**で、「市場込みで学習して市場なしで配信」
+という状態だった。walk-forward 実測（全9四半期・指数1位馬の勝率）:
+
+| | 勝率 |
+|---|---|
+| 市場込み学習・市場なし配信（v13 = 旧本番） | 23.7〜32.6% |
+| 市場なし学習・市場なし配信（v14） | **34.0〜40.1%** |
+
+**全四半期で +6.6〜+13.6pt**（平均約9pt）。複勝率でも 8〜10pt 差。
+
+⚠️ **市場特徴を戻すなら「配信時に必ずオッズを渡す」経路とセットにすること。**
+ただし**穴馬用途では市場を見せてはいけない**（見せると市場が嫌う馬を上位に置かず
+「人気薄×指数上位」の条件が空になる）。詳細: `docs/chihou_rebuild_2026_08.md` 10・13章。
+
+⚠️ **サブ指数の取得元に `CHIHOU_COMPOSITE_VERSION` を使ってはいけない。**
+版を上げた直後はその version の行が DB に無く学習が0件で落ちる。
+`CHIHOU_SUBINDEX_MIN_VERSION = 9` を下限として使うこと（v9 以降サブ指数は不変）。
+
+---
+
 ## 地方競馬 総合指数 v13（min-max 廃止 + 全期間バックフィル・2026-08-02）
 
 `CHIHOU_COMPOSITE_VERSION = 13`。**モデルと44特徴は v12 と完全に同一**
@@ -1340,7 +1368,7 @@ plist は `scripts/launchagents/` に複製あり。
 - 検証スクリプト群（`chihou_rank_quality_review.py` 等）の `test` は
   **2026-01〜06 = プロトコル上は VAL の一部**。TEST とは別物なので混同しないこと
 
-- バックフィル: `scripts/inference_chihou_v13.py --start 20240101 --end YYYYMMDD`
+- バックフィル: `scripts/inference_chihou_v14.py --start 20240101 --end YYYYMMDD`
   - `race_results` は **LEFT JOIN**（出走取消・失格も母集団に含む）。本番 `rank_by_hn` と
     母集団を揃えるため。学習用 `BASE_QUERY` は完走馬のみなので流用してはいけない
   - VPS 負荷対策で `--batch-size` / `--sleep` 分割コミット
@@ -1356,7 +1384,7 @@ plist は `scripts/launchagents/` に複製あり。
 | `scripts/chihou_rank_quality_review.py` | HEAD/TAIL/ALL 分離のランキング品質比較 + レース単位 paired bootstrap |
 | `scripts/chihou_feature_ab.py` | 特徴量セットの A/B（死んだ特徴の除去・新規列の追加） |
 | `scripts/chihou_composite_scale_review.py` | composite スケール係数と tier 較正閾値の掃引 |
-| `scripts/inference_chihou_v13.py` | v13 バッチ推論・全期間バックフィル |
+| `scripts/inference_chihou_v14.py` | v14 バッチ推論・全期間バックフィル |
 
 ### 検証済みの否定結果（再検証不要）
 

@@ -530,19 +530,33 @@ def save_production_models(df_all_raw: pd.DataFrame) -> None:
     A/B を回さずに再学習だけできる。特徴量パイプラインは A/B と共通なので
     train/serve parity は維持される。
     """
-    logger.info("全期間モデルを学習して保存中 (44特徴, binary is_top3)...")
+    # 🔴 v14(2026-08-14): 本番学習を ALL_FEATURES(44) から PROD_FEATURES(39) へ変更した。
+    #
+    # 本番の指数は calculate_and_save(race_id, odds_map=None) で算出され、
+    # _fetch_win_odds は race_results.win_odds（レース確定後にしか入らない）を読む。
+    # つまり **発走前は市場5特徴が常に中立値**で、「市場込みで学習して市場なしで配信」
+    # という状態だった。最初から市場を使わずに学習した方が構造的に強い。
+    #
+    # walk-forward 実測（全9四半期・指数1位馬の勝率）:
+    #   市場込み学習・市場なし配信（旧本番） 23.7〜32.6%
+    #   市場なし学習・市場なし配信（v14）    34.0〜40.1%  ← +6.6〜+13.6pt
+    #
+    # ⚠️ 市場特徴を戻すなら「配信時に必ずオッズを渡す」経路とセットにすること。
+    #    ただし穴馬用途では市場を見せてはいけない（見せると人気薄を上位に置かなくなり
+    #    「人気薄×指数上位」の条件が空になる）。docs/chihou_rebuild_2026_08.md 10・13章。
+    logger.info("全期間モデルを学習して保存中 (39特徴, binary is_top3)...")
     df_all_s = df_all_raw.sort_values("race_id").reset_index(drop=True)
     fp_all = pd.to_numeric(df_all_s["finish_position"], errors="coerce")
     y_all = (fp_all <= 3).astype(int).values
-    x_all = df_all_s[ALL_FEATURES].fillna(0.0).values.astype(np.float64)
+    x_all = df_all_s[PROD_FEATURES].fillna(0.0).values.astype(np.float64)
 
-    final_model = train_binary_control(x_all, y_all, seed=0)
-    out_path = MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"
+    final_model = train_binary_control(x_all, y_all, seed=0, feature_names=PROD_FEATURES)
+    out_path = MODELS_DIR / "chihou_prod_lgb.v14_39feat.txt"
     final_model.save_model(str(out_path))
     logger.info("保存完了: %s", out_path)
 
     importance = sorted(
-        zip(ALL_FEATURES, final_model.feature_importance(importance_type="gain")),
+        zip(PROD_FEATURES, final_model.feature_importance(importance_type="gain")),
         key=lambda x: -x[1],
     )
     print("\n  特徴量重要度 top15 (gain):")
@@ -550,12 +564,12 @@ def save_production_models(df_all_raw: pd.DataFrame) -> None:
         print(f"    {feat:<28} {gain:>10,}")
 
     result_json = {
-        "model": "chihou_prod_lgb.v12_44feat",
+        "model": "chihou_prod_lgb.v14_39feat",
         "objective": "binary",
         "head": "is_top3",
-        "features": ALL_FEATURES,
-        "market_features": MARKET_FEATURES,
-        "n_features": len(ALL_FEATURES),
+        "features": PROD_FEATURES,
+        "market_features_removed": MARKET_FEATURES,
+        "n_features": len(PROD_FEATURES),
         "train_range": [TRAIN_DATA_START, TRAIN_DATA_END],
         "train_end_reason": f"TEST_START({TEST_START}) の前日で打ち切り",
         "effective_train_start": "20240101",
@@ -564,14 +578,14 @@ def save_production_models(df_all_raw: pd.DataFrame) -> None:
         "seeds": SEEDS,
         "feature_importance": [{"feature": f, "gain": int(g)} for f, g in importance],
     }
-    with open(MODELS_DIR / "chihou_prod_lgb.v12_44feat_metrics.json", "w") as fh:
+    with open(MODELS_DIR / "chihou_prod_lgb.v14_39feat_metrics.json", "w") as fh:
         json.dump(result_json, fh, indent=2, ensure_ascii=False)
     print(f"\n  モデル保存完了: {out_path}")
 
-    logger.info("win ヘッドを全期間学習して保存中 (44特徴, is_win)...")
+    logger.info("win ヘッドを全期間学習して保存中 (39特徴, is_win)...")
     y_win = (fp_all == 1).astype(int).values
-    win_model = train_binary_control(x_all, y_win, seed=0, feature_names=ALL_FEATURES)
-    win_out = MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"
+    win_model = train_binary_control(x_all, y_win, seed=0, feature_names=PROD_FEATURES)
+    win_out = MODELS_DIR / "chihou_prod_lgb_win.v14_39feat.txt"
     win_model.save_model(str(win_out))
     logger.info("win モデル保存完了: %s", win_out)
     print(f"  win モデル保存完了: {win_out}")

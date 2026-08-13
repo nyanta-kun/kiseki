@@ -1,7 +1,9 @@
 """地方競馬 v13 バッチ推論・全期間バックフィル
 
 v13 とは（2026-08-02）:
-  **モデルと特徴量は v12 と完全に同一**（`chihou_prod_lgb.v12_44feat.txt` をそのまま使う）。
+  **v14(2026-08-14) で市場乖離5特徴を削除した**（`chihou_prod_lgb.v14_39feat.txt`）。
+  本番は odds_map を渡されず市場特徴が常に中立値だったため、
+  市場を使わずに学習し直した。詳細: docs/chihou_rebuild_2026_08.md 13章。
   変わるのは composite のスケールだけで、レース内 min-max 15〜85 を廃止し
   中心化線形（50 + CHIHOU_INDEX_SCALE * (p − レース内平均)）にした。
   詳細と根拠は `chihou_calculator._scale_to_index_local` の docstring 参照。
@@ -34,8 +36,8 @@ v13 とは（2026-08-02）:
 
 使い方:
     cd backend
-    .venv/bin/python scripts/inference_chihou_v13.py --start 20240101 --end 20260802 --dry-run
-    .venv/bin/python scripts/inference_chihou_v13.py --start 20240101 --end 20260802
+    .venv/bin/python scripts/inference_chihou_v14.py --start 20240101 --end 20260802 --dry-run
+    .venv/bin/python scripts/inference_chihou_v14.py --start 20240101 --end 20260802
 """
 
 from __future__ import annotations
@@ -60,7 +62,7 @@ import pandas as pd  # noqa: E402
 from psycopg2.extras import execute_values  # noqa: E402
 
 from scripts.chihou_rank_quality_review import connect  # noqa: E402
-from scripts.train_chihou_market_lgb import ALL_FEATURES, prep  # noqa: E402
+from scripts.train_chihou_market_lgb import PROD_FEATURES, prep  # noqa: E402
 from scripts.train_chihou_prod_lgb import CHIHOU_V9_VERSION  # noqa: E402
 from scripts.train_chihou_v11_lightgbm import fetch_hist  # noqa: E402
 from src.indices.chihou_calculator import (  # noqa: E402
@@ -72,8 +74,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("chihou_v13")
 
 MODELS_DIR = _root / "models"
-PROD_LGB_T3 = MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"
-PROD_LGB_WIN = MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"
+PROD_LGB_T3 = MODELS_DIR / "chihou_prod_lgb.v14_39feat.txt"
+PROD_LGB_WIN = MODELS_DIR / "chihou_prod_lgb_win.v14_39feat.txt"
 
 # 学習用 BASE_QUERY との違い: race_results を LEFT JOIN し、完走・正常決着の絞り込みを
 # 外している（出走取消・失格馬も母集団に含める）。それ以外の列・結合は同一。
@@ -194,7 +196,7 @@ def main() -> None:
         conn.close()
 
     df = df.sort_values(["race_id", "horse_id"]).reset_index(drop=True)
-    X = df[list(ALL_FEATURES)].to_numpy(dtype=np.float64)
+    X = df[list(PROD_FEATURES)].to_numpy(dtype=np.float64)
     logger.info(f"推論 {X.shape[0]:,}行 × {X.shape[1]}特徴")
     raw_t3 = m_t3.predict(X)
     raw_win = m_win.predict(X)
