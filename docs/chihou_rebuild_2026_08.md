@@ -722,6 +722,39 @@ NVOpen 戻り値: rc=0, 読込ファイル数=12283, DL数=12283, 最終TS=20260
 - 2026-08-13 07:13 に開始した回は 07:50 に `taskkill /F` で停止した
   （9:00 の realtime 起動前に本番を守るため）
 
+### 8.5c 夜間バックフィルのタスク化（**実施済み・2026-08-13**）
+
+全期間DLは避けられず日中に走らせられないため、夜間窓で自動実行する形にした。
+
+| タスク | 時刻 | 内容 |
+|---|---|---|
+| `kiseki-UmaConn-Backfill` | 毎日 **23:50** | `run_umaconn_backfill.vbs` → `--mode recent --from-year 2024` |
+| `kiseki-UmaConn-Backfill-Stop` | 毎日 **08:30** | `run_umaconn_backfill_stop.vbs` → 9:00 の realtime 起動前に確実に落とす |
+
+**安全側の作り**:
+
+- launcher は **realtime が動いていれば起動しない**（COM の奪い合いを構造的に防ぐ）
+- 多重起動しない。前夜から継続中ならそのまま走らせる
+- 停止は `Terminate`(=TerminateProcess)。`DLL_PROCESS_DETACH` を走らせないので
+  NVDTLab.dll(FastMM) のリークダイアログを出さずに落とせる
+- ファイルは到着ごとに `mark_file_completed` されるため**途中停止でも進捗が残り**、
+  複数夜に分割して完走できる
+- `ExecutionTimeLimit` 10時間・`MultipleInstances IgnoreNew`
+- ログ: `C:\kiseki\windows-agent\backfill.log`
+
+**実機検証済み（2026-08-13）**:
+
+```
+9:10:22 stop: no backfill process running        ← 停止タスク: 対象なしでも正常終了(rc=0)
+9:10:54 skip: realtime is still running          ← 起動タスク: realtime 稼働中は起動しない
+recent procs: 0
+```
+
+登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_backfill_task.ps1`
+
+**初回実行は 2026-08-13 23:50**。翌朝以降、`backfill.log` と
+`chihou.race_payouts` / 欠損レース数の推移で進捗を確認すること。
+
 ### 8.6 死活監視の穴を塞いだ（**実施済み**）
 
 netkeiba の縮退を `chihou_data_health_check.py` が**一度も検知していなかった**理由は 2 つ。
@@ -768,7 +801,8 @@ netkeiba の縮退を `chihou_data_health_check.py` が**一度も検知して�
 **デプロイ後に実行する（Plan A）**
 
 - [x] 回収経路の実機検証（8.5b）→ **速報系は不可・蓄積系は可だが全期間再DLが必要**
-- [ ] 蓄積系の全期間DLを夜間窓（23:30〜08:30）で実行（複数夜に分割可）
+- [x] 蓄積系の夜間バックフィルをタスク化（8.5c・初回 2026-08-13 23:50）
+- [ ] 翌朝以降、`backfill.log` と欠損レース数・払戻件数の推移で進捗を確認
 - [ ] `race_payouts` 2024-01〜 のバックフィル（`HRNV*` を completed 一覧から除外）
 - [ ] C のうち 2026-04-20 以前（約120R）の欠損理由を特定
 - [ ] `kiseki-UmaConn-Daily` タスク新設（**これが無いと同じ欠損が再発する**）
