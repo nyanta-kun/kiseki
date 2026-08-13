@@ -30,10 +30,16 @@ def test_train_end_matches_the_model_meta():
     """🔴 定数がモデルのメタとずれていないこと。
 
     ずれると「honest のつもりで look-ahead」または「使える期間を無駄に捨てる」。
+
+    ⚠️ `data/models/` は git 管理外（実体は Mac / VPS のみ）なので **CI では skip** される。
+    守れるのはモデルを持つ環境だけ＝再学習でメタが動いたら手元/VPS の実行で気づく、
+    という位置づけ。CI を緑にするために黙って通すのではなく、理由を出して飛ばす。
     """
     import json
-    meta = json.loads((REPO / "data" / "models" / "odds_tf_meta.json")
-                      .read_text(encoding="utf-8"))
+    meta_path = REPO / "data" / "models" / "odds_tf_meta.json"
+    if not meta_path.exists():
+        pytest.skip(f"モデルのメタが無い環境（git 管理外）: {meta_path}")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert ODDS_TF_TRAIN_END == meta["train_end"]
 
 
