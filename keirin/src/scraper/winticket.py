@@ -254,6 +254,21 @@ class WinticketScraper:
         if not data:
             return None
 
+        # 開催グレード（GP/GI/GII/GIII/FI/FII）。**同じページの state に入っている**
+        # ので追加リクエストは要らない。`race_info.grade` は級班(A級/S級)で別物。
+        # 判定の正本は backend/src/services/keirin_cup_grade.py。
+        cup_obj: dict = {}
+        for q in ("FETCH_KEIRIN_RACE", "FETCH_KEIRIN_CUP_RACES"):
+            src = _get_query(state, q) or {}
+            cand = src.get("cup")
+            if not cand:
+                # FETCH_KEIRIN_RACE は `cups`（複数）で持つことがある。
+                cups = src.get("cups") or []
+                cand = next((c for c in cups if str(c.get("id")) == str(cup_id)), None)
+            if cand:
+                cup_obj = cand
+                break
+
         race_info = data.get("race", {})
         entries_raw = data.get("entries", [])
         players_raw = {p["id"]: p for p in data.get("players", [])}
@@ -336,8 +351,12 @@ class WinticketScraper:
             "race_no":   race_no,
             "cup_id":    cup_id,
             "day_index": day_index,
+            # 開催（cup）単位の情報。レース単位の race_info とは別物。
+            "cup_grade": cup_obj.get("grade"),
+            "cup_name":  cup_obj.get("name"),
             "race_info": {
                 "start_at":  race_info.get("startAt"),
+                # ⚠️ これは**級班**（A級/S級/L級）。開催グレードは cup_grade。
                 "grade":     race_info.get("class", ""),
                 "race_type": race_info.get("raceType", ""),
                 "distance":  race_info.get("distance"),

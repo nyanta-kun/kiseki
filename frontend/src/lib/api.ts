@@ -1033,6 +1033,13 @@ export type KeirinPick = {
    *  🔴 `submission_only` は「picks_history に行が無い」だけで、
    *  **看板の穴埋め（自動）と手動入稿を区別できない**。バッジはこちらで出し分ける。 */
   origin?: string | null;
+  /** 開催グレード（winticket の cup.grade。6=GP 5=GI 4=GII 3=GIII 2=FI 1=FII）。
+   *  ⚠️ `grade` 列は**級班**（A級/S級/L級）で別物。 */
+  cup_grade?: number | null;
+  /** 上記の表示ラベル。未知の値は null（対応表を見直す合図）。 */
+  cup_grade_label?: string | null;
+  /** 大会名（例「オールスター競輪」）。 */
+  cup_name?: string | null;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
   hypo_axis1: number | null;
   hypo_axis2: number | null;

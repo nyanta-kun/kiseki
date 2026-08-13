@@ -1114,6 +1114,18 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               {pick.is_marquee && (
                 <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
+              {/* 開催グレード。GIII 以上は売上・注目が別格なので FI/FII と分けて出す
+                  （実測: GI 開催は1レースあたりの有償ptが他会場の5.0倍）。
+                  🔴 未知の grade は `cup_grade_label` が null になるので**出さない**
+                     （知らない値を勝手に GI 等へ丸めない）。 */}
+              {pick.cup_grade_label && (pick.cup_grade ?? 0) >= 3 && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-bold bg-red-600 text-white dark:bg-red-500"
+                  title={pick.cup_name ? `${pick.cup_grade_label}・${pick.cup_name}` : pick.cup_grade_label}
+                >
+                  {pick.cup_grade_label}
+                </span>
+              )}
               {/* ランクのゲートを通らず入稿したレース。同じ 7A でも経路が違うので、
                   混ぜたまま出すと「ランクの成績」と読まれてしまう
                   （実測でゲート通過と回収率が倍近く違う）。

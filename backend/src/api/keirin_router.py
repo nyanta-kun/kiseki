@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
+from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
@@ -559,6 +560,8 @@ async def get_picks(
                   wr.start_at,
                   wr.status,
                   wr.n_entries,
+                  wr.cup_grade,
+                  wr.cup_name,
                   vi.name                    AS venue_name,
                   ph.id,
                   COALESCE(ph.race_key, wr.race_key) AS ph_race_key,
@@ -639,7 +642,9 @@ async def get_picks(
                   wr.start_at,
                   wr.status,
                   wr.n_entries,
-                  vi.name AS venue_name
+                  wr.cup_grade,
+                  wr.cup_name,
+                  vi.name                    AS venue_name
                 FROM keirin.picks_history ph
                 JOIN keirin.wt_races wr
                   ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
@@ -685,6 +690,8 @@ async def get_picks(
                   wr.start_at,
                   wr.status,
                   wr.n_entries,
+                  wr.cup_grade,
+                  wr.cup_name,
                   vi.name                    AS venue_name
                 FROM keirin.netkeirin_submissions ns
                 JOIN keirin.wt_races wr
@@ -879,6 +886,10 @@ async def get_picks(
             # 入稿の出自。`submission_only` だけだと**看板の穴埋め（自動）も
             # 手動入稿も同じに見える**ので、バッジの出し分けにはこちらを使う。
             "origin": r.get("origin") or None,
+            # 開催グレード（GP/GI/GII/GIII/FI/FII）。⚠️ `grade` 列は級班なので別物。
+            "cup_grade": r.get("cup_grade"),
+            "cup_grade_label": grade_label(r.get("cup_grade")),
+            "cup_name": r.get("cup_name"),
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
             "gap12": float(r["gap12"]) if (has_pick and r.get("gap12") is not None) else None,
