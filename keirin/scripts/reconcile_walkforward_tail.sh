@@ -100,7 +100,9 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # ⚠️ そのテストは**この for 行だけをパースする**。過去、全文の文字列一致で
 #    書かれていたため上のコメントに含まれる "7h1:7H1" を拾って未登録のまま
 #    PASS していた（＝安全網が丸ごと無効だった）。
-for spec in "7ss:7SS" "7s:7S" "7a:7A" "7b:7B" "7c:7C" "9s:9S" "9a:9A" "7h1:7H1" "7t1:7T1"; do
+# 🔴 9S/9A は 2026-08-14 に全廃（RANK_9C へ集約）。ここに残すと**廃止したランクの行が
+#    毎晩 picks_history に書き戻される**。RANK_9C の rebuild は未実装なので未登録。
+for spec in "7ss:7SS" "7s:7S" "7a:7A" "7b:7B" "7c:7C" "7h1:7H1" "7t1:7T1"; do
   script="${spec%%:*}"
   label="${spec##*:}"
   .venv/bin/python3 "scripts/rebuild_${script}_walkforward_pg.py" --tail-only 2>&1 | tee -a "$LOG" \

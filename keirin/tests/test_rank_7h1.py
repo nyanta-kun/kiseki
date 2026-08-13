@@ -294,6 +294,28 @@ def test_reconcile_covers_every_rebuild_script():
         " 登録するか、除外理由を tests/reconcile_spec._INTENTIONALLY_UNREGISTERED へ書くこと")
 
 
+def test_reconcile_has_no_abolished_rank():
+    """🔴 廃止したランクが tail reconcile に残っていないこと。
+
+    残すと**廃止したランクの行が毎晩 picks_history に書き戻される**。
+    2026-08-14 に 9S/9A を全廃した際、reconcile からの除去が漏れた
+    （置換が空振りしたのに気づけなかった）。rebuild スクリプトの存在では
+    検知できない——スクリプト自体は残置するため。
+    """
+    import sys
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(repo))
+    from src.strategy_wt import ABOLISHED_PAPER_RANKS
+    from tests.reconcile_spec import reconcile_specs
+    registered = {label for label in reconcile_specs()}
+    abolished = {s.rank.replace("RANK_", "") for s in ABOLISHED_PAPER_RANKS}
+    leaked = registered & abolished
+    assert not leaked, (
+        f"廃止済みランクが tail reconcile に登録されています: {sorted(leaked)}。"
+        " 毎晩 picks_history へ書き戻されます")
+
+
 def test_reconcile_registration_has_no_dangling_entry():
     """逆に、実体の無いスクリプトを登録していないこと（毎朝 cron が失敗する）。"""
     from tests.reconcile_spec import rebuild_scripts, reconcile_specs
