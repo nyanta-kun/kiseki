@@ -108,6 +108,10 @@ export default function NetkeirinSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [isPending, startTransition] = useTransition();
+  // 無効ランクは既定で畳む（2026-08-14・ユーザー要望「無効は除外」）。
+  // 🔴 **完全に消してはいけない。** ここは唯一の再有効化手段なので、
+  //    画面から消すと二度と ON に戻せなくなる。畳むだけにする。
+  const [showDisabled, setShowDisabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -230,8 +234,8 @@ export default function NetkeirinSettingsPage() {
             </div>
           </section>
 
-          {/* ランク別カード */}
-          {RANK_ORDER.map((rank) => {
+          {/* ランク別カード（有効なものだけ。並びはサマリーと同じ「車数＞優先順位」） */}
+          {RANK_ORDER.filter((r) => rows[r].enabled).map((rank) => {
             const row = rows[rank];
             return (
               <section
@@ -279,6 +283,36 @@ export default function NetkeirinSettingsPage() {
               </section>
             );
           })}
+
+          {/* 無効のランク。既定で畳んでおく（一覧の主役は「いま売っている商品」）。
+              ここでONに戻すと即座に上の一覧へ移動する（rows の enabled を直接見ているため）。 */}
+          {RANK_ORDER.some((r) => !rows[r].enabled) && (
+            <section className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowDisabled((v) => !v)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100 text-left"
+              >
+                <span className="text-sm font-semibold text-gray-500">
+                  無効のランク（{RANK_ORDER.filter((r) => !rows[r].enabled).length}）
+                </span>
+                <span className="text-xs text-gray-400">{showDisabled ? "閉じる" : "開く"}</span>
+              </button>
+              {showDisabled && (
+                <div className="divide-y divide-gray-100">
+                  {RANK_ORDER.filter((r) => !rows[r].enabled).map((rank) => (
+                    <div key={rank} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="text-sm text-gray-600">{RANK_LABEL[rank]}</span>
+                      <Toggle
+                        checked={rows[rank].enabled}
+                        onChange={(v) => update(rank, { enabled: v })}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           {/* 保存 */}
           <div className="sticky bottom-4 flex items-center gap-3 bg-white/90 backdrop-blur rounded-xl border border-gray-200 shadow-lg px-4 py-3">

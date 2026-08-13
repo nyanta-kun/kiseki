@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Settings, Send } from "lucide-react";
+import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Send } from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposals, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
@@ -1712,6 +1712,9 @@ export default function KeirinPage() {
       <div className="flex items-center gap-2">
         <Bike size={22} className="text-blue-500" />
         <h1 className="text-xl font-extrabold tracking-widest text-gray-900 dark:text-white">KEIRIN</h1>
+        {/* 導線は「成績・売上 / 入稿確認 / 推奨ガイド」の3つに絞る（2026-08-14）。
+            入稿設定は日常的に触るものではないので**入稿確認ページの中**へ移した
+            （ヘッダーが増え続けるとモバイルで潰れる）。 */}
         <div className="ml-auto flex items-center gap-3">
           {/* 2026-08-03: netkeirin売上推移を /keirin/stats に追加したのに合わせ、
               ラベルを「成績グラフ」→「成績・売上」へ変更し、**モバイルでも常時表示**する
@@ -1758,14 +1761,6 @@ export default function KeirinPage() {
           >
             <HelpCircle size={15} />
             <span className="hidden sm:inline">推奨ガイド</span>
-          </Link>
-          <Link
-            href="/keirin/settings"
-            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-            aria-label="入稿設定"
-          >
-            <Settings size={15} />
-            <span className="hidden sm:inline">入稿設定</span>
           </Link>
         </div>
       </div>

@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Settings } from "lucide-react";
 
 import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
@@ -500,6 +500,17 @@ export default function ReviewClient({ date, items, nProposed }: {
           戻る
         </Link>
         <h1 className="text-lg font-semibold">入稿の確認・承認</h1>
+        {/* 入稿設定はここからだけ辿れる（2026-08-14 にトップのヘッダーから移設）。
+            ランクごとの ON/OFF・文面はこの画面での確認とセットで触るものなので、
+            確認画面の中に置くほうが導線として自然。 */}
+        <Link
+          href="/keirin/settings"
+          className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+          aria-label="入稿設定"
+        >
+          <Settings size={15} />
+          入稿設定
+        </Link>
         <span className="text-sm text-gray-500">{date}</span>
         <span className="text-sm">
           未入稿 <span className="font-semibold">{nProposed}</span> 件
