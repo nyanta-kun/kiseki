@@ -78,9 +78,9 @@ MODELS_DIR = _root / "models"
 BACKUP_DIR = _root / "data" / "backup"
 REPORT_DIR = _root / "docs" / "monthly_rollover"
 MODEL_FILES = [
-    "chihou_prod_lgb.v12_44feat.txt",
-    "chihou_prod_lgb_win.v12_44feat.txt",
-    "chihou_prod_lgb.v12_44feat_metrics.json",
+    "chihou_prod_lgb.v14_39feat.txt",
+    "chihou_prod_lgb_win.v14_39feat.txt",
+    "chihou_prod_lgb.v14_39feat_metrics.json",
 ]
 BACKFILL_START = "20240101"
 
@@ -191,7 +191,7 @@ def phase_retrain() -> None:
 def phase_backfill() -> None:
     end = datetime.date.today().strftime("%Y%m%d")
     logger.info(f"[backfill] v{CHIHOU_COMPOSITE_VERSION} を {BACKFILL_START}〜{end} で再計算")
-    run([sys.executable, "scripts/inference_chihou_v13.py",
+    run([sys.executable, "scripts/inference_chihou_v14.py",
          "--start", BACKFILL_START, "--end", end,
          "--batch-size", "3000", "--sleep", "0.3"])
 
@@ -249,13 +249,13 @@ def write_report(res: dict, retrained: bool) -> Path:
     lines += ["", "## 次にやること", ""]
     if retrained:
         lines += [
-            "モデルは再学習済み（`backend/models/chihou_prod_lgb.v12_44feat*.txt` が更新されている）。",
+            "モデルは再学習済み（`backend/models/chihou_prod_lgb.v14_39feat*.txt` が更新されている）。",
             "**デプロイまでは DB を触らないこと**（新旧混在になる）。",
             "",
             "```bash",
             "# 1. コミットしてデプロイ（CI が本番へ反映する）",
-            "git add backend/models/chihou_prod_lgb.v12_44feat*.txt \\",
-            "        backend/models/chihou_prod_lgb.v12_44feat_metrics.json \\",
+            "git add backend/models/chihou_prod_lgb.v14_39feat*.txt \\",
+            "        backend/models/chihou_prod_lgb.v14_39feat_metrics.json \\",
             f"        backend/docs/monthly_rollover/{ym}.md backend/scripts/CHIHOU_TEST_USAGE_LEDGER.md",
             "",
             "# 2. デプロイ完了後に DB を新モデルへ揃える",

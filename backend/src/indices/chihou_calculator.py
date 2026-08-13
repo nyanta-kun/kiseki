@@ -130,7 +130,7 @@ logger = logging.getLogger(__name__)
 #   目的は信頼度 tier の復旧（旧方式は 97% のレースが tier S に張り付いていた）と、
 #   v10 で止まっていた履歴バックフィルを 44特徴モデルで作り直すこと。
 #   詳細は `_scale_to_index_local` の docstring 参照。
-CHIHOU_COMPOSITE_VERSION = 13
+CHIHOU_COMPOSITE_VERSION = 14
 
 # composite の表示スケール係数。レース内平均からの差に掛ける。
 # 40.0 は「JRA v27 と同程度のレース内の幅（平均約28〜30）」になるよう選んだ値。
@@ -404,9 +404,22 @@ def _harville_place_probs(win_probs: list[float]) -> list[float]:
 # モデル不在・読込失敗・CHIHOU_USE_LGB=0 のときは線形にフォールバックする。
 # -----------------------------------------------------------------------
 
-# 44特徴量（scripts/train_chihou_prod_lgb.py の FEATURES + market5 と完全一致・同順にすること）
+# 39特徴量（scripts/train_chihou_prod_lgb.py の PROD_FEATURES と完全一致・同順にすること）
 # Phase3: 履歴系4特徴。Phase4(2026-06-07): 外部指数5特徴。Phase5: 馬場4特徴。
-# Phase6(2026-07-07): コーナー/調教師/乗替9特徴（_corner_features_batch / _trainer_features_batch）。
+# Phase6(2026-07-07): コーナー/調教師/乗替9特徴。
+#
+# 🔴 v14(2026-08-14) で **市場乖離5特徴を削除した**。
+# 本番は calculate_and_save(race_id, odds_map=None) で算出され、_fetch_win_odds は
+# race_results.win_odds（レース確定後にしか入らない）を読むため、
+# **発走前は市場5特徴が常に中立値**だった。つまり「市場込みで学習して市場なしで配信」
+# という状態で、最初から市場を使わずに学習した場合より構造的に悪い。
+#
+# walk-forward 実測（全9四半期・指数1位馬の勝率）:
+#   市場込み学習・市場なし配信（旧本番） 23.7〜32.6%
+#   市場なし学習・市場なし配信（v14）    34.0〜40.1%   ← +6.6〜+13.6pt
+#
+# ⚠️ 穴馬用途では市場を見せてはいけない（見せると市場が嫌う馬を上位に置かず
+#    「人気薄×指数上位」の条件が空になる）。詳細は docs/chihou_rebuild_2026_08.md 10・13章。
 _LGB_FEATURE_NAMES: list[str] = [
     # 30 base features (v10)
     "speed_index", "last3f_index", "jockey_index", "rotation_index", "last_margin_index",
@@ -418,12 +431,10 @@ _LGB_FEATURE_NAMES: list[str] = [
     # 9 corner/trainer/jkchg features (v12/Phase6)
     "c_early_n", "c_late_gain_n", "c_makuri_n", "c_runs", "front_density",
     "tr_win_rate", "tr_top3_rate", "tr_runs_n", "jk_change",
-    # 5 market features (v11)
-    "odds_rank_n", "speed_mkt_gap", "kc_mkt_gap", "is_heavy_fav", "is_dark_horse",
 ]
 _MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v12_44feat.txt"      # is_top3: composite & place_prob
-_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.v12_44feat.txt"  # is_win: 較正済 win_prob (v12)
+_PROD_LGB_PATH = _MODELS_DIR / "chihou_prod_lgb.v14_39feat.txt"      # is_top3: composite & place_prob
+_PROD_LGB_WIN_PATH = _MODELS_DIR / "chihou_prod_lgb_win.v14_39feat.txt"  # is_win: 較正済 win_prob (v14)
 _prod_lgb_cache: dict[str, Any] = {}
 _prod_lgb_tried: set[str] = set()
 
@@ -602,22 +613,12 @@ def _build_lgb_features(
             n_front += 1
     front_density = n_front / len(entries) if entries else 0.0
 
-    # ── 市場乖離5特徴（v11）: train add_market_features と同方式 ──
-    # odds_rank_n: レース内オッズ昇順ランク/頭数 (0=1番人気=best, 欠損→0.5)
-    odds_raw = {e.horse_id: (odds_map_race or {}).get(e.horse_id) for e in entries}
-    present_odds = [(hid, v) for hid, v in odds_raw.items() if v is not None and v > 0.0]
-    odds_rank: dict[int, float] = {e.horse_id: 0.5 for e in entries}  # 欠損デフォルト
-    if present_odds:
-        sorted_odds = sorted(present_odds, key=lambda x: x[1])  # 昇順（低オッズ=1番人気=rank1）
-        for rank0, (hid, _) in enumerate(sorted_odds):
-            odds_rank[hid] = rank0 / max(head_count, 1.0)
-
-    # speed_rank_n: speed_index 降順ランク/頭数 (0=最高速度=best)
-    speed_vals = [(e.horse_id, float(speed_map.get(e.horse_id, INDEX_NEUTRAL))) for e in entries]
-    sorted_speed = sorted(speed_vals, key=lambda x: -x[1])  # 降順（高速度=rank1）
-    speed_rank: dict[int, float] = {}
-    for rank0, (hid, _) in enumerate(sorted_speed):
-        speed_rank[hid] = rank0 / max(head_count, 1.0)
+    # 🔴 v14(2026-08-14) で市場乖離5特徴を削除した。
+    # 本番は odds_map が渡されないため、これらは発走前に常に中立値
+    # （odds_rank_n=0.5 / is_heavy_fav=0 / is_dark_horse は12頭立て以上で全馬1）
+    # になっており、「市場込みで学習して市場なしで配信」という最悪の組み合わせだった。
+    # 市場を使わずに学習し直した v14 は指数1位馬の勝率が +6.6〜+13.6pt 高い。
+    # 詳細: docs/chihou_rebuild_2026_08.md 13章。
 
     rows: list[list[float]] = []
     for e in entries:
@@ -632,16 +633,6 @@ def _build_lgb_features(
         pace = float(hist[3])             # prev_pace_ratio (不明=-1)
         pace = pace if pace >= 0 else 0.5  # 不明→中立0.5
         wet_apt, wet_runs = wet_apt_map.get(hid, (0.0, 0.0))
-
-        # 市場乖離特徴
-        orn = odds_rank[hid]   # odds_rank_n
-        srn = speed_rank[hid]  # speed_rank_n
-        kc_rn = float(ext[2])  # kc_rank_n (add_external_features と同位置)
-        speed_mkt_gap = max(-1.0, min(1.0, orn - srn))
-        kc_mkt_gap    = max(-1.0, min(1.0, orn - kc_rn))
-        # 断然人気/穴馬フラグ: オッズ順位で近似（popularity との相関は高い）
-        is_heavy_fav = 1.0 if orn <= 1.0 / max(head_count, 1.0) else 0.0  # 1〜2番人気相当
-        is_dark_horse = 1.0 if orn >= 6.0 / max(head_count, 1.0) else 0.0  # 7番人気以上相当
 
         rows.append([
             float(speed_map.get(hid, INDEX_NEUTRAL)),
@@ -662,8 +653,6 @@ def _build_lgb_features(
             # v12 CT9特徴（Phase6: コーナー/調教師/乗替）
             float(ct[0]), float(ct[1]), float(ct[2]), float(ct[3]), front_density,
             float(tf[0]), float(tf[1]), float(tf[2]), float(ct[4]),
-            # v11 市場乖離5特徴
-            orn, speed_mkt_gap, kc_mkt_gap, is_heavy_fav, is_dark_horse,
         ])
     return rows
 
