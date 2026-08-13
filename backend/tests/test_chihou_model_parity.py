@@ -24,10 +24,10 @@ import lightgbm as lgb
 import pytest
 
 from src.indices.chihou_calculator import (
-    CHIHOU_COMPOSITE_VERSION,
     _LGB_FEATURE_NAMES,
     _PROD_LGB_PATH,
     _PROD_LGB_WIN_PATH,
+    CHIHOU_COMPOSITE_VERSION,
 )
 
 _MARKET_FEATURES = frozenset({
