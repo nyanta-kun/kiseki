@@ -89,17 +89,27 @@ is_fill_target = _canonical.is_fill_target
 def marquee_race_nos(races: list[dict]) -> set[int]:
     """同一開催のレース一覧から、**穴埋め対象**とその前後のレース番号を返す。
 
-    races: [{"race_no": int, "race_type": str|None}, …]（同一開催ぶん）
+    races: [{"race_no": int, "race_type": str|None, "cup_grade": int|None}, …]
+      （同一開催ぶん）
 
-    🔴 対象は**看板 または 大会（6日制の特別開催）の予選**（`is_fill_target`）。
-       2026-08-13 まで看板だけを見ており、GI級の開催（オールスター競輪・松山）で
-       **6R〜11R が丸ごと無推奨**になっていた。売上は他会場の5.0倍の場所だった。
+    🔴 **グレードがキーワードより優先**（2026-08-14・ユーザー判断）。
+       開催グレードが GIII 以上なら**その開催の全レース**を対象にする。
+       グレードは開催の属性なので、`races` のどれか1つでも値を持っていれば
+       それを開催のグレードとして使う（レースごとに違う値にはならない）。
+
+    🔴 グレードが取れないとき（NULL＝2026-08-14 より前のレース等）は、従来どおり
+       **看板 または 大会の予選**（`is_fill_target`）とその前後1R を対象にする。
 
     ⚠️ 「前後」は**レース番号の±1**。実際に隣接するレースが存在するかは
        呼び出し側が `races` に含まれるかで判断する（欠番があっても
-       存在しない番号を返さない）。
+       存在しない番号を返さない）。**グレードで全レースが対象になる場合は
+       前後の展開自体が不要**（既に全部入っている）。
     """
     present = {int(r["race_no"]) for r in races if r.get("race_no") is not None}
+    grades = [int(r["cup_grade"]) for r in races if r.get("cup_grade") is not None]
+    cup_grade = max(grades) if grades else None
+    if cup_grade is not None and is_fill_target(None, cup_grade):
+        return present
     marquee = {int(r["race_no"]) for r in races
                if r.get("race_no") is not None and is_fill_target(r.get("race_type"))}
     out = set(marquee)

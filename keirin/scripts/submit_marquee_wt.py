@@ -126,7 +126,7 @@ def main() -> int:
 
     with get_connection() as conn:
         races = [dict(r) for r in conn.execute(
-            "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id "
+            "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id, cup_grade "
             "FROM wt_races WHERE race_date = ? ORDER BY venue_id, race_no", (date,))]
         # 🔴 **取消（status='deleted'）も「その日は処理済み」として扱う**
         #    （2026-08-13 変更・ユーザー判断）。取消は論理削除なので行が残る。

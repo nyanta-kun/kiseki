@@ -127,3 +127,56 @@ def test_keirin_side_does_not_duplicate_the_keywords() -> None:
             )
     defined = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     assert "is_marquee_type" not in defined, "keirin 側で判定を実装し直しています"
+
+
+# ---------------------------------------------------------------------------
+# 開催グレードによる穴埋め（2026-08-14 追加）
+# ---------------------------------------------------------------------------
+
+
+def test_grade_takes_priority_over_keywords():
+    """🔴 GIII 以上の開催は race_type を問わず穴埋め対象（ユーザー判断 2026-08-14）。
+
+    2026-08-14 松山（オールスター競輪・GI・11R）で、キーワードが拾えたのは
+    「選抜(1)」とその前後だけで **7R〜11R（準々Ａ/Ｂ・シャイニングスター賞）が
+    丸ごと無推奨**だった。番組名は開催ごとに自由なのでキーワードでは追いつかない。
+    """
+    from src.services.keirin_marquee import FILL_ALL_MIN_GRADE, is_fill_target
+
+    for rt in ("準々Ｂ", "シャイニングスター賞", "一般", None):
+        assert is_fill_target(rt, FILL_ALL_MIN_GRADE) is True, rt
+        assert is_fill_target(rt, 6) is True, rt          # GP
+
+
+def test_lower_grades_fall_back_to_keywords():
+    """FI/FII はグレードで拾わない（日常の開催まで全レース対象になってしまう）。"""
+    from src.services.keirin_marquee import is_fill_target
+
+    assert is_fill_target("準々Ｂ", 2) is False
+    assert is_fill_target("一般", 1) is False
+    assert is_fill_target("決勝", 1) is True              # 看板は従来どおり
+
+
+def test_missing_grade_keeps_the_old_behaviour():
+    """🔴 `cup_grade` は 2026-08-14 に保存を始めた列。NULL でも壊れないこと。
+
+    NULL を「対象外」にも「対象」にも倒さず、**従来のキーワード判定へ落ちる**。
+    """
+    from src.services.keirin_marquee import is_fill_target
+
+    assert is_fill_target("決勝", None) is True
+    assert is_fill_target("準々Ｂ", None) is False
+    assert is_fill_target("決勝") is True                 # 引数なしでも従来どおり
+
+
+def test_threshold_matches_the_cup_grade_module():
+    """🔴 しきい値が `keirin_cup_grade` と一致すること。
+
+    ⚠️ `keirin_marquee` は keirin 側が自分の venv から直接読み込むため
+       **標準ライブラリ以外を import できない**。だから定数を複製しており、
+       ここでしか一致を保証できない。
+    """
+    from src.services.keirin_cup_grade import BIG_EVENT_MIN_GRADE
+    from src.services.keirin_marquee import FILL_ALL_MIN_GRADE
+
+    assert FILL_ALL_MIN_GRADE == BIG_EVENT_MIN_GRADE
