@@ -33,11 +33,13 @@ from ..indices.buy_signal import (
     CHIHOU_PICK_MAX_INDEX_RANK,
     CHIHOU_PICK_MIN_POP_RANK,
     CHIHOU_PLACE_MIN_HEAD_COUNT,
+    chihou_effective_head_count,
     chihou_is_place_pick,
     chihou_is_sweet_spot,
     chihou_low_odds_trust_level,
     chihou_market_top3_share,
     chihou_popularity_ranks,
+    chihou_select_place_picks,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_upset import get_chihou_upset_reranker
@@ -810,14 +812,15 @@ async def build_chihou_sweet_spot_recommendations(
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            # 複穴（注目馬）: 発走前6番人気以下 × 指数3位内 × 開いたレース × 8頭以上
+            # 複穴（注目馬）: 発走前6番人気以下 × 指数5位内 × 開いたレース × 8頭以上
+            # ここでは適格判定だけ行い、1レース最大2頭への絞り込みは後段でまとめて行う
             if chihou_is_place_pick(
                 pop_ranks.get(hn) if hn is not None else None,
                 idx_rank,
                 top3_share,
-                race.head_count,
+                chihou_effective_head_count(race.head_count, race.registered_count),
             ):
-                place_bet_horses.append({**base})
+                place_bet_horses.append({**base, "_idx_rank": idx_rank})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
                 low_trusted.append({**base})
@@ -893,10 +896,28 @@ async def build_chihou_sweet_spot_recommendations(
         # ---- 複穴（place_bet）: 人気薄の複勝圏候補を複勝買い ----
         # 発走前6番人気以下 × 指数3位内 × 開いたレース × 8頭以上。
         # 複勝圏率 51.5%（母集団 11.79% の 4.37倍・探索51.4%/確認51.6%）。
-        # **的中率の指標であって収支の保証ではない**（複勝ROI 1.110 [0.886,1.345]）。
-        # 検証: docs/chihou_darkhorse_feasibility_2026_08_05.md
+        # **的中率の指標であって収支の保証ではない**。
+        # ⚠️ 旧記載の「複勝圏率 51.5% / ROI 1.110」は指数側の look-ahead による過大評価。
+        # 市場を見ない指数で測り直した honest な値は 複勝圏率 28.2%(×2.36)・ROI 0.96。
+        # 検証: docs/chihou_rebuild_2026_08.md 10〜11章
         #
-        # ⚠️ 頭数ゲート（旧 k<3）は付けない。検証した条件に無く、1レース平均 1.08 頭。
+        # ⚠️ 頭数ゲート（旧 k<3）は付けない。上限は chihou_select_place_picks が持つ。
+        #
+        # 指数5位内まで緩めた（2026-08-13）ため1レースに最大5頭が適格になりうる。
+        # 「1レースに1〜2頭」に絞るのはここ。指数の良い順に最大2頭。
+        if place_bet_horses:
+            _keep = set(
+                chihou_select_place_picks(
+                    [
+                        (h["horse_number"], h["_idx_rank"])
+                        for h in place_bet_horses
+                        if h.get("horse_number") is not None and h.get("_idx_rank") is not None
+                    ]
+                )
+            )
+            place_bet_horses = [h for h in place_bet_horses if h.get("horse_number") in _keep]
+            for h in place_bet_horses:
+                h.pop("_idx_rank", None)
         if place_bet_horses:
             for h in place_bet_horses:
                 _attach_finish(h, race.id)

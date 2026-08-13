@@ -492,8 +492,26 @@ def chihou_low_odds_trust_level(win_odds: float | None) -> str | None:
 
 # 「6番人気以下」の下限（発走前オッズ昇順の順位）
 CHIHOU_PICK_MIN_POP_RANK: int = 6
-# 指数がこの順位以内であること
-CHIHOU_PICK_MAX_INDEX_RANK: int = 3
+# 指数がこの順位以内であること。
+#
+# 2026-08-13: 3 → 5 に緩和した。目的が「1レースに1〜2頭ピックアップ」であり、
+# 3位以内では網羅率が 6.4%（レースの約1/16）で選択的すぎたため。
+# DISCOVERY(2026-04-07〜06-30 / 2,894R・市場を見ない walk-forward 指数)実測:
+#
+#   指数3位内 × 最大2頭  網羅  6.4%  1.15頭/R  複勝率 29.4%(×2.46)  R的中 32.1%
+#   指数5位内 × 最大2頭  網羅 14.0%  1.40頭/R  複勝率 28.2%(×2.36)  R的中 36.8%
+#
+# 網羅率が 2.2 倍になり複勝率の低下は 1.2pt に留まる。
+# ⚠️ 探索段階の選択（約30セルを比較）であり、隣接セルの差は有意ではない。
+# 確認は前向き記録でのみ行うこと（台帳 11 章）。
+CHIHOU_PICK_MAX_INDEX_RANK: int = 5
+
+# 1レースから採る上限頭数。
+#
+# 「最大2頭」は「最大1頭」より一貫して複勝率が高い（指数5位内で 24.9% → 28.2%）。
+# 2頭目の質が良いのではなく、**2頭が条件を満たすレース自体が当たりやすい**
+# （開いていて指数が複数頭を推せるレース）。頭数そのものがレース選別に効いている。
+CHIHOU_PICK_MAX_PER_RACE: int = 2
 # 市場含意確率（1/オッズをレース内で正規化）の上位3頭合計がこの値未満なら「開いたレース」
 CHIHOU_OPEN_RACE_MAX_TOP3_SHARE: float = 0.63
 
@@ -544,6 +562,46 @@ def chihou_popularity_ranks(pre_odds_by_hn: Mapping[int, float | None]) -> dict[
     return {hn: i + 1 for i, (hn, _o) in enumerate(valid)}
 
 
+def chihou_effective_head_count(
+    head_count: int | None,
+    registered_count: int | None,
+) -> int | None:
+    """発走前でも使える出走頭数を返す。
+
+    🔴 **`chihou.races.head_count` はレース後にしか入らない。**
+    実測（2026-08-13）:
+
+        8/12（過去） 57レース中 57 で充足
+        8/13（当日） 45レース中  2 で充足
+        8/14（翌日） 34レース中  0 で充足
+
+    一方 `registered_count`（登録頭数）は**発走前から100%入っている**。
+
+    `chihou_is_place_pick()` は `head_count is None` で False を返すため、
+    このままでは**当日は一頭も注目馬が出ない**（推奨が事実上死んでいた）。
+    過去データでは head_count が埋まっているので検証だけが通っていた。
+
+    代替の安全性（2026-01〜08-12・8,130レース実測）:
+
+        registered_count>=8 かつ head_count>=8   7,538
+        registered_count>=8 だが head_count<8       71（0.93%）
+        registered_count<8  だが head_count>=8       0  ← 取りこぼしゼロ
+
+    取りこぼしは無く、通しすぎが 0.93%。その 0.93% は出走取消で7頭以下になり
+    複勝が2着までしか払い戻されないレースだが、許容する。
+
+    Args:
+        head_count: 確定出走頭数（レース後のみ）
+        registered_count: 登録頭数（発走前から入る）
+
+    Returns:
+        判定に使う頭数。どちらも無ければ None。
+    """
+    if head_count is not None:
+        return head_count
+    return registered_count
+
+
 def chihou_is_place_pick(
     pop_rank: int | None,
     index_rank: int | None,
@@ -555,11 +613,23 @@ def chihou_is_place_pick(
     条件:
       1. 出走 8 頭以上（7頭以下は複勝が2着までしか払い戻されないため対象外）
       2. **発走前** 6番人気以下
-      3. 指数（composite_index）3位以内
+      3. 指数（composite_index）5位以内
       4. 市場上位3頭シェア < 0.63（上位が抜けていない「開いたレース」）
 
-    実測 複勝圏率 51.5%（母集団 11.79% の 4.37倍・探索51.4%/確認51.6%）。
-    **的中率の指標であって収支の保証ではない**（複勝ROI 1.110 [0.886, 1.345]）。
+    さらに1レースから採るのは `chihou_select_place_picks()` で**最大2頭**に絞る。
+
+    ⚠️ **期待値の訂正（2026-08-13）**: 先行検証の「複勝圏率 51.5%」は
+    **指数側の look-ahead** による過大評価だった。検証に使った walk-forward 指数は
+    市場特徴を含み、その入力が `race_results` の**確定オッズ**だったため、
+    「発走5分前は6番人気以下だが締切までに2〜3番人気まで買われた馬」を拾っていた
+    （該当186頭の 87% が確定1〜3番人気・pre/final 比の中央値 2.30）。
+
+    **市場を見ない指数（＝本番と同じ条件）で測り直した honest な値**:
+
+        複勝圏率 28.2%（母集団 11.9% の ×2.36）・レース単位の的中 36.8%
+
+    **的中率の指標であって収支の保証ではない**（複勝ROI は 0.96 で 1.0 未満）。
+    根拠は台帳 `docs/chihou_rebuild_2026_08.md` 10〜11章。
 
     Args:
         pop_rank: 発走前オッズによる人気順位（`chihou_popularity_ranks()`）
@@ -579,6 +649,27 @@ def chihou_is_place_pick(
     if top3_share is None:
         return False
     return float(top3_share) < CHIHOU_OPEN_RACE_MAX_TOP3_SHARE
+
+
+def chihou_select_place_picks(
+    candidates: list[tuple[int, int]],
+    max_picks: int = CHIHOU_PICK_MAX_PER_RACE,
+) -> list[int]:
+    """1レースの注目馬候補から実際に推奨する馬を選ぶ。
+
+    `chihou_is_place_pick()` は馬ごとの適格判定しかしないので、
+    指数5位以内まで緩めると1レースに最大5頭が該当しうる。
+    「1レースに1〜2頭」に絞るのはここの責務。
+
+    Args:
+        candidates: (馬番, 指数順位) の組。適格判定を通ったものだけを渡すこと。
+        max_picks: 採用上限。
+
+    Returns:
+        推奨する馬番（指数の良い順）。
+    """
+    ordered = sorted(candidates, key=lambda x: (x[1], x[0]))
+    return [hn for hn, _rank in ordered[:max_picks]]
 
 
 # ---------------------------------------------------------------------------

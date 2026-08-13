@@ -23,11 +23,13 @@ from ..db.chihou_models import (
 from ..db.session import get_db
 from ..indices.buy_signal import (
     chihou_buy_signal,
+    chihou_effective_head_count,
     chihou_is_place_bet,
     chihou_is_place_pick,
     chihou_is_sweet_spot,
     chihou_market_top3_share,
     chihou_popularity_ranks,
+    chihou_select_place_picks,
 )
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.confidence import (
@@ -344,14 +346,26 @@ async def get_chihou_featured_place(
         pop_ranks = chihou_popularity_ranks(
             {int(c): o for c, o in win_odds.items() if c.isdigit()}
         )
+        # 適格馬をいったん集め、1レース最大2頭に絞る（指数の良い順）
+        _eligible = [
+            (int(c), idx_ranks[int(c)])
+            for c in win_odds
+            if c.isdigit()
+            and idx_ranks.get(int(c)) is not None
+            and chihou_is_place_pick(
+                pop_ranks.get(int(c)), idx_ranks.get(int(c)), share,
+                chihou_effective_head_count(race.head_count, race.registered_count),
+            )
+        ]
+        _selected = set(chihou_select_place_picks(_eligible))
         for combo, odds_val in sorted(win_odds.items(), key=lambda kv: kv[1]):
             if not combo.isdigit():
                 continue
             hn = int(combo)
+            if hn not in _selected:
+                continue
             pop = pop_ranks.get(hn)
             irank = idx_ranks.get(hn)
-            if not chihou_is_place_pick(pop, irank, share, race.head_count):
-                continue
             out.append(
                 ChihouFeaturedPlaceOut(
                     race_id=race.id,
@@ -532,7 +546,10 @@ async def get_chihou_races_by_date(
         share = chihou_market_top3_share(odds_by_hn.values())
         pop_ranks = chihou_popularity_ranks(odds_by_hn)
         if any(
-            chihou_is_place_pick(pop_ranks.get(hn), idx_ranks.get(hn), share, race.head_count)
+            chihou_is_place_pick(
+                pop_ranks.get(hn), idx_ranks.get(hn), share,
+                chihou_effective_head_count(race.head_count, race.registered_count),
+            )
             for hn in odds_by_hn
         ):
             place_pick_race_ids.add(race.id)
@@ -779,20 +796,32 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     _odds_by_hn = {int(c): v for c, v in win_odds_map.items() if c.isdigit()}
     _top3_share = chihou_market_top3_share(_odds_by_hn.values())
     _pop_ranks = chihou_popularity_ranks(_odds_by_hn)
-    _head_count = race_obj.head_count if race_obj else None
+    # head_count はレース後にしか入らないので registered_count で代替する
+    _head_count = (
+        chihou_effective_head_count(race_obj.head_count, race_obj.registered_count)
+        if race_obj
+        else None
+    )
     # 指数順位は composite_index 降順・同値は馬番昇順（本番 rank_by_hn と同規則）
     _idx_sorted = sorted(
         (h for h in horses if h.horse_number is not None),
         key=lambda h: (-h.composite_index, h.horse_number),
     )
     _idx_rank = {h.horse_number: i + 1 for i, h in enumerate(_idx_sorted)}
-    for h in horses:
-        h.is_place_pick = chihou_is_place_pick(
-            _pop_ranks.get(h.horse_number) if h.horse_number is not None else None,
-            _idx_rank.get(h.horse_number) if h.horse_number is not None else None,
-            _top3_share,
-            _head_count,
+    _eligible_picks = [
+        (h.horse_number, _idx_rank[h.horse_number])
+        for h in horses
+        if h.horse_number is not None
+        and _idx_rank.get(h.horse_number) is not None
+        and chihou_is_place_pick(
+            _pop_ranks.get(h.horse_number), _idx_rank.get(h.horse_number),
+            _top3_share, _head_count,
         )
+    ]
+    # 1レース最大2頭。適格馬が3頭以上いても指数上位だけを注目馬にする
+    _picked = set(chihou_select_place_picks(_eligible_picks))
+    for h in horses:
+        h.is_place_pick = h.horse_number in _picked
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None
