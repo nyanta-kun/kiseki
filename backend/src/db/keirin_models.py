@@ -50,13 +50,20 @@ class KeirinWtRace(KeirinBase):
     race_no: Mapped[int] = mapped_column(Integer, nullable=False, comment="レース番号")
     cup_id: Mapped[str] = mapped_column(String(20), nullable=False, comment="カップID")
     day_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="開催日次")
-    grade: Mapped[str | None] = mapped_column(String(10), comment="グレード")
+    # ⚠️ これは**級班**（A級/S級/L級）。開催グレードは cup_grade（下）。
+    grade: Mapped[str | None] = mapped_column(String(10), comment="級班(A級/S級/L級)")
     race_type: Mapped[str | None] = mapped_column(String(20), comment="レース種別")
     distance: Mapped[int | None] = mapped_column(Integer, comment="距離(m)")
     n_entries: Mapped[int | None] = mapped_column(Integer, comment="出走頭数")
     start_at: Mapped[str | None] = mapped_column(String(20), comment="発走時刻(UNIX timestamp文字列)")
     status: Mapped[int] = mapped_column(Integer, default=0, comment="レースステータス")
     cancel: Mapped[int] = mapped_column(Integer, default=0, comment="中止フラグ")
+    # 開催グレード（winticket の cup.grade）。6=GP 5=GI 4=GII 3=GIII 2=FI 1=FII。
+    # 対応は services/keirin_cup_grade.py が正本。2026-08-14 以降のみ値が入る。
+    cup_grade: Mapped[int | None] = mapped_column(
+        Integer, comment="開催グレード(6=GP/5=GI/4=GII/3=GIII/2=FI/1=FII)"
+    )
+    cup_name: Mapped[str | None] = mapped_column(String, comment="大会名")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="収集日時"
     )

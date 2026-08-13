@@ -195,14 +195,17 @@ def _write_race(conn, data: dict):
     conn.execute("""
         INSERT OR REPLACE INTO wt_races
         (race_key, venue_id, race_date, race_no, cup_id, day_index,
-         grade, race_type, distance, n_entries, start_at, status, cancel)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         grade, race_type, distance, n_entries, start_at, status, cancel,
+         cup_grade, cup_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         data["race_key"], data["venue_id"], data["race_date"], data["race_no"],
         data["cup_id"], data["day_index"],
+        # ⚠️ `grade` は**級班**（A級/S級/L級）。開催グレードは cup_grade。
         ri.get("grade"), ri.get("race_type"), ri.get("distance"),
         ri.get("n_entries"), ri.get("start_at"),
         int(ri.get("status", 0)), int(bool(ri.get("cancel", False))),
+        data.get("cup_grade"), data.get("cup_name"),
     ))
 
     for e in data["entries"]:
