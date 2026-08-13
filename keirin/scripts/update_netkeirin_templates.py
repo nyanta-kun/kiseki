@@ -66,11 +66,10 @@ from src.race_shape import RANK_ALIASES, SHAPE_NOTES, SHAPE_TITLES  # noqa: E402
 #    前半ではなく `race_shape.SHAPE_TITLES` 側に持たせるべき違い。
 TITLE_TEMPLATES: dict[str, str] = {
     "7S": "自信の二軸｜{shape}",
-    "9S": "自信の二軸｜{shape}",
     "7A": "厳選の二軸｜{shape}",
-    "9A": "厳選の二軸｜{shape}",
     "7B": "相手を絞った二軸｜{shape}",
     "7C": "本線の二軸｜{shape}",
+    "9C": "本線の二軸｜{shape}",
     "7SS": "ライン本線の二軸｜{shape}",
     "7H1": "穴狙いの二軸｜{shape}",
     "7H2": "穴狙いの二軸｜{shape}",
@@ -124,7 +123,7 @@ def _body() -> str:
 #    ランクを増減したら TITLE_TEMPLATES と揃っているか `_check_consistency` が見る。
 COMMENT_TEMPLATES: dict[str, str] = {
     rank: _body()
-    for rank in ("7S", "9S", "7A", "9A", "7B", "7C", "7SS", "7H1", "7H2", "9H1",
+    for rank in ("7S", "7A", "7B", "7C", "9C", "7SS", "7H1", "7H2", "9H1",
                  "7T1")
 }
 

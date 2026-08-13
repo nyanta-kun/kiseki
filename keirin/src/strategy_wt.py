@@ -2259,6 +2259,80 @@ def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
 RANK_7C_NE = 7        # 対象車数（7車ちょうど）
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# RANK_9C — 9車のベースモデル（2026-08-14 新設・9S/9A を置換）
+#
+# 【なぜ要るのか】7車には 7C（終日を対象にする的中体験の土台）があるが、
+#   9車には対応するランクが無く、旧世代の 9S/9A のままだった。実測（2026年）:
+#
+#     9車・素の p3上位2車   二軸的中 40.7%（ランダム 8.3% の 4.89倍）
+#     9A（実運用）          二軸的中 26.4%（       同         3.18倍）
+#
+#   🔴 **9A は「素直に上位2車を採る」より 14.3pt 低い**＝ゲートが逆効果だった。
+#      モデル自体は9車のほうがよく効いている（正規化倍率は7車 3.70x より上）。
+#
+# 【7C の定数は使えない】`pred_top3_pct` は**レース内合計が3.0に正規化**される
+#   ので、車数が増えると上位2車の合計が構造的に下がる:
+#
+#     上位2車合計(中央)   7車 1.457 → 9車 1.326
+#     7C の 1.44 を通る率 7車 53.7% → 9車 **21.2%**
+#
+#   したがって9車向けに掃引した（「検証由来の閾値をそのまま定数にすると壊れる」）。
+#
+# 【検証】掃引窓 2026-01〜06(1,138R) で選び、確認窓 2026-07〜08-14(280R) で確認。
+#   walk-forward（月次vintage）なので model-vintage look-ahead は無い。
+#
+#     合計1.30/足切0.15  掃引 二軸49.6% → **確認 50.8%**（実質 44.0% → 48.5%）
+#
+#   🟢 二軸的中は5水準すべてで再現し、合計下限を上げるほど単調に伸びる関係も保たれた。
+#   🔴 **ROI は再現しない**（掃引 83〜95% → 確認 59〜73%）。掃引窓の高 ROI は
+#      三連複の裾（大きな配当1本）に引かれていただけ。**ROI で語る商品ではない**。
+#
+# 【9車固有の発見】
+#   ⚠️ **相手の最低点数ゲートは9車では効かない**。7C の `LEGS_MIN=4`
+#      （相手が少ない＝低配当を落とす）は、9車は相手が7車あるため
+#      **3点と4点が同値**になり機能しない。したがって下限は3点に置くだけ。
+#   ⚠️ 足切り 0.10 のほうが実質的中は高い(51.1%)が **ROI は 0.15 が高い**
+#      (70.3% vs 61.5%)。9車は元々 ROI が薄いので 0.15 を採る（ユーザー判断）。
+#   ⚠️ **7C の三連単切替（`RANK_7C_TRIFECTA_PW_MIN`）は入れない。**
+#      9車では未検証。測っていないものを載せない。
+# ═══════════════════════════════════════════════════════════════════════════
+
+RANK_9C_NE = 9                     # 対象車数（9車ちょうど）
+# モデル3着内率の上位2車の合計の下限。**9車向けに掃引して決めた絶対閾値**。
+# 掃引: 1.20 二軸45.3% / **1.30 50.8%** / 1.40 58.2%（いずれも確認窓）。
+# ⚠️ pred_top3 の較正に依存する。**モデルを再学習したら分布を確認して更新すること**。
+RANK_9C_P3_SUM_MIN = 1.30
+# 相手の足切り。7C と同値だが**根拠は別**（9車で掃引した結果）。
+RANK_9C_LEG_P3_MIN = 0.15
+# 相手の最低点数。⚠️ 9車では**このゲートは実質効かない**（上記）。
+# 買い目として成立する最低限として3点を置くだけ。
+RANK_9C_LEGS_MIN = 3
+RANK_9C_BUDGET = RACE_BUDGET
+RANK_9C_UNIT = STAKE_UNIT
+
+
+def rank_9c_daily_select(candidates: list[dict]) -> list[dict]:
+    """9C の選出: 上位2車の3着内率合計が閾値以上 ∧ 相手が3点以上。
+
+    軸と相手の**選び方は 7C と同じ**（`rank_7c_select_axis` /
+    `rank_7c_select_legs` は車数に依存しない）。違うのは閾値だけ。
+
+    ⚠️ 7C の「低配当パターン」除外は**9車では使わない**。あれは相手の点数が
+       少ないことを低配当の指標に使う仕組みで、相手が7車ある9車では成立しない。
+
+    returns 採用された候補（p3_sum_top2 の降順＝自信のある順）。
+    """
+    return sorted(
+        (c for c in candidates
+         if c.get("n_entries") == RANK_9C_NE
+         and c.get("p3_sum_top2") is not None
+         and float(c["p3_sum_top2"]) >= RANK_9C_P3_SUM_MIN
+         and len(c.get("legs_9c") or []) >= RANK_9C_LEGS_MIN),
+        key=lambda c: -float(c["p3_sum_top2"]),
+    )
+
+
 def rank_7c_select_axis(top3_probs: dict[int, float]) -> tuple[int, int, float] | None:
     """7Cの軸2車を選ぶ: モデル3着内率の上位2車と、その合計を返す。
 
@@ -2926,8 +3000,9 @@ CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
     PaperRankSpec("RANK_7S",  "#7S",  "7S",  in_header_total=True,  in_live_report=True),
     PaperRankSpec("RANK_7A",  "#7A",  "7A",  in_header_total=False, in_live_report=True),
     PaperRankSpec("RANK_7B",  "#7B",  "7B",  in_header_total=False, in_live_report=True),
-    PaperRankSpec("RANK_9S",  "#9S",  "9S",  in_header_total=False, in_live_report=True),
-    PaperRankSpec("RANK_9A",  "#9A",  "9A",  in_header_total=False, in_live_report=True),
+    # 9車のベースモデル（2026-08-14〜）。旧 9S/9A を置換した。
+    # 7C と同じ「終日を対象にする的中体験の土台」で、母集団は9車ちょうど。
+    PaperRankSpec("RANK_9C",  "#9C",  "9C",  in_header_total=False, in_live_report=True),
     # ベースモデル（2026-08-07〜）。終日を対象にする的中体験の土台で、
     # 既存の厳選ランクとは母集団の性格が違うため in_header_total=False。
     PaperRankSpec("RANK_7C",  "#7C",  "7C",  in_header_total=False, in_live_report=True),
@@ -3005,6 +3080,14 @@ ABOLISHED_PAPER_RANKS: tuple[AbolishedRankSpec, ...] = (
     # 設計と失敗の記録は docs/rank_7h3_design.md に残してある（消さないこと）。
     # suffix=None: picks_history の行を削除し、再生成する経路（候補生成・backfill・
     # walk-forward rebuild）も全て消したので、上書き保護の網は不要。
+    # 9S/9A は 2026-08-14 に廃止し RANK_9C へ集約した（ユーザー判断）。
+    # 9A: 121R・二軸的中26.4% で、**「素直に p3上位2車を採る」(40.7%) より 14.3pt 低い**
+    #     ＝ゲートが逆効果だった。9C も選ぶ67Rに限れば 9C が +9.4pt 上（35.8%）。
+    # 9S: 2026年で9件しかなく評価不能（実質稼働していない）。
+    # ⚠️ picks_history の行は**削除しない**。7H3 と違い実際に入稿・採点された
+    #    記録なので、廃止台帳に載せて集計から外すだけにする。
+    AbolishedRankSpec("RANK_9S", "#9S", "9車・三連複2軸流し7点（2026-08-14全廃・9Cへ集約）"),
+    AbolishedRankSpec("RANK_9A", "#9A", "9車・境界ランク（2026-08-14全廃・9Cへ集約）"),
     AbolishedRankSpec("RANK_7H3", None,
                        "本命連対どまり型・三連単（2026-08-13全廃・入稿実績0）"),
     AbolishedRankSpec("SEVEN_S1", "#7S1",

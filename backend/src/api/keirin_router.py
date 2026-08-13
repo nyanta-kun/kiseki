@@ -253,8 +253,10 @@ _PAPER_RANK_LABELS: dict[str, str] = {
     # 7S/7A が枯渇（overlap∈{0,1}が18〜23%まで低下）したことへの増枠。
     # 三連複の相手絞り3点で 7S/7A の5点総流しとは点数が異なる。
     "RANK_7B": "7B",
-    "RANK_9S": "9S",
-    "RANK_9A": "9A",
+    # RANK_9C: 2026-08-14 新設の**9車ベースモデル**（旧 9S/9A を置換）。
+    #    旧 9A は二軸的中 26.4% で「素直に p3上位2車を採る」(40.7%) より
+    #    14.3pt 低く、ゲートが逆効果だった。9C は確認窓で 50.8% を再現。
+    "RANK_9C": "9C",
     # RANK_7H1: 2026-08-06 新設の**穴推奨**（本命バスト型）。既存6ランクとは系統が
     # 違う（S/A/B＝的中率重視の予想ベース、H＝穴狙い）。命名は `{車数}H{連番}`。
     # 「当方指数で頭ひとつ抜けた1車が4着以下に沈む」とレース単位モデルが読んだ
@@ -1237,7 +1239,10 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #
 # ⚠️ この tuple は**フロントの MANUAL_SUBMIT_RANKS / ManualKeirinRankKey の
 #    上位集合**でなければならない。test_keirin_rank_consistency.py が検査する。
-_MANUAL_RANK_KEYS = ("7S", "7A", "9S", "9A")
+# 手動入稿で選べるランク。9車は 2026-08-14 に 9S/9A を廃止し 9C へ集約した。
+# ⚠️ keirin 側 `MANUAL_ALLOWED_RANKS` と**必ず一致させること**
+#    （`test_frontend_manual_submit_ranks_match_backend` が突き合わせている）。
+_MANUAL_RANK_KEYS = ("7S", "7A", "7B", "9C")
 
 
 class SubmitRaceIn(BaseModel):

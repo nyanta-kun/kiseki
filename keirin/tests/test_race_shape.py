@@ -91,7 +91,7 @@ def test_solo_lines_are_never_treated_as_the_same_line():
     assert classify_shape("7S", e, 1, 2) == SHAPE_SPLIT
 
 
-@pytest.mark.parametrize("rank", ["7A", "9A"])
+@pytest.mark.parametrize("rank", ["7A"])
 def test_rank_7a_never_reports_solo(rank):
     """7A は q20 ゲートで「本命が割れた」レースだけを通す＝1車抜けと両立しない。"""
     e = _entries(SOLO_WIN, FLAT_TOP3, lines=[1, 1, 2, 2, 2, 3, 3])
@@ -200,7 +200,7 @@ def test_gami_claim_is_limited_to_high_pay_ranks():
     """ガミ抑制を売り文句にできるのは 7H1/9H1 のみ（仕様書 §1・§4-6）。"""
     for rank in ("7H1", "9H1"):
         assert "ガミ" in stake_note_text(rank, tilted=True)
-    for rank in ("7S", "7A", "7B", "7C", "7SS", "9S", "9A"):
+    for rank in ("7S", "7A", "7B", "7C", "7SS", "9C"):
         assert "ガミ" not in stake_note_text(rank, tilted=True)
         assert "ガミ" not in stake_note_text(rank, tilted=False)
 

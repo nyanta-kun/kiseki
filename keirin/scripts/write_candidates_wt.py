@@ -326,16 +326,19 @@ def _write_paper_candidates(target_date: str) -> None:
             continue  # 重なり2・不明は候補として表示しない（rank_7s_daily_select と同じ除外対象）
         rows.append((f"{rk}#7S", "RANK_7S", f"{axis1}={axis2}-{_third_list(axis1, axis2, 7)}", gate_label, 0))
 
-    for c in _load((f"wave_picks_wt_{target_date}_s9_candidates.json",
-                    f"wave_picks_wt_{target_date}_night_s9_candidates.json")):
+    # 9C（9車のベースモデル・2026-08-14新設・旧 9S/9A を置換）。
+    # 🔴 旧 9A は二軸的中 26.4% で「素直に p3上位2車を採る」(40.7%) より
+    #    14.3pt 低く、ゲートが逆効果だった。設計は strategy_wt.RANK_9C 参照。
+    # 相手は候補JSONの `legs_9c`（総流しではない）。
+    for c in _load((f"wave_picks_wt_{target_date}_s9c_candidates.json",
+                    f"wave_picks_wt_{target_date}_night_s9c_candidates.json")):
         rk = c.get("race_key")
-        axis1, axis2 = c.get("axis1"), c.get("axis2")
-        if not rk or axis1 is None or axis2 is None:
+        axis1, axis2 = c.get("axis1_9c"), c.get("axis2_9c")
+        legs = c.get("legs_9c") or []
+        if not rk or axis1 is None or axis2 is None or not legs:
             continue
-        gate_label = rank_7s_gate_label(c.get("wt_overlap_n"), c.get("axis1_class"), c.get("axis2_class"))
-        if gate_label is None:
-            continue  # S7と同じ基準（重なり2・不明は候補として表示しない）
-        rows.append((f"{rk}#9S", "RANK_9S", f"{axis1}={axis2}-{_third_list(axis1, axis2, 9)}", gate_label, 0))
+        rows.append((f"{rk}#9C", "RANK_9C",
+                     f"{axis1}={axis2}-" + ",".join(str(x) for x in legs), None, 0))
 
     for c in _load((f"wave_picks_wt_{target_date}_s7a_candidates.json",
                     f"wave_picks_wt_{target_date}_night_s7a_candidates.json")):
@@ -360,13 +363,6 @@ def _write_paper_candidates(target_date: str) -> None:
         rows.append((f"{rk}#7SS", "RANK_7SS",
                      f"{axis1}={axis2}-{_third_list(axis1, axis2, 7)}", None, 0))
 
-    for c in _load((f"wave_picks_wt_{target_date}_s9a_candidates.json",
-                    f"wave_picks_wt_{target_date}_night_s9a_candidates.json")):
-        rk = c.get("race_key")
-        axis1, axis2 = c.get("axis1"), c.get("axis2")
-        if not rk or axis1 is None or axis2 is None:
-            continue
-        rows.append((f"{rk}#9A", "RANK_9A", f"{axis1}={axis2}-{_third_list(axis1, axis2, 9)}", None, 0))
 
     # 7B（2026-08-03導入）。他ランクと違い相手を絞る（総流しではない）ため、
     # 候補時点の pred_combo も残り全車ではなく候補JSONの legs_7b（△除外・

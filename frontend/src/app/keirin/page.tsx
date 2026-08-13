@@ -287,11 +287,11 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
   // 色調は別系統（青系）のまま区別する。
-  "9S":         { bg: "#0891b2", text: "#fff", label: "9S" },
   // 7A/9A=RANK_7S/RANK_9Sの境界ランク（2ゲート中1つだけ不合格・2026-07-27導入・
   // 2026-07-31にゲート数を3→2へ簡素化）。彩度を落とした色で7S/9Sとはやや区別する。
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
-  "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
+  // 9C=RANK_9C（9車のベースモデル・2026-08-14新設／旧 9S・9A を置換）。
+  "9C":         { bg: "#0891b2", text: "#fff", label: "9C" },
   // 7B=RANK_7B（◎◯一致だが順序・相手で不一致・三連複3点・2026-08-03導入）。
   // 7S/7Aとは母集団が排他（7B=overlap2 / 7S・7A=overlap0,1）で買い目点数も
   // 異なる（3点 vs 5点）ため、独立した色調（琥珀系）で区別する。
@@ -795,8 +795,7 @@ const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: stri
     { key: "7A", label: "7A" },
   ],
   9: [
-    { key: "9S", label: "9S" },
-    { key: "9A", label: "9A" },
+    { key: "9C", label: "9C" },
   ],
 };
 
@@ -1290,7 +1289,7 @@ type PeriodData = KeirinSummary["today"];
 type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 
 // by_rank キー: "7S"=RANK_7S（単勝×複勝指数トップ3重なり軸×波乱度選出）/
-// "7A"=RANK_7Sの境界ランク / "9S"=RANK_9S（7Sの9車立て版） / "9A"=RANK_9Sの境界
+// "7A"=RANK_7Sの境界ランク / "9C"=RANK_9C（9車のベースモデル・旧9S/9Aを置換）
 // ランク（全てペーパー検証・名目賭金）。
 // 2026-07-17 旧新S1(SIX_S1)/A(7PLUS_A) 全廃・2026-07-19 S1(SEVEN_S1)導入・2026-07-21 S7導入
 // 2026-07-21 S2(7PLUS_U)/S3(7PLUS_M) 全廃、S7をgate_label(SS/S)で7SS/7Sの2ランクへ再編
@@ -1316,9 +1315,9 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9S", "9A", "7H1", "7H2", "9H1", "7T1", "7C"] as const;
+const RANK_ORDER = ["7SS", "7S", "7A", "7B", "9C", "7H1", "7H2", "9H1", "7T1", "7C"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9S": "9S", "9A": "9A",
+  "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9C": "9C",
   "7H1": "7H1",
   "7H2": "7H2",
   "9H1": "9H1",
@@ -1330,8 +1329,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
   "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
-  "9S": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
-  "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
+  "9C": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",
   "7H2": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "9H1": "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-400",

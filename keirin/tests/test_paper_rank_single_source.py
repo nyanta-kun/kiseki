@@ -58,13 +58,15 @@ import live_report_wt as lr
 # 変わると母集団が1.4倍になり崩壊した（入稿実績0）。7T1 は確率を相対順位でしか
 # 使わず、閾値は予測オッズ側に置く。母集団は **看板 × 上位2車が別ライン**で、
 # 看板を対象とする 7C と同じレースを取り合う（入稿は優先順位で 7C が先に取る）。
-CURRENT_RANK_NAMES = {"RANK_7SS", "RANK_7S", "RANK_7A", "RANK_7B", "RANK_9S",
-                      "RANK_9A", "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
+# 2026-08-14: RANK_9S / RANK_9A を全廃し RANK_9C へ集約（9A の二軸的中 26.4% は
+# 「素直に p3上位2車を採る」40.7% より 14.3pt 低くゲートが逆効果だった）。
+CURRENT_RANK_NAMES = {"RANK_7SS", "RANK_7S", "RANK_7A", "RANK_7B", "RANK_9C",
+                      "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
                       "RANK_7T1"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {
-    "RANK_7H3",
+    "RANK_7H3", "RANK_9S", "RANK_9A",
     "SEVEN_S1", "SIX_S1", "7PLUS_U", "7PLUS_M", "7PLUS_R", "7PLUS_ST", "7PLUS_STP",
 }
 
@@ -222,7 +224,7 @@ def test_paper_suffixes_include_legacy_hash_suffix_ranks():
     # "#7SS" は現行ランクのsuffixになったため legacy 側からは外れた。
     # "#7H3" は 2026-08-13 全廃だが suffix=None で登録している（行を削除し再生成
     # 経路も消したため保護不要）。したがってここには現れない。
-    assert legacy_suffixed == {"#7S1", "#6S1"}
+    assert legacy_suffixed == {"#7S1", "#6S1", "#9S", "#9A"}
     for suffix in legacy_suffixed:
         assert suffix in nr._PAPER_SUFFIXES
 
@@ -235,7 +237,12 @@ def test_paper_suffixes_has_no_unexpected_extra_entries():
     このテストを直す必要があり、「数を合わせるだけ」の修正が混入しやすいので
     単一正本から導出した集合との一致＋重複なしで検証する。
     """
-    expected = {spec.suffix for spec in sw.CURRENT_PAPER_RANKS} | {"#7S1", "#6S1"}
+    # legacy: 廃止済みだが `#`サフィックス方式の上書き保護を使っていたもの。
+    # 🔴 2026-08-14 に #9S/#9A を追加した。9S/9A は **picks_history の行を残す廃止**
+    #    （実際に入稿・採点された記録なので消さない）なので、上書き保護の網も
+    #    残す必要がある。7H3 は行ごと削除したので suffix=None で網に入らない。
+    expected = ({spec.suffix for spec in sw.CURRENT_PAPER_RANKS}
+                | {"#7S1", "#6S1", "#9S", "#9A"})
     assert set(nr._PAPER_SUFFIXES) == expected
     # tuple 側に重複が無いこと（集合比較だけでは検出できない）
     assert len(nr._PAPER_SUFFIXES) == len(set(nr._PAPER_SUFFIXES)) == len(expected)

@@ -185,7 +185,7 @@ def test_netkeirin_priority_order():
     """
     from scripts import netkeirin_submit_wt as ns
     # 9車ランクは7車ランクと母集団が排他なので、優先順位の検査から外す
-    order = [r for r in ns.RANK_ORDER if r not in ("9S", "9A", "9H1")]
+    order = [r for r in ns.RANK_ORDER if r not in ("9C", "9H1")]
     # 2026-08-10: 穴推奨 7H2 を 7H1 の直後に置いた（ユーザー判断）。7H1 は本番実測
     # ROI 80.3%・的中18.3% で 7H2(72.2%) より良いので 7H1 を守る。重なるのは
     # 7H1 側の 49.2%。犠牲は 7SS(−73.7%) / 7B(−11.0%) / 7C(−4.5%)。
@@ -196,15 +196,15 @@ def test_netkeirin_priority_order():
 
 
 def test_netkeirin_priority_order_9car():
-    """9車の優先順位 9H1 > 9S > 9A（2026-08-08・9H1 新設時のユーザー判断）。
+    """9車の優先順位 9H1 > 9C（2026-08-14・9S/9A を 9C へ集約）。
 
     同じ9車レースで重なったら**穴推奨の 9H1 が取る**。9H1 は約1件/日と薄いので
     9S/9A（3.96件/日）が失う分は小さい。入れ替えたければ RANK_CONFIGS の定義順を
     変える（RANK_ORDER はその導出なので、片方だけ直すことはできない）。
     """
     from scripts import netkeirin_submit_wt as ns
-    order = [r for r in ns.RANK_ORDER if r in ("9S", "9A", "9H1")]
-    assert order == ["9H1", "9S", "9A"]
+    order = [r for r in ns.RANK_ORDER if r in ("9C", "9H1")]
+    assert order == ["9H1", "9C"]
 
 
 def test_netkeirin_7c_uses_budget_and_own_axis_keys():
@@ -223,13 +223,22 @@ def test_netkeirin_7c_uses_budget_and_own_axis_keys():
 
 def test_all_ranks_invest_one_race_budget():
     """🔴 全ランクが1レース RACE_BUDGET 円に揃っていること（2026-08-07 統一）。
-    固定単価に戻すと点数が変わったとき投資額がずれ、Web の比較が壊れる。"""
+    固定単価に戻すと点数が変わったとき投資額がずれ、Web の比較が壊れる。
+
+    許容は**1点あたり最大1単位の端数**（`_stake_per_line` は単位へ切り捨てるため）。
+    ⚠️ 旧版は一律200円で見ており、**5点以下しか想定していなかった**。
+       9C は 3〜7点と幅があり、6点で 9,600円（400円不足）になる。
+       点数に比例した許容にしないと、割り切れない点数のランクを足すたびに落ちる。
+    ⚠️ これは**傾斜配分が使えないとき（朝オッズ欠損）のフォールバック**の話。
+       通常経路（`tilt_stakes`）は `allocate_budget` が端数を配るので予算ちょうど。
+    """
     from scripts import netkeirin_submit_wt as ns
     for rank, n_pts in (("7SS", 5), ("7S", 5), ("7A", 5), ("7B", 3),
-                        ("9S", 7), ("9A", 7), ("7C", 4), ("7C", 5)):
+                        ("9C", 3), ("9C", 6), ("9C", 7), ("7C", 4), ("7C", 5)):
         cfg = ns.RANK_CONFIGS[rank]
         total = n_pts * ns._stake_per_line(cfg, n_pts)
-        assert sw.RACE_BUDGET - 200 <= total <= sw.RACE_BUDGET, (rank, n_pts, total)
+        assert sw.RACE_BUDGET - n_pts * sw.STAKE_UNIT < total <= sw.RACE_BUDGET, (
+            rank, n_pts, total)
 
 
 def test_default_comment_does_not_hardcode_point_count():
@@ -246,7 +255,7 @@ def test_netkeirin_stake_resolution():
     assert ns._stake_per_line(ns.RANK_CONFIGS["7C"], 5) == 2000
     assert ns._stake_per_line(ns.RANK_CONFIGS["7S"], 5) == 2000
     assert ns._stake_per_line(ns.RANK_CONFIGS["7B"], 3) == 3300
-    assert ns._stake_per_line(ns.RANK_CONFIGS["9S"], 7) == 1400
+    assert ns._stake_per_line(ns.RANK_CONFIGS["9C"], 7) == 1400
 
 
 def test_netkeirin_7c_normalizes_with_its_own_axes():
