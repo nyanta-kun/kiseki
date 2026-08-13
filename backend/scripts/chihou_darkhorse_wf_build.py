@@ -143,6 +143,25 @@ def main() -> None:
     p.add_argument("--out", required=True, help="walk-forward honest 予測結果の出力 CSV パス")
     p.add_argument("--quarters", type=int, default=len(QUARTERS), help="先頭から何四半期処理するか")
     p.add_argument(
+        "--upset-weight",
+        type=float,
+        default=None,
+        metavar="W",
+        help=(
+            "人気薄の行の学習重みを W 倍にして「穴馬専用指数」を作る。"
+            "重み付けの基準は確定人気順位だが、**人気は特徴量に入れない**ので "
+            "serve 時に人気を知る必要はなく look-ahead にならない"
+            "（学習集合の層別であって入力ではない）。--no-market と併用すること"
+        ),
+    )
+    p.add_argument(
+        "--upset-from",
+        type=int,
+        default=4,
+        metavar="P",
+        help="--upset-weight の対象。確定 P 番人気以下を重くする（既定 4）",
+    )
+    p.add_argument(
         "--prerace-lead",
         type=int,
         default=None,
@@ -207,8 +226,25 @@ def main() -> None:
         df_train = df_train.sort_values("race_id").reset_index(drop=True)
         fp_tr = pd.to_numeric(df_train["finish_position"], errors="coerce")
         X_tr = df_train[feature_set].fillna(0.0).values.astype(np.float64)
-        m_top3 = train_binary_control(X_tr, (fp_tr <= 3).astype(int).values, SEED, feature_names=feature_set)
-        m_win = train_binary_control(X_tr, (fp_tr == 1).astype(int).values, SEED, feature_names=feature_set)
+
+        w_tr = None
+        if args.upset_weight is not None:
+            pop_tr = pd.to_numeric(df_train["win_popularity"], errors="coerce")
+            w_tr = np.where(pop_tr >= args.upset_from, args.upset_weight, 1.0)
+            logger.info(
+                "  穴馬重み: %d番人気以下を x%.1f (対象 %.1f%%)",
+                args.upset_from, args.upset_weight,
+                100.0 * float((pop_tr >= args.upset_from).mean()),
+            )
+
+        m_top3 = train_binary_control(
+            X_tr, (fp_tr <= 3).astype(int).values, SEED,
+            feature_names=feature_set, sample_weight=w_tr,
+        )
+        m_win = train_binary_control(
+            X_tr, (fp_tr == 1).astype(int).values, SEED,
+            feature_names=feature_set, sample_weight=w_tr,
+        )
 
         df_test_raw = _fetch(
             conn, FULL_POP_QUERY,
