@@ -483,8 +483,16 @@ def venue_breakdown(df_test: pd.DataFrame, scores: np.ndarray, label: str,
 
 def train_binary_control(X_tr: np.ndarray, y_tr_bin: np.ndarray,
                           seed: int,
-                          feature_names: list[str] | None = None) -> lgb.Booster:
-    """is_top3 binary モデルを指定の特徴量で学習する。"""
+                          feature_names: list[str] | None = None,
+                          sample_weight: np.ndarray | None = None) -> lgb.Booster:
+    """is_top3 binary モデルを指定の特徴量で学習する。
+
+    Args:
+        sample_weight: 学習サンプルの重み。穴馬専用の指数を作るときに
+            「人気薄の行を重く見る」目的で使う。**人気は特徴量に入れない**ので
+            serve 時に人気を知る必要はなく、look-ahead にはならない
+            （学習集合の設計＝層別の重み付けであって、入力ではない）。
+    """
     if feature_names is None:
         feature_names = ALL_FEATURES
     params = {
@@ -504,7 +512,10 @@ def train_binary_control(X_tr: np.ndarray, y_tr_bin: np.ndarray,
         "deterministic":    True,
         "force_col_wise":   True,
     }
-    ds = lgb.Dataset(X_tr, label=y_tr_bin, feature_name=feature_names, free_raw_data=False)
+    ds = lgb.Dataset(
+        X_tr, label=y_tr_bin, feature_name=feature_names,
+        weight=sample_weight, free_raw_data=False,
+    )
     return lgb.train(params, ds, num_boost_round=NUM_ROUNDS)
 
 

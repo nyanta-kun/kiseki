@@ -9,10 +9,13 @@ import pytest
 from src.indices.buy_signal import (
     CHIHOU_OPEN_RACE_MAX_TOP3_SHARE,
     CHIHOU_PICK_MAX_INDEX_RANK,
+    CHIHOU_PICK_MAX_PER_RACE,
     CHIHOU_PICK_MIN_POP_RANK,
+    chihou_effective_head_count,
     chihou_is_place_pick,
     chihou_market_top3_share,
     chihou_popularity_ranks,
+    chihou_select_place_picks,
 )
 
 
@@ -78,11 +81,13 @@ class TestIsPlacePick:
     def test_6番人気ちょうどは対象(self) -> None:
         assert chihou_is_place_pick(CHIHOU_PICK_MIN_POP_RANK, 2, self.OPEN, 12) is True
 
-    @pytest.mark.parametrize("index_rank", [None, 4, 5, 10])
-    def test_指数4位以下は該当しない(self, index_rank: int | None) -> None:
+    @pytest.mark.parametrize("index_rank", [None, 6, 7, 10])
+    def test_指数6位以下は該当しない(self, index_rank: int | None) -> None:
         assert chihou_is_place_pick(7, index_rank, self.OPEN, 12) is False
 
-    def test_指数3位ちょうどは対象(self) -> None:
+    def test_指数5位ちょうどは対象(self) -> None:
+        """2026-08-13 に 3位内 → 5位内へ緩和した（網羅率 6.4% → 14.0%）。"""
+        assert CHIHOU_PICK_MAX_INDEX_RANK == 5
         assert chihou_is_place_pick(7, CHIHOU_PICK_MAX_INDEX_RANK, self.OPEN, 12) is True
 
     @pytest.mark.parametrize("head_count", [None, 1, 7])
@@ -108,9 +113,10 @@ class TestIsPlacePick:
         pops = chihou_popularity_ranks(odds)
         assert share is not None
         assert share < CHIHOU_OPEN_RACE_MAX_TOP3_SHARE
-        # 7番馬 = 7番人気。指数2位なら該当、指数5位なら非該当
+        # 7番馬 = 7番人気。指数5位以内なら該当、6位以下なら非該当
         assert chihou_is_place_pick(pops[7], 2, share, len(odds)) is True
-        assert chihou_is_place_pick(pops[7], 5, share, len(odds)) is False
+        assert chihou_is_place_pick(pops[7], 5, share, len(odds)) is True
+        assert chihou_is_place_pick(pops[7], 6, share, len(odds)) is False
         # 1番馬 = 1番人気は指数1位でも非該当
         assert chihou_is_place_pick(pops[1], 1, share, len(odds)) is False
 
@@ -121,3 +127,61 @@ class TestIsPlacePick:
         share = chihou_market_top3_share(odds.values())
         pops = chihou_popularity_ranks(odds)
         assert chihou_is_place_pick(pops[7], 1, share, len(odds)) is False
+
+
+class TestSelectPlacePicks:
+    """1レースから採る頭数の上限。
+
+    指数5位内まで緩めたので1レースに最大5頭が適格になりうる。
+    目標は「1レースに1〜2頭」なので、絞り込みはここの責務。
+    """
+
+    def test_上限は2頭(self) -> None:
+        assert CHIHOU_PICK_MAX_PER_RACE == 2
+        picks = chihou_select_place_picks([(3, 5), (7, 1), (9, 3), (11, 4)])
+        assert picks == [7, 9]
+
+    def test_指数の良い順に採る(self) -> None:
+        assert chihou_select_place_picks([(5, 4), (2, 2), (8, 1)]) == [8, 2]
+
+    def test_同順位は馬番の小さい方を優先する(self) -> None:
+        assert chihou_select_place_picks([(9, 2), (4, 2), (6, 2)]) == [4, 6]
+
+    def test_候補が上限以下ならそのまま返す(self) -> None:
+        assert chihou_select_place_picks([(3, 2)]) == [3]
+        assert chihou_select_place_picks([]) == []
+
+    def test_上限を明示指定できる(self) -> None:
+        assert chihou_select_place_picks([(3, 1), (5, 2), (7, 3)], max_picks=1) == [3]
+
+
+class TestEffectiveHeadCount:
+    """head_count がレース後にしか入らない問題への対処。
+
+    実測(2026-08-13): 当日 45レース中 head_count 充足は 2、翌日は 0。
+    一方 registered_count は発走前から 100% 入る。
+    これを見落とすと chihou_is_place_pick が当日は必ず False を返し、
+    注目馬の推奨が一頭も出ない（過去データでは head_count が埋まっているため
+    検証だけが通ってしまう）。
+    """
+
+    def test_確定頭数があればそれを使う(self) -> None:
+        assert chihou_effective_head_count(10, 12) == 10
+
+    def test_確定頭数が無ければ登録頭数で代替する(self) -> None:
+        assert chihou_effective_head_count(None, 12) == 12
+
+    def test_どちらも無ければNone(self) -> None:
+        assert chihou_effective_head_count(None, None) is None
+
+    def test_当日レースでも注目馬判定が通る(self) -> None:
+        """head_count=None（当日）でも registered_count があれば判定できる。"""
+        share = CHIHOU_OPEN_RACE_MAX_TOP3_SHARE - 0.05
+        # 修正前はここが False だった（当日は推奨ゼロ）
+        hc = chihou_effective_head_count(None, 12)
+        assert chihou_is_place_pick(7, 2, share, hc) is True
+
+    def test_登録頭数が7以下なら通さない(self) -> None:
+        share = CHIHOU_OPEN_RACE_MAX_TOP3_SHARE - 0.05
+        hc = chihou_effective_head_count(None, 7)
+        assert chihou_is_place_pick(7, 2, share, hc) is False

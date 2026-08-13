@@ -52,7 +52,21 @@ from scripts.train_chihou_v11_lightgbm import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("chihou_p3b")
 
-CHIHOU_V9_VERSION = 9
+from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION  # noqa: E402
+
+# サブ指数(speed/last3f/jockey/rotation/last_margin)の取得元 version。
+#
+# 歴史的に v9 を読んでいたが、**v9 と現行 v13 はサブ指数が完全に同一**
+# （2026-08-13 実測: 共通 316,097 行で speed/last3f/jockey/rotation/last_margin
+# すべて差分ゼロ）。旧版は composite/win_probability の再計算で増えただけで、
+# サブ指数そのものは一度も変わっていない。
+#
+# P2 で v1〜v12 を削除するため、現行版から読むよう付け替えた。
+# **数値をハードコードに戻さないこと**（次の版上げで再び古い版を掴む）。
+CHIHOU_SUBINDEX_VERSION = CHIHOU_COMPOSITE_VERSION
+
+# 後方互換エイリアス。旧名で import している分析スクリプトが多いため残す。
+CHIHOU_V9_VERSION = CHIHOU_SUBINDEX_VERSION
 
 # base21 + trainer_id/apprentice を取得
 BASE_QUERY = """

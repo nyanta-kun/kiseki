@@ -548,6 +548,20 @@ pkill -9 -f "prlctl exec"
         UmaConn COM を奪い合って `NVSetServiceKey` が60秒タイムアウト。最古は41分居座った
       - 回収に `taskkill`(=`TerminateProcess`) を使うのは意図的。`DLL_PROCESS_DETACH` を
         走らせないので UmaConn の FastMM リークダイアログを出さずに落とせる（下記参照）
+  - `kiseki-UmaConn-Backfill` / `kiseki-UmaConn-Backfill-Stop`: **夜間 23:50 起動 / 翌 08:30 停止**（2026-08-13 追加）
+    - 蓄積系（`NVOpen` / RACE dataspec）で `--mode recent --from-year 2024` を回し、
+      速報系では埋まらない過去の結果欠損と払戻を回収する
+    - ⚠️ **日中に走らせてはいけない**。`from_time` に上限が無いため 2024-01 以降の
+      **全ファイル（実測 12,283 本）を再ダウンロード**する動きになり、UmaConn COM を
+      長時間占有して当日のオッズ・結果収集を壊す
+      （2026-08-13 実測: NVOpen rc=0 / DL数 12,283 / **37分間 NVRead=-3 のまま0件**）
+    - `run_umaconn_backfill.vbs` は **realtime が動いていれば起動しない**。
+      多重起動もしない（冪等）。ファイルは到着ごとに `mark_file_completed` されるので
+      途中で止めても進捗は残り、**複数夜に分割できる**
+    - 停止に `Terminate`(=TerminateProcess) を使うのは意図的。`DLL_PROCESS_DETACH` を
+      走らせないので NVDTLab.dll(FastMM) のリークダイアログを出さずに落とせる
+    - ログ: `C:\kiseki\windows-agent\backfill.log`
+    - 登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_backfill_task.ps1`
   - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加）
     - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
     - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
