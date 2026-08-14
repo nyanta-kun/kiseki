@@ -2487,21 +2487,25 @@ def _load_rank_7h1_candidates(today: str) -> list[dict]:
     return out
 
 
-def judge_rank_7h1(cand: dict, trio_lookup: dict, tf_lookup: dict) -> tuple[str, dict]:
+def judge_rank_7h1(cand: dict, tf_lookup: dict) -> tuple[str, dict]:
     """7H1 の発走前判定（純関数・DB非依存）。
 
     returns (decision, detail)。decision は "buy" / "skip" / "不明"。
     "不明" は盤面が取れていない場合で、呼び出し側は次回に再試行する。
+
+    🔴 **2026-08-15 に三連単一本化**。それ以前は三連複BOXとの2券種で、
+       購入の可否も `legs_trio` の有無で決めていた（採点側の注入も同様）。
+       一本化のときにここを `legs_tf` へ替え損ねると、**有効化しても1件も
+       買わずに静かに終わる**（例外もログも出ない）。
     """
-    detail: dict = {"legs_trio": [], "legs_tf": [], "stake_trio": 0, "stake_tf": 0,
+    detail: dict = {"legs_tf": [], "stake_tf": 0,
                     "bet_amount": 0, "fav": cand.get("fav"), "skip_reason": None,
-                    "dropped_trio": 0, "dropped_tf": 0}
-    if not trio_lookup or not tf_lookup:
+                    "dropped_tf": 0}
+    if not tf_lookup:
         return "不明", detail
 
-    legs_trio_all = list(cand.get("legs_trio") or [])
     legs_tf_all = list(cand.get("legs_tf") or [])
-    if not legs_trio_all or not legs_tf_all:
+    if not legs_tf_all:
         detail["skip_reason"] = "候補に買い目が無い"
         return "skip", detail
 
@@ -2521,51 +2525,44 @@ def judge_rank_7h1(cand: dict, trio_lookup: dict, tf_lookup: dict) -> tuple[str,
     # 予測（favbust モデル）に依存している。fav 自身が欠車した時点でその前提が
     # 崩れ、実質6車レースというモデルが想定していない状況になる。
     #
-    # ⚠️ 盤面は三連複(frozenset キー)と三連単(tuple キー)の**両方**から作る。
-    #   `_parse_combo_key` は ordered=False で frozenset を返すので、
-    #   tuple だけを見ると三連複側を1件も拾えず board が空になり、
-    #   このガードが**無言で素通り**する（実装時に実際に踏んだ）。
+    # ⚠️ 盤面は三連単(tuple キー)から作る。2券種だった頃は三連複(frozenset キー)も
+    #   混ぜており、tuple だけを見ると三連複側を1件も拾えず board が空になって
+    #   このガードが**無言で素通り**する罠があった（当時実際に踏んだ）。
     fav = cand.get("fav")
     board: set[int] = set()
-    for lookup in (trio_lookup, tf_lookup):
-        for k in lookup:
-            if isinstance(k, (tuple, frozenset)):
-                board |= {int(x) for x in k}
+    for k in tf_lookup:
+        if isinstance(k, (tuple, frozenset)):
+            board |= {int(x) for x in k}
     if fav is not None and board and int(fav) not in board:
         detail["skip_reason"] = f"本命{fav}番が盤面に無い（欠車）"
         return "skip", detail
 
-    legs_trio = [t for t in legs_trio_all
-                 if _parse_combo_key(t, False) in trio_lookup]
     legs_tf = [t for t in legs_tf_all if _parse_combo_key(t, True) in tf_lookup]
-    detail["dropped_trio"] = len(legs_trio_all) - len(legs_trio)
     detail["dropped_tf"] = len(legs_tf_all) - len(legs_tf)
-    if not legs_trio or not legs_tf:
+    if not legs_tf:
         detail["skip_reason"] = "欠車により買い目が全滅"
         return "skip", detail
 
-    u_trio, u_tf, total = rank_7h1_stakes(len(legs_trio), len(legs_tf))
-    if not u_trio or not u_tf:
+    u_tf, total = rank_7h1_stakes(len(legs_tf))
+    if not u_tf:
         detail["skip_reason"] = "点数過多で100円未満になる"
         return "skip", detail
-    detail.update(legs_trio=legs_trio, legs_tf=legs_tf, stake_trio=u_trio,
-                  stake_tf=u_tf, bet_amount=total)
+    detail.update(legs_tf=legs_tf, stake_tf=u_tf, bet_amount=total)
     return "buy", detail
 
 
 def _insert_rank_7h1_pick(race_key: str, race_date: str, detail: dict) -> None:
     """7H1 の記録行 {base}#7H1 を picks_history に反映する。
 
-    **1レース1行で2券種を合算**する（ユーザー承認・2026-08-06）。
-      pred_combo : "三連複: … / 三連単: …"
-      n_combos   : 三連複点数 + 三連単点数
-      bet_amount : 合算購入額（<= 10,000円）
-    券種別の払戻は採点時に trio_payout / trifecta_payout へ入る。
+    2026-08-15 の三連単一本化で**単一券種**になった。
+      pred_combo : "三単: …"（旧: "三複:… / 三単:…"）
+      n_combos   : 三連単の点数
+      bet_amount : 購入額（<= 10,000円）
+    払戻は採点時に trifecta_payout へ入る（trio_payout は常に0）。
     """
     store_key = race_key + "#7H1"
-    pred = ("三複:" + ",".join(detail["legs_trio"])
-            + " / 三単:" + ",".join(detail["legs_tf"]))
-    n = len(detail["legs_trio"]) + len(detail["legs_tf"])
+    pred = "三単:" + ",".join(detail["legs_tf"])
+    n = len(detail["legs_tf"])
     bet = int(detail["bet_amount"])
     try:
         with get_connection() as conn:
@@ -2590,17 +2587,14 @@ def _build_rank_7h1_message(cand: dict, ri: dict, detail: dict) -> str:
         f"抜け度 {float(cand.get('gap12') or 0) * 100:.1f}pt / "
         f"バスト確率 {float(cand.get('bust_prob') or 0) * 100:.1f}%",
         "",
-        f"三連複 {len(detail['legs_trio'])}点 × {detail['stake_trio']}円",
-        # 全目の列挙は読めないのでフォーメーション表記へ畳む。畳めない構造
-        # （欠車でBOXが崩れた等）は元の列挙にフォールバックする（src/bet_display.py）。
-        "　" + (fold_trio_box(detail["legs_trio"]) or " ".join(detail["legs_trio"])),
         f"三連単 {len(detail['legs_tf'])}点 × {detail['stake_tf']}円",
+        # 全目の列挙は読めないのでフォーメーション表記へ畳む。畳めない構造
+        # （欠車で列が崩れた等）は元の列挙にフォールバックする（src/bet_display.py）。
         "　" + (fold_trifecta_formation(detail["legs_tf"]) or " ".join(detail["legs_tf"])),
         f"合計 {detail['bet_amount']:,}円",
     ]
-    if detail["dropped_trio"] or detail["dropped_tf"]:
-        lines.append(f"（欠車により 三複{detail['dropped_trio']}点 / "
-                     f"三単{detail['dropped_tf']}点 を除外）")
+    if detail["dropped_tf"]:
+        lines.append(f"（欠車により 三単{detail['dropped_tf']}点 を除外）")
     return "\n".join(lines)
 
 
@@ -2648,16 +2642,15 @@ def _process_rank_7h1_candidates(today: str, now_unix: int,
             continue
 
         decision, detail = judge_rank_7h1(
-            cand, _build_odds_lookup(odds_data, "trio"),
-            _build_odds_lookup(odds_data, "trifecta"))
+            cand, _build_odds_lookup(odds_data, "trifecta"))
         if decision == "不明":
             print(f"[prerace] {rk} 7H1候補 → 盤面取得不可（次回再試行）", flush=True)
             time.sleep(0.3)
             continue
 
         # ⚠️ **detail は丸ごと保存する**。採点（notify_results_wt.py の
-        #    _slot=="seven_7h1"）が legs_trio / legs_tf / stake_trio / stake_tf /
-        #    bet_amount をここから読むため、1つでも間引くと黙って採点できなくなる。
+        #    _slot=="seven_7h1"）が legs_tf / stake_tf / bet_amount をここから
+        #    読むため、1つでも間引くと黙って採点できなくなる。
         _save_decision(today, key, {
             "decision": decision, "rank": "RANK_7H1", "paper": True,
             "bust_prob": cand.get("bust_prob"), "gap12": cand.get("gap12"),
@@ -2666,8 +2659,8 @@ def _process_rank_7h1_candidates(today: str, now_unix: int,
         if decision == "buy":
             _insert_rank_7h1_pick(rk, today, detail)
             messages.append((key, _build_rank_7h1_message(cand, ri, detail)))
-            print(f"[prerace] {rk} 7H1候補 → buy（三複{len(detail['legs_trio'])}点+"
-                  f"三単{len(detail['legs_tf'])}点・{detail['bet_amount']}円）", flush=True)
+            print(f"[prerace] {rk} 7H1候補 → buy（三単{len(detail['legs_tf'])}点・"
+                  f"{detail['bet_amount']}円）", flush=True)
         else:
             _mark_paper_miwokuri(rk, "#7H1")
             print(f"[prerace] {rk} 7H1候補 → skip: {detail.get('skip_reason')}", flush=True)

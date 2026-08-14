@@ -16,7 +16,7 @@
 3. `favbust_features.build_favbust_row()` で67特徴を組む
    （**軸1 != WT◎ のレースはここで落ちる**＝母集団外）
 4. `lgbm_wt_favbust` でバスト確率を予測
-5. `strategy_wt.rank_7h1_build_legs()` で買い目（三連複BOX・三連単フォーメーション）
+5. `strategy_wt.rank_7h1_build_legs()` で買い目（三連単フォーメーション8点）
 6. `strategy_wt.rank_7h1_daily_select()` で抜け度と当日相対順位により選別
 
 ## 使い方
@@ -55,8 +55,7 @@ from src.preprocessing.feature_wt import (  # noqa: E402
     build_features_wt, load_raw_data_wt, prepare_X,
 )
 from src.strategy_wt import (  # noqa: E402
-    RANK_7H1_NE, RANK_7H1_TF_UNIT, rank_7h1_build_legs, rank_7h1_daily_select,
-    rank_7h1_trio_stakes,
+    RANK_7H1_NE, rank_7h1_build_legs, rank_7h1_daily_select, rank_7h1_stakes,
 )
 
 
@@ -115,18 +114,13 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
         fav = row.pop("_fav")
         roles = roles_of(ents, fav)
         others = sorted((f for f in pr if f != fav), key=lambda f: -pr[f][0])
-        trio, tf = rank_7h1_build_legs(others, roles)
-        if not trio or not tf:
+        tf = rank_7h1_build_legs(others, roles)
+        if not tf:
             continue                       # 別ライン先頭が居ない等で買い目が組めない
-        # 🔴 ここで出す金額は**表示用の目安**。実際の配分は入稿時点のオッズで
-        #    決め直す（`netkeirin_submit_wt._normalize_multi_candidate`）。
-        #    候補生成は朝で板が薄く、入稿は開催単位の3波でずれるため。
-        u_tf = RANK_7H1_TF_UNIT
-        _st = rank_7h1_trio_stakes([frozenset(t) for t in trio], None, len(tf))
-        u_trio = min(_st.values()) if _st else 0
-        total = sum(_st.values()) + u_tf * len(tf)
-        if not u_trio or not u_tf:
-            continue
+        # 🔴 ここで出す金額は**表示用の目安**。実際の点数は発走前判定が盤面
+        #    （欠車）を見て決め直し、配分は入稿時点のオッズで決め直す
+        #    （`netkeirin_submit_wt._normalize_formation_candidate` のダッチ配分）。
+        u_tf, total = rank_7h1_stakes(len(tf))
         m = meta_all[rk]
         name_of = {int(e["frame_no"]): e.get("name") for e in ents}
         rows.append({
@@ -138,9 +132,11 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             "gap12": round(row["fav_ppw_gap12"], 6),
             "others": others,
             "roles": {str(k): v for k, v in roles.items()},
-            "legs_trio": ["=".join(str(x) for x in sorted(t)) for t in trio],
-            "legs_tf": tf,
-            "stake_trio": u_trio, "stake_tf": u_tf, "bet_amount": total,
+            # 🔴 `legs` は入稿側（9H1 と共用の `_normalize_formation_candidate`）が
+            #    読むキー、`legs_tf` は発走前判定・採点が読むキー。**同じ買い目**を
+            #    両方の名前で出す（片方だけにすると経路がまるごと無言で止まる）。
+            "legs": tf, "legs_tf": tf,
+            "stake_tf": u_tf, "bet_amount": total,
         })
         feats.append(feature_vector(row))
 
@@ -192,7 +188,6 @@ def main() -> None:
         print(f"  {c['venue_name']}{c['race_no']}R  本命{c['fav']}"
               f"({c['fav_name']}) 抜け度{c['gap12'] * 100:.1f}pt "
               f"バスト確率{c['bust_prob'] * 100:.1f}%  "
-              f"三連複{len(c['legs_trio'])}点×{c['stake_trio']}円 + "
               f"三連単{len(c['legs_tf'])}点×{c['stake_tf']}円 = {c['bet_amount']}円")
 
 

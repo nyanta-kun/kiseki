@@ -34,13 +34,13 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.bet_display import (  # noqa: E402
-    fold_trifecta_formation, fold_trio_box,
+    fold_trifecta_formation,
 )
 from src.database import get_connection  # noqa: E402
 # 🔴 自動入稿と**同じ関数**でタイトルを組む。ここで独自に組むと、下書きで確認した
 #    ものと本番の商品が食い違う（この下書きは手動投稿の原稿になるため致命的）。
 from scripts.netkeirin_submit_wt import (  # noqa: E402
-    RANK_CONFIGS, _apply_template, _normalize_multi_candidate, _shape_texts,
+    RANK_CONFIGS, _apply_template, _normalize_formation_candidate, _shape_texts,
     _stake_note_for,
 )
 
@@ -104,7 +104,7 @@ def main() -> None:
             continue
         # 🔴 軸2車も買い目も**自動入稿と同じ関数**で組む。ここで独自に導出すると、
         #    下書きで確認した原稿と実際の商品が食い違う。
-        legs, _marks, axis1, axis2, _src = _normalize_multi_candidate(
+        legs, _marks, axis1, axis2 = _normalize_formation_candidate(
             c, RANK_CONFIGS[RANK_KEY], c["race_key"].split("#")[0])
         shape, shape_note = _shape_texts(c["race_key"], RANK_KEY, axis1, axis2)
         stake_note = _stake_note_for(RANK_KEY, legs)
@@ -127,8 +127,6 @@ def main() -> None:
             "bust_prob_pct": round(float(c.get("bust_prob") or 0) * 100, 1),
             "trifecta": {"legs": c["legs_tf"], "stake": c["stake_tf"],
                          "n": len(c["legs_tf"])},
-            "trio": {"legs": c["legs_trio"], "stake": c["stake_trio"],
-                     "n": len(c["legs_trio"])},
             "bet_amount": c["bet_amount"],
         })
 
@@ -152,9 +150,6 @@ def main() -> None:
         # JSON 側（保存ファイル）は生の legs のままにする＝入稿の正本はあくまで全目。
         print("    " + (fold_trifecta_formation(d["trifecta"]["legs"])
                         or "  ".join(d["trifecta"]["legs"])))
-        print(f"  三連複 {d['trio']['n']}点 × {d['trio']['stake']:,}円")
-        print("    " + (fold_trio_box(d["trio"]["legs"])
-                        or "  ".join(d["trio"]["legs"])))
         print(f"  合計 {d['bet_amount']:,}円")
     if drafts:
         print("─" * 66)

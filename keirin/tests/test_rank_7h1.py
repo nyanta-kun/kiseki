@@ -54,53 +54,53 @@ def test_fav_line_is_excluded_from_pool(board):
 
 
 def test_legs_shape_and_line_exclusion(board):
+    """🔴 三連単一本化（2026-08-15）。三連複BOX は組まない。"""
     roles = ff.roles_of(board, fav=1)
     others = [4, 2, 5, 6, 3, 7]
-    trio, tf = sw.rank_7h1_build_legs(others, roles)
-    # 三連複はプール4車のBOX = 4点
-    assert len(trio) == 4
-    assert all(not ({2, 3} & set(t)) for t in trio), "三連複に本命ラインが混入"
-    # 三連単は 1着=別ライン先頭(4)固定 × 2着=プールr1r2 × 3着=残り5車
+    tf = sw.rank_7h1_build_legs(others, roles)
+    # 1着=別ライン先頭(4)固定 × 2着=プールr1r2 × 3着=残り5車
     assert len(tf) == 8
     assert all(t.startswith("4-") for t in tf), "1着が別ライン先頭に固定されていない"
     # 3着は総流しなので本命ラインも入りうる（設計どおり）
     assert any(t.endswith("-2") or t.endswith("-3") for t in tf)
+    # 2着に本命ラインは入らない（プール＝本命ラインを落とした車から選ぶ）
+    assert all(int(t.split("-")[1]) not in (2, 3) for t in tf), "2着に本命ラインが混入"
 
 
-def test_no_lead_top_means_no_trifecta():
-    """別ラインの先頭が居なければ三連単は組まない（全員単騎など）。"""
+def test_no_lead_top_means_no_legs():
+    """別ラインの先頭が居なければ買い目を組まない（全員単騎など）。
+
+    ⚠️ 一本化前はここで三連複BOXだけを返しており、`rank_7h1_daily_select` が
+       `legs_trio` と `legs_tf` の**両方**を要求することで除外していた。
+       いまは空リストを返すこと自体が除外の唯一の手段。
+    """
     solos = [_entry(i, None, 0, 0, 1, 100.0) for i in range(1, 8)]
     roles = ff.roles_of(solos, fav=1)
-    trio, tf = sw.rank_7h1_build_legs([2, 3, 4, 5, 6, 7], roles)
-    assert tf == []
-    assert len(trio) > 0
+    assert sw.rank_7h1_build_legs([2, 3, 4, 5, 6, 7], roles) == []
 
 
-@pytest.mark.parametrize("n_trio,n_tf", [(1, 8), (4, 8), (10, 8), (10, 14), (3, 6)])
-def test_stakes_never_exceed_cap_and_are_100yen_units(n_trio, n_tf):
-    u_trio, u_tf, total = sw.rank_7h1_stakes(n_trio, n_tf)
+@pytest.mark.parametrize("n_legs", [1, 3, 6, 8, 14])
+def test_stakes_never_exceed_cap_and_are_100yen_units(n_legs):
+    u, total = sw.rank_7h1_stakes(n_legs)
     assert total <= sw.RANK_7H1_BUDGET_CAP, "1レースの購入上限を超えている"
-    assert u_trio % sw.RANK_7H1_UNIT == 0 and u_tf % sw.RANK_7H1_UNIT == 0
-    assert u_trio >= sw.RANK_7H1_UNIT, "三連複が0円になっている"
-    assert u_tf <= sw.RANK_7H1_TF_UNIT, "三連単が単一正本の単価を超えている"
-    assert total == u_trio * n_trio + u_tf * n_tf
+    assert u % sw.RANK_7H1_UNIT == 0 and u >= sw.RANK_7H1_UNIT
+    assert total == u * n_legs
 
 
-@pytest.mark.parametrize("n_trio", [1, 4, 7, 10])
-def test_record_side_tf_unit_matches_the_single_source(n_trio):
-    """記録側（picks_history）の三連単単価は入稿側と同じ `RANK_7H1_TF_UNIT`。
+def test_stakes_follow_the_shared_budget_rule():
+    """🔴 賭け金は全ランク共通の `unit_stake`（1レース1万円 ÷ 点数）。
 
-    2026-08-07〜08-08 に、記録側が旧・枠方式（7,500円÷8点=900円）・入稿側が
-    `RANK_7H1_TF_UNIT`(=500円) という二重管理になり、Web に出ている実績が
-    実際に売っている商品を説明しない状態になっていた。単価は1箇所で決める。
+    一本化前は 7H1 だけが `RANK_7H1_TF_UNIT`(900円) という専用の単価を持ち、
+    記録側と入稿側で二重管理になって Web の実績が実際の商品を説明しない
+    状態になったことがある（2026-08-07〜08-08）。単価は1箇所で決める。
     """
-    _, u_tf, _ = sw.rank_7h1_stakes(n_trio, 8)      # 7車立ての通常形＝三連単8点
-    assert u_tf == sw.RANK_7H1_TF_UNIT
+    assert sw.rank_7h1_stakes(8) == (1200, 9600)      # 7車立ての通常形＝8点
+    for n in (1, 3, 6, 8, 14):
+        assert sw.rank_7h1_stakes(n)[0] == sw.unit_stake(n)
 
 
 def _cand(gap, bust, **kw):
-    d = {"n_entries": 7, "gap12": gap, "bust_prob": bust,
-         "legs_trio": ["1=2=3"], "legs_tf": ["1-2-3"]}
+    d = {"n_entries": 7, "gap12": gap, "bust_prob": bust, "legs_tf": ["1-2-3"]}
     d.update(kw)
     return d
 
@@ -146,40 +146,36 @@ def test_fav_features_returns_none_when_axis1_is_not_honmei(board):
 
 
 def _lookup(perm_cars):
-    """指定車で作れる全順列/組合せのオッズ辞書（盤面のダミー）。"""
-    from itertools import combinations, permutations
+    """指定車で作れる全順列の三連単オッズ辞書（盤面のダミー）。"""
+    from itertools import permutations
 
     from scripts.notify_prerace_wt import _parse_combo_key
-    tf = {_parse_combo_key("-".join(map(str, p)), True): 100.0
-          for p in permutations(perm_cars, 3)}
-    trio = {_parse_combo_key("=".join(map(str, sorted(c))), False): 10.0
-            for c in combinations(perm_cars, 3)}
-    return trio, tf
+    return {_parse_combo_key("-".join(map(str, p)), True): 100.0
+            for p in permutations(perm_cars, 3)}
 
 
 @pytest.fixture
 def cand_7h1():
     return {"fav": 1, "venue_name": "T", "race_no": 1, "fav_name": "X",
             "gap12": 0.25, "bust_prob": 0.35,
-            "legs_trio": ["2=4=5", "2=4=6", "2=5=6", "4=5=6"],
             "legs_tf": [f"4-{a}-{c}" for a in (2, 5)
                         for c in (2, 3, 5, 6, 7) if c != a][:8]}
 
 
 def test_judge_buys_when_board_is_complete(cand_7h1):
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([1, 2, 3, 4, 5, 6, 7])
-    decision, detail = judge_rank_7h1(cand_7h1, trio, tf)
+    decision, detail = judge_rank_7h1(cand_7h1, _lookup([1, 2, 3, 4, 5, 6, 7]))
     assert decision == "buy"
     assert detail["bet_amount"] <= sw.RANK_7H1_BUDGET_CAP
-    assert detail["dropped_trio"] == 0 and detail["dropped_tf"] == 0
+    assert detail["dropped_tf"] == 0
+    # 🔴 一本化後は三連複のキーを持たない（採点側もこれを前提にしている）
+    assert "legs_trio" not in detail and "stake_trio" not in detail
 
 
 def test_judge_skips_when_first_place_car_is_scratched(cand_7h1):
     """三連単の1着固定車が盤面に無い＝レース無効（見送り）。"""
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([1, 2, 3, 5, 6, 7])          # 4番が欠車
-    decision, detail = judge_rank_7h1(cand_7h1, trio, tf)
+    decision, detail = judge_rank_7h1(cand_7h1, _lookup([1, 2, 3, 5, 6, 7]))  # 4番欠車
     assert decision == "skip"
     assert "1着固定" in (detail["skip_reason"] or "")
 
@@ -197,8 +193,7 @@ def test_judge_skips_when_fav_itself_is_scratched(cand_7h1):
     favbust モデルの較正が想定していない状況）。
     """
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([2, 3, 4, 5, 6, 7])          # 本命の1番が欠車
-    decision, detail = judge_rank_7h1(cand_7h1, trio, tf)
+    decision, detail = judge_rank_7h1(cand_7h1, _lookup([2, 3, 4, 5, 6, 7]))  # 1番欠車
     assert decision == "skip"
     assert "本命" in (detail["skip_reason"] or "")
 
@@ -206,25 +201,23 @@ def test_judge_skips_when_fav_itself_is_scratched(cand_7h1):
 def test_judge_still_buys_when_fav_is_present(cand_7h1):
     """本命が居るなら従来どおり買うこと（上の追加ガードで買えなくならない）。"""
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([1, 2, 3, 4, 5, 6, 7])
-    assert judge_rank_7h1(cand_7h1, trio, tf)[0] == "buy"
+    assert judge_rank_7h1(cand_7h1, _lookup([1, 2, 3, 4, 5, 6, 7]))[0] == "buy"
 
 
 def test_judge_drops_scratched_partners_and_restakes(cand_7h1):
     """相手が欠けた目だけ落とし、残った点数で賭け金を張り直す。"""
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([1, 2, 3, 4, 5, 6])          # 7番が欠車
-    decision, detail = judge_rank_7h1(cand_7h1, trio, tf)
+    decision, detail = judge_rank_7h1(cand_7h1, _lookup([1, 2, 3, 4, 5, 6]))  # 7番欠車
     assert decision == "buy"
     assert detail["dropped_tf"] > 0
-    assert detail["stake_tf"] * len(detail["legs_tf"]) <= sw.RANK_7H1_BUDGET_TF
+    assert detail["stake_tf"] * len(detail["legs_tf"]) == detail["bet_amount"]
     assert detail["bet_amount"] <= sw.RANK_7H1_BUDGET_CAP
 
 
 def test_judge_returns_unknown_without_board(cand_7h1):
     """盤面が取れていないときは skip ではなく『不明』（次回再試行）。"""
     from scripts.notify_prerace_wt import judge_rank_7h1
-    assert judge_rank_7h1(cand_7h1, {}, {})[0] == "不明"
+    assert judge_rank_7h1(cand_7h1, {})[0] == "不明"
 
 
 # ── 判定記録 → 採点の受け渡し ─────────────────────────────────────────
@@ -234,14 +227,12 @@ def test_decision_payload_carries_everything_scoring_needs(cand_7h1):
     """`_save_decision` へ渡す detail に採点必須キーが全て残ること。
 
     採点（notify_results_wt の _slot=="seven_7h1"）は判定記録から
-    legs_trio / legs_tf / stake_trio / stake_tf / bet_amount を読む。
-    1つでも間引くと**黙って採点できなくなる**（実装時に legs_tf を
-    除外していて実際に踏んだ）。
+    legs_tf / stake_tf / bet_amount を読む。1つでも間引くと**黙って採点
+    できなくなる**（実装時に legs_tf を除外していて実際に踏んだ）。
     """
     from scripts.notify_prerace_wt import judge_rank_7h1
-    trio, tf = _lookup([1, 2, 3, 4, 5, 6, 7])
-    _decision, detail = judge_rank_7h1(cand_7h1, trio, tf)
-    for k in ("legs_trio", "legs_tf", "stake_trio", "stake_tf", "bet_amount"):
+    _decision, detail = judge_rank_7h1(cand_7h1, _lookup([1, 2, 3, 4, 5, 6, 7]))
+    for k in ("legs_tf", "stake_tf", "bet_amount"):
         assert k in detail and detail[k], f"採点に必要な {k} が detail に無い"
 
 

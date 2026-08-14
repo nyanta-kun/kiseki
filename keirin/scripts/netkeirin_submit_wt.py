@@ -94,11 +94,8 @@ from src.odds_prediction import (
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.strategy_wt import (
     RACE_BUDGET,
-    RANK_7H1_TF_UNIT,
-    rank_7h1_trio_stakes,
     rank_7h2_stakes,
     rank_7s_gate_label,
-    rank_9h1_stakes,
     unit_stake,
 )
 
@@ -258,10 +255,10 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
     # 9H1（2026-08-08新設・穴推奨「9車・高配当狙い」）。三連単フォーメーション
-    # （1着1車 × 2着2車 × 3着4車 ＝ 6点）の**単一券種**なので、7H1 の multi_bet
-    # ではなく `formation_bet` を使う。
-    # 🔴 **7H1 の直後に置いてある**＝同じ9車レースで 9S/9A と重なったとき 9H1 が取る。
-    #    9H1 は約1件/日と薄いので 9S/9A(3.96件/日) が失う分は小さいが、これは
+    # （1着1車 × 2着2車 × 3着4車 ＝ 6点）の**単一券種**。`formation_bet` を使う
+    # （2026-08-15 の三連単一本化で 7H1 も同じ経路になり、関数を共用している）。
+    # 🔴 **9車ランクの先頭**＝同じ9車レースで 9C と重なったとき 9H1 が取る。
+    #    9H1 は約1件/日と薄いので 9C が失う分は小さいが、これは
     #    「穴推奨を優先する」という商品判断なので、入れ替えたければ定義順を変える。
     "9H1": {"file_key": "s9h1", "n_cars": 9, "formation_bet": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
@@ -390,14 +387,14 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "発走時オッズに応じて配分しています。\n\n"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
-    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。**唯一の2券種ランク**で、
-    # 三連単フォーメーション（1着1車×2着2車×3着5車＝8点）と
-    # 三連複BOX（プール上位5車＝最大10点）を **1商品にまとめて** 入稿する
-    # （netkeirin の kaime は配列なので submit は1回。2回送ると上書きになる）。
-    # 買い目は候補JSONの legs_tf / legs_trio を**正**として復元する（下記
-    # _normalize_multi_candidate）。stake も候補JSON側（予算枠から算出済み）を使う
-    # ため stake_per_line は持たない。
-    "7H1": {"file_key": "s7h1", "n_cars": 7, "multi_bet": True, "gate_filter": None,
+    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。
+    # 🔴 **2026-08-15 に三連単一本化**（ユーザー指示）。それまでは唯一の2券種ランクで、
+    #    三連単F8点 + 三連複BOX（最大10点）を1商品にまとめて入稿していた
+    #    （`multi_bet` → `_normalize_multi_candidate`）。三連複ぶんの予算を三連単へ
+    #    振り直したので、9H1 と同じ**三連単フォーメーション単一券種**になり
+    #    `formation_bet` 経路（`_normalize_formation_candidate`）を共用する。
+    # 買い目は候補JSONの `legs`（=`legs_tf` と同じ）を**正**として復元する。
+    "7H1": {"file_key": "s7h1", "n_cars": 7, "formation_bet": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
             "default_comment": (
                 "本日の穴狙いをお届けします。\n\n"
@@ -405,8 +402,9 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "選んでいます。抜けた1番手が消えれば、配当は跳ねます。\n\n"
                 "その1車と、同じラインの選手は買い目から外しました。"
                 "本命が飛ぶときは番手も一緒に飛ぶ傾向があるためです。\n\n"
-                "買い目は三連単と三連複の併せ買い。"
-                "三連単で大きな配当を狙い、三連複で的中を拾う組み立てにしています。\n\n"
+                "買い目は三連単のフォーメーション8点。"
+                "的中を拾う券種を混ぜず、配当の大きさに寄せた組み立てにしています。\n\n"
+                "外れる日が続く買い方です。当たったときの大きさを狙う券種としてご活用ください。"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
 }
@@ -910,7 +908,7 @@ def _bet_detail_odds(race_key: str, cfg: dict, use_trifecta: bool = False) -> di
     """
     base = str(race_key).split("#")[0]
     odds: dict = dict(_load_trio_board(base))
-    if (cfg.get("multi_bet") or cfg.get("multi_bet_7h2")
+    if (cfg.get("multi_bet_7h2")
             or cfg.get("formation_bet") or cfg.get("formation_bet_7t1")
             or use_trifecta):
         odds.update(_load_trifecta_board(base))
@@ -1146,11 +1144,11 @@ def _normalize_candidate(cand: dict, cfg: dict) -> tuple[int, int, list[int], di
 
 
 # ---------------------------------------------------------------------------
-# 7H1（2券種ランク）— 候補JSONの買い目から入稿用の車番グループを復元する
+# 候補JSONの買い目から入稿用の車番グループを復元する
 #
-# 🔴 **推測でフォーメーション/BOXを組み立てないこと。** 候補JSONが持つ
-#    legs_tf / legs_trio（strategy_wt.rank_7h1_build_legs が生成した実際の買い目）を
-#    唯一の正とし、復元したグループを expand_bet() で展開し直して
+# 🔴 **推測でフォーメーション/BOXを組み立てないこと。** 候補JSONが持つ買い目
+#    （`strategy_wt.rank_*_build_legs` が生成した実際の目）を唯一の正とし、
+#    復元したグループを expand_bet() で展開し直して
 #    **元の目集合と完全一致すること**を毎回検証してから入稿する。
 #    一致しなければ ValueError で落とし、そのレースは入稿しない
 #    （誤った買い目を外部へ出さないため、握り潰さない）。
@@ -1175,44 +1173,35 @@ def _trifecta_formation_groups(legs_tf: list[str]) -> list[list[int]]:
     return groups
 
 
-def _trio_box_group(legs_trio: list[str]) -> list[int]:
-    """['1=2=4', '1=2=5', …] から BOX の車群を復元する。"""
-    legs = set()
-    for s in legs_trio:
-        parts = [int(x) for x in str(s).split("=")]
-        if len(parts) != 3:
-            raise ValueError(f"三連複の目の形式が不正です: {s!r}")
-        legs.add(frozenset(parts))
-    if not legs:
-        raise ValueError("三連複の目が空です")
-    cars = sorted({c for leg in legs for c in leg})
-    expanded = expand_bet(BET_KIND_TRIO_BOX, [cars])
-    if expanded != legs:
-        raise ValueError(
-            f"BOX復元が一致しません（元{len(legs)}点 / 復元{len(expanded)}点）: {cars}")
-    return cars
-
-
 def _normalize_formation_candidate(
     cand: dict, cfg: dict, race_key: str | None = None,
 ) -> tuple[list[BetLeg], dict[int, str], int, int]:
-    """9H1 候補から (買い目行, 印, ◎車番, ○車番) を返す。
+    """9H1 / 7H1 候補から (買い目行, 印, ◎車番, ○車番) を返す。
 
-    9H1 は**三連単フォーメーションの単一券種**なので、7H1 の 2券種併買
-    （`_normalize_multi_candidate`）とは別経路にする。賭け金は
-    `strategy_wt.rank_9h1_stakes()`（1レース1万円の予算枠 ÷ 点数）で決める。
+    どちらも**三連単フォーメーションの単一券種**（9H1=6点 / 7H1=8点）。賭け金は
+    `unit_stake()`（1レース1万円の予算枠 ÷ 点数）で、`rank_9h1_stakes` /
+    `rank_7h1_stakes` はどちらもその薄いラッパ。
+
+    🔴 7H1 は 2026-08-15 の三連単一本化でこの経路へ合流した。それ以前は
+       三連複BOX を併せ買いする専用経路（`multi_bet`）を持っていた。
 
     印: ◎ = 1着固定車 / ○▲ = 2着列（モデル3着内率の降順）/ △ = 3着だけの車。
     """
-    legs_raw = list(cand.get("legs") or [])
+    # ⚠️ キー名がランクで違う（9H1/7T1=`legs` / 7H1=`legs`+`legs_tf`）。7H1 は
+    #    一本化の前後で候補JSONの形が変わるため、その日の朝に古い形式で作られた
+    #    候補ファイルでも読めるよう両方を受ける（片方しか見ないと、切替の当日だけ
+    #    「候補はあるのに1件も入稿しない」が起きる）。
+    legs_raw = list(cand.get("legs") or cand.get("legs_tf") or [])
     first, second, third = _trifecta_formation_groups(legs_raw)
     if len(first) != 1:
-        raise ValueError(f"9H1 の1着は1車固定のはずです: {first}")
-    unit, _total = rank_9h1_stakes(len(legs_raw))
+        raise ValueError(f"{cfg.get('file_key')} の1着は1車固定のはずです: {first}")
+    unit = unit_stake(len(legs_raw))
 
-    # 2着列の ○/▲ は候補JSONの order（モデル3着内率の降順）に従う。
+    # 2着列の ○/▲ は候補JSONの序列（モデル3着内率の降順）に従う。
     # bet_id は車番昇順に正規化されるため、買い目の並びに序列を委ねない。
-    order = [int(x) for x in (cand.get("order") or [])]
+    # ⚠️ キー名がランクで違う（9H1=`order` / 7H1=`others`）。片方だけ見ると
+    #    ○▲ が車番順になり、表示の序列と予想の序列が食い違う。
+    order = [int(x) for x in (cand.get("order") or cand.get("others") or [])]
     ranked_second = sorted(second, key=lambda c: order.index(c) if c in order else 99)
     marks: dict[int, str] = {first[0]: "◎"}
     if ranked_second:
@@ -1223,7 +1212,7 @@ def _normalize_formation_candidate(
         marks.setdefault(c, "△")
 
     # ダッチ配分（2026-08-09・仕様書 §2B）。朝オッズが揃わない／条件不成立なら
-    # 従来の均等（rank_9h1_stakes）へフォールバックする。
+    # 従来の均等（`unit_stake`）へフォールバックする。
     tf_board = _load_trifecta_board(race_key) if race_key else {}
     tf_points = sorted(expand_bet(BET_KIND_TRIFECTA_FORMATION, [first, second, third]))
     dutch_legs, _dutch = _dutch_point_legs(tf_points, [], tf_board, {})
@@ -1411,73 +1400,6 @@ def _split_7h2_tf(legs_tf: list[str]) -> tuple[int, int, list[int]]:
     return axis1, axis2, partners
 
 
-def _normalize_multi_candidate(
-    cand: dict, cfg: dict, race_key: str | None = None,
-) -> tuple[list[BetLeg], dict[int, str], int, int, str | None]:
-    """7H1 候補から (買い目行, 印, ◎車番, ○車番, 配分の出どころ) を返す。
-
-    印（ユーザー確定・2026-08-06）:
-      ◎ = 三連単の1着固定車 / ○ = 2着列の1番手 / ▲ = 2着列の2番手 /
-      △ = 3着列の残り（3着だけで買っている車）/ 除外した本命は印なし(--)
-    """
-    tf_groups = _trifecta_formation_groups(cand.get("legs_tf") or [])
-    trio_cars = _trio_box_group(cand.get("legs_trio") or [])
-
-    # 🔴 賭け金は**候補JSONの値を使わず入稿時点で決め直す**（2026-08-07）。
-    #    三連単は 1点 RANK_7H1_TF_UNIT 円の均等、残りを三連複へ回し、
-    #    **入稿時点のオッズで払戻が等しくなるよう**配分する。
-    #    候補JSONの stake_* は朝の候補生成時点の値で、板が育ってから入稿する
-    #    設計（開催単位の3波）とは時点が食い違うため使わない。
-    trio_legs = [frozenset(int(x) for x in _SEP_RE.split(str(c)))
-                 for c in (cand.get("legs_trio") or [])]
-    trio_legs = [t for t in trio_legs if len(t) == 3]
-    board = _load_trio_board(race_key) if race_key else {}
-    odds = {t: board.get(t) for t in trio_legs}
-    source = "odds" if (odds and all(odds.values())) else "equal"
-    stake_tf = RANK_7H1_TF_UNIT
-    trio_stakes = rank_7h1_trio_stakes(
-        trio_legs, odds if source == "odds" else None, len(cand.get("legs_tf") or []))
-
-    first, second, third = tf_groups
-    if len(first) != 1:
-        raise ValueError(f"7H1 の1着は1車固定のはずです: {first}")
-
-    # 2着列は候補生成側で「プール上位2車」の順序を持つが、bet_id は昇順に
-    # 正規化される。印の ○/▲ は候補JSONの others（モデル3着内率の降順）の
-    # 並びに従う＝表示上の序列を買い目の順序に依存させない。
-    order = [int(x) for x in (cand.get("others") or [])]
-    ranked_second = sorted(second, key=lambda c: order.index(c) if c in order else 99)
-
-    marks: dict[int, str] = {first[0]: "◎"}
-    if ranked_second:
-        marks[ranked_second[0]] = "○"
-    if len(ranked_second) > 1:
-        marks[ranked_second[1]] = "▲"
-    for c in third:
-        marks.setdefault(c, "△")
-    for c in trio_cars:          # BOXだけで買っている車も買い目に入っている
-        marks.setdefault(c, "△")
-
-    axis2 = ranked_second[0] if ranked_second else first[0]
-
-    # ── ダッチ配分（2026-08-09・仕様書 §2B）──────────────────────────────
-    # 朝オッズが**全点**に揃えば低オッズ目を切って「当たれば予算超え」の形へ寄せる。
-    # 揃わない／条件不成立なら**従来の配分へフォールバック**する（見送りにはしない。
-    # 朝オッズ欠損は約半数あり、そこを全部落とすと入稿が消える＝仕様書 §7）。
-    tf_board = _load_trifecta_board(race_key) if race_key else {}
-    tf_points = sorted(expand_bet(BET_KIND_TRIFECTA_FORMATION, tf_groups))
-    dutch_legs, dutch = _dutch_point_legs(tf_points, trio_legs, tf_board, board)
-    if dutch_legs:
-        return dutch_legs, marks, first[0], axis2, f"dutch:{dutch.reason}"
-
-    # 三連複は目ごとに金額が違うので **1目 = 1行**（3車のBOX＝1点）で出す。
-    # 同額でも束ねられない（BOXは車群でしか表現できず、任意の部分集合を作れない）。
-    legs = [BetLeg(BET_KIND_TRIFECTA_FORMATION, tf_groups, stake_tf)]
-    for t in sorted(trio_legs, key=lambda x: sorted(x)):
-        legs.append(BetLeg(BET_KIND_TRIO_BOX, [sorted(t)], trio_stakes[t]))
-    return legs, marks, first[0], axis2, source
-
-
 # ---------------------------------------------------------------------------
 # メイン処理
 # ---------------------------------------------------------------------------
@@ -1573,7 +1495,6 @@ def _process_rank(
     client = NetkeirinClient(propose_only=propose_only) if not dry_run else None
     n_submitted = 0
     failures: list[str] = []
-    is_multi = bool(cfg.get("multi_bet"))
     is_multi_7h2 = bool(cfg.get("multi_bet_7h2"))
     is_formation = bool(cfg.get("formation_bet"))
     is_7t1 = bool(cfg.get("formation_bet_7t1"))
@@ -1605,10 +1526,7 @@ def _process_rank(
         tilt_stakes_map: dict[int, int] = {}
         use_trifecta = False
         try:
-            if is_multi:
-                legs, marks, axis1, axis2_or_p1, tilt_source = _normalize_multi_candidate(
-                    cand, cfg, race_key.split("#")[0])
-            elif is_multi_7h2:
+            if is_multi_7h2:
                 legs, marks, axis1, axis2_or_p1 = _normalize_7h2_candidate(
                     cand, cfg, race_key.split("#")[0])
             elif is_7t1:
