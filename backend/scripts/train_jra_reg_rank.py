@@ -45,6 +45,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from scripts.train_jra_out_rate import featurize, load_df  # noqa: E402
+from src import jra_protocol  # noqa: E402
 from src.indices.composite import OUT_PROB_FEATURE_NAMES  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -94,8 +95,11 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="20230506")
     p.add_argument("--end", default="20991231")
-    p.add_argument("--train-end", default="20250630")
-    p.add_argument("--valid-end", default="20251231")
+    p.add_argument("--train-end", default=jra_protocol.TRAIN_END)
+    p.add_argument("--valid-end", default=jra_protocol.VAL_END)
+    p.add_argument("--refit-end", default=jra_protocol.TRAIN_DATA_END,
+                   help="本番モデルを refit する終端。既定は TEST_START の前日。"
+                        "TEST を学習に含めると一度きり評価が in-sample になる")
     p.add_argument("--seeds", default="42,123,456")
     args = p.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
@@ -144,11 +148,17 @@ def main() -> None:
         }
         logger.info(f"honest test: spearman={rho:.4f} rmse={rmse:.4f}")
 
-    dall = lgb.Dataset(df[FEATURES].values, label=df["y"].values, feature_name=FEATURES)
+    # 本番モデルの refit は **TEST_START の前日まで**。
+    # TEST を学習に含めると、その四半期の一度きり評価が in-sample になる
+    # （旧実装は全期間 refit だった）。境界は src/jra_protocol.py。
+    fit = df[df["date"] <= args.refit_end]
+    logger.info(f"refit: {len(fit):,}行 ({fit['date'].min()}〜{fit['date'].max()})")
+    dall = lgb.Dataset(fit[FEATURES].values, label=fit["y"].values, feature_name=FEATURES)
     final = lgb.train(_params(seeds[0]), dall, num_boost_round=n_rounds)
     final.save_model(str(MODEL_PATH))
     metrics["model_path"] = str(MODEL_PATH)
-    metrics["refit_period"] = [df["date"].min(), df["date"].max()]
+    metrics["refit_period"] = [fit["date"].min(), fit["date"].max()]
+    metrics["protocol"] = jra_protocol.describe()
     METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2, default=str))
     logger.info(f"保存: {MODEL_PATH} / {METRICS_PATH}")
 

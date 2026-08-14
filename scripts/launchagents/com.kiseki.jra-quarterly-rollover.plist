@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.jra-quarterly-rollover</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd /Users/ysuzuki/GitHub/kiseki/backend &amp;&amp; .venv/bin/python scripts/jra_quarterly_rollover.py</string>
+  </array>
+
+  <!-- 四半期の初日（1/4/7/10 月の 1 日）03:20。
+       launchd に「四半期ごと」は無いので Month を 4 つ列挙する。
+       03:15 の自動起床（pmset repeat）直後・03:30 の DB バックアップ前に置く。
+       地方の月次ローリング（03:18）とは 2 分ずらして DB を同時に叩かないようにする。 -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>1</integer>
+          <key>Hour</key><integer>3</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>1</integer>
+          <key>Hour</key><integer>3</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Month</key><integer>7</integer><key>Day</key><integer>1</integer>
+          <key>Hour</key><integer>3</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Month</key><integer>10</integer><key>Day</key><integer>1</integer>
+          <key>Hour</key><integer>3</integer><key>Minute</key><integer>20</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/jra_quarterly_rollover.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/jra_quarterly_rollover.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
