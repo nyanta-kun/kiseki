@@ -14,6 +14,7 @@ from .api.chihou_recommendations_router import router as chihou_recommendations_
 from .api.horses import router as horses_router
 from .api.import_router import changes_router
 from .api.import_router import router as import_router
+from .api.jra_pick_log_router import router as jra_pick_log_router
 from .api.keirin_router import router as keirin_router
 from .api.performance import router as performance_router
 from .api.races import router as races_router
@@ -72,6 +73,7 @@ app.include_router(chihou_races_router)        # GET  /api/chihou/races/*
 app.include_router(chihou_performance_router)      # GET  /api/chihou/performance/*
 app.include_router(chihou_recommendations_router)  # GET/POST /api/chihou/recommendations
 app.include_router(chihou_pick_log_router)          # POST /api/chihou/place-picks/*
+app.include_router(jra_pick_log_router)             # POST /api/jra/hit-tier/*
 app.include_router(keirin_router)                  # GET /api/keirin/*
 
 # MS2以降で順次有効化:
