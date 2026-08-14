@@ -42,7 +42,7 @@ from src.evaluation.backtest_wt import _load_payouts_wt
 from src.database import get_connection
 from src.submitted_stakes import resolve_payout
 from src.strategy_wt import (
-    CURRENT_PAPER_RANKS, ABOLISHED_PAPER_RANKS, rank_7c_unit_stake,
+    CURRENT_PAPER_RANKS, ABOLISHED_PAPER_RANKS, rank_7c_unit_stake, unit_stake,
     RANK_7S_STAKE, RANK_7A_STAKE, RANK_7B_STAKE, RANK_9S_STAKE, RANK_9A_STAKE,
 )
 
@@ -671,6 +671,25 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_9A", "", "")
 
+    # 9C=9車のベースモデル（2026-08-14導入・旧 9S/9A を置換）:
+    # decisions キー {rk}#9C（decision=buy）を picks に注入する（slot="nine_9c"）。
+    for _key, _dec in decisions.items():
+        if not _key.endswith("#9C") or _dec.get("decision") != "buy" or not _dec.get("combos"):
+            continue
+        _rk = _key[:-3]
+        if not _rk.startswith(dc):
+            continue
+        try:
+            _, _code, _rno = _rk.split("_")
+        except ValueError:
+            continue
+        _venue = code2name.get(_code)
+        if _venue is None:
+            continue
+        _pk = (_venue, int(_rno), "nine_9c")
+        if _pk not in picks:
+            picks[_pk] = ("RANK_9C", "", "")
+
     # 旧A（{rk}#A）・旧S1（6車三連単）の decisions 注入は 2026-07-17 全廃
     # （両ランク廃止。全廃日以前の decisions が残っていても採点・行再作成しない）
 
@@ -732,6 +751,7 @@ def _main_inner(date):
     results_9h1 = []          # 9H1=穴推奨・9車高配当（三連単単一券種）行 — 同上（2026-08-08導入）
     results_7c = []           # 7C=ベースモデル・終日の二軸（ペーパー）行 — ヘッダー合計には含めず別集計（2026-08-07導入）
     results_9a = []           # 9A=S9の境界ランク（ペーパー）行 — ヘッダー合計には含めず別集計（2026-07-27導入）
+    results_9c = []           # 9C=9車のベースモデル（ペーパー）行 — 同上（2026-08-14導入・9S/9A を置換）
     p7ssb = p7ssr = p7ssh = 0  # 7+車 旧SSランク 合計
     p7sb = p7sr = p7sh = 0    # 7+車 旧Sランク 合計
     p7rb = p7rr = p7rh = 0    # 旧S1（7PLUS_R・2026-07-16全廃・過去日再採点互換）合計
@@ -751,6 +771,8 @@ def _main_inner(date):
     # 7A/9A（S7/S9の境界ランク・単一サブランク・2026-07-27導入。ヘッダー合計には含めない）
     p7ab = p7ar = p7ah = 0
     p9ab = p9ar = p9ah = 0
+    # 9C（9車のベースモデル・2026-08-14導入。賭け金は可変＝予算枠÷点数）
+    p9cb = p9cr = p9ch = 0
     # 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入。ヘッダー合計には含めない）
     p7bb = p7br = p7bh = 0
     p7h1b = p7h1r = p7h1h = 0   # 7H1（穴推奨）の 購入額 / 払戻 / 的中数
@@ -1548,6 +1570,81 @@ def _main_inner(date):
                                 *gap_map.get(rk, (None, None, None)), None))
                 continue
 
+            if _slot == "nine_9c":
+                # ── 9C（9車のベースモデル・2026-08-14導入）採点 ──
+                # judge_rank_9c/_process_rank_9c_candidates と対。正本は
+                # decisions の {rk}#9C。返還処理なし。**三連複のみ**（7C の
+                # 三連単切替は9車では未検証なので持ち込んでいない）。
+                #
+                # ⚠️ **賭け金が可変**（1レース10,000円の予算枠 ÷ 点数）。固定 STAKE を
+                #    掛けると投資額が実態とずれて ROI が壊れる。decision の stake を使う。
+                dec_9c = decisions.get(rk + "#9C")
+                if not dec_9c or dec_9c.get("decision") not in ("buy", "skip"):
+                    print(f"[notify_results_wt] 9C判定記録なし {rk}: 不計上", flush=True)
+                    continue
+                is_buy = dec_9c.get("decision") == "buy" and bool(dec_9c.get("combos"))
+                c9_rows = conn.execute(
+                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
+                    "ORDER BY finish_order", (rk,)).fetchall()
+                c9_order = [int(r[0]) for r in c9_rows]
+                if len(c9_order) < 3:
+                    continue
+                try:
+                    c9_axis1 = int(dec_9c.get("axis1"))
+                    c9_axis2 = int(dec_9c.get("axis2"))
+                except (TypeError, ValueError):
+                    continue
+                c9_top3 = frozenset(c9_order[:3])
+                c9_trio_pay = pm.get(rk, {}).get(("trio", c9_top3), 0)
+                c9_trifecta_pay = pm.get(rk, {}).get(("trifecta", tuple(c9_order[:3])), 0)
+
+                if is_buy:
+                    try:
+                        c9_combos = [frozenset(int(x) for x in str(c).split("-"))
+                                     for c in dec_9c["combos"]]
+                    except (TypeError, ValueError):
+                        continue
+                    c9_n_combos = len(c9_combos)
+                    c9_stake = int(dec_9c.get("stake") or unit_stake(c9_n_combos))
+                    c9_hit = any(cs == c9_top3 for cs in c9_combos)
+                    c9_pay, c9_bet = resolve_payout(
+                        conn, rk, "9C", hit=c9_hit, winning_key=c9_top3,
+                        odds_payout=c9_trio_pay, fallback_stake=c9_stake,
+                        n_combos=c9_n_combos)
+                    c9_thirds = sorted(
+                        next(iter(cs - {c9_axis1, c9_axis2}))
+                        for cs in c9_combos if len(cs - {c9_axis1, c9_axis2}) == 1)
+                    c9_pred = f"{c9_axis1}={c9_axis2}-" + ",".join(map(str, c9_thirds))
+                else:
+                    c9_hit = c9_axis1 in c9_top3 and c9_axis2 in c9_top3
+                    c9_pay = 0
+                    c9_bet = 0
+                    c9_n_combos = 0
+                    # 相手は総流しではないので、見送り時は残り全車を並べない。
+                    c9_pred = f"{c9_axis1}={c9_axis2}-見送り"
+                c9_tstr = ptime
+                _c9_stt = start_map.get(rk)
+                if _c9_stt:
+                    try:
+                        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                        c9_tstr = _dt.fromtimestamp(int(_c9_stt), tz=_tz(_td(hours=9))).strftime("%H:%M")
+                    except (ValueError, TypeError):
+                        pass
+                if is_buy:
+                    c9_mark = f"◎ ¥{c9_pay:,}" if c9_hit else "×"
+                    results_9c.append(
+                        f"[9C] {venue} {race_no}R {c9_tstr}  予:{c9_pred}"
+                        f"  実:{'-'.join(map(str, c9_order[:3]))}  {c9_mark}")
+                    p9cb += c9_bet
+                    if c9_hit:
+                        p9cr += c9_pay
+                        p9ch += 1
+                history.append((target_date, f"{rk}#9C", "RANK_9C", c9_pred, c9_n_combos,
+                                int(c9_hit), c9_pay, c9_trio_pay, c9_trifecta_pay, c9_bet,
+                                not is_buy, None,
+                                *gap_map.get(rk, (None, None, None)), None))
+                continue
+
             # 7plus_a / six_s1 スロットの採点は 2026-07-17 全廃（A・旧S1廃止）
 
             # 発走前判定があるレースは判定時のランク・購入買い目（ガミ目カット済み）で採点する
@@ -1745,7 +1842,8 @@ def _main_inner(date):
 
     total_7plus = results_7plus_ss + results_7plus_s + results_7plus_r
     if (not total_7plus and not results_7plus_s1 and not results_7plus_s7
-            and not results_s9 and not results_7a and not results_9a):
+            and not results_s9 and not results_7a and not results_9a
+            and not results_9c):
         emit(f"📊 **競輪AI[wt]成績 {target_date}**\n確定レースなし")
         return
 
@@ -1820,7 +1918,7 @@ def _main_inner(date):
 
     # ── S9（9車立て・独立ランク）は[7+車]ヘッダーに含めず別メッセージで送信 ──
     # （既存メッセージへの追記だとmsg[:1900]切り詰めで低頻度のS9が消える恐れがあるため）
-    if results_s9 or results_9a:
+    if results_s9 or results_9a or results_9c:
         p9b = p9s9sspb + p9s9ssb + p9s9sb
         p9r = p9s9sspr + p9s9ssr + p9s9sr
         p9h = p9s9ssph + p9s9ssh + p9s9sh
@@ -1839,12 +1937,14 @@ def _main_inner(date):
             _rank_line("9S(9車波乱度選出)", p9s9sn, p9s9sb, p9s9sr, p9s9sh),
             # 9A（境界ランク・2026-07-27導入）はヘッダー合計(p9b/p9h)には含めず別行で表示する
             _rank_line("9A(境界ランク)", len(results_9a), p9ab, p9ar, p9ah),
+            # 9C（9車のベースモデル・2026-08-14導入）もヘッダー合計には含めず別行。
+            _rank_line("9C(9車ベースモデル)", len(results_9c), p9cb, p9cr, p9ch),
         ):
             if _l:
                 rank_9s_rank_lines.append(_l)
         if rank_9s_rank_lines:
             rank_9s_msg += "\n" + "\n".join(rank_9s_rank_lines)
-        rank_9s_msg += "\n```\n" + "\n".join(results_s9 + results_9a) + "\n```"
+        rank_9s_msg += "\n```\n" + "\n".join(results_s9 + results_9a + results_9c) + "\n```"
         emit(rank_9s_msg[:1900])
 
     print(f"[notify_results_wt] {target_date} "
@@ -1859,6 +1959,7 @@ def _main_inner(date):
           f"9H1(穴推奨/9車) {len(results_9h1)}R 的中{p9h1h} / "
           f"S9(ペーパー) {len(results_s9)}R / "
           f"9A(ペーパー) {len(results_9a)}R 的中{p9ah} / "
+          f"9C(ペーパー) {len(results_9c)}R 的中{p9ch} / "
           f"旧SS {len(results_7plus_ss)}R / 旧S {len(results_7plus_s)}R / 欠車無効{skipped_dns}件")
 
 

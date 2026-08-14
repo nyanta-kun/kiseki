@@ -48,6 +48,7 @@ from src.strategy_wt import (
     S1W_STAKE, S1W_TOP3_GAP_MIN, RANK_7S_STAKE, RANK_7A_STAKE, RANK_7B_STAKE,
     RANK_7C_NE, RANK_7C_LEGS_MIN, rank_7c_select_legs, rank_7c_unit_stake,
     RANK_7C_TRIO_P3_SUM_MIN, rank_7c_cut_legs_by_gap,
+    RANK_9C_NE, RANK_9C_LEGS_MIN, RANK_9C_LEG_P3_MIN,
     unit_stake,
     rank_7b_select_legs, RANK_9S_STAKE, RANK_9A_STAKE, SS_STAKE,
     RANK_7SS_STAKE,
@@ -1769,6 +1770,261 @@ def _process_rank_7c_candidates(today: str, now_unix: int, notified: set[str]) -
     return messages, newly_done
 
 
+
+# ---------------------------------------------------------------------------
+# 9C（9車のベースモデル・2026-08-14 新設。旧 9S/9A を置換）
+#
+# 7C の 9車版だが、**7C の飾りは持ち込まない**:
+#   - 三連単への切替（`trifecta_7c`）は 9車で未検証なので入れない
+#   - 低配当パターンの見送り・3着内率の落差カットも 9車では未検証
+#   - 相手の足切りだけ 9C 用の閾値（RANK_9C_LEG_P3_MIN）
+# 軸と相手の選び方は `rank_7c_select_*`（車数に依存しない）をそのまま使う。
+# ---------------------------------------------------------------------------
+
+
+def judge_rank_9c(cand: dict, trio_lookup: dict) -> tuple[str, dict]:
+    """9Cの発走前ライブオッズ判定（純関数・DB非依存）。
+
+    判定:
+      ① 盤面（有効オッズの掲載車）が RANK_9C_NE 車 — 欠車なら見送り
+      ② 軸2車が盤面に在籍
+      ③ 相手を**盤面から再計算**する（朝の legs_9c をそのまま使わない）
+      ④ 相手が RANK_9C_LEGS_MIN 点未満なら見送り
+      ⑤ 賭け金 = unit_stake(点数)（1レース RACE_BUDGET 円を点数で割る）
+
+    returns (decision, detail) — decision: "buy" / "skip" / "不明"
+    """
+    axis1, axis2 = cand.get("axis1"), cand.get("axis2")
+    detail: dict = {"axis1": axis1, "axis2": axis2}
+    if axis1 is None or axis2 is None:
+        detail["skip_reason"] = "軸が無い"
+        return "skip", detail
+
+    valid: dict = {}
+    for k, v in (trio_lookup or {}).items():
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 < fv < 9000:
+            valid[k] = fv
+    if not valid:
+        return "不明", detail
+
+    board: set[int] = set()
+    for k in valid:
+        board |= set(k)
+
+    if len(board) != RANK_9C_NE:
+        detail["skip_reason"] = f"盤面{len(board)}車（欠車）"
+        return "skip", detail
+    if axis1 not in board or axis2 not in board:
+        detail["skip_reason"] = "軸が盤面に不在"
+        return "skip", detail
+
+    others = sorted(board - {axis1, axis2})
+    probs = {int(k): float(v) for k, v in (cand.get("top3_probs") or {}).items()}
+    if probs:
+        legs = rank_7c_select_legs(others, probs, p3_min=RANK_9C_LEG_P3_MIN)
+    else:
+        legs = [x for x in (cand.get("legs_9c") or []) if x in board]
+
+    if len(legs) < RANK_9C_LEGS_MIN:
+        detail["skip_reason"] = f"相手{len(legs)}点（{RANK_9C_LEGS_MIN}点未満）"
+        return "skip", detail
+
+    # ⚠️ leg_odds のキーは**買い目の文字列**（"2-4-7"）。Discord のメッセージ生成が
+    #    combos の各要素で引くため、車番をキーにすると全件「取得不可」になる。
+    combos, leg_odds = [], {}
+    for t in legs:
+        key = frozenset({axis1, axis2, t})
+        ov = valid.get(key)
+        if ov is None:
+            continue
+        label = "-".join(map(str, sorted(key)))
+        leg_odds[label] = ov
+        combos.append(label)
+    if len(combos) < RANK_9C_LEGS_MIN:
+        detail["skip_reason"] = f"オッズ取得できた目が{len(combos)}点"
+        return "skip", detail
+
+    detail["combos"] = combos
+    detail["leg_odds"] = leg_odds
+    detail["thirds"] = legs
+    detail["stake"] = unit_stake(len(combos))
+    # 🔴 採点側（notify_results_wt）が着順を見るかどうかの判断に使う。
+    #    9C は三連複だけなので必ず "trio"。
+    detail["bet_kind"] = "trio"
+    return "buy", detail
+
+
+def _load_rank_9c_candidates(today: str) -> list[dict]:
+    """当日の9C候補 JSON（昼 + 夜）を読み込む。
+
+    ⚠️ 7C と同じく**他ランクとの排他ガードは掛けない**（9C は wt_overlap_n を
+       一切見ない）。1レース1商品の制約は netkeirin 入稿側だけで解決する。
+
+    ⚠️ 9C の軸は `axis1_9c`/`axis2_9c`（pred_top3 上位2車）で、`axis1`/`axis2`
+       （3ヘッド軸）とは**別物**。judge 側は `axis1`/`axis2` を読むので、
+       ここで差し替えたコピーを返す（元は `axis1_3head` へ退避）。
+    """
+    picks_dir = Path(__file__).parent.parent / "data" / "picks"
+    raw: list[dict] = []
+    for fname in (f"wave_picks_wt_{today}_s9c_candidates.json",
+                  f"wave_picks_wt_{today}_night_s9c_candidates.json"):
+        p = picks_dir / fname
+        if not p.exists():
+            continue
+        try:
+            raw += json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("9C候補の読み込み失敗 %s: %s", p, e)
+    out: list[dict] = []
+    for c in raw:
+        a1, a2 = c.get("axis1_9c"), c.get("axis2_9c")
+        if a1 is None or a2 is None:
+            continue
+        d = dict(c)
+        d["axis1_3head"], d["axis2_3head"] = c.get("axis1"), c.get("axis2")
+        d["axis1"], d["axis2"] = int(a1), int(a2)
+        out.append(d)
+    return out
+
+
+def _insert_rank_9c_pick(race_key: str, race_date: str, pred_combo: str,
+                         n_combos: int, stake: int) -> None:
+    """9C（ペーパー）の記録行 {base}#9C を picks_history に即時反映する。
+
+    ⚠️ 7C と同じく **stake が可変**（予算枠 ÷ 点数）なので呼び出し側から渡す。
+    """
+    store_key = race_key + "#9C"
+    bet = n_combos * stake
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO picks_history "
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
+                (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning("9C pick SQLite 書き込み失敗 %s: %s", race_key, e)
+
+    db_url = os.environ.get("KEIRIN_DB_URL")
+    if db_url:
+        try:
+            import psycopg2  # noqa: PLC0415
+            with psycopg2.connect(db_url) as vconn:
+                with vconn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO keirin.picks_history "
+                        "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
+                        "VALUES (%s,%s,%s,%s,%s,0,0,0,%s,'wt',False) "
+                        "ON CONFLICT (race_key) DO UPDATE SET "
+                        "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
+                        "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount",
+                        (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet),
+                    )
+        except Exception as e:
+            logger.warning("9C pick VPS 書き込み失敗 %s: %s", race_key, e)
+
+
+def _build_rank_9c_message(cand: dict, race_info: dict, detail: dict) -> str:
+    """9C（9車ベースモデル・ペーパー）の15分前 Discord 通知メッセージ。"""
+    venue = cand.get("venue_name", "?")
+    race_no = race_info.get("race_no", cand.get("race_no", "?"))
+    start = cand.get("start_time", "--:--")
+    axis1, axis2 = detail.get("axis1"), detail.get("axis2")
+    combos = detail.get("combos") or []
+    leg_odds = detail.get("leg_odds") or {}
+    stake = int(detail.get("stake") or 0)
+    lines = []
+    for c in combos:
+        ov = leg_odds.get(c)
+        lines.append(f"    {c}:  " + (f"{float(ov):.1f}倍" if ov is not None else "取得不可"))
+    p3 = cand.get("p3_sum_top2")
+    p3_str = f"{float(p3):.3f}" if p3 is not None else "—"
+    return (
+        f"🚲 **[9C]  {venue} {race_no}R  発走 {start}**\n"
+        f"  軸: 3着内率の上位2車 {axis1}/{axis2}（9車のベースモデル）\n"
+        f"  三連複2軸流し({len(combos)}点 × {stake:,}円 = {len(combos) * stake:,}円): "
+        f"`{axis1}={axis2}流し`\n"
+        f"  **上位2車の3着内率合計={p3_str}**\n"
+        f"\n"
+        f"  📊 現在オッズ（締切10分前）:\n"
+        + "\n".join(lines)
+    )
+
+
+def _process_rank_9c_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
+    """9C候補の発走前判定・記録・通知メッセージ生成（7C版の9車写し）。"""
+    cands = _load_rank_9c_candidates(today)
+    if not cands:
+        return [], set()
+
+    race_info_map = _load_race_info([c["race_key"] for c in cands if "race_key" in c])
+
+    in_window: list[tuple[dict, dict]] = []
+    for cand in cands:
+        rk = cand.get("race_key")
+        if not rk or f"{rk}#9C" in notified:
+            continue
+        ri = race_info_map.get(rk)
+        if ri is None or ri.get("n_entries") != RANK_9C_NE:
+            continue
+        notify_at = int(ri["start_at"]) - NOTIFY_BEFORE_START_SEC
+        if notify_at <= now_unix < notify_at + NOTIFY_WINDOW_SEC:
+            in_window.append((cand, ri))
+    if not in_window:
+        return [], set()
+
+    scraper = WinticketScraper(request_interval=1.0)
+    messages: list[tuple[str, str]] = []
+    newly_done: set[str] = set()
+    for cand, ri in in_window:
+        rk = cand["race_key"]
+        key_9c = f"{rk}#9C"
+        try:
+            odds_data = scraper.fetch_odds(
+                venue_id=ri["venue_id"], race_date=ri["race_date"],
+                race_no=ri["race_no"], cup_id=ri["cup_id"], day_index=ri["day_index"],
+            )
+        except Exception as e:
+            logger.warning("fetch_odds 失敗(9C) %s: %s", rk, e)
+            odds_data = None
+        if odds_data is None:
+            print(f"[prerace] {rk} 9C候補 → オッズ取得不可（次回再試行）", flush=True)
+            time.sleep(0.3)
+            continue
+
+        decision, detail = judge_rank_9c(cand, _build_odds_lookup(odds_data, "trio"))
+        if decision == "不明":
+            print(f"[prerace] {rk} 9C候補 → 盤面取得不可（次回再試行）", flush=True)
+            time.sleep(0.3)
+            continue
+
+        _save_decision(today, key_9c, {
+            "decision": decision, "rank": "RANK_9C", "paper": True,
+            "p3_sum_top2": cand.get("p3_sum_top2"), **detail,
+        })
+
+        if decision == "buy":
+            combos = detail["combos"]
+            thirds = _u_third_list(combos, detail["axis1"], detail["axis2"])
+            pred = (f"{detail['axis1']}={detail['axis2']}-"
+                    + ",".join(map(str, thirds)))
+            _insert_rank_9c_pick(rk, today, pred, len(combos), int(detail["stake"]))
+            messages.append((key_9c, _build_rank_9c_message(cand, ri, detail)))
+            print(f"[prerace] {rk} 9C候補 → buy（ペーパー・{len(combos)}点）", flush=True)
+        else:
+            _mark_paper_miwokuri(rk, "#9C")
+            print(f"[prerace] {rk} 9C候補 → skip: {detail.get('skip_reason')}", flush=True)
+        newly_done.add(key_9c)
+        time.sleep(0.3)
+    return messages, newly_done
+
+
 def _build_rank_7ss_message(cand: dict, race_info: dict, detail: dict) -> str:
     """7A（境界ランク・ペーパー）の15分前 Discord 通知メッセージ。"""
     venue = cand.get("venue_name", "?")
@@ -3470,14 +3726,17 @@ def main():
     # （残置ファイルが手元に残っていても picks_history へ書き戻らないようにする）。
     # （旧RANK_7SSの記述。2026-08-05に同名の別戦略を新設し上で処理している）
 
-    # ── S9候補（S7の9車立て版・独立ランク・ペーパー）処理 ────────────────────
-    # 2026-07-26導入。S7等との重複排除はない（独立戦略・車数も異なる）。
+    # ── 9C候補（9車のベースモデル・ペーパー）処理 ────────────────────────────
+    # 2026-08-14導入。**旧 9S/9A の判定はここで停止した**（両ランクは同日に全廃）。
+    # 🔴 廃止したのに live 判定だけ残すと、Web・集計から消したランクの行が
+    #    毎日 picks_history へ書き込まれ続ける（7経路チェックリストの「②ライブ判定」）。
+    #    判定関数自体は過去日の再採点・分析のために残置してある。
     try:
-        rank_9s_messages, rank_9s_done = _process_rank_9s_candidates(today, now_unix, notified)
-        messages += rank_9s_messages
-        newly_done |= rank_9s_done
+        rank_9c_messages, rank_9c_done = _process_rank_9c_candidates(today, now_unix, notified)
+        messages += rank_9c_messages
+        newly_done |= rank_9c_done
     except Exception as e:
-        logger.exception("S9候補処理失敗（他ランク通知には影響しない）: %s", e)
+        logger.exception("9C候補処理失敗（他ランク通知には影響しない）: %s", e)
 
     # ── 7A候補（S7の境界ランク・ペーパー）処理 ──────────────────────────────
     # 2026-07-27導入。S7とは論理的に排他（3ゲート中1つだけ不合格）。
@@ -3545,14 +3804,9 @@ def main():
     except Exception as e:
         logger.exception("7C候補処理失敗（他ランク通知には影響しない）: %s", e)
 
-    # ── 9A候補（S9の境界ランク・ペーパー）処理 ──────────────────────────────
-    # 2026-07-27導入。S9とは論理的に排他（2ゲート中1つだけ不合格）。
-    try:
-        rank_9a_messages, rank_9a_done = _process_rank_9a_candidates(today, now_unix, notified)
-        messages += rank_9a_messages
-        newly_done |= rank_9a_done
-    except Exception as e:
-        logger.exception("9A候補処理失敗（他ランク通知には影響しない）: %s", e)
+    # ── 9A候補の処理は 2026-08-14 に停止（RANK_9C へ集約）。
+    #    上の 9C ブロックが後継。`_process_rank_9a_candidates` 自体は
+    #    過去日の再採点・分析のために残置している（呼び出しだけ止める）。
 
     # 旧A候補・旧S1候補（6車三連単）の処理は 2026-07-17 全廃
 
