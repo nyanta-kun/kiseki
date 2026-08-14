@@ -740,8 +740,14 @@ WITH per_race AS (
   SELECT ci.race_id, max(ci.composite_index)-min(ci.composite_index) AS spread
   FROM keiba.calculated_indices ci JOIN keiba.races r ON r.id=ci.race_id
   WHERE ci.version=27 AND r.date='YYYYMMDD' GROUP BY 1)
-SELECT count(*) FILTER (WHERE spread < 20) AS suspicious, count(*) AS races FROM per_race;
+SELECT count(*) races, round(avg(spread)::numeric,2) avg_spread FROM per_race;
+-- 平常 28〜30 / DM 欠損日は 14 前後（11.6）
 ```
+
+⚠️ **レース単位の閾値（例「幅 < 20 なら異常」）で判定してはいけない。**
+少頭数や同質なメンバー構成では平常時でも 18〜19 に収まるレースがある
+（2026-08-15 は DM 100% でも 3 レースが 20 未満だった）。
+**日単位の平均**で見ること。個別に疑うなら、そのレースの DM 充足率を直接見る。
 
 ### 11.8 2026-08-09 の指数は直していない（意図的）
 
