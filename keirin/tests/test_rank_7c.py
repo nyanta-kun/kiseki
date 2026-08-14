@@ -379,19 +379,46 @@ def test_reconcile_registers_7c():
     assert '"7c:7C"' in sh
 
 
-def test_backfill_7c_does_not_require_win_or_bad_models():
-    """7C は pred_prob だけで軸も相手も決まる。win/bad を必須にすると
-    vintage 不足で無意味に窓が落ちる。"""
+def test_backfill_7c_does_not_require_bad_model():
+    """7C の軸は pred_prob だけで決まる。**bad** を必須にすると vintage 不足で
+    無意味に窓が落ちる。
+
+    ⚠️ 2026-08-15 まで **win も**使わない設計だったが、券種の切替
+       （`rank_7c_use_trifecta`）が単勝率を見るため必須になった。win を使わないと
+       全レース三連複で再構築され、本番と別の商品になる（実際にそうなっていた）。
+    """
     import inspect
 
     from scripts import backfill_7c_rank_wt as bf
     src = inspect.getsource(bf.build_rows)
-    assert "load_model(win_model_name)" not in src
     assert "pred_bad" not in src
 
     from scripts import rebuild_7c_walkforward_pg as rb
     rsrc = inspect.getsource(rb.main)
     assert "require_bad=True" not in rsrc
+
+
+def test_backfill_7c_goes_through_the_buy_plan():
+    """🔴 再構築が本番と同じ買い方の正本を通ること（2026-08-15 是正）。
+
+    2026-08-09 に入った3仕様（三連単切替 / 三連複側の追加ゲート / 落差カット）が
+    再構築にだけ入っておらず、`reconcile_walkforward_tail.sh` が毎朝当月を
+    作り直すたびに picks_history が 08-09 以前の買い方へ巻き戻っていた。
+    実測（08-07〜08-14）: picks_history の購入行161件は160件が4〜5点・三連単0件で、
+    同期間の入稿（1点8/2点8/3点2/4点45/5点29・三連単5件）と食い違っていた。
+    """
+    import inspect
+
+    from scripts import backfill_7c_rank_wt as bf
+    src = inspect.getsource(bf.build_rows)
+    assert "rank_7c_buy_plan(" in src, "買い方の正本を通っていない"
+    assert "load_model(win_model_name)" in src, "券種の切替に必要な win モデルが無い"
+
+    # walk-forward 側が vintage の win モデルを渡していること
+    from scripts import rebuild_7c_walkforward_pg as rb
+    rsrc = inspect.getsource(rb.main)
+    assert "build_rows(eval_model, date_from, date_to, win_model)" in rsrc, \
+        "walk-forward が win モデルを渡していない（全レース三連複になる）"
 
 
 # ─────────────────────────────────────────────────────────────────────────

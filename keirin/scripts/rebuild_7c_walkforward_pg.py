@@ -65,8 +65,9 @@ def main() -> None:
                else monthly_windows(_parse_upto(args.upto)))
 
     # --- 事前チェック: build_rows(重い計算)を始める前に全窓のモデル存在を検証 ---
-    # 7C は eval モデルしか使わないので require_bad は不要（要求すると
-    # bad の vintage が無い月まで不足扱いになり、無意味に窓が落ちる）。
+    # 7C は eval + win を使う（win は券種の切替判定のみ）。bad は使わないので
+    # require_bad は不要（要求すると bad の vintage が無い月まで不足扱いになり、
+    # 無意味に窓が落ちる）。
     available, missing = split_by_model_availability(windows)
     if missing:
         report = format_missing_report(_RANK_LABEL, missing)
@@ -95,9 +96,13 @@ def main() -> None:
 
     per_window_rows: list[tuple[str, str, list[dict]]] = []
     all_rows: list[dict] = []
-    for date_from, date_to, eval_model, _win_model in windows:
-        print(f"\n[rebuild-7c-pg] {date_from}〜{date_to}  eval={eval_model}", flush=True)
-        rows = build_rows(eval_model, date_from, date_to)
+    for date_from, date_to, eval_model, win_model in windows:
+        print(f"\n[rebuild-7c-pg] {date_from}〜{date_to}  eval={eval_model} "
+              f"win={win_model}", flush=True)
+        # 🔴 **win モデルを必ず渡す**。券種の切替（三連単）判定に要る。
+        #    渡さないと全レース三連複で再構築され、本番と別の商品になる
+        #    （2026-08-15 まで実際にそうなっていた）。
+        rows = build_rows(eval_model, date_from, date_to, win_model)
         n_hit = sum(r["hit"] for r in rows)
         bet = sum(r["bet_amount"] for r in rows)
         pay = sum(r["payout"] for r in rows)

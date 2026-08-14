@@ -4,11 +4,24 @@
 backfill_7c_rank_wt.py の 7C 版。7SS/7S/7A と違う点は3つ:
 
   1. **軸が3ヘッドではない** — モデル3着内率(pred_prob)の上位2車。
-     したがって軸選定に win/bad モデルを一切使わない（eval モデルのみ）。
+     bad モデルは使わない（win モデルは券種の切替判定にだけ使う・下記）。
   2. **総流しではない** — 相手は3着内率 >= RANK_7C_LEG_P3_MIN に足切り。
      足切り後が RANK_7C_LEGS_MIN 点未満のレースは**買わない**
      （「相手が絞れる＝実力差が大きい＝配当が付かない」ため）。
   3. **賭け金が可変** — 1レース RACE_BUDGET 円を点数で均等割り。
+
+🔴 **買い方は `strategy_wt.rank_7c_buy_plan` を通すこと**（2026-08-15 是正）。
+   2026-08-09 に本番へ入った3仕様——(a) 三連単への切替
+   （`rank_7c_use_trifecta`）・(b) 三連複側の追加ゲート
+   （`RANK_7C_TRIO_P3_SUM_MIN`）・(c) 落差カット（`rank_7c_cut_legs_by_gap`）——が
+   **本スクリプトにだけ入っておらず**、`reconcile_walkforward_tail.sh` が毎朝
+   当月を作り直すたびに picks_history が 08-09 以前の買い方へ巻き戻っていた。
+
+   実害（2026-08-07〜08-14 実測）: picks_history の 7C 購入行 161件は
+   **160件が4〜5点・三連単0件**。同期間の入稿は 1点8/2点8/3点2/4点45/5点29・
+   三連単5件。入稿と突き合わせると **84件中17件（20%）で点数が食い違い**、
+   うち16件は「1〜2点で売ったのに4〜5点として記録」だった。
+   ＝ **Web に出ている 7C の実績が、実際に売っている商品を説明していなかった。**
 
 ⚠️ 7C は他ランクと**論理的に排他ではない**（wt_overlap_n を見ない）。
    picks_history の race_key は `{レースキー}#7C` なので他ランク行とは共存する。
@@ -42,8 +55,9 @@ from src.evaluation.void_rules import void_by_dns
 from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
 from src.strategy_wt import (
-    RANK_7C_LEGS_MIN, unit_stake, rank_7c_daily_select, rank_7c_is_lowpay_pattern,
-    rank_7c_select_axis, rank_7c_select_legs, rank_7s_field_entropy,
+    RANK_7C_LEGS_MIN, unit_stake, rank_7c_buy_plan, rank_7c_daily_select,
+    rank_7c_is_lowpay_pattern, rank_7c_select_axis, rank_7c_select_legs,
+    rank_7s_field_entropy,
 )
 
 N_CAR = 7
@@ -109,14 +123,19 @@ def build_rows(model_name: str, date_from: str, date_to: str,
                 bad_model_name: str | None = None) -> list[dict]:
     """バックフィル対象の 7C(#7C) 行（採点済み）を構築する。
 
-    win_model_name / bad_model_name: **7C では使わない**（軸も相手も pred_prob
-      だけで決まる）。rebuild 側の共通ヘルパと signature を揃えるためだけに
-      受け取り、渡されても無視する。
+    win_model_name: **券種の切替判定にだけ使う**（`rank_7c_use_trifecta`＝
+      単勝率が RANK_7C_TRIFECTA_PW_MIN 以上の1車がいるレースは三連単へ）。
+      🔴 **None を渡すと三連単へ切り替わらず、本番と別の商品を再構築する**。
+      2026-08-15 まで実際にそうなっていた（本 docstring 冒頭の実害を参照）。
+    bad_model_name: 7C では使わない（軸が3ヘッドではないため）。rebuild 側の
+      共通ヘルパと signature を揃えるために受け取り、渡されても無視する。
     """
-    # 7C は軸も相手も pred_prob(3着内率) だけで決まるので eval モデルのみ使う。
-    # win/bad を引数で受けるのは rebuild 側の共通ヘルパと signature を揃えるため
-    # （渡されても無視する）。
     model = load_model(model_name)
+    # 券種の切替（三連単）判定用。無ければ全レース三連複になる＝本番と食い違う。
+    win_model = load_model(win_model_name) if win_model_name else None
+    if win_model is None:
+        print("[backfill-7c] ⚠️ win モデル未指定のため三連単への切替を行いません"
+              "（本番と別の商品になります）", flush=True)
     df = build_features_wt(load_raw_data_wt(min_date=date_from, max_date=date_to))
     if df.empty:
         return []
@@ -144,6 +163,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         return []
     X = prepare_X(df)
     df["pred_prob"] = model.predict_proba(X)[:, 1]
+    df["pred_win"] = (win_model.predict_proba(X)[:, 1] if win_model is not None
+                      else 0.0)
     trio_bd = _load_trio_boards(df["race_key"].unique().tolist())
     board_map = _load_board_frames_wt(df["race_key"].unique().tolist())
     pm = _load_payouts_wt(df["race_key"].unique().tolist())
@@ -163,6 +184,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             continue
 
         top3_probs = {int(r.frame_no): float(r.pred_prob) for r in g.itertuples(index=False)}
+        win_probs = {int(r.frame_no): float(r.pred_win) for r in g.itertuples(index=False)}
         # 7C の軸は **pred_prob 上位2車**（3ヘッド軸ではない）。live（src/cli/main.py）と同一。
         sel = rank_7c_select_axis(top3_probs)
         if sel is None:
@@ -190,7 +212,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),
             "axis1": axis1, "axis2": axis2,
-            "p3_sum_top2": p3_sum, "legs_7c": legs,
+            "p3_sum_top2": p3_sum, "legs_7c": legs, "win_probs": win_probs,
+            "order3": order3,
             "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
             "entropy": rank_7s_field_entropy(top3_probs),
             "trio": trio, "actual_top3": actual_top3,
@@ -203,17 +226,57 @@ def build_rows(model_name: str, date_from: str, date_to: str,
     for c_ in rank_7c_daily_select(candidates):
         axis1, axis2 = c_["axis1"], c_["axis2"]
         trio = c_["trio"]
+        rk = c_["race_key"]
+        # 🔴 **買い方は本番と同じ単一正本を通す**（券種の切替・三連複側の追加
+        #    ゲート・落差カットがここで一括して決まる）。2026-08-15 まで本
+        #    スクリプトだけがこれを通さず `legs_7c` を総流ししていた。
+        plan = rank_7c_buy_plan(c_.get("top3_probs") or {}, c_.get("win_probs") or {},
+                                axis1, c_["legs_7c"])
+        if plan is None:
+            continue                       # 三連複側のゲートを下回る＝見送り
+        bet_kind, buy_legs = plan
+
+        if bet_kind == "trifecta":
+            # 三連単「1着=軸1 / 2着=軸2 / 3着=相手」。**着順まで一致**で的中。
+            # ⚠️ 点数ゲートは**三連複の板**で行う（live の judge_rank_7c と同一）。
+            #    三連単の板は薄く、そちらで足切りすると 7C の 16.9% が
+            #    「オッズ取得できた目がN点」で黙って見送りになる。
+            playable = [x for x in buy_legs if frozenset({axis1, axis2, x}) in trio]
+            if len(playable) < RANK_7C_LEGS_MIN:
+                continue
+            order3 = c_["order3"]
+            hit = tuple(order3) in {(axis1, axis2, x) for x in playable}
+            tri_pay = pm.get(rk, {}).get(("trifecta", tuple(order3)), 0)
+            # 三連単は**均等割り**（live の `rank_7c_unit_stake` と同じ）。
+            # 傾斜配分は三連複の目に対して組んであるので流用しない。
+            unit = unit_stake(len(playable))
+            bet = unit * len(playable)
+            pay = tri_pay * unit // 100 if hit else 0
+            rows.append({
+                "race_date": c_["race_date"],
+                "race_key": f"{rk}#7C", "rank": "RANK_7C",
+                # 🔴 `三単:` と着順の `-` 表記は**券種を伝える唯一の手段**
+                #    （notify_prerace_wt の pred_combo と完全に同じ形式にすること）。
+                "pred_combo": (f"三単:{axis1}-{axis2}-"
+                               + ",".join(str(x) for x in playable)),
+                "n_combos": len(playable), "hit": int(hit), "payout": pay,
+                "trio_payout": 0, "trifecta_payout": tri_pay,
+                "bet_amount": bet, "gate_label": None,
+            })
+            continue
+
         # combos/bought_thirds を同期して構築（pred_combo は実際に買った目のみ）。
         combos, bought_thirds = [], []
-        for x in c_["legs_7c"]:
+        for x in buy_legs:
             key = frozenset({axis1, axis2, x})
             if key in trio:
                 combos.append(key)
                 bought_thirds.append(x)
-        # オッズ欠けで点数ゲートを割ったら買わない（live の judge_rank_7c と同一）。
-        if len(combos) < RANK_7C_LEGS_MIN:
+        # 🔴 必要点数は**買う点数**で判定する。`RANK_7C_LEGS_MIN`(=4) は選別の
+        #    閾値で、落差カット後（1〜5点）へ流用すると常に見送りになる
+        #    （live の judge_rank_7c が同じ理由で `len(legs)` を使っている）。
+        if len(combos) < len(buy_legs):
             continue
-        rk = c_["race_key"]
         hit = c_["actual_top3"] in combos
         trio_pay = pm.get(rk, {}).get(("trio", c_["actual_top3"]), 0)
         # 賭け金は1レース RACE_BUDGET 円を**入稿と同じ傾斜配分**で割り振る
@@ -265,14 +328,18 @@ def wipe_rows(date_from: str, date_to: str, dry_run: bool) -> None:
 def insert_rows(rows: list[dict], dry_run: bool) -> None:
     if dry_run or not rows:
         return
+    # ⚠️ 三連単へ切り替えたレースだけ `trifecta_payout` を持つ。列は全行に
+    #    必要なので、持たない行は 0 で補う（欠けると executemany が落ちる）。
+    rows = [{"trifecta_payout": 0, **r} for r in rows]
     rows_ins = [{**r, "miwokuri": False} for r in rows]
     with get_connection() as conn:
         conn.executemany(
             "INSERT OR REPLACE INTO picks_history "
             "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
-            " trio_payout,bet_amount,route,miwokuri,gate_label) "
+            " trio_payout,trifecta_payout,bet_amount,route,miwokuri,gate_label) "
             "VALUES (:race_date,:race_key,:rank,:pred_combo,:n_combos,:hit,"
-            " :payout,:trio_payout,:bet_amount,'wt',:miwokuri,:gate_label)",
+            " :payout,:trio_payout,:trifecta_payout,:bet_amount,'wt',:miwokuri,"
+            " :gate_label)",
             rows_ins)
         conn.commit()
     print(f"[backfill-7c] get_connection先 {len(rows)}件 書き込み完了")
@@ -288,15 +355,16 @@ def insert_rows(rows: list[dict], dry_run: bool) -> None:
             execute_batch(cur, """
                 INSERT INTO keirin.picks_history
                   (race_date,race_key,rank,pred_combo,n_combos,hit,payout,
-                   trio_payout,bet_amount,route,miwokuri,gate_label)
+                   trio_payout,trifecta_payout,bet_amount,route,miwokuri,gate_label)
                 VALUES (%(race_date)s,%(race_key)s,%(rank)s,%(pred_combo)s,
                         %(n_combos)s,%(hit)s,%(payout)s,%(trio_payout)s,
-                        %(bet_amount)s,'wt',FALSE,%(gate_label)s)
+                        %(trifecta_payout)s,%(bet_amount)s,'wt',FALSE,%(gate_label)s)
                 ON CONFLICT (race_key) DO UPDATE SET
                   race_date=EXCLUDED.race_date, rank=EXCLUDED.rank,
                   pred_combo=EXCLUDED.pred_combo, n_combos=EXCLUDED.n_combos,
                   hit=EXCLUDED.hit, payout=EXCLUDED.payout,
                   trio_payout=EXCLUDED.trio_payout,
+                  trifecta_payout=EXCLUDED.trifecta_payout,
                   bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE,
                   gate_label=EXCLUDED.gate_label
             """, rows, page_size=200)

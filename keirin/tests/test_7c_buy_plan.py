@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.strategy_wt import (  # noqa: E402
     RANK_7C_TRIFECTA_PW_MIN,
     RANK_7C_TRIO_GAP_MIN,
+    RANK_7C_TRIO_LEGS_FLOOR,
     RANK_7C_TRIO_P3_SUM_MIN,
     rank_7c_buy_plan,
     rank_7c_cut_legs_by_gap,
@@ -70,16 +71,20 @@ def test_trio_cuts_only_where_there_is_a_gap() -> None:
     assert kind == "trio"
     assert legs == [3, 4, 5, 6, 7], "差が無いのに削っている"
 
-    # 相手の先頭で大きく落ちる → そこで打ち切る
-    steep = {1: 0.80, 2: 0.76, 3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13}
+    # 相手の3番手で落ちる → そこで打ち切る（3点残るので下限には掛からない）
+    steep = {1: 0.80, 2: 0.76, 3: 0.55, 4: 0.50, 5: 0.46, 6: 0.20, 7: 0.18}
     kind, legs = rank_7c_buy_plan(steep, pw, 1, [3, 4, 5, 6, 7])
-    assert legs == [3], f"落差 0.25 で切れていない: {legs}"
+    assert legs == [3, 4, 5], f"落差 0.26 で切れていない: {legs}"
 
 
 def test_gap_cut_keeps_the_first_partner() -> None:
-    """先頭の相手は必ず残る（買い目が0点にならない）。"""
+    """先頭の相手は必ず残る（買い目が0点にならない）。
+
+    ⚠️ 下限（`RANK_7C_TRIO_LEGS_FLOOR`）を外した素の挙動で確認する。既定では
+       1点まで縮んだ時点で総流しへ戻るので、この性質が見えなくなる。
+    """
     p3 = {3: 0.60, 4: 0.10, 5: 0.05}
-    assert rank_7c_cut_legs_by_gap([3, 4, 5], p3) == [3]
+    assert rank_7c_cut_legs_by_gap([3, 4, 5], p3, legs_floor=0) == [3]
     assert rank_7c_cut_legs_by_gap([], p3) == []
 
 
@@ -88,7 +93,52 @@ def test_gap_cut_threshold_is_the_documented_value() -> None:
     assert RANK_7C_TRIO_GAP_MIN == 0.15
     p3 = {3: 0.50, 4: 0.50 - RANK_7C_TRIO_GAP_MIN, 5: 0.10}
     # ちょうど閾値なら切る（>= 判定）
-    assert rank_7c_cut_legs_by_gap([3, 4, 5], p3) == [3]
+    assert rank_7c_cut_legs_by_gap([3, 4, 5], p3, legs_floor=0) == [3]
+
+
+# ── カット後の点数の下限（2026-08-15・ユーザー判断）─────────────────────────
+
+
+def test_gap_cut_restores_full_spread_when_it_would_leave_too_few() -> None:
+    """🔴 削った結果が2点以下なら**総流しへ戻す**。
+
+    発端は「7C が1点買いになっている」という指摘（2026-08-14 奈良9R）。
+    honest walk-forward 5,387R で分解すると、1点まで縮むのは母集団の43.7%で、
+    そこは的中が 64.4% → 35.0% に落ちるのに ROI は有意に増えていなかった
+    （`RANK_7C_TRIO_LEGS_FLOOR` の定義部に実測表）。
+
+    ⚠️ **見送りにはしない。** 総流しなら的中 64.4% の普通のレースなので、
+       母集団から落とす理由が無い。
+    """
+    legs = [3, 4, 5, 6, 7]
+    # 1点まで縮む形 → 総流しへ戻る
+    steep1 = {3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13}
+    assert rank_7c_cut_legs_by_gap(legs, steep1) == legs
+    # 2点まで縮む形 → 総流しへ戻る
+    steep2 = {3: 0.55, 4: 0.50, 5: 0.20, 6: 0.13, 7: 0.13}
+    assert rank_7c_cut_legs_by_gap(legs, steep2) == legs
+    # 3点残るならカットはそのまま効く（規則自体は生きている）
+    steep3 = {3: 0.55, 4: 0.50, 5: 0.46, 6: 0.20, 7: 0.18}
+    assert rank_7c_cut_legs_by_gap(legs, steep3) == [3, 4, 5]
+
+
+def test_buy_plan_never_returns_one_or_two_points_for_trio() -> None:
+    """🔴 買い方の正本を通ると、三連複が1〜2点になることはない。
+
+    下限を `rank_7c_cut_legs_by_gap` の中に置いたのは、呼び出し側（候補生成・
+    発走前判定・再構築）でそれぞれ掛ける形にすると**忘れた経路だけが1点買いを
+    出し続ける**ため。ここは経路ではなく正本そのものを固定する。
+    """
+    pw = {1: 0.30, 2: 0.20}
+    for p3_tail in ({3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13},
+                    {3: 0.55, 4: 0.50, 5: 0.20, 6: 0.13, 7: 0.13},
+                    {3: 0.60, 4: 0.10, 5: 0.05, 6: 0.05, 7: 0.05}):
+        p3 = {1: 0.80, 2: 0.76, **p3_tail}
+        plan = rank_7c_buy_plan(p3, pw, 1, [3, 4, 5, 6, 7])
+        assert plan is not None
+        kind, legs = plan
+        assert kind == "trio"
+        assert len(legs) > RANK_7C_TRIO_LEGS_FLOOR, f"三連複が{len(legs)}点になっている"
 
 
 def test_trio_below_gate_is_not_bought() -> None:
