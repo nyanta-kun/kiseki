@@ -3038,11 +3038,12 @@ class PaperRankSpec:
 #   2026-08-02 に全廃したため CURRENT から除去した（ABOLISHED_PAPER_RANKS 参照）。
 #   RANK_7B   #7B       7B        （新設・旧名なし）                 —      2026-08-03〜            —
 CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
-    # 2026-08-05 新設。旧 RANK_7SS(波乱軸選出・2026-08-02全廃)とは**無関係の別物**で
-    # 名前だけを引き継いだ。picks_history に旧7SSの行は0件なので成績は混ざらない。
-    PaperRankSpec("RANK_7SS", "#7SS", "7SS", in_header_total=True,  in_live_report=True),
+    # 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した（ユーザー判断）。
+    #    3ランクは買い目構造が同一で、live 実績（n=7,461・32ヶ月）でも
+    #    ROI・的中率・払戻中央値・ガミ率が統計的に区別できなかった。
+    #    選別は変えていないので買うレースは1件も増減しない
+    #    （`rank_7s_merged_daily_select` 参照）。
     PaperRankSpec("RANK_7S",  "#7S",  "7S",  in_header_total=True,  in_live_report=True),
-    PaperRankSpec("RANK_7A",  "#7A",  "7A",  in_header_total=False, in_live_report=True),
     PaperRankSpec("RANK_7B",  "#7B",  "7B",  in_header_total=False, in_live_report=True),
     # 9車のベースモデル（2026-08-14〜）。旧 9S/9A を置換した。
     # 7C と同じ「終日を対象にする的中体験の土台」で、母集団は9車ちょうど。
@@ -3130,6 +3131,11 @@ ABOLISHED_PAPER_RANKS: tuple[AbolishedRankSpec, ...] = (
     # 9S: 2026年で9件しかなく評価不能（実質稼働していない）。
     # ⚠️ picks_history の行は**削除しない**。7H3 と違い実際に入稿・採点された
     #    記録なので、廃止台帳に載せて集計から外すだけにする。
+    # 7SS/7A は 2026-08-14 に RANK_7S へ統合した（廃止ではなく統合）。
+    # ⚠️ picks_history の行は**削除しない**。実際に入稿・採点された記録なので、
+    #    全期間再構築で rank を RANK_7S へ付け替える（退避CSVは data/backup/）。
+    AbolishedRankSpec("RANK_7SS", "#7SS", "7車・entropy不合格×同一ライン（2026-08-14 7Sへ統合）"),
+    AbolishedRankSpec("RANK_7A", "#7A", "7車・境界ランク（2026-08-14 7Sへ統合）"),
     AbolishedRankSpec("RANK_9S", "#9S", "9車・三連複2軸流し7点（2026-08-14全廃・9Cへ集約）"),
     AbolishedRankSpec("RANK_9A", "#9A", "9車・境界ランク（2026-08-14全廃・9Cへ集約）"),
     AbolishedRankSpec("RANK_7H3", None,

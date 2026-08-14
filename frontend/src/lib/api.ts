@@ -1132,7 +1132,7 @@ export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> 
 // ここに backend が受け付けないキーを載せると、UI では選べるのに送信すると
 // 必ず 400「不正なrank_key」になる（2026-08-03〜08-08 の間 "7B" が実際にそうなっていた）。
 // 一致は backend/tests/test_keirin_rank_consistency.py が機械的に検査する。
-export type ManualKeirinRankKey = "7S" | "7A" | "7B" | "9C";
+export type ManualKeirinRankKey = "7S" | "7B" | "9C";
 
 
 export type KeirinStatItem = {
@@ -1170,8 +1170,7 @@ export type KeirinStatsResponse = {
   manual_missing_bet_detail?: number;
 };
 
-export type KeirinStatsRank =
-  | "7SS" | "7S" | "7A" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1"
+export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1"
   | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
@@ -1186,7 +1185,7 @@ export type KeirinStatsRank =
 // 2026-08-12〜: 7H3（穴推奨・本命連対どまり型）を追加 → 2026-08-13 に全廃。
 // 2026-08-13〜: 7T1（三連単・高配当枠／看板×別ライン・点数可変）へ置換。
 export type NetkeirinRankKey =
-  | "_global" | "7SS" | "7S" | "7A" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
+  | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
   | "7T1";
 
 export type NetkeirinSetting = {

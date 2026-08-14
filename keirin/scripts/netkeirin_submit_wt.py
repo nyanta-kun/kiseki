@@ -300,9 +300,15 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    **実質的中 +1.05pt [+0.66, +1.43] P=100%**（ROI −1.34pt は有意でない）
     #    だったので全ランク一律で対象にした。7B の伸びしろは**的中率30.5%が上限**
     #    なので構造的に +2.3pt しかなく、そのうち +1.05pt を回収する形になる。
-    "7SS": {"file_key": "s7ss", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,    "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
-    "7S":  {"file_key": "s7",  "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": "S", "tilt_stakes": True},
-    "7A":  {"file_key": "s7a", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
+
+    # 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した。3つは互いに排他なので
+    #    候補JSONを3つ読んで連結する。**gate_filter は None**（"S" のままだと
+    #    旧 7A / 7SS の候補が `rank_7s_gate_label` で弾かれ、統合したのに
+    #    入稿されないレースが出る）。
+    "7S":  {"file_key": "s7", "file_keys": ["s7", "s7a", "s7ss"],
+            "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,
+            "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
+
     # 7B（2026-08-03新設）は総流しではなく相手を3点に絞る（partners_key）。
     # 1レース総額を他ランク（約10,000円）と揃えるため 3点×3,300円とする。
     # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
@@ -1481,7 +1487,22 @@ def _process_rank(
     if not _is_enabled(settings, rank_key):
         return 0, []
 
-    raw = _load_candidates(target_date, session, cfg["file_key"])
+    # 🔴 2026-08-14 の統合で 7S は**3つの候補JSON**（旧 7S / 7A / 7SS）を読む。
+    #    3つは互いに排他なので単純連結でよい（`rank_7s_merged_daily_select` が
+    #    排他性を検算している）。同じレースが2回来たら `_already_submitted` と
+    #    下の重複除去が止める。
+    raw = []
+    for _fk in cfg.get("file_keys") or [cfg["file_key"]]:
+        raw += _load_candidates(target_date, session, _fk)
+    _seen: set[str] = set()
+    _uniq = []
+    for _c in raw:
+        _rk = str(_c.get("race_key", ""))
+        if _rk in _seen:
+            continue
+        _seen.add(_rk)
+        _uniq.append(_c)
+    raw = _uniq
     if race_key_filter:
         raw = [c for c in raw if c.get("race_key") == race_key_filter]
     # 🔴 この回で担当する開催だけに絞る。朝の候補JSONは当日全開催ぶん入っている
@@ -1759,7 +1780,8 @@ def _process_rank(
 # のためいずれも対象外。kiseki 側 _MANUAL_RANK_KEYS も ("7S","7A","9S","9A") で一致。
 # 7H1 も対象外。手動入稿は「軸2車を選んで総流し」というUIで、7H1 の買い目
 # （バスト予測モデルが決めるフォーメーション+BOX）は軸2車では表現できないため。
-MANUAL_ALLOWED_RANKS = ("7S", "7A", "7B", "9C")
+# 🔴 7A は 2026-08-14 に RANK_7S へ統合したので外した。
+MANUAL_ALLOWED_RANKS = ("7S", "7B", "9C")
 
 
 def _resolve_race_info(race_key: str) -> tuple[str, int, int, str] | None:

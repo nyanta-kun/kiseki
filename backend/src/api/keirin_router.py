@@ -244,6 +244,11 @@ async def _calc_synth_odds(
 # 7S/7A と同じ三連複 軸2車+総流し5点。確認窓（2024-07〜2025-06・掃引未使用）で
 # 1.90件/日・的中41.2%・ROI 85.9% と現行ランク中で最良のため最上位に置く。
 # picks_history の旧7SS行は 2026-08-02 に全削除済み（0件）なので成績は混ざらない。
+# 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した（ユーザー判断）。
+# 3ランクは買い目構造が同一で、live 実績（n=7,461・32ヶ月）でも ROI・的中率・
+# 払戻中央値・ガミ率が統計的に区別できなかった。選別は変えていないので
+# 買うレースは1件も増減しない（keirin 側 `rank_7s_merged_daily_select`）。
+# picks_history の旧 7SS/7A 行は全期間再構築で rank を RANK_7S へ付け替える。
 _PAPER_RANK_LABELS: dict[str, str] = {
     # RANK_7H1: 2026-08-06 新設の**穴推奨**（本命バスト型）。既存6ランクとは系統が
     # 違う（S/A/B＝的中率重視の予想ベース、H＝穴狙い）。命名は `{車数}H{連番}`。
@@ -265,9 +270,7 @@ _PAPER_RANK_LABELS: dict[str, str] = {
     #    置く）で、単一のフォーメーションには畳めない。pred_combo は "三複:… / 三単:…"。
     # 手動入稿（_MANUAL_RANK_KEYS）は軸2車を選ぶUIのため**対象外**（7H1 と同じ理由）。
     "RANK_7H2": "7H2",
-    "RANK_7SS": "7SS",
     "RANK_7S": "7S",
-    "RANK_7A": "7A",
     # RANK_7C: 2026-08-07 新設の**ベースモデル**（終日の二軸）。既存6ランクと
     # 違い wt_overlap_n を見ないため**同一レースに併存しうる**（picks_history の
     # race_key は `{レースキー}#{suffix}` なので行は共存できる）。
@@ -1245,7 +1248,8 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # 手動入稿で選べるランク。9車は 2026-08-14 に 9S/9A を廃止し 9C へ集約した。
 # ⚠️ keirin 側 `MANUAL_ALLOWED_RANKS` と**必ず一致させること**
 #    （`test_frontend_manual_submit_ranks_match_backend` が突き合わせている）。
-_MANUAL_RANK_KEYS = ("7S", "7A", "7B", "9C")
+# 🔴 7A は 2026-08-14 に RANK_7S へ統合したので外した。
+_MANUAL_RANK_KEYS = ("7S", "7B", "9C")
 
 
 class SubmitRaceIn(BaseModel):

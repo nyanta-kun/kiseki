@@ -348,7 +348,10 @@ def _write_paper_candidates(target_date: str) -> None:
             continue
         # 7A候補JSON自体が既にrank_7a_daily_select()で境界ケースのみに絞り込み済み
         # （rank_7s_gate_label が None を返すケース）のため、ここでは再フィルタしない。
-        rows.append((f"{rk}#7A", "RANK_7A", f"{axis1}={axis2}-{_third_list(axis1, axis2, 7)}", None, 0))
+        # 🔴 2026-08-14 に 7SS/7S/7A を RANK_7S へ統合した。候補行も #7S で書く
+        #    （選別は変えていないので候補になるレースは1件も増減しない）。
+        rows.append((f"{rk}#7S", "RANK_7S",
+                     f"{axis1}={axis2}-{_third_list(axis1, axis2, 7)}", None, 0))
 
     # 7SS（2026-08-05新設・entropy不合格 × 軸2車が同一ライン）。
     # ⚠️ 2026-08-02に全廃した旧RANK_7SS（波乱軸選出）とは無関係の別物。
@@ -360,7 +363,8 @@ def _write_paper_candidates(target_date: str) -> None:
         axis1, axis2 = c.get("axis1"), c.get("axis2")
         if not rk or axis1 is None or axis2 is None:
             continue
-        rows.append((f"{rk}#7SS", "RANK_7SS",
+        # 🔴 統合により #7S で書く（上の 7A ブロック参照）。
+        rows.append((f"{rk}#7S", "RANK_7S",
                      f"{axis1}={axis2}-{_third_list(axis1, axis2, 7)}", None, 0))
 
 

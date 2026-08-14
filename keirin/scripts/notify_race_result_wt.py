@@ -45,6 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.combo_label import axis_cars, format_pred_combo, is_hit
+from src.rank_visibility import disabled_rank_names
 from src.database import get_connection
 from src.notify.discord import send
 from src.scraper.pipeline_wt import _save_batch
@@ -171,7 +172,15 @@ def _build_message(t: dict, base: str) -> str:
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
              f"着順: {order}"]
+    # 🔴 入稿 OFF のランクは通知しない（2026-08-14）。`enabled` は入稿だけを
+    #    止めており、判定・記録・通知は動き続けていたため、廃止したはずの
+    #    9H1 の不的中通知が毎レース届いていた（ユーザー指摘）。
+    #    kiseki Web は同じフラグで非表示にしているので Discord だけが
+    #    食い違っていた。判定は `src/rank_visibility`（fail-open）が正本。
+    _off = disabled_rank_names()
     for p in picks:
+        if _g(p, "rank") in _off:
+            continue
         rank = _g(p, "rank").replace("RANK_", "")
         combo = _g(p, "pred_combo") or ""
         # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。

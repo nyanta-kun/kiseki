@@ -60,12 +60,15 @@ import live_report_wt as lr
 # 看板を対象とする 7C と同じレースを取り合う（入稿は優先順位で 7C が先に取る）。
 # 2026-08-14: RANK_9S / RANK_9A を全廃し RANK_9C へ集約（9A の二軸的中 26.4% は
 # 「素直に p3上位2車を採る」40.7% より 14.3pt 低くゲートが逆効果だった）。
-CURRENT_RANK_NAMES = {"RANK_7SS", "RANK_7S", "RANK_7A", "RANK_7B", "RANK_9C",
+# 🔴 2026-08-14: RANK_7SS / RANK_7A を RANK_7S へ統合した（廃止台帳へ移動）。
+CURRENT_RANK_NAMES = {"RANK_7S", "RANK_7B", "RANK_9C",
                       "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
                       "RANK_7T1"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {
+    # 2026-08-14: 7SS/7A は RANK_7S へ**統合**（廃止ではないが台帳の扱いは同じ）。
+    "RANK_7SS", "RANK_7A",
     "RANK_7H3", "RANK_9S", "RANK_9A",
     "SEVEN_S1", "SIX_S1", "7PLUS_U", "7PLUS_M", "7PLUS_R", "7PLUS_ST", "7PLUS_STP",
 }
@@ -116,7 +119,7 @@ def test_header_total_members_are_top_ranks():
     2026-08-05 に再新設した RANK_7SS は最上位ランクのため合計に含める。
     """
     header_members = {spec.rank for spec in sw.CURRENT_PAPER_RANKS if spec.in_header_total}
-    assert header_members == {"RANK_7SS", "RANK_7S"}
+    assert header_members == {"RANK_7S"}
 
 
 def test_all_current_ranks_in_live_report():
@@ -290,9 +293,14 @@ def test_live_report_ranks_matches_single_source_subset():
     assert lr.RANKS == expected
 
 
-def test_live_report_ranks_includes_seven_ss():
-    """live_report_wt.RANKS は単一正本と一致する（2026-08-05 に RANK_7SS を再新設）。"""
-    assert "RANK_7SS" in lr.RANKS
+def test_live_report_ranks_excludes_the_merged_ranks():
+    """🔴 統合した 7SS/7A が live_report から消えていること（2026-08-14）。
+
+    単一正本から外せば全参照先から消える構造を担保する。
+    """
+    assert "RANK_7S" in lr.RANKS
+    assert "RANK_7SS" not in lr.RANKS
+    assert "RANK_7A" not in lr.RANKS
 
 
 def test_live_report_rank_labels_matches_single_source():
@@ -355,20 +363,25 @@ def test_all_four_locations_agree_on_current_rank_universe():
     assert live_report_ranks.isdisjoint(abolished)
 
 
-def test_regression_seven_ss_absent_everywhere():
-    """RANK_7SS 再新設（2026-08-05）が全参照先へ波及していることの単体確認。
+def test_regression_merged_ranks_absent_everywhere():
+    """🔴 7SS/7A の RANK_7S への統合（2026-08-14）が全参照先へ波及していること。
 
-    live実績 n=16,298・ROI73.5% と控除率75%を下回り続けたため全廃した。
-    S1 全廃時と同じく「単一正本から消せば4つの参照先すべてから消える」
-    構造になっていることを担保する（旧S3/S1全廃時に取りこぼした経路が
-    翌日以降ランクを復活させた事故の再発防止）。
+    3ランクは買い目構造が同一で、live 実績（n=7,461・32ヶ月）でも ROI・的中率・
+    払戻中央値・ガミ率が統計的に区別できなかったため1本化した。
+    「単一正本から消せば全参照先から消える」構造を担保する（旧S3/S1全廃時に
+    取りこぼした経路が翌日以降ランクを復活させた事故の再発防止）。
     """
-    assert "RANK_7SS" in {spec.rank for spec in sw.CURRENT_PAPER_RANKS}
-    assert "RANK_7SS" not in {spec.rank for spec in sw.ABOLISHED_PAPER_RANKS}
-    assert "'RANK_7SS'" in nr._QUERY_STATS_RANKS_SQL
-    # "#7SS" は _PAPER_SUFFIXES には残る（廃止済みsuffixは「巻き込み削除の
+    current = {spec.rank for spec in sw.CURRENT_PAPER_RANKS}
+    abolished = {spec.rank for spec in sw.ABOLISHED_PAPER_RANKS}
+    for name in ("RANK_7SS", "RANK_7A"):
+        assert name not in current, f"{name} が現行に残っている"
+        assert name in abolished, f"{name} が廃止台帳に無い"
+        assert f"'{name}'" not in nr._QUERY_STATS_RANKS_SQL
+    assert "RANK_7S" in current
+    # suffix は _PAPER_SUFFIXES に**残す**（廃止済みsuffixは「巻き込み削除の
     # 保護対象」として意図的に含める設計。#7S1/#6S1 と同じ扱い）
     assert "#7SS" in nr._PAPER_SUFFIXES
+    assert "#7A" in nr._PAPER_SUFFIXES
     assert any(r[1] == "RANK_7SS" for r in sme.PAPER_RANKS)
     assert "RANK_7SS" in lr.RANKS
 
