@@ -1,0 +1,70 @@
+{
+  "experiment": "honest",
+  "train_end": "20250630",
+  "valid_end": "20260630",
+  "test_period": [
+    "20260704",
+    "20260809"
+  ],
+  "dropped": [
+    "paddock_index",
+    "going_pedigree_index",
+    "rebound_index"
+  ],
+  "train_sd_of_dropped": {
+    "paddock_index": 0.0,
+    "going_pedigree_index": 1.9624,
+    "rebound_index": 2.047
+  },
+  "inert_in_train": [
+    "paddock_index"
+  ],
+  "n_features": {
+    "base": 34,
+    "alt": 31
+  },
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "n_boot": 5000,
+  "metrics": {
+    "top1_win": {
+      "n_races": 432,
+      "base": 0.28009,
+      "alt": 0.28009,
+      "diff": 0.0,
+      "ci95": [
+        -0.0162,
+        0.0162
+      ],
+      "significant": false,
+      "p_alt_better": 0.437
+    },
+    "top1_place": {
+      "n_races": 432,
+      "base": 0.56944,
+      "alt": 0.57639,
+      "diff": 0.00694,
+      "ci95": [
+        -0.01157,
+        0.02778
+      ],
+      "significant": false,
+      "p_alt_better": 0.7162
+    },
+    "spearman": {
+      "n_races": 432,
+      "base": 0.46115,
+      "alt": 0.45911,
+      "diff": -0.00204,
+      "ci95": [
+        -0.00609,
+        0.00195
+      ],
+      "significant": false,
+      "p_alt_better": 0.1604
+    }
+  }
+}
