@@ -1196,7 +1196,11 @@ for i in 1 2 3 4; do echo "=P${i}="; grep -E "\[.*\].*頭 \(累計" /tmp/v15_p${
 - `odds_history`: **発走後の行**と **exotic 券種の最終スナップショット以外**を削除。
   `win`/`place` の発走前時系列は**触らない**（前向き記録・odds 系分析が使う）。
   `scripts/prune_odds_history.py`（既定 dry-run・**日付ごとに回すこと**。全期間を1本の
-  クエリでやると索引が効かず 6,000万行を全走査する）
+  クエリでやると索引が効かず 6,000万行を全走査する）。
+  **週次自動化済み**: LaunchAgent `com.kiseki.jra-odds-prune`（月曜 05:00・
+  `scripts/prune_odds_history_weekly.sh`）。直近バックアップが無ければ実行しない。
+  ⚠️ VPS の backend コンテナには psycopg2 が無いので **Mac から回している**。
+  `~/GitHub/kiseki` が main 以外のブランチだとスクリプトが無く失敗する
 - ⚠️ DELETE では実サイズは縮まない（領域が再利用可能になるだけ）。
   縮めるなら開催の無い日に `VACUUM FULL`（排他ロック）
 

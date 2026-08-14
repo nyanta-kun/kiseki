@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.jra-odds-prune</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ysuzuki/GitHub/kiseki/scripts/prune_odds_history_weekly.sh</string>
+  </array>
+
+  <!-- 月曜 05:00。中央は土日開催なので直前の週末ぶんを刈れる。
+       日次 DB バックアップ（03:30〜04:25）の直後に置き、
+       「削除の直前のバックアップ」が必ず存在する状態にする。
+       Mac は毎日 03:15 に自動起床する（pmset repeat wakeorpoweron）。
+       スリープで撃ち漏らしても launchd が起床時に実行する。
+       週次の掃除なので多少の遅延は無害。 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>5</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/prune_odds_history_launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/prune_odds_history_launchd.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
