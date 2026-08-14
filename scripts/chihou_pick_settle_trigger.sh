@@ -1,8 +1,10 @@
 #!/bin/bash
 # 地方競馬 注目馬の前向き記録（確定結果の書き戻し・日次cron）
 #
-# VPS cron: 30 14 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
-#   14:30 UTC = 23:30 JST（全レース確定後）
+# VPS cron: 30 23 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
+#   ⚠️ VPS の TZ は **JST**（`timedatectl` 実測）。crontab の時刻も JST で書く。
+#      既存の chihou_results_trigger.sh が `0 22` なのも 22:00 JST の意味。
+#      UTC のつもりで書くと 9 時間ずれる。
 #
 # 直近7日ぶんを毎回なめる。冪等（settled_at が入っている行は対象外）なので
 # 二重実行は無害。結果の取り込みが遅れたレースを翌日以降に拾い直すための冗長性。

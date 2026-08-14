@@ -1140,9 +1140,9 @@ docker exec galloplab-backend-1 alembic upgrade head
 
 # 2. backend 再起動（新ルーター登録のため）
 
-# 3. cron 2本を追加
-* * * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_snapshot_trigger.sh
-30 14 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
+# 3. cron 2本を追加（⚠️ VPS の TZ は JST。crontab も JST で書く）
+* * * * *   /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_snapshot_trigger.sh
+30 23 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
 
 # 4. 翌日、記録されているか確認
 cd backend && .venv/bin/python scripts/chihou_pick_log_report.py --start YYYYMMDD --end YYYYMMDD

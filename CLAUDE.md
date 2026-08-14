@@ -1498,7 +1498,8 @@ ChihouSweetSpotResponse {
 **日中ユーザーに提示された指数は DB に残らない**。そこで発走前に撮って保存する。
 
 - 本体: `backend/src/services/chihou_place_pick_log.py`
-- cron: `scripts/chihou_pick_snapshot_trigger.sh`（**毎分**）/ `chihou_pick_settle_trigger.sh`（日次 23:30 JST）
+- cron: `scripts/chihou_pick_snapshot_trigger.sh`（**毎分**）/ `chihou_pick_settle_trigger.sh`（`30 23 * * *`）
+  - ⚠️ **VPS の cron は JST で動く**（`timedatectl` 実測）。UTC のつもりで書くと 9 時間ずれる
 - 集計: `backend/scripts/chihou_pick_log_report.py --start --end`
 - 🔴 **発走時刻を過ぎたレースは撮らない**（撮ると締切間際の資金移動が混ざり look-ahead になる）。
   撮り逃しは記録から欠けるが、欠けている方が安全。テストで固定してある
