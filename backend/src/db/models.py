@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -1071,3 +1072,120 @@ class WoodTraining(Base):
     lap_400_200: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 400-200M")
     lap_200_0: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), comment="ラップ 200-0M（終い1F・秒）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class HitTierRace(Base):
+    """JRA 推奨（hit_tier）の**前向き記録** — レース単位。
+
+    🔴 **後付けでは作れない。** `/api/recommendations` は都度算出で DB に何も残さず、
+    `calculated_indices` の現行 version 行は馬体重到着ごとに上書きされる。
+    さらに tier の第一分岐 `market_agree`（指数1位が単勝1番人気か）は**発走直前まで動く**
+    ——実測で発走10分前の1番人気が確定1番人気と一致するのは 80.7% しかない。
+    したがって「確定オッズで tier を再現する」ことは原理的にできない。
+    発走前に撮る以外に確認窓は無い（`docs/jra_rebuild_2026_08.md` 8章 / 14章）。
+    """
+
+    __tablename__ = "hit_tier_races"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("race_id", name="uq_hit_tier_races_race_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[str] = mapped_column(String(8), nullable=False, index=True, comment="開催日 YYYYMMDD")
+    race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.races.id"), nullable=False, index=True
+    )
+    course_name: Mapped[str | None] = mapped_column(String(20))
+    race_number: Mapped[int | None] = mapped_column(Integer)
+    post_time: Mapped[str | None] = mapped_column(String(4))
+
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lead_minutes: Mapped[int | None] = mapped_column(
+        Integer, comment="発走まで何分の時点で撮ったか"
+    )
+    index_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule_version: Mapped[str] = mapped_column(
+        String(80), nullable=False, comment="判定ルールの署名（閾値を変えたら値が変わる）"
+    )
+
+    # tier 判定の入力（あとから tier を作り直せるように全部残す）
+    head_count: Mapped[int | None] = mapped_column(Integer)
+    n_entries: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    n_odds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    confidence_score: Mapped[int | None] = mapped_column(Integer)
+    win_prob_top: Mapped[float | None] = mapped_column(Float)
+    entropy_norm: Mapped[float | None] = mapped_column(Float)
+    market_agree: Mapped[bool | None] = mapped_column(
+        Boolean, comment="指数1位馬が発走前の単勝1番人気と一致するか"
+    )
+    top1_win_odds: Mapped[float | None] = mapped_column(Float)
+
+    tier: Mapped[str | None] = mapped_column(String(2), comment="S/A/B/C+/C")
+    bet_type: Mapped[str | None] = mapped_column(String(10), comment="win/place")
+    is_recommended: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false(), comment="tier が C 以外（=推奨を出した）"
+    )
+    skip_reason: Mapped[str | None] = mapped_column(
+        String(30), comment="推奨を出さなかった理由（no_odds/no_index/tier_c 等）"
+    )
+
+    # 確定後
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    n_finishers: Mapped[int | None] = mapped_column(Integer)
+    top1_finish_position: Mapped[int | None] = mapped_column(Integer)
+    hit: Mapped[bool | None] = mapped_column(
+        Boolean, comment="推奨が的中したか（bet_type=win なら1着・place なら3着内）。推奨なしは NULL"
+    )
+    final_market_agree: Mapped[bool | None] = mapped_column(
+        Boolean, comment="確定オッズでの market_agree。発走前との差が「オッズが動いた度合い」"
+    )
+    final_tier: Mapped[str | None] = mapped_column(
+        String(2), comment="確定オッズで tier を作り直した場合の値（発走前 tier との比較用）"
+    )
+
+
+class HitTierPick(Base):
+    """JRA 推奨（hit_tier）の前向き記録 — 出走馬単位。
+
+    **推奨馬だけでなく全出走馬を残す。** 指数が上書きされる以上、
+    「tier の閾値を変えていたら」「指数2位も買っていたら」のような別案の事後評価は、
+    全馬ぶんがここに無ければ二度とできない。
+    """
+
+    __tablename__ = "hit_tier_picks"
+    __table_args__ = ({"schema": SCHEMA},)  # type: ignore[assignment]
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pick_race_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.hit_tier_races.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    race_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    horse_id: Mapped[int | None] = mapped_column(Integer)
+    horse_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    horse_name: Mapped[str | None] = mapped_column(String(50))
+
+    composite_index: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
+    index_rank: Mapped[int | None] = mapped_column(Integer)
+    win_probability: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    place_probability: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    out_probability: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    is_cut_off: Mapped[bool | None] = mapped_column(Boolean, comment="Web の足切り候補だったか")
+
+    pre_win_odds: Mapped[float | None] = mapped_column(Float)
+    pre_place_odds: Mapped[float | None] = mapped_column(Float)
+    pop_rank: Mapped[int | None] = mapped_column(Integer, comment="発走前オッズによる人気順位")
+
+    is_top1: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    is_recommended: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+
+    # 確定後
+    finish_position: Mapped[int | None] = mapped_column(Integer)
+    abnormality_code: Mapped[int | None] = mapped_column(
+        Integer, comment="0/NULL=正常。1=出走取消 2=発走除外 等（RaceResult と同じ体系）"
+    )
+    final_win_odds: Mapped[float | None] = mapped_column(Float)
+    final_win_popularity: Mapped[int | None] = mapped_column(Integer)
+    place_payout_odds: Mapped[float | None] = mapped_column(Float)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
