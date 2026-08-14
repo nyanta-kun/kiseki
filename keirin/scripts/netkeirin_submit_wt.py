@@ -77,6 +77,7 @@ from src.meeting_wave import (
 )
 from src.dutch_allocation import dutch_allocate
 from src.race_shape import (
+    wide_note_text,
     classify_shape,
     logit,
     shape_note_text,
@@ -153,7 +154,8 @@ _DEFAULT_COMMENT_TEMPLATE = (
     "【ご購入にあたって】\n"
     "この配分はあくまで想定オッズに基づくものです。"
     "レース直前の実際のオッズをご自身でご確認いただき、配分を調整いただくと"
-    "精度が上がります。"
+    "精度が上がります。\n"
+    "{wide_note}"
 )
 
 # --- 看板レース（決勝・特選クラス）専用の文面（2026-08-09 新設・`--marquee`）---
@@ -191,7 +193,8 @@ _MARQUEE_COMMENT_TEMPLATE = (
     "本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。\n\n"
     "【ご購入にあたって】\n"
     "レース直前の実際のオッズをご自身でご確認いただき、必要に応じて配分を"
-    "調整いただくと精度が上がります。\n\n"
+    "調整いただくと精度が上がります。\n"
+    "{wide_note}\n\n"
     "【参考データ】\n"
     "出走選手全員の1着率・2着内率・3着内率です。三連単・二車単で購入される際の"
     "着順・買い目の参考にご活用ください。"
@@ -565,7 +568,7 @@ def _stake_note_for(rank_key: str, legs: list[BetLeg]) -> str:
 def _apply_template(
     template: str, *, venue_name: str, race_no: int, rank_key: str, target_date: str,
     axis1: int, axis2: int, shape: str = "", shape_note: str = "",
-    stake_note: str = "", race_type: str = "",
+    stake_note: str = "", race_type: str = "", wide_note: str = "",
 ) -> str:
     """{venue}{race_no}{rank}{date}{axis1}{axis2}{shape}{shape_note}{stake_note}{race_type}
     を置換する。
@@ -585,6 +588,9 @@ def _apply_template(
         # 看板レース用（`--marquee`）。決勝/特選/ガールズ決勝 等をそのまま入れる。
         # 通常経路では空文字なので、既存テンプレートに影響しない。
         "{race_type}": race_type,
+        # 総流しのときだけ「ワイド1点も見比べて」を出す（絞り買いでは空文字）。
+        # 空のまま置換されるので、テンプレートに常に書いておいてよい。
+        "{wide_note}": wide_note,
     }
     out = template
     for k, v in repl.items():
@@ -1614,15 +1620,18 @@ def _process_rank(
 
         shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2_or_p1)
         stake_note = _stake_note_for(rank_key, legs)
+        # 🔴 総流し判定は**実際に買う相手の数**で行う（朝の候補ではなく）。
+        #    欠車で相手が減れば総流しではなくなるので、そのときは出さない。
+        wide_note = wide_note_text(axis1, axis2_or_p1, len(partners), cfg["n_cars"])
         title = _apply_template(
             title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
             target_date=target_date, axis1=axis1, axis2=axis2_or_p1, shape=shape,
-            shape_note=shape_note, stake_note=stake_note,
+            shape_note=shape_note, stake_note=stake_note, wide_note=wide_note,
         )
         comment = _apply_template(
             comment_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
             target_date=target_date, axis1=axis1, axis2=axis2_or_p1, shape=shape,
-            shape_note=shape_note, stake_note=stake_note,
+            shape_note=shape_note, stake_note=stake_note, wide_note=wide_note,
         )
         entry_table = _build_entry_table(race_key, marks)
         if entry_table:
@@ -1840,15 +1849,18 @@ def _process_manual(
 
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
+    wide_note = wide_note_text(axis1, axis2, len(partners), cfg["n_cars"])
     title = _apply_template(
         title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
         target_date=target_date, axis1=axis1, axis2=axis2, shape=shape,
         shape_note=shape_note, stake_note=stake_note, race_type=race_type,
+        wide_note=wide_note,
     )
     comment = _apply_template(
         comment_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
         target_date=target_date, axis1=axis1, axis2=axis2, shape=shape,
         shape_note=shape_note, stake_note=stake_note, race_type=race_type,
+        wide_note=wide_note,
     )
     entry_table = _build_entry_table(race_key, {axis1: "◎", axis2: "○"})
     if entry_table:
