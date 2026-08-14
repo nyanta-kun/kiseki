@@ -1,0 +1,65 @@
+{
+  "experiment": "paddock",
+  "train_end": "20260229",
+  "valid_end": "20260430",
+  "test_period": [
+    "20260502",
+    "20260628"
+  ],
+  "test_is_val": true,
+  "dropped": [
+    "paddock_index"
+  ],
+  "train_sd_of_dropped": {
+    "paddock_index": 5.2081
+  },
+  "inert_in_train": [],
+  "n_features": {
+    "base": 34,
+    "alt": 33
+  },
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "n_boot": 5000,
+  "metrics": {
+    "top1_win": {
+      "n_races": 600,
+      "base": 0.285,
+      "alt": 0.27667,
+      "diff": -0.00833,
+      "ci95": [
+        -0.02167,
+        0.005
+      ],
+      "significant": false,
+      "p_alt_better": 0.093
+    },
+    "top1_place": {
+      "n_races": 600,
+      "base": 0.595,
+      "alt": 0.59333,
+      "diff": -0.00167,
+      "ci95": [
+        -0.01667,
+        0.01333
+      ],
+      "significant": false,
+      "p_alt_better": 0.3768
+    },
+    "spearman": {
+      "n_races": 600,
+      "base": 0.51136,
+      "alt": 0.50864,
+      "diff": -0.00272,
+      "ci95": [
+        -0.00572,
+        0.00027
+      ],
+      "significant": false,
+      "p_alt_better": 0.0362
+    }
+  }
+}
