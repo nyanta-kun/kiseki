@@ -161,3 +161,28 @@ def test_low_grade_meeting_is_not_expanded():
 
     rs = [{"race_no": n, "race_type": "一般", "cup_grade": 2} for n in range(1, 12)]
     assert marquee_race_nos(rs) == set()
+
+
+# ---------------------------------------------------------------------------
+# 看板レースのタイトル（2026-08-14・ユーザー要望「レースの特徴を入れる」）
+# ---------------------------------------------------------------------------
+
+
+def test_marquee_title_shows_the_race_shape():
+    """🔴 他ランクと同じく `｜{shape}` でレース形を出すこと。
+
+    2026-08-09〜08-14 は固定文字列「本日の二軸」で、看板だけが無個性だった。
+    """
+    from scripts.netkeirin_submit_wt import _MARQUEE_TITLE_TEMPLATE as t
+
+    assert "{shape}" in t
+    assert t != "本日の二軸"
+
+
+def test_marquee_title_does_not_carry_grade_or_race_type():
+    """🔴 種別・グレードはタイトルに入れない（通常ランクと方針を揃える）。"""
+    from scripts.netkeirin_submit_wt import _MARQUEE_TITLE_TEMPLATE as t
+
+    assert "{race_type}" not in t
+    assert "{race_label}" not in t
+    assert "GI" not in t

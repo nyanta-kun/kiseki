@@ -196,17 +196,14 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
 // 新設したため復活（keirin PR#10。旧7SSとは無関係・picks_historyの旧行は0件）。
 type RankFilter =
-  | "all" | "7SS" | "7S" | "7A" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
+  | "all" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
   | "7T1";
 
-// 並び順は 7SS/7S/7A/7B/9S/9A に統一。keirin ページの RANK_ORDER と同一基準。
+// 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
-  // 7SS（最上位・entropy不合格×同一ライン・2026-08-05導入）
-  { key: "7SS", label: "7SS" },
+  // 7S（2026-08-14 に旧 7SS / 7A を統合）
   { key: "7S", label: "7S" },
-  // 7A/9A（境界ランク・2026-07-27導入）。"全体"にも含まれる（/summaryと同じ方針）。
-  { key: "7A", label: "7A" },
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）
   { key: "7B", label: "7B" },
   { key: "9C", label: "9C" },

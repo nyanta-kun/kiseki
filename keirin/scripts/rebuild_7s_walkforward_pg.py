@@ -40,7 +40,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.backfill_7s_rank_wt import build_rows
+# 🔴 2026-08-14: 旧 7S/7A/7SS を RANK_7S へ統合したので、再構築も
+#    **和集合ビルダー**を使う。片方だけ再構築すると過去と現在で母集団が違う。
+from scripts.backfill_7s_merged_rank_wt import build_rows
 from src.wt_rebuild_common import (
     format_missing_report,
     notify_discord_warning,

@@ -77,6 +77,7 @@ from src.meeting_wave import (
 )
 from src.dutch_allocation import dutch_allocate
 from src.race_shape import (
+    wide_note_text,
     classify_shape,
     logit,
     shape_note_text,
@@ -153,7 +154,8 @@ _DEFAULT_COMMENT_TEMPLATE = (
     "【ご購入にあたって】\n"
     "この配分はあくまで想定オッズに基づくものです。"
     "レース直前の実際のオッズをご自身でご確認いただき、配分を調整いただくと"
-    "精度が上がります。"
+    "精度が上がります。\n"
+    "{wide_note}"
 )
 
 # --- 看板レース（決勝・特選クラス）専用の文面（2026-08-09 新設・`--marquee`）---
@@ -174,20 +176,25 @@ _DEFAULT_COMMENT_TEMPLATE = (
 #    定数を残しているのは、設定画面のランク別テンプレート編集に引きずられず
 #    看板レースの文面を固定できるようにするため（PR#60 の設計判断）。
 #
-# タイトルは **固定文字列「本日の二軸」**（2026-08-09 ユーザー指示）。
-# ⚠️ 通常ランクのような `{shape}`（レース形の一言）や `{race_type}`（決勝/特選）は
-#    **入れない**。当初は「{race_type}の二軸｜{shape}」で種別を出していたが、
-#    看板レースは商品名を揃える方針に変更した。
+# タイトルは「商品名｜レース形」（2026-08-14）。他ランクが
+# 「自信の二軸｜{shape}」「本線の二軸｜{shape}」なのに対し、看板だけが
+# 固定文字列「本日の二軸」で無個性に埋もれていたため `｜{shape}` を足した。
+#
+# 🔴 **`{race_type}`（決勝/特選）や開催グレード（GI 等）は入れない。**
+#    通常ランクでも種別・グレードはタイトルから外す方針で統一されている
+#    （2026-08-09 に看板からも外した経緯があり、2026-08-14 に再確認）。
+#    レース個別の見立ては `{shape}` と `{shape_note}` が担う。
 #    `{race_type}` の置換自体は `_apply_template` に残してある（設定画面の
 #    独自テンプレートで使えるようにするため）。
-_MARQUEE_TITLE_TEMPLATE = "本日の二軸"
+_MARQUEE_TITLE_TEMPLATE = "本日の二軸｜{shape}"
 _MARQUEE_COMMENT_TEMPLATE = (
     "{shape_note}\n\n"
     "【二軸】\n"
     "本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。\n\n"
     "【ご購入にあたって】\n"
     "レース直前の実際のオッズをご自身でご確認いただき、必要に応じて配分を"
-    "調整いただくと精度が上がります。\n\n"
+    "調整いただくと精度が上がります。\n"
+    "{wide_note}\n\n"
     "【参考データ】\n"
     "出走選手全員の1着率・2着内率・3着内率です。三連単・二車単で購入される際の"
     "着順・買い目の参考にご活用ください。"
@@ -213,7 +220,7 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-13 現在）: **7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7T1 > 7B**
+#    優先順位（2026-08-13 現在）: **7H1 > 7H2 > 7S > 7C > 7T1 > 7B**
 #    （7C > 7B は 2026-08-07 ユーザー指定。7T1 は 2026-08-13 にその間へ挿入）。
 #    ⚠️ 同日中に 7B を 7C の**後ろ**へ動かした。7C との重複では 7C が実質的中率で
 #      上回る（39.0% vs 31.6%）一方、7B は 7C が拾わないレースを 3.14件/日 持つ。
@@ -293,9 +300,15 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    **実質的中 +1.05pt [+0.66, +1.43] P=100%**（ROI −1.34pt は有意でない）
     #    だったので全ランク一律で対象にした。7B の伸びしろは**的中率30.5%が上限**
     #    なので構造的に +2.3pt しかなく、そのうち +1.05pt を回収する形になる。
-    "7SS": {"file_key": "s7ss", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,    "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
-    "7S":  {"file_key": "s7",  "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": "S", "tilt_stakes": True},
-    "7A":  {"file_key": "s7a", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
+
+    # 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した。3つは互いに排他なので
+    #    候補JSONを3つ読んで連結する。**gate_filter は None**（"S" のままだと
+    #    旧 7A / 7SS の候補が `rank_7s_gate_label` で弾かれ、統合したのに
+    #    入稿されないレースが出る）。
+    "7S":  {"file_key": "s7", "file_keys": ["s7", "s7a", "s7ss"],
+            "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,
+            "stake_budget": RACE_BUDGET, "gate_filter": None, "tilt_stakes": True},
+
     # 7B（2026-08-03新設）は総流しではなく相手を3点に絞る（partners_key）。
     # 1レース総額を他ランク（約10,000円）と揃えるため 3点×3,300円とする。
     # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
@@ -561,7 +574,7 @@ def _stake_note_for(rank_key: str, legs: list[BetLeg]) -> str:
 def _apply_template(
     template: str, *, venue_name: str, race_no: int, rank_key: str, target_date: str,
     axis1: int, axis2: int, shape: str = "", shape_note: str = "",
-    stake_note: str = "", race_type: str = "",
+    stake_note: str = "", race_type: str = "", wide_note: str = "",
 ) -> str:
     """{venue}{race_no}{rank}{date}{axis1}{axis2}{shape}{shape_note}{stake_note}{race_type}
     を置換する。
@@ -581,6 +594,9 @@ def _apply_template(
         # 看板レース用（`--marquee`）。決勝/特選/ガールズ決勝 等をそのまま入れる。
         # 通常経路では空文字なので、既存テンプレートに影響しない。
         "{race_type}": race_type,
+        # 総流しのときだけ「ワイド1点も見比べて」を出す（絞り買いでは空文字）。
+        # 空のまま置換されるので、テンプレートに常に書いておいてよい。
+        "{wide_note}": wide_note,
     }
     out = template
     for k, v in repl.items():
@@ -1471,7 +1487,22 @@ def _process_rank(
     if not _is_enabled(settings, rank_key):
         return 0, []
 
-    raw = _load_candidates(target_date, session, cfg["file_key"])
+    # 🔴 2026-08-14 の統合で 7S は**3つの候補JSON**（旧 7S / 7A / 7SS）を読む。
+    #    3つは互いに排他なので単純連結でよい（`rank_7s_merged_daily_select` が
+    #    排他性を検算している）。同じレースが2回来たら `_already_submitted` と
+    #    下の重複除去が止める。
+    raw = []
+    for _fk in cfg.get("file_keys") or [cfg["file_key"]]:
+        raw += _load_candidates(target_date, session, _fk)
+    _seen: set[str] = set()
+    _uniq = []
+    for _c in raw:
+        _rk = str(_c.get("race_key", ""))
+        if _rk in _seen:
+            continue
+        _seen.add(_rk)
+        _uniq.append(_c)
+    raw = _uniq
     if race_key_filter:
         raw = [c for c in raw if c.get("race_key") == race_key_filter]
     # 🔴 この回で担当する開催だけに絞る。朝の候補JSONは当日全開催ぶん入っている
@@ -1610,15 +1641,18 @@ def _process_rank(
 
         shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2_or_p1)
         stake_note = _stake_note_for(rank_key, legs)
+        # 🔴 総流し判定は**実際に買う相手の数**で行う（朝の候補ではなく）。
+        #    欠車で相手が減れば総流しではなくなるので、そのときは出さない。
+        wide_note = wide_note_text(axis1, axis2_or_p1, len(partners), cfg["n_cars"])
         title = _apply_template(
             title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
             target_date=target_date, axis1=axis1, axis2=axis2_or_p1, shape=shape,
-            shape_note=shape_note, stake_note=stake_note,
+            shape_note=shape_note, stake_note=stake_note, wide_note=wide_note,
         )
         comment = _apply_template(
             comment_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
             target_date=target_date, axis1=axis1, axis2=axis2_or_p1, shape=shape,
-            shape_note=shape_note, stake_note=stake_note,
+            shape_note=shape_note, stake_note=stake_note, wide_note=wide_note,
         )
         entry_table = _build_entry_table(race_key, marks)
         if entry_table:
@@ -1746,7 +1780,8 @@ def _process_rank(
 # のためいずれも対象外。kiseki 側 _MANUAL_RANK_KEYS も ("7S","7A","9S","9A") で一致。
 # 7H1 も対象外。手動入稿は「軸2車を選んで総流し」というUIで、7H1 の買い目
 # （バスト予測モデルが決めるフォーメーション+BOX）は軸2車では表現できないため。
-MANUAL_ALLOWED_RANKS = ("7S", "7A", "7B", "9C")
+# 🔴 7A は 2026-08-14 に RANK_7S へ統合したので外した。
+MANUAL_ALLOWED_RANKS = ("7S", "7B", "9C")
 
 
 def _resolve_race_info(race_key: str) -> tuple[str, int, int, str] | None:
@@ -1754,10 +1789,13 @@ def _resolve_race_info(race_key: str) -> tuple[str, int, int, str] | None:
 
     race_type は看板レース用テンプレートの `{race_type}` に使う（「決勝」「特選」
     「ガールズ決勝」等）。NULL のときは空文字を返す。
+    ⚠️ **タイトルには種別もグレードも入れない**（`_MARQUEE_TITLE_TEMPLATE` 参照）。
+       設定画面の独自テンプレートで使えるように置換だけ残してある。
     """
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT venue_id, race_no, n_entries, race_type FROM wt_races WHERE race_key = ?",
+            "SELECT venue_id, race_no, n_entries, race_type "
+            "FROM wt_races WHERE race_key = ?",
             (race_key,),
         ).fetchone()
         if row is None:
@@ -1833,15 +1871,18 @@ def _process_manual(
 
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
+    wide_note = wide_note_text(axis1, axis2, len(partners), cfg["n_cars"])
     title = _apply_template(
         title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
         target_date=target_date, axis1=axis1, axis2=axis2, shape=shape,
         shape_note=shape_note, stake_note=stake_note, race_type=race_type,
+        wide_note=wide_note,
     )
     comment = _apply_template(
         comment_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
         target_date=target_date, axis1=axis1, axis2=axis2, shape=shape,
         shape_note=shape_note, stake_note=stake_note, race_type=race_type,
+        wide_note=wide_note,
     )
     entry_table = _build_entry_table(race_key, {axis1: "◎", axis2: "○"})
     if entry_table:

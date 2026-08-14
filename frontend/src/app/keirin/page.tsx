@@ -792,7 +792,6 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
   7: [
     { key: "7S", label: "7S" },
-    { key: "7A", label: "7A" },
   ],
   9: [
     { key: "9C", label: "9C" },
@@ -940,12 +939,14 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
               <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
               <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
-              {pick.is_marquee && (
-                <span className="text-amber-500/70 dark:text-amber-400/70 text-sm" title="看板レース（決勝・特選クラス）">★</span>
-              )}
               {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
               {(pick.grade || pick.race_type) && (
                 <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              )}
+              {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。
+                  レース番号の直後だと時刻・種別より前に出て、何に掛かる印か読めない。 */}
+              {pick.is_marquee && (
+                <span className="text-amber-500/70 dark:text-amber-400/70 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
             </div>
           </div>
@@ -1110,9 +1111,6 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
               <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
               <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
-              {pick.is_marquee && (
-                <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
-              )}
               {/* 開催グレード。GIII 以上は売上・注目が別格なので FI/FII と分けて出す
                   （実測: GI 開催は1レースあたりの有償ptが他会場の5.0倍）。
                   🔴 未知の grade は `cup_grade_label` が null になるので**出さない**
@@ -1139,19 +1137,19 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                   手動
                 </span>
               )}
-              {pick.submission_only && pick.origin !== "manual" && (
-                <span
-                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-                  title="ランクのゲートを通っていない自動入稿（看板・大会の穴埋め）。買い目と的中は入稿記録から表示しています"
-                >
-                  穴埋め
-                </span>
-              )}
+              {/* 🔴 「穴埋め」バッジは 2026-08-14 に削除（ユーザー要望）。
+                  自動入稿である点は運用上の区別で、商品としては他と同じなので
+                  一覧では出さない。出自は `origin` として API に残っており、
+                  入稿確認画面と分析では引き続き参照できる。 */}
               {startTime && (
                 <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
               )}
               {(pick.grade || pick.race_type) && (
                 <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              )}
+              {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。 */}
+              {pick.is_marquee && (
+                <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
             </div>
           </div>
@@ -1315,7 +1313,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7T1", "7B", "9H1", "9C"] as const;
+const RANK_ORDER = ["7H1", "7H2", "7S", "7C", "7T1", "7B", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9C": "9C",
   "7H1": "7H1",

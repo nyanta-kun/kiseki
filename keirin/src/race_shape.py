@@ -260,6 +260,37 @@ STAKE_NOTE_TILTED_HIGHPAY = (
 GAMI_CLAIM_RANKS = {"7H1"}   # エイリアス解決後。9H1 は 7H1 に寄る
 
 
+WIDE_NOTE_TEMPLATE = (
+    "この買い目は軸2車からの総流しなので、**◎{axis1}番と○{axis2}番がそろって"
+    "3着以内に入れば必ず的中**します。これはワイド{axis1}-{axis2}の的中条件と"
+    "まったく同じです。三連複の合成オッズよりワイド1点のほうが高いことがあるため、"
+    "発走前に見比べていただくと、同じ狙いをより有利に買える場合があります。"
+)
+
+
+def wide_note_text(axis1: int, axis2: int, n_legs: int, n_cars: int) -> str:
+    """総流しのときだけ「ワイド1点も見比べて」という一文を返す。
+
+    🔴 **総流しでないランクには出してはいけない。** 相手を絞っている買い目
+       （7C/9C の足切り・7B の3点）は、軸2車が3着内でも相手が外れれば当たらない
+       ので、「軸2車がそろえば必ず的中」は**嘘になる**。
+       総流し＝相手が残り全車（`n_legs == n_cars - 2`）のときだけ成立する。
+
+    ⚠️ 合成オッズとワイドの比較は**事実として正しい**。軸2車から総流しの三連複は
+       「軸2車がともに3着以内」で必ずどれかの目に当たるので、的中条件はワイド
+       1点と厳密に一致する。控除率が同じでも人気の偏りでワイドのほうが
+       高くつくことがある。
+
+    >>> wide_note_text(1, 5, 5, 7).startswith("この買い目は軸2車からの総流し")
+    True
+    >>> wide_note_text(1, 5, 4, 7)      # 相手を絞っている＝総流しではない
+    ''
+    """
+    if n_cars <= 2 or n_legs != n_cars - 2:
+        return ""
+    return WIDE_NOTE_TEMPLATE.format(axis1=axis1, axis2=axis2)
+
+
 def stake_note_text(rank_key: str, tilted: bool) -> str:
     """賭け金配分の説明文を返す。"""
     if not tilted:

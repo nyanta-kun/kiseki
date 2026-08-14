@@ -1307,6 +1307,50 @@ def rank_7ss_daily_select(candidates: list[dict]) -> list[dict]:
     return sorted(pool, key=lambda c: c.get("entropy", 0.0))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# RANK_7S への統合（2026-08-14・ユーザー判断）
+#
+# 7SS / 7S / 7A は**買い目構造が完全に同一**（三連複 軸2車+5点流し）で、違うのは
+# ゲートの通り方だけだった。picks_history の全live記録（n=7,461・32ヶ月）では
+#
+#     7SS ROI 79.0% / 7S 79.7% / 7A 85.8%
+#
+# と**設計と逆順**（境界ランクの 7A が最良）で、差はいずれも有意でなく
+# （7A −(7SS+7S) = +6.3pt・95%CI [-0.7, +13.5]）、設計どおりの順序になった月は
+# 32ヶ月中7（偶然なら5.3）。払戻中央値・ガミ率・2万円超率まで一致しており、
+# **商品としても3つは同じもの**だった。3つに分けて見せる根拠が無いので1本化する。
+#
+# 🔴 **選別は変えない**。3つは互いに排他:
+#     7S  : axis_sum 合格 ∧ entropy 合格
+#     7A  : axis_sum 不合格 ∧ entropy 合格
+#     7SS : axis_sum 合格 ∧ entropy 不合格 ∧ 軸2車が同一ライン
+#   したがって統合は**和集合＝ラベルの付け替え**で、買うレースは1件も増減しない。
+#   ゲートの意味（どちらが落ちたか）は失われるが、それは ROI・的中率のどちらとも
+#   相関していないことを上記で確認済み。
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def rank_7s_merged_daily_select(
+    candidates: list[dict], top2_threshold: float | None = None,
+) -> list[dict]:
+    """統合後の 7S の選出＝旧 7S ∪ 7A ∪ 7SS。
+
+    top2_threshold: 7A に掛ける低配当見送りゲート（STEP1C）。本番と同じ値を渡すこと。
+
+    🔴 **3つの選別関数をそのまま呼ぶ**（条件を書き直さない）。書き直すと
+       「片方だけ直る」を作れる。排他性はここで検算する。
+    """
+    picked = (rank_7s_daily_select(candidates)
+              + rank_7a_daily_select(candidates, top2_threshold)
+              + rank_7ss_daily_select(candidates))
+    keys = [c.get("race_key") for c in picked if c.get("race_key") is not None]
+    if len(keys) != len(set(keys)):
+        dup = sorted({k for k in keys if keys.count(k) > 1})
+        raise AssertionError(
+            "7S/7A/7SS が同じレースを選んだ（排他のはず）: " + ", ".join(map(str, dup)))
+    return sorted(picked, key=lambda c: c["axis_sum"])
+
+
 def rank_9a_daily_select(candidates: list[dict]) -> list[dict]:
     """9Aの選出: S9の2ゲート(entropy/mark3)のうちちょうど1つだけ不合格の候補。
 
@@ -2250,7 +2294,7 @@ def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
 #   複数ランクの行を持てる**（実データでも 7H1 と 7B が共存している）。したがって
 #   **候補生成・記録の段階では重複を排除しない**（ユーザー判断: 重なりは気にしない）。
 #   重複排除は **netkeirin 入稿でのみ**行う（1レース1商品という外部仕様のため）。
-#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7T1 > 7B）。
+#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7H2 > 7S > 7C > 7T1 > 7B）。
 #   実測の重なりは 2.4〜3.2件/日で、入稿に残る 7C は 16.7件/日。
 #
 # memory: keirin_base_model_two_axis_2026_08_07
@@ -2994,11 +3038,12 @@ class PaperRankSpec:
 #   2026-08-02 に全廃したため CURRENT から除去した（ABOLISHED_PAPER_RANKS 参照）。
 #   RANK_7B   #7B       7B        （新設・旧名なし）                 —      2026-08-03〜            —
 CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
-    # 2026-08-05 新設。旧 RANK_7SS(波乱軸選出・2026-08-02全廃)とは**無関係の別物**で
-    # 名前だけを引き継いだ。picks_history に旧7SSの行は0件なので成績は混ざらない。
-    PaperRankSpec("RANK_7SS", "#7SS", "7SS", in_header_total=True,  in_live_report=True),
+    # 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した（ユーザー判断）。
+    #    3ランクは買い目構造が同一で、live 実績（n=7,461・32ヶ月）でも
+    #    ROI・的中率・払戻中央値・ガミ率が統計的に区別できなかった。
+    #    選別は変えていないので買うレースは1件も増減しない
+    #    （`rank_7s_merged_daily_select` 参照）。
     PaperRankSpec("RANK_7S",  "#7S",  "7S",  in_header_total=True,  in_live_report=True),
-    PaperRankSpec("RANK_7A",  "#7A",  "7A",  in_header_total=False, in_live_report=True),
     PaperRankSpec("RANK_7B",  "#7B",  "7B",  in_header_total=False, in_live_report=True),
     # 9車のベースモデル（2026-08-14〜）。旧 9S/9A を置換した。
     # 7C と同じ「終日を対象にする的中体験の土台」で、母集団は9車ちょうど。
@@ -3086,6 +3131,11 @@ ABOLISHED_PAPER_RANKS: tuple[AbolishedRankSpec, ...] = (
     # 9S: 2026年で9件しかなく評価不能（実質稼働していない）。
     # ⚠️ picks_history の行は**削除しない**。7H3 と違い実際に入稿・採点された
     #    記録なので、廃止台帳に載せて集計から外すだけにする。
+    # 7SS/7A は 2026-08-14 に RANK_7S へ統合した（廃止ではなく統合）。
+    # ⚠️ picks_history の行は**削除しない**。実際に入稿・採点された記録なので、
+    #    全期間再構築で rank を RANK_7S へ付け替える（退避CSVは data/backup/）。
+    AbolishedRankSpec("RANK_7SS", "#7SS", "7車・entropy不合格×同一ライン（2026-08-14 7Sへ統合）"),
+    AbolishedRankSpec("RANK_7A", "#7A", "7車・境界ランク（2026-08-14 7Sへ統合）"),
     AbolishedRankSpec("RANK_9S", "#9S", "9車・三連複2軸流し7点（2026-08-14全廃・9Cへ集約）"),
     AbolishedRankSpec("RANK_9A", "#9A", "9車・境界ランク（2026-08-14全廃・9Cへ集約）"),
     AbolishedRankSpec("RANK_7H3", None,

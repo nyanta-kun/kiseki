@@ -91,7 +91,7 @@ def test_均等配分ランクも同じ形になる():
 
 def test_合成した買い目は本番の入稿と同じ点数になる():
     """`_legs_for_record` が組む groups は `build_bet_id` と同じでなければならない。"""
-    cfg = RANK_CONFIGS["7A"]
+    cfg = RANK_CONFIGS["7S"]
     partners = [3, 4, 5, 6, 7]
     legs = _legs_for_record(cfg, 1, 2, partners, 2000)
     d = _detail(legs)

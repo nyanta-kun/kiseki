@@ -21,13 +21,11 @@ import { saveNetkeirinSettings } from "./actions";
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
 // （7H1 > 7H2 > 9H1 > 7SS > 7S > 7A > 7C > 7T1 > 7B）。ここは設定画面の表示順。
 const RANK_ORDER: NetkeirinRankKey[] =
-  ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7T1", "7B", "9H1", "9C"];
+  ["7H1", "7H2", "7S", "7C", "7T1", "7B", "9H1", "9C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",
-  "7SS": "7SS（7車・三連複2軸流し5点・最上位/「自信あり」付与）",
   "7S": "7S（7車・三連複2軸流し5点）",
-  "7A": "7A（7車・境界ランク）",
   "7B": "7B（◎◯一致・順序/相手で不一致・相手絞り3点）",
   // 9C（2026-08-14）: 旧 9S/9A を置換した9車のベースモデル。
   "9C": "9C（9車・ベースモデル/三連複 軸2車＋相手3〜7点・旧9S/9Aを統合）",

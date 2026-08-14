@@ -192,7 +192,8 @@ def test_netkeirin_priority_order():
     # 2026-08-13: 三連単の高配当枠 7T1 が同じ位置（7C の後ろ）を引き継いだ（旧 7H3）。
     # 7T1 は表示的中3%の高配当商品で、**看板を 7C と取り合う**ため、重複したレースは
     # 的中体験を担う 7C に譲る。7B は準決勝限定なので 7T1 とは母集団が排他。
-    assert order == ["7H1", "7H2", "7SS", "7S", "7A", "7C", "7T1", "7B"]
+    # 2026-08-14: 7SS/7A を 7S へ統合、9H1/9C も定義順に含まれる。
+    assert order == ["7H1", "7H2", "7S", "7C", "7T1", "7B"]
 
 
 def test_netkeirin_priority_order_9car():
@@ -233,7 +234,7 @@ def test_all_ranks_invest_one_race_budget():
        通常経路（`tilt_stakes`）は `allocate_budget` が端数を配るので予算ちょうど。
     """
     from scripts import netkeirin_submit_wt as ns
-    for rank, n_pts in (("7SS", 5), ("7S", 5), ("7A", 5), ("7B", 3),
+    for rank, n_pts in (("7S", 5), ("7B", 3),
                         ("9C", 3), ("9C", 6), ("9C", 7), ("7C", 4), ("7C", 5)):
         cfg = ns.RANK_CONFIGS[rank]
         total = n_pts * ns._stake_per_line(cfg, n_pts)
@@ -274,7 +275,7 @@ def test_netkeirin_7c_uses_same_template_as_7a():
     """タイトル・文面は 7A と同じ（ユーザー指示 2026-08-07）。
     どちらも rank 固有の上書きを持たず既定テンプレートへ落ちる。"""
     from scripts import netkeirin_submit_wt as ns
-    assert "default_comment" not in ns.RANK_CONFIGS["7A"]
+    assert "default_comment" not in ns.RANK_CONFIGS["7S"]
     assert "default_comment" not in ns.RANK_CONFIGS["7C"]
     assert "default_title" not in ns.RANK_CONFIGS["7C"]
 

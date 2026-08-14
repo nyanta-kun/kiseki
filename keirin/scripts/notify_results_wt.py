@@ -41,6 +41,7 @@ from src.notify.discord import send
 from src.evaluation.backtest_wt import _load_payouts_wt
 from src.database import get_connection
 from src.submitted_stakes import resolve_payout
+from src.rank_visibility import disabled_rank_names
 from src.strategy_wt import (
     CURRENT_PAPER_RANKS, ABOLISHED_PAPER_RANKS, rank_7c_unit_stake, unit_stake,
     RANK_7S_STAKE, RANK_7A_STAKE, RANK_7B_STAKE, RANK_9S_STAKE, RANK_9A_STAKE,
@@ -527,12 +528,17 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_9S", "", "")
 
-    # 7A=S7の境界ランク（ペーパートレード検証・2026-07-27導入）:
-    # decisions キー {rk}#7A（decision=buy）を picks に注入する（slot="seven_7a"）。
+    # 🔴 2026-08-14: 7SS/7S/7A を RANK_7S へ統合した。**切り替え前に保存された
+    #    `#7A` / `#7SS` の decisions を採点し損ねない**ため、旧キーも seven_s7 へ
+    #    寄せる（統合後の新しい判定は最初から `#S7` で保存される）。
+    #    ⚠️ ここを消すと、切り替え当日の朝に判定済みだったレースが
+    #       その晩から永久に無採点（bet>0・hit=0）で残る。
     for _key, _dec in decisions.items():
-        if not _key.endswith("#7A") or _dec.get("decision") != "buy" or not _dec.get("combos"):
+        if not (_key.endswith("#7A") or _key.endswith("#7SS")):
             continue
-        _rk = _key[:-3]
+        if _dec.get("decision") != "buy" or not _dec.get("combos"):
+            continue
+        _rk = _key.rsplit("#", 1)[0]
         if not _rk.startswith(dc):
             continue
         try:
@@ -542,28 +548,15 @@ def _main_inner(date):
         _venue = code2name.get(_code)
         if _venue is None:
             continue
-        _pk = (_venue, int(_rno), "seven_7a")
+        _pk = (_venue, int(_rno), "seven_s7")
         if _pk not in picks:
-            picks[_pk] = ("RANK_7A", "", "")
+            picks[_pk] = ("RANK_7S", "", "")
 
-    # 7B=◎◯一致だが順序・相手で不一致（ペーパートレード検証・2026-08-03導入）:
-    # decisions キー {rk}#7B（decision=buy）を picks に注入する（slot="seven_7b"）。
-    for _key, _dec in decisions.items():
-        if not _key.endswith("#7B") or _dec.get("decision") != "buy" or not _dec.get("combos"):
-            continue
-        _rk = _key[:-3]
-        if not _rk.startswith(dc):
-            continue
-        try:
-            _, _code, _rno = _rk.split("_")
-        except ValueError:
-            continue
-        _venue = code2name.get(_code)
-        if _venue is None:
-            continue
-        _pk = (_venue, int(_rno), "seven_7b")
-        if _pk not in picks:
-            picks[_pk] = ("RANK_7B", "", "")
+    # 🔴 旧 `seven_7a` スロットへの注入は 2026-08-14 に**削除した**（統合）。
+    #    上の seven_s7 への寄せと併存させると、同じ `#7A` の decisions から
+    #    2つの pick（seven_s7 と seven_7a）が立ち、**投資も的中も二重に計上**される。
+    #    採点側の `_slot == "seven_7a"` ブロックは過去日の再採点用に残置してある
+    #    （注入が無いので通常運転では通らない）。
 
     # 7C=ベースモデル・終日の二軸（2026-08-07導入）:
     # decisions キー {rk}#7C（decision=buy）を picks に注入する（slot="seven_7c"）。
@@ -846,7 +839,11 @@ def _main_inner(date):
                 # 2026-07-21〜: オッズ見送り（decision=="skip"）も軸2車が実際に3着内へ
                 # 入ったかだけ参考採点する（miwokuri=True・bet=0でサマリー集計対象外の
                 # まま、見送りが「的中していたか」をWebで確認できるようにする）。
-                dec_s7 = decisions.get(rk + "#S7")
+                # 🔴 統合前に保存された `#7A` / `#7SS` も読む（2026-08-14）。
+                #    切り替え当日の朝の判定を取りこぼさないための後方互換。
+                dec_s7 = (decisions.get(rk + "#S7")
+                          or decisions.get(rk + "#7A")
+                          or decisions.get(rk + "#7SS"))
                 if not dec_s7 or dec_s7.get("decision") not in ("buy", "skip"):
                     print(f"[notify_results_wt] S7判定記録なし {rk}: 不計上", flush=True)
                     continue
@@ -1894,18 +1891,38 @@ def _main_inner(date):
     h9_line = _rank_line("9H1(穴推奨/9車)", len(results_9h1), p9h1b, p9h1r, p9h1h)
     # 7C（ベースモデル・終日の二軸・2026-08-07導入）。件数が最多になるランク。
     c7_line = _rank_line("7C(ベース/相手可変)", len(results_7c), p7cb, p7cr, p7ch)
+    # 🔴 入稿 OFF のランクは Discord に出さない（2026-08-14・ユーザー要望）。
+    #    `enabled` は入稿だけを止めており、判定・記録・通知は動き続けていたため、
+    #    運用していない 7H1/7H2/9H1/7B の行が毎日サマリーに並んでいた。
+    #    採点と picks_history への記録は**止めない**（記録は正直に残す）。
+    #    判定は `src/rank_visibility`（fail-open）が正本で、Web と同じフラグを見る。
+    _off_ranks = disabled_rank_names()
+    _gated = {
+        "RANK_7B": b7_line, "RANK_7H1": h1_line,
+        "RANK_7H2": h2_line, "RANK_9H1": h9_line,
+    }
+    for _rank, _l in _gated.items():
+        if _rank in _off_ranks:
+            _gated[_rank] = ""
     # 7SS（波乱軸選出・RANK_7SS）は 2026-08-02 に全廃したため Discord 行も削除した。
-    for _l in (s1_line, old7ssp_line, old7ss_line, s7s_line, a7_line, b7_line,
-               c7_line, h1_line, h2_line, h9_line, r_line, ss_line, s_line):
+    for _l in (s1_line, old7ssp_line, old7ss_line, s7s_line, a7_line,
+               _gated["RANK_7B"], c7_line, _gated["RANK_7H1"], _gated["RANK_7H2"],
+               _gated["RANK_9H1"], r_line, ss_line, s_line):
         if _l:
             rank_lines.append(_l)
 
     msg = header
     if rank_lines:
         msg += "\n" + "\n".join(rank_lines)
+    # 明細も同じ基準で絞る（行だけ消して明細が残ると食い違う）。
+    def _shown(rank: str, rows: list) -> list:
+        return [] if rank in _off_ranks else rows
+
     msg += "\n```\n" + "\n".join(
-        total_7plus + results_7plus_s1 + results_7plus_s7 + results_7a + results_7b
-        + results_7c + results_7h1 + results_7h2 + results_9h1) + "\n```"
+        total_7plus + results_7plus_s1 + results_7plus_s7 + results_7a
+        + _shown("RANK_7B", results_7b) + results_7c
+        + _shown("RANK_7H1", results_7h1) + _shown("RANK_7H2", results_7h2)
+        + _shown("RANK_9H1", results_9h1)) + "\n```"
 
     if skipped_dns:
         msg += f"\n※欠車返還によりレース無効: {skipped_dns}件（軸欠車/全相手欠車・損益不計上）"
@@ -1939,6 +1956,7 @@ def _main_inner(date):
             _rank_line("9A(境界ランク)", len(results_9a), p9ab, p9ar, p9ah),
             # 9C（9車のベースモデル・2026-08-14導入）もヘッダー合計には含めず別行。
             _rank_line("9C(9車ベースモデル)", len(results_9c), p9cb, p9cr, p9ch),
+            # 廃止済み 9S/9A は行自体が 0件で消えるが、入稿OFFの明示的な除外も掛ける。
         ):
             if _l:
                 rank_9s_rank_lines.append(_l)

@@ -232,9 +232,14 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
             ★自信
           </span>
         )}
+        {/* 看板は一覧と同じ★で揃える（2026-08-14・ユーザー要望）。
+            画面ごとに「看板」「★」と表記が割れていると同じ意味だと分からない。 */}
         {p.is_marquee && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-            看板
+          <span
+            className="text-amber-500 dark:text-amber-400 text-sm"
+            title="看板レース（決勝・特選クラス）"
+          >
+            ★
           </span>
         )}
         {/* 🔴 出自。`rank_key` だけ見ても分からない——看板の穴埋めは 7A/9A を
