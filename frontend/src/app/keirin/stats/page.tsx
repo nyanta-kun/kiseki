@@ -19,7 +19,9 @@ import {
 import { fetchKeirinStats, type KeirinStatItem, type KeirinStatsResponse, fetchKeirinSummary} from "@/lib/api";
 import { fetchNetkeirinSales, type NetkeirinSalesResponse } from "@/lib/api";
 import { fetchKeirinSalesAnalysis, type KeirinSalesAnalysisResponse } from "@/lib/api";
+import { fetchKeirinSoldPerformance, type KeirinSoldPerformanceResponse } from "@/lib/api";
 import AnalysisTab from "./AnalysisTab";
+import SoldTab, { type SoldGroupBy } from "./SoldTab";
 import { formatYen } from "./format";
 
 // ---------------------------------------------------------------------------
@@ -220,10 +222,14 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
 // 異なるため、同一ページ内でタブ分割する（2026-08-03・ユーザー指摘）。
 // 期間フィルタは両タブ共通、ランク/粒度/累積ROIは成績タブ専用。
 // 2026-08-11: 「分析」タブを追加（netkeirin のレース別データを使った売上×的中の相関）。
-type StatsTab = "performance" | "sales" | "analysis";
+// 2026-08-15: 「実売」タブを追加。**成績タブは picks_history（ペーパー成績）**で、
+//   netkeirin で売れるのは1レース1商品なので母集団が違う（実測: 入稿472件のうち
+//   250件＝53% に picks_history 行が無い）。実際に売った商品だけの数字はここで見る。
+type StatsTab = "performance" | "sold" | "sales" | "analysis";
 
 const STATS_TABS: [StatsTab, string][] = [
   ["performance", "成績"],
+  ["sold", "実売"],
   ["sales", "売上"],
   ["analysis", "分析"],
 ];
@@ -260,6 +266,11 @@ export default function KeirinStatsPage() {
   const [analysis, setAnalysis] = useState<KeirinSalesAnalysisResponse | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
 
+  // 実売タブ。分析タブと同じく開いたときだけ取りに行く。
+  const [sold, setSold] = useState<KeirinSoldPerformanceResponse | null>(null);
+  const [soldLoading, setSoldLoading] = useState(false);
+  const [soldGroup, setSoldGroup] = useState<SoldGroupBy>("rank");
+
   const load = useCallback(async (
     f: string, t: string, g: Granularity, ranks: RankFilter[], manual: boolean,
   ) => {
@@ -283,6 +294,17 @@ export default function KeirinStatsPage() {
       setSalesData(null);
     } finally {
       setSalesLoading(false);
+    }
+  }, []);
+
+  const loadSold = useCallback(async (f: string, t: string, g: SoldGroupBy) => {
+    setSoldLoading(true);
+    try {
+      setSold(await fetchKeirinSoldPerformance(f, t, g));
+    } catch {
+      setSold(null);
+    } finally {
+      setSoldLoading(false);
     }
   }, []);
 
@@ -315,6 +337,11 @@ export default function KeirinStatsPage() {
     if (tab !== "analysis") return;
     void loadAnalysis(from, to);
   }, [tab, from, to, loadAnalysis]);
+
+  useEffect(() => {
+    if (tab !== "sold") return;
+    void loadSold(from, to, soldGroup);
+  }, [tab, from, to, soldGroup, loadSold]);
 
   // ランクフィルタのトグル（複数選択可）。「全体」は排他、それ以外は積み上げ選択。
   // 選択がゼロになる場合は「全体」に自動復帰する。
@@ -836,6 +863,12 @@ export default function KeirinStatsPage() {
       )}
 
       {/* ── 分析タブ ───────────────────────────────────────── */}
+      {tab === "sold" && (
+        <SoldTab
+          data={sold} loading={soldLoading}
+          group={soldGroup} onGroup={setSoldGroup}
+        />
+      )}
       {tab === "analysis" && <AnalysisTab data={analysis} loading={analysisLoading} />}
     </div>
   );

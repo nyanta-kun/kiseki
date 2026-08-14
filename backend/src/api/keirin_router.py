@@ -338,24 +338,23 @@ def _finish_top3_frames(entries: Sequence[Any]) -> list[int] | None:
     return [int(e["frame_no"]) for e in top3]
 
 
-async def _manual_submission_buckets(
+async def _fetch_settled_submissions(
     db: AsyncSession, from_dt: Date, to_dt: Date,
-    rank_labels: list[str] | None, monthly: bool,
-) -> tuple[dict[str, dict[str, int]], int]:
-    """ゲート未通過の入稿（手動・看板の穴埋め）を成績集計用に日付バケットへ畳む。
+    rank_labels: list[str] | None, *, only_missing_from_picks: bool,
+) -> tuple[list[dict[str, Any]], int]:
+    """入稿の原本（`bet_detail`）と確定結果から**売った1商品ずつ**を採点して返す。
 
-    `picks_history` に行が無いので採点もされていない。**`/picks` と同じ
-    `_submitted_pick_result()` を使って**入稿の原本と確定結果から組み立てる
-    ―― 集計用に別の計算を書くと、一覧の数字と成績の数字が静かに食い違う。
+    netkeirin は1レース1商品なので、ここで返る行は「実際に売ったもの」と1対1になる。
 
-    rank_labels が None なら全ランク。空リストは「該当なし」ではなく全ランク扱い
-    （`/stats` の rank パラメータが未知値で全体へフォールバックする仕様と揃える）。
+    only_missing_from_picks:
+      True  … picks_history に行があるレースを除く（`/stats` の「全入稿」用。
+              1レース1行に保つため。理由は下の NOT EXISTS のコメント参照）
+      False … **売った全商品**（`/sold-performance` 用）
 
-    戻り値は (バケット, 買い目が記録されていなかった件数)。
-    🔴 **`bet_detail` の保存は 2026-08-07 開始**。それ以前の手動入稿は
-       「入稿した事実」しか残っておらず、買い目も金額も復元できない。
-       0円として足すと投資額を過小に見せるので**集計から外し、件数だけ返す**
-       （黙って落とすと「全入稿」が完全な数字に見えてしまう）。
+    returns (行, 買い目が記録されていなかった件数)
+    🔴 **`bet_detail` の保存は 2026-08-07 開始**。それ以前の入稿は「入稿した事実」しか
+       残っておらず買い目も金額も復元できない。0円として足すと投資額を過小に見せるので
+       **集計から外し、件数だけ返す**（黙って落とすと完全な数字に見えてしまう）。
     """
     rank_cond = ""
     params: dict[str, Any] = {"from_date": from_dt.isoformat(), "to_date": to_dt.isoformat()}
@@ -363,9 +362,22 @@ async def _manual_submission_buckets(
         rank_cond = "AND ns.rank_key = ANY(:rank_keys)"
         params["rank_keys"] = rank_labels
 
+    # 同じレースが picks_history にもあるなら、そちらが本体（`/picks` と同じ規則）。
+    # ⚠️ **ランク名で突き合わせてはいけない。** 穴埋めは 7A/9A を名乗るため
+    #    「7C 候補のレースを 7A で入稿した分」が二重に出る。
+    missing_cond = f"""
+              AND NOT EXISTS (
+                SELECT 1 FROM keirin.picks_history ph2
+                WHERE SPLIT_PART(ph2.race_key, '#', 1) = ns.race_key
+                  AND ph2.route = 'wt'
+                  AND ph2.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph2')}
+              )
+    """ if only_missing_from_picks else ""
+
     subs = (await db.execute(
         text(f"""
-            SELECT ns.race_key, ns.rank_key, ns.bet_detail, wr.race_date
+            SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, wr.race_date
             FROM keirin.netkeirin_submissions ns
             JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
             WHERE wr.race_date BETWEEN :from_date AND :to_date
@@ -377,18 +389,12 @@ async def _manual_submission_buckets(
                 OR (wr.start_at IS NOT NULL
                     AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
               )
-              AND NOT EXISTS (
-                SELECT 1 FROM keirin.picks_history ph2
-                WHERE SPLIT_PART(ph2.race_key, '#', 1) = ns.race_key
-                  AND ph2.route = 'wt'
-                  AND ph2.rank IN {_VALID_PICK_RANKS}
-                  AND {_enabled_rank_cond('ph2')}
-              )
+              {missing_cond}
         """),
         params,
     )).mappings().all()
     if not subs:
-        return {}, 0
+        return [], 0
 
     keys = sorted({s["race_key"] for s in subs})
     # 確定着順（1〜3着）をまとめて引く
@@ -429,7 +435,7 @@ async def _manual_submission_buckets(
             pay = int(round(float(o["odds_value"]) * 100)) // 10 * 10
             odds_by_race.setdefault(o["race_key"], {})[o["bet_type"]] = pay
 
-    buckets: dict[str, dict[str, int]] = {}
+    out: list[dict[str, Any]] = []
     n_missing = 0
     for s in subs:
         rk = s["race_key"]
@@ -442,13 +448,39 @@ async def _manual_submission_buckets(
             # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
             n_missing += 1
             continue
-        date_str = str(s["race_date"])
-        key = date_str[:7] if monthly else date_str
-        b = buckets.setdefault(key, {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0})
+        out.append({
+            "race_key": rk, "rank_key": s["rank_key"], "origin": s["origin"],
+            "race_date": str(s["race_date"]),
+            "bet": res["bet_amount"], "payout": res["payout"], "hit": bool(res["hit"]),
+            # 🔴 **netkeirin の表示的中率はこちら**（ガミ＝払戻<賭け金 を不的中と数える）。
+            #    素の的中率だけを見ると点数を増やしたときに誤読する。
+            "net_hit": bool(res["hit"]) and res["payout"] >= res["bet_amount"],
+            "n_combos": res["n_combos"],
+        })
+    return out, n_missing
+
+
+async def _manual_submission_buckets(
+    db: AsyncSession, from_dt: Date, to_dt: Date,
+    rank_labels: list[str] | None, monthly: bool,
+) -> tuple[dict[str, dict[str, int]], int]:
+    """ゲート未通過の入稿（手動・看板の穴埋め）を成績集計用に日付バケットへ畳む。
+
+    `picks_history` に行が無いぶんだけを足すので、`/stats` の「全入稿」は
+    **picks_history + 穴埋め**の混成になる。売った商品だけを見たいときは
+    `/sold-performance`（`_fetch_settled_submissions(only_missing_from_picks=False)`）を使う。
+    """
+    rows, n_missing = await _fetch_settled_submissions(
+        db, from_dt, to_dt, rank_labels, only_missing_from_picks=True)
+    buckets: dict[str, dict[str, int]] = {}
+    for r in rows:
+        key = r["race_date"][:7] if monthly else r["race_date"]
+        b = buckets.setdefault(key, {"n_picks": 0, "n_hits": 0,
+                                     "total_bet": 0, "total_payout": 0})
         b["n_picks"] += 1
-        b["n_hits"] += 1 if res["hit"] else 0
-        b["total_bet"] += res["bet_amount"]
-        b["total_payout"] += res["payout"]
+        b["n_hits"] += 1 if r["hit"] else 0
+        b["total_bet"] += r["bet"]
+        b["total_payout"] += r["payout"]
     return buckets, n_missing
 
 
@@ -1560,6 +1592,87 @@ async def get_stats(
 # 無償pt分は収益にならないため sold_points（総販売pt）ではなく
 # **sold_paid_points（有償pt）** に掛けること。
 NETKEIRIN_REVENUE_RATE = 0.30
+
+
+@router.get("/sold-performance")
+async def get_sold_performance(
+    from_date: str = "",
+    to_date: str = "",
+    group_by: str = "rank",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """**実際に売った商品**の成績を返す（2026-08-15 新設）。
+
+    ## picks_history との違い
+
+    `picks_history` は**ペーパー成績**（各ランクが条件を満たした全レース）で、
+    netkeirin で実際に売れるのは **1レース1商品**。母集団が違う:
+
+      - 売っていないのに picks_history にはある（他ランクに商品を譲ったレース）
+      - **売ったのに picks_history には無い**（看板の穴埋め）
+
+    実測（2026-08-15）: 入稿472件のうち **250件（53%）に picks_history 行が無い**
+    （うち233件が穴埋め）。したがって picks_history をいくら足しても
+    「いくら売って、いくら返ってきたか」は出ない。
+
+    `/stats` の `include_manual`（全入稿）は picks_history + 穴埋めの**混成**で、
+    1レース1商品を守るため *売った穴埋めではなく、売っていないペーパー行を計上する*
+    ことがある。ここは情報源を入稿の原本だけに固定するので、その混成が起きない。
+
+    group_by: `rank`（既定）/ `date` / `origin`
+    from_date / to_date: YYYY-MM-DD。省略時は直近30日。
+    """
+    today = _today_jst()
+    try:
+        to_dt = Date.fromisoformat(to_date) if to_date else today
+    except ValueError:
+        to_dt = today
+    try:
+        from_dt = Date.fromisoformat(from_date) if from_date else today - timedelta(days=29)
+    except ValueError:
+        from_dt = today - timedelta(days=29)
+
+    rows, n_missing = await _fetch_settled_submissions(
+        db, from_dt, to_dt, None, only_missing_from_picks=False)
+
+    key = {"rank": "rank_key", "date": "race_date", "origin": "origin"}.get(
+        group_by, "rank_key")
+
+    def _summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+        n = len(items)
+        bet = sum(i["bet"] for i in items)
+        pay = sum(i["payout"] for i in items)
+        hits = sum(1 for i in items if i["hit"])
+        net = sum(1 for i in items if i["net_hit"])
+        won = sorted(i["payout"] for i in items if i["hit"])
+        return {
+            "n_races": n,
+            "n_hits": hits,
+            # 🔴 netkeirin の表示的中率はガミを不的中として数える方（excl_garami）。
+            "n_net_hits": net,
+            "hit_rate": round(hits / n, 4) if n else None,
+            "net_hit_rate": round(net / n, 4) if n else None,
+            "gami_rate": round((hits - net) / hits, 4) if hits else None,
+            "total_bet": bet,
+            "total_payout": pay,
+            "roi": round(pay / bet, 4) if bet else None,
+            "median_payout": won[len(won) // 2] if won else None,
+        }
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        groups.setdefault(str(r.get(key) or "—"), []).append(r)
+
+    return JSONResponse(content={
+        "from_date": from_dt.isoformat(),
+        "to_date": to_dt.isoformat(),
+        "group_by": group_by,
+        "total": _summary(rows),
+        "items": [{"key": k, **_summary(v)} for k, v in sorted(groups.items())],
+        # 買い目が記録されていない入稿（bet_detail の保存は 2026-08-07 開始）。
+        # 黙って落とすと「売った全部を集計した」ように見えるので必ず返す。
+        "missing_bet_detail": n_missing,
+    })
 
 
 @router.get("/netkeirin-sales")
