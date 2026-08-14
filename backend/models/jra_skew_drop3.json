@@ -1,0 +1,43 @@
+{
+  "train_scenario": "db",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20251231"
+  ],
+  "test_period": [
+    "20260104",
+    "20260802"
+  ],
+  "n_test_rows": 28783,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "dropped_features": [
+    "going_pedigree_index",
+    "paddock_index",
+    "rebound_index"
+  ],
+  "scenarios": {
+    "db": {
+      "n_races": 2082,
+      "spearman": 0.50929,
+      "top1_win_rate": 0.28626,
+      "top1_place_rate": 0.61623,
+      "ndcg3": 0.52917
+    },
+    "t1h_actual": {
+      "n_races": 2082,
+      "spearman": 0.50421,
+      "top1_win_rate": 0.27954,
+      "top1_place_rate": 0.60855,
+      "ndcg3": 0.52316,
+      "top1_agreement_with_first": 0.91066
+    }
+  }
+}

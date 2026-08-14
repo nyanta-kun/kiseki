@@ -1,0 +1,78 @@
+{
+  "train_scenario": "db",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20251231"
+  ],
+  "test_period": [
+    "20260104",
+    "20260802"
+  ],
+  "n_test_rows": 28783,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "scenarios": {
+    "db": {
+      "n_races": 2082,
+      "spearman": 0.50758,
+      "top1_win_rate": 0.28098,
+      "top1_place_rate": 0.60807,
+      "ndcg3": 0.5282
+    },
+    "cond_only": {
+      "n_races": 2082,
+      "spearman": 0.5072,
+      "top1_win_rate": 0.28146,
+      "top1_place_rate": 0.60951,
+      "ndcg3": 0.52879,
+      "top1_agreement_with_first": 0.98799
+    },
+    "morning": {
+      "n_races": 2082,
+      "spearman": 0.50426,
+      "top1_win_rate": 0.27378,
+      "top1_place_rate": 0.60279,
+      "ndcg3": 0.52182,
+      "top1_agreement_with_first": 0.90394
+    },
+    "t1h_actual": {
+      "n_races": 2082,
+      "spearman": 0.50418,
+      "top1_win_rate": 0.27762,
+      "top1_place_rate": 0.60567,
+      "ndcg3": 0.52331,
+      "top1_agreement_with_first": 0.91835
+    },
+    "prerace": {
+      "n_races": 2082,
+      "spearman": 0.5072,
+      "top1_win_rate": 0.28146,
+      "top1_place_rate": 0.60951,
+      "ndcg3": 0.52879,
+      "top1_agreement_with_first": 0.98799
+    },
+    "dm_only": {
+      "n_races": 2082,
+      "spearman": 0.41881,
+      "top1_win_rate": 0.22815,
+      "top1_place_rate": 0.52882,
+      "ndcg3": 0.45814,
+      "top1_agreement_with_first": 0.53939
+    },
+    "nodm": {
+      "n_races": 2082,
+      "spearman": 0.39676,
+      "top1_win_rate": 0.2219,
+      "top1_place_rate": 0.52161,
+      "ndcg3": 0.44766,
+      "top1_agreement_with_first": 0.5024
+    }
+  }
+}
