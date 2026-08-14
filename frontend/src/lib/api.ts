@@ -1439,6 +1439,54 @@ export async function fetchKeirinSalesAnalysis(
 }
 
 // ---------------------------------------------------------------------------
+// 実際に売った商品の成績（2026-08-15）
+//
+// picks_history は**ペーパー成績**（各ランクが条件を満たした全レース）だが、
+// netkeirin で売れるのは **1レース1商品**。母集団が違うので、picks_history を
+// いくら足しても「いくら売って、いくら返ってきたか」は出ない
+// （実測: 入稿472件のうち250件＝53% に picks_history 行が無い）。
+// こちらは情報源を netkeirin_submissions + bet_detail だけに固定した別系統。
+// ---------------------------------------------------------------------------
+export type KeirinSoldSummary = {
+  n_races: number;
+  n_hits: number;
+  /** ガミ（払戻<賭け金）を除いた的中。**netkeirin の表示的中率はこちら**。 */
+  n_net_hits: number;
+  hit_rate: number | null;
+  net_hit_rate: number | null;
+  gami_rate: number | null;
+  total_bet: number;
+  total_payout: number;
+  roi: number | null;
+  median_payout: number | null;
+};
+
+export type KeirinSoldPerformanceResponse = {
+  from_date: string;
+  to_date: string;
+  group_by: string;
+  total: KeirinSoldSummary;
+  items: (KeirinSoldSummary & { key: string })[];
+  /** 買い目が記録されていない入稿（bet_detail の保存は 2026-08-07 開始）。 */
+  missing_bet_detail: number;
+};
+
+export async function fetchKeirinSoldPerformance(
+  fromDate?: string,
+  toDate?: string,
+  groupBy: "rank" | "date" | "origin" = "rank",
+): Promise<KeirinSoldPerformanceResponse> {
+  const params = new URLSearchParams();
+  if (fromDate) params.set("from_date", fromDate);
+  if (toDate) params.set("to_date", toDate);
+  params.set("group_by", groupBy);
+  return get<KeirinSoldPerformanceResponse>(
+    `/keirin/sold-performance?${params.toString()}`,
+    { cache: "no-store" },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 入稿案の確認（2026-08-11）
 // ---------------------------------------------------------------------------
 /** `keirin.netkeirin_submissions` の状態。 */
