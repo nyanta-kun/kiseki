@@ -1,0 +1,34 @@
+{
+  "train_scenario": "db",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20251231"
+  ],
+  "test_period": [
+    "20260104",
+    "20260802"
+  ],
+  "n_test_rows": 28783,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "dropped_features": [
+    "jvan_battle_dm",
+    "jvan_time_dm"
+  ],
+  "scenarios": {
+    "db": {
+      "n_races": 2082,
+      "spearman": 0.47086,
+      "top1_win_rate": 0.26465,
+      "top1_place_rate": 0.58598,
+      "ndcg3": 0.50381
+    }
+  }
+}
