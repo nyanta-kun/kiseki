@@ -269,8 +269,11 @@ VPS cron の 07:30 JST 一回きり**（`scripts/jra_calculate_trigger.sh`）で
 `0B11` が返すのは**全て `WH` レコード**だが、`import_weights` は受け取った分を
 `RaceImporter` へ渡すだけで、`RaceImporter` は `rec_id` が `RA`/`SE` のものしか見ない。
 そのため 23件/回が毎回まるごと捨てられ **200 が返り続けていた**。
-`race_entries.horse_weight` は 0B12（確定成績）経由で **1〜3着馬にしか**入っておらず、
-「馬体重あり」に見えたのは結果取込の副産物だった。
+当時「馬体重あり」に見えたのは結果取込の副産物だった。
+（⚠️ 旧記述の「`race_entries.horse_weight` は 1〜3着馬にしか入っていない」は**恒常的な
+状態としては誤り**。週次の蓄積系 SE 取込で全馬に入るため実測は全期間 99.6〜100%。
+1〜3着だけになるのは蓄積系が走る前の一時的な状態で、0B11 の意義は
+「**発走前に**入るようになった」ことであって「初めて入るようになった」ことではない）
 `parse_wh()` を新設して `WH` を専用経路へ振り分ける（`_apply_wh_records`）。
 **振り分けが壊れると同じ無言の取りこぼしに戻る**ので
 `test_weight_recalc_trigger.py` で経路自体を固定している。
@@ -1110,6 +1113,93 @@ for i in 1 2 3 4; do echo "=P${i}="; grep -E "\[.*\].*頭 \(累計" /tmp/v15_p${
 - スループット: 約12,000件/時間/プロセス
 - `_upsert()` はリアルタイム単一馬更新用として引き続き保持
 
+## 中央競馬 再整理（2026-08）— `docs/jra_rebuild_2026_08.md` が作業台帳
+
+地方（`docs/chihou_rebuild_2026_08.md`）と同じ手順を中央へ適用した記録。
+以下は**毎日の運用に効く要点だけ**。経緯と数値は台帳を見ること。
+
+### 🔴 JV-Next DM がモデルの生命線（gain の 71.8%）
+
+順位回帰ヘッドの gain は `jvan_battle_dm` 55.2% + `jvan_time_dm` 16.7% で
+**2列が 7 割超**を占める。欠けると honest test で
+
+| | 指数1位 勝率 | 複勝率 | 指数1位が変わるレース |
+|---|---|---|---|
+| DM あり | 28.10% | 60.81% | — |
+| **DM 欠損** | **22.81%** | 52.88% | **半分（一致率 50.2%）** |
+
+**本番の指数にもレース内ばらつきの潰れとして現れる**（平常 幅28〜30 → 欠損日 14前後）。
+`confidence` の分散スコア経由で **tier 判定まで壊れる**。
+
+- 死活監視: `protocol_dm_orchestrator.report_unrecovered()` が**終了済みの開催日**の
+  欠損で終了コード 1 を返す → `dm_auto_fetch.sh` が `ERROR: rc=1` を残し
+  `launchctl list com.kiseki.dm-auto-fetch` の `LastExitStatus` に出る
+- ⚠️ **`OVERALL: saved=N` を見て「動いている」と判断しないこと。**
+  `saved` はファイル取得数で DB 反映数ではない。見るべきは `race_entries.jvan_time_dm` の充足率
+- 回収: `jvnext_dm_importer.py --recheck-dates YYYYMMDD,...`（進捗を無視して再POST）
+- 過去に踏んだ3バグ（`updated=0` を "ok" と記録 / `saved>0` のときしか importer を起動しない /
+  小倉のヘッダ行を DM 行と誤認）は修正済み・テストで固定
+
+### TRAIN/VAL/TEST プロトコル（`backend/src/jra_protocol.py`）
+
+**中央は四半期ローリング**（地方は月次）。月 約288レースでは改善の実効サイズ
+0.4〜0.5pt を標準誤差 2.6pt で判定できないため。
+
+- `TRAIN_END=20250630` 固定 / `TEST_START` = 当四半期の初日 / `VAL_END` = その前日
+- **本番モデルの refit は `TEST_START` の前日まで**（全期間 refit をやめた）。
+  やめないと DB の過去分が全て in-sample になり一度きり評価が成立しない
+- TEST を採否判断に使ったら `record_test_usage()` を呼ぶ → `scripts/JRA_TEST_USAGE_LEDGER.md`
+- 四半期バッチ: `scripts/jra_quarterly_rollover.py`（evaluate → retrain → backfill）+
+  LaunchAgent `com.kiseki.jra-quarterly-rollover`（1/4/7/10 月の1日 03:20）。
+  **evaluate → retrain の順序に意味がある**（先に再学習すると評価が in-sample になる）
+- ⚠️ **四半期をまたいで数字を比べない。** 中央は開催地が四半期ごとに総入れ替えになる。
+  実例: 同一設定でも test 窓が 2026-01〜08 なら Spearman 0.5068、2026-07以降だけなら 0.4612。
+  **モデルの差ではなく夏開催が難しいだけ**だった
+
+### 学習ソースの版は固定しない
+
+サブ指数は `composite.SUBINDEX_SOURCE_SQL`（`version >= SUBINDEX_MIN_VERSION` の最大版）で引く。
+🔴 **特定の版に固定すると本番が版を上げた瞬間に学習データが静かに凍結する**
+（実際 `version = 26` 固定で 2026-08-02 に止まっていた）。
+現行版に追従させるのも誤り（版を上げた直後はバックフィル前で 0 件になる）。
+
+### 推奨（hit_tier）の前向き記録（2026-08-15 稼働）
+
+`keiba.hit_tier_races` / `keiba.hit_tier_picks`。発走 **10分前**に全出走馬の指数・
+オッズ・tier 判定を保存し、翌日確定を書き戻す（`src/services/jra_hit_tier_log.py`）。
+
+🔴 **後付けでは作れない。** 推奨は都度算出で DB に残らず、指数は上書きされ、
+さらに **tier の第一分岐 `market_agree` は発走直前まで動く**
+（発走10分前の1番人気が確定と一致するのは **80.7%**・2分前でも 86.5%）。
+**確定オッズから tier を作り直してもユーザーが見た tier とは約2割ずれる。**
+
+- cron: `scripts/jra_pick_snapshot_trigger.sh`（毎分）/ `jra_pick_settle_trigger.sh`（`45 23`）
+- 集計: `backend/scripts/jra_pick_log_report.py --start --end`
+- 発走時刻を過ぎたレースは**撮らない**（撮ると look-ahead になり、欠けているより悪い）
+- tier=C（見送り）も `skip_reason` 付きで記録する。棄権側が無いと運用点を評価できない
+
+### タイムゾーンが列ごとに違う（実際に誤読した）
+
+| 列 | TZ |
+|---|---|
+| `keiba.odds_history.fetched_at` | **UTC**（DB セッションは `Asia/Tokyo`） |
+| `keiba.calculated_indices.calculated_at` | **UTC と JST が混在**（更新は `datetime.now()`＝コンテナUTC / 挿入は列default＝DB JST） |
+
+→ **`calculated_at` で処理の前後関係を判断しない。**
+→ 最新オッズは `now()` と比べず、**最大 `fetched_at` からの相対**で絞る。
+
+### DB の刈り込み方針（2026-08-15 実施）
+
+- `calculated_indices`: **v22 / v24 / v26 / v27 だけ残す**（他は削除済み）。
+  v22 は `backtest_dm` 系、v24 は `inference_v26` 系が明示指定しているので消してはいけない。
+  `scripts/prune_calculated_indices.py`（既定 dry-run）
+- `odds_history`: **発走後の行**と **exotic 券種の最終スナップショット以外**を削除。
+  `win`/`place` の発走前時系列は**触らない**（前向き記録・odds 系分析が使う）。
+  `scripts/prune_odds_history.py`（既定 dry-run・**日付ごとに回すこと**。全期間を1本の
+  クエリでやると索引が効かず 6,000万行を全走査する）
+- ⚠️ DELETE では実サイズは縮まない（領域が再利用可能になるだけ）。
+  縮めるなら開催の無い日に `VACUUM FULL`（排他ロック）
+
 ## 開発マイルストーン
 - MS1: 環境構築 + データ取込 + スピード指数CSV出力
 - MS2: コース適性 + 枠順バイアス + 総合指数CSV
@@ -1239,10 +1329,16 @@ honest 評価は walk-forward スクリプト（`scripts/jra_rank_quality_review
 
 `scripts/check_feature_health.py` が月次ばらつき・欠損率から DEAD / SHIFT / SPARSE を検出する。
 既知の問題:
-- `paddock_index`: 上流 netkeiba スクレイプが 2026-05 に停止。**v26 学習期間中も全月 sd=0** でモデル寄与ゼロ
+- `paddock_index`: 上流 netkeiba スクレイプが 2026-05 に停止。
+  ⚠️ 旧記述の「v26 学習期間中も全月 sd=0」は誤り。**2025-07〜2026-04 は生きている**（sd 5.6〜11.8）。
+  そのため本番モデル（全期間 refit）は分岐を持つが配信では必ず定数 50 側へ落ちる。
+  ただし **除去しても改善しないことを確認済み**（VAL 3,450R の paired bootstrap で有意差なし・
+  `scripts/jra_feature_drop_ab.py` / `docs/jra_rebuild_2026_08.md` 15.1）
 - `going_pedigree_index`: **レース当日に算出すると必ず全馬 50**。算出時点で `races.condition` が
   未確定（重/不でない）ため早期 return する。後日バックフィルしたレースだけ値が入る
-- `rebound_index`: 2026-04 以降ばらつきが単調減少（sd 2.79→0.57）。要調査
+- `rebound_index`: 2026-04 以降ばらつきが単調減少（sd 2.79→0.57）。
+  `going_pedigree_index` ともども、**除去しても改善しない**（15.1 と同じ検定）。
+  🔴 **「配信時に定数だから外すべき」は成り立たない。** LightGBM は定数入力を単に無視する
 
 ### 着外率による足切り（Web グレーアウト・2026-08-02）
 
