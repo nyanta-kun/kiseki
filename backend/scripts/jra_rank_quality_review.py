@@ -56,7 +56,10 @@ import pandas as pd  # noqa: E402
 import psycopg2  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
-from src.indices.composite import OUT_PROB_FEATURE_NAMES  # noqa: E402
+from src.indices.composite import (  # noqa: E402
+    OUT_PROB_FEATURE_NAMES,
+    SUBINDEX_SOURCE_SQL,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("rank_quality")
@@ -64,7 +67,8 @@ logger = logging.getLogger("rank_quality")
 MODELS_DIR = _root / "models"
 FEATURES = OUT_PROB_FEATURE_NAMES
 
-FETCH_SQL = """
+FETCH_SQL = f"""
+WITH ci AS ({SUBINDEX_SOURCE_SQL})
 SELECT
     r.date, ci.race_id, ci.horse_id,
     ci.speed_index, ci.last_3f_index, ci.course_aptitude, ci.position_advantage,
@@ -78,12 +82,11 @@ SELECT
     rr.weight_change, rr.abnormality_code, rr.finish_position,
     rr.win_odds, rr.win_popularity,
     ci.composite_index
-FROM keiba.calculated_indices ci
+FROM ci
 JOIN keiba.races r         ON r.id = ci.race_id
 JOIN keiba.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 LEFT JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
-WHERE ci.version = 26
-  AND r.course IN ('01','02','03','04','05','06','07','08','09','10')
+WHERE r.course IN ('01','02','03','04','05','06','07','08','09','10')
 """
 
 
