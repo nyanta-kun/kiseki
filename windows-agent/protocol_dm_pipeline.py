@@ -301,8 +301,38 @@ def fetch_1403(key: str, date: str, course: str, race: int) -> bytes | None:
         return None
 
 
-def save_1403(date: str, course: str, race: int, body: bytes) -> Path:
-    """解凍済データを zlib 圧縮して 1403{date}{CC}{NN}.dat に保存."""
+def has_dm_lines(body: bytes) -> bool:
+    """DM 値の行（先頭1文字が更新回数 1 以上）を含むか。
+
+    `jvnext_dm_importer.load_1403_file` の判定と同じ。応答は 200 で中身も
+    数KB あるのに DM レコードが 1 行も無いことがある（先頭 0 = 別種別データ）。
+    これを保存してしまうと **サイズが 0 でないため以後 skip され、
+    二度と取り直されない**（実害: 2026-07-19 小倉の 12 レース）。
+    """
+    try:
+        text = body.decode("cp932", errors="replace")
+    except Exception:
+        return False
+    return any(line and line[0].isdigit() and int(line[0]) >= 1
+               for line in text.split("\r\n"))
+
+
+def stored_is_usable(path: Path) -> bool:
+    """永続ストアの既存ファイルが DM レコードを含むか（含まなければ再取得する）。"""
+    try:
+        return has_dm_lines(zlib.decompress(path.read_bytes()))
+    except Exception:
+        return False
+
+
+def save_1403(date: str, course: str, race: int, body: bytes) -> Path | None:
+    """解凍済データを zlib 圧縮して 1403{date}{CC}{NN}.dat に保存.
+
+    DM レコードを含まない応答は**保存しない**（None を返す）。
+    保存すると再取得を永久に塞ぐため（`stored_is_usable` の Why を参照）。
+    """
+    if not has_dm_lines(body):
+        return None
     cc = f"{int(course):02d}"
     nn = f"{race:02d}"
     fname = f"1403{date}{cc}{nn}.dat"
@@ -404,12 +434,13 @@ def main():
                 total += 1
                 fname = f"1403{date}{cc}{race:02d}.dat"
                 out = PERSISTENT_STORE / fname
-                if out.exists() and out.stat().st_size > 0:
+                # サイズだけで判定してはいけない。DM レコードを含まない応答も
+                # 数KB あるため、それを「取得済み」と見なすと永久に再取得されない。
+                if out.exists() and out.stat().st_size > 0 and stored_is_usable(out):
                     skipped += 1
                     continue
                 body = fetch_1403(key, date, cc, race)
-                if body:
-                    save_1403(date, cc, race, body)
+                if body and save_1403(date, cc, race, body) is not None:
                     saved += 1
                 else:
                     failed += 1

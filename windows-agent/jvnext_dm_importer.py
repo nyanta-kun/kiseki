@@ -12,6 +12,15 @@
     python jvnext_dm_importer.py --race-ids 2026042605020201,2026042608030201
     python jvnext_dm_importer.py --dry-run                 # POSTせず内容表示のみ
     python jvnext_dm_importer.py --reset-progress          # 進捗クリア後に全再インポート
+    python jvnext_dm_importer.py --recheck-dates 20260815,20260816  # 進捗を無視して再POST
+
+⚠️ **「反映0件(updated=0)」を成功として記録してはいけない。**
+DM ファイルが取れていても出馬表（race_entries）がまだ DB に無いと API は
+全件 skipped になり updated=0 を返す。これを進捗に "ok" として書くと以後
+永久にスキップされ、その開催日は二度と DM が入らない。
+実害: 2026-08-09 が 5.9% のまま・2026-08-15/16 が 0%
+（総合指数 v27 は gain の 71.8% を DM 2列に依存しており、欠けると
+ 指数1位馬の勝率が 28.1%→22.8% に落ちる。docs/jra_rebuild_2026_08.md 4.2/4.4）
 """
 
 from __future__ import annotations
@@ -41,13 +50,17 @@ env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
 LOG_FILE = r"C:\kiseki\windows-agent\jvnext_dm_importer.log"
+# ログ先は Windows 固定パス。テストを Mac / CI から回せるよう、Windows 以外では
+# 標準出力だけにフォールバックする（import 自体を失敗させない）。
+# ⚠️ POSIX ではバックスラッシュが区切りにならず `Path(LOG_FILE).parent` が `.` に
+# なるため、パスの存在チェックでは判定できない（cwd に変な名前のファイルができる）。
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+if os.name == "nt":
+    _handlers.insert(0, logging.FileHandler(LOG_FILE, encoding="utf-8"))
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
+    handlers=_handlers,
 )
 logger = logging.getLogger(__name__)
 
@@ -111,7 +124,19 @@ def load_1403_file(path: Path) -> dict[int, dict[str, float | None]]:
         return {}
 
     # 先頭1文字が更新回数（1,2,3...）の行から最終更新版を使用。upd=0は別種別データ。
-    data_lines = [(int(l[0]), l) for l in lines if l and l[0].isdigit() and int(l[0]) >= 1]
+    #
+    # ⚠️ **長さの下限が要る。** 先頭行はレースを識別するヘッダ（19文字）で、
+    # その先頭2文字は**場コード**である。小倉（`10`）だけ先頭文字が `1` になるため
+    # 長さを見ないとヘッダが「更新回数 1 の DM 行」に化ける。DM 行も更新回数 1 だと
+    # `max` が同点で**先に現れるヘッダ**を選び、そこにはレコードが無いので
+    # 「DM data なし」として 1 レース丸ごと落ちる（実害: 2026-07-19 小倉）。
+    # レコードを 1 件でも含みうる長さを満たす行だけを候補にする。
+    _MIN_DATA_LEN = LINE1_HEADER_LEN + RECORD_LEN
+    data_lines = [
+        (int(line[0]), line)
+        for line in lines
+        if len(line) >= _MIN_DATA_LEN and line[0].isdigit() and int(line[0]) >= 1
+    ]
     if not data_lines:
         logger.warning(f"No DM data lines in {path}")
         return {}
@@ -255,20 +280,21 @@ def run_import(
     progress: dict[str, str],
     skip_ok: bool = True,
     dry_run: bool = False,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     """DM指数インポートを実行する。
 
     Returns:
-        (ok_count, failed_count, skipped_count)
+        (ok_count, failed_count, skipped_count, empty_count)
+        empty_count は「POST は成功したが 1 頭も更新できなかった」レース数。
     """
     if not dm_files:
         logger.info("対象ファイルなし")
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     # 日付ごとにrace_idマップをキャッシュ（同一日付の複数ファイルで再利用）
     race_id_map_cache: dict[str, dict[tuple[str, str], str]] = {}
 
-    ok = failed = skipped = 0
+    ok = failed = skipped = empty = 0
 
     for dm_path in dm_files:
         fname = dm_path.stem  # 例: "1403202604260501"
@@ -320,10 +346,26 @@ def run_import(
 
         try:
             result = post_race_records(jravan_race_id, records)
-            updated = result.get("updated", 0)
-            logger.info(f"  {dm_path.name} → {jravan_race_id} updated={updated}")
-            progress[jravan_race_id] = "ok"
-            ok += 1
+            updated = int(result.get("updated", 0) or 0)
+            if updated > 0:
+                logger.info(f"  {dm_path.name} → {jravan_race_id} updated={updated}")
+                progress[jravan_race_id] = "ok"
+                ok += 1
+            else:
+                # 🔴 反映0件を "ok" にしてはいけない。
+                # DM ファイルが取れていても出馬表（race_entries）がまだ DB に無いと
+                # API 側は全件 skipped になり updated=0 を返す。ここで "ok" を書くと
+                # 以後 skip_ok で永久にスキップされ、**その開催日は二度と DM が入らない**。
+                # 実害: 2026-08-09 が 5.9% のまま / 2026-08-15・16 が 0%
+                # （docs/jra_rebuild_2026_08.md 4.4）。
+                # 記録を消して次回に再試行させる。
+                progress.pop(jravan_race_id, None)
+                empty += 1
+                logger.warning(
+                    f"  反映0件・次回再試行: {dm_path.name} → {jravan_race_id} "
+                    f"(records={len(records)} skipped={result.get('skipped')}) "
+                    f"— 出馬表が未取込の可能性"
+                )
         except Exception as e:
             logger.error(f"  POST失敗: {jravan_race_id}: {e}")
             progress[jravan_race_id] = "failed"
@@ -332,7 +374,7 @@ def run_import(
         # レースごとに進捗を保存（クラッシュ時も途中まで保持される）
         save_progress(progress)
 
-    return ok, failed, skipped
+    return ok, failed, skipped, empty
 
 
 def main() -> None:
@@ -343,6 +385,11 @@ def main() -> None:
     mode.add_argument("--all", action="store_true", help="永続ストアの全日付を処理")
     mode.add_argument("--retry-failed", action="store_true", help="前回失敗レースのみ再実行")
     mode.add_argument("--race-ids", help="カンマ区切りのjravan_race_id（特定レース指定）")
+    mode.add_argument(
+        "--recheck-dates",
+        help="カンマ区切りの YYYYMMDD。進捗を無視して必ず再POSTする。"
+             "出馬表が後から届いた開催日の回収に使う",
+    )
     parser.add_argument("--end", help="終了日 YYYYMMDD（--start と組み合わせ）")
     parser.add_argument("--course", help="コースコード絞り込み (e.g. 05=東京)")
     parser.add_argument("--dry-run", action="store_true", help="POSTせず内容表示のみ")
@@ -373,6 +420,11 @@ def main() -> None:
         dates = sorted({rid[0:8] for rid in target_ids})
         dm_files = collect_files_for_dates(dates, args.course)
         skip_ok = False
+    elif args.recheck_dates:
+        dates = [d.strip() for d in args.recheck_dates.split(",") if d.strip()]
+        logger.info(f"=== recheck-dates: {len(dates)}日付 ({','.join(dates)}) ===")
+        dm_files = collect_files_for_dates(dates, args.course)
+        skip_ok = False  # 進捗を無視して必ず再POSTする
     elif args.all:
         dates = discover_dates()
         if not dates:
@@ -405,7 +457,6 @@ def main() -> None:
         race_id_map_all: dict[tuple[str, str], str] = {}
         for d in dates_needed:
             race_id_map_all.update(fetch_race_id_map(d))
-        reverse_map = {v: k for k, v in race_id_map_all.items()}
         dm_files = [
             p for p in dm_files
             if len(p.stem) == 16 and
@@ -431,14 +482,21 @@ def main() -> None:
         logger.info("対象ファイルなし（終了）")
         return
 
-    ok, failed, skipped = run_import(dm_files, progress, skip_ok=skip_ok, dry_run=args.dry_run)
+    ok, failed, skipped, empty = run_import(
+        dm_files, progress, skip_ok=skip_ok, dry_run=args.dry_run
+    )
 
     logger.info(
-        f"=== 完了: ok={ok}, failed={failed}, skipped={skipped} "
+        f"=== 完了: ok={ok}, failed={failed}, skipped={skipped}, empty={empty} "
         f"(進捗: {PROGRESS_FILE}) ==="
     )
     if failed:
         logger.warning(f"失敗レース {failed}件 → --retry-failed で再実行できます")
+    if empty:
+        logger.warning(
+            f"反映0件 {empty}件 → 出馬表が届いてから "
+            f"--recheck-dates で再実行してください（進捗には記録していません）"
+        )
 
 
 if __name__ == "__main__":
