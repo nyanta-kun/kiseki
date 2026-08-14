@@ -174,13 +174,17 @@ _DEFAULT_COMMENT_TEMPLATE = (
 #    定数を残しているのは、設定画面のランク別テンプレート編集に引きずられず
 #    看板レースの文面を固定できるようにするため（PR#60 の設計判断）。
 #
-# タイトルは **固定文字列「本日の二軸」**（2026-08-09 ユーザー指示）。
-# ⚠️ 通常ランクのような `{shape}`（レース形の一言）や `{race_type}`（決勝/特選）は
-#    **入れない**。当初は「{race_type}の二軸｜{shape}」で種別を出していたが、
-#    看板レースは商品名を揃える方針に変更した。
+# タイトルは「商品名｜レース形」（2026-08-14）。他ランクが
+# 「自信の二軸｜{shape}」「本線の二軸｜{shape}」なのに対し、看板だけが
+# 固定文字列「本日の二軸」で無個性に埋もれていたため `｜{shape}` を足した。
+#
+# 🔴 **`{race_type}`（決勝/特選）や開催グレード（GI 等）は入れない。**
+#    通常ランクでも種別・グレードはタイトルから外す方針で統一されている
+#    （2026-08-09 に看板からも外した経緯があり、2026-08-14 に再確認）。
+#    レース個別の見立ては `{shape}` と `{shape_note}` が担う。
 #    `{race_type}` の置換自体は `_apply_template` に残してある（設定画面の
 #    独自テンプレートで使えるようにするため）。
-_MARQUEE_TITLE_TEMPLATE = "本日の二軸"
+_MARQUEE_TITLE_TEMPLATE = "本日の二軸｜{shape}"
 _MARQUEE_COMMENT_TEMPLATE = (
     "{shape_note}\n\n"
     "【二軸】\n"
@@ -1754,10 +1758,13 @@ def _resolve_race_info(race_key: str) -> tuple[str, int, int, str] | None:
 
     race_type は看板レース用テンプレートの `{race_type}` に使う（「決勝」「特選」
     「ガールズ決勝」等）。NULL のときは空文字を返す。
+    ⚠️ **タイトルには種別もグレードも入れない**（`_MARQUEE_TITLE_TEMPLATE` 参照）。
+       設定画面の独自テンプレートで使えるように置換だけ残してある。
     """
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT venue_id, race_no, n_entries, race_type FROM wt_races WHERE race_key = ?",
+            "SELECT venue_id, race_no, n_entries, race_type "
+            "FROM wt_races WHERE race_key = ?",
             (race_key,),
         ).fetchone()
         if row is None:
