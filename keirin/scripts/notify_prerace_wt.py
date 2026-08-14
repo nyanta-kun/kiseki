@@ -1225,10 +1225,19 @@ def _load_rank_7a_candidates(today: str) -> list[dict]:
 
 
 def _insert_rank_7a_pick(race_key: str, race_date: str, pred_combo: str, n_combos: int) -> None:
-    """7A（境界ランク・ペーパー）の記録行 {base}#7A を picks_history に即時反映する。
+    """旧7A の記録行を **RANK_7S として** picks_history に即時反映する。
 
-    _insert_rank_7s_pick の7A版（rank='RANK_7A'・race_key末尾#7A・RANK_7A_STAKE・gate_labelなし）。
+    🔴 **2026-08-14 に 7SS/7S/7A を RANK_7S へ統合した**（ユーザー判断）。
+       3ランクは買い目構造が同一で、live 実績（n=7,461・32ヶ月）でも ROI・的中率・
+       払戻中央値・ガミ率が統計的に区別できなかった。選別は変えていないので
+       買うレースは1件も増減しない。**書き込み先だけ 7S に寄せる**。
     """
+    _insert_rank_7s_pick(race_key, race_date, pred_combo, n_combos, gate_label=None)
+
+
+def _insert_rank_7a_pick_legacy(race_key: str, race_date: str, pred_combo: str,
+                                n_combos: int) -> None:
+    """統合前の 7A 書き込み（過去日の再採点・分析用に残置。呼び出し元は無い）。"""
     store_key = race_key + "#7A"
     # 賭け金は1レース RACE_BUDGET 円を点数で均等割り（2026-08-07 全ランク統一）。
     # 固定単価を掛けると欠車で点数が減ったとき投資額が予算枠からずれる。
@@ -1307,7 +1316,7 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
     in_window: list[tuple[dict, dict]] = []
     for cand in cands:
         rk = cand.get("race_key")
-        if not rk or f"{rk}#7A" in notified:
+        if not rk or f"{rk}#7S" in notified:
             continue
         ri = race_info_map.get(rk)
         if ri is None or ri.get("n_entries") != 7:
@@ -1323,7 +1332,8 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
     newly_done: set[str] = set()
     for cand, ri in in_window:
         rk = cand["race_key"]
-        rank_7a_key = f"{rk}#7A"
+        # 🔴 統合により decisions/採点のキーも #7S（`_insert_rank_7a_pick` 参照）。
+        rank_7a_key = f"{rk}#7S"
         try:
             odds_data = scraper.fetch_odds(
                 venue_id  = ri["venue_id"],
@@ -1348,7 +1358,7 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
             continue
 
         _save_decision(today, rank_7a_key, {
-            "decision": decision, "rank": "RANK_7A", "paper": True,
+            "decision": decision, "rank": "RANK_7S", "paper": True,
             "stake": unit_stake(len(detail.get("combos") or [])),
             "axis_sum": cand.get("axis_sum"),
             "wt_overlap_n": cand.get("wt_overlap_n"), **detail,
@@ -1363,7 +1373,7 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_7a_key, _build_rank_7a_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7A候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7A")
+            _mark_paper_miwokuri(rk, "#7S")
             print(f"[prerace] {rk} 7A候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7a_key)
         time.sleep(0.3)
@@ -1403,10 +1413,16 @@ def _load_rank_7ss_candidates(today: str) -> list[dict]:
 
 
 def _insert_rank_7ss_pick(race_key: str, race_date: str, pred_combo: str, n_combos: int) -> None:
-    """7SS（entropy不合格×同一ライン・ペーパー）の記録行 {base}#7SS を picks_history に即時反映する。
+    """旧7SS の記録行を **RANK_7S として** picks_history に即時反映する。
 
-    _insert_rank_7s_pick の7SS版（rank='RANK_7SS'・race_key末尾#7SS・RANK_7SS_STAKE・gate_labelなし）。
+    🔴 2026-08-14 に 7SS/7S/7A を RANK_7S へ統合した（`_insert_rank_7a_pick` 参照）。
     """
+    _insert_rank_7s_pick(race_key, race_date, pred_combo, n_combos, gate_label=None)
+
+
+def _insert_rank_7ss_pick_legacy(race_key: str, race_date: str, pred_combo: str,
+                                 n_combos: int) -> None:
+    """統合前の 7SS 書き込み（過去日の再採点・分析用に残置。呼び出し元は無い）。"""
     store_key = race_key + "#7SS"
     # 賭け金は1レース RACE_BUDGET 円を点数で均等割り（2026-08-07 全ランク統一）。
     # 固定単価を掛けると欠車で点数が減ったとき投資額が予算枠からずれる。
@@ -2068,7 +2084,7 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
     in_window: list[tuple[dict, dict]] = []
     for cand in cands:
         rk = cand.get("race_key")
-        if not rk or f"{rk}#7SS" in notified:
+        if not rk or f"{rk}#7S" in notified:
             continue
         ri = race_info_map.get(rk)
         if ri is None or ri.get("n_entries") != 7:
@@ -2084,7 +2100,8 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
     newly_done: set[str] = set()
     for cand, ri in in_window:
         rk = cand["race_key"]
-        rank_7ss_key = f"{rk}#7SS"
+        # 🔴 統合により decisions/採点のキーも #7S（`_insert_rank_7a_pick` 参照）。
+        rank_7ss_key = f"{rk}#7S"
         try:
             odds_data = scraper.fetch_odds(
                 venue_id  = ri["venue_id"],
@@ -2109,7 +2126,7 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
             continue
 
         _save_decision(today, rank_7ss_key, {
-            "decision": decision, "rank": "RANK_7SS", "paper": True,
+            "decision": decision, "rank": "RANK_7S", "paper": True,
             "stake": unit_stake(len(detail.get("combos") or [])),
             "axis_sum": cand.get("axis_sum"),
             "wt_overlap_n": cand.get("wt_overlap_n"), **detail,
@@ -2124,7 +2141,7 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
             messages.append((rank_7ss_key, _build_rank_7ss_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7SS候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7SS")
+            _mark_paper_miwokuri(rk, "#7S")
             print(f"[prerace] {rk} 7SS候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7ss_key)
         time.sleep(0.3)
@@ -3243,12 +3260,16 @@ def _save_picks_history_state(
     cand_key = race_key + "#CAND"
     try:
         with get_connection() as conn:
-            # ペーパー行（#7U/#7M/#7A/#6S1）は各自の15分前判定が miwokuri を管理するため
-            # 旧S1系のガミ落ち/昇格の一括更新に巻き込まない（2026-07-16）
+            # ペーパー行（#7U/#7M/#7A/#7S/#6S1）は各自の15分前判定が miwokuri を
+            # 管理するため、旧S1系のガミ落ち/昇格の一括更新に巻き込まない（2026-07-16）。
+            # 🔴 `#7S` は 2026-08-14 の統合で追加した。旧 7A は除外されていたのに
+            #    7S は入っておらず、統合で旧7A行が #7S になると**保護を失う**。
+            #    どちらも自前の判定で miwokuri を管理するので除外が正しい。
             conn.execute(
                 "UPDATE picks_history SET miwokuri = ? WHERE race_key LIKE ? AND route = 'wt' "
                 "AND race_key NOT LIKE '%#7U' AND race_key NOT LIKE '%#7M' "
-                "AND race_key NOT LIKE '%#7A' AND race_key NOT LIKE '%#6S1'",
+                "AND race_key NOT LIKE '%#7A' AND race_key NOT LIKE '%#7S' "
+                "AND race_key NOT LIKE '%#6S1'",
                 (miwokuri, pattern),
             )
             if new_rank is not None:
