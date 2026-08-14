@@ -394,7 +394,7 @@ async def _fetch_settled_submissions(
         params,
     )).mappings().all()
     if not subs:
-        return {}, 0
+        return [], 0
 
     keys = sorted({s["race_key"] for s in subs})
     # 確定着順（1〜3着）をまとめて引く
