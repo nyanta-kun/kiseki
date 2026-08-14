@@ -193,13 +193,18 @@ def test_normalize_produces_two_formations_and_matching_points():
     assert marks[a1] == "◎" and marks[a2] == "○"
 
 
-def test_rank_config_is_right_after_7h1():
-    """🔴 入稿の優先順位は RANK_CONFIGS の定義順。7H2 は 7H1 の直後（ユーザー判断）。
+def test_rank_config_7h2_is_first_and_ahead_of_7h1():
+    """🔴 入稿の優先順位は RANK_CONFIGS の定義順。7H2 は**先頭**（2026-08-15〜）。
 
     ここが動くと、重複レース（7H1 の 49.2%）をどちらが取るかが変わる。
+    2026-08-10〜08-14 は「7H2 は 7H1 の直後」だった（7H1 の実測 ROI 80.3%・
+    的中18.3% が 7H2(72.2%) より良いため 7H1 を守る、というユーザー判断）。
+    2026-08-15 に **7H1 を最下位へ落とした**（三連単一本化の実装・検証が終わるまで
+    `enabled=false` で止めるため）ので、重複は 7H2 が取る。
     """
     order = list(RANK_CONFIGS)
-    assert order.index("7H2") == order.index("7H1") + 1
+    assert order[0] == "7H2"
+    assert order.index("7H2") < order.index("7H1")
     assert RANK_CONFIGS["7H2"]["act_type"] == ACT_TYPE_LONGSHOT
     assert RANK_CONFIGS["7H2"]["n_cars"] == 7
 

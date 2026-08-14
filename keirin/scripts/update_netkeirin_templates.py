@@ -158,10 +158,40 @@ def _check_consistency() -> list[str]:
     return problems
 
 
+def _unknown_placeholders() -> set[str]:
+    """テンプレート中の `{...}` のうち、入稿側が置換できないものを返す。
+
+    置換表（`netkeirin_submit_wt._apply_template` の `repl`）をソースから読む。
+    import してしまうと重い依存を引くので、正規表現で拾う。
+    """
+    import re as _re
+    src = (Path(__file__).resolve().parent / "netkeirin_submit_wt.py").read_text(
+        encoding="utf-8")
+    known = set(_re.findall(r'"(\{[a-z_0-9]+\})":', src))
+    used: set[str] = set()
+    for t in list(TITLE_TEMPLATES.values()) + list(COMMENT_TEMPLATES.values()):
+        used |= set(_re.findall(r"\{[a-z_0-9]+\}", t))
+    return used - known
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="実際に書き込む（既定はdry-run）")
     args = ap.parse_args()
+
+    # 🔴 **コードが置換できないプレースホルダを DB へ入れない**（2026-08-14 の実害）。
+    #    `{wide_note}` を含むテンプレートを先に反映し、置換するコードのデプロイが
+    #    後になったため、その間の波（18:00）が**本文に `{wide_note}` を素で残した
+    #    まま入稿案を12件作った**。DB とコードは別々に反映されるので順序を守るしかない。
+    #    ここで「入稿側が知っているキーか」を機械的に確かめる。
+    unknown = _unknown_placeholders()
+    if unknown:
+        print("[NG] 入稿側が置換できないプレースホルダがテンプレートにあります: "
+              + ", ".join(sorted(unknown)), file=sys.stderr)
+        print("     先に netkeirin_submit_wt.py（_apply_template）をデプロイしてください。"
+              "\n     順序を逆にすると、その間に作られた入稿は本文にプレースホルダが"
+              "そのまま残ります。", file=sys.stderr)
+        return 1
 
     problems = _check_consistency()
     if problems:

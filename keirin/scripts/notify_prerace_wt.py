@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.bet_display import fold_trifecta_formation, fold_trio_box
 from src.database import get_connection
+from src.rank_visibility import disabled_rank_names
 from src.scraper.winticket import WinticketScraper
 from src.notify.discord import send
 from src.strategy_wt import (
@@ -398,6 +399,31 @@ def _u_third_list(combos: list[str], dark: int, mate: int) -> list[int]:
         if len(rest) == 1:
             thirds.append(rest[0])
     return sorted(thirds)
+
+
+
+# ---------------------------------------------------------------------------
+# 入稿 OFF のランクは**ライブ判定も走らせない**（2026-08-14・ユーザー指摘）
+#
+# `netkeirin_settings.enabled` は入稿だけを止める設計だったため、OFF のランクでも
+# 発走前判定が走り picks_history へ bet>0 の行が入り続けていた。実害:
+#   2026-08-14 松山1R は **9C（看板の穴埋め）として入稿**したのに、推奨の記録は
+#   **9H1**（入稿OFF）だった。同日だけで「売っていない商品の推奨」が26件・
+#   投資25.4万円ぶん記録され、サマリーの母集団が実態とずれていた。
+#
+# 🔴 **fail-open**（読めなければ全ランク走らせる）。判定は `src/rank_visibility` が正本。
+# ⚠️ 1分ごとに呼ばれるので**プロセス内で1回だけ引く**。
+# ---------------------------------------------------------------------------
+_DISABLED_RANKS: set[str] | None = None
+
+
+def _rank_enabled(rank: str) -> bool:
+    global _DISABLED_RANKS
+    if _DISABLED_RANKS is None:
+        _DISABLED_RANKS = disabled_rank_names()
+    if rank in _DISABLED_RANKS:
+        return False
+    return True
 
 
 def judge_s1(cand: dict, trifecta_lookup: dict) -> tuple[str, dict]:
@@ -856,6 +882,8 @@ def _process_rank_7s_candidates(today: str, now_unix: int, notified: set[str]) -
       messages:   [(rank_7s_key, msg)]（buy 成立分のみ）
       newly_done: 処理完了キー {race_key}#S7 の集合（オッズ取得失敗は含めない=再試行）
     """
+    if not _rank_enabled("RANK_7S"):
+        return [], set()
     cands = _load_rank_7s_candidates(today)
     if not cands:
         return [], set()
@@ -1306,6 +1334,8 @@ def _build_rank_7a_message(cand: dict, race_info: dict, detail: dict) -> str:
 
 def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
     """7A候補の発走前判定・記録・通知メッセージ生成（_process_rank_7s_candidates の7A版）。"""
+    if not _rank_enabled("RANK_7S"):
+        return [], set()
     cands = _load_rank_7a_candidates(today)
     if not cands:
         return [], set()
@@ -1707,6 +1737,8 @@ def _build_rank_7c_message(cand: dict, race_info: dict, detail: dict) -> str:
 
 def _process_rank_7c_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
     """7C候補の発走前判定・記録・通知メッセージ生成（_process_rank_7ss_candidates の7C版）。"""
+    if not _rank_enabled("RANK_7C"):
+        return [], set()
     cands = _load_rank_7c_candidates(today)
     if not cands:
         return [], set()
@@ -1977,6 +2009,8 @@ def _build_rank_9c_message(cand: dict, race_info: dict, detail: dict) -> str:
 
 def _process_rank_9c_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
     """9C候補の発走前判定・記録・通知メッセージ生成（7C版の9車写し）。"""
+    if not _rank_enabled("RANK_9C"):
+        return [], set()
     cands = _load_rank_9c_candidates(today)
     if not cands:
         return [], set()
@@ -2076,6 +2110,8 @@ def _build_rank_7ss_message(cand: dict, race_info: dict, detail: dict) -> str:
 
 def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
     """7SS候補の発走前判定・記録・通知メッセージ生成（_process_rank_7s_candidates の7SS版）。"""
+    if not _rank_enabled("RANK_7S"):
+        return [], set()
     cands = _load_rank_7ss_candidates(today)
     if not cands:
         return [], set()
@@ -2339,6 +2375,8 @@ def _build_rank_7b_message(cand: dict, race_info: dict, detail: dict) -> str:
 
 def _process_rank_7b_candidates(today: str, now_unix: int, notified: set[str]) -> tuple[list, set]:
     """7B候補の発走前判定・記録・通知メッセージ生成（_process_rank_7a_candidates の7B版）。"""
+    if not _rank_enabled("RANK_7B"):
+        return [], set()
     cands = _load_rank_7b_candidates(today)
     if not cands:
         return [], set()
@@ -2569,6 +2607,8 @@ def _build_rank_7h1_message(cand: dict, ri: dict, detail: dict) -> str:
 def _process_rank_7h1_candidates(today: str, now_unix: int,
                                  notified: set[str]) -> tuple[list, set]:
     """7H1候補の発走前判定・記録・通知メッセージ生成。"""
+    if not _rank_enabled("RANK_7H1"):
+        return [], set()
     cands = _load_rank_7h1_candidates(today)
     if not cands:
         return [], set()
@@ -2772,6 +2812,8 @@ def _build_rank_7h2_message(cand: dict, ri: dict, detail: dict) -> str:
 def _process_rank_7h2_candidates(today: str, now_unix: int,
                                  notified: set[str]) -> tuple[list, set]:
     """7H2候補の発走前判定・記録・通知メッセージ生成。"""
+    if not _rank_enabled("RANK_7H2"):
+        return [], set()
     cands = _load_rank_7h2_candidates(today)
     if not cands:
         return [], set()
@@ -2950,6 +2992,8 @@ def _build_rank_9h1_message(cand: dict, ri: dict, detail: dict) -> str:
 def _process_rank_9h1_candidates(today: str, now_unix: int,
                                  notified: set[str]) -> tuple[list, set]:
     """9H1候補の発走前判定・記録・通知メッセージ生成。"""
+    if not _rank_enabled("RANK_9H1"):
+        return [], set()
     cands = _load_rank_9h1_candidates(today)
     if not cands:
         return [], set()
