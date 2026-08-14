@@ -1777,16 +1777,14 @@ RANK_7H1_GAP_MIN = 0.20            # 抜け度（モデル1着率の1位−2位�
 # ⚠️ この値はモデルの較正に依存する。モデルを再学習したら
 #    `scripts/check_7h1_threshold.py` 相当で分布を確認し、必要なら更新すること。
 RANK_7H1_BUST_PROB_MIN = 0.2666
-# ⚠️ 旧・枠方式の定数。**現行の賭け金は `RANK_7H1_TF_UNIT` が単一正本**で、
-#    `rank_7h1_stakes()` はこの2つを参照しない。`scripts/exp_7h1_stake_design.py`
-#    （導入時の配分設計）との互換のために残しているだけなので、
-#    新しいコードから読まないこと。
+# ⚠️ **2券種時代（〜2026-08-15）の枠方式の定数**。三連単一本化で本番からは
+#    参照されなくなった。`scripts/exp_7h1_stake_design.py`（当時の配分設計の
+#    実験）との互換のためだけに残してある。新しいコードから読まないこと。
 RANK_7H1_BUDGET_TF = 7500          # 【旧】三連単の予算枠（円/レース）
 RANK_7H1_BUDGET_TRIO = 2500        # 【旧】三連複の予算枠（円/レース）
 # ⚠️ 同じ値のリテラル再定義にしない（RANK_7C_BUDGET と同じ理由・2026-08-08）。
 RANK_7H1_BUDGET_CAP = RACE_BUDGET  # 1レースの購入上限（円）
 RANK_7H1_UNIT = STAKE_UNIT         # 最低賭け金単位（円）
-RANK_7H1_TRIO_POOL_MAX = 5         # 三連複BOXに使うプール上限車数（→最大10点）
 RANK_7H1_TF_SECOND_N = 2           # 三連単の2着に使うプール上位の車数
 
 
@@ -1799,9 +1797,18 @@ def rank_7h1_pool(others: list[int], roles: dict[int, str]) -> list[int]:
     return [f for f in others if roles.get(f) not in FAV_LINE_ROLES]
 
 
-def rank_7h1_build_legs(others: list[int],
-                        roles: dict[int, str]) -> tuple[list[frozenset], list[str]]:
-    """(三連複の目, 三連単の目) を返す。組めない場合は空リスト。
+def rank_7h1_build_legs(others: list[int], roles: dict[int, str]) -> list[str]:
+    """三連単の目（1着1車 × 2着2車 × 3着5車 ＝ 8点）を返す。組めなければ空。
+
+    🔴 **2026-08-15 に三連単一本化**（ユーザー指示「三連複BOX分を全て三連単の
+       買い目に振り直す」）。それ以前は `(三連複BOX, 三連単F)` の 2券種を返し、
+       予算1万円を 三連単8点×900円 + 三連複2,800円 に割っていた。
+
+       単価を上げても **ROI は動かない**（実測 500〜1,100円 で 80.7〜82.1% と平坦）。
+       動くのは「ガミ率」と「高額払戻の頻度」だけで、この2つは真っ向から
+       トレードオフになる。7H1 は**高配当狙いのランク**として作られており
+       （的中率側は 7S/7C が担当）、的中を拾うための三連複は存在理由と逆を向く。
+       詳細な実測表は `rank_7h1_stakes` の docstring に残してある。
 
     Args:
         others: 本命を除く6車を**モデル3着内率の降順**で並べたもの
@@ -1811,18 +1818,15 @@ def rank_7h1_build_legs(others: list[int],
 
     pool = rank_7h1_pool(others, roles)
     if len(pool) < 3:
-        return [], []
-    trio = [frozenset(c)
-            for c in _combinations(pool[:RANK_7H1_TRIO_POOL_MAX], 3)]
+        return []
     lead = next((f for f in others if roles.get(f) == ROLE_LEAD_TOP), None)
     if lead is None:
         # 別ラインの先頭が存在しない（全員単騎など）レースは対象外にする。
         # 検証では成立率96.3%で、残り3.7%は買い目が定義できない。
-        return trio, []
+        return []
     rest = [f for f in pool if f != lead]
-    tf = [f"{lead}-{a}-{c}" for a in rest[:RANK_7H1_TF_SECOND_N]
-          for c in others if c not in (lead, a)]
-    return trio, tf
+    return [f"{lead}-{a}-{c}" for a in rest[:RANK_7H1_TF_SECOND_N]
+            for c in others if c not in (lead, a)]
 
 
 def rank_7h1_unit(budget: int, n_legs: int) -> int:
@@ -1833,96 +1837,39 @@ def rank_7h1_unit(budget: int, n_legs: int) -> int:
     return u if u >= RANK_7H1_UNIT else 0
 
 
-# 三連単の1点あたり（円）。**この値が 7H1 の賭け金の単一正本**で、記録側
-# （`rank_7h1_stakes` → picks_history）と入稿側（`netkeirin_submit_wt`）の
-# 両方がここから導出される。
-#
-# 【経緯】2026-08-07 に 900円 → 500円 へ下げ、2026-08-08 に 900円へ戻した。
-#
-# 500円化の狙いは「三連単の枠を薄くして残りを三連複へ回しガミを消す」ことで、
-# 実際ガミは消えた。しかし **picks_history 2,425行で枠配分だけを振り替えて
-# 再計算したところ、ROI は 80.7〜82.1% で完全に平坦**だった:
-#
-#   三連単単価 | 三連単枠/三連複枠 |  ROI  | 実質的中(ガミ除く) |   30万+   | 最大払戻
-#   ----------|-----------------|-------|-----------------|-----------|---------
-#      500円   |  4,000 / 6,000  | 82.1% |      15.71%      | 4件(0.16%) |  81万
-#      700円   |  5,600 / 4,400  | 81.6% |      13.94%      | 6件(0.25%) |  99万
-#    **900円** |  7,200 / 2,800  | 81.2% |      11.46%      |13件(0.54%) | 116万
-#     1,100円  |  8,800 / 1,200  | 80.7% |       6.85%      |18件(0.74%) | 134万
-#
-# ＝ 単価で動くのは **「ガミ率」と「高額払戻の頻度」だけで、ROI は動かない**。
-# 両者は真っ向からトレードオフで、同時には取れない。7H1 は**高配当狙いの
-# ランクとして作られた**（既存 S/A/B/C が的中率側を担当している）ため、
-# 存在理由に合わせて 900円＝高額側へ戻す。的中体験を優先したくなったら
-# 500円へ下げてよいが、**そのとき 7H1 は 30万+ を年5回→年1〜2回に落とす**
-# ことを承知の上で下げること。
-#
-# ⚠️ 変更したら `scripts/rebuild_7h1_walkforward_pg.py` で過去分を再構築し、
-#    Web に出る実績と実際に入稿する商品の性格を必ず一致させること
-#    （500円時代はここが食い違っていた。下記 rank_7h1_stakes のコメント参照）。
-RANK_7H1_TF_UNIT = 900
+def rank_7h1_stakes(n_legs: int) -> tuple[int, int]:
+    """(1点あたり賭け金, 合計購入額) を返す。全ランク共通の予算枠方式に従う。
 
+    通常形は8点なので **1,200円/点 × 8 = 9,600円**。欠車で点数が減ったら
+    その点数で引き直す（1レース1万円の枠は動かさない）。9H1・7T1 と同じ規則
+    （`unit_stake`）で、切り捨てぶんは使い切らない。
 
-def rank_7h1_trio_budget(n_tf: int, cap: int = RANK_7H1_BUDGET_CAP,
-                         tf_unit: int = RANK_7H1_TF_UNIT) -> int:
-    """三連単を 1点 `tf_unit` 円で買った残り＝三連複へ回す予算。
+    ## 三連単一本化（2026-08-15）
 
-    現行の 7車立てなら 三連単8点×900 = 7,200円 → 三連複へ 2,800円。
+    それ以前は **三連単8点×900円 + 三連複BOXへ2,800円** の2券種で、記録側
+    （この関数 → picks_history）と入稿側（`netkeirin_submit_wt`）が別々に
+    金額を持っていた。ユーザー指示で三連複ぶんを三連単へ振り直した。
+
+    単価を動かしても **ROI は動かない**。picks_history 2,425行で枠配分だけを
+    振り替えた実測:
+
+      三連単単価 | 三連単枠/三連複枠 |  ROI  | 実質的中(ガミ除く) |   30万+   | 最大払戻
+      ----------|-----------------|-------|-----------------|-----------|---------
+         500円   |  4,000 / 6,000  | 82.1% |      15.71%      | 4件(0.16%) |  81万
+         700円   |  5,600 / 4,400  | 81.6% |      13.94%      | 6件(0.25%) |  99万
+         900円   |  7,200 / 2,800  | 81.2% |      11.46%      |13件(0.54%) | 116万
+       1,100円   |  8,800 / 1,200  | 80.7% |       6.85%      |18件(0.74%) | 134万
+
+    ＝ 単価で動くのは **「ガミ率」と「高額払戻の頻度」だけ**で、両者は真っ向から
+    トレードオフ。7H1 は高配当狙いのランク（的中率側は 7S/7C が担当）なので、
+    的中を拾うための三連複は存在理由と逆を向いていた。
+
+    ⚠️ 賭け金の規則を変えたら `scripts/rebuild_7h1_walkforward_pg.py` で過去分を
+       再構築すること。Web に出る実績と実際に売る商品の性格が食い違う
+       （2026-08-07〜08-08 に記録側900円・入稿側500円の二重管理で実際に起きた）。
     """
-    return max(0, cap - tf_unit * max(n_tf, 0))
-
-
-def rank_7h1_trio_stakes(trio_legs: list, trio_odds: dict | None, n_tf: int,
-                         unit: int = RANK_7H1_UNIT) -> dict:
-    """三連複の目ごとの賭け金。**入稿時点のオッズで払戻が等しくなるよう配分**する。
-
-    trio_odds が無い（朝の板が買う目すべてに揃わない）場合は**均等**へ落とす
-    （ユーザー指定の (a) フォールバック）。7H1 は穴狙いで人気薄を買うため
-    朝の板が埋まるのは実測 53.3% しかない。
-
-    ⚠️ 端数は `allocate_budget` の規則（想定払戻が最小の点）に従って配る。
-       均等割りの切り捨てで捨てていた分（実測 平均613円/レース）も使い切る。
-    """
-    from .stake_allocation import allocate_budget
-
-    if not trio_legs:
-        return {}
-    budget = rank_7h1_trio_budget(n_tf)
-    if budget < unit * len(trio_legs):
-        return {leg: unit for leg in trio_legs}
-    usable = (trio_odds and all(trio_odds.get(leg) for leg in trio_legs))
-    w = ({leg: 1.0 / trio_odds[leg] for leg in trio_legs} if usable
-         else {leg: 1.0 for leg in trio_legs})
-    return allocate_budget(w, budget=budget, unit=unit)
-
-
-def rank_7h1_stakes(n_trio: int, n_tf: int) -> tuple[int, int, int]:
-    """(三連複の1点あたり, 三連単の1点あたり, 合計購入額) を返す。
-
-    **合計は必ず RANK_7H1_BUDGET_CAP 以下**になる。
-
-    🔴 **`RANK_7H1_TF_UNIT` から導出すること**（旧実装は `RANK_7H1_BUDGET_TF`
-    という別枠から割り算していた）。この関数は発走15分前判定が picks_history
-    へ書く**記録側**の金額で、実際に売る**入稿側**（`netkeirin_submit_wt`）は
-    `RANK_7H1_TF_UNIT` を直接使う。2026-08-07〜08-08 の間、記録側が 900円・
-    入稿側が 500円という**二重管理の食い違い**が発生し、Web に出ている実績
-    （ROI・30万+件数）が実際に売っている商品を説明しない状態になっていた。
-    単価を1箇所に集約して再発を防ぐ。
-
-    三連複は残った予算を均等割りする（入稿側は同じ予算をオッズで傾斜配分
-    するため1点あたりは異なるが、**枠の総額と三連単単価は一致する**＝
-    ROI と高額払戻の頻度は記録と商品で揃う）。
-    """
-    uf = RANK_7H1_TF_UNIT if n_tf > 0 else 0
-    # 点数が想定より多い（欠車で組み替わった等）と単価固定では枠を食い破る。
-    # 三連複に最低 100円/点 を残せるところまで 100円ずつ落とす。
-    while uf and uf * n_tf + RANK_7H1_UNIT * max(n_trio, 0) > RANK_7H1_BUDGET_CAP:
-        uf -= RANK_7H1_UNIT
-    ut = rank_7h1_unit(rank_7h1_trio_budget(n_tf, tf_unit=uf), n_trio)
-    total = ut * n_trio + uf * n_tf
-    if total > RANK_7H1_BUDGET_CAP:      # 到達しない想定だが不変条件として守る
-        raise ValueError(f"7H1 の購入額が上限を超えました: {total}円")
-    return ut, uf, total
+    u = unit_stake(n_legs)
+    return u, u * max(n_legs, 0)
 
 
 def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
@@ -1930,10 +1877,15 @@ def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
 
     candidates の各要素に必要なキー:
       `n_entries`(=7) / `gap12`（抜け度） / `bust_prob`（バスト確率） /
-      `legs_trio` / `legs_tf`（買い目。空なら除外）
+      `legs_tf`（買い目。空なら除外）
 
     **選別は `RANK_7H1_BUST_PROB_MIN` の絶対閾値で行う**（日ごとの相対順位ではない）。
     理由は同定数のコメント参照。0件の日があるのは正常（実測で7%の日が0件）。
+
+    ⚠️ 2026-08-15 の三連単一本化で `legs_trio` の条件を落としたが、**母集団は
+       変わらない**。三連複は「プール>=3車」で組め、三連単はそれに加えて
+       「別ラインの先頭が居る」ことを要求する＝三連単が組めるレースでは
+       三連複も必ず組めたため、両方を要求していた旧条件と同値になる。
     """
     elig = [c for c in candidates
             if c.get("n_entries") == RANK_7H1_NE
@@ -1941,7 +1893,7 @@ def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
             and float(c["gap12"]) >= RANK_7H1_GAP_MIN
             and c.get("bust_prob") is not None
             and float(c["bust_prob"]) >= RANK_7H1_BUST_PROB_MIN
-            and c.get("legs_trio") and c.get("legs_tf")]
+            and c.get("legs_tf")]
     elig.sort(key=lambda c: -float(c["bust_prob"]))
     return elig
 

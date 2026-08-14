@@ -578,14 +578,14 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_7C", "", "")
 
-    # 7H1=穴推奨・本命バスト型（2026-08-06導入）:
+    # 7H1=穴推奨・本命バスト型（2026-08-06導入・2026-08-15 三連単一本化）:
     # decisions キー {rk}#7H1（decision=buy）を picks に注入する（slot="seven_7h1"）。
-    # ⚠️ 他ランクと違い **三連単+三連複の2券種**なので `combos` ではなく
-    #    `legs_trio` の有無で購入判定する。
+    # ⚠️ 他ランクと違い買い目が `combos` ではなく `legs_tf` に入っているので、
+    #    購入判定はそちらで行う（一本化前は `legs_trio` を見ていた）。
     for _key, _dec in decisions.items():
         if not _key.endswith("#7H1") or _dec.get("decision") != "buy":
             continue
-        if not _dec.get("legs_trio"):
+        if not _dec.get("legs_tf"):
             continue
         _rk = _key[:-4]
         if not _rk.startswith(dc):
@@ -1267,18 +1267,17 @@ def _main_inner(date):
                 # judge_rank_7h1/_process_rank_7h1_candidates と対。正本は
                 # decisions の {rk}#7H1。返還処理なし。
                 #
-                # ⚠️ **既存6ランクと違い2券種**なので採点式が違う:
-                #   三連複と三連単をそれぞれ判定し、**払戻は合算**して payout に入れる
-                #   （picks_history は1レース1行・ユーザー承認 2026-08-06）。
-                #   券種別の払戻は trio_payout / trifecta_payout に残す。
-                #   三連単が的中したときは三連複も必ず的中する（同じ3車）とは限らない
-                #   ——三連単の3着は総流しで本命ラインを含むが、三連複はプールのみ
-                #   なので **三連単だけ的中する組み合わせが存在する**。両方を独立に見る。
+                # 🔴 **2026-08-15 に三連単一本化**（それ以前は三連複BOXとの2券種で、
+                #    払戻を合算し trio_payout / trifecta_payout の両方に入れていた）。
+                #    購入判定も `legs_trio` から `legs_tf` へ移している。
+                # ⚠️ 一本化前の日を再採点すると**三連複ぶんは計上されない**。
+                #    過去分は `rebuild_7h1_walkforward_pg.py` が同じ新ルールで
+                #    作り直すので、そちらと食い違わせないための意図的な挙動。
                 dec_h1 = decisions.get(rk + "#7H1")
                 if not dec_h1 or dec_h1.get("decision") not in ("buy", "skip"):
                     print(f"[notify_results_wt] 7H1判定記録なし {rk}: 不計上", flush=True)
                     continue
-                is_buy = dec_h1.get("decision") == "buy" and bool(dec_h1.get("legs_trio"))
+                is_buy = dec_h1.get("decision") == "buy" and bool(dec_h1.get("legs_tf"))
                 h1_rows = conn.execute(
                     "SELECT frame_no FROM wt_entries WHERE race_key=? "
                     "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)
@@ -1286,31 +1285,22 @@ def _main_inner(date):
                 h1_order = [int(r[0]) for r in h1_rows]
                 if len(h1_order) < 3:
                     continue
-                h1_top3 = frozenset(h1_order[:3])
-                h1_trio_odds = pm.get(rk, {}).get(("trio", h1_top3), 0)
                 h1_tf_odds = pm.get(rk, {}).get(("trifecta", tuple(h1_order[:3])), 0)
 
                 if is_buy:
-                    legs_trio = [frozenset(int(x) for x in str(t).split("="))
-                                 for t in dec_h1.get("legs_trio") or []]
                     legs_tf = [str(t) for t in dec_h1.get("legs_tf") or []]
-                    u_trio = int(dec_h1.get("stake_trio") or 0)
                     u_tf = int(dec_h1.get("stake_tf") or 0)
-                    hit_trio = h1_top3 in legs_trio
                     hit_tf = "-".join(map(str, h1_order[:3])) in legs_tf
                     # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
-                    h1_pay_trio = h1_trio_odds * u_trio // 100 if hit_trio else 0
                     h1_pay_tf = h1_tf_odds * u_tf // 100 if hit_tf else 0
-                    h1_pay = h1_pay_trio + h1_pay_tf
-                    h1_hit = hit_trio or hit_tf
-                    h1_bet = int(dec_h1.get("bet_amount")
-                                 or (u_trio * len(legs_trio) + u_tf * len(legs_tf)))
-                    h1_n = len(legs_trio) + len(legs_tf)
-                    h1_pred = ("三複:" + ",".join(dec_h1.get("legs_trio") or [])
-                               + " / 三単:" + ",".join(legs_tf))
+                    h1_pay = h1_pay_tf
+                    h1_hit = hit_tf
+                    h1_bet = int(dec_h1.get("bet_amount") or (u_tf * len(legs_tf)))
+                    h1_n = len(legs_tf)
+                    h1_pred = "三単:" + ",".join(legs_tf)
                 else:
                     h1_hit = False
-                    h1_pay = h1_pay_trio = h1_pay_tf = 0
+                    h1_pay = h1_pay_tf = 0
                     h1_bet = 0
                     h1_n = 0
                     h1_pred = "見送り"
@@ -1324,12 +1314,7 @@ def _main_inner(date):
                     except (ValueError, TypeError):
                         pass
                 if is_buy:
-                    if h1_hit:
-                        _kind = ("三複+三単" if h1_pay_trio and h1_pay_tf
-                                 else ("三単" if h1_pay_tf else "三複"))
-                        h1_mark = f"◎ {_kind} ¥{h1_pay:,}"
-                    else:
-                        h1_mark = "×"
+                    h1_mark = f"◎ 三単 ¥{h1_pay:,}" if h1_hit else "×"
                     results_7h1.append(
                         f"[7H1] {venue} {race_no}R {h1_tstr}"
                         f"  実:{'-'.join(map(str, h1_order[:3]))}  {h1_mark}")
@@ -1342,8 +1327,11 @@ def _main_inner(date):
                 #    の docstring が正本）。7H1 はここに券種別の実払戻額を入れていたため、
                 #    同じ列が他ランクと違う意味になり、Web が「✓¥19,780 複¥19,780」と
                 #    同じ額を2度出していた（2026-08-08 是正）。実額は payout に入っている。
+                # 🔴 三連単一本化（2026-08-15）で **trio_payout は常に 0**。
+                #    ここに三連複の確定配当を残すと、買っていない券種の配当が
+                #    Web に出る（買い目は三連単だけなので説明できない数字になる）。
                 history.append((target_date, f"{rk}#7H1", "RANK_7H1", h1_pred, h1_n,
-                                int(h1_hit), h1_pay, h1_trio_odds, h1_tf_odds, h1_bet,
+                                int(h1_hit), h1_pay, 0, h1_tf_odds, h1_bet,
                                 not is_buy, None,
                                 *gap_map.get(rk, (None, None, None)), None))
                 continue

@@ -429,13 +429,10 @@ def _write_paper_candidates(target_date: str) -> None:
     for c in _load((f"wave_picks_wt_{target_date}_s7h1_candidates.json",
                     f"wave_picks_wt_{target_date}_night_s7h1_candidates.json")):
         rk = c.get("race_key")
-        trio = c.get("legs_trio") or []
         tf = c.get("legs_tf") or []
-        if not rk or not trio or not tf:
+        if not rk or not tf:
             continue
-        rows.append((f"{rk}#7H1", "RANK_7H1",
-                     "三複:" + ",".join(trio) + " / 三単:" + ",".join(tf),
-                     None, len(trio) + len(tf)))
+        rows.append((f"{rk}#7H1", "RANK_7H1", "三単:" + ",".join(tf), None, len(tf)))
 
     # 9H1（穴推奨・9車高配当／三連単フォーメーション単一券種・2026-08-08 追加）。
     # 7H1 と同じく朝に bet_amount=0 の暫定行を置き、発走前判定が上書きする。

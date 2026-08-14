@@ -124,14 +124,22 @@ def test_payout_column_differs_from_the_actual_amount():
 
 
 def test_guard_catches_the_original_7h1_shape():
-    """検査が空振りしていないこと（旧 7H1 の形を与えると弾かれる）。"""
+    """検査が空振りしていないこと（旧 7H1 の形を与えると弾かれる）。
+
+    ⚠️ 2026-08-15 の三連単一本化で 7H1 の trio_payout は定数 0 になったため、
+       `h1_trio_odds` はもう存在しない。**同じ形を持つ 7H2**（2券種のまま）で
+       検査が生きていることを確かめる。ここを消すと、AST 解析が
+       「配当ではなく実額を渡している」形を検出できなくなっても気づけない。
+    """
     tree = _tree()
     odds_names = _odds_variable_names(tree)
     # 旧実装は h1_pay_trio / h1_pay_tf（実額）を渡していた
     assert "h1_pay_trio" not in odds_names
     assert "h1_pay_tf" not in odds_names
-    assert "h1_trio_odds" in odds_names
     assert "h1_tf_odds" in odds_names
+    # 2券種ランク（7H2）では券種別のオッズ変数が両方生きている
+    assert "h2_trio_odds" in odds_names
+    assert "h2_tf_odds" in odds_names
 
 
 # ---------------------------------------------------------------------------

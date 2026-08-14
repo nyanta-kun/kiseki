@@ -6,24 +6,22 @@
 レース単位のバスト予測モデルを使うため専用経路を持つ）。本スクリプトは
 その候補に対して、live と同じ盤面フィルタ・採点・記録だけを行う。
 
-## 既存ランクとの違い（採点式）
+## 採点式
 
-7H1 は **唯一の2券種ランク**（三連単フォーメーション + 三連複BOX）。
+🔴 **2026-08-15 に三連単一本化**（それ以前は三連単F + 三連複BOX の2券種で、
+払戻を合算し trio_payout / trifecta_payout の両方へ入れていた）。
 `notify_results_wt.py` の `seven_7h1` 分岐と同じ規則で採点する:
 
-  - 三連複・三連単をそれぞれ独立に判定し、**払戻は合算**して payout に入れる
-    （picks_history は1レース1行・ユーザー承認 2026-08-06）
-  - 券種別の払戻は trio_payout / trifecta_payout に残す
-  - **三連単だけ的中する組み合わせが存在する**（三連単の3着は本命ラインを含む
-    総流しだが、三連複はプールのみ）ので、両方を独立に見る
+  - 三連単フォーメーションのみ。`trio_payout` は常に 0
+  - `trifecta_payout` は **100円あたりの確定配当**（賭け金非依存の生値）
   - 返還処理なし（実精算方式）
 
 ## 欠車の扱い
 
 live の `judge_rank_7h1()` と同一にする:
-  - 三連単の**1着固定車が盤面に無ければレース無効**（skip）
+  - **1着固定車が盤面に無ければレース無効**（skip）
   - それ以外の欠車は**その目だけを落として購入継続**（点数が減る）
-  - 落とした結果どちらかの券種が全滅したら skip
+  - 落とした結果 買い目が全滅したら skip
   - 残った点数で `rank_7h1_stakes()` を引き直す（1点100円未満なら skip）
 
 ## ⚠️ 必ず vintage モデルで流すこと
@@ -55,7 +53,7 @@ from scripts.build_7h1_candidates import build as build_candidates
 from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
-from src.strategy_wt import RANK_7H1_TF_UNIT, rank_7h1_trio_stakes
+from src.strategy_wt import rank_7h1_stakes
 
 RANK = "RANK_7H1"
 SUFFIX = "#7H1"
@@ -129,23 +127,22 @@ def build_rows(date_from: str, date_to: str, *, eval_model: str, win_model: str,
         return []
 
     race_keys = [c["race_key"] for c in cands]
-    trio_bd, tf_bd = _load_boards(race_keys)
+    _trio_bd, tf_bd = _load_boards(race_keys)   # 三連単一本化で trio 側は未使用
     fins = _load_finishes(race_keys)
     pm = _load_payouts_wt(race_keys)
 
     rows: list[dict] = []
     for c in cands:
         rk = c["race_key"]
-        trio_lookup, tf_lookup = trio_bd.get(rk), tf_bd.get(rk)
-        if not trio_lookup or not tf_lookup:
+        tf_lookup = tf_bd.get(rk)
+        if not tf_lookup:
             continue                      # 盤面が取れていない＝live なら「不明」で再試行
         order = fins.get(rk)
         if not order:
             continue                      # 3着まで確定していない
 
-        legs_trio_all = list(c.get("legs_trio") or [])
         legs_tf_all = list(c.get("legs_tf") or [])
-        if not legs_trio_all or not legs_tf_all:
+        if not legs_tf_all:
             continue
 
         # judge_rank_7h1 と同一: 1着固定車が盤面から消えていたらレース無効
@@ -153,41 +150,31 @@ def build_rows(date_from: str, date_to: str, *, eval_model: str, win_model: str,
         if not any(k[0] == head for k in tf_lookup):
             continue
 
-        legs_trio = [t for t in legs_trio_all if _combo_key(t, False) in trio_lookup]
         legs_tf = [t for t in legs_tf_all if _combo_key(t, True) in tf_lookup]
-        if not legs_trio or not legs_tf:
+        if not legs_tf:
             continue                      # 欠車で買い目が全滅
 
-        # 三連単は 1点 RANK_7H1_TF_UNIT 円の均等、残りを三連複へ回し
-        # **オッズで払戻が等しくなるよう配分**する（2026-08-07 ユーザー指定）。
-        trio_keys = [_combo_key(t, False) for t in legs_trio]
-        u_tf = RANK_7H1_TF_UNIT
-        trio_stakes = rank_7h1_trio_stakes(
-            trio_keys, {k: trio_lookup[k] for k in trio_keys}, len(legs_tf))
-        bet = sum(trio_stakes.values()) + u_tf * len(legs_tf)
+        u_tf, bet = rank_7h1_stakes(len(legs_tf))
 
-        top3 = frozenset(order[:3])
-        hit_trio = top3 in {_combo_key(t, False) for t in legs_trio}
         hit_tf = "-".join(map(str, order[:3])) in legs_tf
         # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
-        trio_odds = pm.get(rk, {}).get(("trio", top3), 0)
         tf_odds = pm.get(rk, {}).get(("trifecta", tuple(order[:3])), 0)
-        pay_trio = trio_odds * trio_stakes[top3] // 100 if hit_trio else 0
         pay_tf = tf_odds * u_tf // 100 if hit_tf else 0
 
         rows.append({
             "race_date": c["race_date"],
             "race_key": rk + SUFFIX,
             "rank": RANK,
-            "pred_combo": ("三複:" + ",".join(legs_trio) + " / 三単:" + ",".join(legs_tf)),
-            "n_combos": len(legs_trio) + len(legs_tf),
-            "hit": int(hit_trio or hit_tf),
-            "payout": int(pay_trio + pay_tf),
-            # ⚠️ trio_payout / trifecta_payout は **全ランク共通で「100円あたりの確定配当」**
+            "pred_combo": "三単:" + ",".join(legs_tf),
+            "n_combos": len(legs_tf),
+            "hit": int(hit_tf),
+            "payout": int(pay_tf),
+            # ⚠️ trifecta_payout は **全ランク共通で「100円あたりの確定配当」**
             #    （賭け金非依存の生値）。ここに実払戻額を入れていたため、同じ列が
             #    他ランクと違う意味になり Web が実額と配当を混ぜて表示していた
             #    （2026-08-08 是正・notify_results_wt 側と対）。実額は payout に入る。
-            "trio_payout": int(trio_odds),
+            # 🔴 三連単一本化（2026-08-15）で trio_payout は常に 0。
+            "trio_payout": 0,
             "trifecta_payout": int(tf_odds),
             "bet_amount": int(bet),
         })
