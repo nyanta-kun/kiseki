@@ -175,7 +175,7 @@ def test_daily_select_does_not_dedupe_against_other_ranks():
 # ── netkeirin 入稿の優先順位・賭け金解決 ──────────────────────────────
 
 def test_netkeirin_priority_order():
-    """優先順位 7H1 > 7H2 > 7SS > 7S > 7A > **7C > 7T1 > 7B**。
+    """優先順位 **7H2 > 7S > 7C > 7T1 > 7B > 7H1**。
 
     RANK_ORDER は dict の定義順なので、順序が入れ替わると黙って優先度が変わる。
 
@@ -193,7 +193,11 @@ def test_netkeirin_priority_order():
     # 7T1 は表示的中3%の高配当商品で、**看板を 7C と取り合う**ため、重複したレースは
     # 的中体験を担う 7C に譲る。7B は準決勝限定なので 7T1 とは母集団が排他。
     # 2026-08-14: 7SS/7A を 7S へ統合、9H1/9C も定義順に含まれる。
-    assert order == ["7H1", "7H2", "7S", "7C", "7T1", "7B"]
+    # 2026-08-15: **7H1 を最下位へ**。三連単一本化（三連複BOX分を三連単へ振り直す）の
+    # 実装・検証が終わるまで `enabled=false` で止めてあり、有効化しても他ランクの
+    # 母集団を奪わない位置に置く。重なり実測（2026-06以降・7H1 219件=3.2件/日）は
+    # 7S側 7.2% / 7C側 1.7% / 7T1側 5.3%。
+    assert order == ["7H2", "7S", "7C", "7T1", "7B", "7H1"]
 
 
 def test_netkeirin_priority_order_9car():
@@ -472,7 +476,11 @@ def test_documented_priority_order_matches_rank_configs():
         #    `7H1 > 7SS` のような**隣接2ランクの並び**は成立しなくなり、
         #    このテストは「どのファイルにも表記が無い」＝照合0件で落ちる
         #    （2026-08-10 に 7H2 を挿入して実際に踏んだ）。
-        if "7H1 > " not in text:
+        # 🔴 目印も**実装から導く**こと。ここを `"7H1 > "` と直書きしていたため、
+        #    2026-08-15 に 7H1 を最下位へ移した時点で先頭ランクが 7H2 に変わり、
+        #    どのファイルもマッチせず照合0件になった（同じ罠を二度踏んだ）。
+        marker = f"{seven[0]} > "
+        if marker not in text:
             continue
         checked += 1
         assert expected in text, (
