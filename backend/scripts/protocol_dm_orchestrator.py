@@ -194,11 +194,19 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
             results["total_failed"] += failed
             log(f"    CC={cc}: saved={saved} skipped={skipped} failed={failed}")
 
-        # 全体 import を1回だけ実行
-        if not no_import and results["total_saved"] > 0:
-            log("  Running importer (all)")
+        # import を1回だけ実行。
+        # ⚠️ **`total_saved > 0` を条件にしてはいけない。**
+        # DM ファイルは出馬表（race_entries）より先に取れることがあり、その回の
+        # POST は 0 件で終わる。次の回は saved=0 になるため、旧実装では
+        # 「ファイルは在るのに DB へ入らない」状態が恒久化した
+        # （2026-08-15/16 が 0%・docs/jra_rebuild_2026_08.md 4.4）。
+        # 対象日を明示して毎回 recheck する。--all（全ストア走査・約14分）は使わない。
+        if not no_import and by_date:
+            recheck = ",".join(sorted(by_date.keys()))
+            log(f"  Running importer (recheck-dates {recheck})")
             cmd = ["ssh", "windows-vm",
-                   "C:\\Python312-32\\python.exe C:\\\\kiseki\\\\windows-agent\\\\jvnext_dm_importer.py --all"]
+                   "C:\\Python312-32\\python.exe C:\\\\kiseki\\\\windows-agent\\\\jvnext_dm_importer.py "
+                   f"--recheck-dates {recheck}"]
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout * 2)
                 # 完了行を抽出
@@ -317,7 +325,39 @@ def main() -> int:
     log("=" * 60)
     log(f"OVERALL: saved={results['total_saved']} "
         f"skipped={results['total_skipped']} failed={results['total_failed']}")
-    return 0
+
+    return report_unrecovered(args.courses.split(",") if args.courses else [])
+
+
+def report_unrecovered(courses: list[str]) -> int:
+    """**終了済みの開催日**で DM がまだ欠けているものを警告する。
+
+    Why:
+      `saved` / `skipped` はファイル取得の数であって DB 反映の数ではない。
+      2026-08-09 は 36 レース全ての DM が DB に入らないまま 5 日間放置され、
+      その間 `OVERALL: saved=0 ... failed=0` が正常終了として記録され続けた。
+      **総合指数 v27 は gain の 71.8% を DM 2列に依存しており、欠けた日は
+      指数1位馬の勝率が 28.1%→22.8% に落ちる**（docs/jra_rebuild_2026_08.md 4.2）。
+
+      未来日の欠損は「JV-Next がまだ公開していない」だけのことが多いので
+      警告にしない。**過去日の欠損だけが確実な損失**である。
+    """
+    since = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+    until = (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    try:
+        stale = query_missing_dates(courses, since, until)
+    except Exception as e:  # 監視のための問い合わせで本処理を落とさない
+        log(f"WARNING: 欠損チェックに失敗: {e}")
+        return 0
+    if not stale:
+        log("DM check: 過去30日の開催日に DM 欠損なし")
+        return 0
+    log(f"WARNING: DM MISSING (past) — 終了済みの {len(stale)} 日で DM が入っていません")
+    for t in stale:
+        log(f"  {t['date']} courses={t['courses']}")
+    log("  回収: ssh windows-vm \"C:\\Python312-32\\python.exe "
+        "C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates <日付>\"")
+    return 1
 
 
 if __name__ == "__main__":
