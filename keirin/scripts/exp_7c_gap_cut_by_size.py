@@ -14,7 +14,13 @@
 ## 比較する2つの買い方（同一母集団・同一予算）
 
     総流し   : 相手を削らず `rank_7c_select_legs` の結果すべて（4〜5点）
-    落差カット: `rank_7c_cut_legs_by_gap` の結果（1〜5点）＝**現行の本番**
+    落差カット: `rank_7c_cut_legs_by_gap` の結果（1〜5点）
+
+🔴 **カットは必ず `legs_floor=0` で呼ぶこと。** 本検証の結論を受けて
+   `RANK_7C_TRIO_LEGS_FLOOR`（既定2）が関数の中へ入ったので、既定のまま呼ぶと
+   「カットした結果」が既に下限適用後になり、**比較の基準（＝素のカット）が
+   消えて全方針が同じ数字になる**。ここは下限の効果そのものを測る場所なので、
+   常に素の挙動を測り、下限は呼び出し側（②の掃引）で掛ける。
 
 母集団は本番と同じ 7C 三連複側:
   `rank_7c_daily_select` の条件（p3_sum_top2 >= RANK_7C_P3_SUM_MIN ∧
@@ -24,7 +30,7 @@
 
 ## 賭け金
 
-1レース `RACE_BUDGET` を点数で等分（`unit_stake`）。**点数が変われば単価も変わる**ので、
+1レース1万円を点数で等分（`unit_stake`）。**点数が変われば単価も変わる**ので、
 1点になったレースも投資額は同じ1万円。ここを均等単価にすると「点数を減らすと
 投資が減ってROIが良く見える」という偽の改善が出る。
 
@@ -47,7 +53,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from src.strategy_wt import (  # noqa: E402
-    RACE_BUDGET,
     RANK_7C_LEGS_MIN,
     RANK_7C_P3_SUM_MIN,
     RANK_7C_TRIO_GAP_MIN,
@@ -134,7 +139,7 @@ def main() -> int:
             lambda: {"n": 0, "cut_bet": 0, "cut_pay": 0, "cut_hit": 0,
                      "full_bet": 0, "full_pay": 0, "full_hit": 0})
         for r in pop:
-            cut = rank_7c_cut_legs_by_gap(r["legs"], r["p3"], gap_min=gap)
+            cut = rank_7c_cut_legs_by_gap(r["legs"], r["p3"], gap_min=gap, legs_floor=0)
             k = len(cut)
             b = by_k[k]
             b["n"] += 1
@@ -153,9 +158,6 @@ def main() -> int:
             fr = b["full_pay"] / b["full_bet"] if b["full_bet"] else 0
             print(f"{k}点{'':<6}{n:>6}{n/len(pop):>7.1%} │"
                   f"{b['cut_hit']/n:>12.1%}{cr:>8.1%} │{b['full_hit']/n:>13.1%}{fr:>8.1%} │"
-                  f"{cr - fr:>+8.1f}pt" if False else
-                  f"{k}点{'':<6}{n:>6}{n/len(pop):>7.1%} │"
-                  f"{b['cut_hit']/n:>12.1%}{cr:>8.1%} │{b['full_hit']/n:>13.1%}{fr:>8.1%} │"
                   f"{(cr - fr) * 100:>+7.1f}pt")
 
         # ② 「k点以下なら総流しに戻す」下限を掃引したときの全体成績
@@ -164,7 +166,7 @@ def main() -> int:
             tot = {"n": 0, "bet": 0, "pay": 0, "hit": 0}
             win = {"sweep": {"bet": 0, "pay": 0}, "confirm": {"bet": 0, "pay": 0}}
             for r in pop:
-                cut = rank_7c_cut_legs_by_gap(r["legs"], r["p3"], gap_min=gap)
+                cut = rank_7c_cut_legs_by_gap(r["legs"], r["p3"], gap_min=gap, legs_floor=0)
                 legs = r["legs"] if len(cut) <= floor else cut
                 bet, pay, hit = _settle(r, legs)
                 tot["n"] += 1
