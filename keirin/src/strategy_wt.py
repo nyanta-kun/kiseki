@@ -1307,6 +1307,50 @@ def rank_7ss_daily_select(candidates: list[dict]) -> list[dict]:
     return sorted(pool, key=lambda c: c.get("entropy", 0.0))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# RANK_7S への統合（2026-08-14・ユーザー判断）
+#
+# 7SS / 7S / 7A は**買い目構造が完全に同一**（三連複 軸2車+5点流し）で、違うのは
+# ゲートの通り方だけだった。picks_history の全live記録（n=7,461・32ヶ月）では
+#
+#     7SS ROI 79.0% / 7S 79.7% / 7A 85.8%
+#
+# と**設計と逆順**（境界ランクの 7A が最良）で、差はいずれも有意でなく
+# （7A −(7SS+7S) = +6.3pt・95%CI [-0.7, +13.5]）、設計どおりの順序になった月は
+# 32ヶ月中7（偶然なら5.3）。払戻中央値・ガミ率・2万円超率まで一致しており、
+# **商品としても3つは同じもの**だった。3つに分けて見せる根拠が無いので1本化する。
+#
+# 🔴 **選別は変えない**。3つは互いに排他:
+#     7S  : axis_sum 合格 ∧ entropy 合格
+#     7A  : axis_sum 不合格 ∧ entropy 合格
+#     7SS : axis_sum 合格 ∧ entropy 不合格 ∧ 軸2車が同一ライン
+#   したがって統合は**和集合＝ラベルの付け替え**で、買うレースは1件も増減しない。
+#   ゲートの意味（どちらが落ちたか）は失われるが、それは ROI・的中率のどちらとも
+#   相関していないことを上記で確認済み。
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def rank_7s_merged_daily_select(
+    candidates: list[dict], top2_threshold: float | None = None,
+) -> list[dict]:
+    """統合後の 7S の選出＝旧 7S ∪ 7A ∪ 7SS。
+
+    top2_threshold: 7A に掛ける低配当見送りゲート（STEP1C）。本番と同じ値を渡すこと。
+
+    🔴 **3つの選別関数をそのまま呼ぶ**（条件を書き直さない）。書き直すと
+       「片方だけ直る」を作れる。排他性はここで検算する。
+    """
+    picked = (rank_7s_daily_select(candidates)
+              + rank_7a_daily_select(candidates, top2_threshold)
+              + rank_7ss_daily_select(candidates))
+    keys = [c.get("race_key") for c in picked if c.get("race_key") is not None]
+    if len(keys) != len(set(keys)):
+        dup = sorted({k for k in keys if keys.count(k) > 1})
+        raise AssertionError(
+            "7S/7A/7SS が同じレースを選んだ（排他のはず）: " + ", ".join(map(str, dup)))
+    return sorted(picked, key=lambda c: c["axis_sum"])
+
+
 def rank_9a_daily_select(candidates: list[dict]) -> list[dict]:
     """9Aの選出: S9の2ゲート(entropy/mark3)のうちちょうど1つだけ不合格の候補。
 
