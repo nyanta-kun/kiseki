@@ -208,7 +208,8 @@ netkeirin の分析支援ツール「予想家成績状況」
 | 日別（`list_detail=day`） | `keirin.netkeirin_sales_daily` | 売上タブ |
 | レース別（`list_detail=race`） | `keirin.netkeirin_sales_race` | 分析タブ |
 
-- 取得は `scripts/scrape_netkeirin_sales.sh`（**VPS cron 毎日10:30**・引数なしで両方）。
+- 取得は `scripts/scrape_netkeirin_sales.sh`（**VPS cron 毎日9:40**・引数なしで両方）。
+  サイト側の集計確定は **9:30 頃**（2026-08-14 実測・それまで 10:30 に取っていた）。
   「通常集計日はレース日の翌日」「売上は速報値」のため毎回 UPSERT で上書きする
 - **列構成は日別とレース別で完全に同一**。違うのは集計IDの桁数だけ（8桁 / 12桁）なので、
   振り分けを間違えても全列が埋まり値も自然に見える。`tests/test_scrape_netkeirin_sales.py`
