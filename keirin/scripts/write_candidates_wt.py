@@ -410,6 +410,29 @@ def _write_paper_candidates(target_date: str) -> None:
             pred = f"{axis1}={axis2}-" + ",".join(str(x) for x in legs)
         rows.append((f"{rk}#7C", "RANK_7C", pred, None, 0))
 
+    # 7T1（三連単・高配当枠・2026-08-15 追加）。
+    #
+    # 【なぜ必要だったか】7T1 は **発走前判定（notify_prerace_wt）を持たない**
+    # 唯一のランクで、picks_history の行は翌朝08:30の
+    # `reconcile_walkforward_tail.sh` が作る。`tail_windows()` は当日を含めない
+    # 設計（当日は結果が無く再構築できないため）なので、**7T1 だけ当日中ずっと
+    # Web に出ない**状態だった（2026-08-15 にユーザー指摘で発覚）。
+    #
+    # 🔴 買い目は候補時点で確定しており、**入稿もその買い目をそのまま送る**
+    #    （`netkeirin_submit_wt` の `formation_bet_7t1`）。したがってここで書く
+    #    pred_combo は実際に売る商品と一致する。表記は
+    #    `backfill_7t1_rank_wt.py` と**同一規約**（`三単:` + 着順つきの目）にすること。
+    # ⚠️ bet_amount は他ランクと同じく 0 のまま（下の INSERT が固定で 0 を入れる）。
+    #    7T1 には発走前判定が無いので当日中は 0 のままで、翌朝の再構築が
+    #    実際の投資額・的中で上書きする。
+    for c in _load((f"wave_picks_wt_{target_date}_s7t1_candidates.json",
+                    f"wave_picks_wt_{target_date}_night_s7t1_candidates.json")):
+        rk = c.get("race_key")
+        legs = [str(x) for x in (c.get("legs") or [])]
+        if not rk or not legs:
+            continue
+        rows.append((f"{rk}#7T1", "RANK_7T1", "三単:" + ",".join(legs), None, len(legs)))
+
     # 7H1（穴推奨・本命バスト型／唯一の2券種ランク・2026-08-07 追加）。
     #
     # 【なぜ必要だったか】7H1 の picks_history 行は発走15分前の判定
