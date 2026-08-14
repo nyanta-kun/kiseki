@@ -112,4 +112,5 @@ def test_候補ファイルが無くても他ランクを壊さない(env):
         encoding="utf-8")
     wc._write_paper_candidates(DATE)
     assert not _h1_rows(captured)
-    assert [p for _, p in captured if len(p) > 2 and p[2] == "RANK_7A"], "他ランクまで壊れている"
+    # 2026-08-14: 7A は RANK_7S へ統合したので候補行も RANK_7S で書かれる。
+    assert [p for _, p in captured if len(p) > 2 and p[2] == "RANK_7S"], "他ランクまで壊れている"

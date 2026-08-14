@@ -2294,7 +2294,7 @@ def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
 #   複数ランクの行を持てる**（実データでも 7H1 と 7B が共存している）。したがって
 #   **候補生成・記録の段階では重複を排除しない**（ユーザー判断: 重なりは気にしない）。
 #   重複排除は **netkeirin 入稿でのみ**行う（1レース1商品という外部仕様のため）。
-#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7H2 > 7SS > 7S > 7A > 7C > 7T1 > 7B）。
+#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H1 > 7H2 > 7S > 7C > 7T1 > 7B）。
 #   実測の重なりは 2.4〜3.2件/日で、入稿に残る 7C は 16.7件/日。
 #
 # memory: keirin_base_model_two_axis_2026_08_07

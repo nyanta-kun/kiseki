@@ -227,7 +227,8 @@ def test_paper_suffixes_include_legacy_hash_suffix_ranks():
     # "#7SS" は現行ランクのsuffixになったため legacy 側からは外れた。
     # "#7H3" は 2026-08-13 全廃だが suffix=None で登録している（行を削除し再生成
     # 経路も消したため保護不要）。したがってここには現れない。
-    assert legacy_suffixed == {"#7S1", "#6S1", "#9S", "#9A"}
+    # 2026-08-14: 7SS/7A も suffix つきで台帳入り（RANK_7S へ統合）。
+    assert legacy_suffixed == {"#7S1", "#6S1", "#9S", "#9A", "#7SS", "#7A"}
     for suffix in legacy_suffixed:
         assert suffix in nr._PAPER_SUFFIXES
 
@@ -245,7 +246,7 @@ def test_paper_suffixes_has_no_unexpected_extra_entries():
     #    （実際に入稿・採点された記録なので消さない）なので、上書き保護の網も
     #    残す必要がある。7H3 は行ごと削除したので suffix=None で網に入らない。
     expected = ({spec.suffix for spec in sw.CURRENT_PAPER_RANKS}
-                | {"#7S1", "#6S1", "#9S", "#9A"})
+                | {"#7S1", "#6S1", "#9S", "#9A", "#7SS", "#7A"})
     assert set(nr._PAPER_SUFFIXES) == expected
     # tuple 側に重複が無いこと（集合比較だけでは検出できない）
     assert len(nr._PAPER_SUFFIXES) == len(set(nr._PAPER_SUFFIXES)) == len(expected)
@@ -382,8 +383,10 @@ def test_regression_merged_ranks_absent_everywhere():
     # 保護対象」として意図的に含める設計。#7S1/#6S1 と同じ扱い）
     assert "#7SS" in nr._PAPER_SUFFIXES
     assert "#7A" in nr._PAPER_SUFFIXES
-    assert any(r[1] == "RANK_7SS" for r in sme.PAPER_RANKS)
-    assert "RANK_7SS" in lr.RANKS
+    for name in ("RANK_7SS", "RANK_7A"):
+        assert not any(r[1] == name for r in sme.PAPER_RANKS), f'{name} が save_model_eval に残存'
+        assert name not in lr.RANKS, f'{name} が live_report に残存'
+    assert any(r[1] == "RANK_7S" for r in sme.PAPER_RANKS)
 
 
 def test_regression_seven_s1_absent_everywhere():
