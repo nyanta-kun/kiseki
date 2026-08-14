@@ -242,18 +242,9 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
             ★
           </span>
         )}
-        {/* 🔴 出自。`rank_key` だけ見ても分からない——看板の穴埋めは 7A/9A を
-            名乗って入るため、承認者には「これはランクのゲートを通っていない商品だ」
-            と伝わらない。穴埋めは実測で表示的中率14.9%・回収0.333（ゲート通過は
-            29.0%・0.702）なので、承認の重みが違う。 */}
-        {p.origin === "marquee_fill" && (
-          <span
-            className="rounded bg-orange-100 px-1.5 py-0.5 text-xs text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-            title="看板レースの取りこぼしを埋めた入稿。ランクのゲートは通っていない"
-          >
-            穴埋め
-          </span>
-        )}
+        {/* 🔴 「穴埋め」バッジは 2026-08-14 に削除（ユーザー要望・一覧と揃える）。
+            出自は API の `origin` に残るので、分析（/keirin/stats の分析タブ）では
+            引き続き「看板の穴埋め」として区別できる。 */}
         {p.origin === "manual" && (
           <span className="rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-800 dark:bg-purple-900 dark:text-purple-200">
             手動
