@@ -10,6 +10,10 @@
 特徴量は v26 と同一の 34 列（`composite.py::_V26_FEATURE_NAMES` と同順）。
 オッズ・人気は使わない（発走前に確定している情報のみ）。
 
+サブ指数の取得元は `composite.SUBINDEX_SOURCE_SQL`（`version >= SUBINDEX_MIN_VERSION`
+のうち各馬の最大版）。**特定の版に固定してはいけない** — 本番が版を上げた瞬間に
+学習データが静かに凍結する（docs/jra_rebuild_2026_08.md 4.7）。
+
 出力:
   models/jra_out_rate_lgb.txt        - 本番モデル（全期間 refit）
   models/jra_out_rate_metrics.json   - honest test メトリクス + 閾値別の足切り性能
@@ -42,7 +46,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import psycopg2  # noqa: E402
 
-from src.indices.composite import OUT_PROB_FEATURE_NAMES  # noqa: E402
+from src.indices.composite import OUT_PROB_FEATURE_NAMES, SUBINDEX_SOURCE_SQL  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("train_jra_out_rate")
@@ -52,7 +56,8 @@ MODELS_DIR.mkdir(exist_ok=True)
 MODEL_PATH = MODELS_DIR / "jra_out_rate_lgb.txt"
 METRICS_PATH = MODELS_DIR / "jra_out_rate_metrics.json"
 
-FETCH_SQL = """
+FETCH_SQL = f"""
+WITH ci AS ({SUBINDEX_SOURCE_SQL})
 SELECT
     r.date, ci.race_id, ci.horse_id,
     ci.speed_index, ci.last_3f_index, ci.course_aptitude, ci.position_advantage,
@@ -64,12 +69,11 @@ SELECT
     re.frame_number, re.horse_age, re.weight_carried, re.horse_weight,
     re.jvan_time_dm, re.jvan_battle_dm,
     rr.weight_change, rr.abnormality_code, rr.finish_position
-FROM keiba.calculated_indices ci
+FROM ci
 JOIN keiba.races r         ON r.id = ci.race_id
 JOIN keiba.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 LEFT JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
-WHERE ci.version = 26
-  AND r.date >= %(start)s AND r.date <= %(end)s
+WHERE r.date >= %(start)s AND r.date <= %(end)s
   AND r.course IN ('01','02','03','04','05','06','07','08','09','10')
 """
 

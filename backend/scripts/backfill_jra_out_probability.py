@@ -33,7 +33,7 @@ import pandas as pd  # noqa: E402
 import psycopg2  # noqa: E402
 from psycopg2.extras import execute_values  # noqa: E402
 
-from src.indices.composite import OUT_PROB_FEATURE_NAMES  # noqa: E402
+from src.indices.composite import COMPOSITE_VERSION, OUT_PROB_FEATURE_NAMES  # noqa: E402
 from scripts.train_jra_out_rate import FETCH_SQL, featurize  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -41,13 +41,15 @@ logger = logging.getLogger("backfill_out_prob")
 
 MODEL_PATH = _root / "models" / "jra_out_rate_lgb.txt"
 
-UPDATE_SQL = """
+# 書き込み先は**現行版の行**。旧実装は `version = 26` 固定で、本番が v27 へ上がった
+# あとは 1 行も更新しないまま正常終了していた（docs/jra_rebuild_2026_08.md 4.7）。
+UPDATE_SQL = f"""
 UPDATE keiba.calculated_indices AS ci
 SET out_probability = v.out_probability
 FROM (VALUES %s) AS v(race_id, horse_id, out_probability)
 WHERE ci.race_id = v.race_id
   AND ci.horse_id = v.horse_id
-  AND ci.version = 26
+  AND ci.version = {COMPOSITE_VERSION}
 """
 
 

@@ -282,6 +282,28 @@ _OUT_PROB_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "jra_out
 # 着外率ヘッドの特徴量（v26 と同一の 34 列・同順）
 OUT_PROB_FEATURE_NAMES: list[str] = list(_V26_FEATURE_NAMES)
 
+# 学習・検証がサブ指数（17列）を読み出してよい `calculated_indices.version` の下限。
+#
+# 🔴 **`version = COMPOSITE_VERSION` で引いてはいけないし、特定の版に固定してもいけない。**
+#   - 固定すると（旧実装の `version = 26`）本番が版を上げた瞬間にその版の行が増えなくなり、
+#     **学習データが静かに凍結する**。実際 v27 移行後、学習ソースは 2026-08-02 で
+#     止まったまま何週間も気付かれなかった（docs/jra_rebuild_2026_08.md 4.7）。
+#   - 現行版に追従させると、版を上げた直後はバックフィル前で行が無く学習が 0 件で落ちる。
+#
+# サブ指数は v26 以降不変（v27 で変わったのは合成部だけ。`inference_v27.py` も
+# v26 行のサブ指数をそのまま流用している）。したがって
+# **(race_id, horse_id) ごとに「この下限以上で最大の版」を取る**のが正しい。
+SUBINDEX_MIN_VERSION = 26
+
+# サブ指数を版に依らず引くための共通 SQL 断片。
+# `DISTINCT ON` で (race_id, horse_id) ごとに最大版の 1 行だけを残す。
+SUBINDEX_SOURCE_SQL = f"""
+SELECT DISTINCT ON (race_id, horse_id) *
+FROM keiba.calculated_indices
+WHERE version >= {SUBINDEX_MIN_VERSION}
+ORDER BY race_id, horse_id, version DESC
+"""
+
 # Web の足切り（グレーアウト）閾値。この値以上の着外率の馬を「足切り候補」とする。
 OUT_PROB_CUTOFF = 0.80
 
@@ -998,20 +1020,45 @@ class CompositeIndexCalculator:
     async def _get_weight_change_map(
         self, race_id: int, horse_ids: list[int]
     ) -> dict[int, int | None]:
-        """過去 race_results から馬体重増減を取得（前走の値）。"""
+        """当該レースの馬体重増減（前走比）を取得する。
+
+        🔴 **`race_entries` を先に見ること。** `race_results` はレース確定後にしか
+        存在しないため、そこだけを読むと**発走前は必ず NaN** になる。学習側は
+        `race_results.weight_change` を読む（＝常に埋まっている）ので、
+        `weight_change` は「学習では効く / 配信では常に欠損」という
+        train/serve 不整合になっていた（docs/jra_rebuild_2026_08.md 4.6）。
+
+        `race_entries.weight_change` は 0B11（速報馬体重・発走の約1時間前）と
+        週次の蓄積系取込の両方で埋まる。両表に値がある 70,466 行で**差分ゼロ**を
+        確認済みなので、置き換えても学習時の分布は変わらない。
+        """
         from ..db.models import RaceResult
         if not horse_ids:
             return {}
-        # 当該レース自体の race_results.weight_change が入っていれば使う
         rows = (
             await self.db.execute(
-                select(RaceResult.horse_id, RaceResult.weight_change).where(
-                    RaceResult.race_id == race_id,
-                    RaceResult.horse_id.in_(horse_ids),
+                select(RaceEntry.horse_id, RaceEntry.weight_change).where(
+                    RaceEntry.race_id == race_id,
+                    RaceEntry.horse_id.in_(horse_ids),
                 )
             )
         ).all()
-        return {hid: wc for hid, wc in rows}
+        result: dict[int, int | None] = {hid: wc for hid, wc in rows if wc is not None}
+        missing = [hid for hid in horse_ids if hid not in result]
+        if not missing:
+            return result
+        # 古いデータ等で race_entries 側が空の場合のみ race_results を見る
+        fallback = (
+            await self.db.execute(
+                select(RaceResult.horse_id, RaceResult.weight_change).where(
+                    RaceResult.race_id == race_id,
+                    RaceResult.horse_id.in_(missing),
+                )
+            )
+        ).all()
+        for hid, wc in fallback:
+            result[hid] = wc
+        return result
 
     async def _bulk_upsert_for_race(self, race_id: int, results: list[dict]) -> None:
         """レース全馬分を一括 upsert する（バックフィル高速化用）。
