@@ -71,7 +71,7 @@ from ..indices.buy_signal import (
     chihou_select_place_picks,
 )
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
-from .chihou_odds_query import LATEST_ODDS_SQL
+from .chihou_odds_query import latest_odds_sql
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ async def snapshot_place_picks(
 
     race_ids = [r.id for r in targets]
     odds_rows = await db.execute(
-        sql_text(LATEST_ODDS_SQL.format(bet_types="'win', 'place'")),
+        sql_text(latest_odds_sql(["win", "place"])),
         {"race_ids": race_ids},
     )
     win_by_race: dict[int, dict[int, float]] = defaultdict(dict)

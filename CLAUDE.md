@@ -1499,7 +1499,8 @@ ChihouSweetSpotResponse {
 **日中ユーザーに提示された指数は DB に残らない**。そこで発走前に撮って保存する。
 
 - 本体: `backend/src/services/chihou_place_pick_log.py`
-- cron: `scripts/chihou_pick_snapshot_trigger.sh`（**毎分**）/ `chihou_pick_settle_trigger.sh`（日次 23:30 JST）
+- cron: `scripts/chihou_pick_snapshot_trigger.sh`（**毎分**）/ `chihou_pick_settle_trigger.sh`（`30 23 * * *`）
+  - ⚠️ **VPS の cron は JST で動く**（`timedatectl` 実測）。UTC のつもりで書くと 9 時間ずれる
 - 集計: `backend/scripts/chihou_pick_log_report.py --start --end`
 - 🔴 **発走時刻を過ぎたレースは撮らない**（撮ると締切間際の資金移動が混ざり look-ahead になる）。
   撮り逃しは記録から欠けるが、欠けている方が安全。テストで固定してある
@@ -1508,6 +1509,11 @@ ChihouSweetSpotResponse {
   推奨馬だけでなく**全出走馬**の指数を残す（別案の事後評価は上書き後には不可能）
 - 判定は必ず本番関数（`chihou_is_place_pick` / `chihou_select_place_picks`）を呼ぶ。
   閾値は `rule_version` として毎行に埋まるので、変更しても世代が自動で分かれる
+- 🔴 **オッズ SQL は `latest_odds_sql(["win", "place"])` で組み立てること**。
+  `VALUES ('win', 'place')` は 2 行ではなく**2列の1行**になり、`AS bt(bet_type)` は
+  先頭列にしか名前を付けないため**複勝が丸ごと落ちる**。2026-08-14 まで
+  `/featured-place` の `place_odds` がずっと NULL だったのがこれ（エラーにならないので
+  「複勝オッズ未取得の日」に見えて気付けない）
 
 詳細: `docs/chihou_rebuild_2026_08.md` 16章
 

@@ -1132,21 +1132,45 @@ CLAUDE.md が「tier 較正はスケールに比例させること」と警告�
 オッズの到着は間に合う（8/13 実測: **T-6分までに単勝オッズがあるレース 44/45**、
 平均 9.7 頭ぶん）。残り1レースは `no_odds` として記録される。
 
-### 16.5 デプロイ手順（未実施）
+### 16.4b 初回稼働で見つけた既存バグ — 複勝オッズが一度も取れていなかった
+
+初回スナップショット（2026-08-14 17:44 / 大井5R）で**全馬の `pre_place_odds` が空**だった。
+原因は共有していたオッズ SQL の書き方:
+
+```sql
+CROSS JOIN (VALUES ('win', 'place')) AS bt(bet_type)   -- ❌ 2列の1行
+CROSS JOIN (VALUES ('win'), ('place')) AS bt(bet_type) -- ⭕ 1列の2行
+```
+
+`AS bt(bet_type)` が名前を付けるのは**先頭列だけ**。複勝側は `column2` として捨てられ、
+**`bet_type='win'` しか結合されていなかった**。これは前向き記録の不具合ではなく、
+`GET /api/chihou/races/featured-place` の `place_odds` が**ずっと NULL だった**ということ。
+エラーにならず「複勝オッズが未取得の日」に見えるため気付けなかった。
+
+`latest_odds_sql(["win", "place"])` で必ず組み立てる形に変え（テンプレートの直接 format を禁止）、
+`tests/test_chihou_place_pick_log.py::TestLatestOddsSql` で固定した。
+実測で win 14 / place 14 が返ることを確認済み。
+
+### 16.5 デプロイ手順（実施済み・2026-08-14）
+
+main への push で CI の Blue-Green デプロイが走り、その中で
+`alembic upgrade head` まで自動実行される（`scripts/deploy-bluegreen.sh` L130）。
+人手で要るのは **cron 登録だけ**。
 
 ```bash
-# 1. VPS で migration
-docker exec galloplab-backend-1 alembic upgrade head
+# 1〜2. migration + 再起動は CI が実施（確認: alembic current → 202608141900_chihou (head)）
 
-# 2. backend 再起動（新ルーター登録のため）
-
-# 3. cron 2本を追加
-* * * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_snapshot_trigger.sh
-30 14 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
+# 3. cron 2本を追加（⚠️ VPS の TZ は JST。crontab も JST で書く）
+* * * * *   /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_snapshot_trigger.sh
+30 23 * * * /home/ysuzuki/GitHub/kiseki/scripts/chihou_pick_settle_trigger.sh
 
 # 4. 翌日、記録されているか確認
 cd backend && .venv/bin/python scripts/chihou_pick_log_report.py --start YYYYMMDD --end YYYYMMDD
 ```
+
+**稼働確認（2026-08-14）**: 17:44 に初回スナップショット（大井5R・発走5分前・14頭）。
+`top3_share` 0.598 で開いたレースだが、指数上位5頭が全員5番人気以内だったため
+`no_candidate` で棄権。**意図どおりの挙動**（市場と指数が一致するレースでは推奨しない）。
 
 ⚠️ **記録が始まるまで、この運用点の実力は依然として「28.2%（DISCOVERY 上の推定）」のまま。**
 数百件貯まるまで結論を出さないこと（11.4 の頻度で年 約1,700レース＝月 約140レース）。

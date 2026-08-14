@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from src.indices.buy_signal import (
     CHIHOU_OPEN_RACE_MAX_TOP3_SHARE,
     CHIHOU_PICK_MAX_INDEX_RANK,
@@ -19,6 +21,7 @@ from src.indices.buy_signal import (
     CHIHOU_PICK_MIN_POP_RANK,
     CHIHOU_PLACE_MIN_HEAD_COUNT,
 )
+from src.services.chihou_odds_query import latest_odds_sql
 from src.services.chihou_place_pick_log import (
     JST,
     PICK_RULE_VERSION,
@@ -166,3 +169,30 @@ class TestRuleVersion:
 
     def test_人気薄の線引きは判定と同じ(self) -> None:
         assert UPSET_POP_RANK == CHIHOU_PICK_MIN_POP_RANK
+
+
+class TestLatestOddsSql:
+    """`VALUES ('win', 'place')` は 2 行ではなく 2 列の 1 行になる。
+
+    `AS bt(bet_type)` が名前を付けるのは先頭列だけなので、この書き方では
+    複勝が丸ごと落ちる。2026-08-14 まで `/featured-place` の `place_odds` が
+    常に NULL だった原因がこれ。
+    """
+
+    def test_券種ごとに1行ずつ作る(self) -> None:
+        sql = latest_odds_sql(["win", "place"])
+        assert "VALUES ('win'), ('place')" in sql
+        assert "VALUES ('win', 'place')" not in sql
+
+    def test_1券種でも同じ形(self) -> None:
+        assert "VALUES ('win')" in latest_odds_sql(["win"])
+
+    def test_正規表現の波括弧がエスケープ解除されている(self) -> None:
+        """テンプレートの `{{4}}` が format 後に `{4}` になっていること。"""
+        assert "'^[0-9]{4}$'" in latest_odds_sql(["win"])
+
+    def test_不正な券種は弾く(self) -> None:
+        with pytest.raises(ValueError):
+            latest_odds_sql([])
+        with pytest.raises(ValueError):
+            latest_odds_sql(["win'); DROP TABLE"])
