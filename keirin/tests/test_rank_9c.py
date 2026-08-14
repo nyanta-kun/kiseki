@@ -98,3 +98,63 @@ def test_submit_config_has_no_trifecta_switch():
     assert cfg["n_cars"] == 9
     assert "trifecta_switch_key" not in cfg, "9車で未検証の三連単切替が入っています"
     assert "9S" not in RANK_CONFIGS and "9A" not in RANK_CONFIGS
+
+
+# ---------------------------------------------------------------------------
+# ライブ判定・再構築の経路（2026-08-14 追加）
+#
+# 🔴 ランクを新設・全廃したときに漏れやすい2経路をここで固定する。
+#    ②ライブ判定（notify_prerace_wt）と ①候補生成側の rebuild 登録。
+#    9C 新設時、実際に「9C の live 判定が無い / 廃止した 9S・9A の live 判定が
+#    残っている」状態で1日稼働してしまった。
+# ---------------------------------------------------------------------------
+
+
+def _prerace_source() -> str:
+    return (REPO / "scripts" / "notify_prerace_wt.py").read_text(encoding="utf-8")
+
+
+def test_prerace_runs_9c_and_not_the_abolished_ranks():
+    """🔴 live 判定が 9C を呼び、9S/9A は呼ばないこと。
+
+    判定関数の**定義**は過去日の再採点用に残すので、見るのは
+    「main から呼ばれているか」＝呼び出し行だけ。
+    """
+    import re
+    src = _prerace_source()
+    called = set(re.findall(r"=\s*_process_rank_([0-9a-z]+)_candidates\(", src))
+    assert "9c" in called, "9C のライブ判定が呼ばれていない（買い判定が一生走らない）"
+    for old in ("9s", "9a"):
+        assert old not in called, (
+            f"廃止した {old.upper()} のライブ判定がまだ呼ばれている。"
+            " Web・集計から消したランクの行が毎日書き込まれ続ける")
+
+
+def test_judge_9c_is_trio_only():
+    """🔴 7C の三連単切替を live 側にも持ち込まないこと（9車で未検証）。"""
+    src = _prerace_source()
+    start = src.index("def judge_rank_9c(")
+    body = src[start:src.index("\ndef ", start + 10)]
+    assert '"trio"' in body
+    assert "trifecta" not in body, "9C に三連単の分岐が入っている（未検証）"
+
+
+def test_rebuild_and_backfill_exist_and_are_registered():
+    """🔴 rebuild が実在し tail reconcile に登録されていること。
+
+    未登録だと当月だけ live 行が残り、過去期間の rebuild 行と条件が食い違う
+    （7A/7B・7H1 で実際に起きた）。
+    """
+    from tests.reconcile_spec import reconcile_specs
+    assert (REPO / "scripts" / "backfill_9c_rank_wt.py").exists()
+    assert (REPO / "scripts" / "rebuild_9c_walkforward_pg.py").exists()
+    assert reconcile_specs().get("9c") == "9C", "tail reconcile に 9c:9C が無い"
+
+
+def test_backfill_uses_nine_car_thresholds():
+    """🔴 バックフィルが 7C の閾値を使っていないこと。"""
+    src = (REPO / "scripts" / "backfill_9c_rank_wt.py").read_text(encoding="utf-8")
+    assert "RANK_9C_LEG_P3_MIN" in src and "rank_9c_daily_select" in src
+    assert "RANK_7C_LEG_P3_MIN" not in src
+    assert "rank_7c_daily_select" not in src, "7C の選別関数を呼んでいる"
+    assert "N_CAR = 9" in src

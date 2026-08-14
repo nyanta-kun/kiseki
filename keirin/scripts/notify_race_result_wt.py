@@ -44,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.combo_label import axis_cars, format_pred_combo, is_hit
 from src.database import get_connection
 from src.notify.discord import send
 from src.scraper.pipeline_wt import _save_batch
@@ -173,38 +174,25 @@ def _build_message(t: dict, base: str) -> str:
     for p in picks:
         rank = _g(p, "rank").replace("RANK_", "")
         combo = _g(p, "pred_combo") or ""
-        # 🔴 `三単:` 付きは**着順まで当てて初めて的中**（7C の三連単切替・2026-08-09）。
-        #    順不同で判定すると着順違いを的中として通知してしまう。
-        #    表記は `三単:{1着}-{2着}-{3着候補,...}` で、軸の区切りが `=` ではなく `-`。
-        is_tf = combo.startswith("三単:")
-        body = combo.split(":", 1)[1] if ":" in combo else combo
-        axis_part = body.split("-")[0] if "-" in body else ""
-        legs = ([int(x) for x in body.split("-", 1)[1].split(",")
-                 if x.strip().isdigit()] if "-" in body else [])
-        if is_tf:
-            head = [int(x) for x in body.split("-")[:2] if x.strip().isdigit()]
-            legs = ([int(x) for x in body.split("-")[2].split(",")
-                     if x.strip().isdigit()] if len(body.split("-")) >= 3 else [])
-            axes = head
-            hit = (len(order3) == 3 and len(head) == 2
-                   and order3[0] == head[0] and order3[1] == head[1]
-                   and order3[2] in legs)
-            n_in = len(set(axes) & top3_set)
-        else:
-            axes = [int(x) for x in axis_part.replace("=", ",").split(",")
-                    if x.strip().isdigit()]
-            n_in = len(set(axes) & top3_set)
-            third = list(top3_set - set(axes))
-            hit = n_in == 2 and len(third) == 1 and third[0] in legs
+        # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。
+        #    ここに自前パースを書いてはいけない。以前は「畳んだ形」だけを想定した
+        #    自前実装で、7H1/7H2 の**展開形（1点ずつ）を渡すと軸と相手を取り違え**、
+        #    三連複が当たっていても `❌ 不的中（軸3/2）`（2車のはずが3車）と
+        #    通知していた。表示だけの問題ではなかった。
+        hit = is_hit(combo, order3)
+        axes = axis_cars(combo)
+        n_in = len(set(axes) & top3_set)
         if hit:
             mark = "🎯 **的中**"
-        elif is_tf and n_in == 2:
-            mark = "😖 軸2車は3着内・着順/相手外し"
-        elif n_in == 2:
+        elif len(axes) == 2 and n_in == 2:
+            # 軸2車が3着内なのに外れ＝相手（三連単なら着順も）を外した形。
             mark = "😖 軸的中・相手外し"
-        else:
+        elif len(axes) == 2:
             mark = f"❌ 不的中（軸{n_in}/2）"
-        lines.append(f"{rank}: {combo}  → {mark}")
+        else:
+            # BOX 等で共通の軸が無い買い方（7H1 の三連複）。「軸n/2」は出せない。
+            mark = "❌ 不的中"
+        lines.append(f"{rank}: {format_pred_combo(combo)}  → {mark}")
     return "\n".join(lines)
 
 
