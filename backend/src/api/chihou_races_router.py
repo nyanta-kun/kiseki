@@ -38,7 +38,7 @@ from ..indices.confidence import (
     calculate_race_confidence,
     calculate_recommend_rank,
 )
-from ..services.chihou_odds_query import LATEST_ODDS_SQL
+from ..services.chihou_odds_query import latest_odds_sql
 from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
 from .ws_manager import chihou_results_manager
 
@@ -264,7 +264,7 @@ async def get_chihou_featured_place(
     #    （実測: 発走5分前なら n=106 拾える条件が、最新スナップだと n=43 に落ちた）。
     #    発走前に見る限りこの条件は no-op なので、ライブ表示の挙動は変わらない。
     odds_rows = await db.execute(
-        sql_text(LATEST_ODDS_SQL.format(bet_types="'win', 'place'")),
+        sql_text(latest_odds_sql(["win", "place"])),
         {"race_ids": race_ids},
     )
     win_by_race: dict[int, dict[str, float]] = defaultdict(dict)
@@ -495,7 +495,7 @@ async def get_chihou_races_by_date(
     # 発走時刻以前の最新オッズを使う（理由は featured-place と同じ）
     all_win_odds: dict[int, dict[int, float]] = defaultdict(dict)
     all_odds_rows = await db.execute(
-        sql_text(LATEST_ODDS_SQL.format(bet_types="'win'")),
+        sql_text(latest_odds_sql(["win"])),
         {"race_ids": race_ids},
     )
     for rid, _bet_type, combo, odds_val in all_odds_rows.all():
