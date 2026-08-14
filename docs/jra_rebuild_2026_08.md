@@ -1069,7 +1069,31 @@ CLAUDE.md の記載は 除外30% / 88.6% / 4.8%）。これも夏の窓の効果
 前夜 21:00 JST のもので、発走10分前の値ではない。SQL と判定経路が通ることの
 確認以上の意味は無い。
 
-### 14.6 いつ結論が出るか
+### 14.6 デプロイ手順（実施済み・2026-08-15）
+
+main への push で CI の Blue-Green デプロイが走り、その中で `alembic upgrade head` まで
+自動実行される。人手で要るのは **cron 登録だけ**。
+
+```bash
+# 1. migration は CI が実施（確認: keiba.alembic_version = 202608150500_jra）
+# 2. 疎通確認（対象が無ければ 0 件で戻る）
+ssh sekito "API_KEY=\$(grep '^CHANGE_NOTIFY_API_KEY=' ~/GitHub/kiseki/.env | cut -d= -f2-)
+  curl -s -X POST 'http://127.0.0.1:8003/api/jra/hit-tier/snapshot' -H \"X-API-Key: \$API_KEY\""
+
+# 3. cron 2本を追加（⚠️ VPS の TZ は JST。crontab も JST で書く）
+* * * * *   /home/ysuzuki/GitHub/kiseki/scripts/jra_pick_snapshot_trigger.sh
+45 23 * * * /home/ysuzuki/GitHub/kiseki/scripts/jra_pick_settle_trigger.sh
+
+# 4. 開催日の翌日に記録されているか確認
+cd backend && .venv/bin/python scripts/jra_pick_log_report.py --start YYYYMMDD --end YYYYMMDD
+```
+
+`45 23` にしたのは地方の settle（`30 23`）と 15 分ずらすため。中央の成績確定は
+最終レース（16:30 前後）の直後には揃うので、時刻そのものに強い制約は無い。
+
+**稼働開始: 2026-08-15。** 同日の第1レース（新潟1R・発走 09:40 JST）が初回の対象。
+
+### 14.7 いつ結論が出るか
 
 中央は年 約3,460レース・週 約72レース。ドライランの比率（推奨 61%）が続くとして
 **週 約44レース・月 約190レースの推奨**が貯まる。
