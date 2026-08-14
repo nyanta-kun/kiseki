@@ -16,6 +16,9 @@
     総流し   : 相手を削らず `rank_7c_select_legs` の結果すべて（4〜5点）
     落差カット: `rank_7c_cut_legs_by_gap` の結果（1〜5点）
 
+🔴 **採否は `実質的中`（ガミを除いた的中＝netkeirin の表示的中率）で見ること。**
+   素の的中率だけを見ると、増えた的中がほぼ全部ガミなのに「改善した」と読める。
+
 🔴 **カットは必ず `legs_floor=0` で呼ぶこと。** 本検証の結論を受けて
    `RANK_7C_TRIO_LEGS_FLOOR`（既定2）が関数の中へ入ったので、既定のまま呼ぶと
    「カットした結果」が既に下限適用後になり、**比較の基準（＝素のカット）が
@@ -160,28 +163,48 @@ def main() -> int:
                   f"{b['cut_hit']/n:>12.1%}{cr:>8.1%} │{b['full_hit']/n:>13.1%}{fr:>8.1%} │"
                   f"{(cr - fr) * 100:>+7.1f}pt")
 
-        # ② 「k点以下なら総流しに戻す」下限を掃引したときの全体成績
-        print(f"\n{'方針':<28}{'R数':>6}{'的中率':>9}{'ROI':>9}{'ROI(掃引)':>11}{'ROI(確認)':>11}")
-        for floor in (0, 1, 2, 3, 99):
-            tot = {"n": 0, "bet": 0, "pay": 0, "hit": 0}
+        # ② 削りすぎたときの差し替え方を並べたときの全体成績
+        #
+        # 🔴 **`実質的中` が netkeirin の表示的中率**（ガミ＝払戻<賭け金 を不的中と
+        #    数える。kiseki ルート CLAUDE.md の netkeirin 節が正本）。
+        #    素の的中率だけで方針を決めると、**増えた的中がほぼ全部ガミ**で
+        #    表示的中はむしろ下がる、という取り違えをする（実際に一度やった）。
+        def policy_full(r, cut):
+            return r["legs"]
+
+        def policy_swap23(r, cut):
+            """1点なら2,3番手の2点へ / 2点なら総流し（**現行の本番**）。"""
+            if len(cut) == 1 and len(r["legs"]) >= 3:
+                return list(r["legs"][1:3])
+            return r["legs"] if len(cut) <= 2 else cut
+
+        policies = [
+            ("現行だった（常にカット）", lambda r, cut: cut),
+            ("1点以下なら総流し", lambda r, cut: r["legs"] if len(cut) <= 1 else cut),
+            ("2点以下なら総流し", lambda r, cut: r["legs"] if len(cut) <= 2 else cut),
+            ("カットしない（総流し）", policy_full),
+            ("**1点帯を2,3番手2点へ（採用）**", policy_swap23),
+        ]
+        print(f"\n{'方針':<30}{'素の的中':>9}{'実質的中':>9}{'ROI':>8}"
+              f"{'ROI(掃引)':>10}{'ROI(確認)':>10}")
+        for label, fn in policies:
+            tot = {"n": 0, "bet": 0, "pay": 0, "hit": 0, "real": 0}
             win = {"sweep": {"bet": 0, "pay": 0}, "confirm": {"bet": 0, "pay": 0}}
             for r in pop:
                 cut = rank_7c_cut_legs_by_gap(r["legs"], r["p3"], gap_min=gap, legs_floor=0)
-                legs = r["legs"] if len(cut) <= floor else cut
-                bet, pay, hit = _settle(r, legs)
+                bet, pay, hit = _settle(r, fn(r, cut))
                 tot["n"] += 1
                 tot["bet"] += bet
                 tot["pay"] += pay
                 tot["hit"] += int(hit)
+                tot["real"] += int(hit and pay >= bet)      # ガミを除いた的中
                 w = "sweep" if str(r.get("race_date", "")) <= CONFIRM_END else "confirm"
                 win[w]["bet"] += bet
                 win[w]["pay"] += pay
-            label = {0: "現行（常にカット）", 99: "カットしない（総流し）"}.get(
-                floor, f"{floor}点以下なら総流しへ戻す")
             sr = win["sweep"]["pay"] / win["sweep"]["bet"] if win["sweep"]["bet"] else 0
             cr = win["confirm"]["pay"] / win["confirm"]["bet"] if win["confirm"]["bet"] else 0
-            print(f"{label:<28}{tot['n']:>6}{tot['hit']/tot['n']:>9.1%}"
-                  f"{tot['pay']/tot['bet']:>9.1%}{sr:>11.1%}{cr:>11.1%}")
+            print(f"{label:<30}{tot['hit']/tot['n']:>9.1%}{tot['real']/tot['n']:>9.1%}"
+                  f"{tot['pay']/tot['bet']:>8.1%}{sr:>10.1%}{cr:>10.1%}")
         print()
     return 0
 

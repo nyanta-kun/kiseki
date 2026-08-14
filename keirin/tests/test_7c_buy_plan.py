@@ -99,22 +99,25 @@ def test_gap_cut_threshold_is_the_documented_value() -> None:
 # ── カット後の点数の下限（2026-08-15・ユーザー判断）─────────────────────────
 
 
-def test_gap_cut_restores_full_spread_when_it_would_leave_too_few() -> None:
-    """🔴 削った結果が2点以下なら**総流しへ戻す**。
+def test_one_point_is_swapped_for_the_second_and_third_partner() -> None:
+    """🔴 削った結果が1点なら **相手の2,3番手の2点**へ差し替える。
 
     発端は「7C が1点買いになっている」という指摘（2026-08-14 奈良9R）。
-    honest walk-forward 5,387R で分解すると、1点まで縮むのは母集団の43.7%で、
-    そこは的中が 64.4% → 35.0% に落ちるのに ROI は有意に増えていなかった
-    （`RANK_7C_TRIO_LEGS_FLOOR` の定義部に実測表）。
+    1点になるのは「相手の先頭が抜けている」＝**そこが一番低配当**という意味なので、
+    あえて先頭を外す。1点帯（母集団の43.7%）での実測は
+    `RANK_7C_TRIO_LEGS_FLOOR` の定義部を参照。
 
     ⚠️ **見送りにはしない。** 総流しなら的中 64.4% の普通のレースなので、
        母集団から落とす理由が無い。
     """
     legs = [3, 4, 5, 6, 7]
-    # 1点まで縮む形 → 総流しへ戻る
-    steep1 = {3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13}
-    assert rank_7c_cut_legs_by_gap(legs, steep1) == legs
-    # 2点まで縮む形 → 総流しへ戻る
+    steep1 = {3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13}   # 1点まで縮む
+    assert rank_7c_cut_legs_by_gap(legs, steep1) == [4, 5], "先頭を外していない"
+
+
+def test_two_points_fall_back_to_the_full_spread() -> None:
+    """2点まで縮んだ場合は総流しへ戻す（差し替えは1点のときだけ）。"""
+    legs = [3, 4, 5, 6, 7]
     steep2 = {3: 0.55, 4: 0.50, 5: 0.20, 6: 0.13, 7: 0.13}
     assert rank_7c_cut_legs_by_gap(legs, steep2) == legs
     # 3点残るならカットはそのまま効く（規則自体は生きている）
@@ -122,10 +125,10 @@ def test_gap_cut_restores_full_spread_when_it_would_leave_too_few() -> None:
     assert rank_7c_cut_legs_by_gap(legs, steep3) == [3, 4, 5]
 
 
-def test_buy_plan_never_returns_one_or_two_points_for_trio() -> None:
-    """🔴 買い方の正本を通ると、三連複が1〜2点になることはない。
+def test_buy_plan_never_returns_a_single_point_for_trio() -> None:
+    """🔴 買い方の正本を通ると、三連複が1点になることはない。
 
-    下限を `rank_7c_cut_legs_by_gap` の中に置いたのは、呼び出し側（候補生成・
+    差し替えを `rank_7c_cut_legs_by_gap` の中に置いたのは、呼び出し側（候補生成・
     発走前判定・再構築）でそれぞれ掛ける形にすると**忘れた経路だけが1点買いを
     出し続ける**ため。ここは経路ではなく正本そのものを固定する。
     """
@@ -138,7 +141,13 @@ def test_buy_plan_never_returns_one_or_two_points_for_trio() -> None:
         assert plan is not None
         kind, legs = plan
         assert kind == "trio"
-        assert len(legs) > RANK_7C_TRIO_LEGS_FLOOR, f"三連複が{len(legs)}点になっている"
+        assert len(legs) >= 2, f"三連複が{len(legs)}点になっている"
+
+
+def test_swap_never_produces_an_empty_buy() -> None:
+    """相手が少なく2点を作れない形でも買い目を空にしない（総流しへ倒す）。"""
+    assert rank_7c_cut_legs_by_gap([3, 4], {3: 0.60, 4: 0.10}) == [3, 4]
+    assert rank_7c_cut_legs_by_gap([3], {3: 0.60}) == [3]
 
 
 def test_trio_below_gate_is_not_bought() -> None:
