@@ -1316,7 +1316,7 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
     in_window: list[tuple[dict, dict]] = []
     for cand in cands:
         rk = cand.get("race_key")
-        if not rk or f"{rk}#7S" in notified:
+        if not rk or f"{rk}#S7" in notified:
             continue
         ri = race_info_map.get(rk)
         if ri is None or ri.get("n_entries") != 7:
@@ -1332,8 +1332,10 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
     newly_done: set[str] = set()
     for cand, ri in in_window:
         rk = cand["race_key"]
-        # 🔴 統合により decisions/採点のキーも #7S（`_insert_rank_7a_pick` 参照）。
-        rank_7a_key = f"{rk}#7S"
+        # 🔴 統合により decisions のキーも 7S と同じ **#S7**（`_insert_rank_7a_pick` 参照）。
+        #    ⚠️ decisions は `#S7`、picks_history の race_key は `#7S` で**別体系**。
+        #       採点側（notify_results_wt）は `#S7` の decisions を読む。
+        rank_7a_key = f"{rk}#S7"
         try:
             odds_data = scraper.fetch_odds(
                 venue_id  = ri["venue_id"],
@@ -2084,7 +2086,7 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
     in_window: list[tuple[dict, dict]] = []
     for cand in cands:
         rk = cand.get("race_key")
-        if not rk or f"{rk}#7S" in notified:
+        if not rk or f"{rk}#S7" in notified:
             continue
         ri = race_info_map.get(rk)
         if ri is None or ri.get("n_entries") != 7:
@@ -2100,8 +2102,8 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
     newly_done: set[str] = set()
     for cand, ri in in_window:
         rk = cand["race_key"]
-        # 🔴 統合により decisions/採点のキーも #7S（`_insert_rank_7a_pick` 参照）。
-        rank_7ss_key = f"{rk}#7S"
+        # 🔴 統合により decisions のキーも 7S と同じ **#S7**（`_insert_rank_7a_pick` 参照）。
+        rank_7ss_key = f"{rk}#S7"
         try:
             odds_data = scraper.fetch_odds(
                 venue_id  = ri["venue_id"],

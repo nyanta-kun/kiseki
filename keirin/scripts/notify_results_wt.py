@@ -527,12 +527,17 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_9S", "", "")
 
-    # 7A=S7の境界ランク（ペーパートレード検証・2026-07-27導入）:
-    # decisions キー {rk}#7A（decision=buy）を picks に注入する（slot="seven_7a"）。
+    # 🔴 2026-08-14: 7SS/7S/7A を RANK_7S へ統合した。**切り替え前に保存された
+    #    `#7A` / `#7SS` の decisions を採点し損ねない**ため、旧キーも seven_s7 へ
+    #    寄せる（統合後の新しい判定は最初から `#S7` で保存される）。
+    #    ⚠️ ここを消すと、切り替え当日の朝に判定済みだったレースが
+    #       その晩から永久に無採点（bet>0・hit=0）で残る。
     for _key, _dec in decisions.items():
-        if not _key.endswith("#7A") or _dec.get("decision") != "buy" or not _dec.get("combos"):
+        if not (_key.endswith("#7A") or _key.endswith("#7SS")):
             continue
-        _rk = _key[:-3]
+        if _dec.get("decision") != "buy" or not _dec.get("combos"):
+            continue
+        _rk = _key.rsplit("#", 1)[0]
         if not _rk.startswith(dc):
             continue
         try:
@@ -542,28 +547,15 @@ def _main_inner(date):
         _venue = code2name.get(_code)
         if _venue is None:
             continue
-        _pk = (_venue, int(_rno), "seven_7a")
+        _pk = (_venue, int(_rno), "seven_s7")
         if _pk not in picks:
-            picks[_pk] = ("RANK_7A", "", "")
+            picks[_pk] = ("RANK_7S", "", "")
 
-    # 7B=◎◯一致だが順序・相手で不一致（ペーパートレード検証・2026-08-03導入）:
-    # decisions キー {rk}#7B（decision=buy）を picks に注入する（slot="seven_7b"）。
-    for _key, _dec in decisions.items():
-        if not _key.endswith("#7B") or _dec.get("decision") != "buy" or not _dec.get("combos"):
-            continue
-        _rk = _key[:-3]
-        if not _rk.startswith(dc):
-            continue
-        try:
-            _, _code, _rno = _rk.split("_")
-        except ValueError:
-            continue
-        _venue = code2name.get(_code)
-        if _venue is None:
-            continue
-        _pk = (_venue, int(_rno), "seven_7b")
-        if _pk not in picks:
-            picks[_pk] = ("RANK_7B", "", "")
+    # 🔴 旧 `seven_7a` スロットへの注入は 2026-08-14 に**削除した**（統合）。
+    #    上の seven_s7 への寄せと併存させると、同じ `#7A` の decisions から
+    #    2つの pick（seven_s7 と seven_7a）が立ち、**投資も的中も二重に計上**される。
+    #    採点側の `_slot == "seven_7a"` ブロックは過去日の再採点用に残置してある
+    #    （注入が無いので通常運転では通らない）。
 
     # 7C=ベースモデル・終日の二軸（2026-08-07導入）:
     # decisions キー {rk}#7C（decision=buy）を picks に注入する（slot="seven_7c"）。
@@ -846,7 +838,11 @@ def _main_inner(date):
                 # 2026-07-21〜: オッズ見送り（decision=="skip"）も軸2車が実際に3着内へ
                 # 入ったかだけ参考採点する（miwokuri=True・bet=0でサマリー集計対象外の
                 # まま、見送りが「的中していたか」をWebで確認できるようにする）。
-                dec_s7 = decisions.get(rk + "#S7")
+                # 🔴 統合前に保存された `#7A` / `#7SS` も読む（2026-08-14）。
+                #    切り替え当日の朝の判定を取りこぼさないための後方互換。
+                dec_s7 = (decisions.get(rk + "#S7")
+                          or decisions.get(rk + "#7A")
+                          or decisions.get(rk + "#7SS"))
                 if not dec_s7 or dec_s7.get("decision") not in ("buy", "skip"):
                     print(f"[notify_results_wt] S7判定記録なし {rk}: 不計上", flush=True)
                     continue
