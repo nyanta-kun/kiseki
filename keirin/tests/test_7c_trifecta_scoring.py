@@ -116,9 +116,17 @@ def test_scoring_reads_bet_kind_and_uses_ordered_comparison() -> None:
 
 
 def test_result_notify_is_order_sensitive_for_trifecta() -> None:
-    """結果通知が `三単:` を着順込みで判定している。"""
+    """結果通知が `三単:` を着順込みで判定している。
+
+    ⚠️ 2026-08-14 に判定を `src/combo_label` へ寄せたので、**実装の文字列ではなく
+       挙動**で固定する。以前はここが旧実装の1行を名指ししており、
+       正しい移設でも落ちる形になっていた（テストが実装の写経になっていた）。
+    """
+    from src.combo_label import is_hit
     src = (Path(__file__).parent.parent / "scripts"
            / "notify_race_result_wt.py").read_text()
-    assert 'is_tf = combo.startswith("三単:")' in src
-    assert "order3[0] == head[0] and order3[1] == head[1]" in src, \
-        "着順を見ずに的中判定している"
+    assert "from src.combo_label import" in src, \
+        "結果通知が共通パーサを使っていない（自前パースは誤判定の元）"
+    assert is_hit("三単:5-2-3,4", (5, 2, 3)) is True
+    assert is_hit("三単:5-2-3,4", (5, 3, 2)) is False, "着順を見ずに的中判定している"
+    assert is_hit("三単:5-2-3,4", (2, 5, 3)) is False
