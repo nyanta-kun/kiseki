@@ -8,13 +8,17 @@
  *
  * 表示は **場別（場ごとに畳める）** と **発走時刻順** を切り替えられる
  * （2026-08-12 追加）。当日の進行を追うときは時刻順、場をまとめて承認するときは
- * 場別、と目的が違う。
+ * 場別、と目的が違う。**選んだ並べ方は localStorage に覚える**ので、
+ * 入稿・取消のたびに走る再描画やリロードで戻らない（2026-08-14）。
+ *
+ * 場は**既定で畳んである**（2026-08-14）。上から順に見ていく使い方なので、
+ * 全部開いていると目的の場まで遠い。
  *
  * 🔴 **承認制の ON/OFF はこの画面にはない**（2026-08-12 に `/admin` の設定タブへ移動）。
  *    確認・承認の作業画面に「承認制そのものを切る」スイッチが同居していると、
  *    レースを見ている最中に誤って全体設定を倒しうる。
  */
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronRight, Settings } from "lucide-react";
@@ -36,6 +40,46 @@ const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "�
 
 /** 一覧の並べ方。場別は場ごとに畳める。 */
 type ViewMode = "venue" | "time";
+
+/** 並べ方の保存先。リロード・画面更新をまたいで引き継ぐ（2026-08-14・ユーザー要望）。
+ *
+ * ⚠️ localStorage は React の外にある状態なので `useSyncExternalStore` で読む。
+ *    `useState` + `useEffect` で復元すると
+ *    ①SSR の初期HTMLと食い違って hydration が壊れる
+ *    ②effect 内の setState が lint (react-hooks/set-state-in-effect) で弾かれる。
+ *    サーバー側スナップショットは既定値を返し、hydration 後に実値へ入れ替わる。
+ */
+const VIEW_STORAGE_KEY = "keirin.review.view";
+
+let viewListeners: Array<() => void> = [];
+
+function subscribeView(cb: () => void): () => void {
+  viewListeners.push(cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    viewListeners = viewListeners.filter((l) => l !== cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+
+function getViewSnapshot(): ViewMode {
+  try {
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === "time" ? "time" : "venue";
+  } catch {
+    return "venue";           // プライベートブラウジング等
+  }
+}
+
+const getViewServerSnapshot = (): ViewMode => "venue";
+
+function setStoredView(v: ViewMode): void {
+  try {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, v);
+  } catch {
+    // 保存できなくても切り替えは効かせる（この描画中は listeners 経由で反映）
+  }
+  for (const l of viewListeners) l();
+}
 
 function yen(n: number | null | undefined): string {
   return n === null || n === undefined ? "—" : `${Math.round(n).toLocaleString()}円`;
@@ -390,9 +434,11 @@ export default function ReviewClient({ date, items, nProposed }: {
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
   }, []);
-  const [view, setView] = useState<ViewMode>("venue");
-  // 畳んだ場。**既定は全て開いた状態**（畳むのは能動的な操作）。
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // 並べ方は localStorage が正本（詳細は VIEW_STORAGE_KEY のコメント）。
+  const view = useSyncExternalStore(subscribeView, getViewSnapshot, getViewServerSnapshot);
+  // 開いた場。**既定は全て畳んだ状態**（2026-08-14・ユーザー要望）。
+  // 上から順に確認していく使い方なので、全部開いていると目的の場まで遠い。
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // 通常の取消が「netkeirin 側に見つからない」で失敗したレース。
   // 🔴 そのとき **DB も更新されていない**（取消したはずの行が生き残る）。
   //    強制取消の口をここで初めて出す。常時出すと、netkeirin に残っている
@@ -544,7 +590,7 @@ export default function ReviewClient({ date, items, nProposed }: {
               key={v}
               type="button"
               aria-pressed={view === v}
-              onClick={() => setView(v)}
+              onClick={() => setStoredView(v)}
               className={`px-3 py-1 first:rounded-l last:rounded-r ${view === v
                 ? "bg-blue-600 text-white"
                 : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"}`}
@@ -589,7 +635,7 @@ export default function ReviewClient({ date, items, nProposed }: {
         // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）で、かつ締切前。
         const nAlive = races.filter(
           (r) => r.status !== "deleted" && !isClosed(r.start_at, nowSec)).length;
-        const isOpen = !collapsed[venue];
+        const isOpen = !!expanded[venue];
         return (
           <section key={venue} className="mb-6">
             <div className="mb-2 flex items-center gap-3">
@@ -597,7 +643,7 @@ export default function ReviewClient({ date, items, nProposed }: {
               <button
                 type="button"
                 aria-expanded={isOpen}
-                onClick={() => setCollapsed((prev) => ({ ...prev, [venue]: isOpen }))}
+                onClick={() => setExpanded((prev) => ({ ...prev, [venue]: !isOpen }))}
                 className="flex items-center gap-1 font-semibold hover:text-blue-700 dark:hover:text-blue-300"
               >
                 {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}

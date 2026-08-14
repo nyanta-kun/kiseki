@@ -73,7 +73,12 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
         rest = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds"
                       r"|wt_weather|venue_info|picks_history|model_evaluation"
                       r"|netkeirin_settings"
-                      r"|netkeirin_submissions)\b",
+                      # 🔴 keirin スキーマのテーブルを足したらここにも足すこと。
+                      #    漏れると素の SELECT/UPDATE/DELETE だけが
+                      #    relation does not exist で落ちる（INSERT 系は
+                      #    テーブル名を直接展開するので動いてしまい気づけない）。
+                      r"|netkeirin_submissions|netkeirin_sales_daily"
+                      r"|netkeirin_sales_race)\b",
                       r"keirin.\1", rest, flags=re.IGNORECASE)
 
         if action == "IGNORE":
@@ -103,7 +108,8 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
     sql = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds"
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
-                 r"|netkeirin_submissions)\b",
+                 r"|netkeirin_submissions|netkeirin_sales_daily"
+                 r"|netkeirin_sales_race)\b",
                  r"keirin.\1", sql, flags=re.IGNORECASE)
     # psycopg2 は % をフォーマット文字として扱う。
     # LIKE '7PLUS%' 等リテラル % を先に %% にエスケープしてから :name / ? を変換する。
