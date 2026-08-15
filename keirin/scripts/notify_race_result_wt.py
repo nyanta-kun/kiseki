@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.combo_label import axis_cars, format_pred_combo, is_hit
+from src.sold_performance import settle_submission
 from src.rank_visibility import disabled_rank_names
 from src.database import get_connection
 from src.notify.discord import send
@@ -58,6 +60,13 @@ CHECK_MINUTES = (6, 10, 15, 25)
 STATE = Path(__file__).resolve().parent.parent / "data" / "notified_race_results.json"
 LOCK = Path(__file__).resolve().parent.parent / "data" / "notify_race_result.lock"
 MARK = {1: "◎", 2: "◯", 3: "△", 4: "×"}
+# `netkeirin_submissions.status`。値の正本は `scripts/netkeirin_submit_wt.py`。
+# ⚠️ あちらを import すると入稿一式（netkeirin クライアント・モデル読み込み）まで
+#    引き込むので、毎分 cron で回る本スクリプトでは文字列を持つ。
+#    食い違い検知は tests/test_notify_race_result.py が担う。
+STATUS_SUBMITTED = "submitted"
+# 三連複/三連単の組み合わせ区切り。**表で違う**（wt_odds は '1-2-3'）ので両方受ける。
+_SEP_RE = re.compile(r"[-=]")
 
 
 def _acquire_lock() -> bool:
@@ -97,17 +106,28 @@ def _targets(date: str, now_ts: int) -> list[dict]:
     """当日の推奨レースのうち、発走からの経過分が CHECK_MINUTES に一致し
     かつ結果未確定のものを返す。"""
     with get_connection() as c:
+        # 🔴 対象は **picks_history ∪ 入稿済み**。
+        #    picks_history だけを見ていたため、**看板の穴埋めだけで売っている
+        #    レースが1件も通知されなかった**（2026-08-15 松山 2R/3R/10R。
+        #    当日の 9C 入稿11件は全て marquee_fill で、うち3件は候補行が無い）。
+        #    「推奨を出したレース」の定義は**実際に売ったかどうか**であって、
+        #    ペーパーの候補行があるかどうかではない。
         rows = c.execute(
             """
-            SELECT DISTINCT split_part(p.race_key, '#', 1) AS base,
+            SELECT DISTINCT r.race_key AS base,
                    r.venue_id, r.race_no, r.start_at, r.cup_id, r.day_index,
                    COALESCE(v.name, r.venue_id) AS venue_name
-            FROM picks_history p
-            JOIN wt_races r ON r.race_key = split_part(p.race_key, '#', 1)
+            FROM wt_races r
             LEFT JOIN venue_info v ON v.venue_code = r.venue_id
-            WHERE p.race_date = ?
+            WHERE r.race_key IN (
+                SELECT split_part(race_key, '#', 1) FROM picks_history
+                WHERE race_date = ?
+                UNION
+                SELECT race_key FROM netkeirin_submissions
+                WHERE status = ? AND left(race_key, 8) = ?
+            )
             """,
-            (date,),
+            (date, STATUS_SUBMITTED, date.replace("-", "")),
         ).fetchall()
         out = []
         for r in rows:
@@ -117,16 +137,26 @@ def _targets(date: str, now_ts: int) -> list[dict]:
             except (TypeError, ValueError):
                 continue
             elapsed = (now_ts - start) // 60
-            if elapsed not in CHECK_MINUTES:
-                continue
+            if elapsed < min(CHECK_MINUTES):
+                continue                   # まだ確定していない時間帯（通信しない）
             done = c.execute(
                 "SELECT COUNT(*) AS n FROM wt_entries "
                 "WHERE race_key = ? AND finish_order >= 1", (d["base"],)
             ).fetchone()
             n = (done["n"] if isinstance(done, dict) else done[0]) or 0
-            if n > 0:
-                continue                   # 既に確定済み
+            # 🔴 **結果が既にあるレースを対象から外してはいけない。**
+            #    旧実装は `n > 0` で切っていたため、
+            #      (1) 15分毎の `intraday_results_wt.sh` に先を越されたレース
+            #      (2) 確定が CHECK_MINUTES(6/10/15/25分) を過ぎたレース
+            #    が**永久に通知されなかった**（2026-08-15 松山8R は +25分まで
+            #    「まだ結果なし」で諦め、その後 intraday が取り込んで終わり）。
+            #    結果が既にあるなら**取得せずそのまま通知する**（fetch=False）。
+            #    二重通知は従来どおり notified JSON が抑止する。
             d["elapsed"] = elapsed
+            d["fetch"] = n == 0
+            d["date"] = date
+            if d["fetch"] and elapsed not in CHECK_MINUTES:
+                continue                   # 取得はバックオフの分だけ
             out.append(d)
     return out
 
@@ -145,6 +175,106 @@ def _fetch_one(scraper: WinticketScraper, t: dict, date: str) -> dict | None:
     except Exception:
         data["odds"] = {}
     return data
+
+
+def _confirmed_payouts(conn, base: str) -> dict[tuple[str, tuple[int, ...]], int]:
+    """{(券種, 目): 100円あたりの確定配当}。
+
+    🔴 **入稿時点のオッズ（`bet_detail.odds`）を払戻に使ってはいけない。**
+       発走までに動くので必ず過大・過小になる。実測 2026-08-15 松山9R は
+       入稿時 9.0倍 → 確定 6.3倍で、そのまま使うと払戻が 33,300円（正しくは
+       23,310円）と **43% 過大**になる。
+    ⚠️ `wt_race_payouts` は当日には入らない（松山の当日分は0件だった）ので、
+       レース後に最終値へ上書きされる `wt_odds` を使う。
+    ⚠️ 組み合わせ表記は **`wt_odds` が '1-2-3'**（`wt_odds_snapshot` は別）。
+       三連複は昇順、三連単は着順のまま。
+    """
+    out: dict[tuple[str, tuple[int, ...]], int] = {}
+    rows = conn.execute(
+        "SELECT bet_type, combination, odds_value FROM wt_odds "
+        "WHERE race_key = ? AND bet_type IN ('trio', 'trifecta')", (base,),
+    ).fetchall()
+    for r in rows:
+        bt = r["bet_type"] if isinstance(r, dict) else r[0]
+        comb = r["combination"] if isinstance(r, dict) else r[1]
+        odds = r["odds_value"] if isinstance(r, dict) else r[2]
+        if odds is None:
+            continue
+        try:
+            cars = tuple(int(x) for x in _SEP_RE.split(str(comb)))
+        except ValueError:
+            continue
+        kind = "3連複" if bt == "trio" else "3連単"
+        key = tuple(sorted(cars)) if bt == "trio" else cars
+        out[(kind, key)] = int(round(float(odds) * 100))
+    return out
+
+
+def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
+    """実際に売った商品（入稿原本）の採点行。returns [(表示行, ランク)]。
+
+    🔴 **picks_history ではなく `netkeirin_submissions.bet_detail` が正本。**
+       候補行が無いレース（看板の穴埋め）でも売っている以上は結果を出す。
+       金額も傾斜配分（ダッチング）を反映する——均等割りで計算すると
+       的中点の賭け金がずれる（松山9R は的中点に 3,700円 / 均等なら 1,400円）。
+    """
+    out: list[tuple[str, str]] = []
+    with get_connection() as c:
+        subs = c.execute(
+            "SELECT rank_key, bet_detail FROM netkeirin_submissions "
+            "WHERE race_key = ? AND status = ? ORDER BY rank_key",
+            (base, STATUS_SUBMITTED),
+        ).fetchall()
+        if not subs:
+            return out
+        payouts = _confirmed_payouts(c, base)
+    for s in subs:
+        rank = s["rank_key"] if isinstance(s, dict) else s[0]
+        detail = s["bet_detail"] if isinstance(s, dict) else s[1]
+        got = settle_submission(detail, order3, payouts)
+        if got is None:
+            continue                       # 採点できない入稿は黙って外れにしない
+        bet, pay, hit = got
+        mark = "🎯 **的中**" if hit else "❌ 不的中"
+        if hit and pay < bet:
+            mark = "😖 **ガミ**"            # 当たったが元返し割れ
+        out.append((f"{rank}: {mark}  投資 ¥{bet:,} → 払戻 ¥{pay:,}", rank))
+    return out
+
+
+def _day_total(date: str) -> tuple[int, int, int]:
+    """当日の**実際に売った商品**の (投資, 払戻, 確定レース数)。
+
+    ユーザー要望「推奨した結果として払い戻し総額も出して」（2026-08-15）。
+    ⚠️ 母集団は入稿済み（取消は除く）。picks_history のペーパー成績とは別物で、
+       Web の「売った商品の成績」と同じ定義に揃えている。
+    """
+    ymd = date.replace("-", "")
+    with get_connection() as c:
+        subs = c.execute(
+            "SELECT race_key, rank_key, bet_detail FROM netkeirin_submissions "
+            "WHERE status = ? AND left(race_key, 8) = ?", (STATUS_SUBMITTED, ymd),
+        ).fetchall()
+        bet = pay = n = 0
+        for s in subs:
+            rk = s["race_key"] if isinstance(s, dict) else s[0]
+            detail = s["bet_detail"] if isinstance(s, dict) else s[2]
+            ents = c.execute(
+                "SELECT frame_no FROM wt_entries WHERE race_key = ? "
+                "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,),
+            ).fetchall()
+            order3 = tuple(int(e["frame_no"] if isinstance(e, dict) else e[0])
+                           for e in ents)
+            if len(order3) < 3:
+                continue                   # 未確定は数えない
+            got = settle_submission(detail, order3, _confirmed_payouts(c, rk))
+            if got is None:
+                continue
+            b, p, _ = got
+            bet += b
+            pay += p
+            n += 1
+    return bet, pay, n
 
 
 def _build_message(t: dict, base: str) -> str:
@@ -172,6 +302,11 @@ def _build_message(t: dict, base: str) -> str:
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
              f"着順: {order}"]
+    # 実際に売った商品（入稿原本）を先に出す。picks_history の候補行は
+    # 「入稿していないランク」の分だけ後段で補う。
+    sold = _sold_lines(base, order3)
+    lines.extend(text for text, _ in sold)
+    sold_ranks = {rank for _, rank in sold}
     # 🔴 入稿 OFF のランクは通知しない（2026-08-14）。`enabled` は入稿だけを
     #    止めており、判定・記録・通知は動き続けていたため、廃止したはずの
     #    9H1 の不的中通知が毎レース届いていた（ユーザー指摘）。
@@ -182,6 +317,8 @@ def _build_message(t: dict, base: str) -> str:
         if _g(p, "rank") in _off:
             continue
         rank = _g(p, "rank").replace("RANK_", "")
+        if rank in sold_ranks:
+            continue          # 入稿原本を出した分は重複させない
         combo = _g(p, "pred_combo") or ""
         # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。
         #    ここに自前パースを書いてはいけない。以前は「畳んだ形」だけを想定した
@@ -202,6 +339,11 @@ def _build_message(t: dict, base: str) -> str:
             # BOX 等で共通の軸が無い買い方（7H1 の三連複）。「軸n/2」は出せない。
             mark = "❌ 不的中"
         lines.append(f"{rank}: {format_pred_combo(combo)}  → {mark}")
+
+    bet, pay, n = _day_total(t["date"])
+    if n:
+        roi = f"{pay / bet * 100:.1f}%" if bet else "—"
+        lines.append(f"── 本日累計（{n}R 確定）: 投資 ¥{bet:,} → **払戻 ¥{pay:,}**（回収 {roi}）")
     return "\n".join(lines)
 
 
@@ -223,20 +365,24 @@ def main() -> None:
     scraper = WinticketScraper()
     for t in targets:
         base = t["base"]
-        try:
-            data = _fetch_one(scraper, t, args.date)
-        except Exception as e:
-            print(f"[warn] {base} 取得失敗: {e}", flush=True)
-            continue
-        if not data:
-            print(f"[info] {base} まだ結果なし（発走+{t['elapsed']}分）", flush=True)
-            continue
-        if args.dry_run:
-            print(f"[dry-run] {base} 結果取得（保存・通知はしない）", flush=True)
-            continue
-        _save_batch([data])
         if base in done:
-            continue                        # 二重通知の抑止
+            continue                        # 二重通知の抑止（通信より先に判定する）
+        if t["fetch"]:
+            try:
+                data = _fetch_one(scraper, t, args.date)
+            except Exception as e:
+                print(f"[warn] {base} 取得失敗: {e}", flush=True)
+                continue
+            if not data:
+                print(f"[info] {base} まだ結果なし（発走+{t['elapsed']}分）", flush=True)
+                continue
+            if args.dry_run:
+                print(f"[dry-run] {base} 結果取得（保存・通知はしない）", flush=True)
+                continue
+            _save_batch([data])
+        elif args.dry_run:
+            print(f"[dry-run] {base} 既に結果あり（通知はしない）", flush=True)
+            continue
         try:
             send(_build_message(t, base), channel="results")
             done.add(base)
