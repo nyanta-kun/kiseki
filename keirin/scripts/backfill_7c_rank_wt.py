@@ -209,8 +209,16 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         line_groups = {int(r.frame_no): getattr(r, "line_group", None)
                        for r in g.itertuples(index=False)}
 
+        # 🔴 WT△（prediction_mark==3）は案E（総流し帯から△を外す）の発動条件。
+        #    live（src/cli/main.py）は候補JSONの `wt_ana` を渡すので、再構築でも
+        #    同じ値を作る。**ここが欠けると再構築だけ旧挙動に戻り**、Web の実績が
+        #    実際に売った商品を説明しなくなる。
+        _marks = marks.get(rk, {})
+        wt_ana = next((f for f, v in _marks.items() if v == 3), None)
+
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),
+            "wt_ana": wt_ana,
             "axis1": axis1, "axis2": axis2,
             "p3_sum_top2": p3_sum, "legs_7c": legs, "win_probs": win_probs,
             "order3": order3,
@@ -231,7 +239,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         #    ゲート・落差カットがここで一括して決まる）。2026-08-15 まで本
         #    スクリプトだけがこれを通さず `legs_7c` を総流ししていた。
         plan = rank_7c_buy_plan(c_.get("top3_probs") or {}, c_.get("win_probs") or {},
-                                axis1, c_["legs_7c"])
+                                axis1, c_["legs_7c"], wt_ana=c_.get("wt_ana"))
         if plan is None:
             continue                       # 三連複側のゲートを下回る＝見送り
         bet_kind, buy_legs = plan
