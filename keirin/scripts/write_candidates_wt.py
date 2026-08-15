@@ -10,10 +10,10 @@ gap12 条件を満たす全候補を picks_history に書き込むことで、
 
 daily_picks_wt.sh および evening_picks_wt.sh から wave-picks-wt の直後に呼ばれる。
 
-初回ガミ判定:
+prerace_gami（表示用の最安オッズ）:
   書き込み後、winticket からその時点の三連複オッズを取得して prerace_gami を設定する。
-  最安オッズ < 7.0 の候補は miwokuri=True として早期見送り扱いにする。
-  発走 15 分前の notify_prerace_wt.py がリアルタイムオッズで上書き（最終確認）する。
+  🔴 **見送り判定はしない**（2026-08-15 に全ランクで廃止）。入稿は候補が立った
+  レースをそのまま出しており、「見送った」という状態は運用に存在しない。
 """
 from __future__ import annotations
 
@@ -118,11 +118,14 @@ def _insert_candidates_vps(target_date: str, rows: list[tuple], existing: set[st
         print(f"[write_candidates_wt] VPS INSERT 失敗: {e}", flush=True)
 
 
-def _save_initial_gami(race_key: str, race_date: str, min_odds: float, miwokuri: bool) -> None:
-    """prerace_gami（初回）と miwokuri を SQLite + VPS に保存する。
+def _save_initial_gami(race_key: str, race_date: str, min_odds: float) -> None:
+    """prerace_gami（初回）を SQLite + VPS に保存する。
 
     #CAND エントリのみを更新する。#7SS / #7S などの採点済みエントリは
     notify_results_wt.py が管理するため上書きしない。
+
+    🔴 **miwokuri は書かない**（2026-08-15 に見送りを全ランクで廃止）。
+       ここが唯一「朝の最安オッズで見送りを決める」経路だった。
     """
     rounded = round(min_odds, 2)
     cand_key = race_key + "#CAND"  # #CAND のみ対象（採点済みエントリを上書きしない）
@@ -130,8 +133,8 @@ def _save_initial_gami(race_key: str, race_date: str, min_odds: float, miwokuri:
     try:
         with get_connection() as conn:
             conn.execute(
-                "UPDATE picks_history SET prerace_gami = ?, miwokuri = ? WHERE race_key = ?",
-                (rounded, miwokuri, cand_key),
+                "UPDATE picks_history SET prerace_gami = ? WHERE race_key = ?",
+                (rounded, cand_key),
             )
             conn.commit()
     except Exception as e:
@@ -145,9 +148,9 @@ def _save_initial_gami(race_key: str, race_date: str, min_odds: float, miwokuri:
         with psycopg2.connect(db_url) as pg_conn:
             with pg_conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE keirin.picks_history SET prerace_gami = %s, miwokuri = %s"
+                    "UPDATE keirin.picks_history SET prerace_gami = %s"
                     " WHERE race_key = %s",
-                    (rounded, miwokuri, cand_key),
+                    (rounded, cand_key),
                 )
     except Exception as e:
         print(f"[write_candidates_wt] VPS prerace_gami 更新失敗 {race_key}: {e}", flush=True)
@@ -157,8 +160,8 @@ def _fetch_initial_gami(candidates: list[dict]) -> None:
     """候補レースのオッズを取得して初回ガミ判定（prerace_gami）を設定する。
 
     winticket から三連複オッズを取得し最安値を prerace_gami に保存する。
-    最安値 < GAMI_THRESHOLD(7.0) なら miwokuri=True（早期見送り）。
-    取得失敗時は prerace_gami=NULL のまま notify_prerace_wt.py に委ねる。
+    🔴 **見送り判定はしない**（2026-08-15 廃止）。ここは表示用の目安だけを残す。
+    取得失敗時は prerace_gami=NULL のまま。
     """
     from src.scraper.winticket import WinticketScraper  # noqa: PLC0415
 
@@ -242,14 +245,14 @@ def _fetch_initial_gami(candidates: list[dict]) -> None:
             time.sleep(0.5)
             continue
 
-        # レース単位判定（doc52・2026-07-10 SS/S置き換え）: min(全目) < 閾値 → 見送り初期値。
-        # 最終判定は発走15分前の notify_prerace_wt.py が行う（ここは朝時点の目安）。
+        # 最安オッズを prerace_gami として記録する（**表示用の目安**）。
+        # 🔴 **見送り判定はしない**（2026-08-15・ユーザー指示「入稿時点で見送りを
+        #    行わない。見送り判定はなくす。全ランク同様」）。以前はここで
+        #    `min_odds < GAMI_THRESHOLD` を見送り初期値として miwokuri へ書いていた。
         min_odds = min(valid_odds)
-        miwokuri = min_odds < GAMI_THRESHOLD
-        _save_initial_gami(rk, ri["race_date"], min_odds, miwokuri)
-        status = "⚠️見送り" if miwokuri else "✅OK"
+        _save_initial_gami(rk, ri["race_date"], min_odds)
         print(
-            f"[write_candidates_wt] {rk}: 初回ガミ判定 最安{min_odds:.1f}倍 {status}",
+            f"[write_candidates_wt] {rk}: 最安{min_odds:.1f}倍（prerace_gami 記録）",
             flush=True,
         )
         time.sleep(0.5)
@@ -285,8 +288,9 @@ def _write_paper_candidates(target_date: str) -> None:
     （_third_list()）。軸2車を除く残り車の顔ぶれは対象車数(7/9)が候補生成時点で
     確定しているためオッズなしで一意に決まり、発走15分前判定後の最終表記と
     同じ形式で表示できる（7A/9Aはgate_labelなしのため元々この形式）。
-    発走15分前判定（notify_prerace_wt）が buy なら本行を上書き、skip なら
-    miwokuri=True（オッズ見送り・グレーアウト表示）に更新する。既存行（判定済み）は上書きしない。
+    発走15分前判定（notify_prerace_wt）が buy なら本行を上書きする。skip のときは
+    **何もしない**（2026-08-15 に見送りを廃止。bet_amount=0 のまま残り、夜間の
+    walk-forward 再構築が最終的な買い方・投資額・的中で上書きする）。
     旧S1(7PLUS_R・6車三連複)・旧A(#6A)は 2026-07-17 全廃により書き込み対象外
     （現行の7A/9Aは2026-07-27導入の別ランクで無関係）。
     U（#7U）・M（#7M）は 2026-07-21 全廃。main.py は候補JSON自体を生成しなくなったが、
@@ -441,10 +445,9 @@ def _write_paper_candidates(target_date: str) -> None:
     # 他ランクと同じく朝に bet_amount=0 の暫定行を置き、発走前判定が
     # 買い目・金額を上書きする。
     #
-    # ⚠️ **bet_amount は必ず 0 のまま置くこと。** 発走前に「盤面が取れない/欠車で
-    #    無効」となった場合、notify_prerace_wt._mark_paper_miwokuri が
-    #    `bet_amount = 0` の行だけを見送りへ更新する設計なので、ここで金額を
-    #    入れると見送りに落とせず購入済みとして残る。
+    # ⚠️ **bet_amount は必ず 0 のまま置くこと。** 発走前判定が buy のときだけ
+    #    金額を書く設計で、集計（`bet_amount > 0`）もそれを前提にしている。
+    #    ここで金額を入れると、判定に到達しないレースまで購入済みとして計上される。
     # ⚠️ pred_combo の形式は _save_rank_7h1_pick と**完全に一致**させること
     #    （採点・Web 表示の両方が同じ文字列を前提にしている）。
     # ⚠️ 7H1 は他ランクと**同一レースに併存する**（2026-04以降の実データで

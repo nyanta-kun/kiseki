@@ -665,7 +665,6 @@ def _process_s1_candidates(today: str, now_unix: int, notified: set[str]) -> tup
             messages.append((s1_key, _build_s1_message(cand, ri, detail)))
             print(f"[prerace] {rk} S1候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7S1")  # 候補行をオッズ見送り表示に更新
             print(f"[prerace] {rk} S1候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(s1_key)
         time.sleep(0.3)
@@ -958,7 +957,6 @@ def _process_rank_7s_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_7s_key, _build_rank_7s_message(cand, ri, detail, gate_label)))
             print(f"[prerace] {rk} S7候補 → buy（ペーパー・{len(combos)}点・{gate_label}）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7S")  # 候補行をオッズ見送り表示に更新
             print(f"[prerace] {rk} S7候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7s_key)
         time.sleep(0.3)
@@ -1201,7 +1199,6 @@ def _process_rank_9s_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_9s_key, _build_rank_9s_message(cand, ri, detail, gate_label)))
             print(f"[prerace] {rk} S9候補 → buy（ペーパー・{len(combos)}点・{gate_label}）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#9S")  # 候補行をオッズ見送り表示に更新
             print(f"[prerace] {rk} S9候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_9s_key)
         time.sleep(0.3)
@@ -1405,7 +1402,6 @@ def _process_rank_7a_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_7a_key, _build_rank_7a_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7A候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7S")
             print(f"[prerace] {rk} 7A候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7a_key)
         time.sleep(0.3)
@@ -1813,7 +1809,6 @@ def _process_rank_7c_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_7c_key, _build_rank_7c_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7C候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7C")
             print(f"[prerace] {rk} 7C候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7c_key)
         time.sleep(0.3)
@@ -2070,7 +2065,6 @@ def _process_rank_9c_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((key_9c, _build_rank_9c_message(cand, ri, detail)))
             print(f"[prerace] {rk} 9C候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#9C")
             print(f"[prerace] {rk} 9C候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(key_9c)
         time.sleep(0.3)
@@ -2179,7 +2173,6 @@ def _process_rank_7ss_candidates(today: str, now_unix: int, notified: set[str]) 
             messages.append((rank_7ss_key, _build_rank_7ss_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7SS候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7S")
             print(f"[prerace] {rk} 7SS候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7ss_key)
         time.sleep(0.3)
@@ -2444,7 +2437,6 @@ def _process_rank_7b_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_7b_key, _build_rank_7b_message(cand, ri, detail)))
             print(f"[prerace] {rk} 7B候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7B")
             print(f"[prerace] {rk} 7B候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_7b_key)
         time.sleep(0.3)
@@ -2662,7 +2654,6 @@ def _process_rank_7h1_candidates(today: str, now_unix: int,
             print(f"[prerace] {rk} 7H1候補 → buy（三単{len(detail['legs_tf'])}点・"
                   f"{detail['bet_amount']}円）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7H1")
             print(f"[prerace] {rk} 7H1候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(key)
         time.sleep(0.3)
@@ -2867,7 +2858,6 @@ def _process_rank_7h2_candidates(today: str, now_unix: int,
             print(f"[prerace] {rk} 7H2候補 → buy（三複{len(detail['legs_trio'])}点+"
                   f"三単{len(detail['legs_tf'])}点・{detail['bet_amount']}円）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#7H2")
             print(f"[prerace] {rk} 7H2候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(key)
         time.sleep(0.3)
@@ -3045,7 +3035,6 @@ def _process_rank_9h1_candidates(today: str, now_unix: int,
             print(f"[prerace] {rk} 9H1候補 → buy（三単{len(detail['legs'])}点・"
                   f"{detail['bet_amount']}円）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#9H1")
             print(f"[prerace] {rk} 9H1候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(key)
         time.sleep(0.3)
@@ -3215,45 +3204,28 @@ def _process_rank_9a_candidates(today: str, now_unix: int, notified: set[str]) -
             messages.append((rank_9a_key, _build_rank_9a_message(cand, ri, detail)))
             print(f"[prerace] {rk} 9A候補 → buy（ペーパー・{len(combos)}点）", flush=True)
         else:
-            _mark_paper_miwokuri(rk, "#9A")
             print(f"[prerace] {rk} 9A候補 → skip: {detail.get('skip_reason')}", flush=True)
         newly_done.add(rank_9a_key)
         time.sleep(0.3)
     return messages, newly_done
 
 
-def _mark_paper_miwokuri(race_key: str, suffix: str) -> None:
-    """ペーパー候補行（{rk}#7U/#7M/#7A・bet_amount=0）をオッズ見送りに更新する。
-
-    発走15分前判定が skip のとき、write_candidates_wt が朝に書いた候補行を
-    miwokuri=True にして「オッズ見送り」として Web に表示する。
-    buy 済み行（bet_amount>0）は対象外（上書きしない）。
-    """
-    store_key = race_key + suffix
-    try:
-        with get_connection() as conn:
-            conn.execute(
-                "UPDATE picks_history SET miwokuri = True "
-                "WHERE race_key = ? AND bet_amount = 0",
-                (store_key,),
-            )
-            conn.commit()
-    except Exception as e:
-        logger.warning("ペーパー見送り更新 SQLite 失敗 %s: %s", store_key, e)
-
-    db_url = os.environ.get("KEIRIN_DB_URL")
-    if db_url:
-        try:
-            import psycopg2  # noqa: PLC0415
-            with psycopg2.connect(db_url) as pg_conn:
-                with pg_conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE keirin.picks_history SET miwokuri = TRUE "
-                        "WHERE race_key = %s AND bet_amount = 0",
-                        (store_key,),
-                    )
-        except Exception as e:
-            logger.warning("ペーパー見送り更新 VPS 失敗 %s: %s", store_key, e)
+# ── 見送り（miwokuri）は 2026-08-15 に全ランクで廃止 ──────────────────────────
+#
+# 🔴 **入稿の時点で見送りをしない**（ユーザー指示 2026-08-15）。
+#    netkeirin へは候補が立ったレースをそのまま出しているので、「見送った」という
+#    状態は運用に存在しない。にもかかわらず 15分前判定が skip したときだけ
+#    `_mark_paper_miwokuri()` が picks_history を miwokuri=True に更新しており、
+#    **実際には売った商品が Web で「見送り」と表示される**ことがあった
+#    （2026-08-15 に 7T1 で発覚。7T1 は発走前判定を持たないため、候補行が
+#    bet_amount=0 のまま残り、下記 notify_results_wt の一括処理に拾われていた）。
+#
+# skip したときは**何も書かない**（候補行を bet_amount=0 のまま残す）。
+# 夜間の walk-forward 再構築が買い方・投資額・的中で上書きするので、
+# 記録が失われることはない。
+#
+# ⚠️ 判定そのもの（skip_reason）は残す。欠車・盤面不一致・オッズ欠損は
+#    「買えなかった」事実であってログには要る。消したのは **DB の見送りフラグだけ**。
 
 
 # ── A（◎一致×波乱×別L先頭・二連単）／S1（6車三連単）は 2026-07-17 全廃 ─────────
