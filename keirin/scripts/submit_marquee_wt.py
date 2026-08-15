@@ -51,12 +51,17 @@ from src.submit_window import is_closed  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
+# 🔴 **ここの値は必ず `netkeirin_submit_wt.MANUAL_ALLOWED_RANKS` に載っていること。**
+#    載っていないランク名を書くと `--manual-rank-key` の choices で argparse が
+#    即死し、**穴埋めが1件も入稿されないまま「失敗」だけがログに残る**。
+#    - 9車: 2026-08-14 に 9A を廃止して 9C へ集約（穴埋めは 9A 入稿22件中12件の主経路）
+#    - 7車: 2026-08-14 の PR#145 で 7A を RANK_7S へ統合したのに**ここだけ 7A のまま
+#      残り**、2026-08-15 の7車穴埋め9件が全滅した（9車は 9C で成功していたため
+#      「穴埋めは動いている」ように見えていた）。2026-08-16 に 7S へ付け替え
 # 手動入稿で使うランク。ゲート表示の付かない中立のものを選ぶ
 # （看板レースは「必ず出す」ので「自信あり」を意味するランクは使わない）。
-# 🔴 9車は 2026-08-14 に 9A を廃止して 9C へ集約した。**ここを付け替え忘れると
-#    存在しないランク名で入稿し、Web にも成績にも出なくなる**（穴埋めは
-#    9A 入稿22件中12件を占めていた主経路）。
-RANK_BY_CARS = {7: "7A", 9: "9C"}
+# 7S / 9C はいずれも `gate_filter=None`＝ゲート表示が付かない。
+RANK_BY_CARS = {7: "7S", 9: "9C"}
 
 
 def _load_allindex(date: str) -> dict[str, dict]:
