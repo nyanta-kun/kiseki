@@ -941,6 +941,72 @@ def _predicted_trio_fill(race_key: str) -> dict:
     return {}
 
 
+# 発走前判定の経路を持たないランク（＝当日中に `picks_history.bet_amount` を
+# 埋める者がいないランク）。
+#
+# 🔴 **背景**: 他ランクは発走15分前の買い判定で bet_amount が入るが、7T1 には
+#    その経路が無く（`notify_results_wt.py` に 7T1 の分岐は無い）、候補行は
+#    **当日ずっと bet_amount=0 のまま**置かれる。実際に入るのは翌朝 08:40 の
+#    `reconcile_walkforward_tail.sh` → `rebuild_7t1_walkforward_pg.py`。
+#    その結果、netkeirin で**実際に売っているのに** Web 側では
+#      - 投資・回収サマリーから丸ごと落ちる（SQL が `bet_amount > 0` で絞る）
+#      - ランクバッジの購入◯ が付かない（`isBuyConfirmed` が同じ条件）
+#    という状態になっていた（2026-08-15 ユーザー指摘）。
+#
+# ⚠️ **ここに他ランクを足さないこと。** 発走前判定を持つランクで二重に書くと、
+#    「入稿したが直前オッズで買わなかった」レースまで購入済みになる。
+#    足すのは「当日 bet_amount を書く者が他にいない」ランクだけ。
+RANKS_BOUGHT_ON_SUBMIT = frozenset({"7T1"})
+
+
+def _bet_detail_total(bet_detail: str | None) -> int:
+    """入稿原本（`build_bet_detail` のJSON）から投資合計を取り出す。
+
+    取り出せなければ 0。**0 のときは何も書かない**（下記 `_mark_bought`）ので、
+    金額が分からないまま購入済みに見せることはない。
+    """
+    if not bet_detail:
+        return 0
+    try:
+        return int(json.loads(bet_detail).get("total") or 0)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return 0
+
+
+def _mark_bought(conn, race_key: str, rank_key: str, total: int) -> None:
+    """入稿が成立した時点で `picks_history` に投資額を書き込む（該当ランクのみ）。
+
+    - **UPDATE だけで INSERT はしない。** 候補行が無いレース（看板の穴埋め・
+      手動入稿）は `submission_only` として別扱いされているので、ここで行を
+      作るとランクのペーパー成績に混ざる。
+    - `COALESCE(bet_amount,0)=0` を条件にするのは、**既に採点で入った金額を
+      上書きしないため**。翌朝の walk-forward 再構築は行ごと作り直すので、
+      honest な値が最終的に残る点は従来と変わらない。
+    """
+    if rank_key not in RANKS_BOUGHT_ON_SUBMIT or total <= 0:
+        return
+    conn.execute(
+        "UPDATE picks_history SET bet_amount = ? "
+        "WHERE race_key = ? AND rank = ? AND COALESCE(bet_amount, 0) = 0",
+        (total, f"{race_key}#{rank_key}", f"RANK_{rank_key}"),
+    )
+
+
+def _unmark_bought(conn, race_key: str, rank_key: str) -> None:
+    """入稿取消に伴って投資額を戻す（`_mark_bought` の逆）。
+
+    ⚠️ **採点済み（payout が入っている）行は触らない。** 発走後に取り消した
+       場合まで 0 に戻すと、確定した成績が消える。
+    """
+    if rank_key not in RANKS_BOUGHT_ON_SUBMIT:
+        return
+    conn.execute(
+        "UPDATE picks_history SET bet_amount = 0 "
+        "WHERE race_key = ? AND rank = ? AND COALESCE(payout, 0) = 0",
+        (f"{race_key}#{rank_key}", f"RANK_{rank_key}"),
+    )
+
+
 def _record_submission(
     race_key: str, rank_key: str, session: str, venue_name: str, race_no: int,
     gate_label: str | None, axis1: int, axis2: int, netkeirin_race_id: str,
@@ -976,6 +1042,8 @@ def _record_submission(
              race_id, bet_detail, status, title, comment,
              now if proposed else None, None if proposed else now, None, origin),
         )
+        if not proposed:
+            _mark_bought(conn, race_key, rank_key, _bet_detail_total(bet_detail))
         conn.commit()
 
 
@@ -2143,6 +2211,10 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
             "approved_at = ? WHERE race_key = ? AND rank_key = ?",
             (STATUS_SUBMITTED, str(msg), now, race_key, rank_key),
         )
+        # 🔴 承認制のときはここが唯一の「送信成立」地点。`_record_submission` は
+        #    入稿案を作った時点（proposed）にしか通らないので、ここを抜かすと
+        #    **承認したランクだけ購入◯ が付かない**。
+        _mark_bought(conn, race_key, rank_key, _bet_detail_total(row["bet_detail"]))
         conn.commit()
     return True, str(msg)
 
@@ -2204,6 +2276,9 @@ def cancel_submission(race_key: str, rank_key: str, force: bool = False) -> tupl
             "WHERE race_key = ? AND rank_key = ?",
             (STATUS_DELETED, now, race_key, rank_key),
         )
+        # 取り消したら購入も取り消す。戻さないと**売っていない商品が投資額に
+        # 残る**（入稿→取消を繰り返した日にサマリーが膨らむ）。
+        _unmark_bought(conn, race_key, rank_key)
         conn.commit()
     return True, item_msg
 
