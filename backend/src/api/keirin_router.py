@@ -994,6 +994,36 @@ _SETTLED_COND = """(
     OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
 )"""
 
+# 廃止済みだが**実際に売った**ランクの表示名（2026-08-16 追加）。
+#
+# 🔴 これが無いと `_display_rank()` が内部名（`RANK_7A` 等）をそのまま返し、
+#    フロントの `RANK_STYLE` に該当キーが無いので **「非」バッジ**になる。
+#    実害: 2026-08-14 に 7A を RANK_7S へ統合した直後から、`netkeirin_submissions`
+#    の 7A(137件)・7SS(31件)・9A(13件)・9S(1件) = **182件の実入稿が全部「非」**に
+#    なっていた（例: 2026-08-14 岐阜1R `20260814_43_01`）。
+#
+# 🔴 **`_PAPER_RANK_LABELS` へ足してはいけない。** あちらは
+#    `_VALID_PICK_RANKS` / `_RANKS_ALL` の allowlist を導出しており、足すと
+#    `picks_history` に残っている廃止ランクの行（RANK_9A 1,046件・RANK_9S 179件・
+#    SEVEN_S1 3件）が**過去日の集計に遡って混ざる**。表示名だけを与える。
+#
+# ⚠️ 後継ランクへ寄せない（7A→7S 等にしない）。売ったのはその当時の商品なので、
+#    寄せると廃止済みランクの成績が現行ランクの成績として読まれる。
+#
+# なぜ入稿側だけ起きるか: `picks_history` 由来の行は allowlist で落ちるが、
+# 入稿だけの行（ゲート未通過・看板の穴埋め）は SQL が `'RANK_' || ns.rank_key` で
+# rank を合成しており allowlist を通らない。**売った事実は消せないので落とさず、
+# 表示名を与えるのが正しい**（2026-08-11 に「売っているのに一覧に出ない」を
+# 直した経緯と同じ方針）。
+_LEGACY_RANK_LABELS: dict[str, str] = {
+    "RANK_7A": "7A",      # 2026-08-14 に RANK_7S へ統合
+    "RANK_7SS": "7SS",    # 2026-08-02 全廃 → 2026-08-14 に RANK_7S へ統合
+    "RANK_9A": "9A",      # 2026-08-14 に RANK_9C へ集約
+    "RANK_9S": "9S",      # 2026-08-14 に RANK_9C へ集約
+    "SEVEN_S1": "S1",     # 2026-07-31 全廃
+}
+
+
 def _display_rank(rank: str) -> str:
     """DB の内部 rank から、フロントエンドが表示に使う表示ランク文字列を返す。
 
@@ -1007,11 +1037,17 @@ def _display_rank(rank: str) -> str:
     一括更新済み）。gate_label カラム自体はDBに残っており過去データ分析用に
     保持するが、表示ランクの決定には一切使わない。
 
-    未知の rank（全廃済みランクの残骸データ等）は元の rank 文字列をそのまま
-    返す（呼び出し側は _VALID_PICK_RANKS/_RANKS_ALL のallowlistで事前に
-    除外している想定のため、通常この分岐には到達しない）。
+    廃止済みでも**実際に入稿した**ランクは `_LEGACY_RANK_LABELS` で表示名を
+    与える（入稿だけの行は allowlist を通らずここへ到達するため）。
+
+    それでも未知の rank は元の文字列をそのまま返す。
+    🔴 その場合フロントは「非」バッジになる。**内部名が画面へ漏れたら
+       `_LEGACY_RANK_LABELS` の追加漏れ**なので、回帰テストで縛ってある
+       （`test_keirin_rank_consistency.py`）。
     """
-    return _PAPER_RANK_LABELS.get(rank, rank)
+    if rank in _PAPER_RANK_LABELS:
+        return _PAPER_RANK_LABELS[rank]
+    return _LEGACY_RANK_LABELS.get(rank, rank)
 
 
 # トップライン（当日/当月/当年）は現行有効ランク全て（7S/7A/9S/9A/7SS）をまとめて
