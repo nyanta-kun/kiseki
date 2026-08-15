@@ -1923,7 +1923,10 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                 # 買い方（券種と買う相手）を決める。**単一正本は rank_7c_buy_plan**。
                 # 三連複側だけ p3_sum ゲートが掛かるので、ここで None になる
                 # ＝そのレースは 7C として買わない（`rank_7c_daily_select` が落とす）。
-                _plan_7c = (rank_7c_buy_plan(top3_probs, win_probs, sel_7c[0], legs_7c)
+                # 🔴 `wt_ana` を渡すのが案E（総流し帯から△を外す）の発動条件。
+                #    渡し忘れると **fail-open で黙って旧挙動に戻る**。
+                _plan_7c = (rank_7c_buy_plan(top3_probs, win_probs, sel_7c[0],
+                                             legs_7c, wt_ana=wt_ana)
                             if sel_7c else None)
 
                 # 7SS（2026-08-05新設）判定用。軸2車が同一ラインか。

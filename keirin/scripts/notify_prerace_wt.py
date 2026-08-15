@@ -1584,7 +1584,10 @@ def judge_rank_7c(cand: dict, trio_lookup: dict,
         # 3着内率の落差で打ち切る（差が無ければ削らない）。盤面から再計算した
         # legs に対して掛ける（欠車で相手が変われば削る位置も変わるべきなので、
         # 朝の `legs_7c_buy` は使わない）。
-        legs = rank_7c_cut_legs_by_gap(legs, probs) if probs else legs
+        # 🔴 `wt_ana` は案E（総流し帯から△を外す）の発動条件。候補JSON が持って
+        #    いない古い形式では None＝削らない（fail-open）。
+        legs = (rank_7c_cut_legs_by_gap(legs, probs, wt_ana=cand.get("wt_ana"))
+                if probs else legs)
     combos, leg_odds = [], {}
     for t in legs:
         key = frozenset({axis1, axis2, t})

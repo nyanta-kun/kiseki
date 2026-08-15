@@ -479,6 +479,55 @@ RANK_7C_TRIO_GAP_MIN = 0.15
 #      この変更が動かすのは的中率と払戻の大きさだけ。
 RANK_7C_TRIO_LEGS_FLOOR = 2
 
+# 🔴 **総流し帯から WT△ を外す**（2026-08-15・ユーザー判断「案E」）。
+#
+#   落差カットは **相手が横並びのレースでは何も削らない**（p3 に落差が無いため）。
+#   その結果 4〜5点で買う「総流し帯」が残り、そこが 7C のガミの本体だった。
+#   実測（本番 picks_history 全期間）: 三連複4点のガミ率 47.0% / 5点 50.1%。
+#
+#   ## 削れる相手は誰か（総流し帯 2,746R・月次凍結vintage・2025-01〜）
+#
+#     相手の属性   登場     的中率   ガミ率   的中時の配当中央
+#     **WT△**    2,638    26.8%   90.2%     5,500円
+#     ○            128    21.9%   82.1%     7,000円
+#     無印        9,210    11.4%   34.0%    12,250円
+#
+#   ＝ △は「よく3着に来るが必ず安い」相手で、**当てても損になる的中**を作っている。
+#   7B で「相手から△を外すとガミ率 42.4%→10.8%」が効いたのと同じ構造。
+#
+#   ## なぜ「p3 が高いときだけ」なのか
+#
+#   常に外す案が最も効く（実質的中 +3.2pt）が、素の的中が 65.0%→38.6% と 26.4pt 落ち、
+#   「軸2車は3着内なのに買い目から外れる」体験が 726R 増える。ユーザー判断で
+#   **発動を絞った案E**（△の3着内率が閾値以上のときだけ）を採用した。効果は約6割:
+#
+#     方針                     素の的中  実質的中  ガミ率   ROI   実質Δ掃引  実質Δ確認
+#     総流しのまま                65.0%   28.0%  56.9%  80.7%       —       —
+#     常に△を外す                38.6%   31.5%  18.5%  83.1%  +4.0pt  +3.2pt
+#     **△のp3>=0.40のときだけ**  45.3%   30.2%  33.3%  82.3%  +2.8pt  +2.0pt
+#
+#   確認窓の95%CI（レース単位 paired bootstrap 2,000回）:
+#   実質的中Δ [+1.0, +3.1]pt / ROIΔ [+0.2, +4.4]pt ＝**どちらも0を跨がない**。
+#
+#   ## 検証の作法（7A の相手削りが棄却された型を踏まないために）
+#
+#   7A では同型の相手削り6規則が **5規則で符号反転**して棄却された。原因は
+#   「窓間のROI変動(26pt)が規則の効果(±3pt)を一桁上回る」こと。本件が成立するのは
+#   **主指標を ROI ではなく実質的中（ガミ除く＝netkeirin の表示的中率）に置いた**
+#   ためで、こちらは頻度統計なので裾の影響を受けない。裏取りも取ってある:
+#     - 掃引窓(794R)・確認窓(1952R)で符号一致
+#     - 月次は実質的中が 18/20ヶ月で改善（悪化は n=13 の月のみ）
+#     - 払戻上位10本を除いても ROI 改善が残る（裾依存でない）
+#
+#   ⚠️ **削るのは1車まで**（実測でも削り後は3〜5点）。3点を下回るなら削らない。
+#   ⚠️ **三連単側には掛けない**（点数を変えると効果が消えるのは検証済み）。
+#   ⚠️ ライン条件（軸と同ライン除外など）も測ったが**印を上回らない**
+#      （実質的中は同等でも ROI が +0.4pt しか動かない）。組み合わせも悪化。再提案しないこと。
+#   ⚠️ 印が取れないレースは **fail-open（削らない）**。`wt_ana=None` が既定。
+RANK_7C_ANA_CUT_MIN_LEGS = 4    # 総流し帯（4点以上）でだけ発動する
+RANK_7C_ANA_CUT_P3_MIN = 0.40   # △の3着内率がこれ以上のときだけ削る
+RANK_7C_ANA_CUT_FLOOR = 3       # 削って3点を下回るなら削らない
+
 # 🔴 低配当パターンの除外（2026-08-07 追加・ユーザー発見）。
 #   **「複勝率の3位と4位が大きく離れている（＝上位3車が抜けている）」かつ
 #     「その上位3車が同一ライン」**のレースは見送る。
@@ -2416,10 +2465,36 @@ def rank_7c_use_trifecta(
     return float(win_probs.get(axis1, 0.0)) >= pw_min
 
 
+def rank_7c_drop_ana_leg(
+    legs: list[int], top3_probs: dict[int, float], wt_ana: int | None,
+) -> list[int]:
+    """総流し帯（4点以上）から WT△ を1車外す。**条件を満たさなければ素通し**。
+
+    発動条件（すべて満たしたときだけ）:
+      - 買い目が `RANK_7C_ANA_CUT_MIN_LEGS`(4) 点以上＝落差カットが効かなかった帯
+      - △が買い目に居る
+      - △の3着内率が `RANK_7C_ANA_CUT_P3_MIN`(0.40) 以上
+      - 外した残りが `RANK_7C_ANA_CUT_FLOOR`(3) 点以上
+
+    🔴 **`wt_ana` が None なら何もしない**（fail-open）。印が取れない日に
+       買い目が勝手に変わらないようにするため。根拠と実測は
+       `RANK_7C_ANA_CUT_P3_MIN` の定義部。
+    """
+    if wt_ana is None or len(legs) < RANK_7C_ANA_CUT_MIN_LEGS:
+        return legs
+    if wt_ana not in legs:
+        return legs
+    if top3_probs.get(wt_ana, 0.0) < RANK_7C_ANA_CUT_P3_MIN:
+        return legs
+    kept = [x for x in legs if x != wt_ana]
+    return kept if len(kept) >= RANK_7C_ANA_CUT_FLOOR else legs
+
+
 def rank_7c_cut_legs_by_gap(
     legs: list[int], top3_probs: dict[int, float],
     gap_min: float = RANK_7C_TRIO_GAP_MIN,
     legs_floor: int = RANK_7C_TRIO_LEGS_FLOOR,
+    wt_ana: int | None = None,
 ) -> list[int]:
     """3着内率の落差で相手を打ち切る。**差が無ければ削らない**。
 
@@ -2445,6 +2520,11 @@ def rank_7c_cut_legs_by_gap(
           再構築のどれか1つを忘れると、その経路だけが1点買いを出し続ける。
        ⚠️ `legs_floor=0` を渡すと素のカットだけを返す（検証用。
           `scripts/exp_7c_gap_cut_by_size.py` はこれを使う）。
+
+    🔴 **落差が無くて削れなかった総流し帯（4点以上）は `wt_ana` で削る**
+       （2026-08-15・案E）。落差カットと目的が違う——あちらは「割り込む余地が
+       消えた相手」を落とし、こちらは「よく来るが必ず安い相手（△）」を落とす。
+       `wt_ana=None`（既定）なら何もしない。根拠は `RANK_7C_ANA_CUT_P3_MIN` の定義部。
     """
     if not legs:
         return []
@@ -2454,17 +2534,17 @@ def rank_7c_cut_legs_by_gap(
             break
         out.append(cur)
     if legs_floor <= 0 or len(out) > legs_floor:
-        return out
+        return rank_7c_drop_ana_leg(out, top3_probs, wt_ana)
     # 1点まで縮んだら「先頭を外して2,3番手」。相手が2車しか無い等で2点を作れない
     # ときは総流しへ倒す（買い目を0点にしない）。
     if len(out) == 1 and len(legs) >= 3:
         return list(legs[1:3])
-    return list(legs)
+    return rank_7c_drop_ana_leg(list(legs), top3_probs, wt_ana)
 
 
 def rank_7c_buy_plan(
     top3_probs: dict[int, float], win_probs: dict[int, float] | None,
-    axis1: int, legs: list[int],
+    axis1: int, legs: list[int], wt_ana: int | None = None,
 ) -> tuple[str, list[int]] | None:
     """7Cの買い方を決める。`(bet_kind, 買う相手)` か、買わないなら None。
 
@@ -2483,11 +2563,12 @@ def rank_7c_buy_plan(
         return None
     if rank_7c_use_trifecta(win_probs, axis1):
         # 三連単は絞らない（相手全部・順序固定）。点数を変えると効果が消える。
+        # 🔴 △削り（案E）も掛けない。三連複側だけの規則。
         return "trifecta", list(legs)
     p3_sum = sum(sorted(top3_probs.values(), reverse=True)[:2])
     if p3_sum < RANK_7C_TRIO_P3_SUM_MIN:
         return None
-    return "trio", rank_7c_cut_legs_by_gap(legs, top3_probs)
+    return "trio", rank_7c_cut_legs_by_gap(legs, top3_probs, wt_ana=wt_ana)
 
 
 def rank_7c_is_lowpay_pattern(
