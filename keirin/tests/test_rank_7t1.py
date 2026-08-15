@@ -80,8 +80,8 @@ def test_semifinal_is_a_target():
     """🔴 **準決勝は対象に含む**（看板判定とはここが違う）。
 
     検証をこの定義で行っている。準決勝は母集団の33%を占め、成績は本体と
-    区別できない（20万超 2.17% vs 2.02%）。`marquee.is_marquee_type()` を
-    そのまま使うと準決勝が落ち、13.4→8.9本/日・20万超が3.6日→5.5日に1回まで
+    区別できない（目標20万での検証時 20万超 2.17% vs 2.02%）。
+    `marquee.is_marquee_type()` をそのまま使うと準決勝が落ち、13.4→8.9本/日で
     **頻度だけが落ちる**（実装時に実際に踏んだ）。
     """
     assert rank_7t1_is_target_race_type("準決勝") is True
@@ -174,7 +174,9 @@ def test_cut_uses_rounded_min_stake_not_ideal_split():
 
     assert rank_7t1_min_stake(3) == 3300          # 3,333 ではない
     assert rank_7t1_min_stake(1) == RANK_7T1_BUDGET
-    ideal_bar = RANK_7T1_TARGET_PAYOUT * 3 / RANK_7T1_BUDGET      # = 60.0
+    # 理想の等分（1万÷3点＝3,333円）から逆算した足切り。実際の最小額は
+    # 3,300円なので、この倍率で切ると最小の点だけ目標に届かない。
+    ideal_bar = RANK_7T1_TARGET_PAYOUT * 3 / RANK_7T1_BUDGET
     got = rank_7t1_select(STD, STD_W, _board(ideal_bar))
     if got is not None:
         stakes = rank_7t1_stakes(got[2])
