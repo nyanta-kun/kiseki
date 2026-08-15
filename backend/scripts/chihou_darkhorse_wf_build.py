@@ -50,6 +50,12 @@ from scripts.chihou_rebuild_walkforward import (  # noqa: E402
     _featurize_full,
     _fetch,
 )
+from scripts.chihou_pedigree_features import (  # noqa: E402
+    PEDIGREE_FEATURES,
+    add_pedigree_features,
+    build_pit_tables,
+    fetch_pedigree,
+)
 from scripts.train_chihou_market_lgb import (  # noqa: E402
     ALL_FEATURES,
     PROD_FEATURES,
@@ -221,6 +227,14 @@ def main() -> None:
             "その条件を再現して条件の再現性を確かめるために使う"
         ),
     )
+    p.add_argument(
+        "--pedigree",
+        action="store_true",
+        help=(
+            "血統特徴5本を足して学習・予測する（keiba.pedigrees 経由・出走馬の91.3%%）。"
+            "集計は point-in-time（当日を含まない）。台帳 17.5"
+        ),
+    )
     args = p.parse_args()
     quarters = QUARTERS[: args.quarters]
 
@@ -235,6 +249,8 @@ def main() -> None:
     # odds_rank_n / is_heavy_fav / is_dark_horse が常に中立値で動いている。
     # --no-market はその条件を再現する（＝検証と本番の乖離を測る）。
     feature_set = PROD_FEATURES if args.no_market else ALL_FEATURES
+    if args.pedigree:
+        feature_set = feature_set + PEDIGREE_FEATURES
     logger.info(
         "特徴量セット: %s (%d本)",
         "PROD_FEATURES(市場なし)" if args.no_market else "ALL_FEATURES(市場あり)",
@@ -247,6 +263,15 @@ def main() -> None:
     df_hist_global = fetch_hist(conn)
     apt_tbl = compute_wet_apt_table(fetch_hist_cond(conn))
     ct_tables = build_ct_tables(conn)
+
+    ped = ped_pit = None
+    if args.pedigree:
+        # 血統は keiba.pedigrees 経由（UmaConn は BLOD を配信していない・台帳 17.5）。
+        # 集計は merge_asof(allow_exact_matches=False) で当日を除くので、
+        # 全期間から作っても対象行に未来は混入しない（test_chihou_pedigree_features.py）。
+        logger.info("血統テーブル読み込み中...")
+        ped = fetch_pedigree(conn)
+        ped_pit = build_pit_tables(conn, ped)
 
     all_settled: list[pd.DataFrame] = []
 
@@ -262,6 +287,8 @@ def main() -> None:
             logger.warning("  学習データ不足(%dレース)のためスキップ", n_train_races)
             continue
         df_train = _featurize_full(df_train_raw, df_hist_global, apt_tbl, ct_tables)
+        if args.pedigree:
+            df_train = add_pedigree_features(df_train, ped, ped_pit)
         df_train = df_train.sort_values("race_id").reset_index(drop=True)
         fp_tr = pd.to_numeric(df_train["finish_position"], errors="coerce")
         X_tr = df_train[feature_set].fillna(0.0).values.astype(np.float64)
@@ -308,6 +335,8 @@ def main() -> None:
                 continue
 
         df_test = _featurize_full(df_test_raw, df_hist_global, apt_tbl, ct_tables)
+        if args.pedigree:
+            df_test = add_pedigree_features(df_test, ped, ped_pit)
         if args.serve_no_market:
             # 学習は市場込み、予測だけ中立値。これが本番で起きていること
             df_test = _neutralize_market_features(df_test)
