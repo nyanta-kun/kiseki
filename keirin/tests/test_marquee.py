@@ -186,3 +186,60 @@ def test_marquee_title_does_not_carry_grade_or_race_type():
     assert "{race_type}" not in t
     assert "{race_label}" not in t
     assert "GI" not in t
+
+
+# ---------------------------------------------------------------------------
+# 穴埋めのランク名（2026-08-16・7車の穴埋めが2日間全滅した実バグ）
+# ---------------------------------------------------------------------------
+
+
+def test_marquee_fill_rank_names_are_accepted_by_the_submitter():
+    """🔴 `RANK_BY_CARS` の値は必ず `MANUAL_ALLOWED_RANKS` に載っていること。
+
+    載っていないランク名を渡すと `--manual-rank-key` の argparse choices で
+    **プロセスが即死**する。看板の穴埋めは1件も入稿されず、ログには
+    `invalid choice` と「失敗N件」しか残らない。
+
+    実害: PR#145（2026-08-14）が `MANUAL_ALLOWED_RANKS` から 7A を外したとき
+    `RANK_BY_CARS` の 7車側を付け替え忘れ、2026-08-15 の7車穴埋め **9件が全滅**した。
+    9車は 9C で成功していたため「穴埋めは動いている」ように見えていた。
+
+    ⚠️ ランク集合の二重管理はこのリポジトリが繰り返し踏んでいる型（CLAUDE.md
+       「変更時チェックリスト」）。片側だけ直しても落ちるように機械で縛る。
+    """
+    from scripts.netkeirin_submit_wt import MANUAL_ALLOWED_RANKS
+    from scripts.submit_marquee_wt import RANK_BY_CARS
+
+    for n_cars, rank in RANK_BY_CARS.items():
+        assert rank in MANUAL_ALLOWED_RANKS, (
+            f"{n_cars}車の穴埋めランク {rank} が MANUAL_ALLOWED_RANKS "
+            f"{MANUAL_ALLOWED_RANKS} にありません（入稿が argparse で即死します）"
+        )
+
+
+def test_marquee_fill_rank_matches_the_car_count():
+    """🔴 穴埋めランクの想定車数が対応表のキーと一致すること。
+
+    `_process_manual` は `n_entries != cfg["n_cars"]` で弾くので、ここがずれると
+    argparse は通っても**入稿0件のまま「車数不一致」で失敗し続ける**。
+    """
+    from scripts.netkeirin_submit_wt import RANK_CONFIGS
+    from scripts.submit_marquee_wt import RANK_BY_CARS
+
+    for n_cars, rank in RANK_BY_CARS.items():
+        assert rank in RANK_CONFIGS, f"{n_cars}車の穴埋めランク {rank} が RANK_CONFIGS にありません"
+        assert RANK_CONFIGS[rank]["n_cars"] == n_cars, (
+            f"{n_cars}車の穴埋めに {rank}（{RANK_CONFIGS[rank]['n_cars']}車想定）を使っています"
+        )
+
+
+def test_marquee_fill_rank_has_no_gate_label():
+    """看板は「必ず出す」ので、自信度を意味するゲート表示を付けない。"""
+    from scripts.netkeirin_submit_wt import RANK_CONFIGS
+    from scripts.submit_marquee_wt import RANK_BY_CARS
+
+    for n_cars, rank in RANK_BY_CARS.items():
+        assert rank in RANK_CONFIGS, f"{n_cars}車の穴埋めランク {rank} が RANK_CONFIGS にありません"
+        assert RANK_CONFIGS[rank]["gate_filter"] is None, (
+            f"{n_cars}車の穴埋め {rank} にゲート表示が付いています"
+        )
