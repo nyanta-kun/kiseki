@@ -292,6 +292,13 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
   // 9C=RANK_9C（9車のベースモデル・2026-08-14新設／旧 9S・9A を置換）。
   "9C":         { bg: "#0891b2", text: "#fff", label: "9C" },
+  // 🔴 廃止済みだが**実際に売った**ランク（2026-08-16 追加）。backend の
+  //    `_LEGACY_RANK_LABELS` が表示名を返すので、ここに無いと「非」になる。
+  //    7A/7SS は元から残っていたが 9A/9S が抜けており、入稿だけの行
+  //    （ゲート未通過・看板の穴埋め）が「非」で出ていた。
+  //    ⚠️ 後継（9C）と同じ色にしない。過去の別商品だと分かるようにする。
+  "9A":         { bg: "#64748b", text: "#fff", label: "9A" },
+  "9S":         { bg: "#475569", text: "#fff", label: "9S" },
   // 7B=RANK_7B（◎◯一致だが順序・相手で不一致・三連複3点・2026-08-03導入）。
   // 7S/7Aとは母集団が排他（7B=overlap2 / 7S・7A=overlap0,1）で買い目点数も
   // 異なる（3点 vs 5点）ため、独立した色調（琥珀系）で区別する。
@@ -1315,7 +1322,9 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
 const RANK_ORDER = ["7H2", "7S", "7C", "7T1", "7B", "7H1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
-  "7SS": "7SS", "7S": "7S", "7A": "7A", "7B": "7B", "9C": "9C",
+  // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
+  // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。
+  "7SS": "7SS", "7S": "7S", "7A": "7A", "9A": "9A", "9S": "9S", "7B": "7B", "9C": "9C",
   "7H1": "7H1",
   "7H2": "7H2",
   "9H1": "9H1",
@@ -1326,6 +1335,8 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
   "7A": "bg-stone-100 text-stone-700 dark:bg-stone-800/60 dark:text-stone-300",
+  "9A": "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
+  "9S": "bg-slate-200 text-slate-800 dark:bg-slate-700/60 dark:text-slate-200",
   "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "9C": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
   "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",

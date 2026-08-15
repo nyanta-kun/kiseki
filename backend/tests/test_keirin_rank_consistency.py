@@ -281,3 +281,82 @@ def test_frontend_manual_submit_ranks_match_backend():
     assert typed == allowed, (
         f"ManualKeirinRankKey({sorted(typed)}) が backend の "
         f"_MANUAL_RANK_KEYS({sorted(allowed)}) と一致しない")
+
+
+# ── 廃止済みだが実際に売ったランク（2026-08-16 追加）─────────────────
+#
+# 🔴 実害: 2026-08-14 に 7A を RANK_7S へ統合した直後から、`netkeirin_submissions`
+#    の 7A(137件)・7SS(31件)・9A(13件)・9S(1件) = **182件の実入稿が全部「非」バッジ**
+#    になっていた（例: 2026-08-14 岐阜1R `20260814_43_01`）。
+#
+#    機序: 入稿だけの行（ゲート未通過・看板の穴埋め）は SQL が
+#    `'RANK_' || ns.rank_key` で rank を合成するため allowlist を通らず
+#    `_display_rank()` へ到達する。そこで未知だと**内部名がそのまま画面へ漏れ**、
+#    フロントの `RANK_STYLE` に無いので「非」になる。
+#
+#    ⚠️ 「売っていないランクだから落とす」では直らない。**実際に売った商品**
+#       なので一覧にも成績にも出す必要がある（2026-08-11 の方針）。
+
+_HISTORICAL_SUBMISSION_RANK_KEYS = (
+    # `netkeirin_submissions.rank_key` に実在する値（現行 + 廃止済み）。
+    # 入稿したことがあるランクを消す運用は無いので、増えることはあっても減らない。
+    "7S", "7C", "7B", "7T1", "7H1", "7H2", "9C", "9H1",   # 現行
+    "7A", "7SS", "9A", "9S",                              # 廃止済み（売った実績あり）
+)
+
+
+def test_display_rank_never_leaks_internal_names():
+    """🔴 `_display_rank()` が内部名（`RANK_*`）を画面へ返さないこと。
+
+    返した瞬間フロントの `RANK_STYLE` から外れて「非」になる。
+    """
+    from src.api.keirin_router import _display_rank
+
+    for key in _HISTORICAL_SUBMISSION_RANK_KEYS:
+        got = _display_rank(f"RANK_{key}")
+        assert not got.startswith("RANK_"), (
+            f"rank_key={key} の表示名が内部名のまま漏れています（{got}）。"
+            "backend の _LEGACY_RANK_LABELS に追加してください。")
+
+
+def test_every_submitted_rank_has_a_frontend_badge():
+    """入稿しうる全ランクが、フロントの `RANK_STYLE` に載っていること。
+
+    載っていないと「非」バッジになり、当日のサマリー上でもランク不明として並ぶ。
+    """
+    from src.api.keirin_router import _display_rank
+
+    styles = _extract(
+        "app/keirin/page.tsx",
+        r"const RANK_STYLE: Record<string, \{ bg: string; text: string; label: string \}> = \{(.*?)\n\};",
+    )
+    missing = sorted({_display_rank(f"RANK_{k}") for k in _HISTORICAL_SUBMISSION_RANK_KEYS}
+                     - styles)
+    assert not missing, (
+        f"frontend の RANK_STYLE に無い表示ランク: {missing}（「非」バッジになります）")
+
+
+def test_legacy_labels_are_not_in_the_allowlist():
+    """🔴 廃止ランクを `_PAPER_RANK_LABELS` へ足して直してはいけない。
+
+    あちらは `_VALID_PICK_RANKS` / `_RANKS_ALL` を導出しており、足すと
+    `picks_history` に残る廃止ランクの行（RANK_9A 1,046件・RANK_9S 179件・
+    SEVEN_S1 3件）が**過去日の集計へ遡って混ざる**。表示名だけを与えること。
+    """
+    from src.api.keirin_router import _LEGACY_RANK_LABELS, _PAPER_RANK_LABELS
+
+    overlap = set(_LEGACY_RANK_LABELS) & set(_PAPER_RANK_LABELS)
+    assert not overlap, f"廃止ランクが allowlist にも入っています: {sorted(overlap)}"
+
+
+def test_legacy_labels_are_not_remapped_to_successors():
+    """⚠️ 後継ランクへ寄せない（7A→7S・9A→9C 等にしない）。
+
+    売ったのはその当時の商品なので、寄せると廃止済みランクの成績が
+    現行ランクの成績として読まれる。
+    """
+    from src.api.keirin_router import _LEGACY_RANK_LABELS
+
+    for internal, label in _LEGACY_RANK_LABELS.items():
+        assert label not in LABELS, (
+            f"{internal} の表示名 {label} が現行ランクと同じです（成績が混ざります）")
