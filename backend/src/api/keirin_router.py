@@ -2040,6 +2040,34 @@ def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
     return min(rets), max(rets)
 
 
+def _min_payout_low(lines: list[dict]) -> float | None:
+    """**下振れしても割らない**最低払戻（円）。`odds_low` が全点に無ければ None。
+
+    ## なぜ `odds` と別に要るのか（2026-08-16・実測が起点）
+
+    `odds` は入稿時点の板が最優先で、**朝の板は買い目の帯で確定までに大きく下がる**。
+    実入稿 705点を確定オッズと突合した結果:
+
+    | `odds` の出どころ | 中央 確定/表示 | <0.8倍 |
+    |---|---|---|
+    | 板 | **0.860** | **45.0%** |
+    | 予測（構造モデル） | 1.181 | 16.7% |
+
+    つまり従来の `min_payout` は**当たったときに実際より高い額を約束していた**。
+    `odds_low` は keirin 側 `_conservative_trio_board()` が作る下限包絡
+    （予測の整合板 × 学習窓較正の下側25%分位）で、これで測ると
+    「利益が出ると言った点が実はガミ」は 10.4% → 5.1% に下がる。
+
+    🔴 **`odds_low` はオッズではない。** 表示は従来どおり `odds` を出し、
+       ここで作るのは「下振れ時にいくら返るか」という金額だけ。
+    ⚠️ 三連単は予測モデルが無いので `odds_low` が付かない＝ None になる
+       （その場合は従来どおり `min_payout` で判断する）。
+    """
+    if not lines or any(x.get("odds_low") in (None, 0) for x in lines):
+        return None
+    return min(float(x["stake"]) * float(x["odds_low"]) for x in lines)
+
+
 def _trio_probabilities(top3_pct: dict[int, float]) -> dict[frozenset, float]:
     """3着内率から三連複の各目の確率をつくる（レース内で正規化）。
 
@@ -2139,6 +2167,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         top3 = {int(e["frame_no"]): float(e["pred_top3_pct"])
                 for e in entries if e["pred_top3_pct"] is not None}
         lo, hi = _payout_range(lines)
+        lo_low = _min_payout_low(lines)
         items.append({
             "race_key": r["race_key"],
             "rank_key": r["rank_key"],
@@ -2174,9 +2203,18 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "odds_has_predicted": any(x.get("odds_source") == "predicted" for x in lines),
             "min_payout": lo,
             "max_payout": hi,
-            # ガミ＝当たっても投資を下回る。最低払戻が投資額未満なら必ず起きうる
-            "gami_risk": (bool(detail and lo is not None and lo < detail["total"])
-                          if detail and lo is not None else None),
+            # 下振れしても割らない最低払戻（`odds_low` 由来・無ければ None）。
+            "min_payout_low": lo_low,
+            # ガミ＝当たっても投資を下回る。
+            # 🔴 判定は **下限側（`min_payout_low`）を優先する**。板由来の `odds`
+            #    で測ると当たったときに実際より高い額を約束することになる
+            #    （実測 中央 確定/表示 0.860・45%が0.8倍未満。`_min_payout_low` 参照）。
+            #    `odds_low` が無い記録（三連単・2026-08-16 以前の入稿）は従来どおり。
+            "gami_risk": (
+                bool(detail and (lo_low if lo_low is not None else lo) < detail["total"])
+                if detail and (lo_low is not None or lo is not None) else None),
+            # ガミ判定に下限側を使えたか。使えていないなら表示側で楽観的だと分かる。
+            "gami_risk_is_conservative": lo_low is not None,
             "netkeirin_race_id": r["netkeirin_race_id"],
             "proposed_at": r["proposed_at"].isoformat() if r["proposed_at"] else None,
             "approved_at": r["approved_at"].isoformat() if r["approved_at"] else None,

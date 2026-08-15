@@ -85,3 +85,46 @@ def test_expected_value_unknown_combo_is_none():
     """買い目に出走していない車が含まれていたら黙って0扱いにしない。"""
     lines = _lines(("1=2=9", 1000, 5.0))
     assert _expected_value(lines, _TOP3) is None
+
+
+# ── 下振れ側の最低払戻（2026-08-16 追加）─────────────────────────────
+#
+# 🔴 これが要る理由（実測が起点）: `min_payout` の元になる `odds` は入稿時点の
+#    板が最優先だが、**朝の板は買い目の帯で確定までに大きく下がる**。
+#    実入稿 705点を確定オッズと突合すると 中央 確定/表示 = 0.860・
+#    45.0% が 0.8倍未満（7C は 中央 0.651・64.3%）。
+#    つまり従来の最低払戻は**当たったとき実際より高い額を約束していた**。
+#    keirin 側が `odds_low`（予測の整合板 × 下側25%分位）を記録するので、
+#    ガミ判定はそちらを優先する。
+
+from src.api.keirin_router import _min_payout_low  # noqa: E402
+
+
+def _lines_low(*specs):
+    """(combo, stake, odds, odds_low) の並び。"""
+    return [{"bet_type": "3連複", "combo": c, "stake": s, "odds": o, "odds_low": lo}
+            for c, s, o, lo in specs]
+
+
+def test_min_payout_low_uses_the_conservative_odds():
+    lines = _lines_low(("1=2=3", 2500, 5.0, 4.2), ("1=2=4", 2500, 9.0, 7.6))
+    assert _min_payout_low(lines) == pytest.approx(2500 * 4.2)
+    # 板由来の最低払戻より必ず低い＝楽観側へ倒れない
+    assert _min_payout_low(lines) < _payout_range(lines)[0]
+
+
+@pytest.mark.parametrize("bad", [None, 0])
+def test_min_payout_low_is_none_when_any_point_lacks_it(bad):
+    """🔴 一部だけで計算しない。欠けた点が最安なら下限を高く見せることになる
+    （`_payout_range` と同じ規約）。"""
+    assert _min_payout_low(_lines_low(("1=2=3", 2500, 5.0, 4.2),
+                                      ("1=2=4", 2500, 9.0, bad))) is None
+
+
+def test_min_payout_low_is_none_for_old_records():
+    """`odds_low` を持たない記録（三連単・2026-08-16 以前の入稿）は None。
+
+    この場合、呼び出し側は従来どおり `min_payout` でガミ判定する。
+    """
+    assert _min_payout_low(_lines(("1=2=3", 2500, 5.0))) is None
+    assert _min_payout_low([]) is None
