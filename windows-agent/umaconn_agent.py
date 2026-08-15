@@ -795,6 +795,73 @@ def _race_has_started(post_time: str | int | None, buffer_min: int = 0) -> bool:
 # 動作モード: setup
 # ---------------------------------------------------------------------------
 
+def run_blod(nv, from_time: str = UMACONN_EARLIEST, option: int = 3) -> None:
+    """血統（HN=繁殖馬マスタ / SK=産駒マスタ）だけを取得する。
+
+    🔴 **UmaConn は BLOD を配信していない**（2026-08-16 実機確認）。
+    option=1 / 3 は `rc=-1`（該当データなし）、option=2 は `rc=-116`（fromtime 範囲外）。
+    from_time を 2005 でも 2026-08 でも結果は同じで、**0 ファイル / 0 件**。
+    `chihou.pedigrees` が 0 件（`chihou.horses` は 26,185 頭）なのは取り込み経路の
+    不具合ではなく、**データ源が空**だったため。
+
+    → 地方の血統は `keiba.pedigrees` から取る（`chihou.horses.name + birthday` ↔
+      `keiba.horses.name + birthday` で突合し、**出走馬ベース 91.9% をカバー**）。
+      台帳 `docs/chihou_rebuild_2026_08.md` 17.4。
+
+    このモードは**その確認のために残してある**。UmaConn 側の配信が始まったかを
+    数分で確かめられる（realtime と同時に走らせないこと）。
+
+    ⚠️ **血統のためだけに `--mode setup` を使ってはいけない。**
+    setup は BLOD の前に RACE を全期間なめるので、実測 12,283 ファイルの
+    再ダウンロードが走り UmaConn COM を長時間占有する（台帳 8.5b）。
+    当日のオッズ・結果収集が巻き添えで死ぬ。
+
+    ⚠️ **realtime（9:00〜21:30）と同時に走らせないこと。** NV COM は 1 本しか無い。
+
+    Args:
+        nv: NVLink COM オブジェクト。
+        from_time: 取得開始時刻（YYYYMMDDhhmmss）。既定は UmaConn の最古。
+        option: NVOpen のオプション。3=セットアップ / 2=今週 / 1=差分。
+            ⚠️ **BLOD は option=3 では取れない**（2026-08-16 実測: rc=-1・0件）。
+            JRA の BLDN と違い、UmaConn の BLOD にはセットアップ用の
+            累積マスタが用意されていない可能性が高い。差分(1)で遡る。
+    """
+    # ----- BLOD -----
+    completed_blod = load_completed_files(DATASPEC_BLOD)
+    total_blod: dict[str, int] = {"hn_sk": 0, "files": 0, "skipped": 0}
+
+    def on_blod_file_done(filename: str, file_records: list[dict]) -> None:
+        """血統 1 ファイル完了コールバック。"""
+        if filename in completed_blod:
+            total_blod["skipped"] += 1
+            return
+        hn_sk = [r for r in file_records if r.get("rec_id") in ("HN", "SK")]
+        if not hn_sk:
+            mark_file_completed(DATASPEC_BLOD, filename)
+            completed_blod.add(filename)
+            return
+        logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB 反映開始")
+        _post_in_batches(EP_BLOODLINES, hn_sk, 500, BACKEND_URL, API_KEY, PENDING_DIR)
+        total_blod["hn_sk"] += len(hn_sk)
+        total_blod["files"] += 1
+        mark_file_completed(DATASPEC_BLOD, filename)
+        completed_blod.add(filename)
+        logger.info(
+            f"  [{filename}] 完了 (累計: {total_blod['files']} ファイル / {total_blod['hn_sk']} 件)"
+        )
+
+    logger.info(f"Fetching BLOD from {from_time} (option={option})...")
+    fetch_stored_data(
+        nv, DATASPEC_BLOD, from_time, option=option,
+        on_file_done=on_blod_file_done,
+    )
+    logger.info(
+        f"BLOD 取得完了: {total_blod['files']} ファイル / "
+        f"{total_blod['hn_sk']} 件 DB 反映 / {total_blod['skipped']} スキップ"
+    )
+
+
+
 def run_setup(nv) -> None:
     """初回セットアップ（2005-01-01 からの全データ一括取得）。
 
@@ -855,39 +922,7 @@ def run_setup(nv) -> None:
         f"{total_race['ra_se']} 件 DB 反映 / {total_race['skipped']} スキップ"
     )
 
-    # ----- BLOD -----
-    completed_blod = load_completed_files(DATASPEC_BLOD)
-    total_blod: dict[str, int] = {"hn_sk": 0, "files": 0, "skipped": 0}
-
-    def on_blod_file_done(filename: str, file_records: list[dict]) -> None:
-        """血統 1 ファイル完了コールバック。"""
-        if filename in completed_blod:
-            total_blod["skipped"] += 1
-            return
-        hn_sk = [r for r in file_records if r.get("rec_id") in ("HN", "SK")]
-        if not hn_sk:
-            mark_file_completed(DATASPEC_BLOD, filename)
-            completed_blod.add(filename)
-            return
-        logger.info(f"  [{filename}] HN/SK {len(hn_sk)} 件 → DB 反映開始")
-        _post_in_batches(EP_BLOODLINES, hn_sk, 500, BACKEND_URL, API_KEY, PENDING_DIR)
-        total_blod["hn_sk"] += len(hn_sk)
-        total_blod["files"] += 1
-        mark_file_completed(DATASPEC_BLOD, filename)
-        completed_blod.add(filename)
-        logger.info(
-            f"  [{filename}] 完了 (累計: {total_blod['files']} ファイル / {total_blod['hn_sk']} 件)"
-        )
-
-    logger.info(f"Fetching BLOD from {from_time} (option=3)...")
-    fetch_stored_data(
-        nv, DATASPEC_BLOD, from_time, option=3,
-        on_file_done=on_blod_file_done,
-    )
-    logger.info(
-        f"BLOD 取得完了: {total_blod['files']} ファイル / "
-        f"{total_blod['hn_sk']} 件 DB 反映 / {total_blod['skipped']} スキップ"
-    )
+    run_blod(nv, from_time)
 
     # ----- DIFF -----
     completed_diff = load_completed_files(DATASPEC_DIFF)
@@ -1427,11 +1462,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="kiseki UmaConn Agent（地方競馬データ取得）")
     parser.add_argument(
         "--mode",
-        choices=["setup", "daily", "recent", "realtime", "retry", "fetch-results", "fetch-odds", "chokyo-probe"],
+        choices=["setup", "blod", "daily", "recent", "realtime", "retry", "fetch-results", "fetch-odds", "chokyo-probe"],
         default="daily",
         help=(
             "動作モード: "
             "setup=2005年から全データ取得, "
+            "blod=血統(HN/SK)のみ取得（setup の RACE 全期間再DLを伴わない）, "
             "daily=昨日から取得, "
             "recent=指定年以降を取得, "
             "realtime=オッズをポーリング（0B31のみ）, "
@@ -1440,6 +1476,13 @@ def main() -> None:
             "fetch-odds=指定日のオッズを0B31で取得（1回実行して終了）, "
             "chokyo-probe=SLOP(坂路調教)データの実機probe（--from-date必須・DBには書かずローカルJSON保存のみ）"
         ),
+    )
+    parser.add_argument(
+        "--blod-option",
+        type=int,
+        choices=[1, 2, 3],
+        default=3,
+        help="blod モードの NVOpen オプション（3=セットアップ/2=今週/1=差分）",
     )
     parser.add_argument(
         "--from-date",
@@ -1504,6 +1547,16 @@ def _run_mode(args: argparse.Namespace, nv) -> None:
         run_setup(nv)
         report_status("done", message="UmaConn setup completed.")
         logger.info("setup モード完了。終了します。")
+
+    elif args.mode == "blod":
+        report_status("running", mode="blod", message="Starting UmaConn bloodline fetch")
+        run_blod(
+            nv,
+            from_time=(f"{args.from_date}000000" if args.from_date else UMACONN_EARLIEST),
+            option=args.blod_option,
+        )
+        report_status("done", message="UmaConn bloodline fetch completed.")
+        logger.info("blod モード完了。終了します。")
 
     elif args.mode == "daily":
         report_status("running", mode="daily", message="Starting UmaConn daily fetch")
