@@ -216,7 +216,11 @@ def test_取消対象は生きている下書きだけ(monkeypatch):
     """🔴 取消済み（deleted）を含めると「N件取消しました」の N が実態より多く出る。
     論理削除なので行は残っている。"""
     conn = _capture_cancelable(monkeypatch, "平塚")
-    assert "COALESCE(status, 'submitted') <> ?" in conn.sql, "取消済みを除外していません"
+    # 2026-08-16: 公開済み（published）も除外したので条件が NOT IN になった。
+    # 🔴 公開済みに netkeirin の delete が効くかは未確認で、含めると一括取消の
+    #    たびに必ず失敗する行が混ざり明細が読めなくなる。
+    assert "COALESCE(status, 'submitted') NOT IN (?, ?)" in conn.sql, (
+        "取消済み・公開済みを除外していません")
     assert "deleted" in conn.params
 
 

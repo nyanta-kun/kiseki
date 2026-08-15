@@ -1495,7 +1495,13 @@ export async function fetchKeirinSoldPerformance(
 // 入稿案の確認（2026-08-11）
 // ---------------------------------------------------------------------------
 /** `keirin.netkeirin_submissions` の状態。 */
-export type KeirinProposalStatus = "proposed" | "submitted" | "deleted";
+/** 入稿の状態。netkeirin は「入稿（下書きとして送る）」と「公開」が別操作。
+ *
+ *   proposed（未入稿）→ submitted（入稿済＝公開待ち）→ published（公開済）
+ *                                   ↘ deleted（取消・論理削除）
+ *
+ * 🔴 `published` は不可逆（netkeirin の文言「公開後は修正できなくなります」）。 */
+export type KeirinProposalStatus = "proposed" | "submitted" | "published" | "deleted";
 
 export interface KeirinProposalEntry {
   frame_no: number;
@@ -1580,6 +1586,10 @@ export interface KeirinProposal {
 export interface KeirinProposalsResponse {
   date: string;
   n_proposed: number;
+  /** 未公開＝netkeirin へ送ったが公開していない件数（**自前の記録**）。
+   *  ⚠️ netkeirin の画面から人が直接公開すると submitted のまま取り残されるので
+   *     実数と食い違いうる。netkeirin 側の実数は別 API で取る。 */
+  n_unpublished?: number;
   items: KeirinProposal[];
 }
 

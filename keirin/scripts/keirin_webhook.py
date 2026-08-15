@@ -47,12 +47,16 @@ _running: dict[str, subprocess.Popen] = {}
 
 _RACE_KEY_RE = re.compile(r"^\d{8}_\d{2}_\d{2}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-# scripts/netkeirin_submit_wt.py の MANUAL_ALLOWED_RANKS と同一
-# （S1・旧7SS/旧9SS は全廃済み。波乱軸選出の RANK_7SS も 2026-08-02 に全廃した
-#   ため対象外。2026-08-02 時点で submit 側は既に ("7S","7A","9S","9A") だったが
-#   こちらだけ旧値が残っており、_is_enabled() が fail-open のため webhook 経由の
-#   手動入稿では廃止済みランクが通る状態になっていた＝同時に是正）
-_MANUAL_ALLOWED_RANKS = ("7S", "7A", "7B", "9S", "9A")
+# 🔴 `scripts/netkeirin_submit_wt.py` の `MANUAL_ALLOWED_RANKS` と**必ず同一**にする。
+#    ランク集合のコピーはこれで3箇所目（submit / kiseki backend `_MANUAL_RANK_KEYS` /
+#    ここ）で、このリポジトリが繰り返し事故を起こしている型。
+#    実害の記録:
+#      - 2026-08-02: ここだけ旧値が残り、`_is_enabled()` が fail-open のため
+#        webhook 経由の手動入稿で廃止済みランクが通っていた
+#      - 2026-08-16: 9A→9C（08-14）・7A廃止（08-14）に追随しておらず、
+#        Web のランク選択から **9C を選ぶと 400** になっていた
+#    検査: `tests/test_approve_cli_and_webhook.py`
+_MANUAL_ALLOWED_RANKS = ("7S", "7B", "9C")
 
 
 def _spawn(name: str, cmd: list[str], log_file: Path, extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
@@ -98,8 +102,14 @@ class Handler(BaseHTTPRequestHandler):
             ok, message, status = self._handle_submit_race()
             self._respond(status, {"ok": ok, "message": message})
             return
-        elif self.path in ("/approve", "/cancel"):
+        elif self.path in ("/approve", "/cancel", "/publish"):
             payload, status = self._handle_approval(self.path.lstrip("/"))
+            self._respond(status, payload)
+            return
+        elif self.path == "/publish-wait":
+            # netkeirin の未公開（公開待ち）件数。**読み取り専用**なので
+            # 検証も確認も要らない。確認画面が自前の記録と突き合わせる用。
+            payload, status = self._handle_publish_wait()
             self._respond(status, payload)
             return
         else:
@@ -158,6 +168,29 @@ class Handler(BaseHTTPRequestHandler):
         )
         return ok, message, 200
 
+    def _handle_publish_wait(self) -> tuple[dict, int]:
+        """netkeirin の未公開件数を返す（`action=get_wait`・読み取り専用）。
+
+        自前の `netkeirin_submissions.status` は**画面外で公開されると
+        submitted のまま取り残される**ので、netkeirin 側の実数も出して
+        突き合わせられるようにする（食い違い自体が情報になる）。
+        """
+        cmd = [str(KEIRIN_HOME / ".venv" / "bin" / "python3"),
+               "scripts/netkeirin_publish_wait.py"]
+        env = dict(os.environ, PYTHONPATH=".")
+        try:
+            p = subprocess.run(cmd, cwd=str(KEIRIN_HOME), env=env,
+                               capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "count": 0, "message": "タイムアウトしました（60秒）"}, 504
+        for line in reversed((p.stdout or "").strip().splitlines()):
+            try:
+                return json.loads(line), 200
+            except json.JSONDecodeError:
+                continue
+        return {"ok": False, "count": 0,
+                "message": (p.stderr or "出力を解釈できませんでした")[:300]}, 500
+
     def _handle_approval(self, action: str) -> tuple[dict, int]:
         """入稿案の承認・取消。**同期実行して結果をそのまま返す。**
 
@@ -202,6 +235,13 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": False,
                     "message": "race_key+rank_key か date+venue_name "
                                "か date+all_venues が必要です"}, 400
+
+        # 入稿して**そのまま公開**する（2026-08-16）。公開は不可逆なので
+        # 画面側で必ず確認を挟むこと。CLI 側でも approve 専用に縛ってある。
+        # 🔴 対象の指定を検証し終えた**あと**に足すこと。if/elif の途中へ入れると
+        #    その下の else が別の if に付き、不正な指定が素通りする。
+        if action == "approve" and bool(body.get("publish")):
+            cmd.append("--publish")
 
         log.info("triggered /%s %s", action, cmd[-4:])
         env = dict(os.environ, PYTHONPATH=".")

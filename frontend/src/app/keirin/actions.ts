@@ -150,6 +150,45 @@ export async function approveKeirinAllAction(date: string): Promise<ApprovalResu
 }
 
 /**
+ * 入稿案を承認して netkeirin へ送り、**そのまま公開**する（レース単位）。
+ *
+ * 🔴 **公開は不可逆**。netkeirin 自身の確認文言が「公開後は修正できなくなります」。
+ *    呼び出す前に必ず人の確認を挟むこと。
+ * 🔴 承認に失敗したものは公開しない（送れていないものを公開扱いにしない）。
+ */
+export async function approveAndPublishKeirinRaceAction(
+  raceKey: string,
+  rankKey: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/approve", {
+    race_key: raceKey, rank_key: rankKey, publish: true,
+  });
+}
+
+/** その日の入稿案を全場まとめて承認し、**そのまま公開**する。 */
+export async function approveAndPublishKeirinAllAction(date: string): Promise<ApprovalResult> {
+  return postApproval("/keirin/approve", { date, all_venues: true, publish: true });
+}
+
+/**
+ * 公開待ち（netkeirin へ送信済み）の入稿を**公開する**（レース単位）。
+ *
+ * 🔴 対象は `submitted` のみ。入稿案（proposed）は netkeirin にまだ無いので
+ *    公開できない（その場合は「入稿して公開」を使う）。
+ */
+export async function publishKeirinRaceAction(
+  raceKey: string,
+  rankKey: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/publish", { race_key: raceKey, rank_key: rankKey });
+}
+
+/** その日の公開待ちを**全件公開**する（netkeirin 本体の「全てを公開する」と同じ）。 */
+export async function publishKeirinAllAction(date: string): Promise<ApprovalResult> {
+  return postApproval("/keirin/publish", { date, all_venues: true });
+}
+
+/**
  * 入稿を取り消す。netkeirin の下書きを削除し、記録は論理削除する。
  *
  * ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。
