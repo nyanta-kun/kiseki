@@ -1787,43 +1787,17 @@ def _main_inner(date):
         if n_backfill:
             print(f"[notify_results_wt] 見送り trio_payout バックフィル {n_backfill} 件", flush=True)
 
-        # ペーパー候補（S1/S7/S9/7A/9A/7SS）で15分前判定に到達しなかった行（bet_amount=0・
-        # miwokuri=False のまま残存）を見送りに倒す（オッズ取得失敗・候補生成後の中止等）。
-        # intraday_results_wt.sh が当日分を毎時実行するため、start_at 未到来（＝発走15分前の
-        # 判定窓にまだ入っていない）の候補まで日付一致だけで誤って見送り化しないよう、
-        # 発走時刻を過ぎたレースのみを対象にする（2026-07-18 発見・判定自体は notify_prerace_wt
-        # が INSERT OR REPLACE で miwokuri=False ごと上書きするため実害はなかったが表示が誤っていた）。
-        # 【2026-07-31】OR条件は _PAPER_SUFFIXES（単一正本由来）から動的生成する。
-        # 旧来のハードコード版は "#7SS" が漏れており、7SS新設(dc89f14)後もこの
-        # 見送り確定処理の対象外になっていた（B-6と同根の潜在バグ・ここで解消）。
-        _paper_cand_like_sql = " OR ".join(
-            f"race_key LIKE '%{suffix}'" for suffix in _PAPER_SUFFIXES)
-        _paper_cands = conn.execute(
-            "SELECT race_key FROM picks_history "
-            "WHERE race_date = ? AND route='wt' AND bet_amount = 0 AND NOT miwokuri "
-            f"AND ({_paper_cand_like_sql})",
-            (target_date,)).fetchall()
-        _now_unix_paper = int(time.time())
-        _paper_to_skip: list[str] = []
-        if _paper_cands:
-            _base_keys_paper = {r[0].rsplit("#", 1)[0] for r in _paper_cands}
-            _start_map_paper = dict(conn.execute(
-                f"SELECT race_key, start_at FROM wt_races WHERE race_key IN "
-                f"({','.join('?' * len(_base_keys_paper))})",
-                list(_base_keys_paper)).fetchall())
-            for (store_key,) in _paper_cands:
-                base = store_key.rsplit("#", 1)[0]
-                sa = _start_map_paper.get(base)
-                if sa is not None and int(sa) < _now_unix_paper:
-                    _paper_to_skip.append(store_key)
-        n_paper_skip = 0
-        for store_key in _paper_to_skip:
-            cur_p = conn.execute(
-                "UPDATE picks_history SET miwokuri = True WHERE race_key = ?",
-                (store_key,))
-            n_paper_skip += cur_p.rowcount or 0
-        if n_paper_skip:
-            print(f"[notify_results_wt] ペーパー候補 未判定→見送り {n_paper_skip} 件", flush=True)
+        # 🔴 **「15分前判定に到達しなかった候補を見送りに倒す」処理は 2026-08-15 に撤去**
+        #    （ユーザー指示「入稿時点で見送りを行わない。見送り判定はなくす。全ランク同様」）。
+        #
+        #    ここは bet_amount=0 のペーパー候補行を発走後に miwokuri=True へ更新していた。
+        #    しかし **発走前判定を持たないランク（7T1）の候補行が必ずここに落ちる**ため、
+        #    実際には netkeirin で売った商品が Web 上で「見送り」と表示されていた。
+        #    7T1 は翌朝の walk-forward 再構築が買い方・投資額・的中で上書きするので、
+        #    当日中は bet_amount=0 のまま置いておけばよい。
+        #
+        #    ⚠️ 再導入しないこと。入稿は候補が立った時点で出しており、
+        #       「見送った」という状態は運用に存在しない。
 
     total_7plus = results_7plus_ss + results_7plus_s + results_7plus_r
     if (not total_7plus and not results_7plus_s1 and not results_7plus_s7
