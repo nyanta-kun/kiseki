@@ -88,6 +88,7 @@ from src.race_shape import (
 )
 from src.odds_prediction import (
     OddsPredictionUnavailable,
+    conservative_multiplier,
     predicted_trio_board,
     try_predicted_odds_for_legs,
 )
@@ -813,7 +814,8 @@ def _load_trifecta_board(race_key: str) -> dict[tuple[int, ...], float]:
 def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                      odds: dict | None = None,
                      marks: dict[int, str] | None = None,
-                     predicted_odds: dict | None = None) -> str:
+                     predicted_odds: dict | None = None,
+                     predicted_low: dict | None = None) -> str:
     """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
 
     🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
@@ -840,9 +842,15 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     🔴 **板を上書きしない。** 板があるならそれが実際に付いていた値。
     ⚠️ 区別を落として保存すると、予測値が「実際のオッズ」として読まれる。
        表示側はこの印を見て「(予測)」を付ける。
+
+    `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
+    板の有無によらず全点へ `odds_low` として書く。
+    🔴 **これはオッズではない。** 「下振れしてもこの倍率は割らない」水準で、
+       最低払戻・ガミ判定にだけ使う（理由と実測は `_conservative_trio_board`）。
     """
     odds = odds or {}
     predicted_odds = predicted_odds or {}
+    predicted_low = predicted_low or {}
     lines: list[dict[str, Any]] = []
     for leg in legs:
         for target in sorted(expand_bet(leg.bet_kind, leg.groups),
@@ -855,6 +863,12 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 # 板に無い目だけ予測で埋める（三連複のキーは frozenset）。
                 o = predicted_odds.get(target)
                 odds_source = "predicted" if o else None
+            # 🔴 表示オッズを上回る「下振れ時」を出さない。板が既にモデルの
+            #    下限より低いなら、その板の値のほうが厳しい見積もりになる。
+            #    min を取るので calibration（下側25%分位）は必ず安全側へしか動かない。
+            low = predicted_low.get(target)
+            if low and o:
+                low = min(float(low), float(o))
             lines.append({
                 "bet_type": _BET_TYPE_JP.get(leg.bet_kind, leg.bet_kind),
                 "combo": sep.join(str(c) for c in cars),
@@ -862,6 +876,8 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 "odds": round(float(o), 1) if o else None,
                 # 板 / 予測 / 不明（None）。**表示で区別するために必ず残す。**
                 "odds_source": odds_source,
+                # 下限包絡（オッズではない）。最低払戻・ガミ判定に使う。
+                "odds_low": round(float(low), 1) if low else None,
             })
     payload: dict[str, Any] = {
         "total": sum(x["stake"] for x in lines), "source": source, "lines": lines,
@@ -1008,6 +1024,53 @@ def _unmark_bought(conn, race_key: str, rank_key: str) -> None:
         "WHERE race_key = ? AND rank = ? AND COALESCE(payout, 0) = 0",
         (f"{race_key}#{rank_key}", f"RANK_{rank_key}"),
     )
+
+
+CONSERVATIVE_QUANTILE = "p25"
+
+
+def _conservative_trio_board(board: dict, n_cars: int) -> dict:
+    """予測盤面の**下振れ側の包絡**（＝「これを下回ることは滅多にない」水準）。
+
+    ## なぜ要るのか（2026-08-16・実測が起点）
+
+    入稿時に `bet_detail` へ記録している「表示オッズ」は板（`wt_odds` /
+    朝の `wt_odds_snapshot`）が最優先で、そこから最低払戻・ガミ判定を出している。
+    ところが**朝の板は買い目の帯（人気サイド）で確定までに大きく下がる**。
+    実測（2026-08-08〜15 の実入稿 705点・確定オッズと突合）:
+
+    | 表示オッズの出どころ | 中央 確定/表示 | <0.8倍 | <0.5倍 |
+    |---|---|---|---|
+    | **板** | **0.860** | **45.0%** | 14.2% |
+    | 予測（構造モデル） | 1.181 | 16.7% | 8.3% |
+
+    ランク別では 7C が最悪で **中央 0.651・<0.8倍 64.3%・<0.5倍 32.9%**。
+    二軸が WT◎◯ のときはさらに悪い（中央 0.80 / <0.8倍 50.3% ・
+    ◎◯でないときは 0.98 / 36.3%）。**「確定後にオッズが下がってガミになる」の
+    正体は予測モデルではなく朝の板**だった。
+
+    honest 検証窓（2026-01〜08・7Cの買い点 5,456点）では、予測の整合板は
+    中央 実際/予測 1.081・<0.8倍 17.5% と偏りが小さい。そこで**金額の水準を
+    使う判断（最低払戻・ガミ）だけ**を予測側へ寄せる。
+
+    ## 🔴 表示オッズ（`odds`）は置き換えない
+
+    板の値は「入稿時点で実際に付いていた値」という事実で、配分の根拠でもある。
+    ここで作るのは**別フィールド `odds_low`** で、`odds` には触らない。
+
+    ⚠️ **保守板は「板」ではない。** Σ(1/o) は払戻率100%を超える下限包絡で、
+       オッズとして表示してはいけない（`src/odds_prediction.py` の注意書き）。
+       使ってよいのは「下振れしてもこの額は返る」という**金額の下限**としてだけ。
+    ⚠️ 三連単には使わない（このモデルは三連複しか予測しない）。
+    """
+    if not board:
+        return {}
+    try:
+        mult = conservative_multiplier(n_cars, CONSERVATIVE_QUANTILE)
+    except OddsPredictionUnavailable as e:
+        print(f"[odds-pred] 保守倍率を取れません（下限は出しません）: {e}", flush=True)
+        return {}
+    return {k: v * mult for k, v in board.items()}
 
 
 def _record_submission(
@@ -1803,13 +1866,15 @@ def _process_rank(
             #    確認画面と違う印で入稿される。
             record_marks = marks if legs else {
                 **{c: "△" for c in partners}, axis1: "◎", axis2_or_p1: "○"}
+            pred_board = _predicted_trio_fill(race_key)
             _record_submission(
                 race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2_or_p1, msg,
                 bet_detail=build_bet_detail(
                     record_legs, tilt_source,
                     _bet_detail_odds(race_key, cfg, use_trifecta),
                     marks=record_marks,
-                    predicted_odds=_predicted_trio_fill(race_key)),
+                    predicted_odds=pred_board,
+                    predicted_low=_conservative_trio_board(pred_board, int(cfg["n_cars"]))),
                 title=title, comment=comment,
                 # ここはランクのゲートを通った自動経路のみ（_process_rank）。
                 origin=ORIGIN_RANK,
@@ -1979,6 +2044,7 @@ def _process_manual(
         ok, msg = False, f"例外: {e}"
 
     if ok:
+        _manual_pred_board = _predicted_trio_fill(race_key)
         record_legs = legs if tilt_source else _legs_for_record(
             cfg, axis1, axis2, partners, _stake_per_line(cfg, len(partners)))
         # 🔴 手動経路は**ゲートを通っていない**。`--marquee` なら看板の穴埋め、
@@ -1990,7 +2056,9 @@ def _process_manual(
                                record_legs, tilt_source, _bet_detail_odds(race_key, cfg),
                                marks={**{c: "△" for c in partners},
                                       axis1: "◎", axis2: "○"},
-                               predicted_odds=_predicted_trio_fill(race_key)),
+                               predicted_odds=_manual_pred_board,
+                               predicted_low=_conservative_trio_board(
+                                   _manual_pred_board, int(cfg["n_cars"]))),
                            title=title, comment=comment,
                            origin=ORIGIN_MARQUEE_FILL if marquee else ORIGIN_MANUAL)
         print(f"[netkeirin_submit][manual] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)

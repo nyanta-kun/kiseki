@@ -126,8 +126,10 @@ def test_三連単のオッズはtupleキーで引く():
     legs = [BetLeg(BET_KIND_TRIFECTA_FORMATION, [[3], [4], [1]], 500)]
     d = _detail(legs, None, {(3, 4, 1): 128.5})
     # `odds_source` は板/予測の区別（2026-08-12 追加）。板由来なので "board"。
+    # `odds_low` は下限包絡（2026-08-16 追加）。三連単は予測モデルが無いので None。
     assert d["lines"][0] == {"bet_type": "3連単", "combo": "3-4-1",
-                             "stake": 500, "odds": 128.5, "odds_source": "board"}
+                             "stake": 500, "odds": 128.5, "odds_source": "board",
+                             "odds_low": None}
 
 
 def test_オッズが取れなければNoneで残す():
@@ -135,3 +137,92 @@ def test_オッズが取れなければNoneで残す():
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3]], 10000)]
     assert _detail(legs)["lines"][0]["odds"] is None
     assert _detail(legs, None, {frozenset({1, 2, 3}): 0})["lines"][0]["odds"] is None
+
+
+# ── 下限包絡 odds_low（2026-08-16 追加）──────────────────────────────
+#
+# 🔴 これが要る理由（実測が起点）: 入稿時に記録している「表示オッズ」は板が
+#    最優先だが、**朝の板は買い目の帯で確定までに大きく下がる**。
+#    実入稿 705点を確定オッズと突合すると 中央 確定/表示 = 0.860・
+#    45.0% が 0.8倍未満（7C は 中央 0.651・64.3%）。一方で予測の整合板は
+#    中央 1.081・<0.8倍 17.5%（honest 検証窓 5,456点）。
+#    そこで**金額の水準を使う判断だけ**を予測側の下限へ寄せる。
+
+
+def test_odds_low_は板の有無によらず全点に入る():
+    """🔴 `odds_low` は「板に無い点を埋める」ものではない。
+
+    板があってもその点の下限を出す。板の値こそが下振れの発生源なので、
+    埋め合わせ扱いにすると**一番直したい点だけ下限が付かない**。
+    """
+    legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3, 4]], 2500)]
+    board = {frozenset({1, 2, 3}): 8.34}                 # 1=2=4 は板に無い
+    pred = {frozenset({1, 2, 3}): 9.0, frozenset({1, 2, 4}): 30.0}
+    low = {frozenset({1, 2, 3}): 7.6, frozenset({1, 2, 4}): 25.3}
+    d = json.loads(build_bet_detail(legs, "predicted", board,
+                                    predicted_odds=pred, predicted_low=low))
+    got = {x["combo"]: (x["odds"], x["odds_source"], x["odds_low"]) for x in d["lines"]}
+    assert got == {"1=2=3": (8.3, "board", 7.6),      # 板は上書きしない
+                   "1=2=4": (30.0, "predicted", 25.3)}
+
+
+def test_odds_low_は表示オッズを超えない():
+    """🔴 「下振れ時」が表示オッズより高いのは意味を成さない。
+
+    板が既にモデルの下限より低いなら、その板の値のほうが厳しい見積もり。
+    min を取るので下側分位の較正は**安全側へしか動かない**。
+    実レース 20260815_22_01 で実際に起きた（板 5.6 に対し下限 5.8）。
+    """
+    legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3]], 2500)]
+    d = json.loads(build_bet_detail(
+        legs, "predicted", {frozenset({1, 2, 3}): 5.6},
+        predicted_low={frozenset({1, 2, 3}): 5.8}))
+    assert d["lines"][0]["odds_low"] == 5.6
+
+
+def test_odds_low_が無ければNoneのままで落ちない():
+    """モデル未配備・保守倍率欠損でも入稿は止めない（従来どおり動く）。"""
+    legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3]], 10000)]
+    d = json.loads(build_bet_detail(legs, None, {frozenset({1, 2, 3}): 5.0}))
+    assert d["lines"][0]["odds_low"] is None
+    assert d["lines"][0]["odds"] == 5.0
+
+
+def test_保守板は点予測より必ず低くレース内で一定倍(monkeypatch):
+    """`_conservative_trio_board` は下側分位なので 1 未満の倍率が掛かる。
+
+    ⚠️ **倍率を meta から実際に読ませない。** `data/models/` は git 管理外で
+       CI には存在しないため、実モデルに依存させるとここだけ落ちる（実際に落とした）。
+       検査したいのは「一定倍で必ず下がる」という規則のほう。
+    """
+    import scripts.netkeirin_submit_wt as m
+
+    monkeypatch.setattr(m, "conservative_multiplier", lambda n, q: 0.8453)
+    board = {frozenset({1, 2, 3}): 10.0, frozenset({1, 2, 4}): 40.0}
+    low = m._conservative_trio_board(board, 7)
+    for k, v in board.items():
+        assert 0 < low[k] < v, f"{k}: 下限 {low[k]} が点予測 {v} を下回っていません"
+    # レース内で一定倍＝順序は保つ（配分の比率を壊さないことの確認）
+    assert len({low[k] / v for k, v in board.items()}) == 1
+
+
+def test_保守板は空盤面で例外を出さない():
+    from scripts.netkeirin_submit_wt import _conservative_trio_board
+
+    assert _conservative_trio_board({}, 7) == {}
+
+
+def test_保守倍率が取れなければ下限を出さない(monkeypatch):
+    """🔴 モデル・meta 未配備でも入稿は止めない（下限が出ないだけ）。
+
+    ⚠️ 代わりに 1.0 を掛けて「下限」として出してはいけない。それは点予測
+       そのもので、下限だと思って読まれると**楽観側へ黙って倒れる**。
+    """
+    import scripts.netkeirin_submit_wt as m
+    from src.odds_prediction import OddsPredictionUnavailable
+
+    def _boom(n, q):
+        raise OddsPredictionUnavailable("meta がありません")
+
+    monkeypatch.setattr(m, "conservative_multiplier", _boom)
+    assert m._conservative_trio_board({frozenset({1, 2, 3}): 10.0}, 7) == {}

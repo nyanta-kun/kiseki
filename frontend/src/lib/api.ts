@@ -1074,6 +1074,11 @@ export type KeirinSubmittedBetLine = {
    *  🔴 **表示では必ず区別する。** 予測値を板と同じ顔で出すと
    *     「実際に付いていたオッズ」と読まれる。 */
   odds_source?: "board" | "predicted" | null;
+  /** 下振れしても割らないオッズ水準（＝下限包絡）。**オッズではない**。
+   *  朝の板は買い目の帯で確定までに大きく下がる（実測 中央 確定/表示 0.860・
+   *  45%が0.8倍未満）ため、最低払戻とガミ判定はこちらで測る。
+   *  三連単・2026-08-16 以前の入稿には付かない（null）。 */
+  odds_low?: number | null;
 };
 
 export type KeirinSubmittedBet = {
@@ -1553,8 +1558,15 @@ export interface KeirinProposal {
   min_payout: number | null;
   /** 当たったときの最高払戻（円）。 */
   max_payout: number | null;
-  /** 最低払戻が投資額を下回る＝当たってもガミになりうる。 */
+  /** **下振れしても**割らない最低払戻（円）。`odds_low` が全点に無ければ null。
+   *  🔴 `min_payout` は入稿時点の板由来で楽観的（当たったとき実際より高い額を
+   *     約束していた）。承認判断はこちらを見ること。 */
+  min_payout_low: number | null;
+  /** 最低払戻が投資額を下回る＝当たってもガミになりうる。
+   *  下限側（`min_payout_low`）が取れていればそちらで判定している。 */
   gami_risk: boolean | null;
+  /** ガミ判定に下限側を使えたか。false なら板由来＝楽観的な判定。 */
+  gami_risk_is_conservative?: boolean;
   /** 最低払戻・最高払戻・期待値に予測オッズが混ざっているか。
    *  🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。 */
   odds_has_predicted?: boolean;

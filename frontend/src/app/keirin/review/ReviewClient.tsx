@@ -318,6 +318,17 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
           <span className={p.gami_risk ? "font-semibold text-red-600 dark:text-red-400" : ""}>
             {yen(p.min_payout)}
           </span>
+          {/* 🔴 `min_payout` は入稿時点の板由来で楽観的（実測 中央 確定/表示 0.860・
+              45%が0.8倍未満）。下振れ側が出せるなら必ず併記する。これを出さないと
+              「当たればこの額」と読まれ、確定後に下がって初めて気づくことになる。 */}
+          {p.min_payout_low !== null && (
+            <span
+              className="ml-1 text-[10px] text-amber-600 dark:text-amber-400"
+              title="確定までにオッズが下振れした場合の払戻（予測オッズの下側25%分位）。板は買い目の帯で下がりやすいため、承認判断はこちらを見てください。"
+            >
+              下振れ {yen(p.min_payout_low)}
+            </span>
+          )}
         </div>
         <div>
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
@@ -347,7 +358,8 @@ function RaceCard({ p, busy, closed, onApprove, onCancel, canForceCancel, onForc
       </div>
       {p.gami_risk && (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-          ⚠️ 当たっても投資を下回る目があります（最低払戻 &lt; 投資）
+          ⚠️ 当たっても投資を下回る目があります（
+          {p.gami_risk_is_conservative ? "下振れ時の払戻" : "最低払戻"} &lt; 投資）
         </p>
       )}
 
