@@ -78,24 +78,60 @@ def test_force_is_cancel_only():
 
 
 def test_all_scope_requires_date():
-    """🔴 日付の無い全件取消は絶対に通さない（過去分まで巻き込む）。
+    """🔴 日付の無い全件操作は絶対に通さない（過去分まで巻き込む）。
 
-    2026-08-12 に取消の場単位・全件を解禁した（元は「まとめて消す事故を避ける」
-    ため承認のみだった）。事故防止は画面の二段確認へ移したが、
+    2026-08-12 に取消の場単位・全件を、2026-08-16 に承認の全件を解禁した
+    （元は「まとめて操作する事故を避ける」ため承認は場単位までだった）。
+    事故防止は画面の確認ダイアログと件数表示へ移したが、
     **範囲の縛りだけはコード側に残す**。
     """
     src = inspect.getsource(cli.main)
     assert '"--all には --date が必要です"' in src
-    assert '"--all は cancel 専用です"' in src
 
 
 def test_venue_query_filters_by_proposed_status():
-    """場単位の対象が入稿案だけであること（送信済みを再送しない）。"""
+    """場単位・全件の対象が入稿案だけであること（送信済みを再送しない）。
+
+    🔴 `submitted` を混ぜると二重入稿になる。
+    """
     tree = ast.parse(inspect.getsource(cli._proposals_for_venue))
     sql = " ".join(n.value for n in ast.walk(tree)
                    if isinstance(n, ast.Constant) and isinstance(n.value, str))
     assert "status = ?" in sql and "venue_name = ?" in sql
-    assert "ORDER BY race_no" in sql, "発走順に並べていません"
+    assert "race_no" in sql, "発走順に並べていません"
+
+
+def test_approve_all_venues_covers_the_whole_day(monkeypatch):
+    """🔴 `--all` の承認が場を絞らないこと（2026-08-16 追加）。
+
+    venue_name を渡すと1場しか承認されない。全件承認のつもりで
+    1場だけ入稿される事故を防ぐ。
+    """
+    seen = {}
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params):
+            seen["sql"] = sql
+            seen["params"] = list(params)
+            return type("R", (), {"fetchall": staticmethod(lambda: [])})()
+
+    monkeypatch.setattr(cli, "get_connection", lambda: _Conn())
+    cli._proposals_for_venue("2026-08-16", None)
+    assert "venue_name = ?" not in seen["sql"], "全件なのに場で絞っています"
+    assert seen["params"] == ["20260816%", cli.STATUS_PROPOSED]
+
+    cli._proposals_for_venue("2026-08-16", "前橋")
+    assert "venue_name = ?" in seen["sql"], "場指定が効いていません"
+    assert seen["params"] == ["20260816%", cli.STATUS_PROPOSED, "前橋"]
+
+
+def test_approve_all_is_accepted_by_cli():
+    """承認でも `--all` が通ること（取消専用に戻していないこと）。"""
+    src = inspect.getsource(cli.main)
+    assert "--all は cancel 専用です" not in src, (
+        "承認の --all を塞ぐガードが復活しています")
 
 
 def test_cli_prints_json_on_last_line(monkeypatch, capsys):
@@ -162,3 +198,16 @@ def test_webhook_validates_inputs():
               if isinstance(n, ast.FunctionDef) and n.name == "_handle_approval")
     body = ast.get_source_segment(src, fn) or ""
     assert "_RACE_KEY_RE" in body and "_DATE_RE" in body
+
+
+def test_webhook_passes_all_venues_for_both_actions():
+    """🔴 webhook が `all_venues` を承認にも渡すこと（2026-08-16）。
+
+    元は `action == "cancel"` のときだけ `--all` を付けていた。承認で
+    `all_venues` を送っても黙って**場単位として扱われる**（venue が無いので
+    「date+venue_name が必要」で 400）ため、画面のボタンが無反応に見える。
+    """
+    src = WEBHOOK.read_text(encoding="utf-8")
+    assert 'if body.get("all_venues"):' in src, (
+        "all_venues の判定に action の条件が残っています（承認で --all が付きません）")
+    assert 'action == "cancel" and body.get("all_venues")' not in src

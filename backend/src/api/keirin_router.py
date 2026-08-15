@@ -2346,14 +2346,25 @@ async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
         if (await _closed_races([base])).get(base):
             return _closed_response([base])
         return await _call_webhook("/approve", {"race_key": base, "rank_key": body.rank_key})
-    if body.date and body.venue_name:
+    if body.date and (body.venue_name or body.all_venues):
         if not _DATE_RE.match(body.date):
             return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
                                 status_code=400)
-        return await _call_webhook("/approve",
-                                   {"date": body.date, "venue_name": body.venue_name})
+        # 🔴 その日の全場をまとめて承認する（2026-08-16・ユーザー要望）。
+        #    取消には元から全件があり、承認だけ場単位止まりで非対称だった。
+        #    事故防止は取消と同じ作法に揃える —— **date 必須**で範囲を縛り
+        #    （日付の無い全件承認は通さない）、画面側で二段確認と件数表示を出す。
+        #    ⚠️ 対象は `proposed` のみ（CLI 側 `_proposals_for_venue`）。
+        #       既に送った `submitted` を混ぜると二重入稿になる。
+        payload: dict[str, Any] = {"date": body.date}
+        if body.venue_name:
+            payload["venue_name"] = body.venue_name
+        if body.all_venues:
+            payload["all_venues"] = True
+        return await _call_webhook("/approve", payload)
     return JSONResponse(
-        content={"ok": False, "message": "race_key+rank_key か date+venue_name が必要です"},
+        content={"ok": False,
+                 "message": "race_key+rank_key か date+venue_name か date+all_venues が必要です"},
         status_code=400)
 
 

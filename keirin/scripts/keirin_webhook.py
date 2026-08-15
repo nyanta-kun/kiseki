@@ -194,14 +194,14 @@ class Handler(BaseHTTPRequestHandler):
             cmd += ["--date", str(date)]
             if venue:
                 cmd += ["--venue", str(venue)]
-            # 全場・全件の取消（2026-08-12）。🔴 **日付は必ず付ける**
-            #    （CLI 側でも --date 無しの --all は弾く。二重に縛る）。
-            if action == "cancel" and body.get("all_venues"):
+            # 全場・全件（取消 2026-08-12 / 承認 2026-08-16）。
+            # 🔴 **日付は必ず付ける**（CLI 側でも --date 無しの --all は弾く。二重に縛る）。
+            if body.get("all_venues"):
                 cmd.append("--all")
         else:
             return {"ok": False,
-                    "message": "race_key+rank_key か date+venue_name"
-                               "（取消は date+all_venues も可）が必要です"}, 400
+                    "message": "race_key+rank_key か date+venue_name "
+                               "か date+all_venues が必要です"}, 400
 
         log.info("triggered /%s %s", action, cmd[-4:])
         env = dict(os.environ, PYTHONPATH=".")

@@ -240,11 +240,15 @@ def test_場単位では場でも絞る(monkeypatch):
 
 def test_一括取消はforceを既定で渡さない():
     """🔴 まとめて『記録だけ消す』のは事故。失敗は明細で返し、
-    強制取消は画面から1件ずつ行う。"""
+    強制取消は画面から1件ずつ行う。
+
+    ⚠️ `--all` は 2026-08-16 に承認でも使えるようにしたので
+       「cancel 専用」ではなくなった。**`--force` の cancel 専用は維持する**
+       （承認に「強制」は無い）。範囲の縛り（--date 必須）も維持。
+    """
     import scripts.netkeirin_approve_wt as cli
     tree = ast.parse(inspect.getsource(cli.main))
     consts = {n.value for n in ast.walk(tree)
               if isinstance(n, ast.Constant) and isinstance(n.value, str)}
     assert "--force は cancel 専用です" in consts
-    assert "--all は cancel 専用です" in consts
     assert "--all には --date が必要です" in consts
