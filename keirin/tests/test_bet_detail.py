@@ -188,21 +188,41 @@ def test_odds_low_が無ければNoneのままで落ちない():
     assert d["lines"][0]["odds"] == 5.0
 
 
-def test_保守板は点予測より必ず低い():
-    """`_conservative_trio_board` は下側分位なので 1 未満の倍率が掛かる。"""
-    from scripts.netkeirin_submit_wt import _conservative_trio_board
+def test_保守板は点予測より必ず低くレース内で一定倍(monkeypatch):
+    """`_conservative_trio_board` は下側分位なので 1 未満の倍率が掛かる。
 
+    ⚠️ **倍率を meta から実際に読ませない。** `data/models/` は git 管理外で
+       CI には存在しないため、実モデルに依存させるとここだけ落ちる（実際に落とした）。
+       検査したいのは「一定倍で必ず下がる」という規則のほう。
+    """
+    import scripts.netkeirin_submit_wt as m
+
+    monkeypatch.setattr(m, "conservative_multiplier", lambda n, q: 0.8453)
     board = {frozenset({1, 2, 3}): 10.0, frozenset({1, 2, 4}): 40.0}
-    low = _conservative_trio_board(board, 7)
-    assert low, "保守倍率が meta から取れていません"
+    low = m._conservative_trio_board(board, 7)
     for k, v in board.items():
         assert 0 < low[k] < v, f"{k}: 下限 {low[k]} が点予測 {v} を下回っていません"
     # レース内で一定倍＝順序は保つ（配分の比率を壊さないことの確認）
-    ratios = {low[k] / v for k, v in board.items()}
-    assert len(ratios) == 1
+    assert len({low[k] / v for k, v in board.items()}) == 1
 
 
 def test_保守板は空盤面で例外を出さない():
     from scripts.netkeirin_submit_wt import _conservative_trio_board
 
     assert _conservative_trio_board({}, 7) == {}
+
+
+def test_保守倍率が取れなければ下限を出さない(monkeypatch):
+    """🔴 モデル・meta 未配備でも入稿は止めない（下限が出ないだけ）。
+
+    ⚠️ 代わりに 1.0 を掛けて「下限」として出してはいけない。それは点予測
+       そのもので、下限だと思って読まれると**楽観側へ黙って倒れる**。
+    """
+    import scripts.netkeirin_submit_wt as m
+    from src.odds_prediction import OddsPredictionUnavailable
+
+    def _boom(n, q):
+        raise OddsPredictionUnavailable("meta がありません")
+
+    monkeypatch.setattr(m, "conservative_multiplier", _boom)
+    assert m._conservative_trio_board({frozenset({1, 2, 3}): 10.0}, 7) == {}
