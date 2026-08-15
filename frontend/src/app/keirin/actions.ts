@@ -137,6 +137,19 @@ export async function approveKeirinVenueAction(
 }
 
 /**
+ * その日の入稿案を**全場まとめて**承認して netkeirin へ入稿する。
+ *
+ * 🔴 対象は `proposed`（まだ送っていない入稿案）だけ。既に送った `submitted` は
+ *    含めない（含めると二重入稿になる）。
+ * 🔴 date は必須（API・CLI の両方でも日付無しは弾く）。過去分まで巻き込まないため。
+ * ⚠️ 締切（発走15分前）を過ぎたレースは CLI 側で落として理由が明細に載る。
+ *    一括の関門はそこだけなので、成否は必ず明細で確認すること。
+ */
+export async function approveKeirinAllAction(date: string): Promise<ApprovalResult> {
+  return postApproval("/keirin/approve", { date, all_venues: true });
+}
+
+/**
  * 入稿を取り消す。netkeirin の下書きを削除し、記録は論理削除する。
  *
  * ⚠️ netkeirin 側の削除が効くのは**公開待ち**のもの。公開済みに効くかは未確認。

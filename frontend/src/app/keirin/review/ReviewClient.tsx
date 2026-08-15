@@ -27,6 +27,7 @@ import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
 
 import {
+  approveKeirinAllAction,
   approveKeirinRaceAction,
   approveKeirinVenueAction,
   cancelKeirinAllAction,
@@ -457,6 +458,13 @@ export default function ReviewClient({ date, items, nProposed }: {
     () => items.filter((p) => p.status !== "deleted" && !isClosed(p.start_at, nowSec)).length,
     [items, nowSec],
   );
+  // 一括承認できる＝まだ送っていない入稿案（proposed）で、かつ締切前。
+  // 🔴 締切を過ぎた分を数に入れない（場単位と同じ規則）。入れると
+  //    「N件を承認」の N が実際に通る件数と食い違い、押した後に初めて分かる。
+  const nApprovableAll = useMemo(
+    () => items.filter((p) => p.status === "proposed" && !isClosed(p.start_at, nowSec)).length,
+    [items, nowSec],
+  );
 
   const byVenue = useMemo(() => {
     const m = new Map<string, KeirinProposal[]>();
@@ -569,6 +577,28 @@ export default function ReviewClient({ date, items, nProposed }: {
         <span className="text-sm">
           未入稿 <span className="font-semibold">{nProposed}</span> 件
         </span>
+        {/* この日の入稿案を全場まとめて承認して netkeirin へ送る（2026-08-16）。
+            取消に全件があって承認だけ場単位止まりだったのを揃えた。
+            🔴 外向きの操作なので取消と同じ作法 —— **件数を出して確認を1回**挟む。
+               （取消ほど戻しにくくない＝送った後も個別・全件取消で消せるので二段にはしない）
+            🔴 締切前の proposed だけを数える。submitted は含めない（二重入稿になる）。 */}
+        {nApprovableAll > 0 && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (!window.confirm(
+                `${date} の入稿案を全件（${nApprovableAll}件）承認して netkeirin へ入稿します。\n\n`
+                + "入稿後は netkeirin の公開待ち一覧に並びます（公開はまだされません）。\n"
+                + "よろしいですか？",
+              )) return;
+              run(() => approveKeirinAllAction(date));
+            }}
+            className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+          >
+            この日を全件承認（{nApprovableAll}件）
+          </button>
+        )}
         {/* 🔴 この日の下書きを全部消す。最も戻しにくい操作なので、
             件数を出したうえで **確認を2回** 挟む。日付は必ず添える
             （API・CLI の両方でも日付無しの全件取消は弾く）。 */}

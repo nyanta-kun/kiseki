@@ -6,6 +6,7 @@
 
     python scripts/netkeirin_approve_wt.py approve --race-key 20260811_13_01 --rank-key 7C
     python scripts/netkeirin_approve_wt.py approve --date 2026-08-11 --venue 前橋
+    python scripts/netkeirin_approve_wt.py approve --date 2026-08-11 --all   # その日の全場
     python scripts/netkeirin_approve_wt.py cancel  --race-key 20260811_13_01 --rank-key 7C
 
 ## なぜ同期実行なのか
@@ -44,19 +45,26 @@ from src.database import get_connection  # noqa: E402
 from src.submit_window import SUBMIT_DEADLINE_SEC, is_closed  # noqa: E402
 
 
-def _proposals_for_venue(date: str, venue_name: str) -> list[tuple[str, str]]:
-    """その日・その場の入稿案を (race_key, rank_key) で返す（発走順）。
+def _proposals_for_venue(date: str, venue_name: str | None) -> list[tuple[str, str]]:
+    """承認できる入稿案を (race_key, rank_key) で返す（発走順）。
 
     `date` は YYYY-MM-DD。race_key の先頭8桁が YYYYMMDD。
+    `venue_name` が None ならその日の**全場**（2026-08-16 追加）。
+
+    🔴 **必ず日付で絞る。** `date` を外すと過去分の入稿案まで承認してしまう。
+    🔴 対象は `proposed` だけ。既に netkeirin へ出したもの（submitted）を
+       混ぜると二重入稿になる。
     """
     ymd = date.replace("-", "")
+    sql = ("SELECT race_key, rank_key FROM netkeirin_submissions "
+           "WHERE race_key LIKE ? AND status = ? ")
+    params: list = [f"{ymd}%", STATUS_PROPOSED]
+    if venue_name:
+        sql += "AND venue_name = ? "
+        params.append(venue_name)
+    sql += "ORDER BY venue_name, race_no"
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT race_key, rank_key FROM netkeirin_submissions "
-            "WHERE race_key LIKE ? AND venue_name = ? AND status = ? "
-            "ORDER BY race_no",
-            (f"{ymd}%", venue_name, STATUS_PROPOSED),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [(r["race_key"], r["rank_key"]) for r in rows]
 
 
@@ -143,7 +151,8 @@ def main() -> int:
     ap.add_argument("--venue")
     ap.add_argument(
         "--all", dest="all_venues", action="store_true",
-        help="取消専用。--date で指定した日の**全場・全件**を対象にする")
+        help="--date で指定した日の**全場・全件**を対象にする"
+             "（承認は proposed のみ / 取消は生きている下書き全部）")
     ap.add_argument(
         "--force", action="store_true",
         help="取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする"
@@ -151,10 +160,6 @@ def main() -> int:
     args = ap.parse_args()
     if args.force and args.action != "cancel":
         print(json.dumps({"ok": False, "message": "--force は cancel 専用です"},
-                         ensure_ascii=False))
-        return 2
-    if args.all_venues and args.action != "cancel":
-        print(json.dumps({"ok": False, "message": "--all は cancel 専用です"},
                          ensure_ascii=False))
         return 2
     if args.all_venues and not args.date:
@@ -171,11 +176,10 @@ def main() -> int:
         # 事故防止は**画面側の二段確認と件数表示**に移し、ここでは
         # 🔴 **日付必須**（`--all` は `--date` 無しでは通さない）で範囲を縛る。
         if args.action == "approve":
-            if args.all_venues:
-                print(json.dumps({"ok": False, "message": "--all は cancel 専用です"},
-                                 ensure_ascii=False))
-                return 2
-            targets = _proposals_for_venue(args.date, args.venue)
+            # 2026-08-16: 承認も `--all`（その日の全場）を受け付ける（ユーザー要望）。
+            # 取消に全件があって承認に無いのは非対称なだけで、事故防止の作法
+            # （日付必須・画面の二段確認と件数表示）は取消と同じものが使える。
+            targets = _proposals_for_venue(args.date, args.venue if args.venue else None)
             empty_msg = "対象の入稿案がありません"
         else:
             targets = _cancelable(args.date, args.venue if args.venue else None)
@@ -187,7 +191,7 @@ def main() -> int:
     else:
         print(json.dumps(
             {"ok": False,
-             "message": "--race-key/--rank-key か --date/--venue（取消は --date/--all も可）が必要です"},
+             "message": "--race-key/--rank-key か --date/--venue か --date/--all が必要です"},
             ensure_ascii=False))
         return 2
 
