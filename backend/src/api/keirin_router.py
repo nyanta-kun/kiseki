@@ -2062,6 +2062,10 @@ async def update_netkeirin_settings(
 STATUS_PROPOSED = "proposed"
 STATUS_SUBMITTED = "submitted"
 STATUS_DELETED = "deleted"
+# 公開済み（2026-08-16）。netkeirin は「入稿（下書きとして送る）」と「公開」が
+# 別操作で、公開すると修正できなくなる（不可逆）。
+#   proposed → submitted（＝公開待ち）→ published    ↘ deleted
+STATUS_PUBLISHED = "published"
 
 
 def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
@@ -2269,7 +2273,13 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             ],
         })
     n_proposed = sum(1 for x in items if x["status"] == STATUS_PROPOSED)
-    return JSONResponse(content={"date": target, "n_proposed": n_proposed, "items": items})
+    # 未公開＝netkeirin へ送ったが公開していない（2026-08-16）。
+    # ⚠️ **これは自前の記録**。netkeirin の画面から人が直接公開すると
+    #    こちらは `submitted` のまま取り残されるので、実数と食い違いうる。
+    #    netkeirin 側の実数は `/keirin/publish-wait` で別に取れる。
+    n_unpublished = sum(1 for x in items if x["status"] == STATUS_SUBMITTED)
+    return JSONResponse(content={"date": target, "n_proposed": n_proposed,
+                                 "n_unpublished": n_unpublished, "items": items})
 
 
 class ApprovalIn(BaseModel):
@@ -2282,9 +2292,13 @@ class ApprovalIn(BaseModel):
     # 取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする。
     # 既定 False。承認では無視する（keirin 側の CLI も cancel 以外では弾く）。
     force: bool = False
-    # 取消専用。date で指定した日の**全場・全件**を対象にする。
+    # date で指定した日の**全場・全件**を対象にする（取消 2026-08-12 / 承認 2026-08-16）。
     # 🔴 date が無ければ受け付けない（過去分まで巻き込むため）。
     all_venues: bool = False
+    # 承認専用。入稿が通ったものを続けて **netkeirin で公開**する（2026-08-16）。
+    # 🔴 **公開は不可逆**（netkeirin の確認文言「公開後は修正できなくなります」）。
+    #    画面側で必ず人の確認を挟むこと。keirin 側 CLI も approve 以外では弾く。
+    publish: bool = False
 
 
 async def _closed_races(race_keys: Sequence[str]) -> dict[str, bool]:
@@ -2345,7 +2359,9 @@ async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
         #    押せてしまうと「押したのに出ていない」に見えるので手前で拒む。
         if (await _closed_races([base])).get(base):
             return _closed_response([base])
-        return await _call_webhook("/approve", {"race_key": base, "rank_key": body.rank_key})
+        return await _call_webhook(
+            "/approve", {"race_key": base, "rank_key": body.rank_key,
+                         "publish": body.publish})
     if body.date and (body.venue_name or body.all_venues):
         if not _DATE_RE.match(body.date):
             return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
@@ -2361,7 +2377,47 @@ async def approve_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
             payload["venue_name"] = body.venue_name
         if body.all_venues:
             payload["all_venues"] = True
+        if body.publish:
+            payload["publish"] = True
         return await _call_webhook("/approve", payload)
+    return JSONResponse(
+        content={"ok": False,
+                 "message": "race_key+rank_key か date+venue_name か date+all_venues が必要です"},
+        status_code=400)
+
+
+@router.post("/publish")
+async def publish_submission(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
+    """公開待ち（netkeirin へ送信済み）の入稿を**公開する**（2026-08-16）。
+
+    netkeirin では「入稿（下書きとして送る）」と「公開」が別操作で、公開は
+    `race_auth.html` で人が押していた。確認画面から押せるようにする。
+
+    🔴 **公開は不可逆**。netkeirin 自身の確認文言が「公開後は修正できなくなります」。
+       画面側で必ず人の確認を挟むこと。
+    🔴 対象は `submitted` のみ。入稿案（proposed）は netkeirin にまだ無いので
+       公開できない（「入稿してから公開」は `/approve` に `publish: true`）。
+    ⚠️ 締切（発走15分前）を過ぎたレースは netkeirin の画面でも押させない
+       （JS の `check_closetime`）。keirin 側 CLI が同じ関門で落として明細に載せる。
+    """
+    if body.race_key and body.rank_key:
+        base = body.race_key.split("#", 1)[0]
+        if not _RACE_KEY_RE.match(base):
+            return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"},
+                                status_code=400)
+        if (await _closed_races([base])).get(base):
+            return _closed_response([base])
+        return await _call_webhook("/publish", {"race_key": base, "rank_key": body.rank_key})
+    if body.date and (body.venue_name or body.all_venues):
+        if not _DATE_RE.match(body.date):
+            return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
+                                status_code=400)
+        payload: dict[str, Any] = {"date": body.date}
+        if body.venue_name:
+            payload["venue_name"] = body.venue_name
+        if body.all_venues:
+            payload["all_venues"] = True
+        return await _call_webhook("/publish", payload)
     return JSONResponse(
         content={"ok": False,
                  "message": "race_key+rank_key か date+venue_name か date+all_venues が必要です"},

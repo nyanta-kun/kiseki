@@ -120,6 +120,11 @@ REVIEW_URL = os.environ.get("KEIRIN_REVIEW_URL", "https://galloplab.com/keirin/r
 STATUS_PROPOSED = "proposed"
 STATUS_SUBMITTED = "submitted"
 STATUS_DELETED = "deleted"
+# 公開済み（2026-08-16）。netkeirin の「公開」＝`action=change_status` を通した状態。
+# 🔴 **不可逆**（netkeirin の確認文言「公開後は修正できなくなります」）。
+# ⚠️ 取消の対象から外す。公開済みに `delete` が効くかは仕様に記載が無く未確認で、
+#    含めると一括取消のたびに必ず失敗する行が混ざって明細が読めなくなる。
+STATUS_PUBLISHED = "published"
 
 # netkeirin_submissions.origin（入稿の出自）。マイグレーション 202608111930_keirin。
 # 🔴 **`rank_key` では経路を判別できない。** 看板レースの穴埋め
@@ -2352,6 +2357,76 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
 def _n_cars_from_marks(marks: dict[int, str]) -> int:
     """ランク設定が無いときの保険。印は出走全車に付くので車数と一致する。"""
     return len(marks)
+
+
+def publish_submissions(targets: list[tuple[str, str]]) -> list[dict]:
+    """公開待ち（`submitted`）を netkeirin で**公開**する。1件ずつの結果を返す。
+
+    `targets` は [(race_key, rank_key), ...]。
+
+    🔴 **netkeirin へは1回のリクエストでまとめて送る**（本家の「全てを公開する」と
+       同じ `action=change_status` に race_id の配列）。1件ずつ送ると公開待ち
+       一覧の件数ぶんリクエストが飛び、途中で失敗したときの状態が読めなくなる。
+    🔴 **公開は不可逆**。呼び出し側（CLI・画面）で必ず人の確認を挟むこと。
+    🔴 **記録の更新は netkeirin が OK を返した後だけ**。先に status を進めると、
+       失敗したときに「公開済みなのに公開されていない」行が残る。
+
+    ⚠️ 送れるのは `status='submitted'` かつ `netkeirin_race_id` を持つ行だけ。
+       入稿案（proposed）は netkeirin にまだ無いので race_id が無い。
+       ⚠️ 締切超過の判定はここでは**しない**（呼び出し側 `netkeirin_approve_wt`
+          が `is_closed` で落とす。netkeirin の画面も JS で同じことをしている）。
+    """
+    if not targets:
+        return []
+    results: list[dict] = []
+    sendable: list[tuple[str, str, str]] = []      # (race_key, rank_key, race_id)
+    with get_connection() as conn:
+        for race_key, rank_key in targets:
+            row = conn.execute(
+                "SELECT netkeirin_race_id, status, bet_detail FROM netkeirin_submissions "
+                "WHERE race_key = ? AND rank_key = ?", (race_key, rank_key),
+            ).fetchone()
+            if row is None:
+                results.append({"race_key": race_key, "rank_key": rank_key, "ok": False,
+                                "message": "入稿記録がありません"})
+            elif row["status"] == STATUS_PUBLISHED:
+                results.append({"race_key": race_key, "rank_key": rank_key, "ok": True,
+                                "message": "既に公開済みです"})
+            elif row["status"] != STATUS_SUBMITTED:
+                results.append({"race_key": race_key, "rank_key": rank_key, "ok": False,
+                                "message": f"公開できる状態ではありません（{row['status']}）"})
+            elif not row["netkeirin_race_id"] or str(
+                    row["netkeirin_race_id"]).startswith(PROPOSED_PREFIX):
+                results.append({"race_key": race_key, "rank_key": rank_key, "ok": False,
+                                "message": "netkeirin の race_id がありません"})
+            else:
+                sendable.append((race_key, rank_key, str(row["netkeirin_race_id"]),
+                                 _bet_detail_total(row["bet_detail"])))
+
+    if not sendable:
+        return results
+
+    ok, msg = NetkeirinClient(propose_only=False).publish_picks([x[2] for x in sendable])
+    if ok:
+        now = datetime.now(JST).replace(tzinfo=None)
+        with get_connection() as conn:
+            for race_key, rank_key, _, total in sendable:
+                conn.execute(
+                    "UPDATE netkeirin_submissions SET status = ?, published_at = ? "
+                    "WHERE race_key = ? AND rank_key = ?",
+                    (STATUS_PUBLISHED, now, race_key, rank_key),
+                )
+                # 🔴 投資額の同期をここでも呼ぶ。公開時点では既に承認・直接入稿の
+                #    どちらかで入っているはずだが、`_mark_bought` は
+                #    `COALESCE(bet_amount,0)=0` の行しか触らない**冪等**な処理で、
+                #    前段が失敗していたときの**取りこぼしを最後に拾える**。
+                #    （検査: tests/test_submit_marks_bought.py）
+                _mark_bought(conn, race_key, rank_key, total)
+            conn.commit()
+    for race_key, rank_key, _, _ in sendable:
+        results.append({"race_key": race_key, "rank_key": rank_key,
+                        "ok": bool(ok), "message": str(msg)})
+    return results
 
 
 def cancel_submission(race_key: str, rank_key: str, force: bool = False) -> tuple[bool, str]:

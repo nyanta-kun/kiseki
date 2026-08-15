@@ -19,7 +19,7 @@ import re
 from datetime import date
 from itertools import combinations as _combinations
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple, Sequence
 
 import requests
 from bs4 import BeautifulSoup
@@ -502,6 +502,78 @@ class NetkeirinClient:
         if resp.get("status") != "OK":
             return False, f"削除失敗: {resp}"
         return True, str(resp.get("item_id") or item_id)
+
+    def publish_picks(self, race_ids: Sequence[str]) -> tuple[bool, str]:
+        """公開待ちの予想を**公開する**（`action=change_status`）。
+
+        仕様は `race_auth.html` の実機 JS から確定（2026-08-16）:
+
+            個別: param.action='change_status'; param.race_id = race_id      （スカラー）
+            一括: param.action='change_status'; param.race_id = [race_id...]  （配列）
+
+        jQuery の `$.ajax({data})` は配列を `race_id[]=a&race_id[]=b` へ直列化するので、
+        複数のときは `race_id[]` で送る。**netkeirin 本体の「全てを公開する」ボタンも
+        これ1回で全件を送っている**（`act-bulk_yoso_open`）。
+
+        🔴 **公開は不可逆**。netkeirin 自身の確認文言が「公開後は修正できなくなります」。
+           呼び出し側は必ず人の確認を挟むこと。
+        🔴 **締切の判定はしてくれない。** netkeirin の画面では JS の
+           `check_closetime()` が押させない作りなので、API を直に叩く側で
+           `src.submit_window.is_closed` を通してから呼ぶこと。
+        ⚠️ 対象は**公開待ち**（承認済み＝netkeirin へ送信済み）のもの。入稿案
+           （まだ送っていない）には `race_id` が無いので渡せない。
+        """
+        ids = [str(x) for x in race_ids if x and not str(x).startswith(PROPOSED_PREFIX)]
+        if not ids:
+            return False, "公開できる race_id がありません"
+        if self.propose_only:
+            # 承認制の下でも公開は netkeirin への実操作。ここは素通ししない
+            # （素通しすると「公開した」と記録だけ進んで実態と食い違う）。
+            return False, "propose_only では公開できません"
+        # 1件はスカラー `race_id=`・複数は配列 `race_id[]=`（本家 JS と同じ形）
+        payload: dict[str, Any] = {"output": "json", "action": "change_status"}
+        if len(ids) == 1:
+            payload["race_id"] = ids[0]
+        else:
+            payload["race_id[]"] = ids
+        try:
+            r = self.session.post(POST_GOODS_URL, data=payload, timeout=30)
+            r.raise_for_status()
+            resp = r.json()
+        except (requests.RequestException, ValueError) as e:
+            return False, f"公開リクエスト失敗: {e}"
+        if resp.get("status") != "OK":
+            return False, f"公開失敗: {resp}"
+        return True, f"{len(ids)}件を公開しました"
+
+    def count_wait(self) -> tuple[int, list]:
+        """**未公開（公開待ち）**の件数と一覧（`action=get_wait`）。
+
+        netkeirin のヘッダーが出しているバッジと同じ情報源。実測の応答:
+
+            {"status":"OK","count":"0","list":[]}
+
+        🔴 **読み取り専用**。件数だけ欲しいときも副作用は無い。
+        ⚠️ count は**文字列**で返る。数値化してから比較すること。
+        失敗しても例外にせず (0, []) を返す —— 画面の付随情報なので、
+        ここで落として確認画面ごと見えなくなるほうが困る。
+        """
+        try:
+            r = self.session.post(
+                POST_GOODS_URL, data={"output": "json", "action": "get_wait"}, timeout=15)
+            r.raise_for_status()
+            resp = r.json()
+        except (requests.RequestException, ValueError) as e:
+            print(f"[netkeirin] 未公開件数の取得に失敗: {e}")
+            return 0, []
+        if resp.get("status") != "OK":
+            print(f"[netkeirin] 未公開件数の取得に失敗: {resp}")
+            return 0, []
+        try:
+            n = int(resp.get("count") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        return n, list(resp.get("list") or [])
 
     def fetch_item_ids(self) -> dict[str, str]:
         """`race_auth.html`（公開待ち一覧）から {race_id: item_id} を作る。

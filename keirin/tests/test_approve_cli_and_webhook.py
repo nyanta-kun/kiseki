@@ -211,3 +211,63 @@ def test_webhook_passes_all_venues_for_both_actions():
     assert 'if body.get("all_venues"):' in src, (
         "all_venues の判定に action の条件が残っています（承認で --all が付きません）")
     assert 'action == "cancel" and body.get("all_venues")' not in src
+
+
+def test_webhook_manual_ranks_match_the_submitter():
+    """🔴 webhook の `_MANUAL_ALLOWED_RANKS` が submit 側と一致すること。
+
+    ランク集合のコピーは3箇所（submit / kiseki backend `_MANUAL_RANK_KEYS` /
+    webhook）。webhook だけ取り残されると **Web のランク選択から選んだのに 400**
+    になる（画面には「入稿に失敗しました」しか出ない）。
+
+    実害: 2026-08-14 の 9A→9C・7A廃止に追随しておらず、2026-08-16 まで
+    **9C を選ぶと必ず 400** だった。2026-08-02 にも同じ場所で同型の取り残しがある。
+    """
+    import re
+
+    from scripts.netkeirin_submit_wt import MANUAL_ALLOWED_RANKS
+
+    src = WEBHOOK.read_text(encoding="utf-8")
+    m = re.search(r"_MANUAL_ALLOWED_RANKS = \(([^)]*)\)", src)
+    assert m, "webhook の _MANUAL_ALLOWED_RANKS 宣言を見つけられません"
+    webhook_ranks = tuple(re.findall(r'"([^"]+)"', m.group(1)))
+    assert webhook_ranks == MANUAL_ALLOWED_RANKS, (
+        "webhook と submit でランク集合が食い違います。\n"
+        f"  webhook: {webhook_ranks}\n  submit : {MANUAL_ALLOWED_RANKS}")
+
+
+def test_webhook_routes_publish():
+    """公開の口が生えていること（生えていないと画面のボタンが 404 になる）。"""
+    src = WEBHOOK.read_text(encoding="utf-8")
+    assert '"/approve", "/cancel", "/publish"' in src
+    assert '"/publish-wait"' in src
+
+
+def test_publish_flag_is_approve_only():
+    """`--publish` は承認専用（単体の公開は publish アクションを使う）。"""
+    src = inspect.getsource(cli.main)
+    assert "--publish は approve 専用です" in src
+
+
+def test_publish_targets_are_submitted_only():
+    """🔴 公開できるのは netkeirin へ送信済み（submitted）だけ。
+
+    入稿案（proposed）は netkeirin にまだ無いので race_id が引けない。
+    """
+    tree = ast.parse(inspect.getsource(cli._publishable))
+    sql = " ".join(n.value for n in ast.walk(tree)
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    assert "status = ?" in sql
+    assert "race_key LIKE ?" in sql, "日付で絞っていません"
+
+
+def test_cancel_excludes_published():
+    """🔴 公開済みは取消の対象に入れない。
+
+    公開済みに netkeirin の `delete` が効くかは仕様に記載が無く未確認で、
+    含めると一括取消のたびに必ず失敗する行が混ざり明細が読めなくなる。
+    """
+    tree = ast.parse(inspect.getsource(cli._cancelable))
+    sql = " ".join(n.value for n in ast.walk(tree)
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    assert "NOT IN (?, ?)" in sql, "deleted と published の2つを除外していません"

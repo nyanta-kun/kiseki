@@ -226,3 +226,64 @@ def test_保守倍率が取れなければ下限を出さない(monkeypatch):
 
     monkeypatch.setattr(m, "conservative_multiplier", _boom)
     assert m._conservative_trio_board({frozenset({1, 2, 3}): 10.0}, 7) == {}
+
+
+# ── netkeirin の公開（2026-08-16 追加）─────────────────────────────────
+#
+# 仕様は `race_auth.html` の実機 JS から確定:
+#   個別 param.action='change_status'; param.race_id = race_id      （スカラー）
+#   一括 param.action='change_status'; param.race_id = [race_id...]  （配列 → race_id[]）
+# 🔴 **公開は不可逆**（netkeirin の確認文言「公開後は修正できなくなります」）。
+
+
+def _client(monkeypatch, captured):
+    from src.netkeirin_client import NetkeirinClient
+
+    cl = NetkeirinClient.__new__(NetkeirinClient)
+    cl.propose_only = False
+
+    class _Sess:
+        def post(self, url, data=None, timeout=None):
+            captured["url"] = url
+            captured["data"] = data
+            return type("R", (), {"raise_for_status": lambda s: None,
+                                  "json": lambda s: {"status": "OK"}})()
+    cl.session = _Sess()
+    return cl
+
+
+def test_公開は1件ならスカラーで送る(monkeypatch):
+    cap = {}
+    ok, msg = _client(monkeypatch, cap).publish_picks(["202608160101"])
+    assert ok
+    assert cap["data"]["action"] == "change_status"
+    assert cap["data"]["race_id"] == "202608160101"
+    assert "race_id[]" not in cap["data"]
+
+
+def test_公開は複数なら配列で送る(monkeypatch):
+    cap = {}
+    ok, _ = _client(monkeypatch, cap).publish_picks(["202608160101", "202608160102"])
+    assert ok
+    assert cap["data"]["race_id[]"] == ["202608160101", "202608160102"]
+    assert "race_id" not in cap["data"], "本家 JS と同じくスカラーとは併用しない"
+
+
+def test_未送信の入稿案は公開対象から外す(monkeypatch):
+    """🔴 `PROPOSED:` は netkeirin にまだ存在しない＝公開する相手がいない。"""
+    from src.netkeirin_client import PROPOSED_PREFIX
+
+    cap = {}
+    ok, msg = _client(monkeypatch, cap).publish_picks([f"{PROPOSED_PREFIX}202608160101"])
+    assert not ok and "race_id がありません" in msg
+    assert "data" not in cap, "netkeirin へリクエストを送っています"
+
+
+def test_propose_onlyでは公開しない():
+    """承認制の下でも公開は実操作。素通しすると記録だけ進んで実態と食い違う。"""
+    from src.netkeirin_client import NetkeirinClient
+
+    cl = NetkeirinClient.__new__(NetkeirinClient)
+    cl.propose_only = True
+    ok, msg = cl.publish_picks(["202608160101"])
+    assert not ok and "propose_only" in msg
