@@ -27,7 +27,8 @@ model-vintage look-ahead になる。他ランクの rebuild が 2024-01 から�
   - 残りが0点になったら skip
   - 残った点数で `rank_7t1_stakes()` を**引き直す**（1レース1万円の枠は動かさない）
     ⚠️ 7T1 は均等配分なので、点が落ちると1点あたりの賭け金は**増える**。
-       目標払戻(20万円)への到達性はむしろ緩くなる方向なので、落として続行してよい。
+       目標払戻(`RANK_7T1_TARGET_PAYOUT`)への到達性はむしろ緩くなる方向なので、
+       落として続行してよい。
 
 ## ⚠️ 必ず vintage モデルで流すこと
 
@@ -260,8 +261,8 @@ def main() -> None:
     bet = sum(r["bet_amount"] for r in rows)
     pay = sum(r["payout"] for r in rows)
     # 🔴 集計の基準は**このランクの目標額**（`RANK_7T1_TARGET_PAYOUT`）。
-    #    7H3 由来の 10万円固定を残すと、目標20万で設計したものを別の物差しで
-    #    見ることになる。
+    #    ここに固定値を書くと、目標額を変えたときに別の物差しで見ることになる
+    #    （7H3 由来の 10万円固定が残っていて実際にそうなっていた）。
     big = sum(1 for r in rows if r["payout"] >= RANK_7T1_TARGET_PAYOUT)
     print(f"[backfill-7t1] {args.start}〜{args.end}: {len(rows)}R "
           f"({RANK_7T1_NE}車) 的中{n_hit} "
