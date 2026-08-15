@@ -94,6 +94,9 @@ from src.odds_prediction import (
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.strategy_wt import (
     RACE_BUDGET,
+    RANK_9C_LEG_P3_MIN,
+    RANK_9C_LEGS_MIN,
+    rank_7c_select_legs,
     rank_7h2_stakes,
     rank_7s_gate_label,
     unit_stake,
@@ -1127,6 +1130,65 @@ def _load_top3_probs(race_key: str) -> dict[int, float]:
             for r in rows if r["pred_top3_pct"] is not None}
 
 
+# 手動・看板穴埋め経路で相手を絞るランク。{rank_key: (足切り閾値, 最低点数)}
+#
+# 🔴 **背景（2026-08-15）**: 相手の足切りは `RANK_9C` の設計に入っているが、
+#    効いていたのは**候補JSON経由（ゲート通過）だけ**だった。手動・看板穴埋めは
+#    `軸以外の全車`＝総流しで組んでおり、9車なら常に7点。
+#    実際 2026-08-15 の 9C 入稿11件は全て `marquee_fill` で、全て7点総流しだった。
+#    ⚠️ **「ランクに足切りがある」＝「そのランクの入稿すべてに効く」ではない。**
+#
+# 🟢 **検証**（honest walk-forward・9車 4,593R・2024-07〜2026-08-04）:
+#    総流し7点 → p3>=0.15 で **表示的中率（払戻>=賭け金）22.7% → 27.3%**
+#    （+4.64pt [+3.70,+5.60] 有意）。4窓すべてで改善し、確認窓（2026-07〜）でも
+#    ROI 61.8% → 68.5%。
+#    🔴 **ROI の改善は有意でない**（+3.6pt [-0.4,+7.2]）。これは**表示的中率の施策**で
+#       あって収支のエッジではない。点数が減って1点あたりの賭け金が上がり、
+#       同じ的中でも元返しの壁を越えやすくなるのが効いている。
+#
+# ⚠️ **7A（7車の穴埋め）は入れない。** 総流し前提で設計されたランクで、
+#    9車と違って足切りは未検証。測っていないものを載せない。
+#    追加するときは必ず同じ walk-forward で測ってからにすること。
+MANUAL_LEG_CUTOFF: dict[str, tuple[float, int]] = {
+    "9C": (RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN),
+}
+
+
+def _manual_partners(race_key: str, rank_key: str, axis1: int, axis2: int,
+                     n_entries: int) -> list[int]:
+    """手動・看板穴埋め経路の相手を決める。
+
+    既定は総流し（軸以外の全車）。`MANUAL_LEG_CUTOFF` に載っているランクだけ、
+    候補JSON経由と同じ足切り（`rank_7c_select_legs`＝車数非依存）を通す。
+
+    🔴 **足切りで最低点数を割っても「買わない」にはできない。** 看板レースには
+       必ず推奨を出す方針（2026-08-09 ユーザー決定）で、この経路はその穴埋め
+       そのものだから。3着内率の上位から最低点数まで戻す。
+       ⚠️ ゲート通過側（`rank_9c_daily_select`）は逆に**そのレースを落とす**。
+          役割が違うので挙動が違うのは意図的。上の検証もこの戻し込みで測っている。
+    """
+    partners = [c for c in range(1, n_entries + 1) if c not in (axis1, axis2)]
+    rule = MANUAL_LEG_CUTOFF.get(rank_key)
+    if rule is None:
+        return partners
+    p3_min, legs_min = rule
+    top3 = _load_top3_probs(race_key)
+    if not top3:
+        # 指数が読めないときは絞らない。**黙って点数を減らすより総流しのほうが安全**
+        # （足切りは「当たらない相手を外す」施策で、外し過ぎは取りこぼしになる）。
+        print(f"[netkeirin_submit] {race_key}: 3着内率が読めないため総流しで入稿します",
+              flush=True)
+        return partners
+    kept = rank_7c_select_legs(partners, top3, p3_min)
+    if len(kept) < legs_min:
+        kept = sorted(partners, key=lambda c: (-top3.get(c, 0.0), c))[:legs_min]
+    if len(kept) < len(partners):
+        print(f"[netkeirin_submit] {race_key} ({rank_key}): 相手足切り "
+              f"{len(partners)}→{len(kept)}点 "
+              f"（3着内率 {p3_min:.0%} 未満を除外）", flush=True)
+    return kept
+
+
 def _build_tilted_legs(
     race_key: str, cfg: dict, axis1: int, axis2: int, partners: list[int],
 ) -> tuple[list[BetLeg], str, dict[int, int]]:
@@ -1829,7 +1891,7 @@ def _process_manual(
     if axis1 == axis2 or not (1 <= axis1 <= n_entries) or not (1 <= axis2 <= n_entries):
         return 0, [f"{race_key}: 不正な軸指定 axis1={axis1} axis2={axis2}"]
 
-    partners = [c for c in range(1, n_entries + 1) if c not in (axis1, axis2)]
+    partners = _manual_partners(race_key, rank_key, axis1, axis2, n_entries)
     gate_label = cfg["gate_filter"]
 
     setting = settings.get(rank_key)
