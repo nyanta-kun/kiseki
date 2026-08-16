@@ -26,7 +26,8 @@ sys.path.insert(0, str(REPO))
 from src.strategy_wt import (  # noqa: E402
     RANK_7T1_AXIS1_TOP_N, RANK_7T1_BUDGET, RANK_7T1_KMAX, RANK_7T1_NE,
     RANK_7T1_TARGET_PAYOUT, RANK_7T1_UNIT, ABOLISHED_PAPER_RANK_NAMES,
-    CURRENT_PAPER_RANKS, rank_7t1_daily_select, rank_7t1_is_cross_line,
+    CURRENT_PAPER_RANKS, RANK_7T1_SKIP_MARQUEE, rank_7t1_daily_select,
+    rank_7t1_is_cross_line, rank_7t1_is_marquee_race_type,
     rank_7t1_is_target_race_type, rank_7t1_pl_prob, rank_7t1_select, rank_7t1_stakes,
 )
 
@@ -270,7 +271,10 @@ def test_pl_prob_is_a_probability_and_order_sensitive():
 
 
 def _cand(**kw) -> dict:
-    base = {"n_entries": RANK_7T1_NE, "race_type": "決勝", "is_cross_line": True,
+    # ⚠️ 既定を「準決勝」にしてあるのは、2026-08-17 に**看板レースを母集団から
+    #    外した**ため（`RANK_7T1_SKIP_MARQUEE`）。決勝/特選/選抜は看板なので
+    #    既定にすると全ケースが0件になる。
+    base = {"n_entries": RANK_7T1_NE, "race_type": "準決勝", "is_cross_line": True,
             "legs": ["1-2-3"], "start_time": "10:00", "race_key": "20260813_11_01"}
     base.update(kw)
     return base
@@ -278,11 +282,40 @@ def _cand(**kw) -> dict:
 
 def test_daily_select_requires_final_series_and_cross_line():
     assert len(rank_7t1_daily_select([_cand()])) == 1
-    assert len(rank_7t1_daily_select([_cand(race_type="準決勝")])) == 1
     assert rank_7t1_daily_select([_cand(race_type="予選")]) == []
     assert rank_7t1_daily_select([_cand(is_cross_line=False)]) == []
     assert rank_7t1_daily_select([_cand(n_entries=9)]) == []
     assert rank_7t1_daily_select([_cand(legs=[])]) == []
+
+
+def test_daily_select_excludes_marquee_races():
+    """🔴 看板レース（決勝/特選/選抜）は出さない（2026-08-17・ユーザー判断）。
+
+    看板は当日売上の84%が集中するレースで、そこでの表示的中は
+    7S 32.5% / 7C 26.1% に対し 7T1 は 4.2% しかない。的中体験を優先する。
+
+    ⚠️ 入稿順は既に 7S > 7C > 7T1 なので、**優先順位を下げても効かない**
+       （看板で 7T1 が出るのは両方がゲートに落ちたレースだから）。
+       母集団から外すことでしか変わらない。
+    ⚠️ 外しても看板に穴は空かない（`submit_marquee_wt` が 7S で埋める）。
+    """
+    assert RANK_7T1_SKIP_MARQUEE is True
+    for rt in ("決勝", "特選", "初特選", "選抜", "チャレンジ決勝", "ガールズ決勝"):
+        assert rank_7t1_daily_select([_cand(race_type=rt)]) == [], rt
+    # 準決勝は看板ではないので**残る**（7T1 の母集団はここが本体になる）
+    for rt in ("準決勝", "S級準決勝", "チャレンジ準決勝"):
+        assert len(rank_7t1_daily_select([_cand(race_type=rt)])) == 1, rt
+
+
+def test_marquee_and_target_race_type_are_different_concepts():
+    """🔴 2つの判定を混同しない。違いは「準決勝」ただ1点。"""
+    assert rank_7t1_is_target_race_type("準決勝") is True
+    assert rank_7t1_is_marquee_race_type("準決勝") is False
+    for rt in ("決勝", "特選", "選抜"):
+        assert rank_7t1_is_target_race_type(rt) is True
+        assert rank_7t1_is_marquee_race_type(rt) is True
+    assert rank_7t1_is_marquee_race_type("予選") is False
+    assert rank_7t1_is_marquee_race_type(None) is False
 
 
 def test_daily_select_is_not_a_daily_rank_cut():

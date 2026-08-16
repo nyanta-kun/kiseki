@@ -2966,6 +2966,37 @@ RANK_7T1_TARGET_PAYOUT = 150_000
 #    ただし 1（指数1位固定）まで絞ると目的が落ちる（3.32→3.05%）。
 RANK_7T1_AXIS1_TOP_N = 2
 RANK_7T1_KMAX = 5                   # 3着に流せる最大点数（7車なら残り5車）
+# 看板レース（決勝/特選/選抜/特秀）では 7T1 を出さない（2026-08-17・ユーザー判断）。
+#
+# 【なぜ】7T1 の対象種別（決勝/**準決勝**/特選/選抜）と看板キーワードは
+#   **準決勝を除いてほぼ一致する**ため、7T1 の母集団は構造的に看板と重なる。
+#   実測（入稿 2026-08-13〜）: 看板レースの入稿70件のうち **30件(42.9%)が 7T1**
+#   （看板でないレースは16.1%）。7T1 入稿44件の**68%が看板**だった。
+#
+#   看板は**当日売上の84%が集中する**レース（[[keirin_marquee_race_policy_2026_08_09]]）。
+#   そこでの表示的中率（ガミ除く・7車・2025-01〜）:
+#
+#     7S  n=1,112  32.5%     7C  n=1,287  26.1%     7T1  n=144  **4.2%**
+#
+#   ＝ 最も見られるレースに、表示的中 4.2% の商品を置いていた。
+#
+# 🔴 **優先順位の変更では効かない。** 入稿順は既に 7S > 7C > 7T1 なので、
+#    看板で 7T1 が出ているのは**7S と 7C の両方がゲートに落ちたレース**。
+#    順序を下げても行き先が変わらないため、母集団から外すしかない。
+#
+# 🟢 **看板に穴は空かない。** 7T1 が取らなければ 7C が取り、どちらも通らなければ
+#    `submit_marquee_wt`（`RANK_BY_CARS = {7:"7S"}`）が埋める。
+#
+# 🔴 **代償は一撃力**。15万超を出せるランクは 7T1 だけ（7S 0.00% / 7C 0.08%）で、
+#    しかも看板側のほうが高い（看板 3.47% / 準決勝 1.23%）。残るのは準決勝のみで
+#    母集団は **225→81件（36%）**、設計時の 13.4本/日 は概ね 4〜5本/日 になる。
+#    ⚠️ 種別別の ROI（決勝135.5% / 準決勝44.4% 等）は**判断に使わないこと**。
+#       どのセルも的中1〜3件で、1本の配当で決まる。設計時の walk-forward
+#       (13,749R) は準決勝を含めて同等と判定している。確実なのは表示的中の差だけで、
+#       これは券種の構造（三連単1〜4点 vs 三連複5点）から来る。
+#
+# 戻すときはこの定数を False にする（母集団の定義そのものは変えていない）。
+RANK_7T1_SKIP_MARQUEE = True
 
 
 def rank_7t1_is_target_race_type(race_type: str | None) -> bool:
@@ -2994,6 +3025,22 @@ def rank_7t1_is_target_race_type(race_type: str | None) -> bool:
     if not race_type:
         return False
     return any(k in race_type for k in MARQUEE_KEYWORDS)
+
+
+def rank_7t1_is_marquee_race_type(race_type: str | None) -> bool:
+    """看板レース（決勝/特選/選抜/特秀。**準決勝は除く**）か。
+
+    `rank_7t1_is_target_race_type` と紛らわしいので分けてある:
+
+      target  = 決勝 / **準決勝** / 特選 / 選抜   ← 7T1 の母集団の定義
+      marquee = 決勝 /   特選 / 選抜 / 特秀       ← 売上が集中するレース
+
+    判定は正本（`backend/src/services/keirin_marquee.py`）へ委譲する。
+    ここでキーワードを写すと、看板の定義を変えたときに 7T1 だけ取り残される。
+    """
+    from .marquee import is_marquee_type
+
+    return bool(is_marquee_type(race_type))
 
 
 def rank_7t1_is_cross_line(top3_probs: dict[int, float],
@@ -3153,11 +3200,17 @@ def rank_7t1_daily_select(candidates: list[dict]) -> list[dict]:
 
     **日ごとの相対順位で切らない**（7H1/9H1 と同じ理由。切り捨てが件数を
     系統的に減らす）。母集団の条件を満たすものは全部出す。
-    0件の日があるのは正常（実測 13.4本/日）。
+    0件の日があるのは正常。
+
+    ⚠️ **看板レースは除く**（`RANK_7T1_SKIP_MARQUEE`・2026-08-17）。実質的に
+       残るのは準決勝で、件数は設計時の 13.4本/日 から 4〜5本/日 へ落ちる。
+       理由と代償は定数の定義部に書いてある。
     """
     elig = [c for c in candidates
             if c.get("n_entries") == RANK_7T1_NE
             and rank_7t1_is_target_race_type(c.get("race_type"))
+            and not (RANK_7T1_SKIP_MARQUEE
+                     and rank_7t1_is_marquee_race_type(c.get("race_type")))
             and bool(c.get("is_cross_line"))
             and c.get("legs")]
     # 発走順。件数を絞らないので順序は表示・入稿の都合だけで決めてよい。
