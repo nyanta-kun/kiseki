@@ -27,8 +27,6 @@ import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
 
 import {
-  approveAndPublishKeirinAllAction,
-  approveAndPublishKeirinRaceAction,
   approveKeirinAllAction,
   approveKeirinRaceAction,
   approveKeirinVenueAction,
@@ -203,16 +201,15 @@ function isClosed(startAt: number | null, nowSec: number): boolean {
   return startAt - SUBMIT_DEADLINE_SEC - nowSec <= 0;
 }
 
-function RaceCard({ p, busy, closed, onApprove, onApprovePublish, onPublish,
+function RaceCard({ p, busy, closed, onApprove, onPublish,
                    onCancel, canForceCancel, onForceCancel }: {
   p: KeirinProposal;
   busy: boolean;
   /** 発走15分前を過ぎた＝netkeirin が受け付けないので入稿・取消・公開できない。 */
   closed: boolean;
+  /** netkeirin へ入稿するだけ（公開はしない）。 */
   onApprove: () => void;
-  /** 入稿して**そのまま公開**（公開は不可逆）。 */
-  onApprovePublish: () => void;
-  /** 公開待ち（入稿済）を公開する。 */
+  /** 公開する。**入稿前なら入稿の上で公開**（公開は不可逆）。 */
   onPublish: () => void;
   onCancel: () => void;
   /** 通常の取消が「netkeirin に見つからない」で失敗した後だけ true。 */
@@ -293,37 +290,31 @@ function RaceCard({ p, busy, closed, onApprove, onApprovePublish, onPublish,
               title={closed ? "発走15分前を過ぎたため入稿できません" : undefined}
               className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-50"
             >
-              このレースを入稿
+              入稿
             </button>
           )}
-          {/* 入稿と公開をひと続きで行う。🔴 **公開は不可逆**（netkeirin の文言
-              「公開後は修正できなくなります」）なので確認を必ず挟む。 */}
-          {p.status === "proposed" && (
-            <button
-              type="button"
-              disabled={busy || closed}
-              onClick={onApprovePublish}
-              title={closed ? "発走15分前を過ぎたため入稿できません"
-                : "入稿してそのまま公開します（公開後は修正できません）"}
-              className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
-            >
-              入稿して公開
-            </button>
-          )}
-          {/* 既に入稿済（公開待ち）のものを公開する。 */}
-          {p.status === "submitted" && (
+          {/* 🔴 「公開」は**入稿前なら入稿の上で公開**する（2026-08-16・ユーザー指定）。
+              入稿済かどうかを人に意識させないための1ボタンで、判断は CLI 側が持つ
+              （`_publishable` が proposed も拾い、`_run` が先に入稿する）。
+              🔴 公開は不可逆（netkeirin の文言「公開後は修正できなくなります」）。 */}
+          {(p.status === "proposed" || p.status === "submitted") && (
             <button
               type="button"
               disabled={busy || closed}
               onClick={onPublish}
               title={closed ? "発走15分前を過ぎたため公開できません"
-                : "netkeirin で公開します（公開後は修正できません）"}
+                : p.status === "proposed"
+                  ? "入稿したうえで公開します（公開後は修正できません）"
+                  : "netkeirin で公開します（公開後は修正できません）"}
               className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
             >
               公開
             </button>
           )}
-          {p.status !== "deleted" && (
+          {/* 🔴 取消は**公開後・締切後は効かない**ので押せなくする（NOP）。
+              netkeirin の `delete` が効くのは公開待ちまでで、締切後は下書き削除も
+              受け付けない。押せてしまうと「押したのに消えていない」に見える。 */}
+          {p.status !== "deleted" && p.status !== "published" && (
             <button
               type="button"
               disabled={busy || closed}
@@ -508,9 +499,13 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
     () => items.filter((p) => p.status === "proposed" && !isClosed(p.start_at, nowSec)).length,
     [items, nowSec],
   );
-  // 一括公開できる＝入稿済（netkeirin へ送信済み＝公開待ち）で、かつ締切前。
+  // 一括公開できる＝**未入稿と公開待ちの両方**で、かつ締切前。
+  // 🔴 未入稿を含めるのはレース単位の「公開」と同じ規則（入稿の上で公開する）。
+  //    ここだけ公開待ちに絞ると、画面の件数と実際に公開される数が食い違う。
   const nPublishableAll = useMemo(
-    () => items.filter((p) => p.status === "submitted" && !isClosed(p.start_at, nowSec)).length,
+    () => items.filter(
+      (p) => (p.status === "proposed" || p.status === "submitted")
+        && !isClosed(p.start_at, nowSec)).length,
     [items, nowSec],
   );
 
@@ -579,16 +574,11 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
       busy={pending}
       closed={isClosed(p.start_at, nowSec)}
       onApprove={() => run(() => approveKeirinRaceAction(p.race_key, p.rank_key))}
-      onApprovePublish={() => {
-        if (!window.confirm(
-          `${p.venue_name}${p.race_no}R (${p.rank_key}) を入稿して公開します。\n\n`
-          + "🔴 公開後は修正できません。よろしいですか？")) return;
-        run(() => approveAndPublishKeirinRaceAction(p.race_key, p.rank_key));
-      }}
       onPublish={() => {
-        if (!window.confirm(
-          `${p.venue_name}${p.race_no}R (${p.rank_key}) を公開します。\n\n`
-          + "🔴 公開後は修正できません。よろしいですか？")) return;
+        const head = p.status === "proposed"
+          ? `${p.venue_name}${p.race_no}R (${p.rank_key}) を入稿したうえで公開します。`
+          : `${p.venue_name}${p.race_no}R (${p.rank_key}) を公開します。`;
+        if (!window.confirm(`${head}\n\n🔴 公開後は修正できません。よろしいですか？`)) return;
         run(() => publishKeirinRaceAction(p.race_key, p.rank_key));
       }}
       onCancel={() => {
@@ -654,53 +644,35 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
             disabled={pending}
             onClick={() => {
               if (!window.confirm(
-                `${date} の入稿案を全件（${nApprovableAll}件）承認して netkeirin へ入稿します。\n\n`
-                + "入稿後は netkeirin の公開待ち一覧に並びます（公開はまだされません）。\n"
+                `${date} の入稿案を全件（${nApprovableAll}件）netkeirin へ入稿します。\n\n`
+                + "公開はしません（公開待ち一覧に並ぶだけ）。\n"
                 + "よろしいですか？",
               )) return;
               run(() => approveKeirinAllAction(date));
             }}
             className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-50"
           >
-            この日を全件承認（{nApprovableAll}件）
+            この日を全件入稿（{nApprovableAll}件）
           </button>
         )}
-        {/* 入稿と公開をひと続きで行う。🔴 **公開は不可逆**なので二段で確認する
-            （承認だけの一括より戻せる余地が無いぶん、取消と同じ重さで扱う）。 */}
-        {nApprovableAll > 0 && (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (!window.confirm(
-                `${date} の入稿案を全件（${nApprovableAll}件）入稿して**公開**します。\n\n`
-                + "🔴 公開後は修正できません。よろしいですか？")) return;
-              if (!window.confirm(
-                `最終確認：${date} の ${nApprovableAll}件 を入稿して公開します。`)) return;
-              run(() => approveAndPublishKeirinAllAction(date));
-            }}
-            className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
-          >
-            この日を全件入稿して公開（{nApprovableAll}件）
-          </button>
-        )}
-        {/* 既に入稿済（公開待ち）のものだけをまとめて公開する。
-            netkeirin 本体の「全てを公開する」と同じ操作。 */}
+        {/* 🔴 「全件公開」は**未入稿も入稿の上で公開**する（レース単位のボタンと同じ規則）。
+            公開は不可逆なので**二段確認**（取消と同じ重さで扱う）。 */}
         {nPublishableAll > 0 && (
           <button
             type="button"
             disabled={pending}
             onClick={() => {
               if (!window.confirm(
-                `${date} の公開待ち（${nPublishableAll}件）をすべて公開します。\n\n`
+                `${date} の ${nPublishableAll}件 を公開します。\n`
+                + "（未入稿のものは入稿したうえで公開します）\n\n"
                 + "🔴 公開後は修正できません。よろしいですか？")) return;
               if (!window.confirm(
                 `最終確認：${date} の ${nPublishableAll}件 を公開します。`)) return;
               run(() => publishKeirinAllAction(date));
             }}
-            className="rounded border border-emerald-600 px-3 py-1 text-xs text-emerald-700 disabled:opacity-50 dark:text-emerald-400"
+            className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
           >
-            公開待ちを全件公開（{nPublishableAll}件）
+            この日を全件公開（{nPublishableAll}件）
           </button>
         )}
         {/* 🔴 この日の下書きを全部消す。最も戻しにくい操作なので、
