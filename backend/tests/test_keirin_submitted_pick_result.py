@@ -12,6 +12,13 @@
 
 ⚠️ **最大の罠は券種ごとの区切り文字**。三連複は `1=2=4`、三連単は `1-2-4`。
    取り違えると **当たっているのに不的中**になる。
+
+🔴 **「まだ分からない」と「外れ」を混ぜない**（2026-08-16 の実害）。
+   京王閣2R は netkeirin 側が的中・払戻12,500円を表示している最中に、`/review` が
+   「✗ 不的中」と出していた。呼び出し側は `status=3` か「発走+90分」で採点対象を
+   決めるが、**winticket は着順が入る前に status を 3 にすることがある**ため、
+   結果が揃っていない行がそのまま「外れ・払戻0円」として表示・集計されていた。
+   `settled` はその区別のための列で、これが False の行は集計に混ぜてはいけない。
 """
 from __future__ import annotations
 
@@ -61,7 +68,7 @@ def test_買い目と投資額は入稿の原本から取る():
 def test_入稿記録が無ければ空で返す():
     out = _submitted_pick_result(None, [1, 2, 4], 1000, 0)
     assert out == {"pred_combo": None, "n_combos": None, "bet_amount": 0,
-                   "hit": False, "payout": 0}
+                   "hit": False, "payout": 0, "settled": False}
 
 
 # ---------------------------------------------------------------------------
@@ -109,18 +116,56 @@ def test_外れは払戻ゼロ():
     assert out["payout"] == 0
 
 
+# ---------------------------------------------------------------------------
+# 「まだ分からない」と「外れ」の区別（settled）
+# ---------------------------------------------------------------------------
+
 def test_未確定レースは的中判定しない():
     """発走前に「不的中」と出さない。"""
     out = _submitted_pick_result(_bet(("1=2=4", 5000)), None, 0, 0)
     assert out["hit"] is False
     assert out["payout"] == 0
+    # 🔴 着順が無い＝**採点していない**。外れとして集計されないよう settled は False。
+    assert out["settled"] is False
     # 買い目と投資額は発走前から出す
     assert out["bet_amount"] == 5000
 
 
-def test_払戻オッズが取れていなければ的中にしない():
-    """`trio_pay=0` は「まだオッズが引けていない」状態。
-    ここで hit=True にすると**払戻0円の的中**という嘘の行が出る。"""
+def test_確定配当が引けない的中は未採点として返す():
+    """`trio_pay=0` は「まだ配当が引けていない」状態。
+
+    🔴 ここを `hit=False` にすると **当たっているのに「✗ 不的中」** になる
+       （2026-08-16 京王閣2R）。的中は買い目と着順の一致だけで決め、
+       払戻が出せないことは `settled=False` で表す。
+    """
     out = _submitted_pick_result(_bet(("1=2=4", 5000)), [1, 2, 4], trio_pay=0, trifecta_pay=0)
-    assert out["hit"] is False
+    assert out["hit"] is True
+    assert out["settled"] is False
+    # 払戻は 0 のままだが、この行は集計にも表示にも回さない（呼び出し側が落とす）
     assert out["payout"] == 0
+
+
+def test_外れは配当が引けなくても採点済み():
+    """外れは着順だけで確定する。配当を待つ理由がない。"""
+    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [3, 5, 6], trio_pay=0, trifecta_pay=0)
+    assert out["hit"] is False
+    assert out["settled"] is True
+
+
+def test_的中して配当も引けていれば採点済み():
+    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [4, 1, 2], trio_pay=560, trifecta_pay=0)
+    assert out["hit"] is True
+    assert out["settled"] is True
+    assert out["payout"] == 28000
+
+
+def test_複数点のうち片方の配当が欠けたら未採点():
+    """フォーメーションで2券種が当たり、片方だけ配当が引けている状態。
+    合算額が本来より小さいまま確定させると**払戻を過少に記録**する。"""
+    bet = {"total": 2000, "lines": [
+        {"bet_type": "3連複", "combo": "1=2=4", "stake": 1000, "odds": None},
+        {"bet_type": "3連単", "combo": "1-2-4", "stake": 1000, "odds": None},
+    ]}
+    out = _submitted_pick_result(bet, [1, 2, 4], trio_pay=560, trifecta_pay=0)
+    assert out["hit"] is True
+    assert out["settled"] is False
