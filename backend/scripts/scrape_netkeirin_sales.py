@@ -290,6 +290,113 @@ def _dsn() -> str:
     )
 
 
+#: 売上金額 = 販売*有償*pt × この率。
+#
+# 🔴 正本は `backend/src/api/keirin_router.py::NETKEIRIN_REVENUE_RATE`。
+#    ここへ写しているのは、このスクリプトが **VPS では keirin の venv で動く**ため
+#    （FastAPI も SQLAlchemy も無い環境なので backend を import できない）。
+#    値がずれると Web と Discord で売上が食い違うので
+#    `backend/tests/test_netkeirin_sales_notify.py` が一致を固定している。
+REVENUE_RATE = 0.30
+
+#: 通知先の Discord チャンネル（keirin/.env の webhook URL 環境変数名）
+_NOTIFY_ENV_KEY = "DISCORD_WEBHOOK_URL_NETKEIRIN"
+
+
+def fetch_sales_summary(sale_date: date) -> dict | None:
+    """指定日の販売実績と、その日が属する月の売上合計を DB から読む。
+
+    ⚠️ **スクレイプ結果ではなく DB を読む**。UPSERT 後の実際の値を出すためで、
+       取り込みに失敗した列があれば通知にもそのまま現れる（黙って別の数字を
+       出さない）。
+
+    `sale_date` の列は **`YYYYMMDD` の文字列**（`YYYY-MM-DD` ではない）。
+    月合計はその接頭辞6桁で絞る。
+
+    returns 当日行が無ければ None
+    """
+    ymd = sale_date.strftime("%Y%m%d")
+    conn = psycopg2.connect(_dsn())
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT n_sold, sold_points, sold_paid_points "
+                "FROM keirin.netkeirin_sales_daily WHERE sale_date = %s", (ymd,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(sold_points), 0), "
+                "       COALESCE(SUM(sold_paid_points), 0) "
+                "FROM keirin.netkeirin_sales_daily WHERE sale_date LIKE %s",
+                (ymd[:6] + "%",))
+            n_days, month_points, month_paid = cur.fetchone()
+    finally:
+        conn.close()
+    return {
+        "sale_date": ymd,
+        "n_sold": int(row[0] or 0),
+        "sold_points": int(row[1] or 0),
+        "sold_paid_points": int(row[2] or 0),
+        "month_n_days": int(n_days or 0),
+        "month_sold_points": int(month_points or 0),
+        "month_sold_paid_points": int(month_paid or 0),
+    }
+
+
+def build_sales_message(s: dict) -> str:
+    """Discord へ出す本文を組む。
+
+    🔴 **販売pt と 販売有償pt を必ず並べて出す**。売上になるのは有償ptだけで
+       （`sold_points` には無償ptが混ざる）、片方だけ見せると収益を誤読する。
+    """
+    d = s["sale_date"]
+    revenue = round(s["sold_paid_points"] * REVENUE_RATE)
+    month_revenue = round(s["month_sold_paid_points"] * REVENUE_RATE)
+    return (
+        f"💰 **netkeirin 売上 {d[:4]}-{d[4:6]}-{d[6:]}**\n"
+        f"```\n"
+        f"販売点数     {s['n_sold']:,} 点\n"
+        f"販売pt       {s['sold_points']:,} pt\n"
+        f"販売有償pt   {s['sold_paid_points']:,} pt\n"
+        f"売上         {revenue:,} 円  (有償pt × {REVENUE_RATE})\n"
+        f"---\n"
+        f"{d[4:6]}月 累計   {month_revenue:,} 円"
+        f"  (有償 {s['month_sold_paid_points']:,} pt / {s['month_n_days']}日)\n"
+        f"```"
+    )
+
+
+def notify_sales(sale_date: date) -> bool:
+    """当日ぶんの売上を Discord へ通知する。送れたら True。
+
+    ⚠️ **通知の失敗で取り込みを落とさない**。売上データは既に DB へ入っており、
+       通知はその報告でしかない。ここで例外を投げると、次の実行まで
+       「スクレイプが落ちた」ように見える。
+    """
+    url = os.getenv(_NOTIFY_ENV_KEY, "")
+    if not url:
+        logger.warning("%s が未設定のため Discord 通知をスキップします", _NOTIFY_ENV_KEY)
+        return False
+    try:
+        summary = fetch_sales_summary(sale_date)
+    except Exception as e:  # noqa: BLE001 — 通知のための読み取りで本処理を落とさない
+        logger.warning("売上サマリーを取得できません: %s", e)
+        return False
+    if summary is None:
+        # 開催が無かった日・netkeirin 側の集計がまだの日。0円と書くと誤読するので出さない。
+        logger.info("%s の行がまだ無いため Discord 通知をスキップします", sale_date)
+        return False
+    try:
+        r = requests.post(url, json={"content": build_sales_message(summary)}, timeout=15)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        logger.warning("Discord 通知に失敗しました: %s", e)
+        return False
+    logger.info("Discord へ売上を通知しました（%s）", summary["sale_date"])
+    return True
+
+
 def save_db(records: list[dict]) -> int:
     if not records:
         return 0
@@ -335,6 +442,8 @@ def main() -> None:
     ap.add_argument("--detail", choices=("day", "race", "both"), default="both",
                     help="取得粒度（既定 both: 日別とレース別の両方）")
     ap.add_argument("--dry-run", action="store_true", help="DBに書き込まず取得件数と先頭数件のみ表示")
+    ap.add_argument("--no-notify", action="store_true",
+                    help="Discord へ売上を通知しない（過去分の取り直し用）")
     args = ap.parse_args()
 
     today_jst = datetime.now(JST).date()
@@ -379,6 +488,17 @@ def main() -> None:
     if want_race:
         n = save_race_db(race_records)
         logger.info("保存完了: %d 件を keirin.netkeirin_sales_race に UPSERT", n)
+
+    # 日次の売上を Discord へ報告する（2026-08-16・ユーザー要望）。
+    # 🔴 **1日ぶんを取ったときだけ**送る。バックフィル（複数日）で送ると
+    #    過去分の取り直しのたびに通知が何十件も飛ぶ。
+    # ⚠️ 日別（`--detail day|both`）を取っていないときは送らない。売上の数字は
+    #    日別テーブルにしか無く、レース別だけ取った回に通知すると
+    #    「取り込んでいない日の数字」を報告することになる。
+    if want_day and not args.no_notify and start == end:
+        notify_sales(start)
+    elif not args.no_notify and start != end:
+        logger.info("複数日（%s〜%s）のため Discord 通知はしません", start, end)
 
 
 if __name__ == "__main__":
