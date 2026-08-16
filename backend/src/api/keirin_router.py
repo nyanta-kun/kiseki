@@ -448,6 +448,15 @@ async def _fetch_settled_submissions(
             # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
             n_missing += 1
             continue
+        # 🔴 **採点が終わっていない行は返さない**（2026-08-16）。上の WHERE は
+        #    `status=3` か「発走+90分」で対象を決めているが、そのどちらも
+        #    「着順と配当が DB に入った」ことを意味しない。返してしまうと
+        #    `hit=False` / `payout=0` の行になり、**当たっているレースが
+        #    「✗ 不的中」かつ払戻0円として集計**される（実際に発生した）。
+        #    落とせば `/review` は「未確定」に、成績側は件数から外れるだけで、
+        #    着順・配当が入った次の描画で自然に現れる。
+        if not res["settled"]:
+            continue
         out.append({
             "race_key": rk, "rank_key": s["rank_key"], "origin": s["origin"],
             "race_date": str(s["race_date"]),
@@ -497,6 +506,18 @@ def _submitted_pick_result(
        傾斜配分は入稿時点の想定オッズで決まるので後から再現できない。
     ⚠️ combo の区切りは券種で違う（三連複 `1=2=4` / 三連単 `1-2-4`）。
        ここを取り違えると**当たっているのに不的中**になる（表示だけ静かに壊れる）。
+
+    🔴 **`settled` を必ず見ること。** 「まだ分からない」と「外れ」は別物で、
+       `hit=False` だけで判断すると**当たっているレースを不的中として表示・集計**する
+       （2026-08-16 に京王閣2Rで発生）。`settled=False` になるのは2つ:
+
+         1. 確定着順がまだ取れていない（`finish_frames` が None）。
+            呼び出し側は「発走から90分」か `wt_races.status=3` で対象を決めるが、
+            winticket は**着順が入る前に status を 3 にすることがある**ので、
+            この2つは「結果が揃った」ことを意味しない
+         2. 買い目は当たっているのに確定配当が引けない（`trio_pay`/`trifecta_pay` が 0）
+
+       外れは着順だけで決まるので `settled=True`（配当は要らない）。
     """
     lines = (bet or {}).get("lines") or []
     combos = [str(x["combo"]) for x in lines]
@@ -506,6 +527,8 @@ def _submitted_pick_result(
         "bet_amount": sum(int(x["stake"]) for x in lines),
         "hit": False,
         "payout": 0,
+        # 採点が完了したか。**False は「外れ」ではなく「まだ分からない」**。
+        "settled": False,
     }
     if not lines or not finish_frames:
         return out
@@ -513,17 +536,29 @@ def _submitted_pick_result(
     win_trio = "=".join(map(str, sorted(finish_frames)))
     win_trifecta = "-".join(map(str, finish_frames))
     payout = 0
+    hit = False
+    payout_known = True
     for x in lines:
         combo = str(x["combo"])
         stake = int(x["stake"])
-        # 100円あたりの払戻 × 賭け金/100。10円未満は切り捨てない
-        # （trio_pay 自体が既に10円単位で丸めてある）。
         if combo == win_trio:
-            payout += trio_pay * stake // 100
+            pay = trio_pay
         elif combo == win_trifecta:
-            payout += trifecta_pay * stake // 100
-    out["hit"] = payout > 0
+            pay = trifecta_pay
+        else:
+            continue
+        # 🔴 的中は**買い目と着順の一致だけ**で決める。配当が引けたかは別の話で、
+        #    ここで混ぜると「オッズ未取得＝不的中」になる。
+        hit = True
+        if pay:
+            # 100円あたりの払戻 × 賭け金/100。10円未満は切り捨てない
+            # （trio_pay 自体が既に10円単位で丸めてある）。
+            payout += pay * stake // 100
+        else:
+            payout_known = False
+    out["hit"] = hit
     out["payout"] = payout
+    out["settled"] = payout_known
     return out
 
 # ---------------------------------------------------------------------------
@@ -915,7 +950,10 @@ async def get_picks(
             "n_combos": (sub_result["n_combos"] if sub_result
                          else (r["n_combos"] if has_pick else None)),
             "synth_odds": synth_odds,
-            "hit": (sub_result["hit"] if sub_result
+            # ⚠️ 採点が終わるまでは的中にしない（`settled` の意味は
+            #    `_submitted_pick_result` の docstring 参照）。ここは bool しか
+            #    返せないので「未確定」は表現できず、確定するまで False に倒す。
+            "hit": (sub_result["hit"] and sub_result["settled"] if sub_result
                     else (bool(r["hit"]) if has_pick else False)),
             "payout": (sub_result["payout"] if sub_result
                        else ((r["payout"] or 0) if has_pick else 0)),
