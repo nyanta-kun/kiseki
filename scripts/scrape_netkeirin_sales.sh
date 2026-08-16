@@ -60,6 +60,12 @@ fi
 NETKEIRIN_LOGIN_ID=$(grep -E '^NETKEIRIN_LOGIN_ID=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
 NETKEIRIN_PASSWORD=$(grep -E '^NETKEIRIN_PASSWORD=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
 export NETKEIRIN_LOGIN_ID NETKEIRIN_PASSWORD
+
+# 売上の Discord 通知先（2026-08-16 追加）。webhook URL は keirin/.env が唯一の正本。
+# ⚠️ 未設定でも取り込みは続ける（通知はデータ取得の付随物で、ここで落とすと
+#    「スクレイプが失敗した」ように見える）。python 側が警告を1行出す。
+DISCORD_WEBHOOK_URL_NETKEIRIN=$(grep -E '^DISCORD_WEBHOOK_URL_NETKEIRIN=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
+export DISCORD_WEBHOOK_URL_NETKEIRIN
 if [ -z "$NETKEIRIN_LOGIN_ID" ] || [ -z "$NETKEIRIN_PASSWORD" ]; then
   log "[FATAL] NETKEIRIN_LOGIN_ID / NETKEIRIN_PASSWORD を $KEIRIN_DIR/.env から取得できません"
   exit 1
