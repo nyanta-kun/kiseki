@@ -316,6 +316,106 @@ def _backfill_miwokuri_trio_payout(conn) -> int:
     return updated
 
 
+def _parse_7t1_legs(pred_combo: str | None) -> list[str]:
+    """7T1 の `pred_combo`（`三単:1-7-2,1-7-4`）から買い目を取り出す。
+
+    🔴 **7C の三単表記と形が違う**。7C は `三単:軸1-軸2-相手,相手,…` と
+       3列目だけを並べるが、7T1 は**1点まるごと**をカンマで並べる
+       （`write_candidates_wt.py` / `backfill_7t1_rank_wt.py` と同一規約）。
+       取り違えると別ランクの行を誤って採点するので、
+       **全トークンが「数字3つ」でなければ何も返さない**。
+    """
+    s = str(pred_combo or "")
+    if not s.startswith("三単:"):
+        return []
+    legs = [t.strip() for t in s[len("三単:"):].split(",") if t.strip()]
+    if not legs:
+        return []
+    for leg in legs:
+        parts = leg.split("-")
+        if len(parts) != 3 or not all(p.isdigit() for p in parts):
+            return []
+    return legs
+
+
+def _settle_rank_7t1(conn, target_date: str) -> tuple[int, int, int]:
+    """7T1 を**当日中に**採点して `picks_history` へ書き戻す（2026-08-16 新設）。
+
+    ## なぜ他ランクと別経路なのか
+
+    7T1 は**発走前判定（`notify_prerace_wt`）を持たない唯一のランク**で、
+    `prerace_decisions_*.json` に `{rk}#7T1` が無い。そのため本ファイルの
+    `picks` / `decisions` を辿る採点ループには最初から入れず、行は
+    `write_candidates_wt.py` が朝に置き、投資額だけ入稿時に
+    `netkeirin_submit_wt._mark_bought` が書く、という形になっている。
+
+    🔴 **その結果「投資は当日入るのに払戻は翌朝まで入らない」非対称があった。**
+       `/keirin` のサマリーは `bet_amount > 0` で集計するので、7T1 は
+       **当日ずっと「投資あり・的中0・払戻0」**として積まれる。
+       2026-08-16 の小倉3R（買い目 `1-7-4` が的中・実払戻 176,500円）が
+       当日サマリーに1円も入らず、ユーザー指摘で発覚した。
+
+    ## 何を正本にするか
+
+    - 買い目 … `picks_history.pred_combo`（朝の候補時点で確定していて、
+      入稿もその買い目をそのまま送る）
+    - 賭け金・払戻 … `netkeirin_submissions.bet_detail`（`resolve_payout`）。
+      入稿は点ごとの傾斜配分なので、単価×点数で計算すると高配当ほど過大になる
+    - 確定配当 … `wt_odds` の三連単（100円あたり）
+
+    ⚠️ **翌朝 08:30 の walk-forward 再構築が行ごと作り直す**ので、ここで書いた値は
+       当日限りの暫定。live と rebuild で母集団がずれるのは仕様（CLAUDE.md 参照）。
+
+    returns (採点件数, 的中件数, 配当待ちで見送った件数)
+    """
+    rows = conn.execute(
+        "SELECT race_key, pred_combo, bet_amount FROM picks_history "
+        "WHERE route='wt' AND race_date=? AND rank='RANK_7T1' "
+        "AND COALESCE(bet_amount, 0) > 0",
+        (target_date,),
+    ).fetchall()
+    if not rows:
+        return 0, 0, 0
+
+    pm7 = _load_payouts_wt(sorted({str(r[0]).split("#")[0] for r in rows}))
+    n_settled = n_hit = n_wait = 0
+    for store_key, pred_combo, bet_amount in rows:
+        rk = str(store_key).split("#")[0]
+        legs = _parse_7t1_legs(pred_combo)
+        if not legs:
+            print(f"[notify_results_wt] 7T1 買い目を読めない {store_key}: {pred_combo!r}",
+                  flush=True)
+            continue
+        order = [int(r[0]) for r in conn.execute(
+            "SELECT frame_no FROM wt_entries WHERE race_key=? "
+            "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)).fetchall()]
+        if len(order) < 3:
+            continue                      # まだ確定していない（発走前・確定待ち）
+        win = tuple(order[:3])
+        tf_pay = pm7.get(rk, {}).get(("trifecta", win), 0)
+        hit = "-".join(map(str, win)) in legs
+        # 🔴 当たっているのに確定配当が引けないときは**書かない**。
+        #    払戻0円で確定させると的中が「ガミ」や不的中として残る。次回の実行で拾う。
+        if hit and not tf_pay:
+            print(f"[notify_results_wt] 7T1 的中だが確定配当が未取得 {store_key}: 次回へ",
+                  flush=True)
+            n_wait += 1
+            continue
+        pay, bet = resolve_payout(
+            conn, rk, "7T1", hit=hit, winning_key=win, odds_payout=tf_pay,
+            fallback_stake=unit_stake(len(legs)), n_combos=len(legs))
+        if not bet:
+            bet = int(bet_amount or 0)
+        conn.execute(
+            "UPDATE picks_history SET hit=?, payout=?, trifecta_payout=?, bet_amount=? "
+            "WHERE race_key=? AND rank='RANK_7T1' AND route='wt'",
+            (int(hit), pay, tf_pay, bet, store_key),
+        )
+        n_settled += 1
+        n_hit += int(hit)
+    return n_settled, n_hit, n_wait
+
+
 def _stats_line(label, s):
     if not s or s["bets"] == 0:
         return f"{label}: データなし"
@@ -1798,6 +1898,13 @@ def _main_inner(date):
         #
         #    ⚠️ 再導入しないこと。入稿は候補が立った時点で出しており、
         #       「見送った」という状態は運用に存在しない。
+
+        # 7T1 の採点。**上の採点ループには入らない**（発走前判定を持たないため
+        # picks / decisions のどちらにも現れない）。詳細は `_settle_rank_7t1`。
+        n_t1, n_t1_hit, n_t1_wait = _settle_rank_7t1(conn, target_date)
+        if n_t1 or n_t1_wait:
+            print(f"[notify_results_wt] 7T1 採点 {n_t1}件（的中{n_t1_hit}）"
+                  f" 配当待ち{n_t1_wait}件", flush=True)
 
     total_7plus = results_7plus_ss + results_7plus_s + results_7plus_r
     if (not total_7plus and not results_7plus_s1 and not results_7plus_s7
