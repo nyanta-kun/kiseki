@@ -249,16 +249,28 @@ def test_publish_flag_is_approve_only():
     assert "--publish は approve 専用です" in src
 
 
-def test_publish_targets_are_submitted_only():
-    """🔴 公開できるのは netkeirin へ送信済み（submitted）だけ。
+def test_publish_targets_cover_proposed_and_submitted():
+    """🔴 「公開」は**未入稿も対象**にする（2026-08-16・ユーザー指定）。
 
-    入稿案（proposed）は netkeirin にまだ無いので race_id が引けない。
+    画面の操作を 入稿 / 取消 / 公開 の3つに畳むため、「公開」を押したときに
+    入稿済かどうかを人が意識しなくてよいようにする。未入稿は `_run()` が
+    先に入稿してから公開する（入稿に失敗したものは公開しない）。
     """
     tree = ast.parse(inspect.getsource(cli._publishable))
     sql = " ".join(n.value for n in ast.walk(tree)
                    if isinstance(n, ast.Constant) and isinstance(n.value, str))
-    assert "status = ?" in sql
+    assert "status IN (?, ?)" in sql, "未入稿と公開待ちの両方を対象にしていません"
     assert "race_key LIKE ?" in sql, "日付で絞っていません"
+
+
+def test_publish_approves_before_publishing():
+    """🔴 未入稿を混ぜたまま `publish_submissions` へ渡さないこと。
+
+    渡すと「公開できる状態ではありません（proposed）」で必ず失敗する。
+    """
+    src = inspect.getsource(cli._run)
+    assert '_run("approve"' in src and "publish=True" in src, (
+        "未入稿を先に入稿する経路がありません")
 
 
 def test_cancel_excludes_published():

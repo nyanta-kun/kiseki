@@ -128,3 +128,57 @@ def test_min_payout_low_is_none_for_old_records():
     """
     assert _min_payout_low(_lines(("1=2=3", 2500, 5.0))) is None
     assert _min_payout_low([]) is None
+
+
+# ── /review のボタン整理（2026-08-16・ユーザー指定）────────────────────
+#
+# 操作は **入稿 / 取消 / 公開** の3つだけにする:
+#   入稿 … netkeirin への入稿のみ。公開はしない
+#   取消 … 入稿の取消。**公開後・締切後は NOP**
+#   公開 … 入稿データの公開。**入稿前なら入稿の上で公開**
+#
+# 🔴 「入稿して公開」という4つ目のボタンを復活させないこと。入稿済かどうかを
+#    人に意識させないのがこの整理の目的で、判断は keirin 側 CLI が持つ。
+
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_REVIEW = (Path(__file__).resolve().parents[2]
+           / "frontend" / "src" / "app" / "keirin" / "review" / "ReviewClient.tsx")
+
+
+def _review_src() -> str:
+    if not _REVIEW.exists():
+        pytest.skip(f"frontend が見つかりません: {_REVIEW}")
+    return _REVIEW.read_text(encoding="utf-8")
+
+
+def test_review_has_exactly_three_bulk_buttons():
+    """一括操作は 入稿 / 公開 / 取消 の3つ。"""
+    src = _review_src()
+    labels = re.findall(r"この日を全件(\w+)（", src)
+    assert sorted(labels) == ["入稿", "公開", "取消"], f"一括ボタンが {labels} になっています"
+
+
+def test_review_has_no_approve_and_publish_button():
+    """🔴 「入稿して公開」を別ボタンとして復活させない（公開が吸収する）。"""
+    src = _review_src()
+    assert "入稿して公開" not in src, "「入稿して公開」ボタンが復活しています"
+    assert "approveAndPublish" not in src, "承認+公開の専用アクションが残っています"
+
+
+def test_cancel_is_hidden_after_publish():
+    """🔴 公開後の取消は NOP。押せると「押したのに消えていない」に見える。
+
+    netkeirin の `delete` が効くのは公開待ちまで。
+    """
+    src = _review_src()
+    assert 'p.status !== "deleted" && p.status !== "published"' in src, (
+        "公開済みで取消ボタンを隠していません")
+
+
+def test_publish_button_covers_proposed():
+    """公開ボタンは未入稿にも出る（入稿の上で公開するため）。"""
+    src = _review_src()
+    assert '(p.status === "proposed" || p.status === "submitted")' in src, (
+        "公開ボタンが公開待ちだけにしか出ていません")

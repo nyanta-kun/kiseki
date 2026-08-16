@@ -102,18 +102,20 @@ def _cancelable(date: str, venue_name: str | None) -> list[tuple[str, str]]:
 
 
 def _publishable(date: str, venue_name: str | None) -> list[tuple[str, str]]:
-    """公開できる入稿を (race_key, rank_key) で返す（発走順）。
+    """公開できるものを (race_key, rank_key) で返す（発走順）。
 
-    対象は **`submitted`（netkeirin へ送信済み＝公開待ち）** だけ。
-    🔴 入稿案（proposed）は netkeirin にまだ無いので公開できない。
-       「入稿してから公開」をひと続きでやりたいときは `approve --publish` を使う。
+    対象は **`proposed`（未入稿）と `submitted`（公開待ち）の両方**。
+    🔴 **入稿前のものは「入稿の上で公開」する**（2026-08-16・ユーザー指定の
+       ボタン整理）。画面の操作を 入稿 / 取消 / 公開 の3つに畳むための仕様で、
+       「公開」を押したときに入稿済かどうかを人が意識しなくてよくする。
+       入稿は `_run()` が先に済ませる（承認が通ったものだけ公開する）。
     🔴 公開済み（published）は含めない（二重に押しても害は無いが件数が狂う）。
     🔴 **必ず日付で絞る。** `date` を外すと過去分まで公開してしまう。
     """
     ymd = date.replace("-", "")
     sql = ("SELECT race_key, rank_key FROM netkeirin_submissions "
-           "WHERE race_key LIKE ? AND status = ? ")
-    params: list = [f"{ymd}%", STATUS_SUBMITTED]
+           "WHERE race_key LIKE ? AND status IN (?, ?) ")
+    params: list = [f"{ymd}%", STATUS_PROPOSED, STATUS_SUBMITTED]
     if venue_name:
         sql += "AND venue_name = ? "
         params.append(venue_name)
@@ -121,6 +123,19 @@ def _publishable(date: str, venue_name: str | None) -> list[tuple[str, str]]:
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [(r["race_key"], r["rank_key"]) for r in rows]
+
+
+def _status_of(targets: list[tuple[str, str]], status: str) -> list[tuple[str, str]]:
+    """`targets` のうち `status` のものを返す（順序は保つ）。"""
+    if not targets:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT race_key, rank_key FROM netkeirin_submissions WHERE status = ?",
+            (status,),
+        ).fetchall()
+    hit = {(r["race_key"], r["rank_key"]) for r in rows}
+    return [t for t in targets if t in hit]
 
 
 def _closed_race_keys(targets: list[tuple[str, str]]) -> set[str]:
@@ -165,7 +180,13 @@ def _run(action: str, targets: list[tuple[str, str]], force: bool = False,
                     "message": f"発走{SUBMIT_DEADLINE_SEC // 60}分前を過ぎているため操作できません"}
                    for rk, nk in targets if rk.split("#")[0] in closed]
         sendable = [(rk, nk) for rk, nk in targets if rk.split("#")[0] not in closed]
-        return _summarize(blocked + publish_submissions(sendable))
+        # 🔴 **入稿前のものは先に入稿してから公開する。** 画面の「公開」は
+        #    入稿済かどうかを人に意識させないためのボタンなので、ここで吸収する。
+        #    入稿に失敗したものは公開しない（`_run(approve, publish=True)` の規則）。
+        not_yet = set(_status_of(sendable, STATUS_PROPOSED))
+        via_approve = _run("approve", [t for t in sendable if t in not_yet], publish=True)
+        direct = publish_submissions([t for t in sendable if t not in not_yet])
+        return _summarize(blocked + via_approve["results"] + direct)
 
     results = []
     # 🔴 締切を過ぎたレースは netkeirin が受け付けない。**先に落として理由を返す**
