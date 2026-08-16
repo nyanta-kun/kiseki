@@ -159,10 +159,39 @@ def _closed_race_keys(targets: list[tuple[str, str]]) -> set[str]:
     return {r["race_key"] for r in rows if is_closed(r["start_at"], now)}
 
 
+#: `message` に並べる失敗理由の上限（画面の1行に収まる範囲）
+_MAX_REASONS = 3
+
+
 def _summarize(results: list[dict]) -> dict:
+    """1件ずつの結果を畳んで返す。
+
+    🔴 **`message` を必ず入れること**（2026-08-16 追加）。Web 側は
+       `json.message ?? "実行しました"` で埋めるので、ここに `message` が無いと
+       **失敗しているのに「成功0件 / 失敗1件: 実行しました」**という自己矛盾した
+       表示になり、`results[]` に入っている本当の理由がどこにも出ない。
+       実際にこれで「公開ボタンが無反応」に見えた（京王閣12R）。
+    """
     n_ok = sum(1 for r in results if r["ok"])
-    return {"ok": n_ok == len(results) and bool(results),
-            "n_ok": n_ok, "n_ng": len(results) - n_ok, "results": results}
+    n_ng = len(results) - n_ok
+    if not results:
+        message = "対象がありません"
+    elif n_ng == 0:
+        message = f"{n_ok}件を処理しました"
+    else:
+        # 失敗の理由をそのまま出す。同じ理由は畳んで件数を添える。
+        reasons: dict[str, int] = {}
+        for r in results:
+            if not r["ok"]:
+                reasons[str(r.get("message") or "理由不明")] = (
+                    reasons.get(str(r.get("message") or "理由不明"), 0) + 1)
+        shown = [f"{m}（{n}件）" if n > 1 else m
+                 for m, n in list(reasons.items())[:_MAX_REASONS]]
+        if len(reasons) > _MAX_REASONS:
+            shown.append(f"ほか{len(reasons) - _MAX_REASONS}種")
+        message = " / ".join(shown)
+    return {"ok": n_ok == len(results) and bool(results), "message": message,
+            "n_ok": n_ok, "n_ng": n_ng, "results": results}
 
 
 def _run(action: str, targets: list[tuple[str, str]], force: bool = False,

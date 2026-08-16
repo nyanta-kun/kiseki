@@ -649,13 +649,19 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
     setMsg(null);
     startTransition(async () => {
       const r = await fn();
-      setMsg(
-        r.n_ok === undefined
-          ? r.message
-          : `成功${r.n_ok}件 / 失敗${r.n_ng ?? 0}件: ${r.message}`,
-      );
-      // 明細側にしかメッセージが載らないので、両方を見て判定する
+      // 🔴 失敗したときは**理由を必ず出す**（2026-08-16）。CLI の `_summarize` が
+      //    `message` を返さなかった頃は、Server Action が既定文言で埋めるため
+      //    「成功0件 / 失敗1件: 実行しました」という自己矛盾した表示になり、
+      //    `results[]` にある本当の理由がどこにも出なかった（＝押しても
+      //    「無反応」に見えた）。要約が理由を含まない場合に備えて明細も添える。
       const detail = (r.results ?? []).map((x) => x.message).join(" ");
+      const reasons = [...new Set(
+        (r.results ?? []).filter((x) => !x.ok).map((x) => x.message),
+      )].join(" / ");
+      const head = r.n_ok === undefined
+        ? r.message
+        : `成功${r.n_ok}件 / 失敗${r.n_ng ?? 0}件: ${r.message}`;
+      setMsg(reasons && !head.includes(reasons) ? `${head}（${reasons}）` : head);
       if (!r.ok && onNotFound && `${r.message} ${detail}`.includes("見つかりません")) {
         setForceTargets((prev) => ({ ...prev, [onNotFound]: true }));
       }

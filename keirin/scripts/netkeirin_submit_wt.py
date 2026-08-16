@@ -763,6 +763,24 @@ def _approval_required() -> bool:
     return bool(row["require_approval"]) if row else False
 
 
+def _rank_file_keys(cfg: dict) -> list[str]:
+    """そのランクが読む候補JSONの key を返す（`file_keys` があれば全部）。
+
+    🔴 **候補ファイルの読み方を2か所に書かないための単一正本**（2026-08-16 新設）。
+       `main()` は重複判定に使うレース集合を、`_process_rank()` は実際に入稿する
+       候補を、それぞれここから作る。**片方が `file_key` だけを見ていると、
+       2本目以降のファイル（7S の `s7a` / `s7ss`）から来たレースが
+       `_already_submitted()` の判定対象に入らず、二重入稿のガードが素通りする。**
+
+    実害（2026-08-16）: 09:49 に公開済みだった京王閣12R(7S) が、13:00 の波で
+    入稿案として作り直された。12R は `s7ss` にしか無く、`main()` が `s7` しか
+    読んでいなかったため `already` に入らなかった。**公開済みの記録が
+    `proposed` へ差し戻され**、そのあと「公開」を押しても netkeirin 側に
+    公開待ちが無いので失敗する、という形で表面化した。
+    """
+    return list(cfg.get("file_keys") or [cfg["file_key"]])
+
+
 def _already_submitted(race_keys: list[str]) -> set[tuple[str, str]]:
     if not race_keys:
         return set()
@@ -1617,7 +1635,7 @@ def _process_rank(
     #    排他性を検算している）。同じレースが2回来たら `_already_submitted` と
     #    下の重複除去が止める。
     raw = []
-    for _fk in cfg.get("file_keys") or [cfg["file_key"]]:
+    for _fk in _rank_file_keys(cfg):
         raw += _load_candidates(target_date, session, _fk)
     _seen: set[str] = set()
     _uniq = []
@@ -2177,7 +2195,14 @@ def main() -> None:
         if not _is_enabled(settings, rank_key):
             continue
         cfg = RANK_CONFIGS[rank_key]
-        raw = _load_candidates(target_date, session, cfg["file_key"])
+        # 🔴 **`_process_rank()` と同じ読み方をすること**（`_rank_file_keys` が正本）。
+        #    ここが `file_key` だけだと、2本目以降のファイルから来るレースが
+        #    `all_race_keys` に入らず `_already_submitted()` に問い合わせすらされない
+        #    ＝二重入稿のガードが素通りする（2026-08-16 の実害。詳細は
+        #    `_rank_file_keys` の docstring）。
+        raw = []
+        for _fk in _rank_file_keys(cfg):
+            raw += _load_candidates(target_date, session, _fk)
         if args.race_key:
             raw = [c for c in raw if c.get("race_key") == args.race_key]
         raw = [c for c in raw
