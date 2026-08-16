@@ -105,6 +105,12 @@ function pct(v: number | null): string {
   return v == null ? "—" : `${v.toFixed(1)}%`;
 }
 
+/** 軸の表示ラベル（「3 山田太郎」）。名前が引けない場合は車番だけ。 */
+function axisLabel(entries: KeirinProposalEntry[], frameNo: number): string {
+  const name = entries.find((e) => e.frame_no === frameNo)?.name;
+  return name ? `${frameNo} ${name}` : `${frameNo}`;
+}
+
 function EntryTable({ entries, axis1, axis2 }: {
   entries: KeirinProposalEntry[];
   axis1: number | null;
@@ -220,6 +226,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
 }) {
   const [open, setOpen] = useState(false);
   const d = p.bet_detail;
+  // 軸は最大2車。片方しか無いランクもあるので、null を落として取れている分だけ扱う。
+  const axes = [p.axis1, p.axis2].filter((n): n is number => n !== null);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
   //    取消は淡色＋取り消し線、自信ありは黄色い枠と背景。
@@ -351,6 +359,19 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
           )}
         </span>
       </div>
+
+      {/* 🔴 軸は**カードを畳んだままでも**見えるようにする（2026-08-16・ユーザー要望）。
+          どの2車を軸にした買い目なのかは承認判断の中心で、これを見るためだけに
+          1件ずつ「詳細を開く」のは一覧をスクロールする使い方と噛み合わない。
+          軸が1車だけのランク（高配当系）もあるので、取れている分だけ出す。 */}
+      {axes.length > 0 && (
+        <p className="mt-2 text-xs">
+          <span className="text-gray-500">{axes.length >= 2 ? "二軸" : "軸"}</span>{" "}
+          <span className="font-semibold text-blue-700 dark:text-blue-300">
+            {axes.map((n) => axisLabel(p.entries, n)).join(" / ")}
+          </span>
+        </p>
+      )}
 
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
         <div>
