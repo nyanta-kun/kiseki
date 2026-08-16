@@ -142,11 +142,12 @@ class TestShrinkage:
 
 
 class TestDuplicateGuard:
-    """名前＋生年月日は一意ではない（同名同生年の別馬が実在する）。
+    """血統表に horse_id の重複があれば必ず落とすこと。
 
-    重複したまま結合すると行が増え、下流の代入が**黙ってずれる**。
-    実際に walk-forward が `Length of values (66615) does not match index (65399)`
-    で落ちて発覚した。
+    現在のキーは血統登録番号（`umaconn_code` ↔ `jravan_code`）なので重複は出ないが、
+    キーを変えたときに気付けるようガードは残す。重複したまま結合すると行が増え、
+    下流の代入が**黙ってずれる**（名前突合だった頃に walk-forward が
+    `Length of values (66615) does not match index (65399)` で落ちて発覚した）。
     """
 
     def test_血統表に重複があれば弾く(self) -> None:

@@ -35,9 +35,9 @@
 
 代わりに **中央の血統マスタ `keiba.pedigrees` と突合する**:
 
-    chihou.horses.name + birthday  ↔  keiba.horses.name + birthday
+    chihou.horses.umaconn_code  ↔  keiba.horses.jravan_code   （血統登録番号・同一体系）
 
-出走馬ベースで **91.3%** をカバーする。取れない 8.7% に偏りは無い
+出走馬ベースで **91.5%** をカバーする。取れない 8.5% に偏りは無い
 （父あり/なしで 平均人気 5.90 vs 5.91・6番人気以下率 52.6% vs 52.4%）ので、
 欠損は 0 埋めしてよい。
 
@@ -85,25 +85,24 @@ UPSET_POP_RANK: int = 6
 DIST_BINS: list[float] = [0, 1300, 1700, np.inf]
 DIST_LABELS: list[int] = [0, 1, 2]
 
-# ⚠️ 名前＋生年月日は**一意ではない**。同名同生年の別馬が実在する
-# （実測: `ジャズダンス` `ブレイブハート` など 4 頭ずつ・重複 426 行 / 21,092 行）。
-# 適当に 1 頭選ぶと**誤った血統を学習する**ので、父が一意に決まる馬だけ採用する。
-# 落ちるのは数百頭で、カバー率への影響は無視できる。
+# 地方馬と中央の血統マスタは **血統登録番号で直接つながる**。
+# `chihou.horses.umaconn_code` と `keiba.horses.jravan_code` は同一体系で、
+# どちらも 100% 充足している（実測 2026-08-16: 20,489 頭が一致）。
+#
+# 🔴 **名前で突合してはいけない。** 2026-08-16 に一度やって誤った記述を残した:
+#   - `horses.birthday` は **両テーブルとも 100% が空文字**。`name + birthday` で
+#     結合しても `'' = ''` が常に真になり、**実質は名前だけの一致**になる
+#   - 馬名は世代をまたいで再利用されるので、名前一致では候補が複数出る
+#     （地方馬 20,692 頭のうち 520 頭で候補2頭以上）
+#   - 当時は「父が一意に決まる馬だけ採用」で誤りを避けていた。結果として
+#     登録番号版と父が **20,090 頭すべてで一致**したため A/B の結論は変わらなかったが、
+#     たまたま助かっただけで、キーとしては壊れている
 PEDIGREE_QUERY = """
-    WITH m AS (
-        SELECT ch.id AS chihou_horse_id, kh.id AS keiba_horse_id
-        FROM chihou.horses ch
-        JOIN keiba.horses kh ON kh.name = ch.name AND kh.birthday = ch.birthday
-    ), j AS (
-        SELECT m.chihou_horse_id AS horse_id, p.sire, p.sire_of_dam AS bms
-        FROM m
-        JOIN keiba.pedigrees p ON p.horse_id = m.keiba_horse_id
-        WHERE p.sire IS NOT NULL
-    )
-    SELECT horse_id, min(sire) AS sire, min(bms) AS bms
-    FROM j
-    GROUP BY horse_id
-    HAVING count(DISTINCT sire) = 1
+    SELECT ch.id AS horse_id, p.sire, p.sire_of_dam AS bms
+    FROM chihou.horses ch
+    JOIN keiba.horses kh ON kh.jravan_code = ch.umaconn_code
+    JOIN keiba.pedigrees p ON p.horse_id = kh.id
+    WHERE p.sire IS NOT NULL
 """
 
 # 産駒成績の履歴。集計の材料なので**全期間**を取る（対象期間で切らない）。
