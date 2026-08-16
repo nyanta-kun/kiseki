@@ -20,6 +20,23 @@ from .provisional_horse_importer import try_merge_provisional
 
 logger = logging.getLogger(__name__)
 
+# 発走前 RA（データ区分 1:出走馬名表 / 2:出馬表）では空で、レース後の RA で初めて
+# 埋まる列。そのまま上書きすると確定値を NULL へ戻してしまうため、UPSERT の
+# ON CONFLICT では COALESCE で「非 NULL のときだけ更新」する。
+# （2026-08-02: realtime 0B12 の RA 取り込みを追加した際に必要になったガード）
+#
+# 🔴 `head_count`（出走頭数・取消除外後）もここに入る。2026-08-16 まで漏れており、
+# `--mode fix-race --from-date 20260814` を流した際に **開催済みだった 8/15 の
+# head_count が 36 レースぶん NULL へ消えた**（復旧は `fetch_results_rt.py` で
+# 0B12 の確定 RA を取り直す。memory: jra_entries_dm_cascade_2026_08_16）。
+#
+# ⚠️ `registered_count`（登録頭数）は発走前から埋まるので**ここに入れない**。
+# 入れると出走取消で頭数が減ったときに古い値が残る。
+POST_RACE_ONLY_COLS = frozenset({
+    "condition", "weather", "first_3f", "last_3f_race", "lap_times",
+    "finishers_count", "head_count",
+})
+
 
 # -------------------------------------------------------------------
 # 単位変換ヘルパー
@@ -311,19 +328,11 @@ class RaceImporter:
             "prev_grade_code",
             "prev_post_time",
         ]
-        # 発走前 RA（データ区分 1:出走馬名表 / 2:出馬表）は馬場状態・天候・ラップが空。
-        # そのまま上書きすると、成績確定後 RA で入った値を NULL に戻してしまうため、
-        # 「レース後にしか確定しない列」は COALESCE で非 NULL のときだけ更新する。
-        # （2026-08-02: realtime 0B12 の RA 取り込みを追加した際に必要になったガード）
-        _POST_RACE_ONLY_COLS = frozenset({
-            "condition", "weather", "first_3f", "last_3f_race", "lap_times",
-            "finishers_count",
-        })
         stmt = insert(Race).values(values)
         set_ = {
             col: (
                 func.coalesce(stmt.excluded[col], Race.__table__.c[col])
-                if col in _POST_RACE_ONLY_COLS
+                if col in POST_RACE_ONLY_COLS
                 else stmt.excluded[col]
             )
             for col in update_cols
