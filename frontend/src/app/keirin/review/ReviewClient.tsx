@@ -533,7 +533,10 @@ function DaySummary({ s }: { s: KeirinProposalSummary }) {
           <td className={`${cell} text-center`}>
             {s.n_races}レース
             {s.n_pending > 0 && (
-              <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">
+              // 🔴 未確定は**常に改行**する（2026-08-16・ユーザー要望）。インラインだと
+              //    セル幅次第で「30レース （未確定」で折り返し、件数が同じ行に並んで
+              //    どちらの数字か読み取れなくなる。幅に依存せず必ず2行にする。
+              <span className="block text-xs text-amber-600 dark:text-amber-400">
                 （未確定{s.n_pending}）
               </span>
             )}
