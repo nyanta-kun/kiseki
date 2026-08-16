@@ -273,6 +273,13 @@ class PedigreeImporter:
                 "breeding_code": code,
                 "name": parsed["name"] or None,
                 "name_en": parsed["name_en"] or None,
+                # 親コード。系図を再帰的に遡るための唯一の手掛かりで、
+                # 2026-08-16 まで parse 済みなのに保存していなかった（台帳 17.11）
+                "sire_breeding_code": parsed.get("sire_breeding_code") or None,
+                "dam_breeding_code": parsed.get("dam_breeding_code") or None,
+                "blood_code": parsed.get("blood_code") or None,
+                "birth_year": parsed.get("birth_year") or None,
+                "sex_code": parsed.get("sex_code") or None,
             })
             hn_parsed += 1
 
@@ -282,7 +289,29 @@ class PedigreeImporter:
                 .values(hn_upsert_rows)
                 .on_conflict_do_update(
                     index_elements=["breeding_code"],
-                    set_={"name": text("EXCLUDED.name"), "name_en": text("EXCLUDED.name_en")},
+                    # 親コードは COALESCE で「入っている方を残す」。
+                    # 空欄で届く版のレコードが後から来ても、一度入った系図を消さない。
+                    set_={
+                        "name": text("EXCLUDED.name"),
+                        "name_en": text("EXCLUDED.name_en"),
+                        "sire_breeding_code": text(
+                            "COALESCE(EXCLUDED.sire_breeding_code,"
+                            " breeding_horses.sire_breeding_code)"
+                        ),
+                        "dam_breeding_code": text(
+                            "COALESCE(EXCLUDED.dam_breeding_code,"
+                            " breeding_horses.dam_breeding_code)"
+                        ),
+                        "blood_code": text(
+                            "COALESCE(EXCLUDED.blood_code, breeding_horses.blood_code)"
+                        ),
+                        "birth_year": text(
+                            "COALESCE(EXCLUDED.birth_year, breeding_horses.birth_year)"
+                        ),
+                        "sex_code": text(
+                            "COALESCE(EXCLUDED.sex_code, breeding_horses.sex_code)"
+                        ),
+                    },
                 )
             )
 
