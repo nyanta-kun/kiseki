@@ -31,3 +31,9 @@ refit 境界を `TEST_START` の前日に変えたのは同日（`docs/jra_rebui
 ---
 
 ## 使用履歴
+- 2026-08-15 `TEST_START=20260701` **scripts/anagusa_top3_walkforward.py**: 穴ぐさ×指数3位以内の優位性検証（walk-forward honest 再構築） — 2026Q3 を評価窓の1つとして使用。結論は 2026Q3 に依存しない（n=23）
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_chokyo_peer_walkforward.py**: 調教のレース内他馬比較の A/B。評価窓 4 四半期のうち 2026Q3 が 1 つ。**増分は全帯で負＝不採用**
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_race_level_walkforward.py**: レース単位の「本命崩れ」特徴の A/B。評価窓 4 四半期のうち 2026Q3 が 1 つ。**増分ゼロ（race − ck_x が全帯で 0 を跨ぐ）＝不採用**
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_relative_walkforward.py**: 特徴量のレース内相対化（rel_add / rel_only / frame）の A/B。2026Q3 を 11 窓のうち 1 つとして使用。**全腕が base と有意差なし（点推定はむしろ負）＝不採用**。採用しないので TEST の消費としては軽いが、同じ設計を再評価するなら別窓を使うこと
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_chokyo_walkforward.py**: 調教（坂路）を期待水準との交互作用として入れる A/B（base / ck / ck_x）。⚠️ **採否に直結する評価**で、評価窓 4 四半期のうち 2026Q3 が 1 つを占める（他は 2025Q4・2026Q1・2026Q2）。結果は 1-4番人気で ck_x−base +1.22pt [+0.30, +2.18]。**本番採用を決める前に、次の独立窓（2026Q4）での再現確認を必須とする**
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_darkhorse_walkforward.py**: 人気帯別の識別力の honest ベースライン測定（11四半期の walk-forward） — 2026Q3 を 11 窓のうち 1 つとして使用。**採否判断ではなく現状測定**であり、2026Q3 を除いても結論（人気が下がるほど層化リフトが単調に消える）は変わらない。四半期別内訳を必ず出力するので確認可能
