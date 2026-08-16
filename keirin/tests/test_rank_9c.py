@@ -16,14 +16,16 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.strategy_wt import (  # noqa: E402
-    ABOLISHED_PAPER_RANK_NAMES, CURRENT_PAPER_RANKS, RANK_9C_LEG_P3_MIN,
-    RANK_9C_LEGS_MIN, RANK_9C_NE, RANK_9C_P3_SUM_MIN, rank_7c_select_axis,
-    rank_7c_select_legs, rank_9c_daily_select,
+    ABOLISHED_PAPER_RANK_NAMES, CURRENT_PAPER_RANKS, RANK_9C_BIG_GRADE_MIN,
+    RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, RANK_9C_NE, RANK_9C_P3_SUM_MIN,
+    RANK_9C_P3_SUM_MIN_BIG, rank_7c_select_axis, rank_7c_select_legs,
+    rank_9c_daily_select, rank_9c_p3_sum_min,
 )
 
 
-def _cand(p3_sum, legs, ne=9):
-    return {"n_entries": ne, "p3_sum_top2": p3_sum, "legs_9c": legs}
+def _cand(p3_sum, legs, ne=9, cup_grade=None):
+    return {"n_entries": ne, "p3_sum_top2": p3_sum, "legs_9c": legs,
+            "cup_grade": cup_grade}
 
 
 def test_thresholds_are_calibrated_for_nine_cars():
@@ -51,6 +53,43 @@ def test_daily_select_applies_both_gates():
     assert rank_9c_daily_select([_cand(1.35, [1, 2])]) == []          # 相手不足
     assert rank_9c_daily_select([_cand(1.35, [1, 2, 3], ne=7)]) == []  # 7車は対象外
     assert rank_9c_daily_select([_cand(None, [1, 2, 3])]) == []       # p3 欠損
+
+
+def test_gate_is_raised_only_for_gii_and_above():
+    """GII以上（cup_grade>=4）だけ 1.40。GIII と不明は 1.30 のまま。
+
+    🔴 `cup_grade=3` は **GIII（記念）** であって「一般開催」ではない。
+       ここを 1.40 にすると母集団が半減するのに、増える二軸は全帯で成り立つ
+       単調性の分（+6.4pt）でしかない。較正がずれているのは GII/GI の
+       1.30-1.40 帯だけ（-13.5pt・3.3σ・2025/2026 両年で再現）。
+    """
+    assert RANK_9C_P3_SUM_MIN_BIG == 1.40
+    assert RANK_9C_BIG_GRADE_MIN == 4
+    assert rank_9c_p3_sum_min(5) == RANK_9C_P3_SUM_MIN_BIG   # GI
+    assert rank_9c_p3_sum_min(4) == RANK_9C_P3_SUM_MIN_BIG   # GII
+    assert rank_9c_p3_sum_min(6) == RANK_9C_P3_SUM_MIN_BIG   # GP
+    assert rank_9c_p3_sum_min(3) == RANK_9C_P3_SUM_MIN       # GIII は据え置き
+    assert rank_9c_p3_sum_min(1) == RANK_9C_P3_SUM_MIN       # FII
+
+
+def test_unknown_grade_keeps_the_original_floor():
+    """🔴 `cup_grade` が None なら 1.30（従来動作へのフォールバック）。
+
+    この列は 2026-08-14 に保存を始めたので、それ以前のレースと取得に失敗した
+    開催では NULL。上位グレード側へ倒すと過去分の再構築が**静かに減る**。
+    """
+    assert rank_9c_p3_sum_min(None) == RANK_9C_P3_SUM_MIN
+    assert len(rank_9c_daily_select([_cand(1.35, [1, 2, 3], cup_grade=None)])) == 1
+    # cup_grade キー自体が無い候補（旧形式のJSON）も同じ扱いにする。
+    assert len(rank_9c_daily_select([
+        {"n_entries": 9, "p3_sum_top2": 1.35, "legs_9c": [1, 2, 3]}])) == 1
+
+
+def test_gate_selects_differently_by_grade_at_the_same_p3_sum():
+    """同じ p3合計 1.35 が GIII では通り GI では落ちる（帯の境界そのもの）。"""
+    assert len(rank_9c_daily_select([_cand(1.35, [1, 2, 3], cup_grade=3)])) == 1
+    assert rank_9c_daily_select([_cand(1.35, [1, 2, 3], cup_grade=5)]) == []
+    assert len(rank_9c_daily_select([_cand(1.45, [1, 2, 3], cup_grade=5)])) == 1
 
 
 def test_sorted_by_confidence():
