@@ -115,6 +115,20 @@ class BreedingHorse(Base):
     breeding_code: Mapped[str] = mapped_column(Text(), primary_key=True, comment="繁殖登録番号")
     name: Mapped[str | None] = mapped_column(Text(), comment="馬名（日本語）")
     name_en: Mapped[str | None] = mapped_column(Text(), comment="馬名（欧字）")
+    # 親コード。これがあると繁殖登録番号で**何代でも系図を遡れる**
+    # （インブリード判定に要る5代を netkeiba なしで作れる。台帳 17.11）。
+    # ⚠️ 値が入るのは `--mode bldn-full` を流し直した以降。既存行は NULL。
+    sire_breeding_code: Mapped[str | None] = mapped_column(
+        Text(), index=True, comment="父馬繁殖登録番号（HN pos230）"
+    )
+    dam_breeding_code: Mapped[str | None] = mapped_column(
+        Text(), index=True, comment="母馬繁殖登録番号（HN pos240）"
+    )
+    blood_code: Mapped[str | None] = mapped_column(
+        Text(), comment="血統登録番号（競走馬として登録がある場合・HN pos30）"
+    )
+    birth_year: Mapped[str | None] = mapped_column(Text(), comment="生年（HN pos197）")
+    sex_code: Mapped[str | None] = mapped_column(Text(), comment="性別コード（HN pos201）")
 
 
 class Jockey(Base):
