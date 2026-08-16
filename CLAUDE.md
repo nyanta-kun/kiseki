@@ -940,7 +940,7 @@ POST /api/import/bloodlines（batch_size=2000）
   → INSERT INTO pedigrees ... ON CONFLICT DO UPDATE SET sire=COALESCE(pedigrees.sire, EXCLUDED.sire)
 ```
 
-**完了済みファイルは** `data/completed/BLDN_FULL.txt` に記録。再実行時は削除不要（スキップ対象）。
+**完了済みファイルは** `data/completed/BLDN_FULL_completed.txt` に記録（`{dataspec}_completed.txt` 命名）。再実行時は削除不要（スキップ対象）。
 
 **実行結果（2026-04-20 完了）**:
 - 569 ファイル / 588,768 件 DB 反映済み
@@ -964,7 +964,21 @@ SELECT COUNT(*) FROM keiba.pedigrees WHERE sire IS NULL;
 ```
 
 **再実行が必要な場合**:
-全件再取得するには `data/completed/BLDN_FULL.txt` を削除してから実行。
+全件再取得するには `data/completed/BLDN_FULL_completed.txt` を退避してから実行。
+
+⚠️ **ファイル名は `BLDN_FULL_completed.txt`**（`BLDN_FULL.txt` ではない）。
+2026-08-16 に旧記載のまま消そうとして「完了ファイルなし」と誤認しかけた。
+
+### 夜間の自動実行（2026-08-16 追加）
+
+`kiseki-JVLink-BldnFull`（**22:45 起動**）/ `kiseki-JVLink-BldnFull-Stop`（**08:00 停止**）。
+realtime が動いていれば起動せず、多重起動もしない（`run_jvlink_bldn_full.vbs`）。
+登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_bldn_full_task.ps1`
+ログ: `C:\kiseki\windows-agent\bldn_full.log`
+
+⚠️ **開催日の日中に BLDN を呼ばないこと。** 2026-08-16 実測で
+`JVOpen(BLDN, option=4)` が **22分戻らず** JV-Link 枠を占有した
+（CLAUDE.md は複数インスタンスの同時実行を可としているが、累積マスタ571ファイルは別物）。
 
 ### JV-Next 1403 (DM) 取得 — 2 つのオーケストレーター
 
