@@ -26,7 +26,8 @@ GI ガールズ決勝）に商品がゼロだった。08-09 は手作業で11件
 - 既にどれかのランクで入稿済み → skip（1レース1商品）
 - 発走済み → skip
 - 車数が 7/9 以外 → skip（ランクが7車/9車しか無いため構造的に入稿できない）
-- 軸 = 当日の指数（allindex JSON）の pred 上位2車
+- 軸 = 当日の指数（allindex JSON）の pred 上位2車。
+  ただし **9車のみ**ラインで組み替える（2026-08-16・`_axes()` の docstring に根拠）
 
 ⚠️ **ミッドナイト（第1R 18時以降）は evening の波より前に出さない。**
    三連複の板が朝は63%欠損しており、傾斜配分が均等割りへ落ちる。
@@ -75,11 +76,90 @@ def _load_allindex(date: str) -> dict[str, dict]:
     return out
 
 
-def _axes(entry: dict) -> tuple[int, int] | None:
+def _lines(race_key: str) -> dict[int, dict]:
+    """`wt_entries` から車番→ライン情報を引く。
+
+    ⚠️ allindex JSON はライン構成を持っていない（`line_position` は脚質の
+       「逃/両/追」であってラインではない）。DB を見るしかない。
+       取れなければ空 dict を返し、呼び出し側は従来どおり指数上位2車へ落ちる。
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT frame_no, line_group, line_size, is_line_leader "
+                "FROM wt_entries WHERE race_key = ?",
+                (race_key,),
+            )
+            return {int(r["frame_no"]): dict(r) for r in cur.fetchall()}
+    except Exception as e:  # noqa: BLE001
+        print(f"[marquee] {race_key}: ライン情報の取得に失敗（従来の軸で続行）: {e}", flush=True)
+        return {}
+
+
+def _is_leader(ln: dict[int, dict], n: int) -> bool:
+    """単騎を先頭に数えない（番手がいないので「先頭＋番手」が作れない）。"""
+    e = ln.get(n)
+    return bool(e and e["is_line_leader"] and (e["line_size"] or 1) > 1)
+
+
+def _same_line(ln: dict[int, dict], order: list[int], head: int) -> int | None:
+    """`head` と同じラインの車を、指数順（`order`）で最上位から1車返す。"""
+    g = ln[head]["line_group"]
+    for n in order:
+        if n != head and ln.get(n) and ln[n]["line_group"] == g:
+            return n
+    return None
+
+
+def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] | None:
+    """穴埋めの軸2車を決める。
+
+    既定は指数上位2車。**9車のときだけ**ラインで組み替える（2026-08-16 導入）:
+
+      ルール1  指数1位がライン先頭   → 軸2 = その同ライン最上位（番手）
+      ルール2  指数1位が非先頭 かつ 指数2位がライン先頭
+               → 軸2 を軸へ格上げし、軸2 = その同ライン最上位
+
+    ## なぜ
+
+    穴埋めはゲートを通っていない帯なので、素の上位2車だと二軸 30.4% / ROI 69.4%
+    しか出ない。実測（9車・GIII以上・2025-01〜2026-08 の穴埋め帯 n=1,742）で
+    **二軸 33.8% / 的中 30.9% / ROI 78.5%** へ改善する。paired bootstrap で
+    二軸 +3.4pt [+1.6,+5.3]・的中 +2.9pt [+1.1,+4.6]・ROI +9.2pt [+1.2,+17.6]
+    と3指標とも有意。2025 / 2026 の両年で同じ向きに再現する。
+
+    ルール2 が効くのは**別ライン**のとき（n=293・現行 二軸22.9%/ROI51.1% →
+    29.4%/99.5%）。番手と別線先頭を2車とも要求する、構造的に最も噛み合わない
+    組み方だったのを、同一ラインの先頭＋番手へ替えている。
+    同ラインのときは組み替えても同じペアになる（実測 変更0件/307件）ので実害なし。
+    三連複は順序を問わないため、**ペアが変わらない限り買い目は一切動かない**。
+
+    🔴 **7車には適用しない。** 検証は9車だけで行っており、7車では未測定。
+       このプロジェクトは「7Cの定数を9車へ移植できない」型の事故を既に起こしている
+       （[[keirin_rank_9c_design_2026_08_14]]）。7車へ広げるなら測ってから。
+    🔴 軸から降りた指数1位は**相手に残る**（指数最上位なので相手の足切りに掛からない。
+       実測 293件すべて相手側に入った）。買い目から消えるわけではない。
+    """
     riders = sorted(entry.get("riders") or [], key=lambda r: r.get("ai_rank", 99))
     if len(riders) < 2:
         return None
-    return int(riders[0]["frame_no"]), int(riders[1]["frame_no"])
+    order = [int(r["frame_no"]) for r in riders]
+    a1, a2 = order[0], order[1]
+
+    ln = lines or {}
+    if len(riders) != 9 or not all(n in ln for n in order):
+        return a1, a2
+
+    if _is_leader(ln, a1):
+        partner = _same_line(ln, order, a1)
+        if partner is not None:
+            return a1, partner
+    elif _is_leader(ln, a2):
+        partner = _same_line(ln, order, a2)
+        if partner is not None:
+            return a2, partner
+    return a1, a2
 
 
 def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
@@ -189,7 +269,8 @@ def main() -> int:
             print(f"[marquee] {r['race_key']}: 指数が無い（skip）", flush=True)
             ng += 1
             continue
-        ax = _axes(e)
+        # ライン情報は9車のときだけ引く（7車は組み替えないので問い合わせ自体が無駄）。
+        ax = _axes(e, _lines(r["race_key"]) if int(r.get("n_entries") or 0) == 9 else None)
         if ax is None:
             print(f"[marquee] {r['race_key']}: 軸を決められない（skip）", flush=True)
             ng += 1
