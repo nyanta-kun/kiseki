@@ -32,6 +32,8 @@ refit 境界を `TEST_START` の前日に変えたのは同日（`docs/jra_rebui
 
 ## 使用履歴
 - 2026-08-15 `TEST_START=20260701` **scripts/anagusa_top3_walkforward.py**: 穴ぐさ×指数3位以内の優位性検証（walk-forward honest 再構築） — 2026Q3 を評価窓の1つとして使用。結論は 2026Q3 に依存しない（n=23）
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_thin_career_head_walkforward.py**: キャリア0-2走専用の残差補正ヘッドの A/B。2026Q3 を 11 窓のうち 1 つとして使用。**増分ゼロ＝不採用**。あわせて調教腕（既存 `ck_preds`）をキャリア帯で事後分割し、キャリア0-2走×1-4番人気で +1.31pt [+0.15, +2.46]。⚠️ 事後分割かつ多重比較なので **2026Q4 での確認を必須**とする
+- 2026-08-16 `TEST_START=20260701` **scripts/jra_pedigree_thin_career_walkforward.py**: 血統特徴（父・母の産駒成績）をキャリア0-2走で A/B。2026Q3 を 11 窓のうち 1 つとして使用。**全セグメント非有意（最大 +0.44pt）＝5代化に進まない**
 - 2026-08-16 `TEST_START=20260701` **scripts/jra_chokyo_peer_walkforward.py**: 調教のレース内他馬比較の A/B。評価窓 4 四半期のうち 2026Q3 が 1 つ。**増分は全帯で負＝不採用**
 - 2026-08-16 `TEST_START=20260701` **scripts/jra_race_level_walkforward.py**: レース単位の「本命崩れ」特徴の A/B。評価窓 4 四半期のうち 2026Q3 が 1 つ。**増分ゼロ（race − ck_x が全帯で 0 を跨ぐ）＝不採用**
 - 2026-08-16 `TEST_START=20260701` **scripts/jra_relative_walkforward.py**: 特徴量のレース内相対化（rel_add / rel_only / frame）の A/B。2026Q3 を 11 窓のうち 1 つとして使用。**全腕が base と有意差なし（点推定はむしろ負）＝不採用**。採用しないので TEST の消費としては軽いが、同じ設計を再評価するなら別窓を使うこと
