@@ -68,6 +68,12 @@ node_modules/
 # macOS
 .DS_Store
 
+# Windows（エクスプローラのサムネイルキャッシュ・フォルダ設定）
+# Parallels の Windows 11 から Z:\ 経由で作業ツリーを開くと生成される。
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
 # Docker
 docker-compose.override.yml
 
