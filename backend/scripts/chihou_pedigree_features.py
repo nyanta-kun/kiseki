@@ -63,6 +63,21 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# 母系特徴（兄弟姉妹の戦績）。**血統特徴とは別物**なので分けて A/B する。
+#
+# 産駒成績の集計（PEDIGREE_FEATURES）が増分ゼロだったのは、種牡馬の質が
+# 馬自身の戦績に現れていて共線だったから（台帳 17.7）。
+# 兄弟姉妹の戦績は**馬自身の記録からは復元できない**ので、その筋では消えない。
+#
+# 🔴 **自分自身の戦績は必ず除く。** 母単位の累計から自分の累計を引くこと。
+# 引き忘れると「馬自身の戦績」を別名で渡すことになり、既存特徴と二重計上になる。
+MATERNAL_FEATURES: list[str] = [
+    "dam_sib_top3_rate_pit",        # 兄弟姉妹の複勝率（縮約済み・自分を除く）
+    "dam_sib_win_rate_pit",         # 兄弟姉妹の勝率（縮約済み・自分を除く）
+    "dam_sib_upset_top3_rate_pit",  # 兄弟姉妹が6番人気以下のときの複勝率
+    "dam_sib_n_runs_log_pit",       # 兄弟姉妹の出走数 log1p（信頼度）
+]
+
 # モデルに渡す血統特徴。
 PEDIGREE_FEATURES: list[str] = [
     "sire_top3_rate_pit",        # 父の産駒 複勝率（縮約済み）
@@ -98,7 +113,7 @@ DIST_LABELS: list[int] = [0, 1, 2]
 #     登録番号版と父が **20,090 頭すべてで一致**したため A/B の結論は変わらなかったが、
 #     たまたま助かっただけで、キーとしては壊れている
 PEDIGREE_QUERY = """
-    SELECT ch.id AS horse_id, p.sire, p.sire_of_dam AS bms
+    SELECT ch.id AS horse_id, p.sire, p.sire_of_dam AS bms, NULLIF(p.dam, '') AS dam
     FROM chihou.horses ch
     JOIN keiba.horses kh ON kh.jravan_code = ch.umaconn_code
     JOIN keiba.pedigrees p ON p.horse_id = kh.id
@@ -182,6 +197,7 @@ def build_pit_tables(conn, ped: pd.DataFrame) -> dict[str, pd.DataFrame]:
         len(hist), 100.0 * hist["sire"].notna().mean(),
     )
 
+    dam_h = hist[hist["dam"].notna()]
     sire_h = hist[hist["sire"].notna()]
     bms_h = hist[hist["bms"].notna()]
     upset_h = sire_h[sire_h["pop"] >= UPSET_POP_RANK]
@@ -201,7 +217,17 @@ def build_pit_tables(conn, ped: pd.DataFrame) -> dict[str, pd.DataFrame]:
     )
     gl_up[["cum_n", "cum_s"]] = gl_up[["n", "s"]].cumsum()
 
+    hist_w = hist.assign(
+        top3=(pd.to_numeric(hist["finish_position"], errors="coerce") == 1).astype(int)
+    )
     return {
+        # 母系。自分の寄与を引くため「馬単位」の累計も同じ粒度で持つ
+        "dam": _cum_by(dam_h, ["dam"]),
+        "dam_win": _cum_by(hist_w[hist_w["dam"].notna()], ["dam"]),
+        "dam_upset": _cum_by(dam_h[dam_h["pop"] >= UPSET_POP_RANK], ["dam"]),
+        "self": _cum_by(hist, ["horse_id"]),
+        "self_win": _cum_by(hist_w, ["horse_id"]),
+        "self_upset": _cum_by(hist[hist["pop"] >= UPSET_POP_RANK], ["horse_id"]),
         "sire": _cum_by(sire_h, ["sire"]),
         "sire_upset": _cum_by(upset_h, ["sire"]),
         "sire_dist": _cum_by(dist_h, ["sire", "band"]),
@@ -256,6 +282,10 @@ def add_pedigree_features(
     work["date"] = pd.to_datetime(work["date"], format="%Y%m%d")
     work["band"] = _dist_band(work["distance"])
     work = work.merge(ped, on="horse_id", how="left")
+    # 血統が1頭も引けない場合でも列は必ず作る（欠損は prior で埋まる）
+    for col in ("sire", "bms", "dam"):
+        if col not in work.columns:
+            work[col] = None
 
     def _shrunk(num, den, prior, k: float) -> np.ndarray:
         n = np.nan_to_num(np.asarray(den, dtype=float), nan=0.0)
@@ -294,6 +324,37 @@ def add_pedigree_features(
     out["sire_n_runs_log_pit"] = np.log1p(
         np.nan_to_num(np.asarray(a["n_sire"].values, dtype=float), nan=0.0)
     )
+
+    # ---- 母系（兄弟姉妹）----
+    # 母単位の累計から自分自身の累計を引く。引かないと「馬自身の戦績」を
+    # 別名で渡すことになる（既存特徴と二重計上）。
+    def _sib(dam_key: str, self_key: str, pit_dam: str, pit_self: str) -> tuple:
+        d = _asof(
+            work[["_row", "date", "dam"]], pit[pit_dam], ["dam"], dam_key
+        ).sort_values("_row")
+        me = _asof(
+            work[["_row", "date", "horse_id"]], pit[pit_self], ["horse_id"], self_key
+        ).sort_values("_row")
+        n = np.nan_to_num(np.asarray(d[f"n_{dam_key}"].values, dtype=float), nan=0.0) - \
+            np.nan_to_num(np.asarray(me[f"n_{self_key}"].values, dtype=float), nan=0.0)
+        sm = np.nan_to_num(np.asarray(d[f"s_{dam_key}"].values, dtype=float), nan=0.0) - \
+            np.nan_to_num(np.asarray(me[f"s_{self_key}"].values, dtype=float), nan=0.0)
+        return np.maximum(n, 0.0), np.maximum(sm, 0.0)
+
+    n_sib, s_sib = _sib("dam", "self", "dam", "self")
+    n_sib_w, s_sib_w = _sib("damw", "selfw", "dam_win", "self_win")
+    n_sib_u, s_sib_u = _sib("damu", "selfu", "dam_upset", "self_upset")
+    prior_win = (
+        pd.Series(np.asarray(g["s_gl"].values, dtype=float))
+        / pd.Series(np.asarray(g["n_gl"].values, dtype=float))
+    ).fillna(0.25).values * 0.4   # 勝率の事前分布は複勝率の概ね 0.4 倍
+    out["dam_sib_top3_rate_pit"] = _shrunk(s_sib, n_sib, prior.values, SHRINK_K)
+    out["dam_sib_win_rate_pit"] = _shrunk(s_sib_w, n_sib_w, prior_win, SHRINK_K)
+    out["dam_sib_upset_top3_rate_pit"] = _shrunk(
+        s_sib_u, n_sib_u, prior_up.values, SHRINK_K
+    )
+    out["dam_sib_n_runs_log_pit"] = np.log1p(n_sib)
+
     if len(out) != len(df):
         raise ValueError(f"行数が変わった: {len(df)} → {len(out)}")
     return out

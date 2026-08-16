@@ -51,6 +51,7 @@ from scripts.chihou_rebuild_walkforward import (  # noqa: E402
     _fetch,
 )
 from scripts.chihou_pedigree_features import (  # noqa: E402
+    MATERNAL_FEATURES,
     PEDIGREE_FEATURES,
     add_pedigree_features,
     build_pit_tables,
@@ -235,6 +236,14 @@ def main() -> None:
             "集計は point-in-time（当日を含まない）。台帳 17.5"
         ),
     )
+    p.add_argument(
+        "--maternal",
+        action="store_true",
+        help=(
+            "母系特徴4本（兄弟姉妹の戦績・自分は除く）を足す。"
+            "産駒成績の集計（--pedigree）と違い馬自身の戦績から復元できない情報。台帳 17.10"
+        ),
+    )
     args = p.parse_args()
     quarters = QUARTERS[: args.quarters]
 
@@ -251,6 +260,8 @@ def main() -> None:
     feature_set = PROD_FEATURES if args.no_market else ALL_FEATURES
     if args.pedigree:
         feature_set = feature_set + PEDIGREE_FEATURES
+    if args.maternal:
+        feature_set = feature_set + MATERNAL_FEATURES
     logger.info(
         "特徴量セット: %s (%d本)",
         "PROD_FEATURES(市場なし)" if args.no_market else "ALL_FEATURES(市場あり)",
@@ -265,7 +276,7 @@ def main() -> None:
     ct_tables = build_ct_tables(conn)
 
     ped = ped_pit = None
-    if args.pedigree:
+    if args.pedigree or args.maternal:
         # 血統は keiba.pedigrees 経由（UmaConn は BLOD を配信していない・台帳 17.5）。
         # 集計は merge_asof(allow_exact_matches=False) で当日を除くので、
         # 全期間から作っても対象行に未来は混入しない（test_chihou_pedigree_features.py）。
@@ -287,7 +298,7 @@ def main() -> None:
             logger.warning("  学習データ不足(%dレース)のためスキップ", n_train_races)
             continue
         df_train = _featurize_full(df_train_raw, df_hist_global, apt_tbl, ct_tables)
-        if args.pedigree:
+        if args.pedigree or args.maternal:
             df_train = add_pedigree_features(df_train, ped, ped_pit)
         df_train = df_train.sort_values("race_id").reset_index(drop=True)
         fp_tr = pd.to_numeric(df_train["finish_position"], errors="coerce")
@@ -335,7 +346,7 @@ def main() -> None:
                 continue
 
         df_test = _featurize_full(df_test_raw, df_hist_global, apt_tbl, ct_tables)
-        if args.pedigree:
+        if args.pedigree or args.maternal:
             df_test = add_pedigree_features(df_test, ped, ped_pit)
         if args.serve_no_market:
             # 学習は市場込み、予測だけ中立値。これが本番で起きていること

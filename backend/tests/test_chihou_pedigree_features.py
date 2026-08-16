@@ -59,15 +59,23 @@ def _pit_from(rows: list[tuple[str, str, int]]) -> dict[str, pd.DataFrame]:
         .sort_values("date")
     )
     gl[["cum_n", "cum_s"]] = gl[["n", "s"]].cumsum()
-    empty = pd.DataFrame(columns=["sire", "band", "date", "cum_n", "cum_s"])
-    empty["date"] = pd.to_datetime(empty["date"])
+    def _empty(*keys: str) -> pd.DataFrame:
+        e = pd.DataFrame(columns=[*keys, "date", "cum_n", "cum_s"])
+        return e.astype({"date": "datetime64[ns]"})
+
+    # 母系テーブルは dam 列を持つ履歴から作る（無ければ空）
+    hd = h.assign(dam=h["sire"].map(lambda x: f"dam_of_{x}"), horse_id=1)
     return {
         "sire": _cum_by(h, ["sire"]),
         "sire_upset": _cum_by(h, ["sire"]),
-        "sire_dist": empty,
-        "bms": pd.DataFrame(columns=["bms", "date", "cum_n", "cum_s"]).astype(
-            {"date": "datetime64[ns]"}
-        ),
+        "sire_dist": _empty("sire", "band"),
+        "bms": _empty("bms"),
+        "dam": _cum_by(hd, ["dam"]),
+        "dam_win": _cum_by(hd, ["dam"]),
+        "dam_upset": _cum_by(hd, ["dam"]),
+        "self": _cum_by(hd, ["horse_id"]),
+        "self_win": _cum_by(hd, ["horse_id"]),
+        "self_upset": _cum_by(hd, ["horse_id"]),
         "global": gl[["date", "cum_n", "cum_s"]],
         "global_upset": gl[["date", "cum_n", "cum_s"]],
     }
@@ -158,3 +166,72 @@ class TestDuplicateGuard:
         tgt = pd.DataFrame({"horse_id": [1], "date": ["20260102"], "distance": [1400]})
         with pytest.raises(ValueError, match="重複"):
             add_pedigree_features(tgt, ped, _pit_from([("20260101", "A", 1)]))
+
+
+class TestMaternalSelfExclusion:
+    """母系特徴から**自分自身の戦績を必ず除く**こと。
+
+    引き忘れると「馬自身の戦績」を別名でモデルに渡すことになり、
+    既存特徴と二重計上になる（そして改善したように見える）。
+    """
+
+    def _pit(self) -> dict[str, pd.DataFrame]:
+        """母 D の産駒は自分(1)と兄弟(2)の2頭。1/1 に両方1走ずつ。"""
+        h = pd.DataFrame({
+            "date": pd.to_datetime(["20260101", "20260101"], format="%Y%m%d"),
+            "dam": ["D", "D"], "horse_id": [1, 2], "top3": [1, 1],
+        })
+        gl = h.groupby("date").agg(n=("top3", "size"), s=("top3", "sum")).reset_index()
+        gl[["cum_n", "cum_s"]] = gl[["n", "s"]].cumsum()
+
+        def _empty(*keys: str) -> pd.DataFrame:
+            return pd.DataFrame(columns=[*keys, "date", "cum_n", "cum_s"]).astype(
+                {"date": "datetime64[ns]"}
+            )
+
+        return {
+            "sire": _empty("sire"), "sire_upset": _empty("sire"),
+            "sire_dist": _empty("sire", "band"), "bms": _empty("bms"),
+            "dam": _cum_by(h, ["dam"]), "dam_win": _cum_by(h, ["dam"]),
+            "dam_upset": _cum_by(h, ["dam"]),
+            "self": _cum_by(h, ["horse_id"]), "self_win": _cum_by(h, ["horse_id"]),
+            "self_upset": _cum_by(h, ["horse_id"]),
+            "global": gl[["date", "cum_n", "cum_s"]],
+            "global_upset": gl[["date", "cum_n", "cum_s"]],
+        }
+
+    def test_兄弟の走りだけが数えられる(self) -> None:
+        ped = pd.DataFrame({"horse_id": [1], "sire": [None], "bms": [None], "dam": ["D"]})
+        tgt = pd.DataFrame({"horse_id": [1], "date": ["20260102"], "distance": [1400]})
+        out = add_pedigree_features(tgt, ped, self._pit())
+        # 母 D の産駒は 2 走あるが、自分の 1 走を引いて兄弟は 1 走
+        assert out["dam_sib_n_runs_log_pit"].iloc[0] == np.log1p(1)
+
+    def test_一人っ子は兄弟ゼロになる(self) -> None:
+        """自分しか産駒がいない母では、母単位の累計＝自分の累計。"""
+        h = pd.DataFrame({
+            "date": pd.to_datetime(["20260101"], format="%Y%m%d"),
+            "dam": ["D"], "horse_id": [1], "top3": [1],
+        })
+        gl = h.groupby("date").agg(n=("top3", "size"), s=("top3", "sum")).reset_index()
+        gl[["cum_n", "cum_s"]] = gl[["n", "s"]].cumsum()
+
+        def _empty(*keys: str) -> pd.DataFrame:
+            return pd.DataFrame(columns=[*keys, "date", "cum_n", "cum_s"]).astype(
+                {"date": "datetime64[ns]"}
+            )
+
+        pit = {
+            "sire": _empty("sire"), "sire_upset": _empty("sire"),
+            "sire_dist": _empty("sire", "band"), "bms": _empty("bms"),
+            "dam": _cum_by(h, ["dam"]), "dam_win": _cum_by(h, ["dam"]),
+            "dam_upset": _cum_by(h, ["dam"]),
+            "self": _cum_by(h, ["horse_id"]), "self_win": _cum_by(h, ["horse_id"]),
+            "self_upset": _cum_by(h, ["horse_id"]),
+            "global": gl[["date", "cum_n", "cum_s"]],
+            "global_upset": gl[["date", "cum_n", "cum_s"]],
+        }
+        ped = pd.DataFrame({"horse_id": [1], "sire": [None], "bms": [None], "dam": ["D"]})
+        tgt = pd.DataFrame({"horse_id": [1], "date": ["20260102"], "distance": [1400]})
+        out = add_pedigree_features(tgt, ped, pit)
+        assert out["dam_sib_n_runs_log_pit"].iloc[0] == 0.0, "自分の戦績が兄弟に混ざっている"
