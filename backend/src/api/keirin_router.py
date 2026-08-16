@@ -39,6 +39,7 @@ from ..services.keirin_sales_analysis import (
     build_route_breakdown,
     build_summary,
 )
+from ..services.keirin_sales_report import REVENUE_RATE
 from ..services.keirin_submission_window import SUBMIT_DEADLINE_SEC, is_closed
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
@@ -1665,7 +1666,11 @@ async def get_stats(
 # 売上金額 = sold_paid_points * NETKEIRIN_REVENUE_RATE。
 # 無償pt分は収益にならないため sold_points（総販売pt）ではなく
 # **sold_paid_points（有償pt）** に掛けること。
-NETKEIRIN_REVENUE_RATE = 0.30
+#
+# 🔴 正本は `services/keirin_sales_report.py`（2026-08-16 に移設）。日次の Discord
+#    通知は VPS の **keirin venv** から同じ値を読むので、ここへ数値を書き戻すと
+#    画面と通知で売上が食い違う。別名は後方互換のために残している。
+NETKEIRIN_REVENUE_RATE = REVENUE_RATE
 
 
 @router.get("/sold-performance")

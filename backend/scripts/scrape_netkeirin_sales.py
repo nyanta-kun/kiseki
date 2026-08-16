@@ -290,14 +290,15 @@ def _dsn() -> str:
     )
 
 
-#: 売上金額 = 販売*有償*pt × この率。
-#
-# 🔴 正本は `backend/src/api/keirin_router.py::NETKEIRIN_REVENUE_RATE`。
-#    ここへ写しているのは、このスクリプトが **VPS では keirin の venv で動く**ため
-#    （FastAPI も SQLAlchemy も無い環境なので backend を import できない）。
-#    値がずれると Web と Discord で売上が食い違うので
-#    `backend/tests/test_netkeirin_sales_notify.py` が一致を固定している。
-REVENUE_RATE = 0.30
+# 売上の計算・文面・送信は `src/services/keirin_sales_report.py` が正本。
+# 🔴 **数値も文面もここへ写さないこと。** Web（`/api/keirin/netkeirin-sales`）と
+#    同じモジュールを読むことで、画面と Discord で売上が食い違わないようにしている。
+# ⚠️ 向こうは**標準ライブラリだけ**で書いてある。VPS ではこのスクリプトが
+#    keirin の venv（FastAPI も SQLAlchemy も無い）で動くため。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.services.keirin_sales_report import (  # noqa: E402
+    build_sales_message, post_to_discord,
+)
 
 #: 通知先の Discord チャンネル（keirin/.env の webhook URL 環境変数名）
 _NOTIFY_ENV_KEY = "DISCORD_WEBHOOK_URL_NETKEIRIN"
@@ -344,29 +345,6 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
     }
 
 
-def build_sales_message(s: dict) -> str:
-    """Discord へ出す本文を組む。
-
-    🔴 **販売pt と 販売有償pt を必ず並べて出す**。売上になるのは有償ptだけで
-       （`sold_points` には無償ptが混ざる）、片方だけ見せると収益を誤読する。
-    """
-    d = s["sale_date"]
-    revenue = round(s["sold_paid_points"] * REVENUE_RATE)
-    month_revenue = round(s["month_sold_paid_points"] * REVENUE_RATE)
-    return (
-        f"💰 **netkeirin 売上 {d[:4]}-{d[4:6]}-{d[6:]}**\n"
-        f"```\n"
-        f"販売点数     {s['n_sold']:,} 点\n"
-        f"販売pt       {s['sold_points']:,} pt\n"
-        f"販売有償pt   {s['sold_paid_points']:,} pt\n"
-        f"売上         {revenue:,} 円  (有償pt × {REVENUE_RATE})\n"
-        f"---\n"
-        f"{d[4:6]}月 累計   {month_revenue:,} 円"
-        f"  (有償 {s['month_sold_paid_points']:,} pt / {s['month_n_days']}日)\n"
-        f"```"
-    )
-
-
 def notify_sales(sale_date: date) -> bool:
     """当日ぶんの売上を Discord へ通知する。送れたら True。
 
@@ -387,11 +365,8 @@ def notify_sales(sale_date: date) -> bool:
         # 開催が無かった日・netkeirin 側の集計がまだの日。0円と書くと誤読するので出さない。
         logger.info("%s の行がまだ無いため Discord 通知をスキップします", sale_date)
         return False
-    try:
-        r = requests.post(url, json={"content": build_sales_message(summary)}, timeout=15)
-        r.raise_for_status()
-    except requests.RequestException as e:
-        logger.warning("Discord 通知に失敗しました: %s", e)
+    if not post_to_discord(url, build_sales_message(summary)):
+        logger.warning("Discord 通知に失敗しました（%s）", summary["sale_date"])
         return False
     logger.info("Discord へ売上を通知しました（%s）", summary["sale_date"])
     return True
