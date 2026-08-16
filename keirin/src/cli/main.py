@@ -1285,7 +1285,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         rank_7c_is_lowpay_pattern, rank_7c_use_trifecta, rank_7c_buy_plan,
         RANK_7C_P3_SUM_MIN, RANK_7C_LEGS_MIN,
         rank_7ss_daily_select, rank_7ss_same_line,
-        RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, RANK_9C_P3_SUM_MIN,
+        RANK_9C_BIG_GRADE_MIN, RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN,
+        RANK_9C_P3_SUM_MIN, RANK_9C_P3_SUM_MIN_BIG, rank_9c_p3_sum_min,
         rank_9c_daily_select, ss_policy,
     )
     from pathlib import Path
@@ -1300,6 +1301,27 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         venue_map = dict(zip(vi["venue_code"], vi["name"]))
     except Exception:
         venue_map = {}
+
+    # 開催グレードマップ（9C のゲート下限がグレードで変わるため・2026-08-16）。
+    # ⚠️ `load_raw_data_wt` の SELECT には足さない。あれは学習にも使う共有経路で、
+    #    表示・ゲート用の値を混ぜると `race_point` のときと同じ事故（特徴量へ
+    #    表示用の書き込みが紛れ込む）を招く。ここで引いて候補にだけ載せる。
+    # ⚠️ 取れなければ空のままにする。`rank_9c_p3_sum_min(None)` は従来の 1.30 を
+    #    返すので、失敗しても**選出が広がる方向にしか倒れない**（黙って減らない）。
+    try:
+        with get_connection() as conn:
+            _cg = pd.read_sql(
+                "SELECT race_key, cup_grade FROM wt_races WHERE race_date = %(d)s",
+                conn, params={"d": target_date},
+            )
+        cup_grade_map = {
+            str(k): (int(v) if v is not None and v == v else None)
+            for k, v in zip(_cg["race_key"], _cg["cup_grade"])
+        }
+    except Exception as _e:
+        click.echo(f"[wt][警告] cup_grade を取得できません（9Cは全て下限1.30で選出）: {_e}",
+                   err=True)
+        cup_grade_map = {}
 
     # オッズデータをロード（DB にあれば）
     def _load_odds(race_key: str) -> dict[str, list[dict]]:
@@ -2207,6 +2229,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     "axis2_9c": _sel_9c[1] if _sel_9c else None,
                     "p3_sum_top2": round(_sel_9c[2], 6) if _sel_9c else None,
                     "legs_9c": _legs_9c,
+                    # 9C のゲート下限を決める（GII以上だけ 1.40）。None なら 1.30。
+                    "cup_grade": cup_grade_map.get(race_key),
                     "race_key":   race_key,
                     "venue_name": _venue_name(venue_map, grp_sorted["venue_id"].iloc[0]),
                     "race_no":    int(grp_sorted["race_no"].iloc[0]),
@@ -2240,11 +2264,17 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         _n9_no_p3 = sum(1 for c in rank_9s_raw_candidates if c.get("p3_sum_top2") is None)
         _n9_sum_ok = sum(1 for c in rank_9s_raw_candidates
                          if c.get("p3_sum_top2") is not None
-                         and float(c["p3_sum_top2"]) >= RANK_9C_P3_SUM_MIN)
+                         and float(c["p3_sum_top2"]) >= rank_9c_p3_sum_min(c.get("cup_grade")))
+        # グレード別の下限が実際に効いているかをログで見えるようにする（2026-08-16）。
+        # cup_grade が全件 None なら引き上げは一度も発火していない＝取得に失敗している。
+        _n9_big = sum(1 for c in rank_9s_raw_candidates
+                      if (c.get("cup_grade") or 0) >= RANK_9C_BIG_GRADE_MIN)
         click.echo(f"[保存先] {rank_9c_path}  (9C候補 {len(rank_9c_candidates)}件/"
-                   f"{rank_9s_raw_n}件中・上位2車の3着内率合計>={RANK_9C_P3_SUM_MIN} ∧ "
+                   f"{rank_9s_raw_n}件中・上位2車の3着内率合計>="
+                   f"{RANK_9C_P3_SUM_MIN}（GII以上は{RANK_9C_P3_SUM_MIN_BIG}） ∧ "
                    f"相手{RANK_9C_LEGS_MIN}点以上)")
-        click.echo(f"[wt] 9C母集団: p3欠損={_n9_no_p3} 合計条件通過={_n9_sum_ok} "
+        click.echo(f"[wt] 9C母集団: p3欠損={_n9_no_p3} GII以上={_n9_big} "
+                   f"合計条件通過={_n9_sum_ok} "
                    f"→ 相手{RANK_9C_LEGS_MIN}点以上={len(rank_9c_candidates)}")
 
     # ── 7SS候補（波乱軸選出・穴レース検知）は 2026-08-02 に全廃（ユーザー判断） ──

@@ -2396,6 +2396,32 @@ RANK_9C_NE = 9                     # 対象車数（9車ちょうど）
 # 掃引: 1.20 二軸45.3% / **1.30 50.8%** / 1.40 58.2%（いずれも確認窓）。
 # ⚠️ pred_top3 の較正に依存する。**モデルを再学習したら分布を確認して更新すること**。
 RANK_9C_P3_SUM_MIN = 1.30
+# GII/GI/GP（`cup_grade >= 4`）だけ引き上げる下限（2026-08-16）。
+#
+# 【なぜグレードで変えるのか】同じ p3合計でも、上位グレードだけ 1.30-1.40 の帯で
+#   二軸的中が落ちる（9車・2025-01〜2026-08 の実測）:
+#
+#     p3合計帯      GIII            GII/GI
+#     >=1.40        57.5% (n=942)   52.3% (n=151)   -5.2pt
+#     1.30-1.40     42.7% (n=724)   29.1% (n=151)   **-13.5pt (3.3σ)**
+#     1.20-1.30     33.3%           30.1%           -3.2pt
+#     <1.20         27.6%           28.1%           +0.5pt
+#
+#   ずれているのは **1.30-1.40 の帯だけ**で、そこはまさに現行ゲートが通している帯。
+#   2025年 27.0% / 2026年 32.3% と両年で再現する。GII/GI で 1.40 に上げると
+#   その母集団の二軸が **40.7% → 52.3%** になる（件数は 302→151 と半減する）。
+#
+# 🔴 **GIII には広げない。** `cup_grade=3` は GIII（記念）で「一般開催」ではない。
+#    GIII を 1.40 にすると 1,666→942件に半減して +6.4pt しか増えず、
+#    それは全帯で成り立つ単調性の分でしかない（較正の是正ではない）。
+# 🔴 **`cup_grade` が None のときは 1.30 のまま**（従来動作へのフォールバック）。
+#    この列は 2026-08-14 に保存を始めたので、それ以前のレースと取得に失敗した
+#    開催では NULL になる。ここで上げると過去分の再構築が静かに減る。
+RANK_9C_P3_SUM_MIN_BIG = 1.40
+# 引き上げの対象とする開催グレードの下限（GII）。
+# ⚠️ `cup_grade.BIG_EVENT_MIN_GRADE`（=3 GIII）とは**別の値**。あちらは
+#    「大会として扱う下限」で、こちらは「較正がずれている帯」。混ぜないこと。
+RANK_9C_BIG_GRADE_MIN = 4
 # 相手の足切り。7C と同値だが**根拠は別**（9車で掃引した結果）。
 RANK_9C_LEG_P3_MIN = 0.15
 # 相手の最低点数。⚠️ 9車では**このゲートは実質効かない**（上記）。
@@ -2405,14 +2431,36 @@ RANK_9C_BUDGET = RACE_BUDGET
 RANK_9C_UNIT = STAKE_UNIT
 
 
+def rank_9c_p3_sum_min(cup_grade: int | None) -> float:
+    """9C の「上位2車の3着内率合計」の下限を開催グレードから決める。
+
+    GII 以上（`cup_grade >= RANK_9C_BIG_GRADE_MIN`）だけ 1.40、それ以外と
+    **不明（None）は 1.30**。根拠は `RANK_9C_P3_SUM_MIN_BIG` の定義部。
+
+    🔴 `cup_grade` は 2026-08-14 に保存を始めた列で、それ以前は NULL。
+       None を上位グレード側へ倒すと過去分の再構築が静かに減る。
+    """
+    if cup_grade is not None and int(cup_grade) >= RANK_9C_BIG_GRADE_MIN:
+        return RANK_9C_P3_SUM_MIN_BIG
+    return RANK_9C_P3_SUM_MIN
+
+
 def rank_9c_daily_select(candidates: list[dict]) -> list[dict]:
     """9C の選出: 上位2車の3着内率合計が閾値以上 ∧ 相手が3点以上。
 
     軸と相手の**選び方は 7C と同じ**（`rank_7c_select_axis` /
     `rank_7c_select_legs` は車数に依存しない）。違うのは閾値だけ。
 
+    合計の下限は**開催グレードで変わる**（`rank_9c_p3_sum_min`）。
+    候補が `cup_grade` を持たない場合は 1.30 が使われる＝従来と同じ挙動。
+
     ⚠️ 7C の「低配当パターン」除外は**9車では使わない**。あれは相手の点数が
        少ないことを低配当の指標に使う仕組みで、相手が7車ある9車では成立しない。
+
+    ⚠️ **軸のライン組み替え（看板穴埋めの `_axes()`）はここへ持ち込まない。**
+       ゲート通過分で測ると 的中 45.4→45.0% / ROI 85.2→82.2% と改善しない
+       （2026-08-16・n=1,979・3指標とも有意差なし）。上位2車に確率が集中している
+       帯では素の上位2車がそもそも正しく、入れ替えると確度を下げるため。
 
     returns 採用された候補（p3_sum_top2 の降順＝自信のある順）。
     """
@@ -2420,7 +2468,7 @@ def rank_9c_daily_select(candidates: list[dict]) -> list[dict]:
         (c for c in candidates
          if c.get("n_entries") == RANK_9C_NE
          and c.get("p3_sum_top2") is not None
-         and float(c["p3_sum_top2"]) >= RANK_9C_P3_SUM_MIN
+         and float(c["p3_sum_top2"]) >= rank_9c_p3_sum_min(c.get("cup_grade"))
          and len(c.get("legs_9c") or []) >= RANK_9C_LEGS_MIN),
         key=lambda c: -float(c["p3_sum_top2"]),
     )

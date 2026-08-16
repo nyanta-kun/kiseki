@@ -8,7 +8,8 @@
   - 三連単への切替（`trifecta_7c`）は**入れない**（9車で未検証）
   - 低配当パターンの見送り・3着内率の落差カットも**入れない**（同上）
   - 相手の足切りは `RANK_9C_LEG_P3_MIN`(0.15)、点数の下限は `RANK_9C_LEGS_MIN`(3)
-  - 選別は `rank_9c_daily_select`（上位2車の3着内率合計 >= 1.30）
+  - 選別は `rank_9c_daily_select`（上位2車の3着内率合計 >= 1.30。
+    **GII以上の開催だけ 1.40**・2026-08-16。`rank_9c_p3_sum_min` が正本）
 
 🔴 **7C の定数を持ち込んではいけない。** `pred_top3_pct` はレース内合計が3.0に
    正規化されるため、車数が増えると上位2車の合計が構造的に下がる。
@@ -74,6 +75,13 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         date_map = dict(c.execute(
             "SELECT race_key, race_date FROM wt_races WHERE race_date BETWEEN ? AND ?",
             (date_from, date_to)))
+        # 9C のゲート下限はグレードで変わる（GII以上だけ 1.40・2026-08-16）。
+        # ⚠️ `cup_grade` は 2026-08-14 に保存を始めた列で、それ以前は NULL。
+        #    `rank_9c_p3_sum_min(None)` が 1.30 を返すので、古い期間は従来どおり
+        #    再構築される（黙って件数が減らない）。
+        cup_grade_map = dict(c.execute(
+            "SELECT race_key, cup_grade FROM wt_races WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to)))
         rksN = [rk for rk, ne in ne_map.items() if ne and int(ne) == N_CAR]
         fins: dict[str, list[tuple[int, int]]] = {}
         for i in range(0, len(rksN), 900):
@@ -123,6 +131,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "n_entries": N_CAR,
             "axis1": axis1, "axis2": axis2,
             "p3_sum_top2": p3_sum, "legs_9c": legs,
+            "cup_grade": cup_grade_map.get(rk),
             "trio": trio,
             "actual_top3": frozenset(fno for _, fno in fin[:3]),
             "top3_probs": top3_probs,
