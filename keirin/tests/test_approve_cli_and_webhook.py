@@ -283,3 +283,46 @@ def test_cancel_excludes_published():
     sql = " ".join(n.value for n in ast.walk(tree)
                    if isinstance(n, ast.Constant) and isinstance(n.value, str))
     assert "NOT IN (?, ?)" in sql, "deleted と published の2つを除外していません"
+
+
+# ---------------------------------------------------------------------------
+# 失敗の理由が画面まで届くこと（2026-08-16 の実障害）
+# ---------------------------------------------------------------------------
+#
+# 🔴 `_summarize` に `message` が無かったため、Web の Server Action が
+#    `json.message ?? "実行しました"` で埋め、**失敗しているのに
+#    「成功0件 / 失敗1件: 実行しました」**という自己矛盾した表示になっていた。
+#    理由は `results[]` にあるのに画面のどこにも出ず、「公開ボタンが無反応」に
+#    見えた（京王閣12R・netkeirin 側に公開待ちが無く公開に失敗していた）。
+
+def test_summarize_always_has_message():
+    """空・全成功・失敗のどれでも `message` を返す（Web の既定文言に負けない）。"""
+    for results in ([],
+                    [{"race_key": "a", "rank_key": "7S", "ok": True, "message": "ok"}],
+                    [{"race_key": "a", "rank_key": "7S", "ok": False, "message": "ng"}]):
+        assert cli._summarize(results)["message"]
+
+
+def test_summarize_message_carries_failure_reason():
+    out = cli._summarize([
+        {"race_key": "20260816_27_12", "rank_key": "7S", "ok": False,
+         "message": "公開失敗: {'status': 'NG'}"},
+    ])
+    assert out["ok"] is False and out["n_ng"] == 1
+    assert "公開失敗" in out["message"]
+
+
+def test_summarize_folds_duplicate_reasons():
+    """同じ理由が並んだときに1行へ畳む（一括操作でメッセージが溢れないため）。"""
+    out = cli._summarize([
+        {"race_key": f"20260816_27_{i:02d}", "rank_key": "7S", "ok": False,
+         "message": "発走15分前を過ぎているため操作できません"} for i in (1, 2, 3)
+    ])
+    assert out["message"] == "発走15分前を過ぎているため操作できません（3件）"
+
+
+def test_summarize_success_message_is_not_a_failure_reason():
+    out = cli._summarize([
+        {"race_key": "a", "rank_key": "7S", "ok": True, "message": "1件を公開しました"},
+    ])
+    assert out["ok"] is True and "件" in out["message"]
