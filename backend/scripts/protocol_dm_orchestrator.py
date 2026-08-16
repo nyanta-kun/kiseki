@@ -326,7 +326,80 @@ def main() -> int:
     log(f"OVERALL: saved={results['total_saved']} "
         f"skipped={results['total_skipped']} failed={results['total_failed']}")
 
-    return report_unrecovered(args.courses.split(",") if args.courses else [])
+    # ⚠️ saved/skipped はファイル数であって DB 反映数ではない。
+    # 「今回の対象日が実際に埋まったか」と「終了済みの日に取り残しがないか」を別々に見る。
+    rc_now = report_processed_coverage(by_date)
+    rc_past = report_unrecovered(args.courses.split(",") if args.courses else [])
+    return 1 if (rc_now or rc_past) else 0
+
+
+def report_processed_coverage(by_date: dict[str, list[str]]) -> int:
+    """**今回処理した日**について、DM が実際に DB へ入ったかを確かめる。
+
+    Why:
+      `report_unrecovered()` は終了済みの開催日しか見ない（未来日の欠損は
+      「JV-Next がまだ公開していない」だけのことが多いため）。だが 2026-08-16 は
+      **ファイルは前夜に取得済み（saved=11）なのに DB 充足率が 32/491 = 6.5%**
+      という状態で当日を迎えた。原因は公開遅れではなく、
+      **DM 取り込みが馬番でマッチするのに枠順（race_entries.horse_number）が
+      0 のままだった**こと。この型は `report_unrecovered()` では原理的に捕まらない
+      （memory: jra_entries_dm_cascade_2026_08_16）。
+
+      そこで「今回対象にした日」に限り、当日・未来日でも充足率を出す。
+      枠順が未確定なら原因をそう名指しする——待てば直るのか、
+      人が手を入れるべきなのかが切り分けられないと監視の意味がない。
+    """
+    from sqlalchemy import create_engine, text
+
+    from config import settings
+
+    if not by_date:
+        return 0
+    db_url = settings.database_url_sync
+    if not db_url:
+        log("WARNING: database_url_sync 未設定のため充足率チェックをスキップ")
+        return 0
+
+    sql = text("""
+        SELECT r.date,
+               COUNT(*)                                             AS n,
+               COUNT(re.jvan_time_dm)                               AS n_dm,
+               COUNT(*) FILTER (WHERE COALESCE(re.horse_number, 0) > 0) AS n_frame
+        FROM keiba.races r
+        JOIN keiba.race_entries re ON re.race_id = r.id
+        WHERE r.date = ANY(:dates)
+        GROUP BY r.date
+        ORDER BY r.date
+    """)
+    try:
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"dates": sorted(by_date.keys())}).fetchall()
+    except Exception as e:  # 監視のための問い合わせで本処理を落とさない
+        log(f"WARNING: 充足率チェックに失敗: {e}")
+        return 0
+
+    rc = 0
+    for d, n, n_dm, n_frame in rows:
+        pct = (n_dm / n * 100) if n else 0.0
+        if pct >= 90.0:
+            log(f"DM coverage {d}: {n_dm}/{n} ({pct:.1f}%) OK")
+            continue
+        rc = 1
+        log(f"WARNING: DM coverage {d}: {n_dm}/{n} ({pct:.1f}%) — 低すぎます")
+        if n_frame < n:
+            # ここが今回の型。順序を間違えると何度 recheck しても入らない
+            log(f"  原因候補: 枠順が未確定（horse_number>0 は {n_frame}/{n}）。"
+                "DM は馬番でマッチするため、**枠順を入れてから** "
+                "jvnext_dm_importer --recheck-dates を回し直すこと")
+            log("  1) ssh windows-vm 'powershell -NoProfile -Command \"Set-Content -Path "
+                "\\\"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\\\" -Value "
+                f"\\\"fetch_entries_rt.py --date {d}\\\" -Encoding ASCII\"'")
+            log("     ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'")
+        log("  2) ssh windows-vm \"C:\\Python312-32\\python.exe "
+            f"C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates {d}\"")
+        log(f"  3) 指数を再算出: jra_calculate_trigger.sh {d}")
+    return rc
 
 
 def report_unrecovered(courses: list[str]) -> int:
