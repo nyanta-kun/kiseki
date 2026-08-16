@@ -1501,6 +1501,33 @@ export async function fetchKeirinSoldPerformance(
  *                                   ↘ deleted（取消・論理削除）
  *
  * 🔴 `published` は不可逆（netkeirin の文言「公開後は修正できなくなります」）。 */
+/** 入稿1件の確定成績。**未確定は null**（0円と区別する）。 */
+export type KeirinProposalResult = {
+  bet: number;
+  payout: number;
+  /** 買い目が当たった。 */
+  hit: boolean;
+  /** 払戻 >= 賭け金。🔴 **netkeirin の表示的中率はこちら**（ガミを不的中と数える）。 */
+  net_hit: boolean;
+};
+
+/** 当日サマリー。netkeirin の「回収率 / 的中率 / 予想数 / 購入 / 払戻 / 収支」に合わせる。
+ *
+ * 🔴 **集計は確定した分だけ**（netkeirin と同じ）。`n_races` も確定数で、
+ *    未確定は `n_pending` に分けてある。混ぜると回収率が誤読される。 */
+export type KeirinProposalSummary = {
+  /** 予想数＝**確定した**レース数（netkeirin と同じ数え方）。 */
+  n_races: number;
+  /** まだ確定していないレース数。**分母には入らない**が画面には必ず出す。 */
+  n_pending: number;
+  bet: number;
+  payout: number;
+  balance: number;
+  recovery_rate: number | null;
+  /** ガミ（払戻<投資）を不的中と数える（netkeirin の表示と同じ）。 */
+  hit_rate: number | null;
+};
+
 export type KeirinProposalStatus = "proposed" | "submitted" | "published" | "deleted";
 
 export interface KeirinProposalEntry {
@@ -1573,6 +1600,8 @@ export interface KeirinProposal {
   gami_risk: boolean | null;
   /** ガミ判定に下限側を使えたか。false なら板由来＝楽観的な判定。 */
   gami_risk_is_conservative?: boolean;
+  /** 確定成績。**未確定（発走前・確定待ち）は null**。 */
+  result?: KeirinProposalResult | null;
   /** 最低払戻・最高払戻・期待値に予測オッズが混ざっているか。
    *  🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。 */
   odds_has_predicted?: boolean;
@@ -1590,6 +1619,8 @@ export interface KeirinProposalsResponse {
    *  ⚠️ netkeirin の画面から人が直接公開すると submitted のまま取り残されるので
    *     実数と食い違いうる。netkeirin 側の実数は別 API で取る。 */
   n_unpublished?: number;
+  /** 当日サマリー（netkeirin の表示と項目を合わせたもの）。 */
+  summary?: KeirinProposalSummary;
   items: KeirinProposal[];
 }
 

@@ -182,3 +182,59 @@ def test_publish_button_covers_proposed():
     src = _review_src()
     assert '(p.status === "proposed" || p.status === "submitted")' in src, (
         "公開ボタンが公開待ちだけにしか出ていません")
+
+
+# ── 当日サマリー（2026-08-16・netkeirin と数字を合わせる）──────────────
+
+
+def test_review_summary_is_settled_only():
+    """🔴 サマリーは**確定した分だけ**を数える（netkeirin と同じ）。
+
+    未確定を購入へ混ぜると発走前の分だけ分母が膨らみ、回収率が 0% 近くに見えて
+    「負けている」と誤読する。実測（2026-08-16 09:46）で netkeirin 画面が
+    「予想数 1レース / 購入 10,000円 / 回収率 0.0%」のとき、確定分だけで数えた
+    こちらも 1件・10,000円で一致した（全35件で数えると 350,000円になる）。
+    """
+    src = Path(__file__).resolve().parents[1] / "src" / "api" / "keirin_router.py"
+    code = src.read_text(encoding="utf-8")
+    assert 'settled_items = [x for x in sold if x["result"] is not None]' in code
+    assert '"n_races": len(settled_items)' in code, "予想数が確定数になっていません"
+    assert 'bet = sum(x["result"]["bet"] for x in settled_items)' in code, (
+        "購入に未確定が混ざっています")
+
+
+def test_review_summary_keeps_pending_visible():
+    """未確定数を落とさない（分母から外すぶん、必ず画面へ出す）。"""
+    code = (Path(__file__).resolve().parents[1] / "src" / "api" / "keirin_router.py"
+            ).read_text(encoding="utf-8")
+    assert '"n_pending": len(sold) - len(settled_items)' in code
+    src = _review_src()
+    assert "未確定" in src, "画面に未確定件数を出していません"
+
+
+def test_review_summary_hit_rate_excludes_gami():
+    """🔴 的中率はガミ（払戻<投資）を不的中と数える（netkeirin の表示と同じ）。"""
+    code = (Path(__file__).resolve().parents[1] / "src" / "api" / "keirin_router.py"
+            ).read_text(encoding="utf-8")
+    assert 'x["result"]["net_hit"]' in code, "素の的中率で数えています"
+
+
+def test_review_result_is_null_when_unsettled():
+    """🔴 未確定は None。0円と区別する（発走前に「払戻0円」は外れに見える）。"""
+    code = (Path(__file__).resolve().parents[1] / "src" / "api" / "keirin_router.py"
+            ).read_text(encoding="utf-8")
+    assert 'it["result"] = None if got is None else' in code
+    assert "未確定" in _review_src()
+
+
+def test_published_is_excluded_from_cancel_counts():
+    """🔴 公開済みは取消できない（netkeirin の delete は公開待ちまで）。
+
+    全件・場別の**両方**の件数から外すこと。片方だけだと押した後に
+    「成功N件/失敗M件」で初めて分かる。
+    """
+    src = _review_src()
+    assert src.count('r.status !== "deleted" && r.status !== "published"') >= 1, (
+        "場別の取消件数から公開済みを外していません")
+    assert src.count('p.status !== "deleted" && p.status !== "published"') >= 2, (
+        "全件取消の件数か取消ボタンから公開済みを外していません")

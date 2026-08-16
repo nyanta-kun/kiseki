@@ -23,7 +23,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronRight, Settings } from "lucide-react";
 
-import type { KeirinProposal, KeirinProposalEntry } from "@/lib/api";
+import type {
+  KeirinProposal, KeirinProposalEntry, KeirinProposalSummary,
+} from "@/lib/api";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
 
 import {
@@ -218,8 +220,16 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
 }) {
   const [open, setOpen] = useState(false);
   const d = p.bet_detail;
+  // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
+  //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
+  //    取消は淡色＋取り消し線、自信ありは黄色い枠と背景。
+  const cardCls = p.status === "deleted"
+    ? "rounded border border-gray-200 p-3 opacity-50 line-through dark:border-gray-700"
+    : p.is_confident
+      ? "rounded border-2 border-yellow-400 bg-yellow-50 p-3 dark:border-yellow-500 dark:bg-yellow-950/30"
+      : "rounded border border-gray-200 p-3 dark:border-gray-700";
   return (
-    <div className="rounded border border-gray-200 p-3 dark:border-gray-700">
+    <div className={cardCls}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">
           {p.venue_name}
@@ -366,6 +376,25 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         <div>
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
+        {/* 🔴 確定成績。**未確定は「—」**で 0円と区別する（発走前に「払戻0円」と
+            出ると外れたように見える）。ガミ（当たったが払戻<投資）も明示する。 */}
+        <div>
+          <span className="text-gray-500">結果</span>{" "}
+          {p.result == null ? (
+            <span className="text-gray-400">未確定</span>
+          ) : p.result.net_hit ? (
+            <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+              ✓ {yen(p.result.payout)}
+            </span>
+          ) : p.result.hit ? (
+            <span className="font-semibold text-amber-600 dark:text-amber-400"
+              title="当たりましたが払戻が投資を下回りました（ガミ）">
+              △ {yen(p.result.payout)}
+            </span>
+          ) : (
+            <span className="text-gray-500">✗ 不的中</span>
+          )}
+        </div>
         <div>
           {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
               統一したもの）。板由来の `expected_value` は夜開催で板が育っておらず
@@ -451,12 +480,62 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   );
 }
 
-export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 }: {
+/** 当日サマリー。**netkeirin の表示と数字を合わせる**（回収率/的中率/予想数/購入/払戻/収支）。
+ *
+ * 🔴 **集計は確定した分だけ**（netkeirin の予想家成績と同じ）。未確定を購入へ
+ *    混ぜると発走前の分だけ分母が膨らみ、回収率が 0% 近くに見えて「負けている」と
+ *    誤読する。代わりに**予想数の横へ「未確定N」を併記**する。
+ * 🔴 的中率はガミ（払戻<投資）を不的中と数える（netkeirin の表示と同じ）。
+ */
+function DaySummary({ s }: { s: KeirinProposalSummary }) {
+  const cell = "border border-gray-200 px-3 py-1.5 dark:border-gray-700";
+  const head = `${cell} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300`;
+  const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}%`);
+  const yenS = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString()}円`;
+  return (
+    <table className="mb-3 w-full max-w-2xl border-collapse text-sm tabular-nums">
+      <tbody>
+        <tr>
+          <th className={head}>回収率</th>
+          <td className={`${cell} text-center`}>{pct(s.recovery_rate)}</td>
+          <th className={head}>購入</th>
+          <td className={`${cell} text-right`}>{s.bet.toLocaleString()}円</td>
+        </tr>
+        <tr>
+          <th className={head}>的中率</th>
+          <td className={`${cell} text-center`}>{pct(s.hit_rate)}</td>
+          <th className={head}>払戻</th>
+          <td className={`${cell} text-right`}>{s.payout.toLocaleString()}円</td>
+        </tr>
+        <tr>
+          <th className={head}>予想数</th>
+          <td className={`${cell} text-center`}>
+            {s.n_races}レース
+            {s.n_pending > 0 && (
+              <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">
+                （未確定{s.n_pending}）
+              </span>
+            )}
+          </td>
+          <th className={head}>収支</th>
+          <td className={`${cell} text-right ${s.balance < 0
+            ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+            {yenS(s.balance)}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+export default function ReviewClient({ date, items, nProposed, nUnpublished = 0, summary }: {
   date: string;
   items: KeirinProposal[];
   nProposed: number;
   /** 未公開（入稿済だが公開していない）件数。 */
   nUnpublished?: number;
+  /** 当日サマリー（netkeirin と項目を合わせたもの）。 */
+  summary?: KeirinProposalSummary;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -488,8 +567,11 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
   //    商品を消したつもりで記録だけ消す事故につながる。
   const [forceTargets, setForceTargets] = useState<Record<string, boolean>>({});
   // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
+  // 🔴 **公開済みは取消できない**（netkeirin の `delete` が効くのは公開待ちまで）。
+  //    件数に混ぜると一括取消が必ず一部失敗し、明細が読めなくなる。
   const nAliveAll = useMemo(
-    () => items.filter((p) => p.status !== "deleted" && !isClosed(p.start_at, nowSec)).length,
+    () => items.filter((p) => p.status !== "deleted" && p.status !== "published"
+      && !isClosed(p.start_at, nowSec)).length,
     [items, nowSec],
   );
   // 一括承認できる＝まだ送っていない入稿案（proposed）で、かつ締切前。
@@ -734,6 +816,8 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
         </p>
       )}
 
+      {summary && summary.n_races > 0 && <DaySummary s={summary} />}
+
       {items.length === 0 && (
         <p className="text-sm text-gray-500">この日の入稿はありません。</p>
       )}
@@ -746,9 +830,12 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0 
         //    押した後に「成功3件/失敗2件」と出て初めて分かることになる。
         const nProp = races.filter(
           (r) => r.status === "proposed" && !isClosed(r.start_at, nowSec)).length;
-        // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）で、かつ締切前。
+        // 取消できる＝まだ生きている下書き（未入稿・入稿済）で、かつ締切前。
+        // 🔴 **公開済みは含めない**（2026-08-16）。netkeirin の `delete` が効くのは
+        //    公開待ちまでで、含めると場単位の取消が必ず一部失敗する。
         const nAlive = races.filter(
-          (r) => r.status !== "deleted" && !isClosed(r.start_at, nowSec)).length;
+          (r) => r.status !== "deleted" && r.status !== "published"
+            && !isClosed(r.start_at, nowSec)).length;
         const isOpen = !!expanded[venue];
         return (
           <section key={venue} className="mb-6">

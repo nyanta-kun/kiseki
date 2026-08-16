@@ -2199,7 +2199,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     for e in ent_rows:
         by_race.setdefault(e["race_key"], []).append(dict(e))
 
-    items = []
+    items: list[dict[str, Any]] = []
     for r in rows:
         detail = _parse_bet_detail(r["bet_detail"])
         lines = detail["lines"] if detail else []
@@ -2278,8 +2278,56 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     #    こちらは `submitted` のまま取り残されるので、実数と食い違いうる。
     #    netkeirin 側の実数は `/keirin/publish-wait` で別に取れる。
     n_unpublished = sum(1 for x in items if x["status"] == STATUS_SUBMITTED)
+
+    # ── 確定成績（2026-08-16・ユーザー要望）──────────────────────────
+    # 🔴 **`picks_history` からは出せない。** ランクのゲートを通っていない入稿
+    #    （手動・看板の穴埋め）は行が立たないので、売った商品の半分が欠ける
+    #    （実測 入稿472件中250件）。入稿の原本（`bet_detail`）から採点する
+    #    `_fetch_settled_submissions` を使う（`/sold-performance` と同じ経路）。
+    day = Date.fromisoformat(target)
+    settled, _ = await _fetch_settled_submissions(
+        db, day, day, None, only_missing_from_picks=False)
+    by_key = {(x["race_key"], x["rank_key"]): x for x in settled}
+    for it in items:
+        # ⚠️ 変数名に `r` を使わない。上の `for r in rows` が RowMapping で
+        #    束縛済みなので、同じ名前だと mypy が代入不能として落ちる。
+        got = by_key.get((it["race_key"], it["rank_key"]))
+        # 未確定（発走前・確定待ち）は None。0円と区別する。
+        it["result"] = None if got is None else {
+            "bet": got["bet"], "payout": got["payout"],
+            "hit": got["hit"],
+            # 🔴 netkeirin の表示的中率は**ガミを不的中と数える**ほう。
+            "net_hit": got["net_hit"],
+        }
+
+    # ── 当日サマリー（netkeirin の表示と数字を合わせる）─────────────────
+    # 🔴 母集団は **netkeirin へ送ったもの**（submitted / published）。入稿案は
+    #    まだ売っていないので入れない。取消も入れない。
+    # 🔴 **集計は「確定した分」だけ**。netkeirin の予想家成績も確定分しか数えない
+    #    （2026-08-16 実測: netkeirin 画面が「予想数 1レース / 購入 10,000円」の
+    #     とき、こちらの確定済みも 1件・10,000円で一致した）。
+    #    未確定を購入に混ぜると、発走前の分だけ分母が膨らんで回収率が 0% 近くに
+    #    見える＝「負けている」と誤読する。代わりに **未確定数を併記**する。
+    sold = [x for x in items if x["status"] in (STATUS_SUBMITTED, STATUS_PUBLISHED)]
+    settled_items = [x for x in sold if x["result"] is not None]
+    bet = sum(x["result"]["bet"] for x in settled_items)
+    payout = sum(x["result"]["payout"] for x in settled_items)
+    n_net_hit = sum(1 for x in settled_items if x["result"]["net_hit"])
+    summary = {
+        # 予想数＝確定した数（netkeirin と同じ）。
+        "n_races": len(settled_items),
+        # まだ確定していない数。**分母には入れない**が画面には必ず出す。
+        "n_pending": len(sold) - len(settled_items),
+        "bet": bet,
+        "payout": payout,
+        "balance": payout - bet,
+        "recovery_rate": (100.0 * payout / bet) if bet else None,
+        # 🔴 netkeirin の表示的中率は**ガミを不的中と数える**ほう。
+        "hit_rate": (100.0 * n_net_hit / len(settled_items)) if settled_items else None,
+    }
     return JSONResponse(content={"date": target, "n_proposed": n_proposed,
-                                 "n_unpublished": n_unpublished, "items": items})
+                                 "n_unpublished": n_unpublished,
+                                 "summary": summary, "items": items})
 
 
 class ApprovalIn(BaseModel):
