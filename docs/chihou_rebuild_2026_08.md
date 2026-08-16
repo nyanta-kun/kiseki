@@ -1457,6 +1457,38 @@ look-ahead にならない。層別は入力ではなくラベル側の操作）
 インブリードは「地力の事前分布」ではなく構造的特徴なので性質は違うが、
 投資判断は「取得コスト × 2連敗の事前確率」で行うべき。
 
+### 17.12 5代系図の受け皿を作った（2026-08-16・夜間取得待ち）
+
+**netkeiba は不要**の見込み。JV-Link の HN（繁殖馬マスタ）が親コードを持っており、
+繁殖登録番号で何代でも再帰できる。
+
+| 情報源 | 結果 |
+|---|---|
+| UmaConn | ❌ BLOD 自体を配信していない（option 1/2/3 すべて該当データなし） |
+| **JV-Link HN** | ✅ 父馬繁殖登録番号(pos230) / 母馬繁殖登録番号(pos240) を持つ（`docs/jvdata-spec.md` L541-542） |
+
+`parse_hn` は既に両方を抽出しているのに `keiba.breeding_horses` が
+`breeding_code / name / name_en` の3列しか持たず**捨てていた**
+（`pedigrees` が3代14頭のうち3頭しか持たないのと同じ型）。
+繁殖馬マスタは種牡馬・繁殖牝馬とも **99% カバー**（父 2,853/2,871・母 39,881/39,925）。
+
+**実施済み**:
+
+- alembic `202608161100_shared`: `sire_breeding_code` / `dam_breeding_code` /
+  `blood_code` / `birth_year` / `sex_code` を追加（親コードに索引）。**本番適用済み**
+- importer: 親コードを COALESCE で保存
+- Windows: `kiseki-JVLink-BldnFull`（22:45）/ `-Stop`（08:00）を登録。
+  `BLDN_FULL_completed.txt` は退避済み（571行）→ 今夜から再取得が走る
+
+🔴 **本番デプロイが権限で一度落ちた**。`keiba.breeding_horses` **だけ** owner が
+`postgres` で、他 65 テーブルは全て `hrdb_user` だった（このテーブルだけ migration を
+経ずに作られていた）。`ALTER TABLE ... OWNER TO hrdb_user` で揃えて解消。
+**1テーブルだけ所有者が違う状態は今後の migration も落とす地雷**なので、
+新しいテーブルを手で作らないこと。
+
+⚠️ 次の朝にやること: `keiba.breeding_horses` の親コード充足率を確認する。
+高ければ N代ツリーを組んでインブリード特徴へ。低ければ 5代は netkeiba へ切り替え。
+
 ---
 
 *作成: 2026-08-13 / ブランチ `feat/chihou-upset-model`*
