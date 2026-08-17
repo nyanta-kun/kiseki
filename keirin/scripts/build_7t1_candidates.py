@@ -76,6 +76,7 @@ from src.preprocessing.feature_wt import (  # noqa: E402
 )
 from src.strategy_wt import (  # noqa: E402
     RANK_7T1_NE, RANK_7T1_TARGET_PAYOUT, rank_7t1_daily_select, rank_7t1_is_cross_line,
+    rank_7t1_pl_prob,
     rank_7t1_select, rank_7t1_stakes,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
@@ -205,6 +206,12 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             "legs": legs,
             "stakes": stakes,
             "bet_amount": sum(stakes.values()),
+            # 期待回収倍率。**日次上限（RANK_7T1_DAILY_CAP）の順位づけに使う**ので
+            # 朝の時点で確定させる（入稿側で再計算しない＝根拠を二重に持たない）。
+            "ev": round(sum(
+                (rank_7t1_pl_prob(pw, leg) or 0.0)
+                * float(pred_odds[tuple(int(x) for x in leg.split("-"))])
+                * stakes[leg] for leg in legs) / max(sum(stakes.values()), 1), 4),
         })
 
     if n_no_board:
