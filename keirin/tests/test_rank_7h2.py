@@ -322,3 +322,57 @@ def test_daily_select_drops_missing_share():
     c["entropy"] = 1.95
     c.pop("honmei_share", None)
     assert rank_7h2_daily_select([c]) == []
+
+
+# ── 6. 候補生成が三連単の消滅で 0 件にならない ──────────────────────────
+
+
+def test_candidate_rows_survive_empty_trifecta():
+    """🔴 **`legs_tf` が空でも候補行が出ること**（2026-08-18 の三連複一本化）。
+
+    `build_7h2_candidates` は以前 `if not trio or not tf: continue` と
+    `if not u_trio or not u_tf: continue` で弾いていた。三連単を止めた時点で
+    `tf` は常に空なので、そのままだと **7H2 の候補が 1 件も出ないまま
+    静かに終わる**（例外も出ない）。7H1 を三連単一本化したときに
+    `legs_trio` を見ていて同じ壊れ方をしたことがある。
+    """
+    from scripts.build_7h2_candidates import rows_from_preds
+
+    rk = "20260810_11_01"
+    preds = {rk: {f: (TOP3[f], WIN[f]) for f in TOP3}}
+    ents = {rk: [{"frame_no": f, "name": f"車{f}", "prediction_mark": MARKS[f]}
+                 for f in sorted(TOP3)]}
+    meta = {rk: {"race_date": "2026-08-10", "venue_name": "松戸", "race_no": 1,
+                 "start_at": "2026-08-10 11:00", "race_type": "予選"}}
+
+    rows = rows_from_preds(preds, ents, meta)
+    assert len(rows) == 1, "三連単が空になっただけで候補が消えている"
+    r = rows[0]
+    assert r["legs_trio"], "三連複の目が空"
+    assert r["legs_tf"] == [], "三連単は破棄済みのはず"
+    assert r["stake_trio"] > 0 and r["bet_amount"] > 0
+    a1, a2, _ = rank_7h2_axes(WIN, TOP3, MARKS)
+    assert (r["axis1"], r["axis2"]) == (a1, a2), "軸が rank_7h2_axes と食い違う"
+
+
+def test_candidate_budget_goes_entirely_to_trio():
+    """三連単を止めた枠が三連複へ回っていること。
+
+    止める前は三連複が 3,000円（10点×300円）しか持てず、**33.3倍**取らないと
+    ガミだった。一本化の効果はここに集約されるので、数値で固定しておく。
+    """
+    from scripts.build_7h2_candidates import rows_from_preds
+
+    rk = "20260810_11_01"
+    preds = {rk: {f: (TOP3[f], WIN[f]) for f in TOP3}}
+    ents = {rk: [{"frame_no": f, "name": f"車{f}", "prediction_mark": MARKS[f]}
+                 for f in sorted(TOP3)]}
+    meta = {rk: {"race_date": "2026-08-10", "venue_name": "松戸", "race_no": 1,
+                 "start_at": "2026-08-10 11:00", "race_type": "予選"}}
+    r = rows_from_preds(preds, ents, meta)[0]
+
+    n = len(r["legs_trio"])
+    assert r["stake_tf"] == 0
+    assert r["stake_trio"] * n == r["bet_amount"]
+    assert r["bet_amount"] > RANK_7H2_BUDGET_CAP - RANK_7H2_TF_UNIT * n, (
+        "三連単の枠が三連複へ回っていない")

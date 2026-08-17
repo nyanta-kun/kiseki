@@ -18,7 +18,7 @@
    （**連帯ヘッド `ptop2` は不要**。軸2も三連複プールも 3着内率で決まる）
 3. `strategy_wt.rank_7h2_entropy()` で3着内率の正規化エントロピーと、
    `rank_7h2_honmei_share()` で◎の3着内率シェア
-4. `strategy_wt.rank_7h2_build_legs()` で買い目（三連単F 倍購入10点 + 三連複BOX）
+4. `strategy_wt.rank_7h2_build_legs()` で買い目（**三連複BOX のみ**・2026-08-18〜）
 5. `strategy_wt.rank_7h2_daily_select()` で絶対閾値により選別
 
 ## 使い方
@@ -53,7 +53,8 @@ from src.preprocessing.feature_wt import (  # noqa: E402
     build_features_wt, load_raw_data_wt, prepare_X,
 )
 from src.strategy_wt import (  # noqa: E402
-    RANK_7H2_NE, rank_7h2_build_legs, rank_7h2_daily_select, rank_7h2_entropy,
+    RANK_7H2_NE, rank_7h2_axes, rank_7h2_build_legs, rank_7h2_daily_select,
+    rank_7h2_entropy,
     rank_7h2_honmei_share, rank_7h2_stakes,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
@@ -97,7 +98,17 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str) -> list
     preds: dict[str, dict[int, tuple[float, float]]] = defaultdict(dict)
     for rk, fno, a, b in zip(df["race_key"], df["frame_no"], pp3, ppw):
         preds[rk][int(fno)] = (float(a), float(b))
+    return rows_from_preds(preds, ents_all, meta_all)
 
+
+def rows_from_preds(preds: dict[str, dict[int, tuple[float, float]]],
+                    ents_all: dict[str, list[dict]],
+                    meta_all: dict[str, dict]) -> list[dict]:
+    """予測から 7H2 の候補行を組む（DB に触らない・テスト対象）。
+
+    `build()` から切り出してあるのは、**三連単を破棄したあとも候補が出ること**を
+    テストで固定するため。ここが `legs_tf` の有無で弾くと 7H2 が丸ごと 0 件になる。
+    """
     rows: list[dict] = []
     for rk, pr in preds.items():
         ents = ents_all.get(rk)
@@ -109,16 +120,23 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str) -> list
         marks = {int(e["frame_no"]): e.get("prediction_mark") for e in ents}
         marks = {f: (None if v is None else int(v)) for f, v in marks.items()}
         trio, tf = rank_7h2_build_legs(win, top3, marks)
-        if not trio or not tf:
+        # 🔴 **`tf` の有無で弾かないこと**（2026-08-18 の三連複一本化）。
+        #    以前は2券種だったので `not tf` で落としていたが、いまは `tf` が常に空。
+        #    そのまま残すと候補が**1件も出ないまま静かに終わる**（7H1 が三連単
+        #    一本化したとき `legs_trio` を見ていて同じ壊れ方をした）。
+        if not trio:
             continue
         u_trio, u_tf, total = rank_7h2_stakes(len(trio), len(tf))
-        if not u_trio or not u_tf:
+        if not u_trio:
             continue
         ax = sorted((f for f in win if marks.get(f) == 0), key=lambda f: -win[f])
         m = meta_all[rk]
         name_of = {int(e["frame_no"]): e.get("name") for e in ents}
-        a1 = int(tf[0].split("-")[0])
-        a2 = int(tf[0].split("-")[1])
+        # 軸は三連単の目からではなく `rank_7h2_axes` から取る（tf は空になりうる）。
+        _ax = rank_7h2_axes(win, top3, marks)
+        if _ax is None:
+            continue
+        a1, a2 = _ax[0], _ax[1]
         rows.append({
             "race_key": rk, "race_date": m["race_date"],
             "venue_name": m.get("venue_name"), "race_no": m.get("race_no"),
@@ -171,8 +189,7 @@ def main() -> None:
         print(f"  {c['venue_name']}{c['race_no']}R  "
               f"軸{c['axis1']}({c['axis1_name']})-{c['axis2']}({c['axis2_name']}) "
               f"エントロピー{c['entropy']:.4f} ◎シェア{c['honmei_share']:.4f}  "
-              f"三連複{len(c['legs_trio'])}点×{c['stake_trio']}円 + "
-              f"三連単{len(c['legs_tf'])}点×{c['stake_tf']}円 = {c['bet_amount']}円")
+              f"三連複{len(c['legs_trio'])}点×{c['stake_trio']}円 = {c['bet_amount']}円")
 
 
 if __name__ == "__main__":
