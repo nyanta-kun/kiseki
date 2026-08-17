@@ -198,7 +198,7 @@ type CumMode = "period" | "month" | "year";
 // 2026-08-05〜: 同じ "7SS" ラベルで別戦略（entropy不合格×軸2車が同一ライン）を
 // 新設したため復活（keirin PR#10。旧7SSとは無関係・picks_historyの旧行は0件）。
 type RankFilter =
-  | "all" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C"
+  | "all" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"
   | "7T1";
 
 // 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
@@ -209,6 +209,7 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）
   { key: "7B", label: "7B" },
   { key: "9C", label: "9C" },
+  { key: "7M1", label: "7M1" },
   // 7H1（穴推奨・本命バスト型・三連単F+三連複BOXの2券種・2026-08-06導入）。
   // 的中率重視のS/A/Bとは系統が違うため末尾に置く。
   { key: "7H1", label: "7H1" },

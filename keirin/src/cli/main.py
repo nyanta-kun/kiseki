@@ -1284,6 +1284,7 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         rank_7c_daily_select, rank_7c_select_axis, rank_7c_select_legs,
         rank_7c_is_lowpay_pattern, rank_7c_use_trifecta, rank_7c_buy_plan,
         RANK_7C_P3_SUM_MIN, RANK_7C_LEGS_MIN,
+        rank_7m1_daily_select, rank_7m1_select_legs, RANK_7M1_LEGS,
         rank_7ss_daily_select, rank_7ss_same_line,
         RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, RANK_9C_P3_SUM_MIN,
         rank_9c_daily_select, ss_policy,
@@ -1994,6 +1995,18 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                         if sel_7c else None),
                     "legs_7c": legs_7c,
                     "lowpay_pattern": lowpay_7c,
+                    # ↓ 7M1用（中間層・2026-08-17）。
+                    # 🔴 `wt_overlap_n` は**3ヘッド軸**との重なりなので流用できない。
+                    #    7M1 は 7C と同じ軸（pred_top3 上位2車）で印一致を判定する。
+                    #    取り違えると母集団がずれる（実測で約2割食い違う）。
+                    "wt_overlap_7c_n": (
+                        rank_7s_wt_overlap_n(sel_7c[0], sel_7c[1], wt_honmei, wt_taikou)
+                        if sel_7c else None),
+                    # 相手は軸を除く5車の下位3車（全体では指数5〜7番手）から
+                    # 3着内率で足切りしたもの（最低2点）。🔴 足切りは「下位3車を
+                    # 採った後」に掛ける。5車全体からの選抜に使うと帯が消える。
+                    "legs_7m1": (rank_7m1_select_legs(others_7c, top3_probs)
+                                 if sel_7c else []),
                     # 三連単への切替（2026-08-09）。判定は朝の生予測で確定させ、
                     # 入稿側は**この真偽値だけ**を読む。入稿時に win_probs から
                     # 再判定すると、朝の予想（Web・Discord）と入稿の買い目が
@@ -2164,6 +2177,40 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
             click.echo(f"[wt][警告] 7C: p3_sum_top2 が算出できない候補が {_n_no_p3}件 "
                        f"あります（pred_top3 の欠損）。", err=True)
         click.echo(f"[wt] 軸2車が同一ライン: {_n_same}件 / {len(rank_7s_raw_candidates)}件")
+
+        # ── 7M1候補（中間層・2026-08-17新設）──
+        # 7C の裏返し（混戦）× 公式印と不一致。生候補は 7C と同じプールを使う。
+        rank_7m1_candidates = rank_7m1_daily_select(rank_7s_raw_candidates)
+        rank_7m1_suffix = ("_night_s7m1_candidates.json" if is_night
+                           else "_s7m1_candidates.json")
+        rank_7m1_path = (Path(output_path).parent
+                         / f"wave_picks_wt_{target_date}{rank_7m1_suffix}")
+        with open(rank_7m1_path, "w", encoding="utf-8") as f:
+            json.dump(rank_7m1_candidates, f, ensure_ascii=False, indent=2)
+        # 7C と同じ理由で母集団の内訳を必ず出す。とくに **印の欠損**は
+        # 7M1 では fail-closed（買わない）なので、黙って0件になりうる。
+        _n_no_mark = sum(1 for c in rank_7s_raw_candidates
+                         if c.get("wt_overlap_7c_n") is None)
+        _n_konsen = sum(1 for c in rank_7s_raw_candidates
+                        if c.get("p3_sum_top2") is not None
+                        and float(c.get("p3_sum_top2_cal") or c["p3_sum_top2"])
+                        < RANK_7C_P3_SUM_MIN)
+        _n_disagree = sum(1 for c in rank_7s_raw_candidates
+                          if c.get("wt_overlap_7c_n") is not None
+                          and int(c["wt_overlap_7c_n"]) < 2
+                          and c.get("p3_sum_top2") is not None
+                          and float(c.get("p3_sum_top2_cal") or c["p3_sum_top2"])
+                          < RANK_7C_P3_SUM_MIN)
+        click.echo(f"[保存先] {rank_7m1_path}  (7M1候補 {len(rank_7m1_candidates)}件/"
+                   f"{len(rank_7s_raw_candidates)}件中・合計<{RANK_7C_P3_SUM_MIN} ∧ "
+                   f"印不一致 ∧ 相手{RANK_7M1_LEGS}点/ペーパー検証)")
+        click.echo(f"[wt] 7M1母集団: 混戦={_n_konsen} → 印不一致={_n_disagree} "
+                   f"→ 相手{RANK_7M1_LEGS}点={len(rank_7m1_candidates)}  "
+                   f"(印欠損 {_n_no_mark}件)")
+        if _n_no_mark:
+            click.echo(f"[wt][警告] 7M1: 公式印が取れない候補が {_n_no_mark}件 "
+                       f"あります。7M1 はこれらを**買いません**（印との不一致が"
+                       f"エッジの本体のため）。", err=True)
 
     # ── S9候補（S7の9車立て版・独立ランク・2026-07-26導入）──
     # 2026-08「ドリームレース」（S級・過去3回全て9車立て）対応。軸選定・entropy計算は

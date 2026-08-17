@@ -678,6 +678,26 @@ def _main_inner(date):
         if _pk not in picks:
             picks[_pk] = ("RANK_7C", "", "")
 
+    # 7M1=中間層・混戦 × 市場乖離（2026-08-17導入）:
+    # decisions キー {rk}#7M1（decision=buy）を picks に注入する（slot="seven_7m1"）。
+    # 買い目は三連複2軸流し2〜3点（相手は軸を除く5車の下位3車を足切りしたもの）。
+    for _key, _dec in decisions.items():
+        if not _key.endswith("#7M1") or _dec.get("decision") != "buy" or not _dec.get("combos"):
+            continue
+        _rk = _key[:-4]
+        if not _rk.startswith(dc):
+            continue
+        try:
+            _, _code, _rno = _rk.split("_")
+        except ValueError:
+            continue
+        _venue = code2name.get(_code)
+        if _venue is None:
+            continue
+        _pk = (_venue, int(_rno), "seven_7m1")
+        if _pk not in picks:
+            picks[_pk] = ("RANK_7M1", "", "")
+
     # 7H1=穴推奨・本命バスト型（2026-08-06導入・2026-08-15 三連単一本化）:
     # decisions キー {rk}#7H1（decision=buy）を picks に注入する（slot="seven_7h1"）。
     # ⚠️ 他ランクと違い買い目が `combos` ではなく `legs_tf` に入っているので、
@@ -845,6 +865,7 @@ def _main_inner(date):
     results_7c = []           # 7C=ベースモデル・終日の二軸（ペーパー）行 — ヘッダー合計には含めず別集計（2026-08-07導入）
     results_9a = []           # 9A=S9の境界ランク（ペーパー）行 — ヘッダー合計には含めず別集計（2026-07-27導入）
     results_9c = []           # 9C=9車のベースモデル（ペーパー）行 — 同上（2026-08-14導入・9S/9A を置換）
+    results_7m1 = []          # 7M1=中間層・混戦×市場乖離（ペーパー）行 — 同上（2026-08-17導入）
     p7ssb = p7ssr = p7ssh = 0  # 7+車 旧SSランク 合計
     p7sb = p7sr = p7sh = 0    # 7+車 旧Sランク 合計
     p7rb = p7rr = p7rh = 0    # 旧S1（7PLUS_R・2026-07-16全廃・過去日再採点互換）合計
@@ -874,6 +895,9 @@ def _main_inner(date):
     # 7C（ベースモデル・終日の二軸・2026-08-07導入。ヘッダー合計には含めない）
     # ⚠️ **賭け金が可変**（予算枠÷点数）なので購入額は decision の stake から積む。
     p7cb = p7cr = p7ch = 0
+    # 7M1（中間層・混戦 × 市場乖離・2026-08-17導入。ヘッダー合計には含めない）
+    # ⚠️ 7C と同じく**賭け金が可変**（予算枠÷点数）。固定 STAKE を掛けないこと。
+    p7m1b = p7m1r = p7m1h = 0
     skipped_dns = 0           # 軸欠車/全相手欠車でレース無効（返還）→不計上
     with get_connection() as conn:
         for (venue, race_no, _slot), (rank, ptime, combo_str) in sorted(picks.items(), key=lambda x: (x[0][0], x[0][1], x[0][2])):
@@ -1730,6 +1754,83 @@ def _main_inner(date):
                                 *gap_map.get(rk, (None, None, None)), None))
                 continue
 
+            if _slot == "seven_7m1":
+                # ── 7M1（中間層・混戦 × 市場乖離・2026-08-17導入）採点 ──
+                # judge_rank_7m1/_process_rank_7m1_candidates と対。正本は
+                # decisions の {rk}#7M1。返還処理なし。**三連複のみ**
+                # （7C の三連単切替は持ち込んでいない）。
+                #
+                # ⚠️ 9C と同じく**賭け金が可変**（予算枠 ÷ 点数）。decision の stake を使う。
+                dec_m1 = decisions.get(rk + "#7M1")
+                if not dec_m1 or dec_m1.get("decision") not in ("buy", "skip"):
+                    print(f"[notify_results_wt] 7M1判定記録なし {rk}: 不計上", flush=True)
+                    continue
+                is_buy = dec_m1.get("decision") == "buy" and bool(dec_m1.get("combos"))
+                m1_rows = conn.execute(
+                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
+                    "ORDER BY finish_order", (rk,)).fetchall()
+                m1_order = [int(r[0]) for r in m1_rows]
+                if len(m1_order) < 3:
+                    continue
+                try:
+                    m1_axis1 = int(dec_m1.get("axis1"))
+                    m1_axis2 = int(dec_m1.get("axis2"))
+                except (TypeError, ValueError):
+                    continue
+                m1_top3 = frozenset(m1_order[:3])
+                m1_trio_pay = pm.get(rk, {}).get(("trio", m1_top3), 0)
+                m1_trifecta_pay = pm.get(rk, {}).get(("trifecta", tuple(m1_order[:3])), 0)
+
+                if is_buy:
+                    try:
+                        m1_combos = [frozenset(int(x) for x in str(c).split("-"))
+                                     for c in dec_m1["combos"]]
+                    except (TypeError, ValueError):
+                        continue
+                    m1_n_combos = len(m1_combos)
+                    m1_stake = int(dec_m1.get("stake") or unit_stake(m1_n_combos))
+                    m1_hit = any(cs == m1_top3 for cs in m1_combos)
+                    m1_pay, m1_bet = resolve_payout(
+                        conn, rk, "7M1", hit=m1_hit, winning_key=m1_top3,
+                        odds_payout=m1_trio_pay, fallback_stake=m1_stake,
+                        n_combos=m1_n_combos)
+                    m1_thirds = sorted(
+                        next(iter(cs - {m1_axis1, m1_axis2}))
+                        for cs in m1_combos if len(cs - {m1_axis1, m1_axis2}) == 1)
+                    m1_pred = f"{m1_axis1}={m1_axis2}-" + ",".join(map(str, m1_thirds))
+                else:
+                    # 🔴 見送り時の hit は**軸2車が3着内か**で記録する（9C と同じ規約）。
+                    #    7M1 は相手を3点に絞るので「軸2車が来ても外れ」がありうるが、
+                    #    見送り行は買っていないので投資0・払戻0。ここでの hit は
+                    #    「軸の当否」の記録であって商品の的中ではない。
+                    m1_hit = m1_axis1 in m1_top3 and m1_axis2 in m1_top3
+                    m1_pay = 0
+                    m1_bet = 0
+                    m1_n_combos = 0
+                    m1_pred = f"{m1_axis1}={m1_axis2}-見送り"
+                m1_tstr = ptime
+                _m1_stt = start_map.get(rk)
+                if _m1_stt:
+                    try:
+                        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                        m1_tstr = _dt.fromtimestamp(int(_m1_stt), tz=_tz(_td(hours=9))).strftime("%H:%M")
+                    except (ValueError, TypeError):
+                        pass
+                if is_buy:
+                    m1_mark = f"◎ ¥{m1_pay:,}" if m1_hit else "×"
+                    results_7m1.append(
+                        f"[7M1] {venue} {race_no}R {m1_tstr}  予:{m1_pred}"
+                        f"  実:{'-'.join(map(str, m1_order[:3]))}  {m1_mark}")
+                    p7m1b += m1_bet
+                    if m1_hit:
+                        p7m1r += m1_pay
+                        p7m1h += 1
+                history.append((target_date, f"{rk}#7M1", "RANK_7M1", m1_pred, m1_n_combos,
+                                int(m1_hit), m1_pay, m1_trio_pay, m1_trifecta_pay, m1_bet,
+                                not is_buy, None,
+                                *gap_map.get(rk, (None, None, None)), None))
+                continue
+
             # 7plus_a / six_s1 スロットの採点は 2026-07-17 全廃（A・旧S1廃止）
 
             # 発走前判定があるレースは判定時のランク・購入買い目（ガミ目カット済み）で採点する
@@ -1960,6 +2061,10 @@ def _main_inner(date):
     h9_line = _rank_line("9H1(穴推奨/9車)", len(results_9h1), p9h1b, p9h1r, p9h1h)
     # 7C（ベースモデル・終日の二軸・2026-08-07導入）。件数が最多になるランク。
     c7_line = _rank_line("7C(ベース/相手可変)", len(results_7c), p7cb, p7cr, p7ch)
+    # 7M1（中間層・混戦 × 市場乖離・2026-08-17導入）。的中率は低く払戻中央が高い層
+    # なので、**この行の ROI を月次で読んで採否を動かさないこと**
+    # （±2.5pt に必要なのは約15.6年分。strategy_wt.RANK_7M1_P3_SUM_MAX 参照）。
+    m1_line = _rank_line("7M1(中間層/相手3点)", len(results_7m1), p7m1b, p7m1r, p7m1h)
     # 🔴 入稿 OFF のランクは Discord に出さない（2026-08-14・ユーザー要望）。
     #    `enabled` は入稿だけを止めており、判定・記録・通知は動き続けていたため、
     #    運用していない 7H1/7H2/9H1/7B の行が毎日サマリーに並んでいた。
@@ -1969,13 +2074,15 @@ def _main_inner(date):
     _gated = {
         "RANK_7B": b7_line, "RANK_7H1": h1_line,
         "RANK_7H2": h2_line, "RANK_9H1": h9_line,
+        "RANK_7M1": m1_line,
     }
     for _rank, _l in _gated.items():
         if _rank in _off_ranks:
             _gated[_rank] = ""
     # 7SS（波乱軸選出・RANK_7SS）は 2026-08-02 に全廃したため Discord 行も削除した。
     for _l in (s1_line, old7ssp_line, old7ss_line, s7s_line, a7_line,
-               _gated["RANK_7B"], c7_line, _gated["RANK_7H1"], _gated["RANK_7H2"],
+               _gated["RANK_7B"], c7_line, _gated["RANK_7M1"],
+               _gated["RANK_7H1"], _gated["RANK_7H2"],
                _gated["RANK_9H1"], r_line, ss_line, s_line):
         if _l:
             rank_lines.append(_l)
@@ -1990,6 +2097,7 @@ def _main_inner(date):
     msg += "\n```\n" + "\n".join(
         total_7plus + results_7plus_s1 + results_7plus_s7 + results_7a
         + _shown("RANK_7B", results_7b) + results_7c
+        + _shown("RANK_7M1", results_7m1)
         + _shown("RANK_7H1", results_7h1) + _shown("RANK_7H2", results_7h2)
         + _shown("RANK_9H1", results_9h1)) + "\n```"
 
