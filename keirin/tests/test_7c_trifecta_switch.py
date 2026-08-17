@@ -76,15 +76,19 @@ def test_trifecta_stake_uses_budget_split() -> None:
 
 def test_switch_depends_only_on_axis1_win_prob() -> None:
     """判定は軸1の単勝率のみ。軸2や相手の値を変えても結果が動かない。"""
+    # 🔴 本番は 2026-08-17 に停止済み（`RANK_7C_TRIFECTA_ENABLED=False`）なので、
+    #    論理の検査は enabled=True を明示して行う。再開時にそのまま効く。
     below = {1: RANK_7C_TRIFECTA_PW_MIN - 0.01, 2: 0.10, 3: 0.05}
     at = {1: RANK_7C_TRIFECTA_PW_MIN, 2: 0.10, 3: 0.05}
-    assert rank_7c_use_trifecta(below, 1) is False
-    assert rank_7c_use_trifecta(at, 1) is True
+    assert rank_7c_use_trifecta(below, 1, enabled=True) is False
+    assert rank_7c_use_trifecta(at, 1, enabled=True) is True
     # 軸2以下をどう動かしても閾値ちょうどなら True のまま
-    assert rank_7c_use_trifecta({**at, 2: 0.0, 3: 0.0}, 1) is True
+    assert rank_7c_use_trifecta({**at, 2: 0.0, 3: 0.0}, 1, enabled=True) is True
     # 情報が無いときは切り替えない（検証済みの既定＝三連複へ倒す）
-    assert rank_7c_use_trifecta(None, 1) is False
-    assert rank_7c_use_trifecta({}, 1) is False
+    assert rank_7c_use_trifecta(None, 1, enabled=True) is False
+    assert rank_7c_use_trifecta({}, 1, enabled=True) is False
+    # 既定（本番）では単勝率によらず常に False
+    assert rank_7c_use_trifecta(at, 1) is False
 
 
 def test_switching_ranks_have_no_bet_kind_claim_in_comment() -> None:

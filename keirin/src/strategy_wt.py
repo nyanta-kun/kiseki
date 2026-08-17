@@ -385,6 +385,28 @@ RANK_7C_LEGS_MIN = 4
 #      （RANK_7C_P3_SUM_MIN と同じ理由）。
 RANK_7C_TRIFECTA_PW_MIN = 0.70
 
+# 🔴 **2026-08-17: 三連単への切替を停止した**（ユーザー判断）。
+#   理由は「7C 以外に高額狙い（7T1 / 7H1 / 9H1）を持っているので、7C は的中側に
+#   寄せてバランスを取る」。**検証結果の否定ではない**——切替は ROI では正しい。
+#
+#   同一レースでの実測（2,516R・4.24件/日・両年で符号一致）:
+#
+#     母集団      券種            素の的中  表示的中    ROI
+#     全体        三連単（切替）      43.6%  24.2%  84.3%
+#                 **三連複**       67.5%  28.9%  78.6%
+#     看板        三連単           31.3%  23.7%  82.9%
+#                 **三連複**       57.8%  31.2%  74.3%
+#     看板以外     三連単           47.5%  24.3%  84.8%
+#                 **三連複**       70.7%  28.1%  80.1%
+#
+#   ROI 差は +5.7pt [+0.5, +11.6]（有意）で三連単が上、表示的中は −4.7pt で三連複が上。
+#   ＝ **収支と精度が逆を向く**。7C は「終日の的中体験の土台」なので精度側を採る。
+#
+#   ⚠️ 再開するときはこの1行を True へ戻すだけでよい（判定ロジックは残してある）。
+#      ただし**高額狙いのランクを減らした後**でないと、商品全体が的中の薄い側へ
+#      寄る（この停止はランク間のバランスの判断であって、単独の最適化ではない）。
+RANK_7C_TRIFECTA_ENABLED = False
+
 # 🔴 三連複側だけに掛ける追加ゲートと相手点数（2026-08-09 検証・ユーザー要望
 #    「対象を半分程度に当てやすいレースへ厳選し、その上で ROI を確保する買い目」）。
 #
@@ -2513,6 +2535,7 @@ def rank_7c_select_axis(top3_probs: dict[int, float]) -> tuple[int, int, float] 
 def rank_7c_use_trifecta(
     win_probs: dict[int, float] | None, axis1: int,
     pw_min: float = RANK_7C_TRIFECTA_PW_MIN,
+    enabled: bool = RANK_7C_TRIFECTA_ENABLED,
 ) -> bool:
     """7Cを三連単（1着=軸1 / 2着=軸2 / 3着=相手流し）へ切り替えるか。
 
@@ -2522,7 +2545,13 @@ def rank_7c_use_trifecta(
 
     根拠と実測値は RANK_7C_TRIFECTA_PW_MIN の定義部を参照。
     ⚠️ 判定は**軸1の単勝率だけ**。2着との差は足さないこと（効果が無く該当も変わらない）。
+
+    🔴 **2026-08-17 以降は `RANK_7C_TRIFECTA_ENABLED = False` で常に False を返す**
+       （ユーザー判断・高額狙いは 7T1/7H1/9H1 が担うので 7C は的中側へ寄せる）。
+       停止の根拠と実測は `RANK_7C_TRIFECTA_ENABLED` の定義部。
     """
+    if not enabled:
+        return False
     if not win_probs:
         return False
     return float(win_probs.get(axis1, 0.0)) >= pw_min
@@ -2628,7 +2657,19 @@ def rank_7c_buy_plan(
         # 🔴 △削り（案E）も掛けない。三連複側だけの規則。
         return "trifecta", list(legs)
     p3_sum = sum(sorted(top3_probs.values(), reverse=True)[:2])
-    if p3_sum < RANK_7C_TRIO_P3_SUM_MIN:
+    # 🔴 **断然の1車がいるレースは三連複側のゲートを免除する**（2026-08-17）。
+    #   `RANK_7C_TRIO_P3_SUM_MIN` は「軸2車の信頼が足りないレースを落とす」ための
+    #   ゲートで、**三連単へ切り替わるレースには元々掛けていなかった**。
+    #   2026-08-17 に切替を停止した結果、その母集団が三連複側へ流れてゲートに
+    #   掛かるようになり、**副作用で 0.60件/日 が見送りになっていた**。
+    #   落ちていたのは ROI 90.5% の帯（＝最も落としてはいけない側）。
+    #
+    #   免除の根拠: このゲートは「上位2車の3着内率合計」で信頼を測るが、
+    #   単勝率0.70以上の1車がいるレースは**別の根拠で信頼できる**。
+    #   実測（4.24件/日）: 免除なし 3.64件/日 ROI 74.9% → 免除あり 4.24件/日 77.1%。
+    #   7C 全体では 12.89→13.49件/日・ROI 77.9→78.5%（表示的中は 30.7% で同じ）。
+    if (p3_sum < RANK_7C_TRIO_P3_SUM_MIN
+            and not rank_7c_use_trifecta(win_probs, axis1, enabled=True)):
         return None
     return "trio", rank_7c_cut_legs_by_gap(legs, top3_probs, wt_ana=wt_ana)
 

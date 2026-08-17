@@ -43,19 +43,29 @@ def _p3(sum_top2: float) -> dict[int, float]:
     return {1: a, 2: a, 3: 0.40, 4: 0.35, 5: 0.30, 6: 0.20, 7: 0.05}
 
 
-def test_trifecta_keeps_all_partners() -> None:
-    """三連単は相手を絞らない（点数を変えると効果が消える）。"""
+def test_trifecta_switch_is_off_in_production() -> None:
+    """🔴 2026-08-17〜 三連単切替は**停止**（ユーザー判断・高額狙いは 7T1 等が担う）。
+
+    単勝率が閾値を超えていても三連複で買う。根拠と実測は
+    `RANK_7C_TRIFECTA_ENABLED` の定義部。
+    """
+    import src.strategy_wt as sw
+    assert sw.RANK_7C_TRIFECTA_ENABLED is False
     pw = {1: RANK_7C_TRIFECTA_PW_MIN, 2: 0.10}
-    kind, legs = rank_7c_buy_plan(_p3(1.60), pw, 1, LEGS)
-    assert kind == "trifecta"
-    assert legs == LEGS
+    kind, _ = rank_7c_buy_plan(_p3(1.60), pw, 1, LEGS)
+    assert kind == "trio", "停止したはずの三連単が出ている"
 
 
-def test_trifecta_ignores_the_trio_gate() -> None:
-    """三連単側には p3_sum ゲートを掛けない（単独で最良のため）。"""
+def test_trifecta_logic_is_kept_for_reenabling() -> None:
+    """判定ロジック自体は残す（再開は定数1つ）。有効化した場合の挙動を固定する。
+
+    - 相手を絞らない（点数を変えると効果が消える）
+    - 三連複側の p3_sum ゲートを受けない
+    """
+    from src.strategy_wt import rank_7c_use_trifecta
     pw = {1: RANK_7C_TRIFECTA_PW_MIN, 2: 0.10}
-    plan = rank_7c_buy_plan(_p3(RANK_7C_TRIO_P3_SUM_MIN - 0.10), pw, 1, LEGS)
-    assert plan is not None and plan[0] == "trifecta"
+    assert rank_7c_use_trifecta(pw, 1, enabled=True) is True
+    assert rank_7c_use_trifecta({1: 0.69}, 1, enabled=True) is False
 
 
 def test_trio_cuts_only_where_there_is_a_gap() -> None:
