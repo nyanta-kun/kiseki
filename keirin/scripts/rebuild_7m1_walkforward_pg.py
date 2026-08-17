@@ -55,6 +55,15 @@ def main() -> None:
                           "指定しない場合、モデル不足を検出した時点で計算を一切開始せず"
                           "即座にエラー終了する（全期間計算後に失敗して結果を失うのを防ぐ・"
                           "2026-08-01のm2608不足によるFileNotFoundError実害を踏まえた対応）。")
+    # 🔴 7M1 固有。**2024-01〜07 は vintage モデルの較正差で母集団が3倍に膨らむ**
+    #    （7車レースの33〜47%が選出＝21〜32件/日。2024-08以降は16〜19%＝10.5件/日）。
+    #    ゲートが p3合計の**絶対閾値**なので、モデルが自信控えめだと 7C が縮み
+    #    7M1 が膨らむ（7H3 が廃止に至った型と同じ）。live は 7C と閾値を共有する
+    #    ので追随するが、**その期間の行を picks_history に残すと Web の成績表示で
+    #    「昔はもっと出ていた」と誤読される**ため、既定では書かない。
+    #    2024 も入れたいときは `--since 2024-01` を明示すること。
+    ap.add_argument("--since", metavar="YYYY-MM", default="2025-01",
+                    help="この月以降の窓だけを再構築する（既定 2025-01）")
     ap.add_argument("--upto", metavar="YYYY-MM-DD", default=None,
                     help="この日までを再構築する（当日を含めたくないときに使う）。\n"
                          "monthly_windows は既定で当日を含み、結果未確定のレースは\n"
@@ -65,6 +74,12 @@ def main() -> None:
     # 当日分を削除すると再構築では戻せず、Web から推奨が消えるため。
     windows = (tail_windows() if args.tail_only
                else monthly_windows(_parse_upto(args.upto)))
+    if not args.tail_only and args.since:
+        before = len(windows)
+        windows = [w for w in windows if w[0][:7] >= args.since]
+        if before != len(windows):
+            print(f"[rebuild-7m1-pg] --since {args.since}: "
+                  f"{before - len(windows)}窓を除外（{len(windows)}窓を処理）")
 
     # --- 事前チェック: build_rows(重い計算)を始める前に全窓のモデル存在を検証 ---
     available, missing = split_by_model_availability(windows)

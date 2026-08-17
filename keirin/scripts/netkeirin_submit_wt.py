@@ -258,9 +258,8 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "選んでいます。\n\n"
                 "軸の2車は、公式予想で印の付いていない選手から選びました。"
                 "力はあるのに人気が集まっていない組み合わせを狙う形です。\n\n"
-                "買い目は三連単と三連複の併せ買い。"
-                "三連単は軸2車目を2着・3着の両方に置いて厚めに取り、"
-                "三連複で的中を拾う組み立てにしています。\n\n"
+                "買い目は三連複のみ。人気の中心を外したプールから"
+                "組み合わせを広く取る形にしています。\n\n"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
     # 9H1（2026-08-08新設・穴推奨「9車・高配当狙い」）。三連単フォーメーション
@@ -1580,23 +1579,37 @@ def _normalize_7h2_candidate(
     trio_legs = [frozenset(int(x) for x in _SEP_RE.split(str(c)))
                  for c in (cand.get("legs_trio") or [])]
     trio_legs = [t for t in trio_legs if len(t) == 3]
-    if not legs_tf or not trio_legs:
+    if not trio_legs:
         raise ValueError("7H2 の買い目が空です")
 
-    axis1, axis2, partners = _split_7h2_tf(legs_tf)
+    # 🔴 2026-08-18: 三連単を破棄し三連複のみへ（`RANK_7H2_TRIFECTA_ENABLED`）。
+    #    三連単が無いときは軸を候補JSONの `axis1`/`axis2` から取る
+    #    （従来は三連単の目から復元していた）。
+    if legs_tf:
+        axis1, axis2, partners = _split_7h2_tf(legs_tf)
+    else:
+        try:
+            axis1, axis2 = int(cand["axis1"]), int(cand["axis2"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"7H2 の軸が候補JSONにありません: {e}") from e
+        partners = sorted({x for t in trio_legs for x in t} - {axis1, axis2})
     stake_trio, stake_tf, _total = rank_7h2_stakes(len(trio_legs), len(legs_tf))
-    if not stake_trio or not stake_tf:
+    if not stake_trio:
         raise ValueError(f"7H2 の賭け金が組めません: 三複{len(trio_legs)}点 / "
                          f"三単{len(legs_tf)}点")
 
-    legs: list[BetLeg] = [
-        # 軸2を2着に置く5点
-        BetLeg(BET_KIND_TRIFECTA_FORMATION,
-               [[axis1], [axis2], sorted(partners)], stake_tf),
-        # 軸2を3着に置く5点
-        BetLeg(BET_KIND_TRIFECTA_FORMATION,
-               [[axis1], sorted(partners), [axis2]], stake_tf),
-    ]
+    legs: list[BetLeg] = []
+    if legs_tf:
+        if not stake_tf:
+            raise ValueError(f"7H2 の三連単の賭け金が組めません: {len(legs_tf)}点")
+        legs += [
+            # 軸2を2着に置く5点
+            BetLeg(BET_KIND_TRIFECTA_FORMATION,
+                   [[axis1], [axis2], sorted(partners)], stake_tf),
+            # 軸2を3着に置く5点
+            BetLeg(BET_KIND_TRIFECTA_FORMATION,
+                   [[axis1], sorted(partners), [axis2]], stake_tf),
+        ]
     # 三連複は目ごとに1行（BOXは車群でしか表現できず任意の部分集合を作れない）。
     for t in sorted(trio_legs, key=sorted):
         legs.append(BetLeg(BET_KIND_TRIO_BOX, [sorted(t)], stake_trio))

@@ -228,6 +228,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "wt_ana": wt_ana,
             "axis1": axis1, "axis2": axis2,
             "p3_sum_top2": p3_sum,
+            # 軸1が抜けすぎたレースの回避（2026-08-18・RANK_7C_AXIS1_P3_MAX）。
+            "axis1_p3": top3_probs.get(axis1),
             # ゲート専用の較正値（2026-08-17）。順位は変えないので軸・相手は不変。
             "p3_sum_top2_cal": calibrated_p3_sum_top2(
                 top3_probs, race_type_map.get(rk), cup_grade_map.get(rk)),

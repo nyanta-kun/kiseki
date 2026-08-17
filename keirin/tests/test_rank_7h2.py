@@ -53,14 +53,20 @@ TOP3 = {1: 0.70, 2: 0.60, 3: 0.40, 4: 0.30, 5: 0.55, 6: 0.45, 7: 0.35}
 
 
 def _cand() -> dict:
+    """🔴 2026-08-18 の三連複一本化で `legs_tf` は空になる。
+
+    軸は三連単の目からではなく `rank_7h2_axes` から取る（入稿側も同じ規則）。
+    """
+    from src.strategy_wt import rank_7h2_axes
     trio, tf = rank_7h2_build_legs(WIN, TOP3, MARKS)
     u_trio, u_tf, total = rank_7h2_stakes(len(trio), len(tf))
+    a1, a2, _legs = rank_7h2_axes(WIN, TOP3, MARKS)
     return {
         "race_key": "20260810_11_01", "n_entries": 7,
         "legs_trio": ["=".join(str(x) for x in sorted(t)) for t in trio],
         "legs_tf": tf,
         "stake_trio": u_trio, "stake_tf": u_tf, "bet_amount": total,
-        "axis1": int(tf[0].split("-")[0]), "axis2": int(tf[0].split("-")[1]),
+        "axis1": a1, "axis2": a2,
     }
 
 
@@ -99,7 +105,27 @@ def test_axis1_uses_win_not_top3():
 # ── 2. 買い目の形 ────────────────────────────────────────────────────────
 
 
-def test_trifecta_is_ten_points_of_double_purchase():
+def test_trifecta_is_disabled_in_production():
+    """🔴 2026-08-18〜 7H2 は**三連複のみ**（ユーザー判断）。
+
+    2券種構成は「三連複に3,000円しか乗らず、33倍以上でないと投資が返らない」
+    配分になっていた（実績44件で ROI 20.9% / 表示的中 4.5%）。7H1 が
+    2026-08-15 に三連単一本化したのと同じ手当て。根拠は
+    `RANK_7H2_TRIFECTA_ENABLED` の定義部。
+    """
+    import src.strategy_wt as sw
+    assert sw.RANK_7H2_TRIFECTA_ENABLED is False
+    trio, tf = rank_7h2_build_legs(WIN, TOP3, MARKS)
+    assert tf == [], "停止したはずの三連単が出ている"
+    assert trio, "三連複が空になっている"
+    # 予算は全額が三連複へ乗る（旧構成では三連複に3,000円しか乗らなかった）。
+    u_trio, u_tf, total = rank_7h2_stakes(len(trio), len(tf))
+    assert u_tf == 0
+    assert u_trio * len(trio) == total
+    assert total > 9000, f"予算が三連複へ乗っていない: {total}円"
+
+
+def _skip_trifecta_shape_test():
     """三連単は軸2を2着に置く5点 + 3着に置く5点の10点。"""
     _trio, tf = rank_7h2_build_legs(WIN, TOP3, MARKS)
     assert len(tf) == 10
@@ -118,10 +144,16 @@ def test_trio_box_excludes_honmei():
     assert cars == {6, 5, 2, 3, 7}, "軸2車 + 相手のうち◎を除く3着内率上位3車"
 
 
-def test_honmei_is_still_bought_in_trifecta():
-    """◎は三連単の相手としては買う（総流しなので必ず入る）。"""
-    _trio, tf = rank_7h2_build_legs(WIN, TOP3, MARKS)
-    assert any("-1-" in t or t.endswith("-1") for t in tf)
+def test_honmei_is_excluded_from_the_trio_pool():
+    """◎は三連複のプールから外す（三連複一本化後の唯一の券種なのでここが本体）。
+
+    旧構成では◎を三連単の相手として買っていたが、2026-08-18 に三連単を破棄した
+    ので、◎が買い目に入る経路は無くなった。
+    """
+    trio, tf = rank_7h2_build_legs(WIN, TOP3, MARKS)
+    assert tf == []
+    honmei = 1
+    assert not any(honmei in t for t in trio), "◎が三連複プールに残っている"
 
 
 # ── 3. 賭け金 ────────────────────────────────────────────────────────────
@@ -158,9 +190,13 @@ def test_split_tf_recovers_axes_and_partners():
 
     倍購入なので 2着列も3着列も {軸2}∪相手 で、積集合は相手も含んでしまう。
     実装時にこれを取り違えて全レースで ValueError になった。
+
+    ⚠️ 2026-08-18 の三連複一本化で本番はこの経路を通らないが、再開に備えて
+       復元ロジックの検査は残す（三連単の目を直接与えて検証する）。
     """
-    cand = _cand()
-    a1, a2, partners = _split_7h2_tf(cand["legs_tf"])
+    tf = ([f"6-5-{c}" for c in (1, 2, 3, 4, 7)]
+          + [f"6-{c}-5" for c in (1, 2, 3, 4, 7)])
+    a1, a2, partners = _split_7h2_tf(tf)
     assert (a1, a2) == (6, 5)
     assert partners == [1, 2, 3, 4, 7]
 
@@ -171,24 +207,24 @@ def test_split_tf_rejects_inconsistent_legs():
         _split_7h2_tf(["6-5-1", "6-5-2", "6-1-5", "6-2-4"])
 
 
-def test_normalize_produces_two_formations_and_matching_points():
-    """入稿の車番グループを展開し直した目が、元の買い目と完全一致すること。"""
+def test_normalize_produces_trio_only():
+    """🔴 三連複一本化後の入稿は**三連複だけ**で、予算が全額そこへ乗ること。
+
+    旧構成では三連複に3,000円しか乗らず、33倍以上でないと投資が返らなかった
+    （実績44件で ROI 20.9%）。ここが戻ると同じ壊れ方をする。
+    軸は三連単の目からではなく候補JSONの `axis1`/`axis2` から取る。
+    """
     cand = _cand()
     legs, marks, a1, a2 = _normalize_7h2_candidate(cand, RANK_CONFIGS["7H2"])
 
     forms = [x for x in legs if x.bet_kind == BET_KIND_TRIFECTA_FORMATION]
     boxes = [x for x in legs if x.bet_kind == BET_KIND_TRIO_BOX]
-    assert len(forms) == 2, "三連単は畳めないので2行に分ける"
+    assert forms == [], "停止したはずの三連単が入稿に混じっている"
     assert len(boxes) == 10, "三連複は1目=1行"
-
-    expanded: set[tuple[int, ...]] = set()
-    for leg in forms:
-        expanded |= expand_bet(leg.bet_kind, leg.groups)
-    want = {tuple(int(x) for x in s.split("-")) for s in cand["legs_tf"]}
-    assert expanded == want, "入稿する三連単が候補の買い目と一致しない"
 
     total = sum(len(expand_bet(x.bet_kind, x.groups)) * x.stake_per_line for x in legs)
     assert total == cand["bet_amount"] <= RANK_7H2_BUDGET_CAP
+    assert total > 9000, f"予算が三連複へ乗っていない: {total}円"
     assert (a1, a2) == (6, 5)
     assert marks[a1] == "◎" and marks[a2] == "○"
 

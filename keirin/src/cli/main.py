@@ -1995,6 +1995,10 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                         if sel_7c else None),
                     "legs_7c": legs_7c,
                     "lowpay_pattern": lowpay_7c,
+                    # 軸1が抜けすぎたレースの回避（2026-08-18）。
+                    # 判定は `rank_7c_daily_select`（RANK_7C_AXIS1_P3_MAX）。
+                    "axis1_p3": (round(top3_probs.get(sel_7c[0], 0.0), 6)
+                                 if sel_7c else None),
                     # ↓ 7M1用（中間層・2026-08-17）。
                     # 🔴 `wt_overlap_n` は**3ヘッド軸**との重なりなので流用できない。
                     #    7M1 は 7C と同じ軸（pred_top3 上位2車）で印一致を判定する。

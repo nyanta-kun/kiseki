@@ -174,6 +174,41 @@ def test_daily_select_does_not_dedupe_against_other_ranks():
 
 # ── netkeirin 入稿の優先順位・賭け金解決 ──────────────────────────────
 
+def test_axis1_runaway_races_are_avoided() -> None:
+    """🔴 軸1が抜けすぎたレースは買わない（2026-08-18・ユーザー判断）。
+
+    「一定以上に軸の指数が抜けて高い場合はどの目を買っても回収困難」。
+    実測でも 軸1の3着内率>=0.93 の帯は ROI 74.7% と単体で壁の下。
+    根拠は `RANK_7C_AXIS1_P3_MAX` の定義部。
+
+    ⚠️ **点数を削る対策ではない。** 予算枠方式では点数を減らしても1点が
+       厚くなるだけで表示的中は動かない（3点30.2/4点31.2/5点31.8%）。
+       レースごと避けるのが唯一効く形。
+    """
+    import src.strategy_wt as sw
+
+    def cand(axis1_p3):
+        return {"p3_sum_top2": 1.60, "legs_7c": [3, 4, 5, 6],
+                "legs_7c_buy": [3, 4, 5, 6], "lowpay_pattern": False,
+                "axis1_p3": axis1_p3}
+
+    assert len(sw.rank_7c_daily_select([cand(sw.RANK_7C_AXIS1_P3_MAX - 0.01)])) == 1
+    assert sw.rank_7c_daily_select([cand(sw.RANK_7C_AXIS1_P3_MAX)]) == []
+    assert sw.rank_7c_daily_select([cand(0.99)]) == []
+
+
+def test_axis1_gate_is_fail_open_for_old_candidate_json() -> None:
+    """キーを持たない旧形式の候補JSONは落とさない（判定不能≠買わない）。
+
+    当日リカバリで旧JSONを読んだときに商品が全滅するのを防ぐ。
+    `legs_7c_buy` が同じ扱いなのと揃えてある。
+    """
+    import src.strategy_wt as sw
+    old = {"p3_sum_top2": 1.60, "legs_7c": [3, 4, 5, 6],
+           "legs_7c_buy": [3, 4, 5, 6], "lowpay_pattern": False}
+    assert len(sw.rank_7c_daily_select([old])) == 1
+
+
 def test_netkeirin_priority_order():
     """優先順位 **7H2 > 7S > 7C > 7T1 > 7B > 7H1**。
 
