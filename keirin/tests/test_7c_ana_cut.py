@@ -96,12 +96,16 @@ def test_cut_is_inside_the_single_source() -> None:
     assert rank_7c_cut_legs_by_gap(FLAT_LEGS, FLAT_P3) == FLAT_LEGS
 
 
-def test_trifecta_side_is_untouched() -> None:
-    """三連単へ切り替わるレースには掛からない（相手は全部のまま）。"""
+def test_ana_cut_still_applies_after_the_trifecta_switch_was_disabled() -> None:
+    """🔴 三連単切替の停止（2026-08-17）で、旧「切替レース」も三連複になる。
+
+    以前はここが `trifecta`（△削りの対象外）だった。停止後は三連複なので
+    **△削りが掛かる側へ移る**。停止によって買い方が変わることを明示的に固定する。
+    """
     win = {1: RANK_7C_TRIFECTA_PW_MIN + 0.01, 2: 0.10}
     kind, legs = rank_7c_buy_plan(FLAT_P3, win, axis1=1, legs=FLAT_LEGS, wt_ana=4)
-    assert kind == "trifecta"
-    assert legs == FLAT_LEGS
+    assert kind == "trio"
+    assert legs == [3, 5, 6]
 
 
 def test_buy_plan_passes_ana_through() -> None:

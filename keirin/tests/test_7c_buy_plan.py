@@ -43,19 +43,29 @@ def _p3(sum_top2: float) -> dict[int, float]:
     return {1: a, 2: a, 3: 0.40, 4: 0.35, 5: 0.30, 6: 0.20, 7: 0.05}
 
 
-def test_trifecta_keeps_all_partners() -> None:
-    """三連単は相手を絞らない（点数を変えると効果が消える）。"""
+def test_trifecta_switch_is_off_in_production() -> None:
+    """🔴 2026-08-17〜 三連単切替は**停止**（ユーザー判断・高額狙いは 7T1 等が担う）。
+
+    単勝率が閾値を超えていても三連複で買う。根拠と実測は
+    `RANK_7C_TRIFECTA_ENABLED` の定義部。
+    """
+    import src.strategy_wt as sw
+    assert sw.RANK_7C_TRIFECTA_ENABLED is False
     pw = {1: RANK_7C_TRIFECTA_PW_MIN, 2: 0.10}
-    kind, legs = rank_7c_buy_plan(_p3(1.60), pw, 1, LEGS)
-    assert kind == "trifecta"
-    assert legs == LEGS
+    kind, _ = rank_7c_buy_plan(_p3(1.60), pw, 1, LEGS)
+    assert kind == "trio", "停止したはずの三連単が出ている"
 
 
-def test_trifecta_ignores_the_trio_gate() -> None:
-    """三連単側には p3_sum ゲートを掛けない（単独で最良のため）。"""
+def test_trifecta_logic_is_kept_for_reenabling() -> None:
+    """判定ロジック自体は残す（再開は定数1つ）。有効化した場合の挙動を固定する。
+
+    - 相手を絞らない（点数を変えると効果が消える）
+    - 三連複側の p3_sum ゲートを受けない
+    """
+    from src.strategy_wt import rank_7c_use_trifecta
     pw = {1: RANK_7C_TRIFECTA_PW_MIN, 2: 0.10}
-    plan = rank_7c_buy_plan(_p3(RANK_7C_TRIO_P3_SUM_MIN - 0.10), pw, 1, LEGS)
-    assert plan is not None and plan[0] == "trifecta"
+    assert rank_7c_use_trifecta(pw, 1, enabled=True) is True
+    assert rank_7c_use_trifecta({1: 0.69}, 1, enabled=True) is False
 
 
 def test_trio_cuts_only_where_there_is_a_gap() -> None:
@@ -99,30 +109,44 @@ def test_gap_cut_threshold_is_the_documented_value() -> None:
 # ── カット後の点数の下限（2026-08-15・ユーザー判断）─────────────────────────
 
 
-def test_one_point_is_swapped_for_the_second_and_third_partner() -> None:
-    """🔴 削った結果が1点なら **相手の2,3番手の2点**へ差し替える。
+def test_one_point_falls_back_to_the_full_spread() -> None:
+    """🔴 削った結果が1点なら **総流しへ戻す**（2026-08-17〜）。
 
-    発端は「7C が1点買いになっている」という指摘（2026-08-14 奈良9R）。
-    1点になるのは「相手の先頭が抜けている」＝**そこが一番低配当**という意味なので、
-    あえて先頭を外す。1点帯（母集団の43.7%）での実測は
-    `RANK_7C_TRIO_LEGS_FLOOR` の定義部を参照。
+    2026-08-15〜17 は「相手の2,3番手2点」へ差し替えていたが、**その2点買いだけを
+    取り出すと的中 22.9%** と精度が突出して低かった（7C 平均 38.3%）。総流しへ
+    戻すと看板側で 素の的中 +40.8pt / 表示的中 +8.0pt / ROI +5.7pt と3指標とも
+    改善する。実測表は `RANK_7C_TRIO_LEGS_FLOOR` の定義部。
 
-    ⚠️ **見送りにはしない。** 総流しなら的中 64.4% の普通のレースなので、
-       母集団から落とす理由が無い。
+    ⚠️ **見送りにはしない。** 総流しなら的中 65.9% の普通のレースなので、
+       母集団から落とす理由が無い（「看板以外は精度が大事」の方針でも、
+       件数を捨てるより買い方を戻すほうが精度が上がる）。
     """
     legs = [3, 4, 5, 6, 7]
     steep1 = {3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13}   # 1点まで縮む
-    assert rank_7c_cut_legs_by_gap(legs, steep1) == [4, 5], "先頭を外していない"
+    assert rank_7c_cut_legs_by_gap(legs, steep1) == legs, "総流しへ戻っていない"
 
 
 def test_two_points_fall_back_to_the_full_spread() -> None:
-    """2点まで縮んだ場合は総流しへ戻す（差し替えは1点のときだけ）。"""
+    """2点まで縮んだ場合も総流しへ戻す。"""
     legs = [3, 4, 5, 6, 7]
     steep2 = {3: 0.55, 4: 0.50, 5: 0.20, 6: 0.13, 7: 0.13}
     assert rank_7c_cut_legs_by_gap(legs, steep2) == legs
     # 3点残るならカットはそのまま効く（規則自体は生きている）
     steep3 = {3: 0.55, 4: 0.50, 5: 0.46, 6: 0.20, 7: 0.18}
     assert rank_7c_cut_legs_by_gap(legs, steep3) == [3, 4, 5]
+
+
+def test_no_two_point_trio_is_produced() -> None:
+    """🔴 三連複で2点買いが出ないこと（本変更の目的そのもの）。
+
+    落差カットは3点以上か総流しのどちらかにしか着地しない。ここが崩れると
+    的中22.9%の帯が復活する。
+    """
+    legs = [3, 4, 5, 6, 7]
+    for p3 in ({3: 0.55, 4: 0.30, 5: 0.22, 6: 0.13, 7: 0.13},
+               {3: 0.55, 4: 0.50, 5: 0.20, 6: 0.13, 7: 0.13},
+               {3: 0.60, 4: 0.20, 5: 0.19, 6: 0.18, 7: 0.17}):
+        assert len(rank_7c_cut_legs_by_gap(legs, p3)) != 2
 
 
 def test_buy_plan_never_returns_a_single_point_for_trio() -> None:

@@ -151,6 +151,9 @@ EXPECTED_COVERAGE = {
     # （7SS が split/clash を欠くのと同じ理由）。あえて欠かして
     # `shape_title_text()` が警告を出せるようにしている。
     "7T1": {SHAPE_SOLO, SHAPE_DUO, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
+    # 7M1（中間層・2026-08-17）。母集団は混戦 × 印不一致で、ライン構成には
+    # 条件を置かないので6構造すべてが発生しうる。
+    "7M1": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
 }
 
 
@@ -200,7 +203,7 @@ def test_gami_claim_is_limited_to_high_pay_ranks():
     """ガミ抑制を売り文句にできるのは 7H1/9H1 のみ（仕様書 §1・§4-6）。"""
     for rank in ("7H1", "9H1"):
         assert "ガミ" in stake_note_text(rank, tilted=True)
-    for rank in ("7S", "7A", "7B", "7C", "7SS", "9C"):
+    for rank in ("7S", "7A", "7B", "7C", "7SS", "9C", "7M1"):
         assert "ガミ" not in stake_note_text(rank, tilted=True)
         assert "ガミ" not in stake_note_text(rank, tilted=False)
 

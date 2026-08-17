@@ -226,7 +226,7 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-15 現在）: **7H2 > 7S > 7C > 7T1 > 7B > 7H1**
+#    優先順位（2026-08-17 現在）: **7H2 > 7S > 7C > 7T1 > 7B > 7H1 > 7M1**
 #    （7C > 7B は 2026-08-07 ユーザー指定。7T1 は 2026-08-13 にその間へ挿入）。
 #    ⚠️ **2026-08-15 に 7H1 を最下位へ落とした**。三連単一本化の実装・検証が
 #      終わるまで `enabled=false` で止めてあり、有効化しても他ランクの母集団を
@@ -258,9 +258,8 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "選んでいます。\n\n"
                 "軸の2車は、公式予想で印の付いていない選手から選びました。"
                 "力はあるのに人気が集まっていない組み合わせを狙う形です。\n\n"
-                "買い目は三連単と三連複の併せ買い。"
-                "三連単は軸2車目を2着・3着の両方に置いて厚めに取り、"
-                "三連複で的中を拾う組み立てにしています。\n\n"
+                "買い目は三連複のみ。人気の中心を外したプールから"
+                "組み合わせを広く取る形にしています。\n\n"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
     # 9H1（2026-08-08新設・穴推奨「9車・高配当狙い」）。三連単フォーメーション
@@ -414,6 +413,35 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "買い目は三連単のフォーメーション8点。"
                 "的中を拾う券種を混ぜず、配当の大きさに寄せた組み立てにしています。\n\n"
                 "外れる日が続く買い方です。当たったときの大きさを狙う券種としてご活用ください。"
+                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
+            )},
+    # 7M1（2026-08-17新設・中間層「混戦 × 市場乖離」）。三連複・軸2車から相手3点。
+    # 🔴 **必ず最下位に置くこと**（ユーザー指示 2026-08-17「7H1 の下」）。
+    #    母集団は全7車レースの混戦帯で他ランクと排他ではなく、直接対決の実測でも
+    #      - 7S とは**当たり方が部分集合**（7M1 の的中の89%は7Sも的中）
+    #      - 7H1 とは排他だが ROI は年別でも一貫して 7H1 が上
+    #    なので、重なったら譲るのが正しい。譲った後に残る 5.9件/日 でも
+    #    ROI 81.2%（2025 79.8% / 2026 83.6%）と水準は落ちない。
+    #    根拠は strategy_wt.RANK_7M1_P3_SUM_MAX 定義部のセクションコメント。
+    # ⚠️ この衝突は**想定内**なので `overlap_expected` で失敗集計から外す。
+    # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
+    #    ため、導入時に enabled=false の行を明示投入すること。
+    "7M1": {"file_key": "s7m1", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,
+            "stake_budget": RACE_BUDGET, "gate_filter": None,
+            # 軸は 7C と同じ pred_top3 上位2車（`axis1`/`axis2` は3ヘッド軸で別物）。
+            "axis_keys": ("axis1_7c", "axis2_7c"),
+            "partners_key": "legs_7m1",
+            "overlap_expected": True,
+            "tilt_stakes": True,
+            "default_comment": (
+                "本日の中穴狙いをお届けします。\n\n"
+                "当方の指数で上位2車が絞りきれない混戦のうち、"
+                "その2車が公式予想の印とも食い違っているレースだけを選んでいます。"
+                "評価が割れている分、同じ的中でも配当が付きます。\n\n"
+                "買い目は三連複・軸2車から相手2〜3点。相手はあえて人気どころを外し、"
+                "指数で下位に着けた車から、見込みの薄い車をさらに落として絞りました。"
+                "金額は均等ではなく、当方が想定する発走時オッズに応じて配分しています。\n\n"
+                "当たる回数は多くありませんが、当たったときに手元が増える組み立てです。"
                 "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
             )},
 }
@@ -1551,23 +1579,37 @@ def _normalize_7h2_candidate(
     trio_legs = [frozenset(int(x) for x in _SEP_RE.split(str(c)))
                  for c in (cand.get("legs_trio") or [])]
     trio_legs = [t for t in trio_legs if len(t) == 3]
-    if not legs_tf or not trio_legs:
+    if not trio_legs:
         raise ValueError("7H2 の買い目が空です")
 
-    axis1, axis2, partners = _split_7h2_tf(legs_tf)
+    # 🔴 2026-08-18: 三連単を破棄し三連複のみへ（`RANK_7H2_TRIFECTA_ENABLED`）。
+    #    三連単が無いときは軸を候補JSONの `axis1`/`axis2` から取る
+    #    （従来は三連単の目から復元していた）。
+    if legs_tf:
+        axis1, axis2, partners = _split_7h2_tf(legs_tf)
+    else:
+        try:
+            axis1, axis2 = int(cand["axis1"]), int(cand["axis2"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"7H2 の軸が候補JSONにありません: {e}") from e
+        partners = sorted({x for t in trio_legs for x in t} - {axis1, axis2})
     stake_trio, stake_tf, _total = rank_7h2_stakes(len(trio_legs), len(legs_tf))
-    if not stake_trio or not stake_tf:
+    if not stake_trio:
         raise ValueError(f"7H2 の賭け金が組めません: 三複{len(trio_legs)}点 / "
                          f"三単{len(legs_tf)}点")
 
-    legs: list[BetLeg] = [
-        # 軸2を2着に置く5点
-        BetLeg(BET_KIND_TRIFECTA_FORMATION,
-               [[axis1], [axis2], sorted(partners)], stake_tf),
-        # 軸2を3着に置く5点
-        BetLeg(BET_KIND_TRIFECTA_FORMATION,
-               [[axis1], sorted(partners), [axis2]], stake_tf),
-    ]
+    legs: list[BetLeg] = []
+    if legs_tf:
+        if not stake_tf:
+            raise ValueError(f"7H2 の三連単の賭け金が組めません: {len(legs_tf)}点")
+        legs += [
+            # 軸2を2着に置く5点
+            BetLeg(BET_KIND_TRIFECTA_FORMATION,
+                   [[axis1], [axis2], sorted(partners)], stake_tf),
+            # 軸2を3着に置く5点
+            BetLeg(BET_KIND_TRIFECTA_FORMATION,
+                   [[axis1], sorted(partners), [axis2]], stake_tf),
+        ]
     # 三連複は目ごとに1行（BOXは車群でしか表現できず任意の部分集合を作れない）。
     for t in sorted(trio_legs, key=sorted):
         legs.append(BetLeg(BET_KIND_TRIO_BOX, [sorted(t)], stake_trio))

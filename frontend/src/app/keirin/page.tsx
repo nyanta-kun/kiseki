@@ -292,6 +292,7 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "7A":         { bg: "#78716c", text: "#fff", label: "7A" },
   // 9C=RANK_9C（9車のベースモデル・2026-08-14新設／旧 9S・9A を置換）。
   "9C":         { bg: "#0891b2", text: "#fff", label: "9C" },
+  "7M1":        { bg: "#7c3aed", text: "#fff", label: "7M1" },
   // 🔴 廃止済みだが**実際に売った**ランク（2026-08-16 追加）。backend の
   //    `_LEGACY_RANK_LABELS` が表示名を返すので、ここに無いと「非」になる。
   //    7A/7SS は元から残っていたが 9A/9S が抜けており、入稿だけの行
@@ -1320,11 +1321,12 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H2", "7S", "7C", "7T1", "7B", "7H1", "9H1", "9C"] as const;
+const RANK_ORDER = ["7H2", "7S", "7C", "7T1", "7B", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
   // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。
   "7SS": "7SS", "7S": "7S", "7A": "7A", "9A": "9A", "9S": "9S", "7B": "7B", "9C": "9C",
+  "7M1": "7M1",
   "7H1": "7H1",
   "7H2": "7H2",
   "9H1": "9H1",
@@ -1339,6 +1341,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "9S": "bg-slate-200 text-slate-800 dark:bg-slate-700/60 dark:text-slate-200",
   "7B": "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
   "9C": "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400",
+  "7M1": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "7H1": "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400",
   "7H2": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "9H1": "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-400",

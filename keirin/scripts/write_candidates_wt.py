@@ -414,6 +414,21 @@ def _write_paper_candidates(target_date: str) -> None:
             pred = f"{axis1}={axis2}-" + ",".join(str(x) for x in legs)
         rows.append((f"{rk}#7C", "RANK_7C", pred, None, 0))
 
+    # 7M1（中間層・混戦 × 市場乖離・2026-08-17新設）。
+    # ⚠️ 軸は 7C と同じ `axis1_7c`/`axis2_7c`（3ヘッド軸ではない）。
+    # ⚠️ 相手は `legs_7m1`（軸を除く5車の下位3車を足切りした2〜3点）。7C の `legs_7c` を読むと
+    #    足切り済みの上位相手になり、**この層が狙う帯と正反対の買い目**になる。
+    # ⚠️ 7C と同じく他ランクと同一レースに併存する。1レース1ランクのガードは掛けない。
+    for c in _load((f"wave_picks_wt_{target_date}_s7m1_candidates.json",
+                    f"wave_picks_wt_{target_date}_night_s7m1_candidates.json")):
+        rk = c.get("race_key")
+        axis1, axis2 = c.get("axis1_7c"), c.get("axis2_7c")
+        legs = c.get("legs_7m1") or []
+        if not rk or axis1 is None or axis2 is None or not legs:
+            continue
+        rows.append((f"{rk}#7M1", "RANK_7M1",
+                     f"{axis1}={axis2}-" + ",".join(str(x) for x in legs), None, 0))
+
     # 7T1（三連単・高配当枠・2026-08-15 追加）。
     #
     # 【なぜ必要だったか】7T1 は **発走前判定（notify_prerace_wt）を持たない**
