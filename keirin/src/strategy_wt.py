@@ -2396,32 +2396,11 @@ RANK_9C_NE = 9                     # 対象車数（9車ちょうど）
 # 掃引: 1.20 二軸45.3% / **1.30 50.8%** / 1.40 58.2%（いずれも確認窓）。
 # ⚠️ pred_top3 の較正に依存する。**モデルを再学習したら分布を確認して更新すること**。
 RANK_9C_P3_SUM_MIN = 1.30
-# GII/GI/GP（`cup_grade >= 4`）だけ引き上げる下限（2026-08-16）。
-#
-# 【なぜグレードで変えるのか】同じ p3合計でも、上位グレードだけ 1.30-1.40 の帯で
-#   二軸的中が落ちる（9車・2025-01〜2026-08 の実測）:
-#
-#     p3合計帯      GIII            GII/GI
-#     >=1.40        57.5% (n=942)   52.3% (n=151)   -5.2pt
-#     1.30-1.40     42.7% (n=724)   29.1% (n=151)   **-13.5pt (3.3σ)**
-#     1.20-1.30     33.3%           30.1%           -3.2pt
-#     <1.20         27.6%           28.1%           +0.5pt
-#
-#   ずれているのは **1.30-1.40 の帯だけ**で、そこはまさに現行ゲートが通している帯。
-#   2025年 27.0% / 2026年 32.3% と両年で再現する。GII/GI で 1.40 に上げると
-#   その母集団の二軸が **40.7% → 52.3%** になる（件数は 302→151 と半減する）。
-#
-# 🔴 **GIII には広げない。** `cup_grade=3` は GIII（記念）で「一般開催」ではない。
-#    GIII を 1.40 にすると 1,666→942件に半減して +6.4pt しか増えず、
-#    それは全帯で成り立つ単調性の分でしかない（較正の是正ではない）。
-# 🔴 **`cup_grade` が None のときは 1.30 のまま**（従来動作へのフォールバック）。
-#    この列は 2026-08-14 に保存を始めたので、それ以前のレースと取得に失敗した
-#    開催では NULL になる。ここで上げると過去分の再構築が静かに減る。
-RANK_9C_P3_SUM_MIN_BIG = 1.40
-# 引き上げの対象とする開催グレードの下限（GII）。
-# ⚠️ `cup_grade.BIG_EVENT_MIN_GRADE`（=3 GIII）とは**別の値**。あちらは
-#    「大会として扱う下限」で、こちらは「較正がずれている帯」。混ぜないこと。
-RANK_9C_BIG_GRADE_MIN = 4
+# ⚠️ **グレード別の引き上げ（RANK_9C_P3_SUM_MIN_BIG=1.40・PR#194）は 2026-08-17 に撤去した。**
+#    あれは GII/GI で二軸が -13.5pt 落ちる問題をゲート側で手当てしたものだが、
+#    原因は**モデルの較正**（上位グレードで p3 を +2.1pt 過大評価）だった。
+#    `p3_calibration` を入れたので二重補正になる。較正後は同じ閾値 1.30 のまま
+#    9車・上位グレードの通過が 43.2%→15.4%・通過分の二軸が 43.1%→54.5% になる。
 # 相手の足切り。7C と同値だが**根拠は別**（9車で掃引した結果）。
 RANK_9C_LEG_P3_MIN = 0.15
 # 相手の最低点数。⚠️ 9車では**このゲートは実質効かない**（上記）。
@@ -2431,28 +2410,14 @@ RANK_9C_BUDGET = RACE_BUDGET
 RANK_9C_UNIT = STAKE_UNIT
 
 
-def rank_9c_p3_sum_min(cup_grade: int | None) -> float:
-    """9C の「上位2車の3着内率合計」の下限を開催グレードから決める。
-
-    GII 以上（`cup_grade >= RANK_9C_BIG_GRADE_MIN`）だけ 1.40、それ以外と
-    **不明（None）は 1.30**。根拠は `RANK_9C_P3_SUM_MIN_BIG` の定義部。
-
-    🔴 `cup_grade` は 2026-08-14 に保存を始めた列で、それ以前は NULL。
-       None を上位グレード側へ倒すと過去分の再構築が静かに減る。
-    """
-    if cup_grade is not None and int(cup_grade) >= RANK_9C_BIG_GRADE_MIN:
-        return RANK_9C_P3_SUM_MIN_BIG
-    return RANK_9C_P3_SUM_MIN
-
-
 def rank_9c_daily_select(candidates: list[dict]) -> list[dict]:
     """9C の選出: 上位2車の3着内率合計が閾値以上 ∧ 相手が3点以上。
 
     軸と相手の**選び方は 7C と同じ**（`rank_7c_select_axis` /
     `rank_7c_select_legs` は車数に依存しない）。違うのは閾値だけ。
 
-    合計の下限は**開催グレードで変わる**（`rank_9c_p3_sum_min`）。
-    候補が `cup_grade` を持たない場合は 1.30 が使われる＝従来と同じ挙動。
+    ⚠️ 合計は**較正後の値**で見る（`p3_calibration`・2026-08-17）。候補が
+       `p3_sum_top2_cal` を持たなければ生の `p3_sum_top2` へ落ちる（旧候補JSON互換）。
 
     ⚠️ 7C の「低配当パターン」除外は**9車では使わない**。あれは相手の点数が
        少ないことを低配当の指標に使う仕組みで、相手が7車ある9車では成立しない。
@@ -2468,10 +2433,24 @@ def rank_9c_daily_select(candidates: list[dict]) -> list[dict]:
         (c for c in candidates
          if c.get("n_entries") == RANK_9C_NE
          and c.get("p3_sum_top2") is not None
-         and float(c["p3_sum_top2"]) >= rank_9c_p3_sum_min(c.get("cup_grade"))
+         and float(_gate_p3_sum(c)) >= RANK_9C_P3_SUM_MIN
          and len(c.get("legs_9c") or []) >= RANK_9C_LEGS_MIN),
         key=lambda c: -float(c["p3_sum_top2"]),
     )
+
+
+def _gate_p3_sum(c: dict) -> float:
+    """ゲートが見る「上位2車の3着内率合計」。**較正後の値を優先する**。
+
+    🔴 較正（`p3_calibration`）は決勝・上位グレードでの過大評価を潰すためのもので、
+       **順位は変えない**ので軸・相手の選び方には影響しない。効くのはここだけ。
+    ⚠️ `p3_sum_top2_cal` が無い候補（較正導入前に作られたJSON・古い再構築）は
+       生の値へ落ちる。**黙って0にしない**（0にすると全レースがゲートに落ちる）。
+    """
+    v = c.get("p3_sum_top2_cal")
+    if v is None:
+        v = c.get("p3_sum_top2")
+    return float(v) if v is not None else 0.0
 
 
 def rank_7c_select_axis(top3_probs: dict[int, float]) -> tuple[int, int, float] | None:
@@ -2662,7 +2641,7 @@ def rank_7c_daily_select(candidates: list[dict]) -> list[dict]:
     return sorted(
         (c for c in candidates
          if c.get("p3_sum_top2") is not None
-         and float(c["p3_sum_top2"]) >= RANK_7C_P3_SUM_MIN
+         and _gate_p3_sum(c) >= RANK_7C_P3_SUM_MIN
          and len(c.get("legs_7c") or []) >= RANK_7C_LEGS_MIN
          # 🔴 買い方が決まらないレースは買わない（2026-08-09）。三連複側の
          #    追加ゲート `RANK_7C_TRIO_P3_SUM_MIN` はここで効く。

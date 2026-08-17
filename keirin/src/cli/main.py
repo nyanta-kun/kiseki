@@ -1285,10 +1285,11 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         rank_7c_is_lowpay_pattern, rank_7c_use_trifecta, rank_7c_buy_plan,
         RANK_7C_P3_SUM_MIN, RANK_7C_LEGS_MIN,
         rank_7ss_daily_select, rank_7ss_same_line,
-        RANK_9C_BIG_GRADE_MIN, RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN,
-        RANK_9C_P3_SUM_MIN, RANK_9C_P3_SUM_MIN_BIG, rank_9c_p3_sum_min,
+        RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, RANK_9C_P3_SUM_MIN,
         rank_9c_daily_select, ss_policy,
     )
+    # ゲート専用の較正（2026-08-17）。pred_top3_pct 自体は書き換えない。
+    from src.p3_calibration import calibrated_p3_sum_top2
     from pathlib import Path
 
     if target_date is None:
@@ -1306,8 +1307,9 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
     # ⚠️ `load_raw_data_wt` の SELECT には足さない。あれは学習にも使う共有経路で、
     #    表示・ゲート用の値を混ぜると `race_point` のときと同じ事故（特徴量へ
     #    表示用の書き込みが紛れ込む）を招く。ここで引いて候補にだけ載せる。
-    # ⚠️ 取れなければ空のままにする。`rank_9c_p3_sum_min(None)` は従来の 1.30 を
-    #    返すので、失敗しても**選出が広がる方向にしか倒れない**（黙って減らない）。
+    # ⚠️ 取れなければ空のままにする。`p3_calibration.grade_group(None)` は
+    #    「F級」（補正ほぼ恒等）へ倒すので、失敗しても**選出が広がる方向にしか
+    #    倒れない**（黙って減らない）。
     try:
         with get_connection() as conn:
             _cg = pd.read_sql(
@@ -1983,6 +1985,13 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     "axis1_7c": sel_7c[0] if sel_7c else None,
                     "axis2_7c": sel_7c[1] if sel_7c else None,
                     "p3_sum_top2": round(sel_7c[2], 6) if sel_7c else None,
+                    # ゲート専用の較正値（2026-08-17）。決勝・上位グレードでの
+                    # 過大評価を潰す。**順位は変わらないので軸・相手は不変**。
+                    "p3_sum_top2_cal": (
+                        round(calibrated_p3_sum_top2(
+                            top3_probs, race_type_map.get(race_key),
+                            cup_grade_map.get(race_key)) or 0.0, 6)
+                        if sel_7c else None),
                     "legs_7c": legs_7c,
                     "lowpay_pattern": lowpay_7c,
                     # 三連単への切替（2026-08-09）。判定は朝の生予測で確定させ、
@@ -2141,7 +2150,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         _n_no_p3 = sum(1 for c in rank_7s_raw_candidates if c.get("p3_sum_top2") is None)
         _n_sum_ok = sum(1 for c in rank_7s_raw_candidates
                         if c.get("p3_sum_top2") is not None
-                        and float(c["p3_sum_top2"]) >= RANK_7C_P3_SUM_MIN)
+                        and float(c.get("p3_sum_top2_cal") or c["p3_sum_top2"])
+                        >= RANK_7C_P3_SUM_MIN)
         click.echo(f"[保存先] {rank_7c_path}  (7C候補 {len(rank_7c_candidates)}件/"
                    f"{len(rank_7s_raw_candidates)}件中・上位2車の3着内率合計>="
                    f"{RANK_7C_P3_SUM_MIN} ∧ 相手{RANK_7C_LEGS_MIN}点以上/ペーパー検証)")
@@ -2215,6 +2225,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
 
                 # 9C（9車ベースモデル・2026-08-14）用。軸と相手の選び方は 7C と同じ
                 # （`rank_7c_select_*` は車数に依存しない）。閾値だけ 9C 用。
+                _race_type_9c = race_type_map.get(race_key)
+                _cup_grade_9c = cup_grade_map.get(race_key)
                 _sel_9c = rank_7c_select_axis(top3_probs)
                 if _sel_9c:
                     _others_9c = sorted(set(top3_probs) - {_sel_9c[0], _sel_9c[1]})
@@ -2228,6 +2240,10 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     "axis1_9c": _sel_9c[0] if _sel_9c else None,
                     "axis2_9c": _sel_9c[1] if _sel_9c else None,
                     "p3_sum_top2": round(_sel_9c[2], 6) if _sel_9c else None,
+                    "p3_sum_top2_cal": (
+                        round(calibrated_p3_sum_top2(
+                            top3_probs, _race_type_9c, _cup_grade_9c) or 0.0, 6)
+                        if _sel_9c else None),
                     "legs_9c": _legs_9c,
                     # 9C のゲート下限を決める（GII以上だけ 1.40）。None なら 1.30。
                     "cup_grade": cup_grade_map.get(race_key),
@@ -2264,14 +2280,15 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         _n9_no_p3 = sum(1 for c in rank_9s_raw_candidates if c.get("p3_sum_top2") is None)
         _n9_sum_ok = sum(1 for c in rank_9s_raw_candidates
                          if c.get("p3_sum_top2") is not None
-                         and float(c["p3_sum_top2"]) >= rank_9c_p3_sum_min(c.get("cup_grade")))
+                         and float(c.get("p3_sum_top2_cal") or c["p3_sum_top2"])
+                         >= RANK_9C_P3_SUM_MIN)
         # グレード別の下限が実際に効いているかをログで見えるようにする（2026-08-16）。
         # cup_grade が全件 None なら引き上げは一度も発火していない＝取得に失敗している。
         _n9_big = sum(1 for c in rank_9s_raw_candidates
-                      if (c.get("cup_grade") or 0) >= RANK_9C_BIG_GRADE_MIN)
+                      if (c.get("cup_grade") or 0) >= 4)
         click.echo(f"[保存先] {rank_9c_path}  (9C候補 {len(rank_9c_candidates)}件/"
                    f"{rank_9s_raw_n}件中・上位2車の3着内率合計>="
-                   f"{RANK_9C_P3_SUM_MIN}（GII以上は{RANK_9C_P3_SUM_MIN_BIG}） ∧ "
+                   f"{RANK_9C_P3_SUM_MIN}（較正後の値で判定） ∧ "
                    f"相手{RANK_9C_LEGS_MIN}点以上)")
         click.echo(f"[wt] 9C母集団: p3欠損={_n9_no_p3} GII以上={_n9_big} "
                    f"合計条件通過={_n9_sum_ok} "

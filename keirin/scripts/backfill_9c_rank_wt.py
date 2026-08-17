@@ -51,6 +51,7 @@ from src.strategy_wt import (  # noqa: E402
     RANK_9C_LEG_P3_MIN, RANK_9C_LEGS_MIN, rank_7c_select_axis,
     rank_7c_select_legs, rank_9c_daily_select,
 )
+from src.p3_calibration import calibrated_p3_sum_top2  # noqa: E402
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
 
 N_CAR = 9
@@ -75,12 +76,14 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         date_map = dict(c.execute(
             "SELECT race_key, race_date FROM wt_races WHERE race_date BETWEEN ? AND ?",
             (date_from, date_to)))
-        # 9C のゲート下限はグレードで変わる（GII以上だけ 1.40・2026-08-16）。
-        # ⚠️ `cup_grade` は 2026-08-14 に保存を始めた列で、それ以前は NULL。
-        #    `rank_9c_p3_sum_min(None)` が 1.30 を返すので、古い期間は従来どおり
-        #    再構築される（黙って件数が減らない）。
+        # ゲートは較正後の p3合計 で見る（2026-08-17）。開催グレードとレース種別が
+        # 較正のセグメント。⚠️ `cup_grade` は 2026-08-14 保存開始で以前は NULL、
+        # `grade_group(None)` が「F級」（ほぼ恒等）へ倒すので静かに減らない。
         cup_grade_map = dict(c.execute(
             "SELECT race_key, cup_grade FROM wt_races WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to)))
+        race_type_map = dict(c.execute(
+            "SELECT race_key, race_type FROM wt_races WHERE race_date BETWEEN ? AND ?",
             (date_from, date_to)))
         rksN = [rk for rk, ne in ne_map.items() if ne and int(ne) == N_CAR]
         fins: dict[str, list[tuple[int, int]]] = {}
@@ -131,6 +134,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "n_entries": N_CAR,
             "axis1": axis1, "axis2": axis2,
             "p3_sum_top2": p3_sum, "legs_9c": legs,
+            "p3_sum_top2_cal": calibrated_p3_sum_top2(
+                top3_probs, race_type_map.get(rk), cup_grade_map.get(rk)),
             "cup_grade": cup_grade_map.get(rk),
             "trio": trio,
             "actual_top3": frozenset(fno for _, fno in fin[:3]),
