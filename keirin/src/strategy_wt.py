@@ -2113,11 +2113,15 @@ def rank_7h1_daily_select(candidates: list[dict]) -> list[dict]:
 #   軸2           = 印なし × モデル**3着内率**最大 … m2/m3 との差は全閾値で ns
 #   相手          = 残り5車（**総流し**。WT◎もここに入る）
 #
-#   三連単フォーメーション（倍購入・10点 × RANK_7H2_TF_UNIT 円）
+#   三連複BOX（10点 × 予算/10 = 1点1,000円）
+#       プール = 軸1・軸2 + 相手のうち**WT◎を除く**上位3車 の5車
+#
+#   🔴 **2026-08-18 に三連単を破棄した**（下記 RANK_7H2_TRIFECTA_ENABLED）。
+#      以下の「倍購入」に関する記述は破棄前の設計根拠であり、**現行の買い方では
+#      ない**。再開するなら予算配分から作り直すこと。
+#   （破棄前）三連単フォーメーション（倍購入・10点 × RANK_7H2_TF_UNIT 円）
 #       軸1 → 軸2 → 相手5車   （軸2を2着に置く5点）
 #       軸1 → 相手5車 → 軸2   （軸2を3着に置く5点）
-#   三連複BOX（10点 × 残予算/10）
-#       プール = 軸1・軸2 + 相手のうち**WT◎を除く**上位3車 の5車
 #
 #   ⚠️ **三連単は倍購入・三連複は◎を外す**、が設計の要（2026-08-10 ユーザー指定・実測で裏づけ済み）:
 #     - 倍購入(P1+P2) の **ROI は P1 単独・P2 単独と構造的に同じ**（72.3/72.0/72.2%）。
@@ -2248,8 +2252,18 @@ RANK_7H2_TRIO_POOL_MAX = 5         # 三連複BOXに使うプール上限車数�
 #   三連複一本化の試算（同44件・10点×1,000円・損益分岐10倍）:
 #     13的中中12件が10倍超 → ROI 69.5% / 表示的中 27.3%（20.9% / 4.5% から改善）
 #
-#   ⚠️ **n=44 なので数字は目安**。7H2 は全期間の再構築がまだ無い
-#      （picks_history は44行のみ）。有効化の前に再構築で確かめること。
+#   ✅ **2026-08-18: 再構築スクリプトを新設して確かめた**
+#      （`scripts/backfill_7h2_rank_wt.py` / `rebuild_7h2_walkforward_pg.py`・
+#        月次凍結 vintage の walk-forward）。試算 69.5% に対し実測はやや上:
+#
+#        2026-07 単月 451R … 的中 27.1% / 表示的中 21.7% / ROI 78.0%
+#        2024-01 単月 434R … 的中 32.7% / 表示的中 19.4% / ROI 69.0%
+#
+#      旧構成（ROI 20.9% / 表示的中 4.5%）からの改善は本物。ただし
+#      🔴 **ROI は控除率の壁（75%）の前後を行き来しており、この層に
+#         エッジがあるという主張はできない**。7H2 の評価軸は依然として
+#         「>=300倍 の頻度」であって ROI ではない（下記）。
+#      ⚠️ 旧44行（2026-08-10〜14）は**買い方が違う別物**。再構築が上書きする。
 #   ⚠️ 三連単側のロジックは残してある（再開は `RANK_7H2_TRIFECTA_ENABLED=True`）。
 #      ただし**予算配分を直さずに戻すと同じ壊れ方をする**。
 RANK_7H2_TRIFECTA_ENABLED = False
@@ -3447,22 +3461,94 @@ def rank_7t1_stakes(legs: list[str], budget: int = RANK_7T1_BUDGET,
     return allocate_budget({leg: 1.0 for leg in legs}, budget=budget, unit=unit)
 
 
-def rank_7t1_daily_select(candidates: list[dict]) -> list[dict]:
+# 🔴 **1日の上限本数**（2026-08-18・ユーザー判断「1日5レース程度・期待値のある上位5」）。
+#   7T1 は 13.7件/日 と最も多く、8月の入稿全588件の**40%**を占めていた。
+#   的中は設計どおり4.3%なので、商品構成に占める比率がそのまま
+#   netkeirin の表示的中率を押し下げる（寄与は 0.40 × 3.4% ＝ 1.4pt だけ）。
+#
+#   ⚠️ **これは成績の問題ではない**。7T1 単体は honest walk-forward
+#      （3,120R・2026-01〜08）で ROI 91.4% と壁の上にある。絞るのは
+#      「高配当枠が商品全体に占める比率」を戻すための**構成の判断**。
+#
+#   ⚠️ 点数別の削減は測ったうえで**採らなかった**。1点 ROI 104.2%/的中5.0%、
+#      2点 102.7%/4.7%、3点 78.1%/4.0%、5点 36.2%/1.0% で、1点が最良。
+#      「1点は当てにくい」という印象は誤りで、点数が増えるほど必要オッズの
+#      足切りが上がり的中率が下がる（1点15倍 → 5点75倍）。
+RANK_7T1_DAILY_CAP = 5
+
+
+def rank_7t1_expected_value(candidate: dict, win_probs: dict[int, float] | None = None
+                            ) -> float | None:
+    """1レースの期待回収倍率（Σ 的中確率×予測オッズ×賭け金 ÷ 投資額）。
+
+    候補が `ev` を持っていればそれを返す（候補生成時に確定させるのが正）。
+    無ければ `pred_odds` / `stakes` / win_probs から組み立てる。
+
+    🔴 **予測オッズで計算する**。確定オッズは朝には無い。したがってこの値は
+       「予測が当たっている前提での期待値」であって、実現値ではない。
+    ⚠️ 実測では的中133件のうち目標15万円へ届いたのは66.2%（1点は61.0%）。
+       予測オッズは高めに出る傾向があるので、**この期待値も高めに出ている**。
+    """
+    v = candidate.get("ev")
+    if v is not None:
+        return float(v)
+    odds = candidate.get("pred_odds") or {}
+    stakes = candidate.get("stakes") or {}
+    if not odds or not stakes or not win_probs:
+        return None
+    total = sum(stakes.values())
+    if total <= 0:
+        return None
+    ev = 0.0
+    for leg, stake in stakes.items():
+        o = odds.get(leg)
+        p = rank_7t1_pl_prob(win_probs, leg)
+        if o is None or p is None:
+            continue
+        ev += float(p) * float(o) * float(stake)
+    return ev / total
+
+
+def rank_7t1_daily_select(candidates: list[dict],
+                          daily_cap: int = RANK_7T1_DAILY_CAP) -> list[dict]:
     """当日の候補から 7T1 を選出する。
 
     candidates の各要素に必要なキー:
       `n_entries`(=7) / `race_type` / `is_cross_line` / `legs`（空なら除外）
+      `ev`（期待回収倍率。上限で切るときの順位づけに使う）
 
-    **日ごとの相対順位で切らない**（7H1/9H1 と同じ理由。切り捨てが件数を
-    系統的に減らす）。母集団の条件を満たすものは全部出す。
-    0件の日があるのは正常（実測 13.4本/日）。
+    母集団の条件（決勝系レース × 上位2車が別ライン）を満たしたうえで、
+    **期待値の高い順に `daily_cap` 本だけ**を採る（2026-08-18〜）。
+
+    🔴 **`ev` を持たない候補は落とさない**。旧形式の候補JSONを読んだときに
+       商品が全滅するのを防ぐ（`legs_7c_buy` と同じ扱い）。ただし順位づけでは
+       最下位に置くので、上限に達していれば結果的に外れる。
+    ⚠️ 上限を掛けるのはここ1箇所だけ。`build_7t1_candidates.py` は日次1回しか
+       走らないので、朝夜で枠を取り合う問題は起きない（7S とは事情が違う）。
+    🔴 ただし**バックフィルは同じ関数を月単位で呼ぶ**ので、上限は必ず
+       `race_date` ごとに掛けること（一括で掛けると月5本になる）。
     """
     elig = [c for c in candidates
             if c.get("n_entries") == RANK_7T1_NE
             and rank_7t1_is_target_race_type(c.get("race_type"))
             and bool(c.get("is_cross_line"))
             and c.get("legs")]
-    # 発走順。件数を絞らないので順序は表示・入稿の都合だけで決めてよい。
+    if daily_cap:
+        # 🔴 **必ず日付ごとに切る**。本関数は日次の候補生成（1日分）だけでなく
+        #    過去分バックフィル（`build_7t1_candidates.build` を**月単位**で呼ぶ）
+        #    からも通る。全体へ一括で上限を掛けると、その月ぜんぶで5本しか
+        #    残らない（＝再構築が本番と別物になる）。
+        by_day: dict[str, list[dict]] = {}
+        for c in elig:
+            by_day.setdefault(str(c.get("race_date") or ""), []).append(c)
+        kept: list[dict] = []
+        for day in by_day.values():
+            day.sort(key=lambda c: (
+                -(float(c["ev"]) if c.get("ev") is not None else -1.0),
+                str(c.get("race_key"))))
+            kept += day[:daily_cap]
+        elig = kept
+    # 発走順。表示・入稿の都合だけで決めてよい。
     elig.sort(key=lambda c: (str(c.get("start_time") or ""), str(c.get("race_key"))))
     return elig
 

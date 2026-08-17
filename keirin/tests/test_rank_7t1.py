@@ -285,10 +285,17 @@ def test_daily_select_requires_final_series_and_cross_line():
     assert rank_7t1_daily_select([_cand(legs=[])]) == []
 
 
-def test_daily_select_is_not_a_daily_rank_cut():
-    """件数を日ごとの相対順位で切らないこと（切り捨てが件数を系統的に減らす）。"""
+def test_daily_select_caps_at_five_per_day():
+    """🔴 2026-08-18〜 **1日5本まで**（ユーザー判断）。
+
+    それ以前は「件数を日ごとの相対順位で切らない」方針だった（切り捨てが件数を
+    系統的に減らすため）。7T1 が入稿全体の40%を占め、的中4.3%の高配当枠が
+    表示的中率を押し下げていたので、構成の判断として上限を入れた。
+    上限を外したいときは `daily_cap=0` を渡す（検証用）。
+    """
     cands = [_cand(race_key=f"20260813_11_{i:02d}") for i in range(1, 21)]
-    assert len(rank_7t1_daily_select(cands)) == 20
+    assert len(rank_7t1_daily_select(cands)) == 5
+    assert len(rank_7t1_daily_select(cands, daily_cap=0)) == 20
 
 
 # ---------------------------------------------------------------- 登録・入稿
@@ -388,3 +395,57 @@ def test_single_point_is_allowed():
     rows, _marks, _a1, _a2 = _normalize_7t1_candidate(cand, RANK_CONFIGS["7T1"])
     assert len(rows) == 1
     assert rows[0].stake_per_line == RANK_7T1_BUDGET
+
+
+# ── 日次上限（2026-08-18 新設）────────────────────────────────────────
+
+def _cap_cand(day: str, key: str, ev: float | None) -> dict:
+    return {"n_entries": 7, "race_type": "決勝", "is_cross_line": True,
+            "legs": ["1-2-3"], "race_date": day, "race_key": key,
+            "start_time": key, "ev": ev}
+
+
+def test_daily_cap_keeps_the_top_five_by_expected_value() -> None:
+    """🔴 1日5本まで・期待値の高い順（ユーザー判断 2026-08-18）。
+
+    7T1 は 13.7件/日 と最も多く、8月の入稿全588件の40%を占めていた。
+    的中は設計どおり4.3%なので、比率がそのまま表示的中率を押し下げる。
+    ⚠️ 成績の問題ではない（7T1 単体は honest で ROI 91.4%）。商品構成の判断。
+    """
+    import src.strategy_wt as sw
+    cands = [_cap_cand("2026-08-01", f"a{i}", 1.0 + i * 0.1) for i in range(8)]
+    got = sw.rank_7t1_daily_select(cands)
+    assert len(got) == sw.RANK_7T1_DAILY_CAP == 5
+    assert sorted(round(c["ev"], 2) for c in got) == [1.3, 1.4, 1.5, 1.6, 1.7]
+
+
+def test_daily_cap_is_applied_per_race_date() -> None:
+    """🔴 上限は**日付ごと**に掛ける。
+
+    本関数は日次の候補生成（1日分）だけでなく、過去分バックフィルからも
+    **月単位**で呼ばれる（`build_7t1_candidates.build` に date_from/date_to を渡す）。
+    全体へ一括で掛けると、その月ぜんぶで5本しか残らず再構築が本番と別物になる。
+    """
+    import src.strategy_wt as sw
+    cands = ([_cap_cand("2026-08-01", f"a{i}", 1.0 + i * 0.1) for i in range(8)]
+             + [_cap_cand("2026-08-02", f"b{i}", 1.0 + i * 0.1) for i in range(8)])
+    got = sw.rank_7t1_daily_select(cands)
+    from collections import Counter
+    assert Counter(c["race_date"] for c in got) == {"2026-08-01": 5, "2026-08-02": 5}
+
+
+def test_daily_cap_does_not_drop_candidates_without_ev() -> None:
+    """`ev` を持たない旧形式の候補は落とさない（上限に余裕があれば残る）。"""
+    import src.strategy_wt as sw
+    cands = [_cap_cand("2026-08-01", "a", None), _cap_cand("2026-08-01", "b", 1.5)]
+    got = sw.rank_7t1_daily_select(cands)
+    assert {c["race_key"] for c in got} == {"a", "b"}
+
+
+def test_daily_cap_ranks_ev_above_missing_ev() -> None:
+    """上限に達したら `ev` のある候補が優先される（欠損は最下位）。"""
+    import src.strategy_wt as sw
+    cands = ([_cap_cand("2026-08-01", f"x{i}", None) for i in range(3)]
+             + [_cap_cand("2026-08-01", f"y{i}", 2.0 + i) for i in range(5)])
+    got = sw.rank_7t1_daily_select(cands)
+    assert {c["race_key"] for c in got} == {"y0", "y1", "y2", "y3", "y4"}
