@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.p3_calibration import calibrated_p3_sum_top2  # noqa: E402
 from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
@@ -143,6 +144,12 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         ne_map = dict(c.execute(
             "SELECT race_key, n_entries FROM wt_races WHERE race_date BETWEEN ? AND ?",
             (date_from, date_to)))
+        race_type_map = dict(c.execute(
+            "SELECT race_key, race_type FROM wt_races WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to)))
+        cup_grade_map = dict(c.execute(
+            "SELECT race_key, cup_grade FROM wt_races WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to)))
         date_map = dict(c.execute(
             "SELECT race_key, race_date FROM wt_races WHERE race_date BETWEEN ? AND ?",
             (date_from, date_to)))
@@ -220,7 +227,11 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "race_key": rk, "race_date": date_map.get(rk, ""),
             "wt_ana": wt_ana,
             "axis1": axis1, "axis2": axis2,
-            "p3_sum_top2": p3_sum, "legs_7c": legs, "win_probs": win_probs,
+            "p3_sum_top2": p3_sum,
+            # ゲート専用の較正値（2026-08-17）。順位は変えないので軸・相手は不変。
+            "p3_sum_top2_cal": calibrated_p3_sum_top2(
+                top3_probs, race_type_map.get(rk), cup_grade_map.get(rk)),
+            "legs_7c": legs, "win_probs": win_probs,
             "order3": order3,
             "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
             "entropy": rank_7s_field_entropy(top3_probs),
