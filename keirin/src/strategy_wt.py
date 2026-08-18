@@ -2837,25 +2837,41 @@ def rank_7c_daily_select(candidates: list[dict]) -> list[dict]:
 
     returns 採用された候補のリスト（p3_sum_top2 の降順＝自信のある順）。
     """
-    return sorted(
-        (c for c in candidates
-         if c.get("p3_sum_top2") is not None
-         and _gate_p3_sum(c) >= RANK_7C_P3_SUM_MIN
-         and len(c.get("legs_7c") or []) >= RANK_7C_LEGS_MIN
-         # 🔴 買い方が決まらないレースは買わない（2026-08-09）。三連複側の
-         #    追加ゲート `RANK_7C_TRIO_P3_SUM_MIN` はここで効く。
-         #    ⚠️ 旧形式の候補JSON（`legs_7c_buy` を持たない）は落とさない。
-         #      キーが無い＝判定不能であって「買わない」ではないため、
-         #      当日リカバリで旧JSONを読んだときに商品が全滅するのを防ぐ。
-         and ("legs_7c_buy" not in c or c.get("legs_7c_buy"))
-         and not c.get("lowpay_pattern")
-         # 🔴 軸1が抜けすぎたレースは買わない（2026-08-18）。
-         #    キーが無い旧形式の候補JSONは**落とさない**（判定不能であって
-         #    「買わない」ではない。当日リカバリで旧JSONを読んでも全滅しない）。
-         and (c.get("axis1_p3") is None
-              or float(c["axis1_p3"]) < RANK_7C_AXIS1_P3_MAX)),
-        key=lambda c: -float(c["p3_sum_top2"]),
-    )
+    return sorted((c for c in candidates if rank_7c_accepts(c)),
+                  key=lambda c: -float(c["p3_sum_top2"]))
+
+
+def rank_7c_accepts(c: dict) -> bool:
+    """候補1件を 7C が買うか。**7C の受理条件の単一正本**。
+
+    🔴 `rank_7m1_daily_select` が「7C が見送ったレース」を拾うためにこの述語を
+       共有する。条件をここ以外に写すと、7C の閾値を動かしたときに 7M1 側だけ
+       古い条件のまま残り、**両ランクが同じレースを二重に買う**（あるいは
+       どちらも買わない隙間ができる）。このリポジトリが繰り返し踏んでいる
+       「同じ判定の二重管理」の型なので、必ずこの関数を経由すること。
+    """
+    if c.get("p3_sum_top2") is None:
+        return False
+    if _gate_p3_sum(c) < RANK_7C_P3_SUM_MIN:
+        return False
+    if len(c.get("legs_7c") or []) < RANK_7C_LEGS_MIN:
+        return False
+    # 🔴 買い方が決まらないレースは買わない（2026-08-09）。三連複側の
+    #    追加ゲート `RANK_7C_TRIO_P3_SUM_MIN` はここで効く。
+    #    ⚠️ 旧形式の候補JSON（`legs_7c_buy` を持たない）は落とさない。
+    #      キーが無い＝判定不能であって「買わない」ではないため、
+    #      当日リカバリで旧JSONを読んだときに商品が全滅するのを防ぐ。
+    if "legs_7c_buy" in c and not c.get("legs_7c_buy"):
+        return False
+    if c.get("lowpay_pattern"):
+        return False
+    # 🔴 軸1が抜けすぎたレースは買わない（2026-08-18）。
+    #    キーが無い旧形式の候補JSONは**落とさない**（判定不能であって
+    #    「買わない」ではない。当日リカバリで旧JSONを読んでも全滅しない）。
+    if (c.get("axis1_p3") is not None
+            and float(c["axis1_p3"]) >= RANK_7C_AXIS1_P3_MAX):
+        return False
+    return True
 
 
 def rank_7c_select_legs(
@@ -2987,6 +3003,62 @@ RANK_7M1_LEG_P3_MIN = RANK_7C_LEG_P3_MIN
 # 足切り後の下限。下回ったら下位3車のうち**上位側**から戻して2点にする。
 # 1点買いにしないのは 7C と同じ理由（`RANK_7C_TRIO_LEGS_FLOOR` のコメント参照）。
 RANK_7M1_LEGS_MIN = 2
+# 🔴 **堅い帯の取り込み（2026-08-19・ユーザー要望「三連複で10倍以上を中心に狙う」）**
+#
+#   7M1 は当初「混戦帯（7C の裏返し）」だけを見ていたが、**7C が買わない堅い帯**にも
+#   同じ性格の母集団が残っていた。取り込む条件は次の3つを全て満たすこと:
+#
+#     (a) 上位2車の合計 >= RANK_7M1_P3_SUM_MAX（＝堅い帯）
+#     (b) **◎が軸2車に入り、○は入らない**（`wt_honmei_in_axis_7c` が True かつ
+#         `wt_overlap_7c_n == 1`）
+#     (c) `rank_7c_accepts()` が False（＝7C が見送るレース）
+#
+#   【なぜ (b) が「◎あり・○なし」なのか】2025-01〜2026-08-18・37,660R の実測で、
+#   三連複 軸2車＋下位3車を買ったときの成績を軸と公式印の重なりで割ると:
+#
+#     | 軸の作り方              | 件/日 | 的中% | 10倍+的中% [95%CI]  | 的中中10倍+ | 配当中央 |
+#     |------------------------|-------|-------|---------------------|------------|---------|
+#     | ◎あり・2軸目＝○        | 49.8  | 18.2  | 7.64 [7.34, 7.94]   | 42.1%      |  8.5倍  |
+#     | **◎あり・2軸目は○以外** | 12.0  | 11.7  | 7.95 [7.32, 8.57]   | **67.8%**  | 14.2倍  |
+#     | 【差替】◎を外して上位2   | 63.3  |  5.0  | 4.16 [3.96, 4.36]   | 83.9%      | 25.9倍  |
+#     | 【差替】◎○を外して上位2  | 63.3  |  3.6  | 3.07 [2.90, 3.25]   | 85.0%      | 27.8倍  |
+#
+#   🔴 **◎を軸から外してはいけない**。外すと10倍以上の的中頻度が**半減**する
+#      （7.6〜8.0% → 3.1〜4.2%・CIが重ならない）。1本の配当中央は 8.5→25.9倍に
+#      跳ねるが頻度の損失が上回り ROI は 54.8〜66.0% と壁の下へ落ちる。
+#   🔴 **軸を差し替えるのではなくレースを選ぶこと。** ◎を外して2軸目を繰り上げる
+#      設計は上表の【差替】と同じものになる。
+#   ✅ 「◎あり・○なし」は 10倍以上の的中頻度を**落とさずに**（7.64→7.95%・
+#      統計的に同じ）安い的中だけを落とす。減る 6.5pt は全て10倍未満。
+#
+#   【(c) が要る理由】堅い帯は 7C の縄張りで、入稿の優先順位は 7C > 7M1。
+#   7C が買うレースを 7M1 が拾っても**入稿されない紙の推奨が増えるだけ**。
+#   7C の受理条件そのもの（`rank_7c_accepts`）を共有して、隙間だけを取る。
+#
+#   実測（`scripts/exp_7m1_firm_band.py`・本番と同じ予算枠10,000円＋p3傾斜配分・
+#   確定オッズ採点・(a)(b)(c) を全て満たすレースを三連複 軸2車＋下位3車で購入）:
+#
+#     | 年   | 件/日 | 的中% | 表示的中% | ROI%  | 配当中央 | 的中中10倍+ |
+#     |------|-------|-------|-----------|-------|---------|------------|
+#     | 2025 |  3.1  | 11.2  |   11.2    | 81.4  | 5.24倍  |   59.7%    |
+#     | 2026 |  2.4  | 11.1  |   11.1    | 82.1  | 5.28倍  |   63.9%    |
+#
+#   **両年でほぼ完全に一致**し、現行 7M1（的中 11.3% / ROI 82.3% / 払戻中央 5.66倍）
+#   と同一のプロファイル。ガミは実質ゼロ（的中率＝表示的中率）。
+#
+#   ⚠️ **ROI が上がるから入れるのではない**。n=1,148/549 では ROI の CI は
+#      ±10pt 以上あり、既存 7M1（[69.9, 94.2]）と区別できない。採用根拠は
+#      「同じ性格の商品を増やせること」と「的中の約6割が10倍以上」であって
+#      回収率の改善ではない。
+#   ⚠️ **内訳（7C が見送った理由別）で切り分けてはいけない。** 三連複ゲート /
+#      相手不足 / 軸1抜けすぎ の各サブセグメントは n=82〜585 で、2026年の
+#      「軸1抜けすぎ」は ROI 27.3%、2025年は 95.8% と年で符号が反転する。
+#      合計で見ること（多重比較で必ず良いサブセグメントが見つかる）。
+#   ⚠️ 実際に増える入稿は **1.7件/日 程度**。母集団 2.85件/日 のうち 15.5% は
+#      7S/7B/7H1/7T1 が先に取る（優先順位で譲る）。
+RANK_7M1_FIRM_BAND = True
+#: 堅い帯を拾うために候補dictへ必ず載せるキー（`rank_7c_accepts` が見るもの）。
+_FIRM_BAND_REQUIRED_KEYS = ("legs_7c", "legs_7c_buy", "lowpay_pattern", "axis1_p3")
 RANK_7M1_BUDGET = RACE_BUDGET
 RANK_7M1_UNIT = STAKE_UNIT
 
@@ -3026,11 +3098,17 @@ def rank_7m1_select_legs(
 
 
 def rank_7m1_daily_select(candidates: list[dict]) -> list[dict]:
-    """7M1の選出: 混戦（7C の裏返し）∧ 公式印と不一致 ∧ 相手が最低点数そろう。
+    """7M1の選出: 公式印と不一致 ∧ 相手が最低点数そろう ∧ 次のどちらか。
+
+      - **混戦帯**（上位2車の合計 < `RANK_7M1_P3_SUM_MAX`）… 従来からの母集団
+      - **堅い帯のうち 7C が見送るレース** … `rank_7m1_takes_firm_band`
+        （2026-08-19 追加。◎が軸に入り○が入らないレースだけ）
 
     candidates: 7車の生候補 dict のリスト（`rank_7c_*` と同じもの）。最低限
       {"p3_sum_top2": float, "wt_overlap_7c_n": int, "legs_7m1": list[int]}
-      を持つこと。
+      を持つこと。堅い帯を拾うには加えて `wt_honmei_in_axis_7c` と
+      7C の受理判定に要るキー（`legs_7c` / `legs_7c_buy` / `lowpay_pattern` /
+      `axis1_p3`）が要る。**無ければ堅い帯は拾わない（fail-closed）**。
 
     ⚠️ 合計は**較正後の値**で見る（`_gate_p3_sum`）。7C と同じ関数を通すことで、
        較正を入れ替えても両ランクの境界がずれない。
@@ -3052,15 +3130,50 @@ def rank_7m1_daily_select(candidates: list[dict]) -> list[dict]:
             continue
         if c.get("p3_sum_top2") is None:
             continue
-        if _gate_p3_sum(c) >= RANK_7M1_P3_SUM_MAX:
-            continue
         overlap = c.get("wt_overlap_7c_n")
         if overlap is None or int(overlap) >= 2:
             continue
         if len(c.get("legs_7m1") or []) < RANK_7M1_LEGS_MIN:
             continue
-        out.append(c)
+        if _gate_p3_sum(c) < RANK_7M1_P3_SUM_MAX:
+            out.append(c)                      # 混戦帯（従来からの母集団）
+        elif rank_7m1_takes_firm_band(c):
+            out.append(c)                      # 堅い帯のうち 7C が見送る隙間
     return sorted(out, key=lambda c: -float(c["p3_sum_top2"]))
+
+
+def rank_7m1_takes_firm_band(c: dict, enabled: bool | None = None) -> bool:
+    """堅い帯（7C の縄張り）の候補を 7M1 が拾うか。
+
+    条件は3つとも必須（根拠は `RANK_7M1_FIRM_BAND` 定義部のセクションコメント）:
+      (b) ◎が軸2車に入り、○は入らない
+      (c) 7C が買わないレース（`rank_7c_accepts` を共有）
+
+    🔴 **`wt_honmei_in_axis_7c` が無い候補は False を返す（fail-closed）。**
+       較正導入前の候補JSONや古い再構築には無いキーで、そこを fail-open に
+       すると「◎が軸に居ない＝配当は付くが的中頻度が半減する側」まで
+       買ってしまう。他ランクは情報欠損を fail-open にしているが、
+       本判定は 7M1 の印ゲートと同じく**確認できないなら降りる**のが正しい。
+    """
+    # 🔴 既定値を `enabled: bool = RANK_7M1_FIRM_BAND` と書いてはいけない。
+    #    Python の既定引数は**定義時に評価される**ので、定数を書き換えても
+    #    切り替わらない「効かないスイッチ」になる（実際にそれで
+    #    ON/OFF 比較が両方 ON のまま走り、増分0件と誤読した）。
+    if not (RANK_7M1_FIRM_BAND if enabled is None else enabled):
+        return False
+    # 🔴 7C の受理判定に要るキーが1つでも欠けていたら拾わない（fail-closed）。
+    #    `rank_7c_accepts` は旧候補JSON向けに一部を fail-open（＝買う側）で
+    #    扱うので、キーを渡し忘れた呼び出し元では「7Cは買わない」と誤判定され、
+    #    **7C が実際に買うレースまで 7M1 が拾ってしまう**（実測で母集団が19%膨らむ）。
+    #    ここで明示的に要求しておけば、配線し忘れた経路は静かに増えるのではなく
+    #    静かに0件になる——どちらも静かだが、後者は商品を二重に売らない。
+    if any(k not in c for k in _FIRM_BAND_REQUIRED_KEYS):
+        return False
+    if int(c.get("wt_overlap_7c_n") or 0) != 1:
+        return False
+    if c.get("wt_honmei_in_axis_7c") is not True:
+        return False
+    return not rank_7c_accepts(c)
 
 
 def rank_7m1_unit_stake(n_legs: int, budget: int = RANK_7M1_BUDGET,
@@ -3812,6 +3925,11 @@ ABOLISHED_PAPER_RANK_NAMES: frozenset[str] = frozenset(s.rank for s in ABOLISHED
 #: 検査: tests/test_rule_version.py が backfill_7s_merged_rank_wt._SOURCES と突き合わせる。
 MERGED_RANK_SOURCES: dict[str, tuple[str, ...]] = {
     "7S": ("7S", "7A", "7SS"),
+    # 🔴 7M1 は統合ランクではないが、**7C の受理条件に依存する**
+    #    （`rank_7m1_takes_firm_band` が `rank_7c_accepts` を呼ぶ・2026-08-19）。
+    #    7C の閾値だけ動かすと 7M1 の母集団も動くのに版が変わらない、という
+    #    取りこぼしを防ぐために 7C を版のソースへ入れる。
+    "7M1": ("7M1", "7C"),
 }
 
 #: どのランクの判定にも効く共通定数。
