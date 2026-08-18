@@ -10,10 +10,16 @@ $ErrorActionPreference = 'Stop'
 
 $principal = New-ScheduledTaskPrincipal -UserId 'ysuzuki' -LogonType Interactive -RunLevel Limited
 
-# --- 開始: 毎日 22:45 (jvlink realtime は 22:30 に終了する) ---
+# --- 開始: 毎日 23:55 ---
+#
+# 🔴 22:45 ではダメ（2026-08-16 に踏んだ）。jvlink realtime を止めているのは
+#    watchdog の稼働終了(22:30)ではなく **kiseki-EOD-Cleanup の 23:45** で、
+#    22:45 時点では realtime が生きているため run_jvlink_bldn_full.vbs が
+#    "skip: jvlink realtime is still running" で何もせず終わる。
+#    UmaConn 夜間バックフィル(23:50)とは SDK が別なので並走してよい。
 $startAction  = New-ScheduledTaskAction -Execute 'C:\Windows\System32\wscript.exe' `
                   -Argument 'C:\kiseki\windows-agent\run_jvlink_bldn_full.vbs'
-$startTrigger = New-ScheduledTaskTrigger -Daily -At '22:45'
+$startTrigger = New-ScheduledTaskTrigger -Daily -At '23:55'
 $startSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
                   -ExecutionTimeLimit (New-TimeSpan -Hours 9) `
                   -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
