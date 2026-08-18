@@ -47,7 +47,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.p3_calibration import calibrated_p3_sum_top2  # noqa: E402
+from src.p3_calibration import calibrated_p3_sum_top2
+from src.race_gate_7c import score as race_gate_7c_score  # noqa: E402
 from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
@@ -62,6 +63,17 @@ from src.strategy_wt import (
 )
 
 N_CAR = 7
+
+
+def _gate7c_score_safe(top3_probs, line_groups, race_type, cup_grade):
+    """計測用の選別スコア。**失敗しても None を返すだけ**にする。
+
+    判定には使わない列なので、ここで落ちて毎朝の 7C 再構築を止めるのは割に合わない。
+    """
+    try:
+        return race_gate_7c_score(top3_probs, line_groups, race_type, cup_grade)
+    except Exception:                                      # noqa: BLE001
+        return None
 
 
 def _load_trio_boards(race_keys: list[str]) -> dict:
@@ -233,6 +245,16 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             # ゲート専用の較正値（2026-08-17）。順位は変えないので軸・相手は不変。
             "p3_sum_top2_cal": calibrated_p3_sum_top2(
                 top3_probs, race_type_map.get(rk), cup_grade_map.get(rk)),
+            # ⚠️ **本番の判定はこれを見ていない**（2026-08-18 の選別差し替えは
+            #    walk-forward A/B で不採用になった・`docs/analysis/56` 参照）。
+            #    再検証用のハーネス `scripts/exp_gate7c_walkforward_ab.py` だけが
+            #    読む計測用の列として残してある。**判定に使わないこと。**
+            # 🔴 本スクリプトは `reconcile_walkforward_tail.sh` から毎朝 08:40 に
+            #    走る。**計測専用の列で本番の再構築を落とさない**ため例外を握る
+            #    （握り潰してよいのは「無くても商品が成立する値」だけ）。
+            "gate7c_score": _gate7c_score_safe(
+                top3_probs, line_groups, race_type_map.get(rk),
+                cup_grade_map.get(rk)),
             "legs_7c": legs, "win_probs": win_probs,
             "order3": order3,
             "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
