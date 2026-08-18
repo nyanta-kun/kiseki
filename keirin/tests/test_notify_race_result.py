@@ -91,25 +91,40 @@ def test_deleted_status_value_matches_the_submit_script():
     assert m.STATUS_DELETED == canonical
 
 
-def test_cancelled_rank_is_excluded_from_notification():
-    """🔴 却下（status='deleted'）した推奨を通知しない。
+def test_cancelled_submission_is_still_notified():
+    """🔴 取消した推奨も通知する（2026-08-18 ユーザー方針）。
 
-    2026-08-18 高知8R: 7S が 07:08 に提案され **07:15 に却下**された
-    （承認も公開もされていない）。ところが picks_history の行は入稿の有無と
-    無関係に朝の判定で書かれるため残り、`_sold_lines` は status='submitted'
-    でしか拾わないので「売った商品」にも出ず、結果として
-    **売っていない買い目が 🎯 的中として Discord へ流れた**。
+    「全推奨（取消も含む）を通知し、買い目・払戻・的中を出す。取消なら
+    取り消したことを含める」。**黙って落とすと出した推奨の結果が追えなくなる。**
 
-    ここは静的検査にする。実 DB を組むより、
-    「却下ランクを弾く分岐が存在すること」を固定するほうが壊れにくい。
+    経緯: 2026-08-18 高知8R の 7S は 07:08 提案 → 07:15 取消（意図的）。
+    当初これを「通知から外す」方向で直しかけたが、方針は逆だった。
     """
     src = _src()
-    assert "cancelled_ranks" in src, "却下ランクの集合を作っていない"
-    assert "STATUS_DELETED" in src, "却下ステータスで絞っていない"
-    # picks ループの中で必ず弾くこと（集合を作るだけでは意味がない）
-    body = src[src.index("for p in picks:"):]
-    assert "cancelled_ranks" in body[:1200], (
-        "picks ループ内で cancelled_ranks を参照していない")
+    assert "STATUS_DELETED" in src, "取消ステータスを扱っていない"
+    # 入稿の取得が submitted だけに戻っていないこと
+    assert "status IN (?, ?)" in src, (
+        "入稿の取得が status='submitted' だけに戻っている＝取消が落ちる")
+    assert "（取消）" in src, "取消であることを表示していない"
+
+
+def test_day_total_counts_only_sold():
+    """⚠️ 当日合計は**実売のみ**。取消を混ぜると売上が水増しされる。"""
+    src = _src()
+    body = src[src.index("def _day_total("):]
+    body = body[:body.index("\ndef ", 10)]
+    assert "STATUS_SUBMITTED" in body
+    assert "STATUS_DELETED" not in body, "当日合計に取消が混ざっている"
+
+
+def test_sold_line_shows_buy_and_payout():
+    """買い目・的中・払戻の3点を必ず出す（ユーザー要件）。"""
+    src = _src()
+    body = src[src.index("def _sold_lines("):]
+    body = body[:body.index("\ndef ", 10)]
+    assert "format_pred_combo" in body, "買い目を出していない"
+    assert "払戻" in body and "想定" in body, "払戻/想定の表記が無い"
+    assert "的中" in body
 
 
 # --- 対象範囲（静的検査）----------------------------------------------------

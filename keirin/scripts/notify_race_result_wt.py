@@ -213,7 +213,13 @@ def _confirmed_payouts(conn, base: str) -> dict[tuple[str, tuple[int, ...]], int
 
 
 def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
-    """実際に売った商品（入稿原本）の採点行。returns [(表示行, ランク)]。
+    """入稿した推奨の採点行。**取消したものも含む**。returns [(表示行, ランク)]。
+
+    🔴 **取消を落とさない**（2026-08-18 ユーザー方針）。「全推奨（取消含む）を
+       通知し、取消ならそれと分かるようにする」。取消行は `7S（取消）` と出し、
+       金額は「投資」ではなく「想定」と書く（実際には買っていないため）。
+       ⚠️ 当日合計 `_day_total` は**実売のみ**（status='submitted'）のままにする。
+          ここに取消を混ぜると売上が水増しされる。
 
     🔴 **picks_history ではなく `netkeirin_submissions.bet_detail` が正本。**
        候補行が無いレース（看板の穴埋め）でも売っている以上は結果を出す。
@@ -223,16 +229,24 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     with get_connection() as c:
         subs = c.execute(
-            "SELECT rank_key, bet_detail FROM netkeirin_submissions "
-            "WHERE race_key = ? AND status = ? ORDER BY rank_key",
-            (base, STATUS_SUBMITTED),
+            "SELECT rank_key, bet_detail, status FROM netkeirin_submissions "
+            "WHERE race_key = ? AND status IN (?, ?) ORDER BY rank_key",
+            (base, STATUS_SUBMITTED, STATUS_DELETED),
         ).fetchall()
         if not subs:
             return out
         payouts = _confirmed_payouts(c, base)
+        combos = {
+            str(r["rank"] if isinstance(r, dict) else r[0]).replace("RANK_", ""):
+            (r["pred_combo"] if isinstance(r, dict) else r[1])
+            for r in c.execute(
+                "SELECT rank, pred_combo FROM picks_history "
+                "WHERE split_part(race_key, '#', 1) = ?", (base,)).fetchall()
+        }
     for s in subs:
         rank = s["rank_key"] if isinstance(s, dict) else s[0]
         detail = s["bet_detail"] if isinstance(s, dict) else s[1]
+        status = s["status"] if isinstance(s, dict) else s[2]
         got = settle_submission(detail, order3, payouts)
         if got is None:
             continue                       # 採点できない入稿は黙って外れにしない
@@ -240,7 +254,16 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
         mark = "🎯 **的中**" if hit else "❌ 不的中"
         if hit and pay < bet:
             mark = "😖 **ガミ**"            # 当たったが元返し割れ
-        out.append((f"{rank}: {mark}  投資 ¥{bet:,} → 払戻 ¥{pay:,}", rank))
+        # 🔴 **取消も必ず出す**（2026-08-18 ユーザー方針）。
+        #    「全推奨（取消含む）を通知し、取消ならそれと分かるようにする」。
+        #    黙って落とすと、出した推奨の結果が追えなくなる。
+        cancelled = (status == STATUS_DELETED)
+        head = f"{rank}（取消）" if cancelled else rank
+        money = (f"想定 ¥{bet:,} → ¥{pay:,}" if cancelled
+                 else f"投資 ¥{bet:,} → 払戻 ¥{pay:,}")
+        combo = combos.get(rank)
+        buy = f"{format_pred_combo(combo)}  → " if combo else ""
+        out.append((f"{head}: {buy}{mark}  {money}", rank))
     return out
 
 
@@ -290,20 +313,7 @@ def _build_message(t: dict, base: str) -> str:
             "SELECT race_key, rank, pred_combo FROM picks_history "
             "WHERE split_part(race_key, '#', 1) = ?", (base,)
         ).fetchall()
-        # 🔴 **却下した推奨は通知しない**（2026-08-18・ユーザー指摘）。
-        #    picks_history は入稿の有無と無関係に朝の判定で書かれるので、
-        #    レビューUIで取り消しても行が残る。`_sold_lines` は
-        #    status='submitted' で絞るため却下分はそこに現れず、
-        #    「無効化ランクでもない・売ってもいない」買い目が
-        #    **🎯 的中として通知される**（高知8R 7S・2026-08-18）。
-        #    取消は「これは推奨しない」という明示の判断なので通知対象から外す。
-        cancelled_ranks = {
-            (r["rank_key"] if isinstance(r, dict) else r[0])
-            for r in c.execute(
-                "SELECT rank_key FROM netkeirin_submissions "
-                "WHERE race_key = ? AND status = ?", (base, STATUS_DELETED),
-            ).fetchall()
-        }
+
 
     def _g(r, k):
         return r[k] if isinstance(r, dict) else r[list(r.keys()).index(k)]
@@ -318,8 +328,8 @@ def _build_message(t: dict, base: str) -> str:
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
              f"着順: {order}"]
-    # 実際に売った商品（入稿原本）を先に出す。picks_history の候補行は
-    # 「入稿していないランク」の分だけ後段で補う。
+    # 入稿した推奨（取消を含む）を先に出す。picks_history の候補行は
+    # 「一度も入稿していないランク」の分だけ後段で補う。
     sold = _sold_lines(base, order3)
     lines.extend(text for text, _ in sold)
     sold_ranks = {rank for _, rank in sold}
@@ -335,8 +345,6 @@ def _build_message(t: dict, base: str) -> str:
         rank = _g(p, "rank").replace("RANK_", "")
         if rank in sold_ranks:
             continue          # 入稿原本を出した分は重複させない
-        if rank in cancelled_ranks:
-            continue          # 却下した推奨は「出していない」ので通知しない
         combo = _g(p, "pred_combo") or ""
         # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。
         #    ここに自前パースを書いてはいけない。以前は「畳んだ形」だけを想定した
