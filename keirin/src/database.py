@@ -105,7 +105,13 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
 
     # 通常の SQL: keirin スキーマ付与 + パラメータ変換
     # テーブル名に keirin. プレフィックスを付ける（既についている場合はスキップ）
-    sql = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds"
+    # 🔴 **新しいテーブルを作ったらここへ足すこと。** 足し忘れると
+    #    `relation "..." does not exist` で落ちる（2026-08-18 に
+    #    `wt_race_conditions` で実際に踏んだ）。忘れ防止に
+    #    tests/test_pg_schema_prefix.py が init_db の CREATE TABLE と突き合わせる。
+    # ⚠️ 前方一致するものは**長い方を先に**書く（`wt_odds_snapshot` → `wt_odds`）。
+    sql = re.sub(r"(?<!\w)(?:keirin\.)?(wt_race_conditions|wt_races|wt_entries"
+                 r"|wt_odds_snapshot|wt_odds"
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
@@ -613,6 +619,36 @@ def migrate_db():
                 snapshot_type TEXT NOT NULL DEFAULT 'morning',
                 snapshot_at   TEXT DEFAULT (datetime('now')),
                 UNIQUE(race_key, bet_type, combination, snapshot_type)
+            )
+        """)
+        # レースごとの走路条件。**「発走時点の実測」と「朝時点の予報」を別列で持つ**。
+        #
+        # 🔴 **1列に混ぜてはいけない**（2026-08-18 ユーザー指示）。推奨は朝に作るが
+        #    天候は発走までに変わる。実績の検証は実測で見ないと誤り、予想への投入は
+        #    朝に知り得た予報でないと本番で欠損する。混ぜると「検証では正しいのに
+        #    配信では使えない特徴量」が出来る（地方 v14 の市場特徴と同じ型）。
+        #
+        #   weather / wind_speed … winticket（競輪場発表）の**発走時点の実測**
+        #   fc_*                 … Open-Meteo historical-forecast の**予報**
+        #
+        # 🔴 **`wt_weather` とは別物**。あちらは Open-Meteo の会場×時刻グリッド推定で、
+        #    しかも 0 行のまま（2026-07-22 の PG 一本化で取り残された）。
+        #
+        # 🔴 winticket は**未確定レースに `weather=''` / `windSpeed='0.0'`** という
+        #    プレースホルダを返す。取り込むと「無風の日」を捏造するので、
+        #    `decidedAt`（= settled_at）があるレースだけ実測列を書くこと。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS wt_race_conditions (
+                race_key        TEXT PRIMARY KEY,
+                weather         TEXT,
+                wind_speed      REAL,
+                settled_at      TEXT,
+                fc_weather_code INTEGER,
+                fc_wind_speed   REAL,
+                fc_wind_dir     REAL,
+                fc_precip       REAL,
+                fc_source       TEXT,
+                fetched_at      TEXT DEFAULT (datetime('now'))
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wt_races_date   ON wt_races(race_date)")
