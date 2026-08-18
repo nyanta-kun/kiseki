@@ -844,6 +844,37 @@ ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 - **`--mode fix-race --from-date YYYYMMDD`** が過去データ修復の標準手順。
 - `--mode recent` は今週以前のデータは取得不可（option=2の制約）。
 
+### 調教データ（坂路 SLOP / ウッド WOOD）の取得
+
+`kiseki-Chokyo-Daily`（**毎日 06:00**・`run_chokyo_daily.vbs`）が差分(option=1)で取り込む。
+登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_chokyo_daily_task.ps1`
+ログ: `C:\kiseki\windows-agent\chokyo.log`
+
+- 収録範囲（JV-Data4901 仕様）: **SLOP は 2003年以降・美浦栗東両方 / WOOD は 2021-07-27以降・美浦のみ**
+- 06:00 は realtime(9:00-22:30) の外で、07:00 の `kiseki-JRA-Entries-RT` より前の空き枠
+- **14日遡り**で回す。追い切りは水木に集中しファイル到着も遅れるため。取得済みは
+  `{SLOP,WOOD}_CHOKYO` に記録されスキップされるので窓を広げてもコストはほぼ増えない（実測60秒）
+- ガード: chokyo の多重起動と jvlink realtime 稼働中はスキップ
+
+🔴 **過去へのバックフィルはできない**（2026-08-17 実測・`probe_chokyo_retention.py`）。
+
+| 経路 | 実測 |
+|---|---|
+| option=1（通常データ） | **2025-05-27 が保持限界**。SLOP は 726 ファイル / WOOD は 667 ファイルで頭打ちになり、`from_time` をどれだけ古くしても増えない |
+| option=4（セットアップ） | JVOpen が返らない（600秒・900秒とも）。`BlockingCallGuard` のモーダル自動応答を効かせても**ダイアログは検出されず**、サーバー側で本当にブロックしている |
+
+`keiba.slope_training` が 2025-05-27 始まりなのは取得漏れではなく保持限界そのもの。
+`run_chokyo` は完了ファイルを記録して再開できるが、ハングは JVOpen の中で1ファイルも
+読む前なので再開可能性は救いにならない。UmaConn は SLOP を配信していない（地方側が probe 済み・rc=-1）。
+
+→ **評価窓を伸ばす手段は「これから貯める」しかない。この日次ジョブを止めてはいけない。**
+実際 2026-06-07 を最後に自動実行が止まっており、8/15〜8/16 開催週の調教が丸ごと
+欠けていた（DB 最終日が 2026-08-11 のまま誰も気づかなかった）。
+
+⚠️ **`training_index` は調教データを使っていない。** 中身は直近レース成績のトレンドで、
+初出走馬では 78.5% が中立値 50 に張り付く（sd 3.15 ↔ キャリア3走以上 19.80）。
+名前に騙されないこと。実データの調教はキャリア0-2走（出走の 27.7%）で唯一生きている入力。
+
 ### blod-um モード 仕様（pedigrees.sire NULL 補完）
 
 **目的**: 2022年以前の馬の `pedigrees.sire` が NULL になっている問題を解消する。
