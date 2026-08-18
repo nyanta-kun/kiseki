@@ -534,15 +534,22 @@ export function ChihouRaceDetailClient({
         {hasResults && (
           <div className="mt-4 pt-3 border-t border-gray-100">
             <h3 className="text-xs font-semibold text-gray-500 mb-2">確定着順</h3>
+            {/* 馬名の長さでタイム・後3F がずれないよう、行ごとに同じ列幅で並べる
+                （JRA 側 RaceDetailClient.tsx と同じ作り）。馬名は全角最大9文字なので
+                7.5rem 確保しておけば truncate されない。 */}
             <div className="space-y-1">
               {resultsList
                 .filter((r) => r.finish_position !== null)
                 .sort((a, b) => (a.finish_position ?? 99) - (b.finish_position ?? 99))
                 .slice(0, 5)
                 .map((r) => (
-                  <div key={r.horse_name} className="flex items-center gap-2 text-xs">
+                  <div
+                    key={r.horse_name}
+                    className="grid items-center text-xs"
+                    style={{ gridTemplateColumns: "2.5rem 7.5rem 3.5rem 1fr" }}
+                  >
                     <span className={cn(
-                      "min-w-[2.5rem] text-center text-[11px] py-0.5 rounded font-bold",
+                      "text-center text-[11px] py-0.5 rounded font-bold",
                       r.finish_position === 1 ? "bg-yellow-100 text-yellow-800" :
                       r.finish_position === 2 ? "bg-gray-100 text-gray-700" :
                       r.finish_position === 3 ? "bg-orange-100 text-orange-700" :
@@ -550,13 +557,15 @@ export function ChihouRaceDetailClient({
                     )}>
                       {r.finish_position}着
                     </span>
-                    <span className="font-medium text-gray-800">{r.horse_name}</span>
-                    {r.finish_time !== null && (
-                      <span className="text-gray-400 tabular-nums">{formatTime(r.finish_time)}</span>
-                    )}
-                    {r.last_3f !== null && (
-                      <span className="text-gray-400 tabular-nums">後3F {r.last_3f.toFixed(1)}</span>
-                    )}
+                    <span className="font-medium text-gray-800 truncate px-1">{r.horse_name}</span>
+                    {/* 値が無くても空セルを残す。条件で要素ごと消すと後続の列が
+                        繰り上がって、その行だけ桁がずれる */}
+                    <span className="text-gray-400 tabular-nums">
+                      {r.finish_time !== null ? formatTime(r.finish_time) : ""}
+                    </span>
+                    <span className="text-gray-400 tabular-nums">
+                      {r.last_3f !== null ? `後3F ${r.last_3f.toFixed(1)}` : ""}
+                    </span>
                   </div>
                 ))}
             </div>
