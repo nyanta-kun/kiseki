@@ -180,9 +180,12 @@ def main() -> None:
         days = sorted({h[:10] for _rk, h in items})
         rows: list[dict] = []
         # 会場ごとに1年ずつまとめて引く（APIレート配慮）。
-        for chunk in _year_chunks(days):
+        # 🔴 **アーカイブ境界で必ず割る。** 通常の Forecast API は過去日の範囲を
+        #    受け付けず 400 を返す（2026-08-18 に "2026-04-22〜2026-08-18" で実際に
+        #    踏んだ）。年チャンクごと forecast へ回すと直近年が丸ごと落ちる。
+        for chunk in _split_at_archive(_year_chunks(days), archive_max):
             d_from, d_to = chunk[0], chunk[-1]
-            use_fcst = d_to > archive_max
+            use_fcst = d_from > archive_max
             try:
                 hourly = fetch(s, lat, lon, d_from, d_to, use_fcst)
             except Exception as e:                      # noqa: BLE001
@@ -216,6 +219,23 @@ def main() -> None:
                     "       count(weather) AS n_w FROM wt_race_conditions"):
                 print(f"[forecast] 総数 {r[0]:,} / 予報風速 {r[1]:,} "
                       f"/ 予報風向 {r[2]:,} / 実測天候 {r[3]:,}")
+
+
+def _split_at_archive(chunks: list[list[str]], archive_max: str) -> list[list[str]]:
+    """各チャンクを archive_max の前後で割る。
+
+    前半は historical-forecast（過去のアーカイブ予報）、後半は通常 forecast へ回す。
+    割らずに片方の API へまとめて投げると 400 になる。
+    """
+    out: list[list[str]] = []
+    for ch in chunks:
+        past = [d for d in ch if d <= archive_max]
+        future = [d for d in ch if d > archive_max]
+        if past:
+            out.append(past)
+        if future:
+            out.append(future)
+    return out
 
 
 def _year_chunks(days: list[str]) -> list[list[str]]:
