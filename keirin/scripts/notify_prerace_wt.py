@@ -40,6 +40,7 @@ from src.rank_visibility import disabled_rank_names
 from src.scraper.winticket import WinticketScraper
 from src.notify.discord import send
 from src.strategy_wt import (
+    rank_rule_version,
     rank_7h1_stakes,
     RANK_7H2_NE,
     rank_7h2_stakes,
@@ -531,9 +532,9 @@ def _insert_s1_pick(race_key: str, race_date: str, pred_combo: str, n_combos: in
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trifecta_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "SEVEN_S1", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trifecta_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "SEVEN_S1", pred_combo, n_combos, bet, rank_rule_version("SEVEN_S1")),
             )
             conn.commit()
     except Exception as e:
@@ -552,7 +553,7 @@ def _insert_s1_pick(race_key: str, race_date: str, pred_combo: str, n_combos: in
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE",
-                        (race_date, store_key, "SEVEN_S1", pred_combo, n_combos, bet),
+                        (race_date, store_key, "SEVEN_S1", pred_combo, n_combos, bet, rank_rule_version("SEVEN_S1")),
                     )
         except Exception as e:
             logger.warning("S1 pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -804,9 +805,9 @@ def _insert_rank_7s_pick(race_key: str, race_date: str, pred_combo: str, n_combo
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,gate_label) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
-                (race_date, store_key, "RANK_7S", pred_combo, n_combos, bet, gate_label),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,gate_label,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?,?)",
+                (race_date, store_key, "RANK_7S", pred_combo, n_combos, bet, gate_label, rank_rule_version("RANK_7S")),
             )
             conn.commit()
     except Exception as e:
@@ -826,7 +827,7 @@ def _insert_rank_7s_pick(race_key: str, race_date: str, pred_combo: str, n_combo
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE, "
                         "gate_label=EXCLUDED.gate_label",
-                        (race_date, store_key, "RANK_7S", pred_combo, n_combos, bet, gate_label),
+                        (race_date, store_key, "RANK_7S", pred_combo, n_combos, bet, gate_label, rank_rule_version("RANK_7S")),
                     )
         except Exception as e:
             logger.warning("S7 pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -1056,9 +1057,9 @@ def _insert_rank_9s_pick(race_key: str, race_date: str, pred_combo: str, n_combo
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,gate_label) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
-                (race_date, store_key, "RANK_9S", pred_combo, n_combos, bet, gate_label),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,gate_label,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?,?)",
+                (race_date, store_key, "RANK_9S", pred_combo, n_combos, bet, gate_label, rank_rule_version("RANK_9S")),
             )
             conn.commit()
     except Exception as e:
@@ -1078,7 +1079,7 @@ def _insert_rank_9s_pick(race_key: str, race_date: str, pred_combo: str, n_combo
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE, "
                         "gate_label=EXCLUDED.gate_label",
-                        (race_date, store_key, "RANK_9S", pred_combo, n_combos, bet, gate_label),
+                        (race_date, store_key, "RANK_9S", pred_combo, n_combos, bet, gate_label, rank_rule_version("RANK_9S")),
                     )
         except Exception as e:
             logger.warning("S9 pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -1272,9 +1273,9 @@ def _insert_rank_7a_pick_legacy(race_key: str, race_date: str, pred_combo: str,
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7A", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7A", pred_combo, n_combos, bet, rank_rule_version("RANK_7A")),
             )
             conn.commit()
     except Exception as e:
@@ -1293,7 +1294,7 @@ def _insert_rank_7a_pick_legacy(race_key: str, race_date: str, pred_combo: str,
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE",
-                        (race_date, store_key, "RANK_7A", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_7A", pred_combo, n_combos, bet, rank_rule_version("RANK_7A")),
                     )
         except Exception as e:
             logger.warning("7A pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -1460,9 +1461,9 @@ def _insert_rank_7ss_pick_legacy(race_key: str, race_date: str, pred_combo: str,
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7SS", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7SS", pred_combo, n_combos, bet, rank_rule_version("RANK_7SS")),
             )
             conn.commit()
     except Exception as e:
@@ -1481,7 +1482,7 @@ def _insert_rank_7ss_pick_legacy(race_key: str, race_date: str, pred_combo: str,
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE",
-                        (race_date, store_key, "RANK_7SS", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_7SS", pred_combo, n_combos, bet, rank_rule_version("RANK_7SS")),
                     )
         except Exception as e:
             logger.warning("7A pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -1677,9 +1678,9 @@ def _insert_rank_7c_pick(race_key: str, race_date: str, pred_combo: str,
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7C", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7C", pred_combo, n_combos, bet, rank_rule_version("RANK_7C")),
             )
             conn.commit()
     except Exception as e:
@@ -1698,7 +1699,7 @@ def _insert_rank_7c_pick(race_key: str, race_date: str, pred_combo: str,
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount",
-                        (race_date, store_key, "RANK_7C", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_7C", pred_combo, n_combos, bet, rank_rule_version("RANK_7C")),
                     )
         except Exception as e:
             logger.warning("7C pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -1946,9 +1947,9 @@ def _insert_rank_7m1_pick(race_key: str, race_date: str, pred_combo: str,
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7M1", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7M1", pred_combo, n_combos, bet, rank_rule_version("RANK_7M1")),
             )
             conn.commit()
     except Exception as e:
@@ -1967,7 +1968,7 @@ def _insert_rank_7m1_pick(race_key: str, race_date: str, pred_combo: str,
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount",
-                        (race_date, store_key, "RANK_7M1", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_7M1", pred_combo, n_combos, bet, rank_rule_version("RANK_7M1")),
                     )
         except Exception as e:
             logger.warning("7M1 pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -2201,9 +2202,9 @@ def _insert_rank_9c_pick(race_key: str, race_date: str, pred_combo: str,
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet, rank_rule_version("RANK_9C")),
             )
             conn.commit()
     except Exception as e:
@@ -2222,7 +2223,7 @@ def _insert_rank_9c_pick(race_key: str, race_date: str, pred_combo: str,
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount",
-                        (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_9C", pred_combo, n_combos, bet, rank_rule_version("RANK_9C")),
                     )
         except Exception as e:
             logger.warning("9C pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -2560,9 +2561,9 @@ def _insert_rank_7b_pick(race_key: str, race_date: str, pred_combo: str, n_combo
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7B", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7B", pred_combo, n_combos, bet, rank_rule_version("RANK_7B")),
             )
             conn.commit()
     except Exception as e:
@@ -2581,7 +2582,7 @@ def _insert_rank_7b_pick(race_key: str, race_date: str, pred_combo: str, n_combo
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE",
-                        (race_date, store_key, "RANK_7B", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_7B", pred_combo, n_combos, bet, rank_rule_version("RANK_7B")),
                     )
         except Exception as e:
             logger.warning("7B pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -2814,9 +2815,10 @@ def _insert_rank_7h1_pick(race_key: str, race_date: str, detail: dict) -> None:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
                 "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
-                " trio_payout,trifecta_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7H1", pred, n, bet),
+                " trio_payout,trifecta_payout,bet_amount,route,miwokuri,"
+                " rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7H1", pred, n, bet, rank_rule_version("RANK_7H1")),
             )
             conn.commit()
     except Exception as e:
@@ -3016,9 +3018,10 @@ def _insert_rank_7h2_pick(race_key: str, race_date: str, detail: dict) -> None:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
                 "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
-                " trio_payout,trifecta_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_7H2", pred, n, bet),
+                " trio_payout,trifecta_payout,bet_amount,route,miwokuri,"
+                " rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_7H2", pred, n, bet, rank_rule_version("RANK_7H2")),
             )
             conn.commit()
     except Exception as e:
@@ -3197,10 +3200,11 @@ def _insert_rank_9h1_pick(race_key: str, race_date: str, detail: dict) -> None:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
                 "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
-                " trio_payout,trifecta_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False)",
+                " trio_payout,trifecta_payout,bet_amount,route,miwokuri,"
+                " rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,0,?,'wt',False,?)",
                 (race_date, store_key, "RANK_9H1", pred, len(detail["legs"]),
-                 int(detail["bet_amount"])),
+                 int(detail["bet_amount"]), rank_rule_version("RANK_9H1")),
             )
     except Exception as e:
         logger.warning("9H1 pick 書き込み失敗 %s: %s", race_key, e)
@@ -3331,9 +3335,9 @@ def _insert_rank_9a_pick(race_key: str, race_date: str, pred_combo: str, n_combo
         with get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO picks_history "
-                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri) "
-                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False)",
-                (race_date, store_key, "RANK_9A", pred_combo, n_combos, bet),
+                "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,rule_version) "
+                "VALUES (?,?,?,?,?,0,0,0,?,'wt',False,?)",
+                (race_date, store_key, "RANK_9A", pred_combo, n_combos, bet, rank_rule_version("RANK_9A")),
             )
             conn.commit()
     except Exception as e:
@@ -3352,7 +3356,7 @@ def _insert_rank_9a_pick(race_key: str, race_date: str, pred_combo: str, n_combo
                         "ON CONFLICT (race_key) DO UPDATE SET "
                         "rank=EXCLUDED.rank, pred_combo=EXCLUDED.pred_combo, "
                         "n_combos=EXCLUDED.n_combos, bet_amount=EXCLUDED.bet_amount, miwokuri=FALSE",
-                        (race_date, store_key, "RANK_9A", pred_combo, n_combos, bet),
+                        (race_date, store_key, "RANK_9A", pred_combo, n_combos, bet, rank_rule_version("RANK_9A")),
                     )
         except Exception as e:
             logger.warning("9A pick VPS 書き込み失敗 %s: %s", race_key, e)
@@ -3611,8 +3615,8 @@ def _save_prerace_gami(race_key: str, min_odds: float) -> None:
                 # #CAND なし → プレースホルダーを INSERT
                 conn.execute(
                     "INSERT OR IGNORE INTO picks_history "
-                    "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,prerace_gami) "
-                    "VALUES (?,?,'GAMI',NULL,0,0,0,0,0,'wt',True,?)",
+                    "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,trio_payout,bet_amount,route,miwokuri,prerace_gami,rule_version) "
+                "VALUES (?,?,'GAMI',NULL,0,0,0,0,0,'wt',True,?,?)",
                     (race_date, gami_key, rounded),
                 )
             conn.commit()

@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import hashlib as _hashlib
+
 import json
 import math
 from itertools import combinations as _combinations
@@ -709,6 +711,7 @@ RANK_7S_STAKE = unit_stake(5)   # 2,000円/点（5点=10,000円/レース）
 #    「axis_sum 1.40〜1.50 かつ entropy も不合格」の 0.85件/日のみ。
 #    **7S だけを買う運用なら +2.1pt、7S+7A を買う運用ならほぼ無意味**。
 # ⚠️ 変更後は 7S が 6.69→3.68件/日 とほぼ半減し、その分 7A が増える。
+#
 RANK_7S_AXIS_SUM_MAX = 1.40
 
 # フィールド全体の指数エントロピー上限（2026-07-26・ユーザー要望「30倍以上の
@@ -3749,3 +3752,85 @@ ABOLISHED_PAPER_RANKS: tuple[AbolishedRankSpec, ...] = (
 # 廃止済みランクの内部rank名の集合（frozenset）。CURRENT_PAPER_RANKSに含まれて
 # いないことをテストで機械的に検証する（ブラックリスト側）。
 ABOLISHED_PAPER_RANK_NAMES: frozenset[str] = frozenset(s.rank for s in ABOLISHED_PAPER_RANKS)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 判定ルールの版（picks_history.rule_version）— 2026-08-18 新設
+#
+# 【何のためか】`picks_history` は当月しか再構築されない（日次の
+#   `reconcile_walkforward_tail.sh` は `--tail-only`）。過去月は**書かれた当時の
+#   コードのまま**残るので、閾値や買い方を変えると台帳が静かに世代混在する。
+#
+#   🔴 これは実害を出している。2026-08-18 の 7S 閾値の調査で、
+#      「axis_sum 1.40〜1.50 の帯はどのランクも出していない」と判定したが、
+#      参照した RANK_7S 行の一部は **7S の上限が 1.50 だった時代**のもので、
+#      当然その帯を含んでいた。混在は例外を出さないので気付けない。
+#
+# 【何を解決し、何を解決しないか】
+#   ✅ 混在を**検出可能**にする（版でグループ化・除外できる）
+#   ❌ 古い行が新しいルールの結果になるわけではない。
+#      ルール変更の効果測定は**同じスクリプトを条件だけ変えて2回回す**しかない。
+#      この列はその代わりではなく、**間違った近道を塞ぐもの**。
+#
+# 【なぜ手で採番しないか】上げ忘れるから。このリポジトリは
+#   `CURRENT_PAPER_RANKS` / tail reconcile / スキーマ接頭辞リストと、
+#   手書きリストへの足し忘れを繰り返し踏んでいる。
+#   **定数名の接頭辞から自動導出**すれば原理的に忘れられない。
+#
+# ⚠️ 無関係な定数を変えても版が変わる（細かく割れすぎる）。
+#    これは**安全側の誤り**。「違うのに同じ版」より「同じなのに違う版」の方が
+#    はるかにましなので、精度より取りこぼしの無さを採る。
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: 統合ランクの構成。RANK_7S は 旧7S ∪ 旧7A ∪ 旧7SS（2026-08-14 統合）。
+#: 🔴 統合元の定数を版に含めないと、7A の閾値だけ変えたときに 7S の版が動かない。
+#: 検査: tests/test_rule_version.py が backfill_7s_merged_rank_wt._SOURCES と突き合わせる。
+MERGED_RANK_SOURCES: dict[str, tuple[str, ...]] = {
+    "7S": ("7S", "7A", "7SS"),
+}
+
+#: どのランクの判定にも効く共通定数。
+_SHARED_VERSION_CONSTS: tuple[str, ...] = (
+    "RACE_BUDGET", "STAKE_UNIT", "RANK_AXIS2_BAD_WEIGHT",
+)
+
+
+def _version_scalars(prefix: str) -> list[tuple[str, str]]:
+    """`prefix` で始まるモジュール定数を (名前, 値の文字列) で返す。
+
+    スカラー（bool/int/float/str）と、その tuple/frozenset だけを採る。
+    関数やモデルは実行ごとに id が変わるので**含めてはいけない**
+    （毎回版が変わって検出の意味が消える）。
+    """
+    out: list[tuple[str, str]] = []
+    for name, val in globals().items():
+        if not name.startswith(prefix):
+            continue
+        if isinstance(val, (bool, int, float, str)):
+            out.append((name, repr(val)))
+        elif isinstance(val, (tuple, frozenset)) and all(
+                isinstance(v, (bool, int, float, str)) for v in val):
+            out.append((name, repr(sorted(val, key=repr))))
+    return out
+
+
+def rank_rule_version(rank: str) -> str:
+    """そのランクの判定ルールの版（12桁の16進）。
+
+    rank: "7S" / "RANK_7S" のどちらでも可。
+
+    同じ定数なら同じ値、どれか1つでも変われば別の値になる。
+    `picks_history.rule_version` へ書き、集計時に世代を分ける。
+    """
+    key = str(rank).replace("RANK_", "").replace("SEVEN_S", "S")
+    parts: list[tuple[str, str]] = []
+    for src in MERGED_RANK_SOURCES.get(key, (key,)):
+        parts += _version_scalars(f"RANK_{src}_")
+    for name in _SHARED_VERSION_CONSTS:
+        val = globals().get(name)
+        if isinstance(val, (bool, int, float, str)):
+            parts.append((name, repr(val)))
+    if not parts:
+        return "unknown"
+    body = ";".join(f"{n}={v}" for n, v in sorted(set(parts)))
+    return _hashlib.sha1(body.encode("utf-8")).hexdigest()[:12]

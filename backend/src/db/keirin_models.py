@@ -249,6 +249,11 @@ class KeirinPicksHistory(KeirinBase):
     ratio: Mapped[float | None] = mapped_column(
         Numeric(6, 4), comment="比率（migration l8m9n0p1q2r3）"
     )
+    rule_version: Mapped[str | None] = mapped_column(
+        Text,
+        comment="判定ルールの版（keirin/src/strategy_wt.rank_rule_version・"
+                "migration 202608181800_keirin）。NULL は 2026-08-18 以前で世代不明",
+    )
 
 
 class KeirinNetkeirinSetting(KeirinBase):
