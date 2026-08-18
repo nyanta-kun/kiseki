@@ -186,3 +186,134 @@ def test_submission_priority_is_last():
     sys.path.insert(0, str(ROOT / "scripts"))
     from scripts.netkeirin_submit_wt import RANK_ORDER
     assert RANK_ORDER[-1] == "7M1"
+
+
+# ── 堅い帯の取り込み（RANK_7M1_FIRM_BAND・2026-08-19） ──────────────────
+
+def _firm(**kw):
+    """堅い帯（7C の縄張り）で、7C が「軸1が抜けすぎ」で見送る候補。
+
+    ◎が軸に入り○は入らない（`wt_overlap_7c_n == 1` かつ
+    `wt_honmei_in_axis_7c is True`）状態を既定にする。
+    """
+    base = _cand(
+        p3_sum_top2=sw.RANK_7M1_P3_SUM_MAX + 0.10,
+        wt_overlap_7c_n=1,
+        wt_honmei_in_axis_7c=True,
+        legs_7c=[3, 4, 5, 6],
+        legs_7c_buy=[3, 4, 5, 6],
+        lowpay_pattern=False,
+        axis1_p3=sw.RANK_7C_AXIS1_P3_MAX + 0.01,   # ← 7C はここで見送る
+    )
+    base.update(kw)
+    return base
+
+
+def test_firm_band_is_taken_when_7c_declines():
+    """堅い帯でも、7C が見送る ∧ ◎あり・○なし なら 7M1 が拾う。"""
+    c = _firm()
+    assert not sw.rank_7c_accepts(c)
+    assert sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == [c]
+
+
+def test_firm_band_is_not_taken_when_7c_buys():
+    """🔴 7C が買うレースは拾わない。
+
+    入稿の優先順位は 7C > 7M1 なので、拾っても入稿されない紙の推奨が増えるだけ。
+    ここを緩めると Web の 7M1 実績が「売っていない商品」で薄まる。
+    """
+    c = _firm(axis1_p3=sw.RANK_7C_AXIS1_P3_MAX - 0.01)   # 7C の見送り理由が消える
+    assert sw.rank_7c_accepts(c)
+    assert not sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == []
+
+
+def test_firm_band_requires_honmei_in_axis():
+    """🔴 ◎が軸に居ないレースは拾わない。
+
+    ◎を軸から外した形は実測で**10倍以上の的中頻度が半減**する
+    （7.6〜8.0% → 3.1〜4.2%）。配当中央は上がるが頻度の損失が上回る。
+    """
+    c = _firm(wt_honmei_in_axis_7c=False)
+    assert not sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == []
+
+
+def test_firm_band_is_fail_closed_without_the_mark_flag():
+    """🔴 `wt_honmei_in_axis_7c` が無い古い候補JSONでは拾わない（fail-closed）。
+
+    他ランクは情報欠損を fail-open にしているが、ここを fail-open にすると
+    「◎が軸に居ない側」まで買ってしまい別の商品になる。
+    """
+    c = _firm()
+    del c["wt_honmei_in_axis_7c"]
+    assert not sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == []
+
+
+def test_firm_band_requires_overlap_exactly_one():
+    """◎○の両方が軸に入るレース（overlap==2）は従来どおり除外される。"""
+    c = _firm(wt_overlap_7c_n=2)
+    assert not sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == []
+
+
+def test_firm_band_can_be_switched_off():
+    """定数1つで元の挙動（混戦帯のみ）へ戻せること。"""
+    c = _firm()
+    assert not sw.rank_7m1_takes_firm_band(c, enabled=False)
+
+
+def test_loose_band_is_unchanged_by_the_firm_band_work():
+    """🔴 混戦帯の母集団は一切変えていないこと（回帰の要）。
+
+    堅い帯の追加条件（◎あり・7C が見送る）を**混戦帯へ持ち込んではいけない**。
+    """
+    c = _cand(p3_sum_top2=sw.RANK_7M1_P3_SUM_MAX - 0.10, wt_overlap_7c_n=0)
+    assert "wt_honmei_in_axis_7c" not in c
+    assert sw.rank_7m1_daily_select([c]) == [c]
+
+
+def test_rule_version_reacts_to_7c_constants():
+    """🔴 7C の閾値を動かしたら 7M1 の版も動くこと。
+
+    7M1 は `rank_7c_accepts` に依存するので、7C だけ変えて版が据え置かれると
+    picks_history の世代が静かに混ざる（CLAUDE.md の rule_version の項）。
+    """
+    before = sw.rank_rule_version("7M1")
+    orig = sw.RANK_7C_AXIS1_P3_MAX
+    try:
+        sw.RANK_7C_AXIS1_P3_MAX = orig - 0.05
+        assert sw.rank_rule_version("7M1") != before
+    finally:
+        sw.RANK_7C_AXIS1_P3_MAX = orig
+    assert sw.rank_rule_version("7M1") == before
+
+
+def test_firm_band_switch_is_read_at_call_time(monkeypatch):
+    """🔴 定数を書き換えたら**その場で**効くこと（既定引数に束縛しない）。
+
+    `def f(..., enabled=RANK_7M1_FIRM_BAND)` と書くと既定値は定義時に確定し、
+    定数を差し替えても切り替わらない。検証で ON/OFF を比較したときに
+    「両方 ON」のまま走って増分0件と誤読する事故が実際に起きた。
+    """
+    c = _firm()
+    assert sw.rank_7m1_takes_firm_band(c)
+    monkeypatch.setattr(sw, "RANK_7M1_FIRM_BAND", False)
+    assert not sw.rank_7m1_takes_firm_band(c)
+    assert sw.rank_7m1_daily_select([c]) == []
+
+
+def test_firm_band_is_fail_closed_without_the_7c_judgment_keys():
+    """🔴 7C の受理判定に要るキーが欠けた候補では拾わない（fail-closed）。
+
+    `rank_7c_accepts` は旧候補JSON向けに一部を fail-open で扱うため、
+    キーを渡し忘れると「7Cは買わない」と誤判定され、**7C が実際に買う
+    レースまで 7M1 が拾う**（実測で母集団が19%膨らむ）。
+    """
+    for key in sw._FIRM_BAND_REQUIRED_KEYS:
+        c = _firm()
+        del c[key]
+        assert not sw.rank_7m1_takes_firm_band(c), f"{key} が欠けても拾ってしまう"
+        assert sw.rank_7m1_daily_select([c]) == []

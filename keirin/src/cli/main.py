@@ -2006,6 +2006,13 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     "wt_overlap_7c_n": (
                         rank_7s_wt_overlap_n(sel_7c[0], sel_7c[1], wt_honmei, wt_taikou)
                         if sel_7c else None),
+                    # 🔴 重なり「数」だけでは ◎あり・○なし と ○あり・◎なし を
+                    #    区別できない。堅い帯の取り込み（RANK_7M1_FIRM_BAND）は
+                    #    **◎が軸に居ること**が条件なので専用のキーで持つ。
+                    #    ◎が取れないレースは None（後段は fail-closed で買わない）。
+                    "wt_honmei_in_axis_7c": (
+                        (wt_honmei in (sel_7c[0], sel_7c[1]))
+                        if sel_7c and wt_honmei is not None else None),
                     # 相手は軸を除く5車の下位3車（全体では指数5〜7番手）から
                     # 3着内率で足切りしたもの（最低2点）。🔴 足切りは「下位3車を
                     # 採った後」に掛ける。5車全体からの選抜に使うと帯が消える。

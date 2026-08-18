@@ -79,6 +79,9 @@ def test_production_gate_is_unchanged():
     from src import strategy_wt
 
     assert RANK_7C_P3_SUM_MIN == 1.44
-    src = inspect.getsource(strategy_wt.rank_7c_daily_select)
-    assert "_gate_p3_sum(c) >= RANK_7C_P3_SUM_MIN" in src
+    # 2026-08-19: 受理条件は `rank_7c_accepts` へ切り出した（7M1 が
+    # 「7C が見送るレース」を拾うため単一正本を共有する）。判定内容は不変。
+    src = "".join(inspect.getsource(f) for f in
+                  (strategy_wt.rank_7c_daily_select, strategy_wt.rank_7c_accepts))
+    assert "_gate_p3_sum(c) < RANK_7C_P3_SUM_MIN" in src
     assert "gate7c_score" not in src

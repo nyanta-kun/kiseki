@@ -6,6 +6,8 @@
 
   - 母集団 … 上位2車の3着内率合計が `RANK_7M1_P3_SUM_MAX`(=7C の下限) **未満**
              ∧ その2車が WT公式印の ◎○ と**一致しない**（`wt_overlap_7c_n < 2`）
+             **＋ 堅い帯のうち「◎あり・○なし ∧ 7C が見送る」レース**
+             （2026-08-19・`RANK_7M1_FIRM_BAND`）
   - 相手  … **軸を除く5車のうち下位3車**（全体では指数5〜7番手）から、
              3着内率 < `RANK_7M1_LEG_P3_MIN` を削ったもの（最低2点・
              `rank_7m1_select_legs`）
@@ -26,9 +28,15 @@
    過去へ遡って使うと in-sample になる。walk-forward 再構築では
    月次vintage（`lgbm_wt_eval_mYYMM`）を渡すこと。
 
+⚠️ 2026-08-19 から **`--win-model` が要る**（堅い帯の取り込み・`RANK_7M1_FIRM_BAND`）。
+   7M1 が拾うのは「7C が見送るレース」で、7C の受理判定は券種切替
+   （`rank_7c_use_trifecta`）を通るため win モデルが要る。省くと堅い帯は
+   fail-closed で0件になる（黙って母集団が狭くなるので必ず渡すこと）。
+
 使い方:
     PYTHONPATH=. .venv/bin/python scripts/backfill_7m1_rank_wt.py \
-        --start 2025-01-01 --end 2026-08-16 [--wipe] [--dry-run]
+        --start 2025-01-01 --end 2026-08-16 \
+        --model lgbm_wt_eval_m2608 --win-model lgbm_wt_win_m2608 [--wipe] [--dry-run]
 """
 from __future__ import annotations
 
@@ -52,7 +60,8 @@ from src.preprocessing.feature_wt import (  # noqa: E402
 )
 from src.rebuild_stakes import load_morning_boards, stakes_for_combos  # noqa: E402
 from src.strategy_wt import (  # noqa: E402
-    RANK_7M1_LEGS_MIN, rank_7c_select_axis, rank_7m1_daily_select,
+    RANK_7M1_LEGS_MIN, rank_7c_buy_plan, rank_7c_is_lowpay_pattern,
+    rank_7c_select_axis, rank_7c_select_legs, rank_7m1_daily_select,
     rank_7m1_select_legs, rank_7s_wt_overlap_n,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
@@ -65,10 +74,17 @@ def build_rows(model_name: str, date_from: str, date_to: str,
                bad_model_name: str | None = None) -> list[dict]:
     """バックフィル対象の 7M1(#7M1) 行（採点済み）を構築する。
 
-    win_model_name / bad_model_name: **7M1 では使わない**（軸も相手も pred_prob
-      だけで決まる）。rebuild 側の共通ヘルパと signature を揃えるためだけに受け取る。
+    win_model_name: **堅い帯の取り込み（`RANK_7M1_FIRM_BAND`）に必要**。
+      7M1 が拾うのは「7C が見送るレース」なので、7C の受理判定
+      （`rank_7c_accepts` → `rank_7c_buy_plan` → `rank_7c_use_trifecta`）を
+      同じ入力で再現する必要がある。🔴 **渡さないと母集団が約19%膨らむ**
+      （7C が実際に買うレースまで拾ってしまう）。渡さない場合は堅い帯を
+      諦める（`_FIRM_BAND_REQUIRED_KEYS` の fail-closed で0件になる）。
+    bad_model_name: **7M1 では使わない**。rebuild 側の共通ヘルパと signature を
+      揃えるためだけに受け取る。
     """
     model = load_model(model_name)
+    win_model = load_model(win_model_name) if win_model_name else None
     df = build_features_wt(load_raw_data_wt(min_date=date_from, max_date=date_to))
     if df.empty:
         return []
@@ -102,6 +118,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         return []
     X = prepare_X(df)
     df["pred_prob"] = model.predict_proba(X)[:, 1]
+    if win_model is not None:
+        df["pred_win"] = win_model.predict_proba(X)[:, 1]
     keys = df["race_key"].unique().tolist()
     trio_bd = _load_trio_boards(keys)
     board_map = _load_board_frames_wt(keys)
@@ -129,6 +147,18 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             continue
 
         mk = marks.get(rk, {})
+        # --- 7C の受理判定を live（src/cli/main.py）と同じ入力で再現する ---
+        #     堅い帯を拾うかどうかは「7C が見送るか」で決まるので、ここは
+        #     7C のバックフィルと同じ組み立てにする（片方だけ直すと母集団がずれる）。
+        others_7c = sorted(set(top3_probs) - {axis1, axis2})
+        legs_7c = rank_7c_select_legs(others_7c, top3_probs)
+        line_groups = {int(r.frame_no): getattr(r, "line_group", None)
+                       for r in g.itertuples(index=False)}
+        win_probs = ({int(r.frame_no): float(r.pred_win)
+                      for r in g.itertuples(index=False)}
+                     if win_model is not None else None)
+        plan_7c = rank_7c_buy_plan(top3_probs, win_probs, axis1, legs_7c,
+                                   wt_ana=mk.get(4))
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),
             "n_entries": N_CAR,
@@ -140,6 +170,18 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             #    3ヘッド軸の `wt_overlap_n` を使うと母集団が約2割ずれる。
             "wt_overlap_7c_n": rank_7s_wt_overlap_n(
                 axis1, axis2, mk.get(1), mk.get(2)),
+            # 堅い帯の取り込み（RANK_7M1_FIRM_BAND）に必要。◎が軸に居るか。
+            "wt_honmei_in_axis_7c": (
+                (mk.get(1) in (axis1, axis2)) if mk.get(1) is not None else None),
+            # 🔴 以下4つは `rank_7c_accepts`（7C が買うか）の入力。
+            #    `_FIRM_BAND_REQUIRED_KEYS` と対応しており、欠けると堅い帯を
+            #    拾わなくなる（fail-closed）。win_model 未指定なら
+            #    `legs_7c_buy` は三連単切替なしの判定になる点に注意。
+            "legs_7c": legs_7c,
+            "legs_7c_buy": (plan_7c[1] if plan_7c else None),
+            "bet_kind_7c": (plan_7c[0] if plan_7c else None),
+            "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
+            "axis1_p3": top3_probs.get(axis1),
             # 相手は盤面に残った車から採る（朝の候補をそのまま使わない）。
             "legs_7m1": rank_7m1_select_legs(others, top3_probs),
             "cup_grade": cup_grade_map.get(rk),
@@ -253,13 +295,18 @@ def main() -> None:
     ap.add_argument("--start", default="2025-01-01")
     ap.add_argument("--end", required=False)
     ap.add_argument("--model", default="lgbm_wt_eval")
+    # 🔴 堅い帯（RANK_7M1_FIRM_BAND）の再現に必要。省くと母集団が狭くなる。
+    ap.add_argument("--win-model", default="lgbm_wt_win")
     ap.add_argument("--wipe", action="store_true",
                     help="書き込み前に対象期間の既存 #7M1 行を削除")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     if args.end:
-        assert_vintage_for_past(args.end, {"eval": args.model})
+        # 🔴 win モデルも版の対象。堅い帯の母集団（7C が見送るか）が
+        #    これで決まるので、eval だけ vintage にしても片肺になる。
+        assert_vintage_for_past(args.end, {"eval": args.model,
+                                           "win": args.win_model})
 
     from datetime import date
     end = args.end or date.today().strftime("%Y-%m-%d")
@@ -268,7 +315,7 @@ def main() -> None:
     if args.wipe:
         wipe_rows(args.start, end, args.dry_run)
 
-    rows = build_rows(args.model, args.start, end)
+    rows = build_rows(args.model, args.start, end, args.win_model)
     n_hit = sum(r["hit"] for r in rows)
     bet = sum(r["bet_amount"] for r in rows)
     pay = sum(r["payout"] for r in rows)
