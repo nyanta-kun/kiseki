@@ -480,6 +480,15 @@ def migrate_db():
             conn.execute("ALTER TABLE picks_history ADD COLUMN prerace_gami REAL")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # 判定ルールの版（2026-08-18）。`strategy_wt.rank_rule_version()` が
+        # 定数から自動導出する。**当月しか再構築しないので過去月は当時のコードの
+        # まま残る**＝台帳は世代混在する。混在は例外を出さないので、
+        # 版を残さないと集計時に気付けない（実害は同関数の定義部を参照）。
+        # ⚠️ 既存行は NULL のまま（遡って埋めると嘘になる）。
+        try:
+            conn.execute("ALTER TABLE picks_history ADD COLUMN rule_version TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         try:
             conn.execute("ALTER TABLE picks_history ADD COLUMN trifecta_payout INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:

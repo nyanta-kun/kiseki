@@ -42,6 +42,7 @@ import json
 from pathlib import Path
 
 from src.database import get_connection
+from src.strategy_wt import rank_rule_version
 from src.models.trainer import MODEL_DIR
 from src.notify.discord import send as _discord_send
 from src.strategy_wt import THREE_HEAD_AXIS_SINCE
@@ -150,12 +151,18 @@ def _zero_row_should_notify(rank_label: str, per_window_rows: list) -> bool:
 # 2026-08-06: 7H1（唯一の2券種ランク）のため trifecta_payout を追加した。
 # 三連複のみのランク（7SS/7S/7A/7B/9S/9A）は rows に持たないので、挿入時に
 # 0 を補う（下記 _row_defaults）。gate_label も 7H1 は持たないため同様に補う。
+# 🔴 `rule_version` は**必ず書く**（2026-08-18）。picks_history は当月しか
+#    再構築しないので過去月は当時のコードのまま残り、台帳が世代混在する。
+#    版が無いと混在を検出できない（例外は出ない）。根拠は
+#    `strategy_wt.rank_rule_version()` の定義部。
 _INSERT_SQL = (
     "INSERT OR REPLACE INTO picks_history "
     "(race_date,race_key,rank,pred_combo,n_combos,hit,payout,"
-    " trio_payout,trifecta_payout,bet_amount,route,miwokuri,gate_label) "
+    " trio_payout,trifecta_payout,bet_amount,route,miwokuri,gate_label,"
+    " rule_version) "
     "VALUES (:race_date,:race_key,:rank,:pred_combo,:n_combos,:hit,"
-    " :payout,:trio_payout,:trifecta_payout,:bet_amount,'wt',:miwokuri,:gate_label)"
+    " :payout,:trio_payout,:trifecta_payout,:bet_amount,'wt',:miwokuri,"
+    " :gate_label,:rule_version)"
 )
 
 #: ランクごとに持たない列を補う既定値（**行側の値が常に優先される**）。
@@ -274,7 +281,14 @@ def rebuild_pg_atomic(
                 f"DELETE FROM picks_history WHERE {delete_cond_sql}",
                 (date_from, date_to),
             )
-            rows_ins = [{**_ROW_DEFAULTS, **r, "miwokuri": False} for r in rows]
+            # 版は**行ごとの rank から導く**（rank_label 決め打ちにしない。
+            # 統合ランクや複数ランクを一度に書く経路が将来増えても崩れない）。
+            rows_ins = [
+                {**_ROW_DEFAULTS, **r, "miwokuri": False,
+                 "rule_version": r.get("rule_version")
+                 or rank_rule_version(str(r.get("rank") or rank_label))}
+                for r in rows
+            ]
             conn.executemany(_INSERT_SQL, rows_ins)
             print(f"[{rank_label}] {date_from}〜{date_to}: {len(rows)}件 挿入（未コミット）")
             n_windows_written += 1
