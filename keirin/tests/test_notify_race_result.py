@@ -82,6 +82,36 @@ def test_status_value_matches_the_submit_script():
     assert m.STATUS_SUBMITTED == canonical
 
 
+def test_deleted_status_value_matches_the_submit_script():
+    """`STATUS_DELETED` も同じ理由で一致を固定する。
+
+    ずれると**却下した推奨が的中通知に混ざる**（値が違うだけで例外は出ない）。
+    """
+    from scripts.netkeirin_submit_wt import STATUS_DELETED as canonical
+    assert m.STATUS_DELETED == canonical
+
+
+def test_cancelled_rank_is_excluded_from_notification():
+    """🔴 却下（status='deleted'）した推奨を通知しない。
+
+    2026-08-18 高知8R: 7S が 07:08 に提案され **07:15 に却下**された
+    （承認も公開もされていない）。ところが picks_history の行は入稿の有無と
+    無関係に朝の判定で書かれるため残り、`_sold_lines` は status='submitted'
+    でしか拾わないので「売った商品」にも出ず、結果として
+    **売っていない買い目が 🎯 的中として Discord へ流れた**。
+
+    ここは静的検査にする。実 DB を組むより、
+    「却下ランクを弾く分岐が存在すること」を固定するほうが壊れにくい。
+    """
+    src = _src()
+    assert "cancelled_ranks" in src, "却下ランクの集合を作っていない"
+    assert "STATUS_DELETED" in src, "却下ステータスで絞っていない"
+    # picks ループの中で必ず弾くこと（集合を作るだけでは意味がない）
+    body = src[src.index("for p in picks:"):]
+    assert "cancelled_ranks" in body[:1200], (
+        "picks ループ内で cancelled_ranks を参照していない")
+
+
 # --- 対象範囲（静的検査）----------------------------------------------------
 
 def _src() -> str:

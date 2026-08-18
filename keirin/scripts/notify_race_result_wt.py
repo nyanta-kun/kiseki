@@ -65,6 +65,8 @@ MARK = {1: "◎", 2: "◯", 3: "△", 4: "×"}
 #    引き込むので、毎分 cron で回る本スクリプトでは文字列を持つ。
 #    食い違い検知は tests/test_notify_race_result.py が担う。
 STATUS_SUBMITTED = "submitted"
+# 却下（レビューUIで取り消した）入稿。**通知から外すために要る**。
+STATUS_DELETED = "deleted"
 # 三連複/三連単の組み合わせ区切り。**表で違う**（wt_odds は '1-2-3'）ので両方受ける。
 _SEP_RE = re.compile(r"[-=]")
 
@@ -288,6 +290,20 @@ def _build_message(t: dict, base: str) -> str:
             "SELECT race_key, rank, pred_combo FROM picks_history "
             "WHERE split_part(race_key, '#', 1) = ?", (base,)
         ).fetchall()
+        # 🔴 **却下した推奨は通知しない**（2026-08-18・ユーザー指摘）。
+        #    picks_history は入稿の有無と無関係に朝の判定で書かれるので、
+        #    レビューUIで取り消しても行が残る。`_sold_lines` は
+        #    status='submitted' で絞るため却下分はそこに現れず、
+        #    「無効化ランクでもない・売ってもいない」買い目が
+        #    **🎯 的中として通知される**（高知8R 7S・2026-08-18）。
+        #    取消は「これは推奨しない」という明示の判断なので通知対象から外す。
+        cancelled_ranks = {
+            (r["rank_key"] if isinstance(r, dict) else r[0])
+            for r in c.execute(
+                "SELECT rank_key FROM netkeirin_submissions "
+                "WHERE race_key = ? AND status = ?", (base, STATUS_DELETED),
+            ).fetchall()
+        }
 
     def _g(r, k):
         return r[k] if isinstance(r, dict) else r[list(r.keys()).index(k)]
@@ -319,6 +335,8 @@ def _build_message(t: dict, base: str) -> str:
         rank = _g(p, "rank").replace("RANK_", "")
         if rank in sold_ranks:
             continue          # 入稿原本を出した分は重複させない
+        if rank in cancelled_ranks:
+            continue          # 却下した推奨は「出していない」ので通知しない
         combo = _g(p, "pred_combo") or ""
         # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。
         #    ここに自前パースを書いてはいけない。以前は「畳んだ形」だけを想定した
