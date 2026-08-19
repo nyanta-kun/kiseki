@@ -66,16 +66,18 @@ def load(d1, d2, board=False):
     with get_connection() as conn:
         cur = conn.execute(
             "SELECT e.race_key, e.frame_no, e.pred_top3_pct, e.pred_win_pct, "
+            "       e.pred_top2_pct, "
             "       e.finish_order, e.prediction_mark, e.line_group, "
             "       r.race_type, r.cup_grade "
             "FROM wt_entries e JOIN wt_races r USING(race_key) "
             "WHERE r.race_date BETWEEN ? AND ? AND r.n_entries = 7 "
-            "  AND e.pred_top3_pct IS NOT NULL AND e.pred_win_pct IS NOT NULL",
+            "  AND e.pred_top3_pct IS NOT NULL AND e.pred_win_pct IS NOT NULL "
+            "  AND e.pred_top2_pct IS NOT NULL",
             (d1, d2))
         ent, meta = defaultdict(dict), {}
-        for rk, fn, p3, pw, fo, mk, lg, rt, g in cur.fetchall():
+        for rk, fn, p3, pw, p2, fo, mk, lg, rt, g in cur.fetchall():
             ent[rk][int(fn)] = dict(p3=float(p3) / 100.0, pw=float(pw) / 100.0,
-                                    fo=fo, mark=mk, lg=lg)
+                                    p2=float(p2) / 100.0, fo=fo, mark=mk, lg=lg)
             meta[rk] = (rt, g)
         cur = conn.execute(
             "SELECT o.race_key, o.bet_type, o.combination, o.odds_value "
@@ -164,6 +166,7 @@ def main():
             continue
         p3 = {f: v["p3"] for f, v in cars.items()}
         pw = {f: v["pw"] for f, v in cars.items()}
+        p2 = {f: v["p2"] for f, v in cars.items()}
         sel = rank_7c_select_axis(p3)
         if sel is None:
             continue
@@ -178,7 +181,7 @@ def main():
         h, t = marks.get(1), marks.get(2)
         if h is None or t is None or {a1, a2} != {h, t}:
             continue                     # ◎◯完全一致のレースだけが対象
-        rows.append(dict(rk=rk, date=rk[:8], p3=p3, pw=pw, a1=a1, a2=a2,
+        rows.append(dict(rk=rk, date=rk[:8], p3=p3, pw=pw, p2=p2, a1=a1, a2=a2,
                          marks=marks, h=h, t=t, trio=trio[rk], tfc=tfc.get(rk, {}),
                          board=bd.get(rk) or None,
                          win=frozenset(f for f, v in cars.items() if v["fo"] in (1, 2, 3)),
@@ -195,6 +198,7 @@ def main():
         if pool:
             v["V1 軸2=◎◯以外の1着率1位"] = max(pool, key=lambda f: r["pw"][f])
             v["V2 軸2=◎◯以外の3着内率1位"] = max(pool, key=lambda f: r["p3"][f])
+            v["V3 軸2=◎◯以外の2着内率1位"] = max(pool, key=lambda f: r["p2"][f])
         return v
 
     def score(r, a1, a2):
@@ -220,12 +224,13 @@ def main():
         w = r["win"]
         return bet, (int(r["trio"][w] * st[w]) if w in st else 0)
 
-    names = ["V0 現行（軸2=◯）", "V1 軸2=◎◯以外の1着率1位", "V2 軸2=◎◯以外の3着内率1位"]
+    names = ["V0 現行（軸2=◯）", "V1 軸2=◎◯以外の1着率1位",
+             "V3 軸2=◎◯以外の2着内率1位", "V2 軸2=◎◯以外の3着内率1位"]
     accs = {n: Acc() for n in names}
     keys = []
     for r in rows:
         v = variants(r)
-        if len(v) < 3:
+        if len(v) < 4:
             continue
         got = {n: score(r, r["a1"], v[n]) for n in names}
         if any(g is None for g in got.values()):

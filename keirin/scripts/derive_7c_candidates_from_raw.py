@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.strategy_wt import (  # noqa: E402
     RANK_7C_LEGS_MIN, RANK_7C_P3_SUM_MIN, rank_7c_daily_select,
-    rank_7c_select_axis, rank_7c_select_legs, rank_7c_unit_stake,
+    rank_7c_reselect_axis2_off_marks, rank_7c_select_axis,
+    rank_7c_select_legs, rank_7c_unit_stake,
 )
 
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
@@ -54,6 +55,12 @@ def main() -> None:
             if sel is None:
                 continue
             a1, a2, p3sum = sel
+            # 🔴 live と同じ差し替え（2026-08-19）。**相手を決める前に**確定させる。
+            #    生候補JSONは ◎◯ を `wt_honmei`/`wt_taikou` では持たないので、
+            #    `wt_overlap_n` からは復元できない。持っていないときは差し替えない
+            #    （判定不能で軸を動かすと根拠のない差し替えになる）。
+            a2 = rank_7c_reselect_axis2_off_marks(
+                probs, a1, a2, c.get("wt_honmei"), c.get("wt_taikou"))
             legs = rank_7c_select_legs(sorted(set(probs) - {a1, a2}), probs)
             d = dict(c)
             d["axis1_7c"], d["axis2_7c"] = a1, a2

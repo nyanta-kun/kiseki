@@ -33,36 +33,59 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.database import get_connection
 from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
-from src.wt_vintage_config import monthly_windows
+from src.wt_vintage_config import monthly_windows, top2_model_name
 
 
 def backfill_window(date_from: str, date_to: str, eval_model_name: str, win_model_name: str,
                      dry_run: bool) -> int:
     model = load_model(eval_model_name)
     win_model = load_model(win_model_name)
+    # 2着内率（2026-08-19 追加）。**vintage が無ければ書かない**——本番の
+    # `lgbm_wt_top2` は full_refit なので、それで過去を採点すると
+    # model-vintage look-ahead になる。無いことを理由に本番モデルへ落ちない。
+    top2_name = top2_model_name(eval_model_name)
+    try:
+        top2_model = load_model(top2_name)
+    except Exception as e:  # noqa: BLE001
+        print(f"[backfill-index]   {top2_name} が無いので pred_top2_pct は書きません: {e}",
+              flush=True)
+        top2_model = None
     df = build_features_wt(load_raw_data_wt(min_date=date_from, max_date=date_to))
     if df.empty:
         return 0
     X = prepare_X(df)
     df["pred_prob"] = model.predict_proba(X)[:, 1]
     df["pred_win"] = win_model.predict_proba(X)[:, 1]
+    if top2_model is not None:
+        df["pred_top2"] = top2_model.predict_proba(X)[:, 1]
 
     import pandas as pd
-    rows = [
-        (
-            round(float(r.pred_win) * 100, 1) if pd.notna(r.pred_win) else None,
-            round(float(r.pred_prob) * 100, 1) if pd.notna(r.pred_prob) else None,
-            r.race_key, int(r.frame_no),
-        )
-        for r in df.itertuples(index=False)
-    ]
+    if top2_model is None:
+        rows = [
+            (
+                round(float(r.pred_win) * 100, 1) if pd.notna(r.pred_win) else None,
+                round(float(r.pred_prob) * 100, 1) if pd.notna(r.pred_prob) else None,
+                r.race_key, int(r.frame_no),
+            )
+            for r in df.itertuples(index=False)
+        ]
+        sql = ("UPDATE wt_entries SET pred_win_pct = ?, pred_top3_pct = ? "
+               "WHERE race_key = ? AND frame_no = ?")
+    else:
+        rows = [
+            (
+                round(float(r.pred_win) * 100, 1) if pd.notna(r.pred_win) else None,
+                round(float(r.pred_top2) * 100, 1) if pd.notna(r.pred_top2) else None,
+                round(float(r.pred_prob) * 100, 1) if pd.notna(r.pred_prob) else None,
+                r.race_key, int(r.frame_no),
+            )
+            for r in df.itertuples(index=False)
+        ]
+        sql = ("UPDATE wt_entries SET pred_win_pct = ?, pred_top2_pct = ?, "
+               "pred_top3_pct = ? WHERE race_key = ? AND frame_no = ?")
     if not dry_run:
         with get_connection() as conn:
-            conn.executemany(
-                "UPDATE wt_entries SET pred_win_pct = ?, pred_top3_pct = ? "
-                "WHERE race_key = ? AND frame_no = ?",
-                rows,
-            )
+            conn.executemany(sql, rows)
             conn.commit()
     return len(rows)
 
