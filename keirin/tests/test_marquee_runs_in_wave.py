@@ -86,18 +86,40 @@ def test_marquee_is_passed_the_batch_date(path: Path):
         f"（実行行: {lines[idx]}）")
 
 
-def test_marquee_does_not_take_a_session_argument():
-    """波ラベルを引数で上書きしていないこと。
+def test_marquee_receives_the_same_session_as_the_ranks():
+    """穴埋めの呼び出しが、**そのシェルがランク入稿へ渡したのと同じ波**を渡すこと。
 
-    `submit_marquee_wt.py` は**実行時刻の時**から波ラベルを導き、同じ時刻を
-    「ミッドナイトを evening まで待たせる」判定にも使っている。片方だけ引数で
-    動かすと判定と記録がずれるので、セッションは渡さない設計にしてある。
+    🔴 2026-08-19 に意味が反転した検査。それ以前は「セッションを渡さない」ことを
+       守っていた（波ラベルは `netkeirin_submissions.session` に残す**記録**でしか
+       なく、判定と記録が別経路になるのを避けたかったため）。
+
+       いまは穴埋めが「自分の波の開催しか埋めない」ので、波ラベルは
+       **どの開催を埋めるかの判定**そのもの。実行時刻から導かせると、バッチが
+       境界（12時 / 18時）を跨いだ日にランクは morning・穴埋めは noon で走り、
+       **ナイター開催を穴埋めがランクより先に取る**。実際 session='morning' の
+       穴埋めに submitted_at 12:08 の実績がある。
+
+    ⚠️ 壊れても例外は出ない。ずれるのは「バッチが遅れた日」だけなので、
+       ふだんは何事も無く動いて見える。
     """
     for path in (DAILY, WAVE):
         lines = _code_lines(path)
-        idx = _index_of(lines, "submit_marquee_wt.py")
-        assert idx >= 0
-        for banned in ("--session", "$SESSION", "morning", "noon", "evening"):
-            assert banned not in lines[idx], (
-                f"{path.name}: 穴埋めの呼び出しに波ラベル {banned} を渡している"
-                f"（実行行: {lines[idx]}）")
+        i_m = _index_of(lines, "submit_marquee_wt.py")
+        i_r = _index_of(lines, "netkeirin_submit_wt.py")
+        # 🔴 `-1` をそのまま添字にすると**スクリプト最後の実行行**を掴み、
+        #    「呼び出しが消えた」ことを「波が違う」と誤って報告する。
+        assert i_m >= 0, f"{path.name}: 穴埋めの呼び出しが無い"
+        assert i_r >= 0, f"{path.name}: ランク入稿の呼び出しが無い"
+        marquee, ranks = lines[i_m], lines[i_r]
+        assert "--session" in marquee, (
+            f"{path.name}: 穴埋めへ --session を渡していない（実行行: {marquee}）")
+        # `${SESSION}` と `$SESSION` は同じもの。表記差で通してしまわないよう正規化する。
+        norm = lambda line: line.replace("${SESSION}", "$SESSION")  # noqa: E731
+        ranks, marquee = norm(ranks), norm(marquee)
+        want = next((tok for tok in ("$SESSION", "morning", "noon", "evening")
+                     if tok in ranks), None)
+        assert want is not None, (
+            f"{path.name}: ランク入稿の波が読み取れない（実行行: {ranks}）")
+        assert want in marquee, (
+            f"{path.name}: ランクは {want} で走るのに穴埋めの波が違う"
+            f"（ランク: {ranks} / 穴埋め: {marquee}）")

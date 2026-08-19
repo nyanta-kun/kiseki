@@ -26,14 +26,33 @@ GI ガールズ決勝）に商品がゼロだった。08-09 は手作業で11件
 - 既にどれかのランクで入稿済み → skip（1レース1商品）
 - 発走済み → skip
 - 車数が 7/9 以外 → skip（ランクが7車/9車しか無いため構造的に入稿できない）
-- 軸 = 当日の指数（allindex JSON）の pred 上位2車。
-  ただし **9車のみ**ラインで組み替える（2026-08-16・`_axes()` の docstring に根拠）
+- 軸 = 当日の指数（allindex JSON）の pred 上位2車を、**ラインで組み替える**
+  （9車 2026-08-16 / 7車 2026-08-19・`_axes()` の docstring に根拠）
 
-⚠️ **ミッドナイト（第1R 18時以降）は evening の波より前に出さない。**
-   三連複の板が朝は63%欠損しており、傾斜配分が均等割りへ落ちる。
+🔴 **開催は自分の波でしか埋めない**（`src/meeting_wave.py`・2026-08-19 是正）。
+   ランクの入稿（`netkeirin_submit_wt.py`）と**同じ判定**を使う。ここが食い違うと
+   穴埋めがランクより早い波で走り、**1レース1商品の取り合いに先に勝ってしまう**。
+
+   2026-08-19 以前は「第1R 18時以降か」だけを見ており、**ナイター（第1R 12〜17時台）
+   を朝7時の波で埋めていた**。ランクがその開催を出すのは昼13:00 なので5時間の
+   先回りになる。実測（2026-08-09〜08-19・穴埋め196件）:
+
+   | 入稿波 × 開催の波 | 件数 | ランクが候補を持っていた | うち賭け金0（＝取れなかった） |
+   |---|---|---|---|
+   | morning × morning | 67 | 24 | **0** |
+   | morning × **noon** | 78 | 53 | **25** |
+   | noon × noon | 6 | 2 | **0** |
+   | evening × night | 31 | 10 | **0** |
+
+   **ランクが候補を持ちながら商品を取れなかった25件は、全て波がずれた
+   バケツにだけ現れる。** 板が育つ前に出すので傾斜配分も効かない
+   （ナイターの三連複 未確定率は 朝8時台 30.8% → 12:00 5.3%）。
 
 使い方:
-    python scripts/submit_marquee_wt.py [YYYY-MM-DD] [--dry-run]
+    python scripts/submit_marquee_wt.py [YYYY-MM-DD] [--session morning|noon|evening] [--dry-run]
+
+⚠️ `--session` は**呼び出し元のシェルがランク入稿へ渡したものと同じ値**を渡すこと。
+   省略時のみ実行時刻から導く（手動実行用のフォールバック）。
 """
 from __future__ import annotations
 
@@ -48,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import get_connection  # noqa: E402
 from src.marquee import marquee_race_nos
+from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -115,7 +135,8 @@ def _same_line(ln: dict[int, dict], order: list[int], head: int) -> int | None:
 def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] | None:
     """穴埋めの軸2車を決める。
 
-    既定は指数上位2車。**9車のときだけ**ラインで組み替える（2026-08-16 導入）:
+    既定は指数上位2車。そこからラインで組み替える
+    （9車 2026-08-16 導入 / 7車 2026-08-19 追加）:
 
       ルール1  指数1位がライン先頭   → 軸2 = その同ライン最上位（番手）
       ルール2  指数1位が非先頭 かつ 指数2位がライン先頭
@@ -135,9 +156,43 @@ def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] 
     同ラインのときは組み替えても同じペアになる（実測 変更0件/307件）ので実害なし。
     三連複は順序を問わないため、**ペアが変わらない限り買い目は一切動かない**。
 
-    🔴 **7車には適用しない。** 検証は9車だけで行っており、7車では未測定。
-       このプロジェクトは「7Cの定数を9車へ移植できない」型の事故を既に起こしている
-       （[[keirin_rank_9c_design_2026_08_14]]）。7車へ広げるなら測ってから。
+    ## 7車（2026-08-19 追加）
+
+    9車と同じ規則を7車でも測った（`scripts/exp_marquee_fill_7car_axis.py` /
+    `..._legs.py`・穴埋め帯7車 17,035R・2025-01-01〜2026-08-18・確定オッズ採点・
+    `pred_top3_pct` は月次凍結 vintage）。組み替わるのは 5,138R（30.2%）:
+
+      | | 二軸 | 的中 | 表示的中 | ROI | 配当中央 | 10倍+ |
+      |---|---|---|---|---|---|---|
+      | 現行（素の上位2車） | 48.3% | 48.3% | 28.5% | 73.1% | 1.16 | 9.9% |
+      | ライン組み替え     | 48.5% | 48.5% | 28.6% | **75.5%** | 1.18 | 10.6% |
+
+    ROI +2.5pt [+0.9, +4.2]（レース単位 paired bootstrap・有意）。
+    **的中も表示的中も落ちない**（+0.2pt / +0.1pt）ので、看板帯の目的関数
+    （売上加重の的中率）を損なわずに配当だけ上がる。2025 / 2026 の両年で
+    同じ向きに再現する（72.4→75.4 / 74.1→75.7）。組み替わった 5,138R だけで
+    見ると ROI 68.4→76.7%（+8.2pt [+2.7, +13.8]）で、二軸・表示的中・10倍+ も
+    すべて改善する。
+
+    ⚠️ **穴埋めが実際に出る側（どのランクも取っていない 9,263R）に絞ると
+       ROI +1.9pt [−0.1, +3.8] で有意ではない**（`--only-unranked`）。
+       的中 50.3→49.9%・表示的中 28.3→28.1% と、こちらでは僅かに下がる。
+       採用したのは「点推定が両母集団・両年で同じ向き（+1.9〜+2.5pt）」かつ
+       **失うものがほぼ無い**からで、有意性を根拠にしていない。
+       上の 17,035R は帯全体（ランクが取った分を含む）の数字である。
+
+    ⚠️ **軸を「◎◯と重ならないように」差し替える案は不採用**（同スクリプトで検証）。
+       ROI は +2〜3pt 上がるが **的中が 48.3→35.8%・表示的中が 28.5→25.1%** 落ちる。
+       穴埋めが実際に出る母集団（どのランクも取っていない 9,263R）に絞ると
+       ROI 差は +1.9pt [−1.9, +5.7] で有意ですらない。
+    ⚠️ **「別ラインの先頭同士が軸＝やり合って共倒れ」も不成立**
+       （`scripts/exp_marquee_fill_7car_duel.py`）。軸2車がそろって3着を外す率は
+       その構造で **6.4%** ・それ以外で **7.9%** と**むしろ低い**。番手2車へ
+       振り替えると的中 38.6→9.0%・ROI −12.9pt（逃×逃に絞ると −26.2pt・有意に悪化）。
+    ⚠️ **相手の点数を削っても表示的中は動かない**（`..._legs.py`）。
+       5点→4点→3点で ガミは 19.9→16.1→11.3% と減るが的中も同じだけ減り、
+       表示的中は 28.5 / 28.8 / 28.3% で横ばい・ROI も誤差内。
+       7M1 型（相手 下位3点）は表示的中 −12.4pt で看板には使えない。
     🔴 軸から降りた指数1位は**相手に残る**（指数最上位なので相手の足切りに掛からない。
        実測 293件すべて相手側に入った）。買い目から消えるわけではない。
     """
@@ -148,7 +203,9 @@ def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] 
     a1, a2 = order[0], order[1]
 
     ln = lines or {}
-    if len(riders) != 9 or not all(n in ln for n in order):
+    # 🔴 車数は `RANK_BY_CARS`（＝穴埋めが入稿できる車数）と揃える。ここだけ
+    #    別の数字を書くと「入稿はされるが組み替えだけ効かない」車数が生まれる。
+    if len(riders) not in RANK_BY_CARS or not all(n in ln for n in order):
         return a1, a2
 
     if _is_leader(ln, a1):
@@ -160,6 +217,49 @@ def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] 
         if partner is not None:
             return a2, partner
     return a1, a2
+
+
+def session_of_hour(hour: int) -> str:
+    """実行時刻（時）から波ラベルを返す。
+
+    DB の `netkeirin_submissions.session` と「どの開催を埋めてよいか」の両方に使う。
+    固定にすると後から「どの波で埋めたか」が追えない。
+    """
+    return "morning" if hour < 12 else ("noon" if hour < 18 else "evening")
+
+
+def due_waves_for(session: str) -> set[str]:
+    """その回で埋めてよい開催の波（自分の波 + 取りこぼした過去の波）。
+
+    🔴 **ランク側（`netkeirin_submit_wt.SESSION_WAVE`）を import して使う。**
+       ここへ対応表を書き写すと、片方だけ動かしたときに無言でずれ、
+       穴埋めがランクより早い波で走って商品を横取りする（本モジュール docstring）。
+    """
+    from scripts.netkeirin_submit_wt import SESSION_WAVE  # noqa: PLC0415
+    return set(waves_due_by(SESSION_WAVE[session]))
+
+
+def venue_waves(races: list[dict]) -> dict[str, str]:
+    """会場（venue_id）→ 入稿の波。
+
+    ⚠️ **会場で括る**——`src/meeting_wave.py` の「開催」は会場×日であって
+       cup_id ではない。ランク側 `netkeirin_submit_wt._load_meeting_waves()` と
+       括り方を揃えないと、同じ開催の判定が2箇所で食い違う。
+    ⚠️ 発走時刻が1つも取れない会場は `wave_of_first_hour(None)`＝朝扱い（安全側）。
+       分からないことを理由に商品を落とさない。
+    """
+    first: dict[str, float] = {}
+    for r in races:
+        if not r.get("start_at"):
+            continue
+        v = str(r["venue_id"])
+        try:
+            hour = (int(r["start_at"]) + 9 * 3600) % 86400 / 3600
+        except (TypeError, ValueError):
+            continue
+        first[v] = min(first.get(v, 1e9), hour)
+    return {str(r["venue_id"]): wave_of_first_hour(first.get(str(r["venue_id"])))
+            for r in races}
 
 
 def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
@@ -205,9 +305,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("date", nargs="?", default=datetime.now(JST).strftime("%Y-%m-%d"))
     ap.add_argument("--dry-run", action="store_true")
+    # 🔴 **波はランク入稿と同じ値を受け取る**（2026-08-19）。
+    #    実行時刻から導くと、朝のバッチが正午を跨いだ日に
+    #    `netkeirin_submit_wt.py` は morning で走ったのに穴埋めだけ noon になり、
+    #    **ナイター開催をランクより先に取る**（本モジュール docstring の事故の再発）。
+    #    実際 session='morning' の穴埋めに submitted_at 12:08 の実績がある。
+    #    省略時のみ実行時刻へフォールバック（手動実行の利便のため）。
+    ap.add_argument("--session", choices=("morning", "noon", "evening"), default=None)
     args = ap.parse_args()
     date = args.date
     now_ts = int(datetime.now(JST).timestamp())
+
+    session = args.session or session_of_hour(datetime.now(JST).hour)
+    due_waves = due_waves_for(session)
 
     with get_connection() as conn:
         races = [dict(r) for r in conn.execute(
@@ -232,15 +342,19 @@ def main() -> int:
     for r in races:
         by_cup.setdefault(str(r["cup_id"]), []).append(r)
 
+    venue_wave = venue_waves(races)
+
     allidx = _load_allindex(date)
     targets: list[dict] = []
     for cup, rs in by_cup.items():
         want = marquee_race_nos(rs)
-        # 🔴 ミッドナイトは evening の波を待つ（朝に出すと板が育っておらず
-        #    傾斜配分が均等割りへ落ちる）。開催の第1R発走で判定する。
-        first_start = min(int(x["start_at"]) for x in rs if x.get("start_at"))
-        hour = datetime.fromtimestamp(first_start, JST).hour
-        is_night = hour >= 18
+        # 🔴 自分の波（+ 取りこぼした過去の波）の開催だけを埋める。判定は
+        #    ランクの入稿と同じ `src/meeting_wave.py`（docstring の表を参照）。
+        wave = venue_wave.get(str(rs[0]["venue_id"]))
+        if wave not in due_waves:
+            print(f"[marquee] {rs[0]['venue_id']}: 波が違うので見送り"
+                  f"（開催={WAVE_LABEL_JP.get(wave, wave)} / 今回={session}）", flush=True)
+            continue
         for r in rs:
             if int(r["race_no"]) not in want:
                 continue
@@ -251,8 +365,6 @@ def main() -> int:
             if is_closed(r.get("start_at"), now_ts):
                 continue
             if int(r.get("n_entries") or 0) not in RANK_BY_CARS:
-                continue
-            if is_night and datetime.now(JST).hour < 18:
                 continue
             targets.append(r)
 
@@ -269,17 +381,15 @@ def main() -> int:
             print(f"[marquee] {r['race_key']}: 指数が無い（skip）", flush=True)
             ng += 1
             continue
-        # ライン情報は9車のときだけ引く（7車は組み替えないので問い合わせ自体が無駄）。
-        ax = _axes(e, _lines(r["race_key"]) if int(r.get("n_entries") or 0) == 9 else None)
+        # 🔴 ライン情報は7車でも引く。ここで None を渡すと `_axes()` は
+        #    ライン情報なしのフォールバック（素の上位2車）へ落ちるので、
+        #    組み替えを実装しても**静かに効かない**。
+        ax = _axes(e, _lines(r["race_key"]))
         if ax is None:
             print(f"[marquee] {r['race_key']}: 軸を決められない（skip）", flush=True)
             ng += 1
             continue
         rank = RANK_BY_CARS[int(r["n_entries"])]
-        # 記録される波ラベルは実行時刻に合わせる（DB の netkeirin_submissions.session）。
-        # 固定にすると後から「どの波で埋めたか」が追えない。
-        h = datetime.now(JST).hour
-        session = "morning" if h < 12 else ("noon" if h < 18 else "evening")
         cmd = [sys.executable, "scripts/netkeirin_submit_wt.py", date, session,
                "--marquee", "--race-key", r["race_key"],
                "--manual-rank-key", rank, "--axis1", str(ax[0]), "--axis2", str(ax[1]),

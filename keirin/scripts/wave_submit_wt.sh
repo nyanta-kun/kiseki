@@ -59,13 +59,14 @@ PYTHONPATH=. .venv/bin/python3 scripts/netkeirin_submit_wt.py "$TODAY" "$SESSION
 # 🔴 旧構成は cron で「波の20分後」（13:20 / 18:20）に別建てで走らせていたが、
 #    それは「波が20分以内に終わる」という暗黙の仮定に依存していた。同じ波の中で
 #    順に呼べば競合が構造的に消え、入稿データ作成と Discord 通知も同時になる。
-# ⚠️ 波ラベルは submit_marquee_wt.py が実行時刻の時から導く
-#    （h<12=morning / h<18=noon / else=evening）ので、noon は13時台・evening は
-#    18時台に走る限り $SESSION と一致する。**ここで --session を渡して上書きしない**
-#    （ミッドナイトを evening まで待たせる判定も同じ時刻を見ているため、
-#      片方だけ引数で動かすと判定と記録がずれる）。
+# 🔴 **波はランク入稿と同じ $SESSION を `--session` で渡す**（2026-08-19 変更）。
+#    穴埋めは「自分の波の開催しか埋めない」ようになり、波ラベルは記録ではなく
+#    **どの開催を埋めるかの判定**になった。実行時刻から導かせると、この回が
+#    境界（12時 / 18時）を跨いだときにランクと食い違い、穴埋めが先に取る。
+#    ⚠️ 以前は「渡して上書きしない」が正しかった（当時は記録だけだったので、
+#       判定と記録が別経路になるのを避ける意図）。判定を持たせた時点で逆転している。
 echo "[$(date '+%H:%M:%S')] 看板レースの穴埋め（波: ${SESSION}）..."
-PYTHONPATH=. .venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" \
+PYTHONPATH=. .venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" --session "$SESSION" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 看板穴埋め(${SESSION})に失敗（継続）"
 echo "[$(date '+%H:%M:%S')] === 入稿（波: ${SESSION}） 完了 ==="
