@@ -294,3 +294,46 @@ def test_webhook_get_only_serves_health():
     assert "/publish-wait" not in body.split("def _respond")[0], (
         "do_GET が /publish-wait を受けるようになったなら、この検査と "
         "backend 側の呼び方を見直すこと")
+
+
+def test_summary_is_aggregated_from_actual_sales():
+    """🔴 サマリーは**実際に売った商品**から数える（2026-08-19）。
+
+    以前は `picks_history` の `bet_amount > 0` が母集団だったが、これは
+    売った商品と一致しない:
+
+      - 看板レースの穴埋め入稿はランクのゲートを通っていないので行が立たない
+      - `bet_amount` が入るのは発走前判定を通った分だけで、当日はほぼ 0 のまま
+
+    実測 2026-08-19: 売った40件のうち数えていたのは4件だけで、一覧は40件すべてを
+    出しているのにサマリーだけ別の母集団を見ていた。
+    """
+    import inspect
+
+    from src.api import keirin_router
+
+    src = inspect.getsource(keirin_router._aggregate)
+    assert "_fetch_settled_submissions" in src, "実売から集計していません"
+    assert "only_missing_from_picks=False" in src, (
+        "売った全商品ではなく『picks_history に無い分だけ』を見ています")
+    # 合計とランク別が同じ母集団であること（片方だけ picks_history に戻さない）
+    assert "by_rank_items" in src and "ph.bet_amount > 0" not in src.split(
+        "n_candidates")[0], "ランク別または合計が picks_history のままです"
+
+
+def test_summary_reports_unpriced_submissions():
+    """🔴 買い目の原本が無くて集計から外した件数を必ず返す。
+
+    `bet_detail` の保存は 2026-08-07 開始。それ以前の入稿は金額を復元できず
+    集計に入れられないが、黙って落とすと「その期間の全部」に見える。
+    """
+    import inspect
+
+    from src.api import keirin_router
+
+    assert 'result["n_unpriced"]' in inspect.getsource(keirin_router._aggregate)
+    page = (Path(__file__).resolve().parents[2]
+            / "frontend" / "src" / "app" / "keirin" / "page.tsx")
+    if page.exists():
+        assert "n_unpriced" in page.read_text(encoding="utf-8"), (
+            "画面が除外件数を出していません")
