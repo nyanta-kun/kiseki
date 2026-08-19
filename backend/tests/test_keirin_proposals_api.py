@@ -249,3 +249,48 @@ def test_published_is_excluded_from_cancel_counts():
         "場別の取消件数から公開済みを外していません")
     assert src.count('p.status !== "deleted" && p.status !== "published"') >= 2, (
         "全件取消の件数か取消ボタンから公開済みを外していません")
+
+
+def test_publish_wait_and_sync_are_posted_to_webhook():
+    """🔴 webhook は `do_POST` にしか口が無い。GET で呼ぶと 404 になる。
+
+    2026-08-19、`/keirin/publish-wait` を `client.get` で実装したため、
+    画面に「netkeirin 側の公開待ち件数を取得できませんでした」が出続けた。
+    読み取り専用でも**メソッドは webhook 側に合わせる**。
+
+    webhook 側（`keirin/scripts/keirin_webhook.py`）は
+      do_POST: /fetch-results /fetch-odds /submit-race /approve /cancel /publish
+               /publish-wait /publish-sync
+      do_GET : /health のみ
+    """
+    import inspect
+    import re as _re
+
+    from src.api import keirin_router
+
+    src = inspect.getsource(keirin_router)
+    hits = 0
+    for path in ("/publish-wait", "/publish-sync"):
+        for m in _re.finditer(r"client\.(get|post)\([^)]*" + _re.escape(path), src):
+            hits += 1
+            assert m.group(1) == "post", (
+                f"{path} を client.{m.group(1)} で呼んでいます。"
+                "webhook は POST しか受けないので 404 になります")
+    assert hits, "webhook を直接叩く箇所が見つからない（検査が空振りしている）"
+    # `_call_webhook` 経由（/publish-sync 等）も POST であること
+    assert "client.post(f\"{_WEBHOOK_BASE}{path}\"" in inspect.getsource(
+        keirin_router._call_webhook)
+
+
+def test_webhook_get_only_serves_health():
+    """webhook 側の前提（GET は /health だけ）が変わっていないこと。"""
+    from pathlib import Path
+
+    wh = (Path(__file__).resolve().parents[2] / "keirin" / "scripts" / "keirin_webhook.py")
+    if not wh.exists():
+        pytest.skip("keirin が見つかりません")
+    body = wh.read_text(encoding="utf-8").split("def do_GET")[1]
+    assert '"/health"' in body
+    assert "/publish-wait" not in body.split("def _respond")[0], (
+        "do_GET が /publish-wait を受けるようになったなら、この検査と "
+        "backend 側の呼び方を見直すこと")
