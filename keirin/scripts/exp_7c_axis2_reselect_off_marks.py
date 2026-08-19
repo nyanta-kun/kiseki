@@ -66,18 +66,21 @@ def load(d1, d2, board=False):
     with get_connection() as conn:
         cur = conn.execute(
             "SELECT e.race_key, e.frame_no, e.pred_top3_pct, e.pred_win_pct, "
-            "       e.pred_top2_pct, "
+            "       e.pred_top2_pct, e.line_size, e.is_line_leader, "
             "       e.finish_order, e.prediction_mark, e.line_group, "
             "       r.race_type, r.cup_grade "
             "FROM wt_entries e JOIN wt_races r USING(race_key) "
             "WHERE r.race_date BETWEEN ? AND ? AND r.n_entries = 7 "
-            "  AND e.pred_top3_pct IS NOT NULL AND e.pred_win_pct IS NOT NULL "
-            "  AND e.pred_top2_pct IS NOT NULL",
+            # 🔴 `pred_top2_pct` を必須にしない。2026-08-12 追加の列で過去が空なので
+            #    母集団が 6,865R → 48R に崩壊する（2026-08-19 に一度踏んだ）。
+            "  AND e.pred_top3_pct IS NOT NULL AND e.pred_win_pct IS NOT NULL",
             (d1, d2))
         ent, meta = defaultdict(dict), {}
-        for rk, fn, p3, pw, p2, fo, mk, lg, rt, g in cur.fetchall():
+        for rk, fn, p3, pw, p2, ls, ld, fo, mk, lg, rt, g in cur.fetchall():
             ent[rk][int(fn)] = dict(p3=float(p3) / 100.0, pw=float(pw) / 100.0,
-                                    p2=float(p2) / 100.0, fo=fo, mark=mk, lg=lg)
+                                    p2=(float(p2) / 100.0 if p2 is not None else None),
+                                    fo=fo, mark=mk, lg=lg,
+                                    ls=ls, leader=ld)
             meta[rk] = (rt, g)
         cur = conn.execute(
             "SELECT o.race_key, o.bet_type, o.combination, o.odds_value "
@@ -167,6 +170,7 @@ def main():
         p3 = {f: v["p3"] for f, v in cars.items()}
         pw = {f: v["pw"] for f, v in cars.items()}
         p2 = {f: v["p2"] for f, v in cars.items()}
+        lines = {f: (v["lg"], v["ls"], v["leader"]) for f, v in cars.items()}
         sel = rank_7c_select_axis(p3)
         if sel is None:
             continue
@@ -181,7 +185,8 @@ def main():
         h, t = marks.get(1), marks.get(2)
         if h is None or t is None or {a1, a2} != {h, t}:
             continue                     # ◎◯完全一致のレースだけが対象
-        rows.append(dict(rk=rk, date=rk[:8], p3=p3, pw=pw, p2=p2, a1=a1, a2=a2,
+        rows.append(dict(rk=rk, date=rk[:8], p3=p3, pw=pw, p2=p2, lines=lines,
+                         a1=a1, a2=a2,
                          marks=marks, h=h, t=t, trio=trio[rk], tfc=tfc.get(rk, {}),
                          board=bd.get(rk) or None,
                          win=frozenset(f for f, v in cars.items() if v["fo"] in (1, 2, 3)),
@@ -193,12 +198,33 @@ def main():
           f"{'  ※朝の板を配分に使用' if a.board else '  ※配分は p3 のみ'}")
 
     def variants(r):
+        """◎◯を除いた候補から軸2を選ぶ各案。軸1は据え置き。"""
         pool = [f for f in r["p3"] if f not in (r["a1"], r["h"], r["t"])]
         v = {"V0 現行（軸2=◯）": r["a2"]}
-        if pool:
-            v["V1 軸2=◎◯以外の1着率1位"] = max(pool, key=lambda f: r["pw"][f])
-            v["V2 軸2=◎◯以外の3着内率1位"] = max(pool, key=lambda f: r["p3"][f])
-            v["V3 軸2=◎◯以外の2着内率1位"] = max(pool, key=lambda f: r["p2"][f])
+        if not pool:
+            return v
+        ln = r["lines"]
+        by_p3 = sorted(pool, key=lambda f: (-r["p3"][f], f))
+        best = by_p3[0]
+        v["V2 現行の差し替え（3着内率1位）"] = best
+
+        def is_leader(n):
+            lg, ls, ld = ln.get(n, (None, None, None))
+            # 🔴 単騎（line_size<=1）は先頭に数えない（番手がおらず「先頭＋番手」に
+            #    ならない）。看板穴埋めの `_is_leader` と同じ扱い。
+            return bool(ld and (ls or 1) > 1)
+
+        a1_lg = ln.get(r["a1"], (None,))[0]
+        same = [f for f in by_p3 if ln.get(f, (None,))[0] == a1_lg and a1_lg is not None]
+        other_leaders = [f for f in by_p3
+                         if is_leader(f) and ln.get(f, (None,))[0] != a1_lg]
+        # L1: 軸1と同じラインの最上位（＝番手）。穴埋めで効いた形。
+        v["L1 軸1と同ラインの最上位"] = same[0] if same else best
+        # L2: 別ラインの先頭で3着内率1位。
+        v["L2 別ラインの先頭1位"] = other_leaders[0] if other_leaders else best
+        # L3: 同ライン最上位 → 無ければ別ライン先頭 → 無ければ3着内率1位。
+        v["L3 同ライン→別線先頭→指数"] = (
+            same[0] if same else (other_leaders[0] if other_leaders else best))
         return v
 
     def score(r, a1, a2):
@@ -224,13 +250,14 @@ def main():
         w = r["win"]
         return bet, (int(r["trio"][w] * st[w]) if w in st else 0)
 
-    names = ["V0 現行（軸2=◯）", "V1 軸2=◎◯以外の1着率1位",
-             "V3 軸2=◎◯以外の2着内率1位", "V2 軸2=◎◯以外の3着内率1位"]
+    names = ["V0 現行（軸2=◯）", "V2 現行の差し替え（3着内率1位）",
+             "L1 軸1と同ラインの最上位", "L2 別ラインの先頭1位",
+             "L3 同ライン→別線先頭→指数"]
     accs = {n: Acc() for n in names}
     keys = []
     for r in rows:
         v = variants(r)
-        if len(v) < 4:
+        if len(v) < len(names):
             continue
         got = {n: score(r, r["a1"], v[n]) for n in names}
         if any(g is None for g in got.values()):
