@@ -89,9 +89,10 @@ def test_marquee_is_passed_the_batch_date(path: Path):
 def test_marquee_does_not_take_a_session_argument():
     """波ラベルを引数で上書きしていないこと。
 
-    `submit_marquee_wt.py` は**実行時刻の時**から波ラベルを導き、同じ時刻を
-    「ミッドナイトを evening まで待たせる」判定にも使っている。片方だけ引数で
-    動かすと判定と記録がずれるので、セッションは渡さない設計にしてある。
+    `submit_marquee_wt.py` は**実行時刻の時**から波ラベルを導き（`session_of_hour`）、
+    同じラベルを「どの開催を埋めてよいか」の判定にも使う（`due_waves_for`・
+    2026-08-19 にランク側 `SESSION_WAVE` と一本化）。片方だけ引数で動かすと
+    判定と記録がずれるので、セッションは渡さない設計にしてある。
     """
     for path in (DAILY, WAVE):
         lines = _code_lines(path)

@@ -29,8 +29,24 @@ GI ガールズ決勝）に商品がゼロだった。08-09 は手作業で11件
 - 軸 = 当日の指数（allindex JSON）の pred 上位2車を、**ラインで組み替える**
   （9車 2026-08-16 / 7車 2026-08-19・`_axes()` の docstring に根拠）
 
-⚠️ **ミッドナイト（第1R 18時以降）は evening の波より前に出さない。**
-   三連複の板が朝は63%欠損しており、傾斜配分が均等割りへ落ちる。
+🔴 **開催は自分の波でしか埋めない**（`src/meeting_wave.py`・2026-08-19 是正）。
+   ランクの入稿（`netkeirin_submit_wt.py`）と**同じ判定**を使う。ここが食い違うと
+   穴埋めがランクより早い波で走り、**1レース1商品の取り合いに先に勝ってしまう**。
+
+   2026-08-19 以前は「第1R 18時以降か」だけを見ており、**ナイター（第1R 12〜17時台）
+   を朝7時の波で埋めていた**。ランクがその開催を出すのは昼13:00 なので5時間の
+   先回りになる。実測（2026-08-09〜08-19・穴埋め196件）:
+
+   | 入稿波 × 開催の波 | 件数 | ランクが候補を持っていた | うち賭け金0（＝取れなかった） |
+   |---|---|---|---|
+   | morning × morning | 67 | 24 | **0** |
+   | morning × **noon** | 78 | 53 | **25** |
+   | noon × noon | 6 | 2 | **0** |
+   | evening × night | 31 | 10 | **0** |
+
+   **ランクが候補を持ちながら商品を取れなかった25件は、全て波がずれた
+   バケツにだけ現れる。** 板が育つ前に出すので傾斜配分も効かない
+   （ナイターの三連複 未確定率は 朝8時台 30.8% → 12:00 5.3%）。
 
 使い方:
     python scripts/submit_marquee_wt.py [YYYY-MM-DD] [--dry-run]
@@ -48,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import get_connection  # noqa: E402
 from src.marquee import marquee_race_nos
+from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -192,6 +209,49 @@ def _axes(entry: dict, lines: dict[int, dict] | None = None) -> tuple[int, int] 
     return a1, a2
 
 
+def session_of_hour(hour: int) -> str:
+    """実行時刻（時）から波ラベルを返す。
+
+    DB の `netkeirin_submissions.session` と「どの開催を埋めてよいか」の両方に使う。
+    固定にすると後から「どの波で埋めたか」が追えない。
+    """
+    return "morning" if hour < 12 else ("noon" if hour < 18 else "evening")
+
+
+def due_waves_for(session: str) -> set[str]:
+    """その回で埋めてよい開催の波（自分の波 + 取りこぼした過去の波）。
+
+    🔴 **ランク側（`netkeirin_submit_wt.SESSION_WAVE`）を import して使う。**
+       ここへ対応表を書き写すと、片方だけ動かしたときに無言でずれ、
+       穴埋めがランクより早い波で走って商品を横取りする（本モジュール docstring）。
+    """
+    from scripts.netkeirin_submit_wt import SESSION_WAVE  # noqa: PLC0415
+    return set(waves_due_by(SESSION_WAVE[session]))
+
+
+def venue_waves(races: list[dict]) -> dict[str, str]:
+    """会場（venue_id）→ 入稿の波。
+
+    ⚠️ **会場で括る**——`src/meeting_wave.py` の「開催」は会場×日であって
+       cup_id ではない。ランク側 `netkeirin_submit_wt._load_meeting_waves()` と
+       括り方を揃えないと、同じ開催の判定が2箇所で食い違う。
+    ⚠️ 発走時刻が1つも取れない会場は `wave_of_first_hour(None)`＝朝扱い（安全側）。
+       分からないことを理由に商品を落とさない。
+    """
+    first: dict[str, float] = {}
+    for r in races:
+        if not r.get("start_at"):
+            continue
+        v = str(r["venue_id"])
+        try:
+            hour = (int(r["start_at"]) + 9 * 3600) % 86400 / 3600
+        except (TypeError, ValueError):
+            continue
+        first[v] = min(first.get(v, 1e9), hour)
+    return {str(r["venue_id"]): wave_of_first_hour(first.get(str(r["venue_id"])))
+            for r in races}
+
+
 def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
     """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
 
@@ -239,6 +299,9 @@ def main() -> int:
     date = args.date
     now_ts = int(datetime.now(JST).timestamp())
 
+    session = session_of_hour(datetime.now(JST).hour)
+    due_waves = due_waves_for(session)
+
     with get_connection() as conn:
         races = [dict(r) for r in conn.execute(
             "SELECT race_key, venue_id, race_no, race_type, n_entries, start_at, cup_id, cup_grade "
@@ -262,15 +325,19 @@ def main() -> int:
     for r in races:
         by_cup.setdefault(str(r["cup_id"]), []).append(r)
 
+    venue_wave = venue_waves(races)
+
     allidx = _load_allindex(date)
     targets: list[dict] = []
     for cup, rs in by_cup.items():
         want = marquee_race_nos(rs)
-        # 🔴 ミッドナイトは evening の波を待つ（朝に出すと板が育っておらず
-        #    傾斜配分が均等割りへ落ちる）。開催の第1R発走で判定する。
-        first_start = min(int(x["start_at"]) for x in rs if x.get("start_at"))
-        hour = datetime.fromtimestamp(first_start, JST).hour
-        is_night = hour >= 18
+        # 🔴 自分の波（+ 取りこぼした過去の波）の開催だけを埋める。判定は
+        #    ランクの入稿と同じ `src/meeting_wave.py`（docstring の表を参照）。
+        wave = venue_wave.get(str(rs[0]["venue_id"]))
+        if wave not in due_waves:
+            print(f"[marquee] {rs[0]['venue_id']}: 波が違うので見送り"
+                  f"（開催={WAVE_LABEL_JP.get(wave, wave)} / 今回={session}）", flush=True)
+            continue
         for r in rs:
             if int(r["race_no"]) not in want:
                 continue
@@ -281,8 +348,6 @@ def main() -> int:
             if is_closed(r.get("start_at"), now_ts):
                 continue
             if int(r.get("n_entries") or 0) not in RANK_BY_CARS:
-                continue
-            if is_night and datetime.now(JST).hour < 18:
                 continue
             targets.append(r)
 
@@ -308,10 +373,6 @@ def main() -> int:
             ng += 1
             continue
         rank = RANK_BY_CARS[int(r["n_entries"])]
-        # 記録される波ラベルは実行時刻に合わせる（DB の netkeirin_submissions.session）。
-        # 固定にすると後から「どの波で埋めたか」が追えない。
-        h = datetime.now(JST).hour
-        session = "morning" if h < 12 else ("noon" if h < 18 else "evening")
         cmd = [sys.executable, "scripts/netkeirin_submit_wt.py", date, session,
                "--marquee", "--race-key", r["race_key"],
                "--manual-rank-key", rank, "--axis1", str(ax[0]), "--axis2", str(ax[1]),
