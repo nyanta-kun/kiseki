@@ -2539,9 +2539,13 @@ async def publish_wait(_: ApiKeyDep) -> JSONResponse:
     公開すると `submitted` のまま取り残される。2つの数字を並べて食い違いを
     見えるようにするための口（食い違い自体が「画面外で操作された」情報）。
     """
+    # 🔴 **POST で呼ぶ。** webhook 側は `do_POST` にしか口が無く（`do_GET` は
+    #    /health だけ）、GET だと 404 が返って「取得できませんでした」に化ける。
+    #    読み取り専用でも HTTP メソッドは webhook 側に合わせること。
+    #    検査: tests/test_keirin_proposals_api.py::test_publish_wait_is_posted_to_webhook
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get(f"{_WEBHOOK_BASE}/publish-wait", timeout=70.0)
+            r = await client.post(f"{_WEBHOOK_BASE}/publish-wait", json={}, timeout=70.0)
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as exc:
         # 🔴 付随情報なので画面を落とさない。ただし ok=False は必ず立てる
