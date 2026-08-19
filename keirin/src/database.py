@@ -684,6 +684,23 @@ def migrate_db():
                 -- 想定オッズから決まり**あとから再現できない**ので入稿の瞬間に保存する。
                 -- 本番は kiseki alembic 202608071800_keirin が正本。
                 bet_detail        TEXT,
+                -- 承認フロー（2026-08-11〜）。本番は alembic が正本で、ここは
+                -- **テスト用 SQLite フォールバックのために追随させている**だけ。
+                -- 🔴 追随を忘れると「ローカルだけ通って CI(fresh clone) で落ちる」。
+                --    手元の data/keirin.db は列を足した状態で残っているので気づけない
+                --    （2026-08-19 に status を使うテストで実際に踏んだ）。
+                --    proposed → submitted（公開待ち）→ published  ↘ deleted
+                status            TEXT,
+                title             TEXT,
+                comment           TEXT,
+                netkeirin_item_id TEXT,
+                proposed_at       TEXT,
+                approved_at       TEXT,
+                deleted_at        TEXT,
+                origin            TEXT,
+                is_confident      INTEGER,
+                confident_ev      REAL,
+                published_at      TEXT,
                 PRIMARY KEY (race_key, rank_key)
             )
         """)
