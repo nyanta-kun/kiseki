@@ -243,6 +243,23 @@ def test_webhook_routes_publish():
     assert '"/publish-wait"' in src
 
 
+def test_webhook_routes_publish_sync():
+    """状態合わせの口が生えていること（2026-08-19）。
+
+    🔴 **date 必須**であることも固定する。日付が無いと過去分の `submitted` まで
+       まとめて `published` にしてしまう（承認・取消と同じ作法）。
+    """
+    src = WEBHOOK.read_text(encoding="utf-8")
+    assert '"/publish-sync"' in src
+    tree = ast.parse(src)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_handle_publish_sync"), None)
+    assert fn is not None, "_handle_publish_sync がありません"
+    body = ast.dump(fn)
+    assert "_DATE_RE" in body, "date を検証していません"
+    assert "netkeirin_sync_status.py" in ast.dump(fn), "同期スクリプトを呼んでいません"
+
+
 def test_publish_flag_is_approve_only():
     """`--publish` は承認専用（単体の公開は publish アクションを使う）。"""
     src = inspect.getsource(cli.main)

@@ -154,10 +154,21 @@ def _review_src() -> str:
 
 
 def test_review_has_exactly_three_bulk_buttons():
-    """一括操作は 入稿 / 公開 / 取消 の3つ。"""
+    """一括操作は 入稿 / 公開 / 取消 の3つ。**日単位と場単位の両方**で揃える。
+
+    2026-08-19: ラベルを「この日を全件入稿（N件）」から「入稿 N」へ簡略化し、
+    同時に**場ごとの公開**を足した（それまで公開だけレース単位と日単位しか無く、
+    場をまとめて売り出すのに1レースずつ押す必要があった）。
+    ここは**件数付きの一括ボタンを数える**形にしてあるので、ラベルの言い回しを
+    変えても壊れないが、3つ以外が増えたら落ちる。
+    """
     src = _review_src()
-    labels = re.findall(r"この日を全件(\w+)（", src)
-    assert sorted(labels) == ["入稿", "公開", "取消"], f"一括ボタンが {labels} になっています"
+    labels = re.findall(r"^\s+(入稿|公開|取消) \{n(\w+)\}$", src, re.MULTILINE)
+    # 日単位（…All）と場単位で、それぞれ 入稿/公開/取消 が1つずつ
+    day = sorted(a for a, v in labels if v.endswith("All"))
+    venue = sorted(a for a, v in labels if not v.endswith("All"))
+    assert day == ["入稿", "公開", "取消"], f"日単位の一括ボタンが {day} になっています"
+    assert venue == ["入稿", "公開", "取消"], f"場単位の一括ボタンが {venue} になっています"
 
 
 def test_review_has_no_approve_and_publish_button():

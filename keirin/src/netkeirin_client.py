@@ -546,17 +546,19 @@ class NetkeirinClient:
             return False, f"公開失敗: {resp}"
         return True, f"{len(ids)}件を公開しました"
 
-    def count_wait(self) -> tuple[int, list]:
-        """**未公開（公開待ち）**の件数と一覧（`action=get_wait`）。
+    def wait_state(self) -> tuple[bool, int, list]:
+        """(取得できたか, 未公開件数, 一覧)。`count_wait` と違い**失敗を隠さない**。
+
+        🔴 **記録を書き換える処理は必ずこちらを使うこと。** `count_wait` は
+           失敗時も `(0, [])` を返すので、「本当に0件」と「取得できなかった」が
+           区別できない。0件を根拠に `submitted → published` を書くと、
+           通信が落ちた日に**その日の入稿を全部「公開済み」にしてしまう**。
 
         netkeirin のヘッダーが出しているバッジと同じ情報源。実測の応答:
 
             {"status":"OK","count":"0","list":[]}
 
-        🔴 **読み取り専用**。件数だけ欲しいときも副作用は無い。
         ⚠️ count は**文字列**で返る。数値化してから比較すること。
-        失敗しても例外にせず (0, []) を返す —— 画面の付随情報なので、
-        ここで落として確認画面ごと見えなくなるほうが困る。
         """
         try:
             r = self.session.post(
@@ -565,15 +567,27 @@ class NetkeirinClient:
             resp = r.json()
         except (requests.RequestException, ValueError) as e:
             print(f"[netkeirin] 未公開件数の取得に失敗: {e}")
-            return 0, []
+            return False, 0, []
         if resp.get("status") != "OK":
             print(f"[netkeirin] 未公開件数の取得に失敗: {resp}")
-            return 0, []
+            return False, 0, []
         try:
             n = int(resp.get("count") or 0)
         except (TypeError, ValueError):
             n = 0
-        return n, list(resp.get("list") or [])
+        return True, n, list(resp.get("list") or [])
+
+    def count_wait(self) -> tuple[int, list]:
+        """**未公開（公開待ち）**の件数と一覧（`action=get_wait`）。
+
+        🔴 **読み取り専用**。件数だけ欲しいときも副作用は無い。
+        失敗しても例外にせず (0, []) を返す —— 画面の付随情報なので、
+        ここで落として確認画面ごと見えなくなるほうが困る。
+        ⚠️ そのぶん**失敗と0件が区別できない**。記録を書き換える処理からは
+           呼ばず `wait_state()` を使うこと。
+        """
+        _ok, n, items = self.wait_state()
+        return n, items
 
     def fetch_item_ids(self) -> dict[str, str]:
         """`race_auth.html`（公開待ち一覧）から {race_id: item_id} を作る。

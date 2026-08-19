@@ -106,6 +106,24 @@ docs/bet-structure-guide.md            # 買い目戦略（旧体系の歴史的
 - `INSERT OR REPLACE` を使うため再収集は安全
 - **2026-06-08 winticketルートへ完全移行**（wtがks同等以上を確認）。ks収集停止・cronはwt版。ks資産はロールバック用に保持
 - finish_order=0(欠車)は着外。top3は `between(1,3)` で判定（DNS誤算入バグ修正済）
+- 🔴 **netkeirin は自分の画面からも公開できる。押されるとこちらの記録は取り残される**
+  （2026-08-19 対応）。`netkeirin_submissions.status` が `submitted`（公開待ち）の
+  ままになり、確認画面が「公開待ち N件」と出し続ける。実測 2026-08-16 に35件、
+  2026-08-19 に20件。
+  - 読み取り: `GET /api/keirin/publish-wait` → webhook `/publish-wait`
+    → `scripts/netkeirin_publish_wait.py`（`action=get_wait`・副作用なし）
+  - 書き戻し: `POST /api/keirin/publish-sync` → webhook `/publish-sync`
+    → `scripts/netkeirin_sync_status.py <date>`。公開待ち一覧に**無い** `submitted`
+    を `published` にする。`--dry-run` あり
+  - 画面は `/keirin/review` が食い違いを検出したときだけ**警告を出し、押されるまで
+    何も書き換えない**（「状態を合わせる」ボタン）
+  - 🔴 **`count_wait()` を書き戻しに使わないこと。** 失敗しても `(0, [])` を返すので
+    「本当に0件」と「取得できなかった」が区別できず、通信が落ちた日に
+    **その日の入稿を全部「公開済み」にしてしまう**。`wait_state()`（ok を返す）を使う
+  - ⚠️ **「公開された」と「netkeirin 側で削除された」は区別できない**
+    （netkeirin に公開済み一覧の API が無い）。既定では公開扱い。確認文言でそう説明する
+  - ⚠️ 逆向き（`published` → `submitted`）はしない。公開は不可逆なので必ず誤りになる
+  - 検査: `keirin/tests/test_netkeirin_sync_status.py`
 - 🔴 **`netkeirin_settings.enabled` は「入稿の可否」と「Web の可視性」を兼ねている**（2026-08-18 判明）。
   `keirin_router._enabled_rank_cond()` / `visible_rank_labels()` が同じフラグを見るので、
   **入稿を止めると画面からも消える**。検証中のペーパーランクを「売らずに画面で追う」ことが
