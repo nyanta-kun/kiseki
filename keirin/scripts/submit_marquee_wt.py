@@ -49,7 +49,10 @@ GI ガールズ決勝）に商品がゼロだった。08-09 は手作業で11件
    （ナイターの三連複 未確定率は 朝8時台 30.8% → 12:00 5.3%）。
 
 使い方:
-    python scripts/submit_marquee_wt.py [YYYY-MM-DD] [--dry-run]
+    python scripts/submit_marquee_wt.py [YYYY-MM-DD] [--session morning|noon|evening] [--dry-run]
+
+⚠️ `--session` は**呼び出し元のシェルがランク入稿へ渡したものと同じ値**を渡すこと。
+   省略時のみ実行時刻から導く（手動実行用のフォールバック）。
 """
 from __future__ import annotations
 
@@ -295,11 +298,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("date", nargs="?", default=datetime.now(JST).strftime("%Y-%m-%d"))
     ap.add_argument("--dry-run", action="store_true")
+    # 🔴 **波はランク入稿と同じ値を受け取る**（2026-08-19）。
+    #    実行時刻から導くと、朝のバッチが正午を跨いだ日に
+    #    `netkeirin_submit_wt.py` は morning で走ったのに穴埋めだけ noon になり、
+    #    **ナイター開催をランクより先に取る**（本モジュール docstring の事故の再発）。
+    #    実際 session='morning' の穴埋めに submitted_at 12:08 の実績がある。
+    #    省略時のみ実行時刻へフォールバック（手動実行の利便のため）。
+    ap.add_argument("--session", choices=("morning", "noon", "evening"), default=None)
     args = ap.parse_args()
     date = args.date
     now_ts = int(datetime.now(JST).timestamp())
 
-    session = session_of_hour(datetime.now(JST).hour)
+    session = args.session or session_of_hour(datetime.now(JST).hour)
     due_waves = due_waves_for(session)
 
     with get_connection() as conn:

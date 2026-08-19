@@ -332,13 +332,14 @@ echo "[$(date '+%H:%M:%S')] netkeirinへ下書き入稿（朝の波: モーニ�
 #    収集のリトライ（5分待機×2回）が入ると容易に超える＝**穴埋めがランク入稿より
 #    先に走りうる**。同じ波の中で順に呼べばその競合は構造的に消える。
 #    ユーザー要望「同じタイミングでの入稿データ作成・Discord通知」もこれで満たす。
-# ⚠️ 波ラベル（netkeirin_submissions.session）は submit_marquee_wt.py が
-#    **実行時刻の時**から導く（h<12=morning / h<18=noon / else=evening）。
-#    この回は 07:00 台なので morning になり、旧 07:20 と同じ値になる。
-#    バッチの開始が12時を跨ぐほど遅れると噛み合わないが、そのときは
-#    朝の入稿自体が手遅れなので、ここで取り繕わない。
+# 🔴 **波は上のランク入稿と同じ値を `--session` で渡す**（2026-08-19）。
+#    穴埋めは 2026-08-19 から「自分の波の開催しか埋めない」ようになったので、
+#    波ラベルは記録ではなく**どの開催を埋めるかの判定**になった。
+#    以前のように実行時刻から導かせると、このバッチが正午を跨いだ日に
+#    ランクは morning・穴埋めは noon で走り、**ナイター開催を穴埋めが先に取る**。
+#    実際 session='morning' の穴埋めに submitted_at 12:08 の実績がある。
 echo "[$(date '+%H:%M:%S')] 看板レースの穴埋め..."
-.venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" \
+.venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" --session "morning" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 看板穴埋めに失敗（継続）"
 
