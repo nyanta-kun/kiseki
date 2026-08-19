@@ -27,13 +27,29 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def pytest_configure(config):
-    """CI 環境（SQLite DB 不在）でもテーブルが存在するようスキーマを初期化。
+    """テストは**必ずローカル SQLite** を使う。本番 PostgreSQL へは触らせない。
 
     本番は VPS PostgreSQL へ一本化済み（2026-07-22〜）で get_connection() は
-    KEIRIN_DB_URL 未設定時に例外を送出する。テストだけは明示的に
+    KEIRIN_DB_URL 未設定時に例外を送出する。テストだけは
     KEIRIN_ALLOW_SQLITE_FALLBACK=1 を立ててローカル SQLite を使う。
+
+    🔴 **`KEIRIN_DB_URL` は握り潰す（2026-08-19）。**
+       以前は「未設定なら SQLite」という条件付きだったが、この Mac は
+       **`~/.zshrc` が KEIRIN_DB_URL（本番）を export している**ため条件が成立せず、
+       ローカルの pytest が**本番 PostgreSQL を直接叩いていた**。
+       2026-08-19、`netkeirin_submissions` を seed するテストの
+       `DELETE ... WHERE race_key LIKE '20260819_%'` が
+       **当日の入稿45件を実際に消した**（ログと picks_history から復旧）。
+
+       CI は KEIRIN_DB_URL が無いので**この事故は CI では絶対に再現しない**。
+       「ローカルでだけ壊れる」型なので、条件ではなく**構造で塞ぐ**。
+
+    ⚠️ どうしても本番/リモート DB でテストを回したいときだけ
+       `KEIRIN_TEST_ALLOW_REMOTE_DB=1` を明示する（通常は使わない）。
     """
     import os
+    if not os.environ.get("KEIRIN_TEST_ALLOW_REMOTE_DB"):
+        os.environ.pop("KEIRIN_DB_URL", None)
     if not os.environ.get("KEIRIN_DB_URL"):
         os.environ["KEIRIN_ALLOW_SQLITE_FALLBACK"] = "1"
         from src.database import init_db

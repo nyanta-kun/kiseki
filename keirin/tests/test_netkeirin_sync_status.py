@@ -132,3 +132,23 @@ def test_count_wait_still_hides_failures_but_wait_state_does_not():
 
     src = inspect.getsource(netkeirin_client.NetkeirinClient.count_wait)
     assert "wait_state()" in src, "count_wait は wait_state へ委譲すること（実装の二重化を防ぐ）"
+
+
+def test_tests_never_talk_to_the_production_database():
+    """🔴 テストが本番 PostgreSQL を掴んでいないこと（2026-08-19 の実害）。
+
+    この Mac は `~/.zshrc` が `KEIRIN_DB_URL`（本番）を export しているため、
+    「未設定なら SQLite」という条件付きの切り替えでは効かず、ローカルの
+    pytest が本番を直接叩いていた。上のテスト群は `netkeirin_submissions` を
+    seed するので、**当日の入稿45件が実際に消えた**。
+    conftest が握り潰しているので、ここに来る時点で環境変数は消えている。
+    """
+    import os
+
+    assert not os.environ.get("KEIRIN_DB_URL"), (
+        "テスト中に KEIRIN_DB_URL が生きています。conftest.pytest_configure が "
+        "握り潰しているはずで、ここが立っているなら本番へ書き込む恐れがあります")
+    from src.database import get_connection
+    with get_connection() as conn:
+        assert conn.__class__.__module__.startswith("sqlite3"), (
+            f"SQLite ではない接続です: {conn.__class__}")
