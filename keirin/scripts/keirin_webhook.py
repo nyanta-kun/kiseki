@@ -106,6 +106,12 @@ class Handler(BaseHTTPRequestHandler):
             payload, status = self._handle_approval(self.path.lstrip("/"))
             self._respond(status, payload)
             return
+        elif self.path == "/publish-sync":
+            # netkeirin 側で公開された分をこちらの記録へ反映する（**書き込み**）。
+            # 読み取り専用の /publish-wait と対で、食い違いを見てから押す想定。
+            payload, status = self._handle_publish_sync()
+            self._respond(status, payload)
+            return
         elif self.path == "/publish-wait":
             # netkeirin の未公開（公開待ち）件数。**読み取り専用**なので
             # 検証も確認も要らない。確認画面が自前の記録と突き合わせる用。
@@ -189,6 +195,39 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 continue
         return {"ok": False, "count": 0,
+                "message": (p.stderr or "出力を解釈できませんでした")[:300]}, 500
+
+    def _handle_publish_sync(self) -> tuple[dict, int]:
+        """netkeirin で公開された分を記録へ反映する（`netkeirin_sync_status.py`）。
+
+        🔴 **date 必須**。日付が無いと過去分まで巻き込む（取消・承認と同じ作法）。
+        ⚠️ 同期実行して結果をそのまま返す。背景起動にすると「開始しました」しか
+           返せず、確認画面が何件直ったのかを出せない。
+        """
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            return {"ok": False, "message": "invalid JSON body"}, 400
+        date = str(body.get("date", ""))
+        if not _DATE_RE.match(date):
+            return {"ok": False, "message": f"invalid date: {date}"}, 400
+        cmd = [str(KEIRIN_HOME / ".venv" / "bin" / "python3"),
+               "scripts/netkeirin_sync_status.py", date]
+        if body.get("dry_run"):
+            cmd.append("--dry-run")
+        env = dict(os.environ, PYTHONPATH=".")
+        try:
+            p = subprocess.run(cmd, cwd=str(KEIRIN_HOME), env=env,
+                               capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "message": "タイムアウトしました（120秒）"}, 504
+        for line in reversed((p.stdout or "").strip().splitlines()):
+            try:
+                return json.loads(line), 200
+            except json.JSONDecodeError:
+                continue
+        return {"ok": False,
                 "message": (p.stderr or "出力を解釈できませんでした")[:300]}, 500
 
     def _handle_approval(self, action: str) -> tuple[dict, int]:

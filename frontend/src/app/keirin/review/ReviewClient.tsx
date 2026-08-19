@@ -35,6 +35,9 @@ import {
   cancelKeirinAllAction,
   publishKeirinAllAction,
   publishKeirinRaceAction,
+  publishKeirinVenueAction,
+  fetchKeirinPublishWaitAction,
+  syncKeirinPublishStatusAction,
   cancelKeirinSubmissionAction,
   cancelKeirinVenueAction,
 } from "../actions";
@@ -580,6 +583,27 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
   }, []);
+  /**
+   * netkeirin 側の公開待ち件数。**こちらの記録と食い違うことがある。**
+   *
+   * netkeirin は自分の画面からも公開できるので、そこで押されるとこちらは
+   * `submitted`（公開待ち）のまま取り残される。2026-08-16 に35件、
+   * 2026-08-19 に20件を実際に観測した。
+   *
+   * 🔴 `ok=false`（取得できなかった）と `count=0`（本当に0件）を必ず区別する。
+   *    取れなかったのを0件と読むと「全部公開された」と誤って警告を出し、
+   *    そのまま記録を書き換えると入稿を全部「公開済み」にしてしまう。
+   */
+  const [wait, setWait] = useState<{ ok: boolean; count: number } | null>(null);
+  const reloadWait = () => {
+    void fetchKeirinPublishWaitAction().then((r) => setWait({ ok: r.ok, count: r.count }));
+  };
+  useEffect(reloadWait, [date, nUnpublished]);
+  // 食い違い＝こちらだけが「公開待ち」と思っている件数。
+  // ⚠️ 逆（netkeirin のほうが多い）は**警告しない**。こちらに記録の無い入稿が
+  //    netkeirin にあるだけで、status を書き換えて直せる話ではない。
+  const nStale = wait?.ok ? Math.max(0, nUnpublished - wait.count) : 0;
+
   // 並べ方は localStorage が正本（詳細は VIEW_STORAGE_KEY のコメント）。
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getViewServerSnapshot);
   // 開いた場。**既定は全て畳んだ状態**（2026-08-14・ユーザー要望）。
@@ -763,8 +787,9 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
               run(() => approveKeirinAllAction(date));
             }}
             className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+            title="この日の入稿案を全場まとめて netkeirin へ入稿します（公開はしません）"
           >
-            この日を全件入稿（{nApprovableAll}件）
+            入稿 {nApprovableAll}
           </button>
         )}
         {/* 🔴 「全件公開」は**未入稿も入稿の上で公開**する（レース単位のボタンと同じ規則）。
@@ -783,8 +808,9 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
               run(() => publishKeirinAllAction(date));
             }}
             className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+            title="この日の入稿を全場まとめて公開します（未入稿は入稿の上で公開・公開後は修正できません）"
           >
-            この日を全件公開（{nPublishableAll}件）
+            公開 {nPublishableAll}
           </button>
         )}
         {/* 🔴 この日の下書きを全部消す。最も戻しにくい操作なので、
@@ -806,8 +832,9 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
               run(() => cancelKeirinAllAction(date));
             }}
             className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+            title="この日の下書きを全場まとめて取り消します（netkeirin の公開待ち下書きも削除）"
           >
-            この日を全件取消（{nAliveAll}件）
+            取消 {nAliveAll}
           </button>
         )}
         <div className="ml-auto flex rounded border border-gray-300 text-xs dark:border-gray-600">
@@ -840,6 +867,41 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         実用上は<strong>最低払戻がガミ域に入っていないか</strong>を見てください。
       </p>
 
+      {/* 🔴 netkeirin と記録が食い違っているときだけ出す警告（2026-08-19・ユーザー要望）。
+          押すまで何も書き換えない —— 「公開された」のか「netkeirin 側で消された」のかは
+          区別できない（netkeirin に公開済み一覧の API が無い）ので、人が確認してから。 */}
+      {nStale > 0 && (
+        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-sm dark:border-amber-700 dark:bg-amber-950">
+          <p className="mb-2">
+            <strong>netkeirin と状態が食い違っています。</strong>
+            {" "}こちらの記録では公開待ち <strong>{nUnpublished}</strong> 件ですが、
+            netkeirin の公開待ちは <strong>{wait?.count ?? 0}</strong> 件です
+            （差 {nStale} 件）。netkeirin の画面から直接公開されたと思われます。
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            title="netkeirin の公開待ち一覧に無いものを『公開済み』にします（netkeirin は操作しません）"
+            onClick={() => {
+              if (!window.confirm(
+                `${date} の記録 ${nStale}件 を「公開済み」に更新します。\n\n`
+                + "netkeirin 側は操作しません（記録を実態へ合わせるだけです）。\n"
+                + "⚠️ netkeirin 側で削除された分も「公開済み」になります。\n\n"
+                + "よろしいですか？")) return;
+              run(() => syncKeirinPublishStatusAction(date));
+            }}
+            className="rounded bg-amber-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+          >
+            状態を合わせる（{nStale}件）
+          </button>
+        </div>
+      )}
+      {wait && !wait.ok && (
+        <p className="mb-3 rounded border border-gray-300 bg-gray-50 p-2 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+          netkeirin 側の公開待ち件数を取得できませんでした（食い違いの確認は保留しています）。
+        </p>
+      )}
+
       {msg && (
         <p className="mb-3 rounded border border-blue-200 bg-blue-50 p-2 text-sm dark:border-blue-800 dark:bg-blue-950">
           {msg}
@@ -866,6 +928,12 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         const nAlive = races.filter(
           (r) => r.status !== "deleted" && r.status !== "published"
             && !isClosed(r.start_at, nowSec)).length;
+        // 公開できる＝**未入稿と公開待ちの両方**で、かつ締切前
+        // （レース単位・日単位と同じ規則。ここだけ公開待ちに絞ると
+        //  画面の件数と実際に公開される数が食い違う）。
+        const nPublishable = races.filter(
+          (r) => (r.status === "proposed" || r.status === "submitted")
+            && !isClosed(r.start_at, nowSec)).length;
         const isOpen = !!expanded[venue];
         return (
           <section key={venue} className="mb-6">
@@ -887,10 +955,35 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                 <button
                   type="button"
                   disabled={pending}
+                  title={`${venue} の入稿案をまとめて netkeirin へ入稿します（公開はしません）`}
                   onClick={() => run(() => approveKeirinVenueAction(date, venue))}
                   className="rounded bg-blue-700 px-3 py-1 text-xs text-white disabled:opacity-50"
                 >
-                  この場をまとめて入稿（{nProp}件）
+                  入稿 {nProp}
+                </button>
+              )}
+              {/* 🔴 場ごとの公開（2026-08-19・ユーザー要望）。日単位と場単位で
+                  取消・入稿は揃っていたのに公開だけレース単位と日単位しか無く、
+                  場をまとめて売り出すのに1レースずつ押す必要があった。
+                  規則はレース単位・日単位と同じ ——「未入稿は入稿の上で公開」。
+                  🔴 公開は不可逆なので**二段確認**（日単位と同じ重さで扱う）。 */}
+              {nPublishable > 0 && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  title={`${venue} の入稿をまとめて公開します（未入稿は入稿の上で公開・公開後は修正できません）`}
+                  onClick={() => {
+                    if (!window.confirm(
+                      `${venue} の ${nPublishable}件 を公開します。\n`
+                      + "（未入稿のものは入稿したうえで公開します）\n\n"
+                      + "🔴 公開後は修正できません。よろしいですか？")) return;
+                    if (!window.confirm(
+                      `最終確認：${venue} の ${nPublishable}件 を公開します。`)) return;
+                    run(() => publishKeirinVenueAction(date, venue));
+                  }}
+                  className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  公開 {nPublishable}
                 </button>
               )}
               {/* 🔴 まとめて消す操作。件数を出したうえで二段で確認する
@@ -907,9 +1000,10 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                     if (!window.confirm(`本当に ${venue} の ${nAlive}件 を取り消しますか？`)) return;
                     run(() => cancelKeirinVenueAction(date, venue));
                   }}
+                  title={`${venue} の下書きをまとめて取り消します（netkeirin の公開待ち下書きも削除）`}
                   className="rounded border border-red-400 px-3 py-1 text-xs text-red-700 disabled:opacity-50 dark:border-red-600 dark:text-red-300"
                 >
-                  この場をまとめて取消（{nAlive}件）
+                  取消 {nAlive}
                 </button>
               )}
             </div>

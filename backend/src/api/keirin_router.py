@@ -2531,6 +2531,42 @@ async def publish_submission(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
         status_code=400)
 
 
+@router.get("/publish-wait")
+async def publish_wait(_: ApiKeyDep) -> JSONResponse:
+    """netkeirin 側の**公開待ち件数**（読み取り専用）。
+
+    こちらの `netkeirin_submissions.status` は、netkeirin の画面から人が直接
+    公開すると `submitted` のまま取り残される。2つの数字を並べて食い違いを
+    見えるようにするための口（食い違い自体が「画面外で操作された」情報）。
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{_WEBHOOK_BASE}/publish-wait", timeout=70.0)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as exc:
+        # 🔴 付随情報なので画面を落とさない。ただし ok=False は必ず立てる
+        #    （0件と「取れなかった」を画面側が区別できるように）。
+        return JSONResponse(content={"ok": False, "count": 0, "message": str(exc)},
+                            status_code=200)
+
+
+@router.post("/publish-sync")
+async def publish_sync(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
+    """netkeirin で公開された分を、こちらの記録へ反映する（2026-08-19）。
+
+    netkeirin の公開待ち一覧に載っていない `submitted` を `published` にする。
+
+    🔴 **date 必須**（日付の無い全件更新は通さない。取消・承認と同じ作法）。
+    🔴 逆向き（published → submitted）はしない。公開は不可逆なので必ず誤りになる。
+    ⚠️ 「公開された」と「netkeirin 側で削除された」は区別できない
+       （netkeirin に公開済み一覧の API が無い）。画面の確認文言でそう説明すること。
+    """
+    if not body.date or not _DATE_RE.match(body.date):
+        return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"},
+                            status_code=400)
+    return await _call_webhook("/publish-sync", {"date": body.date})
+
+
 @router.post("/cancel")
 async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
     """入稿を取り消す（netkeirin の下書きを削除・記録は論理削除）。

@@ -164,9 +164,56 @@ export async function publishKeirinRaceAction(
   return postApproval("/keirin/publish", { race_key: raceKey, rank_key: rankKey });
 }
 
+/** 場単位でまとめて公開する（未入稿は入稿の上で公開）。 */
+export async function publishKeirinVenueAction(
+  date: string,
+  venueName: string,
+): Promise<ApprovalResult> {
+  return postApproval("/keirin/publish", { date, venue_name: venueName });
+}
+
 /** その日を**全件公開**する（未入稿は入稿の上で公開）。 */
 export async function publishKeirinAllAction(date: string): Promise<ApprovalResult> {
   return postApproval("/keirin/publish", { date, all_venues: true });
+}
+
+/** netkeirin 側の公開待ち件数（読み取り専用）。 */
+export type PublishWait = { ok: boolean; count: number; message?: string };
+
+/**
+ * netkeirin 側の**公開待ち件数**を読む。
+ *
+ * 🔴 `ok=false` と `count=0` は別物。取得できなかったときに 0 と読むと
+ *    「全部公開済み」と誤って表示してしまう。画面は ok を必ず見ること。
+ */
+export async function fetchKeirinPublishWaitAction(): Promise<PublishWait> {
+  const denied = await requireAdmin();
+  if (denied) return { ok: false, count: 0, message: denied.message };
+  try {
+    const res = await fetch(`${BACKEND_URL}/keirin/publish-wait`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as Partial<PublishWait>;
+    if (!res.ok) return { ok: false, count: 0, message: `失敗しました (${res.status})` };
+    return { ok: json.ok ?? false, count: json.count ?? 0, message: json.message };
+  } catch (e) {
+    return { ok: false, count: 0, message: e instanceof Error ? e.message : "通信に失敗しました" };
+  }
+}
+
+/**
+ * netkeirin で公開された分を、こちらの記録へ**合わせる**（2026-08-19）。
+ *
+ * netkeirin は画面からも公開できるので、そこで押されるとこちらは
+ * `submitted`（公開待ち）のまま取り残される。公開待ち一覧に無いものを
+ * `published` にして食い違いを解消する。
+ *
+ * 🔴 netkeirin 側の状態が読めなかったときは**1件も触らない**（CLI 側で担保）。
+ * ⚠️ 「公開された」と「netkeirin 側で削除された」は区別できない。
+ */
+export async function syncKeirinPublishStatusAction(date: string): Promise<ApprovalResult> {
+  return postApproval("/keirin/publish-sync", { date });
 }
 
 /**
