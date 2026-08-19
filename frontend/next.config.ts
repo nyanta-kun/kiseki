@@ -1,5 +1,34 @@
 import type { NextConfig } from "next";
-import withPWAInit from "@ducanh2912/next-pwa";
+import withPWAInit, { runtimeCaching as defaultRuntimeCaching } from "@ducanh2912/next-pwa";
+
+// 🔴 HTML / RSC のルートに **ネットワークタイムアウトを足す**（2026-08-20）。
+//
+// next-pwa の既定 runtimeCaching は NetworkFirst を使うが、
+// `networkTimeoutSeconds` が入っているのは `apis`（10秒）と `cross-origin`（10秒）だけで、
+// **`pages` / `pages-rsc` / `pages-rsc-prefetch` には無い**。
+//
+// NetworkFirst はタイムアウトが無いと、ネットワークの fetch が決着するまで
+// **いつまでもキャッシュへフォールバックしない**。
+//
+// iOS Safari で他アプリへ切り替えて戻ると、OS が張り直す前の死んだ接続へ
+// リクエストが出て長時間ハングする。その間:
+//   - 画面は（描画済みなので）見えているのにタップだけ効かない
+//   - Next.js の router 遷移も RSC 取得待ちで止まる
+// ＝「復帰後しばらく操作できない」。ドメイン内の**全ページ**で起きる
+// （/chihou/races/[id] と /keirin の双方で報告された）。
+//
+// 3秒で諦めてキャッシュを返す。キャッシュが無ければ従来どおりネットワークを待つので
+// 表示できなくなることはない。
+const runtimeCaching = defaultRuntimeCaching.map((entry) =>
+  ["pages", "pages-rsc", "pages-rsc-prefetch"].includes(
+    String(entry.options?.cacheName ?? ""),
+  )
+    ? {
+        ...entry,
+        options: { ...entry.options, networkTimeoutSeconds: 3 },
+      }
+    : entry,
+);
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -8,6 +37,7 @@ const withPWA = withPWAInit({
   workboxOptions: {
     skipWaiting: true,
     clientsClaim: true,
+    runtimeCaching,
   },
 });
 
