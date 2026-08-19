@@ -1099,6 +1099,10 @@ export type KeirinPeriodSummary = {
   roi: number | null;
   /** 期間内の的中1件あたり最大払戻（円）。的中0件の場合はnull */
   max_payout?: number | null;
+  /** 入稿はあるが**買い目の原本が無い**ため集計から外した件数。
+   *  bet_detail の保存は 2026-08-07 開始で、それ以前は金額を復元できない
+   *  （0円で足すと投資額を過小に見せるので件数だけ出す）。 */
+  n_unpriced?: number;
   by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null; n_candidates?: number; max_payout?: number | null }>;
 };
 

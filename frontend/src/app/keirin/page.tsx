@@ -1427,6 +1427,14 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
         <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
           {label}
           {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
+          {/* 🔴 入稿はあるのに買い目の原本が無くて集計から外した分を必ず出す
+              （2026-08-19）。黙って落とすと「その期間の全部」に見える。
+              買い目の保存は 2026-08-07 開始なので、当年はそれ以前が丸ごと外れる。 */}
+          {!!data.n_unpriced && (
+            <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">
+              買い目未記録 {data.n_unpriced}件を除外
+            </span>
+          )}
         </td>
         {/* 候補（オッズ条件前の総候補レース数） */}
         <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-400 dark:text-gray-500 tabular-nums">

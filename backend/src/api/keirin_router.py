@@ -1158,45 +1158,58 @@ async def _aggregate(
     where: str,
     params: dict[str, Any],
     rank_filter: str = _RANKS_ALL,
+    *,
+    from_dt: Date | None = None,
+    to_dt: Date | None = None,
 ) -> dict:
+    """サマリーの1期間ぶん。
+
+    🔴 **投資・払戻・的中は「実際に売った商品」から数える**（2026-08-19）。
+       以前は `picks_history` の `bet_amount > 0` を母集団にしていたが、これは
+       **売った商品と一致しない**:
+
+         - 看板レースの穴埋め入稿は**ランクのゲートを通っていないので行が立たない**
+         - `bet_amount` が入るのは発走前判定を通った分だけで、当日はほとんど 0 のまま
+           （翌朝の再構築で埋まる）
+
+       実測 2026-08-19: 売った40件のうちサマリーが数えていたのは **4件**だけで、
+       一覧（`/keirin`・`/keirin/review`）は40件すべてを出しているのに
+       サマリーだけ別の母集団を見ていた。
+
+       母集団は `/sold-performance` と同じ `_fetch_settled_submissions
+       (only_missing_from_picks=False)`＝netkeirin へ出した1商品＝1行。
+
+    ⚠️ **買い目の原本（`bet_detail`）は 2026-08-07 から**。それ以前の入稿は
+       金額を復元できないので集計に入れず、`n_unpriced` として件数だけ返す
+       （0円で足すと投資額を過小に見せる）。当年の数字はこの日以降が対象になる。
+
+    ⚠️ **候補数（`n_candidates`）は従来どおり `picks_history` から数える。**
+       「候補」はゲート通過前の紙の概念で、売った商品とは別物。
+    """
     # 2026-08-01〜: 現行ランクは _PAPER_RANK_LABELS の5ランク（RANK_7S/RANK_7A/
     # RANK_9S/RANK_9A）。gate_labelによる表示分岐は廃止済み（_display_rank
     # 参照）。旧S1(SEVEN_S1)・旧S2=7PLUS_U・旧S3=7PLUS_M は全廃・行はアーカイブ
     # 退避 or 残骸のまま（allowlist方式のため自動的に集計対象から除外される）。
     # rank_filter: 個別ランクだけの集計にも本関数を再利用できるようパラメータ化
     # （既定は現行有効ランク全て）。
-    row = (await db.execute(
-        text(f"""
-            SELECT
-              COUNT(*)                                                          AS n_picks,
-              SUM(ph.hit)                                                       AS n_hits,
-              COALESCE(SUM(ph.bet_amount), 0)                                   AS total_bet,
-              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout,
-              MAX(CASE WHEN ph.hit = 1 THEN ph.payout ELSE NULL END)            AS max_payout
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE {where}
-              AND NOT COALESCE(ph.miwokuri, FALSE)
-              AND ph.bet_amount > 0
-              AND ph.rank IN {rank_filter}
-              AND {_enabled_rank_cond()}
-              AND ph.race_key NOT LIKE '%#CAND'
-              AND {_SETTLED_COND}
-        """),
-        params,
-    )).mappings().one_or_none()
+    # ⚠️ ランク絞り込み（`rank_filter`）は候補数の集計にだけ使う。実売側は
+    #    netkeirin の rank_key で持っており、無効化ランクは入稿されないので
+    #    そもそも行が立たない。
+    sold, n_unpriced = (
+        await _fetch_settled_submissions(db, from_dt, to_dt, None,
+                                         only_missing_from_picks=False)
+        if from_dt and to_dt else ([], 0))
 
-    if not row:
-        return {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "roi": None,
-                "max_payout": None, "n_candidates": 0, "by_rank": {}}
+    def _totals(items: list[dict[str, Any]]) -> dict:
+        won = [i["payout"] for i in items if i["hit"]]
+        return _make_period_dict(
+            len(items), len(won),
+            sum(i["bet"] for i in items),
+            sum(i["payout"] for i in items),
+            max(won) if won else None)
 
-    n_picks = int(row["n_picks"] or 0)
-    n_hits = int(row["n_hits"] or 0)
-    total_bet = int(row["total_bet"] or 0)
-    total_payout = int(row["total_payout"] or 0)
-    max_payout = int(row["max_payout"]) if row["max_payout"] is not None else None
-    result = _make_period_dict(n_picks, n_hits, total_bet, total_payout, max_payout)
+    result = _totals(sold)
+    result["n_unpriced"] = n_unpriced
 
     # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）
     # write_candidates_wt が朝の候補選定時点で書き込む行を数えるため、結果確定前
@@ -1223,40 +1236,14 @@ async def _aggregate(
     # 同じ表示キーに収束すると、Python側のdict代入（by_rank[key] = ...）が
     # 後勝ちで上書きしてしまい集計が欠落する事故になるため（例: RANK_7Sは
     # gate_label='S'/'SS'の2行に分かれて残っているが、表示上は"7S"1つに統合される）。
-    rank_rows = (await db.execute(
-        text(f"""
-            SELECT
-              ph.rank                                                            AS rank,
-              COUNT(*)                                                           AS n_picks,
-              SUM(ph.hit)                                                        AS n_hits,
-              COALESCE(SUM(ph.bet_amount), 0)                                    AS total_bet,
-              COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)  AS total_payout,
-              MAX(CASE WHEN ph.hit = 1 THEN ph.payout ELSE NULL END)             AS max_payout
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE {where}
-              AND NOT COALESCE(ph.miwokuri, FALSE)
-              AND ph.bet_amount > 0
-              AND ph.rank IN {rank_filter}
-              AND {_enabled_rank_cond()}
-              AND ph.race_key NOT LIKE '%#CAND'
-              AND {_SETTLED_COND}
-            GROUP BY ph.rank
-        """),
-        params,
-    )).mappings().all()
-
-    by_rank: dict[str, dict] = {}
-    for r in rank_rows:
-        key = _display_rank(str(r["rank"]))
-        by_rank[key] = _make_period_dict(
-            int(r["n_picks"] or 0),
-            int(r["n_hits"] or 0),
-            int(r["total_bet"] or 0),
-            int(r["total_payout"] or 0),
-            int(r["max_payout"]) if r["max_payout"] is not None else None,
-        )
+    # ランク別も同じ母集団（実売）で割る。ここだけ picks_history に戻すと
+    # 合計とランク別の和が合わなくなる。
+    by_rank_items: dict[str, list[dict[str, Any]]] = {}
+    # ⚠️ 変数名に `r` を使わない。下の `for r in paper_cand_rows` が RowMapping で
+    #    束縛するため、同名だと mypy が代入不能として落ちる（既出の型衝突）。
+    for sr in sold:
+        by_rank_items.setdefault(_display_rank(f"RANK_{sr['rank_key']}"), []).append(sr)
+    by_rank: dict[str, dict] = {k: _totals(v) for k, v in by_rank_items.items()}
 
     # ランク別候補数 = 見送り含む全行の distinct レース数
     # （write_candidates_wt が候補時点で #CAND 行（rank='7PLUS_CAND'）を書き込み、
@@ -2015,9 +2002,15 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     # フロントエンドの「ランク別」展開でまとめて確認できる（7A/9Aを専用の別集計に
     # 分離していたが、表示が煩雑とのユーザー要望により同日中に統合した）。
     result = {
-        "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str}),
-        "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"}),
-        "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"}),
+        # 🔴 投資・払戻・的中は**実際に売った商品**から数える（`_aggregate` の
+        #    docstring 参照）。期間は SQL 条件（候補数用）と日付（実売用）の
+        #    両方を渡す —— 片方だけにすると母集団がずれる。
+        "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str},
+                                  from_dt=today, to_dt=today),
+        "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
+                                  from_dt=today.replace(day=1), to_dt=today),
+        "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
+                                  from_dt=Date(today.year, 1, 1), to_dt=today),
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
