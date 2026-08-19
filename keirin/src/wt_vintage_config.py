@@ -53,6 +53,21 @@ def bad_model_name(eval_model_name: str) -> str:
     return eval_model_name.replace("lgbm_wt_eval_", "lgbm_wt_bad_", 1)
 
 
+def top2_model_name(eval_model_name: str) -> str:
+    """eval の vintage 名から、対応する2着内モデルの vintage 名を導く。
+
+    例: "lgbm_wt_eval_m2401" → "lgbm_wt_top2_m2401"
+
+    🔴 **本番の `lgbm_wt_top2` は `full_refit: true`（全期間1回学習）**。
+       それで過去を採点すると model-vintage look-ahead になる
+       （このリポジトリが chihou の sweet_spot と keirin の ROI 検証で
+        繰り返し踏んでいる型）。過去分を埋めるときは必ずこの vintage を使う。
+
+    `bad_model_name` と同じ理由で `monthly_windows()` の tuple は広げない。
+    """
+    return eval_model_name.replace("lgbm_wt_eval_", "lgbm_wt_top2_", 1)
+
+
 def favbust_model_name(eval_model_name: str) -> str:
     """eval の vintage 名から、対応するバスト予測モデルの vintage 名を導く。
 

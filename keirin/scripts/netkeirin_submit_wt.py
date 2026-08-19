@@ -76,6 +76,7 @@ from src.meeting_wave import (
     waves_due_by,
 )
 from src.dutch_allocation import dutch_allocate
+from src.stake_allocation import MIN_EXPECTED_PAYOUT_7C, expected_payout_floor
 from src.race_shape import (
     wide_note_text,
     classify_shape,
@@ -1327,6 +1328,20 @@ def _build_tilted_legs(
     return legs, source, stakes
 
 
+def _expected_payout_floor_7c(
+    race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
+) -> float | None:
+    """7C の想定払戻（下限）。板が足りず判定できないときは None。
+
+    盤面は `_load_trio_board`（＝入稿時点の最新オッズ。朝はスナップショットと同値）。
+    **配分に使ったのと同じ板**で測ること。別の板で測ると、配分が想定した
+    払戻と判定が食い違う。
+    """
+    board = _load_trio_board(race_key)
+    odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
+    return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
+
+
 def _build_trifecta_head_legs(
     cfg: dict, axis1: int, axis2: int, partners: list[int],
 ) -> tuple[list[BetLeg], dict[int, str]]:
@@ -1806,6 +1821,22 @@ def _process_rank(
                 elif cfg.get("tilt_stakes"):
                     legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
                         race_key, cfg, axis1, axis2_or_p1, partners)
+                    # 想定払戻の下限で 7C を足切りする（2026-08-19・ユーザー判断）。
+                    # 根拠・数値は `src/stake_allocation.MIN_EXPECTED_PAYOUT_7C`。
+                    # 🔴 **`continue` で抜けること。** ここで「処理済み」にすると
+                    #    1レース1商品の取り合いで後続ランクがそのレースを取れなくなる。
+                    #    落としたいのは 7C の商品であって、そのレース自体ではない。
+                    # 🔴 判定不能（板が足りない）なら**出す**。分からないことを
+                    #    理由に商品を落とさない（`expected_payout_floor` の docstring）。
+                    if rank_key == "7C" and not use_trifecta:
+                        floor = _expected_payout_floor_7c(
+                            race_key.split("#")[0], axis1, axis2_or_p1,
+                            tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET))
+                        if floor is not None and floor < MIN_EXPECTED_PAYOUT_7C:
+                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
+                                  f"({rank_key}): 想定払戻(下限) {floor:.2f}倍 < "
+                                  f"{MIN_EXPECTED_PAYOUT_7C:.2f}倍", flush=True)
+                            continue
                     # 🔴 印を submit_pick が内部で作っていたものと**同じ**にする。
                     #    submit_pick は軸=◎○・**買った相手=△**・買っていない車=印なし
                     #    を自前で組むが、submit_pick_multi は渡された marks をそのまま

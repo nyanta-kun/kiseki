@@ -222,6 +222,17 @@ def main() -> None:
                     help="この日以前を学習に使う（以降は評価）")
     ap.add_argument("--rounds", type=int, default=700)
     ap.add_argument("--eval-only", action="store_true")
+    # 🔴 **配分に効くのはレース内の相対値だけ**（`landing_weights` は 1/オッズ に
+    #    比例した重みを正規化して使う）。しかも推論の整合化が Σ(1/o) を定数へ
+    #    再スケールするので、**モデルが当てた「水準」は捨てられて再付与される**。
+    #    つまり level 学習は水準にモデル容量を使っており、その分だけ相対値が甘い。
+    #    centered は目的関数をレース内中心化した log10(オッズ) に替えて、
+    #    最初から相対値だけを学習させる。**推論側の変更は不要**（整合化が水準を
+    #    決めるため）。2026-08-19 検証。
+    ap.add_argument("--target-mode", choices=("level", "centered"), default="level")
+    # 本番モデルを上書きせずに比較するための退避名。
+    ap.add_argument("--save-suffix", default="",
+                    help="モデル名の接尾辞（例: _centered2512）。空なら本番名を上書き")
     args = ap.parse_args()
 
     import lightgbm as lgb
@@ -235,14 +246,18 @@ def main() -> None:
         cache.parent.mkdir(parents=True, exist_ok=True)
         d.to_pickle(cache)
     d["y"] = np.log10(d.odds)
+    if args.target_mode == "centered":
+        # レース内で中心化する。水準は推論の整合化が決めるので学習しない。
+        d["y"] = d["y"] - d.groupby("rk")["y"].transform("mean")
     tr = d[d.date <= args.train_end]
     te = d[d.date > args.train_end]
     print(f"\n{args.n_car}車  学習 {tr.rk.nunique():,}R / {len(tr):,}目"
-          f"  評価 {te.rk.nunique():,}R / {len(te):,}目")
+          f"  評価 {te.rk.nunique():,}R / {len(te):,}目"
+          f"  目的={args.target_mode}  保存先={args.n_car}{args.save_suffix}")
     if tr.empty:
         raise SystemExit("学習窓が空です")
 
-    model_path = MODEL_DIR / f"odds_trio_n{args.n_car}.txt"
+    model_path = MODEL_DIR / f"odds_trio_n{args.n_car}{args.save_suffix}.txt"
     if args.eval_only:
         booster = lgb.Booster(model_file=str(model_path))
     else:
@@ -284,7 +299,9 @@ def main() -> None:
         stats[tag] = {"raw": _report(f"{tag}・素の点予測", part.odds.to_numpy(), p),
                       "coherent": _report(f"{tag}・整合板", part.odds.to_numpy(), p * scale)}
 
-    if not args.eval_only:
+    if args.save_suffix:
+        print("\n  ※ --save-suffix 指定のため meta は更新しません（本番と混ぜない）")
+    if not args.eval_only and not args.save_suffix:
         meta = {}
         if META_PATH.exists():
             meta = json.loads(META_PATH.read_text(encoding="utf-8"))

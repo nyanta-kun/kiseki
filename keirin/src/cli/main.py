@@ -1281,7 +1281,8 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
         rank_7a_market_agree_pool,
         rank_7a_top2_threshold, rank_7a_top2_gate, load_7a_pool_axis_sums,
         rank_7b_daily_select, rank_7b_order_disagree, rank_7b_select_legs,
-        rank_7c_daily_select, rank_7c_select_axis, rank_7c_select_legs,
+        rank_7c_daily_select, rank_7c_reselect_axis2_off_marks,
+        rank_7c_select_axis, rank_7c_select_legs,
         rank_7c_is_lowpay_pattern, rank_7c_use_trifecta, rank_7c_buy_plan,
         RANK_7C_P3_SUM_MIN, RANK_7C_LEGS_MIN,
         rank_7m1_daily_select, rank_7m1_select_legs, RANK_7M1_LEGS,
@@ -1938,8 +1939,17 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                        for r in grp_sorted.itertuples(index=False)}
 
                 sel_7c = rank_7c_select_axis(top3_probs)
+                axis1_7c = axis2_7c = None
                 if sel_7c:
-                    others_7c = sorted(set(top3_probs) - {sel_7c[0], sel_7c[1]})
+                    axis1_7c = sel_7c[0]
+                    # 🔴 軸2が WT◯ と一致するなら ◎◯以外の3着内率1位へ差し替える
+                    #    （2026-08-19・根拠は `rank_7c_reselect_axis2_off_marks`）。
+                    # 🔴 **相手（legs）を決める前に確定させること。** 出力の直前で
+                    #    差し替えると、相手が旧軸2を除いたまま作られ、
+                    #    **新しい軸2が相手にも入った不正な買い目**になる。
+                    axis2_7c = rank_7c_reselect_axis2_off_marks(
+                        top3_probs, axis1_7c, sel_7c[1], wt_honmei, wt_taikou)
+                    others_7c = sorted(set(top3_probs) - {axis1_7c, axis2_7c})
                     legs_7c = rank_7c_select_legs(others_7c, top3_probs)
                 else:
                     legs_7c = []
@@ -1950,7 +1960,7 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                 # ＝そのレースは 7C として買わない（`rank_7c_daily_select` が落とす）。
                 # 🔴 `wt_ana` を渡すのが案E（総流し帯から△を外す）の発動条件。
                 #    渡し忘れると **fail-open で黙って旧挙動に戻る**。
-                _plan_7c = (rank_7c_buy_plan(top3_probs, win_probs, sel_7c[0],
+                _plan_7c = (rank_7c_buy_plan(top3_probs, win_probs, axis1_7c,
                                              legs_7c, wt_ana=wt_ana)
                             if sel_7c else None)
 
@@ -1983,8 +1993,13 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     "legs_7b": rank_7b_select_legs(others_7b, top3_probs, wt_ana),
                     # ↓ 7C用（軸は3ヘッドと別物なので専用キーで持つ。
                     #   `axis1`/`axis2` を上書きすると 7S/7A/7SS/7B が壊れる）
-                    "axis1_7c": sel_7c[0] if sel_7c else None,
-                    "axis2_7c": sel_7c[1] if sel_7c else None,
+                    "axis1_7c": axis1_7c,
+                    "axis2_7c": axis2_7c,
+                    # 🔴 印そのものも載せる（2026-08-19）。`axis2_7c` の差し替え
+                    #    （`rank_7c_reselect_axis2_off_marks`）を候補JSONから
+                    #    再現できるようにするため。`wt_overlap_n` からは復元できない。
+                    "wt_honmei": wt_honmei,
+                    "wt_taikou": wt_taikou,
                     "p3_sum_top2": round(sel_7c[2], 6) if sel_7c else None,
                     # ゲート専用の較正値（2026-08-17）。決勝・上位グレードでの
                     # 過大評価を潰す。**順位は変わらないので軸・相手は不変**。
@@ -2001,6 +2016,10 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                                  if sel_7c else None),
                     # ↓ 7M1用（中間層・2026-08-17）。
                     # 🔴 `wt_overlap_n` は**3ヘッド軸**との重なりなので流用できない。
+                    # 🔴 ここは **`sel_7c`（差し替え前のモデル上位2車）**で測る。
+                    #    2026-08-19 に `axis2_7c` を◯から差し替えるようにしたが、
+                    #    この値は 7M1 のゲート（モデル上位2車 ≠ {◎,◯}）が読むので、
+                    #    差し替え後の軸で測ると 7M1 の母集団が黙って変わる。
                     #    7M1 は 7C と同じ軸（pred_top3 上位2車）で印一致を判定する。
                     #    取り違えると母集団がずれる（実測で約2割食い違う）。
                     "wt_overlap_7c_n": (

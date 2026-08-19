@@ -53,7 +53,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.models import vintage_manifest
-from src.wt_vintage_config import BASE_FROM, bad_model_name, monthly_windows
+from src.wt_vintage_config import (
+    BASE_FROM, bad_model_name, monthly_windows, top2_model_name,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = REPO_ROOT / "data" / "models"
@@ -164,9 +166,14 @@ def main():
         tag = eval_name.replace("lgbm_wt_eval_", "")
 
         bad_name = bad_model_name(eval_name)
+        top2_name = top2_model_name(eval_name)
         # 大敗モデル（3ヘッド軸選定の第2項・2026-08-05追加）。7B の honest walk-forward
         # 再構築に必要。既存の eval/win と同じ窓・同じ学習期間で凍結する。
-        targets = [(eval_name, "top3"), (win_name, "win"), (bad_name, "bad")]
+        # 2着内モデル（2026-08-19追加）。本番の `lgbm_wt_top2` は full_refit なので
+        # 過去分の採点に使うと model-vintage look-ahead になる。`pred_top2_pct` の
+        # バックフィル（`backfill_index_pct_wt.py`）が必要とする。
+        targets = [(eval_name, "top3"), (win_name, "win"), (bad_name, "bad"),
+                   (top2_name, "top2")]
 
         # ⚠️ スキップは**モデル単位**で判定する。月単位（3本とも揃っている月だけ
         # スキップ）にすると、eval/win は在るが bad だけ無い月で既存の eval/win まで

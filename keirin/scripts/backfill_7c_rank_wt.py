@@ -58,7 +58,8 @@ from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
 from src.strategy_wt import (
     RANK_7C_LEGS_MIN, unit_stake, rank_7c_buy_plan, rank_7c_daily_select,
-    rank_7c_is_lowpay_pattern, rank_7c_select_axis, rank_7c_select_legs,
+    rank_7c_is_lowpay_pattern, rank_7c_reselect_axis2_off_marks,
+    rank_7c_select_axis, rank_7c_select_legs,
     rank_7s_field_entropy,
 )
 
@@ -209,6 +210,13 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         if sel is None:
             continue
         axis1, axis2, p3_sum = sel
+        # 🔴 軸2が WT◯ と一致するなら ◎◯以外の3着内率1位へ差し替える（2026-08-19）。
+        #    live（`src/cli/main.py`）と**同じ関数・同じ位置**で行うこと。
+        #    相手（legs）を決める前に確定させないと、新しい軸2が相手にも入る。
+        #    `p3_sum` は上位2車の合計のまま（選別の母集団を動かさないため）。
+        _mk = marks.get(rk, {})
+        axis2 = rank_7c_reselect_axis2_off_marks(
+            top3_probs, axis1, axis2, _mk.get(1), _mk.get(2))
 
         # 欠車判定は本番と同一の void_by_dns。軸欠車=レース無効／相手欠車=その目のみ除外。
         thirds_full = sorted(set(top3_probs.keys()) - {axis1, axis2})
