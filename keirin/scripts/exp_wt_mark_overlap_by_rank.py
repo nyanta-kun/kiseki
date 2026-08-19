@@ -134,8 +134,12 @@ def main():
         top3 = {n for n, o in f.items() if o <= 3}
         if len(top3) != 3:
             continue
+        n_in = len(set(ax) & top3)
         rows.append(dict(p, ax=ax, ov=len({ax[0], ax[1]} & {mk[1], mk[2]}),
-                         two=set(ax) <= top3))
+                         two=set(ax) <= top3, n_in=n_in,
+                         honmei_in=(mk[1] in top3), taikou_in=(mk[2] in top3),
+                         honmei_axis=(mk[1] in ax), taikou_axis=(mk[2] in ax),
+                         mk1=mk[1], mk2=mk[2], top3=top3))
     print(f"\n分類できた推奨 {len(rows):,}件 [{a.d1}〜{a.d2}]")
 
     for rank in RANKS:
@@ -161,6 +165,84 @@ def main():
                 new = sum(accs[2].flags[k][idx] for k in accs[2].flags) / accs[2].n
                 print(f"    {name}: 重なり2 − 重なり1 = {100*(new-base):+5.1f}pt "
                       f"[{lo:+5.1f},{hi:+5.1f}]{'  有意' if lo>0 or hi<0 else ''}")
+    # ------------------------------------------------------------------
+    # ユーザー指摘（2026-08-19）の検証:
+    #   「重なった場合の信頼度が高いことはなく、片方だけきて片方外れが多い」
+    # 二軸的中率（両方来た率）だけでは答えにならないので **3分割**で見る。
+    # ------------------------------------------------------------------
+    print("\n\n########## 軸2車の内訳（両方 / 片方だけ / 両方外れ）##########")
+    for rank in RANKS:
+        sub = [r for r in rows if r["rank"] == rank]
+        if len(sub) < 200:
+            continue
+        print(f"\n===== {rank.replace('RANK_','')} =====")
+        print(f"  {'':16}{'R':>7}{'両方%':>8}{'片方だけ%':>10}{'両方外れ%':>10}"
+              f"{'外れのうち片方だけ%':>20}")
+        for ov in (0, 1, 2):
+            v = [r for r in sub if r["ov"] == ov]
+            if not v:
+                continue
+            b = sum(1 for r in v if r["n_in"] == 2)
+            o = sum(1 for r in v if r["n_in"] == 1)
+            z = sum(1 for r in v if r["n_in"] == 0)
+            miss = o + z
+            print(f"  {'◎◯重なり=' + str(ov):16}{len(v):>7}{100*b/len(v):>8.1f}"
+                  f"{100*o/len(v):>10.1f}{100*z/len(v):>10.1f}"
+                  f"{(100*o/miss if miss else 0):>20.1f}")
+
+    # 重なり2 のとき ◎ と ◯ のどちらが飛ぶか
+    print("\n\n########## 重なり2 のとき ◎ / ◯ のどちらが来ているか ##########")
+    print(f"  {'':16}{'R':>7}{'◎が3着内%':>11}{'◯が3着内%':>11}"
+          f"{'◎だけ%':>9}{'◯だけ%':>9}")
+    for rank in RANKS:
+        v = [r for r in rows if r["rank"] == rank and r["ov"] == 2]
+        if len(v) < 200:
+            continue
+        h = sum(1 for r in v if r["honmei_in"])
+        t = sum(1 for r in v if r["taikou_in"])
+        ho = sum(1 for r in v if r["honmei_in"] and not r["taikou_in"])
+        to = sum(1 for r in v if r["taikou_in"] and not r["honmei_in"])
+        print(f"  {rank.replace('RANK_',''):16}{len(v):>7}{100*h/len(v):>11.1f}"
+              f"{100*t/len(v):>11.1f}{100*ho/len(v):>9.1f}{100*to/len(v):>9.1f}")
+
+    # 🔴 決め手: ◎/◯ は**モデルの軸1/軸2 と一致しているだけ**ではないか。
+    #    一致しているなら「◯が飛ぶ」は「軸2が飛ぶ」の言い換えで、
+    #    ◎◯という外部情報は追加で何も言っていないことになる。
+    print("\n\n########## 重なり2 のとき ◎ はモデル軸1か（pred_combo の第1軸）##########")
+    print(f"  {'':16}{'R':>7}{'◎=軸1%':>10}{'◯=軸1%':>10}"
+          f"{'軸1が3着内%':>12}{'軸2が3着内%':>12}")
+    for rank in RANKS:
+        v = [r for r in rows if r["rank"] == rank and r["ov"] == 2]
+        if len(v) < 200:
+            continue
+        h1 = sum(1 for r in v if r["ax"][0] == r.get("_mk1"))
+        print("")  # placeholder（下で作り直す）
+        break
+    for rank in RANKS:
+        v = [r for r in rows if r["rank"] == rank and r["ov"] == 2]
+        if len(v) < 200:
+            continue
+        h1 = sum(1 for r in v if r["mk1"] == r["ax"][0])
+        t1 = sum(1 for r in v if r["mk2"] == r["ax"][0])
+        a1in = sum(1 for r in v if r["ax"][0] in r["top3"])
+        a2in = sum(1 for r in v if r["ax"][1] in r["top3"])
+        print(f"  {rank.replace('RANK_',''):16}{len(v):>7}{100*h1/len(v):>10.1f}"
+              f"{100*t1/len(v):>10.1f}{100*a1in/len(v):>12.1f}{100*a2in/len(v):>12.1f}")
+
+    # 直近だけを切り出す（体感は直近で作られる）
+    print("\n\n########## 直近（2026-08）だけ ##########")
+    print(f"  {'':22}{'R':>7}{'両方%':>8}{'片方だけ%':>10}{'両方外れ%':>10}")
+    for rank in RANKS:
+        for ov in (1, 2):
+            v = [r for r in rows if r["rank"] == rank and r["ov"] == ov
+                 and r["date"] >= "2026-08-01"]
+            if len(v) < 20:
+                continue
+            b = sum(1 for r in v if r["n_in"] == 2)
+            o = sum(1 for r in v if r["n_in"] == 1)
+            z = sum(1 for r in v if r["n_in"] == 0)
+            print(f"  {rank.replace('RANK_','') + ' 重なり' + str(ov):22}{len(v):>7}"
+                  f"{100*b/len(v):>8.1f}{100*o/len(v):>10.1f}{100*z/len(v):>10.1f}")
     return 0
 
 
