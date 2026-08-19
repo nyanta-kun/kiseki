@@ -139,21 +139,6 @@ def boot(base: Acc, new: Acc, keys, n_iter=2000, seed=11):
     return d[int(0.025 * len(d))], d[int(0.975 * len(d))]
 
 
-def boot_rate(base: Acc, new: Acc, keys, attr, n_iter=2000, seed=13):
-    """的中系（レース単位の 0/1）の差の CI。"""
-    rnd = random.Random(seed)
-    b = {k: 0 for k in keys}; n = {k: 0 for k in keys}
-    for k in keys:
-        b[k] = base.flags[attr].get(k, 0)
-        n[k] = new.flags[attr].get(k, 0)
-    d = []
-    for _ in range(n_iter):
-        s = [keys[rnd.randrange(len(keys))] for _ in keys]
-        d.append(100 * (sum(n[k] for k in s) - sum(b[k] for k in s)) / len(s))
-    d.sort()
-    return d[int(0.025 * len(d))], d[int(0.975 * len(d))]
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="date_from", default="2025-01-01")

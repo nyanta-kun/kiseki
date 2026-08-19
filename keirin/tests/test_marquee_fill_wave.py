@@ -46,10 +46,23 @@ from src.meeting_wave import (  # noqa: E402
 )
 
 
+# epoch の起点をずらす理由: 1970-01-01 を基準にすると JST 9時が `start_at == 0`
+# になり、`venue_waves()` の `if not r.get("start_at")` が**欠損と誤判定**する。
+# そのままだと「9時開催のテスト」が実は「発走時刻不明のフォールバック」を通り、
+# どちらも morning なので**気付かないまま通る**。
+_EPOCH_BASE = 86400 * 20000          # 日付は判定に使わない（時刻の「時」だけ見る）
+
+
 def _race(venue: str, hour: int, minute: int = 0) -> dict:
     """JST の指定時刻に発走するレース1件（`start_at` は epoch 秒）。"""
-    # 1970-01-01 JST 基準で十分（`venue_waves` は時刻の「時」しか見ない）。
-    return {"venue_id": venue, "start_at": (hour - 9) % 24 * 3600 + minute * 60}
+    return {"venue_id": venue,
+            "start_at": _EPOCH_BASE + ((hour - 9) % 24) * 3600 + minute * 60}
+
+
+def test_helper_does_not_produce_a_falsy_start_at():
+    """🔴 ヘルパー自身の検査。9時が 0 になると欠損扱いへ落ちて検査が空振りする。"""
+    for h in range(24):
+        assert _race("44", h)["start_at"], f"{h}時の start_at が falsy"
 
 
 def test_session_label_follows_execution_hour():
@@ -119,3 +132,48 @@ def test_missing_start_time_falls_back_to_morning():
     races = [{"venue_id": "99", "start_at": None},
              {"venue_id": "99", "start_at": ""}]
     assert venue_waves(races)["99"] == WAVE_MORNING
+
+
+# ---------------------------------------------------------------------------
+# ランク側との突き合わせ
+# ---------------------------------------------------------------------------
+def test_venue_waves_agrees_with_the_rank_side(tmp_path, monkeypatch):
+    """🔴 `venue_waves()` と `netkeirin_submit_wt._load_meeting_waves()` が一致すること。
+
+    session→wave の対応表は import して共有しているが、**会場の括り方と
+    第1R発走時刻の計算は2箇所に同じものが書いてある**（ランク側は DB を引いて
+    race_key 単位で返し、穴埋め側は取得済みの行から会場単位で返す）。
+    片方だけ直すと同じ開催の波が食い違い、**このPRが直した優先順位の逆転が
+    そのまま戻る**——しかもテストは全部緑のまま。
+
+    ⚠️ ここは「同じ入力で同じ答えを出すか」だけを守る。実装を寄せて共通化して
+       しまうと、ランク側の変更が穴埋めへ黙って波及する経路を作ることになる。
+    """
+    from scripts.netkeirin_submit_wt import _load_meeting_waves
+    from src.database import get_connection
+
+    date = "2026-08-19"
+    rows = [
+        # (venue_id, race_no, JST時)  … 会場ごとに第1R が朝/昼/夕
+        ("44", 1, 10), ("44", 2, 11), ("44", 3, 15),      # 朝
+        ("48", 1, 16), ("48", 2, 17), ("48", 3, 20),      # 昼（ナイター）
+        ("34", 1, 20), ("34", 2, 21),                     # 夕（ミッドナイト）
+    ]
+    with get_connection() as conn:
+        conn.execute("DELETE FROM wt_races WHERE race_date = ?", (date,))
+        for venue, no, hour in rows:
+            conn.execute(
+                "INSERT INTO wt_races (race_key, venue_id, race_date, race_no, "
+                "cup_id, day_index, n_entries, start_at) VALUES (?,?,?,?,?,?,?,?)",
+                (f"20260819_{venue}_{no:02d}", venue, date, no, f"cup{venue}", 1, 7,
+                 str(_race(venue, hour)["start_at"])))
+
+    races = [{"venue_id": v, "start_at": _race(v, h)["start_at"]} for v, _n, h in rows]
+    mine = venue_waves(races)
+    theirs = _load_meeting_waves(date)
+
+    assert theirs, "ランク側が空（seed に失敗している＝この検査は無意味）"
+    for race_key, wave in theirs.items():
+        venue = race_key.split("_")[1]
+        assert mine[venue] == wave, (
+            f"{race_key}: 穴埋め={mine[venue]} / ランク={wave} で食い違っている")

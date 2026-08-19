@@ -104,8 +104,13 @@ def test_marquee_receives_the_same_session_as_the_ranks():
     """
     for path in (DAILY, WAVE):
         lines = _code_lines(path)
-        marquee = lines[_index_of(lines, "submit_marquee_wt.py")]
-        ranks = lines[_index_of(lines, "netkeirin_submit_wt.py")]
+        i_m = _index_of(lines, "submit_marquee_wt.py")
+        i_r = _index_of(lines, "netkeirin_submit_wt.py")
+        # 🔴 `-1` をそのまま添字にすると**スクリプト最後の実行行**を掴み、
+        #    「呼び出しが消えた」ことを「波が違う」と誤って報告する。
+        assert i_m >= 0, f"{path.name}: 穴埋めの呼び出しが無い"
+        assert i_r >= 0, f"{path.name}: ランク入稿の呼び出しが無い"
+        marquee, ranks = lines[i_m], lines[i_r]
         assert "--session" in marquee, (
             f"{path.name}: 穴埋めへ --session を渡していない（実行行: {marquee}）")
         # `${SESSION}` と `$SESSION` は同じもの。表記差で通してしまわないよう正規化する。
