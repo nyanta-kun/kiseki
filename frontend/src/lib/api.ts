@@ -116,9 +116,27 @@ export type HorseIndex = {
   is_natsu_ana?: boolean;
 };
 
+/**
+ * オッズ更新の鮮度。地方の `/chihou/races/{id}/odds` だけが返す（JRA は未対応）。
+ *
+ * 取得が止まっても DB には最後のスナップショットが残るため、API は 200 と
+ * 「それらしい倍率」を返し続ける。値だけでは停止に気づけないので必ず併記する。
+ * 判定の正本は backend の `services/chihou_odds_freshness.py`。
+ */
+export type OddsFreshness = {
+  /** live=最新 / delayed=遅延 / stale=停止 / missing=未取得 / closed=発走済み（正常） */
+  status: "live" | "delayed" | "stale" | "missing" | "closed";
+  /** 最終取得からの経過秒。未取得なら null */
+  age_seconds: number | null;
+  /** 最終取得時刻 (ISO8601 / UTC)。未取得なら null */
+  last_fetched_at: string | null;
+};
+
 export type OddsData = {
   win: Record<string, number>;   // horse_number (str) → 倍率
   place: Record<string, number>; // horse_number (str) → 倍率
+  /** 地方のみ。JRA のレスポンスには含まれない */
+  freshness?: OddsFreshness;
 };
 
 export type RaceEntry = {
