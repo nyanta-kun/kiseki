@@ -55,13 +55,13 @@ def test_all_columns_are_registered_in_feature_cols():
         assert c in FEATURE_COLS_WT, f"{c} が FEATURE_COLS_WT に無い"
 
 
-def test_leader_rp_is_the_leader_not_the_line_max():
+def test_line_leader_rp_is_the_leader_not_the_line_max():
     """🔴 これが本体。`leader_rp` は**先頭の得点**で、ライン内最大ではない。
 
     ライン3 は先頭60 / 番手88 なので、`line_rp_max` なら 88 を拾ってしまい
     「逃げが弱い」という事実が消える。
     """
-    got = _by_frame(add_line_leader_features_wt(FIELD), "leader_rp")
+    got = _by_frame(add_line_leader_features_wt(FIELD), "line_leader_rp")
     assert got[5] == 60.0 and got[6] == 60.0 and got[7] == 60.0
     assert got[1] == 110.0
     assert got[3] == 95.0
@@ -69,7 +69,7 @@ def test_leader_rp_is_the_leader_not_the_line_max():
 
 def test_gap_to_strongest_leader():
     """最強の先頭（110）との差。実測で3着内率を −45.8pt 動かした量。"""
-    got = _by_frame(add_line_leader_features_wt(FIELD), "leader_rp_gap_top")
+    got = _by_frame(add_line_leader_features_wt(FIELD), "line_leader_rp_gap_top")
     assert got[1] == 0.0        # 自分が最強
     assert got[3] == 15.0       # 110 − 95
     assert got[5] == 50.0       # 110 − 60 ← 離される側
@@ -77,11 +77,11 @@ def test_gap_to_strongest_leader():
 
 def test_leader_rank_and_weak_leader_flag():
     out = add_line_leader_features_wt(FIELD)
-    rank = _by_frame(out, "leader_rp_rank")
-    weak = _by_frame(out, "is_weak_leader")
+    rank = _by_frame(out, "line_leader_rp_rank")
+    weak = _by_frame(out, "line_leader_is_weakest")
     assert rank[1] == 0.0 and rank[3] == 1.0 and rank[5] == 2.0
     assert weak[1] == 0.0 and weak[3] == 0.0
-    assert weak[5] == 1.0       # レース内の先頭の中で最下位
+    assert weak[5] == 1.0       # 本物の先頭の中で最下位
 
 
 def test_cohesion_distinguishes_lines_with_the_same_total():
@@ -103,37 +103,45 @@ def test_cohesion_distinguishes_lines_with_the_same_total():
     assert t["line_rp_sum"].iloc[0] if "line_rp_sum" in t else True
     assert t["line_rp_spread"].iloc[0] == 0.0
     assert l["line_rp_spread"].iloc[0] == 40.0
-    assert t["line_rp_lead_minus_next"].iloc[0] == 0.0
-    assert l["line_rp_lead_minus_next"].iloc[0] == 40.0
+    assert t["line_rp_lead_minus_deputy"].iloc[0] == 0.0
+    assert l["line_rp_lead_minus_deputy"].iloc[0] == 40.0
 
 
-def test_lead_minus_next_goes_negative_when_the_deputy_is_stronger():
-    """先頭より番手が強いと負になる（＝逃げが弱いラインの signature）。
+def test_lead_minus_deputy_uses_the_best_non_leader():
+    """🔴 **先頭 − 番手（＝先頭以外の最高得点）**であること。
 
-    🔴 **名前どおり「先頭 − 番手」ではない。** 実際は「先頭 − ライン内2番目の得点」。
-       ライン3 は 先頭60 / 88 / 86 なので **60 − 86 = −26**（「先頭−番手」なら −28）。
-       符号と向きは正しく、ずれるのは大きさだけ。
-       この定義のまま全モデルを学習済みなので、直すなら再学習とセット
-       （`feature_wt.add_line_leader_features_wt` のコメント参照）。
+    ライン3 は 先頭60 / 88 / 86。番手は 88 なので **60 − 88 = −28**。
+    初版は「ライン内2番目の得点(86)」を引いて −26 になっており、
+    **先頭が最上位でない（逃げが弱い）ラインでだけ値がずれていた**
+    （2026-08-19 ユーザー指摘で是正）。
     """
-    got = _by_frame(add_line_leader_features_wt(FIELD), "line_rp_lead_minus_next")
-    assert got[5] == 60.0 - 86.0
+    got = _by_frame(add_line_leader_features_wt(FIELD), "line_rp_lead_minus_deputy")
+    assert got[5] == 60.0 - 88.0
     assert got[5] < 0
 
 
-def test_solo_riders_are_not_counted_as_leaders():
-    """🔴 単騎は先頭に数えない（番手が居らず「道連れ」の構造が無い）。
+def test_solo_riders_are_excluded_from_every_leader_feature():
+    """🔴 単騎は**どの特徴でも**先頭に数えない（定義の統一）。
 
-    看板穴埋めの `_is_leader` と同じ扱いに揃えてある。
+    初版は `gap_top` だけ単騎を除外し、`rank` / `is_weak` は含めていたため、
+    同じ「先頭」という語が特徴ごとに違う意味になっていた
+    （2026-08-19 ユーザー指摘で是正）。
     """
     field = _df([
         dict(race_key="R", frame_no=1, race_point=110, line_group=1, line_size=2, is_line_leader=1),
         dict(race_key="R", frame_no=2, race_point=70,  line_group=1, line_size=2, is_line_leader=0),
-        dict(race_key="R", frame_no=3, race_point=120, line_group=2, line_size=1, is_line_leader=1),
+        dict(race_key="R", frame_no=3, race_point=95,  line_group=2, line_size=2, is_line_leader=1),
+        dict(race_key="R", frame_no=4, race_point=93,  line_group=2, line_size=2, is_line_leader=0),
+        dict(race_key="R", frame_no=5, race_point=120, line_group=3, line_size=1, is_line_leader=1),
     ])
     out = add_line_leader_features_wt(field)
-    # 単騎(3)は「本物の先頭」に数えないので、最強の先頭は 110 のまま
-    assert _by_frame(out, "leader_rp_gap_top")[1] == 0.0
+    rank = _by_frame(out, "line_leader_rp_rank")
+    weak = _by_frame(out, "line_leader_is_weakest")
+    # 最強の先頭は 110（単騎の120ではない）
+    assert _by_frame(out, "line_leader_rp_gap_top")[1] == 0.0
+    # 単騎は順位の外（本物の先頭2つの次＝2.0）に置き、最弱にも数えない
+    assert rank[1] == 0.0 and rank[3] == 1.0 and rank[5] == 2.0
+    assert weak[3] == 1.0 and weak[5] == 0.0
 
 
 def test_missing_columns_do_not_crash():
