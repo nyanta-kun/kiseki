@@ -162,7 +162,9 @@ def test_odds_low_は板の有無によらず全点に入る():
     d = json.loads(build_bet_detail(legs, "predicted", board,
                                     predicted_odds=pred, predicted_low=low))
     got = {x["combo"]: (x["odds"], x["odds_source"], x["odds_low"]) for x in d["lines"]}
-    assert got == {"1=2=3": (8.3, "board", 7.6),      # 板は上書きしない
+    # 表示オッズは 2026-08-21 から予測が主（板は予測を作れない目だけ）。
+    # ここで見たいのは **odds_low が全点に入ること**なので、その2点とも下限を持つ。
+    assert got == {"1=2=3": (9.0, "predicted", 7.6),
                    "1=2=4": (30.0, "predicted", 25.3)}
 
 

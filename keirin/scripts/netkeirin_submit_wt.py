@@ -76,7 +76,10 @@ from src.meeting_wave import (
     waves_due_by,
 )
 from src.dutch_allocation import dutch_allocate
-from src.stake_allocation import MIN_EXPECTED_PAYOUT_7C, expected_payout_floor
+from src.stake_allocation import (
+    MIN_EXPECTED_PAYOUT_BY_RANK,
+    expected_payout_floor,
+)
 from src.race_shape import (
     wide_note_text,
     classify_shape,
@@ -227,7 +230,12 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-17 現在）: **7H2 > 7S > 7C > 7T1 > 7B > 7H1 > 7M1**
+#    優先順位（2026-08-21 現在）: **7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1**
+#    🔴 2026-08-21: **7B を 7C の上へ**（ユーザー方針「最低希望オッズ 1.5倍」）。
+#       競合874R の直接対決で 7B が 1.5倍以上の的中で +5〜6pt 勝ち、ROI も上
+#       （2025 +6.01[+3.10,+9.11] / 2026 +5.03[+1.68,+8.66]・両年独立で再現）。
+#       7B は単独でも 1.5倍以上 24.34% と全ランク最高。
+#       [[keirin_rank_priority_15x_2026_08_21]]
 #    （7C > 7B は 2026-08-07 ユーザー指定。7T1 は 2026-08-13 にその間へ挿入）。
 #    ⚠️ **2026-08-15 に 7H1 を最下位へ落とした**。三連単一本化の実装・検証が
 #      終わるまで `enabled=false` で止めてあり、有効化しても他ランクの母集団を
@@ -327,6 +335,32 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     # ⚠️ **総流しではない**。相手は `legs_7c`（3着内率15%以上・4〜5点で可変）。
     # ⚠️ 賭け金も**可変**（1レース10,000円の予算枠 ÷ 点数）なので
     #    stake_per_line ではなく stake_budget を持つ。
+    "7B":  {"file_key": "s7b", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
+            "partners_key": "legs_7b", "tilt_stakes": True,
+            # 🔴 **7C より後ろに置いた**（2026-08-07 ユーザー判断）。重複するレースは
+            #    7C が取り、7B は独自レース（3.14件/日）だけを出す。7C に譲るのは
+            #    設計どおりなので `overlap_expected` で失敗集計から外す。
+            "overlap_expected": True,
+            # ⚠️ 2026-08-05 の PR#12 で 7B は「◎○一致 × **順序一致** × 準決勝」へ
+            #    全面入替した。旧7Bは順序**不一致**が条件だったため、旧文面の
+            #    「1番手評価が異なり」は現行条件と正反対になっていた（2026-08-06 是正）。
+            #    また外部サイトの予想印を「公式予想」と呼ぶのは誤りなので言及しない。
+            #    定義を変えるときは必ずこの文面と DB の comment_template も見ること。
+            "default_comment": (
+                "本日の二軸をお届けします。\n\n"
+                "準決勝の中から、当方の指数で軸2車が明確に絞り込めたレースだけを"
+                "お届けしています。相手も3点に絞りました。\n"
+                "買い目は三連複・軸2車から相手3点。金額は均等ではなく、当方が想定する"
+                "発走時オッズに応じて配分しています。\n\n"
+                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
+            )},
+    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。
+    # 🔴 **2026-08-15 に三連単一本化**（ユーザー指示）。それまでは唯一の2券種ランクで、
+    #    三連単F8点 + 三連複BOX（最大10点）を1商品にまとめて入稿していた
+    #    （`multi_bet` → `_normalize_multi_candidate`）。三連複ぶんの予算を三連単へ
+    #    振り直したので、9H1 と同じ**三連単フォーメーション単一券種**になり
+    #    `formation_bet` 経路（`_normalize_formation_candidate`）を共用する。
+    # 買い目は候補JSONの `legs`（=`legs_tf` と同じ）を**正**として復元する。
     "7C":  {"file_key": "s7c", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
             "axis_keys": ("axis1_7c", "axis2_7c"),
             # 🔴 **買う相手**は `legs_7c_buy`（三連単=相手全部 / 三連複=上位2点）。
@@ -377,32 +411,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "大きさを狙う券種としてご活用ください。"
                 "レース直前の最終オッズをご自身でご確認ください。"
             )},
-    "7B":  {"file_key": "s7b", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
-            "partners_key": "legs_7b", "tilt_stakes": True,
-            # 🔴 **7C より後ろに置いた**（2026-08-07 ユーザー判断）。重複するレースは
-            #    7C が取り、7B は独自レース（3.14件/日）だけを出す。7C に譲るのは
-            #    設計どおりなので `overlap_expected` で失敗集計から外す。
-            "overlap_expected": True,
-            # ⚠️ 2026-08-05 の PR#12 で 7B は「◎○一致 × **順序一致** × 準決勝」へ
-            #    全面入替した。旧7Bは順序**不一致**が条件だったため、旧文面の
-            #    「1番手評価が異なり」は現行条件と正反対になっていた（2026-08-06 是正）。
-            #    また外部サイトの予想印を「公式予想」と呼ぶのは誤りなので言及しない。
-            #    定義を変えるときは必ずこの文面と DB の comment_template も見ること。
-            "default_comment": (
-                "本日の二軸をお届けします。\n\n"
-                "準決勝の中から、当方の指数で軸2車が明確に絞り込めたレースだけを"
-                "お届けしています。相手も3点に絞りました。\n"
-                "買い目は三連複・軸2車から相手3点。金額は均等ではなく、当方が想定する"
-                "発走時オッズに応じて配分しています。\n\n"
-                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
-            )},
-    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。
-    # 🔴 **2026-08-15 に三連単一本化**（ユーザー指示）。それまでは唯一の2券種ランクで、
-    #    三連単F8点 + 三連複BOX（最大10点）を1商品にまとめて入稿していた
-    #    （`multi_bet` → `_normalize_multi_candidate`）。三連複ぶんの予算を三連単へ
-    #    振り直したので、9H1 と同じ**三連単フォーメーション単一券種**になり
-    #    `formation_bet` 経路（`_normalize_formation_candidate`）を共用する。
-    # 買い目は候補JSONの `legs`（=`legs_tf` と同じ）を**正**として復元する。
     "7H1": {"file_key": "s7h1", "n_cars": 7, "formation_bet": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
             "default_comment": (
@@ -889,11 +897,12 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
        なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
 
-    `predicted_odds` は板に無い目を埋めるための予測盤面（三連複のみ）。
-    埋めた点は `odds_source="predicted"` になり、板由来は `"board"`。
-    🔴 **板を上書きしない。** 板があるならそれが実際に付いていた値。
-    ⚠️ 区別を落として保存すると、予測値が「実際のオッズ」として読まれる。
-       表示側はこの印を見て「(予測)」を付ける。
+    `predicted_odds` は予測盤面（三連複のみ）。**2026-08-21 からこちらが主**で、
+    予測を作れない目だけ `odds`（板）へ落ちる。出どころは `odds_source` に
+    `"predicted"` / `"board"` として残る。
+    🔴 **記録は落とさない。** 表示では区別しなくなったが（配分も足切りも予測
+       オッズで決めているため「全て予測」が前提）、三連単だけは板由来のまま
+       なので、混在を後から数えられなくなると検証ができない。
 
     `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
     板の有無によらず全点へ `odds_low` として書く。
@@ -909,12 +918,20 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                              key=lambda t: tuple(sorted(t)) if isinstance(t, frozenset) else t):
             cars = sorted(target) if isinstance(target, frozenset) else list(target)
             sep = "=" if isinstance(target, frozenset) else "-"
-            o = odds.get(target)
-            odds_source = "board" if o else None
+            # 🔴 **予測オッズを先に使う**（2026-08-21 反転・ユーザー判断）。
+            #    以前は板を優先し「板に無い目だけ」予測で埋めていたが、
+            #    **配分（`landing_weights`）も 1.5倍の足切り
+            #    （`_expected_payout_floor_for`）も予測オッズで決めている**ため、
+            #    表示だけ板だと確認画面の数字と判断根拠が突き合わせられない
+            #    （「想定払戻 1.43倍 < 1.5倍で見送り」と出ているのに、
+            #    並んでいるオッズは板の値、という状態だった）。
+            #    板へ落ちるのは予測を作れないとき——**三連単**（予測は三連複しか
+            #    作れない）と 7車・9車以外のレース。
+            o = predicted_odds.get(target)
+            odds_source = "predicted" if o else None
             if not o:
-                # 板に無い目だけ予測で埋める（三連複のキーは frozenset）。
-                o = predicted_odds.get(target)
-                odds_source = "predicted" if o else None
+                o = odds.get(target)
+                odds_source = "board" if o else None
             # 🔴 表示オッズを上回る「下振れ時」を出さない。板が既にモデルの
             #    下限より低いなら、その板の値のほうが厳しい見積もりになる。
             #    min を取るので calibration（下側25%分位）は必ず安全側へしか動かない。
@@ -926,7 +943,10 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 "combo": sep.join(str(c) for c in cars),
                 "stake": int(leg.stake_per_line),
                 "odds": round(float(o), 1) if o else None,
-                # 板 / 予測 / 不明（None）。**表示で区別するために必ず残す。**
+                # 予測 / 板 / 不明（None）。表示では区別しないが（2026-08-21・
+                # 「全て予測オッズ」が前提になったのでラベルは畳んだ）、
+                # **どちらで出したかの記録としては必ず残す**。
+                # 三連単だけが板になるので、後から混在を数えられる必要がある。
                 "odds_source": odds_source,
                 # 下限包絡（オッズではない）。最低払戻・ガミ判定に使う。
                 "odds_low": round(float(low), 1) if low else None,
@@ -1328,17 +1348,57 @@ def _build_tilted_legs(
     return legs, source, stakes
 
 
-def _expected_payout_floor_7c(
+def _can_pull_forward(
+    race_key: str, is_trifecta: bool, axis1: int, axis2: int, partners: list[int],
+) -> bool:
+    """後の波の開催を、この回へ**前倒しして**入稿してよいか（2026-08-21 新設）。
+
+    波（`src/meeting_wave.py`）は「板が育つのを待つ」ために作った。その前提は
+    2026-08-21 に失効している——賭け金の配分は `landing_weights` が
+    **予測オッズを最優先で単独採用**するようになり、実測でも 2026-08-12 以降の
+    夜の波の入稿は noon 34/34・evening 67/67 が `predicted` で、
+    **板由来は1件も無い**。予想そのものは朝に当日全開催ぶん出来ている
+    （`wave_submit_wt.sh` は入稿だけを行う）ので、予測オッズさえ作れれば
+    夜の開催を朝に出しても中身は変わらない。
+
+    🔴 **前倒しできない2つ**（＝ここで False を返すもの）:
+
+    1. **三連単系ランク**（7T1 / 7H1 / 7H2 / 9H1・三連単への切替も含む）。
+       `_dutch_point_legs` は「買う点**すべて**に三連単の板オッズが揃うときだけ」
+       ダッチにする。朝は三連単の板がまず無いので、揃わず通常配分へ落ちて
+       **券種の形が変わる**。予測オッズは三連複しか作れない。
+    2. **予測オッズが買う点すべてに作れないレース**（7車・9車以外＝実測 3.7%）。
+       一部だけ予測で埋めると比率が壊れる（`stake_allocation._usable_odds`）。
+
+    どちらも「出さない」のではなく**自分の波へ残す**。13:00 / 18:00 の回が
+    従来どおり拾うので、前倒しは常に上積みであって取りこぼしを増やさない。
+    """
+    if is_trifecta or not partners:
+        return False
+    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
+    return bool(odds) and all(odds.get(t) for t in partners)
+
+
+def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
 ) -> float | None:
-    """7C の想定払戻（下限）。板が足りず判定できないときは None。
+    """想定払戻（下限）。判定できないときは None（＝入稿する側へ倒す）。
 
-    盤面は `_load_trio_board`（＝入稿時点の最新オッズ。朝はスナップショットと同値）。
-    **配分に使ったのと同じ板**で測ること。別の板で測ると、配分が想定した
-    払戻と判定が食い違う。
+    🔴 **予測オッズを優先する**（2026-08-21）。実オッズ板は買う点が全部揃うのが
+       実測 8.9% しかなく、板だけで測るとゲートがほぼ発火しない。実際
+       `MIN_EXPECTED_PAYOUT_7C` を 7S へ広げるか検討したとき、板で判定できたのは
+       **12件だけ**で「7S では効かない」と誤読しかけた
+       （[[keirin_n7_gami_cut_predicted_odds_2026_08_21]]）。
+
+    ⚠️ **配分に使ったのと同じ板で測ること。** `_build_tilted_legs` は
+       `tilted_stakes(predicted_odds=...)` に予測オッズを渡しているので、
+       判定も予測オッズで行うのが整合する。予測が作れないときだけ実オッズ板へ落ち、
+       それも無ければ None。
     """
-    board = _load_trio_board(race_key)
-    odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
+    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(stakes))
+    if not odds:
+        board = _load_trio_board(race_key)
+        odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
     return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
 
 
@@ -1682,6 +1742,7 @@ def _process_rank(
     already: set[tuple[str, str]], dry_run: bool, race_key_filter: str | None = None,
     claimed_races: set[str] | None = None, waves: dict[str, str] | None = None,
     started: set[str] | None = None, propose_only: bool = False,
+    deferred_races: set[str] | None = None,
 ) -> tuple[int, list[str]]:
     cfg = RANK_CONFIGS[rank_key]
     if not _is_enabled(settings, rank_key):
@@ -1705,17 +1766,26 @@ def _process_rank(
     raw = _uniq
     if race_key_filter:
         raw = [c for c in raw if c.get("race_key") == race_key_filter]
-    # 🔴 この回で担当する開催だけに絞る。朝の候補JSONは当日全開催ぶん入っている
-    #    （予想・Discord・Web は朝に全部出す）ので、ここで落とさないと
-    #    夜の開催まで朝に入稿してしまい、板が育つ前の配分で確定してしまう。
+    # 🔴 この回で担当する開催 + **前倒しできる後の波の開催**に絞る（2026-08-21 改定）。
+    #    朝の候補JSONは当日全開催ぶん入っている（予想・Discord・Web は朝に全部出す）。
+    #    以前はここで後の波を落としていたが、その理由（板が育つのを待つ）は
+    #    失効した。可否は1件ずつ `_can_pull_forward()` が決め、前倒しできない
+    #    ものだけ自分の波へ残る（下のループで `deferred_races` へ入れる）。
     #    ⚠️ 自分の波と**完全一致**で絞ると、発走時刻が前倒しに訂正された開催が
     #    通過済みの波へ移り、その日どの回からも入稿されない（2026-08-08 是正）。
     #    `waves_due_by()` で「自分の波 + 前の波」を対象にする。二重入稿は
     #    `_already_submitted()` が、締切超過は直下の `started` が止める。
+    #
+    #    🔴 **`deferred_races` は上位ランクが前倒しを見送ったレース。**
+    #    ここで外さないと、上位が波へ残したレースを**下位ランクが朝に横取りする**
+    #    （netkeirin は1レース1商品なので、13:00 に上位が来ても取れない）。
+    #    RANK_ORDER の優先順位が波をまたいで壊れるのを防ぐ。
+    due_waves: set[str] = set()
     if waves is not None:
         due_waves = set(waves_due_by(SESSION_WAVE.get(session, WAVE_MORNING)))
-        raw = [c for c in raw
-               if waves.get(str(c.get("race_key", "")).split("#")[0], WAVE_MORNING) in due_waves]
+        if deferred_races:
+            raw = [c for c in raw
+                   if str(c.get("race_key", "")).split("#")[0] not in deferred_races]
     # 締切（発走15分前）を過ぎたレースへは出さない（netkeirin が受け付けない）。
     if started is not None:
         n_before = len(raw)
@@ -1821,21 +1891,25 @@ def _process_rank(
                 elif cfg.get("tilt_stakes"):
                     legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
                         race_key, cfg, axis1, axis2_or_p1, partners)
-                    # 想定払戻の下限で 7C を足切りする（2026-08-19・ユーザー判断）。
-                    # 根拠・数値は `src/stake_allocation.MIN_EXPECTED_PAYOUT_7C`。
+                    # 想定払戻の下限で足切りする（2026-08-19 新設 / 2026-08-21 改定）。
+                    # 対象ランクと閾値は `stake_allocation.MIN_EXPECTED_PAYOUT_BY_RANK`
+                    # （ユーザー方針「最低限の希望オッズは 1.5 倍」）。
                     # 🔴 **`continue` で抜けること。** ここで「処理済み」にすると
                     #    1レース1商品の取り合いで後続ランクがそのレースを取れなくなる。
-                    #    落としたいのは 7C の商品であって、そのレース自体ではない。
-                    # 🔴 判定不能（板が足りない）なら**出す**。分からないことを
-                    #    理由に商品を落とさない（`expected_payout_floor` の docstring）。
-                    if rank_key == "7C" and not use_trifecta:
-                        floor = _expected_payout_floor_7c(
+                    #    落としたいのはこのランクの商品であって、そのレース自体ではない。
+                    # 🔴 判定不能なら**出す**。分からないことを理由に商品を落とさない
+                    #    （`expected_payout_floor` の docstring）。
+                    # ⚠️ 看板は `submit_marquee_wt.py --marquee` が**ゲートを通さず**
+                    #    埋めるので、ここで落としても看板の推奨は消えない。
+                    min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
+                    if min_floor is not None and not use_trifecta:
+                        floor = _expected_payout_floor_for(
                             race_key.split("#")[0], axis1, axis2_or_p1,
                             tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET))
-                        if floor is not None and floor < MIN_EXPECTED_PAYOUT_7C:
+                        if floor is not None and floor < min_floor:
                             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
                                   f"({rank_key}): 想定払戻(下限) {floor:.2f}倍 < "
-                                  f"{MIN_EXPECTED_PAYOUT_7C:.2f}倍", flush=True)
+                                  f"{min_floor:.2f}倍", flush=True)
                             continue
                     # 🔴 印を submit_pick が内部で作っていたものと**同じ**にする。
                     #    submit_pick は軸=◎○・**買った相手=△**・買っていない車=印なし
@@ -1850,6 +1924,26 @@ def _process_rank(
             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R ({rank_key}): {e}",
                   flush=True)
             continue
+
+        # 🔴 後の波の開催は、前倒しできるものだけこの回で出す（2026-08-21 新設）。
+        #    判定は**買い目を組み終えてから**行う。前倒しの可否は「予測オッズが
+        #    買う点すべてに作れるか」なので、相手が決まる前には測れない。
+        #    見送ったレースは `deferred_races` へ入れ、**下位ランクにも取らせない**
+        #    （1レース1商品なので、下位が朝に取ると上位がその波で取れなくなる）。
+        base_key = race_key.split("#")[0]
+        race_wave = waves.get(base_key, WAVE_MORNING) if waves is not None else WAVE_MORNING
+        if race_wave not in due_waves:
+            is_trifecta = bool(use_trifecta or is_7t1 or is_formation or is_multi_7h2)
+            wave_jp = WAVE_LABEL_JP.get(race_wave, race_wave)
+            if not _can_pull_forward(base_key, is_trifecta, axis1, axis2_or_p1, partners):
+                if deferred_races is not None:
+                    deferred_races.add(base_key)
+                reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"
+                print(f"[netkeirin_submit] 前倒し見送り {venue_name}{race_no}R "
+                      f"({rank_key}): {reason} → {wave_jp}の回で入稿", flush=True)
+                continue
+            print(f"[netkeirin_submit] 前倒し {venue_name}{race_no}R ({rank_key}): "
+                  f"{wave_jp}の開催をこの回で入稿", flush=True)
 
         shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2_or_p1)
         stake_note = _stake_note_for(rank_key, legs)
@@ -2257,9 +2351,11 @@ def main() -> None:
     n_wave = sum(1 for w in waves.values() if w == want_wave)
     n_due = sum(1 for w in waves.values() if w in due_waves)
     carry = n_due - n_wave
+    n_ahead = len(waves) - n_due
     print(f"[netkeirin_submit] {target_date} {session}: "
           f"担当は {WAVE_LABEL_JP[want_wave]} — 当日{len(waves)}レース中{n_wave}レース"
-          + (f"（+ 前の波の未入稿 {carry}レースも対象）" if carry else ""),
+          + (f"（+ 前の波の未入稿 {carry}レースも対象）" if carry else "")
+          + (f"（+ 後の波 {n_ahead}レースは前倒しできるものだけ対象）" if n_ahead else ""),
           flush=True)
 
     all_race_keys: set[str] = set()
@@ -2278,9 +2374,11 @@ def main() -> None:
             raw += _load_candidates(target_date, session, _fk)
         if args.race_key:
             raw = [c for c in raw if c.get("race_key") == args.race_key]
+        # 🔴 波では絞らない。後の波も `_process_rank` が1件ずつ前倒しの可否を見る
+        #    ので、ここで落とすと `_already_submitted()` へ問い合わせられず
+        #    二重入稿のガードが素通りする（2026-08-16 の実害と同型）。
         raw = [c for c in raw
-               if waves.get(str(c.get("race_key", "")).split("#")[0], WAVE_MORNING) in due_waves
-               and str(c.get("race_key", "")).split("#")[0] not in started]
+               if str(c.get("race_key", "")).split("#")[0] not in started]
         per_rank_raw[rank_key] = raw
         all_race_keys.update(c["race_key"] for c in raw)
 
@@ -2301,13 +2399,15 @@ def main() -> None:
     # 同一実行内で入稿済みのレース。netkeirin は1レース1商品なので、後続ランクが
     # 同じレースへ入稿すると先の商品を上書きしてしまう（_process_rank 参照）。
     claimed_races: set[str] = set()
+    # 上位ランクが前倒しを見送ったレース。下位ランクにも取らせない（優先順位の保護）。
+    deferred_races: set[str] = set()
     for rank_key in RANK_ORDER:
         if rank_key not in per_rank_raw:
             continue
         n, failures = _process_rank(
             rank_key, target_date, session, race_date, settings, already, args.dry_run,
             race_key_filter=args.race_key, claimed_races=claimed_races, waves=waves,
-            started=started, propose_only=propose_only,
+            started=started, propose_only=propose_only, deferred_races=deferred_races,
         )
         submitted_counts[rank_key] = n
         all_failures.extend(failures)

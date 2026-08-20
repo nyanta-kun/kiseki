@@ -566,7 +566,7 @@ pkill -9 -f "prlctl exec"
       走らせないので NVDTLab.dll(FastMM) のリークダイアログを出さずに落とせる
     - ログ: `C:\kiseki\windows-agent\backfill.log`
     - 登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_backfill_task.ps1`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加）
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加・2026-08-20 に kill 失敗の検知を追加）
     - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
     - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
       **15分以上更新されていない**場合、taskkill してから再起動する
@@ -602,6 +602,24 @@ pkill -9 -f "prlctl exec"
         いずれでも検知できない**。EOD cleanup が唯一の網だったが、それが落ちていた
       - realtime は 9:00 か本 watchdog（9:00-22:30）でしか起動しないので、
         起動日が今日より前なら定義上「残り物」
+    - 🔴 **`taskkill /F` は効かないことがある**（2026-08-20 追加）。
+      `os._exit(1)` 直後に最後のスレッドがカーネル待ちで固まったプロセスは
+      **TerminateProcess を受け付けない**（`taskkill` は「実行中のタスクのインスタンスが
+      ありません」で失敗し、プロセス一覧には残り続ける。スレッド1本・CPU 加算なしが目印）。
+      - 旧実装は kill の成否を見ずに [1] の再起動へ進み、ランチャ側は
+        **プロセスの存在だけ**で「もう動いている」と判定して降りていた。結果
+        「STALLED -> terminating / not found -> starting」を5分ごとに繰り返すだけで
+        **再起動は一度も起きない**。2026-08-20 に地方のオッズが **14:55〜19:48 の4時間51分**
+        停止し、発走直前のオッズが朝の値のまま表示され続けた
+      - → watchdog は kill 後に存在を確認して `survived taskkill` をログに残し、
+        **死体が残っていても再起動へ進む**。ランチャ（`run_{umaconn,jvlink}_realtime.vbs`）は
+        「動いている」ではなく **heartbeat が新しいか（＝進んでいるか）** で判定する
+      - 死体と併存しても新しいプロセスは正常に動く（COM は解放済み。同日実測）。
+        死体の回収は再起動を待つ
+      - ⚠️ ランチャ末尾の多重起動そうじは **直近 120秒以内に起動したプロセスだけ**を対象にする。
+        「最古の1本を残す」ままだと死体が最古として生き残り、**たった今起動した健全な方**を殺す
+    - watchdog は該当プロセスを**全部**辞書に集めて1本ずつ判定する（死体と健全なプロセスが
+      併存しうるため。最後に見つかった1本だけを覚えていると、どちらを掴むかが WMI の列挙順まかせになる）
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
     - `New-ScheduledTaskAction -Execute` は**絶対パス必須**（Task Scheduler は PATH を解決せず、
@@ -1668,6 +1686,35 @@ ChihouSweetSpotResponse {
 - 自動補完: `backend/src/api/chihou_import_router.py::_fill_loser_place_odds_from_history()` が HR 取込後に呼ばれる
 - 過去補完: `backend/scripts/backfill_chihou_place_odds.py --start YYYYMMDD --end YYYYMMDD`
 - `chihou.odds_history` は **2026-04-07 以降** のみ蓄積。それ以前は恒久的に補完不可
+
+### オッズ鮮度シグナル（レース詳細に常時表示・2026-08-21）
+
+🔴 **オッズが止まっても API は 200 と「それらしい倍率」を返し続ける。**
+最後のスナップショットが DB に残るため、値だけを見て停止に気づくことはできない。
+2026-08-20 に取得が **4時間51分**止まったとき、発走直前の画面に朝の倍率が出ていたが
+異常を示すものは何も無く、公式オッズと見比べるまで誰も気づかなかった。
+
+- 判定の正本: `backend/src/services/chihou_odds_freshness.py`（DB にも FastAPI にも
+  依存しない純関数）。`GET /api/chihou/races/{id}/odds` が `freshness` として返す
+- 表示: `frontend/src/components/OddsFreshnessBadge.tsx`（`ChihouRaceDetailClient` のヘッダ）
+
+| status | 条件 | 表示 |
+|---|---|---|
+| `live` | 経過 ≤ 5分 | 緑「オッズ最新」 |
+| `delayed` | 5〜15分 | 黄「更新遅延」 |
+| `stale` | **15分以上・かつ未発走** | 赤「更新停止」 |
+| `missing` | 取得実績なし | 灰「オッズ未取得」 |
+| `closed` | **発走済み** | 灰「発走済み」 |
+
+- ⚠️ **発走済みの停止を異常にしてはいけない**。終わったレースが全部赤くなり信号が死ぬ
+- ⚠️ **サーバの status をそのまま描画してはいけない**。ポーリングが失敗している・
+  圏外・API 停止のとき、最後に受け取った「最新です」が画面に残り続ける。
+  バッジは**受信からの経過を足して判定し直す**ので、更新が届かなければ自分で赤へ進む
+  （端末の時計が狂っていても影響しない。絶対時刻ではなく経過時間しか使わないため）
+- ⚠️ **`fetched_at` は naive UTC・DB セッションは Asia/Tokyo**。
+  SQL で `now() - fetched_at` すると9時間ずれる。`now() AT TIME ZONE 'UTC'` を使うこと
+- 15分という赤の閾値は Windows 側 `run_realtime_watchdog.vbs` の `STALL_MINUTES` と同値。
+  片方だけ変えると「画面は赤いのに watchdog は無反応」になるので必ず揃える
 
 ### 推奨パネル UI（`/chihou/races` の推奨タブ）
 

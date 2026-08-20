@@ -604,17 +604,12 @@ function SubmittedBetBlock({ bet, entries }: {
               {multiType && <span className="text-gray-400 dark:text-gray-500 mr-1">{l.bet_type}</span>}
               {l.combo}
             </span>
-            {/* 🔴 予測オッズは板と区別して出す。同じ顔で並べると
-                「実際に付いていたオッズ」と読まれる。 */}
-            <span
-              className={`text-right ${l.odds_source === "predicted"
-                ? "text-indigo-400 dark:text-indigo-300"
-                : "text-gray-400 dark:text-gray-500"}`}
-              title={l.odds != null && l.odds_source === "predicted"
-                ? "板に無かったため、オッズ生成モデルの予測値を表示しています"
-                : undefined}
-            >
-              {l.odds != null && `${l.odds.toFixed(1)}倍${l.odds_source === "predicted" ? "*" : ""}`}
+            {/* ⚠️ 2026-08-21 から**出どころは区別して出さない**（ユーザー判断）。
+                入稿の配分・足切り・表示オッズが全て予測オッズに揃ったので、
+                画面上で「予測かどうか」を分ける意味が無くなった。
+                記録としての `odds_source` は bet_detail に残っている。 */}
+            <span className="text-right text-gray-400 dark:text-gray-500">
+              {l.odds != null && `${l.odds.toFixed(1)}倍`}
             </span>
             <span className="text-right text-gray-600 dark:text-gray-300">
               {l.stake.toLocaleString()}
@@ -1321,7 +1316,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H2", "7S", "7C", "7T1", "7B", "7H1", "7M1", "9H1", "9C"] as const;
+const RANK_ORDER = ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
   // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。

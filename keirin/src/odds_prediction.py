@@ -65,6 +65,7 @@ import itertools
 import json
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -72,7 +73,15 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-MODEL_DIR = Path(__file__).resolve().parent.parent / "data" / "models"
+# 予測オッズのモデル置き場。既定は本番の配布先。
+#
+# 🔴 **`KEIRIN_ODDS_MODEL_DIR` で差し替えられる**（2026-08-21 新設）。過去の窓を
+#    評価するときは学習終端の古い（honest な）モデルを使う必要があるが、本番の
+#    配布物を上書きして戻し忘れると**入稿の配分と足切りが静かに古いモデルになる**。
+#    環境変数で向き先だけを変えれば、その回のプロセスにしか影響しない。
+#    例: `KEIRIN_ODDS_MODEL_DIR=data/backup/odds_model_20260816`
+MODEL_DIR = Path(os.environ.get("KEIRIN_ODDS_MODEL_DIR")
+                 or Path(__file__).resolve().parent.parent / "data" / "models")
 META_PATH = MODEL_DIR / "odds_trio_meta.json"
 
 SUPPORTED_N_CAR = (7, 9)
@@ -279,6 +288,40 @@ def load_meta() -> dict[str, Any]:
         )
     _META_CACHE = meta
     return meta
+
+
+def model_train_end() -> str | None:
+    """このモデルの学習終端（`per_n_car` の最大値）。記録が無ければ None。"""
+    per = load_meta().get("per_n_car", {}) or {}
+    ends = [str(v.get("train_end")) for v in per.values() if v.get("train_end")]
+    return max(ends) if ends else None
+
+
+def assert_model_is_honest(date_from: str, *, who: str = "") -> None:
+    """三連複オッズモデルの**学習終端より前**を対象にしていないか検査する。
+
+    🔴 **予測オッズは月次 vintage を持たない。** 学習終端以前の期間を評価すると
+       in-sample になり、「予測オッズで足切りしたら良くなった」のような結論が
+       まるごと嘘になる。7T1 の三連単側には
+       `backfill_7t1_rank_wt.assert_odds_model_is_honest` があるのに三連複側だけ
+       無く、**2026-08-21 に実際に踏んだ**（本番の `train_end` は 2026-08-04 で、
+       2026年の窓を評価しようとしていた）。
+
+    回避策は「honest なモデルへ差し替える」こと。学習終端の古いモデルを
+    `data/backup/odds_model_YYYYMMDD/` に置いてあるので `KEIRIN_ODDS_MODEL_DIR`
+    でそちらを向ける（本番の配布物を上書きしない）。
+
+    ⚠️ **live 予想では絶対に発火しない**（対象は常に学習終端より後）。
+       発火するのは過去を評価するスクリプトだけ。
+    """
+    end = model_train_end()
+    if end and str(date_from) <= end:
+        tag = f"[{who}] " if who else ""
+        raise SystemExit(
+            f"{tag}{date_from} は三連複オッズモデルの学習終端（{end}）以前です。"
+            "そのまま評価すると in-sample になります。honest なモデル "
+            "（data/backup/odds_model_*/）を KEIRIN_ODDS_MODEL_DIR で指すか、"
+            f"{end} より後の期間だけを対象にしてください。")
 
 
 def load_model(n_car: int):

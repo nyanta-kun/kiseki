@@ -5,6 +5,8 @@
 2026-08-08 は当日売上の 84% が「外れたレース」＝看板レース（決勝・特選クラス）に
 集中し、当たった準決勝・予選は買い手0だった。ユーザー決定で
 **看板レースとその前後には必ず推奨を出す**方針になった。
+2026-08-21 に**前後だけを畳んだ**（件数が目標 30〜40/日 に収まらないため。
+穴埋めはランクのゲートを通らないので上振れを直接作る）。看板本体は従来どおり。
 
 2026-08-09 時点では検出が無く、当日の看板11件を手作業で入稿していた。
 
@@ -12,7 +14,9 @@
 
 1. 判定は **race_type**。レース番号（最終R＝決勝）で判定しない
    — ガールズ決勝が 6R と 12R の両方に置かれる開催が実在する（08-09 佐世保）
-2. 「前後」は看板の ±1R。**存在しないレース番号は返さない**
+2. 「前後」の広さは `NEIGHBOR_SPAN` の1箇所だけで決まる。
+   **2026-08-21 から既定は 0（広げない）**。広げるときも
+   **存在しないレース番号は返さない**
 3. 🔴 判定の定義を**ここで持たない**（2026-08-11 一本化）
    — 正本は kiseki 側 `backend/src/services/keirin_marquee.py`
 """
@@ -58,10 +62,34 @@ def test_semifinal_is_not_marquee() -> None:
     assert not is_marquee_type("チャレンジ準決勝")
 
 
-def test_neighbours_are_included() -> None:
+def test_neighbours_are_not_included() -> None:
+    """🔴 前後には広げない（2026-08-21・ユーザー判断で 1R → 0）。
+
+    2026-08-09 の「看板とその前後には必ず出す」方針のうち**前後だけを畳んだ**。
+    穴埋めはランクのゲートを通らないため件数の上振れを直接作っており、
+    2026-08-21 の実測では穴埋め17件中6件が前後の展開だった。
+    """
     races = [{"race_no": n, "race_type": "予選"} for n in range(1, 13)]
     races[6]["race_type"] = "決勝"          # 7R
-    assert marquee_race_nos(races) == {6, 7, 8}
+    assert marquee_race_nos(races) == {7}
+
+
+def test_neighbor_span_is_the_single_knob() -> None:
+    """前後の広さは `NEIGHBOR_SPAN` だけで決まる（戻すときはここを 1 に）。
+
+    ⚠️ 値と挙動が食い違ったまま放置されないよう、定数を上書きして検査する。
+    """
+    from src import marquee as m
+
+    races = [{"race_no": n, "race_type": "予選"} for n in range(1, 13)]
+    races[6]["race_type"] = "決勝"          # 7R
+    original = m.NEIGHBOR_SPAN
+    try:
+        m.NEIGHBOR_SPAN = 1
+        assert m.marquee_race_nos(races) == {6, 7, 8}
+    finally:
+        m.NEIGHBOR_SPAN = original
+    assert m.NEIGHBOR_SPAN == 0, "既定は 0（前後へ広げない）"
 
 
 def test_multiple_marquee_races_in_one_meeting() -> None:
@@ -69,14 +97,25 @@ def test_multiple_marquee_races_in_one_meeting() -> None:
     races = [{"race_no": n, "race_type": "ガールズ一般"} for n in range(1, 13)]
     races[5]["race_type"] = "ガールズ決勝"    # 6R
     races[11]["race_type"] = "ガールズ決勝"   # 12R
-    assert marquee_race_nos(races) == {5, 6, 7, 11, 12}
+    assert marquee_race_nos(races) == {6, 12}
 
 
 def test_does_not_return_missing_race_numbers() -> None:
-    """存在しないレース番号（欠番・最終Rの次）を返さない。"""
+    """存在しないレース番号（欠番・最終Rの次）を返さない。
+
+    ⚠️ `NEIGHBOR_SPAN = 0` の今は自明に成り立つが、**前後を戻したときに
+       効く不変条件**なので広げた状態で検査する。
+    """
+    from src import marquee as m
+
     races = [{"race_no": n, "race_type": "予選"} for n in (1, 2, 3)]
     races[2]["race_type"] = "決勝"           # 3R が最終
-    assert marquee_race_nos(races) == {2, 3}
+    original = m.NEIGHBOR_SPAN
+    try:
+        m.NEIGHBOR_SPAN = 1
+        assert m.marquee_race_nos(races) == {2, 3}
+    finally:
+        m.NEIGHBOR_SPAN = original
 
 
 def test_race_no_alone_does_not_qualify() -> None:
@@ -147,12 +186,16 @@ def test_grade_covers_every_race_of_a_big_meeting():
 
 
 def test_without_grade_the_keyword_behaviour_is_unchanged():
-    """🔴 `cup_grade` が無い（NULL・古いレース）ときは従来どおり看板＋前後1R。"""
+    """🔴 `cup_grade` が無い（NULL・古いレース）ときはキーワード判定へ落ちる。
+
+    ⚠️ 2026-08-21 以降、キーワードで拾うのは**看板本体だけ**（前後は
+       `NEIGHBOR_SPAN = 0`）。グレードが無いことを理由に広げたりはしない。
+    """
     from src.marquee import marquee_race_nos
 
     rs = [{"race_no": n, "race_type": t} for n, t in
           ((1, "一般"), (2, "一般"), (3, "決勝"), (4, "一般"), (5, "一般"))]
-    assert marquee_race_nos(rs) == {2, 3, 4}
+    assert marquee_race_nos(rs) == {3}
 
 
 def test_low_grade_meeting_is_not_expanded():

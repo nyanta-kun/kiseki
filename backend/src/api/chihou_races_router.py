@@ -38,6 +38,12 @@ from ..indices.confidence import (
     calculate_race_confidence,
     calculate_recommend_rank,
 )
+from ..services.chihou_odds_freshness import (
+    STATUS_MISSING,
+    OddsFreshness,
+    classify_odds_freshness,
+    post_time_to_utc,
+)
 from ..services.chihou_odds_query import latest_odds_sql
 from ..utils.constants import CHIHOU_INDEX_DISPLAY_ADJUST
 from .ws_manager import chihou_results_manager
@@ -821,10 +827,17 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
 
 @router.get("/{race_id}/odds")
 async def get_chihou_race_odds(race_id: int, db: DbDep) -> dict:
-    """レースの最新単勝・複勝オッズを返す。
+    """レースの最新単勝・複勝オッズを、**鮮度つきで**返す。
 
     odds_history から各馬の最新オッズを取得して返す。
-    JRA の `/races/{id}/odds` と同一スキーマ（win/place の馬番→倍率 dict）。
+    win/place の馬番→倍率 dict は JRA の `/races/{id}/odds` と同一スキーマで、
+    `freshness` を足したものが地方版（JRA 側のクライアントは無視してよい）。
+
+    🔴 **鮮度を必ず一緒に返すこと。** 取得が止まっても最後のスナップショットは
+    DB に残るので、この API は 200 と「それらしい倍率」を返し続ける。
+    2026-08-20 に取得が4時間51分止まったとき、画面には朝のオッズが最後まで
+    出ていたが異常を示すものが何も無かった。値だけ返すのは危険。
+    詳細は `services/chihou_odds_freshness.py`。
     """
     result = await db.execute(
         sql_text("""
@@ -847,7 +860,46 @@ async def get_chihou_race_odds(race_id: int, db: DbDep) -> dict:
             win[combination] = float(odds_val)
         elif bet_type == "place":
             place[combination] = float(odds_val)
-    return {"win": win, "place": place}
+
+    freshness = await _fetch_odds_freshness(race_id, db)
+    return {"win": win, "place": place, "freshness": freshness.to_dict()}
+
+
+async def _fetch_odds_freshness(race_id: int, db: DbDep) -> OddsFreshness:
+    """レースのオッズ鮮度を DB から引いて判定する。
+
+    ⚠️ **時刻の扱いを SQL 側で完結させないこと。**
+    `chihou.odds_history.fetched_at` は API コンテナの `datetime.now()`（UTC）で
+    書かれた naive 値だが、DB セッションの TimeZone は Asia/Tokyo なので
+    `now() - fetched_at` は9時間ずれる。ここでは
+    「naive UTC の現在時刻」だけを SQL から受け取り、発走時刻の換算と判定は
+    Python の純関数側で行う。
+    """
+    row = (
+        await db.execute(
+            sql_text("""
+                SELECT
+                    r.date,
+                    r.post_time,
+                    (SELECT max(oh.fetched_at)
+                       FROM chihou.odds_history oh
+                      WHERE oh.race_id = r.id) AS last_fetched_at,
+                    (now() AT TIME ZONE 'UTC') AS now_utc
+                FROM chihou.races r
+                WHERE r.id = :rid
+            """),
+            {"rid": race_id},
+        )
+    ).first()
+    if row is None:
+        return OddsFreshness(STATUS_MISSING, None, None)
+
+    date, post_time, last_fetched_at, now_utc = row
+    return classify_odds_freshness(
+        last_fetched_at=last_fetched_at,
+        now_utc=now_utc,
+        post_at_utc=post_time_to_utc(date, post_time),
+    )
 
 
 @router.get("/{race_id}/results")
