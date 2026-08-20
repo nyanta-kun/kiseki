@@ -6,7 +6,9 @@
 '
 ' Behavior:
 '   1. Bail out if outside start-22:00 (weekends start=7:00, weekdays start=9:00).
-'   2. Skip if jvlink_agent --mode realtime is already running (idempotent restart).
+'   2. Skip if jvlink_agent --mode realtime is already running AND making progress
+'      (heartbeat fresh). A present-but-frozen process is not counted as running;
+'      see the 2026-08-20 note below.
 '   3. Otherwise, launch pythonw detached (Wait=False) so this VBS exits immediately.
 '      The previous Do-While+Wait=True design caused the wscript to hang forever
 '      whenever pythonw blocked on JVRTOpen, stacking zombie processes daily.
@@ -24,20 +26,39 @@ Else
 End If
 If h < startHour Or h >= 22 Then WScript.Quit
 
-Dim wmi, procs, alreadyRunning
+' ---- 「動いている」ではなく「進んでいる」で判定する (2026-08-20) ----
+' プロセスの存在だけを見ていたため、終了処理の途中で固まって taskkill も
+' 受け付けなくなったプロセス（＝死体）を「もう動いている」と数えて降りていた。
+' watchdog は5分ごとに kill を試みては失敗し、ここで毎回降りるので再起動が
+' 永久に始まらない。実測で地方のオッズが 4時間51分 止まった。
+' → heartbeat が STALL_MINUTES 以上古ければ、プロセスが残っていても
+'   代わりを起動する。死体と併存しても新しいプロセスは正常に動く。
+Const STALL_MINUTES = 15
+Const DEDUP_WINDOW_SEC = 120
+
+Dim HB_PATH
+HB_PATH = "C:\kiseki\windows-agent\data\realtime_heartbeat_jvlink.txt"
+
+Dim wmi, procs, aliveCount, newestBorn
 Set wmi = GetObject("winmgmts:\\.\root\cimv2")
 Set procs = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='pythonw.exe'")
-alreadyRunning = False
+aliveCount = 0
+newestBorn = ""
 For Each p In procs
     If Not IsNull(p.CommandLine) Then
         If InStr(p.CommandLine, "jvlink_agent.py") > 0 And InStr(p.CommandLine, "realtime") > 0 Then
-            alreadyRunning = True
-            Exit For
+            aliveCount = aliveCount + 1
+            If Not IsNull(p.CreationDate) Then
+                If p.CreationDate > newestBorn Then newestBorn = p.CreationDate
+            End If
         End If
     End If
 Next
 
-If alreadyRunning Then WScript.Quit
+If aliveCount > 0 Then
+    If Not IsFrozen(HB_PATH, newestBorn) Then WScript.Quit   ' 正常稼働中 -> 何もしない
+    sh2Log "jvlink realtime alive but heartbeat is stale -> launching a replacement (existing PIDs are frozen or unkillable)"
+End If
 
 ' ---- 起動レースの防止 (2026-08-02) ----
 ' 「実行中か調べる→起動する」は check-then-act の競合になっており、
@@ -78,17 +99,30 @@ For Each p2 In procs2
         End If
     End If
 Next
-If arr.Count > 1 Then
+' 対象は「たった今の競合」だけに絞る (2026-08-20)。
+' 以前は最古の1本を残していたため、殺せない死体が居るときに死体が「最古」として
+' 生き残り、たった今起動した健全なプロセスの方が殺されていた。
+Dim recent
+Set recent = CreateObject("Scripting.Dictionary")
+For Each k In arr.Keys
+    Dim born
+    born = WmiDateToDate(arr(k))
+    If Not IsEmpty(born) Then
+        If DateDiff("s", born, Now) <= DEDUP_WINDOW_SEC Then recent.Add k, arr(k)
+    End If
+Next
+
+If recent.Count > 1 Then
     Dim keepPid, keepDate
     keepPid = -1
     keepDate = ""
-    For Each k In arr.Keys
-        If keepDate = "" Or arr(k) < keepDate Then
-            keepDate = arr(k)
+    For Each k In recent.Keys
+        If keepDate = "" Or recent(k) < keepDate Then
+            keepDate = recent(k)
             keepPid = k
         End If
     Next
-    For Each k In arr.Keys
+    For Each k In recent.Keys
         If k <> keepPid Then
             sh2Log "duplicate jvlink_agent.py realtime PID=" & k & " -> terminate (keep " & keepPid & ")"
             On Error Resume Next
@@ -104,3 +138,41 @@ Sub sh2Log(msg)
     ts3.WriteLine Now & " launcher: " & msg
     ts3.Close
 End Sub
+
+' ---- WMI の CreationDate (yyyymmddHHMMSS.mmmmmm+ZZZ) を日付に変換する ----
+Function WmiDateToDate(wmiDate)
+    WmiDateToDate = Empty
+    If IsNull(wmiDate) Then Exit Function
+    If Len(wmiDate) < 14 Then Exit Function
+    On Error Resume Next
+    WmiDateToDate = DateSerial(CInt(Mid(wmiDate, 1, 4)), CInt(Mid(wmiDate, 5, 2)), CInt(Mid(wmiDate, 7, 2))) _
+                  + TimeSerial(CInt(Mid(wmiDate, 9, 2)), CInt(Mid(wmiDate, 11, 2)), CInt(Mid(wmiDate, 13, 2)))
+    If Err.Number <> 0 Then
+        WmiDateToDate = Empty
+        Err.Clear
+    End If
+End Function
+
+' ---- heartbeat が STALL_MINUTES 以上古ければ True（起動直後は猶予する） ----
+' 猶予の理由は watchdog の IsStalled と同じ: heartbeat ファイルはプロセスを
+' またいで使い回されるので、起動直後のプロセスは前のプロセスが残した古い
+' ファイルで判定されてしまう。初期化 (NVInit / NVSetServiceKey) が詰まると
+' 最初の heartbeat はさらに遅れる。
+' 判定不能（ファイルが無い）ときは False を返す。旧版エージェントを
+' 多重起動させないため、迷ったら起動しない側へ倒す。
+Function IsFrozen(hbPath, newestWmiDate)
+    IsFrozen = False
+    Dim fsoH
+    Set fsoH = CreateObject("Scripting.FileSystemObject")
+    If Not fsoH.FileExists(hbPath) Then Exit Function
+    If DateDiff("n", fsoH.GetFile(hbPath).DateLastModified, Now) < STALL_MINUTES Then Exit Function
+
+    Dim startedAt
+    startedAt = WmiDateToDate(newestWmiDate)
+    If IsEmpty(startedAt) Then
+        IsFrozen = True
+        Exit Function
+    End If
+    If DateDiff("n", startedAt, Now) < STALL_MINUTES Then Exit Function   ' 起動直後は猶予
+    IsFrozen = True
+End Function
