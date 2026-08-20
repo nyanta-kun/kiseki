@@ -566,7 +566,7 @@ pkill -9 -f "prlctl exec"
       走らせないので NVDTLab.dll(FastMM) のリークダイアログを出さずに落とせる
     - ログ: `C:\kiseki\windows-agent\backfill.log`
     - 登録: `powershell -ExecutionPolicy Bypass -File C:\kiseki\windows-agent\register_backfill_task.ps1`
-  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加）
+  - `kiseki-UmaConn-Watchdog`: **5分おき** (9:00-22:30) に realtime を監視（2026-04-30 から jvlink も対象・2026-08-02 にストール検知を追加・2026-08-03 にサービス検知を追加・2026-08-04 に日跨ぎ検知と起動猶予を追加・2026-08-20 に kill 失敗の検知を追加）
     - **[1] 不在**: プロセスが無ければ `kiseki-UmaConn-Realtime` / `kiseki-JVLink-Realtime` を実行
     - **[2] ストール**: プロセスは生きているが `data\realtime_heartbeat_{jvlink,umaconn}.txt` が
       **15分以上更新されていない**場合、taskkill してから再起動する
@@ -602,6 +602,24 @@ pkill -9 -f "prlctl exec"
         いずれでも検知できない**。EOD cleanup が唯一の網だったが、それが落ちていた
       - realtime は 9:00 か本 watchdog（9:00-22:30）でしか起動しないので、
         起動日が今日より前なら定義上「残り物」
+    - 🔴 **`taskkill /F` は効かないことがある**（2026-08-20 追加）。
+      `os._exit(1)` 直後に最後のスレッドがカーネル待ちで固まったプロセスは
+      **TerminateProcess を受け付けない**（`taskkill` は「実行中のタスクのインスタンスが
+      ありません」で失敗し、プロセス一覧には残り続ける。スレッド1本・CPU 加算なしが目印）。
+      - 旧実装は kill の成否を見ずに [1] の再起動へ進み、ランチャ側は
+        **プロセスの存在だけ**で「もう動いている」と判定して降りていた。結果
+        「STALLED -> terminating / not found -> starting」を5分ごとに繰り返すだけで
+        **再起動は一度も起きない**。2026-08-20 に地方のオッズが **14:55〜19:48 の4時間51分**
+        停止し、発走直前のオッズが朝の値のまま表示され続けた
+      - → watchdog は kill 後に存在を確認して `survived taskkill` をログに残し、
+        **死体が残っていても再起動へ進む**。ランチャ（`run_{umaconn,jvlink}_realtime.vbs`）は
+        「動いている」ではなく **heartbeat が新しいか（＝進んでいるか）** で判定する
+      - 死体と併存しても新しいプロセスは正常に動く（COM は解放済み。同日実測）。
+        死体の回収は再起動を待つ
+      - ⚠️ ランチャ末尾の多重起動そうじは **直近 120秒以内に起動したプロセスだけ**を対象にする。
+        「最古の1本を残す」ままだと死体が最古として生き残り、**たった今起動した健全な方**を殺す
+    - watchdog は該当プロセスを**全部**辞書に集めて1本ずつ判定する（死体と健全なプロセスが
+      併存しうるため。最後に見つかった1本だけを覚えていると、どちらを掴むかが WMI の列挙順まかせになる）
     - スクリプト: `C:\kiseki\windows-agent\run_realtime_watchdog.vbs`
     - ログ: `C:\kiseki\windows-agent\watchdog.log`
     - `New-ScheduledTaskAction -Execute` は**絶対パス必須**（Task Scheduler は PATH を解決せず、
