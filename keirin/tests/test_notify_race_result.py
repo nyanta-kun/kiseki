@@ -100,12 +100,35 @@ def test_cancelled_submission_is_still_notified():
     経緯: 2026-08-18 高知8R の 7S は 07:08 提案 → 07:15 取消（意図的）。
     当初これを「通知から外す」方向で直しかけたが、方針は逆だった。
     """
-    src = _src()
-    assert "STATUS_DELETED" in src, "取消ステータスを扱っていない"
-    # 入稿の取得が submitted だけに戻っていないこと
-    assert "status IN (?, ?)" in src, (
-        "入稿の取得が status='submitted' だけに戻っている＝取消が落ちる")
-    assert "（取消）" in src, "取消であることを表示していない"
+    src = ast.unparse(_func("_sold_lines"))
+    assert "NOTIFY_STATUSES" in src, (
+        "入稿の取得が実売の状態だけに戻っている＝取消が落ちる")
+    assert m.STATUS_DELETED in m.NOTIFY_STATUSES
+    assert "（取消）" in _src(), "取消であることを表示していない"
+
+
+def test_published_status_value_matches_the_submit_script():
+    """`STATUS_PUBLISHED` も値の一致を固定する。
+
+    🔴 ずれると**通知から金額が丸ごと消える**（例外は出ない）。2026-08-16 に
+       netkeirin の「公開」が入って以降、入稿は当日中に submitted → published へ
+       進むため、submitted だけを見ていた本スクリプトは入稿原本の行も当日累計も
+       出せなくなっていた（2026-08-20 の通知で実測）。
+    """
+    from scripts.netkeirin_submit_wt import STATUS_PUBLISHED as canonical
+    assert m.STATUS_PUBLISHED == canonical
+
+
+def test_sold_means_submitted_or_published():
+    """「売った」＝ submitted ∪ published。Web（keirin_router）と同じ定義。
+
+    🔴 published を落とすと、対象抽出・入稿原本の行・当日累計の**3箇所が同時に**
+       欠ける。どれも例外を出さないので「今日は推奨が無かった」ようにしか見えない。
+    """
+    assert set(m.SOLD_STATUSES) == {m.STATUS_SUBMITTED, m.STATUS_PUBLISHED}
+    for name in ("_targets", "_day_total"):
+        src = ast.unparse(_func(name))
+        assert "SOLD_STATUSES" in src, f"{name} が実売の定義を共有していない"
 
 
 def test_day_total_counts_only_sold():
@@ -113,7 +136,7 @@ def test_day_total_counts_only_sold():
     src = _src()
     body = src[src.index("def _day_total("):]
     body = body[:body.index("\ndef ", 10)]
-    assert "STATUS_SUBMITTED" in body
+    assert "SOLD_STATUSES" in body
     assert "STATUS_DELETED" not in body, "当日合計に取消が混ざっている"
 
 
@@ -122,9 +145,71 @@ def test_sold_line_shows_buy_and_payout():
     src = _src()
     body = src[src.index("def _sold_lines("):]
     body = body[:body.index("\ndef ", 10)]
-    assert "format_pred_combo" in body, "買い目を出していない"
+    assert "format_bet_lines" in body, "買い目を出していない"
     assert "払戻" in body and "想定" in body, "払戻/想定の表記が無い"
     assert "的中" in body
+
+
+def test_sold_line_prefers_the_bet_detail_over_the_paper_candidate():
+    """🔴 買い目は**実際に入稿した bet_detail** が正本。
+
+    picks_history は候補なので、看板の穴埋めで売ったレースには行が無く
+    買い目が空欄のまま通知されていた。
+    """
+    src = ast.unparse(_func("_sold_lines"))
+    assert src.index("format_bet_lines") < src.index("format_pred_combo"), \
+        "picks_history を先に見ている（bet_detail が正本）"
+
+
+# --- 表示（2026-08-21 ユーザー要望）------------------------------------------
+
+def test_finishing_order_shows_car_and_mark_only():
+    """🔴 着順に選手名を出さない。車番と印だけ（2026-08-21 ユーザー方針）。
+
+    名前があると1行が折り返し、車番で書かれた買い目と突き合わせにくい。
+    """
+    src = ast.unparse(_func("_build_message"))
+    assert "prediction_mark" in src and "MARK" in src, "印を出していない"
+    # 出走表から名前を引いていないこと（venue_name は会場名なので別物）
+    assert "'name'" not in src and '"name"' not in src, "着順に選手名が復活している"
+    assert "wt_entries" in src
+    entries_sql = next(x for x in src.split("'") if "FROM wt_entries" in x)
+    assert " name" not in entries_sql, "出走表から選手名を取り続けている"
+
+
+def test_race_payout_is_reported():
+    """三連複・三連単の確定配当を出す（2026-08-21 ユーザー要望）。"""
+    assert ast.unparse(_func("_build_message")).count("_race_payout_line") == 1
+    payouts = {("3連複", (1, 3, 7)): 1640, ("3連単", (7, 1, 3)): 4720}
+    assert m._race_payout_line(payouts, (7, 1, 3)) == "確定配当: 3連複 ¥1,640 / 3連単 ¥4,720"
+
+
+def test_race_payout_uses_the_finishing_order_for_trifecta():
+    """三連複は順不同・三連単は着順。取り違えると別の目の配当を出す。"""
+    payouts = {("3連単", (7, 1, 3)): 4720}
+    assert m._race_payout_line(payouts, (1, 7, 3)) is None, \
+        "着順違いの三連単配当を出している"
+
+
+def test_race_payout_line_is_dropped_when_unavailable():
+    """引けないときは行ごと落とす（`—` を並べない）。"""
+    assert m._race_payout_line({}, (1, 2, 3)) is None
+    assert m._race_payout_line({("3連複", (1, 2, 3)): 630}, (1, 2)) is None
+
+
+def test_bet_kind_labels_are_not_printed():
+    """🔴 券種は区切り文字が表す（三連複 `=` / 三連単 `-`）ので `三単:` は出さない。
+
+    表記が統一されていればラベルは冗長というユーザー方針（2026-08-21）。
+    """
+    tree = ast.parse(_src())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "format_pred_combo"]
+    assert calls, "買い目の整形が消えている"
+    for c in calls:
+        kw = {k.arg: k.value for k in c.keywords}
+        assert isinstance(kw.get("labels"), ast.Constant) and kw["labels"].value is False, \
+            "券種ラベルつきで買い目を出している箇所がある"
 
 
 # --- 対象範囲（静的検査）----------------------------------------------------

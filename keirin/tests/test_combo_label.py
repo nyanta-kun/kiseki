@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.combo_label import (  # noqa: E402
-    axis_cars, format_pred_combo, is_hit, parse_pred_combo,
+    axis_cars, format_bet_lines, format_pred_combo, is_hit, parse_pred_combo,
 )
 
 # 実データ（picks_history 2026-08-13 の RANK_7H1）
@@ -98,3 +98,42 @@ def test_notifier_uses_the_shared_parser():
     assert "from src.combo_label import" in src
     assert "combo.startswith(\"三単:\")" not in src, \
         "自前の券種判定が復活している。src/combo_label を使うこと"
+
+
+# --- 券種ラベルの省略 / bet_detail からの整形（2026-08-21）-------------------
+
+def test_labels_can_be_dropped_because_the_separator_carries_the_bet_kind():
+    """三連複 `=` / 三連単 `-` で券種が判るので接頭辞は冗長（ユーザー方針）。"""
+    assert format_pred_combo("三単:5-2-3,5-2-4", labels=False) == "5-2-3,4"
+    assert format_pred_combo("三複:2=5=7,2=5=6", labels=False) == "2=5=7,6"
+    got = format_pred_combo("三複:2=5=7,2=5=6 / 三単:5-2-3", labels=False)
+    assert got == "2=5=7,6 / 5-2-3"
+
+
+def test_labels_false_still_returns_the_raw_text_when_unparsable():
+    """解釈できない断片は券種が判らないので原文のまま返す。"""
+    assert format_pred_combo("見送り", labels=False) == "見送り"
+
+
+def test_bet_detail_lines_fold_like_pred_combo():
+    """`bet_detail.lines` を pred_combo と同じ表記へ畳む。"""
+    trio = [{"bet_type": "3連複", "combo": c}
+            for c in ("1=3=5", "2=3=5", "3=4=5", "3=5=7")]
+    assert format_bet_lines(trio) == "3=5=1,2,4,7"
+    tf = [{"bet_type": "3連単", "combo": c}
+          for c in ("3-2-1", "3-2-4", "3-7-1", "3-7-2")]
+    assert format_bet_lines(tf) == "3-2-1,4 3-7-1,2"
+
+
+def test_bet_detail_of_two_bet_kinds_keeps_both():
+    """7H2 のような2券種の商品は両方出す（区切り文字で見分けられる）。"""
+    got = format_bet_lines([{"bet_type": "3連複", "combo": "1=2=3"},
+                            {"bet_type": "3連単", "combo": "1-2-3"}])
+    assert got == "1=2=3 / 1-2-3"
+
+
+def test_bet_detail_without_lines_is_empty_not_an_error():
+    """買い目が引けないときは空文字（通知を落とさない）。"""
+    assert format_bet_lines(None) == ""
+    assert format_bet_lines([]) == ""
+    assert format_bet_lines([{"bet_type": "2車複", "combo": "1=2"}]) == ""
