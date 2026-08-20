@@ -151,4 +151,6 @@ def test_feature_cols_contains_rp_trend():
     ライン実力5特徴で48→60）。"""
     for c in RP_TREND_COLS_WT:
         assert c in FEATURE_COLS_WT
-    assert len(FEATURE_COLS_WT) == 60
+    # 2026-08-19: ライン先頭比較・ライン内結束の6特徴を追加（60→66）。
+    # 根拠は `LINE_LEADER_COLS_WT` の定義部と `scripts/exp_line_leader_ab.py`。
+    assert len(FEATURE_COLS_WT) == 66

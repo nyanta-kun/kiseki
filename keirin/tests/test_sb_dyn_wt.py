@@ -119,4 +119,6 @@ def test_sb_dyn_cols_in_feature_cols():
     """
     for c in SB_DYN_COLS_WT:
         assert c in FEATURE_COLS_WT
-    assert len(FEATURE_COLS_WT) == 60
+    # 2026-08-19: ライン先頭比較・ライン内結束の6特徴を追加（60→66）。
+    # 根拠は `LINE_LEADER_COLS_WT` の定義部と `scripts/exp_line_leader_ab.py`。
+    assert len(FEATURE_COLS_WT) == 66

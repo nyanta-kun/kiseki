@@ -221,7 +221,31 @@ def main():
         # L1: 軸1と同じラインの最上位（＝番手）。穴埋めで効いた形。
         v["L1 軸1と同ラインの最上位"] = same[0] if same else best
         # L2: 別ラインの先頭で3着内率1位。
+        # 🔴 **単騎(line_size<=1)は先頭に数えない**（看板穴埋めの `_is_leader` を
+        #    そのまま持ってきた形）。複数ラインあるときは、全ラインの先頭を
+        #    横並びにして3着内率1位を採る（軸1に近い／強いラインではない）。
+        # 🔴 別線先頭が1人も居なければ `best`（V2 と同じ）へ落ちる。
+        #    **L2 の数字にはその落ちた分が混ざる**ので、内訳を別に出す。
         v["L2 別ラインの先頭1位"] = other_leaders[0] if other_leaders else best
+        # L2b: 単騎も「1人ラインの先頭」として候補に含める。
+        solo_or_leader = [f for f in by_p3
+                          if ln.get(f, (None,))[0] != a1_lg
+                          and (is_leader(f) or (ln.get(f, (None, 1))[1] or 1) <= 1)]
+        v["L2b 別ライン先頭（単騎も可）"] = solo_or_leader[0] if solo_or_leader else best
+        # L2c: 別ラインのうち**ライン内3着内率の合計が最大**のラインの最上位。
+        grp = defaultdict(list)
+        for f in r["p3"]:
+            g = ln.get(f, (None,))[0]
+            if g is not None and g != a1_lg:
+                grp[g].append(f)
+        cand = None
+        if grp:
+            gbest = max(grp, key=lambda g: sum(r["p3"][f] for f in grp[g]))
+            head = [f for f in sorted(grp[gbest], key=lambda f: (-r["p3"][f], f))
+                    if f not in (r["h"], r["t"])]
+            cand = head[0] if head else None
+        v["L2c 最強別ラインの最上位"] = cand or best
+        r["_l2_fallback"] = not other_leaders
         # L3: 同ライン最上位 → 無ければ別ライン先頭 → 無ければ3着内率1位。
         v["L3 同ライン→別線先頭→指数"] = (
             same[0] if same else (other_leaders[0] if other_leaders else best))
@@ -251,8 +275,8 @@ def main():
         return bet, (int(r["trio"][w] * st[w]) if w in st else 0)
 
     names = ["V0 現行（軸2=◯）", "V2 現行の差し替え（3着内率1位）",
-             "L1 軸1と同ラインの最上位", "L2 別ラインの先頭1位",
-             "L3 同ライン→別線先頭→指数"]
+             "L2 別ラインの先頭1位", "L2b 別ライン先頭（単騎も可）",
+             "L2c 最強別ラインの最上位"]
     accs = {n: Acc() for n in names}
     keys = []
     for r in rows:
@@ -266,6 +290,13 @@ def main():
         for n in names:
             accs[n].add(r["rk"], *got[n], set([r["a1"], v[n]]) <= r["win"])
 
+    _vs = [variants(r) for r in rows]
+    nfb = sum(1 for r in rows if r.get("_l2_fallback"))
+    nsame = sum(1 for vv in _vs if len(vv) >= 3
+                and vv.get("L2 別ラインの先頭1位") == vv.get("V2 現行の差し替え（3着内率1位）"))
+    print(f"\n  L2 の内訳: 別線先頭が居ないので V2 へ落ちた {nfb}R "
+          f"({100*nfb/max(len(rows),1):.1f}%) / "
+          f"結果的に V2 と同じ車 {nsame}R ({100*nsame/max(len(rows),1):.1f}%)")
     print(f"\n===== 軸2の選び直し（軸1据え置き・同一レース {len(keys)}R・同一予算）=====")
     print(HEAD)
     for n in names:

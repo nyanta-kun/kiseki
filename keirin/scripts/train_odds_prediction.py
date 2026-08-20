@@ -159,8 +159,30 @@ def _load_wf_preds(n_car: int) -> dict[str, tuple[dict, dict, str]]:
 
 
 # ---------------------------------------------------------------------------
-def build_dataset(n_car: int) -> pd.DataFrame:
-    preds = _load_wf_preds(n_car)
+def _load_wf_preds_db(n_car: int) -> dict[str, tuple[dict, dict, str]]:
+    """`wt_entries.pred_{top3,win}_pct` から {race_key: (p3, pw, date)} を作る。
+
+    `backfill_index_pct_wt.py` が月次凍結 vintage で書いた値なのでリークは無い。
+    """
+    from src.database import get_connection
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT r.race_key, r.race_date, e.frame_no, e.pred_top3_pct, e.pred_win_pct "
+            "FROM wt_entries e JOIN wt_races r USING(race_key) "
+            "WHERE r.n_entries = ? AND e.pred_top3_pct IS NOT NULL "
+            "  AND e.pred_win_pct IS NOT NULL", (n_car,)).fetchall()
+    acc: dict[str, tuple[dict, dict, str]] = {}
+    for rk, d, fn, p3, pw in rows:
+        p3d, pwd, _ = acc.setdefault(rk, ({}, {}, str(d)))
+        p3d[int(fn)] = float(p3) / 100.0
+        pwd[int(fn)] = float(pw) / 100.0
+    return {k: v for k, v in acc.items() if len(v[0]) == n_car}
+
+
+def build_dataset(n_car: int, p3_source: str = "cache") -> pd.DataFrame:
+    preds = (_load_wf_preds_db(n_car) if p3_source == "db"
+             else _load_wf_preds(n_car))
     keys = sorted(preds)
     log.info("walk-forward 予測: %s車 %d レース", n_car, len(keys))
     entries = _load_entries(keys)
@@ -230,6 +252,18 @@ def main() -> None:
     #    最初から相対値だけを学習させる。**推論側の変更は不要**（整合化が水準を
     #    決めるため）。2026-08-19 検証。
     ap.add_argument("--target-mode", choices=("level", "centered"), default="level")
+    # p3/pw の出所。既定は従来どおり walk-forward キャッシュ。
+    # 🔴 **2026-08-19 に `db` を追加した理由**: `FEATURE_COLS_WT` を 60→66 へ
+    #    変えたので、キャッシュ（`axis_detail_7car.pkl`・2026-08-06 生成）は
+    #    **旧60特徴の予測**であり、そのまま学習すると入力が古いままになる。
+    #    一方 `wt_entries.pred_*_pct` は `backfill_index_pct_wt.py` が
+    #    **月次凍結 vintage で書き直した honest な値**（2026-07-29 の改定以降、
+    #    各月はその月を test 窓とするモデルでのみ採点される）。
+    #    docstring 上部の「wt_entries は backfill されており look-ahead」は
+    #    その改定より前の状態を指しており、**現在は当てはまらない**。
+    # ⚠️ 既定は変えない。キャッシュ再生成（`exp_7car_gap_fresh.py`）が
+    #    走る運用も残っているため、切り替えは明示指定に限る。
+    ap.add_argument("--p3-source", choices=("cache", "db"), default="cache")
     # 本番モデルを上書きせずに比較するための退避名。
     ap.add_argument("--save-suffix", default="",
                     help="モデル名の接尾辞（例: _centered2512）。空なら本番名を上書き")
@@ -237,12 +271,13 @@ def main() -> None:
 
     import lightgbm as lgb
 
-    cache = EXP / f"odds_trio_dataset_n{args.n_car}.pkl"
+    suffix = "" if args.p3_source == "cache" else f"_{args.p3_source}"
+    cache = EXP / f"odds_trio_dataset_n{args.n_car}{suffix}.pkl"
     if cache.exists():
         d = pd.read_pickle(cache)
         log.info("データセットをキャッシュから読みました: %s", cache)
     else:
-        d = build_dataset(args.n_car)
+        d = build_dataset(args.n_car, args.p3_source)
         cache.parent.mkdir(parents=True, exist_ok=True)
         d.to_pickle(cache)
     d["y"] = np.log10(d.odds)
