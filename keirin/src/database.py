@@ -244,11 +244,27 @@ class _PgConn:
         return _PgCursor(cur)
 
     def executemany(self, sql: str, params_list) -> None:
+        """一括 INSERT/UPDATE。**1行ずつ送らない**（2026-08-20 是正）。
+
+        🔴 psycopg2 の素の `executemany` は**1行につき1往復**する。VPS への
+           RTT は実測 24.9ms なので、16,000行の UPDATE に **約399秒**かかっていた。
+           `backfill_index_pct_wt.py` は1窓16,000行 × 32窓で、
+           **所要時間の76%がこの往復待ち**だった（1窓8.7分のうち6.6分）。
+
+        `execute_batch` は page_size 行を1文へまとめて送るので往復が 1/1000 になる。
+        単純な INSERT/UPDATE では素の executemany と意味的に同一
+        （RETURNING を使う文だけは挙動が違うが、本リポジトリの呼び出し30箇所は
+        すべて一括 INSERT/UPDATE で該当しない）。
+
+        ⚠️ `page_size` を上げすぎると1文が巨大になりサーバ側のパースが重くなる。
+           1000 は往復削減がほぼ飽和する一方で文サイズが現実的に収まる値。
+        """
         translated, _ = _pg_translate(sql, ())
         if translated is None or not params_list:
             return
+        from psycopg2.extras import execute_batch
         cur = self._conn.cursor()
-        cur.executemany(translated, params_list)
+        execute_batch(cur, translated, params_list, page_size=1000)
 
     def executescript(self, sql: str) -> None:
         for stmt in sql.split(";"):
