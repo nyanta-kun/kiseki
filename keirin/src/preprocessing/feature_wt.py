@@ -310,9 +310,27 @@ LINE_STRENGTH_COLS_WT = [
 # ⚠️ これは**条件付き成績**であって、モデルが `race_point` 経由で間接的に
 #    捉えている可能性がある。**純増分は A/B で測るまで分からない**
 #    （`scripts/exp_line_leader_ab.py`）。
+# 🔴 **名前は実装と一致させること**（2026-08-19 に4件ずれていた・ユーザー指摘で是正）。
+#   最初の版は次の問題を持っていた。**紛らわしい名前は将来必ず誤読を生む**:
+#     - `leader_rp_gap_top` は単騎を先頭に数えないのに、
+#       `leader_rp_rank` / `is_weak_leader` は**単騎も1ラインとして数えて**いた
+#       ＝同じ「先頭」という語が特徴ごとに違う意味だった
+#     - `is_weak_leader` は名前が車単位に読めるが、実際は**ライン全員に立つ**
+#     - `line_rp_lead_minus_next` は「先頭 − 番手」ではなく
+#       「先頭 − ライン内2番目の得点」だった
+#   → 全て「所属ラインの属性」だと分かる `line_leader_*` 系へ改名し、
+#     単騎の扱いを**全特徴で統一**した（先頭に数えない）。
+#
+# ⚠️ 単騎（`line_size <= 1`）は**どの特徴でも先頭に数えない**。番手が居らず
+#    「先頭が潰れるとライン員も道連れ」という構造そのものが無いため。
+#    看板穴埋めの `_is_leader` と同じ扱い。
 LINE_LEADER_COLS_WT = [
-    "leader_rp", "leader_rp_gap_top", "leader_rp_rank", "is_weak_leader",
-    "line_rp_spread", "line_rp_lead_minus_next",
+    "line_leader_rp",            # 所属ラインの先頭の得点
+    "line_leader_rp_gap_top",    # レース内で最強の先頭との得点差
+    "line_leader_rp_rank",       # 先頭の中での得点順位（0=最強）
+    "line_leader_is_weakest",    # 所属ラインの先頭が最弱か
+    "line_rp_spread",            # ライン内の得点の広がり（max − min）
+    "line_rp_lead_minus_deputy", # 先頭 − 先頭以外の最高得点（＝番手）
 ]
 
 
@@ -398,12 +416,20 @@ def add_line_leader_features_wt(df: pd.DataFrame) -> pd.DataFrame:
 
     根拠と実測は `LINE_LEADER_COLS_WT` の定義部。
 
-    ⚠️ **先頭の定義は `is_line_leader` かつ `line_size >= 2`**。単騎を先頭に
-       数えない（番手が居らず「先頭が潰れると道連れ」という構造が無いため）。
-       看板穴埋めの `_is_leader` と同じ扱いに揃える。
-    ⚠️ 先頭が特定できないライン（`is_line_leader` が全員0 等）は、
-       ライン内の得点最上位を先頭とみなす（情報が無いことを理由に
-       特徴を欠損させない）。
+    ## 用語（全特徴で統一する）
+
+    **先頭 = `is_line_leader` かつ `line_size >= 2`**。
+    🔴 **単騎はどの特徴でも先頭に数えない。** 番手が居らず「先頭が潰れると
+       ライン員も道連れ」という構造そのものが無いため。看板穴埋めの
+       `_is_leader` と同じ扱い。2026-08-19 の初版は特徴ごとに扱いが違い、
+       `gap_top` は単騎を除外するのに `rank` / `is_weak` は含めていた。
+
+    ⚠️ 先頭フラグが1人も立たないラインは、ライン内の得点最上位を先頭とみなす
+       （情報が無いことを理由に特徴を欠損させない）。ただしその推定先頭は
+       `line_size >= 2` のときだけ「本物の先頭」として順位・最弱判定に入る。
+    ⚠️ 値は**すべてライン単位**で、同じラインの全車に同じ値が入る。
+       `line_leader_is_weakest` も車ではなく**所属ラインの属性**（名前を
+       `is_weak_leader` から変えたのはこのため）。
     """
     out = df.copy()
 
@@ -411,8 +437,7 @@ def add_line_leader_features_wt(df: pd.DataFrame) -> pd.DataFrame:
         """列が無くても**必ず Series** を返す。
 
         🔴 `pd.to_numeric(df.get("無い列"))` は **numpy.float64(nan) を返す**ので、
-           そのまま `.fillna()` を呼ぶと AttributeError で落ちる。列の欠落は
-           呼び出し側（テスト用の小さな DataFrame 等）で普通に起きる。
+           そのまま `.fillna()` を呼ぶと AttributeError で落ちる。
         """
         v = out.get(col)
         if v is None:
@@ -426,51 +451,58 @@ def add_line_leader_features_wt(df: pd.DataFrame) -> pd.DataFrame:
     size = _num("line_size", 1.0)
     leader_flag = _num("is_line_leader", 0.0)
     key = out["race_key"].astype(str) + "#" + lg.astype(str)
+    rkey = out["race_key"].astype(str)
 
-    # ライン内の先頭得点: is_line_leader 優先、無ければライン内最大得点。
+    # ---- 先頭の得点 -------------------------------------------------------
+    # is_line_leader を優先し、立っていないラインは得点最上位を先頭とみなす。
     lead_rp = rp.where(leader_flag > 0)
-    by_line_lead = lead_rp.groupby(key).transform("max")
-    by_line_max = rp.groupby(key).transform("max")
-    out["leader_rp"] = by_line_lead.fillna(by_line_max).astype(float)
+    out["line_leader_rp"] = (lead_rp.groupby(key).transform("max")
+                             .fillna(rp.groupby(key).transform("max")).astype(float))
 
-    # レース内の「本物の先頭」（line_size>=2）だけを横並びにする。
-    is_real_leader = (leader_flag > 0) & (size >= 2)
-    real_lead_rp = rp.where(is_real_leader)
-    top_lead = real_lead_rp.groupby(out["race_key"].astype(str)).transform("max")
-    out["leader_rp_gap_top"] = (top_lead - out["leader_rp"]).fillna(0.0).astype(float)
+    # ---- 「本物の先頭」だけを横並びにする（単騎を除外）---------------------
+    line_size_max = size.groupby(key).transform("max")
+    is_real = line_size_max >= 2
+    real_lead_rp = out["line_leader_rp"].where(is_real)
 
-    # レース内の先頭の中での得点順位（0=最強）。先頭でない車はそのラインの値を持つ。
-    per_line_lead = out.groupby(["race_key", key.rename("_lk")])["leader_rp"].first()
-    rank = (per_line_lead.groupby(level=0).rank(ascending=False, method="min") - 1)
-    lk = list(zip(out["race_key"], key))
-    out["leader_rp_rank"] = [float(rank.get(k, 0.0)) for k in lk]
+    top_lead = real_lead_rp.groupby(rkey).transform("max")
+    out["line_leader_rp_gap_top"] = (top_lead - out["line_leader_rp"]).astype(float)
 
-    # 先頭なのに得点が最下位クラス（レース内の先頭の中で最下位）。
-    n_leaders = per_line_lead.groupby(level=0).transform("count")
-    n_lead_by_row = pd.Series([float(n_leaders.get(k, 1.0)) for k in lk], index=out.index)
-    out["is_weak_leader"] = (
-        (out["leader_rp_rank"] >= (n_lead_by_row - 1)) & (n_lead_by_row >= 2)
+    # 順位: 本物の先頭だけで付ける。単騎ラインは「最下位＋1」に置く
+    # （順位を持たないことを、順位の外側の値で表す）。
+    per_line = pd.DataFrame({"rkey": rkey, "key": key,
+                             "rp": real_lead_rp}).drop_duplicates("key").set_index("key")
+    ranks: dict[str, float] = {}
+    n_real: dict[str, int] = {}
+    for rk_, g in per_line.groupby("rkey"):
+        real = g["rp"].dropna().sort_values(ascending=False)
+        n_real[rk_] = len(real)
+        for i, k in enumerate(real.index):
+            ranks[k] = float(i)
+        for k in g.index.difference(real.index):
+            ranks[k] = float(len(real))          # 単騎は最下位＋1
+    out["line_leader_rp_rank"] = [ranks.get(k, 0.0) for k in key]
+
+    # 最弱: 本物の先頭が2つ以上あるレースで、その中で最下位のラインだけ 1。
+    nreal_by_row = pd.Series([float(n_real.get(r, 0)) for r in rkey], index=out.index)
+    out["line_leader_is_weakest"] = (
+        is_real
+        & (nreal_by_row >= 2)
+        & (out["line_leader_rp_rank"] >= (nreal_by_row - 1))
     ).astype(float)
 
-    # ライン内部の結束: 得点の広がりと、先頭−次点の差（ちぎれやすさ）。
+    # ---- ライン内部の結束 -------------------------------------------------
     out["line_rp_spread"] = (rp.groupby(key).transform("max")
                              - rp.groupby(key).transform("min")).astype(float)
-    # 🔴 **名前どおり「先頭 − 番手」ではない。** ここが計算するのは
-    #    **「先頭の得点 − ライン内で2番目に高い得点」**。
-    #    先頭がライン内の最上位なら両者は一致するが、**先頭が最上位でない
-    #    （＝逃げが弱く番手が強い）ラインでは値が小さく出る**
-    #    （例: 先頭60 / 番手88 / 3番手86 → 60−86 = −26。「先頭−番手」なら −28）。
-    #    符号と向きは常に正しく、ずれるのは大きさだけ。
-    #
-    #    ⚠️ **この定義のまま全モデル（本番4本 + vintage 128本）を学習済み**
-    #       （2026-08-19）。実装を「先頭−番手」へ直すと推論値が学習時と食い違う
-    #       （train/serve skew）ので、**直すなら全モデルの再学習とセット**にすること。
-    #       A/B（`exp_line_leader_ab.py`）でもこの定義で測っており、
-    #       ライン内結束2本は3着内ターゲットで上積みが無かった（ΔAUC ≈ 0）。
-    #    ⚠️ 名前を変えるのも不可（学習済みモデルが特徴量名を保持しているため）。
-    second = rp.groupby(key).transform(
-        lambda s: s.nlargest(2).iloc[-1] if len(s) >= 2 else s.iloc[0])
-    out["line_rp_lead_minus_next"] = (out["leader_rp"] - second).astype(float)
+
+    # 先頭 − **先頭以外の最高得点**（＝番手）。名前どおりに計算する。
+    # 🔴 初版は「ライン内2番目の得点」を引いており、**先頭が最上位でない
+    #    （逃げが弱く番手が強い）ラインで値がずれていた**（60−86 = −26。
+    #    正しくは 60−88 = −28）。ユーザー指摘で是正（2026-08-19）。
+    has_flag = (leader_flag > 0).groupby(key).transform("max")
+    is_lead_row = (leader_flag > 0).where(
+        has_flag > 0, rp.eq(rp.groupby(key).transform("max")))
+    deputy_rp = rp.where(~is_lead_row.astype(bool)).groupby(key).transform("max")
+    out["line_rp_lead_minus_deputy"] = (out["line_leader_rp"] - deputy_rp).astype(float)
 
     for c in LINE_LEADER_COLS_WT:
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0).astype(float)
@@ -1046,21 +1078,25 @@ FEATURE_COLS_WT = [
     #   +先頭比較   ΔAUC +0.00044/+0.00072  Δ1位勝率 +0.24/+0.25pt  ← 両窓で一貫
     #   +ライン内結束 ΔAUC −0.00003/+0.00019  Δ1位勝率 +0.04/+0.36pt
     #   +両方       ΔAUC +0.00044/+0.00074  Δ1位勝率 +0.04/+0.31pt
-    # 分割重要度は `leader_rp_gap_top` が全64特徴中**5位**（両窓）、
-    # `line_rp_spread` 5〜7位・`line_rp_lead_minus_next` 9〜12位。
-    # `is_weak_leader` は 56〜59位でほぼ使われない（`leader_rp_gap_top` に吸収）。
+    # 分割重要度は `line_leader_rp_gap_top` が全64特徴中**5位**（両窓）、
+    # `line_rp_spread` 5〜7位・`line_rp_lead_minus_deputy` 9〜12位。
+    # `line_leader_is_weakest` は 56〜59位でほぼ使われない
+    # （`line_leader_rp_gap_top` に吸収）。
+    # ⚠️ この A/B は**改名・定義是正の前**の版で測った値。定義が変わったので
+    #    厳密には測り直しが要るが、変わったのは単騎の扱いと番手の取り方だけで
+    #    主要な `line_leader_rp_gap_top` は同一。再学習後に確認する。
     #
     # ⚠️ **結束2本は3着内ターゲットでは上積みが測れていない**（+両方が
     #    +先頭比較を上回らない）。それでも入れるのは、(a) 分割重要度が高い、
     #    (b) win/top2/bad の各ターゲットでは未検証、(c) ユーザー判断
     #    「基盤として条件を揃えて入れる」（2026-08-19）による。
     #    **将来 A/B で害が出たら真っ先に落とす候補**。
-    "leader_rp",
-    "leader_rp_gap_top",
-    "leader_rp_rank",
-    "is_weak_leader",
+    "line_leader_rp",
+    "line_leader_rp_gap_top",
+    "line_leader_rp_rank",
+    "line_leader_is_weakest",
     "line_rp_spread",
-    "line_rp_lead_minus_next",
+    "line_rp_lead_minus_deputy",
     "n_lines",
     "is_isolated",
     "line_frac",

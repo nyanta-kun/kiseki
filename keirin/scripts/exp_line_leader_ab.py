@@ -244,8 +244,12 @@ def run_window(df: pd.DataFrame, test_from: str, test_to: str, arms: list) -> No
 
 
 
-LEADER_COLS = ["leader_rp", "leader_rp_gap_top", "leader_rp_rank", "is_weak_leader"]
-COHESION_COLS = ["line_rp_spread", "line_rp_lead_minus_next"]
+# 🔴 列名は `LINE_LEADER_COLS_WT` から引く。ここへ手書きすると
+#    2026-08-19 の改名のように**片方だけ古いまま**になり、スクリプトが
+#    「新特徴が付与されていません」で落ちる（このリポジトリの二重管理の型）。
+LEADER_COLS = ["line_leader_rp", "line_leader_rp_gap_top",
+               "line_leader_rp_rank", "line_leader_is_weakest"]
+COHESION_COLS = ["line_rp_spread", "line_rp_lead_minus_deputy"]
 
 
 def main() -> None:
