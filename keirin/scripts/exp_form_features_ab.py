@@ -46,19 +46,34 @@ from src.preprocessing.feature_wt import (
 from src.database import get_connection
 
 TRAIN_FROM = "2024-04-01"          # S/B ラベル(2024-01〜)の90D窓が充足する時点
+# w1/w2 = 掃引窓（2026-08-20 の初回 A/B で使用済み）。
+# 🔴 w3/w4 = **確認窓**。`+meeting1`（4本→1本へ絞った版）は w1/w2 の分割重要度を
+#    見て決めたので、w1/w2 はその案にとって汚染されている。採否は w3/w4 で決める。
 WINDOWS = {
     "w1": ("2026-04-13", "2026-07-15"),
     "w2": ("2026-01-01", "2026-04-12"),
+    "w3": ("2025-10-01", "2025-12-31"),
+    "w4": ("2025-07-01", "2025-09-30"),
 }
 SEEDS = [42, 101, 202, 303, 404]
 LONE_COLS = ["is_lone_senko"]
 
+# 🔴 初回 A/B（2026-08-20・w1/w2）で `+quality` `+lone` `+all` は**不採用**が確定。
+#    `+quality` は w2 で AUC 符号反転（−0.00011）・Δ3着内 +0.03pt。
+#    `+lone` も AUC が窓で反転。`+all` は w1 最良（+0.36pt）なのに w2 で二軸 −0.07。
+#    再実行のコストだけかかるのでアームから外した（記録は
+#    [[keirin_form_features_ab_2026_08_20]]）。
+#
+# `+meeting1` は **`cup_mean_order_n` 1本のみ**。初回の分割重要度で、節内成績4本のうち
+# 使われているのがこれだけ（22/74位・他3本は56〜60位）と分かったため。
+# 事前の残差分析は「3着内かどうか」の二値で層別したが、モデルが使うのは
+# **連続量の平均着順**だった＝二値では情報が粗すぎた。
+MEETING_CORE_COLS = ["cup_mean_order_n"]
+
 ARMS = {
-    "base":     [],
-    "+meeting": MEETING_FORM_COLS_WT,
-    "+quality": FORM_QUALITY_COLS_WT,
-    "+lone":    LONE_COLS,
-    "+all":     MEETING_FORM_COLS_WT + FORM_QUALITY_COLS_WT + LONE_COLS,
+    "base":      [],
+    "+meeting":  MEETING_FORM_COLS_WT,
+    "+meeting1": MEETING_CORE_COLS,
 }
 
 
@@ -123,22 +138,22 @@ def run_window(df: pd.DataFrame, test_from: str, test_to: str) -> dict:
               f"1位勝率 {res[arm]['win']*100:.2f}% / "
               f"1位3着内 {res[arm]['top3']*100:.2f}% / 二軸 {res[arm]['two']*100:.2f}%",
               flush=True)
-        if arm == "+all":
+        if arm == "+meeting":
             imp = pd.Series(m.feature_importances_, index=cols)
             rk = imp.rank(ascending=False).astype(int)
-            for c in ARMS["+all"]:
+            for c in ARMS["+meeting"]:
                 print(f"     {c:<18} imp={imp[c]:5d}  順位 {rk[c]}/{len(cols)}")
     return res
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--windows", default="w1,w2")
+    ap.add_argument("--windows", default="w1,w2,w3,w4")
     args = ap.parse_args()
 
     print("データ読み込み ...", flush=True)
     max_to = max(t for _, t in WINDOWS.values())
-    raw = load_raw_data_wt(min_date="2024-01-01", max_date=max_to)
+    raw = load_raw_data_wt(min_date="2023-06-01", max_date=max_to)
     df = build_features_wt(raw)
     print(f"  特徴量構築 {len(df):,}行", flush=True)
     df = add_meeting_form_features_wt(df)
@@ -164,7 +179,8 @@ def main() -> None:
             d_2 = (r[arm]["two"] - r["base"]["two"]) * 100
             line += f"  AUC{d_auc:+.5f} 勝{d_w:+.2f} 3着{d_t3:+.2f} 二軸{d_2:+.2f}"
         print(line)
-    print("\n採用ライン: 両窓で符号一致 かつ Δ1位3着内 ≥ +0.30pt")
+    print("\n採用ライン: 確認窓 w3/w4 の両方で符号一致 かつ その平均 Δ1位3着内 ≥ +0.30pt")
+    print("           （w1/w2 は掃引窓なので +meeting1 の採否根拠にしない）")
 
 
 if __name__ == "__main__":
