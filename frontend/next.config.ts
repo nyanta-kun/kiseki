@@ -19,16 +19,51 @@ import withPWAInit, { runtimeCaching as defaultRuntimeCaching } from "@ducanh291
 //
 // 3秒で諦めてキャッシュを返す。キャッシュが無ければ従来どおりネットワークを待つので
 // 表示できなくなることはない。
-const runtimeCaching = defaultRuntimeCaching.map((entry) =>
-  ["pages", "pages-rsc", "pages-rsc-prefetch"].includes(
-    String(entry.options?.cacheName ?? ""),
-  )
-    ? {
-        ...entry,
-        options: { ...entry.options, networkTimeoutSeconds: 3 },
-      }
-    : entry,
-);
+//
+// ⚠️ タイムアウトを入れた副作用として、**回線が遅いだけ**のときもキャッシュを返すように
+// なった。既定の保持は 24時間（`maxAgeSeconds: 86400`）で、オッズ・指数を含む RSC が
+// 丸一日前のものになりうる。フォールバックは残したまま陳腐化だけ抑えるため、
+// ページ系の保持を **1時間**へ縮める。
+const PAGE_CACHE_MAX_AGE_SECONDS = 60 * 60;
+
+// `_next/static` の JS は CacheFirst で `maxEntries: 64` が既定。Next.js の
+// チャンク数は容易にこれを超え、超えると**古いものから追い出される**。
+// 追い出されたチャンクをデプロイ後に要求すると 404 になり、強制リロードが起きる
+// （＝復帰時に固まって見える経路のひとつ）。実測で precache だけで 89 件あるため広げる。
+const STATIC_JS_MAX_ENTRIES = 256;
+
+const runtimeCaching = defaultRuntimeCaching.map((entry) => {
+  const name = String(entry.options?.cacheName ?? "");
+
+  if (["pages", "pages-rsc", "pages-rsc-prefetch"].includes(name)) {
+    return {
+      ...entry,
+      options: {
+        ...entry.options,
+        networkTimeoutSeconds: 3,
+        expiration: {
+          ...entry.options?.expiration,
+          maxAgeSeconds: PAGE_CACHE_MAX_AGE_SECONDS,
+        },
+      },
+    };
+  }
+
+  if (name === "next-static-js-assets") {
+    return {
+      ...entry,
+      options: {
+        ...entry.options,
+        expiration: {
+          ...entry.options?.expiration,
+          maxEntries: STATIC_JS_MAX_ENTRIES,
+        },
+      },
+    };
+  }
+
+  return entry;
+});
 
 const withPWA = withPWAInit({
   dest: "public",

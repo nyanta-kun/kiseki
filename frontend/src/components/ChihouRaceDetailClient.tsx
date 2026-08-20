@@ -142,19 +142,40 @@ export function ChihouRaceDetailClient({
   );
   const hasResults = resultsMap.size > 0;
 
-  // オッズは 30 秒ごとにポーリング（UmaConn が約 1 分おきに更新する）
+  // オッズは 30 秒ごとにポーリング（UmaConn が約 1 分おきに更新する）。
+  //
+  // ⚠️ **隠れている間は回さない**（2026-08-20）。iOS では他アプリへ切り替えると
+  // タイマーが抑制され、復帰時にまとめて発火して無駄なリクエストと再描画になる。
+  // 代わりに **visible へ戻った瞬間に1回だけ取り直す**ので、鮮度はむしろ上がる。
   const [odds, setOdds] = useState<OddsData>(initialOdds);
   useEffect(() => {
     if (!mounted) return;
-    const timer = setInterval(async () => {
+
+    let cancelled = false;
+    const refresh = async () => {
       try {
         const newOdds = await fetchChihouOddsBrowser(raceId);
-        setOdds(newOdds);
+        if (!cancelled) setOdds(newOdds);
       } catch {
         // ignore
       }
+    };
+
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      void refresh();
     }, 30_000);
-    return () => clearInterval(timer);
+
+    const onVisibility = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [raceId, mounted]);
 
   const wsUrl = mounted ? buildChihouResultsWsUrl(raceId) : null;

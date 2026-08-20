@@ -15,7 +15,20 @@ type UseWebSocketResult = {
  * WebSocket 接続を管理するカスタムフック。
  *
  * - Exponential backoff で再接続（初期 reconnectInterval → 最大 60 秒）
+ * - **タブが隠れている間は接続しない**（下記）
  * - アンマウント時にクリーンアップ（タイムアウト・WebSocket を確実に破棄）
+ *
+ * ## バックグラウンド時に切断する理由（2026-08-20）
+ *
+ * iOS Safari で他アプリへ切り替えると OS がソケットを黙って切る。すると `onclose` →
+ * バックオフ再接続に入るが、**`attemptRef` は `onopen` 成功時にしかリセットされない**
+ * ため、切替を繰り返すと遅延が 5→10→20→40→最大60秒 と積み上がる。
+ * 結果、復帰しても**最大1分間データが更新されない**。
+ *
+ * 加えて、開いたままの WebSocket は WebKit の bfcache（page cache）を阻害する。
+ * 復帰が「即時復元」ではなくフルリロードになり、体感の遅さにつながる。
+ *
+ * → `hidden` で明示的に閉じ、`visible` で**バックオフをリセットして即再接続**する。
  *
  * @param url 接続先 WebSocket URL。`null` を渡すと接続しない。
  * @param onMessage メッセージ受信コールバック（`data` は JSON.parse 済みの値）
@@ -43,6 +56,9 @@ export function useWebSocket(
   const connectRef = useRef<() => void>(() => {});
   const attemptRef = useRef(0);
 
+  // 「隠れている間は接続しない」ためのフラグ。connect() から参照する
+  const hiddenRef = useRef(false);
+
   const clearReconnect = useCallback(() => {
     if (reconnectRef.current !== null) {
       clearTimeout(reconnectRef.current);
@@ -52,6 +68,8 @@ export function useWebSocket(
 
   const connect = useCallback(() => {
     if (!url || !mountedRef.current) return;
+    // 隠れている間は張らない（復帰時に visibilitychange から張り直す）
+    if (hiddenRef.current) return;
 
     try {
       const ws = new WebSocket(url);
@@ -75,6 +93,9 @@ export function useWebSocket(
       ws.onclose = () => {
         if (!mountedRef.current) return;
         setIsConnected(false);
+        // 隠れている間は再接続を積まない。積むとバックオフだけが伸びて、
+        // 復帰後に最大60秒つながらない状態になる
+        if (hiddenRef.current) return;
         // Exponential backoff: reconnectInterval * 2^attempt（最大 MAX_INTERVAL）
         const delay = Math.min(
           reconnectInterval * Math.pow(2, attemptRef.current),
@@ -122,6 +143,38 @@ export function useWebSocket(
     // connect が変わったとき（= url / reconnectInterval が変わったとき）だけ再実行
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connect]);
+
+  // タブの表示状態に追従する
+  useEffect(() => {
+    if (!url || typeof document === "undefined") return;
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenRef.current = true;
+        clearReconnect();
+        const ws = wsRef.current;
+        wsRef.current = null;
+        if (ws) {
+          // onclose 経由で再接続を積まないよう先に外す
+          ws.onclose = null;
+          ws.onerror = null;
+          ws.close();
+        }
+        setIsConnected(false);
+        return;
+      }
+      hiddenRef.current = false;
+      // 復帰時はバックオフを捨てて即座に張り直す
+      attemptRef.current = 0;
+      clearReconnect();
+      if (wsRef.current === null) connectRef.current();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    // マウント時点で既に隠れている場合に備えて初期状態も反映する
+    hiddenRef.current = document.hidden;
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [url, clearReconnect]);
 
   return { isConnected };
 }
