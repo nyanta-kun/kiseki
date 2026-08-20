@@ -248,6 +248,17 @@ def build_features_wt(df: pd.DataFrame) -> pd.DataFrame:
     # 先行0人=展開不分明で波乱・高配当（oddspark/競輪keirin 監査＋自前検証 2026-06-09）。
     df["n_senko"] = (df["style_enc"] == 0).astype(int).groupby(df["race_key"]).transform("sum")
 
+    # 単独先行（2026-08-20 追加・A/B検証中）。`n_senko` と `style_enc` は既に特徴に
+    # あるので木が学習できるはずだが、実測では残差が残っている:
+    #   - モデル残差: 逃1人レースの逃げ選手は 予測66.2% / 実測68.9% = **+2.7pt 過小評価**
+    #     （7車・2024-01〜・42.9万行。逃2人以上では +0.2〜0.6pt しか無い）
+    #   - 市場比: 「先行1人×逃」= TRAIN 1.057 (t+10.2) / TEST 1.044 (t+4.3)
+    #     [[keirin_interaction_features_market_test_2026_07_30]]
+    # **独立2手法で一致**しながら、ROI 1.333 基準を特徴量候補に誤適用したため
+    # 実装されないまま約1年放置されていた（[[keirin_verification_audit_2026_08_20]]）。
+    # 機構: 叩き合いが無い単独先行は最後まで主導権を握れる。
+    df["is_lone_senko"] = ((df["n_senko"] == 1) & (df["style_enc"] == 0)).astype(int)
+
     # ks流ローリング特徴（point-in-time。履歴 wt_entries から計算）
     df = add_rolling_features_wt(df)
 
@@ -902,6 +913,211 @@ def add_sb_dyn_features_wt(df: pd.DataFrame, history: pd.DataFrame | None = None
     out = df.merge(key, on=["race_key", "player_id"], how="left")
     # 履歴不足（2024-01以前・新人等）は 0.0（学習/予測で同一の既定値）
     for c in SB_DYN_COLS_WT:
+        out[c] = out[c].fillna(0.0)
+    return out
+
+
+MEETING_FORM_COLS_WT = [
+    "cup_n_so_far", "cup_top3_rate", "cup_win_rate", "cup_mean_order_n",
+]
+
+
+def add_meeting_form_features_wt(df: pd.DataFrame,
+                                 history: pd.DataFrame | None = None) -> pd.DataFrame:
+    """同一開催（節）の前日までの自分の成績を付与する（2026-08-20 追加）。
+
+    🔴 **`cup_id` / `day_index` は feature_wt.py に一度も登場していなかった**＝
+       節の文脈が特徴量から丸ごと抜けていた。既存の `win_3m` / `win_6m` は
+       3〜6ヶ月窓なので、3〜4日の開催の中では実質動かない（昨日の走りは
+       3ヶ月平均に 1/50 程度しか乗らない）。**一番新しくて一番濃い情報が
+       構造的に薄まっていた**。
+
+    実測（7車・2024-01〜・同一 cup_id で当日より前の日の自分の成績で層別した
+    今走の 実測3着内率 − 予測p3）:
+
+        節内 全部外している  n=114,838  予測42.3 実測42.1  **−0.17**
+        節内 一部的中        n= 62,336  予測43.1 実測44.3  +1.14
+        節内 全部3着内       n= 94,158  予測44.3 実測45.9  **+1.57**
+
+    **差 1.74pt・単調・SE 約0.15pt（10σ超）**。今セッションで測った未カバー残差の最大。
+
+    競輪は勝ち上がり方式なので、初日・2日目の走りは調子の指標であると同時に
+    その後の組み合わせも決める。⚠️ 交絡の可能性はあるが `RACE_TYPE_COLS_WT`
+    （初特選・準決勝・決勝等）が既に特徴にあり、その上でこの残差が残っている。
+
+    - cup_n_so_far     : 今節ここまでの出走数（0=初日）
+    - cup_top3_rate    : 今節ここまでの3着内率
+    - cup_win_rate     : 今節ここまでの勝率
+    - cup_mean_order_n : 今節ここまでの平均着順を頭数で正規化（0=1着 / 1=最下位）
+
+    ⚠️ 初日は履歴が無いので率は 0.0 補完になる。「0/3 で全外」と区別できるよう
+       `cup_n_so_far` を必ず一緒に入れること（片方だけ使うと初日と全外が混ざる）。
+
+    Args:
+        df: 特徴量付与対象（race_key / player_id 列を持つ前提）。
+        history: テスト用に注入する履歴（race_key/player_id/finish_order/
+            cup_id/day_index/n_entries 列）。None の場合は DB から読む。
+    """
+    df = df.copy()
+    if "player_id" not in df.columns or "race_key" not in df.columns:
+        for c in MEETING_FORM_COLS_WT:
+            df[c] = 0.0
+        return df
+
+    if history is None:
+        mf_sql = (
+            "SELECT e.race_key, e.player_id, e.finish_order, "
+            "r.cup_id, r.day_index, r.n_entries "
+            "FROM wt_entries e JOIN wt_races r ON e.race_key=r.race_key"
+        )
+        db_url = os.environ.get("KEIRIN_DB_URL")
+        if db_url:
+            from sqlalchemy import create_engine, text as sa_text
+            engine = create_engine(db_url)
+            pg_sql = mf_sql.replace("wt_entries", "keirin.wt_entries") \
+                           .replace("wt_races", "keirin.wt_races")
+            with engine.connect() as sa_conn:
+                H = pd.read_sql_query(sa_text(pg_sql), sa_conn)
+            engine.dispose()
+        else:
+            with get_connection() as conn:
+                H = pd.read_sql_query(mf_sql, conn)
+    else:
+        H = history.copy()
+
+    fin = pd.to_numeric(H["finish_order"], errors="coerce")
+    ne = pd.to_numeric(H["n_entries"], errors="coerce")
+    H["_day"] = pd.to_numeric(H["day_index"], errors="coerce")
+    conf = fin >= 1                      # DNS/DNF/未確定は集計から除く
+    H["_top3"] = ((fin >= 1) & (fin <= 3)).astype(float).where(conf)
+    H["_win"] = (fin == 1).astype(float).where(conf)
+    # 着順の頭数正規化（0=1着 / 1=最下位）。頭数が違う開催をまたいで比べるため。
+    H["_ord_n"] = ((fin - 1) / (ne - 1).replace(0, np.nan)).where(conf)
+
+    H = H.sort_values(["cup_id", "player_id", "_day"]).reset_index(drop=True)
+    g = H.groupby(["cup_id", "player_id"], sort=False)
+    # 🔴 shift() で「自分より前の日だけ」に限る。expanding は自分を含むのでリークする。
+    for src, dst in (("_top3", "cup_top3_rate"), ("_win", "cup_win_rate"),
+                     ("_ord_n", "cup_mean_order_n")):
+        H[dst] = g[src].transform(lambda x: x.shift().expanding().mean())
+    H["cup_n_so_far"] = g["_top3"].transform(lambda x: x.shift().expanding().count())
+
+    key = H[["race_key", "player_id"] + MEETING_FORM_COLS_WT]
+    out = df.merge(key, on=["race_key", "player_id"], how="left")
+    for c in MEETING_FORM_COLS_WT:
+        out[c] = out[c].fillna(0.0)
+    return out
+
+
+FORM_QUALITY_COLS_WT = [
+    "b_sink_rate_90", "b_hold_rate_90", "fh_lost_rate_90",
+]
+
+
+def add_form_quality_features_wt(df: pd.DataFrame,
+                                 history: pd.DataFrame | None = None) -> pd.DataFrame:
+    """「行為」ではなく「行為と結果の組み合わせ」をローリングで持たせる（2026-08-20 追加）。
+
+    既存の `SB_DYN_COLS_WT` は **行為しか数えていない**:
+        b_rate_90 / s_rate_90 = B・S を取った率 / fh_rel_90・fh_best_rate_90 = 上がりの速さ
+    「B を取ったのに沈んだ」「上がり上位なのに着外だった」という**結果条件つきの質**が
+    1本も無い。この欠落は独立2手法で確認されている:
+
+    | 信号 | 市場比(TEST・2026-07-30) | モデル残差(2026-08-20) |
+    |---|---|---|
+    | 前走 上がり最速 × 着外 | 1.035 (t+2.41) | **+0.88pt (4σ)** |
+
+    モデル残差の実測（7車・2024-01〜・前走の状態で層別した今走の 実測3着内率 − 予測p3）:
+        A 上がり上位×着外  +1.10   ← 位置取り負け。実力は残っている
+        C 上がり下位×着外  +0.22   ← 実力どおりの負け
+        **A − C = +0.88pt**（n=79,789 / 154,029・SE 約0.22pt）
+    差し・捲り型で +0.84pt、逃げ型でも +0.88pt と**脚質特有ではない**。
+
+    B 取りの側も同様に、取ること自体は強さの証（指数1位が B を取ると3着内 90.5%・
+    取らないと 75.0%）だが、**取って沈む 3.4% のレースでは穴の勝率が 2.3倍**になる
+    （勝者の指数4位以下 42% vs 基準 18%）。「駆けても止まる」型を分離する。
+
+    - b_sink_rate_90  : 直近90日で「B を取ったのに4着以下」だった率（駆け倒れ）
+    - b_hold_rate_90  : 直近90日で「B を取って3着内」だった率（駆け切り）
+    - fh_lost_rate_90 : 直近90日で「レース内の上がり上位2名なのに4着以下」だった率
+
+    ⚠️ **分母は全出走**（B を取ったレースに限定しない）。条件つき率にすると B を
+       あまり取らない選手で NaN だらけになるうえ、取得率そのものは `b_rate_90` が
+       既に持っているので、モデル側で割り算できる。
+
+    🔴 `add_sb_dyn_features_wt` は**触らない**。あの関数は 2026-07-18〜07-28 に
+       「未確定行を drop して発走前予測が全て 0 になる」重大バグを起こした履歴があり、
+       同じ設計方針（行は残し値だけ NaN 化）を踏襲した別関数として足す。
+
+    Args:
+        df: 特徴量付与対象（race_key / player_id / race_date 列を持つ前提）。
+        history: テスト用に注入する履歴（race_key/player_id/res_back/final_half/
+            finish_order/race_date 列）。None の場合は DB から読む。
+    """
+    df = df.copy()
+    if "player_id" not in df.columns or "race_date" not in df.columns:
+        for c in FORM_QUALITY_COLS_WT:
+            df[c] = 0.0
+        return df
+
+    if history is None:
+        fq_sql = (
+            "SELECT e.race_key, e.player_id, e.res_back, e.final_half, "
+            "e.finish_order, r.race_date "
+            "FROM wt_entries e JOIN wt_races r ON e.race_key=r.race_key"
+        )
+        db_url = os.environ.get("KEIRIN_DB_URL")
+        if db_url:
+            from sqlalchemy import create_engine, text as sa_text
+            engine = create_engine(db_url)
+            pg_sql = fq_sql.replace("wt_entries", "keirin.wt_entries") \
+                           .replace("wt_races", "keirin.wt_races")
+            with engine.connect() as sa_conn:
+                H = pd.read_sql_query(sa_text(pg_sql), sa_conn)
+            engine.dispose()
+        else:
+            with get_connection() as conn:
+                H = pd.read_sql_query(fq_sql, conn)
+    else:
+        H = history.copy()
+
+    H["_dt"] = pd.to_datetime(H["race_date"])
+    fin = pd.to_numeric(H["finish_order"], errors="coerce")
+    # DNS/DNF(finish_order<1)・未確定(NaN) は「行は残して値だけ NaN」。
+    # 行ごと落とすと発走前予測で対象レースが merge キーから消える（上記 🔴 の事故）。
+    _confirmed = fin >= 1
+
+    fh = pd.to_numeric(H["final_half"], errors="coerce")
+    H["_fh"] = fh.where(fh > 0)
+    H.loc[~_confirmed, "_fh"] = np.nan
+    # レース内の上がり順位（1=最速）。欠損は順位を付けない。
+    H["_fh_rank"] = H.groupby("race_key")["_fh"].rank(method="min")
+
+    b = pd.to_numeric(H["res_back"], errors="coerce")
+    b = b.where(_confirmed)
+    lost = (fin >= 4).where(_confirmed)
+    held = ((fin >= 1) & (fin <= 3)).astype(float).where(_confirmed)
+
+    H["_b_sink"] = ((b == 1) & (lost == 1)).astype(float).where(b.notna() & lost.notna())
+    H["_b_hold"] = ((b == 1) & (held == 1)).astype(float).where(b.notna() & held.notna())
+    H["_fh_lost"] = (((H["_fh_rank"] <= 2) & (lost == 1)).astype(float)
+                     .where(H["_fh_rank"].notna() & lost.notna()))
+
+    H = H.sort_values(["player_id", "_dt"]).reset_index(drop=True)
+
+    def _rm(col: str) -> np.ndarray:
+        return (H.set_index("_dt").groupby("player_id")[col]
+                .rolling("90D", closed="left").mean()
+                .reset_index(level=0, drop=True).values)
+
+    H["b_sink_rate_90"] = _rm("_b_sink")
+    H["b_hold_rate_90"] = _rm("_b_hold")
+    H["fh_lost_rate_90"] = _rm("_fh_lost")
+
+    key = H[["race_key", "player_id"] + FORM_QUALITY_COLS_WT]
+    out = df.merge(key, on=["race_key", "player_id"], how="left")
+    # 履歴不足（2024-01以前・新人等）は 0.0（学習/予測で同一の既定値）
+    for c in FORM_QUALITY_COLS_WT:
         out[c] = out[c].fillna(0.0)
     return out
 
