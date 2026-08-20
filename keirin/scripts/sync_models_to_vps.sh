@@ -192,6 +192,14 @@ VINTAGE_FILES=(
   #    lgbm_wt_bad で一度踏んでいる（同日）。種別を増やしたら必ずここも見ること。
   "$MODEL_DIR"/lgbm_wt_favbust_m[0-9][0-9][0-9][0-9].pkl
   "$MODEL_DIR"/lgbm_wt_favbust_m[0-9][0-9][0-9][0-9].meta.json
+  # 2026-08-19 追加: 2着内モデルの月次vintage。`pred_top2_pct` のバックフィルに使う。
+  # 🔴 本番の `lgbm_wt_top2` は full_refit なので過去の採点に使うと
+  #    model-vintage look-ahead になる。vintage が VPS に無いと
+  #    `backfill_index_pct_wt.py` が「書かない」側へ落ちて**静かに欠測する**。
+  # ⚠️ 上の警告のとおり、種別を足したらここも必ず見ること（今回もこの glob が
+  #    取り残されており、同じ事故を繰り返すところだった）。
+  "$MODEL_DIR"/lgbm_wt_top2_m[0-9][0-9][0-9][0-9].pkl
+  "$MODEL_DIR"/lgbm_wt_top2_m[0-9][0-9][0-9][0-9].meta.json
 )
 shopt -u nullglob
 # ⚠️ macOS 標準の bash 3.2 では `set -u` 下で **空配列の展開が unbound variable になる**
