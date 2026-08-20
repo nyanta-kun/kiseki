@@ -324,7 +324,11 @@ def test_netkeirin_priority_is_below_7c():
     """
     from scripts.netkeirin_submit_wt import RANK_ORDER
     assert RANK_ORDER.index("7T1") > RANK_ORDER.index("7C")
-    assert RANK_ORDER.index("7T1") < RANK_ORDER.index("7B")
+    # ⚠️ 2026-08-21 に 7B が 7C の上へ移ったので、7T1 と 7B の相対は
+    #    「7T1 が先」から「7B が先」へ変わった。7B と 7T1 は競合が
+    #    60件未満（母集団がほぼ排他）なので実害は無い。ここでは 7C との
+    #    相対だけを固定する。[[keirin_rank_priority_15x_2026_08_21]]
+    assert RANK_ORDER.index("7B") < RANK_ORDER.index("7T1")
 
 
 def test_netkeirin_normalize_preserves_points_and_stakes():

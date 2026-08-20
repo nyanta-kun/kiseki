@@ -1,4 +1,4 @@
-"""想定払戻(下限)による 7C の足切りの回帰テスト（2026-08-19 新設）。
+"""想定払戻(下限)による足切りの回帰テスト（2026-08-19 新設 / 2026-08-21 改定）。
 
 ## 背景
 
@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.stake_allocation import (  # noqa: E402
     MIN_EXPECTED_PAYOUT_7C,
+    MIN_EXPECTED_PAYOUT_7S,
+    MIN_EXPECTED_PAYOUT_BY_RANK,
     expected_payout_floor,
 )
 
@@ -57,40 +59,75 @@ def test_returns_none_for_empty_or_invalid_budget():
     assert expected_payout_floor({3: 100}, {3: 5.0}, 0) is None
 
 
-def test_threshold_is_one_and_not_widened():
-    """🔴 閾値は 1.0。**1.1 より上へ動かしてはいけない。**
+def test_threshold_is_the_users_minimum_desired_odds():
+    """🔴 閾値は 1.5＝ユーザーの「最低限の希望オッズ」（2026-08-21 方針）。
 
-    1.0〜1.3 の帯は表示的中 41.8% と全帯で最高で、そこを落とすとユーザー条件
-    「的中精度は同程度」を破る（実測: >=1.2 で残る側の表示的中 33.1→32.2%）。
-    売上（無売上率）だけを見ると 1.5 まで切りたくなるが、売上データは帯あたり
-    12〜25件しか無い。**この定数を動かすときは定義部の表を読むこと。**
+    **旧テストは 1.0 固定・1.1 超を禁止していた。** その根拠は
+    「1.2 以上へ広げると表示的中が 33.1→32.2% に落ちる」だったが、
+    ユーザー方針が「的中率そのもの（ガミ込み）には意味が無い・件数は減ってよい」
+    へ変わったため、守るべき指標が表示的中ではなくなった。
+    予測オッズで測り直した実測は `MIN_EXPECTED_PAYOUT_7C` 定義部を参照。
+
+    **この定数を動かすときは定義部の表を読むこと。**
     """
-    assert MIN_EXPECTED_PAYOUT_7C == 1.0
-    assert MIN_EXPECTED_PAYOUT_7C <= 1.1, (
-        "閾値を 1.1 より上へ広げている。`MIN_EXPECTED_PAYOUT_7C` 定義部の実測表を参照"
-    )
+    assert MIN_EXPECTED_PAYOUT_7C == 1.5
+    assert MIN_EXPECTED_PAYOUT_7S == 1.5
+    # 2.0 以上は 7C で頭打ち（KPI が戻る一方で件数だけ落ちる）。
+    assert MIN_EXPECTED_PAYOUT_7C <= 2.0, "定義部の掃引表では 2.0 超で KPI が頭打ち"
+
+
+def test_gate_targets_are_measured_ranks_only():
+    """🔴 未測定のランクへ黙って広げない。
+
+    足切りを測ったのは **7車の 7C / 7S だけ**。9車や他ランクを足すなら
+    同じ掃引をやり直してから。
+    """
+    assert set(MIN_EXPECTED_PAYOUT_BY_RANK) == {"7C", "7S"}
 
 
 def _gate_block() -> str:
     src = SUBMIT.read_text(encoding="utf-8")
-    i = src.index("MIN_EXPECTED_PAYOUT_7C:", src.index("_build_tilted_legs(\n"))
-    return src[i - 1200:i + 400]
+    i = src.index("min_floor:", src.index("_build_tilted_legs(\n"))
+    return src[i - 1400:i + 400]
 
 
-def test_gate_is_scoped_to_7c():
-    """🔴 7C 以外へ持ち込まない（測ったのは 7C の三連複だけ）。"""
-    assert re.search(r'rank_key\s*==\s*"7C"', _gate_block()), (
-        "足切りが 7C に限定されていない")
+def test_gate_is_driven_by_the_rank_table():
+    """🔴 ランクをハードコードせず `MIN_EXPECTED_PAYOUT_BY_RANK` を引く。
+
+    旧実装は `rank_key == "7C"` 直書きで、7S を足すのに条件式の書き換えが要った。
+    表を引く形にしておけば、対象ランクの正本が1箇所に残る。
+    """
+    block = _gate_block()
+    assert "MIN_EXPECTED_PAYOUT_BY_RANK" in block, (
+        "足切り対象がランク表から引かれていない")
+    assert not re.search(r'rank_key\s*==\s*"7C"', block), (
+        "ランクがハードコードされたまま")
+
+
+def test_gate_prefers_predicted_odds():
+    """🔴 判定は**予測オッズ優先**（2026-08-21）。
+
+    実オッズ板は買う点が全部揃うのが 8.9% しかなく、板だけで測るとゲートが
+    ほぼ発火しない。7S へ広げるか検討したとき板で判定できたのは12件だけで、
+    「7S では効かない」と誤読しかけた。
+    """
+    src = SUBMIT.read_text(encoding="utf-8")
+    i = src.index("def _expected_payout_floor_for(")
+    body = src[i:i + 1800]
+    assert "try_predicted_odds_for_legs" in body, (
+        "想定払戻の判定が予測オッズを使っていない")
+    assert body.index("try_predicted_odds_for_legs") < body.index("_load_trio_board"), (
+        "実オッズ板を予測オッズより先に使っている（優先順位が逆）")
 
 
 def test_gate_uses_continue_so_other_ranks_can_take_the_race():
     """🔴 `continue` で抜けること。
 
     ここで「処理済み」にすると 1レース1商品の取り合いで後続ランクがその
-    レースを取れなくなる。落としたいのは 7C の商品であってレース自体ではない。
+    レースを取れなくなる。落としたいのはそのランクの商品であってレース自体ではない。
     """
     block = _gate_block()
-    tail = block[block.index("MIN_EXPECTED_PAYOUT_7C:"):]
+    tail = block[block.index("min_floor:"):]
     assert "continue" in tail, "足切り後に continue していない（レースごと失う）"
 
 

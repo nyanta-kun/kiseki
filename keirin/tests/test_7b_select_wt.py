@@ -220,17 +220,26 @@ def test_judge_ignores_placeholder_odds():
 
 # ── 廃止（2026-08-07・ユーザー判断）────────────────────────────────
 
-def test_7bは稼働しており7Cより後ろで入稿される():
-    """2026-08-07: 一度は廃止したが、同日中に**「7C の下に置き、重複は 7C・
-    独自レースだけ 7B」**へユーザー判断が変わった。
+def test_7bは稼働しており7Cより前で入稿される():
+    """🔴 2026-08-21: **7B を 7C の上へ移した**（ユーザー方針「最低希望オッズ 1.5倍」）。
 
-    7C との重複では 7C が実質的中率で上回る（39.0% vs 31.6%）一方、
-    7B は 7C が拾わないレースを 3.14件/日 持つ。優先順位だけでこれを実現する。
+    旧方針（2026-08-07）は「重複は 7C・独自レースだけ 7B」で、根拠は
+    **実質的中率**（7C 39.0% vs 7B 31.6%）だった。しかしユーザー方針が
+    「的中率そのもの（ガミ込み）には意味が無い」へ変わり、基準を
+    **1.5倍以上で的中した率**に置き換えると評価が反転する。
+
+    競合874R の直接対決（`scripts/exp_rank_priority_matrix.py`）:
+
+        2025  7C 19.96% → 7B 25.97%  差 +6.01 [+3.10,+9.11]  ROI 69.7→77.9
+        2026  7C 20.39% → 7B 25.42%  差 +5.03 [+1.68,+8.66]  ROI 75.8→81.0
+
+    **KPI も ROI も両方 7B**で、両年独立に再現する。7B は単独でも
+    1.5倍以上 24.34% と全ランク最高。[[keirin_rank_priority_15x_2026_08_21]]
     """
     from scripts.netkeirin_submit_wt import RANK_ORDER
 
     assert sw.RANK_7B_STOPPED is False
     ok = _cand("ok", 2, False)
     assert sw.rank_7b_daily_select([ok]) != []
-    # netkeirin は1レース1商品。**7C より後ろ**に置くことで重複は 7C が取る。
-    assert RANK_ORDER.index("7B") > RANK_ORDER.index("7C")
+    # netkeirin は1レース1商品。**7C より前**に置くことで重複は 7B が取る。
+    assert RANK_ORDER.index("7B") < RANK_ORDER.index("7C")

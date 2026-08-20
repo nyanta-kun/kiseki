@@ -210,7 +210,7 @@ def test_axis1_gate_is_fail_open_for_old_candidate_json() -> None:
 
 
 def test_netkeirin_priority_order():
-    """優先順位 **7H2 > 7S > 7C > 7T1 > 7B > 7H1**。
+    """優先順位 **7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1**。
 
     RANK_ORDER は dict の定義順なので、順序が入れ替わると黙って優先度が変わる。
 
@@ -234,7 +234,11 @@ def test_netkeirin_priority_order():
     # 7S側 7.2% / 7C側 1.7% / 7T1側 5.3%。
     # 2026-08-17: 中間層 7M1 を**最下位**に追加（ユーザー指示「7H1 の下」）。
     # 7S とは当たり方が部分集合、7H1 とは排他だが ROI で劣るので、重なったら譲る。
-    assert order == ["7H2", "7S", "7C", "7T1", "7B", "7H1", "7M1"]
+    # 2026-08-21: **7B を 7C の上へ**（ユーザー方針「最低希望オッズ 1.5倍」）。
+    # 競合874R で 7B が 1.5倍以上の的中 +5〜6pt・ROI も上（両年独立で再現）。
+    # 旧根拠の「7C が実質的中率で上回る」は**ガミ込みの的中率**で、
+    # 新方針ではその差に価値を置かない。[[keirin_rank_priority_15x_2026_08_21]]
+    assert order == ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1"]
 
 
 def test_netkeirin_priority_order_9car():
