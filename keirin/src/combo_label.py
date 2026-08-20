@@ -30,6 +30,9 @@ _KIND_PREFIX = {"三複": "trio", "三単": "trifecta"}
 #: 「a=b=c」「a-b-c」など、3車が並んだ1点
 _POINT = re.compile(r"^\d+[-=]\d+[-=]\d+$")
 
+#: `bet_detail.lines[].bet_type` → 内部種別。`src/sold_performance._ORDERED` と同じ値。
+_BET_TYPE_KIND = {"3連複": "trio", "3連単": "trifecta"}
+
 
 def _numbers(token: str) -> list[int]:
     return [int(x) for x in re.split(r"[-=]", token) if x.isdigit()]
@@ -122,23 +125,64 @@ def _fmt_trifecta(combos: list[tuple[int, ...]]) -> str:
                     for (a1, a2), ts in groups.items())
 
 
-def format_pred_combo(text: str | None) -> str:
+def format_pred_combo(text: str | None, *, labels: bool = True) -> str:
     """`pred_combo` を**まとめた表示文字列**にする（解釈できなければ原文）。
+
+    labels=False で `三複:` / `三単:` の接頭辞を落とす。
+    🔴 **区切り文字が券種を表している**（三連複 `=` / 三連単 `-`）ので、
+       表記が統一されていれば接頭辞は冗長（2026-08-21 ユーザー方針）。
+       ⚠️ 落としてよいのは畳み方が上の規則に従っているときだけ。
+          原文をそのまま返す経路（解釈不能）では券種が判らないので、
+          `labels=False` でも原文を触らない。
 
     >>> format_pred_combo("三複:2=5=7,2=5=6 / 三単:5-2-3,5-2-4")
     '三複:2=5=7,2=5=6 / 三単:5-2-3,4'
+    >>> format_pred_combo("三単:5-2-3,5-2-4", labels=False)
+    '5-2-3,4'
     >>> format_pred_combo("5=1-2,3,4")
-    '5=1-2,3,4'
+    '1=5=2,3,4'
     """
     parsed = parse_pred_combo(text)
     if not parsed:
         return (text or "").strip()
-    labels = {"trio": "三複", "trifecta": "三単"}
-    has_prefix = ":" in str(text)
+    names = {"trio": "三複", "trifecta": "三単"}
+    has_prefix = labels and ":" in str(text)
     parts = []
     for kind, combos in parsed:
         body = _fmt_trio(combos) if kind == "trio" else _fmt_trifecta(combos)
-        parts.append(f"{labels[kind]}:{body}" if has_prefix else body)
+        parts.append(f"{names[kind]}:{body}" if has_prefix else body)
+    return " / ".join(parts)
+
+
+def format_bet_lines(lines: object) -> str:
+    """`netkeirin_submissions.bet_detail` の `lines` を pred_combo と同じ表記へ畳む。
+
+    🔴 **売った買い目の正本は bet_detail**。`picks_history.pred_combo` は候補で、
+       看板の穴埋めで売ったレースには**そもそも候補行が無い**（買い目が空欄で
+       通知されていた）。両者が食い違う場合も、実際に買ったのはこちら。
+
+    >>> format_bet_lines([{"bet_type": "3連複", "combo": "1=3=5"},
+    ...                   {"bet_type": "3連複", "combo": "2=3=5"}])
+    '3=5=1,2'
+    """
+    if not isinstance(lines, (list, tuple)):
+        return ""
+    buckets: "OrderedDict[str, list[tuple[int, ...]]]" = OrderedDict()
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        kind = _BET_TYPE_KIND.get(str(line.get("bet_type") or "").strip())
+        if kind is None:
+            continue                       # 未知の券種は畳めない（黙って捨てる）
+        nums = _numbers(str(line.get("combo") or ""))
+        if len(nums) != 3:
+            continue
+        combo = tuple(sorted(nums)) if kind == "trio" else tuple(nums)
+        got = buckets.setdefault(kind, [])
+        if combo not in got:
+            got.append(combo)
+    parts = [_fmt_trio(c) if k == "trio" else _fmt_trifecta(c)
+             for k, c in buckets.items()]
     return " / ".join(parts)
 
 

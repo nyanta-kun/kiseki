@@ -45,8 +45,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.combo_label import axis_cars, format_pred_combo, is_hit
-from src.sold_performance import settle_submission
+from src.combo_label import axis_cars, format_bet_lines, format_pred_combo, is_hit
+from src.sold_performance import _as_dict, settle_submission
 from src.rank_visibility import disabled_rank_names
 from src.database import get_connection
 from src.notify.discord import send
@@ -65,8 +65,23 @@ MARK = {1: "◎", 2: "◯", 3: "△", 4: "×"}
 #    引き込むので、毎分 cron で回る本スクリプトでは文字列を持つ。
 #    食い違い検知は tests/test_notify_race_result.py が担う。
 STATUS_SUBMITTED = "submitted"
+# 公開済み（2026-08-16 に netkeirin 側の「公開」を通すようになって増えた状態）。
+# 🔴 **これを「売った」に含め忘れると通知から金額が丸ごと消える。**
+#    2026-08-16 以降の入稿は当日中に submitted → published へ進むため、
+#    submitted だけを見ていた本スクリプトは
+#      (1) 候補行の無い（看板穴埋め）レースが対象から落ちる
+#      (2) 入稿原本の行が出ず「投資 → 払戻」が消える
+#      (3) 当日累計が常に 0R で行ごと出ない
+#    という3つの欠落を起こしていた（2026-08-20 の通知で実測・例外は出ない）。
+#    「売った」の定義は Web と同じ submitted ∪ published
+#    （`backend/src/api/keirin_router.py` の sold 判定）。
+STATUS_PUBLISHED = "published"
 # 却下（レビューUIで取り消した）入稿。**通知から外すために要る**。
 STATUS_DELETED = "deleted"
+#: 実際に売った商品の状態。当日累計・対象抽出はこれ。
+SOLD_STATUSES = (STATUS_SUBMITTED, STATUS_PUBLISHED)
+#: 通知に出す状態。取消も「出した推奨」として表示する（金額は「想定」）。
+NOTIFY_STATUSES = SOLD_STATUSES + (STATUS_DELETED,)
 # 三連複/三連単の組み合わせ区切り。**表で違う**（wt_odds は '1-2-3'）ので両方受ける。
 _SEP_RE = re.compile(r"[-=]")
 
@@ -126,10 +141,10 @@ def _targets(date: str, now_ts: int) -> list[dict]:
                 WHERE race_date = ?
                 UNION
                 SELECT race_key FROM netkeirin_submissions
-                WHERE status = ? AND left(race_key, 8) = ?
+                WHERE status IN (?, ?) AND left(race_key, 8) = ?
             )
             """,
-            (date, STATUS_SUBMITTED, date.replace("-", "")),
+            (date, *SOLD_STATUSES, date.replace("-", "")),
         ).fetchall()
         out = []
         for r in rows:
@@ -218,7 +233,7 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
     🔴 **取消を落とさない**（2026-08-18 ユーザー方針）。「全推奨（取消含む）を
        通知し、取消ならそれと分かるようにする」。取消行は `7S（取消）` と出し、
        金額は「投資」ではなく「想定」と書く（実際には買っていないため）。
-       ⚠️ 当日合計 `_day_total` は**実売のみ**（status='submitted'）のままにする。
+       ⚠️ 当日合計 `_day_total` は**実売のみ**（`SOLD_STATUSES`）のままにする。
           ここに取消を混ぜると売上が水増しされる。
 
     🔴 **picks_history ではなく `netkeirin_submissions.bet_detail` が正本。**
@@ -230,8 +245,8 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
     with get_connection() as c:
         subs = c.execute(
             "SELECT rank_key, bet_detail, status FROM netkeirin_submissions "
-            "WHERE race_key = ? AND status IN (?, ?) ORDER BY rank_key",
-            (base, STATUS_SUBMITTED, STATUS_DELETED),
+            "WHERE race_key = ? AND status IN (?, ?, ?) ORDER BY rank_key",
+            (base, *NOTIFY_STATUSES),
         ).fetchall()
         if not subs:
             return out
@@ -261,10 +276,30 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
         head = f"{rank}（取消）" if cancelled else rank
         money = (f"想定 ¥{bet:,} → ¥{pay:,}" if cancelled
                  else f"投資 ¥{bet:,} → 払戻 ¥{pay:,}")
-        combo = combos.get(rank)
-        buy = f"{format_pred_combo(combo)}  → " if combo else ""
+        # 🔴 買い目は**実際に入稿した bet_detail** が正本。picks_history は候補で、
+        #    看板の穴埋めで売ったレースには行が無く買い目が空欄になっていた。
+        buy = format_bet_lines((_as_dict(detail) or {}).get("lines")) \
+            or format_pred_combo(combos.get(rank), labels=False)
+        buy = f"{buy}  → " if buy else ""
         out.append((f"{head}: {buy}{mark}  {money}", rank))
     return out
+
+
+def _race_payout_line(payouts: dict[tuple[str, tuple[int, ...]], int],
+                      order3: tuple[int, ...]) -> str | None:
+    """そのレースの三連複・三連単の確定配当（100円あたり）の表示行。
+
+    ユーザー要望「三連複、三連単の払い戻しを載せて下さい」（2026-08-21）。
+    ⚠️ **買い目の的中とは無関係**。買っていなくても出す（相場の目安として要る）。
+    ⚠️ 引けないときは黙って落とす。`—` を出すより行ごと無いほうが読みやすい。
+    """
+    if len(order3) < 3:
+        return None
+    got = [(kind, payouts.get((kind, key)))
+           for kind, key in (("3連複", tuple(sorted(order3[:3]))),
+                             ("3連単", tuple(order3[:3])))]
+    parts = [f"{kind} ¥{pay:,}" for kind, pay in got if pay]
+    return "確定配当: " + " / ".join(parts) if parts else None
 
 
 def _day_total(date: str) -> tuple[int, int, int]:
@@ -278,7 +313,7 @@ def _day_total(date: str) -> tuple[int, int, int]:
     with get_connection() as c:
         subs = c.execute(
             "SELECT race_key, rank_key, bet_detail FROM netkeirin_submissions "
-            "WHERE status = ? AND left(race_key, 8) = ?", (STATUS_SUBMITTED, ymd),
+            "WHERE status IN (?, ?) AND left(race_key, 8) = ?", (*SOLD_STATUSES, ymd),
         ).fetchall()
         bet = pay = n = 0
         for s in subs:
@@ -306,28 +341,32 @@ def _build_message(t: dict, base: str) -> str:
     """着順と、そのレースに出していた推奨の的中可否をまとめる。"""
     with get_connection() as c:
         ents = c.execute(
-            "SELECT frame_no, name, prediction_mark, finish_order "
+            "SELECT frame_no, prediction_mark, finish_order "
             "FROM wt_entries WHERE race_key = ? ORDER BY finish_order", (base,)
         ).fetchall()
         picks = c.execute(
             "SELECT race_key, rank, pred_combo FROM picks_history "
             "WHERE split_part(race_key, '#', 1) = ?", (base,)
         ).fetchall()
-
+        payouts = _confirmed_payouts(c, base)
 
     def _g(r, k):
         return r[k] if isinstance(r, dict) else r[list(r.keys()).index(k)]
 
-    top3 = [(int(_g(e, "frame_no")), _g(e, "name"), _g(e, "prediction_mark"))
+    # 🔴 **選手名は出さない**（2026-08-21 ユーザー方針）。買い目は車番で書くので、
+    #    名前があると1行が折り返して車番と印が読み取りにくくなる。
+    top3 = [(int(_g(e, "frame_no")), _g(e, "prediction_mark"))
             for e in ents
             if _g(e, "finish_order") and 1 <= int(_g(e, "finish_order")) <= 3]
-    order3 = tuple(f for f, _, _ in top3)   # 着順（1着,2着,3着）。三連単の判定に要る
-    order = " − ".join(
-        f"**{f}** {n}{MARK.get(m, '')}" for f, n, m in top3)
-    top3_set = {f for f, _, _ in top3}
+    order3 = tuple(f for f, _ in top3)      # 着順（1着,2着,3着）。三連単の判定に要る
+    order = " − ".join(f"**{f}**{MARK.get(m, '')}" for f, m in top3)
+    top3_set = set(order3)
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
              f"着順: {order}"]
+    pay_line = _race_payout_line(payouts, order3)
+    if pay_line:
+        lines.append(pay_line)
     # 入稿した推奨（取消を含む）を先に出す。picks_history の候補行は
     # 「一度も入稿していないランク」の分だけ後段で補う。
     sold = _sold_lines(base, order3)
@@ -364,7 +403,8 @@ def _build_message(t: dict, base: str) -> str:
         else:
             # BOX 等で共通の軸が無い買い方（7H1 の三連複）。「軸n/2」は出せない。
             mark = "❌ 不的中"
-        lines.append(f"{rank}: {format_pred_combo(combo)}  → {mark}")
+        # 🔴 券種は区切り文字が表す（三連複 `=` / 三連単 `-`）ので `三単:` は出さない。
+        lines.append(f"{rank}: {format_pred_combo(combo, labels=False)}  → {mark}")
 
     bet, pay, n = _day_total(t["date"])
     if n:
