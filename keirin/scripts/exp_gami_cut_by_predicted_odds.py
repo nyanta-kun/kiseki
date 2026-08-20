@@ -77,8 +77,9 @@ CUTS = [0.0, 1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 2.5, 3.0]
 
 #: 🔴 honest な三連複オッズモデル（train_end 2025-12-31）。
 #   本番の `data/models` は **train_end 2026-08-04** で、2026 の評価に使うと
-#   in-sample になる。7T1 の `assert_odds_model_is_honest` に相当するガードが
-#   三連複側には無いので、ここで明示的に差し替える。
+#   in-sample になる。
+#   ⚠️ 2026-08-21 から `odds_prediction.assert_model_is_honest()` が
+#      **差し替え忘れを機械的に弾く**（この定数はその既定値でしかない）。
 HONEST_ODDS_DIR = REPO / "data" / "backup" / "odds_model_20260816"
 
 #: 的中した目に限った `確定オッズ ÷ 予測オッズ` の分位（2026-01〜08・7車・honest モデル実測）。
@@ -261,6 +262,10 @@ def main() -> int:
         odds_prediction._META_CACHE = None
     te = odds_prediction.load_meta()["per_n_car"]["7"]["train_end"]
     print(f"[odds] 三連複オッズモデル train_end = {te} / 割引 = {a.haircut}", flush=True)
+    # 🔴 差し替えたつもりで in-sample になっていないかを機械的に検査する。
+    #    `--production-odds-model` は「承知の上で使う」明示の逃げ道。
+    if not a.production_odds_model:
+        odds_prediction.assert_model_is_honest(a.d1, who="exp_gami_cut")
     ranks = a.ranks.split(",")
 
     print(f"[load] picks_history {a.d1}〜{a.d2} {ranks} ...", flush=True)

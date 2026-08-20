@@ -236,6 +236,15 @@ def _report(tag: str, y: np.ndarray, pred: np.ndarray) -> dict:
     return m
 
 
+# 評価窓（学習終端より後）のレース数の下限。これを下回ると学習を失敗させる。
+#
+# 🔴 評価窓は固定ではなく「学習終端の後ろ全部」なので、再学習のたびに縮む。
+#    実行日を `--train-end` に渡すと**空**になり、監視が黙って消える。
+#    値は実測から: 2026-08-04 学習終端のモデルで 964R（7車）あった。
+#    300R あれば logMAE と median_ratio の劣化は見える。
+MIN_EVAL_RACES = 300
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser()
@@ -243,6 +252,9 @@ def main() -> None:
     ap.add_argument("--train-end", default="2025-12-31",
                     help="この日以前を学習に使う（以降は評価）")
     ap.add_argument("--rounds", type=int, default=700)
+    ap.add_argument("--min-eval-races", type=int, default=MIN_EVAL_RACES,
+                    help="評価窓（学習終端より後）のレース数の下限。"
+                         "下回ったら学習を失敗させる（監視が消えるのを防ぐ）")
     ap.add_argument("--eval-only", action="store_true")
     # 🔴 **配分に効くのはレース内の相対値だけ**（`landing_weights` は 1/オッズ に
     #    比例した重みを正規化して使う）。しかも推論の整合化が Σ(1/o) を定数へ
@@ -292,6 +304,21 @@ def main() -> None:
     if tr.empty:
         raise SystemExit("学習窓が空です")
 
+    # 🔴 **評価窓が痩せたら学習を失敗させる**（2026-08-21 新設）。
+    #    評価窓は `date > train_end` ＝**固定ではなく学習終端の後ろ全部**なので、
+    #    再学習のたびに縮む。`--train-end` に実行日を渡すと**空**になり、
+    #    下の `if part.empty: continue` が黙って `stats` から評価窓を落とす
+    #    ＝ **監視が消えたことに誰も気づけない**。
+    #    予測オッズは 2026-08-21 から配分・1.5倍の足切り・表示の全てを決めており、
+    #    劣化を検知できない状態で運用してはいけない（単一障害点）。
+    n_eval_races = int(te.rk.nunique())
+    if n_eval_races < args.min_eval_races:
+        raise SystemExit(
+            f"評価窓が {n_eval_races}R しかありません（下限 {args.min_eval_races}R）。"
+            f"--train-end={args.train_end} が新しすぎます。"
+            "学習終端を過去へ戻すか、--min-eval-races で下限を明示的に下げてください"
+            "（監視を失う判断をした、という記録になります）。")
+
     model_path = MODEL_DIR / f"odds_trio_n{args.n_car}{args.save_suffix}.txt"
     if args.eval_only:
         booster = lgb.Booster(model_file=str(model_path))
@@ -328,11 +355,16 @@ def main() -> None:
     for tag, part in (("学習窓", tr), ("評価窓", te)):
         if part.empty:
             continue
+        # 窓の範囲を必ず残す。「評価窓 n=33,740」だけでは、それが**いつの**
+        # データで、次の再学習でどれだけ縮んだのかを後から追えない。
+        stats[tag] = {"from": str(part.date.min()), "to": str(part.date.max()),
+                      "n_races": int(part.rk.nunique())}
         p = 10 ** booster.predict(part[list(FEATURE_NAMES)])
         scale = (pd.Series(1 / p).groupby(part.rk.values).transform("sum")
                  / target_sum).to_numpy()
-        stats[tag] = {"raw": _report(f"{tag}・素の点予測", part.odds.to_numpy(), p),
-                      "coherent": _report(f"{tag}・整合板", part.odds.to_numpy(), p * scale)}
+        stats[tag].update(
+            {"raw": _report(f"{tag}・素の点予測", part.odds.to_numpy(), p),
+             "coherent": _report(f"{tag}・整合板", part.odds.to_numpy(), p * scale)})
 
     if args.save_suffix:
         print("\n  ※ --save-suffix 指定のため meta は更新しません（本番と混ぜない）")
