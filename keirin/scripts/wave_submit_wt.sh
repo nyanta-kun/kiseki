@@ -3,13 +3,16 @@
 #
 #   使い方: scripts/wave_submit_wt.sh {noon|evening} [YYYY-MM-DD]
 #
-# 三連複の板は「時計時刻」ではなく「発走までの近さ」で埋まる。朝8時台の未確定率は
-# 〜10時台発走 0.8% に対し 20時以降発走 **63.4%**。netkeirin は公開後に差し替えが
-# できないので、夜の開催は板が育ってから入稿する（`src/meeting_wave.py` が正本）。
+# 🔴 **2026-08-21 以降、この回は「前倒しできなかったもの」の受け皿**である。
+#    朝の `daily_picks_wt.sh` が当日全開催を対象にし、予測オッズが作れる三連複は
+#    その場で入稿する。ここへ残るのは**三連単ランク**（ダッチ配分に実際の板
+#    オッズが要る）と**予測オッズを作れないレース**（7車・9車以外＝3.7%）だけ。
+#    板が育つのを待つという当初の理由は失効した（配分は板を使っていない。
+#    実測: 08-12 以降の夜の波は noon 34/34・evening 67/67 が `predicted`）。
 #
-#   cron 07:00  daily_picks_wt.sh          … モーニング・デイ（第1R < 12時）
-#   cron 13:00  wave_submit_wt.sh noon     … ナイター（第1R 12〜17時台・1R 15時に間に合う）
-#   cron 18:00  wave_submit_wt.sh evening  … ミッドナイト（第1R 18時〜・1R 20時に間に合う）
+#   cron 07:00  daily_picks_wt.sh          … 全開催（前倒しできるものは全部ここ）
+#   cron 13:00  wave_submit_wt.sh noon     … ナイターの残り（1R 15時に間に合う）
+#   cron 18:00  wave_submit_wt.sh evening  … ミッドナイトの残り（1R 20時に間に合う）
 #
 # ⚠️ この回は**入稿だけ**を行う。予想（picks_history・Discord・Web）は朝の
 #    daily_picks_wt.sh が当日全開催ぶんを出し終えている。
