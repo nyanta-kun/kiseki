@@ -391,7 +391,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
           {p.min_payout_low !== null && (
             <span
               className="ml-1 text-[10px] text-amber-600 dark:text-amber-400"
-              title="確定までにオッズが下振れした場合の払戻（予測オッズの下側25%分位）。板は買い目の帯で下がりやすいため、承認判断はこちらを見てください。"
+              title="確定までにオッズが下振れした場合の払戻（下側25%分位）。承認判断はこちらを見てください。"
             >
               下振れ {yen(p.min_payout_low)}
             </span>
@@ -421,25 +421,15 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         </div>
         <div>
           {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
-              統一したもの）。板由来の `expected_value` は夜開催で板が育っておらず
-              終日の比較に使えないため、選定の根拠にはならない。
-              選定前（confident_ev が未算出）のときだけ従来の板由来を出す。 */}
-          <span className="text-gray-500">
-            期待値{p.confident_ev !== null && <span className="text-[10px]">(予測)</span>}
-          </span>{" "}
+              統一したもの）。選定前（confident_ev が未算出）のときだけ
+              `expected_value` を出す。
+              ⚠️ 2026-08-21 から**出どころのラベルは出さない**（ユーザー判断）。
+                 入稿の配分・足切り・表示オッズが全て予測オッズに揃ったため、
+                 「予測かどうか」は画面で区別する意味が無くなった。 */}
+          <span className="text-gray-500">期待値</span>{" "}
           {p.confident_ev !== null
             ? p.confident_ev.toFixed(2)
             : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
-          {/* 🔴 予測オッズ由来が混ざっているなら黙って出さない。
-              板の実測値と同じ顔で並べると「実際にこの払戻」と読まれる。 */}
-          {p.odds_has_predicted && (
-            <span
-              className="ml-1 text-[10px] text-indigo-500 dark:text-indigo-300"
-              title="板に無いオッズをオッズ生成モデルの予測値で補って計算しています"
-            >
-              *予測含む
-            </span>
-          )}
         </div>
       </div>
       {p.gami_risk && (
@@ -471,7 +461,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
           </div>
           <div>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-300">
-              買い目（配分の出どころ: {d?.source ?? "均等"}）
+              買い目
             </p>
             <div className="overflow-x-auto">
               <table className="text-xs">
@@ -486,7 +476,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
                       <td className="py-0.5 pr-3 text-right tabular-nums text-gray-500">
                         {l.odds === null
                           ? "オッズ未取得"
-                          : `${l.odds.toFixed(1)}倍${l.odds_source === "predicted" ? "（予測）" : ""}`}
+                          : `${l.odds.toFixed(1)}倍`}
                       </td>
                       <td className="py-0.5 text-right tabular-nums">
                         {l.odds === null ? "—" : yen(l.stake * l.odds)}

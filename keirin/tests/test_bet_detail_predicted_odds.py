@@ -4,9 +4,13 @@
 欠けた点は `odds: null` で保存されて Web では「オッズ未取得」になっていた
 （最低払戻も期待値も出せない）。構造モデルの予測オッズで表示だけ埋める。
 
-🔴 **埋めた点は必ず `odds_source="predicted"` として区別する。**
-   板の値と同じ顔で出すと「実際に付いていたオッズ」と読まれる。
-🔴 **板を上書きしない。** 板があるならそれが実際に付いていた値。
+🔴 **入稿時は予測オッズが主**（2026-08-21 に板優先から反転）。配分も足切りも
+   予測オッズで決めているため、表示だけ板だと根拠と突き合わせられない。
+   板へ落ちるのは予測を作れない目（三連単・7車9車以外）だけ。
+🔴 **`odds_source` の記録は落とさない。** 表示では区別しなくなったが、
+   三連単だけ板由来で残るので、混在を数えられないと検証ができない。
+⚠️ **過去分のバックフィル（`fill_lines`）は板を上書きしない。** あちらは
+   既に入稿済みの記録で、当時実際に付いていた値だから。
 ⚠️ **三連単は埋めない。** このモデルが予測するのは三連複だけで、
    着順の分だけ別物になる。作れないものを作らない。
 """
@@ -29,20 +33,27 @@ def _lines(detail_json: str) -> list[dict]:
 # 入稿時（build_bet_detail）
 # ---------------------------------------------------------------------------
 
-def test_板があるときは板を使い印はboard():
+def test_予測があれば予測を使い印はpredicted():
+    """🔴 2026-08-21 に優先順位を反転（板優先 → 予測優先）。
+
+    配分（`landing_weights`）も 1.5倍の足切り（`_expected_payout_floor_for`）も
+    予測オッズで決めているので、表示だけ板だと確認画面の数字と判断根拠が
+    突き合わせられない。
+    """
     out = _lines(build_bet_detail(
         LEGS, "odds",
         odds={frozenset({1, 2, 3}): 5.5, frozenset({1, 2, 4}): 9.9},
         predicted_odds={frozenset({1, 2, 3}): 111.0, frozenset({1, 2, 4}): 222.0},
     ))
-    assert [x["odds"] for x in out] == [5.5, 9.9], "予測が板を上書きしています"
-    assert {x["odds_source"] for x in out} == {"board"}
+    assert [x["odds"] for x in out] == [111.0, 222.0], "板が予測を上書きしています"
+    assert {x["odds_source"] for x in out} == {"predicted"}
 
 
-def test_板に無い点だけ予測で埋める():
+def test_予測を作れない点だけ板へ落ちる():
+    """三連単・7車9車以外は予測を作れない。そこだけ板を使う。"""
     out = _lines(build_bet_detail(
         LEGS, "odds",
-        odds={frozenset({1, 2, 3}): 5.5},
+        odds={frozenset({1, 2, 3}): 5.5, frozenset({1, 2, 4}): 9.9},
         predicted_odds={frozenset({1, 2, 4}): 12.34},
     ))
     by_combo = {x["combo"]: x for x in out}

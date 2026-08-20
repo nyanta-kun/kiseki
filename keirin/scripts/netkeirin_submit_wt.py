@@ -897,11 +897,12 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
        なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
 
-    `predicted_odds` は板に無い目を埋めるための予測盤面（三連複のみ）。
-    埋めた点は `odds_source="predicted"` になり、板由来は `"board"`。
-    🔴 **板を上書きしない。** 板があるならそれが実際に付いていた値。
-    ⚠️ 区別を落として保存すると、予測値が「実際のオッズ」として読まれる。
-       表示側はこの印を見て「(予測)」を付ける。
+    `predicted_odds` は予測盤面（三連複のみ）。**2026-08-21 からこちらが主**で、
+    予測を作れない目だけ `odds`（板）へ落ちる。出どころは `odds_source` に
+    `"predicted"` / `"board"` として残る。
+    🔴 **記録は落とさない。** 表示では区別しなくなったが（配分も足切りも予測
+       オッズで決めているため「全て予測」が前提）、三連単だけは板由来のまま
+       なので、混在を後から数えられなくなると検証ができない。
 
     `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
     板の有無によらず全点へ `odds_low` として書く。
@@ -917,12 +918,20 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                              key=lambda t: tuple(sorted(t)) if isinstance(t, frozenset) else t):
             cars = sorted(target) if isinstance(target, frozenset) else list(target)
             sep = "=" if isinstance(target, frozenset) else "-"
-            o = odds.get(target)
-            odds_source = "board" if o else None
+            # 🔴 **予測オッズを先に使う**（2026-08-21 反転・ユーザー判断）。
+            #    以前は板を優先し「板に無い目だけ」予測で埋めていたが、
+            #    **配分（`landing_weights`）も 1.5倍の足切り
+            #    （`_expected_payout_floor_for`）も予測オッズで決めている**ため、
+            #    表示だけ板だと確認画面の数字と判断根拠が突き合わせられない
+            #    （「想定払戻 1.43倍 < 1.5倍で見送り」と出ているのに、
+            #    並んでいるオッズは板の値、という状態だった）。
+            #    板へ落ちるのは予測を作れないとき——**三連単**（予測は三連複しか
+            #    作れない）と 7車・9車以外のレース。
+            o = predicted_odds.get(target)
+            odds_source = "predicted" if o else None
             if not o:
-                # 板に無い目だけ予測で埋める（三連複のキーは frozenset）。
-                o = predicted_odds.get(target)
-                odds_source = "predicted" if o else None
+                o = odds.get(target)
+                odds_source = "board" if o else None
             # 🔴 表示オッズを上回る「下振れ時」を出さない。板が既にモデルの
             #    下限より低いなら、その板の値のほうが厳しい見積もりになる。
             #    min を取るので calibration（下側25%分位）は必ず安全側へしか動かない。
@@ -934,7 +943,10 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 "combo": sep.join(str(c) for c in cars),
                 "stake": int(leg.stake_per_line),
                 "odds": round(float(o), 1) if o else None,
-                # 板 / 予測 / 不明（None）。**表示で区別するために必ず残す。**
+                # 予測 / 板 / 不明（None）。表示では区別しないが（2026-08-21・
+                # 「全て予測オッズ」が前提になったのでラベルは畳んだ）、
+                # **どちらで出したかの記録としては必ず残す**。
+                # 三連単だけが板になるので、後から混在を数えられる必要がある。
                 "odds_source": odds_source,
                 # 下限包絡（オッズではない）。最低払戻・ガミ判定に使う。
                 "odds_low": round(float(low), 1) if low else None,
