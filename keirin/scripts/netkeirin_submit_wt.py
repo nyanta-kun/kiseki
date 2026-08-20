@@ -1336,6 +1336,37 @@ def _build_tilted_legs(
     return legs, source, stakes
 
 
+def _can_pull_forward(
+    race_key: str, is_trifecta: bool, axis1: int, axis2: int, partners: list[int],
+) -> bool:
+    """後の波の開催を、この回へ**前倒しして**入稿してよいか（2026-08-21 新設）。
+
+    波（`src/meeting_wave.py`）は「板が育つのを待つ」ために作った。その前提は
+    2026-08-21 に失効している——賭け金の配分は `landing_weights` が
+    **予測オッズを最優先で単独採用**するようになり、実測でも 2026-08-12 以降の
+    夜の波の入稿は noon 34/34・evening 67/67 が `predicted` で、
+    **板由来は1件も無い**。予想そのものは朝に当日全開催ぶん出来ている
+    （`wave_submit_wt.sh` は入稿だけを行う）ので、予測オッズさえ作れれば
+    夜の開催を朝に出しても中身は変わらない。
+
+    🔴 **前倒しできない2つ**（＝ここで False を返すもの）:
+
+    1. **三連単系ランク**（7T1 / 7H1 / 7H2 / 9H1・三連単への切替も含む）。
+       `_dutch_point_legs` は「買う点**すべて**に三連単の板オッズが揃うときだけ」
+       ダッチにする。朝は三連単の板がまず無いので、揃わず通常配分へ落ちて
+       **券種の形が変わる**。予測オッズは三連複しか作れない。
+    2. **予測オッズが買う点すべてに作れないレース**（7車・9車以外＝実測 3.7%）。
+       一部だけ予測で埋めると比率が壊れる（`stake_allocation._usable_odds`）。
+
+    どちらも「出さない」のではなく**自分の波へ残す**。13:00 / 18:00 の回が
+    従来どおり拾うので、前倒しは常に上積みであって取りこぼしを増やさない。
+    """
+    if is_trifecta or not partners:
+        return False
+    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
+    return bool(odds) and all(odds.get(t) for t in partners)
+
+
 def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
 ) -> float | None:
@@ -1699,6 +1730,7 @@ def _process_rank(
     already: set[tuple[str, str]], dry_run: bool, race_key_filter: str | None = None,
     claimed_races: set[str] | None = None, waves: dict[str, str] | None = None,
     started: set[str] | None = None, propose_only: bool = False,
+    deferred_races: set[str] | None = None,
 ) -> tuple[int, list[str]]:
     cfg = RANK_CONFIGS[rank_key]
     if not _is_enabled(settings, rank_key):
@@ -1722,17 +1754,26 @@ def _process_rank(
     raw = _uniq
     if race_key_filter:
         raw = [c for c in raw if c.get("race_key") == race_key_filter]
-    # 🔴 この回で担当する開催だけに絞る。朝の候補JSONは当日全開催ぶん入っている
-    #    （予想・Discord・Web は朝に全部出す）ので、ここで落とさないと
-    #    夜の開催まで朝に入稿してしまい、板が育つ前の配分で確定してしまう。
+    # 🔴 この回で担当する開催 + **前倒しできる後の波の開催**に絞る（2026-08-21 改定）。
+    #    朝の候補JSONは当日全開催ぶん入っている（予想・Discord・Web は朝に全部出す）。
+    #    以前はここで後の波を落としていたが、その理由（板が育つのを待つ）は
+    #    失効した。可否は1件ずつ `_can_pull_forward()` が決め、前倒しできない
+    #    ものだけ自分の波へ残る（下のループで `deferred_races` へ入れる）。
     #    ⚠️ 自分の波と**完全一致**で絞ると、発走時刻が前倒しに訂正された開催が
     #    通過済みの波へ移り、その日どの回からも入稿されない（2026-08-08 是正）。
     #    `waves_due_by()` で「自分の波 + 前の波」を対象にする。二重入稿は
     #    `_already_submitted()` が、締切超過は直下の `started` が止める。
+    #
+    #    🔴 **`deferred_races` は上位ランクが前倒しを見送ったレース。**
+    #    ここで外さないと、上位が波へ残したレースを**下位ランクが朝に横取りする**
+    #    （netkeirin は1レース1商品なので、13:00 に上位が来ても取れない）。
+    #    RANK_ORDER の優先順位が波をまたいで壊れるのを防ぐ。
+    due_waves: set[str] = set()
     if waves is not None:
         due_waves = set(waves_due_by(SESSION_WAVE.get(session, WAVE_MORNING)))
-        raw = [c for c in raw
-               if waves.get(str(c.get("race_key", "")).split("#")[0], WAVE_MORNING) in due_waves]
+        if deferred_races:
+            raw = [c for c in raw
+                   if str(c.get("race_key", "")).split("#")[0] not in deferred_races]
     # 締切（発走15分前）を過ぎたレースへは出さない（netkeirin が受け付けない）。
     if started is not None:
         n_before = len(raw)
@@ -1871,6 +1912,26 @@ def _process_rank(
             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R ({rank_key}): {e}",
                   flush=True)
             continue
+
+        # 🔴 後の波の開催は、前倒しできるものだけこの回で出す（2026-08-21 新設）。
+        #    判定は**買い目を組み終えてから**行う。前倒しの可否は「予測オッズが
+        #    買う点すべてに作れるか」なので、相手が決まる前には測れない。
+        #    見送ったレースは `deferred_races` へ入れ、**下位ランクにも取らせない**
+        #    （1レース1商品なので、下位が朝に取ると上位がその波で取れなくなる）。
+        base_key = race_key.split("#")[0]
+        race_wave = waves.get(base_key, WAVE_MORNING) if waves is not None else WAVE_MORNING
+        if race_wave not in due_waves:
+            is_trifecta = bool(use_trifecta or is_7t1 or is_formation or is_multi_7h2)
+            wave_jp = WAVE_LABEL_JP.get(race_wave, race_wave)
+            if not _can_pull_forward(base_key, is_trifecta, axis1, axis2_or_p1, partners):
+                if deferred_races is not None:
+                    deferred_races.add(base_key)
+                reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"
+                print(f"[netkeirin_submit] 前倒し見送り {venue_name}{race_no}R "
+                      f"({rank_key}): {reason} → {wave_jp}の回で入稿", flush=True)
+                continue
+            print(f"[netkeirin_submit] 前倒し {venue_name}{race_no}R ({rank_key}): "
+                  f"{wave_jp}の開催をこの回で入稿", flush=True)
 
         shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2_or_p1)
         stake_note = _stake_note_for(rank_key, legs)
@@ -2278,9 +2339,11 @@ def main() -> None:
     n_wave = sum(1 for w in waves.values() if w == want_wave)
     n_due = sum(1 for w in waves.values() if w in due_waves)
     carry = n_due - n_wave
+    n_ahead = len(waves) - n_due
     print(f"[netkeirin_submit] {target_date} {session}: "
           f"担当は {WAVE_LABEL_JP[want_wave]} — 当日{len(waves)}レース中{n_wave}レース"
-          + (f"（+ 前の波の未入稿 {carry}レースも対象）" if carry else ""),
+          + (f"（+ 前の波の未入稿 {carry}レースも対象）" if carry else "")
+          + (f"（+ 後の波 {n_ahead}レースは前倒しできるものだけ対象）" if n_ahead else ""),
           flush=True)
 
     all_race_keys: set[str] = set()
@@ -2299,9 +2362,11 @@ def main() -> None:
             raw += _load_candidates(target_date, session, _fk)
         if args.race_key:
             raw = [c for c in raw if c.get("race_key") == args.race_key]
+        # 🔴 波では絞らない。後の波も `_process_rank` が1件ずつ前倒しの可否を見る
+        #    ので、ここで落とすと `_already_submitted()` へ問い合わせられず
+        #    二重入稿のガードが素通りする（2026-08-16 の実害と同型）。
         raw = [c for c in raw
-               if waves.get(str(c.get("race_key", "")).split("#")[0], WAVE_MORNING) in due_waves
-               and str(c.get("race_key", "")).split("#")[0] not in started]
+               if str(c.get("race_key", "")).split("#")[0] not in started]
         per_rank_raw[rank_key] = raw
         all_race_keys.update(c["race_key"] for c in raw)
 
@@ -2322,13 +2387,15 @@ def main() -> None:
     # 同一実行内で入稿済みのレース。netkeirin は1レース1商品なので、後続ランクが
     # 同じレースへ入稿すると先の商品を上書きしてしまう（_process_rank 参照）。
     claimed_races: set[str] = set()
+    # 上位ランクが前倒しを見送ったレース。下位ランクにも取らせない（優先順位の保護）。
+    deferred_races: set[str] = set()
     for rank_key in RANK_ORDER:
         if rank_key not in per_rank_raw:
             continue
         n, failures = _process_rank(
             rank_key, target_date, session, race_date, settings, already, args.dry_run,
             race_key_filter=args.race_key, claimed_races=claimed_races, waves=waves,
-            started=started, propose_only=propose_only,
+            started=started, propose_only=propose_only, deferred_races=deferred_races,
         )
         submitted_counts[rank_key] = n
         all_failures.extend(failures)

@@ -195,11 +195,12 @@ def test_waves_due_by_includes_earlier_waves():
 
 
 def test_waves_due_by_never_includes_later_waves():
-    """🔴 後の波を含めてはいけない。
+    """🔴 `waves_due_by()` は後の波を含めない。
 
-    含めるとミッドナイトを朝に入稿してしまい、「板が育ってから出す」という
-    波の存在理由そのものが壊れる（推奨で買う点すべてにオッズがある割合は
-    ミッドナイトだと朝の時点で 17.5% しかない）。
+    後の波を**この関数で**含めてしまうと、前倒しできないもの（三連単ランク・
+    予測オッズを作れないレース）まで無条件に朝へ出る。前倒しは
+    `netkeirin_submit_wt._can_pull_forward()` が1件ずつ判定する別経路であって、
+    「担当の波」の定義を広げて実現するものではない（2026-08-21）。
     """
     from src.meeting_wave import WAVES, waves_due_by
     for i, w in enumerate(WAVES):
@@ -214,15 +215,25 @@ def test_waves_due_by_tolerates_unknown_wave():
 
 
 def test_submit_uses_due_waves_not_exact_match():
-    """入稿側が `== want_wave` ではなく `in due_waves` で絞っていること。"""
+    """入稿側が `== want_wave` の完全一致で判定していないこと。
+
+    完全一致で絞ると、発走時刻が**前倒しに訂正された開催**が通過済みの波へ移り、
+    その日どの回からも入稿されない（2026-08-08 是正）。判定は `due_waves`
+    （自分の波 + 前の波）で行う。
+
+    ⚠️ 2026-08-21 に構造が変わった。候補は波で**捨てず**、後の波のものは
+       1件ずつ `_can_pull_forward()` が前倒しの可否を決める（前倒しできない
+       ものだけ自分の波へ残る）。そのため「絞り込み行」を数える形では検査できず、
+       ここでは *完全一致で判定していないこと* だけを見る。前倒しの経路自体は
+       `tests/test_submit_pull_forward.py` が固定している。
+    """
     from pathlib import Path
     src = (Path(__file__).resolve().parent.parent / "scripts"
            / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
-    # 候補を絞り込んでいる行（waves.get(...) を評価している行）だけを見る。
-    # ログ用の件数カウントは `== want_wave` のままでよいので全文検索にしない。
-    filters = [ln for ln in src.splitlines()
-               if "waves.get(" in ln and not ln.lstrip().startswith("#")]
-    assert filters, "候補を波で絞り込んでいる行が見つからない"
-    for ln in filters:
-        assert "in due_waves" in ln, (
-            f"波の完全一致で絞り込んでいる（前倒し訂正で取りこぼす）: {ln.strip()!r}")
+    body = [ln for ln in src.splitlines() if not ln.lstrip().startswith("#")]
+    for ln in body:
+        if "waves.get(" not in ln:
+            continue
+        assert "== want_wave" not in ln and "== SESSION_WAVE" not in ln, (
+            f"波の完全一致で判定している（前倒し訂正で取りこぼす）: {ln.strip()!r}")
+    assert "not in due_waves" in src, "前倒し判定が due_waves を見ていない"

@@ -68,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.database import get_connection  # noqa: E402
 from src.marquee import marquee_race_nos
 from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # noqa: E402
+from src.odds_prediction import predicted_trio_board  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -239,6 +240,22 @@ def due_waves_for(session: str) -> set[str]:
     return set(waves_due_by(SESSION_WAVE[session]))
 
 
+def _can_pull_forward(race_key: str) -> bool:
+    """後の波の開催を、この回へ前倒しして埋めてよいか（2026-08-21 新設）。
+
+    穴埋めの買い目は 7S / 9C（`RANK_BY_CARS`）＝**どちらも三連複**なので、
+    条件は「予測オッズの盤面を作れるか」の1つだけ。作れれば賭け金の配分は
+    板を使わないので、朝に出しても夜の波で出しても中身が変わらない。
+
+    ⚠️ 例外は握り潰して False（＝従来どおり自分の波へ残す）。前倒しは上積みで
+       あって、判定できないことを理由に商品を落としてはいけない。
+    """
+    try:
+        return bool(predicted_trio_board(race_key))
+    except Exception:
+        return False
+
+
 def venue_waves(races: list[dict]) -> dict[str, str]:
     """会場（venue_id）→ 入稿の波。
 
@@ -348,13 +365,13 @@ def main() -> int:
     targets: list[dict] = []
     for cup, rs in by_cup.items():
         want = marquee_race_nos(rs)
-        # 🔴 自分の波（+ 取りこぼした過去の波）の開催だけを埋める。判定は
+        # 🔴 自分の波（+ 取りこぼした過去の波）の開催を埋める。判定は
         #    ランクの入稿と同じ `src/meeting_wave.py`（docstring の表を参照）。
+        #    後の波の開催は**予測オッズを作れるレースだけ前倒しする**
+        #    （2026-08-21・`netkeirin_submit_wt._can_pull_forward` と同じ考え方）。
+        #    作れなければ従来どおり自分の波の回が埋める。
         wave = venue_wave.get(str(rs[0]["venue_id"]))
-        if wave not in due_waves:
-            print(f"[marquee] {rs[0]['venue_id']}: 波が違うので見送り"
-                  f"（開催={WAVE_LABEL_JP.get(wave, wave)} / 今回={session}）", flush=True)
-            continue
+        ahead = wave not in due_waves
         for r in rs:
             if int(r["race_no"]) not in want:
                 continue
@@ -365,6 +382,12 @@ def main() -> int:
             if is_closed(r.get("start_at"), now_ts):
                 continue
             if int(r.get("n_entries") or 0) not in RANK_BY_CARS:
+                continue
+            # 前倒しの可否は**埋める対象に残ったレースだけ**で見る（予測オッズの
+            # 算出はモデルを走らせるので、開催の全レースに掛けない）。
+            if ahead and not _can_pull_forward(r["race_key"]):
+                print(f"[marquee] {r['race_key']}: 予測オッズを作れないので"
+                      f"{WAVE_LABEL_JP.get(wave, wave)}の回へ回す", flush=True)
                 continue
             targets.append(r)
 
