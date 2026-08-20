@@ -604,17 +604,12 @@ function SubmittedBetBlock({ bet, entries }: {
               {multiType && <span className="text-gray-400 dark:text-gray-500 mr-1">{l.bet_type}</span>}
               {l.combo}
             </span>
-            {/* 🔴 予測オッズは板と区別して出す。同じ顔で並べると
-                「実際に付いていたオッズ」と読まれる。 */}
-            <span
-              className={`text-right ${l.odds_source === "predicted"
-                ? "text-indigo-400 dark:text-indigo-300"
-                : "text-gray-400 dark:text-gray-500"}`}
-              title={l.odds != null && l.odds_source === "predicted"
-                ? "板に無かったため、オッズ生成モデルの予測値を表示しています"
-                : undefined}
-            >
-              {l.odds != null && `${l.odds.toFixed(1)}倍${l.odds_source === "predicted" ? "*" : ""}`}
+            {/* ⚠️ 2026-08-21 から**出どころは区別して出さない**（ユーザー判断）。
+                入稿の配分・足切り・表示オッズが全て予測オッズに揃ったので、
+                画面上で「予測かどうか」を分ける意味が無くなった。
+                記録としての `odds_source` は bet_detail に残っている。 */}
+            <span className="text-right text-gray-400 dark:text-gray-500">
+              {l.odds != null && `${l.odds.toFixed(1)}倍`}
             </span>
             <span className="text-right text-gray-600 dark:text-gray-300">
               {l.stake.toLocaleString()}
