@@ -19,11 +19,11 @@ import { saveNetkeirinSettings } from "./actions";
 // 存在すればその値に従う。fail-open するのは行が無い場合だけ）。
 // 並び順は Web 全体で「車数（7車→9車）＞入稿の優先順位」に統一。
 // 入稿の優先順位は keirin 側 netkeirin_submit_wt.RANK_CONFIGS の定義順が正本
-// （7H2 > 9H1 > 7S > 9C > 7C > 7T1 > 7B > 7H1）。ここは設定画面の表示順。
+// （7H2 > 9H1 > 7S > 9C > 7B > 7C > 7T1 > 7H1 > 7M1）。ここは設定画面の表示順。
 // ⚠️ 2026-08-15 に 7H1 を最下位へ移した（三連単一本化の検証が終わるまで
 //    enabled=false のため、有効化しても他ランクの母集団を奪わない位置に置く）。
 const RANK_ORDER: NetkeirinRankKey[] =
-  ["7H2", "7S", "7C", "7T1", "7B", "7H1", "7M1", "9H1", "9C"];
+  ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1", "9H1", "9C"];
 
 const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   _global: "全体",

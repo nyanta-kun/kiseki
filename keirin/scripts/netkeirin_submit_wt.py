@@ -76,7 +76,10 @@ from src.meeting_wave import (
     waves_due_by,
 )
 from src.dutch_allocation import dutch_allocate
-from src.stake_allocation import MIN_EXPECTED_PAYOUT_7C, expected_payout_floor
+from src.stake_allocation import (
+    MIN_EXPECTED_PAYOUT_BY_RANK,
+    expected_payout_floor,
+)
 from src.race_shape import (
     wide_note_text,
     classify_shape,
@@ -227,7 +230,12 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-17 現在）: **7H2 > 7S > 7C > 7T1 > 7B > 7H1 > 7M1**
+#    優先順位（2026-08-21 現在）: **7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1**
+#    🔴 2026-08-21: **7B を 7C の上へ**（ユーザー方針「最低希望オッズ 1.5倍」）。
+#       競合874R の直接対決で 7B が 1.5倍以上の的中で +5〜6pt 勝ち、ROI も上
+#       （2025 +6.01[+3.10,+9.11] / 2026 +5.03[+1.68,+8.66]・両年独立で再現）。
+#       7B は単独でも 1.5倍以上 24.34% と全ランク最高。
+#       [[keirin_rank_priority_15x_2026_08_21]]
 #    （7C > 7B は 2026-08-07 ユーザー指定。7T1 は 2026-08-13 にその間へ挿入）。
 #    ⚠️ **2026-08-15 に 7H1 を最下位へ落とした**。三連単一本化の実装・検証が
 #      終わるまで `enabled=false` で止めてあり、有効化しても他ランクの母集団を
@@ -327,6 +335,32 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     # ⚠️ **総流しではない**。相手は `legs_7c`（3着内率15%以上・4〜5点で可変）。
     # ⚠️ 賭け金も**可変**（1レース10,000円の予算枠 ÷ 点数）なので
     #    stake_per_line ではなく stake_budget を持つ。
+    "7B":  {"file_key": "s7b", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
+            "partners_key": "legs_7b", "tilt_stakes": True,
+            # 🔴 **7C より後ろに置いた**（2026-08-07 ユーザー判断）。重複するレースは
+            #    7C が取り、7B は独自レース（3.14件/日）だけを出す。7C に譲るのは
+            #    設計どおりなので `overlap_expected` で失敗集計から外す。
+            "overlap_expected": True,
+            # ⚠️ 2026-08-05 の PR#12 で 7B は「◎○一致 × **順序一致** × 準決勝」へ
+            #    全面入替した。旧7Bは順序**不一致**が条件だったため、旧文面の
+            #    「1番手評価が異なり」は現行条件と正反対になっていた（2026-08-06 是正）。
+            #    また外部サイトの予想印を「公式予想」と呼ぶのは誤りなので言及しない。
+            #    定義を変えるときは必ずこの文面と DB の comment_template も見ること。
+            "default_comment": (
+                "本日の二軸をお届けします。\n\n"
+                "準決勝の中から、当方の指数で軸2車が明確に絞り込めたレースだけを"
+                "お届けしています。相手も3点に絞りました。\n"
+                "買い目は三連複・軸2車から相手3点。金額は均等ではなく、当方が想定する"
+                "発走時オッズに応じて配分しています。\n\n"
+                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
+            )},
+    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。
+    # 🔴 **2026-08-15 に三連単一本化**（ユーザー指示）。それまでは唯一の2券種ランクで、
+    #    三連単F8点 + 三連複BOX（最大10点）を1商品にまとめて入稿していた
+    #    （`multi_bet` → `_normalize_multi_candidate`）。三連複ぶんの予算を三連単へ
+    #    振り直したので、9H1 と同じ**三連単フォーメーション単一券種**になり
+    #    `formation_bet` 経路（`_normalize_formation_candidate`）を共用する。
+    # 買い目は候補JSONの `legs`（=`legs_tf` と同じ）を**正**として復元する。
     "7C":  {"file_key": "s7c", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
             "axis_keys": ("axis1_7c", "axis2_7c"),
             # 🔴 **買う相手**は `legs_7c_buy`（三連単=相手全部 / 三連複=上位2点）。
@@ -377,32 +411,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
                 "大きさを狙う券種としてご活用ください。"
                 "レース直前の最終オッズをご自身でご確認ください。"
             )},
-    "7B":  {"file_key": "s7b", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,     "stake_budget": RACE_BUDGET, "gate_filter": None,
-            "partners_key": "legs_7b", "tilt_stakes": True,
-            # 🔴 **7C より後ろに置いた**（2026-08-07 ユーザー判断）。重複するレースは
-            #    7C が取り、7B は独自レース（3.14件/日）だけを出す。7C に譲るのは
-            #    設計どおりなので `overlap_expected` で失敗集計から外す。
-            "overlap_expected": True,
-            # ⚠️ 2026-08-05 の PR#12 で 7B は「◎○一致 × **順序一致** × 準決勝」へ
-            #    全面入替した。旧7Bは順序**不一致**が条件だったため、旧文面の
-            #    「1番手評価が異なり」は現行条件と正反対になっていた（2026-08-06 是正）。
-            #    また外部サイトの予想印を「公式予想」と呼ぶのは誤りなので言及しない。
-            #    定義を変えるときは必ずこの文面と DB の comment_template も見ること。
-            "default_comment": (
-                "本日の二軸をお届けします。\n\n"
-                "準決勝の中から、当方の指数で軸2車が明確に絞り込めたレースだけを"
-                "お届けしています。相手も3点に絞りました。\n"
-                "買い目は三連複・軸2車から相手3点。金額は均等ではなく、当方が想定する"
-                "発走時オッズに応じて配分しています。\n\n"
-                "レース直前の最終オッズをご自身でご確認のうえ、ご活用ください。"
-            )},
-    # 7H1（2026-08-06新設・穴推奨「本命バスト型」）。
-    # 🔴 **2026-08-15 に三連単一本化**（ユーザー指示）。それまでは唯一の2券種ランクで、
-    #    三連単F8点 + 三連複BOX（最大10点）を1商品にまとめて入稿していた
-    #    （`multi_bet` → `_normalize_multi_candidate`）。三連複ぶんの予算を三連単へ
-    #    振り直したので、9H1 と同じ**三連単フォーメーション単一券種**になり
-    #    `formation_bet` 経路（`_normalize_formation_candidate`）を共用する。
-    # 買い目は候補JSONの `legs`（=`legs_tf` と同じ）を**正**として復元する。
     "7H1": {"file_key": "s7h1", "n_cars": 7, "formation_bet": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
             "default_comment": (
@@ -1328,17 +1336,26 @@ def _build_tilted_legs(
     return legs, source, stakes
 
 
-def _expected_payout_floor_7c(
+def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
 ) -> float | None:
-    """7C の想定払戻（下限）。板が足りず判定できないときは None。
+    """想定払戻（下限）。判定できないときは None（＝入稿する側へ倒す）。
 
-    盤面は `_load_trio_board`（＝入稿時点の最新オッズ。朝はスナップショットと同値）。
-    **配分に使ったのと同じ板**で測ること。別の板で測ると、配分が想定した
-    払戻と判定が食い違う。
+    🔴 **予測オッズを優先する**（2026-08-21）。実オッズ板は買う点が全部揃うのが
+       実測 8.9% しかなく、板だけで測るとゲートがほぼ発火しない。実際
+       `MIN_EXPECTED_PAYOUT_7C` を 7S へ広げるか検討したとき、板で判定できたのは
+       **12件だけ**で「7S では効かない」と誤読しかけた
+       （[[keirin_n7_gami_cut_predicted_odds_2026_08_21]]）。
+
+    ⚠️ **配分に使ったのと同じ板で測ること。** `_build_tilted_legs` は
+       `tilted_stakes(predicted_odds=...)` に予測オッズを渡しているので、
+       判定も予測オッズで行うのが整合する。予測が作れないときだけ実オッズ板へ落ち、
+       それも無ければ None。
     """
-    board = _load_trio_board(race_key)
-    odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
+    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(stakes))
+    if not odds:
+        board = _load_trio_board(race_key)
+        odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
     return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
 
 
@@ -1821,21 +1838,25 @@ def _process_rank(
                 elif cfg.get("tilt_stakes"):
                     legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
                         race_key, cfg, axis1, axis2_or_p1, partners)
-                    # 想定払戻の下限で 7C を足切りする（2026-08-19・ユーザー判断）。
-                    # 根拠・数値は `src/stake_allocation.MIN_EXPECTED_PAYOUT_7C`。
+                    # 想定払戻の下限で足切りする（2026-08-19 新設 / 2026-08-21 改定）。
+                    # 対象ランクと閾値は `stake_allocation.MIN_EXPECTED_PAYOUT_BY_RANK`
+                    # （ユーザー方針「最低限の希望オッズは 1.5 倍」）。
                     # 🔴 **`continue` で抜けること。** ここで「処理済み」にすると
                     #    1レース1商品の取り合いで後続ランクがそのレースを取れなくなる。
-                    #    落としたいのは 7C の商品であって、そのレース自体ではない。
-                    # 🔴 判定不能（板が足りない）なら**出す**。分からないことを
-                    #    理由に商品を落とさない（`expected_payout_floor` の docstring）。
-                    if rank_key == "7C" and not use_trifecta:
-                        floor = _expected_payout_floor_7c(
+                    #    落としたいのはこのランクの商品であって、そのレース自体ではない。
+                    # 🔴 判定不能なら**出す**。分からないことを理由に商品を落とさない
+                    #    （`expected_payout_floor` の docstring）。
+                    # ⚠️ 看板は `submit_marquee_wt.py --marquee` が**ゲートを通さず**
+                    #    埋めるので、ここで落としても看板の推奨は消えない。
+                    min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
+                    if min_floor is not None and not use_trifecta:
+                        floor = _expected_payout_floor_for(
                             race_key.split("#")[0], axis1, axis2_or_p1,
                             tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET))
-                        if floor is not None and floor < MIN_EXPECTED_PAYOUT_7C:
+                        if floor is not None and floor < min_floor:
                             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
                                   f"({rank_key}): 想定払戻(下限) {floor:.2f}倍 < "
-                                  f"{MIN_EXPECTED_PAYOUT_7C:.2f}倍", flush=True)
+                                  f"{min_floor:.2f}倍", flush=True)
                             continue
                     # 🔴 印を submit_pick が内部で作っていたものと**同じ**にする。
                     #    submit_pick は軸=◎○・**買った相手=△**・買っていない車=印なし

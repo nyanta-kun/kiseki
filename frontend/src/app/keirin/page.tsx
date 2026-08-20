@@ -1321,7 +1321,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H2", "7S", "7C", "7T1", "7B", "7H1", "7M1", "9H1", "9C"] as const;
+const RANK_ORDER = ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
   // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。

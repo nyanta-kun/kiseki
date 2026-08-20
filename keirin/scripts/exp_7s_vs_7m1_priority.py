@@ -83,14 +83,17 @@ class Acc:
             return "  （0件）"
         med = statistics.median(self.ratios) if self.ratios else 0.0
         x10 = sum(1 for r in self.ratios if r >= 10)
+        x5 = sum(1 for r in self.ratios if r >= 5)
+        x2p = sum(1 for r in self.ratios if r >= 2)
         x2 = sum(1 for r in self.ratios if r < 2)
         return (f"{self.n:>7}{100 * self.hit / self.n:>8.1f}{100 * self.disp / self.n:>8.1f}"
+                f"{100 * x2p / self.n:>8.1f}{100 * x5 / self.n:>8.1f}"
                 f"{100 * self.pay / self.bet:>8.1f}{med:>9.2f}"
                 f"{100 * x10 / self.n:>9.2f}{100 * x2 / self.hit if self.hit else 0:>10.1f}")
 
 
-HEAD = (f"  {'':22}{'R':>7}{'的中%':>8}{'表示%':>8}{'ROI%':>8}{'倍率中央':>9}"
-        f"{'10倍+%':>9}{'的中中2倍未満':>10}")
+HEAD = (f"  {'':22}{'R':>7}{'的中%':>8}{'表示%':>8}{'2倍+%':>8}{'5倍+%':>8}"
+        f"{'ROI%':>8}{'倍率中央':>9}{'10倍+%':>9}{'的中中2倍未満':>10}")
 
 
 def boot(a: Acc, b: Acc, keys: list[str], n_iter=3000, seed=23):
@@ -108,12 +111,24 @@ def boot(a: Acc, b: Acc, keys: list[str], n_iter=3000, seed=23):
 
 
 def boot_rate(a: Acc, b: Acc, keys: list[str], kind: str, n_iter=3000, seed=29):
-    """的中率 / 表示的中率の差（b − a）の 95%CI。"""
+    """的中率 / 表示的中率 / 2倍以上 / 5倍以上 の差（b − a）の 95%CI。
+
+    ⚠️ `kind="x2"` が **2026-08-21 に足した本命の指標**。当初この検証は
+    表示的中（払戻>賭け金）で採否を決めていたが、ユーザー方針が
+    「的中率そのものには意味がない・件数は減ってよい」へ変わったため、
+    **2倍以上で的中した率**を主指標にする必要がある。
+    """
     rnd = random.Random(seed)
 
     def flag(acc, k):
         bet, pay = acc.per_race[k]
-        return int(pay > bet) if kind == "disp" else int(pay > 0)
+        if kind == "disp":
+            return int(pay > bet)
+        if kind == "x2":
+            return int(pay >= 2 * bet and pay > 0)
+        if kind == "x5":
+            return int(pay >= 5 * bet and pay > 0)
+        return int(pay > 0)
 
     fa = {k: flag(a, k) for k in keys}
     fb = {k: flag(b, k) for k in keys}
@@ -160,6 +175,21 @@ def report(label: str, keys: list[str], rows: dict) -> tuple[Acc, Acc] | None:
           f"{'*' if dl>0 or dh<0 else ' '}"
           f"  的中 {100*(m.hit-s.hit)/len(keys):+5.1f}pt [{hl:+5.1f},{hh:+5.1f}]"
           f"{'*' if hl>0 or hh<0 else ' '}")
+
+    # 🔴 2026-08-21 追加: ユーザー方針変更（的中率そのものには意味がない・
+    #    件数は減ってよい）に伴い、**2倍以上/5倍以上で的中した率**を主指標に据える。
+    #    当初の不採用根拠だった「表示的中 −20pt」は、その差のほとんどが
+    #    **2倍未満の的中**で出来ていたため、KPI を変えると判断が変わりうる。
+    def _rate(acc, mult):
+        return 100 * sum(1 for k in keys
+                         if acc.per_race[k][1] >= mult * acc.per_race[k][0]
+                         and acc.per_race[k][1] > 0) / len(keys)
+    for mult, kind in ((2, "x2"), (5, "x5")):
+        a, b = _rate(s, mult), _rate(m, mult)
+        cl, ch = boot_rate(s, m, keys, kind)
+        print(f"     └ {mult}倍以上で的中: 7S {a:5.2f}%  7M1 {b:5.2f}%  "
+              f"差 {b - a:+5.2f}pt [{cl:+5.2f},{ch:+5.2f}]"
+              f"{'*' if cl > 0 or ch < 0 else ' '}")
     return s, m
 
 
