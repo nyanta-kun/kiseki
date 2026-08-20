@@ -1687,6 +1687,35 @@ ChihouSweetSpotResponse {
 - 過去補完: `backend/scripts/backfill_chihou_place_odds.py --start YYYYMMDD --end YYYYMMDD`
 - `chihou.odds_history` は **2026-04-07 以降** のみ蓄積。それ以前は恒久的に補完不可
 
+### オッズ鮮度シグナル（レース詳細に常時表示・2026-08-21）
+
+🔴 **オッズが止まっても API は 200 と「それらしい倍率」を返し続ける。**
+最後のスナップショットが DB に残るため、値だけを見て停止に気づくことはできない。
+2026-08-20 に取得が **4時間51分**止まったとき、発走直前の画面に朝の倍率が出ていたが
+異常を示すものは何も無く、公式オッズと見比べるまで誰も気づかなかった。
+
+- 判定の正本: `backend/src/services/chihou_odds_freshness.py`（DB にも FastAPI にも
+  依存しない純関数）。`GET /api/chihou/races/{id}/odds` が `freshness` として返す
+- 表示: `frontend/src/components/OddsFreshnessBadge.tsx`（`ChihouRaceDetailClient` のヘッダ）
+
+| status | 条件 | 表示 |
+|---|---|---|
+| `live` | 経過 ≤ 5分 | 緑「オッズ最新」 |
+| `delayed` | 5〜15分 | 黄「更新遅延」 |
+| `stale` | **15分以上・かつ未発走** | 赤「更新停止」 |
+| `missing` | 取得実績なし | 灰「オッズ未取得」 |
+| `closed` | **発走済み** | 灰「発走済み」 |
+
+- ⚠️ **発走済みの停止を異常にしてはいけない**。終わったレースが全部赤くなり信号が死ぬ
+- ⚠️ **サーバの status をそのまま描画してはいけない**。ポーリングが失敗している・
+  圏外・API 停止のとき、最後に受け取った「最新です」が画面に残り続ける。
+  バッジは**受信からの経過を足して判定し直す**ので、更新が届かなければ自分で赤へ進む
+  （端末の時計が狂っていても影響しない。絶対時刻ではなく経過時間しか使わないため）
+- ⚠️ **`fetched_at` は naive UTC・DB セッションは Asia/Tokyo**。
+  SQL で `now() - fetched_at` すると9時間ずれる。`now() AT TIME ZONE 'UTC'` を使うこと
+- 15分という赤の閾値は Windows 側 `run_realtime_watchdog.vbs` の `STALL_MINUTES` と同値。
+  片方だけ変えると「画面は赤いのに watchdog は無反応」になるので必ず揃える
+
 ### 推奨パネル UI（`/chihou/races` の推奨タブ）
 
 - カテゴリ別 **コンパクト table**（カードではなく一覧表形式）
