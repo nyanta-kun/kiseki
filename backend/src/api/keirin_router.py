@@ -1988,9 +1988,79 @@ async def get_netkeirin_analysis(
     })
 
 
+#: **実販売の開始日**。この日より前は netkeirin へ出しておらず（or 買い目の原本
+#: `bet_detail` が残っていない）、実売として集計できない。
+#:
+#: 🔴 サマリーの期間行は **この日を境に出所を切り替える**（2026-08-21・ユーザー判断
+#: 「2026-07まで実販売前なので現在の構成でペーパーとして埋めて」）:
+#:
+#:     race_date <  REAL_SALES_FROM  … `picks_history`（ペーパー・現行ランクのみ）
+#:     race_date >= REAL_SALES_FROM  … `netkeirin_submissions`（実際に売った商品）
+#:
+#: ⚠️ **入稿1件ずつを紙で代用するのは不可能**なので日付で切っている。
+#:    実測（2026-08-21）: `bet_detail` の無い入稿 185件のうち `picks_history` に
+#:    対応行があるのは **33件（18%）だけ**。しかも `marquee_fill`（147件）は
+#:    `submit_marquee_wt.py` が独自に組む別商品で、紙の行は**別の買い目**を
+#:    記録している（実例 `20260727_28_03`: 入稿の軸2は 1 だが紙の 7C は 4）。
+REAL_SALES_FROM = "2026-08-07"
+
 #: ペーパー通算の起点。`picks_history` はここから連続している
 #: （2024-01 より前は月次 vintage が無く再構築できない＝`wt_vintage_config.FIRST_MONTH`）。
 PAPER_TOTAL_SINCE = "2024-01-01"
+
+
+async def _paper_slice(
+    db: AsyncSession, since: str, until: str,
+) -> dict[str, int]:
+    """`since`〜`until`（両端含む）のペーパー集計。現行ランクのみ。
+
+    サマリーの期間行が **実販売開始前**を埋めるために使う（`REAL_SALES_FROM`）。
+    """
+    r = (await db.execute(
+        text(f"""
+            SELECT COUNT(*)                                    AS n_picks,
+                   COUNT(*) FILTER (WHERE ph.payout > 0)       AS n_hits,
+                   COALESCE(SUM(ph.bet_amount), 0)             AS total_bet,
+                   COALESCE(SUM(ph.payout), 0)                 AS total_payout,
+                   MAX(ph.payout) FILTER (WHERE ph.payout > 0) AS max_payout
+            FROM keirin.picks_history ph
+            WHERE ph.race_date BETWEEN :s AND :u
+              AND ph.bet_amount > 0
+              AND ph.route = 'wt'
+              AND ph.rank IN {_RANKS_ALL}
+              AND {_enabled_rank_cond()}
+        """),
+        {"s": since, "u": until},
+    )).mappings().first()
+    d: dict[str, Any] = dict(r) if r is not None else {}
+    return {
+        "n_picks": int(d.get("n_picks") or 0),
+        "n_hits": int(d.get("n_hits") or 0),
+        "total_bet": int(d.get("total_bet") or 0),
+        "total_payout": int(d.get("total_payout") or 0),
+        "max_payout": int(d["max_payout"]) if d.get("max_payout") else 0,
+    }
+
+
+def _merge_paper_into(period: dict, paper: dict[str, int]) -> dict:
+    """実売の期間集計へ**実販売開始前のペーパー分**を合算する。
+
+    🔴 **合算した事実を必ず残す**（`paper_picks` / `paper_from` / `paper_to`）。
+       黙って足すと「当年＝全部実売」と読まれる。フロントは注記で区別する。
+    """
+    if paper["n_picks"] == 0:
+        return period
+    period["n_picks"] += paper["n_picks"]
+    period["n_hits"] += paper["n_hits"]
+    period["total_bet"] += paper["total_bet"]
+    period["total_payout"] += paper["total_payout"]
+    if paper["max_payout"]:
+        period["max_payout"] = max(period.get("max_payout") or 0,
+                                   paper["max_payout"])
+    period["roi"] = (round(period["total_payout"] / period["total_bet"], 3)
+                     if period["total_bet"] > 0 else None)
+    period["paper_picks"] = paper["n_picks"]
+    return period
 
 
 async def _aggregate_paper(
@@ -2096,8 +2166,18 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
                                   from_dt=today, to_dt=today),
         "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
                                   from_dt=today.replace(day=1), to_dt=today),
-        "year":  await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
-                                  from_dt=Date(today.year, 1, 1), to_dt=today),
+        "year":  _merge_paper_into(
+            await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
+                             from_dt=Date(today.year, 1, 1), to_dt=today),
+            # 🔴 実販売開始前（`REAL_SALES_FROM` より前）はペーパーで埋める。
+            #    当年の頭〜実販売開始日の前日まで。当月/当日は実販売開始後なので不要。
+            await _paper_slice(
+                db, f"{today.year}-01-01",
+                (Date.fromisoformat(REAL_SALES_FROM) - timedelta(days=1)).isoformat())
+            if str(today) >= REAL_SALES_FROM
+               and Date.fromisoformat(REAL_SALES_FROM).year == today.year
+            else {"n_picks": 0, "n_hits": 0, "total_bet": 0,
+                  "total_payout": 0, "max_payout": 0}),
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。

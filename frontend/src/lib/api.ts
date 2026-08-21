@@ -1121,6 +1121,11 @@ export type KeirinPeriodSummary = {
    *  bet_detail の保存は 2026-08-07 開始で、それ以前は金額を復元できない
    *  （0円で足すと投資額を過小に見せるので件数だけ出す）。 */
   n_unpriced?: number;
+  /** 🔴 この期間の集計に含まれる**ペーパー分**の件数（2026-08-21 追加）。
+   *  実販売の開始（`REAL_SALES_FROM` = 2026-08-07）より前は netkeirin へ
+   *  出していないので、`picks_history`（現行ランクのみ）で埋めている。
+   *  **黙って足すと「当年＝全部実売」と読まれる**ので、値があれば内訳を出すこと。 */
+  paper_picks?: number;
   by_rank?: Record<string, { n_picks: number; n_hits: number; total_bet: number; total_payout: number; roi: number | null; n_candidates?: number; max_payout?: number | null }>;
 };
 
