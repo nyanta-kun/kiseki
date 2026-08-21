@@ -2042,6 +2042,30 @@ async def _paper_slice(
     }
 
 
+_EMPTY_PAPER: dict[str, int] = {
+    "n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0, "max_payout": 0,
+}
+
+
+async def _paper_for_period(
+    db: AsyncSession, from_dt: Date, to_dt: Date,
+) -> dict[str, int]:
+    """期間 `from_dt`〜`to_dt` のうち、**実販売開始前に重なる部分**のペーパー集計。
+
+    🔴 当年だけでなく **当日・当月にも効かせる**（2026-08-22・ユーザー要望
+       「ペーパー表示は日時で確認できませんか？」）。日付ナビで実販売開始前へ
+       遡ったとき、そのままだと実売が無いので全部 0 になり、
+       **その日に何を推奨していたかが画面から消える**。
+
+    重なりが無ければ 0 の辞書を返す（合算しても何も変わらない）。
+    """
+    end = Date.fromisoformat(REAL_SALES_FROM) - timedelta(days=1)
+    lo, hi = from_dt, min(to_dt, end)
+    if lo > hi:
+        return dict(_EMPTY_PAPER)
+    return await _paper_slice(db, lo.isoformat(), hi.isoformat())
+
+
 def _merge_paper_into(period: dict, paper: dict[str, int]) -> dict:
     """実売の期間集計へ**実販売開始前のペーパー分**を合算する。
 
@@ -2162,22 +2186,22 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         # 🔴 投資・払戻・的中は**実際に売った商品**から数える（`_aggregate` の
         #    docstring 参照）。期間は SQL 条件（候補数用）と日付（実売用）の
         #    両方を渡す —— 片方だけにすると母集団がずれる。
-        "today": await _aggregate(db, "ph.race_date = :d", {"d": today_str},
-                                  from_dt=today, to_dt=today),
-        "month": await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
-                                  from_dt=today.replace(day=1), to_dt=today),
-        "year":  _merge_paper_into(
+        # 🔴 3期間とも **実販売開始前に重なる部分はペーパーで埋める**
+        #    （`_paper_for_period`）。当年だけに効かせていた頃は、日付ナビで
+        #    実販売開始前へ遡ると当日・当月が全部 0 になり、その日に何を推奨して
+        #    いたかが画面から消えていた（2026-08-22 是正）。
+        "today": _merge_paper_into(
+            await _aggregate(db, "ph.race_date = :d", {"d": today_str},
+                             from_dt=today, to_dt=today),
+            await _paper_for_period(db, today, today)),
+        "month": _merge_paper_into(
+            await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
+                             from_dt=today.replace(day=1), to_dt=today),
+            await _paper_for_period(db, today.replace(day=1), today)),
+        "year": _merge_paper_into(
             await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
                              from_dt=Date(today.year, 1, 1), to_dt=today),
-            # 🔴 実販売開始前（`REAL_SALES_FROM` より前）はペーパーで埋める。
-            #    当年の頭〜実販売開始日の前日まで。当月/当日は実販売開始後なので不要。
-            await _paper_slice(
-                db, f"{today.year}-01-01",
-                (Date.fromisoformat(REAL_SALES_FROM) - timedelta(days=1)).isoformat())
-            if str(today) >= REAL_SALES_FROM
-               and Date.fromisoformat(REAL_SALES_FROM).year == today.year
-            else {"n_picks": 0, "n_hits": 0, "total_bet": 0,
-                  "total_payout": 0, "max_payout": 0}),
+            await _paper_for_period(db, Date(today.year, 1, 1), today)),
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
