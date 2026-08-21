@@ -1132,6 +1132,17 @@ export type KeirinSummary = {
   today: KeirinPeriodSummary;
   month: KeirinPeriodSummary;
   year: KeirinPeriodSummary;
+  /** 🔴 **ペーパー通算**（2026-08-21 追加）。上3行とは**母集団が違う**。
+   *
+   *  today/month/year の投資・払戻は `netkeirin_submissions`＝**実際に売った商品**
+   *  から数えるが、その原本は 2026-07-24 開始しかない。こちらは `picks_history`
+   *  ＝「もし買っていたら」の紙の記録で 2024-01 から連続している。
+   *  🔴 **無印で同じ表に並べない。必ず「ペーパー」と明示すること**
+   *  （`/review`(実売) と `/keirin`(ペーパー) の不一致を不具合と誤診する型に戻る）。
+   *  ⚠️ 現行ランクのみ（廃止済みの 7A/7SS/9A/9S は除外）。ただし `rule_version` の
+   *     変化までは吸収していないので**世代をまたいだ通算**であることを承知で読む。
+   *  古いAPIに当たったら undefined（行を出さない・fail-open）。 */
+  paper_total?: KeirinPeriodSummary & { since?: string; is_paper?: boolean };
   /** Web に出してよい表示ラベル（入稿対象ONのランクだけ・2026-08-12）。
    *  未指定の古いAPIに当たったときは絞り込まない（fail-open）。 */
   visible_ranks?: string[];

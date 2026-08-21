@@ -1528,8 +1528,33 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
             <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
             <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
+            {/* 🔴 ペーパー通算（2026-08-21・ユーザー要望）。上3行は**実際に売った商品**
+                （原本は 2026-07-24 開始）だが、この行は `picks_history`＝
+                「もし買っていたら」の紙の記録で 2024-01 から連続している。
+                **母集団が違うので必ずラベルで区別する** —— 無印で並べると
+                `/review`(実売) との不一致を不具合と誤診する型に戻る。
+                ⚠️ 現行ランクのみ（廃止済み 7A/7SS/9A/9S は除外）。
+                古いAPIに当たったら行ごと出さない（fail-open）。 */}
+            {summary.paper_total && (
+              <SummaryRow
+                label={`ペーパー ${(summary.paper_total.since ?? "2024-01-01").slice(0, 7)}〜`}
+                data={summary.paper_total}
+                showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder}
+              />
+            )}
           </tbody>
         </table>
+        {/* 🔴 **母集団の違いを表の中だけで伝えるのは無理**なので注記を置く。
+            ラベルだけだと「当年より件数が多いのはなぜ」と誤読される。 */}
+        {summary.paper_total && (
+          <p className="mt-2 px-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+            ⚠️ 上3行は<strong>実際に売った商品</strong>（netkeirin 入稿・2026-07-24〜）。
+            「ペーパー」行は<strong>買っていたらの想定</strong>（2024-01〜）で、
+            <strong>母集団が違います</strong>。現行ランクのみを集計しており、
+            廃止済みのランクは含みません。買い方（ルール）は期間中に何度も
+            変わっているため、世代をまたいだ参考値です。
+          </p>
+        )}
       </div>
     </div>
   );
