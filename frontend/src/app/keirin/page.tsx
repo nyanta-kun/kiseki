@@ -1433,6 +1433,13 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
                  表示を戻すならこのブロックを復活させるだけでよい。
               ⚠️ 表から消えても **当年の集計に 185件が入っていない事実は変わらない**。
                  その説明は表下の注記へ移した。 */}
+          {/* 🔴 実販売開始前をペーパーで埋めた分の内訳（2026-08-21）。
+              黙って足すと「当年＝全部実売」と読まれる。 */}
+          {!!data.paper_picks && (
+            <span className="block text-xs font-normal text-gray-400 dark:text-gray-500">
+              うちペーパー {data.paper_picks.toLocaleString()}件
+            </span>
+          )}
         </td>
         {/* 候補（オッズ条件前の総候補レース数） */}
         <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-400 dark:text-gray-500 tabular-nums">
@@ -1556,8 +1563,9 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <strong>母集団が違います</strong>。現行ランクのみを集計しており、
             廃止済みのランクは含みません。買い方（ルール）は期間中に何度も
             変わっているため、世代をまたいだ参考値です。
-            なお実売の集計は買い目の原本が残る<strong>2026-08-08 以降</strong>が対象で、
-            それ以前の 185 件は金額を復元できないため入っていません。
+            「当年」は<strong>2026-08-07 の実販売開始</strong>を境に出所が変わります。
+            それ以前は netkeirin へ出していないため<strong>ペーパー</strong>
+            （現行ランクのみ）で埋めており、行内に内訳を出しています。
           </p>
         )}
       </div>
