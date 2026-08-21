@@ -261,6 +261,9 @@ def build_features_wt(df: pd.DataFrame) -> pd.DataFrame:
 
     # ks流ローリング特徴（point-in-time。履歴 wt_entries から計算）
     df = add_rolling_features_wt(df)
+    # Elo残差（2026-08-21・誤り②で放置されていた信号の回収）。
+    # 全履歴でウォームアップするので rolling と同じく DB を直接読む。
+    df = add_elo_features_wt(df)
 
     # 競走得点トレンド（point-in-time。履歴 wt_entries の得点時系列から計算）
     df = add_rp_trend_features_wt(df)
@@ -606,6 +609,117 @@ ROLLING_COLS_WT = [
     "win_3m", "top3_3m", "quin_3m", "win_6m", "top3_6m", "quin_6m",
     "venue_wr", "days_since", "wr_trend",
 ]
+
+
+ELO_COLS_WT = ["elo_resid", "elo_z"]
+
+#: Elo の定数。`scripts/exp_elo_linecoop_wt.py` と同値（値を変えると過去の検証と
+#: 別物になるので、変えるときは A/B からやり直すこと）。
+ELO_K, ELO_SCALE, ELO_INIT = 24.0, 400.0, 1500.0
+
+
+def add_elo_features_wt(df: pd.DataFrame) -> pd.DataFrame:
+    """point-in-time の Elo と、**競走得点に対する残差**を付与する。
+
+        elo_z     : レース内 z-score の Elo（レース前の rating）
+        elo_resid : レース内 z(Elo) − レース内 z(競走得点)
+                    正 = 表示得点より Elo が高く評価している（得点の陳腐化ラグ）
+
+    ## なぜ入れるのか
+
+    2026-07-30 の市場テストで「人気統制後も単調性が残る本物の信号」と確定しながら、
+    **ROI 1.333 という買い目の基準を特徴量候補に当てて**閉じられていた
+    （[[keirin_verification_audit_2026_08_20]] の系統的な誤り②）。
+    2026-08-21 の A/B で回収した（[[keirin_orphan_signals_ab_2026_08_21]]）:
+
+        ΔAUC   6窓すべて正 +0.0016〜+0.0030（N-2 の全アームの約4倍）
+        Δ二軸  6窓すべて正・未使用窓 w5/w6 に事前登録して平均 **+0.38pt** で採用
+
+    🔴 **効くのは「順位付け全体」であって「1位を当てる」ではない。**
+       Δ1位3着内 は窓で符号が振れる（一次判定は不採用だった）。
+       1位精度の改善として説明してはいけない。
+    ⚠️ `n_starts_90`（直近90日の出走回数）は同時に測って**6窓とも無風**だった。
+       一緒に入れると薄まる（`+both` は採用ラインを下回った）ので**入れない**。
+
+    ## 🔴 全履歴でウォームアップする
+
+    Elo は逐次更新なので、`df` の期間だけで回すと期首の rating が初期値に張り付く。
+    `add_rolling_features_wt` と同じく **DB から全履歴を引いて**時系列で回し、
+    その結果を `df` へ結合する。実測 102,131レースで **本計算 7.9秒**（+読込16秒）。
+
+    ⚠️ A/B は `min_date="2023-06-01"` のデータで回したので、**本番はウォームアップが
+       長いぶん rating がより収束している**。同一値にはならない（本番のほうが情報が多い）。
+
+    ## point-in-time の担保
+
+    各レースの特徴は**そのレースの前の rating** で作り、**レース後に更新する**。
+    未確定レース（`finish_order` 無し）は更新に寄与しないので、当日レースを含めても
+    リークしない。
+    """
+    df = df.copy()
+    if "player_id" not in df.columns or "race_key" not in df.columns:
+        for c in ELO_COLS_WT:
+            df[c] = 0.0
+        return df
+
+    sql = ("SELECT e.race_key, r.race_date, r.start_at, e.player_id, "
+           "       e.finish_order, e.race_point "
+           "FROM wt_entries e JOIN wt_races r ON e.race_key=r.race_key")
+    db_url = os.environ.get("KEIRIN_DB_URL")
+    if db_url:
+        from sqlalchemy import create_engine, text as sa_text
+        engine = create_engine(db_url)
+        pg = (sql.replace("wt_entries", "keirin.wt_entries")
+                 .replace("wt_races", "keirin.wt_races"))
+        with engine.connect() as c:
+            H = pd.read_sql_query(sa_text(pg), c)
+        engine.dispose()
+    else:
+        with get_connection() as conn:
+            H = pd.read_sql_query(sql, conn)
+    if H.empty:
+        for c in ELO_COLS_WT:
+            df[c] = 0.0
+        return df
+
+    H["fin"] = pd.to_numeric(H["finish_order"], errors="coerce")
+    order = (H.groupby("race_key")
+             .agg(_d=("race_date", "first"), _s=("start_at", "first"))
+             .sort_values(["_d", "_s"]).index.tolist())
+    groups = {rk: g for rk, g in H.groupby("race_key", sort=False)}
+
+    rating: dict = defaultdict(lambda: ELO_INIT)
+    rows = []
+    for rk in order:
+        g = groups[rk]
+        pids = g["player_id"].tolist()
+        pre = [rating[p] for p in pids]
+        rps = pd.to_numeric(g["race_point"], errors="coerce").tolist()
+        e_mu, e_sd = float(np.mean(pre)), float(np.std(pre))
+        valid = [x for x in rps if x == x]
+        r_mu, r_sd = ((float(np.mean(valid)), float(np.std(valid)))
+                      if valid else (0.0, 1.0))
+        for p, e, rp in zip(pids, pre, rps):
+            z_e = (e - e_mu) / (e_sd or 1.0)
+            z_r = ((rp - r_mu) / (r_sd or 1.0)) if rp == rp else 0.0
+            rows.append((rk, p, z_e - z_r, z_e))
+        fins = g["fin"].tolist()
+        for i, (pi, fi) in enumerate(zip(pids, fins)):
+            if fi != fi or fi < 1:
+                continue
+            for j, (pj, fj) in enumerate(zip(pids, fins)):
+                if i >= j or fj != fj or fj < 1:
+                    continue
+                ex = 1.0 / (1.0 + 10 ** ((rating[pj] - rating[pi]) / ELO_SCALE))
+                sc = 1.0 if fi < fj else (0.0 if fi > fj else 0.5)
+                rating[pi] += ELO_K * (sc - ex)
+                rating[pj] -= ELO_K * (sc - ex)
+
+    E = pd.DataFrame(rows, columns=["race_key", "player_id"] + ELO_COLS_WT)
+    out = df.merge(E, on=["race_key", "player_id"], how="left")
+    for c in ELO_COLS_WT:
+        out[c] = out[c].fillna(0.0)
+    return out
 
 
 def add_rolling_features_wt(df: pd.DataFrame) -> pd.DataFrame:
@@ -1261,6 +1375,8 @@ def add_h2h_features_wt(df: pd.DataFrame, history: pd.DataFrame | None = None) -
 # 元々FEATURE_COLS_WTに含まれていない（load_raw_data_wtでSELECTのみ）ため
 # 変更不要。ただし将来アドホック実験で誤って採用しないよう明記しておく。
 FEATURE_COLS_WT = [
+    # Elo残差（2026-08-21 追加）。詳細は `add_elo_features_wt` の docstring。
+    "elo_resid", "elo_z",
     # コア得点
     "race_point",
     "gear_ratio",
