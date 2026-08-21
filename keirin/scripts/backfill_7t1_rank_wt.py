@@ -59,6 +59,7 @@ from src.strategy_wt import (  # noqa: E402
     RANK_7T1_NE, RANK_7T1_TARGET_PAYOUT, rank_7t1_stakes,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
+from src.result_top3 import hit_trifecta, winning_trifectas
 
 RANK = "RANK_7T1"
 SUFFIX = "#7T1"
@@ -100,8 +101,12 @@ def _load_tf_boards(race_keys: list[str]) -> dict[str, set]:
     return dict(tf)
 
 
-def _load_finishes(race_keys: list[str]) -> dict[str, list[int]]:
-    """{race_key: [1着車, 2着車, 3着車]}。3着まで揃わないレースは含めない。"""
+def _load_finishes(race_keys: list[str]) -> dict[str, list[tuple[int, int]]]:
+    """{race_key: [(着順, 車番), ...]}。3着まで揃わないレースは含めない。
+
+    🔴 **車番だけに畳まないこと。** 同着では三連単の当たりが複数になるので、
+       着順そのものが要る（`src/result_top3` が正本）。
+    """
     out: dict[str, list[tuple[int, int]]] = defaultdict(list)
     if not race_keys:
         return {}
@@ -113,7 +118,7 @@ def _load_finishes(race_keys: list[str]) -> dict[str, list[int]]:
                  % ",".join("?" * len(chunk)))
             for rk, fno, fo in c.execute(q, chunk):
                 out[rk].append((int(fo), int(fno)))
-    return {rk: [f for _, f in sorted(v)] for rk, v in out.items() if len(v) >= 3}
+    return {rk: sorted(v) for rk, v in out.items() if len(v) >= 3}
 
 
 def assert_odds_model_is_honest(date_from: str) -> None:
@@ -167,10 +172,14 @@ def build_rows(date_from: str, date_to: str, *, eval_model: str,
         stakes = rank_7t1_stakes(legs)
         bet = sum(stakes.values())
 
-        hit_combo = "-".join(map(str, order[:3]))
-        hit = hit_combo in legs
+        # 🔴 同着では当たり目が複数ある（`src/result_top3` が正本）。
+        wins_tf = winning_trifectas(order)
+        tf_win = hit_trifecta([tuple(int(x) for x in t.split("-")) for t in legs
+                               if t.count("-") == 2], wins_tf)
+        hit = tf_win is not None
+        hit_combo = "-".join(map(str, tf_win or wins_tf[0]))
         # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
-        tf_odds = pm.get(rk, {}).get(("trifecta", tuple(order[:3])), 0)
+        tf_odds = pm.get(rk, {}).get(("trifecta", tf_win or wins_tf[0]), 0)
         payout = tf_odds * stakes[hit_combo] // 100 if hit else 0
 
         rows.append({

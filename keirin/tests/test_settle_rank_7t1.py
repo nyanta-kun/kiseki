@@ -40,14 +40,14 @@ class FakeConn:
 
     def __init__(self, rows, finish):
         self._rows = rows          # picks_history の行
-        self._finish = finish      # [(車番,), ...] 着順どおり
+        self._finish = finish      # [(着順, 車番), ...]（同着があるので着順が要る）
         self.updates: list[tuple] = []
 
     def execute(self, sql, params=()):
         flat = " ".join(sql.split())
         if flat.startswith("SELECT race_key, pred_combo, bet_amount"):
             return _Result(self._rows)
-        if flat.startswith("SELECT frame_no FROM wt_entries"):
+        if flat.startswith("SELECT finish_order, frame_no FROM wt_entries"):
             return _Result(self._finish)
         if flat.startswith("UPDATE picks_history"):
             self.updates.append(tuple(params))
@@ -89,7 +89,19 @@ def _rows(pred_combo="三単:1-7-2,1-7-4", bet=10000):
 
 
 def _finish(*frames):
-    return [(f,) for f in frames]
+    """着順どおりの車番を (着順, 車番) へ。同着を書きたいときはタプルで渡す。
+
+    >>> _finish(1, 7, 4)          # 通常
+    >>> _finish(1, 7, (4, 5))     # 3着同着（4番と5番）
+    """
+    rows: list[tuple[int, int]] = []
+    pos = 1
+    for f in frames:
+        group = f if isinstance(f, tuple) else (f,)
+        for x in group:
+            rows.append((pos, x))
+        pos += len(group)
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +180,15 @@ def test_採点バッチから呼ばれている():
     """🔴 呼び出しを外しても例外は出ず、7T1 の払戻だけが静かに消える。"""
     src = " ".join(m.__file__ and open(m.__file__, encoding="utf-8").read().split())
     assert "_settle_rank_7t1(conn, target_date)" in src
+
+
+def test_同着でも買った目が的中として書き戻される(patched):
+    """3着同着では当たりが2通りある。旧実装は先頭3件だけを正解にしていた。"""
+    patched["payouts"][RK] = {("trifecta", (1, 7, 5)): 4120}
+    conn = FakeConn(_rows("三単:1-7-5,1-7-2"), _finish(1, 7, (4, 5)))
+    m._settle_rank_7t1(conn, DATE)
+    assert conn.updates, "同着で当たっているのに書き戻していない"
+    hit, pay, tf_pay, bet, key = conn.updates[0]
+    assert hit == 1
+    assert tf_pay == 4120          # **買った目**の払戻を使うこと
+    assert key == STORE
