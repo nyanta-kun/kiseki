@@ -1422,14 +1422,17 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
         <td className="py-1.5 px-2 sm:px-3 text-xs sm:text-sm text-gray-700 dark:text-gray-200 font-medium">
           {label}
           {sub && <span className="block text-xs text-gray-400 dark:text-gray-500 font-normal">{sub}</span>}
-          {/* 🔴 入稿はあるのに買い目の原本が無くて集計から外した分を必ず出す
-              （2026-08-19）。黙って落とすと「その期間の全部」に見える。
-              買い目の保存は 2026-08-07 開始なので、当年はそれ以前が丸ごと外れる。 */}
-          {!!data.n_unpriced && (
-            <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">
-              買い目未記録 {data.n_unpriced}件を除外
-            </span>
-          )}
+          {/* 「買い目未記録 N件を除外」の行は 2026-08-21 に**表示をやめた**（ユーザー要望）。
+              当初（2026-08-19）は「黙って落とすと『その期間の全部』に見える」ため
+              出していたが、対象は **2026-07-24〜08-07 の 185件に限定**され、
+              **08-08 以降はゼロ**（bet_detail の保存が始まって以降は必ず記録される）。
+              ＝ 恒常的な警告ではなく**過渡期の履歴**なので、毎日出し続ける意味が無い。
+
+              🔴 **API の `n_unpriced` は残してある。** 再発（bet_detail が書かれない
+                 入稿が出る）を検知できる必要があるため、値は返し続ける。
+                 表示を戻すならこのブロックを復活させるだけでよい。
+              ⚠️ 表から消えても **当年の集計に 185件が入っていない事実は変わらない**。
+                 その説明は表下の注記へ移した。 */}
         </td>
         {/* 候補（オッズ条件前の総候補レース数） */}
         <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-400 dark:text-gray-500 tabular-nums">
@@ -1553,6 +1556,8 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <strong>母集団が違います</strong>。現行ランクのみを集計しており、
             廃止済みのランクは含みません。買い方（ルール）は期間中に何度も
             変わっているため、世代をまたいだ参考値です。
+            なお実売の集計は買い目の原本が残る<strong>2026-08-08 以降</strong>が対象で、
+            それ以前の 185 件は金額を復元できないため入っていません。
           </p>
         )}
       </div>
