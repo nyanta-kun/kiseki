@@ -432,6 +432,16 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
         </div>
       </div>
+      {/* レース信頼度（落車リスク）。🔴 表示のみ——自動で落とすと ROI が最も高い
+          四分位を捨てることになる（`services/keirin_crash_risk.py` 参照）。
+          危険なときだけ出す。安全・普通は情報量が無いので黙っている。 */}
+      {p.crash_risk_band === "high" && (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+          ⚠️ 落車リスクが高い組み合わせです（出走者の落車率が上位25%
+          {p.crash_risk != null && ` / 平均 ${(p.crash_risk * 100).toFixed(2)}%`}）。
+          このレースは軸が飛びやすい傾向があります。
+        </p>
+      )}
       {p.gami_risk && (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
           ⚠️ 当たっても投資を下回る目があります（

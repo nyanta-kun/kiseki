@@ -8,6 +8,7 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from collections.abc import Sequence
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import get_db
+from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
 from ..services.keirin_sales_analysis import (
@@ -2116,7 +2118,30 @@ async def update_netkeirin_settings(
 # 書き込み（承認・取消）だけは netkeirin のセッションが要るので webhook 経由。
 STATUS_PROPOSED = "proposed"
 STATUS_SUBMITTED = "submitted"
+logger = logging.getLogger(__name__)
+
 STATUS_DELETED = "deleted"
+
+#: レース信頼度指標のための履歴集計。**当該レースより前**だけを数える
+#: （当日を含めると結果を見て予想することになる）。
+Q_SQL_CRASH = """
+    WITH ent AS (
+      SELECT race_key, player_id FROM keirin.wt_entries
+      WHERE race_key = ANY(:keys) AND player_id IS NOT NULL
+    ), h AS (
+      SELECT e.player_id,
+             count(*) AS starts,
+             count(*) FILTER (WHERE COALESCE(e.finish_order, 0) < 1) AS dnf
+      FROM keirin.wt_entries e JOIN keirin.wt_races r USING(race_key)
+      WHERE e.player_id IN (SELECT player_id FROM ent)
+        AND r.race_date < :d
+      GROUP BY 1
+    )
+    SELECT ent.race_key, COALESCE(h.starts, 0) AS starts, COALESCE(h.dnf, 0) AS dnf
+    FROM ent LEFT JOIN h ON h.player_id = ent.player_id
+"""
+
+
 # 公開済み（2026-08-16）。netkeirin は「入稿（下書きとして送る）」と「公開」が
 # 別操作で、公開すると修正できなくなる（不可逆）。
 #   proposed → submitted（＝公開待ち）→ published    ↘ deleted
@@ -2254,6 +2279,25 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     for e in ent_rows:
         by_race.setdefault(e["race_key"], []).append(dict(e))
 
+    # --- レース信頼度指標（落車リスク・2026-08-21 新設）------------------
+    # 出走者の落車性向（そのレースより前の実績のみ・経験ベイズ縮約）の平均。
+    # 🔴 **判断材料であってゲートではない。** 危険帯を自動で落とすと、実測で
+    #    最も ROI の高い四分位（Q4 78.1%）を捨てることになる。詳細は
+    #    `services/keirin_crash_risk.py` の docstring。
+    risk_by_race: dict[str, float] = {}
+    try:
+        hist = (await db.execute(text(Q_SQL_CRASH), {"keys": keys, "d": target})).mappings().all()
+        riders: dict[str, list[tuple[int, int]]] = {}
+        for x in hist:
+            riders.setdefault(x["race_key"], []).append(
+                (int(x["starts"]), int(x["dnf"])))
+        for rk_, rs in riders.items():
+            v = race_risk(rs)
+            if v is not None:
+                risk_by_race[rk_] = v
+    except Exception as e:  # pragma: no cover - 付随情報なので画面を落とさない
+        logger.warning("[keirin] 信頼度指標の算出に失敗（表示のみスキップ）: %s", e)
+
     items: list[dict[str, Any]] = []
     for r in rows:
         detail = _parse_bet_detail(r["bet_detail"])
@@ -2296,6 +2340,10 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             # 最低払戻・最高払戻・期待値に**予測オッズが混ざっているか**。
             # 🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。
             "odds_has_predicted": any(x.get("odds_source") == "predicted" for x in lines),
+            # レース信頼度指標（落車リスク）。**表示専用**（ゲートではない）。
+            "crash_risk": (round(risk_by_race[r["race_key"]], 5)
+                           if r["race_key"] in risk_by_race else None),
+            "crash_risk_band": risk_band(risk_by_race.get(r["race_key"])),
             "min_payout": lo,
             "max_payout": hi,
             # 下振れしても割らない最低払戻（`odds_low` 由来・無ければ None）。
