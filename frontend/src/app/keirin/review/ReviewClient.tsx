@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronRight, Settings } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Settings } from "lucide-react";
 
 import type {
   KeirinProposal, KeirinProposalEntry, KeirinProposalSummary,
@@ -401,22 +401,31 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
         {/* 🔴 確定成績。**未確定は「—」**で 0円と区別する（発走前に「払戻0円」と
-            出ると外れたように見える）。ガミ（当たったが払戻<投資）も明示する。 */}
+            出ると外れたように見える）。ガミ（当たったが払戻<投資）も明示する。
+            ⚠️ 2026-08-21: 他の数値と同じ見え方だと一覧で結果を追えないため、
+               **バッジにして地色ごと変える**（ユーザー要望）。色だけに頼らず
+               記号（✓ / △ / ✗ / …）も必ず添える。 */}
         <div>
           <span className="text-gray-500">結果</span>{" "}
           {p.result == null ? (
-            <span className="text-gray-400">未確定</span>
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+              … 未確定
+            </span>
           ) : p.result.net_hit ? (
-            <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-              ✓ {yen(p.result.payout)}
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold bg-emerald-600 text-white dark:bg-emerald-500">
+              ✓ 的中 {yen(p.result.payout)}
             </span>
           ) : p.result.hit ? (
-            <span className="font-semibold text-amber-600 dark:text-amber-400"
-              title="当たりましたが払戻が投資を下回りました（ガミ）">
-              △ {yen(p.result.payout)}
+            <span
+              className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold bg-amber-500 text-white"
+              title="当たりましたが払戻が投資を下回りました（ガミ）"
+            >
+              △ ガミ {yen(p.result.payout)}
             </span>
           ) : (
-            <span className="text-gray-500">✗ 不的中</span>
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold bg-rose-600 text-white dark:bg-rose-500">
+              ✗ 不的中
+            </span>
           )}
         </div>
         <div>
@@ -739,6 +748,13 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
 
   return (
     <div className="mx-auto max-w-5xl p-4">
+      {/* 🔴 スクロールが長い画面なので、下まで行っても離脱できるようにする
+          （2026-08-21・ユーザー要望）。上部の「戻る」しか導線が無く、
+          推奨が多い日は一覧へ帰るのに画面全体を巻き戻す必要があった。
+          ⚠️ 「画面タップで出す」ではなく**一定量スクロールしたら出す**にした。
+             タップ検知はカード内のボタン操作と区別できず、承認・公開のような
+             取り返しのつかない操作の上に浮くと誤タップを誘発する。 */}
+      <FloatingBack />
       <div className="mb-3 flex flex-wrap items-center gap-3">
         {/* 一覧へ戻る導線（設定・推奨ガイドと同じ形）。無いとブラウザの戻るしかない。 */}
         <Link
@@ -915,7 +931,46 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         <p className="text-sm text-gray-500">この日の入稿はありません。</p>
       )}
 
-      {view === "time" && <div className="space-y-2">{byTime.map(raceCard)}</div>}
+      {/* 発走時刻順は **発走前 / 発走済** に分けてそれぞれ畳めるようにする
+          （2026-08-21・ユーザー要望）。推奨が多い日はスクロールが長く、
+          終わったレースが上に積もると「これから承認するもの」を探せない。
+          🔴 判定は `isClosed`（発走15分前＝netkeirin の締切）を使う。
+             「発走したか」ではなく**まだ手を打てるか**が、この画面での
+             発走前／発走済の意味そのものなので、承認ボタンの有効条件と揃える。 */}
+      {view === "time" && (() => {
+        const upcoming = byTime.filter((p) => !isClosed(p.start_at, nowSec));
+        const finished = byTime.filter((p) => isClosed(p.start_at, nowSec));
+        const section = (
+          key: "upcoming" | "finished", label: string, list: KeirinProposal[],
+        ) => {
+          if (list.length === 0) return null;
+          // 既定は発走前だけ開く（`expanded` はキー未設定＝閉じる仕様なので明示する）
+          const open = expanded[key] ?? (key === "upcoming");
+          return (
+            <section className="mb-4">
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setExpanded((prev) => ({ ...prev, [key]: !open }))}
+                className="mb-2 flex items-center gap-1 font-semibold hover:text-blue-700 dark:hover:text-blue-300"
+              >
+                {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                {label}
+                <span className="ml-1 text-xs font-normal text-gray-500">
+                  {list.length}件
+                </span>
+              </button>
+              {open && <div className="space-y-2">{list.map(raceCard)}</div>}
+            </section>
+          );
+        };
+        return (
+          <div>
+            {section("upcoming", "発走前", upcoming)}
+            {section("finished", "発走済", finished)}
+          </div>
+        );
+      })()}
 
       {view === "venue" && byVenue.map(([venue, races]) => {
         // 🔴 締切（発走15分前）を過ぎたレースは数に入れない。入れると
@@ -1012,6 +1067,40 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           </section>
         );
       })}
+    </div>
+  );
+}
+
+
+/** 左下に浮かせる「戻る」。一定量スクロールしたときだけ出す（2026-08-21 新設）。 */
+function FloatingBack() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setShow(window.scrollY > 400);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  if (!show) return null;
+  return (
+    <div className="fixed bottom-4 left-4 z-40 flex flex-col gap-2">
+      <Link
+        href="/keirin"
+        aria-label="一覧へ戻る"
+        className="flex items-center gap-1 rounded-full bg-gray-800/90 px-3 py-2 text-sm text-white shadow-lg backdrop-blur hover:bg-gray-700 dark:bg-gray-200/90 dark:text-gray-900 dark:hover:bg-white"
+      >
+        <ArrowLeft size={16} />
+        戻る
+      </Link>
+      {/* 画面先頭へ。畳んだ節を開き直すときに使う（戻るとは別の用途）。 */}
+      <button
+        type="button"
+        aria-label="先頭へ"
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        className="flex items-center justify-center rounded-full bg-gray-800/70 px-3 py-2 text-sm text-white shadow-lg backdrop-blur hover:bg-gray-700 dark:bg-gray-200/70 dark:text-gray-900 dark:hover:bg-white"
+      >
+        <ChevronUp size={16} />
+      </button>
     </div>
   );
 }
