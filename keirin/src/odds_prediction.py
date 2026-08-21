@@ -465,6 +465,39 @@ def predicted_odds_for_legs(
     return out
 
 
+def trio_ev_for_legs(
+    race_key: str, axis1: int, axis2: int, partners: Sequence[int],
+) -> dict[int, float] | None:
+    """{相手車番: EV} を返す。作れなければ **None**（例外にしない）。
+
+        EV_i = 予測オッズ({軸1,軸2,i}) × P({軸1,軸2,i} が3着以内)
+
+    `P` は Plackett-Luce（`_pl_trio`）＝モデルの勝率から出す厳密値。
+    予測オッズは「市場がいくら付けるか」の推定なので、この積は
+    **市場に対する割安さ**になる（1 より大きいほど我々の見立てで割安）。
+
+    🔴 **買う点すべてが揃わなければ None**。一部だけ返すと呼び出し側で
+       EV 順と指数順が混ざり、並びの意味が壊れる
+       （`predicted_odds_for_legs` と同じ思想）。
+    ⚠️ 予測オッズは 7車・9車以外では作れない（実測 3.7%）。
+       呼び出し側は None のときに従来規則へフォールバックすること。
+    """
+    try:
+        cars, p3, pw, meta = load_race_inputs(race_key)
+        board = predict_board(cars, p3, pw, meta)
+        pl = _pl_trio(pw, cars)
+    except Exception:
+        return None
+    out: dict[int, float] = {}
+    for t in partners:
+        k = frozenset({int(axis1), int(axis2), int(t)})
+        o, p = board.get(k), pl.get(k)
+        if not o or o <= 0 or p is None:
+            return None
+        out[int(t)] = float(o) * float(p)
+    return out
+
+
 def try_predicted_odds_for_legs(
     race_key: str, axis1: int, axis2: int, partners: Sequence[int],
 ) -> dict[int, float] | None:

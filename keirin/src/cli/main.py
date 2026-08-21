@@ -1292,6 +1292,9 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
     )
     # ゲート専用の較正（2026-08-17）。pred_top3_pct 自体は書き換えない。
     from src.p3_calibration import calibrated_p3_sum_top2
+    # 7M1 の相手を EV 順に並べるための予測オッズ（2026-08-21）。
+    # 作れないレースでは None が返り、`rank_7m1_select_legs` が従来規則へ落ちる。
+    from src.odds_prediction import trio_ev_for_legs
     from pathlib import Path
 
     if target_date is None:
@@ -2035,8 +2038,19 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     # 相手は軸を除く5車の下位3車（全体では指数5〜7番手）から
                     # 3着内率で足切りしたもの（最低2点）。🔴 足切りは「下位3車を
                     # 採った後」に掛ける。5車全体からの選抜に使うと帯が消える。
-                    "legs_7m1": (rank_7m1_select_legs(others_7c, top3_probs)
-                                 if sel_7c else []),
+                    # 🔴 相手は **EV（予測オッズ × 3着内確率）順の上位3点**
+                    #    （2026-08-21・ユーザー提案）。予測オッズが作れないレース
+                    #    （7車・9車以外＝実測3.7%）は `trio_ev_for_legs` が None を
+                    #    返し、従来の「下位3車」へ自動で落ちる。
+                    # 🔴 **日次の tail 再構築（`backfill_7m1_rank_wt`）にも同じ
+                    #    引数を渡すこと。** 片方だけ EV にすると、毎朝の再構築で
+                    #    picks_history が旧規則へ巻き戻る（7C が 2026-08-15 に
+                    #    実際に踏んだ型・`backfill_7c_rank_wt` の冒頭コメント参照）。
+                    "legs_7m1": (rank_7m1_select_legs(
+                        others_7c, top3_probs,
+                        ev=trio_ev_for_legs(race_key, sel_7c[0], sel_7c[1],
+                                            others_7c))
+                        if sel_7c else []),
                     # 三連単への切替（2026-08-09）。判定は朝の生予測で確定させ、
                     # 入稿側は**この真偽値だけ**を読む。入稿時に win_probs から
                     # 再判定すると、朝の予想（Web・Discord）と入稿の買い目が

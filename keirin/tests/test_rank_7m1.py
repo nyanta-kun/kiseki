@@ -317,3 +317,105 @@ def test_firm_band_is_fail_closed_without_the_7c_judgment_keys():
         del c[key]
         assert not sw.rank_7m1_takes_firm_band(c), f"{key} が欠けても拾ってしまう"
         assert sw.rank_7m1_daily_select([c]) == []
+
+
+# ── 相手を EV（予測オッズ × 3着内確率）順にする（2026-08-21・ユーザー提案）──
+#
+# 検証: 3点据え置きで「2倍以上で的中」が +0.30 / +0.22 件/日（両窓とも有意）。
+# memory: keirin_7m1_ev_legs_2026_08_21
+
+def test_select_legs_uses_ev_order_when_available():
+    """EV が全候補に揃っていれば **EV の降順で上位3点**を採る。"""
+    others = [1, 2, 3, 4, 5]
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.10}
+    ev = {1: 0.9, 2: 1.5, 3: 0.8, 4: 2.2, 5: 1.1}
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 2, 5]
+
+
+def test_select_legs_ev_does_not_apply_the_p3_floor():
+    """🔴 EV 順では足切り（`p3_min`）を掛けない。
+
+    足切りは「下位3車を位置で採る」規則の副作用を均すもので、EV は既に
+    オッズ×確率で釣り合っている。ここで p3 の低い車を削ると、EV が狙う
+    「市場が安く付けているのに来る」相手を落として元の低配当側へ寄る。
+    **検証も足切り無しの形で行ったので、足すと検証と別物になる。**
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.02, 5: 0.01}   # 4,5 は足切り水準以下
+    ev = {1: 0.1, 2: 0.2, 3: 0.3, 4: 9.0, 5: 8.0}
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 5, 3]
+
+
+def test_select_legs_falls_back_when_ev_is_missing_or_partial():
+    """EV が None / 1台でも欠けたら従来規則へ落ちる。
+
+    🔴 一部だけ EV を使うと EV 順と指数順が混ざり、並びの意味が壊れる。
+       予測オッズは 7車・9車以外（実測3.7%）で作れないので、この経路は必ず通る。
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.16}
+    base = sw.rank_7m1_select_legs(others, p3)
+    assert sw.rank_7m1_select_legs(others, p3, ev=None) == base
+    assert sw.rank_7m1_select_legs(others, p3, ev={1: 1.0, 2: 2.0}) == base
+
+
+def test_leg_order_constant_moves_the_rule_version():
+    """`RANK_7M1_LEG_ORDER` は版に効く定数であること。
+
+    値を戻したときに `picks_history.rule_version` が旧世代と同じにならないと、
+    集計で新旧が混ざる。
+    """
+    st = sw
+
+    assert st.RANK_7M1_LEG_ORDER == "ev"
+    before = st.rank_rule_version("7M1")
+    st.RANK_7M1_LEG_ORDER = "position"
+    try:
+        assert st.rank_rule_version("7M1") != before
+    finally:
+        st.RANK_7M1_LEG_ORDER = "ev"
+
+
+def test_daily_rebuild_passes_ev_to_select_legs():
+    """🔴 **日次 tail 再構築も EV を渡していること。**
+
+    live だけ EV にすると、毎朝の `reconcile_walkforward_tail.sh` が当月を
+    作り直すたびに picks_history が旧規則（下位3車）へ**巻き戻る**。
+    7C が 2026-08-15 に実際に踏んだ型で、そのときは入稿と記録が
+    84件中17件で食い違う実害になった。
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "backfill_7m1_rank_wt.py").read_text()
+    assert "rank_7m1_select_legs(" in src
+    assert "ev=_ev_for(" in src, "再構築側が EV を渡していない（巻き戻りが起きる）"
+
+
+def test_backfill_ev_is_disabled_before_the_odds_model_train_end():
+    """オッズモデルの学習終端以前の日付では EV を使わない（in-sample 防止）。"""
+    import scripts.backfill_7m1_rank_wt as bf
+
+    bf._EV_WARNED = False
+    assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "2020-01-01") is None
+    assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "") is None
+
+
+def test_backfill_ev_never_raises_when_the_odds_model_is_missing():
+    """🔴 モデル未配備でも **例外にせず従来規則へ落ちる**こと。
+
+    `odds_prediction.model_train_end()` はメタが無いと例外を投げる。
+    `keirin/data` はリポジトリ管理外なので、モデルの無い環境では必ずここを通る。
+    素通しにすると **tail 再構築ごと落ちて当日の行が消える**。
+    2026-08-21 に CI で実際に落ちて発覚した（ローカルはモデルがあるので通っていた）。
+    """
+    import scripts.backfill_7m1_rank_wt as bf
+
+    def boom():
+        raise RuntimeError("odds_trio_meta.json がありません")
+
+    orig = bf.odds_model_train_end
+    bf.odds_model_train_end = boom
+    bf._EV_WARNED = False
+    try:
+        assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "2099-01-01") is None
+    finally:
+        bf.odds_model_train_end = orig

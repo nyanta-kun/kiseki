@@ -58,6 +58,9 @@ from src.p3_calibration import calibrated_p3_sum_top2  # noqa: E402
 from src.preprocessing.feature_wt import (  # noqa: E402
     build_features_wt, load_raw_data_wt, prepare_X,
 )
+from src.odds_prediction import (  # noqa: E402
+    model_train_end as odds_model_train_end, trio_ev_for_legs,
+)
 from src.rebuild_stakes import load_morning_boards, stakes_for_combos  # noqa: E402
 from src.strategy_wt import (  # noqa: E402
     RANK_7M1_LEGS_MIN, rank_7c_buy_plan, rank_7c_is_lowpay_pattern,
@@ -67,6 +70,44 @@ from src.strategy_wt import (  # noqa: E402
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
 
 N_CAR = 7
+
+
+_EV_WARNED = False
+
+
+def _ev_for(race_key: str, axis1: int, axis2: int, others: list[int],
+            race_date: str) -> dict[int, float] | None:
+    """EV（予測オッズ × 3着内確率）。**honest な日付のときだけ**返す。
+
+    🔴 三連複オッズモデルを**学習終端以前の日付へ当てると in-sample**になる。
+       過去分の再構築でそれをやると picks_history の 7M1 が「未来を知っていた
+       買い方」で埋まり、以後の評価が全部そこに引きずられる
+       （[[keirin_n7_gami_cut_predicted_odds_2026_08_21]] で実際に踏んだ型）。
+    ⚠️ honest でない日付は **None を返して従来規則（下位3車）へ落とす**。
+       止めない理由は、止めると tail 再構築ごと失敗して当日の行が消えるため。
+       代わりに一度だけ警告を出す。
+    """
+    global _EV_WARNED
+    # 🔴 `model_train_end()` は**メタが無いと例外を投げる**（`load_meta`）。
+    #    keirin/data はリポジトリ管理外なので、モデル未配備の環境では必ずここを通る。
+    #    ここで素通しにすると **tail 再構築ごと落ちて当日の行が消える**
+    #    （CI で実際に落ちて発覚・2026-08-21）。読めなければ EV を使わないだけにする。
+    try:
+        end = odds_model_train_end()
+    except Exception:
+        end = None
+        if not _EV_WARNED:
+            print("[backfill_7m1] オッズモデルのメタを読めないため EV を使わず"
+                  "従来規則（下位3車）で再構築します", flush=True)
+            _EV_WARNED = True
+        return None
+    if not race_date or (end and race_date <= str(end)):
+        if not _EV_WARNED:
+            print(f"[backfill_7m1] {race_date} はオッズモデルの学習終端 {end} 以前"
+                  "のため EV を使わず従来規則（下位3車）で再構築します", flush=True)
+            _EV_WARNED = True
+        return None
+    return trio_ev_for_legs(race_key, axis1, axis2, others)
 
 
 def build_rows(model_name: str, date_from: str, date_to: str,
@@ -183,7 +224,15 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
             "axis1_p3": top3_probs.get(axis1),
             # 相手は盤面に残った車から採る（朝の候補をそのまま使わない）。
-            "legs_7m1": rank_7m1_select_legs(others, top3_probs),
+            # 🔴 **live（`cli/main.py`）と同じ EV 順を通すこと**（2026-08-21）。
+            #    片方だけ EV にすると、毎朝の tail 再構築で picks_history が
+            #    旧規則（下位3車）へ**巻き戻る**。7C が 2026-08-15 に実際に踏んだ型で、
+            #    そのときは「入稿と記録が84件中17件で食い違う」実害になった
+            #    （本ファイル冒頭ではなく `backfill_7c_rank_wt.py` の冒頭コメント参照）。
+            # ⚠️ 予測オッズモデルは学習終端より前の日付に当てると in-sample。
+            #    `_ev_for` が honest な日付のときだけ EV を返す。
+            "legs_7m1": rank_7m1_select_legs(
+                others, top3_probs, ev=_ev_for(rk, axis1, axis2, others, date_map.get(rk, ""))),
             "cup_grade": cup_grade_map.get(rk),
             "trio": trio,
             "actual_top3": frozenset(fno for _, fno in fin[:3]),
