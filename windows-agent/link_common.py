@@ -372,21 +372,37 @@ def load_cache(
     from_time: str,
     option: int,
     cache_dir: Path,
+    max_age_sec: float | None = None,
 ) -> list[dict] | None:
     """キャッシュが存在すればレコードリストを返す。なければ None を返す。
+
+    キャッシュキーは (dataspec, from_time, option) のみで、from_time は daily 等では
+    「前日 00:00」＝その日いっぱい同じ値になる。TTL が無いと**その日最初の取得結果を
+    一日中使い回す**ため、JRA が日中に公開したデータ（土曜分の枠順確定は金曜 11:30 頃）を
+    その日はもう取り込めなくなる。実際 2026-08-21 に「翌日の出馬表が確定しない」として
+    表面化した。max_age_sec を指定して古いキャッシュを無効化すること。
 
     Args:
         dataspec: JV-Link データ種別ID
         from_time: 取得開始日時文字列
         option: JVOpen オプション値
         cache_dir: キャッシュファイルを格納するディレクトリ
+        max_age_sec: キャッシュの有効期間（秒）。None は無期限。
+                     更新時刻がこれより古い場合は None を返して再取得させる。
 
     Returns:
-        キャッシュが存在する場合はレコードのリスト、存在しない場合は None
+        キャッシュが存在し有効期間内の場合はレコードのリスト、それ以外は None
     """
     path = _cache_path(dataspec, from_time, option, cache_dir)
     if not path.exists():
         return None
+    if max_age_sec is not None:
+        age = time.time() - path.stat().st_mtime
+        if age > max_age_sec:
+            logger.info(
+                f"[cache] 期限切れ ({int(age)}s > {int(max_age_sec)}s): {path.name} → 再取得"
+            )
+            return None
     records = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
