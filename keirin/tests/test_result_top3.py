@@ -136,3 +136,19 @@ def test_採点経路が単一正解の旧実装に戻っていない(rel):
 def test_TOP3_SQL_は車番でタイブレークする():
     assert "ORDER BY finish_order, frame_no" in TOP3_SQL
     assert "finish_order, frame_no" in TOP3_SQL.split("SELECT", 1)[1].split("FROM", 1)[0]
+
+
+def test_過去の取りこぼしが残っていない_ハーネスの形を固定():
+    """`scripts/repair_dead_heat_picks.py` が「安全弁つき」であることを固定する。
+
+    2026-08-22 に過去10件を修復した単発スクリプト。DB が要るので実行はしないが、
+    **決め打ちで UPDATE する形に書き換えられていないこと**だけを見る。
+    - vintage で再計算して記録と突き合わせる経路があること
+    - 記録買い目へ当時の配分を当てる経路が **賭け金一致で検証している**こと
+    - 既定が dry-run であること
+    """
+    src = (ROOT / "scripts" / "repair_dead_heat_picks.py").read_text(encoding="utf-8")
+    assert "def recompute(" in src and "build_rows(" in src, "vintage 再計算の経路が無い"
+    assert 'if total != int(b["bet_amount"] or 0):' in src, \
+        "記録買い目の配分再現を賭け金一致で検証していない"
+    assert '"--apply"' in src and "args.apply" in src, "既定 dry-run になっていない"
