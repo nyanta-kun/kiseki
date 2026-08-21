@@ -263,10 +263,20 @@ _V26_FEATURE_NAMES: list[str] = [
     "weight_change", "jvan_time_dm", "jvan_battle_dm",
 ]
 
-# is_win 較正ヘッド（win_probability 較正用, 2026-06-05）
+# is_win 較正ヘッド（win_probability 較正用, 2026-06-05 / 2026-08-22 再学習）
 # softmax(composite) は OOS ECE 0.033・最上位decile +16pt 過信。is_win binary LGB の
 # 生出力＋レース内正規化で OOS ECE 0.0026 とほぼ完璧に較正される（scripts/jra_calibration_ab.py）。
 # composite_index のランキングは従来どおり（rank/ensemble）維持し、確率のみ較正値に置換する。
+#
+# ⚠️ 2026-08-22 まで、学習スクリプトが**本番モデルだけ全期間 refit** していた
+# （reg_rank / out_rate は jra_protocol.TRAIN_DATA_END で切る修正済み・本ヘッドのみ
+# 取り残し）。旧モデルは 2026-06-05 までを暗記しており、win_probability 最上位馬の
+# 勝率が訓練内 0.43 / 訓練外 0.26 と乖離していた。上の ECE 0.0026 は学習スクリプト内の
+# 別モデル（境界を切ったもの）の数字であって出荷モデルの数字ではない。
+# **win_probability を使った検証は必ず jra_protocol.TEST_START 以降で行うこと。**
+# また ECE は質量の 56% が p<0.05 帯に入るため上位帯の崩れを隠す。
+# 出荷モデルの honest test 数値は models/v26_iswin_calib_metrics.json の `test` を見る。
+#
 # 学習: scripts/train_jra_iswin_head.py
 _V26_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v26_iswin_calib.txt"
 

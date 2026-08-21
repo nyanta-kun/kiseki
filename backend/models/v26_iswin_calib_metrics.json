@@ -1,7 +1,23 @@
 {
-  "trained_on": "20230501-20260605",
-  "n_rows": 143434,
-  "n_races": 10332,
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20260630"
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    126,
+    157,
+    160
+  ],
+  "refit_rounds": 157,
   "features": [
     "speed_index",
     "last_3f_index",
@@ -52,13 +68,100 @@
     "bagging_freq": 5,
     "verbose": -1
   },
-  "num_round": 500,
-  "oos_sanity": {
-    "test_start": "20250701",
-    "softmax_ece": 0.0329,
-    "iswin_raw_ece": 0.0073,
-    "iswin_norm_ece": 0.0026,
-    "softmax_brier": 0.0647,
-    "iswin_norm_brier": 0.0602
-  }
+  "test": {
+    "period": [
+      "20260704",
+      "20260816"
+    ],
+    "n": 6449,
+    "n_races": 489,
+    "softmax_ece": 0.0089,
+    "iswin_raw_ece": 0.0132,
+    "iswin_norm_ece": 0.0071,
+    "iswin_norm_mce": 0.0228,
+    "softmax_brier": 0.064,
+    "iswin_norm_brier": 0.0638,
+    "top1_mean_pred": 0.2812,
+    "top1_actual_win_rate": 0.2699,
+    "iswin_norm_reliability": [
+      {
+        "decile": 1,
+        "n": 645,
+        "pred_pct": 0.62,
+        "actual_pct": 0.62,
+        "gap_pct": -0.0
+      },
+      {
+        "decile": 2,
+        "n": 645,
+        "pred_pct": 1.24,
+        "actual_pct": 1.55,
+        "gap_pct": 0.31
+      },
+      {
+        "decile": 3,
+        "n": 645,
+        "pred_pct": 1.9,
+        "actual_pct": 2.48,
+        "gap_pct": 0.58
+      },
+      {
+        "decile": 4,
+        "n": 645,
+        "pred_pct": 2.68,
+        "actual_pct": 2.02,
+        "gap_pct": -0.67
+      },
+      {
+        "decile": 5,
+        "n": 645,
+        "pred_pct": 3.69,
+        "actual_pct": 3.72,
+        "gap_pct": 0.03
+      },
+      {
+        "decile": 6,
+        "n": 645,
+        "pred_pct": 5.09,
+        "actual_pct": 6.05,
+        "gap_pct": 0.96
+      },
+      {
+        "decile": 7,
+        "n": 645,
+        "pred_pct": 7.2,
+        "actual_pct": 6.67,
+        "gap_pct": -0.54
+      },
+      {
+        "decile": 8,
+        "n": 645,
+        "pred_pct": 10.37,
+        "actual_pct": 11.16,
+        "gap_pct": 0.79
+      },
+      {
+        "decile": 9,
+        "n": 645,
+        "pred_pct": 15.79,
+        "actual_pct": 16.74,
+        "gap_pct": 0.96
+      },
+      {
+        "decile": 10,
+        "n": 644,
+        "pred_pct": 27.28,
+        "actual_pct": 25.0,
+        "gap_pct": -2.28
+      }
+    ]
+  },
+  "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/v26_iswin_calib.txt",
+  "refit_period": [
+    "20230506",
+    "20260628"
+  ],
+  "n_rows": 146949,
+  "n_races": 10589,
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)"
 }
