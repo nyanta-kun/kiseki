@@ -104,3 +104,59 @@ def test_7m1_gate_still_reads_the_original_top2():
     src = _main_src()
     m = re.search(r"rank_7s_wt_overlap_n\(\s*sel_7c\[0\],\s*sel_7c\[1\]", src)
     assert m, "wt_overlap_7c_n が sel_7c（差し替え前）で測られていない"
+
+
+# ---- 落差ガード（2026-08-21）--------------------------------------------
+# 差し替えは「軸2を ◎◯ から離す」操作なので、離した先が弱すぎると
+# **的中率と配当を同時に失う**。両窓で有害が確認された 30pt 以上では止める。
+
+def test_does_not_replace_when_the_cliff_is_large():
+    """🔴 実例: 2026-08-21 西武園1R。
+
+    複勝率 1号 88.2 / 4号 88.1 に対し3番手 5号 35.0（落差 53pt）。
+    ◎=1・◯=4 なので従来は軸2が 4 → 5 へ差し替わり、買い目 1=4=5 / 1=5=7 /
+    1=2=5 / 1=3=5 は 1-4-3 の決着で全滅した（軸2の5号は7着）。
+    """
+    p3 = {1: 0.882, 4: 0.881, 5: 0.350, 7: 0.306, 3: 0.296, 2: 0.218, 6: 0.054}
+    assert rank_7c_reselect_axis2_off_marks(
+        p3, 1, 4, wt_honmei=1, wt_taikou=4) == 4, "落差 53pt でも差し替えている"
+
+
+def test_replaces_when_the_cliff_is_small():
+    """落差が小さいレースでは従来どおり差し替える（判定は落差だけで行う）。"""
+    p3 = {1: 0.80, 2: 0.70, 3: 0.55, 4: 0.40}
+    # 軸2(0.70) − 差し替え先(0.55) = 0.15 < 0.30
+    assert rank_7c_reselect_axis2_off_marks(p3, 1, 2, wt_honmei=1, wt_taikou=2) == 3
+
+
+def test_cliff_boundary():
+    """閾値をまたぐと挙動が変わる（境界そのものは浮動小数の丸めに委ねない）。
+
+    ⚠️ `0.70 - 0.40` は 0.2999999999999999 になる。境界ちょうどの値で
+       検査を書くと、実装ではなく**浮動小数の丸めを試す**テストになる。
+    """
+    over = {1: 0.90, 2: 0.70, 3: 0.35, 4: 0.30}      # 落差 0.35 > 0.30 → 止める
+    assert rank_7c_reselect_axis2_off_marks(over, 1, 2, wt_honmei=1, wt_taikou=2) == 2
+    under = {1: 0.90, 2: 0.70, 3: 0.45, 4: 0.30}     # 落差 0.25 < 0.30 → 差し替える
+    assert rank_7c_reselect_axis2_off_marks(under, 1, 2, wt_honmei=1, wt_taikou=2) == 3
+
+
+def test_cliff_threshold_is_overridable_and_defaults_to_30pt():
+    """閾値は引数で動かせる（掃引スクリプトが本番関数を呼べるように）。"""
+    from src.strategy_wt import RANK_7C_RESELECT_CLIFF_MAX
+
+    assert RANK_7C_RESELECT_CLIFF_MAX == 0.30
+    p3 = {1: 0.882, 4: 0.881, 5: 0.350, 7: 0.306}
+    assert rank_7c_reselect_axis2_off_marks(
+        p3, 1, 4, wt_honmei=1, wt_taikou=4, cliff_max=0.60) == 5
+
+
+def test_scale_is_zero_to_one_not_percent():
+    """🔴 スケール取り違えの検知。
+
+    `top3_probs` は 0-1（`pred_prob`）。もし呼び出し側が % を渡すと落差が
+    100倍になり、**すべてのレースで差し替えが止まる**（静かに仕様が消える）。
+    """
+    pct = {1: 88.2, 4: 88.1, 5: 35.0, 7: 30.6}
+    # % で渡すと落差 53.1 ≧ 0.30 なので必ず止まる ＝ 呼び出し側の単位を疑うこと
+    assert rank_7c_reselect_axis2_off_marks(pct, 1, 4, wt_honmei=1, wt_taikou=4) == 4
