@@ -1583,6 +1583,10 @@ export interface KeirinProposalEntry {
   pred_top2_pct: number | null;
   /** モデルの3着内率（%） */
   pred_top3_pct: number | null;
+  /** 確定着順。**発走前は null、欠車・失格は 0**（着外）。
+   *  🔴 0 と null を同じに扱わないこと。「まだ走っていない」と
+   *     「走ったが着外」が区別できなくなる。 */
+  finish_order: number | null;
 }
 
 export interface KeirinProposal {
@@ -1656,6 +1660,16 @@ export interface KeirinProposal {
   crash_risk?: number | null;
   /** `crash_risk` の区分。low=安全 / mid / high=危険 / unknown=算出できず。 */
   crash_risk_band?: "low" | "mid" | "high" | "unknown";
+  /**
+   * 確定後の当たり目。`bet_detail.lines[].combo` とそのまま比較できる表記
+   * （三連複 `1=3=4` / 三連単 `4-3-1`）。**未確定は空配列**。
+   *
+   * 🔴 **同着では複数になる**（3着同着で三連複2通り・1着/2着同着で三連単2通り）。
+   *    判定はサーバー（`services/keirin_result_top3.py`）が持つので、
+   *    画面は**この配列に入っているかを見るだけ**にすること。実着順から
+   *    組み立て直すと同着で必ず取りこぼす。
+   */
+  winning_combos?: string[];
   netkeirin_race_id: string | null;
   proposed_at: string | null;
   approved_at: string | null;

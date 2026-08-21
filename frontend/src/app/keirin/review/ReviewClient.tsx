@@ -114,6 +114,25 @@ function axisLabel(entries: KeirinProposalEntry[], frameNo: number): string {
   return name ? `${frameNo} ${name}` : `${frameNo}`;
 }
 
+/**
+ * 買い目の表記を比較用のキーへ揃える。
+ *
+ * 🔴 **当たりかどうかの判定はここではない**（サーバーの `winning_combos`）。
+ *    ここがやるのは表記ゆれの吸収だけ。三連複（`=`）は車番昇順、
+ *    三連単（`-`）は着順そのまま。実データ2,970点は全て昇順だったが、
+ *    生成側が変わったときに**静かに赤字が出なくなる**のを防ぐ。
+ */
+function comboKey(combo: string): string {
+  if (combo.includes("=")) {
+    return combo
+      .split("=")
+      .map((x) => Number(x))
+      .sort((a, b) => a - b)
+      .join("=");
+  }
+  return combo;
+}
+
 function EntryTable({ entries, axis1, axis2 }: {
   entries: KeirinProposalEntry[];
   axis1: number | null;
@@ -133,6 +152,11 @@ function EntryTable({ entries, axis1, axis2 }: {
         a.frame_no - b.frame_no,
     );
   }, [entries]);
+
+  // 確定後は着順を出す（2026-08-22・ユーザー要望）。**1件でも着順が入っていれば確定扱い**。
+  // 🔴 `finish_order` は **発走前が null・欠車/失格が 0**。0 を null と同じに扱うと
+  //    「走ったが着外」が「まだ走っていない」に化ける。
+  const settled = entries.some((e) => e.finish_order !== null && e.finish_order > 0);
 
   // レース内合計を揃えてから出す（生確率のままだと1着率の合計が10%等になる）。
   // ⚠️ netkeirin 入稿コメントの出走表と**同じ正規化**であること。片方だけ変えると
@@ -158,6 +182,7 @@ function EntryTable({ entries, axis1, axis2 }: {
             <th className="py-1 pr-2 text-right">2着内率</th>
             <th className="py-1 pr-2 text-right">3着内率</th>
             <th className="py-1 pr-2">ライン</th>
+            {settled && <th className="py-1 pr-2">着順</th>}
           </tr>
         </thead>
         <tbody>
@@ -188,6 +213,23 @@ function EntryTable({ entries, axis1, axis2 }: {
                 <td className="py-0.5 pr-2">
                   {e.line_group ? `${e.line_group}-${e.line_pos ?? ""}` : "単騎"}
                 </td>
+                {/* 3着以内は色を付けて拾えるようにする。0＝欠車・失格は「—」ではなく
+                    明示する（着外と未出走を混ぜない）。 */}
+                {settled && (
+                  <td className="py-0.5 pr-2 tabular-nums">
+                    {e.finish_order === null ? (
+                      <span className="text-gray-400">—</span>
+                    ) : e.finish_order === 0 ? (
+                      <span className="text-gray-400">欠</span>
+                    ) : e.finish_order <= 3 ? (
+                      <span className="font-bold text-red-600 dark:text-red-400">
+                        {e.finish_order}着
+                      </span>
+                    ) : (
+                      <span className="text-gray-500">{e.finish_order}着</span>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
@@ -245,9 +287,14 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   const axes = [p.axis1, p.axis2].filter((n): n is number => n !== null);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
-  //    取消は淡色＋取り消し線、自信ありは黄色い枠と背景。
+  // 🔴 取消は**グレーアウト**（2026-08-22・ユーザー要望）。以前は
+  //    `opacity-50 line-through` だったが、取り消し線が数字の上に重なって
+  //    **取り消したレースのその後（着順・払戻）が読めなかった**。取消は
+  //    「もう操作しない」という意味であって「見なくていい」ではない——
+  //    落とした判断が正しかったかは確定後に確認する。
+  //    → 地色をグレーにし文字を淡くするだけにして、内容は読めるまま残す。
   const cardCls = p.status === "deleted"
-    ? "rounded border border-gray-200 p-3 opacity-50 line-through dark:border-gray-700"
+    ? "rounded border border-gray-200 bg-gray-100 p-3 text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400"
     : p.is_confident
       ? "rounded border-2 border-yellow-400 bg-yellow-50 p-3 dark:border-yellow-500 dark:bg-yellow-950/30"
       : "rounded border border-gray-200 p-3 dark:border-gray-700";
@@ -498,10 +545,24 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             <div className="overflow-x-auto">
               <table className="text-xs">
                 <tbody>
-                  {(d?.lines ?? []).map((l, i) => (
-                    <tr key={`${l.combo}-${i}`}>
+                  {(d?.lines ?? []).map((l, i) => {
+                    // 🔴 当たり目の判定は**サーバーが持つ**（`winning_combos`）。
+                    //    同着では当たり目が複数になるので、実着順から組み立て直すと
+                    //    必ず取りこぼす（2026-08-22 に採点側で実際に10件の
+                    //    取りこぼしが見つかった型）。ここは一致を見るだけ。
+                    const wonKeys = new Set(
+                      (p.winning_combos ?? []).map(comboKey));
+                    const won = wonKeys.has(comboKey(l.combo));
+                    return (
+                    <tr
+                      key={`${l.combo}-${i}`}
+                      className={won ? "font-bold text-red-600 dark:text-red-400" : ""}
+                    >
                       <td className="py-0.5 pr-3">{l.bet_type}</td>
-                      <td className="py-0.5 pr-3 font-mono">{l.combo}</td>
+                      <td className="py-0.5 pr-3 font-mono">
+                        {won && <span className="mr-1">的中</span>}
+                        {l.combo}
+                      </td>
                       <td className="py-0.5 pr-3 text-right tabular-nums">
                         {l.stake.toLocaleString()}円
                       </td>
@@ -514,7 +575,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
                         {l.odds === null ? "—" : yen(l.stake * l.odds)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
