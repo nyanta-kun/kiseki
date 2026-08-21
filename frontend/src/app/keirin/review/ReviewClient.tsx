@@ -285,6 +285,20 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   const d = p.bet_detail;
   // 軸は最大2車。片方しか無いランクもあるので、null を落として取れている分だけ扱う。
   const axes = [p.axis1, p.axis2].filter((n): n is number => n !== null);
+  // 🔴 **売っていないレース（取消・入稿前）は `result` が付かない**。
+  //    確定済みなのに「… 未確定」と出ると、落とした判断が正しかったかを
+  //    カードの一覧で追えない（2026-08-22・ユーザー要望）。
+  //    買い目と当たり目は手元にあるので、**買っていれば幾ら返ったか**を出す。
+  //    ⚠️ **「的中」とは呼ばない。** 買っていない以上これは実績ではなく参考値で、
+  //       サマリーの回収率にも入っていない。文言で必ず区別する。
+  const wonKeys = new Set((p.winning_combos ?? []).map(comboKey));
+  const hypothetical = useMemo(() => {
+    if (p.result || wonKeys.size === 0) return null;   // 売った分は実績を出す
+    const line = (d?.lines ?? []).find((l) => wonKeys.has(comboKey(l.combo)));
+    if (!line || line.odds === null) return null;
+    return { payout: Math.round(line.stake * line.odds), bet: d?.total ?? 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.result, p.winning_combos, d]);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
   // 🔴 取消は**グレーアウト**（2026-08-22・ユーザー要望）。以前は
@@ -466,7 +480,22 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
                記号（✓ / △ / ✗ / …）も必ず添える。 */}
         <div>
           <span className="text-gray-500">結果</span>{" "}
-          {p.result == null ? (
+          {p.result == null && hypothetical ? (
+            // 買っていないレースの参考値。実績（緑・赤）とは別の色にして混ぜない。
+            <span
+              className="inline-flex items-center rounded border border-dashed border-gray-400 px-1.5 py-0.5 text-xs font-semibold text-gray-600 dark:border-gray-500 dark:text-gray-300"
+              title="このレースは売っていません。買い目が当たっていた場合の払戻（参考値）で、回収率には入りません。"
+            >
+              参考 買っていれば {yen(hypothetical.payout)}
+            </span>
+          ) : p.result == null && (p.winning_combos ?? []).length > 0 ? (
+            <span
+              className="inline-flex items-center rounded border border-dashed border-gray-400 px-1.5 py-0.5 text-xs font-semibold text-gray-500 dark:border-gray-500 dark:text-gray-400"
+              title="このレースは売っていません。買い目は当たっていません（参考）。"
+            >
+              参考 外れ
+            </span>
+          ) : p.result == null ? (
             <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
               … 未確定
             </span>
@@ -550,8 +579,6 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
                     //    同着では当たり目が複数になるので、実着順から組み立て直すと
                     //    必ず取りこぼす（2026-08-22 に採点側で実際に10件の
                     //    取りこぼしが見つかった型）。ここは一致を見るだけ。
-                    const wonKeys = new Set(
-                      (p.winning_combos ?? []).map(comboKey));
                     const won = wonKeys.has(comboKey(l.combo));
                     return (
                     <tr
