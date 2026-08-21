@@ -1988,6 +1988,88 @@ async def get_netkeirin_analysis(
     })
 
 
+#: ペーパー通算の起点。`picks_history` はここから連続している
+#: （2024-01 より前は月次 vintage が無く再構築できない＝`wt_vintage_config.FIRST_MONTH`）。
+PAPER_TOTAL_SINCE = "2024-01-01"
+
+
+async def _aggregate_paper(
+    db: AsyncSession, since: str = PAPER_TOTAL_SINCE,
+) -> dict:
+    """**ペーパー**（`picks_history`）の通算。現行ランクだけに絞る。
+
+    🔴 **`_aggregate` とは母集団が違う。同じ表に無印で並べてはいけない。**
+       `_aggregate` の投資・払戻は `netkeirin_submissions`＝**実際に売った商品**から
+       数えるが、その原本は **2026-07-24 開始・842件**しかない。
+       一方 `picks_history` は 2024-01 から 37,708件あるが、これは
+       「もし買っていたら」の紙の記録である。
+       混ぜると `/review`(実売) と `/keirin`(ペーパー) の不一致を「不具合」と
+       誤診する型に戻る（memory: keirin_display_reality_drift_2026_08_16）。
+       → フロントは **必ず「ペーパー」と明示して**描くこと。
+
+    🔴 **現行ランクだけに絞る**（ユーザー判断 2026-08-21・案C）。
+       2024→2026 でランク数は 7 → 8 → 12 と変わり、廃止済みの
+       7A / 7SS / 9A / 9S が 2024〜2025 に大量に入っている。
+       全部混ぜた「2024年 ROI 78.8%」は**いま売っていない商品を含む数字**で、
+       過去傾向の参考にならない。`_enabled_rank_cond()` で入稿ONのものだけ見る。
+
+    ⚠️ **それでも `rule_version` の変化までは吸収できない。**
+       同じランクでも買い方は何度も変わっている（7M1 は 2026-08-21 に相手選択を
+       EV順へ変更）。**世代をまたいだ通算であることを承知で読むこと。**
+    """
+    row_raw = (await db.execute(
+        text(f"""
+            SELECT COUNT(*)                                   AS n_picks,
+                   COUNT(*) FILTER (WHERE ph.payout > 0)      AS n_hits,
+                   COALESCE(SUM(ph.bet_amount), 0)            AS total_bet,
+                   COALESCE(SUM(ph.payout), 0)                AS total_payout,
+                   MAX(ph.payout) FILTER (WHERE ph.payout > 0) AS max_payout
+            FROM keirin.picks_history ph
+            WHERE ph.race_date >= :since
+              AND ph.bet_amount > 0
+              AND ph.route = 'wt'
+              AND ph.rank IN {_RANKS_ALL}
+              AND {_enabled_rank_cond()}
+        """),
+        {"since": since},
+    )).mappings().first()
+    row: dict[str, Any] = dict(row_raw) if row_raw is not None else {}
+
+    result = _make_period_dict(
+        int(row.get("n_picks") or 0), int(row.get("n_hits") or 0),
+        int(row.get("total_bet") or 0), int(row.get("total_payout") or 0),
+        int(row["max_payout"]) if row.get("max_payout") else None)
+    result["since"] = since
+    result["is_paper"] = True     # フロントがラベルを出すための印
+
+    by_rank: dict[str, dict] = {}
+    rank_rows = (await db.execute(
+        text(f"""
+            SELECT ph.rank AS rank,
+                   COUNT(*)                                   AS n_picks,
+                   COUNT(*) FILTER (WHERE ph.payout > 0)      AS n_hits,
+                   COALESCE(SUM(ph.bet_amount), 0)            AS total_bet,
+                   COALESCE(SUM(ph.payout), 0)                AS total_payout,
+                   MAX(ph.payout) FILTER (WHERE ph.payout > 0) AS max_payout
+            FROM keirin.picks_history ph
+            WHERE ph.race_date >= :since
+              AND ph.bet_amount > 0
+              AND ph.route = 'wt'
+              AND ph.rank IN {_RANKS_ALL}
+              AND {_enabled_rank_cond()}
+            GROUP BY ph.rank
+        """),
+        {"since": since},
+    )).mappings().all()
+    for r in rank_rows:
+        by_rank[_display_rank(str(r["rank"]))] = _make_period_dict(
+            int(r["n_picks"] or 0), int(r["n_hits"] or 0),
+            int(r["total_bet"] or 0), int(r["total_payout"] or 0),
+            int(r["max_payout"]) if r["max_payout"] else None)
+    result["by_rank"] = by_rank
+    return result
+
+
 @router.get("/summary")
 async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """当日 / 当月 / 当年のサマリーを返す。
@@ -2019,6 +2101,10 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
+        # 🔴 **ペーパー通算**（2026-08-21 追加・ユーザー要望）。上3行とは母集団が違う
+        #    （上=実際に売った商品・2026-07-24〜 / これ=picks_history・2024-01〜）。
+        #    フロントは必ず「ペーパー」と明示して描くこと。
+        "paper_total": await _aggregate_paper(db),
         "visible_ranks": await visible_rank_labels(db),
     }
 
