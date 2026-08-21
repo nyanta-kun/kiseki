@@ -431,17 +431,18 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             ? p.confident_ev.toFixed(2)
             : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
         </div>
+        {/* 落車リスク（レースの波乱度の一部）。
+            🔴 **大々的に出さない**（2026-08-21 ユーザー判断）。落車は常に存在する
+               リスクで、警告として出すと毎回目に入るだけで判断を助けない。
+               有用性を後から確かめられるよう、**数値だけ静かに常時出す**
+               （高いときだけ出すと、当たり外れとの対応を目視で追えない）。
+            🔴 **netkeirin の入稿データには含めない。** 表示専用。 */}
+        {p.crash_risk != null && (
+          <div className="text-gray-400 dark:text-gray-500">
+            <span>落車</span> {(p.crash_risk * 100).toFixed(2)}%
+          </div>
+        )}
       </div>
-      {/* レース信頼度（落車リスク）。🔴 表示のみ——自動で落とすと ROI が最も高い
-          四分位を捨てることになる（`services/keirin_crash_risk.py` 参照）。
-          危険なときだけ出す。安全・普通は情報量が無いので黙っている。 */}
-      {p.crash_risk_band === "high" && (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-          ⚠️ 落車リスクが高い組み合わせです（出走者の落車率が上位25%
-          {p.crash_risk != null && ` / 平均 ${(p.crash_risk * 100).toFixed(2)}%`}）。
-          このレースは軸が飛びやすい傾向があります。
-        </p>
-      )}
       {p.gami_risk && (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
           ⚠️ 当たっても投資を下回る目があります（
