@@ -206,6 +206,18 @@ function EntryTable({ entries, axis1, axis2 }: {
  */
 const SUBMIT_DEADLINE_SEC = 15 * 60;
 
+/**
+ * 「いま前後」ブロックが拾う幅（片側・秒）。2026-08-21 ユーザー要望。
+ *
+ * 推奨が多い日は一覧が長く、**いま手を打つべきレース**が上下に埋もれる。
+ * 表示時刻の前後30分だけを集めた節を先頭に置いて、開いたまま放置しても
+ * そこだけ見れば間に合うようにする。
+ *
+ * ⚠️ この節は**再掲であって分割ではない**。下の「発走前 / 発走済」にも同じ
+ *    レースが出る。分割にすると、畳んだときに一覧から消えて見落とす。
+ */
+const NOW_WINDOW_SEC = 30 * 60;
+
 /** 締切を過ぎているか。発走時刻が取れない行は「締切前」扱い（＝操作を許す）。 */
 function isClosed(startAt: number | null, nowSec: number): boolean {
   if (startAt === null) return false;
@@ -930,6 +942,46 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
       {items.length === 0 && (
         <p className="text-sm text-gray-500">この日の入稿はありません。</p>
       )}
+
+      {/* 「いま前後30分」— 表示時刻を挟んだ幅だけを集めた再掲（2026-08-21・ユーザー要望）。
+          🔴 `nowSec === 0` は**まだマウントしていない**印なので描かない。0 のまま描くと
+             窓が [-1800, +1800] になり、unix 秒の `start_at` は1件も入らないため
+             「0件」の節が一瞬出てから消える（SSR とクライアントで見た目が食い違う）。
+          🔴 `start_at === null` は**入れない**。窓に置けないので判定できない。
+             「発走前 / 発走済」では時刻不明を**発走前へ寄せた**が、あれは
+             「畳んだ側に隠すより開いた側へ出すほうが安全」という理由で、
+             ここは逆に**入れると窓の意味が壊れる**（前後30分と言えなくなる）。
+             時刻不明の行は下の一覧にそのまま出るので、ここから漏れても失われない。
+          ⚠️ 表示は 30 秒ごとの `nowSec` に追従して勝手に入れ替わる。過去日を開いた
+             ときは1件も入らず、節ごと出ない（正しい挙動）。 */}
+      {nowSec > 0 && (() => {
+        const from = nowSec - NOW_WINDOW_SEC;
+        const to = nowSec + NOW_WINDOW_SEC;
+        const near = byTime.filter(
+          (p) => p.start_at !== null && p.start_at >= from && p.start_at <= to,
+        );
+        if (near.length === 0) return null;
+        const open = expanded.now ?? true;   // 既定は開く（いま見るための節なので）
+        return (
+          <section className="mb-4 rounded border border-blue-200 bg-blue-50/50 p-3
+                              dark:border-blue-900 dark:bg-blue-950/30">
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => setExpanded((prev) => ({ ...prev, now: !open }))}
+              className="flex items-center gap-1 font-semibold hover:text-blue-700
+                         dark:hover:text-blue-300"
+            >
+              {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              いま前後30分
+              <span className="ml-1 text-xs font-normal text-gray-500">
+                {hhmm(from)}〜{hhmm(to)} ・ {near.length}件
+              </span>
+            </button>
+            {open && <div className="mt-2 space-y-2">{near.map(raceCard)}</div>}
+          </section>
+        );
+      })()}
 
       {/* 発走時刻順は **発走前 / 発走済** に分けてそれぞれ畳めるようにする
           （2026-08-21・ユーザー要望）。推奨が多い日はスクロールが長く、
