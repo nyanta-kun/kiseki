@@ -42,6 +42,14 @@ from src.evaluation.backtest_wt import _load_payouts_wt
 from src.database import get_connection
 from src.submitted_stakes import resolve_payout
 from src.rank_visibility import disabled_rank_names
+from src.result_top3 import (
+    TOP3_SQL,
+    hit_trifecta,
+    hit_trio,
+    representative,
+    winning_trifectas,
+    winning_trios,
+)
 from src.strategy_wt import (
     CURRENT_PAPER_RANKS, ABOLISHED_PAPER_RANKS, rank_7c_unit_stake, unit_stake,
     RANK_7S_STAKE, RANK_7A_STAKE, RANK_7B_STAKE, RANK_9S_STAKE, RANK_9A_STAKE,
@@ -211,21 +219,16 @@ def _write_miwokuri(target_date: str, purchased_base_keys: set[str], conn, pm: d
         hit_val, trio_pay_val = 0, 0
         mw_actual = None  # 実着順 (1着,2着,3着) — trifecta_payout 記録用
         if p1 is not None and p2 is not None and thirds:
-            rows = conn.execute(
-                "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                "ORDER BY finish_order", (rk,)
-            ).fetchall()
-            order_list = [int(r[0]) for r in rows]
-            if len(order_list) >= 3:
-                mw_actual = tuple(order_list[:3])
-                top3_cand = frozenset(order_list[:3])
-                for t in thirds:
-                    if frozenset((p1, p2, t)) == top3_cand:
-                        trio_pay_val = pm.get(rk, {}).get(("trio", frozenset((p1, p2, t))), 0)
-                        hit_val = 1
-                        break
-                if not hit_val:
-                    trio_pay_val = pm.get(rk, {}).get(("trio", top3_cand), 0)
+            rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+            wins_cand = winning_trios(rows)
+            wins_tf_cand = winning_trifectas(rows)
+            if wins_cand:
+                mw_actual = wins_tf_cand[0]          # 代表（同着では複数ある）
+                bought = [frozenset((p1, p2, t)) for t in thirds]
+                win_cand = hit_trio(bought, wins_cand)
+                hit_val = 1 if win_cand is not None else 0
+                trio_pay_val = pm.get(rk, {}).get(
+                    ("trio", win_cand or representative(wins_cand)), 0)
 
         try:
             _tri_pay_val = pm.get(rk, {}).get(("trifecta", mw_actual), 0) if mw_actual else 0
@@ -277,14 +280,11 @@ def _backfill_miwokuri_trio_payout(conn) -> int:
     updated = 0
     for (store_key,) in rows:
         base_key = store_key.split("#")[0]
-        top3_rows = conn.execute(
-            "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-            "ORDER BY finish_order", (base_key,)
-        ).fetchall()
-        order_list = [int(r[0]) for r in top3_rows]
-        if len(order_list) < 3:
+        top3_rows = conn.execute(TOP3_SQL, (base_key,)).fetchall()
+        wins = winning_trios(top3_rows)
+        if not wins:
             continue
-        top3 = frozenset(order_list[:3])
+        top3 = representative(wins)
         trio_pay = pm.get(base_key, {}).get(("trio", top3), 0)
         if trio_pay == 0:
             continue
@@ -301,10 +301,10 @@ def _backfill_miwokuri_trio_payout(conn) -> int:
                 try:
                     p1, p2 = int(parts[0]), int(parts[1])
                     thirds = [int(x) for x in parts[2].split(",")]
-                    for t in thirds:
-                        if frozenset((p1, p2, t)) == top3:
-                            hit_val = 1
-                            break
+                    win = hit_trio([frozenset((p1, p2, t)) for t in thirds], wins)
+                    if win is not None:
+                        hit_val = 1
+                        trio_pay = pm.get(base_key, {}).get(("trio", win), trio_pay)
                 except (ValueError, IndexError):
                     pass
 
@@ -386,14 +386,15 @@ def _settle_rank_7t1(conn, target_date: str) -> tuple[int, int, int]:
             print(f"[notify_results_wt] 7T1 買い目を読めない {store_key}: {pred_combo!r}",
                   flush=True)
             continue
-        order = [int(r[0]) for r in conn.execute(
-            "SELECT frame_no FROM wt_entries WHERE race_key=? "
-            "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)).fetchall()]
-        if len(order) < 3:
+        wins_tf = winning_trifectas(conn.execute(TOP3_SQL, (rk,)).fetchall())
+        if not wins_tf:
             continue                      # まだ確定していない（発走前・確定待ち）
-        win = tuple(order[:3])
+        # 同着では当たり目が複数ある。買った目が当たっていればそれを、無ければ代表を使う。
+        hit_key = hit_trifecta([tuple(int(x) for x in leg.split("-")) for leg in legs
+                                if leg.count("-") == 2], wins_tf)
+        win = hit_key or representative(wins_tf)
         tf_pay = pm7.get(rk, {}).get(("trifecta", win), 0)
-        hit = "-".join(map(str, win)) in legs
+        hit = hit_key is not None
         # 🔴 当たっているのに確定配当が引けないときは**書かない**。
         #    払戻0円で確定させると的中が「ガミ」や不的中として残る。次回の実行で拾う。
         if hit and not tf_pay:
@@ -916,10 +917,10 @@ def _main_inner(date):
                 if not (dec_s1 and dec_s1.get("decision") == "buy" and dec_s1.get("combos")):
                     print(f"[notify_results_wt] S1判定記録なし {rk}: 不計上", flush=True)
                     continue
-                s1_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                s1_order = [int(r[0]) for r in s1_rows]
+                s1_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                s1_wins_tf = winning_trifectas(s1_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                s1_order = list(s1_wins_tf[0]) if s1_wins_tf else []
                 if len(s1_order) < 3:
                     continue
                 s1_stake = int(dec_s1.get("stake") or 100)
@@ -928,8 +929,10 @@ def _main_inner(date):
                                  for c in dec_s1["combos"]]
                 except (TypeError, ValueError):
                     continue
-                s1_order3 = tuple(s1_order[:3])
-                s1_hit = s1_order3 in s1_combos
+                # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                s1_win = hit_trifecta(s1_combos, s1_wins_tf)
+                s1_order3 = s1_win or (tuple(s1_order[:3]) if s1_order else ())
+                s1_hit = s1_win is not None
                 s1_trifecta_pay = pm.get(rk, {}).get(("trifecta", s1_order3), 0)
                 s1_pay = s1_trifecta_pay * s1_stake // 100 if s1_hit else 0
                 s1_bet = len(s1_combos) * s1_stake
@@ -972,10 +975,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] S7判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_s7.get("decision") == "buy" and bool(dec_s7.get("combos"))
-                rank_7s_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                rank_7s_order = [int(r[0]) for r in rank_7s_rows]
+                rank_7s_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                rank_7s_wins = winning_trios(rank_7s_rows)
+                rank_7s_wins_tf = winning_trifectas(rank_7s_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                rank_7s_order = list(rank_7s_wins_tf[0]) if rank_7s_wins_tf else []
                 if len(rank_7s_order) < 3:
                     continue
                 # 旧 decisions は stake=100 で保存されている。予算枠へ統一した
@@ -996,9 +1000,12 @@ def _main_inner(date):
                                      for c in dec_s7["combos"]]
                     except (TypeError, ValueError):
                         continue
-                    rank_7s_hit = any(cs == rank_7s_top3 for cs in rank_7s_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    rank_7s_win = hit_trio(rank_7s_combos, rank_7s_wins)
+                    rank_7s_hit = rank_7s_win is not None
+                    rank_7s_trio_pay = pm.get(rk, {}).get(("trio", rank_7s_win or rank_7s_top3), 0)
                     rank_7s_pay, rank_7s_bet = resolve_payout(
-                        conn, rk, "7S", hit=rank_7s_hit, winning_key=rank_7s_top3,
+                        conn, rk, "7S", hit=rank_7s_hit, winning_key=(rank_7s_win or rank_7s_top3),
                         odds_payout=rank_7s_trio_pay, fallback_stake=rank_7s_stake, n_combos=len(rank_7s_combos))
                     rank_7s_n_combos = len(rank_7s_combos)
                     rank_7s_thirds = sorted(
@@ -1008,7 +1015,7 @@ def _main_inner(date):
                 else:
                     # 見送り: 軸2車が両方とも実際の3着内に入っていれば「見送りだが的中」扱い
                     # （買っていれば5点全目のいずれかで的中していたはずのため）。実賭けなし。
-                    rank_7s_hit = rank_7s_axis1 in rank_7s_top3 and rank_7s_axis2 in rank_7s_top3
+                    rank_7s_hit = any({rank_7s_axis1, rank_7s_axis2} <= w for w in rank_7s_wins)
                     rank_7s_pay = 0
                     rank_7s_bet = 0
                     rank_7s_n_combos = 0
@@ -1072,10 +1079,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] S9判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_s9.get("decision") == "buy" and bool(dec_s9.get("combos"))
-                rank_9s_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                rank_9s_order = [int(r[0]) for r in rank_9s_rows]
+                rank_9s_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                rank_9s_wins = winning_trios(rank_9s_rows)
+                rank_9s_wins_tf = winning_trifectas(rank_9s_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                rank_9s_order = list(rank_9s_wins_tf[0]) if rank_9s_wins_tf else []
                 if len(rank_9s_order) < 3:
                     continue
                 rank_9s_stake = int(dec_s9.get("stake") or RANK_9S_STAKE)
@@ -1094,9 +1102,12 @@ def _main_inner(date):
                                      for c in dec_s9["combos"]]
                     except (TypeError, ValueError):
                         continue
-                    rank_9s_hit = any(cs == rank_9s_top3 for cs in rank_9s_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    rank_9s_win = hit_trio(rank_9s_combos, rank_9s_wins)
+                    rank_9s_hit = rank_9s_win is not None
+                    rank_9s_trio_pay = pm.get(rk, {}).get(("trio", rank_9s_win or rank_9s_top3), 0)
                     rank_9s_pay, rank_9s_bet = resolve_payout(
-                        conn, rk, "9S", hit=rank_9s_hit, winning_key=rank_9s_top3,
+                        conn, rk, "9S", hit=rank_9s_hit, winning_key=(rank_9s_win or rank_9s_top3),
                         odds_payout=rank_9s_trio_pay, fallback_stake=rank_9s_stake, n_combos=len(rank_9s_combos))
                     rank_9s_n_combos = len(rank_9s_combos)
                     rank_9s_thirds = sorted(
@@ -1104,7 +1115,7 @@ def _main_inner(date):
                         for cs in rank_9s_combos if len(cs - {rank_9s_axis1, rank_9s_axis2}) == 1)
                     rank_9s_pred = f"{rank_9s_axis1}={rank_9s_axis2}-" + ",".join(map(str, rank_9s_thirds))
                 else:
-                    rank_9s_hit = rank_9s_axis1 in rank_9s_top3 and rank_9s_axis2 in rank_9s_top3
+                    rank_9s_hit = any({rank_9s_axis1, rank_9s_axis2} <= w for w in rank_9s_wins)
                     rank_9s_pay = 0
                     rank_9s_bet = 0
                     rank_9s_n_combos = 0
@@ -1157,10 +1168,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7A判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_7a.get("decision") == "buy" and bool(dec_7a.get("combos"))
-                a7_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                a7_order = [int(r[0]) for r in a7_rows]
+                a7_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                a7_wins = winning_trios(a7_rows)
+                a7_wins_tf = winning_trifectas(a7_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                a7_order = list(a7_wins_tf[0]) if a7_wins_tf else []
                 if len(a7_order) < 3:
                     continue
                 a7_stake = int(dec_7a.get("stake") or RANK_7A_STAKE)
@@ -1179,9 +1191,12 @@ def _main_inner(date):
                                      for c in dec_7a["combos"]]
                     except (TypeError, ValueError):
                         continue
-                    a7_hit = any(cs == a7_top3 for cs in a7_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    a7_win = hit_trio(a7_combos, a7_wins)
+                    a7_hit = a7_win is not None
+                    a7_trio_pay = pm.get(rk, {}).get(("trio", a7_win or a7_top3), 0)
                     a7_pay, a7_bet = resolve_payout(
-                        conn, rk, "7A", hit=a7_hit, winning_key=a7_top3,
+                        conn, rk, "7A", hit=a7_hit, winning_key=(a7_win or a7_top3),
                         odds_payout=a7_trio_pay, fallback_stake=a7_stake, n_combos=len(a7_combos))
                     a7_n_combos = len(a7_combos)
                     a7_thirds = sorted(
@@ -1189,7 +1204,7 @@ def _main_inner(date):
                         for cs in a7_combos if len(cs - {a7_axis1, a7_axis2}) == 1)
                     a7_pred = f"{a7_axis1}={a7_axis2}-" + ",".join(map(str, a7_thirds))
                 else:
-                    a7_hit = a7_axis1 in a7_top3 and a7_axis2 in a7_top3
+                    a7_hit = any({a7_axis1, a7_axis2} <= w for w in a7_wins)
                     a7_pay = 0
                     a7_bet = 0
                     a7_n_combos = 0
@@ -1228,10 +1243,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7B判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_7b.get("decision") == "buy" and bool(dec_7b.get("combos"))
-                b7_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                b7_order = [int(r[0]) for r in b7_rows]
+                b7_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                b7_wins = winning_trios(b7_rows)
+                b7_wins_tf = winning_trifectas(b7_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                b7_order = list(b7_wins_tf[0]) if b7_wins_tf else []
                 if len(b7_order) < 3:
                     continue
                 b7_stake = int(dec_7b.get("stake") or RANK_7B_STAKE)
@@ -1250,9 +1266,12 @@ def _main_inner(date):
                                      for c in dec_7b["combos"]]
                     except (TypeError, ValueError):
                         continue
-                    b7_hit = any(cs == b7_top3 for cs in b7_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    b7_win = hit_trio(b7_combos, b7_wins)
+                    b7_hit = b7_win is not None
+                    b7_trio_pay = pm.get(rk, {}).get(("trio", b7_win or b7_top3), 0)
                     b7_pay, b7_bet = resolve_payout(
-                        conn, rk, "7B", hit=b7_hit, winning_key=b7_top3,
+                        conn, rk, "7B", hit=b7_hit, winning_key=(b7_win or b7_top3),
                         odds_payout=b7_trio_pay, fallback_stake=b7_stake, n_combos=len(b7_combos))
                     b7_n_combos = len(b7_combos)
                     b7_thirds = sorted(
@@ -1260,7 +1279,7 @@ def _main_inner(date):
                         for cs in b7_combos if len(cs - {b7_axis1, b7_axis2}) == 1)
                     b7_pred = f"{b7_axis1}={b7_axis2}-" + ",".join(map(str, b7_thirds))
                 else:
-                    b7_hit = b7_axis1 in b7_top3 and b7_axis2 in b7_top3
+                    b7_hit = any({b7_axis1, b7_axis2} <= w for w in b7_wins)
                     b7_pay = 0
                     b7_bet = 0
                     b7_n_combos = 0
@@ -1303,10 +1322,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7C判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_7c.get("decision") == "buy" and bool(dec_7c.get("combos"))
-                c7_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                c7_order = [int(r[0]) for r in c7_rows]
+                c7_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                c7_wins = winning_trios(c7_rows)
+                c7_wins_tf = winning_trifectas(c7_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                c7_order = list(c7_wins_tf[0]) if c7_wins_tf else []
                 if len(c7_order) < 3:
                     continue
                 try:
@@ -1341,8 +1361,13 @@ def _main_inner(date):
                     c7_n_combos = len(c7_combos)
                     c7_stake = int(dec_7c.get("stake")
                                    or rank_7c_unit_stake(c7_n_combos))
-                    c7_win_key = c7_order3 if c7_is_tf else c7_top3
-                    c7_hit = any(cs == c7_win_key for cs in c7_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    if c7_is_tf:
+                        c7_win = hit_trifecta(c7_combos, c7_wins_tf)
+                    else:
+                        c7_win = hit_trio(c7_combos, c7_wins)
+                    c7_win_key = c7_win or (c7_order3 if c7_is_tf else c7_top3)
+                    c7_hit = c7_win is not None
                     c7_pay, c7_bet = resolve_payout(
                         conn, rk, "7C", hit=c7_hit, winning_key=c7_win_key,
                         odds_payout=(c7_trifecta_pay if c7_is_tf else c7_trio_pay),
@@ -1358,7 +1383,7 @@ def _main_inner(date):
                             for cs in c7_combos if len(cs - {c7_axis1, c7_axis2}) == 1)
                         c7_pred = f"{c7_axis1}={c7_axis2}-" + ",".join(map(str, c7_thirds))
                 else:
-                    c7_hit = c7_axis1 in c7_top3 and c7_axis2 in c7_top3
+                    c7_hit = any({c7_axis1, c7_axis2} <= w for w in c7_wins)
                     c7_pay = 0
                     c7_bet = 0
                     c7_n_combos = 0
@@ -1402,19 +1427,22 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7H1判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_h1.get("decision") == "buy" and bool(dec_h1.get("legs_tf"))
-                h1_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? "
-                    "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)
-                ).fetchall()
-                h1_order = [int(r[0]) for r in h1_rows]
-                if len(h1_order) < 3:
+                h1_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                h1_wins_tf = winning_trifectas(h1_rows)
+                if not h1_wins_tf:
                     continue
-                h1_tf_odds = pm.get(rk, {}).get(("trifecta", tuple(h1_order[:3])), 0)
+                h1_order = list(h1_wins_tf[0])   # 表示用の代表（同着では複数ある）
+                h1_tf_odds = pm.get(rk, {}).get(("trifecta", tuple(h1_order)), 0)
 
                 if is_buy:
                     legs_tf = [str(t) for t in dec_h1.get("legs_tf") or []]
                     u_tf = int(dec_h1.get("stake_tf") or 0)
-                    hit_tf = "-".join(map(str, h1_order[:3])) in legs_tf
+                    h1_win = hit_trifecta(
+                        [tuple(int(x) for x in str(t).split("-")) for t in legs_tf
+                         if str(t).count("-") == 2], h1_wins_tf)
+                    hit_tf = h1_win is not None
+                    if h1_win is not None:   # 同着では買った目の払戻を使う
+                        h1_tf_odds = pm.get(rk, {}).get(("trifecta", h1_win), h1_tf_odds)
                     # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
                     h1_pay_tf = h1_tf_odds * u_tf // 100 if hit_tf else 0
                     h1_pay = h1_pay_tf
@@ -1480,14 +1508,13 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7H2判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_h2.get("decision") == "buy" and bool(dec_h2.get("legs_trio"))
-                h2_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? "
-                    "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)
-                ).fetchall()
-                h2_order = [int(r[0]) for r in h2_rows]
-                if len(h2_order) < 3:
+                h2_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                h2_wins = winning_trios(h2_rows)
+                h2_wins_tf = winning_trifectas(h2_rows)
+                if not h2_wins:
                     continue
-                h2_top3 = frozenset(h2_order[:3])
+                h2_order = list(h2_wins_tf[0])   # 表示用の代表（同着では複数ある）
+                h2_top3 = representative(h2_wins)
                 h2_trio_odds = pm.get(rk, {}).get(("trio", h2_top3), 0)
                 h2_tf_odds = pm.get(rk, {}).get(("trifecta", tuple(h2_order[:3])), 0)
 
@@ -1497,13 +1524,22 @@ def _main_inner(date):
                     legs_tf = [str(t) for t in dec_h2.get("legs_tf") or []]
                     u_trio = int(dec_h2.get("stake_trio") or 0)
                     u_tf = int(dec_h2.get("stake_tf") or 0)
-                    hit_trio = h2_top3 in legs_trio
-                    hit_tf = "-".join(map(str, h2_order[:3])) in legs_tf
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    h2_win_trio = hit_trio(legs_trio, h2_wins)
+                    h2_win_tf = hit_trifecta(
+                        [tuple(int(x) for x in str(t).split("-")) for t in legs_tf
+                         if str(t).count("-") == 2], h2_wins_tf)
+                    h2_hit_trio = h2_win_trio is not None
+                    hit_tf = h2_win_tf is not None
+                    if h2_win_trio is not None:
+                        h2_trio_odds = pm.get(rk, {}).get(("trio", h2_win_trio), h2_trio_odds)
+                    if h2_win_tf is not None:
+                        h2_tf_odds = pm.get(rk, {}).get(("trifecta", h2_win_tf), h2_tf_odds)
                     # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
-                    h2_pay_trio = h2_trio_odds * u_trio // 100 if hit_trio else 0
+                    h2_pay_trio = h2_trio_odds * u_trio // 100 if h2_hit_trio else 0
                     h2_pay_tf = h2_tf_odds * u_tf // 100 if hit_tf else 0
                     h2_pay = h2_pay_trio + h2_pay_tf
-                    h2_hit = hit_trio or hit_tf
+                    h2_hit = h2_hit_trio or hit_tf
                     h2_bet = int(dec_h2.get("bet_amount")
                                  or (u_trio * len(legs_trio) + u_tf * len(legs_tf)))
                     h2_n = len(legs_trio) + len(legs_tf)
@@ -1557,21 +1593,25 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 9H1判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_h9.get("decision") == "buy" and bool(dec_h9.get("legs"))
-                h9_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? "
-                    "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,)
-                ).fetchall()
-                h9_order = [int(r[0]) for r in h9_rows]
-                if len(h9_order) < 3:
+                h9_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                h9_wins_tf = winning_trifectas(h9_rows)
+                if not h9_wins_tf:
                     continue
-                h9_key = tuple(h9_order[:3])
+                h9_order = list(h9_wins_tf[0])   # 表示用の代表（同着では複数ある）
+                h9_key = tuple(h9_order)
                 h9_tf_odds = pm.get(rk, {}).get(("trifecta", h9_key), 0)
 
                 if is_buy:
                     h9_legs = [str(t) for t in dec_h9.get("legs") or []]
                     h9_n = len(h9_legs)
                     h9_unit = int(dec_h9.get("stake") or 0)
-                    h9_hit = "-".join(map(str, h9_key)) in h9_legs
+                    h9_win = hit_trifecta(
+                        [tuple(int(x) for x in str(t).split("-")) for t in h9_legs
+                         if str(t).count("-") == 2], h9_wins_tf)
+                    h9_hit = h9_win is not None
+                    if h9_win is not None:   # 同着では買った目の払戻を使う
+                        h9_key = h9_win
+                        h9_tf_odds = pm.get(rk, {}).get(("trifecta", h9_win), h9_tf_odds)
                     h9_pay, h9_bet = resolve_payout(
                         conn, rk, "9H1", hit=h9_hit, winning_key=h9_key,
                         odds_payout=h9_tf_odds, fallback_stake=h9_unit, n_combos=h9_n)
@@ -1619,10 +1659,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 9A判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_9a.get("decision") == "buy" and bool(dec_9a.get("combos"))
-                a9_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                a9_order = [int(r[0]) for r in a9_rows]
+                a9_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                a9_wins = winning_trios(a9_rows)
+                a9_wins_tf = winning_trifectas(a9_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                a9_order = list(a9_wins_tf[0]) if a9_wins_tf else []
                 if len(a9_order) < 3:
                     continue
                 a9_stake = int(dec_9a.get("stake") or RANK_9A_STAKE)
@@ -1641,9 +1682,12 @@ def _main_inner(date):
                                      for c in dec_9a["combos"]]
                     except (TypeError, ValueError):
                         continue
-                    a9_hit = any(cs == a9_top3 for cs in a9_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    a9_win = hit_trio(a9_combos, a9_wins)
+                    a9_hit = a9_win is not None
+                    a9_trio_pay = pm.get(rk, {}).get(("trio", a9_win or a9_top3), 0)
                     a9_pay, a9_bet = resolve_payout(
-                        conn, rk, "9A", hit=a9_hit, winning_key=a9_top3,
+                        conn, rk, "9A", hit=a9_hit, winning_key=(a9_win or a9_top3),
                         odds_payout=a9_trio_pay, fallback_stake=a9_stake, n_combos=len(a9_combos))
                     a9_n_combos = len(a9_combos)
                     a9_thirds = sorted(
@@ -1651,7 +1695,7 @@ def _main_inner(date):
                         for cs in a9_combos if len(cs - {a9_axis1, a9_axis2}) == 1)
                     a9_pred = f"{a9_axis1}={a9_axis2}-" + ",".join(map(str, a9_thirds))
                 else:
-                    a9_hit = a9_axis1 in a9_top3 and a9_axis2 in a9_top3
+                    a9_hit = any({a9_axis1, a9_axis2} <= w for w in a9_wins)
                     a9_pay = 0
                     a9_bet = 0
                     a9_n_combos = 0
@@ -1692,10 +1736,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 9C判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_9c.get("decision") == "buy" and bool(dec_9c.get("combos"))
-                c9_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                c9_order = [int(r[0]) for r in c9_rows]
+                c9_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                c9_wins = winning_trios(c9_rows)
+                c9_wins_tf = winning_trifectas(c9_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                c9_order = list(c9_wins_tf[0]) if c9_wins_tf else []
                 if len(c9_order) < 3:
                     continue
                 try:
@@ -1715,9 +1760,12 @@ def _main_inner(date):
                         continue
                     c9_n_combos = len(c9_combos)
                     c9_stake = int(dec_9c.get("stake") or unit_stake(c9_n_combos))
-                    c9_hit = any(cs == c9_top3 for cs in c9_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    c9_win = hit_trio(c9_combos, c9_wins)
+                    c9_hit = c9_win is not None
+                    c9_trio_pay = pm.get(rk, {}).get(("trio", c9_win or c9_top3), 0)
                     c9_pay, c9_bet = resolve_payout(
-                        conn, rk, "9C", hit=c9_hit, winning_key=c9_top3,
+                        conn, rk, "9C", hit=c9_hit, winning_key=(c9_win or c9_top3),
                         odds_payout=c9_trio_pay, fallback_stake=c9_stake,
                         n_combos=c9_n_combos)
                     c9_thirds = sorted(
@@ -1725,7 +1773,7 @@ def _main_inner(date):
                         for cs in c9_combos if len(cs - {c9_axis1, c9_axis2}) == 1)
                     c9_pred = f"{c9_axis1}={c9_axis2}-" + ",".join(map(str, c9_thirds))
                 else:
-                    c9_hit = c9_axis1 in c9_top3 and c9_axis2 in c9_top3
+                    c9_hit = any({c9_axis1, c9_axis2} <= w for w in c9_wins)
                     c9_pay = 0
                     c9_bet = 0
                     c9_n_combos = 0
@@ -1766,10 +1814,11 @@ def _main_inner(date):
                     print(f"[notify_results_wt] 7M1判定記録なし {rk}: 不計上", flush=True)
                     continue
                 is_buy = dec_m1.get("decision") == "buy" and bool(dec_m1.get("combos"))
-                m1_rows = conn.execute(
-                    "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                    "ORDER BY finish_order", (rk,)).fetchall()
-                m1_order = [int(r[0]) for r in m1_rows]
+                m1_rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+                m1_wins = winning_trios(m1_rows)
+                m1_wins_tf = winning_trifectas(m1_rows)
+                # 同着では当たり目が複数ある。`_order` は表示と外れたときの記録に使う代表。
+                m1_order = list(m1_wins_tf[0]) if m1_wins_tf else []
                 if len(m1_order) < 3:
                     continue
                 try:
@@ -1789,9 +1838,12 @@ def _main_inner(date):
                         continue
                     m1_n_combos = len(m1_combos)
                     m1_stake = int(dec_m1.get("stake") or unit_stake(m1_n_combos))
-                    m1_hit = any(cs == m1_top3 for cs in m1_combos)
+                    # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+                    m1_win = hit_trio(m1_combos, m1_wins)
+                    m1_hit = m1_win is not None
+                    m1_trio_pay = pm.get(rk, {}).get(("trio", m1_win or m1_top3), 0)
                     m1_pay, m1_bet = resolve_payout(
-                        conn, rk, "7M1", hit=m1_hit, winning_key=m1_top3,
+                        conn, rk, "7M1", hit=m1_hit, winning_key=(m1_win or m1_top3),
                         odds_payout=m1_trio_pay, fallback_stake=m1_stake,
                         n_combos=m1_n_combos)
                     m1_thirds = sorted(
@@ -1803,7 +1855,7 @@ def _main_inner(date):
                     #    7M1 は相手を3点に絞るので「軸2車が来ても外れ」がありうるが、
                     #    見送り行は買っていないので投資0・払戻0。ここでの hit は
                     #    「軸の当否」の記録であって商品の的中ではない。
-                    m1_hit = m1_axis1 in m1_top3 and m1_axis2 in m1_top3
+                    m1_hit = any({m1_axis1, m1_axis2} <= w for w in m1_wins)
                     m1_pay = 0
                     m1_bet = 0
                     m1_n_combos = 0
@@ -1841,13 +1893,13 @@ def _main_inner(date):
                 r_stake = int(dec.get("stake") or 100)
                 combo_str = (f"{dec['pivot1']}-{dec['pivot2']}-"
                              + ",".join(map(str, dec["thirds"])))
-            rows = conn.execute(
-                "SELECT frame_no FROM wt_entries WHERE race_key=? AND finish_order BETWEEN 1 AND 3 "
-                "ORDER BY finish_order", (rk,)).fetchall()
-            order = [int(r[0]) for r in rows]
-            if len(order) < 3:
+            rows = conn.execute(TOP3_SQL, (rk,)).fetchall()
+            wins = winning_trios(rows)
+            wins_tf = winning_trifectas(rows)
+            if not wins:
                 continue
-            top3 = frozenset(order[:3])
+            order = list(wins_tf[0])       # 表示用の代表（同着では複数ある）
+            top3 = representative(wins)
             # 最終オッズ盤面掲載車（=購入できた車）。盤面に無い車=欠車のみ返還扱い。
             # 落車・失格・棄権は盤面に残る→買い目は購入のまま外れ計上（実精算・2026-07-15）。
             # 盤面データが無い場合のみ旧・完走者基準にフォールバック（誤没収防止）。
@@ -1866,13 +1918,12 @@ def _main_inner(date):
             # 7+車は常に三連複（全相手流し）
             n_combos = len(thirds)
             pred = f"{p1}-{p2}-" + ",".join(map(str, thirds))
-            for t in thirds:
-                if frozenset((p1, p2, t)) == top3:
-                    pay = pm.get(rk, {}).get(("trio", frozenset((p1, p2, t))), 0) * r_stake // 100
-                    hit = True
-                    break
-            # 不的中に関わらずレース確定三連複/三連単払戻を記録
-            trio_pay = pm.get(rk, {}).get(("trio", top3), 0)
+            win_key = hit_trio([frozenset((p1, p2, t)) for t in thirds], wins)
+            if win_key is not None:
+                pay = pm.get(rk, {}).get(("trio", win_key), 0) * r_stake // 100
+                hit = True
+            # 不的中に関わらずレース確定三連複/三連単払戻を記録（同着は代表1通り）
+            trio_pay = pm.get(rk, {}).get(("trio", win_key or top3), 0)
             trifecta_pay = pm.get(rk, {}).get(("trifecta", tuple(order[:3])), 0)
             bet = n_combos * r_stake
             actual = "-".join(map(str, order[:3]))

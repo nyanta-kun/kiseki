@@ -38,6 +38,7 @@ from src.evaluation.backtest_wt import _load_payouts_wt
 from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
 from src.strategy_wt import S1W_STAKE, s1w_gate, s1w_select, rank_7s_field_entropy
+from src.result_top3 import hit_trifecta, winning_trifectas
 
 
 def _load_trifecta_boards(race_keys: list[str]) -> dict:
@@ -132,8 +133,13 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         if not buy:
             continue
 
-        order3 = tuple(fno for _, fno in fin[:3])
-        hit = order3 in buy
+        # 🔴 同着では当たり目が複数ある（`src/result_top3` が正本）。
+        wins_tf = winning_trifectas(fin)
+        if not wins_tf:
+            continue
+        win_key = hit_trifecta(buy, wins_tf)
+        order3 = win_key or wins_tf[0]
+        hit = win_key is not None
         trifecta_pay = pm.get(rk, {}).get(("trifecta", order3), 0)
         pay = trifecta_pay * S1W_STAKE // 100 if hit else 0
         bet = len(buy) * S1W_STAKE

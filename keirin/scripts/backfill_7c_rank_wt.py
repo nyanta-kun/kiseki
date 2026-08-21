@@ -62,6 +62,8 @@ from src.strategy_wt import (
     rank_7c_select_axis, rank_7c_select_legs,
     rank_7s_field_entropy,
 )
+from src.result_top3 import (hit_trifecta, hit_trio, representative,
+                             winning_trifectas, winning_trios)
 
 N_CAR = 7
 
@@ -228,8 +230,13 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         # 足切り後が RANK_7C_LEGS_MIN 点未満なら **買わない**（低配当回避の本体）。
         legs = rank_7c_select_legs(others, top3_probs)
 
-        order3 = tuple(fno for _, fno in fin[:3])
-        actual_top3 = frozenset(order3)
+        # 🔴 同着では3着以内の当たり目が2通りになる（`src/result_top3` が正本）。
+        wins = winning_trios(fin)
+        wins_tf = winning_trifectas(fin)
+        if not wins:
+            continue
+        actual_top3 = representative(wins)   # 表示・外れたときの記録用の代表
+        order3 = wins_tf[0]
 
         # 低配当パターン（上位3車が抜けている ∧ その3車が同一ライン）は見送る。
         # live（src/cli/main.py）と同じく特徴量DFの line_group をそのまま渡す。
@@ -268,6 +275,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             "lowpay_pattern": rank_7c_is_lowpay_pattern(top3_probs, line_groups),
             "entropy": rank_7s_field_entropy(top3_probs),
             "trio": trio, "actual_top3": actual_top3,
+            "wins": wins, "wins_tf": wins_tf,
             "top3_probs": top3_probs,
         })
 
@@ -296,8 +304,9 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             if len(playable) < RANK_7C_LEGS_MIN:
                 continue
             order3 = c_["order3"]
-            hit = tuple(order3) in {(axis1, axis2, x) for x in playable}
-            tri_pay = pm.get(rk, {}).get(("trifecta", tuple(order3)), 0)
+            tf_win = hit_trifecta([(axis1, axis2, x) for x in playable], c_["wins_tf"])
+            hit = tf_win is not None
+            tri_pay = pm.get(rk, {}).get(("trifecta", tf_win or tuple(order3)), 0)
             # 三連単は**均等割り**（live の `rank_7c_unit_stake` と同じ）。
             # 傾斜配分は三連複の目に対して組んであるので流用しない。
             unit = unit_stake(len(playable))
@@ -328,15 +337,17 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         #    （live の judge_rank_7c が同じ理由で `len(legs)` を使っている）。
         if len(combos) < len(buy_legs):
             continue
-        hit = c_["actual_top3"] in combos
-        trio_pay = pm.get(rk, {}).get(("trio", c_["actual_top3"]), 0)
+        # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+        win_key = hit_trio(combos, c_["wins"])
+        hit = win_key is not None
+        trio_pay = pm.get(rk, {}).get(("trio", win_key or c_["actual_top3"]), 0)
         # 賭け金は1レース RACE_BUDGET 円を**入稿と同じ傾斜配分**で割り振る
         # （2026-08-07・均等割りから変更）。最終オッズで配分すると先読みになり
         # 本番より 14.5pt 高く出るので、必ず「朝オッズ×p3、無ければ p3 単独」の
         # 本番と同じ規則を使う（src/rebuild_stakes.py の docstring 参照）。
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
                                    morning_boards.get(rk))
-        pay = trio_pay * stakes[c_["actual_top3"]] // 100 if hit else 0
+        pay = trio_pay * stakes[win_key] // 100 if hit else 0
         bet = sum(stakes.values())
         rows.append({
             "race_date": c_["race_date"],

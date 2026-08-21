@@ -68,6 +68,7 @@ from src.strategy_wt import (
     RANK_9A_STAKE, unit_stake, rank_7s_field_entropy, rank_7s_select_axis, rank_7s_wt_mark3_overlap_n,
     rank_7s_wt_overlap_n, rank_9a_daily_select,
 )
+from src.result_top3 import hit_trio, representative, winning_trios
 
 N_CAR = 9
 
@@ -193,8 +194,11 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         if skip_race:
             continue
 
-        order3 = tuple(fno for _, fno in fin[:3])
-        actual_top3 = frozenset(order3)
+        # 🔴 同着では3着以内の当たり目が2通りになる（`src/result_top3` が正本）。
+        wins = winning_trios(fin)
+        if not wins:
+            continue
+        actual_top3 = representative(wins)   # 表示・外れたときの記録用の代表
 
         mk = marks.get(rk, {})
         wt_honmei = next((fno for fno, v in mk.items() if v == 1), None)
@@ -206,7 +210,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),
             "axis1": axis1, "axis2": axis2, "axis_sum": axis_sum, "entropy": entropy,
-            "others": others, "trio": trio, "actual_top3": actual_top3,
+            "others": others, "trio": trio, "actual_top3": actual_top3, "wins": wins,
             "top3_probs": top3_probs,
             "wt_overlap_n": wt_overlap_n, "wt_mark3_overlap_n": wt_mark3_overlap_n,
         })
@@ -228,15 +232,17 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         if not combos:
             continue
         rk = c_["race_key"]
-        hit = c_["actual_top3"] in combos
-        trio_pay = pm.get(rk, {}).get(("trio", c_["actual_top3"]), 0)
+        # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+        win_key = hit_trio(combos, c_["wins"])
+        hit = win_key is not None
+        trio_pay = pm.get(rk, {}).get(("trio", win_key or c_["actual_top3"]), 0)
         # 賭け金は1レース RACE_BUDGET 円を**入稿と同じ傾斜配分**で割り振る
         # （2026-08-07・均等割りから変更）。最終オッズで配分すると先読みになり
         # 本番より 14.5pt 高く出るので、必ず「朝オッズ×p3、無ければ p3 単独」の
         # 本番と同じ規則を使う（src/rebuild_stakes.py の docstring 参照）。
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
                                    morning_boards.get(rk))
-        pay = trio_pay * stakes[c_["actual_top3"]] // 100 if hit else 0
+        pay = trio_pay * stakes[win_key] // 100 if hit else 0
         bet = sum(stakes.values())
         rows.append({
             "race_date": c_["race_date"],

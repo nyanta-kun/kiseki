@@ -54,6 +54,7 @@ from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
 from src.strategy_wt import rank_7h1_stakes
+from src.result_top3 import hit_trifecta, winning_trifectas
 
 RANK = "RANK_7H1"
 SUFFIX = "#7H1"
@@ -98,8 +99,12 @@ def _load_boards(race_keys: list[str]) -> tuple[dict[str, set], dict[str, set]]:
     return dict(trio), dict(tf)
 
 
-def _load_finishes(race_keys: list[str]) -> dict[str, list[int]]:
-    """{race_key: [1着車, 2着車, 3着車]}。3着まで揃わないレースは含めない。"""
+def _load_finishes(race_keys: list[str]) -> dict[str, list[tuple[int, int]]]:
+    """{race_key: [(着順, 車番), ...]}。3着まで揃わないレースは含めない。
+
+    🔴 **車番だけに畳まないこと。** 同着では三連単の当たりが複数になるので、
+       着順そのものが要る（`src/result_top3` が正本）。
+    """
     out: dict[str, list[tuple[int, int]]] = defaultdict(list)
     if not race_keys:
         return {}
@@ -111,7 +116,7 @@ def _load_finishes(race_keys: list[str]) -> dict[str, list[int]]:
                  % ",".join("?" * len(chunk)))
             for rk, fno, fo in c.execute(q, chunk):
                 out[rk].append((int(fo), int(fno)))
-    return {rk: [f for _, f in sorted(v)] for rk, v in out.items() if len(v) >= 3}
+    return {rk: sorted(v) for rk, v in out.items() if len(v) >= 3}
 
 
 def build_rows(date_from: str, date_to: str, *, eval_model: str, win_model: str,
@@ -156,9 +161,13 @@ def build_rows(date_from: str, date_to: str, *, eval_model: str, win_model: str,
 
         u_tf, bet = rank_7h1_stakes(len(legs_tf))
 
-        hit_tf = "-".join(map(str, order[:3])) in legs_tf
+        # 🔴 同着では当たり目が複数ある（`src/result_top3` が正本）。
+        wins_tf = winning_trifectas(order)
+        tf_win = hit_trifecta([tuple(int(x) for x in t.split("-")) for t in legs_tf
+                               if t.count("-") == 2], wins_tf)
+        hit_tf = tf_win is not None
         # pm のオッズは「100円あたりの払戻」なので賭け金で按分する
-        tf_odds = pm.get(rk, {}).get(("trifecta", tuple(order[:3])), 0)
+        tf_odds = pm.get(rk, {}).get(("trifecta", tf_win or wins_tf[0]), 0)
         pay_tf = tf_odds * u_tf // 100 if hit_tf else 0
 
         rows.append({

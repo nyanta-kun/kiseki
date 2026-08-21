@@ -68,6 +68,7 @@ from src.strategy_wt import (  # noqa: E402
     rank_7m1_select_legs, rank_7s_wt_overlap_n,
 )
 from src.wt_vintage_config import assert_vintage_for_past  # noqa: E402
+from src.result_top3 import hit_trio, representative, winning_trios
 
 N_CAR = 7
 
@@ -235,7 +236,9 @@ def build_rows(model_name: str, date_from: str, date_to: str,
                 others, top3_probs, ev=_ev_for(rk, axis1, axis2, others, date_map.get(rk, ""))),
             "cup_grade": cup_grade_map.get(rk),
             "trio": trio,
-            "actual_top3": frozenset(fno for _, fno in fin[:3]),
+            # 🔴 同着では当たり目が2通りになる（`src/result_top3` が正本）。
+            "actual_top3": representative(winning_trios(fin)),
+            "wins": winning_trios(fin),
             "top3_probs": top3_probs,
         })
 
@@ -254,11 +257,13 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         if len(combos) < RANK_7M1_LEGS_MIN:
             continue
         rk = c_["race_key"]
-        hit = c_["actual_top3"] in combos
-        trio_pay = pm.get(rk, {}).get(("trio", c_["actual_top3"]), 0)
+        # 同着では当たり目が複数ある。**買った目**で払戻を引く。
+        win_key = hit_trio(combos, c_["wins"])
+        hit = win_key is not None
+        trio_pay = pm.get(rk, {}).get(("trio", win_key or c_["actual_top3"]), 0)
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
                                    morning_boards.get(rk))
-        pay = trio_pay * stakes[c_["actual_top3"]] // 100 if hit else 0
+        pay = trio_pay * stakes[win_key] // 100 if hit else 0
         rows.append({
             "race_date": c_["race_date"],
             "race_key": f"{rk}#7M1", "rank": "RANK_7M1",

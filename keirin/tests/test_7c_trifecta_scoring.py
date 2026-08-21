@@ -109,8 +109,12 @@ def test_scoring_reads_bet_kind_and_uses_ordered_comparison() -> None:
     src = (Path(__file__).parent.parent / "scripts" / "notify_results_wt.py").read_text()
     assert 'c7_is_tf = dec_7c.get("bet_kind") == "trifecta"' in src, \
         "7C 採点が bet_kind を読んでいない"
-    assert "c7_win_key = c7_order3 if c7_is_tf else c7_top3" in src, \
+    # 2026-08-22: 同着対応（`src/result_top3`）を通すようになったので、
+    # 「券種で当たり目の作り方を切り替えている」ことを固定する。
+    assert "c7_win = hit_trifecta(c7_combos, c7_wins_tf)" in src, \
         "三連単でも順不同（frozenset）で比較している"
+    assert "c7_win = hit_trio(c7_combos, c7_wins)" in src, \
+        "三連複が同着対応の当たり目を使っていない"
     assert "odds_payout=(c7_trifecta_pay if c7_is_tf else c7_trio_pay)" in src, \
         "三連単なのに三連複の配当を payout に使っている"
 
