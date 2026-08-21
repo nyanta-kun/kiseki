@@ -1627,6 +1627,19 @@ export interface KeirinProposal {
   /** 最低払戻・最高払戻・期待値に予測オッズが混ざっているか。
    *  🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。 */
   odds_has_predicted?: boolean;
+  /**
+   * レース信頼度指標 — 出走者の落車性向（point-in-time・経験ベイズ縮約）の平均。
+   *
+   * 実測（2026-08-21・7C ゲート通過 6,425R の四分位）: 軸2車のどちらかが落車する率が
+   * Q1(安全) 1.56% → Q4(危険) 3.11% と**約2倍**になる。
+   *
+   * 🔴 **判断材料であってゲートではない。** 危険帯は二軸的中がほぼ変わらない一方で
+   *    ROI が最も高い（Q4 78.1% vs Q1 71.6%）ため、自動で落とすと回収率の高い
+   *    四分位を捨てることになる。表示だけに使う。
+   */
+  crash_risk?: number | null;
+  /** `crash_risk` の区分。low=安全 / mid / high=危険 / unknown=算出できず。 */
+  crash_risk_band?: "low" | "mid" | "high" | "unknown";
   netkeirin_race_id: string | null;
   proposed_at: string | null;
   approved_at: string | null;
