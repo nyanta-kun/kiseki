@@ -29,6 +29,7 @@ from ..db.session import get_db
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
+from ..services.keirin_result_top3 import winning_combo_labels
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
     build_correlations,
@@ -2462,7 +2463,8 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     keys = sorted({r["race_key"] for r in rows})
     ent_rows = (await db.execute(text("""
         SELECT race_key, frame_no, name, race_point, style, line_group, line_pos,
-               player_class, prediction_mark, pred_win_pct, pred_top2_pct, pred_top3_pct
+               player_class, prediction_mark, pred_win_pct, pred_top2_pct, pred_top3_pct,
+               finish_order
         FROM keirin.wt_entries WHERE race_key = ANY(:keys) ORDER BY frame_no
     """), {"keys": keys})).mappings().all()
     by_race: dict[str, list[dict]] = {}
@@ -2561,7 +2563,11 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
                  "pred_win_pct": float(e["pred_win_pct"]) if e["pred_win_pct"] is not None else None,
                  # 2着内率。列追加（2026-08-12）以降に算出したレースだけ値が入る
                  "pred_top2_pct": float(e["pred_top2_pct"]) if e["pred_top2_pct"] is not None else None,
-                 "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None}
+                 "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None,
+                 # 確定着順。**発走前は None、欠車・失格は 0**（着外）。
+                 # 0 と None を潰すと「まだ走っていない」と「走ったが着外」が
+                 # 区別できなくなる。
+                 "finish_order": e["finish_order"]}
                 for e in entries
             ],
         })
@@ -2592,6 +2598,18 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             # 🔴 netkeirin の表示的中率は**ガミを不的中と数える**ほう。
             "net_hit": got["net_hit"],
         }
+        # 🔴 **どの買い目が当たったかはサーバーで決める。** 同着では当たり目が
+        #    複数になる（3着同着で三連複2通り・1着/2着同着で三連単2通り）ので、
+        #    フロントで「実着順と一致するか」を組み立てると必ず取りこぼす。
+        #    ここは `bet_detail.lines[].combo` とそのまま比較できる表記で返し、
+        #    画面は**一致を見るだけ**にする。未確定は空配列。
+        # 🔴 **売った分だけに付けてはいけない。** 取り消したレース・入稿前の
+        #    レースこそ「落とした判断は正しかったか」を確認したい対象で、
+        #    `got`（＝netkeirin へ送って確定した分）で絞ると赤字が出ない。
+        #    着順が入っていれば付ける。
+        it["winning_combos"] = winning_combo_labels(
+            [(e["finish_order"], e["frame_no"]) for e in it["entries"]
+             if e["finish_order"] is not None])
 
     # ── 当日サマリー（netkeirin の表示と数字を合わせる）─────────────────
     # 🔴 母集団は **netkeirin へ送ったもの**（submitted / published）。入稿案は
