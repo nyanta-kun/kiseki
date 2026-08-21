@@ -126,6 +126,11 @@ logger = logging.getLogger("jvlink_agent")
 # 2026-08-05 18:00 の weekly-preview は 23.3 時間返らず、丸2日間 jvlink_historical を
 # 巻き添えにした（realtime ループにはウォッチドッグがあったが一発実行モードには無かった）。
 # option=4（セットアップ）だけは数時間ブロックしうるため別枠にする。
+# JVRead 生データキャッシュの有効期間。キャッシュキーに時刻成分が無く、daily の
+# from_time は「前日 00:00」＝その日いっぱい不変なので、TTL が無いとその日最初の
+# 取得結果を一日中使い回してしまう（2026-08-21 に土曜分の枠順確定を取りこぼした）。
+CACHE_TTL_SEC = int(os.getenv("JVLINK_CACHE_TTL_SEC", "1800"))
+
 JVOPEN_TIMEOUT_DIFF = int(os.getenv("JVOPEN_TIMEOUT_DIFF", "3600"))
 JVOPEN_TIMEOUT_SETUP = int(os.getenv("JVOPEN_TIMEOUT_SETUP", "21600"))
 
@@ -278,6 +283,7 @@ def fetch_stored_data(
     skip_cache: bool = False,
     max_errors: int = 5,
     stop_event=None,
+    cache_ttl_sec: float | None = CACHE_TTL_SEC,
 ) -> list[dict]:
     """
     蓄積系データを取得する (JVOpen)。
@@ -301,10 +307,16 @@ def fetch_stored_data(
                     大量データ取得時（recentモード等）に使用する。
         stop_event: threading.Event | None。セットされるとファイル完了後に
                     graceful stop する。jvlink_historical.py の時間制限実装に使用。
+        cache_ttl_sec: キャッシュの有効期間（秒）。None は無期限。既定は CACHE_TTL_SEC。
+                       option=3/4（セットアップ）には適用しない。
     """
     # キャッシュ確認
     if not skip_cache:
-        cached = load_cache(dataspec, from_time, option, CACHE_DIR)
+        # option=3/4（セットアップ）は全期間の不変スナップショットで、取得に数時間かかる。
+        # 日中に中身が変わるのは差分（option=1）と今週分（option=2）だけなので、
+        # TTL はそちらにだけ効かせる。
+        ttl = cache_ttl_sec if option in (1, 2) else None
+        cached = load_cache(dataspec, from_time, option, CACHE_DIR, max_age_sec=ttl)
         if cached is not None:
             logger.info(f"[cache] キャッシュ使用: {dataspec} from={from_time} opt={option} ({len(cached)} records)")
             if on_file_done:
