@@ -88,7 +88,19 @@ def _ev_for(race_key: str, axis1: int, axis2: int, others: list[int],
        代わりに一度だけ警告を出す。
     """
     global _EV_WARNED
-    end = odds_model_train_end()
+    # 🔴 `model_train_end()` は**メタが無いと例外を投げる**（`load_meta`）。
+    #    keirin/data はリポジトリ管理外なので、モデル未配備の環境では必ずここを通る。
+    #    ここで素通しにすると **tail 再構築ごと落ちて当日の行が消える**
+    #    （CI で実際に落ちて発覚・2026-08-21）。読めなければ EV を使わないだけにする。
+    try:
+        end = odds_model_train_end()
+    except Exception:
+        end = None
+        if not _EV_WARNED:
+            print("[backfill_7m1] オッズモデルのメタを読めないため EV を使わず"
+                  "従来規則（下位3車）で再構築します", flush=True)
+            _EV_WARNED = True
+        return None
     if not race_date or (end and race_date <= str(end)):
         if not _EV_WARNED:
             print(f"[backfill_7m1] {race_date} はオッズモデルの学習終端 {end} 以前"

@@ -397,3 +397,25 @@ def test_backfill_ev_is_disabled_before_the_odds_model_train_end():
     bf._EV_WARNED = False
     assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "2020-01-01") is None
     assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "") is None
+
+
+def test_backfill_ev_never_raises_when_the_odds_model_is_missing():
+    """🔴 モデル未配備でも **例外にせず従来規則へ落ちる**こと。
+
+    `odds_prediction.model_train_end()` はメタが無いと例外を投げる。
+    `keirin/data` はリポジトリ管理外なので、モデルの無い環境では必ずここを通る。
+    素通しにすると **tail 再構築ごと落ちて当日の行が消える**。
+    2026-08-21 に CI で実際に落ちて発覚した（ローカルはモデルがあるので通っていた）。
+    """
+    import scripts.backfill_7m1_rank_wt as bf
+
+    def boom():
+        raise RuntimeError("odds_trio_meta.json がありません")
+
+    orig = bf.odds_model_train_end
+    bf.odds_model_train_end = boom
+    bf._EV_WARNED = False
+    try:
+        assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "2099-01-01") is None
+    finally:
+        bf.odds_model_train_end = orig
