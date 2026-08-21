@@ -934,12 +934,18 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
       {/* 発走時刻順は **発走前 / 発走済** に分けてそれぞれ畳めるようにする
           （2026-08-21・ユーザー要望）。推奨が多い日はスクロールが長く、
           終わったレースが上に積もると「これから承認するもの」を探せない。
-          🔴 判定は `isClosed`（発走15分前＝netkeirin の締切）を使う。
-             「発走したか」ではなく**まだ手を打てるか**が、この画面での
-             発走前／発走済の意味そのものなので、承認ボタンの有効条件と揃える。 */}
+          🔴 判定は **実際の発走時刻**（2026-08-21 是正・ユーザー指摘）。
+             当初は `isClosed`（発走15分前＝netkeirin の締切）で分けたが、
+             それだと**締切を過ぎただけでまだ発走していないレースが「発走済」へ
+             入る**。承認ボタンの有効/無効は締切で決まるが、この節の見出しが
+             言っているのは「もう走ったか」なので、意味が違う。
+             ⚠️ 発走時刻が取れない行は**発走前**へ入れる（畳んだ節に隠れて
+                見落とすより、開いている側に出るほうが安全）。 */}
       {view === "time" && (() => {
-        const upcoming = byTime.filter((p) => !isClosed(p.start_at, nowSec));
-        const finished = byTime.filter((p) => isClosed(p.start_at, nowSec));
+        const started = (p: KeirinProposal) =>
+          p.start_at !== null && p.start_at <= nowSec;
+        const upcoming = byTime.filter((p) => !started(p));
+        const finished = byTime.filter(started);
         const section = (
           key: "upcoming" | "finished", label: string, list: KeirinProposal[],
         ) => {
