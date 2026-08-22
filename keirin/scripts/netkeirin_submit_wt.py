@@ -97,8 +97,10 @@ from src.odds_prediction import (
     conservative_multiplier,
     predicted_trio_board,
     try_predicted_odds_for_legs,
+    trio_hit_probability,
 )
 from src.stake_allocation import group_by_stake, tilted_stakes
+from src.premium_pick import select_premium
 from src.strategy_wt import (
     RACE_BUDGET,
     RANK_9C_LEG_P3_MIN,
@@ -199,6 +201,10 @@ _DEFAULT_COMMENT_TEMPLATE = (
 #    `{race_type}` の置換自体は `_apply_template` に残してある（設定画面の
 #    独自テンプレートで使えるようにするため）。
 _MARQUEE_TITLE_TEMPLATE = "本日の二軸｜{shape}"
+#: 当日の「厳選の二軸」（`src/premium_pick.py` が選ぶ3本）のタイトル。
+#: ⚠️ 選ばれるのは**当たりやすい**3本で、実測では「2倍以上の的中」が0件。
+#:    「増える」と読ませる語を足さないこと。
+_PREMIUM_TITLE_TEMPLATE = "厳選の二軸｜{shape}"
 _MARQUEE_COMMENT_TEMPLATE = (
     "{shape_note}\n\n"
     "【二軸】\n"
@@ -1381,6 +1387,48 @@ def _can_pull_forward(
     return bool(odds) and all(odds.get(t) for t in partners)
 
 
+def _premium_metrics(rank_key: str, cand: dict) -> dict | None:
+    """「厳選の二軸」の候補判定に要る3つの量を出す。作れなければ None。
+
+    - `p_hit`            … 買う点のどれかが3着以内に入る確率（PL）
+    - `min_point_odds`   … 買う点の予測オッズの最小値
+    - `min_payout_ratio` … 買う点の想定払戻（賭け金×予測オッズ÷予算）の最小値
+
+    🔴 **三連単のランクは対象外**（予測盤面が三連複しか作れない）。None を返す。
+    🔴 **本番と同じ配分**（`_build_tilted_legs` と同じ `tilted_stakes`）で測ること。
+       別の配分で測ると `min_payout_ratio` が本番とずれる。
+    ⚠️ ここは選定の前に全ランクぶん回るので、1レースにつき予測盤面を1回作る。
+       盤面はモデル側でキャッシュされるが `load_race_inputs` は都度DBを引く。
+    """
+    cfg = RANK_CONFIGS[rank_key]
+    if not cfg.get("tilt_stakes") or cfg.get("trifecta_switch_key") and cand.get(
+            cfg.get("trifecta_switch_key")):
+        return None
+    try:
+        axis1, axis2, partners, _marks = _normalize_candidate(cand, cfg)
+    except (ValueError, KeyError, TypeError, IndexError):
+        return None
+    if not partners:
+        return None
+    race_key = str(cand.get("race_key", "")).split("#")[0]
+    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
+    if not odds or any(not odds.get(t) for t in partners):
+        return None
+    p_hit = trio_hit_probability(race_key, axis1, axis2, list(partners))
+    if p_hit is None:
+        return None
+    budget = int(cfg.get("stake_budget") or RACE_BUDGET)
+    try:
+        _legs, _src, stakes = _build_tilted_legs(race_key, cfg, axis1, axis2, partners)
+    except Exception:
+        return None
+    ratio = expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
+    if ratio is None:
+        return None
+    return {"race_key": cand.get("race_key"), "p_hit": p_hit,
+            "min_point_odds": min(odds.values()), "min_payout_ratio": ratio}
+
+
 def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
 ) -> float | None:
@@ -1745,6 +1793,7 @@ def _process_rank(
     claimed_races: set[str] | None = None, waves: dict[str, str] | None = None,
     started: set[str] | None = None, propose_only: bool = False,
     deferred_races: set[str] | None = None,
+    premium_races: set[str] | None = None,
 ) -> tuple[int, list[str]]:
     cfg = RANK_CONFIGS[rank_key]
     if not _is_enabled(settings, rank_key):
@@ -1970,8 +2019,15 @@ def _process_rank(
         # 🔴 総流し判定は**実際に買う相手の数**で行う（朝の候補ではなく）。
         #    欠車で相手が減れば総流しではなくなるので、そのときは出さない。
         wide_note = wide_note_text(axis1, axis2_or_p1, len(partners), cfg["n_cars"])
+        # 🔴 当日の「厳選の二軸」だけタイトルを差し替える（2026-08-22）。
+        #    選定は `src/premium_pick.py`（当たりやすい順・ガミ除外つき・上位3本）。
+        #    ⚠️ ランクのテンプレートを**上書き**するので、7A の既定文
+        #       （同じ「厳選の二軸」）と見分けが付かなくなる点は承知の上。
+        _title_template = (_PREMIUM_TITLE_TEMPLATE
+                           if premium_races and race_key in premium_races
+                           else title_template)
         title = _apply_template(
-            title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
+            _title_template, venue_name=venue_name, race_no=race_no, rank_key=rank_key,
             target_date=target_date, axis1=axis1, axis2=axis2_or_p1, shape=shape,
             shape_note=shape_note, stake_note=stake_note, wide_note=wide_note,
         )
@@ -2402,6 +2458,27 @@ def main() -> None:
         per_rank_raw[rank_key] = raw
         all_race_keys.update(c["race_key"] for c in raw)
 
+    # ── 当日の「厳選の二軸」3本を**submit ループの前に**決める（2026-08-22）。
+    # 🔴 **波をまたいで同じ結果になること**が要件。入力（朝の候補・予測オッズ）は
+    #    日中変わらないので、何度実行しても同じ3本が選ばれる。ここでランクごとに
+    #    決めると優先順位で先に取られたレースしか候補にならず、日をまたいで
+    #    「厳選」の意味が変わる。
+    # ⚠️ 選ばれた3本が**実際に入稿されるとは限らない**（1レース1商品の取り合いや
+    #    他のゲートで落ちる）。そのときは3本に満たないまま出す。埋め合わせに
+    #    4番手を繰り上げると、波ごとに違うレースが「厳選」になる。
+    premium_races: set[str] = set()
+    if not args.race_key:
+        _metrics = []
+        for _rk, _raw in per_rank_raw.items():
+            for _c in _raw:
+                _m = _premium_metrics(_rk, _c)
+                if _m:
+                    _metrics.append(_m)
+        premium_races = set(select_premium(_metrics))
+        if premium_races:
+            print(f"[netkeirin_submit] 厳選の二軸 {len(premium_races)}本: "
+                  + " / ".join(sorted(premium_races)), flush=True)
+
     # 🔴 承認制の判定は**波の頭で1回だけ**。ランクごとに引き直すと、途中で
     #    設定が変わったときに同じ波の中で「送ったもの」と「案のまま」が混ざる。
     propose_only = _approval_required()
@@ -2428,6 +2505,7 @@ def main() -> None:
             rank_key, target_date, session, race_date, settings, already, args.dry_run,
             race_key_filter=args.race_key, claimed_races=claimed_races, waves=waves,
             started=started, propose_only=propose_only, deferred_races=deferred_races,
+            premium_races=premium_races,
         )
         submitted_counts[rank_key] = n
         all_failures.extend(failures)
