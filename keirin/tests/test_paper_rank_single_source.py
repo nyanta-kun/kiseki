@@ -64,9 +64,12 @@ import live_report_wt as lr
 # 2026-08-17: 中間層 RANK_7M1 を新設。ベース層（的中重視・払戻中央1.5倍台）と
 # 穴推奨（的中5%未満・中央8〜22倍）の**間の払戻帯**を埋める枠で、母集団は
 # 7C の裏返し（混戦）× 公式印と不一致。入稿の優先順位は**最下位**。
+# 2026-08-22: RANK_7T2（三連単・一撃枠）を新設。7T1 と買い目の形は同一で、
+# 母集団を全7車へ広げ日次上限20・目標払戻20万にした版。**ペーパー並走中で
+# 入稿しない**（`PaperRankSpec.paper_only=True`）。
 CURRENT_RANK_NAMES = {"RANK_7S", "RANK_7B", "RANK_9C",
                       "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
-                      "RANK_7T1", "RANK_7M1"}
+                      "RANK_7T1", "RANK_7T2", "RANK_7M1"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {

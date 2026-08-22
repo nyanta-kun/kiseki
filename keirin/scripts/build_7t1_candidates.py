@@ -137,8 +137,17 @@ def _meta_of(ents: list[dict]) -> dict[int, dict]:
 
 
 def build(date_from: str, date_to: str, eval_model: str, win_model: str,
-          require_model: bool = True) -> list[dict]:
-    """対象期間の 7T1 候補（選別後）を返す。当日生成もバックフィルもこれを使う。"""
+          require_model: bool = True,
+          target_payout: int = RANK_7T1_TARGET_PAYOUT,
+          daily_select=rank_7t1_daily_select,
+          label: str = "7T1") -> list[dict]:
+    """対象期間の三連単候補（選別後）を返す。当日生成もバックフィルもこれを使う。
+
+    🔴 **RANK_7T2 もこの関数を通す**（2026-08-22）。買い目の作り方は完全に同じで、
+       違うのは `target_payout`（目標払戻）と `daily_select`（母集団と日次上限）
+       だけ。ここを複製すると、片方だけ直したときに**同じ形のはずの2ランクが
+       無言で食い違う**（このリポジトリが繰り返し踏んでいる事故の型）。
+    """
     by_race = _load_range(date_from, date_to)
     if not by_race:
         print(f"{date_from}〜{date_to}: 7車立てのレースがありません")
@@ -174,7 +183,8 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             n_no_board += 1
             print(f"  {rk}: 予測オッズを作れず skip（{e}）")
             continue
-        picked = rank_7t1_select(probs, pw, pred_odds)
+        picked = rank_7t1_select(probs, pw, pred_odds,
+                                 target_payout=target_payout)
         if picked is None:
             continue
         axis1, axis2, legs = picked
@@ -191,7 +201,7 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             "race_type": ents[0].get("race_type"),
             "n_entries": RANK_7T1_NE,
             "is_cross_line": rank_7t1_is_cross_line(probs, line_group, line_pos),
-            "target_payout": RANK_7T1_TARGET_PAYOUT,
+            "target_payout": target_payout,
             "order": order,                      # 3着内率の降順（印の割当に使う）
             "axis1": axis1, "axis2": axis2,
             "axis1_name": name_of.get(axis1), "axis2_name": name_of.get(axis2),
@@ -216,8 +226,8 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
 
     if n_no_board:
         print(f"  予測オッズを作れなかったレース: {n_no_board}件")
-    picked_all = rank_7t1_daily_select(cands)
-    print(f"決勝系レース×別ラインで {len(picked_all)}/{len(cands)}R を採用")
+    picked_all = daily_select(cands)
+    print(f"[{label}] {len(picked_all)}/{len(cands)}R を採用")
     for c in picked_all:
         print(f"  {c['race_key']} {c.get('venue_name')}{c.get('race_no')}R "
               f"[{c.get('race_type')}] 軸={c['axis1']}-{c['axis2']} "
