@@ -49,7 +49,12 @@ UNSAFE_BUTTONS: tuple[str, ...] = ("はい", "Yes")
 DIALOG_CLASS = "#32770"
 
 # 対象にするダイアログのタイトル接頭辞
-TITLE_PREFIXES: tuple[str, ...] = ("JRA-VAN", "JV-Link")
+#
+# 🔴 2026-08-23: JV-Link 5.0.0 で option=3/4（セットアップ）中に
+#    class=#32770 / title='セットアップ' / visible=0 のダイアログが観測された。
+#    接頭辞が JRA-VAN / JV-Link のどちらでもないため対象外として捨てられ、
+#    JVOpen が 6 時間ブロックし続けていた（毎晩・8/17〜）。
+TITLE_PREFIXES: tuple[str, ...] = ("JRA-VAN", "JV-Link", "セットアップ", "Setup")
 
 
 # 「いいえ(&N)」「&Yes」のようなアクセラレータ表記
@@ -91,6 +96,53 @@ def is_unsafe(label: str) -> bool:
 def is_target_title(title: str) -> bool:
     """このダイアログを JV-Link のものとして扱ってよいか。"""
     return any(title.startswith(p) for p in TITLE_PREFIXES)
+
+
+# JV-Link 5.0.0 のセットアップ選択ダイアログを見分けるための語
+_SETUP_NO_KIT = "持っていない"
+_SETUP_KIT_MARK = "スタートキット"
+
+
+def _handle_setup_dialog(
+    log: logging.Logger, buttons: dict[str, int], *, dry_run: bool
+) -> bool:
+    """JV-Link 5.0.0 の「セットアップ」選択ダイアログに応答する。
+
+    「スタートキット(CD/DVD-ROM)を持っていない」を選んでから OK を押す。
+    CD が無い環境なので全ダウンロードで進めるのが正しい。
+
+    Returns:
+        このダイアログとして処理したら True。
+    """
+    no_kit = next(
+        (label for label in buttons if _SETUP_KIT_MARK in label and _SETUP_NO_KIT in label),
+        None,
+    )
+    ok = next((label for label in buttons if normalize_label(label) in ("OK", "ＯＫ")), None)
+    if no_kit is None or ok is None:
+        return False
+
+    if dry_run:
+        log.warning(f"[dry-run] セットアップダイアログ: 「{no_kit}」→「{ok}」を押すところ")
+        return True
+
+    # ctypes / user32 は dismiss() 内でローカルに作られるので、ここでも取り直す
+    # （このモジュールは Windows 以外でも import されるため、トップレベルで
+    #   ctypes.windll を触ってはいけない）
+    import ctypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    BM_CLICK = 0x00F5
+    BM_GETCHECK = 0x00F0
+    BST_CHECKED = 0x0001
+    if user32.SendMessageW(buttons[no_kit], BM_GETCHECK, 0, 0) != BST_CHECKED:
+        user32.SendMessageW(buttons[no_kit], BM_CLICK, 0, 0)
+    user32.SendMessageW(buttons[ok], BM_CLICK, 0, 0)
+    log.warning(
+        f"セットアップダイアログに自動応答: 「{no_kit}」を選んで「{ok}」を押した"
+        "（スタートキット無し＝全ダウンロード）"
+    )
+    return True
 
 
 def dismiss(log: logging.Logger, *, dry_run: bool = False) -> int:
@@ -144,8 +196,14 @@ def dismiss(log: logging.Logger, *, dry_run: bool = False) -> int:
         title_buf = ctypes.create_unicode_buffer(512)
         user32.GetWindowTextW(hwnd, title_buf, 512)
         title = title_buf.value
-        if not is_target_title(title):
-            continue
+
+        # 🔴 タイトルで弾く前に必ず記録する。
+        #    以前はここが `if not is_target_title(title): continue` だったため、
+        #    接頭辞に一致しないダイアログを**一行も残さず**捨てていた。
+        #    その結果「ログに title= が0件だからダイアログは無い」と誤読でき、
+        #    JV-Link 5.0.0 の 'セットアップ' ダイアログを 6 夜見逃した。
+        #    docstring が約束している「未知のダイアログでも文面を必ず残す」を守る。
+        target_title = is_target_title(title)
 
         texts: list[str] = []
         buttons: dict[str, int] = {}
@@ -170,9 +228,28 @@ def dismiss(log: logging.Logger, *, dry_run: bool = False) -> int:
 
         # 未知のダイアログでも必ず文面を残す。今回の障害で失われたのはこの1行。
         log.warning(
-            f"JV-Link がモーダルを出している: title={title!r} "
+            f"モーダルを検出: title={title!r} target={target_title} "
             f"buttons={sorted(buttons)} text={' / '.join(texts)!r}"
         )
+        if not target_title:
+            # 対象外でも記録だけは残す（押しはしない）
+            continue
+
+        # --- JV-Link 5.0.0 の「セットアップ」ダイアログ ---------------------
+        # option=4 は仕様上「ダイアログ無しセットアップ」だが、5.0.0 では
+        # option=3/4 とも下記の選択ダイアログを **不可視で** 出すようになった
+        # （2026-08-23 に TOKU/option=4 で再現。BLDN 固有ではない）。
+        # 誰も押せないので JVOpen が永久にブロックする。
+        #   title='セットアップ'
+        #   buttons=['OK','キャンセル',
+        #            'スタートキット(CD/DVD-ROM)を持っている（推奨）',
+        #            'スタートキット(CD/DVD-ROM)を持っていない']
+        # CD は無いので「持っていない」を選んで OK ＝ 全ダウンロードで進める。
+        # ⚠️ SAFE_BUTTONS のままだと「キャンセル」が先に当たってセットアップが
+        #    中止される。ここで先に処理して return する必要がある。
+        if _handle_setup_dialog(log, buttons, dry_run=dry_run):
+            closed += 1
+            continue
 
         target = choose_button(list(buttons))
         if target is None:
