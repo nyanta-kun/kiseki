@@ -39,8 +39,24 @@ def test_安い目があるレースは厳選にしない():
 
 
 def test_当たっても増えないレースは厳選にしない():
+    """🔴 ユーザー要件「厳選のガミは許容できない」。判定は**下限包絡**で。"""
     assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO - 0.01)]) == []
     assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO)]) == ["a"]
+
+
+def test_ガミ判定は下限包絡で測っている():
+    """🔴 予測オッズで測ると実ガミが出る（初版がそうだった）。
+
+    確定オッズは予測から大きく下振れする（買った点1,020点の実測で
+    **40%が予測を割る**・下限包絡でも 22%）。`_premium_metrics` が
+    `_conservative_trio_board` を通していることを構造で固定する。
+    """
+    src = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    body = src.split("def _premium_metrics")[1].split("\ndef ")[0]
+    assert "_conservative_trio_board" in body, \
+        "厳選のガミ判定が下限包絡を通っていない（予測オッズのままだとガミが出る）"
+    assert "expected_payout_floor(stakes, {k: v for k, v in low.items()" in body, \
+        "想定払戻の算出に下限包絡を渡していない"
 
 
 def test_測れないレースは特別扱いしない():
@@ -71,7 +87,7 @@ def test_既定は3本():
 def test_締めすぎない設計であること():
     """🔴 `MIN_PAYOUT_RATIO` を上げると的中が落ちて帰無と区別できなくなる。
 
-    実測（8/16〜8/21）: 1.0 → 的中61.1% / 1.2 → 44.4% / 1.5 → 27.8%。
+    実測（8/16〜8/21・下限包絡）: 1.0 → 的中44.4%(ガミ0) / 1.1 → 33.3% / 1.2 → 27.8%。
     「安全側へ倒すほど良い」ではないので、値を上げる変更はここで落とす。
     """
     assert MIN_PAYOUT_RATIO <= 1.0, (
