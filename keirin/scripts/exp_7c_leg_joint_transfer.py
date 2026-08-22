@@ -37,7 +37,8 @@ from scripts.exp_trio_joint_partner import (  # noqa: E402
     build_A, fit, load_any, load_boards, load_entries)
 from src.result_top3 import winning_trifectas  # noqa: E402
 from src.strategy_wt import (  # noqa: E402
-    RANK_7C_LEG_P3_MIN, RANK_7C_LEGS_MIN, unit_stake)
+    RANK_7C_LEG_P3_MIN, RANK_7C_LEGS_MIN, rank_7c_cut_legs_by_gap,
+    rank_7c_select_legs, unit_stake)
 
 PAYOUT_RATE = 0.7485
 
@@ -89,7 +90,7 @@ def main() -> int:
         if o3:
             wins_of[r["key"]] = {frozenset(w) for w in winning_trifectas(o3)}
 
-    arms = ["現行(p3足切り)", "同時確率(同点数)", "同時確率1点", "総流し5点"]
+    arms = ["現行(p3落差カット)", "同時確率(同点数)", "同時確率1点", "総流し5点"]
     rows = {a: [] for a in arms}
     npt = defaultdict(int)
     n = same = 0
@@ -99,12 +100,18 @@ def main() -> int:
             continue
         a1, a2 = axes[key]
         p3 = p3_of[key]
-        cur = [c for _, c, _ in sorted(v, key=lambda x: (-p3[x[1]], x[1]))
-               if p3[c] >= RANK_7C_LEG_P3_MIN]
-        if len(cur) < RANK_7C_LEGS_MIN:      # 7C はこのレースを買わない
+        others = [c for _, c, _ in v]
+        # 🔴 **本番の買い方をそのまま通す**（選抜 → 落差カット → △削り）。
+        #    選抜だけを再現すると平均4.37点になるが、7C が実際に買うのは
+        #    落差カット後の平均2.60点。ここを間違えたのが §29 の誤り。
+        sel = rank_7c_select_legs(others, p3)
+        if len(sel) < RANK_7C_LEGS_MIN:      # 7C はこのレースを買わない
+            continue
+        cur = rank_7c_cut_legs_by_gap(sel, p3)
+        if not cur:
             continue
         jnt = [c for _, c, _ in sorted(v, key=lambda x: -x[0])]
-        picks = {"現行(p3足切り)": cur, "同時確率(同点数)": jnt[:len(cur)],
+        picks = {"現行(p3落差カット)": cur, "同時確率(同点数)": jnt[:len(cur)],
                  "同時確率1点": jnt[:1], "総流し5点": jnt}
         ks = {a: [frozenset((a1, a2, c)) for c in legs] for a, legs in picks.items()}
         if any(any(k not in bd for k in v_) for v_ in ks.values()):
@@ -131,12 +138,12 @@ def main() -> int:
         for d, h, p, b in seg:
             z = dh[d]; z[0] += 1; z[2] += h
             z = dr[d]; z[0] += b; z[2] += p
-        for (d, h, p, b), (d2, h2, p2, b2) in zip(seg, rows["現行(p3足切り)"]):
+        for (d, h, p, b), (d2, h2, p2, b2) in zip(seg, rows["現行(p3落差カット)"]):
             dh[d][1] += h2
             dr[d][1] += p2
         hit = sum(x[1] for x in seg) / len(seg)
         roi = sum(x[2] for x in seg) / sum(x[3] for x in seg)
-        if a == "現行(p3足切り)":
+        if a == "現行(p3落差カット)":
             base_h, base_r = hit, roi
             print(f"{a:>18}{hit:>9.2%}{roi:>9.1%}{'':>24}{'':>24}")
             continue
