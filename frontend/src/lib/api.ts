@@ -984,6 +984,49 @@ export async function fetchJraTopProbability(date: string): Promise<TopProbHorse
 }
 
 // ---------------------------------------------------------------------------
+// レース信頼度一覧（推奨ページ）
+// ---------------------------------------------------------------------------
+
+/**
+ * 推奨ページの1行 = 1レース。
+ *
+ * `confidence_score` / `tier` は**レース単位**の信頼度（指数1位馬ベース）、
+ * `horse_number` 以降は**そのレースの単勝1番人気馬**。両者の基準馬は必ずしも一致しない。
+ * 指数・オッズ未取得のレースも行として返るため、馬側は全て null になりうる。
+ */
+export type RaceConfidenceRow = {
+  race_id: number;
+  course_name: string;
+  race_number: number;
+  race_name: string | null;
+  post_time: string | null;
+  surface: string | null;
+  distance: number | null;
+  head_count: number | null;
+  /** 0-100。confidence.py の指数差40+頭数20+分散25+勝率15 */
+  confidence_score: number | null;
+  /** S / A / B / C+ / C */
+  tier: string | null;
+  horse_number: number | null;
+  horse_name: string | null;
+  win_odds: number | null;
+  /** 0〜1。較正済み単勝確率 */
+  win_probability: number | null;
+  /** 単勝オッズ × 単勝率。表示は小数第1位だが、並び替えのため素の値で持つ */
+  ev: number | null;
+  finish_position: number | null;
+};
+
+export async function fetchRaceConfidence(date: string): Promise<RaceConfidenceRow[]> {
+  return get<RaceConfidenceRow[]>(`/races/confidence?date=${date}`, { next: { revalidate: 60 } });
+}
+
+/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし） */
+export async function fetchRaceConfidenceBrowser(date: string): Promise<RaceConfidenceRow[]> {
+  return get<RaceConfidenceRow[]>(`/races/confidence?date=${date}`, { cache: "no-store" });
+}
+
+// ---------------------------------------------------------------------------
 // 競輪
 // ---------------------------------------------------------------------------
 
