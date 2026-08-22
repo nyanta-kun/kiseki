@@ -105,13 +105,17 @@ def summarize_race(entries: list[dict[str, Any]]) -> dict[str, Any]:
     # --- 信頼度スコア（既存 confidence.py。JRA は gap 較正値が専用） ---
     confidence: dict[str, Any] | None = None
     if indices:
-        aligned_probs = [
+        # calculate_race_confidence は win_probabilities を sorted() するため、
+        # None が1つでも混ざると TypeError になる。全頭そろっている時だけ渡す。
+        raw_probs = [
             e.get("win_probability") for e in entries if e.get("composite_index") is not None
         ]
+        kept = [float(p) for p in raw_probs if p is not None]
+        probs: list[float] | None = kept if len(kept) == len(raw_probs) and kept else None
         confidence = calculate_race_confidence(
             indices,
             head_count=head_count,
-            win_probabilities=None if any(p is None for p in aligned_probs) else aligned_probs,
+            win_probabilities=probs,
             gap_full_score=JRA_GAP_FULL_SCORE,
         )
 
