@@ -498,6 +498,37 @@ def trio_ev_for_legs(
     return out
 
 
+def trio_hit_probability(
+    race_key: str, axis1: int, axis2: int, partners: Sequence[int],
+) -> float | None:
+    """買う三連複のどれかが3着以内に入る確率（Plackett-Luce）。作れなければ None。
+
+    「当たりやすい順に並べる」ためだけの量。**絶対値は信用しないこと**——
+    2026-08-22 の実測（8/16〜8/21 の実売 228件）で、この値の四分位と実際の
+    的中率は
+
+        Q1 予測 0.17 / 実測 0.23   Q2 0.41 / 0.23
+        Q3 0.57 / 0.44             Q4 0.73 / **0.51**
+
+    と上側で**大きく上振れ**する。順位付けとしては単調（Q1 0.23 → Q4 0.51）で
+    使えるので、`premium_pick` は順位だけに使っている。
+
+    ⚠️ 三連複の盤面しか作れない（7車・9車以外は None）。三連単のランクでは使えない。
+    """
+    try:
+        cars, p3, pw, meta = load_race_inputs(race_key)
+        pl = _pl_trio(pw, cars)
+    except Exception:
+        return None
+    total = 0.0
+    for t in partners:
+        p = pl.get(frozenset({int(axis1), int(axis2), int(t)}))
+        if p is None:
+            return None
+        total += float(p)
+    return total
+
+
 def try_predicted_odds_for_legs(
     race_key: str, axis1: int, axis2: int, partners: Sequence[int],
 ) -> dict[int, float] | None:
