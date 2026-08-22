@@ -88,3 +88,4 @@ netkeirin/*.pdf
 keirin/data/
 keirin/.venv/
 keirin/*.log
+odds_backfill.log
