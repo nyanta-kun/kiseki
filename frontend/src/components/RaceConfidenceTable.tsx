@@ -43,7 +43,7 @@ type Column = {
   label: string;
   /** 数値列は右寄せ */
   numeric: boolean;
-  /** その列を最初にクリックしたときの向き（「良い順」が先頭に来るように） */
+  /** その列を最初に選んだときの向き（「良い順」が先頭に来るように） */
   firstDir: Dir;
 };
 
@@ -101,6 +101,50 @@ function tieBreak(a: RaceConfidenceRow, b: RaceConfidenceRow): number {
   if (ta !== tb) return ta < tb ? -1 : 1;
   if (a.course_name !== b.course_name) return a.course_name.localeCompare(b.course_name, "ja");
   return a.race_number - b.race_number;
+}
+
+const DASH = <span className="text-gray-300">-</span>;
+
+function fmtOdds(v: number | null) {
+  return v !== null ? `${v.toFixed(1)}倍` : DASH;
+}
+function fmtPct(v: number | null) {
+  return v !== null ? `${(v * 100).toFixed(1)}%` : DASH;
+}
+/** 単勝EV。表示は小数第1位だが、並び替えは素の値で行うので同表示でも順序は潰れない。 */
+function fmtEv(v: number | null) {
+  return v !== null ? v.toFixed(1) : DASH;
+}
+function evClass(v: number | null): string {
+  return v !== null && v >= 1.0 ? "text-orange-600" : "text-gray-900";
+}
+
+function TierBadge({ tier }: { tier: string | null }) {
+  if (!tier) return DASH;
+  return (
+    <span
+      className={cn(
+        "inline-block rounded-full text-[11px] font-bold leading-none px-1.5 py-1",
+        TIER_STYLE[tier] ?? "bg-gray-200 text-gray-600"
+      )}
+    >
+      {tier}
+    </span>
+  );
+}
+
+function FinishBadge({ pos }: { pos: number | null }) {
+  if (pos === null) return DASH;
+  return (
+    <span
+      className={cn(
+        "inline-block px-1.5 py-0.5 rounded text-[11px] font-bold tabular-nums",
+        posColor(pos)
+      )}
+    >
+      {pos}着
+    </span>
+  );
 }
 
 type Props = {
@@ -168,15 +212,112 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
     );
   }
 
+  const arrow = dir === "asc" ? "▲" : "▼";
+  const sortLabel = COLUMNS.find((c) => c.key === sortKey)?.label ?? "";
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs px-1">
-        <span className="text-gray-500">全{rows.length}レースを信頼度順に表示</span>
+        <span className="text-gray-500">
+          全{rows.length}レースを{sortLabel}順に表示
+        </span>
         {stale && <span className="text-amber-600">最新のオッズを取得できていません</span>}
       </div>
 
-      {/* 列が多いので、横幅が足りない端末では表だけを横スクロールさせる */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+      {/*
+        スマホ（< md）は10列の表が画面幅に収まらず、横スクロールしないと
+        単勝・単勝率・EV・着順が見えない。カード表示に切り替え、
+        並び替えは列見出しの代わりにチップで行う（全列とも並び替え可能）。
+      */}
+      <div className="md:hidden space-y-2">
+        <div
+          className="flex gap-1 overflow-x-auto pb-1 scrollbar-none"
+          role="group"
+          aria-label="並び替え"
+        >
+          {COLUMNS.map((col) => {
+            const active = col.key === sortKey;
+            return (
+              <button
+                key={col.key}
+                type="button"
+                onClick={() => toggle(col)}
+                aria-pressed={active}
+                className={cn(
+                  "flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                  active
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "bg-white text-gray-600 border-gray-200"
+                )}
+              >
+                {col.label}
+                {active && <span aria-hidden="true"> {arrow}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <ul className="space-y-1.5">
+          {sorted.map((r) => (
+            <li key={r.race_id} className="bg-white rounded-xl border border-gray-200 px-3 py-2.5">
+              {/* 1段目: レース / 発走 / tier … 信頼度 */}
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/races/${r.race_id}`}
+                  className="font-bold text-gray-900 hover:underline"
+                >
+                  {r.course_name}
+                  {r.race_number}R
+                </Link>
+                <span className="text-xs text-gray-500 tabular-nums">{fmtTime(r.post_time)}</span>
+                <TierBadge tier={r.tier} />
+                <span className="ml-auto flex items-baseline gap-1">
+                  <span className="text-[10px] text-gray-400">信頼度</span>
+                  <span className="text-lg font-bold text-gray-900 tabular-nums leading-none">
+                    {r.confidence_score ?? "-"}
+                  </span>
+                </span>
+              </div>
+
+              {/* 2段目: 単勝1番人気馬 … 着順 */}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="w-6 h-6 flex-shrink-0 rounded bg-gray-100 text-gray-700 text-xs font-bold flex items-center justify-center tabular-nums">
+                  {r.horse_number ?? "-"}
+                </span>
+                <span className="font-medium text-gray-900 truncate">{r.horse_name ?? "-"}</span>
+                <span className="ml-auto flex-shrink-0">
+                  <FinishBadge pos={r.finish_position} />
+                </span>
+              </div>
+
+              {/* 3段目: オッズ系 */}
+              <dl className="mt-1.5 flex items-center gap-x-3 text-xs">
+                <div>
+                  <dt className="inline text-gray-400">単勝 </dt>
+                  <dd className="inline font-medium text-gray-900 tabular-nums">
+                    {fmtOdds(r.win_odds)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="inline text-gray-400">単勝率 </dt>
+                  <dd className="inline font-medium text-gray-900 tabular-nums">
+                    {fmtPct(r.win_probability)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="inline text-gray-400">EV </dt>
+                  <dd className={cn("inline font-bold tabular-nums", evClass(r.ev))}>
+                    {fmtEv(r.ev)}
+                  </dd>
+                </div>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* PC（md 以上）は表。列見出しクリックで並び替え。 */}
+      <div className="hidden md:block bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <table className="w-full text-sm whitespace-nowrap">
           <caption className="sr-only">
             レース信頼度一覧。各列の見出しを押すと並び替わります。
@@ -203,7 +344,7 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
                     >
                       {col.label}
                       <span aria-hidden="true" className="ml-0.5 text-[10px]">
-                        {active ? (dir === "asc" ? "▲" : "▼") : "　"}
+                        {active ? arrow : "　"}
                       </span>
                     </button>
                   </th>
@@ -213,7 +354,10 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={r.race_id} className="border-b border-gray-100 last:border-0 hover:bg-blue-50/40">
+              <tr
+                key={r.race_id}
+                className="border-b border-gray-100 last:border-0 hover:bg-blue-50/40"
+              >
                 <td className="px-2 py-2">
                   <Link
                     href={`/races/${r.race_id}`}
@@ -225,59 +369,31 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
                 </td>
                 <td className="px-2 py-2 text-gray-500 tabular-nums">{fmtTime(r.post_time)}</td>
                 <td className="px-2 py-2">
-                  {r.tier ? (
-                    <span
-                      className={cn(
-                        "inline-block px-1.5 py-0.5 rounded-full text-[11px] font-bold",
-                        TIER_STYLE[r.tier] ?? "bg-gray-200 text-gray-600"
-                      )}
-                    >
-                      {r.tier}
-                    </span>
-                  ) : (
-                    <span className="text-gray-300">-</span>
-                  )}
+                  <TierBadge tier={r.tier} />
                 </td>
-                <td className="px-2 py-2 text-right tabular-nums font-medium">
-                  {r.confidence_score ?? <span className="text-gray-300">-</span>}
+                <td className="px-2 py-2 text-right tabular-nums font-bold text-gray-900">
+                  {r.confidence_score ?? DASH}
                 </td>
-                <td className="px-2 py-2 text-right tabular-nums">
-                  {r.horse_number ?? <span className="text-gray-300">-</span>}
-                </td>
-                <td className="px-2 py-2 max-w-[10rem] truncate" title={r.horse_name ?? undefined}>
-                  {r.horse_name ?? <span className="text-gray-300">-</span>}
-                </td>
-                <td className="px-2 py-2 text-right tabular-nums">
-                  {r.win_odds !== null ? `${r.win_odds.toFixed(1)}倍` : <span className="text-gray-300">-</span>}
-                </td>
-                <td className="px-2 py-2 text-right tabular-nums">
-                  {r.win_probability !== null ? (
-                    `${(r.win_probability * 100).toFixed(1)}%`
-                  ) : (
-                    <span className="text-gray-300">-</span>
-                  )}
+                <td className="px-2 py-2 text-right tabular-nums text-gray-900">
+                  {r.horse_number ?? DASH}
                 </td>
                 <td
-                  className={cn(
-                    "px-2 py-2 text-right tabular-nums font-medium",
-                    r.ev !== null && r.ev >= 1.0 ? "text-orange-600" : "text-gray-700"
-                  )}
+                  className="px-2 py-2 max-w-[10rem] truncate text-gray-900"
+                  title={r.horse_name ?? undefined}
                 >
-                  {r.ev !== null ? r.ev.toFixed(1) : <span className="text-gray-300">-</span>}
+                  {r.horse_name ?? DASH}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums text-gray-900">
+                  {fmtOdds(r.win_odds)}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums text-gray-900">
+                  {fmtPct(r.win_probability)}
+                </td>
+                <td className={cn("px-2 py-2 text-right tabular-nums font-bold", evClass(r.ev))}>
+                  {fmtEv(r.ev)}
                 </td>
                 <td className="px-2 py-2 text-right">
-                  {r.finish_position !== null ? (
-                    <span
-                      className={cn(
-                        "inline-block px-1.5 py-0.5 rounded text-[11px] font-bold tabular-nums",
-                        posColor(r.finish_position)
-                      )}
-                    >
-                      {r.finish_position}着
-                    </span>
-                  ) : (
-                    <span className="text-gray-300">-</span>
-                  )}
+                  <FinishBadge pos={r.finish_position} />
                 </td>
               </tr>
             ))}
