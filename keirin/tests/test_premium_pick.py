@@ -27,21 +27,32 @@ def _m(rk, p_hit, odds=3.0, ratio=1.2):
             "min_point_odds": odds, "min_payout_ratio": ratio}
 
 
-def test_的中率の高い順に3本():
-    got = select_premium([_m("c", 0.3), _m("a", 0.9), _m("b", 0.6), _m("d", 0.1)])
+def test_的中率の高い順に選ぶ():
+    """本数は `TOP_N` に依らず「多い順」であること（保留中は TOP_N=0）。"""
+    got = select_premium([_m("c", 0.3), _m("a", 0.9), _m("b", 0.6), _m("d", 0.1)], top_n=3)
     assert got == ["a", "b", "c"]
+
+
+def test_保留中は1本も選ばれない():
+    """🔴 2026-08-22 夕からユーザー判断で停止中（`TOP_N = 0`）。
+
+    実装は残してあるので、再開するときは 3 に戻すだけ。**戻す前に
+    `keirin_handoff_2026_08_22_pm` の4つの課題を片付けること。**
+    """
+    assert TOP_N == 0, "保留を解除するなら、このテストの意図ごと更新すること"
+    assert select_premium([_m("a", 0.9), _m("b", 0.6), _m("c", 0.3)]) == []
 
 
 def test_安い目があるレースは厳選にしない():
     """A案と同じ 2.0 倍のゲート。"""
-    assert select_premium([_m("a", 0.9, odds=MIN_POINT_ODDS - 0.01)]) == []
-    assert select_premium([_m("a", 0.9, odds=MIN_POINT_ODDS)]) == ["a"]
+    assert select_premium([_m("a", 0.9, odds=MIN_POINT_ODDS - 0.01)], top_n=3) == []
+    assert select_premium([_m("a", 0.9, odds=MIN_POINT_ODDS)], top_n=3) == ["a"]
 
 
 def test_当たっても増えないレースは厳選にしない():
     """🔴 ユーザー要件「厳選のガミは許容できない」。判定は**下限包絡**で。"""
-    assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO - 0.01)]) == []
-    assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO)]) == ["a"]
+    assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO - 0.01)], top_n=3) == []
+    assert select_premium([_m("a", 0.9, ratio=MIN_PAYOUT_RATIO)], top_n=3) == ["a"]
 
 
 def test_ガミ判定は下限包絡で測っている():
@@ -75,12 +86,11 @@ def test_同点でも並びが決まる():
 
 def test_候補が3本に満たなければそのまま():
     """⚠️ 4番手を繰り上げない（波ごとに違うレースが厳選になるため）。"""
-    assert select_premium([_m("a", 0.9), _m("b", 0.5, odds=1.5)]) == ["a"]
-    assert select_premium([]) == []
+    assert select_premium([_m("a", 0.9), _m("b", 0.5, odds=1.5)], top_n=3) == ["a"]
+    assert select_premium([], top_n=3) == []
 
 
-def test_既定は3本():
-    assert TOP_N == 3
+def test_ガミ許容度の既定():
     assert MIN_PAYOUT_RATIO == 1.0
 
 
