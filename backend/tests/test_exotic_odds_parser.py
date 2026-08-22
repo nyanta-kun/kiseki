@@ -46,10 +46,10 @@ from src.importers.odds_importer import (
 # pos 36-37: 登録頭数 "18"
 # pos 38-39: 出走頭数 "18"
 # pos 40:    発売フラグ "1"
-# pos 41-51: 予備 (11バイト空白)
+# pos 41-:   オッズ配列（この直後）。「票数合計」11バイトはレコード末尾にある
 # → jravan_race_id = "2026061405010111"
 
-# ヘッダー本体 (レコード種別IDを除く 49バイト)
+# ヘッダー本体 (レコード種別IDを除く 38バイト)
 _HEADER_BODY = (
     "2"           # 1バイト: データ区分
     "20260614"    # 8バイト: データ作成年月日
@@ -63,14 +63,16 @@ _HEADER_BODY = (
     "18"          # 2バイト: 登録頭数
     "18"          # 2バイト: 出走頭数
     "1"           # 1バイト: 発売フラグ
-    "           "  # 11バイト: 予備
-)  # 合計 1+8+4+4+2+2+2+2+8+2+2+1+11 = 49バイト
+)  # 合計 1+8+4+4+2+2+2+2+8+2+2+1 = 38バイト
 
-assert len(_HEADER_BODY) == 49, f"_HEADER_BODY サイズ不正: {len(_HEADER_BODY)}"
+assert len(_HEADER_BODY) == 38, f"_HEADER_BODY サイズ不正: {len(_HEADER_BODY)}"
+
+# オッズ配列の直後に置かれる「票数合計」(11バイト)。レコード末尾 = 票数合計 + CRLF。
+_TOTAL_VOTES = "0" * 11
 
 
 def _make_header(rec_id: str) -> str:
-    """レコード種別IDを含む51バイトヘッダーを返す。"""
+    """レコード種別IDを含む40バイトヘッダーを返す（pos1-40）。"""
     assert len(rec_id) == 2
     return rec_id + _HEADER_BODY
 
@@ -88,7 +90,7 @@ def _make_o2_record(combos: list[tuple[int, int, float]]) -> str:
         O2 固定長レコード文字列 (CRLF 末尾あり)
     """
     header = _make_header("O2")
-    assert len(header) == 51
+    assert len(header) == 40
 
     # 各エントリ: 組番(4byte: 馬番2+馬番2) + オッズ(6byte: ÷10表記) + 人気順(3byte)
     # 最大 153 組 × 13byte = 1989byte
@@ -105,7 +107,7 @@ def _make_o2_record(combos: list[tuple[int, int, float]]) -> str:
     padding_count = max_entries - len(combos)
     padding = " " * (padding_count * entry_size)
 
-    data = header + entries + padding + "\r\n"
+    data = header + entries + padding + _TOTAL_VOTES + "\r\n"
     assert len(data) == 2042, f"O2 レコードサイズ不正: {len(data)} != 2042"
     return data
 
@@ -135,7 +137,7 @@ def _make_o3_record(combos: list[tuple[int, int, float, float]]) -> str:
     padding_count = max_entries - len(combos)
     padding = " " * (padding_count * entry_size)
 
-    data = header + entries + padding + "\r\n"
+    data = header + entries + padding + _TOTAL_VOTES + "\r\n"
     assert len(data) == 2654, f"O3 レコードサイズ不正: {len(data)} != 2654"
     return data
 
@@ -164,7 +166,7 @@ def _make_o4_record(combos: list[tuple[int, int, float]]) -> str:
     padding_count = max_entries - len(combos)
     padding = " " * (padding_count * entry_size)
 
-    data = header + entries + padding + "\r\n"
+    data = header + entries + padding + _TOTAL_VOTES + "\r\n"
     assert len(data) == 4031, f"O4 レコードサイズ不正: {len(data)} != 4031"
     return data
 
@@ -193,7 +195,7 @@ def _make_o5_record(combos: list[tuple[int, int, int, float]]) -> str:
     padding_count = max_entries - len(combos)
     padding = " " * (padding_count * entry_size)
 
-    data = header + entries + padding + "\r\n"
+    data = header + entries + padding + _TOTAL_VOTES + "\r\n"
     assert len(data) == 12293, f"O5 レコードサイズ不正: {len(data)} != 12293"
     return data
 
@@ -222,7 +224,7 @@ def _make_o6_record(combos: list[tuple[int, int, int, float]]) -> str:
     padding_count = max_entries - len(combos)
     padding = " " * (padding_count * entry_size)
 
-    data = header + entries + padding + "\r\n"
+    data = header + entries + padding + _TOTAL_VOTES + "\r\n"
     assert len(data) == 83285, f"O6 レコードサイズ不正: {len(data)} != 83285"
     return data
 
@@ -508,27 +510,101 @@ class TestExtractExoticOdds:
         # 0倍のエントリ: 組番 "0103" + オッズ "000000" + 人気 "001"
         combo_entry = "0103" + "000000" + "001"
         padding = " " * ((153 - 1) * 13)
-        data = header + combo_entry + padding + "\r\n"
+        data = header + combo_entry + padding + _TOTAL_VOTES + "\r\n"
         assert len(data) == 2042
 
         rows = self.importer._extract_odds_rows("O2", data, "quinella", self.race_id, self.fetched_at)
         assert len(rows) == 0
 
     def test_o2_header_size_correctness(self) -> None:
-        """O2-O6 共通ヘッダーが 51 バイトであることを確認する。
+        """O2-O6 共通ヘッダーが 40 バイトであることを確認する。
 
-        検証: total - data - CRLF = header
-          O2: 2042 - (153×13) - 2 = 51
-          O3: 2654 - (153×17) - 2 = 51
-          O4: 4031 - (306×13) - 2 = 51
-          O5: 12293 - (816×15) - 2 = 51
-          O6: 83285 - (4896×17) - 2 = 51
+        レコード長 = ヘッダー40 + オッズ配列 + 票数合計11 + CRLF 2。
+        🔴 以前は「レコード長 − オッズ配列 − CRLF = 51」を根拠にしていたが、
+           その 51 には末尾の票数合計 11 バイトが含まれていた（2026-08-23 修正）。
         """
-        assert 2042 - 153 * 13 - 2 == EXOTIC_HEADER_SIZE
-        assert 2654 - 153 * 17 - 2 == EXOTIC_HEADER_SIZE
-        assert 4031 - 306 * 13 - 2 == EXOTIC_HEADER_SIZE
-        assert 12293 - 816 * 15 - 2 == EXOTIC_HEADER_SIZE
-        assert 83285 - 4896 * 17 - 2 == EXOTIC_HEADER_SIZE
+        total_votes, crlf = 11, 2
+        for total, n_combos, entry_size in (
+            (2042, 153, 13),    # O2 馬連
+            (2654, 153, 17),    # O3 ワイド
+            (4031, 306, 13),    # O4 馬単
+            (12293, 816, 15),   # O5 三連複
+            (83285, 4896, 17),  # O6 三連単
+        ):
+            assert (
+                EXOTIC_HEADER_SIZE + n_combos * entry_size + total_votes + crlf == total
+            ), f"レコード長が合わない: {total}"
+
+
+class TestHeaderOffsetRegression:
+    """2026-08-23 の 11バイトずれバグの回帰テスト。
+
+    `EXOTIC_HEADER_SIZE` が 51 だった頃、オッズ配列の開始位置が 11 バイト後ろに
+    ずれ、組番欄に隣接エントリのゴミが、オッズ欄に次エントリの組番が入っていた。
+    本番 DB では三連複の最小オッズが 2040.0（組番 "02-04-0" の読み違い）、
+    三連単が 10204.0（組番 "010204"）になり、馬番が出走頭数以内の行は
+    三連単 1.4% / 三連複 3.0% しか無かった。
+    """
+
+    def test_o5_first_entry_is_exact(self) -> None:
+        """先頭エントリが書いたとおりに読めること（開始位置を1バイト単位で固定）。"""
+        importer = OddsImporter(db=None)  # type: ignore[arg-type]
+        data = _make_o5_record([(1, 2, 3, 23.0), (1, 2, 4, 46.0), (1, 2, 5, 69.0)])
+        rows = importer._extract_pair_odds(
+            data, "trio", race_id=1, fetched_at=datetime(2026, 6, 14, 10, 30),
+            n_combos=816, entry_size=15, combo_bytes=6, odds_bytes=6, n_horses=3,
+            max_combos=None,
+        )
+        assert [(r["combination"], r["odds"]) for r in rows] == [
+            ("1-2-3", 23.0), ("1-2-4", 46.0), ("1-2-5", 69.0),
+        ]
+
+    def test_parsed_horse_numbers_are_plausible(self) -> None:
+        """組番の馬番が全て出走頭数(18)以内・重複なしであること。
+
+        ずれていると馬番が 32・55・97 のような値になり、重複も出る。
+        """
+        importer = OddsImporter(db=None)  # type: ignore[arg-type]
+        combos = [(a, b, c, 10.0 + i)
+                  for i, (a, b, c) in enumerate(
+                      [(1, 2, 3), (1, 2, 4), (2, 5, 9), (10, 11, 18), (3, 7, 12)])]
+        data = _make_o5_record(combos)
+        rows = importer._extract_pair_odds(
+            data, "trio", race_id=1, fetched_at=datetime(2026, 6, 14, 10, 30),
+            n_combos=816, entry_size=15, combo_bytes=6, odds_bytes=6, n_horses=3,
+            max_combos=None,
+        )
+        assert len(rows) == len(combos)
+        for r in rows:
+            nums = [int(x) for x in r["combination"].split("-")]
+            assert len(nums) == 3
+            assert all(1 <= n <= 18 for n in nums), r["combination"]
+            assert len(set(nums)) == 3, f"馬番が重複: {r['combination']}"
+            assert 1.0 <= r["odds"] <= 100000.0, r["odds"]
+
+    def test_max_combos_selects_by_popularity_not_record_order(self) -> None:
+        """組番昇順のレコードから、人気順で絞れること。
+
+        実レコードは組番昇順なので、先頭 N 件を取ると 1番・2番絡みの組だけが残る。
+        """
+        importer = OddsImporter(db=None)  # type: ignore[arg-type]
+        # 組番昇順に並べ、人気順は逆順（最後の組が1番人気）になるようオッズを設定
+        raw = [(1, 2, 3), (1, 2, 4), (1, 3, 5), (2, 4, 6), (5, 8, 12)]
+        header = _make_header("O5")
+        entries = ""
+        for i, (h1, h2, h3) in enumerate(raw):
+            pop = len(raw) - i  # 末尾ほど人気が上
+            entries += f"{h1:02d}{h2:02d}{h3:02d}" + f"{int((10.0 * pop) * 10):06d}" + f"{pop:03d}"
+        data = header + entries + " " * ((816 - len(raw)) * 15) + _TOTAL_VOTES + "\r\n"
+        assert len(data) == 12293
+
+        rows = importer._extract_pair_odds(
+            data, "trio", race_id=1, fetched_at=datetime(2026, 6, 14, 10, 30),
+            n_combos=816, entry_size=15, combo_bytes=6, odds_bytes=6, n_horses=3,
+            max_combos=2,
+        )
+        # 1番人気 = 最後の組 (5-8-12)、2番人気 = その一つ前 (2-4-6)
+        assert {r["combination"] for r in rows} == {"5-8-12", "2-4-6"}
 
 
 # ---------------------------------------------------------------------------

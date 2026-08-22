@@ -564,7 +564,14 @@ def fetch_realtime_data(jv, dataspec: str, key: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _filter_race_records(records: list[dict]) -> list[dict]:
-    """RA/SE/HRレコードのみ抽出する。RACE dataspaceにはJG等も混在するため。"""
+    """RA/SE/HRレコードのみ抽出する。RACE dataspaceにはJG等も混在するため。
+
+    ⚠️ **RACE には O1〜O6（確定オッズ）も含まれるが、ここで捨てている。**
+    そのため確定オッズは一度も DB に入っていない（`docs/jvdata-spec.md` の
+    蓄積系データ種別ID 表を参照）。回収は `odds_backfill.py` で別途行う。
+    ここを広げて `/api/import/odds` へ流す改修は、稼働中の RA/SE/HR 経路に
+    影響しうるので単独 PR で検証してから入れること。
+    """
     return [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
 
 
