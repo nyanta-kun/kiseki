@@ -61,7 +61,7 @@ PLACE_MAX_HORSES = 28  # 最大28頭
 # -------------------------------------------------------------------
 # O2-O6 エキゾチックオッズ レコード構造 (JVDF v4.9 仕様書準拠)
 #
-# O2-O6 共通ヘッダー (51バイト):
+# O2-O6 共通ヘッダー (39バイト + レコード種別2 = pos40 まで):
 #   pos 1-2:   レコード種別ID ("O2"〜"O6")
 #   pos 3:     データ区分
 #   pos 4-27:  共通ヘッダー (JVDF標準: 開催年・月日・場コード等)
@@ -69,11 +69,19 @@ PLACE_MAX_HORSES = 28  # 最大28頭
 #   pos 36-37: 登録頭数 (2バイト)
 #   pos 38-39: 出走頭数 (2バイト)
 #   pos 40:    発売フラグ (1バイト)
-#   pos 41-51: 予備等 (11バイト)
-#   pos 52:    オッズデータ開始 ← 各券種ともここから
+#   pos 41:    オッズデータ開始 ← 各券種ともここから (0-indexed で 40)
+#   （オッズ配列の直後に「票数合計」11バイト、その後 レコード区切 2バイト）
 #
-# 検証: 2042-1989-2=51, 2654-2601-2=51, 4031-3978-2=51,
-#       12293-12240-2=51, 83285-83232-2=51 (全券種ヘッダー51バイト確認)
+# 🔴 2026-08-23 まで EXOTIC_HEADER_SIZE=51 だった。「レコード長 − オッズ配列 − CRLF」の
+#    余り 51 を全部ヘッダだと誤認したためで、実際は 先頭40 + 末尾11(票数合計)。
+#    11バイトずれた結果、組番欄に隣接エントリのゴミが入り、オッズ欄には次エントリの
+#    組番が入っていた（三連複の最小オッズが 2040.0＝組番"02-04-0"、三連単が 10204.0）。
+#    win/place(O1) は仕様の絶対位置を直接使っていたため無傷。
+#
+# 検証（全券種で 40 + 組数×エントリ長 + 11 + 2 = レコード長）:
+#   O2: 40 + 153×13 + 13 = 2042    O3: 40 + 153×17 + 13 = 2654
+#   O4: 40 + 306×13 + 13 = 4031    O5: 40 + 816×15 + 13 = 12293
+#   O6: 40 + 4896×17 + 13 = 83285
 #
 # O2 (馬連, 2042バイト):  153組 × 13byte (組番4+オッズ6+人気順3)
 # O3 (ワイド, 2654バイト): 153組 × 17byte (組番4+最低5+最高5+人気順3)
@@ -104,12 +112,14 @@ PLACE_MAX_HORSES = 28  # 最大28頭
 #      全組格納するか上位N人気のみにするかは運用で判断する。
 # -------------------------------------------------------------------
 
-EXOTIC_HEADER_SIZE = 51  # O2-O6共通ヘッダーバイト数 (オッズデータはpos52=index51から)
+EXOTIC_HEADER_SIZE = 40  # O2-O6共通ヘッダーバイト数 (オッズデータは pos41 = index40 から)
 
 # 上位N人気以内の組のみ格納（三連単はmax4896組なので絞り込み必須）
 # None = 全組格納
-TRIFECTA_MAX_COMBOS: int | None = 200  # 三連単: 上位200人気のみ格納
-TRIO_MAX_COMBOS: int | None = 300      # 三連複: 上位300人気のみ格納
+# 🔴 レコードは仕様上「組番昇順」で並ぶ。先頭 N 件を取ると 1番・2番絡みの組だけが
+#    残ってしまうので、必ず人気順フィールドで並べ替えてから絞ること（_extract_pair_odds）。
+TRIFECTA_MAX_COMBOS: int | None = 500  # 三連単: 上位500人気のみ格納
+TRIO_MAX_COMBOS: int | None = None     # 三連複: 全816組を格納（買い目検証の主対象）
 EXACTA_MAX_COMBOS: int | None = None   # 馬単: 全組格納 (最大306組)
 QUINELLA_MAX_COMBOS: int | None = None  # 馬連/ワイド: 全組格納 (最大153組)
 
@@ -384,17 +394,17 @@ class OddsImporter:
             odds_bytes: オッズフィールドのバイト数 (6 または 7)
             n_horses: 組合せを構成する馬の数 (2 または 3)
             max_combos: 格納上限組数 (None=全組)。人気順の若い順から max_combos 件のみ格納。
+                        レコードは組番昇順なので、全件読んでから人気順で並べ替えて絞る。
 
         Returns:
             OddsHistory 行の辞書リスト
         """
-        rows: list[dict] = []
-        data_start = EXOTIC_HEADER_SIZE  # 0-indexed: pos 52(1-indexed) = index 51(0-indexed)
-        limit = max_combos if max_combos is not None else n_combos
+        data_start = EXOTIC_HEADER_SIZE  # 0-indexed: pos 41(1-indexed) = index 40
 
+        # レコードは「組番昇順」で並ぶ。先頭 N 件を取ると 1番・2番絡みの組だけが
+        # 残るので、いったん全件を読んでから人気順で絞る。
+        parsed: list[tuple[int, dict]] = []
         for i in range(n_combos):
-            if len(rows) >= limit:
-                break
             pos = data_start + i * entry_size
             if pos + entry_size > len(data):
                 break
@@ -402,24 +412,37 @@ class OddsImporter:
             entry = data[pos : pos + entry_size]
             combo_raw = entry[:combo_bytes]
             odds_raw = entry[combo_bytes : combo_bytes + odds_bytes]
+            pop_raw = entry[combo_bytes + odds_bytes : entry_size]
 
             combo_str = _parse_horse_combo(combo_raw, n_horses)
             if combo_str is None:
                 continue
 
             odds_val = _parse_exotic_odds_value(odds_raw)
-            if odds_val is not None:
-                rows.append(
+            if odds_val is None:
+                continue
+
+            # 人気順が読めない行（"000"/空白/取消）は最後尾に回す
+            pop = int(pop_raw) if pop_raw.strip().isdigit() and int(pop_raw) > 0 else 10**9
+
+            parsed.append(
+                (
+                    pop,
                     {
                         "race_id": race_id,
                         "bet_type": bet_type,
                         "combination": combo_str,
                         "odds": odds_val,
                         "fetched_at": fetched_at,
-                    }
+                    },
                 )
+            )
 
-        return rows
+        if max_combos is not None and len(parsed) > max_combos:
+            parsed.sort(key=lambda x: x[0])
+            parsed = parsed[:max_combos]
+
+        return [row for _, row in parsed]
 
     def _extract_wide_odds(
         self,
@@ -446,7 +469,7 @@ class OddsImporter:
             OddsHistory 行の辞書リスト
         """
         rows = []
-        data_start = EXOTIC_HEADER_SIZE  # 0-indexed
+        data_start = EXOTIC_HEADER_SIZE  # 0-indexed: pos 41(1-indexed) = index 40
         combo_bytes = 4
         low_odds_bytes = 5
         entry_size = 17  # combo4 + low5 + high5 + popularity3
