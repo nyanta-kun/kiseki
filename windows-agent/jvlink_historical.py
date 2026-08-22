@@ -535,6 +535,7 @@ def run_historical_race(
 def run_historical_horses(
     jv,
     stop_event: threading.Event,
+    from_date: str = "20000101",
 ) -> dict:
     """
     DIFN DataSpec で UM（競走馬マスタ）レコードを全期間取得する。
@@ -549,7 +550,11 @@ def run_historical_horses(
     Returns:
         処理統計 dict
     """
-    from_time = "20000101000000"
+    # 🔴 ここは 2026-08-23 まで "20000101000000" 固定だった。--from-date は RACE にしか
+    #    効いておらず、UM は毎回 26 年分を舐めていた。その結果 JVOpen が 3600 秒の上限を
+    #    超えてタイムアウトし、kiseki-Historical は 8/6〜8/8 の全 14 回が失敗、
+    #    8/8 に Disabled にされたまま放置されていた（新規馬の血統が入らなくなった）。
+    from_time = from_date + "000000"
     logger.info(f"=== UM 競走馬マスタ取得: DIFN, from={from_time}, option=1 ===")
 
     completed = load_completed_files(COMPLETED_KEY_HORSES)
@@ -656,7 +661,11 @@ def main() -> None:
         "--from-date",
         default="20000101",
         metavar="YYYYMMDD",
-        help="RACE 取得開始日 (デフォルト: 20000101。option=1 差分モードで該当日以降を取得)",
+        help=(
+            "取得開始日 (デフォルト: 20000101)。option=1 差分モードで該当日以降を取得。"
+            "RACE と UM の両方に効く。⚠️ 20000101 のままだと 26 年分を舐めるため "
+            "JVOpen が 3600 秒の上限を超えてタイムアウトする。定期実行では直近に絞ること"
+        ),
     )
     parser.add_argument(
         "--time-limit",
@@ -732,7 +741,7 @@ def _run_main(args) -> None:
             run_historical_race(jv, args.from_date, stop_event)
 
         if args.mode in ("all", "horses") and not stop_event.is_set():
-            run_historical_horses(jv, stop_event)
+            run_historical_horses(jv, stop_event, args.from_date)
 
     except jvm.MaintenanceWindowActive as e:
         # 異常ではない。処理済みファイルは completed に記録済みなので次回続行できる。
