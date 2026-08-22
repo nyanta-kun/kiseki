@@ -44,13 +44,25 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# ⚠️ 先行インスタンスがログを掴んでいると FileHandler が PermissionError で落ち、
+#    プロセスが起動時点で死ぬ（payout_backfill.py で実際に起きて _out.txt /
+#    _run2.log / _run3.log という別名ファイルが乱立した）。掴まれていたら
+#    プロセスIDを付けた別名へ逃がす。
+def _log_handlers() -> list[logging.Handler]:
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    for name in ("odds_backfill.log", f"odds_backfill_{os.getpid()}.log"):
+        try:
+            handlers.append(logging.FileHandler(name, encoding="utf-8"))
+            break
+        except PermissionError:
+            continue
+    return handlers
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("odds_backfill.log", encoding="utf-8"),
-    ],
+    handlers=_log_handlers(),
 )
 logger = logging.getLogger(__name__)
 
