@@ -31,7 +31,7 @@ Const HUNG_MINUTES = 180   ' time_limit 7200s(2h) + 後処理。3時間超は JV
 
 Dim objWMI, colProcesses, objProcess
 Dim blRunning, lngAge
-Dim strPython, strScript, strArgs
+Dim strPython, strScript, strArgs, strFromDate
 Dim objShell, objFSO, strLog
 
 Set objShell = CreateObject("WScript.Shell")
@@ -94,7 +94,14 @@ End If
 ' ----- 起動 -----
 strPython = "C:\Python312-32\pythonw.exe"
 strScript = "C:\kiseki\windows-agent\jvlink_historical.py"
-strArgs   = "--mode all --time-limit 7200"
+' 🔴 --from-date を必ず渡すこと。省略すると jvlink_historical の既定 20000101 が使われ、
+'    RACE も UM も 26 年分を舐めて JVOpen が 3600 秒の上限を超えてタイムアウトする。
+'    2026-08-06〜08-08 の全 14 回がこれで失敗し、8/8 に本タスクは Disabled にされた。
+'    差分取得なので直近 90 日もあれば取りこぼさない（未処理ファイルは completed で管理）。
+Dim dtFrom
+dtFrom = DateAdd("d", -90, Date())
+strFromDate = Right("0000" & Year(dtFrom), 4) & Right("00" & Month(dtFrom), 2) & Right("00" & Day(dtFrom), 2)
+strArgs   = "--mode all --time-limit 7200 --from-date " & strFromDate
 
 objShell.Run strPython & " " & strScript & " " & strArgs, 0, False
 
