@@ -13,6 +13,23 @@
   `jvlink_agent.py::_filter_race_records()` が RA/SE/HR だけを残して捨てていた。
   → 確定オッズは一度も DB に入っていない。ここから取り直す。
 
+## 🔴 実行前に必ず: バックエンドへの修正デプロイ
+
+**パースは VPS のバックエンド（`https://api.galloplab.com`）側で走る。**
+`backend/src/importers/odds_importer.py` の修正がデプロイされていない状態で
+バックフィルを流すと、**壊れたデータを入れ直すだけ**になる。
+
+```bash
+# 1. デプロイ済みバージョンを確認（51 なら未デプロイ）
+ssh sekito "grep -n 'EXOTIC_HEADER_SIZE =' ~/GitHub/kiseki/backend/src/importers/odds_importer.py"
+
+# 2. 修正を main へマージしてからデプロイ（deploy スクリプトは git pull origin main する）
+bash scripts/deploy-galloplab.sh --backend
+
+# 3. 40 になったことを確認
+ssh sekito "grep -n 'EXOTIC_HEADER_SIZE =' ~/GitHub/kiseki/backend/src/importers/odds_importer.py"
+```
+
 ## 前提
 
 | 項目 | 値 |
@@ -48,9 +65,14 @@ ssh windows-vm 'powershell -Command "Test-Path C:\kiseki\windows-agent\odds_back
 `-Encoding ASCII` は必須。
 
 ```bash
-ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\kiseki\windows-agent\adhoc_cmd.txt\" -Value \"odds_backfill.py --from-year 2024 --option 1\" -Encoding ASCII"'
+ssh windows-vm 'powershell -Command "Set-Content -Path \"C:\kiseki\windows-agent\adhoc_cmd.txt\" -Value \"odds_backfill.py --from-year 2026 --option 1 --backend-url https://api.galloplab.com\" -Encoding ASCII"'
 ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'
 ```
+
+> 🔴 **`--backend-url` を明示すること。** VM には `.env` が2つあり、
+> `C:\kiseki\.env` は `https://api.galloplab.com`（到達可・200）だが
+> `C:\kiseki\windows-agent\.env` は `http://192.168.11.26:8000`（**到達不可**）。
+> スクリプト側では親 `.env` を先に読むようにしてあるが、明示が確実。
 
 ### 3. 進捗を見る
 

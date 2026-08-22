@@ -84,11 +84,17 @@ ODDS_REC_IDS = ("O1", "O2", "O3", "O4", "O5", "O6")
 # O6（三連単）は 1 レコード 83,285 バイトあるので小さめにする。
 ODDS_BATCH_SIZE = 20
 
+# ⚠️ VM には .env が 2 つある。
+#   C:\kiseki\.env               → BACKEND_URL=https://api.galloplab.com（到達可・200）
+#   C:\kiseki\windows-agent\.env → BACKEND_URL=http://192.168.11.26:8000（**到達不可**）
+# python-dotenv は既定 override=False なので、先に読んだ方が勝つ。
+# payout_backfill.py と同じ順（windows-agent → 親）だと死んだURLを掴むため、
+# **親（C:\kiseki\.env）を先に読む**。--backend-url で明示指定もできる。
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(BASE_DIR / ".env")
     load_dotenv(BASE_DIR.parent / ".env")
+    load_dotenv(BASE_DIR / ".env")
 except ImportError:
     pass
 
@@ -308,18 +314,31 @@ def run_odds_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="確定オッズ O1〜O6 バックフィル")
-    parser.add_argument("--from-year", type=int, default=2024, help="取得開始年 (default: 2024)")
-    parser.add_argument(
+    ap = argparse.ArgumentParser(description="確定オッズ O1〜O6 バックフィル")
+    ap.add_argument("--from-year", type=int, default=2024, help="取得開始年 (default: 2024)")
+    ap.add_argument(
         "--option",
         type=int,
         default=1,
         choices=[1, 3],
         help="JVOpen option: 1=通常(キャッシュ), 3=セットアップ(全再DL) (default: 1)",
     )
-    args = parser.parse_args()
+    ap.add_argument(
+        "--backend-url",
+        default=None,
+        help="POST 先のバックエンド URL（既定は .env の BACKEND_URL）",
+    )
+    args = ap.parse_args()
 
-    logger.info(f"確定オッズ バックフィル開始: from_year={args.from_year}, option={args.option}")
+    global BACKEND_URL
+    if args.backend_url:
+        BACKEND_URL = args.backend_url
+    logger.info(
+        f"確定オッズ バックフィル開始: from_year={args.from_year}, "
+        f"option={args.option}, backend={BACKEND_URL}"
+    )
+    if not API_KEY:
+        logger.warning("API_KEY が空。認証が有効なバックエンドでは 401 になる。")
 
     try:
         import win32com.client
