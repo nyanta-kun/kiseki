@@ -93,6 +93,8 @@ from src.race_shape import (
     stake_note_text,
 )
 from src.odds_prediction import (
+    load_race_inputs,
+    predict_board,
     OddsPredictionUnavailable,
     conservative_multiplier,
     predicted_trio_board,
@@ -1392,7 +1394,10 @@ def _premium_metrics(rank_key: str, cand: dict) -> dict | None:
 
     - `p_hit`            … 買う点のどれかが3着以内に入る確率（PL）
     - `min_point_odds`   … 買う点の予測オッズの最小値
-    - `min_payout_ratio` … 買う点の想定払戻（賭け金×予測オッズ÷予算）の最小値
+    - `min_payout_ratio` … 買う点の想定払戻の最小値。🔴 **下限包絡（`odds_low`）で
+      測る**（賭け金 × `_conservative_trio_board()` の値 ÷ 予算）。予測オッズで
+      測ると実ガミが出る（初版がそうだった）。ユーザー要件は
+      「厳選のガミは許容できない」。理由と実測は `src/premium_pick.py`
 
     🔴 **三連単のランクは対象外**（予測盤面が三連複しか作れない）。None を返す。
     🔴 **本番と同じ配分**（`_build_tilted_legs` と同じ `tilted_stakes`）で測ること。
@@ -1422,7 +1427,18 @@ def _premium_metrics(rank_key: str, cand: dict) -> dict | None:
         _legs, _src, stakes = _build_tilted_legs(race_key, cfg, axis1, axis2, partners)
     except Exception:
         return None
-    ratio = expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
+    # 🔴 ガミ判定は**下限包絡**で。`odds` は予測オッズで、そのまま使うと
+    #    確定までの下振れ（実測で 40% の点が予測を割る）を見落とす。
+    try:
+        cars, p3, pw, meta = load_race_inputs(race_key)
+        low_board = _conservative_trio_board(
+            predict_board(cars, p3, pw, meta), len(cars))
+    except Exception:
+        return None
+    low = {t: low_board.get(frozenset({axis1, axis2, t})) for t in stakes}
+    if any(not v for v in low.values()):
+        return None
+    ratio = expected_payout_floor(stakes, {k: v for k, v in low.items() if v}, budget)
     if ratio is None:
         return None
     return {"race_key": cand.get("race_key"), "p_hit": p_hit,
