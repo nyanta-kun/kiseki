@@ -344,16 +344,16 @@ def _fetch_with_stop(
 
             # 処理済みファイルは JVSkip で高速スキップ
             if new_file and skip_file_fn and skip_file_fn(new_file):
-                rc_skip = jv.JVSkip()
-                if rc_skip == 0:
-                    logger.debug(f"JVSkip: {new_file}")
-                    if on_file_done:
-                        on_file_done(new_file, [])  # スキップ通知
-                    current_file = ""
-                    skip_current = False
-                else:
-                    logger.debug(f"JVSkip 失敗(rc={rc_skip}): {new_file} → 読み捨てモード")
-                    skip_current = True
+                # JVSkip の戻り値は VT_VOID（4.9 仕様書・5.0.0 の型情報とも「戻り値なし」）。
+                # pywin32 は None を返すため、以前の `if rc_skip == 0:` は必ず False になり、
+                # 4 箇所すべてが恒常的に「JVSkip 失敗 → 読み捨てモード」に落ちていた。
+                # 戻り値は見ず、無条件に成功として扱う（2026-08-23 修正）。
+                jv.JVSkip()
+                logger.debug(f"JVSkip: {new_file}")
+                if on_file_done:
+                    on_file_done(new_file, [])  # スキップ通知
+                current_file = ""
+                skip_current = False
             else:
                 skip_current = False
             continue

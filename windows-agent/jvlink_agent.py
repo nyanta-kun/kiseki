@@ -256,10 +256,28 @@ def init_jvlink(sid: str | None = None):
     try:
         import win32com.client
         jv = win32com.client.Dispatch("JVDTLab.JVLink")
+
+        # JV-Link が出すモーダルのオーナーウィンドウ。仕様書は「JVOpen/JVRTOpen 呼出前に
+        # 設定（Ver2.0.0以降必須）」としているのに、これまで一度も設定していなかった。
+        # option=3/4 で出る「セットアップ」ダイアログが visible=0 だったのは owner=NULL で
+        # 生成されていたためと考えられる（因果は未検証）。5.0.0 では propput のみ提供で、
+        # 代入が正常に通ることは実測済み。
+        try:
+            jv.ParentHWnd = 0
+        except Exception as e:  # noqa: BLE001 - 設定できなくても本処理は続ける
+            logger.warning(f"ParentHWnd の設定に失敗（続行）: {e!r}")
+
         rc = jv.JVInit(use_sid)
         if rc != 0:
             logger.error(f"JVInit failed: rc={rc}")
             sys.exit(1)
+
+        # 払戻ダイアログを抑止する。既定は m_payflag=0（＝表示する）で、
+        # 非対話プロセスで出ると誰も押せずブロックする。
+        try:
+            jv.JVSetPayFlag(1)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"JVSetPayFlag(1) に失敗（続行）: {e!r}")
         sid_label = "SID2(蓄積系)" if (JRAVAN_SID_2 and use_sid == JRAVAN_SID_2) else "SID1(共通)"
         logger.info(f"JV-Link initialized successfully ({sid_label})")
         return jv
@@ -411,18 +429,16 @@ def fetch_stored_data(
             # skip_file_fn が True を返すファイルは JVSkip で即スキップを試みる。
             # JVSkip が失敗した場合は skip_current=True でレコード蓄積を抑制する。
             if new_file and skip_file_fn and skip_file_fn(new_file):
-                rc_skip = jv.JVSkip()
-                if rc_skip == 0:
-                    # JVSkip 成功: 次ファイルへ即移動
-                    logger.info(f"JVSkip: {new_file} (成功)")
-                    if on_file_done:
-                        on_file_done(new_file, [])
-                    current_file = ""
-                    skip_current = False
-                else:
-                    # JVSkip 失敗 (rc={rc_skip}): レコードは読み捨て
-                    logger.debug(f"JVSkip: {new_file} 失敗(rc={rc_skip}) → 読み捨てモード")
-                    skip_current = True
+                # JVSkip の戻り値は VT_VOID（4.9 仕様書・5.0.0 の型情報とも「戻り値なし」）。
+                # pywin32 は None を返すため、以前の `if rc_skip == 0:` は必ず False になり、
+                # 4 箇所すべてが恒常的に「JVSkip 失敗 → 読み捨てモード」に落ちていた。
+                # 戻り値は見ず、無条件に成功として扱う（2026-08-23 修正）。
+                jv.JVSkip()
+                logger.info(f"JVSkip: {new_file}")
+                if on_file_done:
+                    on_file_done(new_file, [])
+                current_file = ""
+                skip_current = False
             else:
                 skip_current = False
             continue
