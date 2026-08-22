@@ -78,6 +78,8 @@ from src.meeting_wave import (
 from src.dutch_allocation import dutch_allocate
 from src.stake_allocation import (
     MIN_EXPECTED_PAYOUT_BY_RANK,
+    MIN_POINT_ODDS,
+    cheap_point_odds,
     expected_payout_floor,
 )
 from src.race_shape import (
@@ -1901,6 +1903,24 @@ def _process_rank(
                     #    （`expected_payout_floor` の docstring）。
                     # ⚠️ 看板は `submit_marquee_wt.py --marquee` が**ゲートを通さず**
                     #    埋めるので、ここで落としても看板の推奨は消えない。
+                    # 🔴 **1点でも安すぎる目があるレースは出さない**
+                    #    （2026-08-22・ユーザー判断「掛金の半分を入れて元返しに
+                    #    しかならない目を売らない」）。判定と根拠は
+                    #    `stake_allocation.MIN_POINT_ODDS`。
+                    #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
+                    #    ⚠️ 看板の穴埋め（`submit_marquee_wt.py --marquee`）は
+                    #       この経路を通らないので、看板の推奨は消えない。
+                    #       実測では該当9件のうち**6件が看板の穴埋め**だった。
+                    if not use_trifecta:
+                        _pt_odds = try_predicted_odds_for_legs(
+                            race_key.split("#")[0], axis1, axis2_or_p1,
+                            list(tilt_stakes_map))
+                        _cheap = cheap_point_odds(_pt_odds or {})
+                        if _cheap is not None:
+                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
+                                  f"({rank_key}): 予測オッズ {_cheap:.2f}倍 の目がある "
+                                  f"< {MIN_POINT_ODDS:.1f}倍", flush=True)
+                            continue
                     min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
                     if min_floor is not None and not use_trifecta:
                         floor = _expected_payout_floor_for(
