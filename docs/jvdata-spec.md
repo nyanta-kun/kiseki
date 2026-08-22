@@ -296,6 +296,50 @@ Ver.4.9.0.1 / 更新日 2024年8月7日
 
 ---
 
+### 券種名（bet_type）の正準表記（🔴 実装で一度間違えた箇所）
+
+JVData の仕様書は券種を日本語（単勝／ワイド…）でしか書かない。英語名はこちらで
+決めるしかないので、`keiba.race_payouts` / `keiba.odds_history` /
+`keiba.latest_odds` で使う表記を下表に固定する。**唯一の出所は
+`backend/src/bet_types.py`。**
+
+| JVData 表記 | 由来レコード | `bet_type` | JRA 公式英語名 | 備考 |
+|---|---|---|---|---|
+| 単勝 | HR 項42 / O1 | `win` | Win | |
+| 複勝 | HR 項43 / O1 | `place` | Place | |
+| 枠連 | HR 項44 / O1 | `bracket` | Bracket Quinella | O1 の枠連オッズは未取込 |
+| 馬連 | HR 項45 / O2 | `quinella` | Quinella | |
+| ワイド | HR 項46 / O3 | `wide` | Quinella Place | 🔴 下記参照 |
+| 馬単 | HR 項48 / O4 | `exacta` | Exacta | |
+| 3連複 | HR 項49 / O5 | `trio` | Trio | |
+| 3連単 | HR 項50 / O6 | `trifecta` | Trifecta | |
+
+> 🔴 **2026-08-23 まで、同じ `jvlink_parser.py` がワイドに 2 つの名前を付けていた。**
+> HR（払戻）は `wide`、O3（オッズ）は `quinella_place`。前者は JRA の日本語商品名、
+> 後者は JRA 公式英語名 "Quinella Place" 由来で、どちらも根拠はあるが混在していた。
+> この 3 テーブルは `bet_type` で join されるため、**SQL は例外を出さず 0 件を返す**。
+> 確定オッズの検証で trio / trifecta / quinella / exacta は突き合わせできたのに
+> ワイドだけ結果が出なかったのがこれ。
+>
+> `wide` に寄せた根拠:
+> - 精算の正本である `race_payouts` が `wide`（実データ 69,103 行）
+> - `betting/backtest.py` の `BET_TYPES`、`betting/allocation.py` の `BetType`、
+>   `betting/odds_model.py` の `TAKEOUT_RATE` がすべて `wide`
+> - `quinella_place` はソース 2 ファイル（`jvlink_parser.py` / `odds_importer.py`）
+>   にしか無く、移行は `odds_history` / `latest_odds` の UPDATE で済む
+>
+> 既存行の移行: `backend/scripts/rename_quinella_place_to_wide.py`（既定 dry-run）。
+> 再発防止: `backend/tests/test_bet_type_naming.py`。
+
+> ⚠️ 枠連も `allocation.py` だけ `frame` と書いていた（DB は `bracket`）。同時に直した。
+
+> ⚠️ `betting/finish_order.py` は確率モデル内部でローマ字名
+> （`tansho` / `fukusho` / `umaren` / `wide` / `sanrenpuku` / `sanrentan`）を使う。
+> これは `models/finish_order_lambda.json` のキーと対応する**別語彙**で、DB には
+> 触らない。DB へ書き出す境界で必ず上表の表記へ変換すること。
+
+---
+
 ### 5. 票数1 (H1)
 
 レコード種別ID: `H1` / レコード長: 28955バイト

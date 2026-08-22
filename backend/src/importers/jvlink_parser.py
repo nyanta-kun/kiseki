@@ -36,7 +36,28 @@ import logging
 from decimal import Decimal
 from typing import Any
 
+from ..bet_types import BET_TYPES  # noqa: F401  (再エクスポート: 券種名の正準表記)
+
 logger = logging.getLogger(__name__)
+
+# -------------------------------------------------------------------
+# 券種名（bet_type）
+# -------------------------------------------------------------------
+# 正準表記は src/bet_types.py が唯一の出所。race_payouts / odds_history /
+# latest_odds は bet_type で join されるため、表記が割れると **例外にならず
+# 0 件** になる。新しい券種を足すときは src/bet_types.py に追加すること。
+
+# O1-O6 オッズレコード種別ID → bet_type（JVDF v4.9 仕様書 p.8-12, 2024-08-07確認）
+# O1 は単勝・複勝・枠連が1レコードに混在しており、展開は odds_importer 側で行う。
+# ワイド(O3)は `wide`。2026-08-23 まで `quinella_place` を書いていた。
+ODDS_RECORD_BET_TYPES: dict[str, str] = {
+    "O1": "win",       # 単勝・複勝・枠連 (962バイト)
+    "O2": "quinella",  # 馬連 (2042バイト, 153組)
+    "O3": "wide",      # ワイド (2654バイト, 153組)
+    "O4": "exacta",    # 馬単 (4031バイト, 306組)
+    "O5": "trio",      # 三連複 (12293バイト, 816組)
+    "O6": "trifecta",  # 三連単 (83285バイト, 4896組)
+}
 
 # -------------------------------------------------------------------
 # 競馬場コード → 競馬場名
@@ -819,6 +840,12 @@ def parse_odds(data: str) -> dict[str, Any] | None:
 
     ※ 旧コードで O4=馬連, O5=ワイド, O6=馬単, O7=三連複, O8=三連単 と誤記されていたが
       正しい JVDF 仕様では O2=馬連, O3=ワイド, O4=馬単, O5=三連複, O6=三連単 (2024-08-07確認)
+
+    ※ 券種名は race_payouts（HR レコード, parse_payout）と同じ語彙を使うこと。
+      ワイドは `wide`。2026-08-23 まで O3 だけ `quinella_place`（JRA 公式英語名
+      "Quinella Place" 由来）を書いており、odds_history と race_payouts を
+      bet_type で join すると無言で 0 件になっていた。docs/jvdata-spec.md の
+      「券種名（bet_type）の正準表記」を参照。
     """
     if len(data) < 27:
         return None
@@ -828,23 +855,13 @@ def parse_odds(data: str) -> dict[str, Any] | None:
         if rec_id not in ("O1", "O2", "O3", "O4", "O5", "O6"):
             return None
 
-        # JVDF v4.9 仕様書 p.8-12 準拠 (2024-08-07版で確認)
-        bet_type_map = {
-            "O1": "win",              # 単勝・複勝・枠連 (O1 レコードに3種混在)
-            "O2": "quinella",         # 馬連 (2042バイト, 153組)
-            "O3": "quinella_place",   # ワイド (2654バイト, 153組)
-            "O4": "exacta",           # 馬単 (4031バイト, 306組)
-            "O5": "trio",             # 三連複 (12293バイト, 816組)
-            "O6": "trifecta",         # 三連単 (83285バイト, 4896組)
-        }
-
         header = _parse_common_header(data)
         if not header:
             return None
 
         return {
             "rec_id": rec_id,
-            "bet_type": bet_type_map.get(rec_id, rec_id),
+            "bet_type": ODDS_RECORD_BET_TYPES.get(rec_id, rec_id),
             "jravan_race_id": header["jravan_race_id"],
             "raw_data": data,
         }

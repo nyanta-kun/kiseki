@@ -28,15 +28,16 @@ from typing import Any
 import numpy as np
 from sqlalchemy import text
 
+from src.bet_types import BET_TYPES as _CANONICAL_BET_TYPES
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Bet dataclass
 # ---------------------------------------------------------------------------
 
-BET_TYPES = frozenset(
-    {"win", "place", "quinella", "wide", "trio", "trifecta", "exacta", "bracket"}
-)
+# 正準表記は src/bet_types.py（race_payouts / odds_history と共通の語彙）
+BET_TYPES = _CANONICAL_BET_TYPES
 
 
 @dataclass

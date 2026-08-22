@@ -345,13 +345,13 @@ class TestParseOddsRecordId:
         assert result["rec_id"] == "O2"
         assert result["bet_type"] == "quinella"
 
-    def test_o3_maps_to_quinella_place(self) -> None:
-        """O3 レコード → bet_type = quinella_place (ワイド)"""
+    def test_o3_maps_to_wide(self) -> None:
+        """O3 レコード → bet_type = wide (ワイド)。race_payouts と同じ表記。"""
         data = _make_o3_record([(1, 3, 2.5, 4.0)])
         result = parse_odds(data)
         assert result is not None
         assert result["rec_id"] == "O3"
-        assert result["bet_type"] == "quinella_place"
+        assert result["bet_type"] == "wide"
 
     def test_o4_maps_to_exacta(self) -> None:
         """O4 レコード → bet_type = exacta (馬単)"""
@@ -432,12 +432,12 @@ class TestExtractExoticOdds:
             (1, 3, 2.5, 4.0),   # 1-3: 最低2.5〜最高4.0
             (1, 5, 3.0, 5.5),   # 1-5: 最低3.0〜最高5.5
         ])
-        rows = self.importer._extract_odds_rows("O3", data, "quinella_place", self.race_id, self.fetched_at)
+        rows = self.importer._extract_odds_rows("O3", data, "wide", self.race_id, self.fetched_at)
 
         assert len(rows) == 2
         assert rows[0]["combination"] == "1-3"
         assert rows[0]["odds"] == pytest.approx(2.5)  # 最低オッズ
-        assert rows[0]["bet_type"] == "quinella_place"
+        assert rows[0]["bet_type"] == "wide"
 
     def test_o4_exacta_extraction(self) -> None:
         """O4 馬単: 着順込みの組番が展開される。"""

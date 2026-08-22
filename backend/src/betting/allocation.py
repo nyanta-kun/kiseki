@@ -28,20 +28,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
 
+from src.bet_types import BetType as _BetType
 from src.config import settings
 
-BetType = Literal[
-    "win",        # 単勝
-    "place",      # 複勝
-    "quinella",   # 馬連
-    "wide",       # ワイド
-    "trio",       # 三連複
-    "trifecta",   # 三連単
-    "exacta",     # 馬単
-    "frame",      # 枠連
-]
+# 券種名は src/bet_types.py が唯一の出所（race_payouts / odds_history と共通）。
+# 2026-08-23 まで枠連を "frame" と書いていたが、DB 表記は "bracket"。
+BetType = _BetType
 
 # 券種別最大点数（超過時は EV 降順で切る）
 MAX_TICKETS_PER_TYPE: dict[str, int] = {
@@ -52,7 +45,7 @@ MAX_TICKETS_PER_TYPE: dict[str, int] = {
     "exacta": 12,
     "trio": 10,
     "trifecta": 12,
-    "frame": 6,
+    "bracket": 6,
 }
 
 MIN_STAKE = 100  # JRA 最小購入単位（円）
