@@ -4050,22 +4050,113 @@ def rank_7t1_daily_select(candidates: list[dict],
             and rank_7t1_is_target_race_type(c.get("race_type"))
             and bool(c.get("is_cross_line"))
             and c.get("legs")]
-    if daily_cap:
-        # 🔴 **必ず日付ごとに切る**。本関数は日次の候補生成（1日分）だけでなく
-        #    過去分バックフィル（`build_7t1_candidates.build` を**月単位**で呼ぶ）
-        #    からも通る。全体へ一括で上限を掛けると、その月ぜんぶで5本しか
-        #    残らない（＝再構築が本番と別物になる）。
-        by_day: dict[str, list[dict]] = {}
-        for c in elig:
-            by_day.setdefault(str(c.get("race_date") or ""), []).append(c)
-        kept: list[dict] = []
-        for day in by_day.values():
-            day.sort(key=lambda c: (
-                -(float(c["ev"]) if c.get("ev") is not None else -1.0),
-                str(c.get("race_key"))))
-            kept += day[:daily_cap]
-        elig = kept
+    elig = _cap_by_day_on_ev(elig, daily_cap)
     # 発走順。表示・入稿の都合だけで決めてよい。
+    elig.sort(key=lambda c: (str(c.get("start_time") or ""), str(c.get("race_key"))))
+    return elig
+
+
+def _cap_by_day_on_ev(candidates: list[dict], daily_cap: int) -> list[dict]:
+    """期待回収倍率の高い順に **1日あたり `daily_cap` 本**だけ残す。
+
+    🔴 **必ず日付ごとに切る**。呼び出し元は日次の候補生成（1日分）だけでなく
+       過去分バックフィル（`build_7t1_candidates.build` を**月単位**で呼ぶ）
+       からも通る。全体へ一括で上限を掛けると、その月ぜんぶで `daily_cap` 本しか
+       残らない（＝再構築が本番と別物になる）。
+    🔴 `ev` を持たない候補は落とさない（旧形式の候補JSONで商品が全滅するのを防ぐ）。
+       順位づけでは最下位に置くので、上限に達していれば結果的に外れる。
+    """
+    if not daily_cap:
+        return candidates
+    by_day: dict[str, list[dict]] = {}
+    for c in candidates:
+        by_day.setdefault(str(c.get("race_date") or ""), []).append(c)
+    kept: list[dict] = []
+    for day in by_day.values():
+        day.sort(key=lambda c: (
+            -(float(c["ev"]) if c.get("ev") is not None else -1.0),
+            str(c.get("race_key"))))
+        kept += day[:daily_cap]
+    return kept
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RANK_7T2 — 三連単・一撃枠（2026-08-22 新設・**ペーパー並走中**）
+#
+# 【position】7T1 と**同じ買い目の形・同じ選定関数**を使う。違うのは3点だけ:
+#
+#   | | 7T1（現行・入稿中） | 7T2（本ランク） |
+#   |---|---|---|
+#   | 母集団 | 決勝系レース × 上位2車が別ライン（13.1件/日） | **全7車**（64件/日） |
+#   | 日次上限 | 5 | **20** |
+#   | 目標払戻 | 15万円 | **20万円**（= 上限20件 × 1万円） |
+#
+# 【なぜ 目標払戻 = 日次件数 × 1万円 なのか（本ランクの設計原理）】
+#   1レース1万円・1日N件なら、**1件の的中で日次回収率が100%を超える条件は
+#   「払戻 >= N万円」**。したがって目標額 T と件数 N は `T = N × 10,000` で
+#   自己整合させるべき量で、片方だけ動かすと
+#   「当たっても日次がプラスにならない」か「当たる回数が足りない」のどちらかになる。
+#   🔴 **N を変えるときは T も必ず一緒に動かすこと。**
+#
+# 【実測】honest walk-forward・出荷実装忠実（`scripts/exp_tf_shape_prod.py`）・
+#   2026-01-01〜2026-08-22 の 14,922R / 234日。現行の全ランク構成との
+#   **同一日ペアード** bootstrap:
+#
+#   | | 現行（全ランク43.7件/日） | 7T2 20件 + 三連複10件 |
+#   |---|---|---|
+#   | 投資/日 | 43.5万円 | **30.0万円** |
+#   | 回収率100%超の日 | 23.9% | **33.8%**  Δ+9.8pt [+1.7, +17.9] 🟢 |
+#   | 15万+の払戻/日 | 0.18 | **0.51**  Δ+0.33 [+0.24, +0.43] 🟢 |
+#   | ROI | 80.2% | 81.2%（**有意でない**） |
+#   | 的中/日 | 12.1 | 4.59 |
+#
+#   🔴 **ROI は改善しない。「回収率が上がる」と説明してはいけない。**
+#      有効なのは「100%を超える日の頻度」と「大きい払戻の頻度」の2つだけ。
+#      平均 ROI が控除率の壁（74.85%）から 100% へ届かないことは社内の
+#      積の保存則とも、netkeirin 予想家64名・145シーズンで年ROI100%超が
+#      3例しかない外部実測とも一致している。
+#
+# 【❌ 検証して採らなかった案（再提案しない）】
+#   - **軸2を2着・3着の両方に置いて相手を広げる**（ユーザー提案 2026-08-22）。
+#     軸を固定した簡易実装では 8/8 セルで現行形を上回ったが、**出荷実装
+#     （軸1=3着内率上位2車 × 42順序対の総当たり）で測り直すと 100%超の日で
+#     逆転する**（36.8% → 30.8%）。総当たりは軸2が3着に来そうなレースで
+#     **別の順序対を選び直す**ことで既にその決着形を拾っていた
+#   - **予測オッズの下振れマージン**（`T_sel > T_eval`）。出荷実装では m=1.0 が
+#     最良で、上げると到達/日も100%超の日も下がる
+#   - **日次選別の順序の工夫**。無作為が ev 降順とほぼ同じ（96.9% vs 99.3%）で、
+#     的中確率順・予測オッズ順・軸1の3着内率順は**無作為より悪い**。
+#     効いているのは母集団と件数であって選別順ではない。**選別器を作らないこと**
+#   - 母集団を「別ライン」に絞る案。全7車との差は小さく（N=20 で 36.8% vs 35.5%）
+#     **掃引の最良を拾わない**ために広いほうを採った。明確に劣るのは決勝系×別ラインだけ
+#
+# ⚠️ **7T1 の「決勝系レースに推奨を出す」というブランドは本ランクには無い。**
+#    商品名・文面を流用しないこと。
+# ⚠️ **入稿しない**（`netkeirin_submit_wt.RANK_CONFIGS` に登録しない）。
+#    ペーパー並走で前向きの実績を見てから判断する（2026-08-22 ユーザー判断）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+RANK_7T2_NE = 7                      # 対象車数（7車ちょうど）
+#: 1日の上限本数。**`RANK_7T2_TARGET_PAYOUT` と必ず対で動かす**。
+RANK_7T2_DAILY_CAP = 20
+#: 目標払戻（円）。`RANK_7T2_DAILY_CAP × RACE_BUDGET` と一致させること。
+RANK_7T2_TARGET_PAYOUT = RANK_7T2_DAILY_CAP * RACE_BUDGET
+
+
+def rank_7t2_daily_select(candidates: list[dict],
+                          daily_cap: int = RANK_7T2_DAILY_CAP) -> list[dict]:
+    """当日の候補から 7T2 を選出する（**7車立てなら母集団を絞らない**）。
+
+    candidates の各要素に必要なキー: `n_entries`(=7) / `legs`（空なら除外） /
+    `ev`（期待回収倍率。上限で切るときの順位づけに使う）。
+
+    🔴 7T1 と違い `race_type` も `is_cross_line` も見ない。母集団を広げたことが
+       効果の本体（回収率100%超の日 26.1% → 36.8%）なので、
+       **ここに条件を足すと本ランクの存在理由が消える**。
+    """
+    elig = [c for c in candidates
+            if c.get("n_entries") == RANK_7T2_NE and c.get("legs")]
+    elig = _cap_by_day_on_ev(elig, daily_cap)
     elig.sort(key=lambda c: (str(c.get("start_time") or ""), str(c.get("race_key"))))
     return elig
 
@@ -4099,6 +4190,14 @@ class PaperRankSpec:
     label: str             # 表示ラベル（例: "7S"）
     in_header_total: bool  # notify_results_wt.py の[7+車]ヘッダー合計(p7b/p7r/p7h・n7)に含めるか
     in_live_report: bool   # live_report_wt.py の集計対象(RANKS)に含めるか
+    #: **ペーパー専用**（netkeirin へ入稿しない）。既定 False。
+    #
+    # 🔴 これは「入稿側への登録漏れ」と「意図的に入稿しない」を区別するための旗。
+    #    無いと `test_current_paper_ranks_are_submittable`（2026-08-05 の 7SS 事故で
+    #    追加した安全網）が両者を見分けられず、**安全網を緩めるしかなくなる**。
+    # ⚠️ 入稿を始めるときは、この旗を False にすると同時に
+    #    `netkeirin_submit_wt.RANK_CONFIGS` へ登録すること（片方だけだと落ちる）。
+    paper_only: bool = False
 
 
 # 現行4ランク（2026-07-31 内部rank/suffixをRANK_+表示ラベル方式へ全面改名。
@@ -4163,6 +4262,12 @@ CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
     # 7C が先に取り 7T1 が降りる（的中体験を高配当枠に奪わせない）。
     # picks_history には**両方の行が入る**（記録は独立）。
     PaperRankSpec("RANK_7T1", "#7T1", "7T1", in_header_total=False, in_live_report=True),
+    # 三連単・一撃枠（2026-08-22〜・**ペーパー並走中で入稿しない**）。
+    # 7T1 と買い目の形は同一で、母集団を全7車へ広げ日次上限20・目標払戻20万に
+    # した版（RANK_7T2 セクション参照）。ここへ登録するのは**成績を追うため**で、
+    # 入稿は `netkeirin_submit_wt.RANK_CONFIGS` 側で制御している（未登録＝出ない）。
+    PaperRankSpec("RANK_7T2", "#7T2", "7T2", in_header_total=False, in_live_report=True,
+                  paper_only=True),
 )
 
 # 旧名(2026-07-31改名前)→新名のマッピング（過去のCSVバックアップ・Discordログ・

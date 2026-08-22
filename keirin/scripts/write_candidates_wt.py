@@ -452,6 +452,16 @@ def _write_paper_candidates(target_date: str) -> None:
             continue
         rows.append((f"{rk}#7T1", "RANK_7T1", "三単:" + ",".join(legs), None, len(legs)))
 
+    # 7T2（三連単・一撃枠・2026-08-22 追加・**ペーパー並走中**）。
+    # 7T1 と同じ理由で発走前判定を持たないため、ここで当日行を置かないと
+    # 翌朝の再構築まで一切追えない。**入稿はしない**ので、ここが唯一の記録経路。
+    for c in _load((f"wave_picks_wt_{target_date}_s7t2_candidates.json",)):
+        rk = c.get("race_key")
+        legs = [str(x) for x in (c.get("legs") or [])]
+        if not rk or not legs:
+            continue
+        rows.append((f"{rk}#7T2", "RANK_7T2", "三単:" + ",".join(legs), None, len(legs)))
+
     # 7H1（穴推奨・本命バスト型／唯一の2券種ランク・2026-08-07 追加）。
     #
     # 【なぜ必要だったか】7H1 の picks_history 行は発走15分前の判定

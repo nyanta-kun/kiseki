@@ -269,6 +269,15 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 7T1候補生成に失敗（他ランクには影響しないため継続）"
 
+# --- 7T2（三連単・一撃枠）候補生成（2026-08-22 新設・**ペーパー並走中**）---
+# 7T1 と同じ生成器に別の目的値と母集団を渡すだけ（母集団=全7車 / 日次上限20 /
+# 目標払戻20万）。🔴 **入稿しない**（netkeirin_submit_wt.RANK_CONFIGS に未登録）。
+# 前向きの実績を picks_history で見てから採否を決める（2026-08-22 ユーザー判断）。
+# 選別後は 20件/日（7車が20件に満たない日はその数）。
+.venv/bin/python3 scripts/build_7t2_candidates.py --date "$TODAY" \
+  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+  || echo "[$(date '+%H:%M:%S')] 7T2候補生成に失敗（他ランクには影響しないため継続）"
+
 # 「朝夕の推奨」Discord通知（notify_picks.py）は2026-07-31にユーザー要望により廃止。
 # 発走15分前の個別通知（notify_prerace_wt.py）のみ残す。
 

@@ -72,13 +72,30 @@ def test_current_paper_ranks_are_submittable():
     # 2026-08-06: RANK_7H1（穴推奨・本命バスト型）の入稿に対応し、除外集合は空に
     # なった。**「なぜ除外されているか」をここに書かずに集合から落とすと、
     # 7SS のときと同じ「無警告で一度も入稿されない」事故になる。**
+    #
+    # 🔴 2026-08-22: 「意図的に入稿しないランク」を `PaperRankSpec.paper_only` で
+    #    表すようにした（RANK_7T2 のペーパー並走）。**この集合を手で足さないこと**——
+    #    手書きの除外集合は「登録漏れ」と「意図的な除外」を見分けられず、
+    #    足した瞬間に本テストが守っているものが消える。
     NOT_YET_SUBMITTABLE: set[str] = set()
     missing = [spec.label for spec in CURRENT_PAPER_RANKS
                if spec.label not in RANK_CONFIGS
+               and not spec.paper_only
                and spec.label not in NOT_YET_SUBMITTABLE]
     assert not missing, (
         f"CURRENT_PAPER_RANKS にあるが netkeirin 入稿側に定義が無い: {missing}"
     )
+
+
+def test_paper_only_ranks_are_actually_absent_from_submission():
+    """逆向き: `paper_only=True` のランクが入稿側に紛れ込んでいないこと。
+
+    🔴 旗だけ立てて実際には入稿されている、という食い違いを防ぐ。
+       ペーパー並走の前提（検証していない構成で商品を売らない）が崩れる。
+    """
+    leaked = [spec.label for spec in CURRENT_PAPER_RANKS
+              if spec.paper_only and spec.label in RANK_CONFIGS]
+    assert not leaked, f"paper_only なのに入稿側に定義がある: {leaked}"
 
 
 def test_normalize_candidate_rejects_identical_axes():

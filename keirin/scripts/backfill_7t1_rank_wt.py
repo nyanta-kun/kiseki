@@ -136,10 +136,17 @@ def assert_odds_model_is_honest(date_from: str) -> None:
 
 
 def build_rows(date_from: str, date_to: str, *, eval_model: str,
-               win_model: str) -> list[dict]:
-    """バックフィル対象の 7T1（#7T1）行（採点済み）を構築する。"""
+               win_model: str, candidates_fn=None,
+               rank: str = RANK, suffix: str = SUFFIX) -> list[dict]:
+    """バックフィル対象の行（採点済み）を構築する。
+
+    🔴 **RANK_7T2 もこの関数を通す**（`candidates_fn` に 7T2 の候補生成を渡す）。
+       採点式・欠車の扱い・賭け金の引き直しは 7T1 と完全に同じなので、
+       複製すると片方だけ直したときに無言で食い違う。
+    """
     assert_odds_model_is_honest(date_from)
-    cands = build_candidates(date_from, date_to, eval_model, win_model)
+    cands = (candidates_fn or build_candidates)(
+        date_from, date_to, eval_model, win_model)
     if not cands:
         return []
 
@@ -184,8 +191,8 @@ def build_rows(date_from: str, date_to: str, *, eval_model: str,
 
         rows.append({
             "race_date": c["race_date"],
-            "race_key": rk + SUFFIX,
-            "rank": RANK,
+            "race_key": rk + suffix,
+            "rank": rank,
             "pred_combo": "三単:" + ",".join(legs),
             "n_combos": len(legs),
             "hit": int(hit),
