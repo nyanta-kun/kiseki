@@ -66,9 +66,23 @@ def test_labels_match_keirin_current_paper_ranks():
     assert block, (
         "keirin 側 CURRENT_PAPER_RANKS の宣言を見つけられなかった。"
         "書き方が変わったならこのテストのパターンも更新すること。")
-    upstream = set(re.findall(r'PaperRankSpec\(\s*"[^"]+",\s*"#[^"]+",\s*"([^"]+)"',
-                              block.group(1)))
+    # 🔴 **`paper_only=True` のランクは Web に出さない**（2026-08-22）。
+    #    入稿もせず画面にも出さない「ペーパー並走中」の枠で、`_PAPER_RANK_LABELS`
+    #    へ載せるとフロント4箇所（フィルタ・表示順・バッジ・ヘルプ）への追随が
+    #    必要になる。**並走を Web で追えるようにする段になったら旗を下ろし、
+    #    同時に4箇所を直す**（そのときこのテストが漏れを検出する）。
+    #    ⚠️ ここで除外しているのは「表示するか」だけ。上流に登録されていること
+    #       自体は keirin 側の `test_paper_rank_single_source` が守っている。
+    specs = re.findall(
+        r'PaperRankSpec\(\s*"[^"]+",\s*"#[^"]+",\s*"([^"]+)"(.*?)\),\n',
+        block.group(1), re.DOTALL)
+    assert specs, "CURRENT_PAPER_RANKS から表示ラベルを1つも拾えなかった"
+    upstream = {label for label, rest in specs if "paper_only=True" not in rest}
+    paper_only = {label for label, rest in specs if "paper_only=True" in rest}
     assert upstream, "CURRENT_PAPER_RANKS から表示ラベルを1つも拾えなかった"
+    assert not (paper_only & LABELS), (
+        "paper_only なのに Web の表示ラベルに載っている: "
+        f"{sorted(paper_only & LABELS)}")
     assert upstream == LABELS, (
         "keirin 側 CURRENT_PAPER_RANKS と kiseki 側 _PAPER_RANK_LABELS が食い違う。\n"
         f"  keirin にあって kiseki に無い: {sorted(upstream - LABELS)}\n"
