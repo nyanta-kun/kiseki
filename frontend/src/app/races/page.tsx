@@ -1,12 +1,10 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules, fetchRecommendations } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchRaceConfidence } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
-import { AnagusaRuleView } from "@/components/AnagusaRuleView";
-import { RecommendView } from "@/components/RecommendView";
+import { RaceConfidenceView } from "@/components/RaceConfidenceView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -66,12 +64,11 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    // 推奨系を並列プリフェッチ: 各パネルでの同一フェッチはキャッシュから即解決する
+    // 推奨タブのデータを並列プリフェッチ: RaceConfidenceView での同一フェッチは
+    // Next の fetch キャッシュから即解決する
     [races] = await Promise.all([
       fetchRacesByDate(date),
-      fetchJraTopProbability(date).catch(() => []),
-      fetchAnagusaRules(date).catch(() => []),
-      fetchRecommendations(date).catch(() => []),
+      fetchRaceConfidence(date).catch(() => []),
     ]);
   } catch {
     return (
@@ -116,20 +113,13 @@ async function RaceList({ date }: { date: string }) {
     if (!sortedGroups[name]) sortedGroups[name] = courseGroups[name];
   }
 
+  // 推奨タブ = レース信頼度一覧。
+  // 2026-08-22 に刷新し、旧「推奨カード / 穴ぐさ条件推奨 / 本日の注目馬」は破棄した
+  // （コンポーネント自体は他所から使えるよう残してある）。
   const recommendPanel = (
-    <>
-      {/* 期待値・指数から算出した推奨（本命tier + 人気薄1頭 複勝EV軸・memory: place_ev_model） */}
-      <Suspense fallback={<AnagusaSkeleton />}>
-        <RecommendView date={date} />
-      </Suspense>
-      {/* 穴ぐさ条件ルール推奨（rank_A × 場/面/距離ルール） */}
-      <Suspense fallback={<AnagusaSkeleton />}>
-        <AnagusaRuleView date={date} />
-      </Suspense>
-      <Suspense>
-        <JraTopProbabilityPanel date={date} />
-      </Suspense>
-    </>
+    <Suspense fallback={<ConfidenceTableSkeleton />}>
+      <RaceConfidenceView date={date} />
+    </Suspense>
   );
 
   return <CourseTabView courseGroups={sortedGroups} recommendPanel={recommendPanel} />;
@@ -145,8 +135,8 @@ function RaceListSkeleton() {
   );
 }
 
-function AnagusaSkeleton() {
+function ConfidenceTableSkeleton() {
   return (
-    <div className="h-24 bg-gray-100 rounded-xl animate-pulse motion-reduce:animate-none" aria-busy="true" />
+    <div className="h-64 bg-gray-100 rounded-xl animate-pulse motion-reduce:animate-none" aria-busy="true" />
   );
 }

@@ -55,6 +55,7 @@ from ..indices.confidence import (
     is_market_favorite,
 )
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
+from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
@@ -468,6 +469,31 @@ class OddsOut(BaseModel):
 # エンドポイント
 # -------------------------------------------------------------------
 
+class RaceConfidenceOut(BaseModel):
+    """推奨ページ（レース信頼度一覧）の1行。
+
+    レース属性 + 信頼度（既存 confidence_score / tier）+ **市場1番人気馬**の情報。
+    指数やオッズが未取得のレースも欠損のまま返すため、馬の項目は全て optional。
+    """
+
+    race_id: int
+    course_name: str
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    surface: str | None
+    distance: int | None
+    head_count: int | None
+    confidence_score: int | None
+    tier: str | None
+    horse_number: int | None
+    horse_name: str | None
+    win_odds: float | None
+    win_probability: float | None
+    ev: float | None
+    finish_position: int | None
+
+
 class TopHorseOut(BaseModel):
     course_name: str
     race_number: int
@@ -568,6 +594,23 @@ async def get_nearest_race_date(
     if not race_date:
         raise HTTPException(status_code=404, detail="No adjacent race date found")
     return {"date": race_date}
+
+
+@router.get("/confidence")
+async def get_race_confidence(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+) -> list[RaceConfidenceOut]:
+    """指定日の**全レース**を、信頼度と市場1番人気馬の情報つきで返す。
+
+    推奨ページ（レース信頼度一覧）用。従来の `/api/recommendations` が tier=C を
+    落として1レース1推奨を出すのに対し、こちらは**1レースも落とさない**。
+    並び替えはフロント側で行うため、返却順は常に発走時刻順。
+
+    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
+    """
+    rows = await build_race_confidence_list(db, date)
+    return [RaceConfidenceOut(**row) for row in rows]
 
 
 @router.get("")
