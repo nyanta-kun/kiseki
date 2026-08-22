@@ -275,13 +275,14 @@ def run_payout_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
             # 新ファイルをスキップすべきか判定
             skip_current = skip_fn(current_file)
             if skip_current:
-                rc_skip = jv.JVSkip()
-                if rc_skip == 0:
-                    skip_count += 1
-                    current_file = ""
-                    skip_current = False
-                else:
-                    logger.debug(f"JVSkip 失敗(rc={rc_skip}): 読み捨てモード")
+                # JVSkip の戻り値は VT_VOID（4.9 仕様書・5.0.0 の型情報とも「戻り値なし」）。
+                # pywin32 は None を返すため、以前の `if rc_skip == 0:` は必ず False になり、
+                # 4 箇所すべてが恒常的に「JVSkip 失敗 → 読み捨てモード」に落ちていた。
+                # 戻り値は見ず、無条件に成功として扱う（2026-08-23 修正）。
+                jv.JVSkip()
+                skip_count += 1
+                current_file = ""
+                skip_current = False
             continue
         elif rc2 == -3:  # ダウンロード中
             wait_count += 1

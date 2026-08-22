@@ -14,7 +14,13 @@ today = "20260328000000"
 
 jv = win32com.client.Dispatch("JVDTLab.JVLink.1")
 try:
-    jv.JVSetUIProperties(False, False)
+    # ⚠️ jv.JVSetUIProperties(False, False) をここで呼んでいたが削除した。
+    #    このメソッドは仕様上**引数0個**で、しかも「設定変更（ダイアログ版）」＝
+    #    モーダル設定ダイアログを開く。2引数呼び出しは pywin32 が TypeError を投げ、
+    #    素の except で握り潰されていたので **一度も効いていなかった**。
+    #    「引数が多すぎるバグ」と見て 0 引数に直すと、非対話プロセスでダイアログが
+    #    開いて永久ブロックする。UI 抑止が要るなら JVSetSaveFlag / JVSetPayFlag を使う。
+    pass  # noqa: PIE790
 except Exception:
     pass
 rc_init = jv.JVInit(sid)
