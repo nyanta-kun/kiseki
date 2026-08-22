@@ -14,6 +14,13 @@ const TIER_STYLE: Record<string, string> = {
   C: "bg-gray-200 text-gray-600",
 };
 
+/** 着順バッジの色。1着=金、複勝圏=青、それ以外は無彩色。 */
+function posColor(p: number): string {
+  if (p === 1) return "bg-amber-100 text-amber-700";
+  if (p <= 3) return "bg-blue-100 text-blue-700";
+  return "bg-gray-100 text-gray-500";
+}
+
 /** tier の堅さ順（並び替え用）。大きいほど堅い。 */
 const TIER_RANK: Record<string, number> = { S: 5, A: 4, B: 3, "C+": 2, C: 1 };
 
@@ -26,7 +33,8 @@ type SortKey =
   | "horse_name"
   | "win_odds"
   | "win_probability"
-  | "ev";
+  | "ev"
+  | "finish_position";
 
 type Dir = "asc" | "desc";
 
@@ -49,6 +57,8 @@ const COLUMNS: Column[] = [
   { key: "win_odds", label: "単勝", numeric: true, firstDir: "asc" },
   { key: "win_probability", label: "単勝率", numeric: true, firstDir: "desc" },
   { key: "ev", label: "単勝EV", numeric: true, firstDir: "desc" },
+  // 未確定（発走前）は null。並び替えでは向きに関わらず末尾へ送られる
+  { key: "finish_position", label: "着順", numeric: true, firstDir: "asc" },
 ];
 
 /** "1025" → "10:25" */
@@ -79,6 +89,8 @@ function sortValue(r: RaceConfidenceRow, key: SortKey): number | string | null {
       return r.win_probability;
     case "ev":
       return r.ev;
+    case "finish_position":
+      return r.finish_position;
   }
 }
 
@@ -253,6 +265,20 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
                 >
                   {r.ev !== null ? r.ev.toFixed(1) : <span className="text-gray-300">-</span>}
                 </td>
+                <td className="px-2 py-2 text-right">
+                  {r.finish_position !== null ? (
+                    <span
+                      className={cn(
+                        "inline-block px-1.5 py-0.5 rounded text-[11px] font-bold tabular-nums",
+                        posColor(r.finish_position)
+                      )}
+                    >
+                      {r.finish_position}着
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">-</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -262,6 +288,7 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
       <p className="text-[11px] text-gray-400 px-1 leading-relaxed">
         信頼度・tier はレース単位の指標（指数1位馬が単勝1番人気と一致するか等から算出）。
         馬番以降は<strong>そのレースの単勝1番人気馬</strong>。単勝EV = 単勝オッズ × 単勝率。
+        着順は確定後に入り、未確定のレースは「-」。
       </p>
     </div>
   );
