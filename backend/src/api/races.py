@@ -485,7 +485,19 @@ class RaceConfidenceOut(BaseModel):
     distance: int | None
     head_count: int | None
     confidence_score: int | None
+    """指数gapベースの信頼度 0-100。⚠️ **tier とは対応しない**（tier の第一分岐は
+    市場一致で、confidence_score は第二分岐でしか効かないため）。並び替えの主軸には
+    tier_score を使うこと。"""
     tier: str | None
+    tier_score: float | None
+    """tier を 0-100 の連続値にしたもの。降順に並べると tier 順が完全に再現され、
+    かつ同じ tier の中でも priority_score の順に並ぶ。画面の並び替えはこれを使う。"""
+    market_agree: bool | None
+    """指数1位馬が単勝1番人気と一致するか。tier の第一分岐。"""
+    entropy_norm: float | None
+    """市場の混戦度 0-1。高いほど拮抗。C+/C の分岐と priority_score の減点に使う。"""
+    priority_score: float | None
+    """tier 内の並び順に使う連続値（confidence_score - entropy_norm*30）。"""
     horse_number: int | None
     horse_name: str | None
     win_odds: float | None

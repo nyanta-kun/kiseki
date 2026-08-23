@@ -28,6 +28,7 @@ type SortKey =
   | "race"
   | "post_time"
   | "tier"
+  | "tier_score"
   | "confidence_score"
   | "horse_number"
   | "horse_name"
@@ -51,6 +52,8 @@ const COLUMNS: Column[] = [
   { key: "race", label: "レース", numeric: false, firstDir: "asc" },
   { key: "post_time", label: "発走", numeric: false, firstDir: "asc" },
   { key: "tier", label: "tier", numeric: false, firstDir: "desc" },
+  // tier を数値化したもの。tier と食い違わない唯一の並び替え軸なのでこれを既定にする。
+  { key: "tier_score", label: "評価", numeric: true, firstDir: "desc" },
   { key: "confidence_score", label: "信頼度", numeric: true, firstDir: "desc" },
   { key: "horse_number", label: "馬番", numeric: true, firstDir: "asc" },
   { key: "horse_name", label: "馬名", numeric: false, firstDir: "asc" },
@@ -77,6 +80,8 @@ function sortValue(r: RaceConfidenceRow, key: SortKey): number | string | null {
       return r.post_time;
     case "tier":
       return r.tier ? (TIER_RANK[r.tier] ?? 0) : null;
+    case "tier_score":
+      return r.tier_score;
     case "confidence_score":
       return r.confidence_score;
     case "horse_number":
@@ -154,7 +159,7 @@ type Props = {
 
 export function RaceConfidenceTable({ initialRows, date }: Props) {
   const [rows, setRows] = useState<RaceConfidenceRow[]>(initialRows);
-  const [sortKey, setSortKey] = useState<SortKey>("confidence_score");
+  const [sortKey, setSortKey] = useState<SortKey>("tier_score");
   const [dir, setDir] = useState<Dir>("desc");
   const [stale, setStale] = useState(false);
 
@@ -271,9 +276,13 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
                 </Link>
                 <span className="text-xs text-gray-500 tabular-nums">{fmtTime(r.post_time)}</span>
                 <TierBadge tier={r.tier} />
+                {/* tier の数値表現。tier と並び順が一致する唯一の指標なので主役に置く */}
+                <span className="text-base font-bold text-gray-900 tabular-nums leading-none">
+                  {r.tier_score != null ? r.tier_score.toFixed(1) : "-"}
+                </span>
                 <span className="ml-auto flex items-baseline gap-1">
                   <span className="text-[10px] text-gray-400">信頼度</span>
-                  <span className="text-lg font-bold text-gray-900 tabular-nums leading-none">
+                  <span className="text-sm font-semibold text-gray-600 tabular-nums leading-none">
                     {r.confidence_score ?? "-"}
                   </span>
                 </span>
@@ -371,7 +380,19 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
                 <td className="px-2 py-2">
                   <TierBadge tier={r.tier} />
                 </td>
-                <td className="px-2 py-2 text-right tabular-nums font-bold text-gray-900">
+                <td
+                  className="px-2 py-2 text-right tabular-nums font-bold text-gray-900"
+                  title={
+                    r.tier_score == null
+                      ? undefined
+                      : `市場一致 ${r.market_agree === null ? "不明" : r.market_agree ? "○" : "×"}` +
+                        ` / 混戦度 ${r.entropy_norm ?? DASH}` +
+                        ` / tier内順位スコア ${r.priority_score ?? DASH}`
+                  }
+                >
+                  {r.tier_score != null ? r.tier_score.toFixed(1) : DASH}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums text-gray-600">
                   {r.confidence_score ?? DASH}
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums text-gray-900">
@@ -402,7 +423,7 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
       </div>
 
       <p className="text-[11px] text-gray-400 px-1 leading-relaxed">
-        信頼度・tier はレース単位の指標（指数1位馬が単勝1番人気と一致するか等から算出）。
+        「評価」は tier を 0-100 の連続値にしたもの。降順に並べると tier 順が再現され、同じ tier の中でも順位がつく。⚠️「信頼度」(confidence_score) は指数差ベースの別指標で **tier とは対応しない**（tier の第一分岐は市場一致、信頼度は第二分岐でしか効かないため、信頼度が高くても tier が低いことがある）。
         馬番以降は<strong>そのレースの単勝1番人気馬</strong>。単勝EV = 単勝オッズ × 単勝率。
         着順は確定後に入り、未確定のレースは「-」。
       </p>
