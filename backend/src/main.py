@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .api.access import access_admin_router, access_router
 from .api.agent_router import router as agent_router
@@ -31,6 +32,21 @@ app = FastAPI(
     docs_url=None if settings.api_env == "production" else "/docs",
     redoc_url=None if settings.api_env == "production" else "/redoc",
 )
+
+# 🔴 **API レスポンスは圧縮する**（2026-08-23 追加）。
+#    `api.galloplab.com` は全エンドポイントが無圧縮で、競輪のトップページだけで
+#    **1回あたり約472KB を生で転送**していた（picks 225KB + proposals 241KB ほか）。
+#    返すのは JSON なので gzip でおよそ **1/9** になる。モバイル回線では
+#    ここが体感の支配項になる。
+#
+#    ⚠️ `minimum_size` を小さくしすぎないこと。数百バイトの応答まで圧縮すると
+#       CPU を使うだけで縮まない（VPS は 1.9GiB RAM の小さな機体）。
+#    ⚠️ nginx 側で二重に gzip しないこと。現状 `api` の vhost は無圧縮なので
+#       ここで掛ける。将来 nginx 側に入れるならこちらを外す。
+#    ⚠️ **CORS より先に登録しないこと。** Starlette のミドルウェアは
+#       後から追加したものが外側になるため、ここに置くと
+#       CORS が外側＝プリフライトやエラー応答にも CORS ヘッダが付く。
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,
