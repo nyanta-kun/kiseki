@@ -1433,13 +1433,6 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
                  表示を戻すならこのブロックを復活させるだけでよい。
               ⚠️ 表から消えても **当年の集計に 185件が入っていない事実は変わらない**。
                  その説明は表下の注記へ移した。 */}
-          {/* 🔴 実販売開始前をペーパーで埋めた分の内訳（2026-08-21）。
-              黙って足すと「当年＝全部実売」と読まれる。 */}
-          {!!data.paper_picks && (
-            <span className="block text-xs font-normal text-gray-400 dark:text-gray-500">
-              うちペーパー {data.paper_picks.toLocaleString()}件
-            </span>
-          )}
         </td>
         {/* 候補（オッズ条件前の総候補レース数） */}
         <td className="py-1.5 px-1.5 sm:px-3 text-right text-xs sm:text-sm text-gray-400 dark:text-gray-500 tabular-nums">
@@ -1538,37 +1531,17 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
             <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
             <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
-            {/* 🔴 ペーパー通算（2026-08-21・ユーザー要望）。上3行は**実際に売った商品**
-                （原本は 2026-07-24 開始）だが、この行は `picks_history`＝
-                「もし買っていたら」の紙の記録で 2024-01 から連続している。
-                **母集団が違うので必ずラベルで区別する** —— 無印で並べると
-                `/review`(実売) との不一致を不具合と誤診する型に戻る。
-                ⚠️ 現行ランクのみ（廃止済み 7A/7SS/9A/9S は除外）。
-                古いAPIに当たったら行ごと出さない（fail-open）。 */}
-            {summary.paper_total && (
-              <SummaryRow
-                label={`ペーパー ${(summary.paper_total.since ?? "2024-01-01").slice(0, 7)}〜`}
-                data={summary.paper_total}
-                showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder}
-              />
-            )}
+            {/* ⚠️ **ペーパーの表記は 2026-08-24 に全て外した**（ユーザー判断）。
+                外したのは3つ —— 行内の「うちペーパー N件」・「ペーパー 2024-01〜」の
+                通算行・表下の注記。
+                理由: **実売のマスターは netkeirin 側**であり、この画面は
+                「モデルが推奨した場合のサンプル確認」がベースなので、
+                実売との母集団の違いを断る必要が無い。
+                🔴 **上3行は実売とペーパーの合算のまま**（`_merge_paper_into`）。
+                   API は `paper_picks` / `paper_total` を返し続けているので、
+                   表示を戻すならこのブロックへ書き足すだけでよい。 */}
           </tbody>
         </table>
-        {/* 🔴 **母集団の違いを表の中だけで伝えるのは無理**なので注記を置く。
-            ラベルだけだと「当年より件数が多いのはなぜ」と誤読される。 */}
-        {summary.paper_total && (
-          <p className="mt-2 px-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-            ⚠️ 上3行は<strong>実際に売った商品</strong>（netkeirin 入稿・2026-07-24〜）。
-            「ペーパー」行は<strong>買っていたらの想定</strong>（2024-01〜）で、
-            <strong>母集団が違います</strong>。現行ランクのみを集計しており、
-            廃止済みのランクは含みません。買い方（ルール）は期間中に何度も
-            変わっているため、世代をまたいだ参考値です。
-            各行は<strong>2026-08-07 の実販売開始</strong>を境に出所が変わります。
-            それ以前は netkeirin へ出していないため<strong>ペーパー</strong>
-            （現行ランクのみ）で埋めており、行内に内訳を出しています。
-            日付を遡ると当日・当月もペーパーで表示されます。
-          </p>
-        )}
       </div>
     </div>
   );
