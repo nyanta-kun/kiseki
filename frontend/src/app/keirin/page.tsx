@@ -5,7 +5,7 @@ import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
 import Link from "next/link";
 import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Send } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposals, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposalsCount, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
 import {
@@ -1654,6 +1654,8 @@ export default function KeirinPage() {
   const [picks, setPicks] = useState<KeirinPick[]>([]);
   const [summary, setSummary] = useState<KeirinSummary | null>(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
+  // サマリーは一覧と**別に**待つ（一覧を人質に取らせない・loadData のコメント参照）
+  const [loadingSummary, setLoadingSummary] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
@@ -1689,24 +1691,27 @@ export default function KeirinPage() {
   // 出るのに何も隠れない／隠れるのにボタンが無い、という食い違いになる）。
   const hasHideableRows = picks.some((p) => !p.has_pick || computeGamiSkip(p));
 
+  // 🔴 **一覧の表示を summary に待たせないこと**（2026-08-23・実バグ）。
+  //    以前は picks と summary を `Promise.allSettled` で待ってから
+  //    `setLoadingPicks(false)` していたため、**picks が 0.45秒で返っていても
+  //    summary が遅ければその間ずっとスケルトン**が出ていた。
+  //    2026-08-21 に summary へペーパー通算集計が入って 0.7〜4.2秒になり、
+  //    そのまま一覧の表示時間になった。fetch は並列でも、**解放条件が
+  //    両方揃うことになっていたら意味が無い**。
+  //    `SummaryCard` は `summary && ...` の条件描画なので、後から挿し込んで問題ない。
   const loadData = useCallback(async (d: string) => {
     setLoadingPicks(true);
+    setLoadingSummary(true);
     setError(null);
     const iso = toISODate(d);
-    const [picksResult, summaryResult] = await Promise.allSettled([
-      fetchKeirinPicks(iso, true),
-      fetchKeirinSummary(iso),
-    ]);
-    if (picksResult.status === "fulfilled") {
-      setPicks(picksResult.value);
-    } else {
-      setError("ピックの取得に失敗しました。");
-      setPicks([]);
-    }
-    if (summaryResult.status === "fulfilled") {
-      setSummary(summaryResult.value);
-    }
-    setLoadingPicks(false);
+    void fetchKeirinPicks(iso, true)
+      .then((v) => { setPicks(v); setError(null); })
+      .catch(() => { setError("ピックの取得に失敗しました。"); setPicks([]); })
+      .finally(() => setLoadingPicks(false));
+    void fetchKeirinSummary(iso)
+      .then(setSummary)
+      .catch(() => { /* サマリーは付随情報。落ちても一覧は出す */ })
+      .finally(() => setLoadingSummary(false));
   }, []);
 
   const handleRefresh = useCallback(async () => {
@@ -1732,9 +1737,10 @@ export default function KeirinPage() {
     setVenueFilter(null);
   }, [date]);
 
-  // 未承認バッジ。まず承認制かどうかだけを引き（軽い）、**ON のときだけ**
-  // 入稿案を取りに行く（/proposals は全レースの買い目・出走表を含んで重いため、
-  // 承認制 OFF の平常時にトップページへ乗せてはいけない）。
+  // 未承認バッジ。まず承認制かどうかだけを引き（軽い）、**ON のときだけ**件数を取る。
+  // ⚠️ 「承認制 OFF の平常時に乗せてはいけない」と書いてあったが、**本番の
+  //    `require_approval` は 2026-08-21 から true** で前提が崩れていた。
+  //    そのため重い `/proposals` が毎回飛んでいた（2026-08-23 に件数専用口へ変更）。
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -1745,7 +1751,9 @@ export default function KeirinPage() {
         setNProposed(0);
         return;
       }
-      const p = await fetchKeirinProposals(toISODate(date)).catch(() => ({ n_proposed: 0 }));
+      // 🔴 件数専用の軽い口を使う。`/proposals` 本体（201〜282KB・約3秒）は
+      //    確認画面だけが呼ぶ。ここで本体を呼ぶと picks と帯域・接続を奪い合う。
+      const p = await fetchKeirinProposalsCount(toISODate(date)).catch(() => ({ n_proposed: 0 }));
       if (alive) setNProposed(p.n_proposed);
     })();
     return () => { alive = false; };
@@ -1819,12 +1827,13 @@ export default function KeirinPage() {
         </div>
       </div>
 
-      {/* サマリー */}
+      {/* サマリー（一覧とは独立に読み込む。取得に失敗したら黙って消す＝
+          スケルトンを出しっぱなしにしない） */}
       {summary ? (
         <SummaryCard summary={summary} />
-      ) : (
+      ) : loadingSummary ? (
         <div className="bg-white rounded-xl border border-gray-100 h-24 animate-pulse" />
-      )}
+      ) : null}
 
       {/* 日付ナビ */}
       <DateNav date={date} onChange={setDate} />
