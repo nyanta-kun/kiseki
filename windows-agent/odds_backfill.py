@@ -25,10 +25,14 @@
    取り込むデータは変わらない（rec_id で必ず絞っているため）。
 
 使用方法:
-    python odds_backfill.py [--from-year YYYY] [--option 1|3]
+    python odds_backfill.py [--from-year YYYY] [--option 1|3|4]
 
     --from-year: 取得開始年（デフォルト: 2024）
-    --option:    1=通常(ローカルキャッシュ優先) / 3=セットアップ(全再ダウンロード)
+    --option:    1=通常(ローカルキャッシュ優先。ただし JRA 側の保持窓が1年しかないので
+                 2024年まで遡るには 3 か 4 が要る)
+                 3=セットアップ(全再ダウンロード・選択ダイアログ有)
+                 4=セットアップ(ダイアログ無)。jvlink_agent.py の RACE 取得と同じ経路。
+                   5.0.0 では 3/4 とも不可視ダイアログを出すが jvlink_dialog_guard が応答する
 """
 
 from __future__ import annotations
@@ -38,11 +42,13 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from link_common import BlockingCallGuard
+
 
 # ⚠️ 先行インスタンスがログを掴んでいると FileHandler が PermissionError で落ち、
 #    プロセスが起動時点で死ぬ（payout_backfill.py で実際に起きて _out.txt /
@@ -97,6 +103,13 @@ try:
     load_dotenv(BASE_DIR / ".env")
 except ImportError:
     pass
+
+# 🔴 option=3/4 は JV-Link 5.0.0 で**不可視の「セットアップ」ダイアログ**を出す。
+# 誰も押さないと JVOpen が永久にブロックする（2026-08-23 に #266 でエージェント経路は
+# 直したが、このスクリプトは link_common を通しておらず素の JVOpen を呼んでいた）。
+# BlockingCallGuard が 5 秒ごとに jvlink_dialog_guard.dismiss() を叩き、
+# 上限を超えたらプロセスごと落とす。JVOpen がこの秒数を超えて返らなければ強制終了する。
+JVOPEN_TIMEOUT_SEC = 3600
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_KEY = os.getenv("AGENT_API_KEY", "") or os.getenv("CHANGE_NOTIFY_API_KEY", "")
@@ -221,23 +234,12 @@ def run_odds_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
             return True
         return False
 
-    opt_label = "セットアップ/全再ダウンロード" if option == 3 else "通常/ローカルキャッシュ優先"
+    opt_label = ("セットアップ/全再ダウンロード" if option in (3, 4)
+                 else "通常/ローカルキャッシュ優先")
     logger.info(f"JVOpen RACE from={from_time} option={option} ({opt_label})...")
 
-    _jvopen_done = threading.Event()
-
-    def _heartbeat() -> None:
-        start = time.time()
-        while not _jvopen_done.is_set():
-            _jvopen_done.wait(timeout=30)
-            if not _jvopen_done.is_set():
-                logger.info(f"JVOpen 待機中... {int(time.time() - start)}秒経過")
-
-    hb = threading.Thread(target=_heartbeat, daemon=True)
-    hb.start()
-
-    result = jv.JVOpen(DATASPEC_RACE, from_time, option, 0, 0, "")
-    _jvopen_done.set()
+    with BlockingCallGuard(f"JVOpen(RACE, option={option})", JVOPEN_TIMEOUT_SEC, logger):
+        result = jv.JVOpen(DATASPEC_RACE, from_time, option, 0, 0, "")
 
     rc = result[0] if isinstance(result, tuple) else result
     logger.info(f"JVOpen rc={rc}")
@@ -321,8 +323,9 @@ def main() -> None:
         "--option",
         type=int,
         default=1,
-        choices=[1, 3],
-        help="JVOpen option: 1=通常(キャッシュ), 3=セットアップ(全再DL) (default: 1)",
+        choices=[1, 3, 4],
+        help="JVOpen option: 1=通常(キャッシュ・保持窓は1年) / "
+             "3=セットアップ(ダイアログ有) / 4=セットアップ(ダイアログ無) (default: 1)",
     )
     ap.add_argument(
         "--backend-url",
