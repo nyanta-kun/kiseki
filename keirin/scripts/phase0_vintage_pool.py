@@ -102,7 +102,11 @@ def build(a: str, b: str) -> None:
             try:
                 mod = importlib.import_module(f"scripts.{mod_name}")
                 rows = call(mod, tag, d1, d2)
-            except Exception as e:                       # noqa: BLE001
+            except (Exception, SystemExit) as e:         # noqa: BLE001
+                # 🔴 `SystemExit` も捕まえること。`assert_odds_model_is_honest()` は
+                #    `raise SystemExit` で止めるので、`except Exception` だけだと
+                #    **1ランクの制約で全体の生成が落ちる**（2026-08-23 に実際に
+                #    7T1 の 2024-01 で落ちて 4/168 で止まった）。
                 print(f"  {tag} {rank:>4}: 🔴 {type(e).__name__}: {e}", flush=True)
                 # 🔴 失敗を空で保存しない。空とエラーを区別できなくなる。
                 continue
