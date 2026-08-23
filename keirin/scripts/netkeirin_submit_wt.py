@@ -2349,6 +2349,31 @@ def _process_manual(
     return 0, [f"{venue_name}{race_no}R({rank_key}): {msg}"]
 
 
+DEFERRED_NOTICE_VERSION = 1
+
+
+def _write_deferred_notice(path: str, payload: dict) -> None:
+    """通知の材料を JSON で書き出す（送信は看板穴埋めの後で1通だけ行う）。
+
+    🔴 **書けなくても入稿を落とさない。** 通知は付随情報で、
+       ここで例外を上げると入稿済みの結果まで失う。
+    ⚠️ 読み手（`submit_marquee_wt`）は**ファイルが無い場合を必ず許容**すること。
+       このスクリプトが途中で落ちた日でも穴埋め側は動く。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        payload = dict(payload, version=DEFERRED_NOTICE_VERSION)
+        p = _Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        print(f"[netkeirin_submit] 通知を保留（{path}・看板穴埋めの後で送る）",
+              flush=True)
+    except Exception as e:  # noqa: BLE001 — 通知の保留失敗で入稿結果を失わない
+        print(f"[netkeirin_submit] 通知の保留に失敗（通知のみ欠落）: {e}", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("target_date")
@@ -2380,6 +2405,15 @@ def main() -> None:
     # 🔴 呼び出し側でまとめて通知するとき用（`submit_marquee_wt.py` が使う）。
     #    看板レースは1レース1プロセスで起動するので、各プロセスが通知すると
     #    「手動入稿・1件」が件数ぶん飛ぶ（2026-08-11 に16通届いた）。
+    # 🔴 **通知を後ろへ回す**（2026-08-23）。看板レースの穴埋め
+    #    （`submit_marquee_wt.py`）はこのスクリプトの**後**に走るので、
+    #    ここで送ると穴埋めぶんが件数に入らない。実際 2026-08-23 朝は
+    #    Discord「計25件」に対し確認画面「45件」で、**20件（看板穴埋め）が
+    #    どこにも出ていなかった**。
+    #    このオプションを付けると送信せず JSON を書き出し、穴埋め側が
+    #    自分の件数を足して**1通だけ**送る（承認制で1通、という方針は変えない）。
+    parser.add_argument("--defer-notify", metavar="PATH", default="",
+                        help="通知を送らず、集計を JSON でこのパスへ書き出す")
     parser.add_argument("--no-notify", action="store_true",
                         help="Discord通知を抑止する（呼び出し側でまとめて通知する場合）")
     args = parser.parse_args()
@@ -2552,10 +2586,17 @@ def main() -> None:
             )
         if all_failures:
             msg += f"\n⚠️ 入稿失敗 {len(all_failures)}件: " + " / ".join(all_failures)
-        try:
-            send(msg, channel="netkeirin")
-        except Exception as e:
-            print(f"[netkeirin_submit] Discord通知失敗: {e}", flush=True)
+        if args.defer_notify:
+            _write_deferred_notice(args.defer_notify, dict(
+                target_date=target_date, session_jp=session_jp,
+                propose_only=bool(propose_only),
+                breakdown={k: v for k, v in submitted_counts.items() if v > 0},
+                total=total, failures=all_failures))
+        else:
+            try:
+                send(msg, channel="netkeirin")
+            except Exception as e:
+                print(f"[netkeirin_submit] Discord通知失敗: {e}", flush=True)
     elif all_failures:
         try:
             send(
