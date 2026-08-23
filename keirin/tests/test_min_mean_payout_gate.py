@@ -100,8 +100,11 @@ def test_ダイアログが判断材料を並べている():
     tsx = (REPO / "frontend" / "src" / "app" / "keirin" / "review"
            / "ReviewClient.tsx").read_text("utf-8")
     dlg = tsx[tsx.index("aria-label=\"想定払戻の平均が安いレースの取消\""):]
-    for col in ("平均払戻", "最低払戻", "最高払戻", "落車"):
+    for col in ("平均払戻", "最低払戻", "最高払戻"):
         assert f">{col}</th>" in dlg, f"ダイアログに {col} 列が無い"
+    # ⚠️ 落車リスクは**載せない**（2026-08-24 ユーザー判断）。取消の判断に使わない
+    #    ので列を増やさない（危険帯のほうが ROI は高く、理由にならない）。
+    assert ">落車</th>" not in dlg, "落車リスクの列は出さない"
     # 🔴 最低払戻は下振れ側を優先（板由来の min_payout は楽観的）
     assert "p.min_payout_low ?? p.min_payout" in dlg, "下振れ側を優先していない"
     assert "p.gami_risk" in dlg, "ガミの印が無い"

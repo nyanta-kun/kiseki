@@ -1263,10 +1263,13 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
              `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT` と
              `keirin_router._mean_payout`。
           🔴 **リストに載せる条件は平均払戻の1つだけ**（`cheap_mean_payout`）。
-             最低払戻・ガミ・落車は**判断材料として並べているだけで選定には
+             最低払戻・最高払戻・ガミは**判断材料として並べているだけで選定には
              使っていない**。列が増えたときに「これも条件だ」と読まれないよう、
              見出しにも書いてある。選定条件を増やすなら API 側の印を増やすこと
-             （画面で条件を足すと正本が画面へ散る）。 */}
+             （画面で条件を足すと正本が画面へ散る）。
+          ⚠️ **落車リスクは載せない**（2026-08-24 ユーザー判断）。カード側には
+             出ているが、取消の判断には使わないので列を増やさない
+             （危険帯のほうが ROI は高く、そもそも取消の理由にならない）。 */}
       {cheapDialog !== null && (() => {
         const chosen = cheapTargets.filter((p) => cheapDialog[pickKey(p)]);
         return (
@@ -1283,8 +1286,8 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                   入稿時点の買い目払戻の<strong>平均</strong>が安い＝リスクに見合わない、
                   と判定したレースです。<strong>チェックを外すと取消から除外</strong>できます。
                   <br />
-                  ⚠️ 一覧に載せる条件は<strong>平均払戻だけ</strong>です。最低払戻・ガミ・
-                  落車は判断材料として並べているだけで、選定には使っていません。
+                  ⚠️ 一覧に載せる条件は<strong>平均払戻だけ</strong>です。最低払戻・
+                  最高払戻・ガミは判断材料として並べているだけで、選定には使っていません。
                 </p>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -1299,7 +1302,6 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                       {/* ⚠️ ここから右は**判断材料**であって選定条件ではない。 */}
                       <th className="p-2 text-right">最低払戻</th>
                       <th className="p-2 text-right">最高払戻</th>
-                      <th className="p-2 text-right">落車</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1343,12 +1345,6 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                           </td>
                           <td className="p-2 text-right tabular-nums text-gray-500">
                             {yen(p.max_payout)}
-                          </td>
-                          {/* ⚠️ 落車リスクは**表示だけ**（危険帯のほうが ROI は高い）。
-                              取消の理由にはしない —— 判断材料として出すに留める。 */}
-                          <td className="p-2 text-right tabular-nums text-gray-500">
-                            {p.crash_risk == null
-                              ? "—" : `${(p.crash_risk * 100).toFixed(2)}%`}
                           </td>
                         </tr>
                       );
