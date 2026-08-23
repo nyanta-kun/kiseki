@@ -70,6 +70,8 @@ from src.marquee import marquee_race_nos
 from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # noqa: E402
 from src.odds_prediction import predicted_trio_board  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
+# 🔴 確認画面の URL は入稿側の定義を借りる（二重管理にしない）
+from scripts.netkeirin_submit_wt import REVIEW_URL  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
@@ -279,6 +281,80 @@ def venue_waves(races: list[dict]) -> dict[str, str]:
             for r in races}
 
 
+def _rank_of(label: str) -> str:
+    """`立川3R(7C)` から `7C` を取り出す。取れなければ空文字。"""
+    a, b = label.rfind("("), label.rfind(")")
+    return label[a + 1:b] if 0 <= a < b else ""
+
+
+def _send_merged_notice(path: str, date: str, done: list[str],
+                        failed: list[str]) -> bool:
+    """ランク入稿が保留した通知に**穴埋めぶんを足して1通**送る（2026-08-23）。
+
+    🔴 **これが無いと Discord の件数が確認画面と食い違う。**
+       穴埋めはランク入稿の**後**に走るので、ランク側が自分で送ると
+       穴埋めぶんが数に入らない。2026-08-23 朝の実害:
+       Discord「計25件」に対し確認画面は「45件」で、
+       **看板穴埋め20件（7S18・9C2）がどこにも出ていなかった**。
+
+    🔴 **通知は1通のまま**（2026-08-14 のユーザー判断を変えない）。
+       増やすのではなく、既にある1通の件数を正しくする。
+
+    ⚠️ ファイルが無い場合は False を返し、呼び出し側が従来経路へ落ちる。
+       ランク入稿が落ちた日や手動実行でも穴埋めは動く必要がある。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from src.notify.discord import send
+
+    f = _Path(path)
+    if not path or not f.exists():
+        return False
+    try:
+        d = _json.loads(f.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[marquee] 保留通知の読み込みに失敗（従来経路で送る）: {e}", flush=True)
+        return False
+
+    fill: dict[str, int] = {}
+    for label in done:
+        r = _rank_of(label)
+        if r:
+            fill[r] = fill.get(r, 0) + 1
+    n_fill = len(done)
+    total = int(d.get("total", 0)) + n_fill
+    parts = [f"{k}{v}件" for k, v in (d.get("breakdown") or {}).items()]
+    breakdown = "・".join(parts) if parts else "なし"
+    if fill:
+        breakdown += "／看板穴埋め " + "・".join(f"{k}{v}件" for k, v in fill.items())
+
+    if d.get("propose_only"):
+        msg = (f"📝 **[netkeirin入稿案] {d.get('target_date', date)}"
+               f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
+               f"確認・承認: {REVIEW_URL}\n"
+               f"⚠️ 承認するまで netkeirin へは出ません。")
+    else:
+        from src.netkeirin_client import RACE_AUTH_URL
+        msg = (f"📮 **[netkeirin入稿完了] {d.get('target_date', date)}"
+               f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
+               f"確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。")
+    fails = list(d.get("failures") or []) + [f"{x}(看板穴埋め)" for x in failed]
+    if fails:
+        msg += f"\n⚠️ 入稿失敗 {len(fails)}件: " + " / ".join(fails)
+    try:
+        send(msg, channel="netkeirin")
+    except Exception as e:  # noqa: BLE001 — 通知失敗で入稿結果を失わない
+        print(f"[marquee] Discord通知失敗: {e}", flush=True)
+    finally:
+        # 🔴 同じ内容を翌日また送らないよう必ず消す（送信の成否によらない）。
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
     """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
 
@@ -322,6 +398,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("date", nargs="?", default=datetime.now(JST).strftime("%Y-%m-%d"))
     ap.add_argument("--dry-run", action="store_true")
+    # 🔴 ランク入稿が `--defer-notify` で書き出した集計。ここに穴埋めを足して
+    #    **1通だけ**送る（`_send_merged_notice` の docstring 参照）。
+    ap.add_argument("--defer-notify", metavar="PATH", default="",
+                    help="ランク入稿が保留した通知の JSON パス")
     # 🔴 **波はランク入稿と同じ値を受け取る**（2026-08-19）。
     #    実行時刻から導くと、朝のバッチが正午を跨いだ日に
     #    `netkeirin_submit_wt.py` は morning で走ったのに穴埋めだけ noon になり、
@@ -437,7 +517,13 @@ def main() -> int:
             sys.stderr.write(p.stderr)
     print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件）", flush=True)
     if not args.dry_run and (done or failed):
-        _notify_summary(date, done, failed)
+        # 🔴 ランク入稿が通知を保留していれば、そこへ穴埋めを足して1通送る。
+        #    保留が無ければ従来どおり（手動実行・ランク入稿が落ちた日）。
+        if not _send_merged_notice(args.defer_notify, date, done, failed):
+            _notify_summary(date, done, failed)
+    elif not args.dry_run:
+        # 穴埋めが0件でも、ランク入稿が保留した通知は必ず送る
+        _send_merged_notice(args.defer_notify, date, [], [])
     return 0
 
 

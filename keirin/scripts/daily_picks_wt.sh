@@ -318,8 +318,14 @@ echo "[$(date '+%H:%M:%S')] 候補レースを picks_history に書き込み..."
 #        これらは従来どおり 13:00 / 18:00 の `wave_submit_wt.sh` が拾う。
 #        ⚠️ **予想そのもの（picks_history・Discord・Web）は当日全開催ぶんを
 #           この朝の回で出す**（従来から変わらない）。---
+# 🔴 ランク入稿の Discord 通知は**看板穴埋めの後**で1通だけ送る（2026-08-23）。
+#    穴埋めはランク入稿の後に走るので、ランク側が自分で送ると穴埋めぶんが
+#    件数に入らない。2026-08-23 朝は Discord「計25件」に対し確認画面「45件」で、
+#    看板穴埋め20件がどこにも出ていなかった。
+NOTICE_JSON="${TMPDIR:-/tmp}/netkeirin_notice_${TODAY}_morning.json"
 echo "[$(date '+%H:%M:%S')] netkeirinへ下書き入稿（当日全開催・前倒しできるもの）..."
 .venv/bin/python3 scripts/netkeirin_submit_wt.py "$TODAY" morning \
+  --defer-notify "$NOTICE_JSON" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] netkeirin入稿に失敗（継続）"
 
@@ -343,6 +349,7 @@ echo "[$(date '+%H:%M:%S')] netkeirinへ下書き入稿（当日全開催・前�
 #    実際 session='morning' の穴埋めに submitted_at 12:08 の実績がある。
 echo "[$(date '+%H:%M:%S')] 看板レースの穴埋め..."
 .venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" --session "morning" \
+  --defer-notify "$NOTICE_JSON" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 看板穴埋めに失敗（継続）"
 

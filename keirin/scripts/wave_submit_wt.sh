@@ -51,8 +51,14 @@ send('🚨 **[wave_submit_wt.sh] KEIRIN_DB_URL が未設定のため入稿を中
   exit 1
 fi
 
+# 🔴 ランク入稿の Discord 通知は**看板穴埋めの後**で1通だけ送る（2026-08-23）。
+#    穴埋めはランク入稿の後に走るので、ランク側が自分で送ると穴埋めぶんが
+#    件数に入らない。2026-08-23 朝は Discord「計25件」に対し確認画面「45件」で、
+#    看板穴埋め20件がどこにも出ていなかった。
+NOTICE_JSON="${TMPDIR:-/tmp}/netkeirin_notice_${TODAY}_${SESSION}.json"
 echo "[$(date '+%H:%M:%S')] === netkeirin 入稿（波: ${SESSION}） $TODAY ==="
 PYTHONPATH=. .venv/bin/python3 scripts/netkeirin_submit_wt.py "$TODAY" "$SESSION" \
+  --defer-notify "$NOTICE_JSON" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] netkeirin入稿(${SESSION})に失敗（継続）"
 
@@ -70,6 +76,7 @@ PYTHONPATH=. .venv/bin/python3 scripts/netkeirin_submit_wt.py "$TODAY" "$SESSION
 #       判定と記録が別経路になるのを避ける意図）。判定を持たせた時点で逆転している。
 echo "[$(date '+%H:%M:%S')] 看板レースの穴埋め（波: ${SESSION}）..."
 PYTHONPATH=. .venv/bin/python3 scripts/submit_marquee_wt.py "$TODAY" --session "$SESSION" \
+  --defer-notify "$NOTICE_JSON" \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 看板穴埋め(${SESSION})に失敗（継続）"
 echo "[$(date '+%H:%M:%S')] === 入稿（波: ${SESSION}） 完了 ==="
