@@ -11,8 +11,10 @@
  * 場別、と目的が違う。**選んだ並べ方は localStorage に覚える**ので、
  * 入稿・取消のたびに走る再描画やリロードで戻らない（2026-08-14）。
  *
- * 場は**既定で畳んである**（2026-08-14）。上から順に見ていく使い方なので、
- * 全部開いていると目的の場まで遠い。
+ * 🔴 **節は既定で全て畳んである**（場は 2026-08-14 / 発走前・発走済は 2026-08-24）。
+ *    上から順に見ていく使い方なので、全部開いていると目的の場まで遠い。
+ *    **例外は「いま前後30分」の1節だけ**——いま手を打つべきレースを集めた節なので
+ *    畳むと存在意義が無くなる。
  *
  * 🔴 **承認制の ON/OFF はこの画面にはない**（2026-08-12 に `/admin` の設定タブへ移動）。
  *    確認・承認の作業画面に「承認制そのものを切る」スイッチが同居していると、
@@ -1124,7 +1126,9 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           (p) => p.start_at !== null && p.start_at >= from && p.start_at <= to,
         );
         if (near.length === 0) return null;
-        const open = expanded.now ?? true;   // 既定は開く（いま見るための節なので）
+        // 🔴 **ここだけ既定で開く**（2026-08-24 に他を全て畳んだ）。いま手を打つ
+        //    べきレースを集めた節なので、畳むと存在意義が無くなる。
+        const open = expanded.now ?? true;
         return (
           <section className="mb-4 rounded border border-blue-200 bg-blue-50/50 p-3
                               dark:border-blue-900 dark:bg-blue-950/30">
@@ -1165,8 +1169,11 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           key: "upcoming" | "finished", label: string, list: KeirinProposal[],
         ) => {
           if (list.length === 0) return null;
-          // 既定は発走前だけ開く（`expanded` はキー未設定＝閉じる仕様なので明示する）
-          const open = expanded[key] ?? (key === "upcoming");
+          // 🔴 **既定は畳む**（2026-08-24・ユーザー要望「ページ表示時は全て畳み込み」）。
+          //    以前は「発走前」だけ開いていたが、推奨が多い日はそれだけで画面が
+          //    埋まり、**開いたままにしておきたい「いま前後30分」が押し出される**。
+          //    開いておくのは「いま前後30分」の1節だけにして、他は自分で開く。
+          const open = expanded[key] ?? false;
           return (
             <section className="mb-4">
               <button
