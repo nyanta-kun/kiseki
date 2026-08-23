@@ -21,6 +21,16 @@ from .jvlink_parser import parse_hc, parse_wc
 
 logger = logging.getLogger(__name__)
 
+# 🔴 asyncpg のバインドパラメータ上限。1文に入る行数は 32767 ÷ 列数 で決まる。
+#   slope(11列) → 2,978行 / wood(25列) → 1,310行
+# Windows Agent は 2,000件ずつ POST してくる（jvlink_agent.py::run_chokyo）ため、
+# **wood は 1バッチが上限を超えて必ず落ちる**。SLOP と WOOD は別 DataSpec で
+# 取得するのでバッチは均質になり、大きい WOOD ファイルが来た日だけ落ちる。
+#   実測 2026-08-24 06:00: WOOD 4,141件 → [0:2000] と [2000:4000] が 500、
+#   末尾141件だけ成功（DB の当日 wood 行数と一致）。
+# エージェント側のバッチサイズを下げても将来また踏むので、**サーバ側で塞ぐ**。
+_MAX_BIND_PARAMS = 32767
+
 # DB カラムに渡すフィールド（rec_id 等のメタを除いた値カラム）
 _SLOPE_COLS = (
     "blood_reg_no", "training_date", "training_time", "center",
@@ -101,10 +111,13 @@ class TrainingImporter:
         if not rows:
             return 0
         update_cols = [c for c in cols if c not in _KEY_COLS]
-        stmt = pg_insert(model).values(rows)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=list(_KEY_COLS),
-            set_={c: getattr(stmt.excluded, c) for c in update_cols},
-        )
-        await self.db.execute(stmt)
+        chunk = max(1, _MAX_BIND_PARAMS // len(cols))
+        for i in range(0, len(rows), chunk):
+            part = rows[i:i + chunk]
+            stmt = pg_insert(model).values(part)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=list(_KEY_COLS),
+                set_={c: getattr(stmt.excluded, c) for c in update_cols},
+            )
+            await self.db.execute(stmt)
         return len(rows)
