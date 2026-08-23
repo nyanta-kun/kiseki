@@ -628,13 +628,25 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
  *    誤読する。代わりに**予想数の横へ「未確定N」を併記**する。
  * 🔴 的中率はガミ（払戻<投資）を不的中と数える（netkeirin の表示と同じ）。
  */
-function DaySummary({ s }: { s: KeirinProposalSummary }) {
+function DaySummary({ s, caption }: {
+  s: KeirinProposalSummary;
+  /** 参考値のときだけ渡す。実績（売った分）は従来どおり見出しなし。 */
+  caption?: string;
+}) {
   const cell = "border border-gray-200 px-3 py-1.5 dark:border-gray-700";
   const head = `${cell} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300`;
   const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}%`);
   const yenS = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString()}円`;
   return (
     <table className="mb-3 w-full max-w-2xl border-collapse text-sm tabular-nums">
+      {/* 🔴 参考値のときは**必ず見出しを出す**。同じ形の表が2つ並ぶので、
+          見出しが無いと実績と取り違える（「サマリーの回収率には入っていない」
+          という既存の約束が画面上で守られなくなる）。 */}
+      {caption && (
+        <caption className="caption-top pb-1 text-left text-xs text-gray-500 dark:text-gray-400">
+          {caption}
+        </caption>
+      )}
       <tbody>
         <tr>
           <th className={head}>回収率</th>
@@ -672,7 +684,8 @@ function DaySummary({ s }: { s: KeirinProposalSummary }) {
   );
 }
 
-export default function ReviewClient({ date, items, nProposed, nUnpublished = 0, summary }: {
+export default function ReviewClient({ date, items, nProposed, nUnpublished = 0, summary,
+                                      summaryCancelled }: {
   date: string;
   items: KeirinProposal[];
   nProposed: number;
@@ -680,6 +693,8 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
   nUnpublished?: number;
   /** 当日サマリー（netkeirin と項目を合わせたもの）。 */
   summary?: KeirinProposalSummary;
+  /** 取り消したレースを**そのまま売っていたら**の参考値（2026-08-24）。 */
+  summaryCancelled?: KeirinProposalSummary;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -1067,6 +1082,16 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
       )}
 
       {summary && summary.n_races > 0 && <DaySummary s={summary} />}
+      {/* 🔴 **実績ではない。** 取り消したレースを売っていた場合の参考値で、
+          上の実績サマリーにも netkeirin の成績にも入っていない。落とした判断が
+          正しかったかを見るためだけに出す（2026-08-24・ユーザー要望）。
+          採点は実績と同じ経路（確定オッズ）なので同じ土俵で比べられる。 */}
+      {summaryCancelled && summaryCancelled.n_races > 0 && (
+        <DaySummary
+          s={summaryCancelled}
+          caption="取り消したレースを、そのまま売っていたら（参考値・実績には含みません）"
+        />
+      )}
 
       {items.length === 0 && (
         <p className="text-sm text-gray-500">この日の入稿はありません。</p>
