@@ -7,6 +7,7 @@ GET /api/keirin/summary                  - 当日/当月/当年の投資・回�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -25,7 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.keirin_models import KeirinNetkeirinSetting
-from ..db.session import get_db
+from ..db.session import AsyncSessionLocal, get_db
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
@@ -2183,7 +2184,21 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     # S1/7SS/7S/7A（7車）と9SS/9S/9A（9車）が同じ辞書に並ぶため、
     # フロントエンドの「ランク別」展開でまとめて確認できる（7A/9Aを専用の別集計に
     # 分離していたが、表示が煩雑とのユーザー要望により同日中に統合した）。
-    result = {
+    # 🔴 **4つの塊を並行に走らせる**（2026-08-23）。
+    #    以前は dict リテラルの中で8本を `await` しており、**Python が逐次に
+    #    評価する**ため全部足し算になっていた（本番実測 合計 2,216ms:
+    #    year 722 / month 655 / today 410 / paper_total 217 / 他）。
+    #    2026-08-21 にペーパー補完が3期間へ増えてから、この直列が
+    #    そのまま `/keirin` の表示時間になっていた。
+    #
+    # ⚠️ **同じ `AsyncSession` を並行に使ってはいけない**（SQLAlchemy は
+    #    セッションの同時使用を許さず `another operation is in progress` になる）。
+    #    塊ごとに**別セッション**を張る。リクエスト自身の `db` は1つ目に使い、
+    #    追加の接続は3本に抑える（プールは pool_size 5 + max_overflow 15）。
+    # ⚠️ 塊を細かく割りすぎないこと。接続本数が増えるだけで、律速は
+    #    いちばん重い `year` の集計なので 4分割より先は縮まない。
+    async def _period(session: AsyncSession, cond: str, params: dict,
+                      from_dt: Date, to_dt: Date) -> dict:
         # 🔴 投資・払戻・的中は**実際に売った商品**から数える（`_aggregate` の
         #    docstring 参照）。期間は SQL 条件（候補数用）と日付（実売用）の
         #    両方を渡す —— 片方だけにすると母集団がずれる。
@@ -2191,26 +2206,41 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         #    （`_paper_for_period`）。当年だけに効かせていた頃は、日付ナビで
         #    実販売開始前へ遡ると当日・当月が全部 0 になり、その日に何を推奨して
         #    いたかが画面から消えていた（2026-08-22 是正）。
-        "today": _merge_paper_into(
-            await _aggregate(db, "ph.race_date = :d", {"d": today_str},
-                             from_dt=today, to_dt=today),
-            await _paper_for_period(db, today, today)),
-        "month": _merge_paper_into(
-            await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
-                             from_dt=today.replace(day=1), to_dt=today),
-            await _paper_for_period(db, today.replace(day=1), today)),
-        "year": _merge_paper_into(
-            await _aggregate(db, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
-                             from_dt=Date(today.year, 1, 1), to_dt=today),
-            await _paper_for_period(db, Date(today.year, 1, 1), today)),
+        return _merge_paper_into(
+            await _aggregate(session, cond, params, from_dt=from_dt, to_dt=to_dt),
+            await _paper_for_period(session, from_dt, to_dt))
+
+    async def _in_new_session(fn):
+        async with AsyncSessionLocal() as s:
+            return await fn(s)
+
+    async def _totals(session: AsyncSession) -> tuple[dict, list]:
+        return (await _aggregate_paper(session),
+                await visible_rank_labels(session))
+
+    r_today, r_month, r_year, (paper_total, visible_ranks) = await asyncio.gather(
+        _period(db, "ph.race_date = :d", {"d": today_str}, today, today),
+        _in_new_session(lambda s: _period(
+            s, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
+            today.replace(day=1), today)),
+        _in_new_session(lambda s: _period(
+            s, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
+            Date(today.year, 1, 1), today)),
+        _in_new_session(_totals),
+    )
+
+    result = {
+        "today": r_today,
+        "month": r_month,
+        "year": r_year,
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
         # 🔴 **ペーパー通算**（2026-08-21 追加・ユーザー要望）。上3行とは母集団が違う
         #    （上=実際に売った商品・2026-07-24〜 / これ=picks_history・2024-01〜）。
         #    フロントは必ず「ペーパー」と明示して描くこと。
-        "paper_total": await _aggregate_paper(db),
-        "visible_ranks": await visible_rank_labels(db),
+        "paper_total": paper_total,
+        "visible_ranks": visible_ranks,
     }
 
     return JSONResponse(content=result)

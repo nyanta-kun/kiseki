@@ -78,8 +78,22 @@ def test_visible_rank_labels_returns_display_labels():
 
 
 def test_summary_exposes_visible_ranks():
-    """/keirin/summary が `visible_ranks` を返すこと（フロントの絞り込みの元）。"""
-    assert '"visible_ranks": await visible_rank_labels(db)' in SRC
+    """/keirin/summary が `visible_ranks` を返すこと（フロントの絞り込みの元）。
+
+    ⚠️ **行の書き方ではなく「呼んでいること」と「返していること」を見る**
+       （2026-08-23 更新）。以前は
+       `'"visible_ranks": await visible_rank_labels(db)'` という**1行の文字列**を
+       固定していたため、`get_summary` を並列化して呼び出しをヘルパへ移した
+       だけで落ちた。中身は同じなのに落ちるテストは、リファクタを妨げるだけで
+       退行を捕まえない。
+    """
+    import inspect
+
+    from src.api.keirin_router import get_summary
+
+    src = inspect.getsource(get_summary)
+    assert "visible_rank_labels(" in src, "visible_rank_labels を呼ぶこと"
+    assert '"visible_ranks":' in src, "レスポンスに visible_ranks を含めること"
 
 
 def test_frontend_filters_are_fail_open():
