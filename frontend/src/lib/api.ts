@@ -1688,6 +1688,14 @@ export interface KeirinProposal {
    *    実用上は「最低払戻がガミ域に入っていないか」を見るほうが確実。
    */
   expected_value: number | null;
+  /** 買い目の想定払戻の**平均**（円）。オッズが1点でも欠けると null。
+   *  🔴 `min_payout`（最低）とは別の量。ダッチング配分では近いが、均等配分の
+   *     経路では大きく開くので取り違えないこと。 */
+  mean_payout: number | null;
+  /** 想定払戻の平均が安い＝リスクに見合わない（レビュー画面の一括取消の候補）。
+   *  🔴 判定の正本は `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT`。
+   *     **自動では落とさない**。人がダイアログで確認して取り消す。 */
+  cheap_mean_payout: boolean;
   /** 当たったときの最低払戻（円）。オッズが1点でも欠けると null。 */
   min_payout: number | null;
   /** 当たったときの最高払戻（円）。 */

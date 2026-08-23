@@ -78,11 +78,9 @@ from src.meeting_wave import (
 from src.dutch_allocation import dutch_allocate
 from src.stake_allocation import (
     MIN_EXPECTED_PAYOUT_BY_RANK,
-    MIN_MEAN_PAYOUT,
     MIN_POINT_ODDS,
     cheap_point_odds,
     expected_payout_floor,
-    mean_expected_payout,
 )
 from src.race_shape import (
     wide_note_text,
@@ -1470,22 +1468,6 @@ def _expected_payout_floor_for(
     return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
 
 
-def _mean_payout_for(
-    race_key: str, axis1: int, axis2: int, stakes: dict[int, int],
-) -> float | None:
-    """想定払戻の**平均（円）**。判定できないときは None（＝入稿する側へ倒す）。
-
-    ⚠️ **配分に使ったのと同じ板で測ること**（`_expected_payout_floor_for` と同じ）。
-       `_build_tilted_legs` は予測オッズで配分しているので判定も予測オッズ。
-       予測が作れないときだけ実オッズ板へ落ち、それも無ければ None。
-    """
-    odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(stakes))
-    if not odds:
-        board = _load_trio_board(race_key)
-        odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
-    return mean_expected_payout(stakes, {k: v for k, v in odds.items() if v})
-
-
 def _build_trifecta_head_legs(
     cfg: dict, axis1: int, axis2: int, partners: list[int],
 ) -> tuple[list[BetLeg], dict[int, str]]:
@@ -2004,23 +1986,6 @@ def _process_rank(
                                   f"({rank_key}): 予測オッズ {_cheap:.2f}倍 の目がある "
                                   f"< {MIN_POINT_ODDS:.1f}倍", flush=True)
                             continue
-                    # 🔴 **想定払戻の平均が安いレースは出さない**
-                    #    （2026-08-24・ユーザー判断「入稿時点の買い目払戻の平均が
-                    #    20,000円以下はリスクに見合わない。件数が減るのは許容」）。
-                    #    根拠と実測は `stake_allocation.MIN_MEAN_PAYOUT`。
-                    #    ⚠️ `MIN_EXPECTED_PAYOUT_BY_RANK`（**下限**倍率・7C/7S のみ）
-                    #       とは別の量。両方を通す。
-                    #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
-                    #    ⚠️ 看板の穴埋め（`submit_marquee_wt.py --marquee`）は
-                    #       この経路を通らないので看板の推奨は消えない。
-                    if not use_trifecta:
-                        _mean = _mean_payout_for(
-                            race_key.split("#")[0], axis1, axis2_or_p1, tilt_stakes_map)
-                        if _mean is not None and _mean <= MIN_MEAN_PAYOUT:
-                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                                  f"({rank_key}): 想定払戻(平均) {_mean:,.0f}円 <= "
-                                  f"{MIN_MEAN_PAYOUT:,}円", flush=True)
-                            continue
                     min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
                     if min_floor is not None and not use_trifecta:
                         floor = _expected_payout_floor_for(
@@ -2303,21 +2268,6 @@ def _process_manual(
     if cfg.get("tilt_stakes"):
         legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
             race_key, cfg, axis1, axis2, partners)
-        # 🔴 **想定払戻の平均が安いレースは看板でも出さない**
-        #    （2026-08-24・ユーザー判断）。根拠と実測は
-        #    `stake_allocation.MIN_MEAN_PAYOUT`。
-        #    ⚠️ **これは「看板レースには必ず推奨を出す」（2026-08-09 ユーザー決定）
-        #       を上書きする**。看板でも配当が薄いレースは売らない、という判断。
-        #       実測でも落ちる側の profile は看板のほうが悪い
-        #       （ガミ 26.3% / 「2万円以上の的中」4.00%/件）。
-        #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
-        _mean = _mean_payout_for(race_key.split("#")[0], axis1, axis2, tilt_stakes_map)
-        if _mean is not None and _mean <= MIN_MEAN_PAYOUT:
-            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                  f"({rank_key}): 想定払戻(平均) {_mean:,.0f}円 <= "
-                  f"{MIN_MEAN_PAYOUT:,}円", flush=True)
-            return 0, []
-
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
     wide_note = wide_note_text(axis1, axis2, len(partners), cfg["n_cars"])
