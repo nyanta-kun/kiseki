@@ -27,8 +27,18 @@
 1. `post` — **発走後の行を削除**（−約40%）。読み手が無い。
    むしろ `jra_phase4a` の「late 20%点」が発走後の値で汚染されているのを直す副作用がある
 2. `exotic` — **exotic 券種は発走前の最終スナップショットだけ残す**（−約40%）。
-   `odds_history` の exotic 時系列を読むスクリプトは**1本も無い**
-   （3連単の検証は `race_payouts` の実払戻を使う。`backtest_pivot_exotic.py` 等）
+   ただし **`--exotic-keep-days`（既定 21 日）より新しいレースは潰さない**。
+
+   🔴 **2026-08-23 に前提が変わった。** かつては「exotic 時系列を読むスクリプトは1本も無い」
+   ことがこの方針の根拠だった。#265 で exotic オッズのパースが直り、
+   三連複オッズから逆算した「3着以内」確率が単勝プール由来のものより
+   実際の着順をよく当てることが分かった（穴馬帯の AUC 増分 +0.0066）。
+   この発見を実運用に載せられるかは **「発走 N 分前のオッズでも同じ差が出るか」** に懸かっており、
+   その検定には**発走前 30 分の時系列そのもの**が要る。最終スナップショットだけでは測れない。
+
+   三連単だけは保持期間内でも潰す。JVDF が上位500人気で打ち切って配信するため
+   分母が閉じず（Σ(1/odds) から逆算した払戻率が 81.6%・公式 72.5%）、
+   期待値計算に使えないことが実測で確定している。しかも exotic 行数の約45%を占める。
 
 ⚠️ **`win` / `place` の発走前時系列には触らない。** 前向き記録（発走10分前）・
 `jra_odds_cross_bettype_arbitrage`・`jra_phase4a` が使う。ここを削ると
@@ -69,6 +79,15 @@ logger = logging.getLogger("prune_oh")
 
 KEEP_BET_TYPES = ("win", "place")
 
+# exotic とみなす券種（= 最終スナップショット以外を潰す対象）
+EXOTIC_BET_TYPES = ("bracket", "quinella", "wide", "exacta", "trio", "trifecta")
+# 保持期間内でも潰す券種（上位500人気で打ち切られており期待値計算に使えない）
+ALWAYS_COLLAPSE = ("trifecta",)
+
+# win/place の発走前時系列には絶対に触らない（前向き記録・odds 系分析が使う）
+assert not set(KEEP_BET_TYPES) & set(EXOTIC_BET_TYPES)
+assert set(ALWAYS_COLLAPSE) <= set(EXOTIC_BET_TYPES)
+
 # ⚠️ `fetched_at` は UTC・`races.post_time` は JST。9時間ずらして比較する（台帳 14.2）
 #
 # 🔴 **日付ごとに回すこと。** 全期間を1本の CTE でやると `fetched_at > post_utc` を
@@ -97,13 +116,13 @@ COUNT_SQL = {
     WITH latest AS (
       SELECT bet_type, combination, max(fetched_at) AS last_at
       FROM keiba.odds_history
-      WHERE race_id = %(race_id)s AND bet_type NOT IN %(keep)s
+      WHERE race_id = %(race_id)s AND bet_type IN %(collapse)s
         AND fetched_at <= %(post_utc)s
       GROUP BY 1,2
     )
     SELECT count(*) FROM keiba.odds_history o
     JOIN latest l ON l.bet_type = o.bet_type AND l.combination = o.combination
-    WHERE o.race_id = %(race_id)s AND o.bet_type NOT IN %(keep)s
+    WHERE o.race_id = %(race_id)s AND o.bet_type IN %(collapse)s
       AND o.fetched_at <= %(post_utc)s AND o.fetched_at < l.last_at
     """,
 }
@@ -117,13 +136,13 @@ DELETE_SQL = {
     WITH latest AS (
       SELECT bet_type, combination, max(fetched_at) AS last_at
       FROM keiba.odds_history
-      WHERE race_id = %(race_id)s AND bet_type NOT IN %(keep)s
+      WHERE race_id = %(race_id)s AND bet_type IN %(collapse)s
         AND fetched_at <= %(post_utc)s
       GROUP BY 1,2
     ), doomed AS (
       SELECT o.ctid FROM keiba.odds_history o
       JOIN latest l ON l.bet_type = o.bet_type AND l.combination = o.combination
-      WHERE o.race_id = %(race_id)s AND o.bet_type NOT IN %(keep)s
+      WHERE o.race_id = %(race_id)s AND o.bet_type IN %(collapse)s
         AND o.fetched_at <= %(post_utc)s AND o.fetched_at < l.last_at
     )
     DELETE FROM keiba.odds_history WHERE ctid IN (SELECT ctid FROM doomed)
@@ -149,6 +168,9 @@ def main() -> None:
     p.add_argument("--execute", action="store_true", help="付けないと dry-run")
     p.add_argument("--sample-dates", type=int, default=4,
                    help="dry-run で見積りに使う開催日数（全期間を数えると重いため）")
+    p.add_argument("--exotic-keep-days", type=int, default=21,
+                   help="この日数より新しいレースは exotic 時系列を潰さない"
+                        "（発走前オッズの検証に使う。三連単は対象外で常に潰す）")
     p.add_argument("--sleep", type=float, default=0.3, help="日ごとの休止秒")
     args = p.parse_args()
 
@@ -159,6 +181,17 @@ def main() -> None:
         if pol not in COUNT_SQL:
             raise SystemExit(f"未知の policy: {pol}")
 
+    keep_cutoff = (
+        datetime.datetime.strptime(before, "%Y%m%d").date()
+        - datetime.timedelta(days=args.exotic_keep_days)
+    ).strftime("%Y%m%d")
+
+    def _collapse_for(date: str) -> tuple[str, ...]:
+        """その開催日で「最終スナップショット以外を潰す」券種。"""
+        if date >= keep_cutoff:
+            return ALWAYS_COLLAPSE
+        return EXOTIC_BET_TYPES
+
     conn = connect()
     cur = conn.cursor()
     cur.execute(DATES_SQL, {"start": args.start, "before": before})
@@ -166,6 +199,9 @@ def main() -> None:
     cur.execute("SELECT count(*) FROM keiba.odds_history")
     total = cur.fetchone()[0]
     logger.info(f"対象期間 {args.start}〜{before}（当日は触らない）/ 開催日 {len(dates)}")
+    logger.info(f"exotic 時系列の保持: {keep_cutoff} 以降のレースは潰さない"
+                f"（--exotic-keep-days={args.exotic_keep_days}、"
+                f"ただし {'/'.join(ALWAYS_COLLAPSE)} は常に潰す）")
     logger.info(f"現在の総行数 {total:,}")
     if not dates:
         return
@@ -188,7 +224,8 @@ def main() -> None:
                 sampled_total += cur.fetchone()[0]
                 for pol in policies:
                     cur.execute(COUNT_SQL[pol], {
-                        "race_id": race_id, "post_utc": post_utc, "keep": KEEP_BET_TYPES,
+                        "race_id": race_id, "post_utc": post_utc,
+                        "collapse": _collapse_for(date),
                     })
                     planned[pol] += cur.fetchone()[0]
         logger.info(f"標本の総行数 {sampled_total:,}")
@@ -207,7 +244,8 @@ def main() -> None:
         for race_id, post_utc in _races(date):
             for pol in policies:
                 cur.execute(DELETE_SQL[pol], {
-                    "race_id": race_id, "post_utc": post_utc, "keep": KEEP_BET_TYPES,
+                    "race_id": race_id, "post_utc": post_utc,
+                    "collapse": _collapse_for(date),
                 })
                 deleted[pol] += cur.rowcount
         conn.commit()   # 開催日ごとにコミット（長大トランザクションを作らない）
