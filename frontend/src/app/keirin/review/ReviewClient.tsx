@@ -1027,18 +1027,14 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         </div>
       </div>
 
-      <p className="mb-3 rounded bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-        承認制の ON/OFF は{" "}
-        <Link href="/admin" className="text-blue-600 underline dark:text-blue-400">
-          管理 → 設定
-        </Link>{" "}
-        にあります。OFF のときは朝のバッチが従来どおり netkeirin へ下書きを自動作成し、
-        ON にすると承認するまで netkeirin へは何も出ません。
-        <br />
-        期待値は<strong>異常値の検知が目的</strong>で、購入判断の根拠には使えません
-        （市場は効率的で、モデル由来の期待値による選別は繰り返し否定されています）。
-        実用上は<strong>最低払戻がガミ域に入っていないか</strong>を見てください。
-      </p>
+      {/* ⚠️ **説明の注記は 2026-08-24 に外した**（ユーザー判断・「私以外使用しない
+          ページです」）。消したのは2つ:
+            1. 承認制 ON/OFF の場所（`/admin` → 設定）とその挙動
+            2. 期待値の使い方（異常値の検知が目的・購入判断には使えない）
+          単一の運用者しか開かない画面なので、案内文が常時場所を取る意味が無い。
+          🔴 2 の中身（**期待値で選別しない／実用上は最低払戻がガミ域かを見る**）は
+             判断の作法そのものなので、`KeirinProposal.expected_value` の型定義に
+             同じ警告が残してある。画面から消えても根拠は失っていない。 */}
 
       {/* 🔴 netkeirin と記録が食い違っているときだけ出す警告（2026-08-19・ユーザー要望）。
           押すまで何も書き換えない —— 「公開された」のか「netkeirin 側で消された」のかは
