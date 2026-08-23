@@ -365,6 +365,7 @@ def _finish_top3_frames(entries: Sequence[Any]) -> list[int] | None:
 async def _fetch_settled_submissions(
     db: AsyncSession, from_dt: Date, to_dt: Date,
     rank_labels: list[str] | None, *, only_missing_from_picks: bool,
+    deleted_only: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """入稿の原本（`bet_detail`）と確定結果から**売った1商品ずつ**を採点して返す。
 
@@ -398,6 +399,12 @@ async def _fetch_settled_submissions(
                   AND {_enabled_rank_cond('ph2')}
               )
     """ if only_missing_from_picks else ""
+    # 🔴 既定は「売った商品だけ」＝取消は除外。`deleted_only=True` のときだけ
+    #    **取り消した分だけ**を採点する（レビュー画面の「取り消した分の参考値」用）。
+    #    ⚠️ 両方を混ぜる口は作らない。混ぜると実績サマリーに売っていない分が
+    #       紛れ込む（`winning_combos` を取消にも付けたときと同じ事故）。
+    deleted_cond = ("ns.deleted_at IS NOT NULL" if deleted_only
+                    else "ns.deleted_at IS NULL")
 
     subs = (await db.execute(
         text(f"""
@@ -405,7 +412,7 @@ async def _fetch_settled_submissions(
             FROM keirin.netkeirin_submissions ns
             JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
             WHERE wr.race_date BETWEEN :from_date AND :to_date
-              AND ns.deleted_at IS NULL
+              AND {deleted_cond}
               {rank_cond}
               -- 発走から90分。picks_history 側の集計条件と同一にする
               AND (
@@ -2736,9 +2743,34 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         # 🔴 netkeirin の表示的中率は**ガミを不的中と数える**ほう。
         "hit_rate": (100.0 * n_net_hit / len(settled_items)) if settled_items else None,
     }
+    # ── 取り消した分の「そのまま売っていたら」（2026-08-24・ユーザー要望）──
+    # 🔴 **実績ではない。** 売っていないので netkeirin の成績にも入らないし、
+    #    上の `summary` にも入れない。落とした判断が正しかったかを見るための参考値。
+    # 🔴 採点は**実績と同じ経路**（`_fetch_settled_submissions`）を使う。確定オッズ
+    #    （`wt_odds`）で採点するので、`bet_detail` の入稿時点オッズで画面が計算する
+    #    のとは別物。画面側で計算すると実績サマリーと数字の作り方が食い違う。
+    # ⚠️ 母集団は**取り消したレースだけ**。入稿前（proposed）は「まだ売っていない」
+    #    のであって「売らないと決めた」ではないので混ぜない。
+    cancelled_settled, _ = await _fetch_settled_submissions(
+        db, day, day, None, only_missing_from_picks=False, deleted_only=True)
+    c_bet = sum(x["bet"] for x in cancelled_settled)
+    c_pay = sum(x["payout"] for x in cancelled_settled)
+    c_net = sum(1 for x in cancelled_settled if x["net_hit"])
+    summary_cancelled = {
+        "n_races": len(cancelled_settled),
+        # 取消は「売っていない」ので未確定の概念を持たない。形を揃えるため 0 を返す。
+        "n_pending": 0,
+        "bet": c_bet,
+        "payout": c_pay,
+        "balance": c_pay - c_bet,
+        "recovery_rate": (100.0 * c_pay / c_bet) if c_bet else None,
+        "hit_rate": (100.0 * c_net / len(cancelled_settled)) if cancelled_settled else None,
+    }
     return JSONResponse(content={"date": target, "n_proposed": n_proposed,
                                  "n_unpublished": n_unpublished,
-                                 "summary": summary, "items": items})
+                                 "summary": summary,
+                                 "summary_cancelled": summary_cancelled,
+                                 "items": items})
 
 
 class ApprovalIn(BaseModel):

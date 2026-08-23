@@ -1753,6 +1753,15 @@ export interface KeirinProposalsResponse {
   n_unpublished?: number;
   /** 当日サマリー（netkeirin の表示と項目を合わせたもの）。 */
   summary?: KeirinProposalSummary;
+  /**
+   * **取り消したレースを、そのまま売っていたら**の参考値（2026-08-24）。
+   *
+   * 🔴 **実績ではない。** 売っていないので netkeirin の成績にも `summary` にも
+   *    入らない。落とした判断が正しかったかを見るためだけの数字。
+   * ⚠️ 母集団は**取り消したレースだけ**（入稿前は含めない）。採点は実績と
+   *    同じ経路（確定オッズ）なので、両者は同じ土俵で比べられる。
+   */
+  summary_cancelled?: KeirinProposalSummary;
   items: KeirinProposal[];
 }
 

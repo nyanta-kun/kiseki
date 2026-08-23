@@ -39,7 +39,8 @@ export default async function KeirinReviewPage({
   // 承認制の ON/OFF は 2026-08-12 に `/admin` の設定タブへ移した（この画面は
   // レースを見て承認する作業に専念する）。ここで取得・表示する必要はない。
   const proposals = await fetchKeirinProposals(target).catch(() => ({
-    date: target, n_proposed: 0, n_unpublished: 0, summary: undefined, items: [],
+    date: target, n_proposed: 0, n_unpublished: 0, summary: undefined,
+    summary_cancelled: undefined, items: [],
   }));
 
   return (
@@ -49,6 +50,7 @@ export default async function KeirinReviewPage({
       nProposed={proposals.n_proposed}
       nUnpublished={proposals.n_unpublished ?? 0}
       summary={proposals.summary}
+      summaryCancelled={proposals.summary_cancelled}
     />
   );
 }
