@@ -2315,6 +2315,15 @@ STATUS_DELETED = "deleted"
 
 #: レース信頼度指標のための履歴集計。**当該レースより前**だけを数える
 #: （当日を含めると結果を見て予想することになる）。
+# 🔴 **`wt_races` と結合してはいけない**（2026-08-23・本番を遅くした実バグ）。
+#    `race_key` は `YYYYMMDD_場_R` 形式なので `r.race_date < :d` は
+#    **`e.race_key < :ymd`（8桁の日付文字列）と等価**。結合を外すだけで
+#    本番実測 2,576ms → 655ms になった（`wt_races` 102,221行の seq scan が消える）。
+#    さらに `ix_wt_entries_player_id`（202608230945_keirin）で index only scan になる。
+#
+#    文字列比較で正しく効く理由: `'20260822_27_01' < '20260823'` は7文字目まで一致し
+#    8文字目 `'2' < '3'` で真。同日の `'20260823_27_01' < '20260823'` は
+#    8文字まで一致したうえで**長い方が大きい**ので偽。＝ 前日以前だけが残る。
 Q_SQL_CRASH = """
     WITH ent AS (
       SELECT race_key, player_id FROM keirin.wt_entries
@@ -2323,9 +2332,9 @@ Q_SQL_CRASH = """
       SELECT e.player_id,
              count(*) AS starts,
              count(*) FILTER (WHERE COALESCE(e.finish_order, 0) < 1) AS dnf
-      FROM keirin.wt_entries e JOIN keirin.wt_races r USING(race_key)
+      FROM keirin.wt_entries e
       WHERE e.player_id IN (SELECT player_id FROM ent)
-        AND r.race_date < :d
+        AND e.race_key < :ymd
       GROUP BY 1
     )
     SELECT ent.race_key, COALESCE(h.starts, 0) AS starts, COALESCE(h.dnf, 0) AS dnf
@@ -2432,6 +2441,34 @@ def _expected_value(lines: list[dict], top3_pct: dict[int, float]) -> float | No
     return ev / total
 
 
+@router.get("/proposals/count")
+async def get_proposals_count(date: str = "",
+                              db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """未承認の入稿案の**件数だけ**を返す（バッジ用・2026-08-23 新設）。
+
+    🔴 **トップページは `/proposals` を呼んではいけない。** あちらは全レースの
+       買い目・出走表・落車リスクを含み **201〜282KB / 約3秒**かかるが、
+       トップが欲しいのは `n_proposed`（整数ひとつ）だけだった。
+       本番実測でページ表示の支配項になっていた（2026-08-21〜）。
+
+    こちらは `netkeirin_submissions` を1本引くだけで、他の表には触らない。
+    """
+    target = date or _today_jst().isoformat()
+    if not _DATE_RE.match(target):
+        return JSONResponse(content={"ok": False, "message": f"不正な日付: {target}"},
+                            status_code=400)
+    ymd = target.replace("-", "")
+    # 🔴 **`deleted_at IS NULL` を足してはいけない。** `/proposals` 側の
+    #    `n_proposed` は削除済みの行も数えている（`WHERE race_key LIKE :pat` だけで
+    #    絞り、items をそのまま数える）。ここで条件を足すと**バッジの数字が変わる**。
+    #    挙動を変えるかどうかは性能修正とは別の判断なので、まず一致させる。
+    n = (await db.execute(text("""
+        SELECT count(*) FROM keirin.netkeirin_submissions
+        WHERE race_key LIKE :pat AND status = :st
+    """), {"pat": f"{ymd}%", "st": STATUS_PROPOSED})).scalar_one()
+    return JSONResponse(content={"date": target, "n_proposed": int(n or 0)})
+
+
 @router.get("/proposals")
 async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """指定日の入稿案・入稿済みを、確認画面が必要とする情報つきで返す。
@@ -2478,7 +2515,10 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     #    `services/keirin_crash_risk.py` の docstring。
     risk_by_race: dict[str, float] = {}
     try:
-        hist = (await db.execute(text(Q_SQL_CRASH), {"keys": keys, "d": target})).mappings().all()
+        # :ymd は上で作った `target.replace("-", "")`＝`race_key` の前置8桁と
+        # 比べるための文字列（Q_SQL_CRASH のコメント参照）。
+        hist = (await db.execute(text(Q_SQL_CRASH),
+                                 {"keys": keys, "ymd": ymd})).mappings().all()
         riders: dict[str, list[tuple[int, int]]] = {}
         for x in hist:
             riders.setdefault(x["race_key"], []).append(

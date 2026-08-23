@@ -1752,6 +1752,17 @@ export async function fetchKeirinProposals(date: string): Promise<KeirinProposal
   return get<KeirinProposalsResponse>(`/keirin/proposals?date=${date}`, { cache: "no-store" });
 }
 
+/**
+ * 未承認バッジ用の**件数だけ**を取る（2026-08-23 新設）。
+ *
+ * 🔴 **バッジのために `fetchKeirinProposals` を呼んではいけない。**
+ *    あちらは全レースの買い目・出走表・落車リスクを含み、本番実測で
+ *    **201〜282KB / 約3秒**。トップページ表示の支配項になっていた。
+ */
+export async function fetchKeirinProposalsCount(date: string): Promise<{ n_proposed: number }> {
+  return get<{ n_proposed: number }>(`/keirin/proposals/count?date=${date}`, { cache: "no-store" });
+}
+
 export async function fetchKeirinApprovalMode(): Promise<{ require_approval: boolean }> {
   return get<{ require_approval: boolean }>("/keirin/approval-mode", { cache: "no-store" });
 }
