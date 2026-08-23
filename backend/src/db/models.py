@@ -406,7 +406,10 @@ class RacePayout(Base):
     bet_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        comment="馬券種別（win/place/bracket/quinella/wide/exacta/trio/trifecta）",
+        comment=(
+            "馬券種別（win/place/bracket/quinella/wide/exacta/trio/trifecta）。"
+            "odds_history.bet_type と同じ語彙。src/bet_types.py が正準表記の出所"
+        ),
     )
     combination: Mapped[str] = mapped_column(
         String(30),
@@ -767,7 +770,11 @@ class OddsHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     race_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.races.id"), index=True)
     bet_type: Mapped[str] = mapped_column(
-        String(20), comment="賭式（win/place/quinella/trio/trifecta等）"
+        String(20),
+        comment=(
+            "馬券種別（win/place/bracket/quinella/wide/exacta/trio/trifecta）。"
+            "race_payouts.bet_type と同じ語彙。src/bet_types.py が正準表記の出所"
+        ),
     )
     combination: Mapped[str] = mapped_column(
         String(50), comment="馬番組み合わせ（単: '3', 連: '3-7', 3連: '3-7-12'）"

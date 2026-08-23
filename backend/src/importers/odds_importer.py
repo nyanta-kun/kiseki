@@ -11,6 +11,12 @@ JVDF v4.9 速報系 DataSpec と対応するレコード種別 ID (2024-08-07確
   0B34 → O4: 馬単 (4031バイト)
   0B35 → O5: 三連複 (12293バイト)
   0B36 → O6: 三連単 (83285バイト)
+
+bet_type は race_payouts（HR レコード）と同じ語彙を使う:
+  win / place / bracket / quinella / wide / exacta / trio / trifecta
+ワイドは `wide`。2026-08-23 まで O3 だけ `quinella_place` を書いており、
+odds_history と race_payouts を bet_type で join すると無言で 0 件になっていた。
+既存行の移行は scripts/rename_quinella_place_to_wide.py。
 """
 
 from __future__ import annotations
@@ -460,7 +466,7 @@ class OddsImporter:
 
         Args:
             data: レコード文字列
-            bet_type: "quinella_place"
+            bet_type: "wide"（race_payouts と同じ表記）
             race_id: DBのレースID
             fetched_at: 取得日時
             n_combos: 最大組数 (153)

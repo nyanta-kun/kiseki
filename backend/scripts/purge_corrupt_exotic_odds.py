@@ -9,7 +9,7 @@ O2〜O6（馬連・ワイド・馬単・三連複・三連単）は組番欄に�
     place                  99.8%            1.0     ← 無傷
     trifecta                1.4%        10204.0
     trio                    3.0%         2040.0
-    quinella_place          2.0%            0.1
+    quinella_place          2.0%            0.1  ← 現在は `wide` に改名済み
     exacta                 15.0%         1000.3
     quinella               15.6%         3000.0
 
@@ -49,7 +49,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("purge_exotic")
 
 # 壊れている券種。win / place は含めない（無傷）。
-CORRUPT_BET_TYPES = ("trio", "trifecta", "quinella", "quinella_place", "exacta")
+# ワイドは 2026-08-23 の改名前が `quinella_place`、改名後が `wide`。
+# rename_quinella_place_to_wide.py の実行前後どちらでも取りこぼさないよう両方入れる。
+CORRUPT_BET_TYPES = ("trio", "trifecta", "quinella", "quinella_place", "wide", "exacta")
 TARGET_TABLES = ("keiba.odds_history", "keiba.latest_odds")
 BATCH = 200_000
 

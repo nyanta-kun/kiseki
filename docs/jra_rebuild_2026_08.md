@@ -356,7 +356,9 @@ version | rows   | races | 期間                  | calculated_at 最終
 ### 5.3 `odds_history` は 13GB
 
 60,368,822 行 / **13GB**。`fetched_at` は **2026-03-28 01:38 〜**、開催 **40 日分**のみ。
-`bet_type` は win / place / trio / trifecta / exacta / quinella_place / quinella の 7 種。
+`bet_type` は win / place / trio / trifecta / exacta / wide / quinella の 7 種。
+（2026-08-23 まで、ワイドだけ `quinella_place` と書かれていて `race_payouts.bet_type='wide'`
+と join できなかった。正準表記は docs/jvdata-spec.md「券種名（bet_type）の正準表記」）
 （地方は win / place の 2 種で 9.9GB。中央は券種が多いぶん増加が速い）
 
 `latest_odds` は別に 774MB / 4,375,343 行。
@@ -1238,7 +1240,7 @@ OS へは返さない。したがって効果は「**縮む**」ではなく「*
 本番稼働中には絶対に打たないこと。急ぐ理由が無ければ再利用に任せるのが安全。
 
 ⚠️ **exotic 券種の収集開始は 2026-06-14。** `win`/`place` は 2026-03-28 からあるが、
-trio / trifecta / exacta / quinella / quinella_place は 6月半ばからしか無い
+trio / trifecta / exacta / quinella / wide（旧 `quinella_place`）は 6月半ばからしか無い
 （刈り込みの実行ログで 6/13 までは `exotic=0` と出るのはこのため。異常ではない）。
 **exotic の時系列はそもそも 2 か月ぶんしか存在しない。**
 **`win` / `place` の発走前時系列は一切触っていない**（前向き記録・
