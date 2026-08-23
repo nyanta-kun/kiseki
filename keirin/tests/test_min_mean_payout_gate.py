@@ -78,6 +78,28 @@ def test_三連単経路には適用しない():
     assert "if not use_trifecta:" in block, "三連単経路を除外していない"
 
 
+def test_看板_手動経路にもこの判定が入っている():
+    """🔴 2026-08-24 のユーザー判断で**看板にも掛ける**。
+
+    ⚠️ これは「看板レースには必ず推奨を出す」（2026-08-09 決定）を上書きしている。
+       実測では落ちる側の profile は看板のほうが悪い
+       （ガミ 26.3% / 「2万円以上の的中」4.00%/件）。
+    """
+    src = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    fn = src[src.index("def _process_manual("):src.index("def _resolve_race_info(")] \
+        if "def _resolve_race_info(" in src[src.index("def _process_manual("):] \
+        else src[src.index("def _process_manual("):]
+    assert "_mean_payout_for" in fn, "看板・手動経路が判定を呼んでいない"
+    assert "return 0, []" in fn
+
+
+def test_ゲートは2経路に入っている():
+    """ランク自動入稿と 看板・手動入稿の**両方**で発火すること。"""
+    src = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    assert src.count("_mean = _mean_payout_for") == 2, \
+        "ゲートが2経路に入っていない（片方だけだと看板が素通りする）"
+
+
 def test_判定は配分に使ったのと同じ板で行う():
     """⚠️ 配分が予測オッズなら判定も予測オッズ（`_expected_payout_floor_for` と同じ）。"""
     src = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")

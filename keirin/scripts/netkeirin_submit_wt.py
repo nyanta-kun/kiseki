@@ -2303,6 +2303,20 @@ def _process_manual(
     if cfg.get("tilt_stakes"):
         legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
             race_key, cfg, axis1, axis2, partners)
+        # 🔴 **想定払戻の平均が安いレースは看板でも出さない**
+        #    （2026-08-24・ユーザー判断）。根拠と実測は
+        #    `stake_allocation.MIN_MEAN_PAYOUT`。
+        #    ⚠️ **これは「看板レースには必ず推奨を出す」（2026-08-09 ユーザー決定）
+        #       を上書きする**。看板でも配当が薄いレースは売らない、という判断。
+        #       実測でも落ちる側の profile は看板のほうが悪い
+        #       （ガミ 26.3% / 「2万円以上の的中」4.00%/件）。
+        #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
+        _mean = _mean_payout_for(race_key.split("#")[0], axis1, axis2, tilt_stakes_map)
+        if _mean is not None and _mean <= MIN_MEAN_PAYOUT:
+            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
+                  f"({rank_key}): 想定払戻(平均) {_mean:,.0f}円 <= "
+                  f"{MIN_MEAN_PAYOUT:,}円", flush=True)
+            return 0, []
 
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
