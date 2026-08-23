@@ -126,6 +126,10 @@ def main() -> int:
     ap.add_argument("--test", default="data/exp/tf_shape_cache4.jsonl")
     ap.add_argument("--rounds", type=int, default=400)
     ap.add_argument("--swap", action="store_true")
+    # 🔴 **商品が売らない堅いレースを除く**（2026-08-23 の是正）。
+    #    初出時は全レースで測っており、7S の母集団（axis_sum<=1.40）ではなかった。
+    #    ◎○の分析では、堅いレースを含めるか外すかで結論が逆転した実例がある。
+    ap.add_argument("--axis-sum-max", type=float, default=None)
     args = ap.parse_args()
 
     tr, te = load_any(args.train), load_any(args.test)
@@ -139,6 +143,19 @@ def main() -> int:
     ent_te = load_entries([r["key"] for r in te])
     fin_tr = _load_finishes([r["key"] for r in tr])
     fin_te = _load_finishes([r["key"] for r in te])
+    if args.axis_sum_max is not None:
+        def _firm(rows):
+            out = []
+            for r in rows:
+                o = r["order"]
+                if len(o) >= 2 and r["p3"][o[0]] + r["p3"][o[1]] <= args.axis_sum_max:
+                    out.append(r)
+            return out
+        tr, te = _firm(tr), _firm(te)
+        print(f"堅いレースを除外（p3上位2合計<={args.axis_sum_max}）: "
+              f"学習 {len(tr):,}R / 検定 {len(te):,}R")
+        ent_tr = {k: v for k, v in ent_tr.items()}
+        ent_te = {k: v for k, v in ent_te.items()}
     Xtr, ytr, _ = build(tr, ent_tr, fin_tr)
     Xte, yte, mte = build(te, ent_te, fin_te)
     print(f"車行 学習 {len(Xtr):,} / 検定 {len(Xte):,}"
