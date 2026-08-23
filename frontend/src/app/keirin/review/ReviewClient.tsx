@@ -1261,7 +1261,12 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           🔴 平均払戻は API の `mean_payout`（入稿時点の予測オッズ×実配分）。
              画面では計算しない —— 正本は
              `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT` と
-             `keirin_router._mean_payout`。 */}
+             `keirin_router._mean_payout`。
+          🔴 **リストに載せる条件は平均払戻の1つだけ**（`cheap_mean_payout`）。
+             最低払戻・ガミ・落車は**判断材料として並べているだけで選定には
+             使っていない**。列が増えたときに「これも条件だ」と読まれないよう、
+             見出しにも書いてある。選定条件を増やすなら API 側の印を増やすこと
+             （画面で条件を足すと正本が画面へ散る）。 */}
       {cheapDialog !== null && (() => {
         const chosen = cheapTargets.filter((p) => cheapDialog[pickKey(p)]);
         return (
@@ -1275,8 +1280,11 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
               <div className="border-b p-4 dark:border-gray-700">
                 <h2 className="text-base font-semibold">想定払戻の平均が安いレースを取り消す</h2>
                 <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                  入稿時点の買い目払戻の平均が安い＝リスクに見合わない、と判定した
-                  レースです。<strong>チェックを外すと取消から除外</strong>できます。
+                  入稿時点の買い目払戻の<strong>平均</strong>が安い＝リスクに見合わない、
+                  と判定したレースです。<strong>チェックを外すと取消から除外</strong>できます。
+                  <br />
+                  ⚠️ 一覧に載せる条件は<strong>平均払戻だけ</strong>です。最低払戻・ガミ・
+                  落車は判断材料として並べているだけで、選定には使っていません。
                 </p>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -1288,6 +1296,10 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                       <th className="p-2 text-right">R</th>
                       <th className="p-2 text-left">ランク</th>
                       <th className="p-2 text-right">平均払戻</th>
+                      {/* ⚠️ ここから右は**判断材料**であって選定条件ではない。 */}
+                      <th className="p-2 text-right">最低払戻</th>
+                      <th className="p-2 text-right">最高払戻</th>
+                      <th className="p-2 text-right">落車</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1311,6 +1323,32 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                             {p.mean_payout === null
                               ? "—"
                               : `${Math.round(p.mean_payout).toLocaleString()}円`}
+                          </td>
+                          {/* 🔴 最低払戻は**下振れ側を優先**する。`min_payout` は
+                              入稿時点の板由来で楽観的（実測 中央 確定/表示 0.860）。
+                              カードの表示と同じ規則。ガミ域は赤で出す。 */}
+                          <td className="p-2 text-right tabular-nums">
+                            <span className={p.gami_risk
+                              ? "font-semibold text-red-600 dark:text-red-400" : ""}>
+                              {yen(p.min_payout_low ?? p.min_payout)}
+                            </span>
+                            {p.gami_risk && (
+                              <span
+                                className="ml-1 text-[10px] text-red-600 dark:text-red-400"
+                                title="当たっても投資額を下回りうる（ガミ）"
+                              >
+                                ガミ
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2 text-right tabular-nums text-gray-500">
+                            {yen(p.max_payout)}
+                          </td>
+                          {/* ⚠️ 落車リスクは**表示だけ**（危険帯のほうが ROI は高い）。
+                              取消の理由にはしない —— 判断材料として出すに留める。 */}
+                          <td className="p-2 text-right tabular-nums text-gray-500">
+                            {p.crash_risk == null
+                              ? "—" : `${(p.crash_risk * 100).toFixed(2)}%`}
                           </td>
                         </tr>
                       );

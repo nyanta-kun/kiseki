@@ -90,6 +90,25 @@ def test_レビュー画面に一括取消の口がある():
         "画面が閾値を直書きしている（API の印だけを見ること）"
 
 
+def test_ダイアログが判断材料を並べている():
+    """🔴 取消の可否を人が決める場なので、既に算出済みのリスク指標を並べる。
+
+    ⚠️ **選定条件は平均払戻の1つだけ**。ここに並ぶ他の列は判断材料であって
+       条件ではない。列が増えたときに「これも条件だ」と読まれないよう、
+       画面にも但し書きを出している。
+    """
+    tsx = (REPO / "frontend" / "src" / "app" / "keirin" / "review"
+           / "ReviewClient.tsx").read_text("utf-8")
+    dlg = tsx[tsx.index("aria-label=\"想定払戻の平均が安いレースの取消\""):]
+    for col in ("平均払戻", "最低払戻", "最高払戻", "落車"):
+        assert f">{col}</th>" in dlg, f"ダイアログに {col} 列が無い"
+    # 🔴 最低払戻は下振れ側を優先（板由来の min_payout は楽観的）
+    assert "p.min_payout_low ?? p.min_payout" in dlg, "下振れ側を優先していない"
+    assert "p.gami_risk" in dlg, "ガミの印が無い"
+    # ⚠️ 選定条件は1つだけ、と画面にも書いてあること
+    assert "選定には使っていません" in dlg
+
+
 def test_自動入稿にはゲートを入れない():
     """🔴 人が確認して消す設計。自動で落とすと**ダイアログに出す対象が消える**。"""
     sub = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
