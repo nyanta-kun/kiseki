@@ -77,6 +77,51 @@ _ENTRIES_SQL = _text("""
 """)
 
 
+# tier ごとの数値バンド（上限は含まない）。tier_score を降順に並べると tier 順が完全に
+# 再現され、かつ同じ tier の中でも priority_score の順に並ぶ。
+#
+# なぜ必要か: 画面には confidence_score（指数gapベース 0-100）を出していたが、
+# **これは tier と対応しない**。tier の第一分岐は市場一致（指数1位馬＝単勝1番人気か）で、
+# confidence_score は第二分岐でしか効かないため、
+# 「confidence_score 96 なのに tier C」「67 なのに tier A」が普通に起きる（2026-08-23 実測）。
+# 数値と順位が食い違って見えるので、tier と整合する単一の指標を別に用意する。
+_TIER_BANDS: dict[str, tuple[float, float]] = {
+    "S": (80.0, 100.0),
+    "A": (65.0, 80.0),
+    "B": (50.0, 65.0),
+    "C+": (35.0, 50.0),
+    "C": (0.0, 35.0),
+}
+
+# priority_score = confidence_score - entropy_norm * _ENTROPY_PENALTY_WEIGHT
+# recommender._ENTROPY_PENALTY_WEIGHT と同じ値。Phase3 で検証済み。
+_ENTROPY_PENALTY_WEIGHT = 30.0
+
+
+def _tier_score(tier: str | None, priority_score: float | None) -> float | None:
+    """tier を 0-100 の連続値にする。降順に並べれば tier 順が再現される。
+
+    バンド内の位置は `priority_score`（= confidence_score - entropy_norm*30）で決める。
+    recommender が tier 内の並び替えに使っているのと同じ値なので、画面の並びと
+    推奨カードの並びが食い違わない。
+
+    Args:
+        tier: "S" / "A" / "B" / "C+" / "C" のいずれか。None なら None を返す。
+        priority_score: 0-100 想定（範囲外はクリップする）。
+
+    Returns:
+        0-100 の連続値。tier が未知なら None。
+    """
+    band = _TIER_BANDS.get(tier or "")
+    if band is None:
+        return None
+    lo, hi = band
+    if priority_score is None:
+        return lo
+    frac = max(0.0, min(1.0, priority_score / 100.0))
+    return lo + (hi - lo) * frac
+
+
 def summarize_race(entries: list[dict[str, Any]]) -> dict[str, Any]:
     """1レース分の出走馬リストを、一覧の1行に畳む。
 
@@ -121,18 +166,27 @@ def summarize_race(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
     # --- tier 判定（従来どおり「指数1位馬」基準） ---
     tier: str | None = None
+    market_agree: bool | None = None
+    entropy_norm: float | None = None
+    priority_score: float | None = None
+    tier_score: float | None = None
     if confidence is not None:
         top_by_index = max(
             (e for e in entries if e.get("composite_index") is not None),
             key=lambda e: e["composite_index"],
         )
         win_odds_top = top_by_index.get("win_odds")
+        market_agree = is_market_favorite(win_odds_top, odds_list or None)
+        entropy_norm = calculate_market_chaos(odds_list)["entropy_norm"]
         tier = calculate_recommend_rank(
             confidence_score=confidence["score"],
             win_odds_top=win_odds_top,
-            market_agree=is_market_favorite(win_odds_top, odds_list or None),
-            entropy_norm=calculate_market_chaos(odds_list)["entropy_norm"],
+            market_agree=market_agree,
+            entropy_norm=entropy_norm,
         )
+        # tier 内の並び順に使う連続値（recommender と同じ式）。
+        priority_score = confidence["score"] - (entropy_norm or 0.0) * _ENTROPY_PENALTY_WEIGHT
+        tier_score = _tier_score(tier, priority_score)
 
     # --- 表示する馬 = 市場1番人気（単勝オッズ最小） ---
     fav = min(
@@ -157,6 +211,13 @@ def summarize_race(entries: list[dict[str, Any]]) -> dict[str, Any]:
         "head_count": head_count,
         "confidence_score": confidence["score"] if confidence else None,
         "tier": tier,
+        # tier を数値化したもの。**並び替えれば tier 順が完全に再現され、
+        # かつ tier 内でも順位がつく**。詳細は _tier_score の docstring 参照。
+        "tier_score": round(tier_score, 1) if tier_score is not None else None,
+        # tier_score の内訳。なぜその tier になったのかを画面で説明できるようにする。
+        "market_agree": market_agree,
+        "entropy_norm": round(entropy_norm, 3) if entropy_norm is not None else None,
+        "priority_score": round(priority_score, 1) if priority_score is not None else None,
         "horse_number": fav["horse_number"] if fav else None,
         "horse_name": fav["horse_name"] if fav else None,
         "win_odds": fav_odds,

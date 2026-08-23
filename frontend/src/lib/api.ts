@@ -1003,10 +1003,26 @@ export type RaceConfidenceRow = {
   surface: string | null;
   distance: number | null;
   head_count: number | null;
-  /** 0-100。confidence.py の指数差40+頭数20+分散25+勝率15 */
+  /**
+   * 0-100。confidence.py の指数差40+頭数20+分散25+勝率15。
+   * ⚠️ **tier とは対応しない。** tier の第一分岐は市場一致で confidence_score は
+   * 第二分岐でしか効かないため、「96 なのに tier C」「67 なのに tier A」が普通に起きる。
+   * 並び替えの主軸には tier_score を使うこと。
+   */
   confidence_score: number | null;
   /** S / A / B / C+ / C */
   tier: string | null;
+  /**
+   * tier を 0-100 の連続値にしたもの。**降順に並べると tier 順が完全に再現され、
+   * かつ同じ tier の中でも priority_score の順に並ぶ。** 一覧の既定の並び替え軸。
+   */
+  tier_score: number | null;
+  /** 指数1位馬が単勝1番人気と一致するか。tier の第一分岐。 */
+  market_agree: boolean | null;
+  /** 市場の混戦度 0-1。高いほど拮抗。C+/C の分岐と priority_score の減点に使う。 */
+  entropy_norm: number | null;
+  /** tier 内の並び順に使う連続値（confidence_score - entropy_norm*30）。 */
+  priority_score: number | null;
   horse_number: number | null;
   horse_name: string | null;
   win_odds: number | null;
