@@ -1277,7 +1277,7 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
     from src.strategy_wt import (
         line_score_features, race_signals,
         rank_7s_daily_select, rank_7s_field_entropy, rank_7s_select_axis, rank_7s_wt_mark3_overlap_n,
-        rank_7s_wt_overlap_n, rank_7a_daily_select,
+        rank_7s_swap_axis2_line, rank_7s_wt_overlap_n, rank_7a_daily_select,
         rank_7a_market_agree_pool,
         rank_7a_top2_threshold, rank_7a_top2_gate, load_7a_pool_axis_sums,
         rank_7b_daily_select, rank_7b_order_disagree, rank_7b_select_legs,
@@ -1909,6 +1909,25 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                 wt_honmei = next((fno for fno, v in _marks.items() if v == 1), None)
                 wt_taikou = next((fno for fno, v in _marks.items() if v == 2), None)
                 wt_ana = next((fno for fno, v in _marks.items() if v == 3), None)
+
+                # 🔴 **軸2の差し替え**（2026-08-23）。◎○が別ライン ∧ 代替が軸1と
+                #    同ライン ∧ 差が小さい、の3条件がそろうときだけ軸2を替える。
+                #    根拠と実測は `strategy_wt.rank_7s_swap_axis2_line` の
+                #    セクションコメント（両窓で二軸的中 +4.8〜+6.6pt）。
+                # 🔴 **`axis_sum` は差し替え後の軸で引き直す**。据え置くと
+                #    ゲート（axis_sum<=1.40）が「もう買わない軸」で判定することに
+                #    なり、選ばれるレースが検証時とずれる。
+                #    （`entropy` はフィールド全体の量で軸に依存しないので不要）
+                # ⚠️ ライン情報が無い場合は `rank_7s_swap_axis2_line` が
+                #    差し替えない側へ倒す（推奨を勝手に動かさない）。
+                _line_of = {int(r.frame_no): getattr(r, "line_group", None)
+                            for r in grp_sorted.itertuples(index=False)}
+                _axis2_swapped = rank_7s_swap_axis2_line(
+                    axis1, axis2, top3_probs, _line_of, wt_honmei, wt_taikou)
+                if _axis2_swapped != axis2:
+                    axis2 = _axis2_swapped
+                    axis_sum = top3_probs[axis1] + top3_probs[axis2]
+
                 wt_overlap_n = rank_7s_wt_overlap_n(axis1, axis2, wt_honmei, wt_taikou)
                 wt_mark3_overlap_n = rank_7s_wt_mark3_overlap_n(axis1, axis2, wt_honmei, wt_taikou, wt_ana)
 

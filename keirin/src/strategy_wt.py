@@ -973,6 +973,94 @@ def rank_7s_field_entropy(top3_probs: dict[int, float]) -> float:
     return ent
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 軸2の差し替え（◎○が別ライン × 代替が軸1と同ライン × 差が小さい）— 2026-08-23
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 【ユーザー指摘】「二軸一致時に片方が着外になって外しているケースが問題。
+#   ここは確実に当てる、当てられないなら片方の軸はそれ以外の選手にする」
+#   「3着以下との差、ラインも考慮した条件分けが必要」
+#
+# 🔴 **一律に「◎○を軸2から外す」は逆効果**（測定済み）。◎○は実際に強く、
+#    軸1∈{◎,○} の全レースで一律置換すると二軸的中 −5.42pt、
+#    減らしたい「軸2のみ着外」がむしろ 30.40%→35.82% に増える。
+#    信頼度モデルの十分位で切っても最下位10%で −1.17pt と、プラスに転じない。
+#
+# 🟢 **効くのは3条件がすべて揃うときだけ**（両窓で確認）:
+#      ① 現行の二軸（◎○）が**別ライン**       … ライン戦で噛んでいない
+#      ② 代替車が**軸1と同一ライン**           … 軸1を後ろから支える
+#      ③ `p3[軸2] − p3[代替車] < 0.114`        … 置き換えの代償が小さい
+#
+#    二軸的中（＝5点総流しの的中）の実測:
+#      探索 2026     575R  31.83% → 38.43%  (+6.61pt [+0.7,+12.2])
+#      確認 2024-25 1,418R 33.00% → 38.36%  (+5.36pt [+1.9,+8.8])
+#    該当率は両窓とも 16.9%、的中時の中央払戻は 13,000円前後で不変
+#    （大穴へ逃げて数字を作ってはいない）。
+#
+# 🔴 **条件を1つでも外すと効果が消える**（探索窓・確認窓とも）:
+#      「差小 ∧ 代替同ライン」だけ            → +1.69pt（有意でない）
+#      「二軸別ライン ∧ 差小」だけ            → +1.55pt（有意でない）
+#    さらに **現行の二軸が同ラインのときに置換すると −7.96pt**。
+#    ライン戦として既に噛んでいるペアは崩してはいけない。
+#
+# 🔴 **代替車はモデルを使わず `p3` 順で選ぶ**。ペア同時確率モデルで選ぶ版と
+#    比べて 探索 +6.17 vs +6.61 / 確認 +4.80 vs +5.36 と差が小さく、
+#    **モデルの学習・配布を増やす価値が無い**（条件②で候補が既に絞られるため）。
+RANK_AXIS2_SWAP_ENABLED = True
+RANK_AXIS2_SWAP_GAP_MAX = 0.114   # 🔴 探索窓(2026)の中央値。確認窓で引き直していない
+
+
+def rank_7s_swap_axis2_line(
+    axis1: int, axis2: int, top3_probs: dict[int, float],
+    line_of: dict[int, object] | None,
+    wt_honmei: int | None, wt_taikou: int | None,
+    gap_max: float = RANK_AXIS2_SWAP_GAP_MAX,
+    enabled: bool = RANK_AXIS2_SWAP_ENABLED,
+) -> int:
+    """3条件がすべて成り立つときだけ軸2を差し替えて返す（それ以外は axis2 のまま）。
+
+    line_of: {frame_no: line_group}。**None や欠損は差し替えない側へ倒す**
+      （推奨を勝手に動かさない。ライン不明で差し替えると根拠が消える）。
+
+    根拠と実測は本セクション冒頭のコメントを参照。
+
+    >>> p3 = {1: .70, 2: .60, 3: .55, 4: .30}
+    >>> lg = {1: "A", 2: "B", 3: "A", 4: "B"}
+    >>> rank_7s_swap_axis2_line(1, 2, p3, lg, 1, 2)   # 3条件そろう → 3へ
+    3
+    >>> lg2 = {1: "A", 2: "A", 3: "A", 4: "B"}        # 二軸が同ライン → 崩さない
+    >>> rank_7s_swap_axis2_line(1, 2, p3, lg2, 1, 2)
+    2
+    >>> p3b = {1: .70, 2: .60, 3: .30, 4: .20}        # 差が大きい → 据え置き
+    >>> rank_7s_swap_axis2_line(1, 2, p3b, lg, 1, 2)
+    2
+    """
+    if not enabled or not line_of:
+        return axis2
+    if wt_honmei is None or wt_taikou is None:
+        return axis2
+    # 対象は「二軸が◎○」のレースだけ（軸1も軸2も印の側にいる）
+    if axis1 not in (wt_honmei, wt_taikou) or axis2 not in (wt_honmei, wt_taikou):
+        return axis2
+    la = line_of.get(axis1)
+    if la is None:
+        return axis2
+    # ① 現行の二軸が同ラインなら崩さない（崩すと −7.96pt）
+    if line_of.get(axis2) == la:
+        return axis2
+    # ② 候補 = 軸1と同ライン ∧ ◎○でない
+    cand = [c for c, g in line_of.items()
+            if c not in (axis1, wt_honmei, wt_taikou)
+            and g is not None and g == la and c in top3_probs]
+    if not cand:
+        return axis2
+    rep = max(cand, key=lambda c: (top3_probs[c], -c))
+    # ③ 置き換えの代償が小さいこと
+    if top3_probs.get(axis2, 0.0) - top3_probs[rep] >= gap_max:
+        return axis2
+    return rep
+
+
 def rank_7s_select_axis(
     win_probs: dict[int, float], top3_probs: dict[int, float],
     bad_probs: dict[int, float] | None = None,
