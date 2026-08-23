@@ -27,6 +27,7 @@ import type {
   KeirinProposal, KeirinProposalEntry, KeirinProposalSummary,
 } from "@/lib/api";
 import { makeRaceNormalizer } from "@/lib/keirinProb";
+import { DateNav } from "@/components/KeirinDateNav";
 
 import {
   approveKeirinAllAction,
@@ -915,7 +916,6 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           <Settings size={15} />
           入稿設定
         </Link>
-        <span className="text-sm text-gray-500">{date}</span>
         <span className="text-sm">
           未入稿 <span className="font-semibold">{nProposed}</span> 件
         </span>
@@ -1076,6 +1076,19 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           {msg}
         </p>
       )}
+
+      {/* 🔴 日付の前後送り（2026-08-24・ユーザー要望）。`/keirin` と**同じ部品**を使う
+          （`components/KeirinDateNav`）。写して増やすと月末クランプ・未来日クランプの
+          規則が片方だけ古くなる。
+          ⚠️ この画面の `date` は **ISO(YYYY-MM-DD)**、部品は **YYYYMMDD** なので
+             境界で変換する。サーバーコンポーネント側は `?date=` を ISO で読む。 */}
+      <div className="mb-3">
+        <DateNav
+          date={date.replace(/-/g, "")}
+          onChange={(d) => router.push(
+            `/keirin/review?date=${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`)}
+        />
+      </div>
 
       {summary && summary.n_races > 0 && <DaySummary s={summary} />}
       {/* 🔴 **実績ではない。** 取り消したレースを売っていた場合の参考値で、
