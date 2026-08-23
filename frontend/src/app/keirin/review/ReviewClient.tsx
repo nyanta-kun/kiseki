@@ -33,6 +33,7 @@ import {
   approveKeirinRaceAction,
   approveKeirinVenueAction,
   cancelKeirinAllAction,
+  cancelKeirinPicksAction,
   publishKeirinAllAction,
   publishKeirinRaceAction,
   publishKeirinVenueAction,
@@ -259,6 +260,11 @@ const SUBMIT_DEADLINE_SEC = 15 * 60;
  *    レースが出る。分割にすると、畳んだときに一覧から消えて見落とす。
  */
 const NOW_WINDOW_SEC = 30 * 60;
+
+/** 1入稿を一意に指す鍵。1レースに複数ランクが並びうるので race_key だけでは足りない。 */
+function pickKey(p: { race_key: string; rank_key: string }): string {
+  return `${p.race_key}#${p.rank_key}`;
+}
 
 /** 締切を過ぎているか。発走時刻が取れない行は「締切前」扱い（＝操作を許す）。 */
 function isClosed(startAt: number | null, nowSec: number): boolean {
@@ -725,6 +731,9 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
   //    強制取消の口をここで初めて出す。常時出すと、netkeirin に残っている
   //    商品を消したつもりで記録だけ消す事故につながる。
   const [forceTargets, setForceTargets] = useState<Record<string, boolean>>({});
+  // 安い配当の一括取消ダイアログ。null なら閉じている。
+  // 値は「取消対象にするか」を race_key+rank_key ごとに持つ（既定は全部 true）。
+  const [cheapDialog, setCheapDialog] = useState<Record<string, boolean> | null>(null);
   // 取消できる＝まだ生きている下書き（未入稿・入稿済の両方）。
   // 🔴 **公開済みは取消できない**（netkeirin の `delete` が効くのは公開待ちまで）。
   //    件数に混ぜると一括取消が必ず一部失敗し、明細が読めなくなる。
@@ -733,6 +742,20 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
       && !isClosed(p.start_at, nowSec)).length,
     [items, nowSec],
   );
+  // 🔴 **想定払戻の平均が安いレース**（2026-08-24・ユーザー要望）。
+  //    「リスクに見合わない配当」を人が確認して一括で取り消すための候補。
+  //    ⚠️ **自動では落とさない。** 入稿はいったん通し、ここから人が消す。
+  //       判定の正本は `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT`、
+  //       印は API の `cheap_mean_payout`（画面で閾値を持たない）。
+  //    ⚠️ 取消できる条件は一括取消と**同じ**にする（生きている・締切前）。
+  //       ここだけ緩めると押した後に一部が必ず失敗する。
+  const cheapTargets = useMemo(
+    () => items.filter((p) => p.cheap_mean_payout
+      && p.status !== "deleted" && p.status !== "published"
+      && !isClosed(p.start_at, nowSec)),
+    [items, nowSec],
+  );
+
   // 一括承認できる＝まだ送っていない入稿案（proposed）で、かつ締切前。
   // 🔴 締切を過ぎた分を数に入れない（場単位と同じ規則）。入れると
   //    「N件を承認」の N が実際に通る件数と食い違い、押した後に初めて分かる。
@@ -929,6 +952,23 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
             title="この日の入稿を全場まとめて公開します（未入稿は入稿の上で公開・公開後は修正できません）"
           >
             公開 {nPublishableAll}
+          </button>
+        )}
+        {/* 🔴 **想定払戻の平均が安いレースをまとめて取り消す**（2026-08-24・ユーザー要望）。
+            「リスクに見合わない配当のレースは買わない」という方針の運用口。
+            🔴 **押しただけでは消えない。** ダイアログで対象一覧（場・R・平均払戻）を
+               出し、チェックを外せば個別に除外できる。全件取消と違って二段確認に
+               しないのは、ダイアログ自体が確認になっているため。 */}
+        {cheapTargets.length > 0 && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setCheapDialog(
+              Object.fromEntries(cheapTargets.map((p) => [pickKey(p), true])))}
+            className="rounded bg-amber-600 px-3 py-1 text-xs text-white disabled:opacity-50"
+            title="想定払戻の平均が安いレースを一覧で確認してまとめて取り消します"
+          >
+            安い配当 {cheapTargets.length}
           </button>
         )}
         {/* 🔴 この日の下書きを全部消す。最も戻しにくい操作なので、
@@ -1214,6 +1254,148 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           </section>
         );
       })}
+
+      {/* ── 安い配当の一括取消ダイアログ（2026-08-24・ユーザー要望）──
+          🔴 **既定は全部チェック済み**（＝押した数がそのまま消える）。
+             チェックを外したものは取消から外れる。
+          🔴 平均払戻は API の `mean_payout`（入稿時点の予測オッズ×実配分）。
+             画面では計算しない —— 正本は
+             `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT` と
+             `keirin_router._mean_payout`。
+          🔴 **リストに載せる条件は平均払戻の1つだけ**（`cheap_mean_payout`）。
+             最低払戻・最高払戻・ガミは**判断材料として並べているだけで選定には
+             使っていない**。列が増えたときに「これも条件だ」と読まれないよう、
+             見出しにも書いてある。選定条件を増やすなら API 側の印を増やすこと
+             （画面で条件を足すと正本が画面へ散る）。
+          ⚠️ **落車リスクは載せない**（2026-08-24 ユーザー判断）。カード側には
+             出ているが、取消の判断には使わないので列を増やさない
+             （危険帯のほうが ROI は高く、そもそも取消の理由にならない）。 */}
+      {cheapDialog !== null && (() => {
+        const chosen = cheapTargets.filter((p) => cheapDialog[pickKey(p)]);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="想定払戻の平均が安いレースの取消"
+          >
+            <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl dark:bg-gray-900">
+              <div className="border-b p-4 dark:border-gray-700">
+                <h2 className="text-base font-semibold">想定払戻の平均が安いレースを取り消す</h2>
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                  入稿時点の買い目払戻の<strong>平均</strong>が安い＝リスクに見合わない、
+                  と判定したレースです。<strong>チェックを外すと取消から除外</strong>できます。
+                  <br />
+                  ⚠️ 一覧に載せる条件は<strong>平均払戻だけ</strong>です。最低払戻・
+                  最高払戻・ガミは判断材料として並べているだけで、選定には使っていません。
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white text-xs text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+                    <tr>
+                      <th className="w-10 p-2" />
+                      <th className="p-2 text-left">場</th>
+                      <th className="p-2 text-right">R</th>
+                      <th className="p-2 text-left">ランク</th>
+                      <th className="p-2 text-right">平均払戻</th>
+                      {/* ⚠️ ここから右は**判断材料**であって選定条件ではない。 */}
+                      <th className="p-2 text-right">最低払戻</th>
+                      <th className="p-2 text-right">最高払戻</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cheapTargets.map((p) => {
+                      const k = pickKey(p);
+                      return (
+                        <tr key={k} className="border-t dark:border-gray-800">
+                          <td className="p-2 text-center">
+                            <input
+                              type="checkbox"
+                              aria-label={`${p.venue_name}${p.race_no}R を取り消す`}
+                              checked={cheapDialog[k] ?? false}
+                              onChange={(e) => setCheapDialog(
+                                { ...cheapDialog, [k]: e.target.checked })}
+                            />
+                          </td>
+                          <td className="p-2">{p.venue_name}</td>
+                          <td className="p-2 text-right tabular-nums">{p.race_no}R</td>
+                          <td className="p-2 text-xs text-gray-500">{p.rank_key}</td>
+                          <td className="p-2 text-right tabular-nums">
+                            {p.mean_payout === null
+                              ? "—"
+                              : `${Math.round(p.mean_payout).toLocaleString()}円`}
+                          </td>
+                          {/* 🔴 最低払戻は**下振れ側を優先**する。`min_payout` は
+                              入稿時点の板由来で楽観的（実測 中央 確定/表示 0.860）。
+                              カードの表示と同じ規則。ガミ域は赤で出す。 */}
+                          <td className="p-2 text-right tabular-nums">
+                            <span className={p.gami_risk
+                              ? "font-semibold text-red-600 dark:text-red-400" : ""}>
+                              {yen(p.min_payout_low ?? p.min_payout)}
+                            </span>
+                            {p.gami_risk && (
+                              <span
+                                className="ml-1 text-[10px] text-red-600 dark:text-red-400"
+                                title="当たっても投資額を下回りうる（ガミ）"
+                              >
+                                ガミ
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2 text-right tabular-nums text-gray-500">
+                            {yen(p.max_payout)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center gap-2 border-t p-3 dark:border-gray-700">
+                <button
+                  type="button"
+                  className="text-xs text-gray-600 underline dark:text-gray-400"
+                  onClick={() => setCheapDialog(Object.fromEntries(
+                    cheapTargets.map((p) => [pickKey(p), true])))}
+                >
+                  全部にチェック
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-gray-600 underline dark:text-gray-400"
+                  onClick={() => setCheapDialog(Object.fromEntries(
+                    cheapTargets.map((p) => [pickKey(p), false])))}
+                >
+                  全部外す
+                </button>
+                <span className="ml-auto text-sm">
+                  取消 <strong>{chosen.length}</strong> 件
+                </span>
+                <button
+                  type="button"
+                  className="rounded border px-3 py-1 text-xs dark:border-gray-600"
+                  onClick={() => setCheapDialog(null)}
+                >
+                  やめる
+                </button>
+                <button
+                  type="button"
+                  disabled={pending || chosen.length === 0}
+                  className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+                  onClick={() => {
+                    setCheapDialog(null);
+                    run(() => cancelKeirinPicksAction(chosen.map(
+                      (p) => ({ raceKey: p.race_key, rankKey: p.rank_key }))));
+                  }}
+                >
+                  {chosen.length}件を取り消す
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

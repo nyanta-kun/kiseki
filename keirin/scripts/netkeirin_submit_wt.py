@@ -2268,7 +2268,6 @@ def _process_manual(
     if cfg.get("tilt_stakes"):
         legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
             race_key, cfg, axis1, axis2, partners)
-
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
     wide_note = wide_note_text(axis1, axis2, len(partners), cfg["n_cars"])

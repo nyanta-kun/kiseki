@@ -2390,6 +2390,30 @@ def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
     return min(rets), max(rets)
 
 
+#: 想定払戻の**平均**がこの額以下なら、レビュー画面で一括取消の候補にする（円）。
+#
+# 🔴 **正本は `keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT`**。ここはAPIが
+#    候補を選ぶための写しで、`keirin/tests/test_min_mean_payout_gate.py` が
+#    食い違いを機械的に落とす（`SUBMIT_DEADLINE_SEC` と同じ作法）。
+# 🔴 **自動では落とさない。** ユーザー方針（2026-08-24）は「入稿はいったん通し、
+#    レビュー画面から人が確認して一括取消する」。ここは目印を返すだけ。
+CHEAP_MEAN_PAYOUT = 20_000
+
+
+def _mean_payout(lines: list[dict]) -> float | None:
+    """買い目の想定払戻の**平均**（円）。オッズが1つでも欠けたら None。
+
+    🔴 `_payout_range` と同じ理由で**一部だけで計算しない**。欠けた点が最安
+       だった場合に平均を実際より高く見せ、取消候補から漏れる。
+    ⚠️ `min_payout`（最低）とは別の量。ダッチング配分では近いが、均等配分の
+       経路（三連単・旧候補）では大きく開く。
+    """
+    if not lines or any(x.get("odds") in (None, 0) for x in lines):
+        return None
+    rets = [float(x["stake"]) * float(x["odds"]) for x in lines]
+    return sum(rets) / len(rets)
+
+
 def _min_payout_low(lines: list[dict]) -> float | None:
     """**下振れしても割らない**最低払戻（円）。`odds_low` が全点に無ければ None。
 
@@ -2569,6 +2593,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
                 for e in entries if e["pred_top3_pct"] is not None}
         lo, hi = _payout_range(lines)
         lo_low = _min_payout_low(lines)
+        mean_pay = _mean_payout(lines)
         items.append({
             "race_key": r["race_key"],
             "rank_key": r["rank_key"],
@@ -2606,6 +2631,11 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "crash_risk": (round(risk_by_race[r["race_key"]], 5)
                            if r["race_key"] in risk_by_race else None),
             "crash_risk_band": risk_band(risk_by_race.get(r["race_key"])),
+            "mean_payout": mean_pay,
+            # 想定払戻の平均が安い＝リスクに見合わない。レビュー画面の
+            # 一括取消ボタンがこの印だけを見て候補を作る（2026-08-24）。
+            "cheap_mean_payout": (mean_pay is not None
+                                  and mean_pay <= CHEAP_MEAN_PAYOUT),
             "min_payout": lo,
             "max_payout": hi,
             # 下振れしても割らない最低払戻（`odds_low` 由来・無ければ None）。
