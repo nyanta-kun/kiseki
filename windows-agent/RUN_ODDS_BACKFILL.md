@@ -112,8 +112,16 @@ WHERE oh.bet_type IN ('trio','trifecta') GROUP BY 1;
 
 | option | 意味 | 備考 |
 |---|---|---|
-| `1` | 通常（ローカルキャッシュ優先） | **まずこれで試す。** `payout_backfill` は 109ファイル/約9分で完了した実績あり |
-| `3` | セットアップ（全再ダウンロード） | 消費済みファイルも取り直せる。**旧セットアップダイアログが出る**ので対話セッションが要る |
+| `1` | 通常（ローカルキャッシュ優先） | **JRA 側の保持窓がちょうど1年**しかない。2024年まで遡るには足りない |
+| `3` | セットアップ（全再ダウンロード） | 消費済みファイルも取り直せる |
+| `4` | セットアップ（ダイアログ無し） | **2024年まで遡るならこれ。** `jvlink_agent.py` の RACE 取得と同じ経路 |
+
+> 🔴 **option=3/4 は JV-Link 5.0.0 で不可視の「セットアップ」ダイアログを出す。**
+> `odds_backfill.py` は 2026-08-23 まで `link_common.BlockingCallGuard` を通さず
+> 素の `jv.JVOpen()` を呼んでいたので、**誰も押せず永久ブロックするはずだった**
+> （#266 で直したのは `jvlink_agent.py` 経路だけ）。現在は Guard を通しており、
+> 5 秒ごとに `jvlink_dialog_guard.dismiss()` が応答し、`JVOPEN_TIMEOUT_SEC=3600` を
+> 超えたらプロセスごと落ちる。
 
 > `payout_backfill_out.txt` の実測では **RACE + option=3 の JVOpen は 11秒で rc=0**。
 > 「option=3 は数時間」という一般論は DataSpec 依存で、RACE には当てはまらなかった
@@ -121,6 +129,14 @@ WHERE oh.bet_type IN ('trio','trifecta') GROUP BY 1;
 
 ## 落とし穴
 
+0. 🔴 **JV-Link は同時1接続。他のタスクと窓を取り合う。** 開催日に流すなら、
+   最終レースの発走前30分窓が閉じるまで（エキゾチックオッズの前向き蓄積）待つこと。
+   VM 側の定期タスクは `kiseki-JVLink-TOKU`(18:00) / `kiseki-JRA-Results-RT`(22:00) /
+   `kiseki-FetchResults-Daily`(23:00) / `kiseki-EOD-Cleanup`(23:45) /
+   `kiseki-JVLink-BldnFull`(23:55〜翌08:00) があるので、
+   **開催日の実行可能窓は概ね 18:40〜21:50 の約3時間**しかない。
+   ただし `ODDS_completed.txt` にファイル単位で追記していくので**中断しても再開できる**。
+   途中で止めるなら `taskkill` でなく次回の実行に任せてよい。
 1. **メンテナンス窓**（既定 `TUE 08:00-15:00`）は JVOpen を呼ばない設計。火曜午前は避ける。
    実測で JVOpen が 1193 秒待たされて rc=-504 になった記録あり（2026-08-04）。
 2. **JVOpen が返らないときは、まずモーダルダイアログを疑う。**
