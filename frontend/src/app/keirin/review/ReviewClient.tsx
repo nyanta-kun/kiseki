@@ -303,11 +303,19 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   const wonKeys = new Set((p.winning_combos ?? []).map(comboKey));
   const hypothetical = useMemo(() => {
     if (p.result || wonKeys.size === 0) return null;   // 売った分は実績を出す
+    // 🔴 **確定していれば API の採点を使う**（2026-08-24）。`result_if_sold` は
+    //    サマリーと同じ確定オッズ基準なので、カードとサマリーの数字が一致する。
+    //    以前はここで `bet_detail` の**入稿時点オッズ**から計算しており、
+    //    同じレースで 16,910円（カード）↔ 20,710円（サマリー）と食い違っていた。
+    if (p.result_if_sold) {
+      return { payout: p.result_if_sold.payout, bet: p.result_if_sold.bet };
+    }
+    // 未確定のあいだだけ、入稿時点のオッズで見込みを出す（確定したら上へ切り替わる）。
     const line = (d?.lines ?? []).find((l) => wonKeys.has(comboKey(l.combo)));
     if (!line || line.odds === null) return null;
     return { payout: Math.round(line.stake * line.odds), bet: d?.total ?? 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.result, p.winning_combos, d]);
+  }, [p.result, p.result_if_sold, p.winning_combos, d]);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
   // 🔴 取消は**グレーアウト**（2026-08-22・ユーザー要望）。以前は

@@ -2703,6 +2703,14 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     settled, _ = await _fetch_settled_submissions(
         db, day, day, None, only_missing_from_picks=False)
     by_key = {(x["race_key"], x["rank_key"]): x for x in settled}
+    # 🔴 **取消分も同じ経路で採点する**（2026-08-24）。カードの「参考 買っていれば」は
+    #    `bet_detail` の**入稿時点オッズ**で画面が計算していたため、確定オッズで
+    #    採点するサマリーと数字が合わなかった（実測 立川4R: カード 16,910円 ↔
+    #    サマリー 20,710円。同じレース・同じ的中目なのに基準違いで別の額）。
+    #    突き合わせられないので、**参考値もサマリーと同じ確定オッズ**へ揃える。
+    cancelled_settled, _ = await _fetch_settled_submissions(
+        db, day, day, None, only_missing_from_picks=False, deleted_only=True)
+    by_key_cancelled = {(x["race_key"], x["rank_key"]): x for x in cancelled_settled}
     for it in items:
         # ⚠️ 変数名に `r` を使わない。上の `for r in rows` が RowMapping で
         #    束縛済みなので、同じ名前だと mypy が代入不能として落ちる。
@@ -2723,6 +2731,14 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         #    レースこそ「落とした判断は正しかったか」を確認したい対象で、
         #    `got`（＝netkeirin へ送って確定した分）で絞ると赤字が出ない。
         #    着順が入っていれば付ける。
+        # 🔴 **`result` へは入れない。** あちらは「売った商品の実績」で、
+        #    netkeirin の成績とサマリーの回収率がそこから作られる。取消を混ぜると
+        #    売っていないものが実績になる。別のキーで渡し、画面は文言で区別する。
+        got_c = by_key_cancelled.get((it["race_key"], it["rank_key"]))
+        it["result_if_sold"] = None if got_c is None else {
+            "bet": got_c["bet"], "payout": got_c["payout"],
+            "hit": got_c["hit"], "net_hit": got_c["net_hit"],
+        }
         it["winning_combos"] = winning_combo_labels(
             [(e["finish_order"], e["frame_no"]) for e in it["entries"]
              if e["finish_order"] is not None])
@@ -2760,8 +2776,6 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     #    のとは別物。画面側で計算すると実績サマリーと数字の作り方が食い違う。
     # ⚠️ 母集団は**取り消したレースだけ**。入稿前（proposed）は「まだ売っていない」
     #    のであって「売らないと決めた」ではないので混ぜない。
-    cancelled_settled, _ = await _fetch_settled_submissions(
-        db, day, day, None, only_missing_from_picks=False, deleted_only=True)
     c_bet = sum(x["bet"] for x in cancelled_settled)
     c_pay = sum(x["payout"] for x in cancelled_settled)
     c_net = sum(1 for x in cancelled_settled if x["net_hit"])

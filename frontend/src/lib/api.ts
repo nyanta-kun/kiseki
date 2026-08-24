@@ -1711,6 +1711,17 @@ export interface KeirinProposal {
   gami_risk_is_conservative?: boolean;
   /** 確定成績。**未確定（発走前・確定待ち）は null**。 */
   result?: KeirinProposalResult | null;
+  /**
+   * **取消したレースを売っていたら**の確定成績（2026-08-24）。取消以外は null。
+   *
+   * 🔴 **実績ではない。** `result` とは別のキーで渡すのは、あちらが
+   *    netkeirin の成績とサマリーの回収率の元になるため——混ぜると売って
+   *    いないものが実績になる。画面は文言で必ず区別する。
+   * 🔴 採点は `summary_cancelled` と**同じ経路（確定オッズ）**。以前カード側は
+   *    `bet_detail` の入稿時点オッズで計算しており、同じレースでサマリーと
+   *    数字が合わなかった（実測 16,910円 ↔ 20,710円）。
+   */
+  result_if_sold?: KeirinProposalResult | null;
   /** 最低払戻・最高払戻・期待値に予測オッズが混ざっているか。
    *  🔴 混ざっているのに黙って出すと「実際の板でこの払戻」と読まれる。 */
   odds_has_predicted?: boolean;

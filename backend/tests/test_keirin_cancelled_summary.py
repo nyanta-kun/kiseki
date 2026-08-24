@@ -33,11 +33,14 @@ def test_取消のみを採点する口がある():
 
 def test_採点は実績と同じ経路を通る():
     """🔴 画面で `bet_detail` のオッズから計算しない。実績は確定オッズ採点なので
-       別経路にすると2つの表が別の作り方の数字になる。"""
-    blk = ROUTER[ROUTER.index("summary_cancelled = {") - 1200:
-                 ROUTER.index("summary_cancelled = {")]
-    assert "_fetch_settled_submissions(" in blk
-    assert "deleted_only=True" in blk
+       別経路にすると2つの表が別の作り方の数字になる。
+
+    ⚠️ 2026-08-24 に取得位置を item ループの前へ移した（行へも配るため）。
+       位置に依存しない形で、**同じ変数がサマリーの元になっている**ことを見る。
+    """
+    assert "deleted_only=True)" in ROUTER, "取消のみの採点を呼んでいない"
+    assert 'c_bet = sum(x["bet"] for x in cancelled_settled)' in ROUTER, \
+        "サマリーが同じ採点結果から作られていない"
 
 
 def test_実績サマリーには取消が混ざらない():
@@ -86,6 +89,34 @@ def test_両方のサマリーを常時表示する():
     # 🔴 2枚並ぶので**両方に見出し**が要る（無名だと残った1枚が実績と読まれる）
     assert 'caption="売った分（実績）"' in tsx, "実績側の見出しが無い"
     assert "参考値・実績には含みません" in tsx, "取消側の見出しが無い"
+
+
+def test_取消行にも確定成績を配る():
+    """🔴 サマリーが「N レース的中」と言うのに、一覧のどれか分からなかった。
+
+    取消行は `result` が付かない設計（実績に混ぜないため）なので、
+    **別キー `result_if_sold`** で同じ採点結果を配る。
+    """
+    assert '"result_if_sold"' in ROUTER, "取消行へ結果を配っていない"
+    assert "by_key_cancelled" in ROUTER
+    # 🔴 `result` には入れない（実績＝netkeirin の成績とサマリーの元）
+    assert 'it["result"] = None if got is None' in ROUTER, "実績の付け方が変わった"
+
+
+def test_取消の採点は一度だけ取る():
+    """⚠️ 行への配布とサマリーで二重に取ると、同じクエリが2回走る。"""
+    assert ROUTER.count("deleted_only=True)") == 1, "取消の採点を2回取っている"
+
+
+def test_カードの参考値は確定オッズを優先する():
+    """🔴 カードとサマリーの基準を揃える（実測 16,910円 ↔ 20,710円 の食い違い）。"""
+    tsx = (ROOT / "frontend" / "src" / "app" / "keirin" / "review"
+           / "ReviewClient.tsx").read_text("utf-8")
+    fn = tsx[tsx.index("const hypothetical = useMemo("):]
+    fn = fn[:fn.index("}, [")]
+    assert "p.result_if_sold" in fn, "確定オッズの採点を使っていない"
+    # 未確定のあいだのフォールバックは残す（確定したら切り替わる）
+    assert "line.odds" in fn, "未確定時のフォールバックが消えている"
 
 
 def test_ページが受け渡している():
