@@ -92,8 +92,9 @@ def test_semifinal_and_other_marquee_types_are_no_longer_targets(race_type):
     決勝のみへ絞る判断で不要になった。**部分一致にしていないこと**もここで固定する
     ——「決勝」で部分一致すると準決勝と S級決勝 を拾う。
 
-    ⚠️ `S級決勝` が False なのは完全一致だから。実データの `race_type` は
-       `決勝` / `チャレンジ決勝` の2値で、級班は別列にある。
+    ⚠️ `S級決勝` が False なのは完全一致だから。実データの `race_type` には
+       `ガールズ決勝` / `アドバンス決勝` / `男ア決` なども存在するが、7T1/7T3 は
+       `決勝` / `チャレンジ決勝` の2値だけを母集団とする（検証をその定義で行った）。
     """
     assert rank_7t1_is_target_race_type(race_type) is False
 

@@ -169,6 +169,17 @@ COMMENT_TEMPLATES: dict[str, str] = {
 # 🔴 7T3 だけ【二軸】節を持たない（軸が無い枠・`_body_no_axis` の実測を参照）。
 COMMENT_TEMPLATES["7T3"] = _body_no_axis()
 
+#: 行を新規作成するとき **`enabled=false`** で入れるランク。
+#  🔴 `_is_enabled()` は fail-open（`netkeirin_settings` に行が無いと常時ON）なので、
+#     新ランクは「行を先に enabled=false で入れる」運用になっている。ところが
+#     本スクリプトの `--apply` は**行が無ければ `enabled=True` で INSERT する**ので、
+#     デプロイ直後にこちらが先に走ると**新ランクが武装した状態で行が出来てしまう**
+#     （しかも後から手で `INSERT ... enabled=false` すると主キー衝突で失敗し、
+#      「入れたつもり」で気づけない）。**順序に頼らず、ここで落とす。**
+#  ⚠️ ペーパー並走を終えて有効化したら、この集合から外すこと（外し忘れても
+#     既存行の `enabled` は UPDATE しないので実害は無いが、記述が古くなる）。
+NEW_RANKS_START_DISABLED: frozenset[str] = frozenset({"7T3"})
+
 
 def _check_consistency() -> list[str]:
     """テンプレと `race_shape` の食い違いを検出する（実行前の自己検査）。
@@ -274,7 +285,9 @@ def main() -> int:
                 conn.execute(
                     "INSERT INTO netkeirin_settings "
                     "(rank_key, enabled, title_template, comment_template) "
-                    "VALUES (?, ?, ?, ?)", (rank, True, new_title, new_comment))
+                    "VALUES (?, ?, ?, ?)",
+                    (rank, rank not in NEW_RANKS_START_DISABLED,
+                     new_title, new_comment))
             else:
                 conn.execute(
                     "UPDATE netkeirin_settings SET title_template = ?, "

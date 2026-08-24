@@ -341,3 +341,70 @@ def test_axes_are_marks_not_a_structural_claim():
     from src.strategy_wt import rank_7t3_axes
 
     assert rank_7t3_axes(["1-2-3", "1-3-4", "1-2-5"]) == (1, 2)
+
+
+def test_settings_row_is_created_disabled():
+    """🔴 新ランクの行は **`enabled=false`** で作られること。
+
+    `_is_enabled()` は fail-open（行が無いと常時ON）なので、新ランクは
+    「行を先に `enabled=false` で入れる」運用。ところが
+    `update_netkeirin_templates --apply` は行が無ければ `enabled=True` で
+    INSERT するので、デプロイ直後にこちらが先に走ると**武装した状態で行が
+    出来る**（後から手で INSERT すると主キー衝突で失敗し「入れたつもり」になる）。
+    **実行順に頼らず落とす。**
+    """
+    from scripts.update_netkeirin_templates import NEW_RANKS_START_DISABLED
+
+    assert "7T3" in NEW_RANKS_START_DISABLED
+    src = (REPO / "scripts" / "update_netkeirin_templates.py").read_text("utf-8")
+    assert "rank not in NEW_RANKS_START_DISABLED" in src, \
+        "INSERT が enabled を固定値 True で入れている"
+
+
+def test_bought_on_submit_includes_7t3():
+    """🔴 7T3 は発走前の買い判定を持たない。足さないと **売っているのに
+    Web の投資・回収サマリーから消える**（7T1 で 2026-08-15 に起きた事故）。"""
+    from scripts.netkeirin_submit_wt import RANKS_BOUGHT_ON_SUBMIT
+
+    assert "7T3" in RANKS_BOUGHT_ON_SUBMIT
+
+
+def test_normalizer_derives_marks_when_axes_are_absent():
+    """🔴 7T3 の候補JSONには `axis1`/`axis2` が無い。買い目から ◎○△ を導くこと。
+
+    導かないと `_normalize_7t1_candidate` が KeyError になり、
+    **全 7T3 レースが「候補情報不正」で無言スキップ**される。
+    """
+    from scripts.netkeirin_submit_wt import RANK_CONFIGS, _normalize_7t1_candidate
+
+    legs = ["1-2-3", "1-2-4", "1-3-5", "2-1-6", "1-4-7"]
+    cand = {"race_key": "20260813_11_01", "legs": legs}
+    rows, marks, axis1, axis2 = _normalize_7t1_candidate(cand, RANK_CONFIGS["7T3"])
+    assert len(rows) == len(legs)
+    assert (axis1, axis2) == (1, 2)             # 1着最多=1 / ◎除く1-2着最多=2
+    assert marks[1] == "◎" and marks[2] == "○"
+    # 買い目に出る残りは △、出ない車には印を付けない
+    assert {c for c, m in marks.items() if m == "△"} == {3, 4, 5, 6, 7}
+
+
+def test_equal_stake_trifecta_can_pull_forward():
+    """🔴 7T1/7T3 は三連単でも**前倒しできる**こと（2026-08-24）。
+
+    `_normalize_7t1_candidate` は「ダッチ配分は使わない」と明記されており
+    賭け金は均等で板を一切見ないので、前倒しを止める理由（券種の形が変わる）が
+    当てはまらない。
+
+    ⚠️ **止めると 7T1/7T3 を優先順位の上へ置いた効果が消える。** 後の波の決勝を
+       7T1 が最初に見て前倒しを見送ると `deferred_races` に入り、**下位の
+       7S/7B/7C も朝に取れなくなる**＝売上が最も集まる決勝の朝の露出を失う。
+    """
+    import inspect
+
+    from scripts.netkeirin_submit_wt import _can_pull_forward
+
+    src = inspect.getsource(_can_pull_forward)
+    assert "equal_stake_trifecta" in src
+    assert "if is_trifecta and not equal_stake_trifecta:" in src
+    # 呼び出し側が 7T1/7T3 を渡していること
+    body = (REPO / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
+    assert "equal_stake_trifecta=is_7t1" in body

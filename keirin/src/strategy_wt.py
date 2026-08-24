@@ -4336,12 +4336,16 @@ def rank_7t1_daily_select(candidates: list[dict],
       `n_entries`(=7) / `race_type` / `is_cross_line` / `legs`（空なら除外）
       `ev`（期待回収倍率。上限で切るときの順位づけに使う）
 
-    母集団の条件（決勝系レース × 上位2車が別ライン）を満たしたうえで、
-    **期待値の高い順に `daily_cap` 本だけ**を採る（2026-08-18〜）。
+    母集団の条件（**決勝** × 上位2車が別ライン）を満たしたものを採る。
+
+    ⚠️ **日次上限は既定で無効**（`RANK_7T1_DAILY_CAP = 0`・2026-08-24）。
+       機構は残してあるので `daily_cap` を明示すれば効く（検証用）。
+       撤廃した理由は定数の定義部：件数を 1/3 に削って ROI が同じ＝
+       ev による選別は無価値だった。
 
     🔴 **`ev` を持たない候補は落とさない**。旧形式の候補JSONを読んだときに
        商品が全滅するのを防ぐ（`legs_7c_buy` と同じ扱い）。ただし順位づけでは
-       最下位に置くので、上限に達していれば結果的に外れる。
+       最下位に置くので、上限を**明示したとき**は結果的に外れる。
     ⚠️ 上限を掛けるのはここ1箇所だけ。`build_7t1_candidates.py` は日次1回しか
        走らないので、朝夜で枠を取り合う問題は起きない（7S とは事情が違う）。
     🔴 ただし**バックフィルは同じ関数を月単位で呼ぶ**ので、上限は必ず
@@ -4518,12 +4522,19 @@ def rank_7t3_select(
     probs = rank_7t3_blend_probs(cars, win_probs, top3_probs)
     if not probs:
         return []
-    band = [(p, k) for k, o in pred_odds.items()
-            if o and float(o) >= min_odds and (p := probs.get(k)) is not None]
+    band: list[tuple[float, tuple[int, int, int]]] = []
+    for combo, odds in pred_odds.items():
+        if not odds or float(odds) < min_odds:
+            continue                       # 帯の外（安すぎる目）
+        p = probs.get(combo)
+        if p is None:
+            continue                       # 盤面に無い車が混ざった目
+        band.append((float(p), combo))
     if not band:
         return []
+    # 確率の降順。同率は車番順で決定的にする（レースごとに揺れないため）。
     band.sort(key=lambda t: (-t[0], t[1]))
-    return ["-".join(str(x) for x in k) for _, k in band[:n_legs]]
+    return ["-".join(str(x) for x in combo) for _, combo in band[:n_legs]]
 
 
 def rank_7t3_axes(legs: list[str]) -> tuple[int | None, int | None]:

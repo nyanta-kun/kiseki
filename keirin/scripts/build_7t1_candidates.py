@@ -206,7 +206,7 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             "legs": legs,
             "stakes": stakes,
             "bet_amount": sum(stakes.values()),
-            # 期待回収倍率。**日次上限（RANK_7T1_DAILY_CAP）の順位づけに使う**ので
+            # 期待回収倍率。**日次上限（`RANK_7T1_DAILY_CAP`）の順位づけに使う。⚠️ 上限は 2026-08-24 に既定で無効（0）になったので、いまは記録用**ので
             # 朝の時点で確定させる（入稿側で再計算しない＝根拠を二重に持たない）。
             "ev": round(sum(
                 (rank_7t1_pl_prob(pw, leg) or 0.0)
