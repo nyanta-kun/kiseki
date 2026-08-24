@@ -562,86 +562,6 @@ export async function fetchResultsBrowser(raceId: number): Promise<RaceResult[]>
   return get<RaceResult[]>(`/races/${raceId}/results`, { cache: "no-store" });
 }
 
-// ---------------------------------------------------------------------------
-// 推奨レース・馬券
-// ---------------------------------------------------------------------------
-
-export type RecommendationHorse = {
-  horse_number: number;
-  horse_name: string | null;
-  composite_index: number | null;
-  win_probability: number | null;
-  place_probability: number | null;
-  ev_win: number | null;
-  ev_place: number | null;
-  win_odds: number | null;
-  place_odds: number | null;
-  finish_position: number | null;  // 結果更新後に追記
-};
-
-export type RecommendationRace = {
-  race_id: number;
-  course_name: string;
-  race_number: number;
-  race_name: string | null;
-  post_time: string | null;
-  surface: string | null;
-  distance: number | null;
-  grade: string | null;
-  head_count: number | null;
-};
-
-/** 妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。 */
-export type ValueCandidate = {
-  horse_number: number;
-  horse_name: string | null;
-  win_odds: number | null;
-  index_rank: number | null;
-  badges: string[];
-  /** 複勝EVモデルの人気薄1頭軸該当（単勝10倍+×較正複勝率フロア×EV最大の1頭）。 */
-  is_place_axis?: boolean;
-  /** 軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+/0) / null。 */
-  upset_tier?: string | null;
-  /** ワイド相手＝モデル指数1位（=本命）の馬番。 */
-  wide_partner_horse_number?: number | null;
-  /** 複勝EVモデルの較正済み複勝圏確率（軸該当馬のみ）。 */
-  place_prob_cal?: number | null;
-  /** 複勝EV = 較正複勝率 × 複勝最低オッズ近似（軸該当馬のみ）。 */
-  place_ev?: number | null;
-  /** 確定着順（レース後表示用）。 */
-  finish_position?: number | null;
-};
-
-export type Recommendation = {
-  id: number;
-  rank: number;
-  race: RecommendationRace;
-  bet_type: "win" | "place" | "trifecta";
-  /** 的中重視tier（市場一致ベース再設計）: S 最強軸 / A 信頼軸 / B 準軸 / C+ 準見送り（旧 SS/3F は降格済） */
-  tier: "S" | "A" | "B" | "C+" | "SS" | "3F-2軸" | "3F-BOX" | null;
-  /** 実際の買い目組み合わせ 単勝: [[馬番]] / 3連複: [[1,2,3],[1,2,4],...] */
-  ticket_combos: number[][] | null;
-  points: number | null;
-  roi_basis: number | null;
-  is_verified: boolean | null;
-  /** 妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。 */
-  value_candidates: ValueCandidate[] | null;
-  target_horses: RecommendationHorse[];
-  snapshot_win_odds: Record<string, number> | null;
-  snapshot_place_odds: Record<string, number> | null;
-  snapshot_at: string | null;
-  reason: string;
-  confidence: number;
-  /** tier固定値でなくレース単位の連続値スコア(confidence_score - entropy_norm*30) */
-  priority_score: number;
-  /** 市場混戦度(0〜1、1に近いほど大混戦、算出不能時null) Phase3で追加 */
-  entropy_norm: number | null;
-  result_correct: boolean | null;
-  result_payout: number | null;
-  result_updated_at: string | null;
-  created_at: string;
-};
-
 export type OddsDataPoint = {
   win_odds: number | null;
   win_hit: boolean;
@@ -665,53 +585,58 @@ export async function fetchOddsData(
   return get<OddsDataPoint[]>(`/performance/odds-data${qs}`, { cache: "no-store" });
 }
 
-export async function fetchRecommendations(date: string): Promise<Recommendation[]> {
-  return get<Recommendation[]>(`/recommendations?date=${date}`, {
-    next: { revalidate: 60 },
-  });
-}
+/**
+ * 単勝信頼度ボード（中央「推奨」タブの表示本体）。
+ *
+ * ⚠️ **「信頼度」と「単勝信頼度」は別物。**
+ * `confidence_score` / `confidence_rank` は**レース単位**の信頼度、
+ * `win_probability` は**馬ごと**の単勝信頼度（is_win 較正ヘッドの勝率予測）。
+ */
+export type ConfidenceBoardHorse = {
+  horse_number: number | null;
+  horse_name: string | null;
+  win_odds: number | null;
+  /** 単勝信頼度（0〜1）。指数未算出なら null（末尾に回る） */
+  win_probability: number | null;
+  /** オッズ×単勝信頼度（小数第1位・サーバ側で丸め済み）。1.0 が損益分岐 */
+  odds_x_confidence: number | null;
+  /** レース内の単勝信頼度順位（1 始まり）。未算出なら null */
+  confidence_rank_in_race: number | null;
+  finish_position: number | null;
+};
 
-/** ブラウザ側ポーリング専用: JRA推奨を毎回サーバーから取得（キャッシュなし）*/
-export async function fetchRecommendationsBrowser(date: string): Promise<Recommendation[]> {
-  return get<Recommendation[]>(`/recommendations?date=${date}`, { cache: "no-store" });
-}
-
-// ---------------------------------------------------------------------------
-// 穴ぐさルール推奨
-// ---------------------------------------------------------------------------
-
-export type AnagusaRuleItem = {
-  rule_label: string;
-  rule_desc: string;
-  bet_type: "place" | "win_place";
+export type ConfidenceBoardRace = {
   race_id: number;
   course_name: string;
   race_number: number;
   race_name: string | null;
   post_time: string | null;
-  distance: number;
-  surface: string;
-  horse_number: number;
-  horse_name: string | null;
-  win_odds: number | null;
-  place_odds: number | null;
-  popularity: number | null;
-  is_preferred_pop: boolean;
-  finish_position: number | null;
-  backtest_place_roi: number;
-  backtest_win_roi: number | null;
-  backtest_n: number;
-  snapshot_at: string | null;
+  surface: string | null;
+  distance: number | null;
+  grade: string | null;
+  head_count: number | null;
+  /** レース単位の信頼度スコア（0-100） */
+  confidence_score: number | null;
+  /** レース単位の信頼度ランク S / A / B / C */
+  confidence_rank: string | null;
+  confidence_label: string | null;
+  /** 単勝信頼度が付いた頭数（horses の長さとは一致しないことがある） */
+  n_rated: number;
+  /** 出走馬**全頭**を単勝信頼度の降順で。未算出の馬は末尾 */
+  horses: ConfidenceBoardHorse[];
 };
 
-export async function fetchAnagusaRules(date: string): Promise<AnagusaRuleItem[]> {
-  return get<AnagusaRuleItem[]>(`/recommendations/anagusa-rules?date=${date}`, {
-    next: { revalidate: 60 },
+export async function fetchJraConfidenceBoard(date: string): Promise<ConfidenceBoardRace[]> {
+  return get<ConfidenceBoardRace[]>(`/recommendations/confidence-board?date=${date}`, {
+    next: { revalidate: 30 },
   });
 }
 
-export async function fetchAnagusaRulesBrowser(date: string): Promise<AnagusaRuleItem[]> {
-  return get<AnagusaRuleItem[]>(`/recommendations/anagusa-rules?date=${date}`, { cache: "no-store" });
+/** ブラウザ側ポーリング専用: オッズが動くので毎回サーバーから取る（キャッシュなし） */
+export async function fetchJraConfidenceBoardBrowser(date: string): Promise<ConfidenceBoardRace[]> {
+  return get<ConfidenceBoardRace[]>(`/recommendations/confidence-board?date=${date}`, {
+    cache: "no-store",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -932,26 +857,6 @@ export async function fetchChihouBuyingGuide(since = "20250101"): Promise<Buying
   return get<BuyingGuide>(`/chihou/performance/buying-guide?since=${since}`, { next: { revalidate: 3600 } });
 }
 
-// ---------------------------------------------------------------------------
-// 勝率上位馬（当日 50%以上）
-// ---------------------------------------------------------------------------
-
-export type TopProbHorse = {
-  course_name: string;
-  race_number: number;
-  race_name: string | null;
-  post_time: string | null;
-  horse_number: number | null;
-  horse_name: string | null;
-  win_probability: number;
-  win_odds: number | null;
-  finish_position: number | null;
-};
-
-export async function fetchChihouTopProbability(date: string): Promise<TopProbHorse[]> {
-  return get<TopProbHorse[]>(`/chihou/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
-}
-
 /** 地方 注目馬（穴馬複勝）1頭ぶん */
 export type ChihouFeaturedPlaceHorse = {
   race_id: number;
@@ -977,10 +882,6 @@ export async function fetchChihouFeaturedPlace(date: string): Promise<ChihouFeat
   return get<ChihouFeaturedPlaceHorse[]>(`/chihou/races/featured-place?date=${date}`, {
     next: { revalidate: 60 },
   });
-}
-
-export async function fetchJraTopProbability(date: string): Promise<TopProbHorse[]> {
-  return get<TopProbHorse[]>(`/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
 }
 
 // ---------------------------------------------------------------------------

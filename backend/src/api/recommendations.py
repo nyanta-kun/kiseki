@@ -18,17 +18,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy import text as _sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
+from ..indices.composite import COMPOSITE_VERSION
+from ..indices.confidence import JRA_GAP_FULL_SCORE, calculate_race_confidence
+from ..services.jra_confidence_board import (
+    BoardHorse,
+    rank_in_race,
+    sort_by_confidence,
+)
 from ..services.recommender import (
     build_anagusa_rule_recommendations,
     build_hit_tier_recommendations,
@@ -446,3 +455,173 @@ async def update_recommendation_results(
 
     count = await update_results(db, date)
     return {"updated": count, "date": date}
+
+
+# ---------------------------------------------------------------------------
+# 単勝信頼度ボード（推奨タブの表示本体・2026-08-22）
+# ---------------------------------------------------------------------------
+
+
+class ConfidenceBoardHorse(BaseModel):
+    """ボードに並ぶ1頭。"""
+
+    horse_number: int | None
+    horse_name: str | None
+    win_odds: float | None
+    # 単勝信頼度（0〜1）。calculated_indices.win_probability（is_win 較正ヘッド）。
+    # 指数未算出の馬は None（並べようが無いので末尾へ回る）
+    win_probability: float | None
+    # オッズ×単勝信頼度（小数第1位まで）。単勝期待値と同義で 1.0 が損益分岐
+    odds_x_confidence: float | None
+    # レース内の単勝信頼度順位（1 始まり）。未算出の馬は None
+    confidence_rank_in_race: int | None
+    finish_position: int | None = None
+
+
+class ConfidenceBoardRace(BaseModel):
+    """1レース分のボード。"""
+
+    race_id: int
+    course_name: str
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    surface: str | None
+    distance: int | None
+    grade: str | None
+    head_count: int | None
+    # レース単位の信頼度（馬ごとの単勝信頼度とは別物）
+    confidence_score: int | None
+    confidence_rank: str | None
+    confidence_label: str | None
+    # 単勝信頼度を持つ頭数（horses の長さとは一致しないことがある）
+    n_rated: int
+    # 出走馬**全頭**を単勝信頼度の降順で。未算出の馬は末尾
+    horses: list[ConfidenceBoardHorse]
+
+
+_BOARD_SQL = _sql_text("""
+    SELECT
+        r.id AS race_id,
+        re.horse_number,
+        h.name AS horse_name,
+        ci.composite_index,
+        ci.win_probability,
+        o.odds AS win_odds,
+        rr.finish_position
+    FROM keiba.races r
+    JOIN keiba.race_entries re ON re.race_id = r.id
+    JOIN keiba.horses h ON h.id = re.horse_id
+    LEFT JOIN LATERAL (
+        SELECT composite_index, win_probability
+        FROM keiba.calculated_indices
+        WHERE race_id = r.id AND horse_id = re.horse_id AND version <= :max_version
+        ORDER BY version DESC, calculated_at DESC
+        LIMIT 1
+    ) ci ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT odds
+        FROM keiba.odds_history
+        WHERE race_id = r.id
+          AND bet_type = 'win'
+          AND combination = re.horse_number::text
+        ORDER BY fetched_at DESC
+        LIMIT 1
+    ) o ON TRUE
+    LEFT JOIN keiba.race_results rr
+        ON rr.race_id = r.id AND rr.horse_id = re.horse_id
+    WHERE r.date = :date
+""")
+
+
+@router.get("/confidence-board", response_model=list[ConfidenceBoardRace])
+async def get_confidence_board(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+) -> list[ConfidenceBoardRace]:
+    """指定日の**全レース**について、**全出走馬**を単勝信頼度の降順で発走順に返す。
+
+    「信頼度」はレース単位（`calculate_race_confidence`）、「単勝信頼度」は
+    馬ごとの `win_probability`。名前が似ているが別物なので取り違えないこと。
+
+    ⚠️ **指数未算出のレース・馬も落とさない**（レースは `horses` 空で `n_rated=0`、
+    馬は `win_probability=None` で末尾）。落とすと画面から消えて「開催が無い」
+    「そもそも出走していない」ように見えてしまう。
+    """
+    races_result = await db.execute(
+        select(Race).where(Race.date == date).order_by(Race.post_time, Race.race_number)
+    )
+    races = list(races_result.scalars().all())
+    if not races:
+        return []
+
+    rows = (
+        await db.execute(_BOARD_SQL, {"date": date, "max_version": COMPOSITE_VERSION})
+    ).all()
+
+    horses_by_race: dict[int, list[BoardHorse]] = defaultdict(list)
+    composites_by_race: dict[int, list[float]] = defaultdict(list)
+    win_probs_by_race: dict[int, list[float]] = defaultdict(list)
+    for race_id, horse_number, horse_name, composite, win_prob, win_odds, finish in rows:
+        # レース信頼度の母集団は composite。未算出の馬はここには入らない。
+        if composite is not None:
+            composites_by_race[race_id].append(float(composite))
+        if win_prob is not None:
+            win_probs_by_race[race_id].append(float(win_prob))
+        horses_by_race[race_id].append(
+            BoardHorse(
+                horse_number=horse_number,
+                horse_name=horse_name,
+                win_odds=float(win_odds) if win_odds is not None else None,
+                win_probability=float(win_prob) if win_prob is not None else None,
+                finish_position=finish,
+            )
+        )
+
+    out: list[ConfidenceBoardRace] = []
+    for race in races:
+        ordered = sort_by_confidence(horses_by_race.get(race.id, []))
+        ranks = rank_in_race(ordered)
+
+        conf: dict[str, Any] = {"score": None, "rank": None, "label": None}
+        composites = composites_by_race.get(race.id)
+        if composites:
+            conf = calculate_race_confidence(
+                composites,
+                race.head_count,
+                win_probs_by_race.get(race.id) or None,
+                gap_full_score=JRA_GAP_FULL_SCORE,
+            )
+
+        out.append(
+            ConfidenceBoardRace(
+                race_id=race.id,
+                course_name=race.course_name,
+                race_number=race.race_number,
+                race_name=race.race_name,
+                post_time=race.post_time,
+                surface=race.surface,
+                distance=race.distance,
+                grade=race.grade,
+                head_count=race.head_count,
+                confidence_score=conf.get("score"),
+                confidence_rank=conf.get("rank"),
+                confidence_label=conf.get("label"),
+                n_rated=len(win_probs_by_race.get(race.id, [])),
+                horses=[_board_horse_out(h, r) for h, r in zip(ordered, ranks, strict=True)],
+            )
+        )
+    return out
+
+
+def _board_horse_out(h: BoardHorse, rank: int | None) -> ConfidenceBoardHorse:
+    """内部表現を API レスポンスへ写す。"""
+    return ConfidenceBoardHorse(
+        horse_number=h.horse_number,
+        horse_name=h.horse_name,
+        win_odds=h.win_odds,
+        win_probability=h.win_probability,
+        odds_x_confidence=h.odds_x_confidence,
+        confidence_rank_in_race=rank,
+        finish_position=h.finish_position,
+    )

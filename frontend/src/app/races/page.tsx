@@ -1,12 +1,10 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchJraTopProbability, fetchAnagusaRules, fetchRecommendations } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchJraConfidenceBoard } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { JraTopProbabilityPanel } from "@/components/TopProbabilityPanel";
-import { AnagusaRuleView } from "@/components/AnagusaRuleView";
-import { RecommendView } from "@/components/RecommendView";
+import { ConfidenceBoardPanel } from "@/components/ConfidenceBoardPanel";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -66,12 +64,10 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    // 推奨系を並列プリフェッチ: 各パネルでの同一フェッチはキャッシュから即解決する
+    // 推奨タブぶんも並列プリフェッチ: パネル側の同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchRacesByDate(date),
-      fetchJraTopProbability(date).catch(() => []),
-      fetchAnagusaRules(date).catch(() => []),
-      fetchRecommendations(date).catch(() => []),
+      fetchJraConfidenceBoard(date).catch(() => []),
     ]);
   } catch {
     return (
@@ -116,20 +112,12 @@ async function RaceList({ date }: { date: string }) {
     if (!sortedGroups[name]) sortedGroups[name] = courseGroups[name];
   }
 
+  // 推奨タブ = 単勝信頼度ボード（2026-08-22 にこの1枚へ置き換え）。
+  // 旧構成（推奨カード tier/理由/妙味候補 + 穴ぐさルール推奨 + 勝率上位パネル）は撤去した。
   const recommendPanel = (
-    <>
-      {/* 期待値・指数から算出した推奨（本命tier + 人気薄1頭 複勝EV軸・memory: place_ev_model） */}
-      <Suspense fallback={<AnagusaSkeleton />}>
-        <RecommendView date={date} />
-      </Suspense>
-      {/* 穴ぐさ条件ルール推奨（rank_A × 場/面/距離ルール） */}
-      <Suspense fallback={<AnagusaSkeleton />}>
-        <AnagusaRuleView date={date} />
-      </Suspense>
-      <Suspense>
-        <JraTopProbabilityPanel date={date} />
-      </Suspense>
-    </>
+    <Suspense fallback={<AnagusaSkeleton />}>
+      <ConfidenceBoardPanel date={date} />
+    </Suspense>
   );
 
   return <CourseTabView courseGroups={sortedGroups} recommendPanel={recommendPanel} />;
