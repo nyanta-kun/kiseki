@@ -86,6 +86,8 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # RANK_7H3（2026-08-12新設）はここに登録していたが、2026-08-13 の全廃
 # （RANK_7T1 へ置換）で rebuild スクリプトごと削除したため外した。
 # RANK_7T1（2026-08-13新設）も同じ理由でここへ登録する。
+# RANK_7T3（2026-08-24新設）も同様。**7T1 と同じく honest 期間は 2026-01 以降**
+# （三連単オッズ予測モデルに月次 vintage が無い）。
 # 🔴 **7T1 だけ honest 期間が 2026-01 以降に限られる**（三連単オッズ予測モデルの
 #    学習終端が 2025-12-31 で月次 vintage が無いため）。tail は当月しか触らないので
 #    日次運用では問題にならないが、全期間再構築の結果を他ランクと並べるときは
@@ -105,7 +107,7 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # 🔴 RANK_7H2 は 2026-08-18 に三連複一本化（三連単を破棄）した際、rebuild
 #    スクリプトを新設したのでここへ登録した。それまで rebuild が無く、
 #    picks_history には live が書いた 44件（旧・2券種構成）しか無かった。
-for spec in "7s:7S" "7b:7B" "7c:7C" "7h1:7H1" "7h2:7H2" "7t1:7T1" "9c:9C" "7m1:7M1"; do
+for spec in "7s:7S" "7b:7B" "7c:7C" "7h1:7H1" "7h2:7H2" "7t1:7T1" "7t3:7T3" "9c:9C" "7m1:7M1"; do
   script="${spec%%:*}"
   label="${spec##*:}"
   .venv/bin/python3 "scripts/rebuild_${script}_walkforward_pg.py" --tail-only 2>&1 | tee -a "$LOG" \
