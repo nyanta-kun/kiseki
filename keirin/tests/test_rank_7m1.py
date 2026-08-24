@@ -603,3 +603,21 @@ def test_live_passes_odds_and_marks_to_select_legs():
     i = src.index("rank_7m1_select_legs(")
     call = src[i:i + 400]
     assert "odds=" in call and "marks=" in call
+
+
+def test_backfill_uses_mark3_for_the_7c_ana_cut():
+    """🔴 再構築の `wt_ana` は **mark3**（live と揃えること）。
+
+    live（`cli/main.py`）は `prediction_mark == 3` を候補JSON の `wt_ana` に載せ、
+    `backfill_7c_rank_wt` もそれを使う。ここだけ mark4 を渡していた時期があり、
+    `rank_7c_drop_ana_leg` の発動が live と食い違って **51% のレースで
+    `legs_7c` が変わっていた**（`legs_7c_buy` は 7M1 の堅い帯ゲートの入力）。
+
+    ⚠️ 変数名の「ana(穴)」に引きずられないこと。`wt_ana` は名前に反して ▲ で、
+       最弱の印は mark4(△)。7B の相手除外印も再検証で mark3 が最良と確定している。
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "backfill_7m1_rank_wt.py").read_text()
+    i = src.index("rank_7c_buy_plan(")
+    call = src[i:i + 200]
+    assert "wt_ana=mk.get(3)" in call, "再構築の wt_ana が live(mark3) と違う"
