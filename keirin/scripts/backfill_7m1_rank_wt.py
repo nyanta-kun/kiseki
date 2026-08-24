@@ -204,8 +204,19 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         win_probs = ({int(r.frame_no): float(r.pred_win)
                       for r in g.itertuples(index=False)}
                      if win_model is not None else None)
+        # 🔴 **`wt_ana` は mark3**（2026-08-24 修正・旧実装は `mk.get(4)`）。
+        #    live（`cli/main.py`）は `prediction_mark == 3` を候補JSON の `wt_ana`
+        #    に載せ、`backfill_7c_rank_wt` も `c_.get("wt_ana")` でそれを使う。
+        #    ここだけ mark4 を渡していたため、`rank_7c_drop_ana_leg` の発動が
+        #    live と食い違い、**実測で 51% のレースで `legs_7c` が変わっていた**。
+        #    `legs_7c_buy` は `rank_7c_accepts` 経由で 7M1 の堅い帯ゲート
+        #    （`RANK_7M1_FIRM_BAND`）の入力なので、母集団まで静かにずれる。
+        #    ⚠️ 変数名の「ana(穴)」に引きずられないこと。`wt_ana` は名前に反して
+        #       **mark3(▲)** で、最弱の印は mark4(△)
+        #       （[[keirin_daily_review_2026_08_21]]）。7B の相手除外印も
+        #       再検証で mark3 が最良と確定している（mark4 除外は有意に悪化）。
         plan_7c = rank_7c_buy_plan(top3_probs, win_probs, axis1, legs_7c,
-                                   wt_ana=mk.get(4))
+                                   wt_ana=mk.get(3))
         _eo = _ev_for(rk, axis1, axis2, others, date_map.get(rk, ""))
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),

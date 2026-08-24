@@ -50,7 +50,7 @@ from src.strategy_wt import (
     S1W_STAKE, S1W_TOP3_GAP_MIN, RANK_7S_STAKE, RANK_7A_STAKE, RANK_7B_STAKE,
     RANK_7C_NE, RANK_7C_LEGS_MIN, rank_7c_select_legs, rank_7c_unit_stake,
     RANK_7C_TRIO_P3_SUM_MIN, rank_7c_cut_legs_by_gap,
-    RANK_7M1_NE, RANK_7M1_LEGS_MIN, rank_7m1_select_legs,
+    RANK_7M1_NE, rank_7m1_select_legs,
     RANK_9C_NE, RANK_9C_LEGS_MIN, RANK_9C_LEG_P3_MIN,
     unit_stake,
     rank_7b_select_legs, RANK_9S_STAKE, RANK_9A_STAKE, SS_STAKE,
@@ -1823,11 +1823,17 @@ def _process_rank_7c_candidates(today: str, now_unix: int, notified: set[str]) -
 # ---------------------------------------------------------------------------
 # 7M1（中間層「混戦 × 市場乖離」・2026-08-17 新設）
 #
-# 7C と同じ軸（pred_top3 上位2車）を使うが、**母集団は 7C の裏返し**で、
-# 相手は軸を除く5車の**下位3車**（全体では指数5〜7番手）から、
-# 3着内率が `RANK_7M1_LEG_P3_MIN` 未満の車を削ったもの（最低2点）。
-# 狙いは「的中11% / 払戻中央5.7倍」の帯。
+# 7C と同じ軸（pred_top3 上位2車）を使うが、**母集団は 7C の裏返し**。
 # 設計と検証値は strategy_wt.RANK_7M1_P3_SUM_MAX 定義部のセクションコメント。
+#
+# 🔴🔴 **相手は朝の候補（`legs_7m1`）をそのまま使う。ここで組み直さない**
+#    （2026-08-24 修正）。相手の作り方は EV・予測オッズ・公式印を見る規則
+#    （`strategy_wt.rank_7m1_select_legs`）で、この経路にはその3つが無い。
+#    引数なしで `rank_7m1_select_legs` を呼ぶと**必ず旧・位置規則へ落ちる**ため、
+#    「入稿は EV 順 / 記録は位置規則」という二重管理になっていた
+#    （2026-08-21 の EV 順導入時にこの経路が追随していなかった）。
+#    ここは `picks_history` へ書く**記録側**なので、食い違うと Web の実績が
+#    実際に売った商品を説明しなくなる（PR#289 の賭け金二重管理と同じ型で3回目）。
 #
 # 🔴 **相手に足切りを掛けないこと**（7C の `rank_7c_select_legs` を流用しない）。
 #    足切りは「3着内に入れなそうな車を外す」規則で、7M1 が狙う帯そのものを消す。
@@ -1842,11 +1848,14 @@ def judge_rank_7m1(cand: dict, trio_lookup: dict) -> tuple[str, dict]:
     判定:
       ① 盤面が RANK_7M1_NE 車 — 欠車なら見送り（点数が変わり別の商品になる）
       ② 軸2車が盤面にいること
-      ③ 相手を**盤面から再計算**する（朝の legs_7m1 をそのまま使わない。
-         欠車で順位が繰り上がった場合に朝の車番が誤りになるため）
-      ④ 相手が RANK_7M1_LEGS_MIN 点に満たなければ見送り
-         （足切りで削れた結果2点になるのは正常。1点まで落ちたら買わない）
-      ⑤ オッズが取れた目が規定点数に満たなければ見送り
+      ③ 相手は**朝の `legs_7m1` をそのまま使う**（入稿と同じ買い目にするため）。
+         ①で盤面が7車ちょうどであることを確認済みなので、朝の車番はそのまま
+         有効。朝の候補に相手が入っていないときだけ盤面から再計算する
+         （旧候補JSON との後方互換。その場合は位置規則になる）
+      ④ 相手が1点も無ければ見送り。**1点は許す**——○1点への集中
+         （`rank_7m1_maru_concentrates`）は意図した1点買いなので、
+         ここで2点を要求すると集中したレースだけ記録が欠ける
+      ⑤ オッズが取れた目が買い目の点数に満たなければ見送り
 
     ⚠️ **オッズを選別条件に使わない**（ユーザー方針 2026-08-17「オッズ確認なしで
        レース選定・推奨作成」）。ここで板を読むのは欠車の検知と表示のためだけで、
@@ -1878,14 +1887,17 @@ def judge_rank_7m1(cand: dict, trio_lookup: dict) -> tuple[str, dict]:
         return "skip", detail
 
     others = sorted(board - {axis1, axis2})
-    probs = {int(k): float(v) for k, v in (cand.get("top3_probs") or {}).items()}
-    if probs:
-        legs = rank_7m1_select_legs(others, probs)
-    else:
-        legs = [x for x in (cand.get("legs_7m1") or []) if x in board]
+    # 🔴 朝の買い目を最優先で使う（上記③）。盤面は①で7車ちょうどと確認済み。
+    legs = [x for x in (cand.get("legs_7m1") or []) if x in board]
+    if not legs:
+        # 朝の候補に相手が無い（旧候補JSON）ときだけ組み直す。EV も予測オッズも
+        # 印もここには無いので、必ず位置規則になる＝入稿とは別物になりうる。
+        probs = {int(k): float(v) for k, v in (cand.get("top3_probs") or {}).items()}
+        if probs:
+            legs = rank_7m1_select_legs(others, probs)
 
-    if len(legs) < RANK_7M1_LEGS_MIN:
-        detail["skip_reason"] = f"相手{len(legs)}点（{RANK_7M1_LEGS_MIN}点未満）"
+    if not legs:
+        detail["skip_reason"] = "相手0点"
         return "skip", detail
 
     combos, leg_odds = [], {}
@@ -1897,8 +1909,12 @@ def judge_rank_7m1(cand: dict, trio_lookup: dict) -> tuple[str, dict]:
         label = "-".join(map(str, sorted(key)))
         leg_odds[label] = ov
         combos.append(label)
-    if len(combos) < RANK_7M1_LEGS_MIN:
-        detail["skip_reason"] = f"オッズ取得できた目が{len(combos)}点"
+    # 🔴 **買い目の全点にオッズが要る**（2026-08-24）。旧実装は
+    #    `RANK_7M1_LEGS_MIN`(=2) 点あれば通していたが、点数が可変になった今それだと
+    #    「4点のうち3点しか記録しない」「○1点は常に見送り」の両方が起きる。
+    #    記録は入稿と同じ買い目でなければ意味がないので、欠けたら見送る。
+    if len(combos) < len(legs):
+        detail["skip_reason"] = (f"オッズ取得できた目が{len(combos)}/{len(legs)}点")
         return "skip", detail
 
     detail["combos"] = combos
