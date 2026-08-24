@@ -154,6 +154,11 @@ EXPECTED_COVERAGE = {
     # 7M1（中間層・2026-08-17）。母集団は混戦 × 印不一致で、ライン構成には
     # 条件を置かないので6構造すべてが発生しうる。
     "7M1": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
+    # 7T3（2026-08-24）。**ライン条件を持たない**ので6構造すべてが発生しうる
+    # （7T1 が line を欠くのとはちょうど逆）。実際には優先順位で 7T1 が
+    # 別ラインを取るため line が多くなるが、7T1 が買い目を組めなかった
+    # レースは 7T3 へ落ちてくるので split/clash も発生する。
+    "7T3": {SHAPE_SOLO, SHAPE_DUO, SHAPE_LINE, SHAPE_SPLIT, SHAPE_CLASH, SHAPE_MIXED},
 }
 
 

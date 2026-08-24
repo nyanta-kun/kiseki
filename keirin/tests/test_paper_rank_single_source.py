@@ -64,9 +64,12 @@ import live_report_wt as lr
 # 2026-08-17: 中間層 RANK_7M1 を新設。ベース層（的中重視・払戻中央1.5倍台）と
 # 穴推奨（的中5%未満・中央8〜22倍）の**間の払戻帯**を埋める枠で、母集団は
 # 7C の裏返し（混戦）× 公式印と不一致。入稿の優先順位は**最下位**。
+# 2026-08-24: 三連単・決勝の中配当枠 RANK_7T3 を新設。母集団は決勝 × 予測30倍以上で
+# **ライン条件を持たない**。入稿の優先順位で 7T1 の直後に置くため、結果として
+# 同ラインだけを拾う（判定の正本を2箇所に持たないため・docs/rank_7t3_design.md §8）。
 CURRENT_RANK_NAMES = {"RANK_7S", "RANK_7B", "RANK_9C",
                       "RANK_7H1", "RANK_7H2", "RANK_7C", "RANK_9H1",
-                      "RANK_7T1", "RANK_7M1"}
+                      "RANK_7T1", "RANK_7M1", "RANK_7T3"}
 
 # 全廃済み（picks_history に存在しない）ランク。
 ABOLISHED_RANK_NAMES = {

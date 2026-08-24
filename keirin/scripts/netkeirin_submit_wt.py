@@ -242,7 +242,7 @@ _MARQUEE_COMMENT_TEMPLATE = (
 # 🔴 **この dict の定義順がそのまま入稿の優先順位**（RANK_ORDER が list(RANK_CONFIGS)）。
 #    netkeirin は1レース1商品なので、同じレースに複数ランクが該当したときは
 #    先に来たランクが取り、後続はスキップする。
-#    優先順位（2026-08-21 現在）: **7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1**
+#    優先順位（2026-08-21 現在）: **7H2 > 7T1 > 7T3 > 7S > 7B > 7C > 7H1 > 7M1**
 #    🔴 2026-08-21: **7B を 7C の上へ**（ユーザー方針「最低希望オッズ 1.5倍」）。
 #       競合874R の直接対決で 7B が 1.5倍以上の的中で +5〜6pt 勝ち、ROI も上
 #       （2025 +6.01[+3.10,+9.11] / 2026 +5.03[+1.68,+8.66]・両年独立で再現）。
@@ -313,6 +313,60 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    だったので全ランク一律で対象にした。7B の伸びしろは**的中率30.5%が上限**
     #    なので構造的に +2.3pt しかなく、そのうち +1.05pt を回収する形になる。
 
+    # 7T1（2026-08-13新設・三連単の高配当枠）。三連単フォーメーション
+    # （1着=軸1 × 2着=軸2 × 3着=相手 ＝ 相手数そのもの・実測 平均2.0点）。
+    # 🔴 **1点=1行で送る**（`formation_bet_7t1`）。賭け金は均等だが、点数が
+    #    1〜5点と可変で 9H1 の `formation_bet`（1着1車固定・単一行）とは
+    #    3着列の組み方が違うため専用経路にしている。
+    # 🔴 **2026-08-24 に 7S の上へ移した**（旧: 7C の後ろ・7B の前）。同日に母集団を
+    #    「決勝系レース（決勝/準決勝/特選/選抜）」→ **決勝のみ × 上位2車が別ライン**
+    #    へ絞ったため 2.20件/日 しか無く、下に置くと 7S に取られてほぼ出ない
+    #    （実測: 決勝の16%しか取れていなかった）。決勝では ROI が 7S より 22〜31pt 高い。
+    #    受け入れたトレードは **7S の表示的中 −0.22pt**・ROI 不変
+    #    （決勝は 7S 母集団の 5.7%）。設計: `docs/rank_7t3_design.md` §9。
+    # 🔴 **直後に 7T3 を置く**（間に他ランクを挟まない）。7T3 はライン条件を持たず、
+    #    この順序だけで「別ラインは 7T1・同ラインは 7T3」を実現している。
+    # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
+    #    ため、導入時に enabled=false の行を明示投入すること。
+    "7T1": {"file_key": "s7t1", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
+            "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
+            "overlap_expected": True,        # 7C との重複は設計どおり
+            "default_comment": (
+                "本日の高配当狙いをお届けします。\n\n"
+                "決勝・準決勝・特選・選抜といった、開催の節目となる一戦の中から、"
+                "当方の指数で上位に立つ2車が別々のラインに分かれているレースだけを"
+                "選んでいます。\n\n"
+                "その2車を1着・2着に固定し、3着を手広く流さず少点数に絞りました。"
+                "1点あたりの金額を厚くして、当たったときの大きさを取りにいく組み立てです。\n\n"
+                "外れる日が続く買い方です。的中の回数ではなく、当たったときの"
+                "大きさを狙う券種としてご活用ください。"
+                "レース直前の最終オッズをご自身でご確認ください。"
+            )},
+    # 🔴 **7T3 は 7T1 の直後**（2026-08-24 新設・`docs/rank_7t3_design.md`）。
+    #    この順序が「別ラインは 7T1・同ラインは 7T3」という棲み分けを実現している。
+    #    7T3 自身は**ライン条件を持たない**ので、順序を入れ替えると 7T3 が
+    #    別ラインまで取り、7T1 が出なくなる。**間に他ランクを挟まないこと。**
+    # 🔴 買い目は三連単5点（均等 2,000円/点）。**1点=1行**（`formation_bet_7t1`）。
+    #    5点の1着が1車に揃うのは 7.0% しかなく、1着1車固定のフォーメーションでは
+    #    93% のレースを表現できない。
+    # ⚠️ ◎○ は `strategy_wt.rank_7t3_axes`（1着最多 / ◎除く1-2着最多）で決める。
+    #    **買い目の軸ではない**ので、見解本文では「二軸」と書かない。
+    # ⚠️ `_is_enabled()` は fail-open（`netkeirin_settings` に行が無いと常時ON）。
+    #    **`7T3` の行を `enabled=false` で INSERT してからデプロイすること。**
+    "7T3": {"file_key": "s7t3", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
+            "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
+            "overlap_expected": True,        # 7T1/7S との重複は設計どおり
+            "default_comment": (
+                "本日の高配当狙いをお届けします。\n\n"
+                "開催の締めくくりとなる決勝戦のうち、当方の指数で見て"
+                "配当が大きく付きそうな組み合わせが残っているレースだけを選んでいます。\n\n"
+                "買い目は三連単5点。当たれば数万円台の払戻になる組み合わせに絞り、"
+                "1点あたりの金額を均等にして置いています。\n\n"
+                "当たる回数は多くありません。おおむね10回に1回ほどの見込みで、"
+                "外れる日が続く買い方です。的中の回数ではなく、"
+                "当たったときの大きさを狙う券種としてご活用ください。"
+                "レース直前の最終オッズをご自身でご確認ください。"
+            )},
     # 🔴 2026-08-14: 旧 7SS / 7A を RANK_7S へ統合した。3つは互いに排他なので
     #    候補JSONを3つ読んで連結する。**gate_filter は None**（"S" のままだと
     #    旧 7A / 7SS の候補が `rank_7s_gate_label` で弾かれ、統合したのに
@@ -397,32 +451,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             # タイトル・文面は **7A と同じ既定テンプレート**を使う（ユーザー指示
             # 2026-08-07）。したがって default_comment は持たない。
             },
-    # 7T1（2026-08-13新設・三連単の高配当枠）。三連単フォーメーション
-    # （1着=軸1 × 2着=軸2 × 3着=相手 ＝ 相手数そのもの・実測 平均2.0点）。
-    # 🔴 **1点=1行で送る**（`formation_bet_7t1`）。賭け金は均等だが、点数が
-    #    1〜5点と可変で 9H1 の `formation_bet`（1着1車固定・単一行）とは
-    #    3着列の組み方が違うため専用経路にしている。
-    # 🔴 **7C の後ろ・7B の前**。母集団は「決勝系レース（決勝/準決勝/特選/選抜）
-    #    × 上位2車が別ライン」なので、看板+準決勝を対象とする 7C と
-    #    **同じレースを取り合う**。重複時は 7C
-    #    （実質的中率39.0%）に譲るのが正しい（7T1 は表示的中3%の高配当商品で、
-    #    的中体験は 7C が担う）。
-    # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
-    #    ため、導入時に enabled=false の行を明示投入すること。
-    "7T1": {"file_key": "s7t1", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
-            "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
-            "overlap_expected": True,        # 7C との重複は設計どおり
-            "default_comment": (
-                "本日の高配当狙いをお届けします。\n\n"
-                "決勝・準決勝・特選・選抜といった、開催の節目となる一戦の中から、"
-                "当方の指数で上位に立つ2車が別々のラインに分かれているレースだけを"
-                "選んでいます。\n\n"
-                "その2車を1着・2着に固定し、3着を手広く流さず少点数に絞りました。"
-                "1点あたりの金額を厚くして、当たったときの大きさを取りにいく組み立てです。\n\n"
-                "外れる日が続く買い方です。的中の回数ではなく、当たったときの"
-                "大きさを狙う券種としてご活用ください。"
-                "レース直前の最終オッズをご自身でご確認ください。"
-            )},
     "7H1": {"file_key": "s7h1", "n_cars": 7, "formation_bet": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
             "default_comment": (
@@ -1063,7 +1091,10 @@ def _predicted_trio_fill(race_key: str) -> dict:
 # ⚠️ **ここに他ランクを足さないこと。** 発走前判定を持つランクで二重に書くと、
 #    「入稿したが直前オッズで買わなかった」レースまで購入済みになる。
 #    足すのは「当日 bet_amount を書く者が他にいない」ランクだけ。
-RANKS_BOUGHT_ON_SUBMIT = frozenset({"7T1"})
+#    7T3（2026-08-24 新設）も同じ。`notify_results_wt.py` の発走前判定は
+#    `rank='RANK_7T1'` を直接書いており 7T3 の分岐が無いので、足さないと
+#    **売っているのに Web の投資・回収サマリーから消える**（7T1 と同じ事故）。
+RANKS_BOUGHT_ON_SUBMIT = frozenset({"7T1", "7T3"})
 
 
 def _bet_detail_total(bet_detail: str | None) -> int:
@@ -1366,6 +1397,7 @@ def _build_tilted_legs(
 
 def _can_pull_forward(
     race_key: str, is_trifecta: bool, axis1: int, axis2: int, partners: list[int],
+    equal_stake_trifecta: bool = False,
 ) -> bool:
     """後の波の開催を、この回へ**前倒しして**入稿してよいか（2026-08-21 新設）。
 
@@ -1379,7 +1411,7 @@ def _can_pull_forward(
 
     🔴 **前倒しできない2つ**（＝ここで False を返すもの）:
 
-    1. **三連単系ランク**（7T1 / 7H1 / 7H2 / 9H1・三連単への切替も含む）。
+    1. **板でダッチする三連単系ランク**（7H1 / 7H2 / 9H1・三連複からの切替も含む）。
        `_dutch_point_legs` は「買う点**すべて**に三連単の板オッズが揃うときだけ」
        ダッチにする。朝は三連単の板がまず無いので、揃わず通常配分へ落ちて
        **券種の形が変わる**。予測オッズは三連複しか作れない。
@@ -1388,8 +1420,23 @@ def _can_pull_forward(
 
     どちらも「出さない」のではなく**自分の波へ残す**。13:00 / 18:00 の回が
     従来どおり拾うので、前倒しは常に上積みであって取りこぼしを増やさない。
+
+    🔴 **`equal_stake_trifecta`（7T1 / 7T3）は三連単でも前倒しできる**
+       （2026-08-24）。`_normalize_7t1_candidate` は
+       「**ダッチ配分（`_dutch_point_legs`）は使わない**」と明記されており、
+       賭け金は `rank_7t1_stakes` / `rank_7t3_stakes` の**均等**で板を一切見ない。
+       つまり上の理由1が当てはまらない。
+
+       ⚠️ **これを外すと 7T1/7T3 を優先順位の上へ置いた効果が消える。**
+          後の波の決勝レースを 7T1 が最初に見て前倒しを見送ると、そのレースは
+          `deferred_races` に入り**下位の 7S/7B/7C も朝に取れなくなる**（優先順位の
+          保護）。商品自体は自分の波で 7T1 が出すので取りこぼしは無いが、
+          **売上が最も集まる決勝の朝の露出を丸ごと失う**（2026-08-21 に足した
+          前倒しの効果が決勝だけ無効になる）。
     """
-    if is_trifecta or not partners:
+    if not partners:
+        return False
+    if is_trifecta and not equal_stake_trifecta:
         return False
     odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
     return bool(odds) and all(odds.get(t) for t in partners)
@@ -1683,8 +1730,21 @@ def _normalize_7t1_candidate(
     legs_raw = [str(x) for x in (cand.get("legs") or [])]
     if not legs_raw:
         raise ValueError("7T1 の買い目が空です")
-    axis1 = int(cand["axis1"])
-    axis2 = int(cand["axis2"])
+    # 🔴 7T3 は**軸を持たない**ので候補JSONに `axis1`/`axis2` が無い。
+    #    買い目から表示用の ◎○ を導く（`strategy_wt.rank_7t3_axes`：
+    #    1着に最も多く現れる車 / ◎を除き1-2着に最も多く現れる車）。
+    #    ⚠️ これは**買い目の軸ではない**。見解本文でも「二軸」と書かない
+    #       （`update_netkeirin_templates._body_no_axis`）。
+    if cand.get("axis1") is None or cand.get("axis2") is None:
+        from src.strategy_wt import rank_7t3_axes
+
+        a1, a2 = rank_7t3_axes(legs_raw)
+        if a1 is None or a2 is None:
+            raise ValueError("買い目から ◎○ を決められません")
+        axis1, axis2 = int(a1), int(a2)
+    else:
+        axis1 = int(cand["axis1"])
+        axis2 = int(cand["axis2"])
 
     # 賭け金は候補JSONを正とする。欠けていたら**同じ関数で組み直す**
     # （別式で埋めると記録側と入稿側が静かに食い違う。7H1 で実際に起きた型）。
@@ -1697,7 +1757,13 @@ def _normalize_7t1_candidate(
         cars = [int(x) for x in leg.split("-")]
         legs.append(BetLeg(BET_KIND_TRIFECTA_FORMATION,
                            [[cars[0]], [cars[1]], [cars[2]]], stakes[leg]))
-    marks: dict[int, str] = {int(c): "△" for c in (cand.get("partners") or [])}
+    # △ は候補JSONの `partners` を正とする。7T3 には無いので、
+    # **買い目に登場する車**（◎○を除く）から導く。
+    partners = cand.get("partners")
+    if partners is None:
+        partners = sorted({int(x) for leg in legs_raw for x in leg.split("-")}
+                          - {axis1, axis2})
+    marks: dict[int, str] = {int(c): "△" for c in partners}
     marks[axis1] = "◎"
     marks[axis2] = "○"
     return legs, marks, axis1, axis2
@@ -2075,7 +2141,8 @@ def _process_rank(
         if race_wave not in due_waves:
             is_trifecta = bool(use_trifecta or is_7t1 or is_formation or is_multi_7h2)
             wave_jp = WAVE_LABEL_JP.get(race_wave, race_wave)
-            if not _can_pull_forward(base_key, is_trifecta, axis1, axis2_or_p1, partners):
+            if not _can_pull_forward(base_key, is_trifecta, axis1, axis2_or_p1,
+                                     partners, equal_stake_trifecta=is_7t1):
                 if deferred_races is not None:
                     deferred_races.add(base_key)
                 reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"

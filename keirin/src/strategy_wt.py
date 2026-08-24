@@ -23,8 +23,10 @@ import hashlib as _hashlib
 import json
 import math
 from itertools import combinations as _combinations
+from itertools import permutations as _permutations
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping, Sequence
 
 # TRAIN(2023-07-01〜2026-02-28) の top3_sum 四分位カット（既定値＝コミット済フォールバック）。
 # 再学習でモデル確率分布が変わると四分位がズレるため、週次再学習後に
@@ -2755,7 +2757,7 @@ def rank_7h2_daily_select(candidates: list[dict]) -> list[dict]:
 #   複数ランクの行を持てる**（実データでも 7H1 と 7B が共存している）。したがって
 #   **候補生成・記録の段階では重複を排除しない**（ユーザー判断: 重なりは気にしない）。
 #   重複排除は **netkeirin 入稿でのみ**行う（1レース1商品という外部仕様のため）。
-#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1）。
+#   優先順位は `netkeirin_submit_wt.RANK_ORDER`（7H2 > 7T1 > 7T3 > 7S > 7B > 7C > 7H1 > 7M1）。
 #   実測の重なりは 2.4〜3.2件/日で、入稿に残る 7C は 16.7件/日。
 #
 # memory: keirin_base_model_two_axis_2026_08_07
@@ -4090,32 +4092,36 @@ RANK_7T1_AXIS1_TOP_N = 2
 RANK_7T1_KMAX = 5                   # 3着に流せる最大点数（7車なら残り5車）
 
 
+#: 7T1 の対象レース種別（2026-08-24 に**決勝のみ**へ絞った・完全一致）。
+#  🔴 **`marquee.MARQUEE_KEYWORDS` への依存を切った。** 以前は看板判定の正本を
+#     束縛していたので、「7T1 を絞ろう」としてキーワードを触ると看板判定まで
+#     動く構造だった。7T1 は自分の定数を持つ。
+RANK_7T1_RACE_TYPES: tuple[str, ...] = ("決勝", "チャレンジ決勝")
+
+
 def rank_7t1_is_target_race_type(race_type: str | None) -> bool:
-    """7T1 の対象レース種別か（＝**決勝系レース**。決勝・準決勝・特選・選抜）。
+    """7T1 の対象レース種別か（**決勝のみ・完全一致**）。
 
-    ⚠️ **クラスの高さとは無関係**。母集団の23.8%は チャレンジ／ガールズ
-       （チャレンジ準決勝 8.3% / チャレンジ選抜 8.3% 等）で、「上位クラス戦」では
-       ない。**開催の節目のレース**という意味なので、顧客向け文面でも
-       クラスの高さを謳わないこと。
+    🔴 **2026-08-24 に「決勝系（決勝/準決勝/特選/選抜）」から絞った。**
+       日次上限5は ROI を1ミリも改善していなかった（件数を 1/3 に削って
+       ROI は 81.8% で同じ＝ev による選別は無価値）一方、**種別で絞ると質が上がる**:
 
-    🔴 **これは「看板」ではない。** `marquee.is_marquee_type()` を使ってはいけない。
-       あちらは売上が集まる看板レースの判定で **「準決勝」を明示的に除外する**が、
-       7T1 の母集団は**準決勝を含む**（検証をその定義で行った）。
-       準決勝は母集団の33%を占め、成績は本体と区別できない
-       （20万超 2.17% vs 2.02% / edge 1.236 vs 1.213）。除くと 13.4→8.9本/日、
-       20万超が 3.6日→5.5日に1回まで落ちる＝**頻度だけを失う**。
+         上限なし（母集団まるごと）      13.60件/日  的中 3.68%  ROI  81.8%
+         旧: 決勝系×別ライン×上限5        4.96件/日  的中 3.51%  ROI  81.8%
+         決勝+準決勝×別ライン             7.03件/日  的中 4.18%  ROI  93.0%
+         **決勝のみ×別ライン（現行）**    2.20件/日  的中 4.99%  ROI 106.3%
 
-    🔴 キーワードはここで定義せず正本（`backend/src/services/keirin_marquee.py`）
-       から束縛する。除外リスト（`MARQUEE_EXCLUDE`）だけを適用しない。
-       ⚠️ 「準決勝」は「決勝」に部分一致で当たるので、除外しなければ自然に入る。
-       ⚠️ `特秀` は7車立てに**1レースも存在しない**（13,749R で0件）ので、
-          4キーワードをそのまま使っても検証時の定義（決勝/特選/選抜）と一致する。
+    🔴 **部分一致にしないこと**（「決勝」は準決勝に当たる）。
+    🔴 **別ライン制約（`rank_7t1_is_cross_line`）は必ず併用する。**
+       決勝×同ラインで 7T1 の買い方をすると ROI 64.7%（別ラインは 106.3%）。
+       同ラインは `RANK_7T3` が優先順位の結果として拾う。
+    ⚠️ 分析スクリプト（`scripts/exp_*`）がこの関数を「決勝系」の意味で使っている
+       ものがあり、定義変更でそれらの母集団も決勝のみへ変わる。広い意味が要る
+       場合は `marquee.MARQUEE_KEYWORDS` を直接使うこと。
+
+    設計と実測: `docs/rank_7t3_design.md` §5
     """
-    from .marquee import MARQUEE_KEYWORDS
-
-    if not race_type:
-        return False
-    return any(k in race_type for k in MARQUEE_KEYWORDS)
+    return str(race_type or "") in RANK_7T1_RACE_TYPES
 
 
 def rank_7t1_is_cross_line(top3_probs: dict[int, float],
@@ -4280,7 +4286,14 @@ def rank_7t1_stakes(legs: list[str], budget: int = RANK_7T1_BUDGET,
 #      2点 102.7%/4.7%、3点 78.1%/4.0%、5点 36.2%/1.0% で、1点が最良。
 #      「1点は当てにくい」という印象は誤りで、点数が増えるほど必要オッズの
 #      足切りが上がり的中率が下がる（1点15倍 → 5点75倍）。
-RANK_7T1_DAILY_CAP = 5
+#   🔴 **2026-08-24 に撤廃した（5 → 0）。** 上記の判断は「商品構成に占める比率を
+#      戻す」ためのもので、**ROI は1ミリも改善していなかった**——件数を 13.60 →
+#      4.96件/日 と 1/3 に削って ROI は 81.8% で同じ（CI [73,91] ↔ [66,98]）。
+#      ＝ **ev による選別は無価値**だった。代わりに母集団を「決勝のみ×別ライン」
+#      へ絞ることで 2.20件/日・ROI 106.3% にした（`rank_7t1_is_target_race_type`）。
+#      比率の問題は母集団が薄くなったこと自体で解決している。
+#   ⚠️ 0 は「上限なし」。`rank_7t1_daily_select` は falsy を上限なしとして扱う。
+RANK_7T1_DAILY_CAP = 0
 
 
 def rank_7t1_expected_value(candidate: dict, win_probs: dict[int, float] | None = None
@@ -4323,12 +4336,16 @@ def rank_7t1_daily_select(candidates: list[dict],
       `n_entries`(=7) / `race_type` / `is_cross_line` / `legs`（空なら除外）
       `ev`（期待回収倍率。上限で切るときの順位づけに使う）
 
-    母集団の条件（決勝系レース × 上位2車が別ライン）を満たしたうえで、
-    **期待値の高い順に `daily_cap` 本だけ**を採る（2026-08-18〜）。
+    母集団の条件（**決勝** × 上位2車が別ライン）を満たしたものを採る。
+
+    ⚠️ **日次上限は既定で無効**（`RANK_7T1_DAILY_CAP = 0`・2026-08-24）。
+       機構は残してあるので `daily_cap` を明示すれば効く（検証用）。
+       撤廃した理由は定数の定義部：件数を 1/3 に削って ROI が同じ＝
+       ev による選別は無価値だった。
 
     🔴 **`ev` を持たない候補は落とさない**。旧形式の候補JSONを読んだときに
        商品が全滅するのを防ぐ（`legs_7c_buy` と同じ扱い）。ただし順位づけでは
-       最下位に置くので、上限に達していれば結果的に外れる。
+       最下位に置くので、上限を**明示したとき**は結果的に外れる。
     ⚠️ 上限を掛けるのはここ1箇所だけ。`build_7t1_candidates.py` は日次1回しか
        走らないので、朝夜で枠を取り合う問題は起きない（7S とは事情が違う）。
     🔴 ただし**バックフィルは同じ関数を月単位で呼ぶ**ので、上限は必ず
@@ -4354,6 +4371,248 @@ def rank_7t1_daily_select(candidates: list[dict],
                 str(c.get("race_key"))))
             kept += day[:daily_cap]
         elig = kept
+    # 発走順。表示・入稿の都合だけで決めてよい。
+    elig.sort(key=lambda c: (str(c.get("start_time") or ""), str(c.get("race_key"))))
+    return elig
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RANK_7T3 — 三連単「決勝の中配当枠」（2026-08-24 新設）
+#
+# 設計書: `docs/rank_7t3_design.md`（この節は要点だけ。数字の出所は向こう）
+#
+# 【なぜ要るのか】ユーザー要望「1日3〜5レース狙い、週2〜3ヒット」。
+#   🔴 **万車券（100倍以上）で週2〜3ヒットは算数的に不可能**。
+#      週2.5ヒット ÷（3.5R/日 × 7日）＝ 必要な的中率 約10%。100倍以上を5点
+#      買ったときの的中は構造的に 2.2%（各目の公正確率 0.75/160 ≈ 0.47%）。
+#   オッズ帯を動かしても ROI はどの帯でも 73〜76% で一定（的中率と配当が
+#   交換されるだけ）。**「週2〜3ヒット」に対応するのは 30倍以上の帯**。
+#
+#   ⚠️ したがって **商品説明で万車券を謳わないこと**。的中278件の払戻内訳は
+#      〜3千円 30.9% / 3〜5千円 38.1% / 5千〜1万円 26.3% /
+#      **1万円以上 4.7%（年6件）** / 3万円超 **0件**。
+#
+# 【定義】
+#     n_entries == 7
+#     ∧ race_type ∈ RANK_7T3_RACE_TYPES        # **完全一致**
+#     ∧ 予測オッズ RANK_7T3_MIN_ODDS 倍以上の目が1点以上ある
+#     → 位置別合成 PL の確率上位 RANK_7T3_LEGS 点
+#
+# 【実測】探索 2024-07〜2025-12(1,997R) / 確認 2026-01〜2026-08-04(783R):
+#
+#     窓     件/日  的中     ROI    CI        払戻中央
+#     探索    3.6   9.51%   90.7%  [76,107]  79,080円
+#     確認    3.6  11.24%   94.2%  [73,118]  72,300円
+#     通算    3.6  10.00%   91.7%  [80,104]  77,000円   （対照＝全レース 75.2%）
+#
+#   四半期7窓で 5/7 が対照超え・5/7 が壁(74.85%)超え（**2窓は壁割れ**）。
+#   月次ライブ（2026-04〜08・vintage m2604〜m2608）は 5/5ヶ月で対照超え・
+#   通算 ROI 111.9%。
+#   🔴 **黒字と断定しないこと。** 111.9% は的中60件・CI[81,146]。
+#
+# 【掘って空振りだった選別源（再検証不要・設計書 §7）】
+#   Σp（AUC 0.5172・較正も崩壊）/ 源泉 LightGBM（AUC 0.5304）/
+#   **場・バンク**（探索↔確認の順位相関 −0.065〜+0.047 ＝ ノイズ）/ 堅いレース優先。
+#   🟢 効いたのは **race_type だけ**（順位相関 的中 +0.395 / ROI +0.408）。
+#
+# 【優先順位】`7H2 > 9H1 > 7T1 > 7T3 > 7S > 9C > 7B > 7C > 7H1 > 7M1`
+#   （2026-08-24 ユーザー判断）。7T1 を 7T3 の**上**に置くのが必須。
+#   決勝では ROI が 7S より 22〜31pt 高い一方、7T1/7T3 は合計 3.6件/日 と薄いので、
+#   下に置くと 7S に取られてほぼ出ない（実測 7T1 は決勝の16%しか取れていない）。
+#   受け入れたトレード: 7S の**表示的中 −0.22pt**・ROI 不変（決勝は 7S 母集団の5.7%）。
+#   🔴 「決勝で 7S の的中は 44.5%」をそのまま比較に使わないこと。それはガミ込みの
+#      生の的中率で、netkeirin が見せるのはガミを除いた **26.12%**。
+# ═══════════════════════════════════════════════════════════════════════════
+
+RANK_7T3_NE = 7                     # 対象車数（7車ちょうど）
+RANK_7T3_BUDGET = RACE_BUDGET       # 1レースの予算枠（円）
+RANK_7T3_UNIT = STAKE_UNIT          # 最低賭け金単位（円）
+#: 対象レース種別。🔴 **完全一致で判定する**（`rank_7t3_is_target_race_type`）。
+#  `marquee.MARQUEE_KEYWORDS` を使ってはいけない——あれは 決勝/特選/選抜/特秀 の
+#  **部分一致**で準決勝・特選・選抜まで拾う。特選・選抜は単独 ROI 71.9% ＝壁の下。
+RANK_7T3_RACE_TYPES: tuple[str, ...] = ("決勝", "チャレンジ決勝")
+#: 買う目の予測オッズの下限（倍）。「週2〜3ヒット」に対応する帯。
+#  ⚠️ 予測30倍以上でも**確定では17%が下振れ**する。的中の内訳を語るときは
+#     予測ではなく確定オッズで数えること。
+RANK_7T3_MIN_ODDS = 30.0
+#: 買い目の点数。予算を等分するので 1点 = 2,000円。
+RANK_7T3_LEGS = 5
+#: 位置別合成の重み（1着=勝率 / 2着=相乗平均 / 3着=3着内率）。
+#  🔴 `odds_prediction_tf.pl_ordered` は **`pw` 単独**なので流用しないこと。
+#     確認窓の top1 的中は 単独 5.99% ↔ 合成 **10.07%**。
+RANK_7T3_BLEND_W: tuple[float, float, float] = (1.0, 0.5, 0.0)
+
+
+def rank_7t3_is_target_race_type(race_type: str | None) -> bool:
+    """7T3 の対象レース種別か（**完全一致**）。
+
+    🔴 部分一致にしないこと。「決勝」で部分一致すると準決勝を拾い、
+       `marquee.MARQUEE_KEYWORDS` を使うと特選・選抜まで入る（単独 ROI 71.9%
+       ＝控除率の壁の下）。検証は完全一致の定義で行った。
+    """
+    return str(race_type or "") in RANK_7T3_RACE_TYPES
+
+
+def rank_7t3_blend_probs(
+    cars: Sequence[int], win_probs: Mapping[int, float],
+    top3_probs: Mapping[int, float],
+    w: tuple[float, float, float] = RANK_7T3_BLEND_W,
+) -> dict[tuple[int, int, int], float]:
+    """三連単・全順列の確率。**位置別合成 Plackett-Luce**。
+
+    1着は勝率(`pw`)、3着は3着内率(`p3`)、2着はその相乗平均を強度に使う:
+
+        a = normalize(pw), b = normalize(p3)
+        s_i = normalize(a**w_i * b**(1-w_i))        （w = (1, 0.5, 0)）
+        P(x,y,z) = s0[x] × s1[y]/(1-s1[x]) × s2[z]/(1-s2[x]-s2[y])
+
+    🔴 **`pw` 単独の PL（`odds_prediction_tf.pl_ordered`）とは別物**。
+       三連単の買い目確率を1着率だけで作るのが元の穴で、位置別に合成すると
+       確認窓の top1 的中が **5.99% → 10.07%** になる。
+    ⚠️ 最後にレース内で正規化する（検証実装 `scripts/exp_7t3/tfprob.py` と同じ）。
+    """
+    cs = [int(c) for c in cars]
+    if len(cs) < 3:
+        return {}
+    a = [max(float(win_probs.get(c, 0.0)), 1e-9) for c in cs]
+    b = [max(float(top3_probs.get(c, 0.0)), 1e-9) for c in cs]
+    sa, sb = sum(a), sum(b)
+    a = [x / sa for x in a]
+    b = [x / sb for x in b]
+    strengths: list[list[float]] = []
+    for wi in w:
+        s = [ai ** wi * bi ** (1.0 - wi) for ai, bi in zip(a, b)]
+        tot = sum(s)
+        strengths.append([x / tot for x in s] if tot > 0 else s)
+    idx = {c: i for i, c in enumerate(cs)}
+    out: dict[tuple[int, int, int], float] = {}
+    for x, y, z in _permutations(cs, 3):
+        ix, iy, iz = idx[x], idx[y], idx[z]
+        d1 = 1.0 - strengths[1][ix]
+        d2 = 1.0 - strengths[2][ix] - strengths[2][iy]
+        if d1 <= 0 or d2 <= 0:
+            continue
+        out[(x, y, z)] = (strengths[0][ix]
+                          * (strengths[1][iy] / d1)
+                          * (strengths[2][iz] / d2))
+    tot = sum(out.values())
+    return {k: v / tot for k, v in out.items()} if tot > 0 else {}
+
+
+def rank_7t3_select(
+    top3_probs: dict[int, float], win_probs: dict[int, float],
+    pred_odds: dict[tuple[int, int, int], float],
+    min_odds: float = RANK_7T3_MIN_ODDS, n_legs: int = RANK_7T3_LEGS,
+) -> list[str]:
+    """7T3 の買い目（`"1-2-3"` 形式の文字列）。組めなければ空リスト。
+
+    予測オッズが `min_odds` 倍以上の目に限定し、**位置別合成 PL の確率の降順**で
+    `n_legs` 点を採る。
+
+    🔴 **EV順（確率 × 予測オッズ）にしてはいけない。** 100〜300倍帯では EV 順が
+       優れるが、30倍帯では確率順のほうが素直。EV 順は探索窓で予測オッズモデルが
+       in-sample なので過大評価される。
+    🔴 `pred_odds` は板として整合させたもの（`odds_prediction_tf.predict_board`）を
+       渡すこと。生の回帰値だと Σ(1/オッズ) が払戻率の制約から外れ、
+       30倍という足切りがそのままずれる。
+    """
+    if not top3_probs or not win_probs or not pred_odds:
+        return []
+    cars = sorted(set(top3_probs) & set(win_probs))
+    probs = rank_7t3_blend_probs(cars, win_probs, top3_probs)
+    if not probs:
+        return []
+    band: list[tuple[float, tuple[int, int, int]]] = []
+    for combo, odds in pred_odds.items():
+        if not odds or float(odds) < min_odds:
+            continue                       # 帯の外（安すぎる目）
+        p = probs.get(combo)
+        if p is None:
+            continue                       # 盤面に無い車が混ざった目
+        band.append((float(p), combo))
+    if not band:
+        return []
+    # 確率の降順。同率は車番順で決定的にする（レースごとに揺れないため）。
+    band.sort(key=lambda t: (-t[0], t[1]))
+    return ["-".join(str(x) for x in combo) for _, combo in band[:n_legs]]
+
+
+def rank_7t3_axes(legs: list[str]) -> tuple[int | None, int | None]:
+    """7T3 の表示用 ◎○（2026-08-24 ユーザー判断）。買い目が空なら (None, None)。
+
+        ◎ = 買い目5点の**1着に最も多く現れる車**
+        ○ = ◎を除いて、**1着または2着に最も多く現れる車**
+
+    🔴 **これは「軸」ではない。** 7T3 は軸を固定せず、予測オッズ30倍以上の帯から
+       確率上位の決着順を採るだけ。実測（2026年の決勝200R）で
+       5点すべてに共通して含まれる車は **1車が 50.5%**（2車は 49.0%）＝
+       半数のレースに「二軸」と呼べる2車は存在しない。
+       したがって**見解本文では「二軸」と明言しない**（7T3 だけ【二軸】節を
+       持たない・`update_netkeirin_templates._body_no_axis`）。
+       印を付けるのは **二軸探偵としてのブランドの一貫性**と
+       **netkeirin が ◎○ を要求する**ためで、買い目の構造の主張ではない。
+
+    ⚠️ 同数のときは **`legs` の並び順が早いほう**を採る。`rank_7t3_select` は
+       確率の降順で返すので、これは「確率の高い買い目に出てくるほう」を意味する。
+       車番昇順で切ると確率を無視した恣意的な選び方になる。
+    """
+    if not legs:
+        return None, None
+    cars = [[int(x) for x in leg.split("-")] for leg in legs]
+    first_seen: dict[int, int] = {}
+    for i, trio in enumerate(cars):
+        for c in trio:
+            first_seen.setdefault(c, i)
+    n1: dict[int, int] = {}
+    for trio in cars:
+        n1[trio[0]] = n1.get(trio[0], 0) + 1
+    honmei = min(n1, key=lambda c: (-n1[c], first_seen[c]))
+    n12: dict[int, int] = {}
+    for trio in cars:
+        for c in trio[:2]:
+            if c != honmei:
+                n12[c] = n12.get(c, 0) + 1
+    if not n12:
+        return honmei, None
+    taikou = min(n12, key=lambda c: (-n12[c], first_seen[c]))
+    return honmei, taikou
+
+
+def rank_7t3_stakes(legs: list[str], budget: int = RANK_7T3_BUDGET,
+                    unit: int = RANK_7T3_UNIT) -> dict[str, int]:
+    """買い目ごとの賭け金。**均等**（5点なら 2,000円/点）。
+
+    🔴 確率で重み付けしないこと。30倍という足切りは「全点が等額」を前提に
+       決めてある（`rank_7t3_select`）。重み付けすると軽い点が帯の意味を失う。
+    """
+    from .stake_allocation import allocate_budget
+
+    if not legs:
+        return {}
+    return allocate_budget({leg: 1.0 for leg in legs}, budget=budget, unit=unit)
+
+
+def rank_7t3_daily_select(candidates: list[dict]) -> list[dict]:
+    """当日の候補から 7T3 を選出する。
+
+    candidates の各要素に必要なキー:
+      `n_entries`(=7) / `race_type` / `legs`（空なら除外）
+
+    🔴 **ライン条件を持たない**（設計書 §8）。別/同ラインの判定は「p3上位2車」の
+       取り方に敏感で、軸2を p3 の3番手に替えると **44.5%** のレースで反転する。
+       判定ロジックを2箇所に持つと、モデルの微小な更新で商品が入れ替わる。
+       入稿の優先順位で **7T1 の直後**に置けば、7T1 が取った別ラインは自動で降り、
+       7T3 は同ラインだけを拾う。**判定の正本は 7T1 側の1箇所だけになる。**
+       こうしておけば判定が揺れても必ずどちらか一方が出る（穴も二重入稿もない）。
+
+    🔴 **日次上限は掛けない。** 決勝のみで 3.6件/日（優先順位で 7T1 に譲った後は
+       1.4件/日）と元から薄い。7T1 の上限5は ROI を1ミリも改善していなかった
+       （件数 1/3 で ROI 同じ）ので、同じ轍を踏まない。
+    """
+    elig = [c for c in candidates
+            if c.get("n_entries") == RANK_7T3_NE
+            and rank_7t3_is_target_race_type(c.get("race_type"))
+            and c.get("legs")]
     # 発走順。表示・入稿の都合だけで決めてよい。
     elig.sort(key=lambda c: (str(c.get("start_time") or ""), str(c.get("race_key"))))
     return elig
@@ -4452,6 +4711,12 @@ CURRENT_PAPER_RANKS: tuple[PaperRankSpec, ...] = (
     # 7C が先に取り 7T1 が降りる（的中体験を高配当枠に奪わせない）。
     # picks_history には**両方の行が入る**（記録は独立）。
     PaperRankSpec("RANK_7T1", "#7T1", "7T1", in_header_total=False, in_live_report=True),
+    # 三連単・決勝の中配当枠（2026-08-24〜）。母集団は**決勝 × 予測30倍以上**の
+    # 7車立てで、ライン条件を持たない。入稿の優先順位で 7T1 の**直後**に置くため、
+    # 7T1（決勝×別ライン）が取ったレースは自動で降り、結果として**同ラインだけ**を
+    # 拾う。判定の正本を2箇所に持たないための設計（docs/rank_7t3_design.md §8）。
+    # picks_history には**両方の行が入る**（記録は独立）。
+    PaperRankSpec("RANK_7T3", "#7T3", "7T3", in_header_total=False, in_live_report=True),
 )
 
 # 旧名(2026-07-31改名前)→新名のマッピング（過去のCSVバックアップ・Discordログ・

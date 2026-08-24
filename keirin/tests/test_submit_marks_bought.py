@@ -82,7 +82,11 @@ def test_only_ranks_without_a_prerace_decision_are_marked():
     for rank in ("7S", "7C", "7A", "7B", "7H1", "7H2", "9C", "9H1", "7SS"):
         m._mark_bought(conn, "20260815_53_04", rank, 10000)
     assert conn.calls == []
-    assert m.RANKS_BOUGHT_ON_SUBMIT == frozenset({"7T1"})
+    # 2026-08-24: 7T3 を追加。7T1 と同じく発走前の買い判定を持たない
+    # （`notify_results_wt.py` は `rank='RANK_7T1'` を直接書いており 7T3 の
+    #  分岐が無い）ので、足さないと**売っているのに Web の投資・回収
+    #  サマリーから消える**（7T1 で 2026-08-15 に起きた事故と同じ）。
+    assert m.RANKS_BOUGHT_ON_SUBMIT == frozenset({"7T1", "7T3"})
 
 
 def test_zero_total_never_writes():
