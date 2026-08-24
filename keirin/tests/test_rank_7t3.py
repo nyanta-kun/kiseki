@@ -288,3 +288,56 @@ def test_shape_texts_do_not_claim_fixed_axes():
     for text in list(SHAPE_NOTES["7T3"].values()) + list(SHAPE_TITLES["7T3"].values()):
         for banned in ("固定", "万車券", "一撃", "堅い", "読み切"):
             assert banned not in text, f"7T3 の文面が「{banned}」を含む: {text}"
+
+
+# ---------------------------------------------------------------- 印（◎○）
+
+def test_axes_are_by_first_and_second_place_frequency():
+    """🔴 ◎○ の決め方（2026-08-24 ユーザー判断）。
+
+        ◎ = 買い目の**1着に最も多く現れる車**
+        ○ = ◎を除いて、**1着または2着に最も多く現れる車**
+    """
+    from src.strategy_wt import rank_7t3_axes
+
+    # 1着: 1が3回・2が1回・3が1回 → ◎=1
+    # 1-2着（◎除く）: 2が3回・3が2回・… → ○=2
+    legs = ["1-2-3", "1-2-4", "2-1-5", "3-1-2", "1-3-6"]
+    assert rank_7t3_axes(legs) == (1, 2)
+
+
+def test_axes_tie_break_prefers_the_higher_probability_leg():
+    """⚠️ 同数なら **`legs` の並びが早いほう**（＝確率が高い買い目に出るほう）。
+
+    車番昇順で切ると確率を無視した恣意的な選び方になる。
+    `rank_7t3_select` は確率の降順で返すので、並び順がそのまま確率順。
+    """
+    from src.strategy_wt import rank_7t3_axes
+
+    assert rank_7t3_axes(["1-2-3", "2-1-4"]) == (1, 2)
+    assert rank_7t3_axes(["2-1-3", "1-2-4"]) == (2, 1)
+
+
+def test_axes_are_empty_without_legs():
+    from src.strategy_wt import rank_7t3_axes
+
+    assert rank_7t3_axes([]) == (None, None)
+
+
+def test_axes_are_marks_not_a_structural_claim():
+    """🔴 印は付けるが、**文面では「二軸」と言わない**（2026-08-24 ユーザー判断）。
+
+    印を付ける理由は「二軸探偵としてのブランドの一貫性」と「netkeirin が ◎○ を
+    要求すること」であって、買い目が2車を軸に組まれているという主張ではない。
+
+    実測（2026年の決勝200R）で ◎ は 5点すべてに含まれるのが **93.5%** と強いが、
+    ○ は 52.0% で、◎○ が両方そろって全点に入るのは **46.5%** しかない。
+    ＝ **2車で「二軸」と言い切れる形にはならない。**
+    """
+    from scripts.update_netkeirin_templates import COMMENT_TEMPLATES
+
+    assert "二軸" not in COMMENT_TEMPLATES["7T3"]
+    # ただし印そのものは出せること（関数が存在し、値を返す）
+    from src.strategy_wt import rank_7t3_axes
+
+    assert rank_7t3_axes(["1-2-3", "1-3-4", "1-2-5"]) == (1, 2)

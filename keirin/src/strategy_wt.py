@@ -4526,6 +4526,47 @@ def rank_7t3_select(
     return ["-".join(str(x) for x in k) for _, k in band[:n_legs]]
 
 
+def rank_7t3_axes(legs: list[str]) -> tuple[int | None, int | None]:
+    """7T3 の表示用 ◎○（2026-08-24 ユーザー判断）。買い目が空なら (None, None)。
+
+        ◎ = 買い目5点の**1着に最も多く現れる車**
+        ○ = ◎を除いて、**1着または2着に最も多く現れる車**
+
+    🔴 **これは「軸」ではない。** 7T3 は軸を固定せず、予測オッズ30倍以上の帯から
+       確率上位の決着順を採るだけ。実測（2026年の決勝200R）で
+       5点すべてに共通して含まれる車は **1車が 50.5%**（2車は 49.0%）＝
+       半数のレースに「二軸」と呼べる2車は存在しない。
+       したがって**見解本文では「二軸」と明言しない**（7T3 だけ【二軸】節を
+       持たない・`update_netkeirin_templates._body_no_axis`）。
+       印を付けるのは **二軸探偵としてのブランドの一貫性**と
+       **netkeirin が ◎○ を要求する**ためで、買い目の構造の主張ではない。
+
+    ⚠️ 同数のときは **`legs` の並び順が早いほう**を採る。`rank_7t3_select` は
+       確率の降順で返すので、これは「確率の高い買い目に出てくるほう」を意味する。
+       車番昇順で切ると確率を無視した恣意的な選び方になる。
+    """
+    if not legs:
+        return None, None
+    cars = [[int(x) for x in leg.split("-")] for leg in legs]
+    first_seen: dict[int, int] = {}
+    for i, trio in enumerate(cars):
+        for c in trio:
+            first_seen.setdefault(c, i)
+    n1: dict[int, int] = {}
+    for trio in cars:
+        n1[trio[0]] = n1.get(trio[0], 0) + 1
+    honmei = min(n1, key=lambda c: (-n1[c], first_seen[c]))
+    n12: dict[int, int] = {}
+    for trio in cars:
+        for c in trio[:2]:
+            if c != honmei:
+                n12[c] = n12.get(c, 0) + 1
+    if not n12:
+        return honmei, None
+    taikou = min(n12, key=lambda c: (-n12[c], first_seen[c]))
+    return honmei, taikou
+
+
 def rank_7t3_stakes(legs: list[str], budget: int = RANK_7T3_BUDGET,
                     unit: int = RANK_7T3_UNIT) -> dict[str, int]:
     """買い目ごとの賭け金。**均等**（5点なら 2,000円/点）。
