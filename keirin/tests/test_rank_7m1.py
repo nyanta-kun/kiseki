@@ -138,9 +138,20 @@ def test_daily_select_accepts_two_legs_after_floor():
     assert len(sw.rank_7m1_daily_select([_cand(legs_7m1=[3, 4])])) == 1
 
 
-def test_daily_select_rejects_single_leg():
-    """1点まで落ちたら買わない（1点買いは商品として説明できない・7C と同じ判断）。"""
-    assert sw.rank_7m1_daily_select([_cand(legs_7m1=[3])]) == []
+def test_daily_select_accepts_the_deliberate_single_leg():
+    """🔴 **1点は通す**（2026-08-24）。
+
+    旧仕様は「1点まで落ちたら買わない」だったが、○1点への集中
+    （`rank_7m1_maru_concentrates`）は**意図した1点買い**なので、ここで
+    `RANK_7M1_LEGS_MIN`(=2) を要求すると集中したいレースが母集団ごと落ちる。
+    下限2点は位置規則の戻し先であって選出のゲートではない。
+    """
+    assert sw.rank_7m1_daily_select([_cand(legs_7m1=[3])]) != []
+
+
+def test_daily_select_rejects_empty_legs():
+    """相手が1点も作れないレースは買わない。"""
+    assert sw.rank_7m1_daily_select([_cand(legs_7m1=[])]) == []
 
 
 def test_daily_select_rejects_non_seven_car():
@@ -325,11 +336,17 @@ def test_firm_band_is_fail_closed_without_the_7c_judgment_keys():
 # memory: keirin_7m1_ev_legs_2026_08_21
 
 def test_select_legs_uses_ev_order_when_available():
-    """EV が全候補に揃っていれば **EV の降順で上位3点**を採る。"""
+    """EV が全候補に揃っていれば **EV の降順で上位 `RANK_7M1_LEGS` 点**を採る。
+
+    点数は 2026-08-24 に 3 → 4。均等配分で測った旧検証が「増点は悪化」と
+    出していたのは配分の取り違えで、本番のダッチングで測り直すと4点が優る
+    （`strategy_wt.RANK_7M1_MARK_DEMOTE` 定義部）。
+    """
     others = [1, 2, 3, 4, 5]
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.10}
     ev = {1: 0.9, 2: 1.5, 3: 0.8, 4: 2.2, 5: 1.1}
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 2, 5]
+    assert sw.RANK_7M1_LEGS == 4
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 2, 5, 1]
 
 
 def test_select_legs_ev_does_not_apply_the_p3_floor():
@@ -343,7 +360,7 @@ def test_select_legs_ev_does_not_apply_the_p3_floor():
     others = [1, 2, 3, 4, 5]
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.02, 5: 0.01}   # 4,5 は足切り水準以下
     ev = {1: 0.1, 2: 0.2, 3: 0.3, 4: 9.0, 5: 8.0}
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 5, 3]
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 5, 3, 2]
 
 
 def test_select_legs_falls_back_when_ev_is_missing_or_partial():
@@ -387,7 +404,12 @@ def test_daily_rebuild_passes_ev_to_select_legs():
     src = (Path(__file__).resolve().parent.parent
            / "scripts" / "backfill_7m1_rank_wt.py").read_text()
     assert "rank_7m1_select_legs(" in src
-    assert "ev=_ev_for(" in src, "再構築側が EV を渡していない（巻き戻りが起きる）"
+    assert "_ev_for(" in src, "再構築側が EV を渡していない（巻き戻りが起きる）"
+    # 🔴 2026-08-24: 相手選択は EV だけでなく **予測オッズと印**も見る。
+    #    どれか1つでも渡し忘れると、live と再構築で別の買い目になり
+    #    picks_history が入稿と食い違う（7C が 2026-08-15 に踏んだ型）。
+    assert "odds=" in src, "再構築側が予測オッズを渡していない（○集中が効かない）"
+    assert "marks=" in src, "再構築側が印を渡していない（○△の後回しが効かない）"
 
 
 def test_backfill_ev_is_disabled_before_the_odds_model_train_end():
@@ -419,3 +441,165 @@ def test_backfill_ev_never_raises_when_the_odds_model_is_missing():
         assert bf._ev_for("20260101_11_01", 1, 2, [3, 4, 5], "2099-01-01") is None
     finally:
         bf.odds_model_train_end = orig
+
+
+# ── 相手の印による後回し / ○1点への集中（2026-08-24） ─────────────────
+#
+# 根拠と実測は `strategy_wt.RANK_7M1_MARK_DEMOTE` 定義部のセクションコメント。
+# memory: keirin_7m1_partner_count_2026_08_24
+
+def test_select_legs_demotes_marked_partners():
+    """○(mark2)/△(mark4) は EV が高くても**相手の後ろへ回す**。
+
+    「軸2＋その車」を1点買いした素ROI は ○ 68〜70% / △ 71〜74% と控除率の壁
+    (74.85%) の下で、無印 77〜86% に負ける。しかもダッチングは人気の相手ほど
+    厚く置くので、放っておくと**賭け金の過半が負ける側に乗る**（実測 55.9%）。
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {c: 0.3 for c in others}
+    ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+    marks = {1: 2, 2: 4, 3: 0, 4: 0, 5: 0}      # 1=○ 2=△ 残りは無印
+    # 無印(3,4,5)が EV 順で先、そのあと ○△ が EV 順で続く → 4点目は○
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, marks=marks) == [3, 4, 5, 1]
+
+
+def test_select_legs_without_marks_keeps_the_old_ev_order():
+    """`marks` を渡さない呼び出しは**後回しも集中もしない**（fail-open）。
+
+    印が取れない日に静かに別の商品へ変わらないこと。
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {c: 0.3 for c in others}
+    ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [1, 2, 3, 4]
+
+
+def test_maru_concentration_band():
+    """○を含む点の**予測**オッズが 2.0〜3.1倍 のときだけ ○1点へ集中する。"""
+    assert sw.rank_7m1_maru_concentrates(3, {3: 2.5}) is True
+    assert sw.rank_7m1_maru_concentrates(3, {3: 2.0}) is True     # 下限は含む
+    assert sw.rank_7m1_maru_concentrates(3, {3: 3.1}) is True     # 上限は含む
+    assert sw.rank_7m1_maru_concentrates(3, {3: 1.9}) is False    # 安すぎる
+    assert sw.rank_7m1_maru_concentrates(3, {3: 3.2}) is False    # 人気が集まっていない
+
+
+def test_maru_concentration_is_fail_closed():
+    """○が居ない / 予測オッズが無いときは集中しない（根拠なく1点買いにしない）。"""
+    assert sw.rank_7m1_maru_concentrates(None, {3: 2.5}) is False
+    assert sw.rank_7m1_maru_concentrates(3, None) is False
+    assert sw.rank_7m1_maru_concentrates(3, {}) is False
+    assert sw.rank_7m1_maru_concentrates(3, {4: 2.5}) is False    # ○の点が無い
+
+
+def test_maru_concentration_lower_bound_tracks_min_point_odds():
+    """🔴 下限は入稿側の `MIN_POINT_ODDS` と**必ず同じ値**であること。
+
+    入稿は「2倍未満の目が1つでもあるレースは出さない」ので、下限を下げると
+    ○1点へ絞った瞬間に**そのレースが丸ごと落ちる**（実測で発火の27〜30%）。
+    下限を揃えておけば、その帯は集中せず通常の相手構成のまま売れる。
+    """
+    from src.stake_allocation import MIN_POINT_ODDS
+
+    assert sw.RANK_7M1_MARU_CONC_ODDS_MIN == MIN_POINT_ODDS
+
+
+def test_maru_concentration_thresholds_are_not_bound_at_import_time():
+    """🔴 帯の既定値は**呼び出し時**に読むこと。
+
+    `def f(lo=RANK_7M1_MARU_CONC_ODDS_MIN)` と書くと定義時に確定し、定数を
+    書き換えても切り替わらない「効かないスイッチ」になる
+    （`rank_7m1_takes_firm_band` で実際に踏んだ型）。
+    """
+    orig = sw.RANK_7M1_MARU_CONC_ODDS_MAX
+    sw.RANK_7M1_MARU_CONC_ODDS_MAX = 10.0
+    try:
+        assert sw.rank_7m1_maru_concentrates(3, {3: 5.0}) is True
+    finally:
+        sw.RANK_7M1_MARU_CONC_ODDS_MAX = orig
+    assert sw.rank_7m1_maru_concentrates(3, {3: 5.0}) is False
+
+
+def test_select_legs_concentrates_on_maru_before_demoting_it():
+    """🔴 集中判定は**後回しより先**。
+
+    順序を入れ替えると ○ が後ろへ回された結果、集中したいレースで
+    ○ を買っていないという矛盾が起きる。
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {c: 0.3 for c in others}
+    ev = {1: 0.1, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+    marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}       # 1 が○（EV は最下位）
+    odds = {1: 2.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, odds=odds, marks=marks) == [1]
+
+
+def test_select_legs_falls_back_to_four_points_outside_the_band():
+    """帯の外なら集中せず、○を後回しにした4点になる。"""
+    others = [1, 2, 3, 4, 5]
+    p3 = {c: 0.3 for c in others}
+    ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+    marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}
+    odds = {1: 1.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}   # ○が安すぎる
+    # ○(1) は EV 最上位でも後ろへ回るので、無印4車がそのまま4点になる
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, odds=odds, marks=marks) == [2, 3, 4, 5]
+
+
+def test_concentration_never_fires_without_ev():
+    """予測オッズが作れない（EV も無い）レースでは従来の位置規則のまま。"""
+    others = [1, 2, 3, 4, 5]
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.16}
+    marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}
+    odds = {1: 2.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}
+    assert (sw.rank_7m1_select_legs(others, p3, odds=odds, marks=marks)
+            == sw.rank_7m1_select_legs(others, p3))
+
+
+def test_new_constants_move_the_rule_version():
+    """🔴 新しい定数は `picks_history.rule_version` に効くこと。
+
+    効かないと、改定の前後が同じ世代として混ざって集計できない。
+    タプルではなく文字列で持っているのは `rank_rule_version` が
+    スカラしか拾わないため（`RANK_7M1_MARK_DEMOTE`）。
+    """
+    for name, alt in (("RANK_7M1_MARK_DEMOTE", "4"),
+                      ("RANK_7M1_MARU_CONC_ODDS_MIN", 2.5),
+                      ("RANK_7M1_MARU_CONC_ODDS_MAX", 4.0),
+                      ("RANK_7M1_LEGS", 3)):
+        orig = getattr(sw, name)
+        before = sw.rank_rule_version("7M1")
+        setattr(sw, name, alt)
+        try:
+            assert sw.rank_rule_version("7M1") != before, f"{name} が版に効いていない"
+        finally:
+            setattr(sw, name, orig)
+        assert sw.rank_rule_version("7M1") == before
+
+
+def test_demote_marks_parses_the_constant():
+    """`RANK_7M1_MARK_DEMOTE` は「後ろへ回す印」のカンマ区切り。空なら後回ししない。"""
+    assert sw.rank_7m1_demoted_marks() == {2, 4}
+    orig = sw.RANK_7M1_MARK_DEMOTE
+    sw.RANK_7M1_MARK_DEMOTE = ""
+    try:
+        assert sw.rank_7m1_demoted_marks() == set()
+        others = [1, 2, 3, 4, 5]
+        p3 = {c: 0.3 for c in others}
+        ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+        marks = {1: 2, 2: 4, 3: 0, 4: 0, 5: 0}
+        assert sw.rank_7m1_select_legs(others, p3, ev=ev, marks=marks) == [1, 2, 3, 4]
+    finally:
+        sw.RANK_7M1_MARK_DEMOTE = orig
+
+
+def test_live_passes_odds_and_marks_to_select_legs():
+    """🔴 live 側（`cli/main.py`）も予測オッズと印を渡していること。
+
+    再構築側だけに入れると、入稿と記録が食い違う（逆向きの巻き戻り）。
+    盤面計算は1回にまとめる（`trio_ev_and_odds_for_legs`）。
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "src" / "cli" / "main.py").read_text()
+    assert "trio_ev_and_odds_for_legs" in src
+    i = src.index("rank_7m1_select_legs(")
+    call = src[i:i + 400]
+    assert "odds=" in call and "marks=" in call

@@ -498,6 +498,36 @@ def trio_ev_for_legs(
     return out
 
 
+def trio_ev_and_odds_for_legs(
+    race_key: str, axis1: int, axis2: int, partners: Sequence[int],
+) -> tuple[dict[int, float], dict[int, float]] | None:
+    """({相手: EV}, {相手: 予測オッズ}) を返す。作れなければ **None**。
+
+    `trio_ev_for_legs` と `predicted_odds_for_legs` を別々に呼ぶと**盤面を2回
+    作る**（`load_race_inputs` → `predict_board` が2回走る）。7M1 は両方を
+    同時に要るので1回で返す。
+
+    🔴 **買う点すべてが揃わなければ None**。片方だけ返すと呼び出し側で
+       EV 順と指数順が混ざる（`trio_ev_for_legs` と同じ思想）。
+    """
+    try:
+        cars, p3, pw, meta = load_race_inputs(race_key)
+        board = predict_board(cars, p3, pw, meta)
+        pl = _pl_trio(pw, cars)
+    except Exception:
+        return None
+    ev: dict[int, float] = {}
+    odds: dict[int, float] = {}
+    for t in partners:
+        k = frozenset({int(axis1), int(axis2), int(t)})
+        o, p = board.get(k), pl.get(k)
+        if not o or o <= 0 or p is None:
+            return None
+        odds[int(t)] = float(o)
+        ev[int(t)] = float(o) * float(p)
+    return ev, odds
+
+
 def trio_hit_probability(
     race_key: str, axis1: int, axis2: int, partners: Sequence[int],
 ) -> float | None:
