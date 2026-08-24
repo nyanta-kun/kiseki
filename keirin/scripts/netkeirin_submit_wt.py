@@ -78,9 +78,11 @@ from src.meeting_wave import (
 from src.dutch_allocation import dutch_allocate
 from src.stake_allocation import (
     MIN_EXPECTED_PAYOUT_BY_RANK,
+    MIN_MEAN_PAYOUT,
     MIN_POINT_ODDS,
     cheap_point_odds,
     expected_payout_floor,
+    mean_expected_payout,
 )
 from src.race_shape import (
     wide_note_text,
@@ -1807,6 +1809,35 @@ def _split_7h2_tf(legs_tf: list[str]) -> tuple[int, int, list[int]]:
 # メイン処理
 # ---------------------------------------------------------------------------
 
+#: 平均払戻ゲートで見送ったときのログに必ず入れる語（2026-08-24）。
+#  🔴 **`submit_marquee_wt.py` が子プロセスの stdout をこの語で数える。**
+#     文言を変えるときは向こうも直すこと（`test_min_mean_payout_gate.py` が固定）。
+MEAN_PAYOUT_SKIP_TAG = "平均払戻ゲート"
+
+#: 本実行で平均払戻ゲートが見送ったレース（`main()` がサマリーと通知に出す）。
+#  🔴 **可視性のために要る。** 自動化すると入稿自体が行われず
+#     `netkeirin_submissions` に痕跡が残らないので、ここを数えないと
+#     ゲートが壊れても誰も気づけない（docs/sales_kpi.md §11.6.3）。
+_mean_payout_skips: list[str] = []
+
+
+def _mean_payout_too_low(
+    stakes: dict[int, int], odds: dict[int, float] | None,
+) -> float | None:
+    """平均払戻が安すぎて見送るなら**その平均（円）**、出してよいなら None。
+
+    🔴 **判定できないとき（オッズが1点でも欠ける）は None ＝ 出す側へ倒す。**
+       `mean_expected_payout` が None を返す設計そのもの。分からないことを
+       理由に商品を落とさない（`MIN_POINT_ODDS` の既存ゲートと同じ思想）。
+       朝オッズが揃わなかったレースはここを素通りするので、レビュー画面の
+       一括取消 UI は保険として残す（§11.6.4）。
+    """
+    mean = mean_expected_payout(stakes, odds or {})
+    if mean is None or mean > MIN_MEAN_PAYOUT:
+        return None
+    return mean
+
+
 def _process_rank(
     rank_key: str, target_date: str, session: str, race_date, settings: dict[str, dict],
     already: set[tuple[str, str]], dry_run: bool, race_key_filter: str | None = None,
@@ -1989,6 +2020,26 @@ def _process_rank(
                             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
                                   f"({rank_key}): 予測オッズ {_cheap:.2f}倍 の目がある "
                                   f"< {MIN_POINT_ODDS:.1f}倍", flush=True)
+                            continue
+                    # 🔴 **平均払戻が安すぎるレースは出さない**（2026-08-24・
+                    #    ユーザー判断で手動の一括取消から自動ゲートへ切替）。
+                    #    判定と根拠は `stake_allocation.MIN_MEAN_PAYOUT`、
+                    #    設計は `docs/sales_kpi.md` §11.6。
+                    #    🔴 **`continue` であること。** ここで「処理済み」にすると
+                    #       1レース1商品の取り合いで後続ランクがそのレースを
+                    #       取れなくなる。**この continue が差し替えの本体**で、
+                    #       安い三連複が落ちた枠を後続ランク（7T1/7H1 の三連単）が
+                    #       自動的に拾う＝手動取消には無かった上積みになる。
+                    #    ⚠️ 三連単経路は対象外（予測オッズは三連複しか作れず、
+                    #       実測でも 7T1/7H1/7H2 は該当0件）。
+                    #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
+                    if not use_trifecta:
+                        _mean = _mean_payout_too_low(tilt_stakes_map, _pt_odds)
+                        if _mean is not None:
+                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
+                                  f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
+                                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円", flush=True)
+                            _mean_payout_skips.append(f"{venue_name}{race_no}R({rank_key})")
                             continue
                     min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
                     if min_floor is not None and not use_trifecta:
@@ -2272,6 +2323,25 @@ def _process_manual(
     if cfg.get("tilt_stakes"):
         legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
             race_key, cfg, axis1, axis2, partners)
+        # 🔴 **看板穴埋めにも平均払戻ゲートを掛ける**（2026-08-24・§11.6.2）。
+        #    この経路は `submit_marquee_wt.py` → subprocess → ここ、で
+        #    **実入稿の43%（240/562件）**を占める。入れないとゲートは
+        #    対象の半分以下にしか効かない。
+        #    ⚠️ `MANUAL_ALLOWED_RANKS` は 7B/7S/9C ＝すべて三連複・すべて
+        #       `tilt_stakes=True` なので、この分岐に入る時点で三連単経路ではない。
+        #    ⚠️ **`MIN_POINT_ODDS` と `MIN_EXPECTED_PAYOUT_BY_RANK` は
+        #       ここへ広げないこと。** 今回のユーザー判断に含まれておらず、
+        #       母集団と「看板レースには必ず推奨を出す」（2026-08-09）との
+        #       衝突範囲が変わる。広げるには別途のユーザー判断が要る。
+        _pt_odds = try_predicted_odds_for_legs(
+            race_key.split("#")[0], axis1, axis2, list(tilt_stakes_map))
+        _mean = _mean_payout_too_low(tilt_stakes_map, _pt_odds)
+        if _mean is not None:
+            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
+                  f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
+                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円", flush=True)
+            _mean_payout_skips.append(f"{venue_name}{race_no}R({rank_key})")
+            return 0, []
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
     stake_note = _stake_note_for(rank_key, legs)
     wide_note = wide_note_text(axis1, axis2, len(partners), cfg["n_cars"])
@@ -2546,6 +2616,8 @@ def main() -> None:
 
     submitted_counts: dict[str, int] = {r: 0 for r in RANK_ORDER}
     all_failures: list[str] = []
+    # 平均払戻ゲートの見送りを本実行ぶんだけ数える（§11.6.3 の可視性の手当て）。
+    _mean_payout_skips.clear()
     # 同一実行内で入稿済みのレース。netkeirin は1レース1商品なので、後続ランクが
     # 同じレースへ入稿すると先の商品を上書きしてしまう（_process_rank 参照）。
     claimed_races: set[str] = set()
@@ -2587,6 +2659,13 @@ def main() -> None:
                 f"確認: {RACE_AUTH_URL}\n"
                 f"内容を確認の上、公開してください。"
             )
+        # 🔴 **見送り件数を必ず出す**（§11.6.3）。自動化すると入稿自体が行われず
+        #    `netkeirin_submissions` に痕跡が残らないので、この1行が唯一の
+        #    「ゲートが生きている」証拠になる。**0件が続いたら壊れている合図**。
+        if _mean_payout_skips:
+            msg += (f"\n💸 安い配当で {len(_mean_payout_skips)}件 見送り"
+                    f"（平均払戻 {MIN_MEAN_PAYOUT:,}円以下）: "
+                    + " / ".join(_mean_payout_skips))
         if all_failures:
             msg += f"\n⚠️ 入稿失敗 {len(all_failures)}件: " + " / ".join(all_failures)
         if args.defer_notify:
@@ -2594,7 +2673,8 @@ def main() -> None:
                 target_date=target_date, session_jp=session_jp,
                 propose_only=bool(propose_only),
                 breakdown={k: v for k, v in submitted_counts.items() if v > 0},
-                total=total, failures=all_failures))
+                total=total, failures=all_failures,
+                mean_payout_skips=list(_mean_payout_skips)))
         else:
             try:
                 send(msg, channel="netkeirin")
@@ -2613,7 +2693,9 @@ def main() -> None:
         print(f"[netkeirin_submit] {target_date} {session}: 対象なし（スキップ）", flush=True)
 
     print(
-        f"[netkeirin_submit] {target_date} {session}: 完了（成功{total}件・失敗{len(all_failures)}件）",
+        f"[netkeirin_submit] {target_date} {session}: 完了（成功{total}件・"
+        f"失敗{len(all_failures)}件・{MEAN_PAYOUT_SKIP_TAG}で見送り"
+        f"{len(_mean_payout_skips)}件）",
         flush=True,
     )
 
