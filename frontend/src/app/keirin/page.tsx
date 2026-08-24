@@ -288,6 +288,7 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "9H1":        { bg: "#a855f7", text: "#fff", label: "9H1" },
   // 7T1=RANK_7T1（三連単・高配当枠・2026-08-13新設／旧7H3を置換）。穴狙い系なので同系色。
   "7T1":        { bg: "#4f46e5", text: "#fff", label: "7T1" },
+  "7T3":        { bg: "#7c3aed", text: "#fff", label: "7T3" },
   // 7C=RANK_7C（ベースモデル・終日の二軸・2026-08-07新設）。件数が最多になる。
   "7C":         { bg: "#0d9488", text: "#fff", label: "7C" },
 };
@@ -1282,7 +1283,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1", "9H1", "9C"] as const;
+const RANK_ORDER = ["7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
   // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。
@@ -1292,6 +1293,7 @@ const RANK_LABEL: Record<string, string> = {
   "7H2": "7H2",
   "9H1": "9H1",
   "7T1": "7T1",
+  "7T3": "7T3",
   "7C": "7C",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
@@ -1307,6 +1309,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7H2": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "9H1": "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-400",
   "7T1": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
+  "7T3": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "7C": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
 };
 

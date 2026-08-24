@@ -1272,7 +1272,7 @@ export type KeirinStatsResponse = {
   manual_missing_bet_detail?: number;
 };
 
-export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1" | "7M1"
+export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1" | "7T3" | "7M1"
   | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
@@ -1286,9 +1286,11 @@ export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C
 // 2026-08-10〜: 7H2（穴推奨・印なし2軸・三連単倍購入10点+三連複BOX10点）を追加。
 // 2026-08-12〜: 7H3（穴推奨・本命連対どまり型）を追加 → 2026-08-13 に全廃。
 // 2026-08-13〜: 7T1（三連単・高配当枠／看板×別ライン・点数可変）へ置換。
+// 2026-08-24〜: 7T3（三連単・決勝の中配当枠／決勝限定・予測30倍以上から確率上位5点・
+//   ライン条件なし）を追加。7T1 は同日に母集団を決勝のみへ絞った。
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"
-  | "7T1";
+  | "7T1" | "7T3";
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;
