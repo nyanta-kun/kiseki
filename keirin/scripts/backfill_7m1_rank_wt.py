@@ -59,7 +59,7 @@ from src.preprocessing.feature_wt import (  # noqa: E402
     build_features_wt, load_raw_data_wt, prepare_X,
 )
 from src.odds_prediction import (  # noqa: E402
-    model_train_end as odds_model_train_end, trio_ev_for_legs,
+    model_train_end as odds_model_train_end, trio_ev_and_odds_for_legs,
 )
 from src.rebuild_stakes import (load_morning_boards, load_submitted_stakes,
                                 stakes_for_combos)  # noqa: E402
@@ -78,8 +78,12 @@ _EV_WARNED = False
 
 
 def _ev_for(race_key: str, axis1: int, axis2: int, others: list[int],
-            race_date: str) -> dict[int, float] | None:
-    """EV（予測オッズ × 3着内確率）。**honest な日付のときだけ**返す。
+            race_date: str) -> tuple[dict[int, float], dict[int, float]] | None:
+    """({相手: EV}, {相手: 予測オッズ})。**honest な日付のときだけ**返す。
+
+    予測オッズも返すのは、○1点への集中判定（`rank_7m1_maru_concentrates`）が
+    それを見るため。EV だけ honest にして集中判定に本番モデルを使う、という
+    取り違えを防ぐために**同じ関数から両方**返す。
 
     🔴 三連複オッズモデルを**学習終端以前の日付へ当てると in-sample**になる。
        過去分の再構築でそれをやると picks_history の 7M1 が「未来を知っていた
@@ -109,7 +113,7 @@ def _ev_for(race_key: str, axis1: int, axis2: int, others: list[int],
                   "のため EV を使わず従来規則（下位3車）で再構築します", flush=True)
             _EV_WARNED = True
         return None
-    return trio_ev_for_legs(race_key, axis1, axis2, others)
+    return trio_ev_and_odds_for_legs(race_key, axis1, axis2, others)
 
 
 def build_rows(model_name: str, date_from: str, date_to: str,
@@ -202,6 +206,7 @@ def build_rows(model_name: str, date_from: str, date_to: str,
                      if win_model is not None else None)
         plan_7c = rank_7c_buy_plan(top3_probs, win_probs, axis1, legs_7c,
                                    wt_ana=mk.get(4))
+        _eo = _ev_for(rk, axis1, axis2, others, date_map.get(rk, ""))
         candidates.append({
             "race_key": rk, "race_date": date_map.get(rk, ""),
             "n_entries": N_CAR,
@@ -233,8 +238,12 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             #    （本ファイル冒頭ではなく `backfill_7c_rank_wt.py` の冒頭コメント参照）。
             # ⚠️ 予測オッズモデルは学習終端より前の日付に当てると in-sample。
             #    `_ev_for` が honest な日付のときだけ EV を返す。
+            # 🔴 `marks` は {車番: 印} 。`mk` は {印: 車番} の逆向きなので反転する
+            #    （2026-08-24・○1点への集中と ○/△ の後回しに使う）。
             "legs_7m1": rank_7m1_select_legs(
-                others, top3_probs, ev=_ev_for(rk, axis1, axis2, others, date_map.get(rk, ""))),
+                others, top3_probs,
+                ev=(_eo or (None, None))[0], odds=(_eo or (None, None))[1],
+                marks={v: k for k, v in mk.items()}),
             "cup_grade": cup_grade_map.get(rk),
             "trio": trio,
             # 🔴 同着では当たり目が2通りになる（`src/result_top3` が正本）。

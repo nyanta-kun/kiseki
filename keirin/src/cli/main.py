@@ -1294,7 +1294,7 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
     from src.p3_calibration import calibrated_p3_sum_top2
     # 7M1 の相手を EV 順に並べるための予測オッズ（2026-08-21）。
     # 作れないレースでは None が返り、`rank_7m1_select_legs` が従来規則へ落ちる。
-    from src.odds_prediction import trio_ev_for_legs
+    from src.odds_prediction import trio_ev_and_odds_for_legs
     from pathlib import Path
 
     if target_date is None:
@@ -1989,6 +1989,16 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                 # 7SS（2026-08-05新設）判定用。軸2車が同一ラインか。
                 same_line = rank_7ss_same_line(axis1, axis2, _lg)
 
+                # 7M1 の相手選択に要る EV と予測オッズ（2026-08-24）。
+                # 🔴 **盤面計算は1回だけ**。`trio_ev_for_legs` と
+                #    `predicted_odds_for_legs` を別々に呼ぶと `predict_board` が
+                #    2回走る（7車で約0.3秒 × 全レース）。
+                # ⚠️ 作れないレース（7車・9車以外＝実測3.7%）は None のままで、
+                #    `rank_7m1_select_legs` が従来の位置規則へ落ちる。
+                _eo_7m1 = (trio_ev_and_odds_for_legs(
+                    race_key, sel_7c[0], sel_7c[1], others_7c)
+                    if sel_7c else None)
+
                 rank_7s_raw_candidates.append({
                     "race_key":   race_key,
                     "same_line":  same_line,
@@ -2065,10 +2075,15 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                     #    引数を渡すこと。** 片方だけ EV にすると、毎朝の再構築で
                     #    picks_history が旧規則へ巻き戻る（7C が 2026-08-15 に
                     #    実際に踏んだ型・`backfill_7c_rank_wt` の冒頭コメント参照）。
+                    # 🔴 EV と予測オッズは**1回の盤面計算から両方**受け取る
+                    #    （別々に呼ぶと `predict_board` が2回走る）。
+                    #    `marks` は ○1点への集中判定と ○/△ の後回しに使う。
                     "legs_7m1": (rank_7m1_select_legs(
                         others_7c, top3_probs,
-                        ev=trio_ev_for_legs(race_key, sel_7c[0], sel_7c[1],
-                                            others_7c))
+                        ev=(_eo_7m1 or (None, None))[0],
+                        odds=(_eo_7m1 or (None, None))[1],
+                        marks={int(k): int(v) for k, v in _marks.items()
+                               if v is not None})
                         if sel_7c else []),
                     # 三連単への切替（2026-08-09）。判定は朝の生予測で確定させ、
                     # 入稿側は**この真偽値だけ**を読む。入稿時に win_probs から
@@ -2266,9 +2281,9 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                           < RANK_7C_P3_SUM_MIN)
         click.echo(f"[保存先] {rank_7m1_path}  (7M1候補 {len(rank_7m1_candidates)}件/"
                    f"{len(rank_7s_raw_candidates)}件中・合計<{RANK_7C_P3_SUM_MIN} ∧ "
-                   f"印不一致 ∧ 相手{RANK_7M1_LEGS}点/ペーパー検証)")
+                   f"印不一致 ∧ 相手1〜{RANK_7M1_LEGS}点/ペーパー検証)")
         click.echo(f"[wt] 7M1母集団: 混戦={_n_konsen} → 印不一致={_n_disagree} "
-                   f"→ 相手{RANK_7M1_LEGS}点={len(rank_7m1_candidates)}  "
+                   f"→ 相手1〜{RANK_7M1_LEGS}点={len(rank_7m1_candidates)}  "
                    f"(印欠損 {_n_no_mark}件)")
         if _n_no_mark:
             click.echo(f"[wt][警告] 7M1: 公式印が取れない候補が {_n_no_mark}件 "
