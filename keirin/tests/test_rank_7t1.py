@@ -65,9 +65,16 @@ def _board(odds: float = 400.0) -> dict[tuple[int, int, int], float]:
 # ---------------------------------------------------------------- 母集団
 
 
-@pytest.mark.parametrize("race_type", ["決勝", "S級決勝", "特選", "選抜", "特秀"])
-def test_final_series_race_types_are_targets(race_type):
-    """前身 7H3 とは**母集団が真逆**。決勝系レースを通すこと。"""
+@pytest.mark.parametrize("race_type", ["決勝", "チャレンジ決勝"])
+def test_final_race_types_are_targets(race_type):
+    """🔴 **2026-08-24 に「決勝のみ」へ絞った**（旧: 決勝系＝決勝/準決勝/特選/選抜）。
+
+    旧テストは `["決勝", "S級決勝", "特選", "選抜", "特秀"]` を通していた。
+    日次上限5が ROI を1ミリも改善していなかった（件数 1/3 で ROI 同じ）一方、
+    **種別で絞ると質が上がる**と分かったため（決勝のみ×別ラインで
+    2.20件/日・ROI 106.3% ↔ 旧 4.96件/日・81.8%）。
+    設計と実測: `docs/rank_7t3_design.md` §5。
+    """
     assert rank_7t1_is_target_race_type(race_type) is True
 
 
@@ -76,24 +83,31 @@ def test_non_final_series_race_types_are_excluded(race_type):
     assert rank_7t1_is_target_race_type(race_type) is False
 
 
-def test_semifinal_is_a_target():
-    """🔴 **準決勝は対象に含む**（看板判定とはここが違う）。
+@pytest.mark.parametrize("race_type", ["準決勝", "S級準決勝", "特選", "選抜", "特秀",
+                                       "S級決勝"])
+def test_semifinal_and_other_marquee_types_are_no_longer_targets(race_type):
+    """🔴 **反転**（旧 `test_semifinal_is_a_target`・2026-08-24）。
 
-    検証をこの定義で行っている。準決勝は母集団の33%を占め、成績は本体と
-    区別できない（目標20万での検証時 20万超 2.17% vs 2.02%）。
-    `marquee.is_marquee_type()` をそのまま使うと準決勝が落ち、13.4→8.9本/日で
-    **頻度だけが落ちる**（実装時に実際に踏んだ）。
+    旧テストは「準決勝は対象に含む（検証をこの定義で行っている）」を守っていた。
+    決勝のみへ絞る判断で不要になった。**部分一致にしていないこと**もここで固定する
+    ——「決勝」で部分一致すると準決勝と S級決勝 を拾う。
+
+    ⚠️ `S級決勝` が False なのは完全一致だから。実データの `race_type` は
+       `決勝` / `チャレンジ決勝` の2値で、級班は別列にある。
     """
-    assert rank_7t1_is_target_race_type("準決勝") is True
-    assert rank_7t1_is_target_race_type("S級準決勝") is True
+    assert rank_7t1_is_target_race_type(race_type) is False
 
 
-def test_does_not_use_the_marquee_predicate():
-    """看板判定（準決勝を除外する）を**呼んで**いないこと。
+def test_does_not_bind_the_marquee_keywords():
+    """🔴 **反転**（旧 `test_does_not_use_the_marquee_predicate`・2026-08-24）。
 
-    🔴 ソースの文字列一致で見てはいけない。docstring が「使ってはいけない」と
-       説明のために名前を書くだけで落ちる（実際に落ちた）。AST で
-       **実際の import と呼び出しだけ**を見る。
+    旧テストは `MARQUEE_KEYWORDS` を**正本から束縛していること**を要求していた。
+    その構造だと「7T1 を絞ろう」としてキーワードを触ると**看板判定の正本まで動く**。
+    7T1 は `RANK_7T1_RACE_TYPES` を自前で持ち、`marquee` へ依存しない。
+
+    🔴 ソースの文字列一致で見てはいけない。docstring が説明のために名前を
+       書くだけで落ちる（過去に実際に落ちた）。AST で**実際の import と
+       呼び出しだけ**を見る。
     """
     import ast
 
@@ -109,21 +123,27 @@ def test_does_not_use_the_marquee_predicate():
             imported |= {a.name for a in node.names}
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             called.add(node.func.id)
-    assert "is_marquee_type" not in imported | called, (
-        "7T1 が看板判定を使っている。準決勝が落ちて母集団が33%減る")
-    assert "MARQUEE_KEYWORDS" in imported, "正本からキーワードを束縛すること"
+    assert not ({"is_marquee_type", "MARQUEE_KEYWORDS"} & (imported | called)), (
+        "7T1 が marquee へ依存している。看板判定の正本と結合してはいけない")
 
 
-def test_race_type_keywords_are_not_redefined_here():
-    """レース種別キーワードを 7T1 側で定義していないこと（二重管理の禁止）。
+def test_race_type_is_defined_by_7t1_own_constant():
+    """🔴 **反転**（旧 `test_race_type_keywords_are_not_redefined_here`・2026-08-24）。
 
-    写した瞬間に「★は付くのに入稿されない」またはその逆を作れる。
+    旧テストは「キーワードを 7T1 側で定義しない（正本＝marquee から束縛する）」を
+    守っていた。二重管理を避ける意図は正しいが、**束ねる相手が間違っていた**
+    ——7T1 の母集団と看板の母集団は別物（看板は準決勝を除外し、7T1 は決勝のみ）
+    なので、同じ定数を共有すると片方を動かしたとき他方が黙って動く。
+
+    7T1 は `RANK_7T1_RACE_TYPES` を自分で持つ。**看板のキーワードは写さない**
+    （特選・選抜・特秀が入ると母集団が別物になる）。
     """
-    src = (REPO / "src" / "strategy_wt.py").read_text(encoding="utf-8")
-    section = src[src.index("RANK_7T1_NE ="):src.index("def rank_7t1_is_cross_line(")]
-    for kw in ("決勝", "特選", "選抜", "特秀"):
-        assert f'"{kw}"' not in section, (
-            f"看板キーワード {kw} を 7T1 側で定義している。正本から束縛すること")
+    import src.strategy_wt as sw
+
+    assert sw.RANK_7T1_RACE_TYPES == ("決勝", "チャレンジ決勝")
+    # 看板のキーワードを写していないこと
+    for kw in ("特選", "選抜", "特秀"):
+        assert kw not in sw.RANK_7T1_RACE_TYPES
 
 
 def test_cross_line_uses_top2_of_p3():
@@ -276,26 +296,37 @@ def _cand(**kw) -> dict:
     return base
 
 
-def test_daily_select_requires_final_series_and_cross_line():
+def test_daily_select_requires_final_and_cross_line():
+    """⚠️ 準決勝は 2026-08-24 に母集団から外れた（決勝のみ）。"""
     assert len(rank_7t1_daily_select([_cand()])) == 1
-    assert len(rank_7t1_daily_select([_cand(race_type="準決勝")])) == 1
+    assert rank_7t1_daily_select([_cand(race_type="準決勝")]) == []
     assert rank_7t1_daily_select([_cand(race_type="予選")]) == []
     assert rank_7t1_daily_select([_cand(is_cross_line=False)]) == []
     assert rank_7t1_daily_select([_cand(n_entries=9)]) == []
     assert rank_7t1_daily_select([_cand(legs=[])]) == []
 
 
-def test_daily_select_caps_at_five_per_day():
-    """🔴 2026-08-18〜 **1日5本まで**（ユーザー判断）。
+def test_daily_cap_is_disabled():
+    """🔴 **反転**（旧 `test_daily_select_caps_at_five_per_day`・2026-08-24）。
 
-    それ以前は「件数を日ごとの相対順位で切らない」方針だった（切り捨てが件数を
-    系統的に減らすため）。7T1 が入稿全体の40%を占め、的中4.3%の高配当枠が
-    表示的中率を押し下げていたので、構成の判断として上限を入れた。
-    上限を外したいときは `daily_cap=0` を渡す（検証用）。
+    旧テストは「1日5本まで」（2026-08-18 ユーザー判断・7T1 が入稿全体の40%を
+    占め表示的中率を押し下げていたため）を固定していた。
+
+    **上限は ROI を1ミリも改善していなかった**——件数を 13.60 → 4.96件/日 と
+    1/3 に削って ROI は 81.8% で同じ（CI [73,91] ↔ [66,98]）＝ ev による選別は
+    無価値。代わりに母集団を決勝のみへ絞り 2.20件/日・ROI 106.3% にした。
+    比率の問題は母集団が薄くなったこと自体で解決している。
+
+    ⚠️ 上限の**機構自体は残す**（`daily_cap` 引数）。値を 0＝無効にしただけで、
+       戻したくなったら定数1つで戻せる。
     """
+    import src.strategy_wt as sw
+
+    assert sw.RANK_7T1_DAILY_CAP == 0
     cands = [_cand(race_key=f"20260813_11_{i:02d}") for i in range(1, 21)]
-    assert len(rank_7t1_daily_select(cands)) == 5
-    assert len(rank_7t1_daily_select(cands, daily_cap=0)) == 20
+    assert len(rank_7t1_daily_select(cands)) == 20
+    # 機構は生きている（明示的に渡せば効く）
+    assert len(rank_7t1_daily_select(cands, daily_cap=5)) == 5
 
 
 # ---------------------------------------------------------------- 登録・入稿
@@ -316,19 +347,27 @@ def test_predecessor_7h3_is_abolished_and_gone():
     assert all(s.rank != "RANK_7H3" for s in CURRENT_PAPER_RANKS)
 
 
-def test_netkeirin_priority_is_below_7c():
-    """入稿の優先順位で 7T1 が 7C より後ろにあること。
+def test_netkeirin_priority_is_above_7s():
+    """🔴 **反転**（旧 `test_netkeirin_priority_is_below_7c`・2026-08-24 ユーザー判断）。
 
-    7C（実質的中率39.0%）が的中体験を担い、7T1 は高配当担当。**看板を取り合う**
-    ので、7T1 が先に取ると表示的中3%の商品が的中体験を奪う。
+    旧テストは「7T1 は 7C より後ろ」を守っていた。理由は「7C が的中体験を担い、
+    7T1 が先に取ると表示的中3%の商品が的中体験を奪う」。
+
+    絞り込み後の 7T1（決勝のみ×別ライン）は **2.20件/日**しか無く、下に置くと
+    7S に取られてほぼ出ない（実測: 7T1 は決勝の16%しか取れていなかった）。
+    決勝では ROI が 7S より 22〜31pt 高い。受け入れたトレードは
+    **7S の表示的中 −0.22pt**・ROI 不変（決勝は 7S 母集団の 5.7%）。
+
+    🔴 **7T1 は 7T3 の直上**であること。この順序が「別ラインは 7T1・
+       同ラインは 7T3」の棲み分けを作っている（7T3 はライン条件を持たない）。
+    設計と実測: `docs/rank_7t3_design.md` §9
     """
     from scripts.netkeirin_submit_wt import RANK_ORDER
-    assert RANK_ORDER.index("7T1") > RANK_ORDER.index("7C")
-    # ⚠️ 2026-08-21 に 7B が 7C の上へ移ったので、7T1 と 7B の相対は
-    #    「7T1 が先」から「7B が先」へ変わった。7B と 7T1 は競合が
-    #    60件未満（母集団がほぼ排他）なので実害は無い。ここでは 7C との
-    #    相対だけを固定する。[[keirin_rank_priority_15x_2026_08_21]]
-    assert RANK_ORDER.index("7B") < RANK_ORDER.index("7T1")
+
+    assert RANK_ORDER.index("7T1") < RANK_ORDER.index("7S")
+    assert RANK_ORDER.index("7T1") < RANK_ORDER.index("7C")
+    # 7T3 は 7T1 の**直後**（間に他ランクを挟まない）
+    assert RANK_ORDER.index("7T3") == RANK_ORDER.index("7T1") + 1
 
 
 def test_netkeirin_normalize_preserves_points_and_stakes():
@@ -409,17 +448,17 @@ def _cap_cand(day: str, key: str, ev: float | None) -> dict:
             "start_time": key, "ev": ev}
 
 
-def test_daily_cap_keeps_the_top_five_by_expected_value() -> None:
-    """🔴 1日5本まで・期待値の高い順（ユーザー判断 2026-08-18）。
+def test_daily_cap_keeps_the_top_n_by_expected_value() -> None:
+    """上限を掛けたときは**期待値の高い順**に残ること（機構の検査）。
 
-    7T1 は 13.7件/日 と最も多く、8月の入稿全588件の40%を占めていた。
-    的中は設計どおり4.3%なので、比率がそのまま表示的中率を押し下げる。
-    ⚠️ 成績の問題ではない（7T1 単体は honest で ROI 91.4%）。商品構成の判断。
+    ⚠️ 2026-08-24 に既定は 0（無効）になった。上限そのものは ROI を改善して
+       いなかったため（`test_daily_cap_is_disabled`）。**機構は残す**ので、
+       ここでは明示的に `daily_cap=5` を渡して順位づけだけを固定する。
     """
     import src.strategy_wt as sw
     cands = [_cap_cand("2026-08-01", f"a{i}", 1.0 + i * 0.1) for i in range(8)]
-    got = sw.rank_7t1_daily_select(cands)
-    assert len(got) == sw.RANK_7T1_DAILY_CAP == 5
+    got = sw.rank_7t1_daily_select(cands, daily_cap=5)
+    assert len(got) == 5
     assert sorted(round(c["ev"], 2) for c in got) == [1.3, 1.4, 1.5, 1.6, 1.7]
 
 
@@ -433,7 +472,7 @@ def test_daily_cap_is_applied_per_race_date() -> None:
     import src.strategy_wt as sw
     cands = ([_cap_cand("2026-08-01", f"a{i}", 1.0 + i * 0.1) for i in range(8)]
              + [_cap_cand("2026-08-02", f"b{i}", 1.0 + i * 0.1) for i in range(8)])
-    got = sw.rank_7t1_daily_select(cands)
+    got = sw.rank_7t1_daily_select(cands, daily_cap=5)
     from collections import Counter
     assert Counter(c["race_date"] for c in got) == {"2026-08-01": 5, "2026-08-02": 5}
 
@@ -451,5 +490,5 @@ def test_daily_cap_ranks_ev_above_missing_ev() -> None:
     import src.strategy_wt as sw
     cands = ([_cap_cand("2026-08-01", f"x{i}", None) for i in range(3)]
              + [_cap_cand("2026-08-01", f"y{i}", 2.0 + i) for i in range(5)])
-    got = sw.rank_7t1_daily_select(cands)
+    got = sw.rank_7t1_daily_select(cands, daily_cap=5)
     assert {c["race_key"] for c in got} == {"y0", "y1", "y2", "y3", "y4"}

@@ -210,7 +210,7 @@ def test_axis1_gate_is_fail_open_for_old_candidate_json() -> None:
 
 
 def test_netkeirin_priority_order():
-    """優先順位 **7H2 > 7S > 7B > 7C > 7T1 > 7H1 > 7M1**。
+    """優先順位 **7H2 > 7T1 > 7T3 > 7S > 7B > 7C > 7H1 > 7M1**。
 
     RANK_ORDER は dict の定義順なので、順序が入れ替わると黙って優先度が変わる。
 
@@ -238,7 +238,15 @@ def test_netkeirin_priority_order():
     # 競合874R で 7B が 1.5倍以上の的中 +5〜6pt・ROI も上（両年独立で再現）。
     # 旧根拠の「7C が実質的中率で上回る」は**ガミ込みの的中率**で、
     # 新方針ではその差に価値を置かない。[[keirin_rank_priority_15x_2026_08_21]]
-    assert order == ["7H2", "7S", "7B", "7C", "7T1", "7H1", "7M1"]
+    # 2026-08-24: **7T1 を 7S の上へ移し、7T3 を新設して 7T1 の直後**に置いた
+    # （ユーザー判断・`docs/rank_7t3_design.md` §9）。7T1 は決勝のみへ絞られて
+    # 2.20件/日 しか無く、下に置くと 7S に取られてほぼ出ない（実測: 決勝の16%
+    # しか取れていなかった）。決勝では ROI が 7S より 22〜31pt 高い。
+    # 受け入れたトレードは **7S の表示的中 −0.22pt**・ROI 不変
+    # （決勝は 7S 母集団の 5.7%・実入稿でも約1件/日）。
+    # 🔴 **7T3 は 7T1 の直後**（間に他ランクを挟まない）。7T3 はライン条件を
+    #    持たず、この順序だけで「別ラインは 7T1・同ラインは 7T3」を実現している。
+    assert order == ["7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1"]
 
 
 def test_netkeirin_priority_order_9car():
