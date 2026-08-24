@@ -62,6 +62,32 @@ def test_画面が参考値だと分かる見出しを出す():
     assert "caption" in tsx
 
 
+def test_取消サマリーの未確定数は実数を返す():
+    """🔴 当初 0 固定だったのを 2026-08-24 に是正した。
+
+    画面が**常時表示**になったことで、「取消14件のうち確定2件」が
+    「予想数 2レース」としか出ず**残り12件が消えたように見える**問題があった。
+    """
+    assert '"n_pending": 0,' not in ROUTER, "未確定数がまだ 0 固定のまま"
+    assert "n_cancelled = sum(1 for x in items" in ROUTER, "取消の総数を数えていない"
+    assert "max(0, n_cancelled - len(cancelled_settled))" in ROUTER
+
+
+def test_両方のサマリーを常時表示する():
+    """🔴 確定0件でも隠さない（2026-08-24・ユーザー要望）。
+
+    以前は `n_races > 0` で隠していたため、朝は売った分が未確定で
+    **取消サマリーだけが出て「それが実績」と読める**状態になっていた。
+    """
+    tsx = (ROOT / "frontend" / "src" / "app" / "keirin" / "review"
+           / "ReviewClient.tsx").read_text("utf-8")
+    assert "summary.n_races > 0 &&" not in tsx, "実績サマリーを件数で隠している"
+    assert "summaryCancelled.n_races > 0 &&" not in tsx, "取消サマリーを件数で隠している"
+    # 🔴 2枚並ぶので**両方に見出し**が要る（無名だと残った1枚が実績と読まれる）
+    assert 'caption="売った分（実績）"' in tsx, "実績側の見出しが無い"
+    assert "参考値・実績には含みません" in tsx, "取消側の見出しが無い"
+
+
 def test_ページが受け渡している():
     page = (ROOT / "frontend" / "src" / "app" / "keirin" / "review"
             / "page.tsx").read_text("utf-8")

@@ -2765,10 +2765,15 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     c_bet = sum(x["bet"] for x in cancelled_settled)
     c_pay = sum(x["payout"] for x in cancelled_settled)
     c_net = sum(1 for x in cancelled_settled if x["net_hit"])
+    # 🔴 **未確定数は実数を返す**（2026-08-24 是正）。当初「取消は売っていないので
+    #    未確定の概念を持たない」として 0 固定にしていたが、画面が**常時表示**へ
+    #    変わったことで「取消14件のうち確定は2件」という状態が
+    #    「予想数 2レース」としか出ず、**残り12件が消えたように見える**。
+    #    確定していないだけで、走れば数字が入る。
+    n_cancelled = sum(1 for x in items if x["status"] == STATUS_DELETED)
     summary_cancelled = {
         "n_races": len(cancelled_settled),
-        # 取消は「売っていない」ので未確定の概念を持たない。形を揃えるため 0 を返す。
-        "n_pending": 0,
+        "n_pending": max(0, n_cancelled - len(cancelled_settled)),
         "bet": c_bet,
         "payout": c_pay,
         "balance": c_pay - c_bet,

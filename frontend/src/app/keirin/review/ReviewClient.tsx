@@ -633,7 +633,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
  */
 function DaySummary({ s, caption }: {
   s: KeirinProposalSummary;
-  /** 参考値のときだけ渡す。実績（売った分）は従来どおり見出しなし。 */
+  /** 🔴 表の見出し。**2つ並ぶので両方に必ず付ける**（2026-08-24）。
+   *  片方だけ無名にすると、確定0件のときに残った1枚が「実績」と読まれる。 */
   caption?: string;
 }) {
   const cell = "border border-gray-200 px-3 py-1.5 dark:border-gray-700";
@@ -1092,12 +1093,17 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         />
       </div>
 
-      {summary && summary.n_races > 0 && <DaySummary s={summary} />}
+      {/* 🔴 **確定0件でも必ず出す**（2026-08-24・ユーザー要望）。以前は
+          `n_races > 0` で隠していたため、朝はまだ1件も確定しておらず
+          **取消サマリーだけが出て「それが実績」と読める**状態になっていた
+          （2026-08-24 10:00 実測: 売った23件が全て未確定・取消2件だけ確定）。
+          確定0件でも「予想数 0レース（未確定N）」と出るほうが状態が分かる。 */}
+      {summary && <DaySummary s={summary} caption="売った分（実績）" />}
       {/* 🔴 **実績ではない。** 取り消したレースを売っていた場合の参考値で、
           上の実績サマリーにも netkeirin の成績にも入っていない。落とした判断が
           正しかったかを見るためだけに出す（2026-08-24・ユーザー要望）。
           採点は実績と同じ経路（確定オッズ）なので同じ土俵で比べられる。 */}
-      {summaryCancelled && summaryCancelled.n_races > 0 && (
+      {summaryCancelled && (
         <DaySummary
           s={summaryCancelled}
           caption="取り消したレースを、そのまま売っていたら（参考値・実績には含みません）"
