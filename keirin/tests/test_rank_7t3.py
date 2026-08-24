@@ -246,3 +246,45 @@ def test_comment_does_not_promise_manshaken():
     c = RANK_CONFIGS["7T3"]["default_comment"]
     for bad in ("万車券", "一撃", "大穴"):
         assert bad not in c, f"7T3 の文面が「{bad}」を謳っている"
+
+
+# ---------------------------------------------------------------- 文面
+
+def test_comment_does_not_claim_two_axes():
+    """🔴 **7T3 で「二軸」と書かない**（2026-08-24 実測）。
+
+    7T3 は軸を固定せず、予測オッズ30倍以上の帯から確率上位の決着順を5点採るだけ。
+    2026年の決勝200Rで実測すると:
+
+        5点すべてに共通して含まれる車  2車 49.0% / **1車 50.5%** / 0車 0.5%
+        5点の1着に現れる車の種類      1種 10.0% / 2種 65.5% / 3種以上 24.5%
+
+    ＝ **半数のレースには「二軸」と呼べる2車が存在しない**。共通本文をそのまま
+    使うと、買い目の軸でない2車を「照らし出した二軸」として売ることになる。
+    """
+    from scripts.update_netkeirin_templates import COMMENT_TEMPLATES, TITLE_TEMPLATES
+
+    body = COMMENT_TEMPLATES["7T3"]
+    assert "二軸" not in body
+    assert "{axis1}" not in body and "{axis2}" not in body
+    assert "二軸" not in TITLE_TEMPLATES["7T3"]
+    # 他ランクは従来どおり【二軸】節を持つ（落としたのは 7T3 だけ）
+    assert "二軸" in COMMENT_TEMPLATES["7T1"]
+
+
+def test_title_is_distinct_from_7t1():
+    """🔴 7T1 と語を分ける。帯が違う（払戻中央 17.9万 ↔ 7.8万・的中 5% ↔ 10%）。"""
+    from scripts.update_netkeirin_templates import TITLE_TEMPLATES
+
+    assert TITLE_TEMPLATES["7T3"] != TITLE_TEMPLATES["7T1"]
+    for banned in ("万車券", "一撃", "大穴", "自信", "本線"):
+        assert banned not in TITLE_TEMPLATES["7T3"]
+
+
+def test_shape_texts_do_not_claim_fixed_axes():
+    """🔴 見解文で「固定」と書かない（7T1 と違い軸を置かない）。"""
+    from src.race_shape import SHAPE_NOTES, SHAPE_TITLES
+
+    for text in list(SHAPE_NOTES["7T3"].values()) + list(SHAPE_TITLES["7T3"].values()):
+        for banned in ("固定", "万車券", "一撃", "堅い", "読み切"):
+            assert banned not in text, f"7T3 の文面が「{banned}」を含む: {text}"
