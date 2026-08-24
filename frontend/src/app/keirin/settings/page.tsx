@@ -254,6 +254,12 @@ export default function NetkeirinSettingsPage() {
                 </div>
                 <div className="px-4 py-3 space-y-3">
                   <div>
+                    {/* 🔴 入力欄には**必ず色を明示する**（2026-08-24 ユーザー報告）。
+                        このカードは `bg-white` で dark: 変種を持たない一方、入力欄に
+                        色指定が無いとページ側のダークモード用の**明るい文字色を継承**し、
+                        白いカードの上で文字がほぼ見えなくなる（スマホのダークモードで発生）。
+                        ⚠️ `dark:` 変種を足すのも誤り——カードが白のままなので、
+                           入力欄だけ暗くなって不整合になる。 */}
                     <label className="text-xs font-medium text-gray-500 mb-1 block">
                       タイトルテンプレート
                     </label>
@@ -261,7 +267,7 @@ export default function NetkeirinSettingsPage() {
                       type="text"
                       value={row.title_template}
                       onChange={(e) => update(rank, { title_template: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300"
                       placeholder="自信の二軸｜{shape}"
                     />
                     {row.title_template && (
@@ -278,7 +284,7 @@ export default function NetkeirinSettingsPage() {
                       value={row.comment_template}
                       onChange={(e) => update(rank, { comment_template: e.target.value })}
                       rows={5}
-                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono"
+                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono"
                       placeholder="本日の二軸をお届けします。"
                     />
                     <p className="text-xs text-gray-400 mt-1">
