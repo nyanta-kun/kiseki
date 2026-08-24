@@ -64,7 +64,7 @@ from src.odds_prediction import (  # noqa: E402
 from src.rebuild_stakes import (load_morning_boards, load_submitted_stakes,
                                 stakes_for_combos)  # noqa: E402
 from src.strategy_wt import (  # noqa: E402
-    RANK_7M1_LEGS_MIN, rank_7c_buy_plan, rank_7c_is_lowpay_pattern,
+    rank_7c_buy_plan, rank_7c_is_lowpay_pattern,
     rank_7c_select_axis, rank_7c_select_legs, rank_7m1_daily_select,
     rank_7m1_select_legs, rank_7s_wt_overlap_n,
 )
@@ -278,8 +278,12 @@ def build_rows(model_name: str, date_from: str, date_to: str,
             if key in trio:
                 combos.append(key)
                 bought.append(x)
-        # オッズ欠けで点数を割ったら買わない（live の judge_rank_7m1 と同一規約）。
-        if len(combos) < RANK_7M1_LEGS_MIN:
+        # 🔴 **買い目の全点にオッズが要る**（2026-08-24 修正・live の
+        #    `judge_rank_7m1` と同一規約）。旧実装は `RANK_7M1_LEGS_MIN`(=2) 点
+        #    あれば通していたが、点数が可変になった今それだと
+        #    **○1点への集中が丸ごと捨てられる**（実測で 2026-08 の再構築 212件中
+        #    集中が 0件になっていた）。記録は入稿と同じ買い目でなければ意味がない。
+        if len(combos) < len(c_["legs_7m1"]):
             continue
         rk = c_["race_key"]
         # 同着では当たり目が複数ある。**買った目**で払戻を引く。

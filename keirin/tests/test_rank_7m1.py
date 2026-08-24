@@ -621,3 +621,19 @@ def test_backfill_uses_mark3_for_the_7c_ana_cut():
     i = src.index("rank_7c_buy_plan(")
     call = src[i:i + 200]
     assert "wt_ana=mk.get(3)" in call, "再構築の wt_ana が live(mark3) と違う"
+
+
+def test_rebuild_keeps_the_deliberate_single_point():
+    """🔴 再構築も**1点を捨てない**こと（2026-08-24）。
+
+    `backfill_7m1_rank_wt` は `len(combos) < RANK_7M1_LEGS_MIN`(=2) で弾いており、
+    ○1点への集中が丸ごと落ちていた（実測で 2026-08 の再構築 212件中 集中 0件）。
+    `judge_rank_7m1` と同じく「**買い目の全点にオッズがあること**」を要求する。
+
+    この3箇所（live / 発走前の記録 / 再構築）はどれか1つでも取り残すと
+    入稿と記録が食い違う。PR#289 と同じ型なので構造で塞ぐ。
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "backfill_7m1_rank_wt.py").read_text()
+    assert "< RANK_7M1_LEGS_MIN" not in src, "再構築が最低点数で弾いている（1点が消える）"
+    assert 'len(combos) < len(c_["legs_7m1"])' in src
