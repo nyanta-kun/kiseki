@@ -42,8 +42,8 @@ const RANK_LABEL: Record<NetkeirinRankKey, string> = {
   "9H1": "9H1（9車・穴推奨/高配当狙い・三連単フォーメーション6点・「穴狙い」付与）",
   // 7T1 は三連単の単一券種（2026-08-13 に旧 7H3 を置換）。**点数がレースごとに
   // 変わる**（払戻20万円に届く点だけを買う）のが他ランクと違うので明記する。
-  "7T1": "7T1（7車・高配当/三連単・**決勝**×別ライン限定・軸2車固定+3着流し1〜5点可変・「穴狙い」付与）",
-  "7T3": "7T3（7車・中配当/三連単・**決勝**限定・予測30倍以上から確率上位5点均等・ライン条件なし・「穴狙い」付与）",
+  "7T1": "7T1（7車・高配当/三連単・決勝限定×別ライン・軸2車固定+3着流し1〜5点可変・「穴狙い」付与）",
+  "7T3": "7T3（7車・中配当/三連単・決勝限定・予測30倍以上から確率上位5点均等・ライン条件なし・「穴狙い」付与）",
   // 7C の相手点数は落差カットで可変。2026-08-15 から「1点に縮むなら相手の
   // 2,3番手2点へ差し替え」なので下限は2点（1点買いは出ない）。
   "7C": "7C（7車・ベースモデル/終日の二軸・三連複 軸2車＋相手2〜5点・他ランクと併存）",
@@ -254,6 +254,12 @@ export default function NetkeirinSettingsPage() {
                 </div>
                 <div className="px-4 py-3 space-y-3">
                   <div>
+                    {/* 🔴 入力欄には**必ず色を明示する**（2026-08-24 ユーザー報告）。
+                        このカードは `bg-white` で dark: 変種を持たない一方、入力欄に
+                        色指定が無いとページ側のダークモード用の**明るい文字色を継承**し、
+                        白いカードの上で文字がほぼ見えなくなる（スマホのダークモードで発生）。
+                        ⚠️ `dark:` 変種を足すのも誤り——カードが白のままなので、
+                           入力欄だけ暗くなって不整合になる。 */}
                     <label className="text-xs font-medium text-gray-500 mb-1 block">
                       タイトルテンプレート
                     </label>
@@ -261,7 +267,7 @@ export default function NetkeirinSettingsPage() {
                       type="text"
                       value={row.title_template}
                       onChange={(e) => update(rank, { title_template: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300"
                       placeholder="自信の二軸｜{shape}"
                     />
                     {row.title_template && (
@@ -278,7 +284,7 @@ export default function NetkeirinSettingsPage() {
                       value={row.comment_template}
                       onChange={(e) => update(rank, { comment_template: e.target.value })}
                       rows={5}
-                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono"
+                      className="w-full px-3 py-2 rounded-lg text-sm border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono"
                       placeholder="本日の二軸をお届けします。"
                     />
                     <p className="text-xs text-gray-400 mt-1">
