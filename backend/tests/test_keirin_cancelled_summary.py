@@ -119,6 +119,20 @@ def test_カードの参考値は確定オッズを優先する():
     assert "line.odds" in fn, "未確定時のフォールバックが消えている"
 
 
+def test_サマリーの列幅が固定されている():
+    """🔴 同じ項目の表が2枚縦に並ぶので、列がずれると比べられない（2026-08-24）。
+
+    自動レイアウトだと表ごとに中身（「—」と「112.7%」等）で幅が決まる。
+    """
+    tsx = (ROOT / "frontend" / "src" / "app" / "keirin" / "review"
+           / "ReviewClient.tsx").read_text("utf-8")
+    fn = tsx[tsx.index("function DaySummary("):]
+    fn = fn[:fn.index("\nexport default function")]
+    assert "table-fixed" in fn, "table-fixed が無い（列幅が中身で決まる）"
+    assert "<colgroup>" in fn, "colgroup が無い"
+    assert fn.count("<col ") == 4, "列は4本（項目/値/項目/値）"
+
+
 def test_ページが受け渡している():
     page = (ROOT / "frontend" / "src" / "app" / "keirin" / "review"
             / "page.tsx").read_text("utf-8")

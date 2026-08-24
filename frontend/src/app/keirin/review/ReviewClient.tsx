@@ -650,7 +650,16 @@ function DaySummary({ s, caption }: {
   const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}%`);
   const yenS = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString()}円`;
   return (
-    <table className="mb-3 w-full max-w-2xl border-collapse text-sm tabular-nums">
+    // 🔴 **`table-fixed` + `colgroup` で列幅を固定する**（2026-08-24・ユーザー要望）。
+    //    同じ項目を並べた表が2枚縦に並ぶが、既定の自動レイアウトだと表ごとに
+    //    中身（「—」と「112.7%」等）で幅が決まり、**列がずれて比べられない**。
+    <table className="mb-3 w-full max-w-2xl table-fixed border-collapse text-sm tabular-nums">
+      <colgroup>
+        <col className="w-[22%]" />
+        <col className="w-[28%]" />
+        <col className="w-[22%]" />
+        <col className="w-[28%]" />
+      </colgroup>
       {/* 🔴 参考値のときは**必ず見出しを出す**。同じ形の表が2つ並ぶので、
           見出しが無いと実績と取り違える（「サマリーの回収率には入っていない」
           という既存の約束が画面上で守られなくなる）。 */}
