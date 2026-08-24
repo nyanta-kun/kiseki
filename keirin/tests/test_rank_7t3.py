@@ -408,3 +408,80 @@ def test_equal_stake_trifecta_can_pull_forward():
     # 呼び出し側が 7T1/7T3 を渡していること
     body = (REPO / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
     assert "equal_stake_trifecta=is_7t1" in body
+
+
+# ---------------------------------------------------------------- パイプライン
+
+def test_candidate_builder_exists_and_uses_the_production_selectors():
+    """🔴 候補生成が**本番の選択関数**を呼んでいること。
+
+    ここで自前に組み直すと「検証した商品と違うものを売る」型になる
+    （このリポジトリで繰り返し起きている）。
+    """
+    src = (REPO / "scripts" / "build_7t3_candidates.py").read_text("utf-8")
+    for fn in ("rank_7t3_select", "rank_7t3_stakes", "rank_7t3_daily_select",
+               "rank_7t3_axes"):
+        assert fn in src, f"{fn} を呼んでいない"
+    # 🔴 帯を切るのに三連単の予測オッズ盤面が要る
+    assert "odds_prediction_tf" in src
+    # 🔴 過去日に本番モデルを当てさせない
+    assert "assert_vintage_for_past" in src
+
+
+def test_candidate_builder_fails_loudly_without_the_odds_model():
+    """🔴 オッズモデル未配備を**黙って0件**にしないこと。
+
+    既存の三連複ランクに無い依存なので、落ちないと
+    「今日はたまたま該当なし」と区別が付かない。
+    """
+    src = (REPO / "scripts" / "build_7t3_candidates.py").read_text("utf-8")
+    assert "raise SystemExit" in src
+    assert "require_model" in src
+
+
+def test_backfill_refuses_dates_before_the_odds_model_train_end():
+    """🔴 **2026-01-01 が下限**（7T1 と同じ制約）。
+
+    三連単オッズ予測モデルは学習終端 2025-12-31 で**月次 vintage が無い**ので、
+    それ以前へ遡ると model-vintage look-ahead になる。回避策も無いので落とす。
+    """
+    import pytest
+
+    import scripts.backfill_7t3_rank_wt as bf
+
+    assert bf.ODDS_TF_TRAIN_END == "2025-12-31"
+    with pytest.raises(SystemExit):
+        bf.assert_odds_model_is_honest("2025-12-31")
+    bf.assert_odds_model_is_honest("2026-01-01")      # 例外にならない
+
+
+def test_backfill_and_rebuild_target_the_7t3_rows_only():
+    """再構築の DELETE 条件が 7T3 だけを消すこと（他ランクを巻き込まない）。"""
+    bf = (REPO / "scripts" / "backfill_7t3_rank_wt.py").read_text("utf-8")
+    rb = (REPO / "scripts" / "rebuild_7t3_walkforward_pg.py").read_text("utf-8")
+    assert 'RANK = "RANK_7T3"' in bf and 'SUFFIX = "#7T3"' in bf
+    assert "rank='RANK_7T3'" in rb and "'%#7T3'" in rb
+    # 🔴 オッズモデルの学習終端より前の窓を落とす（黙って落とさない＝報告する）
+    assert "drop_windows_before_odds_model" in rb
+
+
+def test_daily_batch_builds_7t3_candidates():
+    """🔴 日次バッチに配線されていること。忘れると**候補JSONが出来ず永久に0件**。
+
+    ⚠️ 夕方（`evening_picks_wt.sh`）では作らない。7T1 と同じく朝1回で
+       当日全開催ぶんを作る設計なので、夕方に足すと二重生成になる。
+    """
+    daily = (REPO / "scripts" / "daily_picks_wt.sh").read_text("utf-8")
+    evening = (REPO / "scripts" / "evening_picks_wt.sh").read_text("utf-8")
+    assert "build_7t3_candidates.py" in daily
+    assert "build_7t3_candidates.py" not in evening
+
+
+def test_tail_reconcile_includes_7t3():
+    """🔴 毎朝の tail 再構築に載っていること。
+
+    載せないと当日の `picks_history` が入稿と食い違ったまま残る
+    （`RANKS_BOUGHT_ON_SUBMIT` が入れた bet_amount だけがあって採点されない）。
+    """
+    sh = (REPO / "scripts" / "reconcile_walkforward_tail.sh").read_text("utf-8")
+    assert '"7t3:7T3"' in sh
