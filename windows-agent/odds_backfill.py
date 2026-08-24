@@ -199,14 +199,13 @@ def run_odds_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
     logger.info(f"[odds_completed] 処理済みファイル: {len(odds_completed)} 件")
     logger.info(f"[race_completed] 参照ファイル（RA/SE/HRスキップ用）: {len(race_completed)} 件")
 
-    total = {"files": 0, "records": 0, "posted": 0, "skipped": 0}
+    total = {"files": 0, "records": 0, "posted": 0}
+    # スキップは理由別に数える。JVSkip したファイルは on_file_done に届かないので、
+    # ここで数えないと「配信されなかった」のか「取込済みで飛ばした」のか区別が付かない。
+    skips = {"odds_completed": 0, "race_completed": 0}
     by_rec: dict[str, int] = {}
 
     def on_file_done(filename: str, file_records: list[dict]) -> None:
-        if filename in odds_completed:
-            total["skipped"] += 1
-            return
-
         odds = [r for r in file_records if r.get("rec_id") in ODDS_REC_IDS]
         if not odds:
             mark_odds_completed(filename)
@@ -228,9 +227,11 @@ def run_odds_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
 
     def skip_fn(filename: str) -> bool:
         if filename in odds_completed:
+            skips["odds_completed"] += 1
             return True
         # O 始まりでないファイルは RA/SE/HR 系なので RACE_completed にあればスキップ
         if not filename.startswith("O") and filename in race_completed:
+            skips["race_completed"] += 1
             return True
         return False
 
@@ -311,9 +312,16 @@ def run_odds_backfill(jv, from_year: int = 2024, option: int = 1) -> None:
     breakdown = " / ".join(f"{k}:{v}" for k, v in sorted(by_rec.items())) or "なし"
     logger.info(
         f"=== 確定オッズ バックフィル完了: {total['files']} ファイル / "
-        f"{total['posted']}/{total['records']} 件 POST / {total['skipped']} スキップ ==="
+        f"{total['posted']}/{total['records']} 件 POST / "
+        f"{sum(skips.values())} スキップ"
+        f"（取込済み {skips['odds_completed']} / RA・SE・HR {skips['race_completed']}）==="
     )
-    logger.info(f"    レコード種別の内訳: {breakdown}")
+    # 🔴 内訳は**レコードの中身**（先頭2バイト）で数えている。ファイル名の接頭辞とは一致しない。
+    #   実測 2026-08-24: `O1VM2024039920240401144912.jvd` の中身は rec_id='O2'（馬連・2042バイト）。
+    #   蓄積系はファイル名が1つずれており、**真の O1（単複枠＝単勝・複勝）は setup データに無い**。
+    #   単勝・複勝の確定オッズは option=1（保持窓ちょうど1年）でしか取れない。
+    #   ファイル名で「O1 も取れている」と誤読しないこと。
+    logger.info(f"    レコード種別の内訳（レコードの中身で判定）: {breakdown}")
 
 
 def main() -> None:
