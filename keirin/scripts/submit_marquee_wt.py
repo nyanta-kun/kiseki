@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -71,7 +72,10 @@ from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # 
 from src.odds_prediction import predicted_trio_board  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
 # 🔴 確認画面の URL は入稿側の定義を借りる（二重管理にしない）
-from scripts.netkeirin_submit_wt import REVIEW_URL  # noqa: E402
+from scripts.netkeirin_submit_wt import (  # noqa: E402
+    MEAN_PAYOUT_SKIP_TAG,
+    REVIEW_URL,
+)
 
 JST = timezone(timedelta(hours=9))
 PICKS = Path(__file__).resolve().parent.parent / "data" / "picks"
@@ -288,7 +292,8 @@ def _rank_of(label: str) -> str:
 
 
 def _send_merged_notice(path: str, date: str, done: list[str],
-                        failed: list[str]) -> bool:
+                        failed: list[str],
+                        skipped: list[str] | None = None) -> bool:
     """ランク入稿が保留した通知に**穴埋めぶんを足して1通**送る（2026-08-23）。
 
     🔴 **これが無いと Discord の件数が確認画面と食い違う。**
@@ -339,6 +344,12 @@ def _send_merged_notice(path: str, date: str, done: list[str],
         msg = (f"📮 **[netkeirin入稿完了] {d.get('target_date', date)}"
                f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
                f"確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。")
+    # 🔴 ランク入稿ぶんの見送り（`_write_deferred_notice` が持ち越す）と
+    #    看板穴埋めぶんの見送りを**合算して1行**にする（§11.6.3）。
+    skips = (list(d.get("mean_payout_skips") or [])
+             + [f"{x}(看板穴埋め)" for x in (skipped or [])])
+    if skips:
+        msg += f"\n💸 安い配当で {len(skips)}件 見送り: " + " / ".join(skips)
     fails = list(d.get("failures") or []) + [f"{x}(看板穴埋め)" for x in failed]
     if fails:
         msg += f"\n⚠️ 入稿失敗 {len(fails)}件: " + " / ".join(fails)
@@ -355,7 +366,8 @@ def _send_merged_notice(path: str, date: str, done: list[str],
     return True
 
 
-def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
+def _notify_summary(date: str, done: list[str], failed: list[str],
+                    skipped: list[str] | None = None) -> None:
     """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
 
     🔴 これは人手の入稿ではなく**自動入稿**なので「手動入稿」と書かない。
@@ -385,6 +397,9 @@ def _notify_summary(date: str, done: list[str], failed: list[str]) -> None:
     body = ""
     if done:
         body += "\n" + " / ".join(done)
+    # 平均払戻ゲートの見送りは失敗ではないので別行にする（§11.6.3）
+    if skipped:
+        body += f"\n💸 安い配当で {len(skipped)}件 見送り: " + " / ".join(skipped)
     if failed:
         body += "\n⚠️ 失敗: " + " / ".join(failed)
     body += f"\n確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。"
@@ -478,6 +493,8 @@ def main() -> int:
     ok = ng = 0
     done: list[str] = []
     failed: list[str] = []
+    # 平均払戻ゲートで見送った看板レース（成功でも失敗でもない別枠・§11.6.3）
+    skipped_cheap: list[str] = []
     for r in sorted(targets, key=lambda x: int(x["start_at"] or 0)):
         e = allidx.get(r["race_key"])
         if not e:
@@ -508,19 +525,29 @@ def main() -> int:
                            cwd=str(Path(__file__).resolve().parent.parent))
         sys.stdout.write(p.stdout)
         label = f"{e.get('venue_name')}{r['race_no']}R({rank})"
-        if p.returncode == 0 and "入稿失敗" not in p.stdout:
+        # 🔴 **平均払戻ゲートの見送りは「失敗」ではない**（2026-08-24・§11.6）。
+        #    子プロセスは 0件・失敗0 で正常終了するので、`done` へ入れると
+        #    「入稿した」と嘘になり、`failed` へ入れると毎朝の通知が警告で埋まる。
+        #    stdout の目印で数えて**別枠**にする。自動化すると入稿自体が
+        #    行われず `netkeirin_submissions` に痕跡が残らないので、
+        #    ここが看板経路の唯一の可視性になる（§11.6.3）。
+        if MEAN_PAYOUT_SKIP_TAG in p.stdout:
+            skipped_cheap.append(label)
+        elif p.returncode == 0 and "入稿失敗" not in p.stdout:
             ok += 1
             done.append(label)
         else:
             ng += 1
             failed.append(label)
             sys.stderr.write(p.stderr)
-    print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件）", flush=True)
-    if not args.dry_run and (done or failed):
+    print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件・"
+          f"安い配当で見送り{len(skipped_cheap)}件）", flush=True)
+    if not args.dry_run and (done or failed or skipped_cheap):
         # 🔴 ランク入稿が通知を保留していれば、そこへ穴埋めを足して1通送る。
         #    保留が無ければ従来どおり（手動実行・ランク入稿が落ちた日）。
-        if not _send_merged_notice(args.defer_notify, date, done, failed):
-            _notify_summary(date, done, failed)
+        if not _send_merged_notice(args.defer_notify, date, done, failed,
+                                   skipped_cheap):
+            _notify_summary(date, done, failed, skipped_cheap)
     elif not args.dry_run:
         # 穴埋めが0件でも、ランク入稿が保留した通知は必ず送る
         _send_merged_notice(args.defer_notify, date, [], [])

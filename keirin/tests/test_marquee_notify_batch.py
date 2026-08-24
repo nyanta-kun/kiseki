@@ -103,10 +103,17 @@ def test_summary_includes_success_and_failure(monkeypatch):
 
 
 def test_summary_not_sent_when_nothing_done(monkeypatch):
-    """埋める対象が無い日は通知しない（毎朝の無意味な通知を増やさない）。"""
+    """埋める対象が無い日は通知しない（毎朝の無意味な通知を増やさない）。
+
+    ⚠️ 2026-08-24 に条件へ `skipped_cheap` を足した（平均払戻ゲートの見送り）。
+       **意図は変えていない**——「報告すべきことが何も無ければ黙る」であって、
+       見送りは報告すべきこと。ここを外すと、看板が全部ゲートで落ちた日に
+       通知が1通も出ず、**ゲートが効きすぎていても気づけない**。
+    """
     import scripts.submit_marquee_wt as m  # noqa: PLC0415
 
     src = inspect.getsource(m.main) if hasattr(m, "main") else ""
-    assert "if not args.dry_run and (done or failed):" in inspect.getsource(m), (
-        "成功も失敗も無いときに通知しないガードが見当たりません"
-    )
+    assert "if not args.dry_run and (done or failed or skipped_cheap):" \
+        in inspect.getsource(m), (
+            "成功も失敗も見送りも無いときに通知しないガードが見当たりません"
+        )
