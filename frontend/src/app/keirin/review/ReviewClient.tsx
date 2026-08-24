@@ -303,11 +303,19 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   const wonKeys = new Set((p.winning_combos ?? []).map(comboKey));
   const hypothetical = useMemo(() => {
     if (p.result || wonKeys.size === 0) return null;   // 売った分は実績を出す
+    // 🔴 **確定していれば API の採点を使う**（2026-08-24）。`result_if_sold` は
+    //    サマリーと同じ確定オッズ基準なので、カードとサマリーの数字が一致する。
+    //    以前はここで `bet_detail` の**入稿時点オッズ**から計算しており、
+    //    同じレースで 16,910円（カード）↔ 20,710円（サマリー）と食い違っていた。
+    if (p.result_if_sold) {
+      return { payout: p.result_if_sold.payout, bet: p.result_if_sold.bet };
+    }
+    // 未確定のあいだだけ、入稿時点のオッズで見込みを出す（確定したら上へ切り替わる）。
     const line = (d?.lines ?? []).find((l) => wonKeys.has(comboKey(l.combo)));
     if (!line || line.odds === null) return null;
     return { payout: Math.round(line.stake * line.odds), bet: d?.total ?? 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.result, p.winning_combos, d]);
+  }, [p.result, p.result_if_sold, p.winning_combos, d]);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
   // 🔴 取消は**グレーアウト**（2026-08-22・ユーザー要望）。以前は
@@ -633,7 +641,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
  */
 function DaySummary({ s, caption }: {
   s: KeirinProposalSummary;
-  /** 参考値のときだけ渡す。実績（売った分）は従来どおり見出しなし。 */
+  /** 🔴 表の見出し。**2つ並ぶので両方に必ず付ける**（2026-08-24）。
+   *  片方だけ無名にすると、確定0件のときに残った1枚が「実績」と読まれる。 */
   caption?: string;
 }) {
   const cell = "border border-gray-200 px-3 py-1.5 dark:border-gray-700";
@@ -1092,12 +1101,17 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         />
       </div>
 
-      {summary && summary.n_races > 0 && <DaySummary s={summary} />}
+      {/* 🔴 **確定0件でも必ず出す**（2026-08-24・ユーザー要望）。以前は
+          `n_races > 0` で隠していたため、朝はまだ1件も確定しておらず
+          **取消サマリーだけが出て「それが実績」と読める**状態になっていた
+          （2026-08-24 10:00 実測: 売った23件が全て未確定・取消2件だけ確定）。
+          確定0件でも「予想数 0レース（未確定N）」と出るほうが状態が分かる。 */}
+      {summary && <DaySummary s={summary} caption="売った分（実績）" />}
       {/* 🔴 **実績ではない。** 取り消したレースを売っていた場合の参考値で、
           上の実績サマリーにも netkeirin の成績にも入っていない。落とした判断が
           正しかったかを見るためだけに出す（2026-08-24・ユーザー要望）。
           採点は実績と同じ経路（確定オッズ）なので同じ土俵で比べられる。 */}
-      {summaryCancelled && summaryCancelled.n_races > 0 && (
+      {summaryCancelled && (
         <DaySummary
           s={summaryCancelled}
           caption="取り消したレースを、そのまま売っていたら（参考値・実績には含みません）"
