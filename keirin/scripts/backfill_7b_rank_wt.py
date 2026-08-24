@@ -55,7 +55,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
-from src.rebuild_stakes import load_morning_boards, stakes_for_combos
+from src.rebuild_stakes import (load_morning_boards, load_submitted_stakes,
+                                stakes_for_combos)
 from src.evaluation.void_rules import void_by_dns
 from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
@@ -236,6 +237,10 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         })
 
     morning_boards = load_morning_boards([c["race_key"] for c in candidates])
+    # 🔴 **実際に入稿した賭け金があればそれを使う**（2026-08-24）。記録側の
+    #    配分規則は 2026-08-07 のままで、入稿側が 2026-08-11 に予測オッズへ
+    #    移って以来ずれていた（実測 ROI 63.3% ↔ 78.0%・−14.7pt）。
+    submitted_stakes = load_submitted_stakes([c["race_key"] for c in candidates], "7B")
     rows: list[dict] = []
     for c_ in rank_7b_daily_select(candidates):
         axis1, axis2 = c_["axis1"], c_["axis2"]
@@ -263,7 +268,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         # 賭け金は1レース RACE_BUDGET 円を**入稿と同じ傾斜配分**で割り振る。
         # 7B も3点買いとはいえ 3.0倍未満はガミになる（netkeirin は不的中扱い）。
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
-                                   morning_boards.get(rk))
+                                   morning_boards.get(rk),
+                                   submitted=submitted_stakes.get(rk))
         pay = trio_pay * stakes[win_key] // 100 if hit else 0
         bet = sum(stakes.values())
         rows.append({
