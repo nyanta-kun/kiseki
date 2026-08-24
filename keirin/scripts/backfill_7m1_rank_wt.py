@@ -61,7 +61,8 @@ from src.preprocessing.feature_wt import (  # noqa: E402
 from src.odds_prediction import (  # noqa: E402
     model_train_end as odds_model_train_end, trio_ev_for_legs,
 )
-from src.rebuild_stakes import load_morning_boards, stakes_for_combos  # noqa: E402
+from src.rebuild_stakes import (load_morning_boards, load_submitted_stakes,
+                                stakes_for_combos)  # noqa: E402
 from src.strategy_wt import (  # noqa: E402
     RANK_7M1_LEGS_MIN, rank_7c_buy_plan, rank_7c_is_lowpay_pattern,
     rank_7c_select_axis, rank_7c_select_legs, rank_7m1_daily_select,
@@ -243,6 +244,10 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         })
 
     morning_boards = load_morning_boards([c["race_key"] for c in candidates])
+    # 🔴 **実際に入稿した賭け金があればそれを使う**（2026-08-24）。記録側の
+    #    配分規則は 2026-08-07 のままで、入稿側が 2026-08-11 に予測オッズへ
+    #    移って以来ずれていた（実測 ROI 63.3% ↔ 78.0%・−14.7pt）。
+    submitted_stakes = load_submitted_stakes([c["race_key"] for c in candidates], "7M1")
     rows: list[dict] = []
     for c_ in rank_7m1_daily_select(candidates):
         axis1, axis2 = c_["axis1"], c_["axis2"]
@@ -262,7 +267,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         hit = win_key is not None
         trio_pay = pm.get(rk, {}).get(("trio", win_key or c_["actual_top3"]), 0)
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
-                                   morning_boards.get(rk))
+                                   morning_boards.get(rk),
+                                   submitted=submitted_stakes.get(rk))
         pay = trio_pay * stakes[win_key] // 100 if hit else 0
         rows.append({
             "race_date": c_["race_date"],

@@ -67,7 +67,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.wt_vintage_config import assert_vintage_for_past
 from src.database import get_connection
 from src.evaluation.backtest_wt import _load_payouts_wt
-from src.rebuild_stakes import load_morning_boards, stakes_for_combos
+from src.rebuild_stakes import (load_morning_boards, load_submitted_stakes,
+                                stakes_for_combos)
 from src.evaluation.void_rules import void_by_dns
 from src.models.trainer import load_model
 from src.preprocessing.feature_wt import build_features_wt, load_raw_data_wt, prepare_X
@@ -244,6 +245,10 @@ def build_rows(model_name: str, date_from: str, date_to: str,
 
     # 朝オッズ盤面は 2026-06-08 以降にしか無い。無い期間は p3 単独へ落ちる。
     morning_boards = load_morning_boards([c["race_key"] for c in candidates])
+    # 🔴 **実際に入稿した賭け金があればそれを使う**（2026-08-24）。記録側の
+    #    配分規則は 2026-08-07 のままで、入稿側が 2026-08-11 に予測オッズへ
+    #    移って以来ずれていた（実測 ROI 63.3% ↔ 78.0%・−14.7pt）。
+    submitted_stakes = load_submitted_stakes([c["race_key"] for c in candidates], "7A")
     rows: list[dict] = []
     # 【2026-08-09】低配当レース見送りゲート。**live と同じ規則で日付順に**掛ける
     # （その日より前のプールから q20）。ここを外すと毎朝 08:40 の tail 再構築が
@@ -287,7 +292,8 @@ def build_rows(model_name: str, date_from: str, date_to: str,
         # 本番より 14.5pt 高く出るので、必ず「朝オッズ×p3、無ければ p3 単独」の
         # 本番と同じ規則を使う（src/rebuild_stakes.py の docstring 参照）。
         stakes = stakes_for_combos(axis1, axis2, combos, c_.get("top3_probs") or {},
-                                   morning_boards.get(rk))
+                                   morning_boards.get(rk),
+                                   submitted=submitted_stakes.get(rk))
         pay = trio_pay * stakes[win_key] // 100 if hit else 0
         bet = sum(stakes.values())
         rows.append({
