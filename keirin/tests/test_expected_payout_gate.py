@@ -113,7 +113,9 @@ def test_gate_prefers_predicted_odds():
     """
     src = SUBMIT.read_text(encoding="utf-8")
     i = src.index("def _expected_payout_floor_for(")
-    body = src[i:i + 1800]
+    # 🔴 固定長で切らない。docstring が伸びると本体が窓から外れて
+    #    「使っていない」と誤検知する（2026-08-26 に実際に落ちた）。
+    body = src[i:src.index("def _build_trifecta_head_legs(", i)]
     assert "try_predicted_odds_for_legs" in body, (
         "想定払戻の判定が予測オッズを使っていない")
     assert body.index("try_predicted_odds_for_legs") < body.index("_load_trio_board"), (
@@ -136,3 +138,80 @@ def test_gate_skips_when_floor_is_unknown():
     block = _gate_block()
     assert "floor is not None" in block, (
         "板が足りないときに素通しする条件（floor is not None）が無い")
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-26: 判定する数字を「素の予測オッズ」→「下限包絡（c(p25)×予測）」へ
+# ---------------------------------------------------------------------------
+# 素の予測で測ると下限を系統的に高く見積もる（確定の下限 ÷ 予測の下限 = 0.78・
+# 月次 0.766〜0.789）。実入稿では「通した商品のうち実際に1.5倍以上あったのは
+# 57.7%」でしかなく、看板が半分しか守れていなかった。
+# 数値と再現は `src/stake_allocation.py` の定義部と `docs/oddspred_gap_2026_08_26.md`。
+#
+# ⚠️ 壊れても例外は出ない。**保守倍率の一行を消すとゲートが静かに甘くなる**だけ
+#    なので、ここでしか守れない。
+from scripts import netkeirin_submit_wt as sub  # noqa: E402
+
+
+def _floor(monkeypatch, *, predicted, board=None, mult=0.8):
+    monkeypatch.setattr(sub, "try_predicted_odds_for_legs",
+                        lambda rk, a1, a2, legs: predicted)
+    monkeypatch.setattr(sub, "_load_trio_board", lambda rk: board or {})
+    if mult is None:
+        def _boom(n_cars, q):
+            raise sub.OddsPredictionUnavailable("保守倍率が meta にありません")
+        monkeypatch.setattr(sub, "conservative_multiplier", _boom)
+    else:
+        monkeypatch.setattr(sub, "conservative_multiplier", lambda n_cars, q: mult)
+    return sub._expected_payout_floor_for(
+        "20260826_11_01", 1, 2, {3: 6000, 4: 4000}, BUDGET, n_cars=7)
+
+
+def test_floor_applies_the_conservative_multiplier(monkeypatch):
+    """予測オッズには保守倍率が掛かる（素の予測で判定しない）。"""
+    got = _floor(monkeypatch, predicted={3: 5.0, 4: 10.0}, mult=0.8)
+    # 素なら 5.0*6000/10000 = 3.00。保守板なら 0.8 を掛けて 2.40。
+    assert got is not None
+    assert abs(got - 2.40) < 1e-9, "保守倍率が掛かっていない（ゲートが甘くなる）"
+
+
+def test_floor_is_none_when_the_multiplier_is_unavailable(monkeypatch):
+    """🔴 保守倍率が無いなら**判定しない**（素の予測へ黙って戻さない）。
+
+    戻すと「下限」と名乗りながら中央値相当の数字で判定することになり、
+    2026-08-26 以前の甘い状態へ静かに退行する。
+    """
+    assert _floor(monkeypatch, predicted={3: 5.0, 4: 10.0}, mult=None) is None
+
+
+def test_board_fallback_is_not_multiplied(monkeypatch):
+    """⚠️ 実オッズ板には保守倍率を掛けない。
+
+    板は買う帯で系統的に低く（中央 確定/板 0.86）、c(p25)=0.843 と
+    ほぼ同じ保守水準にある。掛けると二重に絞る。
+    """
+    board = {frozenset({1, 2, 3}): 5.0, frozenset({1, 2, 4}): 10.0}
+    got = _floor(monkeypatch, predicted=None, board=board, mult=0.8)
+    assert got is not None
+    assert abs(got - 3.00) < 1e-9, "板にも倍率が掛かっている（二重に絞っている）"
+
+
+def test_gate_passes_n_cars_so_the_9car_multiplier_is_used():
+    """保守倍率は車数別（7車 0.843 / 9車 0.859）。呼び出し側が車数を渡すこと。"""
+    block = _gate_block()
+    assert "_expected_payout_floor_for(" in block
+    assert "n_cars=" in block[block.index("_expected_payout_floor_for("):], (
+        "車数を渡していない（9車で7車の保守倍率を使ってしまう）")
+
+
+def test_gate_does_not_judge_on_the_recorded_odds_low():
+    """🔴 `bet_detail` の `odds_low`（= min(板, c×予測)）で判定しない。
+
+    同じ314件の実測で 通す97件・達成66.0%・取りこぼし26.3% と**両方悪い**。
+    表示は min 側・判定は c×予測、と用途で数字を替える。
+    """
+    src = SUBMIT.read_text(encoding="utf-8")
+    i = src.index("def _expected_payout_floor_for(")
+    body = src[i:src.index("def _build_trifecta_head_legs(", i)]
+    assert "odds_low" not in body.split('"""')[2], (
+        "判定が表示用の odds_low を見ている")

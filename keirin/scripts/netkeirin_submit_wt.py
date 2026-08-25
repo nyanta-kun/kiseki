@@ -1586,6 +1586,7 @@ def _premium_metrics(rank_key: str, cand: dict) -> dict | None:
 
 def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
+    n_cars: int,
 ) -> float | None:
     """想定払戻（下限）。判定できないときは None（＝入稿する側へ倒す）。
 
@@ -1595,13 +1596,62 @@ def _expected_payout_floor_for(
        **12件だけ**で「7S では効かない」と誤読しかけた
        （[[keirin_n7_gami_cut_predicted_odds_2026_08_21]]）。
 
+    🔴 **予測オッズは下限包絡（`_conservative_trio_board`）へ落としてから測る**
+       （2026-08-26）。素の予測オッズで測ると**下限を系統的に高く見積もる**。
+
+       理由は2つあり、どちらも構造的:
+
+       1. 整合化（Σ(1/o) を定数へ再スケール）が素の点予測を約8%下げる方向に
+          効くため、**買う点は確定オッズのほうが約7%高く出る**（実測 中央 1.07）。
+       2. 下限は買う点の**最小**なので、目ごとに独立な誤差がある限り
+          「予測の最小」より「確定の最小」は必ず小さく出る（順序統計量）。
+          しかも傾斜配分が払戻をそろえるほど5点が接近し、最小はより深く食い込む。
+
+       実測（vintage モデル・2026-01〜08 の 14,748R）で
+       **確定の下限 ÷ 予測の下限の中央は 0.78**（月次 0.766〜0.789 で安定）。
+       素の予測で 1.5倍ゲートを掛けると、通した商品のうち**実際に 1.5倍以上
+       あったのは 44.8%**（実入稿 8/05〜8/25 の 424件でも 57.7%）＝
+       「最低 1.5倍」という看板が半分しか守れていなかった。
+
+       保守倍率 c(p25)=0.843 を掛けると、実入稿で
+       **通す 215→136件（11.3→7.2件/日）・達成率 57.7→75.7%**。
+       落ちる 79件のうち実際に 1.5倍以上あったのは 21件（27%）。
+       数値と再現は `docs/oddspred_gap_2026_08_26.md`。
+
+    🔴 **`bet_detail` の `odds_low`（= min(板, c×予測)）で判定してはいけない。**
+       表示用の下限は「板より高い数字を約束しない」ために min を取っているが、
+       板は買う帯で系統的に低い（中央 確定/板 0.86）ので、判定に使うと
+       **通す件数が減るのに達成率も落ちる**。同じ 314件での実測:
+
+         予測そのまま        通す 194件  達成 57.2%  取りこぼし  8.3%
+         **c(p25)×予測**    通す 121件  達成 76.0%  取りこぼし 15.0%
+         min(板, c×予測)     通す  97件  達成 66.0%  取りこぼし 26.3%
+
+       **用途ごとに数字を替える**（[[keirin_odds_prediction_model_2026_08_11]]）。
+       表示は min 側・判定はこちら。両者が食い違うのは意図的で、
+       レビュー画面の「下振れ」より本ゲートのほうが緩く出ることがある。
+
     ⚠️ **配分に使ったのと同じ板で測ること。** `_build_tilted_legs` は
        `tilted_stakes(predicted_odds=...)` に予測オッズを渡しているので、
-       判定も予測オッズで行うのが整合する。予測が作れないときだけ実オッズ板へ落ち、
-       それも無ければ None。
+       判定も予測オッズで行うのが整合する。保守倍率はレース内で一律なので
+       **配分の比率は1ミリも変わらない**（水準だけを保守側へ寄せている）。
+
+    ⚠️ 予測が作れないときだけ実オッズ板へ落ち、それも無ければ None。
+       **板には保守倍率を掛けない。** 板は既に系統的に低く（中央 確定/板 0.86）、
+       c(p25)=0.843 とほぼ同じ保守水準にあるため、掛けると二重に絞る。
     """
     odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(stakes))
-    if not odds:
+    if odds:
+        low = _conservative_trio_board(odds, int(n_cars))
+        if low:
+            odds = low
+        else:
+            # 保守倍率が取れない＝下限を名乗れない。素の予測で判定すると
+            # 上の実測どおり甘くなるだけなので、判定しない側へ倒す。
+            print(f"[odds-pred] {race_key}: 保守倍率が無いため想定払戻(下限)の"
+                  "足切りは行いません", flush=True)
+            return None
+    else:
         board = _load_trio_board(race_key)
         odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
     return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
@@ -2274,11 +2324,13 @@ def _process_rank(
                     if min_floor is not None and not use_trifecta:
                         floor = _expected_payout_floor_for(
                             race_key.split("#")[0], axis1, axis2_or_p1,
-                            tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET))
+                            tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET),
+                            n_cars=int(cfg["n_cars"]))
                         if floor is not None and floor < min_floor:
                             _skip(race_key, rank_key, session,
                                   SKIP_GATE_EXPECTED_FLOOR,
-                                  f"想定払戻(下限) {floor:.2f}倍 < {min_floor:.2f}倍",
+                                  f"想定払戻(下限・下振れ込み) {floor:.2f}倍 "
+                                  f"< {min_floor:.2f}倍",
                                   venue_name, race_no)
                             continue
                     # 🔴 印を submit_pick が内部で作っていたものと**同じ**にする。

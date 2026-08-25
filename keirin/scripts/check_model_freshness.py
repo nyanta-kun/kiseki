@@ -73,6 +73,28 @@ TARGET_FILES: tuple[str, ...] = (
 
 DEFAULT_STALE_DAYS = 8.0
 
+# 予測オッズ（三連複）モデル。**存在の有無だけ**を見る（2026-08-26 追加）。
+#
+# 🔴 なぜ mtime を見ないか: このモデルには**再学習の自動化が無い**（手動実行）。
+#    週次モデルと同じ 8日しきい値を当てると毎日鳴り続け、
+#    鳴りっぱなしの監視は無いのと同じになる。
+#    そして**鮮度そのものに精度上の価値が無いことは実測済み**——学習終端
+#    2025-12-31 / 2026-04-30 / 2026-06-30 を同一窓で比べて logMAE 0.1400→0.1397・
+#    配分の相対誤差も偏りも不変（`docs/oddspred_gap_2026_08_26.md` §5）。
+#    **8か月古くても実害が測れない**ので、古さで鳴らす理由が無い。
+#
+# 🔴 なぜ存在は見るか: このファイルが消える／配布されないと、
+#    `landing_weights` は**黙って**朝の板 or p3 単独の配分へ落ち、
+#    `MIN_POINT_ODDS` と想定払戻(下限)の足切りは**判定不能＝素通し**になる。
+#    入稿は成功し続けるので気づけない（実測でも板の配分は予測より明確に悪い:
+#    重みのL1 中央 0.27〜0.41 ↔ 予測 0.18〜0.20）。
+#    ⚠️ ログには WARNING が出るが、cron.log を毎日読む運用にはなっていない。
+ODDS_MODEL_FILES: tuple[str, ...] = (
+    "odds_trio_n7.txt",
+    "odds_trio_n9.txt",
+    "odds_trio_meta.json",
+)
+
 
 def check_staleness(
     model_dir: Path, target_files: tuple[str, ...], stale_days: float
@@ -96,6 +118,11 @@ def check_staleness(
     return stale
 
 
+def check_missing(model_dir: Path, target_files: tuple[str, ...]) -> list[str]:
+    """存在しないファイル名を返す（古さは見ない）。理由は `ODDS_MODEL_FILES` 参照。"""
+    return [name for name in target_files if not (model_dir / name).exists()]
+
+
 def build_message(stale: list[tuple[str, float | None]], stale_days: float) -> str:
     lines = [
         "⚠️ **[check_model_freshness] 週次再学習のモデル更新が確認できません"
@@ -112,6 +139,25 @@ def build_message(stale: list[tuple[str, float | None]], stale_days: float) -> s
         "可能性があります。Macのスリープ/電源状態を確認してください。"
     )
     return "\n".join(lines)
+
+
+def _notify(message: str, dry_run: bool) -> None:
+    """Discord へ送る。失敗しても cron 全体は壊さない。"""
+    if dry_run:
+        print("[check_model_freshness] --dry-run のためDiscord通知は送信していません。")
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from src.notify.discord import send  # 遅延import（健全時は読み込まない）
+
+        if not send(message, channel="system"):
+            print(
+                "[check_model_freshness] Discord通知に失敗しました"
+                "（DISCORD_WEBHOOK_URL_SYSTEM未設定などの可能性）。",
+                file=sys.stderr,
+            )
+    except Exception as exc:  # noqa: BLE001 - 通知失敗でcron全体を壊さないため広く捕捉
+        print(f"[check_model_freshness] Discord通知中に例外: {exc}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,34 +178,32 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     stale = check_staleness(MODEL_DIR, TARGET_FILES, args.stale_days)
+    missing = check_missing(MODEL_DIR, ODDS_MODEL_FILES)
 
-    if not stale:
+    if missing:
+        odds_msg = (
+            "🚨 **[check_model_freshness] 予測オッズモデルが見つかりません**\n"
+            + "\n".join(f"- `{name}`" for name in missing)
+            + "\n配分（`landing_weights`）が黙って朝の板／p3 単独へ落ち、"
+            "`MIN_POINT_ODDS` と想定払戻(下限)の足切りは素通しになります。"
+            "`scripts/train_odds_prediction.py --n-car 7 / 9` を実行し、"
+            "`scripts/sync_models_to_vps.sh` で配布してください。"
+        )
+        print(odds_msg)
+        _notify(odds_msg, args.dry_run)
+
+    if not stale and not missing:
         print(
             f"[check_model_freshness] OK: 全{len(TARGET_FILES)}ファイルが"
             f"{args.stale_days:.0f}日以内に更新されています。"
+            f"（予測オッズモデル {len(ODDS_MODEL_FILES)}ファイルも存在します）"
         )
         return 0
 
-    message = build_message(stale, args.stale_days)
-    print(message)
-
-    if args.dry_run:
-        print("[check_model_freshness] --dry-run のためDiscord通知は送信していません。")
-        return 1
-
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from src.notify.discord import send  # 遅延import（健全時は読み込まない）
-
-        ok = send(message, channel="system")
-        if not ok:
-            print(
-                "[check_model_freshness] Discord通知に失敗しました"
-                "（DISCORD_WEBHOOK_URL_SYSTEM未設定などの可能性）。",
-                file=sys.stderr,
-            )
-    except Exception as exc:  # noqa: BLE001 - 通知失敗でcron全体を壊さないため広く捕捉
-        print(f"[check_model_freshness] Discord通知中に例外: {exc}", file=sys.stderr)
+    if stale:
+        message = build_message(stale, args.stale_days)
+        print(message)
+        _notify(message, args.dry_run)
 
     return 1
 
