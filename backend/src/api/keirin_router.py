@@ -196,64 +196,38 @@ async def _calc_synth_odds(
     return round(1.0 / sum(1.0 / o for o in matched), 2)
 
 
-async def _calc_synth_odds_from_lines(
-    db: AsyncSession, race_key: str, lines: Sequence[Mapping[str, Any]],
+def _calc_synth_odds_from_lines(
+    lines: Sequence[Mapping[str, Any]],
 ) -> float | None:
     """**入稿した買い目そのもの**の合成オッズ（= 1 / Σ(1/odds)）。
 
-    `_calc_synth_odds` は `picks_history.pred_combo`（ランクの候補）用。売った商品は
-    候補と買い目が違うことがある（看板の穴埋めで軸を組み替える等）ので、
-    合成オッズも売ったほうから出さないと**買い目と数字がちぐはぐになる**。
+    🔴 **`bet_detail` に記録されたオッズだけで計算する**（2026-08-26・ユーザー指示
+       「入稿データのオッズは全て予測オッズのみ」）。入稿側は 2026-08-26 から
+       三連複も三連単も予測オッズしか書かないので、ここも同じ数字で揃う。
 
-    ⚠️ `wt_odds_snapshot.combination` は収集経路で表記が混在する
-       （trio が `1=2=6` の回と `1-2-6` の回がある）ので、三連複は両方を候補にする。
+    ⚠️ 旧実装は `wt_odds_snapshot`（板）を引いていた。**朝の板は薄い**ので、
+       5点のうち板にあるのが2点だけ、という状態が普通に起きる。
+       合成オッズは点が少ないほど大きく出るため、
+       **一部しか照合できなかったレースほど合成オッズが大きく表示されていた**
+       （実例 2026-08-26 熊本6R: 35点中12点にしか金が入っていない板）。
+
+    🔴 **1点でもオッズが欠けたら None**。残りだけで合成すると上記のとおり
+       過大表示になる。分からないときは出さない。
+
+    `_calc_synth_odds` は `picks_history.pred_combo`（**ランクの候補**）用で、
+    そちらは入稿データではないので板のまま（候補には記録済みのオッズが無い）。
     """
-    by_type: dict[str, list[list[str]]] = {}
+    odds: list[float] = []
     for x in lines:
-        kind = str(x.get("bet_type") or "")
-        if kind == "3連複":
-            bt, ordered = "trio", False
-        elif kind == "3連単":
-            bt, ordered = "trifecta", True
-        else:
+        if str(x.get("bet_type") or "") not in ("3連複", "3連単"):
             return None                      # 未知の券種は黙って混ぜない
-        try:
-            cars = [int(c) for c in re.split(r"[-=]", str(x.get("combo"))) if c != ""]
-        except ValueError:
+        o = x.get("odds")
+        if not o or float(o) <= 0:
             return None
-        if len(cars) != 3:
-            return None
-        if ordered:
-            by_type.setdefault(bt, []).append(["-".join(map(str, cars))])
-        else:
-            joined = sorted(cars)
-            by_type.setdefault(bt, []).append(
-                ["-".join(map(str, joined)), "=".join(map(str, joined))])
-    matched: list[float] = []
-    for bt, legs in by_type.items():
-        combos = [k for leg in legs for k in leg]
-        rows = (await db.execute(
-            text("""
-                SELECT combination, odds_value
-                FROM keirin.wt_odds_snapshot
-                WHERE race_key = :rk
-                  AND bet_type = :bt
-                  AND combination = ANY(:combos)
-                  AND snapshot_at = (
-                    SELECT MAX(snapshot_at) FROM keirin.wt_odds_snapshot
-                    WHERE race_key = :rk AND bet_type = :bt
-                  )
-            """), {"rk": race_key, "bt": bt, "combos": combos},
-        )).mappings().all()
-        odds_map = {x["combination"]: x["odds_value"] for x in rows if x["odds_value"]}
-        for leg in legs:
-            for key in leg:                  # 二重計上を避けて1点につき1つだけ採る
-                if key in odds_map:
-                    matched.append(float(odds_map[key]))
-                    break
-    if not matched:
+        odds.append(float(o))
+    if not odds:
         return None
-    return round(1.0 / sum(1.0 / o for o in matched), 2)
+    return round(1.0 / sum(1.0 / o for o in odds), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -1078,8 +1052,7 @@ async def get_picks(
         # 合成オッズも**表に出す買い目と同じもの**から出す。売った商品があるなら
         # その買い目、無ければ picks_history の候補（`pred_combo`）から計算する。
         if sub_result is not None and submitted_bet:
-            synth_odds = await _calc_synth_odds_from_lines(
-                db, base_key, submitted_bet["lines"])
+            synth_odds = _calc_synth_odds_from_lines(submitted_bet["lines"])
         elif has_pick:
             synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
         else:
