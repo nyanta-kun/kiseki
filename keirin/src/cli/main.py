@@ -1308,26 +1308,34 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
     except Exception:
         venue_map = {}
 
-    # 開催グレードマップ（9C のゲート下限がグレードで変わるため・2026-08-16）。
+    # 開催グレードマップ（3着内率の後段較正に効く・2026-08-16）。
     # ⚠️ `load_raw_data_wt` の SELECT には足さない。あれは学習にも使う共有経路で、
     #    表示・ゲート用の値を混ぜると `race_point` のときと同じ事故（特徴量へ
     #    表示用の書き込みが紛れ込む）を招く。ここで引いて候補にだけ載せる。
+    # 🔴 **`pd.read_sql(..., params=...)` を使ってはいけない**（2026-08-26 是正）。
+    #    `get_connection()` が返すのは sqlite3 互換ラッパー `_PgConn` で、pandas は
+    #    これを DBAPI2 として扱えずプレースホルダを解決しない。`%(d)s` がそのまま
+    #    PostgreSQL へ渡り `syntax error at or near "%"` で **毎回 except に落ちて
+    #    いた**（#194 の導入初日 2026-08-17 から 10日間、一度も取れていない）。
+    #    同ファイルの `_load_odds` と同じく `conn.execute` + `?` で引く。
     # ⚠️ 取れなければ空のままにする。`p3_calibration.grade_group(None)` は
     #    「F級」（補正ほぼ恒等）へ倒すので、失敗しても**選出が広がる方向にしか
-    #    倒れない**（黙って減らない）。
+    #    倒れない**（黙って減らない）。逆に言えば**黙って緩む**ので、この警告が
+    #    出ている日は 7C/9C のゲートが本来より通っていると考えること。
     try:
         with get_connection() as conn:
-            _cg = pd.read_sql(
-                "SELECT race_key, cup_grade FROM wt_races WHERE race_date = %(d)s",
-                conn, params={"d": target_date},
-            )
+            _cg = conn.execute(
+                "SELECT race_key, cup_grade FROM wt_races WHERE race_date = ?",
+                (target_date,),
+            ).fetchall()
         cup_grade_map = {
-            str(k): (int(v) if v is not None and v == v else None)
-            for k, v in zip(_cg["race_key"], _cg["cup_grade"])
+            str(r["race_key"]): (int(r["cup_grade"])
+                                 if r["cup_grade"] is not None else None)
+            for r in _cg
         }
     except Exception as _e:
-        click.echo(f"[wt][警告] cup_grade を取得できません（9Cは全て下限1.30で選出）: {_e}",
-                   err=True)
+        click.echo("[wt][警告] cup_grade を取得できません"
+                   f"（GIII の較正が効かず 7C/9C のゲートが緩みます）: {_e}", err=True)
         cup_grade_map = {}
 
     # オッズデータをロード（DB にあれば）
@@ -2370,7 +2378,10 @@ def wave_picks_wt(target_date, output_path, model_name, only_races_file,
                             top3_probs, _race_type_9c, _cup_grade_9c) or 0.0, 6)
                         if _sel_9c else None),
                     "legs_9c": _legs_9c,
-                    # 9C のゲート下限を決める（GII以上だけ 1.40）。None なら 1.30。
+                    # 3着内率の後段較正のセグメント（`p3_calibration.grade_group`）。
+                    # ⚠️ ゲート下限は **cup_grade で変わらない**。グレード別の引き上げ
+                    #    （RANK_9C_P3_SUM_MIN_BIG=1.40・PR#194）は 2026-08-17 の
+                    #    較正導入（#199）で撤去済みで、下限は 1.30 の一本。
                     "cup_grade": cup_grade_map.get(race_key),
                     "race_key":   race_key,
                     "venue_name": _venue_name(venue_map, grp_sorted["venue_id"].iloc[0]),
