@@ -235,7 +235,8 @@ export async function syncKeirinPublishStatusAction(date: string): Promise<Appro
 export const CANCEL_REASONS = {
   manual: "手動取消",
   forced: "強制取消",
-  cheap: "平均払戻が安い",
+  // ⚠️ `cheap: "平均払戻が安い"` は 2026-08-26 に廃止（入稿時の自動ゲートへ移行）。
+  //    **過去の取消行にはこの文言が残っている**ので、集計するときは忘れないこと。
   venue: "場単位で取消",
   all: "全件取消",
 } as const;
@@ -268,45 +269,11 @@ export async function cancelKeirinVenueAction(
     { date, venue_name: venueName, reason: CANCEL_REASONS.venue });
 }
 
-/**
- * 指定した**レースだけ**をまとめて取り消す（レビュー画面の一括取消・2026-08-24）。
- *
- * 🔴 **1件ずつの取消 API を順に呼ぶ**。専用の一括APIを作らないのは、締切判定・
- *    netkeirin の下書き削除・失敗理由の明細が既にレース単位の経路で作り込まれて
- *    いるため。一括用に別経路を作ると、そちらだけ規則が古くなる。
- * 🔴 **1件失敗しても止めない。** 途中で止めると「どこまで消えたか」が分からなく
- *    なる。全件試して**明細で返す**（画面が失敗分だけを再操作できる）。
- * ⚠️ force は使わない（まとめて記録だけ消す事故を避ける）。netkeirin 側に無い
- *    ものは失敗として返るので、画面から1件ずつ強制取消すること。
- */
-export async function cancelKeirinPicksAction(
-  targets: { raceKey: string; rankKey: string }[],
-  reason: CancelReason = CANCEL_REASONS.manual,
-): Promise<ApprovalResult> {
-  const denied = await requireAdmin();
-  if (denied) return denied;
-  if (targets.length === 0) return { ok: false, message: "対象がありません" };
-  const results: NonNullable<ApprovalResult["results"]> = [];
-  for (const t of targets) {
-    const r = await postApproval(
-      "/keirin/cancel",
-      { race_key: t.raceKey, rank_key: t.rankKey, force: false, reason });
-    results.push({
-      race_key: t.raceKey, rank_key: t.rankKey, ok: r.ok, message: r.message,
-    });
-  }
-  const nOk = results.filter((r) => r.ok).length;
-  const nNg = results.length - nOk;
-  return {
-    ok: nNg === 0,
-    message: nNg === 0
-      ? `${nOk}件を取り消しました`
-      : `${nOk}件を取り消し・${nNg}件が失敗しました`,
-    n_ok: nOk,
-    n_ng: nNg,
-    results,
-  };
-}
+/* 🔴 `cancelKeirinPicksAction()`（レース指定の一括取消）は 2026-08-26 に削除した。
+      唯一の呼び出し元だった「安い配当」の一括取消が、入稿データを作る時点の
+      自動ゲートへ移ったため（`keirin/src/stake_allocation.py::MIN_MEAN_PAYOUT`）。
+      ⚠️ 復活させるなら**取消 API はレース単位のものを順に呼ぶ**こと。
+         専用の一括 API を作ると締切判定・下書き削除・失敗明細が二重管理になる。 */
 
 /**
  * その日の下書きを**全件**取り消す。
