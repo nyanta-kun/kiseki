@@ -1122,6 +1122,17 @@ export type KeirinPick = {
   skip_reason_text?: string | null;
   /** 取り消した理由（`netkeirin_submissions.cancel_reason`）。取消行だけ非 null。 */
   cancel_reason?: string | null;
+  /**
+   * ── モデル（ランクの**候補**）としての結果 ────────────────────────
+   * 🔴 **売った商品の成績ではない。** `hit` / `payout` / `bet_amount` とは
+   * 別物なので集計へ混ぜないこと。入稿・Discord は売った商品だけを見る。
+   * ここはゲートで見送ったレースが当たっていたかを Web で追うために返る。
+   * ⚠️ `paper_bet` は「1万円賭けたことにしたら」という**名目値**。実際の投資ではない。
+   */
+  paper_hit?: boolean | null;
+  paper_payout?: number | null;
+  paper_bet?: number | null;
+  paper_combo?: string | null;
   miwokuri: boolean;
   prerace_gami: number | null;
   /** 過去のgate_label分岐（"SS"|"S"）の名残。2026-08-01〜表示ランクの決定には
@@ -1290,6 +1301,8 @@ export type KeirinStatItem = {
   date: string;
   n_picks: number;
   n_hits: number;
+  /** ガミ（払戻 < 賭け金）を不的中と数えたもの。netkeirin の表示的中率はこちら。 */
+  n_net_hits?: number;
   total_bet: number;
   total_payout: number;
   roi: number | null;
@@ -1312,8 +1325,16 @@ export type KeirinStatsResponse = {
     total_bet: number;
     total_payout: number;
     roi: number | null;
+    n_net_hits?: number;
   };
-  /** 手動・穴埋め入稿を含めた集計か。 */
+  /**
+   * どちらの母集団か。`"sold"` = 実際に売った商品（収支の正）/
+   * `"paper"` = モデル（ランクの候補）の名目成績。
+   * 🔴 **画面は必ずこれを出すこと。** 同じ期間で数字が2種類あるので、
+   * ラベルが無いと必ず誤読される。足し合わせてもいけない。
+   */
+  source?: "sold" | "paper";
+  /** 手動・穴埋め入稿を含めた集計か。⚠️ 2026-08-25 から意味を持たない。 */
   include_manual?: boolean;
   /** 含めた場合に、買い目が記録されておらず集計から外した件数。
    *  ⚠️ `bet_detail` の保存開始は 2026-08-07。それ以前の手動入稿は
@@ -1357,15 +1378,18 @@ export async function fetchKeirinStats(
   toDate: string,
   granularity: "daily" | "monthly",
   rank?: KeirinStatsRank | KeirinStatsRank[],
-  /** ランクのゲートを通っていない入稿（手動・看板の穴埋め）を含めるか。
-   *  ⚠️ 含めると数字の意味が変わる（false=ランクの実力 / true=実際の収支）。 */
+  /** ⚠️ 2026-08-25 から**サーバー側で無視される**（互換のために残している）。 */
   includeManual = false,
+  /** 母集団。`"sold"`（既定）= 売った商品 / `"paper"` = モデルの候補。
+   *  🔴 2つは足せない（候補の賭け金は名目値）。切り替えであって合算ではない。 */
+  source: "sold" | "paper" = "sold",
 ): Promise<KeirinStatsResponse> {
   const rankValue = Array.isArray(rank) ? rank.join(",") : rank;
   const rankQuery = rankValue ? `&rank=${encodeURIComponent(rankValue)}` : "";
   const manualQuery = includeManual ? "&include_manual=true" : "";
+  const sourceQuery = source === "paper" ? "&source=paper" : "";
   return get<KeirinStatsResponse>(
-    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}${manualQuery}`,
+    `/keirin/stats?from_date=${fromDate}&to_date=${toDate}&granularity=${granularity}${rankQuery}${manualQuery}${sourceQuery}`,
     { cache: "no-store" },
   );
 }

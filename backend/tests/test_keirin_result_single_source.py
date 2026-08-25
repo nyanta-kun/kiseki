@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 from pathlib import Path
@@ -49,22 +50,65 @@ def test_picks_の的中と投資は入稿の採点から出す():
     assert '"winning_combos": won' in src
 
 
+def _picks_response_exprs() -> dict[str, str]:
+    """`get_picks` が組み立てるレスポンス dict を {キー: 値の式} で返す。
+
+    文字列 grep だと `paper_hit` のような**別キー**まで巻き込んでしまうので、
+    キーごとに値の式を取り出して見る。
+    """
+    tree = ast.parse(inspect.getsource(keirin_router.get_picks))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "append"):
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Dict) and any(
+                    isinstance(k, ast.Constant) and k.value == "race_key"
+                    for k in arg.keys):
+                return {k.value: ast.unparse(v)
+                        for k, v in zip(arg.keys, arg.values)
+                        if isinstance(k, ast.Constant)}
+    raise AssertionError("レスポンスの組み立てを見つけられませんでした")
+
+
 def test_売っていない行はpicks_historyの成績へフォールバックしない():
     """🔴 **見送ったレースを「購入・的中」として出さない**（2026-08-25）。
 
     2026-08-25 松阪7R(7S) は平均払戻ゲート（想定平均 19,226円 <= 20,000円）で
     入稿していないのに、一覧と Discord が `picks_history` 由来で
     「購入・的中 42,400円」を出していた。8月は毎日 26〜49件がこの状態だった。
+
+    ⚠️ `paper_*`（モデルの候補としての結果）は**別キー**なので対象外。
+       混ざるのを防ぐのが目的で、候補の結果を返すこと自体は禁じていない。
     """
-    src = inspect.getsource(keirin_router.get_picks)
-    for ng in ('r["bet_amount"]', 'r["payout"]', 'bool(r["hit"])'):
-        assert ng not in src, (
-            f"売っていない行の成績を picks_history から作っている（{ng}）。"
+    exprs = _picks_response_exprs()
+    for key in ("hit", "payout", "bet_amount"):
+        expr = exprs[key]
+        assert "sub_result" in expr, f'"{key}" が売った商品の採点から出ていない'
+        assert "r[" not in expr, (
+            f'"{key}" が picks_history へフォールバックしている（{expr}）。'
             " 候補の名目値は売上にも収支にも対応しない。"
         )
     # 売ったかどうかを画面へ渡す。フロントの購入判定はこれだけを見る。
-    assert '"sold": sold' in src
+    assert exprs["sold"] == "sold"
+    src = inspect.getsource(keirin_router.get_picks)
     assert "sold = bool(submitted_bet) and not submission_cancelled" in src
+
+
+def test_モデルの候補としての結果は別キーで返る():
+    """🟢 入稿・Discord は売った商品に揃えたが、**Web ではモデルを追えること**。
+
+    見送ったレースが当たっていたかどうかが分からないと、ゲートの是非を
+    後から検証できない（2026-08-25 ユーザー要望）。
+    🔴 ただし売った成績と**同じキーに入れない**。混ぜた瞬間に元の食い違いへ戻る。
+    """
+    exprs = _picks_response_exprs()
+    for key in ("paper_hit", "paper_payout", "paper_bet"):
+        assert key in exprs, f"{key} を返していない"
+        assert "sub_result" not in exprs[key], \
+            f"{key} が売った商品の採点から出ている（候補の成績ではない）"
+        assert "r[" in exprs[key], f"{key} が picks_history から出ていない"
 
 
 def test_picks_は見送った理由を返す():
@@ -75,13 +119,32 @@ def test_picks_は見送った理由を返す():
     assert '"cancel_reason"' in src
 
 
-def test_stats_も売った商品だけを数える():
-    """🔴 一覧・Discord・統計で母集団が違うと、同じ日の数字が3種類できる。"""
+def test_stats_の既定は売った商品():
+    """🔴 一覧・Discord・統計で既定の母集団が違うと、同じ日の数字が3種類できる。"""
+    sig = inspect.signature(keirin_router.get_stats)
+    assert sig.parameters["source"].default == "sold", \
+        "統計の既定が「売った商品」でなくなっている"
     src = inspect.getsource(keirin_router.get_stats)
     assert "_fetch_settled_submissions" in src
     assert "keirin.picks_history" not in src, \
-        "統計が picks_history（ランクの候補）を数えている"
-    assert "ph.bet_amount > 0" not in src
+        "統計本体が picks_history を直接数えている（候補は _fetch_paper_picks 経由）"
+
+
+def test_stats_はモデルの母集団も選べる():
+    """🟢 ゲートの是非を後から追うために、候補側も見られること（2026-08-25）。
+
+    🔴 ただし**足したり混ぜたりしない**。金額の意味が違う（候補の賭け金は
+       「1万円賭けたことにしたら」という名目値）ので、切り替えであって合算ではない。
+    """
+    src = inspect.getsource(keirin_router.get_stats)
+    assert '_fetch_paper_picks' in src
+    assert 'source == "paper"' in src
+    # 画面がどちらを見ているか出せるように返す（ラベルが無いと必ず誤読される）
+    assert '"source":' in src
+    paper = inspect.getsource(keirin_router._fetch_paper_picks)
+    # 候補側も「見送り」と未確定は数えない（買っていない・結果が無い）
+    assert "miwokuri" in paper
+    assert "wr.status = 3" in paper
 
 
 def test_確定成績は発走からの経過時間で足切りしない():

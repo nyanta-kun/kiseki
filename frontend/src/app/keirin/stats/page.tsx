@@ -246,8 +246,11 @@ export default function KeirinStatsPage() {
   // true = 手動入稿・看板の穴埋めも含めた実際の収支。
   // 🔴 既定は false。ROI の意味が変わるので、切り替えたことが分かる状態でだけ含める。
   // ⚠️ API 互換のために残しているだけで、2026-08-25 から**サーバー側で無視される**
-  //    （集計は常に「売った商品」）。切り替え UI も撤去済み。
+  //    （経路を問わず売ったものは全部入る）。切り替え UI も撤去済み。
   const [includeManual] = useState(false);
+  // 🔴 母集団。`sold` = 実際に売った商品（収支の正）/ `paper` = モデルの候補。
+  //    **足し合わせない**（候補の賭け金は「1万円賭けたことにしたら」の名目値）。
+  const [source, setSource] = useState<"sold" | "paper">("sold");
   const [from, setFrom] = useState(() => calcRange("30d").from);
   const [to, setTo] = useState(() => calcRange("30d").to);
   // 入稿対象OFFのランクは絞り込みチップからも外す（2026-08-12・ユーザー要望）。
@@ -277,10 +280,11 @@ export default function KeirinStatsPage() {
 
   const load = useCallback(async (
     f: string, t: string, g: Granularity, ranks: RankFilter[], manual: boolean,
+    src: "sold" | "paper",
   ) => {
     setLoading(true);
     try {
-      const res = await fetchKeirinStats(f, t, g, ranks, manual);
+      const res = await fetchKeirinStats(f, t, g, ranks, manual, src);
       setData(res);
     } catch {
       setData(null);
@@ -330,8 +334,8 @@ export default function KeirinStatsPage() {
   }, []);
 
   useEffect(() => {
-    void load(from, to, granularity, rankFilters, includeManual);
-  }, [from, to, granularity, rankFilters, includeManual, load]);
+    void load(from, to, granularity, rankFilters, includeManual, source);
+  }, [from, to, granularity, rankFilters, includeManual, source, load]);
 
   useEffect(() => {
     void loadSales(from, to);
@@ -581,10 +585,32 @@ export default function KeirinStatsPage() {
               </button>
             ))}
           </div>
-          {/* 🔴 「ゲート通過のみ / 全入稿」の切り替えは 2026-08-25 に撤去した。
-              集計を**実際に売った商品**へ一本化したので、選ぶ母集団が無くなった
-              （売ったものは経路を問わず全部入る）。ランク自体の候補性能を見たい
-              ときは keirin 側の walk-forward スクリプトを使う。 */}
+          {/* 🔴 母集団の切り替え（2026-08-25）。「ゲート通過のみ / 全入稿」は同日に
+              撤去した（売った商品へ一本化したので選ぶ意味が無くなった）が、
+              代わりに**売った商品 / モデルの候補**を選べるようにしてある。
+              入稿・Discord は売った商品だけに揃えたため、ゲートの是非を追うには
+              候補側も見られる必要がある（ユーザー要望）。
+              🔴 2つは**足せない**。金額の意味が違うので切り替えであって合算ではない。 */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-400 dark:text-gray-500">集計対象</span>
+            {([["sold", "売った商品"], ["paper", "モデル"]] as ["sold" | "paper", string][])
+              .map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setSource(key)}
+                  title={key === "sold"
+                    ? "実際に netkeirin へ入稿して売った商品だけ。収支はこちらが正"
+                    : "ランクの候補（ゲートで見送った分も含む）。名目の賭け金なので収支ではない"}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    source === key
+                      ? "bg-gray-700 dark:bg-gray-200 text-white dark:text-gray-900"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-400 dark:text-gray-500">累積ROI</span>
             {([["period", "全期間"], ["month", "当月"], ["year", "当年"]] as [CumMode, string][]).map(([key, label]) => (
@@ -678,7 +704,17 @@ export default function KeirinStatsPage() {
 
       {/* 集計対象の注記。「全入稿」は買い目の記録がある分しか足せない。
           黙って落とすと完全な数字に見えてしまうので、除外件数を必ず出す。 */}
-      {(
+      {source === "paper" ? (
+        <p className="text-[11px] leading-relaxed border-l-2 border-amber-400 pl-2 text-amber-700 dark:text-amber-400">
+          <strong>モデル（ランクの候補）</strong>の成績です。ゲートで見送ったレースも
+          含み、賭け金は「1レース1万円賭けたとしたら」という<strong>名目値</strong>——
+          <strong>売上でも収支でもありません</strong>。「売った商品」の数字と足さないでください。
+          <br />
+          ⚠️ 候補の記録（picks_history）は当月分が毎朝 walk-forward で組み直され、
+          月をまたぐと当時のコードのまま残ります（世代が混ざる）。ここで見るのは
+          日々の傾向までにして、ゲートや閾値の採否は walk-forward スクリプトで判断してください。
+        </p>
+      ) : (
         <p className={`text-[11px] leading-relaxed border-l-2 pl-2 ${
           (data?.manual_missing_bet_detail ?? 0) > 0
             ? "border-amber-400 text-amber-700 dark:text-amber-400"
@@ -700,7 +736,8 @@ export default function KeirinStatsPage() {
       {/* 期間サマリー */}
       {data && (
         <SummaryCard
-          label={`${rankLabel} ・ 選択期間（${from} 〜 ${to}）`}
+          label={`${rankLabel} ・ ${source === "paper" ? "モデル（名目）" : "売った商品"}`
+            + ` ・ 選択期間（${from} 〜 ${to}）`}
           {...data.period_summary}
         />
       )}
