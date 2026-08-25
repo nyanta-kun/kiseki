@@ -37,18 +37,25 @@ def mod():
     return _load_module()
 
 
-def test_trifecta_is_never_pulled_forward(mod, monkeypatch):
-    """三連単は前倒ししない。
+def test_dutch_trifecta_is_pulled_forward_when_the_tf_board_exists(mod, monkeypatch):
+    """ダッチ配分する三連単（7H1 / 7H2 / 9H1）は**三連単の予測盤面**で判定する。
 
-    `_dutch_point_legs` は「買う点**すべて**に三連単の板オッズが揃うときだけ」
-    ダッチ配分にする。朝は三連単の板がまず無いので、揃わず通常配分へ落ちて
-    **券種の形が変わる**。予測オッズは三連複しか作れない。
+    🔴 2026-08-26 に規則が変わった。それまでは「三連単は板でダッチするので
+       前倒し不可」——朝は三連単の板がまず無く、揃わないと均等へ落ちて
+       **券種の形が波によって変わる**からだった。いまは
+       `src.odds_prediction_tf`（7車）で配分するので、盤面さえ作れれば
+       朝でも形は変わらない。
+    ⚠️ 9車は三連単の予測モデルが無い＝空 → 従来どおり自分の波まで待つ。
     """
     called = []
     monkeypatch.setattr(mod, "try_predicted_odds_for_legs",
                         lambda *a, **k: called.append(a) or {1: 5.0})
+    monkeypatch.setattr(mod, "_predicted_tf_fill", lambda rk: {(1, 2, 3): 50.0})
+    assert mod._can_pull_forward("20260821_46_05", True, 1, 2, [3, 4, 5]) is True
+    assert not called, "三連単なら三連複の予測オッズは引かないはず"
+
+    monkeypatch.setattr(mod, "_predicted_tf_fill", lambda rk: {})
     assert mod._can_pull_forward("20260821_46_05", True, 1, 2, [3, 4, 5]) is False
-    assert not called, "三連単なら予測オッズを引くまでもなく False のはず"
 
 
 def test_pull_forward_requires_predicted_odds_for_every_leg(mod, monkeypatch):

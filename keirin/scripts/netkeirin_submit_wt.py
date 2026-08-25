@@ -118,6 +118,7 @@ from src.odds_prediction import (
     try_predicted_odds_for_legs,
     trio_hit_probability,
 )
+from src.odds_prediction_tf import try_predicted_trifecta_board
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.premium_pick import select_premium
 from src.strategy_wt import (
@@ -925,32 +926,7 @@ _BET_TYPE_JP = {
 }
 
 
-def _load_trifecta_board(race_key: str) -> dict[tuple[int, ...], float]:
-    """三連単オッズ（7H1 の買い目にオッズを添えるため）。`_load_trio_board` と同方針。"""
-    board: dict[tuple[int, ...], float] = {}
-    with get_connection() as conn:
-        for sql in (
-            "SELECT combination, odds_value FROM wt_odds "
-            "WHERE race_key = ? AND bet_type = 'trifecta'",
-            "SELECT combination, odds_value FROM wt_odds_snapshot "
-            "WHERE race_key = ? AND bet_type = 'trifecta' AND snapshot_type = 'morning'",
-        ):
-            for comb, od in conn.execute(sql, (race_key,)).fetchall():
-                if od is None or not (0 < float(od) < 9000):
-                    continue
-                try:
-                    key = tuple(int(x) for x in _SEP_RE.split(str(comb)))
-                except ValueError:
-                    continue
-                if len(key) == 3:
-                    board[key] = float(od)
-            if board:
-                return board
-    return board
-
-
 def build_bet_lines(legs: list[BetLeg],
-                    odds: dict | None = None,
                     predicted_odds: dict | None = None,
                     predicted_low: dict | None = None) -> list[dict[str, Any]]:
     """買い目を1点ずつへ展開する（`build_bet_detail` の `lines` そのもの）。
@@ -965,7 +941,6 @@ def build_bet_lines(legs: list[BetLeg],
 
     引数の意味は `build_bet_detail` と同じ。
     """
-    odds = odds or {}
     predicted_odds = predicted_odds or {}
     predicted_low = predicted_low or {}
     lines: list[dict[str, Any]] = []
@@ -974,20 +949,17 @@ def build_bet_lines(legs: list[BetLeg],
                              key=lambda t: tuple(sorted(t)) if isinstance(t, frozenset) else t):
             cars = sorted(target) if isinstance(target, frozenset) else list(target)
             sep = "=" if isinstance(target, frozenset) else "-"
-            # 🔴 **予測オッズを先に使う**（2026-08-21 反転・ユーザー判断）。
-            #    以前は板を優先し「板に無い目だけ」予測で埋めていたが、
-            #    **配分（`landing_weights`）も 1.5倍の足切り
-            #    （`_expected_payout_floor_for`）も予測オッズで決めている**ため、
-            #    表示だけ板だと確認画面の数字と判断根拠が突き合わせられない
-            #    （「想定払戻 1.43倍 < 1.5倍で見送り」と出ているのに、
-            #    並んでいるオッズは板の値、という状態だった）。
-            #    板へ落ちるのは予測を作れないとき——**三連単**（予測は三連複しか
-            #    作れない）と 7車・9車以外のレース。
+            # 🔴 **板は一切見ない**（2026-08-26・ユーザー指示「全て予測オッズのみ」）。
+            #    2026-08-21 に「予測オッズを優先し、作れない目だけ板」へ反転したが、
+            #    **三連単は予測盤面を渡していなかった**ので実際には板のままだった
+            #    （8/22〜8/26 の板由来 89点はすべて 7H1 / 7T1）。三連単の予測
+            #    オッズは `src.odds_prediction_tf` に既にあり、7T1/7T3 の候補生成
+            #    では使っている——入稿経路だけが取り残されていた。
+            #    ⚠️ 板は「入稿時点で実際に付いていた値」ではあるが、朝は薄い。
+            #       2026-08-26 の熊本6Rは 35点中12点にしか金が入っておらず、
+            #       中途半端な板を混ぜると商品の想定オッズが説明できなくなる。
             o = predicted_odds.get(target)
             odds_source = "predicted" if o else None
-            if not o:
-                o = odds.get(target)
-                odds_source = "board" if o else None
             # 🔴 表示オッズを上回る「下振れ時」を出さない。板が既にモデルの
             #    下限より低いなら、その板の値のほうが厳しい見積もりになる。
             #    min を取るので calibration（下側25%分位）は必ず安全側へしか動かない。
@@ -999,10 +971,9 @@ def build_bet_lines(legs: list[BetLeg],
                 "combo": sep.join(str(c) for c in cars),
                 "stake": int(leg.stake_per_line),
                 "odds": round(float(o), 1) if o else None,
-                # 予測 / 板 / 不明（None）。表示では区別しないが（2026-08-21・
-                # 「全て予測オッズ」が前提になったのでラベルは畳んだ）、
-                # **どちらで出したかの記録としては必ず残す**。
-                # 三連単だけが板になるので、後から混在を数えられる必要がある。
+                # 常に "predicted"（作れなければ None）。列は残す——過去分には
+                # "board" の行があり、**混在した期間を後から数えられなくなる**
+                # と検証ができない（2026-08-26 の調査がまさにこれで進んだ）。
                 "odds_source": odds_source,
                 # 下限包絡（オッズではない）。最低払戻・ガミ判定に使う。
                 "odds_low": round(float(low), 1) if low else None,
@@ -1011,7 +982,6 @@ def build_bet_lines(legs: list[BetLeg],
 
 
 def build_bet_detail(legs: list[BetLeg], source: str | None = None,
-                     odds: dict | None = None,
                      marks: dict[int, str] | None = None,
                      predicted_odds: dict | None = None,
                      predicted_low: dict | None = None) -> str:
@@ -1032,16 +1002,11 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     `src.stake_allocation` 参照）。均等配分のランクは None。
     `predicted` は構造モデルの予測オッズ（`src.odds_prediction`）。
 
-    `odds` は**入稿時点の**オッズ（三連複は frozenset・三連単は tuple がキー）。
-    🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
-       なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
-
-    `predicted_odds` は予測盤面（三連複のみ）。**2026-08-21 からこちらが主**で、
-    予測を作れない目だけ `odds`（板）へ落ちる。出どころは `odds_source` に
-    `"predicted"` / `"board"` として残る。
-    🔴 **記録は落とさない。** 表示では区別しなくなったが（配分も足切りも予測
-       オッズで決めているため「全て予測」が前提）、三連単だけは板由来のまま
-       なので、混在を後から数えられなくなると検証ができない。
+    `predicted_odds` は予測盤面（三連複は frozenset・三連単は tuple がキー）。
+    🔴 **板は渡さない・見ない**（2026-08-26・ユーザー指示）。引数そのものを
+       無くしてあるので、板を混ぜたくても混ぜられない。
+       配分の根拠と表示が同じ数字になるのが要点で、
+       「なぜこの金額なのか」は予測オッズだけで読める。
 
     `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
     板の有無によらず全点へ `odds_low` として書く。
@@ -1050,7 +1015,7 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     """
     # 🔴 展開は `build_bet_lines()` に一本化する。入稿ゲート（平均払戻）も
     #    同じ関数から作った lines で判定するので、**判定と記録が食い違わない**。
-    lines = build_bet_lines(legs, odds, predicted_odds, predicted_low)
+    lines = build_bet_lines(legs, predicted_odds, predicted_low)
     payload: dict[str, Any] = {
         "total": sum(x["stake"] for x in lines), "source": source, "lines": lines,
         # 🔴 **承認制で「そのまま送り直す」ための原本**。`lines` は展開済みなので
@@ -1089,21 +1054,46 @@ def _legs_for_record(cfg: dict, axis1: int, axis2_or_p1: int, partners: list[int
     return [BetLeg(cfg["bet_kind"], groups, stake)]
 
 
-def _bet_detail_odds(race_key: str, cfg: dict, use_trifecta: bool = False) -> dict:
-    """買い目に添えるオッズ。
+def _predicted_board_for(race_key: str, cfg: dict, use_trifecta: bool = False) -> dict:
+    """買い目に添える**予測オッズ**の盤面（三連複=frozenset / 三連単=tuple がキー）。
 
-    ⚠️ **cfg だけで決めてはいけない。** 7C は同じ cfg のまま単勝率で三連複と
-       三連単を切り替えるため、cfg 由来の判定だと切替時に三連単オッズが欠け、
-       `bet_detail` が買った目のオッズを持たない行になる（Web が空表示になる）。
+    🔴 **板は見ない**（2026-08-26・ユーザー指示「全て予測オッズのみ」）。
+       旧 `_bet_detail_odds` は `wt_odds` / 朝スナップショットを読んでいた。
+
+    ⚠️ **cfg だけで券種を決めてはいけない。** 7C は同じ cfg のまま単勝率で
+       三連複と三連単を切り替えるため、cfg 由来の判定だと切替時に三連単の
+       オッズが欠け、`bet_detail` が買った目のオッズを持たない行になる。
        実際に何を買ったかを `use_trifecta` で受け取る。
+
+    ⚠️ 三連単の予測オッズは**7車のみ**（`odds_prediction_tf.SUPPORTED_N_CAR`）。
+       9車（9H1）は作れないので `odds` は None のまま記録される。
     """
     base = str(race_key).split("#")[0]
-    odds: dict = dict(_load_trio_board(base))
+    board: dict = dict(_predicted_trio_fill(base))
     if (cfg.get("multi_bet_7h2")
             or cfg.get("formation_bet") or cfg.get("formation_bet_7t1")
             or use_trifecta):
-        odds.update(_load_trifecta_board(base))
-    return odds
+        board.update(_predicted_tf_fill(base))
+    return board
+
+
+_TF_BOARD_CACHE: dict[str, dict] = {}
+
+
+def _predicted_tf_fill(race_key: str) -> dict:
+    """三連単の予測盤面（`src.odds_prediction_tf`）。作れなければ空 dict。
+
+    🔴 **入稿を止めない。** 失敗したら理由をログに残して空を返す
+       （`_predicted_trio_fill` と同じ思想）。空だとダッチ配分は均等へ落ち、
+       `bet_detail` の `odds` は None になる。
+
+    ⚠️ 1レースで表示・ダッチ配分・前倒し判定の3か所から呼ばれるので、
+       レース単位でキャッシュする（210点の推論を3回やらない）。
+    """
+    base = str(race_key).split("#")[0]
+    if base not in _TF_BOARD_CACHE:
+        _TF_BOARD_CACHE[base] = try_predicted_trifecta_board(base) or {}
+    return _TF_BOARD_CACHE[base]
 
 
 def _predicted_trio_fill(race_key: str) -> dict:
@@ -1341,53 +1331,6 @@ def _stake_per_line(cfg: dict, n_lines: int) -> int:
     return int(cfg["stake_per_line"])
 
 
-def _load_trio_board(race_key: str) -> dict[frozenset[int], float]:
-    """レースの三連複オッズ盤面（朝の値を優先）。
-
-    ⚠️ **`wt_odds` は '1=2=3' / `wt_odds_snapshot` は '1-2-3'** と区切り文字が違う。
-       片方だけを想定すると盤面が丸ごと空になり、**無言で均等割りへ落ちる**
-       （検証スクリプトで実際にサンプルが 1/20 に消えた）。両方を受ける。
-
-    🔴 **常に `wt_odds`（＝その時点の最新）を優先する。** 朝スナップショットは
-    フォールバックにすぎない。理由は板の厚さが**時計時刻ではなく発走までの近さ**で
-    決まるため（実測・2026-08-07）:
-
-        朝8:12時点の三連複 未確定率 —
-          〜10時台発走 0.8% / 11-13時 9.4% / 14-16時 17.2% /
-          17-19時 34.6% / **20時以降 58.3%**
-
-    夜のレースは朝には板がほぼ無い。あとから入稿するほど良くなるので、
-    その時刻の最新値を使えなければ意味がない（`wt_odds` は日中 15分ごとの
-    `intraday_results_wt.sh` で更新される）。朝の定時バッチではこの2つは
-    同じ値になるので、優先順位を変えても朝の挙動は一切変わらない。
-
-    ⚠️ **9999.9 は winticket の「オッズ未確定」センチネル**（朝の三連複の23%）。
-       実際の確定値は 1.1倍〜と幅がありオッズとして使えないので、
-       0<odds<9000 の範囲外は**採らない**（買う点が1つでも欠ければモデル配分に落ちる）。
-    """
-    board: dict[frozenset[int], float] = {}
-    with get_connection() as conn:
-        for sql, params in (
-            ("SELECT combination, odds_value FROM wt_odds "
-             "WHERE race_key = ? AND bet_type = 'trio'", (race_key,)),
-            ("SELECT combination, odds_value FROM wt_odds_snapshot "
-             "WHERE race_key = ? AND bet_type = 'trio' AND snapshot_type = 'morning'",
-             (race_key,)),
-        ):
-            for comb, od in conn.execute(sql, params).fetchall():
-                if od is None or not (0 < float(od) < 9000):
-                    continue
-                try:
-                    key = frozenset(int(x) for x in _SEP_RE.split(str(comb)))
-                except ValueError:
-                    continue
-                if len(key) == 3:
-                    board[key] = float(od)
-            if board:
-                return board
-    return board
-
-
 def _load_top3_probs(race_key: str) -> dict[int, float]:
     """{車番: モデルの3着内率 0-1}。`wt_entries.pred_top3_pct` は日次バッチが
     候補生成の直後（入稿より前）に書くので、入稿時点で必ず読める。"""
@@ -1467,14 +1410,14 @@ def _build_tilted_legs(
     returns (買い目行, 重みの出どころ, {相手車番: 賭け金})。
     同額の相手は1行にまとめる（netkeirin の1行は bet_money を1つしか持てない）。
     """
-    board = _load_trio_board(race_key)
-    morning = {t: board.get(frozenset({axis1, axis2, t})) for t in partners}
-    morning = {t: o for t, o in morning.items() if o}
-    # 構造モデルの予測オッズ（7車/9車）。使えないときは None が返り従来経路へ落ちる。
-    # 🔴 落ちたことは WARNING で必ずログに出る（無言のフォールバックにしない）。
+    # 🔴 **板は渡さない**（2026-08-26・ユーザー指示「全て予測オッズのみ」）。
+    #    `landing_weights` は板を受け取れる（過去の再構築 `rebuild_stakes` が
+    #    使う）が、入稿では渡さない——朝の板は薄く、混ぜると同じ商品の中で
+    #    根拠が2種類になる。予測オッズが作れないときは p3 単独へ落ちる。
+    # 🔴 落ちたことは必ずログに出る（無言のフォールバックにしない）。
     predicted = try_predicted_odds_for_legs(race_key, axis1, axis2, partners)
     stakes, source = tilted_stakes(
-        partners, morning, _load_top3_probs(race_key),
+        partners, None, _load_top3_probs(race_key),
         budget=int(cfg.get("stake_budget") or RACE_BUDGET),
         predicted_odds=predicted,
     )
@@ -1525,7 +1468,12 @@ def _can_pull_forward(
     if not partners:
         return False
     if is_trifecta and not equal_stake_trifecta:
-        return False
+        # ダッチ配分する三連単ランク（7H1 / 7H2 / 9H1）。2026-08-26 までは
+        # **板でダッチしていたので前倒しできなかった**が、いまは三連単の
+        # 予測オッズ（`src.odds_prediction_tf`・7車のみ）で配分するので、
+        # 盤面さえ作れれば朝でも券種の形は変わらない。
+        # ⚠️ 9車は三連単の予測モデルが無い＝空 → 従来どおり自分の波まで待つ。
+        return bool(_predicted_tf_fill(race_key))
     odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
     return bool(odds) and all(odds.get(t) for t in partners)
 
@@ -1674,9 +1622,8 @@ def _expected_payout_floor_for(
        判定も予測オッズで行うのが整合する。保守倍率はレース内で一律なので
        **配分の比率は1ミリも変わらない**（水準だけを保守側へ寄せている）。
 
-    ⚠️ 予測が作れないときだけ実オッズ板へ落ち、それも無ければ None。
-       **板には保守倍率を掛けない。** 板は既に系統的に低く（中央 確定/板 0.86）、
-       c(p25)=0.843 とほぼ同じ保守水準にあるため、掛けると二重に絞る。
+    ⚠️ 予測が作れないときは **None**（＝足切りしない）。2026-08-26 までは実オッズ板へ
+       落ちていたが、ユーザー指示「全て予測オッズのみ」により板は見ない。
     """
     odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(stakes))
     if odds:
@@ -1690,8 +1637,10 @@ def _expected_payout_floor_for(
                   "足切りは行いません", flush=True)
             return None
     else:
-        board = _load_trio_board(race_key)
-        odds = {t: board.get(frozenset({axis1, axis2, t})) for t in stakes}
+        # 🔴 **板へ落とさない**（2026-08-26・ユーザー指示）。配分は予測オッズで
+        #    決めているので、判定だけ板でやると尺度が食い違う。作れないなら
+        #    判定しない＝出す側へ倒す（このモジュールの他のゲートと同じ思想）。
+        return None
     return expected_payout_floor(stakes, {k: v for k, v in odds.items() if v}, budget)
 
 
@@ -1823,9 +1772,14 @@ def _normalize_formation_candidate(
     for c in third:
         marks.setdefault(c, "△")
 
-    # ダッチ配分（2026-08-09・仕様書 §2B）。朝オッズが揃わない／条件不成立なら
+    # ダッチ配分（2026-08-09・仕様書 §2B）。オッズが揃わない／条件不成立なら
     # 従来の均等（`unit_stake`）へフォールバックする。
-    tf_board = _load_trifecta_board(race_key) if race_key else {}
+    # 🔴 **予測オッズで配分する**（2026-08-26・ユーザー指示「全て予測オッズのみ」）。
+    #    以前は三連単の**板**で配分していた。板は発走が近いほど厚くなるので、
+    #    朝に判定すると揃わず均等へ落ち、券種の形が波によって変わっていた。
+    #    予測オッズなら朝でも210点すべてに値が付く（7車のみ）。
+    # ⚠️ 9車（9H1）は三連単の予測モデルが無いので空 → 均等配分のまま。
+    tf_board = _predicted_tf_fill(race_key) if race_key else {}
     tf_points = sorted(expand_bet(BET_KIND_TRIFECTA_FORMATION, [first, second, third]))
     dutch_legs, _dutch = _dutch_point_legs(tf_points, [], tf_board, {})
     legs = dutch_legs or [BetLeg(BET_KIND_TRIFECTA_FORMATION, [first, second, third], unit)]
@@ -2354,11 +2308,10 @@ def _process_rank(
                     #    自動ゲートを通ったものが手動取消の候補として残っていた。
                     #    `build_bet_lines()` を共有すれば食い違いは構造的に起きない。
                     if not use_trifecta:
-                        pred_board = _predicted_trio_fill(race_key)
+                        pred_board = _predicted_board_for(
+                            race_key, cfg, use_trifecta)
                         _mean = _mean_payout_too_low(
-                            build_bet_lines(
-                                legs, _bet_detail_odds(race_key, cfg, use_trifecta),
-                                pred_board),
+                            build_bet_lines(legs, pred_board),
                             n_cars=cfg["n_cars"], race_key=race_key)
                         if _mean is not None:
                             _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
@@ -2541,12 +2494,11 @@ def _process_rank(
             record_marks = marks if legs else {
                 **{c: "△" for c in partners}, axis1: "◎", axis2_or_p1: "○"}
             if pred_board is None:      # 三連単経路はゲートを通らないのでここで作る
-                pred_board = _predicted_trio_fill(race_key)
+                pred_board = _predicted_board_for(race_key, cfg, use_trifecta)
             _record_submission(
                 race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2_or_p1, msg,
                 bet_detail=build_bet_detail(
                     record_legs, tilt_source,
-                    _bet_detail_odds(race_key, cfg, use_trifecta),
                     marks=record_marks,
                     predicted_odds=pred_board,
                     predicted_low=_conservative_trio_board(pred_board, int(cfg["n_cars"]))),
@@ -2664,8 +2616,9 @@ def _process_manual(
 
     # 手動入稿も自動入稿と**同じ商品**なので配分方式を揃える。
     # 片方だけ均等のままだと、共通の文面「想定オッズに応じて配分しています」が
-    # 手動入稿分だけ嘘になる。なおこちらは日中に呼ばれるため朝スナップショットが
-    # 無ければ現在の wt_odds を使う＝自動入稿より新しいオッズで配分できる。
+    # 手動入稿分だけ嘘になる。
+    # ⚠️ 旧記述「日中に呼ばれるので朝スナップショットが無ければ現在の板を使う」は
+    #    2026-08-26 に失効。**入稿はどの経路でも予測オッズだけで配分する**。
     # 🔴 **文面より先に組む**。`{stake_note}` は実際に入稿する買い目から導くため、
     #    legs が確定する前にテンプレートを適用すると常に「均等」になる。
     tilt_source = None
@@ -2690,9 +2643,9 @@ def _process_manual(
         #       行う（2026-08-26・ランクループと同じ理由）。予測オッズの生値で
         #       判定すると、記録・表示に残る値（板フォールバックと丸め込み）と
         #       食い違い、ゲートを通ったものがレビュー画面に取消候補として残る。
-        manual_pred_board = _predicted_trio_fill(race_key)
+        manual_pred_board = _predicted_board_for(race_key, cfg)
         _mean = _mean_payout_too_low(
-            build_bet_lines(legs, _bet_detail_odds(race_key, cfg), manual_pred_board),
+            build_bet_lines(legs, manual_pred_board),
             n_cars=n_entries, race_key=race_key)
         if _mean is not None:
             _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
@@ -2760,7 +2713,7 @@ def _process_manual(
     if ok:
         # 均等配分の経路（`tilt_stakes` なし）はゲートを通らないのでここで作る。
         _manual_pred_board = (manual_pred_board if manual_pred_board is not None
-                              else _predicted_trio_fill(race_key))
+                              else _predicted_board_for(race_key, cfg))
         record_legs = legs if tilt_source else _legs_for_record(
             cfg, axis1, axis2, partners, _stake_per_line(cfg, len(partners)))
         # 🔴 手動経路は**ゲートを通っていない**。`--marquee` なら看板の穴埋め、
@@ -2769,7 +2722,7 @@ def _process_manual(
         _record_submission(race_key, rank_key, session, venue_name, race_no, gate_label,
                            axis1, axis2, msg,
                            bet_detail=build_bet_detail(
-                               record_legs, tilt_source, _bet_detail_odds(race_key, cfg),
+                               record_legs, tilt_source,
                                marks={**{c: "△" for c in partners},
                                       axis1: "◎", axis2: "○"},
                                predicted_odds=_manual_pred_board,

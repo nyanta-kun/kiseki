@@ -104,8 +104,8 @@ def test_gate_is_driven_by_the_rank_table():
         "ランクがハードコードされたまま")
 
 
-def test_gate_prefers_predicted_odds():
-    """🔴 判定は**予測オッズ優先**（2026-08-21）。
+def test_gate_uses_predicted_odds_only():
+    """🔴 判定は**予測オッズだけ**（2026-08-21 に板優先から反転・2026-08-26 に板を撤去）。
 
     実オッズ板は買う点が全部揃うのが 8.9% しかなく、板だけで測るとゲートが
     ほぼ発火しない。7S へ広げるか検討したとき板で判定できたのは12件だけで、
@@ -118,8 +118,7 @@ def test_gate_prefers_predicted_odds():
     body = src[i:src.index("def _build_trifecta_head_legs(", i)]
     assert "try_predicted_odds_for_legs" in body, (
         "想定払戻の判定が予測オッズを使っていない")
-    assert body.index("try_predicted_odds_for_legs") < body.index("_load_trio_board"), (
-        "実オッズ板を予測オッズより先に使っている（優先順位が逆）")
+    assert "_load_trio_board" not in body, "板へのフォールバックが残っている"
 
 
 def test_gate_uses_continue_so_other_ranks_can_take_the_race():
@@ -153,10 +152,9 @@ def test_gate_skips_when_floor_is_unknown():
 from scripts import netkeirin_submit_wt as sub  # noqa: E402
 
 
-def _floor(monkeypatch, *, predicted, board=None, mult=0.8):
+def _floor(monkeypatch, *, predicted, mult=0.8):
     monkeypatch.setattr(sub, "try_predicted_odds_for_legs",
                         lambda rk, a1, a2, legs: predicted)
-    monkeypatch.setattr(sub, "_load_trio_board", lambda rk: board or {})
     if mult is None:
         def _boom(n_cars, q):
             raise sub.OddsPredictionUnavailable("保守倍率が meta にありません")
@@ -184,16 +182,13 @@ def test_floor_is_none_when_the_multiplier_is_unavailable(monkeypatch):
     assert _floor(monkeypatch, predicted={3: 5.0, 4: 10.0}, mult=None) is None
 
 
-def test_board_fallback_is_not_multiplied(monkeypatch):
-    """⚠️ 実オッズ板には保守倍率を掛けない。
+def test_no_board_fallback(monkeypatch):
+    """🔴 予測オッズが作れないときに**板へ落ちない**（2026-08-26・ユーザー指示）。
 
-    板は買う帯で系統的に低く（中央 確定/板 0.86）、c(p25)=0.843 と
-    ほぼ同じ保守水準にある。掛けると二重に絞る。
+    配分は予測オッズで決めているので、判定だけ板でやると尺度が食い違う。
+    判定しない＝出す側へ倒す。
     """
-    board = {frozenset({1, 2, 3}): 5.0, frozenset({1, 2, 4}): 10.0}
-    got = _floor(monkeypatch, predicted=None, board=board, mult=0.8)
-    assert got is not None
-    assert abs(got - 3.00) < 1e-9, "板にも倍率が掛かっている（二重に絞っている）"
+    assert _floor(monkeypatch, predicted=None, mult=0.8) is None
 
 
 def test_gate_passes_n_cars_so_the_9car_multiplier_is_used():

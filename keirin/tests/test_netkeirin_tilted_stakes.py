@@ -1,4 +1,9 @@
-"""netkeirin 入稿の傾斜配分まわりのテスト（2026-08-07）。
+"""netkeirin 入稿の傾斜配分まわりのテスト（2026-08-07 / 2026-08-26 改定）。
+
+🔴 **入稿の配分は予測オッズ単独**（2026-08-26・ユーザー指示「全て予測オッズのみ」）。
+   `_build_tilted_legs` は板（`wt_odds` / 朝スナップショット）を**渡さない**ので、
+   `source` は predicted / model / equal のいずれかにしかならない
+   （blend・odds は過去の再構築 `rebuild_stakes` 専用の経路として残っている）。
 
 ここで守るのは3点:
   1. **買い目の集合が変わらない**（配分は金額の話で、買う目を減らしてはいけない）
@@ -29,7 +34,13 @@ def board(monkeypatch):
     """DB を触らずに盤面とモデル確率を差し込む。"""
     state = {"board": {}, "p3": {}}
 
-    monkeypatch.setattr(sub, "_load_trio_board", lambda rk: state["board"])
+    # 🔴 入稿経路は板を見ない（2026-08-26）。盤面＝予測オッズ。
+    monkeypatch.setattr(
+        sub, "try_predicted_odds_for_legs",
+        lambda rk, a1, a2, legs: ({t: state["board"][frozenset({a1, a2, t})]
+                                   for t in legs}
+                                  if all(frozenset({a1, a2, t}) in state["board"]
+                                         for t in legs) else None))
     monkeypatch.setattr(sub, "_load_top3_probs", lambda rk: state["p3"])
     return state
 
@@ -52,7 +63,7 @@ def test_買い目の集合は総流しと一致する(board):
     legs, source, stakes = sub._build_tilted_legs("rk", CFG, a1, a2, partners)
     assert _points(legs) == {frozenset({a1, a2, t}) for t in partners}
     assert set(stakes) == set(partners)
-    assert source == "odds"
+    assert source == "predicted", "入稿は予測オッズ単独で配分する（板は見ない）"
 
 
 def test_総額は予算どおり(board):
@@ -73,7 +84,7 @@ def test_低オッズの相手ほど厚く積まれる(board):
     assert stakes[3] > stakes[4] > stakes[5]
 
 
-def test_盤面が空ならモデル確率へ落ちる(board):
+def test_予測オッズが空ならモデル確率へ落ちる(board):
     a1, a2, partners = 1, 2, [3, 4, 5]
     board["board"] = {}
     board["p3"] = {3: 0.6, 4: 0.4, 5: 0.2}
@@ -82,14 +93,14 @@ def test_盤面が空ならモデル確率へ落ちる(board):
     assert stakes[3] > stakes[4] > stakes[5]
 
 
-def test_盤面もモデルも無ければ均等になる(board):
+def test_予測オッズもモデルも無ければ均等になる(board):
     a1, a2, partners = 1, 2, [3, 4, 5, 6, 7]
     _, source, stakes = sub._build_tilted_legs("rk", CFG, a1, a2, partners)
     assert source == "equal"
     assert set(stakes.values()) == {2000}
 
 
-def test_盤面が一部しか無ければモデルへ落ちる(board):
+def test_予測オッズが一部しか無ければモデルへ落ちる(board):
     """一部だけオッズを使うと点どうしの比率が壊れる。"""
     a1, a2, partners = 1, 2, [3, 4, 5]
     board["board"] = {frozenset({1, 2, 3}): 2.0}      # 4,5 が無い

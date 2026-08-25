@@ -273,3 +273,39 @@ def predict_board(cars, p3, pw, meta) -> dict[tuple, float]:
     raw = np.clip(raw, 1.0, None)
     scale = float((1.0 / raw).sum()) / target_sum(n_car)
     return {c: float(o * scale) for c, o in zip(combos, raw)}
+
+
+# ---------------------------------------------------------------------------
+# DB から入力を集める（入稿経路が使う・2026-08-26 追加）
+# ---------------------------------------------------------------------------
+def predicted_trifecta_board(race_key: str) -> dict[tuple, float]:
+    """整合化済みの三連単予測オッズ盤面 {(1着,2着,3着): オッズ}。
+
+    入力（`wt_entries` の p3/pw・出走表）は三連複版と**同じもの**を使うので、
+    `src.odds_prediction.load_race_inputs` をそのまま借りる。
+    作れないときは `OddsPredictionUnavailable`。
+
+    ⚠️ **7車のみ**（`SUPPORTED_N_CAR`）。9車の三連単モデルは無い。
+    """
+    from src.odds_prediction import load_race_inputs
+
+    cars, p3, pw, meta = load_race_inputs(race_key)
+    if len(cars) not in SUPPORTED_N_CAR:
+        raise OddsPredictionUnavailable(
+            f"{race_key}: 三連単の予測オッズは {SUPPORTED_N_CAR} 車にしか作れません"
+            f"（このレースは {len(cars)}車）")
+    return predict_board(cars, p3, pw, meta)
+
+
+def try_predicted_trifecta_board(race_key: str) -> dict[tuple, float] | None:
+    """例外を出さない版。使えないときは None を返し、**理由を必ず残す**。
+
+    🔴 無言のフォールバックにしない。予測オッズが使えていなくても入稿は成功して
+       しまうので、ログが無いと劣化に気づけない（三連複版と同じ思想）。
+    """
+    try:
+        return predicted_trifecta_board(race_key)
+    except Exception as e:  # noqa: BLE001 — 入稿を止めない
+        print(f"[odds-pred-tf] {race_key}: 三連単の予測オッズを作れません: {e}",
+              flush=True)
+        return None

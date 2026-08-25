@@ -104,7 +104,7 @@ def test_normalize_builds_single_trifecta_row_and_marks(monkeypatch):
       △=3着だけで買っている車 / 除外した本命は印なし
     """
     import scripts.netkeirin_submit_wt as sub
-    monkeypatch.setattr(sub, "_load_trifecta_board", lambda rk: {})   # 板なし＝均等
+    monkeypatch.setattr(sub, "_predicted_tf_fill", lambda rk: {})   # 予測なし＝均等
 
     legs, marks, axis1, axis2 = _normalize_formation_candidate(
         _cand(), RANK_CONFIGS["7H1"], "20260807_85_07")
@@ -131,7 +131,7 @@ def test_marks_follow_others_order_not_car_number(monkeypatch):
        ○▲ が車番順に落ちる（表示の序列と予想の序列が食い違う）。
     """
     import scripts.netkeirin_submit_wt as sub
-    monkeypatch.setattr(sub, "_load_trifecta_board", lambda rk: {})
+    monkeypatch.setattr(sub, "_predicted_tf_fill", lambda rk: {})
 
     others = [3, 5, 4, 1, 2, 6]     # プール上位は 5 → 4 の順
     roles = {3: _ROLE_LEAD_TOP, 5: _OTHER, 4: _OTHER, 1: _OTHER, 2: _OTHER,
@@ -153,7 +153,7 @@ def test_falls_back_to_equal_when_odds_incomplete(monkeypatch):
     points = sorted(expand_bet(BET_KIND_TRIFECTA_FORMATION,
                                _trifecta_formation_groups(tf)))
     partial = {p: 60.0 for p in points[:-1]}      # 1点だけ板が無い
-    monkeypatch.setattr(sub, "_load_trifecta_board", lambda rk: partial)
+    monkeypatch.setattr(sub, "_predicted_tf_fill", lambda rk: partial)
 
     legs, _, _, _ = _normalize_formation_candidate(
         _cand(), RANK_CONFIGS["7H1"], "20260807_85_07")
@@ -172,7 +172,7 @@ def test_uses_dutch_when_odds_complete(monkeypatch):
     #    持たない環境（CI）ではフォールバック経路と、同じテストが環境によって
     #    別の物を検査してしまう。
     tf_board = {p: 60.0 + 5 * i for i, p in enumerate(points)}
-    monkeypatch.setattr(sub, "_load_trifecta_board", lambda rk: tf_board)
+    monkeypatch.setattr(sub, "_predicted_tf_fill", lambda rk: tf_board)
 
     legs, _, _, _ = _normalize_formation_candidate(
         _cand(), RANK_CONFIGS["7H1"], "20260807_85_07")
