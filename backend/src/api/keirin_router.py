@@ -617,6 +617,62 @@ async def _fetch_settled_submissions(
     return out, n_missing
 
 
+async def _fetch_paper_picks(
+    db: AsyncSession, from_dt: Date, to_dt: Date, rank_labels: list[str] | None,
+) -> tuple[list[dict[str, Any]], int]:
+    """モデル（ランクの**候補**）の名目成績を返す。**売上でも収支でもない。**
+
+    `/stats?source=paper` 専用。`_fetch_settled_submissions` と**同じ形**
+    （`race_date` / `bet` / `payout` / `hit` / `net_hit`）で返すので、
+    集計側は母集団を差し替えるだけで済む。
+
+    🔴 **売った商品の成績と足さないこと。** 賭け金は
+       「1レース1万円賭けたことにしたら」という名目値（`notify_prerace_wt.py` が
+       発走15分前に書く）で、入稿ゲートを一切見ていない。
+
+    ⚠️ `picks_history` は世代が混ざる（`rule_version`）。日々の傾向を見るための
+       ものであって、厳密な検証は walk-forward スクリプトで行うこと。
+    """
+    internal = [i for i, lab in _PAPER_RANK_LABELS.items()
+                if rank_labels is None or lab in rank_labels]
+    if not internal:
+        return [], 0
+    rows = (await db.execute(
+        text(f"""
+            SELECT ph.race_date, ph.hit, ph.payout, ph.bet_amount
+            FROM keirin.picks_history ph
+            JOIN keirin.wt_races wr
+              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+            WHERE ph.race_date BETWEEN :from_date AND :to_date
+              AND ph.route = 'wt'
+              -- 見送り（miwokuri）は「買っていない」ので候補の成績にも入れない
+              AND NOT COALESCE(ph.miwokuri, FALSE)
+              AND COALESCE(ph.bet_amount, 0) > 0
+              AND ph.rank = ANY(:ranks)
+              AND {_enabled_rank_cond('ph')}
+              -- 候補プレースホルダ（#CAND）はまだ買い目が決まっていない
+              AND ph.race_key NOT LIKE '%#CAND'
+              -- 発走前・結果待ちを混ぜない（確定したレースだけ数える）
+              AND (
+                wr.status = 3
+                OR (wr.start_at IS NOT NULL
+                    AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
+              )
+        """),
+        {"from_date": from_dt.isoformat(), "to_date": to_dt.isoformat(),
+         "ranks": internal},
+    )).mappings().all()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        hit = bool(r["hit"])
+        bet = int(r["bet_amount"] or 0)
+        pay = int(r["payout"] or 0) if hit else 0
+        out.append({"race_date": str(r["race_date"]), "bet": bet, "payout": pay,
+                    "hit": hit, "net_hit": hit and pay >= bet})
+    # 候補側に「買い目が記録されていない」概念は無いので常に 0
+    return out, 0
+
+
 def _submitted_pick_result(
     bet: dict[str, Any] | None,
     finishers: Iterable[Sequence[int]] | None,
@@ -1112,6 +1168,19 @@ async def get_picks(
             "trio_payout": trio_pay,
             "trifecta_payout": trifecta_pay,
             "bet_amount": sub_result.bet if sub_result else 0,
+            # ── モデル（ランクの候補）としての結果 ────────────────────────
+            # 🔴 **売った商品の成績ではない。**`hit` / `payout` / `bet_amount` とは
+            #    別のキーに分けてあるので、集計へ混ぜないこと。
+            #    入稿・Discord は「売った商品」だけを見る（2026-08-25 統一）。
+            #    ここは **Web でモデルの当たり外れを追うため**にだけ返す
+            #    （ゲートで見送ったレースが当たっていたか、が分からなくなるため）。
+            # ⚠️ `picks_history` は当日中に採点され、翌朝の walk-forward 再構築で
+            #    書き直される（世代が混ざる。`rule_version` 参照）。
+            # ⚠️ 賭け金は「1万円賭けたことにしたら」という**名目値**。実際の投資ではない。
+            "paper_hit": (bool(r["hit"]) if has_pick else None),
+            "paper_payout": ((r["payout"] or 0) if has_pick else None),
+            "paper_bet": ((r["bet_amount"] or 0) if has_pick else None),
+            "paper_combo": (r["pred_combo"] if has_pick else None),
             # ゲートを通っていない入稿（手動・看板の穴埋め）であることを表に出す。
             # 混ぜたまま出すと「ランクの成績」と読まれてしまう。
             "submission_only": submission_only,
@@ -1571,13 +1640,26 @@ async def get_stats(
     granularity: str = "daily",
     rank: str = "all",
     include_manual: bool = False,
+    source: str = "sold",
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """日別 / 月別の投資・回収・累積ROI推移を返す。
 
-    🔴 **母集団は「実際に売った商品」だけ**（2026-08-25 統一）。`picks_history`
-       （ランクの候補）は使わない。以前は候補の名目投資1万円を積んでおり、
-       ゲートで見送ったレースまで収支に入っていた。
+    source: 母集団を選ぶ（2026-08-25）。
+        `"sold"`（既定）… **実際に売った商品**。入稿・Discord と同じ母集団で、
+            収支はこれが正。
+        `"paper"` … **モデル（ランクの候補）**。ゲートで見送ったレースも含む
+            `picks_history` の名目成績。**売上でも収支でもない**が、
+            ゲートの是非やランクの実力を後から追うために要る。
+
+    🔴 **2つを足したり混ぜたりしないこと。** 母集団も金額の意味も違う
+        （`paper` の賭け金は「1万円賭けたことにしたら」という名目値）。
+        画面は必ずどちらを見ているかを出す。
+
+    ⚠️ `paper` は **live と rebuild で母集団が構造的にずれる**（keirin/CLAUDE.md
+        「live と rebuild で母集団がずれるのは仕様」）。さらに `rule_version` の
+        世代が混ざるので、**厳密な検証は walk-forward スクリプトで行うこと**。
+        ここで見るのは日々の傾向まで。
 
     include_manual: **もう効かない**（互換のため受け取るだけ）。以前は
         「ゲートを通った推奨だけ / 全入稿」の切り替えだったが、売った商品に
@@ -1649,10 +1731,19 @@ async def get_stats(
             cur["total_payout"] += int(r["payout"])
         return acc
 
-    sold, manual_missing = await _fetch_settled_submissions(
-        db, from_dt, to_dt, rank_labels, only_missing_from_picks=False)
+    # 🔴 母集団は2つあり、**足しても混ぜてもいけない**（金額の意味が違う）。
+    #    既定は売った商品＝入稿・Discord と同じ。`source=paper` はモデルの候補。
+    is_paper = source == "paper"
+
+    async def _fetch(a: Date, b: Date) -> tuple[list[dict[str, Any]], int]:
+        if is_paper:
+            return await _fetch_paper_picks(db, a, b, rank_labels)
+        return await _fetch_settled_submissions(
+            db, a, b, rank_labels, only_missing_from_picks=False)
+
+    base_rows, manual_missing = await _fetch(from_dt, to_dt)
     stat_rows: list[dict[str, Any]] = [
-        {"bucket": b, **v} for b, v in sorted(_fold(sold).items())
+        {"bucket": b, **v} for b, v in sorted(_fold(base_rows).items())
     ]
 
     # 月別・年別累積を Python 側で計算
@@ -1671,10 +1762,8 @@ async def get_stats(
         # ウィンドウ前の同月・同年分を先に集計して seed する（2026-07-12）。
         month_start = from_dt.replace(day=1)
         year_start = from_dt.replace(month=1, day=1)
-        pre_sold, _ = await _fetch_settled_submissions(
-            db, year_start, from_dt - timedelta(days=1), rank_labels,
-            only_missing_from_picks=False)
-        for pre in pre_sold:
+        pre_rows, _ = await _fetch(year_start, from_dt - timedelta(days=1))
+        for pre in pre_rows:
             mk = str(pre["race_date"])[:7]
             yk = mk[:4]
             year_acc.setdefault(yk, {"bet": 0, "payout": 0})
@@ -1754,6 +1843,9 @@ async def get_stats(
             "total_payout": period_payout,
             "roi": round(period_payout / period_bet, 3) if period_bet > 0 else None,
         },
+        # どちらの母集団を見ているか。🔴 画面は必ずこれを表示すること
+        #    （同じ期間で数字が2種類あるので、ラベルが無いと必ず誤読される）。
+        "source": "paper" if is_paper else "sold",
         # ⚠️ `include_manual` は 2026-08-25 から**意味を持たない**（常に売った
         #    全商品が対象）。フロントの互換のために受け取って返しているだけ。
         "include_manual": include_manual,

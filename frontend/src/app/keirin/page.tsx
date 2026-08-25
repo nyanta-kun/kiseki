@@ -368,8 +368,9 @@ function PayoutInfo({ trio, trifecta }: { trio: number; trifecta?: number }) {
   );
 }
 
-function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isReference, isMiwokuri, isGamiSkip }: {
+function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isReference, isMiwokuri, isGamiSkip, paperHit, paperPayout, paperBet }: {
   hit: boolean; payout: number; trioPayout: number; trifectaPayout?: number; bet: number; isSettled: boolean; isReference?: boolean; isMiwokuri?: boolean; isGamiSkip?: boolean;
+  paperHit?: boolean | null; paperPayout?: number | null; paperBet?: number | null;
 }) {
   if (isGamiSkip) {
     if (!isSettled) return <span className="text-xs text-orange-400 dark:text-orange-500">ガミ落ち</span>;
@@ -398,9 +399,34 @@ function HitBadge({ hit, payout, trioPayout, trifectaPayout, bet, isSettled, isR
   }
 
   if (isReference) {
+    // 🔴 売っていない行。**モデル（ランクの候補）としての当たり外れ**をここに出す
+    //    （2026-08-25）。入稿・Discord は売った商品だけに揃えたので、
+    //    ゲートで見送ったレースが当たっていたかは Web でしか追えない。
+    //    ⚠️ 金額は「1万円賭けたことにしたら」という名目値。収支ではない。
     return (
       <div className="flex items-center justify-between w-full gap-2">
-        <span className="text-xs text-gray-400 dark:text-gray-500">参考</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-400 dark:text-gray-500">参考</span>
+          {paperHit != null && (
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600"
+              title="モデル（ランクの候補）としての結果。売っていないので収支ではありません"
+            >
+              モデル {paperHit ? "◯ 的中" : "✗ 不的中"}
+            </span>
+          )}
+          {paperHit && (paperPayout ?? 0) > 0 && (
+            <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+              {(paperBet ?? 0) > 0 && <>¥{(paperBet ?? 0).toLocaleString()} → </>}
+              ¥{(paperPayout ?? 0).toLocaleString()}
+              {(paperBet ?? 0) > 0 && (
+                <span className="text-gray-400 ml-1">
+                  ({((paperPayout ?? 0) / (paperBet ?? 1)).toFixed(1)}倍・名目)
+                </span>
+              )}
+            </span>
+          )}
+        </div>
         <PayoutInfo trio={trioPayout} trifecta={trifectaPayout} />
       </div>
     );
@@ -695,8 +721,29 @@ function computeIsSettled(status: number, startAt: number | string | null): bool
   return !isNaN(sec) && sec + 5400 < Date.now() / 1000;
 }
 
-function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurchased, isMiwokuri, isGamiSkip }: {
+/**
+ * モデル（ランクの**候補**）としての結果チップ。
+ *
+ * 🔴 **売った商品の成績と見分けが付く形にすること。** 入稿・Discord は売った
+ *    商品だけに揃えてあり（2026-08-25）、ここはゲートで見送ったレースが
+ *    当たっていたかを追うためのもの。グレーの「模」で購入表示と区別する。
+ * ⚠️ 金額は「1万円賭けたことにしたら」という名目値。実際の投資ではない。
+ */
+function PaperChip({ hit, payout }: { hit?: boolean | null; payout?: number | null }) {
+  if (hit == null) return null;
+  return (
+    <span
+      className="text-xs text-gray-400 dark:text-gray-500 tabular-nums"
+      title="モデル（ランクの候補）としての結果。売っていないので収支ではありません"
+    >
+      模{hit ? `◯¥${(payout ?? 0).toLocaleString()}` : "✗"}
+    </span>
+  );
+}
+
+function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurchased, isMiwokuri, isGamiSkip, paperHit, paperPayout }: {
   hit: boolean; payout: number; trioPayout: number; trifectaPayout?: number; bet: number; isPurchased: boolean; isMiwokuri: boolean; isGamiSkip?: boolean;
+  paperHit?: boolean | null; paperPayout?: number | null;
 }) {
   const tp = trifectaPayout ?? 0;
   const trioEl = (trioPayout > 0 || tp > 0)
@@ -738,7 +785,14 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
     return <div className="flex items-center gap-1.5 flex-shrink-0">{missEl}{trioEl}</div>;
   }
 
-  return trioEl;
+  // 売っていない行。レースの配当に加えて**モデルとしての当たり外れ**を出す
+  // （見送ったレースが当たっていたかが分からないと、ゲートの是非を追えない）。
+  const paperEl = <PaperChip hit={paperHit} payout={paperPayout} />;
+  if (!trioEl && paperHit == null) return null;
+  if (!trioEl) return paperEl;
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">{paperEl}{trioEl}</div>
+  );
 }
 
 // 推奨外レースの手動入稿で選べるランク。
@@ -1166,7 +1220,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
             <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">未確定</span>
           )}
           {collapsed && isSettled && (
-            <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} />
+            <CollapsedResult hit={pick.hit} payout={pick.payout} trioPayout={pick.trio_payout} trifectaPayout={pick.trifecta_payout} bet={pick.bet_amount} isPurchased={isPurchased} isMiwokuri={isMiwokuri} isGamiSkip={isGamiSkip} paperHit={pick.paper_hit} paperPayout={pick.paper_payout} />
           )}
           {collapsed && !isSettled && (gamiStatus != null || (pick.synth_odds != null && !isMiwokuri)) && (
             <span className="text-xs flex items-center gap-1.5 flex-shrink-0 tabular-nums">
@@ -1278,6 +1332,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 isReference={!isPurchased && !isMiwokuri && !isGamiSkip}
                 isMiwokuri={isMiwokuri}
                 isGamiSkip={isGamiSkip}
+                paperHit={pick.paper_hit}
+                paperPayout={pick.paper_payout}
+                paperBet={pick.paper_bet}
               />
             </div>
           )}
