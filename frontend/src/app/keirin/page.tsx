@@ -986,7 +986,17 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const isMiwokuri = pick.miwokuri;
-  const isPurchased = !isMiwokuri && pick.bet_amount > 0;
+  // 🔴 **購入判定は API の `sold`（実際に売った商品か）だけを見る**（2026-08-25）。
+  //    以前は `bet_amount > 0` で判定していたが、あれは**ゲートを通る前の候補**にも
+  //    立つ名目値で、入稿を見送ったレースまで「購入・的中」と表示していた
+  //    （08-25 松阪7R 7S ＝ 想定平均払戻 19,226円 で売っていないのに
+  //     「✓ ¥42,400」と出ていた。8月は毎日 26〜49件がこの状態）。
+  //    `sold` を返さない古い応答のときだけ従来の判定へ落ちる。
+  const isPurchased = !isMiwokuri && (pick.sold ?? pick.bet_amount > 0);
+  // 売っていない理由（ゲートで見送った / 取り消した）。バッジの文言はサーバーが持つ。
+  const skipLabel = !isPurchased ? (pick.skip_reason_label ?? null) : null;
+  const skipTitle = pick.skip_reason_text ?? null;
+  const cancelReason = pick.cancel_reason ?? null;
   const gamiThr = GAMI_THRESHOLD;
   const isGamiSkip = computeGamiSkip(pick);
   // ペーパー検証ランク（RANK_7SS/RANK_7S/RANK_7A/RANK_9S/RANK_9A。2026-08-01〜
@@ -1019,7 +1029,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
     : (pick.display_rank ?? rankStr);
   // 購入対象判定: 採点済みは bet_amount>0。当日の S1 買い成立は #CAND 行の
   // rank が 7PLUS_R に昇格した時点（bet_amount は翌朝採点まで 0 のため）。
-  const isBuyConfirmed = !isMiwokuri && !isGamiSkip && (pick.bet_amount > 0 || rankStr === "7PLUS_R");
+  const isBuyConfirmed = !isMiwokuri && !isGamiSkip
+    && ((pick.sold ?? pick.bet_amount > 0) || rankStr === "7PLUS_R");
   // 券種ラベル: 旧S1（win軸新設計・三連単）は2026-07-31全廃済み。三連複ランク
   // （RANK_7S/RANK_7A/RANK_7B/RANK_9S/RANK_9A/RANK_7SS）は固定表示でよい
   // （API側の_VALID_PICK_RANKSからもSEVEN_S1は除外済みのため到達し得ない）。
@@ -1115,6 +1126,27 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                   自動入稿である点は運用上の区別で、商品としては他と同じなので
                   一覧では出さない。出自は `origin` として API に残っており、
                   入稿確認画面と分析では引き続き参照できる。 */}
+              {/* 売らなかった理由（2026-08-25）。表示を入稿へ揃えた結果、
+                  見送ったレースは購入表示が消える。**なぜ売らなかったのかが
+                  画面から分からなくなる**ので、理由をここに出す。
+                  🔴 文言はサーバーが持つ（入稿側と同じ正本を読む）。
+                     ここで日本語を組み立てると三重管理になる。 */}
+              {skipLabel && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                  title={skipTitle ?? "入稿しませんでした"}
+                >
+                  見送 {skipLabel}
+                </span>
+              )}
+              {cancelReason && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+                  title={`取り消した理由: ${cancelReason}`}
+                >
+                  取消 {cancelReason}
+                </span>
+              )}
               {startTime && (
                 <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
               )}

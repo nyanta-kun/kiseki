@@ -229,14 +229,18 @@ def _func(name: str) -> ast.FunctionDef:
                 if isinstance(n, ast.FunctionDef) and n.name == name)
 
 
-def test_targets_include_submitted_races():
-    """🔴 対象は picks_history だけではない。売ったレースは全部含めること。
+def test_targets_are_sold_races_only():
+    """🔴 **対象は実際に売ったレースだけ**（2026-08-25）。
 
-    これを戻すと**看板の穴埋めだけで売っているレースが通知されなくなる**。
+    以前は `picks_history`（ランクの候補）との UNION も見ていたため、
+    ゲートで見送って売っていないレースを的中/不的中として通知していた
+    （08-25 松阪7R 7S ＝ 平均払戻ゲートで入稿していないのに「的中 42,400円」）。
+    ⚠️ 看板の穴埋めだけで売っているレース（候補行が無い）は必ず含めること。
     """
     src = ast.unparse(_func("_targets"))
     assert "netkeirin_submissions" in src
-    assert "picks_history" in src
+    assert "picks_history" not in src, \
+        "売っていない候補を通知対象へ戻している"
 
 
 def test_targets_do_not_drop_races_that_already_have_results():
@@ -258,10 +262,17 @@ def test_daily_total_is_reported():
     assert "払戻" in src
 
 
-def test_sold_lines_win_over_the_paper_lines():
-    """同じランクで入稿原本とペーパー候補の両方を出さないこと（重複表示の防止）。"""
+def test_message_shows_only_sold_products():
+    """🔴 本文に `picks_history`（ランクの候補）の行を混ぜないこと（2026-08-25）。
+
+    候補と売った商品は別物で、混ぜると「売っていないのに的中」が毎レース出る。
+    候補の成績を見たいときは keirin の walk-forward スクリプトを使う。
+    """
     src = ast.unparse(_func("_build_message"))
-    assert "sold_ranks" in src
+    assert "_sold_lines" in src
+    assert "picks_history" not in src
+    # 「入稿原本を出した分は重複させない」という後段そのものが不要になった
+    assert "sold_ranks" not in src
 
 
 def test_day_total_counts_only_settled_races():

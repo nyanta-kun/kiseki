@@ -225,12 +225,31 @@ export async function syncKeirinPublishStatusAction(date: string): Promise<Appro
  * netkeirin 側で先に下書きを消していると item_id が引けず、従来はそこで止まって
  * DB も更新されないままだった（取消したはずの行が残り、自動穴埋めでも出し直せない）。
  */
+/**
+ * 取り消した理由（2026-08-25）。一覧の「取消」バッジに出る。
+ *
+ * 🔴 **自由入力にしない。** 画面のボタンと1対1の固定文言にすることで、
+ *    あとから「どの操作で消えたのか」を集計できる。
+ * ⚠️ DB は varchar(255)。長い文言を足さないこと。
+ */
+export const CANCEL_REASONS = {
+  manual: "手動取消",
+  forced: "強制取消",
+  cheap: "平均払戻が安い",
+  venue: "場単位で取消",
+  all: "全件取消",
+} as const;
+
+export type CancelReason = (typeof CANCEL_REASONS)[keyof typeof CANCEL_REASONS];
+
 export async function cancelKeirinSubmissionAction(
   raceKey: string,
   rankKey: string,
   force = false,
+  reason: CancelReason = CANCEL_REASONS.manual,
 ): Promise<ApprovalResult> {
-  return postApproval("/keirin/cancel", { race_key: raceKey, rank_key: rankKey, force });
+  return postApproval(
+    "/keirin/cancel", { race_key: raceKey, rank_key: rankKey, force, reason });
 }
 
 /**
@@ -245,7 +264,8 @@ export async function cancelKeirinVenueAction(
   date: string,
   venueName: string,
 ): Promise<ApprovalResult> {
-  return postApproval("/keirin/cancel", { date, venue_name: venueName });
+  return postApproval("/keirin/cancel",
+    { date, venue_name: venueName, reason: CANCEL_REASONS.venue });
 }
 
 /**
@@ -261,6 +281,7 @@ export async function cancelKeirinVenueAction(
  */
 export async function cancelKeirinPicksAction(
   targets: { raceKey: string; rankKey: string }[],
+  reason: CancelReason = CANCEL_REASONS.manual,
 ): Promise<ApprovalResult> {
   const denied = await requireAdmin();
   if (denied) return denied;
@@ -268,7 +289,8 @@ export async function cancelKeirinPicksAction(
   const results: NonNullable<ApprovalResult["results"]> = [];
   for (const t of targets) {
     const r = await postApproval(
-      "/keirin/cancel", { race_key: t.raceKey, rank_key: t.rankKey, force: false });
+      "/keirin/cancel",
+      { race_key: t.raceKey, rank_key: t.rankKey, force: false, reason });
     results.push({
       race_key: t.raceKey, rank_key: t.rankKey, ok: r.ok, message: r.message,
     });
@@ -293,7 +315,8 @@ export async function cancelKeirinPicksAction(
  * 🔴 date は必須（API・CLI の両方でも日付無しは弾く）。過去分まで巻き込まないため。
  */
 export async function cancelKeirinAllAction(date: string): Promise<ApprovalResult> {
-  return postApproval("/keirin/cancel", { date, all_venues: true });
+  return postApproval("/keirin/cancel",
+    { date, all_venues: true, reason: CANCEL_REASONS.all });
 }
 
 /**

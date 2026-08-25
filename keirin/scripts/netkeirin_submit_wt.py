@@ -52,6 +52,17 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import get_connection
+from src.submission_skips import (
+    CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
+    CLOSED as SKIP_CLOSED,
+    DEFER_WAVE as SKIP_DEFER_WAVE,
+    GATE_EXPECTED_FLOOR as SKIP_GATE_EXPECTED_FLOOR,
+    GATE_MEAN_PAYOUT as SKIP_GATE_MEAN_PAYOUT,
+    GATE_POINT_ODDS as SKIP_GATE_POINT_ODDS,
+    RANK_CONFLICT as SKIP_RANK_CONFLICT,
+    SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
+    record_skip,
+)
 from src.netkeirin_client import (
     ACT_TYPE_CONFIDENT,
     ACT_TYPE_DEFAULT,
@@ -1213,6 +1224,38 @@ def _conservative_trio_board(board: dict, n_cars: int) -> dict:
     return {k: v * mult for k, v in board.items()}
 
 
+def _skip(
+    race_key: str, rank_key: str, session: str, code: str, detail: str,
+    venue_name: str | None = None, race_no: Any = None, *, tag: str = "スキップ",
+    quiet: bool = False,
+) -> None:
+    """入稿を見送ったことを **ログにも DB にも** 残す。
+
+    🔴 **print と記録を別々に書かないこと。** どちらか片方だけの経路ができると、
+       その理由は画面から永久に「理由不明」になる（記録が無かった 2026-08-25
+       以前の状態へ戻る）。条件で守るのではなく、**この関数を通す構造**で守る。
+
+    ⚠️ ログの文言は従来と1文字も変えていない。`submit_marquee_wt.py` が
+       子プロセスの stdout に `MEAN_PAYOUT_SKIP_TAG` が含まれるかで
+       「安い配当で見送り」を数えており、変えるとその集計が黙って 0 になる。
+
+    🔴 記録に失敗しても入稿処理は止めない。これは表示のための付随情報で、
+       商品を出す / 出さないの判断には関わらない。
+    """
+    if not quiet:
+        # `quiet` は件数だけを別途ログに出す経路（締切超過）のためのもの。
+        # 🔴 **記録のほうは quiet でも必ず通す。**
+        where = f"{venue_name}{race_no}R" if venue_name is not None else race_key
+        print(f"[netkeirin_submit] {tag} {where} ({rank_key}): {detail}", flush=True)
+    try:
+        with get_connection() as conn:
+            record_skip(conn, race_key, rank_key, session, code, detail)
+            conn.commit()
+    except Exception as e:                          # pragma: no cover - 経路のみ検査
+        print(f"[netkeirin_submit] 見送り記録に失敗（継続）: "
+              f"{race_key} {rank_key} {e}", flush=True)
+
+
 def _record_submission(
     race_key: str, rank_key: str, session: str, venue_name: str, race_no: int,
     gate_label: str | None, axis1: int, axis2: int, netkeirin_race_id: str,
@@ -2005,11 +2048,17 @@ def _process_rank(
                    if str(c.get("race_key", "")).split("#")[0] not in deferred_races]
     # 締切（発走15分前）を過ぎたレースへは出さない（netkeirin が受け付けない）。
     if started is not None:
-        n_before = len(raw)
+        _closed = [c for c in raw
+                   if str(c.get("race_key", "")).split("#")[0] in started]
         raw = [c for c in raw if str(c.get("race_key", "")).split("#")[0] not in started]
-        if len(raw) < n_before:
-            print(f"[netkeirin_submit] {rank_key}: 締切超過 {n_before - len(raw)}件を除外",
+        if _closed:
+            print(f"[netkeirin_submit] {rank_key}: 締切超過 {len(_closed)}件を除外",
                   flush=True)
+            # ⚠️ ログは従来どおり件数だけ（波ごとに前の開催が毎回並ぶと読めない）。
+            #    記録は1件ずつ残す＝画面では「締切超過」バッジとして出せる。
+            for _c in _closed:
+                _skip(str(_c.get("race_key", "")), rank_key, session, SKIP_CLOSED,
+                      "発走15分前を過ぎていました", quiet=True)
     if not raw:
         return 0, []
 
@@ -2069,7 +2118,9 @@ def _process_rank(
                f"別ランクが同じレースを入稿済みのためスキップ")
         if not overlap_expected:
             failures.append(msg)
-        print(f"[netkeirin_submit] {msg}", flush=True)
+        _skip(str(cand.get("race_key", "")), rank_key, session, SKIP_RANK_CONFLICT,
+              "別ランクが同じレースを入稿済みのためスキップ",
+              cand.get("venue_name", "?"), cand.get("race_no", "?"))
 
     for cand, gate_label in pending:
         race_key = cand["race_key"]
@@ -2132,9 +2183,9 @@ def _process_rank(
                             list(tilt_stakes_map))
                         _cheap = cheap_point_odds(_pt_odds or {})
                         if _cheap is not None:
-                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                                  f"({rank_key}): 予測オッズ {_cheap:.2f}倍 の目がある "
-                                  f"< {MIN_POINT_ODDS:.1f}倍", flush=True)
+                            _skip(race_key, rank_key, session, SKIP_GATE_POINT_ODDS,
+                                  f"予測オッズ {_cheap:.2f}倍 の目がある "
+                                  f"< {MIN_POINT_ODDS:.1f}倍", venue_name, race_no)
                             continue
                     # 🔴 **平均払戻が安すぎるレースは出さない**（2026-08-24・
                     #    ユーザー判断で手動の一括取消から自動ゲートへ切替）。
@@ -2153,9 +2204,10 @@ def _process_rank(
                             tilt_stakes_map, _pt_odds,
                             n_cars=cfg["n_cars"], race_key=race_key)
                         if _mean is not None:
-                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                                  f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
-                                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円", flush=True)
+                            _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
+                                  f"{MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
+                                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円",
+                                  venue_name, race_no)
                             _mean_payout_skips.append(f"{venue_name}{race_no}R({rank_key})")
                             continue
                     min_floor = MIN_EXPECTED_PAYOUT_BY_RANK.get(rank_key)
@@ -2164,9 +2216,10 @@ def _process_rank(
                             race_key.split("#")[0], axis1, axis2_or_p1,
                             tilt_stakes_map, int(cfg.get("stake_budget") or RACE_BUDGET))
                         if floor is not None and floor < min_floor:
-                            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                                  f"({rank_key}): 想定払戻(下限) {floor:.2f}倍 < "
-                                  f"{min_floor:.2f}倍", flush=True)
+                            _skip(race_key, rank_key, session,
+                                  SKIP_GATE_EXPECTED_FLOOR,
+                                  f"想定払戻(下限) {floor:.2f}倍 < {min_floor:.2f}倍",
+                                  venue_name, race_no)
                             continue
                     # 🔴 印を submit_pick が内部で作っていたものと**同じ**にする。
                     #    submit_pick は軸=◎○・**買った相手=△**・買っていない車=印なし
@@ -2178,8 +2231,8 @@ def _process_rank(
                              axis1: "◎", axis2_or_p1: "○"}
         except (ValueError, KeyError, TypeError, IndexError) as e:
             failures.append(f"{race_key} ({rank_key}): 候補情報不正 - {e}")
-            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R ({rank_key}): {e}",
-                  flush=True)
+            _skip(race_key, rank_key, session, SKIP_CANDIDATE_INVALID, str(e),
+                  venue_name, race_no)
             continue
 
         # 🔴 後の波の開催は、前倒しできるものだけこの回で出す（2026-08-21 新設）。
@@ -2197,8 +2250,9 @@ def _process_rank(
                 if deferred_races is not None:
                     deferred_races.add(base_key)
                 reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"
-                print(f"[netkeirin_submit] 前倒し見送り {venue_name}{race_no}R "
-                      f"({rank_key}): {reason} → {wave_jp}の回で入稿", flush=True)
+                _skip(race_key, rank_key, session, SKIP_DEFER_WAVE,
+                      f"{reason} → {wave_jp}の回で入稿", venue_name, race_no,
+                      tag="前倒し見送り")
                 continue
             print(f"[netkeirin_submit] 前倒し {venue_name}{race_no}R ({rank_key}): "
                   f"{wave_jp}の開催をこの回で入稿", flush=True)
@@ -2340,7 +2394,10 @@ def _process_rank(
             print(f"[netkeirin_submit] 入稿成功 {venue_name}{race_no}R ({rank_key}) → {msg}", flush=True)
         else:
             failures.append(f"{venue_name}{race_no}R({rank_key}): {msg}")
-            print(f"[netkeirin_submit] 入稿失敗 {venue_name}{race_no}R ({rank_key}): {msg}", flush=True)
+            # ⚠️ ログの「入稿失敗」は `submit_marquee_wt.py` が子プロセスの
+            #    stdout で成功判定に使うので、この語を必ず残すこと。
+            _skip(race_key, rank_key, session, SKIP_SUBMIT_FAILED, str(msg),
+                  venue_name, race_no, tag="入稿失敗")
 
     return n_submitted, failures
 
@@ -2456,9 +2513,10 @@ def _process_manual(
         _mean = _mean_payout_too_low(
             tilt_stakes_map, _pt_odds, n_cars=n_entries, race_key=race_key)
         if _mean is not None:
-            print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
-                  f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
-                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円", flush=True)
+            _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
+                  f"{MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
+                  f"{_mean:,.0f}円 <= {MIN_MEAN_PAYOUT:,}円",
+                  venue_name, race_no)
             _mean_payout_skips.append(f"{venue_name}{race_no}R({rank_key})")
             return 0, []
     shape, shape_note = _shape_texts(race_key, rank_key, axis1, axis2)
@@ -2986,7 +3044,8 @@ def publish_submissions(targets: list[tuple[str, str]]) -> list[dict]:
     return results
 
 
-def cancel_submission(race_key: str, rank_key: str, force: bool = False) -> tuple[bool, str]:
+def cancel_submission(race_key: str, rank_key: str, force: bool = False,
+                      reason: str | None = None) -> tuple[bool, str]:
     """入稿を取り消す。netkeirin の下書きを削除し、記録は**論理削除**する。
 
     🔴 行を消してはいけない。`bet_detail` は「何をいくらで買ったか」の唯一の
@@ -3033,10 +3092,15 @@ def cancel_submission(race_key: str, rank_key: str, force: bool = False) -> tupl
 
     now = datetime.now(JST).replace(tzinfo=None)
     with get_connection() as conn:
+        # 🔴 **なぜ取り消したかを残す**（2026-08-25）。一覧の「取消」バッジに出る。
+        #    理由が無いと「売っていない」ことは分かっても「なぜ」が画面から消える。
+        #    ⚠️ 既存の理由を None で上書きしない（強制取消でやり直したときに
+        #       最初の理由が消えるため）。
         conn.execute(
-            "UPDATE netkeirin_submissions SET status = ?, deleted_at = ? "
+            "UPDATE netkeirin_submissions "
+            "SET status = ?, deleted_at = ?, cancel_reason = COALESCE(?, cancel_reason) "
             "WHERE race_key = ? AND rank_key = ?",
-            (STATUS_DELETED, now, race_key, rank_key),
+            (STATUS_DELETED, now, (reason or None), race_key, rank_key),
         )
         # 取り消したら購入も取り消す。戻さないと**売っていない商品が投資額に
         # 残る**（入稿→取消を繰り返した日にサマリーが膨らむ）。

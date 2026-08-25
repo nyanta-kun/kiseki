@@ -1104,6 +1104,24 @@ export type KeirinPick = {
   trio_payout: number;
   trifecta_payout: number;
   bet_amount: number;
+  /**
+   * **実際に売った商品か**（2026-08-25 新設）。購入表示はこれだけで判定する。
+   * 🔴 `bet_amount > 0` で判定してはいけない。あれはゲートを通る前の候補にも
+   * 立つ名目値で、見送ったレースまで「購入・的中」と表示していた
+   * （08-25 松阪7R 7S ＝ 平均払戻ゲートで売っていないのに「的中 42,400円」）。
+   * 売っていない行は `bet_amount` も `payout` も 0 が返る。
+   */
+  sold?: boolean;
+  /** 入稿を見送った理由のコード（売っていない行だけ非 null）。
+   *  語彙の正本は backend/src/services/keirin_skip_reasons.py。 */
+  skip_reason?: string | null;
+  /** バッジに出す短いラベル（例「平均払戻」）。🔴 **文言はサーバーが決める**
+   *  （入稿側と表示側が同じ正本を読む。ここで組み立てると三重管理になる）。 */
+  skip_reason_label?: string | null;
+  /** ツールチップに出す説明。実測値つきの文言（例「平均払戻 19,226円 <= 20,000円」）。 */
+  skip_reason_text?: string | null;
+  /** 取り消した理由（`netkeirin_submissions.cancel_reason`）。取消行だけ非 null。 */
+  cancel_reason?: string | null;
   miwokuri: boolean;
   prerace_gami: number | null;
   /** 過去のgate_label分岐（"SS"|"S"）の名残。2026-08-01〜表示ランクの決定には

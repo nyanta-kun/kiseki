@@ -41,12 +41,47 @@ def test_picks_は入稿があるならそれを採点する():
 
 def test_picks_の的中と投資は入稿の採点から出す():
     src = inspect.getsource(keirin_router.get_picks)
-    assert '"hit": (sub_result.hit and sub_result.settled if sub_result' in src
-    assert '"bet_amount": (sub_result.bet if sub_result' in src
+    assert "sub_result.hit and sub_result.settled" in src
+    assert "sub_result.bet if sub_result else 0" in src
     # 「まだ分からない」を画面へ渡す。これが無いと確定前が「✗」になる。
     assert '"settled":' in src
     # 当たり目はサーバーが返す（フロントで着順から組み立てると同着を落とす）。
     assert '"winning_combos": won' in src
+
+
+def test_売っていない行はpicks_historyの成績へフォールバックしない():
+    """🔴 **見送ったレースを「購入・的中」として出さない**（2026-08-25）。
+
+    2026-08-25 松阪7R(7S) は平均払戻ゲート（想定平均 19,226円 <= 20,000円）で
+    入稿していないのに、一覧と Discord が `picks_history` 由来で
+    「購入・的中 42,400円」を出していた。8月は毎日 26〜49件がこの状態だった。
+    """
+    src = inspect.getsource(keirin_router.get_picks)
+    for ng in ('r["bet_amount"]', 'r["payout"]', 'bool(r["hit"])'):
+        assert ng not in src, (
+            f"売っていない行の成績を picks_history から作っている（{ng}）。"
+            " 候補の名目値は売上にも収支にも対応しない。"
+        )
+    # 売ったかどうかを画面へ渡す。フロントの購入判定はこれだけを見る。
+    assert '"sold": sold' in src
+    assert "sold = bool(submitted_bet) and not submission_cancelled" in src
+
+
+def test_picks_は見送った理由を返す():
+    """理由が無いと、売らなかったことは分かっても「なぜ」が画面から消える。"""
+    src = inspect.getsource(keirin_router.get_picks)
+    assert '"skip_reason"' in src and '"skip_reason_text"' in src
+    assert "submission_skips" in src, "見送りの記録テーブルを引いていない"
+    assert '"cancel_reason"' in src
+
+
+def test_stats_も売った商品だけを数える():
+    """🔴 一覧・Discord・統計で母集団が違うと、同じ日の数字が3種類できる。"""
+    src = inspect.getsource(keirin_router.get_stats)
+    assert "_fetch_settled_submissions" in src
+    assert "keirin.picks_history" not in src, \
+        "統計が picks_history（ランクの候補）を数えている"
+    assert "ph.bet_amount > 0" not in src
 
 
 def test_確定成績は発走からの経過時間で足切りしない():

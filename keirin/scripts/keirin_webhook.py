@@ -282,6 +282,12 @@ class Handler(BaseHTTPRequestHandler):
         if action == "approve" and bool(body.get("publish")):
             cmd.append("--publish")
 
+        # 取り消した理由（2026-08-25）。一覧の「取消」バッジに出す。
+        # 🔴 対象の指定を検証し終えた**あと**に足すこと（上の publish と同じ理由）。
+        # ⚠️ 長さを縛る。DB は varchar(255) で、超えると取消そのものが失敗する。
+        if action == "cancel" and body.get("reason"):
+            cmd += ["--reason", str(body["reason"])[:255]]
+
         log.info("triggered /%s %s", action, cmd[-4:])
         env = dict(os.environ, PYTHONPATH=".")
         try:

@@ -195,7 +195,7 @@ def _summarize(results: list[dict]) -> dict:
 
 
 def _run(action: str, targets: list[tuple[str, str]], force: bool = False,
-         publish: bool = False) -> dict:
+         publish: bool = False, reason: str | None = None) -> dict:
     """承認 / 取消 / 公開を実行して1件ずつの結果を返す。
 
     `publish=True` を承認に添えると、**承認が通ったものだけ**を続けて公開する
@@ -234,7 +234,9 @@ def _run(action: str, targets: list[tuple[str, str]], force: bool = False,
                 ok, message = approve_and_submit(race_key, rank_key)
             else:
                 # force は取消専用。netkeirin 側を触らず記録だけ実態へ合わせる。
-                ok, message = cancel_submission(race_key, rank_key, force=force)
+                # reason は「なぜ取り消したか」。一覧の「取消」バッジに出る。
+                ok, message = cancel_submission(race_key, rank_key, force=force,
+                                                reason=reason)
         except Exception as e:  # noqa: BLE001 — 1件の失敗で残りを止めない
             ok, message = False, f"例外: {e}"
         results.append({"race_key": race_key, "rank_key": rank_key,
@@ -273,7 +275,15 @@ def main() -> int:
         "--force", action="store_true",
         help="取消専用。netkeirin 側の削除をあきらめて記録だけ取消にする"
              "（netkeirin で先に消してしまい記録が残ったときの最後の手段）")
+    ap.add_argument(
+        "--reason",
+        help="取消専用。なぜ取り消したか（一覧の「取消」バッジに出る）。"
+             "画面のボタンごとの固定文言を想定している")
     args = ap.parse_args()
+    if args.reason and args.action != "cancel":
+        print(json.dumps({"ok": False, "message": "--reason は cancel 専用です"},
+                         ensure_ascii=False))
+        return 2
     if args.force and args.action != "cancel":
         print(json.dumps({"ok": False, "message": "--force は cancel 専用です"},
                          ensure_ascii=False))
@@ -319,7 +329,8 @@ def main() -> int:
             ensure_ascii=False))
         return 2
 
-    out = _run(args.action, targets, force=args.force, publish=args.publish)
+    out = _run(args.action, targets, force=args.force, publish=args.publish,
+               reason=args.reason)
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1
 

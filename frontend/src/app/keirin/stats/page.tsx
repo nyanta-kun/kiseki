@@ -245,7 +245,9 @@ export default function KeirinStatsPage() {
   // 集計対象。false = ランクのゲートを通った推奨だけ（＝ランクの実力）、
   // true = 手動入稿・看板の穴埋めも含めた実際の収支。
   // 🔴 既定は false。ROI の意味が変わるので、切り替えたことが分かる状態でだけ含める。
-  const [includeManual, setIncludeManual] = useState(false);
+  // ⚠️ API 互換のために残しているだけで、2026-08-25 から**サーバー側で無視される**
+  //    （集計は常に「売った商品」）。切り替え UI も撤去済み。
+  const [includeManual] = useState(false);
   const [from, setFrom] = useState(() => calcRange("30d").from);
   const [to, setTo] = useState(() => calcRange("30d").to);
   // 入稿対象OFFのランクは絞り込みチップからも外す（2026-08-12・ユーザー要望）。
@@ -579,24 +581,10 @@ export default function KeirinStatsPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            {/* 🔴 ランクのゲートを通った推奨だけか、実際に賭けた全部か。
-                ROI の意味が変わるので、どちらを見ているかを常に画面に出す。 */}
-            <span className="text-xs text-gray-400 dark:text-gray-500">集計対象</span>
-            {([[false, "ゲート通過のみ"], [true, "全入稿"]] as [boolean, string][]).map(([key, label]) => (
-              <button
-                key={label}
-                onClick={() => setIncludeManual(key)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                  includeManual === key
-                    ? "bg-gray-700 dark:bg-gray-200 text-white dark:text-gray-900"
-                    : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {/* 🔴 「ゲート通過のみ / 全入稿」の切り替えは 2026-08-25 に撤去した。
+              集計を**実際に売った商品**へ一本化したので、選ぶ母集団が無くなった
+              （売ったものは経路を問わず全部入る）。ランク自体の候補性能を見たい
+              ときは keirin 側の walk-forward スクリプトを使う。 */}
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-400 dark:text-gray-500">累積ROI</span>
             {([["period", "全期間"], ["month", "当月"], ["year", "当年"]] as [CumMode, string][]).map(([key, label]) => (
@@ -690,14 +678,14 @@ export default function KeirinStatsPage() {
 
       {/* 集計対象の注記。「全入稿」は買い目の記録がある分しか足せない。
           黙って落とすと完全な数字に見えてしまうので、除外件数を必ず出す。 */}
-      {includeManual && (
+      {(
         <p className={`text-[11px] leading-relaxed border-l-2 pl-2 ${
           (data?.manual_missing_bet_detail ?? 0) > 0
             ? "border-amber-400 text-amber-700 dark:text-amber-400"
             : "border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400"
         }`}>
-          手動入稿・看板の穴埋め（ランクのゲートを通っていない入稿）を含めた数字です。
-          ランク自体の実力を見るときは「ゲート通過のみ」に戻してください。
+          <strong>実際に売った商品</strong>の成績です（入稿していないランクの候補は
+          含みません）。看板の穴埋め・手動入稿も売ったものは全部入ります。
           {(data?.manual_missing_bet_detail ?? 0) > 0 && (
             <>
               <br />
@@ -712,7 +700,7 @@ export default function KeirinStatsPage() {
       {/* 期間サマリー */}
       {data && (
         <SummaryCard
-          label={`${rankLabel}${includeManual ? "＋手動入稿" : ""} ・ 選択期間（${from} 〜 ${to}）`}
+          label={`${rankLabel} ・ 選択期間（${from} 〜 ${to}）`}
           {...data.period_summary}
         />
       )}

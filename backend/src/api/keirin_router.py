@@ -49,6 +49,12 @@ from ..services.keirin_sales_analysis import (
 )
 from ..services.keirin_sales_report import REVENUE_RATE
 from ..services.keirin_settlement import Settlement, payout_per_100, settle
+from ..services.keirin_skip_reasons import (
+    describe as skip_reason_describe,
+)
+from ..services.keirin_skip_reasons import (
+    label as skip_reason_label,
+)
 from ..services.keirin_submission_window import SUBMIT_DEADLINE_SEC, is_closed
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
@@ -611,30 +617,6 @@ async def _fetch_settled_submissions(
     return out, n_missing
 
 
-async def _manual_submission_buckets(
-    db: AsyncSession, from_dt: Date, to_dt: Date,
-    rank_labels: list[str] | None, monthly: bool,
-) -> tuple[dict[str, dict[str, int]], int]:
-    """ゲート未通過の入稿（手動・看板の穴埋め）を成績集計用に日付バケットへ畳む。
-
-    `picks_history` に行が無いぶんだけを足すので、`/stats` の「全入稿」は
-    **picks_history + 穴埋め**の混成になる。売った商品だけを見たいときは
-    `/sold-performance`（`_fetch_settled_submissions(only_missing_from_picks=False)`）を使う。
-    """
-    rows, n_missing = await _fetch_settled_submissions(
-        db, from_dt, to_dt, rank_labels, only_missing_from_picks=True)
-    buckets: dict[str, dict[str, int]] = {}
-    for r in rows:
-        key = r["race_date"][:7] if monthly else r["race_date"]
-        b = buckets.setdefault(key, {"n_picks": 0, "n_hits": 0,
-                                     "total_bet": 0, "total_payout": 0})
-        b["n_picks"] += 1
-        b["n_hits"] += 1 if r["hit"] else 0
-        b["total_bet"] += r["bet"]
-        b["total_payout"] += r["payout"]
-    return buckets, n_missing
-
-
 def _submitted_pick_result(
     bet: dict[str, Any] | None,
     finishers: Iterable[Sequence[int]] | None,
@@ -754,17 +736,16 @@ async def get_picks(
                   ph.gap12,
                   ph.gap23,
                   ph.gap34,
-                  ph.gate_label
+                  ph.gate_label,
+                  sk.reason_code            AS skip_reason,
+                  sk.reason_text            AS skip_reason_text
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
-                LEFT JOIN keirin.picks_history ph
-                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-                 AND ph.race_date = :date
-                 AND ph.route = 'wt'
-                 AND ph.rank IN {_VALID_PICK_RANKS}
-                  AND {_enabled_rank_cond('ph')}
-                -- 生きている入稿のうち最新の1件（取消は論理削除なので除外する）
+                -- 生きている入稿のうち最新の1件（取消は論理削除なので除外する）。
+                -- 🔴 **picks_history より先に結合する。** 下の JOIN 条件が
+                --    ns.rank_key を参照するため、順序を入れ替えると
+                --    「missing FROM-clause entry for table ns」で落ちる。
                 LEFT JOIN LATERAL (
                     -- 🔴 外側が参照する ns.* は**すべてここで SELECT する**こと。
                     --    抜けると SQL が実行時にしか落ちず、
@@ -775,6 +756,32 @@ async def get_picks(
                     ORDER BY x.submitted_at DESC
                     LIMIT 1
                 ) ns ON TRUE
+                LEFT JOIN keirin.picks_history ph
+                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+                 AND ph.race_date = :date
+                 AND ph.route = 'wt'
+                 AND ph.rank IN {_VALID_PICK_RANKS}
+                  AND {_enabled_rank_cond('ph')}
+                 -- 🔴 **売ったレースは「売った商品」の行だけを出す**（2026-08-25）。
+                 --    netkeirin は1レース1商品で、実測でも生きている入稿は
+                 --    どのレースも必ず1件（2026-08-08〜25 の749レース全て）。
+                 --    この条件が無いと、候補のランク（例 RANK_7M1）と入稿の
+                 --    rank_key（例 7S）が違うレースで**売っていない候補が並び、
+                 --    売った商品はどこにも出ない**（実測 704 組）。
+                 --    一致する候補行が無ければ ph は NULL になり、
+                 --    `submission_only` の行として売った商品が出る。
+                 AND (ns.rank_key IS NULL OR ph.rank = 'RANK_' || ns.rank_key)
+                -- 入稿しなかった理由（`keirin.submission_skips`）。
+                -- 画面の「見送り」バッジに出す。波をまたぐので最新の1件を採る。
+                LEFT JOIN LATERAL (
+                    SELECT reason_code, reason_text
+                    FROM keirin.submission_skips x
+                    WHERE x.race_key = wr.race_key
+                      AND 'RANK_' || x.rank_key
+                          = COALESCE(ph.rank, 'RANK_' || ns.rank_key)
+                    ORDER BY x.decided_at DESC
+                    LIMIT 1
+                ) sk ON TRUE
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
@@ -915,10 +922,12 @@ async def get_picks(
     #    的中・払戻・投資額をそこから作ってはいけない。買い目は「何を出そうとしたか」
     #    の記録として残すが、画面には取消と分かるように出す。
     submitted = {
-        (m["race_key"], m["rank_key"]): (m["bet_detail"], m["deleted_at"] is not None)
+        (m["race_key"], m["rank_key"]): (m["bet_detail"], m["deleted_at"] is not None,
+                                         m["cancel_reason"])
         for m in (await db.execute(
             text("""
-                SELECT ns.race_key, ns.rank_key, ns.bet_detail, ns.deleted_at
+                SELECT ns.race_key, ns.rank_key, ns.bet_detail, ns.deleted_at,
+                       ns.cancel_reason
                 FROM keirin.netkeirin_submissions ns
                 JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
                 WHERE wr.race_date = :date
@@ -990,9 +999,16 @@ async def get_picks(
         trio_pay, trifecta_pay = _race_payout_display(pays, won)
 
         # 入稿の原本（keirin 側が入稿の瞬間に保存した買い目と金額配分）。
-        submitted_raw, submission_cancelled = submitted.get(
-            (base_key, (r["rank"] or "").replace("RANK_", "")), (None, False))
+        submitted_raw, submission_cancelled, cancel_reason = submitted.get(
+            (base_key, (r["rank"] or "").replace("RANK_", "")), (None, False, None))
         submitted_bet = _parse_bet_detail(submitted_raw)
+        # 🔴 **この行が「売った商品」かどうか**（2026-08-25）。取消したものは
+        #    売っていないので False。以前は `picks_history.bet_amount > 0` を
+        #    フロントが購入判定に使っていたが、あれは**ゲートを通る前の候補**にも
+        #    立つ値で、平均払戻ゲート等で見送ったレースまで「購入・的中」と
+        #    表示していた（08-25 松阪7R 7S ＝ 想定平均 19,226円 で見送ったのに
+        #    「的中 42,400円」と出ていた）。
+        sold = bool(submitted_bet) and not submission_cancelled
         # 🔴 **売った商品があるなら、買い目も投資も的中も払戻もそこから作る**
         #    （2026-08-25）。以前は「picks_history に行が無い入稿」だけをこの経路に
         #    通し、行があるレースは `picks_history.hit`（＝ランクの**候補**の成績）を
@@ -1049,15 +1065,37 @@ async def get_picks(
             "n_entries": r["n_entries"],
             "rank": r["rank"],
             "display_rank": _display_rank(str(r["rank"])) if has_pick else None,
+            # 買い目は「売った商品」があればそれ、無ければ候補の買い目を
+            # **参考として**出す（買っていないことは `sold` で表す）。
             "pred_combo": (sub_result.pred_combo if sub_result
                            else (r["pred_combo"] if has_pick else None)),
             "n_combos": (sub_result.n_combos if sub_result
                          else (r["n_combos"] if has_pick else None)),
             "synth_odds": synth_odds,
+            # 🔴 **売った商品かどうか。フロントの購入判定はこれだけを見る**
+            #    （2026-08-25）。`bet_amount > 0` で判定してはいけない。
+            "sold": sold,
+            # 入稿しなかった理由（`keirin.submission_skips`）。売っていない行に
+            # だけ意味がある。
+            # 🔴 **文言はサーバーが決める**。語彙の正本は
+            #    services/keirin_skip_reasons.py で、入稿側（keirin）も同じ
+            #    ファイルを読む。フロントで日本語を組み立てると三重管理になる。
+            "skip_reason": (None if sold else (r.get("skip_reason") or None)),
+            "skip_reason_label": (
+                None if sold or not r.get("skip_reason")
+                else skip_reason_label(r.get("skip_reason"))),
+            "skip_reason_text": (
+                None if sold or not r.get("skip_reason")
+                else skip_reason_describe(r.get("skip_reason"),
+                                          r.get("skip_reason_text"))),
+            # 取り消した理由（`netkeirin_submissions.cancel_reason`）。
+            "cancel_reason": cancel_reason if submission_cancelled else None,
             # ⚠️ 採点が終わるまでは的中にしない（`settled` の意味は
             #    `services/keirin_settlement` の docstring 参照）。
-            "hit": (sub_result.hit and sub_result.settled if sub_result
-                    else (bool(r["hit"]) if has_pick else False)),
+            # 🔴 **売っていない行は的中にしない。** 候補が当たったかどうかは
+            #    商品の成績ではない（`winning_combos` と参考買い目から画面側で
+            #    「買っていれば当たっていた」と読める形にはしてある）。
+            "hit": bool(sub_result.hit and sub_result.settled) if sub_result else False,
             # 採点が終わったか。🔴 **`hit=False` と混ぜない。** これを見ずに描画すると
             #    確定前・配当待ちのレースが「✗ 不的中」として出る。
             "settled": (sub_result.settled if sub_result else bool(won)),
@@ -1065,12 +1103,15 @@ async def get_picks(
             # これとの一致だけで決める。🔴 フロントで着順から組み立て直さない
             # （同着を必ず取りこぼす）。
             "winning_combos": won,
-            "payout": (sub_result.payout if sub_result
-                       else ((r["payout"] or 0) if has_pick else 0)),
+            # 🔴 **売っていない行の投資・払戻は 0**（2026-08-25）。
+            #    `picks_history` の bet_amount / payout は「1万円賭けたことにしたら」
+            #    という**ペーパーの名目値**で、売上にも収支にも対応しない。
+            #    ここでフォールバックすると一覧の集計が実売とずれる
+            #    （8月は毎日 26〜49件が売っていないのに購入表示されていた）。
+            "payout": sub_result.payout if sub_result else 0,
             "trio_payout": trio_pay,
             "trifecta_payout": trifecta_pay,
-            "bet_amount": (sub_result.bet if sub_result
-                           else ((r["bet_amount"] or 0) if has_pick else 0)),
+            "bet_amount": sub_result.bet if sub_result else 0,
             # ゲートを通っていない入稿（手動・看板の穴埋め）であることを表に出す。
             # 混ぜたまま出すと「ランクの成績」と読まれてしまう。
             "submission_only": submission_only,
@@ -1534,12 +1575,13 @@ async def get_stats(
 ) -> JSONResponse:
     """日別 / 月別の投資・回収・累積ROI推移を返す。
 
-    include_manual: ランクのゲートを通っていない入稿（手動入稿・看板の穴埋め）を
-        含めるか。既定は False＝**ゲートを通った推奨だけ**の成績。
-        🔴 含めると数字の意味が変わる。False は「ランクの実力」、True は
-        「実際に賭けた全額の収支」。実測（直近30日）で ROI が 0.711 → 約0.67 動く。
-        入稿だけの行は採点されないため、`/picks` と同じ `_submitted_pick_result()`
-        で入稿の原本と確定結果から組み立てる（別計算にすると一覧と食い違う）。
+    🔴 **母集団は「実際に売った商品」だけ**（2026-08-25 統一）。`picks_history`
+       （ランクの候補）は使わない。以前は候補の名目投資1万円を積んでおり、
+       ゲートで見送ったレースまで収支に入っていた。
+
+    include_manual: **もう効かない**（互換のため受け取るだけ）。以前は
+        「ゲートを通った推奨だけ / 全入稿」の切り替えだったが、売った商品に
+        揃えた時点で区別が無くなった（売ったものは経路を問わず全部入る）。
 
     granularity: "daily"（日別）または "monthly"（月別）
     from_date / to_date: YYYY-MM-DD 形式。省略時は直近30日。
@@ -1572,93 +1614,46 @@ async def get_stats(
     else:
         from_dt = today - timedelta(days=29)
 
-    if granularity == "monthly":
-        date_expr = "TO_CHAR(ph.race_date::DATE, 'YYYY-MM')"
-    else:
-        date_expr = "ph.race_date"
-
-    # rank クエリパラメータはホワイトリスト方式で固定SQL文字列に変換する
-    # （rank文字列をそのままSQLへ埋め込まない）。カンマ区切りで複数指定された場合は
-    # OR条件として結合する（例: "7A,9S" → RANK_7A or RANK_9S）。
-    # 2026-08-01〜: gate_labelによる分岐は廃止済み・内部rankは_PAPER_RANK_LABELSの
-    # 単純な等価条件になる。既定の"all"は全ランクをまとめて集計する（/summaryと同じ方針）。
+    # 🔴 **集計は「売った商品」だけ**（2026-08-25）。以前は picks_history の
+    #    `bet_amount > 0` を母集団にしていたが、あれは**ゲートを通る前の候補**にも
+    #    立つ名目値で、売上にも収支にも対応しない。実測（8月）で毎日 26〜49件が
+    #    「売っていないのに投資1万円・的中あり」として数えられていた。
+    #    `/summary` `/sold-performance` `/picks` と同じ `_fetch_settled_submissions`
+    #    を使う（別計算にすると画面ごとに違う数字が出る）。
     #
-    # 【2026-08-05 是正】ここは _PAPER_RANK_LABELS とは別に手書きの辞書を持っており、
-    # 2026-08-03 に新設した 7B が追加されないまま放置されていた。未知キーは
-    # `_matched_conds` が空になり **黙って _ALL_COND（全ランク）へフォールバック**
-    # するため、統計ページで「7B」を選ぶと全ランクの数字が 7B として表示されていた
-    # （エラーも警告も出ない）。ランク名の二重管理をやめ _PAPER_RANK_LABELS から
-    # 導出する（同辞書のコメントが宣言している「新ランク追加時はここだけ直せばよい」
-    # 設計を実際に満たすため）。
-    _RANK_COND_MAP = {
-        label: f"ph.rank = '{internal}'"
-        for internal, label in _PAPER_RANK_LABELS.items()
-    }
-    _ALL_COND = f"ph.rank IN {_RANKS_ALL}"
+    #    ⚠️ **ランクの候補としての実力はここでは測れない**（売った分しか入らない）。
+    #       候補の性能は keirin 側の walk-forward スクリプトで測ること。
+    _all_labels = set(_PAPER_RANK_LABELS.values())
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
     if not _requested_keys or "all" in _requested_keys:
-        _RANK_COND = _ALL_COND
+        rank_labels: list[str] | None = None
     else:
-        _matched_conds = [_RANK_COND_MAP[k] for k in _requested_keys if k in _RANK_COND_MAP]
-        # 複数条件はOR結合するため、AND {_RANK_COND} の文脈で優先順位が壊れないよう
-        # 常に外側を括弧で囲む（単一条件でも一貫性のため同様に囲む）
-        _RANK_COND = "(" + " OR ".join(f"({c})" for c in _matched_conds) + ")" if _matched_conds else _ALL_COND
+        # 未知のキーは黙って全ランクへ落とさない（7B が全ランクの数字を
+        # 「7B」として出していた 2026-08-05 の事故と同型を防ぐ）。
+        rank_labels = [k for k in _requested_keys if k in _all_labels] or None
 
-    _STATS_COND = f"""
-        AND NOT COALESCE(ph.miwokuri, FALSE)
-        AND ph.bet_amount > 0
-        AND {_RANK_COND}
-        AND ph.race_key NOT LIKE '%#CAND'
-        AND (
-            wr.status = 3
-            OR (wr.start_at IS NOT NULL AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
-        )
-    """
+    def _bucket_of(race_date: str) -> str:
+        return race_date[:7] if granularity == "monthly" else race_date
 
-    rows = (await db.execute(
-        text(f"""
-            SELECT
-                {date_expr}                                                           AS bucket,
-                COUNT(*)                                                              AS n_picks,
-                COALESCE(SUM(ph.hit), 0)                                              AS n_hits,
-                COALESCE(SUM(ph.bet_amount), 0)                                       AS total_bet,
-                COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0)     AS total_payout
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE ph.race_date BETWEEN :from_date AND :to_date
-            {_STATS_COND}
-            GROUP BY {date_expr}
-            ORDER BY {date_expr}
-        """),
-        {"from_date": from_dt.isoformat(), "to_date": to_dt.isoformat()},
-    )).mappings().all()
-    # 手動入稿分を足すため、以降は素の dict で扱う（RowMapping は不変）。
-    stat_rows: list[dict[str, Any]] = [dict(r) for r in rows]
+    def _fold(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+        acc: dict[str, dict[str, int]] = {}
+        for r in rows:
+            cur = acc.setdefault(_bucket_of(str(r["race_date"])), {
+                "n_picks": 0, "n_hits": 0, "n_net_hits": 0,
+                "total_bet": 0, "total_payout": 0,
+            })
+            cur["n_picks"] += 1
+            cur["n_hits"] += 1 if r["hit"] else 0
+            cur["n_net_hits"] += 1 if r["net_hit"] else 0
+            cur["total_bet"] += int(r["bet"])
+            cur["total_payout"] += int(r["payout"])
+        return acc
 
-    manual_missing = 0
-    if include_manual:
-        manual, manual_missing = await _manual_submission_buckets(
-            db, from_dt, to_dt,
-            # "all"・未知値のときは None（＝全ランク）。picks_history 側の
-            # フォールバック仕様と揃える。
-            None if _RANK_COND is _ALL_COND else [
-                k for k in _requested_keys if k in _RANK_COND_MAP],
-            granularity == "monthly",
-        )
-        if manual:
-            merged: dict[str, dict[str, int]] = {
-                str(r["bucket"]): {
-                    "n_picks": int(r["n_picks"]), "n_hits": int(r["n_hits"]),
-                    "total_bet": int(r["total_bet"]), "total_payout": int(r["total_payout"]),
-                } for r in stat_rows
-            }
-            for k, v in manual.items():
-                cur = merged.setdefault(
-                    k, {"n_picks": 0, "n_hits": 0, "total_bet": 0, "total_payout": 0})
-                for f in ("n_picks", "n_hits", "total_bet", "total_payout"):
-                    cur[f] += v[f]
-            stat_rows = [{"bucket": k, **merged[k]} for k in sorted(merged)]
+    sold, manual_missing = await _fetch_settled_submissions(
+        db, from_dt, to_dt, rank_labels, only_missing_from_picks=False)
+    stat_rows: list[dict[str, Any]] = [
+        {"bucket": b, **v} for b, v in sorted(_fold(sold).items())
+    ]
 
     # 月別・年別累積を Python 側で計算
     items: list[dict[str, Any]] = []
@@ -1671,39 +1666,30 @@ async def get_stats(
     # なってしまいラベル（当月累計/当年累計）と乖離する。ウィンドウ前の同月・同年分を
     # 先に集計して seed し、真のカレンダー累積にする（2026-07-12）。
     if (from_dt.month, from_dt.day) != (1, 1):
+        # ウィンドウ開始日が月初/年初でない場合、cum_month/cum_year が
+        # 「表示期間内の累積」になりラベル（当月累計/当年累計）と乖離する。
+        # ウィンドウ前の同月・同年分を先に集計して seed する（2026-07-12）。
         month_start = from_dt.replace(day=1)
         year_start = from_dt.replace(month=1, day=1)
-        pre_rows = (await db.execute(
-            text(f"""
-                SELECT
-                    TO_CHAR(ph.race_date::DATE, 'YYYY-MM')                           AS month_key,
-                    COALESCE(SUM(ph.bet_amount), 0)                                   AS total_bet,
-                    COALESCE(SUM(CASE WHEN ph.hit = 1 THEN ph.payout ELSE 0 END), 0) AS total_payout
-                FROM keirin.picks_history ph
-                JOIN keirin.wt_races wr
-                  ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-                WHERE ph.race_date >= :year_start AND ph.race_date < :from_date
-                {_STATS_COND}
-                GROUP BY 1
-            """),
-            {"year_start": year_start.isoformat(), "from_date": from_dt.isoformat()},
-        )).mappings().all()
-        for pr in pre_rows:
-            mk = str(pr["month_key"])
-            bet_v, pay_v = int(pr["total_bet"] or 0), int(pr["total_payout"] or 0)
+        pre_sold, _ = await _fetch_settled_submissions(
+            db, year_start, from_dt - timedelta(days=1), rank_labels,
+            only_missing_from_picks=False)
+        for pre in pre_sold:
+            mk = str(pre["race_date"])[:7]
             yk = mk[:4]
             year_acc.setdefault(yk, {"bet": 0, "payout": 0})
-            year_acc[yk]["bet"] += bet_v
-            year_acc[yk]["payout"] += pay_v
+            year_acc[yk]["bet"] += int(pre["bet"])
+            year_acc[yk]["payout"] += int(pre["payout"])
             if mk >= month_start.strftime("%Y-%m"):
                 month_acc.setdefault(mk, {"bet": 0, "payout": 0})
-                month_acc[mk]["bet"] += bet_v
-                month_acc[mk]["payout"] += pay_v
+                month_acc[mk]["bet"] += int(pre["bet"])
+                month_acc[mk]["payout"] += int(pre["payout"])
 
     for r in stat_rows:
         bucket = str(r["bucket"])
         n_picks = int(r["n_picks"] or 0)
         n_hits = int(r["n_hits"] or 0)
+        n_net_hits = int(r["n_net_hits"] or 0)
         total_bet = int(r["total_bet"] or 0)
         total_payout = int(r["total_payout"] or 0)
 
@@ -1735,6 +1721,9 @@ async def get_stats(
             "date": bucket,
             "n_picks": n_picks,
             "n_hits": n_hits,
+            # ガミ（払戻 < 賭け金）を不的中と数えたもの。**netkeirin の
+            # 表示的中率はこちら**。素の的中率だけ見ると点数を増やしたとき誤読する。
+            "n_net_hits": n_net_hits,
             "total_bet": total_bet,
             "total_payout": total_payout,
             "roi": round(total_payout / total_bet, 3) if total_bet > 0 else None,
@@ -1753,19 +1742,23 @@ async def get_stats(
     period_payout = cum_payout
     period_picks = sum(int(i["n_picks"]) for i in items)
     period_hits = sum(int(i["n_hits"]) for i in items)
+    period_net_hits = sum(int(i["n_net_hits"]) for i in items)
 
     return JSONResponse(content={
         "items": items,
         "period_summary": {
             "n_picks": period_picks,
             "n_hits": period_hits,
+            "n_net_hits": period_net_hits,
             "total_bet": period_bet,
             "total_payout": period_payout,
             "roi": round(period_payout / period_bet, 3) if period_bet > 0 else None,
         },
-        # 手動・穴埋め入稿を含めたか。含めた場合、買い目が記録されていなくて
-        # 集計から外した件数も返す（黙って落とすと「全入稿」が完全に見える）。
+        # ⚠️ `include_manual` は 2026-08-25 から**意味を持たない**（常に売った
+        #    全商品が対象）。フロントの互換のために受け取って返しているだけ。
         "include_manual": include_manual,
+        # 買い目が記録されていなくて集計から外した件数（2026-08-07 以前の入稿）。
+        # 黙って落とすと数字が完全に見えてしまうので必ず返す。
         "manual_missing_bet_detail": manual_missing,
     })
 
@@ -2918,6 +2911,10 @@ class ApprovalIn(BaseModel):
     # 🔴 **公開は不可逆**（netkeirin の確認文言「公開後は修正できなくなります」）。
     #    画面側で必ず人の確認を挟むこと。keirin 側 CLI も approve 以外では弾く。
     publish: bool = False
+    # 取消専用。**なぜ取り消したか**（2026-08-25）。一覧の「取消」バッジに出る。
+    # 🔴 画面のボタンごとに固定の文言を送る（自由入力ではない）。理由が無いと
+    #    「売っていない」ことは分かっても「なぜ」が画面から永久に消える。
+    reason: str | None = None
 
 
 async def _closed_races(race_keys: Sequence[str]) -> dict[str, bool]:
@@ -3113,8 +3110,11 @@ async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
         #    （締切を過ぎた行を永久に片付けられなくなるのを避ける逃げ道）。
         if not body.force and (await _closed_races([base])).get(base):
             return _closed_response([base])
-        return await _call_webhook(
-            "/cancel", {"race_key": base, "rank_key": body.rank_key, "force": body.force})
+        payload_one: dict[str, Any] = {
+            "race_key": base, "rank_key": body.rank_key, "force": body.force}
+        if body.reason:
+            payload_one["reason"] = body.reason[:255]
+        return await _call_webhook("/cancel", payload_one)
 
     if body.date and (body.venue_name or body.all_venues):
         if not _DATE_RE.match(body.date):
@@ -3125,6 +3125,8 @@ async def cancel_proposal(body: ApprovalIn, _: ApiKeyDep) -> JSONResponse:
             payload["venue_name"] = body.venue_name
         if body.all_venues:
             payload["all_venues"] = True
+        if body.reason:
+            payload["reason"] = body.reason[:255]
         return await _call_webhook("/cancel", payload)
 
     return JSONResponse(

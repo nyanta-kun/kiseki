@@ -36,6 +36,7 @@ import {
   approveKeirinRaceAction,
   approveKeirinVenueAction,
   cancelKeirinAllAction,
+  CANCEL_REASONS,
   cancelKeirinPicksAction,
   publishKeirinAllAction,
   publishKeirinRaceAction,
@@ -962,7 +963,8 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           + "netkeirin 側には何もしません。netkeirin にまだ商品が残っている場合は、\n"
           + "先に netkeirin 側で削除してください。よろしいですか？",
         )) return;
-        run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key, true));
+        run(() => cancelKeirinSubmissionAction(
+          p.race_key, p.rank_key, true, CANCEL_REASONS.forced));
       }}
     />
   );
@@ -1510,8 +1512,10 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                   className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
                   onClick={() => {
                     setCheapDialog(null);
-                    run(() => cancelKeirinPicksAction(chosen.map(
-                      (p) => ({ raceKey: p.race_key, rankKey: p.rank_key }))));
+                    // 理由を残す（2026-08-25）。一覧の「取消」バッジに出る。
+                    run(() => cancelKeirinPicksAction(
+                      chosen.map((p) => ({ raceKey: p.race_key, rankKey: p.rank_key })),
+                      CANCEL_REASONS.cheap));
                   }}
                 >
                   {chosen.length}件を取り消す
