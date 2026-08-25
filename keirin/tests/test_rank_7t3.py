@@ -404,12 +404,17 @@ def test_equal_stake_trifecta_can_pull_forward():
 
     from scripts.netkeirin_submit_wt import _can_pull_forward
 
+    # 🔴 2026-08-26 に判定を「買う点に値を付けられるか」へ一本化した。
+    #    それまでは `equal_stake_trifecta` で 7T1/7T3 だけを例外扱いしていたが、
+    #    **その手前の `if not partners: return False` が常に先に立って**
+    #    三連単はどれも前倒しできていなかった（三連単は `partners` を持たない）。
     src = inspect.getsource(_can_pull_forward)
-    assert "equal_stake_trifecta" in src
-    assert "if is_trifecta and not equal_stake_trifecta:" in src
-    # 呼び出し側が 7T1/7T3 を渡していること
-    body = (REPO / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
-    assert "equal_stake_trifecta=is_7t1" in body
+    # コメントには経緯として同じ文字列が出てくるので、実行される行だけを見る。
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "if is_trifecta:" in code, "三連単を先に判定していない"
+    assert "_predicted_tf_fill(race_key)" in code, "三連単の予測盤面で判定していない"
+    assert code.index("if is_trifecta:") < code.index("if not partners:"), (
+        "partners の判定が先に立つと三連単は永久に前倒しできない")
 
 
 # ---------------------------------------------------------------- パイプライン
