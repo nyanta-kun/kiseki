@@ -115,7 +115,7 @@ class ChihouHorseIndexOut(BaseModel):
     ev: float | None = None               # 期待値 win_probability × win_odds
     is_sweet_spot: bool = False           # v10スイートスポット該当馬（赤字表示）
     is_place_bet: bool = False            # 断然人気複勝推奨（断然人気×EV1.2-2.0）
-    is_place_pick: bool = False           # 注目馬（6番人気以下×指数3位内×開いたR）→ ★表示
+    is_place_pick: bool = False           # 注目馬（6番人気以下×指数5位内×開いたR）→ ★表示
 
 
 class ChihouRaceRanks(BaseModel):
@@ -192,6 +192,13 @@ async def get_chihou_top_probability(
             WHERE race_id = r.id
               AND bet_type = 'win'
               AND combination = re.horse_number::text
+              -- 発走時刻以前に限定（発走後もオッズ取得は続くため。chihou_odds_query と同じ規約）
+              AND (
+                r.post_time !~ '^[0-9]{4}$'
+                OR fetched_at <= (
+                    to_timestamp(r.date || r.post_time, 'YYYYMMDDHH24MI') - interval '9 hours'
+                )
+              )
             ORDER BY fetched_at DESC
             LIMIT 1
         ) oh ON TRUE
@@ -247,7 +254,7 @@ async def get_chihou_featured_place(
     """指定日の「注目馬」を発走時刻順で返す。
 
     条件は `chihou_is_place_pick()`
-    （発走前6番人気以下 × 指数3位以内 × 上位3頭シェア<0.63 × 8頭以上）。
+    （発走前6番人気以下 × 指数5位以内 × 上位3頭シェア<0.63 × 8頭以上・1レース最大2頭）。
     検証根拠は docs/chihou_darkhorse_feasibility_2026_08_05.md。
 
     ⚠️ 人気・シェアは **その時点で取得済みの最新オッズ**から作る。
@@ -679,20 +686,17 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             for hn in ext_dict:
                 consensus_map[hn] = (1 if hn == kichi_top else 0) + (1 if hn == netk_top else 0)
 
-    # --- 全馬の最新単勝オッズを一括取得 ---
+    # --- 全馬の「発走時刻以前の」最新単勝オッズを一括取得 ---
+    # 🔴 素の `ORDER BY fetched_at DESC` を使ってはいけない。オッズ取得は発走後も
+    # 続くので、終了したレースを開くと**発走後のオッズ**で EV が出る（2026-08-24 発覚）。
+    # 判定・表示とも `chihou_odds_query` の発走時刻フィルタ版が唯一の正本。
     odds_result = await db.execute(
-        sql_text("""
-            SELECT DISTINCT ON (combination)
-                combination, odds
-            FROM chihou.odds_history
-            WHERE race_id = :rid AND bet_type = 'win'
-            ORDER BY combination, fetched_at DESC
-        """),
-        {"rid": race_id},
+        sql_text(latest_odds_sql(["win"])),
+        {"race_ids": [race_id]},
     )
     win_odds_map: dict[str, float] = {
-        combo: float(odds_val)
-        for combo, odds_val in odds_result.fetchall()
+        str(combo): float(odds_val)
+        for _rid, _bet_type, combo, odds_val in odds_result.all()
         if odds_val is not None
     }
 
@@ -762,7 +766,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             for h in horses:
                 h.is_place_bet = False
 
-    # --- 注目馬（発走前6番人気以下 × 指数3位内 × 開いたレース）---
+    # --- 注目馬（発走前6番人気以下 × 指数5位内 × 開いたレース）---
     # 人気順位・シェアはこの時点で取得済みの最新オッズから作る。
     # 確定オッズを使ってはいけない（前身の条件がそれで崩壊した）。
     _odds_by_hn = {int(c): v for c, v in win_odds_map.items() if c.isdigit()}
