@@ -178,3 +178,50 @@ def calibrated_p3_sum_top2(top3_probs: dict[int, float],
     cal = {f: calibrate_top3(p, race_type, cup_grade) for f, p in top3_probs.items()}
     top2 = sorted(cal, key=lambda f: (-cal[f], f))[:2]
     return cal[top2[0]] + cal[top2[1]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# レース信頼度（表示用・2026-08-25 新設）
+#
+# 【定義】**上位2車の較正後3着内率の合計を、2.00 = 100% として百分率にする。**
+#   合計 2.00 ＝「軸2車がどちらも確実に3着以内」＝信頼度の理論上限なので
+#   100% が最上位になる（ユーザー指定）。小数点以下は四捨五入して整数にする。
+#
+# 【なぜこの量か】ランクのゲート（`RANK_7C_P3_SUM_MIN=1.44` /
+#   `RANK_9C_P3_SUM_MIN=1.30`）が見ているのと**同じ量**だから。表示と採否が
+#   別の量だと「なぜこのレースが出ないのか」が画面から読めない。
+#   2026-08-25 の平均払戻ゲートも 9車は信頼度 1.25 未満だけを見送る。
+#
+#   参考: 閾値を百分率にすると 1.25→63% / 1.30→65% / 1.44→72%。
+#
+# 🔴 **`round()` を使わないこと。** Python の `round` は偶数丸めで 64.5→64 に
+#    なる。指定は四捨五入なので `floor(x + 0.5)`。
+# 🔴 **標準ライブラリ以外を import しないこと**（kiseki 側の FastAPI が
+#    このファイルを直接読み込んで束縛する。`keirin_marquee.py` と同じ制約）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: 信頼度 100% に対応する「上位2車の3着内率の合計」。
+CONFIDENCE_FULL_SUM = 2.0
+
+
+def confidence_pct(top3_probs, race_type=None, cup_grade=None):
+    """レース信頼度（0〜100 の整数）。判定できなければ None。
+
+    top3_probs: {車番: 3着内率 **0-1 スケール**}（出走車ぶん全部渡すこと）
+
+    >>> confidence_pct({1: 1.0, 2: 1.0, 3: 0.0})
+    100
+    >>> confidence_pct({1: 0.5}) is None
+    True
+    >>> confidence_pct({}) is None
+    True
+    """
+    total = calibrated_p3_sum_top2(top3_probs, race_type, cup_grade)
+    if total is None:
+        return None
+    pct = 100.0 * float(total) / CONFIDENCE_FULL_SUM
+    if pct < 0:
+        pct = 0.0
+    elif pct > 100:
+        pct = 100.0
+    return int(math.floor(pct + 0.5))          # 四捨五入（偶数丸めにしない）

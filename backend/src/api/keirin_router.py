@@ -30,6 +30,7 @@ from ..db.session import AsyncSessionLocal, get_db
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
+from ..services.keirin_race_confidence import confidence_from_entries
 from ..services.keirin_result_top3 import winning_combo_labels
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
@@ -1014,6 +1015,11 @@ async def get_picks(
             # 開催グレード（GP/GI/GII/GIII/FI/FII）。⚠️ `grade` 列は級班なので別物。
             "cup_grade": r.get("cup_grade"),
             "cup_grade_label": grade_label(r.get("cup_grade")),
+            # レース信頼度（0〜100%）。100% ＝ 上位2車の3着内率合計 2.00。
+            # **ランクのゲートが見ているのと同じ量**なので、出る／出ないの理由が
+            # 画面から読める。正本は keirin 側 `src/p3_calibration.confidence_pct`。
+            "confidence_pct": confidence_from_entries(
+                entries, r.get("race_type"), r.get("cup_grade")),
             "cup_name": r.get("cup_name"),
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
@@ -2571,7 +2577,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         SELECT s.race_key, s.rank_key, s.origin, s.status, s.session, s.venue_name, s.race_no,
                s.axis1, s.axis2, s.title, s.comment, s.bet_detail, s.is_confident, s.confident_ev,
                s.netkeirin_race_id, s.proposed_at, s.approved_at, s.deleted_at,
-               r.start_at, r.grade, r.race_type, r.n_entries
+               r.start_at, r.grade, r.race_type, r.n_entries, r.cup_grade
         FROM keirin.netkeirin_submissions s
         LEFT JOIN keirin.wt_races r ON r.race_key = s.race_key
         WHERE s.race_key LIKE :pat
@@ -2636,6 +2642,11 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "grade": r["grade"],
             "race_type": r["race_type"],
             "is_marquee": is_marquee_race(r["race_type"]),
+            # レース信頼度（0〜100%）。**ランクのゲートが見ているのと同じ量**を
+            # 100% ＝ 上位2車の3着内率合計 2.00 として百分率にしたもの。
+            # 判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
+            "confidence_pct": confidence_from_entries(
+                entries, r["race_type"], r["cup_grade"]),
             "start_at": r["start_at"],
             "n_entries": r["n_entries"],
             "axis1": r["axis1"],
