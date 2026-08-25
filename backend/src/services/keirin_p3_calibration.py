@@ -239,3 +239,27 @@ def confidence_pct(top3_probs, race_type=None, cup_grade=None):
     elif pct > 100:
         pct = 100.0
     return int(math.floor(pct + 0.5))          # 四捨五入（偶数丸めにしない）
+
+
+def confidence_axes(top3_probs):
+    """信頼度の算出に使った**2車**（車番のタプル）。決められなければ None。
+
+    🔴 **`calibrated_p3_sum_top2` と同じ並び順で選ぶこと。** 較正は単調変換なので
+       生の3着内率で並べても順位は同じだが、規則を2箇所に書くとどちらかを直した
+       ときに「表示している信頼度」と「○×を出した2車」がずれる。
+
+    ⚠️ **入稿の軸2車とは限らない。** 看板穴埋めは `submit_marquee_wt._axes()` で
+       ライン組み替えをするため、実際に買った軸と一致しないことがある。
+       ○× は**信頼度が見ている2車**についての答え合わせである。
+
+    >>> confidence_axes({1: 0.4, 2: 0.9, 3: 0.7})
+    (2, 3)
+    >>> confidence_axes({1: 0.5, 2: 0.5, 3: 0.1})
+    (1, 2)
+    >>> confidence_axes({1: 0.5}) is None
+    True
+    """
+    if not top3_probs or len(top3_probs) < 2:
+        return None
+    ranked = sorted(top3_probs, key=lambda f: (-float(top3_probs[f]), f))
+    return (ranked[0], ranked[1])

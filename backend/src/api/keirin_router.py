@@ -30,7 +30,10 @@ from ..db.session import AsyncSessionLocal, get_db
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
-from ..services.keirin_race_confidence import confidence_from_entries
+from ..services.keirin_race_confidence import (
+    confidence_from_entries,
+    confidence_hit_count_from_entries,
+)
 from ..services.keirin_result_top3 import winning_combo_labels
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
@@ -1020,6 +1023,10 @@ async def get_picks(
             # 画面から読める。正本は keirin 側 `src/p3_calibration.confidence_pct`。
             "confidence_pct": confidence_from_entries(
                 entries, r.get("race_type"), r.get("cup_grade")),
+            # 信頼度が見ている2車のうち何車が3着以内に入ったか（0/1/2・確定後のみ）。
+            # 表示は 2→○ / 1→△ / 0→×。**1軸だけの的中も情報**なので潰さない。
+            # 🔴 買い目の的中とは別物。相手が外れても二軸はそろっていることがある。
+            "confidence_hit_count": confidence_hit_count_from_entries(entries),
             "cup_name": r.get("cup_name"),
             "miwokuri": bool(r["miwokuri"]) if has_pick else False,
             "prerace_gami": float(r["prerace_gami"]) if (has_pick and r["prerace_gami"] is not None) else None,
@@ -2647,6 +2654,10 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             # 判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
             "confidence_pct": confidence_from_entries(
                 entries, r["race_type"], r["cup_grade"]),
+            # 信頼度が見ている2車のうち何車が3着以内に入ったか（0/1/2・確定後のみ）。
+            # 表示は 2→○ / 1→△ / 0→×。**1軸だけの的中も情報**なので潰さない。
+            # 🔴 買い目の的中とは別物。相手が外れても二軸はそろっていることがある。
+            "confidence_hit_count": confidence_hit_count_from_entries(entries),
             "start_at": r["start_at"],
             "n_entries": r["n_entries"],
             "axis1": r["axis1"],

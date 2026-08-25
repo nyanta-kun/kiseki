@@ -1124,6 +1124,15 @@ export type KeirinPick = {
    *    判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
    */
   confidence_pct?: number | null;
+  /**
+   * 信頼度が見ている2車のうち**何車が3着以内に入ったか**（0 / 1 / 2）。未確定なら null。
+   * 表示は 2→○ / 1→△ / 0→×。
+   *
+   * 🔴 **買い目の的中とは別物。** 相手が外れても二軸はそろっていることがあるので、
+   *    ○ なのに不的中、は普通に起きる。
+   */
+  confidence_hit_count?: number | null;
+
   /** 大会名（例「オールスター競輪」）。 */
   cup_name?: string | null;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
@@ -1755,6 +1764,15 @@ export interface KeirinProposal {
    *    判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
    */
   confidence_pct?: number | null;
+  /**
+   * 信頼度が見ている2車のうち**何車が3着以内に入ったか**（0 / 1 / 2）。未確定なら null。
+   * 表示は 2→○ / 1→△ / 0→×。
+   *
+   * 🔴 **買い目の的中とは別物。** 相手が外れても二軸はそろっていることがあるので、
+   *    ○ なのに不的中、は普通に起きる。
+   */
+  confidence_hit_count?: number | null;
+
   crash_risk?: number | null;
   /** `crash_risk` の区分。low=安全 / mid / high=危険 / unknown=算出できず。 */
   crash_risk_band?: "low" | "mid" | "high" | "unknown";

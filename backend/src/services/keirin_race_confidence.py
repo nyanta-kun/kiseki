@@ -10,9 +10,30 @@
 """
 from __future__ import annotations
 
-from .keirin_p3_calibration import CONFIDENCE_FULL_SUM, confidence_pct
+from .keirin_p3_calibration import (
+    CONFIDENCE_FULL_SUM,
+    confidence_axes,
+    confidence_pct,
+)
 
-__all__ = ["CONFIDENCE_FULL_SUM", "confidence_pct", "confidence_from_entries"]
+__all__ = [
+    "CONFIDENCE_FULL_SUM",
+    "confidence_axes",
+    "confidence_from_entries",
+    "confidence_hit_count_from_entries",
+    "confidence_pct",
+]
+
+
+def _probs_of(entries) -> dict[int, float]:
+    probs: dict[int, float] = {}
+    for e in entries or []:
+        v = e.get("pred_top3_pct")
+        fno = e.get("frame_no")
+        if v is None or fno is None:
+            continue
+        probs[int(fno)] = float(v) / 100.0
+    return probs
 
 
 def confidence_from_entries(entries, race_type=None, cup_grade=None) -> int | None:
@@ -21,13 +42,35 @@ def confidence_from_entries(entries, race_type=None, cup_grade=None) -> int | No
     ⚠️ `pred_top3_pct` は **%スケール**で入っているので 0-1 へ直して渡す。
        ここを間違えると常に 100% になる（正本は 0-1 前提）。
     """
-    probs = {}
-    for e in entries or []:
-        v = e.get("pred_top3_pct")
-        fno = e.get("frame_no")
-        if v is None or fno is None:
-            continue
-        probs[int(fno)] = float(v) / 100.0
+    probs = _probs_of(entries)
     if len(probs) < 2:
         return None
     return confidence_pct(probs, race_type, cup_grade)
+
+
+def confidence_hit_count_from_entries(entries) -> int | None:
+    """信頼度が見ている2車のうち**何車が3着以内に入ったか**（0 / 1 / 2）。
+
+    表示は 2→○ / 1→△ / 0→× （2026-08-25 ユーザー指定）。
+    **1軸だけ的中も情報**なので ○×の二値に潰さない。
+
+    🔴 **信頼度は「軸2車がどちらも3着内に入る」確からしさ**なので、答え合わせも
+       同じ2車で行う（`confidence_axes`）。買い目の的中とは別物で、
+       買い目が外れていても二軸はそろっていることがある（相手が外れた場合）。
+
+    ⚠️ **着順が1つでも欠けていたら None**（＝「まだ出さない」）。
+       欠けたまま 0 を返すと、発走前や取消のレースに × が付いて
+       「外れた」と読まれる。
+    """
+    probs = _probs_of(entries)
+    axes = confidence_axes(probs)
+    if axes is None:
+        return None
+    order: dict[int, int] = {}
+    for e in entries or []:
+        fno, fo = e.get("frame_no"), e.get("finish_order")
+        if fno is not None and fo is not None:
+            order[int(fno)] = int(fo)
+    if any(a not in order for a in axes):
+        return None
+    return sum(1 for a in axes if 1 <= order[a] <= 3)
