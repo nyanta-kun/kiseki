@@ -149,15 +149,24 @@ MIN_EXPECTED_PAYOUT_BY_RANK: dict[str, float] = {
 # ユーザー方針: 「**入稿時点の買い目払戻の平均が 20,000円以下のレースは取り消す**。
 # リスクに見合わない配当。購入レースが減ることは許容」。
 #
-# 🔴 **自動では落とさない。** 入稿はいったん通し、**レビュー画面のボタンから
-#    人が確認して一括取消する**（2026-08-24 ユーザー指定）。ダイアログで
-#    場名・R・平均払戻・チェックボックスを出し、チェックを外せば個別に除外できる。
-#    ＝ 判定は提案であって強制ではない。実装は
-#    `frontend/src/app/keirin/review/ReviewClient.tsx`。
+# 🔴 **入稿データを作る時点で自動的に見送る**（2026-08-24 に自動化・2026-08-26 に
+#    レビュー画面の手動一括取消を廃止）。実装は
+#    `scripts/netkeirin_submit_wt.py::_mean_payout_too_low()` で、ランク自動入稿
+#    ループと看板穴埋め `_process_manual()` の2箇所から呼ばれる。
 #
-# 🔴 **本モジュールが閾値と式の正本**。画面側は同じ値・同じ式を写しており、
-#    `tests/test_min_mean_payout_gate.py` が食い違いを機械的に落とす
-#    （`SUBMIT_DEADLINE_SEC` と同じ作法）。
+# 🔴 **判定は「入稿する買い目そのもの」から作る**（2026-08-26）。
+#    `mean_payout_of_lines()` が受け取る lines は `build_bet_lines()` の戻り値＝
+#    `netkeirin_submissions.bet_detail` に保存される形そのもの。
+#    ⚠️ 以前は `mean_expected_payout()`（相手車番→賭け金/オッズ の中間表現）で
+#       判定していたため、記録・表示に残る値（予測が無い点は板で埋まり、小数
+#       第1位で丸められる）と食い違い、**同じ商品の平均払戻が2つ存在した**。
+#       実測 2026-08-25 の松阪2R(7M1) はゲートでは 20,000円超・画面では
+#       20,000円ちょうどで、自動ゲートを通ったものが取消候補として残っていた。
+#
+# 🔴 **本モジュールが閾値の正本で、写しはもう無い**。backend / frontend からは
+#    2026-08-26 に削除した（`CHEAP_MEAN_PAYOUT` / `cheap_mean_payout`）。
+#    **写しを増やさないこと。** 写しが増えると上記の「平均払戻が2つある」状態へ
+#    戻る。`tests/test_min_mean_payout_gate.py` が写しの不在を機械的に見張る。
 #
 # 🔴 **`expected_payout_floor`（下限）とも `MIN_POINT_ODDS`（生オッズ）とも別の量。**
 #    3つを取り違えないこと:
@@ -203,6 +212,7 @@ MIN_EXPECTED_PAYOUT_BY_RANK: dict[str, float] = {
 #    ⚠️ この判断は 2026-08-24 に**同日中で二転**した。最初は「自動では落とさず
 #    人がレビュー画面から一括取消する」と決めたが、同日「他と同様に自動でよい」へ
 #    変わった。`tests/test_min_mean_payout_gate.py` に両方の記録がある。
+#    2026-08-26 に**画面側の口も廃止**して自動ゲート一本になった。
 #
 #    ゲートは **2箇所**に入っている（片方だけだと看板が素通りする）:
 #      `netkeirin_submit_wt.py` の **ランク自動入稿ループ** と **`_process_manual()`**
@@ -216,8 +226,10 @@ MIN_EXPECTED_PAYOUT_BY_RANK: dict[str, float] = {
 #      **別途のユーザー判断が要る**。
 #
 #    ⚠️ 自動化すると入稿自体が行われず `netkeirin_submissions` に痕跡が残らない。
-#      見送り件数はログ・実行サマリー・Discord の3つに出している
-#      （`docs/sales_kpi.md` §11.6.3）。**0件が続いたら壊れている合図**。
+#      見送り件数はログ・実行サマリー・Discord・`keirin.submission_skips` に
+#      出している（`docs/sales_kpi.md` §11.6.3）。**0件が続いたら壊れている合図**。
+#      🔴 画面から手で落とせる口を作り直すと、この死活監視が濁る（人が消したのか
+#         ゲートが効いたのか区別できなくなる）。**戻さないこと。**
 #
 # 【全経路・日次への影響】8/08〜8/23（16日・562件）を同じやり方で引き直した:
 #
@@ -311,6 +323,43 @@ def mean_expected_payout(
             return None
         vals.append(float(o) * float(stake))
     return sum(vals) / len(vals) if vals else None
+
+
+def mean_payout_of_lines(lines: list[dict]) -> float | None:
+    """**入稿する買い目そのもの**（1点ずつ展開した lines）の想定払戻の平均（円）。
+
+    lines は `netkeirin_submit_wt.build_bet_lines()` の戻り値＝
+    `netkeirin_submissions.bet_detail` に保存される形。
+    各要素は少なくとも `stake`（円）と `odds`（倍・欠けていれば None）を持つ。
+
+    🔴 **これが平均払戻ゲートの判定関数**（2026-08-26 に `mean_expected_payout`
+       から差し替え）。旧関数は「相手車番 → 賭け金 / オッズ」という**入稿前の
+       中間表現**で計算していたため、実際に記録・表示される値（予測オッズが
+       無い点は板で埋まり、小数第1位で丸められる）と食い違い、
+       **ゲートを通ったのにレビュー画面では取消候補**という商品が残っていた。
+       判定を「入稿する買い目」の側へ寄せると、この食い違いは構造的に消える。
+
+    🔴 **1点でもオッズが欠けたら None を返す**（＝入稿する側へ倒す）。
+       `mean_expected_payout` と同じ思想で、欠けた点が最安だった可能性がある。
+
+    >>> mean_payout_of_lines([{"stake": 4000, "odds": 5.0},
+    ...                       {"stake": 2000, "odds": 10.0}])
+    20000.0
+    >>> mean_payout_of_lines([{"stake": 4000, "odds": 5.0},
+    ...                       {"stake": 2000, "odds": None}]) is None
+    True
+    >>> mean_payout_of_lines([]) is None
+    True
+    """
+    if not lines:
+        return None
+    vals = []
+    for x in lines:
+        o, stake = x.get("odds"), x.get("stake")
+        if not o or float(o) <= 0 or not stake:
+            return None
+        vals.append(float(o) * float(stake))
+    return sum(vals) / len(vals)
 
 
 def expected_payout_floor(

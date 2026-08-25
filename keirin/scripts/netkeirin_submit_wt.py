@@ -93,8 +93,8 @@ from src.stake_allocation import (
     MIN_POINT_ODDS,
     cheap_point_odds,
     expected_payout_floor,
-    mean_expected_payout,
     mean_payout_gate_applies,
+    mean_payout_of_lines,
 )
 from src.p3_calibration import calibrated_p3_sum_top2
 from src.race_shape import (
@@ -947,43 +947,21 @@ def _load_trifecta_board(race_key: str) -> dict[tuple[int, ...], float]:
     return board
 
 
-def build_bet_detail(legs: list[BetLeg], source: str | None = None,
-                     odds: dict | None = None,
-                     marks: dict[int, str] | None = None,
-                     predicted_odds: dict | None = None,
-                     predicted_low: dict | None = None) -> str:
-    """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
+def build_bet_lines(legs: list[BetLeg],
+                    odds: dict | None = None,
+                    predicted_odds: dict | None = None,
+                    predicted_low: dict | None = None) -> list[dict[str, Any]]:
+    """買い目を1点ずつへ展開する（`build_bet_detail` の `lines` そのもの）。
 
-    🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
-       その金額は入稿時点の想定オッズから決まるので、**あとから再現できない**。
-       グループ表記のまま持つと表示側が `expand_bet` 相当を再実装することになり、
-       買い目の解釈が2箇所に分かれる（この種の二重管理はこのリポジトリで
-       繰り返し事故を起こしている）。
+    🔴 **入稿ゲートと記録が同じ値を見るための関数**（2026-08-26 に切り出し）。
+       平均払戻ゲートは以前 `try_predicted_odds_for_legs()` の**生値**で判定し、
+       レビュー画面は `bet_detail` の**丸めた値・板フォールバック込み**で
+       判定していたため、**同じ商品の平均払戻が2つ存在した**。実測（8/25）でも
+       予測 2.0x 倍がゲートでは 20,000円超・画面では 20,000円ちょうどになり、
+       ゲートを通ったものが画面で取消候補として残っていた。
+       判定と記録を1本の関数から作れば、この食い違いは**構造的に起きない**。
 
-    形式:
-        {"total": 10000, "source": "blend",
-         "lines": [{"bet_type": "3連複", "combo": "1=2=5", "stake": 4100,
-                    "odds": 8.3}, ...]}
-
-    `source` は金額配分の出どころ（predicted / blend / odds / model / equal・
-    `src.stake_allocation` 参照）。均等配分のランクは None。
-    `predicted` は構造モデルの予測オッズ（`src.odds_prediction`）。
-
-    `odds` は**入稿時点の**オッズ（三連複は frozenset・三連単は tuple がキー）。
-    🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
-       なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
-
-    `predicted_odds` は予測盤面（三連複のみ）。**2026-08-21 からこちらが主**で、
-    予測を作れない目だけ `odds`（板）へ落ちる。出どころは `odds_source` に
-    `"predicted"` / `"board"` として残る。
-    🔴 **記録は落とさない。** 表示では区別しなくなったが（配分も足切りも予測
-       オッズで決めているため「全て予測」が前提）、三連単だけは板由来のまま
-       なので、混在を後から数えられなくなると検証ができない。
-
-    `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
-    板の有無によらず全点へ `odds_low` として書く。
-    🔴 **これはオッズではない。** 「下振れしてもこの倍率は割らない」水準で、
-       最低払戻・ガミ判定にだけ使う（理由と実測は `_conservative_trio_board`）。
+    引数の意味は `build_bet_detail` と同じ。
     """
     odds = odds or {}
     predicted_odds = predicted_odds or {}
@@ -1027,6 +1005,50 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                 # 下限包絡（オッズではない）。最低払戻・ガミ判定に使う。
                 "odds_low": round(float(low), 1) if low else None,
             })
+    return lines
+
+
+def build_bet_detail(legs: list[BetLeg], source: str | None = None,
+                     odds: dict | None = None,
+                     marks: dict[int, str] | None = None,
+                     predicted_odds: dict | None = None,
+                     predicted_low: dict | None = None) -> str:
+    """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
+
+    🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
+       その金額は入稿時点の想定オッズから決まるので、**あとから再現できない**。
+       グループ表記のまま持つと表示側が `expand_bet` 相当を再実装することになり、
+       買い目の解釈が2箇所に分かれる（この種の二重管理はこのリポジトリで
+       繰り返し事故を起こしている）。
+
+    形式:
+        {"total": 10000, "source": "blend",
+         "lines": [{"bet_type": "3連複", "combo": "1=2=5", "stake": 4100,
+                    "odds": 8.3}, ...]}
+
+    `source` は金額配分の出どころ（predicted / blend / odds / model / equal・
+    `src.stake_allocation` 参照）。均等配分のランクは None。
+    `predicted` は構造モデルの予測オッズ（`src.odds_prediction`）。
+
+    `odds` は**入稿時点の**オッズ（三連複は frozenset・三連単は tuple がキー）。
+    🔴 **配分の根拠そのものなので一緒に保存する。** あとから引くと発走時の値に
+       なってしまい、「なぜこの金額なのか」が読めなくなる。取れなければ None。
+
+    `predicted_odds` は予測盤面（三連複のみ）。**2026-08-21 からこちらが主**で、
+    予測を作れない目だけ `odds`（板）へ落ちる。出どころは `odds_source` に
+    `"predicted"` / `"board"` として残る。
+    🔴 **記録は落とさない。** 表示では区別しなくなったが（配分も足切りも予測
+       オッズで決めているため「全て予測」が前提）、三連単だけは板由来のまま
+       なので、混在を後から数えられなくなると検証ができない。
+
+    `predicted_low` は `_conservative_trio_board()` が作る**下限包絡**。
+    板の有無によらず全点へ `odds_low` として書く。
+    🔴 **これはオッズではない。** 「下振れしてもこの倍率は割らない」水準で、
+       最低払戻・ガミ判定にだけ使う（理由と実測は `_conservative_trio_board`）。
+    """
+    # 🔴 展開は `build_bet_lines()` に一本化する。入稿ゲート（平均払戻）も
+    #    同じ関数から作った lines で判定するので、**判定と記録が食い違わない**。
+    lines = build_bet_lines(legs, odds, predicted_odds, predicted_low)
     payload: dict[str, Any] = {
         "total": sum(x["stake"] for x in lines), "source": source, "lines": lines,
         # 🔴 **承認制で「そのまま送り直す」ための原本**。`lines` は展開済みなので
@@ -1970,23 +1992,25 @@ def _race_confidence_sum(race_key: str) -> float | None:
 
 
 def _mean_payout_too_low(
-    stakes: dict[int, int], odds: dict[int, float] | None,
-    n_cars: int | None = None, race_key: str | None = None,
+    lines: list[dict], n_cars: int | None = None, race_key: str | None = None,
 ) -> float | None:
     """平均払戻が安すぎて見送るなら**その平均（円）**、出してよいなら None。
 
-    🔴 **判定できないとき（オッズが1点でも欠ける）は None ＝ 出す側へ倒す。**
-       `mean_expected_payout` が None を返す設計そのもの。分からないことを
+    `lines` は `build_bet_lines()` の戻り値＝**そのまま `bet_detail` に保存される
+    買い目**。判定と記録が同じ値を見るのが要点で、これを守らないと
+    「ゲートは通ったのにレビュー画面では取消候補」という商品が残る
+    （2026-08-26 まで実際に残っていた。`build_bet_lines` の docstring 参照）。
+
+    🔴 **判定できないとき（1点でもオッズが欠ける）は None ＝ 出す側へ倒す。**
+       `mean_payout_of_lines` が None を返す設計そのもの。分からないことを
        理由に商品を落とさない（`MIN_POINT_ODDS` の既存ゲートと同じ思想）。
-       朝オッズが揃わなかったレースはここを素通りするので、レビュー画面の
-       一括取消 UI は保険として残す（§11.6.4）。
 
     🔴 **9車は「安い かつ 低信頼」のときだけ見送る**（2026-08-25 実測）。
        9車では「安さで切る」が「信頼度で切る」と同義になり符号が反転する。
        根拠と数値は `stake_allocation.mean_payout_gate_applies` のコメント。
-       `n_cars` / `race_key` を渡さない呼び出しは従来どおり全車数で掛かる。
+       `n_cars` を渡さない呼び出しは従来どおり全車数で掛かる。
     """
-    mean = mean_expected_payout(stakes, odds or {})
+    mean = mean_payout_of_lines(lines)
     if mean is None or mean > MIN_MEAN_PAYOUT:
         return None
     if n_cars is not None:
@@ -2136,6 +2160,11 @@ def _process_rank(
         tilt_source: str | None = None
         tilt_stakes_map: dict[int, int] = {}
         use_trifecta = False
+        # 予測盤面。平均払戻ゲートが先に作るので、記録のときは作り直さない
+        # （`_predicted_trio_fill` は1レース1回で足りる）。**レースごとに
+        # 必ず None へ戻すこと**——前のレースの盤面で bet_detail を書くと、
+        # 買っていない目のオッズが混ざる。
+        pred_board: dict | None = None
         try:
             if is_multi_7h2:
                 legs, marks, axis1, axis2_or_p1 = _normalize_7h2_candidate(
@@ -2198,10 +2227,21 @@ def _process_rank(
                     #       自動的に拾う＝手動取消には無かった上積みになる。
                     #    ⚠️ 三連単経路は対象外（予測オッズは三連複しか作れず、
                     #       実測でも 7T1/7H1/7H2 は該当0件）。
-                    #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
+                    #    ⚠️ 判定できないとき（1点でもオッズが欠ける）は**出す**。
+                    # 🔴 **判定は「入稿する買い目」そのものから作る**（2026-08-26）。
+                    #    以前は `_pt_odds`（予測オッズの生値）で判定していたが、
+                    #    記録・表示に残るのは `build_bet_lines()` の値
+                    #    （予測が無い点は板・小数第1位で丸め）なので、**同じ商品の
+                    #    平均払戻が2つ存在した**。実測 8/25 の松阪2R(7M1) は
+                    #    ゲートでは 20,000円超・画面では 20,000円ちょうどになり、
+                    #    自動ゲートを通ったものが手動取消の候補として残っていた。
+                    #    `build_bet_lines()` を共有すれば食い違いは構造的に起きない。
                     if not use_trifecta:
+                        pred_board = _predicted_trio_fill(race_key)
                         _mean = _mean_payout_too_low(
-                            tilt_stakes_map, _pt_odds,
+                            build_bet_lines(
+                                legs, _bet_detail_odds(race_key, cfg, use_trifecta),
+                                pred_board),
                             n_cars=cfg["n_cars"], race_key=race_key)
                         if _mean is not None:
                             _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
@@ -2375,7 +2415,8 @@ def _process_rank(
             #    確認画面と違う印で入稿される。
             record_marks = marks if legs else {
                 **{c: "△" for c in partners}, axis1: "◎", axis2_or_p1: "○"}
-            pred_board = _predicted_trio_fill(race_key)
+            if pred_board is None:      # 三連単経路はゲートを通らないのでここで作る
+                pred_board = _predicted_trio_fill(race_key)
             _record_submission(
                 race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2_or_p1, msg,
                 bet_detail=build_bet_detail(
@@ -2495,6 +2536,8 @@ def _process_manual(
     tilt_source = None
     tilt_stakes_map: dict[int, int] = {}
     legs: list[BetLeg] = []
+    # 予測盤面。平均払戻ゲートが先に作るので記録では作り直さない。
+    manual_pred_board: dict | None = None
     if cfg.get("tilt_stakes"):
         legs, tilt_source, tilt_stakes_map = _build_tilted_legs(
             race_key, cfg, axis1, axis2, partners)
@@ -2508,10 +2551,14 @@ def _process_manual(
         #       ここへ広げないこと。** 今回のユーザー判断に含まれておらず、
         #       母集団と「看板レースには必ず推奨を出す」（2026-08-09）との
         #       衝突範囲が変わる。広げるには別途のユーザー判断が要る。
-        _pt_odds = try_predicted_odds_for_legs(
-            race_key.split("#")[0], axis1, axis2, list(tilt_stakes_map))
+        #    🔴 判定は **`build_bet_lines()` が作る「入稿する買い目」そのもの**から
+        #       行う（2026-08-26・ランクループと同じ理由）。予測オッズの生値で
+        #       判定すると、記録・表示に残る値（板フォールバックと丸め込み）と
+        #       食い違い、ゲートを通ったものがレビュー画面に取消候補として残る。
+        manual_pred_board = _predicted_trio_fill(race_key)
         _mean = _mean_payout_too_low(
-            tilt_stakes_map, _pt_odds, n_cars=n_entries, race_key=race_key)
+            build_bet_lines(legs, _bet_detail_odds(race_key, cfg), manual_pred_board),
+            n_cars=n_entries, race_key=race_key)
         if _mean is not None:
             _skip(race_key, rank_key, session, SKIP_GATE_MEAN_PAYOUT,
                   f"{MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
@@ -2576,7 +2623,9 @@ def _process_manual(
         ok, msg = False, f"例外: {e}"
 
     if ok:
-        _manual_pred_board = _predicted_trio_fill(race_key)
+        # 均等配分の経路（`tilt_stakes` なし）はゲートを通らないのでここで作る。
+        _manual_pred_board = (manual_pred_board if manual_pred_board is not None
+                              else _predicted_trio_fill(race_key))
         record_legs = legs if tilt_source else _legs_for_record(
             cfg, axis1, axis2, partners, _stake_per_line(cfg, len(partners)))
         # 🔴 手動経路は**ゲートを通っていない**。`--marquee` なら看板の穴埋め、

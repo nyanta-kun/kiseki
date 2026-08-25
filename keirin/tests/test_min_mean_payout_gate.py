@@ -9,11 +9,16 @@
    取り消しは他同様に自動として良さそう」というユーザー判断で反転した。
    設計の全文は `docs/sales_kpi.md` §11.6。
 
-   ⚠️ **レビュー画面の一括取消 UI は残す**（§11.6.4）。`mean_expected_payout` は
-   オッズが1点でも欠けたら None を返して**入稿側へ倒す**ので、朝オッズが
-   揃わなかったレースは自動ゲートを素通りする。後から揃えば画面で判定できる。
-   自動化後は表示件数が大きく減るはずで、**減らなければ自動ゲートが効いていない
-   合図**になる。
+🔴🔴 **2026-08-26 にレビュー画面の一括取消 UI を廃止した**（ユーザー要望
+   「入稿データ作成時に自動で行うようにし、ボタン削除」）。同時に、
+   **判定を「入稿する買い目そのもの」から作る**ように直した。
+
+   ⚠️ それまでは同じ商品の平均払戻が **2つ存在した**:
+     - 入稿ゲート … `try_predicted_odds_for_legs()` の**生値**
+     - レビュー画面 … `bet_detail`（予測が無い点は**板**・小数第1位で**丸め**）
+     実測 8/25 の松阪2R(7M1) は前者 20,000円超・後者ちょうど 20,000円で、
+     自動ゲートを通ったものが画面に取消候補として残っていた。
+     いまは両方 `build_bet_lines()` の lines から作るので**構造的に一致する**。
 
 🔴 この規則は**収支の改善策ではない**。実測（8/08〜8/23 の実入稿 562件を
    `bet_detail` の予測オッズ×実配分で引き直し、実結果で採点）では
@@ -21,18 +26,23 @@
    効くのは**投資額が30%減ること**で、1日の損失が 96,012 → 69,265円になる。
    根拠の数字は `src/stake_allocation.MIN_MEAN_PAYOUT` のコメント。
 
-ここで固定するのは4つ:
-  1. 判定の式と境界（20,000円ちょうどは**取消対象**＝「以下」）
-  2. **オッズが1点でも欠けたら判定しない**（＝残す側へ倒す）
-  3. 閾値が **backend / frontend / keirin の3箇所で一致**していること
+ここで固定するのは5つ:
+  1. 判定の式と境界（20,000円ちょうどは**見送り対象**＝「以下」）
+  2. **オッズが1点でも欠けたら判定しない**（＝出す側へ倒す）
+  3. 閾値の**写しがもう無い**こと（正本は `src/stake_allocation` の1箇所だけ）
   4. **自動入稿の2経路（ランクループ・看板穴埋め）にゲートが入っている**こと
+  5. **ゲートと記録が同じ関数（`build_bet_lines`）から値を作る**こと
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-from src.stake_allocation import MIN_MEAN_PAYOUT, mean_expected_payout
+from src.stake_allocation import (
+    MIN_MEAN_PAYOUT,
+    mean_expected_payout,
+    mean_payout_of_lines,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = ROOT.parent
@@ -41,6 +51,17 @@ REPO = ROOT.parent
 def test_平均払戻を円で返す():
     # 4,000×5.0 = 20,000 と 2,000×10.0 = 20,000 → 平均 20,000円
     assert mean_expected_payout({1: 4000, 2: 2000}, {1: 5.0, 2: 10.0}) == 20000.0
+
+
+def test_入稿する買い目から平均払戻を出す():
+    """`mean_payout_of_lines` は `bet_detail` の lines をそのまま受ける。"""
+    assert mean_payout_of_lines(
+        [{"stake": 4000, "odds": 5.0}, {"stake": 2000, "odds": 10.0}]) == 20000.0
+    # 🔴 1点でも欠けたら判定しない（欠けた点が最安だった可能性がある）
+    assert mean_payout_of_lines(
+        [{"stake": 4000, "odds": 5.0}, {"stake": 2000, "odds": None}]) is None
+    assert mean_payout_of_lines([{"stake": 4000, "odds": 0}]) is None
+    assert mean_payout_of_lines([]) is None
 
 
 def test_最低払戻では代用できない():
@@ -67,57 +88,40 @@ def test_オッズが欠けたら判定しない():
     assert mean_expected_payout({}, {1: 5.0}) is None
 
 
-def test_閾値は3箇所で一致する():
-    """🔴 写しが増えたので機械的に突き合わせる（`SUBMIT_DEADLINE_SEC` と同じ作法）。"""
+def test_閾値の写しがもうない():
+    """🔴 **正本は `src/stake_allocation.MIN_MEAN_PAYOUT` の1箇所だけ**。
+
+    2026-08-26 に backend / frontend の写しを削除した。写しが増えると
+    「入稿ゲートと画面で別の平均払戻を計算する」状態（同日まで実在した）へ
+    逆戻りするので、機械的に不在を見張る。
+    """
     assert MIN_MEAN_PAYOUT == 20_000
     router = (REPO / "backend" / "src" / "api" / "keirin_router.py").read_text("utf-8")
-    m = re.search(r"CHEAP_MEAN_PAYOUT\s*=\s*([0-9_]+)", router)
-    assert m, "keirin_router.py に CHEAP_MEAN_PAYOUT がありません"
-    assert int(m.group(1).replace("_", "")) == MIN_MEAN_PAYOUT
+    assert "CHEAP_MEAN_PAYOUT = " not in router, "API に閾値の写しが復活している"
+    assert '"cheap_mean_payout"' not in router, "API が取消候補の印を返している"
+    assert '"mean_payout":' not in router, "API が平均払戻を返している"
+    api_ts = (REPO / "frontend" / "src" / "lib" / "api.ts").read_text("utf-8")
+    assert "cheap_mean_payout:" not in api_ts, "画面の型に印が復活している"
 
 
-def test_APIが平均払戻と印を返している():
-    router = (REPO / "backend" / "src" / "api" / "keirin_router.py").read_text("utf-8")
-    assert "def _mean_payout(" in router, "平均払戻の算出が無い"
-    assert '"mean_payout": mean_pay' in router, "API が mean_payout を返していない"
-    assert '"cheap_mean_payout"' in router, "API が取消候補の印を返していない"
-    # 🔴 一部だけで平均を出さない（欠けた点が最安なら候補から漏れる）
-    fn = router[router.index("def _mean_payout("):router.index("def _min_payout_low(")]
-    assert 'any(x.get("odds") in (None, 0) for x in lines)' in fn
+def test_レビュー画面に手動の口がない():
+    """🔴 **2026-08-26 に反転**（旧: `test_レビュー画面に一括取消の口がある`）。
 
+    ユーザー要望で「安い配当」ボタンとダイアログを削除し、判定は入稿データを
+    作る時点の自動ゲートへ一本化した。
 
-def test_レビュー画面に一括取消の口がある():
-    tsx = (REPO / "frontend" / "src" / "app" / "keirin" / "review"
-           / "ReviewClient.tsx").read_text("utf-8")
-    assert "cheap_mean_payout" in tsx, "画面が API の印を見ていない"
-    assert "cancelKeirinPicksAction" in tsx, "一括取消アクションを呼んでいない"
-    assert 'type="checkbox"' in tsx, "チェックボックスが無い"
-    assert "mean_payout" in tsx, "平均払戻を表示していない"
-    # 🔴 画面で閾値を持たない（正本は Python 側）
-    assert "20000" not in tsx and "20_000" not in tsx, \
-        "画面が閾値を直書きしている（API の印だけを見ること）"
-
-
-def test_ダイアログが判断材料を並べている():
-    """🔴 取消の可否を人が決める場なので、既に算出済みのリスク指標を並べる。
-
-    ⚠️ **選定条件は平均払戻の1つだけ**。ここに並ぶ他の列は判断材料であって
-       条件ではない。列が増えたときに「これも条件だ」と読まれないよう、
-       画面にも但し書きを出している。
+    🔴 **画面から手で落とせる口を作り直さないこと。** 人が消したのかゲートが
+       効いたのかが区別できなくなり、`submission_skips` の件数による死活監視
+       （§11.6.3・「0件が続いたら壊れている合図」）が濁る。
     """
     tsx = (REPO / "frontend" / "src" / "app" / "keirin" / "review"
            / "ReviewClient.tsx").read_text("utf-8")
-    dlg = tsx[tsx.index("aria-label=\"想定払戻の平均が安いレースの取消\""):]
-    for col in ("平均払戻", "最低払戻", "最高払戻"):
-        assert f">{col}</th>" in dlg, f"ダイアログに {col} 列が無い"
-    # ⚠️ 落車リスクは**載せない**（2026-08-24 ユーザー判断）。取消の判断に使わない
-    #    ので列を増やさない（危険帯のほうが ROI は高く、理由にならない）。
-    assert ">落車</th>" not in dlg, "落車リスクの列は出さない"
-    # 🔴 最低払戻は下振れ側を優先（板由来の min_payout は楽観的）
-    assert "p.min_payout_low ?? p.min_payout" in dlg, "下振れ側を優先していない"
-    assert "p.gami_risk" in dlg, "ガミの印が無い"
-    # ⚠️ 選定条件は1つだけ、と画面にも書いてあること
-    assert "選定には使っていません" in dlg
+    assert "cheap_mean_payout" not in tsx, "画面が取消候補の印を見ている"
+    assert "cheapTargets" not in tsx, "取消候補の一覧が復活している"
+    assert "cancelKeirinPicksAction" not in tsx, "レース指定の一括取消が復活している"
+    act = (REPO / "frontend" / "src" / "app" / "keirin" / "actions.ts").read_text("utf-8")
+    assert "export async function cancelKeirinPicksAction(" not in act, \
+        "唯一の呼び出し元を消したのにアクションが残っている"
 
 
 def test_自動入稿の2経路にゲートが入っている():
@@ -140,7 +144,7 @@ def test_自動入稿の2経路にゲートが入っている():
     manual = body[body.index("def _process_manual("):]
     assert "_mean_payout_too_low" in rank_loop, "ランク自動入稿ループにゲートが無い"
     assert "_mean_payout_too_low" in manual, "看板穴埋め（_process_manual）にゲートが無い"
-    assert "mean_expected_payout" in sub, "判定関数を使っていない"
+    assert "mean_payout_of_lines" in sub, "判定関数を使っていない"
 
 
 def test_ゲートはcontinueで抜ける():
@@ -175,18 +179,53 @@ def test_三連単経路は対象外():
 def test_オッズ欠けは入稿側へ倒す():
     """🔴 判定できないことを理由に商品を落とさない。
 
-    `mean_expected_payout` が None を返す（＝1点でもオッズが欠ける）とき、
+    `mean_payout_of_lines` が None を返す（＝1点でもオッズが欠ける）とき、
     ゲートは **None を返して素通しする**こと。ここを「落とす」に倒すと、
     朝オッズが揃わない日に入稿が丸ごと消える。
     """
     import scripts.netkeirin_submit_wt as nsw
 
-    assert nsw._mean_payout_too_low({1: 5000, 2: 5000}, {1: 2.0}) is None
-    assert nsw._mean_payout_too_low({1: 5000, 2: 5000}, None) is None
-    assert nsw._mean_payout_too_low({}, {1: 2.0}) is None
+    欠け = [{"stake": 5000, "odds": 4.0}, {"stake": 5000, "odds": None}]
+    assert nsw._mean_payout_too_low(欠け) is None
+    assert nsw._mean_payout_too_low([]) is None
     # 境界: ちょうど 20,000円 は見送る（「以下」）
-    assert nsw._mean_payout_too_low({1: 4000, 2: 2000}, {1: 5.0, 2: 10.0}) == 20000.0
-    assert nsw._mean_payout_too_low({1: 4000, 2: 2000}, {1: 5.1, 2: 10.0}) is None
+    ちょうど = [{"stake": 4000, "odds": 5.0}, {"stake": 2000, "odds": 10.0}]
+    assert nsw._mean_payout_too_low(ちょうど) == 20000.0
+    上 = [{"stake": 4000, "odds": 5.1}, {"stake": 2000, "odds": 10.0}]
+    assert nsw._mean_payout_too_low(上) is None
+
+
+def test_ゲートと記録は同じ関数から値を作る():
+    """🔴🔴 **これが 2026-08-26 の修正の本体**。
+
+    入稿ゲートが見る平均払戻と、`bet_detail` に残って画面へ出る平均払戻は
+    **同じ lines から**作ること。別々に作ると、予測オッズが無い点の板
+    フォールバックと小数第1位の丸めのぶんだけ食い違い、
+    「ゲートは通ったのに画面では取消候補」という商品が残る（実在した）。
+    """
+    import scripts.netkeirin_submit_wt as nsw
+
+    sub = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
+    # `build_bet_detail` は自前で展開せず `build_bet_lines` を呼ぶこと
+    detail = sub[sub.index("def build_bet_detail("):sub.index("def _legs_for_record(")]
+    assert "build_bet_lines(" in detail, "記録が展開を自前で持っている"
+    assert "for leg in legs:" not in detail, "記録側に展開ループが復活している"
+    # ゲートの2経路とも `build_bet_lines(` の戻り値を渡していること
+    body = sub[sub.index("def _process_rank("):]
+    rank_loop = body[:body.index("def _process_manual(")]
+    manual = body[body.index("def _process_manual("):]
+    for name, blk in (("ランクループ", rank_loop), ("看板穴埋め", manual)):
+        i = blk.index("_mean_payout_too_low(")
+        assert "build_bet_lines(" in blk[i:i + 400], \
+            f"{name} が入稿する買い目そのものから判定していない"
+    # 丸め込みの境界: 予測 2.04倍 は記録では 2.0倍 ＝ 平均ちょうど 20,000円。
+    # 実測 8/25 の松阪2R(7M1) がこの形で自動ゲートを素通りしていた。
+    lines = nsw.build_bet_lines(
+        [nsw.BetLeg(nsw.BET_KIND_TRIO_AXIS2, [[2], [3], [4]], 10000)],
+        predicted_odds={frozenset({2, 3, 4}): 2.04})
+    assert lines[0]["odds"] == 2.0
+    assert mean_payout_of_lines(lines) == 20000.0
+    assert nsw._mean_payout_too_low(lines) == 20000.0
 
 
 def test_見送り件数が可視化されている():
@@ -226,14 +265,3 @@ def test_新しいstatus値を足していない():
     sub = (ROOT / "scripts" / "netkeirin_submit_wt.py").read_text("utf-8")
     for bad in ("'skipped'", '"skipped"', "'gated'", '"gated"'):
         assert bad not in sub, f"新しい status 値 {bad} を足している"
-
-
-def test_一括取消は1件ずつのAPIを順に呼ぶ():
-    """🔴 専用の一括APIを作らない（締切判定・削除・失敗明細を二重に持たない）。"""
-    act = (REPO / "frontend" / "src" / "app" / "keirin"
-           / "actions.ts").read_text("utf-8")
-    fn = act[act.index("export async function cancelKeirinPicksAction("):]
-    fn = fn[:fn.index("\n}\n") + 3]
-    assert '"/keirin/cancel"' in fn, "既存のレース単位 API を使っていない"
-    assert "force: false" in fn, "一括で force を使ってはいけない"
-    assert "results.push" in fn, "失敗を明細で返していない"
