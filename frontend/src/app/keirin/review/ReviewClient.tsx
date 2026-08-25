@@ -36,7 +36,6 @@ import {
   approveKeirinRaceAction,
   approveKeirinVenueAction,
   cancelKeirinAllAction,
-  CANCEL_REASONS,
   publishKeirinAllAction,
   publishKeirinRaceAction,
   publishKeirinVenueAction,
@@ -45,6 +44,7 @@ import {
   cancelKeirinSubmissionAction,
   cancelKeirinVenueAction,
 } from "../actions";
+import { CANCEL_REASONS } from "../cancelReasons";
 
 import CommentBody from "./CommentBody";
 import ExpectedValueBadge from "@/components/ExpectedValueBadge";
