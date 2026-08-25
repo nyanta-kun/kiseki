@@ -106,6 +106,43 @@ ON CONFLICT (race_key, rank_key, session) DO UPDATE SET
 """
 
 
+#: その回でランクが「自分の波へ回した」レースを引く SQL。
+_DEFERRED_SQL = """
+SELECT race_key FROM submission_skips
+WHERE race_date = ? AND session = ? AND reason_code = ?
+"""
+
+
+def deferred_race_keys(conn, race_date: str, session: str) -> set[str]:
+    """**この回のランク入稿が後の波へ持ち越した**レース（`race_key` の集合）。
+
+    🔴 **看板穴埋めが横取りしないために要る**（2026-08-26・ユーザー判断）。
+       三連単をダッチ配分するランク（7H1 / 7H2 / 9H1）は、朝は三連単の板が
+       無いので後の波の開催を**必ず**持ち越す（`_can_pull_forward`）。
+       ランク入稿どうしは `deferred_races`（実行中のメモリ）で守られているが、
+       看板穴埋めは**別プロセス**なのでそれを見られず、同じレースを埋めていた。
+       実測 2026-08-25: 松戸3R を 7H1 が昼へ回した直後に看板穴埋めが 7S で埋め、
+       昼の回で 7H1 が「別ランクが入稿済み」で取れなくなった。
+
+    🔴 **`session` で絞ること。** 持ち越しは「その回では出さない」という意味しか
+       持たない。レースが自分の波に入れば持ち越しは起きないので、次の回では
+       この集合に現れず、普通に優先順位勝負へ戻る。日付だけで絞ると
+       **そのレースが一日中どのランクにも埋められなくなる**。
+
+    ⚠️ 読めなければ**空集合**を返す（＝従来どおり埋める）。記録は表示のための
+       付随情報で、これが引けないことを理由に看板レースを空にしない。
+    """
+    try:
+        rows = conn.execute(_DEFERRED_SQL, (race_date, session, DEFER_WAVE)).fetchall()
+    except Exception as e:                          # pragma: no cover - 経路のみ検査
+        print(f"[submission_skips] 持ち越しの読み出しに失敗（継続）: {e}", flush=True)
+        return set()
+    # ⚠️ 行の型は接続で違う（sqlite3.Row / RealDictRow / 素のタプル）。
+    #    1列しか選んでいないので、名前で引けなければ位置で取る。
+    return {base_key_of(str(r["race_key"] if hasattr(r, "keys") else r[0]))
+            for r in rows}
+
+
 def record_skip(
     conn,
     race_key: str,

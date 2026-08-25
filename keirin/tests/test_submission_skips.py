@@ -167,3 +167,131 @@ def test_正本にはFastAPIもSQLAlchemyも入っていない():
     for ng in ("import sqlalchemy", "from sqlalchemy", "import fastapi",
                "from fastapi", "from src.", "import pydantic"):
         assert ng not in canonical, f"正本が {ng} を import しています"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 別ランクとの衝突は「入稿失敗」ではない（2026-08-26・ユーザー指示）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 昼(13:00)・夕(18:00)の回は、朝と**同じ候補ファイルを読み直して再判定する**
+# （`_load_candidates` は `_noon` / `_night` の再生成物が無ければ朝の生成物へ
+# 落ちる）。したがって朝に決着したレースが毎回もう一度候補に上がり、
+# 「別ランクが同じレースを入稿済み」で降りる。
+#
+# 🔴 実測 2026-08-25（昼）: Discord に「**全8件が入稿失敗**」と出たが、
+#    8件すべてが朝に**意図どおり**入稿済みのレースだった:
+#      宇都宮2R/3R … 7S が平均払戻ゲートで降り、下位の 7M1 が拾った（差し替え）
+#      防府11R/12R・和歌山11R … 上位の 7T1 が取った
+#      和歌山10R … 7S 自身がゲートで降りたレースを別ランクが取った
+#      松戸3R … 7H1 が「三連単は板が要る」で昼へ回し、看板穴埋めが取った
+#    どれも 1レース1商品という設計どおりの譲り合いで、失敗ではない。
+
+
+def test_衝突は失敗に数えない():
+    """`conflicts` のループが `failures` へ入れないこと。"""
+    import ast
+
+    tree = ast.parse(SUBMIT_PY.read_text(encoding="utf-8"))
+    loops = [n for n in ast.walk(tree)
+             if isinstance(n, ast.For) and isinstance(n.iter, ast.Name)
+             and n.iter.id == "conflicts"]
+    assert loops, "conflicts のループが見つかりません"
+    for loop in loops:
+        for sub in ast.walk(loop):
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "append"
+                    and isinstance(sub.func.value, ast.Name)
+                    and sub.func.value.id == "failures"):
+                raise AssertionError(
+                    "衝突を failures へ入れています。1レース1商品なので上位ランクへ"
+                    " 譲るのは正常動作で、Discord の「入稿失敗」に出してはいけません。")
+
+
+def test_衝突は記録と件数に残る():
+    """🔴 通知しないだけで**見えなくしない**。記録とサマリーには必ず残す。"""
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert "_rank_conflict_skips" in src, "衝突の件数を数えていません"
+    assert "_rank_conflict_skips.clear()" in src, "実行ごとに数え直していません"
+    assert "別ランクへ譲り" in src, "実行サマリーに件数が出ていません"
+    # Discord へ出す本文には混ぜないこと（ユーザー指示 2026-08-26）。
+    # 通知本文は `session_jp = ...` から実行サマリーの print までの区間で組む。
+    notify = src[src.index("session_jp = SESSION_LABEL_JP[session]"):
+                 src.index('f"[netkeirin_submit] {target_date} {session}: 完了（成功')]
+    assert "_rank_conflict_skips" not in notify, \
+        "Discord 通知に衝突を混ぜています（通知は不要というユーザー指示）"
+
+
+def test_overlap_expectedフラグは廃止済み():
+    """⚠️ 復活させないこと。
+
+    「排他設計のランクの衝突だけ失敗として可視化する」という前提が、
+    7T1 / 7T3（7S より上位）と看板穴埋めの追加で成り立たなくなった。
+    衝突はどのランクでも失敗ではないので、フラグの役目そのものが無い。
+    """
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert '"overlap_expected"' not in src, "overlap_expected が復活しています"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 看板穴埋めは「ランクが持ち越したレース」を横取りしない（2026-08-26）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 三連単をダッチ配分するランク（7H1 / 7H2 / 9H1）は、朝は三連単の板が無いので
+# 後の波の開催を**必ず**持ち越す（`_can_pull_forward`）。ランク入稿どうしは
+# 実行中の `deferred_races` で守られているが、看板穴埋めは**別プロセス**なので
+# それを見られず、同じレースを埋めていた。
+#
+# 🔴 実測 2026-08-25: 7H1 が松戸3R を昼へ持ち越した直後、看板穴埋めが 7S で埋め、
+#    昼の回で 7H1 が「別ランクが同じレースを入稿済み」で取れなくなった。
+#
+#      [netkeirin_submit] 前倒し見送り 松戸3R (7H1): 三連単は板が要る → 昼の回で入稿
+#      [netkeirin_submit][manual] 入稿成功 松戸3R (7S) → PROPOSED:202608253103
+#      （13:00）松戸3R(7H1): 別ランクが同じレースを入稿済みのためスキップ
+
+
+def test_持ち越しはその波だけ避ける(tmp_path):
+    """🔴 `session` で絞ること。日付だけで絞ると一日中誰も埋められなくなる。"""
+    from src.submission_skips import DEFER_WAVE, deferred_race_keys, record_skip
+
+    conn = _conn(tmp_path)
+    record_skip(conn, "20260825_31_03#7H1", "7H1", "morning", DEFER_WAVE,
+                "三連単は板が要る → 昼の回で入稿")
+    # 朝の回では避ける（ランク接尾辞は落ちて netkeirin_submissions と同じ形）
+    assert deferred_race_keys(conn, "2026-08-25", "morning") == {"20260825_31_03"}
+    # 昼の回＝レースが自分の波に入るので持ち越しは無い＝普通に埋めてよい
+    assert deferred_race_keys(conn, "2026-08-25", "noon") == set()
+
+
+def test_持ち越し以外の見送りは避けない(tmp_path):
+    """⚠️ ゲートで落ちたレースは看板穴埋めが埋める（従来どおり）。
+
+    「安いから 7S は出さない」と「板が無いから後の波で出す」は別の意味で、
+    前者まで避けると看板レースが空のまま終わる。
+    """
+    from src.submission_skips import GATE_MEAN_PAYOUT, deferred_race_keys, record_skip
+
+    conn = _conn(tmp_path)
+    record_skip(conn, "20260825_31_04", "7S", "morning", GATE_MEAN_PAYOUT,
+                "平均払戻 15,000円 <= 20,000円")
+    assert deferred_race_keys(conn, "2026-08-25", "morning") == set()
+
+
+def test_読めなければ埋める側へ倒す():
+    """🔴 記録が引けないことを理由に看板レースを空にしない。"""
+    from src.submission_skips import deferred_race_keys
+
+    class _Broken:
+        def execute(self, *a, **k):
+            raise RuntimeError("テーブルが無い")
+
+    assert deferred_race_keys(_Broken(), "2026-08-25", "morning") == set()
+
+
+def test_看板穴埋めが持ち越しを見ている():
+    """構造で固定する。呼び出しを消すと 2026-08-25 の横取りへ戻る。"""
+    src = (ROOT / "scripts" / "submit_marquee_wt.py").read_text(encoding="utf-8")
+    assert "deferred_race_keys(conn, date, session)" in src, \
+        "看板穴埋めが持ち越しを読んでいません"
+    assert "deferred_by_rank" in src, "持ち越しレースを避けていません"
+    # 🔴 件数を可視化すること（0件が続いたとき、無いのか壊れたのか分からなくなる）
+    assert "持ち越したため埋めなかった" in src, "件数のログがありません"

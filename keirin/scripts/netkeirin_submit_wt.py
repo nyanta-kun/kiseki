@@ -291,6 +291,13 @@ _MARQUEE_COMMENT_TEMPLATE = (
 #    EV 順に替えるのは「的中率を 8pt 落として ROI は据え置き」を選ぶこと。
 #    詳細と redesign の論点: `docs/rank_priority_redesign_2026_08_25.md`
 #    再現: `scripts/exp_priority/rank_arms.py`
+#
+# 🔴 **どのランクも重複しうる**（2026-08-26）。netkeirin は1レース1商品なので、
+#    上位ランクが取ったレースは下位が降りる。これは**入稿失敗ではなく正常動作**で、
+#    `submission_skips` に `rank_conflict` として記録される（Discord には出さない）。
+#    ⚠️ 以前あった `overlap_expected` フラグは廃止した。「排他設計だから衝突は
+#       想定外」という前提が、7T1 / 7T3（7S より上位）と看板穴埋めの追加で
+#       成り立たなくなり、フラグの唯一の役目（失敗集計から外す）が消えたため。
 RANK_CONFIGS: dict[str, dict[str, Any]] = {
     # 7H2（2026-08-10新設・穴推奨「印なし2軸・高配当」）。7H1 と同じ2券種だが
     # **三連単が単一のフォーメーションで表現できない**（軸2を2着に置く5点と
@@ -362,7 +369,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    ため、導入時に enabled=false の行を明示投入すること。
     "7T1": {"file_key": "s7t1", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
-            "overlap_expected": True,        # 7C との重複は設計どおり
             "default_comment": (
                 "本日の高配当狙いをお届けします。\n\n"
                 "決勝・準決勝・特選・選抜といった、開催の節目となる一戦の中から、"
@@ -387,7 +393,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    **`7T3` の行を `enabled=false` で INSERT してからデプロイすること。**
     "7T3": {"file_key": "s7t3", "n_cars": 7, "formation_bet_7t1": True, "gate_filter": None,
             "act_type": ACT_TYPE_LONGSHOT,   # 勝負アイコン「穴狙い」
-            "overlap_expected": True,        # 7T1/7S との重複は設計どおり
             "default_comment": (
                 "本日の高配当狙いをお届けします。\n\n"
                 "開催の締めくくりとなる決勝戦のうち、当方の指数で見て"
@@ -422,12 +427,10 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             "stake_budget": RACE_BUDGET, "gate_filter": None,
             "axis_keys": ("axis1_9c", "axis2_9c"),
             "partners_key": "legs_9c",
-            "overlap_expected": True,
             "tilt_stakes": True},
     # 7C（2026-08-07新設・ベースモデル「終日の二軸」）。**必ず最下位に置くこと**。
     # 母集団が全7車レースで他ランクと排他ではないため、上位ランクが取った
-    # レースは 7C が降りる。この衝突は**想定内**なので `overlap_expected` で
-    # 失敗集計から外す（本物の失敗を埋もれさせないため）。
+    # レースは 7C が降りる。この衝突は**想定内**（＝入稿失敗ではない）。
     # ⚠️ 軸は候補JSONの `axis1_7c`/`axis2_7c`（pred_top3 上位2車）で、
     #    `axis1`/`axis2`（3ヘッド軸）とは**別物**。取り違えると別の買い目になる。
     # ⚠️ **総流しではない**。相手は `legs_7c`（3着内率15%以上・4〜5点で可変）。
@@ -437,8 +440,7 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             "partners_key": "legs_7b", "tilt_stakes": True,
             # 🔴 **7C より後ろに置いた**（2026-08-07 ユーザー判断）。重複するレースは
             #    7C が取り、7B は独自レース（3.14件/日）だけを出す。7C に譲るのは
-            #    設計どおりなので `overlap_expected` で失敗集計から外す。
-            "overlap_expected": True,
+            #    設計どおり（＝入稿失敗ではない）。
             # ⚠️ 2026-08-05 の PR#12 で 7B は「◎○一致 × **順序一致** × 準決勝」へ
             #    全面入替した。旧7Bは順序**不一致**が条件だったため、旧文面の
             #    「1番手評価が異なり」は現行条件と正反対になっていた（2026-08-06 是正）。
@@ -465,7 +467,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             #    `legs_7c` は選別用の全リスト（4〜5点）で、そのまま買うと
             #    2026-08-09 の絞り込みが効かない。取り違えると別の買い目になる。
             "partners_key": "legs_7c_buy",
-            "overlap_expected": True,
             "tilt_stakes": True,
             # 単勝率で三連単へ切り替える（2026-08-09・`RANK_7C_TRIFECTA_PW_MIN`）。
             # 候補JSONの真偽値だけを読む。**点数は三連複と同じ**（1着=軸1 /
@@ -506,7 +507,7 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
     #    なので、重なったら譲るのが正しい。譲った後に残る 5.9件/日 でも
     #    ROI 81.2%（2025 79.8% / 2026 83.6%）と水準は落ちない。
     #    根拠は strategy_wt.RANK_7M1_P3_SUM_MAX 定義部のセクションコメント。
-    # ⚠️ この衝突は**想定内**なので `overlap_expected` で失敗集計から外す。
+    # ⚠️ この衝突は**想定内**（＝入稿失敗ではない）。
     # ⚠️ `_is_enabled()` は fail-open（netkeirin_settings に行が無いと常時ON）の
     #    ため、導入時に enabled=false の行を明示投入すること。
     "7M1": {"file_key": "s7m1", "n_cars": 7, "bet_kind": BET_KIND_TRIO_AXIS2,
@@ -514,7 +515,6 @@ RANK_CONFIGS: dict[str, dict[str, Any]] = {
             # 軸は 7C と同じ pred_top3 上位2車（`axis1`/`axis2` は3ヘッド軸で別物）。
             "axis_keys": ("axis1_7c", "axis2_7c"),
             "partners_key": "legs_7m1",
-            "overlap_expected": True,
             "tilt_stakes": True,
             "default_comment": (
                 "本日の中穴狙いをお届けします。\n\n"
@@ -1972,6 +1972,23 @@ MEAN_PAYOUT_SKIP_TAG = "平均払戻ゲート"
 #     ゲートが壊れても誰も気づけない（docs/sales_kpi.md §11.6.3）。
 _mean_payout_skips: list[str] = []
 
+#: 本実行で「別ランクが同じレースを先に取った」ため降りたレース（2026-08-26）。
+#
+# 🔴 **これは入稿失敗ではない。** netkeirin は1レース1商品なので、優先順位の
+#    高いランクが取ったレースを下位が譲るのは**設計どおりの正常動作**。
+#    以前は排他設計のつもりだったランク（7S / 7H1）の衝突だけを「想定外」として
+#    `failures` に混ぜ、Discord に「入稿失敗」として出していたが、
+#    7T1 / 7T3（2026-08-24 新設・7S より上位）と看板穴埋めが同じ決勝級レースを
+#    取るようになって以降は**日常**になった。実測 2026-08-25（昼）は
+#    「全8件が入稿失敗」と通知されたが、8件すべてが朝に上位ランクまたは
+#    看板穴埋めが**意図どおり入稿済み**のレースだった。
+#
+# 🔴 **Discord へは出さない**（2026-08-26 ユーザー指示）。昼・夕の回は朝と同じ
+#    候補ファイルを読み直して**再判定する**ので、朝に決着したレースが毎回ここへ
+#    並ぶ。可視性は失わない——1件ずつログに出し、`keirin.submission_skips` に
+#    `rank_conflict` として残るので Web の確認画面から追える。
+_rank_conflict_skips: list[str] = []
+
 
 def _race_confidence_sum(race_key: str) -> float | None:
     """そのレースの信頼度（**較正後**の上位2車3着内率の合計）。読めなければ None。
@@ -2132,16 +2149,19 @@ def _process_rank(
     is_formation = bool(cfg.get("formation_bet"))
     is_7t1 = bool(cfg.get("formation_bet_7t1"))
 
-    # 衝突の扱いはランクによって意味が違う。**排他設計のランク**（7SS/7S/7A/7B/9S/
-    # 9A/7H1）で衝突が起きたのは想定外なので失敗として可視化する。一方 7C のような
-    # **重複前提のランク**（`overlap_expected`）では衝突は日常（実測 2.4件/日）で、
-    # 失敗に混ぜるとサマリーが常時赤くなり本物の失敗が埋もれる。
-    overlap_expected = bool(cfg.get("overlap_expected"))
+    # 🔴 **衝突は「失敗」ではない**（2026-08-26 にユーザー指示で反転）。
+    #    1レース1商品なので、上位ランクが取ったレースを下位が譲るのは正常動作。
+    #    旧実装は `overlap_expected` を持たないランク（7S / 7H1）の衝突を
+    #    `failures` へ入れて Discord に「入稿失敗」として出していたが、
+    #    7T1 / 7T3 と看板穴埋めが上位に入って以降は日常になり、昼・夕の回は
+    #    **朝に決着したレースを再判定して毎回同じ顔ぶれが並ぶ**だけだった。
+    #    記録は `_skip()`（`submission_skips`）とログに残す。詳細は
+    #    `_rank_conflict_skips` の定義部。
+    #    ⚠️ ここに print を足さないこと。ログと記録は `_skip()` が**対で**出す
+    #       （`test_submission_skips.py` が AST でその対応を固定している）。
     for cand in conflicts:
-        msg = (f"{cand.get('venue_name', '?')}{cand.get('race_no', '?')}R({rank_key}): "
-               f"別ランクが同じレースを入稿済みのためスキップ")
-        if not overlap_expected:
-            failures.append(msg)
+        _rank_conflict_skips.append(
+            f"{cand.get('venue_name', '?')}{cand.get('race_no', '?')}R({rank_key})")
         _skip(str(cand.get("race_key", "")), rank_key, session, SKIP_RANK_CONFLICT,
               "別ランクが同じレースを入稿済みのためスキップ",
               cand.get("venue_name", "?"), cand.get("race_no", "?"))
@@ -2289,7 +2309,13 @@ def _process_rank(
                                      partners, equal_stake_trifecta=is_7t1):
                 if deferred_races is not None:
                     deferred_races.add(base_key)
-                reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"
+                # ⚠️ 7T1 / 7T3 は三連単でも**均等配分**なので板を見ない
+                #    （`_can_pull_forward` の `equal_stake_trifecta`）。ここへ
+                #    落ちたのは予測オッズを作れなかったから。理由を券種だけで
+                #    決めると「三連単は板が要る」と嘘のログが出る（実測で
+                #    7T1 の持ち越し4件すべてがその誤表示だった）。
+                reason = ("三連単は板が要る"
+                          if is_trifecta and not is_7t1 else "予測オッズを作れない")
                 _skip(race_key, rank_key, session, SKIP_DEFER_WAVE,
                       f"{reason} → {wave_jp}の回で入稿", venue_name, race_no,
                       tag="前倒し見送り")
@@ -2844,6 +2870,9 @@ def main() -> None:
     all_failures: list[str] = []
     # 平均払戻ゲートの見送りを本実行ぶんだけ数える（§11.6.3 の可視性の手当て）。
     _mean_payout_skips.clear()
+    # 衝突（上位ランクが先に取った）も本実行ぶんだけ数える。Discord には出さず、
+    # 実行サマリーとログにだけ残す（`_rank_conflict_skips` の定義部）。
+    _rank_conflict_skips.clear()
     # 同一実行内で入稿済みのレース。netkeirin は1レース1商品なので、後続ランクが
     # 同じレースへ入稿すると先の商品を上書きしてしまう（_process_rank 参照）。
     claimed_races: set[str] = set()
@@ -2921,7 +2950,7 @@ def main() -> None:
     print(
         f"[netkeirin_submit] {target_date} {session}: 完了（成功{total}件・"
         f"失敗{len(all_failures)}件・{MEAN_PAYOUT_SKIP_TAG}で見送り"
-        f"{len(_mean_payout_skips)}件）",
+        f"{len(_mean_payout_skips)}件・別ランクへ譲り{len(_rank_conflict_skips)}件）",
         flush=True,
     )
 

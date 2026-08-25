@@ -70,6 +70,7 @@ from src.database import get_connection  # noqa: E402
 from src.marquee import marquee_race_nos
 from src.meeting_wave import WAVE_LABEL_JP, wave_of_first_hour, waves_due_by  # noqa: E402
 from src.odds_prediction import predicted_trio_board  # noqa: E402
+from src.submission_skips import deferred_race_keys  # noqa: E402
 from src.submit_window import is_closed  # noqa: E402
 # 🔴 確認画面の URL は入稿側の定義を借りる（二重管理にしない）
 from scripts.netkeirin_submit_wt import (  # noqa: E402
@@ -444,6 +445,11 @@ def main() -> int:
         #    `tests/test_marquee_fill_dedup_parity.py` が機械的に突き合わせている。
         submitted = {str(dict(r)["race_key"]).split("#")[0] for r in conn.execute(
             "SELECT race_key FROM netkeirin_submissions")}
+        # 🔴 **この回のランク入稿が後の波へ持ち越したレースは埋めない**
+        #    （2026-08-26・ユーザー判断）。詳細は `deferred_race_keys` の
+        #    docstring。ランク入稿は直前に同じ波で走っているので、ここを読む
+        #    時点で記録は揃っている（`wave_submit_wt.sh` の順序）。
+        deferred_by_rank = deferred_race_keys(conn, date, session)
 
     if not races:
         print(f"[marquee] {date}: レースが無い", flush=True)
@@ -459,6 +465,8 @@ def main() -> int:
     allidx = _load_allindex(date)
     # 予測オッズが作れず自分の波へ回したレース（欠車が主因・下記コメント）
     deferred_no_odds: list[str] = []
+    # ランク入稿が自分の波へ持ち越したので埋めなかったレース（2026-08-26）
+    deferred_by_rank_hits: list[str] = []
     targets: list[dict] = []
     for cup, rs in by_cup.items():
         want = marquee_race_nos(rs)
@@ -473,6 +481,17 @@ def main() -> int:
             if int(r["race_no"]) not in want:
                 continue
             if r["race_key"] in submitted:
+                continue
+            # 上位ランクではなく**下位ランク**が持ち越した場合も埋めない。
+            # 持ち越しは「この回では出さない」であって「要らない」ではないので、
+            # ここで埋めるとそのランクは自分の波で永久に取れなくなる。
+            # レースは失われない——自分の波でランクが出すか、そこで落ちれば
+            # その回の看板穴埋めが埋める（持ち越しは自分の波では起きない）。
+            if r["race_key"] in deferred_by_rank:
+                deferred_by_rank_hits.append(f"{r['venue_id']}{r['race_no']}R")
+                print(f"[marquee] {r['race_key']}: ランクが"
+                      f"{WAVE_LABEL_JP.get(wave, wave)}の回へ持ち越したので埋めない",
+                      flush=True)
                 continue
             # 締切（発走15分前）を過ぎたレースへは出さない。判定の正本は
             # `src/submit_window`（kiseki 側の keirin_submission_window.py）。
@@ -499,6 +518,14 @@ def main() -> int:
         print(f"[marquee] {date}: 予測オッズを作れず自分の波へ回した "
               f"{len(deferred_no_odds)}件（{' '.join(deferred_no_odds)}）"
               f" — 欠車で車数が 7/9 以外になったレースが主因", flush=True)
+
+    if deferred_by_rank_hits:
+        # 🔴 **件数を必ず可視化する。** 0件が続くのは「持ち越しが無い」か
+        #    「読み出しが壊れて空集合を返している」かのどちらかで、
+        #    ログが無いと後者に気づけない。
+        print(f"[marquee] {date}: ランクが自分の波へ持ち越したため埋めなかった "
+              f"{len(deferred_by_rank_hits)}件"
+              f"（{' '.join(deferred_by_rank_hits)}）", flush=True)
 
     if not targets:
         print(f"[marquee] {date}: 埋める看板レースは無い", flush=True)
