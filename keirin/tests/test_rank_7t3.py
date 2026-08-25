@@ -230,7 +230,9 @@ def test_netkeirin_config_and_priority():
     # 🔴 1点=1行。5点の1着が1車に揃うのは 7.0% しかなく、
     #    1着1車固定のフォーメーションでは 93% のレースを表現できない。
     assert cfg["formation_bet_7t1"] is True
-    assert cfg["overlap_expected"] is True
+    # ⚠️ `overlap_expected` は 2026-08-26 に廃止（衝突は失敗ではないので
+    #    フラグで失敗集計から外す必要がなくなった）。復活させないこと。
+    assert "overlap_expected" not in cfg
     assert RANK_ORDER.index("7T3") == RANK_ORDER.index("7T1") + 1
     assert RANK_ORDER.index("7T3") < RANK_ORDER.index("7S")
 

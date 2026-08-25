@@ -270,7 +270,9 @@ def test_netkeirin_7c_uses_budget_and_own_axis_keys():
     assert cfg["partners_key"] == "legs_7c_buy"
     assert cfg["stake_budget"] == sw.RACE_BUDGET
     assert "stake_per_line" not in cfg      # 固定額と併記すると取り違える
-    assert cfg["overlap_expected"] is True  # 衝突は想定内＝失敗集計に混ぜない
+    # ⚠️ `overlap_expected` は 2026-08-26 に廃止。衝突は**どのランクでも**
+    #    入稿失敗ではなくなり、フラグで失敗集計から外す必要が消えた。
+    assert "overlap_expected" not in cfg
     # タイトル・文面は 7A と同じ既定テンプレート（ユーザー指示 2026-08-07）
     assert "default_comment" not in cfg
 
