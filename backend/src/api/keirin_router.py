@@ -2642,6 +2642,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
         SELECT s.race_key, s.rank_key, s.origin, s.status, s.session, s.venue_name, s.race_no,
                s.axis1, s.axis2, s.title, s.comment, s.bet_detail, s.is_confident, s.confident_ev,
                s.netkeirin_race_id, s.proposed_at, s.approved_at, s.deleted_at,
+               s.cancel_reason,
                r.start_at, r.grade, r.race_type, r.n_entries, r.cup_grade
         FROM keirin.netkeirin_submissions s
         LEFT JOIN keirin.wt_races r ON r.race_key = s.race_key
@@ -2763,6 +2764,9 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             "proposed_at": r["proposed_at"].isoformat() if r["proposed_at"] else None,
             "approved_at": r["approved_at"].isoformat() if r["approved_at"] else None,
             "deleted_at": r["deleted_at"].isoformat() if r["deleted_at"] else None,
+            # なぜ取り消したか（2026-08-25）。画面の「取消」バッジに添える。
+            # 2026-08-25 より前の取消は記録が無いので null。
+            "cancel_reason": r["cancel_reason"] or None,
             "entries": [
                 {"frame_no": e["frame_no"], "name": e["name"],
                  "race_point": float(e["race_point"]) if e["race_point"] is not None else None,

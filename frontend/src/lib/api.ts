@@ -1821,6 +1821,9 @@ export interface KeirinProposal {
   proposed_at: string | null;
   approved_at: string | null;
   deleted_at: string | null;
+  /** なぜ取り消したか（画面のボタンごとの固定文言）。
+   *  2026-08-25 より前の取消は記録が無いので null。 */
+  cancel_reason?: string | null;
   entries: KeirinProposalEntry[];
 }
 
