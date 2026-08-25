@@ -1,5 +1,5 @@
 /**
- * レース信頼度バッジ（2026-08-25 新設）。
+ * 軸信頼バッジ（2026-08-25 新設）。
  *
  * 100% ＝ 上位2車の3着内率の合計が 2.00（軸2車がどちらも確実に3着以内）。
  * 値の算出はサーバ側で完結しており、判定の正本は
@@ -51,7 +51,8 @@ export default function RaceConfidenceBadge({
       <span
         className="relative inline-flex shrink-0 items-center overflow-hidden rounded border border-gray-300 bg-gray-100 px-1.5 py-0.5 dark:border-gray-600 dark:bg-gray-700"
         title={
-          "レース信頼度。上位2車の3着内率の合計を 2.00 = 100% として表したもの。" +
+          "軸信頼。上位2車の3着内率の合計を 2.00 = 100% として表したもの" +
+          "（＝軸2車がそろって3着以内に入る確からしさ）。" +
           "入稿ランクの採否ゲートと同じ量（9C は 65%・7C は 72% が下限）。"
         }
       >
@@ -62,14 +63,14 @@ export default function RaceConfidenceBadge({
         />
         <span className="relative text-xs font-bold tabular-nums text-gray-800 dark:text-gray-100">
           {compact ? null : (
-            <span className="mr-0.5 font-normal opacity-70">信頼度</span>
+            <span className="mr-0.5 font-normal opacity-70">軸信頼</span>
           )}
           {v}%
         </span>
       </span>
       {hitCount != null && (
         <span
-          className={`text-xs font-bold ${
+          className={`text-sm font-bold leading-none ${
             hitCount >= 2
               ? "text-emerald-600 dark:text-emerald-400"
               : hitCount === 1
@@ -77,7 +78,7 @@ export default function RaceConfidenceBadge({
                 : "text-rose-600 dark:text-rose-400"
           }`}
           title={
-            `信頼度が見ている2車のうち ${hitCount}車が3着以内に入りました` +
+            `軸信頼が見ている2車のうち ${hitCount}車が3着以内に入りました` +
             "（買い目の的中とは別）"
           }
         >

@@ -48,6 +48,19 @@ import {
 
 import CommentBody from "./CommentBody";
 import RaceConfidenceBadge from "@/components/RaceConfidenceBadge";
+/**
+ * 期待値（見込み回収率）の色。**1.00 が収支トントン**なのに素の数字だけだと
+ * 高いのか低いのか読めないため、基準との位置だけ色で添える（2026-08-25）。
+ *
+ * 🔴 **色で買い煽りをしない。** この値は購入判断に使えない（競輪の市場は効率的で
+ *    モデル由来の期待値による選別は繰り返し否定されている・`_expected_value` の
+ *    docstring 参照）。1.00 未満をグレーに落とす程度に留め、強調はしない。
+ */
+function evTone(v: number | null | undefined): string {
+  if (v == null) return "";
+  if (v >= 1.0) return "font-semibold text-emerald-700 dark:text-emerald-400";
+  return "text-gray-600 dark:text-gray-300";
+}
 
 const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆" };
 
@@ -467,29 +480,12 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         </p>
       )}
 
+      {/* 🔴 並び順はユーザー指定（2026-08-25）:
+          **投資と結果を対**にし、**最低払戻・最高払戻・期待値・軸信頼を揃える**。
+          スマホ（2列）では 投資|結果 / 最低|最高 / 期待値|軸信頼 と並ぶ。 */}
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
         <div>
           <span className="text-gray-500">投資</span> {yen(d?.total)}
-        </div>
-        <div>
-          <span className="text-gray-500">最低払戻</span>{" "}
-          <span className={p.gami_risk ? "font-semibold text-red-600 dark:text-red-400" : ""}>
-            {yen(p.min_payout)}
-          </span>
-          {/* 🔴 `min_payout` は入稿時点の板由来で楽観的（実測 中央 確定/表示 0.860・
-              45%が0.8倍未満）。下振れ側が出せるなら必ず併記する。これを出さないと
-              「当たればこの額」と読まれ、確定後に下がって初めて気づくことになる。 */}
-          {p.min_payout_low !== null && (
-            <span
-              className="ml-1 text-[10px] text-amber-600 dark:text-amber-400"
-              title="確定までにオッズが下振れした場合の払戻（下側25%分位）。承認判断はこちらを見てください。"
-            >
-              下振れ {yen(p.min_payout_low)}
-            </span>
-          )}
-        </div>
-        <div>
-          <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
         {/* 🔴 確定成績。**未確定は「—」**で 0円と区別する（発走前に「払戻0円」と
             出ると外れたように見える）。ガミ（当たったが払戻<投資）も明示する。
@@ -534,8 +530,26 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             </span>
           )}
         </div>
-        {/* レース信頼度。畳んだ状態でも見える位置に置く（2026-08-25 ユーザー指定）。 */}
-        <RaceConfidenceBadge pct={p.confidence_pct} hitCount={p.confidence_hit_count} />
+        <div>
+          <span className="text-gray-500">最低払戻</span>{" "}
+          <span className={p.gami_risk ? "font-semibold text-red-600 dark:text-red-400" : ""}>
+            {yen(p.min_payout)}
+          </span>
+          {/* 🔴 `min_payout` は入稿時点の板由来で楽観的（実測 中央 確定/表示 0.860・
+              45%が0.8倍未満）。下振れ側が出せるなら必ず併記する。これを出さないと
+              「当たればこの額」と読まれ、確定後に下がって初めて気づくことになる。 */}
+          {p.min_payout_low !== null && (
+            <span
+              className="ml-1 text-[10px] text-amber-600 dark:text-amber-400"
+              title="確定までにオッズが下振れした場合の払戻（下側25%分位）。承認判断はこちらを見てください。"
+            >
+              下振れ {yen(p.min_payout_low)}
+            </span>
+          )}
+        </div>
+        <div>
+          <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
+        </div>
         <div>
           {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
               統一したもの）。選定前（confident_ev が未算出）のときだけ
@@ -543,11 +557,28 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
               ⚠️ 2026-08-21 から**出どころのラベルは出さない**（ユーザー判断）。
                  入稿の配分・足切り・表示オッズが全て予測オッズに揃ったため、
                  「予測かどうか」は画面で区別する意味が無くなった。 */}
-          <span className="text-gray-500">期待値</span>{" "}
-          {p.confident_ev !== null
-            ? p.confident_ev.toFixed(2)
-            : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
+          <span
+            className="text-gray-500"
+            title={
+              "見込み回収率（1.00 で収支トントン）。Σ(その目の確率 × 賭け金 × オッズ) ÷ 投資。" +
+              "確率は各車の3着内率の積をレース内で正規化したもの（厳密な同時確率ではなく、" +
+              "ライン内の連動を織り込んでいない）。" +
+              "🔴 購入判断の根拠には使わないこと（異常値の検知用）。"
+            }
+          >
+            期待値
+          </span>{" "}
+          <span className={evTone(p.confident_ev ?? p.expected_value)}>
+            {p.confident_ev !== null
+              ? p.confident_ev.toFixed(2)
+              : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
+          </span>
         </div>
+        {/* 軸信頼。畳んだ状態でも見える位置に置く（2026-08-25 ユーザー指定）。
+            🔴 **最低払戻・最高払戻・期待値と同じ並びに置く**（2026-08-25 ユーザー指定）。
+               「いくら賭けていくら返るか」の系列と、「どれくらい確からしいか」の
+               系列が離れていると、スマホの2列表示で対応が読めない。 */}
+        <RaceConfidenceBadge pct={p.confidence_pct} hitCount={p.confidence_hit_count} />
         {/* 落車リスク（レースの波乱度の一部）。
             🔴 **大々的に出さない**（2026-08-21 ユーザー判断）。落車は常に存在する
                リスクで、警告として出すと毎回目に入るだけで判断を助けない。
@@ -707,6 +738,7 @@ function DaySummary({ s, caption }: {
     </table>
   );
 }
+
 
 export default function ReviewClient({ date, items, nProposed, nUnpublished = 0, summary,
                                       summaryCancelled }: {
