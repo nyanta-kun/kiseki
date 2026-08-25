@@ -47,20 +47,8 @@ import {
 } from "../actions";
 
 import CommentBody from "./CommentBody";
+import ExpectedValueBadge from "@/components/ExpectedValueBadge";
 import RaceConfidenceBadge from "@/components/RaceConfidenceBadge";
-/**
- * 期待値（見込み回収率）の色。**1.00 が収支トントン**なのに素の数字だけだと
- * 高いのか低いのか読めないため、基準との位置だけ色で添える（2026-08-25）。
- *
- * 🔴 **色で買い煽りをしない。** この値は購入判断に使えない（競輪の市場は効率的で
- *    モデル由来の期待値による選別は繰り返し否定されている・`_expected_value` の
- *    docstring 参照）。1.00 未満をグレーに落とす程度に留め、強調はしない。
- */
-function evTone(v: number | null | undefined): string {
-  if (v == null) return "";
-  if (v >= 1.0) return "font-semibold text-emerald-700 dark:text-emerald-400";
-  return "text-gray-600 dark:text-gray-300";
-}
 
 const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆" };
 
@@ -338,8 +326,13 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   //    「もう操作しない」という意味であって「見なくていい」ではない——
   //    落とした判断が正しかったかは確定後に確認する。
   //    → 地色をグレーにし文字を淡くするだけにして、内容は読めるまま残す。
+  // 🔴 2026-08-25: 地色をもう一段濃くした（ユーザー要望）。**ただし文字は
+  //    逆にはっきりさせる**（gray-500 → gray-700 / dark は gray-400 → gray-300）。
+  //    「もう操作しない」ことを地色で示すだけで、**読めなくしてはいけない**
+  //    （落とした判断が正しかったかを確定後に確認する場所なので）。
+  //    コントラスト比は light 8.0:1 / dark 10.4:1 で WCAG AA を満たす。
   const cardCls = p.status === "deleted"
-    ? "rounded border border-gray-200 bg-gray-100 p-3 text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400"
+    ? "rounded border border-gray-300 bg-gray-200 p-3 text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
     : p.is_confident
       ? "rounded border-2 border-yellow-400 bg-yellow-50 p-3 dark:border-yellow-500 dark:bg-yellow-950/30"
       : "rounded border border-gray-200 p-3 dark:border-gray-700";
@@ -514,7 +507,12 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
               className="inline-flex items-center rounded border border-dashed border-gray-400 px-1.5 py-0.5 text-xs font-semibold text-gray-600 dark:border-gray-500 dark:text-gray-300"
               title="このレースは売っていません。買い目が当たっていた場合の払戻（参考値）で、回収率には入りません。"
             >
-              参考 買っていれば {yen(hypothetical.payout)}
+              {/* 🔴 取消カードは見出しに「取消」バッジが出ているので
+                  「参考 買っていれば」は重複（2026-08-25 ユーザー指定）。金額だけ出す。
+                  ⚠️ **破線の枠は外さない。** 実績と同じ見た目にすると回収率に
+                     入っている数字だと読まれる。 */}
+              {p.status === "deleted" ? "" : "参考 買っていれば "}
+              {yen(hypothetical.payout)}
             </span>
           ) : p.result == null && (p.winning_combos ?? []).length > 0 ? (
             <span
@@ -564,29 +562,23 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         <div>
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
+        {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
+            統一したもの）。選定前（confident_ev が未算出）のときだけ
+            `expected_value` を出す。
+            ⚠️ 2026-08-21 から**出どころのラベルは出さない**（ユーザー判断）。
+               入稿の配分・足切り・表示オッズが全て予測オッズに揃ったため、
+               「予測かどうか」は画面で区別する意味が無くなった。
+            🔴 2026-08-25: **軸信頼と同じ棒グラフ**にした（ユーザー指定）。
+               満尺 2.00・1.00 未満は赤・1.00 以上は青。判断の根拠に使える値では
+               ないので、色を付けても煽らないこと（`ExpectedValueBadge` 参照）。 */}
         <div>
-          {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
-              統一したもの）。選定前（confident_ev が未算出）のときだけ
-              `expected_value` を出す。
-              ⚠️ 2026-08-21 から**出どころのラベルは出さない**（ユーザー判断）。
-                 入稿の配分・足切り・表示オッズが全て予測オッズに揃ったため、
-                 「予測かどうか」は画面で区別する意味が無くなった。 */}
-          <span
-            className="text-gray-500"
-            title={
-              "見込み回収率（1.00 で収支トントン）。Σ(その目の確率 × 賭け金 × オッズ) ÷ 投資。" +
-              "確率は各車の3着内率の積をレース内で正規化したもの（厳密な同時確率ではなく、" +
-              "ライン内の連動を織り込んでいない）。" +
-              "🔴 購入判断の根拠には使わないこと（異常値の検知用）。"
-            }
-          >
-            期待値
-          </span>{" "}
-          <span className={evTone(p.confident_ev ?? p.expected_value)}>
-            {p.confident_ev !== null
-              ? p.confident_ev.toFixed(2)
-              : p.expected_value === null ? "—" : p.expected_value.toFixed(2)}
-          </span>
+          {/* ⚠️ 算出できないとき（三連単・オッズ欠け）は**セルを空にしない**。
+              空だと「0 に近い」と読まれる。 */}
+          {(p.confident_ev ?? p.expected_value) == null ? (
+            <span className="text-gray-500">期待値 —</span>
+          ) : (
+            <ExpectedValueBadge ev={p.confident_ev ?? p.expected_value} />
+          )}
         </div>
         {/* 軸信頼。畳んだ状態でも見える位置に置く（2026-08-25 ユーザー指定）。
             🔴 **最低払戻・最高払戻・期待値と同じ並びに置く**（2026-08-25 ユーザー指定）。
