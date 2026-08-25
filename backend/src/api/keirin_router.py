@@ -12,7 +12,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import date as Date
 from typing import Any
@@ -48,6 +48,7 @@ from ..services.keirin_sales_analysis import (
     build_summary,
 )
 from ..services.keirin_sales_report import REVENUE_RATE
+from ..services.keirin_settlement import Settlement, payout_per_100, settle
 from ..services.keirin_submission_window import SUBMIT_DEADLINE_SEC, is_closed
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
@@ -186,6 +187,66 @@ async def _calc_synth_odds(
     if not matched:
         return None
 
+    return round(1.0 / sum(1.0 / o for o in matched), 2)
+
+
+async def _calc_synth_odds_from_lines(
+    db: AsyncSession, race_key: str, lines: Sequence[Mapping[str, Any]],
+) -> float | None:
+    """**入稿した買い目そのもの**の合成オッズ（= 1 / Σ(1/odds)）。
+
+    `_calc_synth_odds` は `picks_history.pred_combo`（ランクの候補）用。売った商品は
+    候補と買い目が違うことがある（看板の穴埋めで軸を組み替える等）ので、
+    合成オッズも売ったほうから出さないと**買い目と数字がちぐはぐになる**。
+
+    ⚠️ `wt_odds_snapshot.combination` は収集経路で表記が混在する
+       （trio が `1=2=6` の回と `1-2-6` の回がある）ので、三連複は両方を候補にする。
+    """
+    by_type: dict[str, list[list[str]]] = {}
+    for x in lines:
+        kind = str(x.get("bet_type") or "")
+        if kind == "3連複":
+            bt, ordered = "trio", False
+        elif kind == "3連単":
+            bt, ordered = "trifecta", True
+        else:
+            return None                      # 未知の券種は黙って混ぜない
+        try:
+            cars = [int(c) for c in re.split(r"[-=]", str(x.get("combo"))) if c != ""]
+        except ValueError:
+            return None
+        if len(cars) != 3:
+            return None
+        if ordered:
+            by_type.setdefault(bt, []).append(["-".join(map(str, cars))])
+        else:
+            joined = sorted(cars)
+            by_type.setdefault(bt, []).append(
+                ["-".join(map(str, joined)), "=".join(map(str, joined))])
+    matched: list[float] = []
+    for bt, legs in by_type.items():
+        combos = [k for leg in legs for k in leg]
+        rows = (await db.execute(
+            text("""
+                SELECT combination, odds_value
+                FROM keirin.wt_odds_snapshot
+                WHERE race_key = :rk
+                  AND bet_type = :bt
+                  AND combination = ANY(:combos)
+                  AND snapshot_at = (
+                    SELECT MAX(snapshot_at) FROM keirin.wt_odds_snapshot
+                    WHERE race_key = :rk AND bet_type = :bt
+                  )
+            """), {"rk": race_key, "bt": bt, "combos": combos},
+        )).mappings().all()
+        odds_map = {x["combination"]: x["odds_value"] for x in rows if x["odds_value"]}
+        for leg in legs:
+            for key in leg:                  # 二重計上を避けて1点につき1つだけ採る
+                if key in odds_map:
+                    matched.append(float(odds_map[key]))
+                    break
+    if not matched:
+        return None
     return round(1.0 / sum(1.0 / o for o in matched), 2)
 
 
@@ -367,16 +428,87 @@ _CANDIDATE_RANK = "7PLUS_CAND"
 _VALID_PICK_RANKS = "(" + ", ".join(f"'{r}'" for r in (*_PAPER_RANK_LABELS, _CANDIDATE_RANK)) + ")"
 
 
-def _finish_top3_frames(entries: Sequence[Any]) -> list[int] | None:
-    """確定した1〜3着の車番を着順で返す。未確定・欠けているなら None。"""
-    top3 = sorted(
-        (e for e in entries
-         if e["finish_order"] is not None and 1 <= e["finish_order"] <= 3),
-        key=lambda e: e["finish_order"],
-    )
-    if len(top3) != 3:
-        return None
-    return [int(e["frame_no"]) for e in top3]
+def _finishers(entries: Iterable[Any]) -> list[tuple[int, int]]:
+    """`(着順, 車番)` の並び（3着以内のみ）。
+
+    🔴 **「ちょうど3件」に絞ってはいけない。** 同着があると4件以上になる。
+       旧実装（`_finish_top3_frames`）は3件でなければ None を返していたため、
+       同着のレースが**永久に「未確定」**のまま集計からも落ちていた
+       （2026-08-21 立川11R の 7S は 10,000円の外れが回収率から消えていた）。
+       当たり目の展開は `keirin_result_top3.winning_combo_labels` が担う。
+    """
+    out: list[tuple[int, int]] = []
+    for e in entries or []:
+        fo = e["finish_order"]
+        if fo is None or not 1 <= int(fo) <= 3:
+            continue
+        out.append((int(fo), int(e["frame_no"])))
+    return sorted(out)
+
+
+def _race_payout_display(payouts: Mapping[str, int], won: Sequence[str]) -> tuple[int, int]:
+    """一覧に出す「複¥… 単¥…」（そのレースの確定配当）。
+
+    ⚠️ 同着では当たり目が複数あり配当も別々だが、この行は**相場の目安**なので
+       先に見つかったものを1つずつ出す。採点（`settle`）は当たり目ごとに正しく
+       払戻を積むので、こちらの表示とは独立している。
+    """
+    trio = next((payouts[c] for c in won if "=" in c and c in payouts), 0)
+    tri = next((payouts[c] for c in won if "-" in c and c in payouts), 0)
+    return trio, tri
+
+
+async def _fetch_finishers(
+    db: AsyncSession, race_keys: Sequence[str],
+) -> dict[str, list[tuple[int, int]]]:
+    """race_key → `(着順, 車番)`（3着以内・同着があれば4件以上）。"""
+    if not race_keys:
+        return {}
+    rows: dict[str, list[Any]] = {}
+    for e in (await db.execute(
+        text("""
+            SELECT race_key, frame_no, finish_order FROM keirin.wt_entries
+            WHERE race_key = ANY(:keys) AND finish_order BETWEEN 1 AND 3
+        """), {"keys": list(race_keys)},
+    )).mappings().all():
+        rows.setdefault(e["race_key"], []).append(e)
+    return {rk: _finishers(v) for rk, v in rows.items()}
+
+
+async def _fetch_winning_payouts(
+    db: AsyncSession, won_by_race: Mapping[str, Sequence[str]],
+) -> dict[str, dict[str, int]]:
+    """race_key → `{当たり目の表記: 100円あたりの確定払戻}`。
+
+    ⚠️ `wt_odds.combination` は**券種を問わず `-` 区切り**（三連複は昇順）。
+       買い目・当たり目の表記（三連複 `1=2=4`）とは別なので変換して引く。
+    ⚠️ 同着では当たり目が増える（三連複2通り・三連単はさらに多い）ので
+       レースあたり2行決め打ちの引き方をしてはいけない。
+    """
+    wanted: list[dict[str, str]] = []
+    for rk, labels in won_by_race.items():
+        for label in labels:
+            ordered = "-" in label
+            cars = label.split("-" if ordered else "=")
+            wanted.append({"rk": rk, "bt": "trifecta" if ordered else "trio",
+                           "cb": "-".join(cars), "lb": label})
+    if not wanted:
+        return {}
+    rows = (await db.execute(
+        text("""
+            SELECT w.rk AS race_key, w.lb AS label, o.odds_value
+            FROM jsonb_to_recordset(CAST(:w AS jsonb))
+                 AS w(rk text, bt text, cb text, lb text)
+            JOIN keirin.wt_odds o
+              ON o.race_key = w.rk AND o.bet_type = w.bt AND o.combination = w.cb
+        """), {"w": json.dumps(wanted)},
+    )).mappings().all()
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        pay = payout_per_100(r["odds_value"])
+        if pay:
+            out.setdefault(r["race_key"], {})[r["label"]] = pay
+    return out
 
 
 async def _fetch_settled_submissions(
@@ -431,12 +563,12 @@ async def _fetch_settled_submissions(
             WHERE wr.race_date BETWEEN :from_date AND :to_date
               AND {deleted_cond}
               {rank_cond}
-              -- 発走から90分。picks_history 側の集計条件と同一にする
-              AND (
-                wr.status = 3
-                OR (wr.start_at IS NOT NULL
-                    AND wr.start_at::BIGINT + 5400 < EXTRACT(EPOCH FROM NOW()))
-              )
+              -- 🔴 **「発走から90分」「status=3」で絞らない**（2026-08-25 撤去）。
+              --    どちらも「着順と配当が DB に入った」ことを意味しないうえ、
+              --    確定が早いレースを 90分間ただ「未確定」にしていた
+              --    （その間、確認画面は売った商品に「参考 買っていれば」という
+              --     売っていないレース用の文言を出していた）。採点できるかは
+              --    `settle()` の `settled` が決めるので、ここで先に切る必要はない。
               {missing_cond}
         """),
         params,
@@ -445,74 +577,36 @@ async def _fetch_settled_submissions(
         return [], 0
 
     keys = sorted({s["race_key"] for s in subs})
-    # 確定着順（1〜3着）をまとめて引く
-    finishes: dict[str, list] = {}
-    for e in (await db.execute(
-        text("""
-            SELECT race_key, frame_no, finish_order FROM keirin.wt_entries
-            WHERE race_key = ANY(:keys) AND finish_order BETWEEN 1 AND 3
-        """), {"keys": keys},
-    )).mappings().all():
-        finishes.setdefault(e["race_key"], []).append(dict(e))
-
-    # 当たり目のオッズをまとめて引く（レースごとに1〜2行）
-    odds_by_race: dict[str, dict[str, int]] = {}
-    wanted: list[dict[str, str]] = []
-    win_frames: dict[str, list[int]] = {}
-    for rk in keys:
-        frames = _finish_top3_frames(finishes.get(rk, []))
-        if not frames:
-            continue
-        win_frames[rk] = frames
-        wanted.append({"rk": rk, "tc": "-".join(map(str, sorted(frames))),
-                       "fc": "-".join(map(str, frames))})
-    if wanted:
-        for o in (await db.execute(
-            text("""
-                SELECT race_key, bet_type, odds_value FROM keirin.wt_odds
-                WHERE (race_key, bet_type, combination) IN (
-                    SELECT w.rk, t.bt, CASE t.bt WHEN 'trio' THEN w.tc ELSE w.fc END
-                    FROM jsonb_to_recordset(CAST(:w AS jsonb))
-                         AS w(rk text, tc text, fc text),
-                         (VALUES ('trio'), ('trifecta')) AS t(bt)
-                )
-            """), {"w": json.dumps(wanted)},
-        )).mappings().all():
-            if not o["odds_value"]:
-                continue
-            pay = int(round(float(o["odds_value"]) * 100)) // 10 * 10
-            odds_by_race.setdefault(o["race_key"], {})[o["bet_type"]] = pay
+    finishers = await _fetch_finishers(db, keys)
+    won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers.items()}
+    payouts = await _fetch_winning_payouts(db, won_by_race)
 
     out: list[dict[str, Any]] = []
     n_missing = 0
     for s in subs:
         rk = s["race_key"]
-        pays = odds_by_race.get(rk, {})
-        res = _submitted_pick_result(
-            _parse_bet_detail(s["bet_detail"]), win_frames.get(rk),
-            pays.get("trio", 0), pays.get("trifecta", 0),
-        )
-        if res["bet_amount"] <= 0:
+        res = settle(_parse_bet_detail(s["bet_detail"]),
+                     finishers.get(rk), payouts.get(rk))
+        if res.bet <= 0:
             # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
             n_missing += 1
             continue
-        # 🔴 **採点が終わっていない行は返さない**（2026-08-16）。上の WHERE は
-        #    `status=3` か「発走+90分」で対象を決めているが、そのどちらも
-        #    「着順と配当が DB に入った」ことを意味しない。返してしまうと
+        # 🔴 **採点が終わっていない行は返さない**（2026-08-16）。着順が揃っていない、
+        #    あるいは当たっているのに確定配当が引けない状態で返すと
         #    `hit=False` / `payout=0` の行になり、**当たっているレースが
         #    「✗ 不的中」かつ払戻0円として集計**される（実際に発生した）。
         #    落とせば `/review` は「未確定」に、成績側は件数から外れるだけで、
         #    着順・配当が入った次の描画で自然に現れる。
-        if not res["settled"]:
+        if not res.settled:
             continue
         out.append({
             "race_key": rk, "rank_key": s["rank_key"], "origin": s["origin"],
             "race_date": str(s["race_date"]),
-            "bet": res["bet_amount"], "payout": res["payout"], "hit": bool(res["hit"]),
+            "bet": res.bet, "payout": res.payout, "hit": res.hit,
             # 🔴 **netkeirin の表示的中率はこちら**（ガミ＝払戻<賭け金 を不的中と数える）。
             #    素の的中率だけを見ると点数を増やしたときに誤読する。
-            "net_hit": bool(res["hit"]) and res["payout"] >= res["bet_amount"],
-            "n_combos": res["n_combos"],
+            "net_hit": res.net_hit,
+            "n_combos": res.n_combos,
         })
     return out, n_missing
 
@@ -542,72 +636,24 @@ async def _manual_submission_buckets(
 
 
 def _submitted_pick_result(
-    bet: dict[str, Any] | None, finish_frames: list[int] | None,
-    trio_pay: int, trifecta_pay: int,
-) -> dict[str, Any]:
-    """入稿記録だけの行（picks_history に無い）の買い目・投資・的中・払戻を組む。
+    bet: dict[str, Any] | None,
+    finishers: Iterable[Sequence[int]] | None,
+    payouts: Mapping[str, int] | None = None,
+) -> Settlement:
+    """入稿の原本（`bet_detail`）と確定結果から**売った1商品**を採点する。
 
-    ランクのゲートを通っていないレースは `picks_history` に行が立たず、採点バッチも
-    走らない。そのため **入稿の原本（`bet_detail`）と確定結果から直に組み立てる**。
+    採点そのものは `services/keirin_settlement.settle`（**唯一の正本**）が行う。
+    ここはその薄い入口で、呼び出し側が渡す型を揃えるためだけに残してある。
 
     ⚠️ **買い目は再構成しない。** 入稿の瞬間に保存した combo と stake をそのまま使う。
        傾斜配分は入稿時点の想定オッズで決まるので後から再現できない。
-    ⚠️ combo の区切りは券種で違う（三連複 `1=2=4` / 三連単 `1-2-4`）。
-       ここを取り違えると**当たっているのに不的中**になる（表示だけ静かに壊れる）。
 
     🔴 **`settled` を必ず見ること。** 「まだ分からない」と「外れ」は別物で、
        `hit=False` だけで判断すると**当たっているレースを不的中として表示・集計**する
-       （2026-08-16 に京王閣2Rで発生）。`settled=False` になるのは2つ:
-
-         1. 確定着順がまだ取れていない（`finish_frames` が None）。
-            呼び出し側は「発走から90分」か `wt_races.status=3` で対象を決めるが、
-            winticket は**着順が入る前に status を 3 にすることがある**ので、
-            この2つは「結果が揃った」ことを意味しない
-         2. 買い目は当たっているのに確定配当が引けない（`trio_pay`/`trifecta_pay` が 0）
-
-       外れは着順だけで決まるので `settled=True`（配当は要らない）。
+       （2026-08-16 に京王閣2Rで発生）。
     """
-    lines = (bet or {}).get("lines") or []
-    combos = [str(x["combo"]) for x in lines]
-    out: dict[str, Any] = {
-        "pred_combo": " ".join(combos) or None,
-        "n_combos": len(lines) or None,
-        "bet_amount": sum(int(x["stake"]) for x in lines),
-        "hit": False,
-        "payout": 0,
-        # 採点が完了したか。**False は「外れ」ではなく「まだ分からない」**。
-        "settled": False,
-    }
-    if not lines or not finish_frames:
-        return out
+    return settle(bet, finishers, payouts)
 
-    win_trio = "=".join(map(str, sorted(finish_frames)))
-    win_trifecta = "-".join(map(str, finish_frames))
-    payout = 0
-    hit = False
-    payout_known = True
-    for x in lines:
-        combo = str(x["combo"])
-        stake = int(x["stake"])
-        if combo == win_trio:
-            pay = trio_pay
-        elif combo == win_trifecta:
-            pay = trifecta_pay
-        else:
-            continue
-        # 🔴 的中は**買い目と着順の一致だけ**で決める。配当が引けたかは別の話で、
-        #    ここで混ぜると「オッズ未取得＝不的中」になる。
-        hit = True
-        if pay:
-            # 100円あたりの払戻 × 賭け金/100。10円未満は切り捨てない
-            # （trio_pay 自体が既に10円単位で丸めてある）。
-            payout += pay * stake // 100
-        else:
-            payout_known = False
-    out["hit"] = hit
-    out["payout"] = payout
-    out["settled"] = payout_known
-    return out
 
 # ---------------------------------------------------------------------------
 # 推奨外レースの仮想買い目（hypo_*）— 2026-07-31新設
@@ -865,18 +911,31 @@ async def get_picks(
     # 入稿時の買い目・金額配分（keirin 側が**入稿の瞬間に**保存した値）。
     # 傾斜配分は入稿時点の想定オッズから決まるため**あとから再現できない**ので、
     # ここは記録を読むだけにする（再計算してはいけない）。
+    # 🔴 **取消（論理削除）かどうかを持って回る。** 取り消した入稿は商品ではないので
+    #    的中・払戻・投資額をそこから作ってはいけない。買い目は「何を出そうとしたか」
+    #    の記録として残すが、画面には取消と分かるように出す。
     submitted = {
-        (m["race_key"], m["rank_key"]): m["bet_detail"]
+        (m["race_key"], m["rank_key"]): (m["bet_detail"], m["deleted_at"] is not None)
         for m in (await db.execute(
             text("""
-                SELECT ns.race_key, ns.rank_key, ns.bet_detail
+                SELECT ns.race_key, ns.rank_key, ns.bet_detail, ns.deleted_at
                 FROM keirin.netkeirin_submissions ns
                 JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
                 WHERE wr.race_date = :date
+                -- dict にするので**最後に来た行が勝つ**。取消を先に、生きている
+                -- 入稿を後に並べ、同じ状態なら新しいほうを後にする。
+                ORDER BY (ns.deleted_at IS NULL) ASC, ns.submitted_at ASC
             """),
             {"date": target},
         )).mappings().all()
     }
+
+    # 確定着順と当たり目の配当は**レース単位でまとめて引く**。行ごとに引くと
+    # 1日40レースで往復が倍増する（同じレースに複数ランクの行が立つこともある）。
+    _base_keys = sorted({r["base_key"] for r in rows})
+    finishers_by_race = await _fetch_finishers(db, _base_keys)
+    won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers_by_race.items()}
+    payouts_by_race = await _fetch_winning_payouts(db, won_by_race)
 
     picks = []
     for r in rows:
@@ -885,15 +944,8 @@ async def get_picks(
         # 入稿記録だけの行（ゲート未通過で picks_history に無い）。
         submission_only = bool(r.get("submission_only"))
 
-        if has_pick:
-            is_wide = r["rank"] == "WIDE"
-            race_key = r["ph_race_key"] if include_all else r["race_key"]
-            # 合成オッズは picks_history の pred_combo が前提。入稿だけの行には無い。
-            synth_odds = (None if submission_only
-                          else await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide))
-        else:
-            race_key = base_key
-            synth_odds = None
+        is_wide = has_pick and r["rank"] == "WIDE"
+        race_key = (r["ph_race_key"] if include_all else r["race_key"]) if has_pick else base_key
 
         entries = (await db.execute(
             text("""
@@ -917,45 +969,49 @@ async def get_picks(
             {"race_key": base_key},
         )).mappings().all()
 
-        # 確定した上位3着（レース未確定なら None）。払戻の算出と、入稿だけの行の
-        # 的中判定の両方で使う。
-        finish_frames = _finish_top3_frames(entries)
+        # 確定した3着以内（同着があれば4件以上）と、その当たり目。
+        # 🔴 判定は `keirin_result_top3` が正本。フロントで組み立て直さない。
+        finishers = finishers_by_race.get(base_key, [])
+        won = won_by_race.get(base_key, [])
 
-        # 推奨外レース・採点前の候補行でも、レース確定後は三連複/三連単の払戻を表示する。
-        # picks_history に未記録（0円）の場合は wt_odds の最終オッズ×100 から算出
-        # （10円単位切り捨て。実払戻との一致は 2026-07-12 に検証済み）。
-        trio_pay = int(r["trio_payout"] or 0) if has_pick else 0
-        trifecta_pay = int(r["trifecta_payout"] or 0) if has_pick else 0
-        if trio_pay == 0 or trifecta_pay == 0:
-            if finish_frames:
-                frames = finish_frames
-                trio_comb = "-".join(map(str, sorted(frames)))
-                tri_comb = "-".join(map(str, frames))
-                odds_rows = (await db.execute(
-                    text("""
-                        SELECT bet_type, odds_value
-                        FROM keirin.wt_odds
-                        WHERE race_key = :bk
-                          AND ((bet_type = 'trio' AND combination = :tc)
-                            OR (bet_type = 'trifecta' AND combination = :fc))
-                    """),
-                    {"bk": base_key, "tc": trio_comb, "fc": tri_comb},
-                )).mappings().all()
-                for o in odds_rows:
-                    if not o["odds_value"]:
-                        continue
-                    pay = int(round(float(o["odds_value"]) * 100)) // 10 * 10
-                    if o["bet_type"] == "trio" and trio_pay == 0:
-                        trio_pay = pay
-                    elif o["bet_type"] == "trifecta" and trifecta_pay == 0:
-                        trifecta_pay = pay
+        # 当たり目の確定配当（100円あたり）。wt_odds の最終オッズから引き、
+        # 引けない分だけ picks_history の記録で補う（10円単位切り捨て。実払戻との
+        # 一致は 2026-07-12 に検証済み）。
+        pays = dict(payouts_by_race.get(base_key, {}))
+        if has_pick:
+            # ⚠️ 同着で当たり目が複数あるときは補わない。picks_history の払戻は
+            #    1つしか持っておらず、どちらの目のものか決められないため。
+            trios = [c for c in won if "=" in c]
+            tris = [c for c in won if "-" in c]
+            if len(trios) == 1 and r["trio_payout"] and trios[0] not in pays:
+                pays[trios[0]] = int(r["trio_payout"])
+            if len(tris) == 1 and r["trifecta_payout"] and tris[0] not in pays:
+                pays[tris[0]] = int(r["trifecta_payout"])
+        trio_pay, trifecta_pay = _race_payout_display(pays, won)
 
         # 入稿の原本（keirin 側が入稿の瞬間に保存した買い目と金額配分）。
-        submitted_bet = _parse_bet_detail(
-            submitted.get((base_key, (r["rank"] or "").replace("RANK_", ""))))
-        # 入稿だけの行は、買い目・投資・的中・払戻をその原本と確定結果から組む。
-        sub_result = (_submitted_pick_result(submitted_bet, finish_frames, trio_pay, trifecta_pay)
-                      if submission_only else None)
+        submitted_raw, submission_cancelled = submitted.get(
+            (base_key, (r["rank"] or "").replace("RANK_", "")), (None, False))
+        submitted_bet = _parse_bet_detail(submitted_raw)
+        # 🔴 **売った商品があるなら、買い目も投資も的中も払戻もそこから作る**
+        #    （2026-08-25）。以前は「picks_history に行が無い入稿」だけをこの経路に
+        #    通し、行があるレースは `picks_history.hit`（＝ランクの**候補**の成績）を
+        #    出していた。候補と売った商品は別物で、2026-08-07〜25 の売った295商品の
+        #    うち **53件（18%）で的中の表示が食い違っていた**
+        #    （例: 08-25 防府8R 7S は Discord「🎯 15,200円」に対し一覧が「✗」）。
+        #    取消した入稿は商品ではないので通さない（買い目だけ記録として出す）。
+        sub_result = (settle(submitted_bet, finishers, pays)
+                      if submitted_bet and not submission_cancelled else None)
+
+        # 合成オッズも**表に出す買い目と同じもの**から出す。売った商品があるなら
+        # その買い目、無ければ picks_history の候補（`pred_combo`）から計算する。
+        if sub_result is not None and submitted_bet:
+            synth_odds = await _calc_synth_odds_from_lines(
+                db, base_key, submitted_bet["lines"])
+        elif has_pick:
+            synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
+        else:
+            synth_odds = None
 
         # 推奨外レースの仮想買い目（hypo_*）。7/9車のみ・軸選定可能な場合のみ非null。
         hypo_axis1 = hypo_axis2 = hypo_others = hypo_axis_sum = hypo_entropy = hypo_wt_overlap_n = None
@@ -993,21 +1049,27 @@ async def get_picks(
             "n_entries": r["n_entries"],
             "rank": r["rank"],
             "display_rank": _display_rank(str(r["rank"])) if has_pick else None,
-            "pred_combo": (sub_result["pred_combo"] if sub_result
+            "pred_combo": (sub_result.pred_combo if sub_result
                            else (r["pred_combo"] if has_pick else None)),
-            "n_combos": (sub_result["n_combos"] if sub_result
+            "n_combos": (sub_result.n_combos if sub_result
                          else (r["n_combos"] if has_pick else None)),
             "synth_odds": synth_odds,
             # ⚠️ 採点が終わるまでは的中にしない（`settled` の意味は
-            #    `_submitted_pick_result` の docstring 参照）。ここは bool しか
-            #    返せないので「未確定」は表現できず、確定するまで False に倒す。
-            "hit": (sub_result["hit"] and sub_result["settled"] if sub_result
+            #    `services/keirin_settlement` の docstring 参照）。
+            "hit": (sub_result.hit and sub_result.settled if sub_result
                     else (bool(r["hit"]) if has_pick else False)),
-            "payout": (sub_result["payout"] if sub_result
+            # 採点が終わったか。🔴 **`hit=False` と混ぜない。** これを見ずに描画すると
+            #    確定前・配当待ちのレースが「✗ 不的中」として出る。
+            "settled": (sub_result.settled if sub_result else bool(won)),
+            # 確定した当たり目（同着なら複数）。買い目のどれが当たったかの色付けは
+            # これとの一致だけで決める。🔴 フロントで着順から組み立て直さない
+            # （同着を必ず取りこぼす）。
+            "winning_combos": won,
+            "payout": (sub_result.payout if sub_result
                        else ((r["payout"] or 0) if has_pick else 0)),
             "trio_payout": trio_pay,
             "trifecta_payout": trifecta_pay,
-            "bet_amount": (sub_result["bet_amount"] if sub_result
+            "bet_amount": (sub_result.bet if sub_result
                            else ((r["bet_amount"] or 0) if has_pick else 0)),
             # ゲートを通っていない入稿（手動・看板の穴埋め）であることを表に出す。
             # 混ぜたまま出すと「ランクの成績」と読まれてしまう。
@@ -1042,6 +1104,9 @@ async def get_picks(
             "hypo_wt_overlap_n": hypo_wt_overlap_n,
             "meeting_type": meeting_type.get(base_key),
             "submitted_bet": submitted_bet,
+            # 入稿を取り消した（＝売っていない）。買い目は記録として残すが、
+            # 的中・払戻・投資額はここから作らない。画面でも取消と分かるように出す。
+            "submission_cancelled": submission_cancelled and submitted_bet is not None,
             "entries": [
                 {
                     "frame_no": e["frame_no"],

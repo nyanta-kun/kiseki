@@ -516,37 +516,34 @@ const BET_SOURCE_JP: Record<string, string> = {
   equal: "均等",
 };
 
-// 確定した着順から「当たった目」の表記を作る。3連複は昇順 "a=b=c"、
-// 3連単は着順どおり "1着-2着-3着"。`bet_detail.combo` と同じ書き方に揃える。
+// 当たった目（3連複は昇順 "a=b=c" / 3連単は着順どおり "1着-2着-3着"）。
+// 🔴 **API が返すものをそのまま使う。**（`services/keirin_result_top3.py` が正本）
+//    以前はここで着順から組み立てていたが、**同着を必ず取りこぼす**
+//    （3着同着なら三連複の当たりは2通り）。判定が3言語に散ると必ずどこかが古くなる。
 // ⚠️ **着順が入っていないうちは null を返す**。未確定のまま色を付けると
 //    「外れた」と読めてしまう（I-34 と同じ理由）。
-function winningCombos(entries: KeirinPick["entries"]): Set<string> | null {
-  const byOrder = new Map<number, number>();
-  for (const e of entries) {
-    const o = e.finish_order ?? 0;
-    if (o >= 1 && o <= 3) byOrder.set(o, e.frame_no);
-  }
-  if (byOrder.size !== 3) return null;
-  const [a, b, c] = [byOrder.get(1)!, byOrder.get(2)!, byOrder.get(3)!];
-  return new Set([
-    [a, b, c].slice().sort((x, y) => x - y).join("="),   // 3連複
-    `${a}-${b}-${c}`,                                     // 3連単
-  ]);
+function winningCombos(pick: KeirinPick): Set<string> | null {
+  const won = pick.winning_combos;
+  if (!won || won.length === 0) return null;
+  return new Set(won);
 }
 
-function SubmittedBetBlock({ bet, entries }: {
+function SubmittedBetBlock({ bet, pick }: {
   bet: NonNullable<KeirinPick["submitted_bet"]>;
-  entries: KeirinPick["entries"];
+  pick: KeirinPick;
 }) {
   // 金額の大きい順。傾斜配分では「どこに厚く置いたか」が読みたい情報なので、
   // 車番順よりも配分順のほうが目的に合う。
   const lines = [...bet.lines].sort((a, b) => b.stake - a.stake || a.combo.localeCompare(b.combo));
   const multiType = new Set(lines.map((l) => l.bet_type)).size > 1;
-  const winners = winningCombos(entries);
+  const winners = winningCombos(pick);
+  const cancelled = pick.submission_cancelled === true;
   return (
     <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700">
       <div className="flex items-baseline gap-2 mb-1">
-        <span className="text-xs font-medium text-gray-600 dark:text-gray-300">入稿した買い目</span>
+        <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
+          入稿した買い目{cancelled && "（取消）"}
+        </span>
         <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
           計 {bet.total.toLocaleString()}円 / {lines.length}点
         </span>
@@ -979,7 +976,11 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
   // 発走済みでも結果未取込のうちは「未確定」。不的中を出すのは確定後だけ
   // （ユーザー指摘 2026-08-07。サマリー側の集計は従来どおりで変えない）。
   const isRaceOver = computeIsSettled(pick.status, pick.start_at);
-  const isSettled = isRaceOver && hasResult(pick.entries);
+  // 🔴 **採点が終わったかは API が決める**（2026-08-25）。売った商品は
+  //    「着順が入った」だけでは採点できない（確定配当が引けるまで払戻が出せない）。
+  //    画面側で「発走から90分」だけを見て確定扱いすると、当たっているレースが
+  //    「✗ 不的中」として出る。`settled` を返さない古い応答のときだけ従来の判定へ。
+  const isSettled = pick.settled ?? (isRaceOver && hasResult(pick.entries));
   const isPendingResult = isRaceOver && !isSettled;
   const [collapsed, setCollapsed] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -1250,7 +1251,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
           )}
 
           {pick.submitted_bet && (
-            <SubmittedBetBlock bet={pick.submitted_bet} entries={pick.entries} />
+            <SubmittedBetBlock bet={pick.submitted_bet} pick={pick} />
           )}
         </>
       )}

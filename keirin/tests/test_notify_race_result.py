@@ -47,8 +47,11 @@ def test_payouts_come_from_the_final_odds_board():
         {"bet_type": "trifecta", "combination": "8-2-1", "odds_value": 34.9},
     ])
     got = m._confirmed_payouts(conn, "20260815_75_09")
-    assert got[("3連複", (1, 2, 8))] == 630
-    assert got[("3連単", (8, 2, 1))] == 3490
+    # 当たり目の表記（三連複 `1=2=8` / 三連単 `8-2-1`）をキーにする。
+    # 🔴 Web（`backend/src/services/keirin_settlement.py`）と**同じ表記**でないと
+    #    同じ商品が別々に採点される。
+    assert got["1=2=8"] == 630
+    assert got["8-2-1"] == 3490
     sql, _ = conn._last
     assert "wt_odds" in sql, "確定配当は wt_odds から引くこと"
 
@@ -60,9 +63,9 @@ def test_trio_keys_are_sorted_and_trifecta_keeps_the_order():
         {"bet_type": "trifecta", "combination": "8-2-1", "odds_value": 34.9},
     ])
     got = m._confirmed_payouts(conn, "rk")
-    assert ("3連複", (1, 2, 8)) in got
-    assert ("3連単", (8, 2, 1)) in got
-    assert ("3連単", (1, 2, 8)) not in got
+    assert "1=2=8" in got            # 三連複は昇順へ畳む
+    assert "8-2-1" in got            # 三連単は着順のまま
+    assert "1-2-8" not in got
 
 
 def test_rows_without_odds_are_skipped():
@@ -180,21 +183,23 @@ def test_finishing_order_shows_car_and_mark_only():
 def test_race_payout_is_reported():
     """三連複・三連単の確定配当を出す（2026-08-21 ユーザー要望）。"""
     assert ast.unparse(_func("_build_message")).count("_race_payout_line") == 1
-    payouts = {("3連複", (1, 3, 7)): 1640, ("3連単", (7, 1, 3)): 4720}
-    assert m._race_payout_line(payouts, (7, 1, 3)) == "確定配当: 3連複 ¥1,640 / 3連単 ¥4,720"
+    payouts = {"1=3=7": 1640, "7-1-3": 4720}
+    won = ["1=3=7", "7-1-3"]
+    assert m._race_payout_line(payouts, won) == "確定配当: 3連複 ¥1,640 / 3連単 ¥4,720"
 
 
 def test_race_payout_uses_the_finishing_order_for_trifecta():
     """三連複は順不同・三連単は着順。取り違えると別の目の配当を出す。"""
-    payouts = {("3連単", (7, 1, 3)): 4720}
-    assert m._race_payout_line(payouts, (1, 7, 3)) is None, \
+    payouts = {"7-1-3": 4720}
+    # 着順が 1-7-3 なら当たり目は `1-7-3`。`7-1-3` の配当を出してはいけない。
+    assert m._race_payout_line(payouts, ["1=3=7", "1-7-3"]) is None, \
         "着順違いの三連単配当を出している"
 
 
 def test_race_payout_line_is_dropped_when_unavailable():
     """引けないときは行ごと落とす（`—` を並べない）。"""
-    assert m._race_payout_line({}, (1, 2, 3)) is None
-    assert m._race_payout_line({("3連複", (1, 2, 3)): 630}, (1, 2)) is None
+    assert m._race_payout_line({}, ["1=2=3", "1-2-3"]) is None
+    assert m._race_payout_line({"1=2=3": 630}, []) is None
 
 
 def test_bet_kind_labels_are_not_printed():
@@ -260,6 +265,10 @@ def test_sold_lines_win_over_the_paper_lines():
 
 
 def test_day_total_counts_only_settled_races():
-    """未確定レースを投資に数えない（回収率が不当に下がる）。"""
+    """未確定レースを投資に数えない（回収率が不当に下がる）。
+
+    🔴 `settled` を見ずに `got is None` だけで弾くと、**当たっているが確定配当が
+       まだ引けていない**レースが払戻0円として回収率に入る。
+    """
     src = ast.unparse(_func("_day_total"))
-    assert "len(order3) < 3" in src
+    assert "not got.settled" in src

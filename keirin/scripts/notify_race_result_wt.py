@@ -46,7 +46,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.combo_label import axis_cars, format_bet_lines, format_pred_combo, is_hit
-from src.sold_performance import _as_dict, settle_submission
+from src.sold_performance import (
+    _as_dict, payout_per_100, settle_submission, winning_combo_labels,
+)
 from src.rank_visibility import disabled_rank_names
 from src.database import get_connection
 from src.notify.discord import send
@@ -57,6 +59,9 @@ JST = timezone(timedelta(hours=9))
 # 発走からの経過分。競輪は発走〜確定が概ね5分前後なので6分で大半が取れる。
 # 以降は遅延（写真判定・失格審議など）を拾うためのバックオフ。
 CHECK_MINUTES = (6, 10, 15, 25)
+# 確定配当（`wt_odds` の最終オッズ）が引けないまま何分待つか。これを過ぎたら
+# 「⏳ 確定待ち」の行を含んだまま通知して打ち切る（永久に黙るより出す）。
+SETTLE_WAIT_MINUTES = 60
 STATE = Path(__file__).resolve().parent.parent / "data" / "notified_race_results.json"
 LOCK = Path(__file__).resolve().parent.parent / "data" / "notify_race_result.lock"
 MARK = {1: "◎", 2: "◯", 3: "△", 4: "×"}
@@ -194,8 +199,8 @@ def _fetch_one(scraper: WinticketScraper, t: dict, date: str) -> dict | None:
     return data
 
 
-def _confirmed_payouts(conn, base: str) -> dict[tuple[str, tuple[int, ...]], int]:
-    """{(券種, 目): 100円あたりの確定配当}。
+def _confirmed_payouts(conn, base: str) -> dict[str, int]:
+    """`{当たり目の表記: 100円あたりの確定配当}`（三連複 `1=2=4` / 三連単 `1-2-4`）。
 
     🔴 **入稿時点のオッズ（`bet_detail.odds`）を払戻に使ってはいけない。**
        発走までに動くので必ず過大・過小になる。実測 2026-08-15 松山9R は
@@ -203,10 +208,12 @@ def _confirmed_payouts(conn, base: str) -> dict[tuple[str, tuple[int, ...]], int
        23,310円）と **43% 過大**になる。
     ⚠️ `wt_race_payouts` は当日には入らない（松山の当日分は0件だった）ので、
        レース後に最終値へ上書きされる `wt_odds` を使う。
-    ⚠️ 組み合わせ表記は **`wt_odds` が '1-2-3'**（`wt_odds_snapshot` は別）。
-       三連複は昇順、三連単は着順のまま。
+    ⚠️ 組み合わせ表記は **`wt_odds` が '1-2-3'**（券種を問わず `-` 区切り・
+       三連複は昇順）。買い目・当たり目の表記とは別なので変換する。
+    ⚠️ 端数は**10円未満切り捨て**（`payout_per_100`）。実払戻との一致は
+       2026-07-12 に検証済みで、切り捨てないと Web の表示と数円ずれる。
     """
-    out: dict[tuple[str, tuple[int, ...]], int] = {}
+    out: dict[str, int] = {}
     rows = conn.execute(
         "SELECT bet_type, combination, odds_value FROM wt_odds "
         "WHERE race_key = ? AND bet_type IN ('trio', 'trifecta')", (base,),
@@ -215,20 +222,26 @@ def _confirmed_payouts(conn, base: str) -> dict[tuple[str, tuple[int, ...]], int
         bt = r["bet_type"] if isinstance(r, dict) else r[0]
         comb = r["combination"] if isinstance(r, dict) else r[1]
         odds = r["odds_value"] if isinstance(r, dict) else r[2]
-        if odds is None:
+        pay = payout_per_100(odds)
+        if not pay:
             continue
         try:
-            cars = tuple(int(x) for x in _SEP_RE.split(str(comb)))
+            cars = [int(x) for x in _SEP_RE.split(str(comb)) if x != ""]
         except ValueError:
             continue
-        kind = "3連複" if bt == "trio" else "3連単"
-        key = tuple(sorted(cars)) if bt == "trio" else cars
-        out[(kind, key)] = int(round(float(odds) * 100))
+        if len(cars) != 3:
+            continue
+        label = ("=".join(map(str, sorted(cars))) if bt == "trio"
+                 else "-".join(map(str, cars)))
+        out[label] = pay
     return out
 
 
-def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
-    """入稿した推奨の採点行。**取消したものも含む**。returns [(表示行, ランク)]。
+def _sold_lines(base: str, finishers: list[tuple[int, int]],
+                payouts: dict[str, int]) -> tuple[list[tuple[str, str]], bool]:
+    """入稿した推奨の採点行。**取消したものも含む**。
+
+    returns ([(表示行, ランク)], 採点待ちが残っているか)
 
     🔴 **取消を落とさない**（2026-08-18 ユーザー方針）。「全推奨（取消含む）を
        通知し、取消ならそれと分かるようにする」。取消行は `7S（取消）` と出し、
@@ -242,6 +255,7 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
        的中点の賭け金がずれる（松山9R は的中点に 3,700円 / 均等なら 1,400円）。
     """
     out: list[tuple[str, str]] = []
+    pending = False
     with get_connection() as c:
         subs = c.execute(
             "SELECT rank_key, bet_detail, status FROM netkeirin_submissions "
@@ -249,8 +263,7 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
             (base, *NOTIFY_STATUSES),
         ).fetchall()
         if not subs:
-            return out
-        payouts = _confirmed_payouts(c, base)
+            return out, pending
         combos = {
             str(r["rank"] if isinstance(r, dict) else r[0]).replace("RANK_", ""):
             (r["pred_combo"] if isinstance(r, dict) else r[1])
@@ -262,10 +275,23 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
         rank = s["rank_key"] if isinstance(s, dict) else s[0]
         detail = s["bet_detail"] if isinstance(s, dict) else s[1]
         status = s["status"] if isinstance(s, dict) else s[2]
-        got = settle_submission(detail, order3, payouts)
+        got = settle_submission(detail, finishers, payouts)
         if got is None:
-            continue                       # 採点できない入稿は黙って外れにしない
-        bet, pay, hit = got
+            continue                       # 買い目が残っていない（2026-08-07 以前）
+        bet, pay, hit = got.bet, got.payout, got.hit
+        # 🔴 **「まだ分からない」を外れにしない。** 当たっているのに確定配当が
+        #    引けていない状態がある（着順は入ったがオッズの最終値が未着）。
+        #    ここで金額を作ると Web の「未確定」と食い違うので、待っていると出す。
+        #    呼び出し側は `pending` を見て**通知を確定させず次回に回す**。
+        if not got.settled:
+            pending = True
+            mark = "⏳ 確定待ち"
+            money = f"投資 ¥{bet:,}"
+            buy = format_bet_lines((_as_dict(detail) or {}).get("lines")) or ""
+            buy = f"{buy}  → " if buy else ""
+            head = (f"{rank}（取消）" if status == STATUS_DELETED else rank)
+            out.append((f"{head}: {buy}{mark}  {money}", rank))
+            continue
         mark = "🎯 **的中**" if hit else "❌ 不的中"
         if hit and pay < bet:
             mark = "😖 **ガミ**"            # 当たったが元返し割れ
@@ -282,23 +308,23 @@ def _sold_lines(base: str, order3: tuple[int, ...]) -> list[tuple[str, str]]:
             or format_pred_combo(combos.get(rank), labels=False)
         buy = f"{buy}  → " if buy else ""
         out.append((f"{head}: {buy}{mark}  {money}", rank))
-    return out
+    return out, pending
 
 
-def _race_payout_line(payouts: dict[tuple[str, tuple[int, ...]], int],
-                      order3: tuple[int, ...]) -> str | None:
+def _race_payout_line(payouts: dict[str, int], won: list[str]) -> str | None:
     """そのレースの三連複・三連単の確定配当（100円あたり）の表示行。
 
     ユーザー要望「三連複、三連単の払い戻しを載せて下さい」（2026-08-21）。
     ⚠️ **買い目の的中とは無関係**。買っていなくても出す（相場の目安として要る）。
     ⚠️ 引けないときは黙って落とす。`—` を出すより行ごと無いほうが読みやすい。
+    ⚠️ 同着では当たり目が複数あるが、この行は**相場の目安**なので券種ごとに
+       1つずつ出す（採点はそれとは独立に当たり目ごとの配当を積む）。
     """
-    if len(order3) < 3:
-        return None
-    got = [(kind, payouts.get((kind, key)))
-           for kind, key in (("3連複", tuple(sorted(order3[:3]))),
-                             ("3連単", tuple(order3[:3])))]
-    parts = [f"{kind} ¥{pay:,}" for kind, pay in got if pay]
+    parts = []
+    for kind, sep in (("3連複", "="), ("3連単", "-")):
+        pay = next((payouts[c] for c in won if sep in c and c in payouts), None)
+        if pay:
+            parts.append(f"{kind} ¥{pay:,}")
     return "確定配当: " + " / ".join(parts) if parts else None
 
 
@@ -320,25 +346,30 @@ def _day_total(date: str) -> tuple[int, int, int]:
             rk = s["race_key"] if isinstance(s, dict) else s[0]
             detail = s["bet_detail"] if isinstance(s, dict) else s[2]
             ents = c.execute(
-                "SELECT frame_no FROM wt_entries WHERE race_key = ? "
-                "AND finish_order BETWEEN 1 AND 3 ORDER BY finish_order", (rk,),
+                "SELECT frame_no, finish_order FROM wt_entries WHERE race_key = ? "
+                "AND finish_order BETWEEN 1 AND 3", (rk,),
             ).fetchall()
-            order3 = tuple(int(e["frame_no"] if isinstance(e, dict) else e[0])
-                           for e in ents)
-            if len(order3) < 3:
-                continue                   # 未確定は数えない
-            got = settle_submission(detail, order3, _confirmed_payouts(c, rk))
-            if got is None:
+            # ⚠️ **車番だけに畳まない**。同着があると着順が潰れて当たり目を誤る。
+            finishers = sorted(
+                (int(e["finish_order"] if isinstance(e, dict) else e[1]),
+                 int(e["frame_no"] if isinstance(e, dict) else e[0])) for e in ents)
+            got = settle_submission(detail, finishers, _confirmed_payouts(c, rk))
+            # 🔴 未採点（未確定・配当待ち）は数えない。0円として足すと
+            #    当たっているレースが回収率を押し下げる。
+            if got is None or not got.settled:
                 continue
-            b, p, _ = got
-            bet += b
-            pay += p
+            bet += got.bet
+            pay += got.payout
             n += 1
     return bet, pay, n
 
 
-def _build_message(t: dict, base: str) -> str:
-    """着順と、そのレースに出していた推奨の的中可否をまとめる。"""
+def _build_message(t: dict, base: str) -> tuple[str, bool]:
+    """着順と、そのレースに出していた推奨の的中可否をまとめる。
+
+    returns (本文, 採点待ちが残っているか)。採点待ちがあるうちは呼び出し側が
+    **通知を確定させない**（次のチェックでもう一度組み直す）。
+    """
     with get_connection() as c:
         ents = c.execute(
             "SELECT frame_no, prediction_mark, finish_order "
@@ -355,21 +386,25 @@ def _build_message(t: dict, base: str) -> str:
 
     # 🔴 **選手名は出さない**（2026-08-21 ユーザー方針）。買い目は車番で書くので、
     #    名前があると1行が折り返して車番と印が読み取りにくくなる。
-    top3 = [(int(_g(e, "frame_no")), _g(e, "prediction_mark"))
+    top3 = [(int(_g(e, "finish_order")), int(_g(e, "frame_no")), _g(e, "prediction_mark"))
             for e in ents
             if _g(e, "finish_order") and 1 <= int(_g(e, "finish_order")) <= 3]
-    order3 = tuple(f for f, _ in top3)      # 着順（1着,2着,3着）。三連単の判定に要る
-    order = " − ".join(f"**{f}**{MARK.get(m, '')}" for f, m in top3)
-    top3_set = set(order3)
+    top3.sort()
+    # ⚠️ **`(着順, 車番)` のまま持つ**。車番だけに畳むと同着が潰れ、当たり目を誤る。
+    finishers = [(fo, f) for fo, f, _ in top3]
+    order3 = tuple(f for _, f, _ in top3)   # picks_history 側の判定に渡す（同着は先頭3件）
+    order = " − ".join(f"**{f}**{MARK.get(m, '')}" for _, f, m in top3)
+    top3_set = {f for _, f, _ in top3}
+    won = winning_combo_labels(finishers)
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
              f"着順: {order}"]
-    pay_line = _race_payout_line(payouts, order3)
+    pay_line = _race_payout_line(payouts, won)
     if pay_line:
         lines.append(pay_line)
     # 入稿した推奨（取消を含む）を先に出す。picks_history の候補行は
     # 「一度も入稿していないランク」の分だけ後段で補う。
-    sold = _sold_lines(base, order3)
+    sold, pending = _sold_lines(base, finishers, payouts)
     lines.extend(text for text, _ in sold)
     sold_ranks = {rank for _, rank in sold}
     # 🔴 入稿 OFF のランクは通知しない（2026-08-14）。`enabled` は入稿だけを
@@ -410,7 +445,7 @@ def _build_message(t: dict, base: str) -> str:
     if n:
         roi = f"{pay / bet * 100:.1f}%" if bet else "—"
         lines.append(f"── 本日累計（{n}R 確定）: 投資 ¥{bet:,} → **払戻 ¥{pay:,}**（回収 {roi}）")
-    return "\n".join(lines)
+    return "\n".join(lines), pending
 
 
 def main() -> None:
@@ -450,7 +485,17 @@ def main() -> None:
             print(f"[dry-run] {base} 既に結果あり（通知はしない）", flush=True)
             continue
         try:
-            send(_build_message(t, base), channel="results")
+            body, pending = _build_message(t, base)
+            # 🔴 **配当が引けるまで通知を確定させない**（2026-08-25）。当たっているのに
+            #    `wt_odds` の最終値が未着だと金額が出せない。以前はその場を
+            #    入稿時点のオッズで埋めていたが、Web は同じ状態を「未確定」と出すため
+            #    **同じレースで別の数字**になっていた。通知は1レース1回きりなので、
+            #    採点待ちのうちは `done` に入れず次のチェックで組み直す。
+            #    ⚠️ 待ちきれない場合の逃げ道は `SETTLE_WAIT_MINUTES`。
+            if pending and t["elapsed"] < SETTLE_WAIT_MINUTES:
+                print(f"[info] {base} 採点待ち（発走+{t['elapsed']}分）", flush=True)
+                continue
+            send(body, channel="results")
             done.add(base)
             _save_state(done)
             print(f"[ok] {base} 通知", flush=True)

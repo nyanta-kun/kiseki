@@ -303,8 +303,13 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   //    ⚠️ **「的中」とは呼ばない。** 買っていない以上これは実績ではなく参考値で、
   //       サマリーの回収率にも入っていない。文言で必ず区別する。
   const wonKeys = new Set((p.winning_combos ?? []).map(comboKey));
+  // 🔴 **売ったレースに参考値を出さない**（2026-08-25）。`result` はサーバーの採点で、
+  //    着順は入ったが確定配当がまだ引けない間は null になる。そのとき売った商品にも
+  //    「参考 買っていれば ¥X」（＝**入稿時点のオッズ**で計算した売っていないレース用の
+  //    文言）が出ていた。売った分は採点が終わるまで「… 確定待ち」と出す。
+  const wasSold = p.status === "submitted" || p.status === "published";
   const hypothetical = useMemo(() => {
-    if (p.result || wonKeys.size === 0) return null;   // 売った分は実績を出す
+    if (p.result || wasSold || wonKeys.size === 0) return null;   // 売った分は実績を出す
     // 🔴 **確定していれば API の採点を使う**（2026-08-24）。`result_if_sold` は
     //    サマリーと同じ確定オッズ基準なので、カードとサマリーの数字が一致する。
     //    以前はここで `bet_detail` の**入稿時点オッズ**から計算しており、
@@ -317,7 +322,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
     if (!line || line.odds === null) return null;
     return { payout: Math.round(line.stake * line.odds), bet: d?.total ?? 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.result, p.result_if_sold, p.winning_combos, d]);
+  }, [p.result, p.result_if_sold, p.winning_combos, wasSold, d]);
   // 🔴 取消・自信ありは**カード全体**で分かるようにする（2026-08-16・ユーザー要望）。
   //    小さなバッジだけだと、一覧をスクロールしているときに見落とす。
   // 🔴 取消は**グレーアウト**（2026-08-22・ユーザー要望）。以前は
@@ -523,7 +528,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             </span>
           ) : p.result == null ? (
             <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
-              … 未確定
+              {/* 着順が入っていれば残りは確定配当待ち。発走前と区別して出す。 */}
+              {wasSold && (p.winning_combos ?? []).length > 0 ? "… 確定待ち" : "… 未確定"}
             </span>
           ) : p.result.net_hit ? (
             <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold bg-emerald-600 text-white dark:bg-emerald-500">
