@@ -59,10 +59,12 @@ from src.submission_skips import (
     GATE_EXPECTED_FLOOR as SKIP_GATE_EXPECTED_FLOOR,
     GATE_MEAN_PAYOUT as SKIP_GATE_MEAN_PAYOUT,
     GATE_POINT_ODDS as SKIP_GATE_POINT_ODDS,
+    MISSING_LINEUP as SKIP_MISSING_LINEUP,
     RANK_CONFLICT as SKIP_RANK_CONFLICT,
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
     record_skip,
 )
+from src.entry_health import missing_market_inputs
 from src.netkeirin_client import (
     ACT_TYPE_CONFIDENT,
     ACT_TYPE_DEFAULT,
@@ -1584,6 +1586,42 @@ def _premium_metrics(rank_key: str, cand: dict) -> dict | None:
             "min_point_odds": min(odds.values()), "min_payout_ratio": ratio}
 
 
+_MARKET_INPUT_CACHE: dict[str, str | None] = {}
+
+
+def _missing_market_inputs(race_key: str) -> str | None:
+    """WT印・並びが取れていないなら理由、揃っていれば None（判定は `src.entry_health`）。
+
+    🔴 **入稿の前に必ず通すこと。** 2026-08-26 に熊本の全7レースで winticket の
+       並び予想と AI 印が未公開のまま朝の入稿が走り、印なし（=最弱扱い）・
+       全員同ライン という**学習データにほぼ無い入力**で指数と予測オッズが作られた。
+       エラーは出ない。指数は「2車に集中」した形になり、予測オッズは
+       その型の実勢とかけ離れた水準を出す。ユーザー指摘
+       「2車に指数が集中している場合、現在のような想定オッズはつきません」がこれ。
+
+    ⚠️ **レースを確保せずに抜けること**（`continue` / `return`）。
+       ミッドナイトのように後から公開される開催があるので、
+       同じ開催の後の波（13:00 / 18:00）で再判定させる。
+
+    ⚠️ 取れないときは None＝出す側へ倒す（DB が読めないことを理由に商品を消さない）。
+    """
+    base = str(race_key).split("#")[0]
+    if base in _MARKET_INPUT_CACHE:
+        return _MARKET_INPUT_CACHE[base]
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT prediction_mark, line_group FROM wt_entries WHERE race_key = ?",
+                (base,)).fetchall()
+        reason = missing_market_inputs([dict(r) for r in rows])
+    except Exception as e:  # noqa: BLE001 — 入稿を止めない
+        print(f"[lineup] {base}: 出走表の健全性を確認できません（出す側へ倒す）: {e!r}",
+              flush=True)
+        reason = None
+    _MARKET_INPUT_CACHE[base] = reason
+    return reason
+
+
 def _expected_payout_floor_for(
     race_key: str, axis1: int, axis2: int, stakes: dict[int, int], budget: int,
     n_cars: int,
@@ -2220,6 +2258,15 @@ def _process_rank(
         race_key = cand["race_key"]
         venue_name = cand.get("venue_name", "?")
         race_no = int(cand["race_no"])
+        # 🔴 **WT印・並びが取れていないレースは出さない**（2026-08-26）。
+        #    指数（`FEATURE_COLS_WT` の line_* / prediction_mark）と予測オッズの
+        #    両方の入力なので、欠けたまま作った商品は静かにずれる。
+        #    レースを確保せずに `continue` するので、後の波で再判定される。
+        _lineup = _missing_market_inputs(race_key)
+        if _lineup:
+            _skip(race_key, rank_key, session, SKIP_MISSING_LINEUP,
+                  f"{_lineup} → この回は見送り（後の波で再判定）", venue_name, race_no)
+            continue
         # 相手絞りランク（partners_key あり）は候補JSONが絞り込み結果を持たないと
         # 相手を決められず ValueError になる。7H1 は買い目の復元検証に失敗すると
         # 同じく ValueError になる。ここで捕まえないと RANK_ORDER の
@@ -2586,6 +2633,16 @@ def _process_manual(
         return 0, [f"{race_key}: 車数不一致（{n_entries}車 / {rank_key}は{cfg['n_cars']}車想定）"]
     if axis1 == axis2 or not (1 <= axis1 <= n_entries) or not (1 <= axis2 <= n_entries):
         return 0, [f"{race_key}: 不正な軸指定 axis1={axis1} axis2={axis2}"]
+    # 🔴 **看板穴埋めにも掛ける**（2026-08-26）。2026-08-26 に実際に落ちたのは
+    #    この経路（熊本の3商品はすべて `marquee_fill`）で、うち1つは当日の
+    #    「自信」レースだった。「看板レースには必ず推奨を出す」（2026-08-09）より
+    #    優先する——入力が無いのは好みの問題ではなく、指数もオッズも当てにできない。
+    #    後の波で再判定されるので、公開が間に合えばその回で出る。
+    lineup_missing = _missing_market_inputs(race_key)
+    if lineup_missing:
+        _skip(race_key, rank_key, session, SKIP_MISSING_LINEUP,
+              f"{lineup_missing} → この回は見送り（後の波で再判定）", venue_name, race_no)
+        return 0, []
 
     partners = _manual_partners(race_key, rank_key, axis1, axis2, n_entries)
     gate_label = cfg["gate_filter"]

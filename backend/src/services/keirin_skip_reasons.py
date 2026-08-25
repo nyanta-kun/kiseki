@@ -31,6 +31,9 @@ DEFER_WAVE = "defer_wave"
 CANDIDATE_INVALID = "candidate_invalid"
 #: netkeirin への送信そのものが失敗した
 SUBMIT_FAILED = "submit_failed"
+#: WT印・並びが未取得（`keirin/src/entry_health.py`）。指数も予測オッズも
+#: 学習データにほぼ無い入力で動くことになるので、その回は見送って次の波へ回す
+MISSING_LINEUP = "missing_lineup"
 
 #: バッジに出す短いラベル。**8文字以内**（一覧の行に収める）
 LABELS: dict[str, str] = {
@@ -42,6 +45,7 @@ LABELS: dict[str, str] = {
     DEFER_WAVE: "次の波へ",
     CANDIDATE_INVALID: "候補不正",
     SUBMIT_FAILED: "入稿失敗",
+    MISSING_LINEUP: "並び未取得",
 }
 
 #: バッジの `title`（マウスオーバー）に出す説明。`reason_text` が無いときの代わり
@@ -54,6 +58,7 @@ DESCRIPTIONS: dict[str, str] = {
     DEFER_WAVE: "予測オッズを作れないため、その開催の回まで見送りました",
     CANDIDATE_INVALID: "候補の情報が不正で買い目を組めませんでした",
     SUBMIT_FAILED: "netkeirin への入稿が失敗しました",
+    MISSING_LINEUP: "並び予想・AI印が未公開で、指数もオッズも当てにできないため見送りました",
 }
 
 #: すべてのコード（検査用）
