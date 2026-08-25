@@ -343,8 +343,22 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
     : p.is_confident
       ? "rounded border-2 border-yellow-400 bg-yellow-50 p-3 dark:border-yellow-500 dark:bg-yellow-950/30"
       : "rounded border border-gray-200 p-3 dark:border-gray-700";
+  // 🔴 **カード全体のクリック／タップで開閉する**（2026-08-25 ユーザー指定）。
+  //    ただし中の操作を殺さないこと:
+  //    - リンク・ボタン・入力（承認 / 公開 / 取消 / netkeirin へのリンク）は素通し
+  //    - **テキスト選択中は無視する**。承認画面はタイトルや文面をコピーする場所で、
+  //      ドラッグの終わりで畳まれると選択したものが消える
+  //    キーボード操作は下の開閉ボタンが担うので、この div は
+  //    `role="button"` にしない（ボタンの入れ子になり読み上げが壊れる）。
+  const toggleFromCard = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement | null;
+    if (el?.closest("a, button, input, select, textarea, label, [role='button']")) return;
+    if ((window.getSelection()?.toString() ?? "").length > 0) return;
+    setOpen((v) => !v);
+  };
+
   return (
-    <div className={cardCls}>
+    <div className={`${cardCls} cursor-pointer`} onClick={toggleFromCard}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">
           {p.venue_name}
@@ -598,16 +612,30 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         </p>
       )}
 
+      {/* カード全体がトグルになったので、ここは**状態の目印**として残す。
+          🔴 消してはいけない——キーボード／読み上げの操作口はこのボタンだけで、
+             div のクリックはあくまで上乗せ（`toggleFromCard` のコメント参照）。 */}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="mt-2 text-xs text-blue-600 underline dark:text-blue-400"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        aria-expanded={open}
+        className="mt-2 flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
       >
-        {open ? "詳細を閉じる" : "買い目・文面・選手を見る"}
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {open ? "閉じる" : "買い目・文面・選手"}
       </button>
 
       {open && (
-        <div className="mt-2 space-y-3 border-t border-gray-200 pt-2 dark:border-gray-700">
+        // 🔴 **開いた中身をクリックしても畳まない**（`stopPropagation`）。
+        //    ここは買い目・文面・出走表を読む場所で、読んでいる最中に消えると
+        //    開き直すことになる。畳むのは上のサマリー領域か開閉ボタンから。
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="mt-2 cursor-auto space-y-3 border-t border-gray-200 pt-2 dark:border-gray-700"
+        >
           <div>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-300">タイトル</p>
             <p className="text-sm">{p.title || "（未設定）"}</p>
