@@ -152,7 +152,7 @@ def test_load_proposal_filters_by_status():
 def test_bet_detail_carries_legs_and_marks():
     """`build_bet_detail` が原本（legs/marks）を書き出すこと。"""
     legs = [BetLeg("trio_axis2", [[1], [2], [3, 4]], 500)]
-    out = json.loads(m.build_bet_detail(legs, "predicted", None,
+    out = json.loads(m.build_bet_detail(legs, "predicted",
                                         marks={1: "◎", 2: "○", 3: "△", 4: "△"}))
     assert out["legs"] == [{"bet_kind": "trio_axis2",
                             "groups": [[1], [2], [3, 4]], "stake": 500}]

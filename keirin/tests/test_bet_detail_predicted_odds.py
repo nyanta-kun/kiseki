@@ -1,18 +1,19 @@
-"""板に無いオッズを予測値で埋める処理の検査（2026-08-12）。
+"""入稿する買い目のオッズは**予測オッズだけ**で作る（2026-08-12 / 2026-08-26 改定）。
 
-板（`wt_odds` / 朝の `wt_odds_snapshot`）は買った目を必ずしも網羅せず、
-欠けた点は `odds: null` で保存されて Web では「オッズ未取得」になっていた
-（最低払戻も期待値も出せない）。構造モデルの予測オッズで表示だけ埋める。
+🔴 **板（`wt_odds` / 朝の `wt_odds_snapshot`）は入稿経路から一切参照しない**
+   （2026-08-26・ユーザー指示）。`build_bet_detail` / `build_bet_lines` から
+   板の引数そのものを外してあるので、混ぜたくても混ぜられない。
 
-🔴 **入稿時は予測オッズが主**（2026-08-21 に板優先から反転）。配分も足切りも
-   予測オッズで決めているため、表示だけ板だと根拠と突き合わせられない。
-   板へ落ちるのは予測を作れない目（三連単・7車9車以外）だけ。
-🔴 **`odds_source` の記録は落とさない。** 表示では区別しなくなったが、
-   三連単だけ板由来で残るので、混在を数えられないと検証ができない。
+経緯: 2026-08-21 に「予測オッズを優先し、作れない目だけ板」へ反転したが、
+**三連単には予測盤面を渡していなかった**ので実際には板のままだった
+（8/22〜8/26 の板由来 89点はすべて 7H1 / 7T1）。三連単の予測オッズは
+`src.odds_prediction_tf` に既にあり、候補生成では使っていた。
+
+🔴 **`odds_source` の列は残す。** 過去分には "board" の行があり、
+   混在した期間を後から数えられないと検証ができない。
 ⚠️ **過去分のバックフィル（`fill_lines`）は板を上書きしない。** あちらは
    既に入稿済みの記録で、当時実際に付いていた値だから。
-⚠️ **三連単は埋めない。** このモデルが予測するのは三連複だけで、
-   着順の分だけ別物になる。作れないものを作らない。
+⚠️ **バックフィルは三連単を埋めない**（あちらは三連複モデルしか持たない）。
 """
 from __future__ import annotations
 
@@ -33,49 +34,43 @@ def _lines(detail_json: str) -> list[dict]:
 # 入稿時（build_bet_detail）
 # ---------------------------------------------------------------------------
 
-def test_予測があれば予測を使い印はpredicted():
-    """🔴 2026-08-21 に優先順位を反転（板優先 → 予測優先）。
-
-    配分（`landing_weights`）も 1.5倍の足切り（`_expected_payout_floor_for`）も
-    予測オッズで決めているので、表示だけ板だと確認画面の数字と判断根拠が
-    突き合わせられない。
-    """
+def test_予測オッズがそのまま記録される():
     out = _lines(build_bet_detail(
-        LEGS, "odds",
-        odds={frozenset({1, 2, 3}): 5.5, frozenset({1, 2, 4}): 9.9},
+        LEGS, "predicted",
         predicted_odds={frozenset({1, 2, 3}): 111.0, frozenset({1, 2, 4}): 222.0},
     ))
-    assert [x["odds"] for x in out] == [111.0, 222.0], "板が予測を上書きしています"
+    assert [x["odds"] for x in out] == [111.0, 222.0]
     assert {x["odds_source"] for x in out} == {"predicted"}
 
 
-def test_予測を作れない点だけ板へ落ちる():
-    """三連単・7車9車以外は予測を作れない。そこだけ板を使う。"""
-    out = _lines(build_bet_detail(
-        LEGS, "odds",
-        odds={frozenset({1, 2, 3}): 5.5, frozenset({1, 2, 4}): 9.9},
-        predicted_odds={frozenset({1, 2, 4}): 12.34},
-    ))
-    by_combo = {x["combo"]: x for x in out}
-    assert by_combo["1=2=3"]["odds"] == 5.5
-    assert by_combo["1=2=3"]["odds_source"] == "board"
-    assert by_combo["1=2=4"]["odds"] == 12.3  # 小数1桁へ丸める
-    assert by_combo["1=2=4"]["odds_source"] == "predicted"
+def test_板を渡す引数がそもそも無い():
+    """🔴 構造で塞ぐ。板を混ぜたくても混ぜられないことを固定する。"""
+    import inspect
+
+    from scripts.netkeirin_submit_wt import build_bet_lines
+    for fn in (build_bet_detail, build_bet_lines):
+        assert "odds" not in [
+            n for n in inspect.signature(fn).parameters
+            if n not in ("predicted_odds", "predicted_low")
+        ], f"{fn.__name__} に板を渡せる引数が残っています"
 
 
-def test_予測にも無ければ不明のまま():
+def test_予測に無ければ不明のまま():
     """作れないものを作らない。null のままにして『未取得』と出させる。"""
-    out = _lines(build_bet_detail(LEGS, "odds", odds={}, predicted_odds={}))
+    out = _lines(build_bet_detail(LEGS, "predicted", predicted_odds={}))
     assert all(x["odds"] is None for x in out)
     assert all(x["odds_source"] is None for x in out)
 
 
-def test_予測盤面を渡さなければ従来どおり():
-    """既存の呼び出し（predicted_odds なし）が壊れないこと。"""
-    out = _lines(build_bet_detail(LEGS, "odds", odds={frozenset({1, 2, 3}): 5.5}))
-    by_combo = {x["combo"]: x for x in out}
-    assert by_combo["1=2=3"]["odds"] == 5.5
-    assert by_combo["1=2=4"]["odds"] is None
+def test_三連単も予測盤面から書ける():
+    """🔴 三連単のキーは tuple。ここが空だと 7H1 / 7T1 が板へ戻る
+    （2026-08-26 まで実際にそうなっていた）。"""
+    tf = [BetLeg(bet_kind="trifecta_formation", groups=[[1], [2], [3, 4]],
+                 stake_per_line=1000)]
+    out = _lines(build_bet_detail(
+        tf, "equal", predicted_odds={(1, 2, 3): 45.6, (1, 2, 4): 78.9}))
+    assert [x["odds"] for x in out] == [45.6, 78.9]
+    assert {x["odds_source"] for x in out} == {"predicted"}
 
 
 # ---------------------------------------------------------------------------

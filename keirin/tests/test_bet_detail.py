@@ -33,8 +33,9 @@ from src.netkeirin_client import (  # noqa: E402
 )
 
 
-def _detail(legs, source=None, odds=None):
-    return json.loads(build_bet_detail(legs, source, odds))
+def _detail(legs, source=None, predicted_odds=None):
+    # 🔴 入稿経路は板を見ない（2026-08-26）。オッズは予測盤面からしか来ない。
+    return json.loads(build_bet_detail(legs, source, predicted_odds=predicted_odds))
 
 
 def test_三連複軸2車が展開されて金額とともに並ぶ():
@@ -117,18 +118,21 @@ def test_オッズを渡すと買い目に添えられる():
     なってしまい「なぜこの金額なのか」が読めなくなる。"""
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3, 4]], 2500)]
     odds = {frozenset({1, 2, 3}): 8.34, frozenset({1, 2, 4}): 21.0}
-    d = _detail(legs, "blend", odds)
+    d = _detail(legs, "predicted", odds)
     got = {x["combo"]: x["odds"] for x in d["lines"]}
     assert got == {"1=2=3": 8.3, "1=2=4": 21.0}      # 小数第1位へ丸める
 
 
 def test_三連単のオッズはtupleキーで引く():
+    """🔴 三連単も**予測盤面**（`src.odds_prediction_tf`）から書く（2026-08-26）。
+
+    2026-08-26 まではここへ板が渡っており、実測でも 8/22〜8/26 の板由来 89点は
+    すべて 7H1 / 7T1 だった。`odds_low` は三連複の保守板しか無いので None。
+    """
     legs = [BetLeg(BET_KIND_TRIFECTA_FORMATION, [[3], [4], [1]], 500)]
     d = _detail(legs, None, {(3, 4, 1): 128.5})
-    # `odds_source` は板/予測の区別（2026-08-12 追加）。板由来なので "board"。
-    # `odds_low` は下限包絡（2026-08-16 追加）。三連単は予測モデルが無いので None。
     assert d["lines"][0] == {"bet_type": "3連単", "combo": "3-4-1",
-                             "stake": 500, "odds": 128.5, "odds_source": "board",
+                             "stake": 500, "odds": 128.5, "odds_source": "predicted",
                              "odds_low": None}
 
 
@@ -149,21 +153,14 @@ def test_オッズが取れなければNoneで残す():
 #    そこで**金額の水準を使う判断だけ**を予測側の下限へ寄せる。
 
 
-def test_odds_low_は板の有無によらず全点に入る():
-    """🔴 `odds_low` は「板に無い点を埋める」ものではない。
-
-    板があってもその点の下限を出す。板の値こそが下振れの発生源なので、
-    埋め合わせ扱いにすると**一番直したい点だけ下限が付かない**。
-    """
+def test_odds_low_は全点に入る():
+    """🔴 `odds_low` は「オッズが無い点を埋める」ものではない。全点に付ける。"""
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3, 4]], 2500)]
-    board = {frozenset({1, 2, 3}): 8.34}                 # 1=2=4 は板に無い
     pred = {frozenset({1, 2, 3}): 9.0, frozenset({1, 2, 4}): 30.0}
     low = {frozenset({1, 2, 3}): 7.6, frozenset({1, 2, 4}): 25.3}
-    d = json.loads(build_bet_detail(legs, "predicted", board,
+    d = json.loads(build_bet_detail(legs, "predicted",
                                     predicted_odds=pred, predicted_low=low))
     got = {x["combo"]: (x["odds"], x["odds_source"], x["odds_low"]) for x in d["lines"]}
-    # 表示オッズは 2026-08-21 から予測が主（板は予測を作れない目だけ）。
-    # ここで見たいのは **odds_low が全点に入ること**なので、その2点とも下限を持つ。
     assert got == {"1=2=3": (9.0, "predicted", 7.6),
                    "1=2=4": (30.0, "predicted", 25.3)}
 
@@ -171,13 +168,12 @@ def test_odds_low_は板の有無によらず全点に入る():
 def test_odds_low_は表示オッズを超えない():
     """🔴 「下振れ時」が表示オッズより高いのは意味を成さない。
 
-    板が既にモデルの下限より低いなら、その板の値のほうが厳しい見積もり。
-    min を取るので下側分位の較正は**安全側へしか動かない**。
-    実レース 20260815_22_01 で実際に起きた（板 5.6 に対し下限 5.8）。
+    保守倍率は 1 未満なので通常はそもそも下回るが、**万一の取り違えを
+    ここで止める**（min を取るので較正は安全側へしか動かない）。
     """
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3]], 2500)]
     d = json.loads(build_bet_detail(
-        legs, "predicted", {frozenset({1, 2, 3}): 5.6},
+        legs, "predicted", predicted_odds={frozenset({1, 2, 3}): 5.6},
         predicted_low={frozenset({1, 2, 3}): 5.8}))
     assert d["lines"][0]["odds_low"] == 5.6
 
@@ -185,7 +181,8 @@ def test_odds_low_は表示オッズを超えない():
 def test_odds_low_が無ければNoneのままで落ちない():
     """モデル未配備・保守倍率欠損でも入稿は止めない（従来どおり動く）。"""
     legs = [BetLeg(BET_KIND_TRIO_AXIS2, [[1], [2], [3]], 10000)]
-    d = json.loads(build_bet_detail(legs, None, {frozenset({1, 2, 3}): 5.0}))
+    d = json.loads(build_bet_detail(legs, None,
+                                    predicted_odds={frozenset({1, 2, 3}): 5.0}))
     assert d["lines"][0]["odds_low"] is None
     assert d["lines"][0]["odds"] == 5.0
 
