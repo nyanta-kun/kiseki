@@ -49,8 +49,8 @@ def test_run_continues_after_failure(monkeypatch):
 def test_cancel_uses_cancel_function(monkeypatch):
     seen: list[tuple[str, bool]] = []
     monkeypatch.setattr(cli, "cancel_submission",
-                        lambda rk, rank, force=False: (seen.append((rk, force)),
-                                                       (True, "deleted"))[1])
+                        lambda rk, rank, force=False, reason=None:
+                            (seen.append((rk, force)), (True, "deleted"))[1])
     monkeypatch.setattr(cli, "approve_and_submit",
                         lambda rk, rank: pytest.fail("cancel で承認関数が呼ばれました"))
     out = cli._run("cancel", [("20260811_13_01", "7C")])
@@ -65,16 +65,36 @@ def test_cancel_passes_force_through(monkeypatch):
     """
     seen: list[tuple[str, bool]] = []
     monkeypatch.setattr(cli, "cancel_submission",
-                        lambda rk, rank, force=False: (seen.append((rk, force)),
-                                                       (True, "forced"))[1])
+                        lambda rk, rank, force=False, reason=None:
+                            (seen.append((rk, force)), (True, "forced"))[1])
     out = cli._run("cancel", [("20260811_13_01", "7C")], force=True)
     assert out["ok"] is True and seen == [("20260811_13_01", True)]
+
+
+def test_cancel_passes_reason_through(monkeypatch):
+    """取消の理由が CLI から DB まで素通しされること（2026-08-25）。
+
+    🔴 ここが落ちると一覧の「取消」バッジが理由なしになり、
+       **売っていないことは分かっても「なぜ」が画面から消える**。
+    """
+    seen: list[str | None] = []
+    monkeypatch.setattr(cli, "cancel_submission",
+                        lambda rk, rank, force=False, reason=None:
+                            (seen.append(reason), (True, "deleted"))[1])
+    out = cli._run("cancel", [("20260811_13_01", "7C")], reason="平均払戻が安い")
+    assert out["ok"] is True and seen == ["平均払戻が安い"]
 
 
 def test_force_is_cancel_only():
     """--force は承認では受け付けないこと（承認に「強制」は無い）。"""
     src = inspect.getsource(cli.main)
     assert "--force は cancel 専用です" in src
+
+
+def test_reason_is_cancel_only():
+    """--reason も取消専用（承認・公開に「取り消した理由」は無い）。"""
+    src = inspect.getsource(cli.main)
+    assert "--reason は cancel 専用です" in src
 
 
 def test_all_scope_requires_date():

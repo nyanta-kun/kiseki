@@ -59,7 +59,12 @@ def test_is_operating_uses_the_given_set():
 
 
 def test_notifiers_filter_by_the_shared_predicate():
-    """🔴 通知側が共通判定を使っていること（自前で書き直すとまた食い違う）。"""
-    for rel in ("scripts/notify_race_result_wt.py", "scripts/notify_results_wt.py"):
+    """🔴 通知側が共通判定を使っていること（自前で書き直すとまた食い違う）。
+
+    ⚠️ `notify_race_result_wt.py` は 2026-08-25 から**売った商品しか出さない**ので
+       対象外。入稿 OFF のランクはそもそも入稿されない＝通知にも出ない
+       （フラグを見る必要が構造的に無くなった）。
+    """
+    for rel in ("scripts/notify_results_wt.py",):
         src = (REPO / rel).read_text(encoding="utf-8")
         assert "disabled_rank_names" in src, f"{rel} が運用中判定を使っていない"

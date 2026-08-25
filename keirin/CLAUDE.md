@@ -162,6 +162,71 @@ docs/bet-structure-guide.md            # 買い目戦略（旧体系の歴史的
   - 検査: `tests/test_rule_version.py`（本番の書き込み経路を全件走査）
 - **バックテストの3バイアスに注意（2026-06-12発見・docs/analysis/18）**: ①ランキングは必ず全エントリーで行う（完走者のみ=欠車生存バイアス×stale oddsで黒字が捏造される・旧 `_apply_pred_prob_wt`系は該当）②≤6車判定は出走表基準（`_filter_by_n_riders`を欠車除去後に適用すると7車立てが混入）③モデルは評価期間外で学習（週次再学習済みlgbm_wtはリーク）。標準実装= `exp_leakfree_rescore_wt.py`。本番忠実ではC0現行戦略含む全レバー~70-90%＝**採否判断はlive実測(picks_history)のみ**
 
+## 🔴 表示・通知の正本は「売った商品」（2026-08-25 統一）
+
+一覧・Discord・統計のすべてで、成績の母集団を
+**`netkeirin_submissions` + `bet_detail`（実際に売った商品）** へ揃えた。
+`picks_history`（ランクの**候補**）は成績の情報源にしない。
+
+### なぜ
+
+2026-08-25 松阪7R(7S) は平均払戻ゲート（想定平均 19,226円 <= 20,000円）で
+**入稿していない**のに、一覧が「購入・的中 42,400円」と表示し、Discord も
+`[ok] 20260825_47_07 通知` で的中として流していた。実測（8月）で
+**毎日 26〜49件**が「売っていないのに購入表示」だった。
+
+逆向きのずれもあった。看板の穴埋め（`origin='marquee_fill'`・全入稿の約4割）は
+`rank_key` が `7A`/`9A` で候補行と一致しないため、**実際に売った商品が
+一覧に出ていなかった**（picks 行のランクと入稿の rank_key が違う組が 704件）。
+
+### どこを直したか
+
+| 経路 | 変更 |
+|---|---|
+| `/api/keirin/picks` | 入稿があるレースは**その商品の行だけ**出す（JOIN 条件に `ph.rank = 'RANK_' \|\| ns.rank_key`）。売っていない行は `sold=false` で **投資・払戻・的中を 0/false** にする（`picks_history` へフォールバックしない） |
+| `/api/keirin/stats` | 母集団を `_fetch_settled_submissions` へ。`include_manual` は**意味を失った**（互換で受け取るだけ） |
+| `scripts/notify_race_result_wt.py` | 対象抽出の `picks_history` UNION を撤去。本文の候補行ループも撤去 |
+| フロント一覧 | 購入判定を `pick.sold` だけで行う。`bet_amount > 0` で判定しない |
+
+🔴 **`picks_history.bet_amount > 0` を「購入した」の意味で使わないこと。**
+あれは発走15分前判定が書く**名目値**（1万円賭けたことにしたら）で、
+入稿ゲートを一切見ていない（`notify_prerace_wt.py` は
+`MIN_MEAN_PAYOUT` 等を import すらしていない）。
+
+⚠️ **ランクの候補としての実力は Web からは測れなくなった**（売った分しか入らない）。
+候補の性能は keirin 側の walk-forward スクリプトで測ること。
+そもそも live と rebuild は母集団が構造的にずれる（下記「live と rebuild で
+母集団がずれるのは仕様」）。
+
+### 見送った理由の記録（`keirin.submission_skips`）
+
+売らなかったレースの理由を DB に残す。**2026-08-25 以前はログにしか無かった**ので、
+それより前の見送りは画面で「理由不明」になる（過去分の復元はしない）。
+
+- 語彙の正本: `backend/src/services/keirin_skip_reasons.py`
+  （**標準ライブラリ以外を import しないこと**。keirin が自分の venv から
+  ファイル読み込みする。看板判定・採点と同じ制約）
+- 記録: `keirin/src/submission_skips.py::record_skip`
+  → `netkeirin_submit_wt.py::_skip()`
+- 🔴 **`print` と記録を分けて書かないこと。** 必ず `_skip()` を通す。
+  片方だけの経路ができるとその理由は永久に「理由不明」になる。
+  `tests/test_submission_skips.py` が AST で対応を見ている
+- 🔴 記録に失敗しても**入稿は止めない**（表示のための付随情報）。
+  デプロイ直後にテーブルがまだ無くても入稿は通る
+- 一意キーは `(race_key, rank_key, session)`。同じ波を2回流しても増えず、
+  波が変われば別行（朝は見送り→夕方に入稿、が追える）
+
+⚠️ **`netkeirin_submissions` へ `status='skipped'` を足す形にしなかった**のは、
+売った記録に売っていない行を混ぜると `_already_submitted()` と
+`/summary` `/sold-performance` `/proposals` の status フィルタ全部に波及し、
+取りこぼすと**売上集計へ静かに混入する**ため。
+
+### 取り消した理由（`netkeirin_submissions.cancel_reason`）
+
+画面のボタンごとの固定文言（`frontend/src/app/keirin/actions.ts::CANCEL_REASONS`）を
+`/cancel` → webhook → `netkeirin_approve_wt.py --reason` → `cancel_submission` と
+通して保存する。**自由入力にしない**（あとで「どの操作で消えたか」を集計するため）。
+
 ## 現行ランク体系（2026-08-17〜・**7S/7B/7C/7M1/7H1/7H2/7T1/9C/9H1 の9ペーパーランク**）
 
 > **【2026-08-17・中間層 RANK_7M1（混戦 × 市場乖離）を新設】**

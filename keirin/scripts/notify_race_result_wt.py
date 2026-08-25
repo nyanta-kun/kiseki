@@ -45,11 +45,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.combo_label import axis_cars, format_bet_lines, format_pred_combo, is_hit
+from src.combo_label import format_bet_lines, format_pred_combo
 from src.sold_performance import (
     _as_dict, payout_per_100, settle_submission, winning_combo_labels,
 )
-from src.rank_visibility import disabled_rank_names
 from src.database import get_connection
 from src.notify.discord import send
 from src.scraper.pipeline_wt import _save_batch
@@ -128,12 +127,15 @@ def _targets(date: str, now_ts: int) -> list[dict]:
     """当日の推奨レースのうち、発走からの経過分が CHECK_MINUTES に一致し
     かつ結果未確定のものを返す。"""
     with get_connection() as c:
-        # 🔴 対象は **picks_history ∪ 入稿済み**。
-        #    picks_history だけを見ていたため、**看板の穴埋めだけで売っている
-        #    レースが1件も通知されなかった**（2026-08-15 松山 2R/3R/10R。
-        #    当日の 9C 入稿11件は全て marquee_fill で、うち3件は候補行が無い）。
-        #    「推奨を出したレース」の定義は**実際に売ったかどうか**であって、
+        # 🔴 **対象は「実際に売ったレース」だけ**（2026-08-25）。
+        #    以前は `picks_history`（ランクの**候補**）との UNION も見ていたため、
+        #    ゲートで見送って**売っていないレースを的中/不的中として通知**していた
+        #    （08-25 松阪7R 7S は平均払戻ゲートで入稿していないのに
+        #     「的中 42,400円」を通知した）。8月は毎日 26〜49件がこの状態。
+        #    「推奨を出した」の定義は**実際に売ったかどうか**であって、
         #    ペーパーの候補行があるかどうかではない。
+        #    ⚠️ 看板の穴埋めだけで売っているレース（`picks_history` に候補行が
+        #       無い）は必ず含めること。2026-08-15 に取りこぼした経路。
         rows = c.execute(
             """
             SELECT DISTINCT r.race_key AS base,
@@ -142,14 +144,11 @@ def _targets(date: str, now_ts: int) -> list[dict]:
             FROM wt_races r
             LEFT JOIN venue_info v ON v.venue_code = r.venue_id
             WHERE r.race_key IN (
-                SELECT split_part(race_key, '#', 1) FROM picks_history
-                WHERE race_date = ?
-                UNION
                 SELECT race_key FROM netkeirin_submissions
                 WHERE status IN (?, ?) AND left(race_key, 8) = ?
             )
             """,
-            (date, *SOLD_STATUSES, date.replace("-", "")),
+            (*SOLD_STATUSES, date.replace("-", "")),
         ).fetchall()
         out = []
         for r in rows:
@@ -375,10 +374,6 @@ def _build_message(t: dict, base: str) -> tuple[str, bool]:
             "SELECT frame_no, prediction_mark, finish_order "
             "FROM wt_entries WHERE race_key = ? ORDER BY finish_order", (base,)
         ).fetchall()
-        picks = c.execute(
-            "SELECT race_key, rank, pred_combo FROM picks_history "
-            "WHERE split_part(race_key, '#', 1) = ?", (base,)
-        ).fetchall()
         payouts = _confirmed_payouts(c, base)
 
     def _g(r, k):
@@ -392,9 +387,7 @@ def _build_message(t: dict, base: str) -> tuple[str, bool]:
     top3.sort()
     # ⚠️ **`(着順, 車番)` のまま持つ**。車番だけに畳むと同着が潰れ、当たり目を誤る。
     finishers = [(fo, f) for fo, f, _ in top3]
-    order3 = tuple(f for _, f, _ in top3)   # picks_history 側の判定に渡す（同着は先頭3件）
     order = " − ".join(f"**{f}**{MARK.get(m, '')}" for _, f, m in top3)
-    top3_set = {f for _, f, _ in top3}
     won = winning_combo_labels(finishers)
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
@@ -402,44 +395,15 @@ def _build_message(t: dict, base: str) -> tuple[str, bool]:
     pay_line = _race_payout_line(payouts, won)
     if pay_line:
         lines.append(pay_line)
-    # 入稿した推奨（取消を含む）を先に出す。picks_history の候補行は
-    # 「一度も入稿していないランク」の分だけ後段で補う。
+    # 🔴 **売った商品だけを出す**（2026-08-25）。取消は「（取消）」付きで出るが、
+    #    当日累計には入らない（`_day_total` は submitted/published のみ）。
+    #    以前はここに `picks_history`（ランクの候補）を並べる後段があり、
+    #    **売っていないランクの的中/不的中が毎レース混ざっていた**。
+    #    候補の成績を見たいときは keirin 側の walk-forward スクリプトを使う
+    #    （入稿とは母集団が構造的にずれる。keirin/CLAUDE.md「live と rebuild で
+    #     母集団がずれるのは仕様」参照）。
     sold, pending = _sold_lines(base, finishers, payouts)
     lines.extend(text for text, _ in sold)
-    sold_ranks = {rank for _, rank in sold}
-    # 🔴 入稿 OFF のランクは通知しない（2026-08-14）。`enabled` は入稿だけを
-    #    止めており、判定・記録・通知は動き続けていたため、廃止したはずの
-    #    9H1 の不的中通知が毎レース届いていた（ユーザー指摘）。
-    #    kiseki Web は同じフラグで非表示にしているので Discord だけが
-    #    食い違っていた。判定は `src/rank_visibility`（fail-open）が正本。
-    _off = disabled_rank_names()
-    for p in picks:
-        if _g(p, "rank") in _off:
-            continue
-        rank = _g(p, "rank").replace("RANK_", "")
-        if rank in sold_ranks:
-            continue          # 入稿原本を出した分は重複させない
-        combo = _g(p, "pred_combo") or ""
-        # 🔴 解釈は `src/combo_label` が単一正本（2026-08-14）。
-        #    ここに自前パースを書いてはいけない。以前は「畳んだ形」だけを想定した
-        #    自前実装で、7H1/7H2 の**展開形（1点ずつ）を渡すと軸と相手を取り違え**、
-        #    三連複が当たっていても `❌ 不的中（軸3/2）`（2車のはずが3車）と
-        #    通知していた。表示だけの問題ではなかった。
-        hit = is_hit(combo, order3)
-        axes = axis_cars(combo)
-        n_in = len(set(axes) & top3_set)
-        if hit:
-            mark = "🎯 **的中**"
-        elif len(axes) == 2 and n_in == 2:
-            # 軸2車が3着内なのに外れ＝相手（三連単なら着順も）を外した形。
-            mark = "😖 軸的中・相手外し"
-        elif len(axes) == 2:
-            mark = f"❌ 不的中（軸{n_in}/2）"
-        else:
-            # BOX 等で共通の軸が無い買い方（7H1 の三連複）。「軸n/2」は出せない。
-            mark = "❌ 不的中"
-        # 🔴 券種は区切り文字が表す（三連複 `=` / 三連単 `-`）ので `三単:` は出さない。
-        lines.append(f"{rank}: {format_pred_combo(combo, labels=False)}  → {mark}")
 
     bet, pay, n = _day_total(t["date"])
     if n:

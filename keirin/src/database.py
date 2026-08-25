@@ -78,7 +78,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                       #    relation does not exist で落ちる（INSERT 系は
                       #    テーブル名を直接展開するので動いてしまい気づけない）。
                       r"|netkeirin_submissions|netkeirin_sales_daily"
-                      r"|netkeirin_sales_race)\b",
+                      r"|netkeirin_sales_race|submission_skips)\b",
                       r"keirin.\1", rest, flags=re.IGNORECASE)
 
         if action == "IGNORE":
@@ -115,7 +115,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
-                 r"|netkeirin_sales_race)\b",
+                 r"|netkeirin_sales_race|submission_skips)\b",
                  r"keirin.\1", sql, flags=re.IGNORECASE)
     # psycopg2 は % をフォーマット文字として扱う。
     # LIKE '7PLUS%' 等リテラル % を先に %% にエスケープしてから :name / ? を変換する。
@@ -717,9 +717,34 @@ def migrate_db():
                 is_confident      INTEGER,
                 confident_ev      REAL,
                 published_at      TEXT,
+                -- 取り消した理由（2026-08-25〜）。Web が「取消」バッジの説明に使う。
+                cancel_reason     TEXT,
                 PRIMARY KEY (race_key, rank_key)
             )
         """)
+
+        # 入稿を見送った理由（2026-08-25新設）。本番は kiseki alembic
+        # 202608252140_keirin が正本で、ここは**テスト用 SQLite フォールバック**。
+        # 🔴 `netkeirin_submissions` へ status='skipped' を足す形にしていないのは、
+        #    売った記録に売っていない行を混ぜると `_already_submitted()` と
+        #    `/summary` `/sold-performance` `/proposals` の status フィルタすべてに
+        #    波及し、取りこぼすと**売上集計へ静かに混入する**ため。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS submission_skips (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_date   TEXT NOT NULL,
+                race_key    TEXT NOT NULL,
+                rank_key    TEXT NOT NULL,
+                session     TEXT NOT NULL,
+                -- 語彙の正本は backend/src/services/keirin_skip_reasons.py
+                reason_code TEXT NOT NULL,
+                reason_text TEXT,
+                decided_at  TEXT DEFAULT (datetime('now')),
+                UNIQUE (race_key, rank_key, session)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_submission_skips_date "
+                     "ON submission_skips(race_date)")
 
         # netkeirin自動入稿のランク別ON/OFF・タイトル/コメントテンプレート設定
         # （2026-07-28新設。本番はkiseki alembic migration s2t3u4v5w6x7が正本・

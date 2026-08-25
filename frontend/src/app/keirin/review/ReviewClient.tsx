@@ -36,6 +36,7 @@ import {
   approveKeirinRaceAction,
   approveKeirinVenueAction,
   cancelKeirinAllAction,
+  CANCEL_REASONS,
   cancelKeirinPicksAction,
   publishKeirinAllAction,
   publishKeirinRaceAction,
@@ -410,6 +411,16 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             : p.status === "submitted" ? "入稿済(未公開)"
               : p.status === "published" ? "公開済" : "取消"}
         </span>
+        {/* なぜ取り消したか（2026-08-25）。理由が無いと「消えている」ことは
+            分かっても「なぜ」が画面から消える。2026-08-25 より前は記録が無い。 */}
+        {p.status === "deleted" && p.cancel_reason && (
+          <span
+            className="rounded bg-rose-100 px-1.5 py-0.5 text-xs text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+            title={`取り消した理由: ${p.cancel_reason}`}
+          >
+            {p.cancel_reason}
+          </span>
+        )}
         {closed && p.status !== "deleted" && (
           <span
             className="rounded bg-gray-300 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-600 dark:text-gray-200"
@@ -962,7 +973,8 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
           + "netkeirin 側には何もしません。netkeirin にまだ商品が残っている場合は、\n"
           + "先に netkeirin 側で削除してください。よろしいですか？",
         )) return;
-        run(() => cancelKeirinSubmissionAction(p.race_key, p.rank_key, true));
+        run(() => cancelKeirinSubmissionAction(
+          p.race_key, p.rank_key, true, CANCEL_REASONS.forced));
       }}
     />
   );
@@ -1510,8 +1522,10 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
                   className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
                   onClick={() => {
                     setCheapDialog(null);
-                    run(() => cancelKeirinPicksAction(chosen.map(
-                      (p) => ({ raceKey: p.race_key, rankKey: p.rank_key }))));
+                    // 理由を残す（2026-08-25）。一覧の「取消」バッジに出る。
+                    run(() => cancelKeirinPicksAction(
+                      chosen.map((p) => ({ raceKey: p.race_key, rankKey: p.rank_key })),
+                      CANCEL_REASONS.cheap));
                   }}
                 >
                   {chosen.length}件を取り消す

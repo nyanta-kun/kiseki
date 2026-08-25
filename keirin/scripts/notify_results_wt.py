@@ -475,6 +475,15 @@ def main():
 
 # 成績サマリーの送信スイッチ（2026-08-07 ユーザー要望で廃止）。
 # **採点と picks_history への保存は続ける**。
+#
+# 🔴 **再開するときは母集団を「売った商品」へ入れ替えること**（2026-08-25）。
+#    このスクリプトが集計しているのは `prerace_decisions` → `picks_history` の
+#    **ランクの候補**で、実際に売った商品ではない（ゲートで見送ったレースが
+#    そのまま入っている）。一覧・レース単位通知・統計は
+#    `netkeirin_submissions` + `bet_detail` へ揃えたので、ここだけ古い母集団の
+#    まま復活させると**また画面と Discord で数字が食い違う**。
+#    売った商品の集計は `src/sold_performance.py` / kiseki の
+#    `/api/keirin/sold-performance` を使う。
 RESULTS_SUMMARY_NOTIFY_ENABLED = False
 
 
