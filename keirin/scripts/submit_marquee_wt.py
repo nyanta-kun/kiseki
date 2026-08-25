@@ -457,6 +457,8 @@ def main() -> int:
     venue_wave = venue_waves(races)
 
     allidx = _load_allindex(date)
+    # 予測オッズが作れず自分の波へ回したレース（欠車が主因・下記コメント）
+    deferred_no_odds: list[str] = []
     targets: list[dict] = []
     for cup, rs in by_cup.items():
         want = marquee_race_nos(rs)
@@ -481,10 +483,22 @@ def main() -> int:
             # 前倒しの可否は**埋める対象に残ったレースだけ**で見る（予測オッズの
             # 算出はモデルを走らせるので、開催の全レースに掛けない）。
             if ahead and not _can_pull_forward(r["race_key"]):
+                # 🔴 **件数を必ず可視化する**（2026-08-25）。ここへ落ちる主因は
+                #    「9車→8車 / 7車→6車」の欠車で、予測オッズモデルが
+                #    `SUPPORTED_N_CAR=(7,9)` しか持たないこと。実測の発生率は
+                #    9車 0.67% / 7車 1.10%（2026年）。**レースは失われず自分の波が
+                #    拾う**（自分の波では `ahead=False` になりこの分岐を通らない）が、
+                #    ログ1行だけだと「なぜ朝に出なかったのか」が誰にも見えない。
+                deferred_no_odds.append(f"{r['venue_id']}{r['race_no']}R")
                 print(f"[marquee] {r['race_key']}: 予測オッズを作れないので"
                       f"{WAVE_LABEL_JP.get(wave, wave)}の回へ回す", flush=True)
                 continue
             targets.append(r)
+
+    if deferred_no_odds:
+        print(f"[marquee] {date}: 予測オッズを作れず自分の波へ回した "
+              f"{len(deferred_no_odds)}件（{' '.join(deferred_no_odds)}）"
+              f" — 欠車で車数が 7/9 以外になったレースが主因", flush=True)
 
     if not targets:
         print(f"[marquee] {date}: 埋める看板レースは無い", flush=True)
@@ -541,7 +555,8 @@ def main() -> int:
             failed.append(label)
             sys.stderr.write(p.stderr)
     print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件・"
-          f"安い配当で見送り{len(skipped_cheap)}件）", flush=True)
+          f"安い配当で見送り{len(skipped_cheap)}件・"
+          f"予測オッズなしで次の波へ{len(deferred_no_odds)}件）", flush=True)
     if not args.dry_run and (done or failed or skipped_cheap):
         # 🔴 ランク入稿が通知を保留していれば、そこへ穴埋めを足して1通送る。
         #    保留が無ければ従来どおり（手動実行・ランク入稿が落ちた日）。

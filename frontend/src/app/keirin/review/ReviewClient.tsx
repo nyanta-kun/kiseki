@@ -47,6 +47,7 @@ import {
 } from "../actions";
 
 import CommentBody from "./CommentBody";
+import RaceConfidenceBadge from "@/components/RaceConfidenceBadge";
 
 const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆" };
 
@@ -533,6 +534,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             </span>
           )}
         </div>
+        {/* レース信頼度。畳んだ状態でも見える位置に置く（2026-08-25 ユーザー指定）。 */}
+        <RaceConfidenceBadge pct={p.confidence_pct} />
         <div>
           {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
               統一したもの）。選定前（confident_ev が未算出）のときだけ

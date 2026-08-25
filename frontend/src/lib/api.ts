@@ -1115,6 +1115,15 @@ export type KeirinPick = {
   cup_grade?: number | null;
   /** 上記の表示ラベル。未知の値は null（対応表を見直す合図）。 */
   cup_grade_label?: string | null;
+  /**
+   * レース信頼度（0〜100 の整数・四捨五入）。100% ＝ 上位2車の3着内率の合計が
+   * 2.00（軸2車がどちらも確実に3着以内）。
+   *
+   * 🔴 **ランクのゲートが見ているのと同じ量**なので、出る／出ないの理由が
+   *    画面から読める（7C は 72% 相当・9C は 65% 相当が下限）。
+   *    判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
+   */
+  confidence_pct?: number | null;
   /** 大会名（例「オールスター競輪」）。 */
   cup_name?: string | null;
   /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
@@ -1737,6 +1746,15 @@ export interface KeirinProposal {
    *    ROI が最も高い（Q4 78.1% vs Q1 71.6%）ため、自動で落とすと回収率の高い
    *    四分位を捨てることになる。表示だけに使う。
    */
+  /**
+   * レース信頼度（0〜100 の整数・四捨五入）。100% ＝ 上位2車の3着内率の合計が
+   * 2.00（軸2車がどちらも確実に3着以内）。
+   *
+   * 🔴 **ランクのゲートが見ているのと同じ量**なので、出る／出ないの理由が
+   *    画面から読める（7C は 72% 相当・9C は 65% 相当が下限）。
+   *    判定の正本は keirin 側 `src/p3_calibration.confidence_pct`。
+   */
+  confidence_pct?: number | null;
   crash_risk?: number | null;
   /** `crash_risk` の区分。low=安全 / mid / high=危険 / unknown=算出できず。 */
   crash_risk_band?: "low" | "mid" | "high" | "unknown";

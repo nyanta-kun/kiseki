@@ -16,6 +16,7 @@ import {
   triggerKeirinSubmitRaceAction as triggerKeirinSubmitRace,
 } from "./actions";
 import { todayYYYYMMDD } from "@/lib/utils";
+import RaceConfidenceBadge from "@/components/RaceConfidenceBadge";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -918,6 +919,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
               {pick.is_marquee && (
                 <span className="text-amber-500/70 dark:text-amber-400/70 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
+              {/* レース信頼度。**折りたたみ中も見える**位置に置く（2026-08-25 ユーザー指定）。 */}
+              <RaceConfidenceBadge pct={pick.confidence_pct} compact />
             </div>
           </div>
           {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用） */}
@@ -1121,6 +1124,8 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               {pick.is_marquee && (
                 <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
+              {/* レース信頼度。**折りたたみ中も見える**位置に置く（2026-08-25 ユーザー指定）。 */}
+              <RaceConfidenceBadge pct={pick.confidence_pct} compact />
             </div>
           </div>
           {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}

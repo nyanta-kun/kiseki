@@ -107,7 +107,10 @@ echo "[$(date '+%H:%M:%S')] === walk-forward tail再構築 開始 ===" | tee -a 
 # 🔴 RANK_7H2 は 2026-08-18 に三連複一本化（三連単を破棄）した際、rebuild
 #    スクリプトを新設したのでここへ登録した。それまで rebuild が無く、
 #    picks_history には live が書いた 44件（旧・2券種構成）しか無かった。
-for spec in "7s:7S" "7b:7B" "7c:7C" "7h1:7H1" "7h2:7H2" "7t1:7T1" "7t3:7T3" "9c:9C" "7m1:7M1"; do
+# 🔴 RANK_9F（9車・看板穴埋め）は 2026-08-25 に新設。**9C と必ず同じ夜に回すこと。**
+#    母集団は「9C のゲートを通らない9車」なので、片方だけ別の vintage で作ると
+#    同じレースに #9C と #9F が両方立つ（実測: 7月を m2606 で作って 15件が重複した）。
+for spec in "7s:7S" "7b:7B" "7c:7C" "7h1:7H1" "7h2:7H2" "7t1:7T1" "7t3:7T3" "9c:9C" "9f:9F" "7m1:7M1"; do
   script="${spec%%:*}"
   label="${spec##*:}"
   .venv/bin/python3 "scripts/rebuild_${script}_walkforward_pg.py" --tail-only 2>&1 | tee -a "$LOG" \

@@ -236,6 +236,54 @@ MIN_EXPECTED_PAYOUT_BY_RANK: dict[str, float] = {
 #: 買い目の想定払戻の平均（円）の下限。これ以下なら入稿しない。
 MIN_MEAN_PAYOUT = 20_000
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 **このゲートは 7車では正しく、9車では向きが逆**（2026-08-25 実測）
+#
+# honest walk-forward（vintage 予測・本番の買い方・均等配分）で、想定平均払戻が
+# 2万円以下の側と2万円超の側を比べた:
+#
+#   | | 切られる側(〜2万) | 残る側(2万〜) |
+#   |---|---|---|
+#   | 7車 25,518R | 19,599R 的中59.1% **ROI 76.5%**（確認 77.2%） | 5,919R 的中29.5% **ROI 82.6%**（確認 81.5%） |
+#   | 9車  4,591R |  1,979R 的中55.5% **ROI 84.1%**（確認 86.5%） | 2,612R 的中27.3% **ROI 75.7%**（確認 72.1%） |
+#
+#   7車は切って +6.1pt / **9車は切って −8.4pt**。9車は高信頼のレースほど配当が
+#   安く（想定平均払戻の中央: 高信頼1.48万 / 中2.07万 / 低2.73万）、
+#   **「安さで切る」が「信頼度で切る」と同義になり符号が反転する**。
+#
+# 9車で切ってよいのは「安い **かつ** 低信頼」のセルだけ:
+#
+#   低信頼×安い（gate<1.25） 337R 的中45.7% ROI 74.4%（確認 69.9%）  ← 切る
+#   高信頼×安い            1,642R 的中57.6% ROI 86.0%（確認 89.9%）  ← 残す
+#
+# ⚠️ 7車の測定窓は 2025-07〜2026-08。9車は 2024-07〜2026-08。
+# 再現: `scripts/exp_9axis/cheap_band.py` / `cheap_band_7car.py` / `cheap_band_cross.py`
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: 9車でこのゲートを掛ける信頼度（較正後 p3_sum_top2）の上限。これ以上は掛けない。
+MEAN_PAYOUT_GATE_CONF_MAX_9CAR = 1.25
+
+
+def mean_payout_gate_applies(n_cars: int | None, p3_sum_cal: float | None) -> bool:
+    """平均払戻ゲートを掛けてよいか。**9車は低信頼のときだけ掛ける**。
+
+    🔴 判定に必要な値が無ければ **9車は掛けない**（＝出す側へ倒す）。
+       このモジュールの他のゲートと同じ思想で、分からないことを理由に
+       商品を落とさない。9車では「掛けない」が実測で良い側でもある。
+
+    >>> mean_payout_gate_applies(7, None)
+    True
+    >>> mean_payout_gate_applies(9, 1.10)
+    True
+    >>> mean_payout_gate_applies(9, 1.45)
+    False
+    >>> mean_payout_gate_applies(9, None)
+    False
+    """
+    if n_cars == 9:
+        return p3_sum_cal is not None and float(p3_sum_cal) < MEAN_PAYOUT_GATE_CONF_MAX_9CAR
+    return True
+
 
 def mean_expected_payout(
     stakes: dict[int, int], odds: dict[int, float],

@@ -83,7 +83,9 @@ from src.stake_allocation import (
     cheap_point_odds,
     expected_payout_floor,
     mean_expected_payout,
+    mean_payout_gate_applies,
 )
+from src.p3_calibration import calibrated_p3_sum_top2
 from src.race_shape import (
     wide_note_text,
     classify_shape,
@@ -1887,8 +1889,27 @@ MEAN_PAYOUT_SKIP_TAG = "平均払戻ゲート"
 _mean_payout_skips: list[str] = []
 
 
+def _race_confidence_sum(race_key: str) -> float | None:
+    """そのレースの信頼度（**較正後**の上位2車3着内率の合計）。読めなければ None。
+
+    ゲート判定にだけ使う量で、`race_confidence_pct()` が表示に使うのと同じ値。
+    """
+    rk = race_key.split("#")[0]
+    probs = _load_top3_probs(rk)
+    if not probs:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT race_type, cup_grade FROM wt_races WHERE race_key = ?", (rk,),
+        ).fetchone()
+    rt = row["race_type"] if row is not None else None
+    cg = row["cup_grade"] if row is not None else None
+    return calibrated_p3_sum_top2(probs, rt, cg)
+
+
 def _mean_payout_too_low(
     stakes: dict[int, int], odds: dict[int, float] | None,
+    n_cars: int | None = None, race_key: str | None = None,
 ) -> float | None:
     """平均払戻が安すぎて見送るなら**その平均（円）**、出してよいなら None。
 
@@ -1897,10 +1918,19 @@ def _mean_payout_too_low(
        理由に商品を落とさない（`MIN_POINT_ODDS` の既存ゲートと同じ思想）。
        朝オッズが揃わなかったレースはここを素通りするので、レビュー画面の
        一括取消 UI は保険として残す（§11.6.4）。
+
+    🔴 **9車は「安い かつ 低信頼」のときだけ見送る**（2026-08-25 実測）。
+       9車では「安さで切る」が「信頼度で切る」と同義になり符号が反転する。
+       根拠と数値は `stake_allocation.mean_payout_gate_applies` のコメント。
+       `n_cars` / `race_key` を渡さない呼び出しは従来どおり全車数で掛かる。
     """
     mean = mean_expected_payout(stakes, odds or {})
     if mean is None or mean > MIN_MEAN_PAYOUT:
         return None
+    if n_cars is not None:
+        conf = _race_confidence_sum(race_key) if race_key else None
+        if not mean_payout_gate_applies(n_cars, conf):
+            return None
     return mean
 
 
@@ -2100,7 +2130,9 @@ def _process_rank(
                     #       実測でも 7T1/7H1/7H2 は該当0件）。
                     #    ⚠️ 判定できないとき（予測オッズが1点でも欠ける）は**出す**。
                     if not use_trifecta:
-                        _mean = _mean_payout_too_low(tilt_stakes_map, _pt_odds)
+                        _mean = _mean_payout_too_low(
+                            tilt_stakes_map, _pt_odds,
+                            n_cars=cfg["n_cars"], race_key=race_key)
                         if _mean is not None:
                             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
                                   f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
@@ -2402,7 +2434,8 @@ def _process_manual(
         #       衝突範囲が変わる。広げるには別途のユーザー判断が要る。
         _pt_odds = try_predicted_odds_for_legs(
             race_key.split("#")[0], axis1, axis2, list(tilt_stakes_map))
-        _mean = _mean_payout_too_low(tilt_stakes_map, _pt_odds)
+        _mean = _mean_payout_too_low(
+            tilt_stakes_map, _pt_odds, n_cars=n_entries, race_key=race_key)
         if _mean is not None:
             print(f"[netkeirin_submit] スキップ {venue_name}{race_no}R "
                   f"({rank_key}): {MEAN_PAYOUT_SKIP_TAG} 平均払戻 "
