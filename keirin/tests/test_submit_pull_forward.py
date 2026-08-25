@@ -105,3 +105,44 @@ def test_marquee_fill_uses_the_same_rule():
     src = (ROOT / "scripts" / "submit_marquee_wt.py").read_text(encoding="utf-8")
     assert "_can_pull_forward" in src
     assert "predicted_trio_board" in src
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-26: 三連単は `partners` を持たないので、先に判定する
+# ---------------------------------------------------------------------------
+def test_trifecta_does_not_require_partners(mod, monkeypatch):
+    """🔴 三連単のランクは `partners` が**常に空**。
+
+    7T1 / 7T3 / 7H1 / 7H2 / 9H1 は買う点を `legs` で受け取り、呼び出し側の
+    `partners` には何も代入されない（`_normalize_7t1_candidate` などの分岐）。
+    そのため `if not partners: return False` が先に立つと
+    **三連単は理由を問わず一度も前倒しできない**。
+    実測（2026-08-26 朝）: 青森7R・宇都宮7R・玉野5R・松阪7R は三連単の予測盤面が
+    210点そろっているのに「予測オッズを作れない」「三連単は板が要る」と出て
+    見送られていた。どちらのログも実態と違っていた。
+    """
+    monkeypatch.setattr(mod, "_predicted_tf_fill", lambda rk: {(1, 2, 3): 50.0})
+    assert mod._can_pull_forward("20260826_12_07", True, 4, 3, []) is True
+    assert mod._can_pull_forward("20260826_47_07", True, 1, 2, []) is True
+
+
+def test_trifecta_without_a_predicted_board_still_waits(mod, monkeypatch):
+    """9車は三連単の予測モデルが無い（`odds_tf` は7車のみ）＝自分の波まで待つ。"""
+    monkeypatch.setattr(mod, "_predicted_tf_fill", lambda rk: {})
+    assert mod._can_pull_forward("20260825_31_10", True, 1, 2, []) is False
+
+
+def test_trio_still_requires_partners(mod, monkeypatch):
+    """三連複は買う相手が要る（そこが空なら比率を作れない）。"""
+    monkeypatch.setattr(mod, "try_predicted_odds_for_legs",
+                        lambda *a, **k: {3: 5.0})
+    assert mod._can_pull_forward("20260826_12_07", False, 1, 2, []) is False
+
+
+def test_defer_reason_is_not_decided_by_bet_type_alone(mod):
+    """⚠️ 「三連単は板が要る」は 2026-08-26 に嘘になった（板でダッチしていない）。"""
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    # コメント行は経緯の説明として残す。**実行される文字列**だけを見る。
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "三連単は板が要る" not in code, "実態と違う見送り理由が残っている"

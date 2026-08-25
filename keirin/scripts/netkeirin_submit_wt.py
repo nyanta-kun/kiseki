@@ -1428,7 +1428,6 @@ def _build_tilted_legs(
 
 def _can_pull_forward(
     race_key: str, is_trifecta: bool, axis1: int, axis2: int, partners: list[int],
-    equal_stake_trifecta: bool = False,
 ) -> bool:
     """後の波の開催を、この回へ**前倒しして**入稿してよいか（2026-08-21 新設）。
 
@@ -1440,40 +1439,34 @@ def _can_pull_forward(
     （`wave_submit_wt.sh` は入稿だけを行う）ので、予測オッズさえ作れれば
     夜の開催を朝に出しても中身は変わらない。
 
-    🔴 **前倒しできない2つ**（＝ここで False を返すもの）:
+    判定は「**買う点に値を付けられるか**」の一点:
 
-    1. **板でダッチする三連単系ランク**（7H1 / 7H2 / 9H1・三連複からの切替も含む）。
-       `_dutch_point_legs` は「買う点**すべて**に三連単の板オッズが揃うときだけ」
-       ダッチにする。朝は三連単の板がまず無いので、揃わず通常配分へ落ちて
-       **券種の形が変わる**。予測オッズは三連複しか作れない。
-    2. **予測オッズが買う点すべてに作れないレース**（7車・9車以外＝実測 3.7%）。
-       一部だけ予測で埋めると比率が壊れる（`stake_allocation._usable_odds`）。
+    - 三連単のランク（7T1 / 7T3 / 7H1 / 7H2 / 9H1）… 三連単の予測盤面
+      （`src.odds_prediction_tf`・**7車のみ**）が作れるか
+    - 三連複のランク … 買う相手すべてに三連複の予測オッズが作れるか
+      （一部だけ埋めると重みの比率が壊れる・`stake_allocation._usable_odds`）
 
-    どちらも「出さない」のではなく**自分の波へ残す**。13:00 / 18:00 の回が
-    従来どおり拾うので、前倒しは常に上積みであって取りこぼしを増やさない。
+    前倒ししないレースは `deferred_races` に入り、**下位ランクにも取らせない**。
 
-    🔴 **`equal_stake_trifecta`（7T1 / 7T3）は三連単でも前倒しできる**
-       （2026-08-24）。`_normalize_7t1_candidate` は
-       「**ダッチ配分（`_dutch_point_legs`）は使わない**」と明記されており、
-       賭け金は `rank_7t1_stakes` / `rank_7t3_stakes` の**均等**で板を一切見ない。
-       つまり上の理由1が当てはまらない。
-
-       ⚠️ **これを外すと 7T1/7T3 を優先順位の上へ置いた効果が消える。**
-          後の波の決勝レースを 7T1 が最初に見て前倒しを見送ると、そのレースは
-          `deferred_races` に入り**下位の 7S/7B/7C も朝に取れなくなる**（優先順位の
-          保護）。商品自体は自分の波で 7T1 が出すので取りこぼしは無いが、
-          **売上が最も集まる決勝の朝の露出を丸ごと失う**（2026-08-21 に足した
-          前倒しの効果が決勝だけ無効になる）。
+    🔴 **7T1/7T3 を止めると優先順位の上へ置いた効果が消える。** 後の波の決勝を
+       7T1 が最初に見て見送ると、下位の 7S/7B/7C も朝に取れなくなる＝
+       **売上が最も集まる決勝の朝の露出を丸ごと失う**。
     """
+    # 🔴 **三連単のランクは `partners` を持たない**（2026-08-26 修正）。
+    #    7T1 / 7T3 / 7H1 / 7H2 / 9H1 は買う点を `legs` で受け取るので、呼び出し側の
+    #    `partners` は **常に空リスト**（`_normalize_7t1_candidate` などの分岐では
+    #    代入されない）。そのため下の `if not partners: return False` が先に立って
+    #    **三連単は理由を問わず一度も前倒しできていなかった**。ログには
+    #    「予測オッズを作れない」「三連単は板が要る」と出るがどちらも実態と違う。
+    #    実測（2026-08-26 朝）: 青森7R・宇都宮7R・玉野5R・松阪7R は三連単の
+    #    予測盤面が 210点そろっているのに見送られていた。
+    #    → 三連単は**盤面が作れるか**だけで判定する（券種の形が変わらない条件）。
+    if is_trifecta:
+        # ⚠️ 9車は三連単の予測モデルが無い（`odds_tf` は7車のみ）＝空 →
+        #    従来どおり自分の波まで待つ。
+        return bool(_predicted_tf_fill(race_key))
     if not partners:
         return False
-    if is_trifecta and not equal_stake_trifecta:
-        # ダッチ配分する三連単ランク（7H1 / 7H2 / 9H1）。2026-08-26 までは
-        # **板でダッチしていたので前倒しできなかった**が、いまは三連単の
-        # 予測オッズ（`src.odds_prediction_tf`・7車のみ）で配分するので、
-        # 盤面さえ作れれば朝でも券種の形は変わらない。
-        # ⚠️ 9車は三連単の予測モデルが無い＝空 → 従来どおり自分の波まで待つ。
-        return bool(_predicted_tf_fill(race_key))
     odds = try_predicted_odds_for_legs(race_key, axis1, axis2, list(partners))
     return bool(odds) and all(odds.get(t) for t in partners)
 
@@ -2358,16 +2351,15 @@ def _process_rank(
             is_trifecta = bool(use_trifecta or is_7t1 or is_formation or is_multi_7h2)
             wave_jp = WAVE_LABEL_JP.get(race_wave, race_wave)
             if not _can_pull_forward(base_key, is_trifecta, axis1, axis2_or_p1,
-                                     partners, equal_stake_trifecta=is_7t1):
+                                     partners):
                 if deferred_races is not None:
                     deferred_races.add(base_key)
-                # ⚠️ 7T1 / 7T3 は三連単でも**均等配分**なので板を見ない
-                #    （`_can_pull_forward` の `equal_stake_trifecta`）。ここへ
-                #    落ちたのは予測オッズを作れなかったから。理由を券種だけで
-                #    決めると「三連単は板が要る」と嘘のログが出る（実測で
-                #    7T1 の持ち越し4件すべてがその誤表示だった）。
-                reason = ("三連単は板が要る"
-                          if is_trifecta and not is_7t1 else "予測オッズを作れない")
+                # ⚠️ 理由は**券種で決めない**。2026-08-26 まで「三連単は板が要る」と
+                #    出していたが、板でダッチするのをやめた今は嘘になる。
+                #    三連単で落ちるのは予測盤面（`odds_tf`・7車のみ）が作れないとき
+                #    ＝実質 9車のレース。三連複は買う点のどれかが作れないとき。
+                reason = ("三連単の予測オッズを作れない（9車など）"
+                          if is_trifecta else "予測オッズを作れない")
                 _skip(race_key, rank_key, session, SKIP_DEFER_WAVE,
                       f"{reason} → {wave_jp}の回で入稿", venue_name, race_no,
                       tag="前倒し見送り")
