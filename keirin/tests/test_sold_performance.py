@@ -42,7 +42,9 @@ def test_採点は正本へ委譲している():
     結果が Discord と Web で食い違う状態（2026-08-25 の障害）へ戻る。"""
     assert _CANONICAL.name == "keirin_settlement.py"
     assert _CANONICAL.exists(), f"正本が見つかりません: {_CANONICAL}"
-    body = Path("src/sold_performance.py").read_text()
+    # ⚠️ **カレントディレクトリに依存させない。** 相対パスで書くと
+    #    リポジトリ直下から pytest を回したときだけ落ちる。
+    body = (Path(__file__).resolve().parents[1] / "src" / "sold_performance.py").read_text()
     assert "def settle(" not in body, "採点の実装を keirin 側に持ってはいけない"
 
 
