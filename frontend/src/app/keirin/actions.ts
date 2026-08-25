@@ -18,6 +18,7 @@
  */
 
 import { auth } from "@/auth";
+import { CANCEL_REASONS, type CancelReason } from "./cancelReasons";
 import type { ManualKeirinRankKey } from "@/lib/api";
 
 const BACKEND_URL =
@@ -225,24 +226,6 @@ export async function syncKeirinPublishStatusAction(date: string): Promise<Appro
  * netkeirin 側で先に下書きを消していると item_id が引けず、従来はそこで止まって
  * DB も更新されないままだった（取消したはずの行が残り、自動穴埋めでも出し直せない）。
  */
-/**
- * 取り消した理由（2026-08-25）。一覧の「取消」バッジに出る。
- *
- * 🔴 **自由入力にしない。** 画面のボタンと1対1の固定文言にすることで、
- *    あとから「どの操作で消えたのか」を集計できる。
- * ⚠️ DB は varchar(255)。長い文言を足さないこと。
- */
-export const CANCEL_REASONS = {
-  manual: "手動取消",
-  forced: "強制取消",
-  // ⚠️ `cheap: "平均払戻が安い"` は 2026-08-26 に廃止（入稿時の自動ゲートへ移行）。
-  //    **過去の取消行にはこの文言が残っている**ので、集計するときは忘れないこと。
-  venue: "場単位で取消",
-  all: "全件取消",
-} as const;
-
-export type CancelReason = (typeof CANCEL_REASONS)[keyof typeof CANCEL_REASONS];
-
 export async function cancelKeirinSubmissionAction(
   raceKey: string,
   rankKey: string,
