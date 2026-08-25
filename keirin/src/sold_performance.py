@@ -31,15 +31,66 @@ netkeirin の**表示的中率は `n_hits_excl_garami`**（払戻＞賭け金）
 **集計から外し、件数だけ返す**（黙って落とすと完全な数字に見える）。
 
 DB にも FastAPI にも依存しない純関数（`keirin_sales_analysis.py` と同じ方針）。
+
+## 🔴 採点そのものは kiseki 側が正本（2026-08-25 一本化）
+
+    backend/src/services/keirin_settlement.py
+
+同じ商品の結果が Discord・入稿確認・推奨一覧で食い違っていたため、採点を1本に
+まとめた。**ここに採点規則を書き直してはいけない**（書いた瞬間、Discord だけが
+別の答えを出す状態へ戻る）。看板判定（`marquee.py`）と同じく、正本を
+ファイル指定で読み込んで束縛する。
+`tests/test_sold_performance.py::test_採点は正本へ委譲している` が機械的に見ている。
 """
 from __future__ import annotations
 
-import json
+import importlib.util
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import ModuleType
 from typing import Any, Iterable, Mapping, Sequence
 
-#: `bet_detail.lines[].bet_type` → 着順を見るか（三連単だけ順序が要る）
-_ORDERED = {"3連単": True, "3連複": False}
+# keirin/src/sold_performance.py → parents[2] が kiseki のリポジトリルート。
+_CANONICAL = (Path(__file__).resolve().parents[2]
+              / "backend" / "src" / "services" / "keirin_settlement.py")
+_MODULE_NAME = "kiseki_keirin_settlement"
+
+
+def _load_canonical() -> ModuleType:
+    """kiseki 側の採点の正本をファイルから読み込む。
+
+    ⚠️ `sys.path` に `backend/` を足す方式は使えない。keirin にも `src`
+       パッケージがあり**名前が衝突する**ため。正本は標準ライブラリ以外を
+       import しないので、ファイル指定の読み込みで安全に共有できる。
+    ⚠️ 見つからないときは**黙って自前実装へ落ちない**。フォールバックは
+       二重管理を静かに復活させ、ずれても誰も気づけない。
+    """
+    cached = sys.modules.get(_MODULE_NAME)
+    if cached is not None:
+        return cached
+    if not _CANONICAL.exists():
+        raise ImportError(
+            f"採点の正本が見つかりません: {_CANONICAL}\n"
+            "keirin は kiseki リポジトリ内（<kiseki>/keirin）で動かす前提です。"
+        )
+    spec = importlib.util.spec_from_file_location(_MODULE_NAME, _CANONICAL)
+    if spec is None or spec.loader is None:        # pragma: no cover - 実質起きない
+        raise ImportError(f"正本を読み込めません: {_CANONICAL}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_canonical = _load_canonical()
+
+Settlement = _canonical.Settlement
+settle = _canonical.settle
+payout_per_100 = _canonical.payout_per_100
+_as_dict = _canonical.as_bet_detail
+#: 確定着順（同着を含む）から当たり目の表記を作る。再実装しないこと。
+winning_combo_labels = _canonical.winning_combo_labels
 
 
 @dataclass
@@ -96,77 +147,35 @@ class SoldSummary:
         return p[len(p) // 2]
 
 
-def _as_dict(bet_detail: Any) -> dict | None:
-    if bet_detail is None:
-        return None
-    if isinstance(bet_detail, str):
-        try:
-            return json.loads(bet_detail)
-        except (TypeError, ValueError):
-            return None
-    return dict(bet_detail) if isinstance(bet_detail, Mapping) else None
-
-
-def _combo_key(combo: str, ordered: bool) -> tuple[int, ...]:
-    """'5-6-1' / '1=2=3' を比較可能な形にする。三連複は順不同へ畳む。"""
-    parts = [int(x) for x in str(combo).replace("=", "-").split("-")]
-    return tuple(parts) if ordered else tuple(sorted(parts))
-
-
 def settle_submission(
     bet_detail: Any,
-    order3: Sequence[int] | None,
-    payout_per_100: Mapping[tuple[str, tuple[int, ...]], int] | None = None,
-) -> tuple[int, int, bool] | None:
-    """1入稿を採点して (投資, 払戻, 的中) を返す。採点できないなら None。
+    finishers: Iterable[Sequence[int]] | None,
+    payouts: Mapping[str, int] | None = None,
+) -> Settlement | None:
+    """1入稿を採点する。**買い目が読めない入稿だけ None**。
 
     Args:
         bet_detail: `netkeirin_submissions.bet_detail`
-        order3: 確定した1〜3着の車番（着順）。確定していなければ None
-        payout_per_100: `{(券種, 目): 100円あたりの確定配当}`。
-            **確定配当が正**で、`bet_detail.odds`（入稿時点のオッズ）は
-            発走までに動くので払戻計算には使わない。渡されない・欠けている
-            ときだけ `odds` へフォールバックする。
+        finishers: `(着順, 車番)` の並び。**3着以内の行をすべて渡すこと**
+            （同着があると3件を超える）。未確定なら None
+        payouts: `{当たり目の表記: 100円あたりの確定払戻}`。
+            表記は三連複 `1=2=4` / 三連単 `1-2-4`（`payout_per_100` で作る）
 
-    🔴 券種は行ごとに違いうる（7H2 は三連単と三連複を1商品で売る）。
-       `bet_type` を無視して一律で畳むと、三連単の着順違いを的中に数える。
+    🔴 **採点が終わったかは `Settlement.settled` を見ること。** False は「外れ」では
+       なく「まだ分からない」で、集計にも通知にも混ぜてはいけない。
+    🔴 引けない配当を `bet_detail.odds`（入稿時点のオッズ）で代用しない。
+       発走までに動くので払戻を過大にも過小にもする（実測 2026-08-15 松山9R で
+       9.0倍→6.3倍・43%過大）。以前ここだけが代用しており、Web が「未確定」と
+       出すレースに Discord が金額を出していた。
     """
-    d = _as_dict(bet_detail)
-    if not d:
-        return None
-    lines = d.get("lines") or []
-    if not lines:
-        return None
-    if not order3 or len(order3) < 3:
-        return None
-
-    bet = payout = 0
-    hit = False
-    for line in lines:
-        stake = int(line.get("stake") or 0)
-        bet += stake
-        kind = str(line.get("bet_type") or "")
-        ordered = _ORDERED.get(kind)
-        if ordered is None:            # 未知の券種は採点しない（黙って外れにしない）
-            return None
-        want = tuple(order3[:3]) if ordered else tuple(sorted(order3[:3]))
-        if _combo_key(line.get("combo"), ordered) != want:
-            continue
-        hit = True
-        per100 = (payout_per_100 or {}).get((kind, want))
-        if per100:
-            payout += int(per100) * stake // 100
-        else:                          # 確定配当が引けないときだけ入稿時オッズで代用
-            payout += int(round(float(line.get("odds") or 0) * stake))
-    if bet <= 0:
-        return None
-    return bet, payout, hit
+    out = settle(bet_detail, finishers, payouts)
+    return out if out.bet > 0 else None
 
 
 def build_sold_races(
     submissions: Iterable[Mapping[str, Any]],
-    finishes: Mapping[str, Sequence[int]],
-    payouts: Mapping[str, Mapping[tuple[str, tuple[int, ...]], int]] | None = None,
+    finishes: Mapping[str, Sequence[Sequence[int]]],
+    payouts: Mapping[str, Mapping[str, int]] | None = None,
 ) -> tuple[list[SoldRace], int]:
     """入稿の一覧から `SoldRace` を組み立てる。
 
@@ -174,7 +183,12 @@ def build_sold_races(
       `race_key` / `race_date` / `rank_key` / `bet_detail`（`origin` は任意）
       **取消済み（deleted）は呼び出し側で除いておくこと**——商品ではないため。
 
+    finishes: race_key → `(着順, 車番)` の並び（3着以内・同着なら4件以上）
+    payouts:  race_key → `{当たり目の表記: 100円あたりの確定払戻}`
+
     returns (売れたレース, 採点できなかった件数)
+    🔴 **採点が終わっていない入稿は「外れ」ではなく `skipped`** に数える。
+       0円として足すと、当たっているレースが払戻0円で回収率に入る。
     """
     out: list[SoldRace] = []
     skipped = 0
@@ -182,16 +196,14 @@ def build_sold_races(
         rk = str(s.get("race_key") or "")
         got = settle_submission(
             s.get("bet_detail"), finishes.get(rk), (payouts or {}).get(rk))
-        if got is None:
+        if got is None or not got.settled:
             skipped += 1
             continue
-        bet, pay, hit = got
-        d = _as_dict(s.get("bet_detail")) or {}
         out.append(SoldRace(
             race_key=rk, race_date=str(s.get("race_date") or ""),
             rank_key=str(s.get("rank_key") or ""), origin=s.get("origin"),
-            bet=bet, payout=pay, hit=hit, net_hit=hit and pay >= bet,
-            n_points=len(d.get("lines") or []),
+            bet=got.bet, payout=got.payout, hit=got.hit, net_hit=got.net_hit,
+            n_points=got.n_combos,
         ))
     return out, skipped
 

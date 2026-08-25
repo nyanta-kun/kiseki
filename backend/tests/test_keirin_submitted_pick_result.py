@@ -1,33 +1,37 @@
-"""手動・穴埋め入稿レースの買い目・的中・払戻の組み立て検査（2026-08-11）。
+"""入稿（`bet_detail`）の採点検査 — 一覧・確認画面・Discord が同じ答えを出すこと。
 
 ## 背景
 
-ランクのゲートを通っていない入稿（手動・看板の穴埋め）は `picks_history` に
-行が立たないため採点バッチも走らない。実際に商品として売っているのに Web の
-一覧にも成績にも現れなかった（実測 135レース・売上シェアの約7割）。
+同じ1レース1商品の結果が、2026-08-25 時点で **3つの画面でバラバラに出ていた**
+（08-25 防府8R・7S: Discord「🎯 15,200円」/ 確認画面「… 未確定」/ 一覧「✗」）。
+一覧が `picks_history.hit`＝**ランクの候補**の成績を出していたのが最大の原因で、
+実測 2026-08-07〜25 の売った295商品のうち **53件（18%）**で食い違っていた。
 
-そこで **入稿の原本（`netkeirin_submissions.bet_detail`）と確定結果**から
-直に組み立てる。ここが壊れても例外は出ず、「不的中」と表示されるだけなので
-気づけない。だから検査で固定する。
+採点の正本は `src/services/keirin_settlement.settle` に一本化した。ここが壊れても
+例外は出ず「不的中」や「未確定」と表示されるだけなので気づけない。だから検査で固定する。
 
-⚠️ **最大の罠は券種ごとの区切り文字**。三連複は `1=2=4`、三連単は `1-2-4`。
-   取り違えると **当たっているのに不的中**になる。
+⚠️ **最大の罠は券種**。三連複は `1=2=4`（順不同）、三連単は `1-2-4`（着順）。
+   取り違えると **当たっているのに不的中**になる。券種は `bet_type` が正本で、
+   区切り文字から推測しない（実データ 4,163点すべてで両者は一致している）。
 
 🔴 **「まだ分からない」と「外れ」を混ぜない**（2026-08-16 の実害）。
    京王閣2R は netkeirin 側が的中・払戻12,500円を表示している最中に、`/review` が
-   「✗ 不的中」と出していた。呼び出し側は `status=3` か「発走+90分」で採点対象を
-   決めるが、**winticket は着順が入る前に status を 3 にすることがある**ため、
-   結果が揃っていない行がそのまま「外れ・払戻0円」として表示・集計されていた。
-   `settled` はその区別のための列で、これが False の行は集計に混ぜてはいけない。
+   「✗ 不的中」と出していた。`settled` はその区別のための値で、
+   False の行は集計に混ぜてはいけない。
+
+🔴 **同着で採点を諦めない**（2026-08-25 是正）。旧実装は「3着以内がちょうど3車」で
+   なければ採点せず、同着のレースが**永久に未確定**のまま集計から落ちていた
+   （08-21 立川11R の 7S は 10,000円の外れが1日の回収率から消えていた）。
 """
 from __future__ import annotations
 
-from src.api.keirin_router import _finish_top3_frames, _submitted_pick_result
+from src.api.keirin_router import _finishers, _race_payout_display, _submitted_pick_result
+from src.services.keirin_settlement import payout_per_100, settle
 
 
-def _bet(*lines):
+def _bet(*lines, bet_type="3連複"):
     return {"total": sum(x[1] for x in lines),
-            "lines": [{"bet_type": "3連複", "combo": c, "stake": s, "odds": None}
+            "lines": [{"bet_type": bet_type, "combo": c, "stake": s, "odds": None}
                       for c, s in lines]}
 
 
@@ -41,16 +45,16 @@ def _entries(order: dict[int, int]):
 # ---------------------------------------------------------------------------
 
 def test_確定していれば着順どおりに返す():
-    assert _finish_top3_frames(_entries({5: 1, 2: 2, 7: 3})) == [5, 2, 7]
+    assert _finishers(_entries({5: 1, 2: 2, 7: 3})) == [(1, 5), (2, 2), (3, 7)]
 
 
-def test_未確定ならNoneを返す():
-    assert _finish_top3_frames(_entries({})) is None
+def test_未確定なら空を返す():
+    assert _finishers(_entries({})) == []
 
 
-def test_3着まで揃っていなければNone():
-    """1〜2着しか入っていない中途半端な状態で「不的中」と出さないため。"""
-    assert _finish_top3_frames(_entries({5: 1, 2: 2})) is None
+def test_同着は落とさない():
+    """🔴 3件に絞ると同着のレースが永久に未確定になる（2026-08-21 立川11R）。"""
+    assert _finishers(_entries({4: 1, 6: 2, 2: 3, 5: 3})) == [(1, 4), (2, 6), (3, 2), (3, 5)]
 
 
 # ---------------------------------------------------------------------------
@@ -59,16 +63,16 @@ def test_3着まで揃っていなければNone():
 
 def test_買い目と投資額は入稿の原本から取る():
     """⚠️ 再構成しない。傾斜配分は入稿時点の想定オッズで決まり後から再現できない。"""
-    out = _submitted_pick_result(_bet(("1=2=4", 4900), ("1=2=3", 3300)), None, 0, 0)
-    assert out["pred_combo"] == "1=2=4 1=2=3"
-    assert out["n_combos"] == 2
-    assert out["bet_amount"] == 8200
+    out = settle(_bet(("1=2=4", 4900), ("1=2=3", 3300)), None)
+    assert out.pred_combo == "1=2=4 1=2=3"
+    assert out.n_combos == 2
+    assert out.bet == 8200
 
 
 def test_入稿記録が無ければ空で返す():
-    out = _submitted_pick_result(None, [1, 2, 4], 1000, 0)
-    assert out == {"pred_combo": None, "n_combos": None, "bet_amount": 0,
-                   "hit": False, "payout": 0, "settled": False}
+    out = settle(None, [(1, 1), (2, 2), (3, 4)])
+    assert (out.bet, out.n_combos, out.hit, out.payout, out.settled) == (0, 0, False, 0, False)
+    assert out.pred_combo is None
 
 
 # ---------------------------------------------------------------------------
@@ -77,26 +81,24 @@ def test_入稿記録が無ければ空で返す():
 
 def test_三連複の的中は車番を昇順に並べて突き合わせる():
     """🔴 結果が 4→1→2 でも買い目 `1=2=4` は的中。着順で並べたまま比べると外れる。"""
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [4, 1, 2], trio_pay=560, trifecta_pay=0)
-    assert out["hit"] is True
-    assert out["payout"] == 560 * 5000 // 100  # 100円あたり560円
+    out = settle(_bet(("1=2=4", 5000)), [(1, 4), (2, 1), (3, 2)], {"1=2=4": 560})
+    assert out.hit is True
+    assert out.payout == 560 * 5000 // 100        # 100円あたり560円
 
 
 def test_三連単は着順まで一致して初めて的中():
-    bet = {"total": 1000,
-           "lines": [{"bet_type": "3連単", "combo": "1-2-4", "stake": 1000, "odds": None}]}
-    assert _submitted_pick_result(bet, [1, 2, 4], 0, 3200)["hit"] is True
+    bet = _bet(("1-2-4", 1000), bet_type="3連単")
+    assert settle(bet, [(1, 1), (2, 2), (3, 4)], {"1-2-4": 3200}).hit is True
     # 同じ3車でも着順が違えば不的中
-    assert _submitted_pick_result(bet, [4, 2, 1], 0, 3200)["hit"] is False
+    assert settle(bet, [(1, 4), (2, 2), (3, 1)], {"4-2-1": 3200}).hit is False
 
 
-def test_区切り文字を取り違えない():
-    """三連複の買い目を三連単の区切りで持っていると突き合わせに失敗する。
-    実データは 3連複=`1=2=4` / 3連単=`1-2-4`。"""
-    wrong = {"total": 1000,
-             "lines": [{"bet_type": "3連複", "combo": "1-2-4", "stake": 1000, "odds": None}]}
-    # 三連複として買ったのに区切りが `-` だと三連単扱いになり、着順が違えば外れる
-    assert _submitted_pick_result(wrong, [4, 1, 2], 5600, 0)["hit"] is False
+def test_券種は区切り文字ではなくbet_typeで決める():
+    """🔴 実データは 3連複=`1=2=4` / 3連単=`1-2-4` で一致しているが、
+    推測に頼ると片方が崩れたときに**当たっているのに不的中**になる。
+    Discord（keirin 側）は最初から `bet_type` を見ているので、そちらへ揃える。"""
+    odd = _bet(("1-2-4", 1000))                   # 3連複なのに区切りが `-`
+    assert settle(odd, [(1, 4), (2, 1), (3, 2)], {"1=2=4": 5600}).hit is True
 
 
 def test_複数点が当たったら合算する():
@@ -105,15 +107,50 @@ def test_複数点が当たったら合算する():
         {"bet_type": "3連複", "combo": "1=2=4", "stake": 1000, "odds": None},
         {"bet_type": "3連単", "combo": "1-2-4", "stake": 1000, "odds": None},
     ]}
-    out = _submitted_pick_result(bet, [1, 2, 4], trio_pay=560, trifecta_pay=3200)
-    assert out["payout"] == 5600 + 32000
-    assert out["hit"] is True
+    out = settle(bet, [(1, 1), (2, 2), (3, 4)], {"1=2=4": 560, "1-2-4": 3200})
+    assert out.payout == 5600 + 32000
+    assert out.hit is True
 
 
 def test_外れは払戻ゼロ():
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [3, 5, 6], 560, 0)
-    assert out["hit"] is False
-    assert out["payout"] == 0
+    out = settle(_bet(("1=2=4", 5000)), [(1, 3), (2, 5), (3, 6)], {"3=5=6": 560})
+    assert out.hit is False
+    assert out.payout == 0
+
+
+def test_入稿時点のオッズを払戻に使わない():
+    """🔴 `bet_detail.odds` は入稿時点の値で発走までに動く（実測 2026-08-15 松山9R は
+    9.0倍→6.3倍で払戻が43%過大になった）。引けないなら**未採点**にする。"""
+    bet = {"total": 5000, "lines": [
+        {"bet_type": "3連複", "combo": "1=2=4", "stake": 5000, "odds": 9.0}]}
+    out = settle(bet, [(1, 1), (2, 2), (3, 4)], {})
+    assert out.hit is True
+    assert out.payout == 0
+    assert out.settled is False
+
+
+# ---------------------------------------------------------------------------
+# 同着
+# ---------------------------------------------------------------------------
+
+def test_三着同着なら三連複の当たりは2通り():
+    """2026-08-22 高松3R（9C・取消）は `3=5=7` と `3=5=9` の両方を買っていた。"""
+    fin = [(1, 5), (2, 3), (3, 7), (3, 9)]
+    out = settle(_bet(("3=5=7", 5400), ("3=5=9", 2500)), fin,
+                 {"3=5=7": 1000, "3=5=9": 2000})
+    assert out.hit is True
+    assert out.payout == 1000 * 5400 // 100 + 2000 * 2500 // 100
+    assert out.settled is True
+
+
+def test_同着でも外れは外れとして採点する():
+    """🔴 旧実装は同着だと採点自体を諦め、10,000円の外れが回収率から消えていた
+    （2026-08-21 立川11R・7S）。"""
+    fin = [(1, 4), (2, 6), (3, 2), (3, 5)]
+    out = settle(_bet(("1=3=7", 4700), ("1=2=7", 2100)), fin, {})
+    assert out.hit is False
+    assert out.settled is True
+    assert out.bet == 6800
 
 
 # ---------------------------------------------------------------------------
@@ -122,41 +159,40 @@ def test_外れは払戻ゼロ():
 
 def test_未確定レースは的中判定しない():
     """発走前に「不的中」と出さない。"""
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), None, 0, 0)
-    assert out["hit"] is False
-    assert out["payout"] == 0
+    out = settle(_bet(("1=2=4", 5000)), None)
+    assert out.hit is False
+    assert out.payout == 0
     # 🔴 着順が無い＝**採点していない**。外れとして集計されないよう settled は False。
-    assert out["settled"] is False
+    assert out.settled is False
     # 買い目と投資額は発走前から出す
-    assert out["bet_amount"] == 5000
+    assert out.bet == 5000
+
+
+def test_1着2着しか入っていない途中経過では採点しない():
+    assert settle(_bet(("1=2=4", 5000)), [(1, 1), (2, 2)]).settled is False
 
 
 def test_確定配当が引けない的中は未採点として返す():
-    """`trio_pay=0` は「まだ配当が引けていない」状態。
-
-    🔴 ここを `hit=False` にすると **当たっているのに「✗ 不的中」** になる
-       （2026-08-16 京王閣2R）。的中は買い目と着順の一致だけで決め、
-       払戻が出せないことは `settled=False` で表す。
-    """
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [1, 2, 4], trio_pay=0, trifecta_pay=0)
-    assert out["hit"] is True
-    assert out["settled"] is False
-    # 払戻は 0 のままだが、この行は集計にも表示にも回さない（呼び出し側が落とす）
-    assert out["payout"] == 0
+    """🔴 ここを `hit=False` にすると **当たっているのに「✗ 不的中」** になる
+    （2026-08-16 京王閣2R）。"""
+    out = settle(_bet(("1=2=4", 5000)), [(1, 1), (2, 2), (3, 4)], {})
+    assert out.hit is True
+    assert out.settled is False
+    assert out.payout == 0
 
 
 def test_外れは配当が引けなくても採点済み():
     """外れは着順だけで確定する。配当を待つ理由がない。"""
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [3, 5, 6], trio_pay=0, trifecta_pay=0)
-    assert out["hit"] is False
-    assert out["settled"] is True
+    out = settle(_bet(("1=2=4", 5000)), [(1, 3), (2, 5), (3, 6)], {})
+    assert out.hit is False
+    assert out.settled is True
 
 
 def test_的中して配当も引けていれば採点済み():
-    out = _submitted_pick_result(_bet(("1=2=4", 5000)), [4, 1, 2], trio_pay=560, trifecta_pay=0)
-    assert out["hit"] is True
-    assert out["settled"] is True
-    assert out["payout"] == 28000
+    out = settle(_bet(("1=2=4", 5000)), [(1, 4), (2, 1), (3, 2)], {"1=2=4": 560})
+    assert out.hit is True
+    assert out.settled is True
+    assert out.payout == 28000
 
 
 def test_複数点のうち片方の配当が欠けたら未採点():
@@ -166,6 +202,57 @@ def test_複数点のうち片方の配当が欠けたら未採点():
         {"bet_type": "3連複", "combo": "1=2=4", "stake": 1000, "odds": None},
         {"bet_type": "3連単", "combo": "1-2-4", "stake": 1000, "odds": None},
     ]}
-    out = _submitted_pick_result(bet, [1, 2, 4], trio_pay=560, trifecta_pay=0)
-    assert out["hit"] is True
-    assert out["settled"] is False
+    out = settle(bet, [(1, 1), (2, 2), (3, 4)], {"1=2=4": 560})
+    assert out.hit is True
+    assert out.settled is False
+
+
+def test_未知の券種は黙って外れにしない():
+    bet = {"total": 1000,
+           "lines": [{"bet_type": "2車単", "combo": "1-2", "stake": 1000, "odds": None}]}
+    out = settle(bet, [(1, 1), (2, 2), (3, 4)], {})
+    assert out.hit is False
+    assert out.settled is False
+
+
+# ---------------------------------------------------------------------------
+# ガミ（当たったが払戻 < 投資）
+# ---------------------------------------------------------------------------
+
+def test_ガミは的中でありネット的中ではない():
+    """🔴 netkeirin の表示的中率は `net_hit` のほう（ガミを不的中と数える）。"""
+    out = settle(_bet(("1=2=4", 10000)), [(1, 1), (2, 2), (3, 4)], {"1=2=4": 80})
+    assert out.hit is True
+    assert out.payout == 8000
+    assert out.net_hit is False
+
+
+# ---------------------------------------------------------------------------
+# 端数
+# ---------------------------------------------------------------------------
+
+def test_確定配当は10円未満を切り捨てる():
+    """実払戻との一致は 2026-07-12 に検証済み。切り捨てを外すと Discord とずれる。"""
+    assert payout_per_100(4.05) == 400
+    assert payout_per_100(5.1) == 510
+    assert payout_per_100(None) is None
+
+
+# ---------------------------------------------------------------------------
+# レースの確定配当表示（一覧の「複¥… 単¥…」）
+# ---------------------------------------------------------------------------
+
+def test_レースの確定配当は券種ごとに1つずつ出す():
+    won = ["1=2=4", "4-1-2"]
+    assert _race_payout_display({"1=2=4": 560, "4-1-2": 3200}, won) == (560, 3200)
+    assert _race_payout_display({}, won) == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# 互換の入口
+# ---------------------------------------------------------------------------
+
+def test_router側の入口は正本へ委譲するだけ():
+    fin = [(1, 4), (2, 1), (3, 2)]
+    assert _submitted_pick_result(_bet(("1=2=4", 5000)), fin, {"1=2=4": 560}) == \
+        settle(_bet(("1=2=4", 5000)), fin, {"1=2=4": 560})

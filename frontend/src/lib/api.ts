@@ -1089,7 +1089,17 @@ export type KeirinPick = {
   gap23: number | null;
   /** 指数3-4位の予測確率差（0-1スケール） */
   gap34: number | null;
+  /**
+   * 的中したか。**売った商品（入稿）があるならその買い目で判定した結果**で、
+   * picks_history（ランクの候補）の成績ではない（2026-08-25 統一）。
+   * 🔴 `settled` が false のあいだは「まだ分からない」であって外れではない。
+   */
   hit: boolean;
+  /** 採点が終わったか。false は未確定（発走前・結果待ち・確定配当待ち）。 */
+  settled?: boolean;
+  /** 確定した当たり目（同着なら複数）。表記は 3連複 `1=2=4` / 3連単 `1-2-4`。
+   *  🔴 着順から画面で組み立て直さないこと（同着を必ず取りこぼす）。 */
+  winning_combos?: string[];
   payout: number;
   trio_payout: number;
   trifecta_payout: number;
@@ -1150,6 +1160,9 @@ export type KeirinPick = {
    *  傾斜配分は入稿時点の想定オッズから決まるため後から再現できないので、
    *  keirin 側が入稿の瞬間に保存した値をそのまま表示する（再計算しない）。 */
   submitted_bet: KeirinSubmittedBet | null;
+  /** その入稿を取り消した（＝売っていない）。買い目は記録として出すが、
+   *  的中・払戻・投資額はそこから作らない。 */
+  submission_cancelled?: boolean;
   entries: KeirinEntry[];
 };
 
