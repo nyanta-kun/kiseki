@@ -230,3 +230,68 @@ def test_overlap_expectedフラグは廃止済み():
     """
     src = SUBMIT_PY.read_text(encoding="utf-8")
     assert '"overlap_expected"' not in src, "overlap_expected が復活しています"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 看板穴埋めは「ランクが持ち越したレース」を横取りしない（2026-08-26）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 三連単をダッチ配分するランク（7H1 / 7H2 / 9H1）は、朝は三連単の板が無いので
+# 後の波の開催を**必ず**持ち越す（`_can_pull_forward`）。ランク入稿どうしは
+# 実行中の `deferred_races` で守られているが、看板穴埋めは**別プロセス**なので
+# それを見られず、同じレースを埋めていた。
+#
+# 🔴 実測 2026-08-25: 7H1 が松戸3R を昼へ持ち越した直後、看板穴埋めが 7S で埋め、
+#    昼の回で 7H1 が「別ランクが同じレースを入稿済み」で取れなくなった。
+#
+#      [netkeirin_submit] 前倒し見送り 松戸3R (7H1): 三連単は板が要る → 昼の回で入稿
+#      [netkeirin_submit][manual] 入稿成功 松戸3R (7S) → PROPOSED:202608253103
+#      （13:00）松戸3R(7H1): 別ランクが同じレースを入稿済みのためスキップ
+
+
+def test_持ち越しはその波だけ避ける(tmp_path):
+    """🔴 `session` で絞ること。日付だけで絞ると一日中誰も埋められなくなる。"""
+    from src.submission_skips import DEFER_WAVE, deferred_race_keys, record_skip
+
+    conn = _conn(tmp_path)
+    record_skip(conn, "20260825_31_03#7H1", "7H1", "morning", DEFER_WAVE,
+                "三連単は板が要る → 昼の回で入稿")
+    # 朝の回では避ける（ランク接尾辞は落ちて netkeirin_submissions と同じ形）
+    assert deferred_race_keys(conn, "2026-08-25", "morning") == {"20260825_31_03"}
+    # 昼の回＝レースが自分の波に入るので持ち越しは無い＝普通に埋めてよい
+    assert deferred_race_keys(conn, "2026-08-25", "noon") == set()
+
+
+def test_持ち越し以外の見送りは避けない(tmp_path):
+    """⚠️ ゲートで落ちたレースは看板穴埋めが埋める（従来どおり）。
+
+    「安いから 7S は出さない」と「板が無いから後の波で出す」は別の意味で、
+    前者まで避けると看板レースが空のまま終わる。
+    """
+    from src.submission_skips import GATE_MEAN_PAYOUT, deferred_race_keys, record_skip
+
+    conn = _conn(tmp_path)
+    record_skip(conn, "20260825_31_04", "7S", "morning", GATE_MEAN_PAYOUT,
+                "平均払戻 15,000円 <= 20,000円")
+    assert deferred_race_keys(conn, "2026-08-25", "morning") == set()
+
+
+def test_読めなければ埋める側へ倒す():
+    """🔴 記録が引けないことを理由に看板レースを空にしない。"""
+    from src.submission_skips import deferred_race_keys
+
+    class _Broken:
+        def execute(self, *a, **k):
+            raise RuntimeError("テーブルが無い")
+
+    assert deferred_race_keys(_Broken(), "2026-08-25", "morning") == set()
+
+
+def test_看板穴埋めが持ち越しを見ている():
+    """構造で固定する。呼び出しを消すと 2026-08-25 の横取りへ戻る。"""
+    src = (ROOT / "scripts" / "submit_marquee_wt.py").read_text(encoding="utf-8")
+    assert "deferred_race_keys(conn, date, session)" in src, \
+        "看板穴埋めが持ち越しを読んでいません"
+    assert "deferred_by_rank" in src, "持ち越しレースを避けていません"
+    # 🔴 件数を可視化すること（0件が続いたとき、無いのか壊れたのか分からなくなる）
+    assert "持ち越したため埋めなかった" in src, "件数のログがありません"

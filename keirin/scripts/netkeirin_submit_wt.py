@@ -2309,7 +2309,13 @@ def _process_rank(
                                      partners, equal_stake_trifecta=is_7t1):
                 if deferred_races is not None:
                     deferred_races.add(base_key)
-                reason = "三連単は板が要る" if is_trifecta else "予測オッズを作れない"
+                # ⚠️ 7T1 / 7T3 は三連単でも**均等配分**なので板を見ない
+                #    （`_can_pull_forward` の `equal_stake_trifecta`）。ここへ
+                #    落ちたのは予測オッズを作れなかったから。理由を券種だけで
+                #    決めると「三連単は板が要る」と嘘のログが出る（実測で
+                #    7T1 の持ち越し4件すべてがその誤表示だった）。
+                reason = ("三連単は板が要る"
+                          if is_trifecta and not is_7t1 else "予測オッズを作れない")
                 _skip(race_key, rank_key, session, SKIP_DEFER_WAVE,
                       f"{reason} → {wave_jp}の回で入稿", venue_name, race_no,
                       tag="前倒し見送り")
