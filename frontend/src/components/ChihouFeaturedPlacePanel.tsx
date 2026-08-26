@@ -45,12 +45,13 @@ export async function ChihouFeaturedPlacePanel({ date }: { date: string }) {
         本日の注目馬（複勝・人気薄の複勝圏候補）
       </h2>
       <p className="text-[11px] text-gray-500 mb-3 leading-relaxed">
-        発走前<strong>6番人気以下</strong>なのに<strong>指数3位以内</strong>、かつ上位人気が抜けていないレース
-        （市場上位3頭シェア&lt;0.63）・8頭立て以上。
+        発走前<strong>6番人気以下</strong>なのに<strong>指数5位以内</strong>、かつ上位人気が抜けていないレース
+        （市場上位3頭シェア&lt;0.63）・8頭立て以上。1レース最大2頭。
         <span className="text-gray-400">
           {" "}
-          実測 複勝圏率 <strong>51.5%</strong>（人気薄全体 11.8% の 4.4倍・探索51.4%/確認51.6%で再現）。
-          <strong>的中率の指標であって収支は保証しません</strong>（複勝ROI 1.11・黒字は未確立）。
+          実測 複勝圏率 <strong>26.9%</strong>（同条件の人気薄 12.2% の約2.2倍・walk-forward 840点）。
+          <strong>的中率の指標であって収支は保証しません</strong>
+          （複勝ROI <strong>0.92</strong>・95%CI 0.80〜1.05 で<strong>黒字は確認できていません</strong>）。
         </span>
       </p>
 

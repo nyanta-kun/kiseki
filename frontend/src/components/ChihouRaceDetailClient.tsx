@@ -10,7 +10,7 @@ import {
   fetchChihouHorseHistory,
   fetchChihouOddsBrowser,
 } from "@/lib/api";
-import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
+import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
@@ -60,12 +60,9 @@ function winOddsColorClass(odds: number | null): string {
   return "text-gray-600";
 }
 
+/** EV は中立表示。高い EV を緑で強調しない（実測で ROI は EV と逆相関・2026-08-25）。 */
 function evColorClass(ev: number | null): string {
-  if (ev === null) return "text-gray-400";
-  if (ev >= 1.5) return "text-green-600 font-bold";
-  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "text-green-500 font-semibold";
-  if (ev >= 1.0) return "text-gray-600";
-  return "text-gray-400";
+  return ev === null ? "text-gray-400" : "text-gray-600";
 }
 
 function finishBadgeClass(pos: number | null | undefined): string {
@@ -271,12 +268,11 @@ export function ChihouRaceDetailClient({
           ranks?.win_prob_top != null && ranks?.top_win_odds != null
             ? ranks.win_prob_top * ranks.top_win_odds
             : null;
-        const evZone =
-          ev === null ? null
-          : ev >= 2.0 ? { label: "大穴注意", cls: "text-orange-500" }
-          : ev >= 1.0 ? { label: "最適帯",   cls: "text-green-600"  }
-          : ev >= 0.8 ? { label: "過剰人気", cls: "text-yellow-600" }
-          :             { label: "過剰人気", cls: "text-red-500"     };
+        // 🔴 EV の帯にラベル・色を付けない（2026-08-25）。
+        // 24,093R の walk-forward で **EV が高い帯ほど単勝ROIが低い**ことが確定した
+        // （Spearman ρ=-0.617／EV<0.6 で 0.752 → EV2.5+ で 0.554）。
+        // 旧実装は EV>=1.0 を緑の「最適帯」と表示していたが、実測と向きが逆で
+        // 買い煽りにしかならない。EV は説明用の数値として中立に出すだけにする。
         return (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
             {buySignal !== undefined && (
@@ -304,17 +300,17 @@ export function ChihouRaceDetailClient({
                   <RankBadge rank={ranks.recommend_rank} />
                   {ev !== null ? (
                     <>
-                      <span className={`font-bold whitespace-nowrap ${evZone?.cls ?? ""}`}>
+                      <span className="font-bold whitespace-nowrap text-gray-600">
                         {ev.toFixed(2)}
                       </span>
-                      {evZone && (
-                        <span className={`whitespace-nowrap ${evZone.cls}`}>{evZone.label}</span>
-                      )}
                       {ranks.win_prob_top != null && ranks.top_win_odds != null && (
                         <span className="text-gray-400 whitespace-nowrap">
                           ({Math.round(ranks.win_prob_top * 100)}%×{ranks.top_win_odds.toFixed(1)}倍)
                         </span>
                       )}
+                      <span className="text-gray-400 whitespace-nowrap">
+                        ※EVが高いほど回収率は下がる（実測）
+                      </span>
                     </>
                   ) : (
                     <span className="text-gray-400">オッズ未取得</span>
@@ -429,7 +425,7 @@ export function ChihouRaceDetailClient({
                         )}>
                           {horse.horse_name}
                         </span>
-                        {/* 注目馬（発走前6番人気以下 × 指数3位内 × 開いたレース） */}
+                        {/* 注目馬（発走前6番人気以下 × 指数5位内 × 開いたレース） */}
                         {horse.is_place_pick && (
                           <span
                             className="text-amber-500 text-sm leading-none"
