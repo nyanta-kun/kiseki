@@ -334,6 +334,11 @@ def test_firm_band_is_fail_closed_without_the_7c_judgment_keys():
 #
 # 検証: 3点据え置きで「2倍以上で的中」が +0.30 / +0.22 件/日（両窓とも有意）。
 # memory: keirin_7m1_ev_legs_2026_08_21
+#
+# 🔴 **2026-08-26 から EV 経路は休止中**（`RANK_7M1_LEG_ORDER = "position"`）。
+#    以下は `order="ev"` を明示して経路そのものを守るテスト。"ev" へ戻したときに
+#    2026-08-21/24 の検証どおり動くことを保証する。休止の理由は
+#    `strategy_wt.RANK_7M1_MARK_DEMOTE` 定義部の「2026-08-26」節。
 
 def test_select_legs_uses_ev_order_when_available():
     """EV が全候補に揃っていれば **EV の降順で上位 `RANK_7M1_LEGS` 点**を採る。
@@ -346,7 +351,7 @@ def test_select_legs_uses_ev_order_when_available():
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.10}
     ev = {1: 0.9, 2: 1.5, 3: 0.8, 4: 2.2, 5: 1.1}
     assert sw.RANK_7M1_LEGS == 4
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 2, 5, 1]
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, order="ev") == [4, 2, 5, 1]
 
 
 def test_select_legs_ev_does_not_apply_the_p3_floor():
@@ -360,7 +365,7 @@ def test_select_legs_ev_does_not_apply_the_p3_floor():
     others = [1, 2, 3, 4, 5]
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.02, 5: 0.01}   # 4,5 は足切り水準以下
     ev = {1: 0.1, 2: 0.2, 3: 0.3, 4: 9.0, 5: 8.0}
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [4, 5, 3, 2]
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, order="ev") == [4, 5, 3, 2]
 
 
 def test_select_legs_falls_back_when_ev_is_missing_or_partial():
@@ -372,8 +377,38 @@ def test_select_legs_falls_back_when_ev_is_missing_or_partial():
     others = [1, 2, 3, 4, 5]
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.16}
     base = sw.rank_7m1_select_legs(others, p3)
-    assert sw.rank_7m1_select_legs(others, p3, ev=None) == base
-    assert sw.rank_7m1_select_legs(others, p3, ev={1: 1.0, 2: 2.0}) == base
+    assert sw.rank_7m1_select_legs(others, p3, ev=None, order="ev") == base
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev={1: 1.0, 2: 2.0}, order="ev") == base
+
+
+def test_leg_order_constant_is_the_actual_switch():
+    """🔴 **`RANK_7M1_LEG_ORDER` が実際の分岐であること**（2026-08-26 に配線）。
+
+    以前は「呼び出し元が `ev=` を渡すかどうか」が分岐で、この定数は
+    `rank_rule_version` にしか効かない**飾りのスイッチ**だった。呼び出し元は
+    live（`cli/main.py`）と日次 tail 再構築（`backfill_7m1_rank_wt.py`）の2つ
+    あり、定数だけを戻した人は「戻したつもりで挙動が変わらない」ことに
+    気付けない（例外もログも出ない）。
+
+    ここでは **"position" のときに ev/odds/marks を渡しても無視される**ことを
+    固定する。○1点集中（`RANK_7M1_MARU_CONC_*`）が休止していることも同時に守る。
+    """
+    others = [1, 2, 3, 4, 5]
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.16}
+    ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
+    marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}
+    odds = {1: 2.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}   # ○が集中帯のど真ん中
+
+    assert sw.RANK_7M1_LEG_ORDER == "position"
+    position_only = sw.rank_7m1_select_legs(others, p3)
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev=ev, odds=odds, marks=marks) == position_only
+    # 帯の中でも1点買いにならない（○集中は EV 経路の中にある）
+    assert len(position_only) >= sw.RANK_7M1_LEGS_MIN
+    # "ev" を明示したときだけ集中する
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev=ev, odds=odds, marks=marks, order="ev") == [1]
 
 
 def test_leg_order_constant_moves_the_rule_version():
@@ -384,22 +419,27 @@ def test_leg_order_constant_moves_the_rule_version():
     """
     st = sw
 
-    assert st.RANK_7M1_LEG_ORDER == "ev"
+    assert st.RANK_7M1_LEG_ORDER == "position"
     before = st.rank_rule_version("7M1")
-    st.RANK_7M1_LEG_ORDER = "position"
+    st.RANK_7M1_LEG_ORDER = "ev"
     try:
         assert st.rank_rule_version("7M1") != before
     finally:
-        st.RANK_7M1_LEG_ORDER = "ev"
+        st.RANK_7M1_LEG_ORDER = "position"
 
 
 def test_daily_rebuild_passes_ev_to_select_legs():
-    """🔴 **日次 tail 再構築も EV を渡していること。**
+    """🔴 **日次 tail 再構築も live と同じ材料を渡していること。**
 
     live だけ EV にすると、毎朝の `reconcile_walkforward_tail.sh` が当月を
-    作り直すたびに picks_history が旧規則（下位3車）へ**巻き戻る**。
+    作り直すたびに picks_history が別規則へ**巻き戻る**。
     7C が 2026-08-15 に実際に踏んだ型で、そのときは入稿と記録が
     84件中17件で食い違う実害になった。
+
+    ⚠️ 2026-08-26 以降、実際にどちらの規則で並べるかは
+    `RANK_7M1_LEG_ORDER`（現行 "position"）が決めるので、両側が渡していても
+    買い目は割れない。それでも**渡す材料を揃えておく**のは、"ev" へ戻した
+    瞬間に再構築側だけ旧規則へ落ちるのを防ぐため。
     """
     src = (Path(__file__).resolve().parent.parent
            / "scripts" / "backfill_7m1_rank_wt.py").read_text()
@@ -460,7 +500,8 @@ def test_select_legs_demotes_marked_partners():
     ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
     marks = {1: 2, 2: 4, 3: 0, 4: 0, 5: 0}      # 1=○ 2=△ 残りは無印
     # 無印(3,4,5)が EV 順で先、そのあと ○△ が EV 順で続く → 4点目は○
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev, marks=marks) == [3, 4, 5, 1]
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev=ev, marks=marks, order="ev") == [3, 4, 5, 1]
 
 
 def test_select_legs_without_marks_keeps_the_old_ev_order():
@@ -471,7 +512,7 @@ def test_select_legs_without_marks_keeps_the_old_ev_order():
     others = [1, 2, 3, 4, 5]
     p3 = {c: 0.3 for c in others}
     ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev) == [1, 2, 3, 4]
+    assert sw.rank_7m1_select_legs(others, p3, ev=ev, order="ev") == [1, 2, 3, 4]
 
 
 def test_maru_concentration_band():
@@ -530,7 +571,8 @@ def test_select_legs_concentrates_on_maru_before_demoting_it():
     ev = {1: 0.1, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
     marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}       # 1 が○（EV は最下位）
     odds = {1: 2.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev, odds=odds, marks=marks) == [1]
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev=ev, odds=odds, marks=marks, order="ev") == [1]
 
 
 def test_select_legs_falls_back_to_four_points_outside_the_band():
@@ -541,7 +583,8 @@ def test_select_legs_falls_back_to_four_points_outside_the_band():
     marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}
     odds = {1: 1.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}   # ○が安すぎる
     # ○(1) は EV 最上位でも後ろへ回るので、無印4車がそのまま4点になる
-    assert sw.rank_7m1_select_legs(others, p3, ev=ev, odds=odds, marks=marks) == [2, 3, 4, 5]
+    assert sw.rank_7m1_select_legs(
+        others, p3, ev=ev, odds=odds, marks=marks, order="ev") == [2, 3, 4, 5]
 
 
 def test_concentration_never_fires_without_ev():
@@ -550,7 +593,7 @@ def test_concentration_never_fires_without_ev():
     p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.20, 5: 0.16}
     marks = {1: 2, 2: 0, 3: 0, 4: 0, 5: 0}
     odds = {1: 2.5, 2: 30.0, 3: 20.0, 4: 15.0, 5: 10.0}
-    assert (sw.rank_7m1_select_legs(others, p3, odds=odds, marks=marks)
+    assert (sw.rank_7m1_select_legs(others, p3, odds=odds, marks=marks, order="ev")
             == sw.rank_7m1_select_legs(others, p3))
 
 
@@ -586,7 +629,8 @@ def test_demote_marks_parses_the_constant():
         p3 = {c: 0.3 for c in others}
         ev = {1: 9.0, 2: 8.0, 3: 3.0, 4: 2.0, 5: 1.0}
         marks = {1: 2, 2: 4, 3: 0, 4: 0, 5: 0}
-        assert sw.rank_7m1_select_legs(others, p3, ev=ev, marks=marks) == [1, 2, 3, 4]
+        assert sw.rank_7m1_select_legs(
+            others, p3, ev=ev, marks=marks, order="ev") == [1, 2, 3, 4]
     finally:
         sw.RANK_7M1_MARK_DEMOTE = orig
 
