@@ -500,3 +500,100 @@ def test_tail_reconcile_includes_7t3():
     """
     sh = (REPO / "scripts" / "reconcile_walkforward_tail.sh").read_text("utf-8")
     assert '"7t3:7T3"' in sh
+
+
+# ------------------------------------------------- 同ライン隣接ボーナス（2026-08-26）
+#
+# 位置別合成 PL は車ごとの周辺確率の積なので、「先頭が1着なら番手が2着に続く」という
+# ライン依存を構造的に表現できない。実測（vintage 210点板・7車 36,237R）で、PL の
+# 最上位の1-2着が「最強ラインの先頭→番手」と食い違う 68.9% のうち **29.8% は2着に
+# 別ラインの車を置いており**、そのセルの二軸そろいは ライン型 22.31% ↔ PL型 11.65%。
+# 経緯: `docs/tf_rival614_line_pair_2026_08_26.md`
+
+# 1(先頭)-2(番手)-3(3番手) / 4(先頭)-5(番手) / 6,7 は単騎
+LG = {1: "a", 2: "a", 3: "a", 4: "b", 5: "b", 6: "c", 7: "d"}
+LP = {1: 1, 2: 2, 3: 3, 4: 1, 5: 2, 6: 1, 7: 1}
+
+
+def test_line_bonus_is_off_without_line_info():
+    """🔴 ライン情報を渡さなければ**完全に従来どおり**（後方互換）。
+
+    既定で効いてしまうと、ライン情報を持たない呼び出し元が黙って別の確率を使う。
+    """
+    base = rank_7t3_blend_probs(CARS, PW, P3)
+    same = rank_7t3_blend_probs(CARS, PW, P3, line_group=None, line_pos=None)
+    assert max(abs(base[k] - same[k]) for k in base) == 0.0
+
+
+def test_line_bonus_matches_a_hand_written_reference():
+    """出荷実装 = 式そのもの。写し間違いを止める。
+
+        P'(x,y,z) ∝ P(x,y,z) × λ^[y が x の直後] × μ^[z が y の直後]
+    """
+    lam, mu = sw.RANK_7T3_LINE_ADJ_W
+    base = rank_7t3_blend_probs(CARS, PW, P3)
+    got = rank_7t3_blend_probs(CARS, PW, P3, line_group=LG, line_pos=LP)
+
+    def nxt(a, b):
+        return LG[a] == LG[b] and LP[b] == LP[a] + 1
+
+    ref = {k: v * (lam if nxt(k[0], k[1]) else 1.0) * (mu if nxt(k[1], k[2]) else 1.0)
+           for k, v in base.items()}
+    tot = sum(ref.values())
+    ref = {k: v / tot for k, v in ref.items()}
+    assert max(abs(got[k] - ref[k]) for k in got) < 1e-12
+    assert abs(sum(got.values()) - 1.0) < 1e-9
+
+
+def test_line_bonus_lifts_the_adjacent_order():
+    """隣接（1→2→3）は上がり、非隣接（1→4→…）は相対的に下がる。"""
+    base = rank_7t3_blend_probs(CARS, PW, P3)
+    got = rank_7t3_blend_probs(CARS, PW, P3, line_group=LG, line_pos=LP)
+    assert got[(1, 2, 3)] / base[(1, 2, 3)] > got[(1, 4, 6)] / base[(1, 4, 6)]
+
+
+@pytest.mark.parametrize("lg, lp", [
+    ({}, LP),                                            # ライン情報なし
+    ({c: "" for c in CARS}, LP),                         # 並びが空文字
+    ({c: "0" for c in CARS}, LP),                        # 並びが "0"
+    (LG, {c: None for c in CARS}),                       # 位置が欠測
+])
+def test_line_bonus_ignores_missing_line_info(lg, lp):
+    """🔴 欠測を「隣接」と読まない。
+
+    並び予想が未公開のまま入稿された 2026-08-26 熊本の件（PR#314）と同じ型で、
+    欠測が静かに確率を歪めるのを止める。
+    """
+    base = rank_7t3_blend_probs(CARS, PW, P3)
+    got = rank_7t3_blend_probs(CARS, PW, P3, line_group=lg, line_pos=lp)
+    assert max(abs(base[k] - got[k]) for k in base) < 1e-12
+
+
+def test_select_forwards_line_info_to_the_probabilities():
+    """`rank_7t3_select` がライン情報を確率へ渡していること。"""
+    board = _flat_board(RANK_7T3_MIN_ODDS)
+    plain = rank_7t3_select(P3, PW, board)
+    lined = rank_7t3_select(P3, PW, board, line_group=LG, line_pos=LP)
+    assert plain != lined
+
+
+def test_production_builder_passes_line_info():
+    """🔴 本番経路（`build_7t3_candidates`）が必ずライン情報を渡すこと。
+
+    既定が None（＝ボーナス無効）なので、**渡し忘れてもエラーにならない**。
+    確認窓で top1 的中 −1.0pt・ROI −13.7pt 相当の旧挙動へ黙って戻るため、
+    呼び出し側を構造で固定する。
+    """
+    import ast
+
+    src = (REPO / "scripts" / "build_7t3_candidates.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    seen = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ("rank_7t3_select", "rank_7t3_blend_probs")):
+            kw = {k.arg for k in node.keywords}
+            assert {"line_group", "line_pos"} <= kw, (
+                f"{node.func.id} がライン情報を渡していない（{sorted(kw)}）")
+            seen.add(node.func.id)
+    assert seen == {"rank_7t3_select", "rank_7t3_blend_probs"}
