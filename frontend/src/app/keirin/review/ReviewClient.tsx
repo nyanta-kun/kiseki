@@ -273,7 +273,8 @@ function isClosed(startAt: number | null, nowSec: number): boolean {
 }
 
 function RaceCard({ p, busy, closed, onApprove, onPublish,
-                   onCancel, canForceCancel, onForceCancel }: {
+                   onCancel, onCancelPendingInputs,
+                   canForceCancel, onForceCancel }: {
   p: KeirinProposal;
   busy: boolean;
   /** 発走15分前を過ぎた＝netkeirin が受け付けないので入稿・取消・公開できない。 */
@@ -283,6 +284,8 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
   /** 公開する。**入稿前なら入稿の上で公開**（公開は不可逆）。 */
   onPublish: () => void;
   onCancel: () => void;
+  /** 入力待ち（並び予想・AI印が未公開）で取り消す。**後の波が判定し直す**。 */
+  onCancelPendingInputs: () => void;
   /** 通常の取消が「netkeirin に見つからない」で失敗した後だけ true。 */
   canForceCancel: boolean;
   onForceCancel: () => void;
@@ -465,6 +468,28 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
               className="rounded border border-red-300 px-3 py-1 text-xs text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
             >
               取消
+            </button>
+          )}
+          {/* 🔴 **「入力待ち」だけは後の波が判定し直す**（2026-08-26・ユーザー判断）。
+              通常の取消はその日ずっと復活しない（人が中身を見て落としたものが
+              勝手に戻らないようにするため・2026-08-13）。しかし並び予想・AI印が
+              未公開なのは**商品の良し悪しではなくデータが届いていないだけ**で、
+              意味は "not now" であって "not ever" ではない。この理由で取り消すと
+              `netkeirin_submit_wt._already_submitted` の例外に入り、入力が届いた
+              波でもう一度判定される。再判定でまた見送るなら取消理由はその回の
+              理由へ張り替わる。
+              ⚠️ 看板穴埋めはこの取消でも復活しない（2026-08-26・ユーザー判断）。 */}
+          {p.status !== "deleted" && p.status !== "published" && (
+            <button
+              type="button"
+              disabled={busy || closed}
+              onClick={onCancelPendingInputs}
+              title={closed
+                ? "発走15分前を過ぎたため取消できません"
+                : "並び予想・AI印が未公開のときに使います。入力が届いた波で判定し直します"}
+              className="rounded border border-amber-400 px-3 py-1 text-xs text-amber-700 disabled:opacity-50 dark:border-amber-600 dark:text-amber-300"
+            >
+              入力待ちで取消
             </button>
           )}
           {/* 🔴 通常の取消が失敗したときにだけ出す。netkeirin 側で先に消していると
@@ -940,6 +965,18 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
         if (!window.confirm(`${p.venue_name}${p.race_no}R (${p.rank_key}) の入稿を取り消します。よろしいですか？`)) return;
         run(
           () => cancelKeirinSubmissionAction(p.race_key, p.rank_key),
+          `${p.race_key}-${p.rank_key}`,
+        );
+      }}
+      onCancelPendingInputs={() => {
+        if (!window.confirm(
+          `${p.venue_name}${p.race_no}R (${p.rank_key}) を「入力待ち」で取り消します。\n\n`
+          + "並び予想・AI印が届いた波で、もう一度判定し直されます。\n"
+          + "そこでも売らないと判断された場合は、その理由で取消のまま残ります。",
+        )) return;
+        run(
+          () => cancelKeirinSubmissionAction(
+            p.race_key, p.rank_key, false, CANCEL_REASONS.pendingInputs),
           `${p.race_key}-${p.rank_key}`,
         );
       }}

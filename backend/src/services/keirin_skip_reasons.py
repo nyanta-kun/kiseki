@@ -64,6 +64,45 @@ DESCRIPTIONS: dict[str, str] = {
 #: すべてのコード（検査用）
 ALL_CODES: frozenset[str] = frozenset(LABELS)
 
+# ---------------------------------------------------------------------------
+# 取消理由のうち「保留」を意味するもの（2026-08-26・ユーザー判断）
+# ---------------------------------------------------------------------------
+# 🔴 **入力が揃っていないことを理由にした取消は「却下」ではなく「保留」**。
+#    並び予想・AI印が未公開のあいだは指数も予測オッズも当てにできないので
+#    その回は落とすが、**入力が届いたら判定し直すべき**であって、
+#    その日ずっと売らないと決めたわけではない。
+#
+#    `netkeirin_submit_wt._already_submitted()` は `status='deleted'` を
+#    一律「その日は処理済み」として扱う（2026-08-13・人が中身を見て落とした
+#    ものが勝手に戻らないようにするため）。この文言の取消**だけ**をそこから
+#    外すことで、「なぜ消したか」で再判定の可否が決まるようにする。
+#    ⚠️ **「誰が消したか」で分けてはいけない。** 人が押した取消でも、理由が
+#       「入力待ち」なら意味は "not now" であって "not ever" ではない。
+#
+# 🔴 **看板穴埋め（`submit_marquee_wt.py`）は従来どおり全ての取消でブロックする**
+#    （2026-08-26・ユーザー判断）。再判定でどのランクも取らなかった看板レースは
+#    取消のままにする。両者の重複判定は
+#    `tests/test_cancel_force_and_marquee_dedup.py` が突き合わせている。
+#
+# ⚠️ **この文字列は `frontend/src/app/keirin/cancelReasons.ts` と1文字も違えないこと。**
+#    画面が送る文言をここで照合するので、ずれると再判定が黙って起きなくなる
+#    （失敗の向きは安全側＝従来どおりブロック）。
+#    `keirin/tests/test_cancel_pending_inputs.py` が両者の一致を見ている。
+CANCEL_PENDING_INPUTS = "入力待ちのため取消（後の波で再判定）"
+
+
+def cancel_is_pending_inputs(reason: str | None) -> bool:
+    """その取消理由が「入力待ち＝後の波で再判定してよい」ものか。
+
+    >>> cancel_is_pending_inputs("入力待ちのため取消（後の波で再判定）")
+    True
+    >>> cancel_is_pending_inputs("手動取消")
+    False
+    >>> cancel_is_pending_inputs(None)
+    False
+    """
+    return reason == CANCEL_PENDING_INPUTS
+
 
 def label(code: str | None) -> str:
     """バッジの短いラベル。未知のコードでも**空にしない**。

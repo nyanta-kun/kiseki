@@ -64,20 +64,51 @@ def test_穴埋めの重複判定が取消済みも処理済みとして扱う()
     )
 
 
-def test_重複判定の条件が入稿側と揃っている():
-    """🔴 2箇所で条件が食い違っていた前例がある（2026-08-11）。同じであることを縛る。
-
-    どちらも「その race_key の行があれば処理済み」＝status で絞らない。
-    """
-    marquee = " ".join(_sql_literals(MARQUEE, "netkeirin_submissions"))
-    submit = " ".join(
+def _submit_sql() -> str:
+    return " ".join(
         n.value for n in ast.walk(ast.parse(inspect.getsource(m._already_submitted)))
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
     )
-    for label, sql in (("submit_marquee_wt.py", marquee), ("_already_submitted", submit)):
-        assert "deleted" not in sql, f"{label} が取消済みを除外しています"
-        assert "status" not in sql, (
-            f"{label} が status で絞っています。取消済みも処理済みとして扱う仕様です")
+
+
+def test_重複判定の差は入力待ち取消の1点だけ():
+    """🔴 2箇所で条件が食い違っていた前例がある（2026-08-11）。差を明示して縛る。
+
+    2026-08-26 に**意図的な差**を1つだけ入れた（ユーザー判断）:
+
+      - ランク入稿（`_already_submitted`）… 「入力待ち取消」だけ処理済みから外す。
+        並び予想・AI印が未公開なのはデータが届いていないだけで、意味は
+        "not now"。入力が届いた波でもう一度判定する
+      - 看板穴埋め（`submit_marquee_wt.py`）… **例外なし**。再判定でどのランクも
+        取らなかった看板レースは取消のままにする
+
+    差はこの1点だけ。他の取消（手動・強制・場単位・全件）はどちらも処理済み。
+    """
+    marquee = " ".join(_sql_literals(MARQUEE, "netkeirin_submissions"))
+    assert "deleted" not in marquee, (
+        "看板穴埋めが取消済みを除外しています。取り消した看板レースを"
+        "穴埋めが出し直してしまいます（2026-08-26・ユーザー判断で取消のまま）")
+    assert "status" not in marquee, "看板穴埋めが status で絞っています"
+
+    submit = _submit_sql()
+    assert "cancel_reason" in submit, (
+        "ランク入稿の重複判定が取消理由を見ていません。"
+        "入力待ち取消が再判定されなくなります")
+    assert "NOT (status = ? AND cancel_reason = ?)" in submit, (
+        "除外条件の形が変わっています。**入力待ち取消だけ**を外す形を保つこと"
+        "（status だけで外すと、人が中身を見て落とした取消まで復活します）")
+
+
+def test_入力待ち取消だけが再判定の対象():
+    """🔴 除外に渡す値が `CANCEL_PENDING_INPUTS` そのものであること。
+
+    別の文言を渡すと**どの取消も再判定されない**（沈黙して従来動作に戻る）。
+    """
+    src = inspect.getsource(m._already_submitted)
+    assert "CANCEL_PENDING_INPUTS" in src, (
+        "入力待ち取消の判定に語彙の正本を使っていません。"
+        "文字列を書き写すと frontend / backend / keirin の三重管理になります")
+    assert "STATUS_DELETED" in src
 
 
 # ---------------------------------------------------------------------------

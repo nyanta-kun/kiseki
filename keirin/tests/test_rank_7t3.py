@@ -475,13 +475,21 @@ def test_backfill_and_rebuild_target_the_7t3_rows_only():
 def test_daily_batch_builds_7t3_candidates():
     """🔴 日次バッチに配線されていること。忘れると**候補JSONが出来ず永久に0件**。
 
-    ⚠️ 夕方（`evening_picks_wt.sh`）では作らない。7T1 と同じく朝1回で
-       当日全開催ぶんを作る設計なので、夕方に足すと二重生成になる。
+    🔴 **夕方（`evening_picks_wt.sh`）でも作り直す**（2026-08-26 に方針転換）。
+       旧記述は「朝1回で当日全開催ぶんを作る設計なので、夕方に足すと二重生成
+       になる」だったが、これは誤り。夕方は**別ファイル**（`_night_` を挟む）へ
+       書き、`_load_candidates` が evening の波でそちらを先に読むので二重には
+       ならない。逆に作り直さないと、朝に並び予想・AI印が未取得だった開催で
+       **壊れた入力で選んだ買い目が、入力が届いた夕方にそのまま入稿される**
+       （2026-08-26 熊本7R・7T1 で実際に発生）。
+       実害と検査は `tests/test_cancel_pending_inputs.py`。
     """
     daily = (REPO / "scripts" / "daily_picks_wt.sh").read_text("utf-8")
     evening = (REPO / "scripts" / "evening_picks_wt.sh").read_text("utf-8")
     assert "build_7t3_candidates.py" in daily
-    assert "build_7t3_candidates.py" not in evening
+    assert "build_7t3_candidates.py" in evening
+    assert "_night_s7t3_candidates.json" in evening, (
+        "夕方の出力名に _night がありません（朝の候補が使われ続けます）")
 
 
 def test_tail_reconcile_includes_7t3():
