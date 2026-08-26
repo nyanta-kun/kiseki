@@ -16,6 +16,8 @@ from ..db.chihou_models import (
     ChihouCalculatedIndex,
     ChihouHorse,
     ChihouOddsHistory,
+    ChihouPlacePick,
+    ChihouPlacePickRace,
     ChihouRace,
     ChihouRaceEntry,
     ChihouRaceResult,
@@ -63,6 +65,36 @@ def _adj_chihou(v: float | None, key: str) -> float | None:
 
 router = APIRouter(prefix="/api/chihou/races", tags=["chihou-races"])
 DbDep = Annotated[AsyncSession, Depends(get_db)]
+
+
+def resolve_place_picks(
+    logged_picks: list[int] | None,
+    recomputed_picks: list[int],
+) -> list[int]:
+    """注目馬の表示に「前向き記録」と「再計算」のどちらを使うか決める。
+
+    🔴 **記録がある レースは記録が唯一の正本**（2026-08-26）。
+    再計算はオッズを引き直すので、終わったレースを開くと**その日に実際に出ていた
+    推奨と食い違う**。記録は発走 5〜6 分前で凍結されるのに対し、再計算が使う
+    「発走時刻以前の最新」は実測で発走 0〜1 分前を拾い、人気順もシェアも別物になる。
+
+    実例（2026-08-26 船橋）: 記録は 3R・4R に計 4 頭。再計算では 12R の 1 頭のみ。
+    さらにその 12R も 12 分後にはシェアが 0.628 → 0.661 へ動いて条件から外れた。
+
+    ⚠️ **`None` と `[]` は意味が違う。**
+      - `None` = 記録が無い（記録開始前の日付／まだスナップショット前）→ 再計算する
+      - `[]`   = 記録が「見送り」だった → **何も出さない**（再計算で拾い直さない）
+
+    Args:
+        logged_picks: 記録された推奨馬の馬番。記録自体が無ければ None。
+        recomputed_picks: いま再計算した推奨馬の馬番。
+
+    Returns:
+        表示に使う馬番のリスト。
+    """
+    if logged_picks is None:
+        return recomputed_picks
+    return logged_picks
 
 
 class ChihouRaceOut(BaseModel):
@@ -259,6 +291,17 @@ async def get_chihou_featured_place(
 
     ⚠️ 人気・シェアは **その時点で取得済みの最新オッズ**から作る。
     確定オッズを使うと look-ahead になる（前身の条件がそれで崩壊した）。
+
+    🔴 **前向き記録がある レースは、その記録が唯一の正本**（2026-08-26）。
+    この関数はオッズを引き直して条件を再計算するので、**終わったレースを開くと
+    その日に実際に出ていた推奨と食い違う**。前向き記録は発走 5〜6 分前の
+    スナップショットで凍結されるのに対し、再計算は「発走時刻以前の最新」＝
+    実測で発走 0〜1 分前を拾うため、人気順もシェアも別の瞬間の値になる。
+
+    実例（2026-08-26 船橋）: 前向き記録は 3R・4R に計 4 頭を出していたが、
+    再計算では 12R の 1 頭しか返らなかった。**購入判断に使うのは記録側**なので、
+    記録がある レースは `place_pick_races` / `place_picks` をそのまま返し、
+    記録が無い レース（記録開始前の日付・まだスナップショット前）だけ再計算する。
     """
     races_result = await db.execute(
         select(ChihouRace)
@@ -311,8 +354,53 @@ async def get_chihou_featured_place(
     # 指数（composite_index）のレース内順位。この条件は指数を使うので必須。
     idx_rank_by_race = await _fetch_index_ranks(db, race_ids)
 
+    # --- 前向き記録（凍結済みの推奨）を読む。あるレースはこれが正本 ---
+    logged_races_result = await db.execute(
+        select(ChihouPlacePickRace).where(ChihouPlacePickRace.race_id.in_(race_ids))
+    )
+    logged_by_race = {int(pr.race_id): pr for pr in logged_races_result.scalars().all()}
+    logged_picks_by_race: dict[int, list[ChihouPlacePick]] = defaultdict(list)
+    if logged_by_race:
+        picks_result = await db.execute(
+            select(ChihouPlacePick)
+            .where(ChihouPlacePick.pick_race_id.in_([pr.id for pr in logged_by_race.values()]))
+            .where(ChihouPlacePick.is_picked.is_(True))
+            .order_by(ChihouPlacePick.pick_order.asc().nullslast())
+        )
+        for pk in picks_result.scalars().all():
+            logged_picks_by_race[int(pk.race_id)].append(pk)
+
     out: list[ChihouFeaturedPlaceOut] = []
     for race in races:
+        # 記録があるならそれをそのまま返す（0 頭の記録＝見送りも尊重する）
+        logged = logged_by_race.get(race.id)
+        if logged is not None:
+            for pk in logged_picks_by_race.get(race.id, []):
+                out.append(
+                    ChihouFeaturedPlaceOut(
+                        race_id=race.id,
+                        course_name=race.course_name,
+                        race_number=race.race_number,
+                        race_name=race.race_name,
+                        post_time=race.post_time,
+                        head_count=logged.head_count_used,
+                        horse_number=pk.horse_number,
+                        horse_name=pk.horse_name or name_map.get((race.id, pk.horse_number)),
+                        win_odds=pk.pre_win_odds,
+                        place_odds=pk.pre_place_odds,
+                        top3_share=round(float(logged.top3_share), 3)
+                        if logged.top3_share is not None
+                        else 0.0,
+                        popularity=pk.pop_rank,
+                        index_rank=pk.index_rank,
+                        # 着順は記録側(settle は 23:30)より race_results のほうが新しい
+                        finish_position=finish_map.get((race.id, pk.horse_number))
+                        if (race.id, pk.horse_number) in finish_map
+                        else pk.finish_position,
+                    )
+                )
+            continue
+
         win_odds = win_by_race.get(race.id)
         if not win_odds:
             continue
@@ -516,8 +604,21 @@ async def get_chihou_races_by_date(
             all_win_odds[int(rid)][int(combo)] = float(odds_val)
 
     idx_rank_by_race = await _fetch_index_ranks(db, race_ids)
+
+    # 前向き記録があるレースはそれが正本（理由は featured-place の docstring）。
+    # 一覧の ★ と推奨タブの中身が食い違わないよう、同じ優先順位で判定する。
+    logged_rows = await db.execute(
+        select(ChihouPlacePickRace.race_id, ChihouPlacePickRace.n_picked)
+        .where(ChihouPlacePickRace.race_id.in_(race_ids))
+    )
+    logged_n_picked: dict[int, int] = {int(rid): int(n or 0) for rid, n in logged_rows.all()}
+
     place_pick_race_ids: set[int] = set()
     for race in races:
+        if race.id in logged_n_picked:
+            if logged_n_picked[race.id] > 0:
+                place_pick_race_ids.add(race.id)
+            continue
         odds_by_hn = all_win_odds.get(race.id)
         idx_ranks = idx_rank_by_race.get(race.id)
         if not odds_by_hn or not idx_ranks:
@@ -795,7 +896,23 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         )
     ]
     # 1レース最大2頭。適格馬が3頭以上いても指数上位だけを注目馬にする
-    _picked = set(chihou_select_place_picks(_eligible_picks))
+    _recomputed = chihou_select_place_picks(_eligible_picks)
+
+    # 前向き記録があればそれが正本（`resolve_place_picks` の docstring 参照）。
+    _has_log = await db.scalar(
+        select(ChihouPlacePickRace.id).where(ChihouPlacePickRace.race_id == race_id)
+    )
+    _logged: list[int] | None = None
+    if _has_log is not None:
+        _logged_rows = await db.execute(
+            select(ChihouPlacePick.horse_number)
+            .where(ChihouPlacePick.pick_race_id == _has_log)
+            .where(ChihouPlacePick.is_picked.is_(True))
+            .order_by(ChihouPlacePick.pick_order.asc().nullslast())
+        )
+        _logged = [int(hn) for (hn,) in _logged_rows.all() if hn is not None]
+
+    _picked = set(resolve_place_picks(_logged, _recomputed))
     for h in horses:
         h.is_place_pick = h.horse_number in _picked
 
