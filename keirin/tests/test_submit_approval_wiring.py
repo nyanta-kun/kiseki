@@ -130,15 +130,21 @@ def test_already_submitted_counts_deleted_as_handled():
     取り消したレースを出し直したいときは**手動入稿**を使う
     （`--manual-rank-key`。あちらはこの判定を通らない）。
 
+    🔴 **例外は「入力待ち取消」の1つだけ**（2026-08-26・ユーザー判断）。
+       並び予想・AI印が未公開なのは商品の良し悪しではなくデータが届いて
+       いないだけで、意味は "not now"。入力が届いた波でもう一度判定する。
+       詳細と実害は `tests/test_cancel_pending_inputs.py`。
+
     コメントではなく **実際に発行する SQL** を見る。
     """
     sql = _sql_literals("_already_submitted")
-    assert "deleted" not in sql, (
-        "_already_submitted の SQL が取消済みを除外しています"
-        "（取り消したレースが次の波で復活します）"
-    )
-    assert "status" not in sql, (
-        "status で絞っています。取消済みも処理済みとして扱う仕様です")
+    # 🔴 「入力待ち取消**だけ**を外す」形であること。`status` 単独で外すと
+    #    人が中身を見て落とした取消まで復活する。
+    assert "NOT (status = ? AND cancel_reason = ?)" in sql, (
+        "_already_submitted の除外条件の形が変わっています。"
+        "入力待ち取消だけを外す形を保つこと")
+    assert "cancel_reason" in sql, (
+        "取消理由を見ていません。入力待ち取消が再判定されなくなります")
 
 
 def test_record_submission_derives_status_from_prefix():

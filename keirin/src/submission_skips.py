@@ -70,6 +70,9 @@ MISSING_LINEUP = _canonical.MISSING_LINEUP
 ALL_CODES = _canonical.ALL_CODES
 label = _canonical.label
 describe = _canonical.describe
+#: 取消理由のうち「入力待ち＝後の波で再判定してよい」もの（2026-08-26）
+CANCEL_PENDING_INPUTS = _canonical.CANCEL_PENDING_INPUTS
+cancel_is_pending_inputs = _canonical.cancel_is_pending_inputs
 
 
 def race_date_of(race_key: str) -> str:

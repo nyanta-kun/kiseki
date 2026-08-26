@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database import get_connection
 from src.submission_skips import (
+    CANCEL_PENDING_INPUTS,
     CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
     CLOSED as SKIP_CLOSED,
     DEFER_WAVE as SKIP_DEFER_WAVE,
@@ -62,6 +63,8 @@ from src.submission_skips import (
     MISSING_LINEUP as SKIP_MISSING_LINEUP,
     RANK_CONFLICT as SKIP_RANK_CONFLICT,
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
+    base_key_of,
+    describe,
     record_skip,
 )
 from src.entry_health import missing_market_inputs
@@ -908,12 +911,23 @@ def _already_submitted(race_keys: list[str]) -> set[tuple[str, str]]:
         #    朝の波で取り消した商品を昼・夕の波が復活させると、
         #    「確認して落としたはずのものが勝手に戻る」＝確認の意味が消える。
         #    入稿案（'proposed'）を含めるのは従来どおり（案の二重作成を防ぐ）。
-        #    ⚠️ 取消したレースを出し直したいときは**手動入稿**を使う
-        #       （`--manual-rank-key`。あちらはこの判定を通らない）。
+        #
+        # 🔴 **唯一の例外が「入力待ち取消」**（2026-08-26・ユーザー判断）。
+        #    並び予想・AI印が未公開のあいだは指数も予測オッズも当てにできないので
+        #    その回は落とすが、入力が届いたら**判定し直す**べきで、その日ずっと
+        #    売らないと決めたわけではない。判定は「誰が消したか」ではなく
+        #    **「なぜ消したか」**で分ける（`CANCEL_PENDING_INPUTS` の定義部）。
+        #    ⚠️ 再判定の結果また見送るなら、`_skip()` が取消理由をその回の理由へ
+        #       **張り替える**ので、画面に古い「入力待ち」が残ることはない。
+        #    ⚠️ 看板穴埋め（`submit_marquee_wt.py`）は**この例外を持たない**。
+        #       再判定でどのランクも取らなかった看板レースは取消のままにする
+        #       （2026-08-26・ユーザー判断）。差は意図的で、
+        #       `tests/test_cancel_force_and_marquee_dedup.py` が固定している。
         rows = conn.execute(
             f"SELECT race_key, rank_key FROM netkeirin_submissions "
-            f"WHERE race_key IN ({placeholders})",
-            race_keys,
+            f"WHERE race_key IN ({placeholders}) "
+            f"  AND NOT (status = ? AND cancel_reason = ?)",
+            [*race_keys, STATUS_DELETED, CANCEL_PENDING_INPUTS],
         ).fetchall()
     return {(r["race_key"], r["rank_key"]) for r in rows}
 
@@ -1264,10 +1278,34 @@ def _skip(
     try:
         with get_connection() as conn:
             record_skip(conn, race_key, rank_key, session, code, detail)
+            _relabel_pending_cancel(conn, race_key, rank_key, code, detail)
             conn.commit()
     except Exception as e:                          # pragma: no cover - 経路のみ検査
         print(f"[netkeirin_submit] 見送り記録に失敗（継続）: "
               f"{race_key} {rank_key} {e}", flush=True)
+
+
+def _relabel_pending_cancel(conn, race_key: str, rank_key: str,
+                            code: str, detail: str) -> None:
+    """「入力待ち取消」の行を、**再判定した結果の理由**へ張り替える（2026-08-26）。
+
+    🔴 **古いラベルを残してはいけない**（ユーザー判断）。入力待ちで取り消した
+       レースは後の波で再判定される（`_already_submitted` の例外）。そこでまた
+       見送るなら、画面に出る理由は「入力待ち」ではなく**そのとき落ちた理由**
+       （平均払戻ゲート等）でなければ、取消の記録が実態を説明しない。
+
+    ⚠️ **対象は「入力待ち取消」の行だけ。** 人が中身を見て落とした取消
+       （手動取消・強制取消・場単位・全件）はそもそも再判定されないので、
+       ここへは来ない。万一来ても文言一致で弾かれる。
+    ⚠️ 記録が無い／別の理由なら **0行更新で何も起きない**（例外にしない）。
+       これは表示のための付随情報で、入稿の判断には関わらない。
+    """
+    conn.execute(
+        "UPDATE netkeirin_submissions SET cancel_reason = ? "
+        "WHERE race_key = ? AND rank_key = ? AND status = ? AND cancel_reason = ?",
+        (f"再判定: {describe(code, detail)}", base_key_of(race_key), rank_key,
+         STATUS_DELETED, CANCEL_PENDING_INPUTS),
+    )
 
 
 def _record_submission(
@@ -1299,11 +1337,11 @@ def _record_submission(
             "INSERT OR REPLACE INTO netkeirin_submissions "
             "(race_key,rank_key,session,venue_name,race_no,gate_label,axis1,axis2,"
             "netkeirin_race_id,bet_detail,status,title,comment,proposed_at,approved_at,"
-            "deleted_at,origin) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "deleted_at,origin,cancel_reason) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (race_key, rank_key, session, venue_name, race_no, gate_label, axis1, axis2,
              race_id, bet_detail, status, title, comment,
-             now if proposed else None, None if proposed else now, None, origin),
+             now if proposed else None, None if proposed else now, None, origin, None),
         )
         if not proposed:
             _mark_bought(conn, race_key, rank_key, _bet_detail_total(bet_detail))
