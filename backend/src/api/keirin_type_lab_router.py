@@ -170,6 +170,19 @@ def _median(v: list[float]) -> float:
     return float(s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2)
 
 
+def window(date_from: str | None, date_to: str | None
+           ) -> tuple[str, str, date, date]:
+    """(表示用の文字列 d1, d2, DATE 比較用の date dd1, dd2)。
+
+    🔴 asyncpg は DATE 列へ文字列を渡せない（`'str' object has no attribute
+       'toordinal'` で 500 になる）。日付比較には必ず `datetime.date` を渡すこと。
+       `race_key` の先頭8文字と比べるクエリだけは文字列のままでよい。
+    """
+    d2 = date_to or date.today().isoformat()
+    d1 = date_from or (date.fromisoformat(d2) - timedelta(days=6)).isoformat()
+    return d1, d2, date.fromisoformat(d1), date.fromisoformat(d2)
+
+
 def _rank_pos(rank: str) -> int:
     return (CURRENT_RANK_ORDER.index(rank) if rank in CURRENT_RANK_ORDER
             else len(CURRENT_RANK_ORDER))
@@ -187,14 +200,13 @@ async def get_type_lab(
 
     既定は直近7日の実地（`mode=live`）。ペーパー検証は `mode=paper` と期間を指定する。
     """
-    d2 = date_to or date.today().isoformat()
-    d1 = date_from or (date.fromisoformat(d2) - timedelta(days=6)).isoformat()
+    d1, d2, dd1, dd2 = window(date_from, date_to)
 
-    res = await db.execute(_SQL, {"mode": mode, "d1": d1, "d2": d2})
+    res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2})
     rows = [dict(r._mapping) for r in res]
 
     # 同じ期間の現行推奨。1レースに複数ランクがあれば優先順位の最上位を採る。
-    cur_res = await db.execute(_SQL_CURRENT, {"d1": d1, "d2": d2})
+    cur_res = await db.execute(_SQL_CURRENT, {"d1": dd1, "d2": dd2})
     current: dict[str, dict[str, Any]] = {}
     for c in (dict(r._mapping) for r in cur_res):
         prev = current.get(c["rk"])
