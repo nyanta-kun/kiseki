@@ -31,3 +31,39 @@ def test_lists_are_not_empty():
     """表示順と優先順位の手書きリストが空になっていないこと。"""
     assert len(PLAN_ORDER) == 8
     assert CURRENT_RANK_ORDER[0] == "RANK_7H2" and CURRENT_RANK_ORDER[-1] == "RANK_7M1"
+
+
+def test_each_query_gets_the_parameter_type_its_column_needs():
+    """🔴 `race_date` の型がテーブルごとに違う。
+
+        keirin.type_lab_picks.race_date  … DATE     → datetime.date
+        keirin.picks_history.race_date   … VARCHAR  → str
+        keirin.netkeirin_submissions     … 日付列なし → race_key の先頭8桁（str）
+
+    asyncpg は型を厳格に見るので取り違えると即 500 になる。
+    2026-08-27 に**両方向とも**踏んだ（文字列を DATE へ／date を VARCHAR へ）。
+    呼び出し側が渡している式を構文で固定する。
+    """
+    import ast
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab)
+    tree = ast.parse(src.lstrip())
+    got: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and node.args):
+            continue
+        target = getattr(node.args[0], "id", None)
+        if target not in ("_SQL", "_SQL_CURRENT", "_SQL_SOLD"):
+            continue
+        d = node.args[1]
+        if not isinstance(d, ast.Dict):
+            continue
+        got[target] = {ast.unparse(v) for k, v in zip(d.keys, d.values)
+                       if getattr(k, "value", "") in ("d1", "d2")}
+    assert got.get("_SQL") == {"dd1", "dd2"}, got.get("_SQL")
+    assert got.get("_SQL_CURRENT") == {"d1", "d2"}, got.get("_SQL_CURRENT")
+    assert got.get("_SQL_SOLD") == {"d1.replace('-', '')", "d2.replace('-', '')"}, \
+        got.get("_SQL_SOLD")

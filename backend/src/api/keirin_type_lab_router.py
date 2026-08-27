@@ -147,6 +147,11 @@ _SQL = text("""
 CURRENT_RANK_ORDER = ["RANK_7H2", "RANK_9H1", "RANK_7T1", "RANK_7T3", "RANK_7S",
                       "RANK_9C", "RANK_7B", "RANK_7C", "RANK_7H1", "RANK_7M1"]
 
+# 🔴 **テーブルごとに `race_date` の型が違う**（2026-08-27 に両方 date にして 500 を出した）:
+#     keirin.type_lab_picks.race_date        … DATE      → `datetime.date` を渡す
+#     keirin.picks_history.race_date         … VARCHAR   → **文字列**を渡す
+#     keirin.netkeirin_submissions           … 日付列なし → `race_key` の先頭8桁と比較
+#   asyncpg は型を厳格に見るので、取り違えるとその場で DataError になる。
 _SQL_CURRENT = text("""
     SELECT split_part(race_key, '#', 1) AS rk, rank, pred_combo, n_combos,
            hit, payout, bet_amount
@@ -201,12 +206,15 @@ async def get_type_lab(
     既定は直近7日の実地（`mode=live`）。ペーパー検証は `mode=paper` と期間を指定する。
     """
     d1, d2, dd1, dd2 = window(date_from, date_to)
+    # 上の注記のとおり、渡す型はテーブルごとに違う。
 
+    # type_lab_picks.race_date は DATE なので `datetime.date` で渡す
     res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2})
     rows = [dict(r._mapping) for r in res]
 
     # 同じ期間の現行推奨。1レースに複数ランクがあれば優先順位の最上位を採る。
-    cur_res = await db.execute(_SQL_CURRENT, {"d1": dd1, "d2": dd2})
+    # picks_history.race_date は VARCHAR なので**文字列**で渡す
+    cur_res = await db.execute(_SQL_CURRENT, {"d1": d1, "d2": d2})
     current: dict[str, dict[str, Any]] = {}
     for c in (dict(r._mapping) for r in cur_res):
         prev = current.get(c["rk"])
