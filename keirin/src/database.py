@@ -78,7 +78,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                       #    relation does not exist で落ちる（INSERT 系は
                       #    テーブル名を直接展開するので動いてしまい気づけない）。
                       r"|netkeirin_submissions|netkeirin_sales_daily"
-                      r"|netkeirin_sales_race|submission_skips)\b",
+                      r"|netkeirin_sales_race|submission_skips|type_lab_picks)\b",
                       r"keirin.\1", rest, flags=re.IGNORECASE)
 
         if action == "IGNORE":
@@ -115,7 +115,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
-                 r"|netkeirin_sales_race|submission_skips)\b",
+                 r"|netkeirin_sales_race|submission_skips|type_lab_picks)\b",
                  r"keirin.\1", sql, flags=re.IGNORECASE)
     # psycopg2 は % をフォーマット文字として扱う。
     # LIKE '7PLUS%' 等リテラル % を先に %% にエスケープしてから :name / ? を変換する。
@@ -745,6 +745,46 @@ def migrate_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_submission_skips_date "
                      "ON submission_skips(race_date)")
+
+        # 型ラボ（`src/type_lab.py`）の検証を貯める器。**既存商品とは完全に別**で、
+        # 一覧・統計・入稿には出さない（本番は kiseki alembic
+        # 202608270930_keirin が正本・この CREATE TABLE はテスト用 SQLite 専用）。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS type_lab_picks (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_key         TEXT NOT NULL,
+                race_date        TEXT NOT NULL,
+                venue_name       TEXT,
+                race_no          INTEGER,
+                race_type        TEXT,
+                n_entries        INTEGER,
+                day_index        INTEGER,
+                type_label       TEXT NOT NULL,
+                axis_sum         REAL,
+                arare            INTEGER,
+                gap              REAL,
+                axis1            INTEGER,
+                axis2            INTEGER,
+                mode             TEXT NOT NULL,
+                plan_key         TEXT NOT NULL,
+                bet_type         TEXT NOT NULL,
+                n_legs           INTEGER NOT NULL,
+                budget           INTEGER NOT NULL,
+                legs             TEXT NOT NULL,
+                pred_mean_payout REAL,
+                pred_min_payout  REAL,
+                rule_version     TEXT NOT NULL,
+                generated_at     TEXT DEFAULT (datetime('now')),
+                settled_at       TEXT,
+                win_combo        TEXT,
+                hit              INTEGER,
+                payout           INTEGER,
+                final_odds       REAL,
+                UNIQUE (race_key, plan_key, mode)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_type_lab_picks_date "
+                     "ON type_lab_picks(race_date, mode)")
 
         # netkeirin自動入稿のランク別ON/OFF・タイトル/コメントテンプレート設定
         # （2026-07-28新設。本番はkiseki alembic migration s2t3u4v5w6x7が正本・
