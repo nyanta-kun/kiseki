@@ -112,16 +112,24 @@ def main() -> None:
                 n_wait += 1
                 continue
             payout = int(round(hit["stake"] * o)) if hit else 0
+            # 🔴 **決着の三連単オッズは券種と的中に関係なく入れる**（答え合わせ用）。
+            #    `final_odds` は「買った目」の確定オッズで的中時しか入らないため、
+            #    外れたレースの荒れ具合が測れず「arare が配当を当てているか」を
+            #    検証できない。三連複プラン(D_hit)の行にも三連単の値を入れることで
+            #    型どうしを同じ物差しで比べられる。
+            tf_odds = odds.get(t["race_key"], {}).get(("trifecta", tf))
             # 🔴 `hit` は PostgreSQL では boolean。1/0 を渡すと
             #    DatatypeMismatch で落ちる（SQLite では通るので気づきにくい）。
             updates.append((win, bool(hit), payout,
-                            float(o) if (hit and o) else None, t["id"]))
+                            float(o) if (hit and o) else None,
+                            float(tf_odds) if tf_odds else None, t["id"]))
             n_ok += 1
         # 1行ずつ UPDATE すると 16,000 行で数分かかる（VPS への往復）。まとめて送る。
         if updates:
             c.executemany(
                 "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
-                "hit = ?, payout = ?, final_odds = ? WHERE id = ?", updates)
+                "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ? "
+                "WHERE id = ?", updates)
         c.commit()
     print(f"採点 {n_ok} 行 / 保留 {n_wait} 行（着順または確定オッズ待ち）")
 

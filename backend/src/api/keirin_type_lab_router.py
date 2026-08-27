@@ -24,6 +24,7 @@ from ..services.keirin_type_lab_gate import (
     AXIS_GATE_MIN,
     passes_axis_gate,
 )
+from ..services.keirin_type_lab_outcome import build_outcome, finish_class
 
 router = APIRouter(prefix="/api/keirin/type-lab", tags=["keirin-type-lab"])
 
@@ -65,6 +66,11 @@ class TypeLabPick(BaseModel):
     hit: bool | None = None
     payout: int | None = None
     final_odds: float | None = None
+    #: 指数順位から見た決着の中身（`keirin_type_lab_outcome.FINISH_CLASSES` の key）。
+    #: `p3_order` を持たない古い行では None。
+    finish_class: str | None = None
+    #: 決着した 1-2-3 の三連単確定オッズ（券種に関係なくレース単位の荒れ具合）
+    win_tf_odds: float | None = None
     current: CurrentPick | None = None
 
 
@@ -162,6 +168,56 @@ class ComboResponse(BaseModel):
     total: ComboRow
 
 
+class OutcomeColumn(BaseModel):
+    key: str
+    label: str
+    note: str = ""
+
+
+class OutcomeCell(BaseModel):
+    key: str
+    n: int
+    pct: float
+    #: プラン別の表だけ埋まる（そのセルでそのプランが当たった回数と率）
+    n_hit: int | None = None
+    hit_rate: float | None = None
+
+
+class OutcomeRow(BaseModel):
+    key: str
+    label: str
+    n: int
+    median_tf_odds: float | None = None
+    cells: list[OutcomeCell]
+
+
+class OutcomeMatrix(BaseModel):
+    key: str
+    title: str
+    note: str = ""
+    columns: list[OutcomeColumn]
+    rows: list[OutcomeRow]
+    total: OutcomeRow | None = None
+
+
+class TypeLabOutcomeResponse(BaseModel):
+    """型分けの答え合わせ。
+
+    🔴 母集団は**型ラボが実際に買ったレース**（`type_lab_picks` にある採点済みの行）。
+       買い目が組めずゲートで落ちたレースは入っていないので、
+       「全7車レースでの型の分布」とは一致しない。
+    """
+    mode: str
+    date_from: str
+    date_to: str
+    venue: str | None = None
+    n_races: int
+    n_races_settled: int
+    n_unclassified: int
+    n_no_payout: int
+    matrices: list[OutcomeMatrix]
+
+
 class TypeLabResponse(BaseModel):
     mode: str
     date_from: str
@@ -184,6 +240,7 @@ _SQL = text("""
            p.type_label, p.axis_sum, p.arare, p.axis1, p.axis2, p.mode, p.plan_key,
            p.bet_type, p.n_legs, p.budget, p.legs, p.pred_mean_payout, p.pred_min_payout,
            p.settled_at, p.win_combo, p.hit, p.payout, p.final_odds, p.rule_version,
+           p.p3_order, p.win_tf_odds,
            r.start_at
     FROM keirin.type_lab_picks p
     LEFT JOIN keirin.wt_races r ON r.race_key = p.race_key
@@ -339,6 +396,9 @@ async def get_type_lab(
                 hit=(bool(r["hit"]) if r["hit"] is not None else None),
                 payout=r["payout"],
                 final_odds=(float(r["final_odds"]) if r["final_odds"] is not None else None),
+                finish_class=finish_class(r.get("win_combo"), r.get("p3_order")),
+                win_tf_odds=(float(r["win_tf_odds"])
+                             if r["win_tf_odds"] is not None else None),
                 current=_current_of(current.get(r["race_key"]), sold.get(r["race_key"])),
             ))
 
@@ -532,3 +592,36 @@ async def get_type_lab_combo(
                          axis_gate=axis_gate, n_axis_gated_out=n_gated,
                          axis_gate_min=AXIS_GATE_MIN,
                          rows=detail, total=total)
+
+
+# 答え合わせ用。**買い目（legs）は引かない**（分類に要らないので軽くする）。
+_SQL_OUTCOME = text("""
+    SELECT race_key, race_date, venue_name, plan_key, type_label, gap,
+           settled_at, hit, win_combo, p3_order, win_tf_odds
+    FROM keirin.type_lab_picks
+    WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
+""")
+
+
+@router.get("/outcome", response_model=TypeLabOutcomeResponse)
+async def get_type_lab_outcome(
+    mode: Literal["paper", "live"] = "live",
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    venue: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> TypeLabOutcomeResponse:
+    """事前の型分けが決着と合っていたかを表にして返す。
+
+    ①軸の堅さ→的中率 / ②相手の開き→3着の出どころ / ③荒れ度→配当 の3層を、
+    それぞれ「事前の分割 × 実際の決着」のマトリクスで出す。
+    計算の正本は `services/keirin_type_lab_outcome.build_outcome`（純関数）。
+    """
+    d1, d2, dd1, dd2 = window(date_from, date_to)
+    res = await db.execute(_SQL_OUTCOME, {"mode": mode, "d1": dd1, "d2": dd2})
+    rows = [dict(r._mapping) for r in res]
+    if venue:
+        rows = [r for r in rows if r["venue_name"] == venue]
+    out = build_outcome(rows)
+    return TypeLabOutcomeResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+                                  **out)

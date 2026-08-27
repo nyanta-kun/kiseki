@@ -90,6 +90,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             type_label=shape.type_label, axis_sum=round(shape.axis_sum, 4),
             arare=shape.arare, gap=round(shape.gap, 4),
             axis1=shape.order[0], axis2=shape.order[1],
+            # 🔴 **並びを行へ焼き付ける**。後から `wt_entries` を引き直しても
+            #    モデルが再学習されていれば別の並びになり、答え合わせにならない。
+            p3_order="-".join(str(c) for c in shape.order),
             mode=mode, plan_key=plan.key, bet_type=plan.bet_type,
             n_legs=len(legs), budget=BUDGET,
             legs=json.dumps(detail, ensure_ascii=False),
@@ -164,6 +167,31 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
 
 # ───────────────────────── live（本番モデル） ─────────────────────────
 
+def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
+                  win_model: str = "lgbm_wt_win") -> tuple[dict, dict]:
+    """指定日の {race_key: {車番: 3着内率}} と {race_key: {車番: 1着率}}。
+
+    🔴 `run_live` と**答え合わせのバックフィル**の両方がここを呼ぶ。
+       別々に書くと「行を作ったときの並び」と「後から復元した並び」がずれる。
+    """
+    from src.models.trainer import load_model
+    from src.preprocessing.feature_wt import (
+        build_features_wt, load_raw_data_wt, prepare_X,
+    )
+
+    feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day))
+    if feats is None or not len(feats):
+        return {}, {}
+    X = prepare_X(feats)
+    p3v = load_model(eval_model).predict_proba(X)[:, 1]
+    pwv = load_model(win_model).predict_proba(X)[:, 1]
+    p3, pw = defaultdict(dict), defaultdict(dict)
+    for rk, fn, a, b in zip(feats["race_key"], feats["frame_no"], p3v, pwv):
+        p3[rk][int(fn)] = float(a)
+        pw[rk][int(fn)] = float(b)
+    return dict(p3), dict(pw)
+
+
 def run_live(day: str, eval_model: str = "lgbm_wt_eval",
              win_model: str = "lgbm_wt_win", mode: str = "live") -> list[dict]:
     """指定日の買い目を作る。
@@ -174,10 +202,6 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
     # 🔴 import 元は `build_7t3_candidates.py` と揃える。
     #    `src.features_wt` は存在しない（正しくは `src.preprocessing.feature_wt`）。
     from src import odds_prediction_tf as odds_tf
-    from src.models.trainer import load_model
-    from src.preprocessing.feature_wt import (
-        build_features_wt, load_raw_data_wt, prepare_X,
-    )
 
     keys = _keys_of_date(day)
     if not keys:
@@ -187,17 +211,10 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
     meta_all = _load_race_meta(keys)
     ent_all = _load_entries(keys)
 
-    feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day))
-    if feats is None or not len(feats):
+    p3, pw = predict_p3_pw(day, eval_model, win_model)
+    if not p3:
         print("[live] 特徴量が作れませんでした")
         return []
-    X = prepare_X(feats)
-    p3v = load_model(eval_model).predict_proba(X)[:, 1]
-    pwv = load_model(win_model).predict_proba(X)[:, 1]
-    p3, pw = defaultdict(dict), defaultdict(dict)
-    for rk, fn, a, b in zip(feats["race_key"], feats["frame_no"], p3v, pwv):
-        p3[rk][int(fn)] = float(a)
-        pw[rk][int(fn)] = float(b)
 
     out = []
     for rk in keys:
@@ -311,7 +328,7 @@ def _load_entries(keys: list[str]) -> dict:
 
 
 COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
-        "type_label axis_sum arare gap axis1 axis2 mode plan_key bet_type "
+        "type_label axis_sum arare gap axis1 axis2 p3_order mode plan_key bet_type "
         "n_legs budget legs pred_mean_payout pred_min_payout rule_version").split()
 
 
