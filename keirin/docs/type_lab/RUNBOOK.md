@@ -194,14 +194,20 @@ python scripts/backfill_type_lab_outcome.py --order-from-models --mode live \
 ⚠️ **2025年ぶんを板 npz で埋めてはいけない**（食い違い 34% ＝ 別ソース）。
 月次 vintage（`--order-from-models --mode paper`）で埋めること。
 
-🔴 **`paper9`（9車）は `p3_order` が空のまま**。理由は2つ:
-- 板 npz は**7車のみ**なので `--order-from-board` では埋まらない
-- `--order-from-models` の `--mode` は `paper` / `live` しか受け付けず、
-  `paper` の分岐（月次 vintage）にも入らない
+🟢 **`paper9`（9車）も同じ経路で埋まる**（2026-08-28 対応）。
+paper9 は `build_type_lab_picks --n-entries 9` が**月次 vintage** で作っているので、
+`--order-from-models --mode paper9` で復元できる（実測 2025-01 は 202/202 一致・0.00%）。
+板 npz は7車のみなので `--order-from-board` では埋まらない。
 
-9車を答え合わせに載せるなら、`--mode` に `paper9` を足して月次 vintage 側の
-分岐へ流すこと（決着クラスの判定自体は車数に依存しないのでそのまま使える）。
-API の `mode` も `paper|live` の2択なので、**いまは画面にも出ていない**。
+```bash
+python scripts/backfill_type_lab_outcome.py --order-from-models --mode paper9 \
+    --from 2025-01-01 --to 2026-08-31
+python scripts/backfill_type_lab_outcome.py --odds --mode paper9 \
+    --from 2025-01-01 --to 2026-08-31
+```
+
+画面は「9車ペーパー（検証）」で選べる（既定は実地のまま）。
+🔴 **7車と混ぜて読まないこと。** 型の出方が違う（9車は F 大混戦が 58% ↔ 7車 31%）。
 
 詳細と実測: `outcome_matrix_2026_08_27.md`
 
