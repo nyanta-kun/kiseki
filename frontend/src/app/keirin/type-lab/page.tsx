@@ -59,17 +59,24 @@ export default function TypeLabPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [planFilter, setPlanFilter] = useState<string>("");
+  // 競輪場フィルタ。**サーバー側で絞る**ので、まとめ・比較もその場だけの数字になる。
+  const [venue, setVenue] = useState<string>("");
+  // 選択肢は絞り込み前の一覧を保持する（絞ると自分の場しか返らないため）
+  const [venueOptions, setVenueOptions] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      setData(await fetchKeirinTypeLab({ mode, dateFrom, dateTo, limit: 1000 }));
+      const r = await fetchKeirinTypeLab({ mode, dateFrom, dateTo, venue, limit: 1000 });
+      setData(r);
+      // 絞っていないときの一覧を覚えておく（絞ると1場しか返らない）
+      if (!venue) setVenueOptions(r.venues);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [mode, dateFrom, dateTo]);
+  }, [mode, dateFrom, dateTo, venue]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -101,6 +108,16 @@ export default function TypeLabPage() {
           <b>ペーパー</b>は過去を vintage 予測で、<b>実地</b>は当日を本番モデルで組んだもの。
           どちらも <code>keirin.type_lab_picks</code> にしか書かれず、一覧・統計・入稿には出ません。
         </p>
+        <p className="px-3 pb-3 leading-relaxed">
+          プラン名の <b>_hit</b> と <b>_pay</b> は<b>同じ型に対する狙いの違い</b>です。
+          <b>_hit</b> は当たる回数を取りにいく形（点数を広げる・低い帯）、
+          <b>_pay</b> は1点あたりの購入額を増やして払戻を取りにいく形（点数を絞る）。
+          ROI はどちらも控除率の壁の周辺で変わらず、
+          <b>的中率と払戻の大きさを交換しているだけ</b>です。
+          例: 型A はペーパーで <b>A_hit 表示的中 29.7% / 払戻中央 1.9万円</b> ↔
+          <b>A_pay 19.1% / 2.8万円</b>（2倍以上の的中件数は 1.62件/日 で同じ）。
+          型F は <b>F_hit 24.2% / 2.4万円</b> ↔ <b>F_pay 8.5% / 5.9万円</b>。
+        </p>
       </details>
 
       {/* ── 条件 ── */}
@@ -128,6 +145,15 @@ export default function TypeLabPage() {
           <input type="date" className="min-w-0 flex-1 rounded border px-2 py-1.5 text-sm"
                  value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
+        <select
+          className="w-full rounded border px-2 py-1.5 text-sm"
+          value={venue} onChange={(e) => setVenue(e.target.value)}
+        >
+          <option value="">すべての競輪場{venueOptions.length ? `（${venueOptions.length}場）` : ""}</option>
+          {(venueOptions.length ? venueOptions : (data?.venues ?? [])).map((v) => (
+            <option key={v} value={v}>{v}</option>
+          ))}
+        </select>
         {data?.rule_versions?.length ? (
           <div className="text-[10px] text-slate-400">rule_version: {data.rule_versions.join(", ")}</div>
         ) : null}
@@ -138,7 +164,8 @@ export default function TypeLabPage() {
       )}
 
       {/* ── プラン別サマリ ── */}
-      <Section title="プラン別のまとめ">
+      <Section title="プラン別のまとめ"
+               note={venue ? `${venue} に絞り込み中` : undefined}>
         {/* モバイル: 1プラン=1カード */}
         <div className="space-y-2 sm:hidden">
           {(data?.summaries ?? []).map((s) => (

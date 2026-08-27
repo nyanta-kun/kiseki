@@ -124,6 +124,10 @@ class TypeLabResponse(BaseModel):
     date_from: str
     date_to: str
     rule_versions: list[str]
+    #: 期間内に出てくる競輪場（**絞り込み前**の全件から作る。
+    #: 絞り込み後だと選んだ場しか候補に残らず、他の場へ切り替えられなくなる）
+    venues: list[str]
+    venue: str | None = None
     summaries: list[TypeLabSummary]
     comparison: list[ComparisonRow]
     picks: list[TypeLabPick]
@@ -198,6 +202,7 @@ async def get_type_lab(
     mode: Literal["paper", "live"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
     limit: int = Query(500, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
 ) -> TypeLabResponse:
@@ -211,6 +216,12 @@ async def get_type_lab(
     # type_lab_picks.race_date は DATE なので `datetime.date` で渡す
     res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2})
     rows = [dict(r._mapping) for r in res]
+
+    # 🔴 選択肢は**絞り込む前**に作る。絞ってから作ると選んだ場しか残らず
+    #    他の場へ切り替えられなくなる。
+    venues = sorted({str(r["venue_name"]) for r in rows if r["venue_name"]})
+    if venue:
+        rows = [r for r in rows if r["venue_name"] == venue]
 
     # 同じ期間の現行推奨。1レースに複数ランクがあれば優先順位の最上位を採る。
     # picks_history.race_date は VARCHAR なので**文字列**で渡す
@@ -284,6 +295,7 @@ async def get_type_lab(
 
     return TypeLabResponse(mode=mode, date_from=d1, date_to=d2,
                            rule_versions=sorted(versions),
+                           venues=venues, venue=venue,
                            summaries=summaries,
                            comparison=_comparison(by_plan, current),
                            picks=picks)

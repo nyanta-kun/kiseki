@@ -1933,17 +1933,20 @@ export type TypeLabSummary = {
 export type TypeLabResponse = {
   mode: string; date_from: string; date_to: string;
   rule_versions: string[];
+  venues: string[]; venue: string | null;
   summaries: TypeLabSummary[]; comparison: TypeLabComparisonRow[];
   picks: TypeLabPick[];
 };
 
 export async function fetchKeirinTypeLab(params: {
-  mode?: "paper" | "live"; dateFrom?: string; dateTo?: string; limit?: number;
+  mode?: "paper" | "live"; dateFrom?: string; dateTo?: string;
+  venue?: string; limit?: number;
 } = {}): Promise<TypeLabResponse> {
   const q = new URLSearchParams();
   if (params.mode) q.set("mode", params.mode);
   if (params.dateFrom) q.set("date_from", params.dateFrom);
   if (params.dateTo) q.set("date_to", params.dateTo);
+  if (params.venue) q.set("venue", params.venue);
   if (params.limit) q.set("limit", String(params.limit));
   const s = q.toString();
   return get<TypeLabResponse>(`/keirin/type-lab${s ? `?${s}` : ""}`, { cache: "no-store" });
