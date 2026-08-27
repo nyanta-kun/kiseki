@@ -1920,6 +1920,11 @@ export type TypeLabPick = {
   pred_mean_payout: number | null; pred_min_payout: number | null;
   settled: boolean; win_combo: string | null; hit: boolean | null;
   payout: number | null; final_odds: number | null;
+  /** 指数順位から見た決着の中身（firm34 / firm_ana / half34 / half_ana / broken）。
+   *  p3_order を持たない古い行では null。 */
+  finish_class: string | null;
+  /** 決着した 1-2-3 の三連単確定オッズ（券種に関係なくレース単位の荒れ具合） */
+  win_tf_odds: number | null;
   current: TypeLabCurrentPick | null;
 };
 export type TypeLabSummary = {
@@ -1985,4 +1990,42 @@ export async function fetchKeirinTypeLabCombo(params: {
   if (params.venue) q.set("venue", params.venue);
   return get<TypeLabComboResponse>(`/keirin/type-lab/combo?${q.toString()}`,
                                    { cache: "no-store" });
+}
+
+/** 型分けの答え合わせ。事前の分割（型・相手の開き）と実際の決着のマトリクス。
+ *  🔴 母集団は**型ラボが実際に買ったレース**。ゲートで落ちたレースは入っていない。 */
+export type TypeLabOutcomeCell = {
+  key: string; n: number; pct: number;
+  /** プラン別の表だけ埋まる */
+  n_hit: number | null; hit_rate: number | null;
+};
+export type TypeLabOutcomeRow = {
+  key: string; label: string; n: number;
+  median_tf_odds: number | null;
+  cells: TypeLabOutcomeCell[];
+};
+export type TypeLabOutcomeMatrix = {
+  key: string; title: string; note: string;
+  columns: { key: string; label: string; note: string }[];
+  rows: TypeLabOutcomeRow[];
+  total: TypeLabOutcomeRow | null;
+};
+export type TypeLabOutcomeResponse = {
+  mode: string; date_from: string; date_to: string; venue: string | null;
+  n_races: number; n_races_settled: number;
+  n_unclassified: number; n_no_payout: number;
+  matrices: TypeLabOutcomeMatrix[];
+};
+
+export async function fetchKeirinTypeLabOutcome(params: {
+  mode?: "paper" | "live"; dateFrom?: string; dateTo?: string; venue?: string;
+} = {}): Promise<TypeLabOutcomeResponse> {
+  const q = new URLSearchParams();
+  if (params.mode) q.set("mode", params.mode);
+  if (params.dateFrom) q.set("date_from", params.dateFrom);
+  if (params.dateTo) q.set("date_to", params.dateTo);
+  if (params.venue) q.set("venue", params.venue);
+  const s = q.toString();
+  return get<TypeLabOutcomeResponse>(`/keirin/type-lab/outcome${s ? `?${s}` : ""}`,
+                                     { cache: "no-store" });
 }

@@ -117,6 +117,53 @@ VPS の cron（既存の keirin バッチと同じホスト cron）:
 
 詳細: `ev_axis_rank_2026_08_27.md`
 
+### 「型分けの答え合わせ」（2026-08-27 追加）
+
+事前の分割（型・相手の開き）が**実際の決着と合っていたか**をマトリクスで出す。
+API は `GET /api/keirin/type-lab/outcome`、計算の正本は
+`backend/src/services/keirin_type_lab_outcome.py`（DB にも FastAPI にも依存しない純関数）。
+
+| 表 | 行 | 列 | 何が言えるか |
+|---|---|---|---|
+| ① | 型 A〜F | 決着クラス5種 | 軸の堅さの分割が的中率を分けているか |
+| ② | 相手の開き（`gap` 3分位） | 決着クラス5種 | 開きが3着の出どころを分けているか |
+| ③ | 型 A〜F | 三連単の確定オッズ帯 | 荒れ度の分割が配当を分けているか |
+| ④ | プラン | 決着クラス5種（**セルは的中率**） | どの決着で取れて、どこで落としているか |
+
+**決着クラス**は指数（3着内率）順位で「1〜3着に入った3車がどこから来たか」を5つに分ける:
+`順当`（軸2車＋指数3〜4位）/ `軸2+穴`（軸2車＋指数5〜7位）/ `片軸+中位` /
+`片軸+穴` / `軸崩壊`（指数1位も2位も3着外）。
+
+🔴 **指数の並び（`p3_order`）は行を作った時点でしか残せない。**
+後から `wt_entries` を引き直すと、モデルの再学習ぶんだけ当時と違う並びになる
+（paper は vintage・live は当日の本番モデル）。**並びの無い行は分類しない**——
+分類できなかった件数は画面に必ず出る。
+
+🔴 **分割が当たっている ＝ 儲かる ではない。** 型は edge を作らず、決めるのは
+「同じ買い方でどの帯へ落ちるか」と「どのレースを拾えるか」だけ（SUMMARY 2.6）。
+
+#### 古い行を埋める（2026-08-27 以前に作られた行）
+
+```bash
+# 決着の三連単オッズ（軽い・全モード）
+python scripts/backfill_type_lab_outcome.py --odds --from 2026-01-01 --to 2026-08-27
+
+# 指数の並び — paper の四半期 walk-forward ぶん（/tmp/race_type_board.npz から）
+python scripts/backfill_type_lab_outcome.py --order-from-board --from 2026-01-01 --to 2026-08-04
+
+# 指数の並び — モデルを回して復元（paper は月次 vintage / live は本番モデル）
+python scripts/backfill_type_lab_outcome.py --order-from-models --mode paper \
+    --from 2026-08-05 --to 2026-08-26
+python scripts/backfill_type_lab_outcome.py --order-from-models --mode live \
+    --from 2026-08-27 --to 2026-08-27
+```
+
+🔴 復元した並びは `axis1`/`axis2` と突き合わせ、**合わない行は書かない**（NULL のまま）。
+モデルが変わっていれば並びも変わるので、黙って書くと答え合わせの土台が静かにずれる。
+`軸不一致 N` としてログに出るので、多ければその期間の復元は諦めること。
+
+詳細と実測: `outcome_matrix_2026_08_27.md`
+
 ## 4. プランを変えるとき
 
 `keirin/src/type_lab.py` の `PLANS` を編集する。`rule_version()` が自動で変わるので

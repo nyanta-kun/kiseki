@@ -1,10 +1,12 @@
 """競輪データベースモデル定義（keirin スキーマ）"""
 
-from datetime import datetime
+from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import (
     REAL,
     Boolean,
+    Date,
     DateTime,
     Float,
     Integer,
@@ -14,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 KEIRIN_SCHEMA = "keirin"
@@ -418,3 +421,57 @@ class KeirinModelEvaluation(KeirinBase):
     evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), comment="評価実行日時"
     )
+
+
+class KeirinTypeLabPick(KeirinBase):
+    """型ラボ（検証用）の買い目と結果。
+
+    🔴 **既存商品とは隔離された検証用テーブル**。書くのは `keirin/scripts/
+       {build,settle,backfill}_type_lab_picks*.py` だけで、入稿・売上集計は触らない。
+    🔴 このモデルは `alembic revision --autogenerate` に**テーブルごと DROP** を
+       作らせないために置いている（`tests/test_keirin_model_schema_sync.py`）。
+       列は migration（202608270930_keirin / 202608272200_keirin）と一致させること。
+    """
+
+    __tablename__ = "type_lab_picks"
+    __table_args__ = {"schema": KEIRIN_SCHEMA}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # ── レース ──
+    race_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    race_date: Mapped[date] = mapped_column(Date, nullable=False)
+    venue_name: Mapped[str | None] = mapped_column(String(32))
+    race_no: Mapped[int | None] = mapped_column(Integer)
+    race_type: Mapped[str | None] = mapped_column(String(32))
+    n_entries: Mapped[int | None] = mapped_column(Integer)
+    day_index: Mapped[int | None] = mapped_column(Integer)
+    # ── 型の根拠（後から再現できるように行へ埋める）──
+    type_label: Mapped[str] = mapped_column(String(1), nullable=False, comment="A〜F")
+    axis_sum: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="3着内率 上位2車の合計")
+    arare: Mapped[int | None] = mapped_column(Integer, comment="荒れ度")
+    gap: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="相手の開き")
+    axis1: Mapped[int | None] = mapped_column(Integer)
+    axis2: Mapped[int | None] = mapped_column(Integer)
+    #: 3着内率の降順に並べた車番（"3-1-5-7-2-4-6"）。答え合わせの土台。
+    p3_order: Mapped[str | None] = mapped_column(String(32))
+    # ── 商品 ──
+    mode: Mapped[str] = mapped_column(String(8), nullable=False, comment="paper | live")
+    plan_key: Mapped[str] = mapped_column(String(16), nullable=False)
+    bet_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    n_legs: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    legs: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    pred_mean_payout: Mapped[float | None] = mapped_column(Numeric(12, 1))
+    pred_min_payout: Mapped[float | None] = mapped_column(Numeric(12, 1))
+    rule_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now())
+    # ── 結果（採点で埋める）──
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    win_combo: Mapped[str | None] = mapped_column(String(16))
+    hit: Mapped[bool | None] = mapped_column(Boolean)
+    payout: Mapped[int | None] = mapped_column(Integer)
+    final_odds: Mapped[float | None] = mapped_column(
+        Numeric(10, 2), comment="買った目の確定オッズ（的中時のみ）")
+    win_tf_odds: Mapped[float | None] = mapped_column(
+        Numeric(10, 2), comment="決着 1-2-3 の三連単確定オッズ（券種・的中を問わず）")

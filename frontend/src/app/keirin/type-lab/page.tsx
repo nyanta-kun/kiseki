@@ -21,8 +21,9 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, FlaskConical, RefreshCw,
 } from "lucide-react";
 import {
-  fetchKeirinTypeLab, fetchKeirinTypeLabCombo,
+  fetchKeirinTypeLab, fetchKeirinTypeLabCombo, fetchKeirinTypeLabOutcome,
   type TypeLabComboResponse, type TypeLabComboRow, type TypeLabComparisonRow,
+  type TypeLabOutcomeMatrix, type TypeLabOutcomeResponse,
   type TypeLabPick, type TypeLabResponse, type TypeLabSummary,
 } from "@/lib/api";
 
@@ -39,6 +40,21 @@ const PLAN_NOTE: Record<string, string> = {
   E_hit: "三連単 予測30倍以上から確率上位14点",
   F_hit: "三連単 軸2車＋相手2車の6順列すべて（12点）",
   F_pay: "三連単 1着=軸1固定・2着2車 → 3着流し（一撃）",
+};
+
+/** 決着クラスの表示。サーバー（`keirin_type_lab_outcome.FINISH_CLASSES`）と対。
+ *  🔴 key を増やしたら**両方**へ足すこと（片方だけだと「—」になって気づけない）。 */
+const FINISH_LABEL: Record<string, string> = {
+  firm34: "順当", firm_ana: "軸2+穴", half34: "片軸+中位",
+  half_ana: "片軸+穴", broken: "軸崩壊",
+};
+/** 決着クラスの色。堅い決着＝緑 → 崩れた決着＝赤。 */
+const FINISH_TONE: Record<string, string> = {
+  firm34: "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+  firm_ana: "bg-teal-50 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200",
+  half34: "bg-amber-50 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+  half_ana: "bg-orange-50 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200",
+  broken: "bg-rose-50 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
 };
 
 /** 表示順。`PLAN_NOTE` の並びをそのまま使う（挿入順が保たれる）。 */
@@ -86,6 +102,9 @@ export default function TypeLabPage() {
   // 軸信頼ゲート（検証中の候補・既定はOFF）。既存の行に後から当てるだけなので
   // 実地検証の最中でも買い目は一切作り直さない。
   const [axisGate, setAxisGate] = useState(false);
+  // 型分けの答え合わせ。買い目を引かない軽い専用 API（本体とは別に読む）。
+  const [outcome, setOutcome] = useState<TypeLabOutcomeResponse | null>(null);
+  const [outcomeErr, setOutcomeErr] = useState<string | null>(null);
 
   /** 期間の**幅を保ったまま**日数ぶん前後へずらす。 */
   const shiftRange = useCallback((sign: number) => {
@@ -127,6 +146,18 @@ export default function TypeLabPage() {
   }, [comboPlans, mode, dateFrom, dateTo, venue, axisGate]);
 
   useEffect(() => { void loadCombo(); }, [loadCombo]);
+
+  const loadOutcome = useCallback(async () => {
+    try {
+      setOutcome(await fetchKeirinTypeLabOutcome({ mode, dateFrom, dateTo, venue }));
+      setOutcomeErr(null);
+    } catch (e) {
+      setOutcome(null);
+      setOutcomeErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [mode, dateFrom, dateTo, venue]);
+
+  useEffect(() => { void loadOutcome(); }, [loadOutcome]);
 
   const togglePlan = useCallback((plan: string) => {
     setComboPlans((prev) => (prev.includes(plan)
@@ -394,6 +425,39 @@ export default function TypeLabPage() {
         括弧の「表示」はガミ（払戻が賭け金以下）を除いた的中数です。
       </p>
 
+      {/* ── 型分けの答え合わせ ── */}
+      <Section
+        title="型分けの答え合わせ"
+        note={outcome
+          ? `採点済み ${outcome.n_races_settled}R / 分類できた ${outcome.n_races}R`
+          : undefined}>
+        {outcomeErr && (
+          <div className="p-3 text-sm text-rose-700 dark:text-rose-300">{outcomeErr}</div>
+        )}
+        {!outcomeErr && outcome && !outcome.n_races && (
+          <Empty text="分類できるレースがありません（採点済み かつ 指数の並びを持つ行が要ります）" />
+        )}
+        {!outcomeErr && outcome && !!outcome.n_races && (
+          <div className="space-y-3 p-2 sm:p-3">
+            {outcome.n_unclassified > 0 && (
+              <p className="rounded bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                ⚠️ 採点済み {outcome.n_races_settled}R のうち <b>{outcome.n_unclassified}R</b> は
+                指数の並びが行に無いため分類できていません。並びは<b>行を作った時点でしか残せない</b>
+                （モデルが再学習されると当時と別の並びになる）ので、古い行は
+                <code className="mx-0.5">backfill_type_lab_outcome.py</code>で復元します。
+              </p>
+            )}
+            {outcome.matrices.map((m) => <MatrixTable key={m.key} m={m} />)}
+            <p className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
+              🔴 母集団は<b>型ラボが実際に買ったレース</b>です（買い目が組めずゲートで落ちた
+              レースは入っていないので、全7車レースでの型の分布とは一致しません）。
+              🔴 <b>分割が当たっている＝儲かる ではありません。</b>型は edge を作らず、
+              決めるのは「同じ買い方でどの帯へ落ちるか」と「どのレースを拾えるか」だけです。
+            </p>
+          </div>
+        )}
+      </Section>
+
       {/* ── 現行推奨との比較 ── */}
       <Section title="現行推奨との比較"
                note="両方に採点済みの記録がある同じレースだけで並べています">
@@ -531,6 +595,89 @@ function Section({ title, note, children }: {
   );
 }
 
+/** 事前の分割（行）× 実際の決着（列）のマトリクス。
+ *
+ * 🔴 **ダークモードでは本文色がほぼ白**なので、セルには必ず文字色を明示する
+ *    （色指定の無い数値が背景に溶けて消える。2026-08-27 に一度踏んだ）。
+ * 濃淡は「その行の中でどこへ寄っているか」を一目で見せるためのもので、
+ * 色そのものに意味は持たせない（値は必ず数字でも出す）。
+ */
+function MatrixTable({ m }: { m: TypeLabOutcomeMatrix }) {
+  const rows = m.total ? [...m.rows, m.total] : m.rows;
+  const hasHit = rows.some((r) => r.cells.some((c) => c.hit_rate != null));
+  const showOdds = rows.some((r) => r.median_tf_odds != null);
+  return (
+    <div className="overflow-hidden rounded border border-gray-200 dark:border-gray-700">
+      <div className="border-b border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-800">
+        <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">{m.title}</div>
+        {m.note && (
+          <div className="text-[11px] text-gray-600 dark:text-gray-400">{m.note}</div>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-xs">
+          <thead className="bg-gray-50 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+            <tr>
+              <th className="p-1.5 text-left">区分</th>
+              <th className="p-1.5 text-right">R数</th>
+              {m.columns.map((c) => (
+                <th key={c.key} className="p-1.5 text-right" title={c.note || undefined}>
+                  {c.label}
+                </th>
+              ))}
+              {showOdds && <th className="p-1.5 text-right">中央倍率</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key}
+                  className={`border-t border-gray-200 dark:border-gray-700 ${
+                    r.key === "ALL" ? "bg-gray-50 font-semibold dark:bg-gray-800" : ""}`}>
+                <td className="whitespace-nowrap p-1.5 text-gray-900 dark:text-gray-100">{r.label}</td>
+                <td className="p-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{r.n}</td>
+                {r.cells.map((c) => {
+                  // 濃淡は「行内の偏り」＝割合。的中率の表でも割合で塗る
+                  // （的中率で塗ると母数1件のセルが最も濃くなって誤読を招く）。
+                  const tint = Math.min(c.pct, 60) / 60 * 0.30;
+                  return (
+                    <td key={c.key} className="p-1.5 text-right"
+                        style={{ backgroundColor: `rgba(99, 102, 241, ${tint})` }}>
+                      {hasHit ? (
+                        <>
+                          <div className="tabular-nums font-semibold text-gray-900 dark:text-gray-100">
+                            {c.n ? `${(c.hit_rate ?? 0).toFixed(0)}%` : "—"}
+                          </div>
+                          <div className="text-[10px] tabular-nums text-gray-600 dark:text-gray-400">
+                            {c.n_hit ?? 0}/{c.n}R
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="tabular-nums font-semibold text-gray-900 dark:text-gray-100">
+                            {c.pct.toFixed(1)}%
+                          </div>
+                          <div className="text-[10px] tabular-nums text-gray-600 dark:text-gray-400">
+                            {c.n}R
+                          </div>
+                        </>
+                      )}
+                    </td>
+                  );
+                })}
+                {showOdds && (
+                  <td className="p-1.5 text-right tabular-nums text-gray-900 dark:text-gray-100">
+                    {r.median_tf_odds != null ? `${r.median_tf_odds.toFixed(1)}倍` : "—"}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Empty({ text = "データがありません" }: { text?: string }) {
   return <div className="p-6 text-center text-sm text-gray-500 dark:text-gray-400">{text}</div>;
 }
@@ -661,6 +808,20 @@ function PickCard({ p }: { p: TypeLabPick }) {
             : <span className="text-gray-500 dark:text-gray-400">未確定</span>}
         </span>
       </div>
+      {/* 決着の中身。事前の型（左）に対して実際がどう決まったか（右）。 */}
+      {settled && p.finish_class && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+          <span className={`rounded px-1.5 py-0.5 font-semibold ${
+            FINISH_TONE[p.finish_class] ?? "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200"}`}>
+            決着 {FINISH_LABEL[p.finish_class] ?? p.finish_class}
+          </span>
+          {p.win_tf_odds != null && (
+            <span className="text-gray-600 dark:text-gray-400">
+              三連単 {p.win_tf_odds.toFixed(1)}倍
+            </span>
+          )}
+        </div>
+      )}
       {p.current && (
         <div className="mt-1.5 rounded bg-gray-50 dark:bg-gray-800 px-2 py-1 text-[10px] leading-relaxed text-gray-700 dark:text-gray-300">
           <span className="font-semibold">現行</span>

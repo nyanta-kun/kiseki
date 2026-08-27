@@ -221,7 +221,9 @@ _FORBIDDEN = ("picks_history", "netkeirin_submissions", "submission_skips",
               "netkeirin_settings")
 
 
-@pytest.mark.parametrize("script", ["build_type_lab_picks.py", "settle_type_lab_picks.py"])
+@pytest.mark.parametrize("script", ["build_type_lab_picks.py",
+                                    "settle_type_lab_picks.py",
+                                    "backfill_type_lab_outcome.py"])
 def test_scripts_never_touch_existing_product_tables(script):
     """🔴 **型ラボは既存商品のテーブルへ触らない。**
 
@@ -338,3 +340,37 @@ def test_intraday_settle_covers_yesterday_too():
     assert "settle_type_lab_picks.py" in hourly and "date +%F" in hourly
     assert 'settle_type_lab_picks.py --date "$YEST"' in hourly
     assert 'settle_type_lab_picks.py --date "$TODAY"' in hourly
+
+
+# ─────────────────────── 答え合わせ用の列 ───────────────────────
+
+def test_build_stores_the_index_order():
+    """🔴 **行を作った時点の指数の並びを焼き付ける。**
+
+    後から `wt_entries` を引き直して並べ直すことは**できない**。モデルが再学習
+    されれば p3 が変わり、当時と違う並びになる（paper は vintage・live は当日の
+    本番モデル）。並びが無いと「3着が指数3〜4位から出たか」を検証できず、
+    型分けの答え合わせが成り立たない。
+    """
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    assert "p3_order" in src
+    tree = ast.parse(src)
+    cols = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, ast.Assign)
+         and any(getattr(t, "id", "") == "COLS" for t in n.targets)), None)
+    assert cols is not None, "COLS が見つからない"
+    assert "p3_order" in ast.unparse(cols), "COLS に p3_order が無い（保存されない）"
+
+
+def test_settle_stores_the_race_level_trifecta_odds():
+    """🔴 決着の三連単オッズは**券種と的中に関係なく**入れる。
+
+    `final_odds` は「買った目」の確定オッズで的中時しか入らないため、
+    外れたレースの荒れ具合が分からず「荒れ度が配当を当てているか」を測れない。
+    三連複プラン（D_hit）の行にも三連単の値を入れることで型どうしを比べられる。
+    """
+    src = (REPO / "scripts" / "settle_type_lab_picks.py").read_text(encoding="utf-8")
+    assert "win_tf_odds" in src
+    # 的中の有無で分岐させていないこと（`final_odds` と同じ扱いにしない）
+    assert 'odds.get(t["race_key"], {}).get(("trifecta", tf))' in src
