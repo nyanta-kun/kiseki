@@ -45,12 +45,21 @@ import itertools
 import json
 import math
 from collections.abc import Mapping, Sequence
+import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-MODEL_DIR = Path(__file__).resolve().parent.parent / "data" / "models"
+# 🔴 **`KEIRIN_ODDS_TF_MODEL_DIR` で差し替えられるようにしてある**（2026-08-27）。
+#    三連単の予測オッズは月次 vintage を持たず、本番モデルの学習終端は 2025-12-31。
+#    それより前の窓を評価するには「もっと古い終端で学習したモデル」が要るが、
+#    学習スクリプトの出力先が固定だと**本番モデルを上書きしてしまう**
+#    （三連複側には `KEIRIN_ODDS_MODEL_DIR` があるのに、こちらだけ無かった）。
+#    過去を評価するときは vintage ディレクトリを指すこと。
+MODEL_DIR = Path(os.environ.get(
+    "KEIRIN_ODDS_TF_MODEL_DIR",
+    str(Path(__file__).resolve().parent.parent / "data" / "models")))
 META_PATH = MODEL_DIR / "odds_tf_meta.json"
 SUPPORTED_N_CAR = (7,)
 
