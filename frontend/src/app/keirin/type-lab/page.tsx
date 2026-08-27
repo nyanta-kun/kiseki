@@ -88,18 +88,18 @@ export default function TypeLabPage() {
   return (
     <main className="w-full px-3 py-3 sm:mx-auto sm:max-w-6xl sm:px-4 sm:py-4 space-y-3 pb-16">
       <header className="flex items-center gap-2">
-        <Link href="/keirin" className="text-slate-500 hover:text-slate-800" aria-label="戻る">
+        <Link href="/keirin" className="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:text-gray-100" aria-label="戻る">
           <ArrowLeft size={18} />
         </Link>
         <FlaskConical size={18} className="text-indigo-600" />
-        <h1 className="text-base font-bold sm:text-lg">型ラボ</h1>
-        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 sm:text-xs">
+        <h1 className="text-base font-bold text-gray-900 dark:text-white sm:text-lg">型ラボ</h1>
+        <span className="rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200 sm:text-xs">
           検証用・入稿しません
         </span>
       </header>
 
-      <details className="rounded border bg-white text-xs text-slate-500">
-        <summary className="cursor-pointer px-3 py-2 font-semibold text-slate-600">
+      <details className="rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 text-xs">
+        <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">
           このページは何か
         </summary>
         <p className="px-3 pb-3 leading-relaxed">
@@ -121,10 +121,10 @@ export default function TypeLabPage() {
       </details>
 
       {/* ── 条件 ── */}
-      <div className="space-y-2 rounded border bg-white p-3">
+      <div className="space-y-2 rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 p-3">
         <div className="flex items-center gap-2">
           <select
-            className="min-w-0 flex-1 rounded border px-2 py-1.5 text-sm sm:flex-none"
+            className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 sm:flex-none"
             value={mode} onChange={(e) => setMode(e.target.value as "live" | "paper")}
           >
             <option value="live">実地（当日・本番モデル）</option>
@@ -139,10 +139,10 @@ export default function TypeLabPage() {
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <input type="date" className="min-w-0 flex-1 rounded border px-2 py-1.5 text-sm"
+          <input type="date" className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                  value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <span className="shrink-0 text-slate-400">〜</span>
-          <input type="date" className="min-w-0 flex-1 rounded border px-2 py-1.5 text-sm"
+          <span className="shrink-0 text-gray-400 dark:text-gray-500">〜</span>
+          <input type="date" className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                  value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
         <VenueTabs
@@ -150,12 +150,12 @@ export default function TypeLabPage() {
           value={venue} onChange={setVenue}
         />
         {data?.rule_versions?.length ? (
-          <div className="text-[10px] text-slate-400">rule_version: {data.rule_versions.join(", ")}</div>
+          <div className="text-[10px] text-gray-400 dark:text-gray-500">rule_version: {data.rule_versions.join(", ")}</div>
         ) : null}
       </div>
 
       {err && (
-        <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{err}</div>
+        <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950 p-3 text-sm text-red-700">{err}</div>
       )}
 
       {/* ── プラン別サマリ ── */}
@@ -172,7 +172,7 @@ export default function TypeLabPage() {
         {/* sm 以上: 表 */}
         <div className="hidden overflow-x-auto sm:block">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs text-slate-600">
+            <thead className="bg-gray-50 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
               <tr>
                 <th className="p-2 text-left">プラン</th>
                 <th className="p-2 text-left">型</th>
@@ -190,33 +190,33 @@ export default function TypeLabPage() {
             <tbody>
               {(data?.summaries ?? []).map((s) => (
                 <tr key={s.plan_key}
-                    className={`cursor-pointer border-t hover:bg-indigo-50 ${planFilter === s.plan_key ? "bg-indigo-50" : ""}`}
+                    className={`cursor-pointer border-t hover:bg-indigo-50 dark:bg-indigo-950 ${planFilter === s.plan_key ? "bg-indigo-50" : ""}`}
                     onClick={() => setPlanFilter(planFilter === s.plan_key ? "" : s.plan_key)}>
                   <td className="p-2">
-                    <div className="font-mono font-semibold">{s.plan_key}</div>
-                    <div className="text-xs text-slate-500">{PLAN_NOTE[s.plan_key] ?? ""}</div>
+                    <div className="font-mono font-semibold text-gray-900 dark:text-white">{s.plan_key}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{PLAN_NOTE[s.plan_key] ?? ""}</div>
                   </td>
-                  <td className="p-2 whitespace-nowrap">{s.type_label} {TYPE_NAME[s.type_label] ?? ""}</td>
-                  <td className="p-2 text-right">{s.per_day.toFixed(2)}</td>
-                  <td className="p-2 text-right">{s.n_settled}/{s.n}</td>
-                  <td className="p-2 text-right font-semibold">{pct(s.shown_hit_rate)}</td>
-                  <td className="p-2 text-right">{pct(s.gami_rate)}</td>
-                  <td className="p-2 text-right font-semibold">{yen(s.median_payout)}</td>
-                  <td className="p-2 text-right text-slate-500">{yen(s.median_pred_mean)}</td>
-                  <td className="p-2 text-right">{s.two_plus_per_day.toFixed(2)}</td>
-                  <td className="p-2 text-right">{s.big_per_day.toFixed(3)}</td>
-                  <td className="p-2 text-right text-slate-500">{s.roi.toFixed(1)}%</td>
+                  <td className="p-2 whitespace-nowrap text-gray-800 dark:text-gray-100">{s.type_label} {TYPE_NAME[s.type_label] ?? ""}</td>
+                  <td className="p-2 text-right text-gray-800 dark:text-gray-100">{s.per_day.toFixed(2)}</td>
+                  <td className="p-2 text-right text-gray-800 dark:text-gray-100">{s.n_settled}/{s.n}</td>
+                  <td className="p-2 text-right font-semibold text-gray-900 dark:text-white">{pct(s.shown_hit_rate)}</td>
+                  <td className="p-2 text-right text-gray-800 dark:text-gray-100">{pct(s.gami_rate)}</td>
+                  <td className="p-2 text-right font-semibold text-gray-900 dark:text-white">{yen(s.median_payout)}</td>
+                  <td className="p-2 text-right text-gray-500 dark:text-gray-400">{yen(s.median_pred_mean)}</td>
+                  <td className="p-2 text-right text-gray-800 dark:text-gray-100">{s.two_plus_per_day.toFixed(2)}</td>
+                  <td className="p-2 text-right text-gray-800 dark:text-gray-100">{s.big_per_day.toFixed(3)}</td>
+                  <td className="p-2 text-right text-gray-500 dark:text-gray-400">{s.roi.toFixed(1)}%</td>
                 </tr>
               ))}
               {!loading && !(data?.summaries ?? []).length && (
-                <tr><td colSpan={11} className="p-6 text-center text-slate-400">データがありません</td></tr>
+                <tr><td colSpan={11} className="p-6 text-center text-gray-400 dark:text-gray-500">データがありません</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Section>
 
-      <p className="text-[11px] leading-relaxed text-slate-400">
+      <p className="text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
         ⚠️ <b>ROI で採否を決めないこと</b>（この層は ±2.5pt に収めるのに約15.6年）。
         判断指標は 件/日・表示的中（ガミ除く）・払戻中央・2倍以上の的中件/日・ガミ率。
         {planFilter
@@ -233,7 +233,7 @@ export default function TypeLabPage() {
         </div>
         <div className="hidden overflow-x-auto sm:block">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs text-slate-600">
+            <thead className="bg-gray-50 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
               <tr>
                 <th className="p-2 text-left">プラン</th>
                 <th className="p-2 text-right">対象R</th>
@@ -246,24 +246,24 @@ export default function TypeLabPage() {
             <tbody>
               {(data?.comparison ?? []).map((c) => (
                 <tr key={c.plan_key} className="border-t">
-                  <td className="p-2 font-mono">{c.plan_key}</td>
-                  <td className="p-2 text-right whitespace-nowrap">{c.n_races}（{c.n_days}日）</td>
-                  <td className="p-2 text-right whitespace-nowrap">
+                  <td className="p-2 font-mono text-gray-800 dark:text-gray-100">{c.plan_key}</td>
+                  <td className="p-2 text-right whitespace-nowrap text-gray-800 dark:text-gray-100">{c.n_races}（{c.n_days}日）</td>
+                  <td className="p-2 text-right whitespace-nowrap text-gray-800 dark:text-gray-100">
                     <Win a={c.lab_shown_hit} b={c.cur_shown_hit} fmt={pct} />
                   </td>
-                  <td className="p-2 text-right whitespace-nowrap">
+                  <td className="p-2 text-right whitespace-nowrap text-gray-800 dark:text-gray-100">
                     <Win a={c.lab_median_payout} b={c.cur_median_payout} fmt={yen} />
                   </td>
-                  <td className="p-2 text-right whitespace-nowrap">
+                  <td className="p-2 text-right whitespace-nowrap text-gray-800 dark:text-gray-100">
                     <Win a={c.lab_two_per_day} b={c.cur_two_per_day} fmt={(v) => v.toFixed(2)} />
                   </td>
-                  <td className="p-2 text-right whitespace-nowrap text-slate-500">
+                  <td className="p-2 text-right whitespace-nowrap text-gray-500 dark:text-gray-400">
                     {c.lab_roi.toFixed(1)}% / {c.cur_roi.toFixed(1)}%
                   </td>
                 </tr>
               ))}
               {!loading && !(data?.comparison ?? []).length && (
-                <tr><td colSpan={6} className="p-4 text-center text-slate-400">
+                <tr><td colSpan={6} className="p-4 text-center text-gray-400 dark:text-gray-500">
                   比較できる記録がありません
                 </td></tr>
               )}
@@ -272,7 +272,7 @@ export default function TypeLabPage() {
         </div>
       </Section>
 
-      <p className="text-[11px] leading-relaxed text-slate-400">
+      <p className="text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
         🔴 現行側は <code>picks_history</code>（<b>ランクの候補</b>）です。実売との不一致が
         18% あるため「売った商品」そのものではありませんが、型ラボも「設計が何を買うか」なので
         <b>設計どうしの比較としては同じ土俵</b>です。実際に入稿されたかは各カードの
@@ -306,7 +306,7 @@ function VenueTabs({ venues, value, onChange }: {
         className={`shrink-0 rounded-full border px-3 py-1 text-xs transition-colors ${
           active
             ? "border-indigo-600 bg-indigo-600 font-semibold text-white"
-            : "border-slate-300 bg-white text-slate-600 hover:border-indigo-400 hover:text-indigo-600"
+            : "border-gray-300 bg-white text-gray-700 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-indigo-500 dark:hover:text-indigo-300"
         }`}
       >
         {label}
@@ -328,10 +328,10 @@ function Section({ title, note, children }: {
   title: string; note?: string; children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded border bg-white">
-      <div className="border-b bg-slate-50 px-3 py-2 text-sm font-semibold">
+    <section className="overflow-hidden rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+      <div className="border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
         {title}
-        {note && <span className="ml-2 text-[11px] font-normal text-slate-500">{note}</span>}
+        {note && <span className="ml-2 text-[11px] font-normal text-gray-500 dark:text-gray-400">{note}</span>}
       </div>
       <div className="p-2 sm:p-0">{children}</div>
     </section>
@@ -339,15 +339,15 @@ function Section({ title, note, children }: {
 }
 
 function Empty({ text = "データがありません" }: { text?: string }) {
-  return <div className="p-6 text-center text-sm text-slate-400">{text}</div>;
+  return <div className="p-6 text-center text-sm text-gray-400 dark:text-gray-500">{text}</div>;
 }
 
 /** ラボ / 現行 を並べ、良いほうを強調する。 */
 function Win({ a, b, fmt }: { a: number; b: number; fmt: (v: number) => string }) {
   return (
     <>
-      <b className={a >= b ? "text-emerald-700" : "text-slate-700"}>{fmt(a)}</b>
-      <span className="text-slate-400"> / {fmt(b)}</span>
+      <b className={a >= b ? "text-emerald-700" : "text-gray-700 dark:text-gray-200"}>{fmt(a)}</b>
+      <span className="text-gray-400 dark:text-gray-500"> / {fmt(b)}</span>
     </>
   );
 }
@@ -355,8 +355,8 @@ function Win({ a, b, fmt }: { a: number; b: number; fmt: (v: number) => string }
 function Metric({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] text-slate-400">{label}</div>
-      <div className={`truncate text-sm ${strong ? "font-semibold" : ""}`}>{value}</div>
+      <div className="text-[10px] text-gray-400 dark:text-gray-500">{label}</div>
+      <div className={`truncate text-sm text-gray-800 dark:text-gray-100 ${strong ? "font-semibold" : ""}`}>{value}</div>
     </div>
   );
 }
@@ -366,15 +366,19 @@ function SummaryCard({ s, active, onClick }: {
 }) {
   return (
     <button onClick={onClick}
-            className={`w-full rounded border p-2 text-left ${active ? "border-indigo-400 bg-indigo-50" : "bg-white"}`}>
+            className={`w-full rounded border p-2 text-left ${
+              active
+                ? "border-indigo-400 bg-indigo-50 dark:border-indigo-600 dark:bg-indigo-950"
+                : "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
+            }`}>
       <div className="flex items-center gap-2">
-        <span className="font-mono text-sm font-semibold">{s.plan_key}</span>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">
+        <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">{s.plan_key}</span>
+        <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px]">
           型{s.type_label} {TYPE_NAME[s.type_label] ?? ""}
         </span>
-        <span className="ml-auto text-[10px] text-slate-400">{s.n_settled}/{s.n} 採点</span>
+        <span className="ml-auto text-[10px] text-gray-400 dark:text-gray-500">{s.n_settled}/{s.n} 採点</span>
       </div>
-      <div className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">{PLAN_NOTE[s.plan_key] ?? ""}</div>
+      <div className="mt-0.5 line-clamp-2 text-[10px] text-gray-500 dark:text-gray-400">{PLAN_NOTE[s.plan_key] ?? ""}</div>
       <div className="mt-2 grid grid-cols-3 gap-2">
         <Metric label="件/日" value={s.per_day.toFixed(2)} />
         <Metric label="表示的中" value={pct(s.shown_hit_rate)} strong />
@@ -397,15 +401,15 @@ function CompareCard({ c }: { c: TypeLabComparisonRow }) {
     ["ROI", `${c.lab_roi.toFixed(1)}%`, `${c.cur_roi.toFixed(1)}%`, false],
   ];
   return (
-    <div className="rounded border bg-white p-2">
+    <div className="rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 p-2">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-sm font-semibold">{c.plan_key}</span>
-        <span className="ml-auto text-[10px] text-slate-400">{c.n_races}R / {c.n_days}日</span>
+        <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">{c.plan_key}</span>
+        <span className="ml-auto text-[10px] text-gray-400 dark:text-gray-500">{c.n_races}R / {c.n_days}日</span>
       </div>
       <div className="mt-1 grid grid-cols-[auto_1fr_1fr] gap-x-2 gap-y-1 text-xs">
-        <span className="text-[10px] text-slate-400" />
-        <span className="text-right text-[10px] text-slate-400">ラボ</span>
-        <span className="text-right text-[10px] text-slate-400">現行</span>
+        <span className="text-[10px] text-gray-400 dark:text-gray-500" />
+        <span className="text-right text-[10px] text-gray-400 dark:text-gray-500">ラボ</span>
+        <span className="text-right text-[10px] text-gray-400 dark:text-gray-500">現行</span>
         {rows.map(([label, a, b, win]) => (
           <Fragmented key={label} label={label} a={a} b={b} win={win} />
         ))}
@@ -419,35 +423,35 @@ function Fragmented({ label, a, b, win }: {
 }) {
   return (
     <>
-      <span className="text-slate-500">{label}</span>
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
       <span className={`text-right ${win ? "font-semibold text-emerald-700" : ""}`}>{a}</span>
-      <span className="text-right text-slate-400">{b}</span>
+      <span className="text-right text-gray-400 dark:text-gray-500">{b}</span>
     </>
   );
 }
 
 function PickCard({ p }: { p: TypeLabPick }) {
   const settled = p.settled;
-  const tone = !settled ? "border-slate-200"
+  const tone = !settled ? "border-gray-200 dark:border-gray-700"
     : p.hit ? ((p.payout ?? 0) >= p.budget ? "border-emerald-400" : "border-amber-400")
-    : "border-slate-200 opacity-70";
+    : "border-gray-200 opacity-70 dark:border-gray-700";
   return (
-    <div className={`rounded border-2 bg-white p-2 sm:p-3 ${tone}`}>
+    <div className={`rounded border-2 bg-white p-2 dark:bg-gray-900 sm:p-3 ${tone}`}>
       {/* 1行目: レース */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm">
-        <span className="text-slate-500">{p.race_date}</span>
-        <span className="font-semibold">{p.venue_name ?? "—"} {p.race_no ?? "?"}R</span>
-        <span className="text-[10px] text-slate-500 sm:text-xs">{p.race_type ?? ""}</span>
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">
+        <span className="text-gray-500 dark:text-gray-400">{p.race_date}</span>
+        <span className="font-semibold text-gray-900 dark:text-white">{p.venue_name ?? "—"} {p.race_no ?? "?"}R</span>
+        <span className="text-[10px] text-gray-500 dark:text-gray-400 sm:text-xs">{p.race_type ?? ""}</span>
+        <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px]">
           型{p.type_label}{TYPE_NAME[p.type_label] ? ` ${TYPE_NAME[p.type_label]}` : ""}
         </span>
-        <span className="rounded bg-indigo-100 px-1.5 py-0.5 font-mono text-[10px] text-indigo-800">
+        <span className="rounded bg-indigo-100 dark:bg-indigo-900 px-1.5 py-0.5 font-mono text-[10px] text-indigo-800">
           {p.plan_key}
         </span>
       </div>
       {/* 2行目: 商品と結果（モバイルでは折り返す） */}
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
-        <span>{p.bet_type === "trio" ? "三連複" : "三連単"} {p.n_legs}点</span>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+        <span className="text-gray-700 dark:text-gray-200">{p.bet_type === "trio" ? "三連複" : "三連単"} {p.n_legs}点</span>
         <span>想定平均 {yen(p.pred_mean_payout)}</span>
         <span className="ml-auto">
           {settled
@@ -456,24 +460,24 @@ function PickCard({ p }: { p: TypeLabPick }) {
                     的中 {yen(p.payout)}（{p.win_combo} / {p.final_odds?.toFixed(1)}倍）
                     {(p.payout ?? 0) < p.budget ? " ※ガミ" : ""}
                   </b>
-                : <span className="text-slate-400">不的中（{p.win_combo}）</span>)
-            : <span className="text-slate-400">未確定</span>}
+                : <span className="text-gray-400 dark:text-gray-500">不的中（{p.win_combo}）</span>)
+            : <span className="text-gray-400 dark:text-gray-500">未確定</span>}
         </span>
       </div>
       {p.current && (
-        <div className="mt-1.5 rounded bg-slate-50 px-2 py-1 text-[10px] leading-relaxed text-slate-600">
+        <div className="mt-1.5 rounded bg-gray-50 dark:bg-gray-800 px-2 py-1 text-[10px] leading-relaxed text-gray-600 dark:text-gray-300">
           <span className="font-semibold">現行</span>
           <span className="ml-1.5 font-mono">{p.current.rank.replace("RANK_", "")}</span>
-          {p.current.n_combos ? <span className="ml-1 text-slate-400">{p.current.n_combos}点</span> : null}
+          {p.current.n_combos ? <span className="ml-1 text-gray-400 dark:text-gray-500">{p.current.n_combos}点</span> : null}
           {p.current.settled
             ? (p.current.hit
                 ? <span className="ml-1.5 text-emerald-700">的中 {yen(p.current.payout)}</span>
-                : <span className="ml-1.5 text-slate-400">不的中</span>)
-            : <span className="ml-1.5 text-slate-400">未採点</span>}
+                : <span className="ml-1.5 text-gray-400 dark:text-gray-500">不的中</span>)
+            : <span className="ml-1.5 text-gray-400 dark:text-gray-500">未採点</span>}
           {p.current.sold_rank_key
-            ? <span className="ml-1.5 rounded bg-indigo-100 px-1 text-indigo-700">入稿 {p.current.sold_rank_key}</span>
-            : <span className="ml-1.5 text-slate-400">（入稿なし）</span>}
-          <div className="mt-0.5 break-all font-mono text-slate-500">{p.current.pred_combo ?? "—"}</div>
+            ? <span className="ml-1.5 rounded bg-indigo-100 dark:bg-indigo-900 px-1 text-indigo-700">入稿 {p.current.sold_rank_key}</span>
+            : <span className="ml-1.5 text-gray-400 dark:text-gray-500">（入稿なし）</span>}
+          <div className="mt-0.5 break-all font-mono text-gray-500 dark:text-gray-400">{p.current.pred_combo ?? "—"}</div>
         </div>
       )}
       {/* 買い目 */}
@@ -482,7 +486,7 @@ function PickCard({ p }: { p: TypeLabPick }) {
           <span key={l.combo}
                 className={`rounded px-1.5 py-0.5 font-mono text-[10px] leading-tight sm:text-xs ${
                   settled && p.win_combo === l.combo
-                    ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"}`}>
+                    ? "bg-emerald-600 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200"}`}>
             {l.combo}
             <span className="ml-1 opacity-70">
               {(l.stake / 100).toFixed(0)}00円/{l.pred_odds.toFixed(1)}倍
