@@ -1887,3 +1887,50 @@ export async function fetchKeirinProposalsCount(date: string): Promise<{ n_propo
 export async function fetchKeirinApprovalMode(): Promise<{ require_approval: boolean }> {
   return get<{ require_approval: boolean }>("/keirin/approval-mode", { cache: "no-store" });
 }
+
+// ---------------------------------------------------------------------------
+// 型ラボ（検証用・2026-08-27）
+// 🔴 既存の keirin 一覧・統計とは**別テーブル**（keirin.type_lab_picks）を見る。
+//    既存商品の全面置き換えを想定した設計の、ペーパー検証と実地検証の確認窓口。
+//    設計と実測は keirin/docs/type_lab/SUMMARY.md
+// ---------------------------------------------------------------------------
+export type TypeLabLeg = {
+  combo: string; stake: number; pred_odds: number; prob: number;
+};
+export type TypeLabPick = {
+  race_key: string; race_date: string; venue_name: string | null;
+  race_no: number | null; race_type: string | null; day_index: number | null;
+  type_label: string; axis_sum: number | null; arare: number | null;
+  axis1: number | null; axis2: number | null;
+  mode: string; plan_key: string; bet_type: string;
+  n_legs: number; budget: number; legs: TypeLabLeg[];
+  pred_mean_payout: number | null; pred_min_payout: number | null;
+  settled: boolean; win_combo: string | null; hit: boolean | null;
+  payout: number | null; final_odds: number | null;
+};
+export type TypeLabSummary = {
+  plan_key: string; type_label: string; bet_type: string;
+  n: number; n_days: number; per_day: number;
+  n_settled: number; n_hit: number; n_gami: number;
+  hit_rate: number; shown_hit_rate: number; gami_rate: number;
+  median_payout: number; median_pred_mean: number;
+  two_plus_per_day: number; big_per_day: number;
+  invested: number; returned: number; roi: number;
+};
+export type TypeLabResponse = {
+  mode: string; date_from: string; date_to: string;
+  rule_versions: string[];
+  summaries: TypeLabSummary[]; picks: TypeLabPick[];
+};
+
+export async function fetchKeirinTypeLab(params: {
+  mode?: "paper" | "live"; dateFrom?: string; dateTo?: string; limit?: number;
+} = {}): Promise<TypeLabResponse> {
+  const q = new URLSearchParams();
+  if (params.mode) q.set("mode", params.mode);
+  if (params.dateFrom) q.set("date_from", params.dateFrom);
+  if (params.dateTo) q.set("date_to", params.dateTo);
+  if (params.limit) q.set("limit", String(params.limit));
+  const s = q.toString();
+  return get<TypeLabResponse>(`/keirin/type-lab${s ? `?${s}` : ""}`, { cache: "no-store" });
+}

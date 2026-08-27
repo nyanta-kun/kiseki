@@ -17,6 +17,7 @@ from .api.import_router import changes_router
 from .api.import_router import router as import_router
 from .api.jra_pick_log_router import router as jra_pick_log_router
 from .api.keirin_router import router as keirin_router
+from .api.keirin_type_lab_router import router as keirin_type_lab_router
 from .api.performance import router as performance_router
 from .api.races import router as races_router
 from .api.recommendations import router as recommendations_router
@@ -82,6 +83,7 @@ app.include_router(users_admin_router)      # GET/PATCH /api/admin/users
 app.include_router(access_router)           # POST/GET /api/users/{id}/redeem-code, /access
 app.include_router(access_admin_router)     # GET/POST/PATCH /api/admin/invitation-codes
 app.include_router(yoso_router)             # GET/POST /api/yoso/*
+app.include_router(keirin_type_lab_router)  # GET /api/keirin/type-lab（検証用・既存とは独立）
 app.include_router(recommendations_router)  # GET/POST /api/recommendations
 app.include_router(chihou_router)              # POST /api/import/chihou/*
 app.include_router(chihou_horses_router)       # GET  /api/chihou/horses/*
