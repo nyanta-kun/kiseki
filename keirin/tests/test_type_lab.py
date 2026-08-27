@@ -376,28 +376,34 @@ def test_settle_stores_the_race_level_trifecta_odds():
     assert 'odds.get(t["race_key"], {}).get(("trifecta", tf))' in src
 
 
-def test_backfill_refuses_to_write_when_the_axis_disagrees():
-    """🔴🔴 **軸が1行でも食い違ったら、その回は1行も書かない。**
+def test_backfill_refuses_the_range_when_the_source_looks_wrong():
+    """🔴🔴 見るのは「行が合っているか」ではなく「**ソースが正しいか**」。
 
-    突き合わせられるのは `axis1`/`axis2` ＝ 並びの先頭2つだけ。
-    先頭2つが合っていても3位以下は半分違う（2025-07-15 実測: 別ソースで復元した
-    47行のうち 完全一致 24 / **先頭2つだけ一致 23**）。そして3位以下こそが
-    「順当（3着が指数3〜4位）」と「軸2+穴（指数5〜7位）」を分ける当の情報なので、
-    部分的に書くと答え合わせの土台が静かに壊れる。
+    突き合わせられるのは `axis1`/`axis2` ＝ 並びの先頭2つだけ。**違うソース**だと
+    先頭2つが合った行でも3位以下は半分違う（2025-07-15 実測: 47行のうち
+    完全一致 24 / **先頭2つだけ一致 23**）。3位以下こそが「順当（3着が指数3〜4位）」と
+    「軸2+穴（指数5〜7位）」を分ける当の情報なので、違うソースの行を部分的に書くと
+    答え合わせの土台が静かに壊れる。
+
+    幸い食い違い率は桁で分かれる（正しいソース 0.00〜0.07% ↔ 違うソース 34%）ので、
+    率で判定して超えたら**その範囲は1行も書かない**。
 
     2026-08-27 に「先頭2つが合った行だけ書く」実装で 2025年ぶん 16,864 行を
     埋めてしまい、実測に気づいて全部 NULL へ戻した。
     """
+    from scripts.backfill_type_lab_outcome import AXIS_MISMATCH_LIMIT_PCT
+    # 正しいソースの実測 0.07% と違うソースの 34% の**どちらからも十分離れている**こと
+    assert 0.1 < AXIS_MISMATCH_LIMIT_PCT < 10.0
+
     src = (REPO / "scripts" / "backfill_type_lab_outcome.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "_apply_order")
     body = ast.unparse(fn)
-    # 食い違いがあれば UPDATE へ進まずに抜けること
-    assert "if miss:" in body, "軸不一致で打ち切る分岐が無い"
-    idx_guard = body.index("if miss:")
+    assert "AXIS_MISMATCH_LIMIT_PCT" in body, "食い違い率で打ち切る分岐が無い"
+    idx_guard = body.index("AXIS_MISMATCH_LIMIT_PCT")
     idx_update = body.index("UPDATE type_lab_picks SET p3_order")
-    assert idx_guard < idx_update, "軸不一致の判定が UPDATE より後にある"
+    assert idx_guard < idx_update, "食い違い率の判定が UPDATE より後にある"
     assert "return False" in body
 
 
