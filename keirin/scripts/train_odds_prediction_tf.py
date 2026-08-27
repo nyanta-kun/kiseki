@@ -48,7 +48,22 @@ from src.odds_prediction_tf import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("train_odds_tf")
 EXP = REPO / "data" / "exp_cache"
-ODDS_SENTINEL = 9000.0     # これ以上は「板が立っていない」扱い
+# 🔴 **打ち切り（表示上限）の位置は車数で違う。** winticket の三連単オッズは
+#    9999.9 が表示上限で、そこに張り付いた点は真の値が分からない（右側打ち切り）。
+#    7車は中央値が低く 9000 以上がほとんど出ないので 9000 で切っても実害が無いが、
+#    **9車は中央値 1,650倍・p90 8,891倍で、8.2% が上限に張り付く**。
+#    9車に 9000 を当てると「504点そろっていない」で**レースごと落ちる**
+#    （実測 5,698R 中 4,834R が除外され、学習が 339R まで痩せた）。
+#    7車の既存の挙動は変えないため車数別に持つ。
+ODDS_SENTINEL_BY_CAR = {7: 9000.0, 9: 9999.0}
+ODDS_SENTINEL = 9000.0     # 後方互換（7車の既定）
+
+#: 板の充足率がこれを下回るレースは捨てる。**完全一致を要求しない**
+#: （打ち切り点を落とすと必ず 504 未満になるため）。
+MIN_BOARD_RATIO = 0.85
+#: 既定は 7車。`--n-car 9` で 9車モデル（`odds_tf_n9.txt`）を学習する。
+#: 🔴 **モデルもメタも車数ごとに分かれている。** メタは丸ごと上書きせず**マージ**する
+#:    （上書きすると `target_sum["7"]` が消えて本番の三連単予測オッズが全滅する）。
 N_CAR = 7
 N_COMBO = 210
 
@@ -98,7 +113,8 @@ def _load_final_boards(race_keys: list[str]) -> dict[str, dict[tuple, float]]:
     with _connect() as conn:
         df = pd.read_sql(sql, conn, params=(race_keys,))
     df["odds_value"] = pd.to_numeric(df.odds_value, errors="coerce")
-    df = df[(df.odds_value > 0) & (df.odds_value < ODDS_SENTINEL)]
+    cap = ODDS_SENTINEL_BY_CAR.get(N_CAR, ODDS_SENTINEL)
+    df = df[(df.odds_value > 0) & (df.odds_value < cap)]
     out: dict[str, dict[tuple, float]] = {}
     for rk, g in df.groupby("race_key"):
         board = {}
@@ -114,14 +130,41 @@ def _load_final_boards(race_keys: list[str]) -> dict[str, dict[tuple, float]]:
 
 
 def _load_wf_preds() -> dict[str, tuple[dict, dict, str]]:
-    path = EXP / "axis_detail_7car.pkl"
-    if not path.exists():
-        raise SystemExit(f"{path} がありません（scripts/exp_7car_gap_fresh.py で生成）")
-    preds = {}
-    for r in pickle.load(open(path, "rb")):
-        if len(r.get("p3") or {}) == N_CAR and len(r.get("pw") or {}) == N_CAR:
-            preds[r["rk"]] = (r["p3"], r["pw"], r["date"])
-    return preds
+    """walk-forward の p3/pw。**本番モデルを過去へ当てない**ための第一ソース。
+
+    7車: `axis_detail_7car.pkl`（レースごとの dict）
+    9車: `wf_preds9_*.pkl`（race_key/frame_no/pp3/ppw の DataFrame・
+         `scripts/exp_type_lab/carcount6.py` と同じ作り方で別途生成したもの）
+    """
+    if N_CAR == 7:
+        path = EXP / "axis_detail_7car.pkl"
+        if not path.exists():
+            raise SystemExit(f"{path} がありません（scripts/exp_7car_gap_fresh.py で生成）")
+        preds = {}
+        for r in pickle.load(open(path, "rb")):
+            if len(r.get("p3") or {}) == N_CAR and len(r.get("pw") or {}) == N_CAR:
+                preds[r["rk"]] = (r["p3"], r["pw"], r["date"])
+        return preds
+
+    import glob as _g
+    files = sorted(_g.glob(str(EXP / f"wf_preds{N_CAR}_*.pkl")))
+    if not files:
+        raise SystemExit(
+            f"{EXP}/wf_preds{N_CAR}_*.pkl がありません。"
+            f"{N_CAR}車の walk-forward 予測を先に作ってください")
+    df = pd.concat([pd.read_pickle(f) for f in files], ignore_index=True)
+    p3: dict[str, dict] = {}
+    pw: dict[str, dict] = {}
+    for rk, fn, a, b in zip(df["race_key"], df["frame_no"], df["pp3"], df["ppw"]):
+        rk = str(rk)
+        p3.setdefault(rk, {})[int(fn)] = float(a)
+        pw.setdefault(rk, {})[int(fn)] = float(b)
+    out = {}
+    for rk in p3:
+        if len(p3[rk]) == N_CAR and len(pw.get(rk) or {}) == N_CAR:
+            d = rk[:8]
+            out[rk] = (p3[rk], pw[rk], f"{d[:4]}-{d[4:6]}-{d[6:]}")
+    return out
 
 
 def build_dataset(max_races: int | None) -> pd.DataFrame:
@@ -131,7 +174,7 @@ def build_dataset(max_races: int | None) -> pd.DataFrame:
         # 期間を偏らせないよう等間隔で間引く（先頭から切ると古い年だけになる）
         idx = np.linspace(0, len(keys) - 1, max_races).astype(int)
         keys = [keys[i] for i in sorted(set(idx))]
-    log.info("walk-forward 予測: %d レース（210点/レース）", len(keys))
+    log.info("walk-forward 予測: %d レース（%d点/レース）", len(keys), N_COMBO)
 
     frames, skipped = [], {"entries": 0, "board": 0, "features": 0}
     CH = 800
@@ -145,7 +188,7 @@ def build_dataset(max_races: int | None) -> pd.DataFrame:
             if not meta or len(meta) != N_CAR:
                 skipped["entries"] += 1
                 continue
-            if not board or len(board) != N_COMBO:
+            if not board or len(board) < N_COMBO * MIN_BOARD_RATIO:
                 skipped["board"] += 1
                 continue
             try:
@@ -153,10 +196,17 @@ def build_dataset(max_races: int | None) -> pd.DataFrame:
             except Exception:
                 skipped["features"] += 1
                 continue
-            df = pd.DataFrame(X, columns=list(FEATURE_NAMES))
+            # 打ち切り点（表示上限に張り付いた点）は board に無い。**その点だけ落とす**
+            # ——レースごと捨てると 9車の学習が痩せる。Σ1/o への影響は
+            # 1/9999.9 ≈ 0.0001 × 約41点 = 0.004 で目標総和 1.33 に対し無視できる。
+            keep = [i for i, c in enumerate(combos) if c in board]
+            if len(keep) < N_COMBO * MIN_BOARD_RATIO:
+                skipped["board"] += 1
+                continue
+            df = pd.DataFrame(X[keep], columns=list(FEATURE_NAMES))
             df["rk"] = rk
             df["date"] = date
-            df["odds"] = [board[c] for c in combos]
+            df["odds"] = [board[combos[i]] for i in keep]
             frames.append(df)
         log.info("  %d/%d レース 採用%d", min(i + CH, len(keys)), len(keys), len(frames))
     log.info("採用 %d レース / 除外 %s", len(frames), skipped)
@@ -185,9 +235,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--train-end", default="2025-12-31",
                     help="この日までを学習に使う（以降は honest な検証窓）")
+    ap.add_argument("--n-car", type=int, default=7, choices=(7, 9),
+                    help="学習する車数（既定7）。9 は odds_tf_n9.txt を作る")
     ap.add_argument("--rounds", type=int, default=600)
     ap.add_argument("--max-races", type=int, default=12000)
     args = ap.parse_args()
+    global N_CAR, N_COMBO
+    N_CAR = int(args.n_car)
+    N_COMBO = N_CAR * (N_CAR - 1) * (N_CAR - 2)
+    log.info("車数 %d（組み合わせ %d通り）", N_CAR, N_COMBO)
 
     import lightgbm as lgb
 
@@ -222,10 +278,34 @@ def main() -> None:
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     booster.save_model(str(MODEL_DIR / f"odds_tf_n{N_CAR}.txt"))
+    # 🔴 **丸ごと上書きしない。** 上書きすると他の車数の `target_sum` が消え、
+    #    本番の `target_sum(7)` が例外になって三連単の予測オッズが全滅する。
+    prev = {}
+    if META_PATH.exists():
+        try:
+            prev = json.loads(META_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:  # noqa: BLE001
+            log.warning("既存メタを読めませんでした（新規で書きます）: %r", e)
+    tgt = dict(prev.get("target_sum") or {})
+    tgt[str(N_CAR)] = target_sum
+    per = dict(prev.get("per_n_car") or {})
+    # 旧形式（per_n_car を持たない）を車数別へ畳み直す
+    if not per and prev.get("train_end"):
+        for k in prev.get("target_sum") or {}:
+            per[k] = {"train_end": prev.get("train_end"),
+                      "n_train_races": prev.get("n_train_races"),
+                      "metrics": prev.get("metrics")}
+    per[str(N_CAR)] = {"train_end": args.train_end,
+                       "n_train_races": int(tr.rk.nunique()), "metrics": res}
+    ends = [str(v.get("train_end")) for v in per.values()
+            if isinstance(v, dict) and v.get("train_end")]
     META_PATH.write_text(json.dumps({
         "feature_names": list(FEATURE_NAMES),
-        "target_sum": {str(N_CAR): target_sum},
-        "train_end": args.train_end,
+        "target_sum": tgt,
+        "per_n_car": per,
+        # 最上位は**最も新しい終端**。honest 判定を甘くしないため（古い方を残すと
+        # まだ in-sample な期間を通してしまう）。車数別の正確な値は per_n_car。
+        "train_end": max(ends) if ends else args.train_end,
         "n_train_races": int(tr.rk.nunique()),
         "metrics": res,
     }, ensure_ascii=False, indent=2), encoding="utf-8")

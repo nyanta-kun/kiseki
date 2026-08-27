@@ -61,7 +61,10 @@ MODEL_DIR = Path(os.environ.get(
     "KEIRIN_ODDS_TF_MODEL_DIR",
     str(Path(__file__).resolve().parent.parent / "data" / "models")))
 META_PATH = MODEL_DIR / "odds_tf_meta.json"
-SUPPORTED_N_CAR = (7,)
+#: 三連単の予測オッズを作れる車数。**モデルは車数ごとに別ファイル**
+#: （`odds_tf_n7.txt` / `odds_tf_n9.txt`）で、特徴量の作り方は共通。
+#: 9車は 2026-08-27 に追加（型ラボを 9車へ広げるため。それまでは 7車のみだった）。
+SUPPORTED_N_CAR = (7, 9)
 
 NO_MARK = 9
 CLASS_CODE = {"S1": 0, "S2": 1, "S3": 2, "A1": 3, "A2": 4, "A3": 5, "L1": 6}
@@ -260,6 +263,27 @@ def load_model(n_car: int):
     return _MODEL_CACHE[n_car]
 
 
+def model_train_end(n_car: int | None = None) -> str | None:
+    """学習終端。`n_car` を指定すればその車数のもの。
+
+    🔴 **車数を指定しないときは「最も新しい終端」を返す**。honest 判定を
+       甘くしないため（古い方を返すと、まだ in-sample な期間を通してしまう）。
+    ⚠️ 旧形式のメタ（`per_n_car` が無い）は最上位の `train_end` へ落ちる。
+    """
+    meta = load_meta()
+    per = meta.get("per_n_car") or {}
+    if n_car is not None:
+        v = per.get(str(n_car))
+        if isinstance(v, dict) and v.get("train_end"):
+            return str(v["train_end"])
+        return str(meta.get("train_end")) if meta.get("train_end") else None
+    ends = [str(v.get("train_end")) for v in per.values()
+            if isinstance(v, dict) and v.get("train_end")]
+    if meta.get("train_end"):
+        ends.append(str(meta["train_end"]))
+    return max(ends) if ends else None
+
+
 def target_sum(n_car: int) -> float:
     """板の Σ(1/オッズ) の目標値（学習窓の実測平均）。"""
     v = load_meta().get("target_sum", {}).get(str(n_car))
@@ -294,7 +318,7 @@ def predicted_trifecta_board(race_key: str) -> dict[tuple, float]:
     `src.odds_prediction.load_race_inputs` をそのまま借りる。
     作れないときは `OddsPredictionUnavailable`。
 
-    ⚠️ **7車のみ**（`SUPPORTED_N_CAR`）。9車の三連単モデルは無い。
+    ⚠️ 対応車数は `SUPPORTED_N_CAR`。未対応の車数では例外を投げる（黙って0を返さない）。
     """
     from src.odds_prediction import load_race_inputs
 
