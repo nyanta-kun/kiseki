@@ -14,12 +14,25 @@ cd backend && .venv/bin/alembic upgrade head     # 202608270930_keirin
 
 vintage walk-forward の予測で組む。台が無ければ先に作る（約10分）。
 
+予測の取り方が2つある。**どちらも学習はレースより前**（look-ahead なし）で、
+違うのは再学習の刻みだけ。
+
+| `--models` | 予測の出どころ | 使える期間 |
+|---|---|---|
+| `board`（既定） | 四半期 walk-forward（`/tmp/race_type_board.npz`） | 台を作った範囲（現状 2024-07〜2026-08-04） |
+| `vintage` | **月次 vintage モデル**（`lgbm_wt_{eval,win}_mYYMM`） | モデルがある月すべて |
+
 ```bash
 cd keirin
 python scripts/build_race_type_board.py                       # /tmp/race_type_board.npz
-python scripts/build_type_lab_picks.py --mode paper --from 2026-01-01 --to 2026-08-26
+python scripts/build_type_lab_picks.py --mode paper --from 2026-01-01 --to 2026-08-04
+# 台が届かない期間は月次 vintage で埋める
+python scripts/build_type_lab_picks.py --mode paper --models vintage --from 2026-08-05 --to 2026-08-26
 python scripts/settle_type_lab_picks.py --from 2026-01-01 --to 2026-08-26
 ```
+
+⚠️ 同じ `mode='paper'` に両方の出どころが混ざる。**比べるときは期間で切ること**
+（再学習の刻みが違うので、境目をまたいで「良くなった/悪くなった」と読まない）。
 
 ⚠️ **確認窓は 2026-01 以降**（予測オッズ `odds_tf_n7` の train_end が 2025-12-31）。
 2024-07〜2025-12 も入れられるが、そちらのオッズは in-sample。

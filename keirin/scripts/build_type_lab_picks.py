@@ -164,7 +164,13 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
 
 # ───────────────────────── live（本番モデル） ─────────────────────────
 
-def run_live(day: str) -> list[dict]:
+def run_live(day: str, eval_model: str = "lgbm_wt_eval",
+             win_model: str = "lgbm_wt_win", mode: str = "live") -> list[dict]:
+    """指定日の買い目を作る。
+
+    eval_model / win_model を差し替えると**その日に使ってよいモデル**で組める。
+    ペーパーを vintage で埋めるとき（`run_paper_vintage`）に使う。
+    """
     # 🔴 import 元は `build_7t3_candidates.py` と揃える。
     #    `src.features_wt` は存在しない（正しくは `src.preprocessing.feature_wt`）。
     from src import odds_prediction_tf as odds_tf
@@ -186,8 +192,8 @@ def run_live(day: str) -> list[dict]:
         print("[live] 特徴量が作れませんでした")
         return []
     X = prepare_X(feats)
-    p3v = load_model("lgbm_wt_eval").predict_proba(X)[:, 1]
-    pwv = load_model("lgbm_wt_win").predict_proba(X)[:, 1]
+    p3v = load_model(eval_model).predict_proba(X)[:, 1]
+    pwv = load_model(win_model).predict_proba(X)[:, 1]
     p3, pw = defaultdict(dict), defaultdict(dict)
     for rk, fn, a, b in zip(feats["race_key"], feats["frame_no"], p3v, pwv):
         p3[rk][int(fn)] = float(a)
@@ -212,7 +218,36 @@ def run_live(day: str) -> list[dict]:
         m = meta_all.get(rk)
         if not m:
             continue
-        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, "live"))
+        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, mode))
+    return out
+
+
+def run_paper_vintage(date_from: str, date_to: str) -> list[dict]:
+    """ペーパーを**月次 vintage モデル**で埋める（`/tmp/race_type_board.npz` を使わない）。
+
+    月 M のレースは `lgbm_wt_{eval,win}_mYYMM`（学習は M の前月末まで）でだけ採点する
+    ＝ `src/wt_vintage_config.monthly_windows()` の契約。
+    🔴 **本番モデルを過去へ当ててはいけない**（全期間学習なので in-sample になる）。
+       `assert_vintage_for_past` と同じ思想で、ここではモデル名を月から導いて固定する。
+
+    ⚠️ 既存の 2026-01-01〜08-04 は四半期 walk-forward（`wf_preds_*.pkl`）由来で、
+       こちらは月次 vintage。**どちらも学習はレースより前**だが再学習の刻みが違う。
+       同じ `mode='paper'` に両方が入ることを承知して読むこと。
+    """
+    from src.wt_vintage_config import monthly_windows
+
+    out: list[dict] = []
+    for w_from, w_to, eval_model, win_model in monthly_windows():
+        lo = max(w_from, date_from)
+        hi = min(w_to, date_to)
+        if lo > hi:
+            continue
+        print(f"[paper/vintage] {lo}〜{hi}  {eval_model} / {win_model}", flush=True)
+        d = date.fromisoformat(lo)
+        end = date.fromisoformat(hi)
+        while d <= end:
+            out.extend(run_live(d.isoformat(), eval_model, win_model, mode="paper"))
+            d += timedelta(days=1)
     return out
 
 
@@ -302,12 +337,16 @@ def main() -> None:
     ap.add_argument("--from", dest="date_from")
     ap.add_argument("--to", dest="date_to")
     ap.add_argument("--date")
+    ap.add_argument("--models", choices=("board", "vintage"), default="board",
+                    help="paper の予測をどこから取るか。board=/tmp/race_type_board.npz "
+                         "（四半期 walk-forward）/ vintage=月次 vintage モデル")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if a.mode == "paper":
         if not (a.date_from and a.date_to):
             raise SystemExit("--from と --to が要ります")
-        rows = run_paper(a.date_from, a.date_to)
+        rows = (run_paper_vintage(a.date_from, a.date_to) if a.models == "vintage"
+                else run_paper(a.date_from, a.date_to))
     else:
         day = a.date or date.today().isoformat()
         rows = run_live(day)
