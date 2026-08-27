@@ -165,9 +165,13 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
 # ───────────────────────── live（本番モデル） ─────────────────────────
 
 def run_live(day: str) -> list[dict]:
-    import src.odds_prediction_tf as odds_tf
-    from src.features_wt import build_features_wt, load_raw_data_wt, prepare_X
+    # 🔴 import 元は `build_7t3_candidates.py` と揃える。
+    #    `src.features_wt` は存在しない（正しくは `src.preprocessing.feature_wt`）。
+    from src import odds_prediction_tf as odds_tf
     from src.models.trainer import load_model
+    from src.preprocessing.feature_wt import (
+        build_features_wt, load_raw_data_wt, prepare_X,
+    )
 
     keys = _keys_of_date(day)
     if not keys:

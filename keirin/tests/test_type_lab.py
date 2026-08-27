@@ -297,3 +297,17 @@ def test_comparison_rank_order_matches_production():
     assert keys, "RANK_CONFIGS のキーを読めない（netkeirin_submit_wt.py の形が変わった）"
     assert [k.replace("RANK_", "") for k in order] == keys, (
         f"優先順位がずれている\n  API: {order}\n  本番: {keys}")
+
+
+def test_live_path_imports_resolve():
+    """🔴 live 経路の import が実在すること。
+
+    `run_live` の import は関数の中にあるので、モジュールを読むだけでは検証できない。
+    実際に import して落ちないことを見る。ここが壊れると**当日のバッチだけが
+    毎朝 ModuleNotFoundError で落ちる**（paper は動くので気づきにくい）。
+    """
+    from src import odds_prediction_tf  # noqa: F401
+    from src.models.trainer import load_model  # noqa: F401
+    from src.preprocessing.feature_wt import (  # noqa: F401
+        build_features_wt, load_raw_data_wt, prepare_X,
+    )
