@@ -332,7 +332,7 @@ def _rank_pos(rank: str) -> int:
 
 @router.get("", response_model=TypeLabResponse)
 async def get_type_lab(
-    mode: Literal["paper", "live"] = "live",
+    mode: Literal["paper", "paper9", "live"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
@@ -546,7 +546,7 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
 @router.get("/combo", response_model=ComboResponse)
 async def get_type_lab_combo(
     plans: str = Query("", description="カンマ区切りのプラン（例 'A_hit,B_hit'）"),
-    mode: Literal["paper", "live"] = "live",
+    mode: Literal["paper", "paper9", "live"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),
@@ -605,7 +605,7 @@ _SQL_OUTCOME = text("""
 
 @router.get("/outcome", response_model=TypeLabOutcomeResponse)
 async def get_type_lab_outcome(
-    mode: Literal["paper", "live"] = "live",
+    mode: Literal["paper", "paper9", "live"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),

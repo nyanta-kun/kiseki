@@ -42,6 +42,12 @@ const PLAN_NOTE: Record<string, string> = {
   F_pay: "三連単 1着=軸1固定・2着2車 → 3着流し（一撃）",
 };
 
+/** モード。`paper9` は9車の検証行（`build_type_lab_picks --n-entries 9` が書く）。
+ *  三連単の予測オッズ `odds_tf_n9`（2026-08-27 新設）が入ったので**8プランとも組める**。
+ *  🔴 **7車の実地検証と混ぜて読まないこと。** 型の出方が違う（9車は F 大混戦が
+ *     58% を占める ↔ 7車は 31%）ので、件数も配当帯も別物になる。 */
+type TypeLabMode = "live" | "paper" | "paper9";
+
 /** 決着クラスの表示。サーバー（`keirin_type_lab_outcome.FINISH_CLASSES`）と対。
  *  🔴 key を増やしたら**両方**へ足すこと（片方だけだと「—」になって気づけない）。 */
 const FINISH_LABEL: Record<string, string> = {
@@ -83,7 +89,7 @@ function shiftISO(iso: string, days: number): string {
 }
 
 export default function TypeLabPage() {
-  const [mode, setMode] = useState<"live" | "paper">("live");
+  const [mode, setMode] = useState<TypeLabMode>("live");
   const [dateFrom, setDateFrom] = useState(isoDaysAgo(6));
   const [dateTo, setDateTo] = useState(isoDaysAgo(0));
   const [data, setData] = useState<TypeLabResponse | null>(null);
@@ -210,10 +216,11 @@ export default function TypeLabPage() {
         <div className="flex items-center gap-2">
           <select
             className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 sm:flex-none"
-            value={mode} onChange={(e) => setMode(e.target.value as "live" | "paper")}
+            value={mode} onChange={(e) => setMode(e.target.value as TypeLabMode)}
           >
             <option value="live">実地（当日・本番モデル）</option>
             <option value="paper">ペーパー（過去・vintage）</option>
+            <option value="paper9">9車ペーパー（検証・買い目は三連複のみ）</option>
           </select>
           <button
             onClick={() => void load()} disabled={loading}

@@ -7,9 +7,13 @@
     # 指数の並び（paper の四半期 walk-forward ぶん・/tmp/race_type_board.npz から）
     python scripts/backfill_type_lab_outcome.py --order-from-board --from 2026-01-01 --to 2026-08-04
 
-    # 指数の並び（モデルを回して復元する。paper は月次 vintage / live は本番モデル）
+    # 指数の並び（モデルを回して復元する。paper 系は月次 vintage / live は本番モデル）
     python scripts/backfill_type_lab_outcome.py --order-from-models --mode paper \
         --from 2026-08-05 --to 2026-08-26
+
+    # 9車の検証行（mode='paper9'）も同じ経路で埋まる
+    python scripts/backfill_type_lab_outcome.py --order-from-models --mode paper9 \
+        --from 2025-01-01 --to 2026-08-31
 
 🔴🔴 **見るのは「行が合っているか」ではなく「ソースが正しいか」。**
    突き合わせられるのは `axis1`/`axis2` ＝ **並びの先頭2つだけ**で、3位以下は
@@ -165,7 +169,10 @@ def fill_order_from_models(date_from: str, date_to: str, mode: str) -> None:
     from scripts.build_type_lab_picks import predict_p3_pw
     from src.wt_vintage_config import monthly_windows
 
-    if mode == "paper":
+    # 🔴 `paper` / `paper9` …ペーパー系は**月次 vintage** で作られている。
+    #    車数（`paper9` の 9）はモデルに関係しない（`predict_p3_pw` は日付のレースを
+    #    全部返し、車数は `race_key` 側の話）ので、接尾辞で分岐を変える必要はない。
+    if mode.startswith("paper"):
         windows = [(w_from, w_to, ev) for w_from, w_to, ev, _ in monthly_windows()]
     else:
         windows = [(date_from, date_to, "lgbm_wt_eval")]
@@ -239,7 +246,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="date_from", required=True)
     ap.add_argument("--to", dest="date_to", required=True)
-    ap.add_argument("--mode", choices=("paper", "live"))
+    #: `paper9` は9車の検証行（`build_type_lab_picks --n-entries 9` が書く）。
+    #: ペーパー系はどれも月次 vintage で作られているので同じ経路で埋まる。
+    ap.add_argument("--mode", choices=("paper", "paper9", "live"))
     ap.add_argument("--odds", action="store_true", help="win_tf_odds を埋める")
     ap.add_argument("--order-from-board", action="store_true")
     ap.add_argument("--order-from-models", action="store_true")
