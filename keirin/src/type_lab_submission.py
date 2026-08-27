@@ -1,0 +1,300 @@
+"""型ラボの入稿データ（タイトル・コメント・印）を作る — **文面の唯一の正本**。
+
+🔴 **まだ入稿していない。** 型ラボは `keirin.type_lab_picks` にしか書かず、
+   `netkeirin_submit_wt.py` はこのモジュールを import していない。ここにあるのは
+   「採用するなら何をどう出すか」を**実データで確かめられる形**にしたもので、
+   採否が決まったら `RANK_CONFIGS` に相当する結線を別途行う。
+
+## なぜ既存ランクの文面を流用できないか
+
+既存ランクは `src/race_shape.py` の `SHAPE_TITLES` / `SHAPE_NOTES` を
+**rank_key で引く**。型ラボは rank ではなく **型（A〜F）× プラン**の商品なので、
+そのキーでは引けない。そして流用してはいけない理由がもう一つある:
+
+🔴 **「軸2車流し」と書けないプランがある。** 確率上位から積む B_hit / C_hit / E_hit は、
+   買い目の **56.2% / 66.5% / 72.6%** が「◎○が1・2着に並ばない」目
+   （実測 2026-06〜08・`type_lab_picks`）。既存の共通文
+   「買い目は三連複・軸2車流しです」をそのまま使うと**大半のレースで嘘になる**。
+   `race_shape.py` が構造テキストをコード側に置いているのと同じ理由で、
+   文面はプランごとに持つ。
+
+## 3つの出力
+
+| | 出どころ | 備考 |
+|---|---|---|
+| タイトル | `PLAN_TITLES[plan]｜TYPE_VIEWS[type]` | 既存の「狙い｜レース見解」と同じ2ブロック |
+| コメント | `TYPE_NOTES[type]` + `PLAN_BODIES[plan]` + 共通の結び | 出走表HTMLは呼び出し側で連結する |
+| 印 | `marks_for()` が **`p3_order` と実際の買い目**から導く | 買っていない車には印を付けない |
+
+## 🔴 Markdown の装飾を書かないこと
+
+netkeirin のコメント欄は **HTML は通るが Markdown は通らない**（`_build_entry_table` が
+`<table>` を直接埋めているのはそのため）。`**強調**` と書くとアスタリスクが
+そのまま商品説明に出る。既存ランクの `default_comment` も装飾を使っていない。
+
+## 🔴 文面に数字（的中率・ROI・払戻）を書かないこと
+
+既存ランクの `default_comment` も書いていない。窓を変えれば動く値を商品説明へ
+焼き込むと、更新されないまま残って事実と食い違う（この repo が繰り返した型）。
+説明するのは**いま実際に何を買っているか**だけにする。
+
+## 🔴 配分の説明は `legs` から導く（テンプレートに固定で書かない）
+
+`alloc_note()` が実際の賭け金のばらつきを見て「傾斜」か「均等」かを決める。
+`netkeirin_submit_wt._stake_note_for` と同じ考え方で、同じ理由
+（配分が組めずフォールバックしたレースで嘘をつかないため）。
+
+## 制約
+
+🔴 **標準ライブラリ以外を import しないこと。** `keirin_marquee.py` /
+   `keirin_type_lab_gate.py` と同じ制約で、将来 backend 側から
+   ファイル読み込みで束縛する余地を残す。
+"""
+from __future__ import annotations
+
+from typing import Mapping, Sequence
+
+#: 賭け金の最小単位（円）。これ以下の差は端数とみなす。
+#: `src.strategy_wt.STAKE_UNIT` と同値だが、上記の import 制約のため参照しない。
+#: ⚠️ 向こうを変えたらここも変えること（`tests/test_type_lab_submission.py` が固定）。
+STAKE_UNIT = 100
+
+# ───────────────────────────── 型 → レース見解 ─────────────────────────────
+
+#: タイトル後半（レース見解）。**型は買い方を決めた根拠そのもの**なので、
+#: 既存ランクの `classify_shape` と違い「表示専用ラベル」ではない
+#: ＝ここに書いたことと実際に買うものが構造的にずれない。
+#: 🔴 拮抗度を断定する語を型A〜C（堅い側）と型D〜F（混戦側）で取り違えないこと。
+TYPE_VIEWS: dict[str, str] = {
+    "A": "二軸が堅い一戦",
+    "B": "二軸は堅く相手は拮抗",
+    "C": "堅い二軸から崩れ筋",
+    "D": "二軸が絞りきれない混戦",
+    "E": "混戦・配当妙味",
+    "F": "大混戦",
+}
+
+#: コメント冒頭のレース見解（1〜2文）。
+#: ⚠️ 「軸」という語を型D〜F で使うときは注意する。型ラボの軸2車は
+#:    **3着内率の上位2車**であって、そこが1・2着に来ると言っているのではない。
+TYPE_NOTES: dict[str, str] = {
+    "A": ("指数の上位2車がはっきり抜け、レースが荒れる要素も見当たらない一戦です。"
+          "着順まで踏み込んで狙えると読みました。"),
+    "B": ("指数の上位2車は堅い一方、3番手以下が団子で相手を1車に絞りきれません。"
+          "上位2車を信頼したうえで、3着の可能性がある目を広めに拾います。"),
+    "C": ("指数の上位2車は堅いのですが、ライン構成・開催日目から崩れる余地のある"
+          "一戦と読みました。素直な決着だけを買わず、配当の付く帯へ寄せています。"),
+    "D": ("指数の上位2車が絞りきれない混戦です。着順までは読み切れないと判断し、"
+          "3車がそろうことだけを狙います。"),
+    "E": ("上位が拮抗し、決着が読みにくい一戦です。安い決着は買わず、"
+          "配当が付く帯だけを広く押さえます。"),
+    "F": ("指数が横一線の大混戦です。誰が来るかは絞れても着順までは読めないと判断し、"
+          "順番を決め打ちしない組み立てにしています。"),
+}
+
+# ───────────────────────────── プラン → 商品名・買い目の説明 ────────────────
+
+#: タイトル前半（狙い）。
+#: 🔴 `_hit` と `_pay` は**同じ型に対する狙いの違い**（当たる回数 ↔ 払戻の大きさ）で、
+#:    ROI の優劣ではない。「勝てる」「儲かる」と読ませる語を入れないこと。
+PLAN_TITLES: dict[str, str] = {
+    "A_hit": "本線の三連単",
+    "A_pay": "一撃の三連単",
+    "B_hit": "本線の三連単",
+    "C_hit": "中配当の三連単",
+    "D_hit": "混戦の三連複",
+    "E_hit": "高配当の三連単",
+    "F_hit": "総取りの三連単",
+    "F_pay": "一撃の三連単",
+}
+
+#: 【買い目】の説明。**`PLANS`（`src/type_lab.py`）の structure と1対1**にすること。
+#: 🔴 点数は書かない（欠車で減る）。`build_comment` が実際の `n_legs` を差し込む。
+#: 🔴 確率上位から積む B/C/E に「軸2車流し」と書かない（実測で 56〜73% の目が
+#:    ◎○を1・2着に置いていない。モジュール docstring 参照）。
+PLAN_BODIES: dict[str, str] = {
+    "A_hit": ("買い目は三連単。1着に◎、2着に○を固定し、3着だけを流しました。"
+              "着順まで読み切れる形と判断したので、順番の入れ替えは買っていません。"),
+    "A_pay": ("買い目は三連単。1着は◎に固定し、2着を2車に広げて3着を流しました。"
+              "点数を絞るぶん、1点あたりを厚くして払戻の大きさに寄せています。"),
+    "B_hit": ("買い目は三連単。◎○を上位2車としつつ、着順は決め打ちせず"
+              "当方の指数で確率の高い目から順に積みました。"
+              "◎○が2着・3着へ回る目も含みます。"),
+    "C_hit": ("買い目は三連単。当方が想定する発走時オッズで一定の配当が付く目に絞り、"
+              "そのなかから確率の高い順に積みました。"
+              "素直な決着は買わないので、◎○が2着・3着へ回る目も含みます。"),
+    "D_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
+              "ただし相手のうち、最も人気を集めている1車をあえて外しています。"
+              "そこを買うと当たっても配当が残らないためです。"),
+    "E_hit": ("買い目は三連単。当方が想定する発走時オッズで高い配当が付く帯だけに絞り、"
+              "そのなかから確率の高い順に広く押さえました。"
+              "◎○が2着・3着へ回る目も含みます。"),
+    "F_hit": ("買い目は三連単。◎○と相手2車の計3車について、"
+              "着順の組み合わせをすべて買いました。"
+              "誰が来るかは絞れても順番は読めない、という判断です。"),
+    "F_pay": ("買い目は三連単。1着は◎に固定し、2着を2車に広げて3着を流しました。"
+              "点数を絞るぶん、1点あたりを厚くして払戻の大きさに寄せています。"),
+}
+
+#: 結び。全プラン共通。**オッズの自己確認を必ず促す**（既存ランクと同じ）。
+CLOSING = (
+    "【ご購入にあたって】\n"
+    "この配分は当方が想定する発走時オッズに基づくものです。"
+    "レース直前の実際のオッズをご自身でご確認いただき、"
+    "必要に応じて配分を調整いただくと精度が上がります。"
+)
+
+#: 出走表を添えるときの見出し（呼び出し側が HTML を連結する前に置く）。
+ENTRY_TABLE_LEAD = (
+    "【参考データ】\n"
+    "出走選手全員の1着率・2着内率・3着内率です。買い目の調整にご活用ください。"
+)
+
+
+# ───────────────────────────── 印 ─────────────────────────────
+
+def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
+              axis1: int, axis2: int) -> dict[int, str]:
+    """車番 → 印。**買っていない車には印を付けない**。
+
+    ◎＝軸1 / ○＝軸2 / ▲＝買い目に出てくる非軸車のうち指数最上位 / △＝残り。
+
+    🔴 **買い目から導くこと**（`p3_order` の上位N車ではなく）。型D は
+       「相手のうち最人気の1車を外す」のが設計の核心なので、外した車に印を
+       付けると**買っていない車を推している**ことになる。
+       既存ランクの `marks = {**{c: "△" for c in partners}, axis1: "◎", axis2: "○"}`
+       も同じく買い目由来。
+
+    ⚠️ **E_hit では全車に印が付くことがある**（予測30倍以上の帯を広く押さえる商品で、
+       実測の平均は 6.11車／7車中）。印が絞り込みの信号にならないのは
+       商品の性格どおりなので、そこを隠すために印を間引かないこと。
+
+    >>> legs = [{"combo": "1-4-5"}, {"combo": "1-4-2"}]
+    >>> marks_for("1-4-5-2-3-7-6", legs, 1, 4) == {1: "◎", 4: "○", 5: "▲", 2: "△"}
+    True
+    >>> legs = [{"combo": "2=5=7"}, {"combo": "1=5=7"}]
+    >>> marks_for([7, 5, 6, 1, 2, 4, 3], legs, 7, 5) == {7: "◎", 5: "○", 1: "▲", 2: "△"}
+    True
+    """
+    order = _order_list(p3_order)
+    used: set[int] = set()
+    for leg in legs:
+        used |= set(_combo_cars(str(leg.get("combo", ""))))
+    marks: dict[int, str] = {}
+    if axis1 in used or not used:
+        marks[int(axis1)] = "◎"
+    if axis2 in used or not used:
+        marks[int(axis2)] = "○"
+    rest = [c for c in order if c in used and c not in (axis1, axis2)]
+    # 指数順にならないもの（order に無い車）は末尾へ。順序を決められないまま
+    # 先頭へ来ると ▲ が入れ替わる。
+    rest += sorted(c for c in used if c not in order and c not in (axis1, axis2))
+    for i, c in enumerate(rest):
+        marks[int(c)] = "▲" if i == 0 else "△"
+    return marks
+
+
+def _order_list(p3_order: Sequence[int] | str) -> list[int]:
+    """`"1-4-5-2-3-7-6"` でも `[1,4,5,...]` でも受ける。"""
+    if isinstance(p3_order, str):
+        return [int(x) for x in p3_order.split("-") if x.strip().isdigit()]
+    return [int(x) for x in p3_order]
+
+
+def _combo_cars(combo: str) -> list[int]:
+    """`"1-4-5"`（三連単）/ `"2=5=7"`（三連複）の車番。"""
+    sep = "=" if "=" in combo else "-"
+    return [int(x) for x in combo.split(sep) if x.strip().isdigit()]
+
+
+# ───────────────────────────── 配分の説明 ─────────────────────────────
+
+def alloc_note(legs: Sequence[Mapping]) -> str:
+    """実際の賭け金から配分方式の説明文を決める。
+
+    🔴 **テンプレートに固定で書かない。** 型ラボの配分はダッチ（∝1/予測オッズ）と
+       信頼度傾斜の2種類だが、どちらも**点数が少なければ結果的に均等に近くなる**。
+       固定文にすると均等に置いたレースで「オッズに応じて配分」と嘘をつく
+       （`netkeirin_submit_wt._stake_note_for` が同じ理由で legs から導いている）。
+
+    ⚠️ **最小単位ぶんの差は「均等」とみなす**。予算が点数で割り切れないときの
+       端数だけで傾斜扱いになるのを防ぐ（10,000円/3点 → 3,400/3,300/3,300）。
+
+    >>> alloc_note([{"stake": 3400}, {"stake": 3300}, {"stake": 3300}])
+    '金額は各点ほぼ均等に置いています。'
+    >>> alloc_note([{"stake": 4700}, {"stake": 2900}, {"stake": 2400}]).startswith("金額は均等ではなく")
+    True
+    >>> alloc_note([])
+    ''
+    """
+    stakes = [int(l.get("stake", 0)) for l in legs if l.get("stake") is not None]
+    if not stakes:
+        return ""
+    if max(stakes) - min(stakes) <= STAKE_UNIT:
+        return "金額は各点ほぼ均等に置いています。"
+    return ("金額は均等ではなく、当方が想定する発走時オッズに応じて配分しています。"
+            "配当が低くなりやすい目に厚く、高くなりやすい目に薄く置き、"
+            "どの目で決まっても払戻が投資を上回ることを狙う組み立てです。")
+
+
+# ───────────────────────────── 組み立て ─────────────────────────────
+
+def build_title(plan_key: str, type_label: str) -> str:
+    """「狙い｜レース見解」。既存ランクのタイトルと同じ2ブロック構成。
+
+    🔴 **`race_type`（決勝/特選）やグレードを入れない。** 既存ランクで
+       2026-08-09 に外した方針をそのまま踏襲する。
+
+    >>> build_title("A_hit", "A")
+    '本線の三連単｜二軸が堅い一戦'
+    >>> build_title("D_hit", "D")
+    '混戦の三連複｜二軸が絞りきれない混戦'
+    """
+    head = PLAN_TITLES.get(plan_key, "型ラボ")
+    view = TYPE_VIEWS.get(type_label, "")
+    return f"{head}｜{view}" if view else head
+
+
+def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
+                  legs: Sequence[Mapping], bet_type: str,
+                  entry_table_html: str | None = None) -> str:
+    """コメント本文。`entry_table_html` を渡すと末尾に出走表を付ける。
+
+    構成は既存ランク（看板テンプレート）と同じ:
+      レース見解 → 【二軸】 → 【買い目】 → 【ご購入にあたって】 → 【参考データ】
+    """
+    n = len(legs)
+    tail = "点" if bet_type == "trio" else "点"
+    blocks = [
+        TYPE_NOTES.get(type_label, ""),
+        f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。",
+        (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
+         f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"),
+        CLOSING,
+    ]
+    if entry_table_html:
+        blocks.append(f"{ENTRY_TABLE_LEAD}\n{entry_table_html}")
+    return "\n\n".join(b for b in blocks if b)
+
+
+def build_submission(row: Mapping, entry_table_html: str | None = None) -> dict:
+    """`type_lab_picks` の1行 → `{"title", "comment", "marks"}`。
+
+    `row` に要る列: `plan_key` `type_label` `axis1` `axis2` `p3_order`
+    `bet_type` `legs`（`combo` / `stake` を持つ辞書の並び）。
+
+    🔴 **`legs` は必ず「実際に入稿する買い目」を渡すこと。** 候補の段階の
+       買い目を渡すと、印も点数も配分の説明も**売っていないもの**を説明する
+       （既存経路が `picks_history`（候補）ではなく `bet_detail`（実売）を
+       正本にしているのと同じ理由）。
+    """
+    legs = list(row.get("legs") or [])
+    return {
+        "title": build_title(str(row["plan_key"]), str(row["type_label"])),
+        "comment": build_comment(
+            str(row["plan_key"]), str(row["type_label"]),
+            int(row["axis1"]), int(row["axis2"]), legs,
+            str(row.get("bet_type") or "trifecta"), entry_table_html),
+        "marks": marks_for(row.get("p3_order") or [], legs,
+                           int(row["axis1"]), int(row["axis2"])),
+    }
