@@ -1965,15 +1965,20 @@ export type TypeLabComboRow = {
 export type TypeLabComboResponse = {
   mode: string; date_from: string; date_to: string; venue: string | null;
   plans: string[]; n_days: number; n_conflict_races: number;
+  /** 軸信頼ゲート（プラン内で軸信頼が下位のレースを外す）を掛けたか */
+  axis_gate: boolean; n_axis_gated_out: number;
+  axis_gate_min: Record<string, number>; axis_gate_drop_ratio: number;
   rows: TypeLabComboRow[]; total: TypeLabComboRow;
 };
 
 export async function fetchKeirinTypeLabCombo(params: {
   plans: string[];
   mode?: "paper" | "live"; dateFrom?: string; dateTo?: string; venue?: string;
+  axisGate?: boolean;
 }): Promise<TypeLabComboResponse> {
   const q = new URLSearchParams();
   q.set("plans", params.plans.join(","));
+  if (params.axisGate) q.set("axis_gate", "true");
   if (params.mode) q.set("mode", params.mode);
   if (params.dateFrom) q.set("date_from", params.dateFrom);
   if (params.dateTo) q.set("date_to", params.dateTo);

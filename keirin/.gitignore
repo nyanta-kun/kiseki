@@ -86,3 +86,9 @@ data/netkeirin_venue_codes.json
 # scrape_physicals_wt.py / scrape_winticket_ex_stats.py が生成する。
 data/player_physicals.csv
 data/player_ex_stats.csv
+
+# 競合分析のスクレイプ生データ（exp_hot/raw は 83MB・再取得可能）
+scripts/exp_hot/raw/
+scripts/exp_hot/*.jsonl
+scripts/exp_hot/*.json
+scripts/exp_hot/*.log
