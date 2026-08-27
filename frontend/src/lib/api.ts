@@ -1897,6 +1897,18 @@ export async function fetchKeirinApprovalMode(): Promise<{ require_approval: boo
 export type TypeLabLeg = {
   combo: string; stake: number; pred_odds: number; prob: number;
 };
+export type TypeLabCurrentPick = {
+  rank: string; pred_combo: string | null; n_combos: number | null;
+  bet_amount: number | null; hit: boolean | null; payout: number | null;
+  settled: boolean; sold_rank_key: string | null;
+};
+export type TypeLabComparisonRow = {
+  plan_key: string; n_races: number; n_days: number;
+  lab_shown_hit: number; cur_shown_hit: number;
+  lab_median_payout: number; cur_median_payout: number;
+  lab_two_per_day: number; cur_two_per_day: number;
+  lab_roi: number; cur_roi: number;
+};
 export type TypeLabPick = {
   race_key: string; race_date: string; venue_name: string | null;
   race_no: number | null; race_type: string | null; day_index: number | null;
@@ -1907,6 +1919,7 @@ export type TypeLabPick = {
   pred_mean_payout: number | null; pred_min_payout: number | null;
   settled: boolean; win_combo: string | null; hit: boolean | null;
   payout: number | null; final_odds: number | null;
+  current: TypeLabCurrentPick | null;
 };
 export type TypeLabSummary = {
   plan_key: string; type_label: string; bet_type: string;
@@ -1920,7 +1933,8 @@ export type TypeLabSummary = {
 export type TypeLabResponse = {
   mode: string; date_from: string; date_to: string;
   rule_versions: string[];
-  summaries: TypeLabSummary[]; picks: TypeLabPick[];
+  summaries: TypeLabSummary[]; comparison: TypeLabComparisonRow[];
+  picks: TypeLabPick[];
 };
 
 export async function fetchKeirinTypeLab(params: {

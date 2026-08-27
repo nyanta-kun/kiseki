@@ -271,3 +271,29 @@ def test_rule_version_changes_with_the_plans():
 def test_every_type_has_at_least_one_plan():
     for t in "ABCDEF":
         assert plans_for(t), f"型{t} に買い方が無い"
+
+
+def test_comparison_rank_order_matches_production():
+    """🔴 API の `CURRENT_RANK_ORDER` を本番の入稿優先順位と一致させる。
+
+    比較表は「1レースで実際に売られる1商品」と並べるためにこの順序を使う。
+    ずれると**別のランクと比べた数字**を出してしまう（手書きリストの足し忘れ型）。
+    """
+    import re
+
+    api = (REPO.parent / "backend" / "src" / "api" / "keirin_type_lab_router.py")
+    tree = ast.parse(api.read_text(encoding="utf-8"))
+    order = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and node.targets
+                and getattr(node.targets[0], "id", "") == "CURRENT_RANK_ORDER"):
+            order = [e.value for e in node.value.elts]
+    assert order is not None, "CURRENT_RANK_ORDER が見つからない"
+
+    src = (REPO / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
+    # RANK_CONFIGS の定義順がそのまま優先順位（RANK_ORDER = list(RANK_CONFIGS)）
+    body = src[src.index("RANK_CONFIGS"):src.index("RANK_ORDER = list(RANK_CONFIGS)")]
+    keys = re.findall(r'^\s{4}"([0-9A-Z]+)":\s*\{', body, flags=re.M)
+    assert keys, "RANK_CONFIGS のキーを読めない（netkeirin_submit_wt.py の形が変わった）"
+    assert [k.replace("RANK_", "") for k in order] == keys, (
+        f"優先順位がずれている\n  API: {order}\n  本番: {keys}")

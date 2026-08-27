@@ -173,6 +173,68 @@ export default function TypeLabPage() {
         行をクリックするとそのプランだけに絞り込みます。
       </p>
 
+      {/* ── 現行推奨との比較 ── */}
+      <section className="overflow-x-auto rounded border bg-white">
+        <div className="border-b bg-slate-50 px-3 py-2 text-sm font-semibold">
+          現行推奨との比較
+          <span className="ml-2 font-normal text-xs text-slate-500">
+            両方に採点済みの記録がある**同じレース**だけで並べています
+          </span>
+        </div>
+        <table className="w-full min-w-[900px] text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-600">
+            <tr>
+              <th className="p-2 text-left">プラン</th>
+              <th className="p-2 text-right">対象R</th>
+              <th className="p-2 text-right">表示的中 ラボ / 現行</th>
+              <th className="p-2 text-right">払戻中央 ラボ / 現行</th>
+              <th className="p-2 text-right">2倍+/日 ラボ / 現行</th>
+              <th className="p-2 text-right">ROI ラボ / 現行</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(data?.comparison ?? []).map((c) => (
+              <tr key={c.plan_key} className="border-t">
+                <td className="p-2 font-mono">{c.plan_key}</td>
+                <td className="p-2 text-right">{c.n_races}（{c.n_days}日）</td>
+                <td className="p-2 text-right">
+                  <b className={c.lab_shown_hit >= c.cur_shown_hit ? "text-emerald-700" : "text-slate-700"}>
+                    {pct(c.lab_shown_hit)}
+                  </b>
+                  <span className="text-slate-400"> / {pct(c.cur_shown_hit)}</span>
+                </td>
+                <td className="p-2 text-right">
+                  <b className={c.lab_median_payout >= c.cur_median_payout ? "text-emerald-700" : "text-slate-700"}>
+                    {yen(c.lab_median_payout)}
+                  </b>
+                  <span className="text-slate-400"> / {yen(c.cur_median_payout)}</span>
+                </td>
+                <td className="p-2 text-right">
+                  <b className={c.lab_two_per_day >= c.cur_two_per_day ? "text-emerald-700" : "text-slate-700"}>
+                    {c.lab_two_per_day.toFixed(2)}
+                  </b>
+                  <span className="text-slate-400"> / {c.cur_two_per_day.toFixed(2)}</span>
+                </td>
+                <td className="p-2 text-right text-slate-500">
+                  {c.lab_roi.toFixed(1)}% / {c.cur_roi.toFixed(1)}%
+                </td>
+              </tr>
+            ))}
+            {!loading && !(data?.comparison ?? []).length && (
+              <tr><td colSpan={6} className="p-4 text-center text-slate-400">
+                比較できる記録がありません（現行側の採点待ちの可能性があります）
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+      <p className="text-xs text-slate-400">
+        🔴 現行側は <code>picks_history</code>（<b>ランクの候補</b>）です。実売との不一致が
+        18% あるため「売った商品」そのものではありませんが、型ラボも「設計が何を買うか」なので
+        <b>設計どうしの比較としては同じ土俵</b>です。実際に入稿されたかは各カードの
+        「入稿: …」で確認できます。
+      </p>
+
       {/* ── 買い目一覧 ── */}
       <section className="space-y-2">
         {picks.map((p) => <PickCard key={`${p.race_key}-${p.plan_key}`} p={p} />)}
@@ -212,6 +274,22 @@ function PickCard({ p }: { p: TypeLabPick }) {
             : <span className="text-slate-400">未確定</span>}
         </span>
       </div>
+      {p.current && (
+        <div className="mt-2 rounded bg-slate-50 px-2 py-1 text-xs text-slate-600">
+          <span className="font-semibold">現行推奨</span>
+          <span className="ml-2 font-mono">{p.current.rank.replace("RANK_", "")}</span>
+          <span className="ml-2 font-mono">{p.current.pred_combo ?? "—"}</span>
+          {p.current.n_combos ? <span className="ml-1 text-slate-400">（{p.current.n_combos}点）</span> : null}
+          {p.current.settled
+            ? (p.current.hit
+                ? <span className="ml-2 text-emerald-700">的中 {yen(p.current.payout)}</span>
+                : <span className="ml-2 text-slate-400">不的中</span>)
+            : <span className="ml-2 text-slate-400">未採点</span>}
+          {p.current.sold_rank_key
+            ? <span className="ml-2 rounded bg-indigo-100 px-1 text-indigo-700">入稿: {p.current.sold_rank_key}</span>
+            : <span className="ml-2 text-slate-400">（入稿記録なし）</span>}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1">
         {p.legs.map((l) => (
           <span key={l.combo}
