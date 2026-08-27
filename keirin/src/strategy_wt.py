@@ -4538,6 +4538,33 @@ RANK_7T3_LEGS = 5
 #  🔴 `odds_prediction_tf.pl_ordered` は **`pw` 単独**なので流用しないこと。
 #     確認窓の top1 的中は 単独 5.99% ↔ 合成 **10.07%**。
 RANK_7T3_BLEND_W: tuple[float, float, float] = (1.0, 0.5, 0.0)
+#: **同ライン隣接ボーナス** (1-2着, 2-3着)。2026-08-26 追加。
+#
+#  位置別合成 PL は車ごとの周辺確率の積なので、「先頭が1着なら番手が2着に続く」
+#  という**ライン依存を構造的に表現できない**。実測（vintage 210点板・7車
+#  36,237R・2024-07〜2026-08）で、PL の最上位の1-2着が「最強ラインの先頭→番手」と
+#  食い違うのは 68.9% あり、そのうち **29.8% は2着に別ラインの車を置いている**。
+#  そのセルの二軸そろいは ライン型 22.31% ↔ **PL型 11.65%**（約2倍差）。
+#
+#  🔴 **ハードな規則（常にライン先頭→番手）にしてはいけない。** 逆に PL が正しい
+#     セル（番手→先頭の反転・20.0%）があり、λ=∞ は λ=2.5 に負ける。重みで入れる。
+#
+#      score(x,y,z) = P_PL(x,y,z) × λ^[y が x の直後] × μ^[z が y の直後]
+#
+#  λ/μ は探索窓（2024-07〜2025-12）で選び確認窓（2026）で検証した。
+#  2.0〜2.5 × 1.2〜2.0 は**広いプラトー**（スパイクではない）。
+#
+#  実測（top1 の1点に1万円・λ有 ↔ 素）:
+#    探索 25,833R  的中 10.89 ↔ 9.93%  Δ+0.96pt CI[+0.60,+1.32] /
+#                  ROI  80.5 ↔ 73.6%  Δ+6.9pt  CI[+1.9,+11.7]
+#    確認 10,404R  的中 10.90 ↔ 9.88%  Δ+1.01pt CI[+0.52,+1.52] /
+#                  ROI  84.9 ↔ 71.3%  Δ+13.7pt CI[+6.1,+21.2]
+#    **9/9 四半期で的中・ROI とも符号プラス**。払戻中央も 46,000 → 50,000円。
+#
+#  ⚠️ **7T1 には効かない**。7T1 の母集団は「3着内率の上位2車が別ライン」で、
+#     隣接ペアを定義上除いている（決勝系 n=636 で改善しないことを実測済み）。
+#  経緯と全数値: `docs/tf_rival614_line_pair_2026_08_26.md`
+RANK_7T3_LINE_ADJ_W: tuple[float, float] = (2.0, 1.5)
 
 
 def rank_7t3_is_target_race_type(race_type: str | None) -> bool:
@@ -4550,12 +4577,38 @@ def rank_7t3_is_target_race_type(race_type: str | None) -> bool:
     return str(race_type or "") in RANK_7T3_RACE_TYPES
 
 
+def _line_next(line_group: Mapping[int, object] | None,
+               line_pos: Mapping[int, object] | None,
+               a: int, b: int) -> bool:
+    """b が a の**直後**（同一ライン・`line_pos` が +1）か。
+
+    ライン情報が欠けている車は False（＝ボーナスを掛けない）。
+    🔴 欠測を「隣接」と読んではいけない。並び予想が未公開のまま入稿された
+       2026-08-26 熊本の件（PR#314）と同じ型で、欠測が静かに確率を歪める。
+    """
+    if not line_group or not line_pos:
+        return False
+    ga, gb = line_group.get(a), line_group.get(b)
+    if ga is None or gb is None or str(ga) in ("", "0") or ga != gb:
+        return False
+    pa, pb = line_pos.get(a), line_pos.get(b)
+    if pa is None or pb is None:
+        return False
+    try:
+        return int(pb) == int(pa) + 1
+    except (TypeError, ValueError):
+        return False
+
+
 def rank_7t3_blend_probs(
     cars: Sequence[int], win_probs: Mapping[int, float],
     top3_probs: Mapping[int, float],
     w: tuple[float, float, float] = RANK_7T3_BLEND_W,
+    line_group: Mapping[int, object] | None = None,
+    line_pos: Mapping[int, object] | None = None,
+    adj_w: tuple[float, float] = RANK_7T3_LINE_ADJ_W,
 ) -> dict[tuple[int, int, int], float]:
-    """三連単・全順列の確率。**位置別合成 Plackett-Luce**。
+    """三連単・全順列の確率。**位置別合成 Plackett-Luce ＋ 同ライン隣接ボーナス**。
 
     1着は勝率(`pw`)、3着は3着内率(`p3`)、2着はその相乗平均を強度に使う:
 
@@ -4566,6 +4619,13 @@ def rank_7t3_blend_probs(
     🔴 **`pw` 単独の PL（`odds_prediction_tf.pl_ordered`）とは別物**。
        三連単の買い目確率を1着率だけで作るのが元の穴で、位置別に合成すると
        確認窓の top1 的中が **5.99% → 10.07%** になる。
+    さらに `line_group` / `line_pos` を渡すと、**同ラインで直後にいる車の並び**へ
+    `adj_w = (λ, μ)` を掛けてから正規化する（`RANK_7T3_LINE_ADJ_W` の節に実測）。
+
+        P(x,y,z) ← P(x,y,z) × λ^[y は x の直後] × μ^[z は y の直後]
+
+    🔴 **ライン情報を渡さないとボーナスは効かない**（後方互換のため既定は None）。
+       本番経路が渡していることは `tests/test_rank_7t3.py` が固定している。
     ⚠️ 最後にレース内で正規化する（検証実装 `scripts/exp_7t3/tfprob.py` と同じ）。
     """
     cs = [int(c) for c in cars]
@@ -4589,9 +4649,14 @@ def rank_7t3_blend_probs(
         d2 = 1.0 - strengths[2][ix] - strengths[2][iy]
         if d1 <= 0 or d2 <= 0:
             continue
-        out[(x, y, z)] = (strengths[0][ix]
-                          * (strengths[1][iy] / d1)
-                          * (strengths[2][iz] / d2))
+        v = (strengths[0][ix]
+             * (strengths[1][iy] / d1)
+             * (strengths[2][iz] / d2))
+        if _line_next(line_group, line_pos, x, y):
+            v *= adj_w[0]
+        if _line_next(line_group, line_pos, y, z):
+            v *= adj_w[1]
+        out[(x, y, z)] = v
     tot = sum(out.values())
     return {k: v / tot for k, v in out.items()} if tot > 0 else {}
 
@@ -4600,6 +4665,8 @@ def rank_7t3_select(
     top3_probs: dict[int, float], win_probs: dict[int, float],
     pred_odds: dict[tuple[int, int, int], float],
     min_odds: float = RANK_7T3_MIN_ODDS, n_legs: int = RANK_7T3_LEGS,
+    line_group: Mapping[int, object] | None = None,
+    line_pos: Mapping[int, object] | None = None,
 ) -> list[str]:
     """7T3 の買い目（`"1-2-3"` 形式の文字列）。組めなければ空リスト。
 
@@ -4612,11 +4679,15 @@ def rank_7t3_select(
     🔴 `pred_odds` は板として整合させたもの（`odds_prediction_tf.predict_board`）を
        渡すこと。生の回帰値だと Σ(1/オッズ) が払戻率の制約から外れ、
        30倍という足切りがそのままずれる。
+    🔴 `line_group` / `line_pos` を渡すこと（2026-08-26）。渡さないと同ライン
+       隣接ボーナスが効かず、確認窓で top1 的中 −1.0pt・ROI −13.7pt 相当の
+       旧挙動に戻る（`RANK_7T3_LINE_ADJ_W` の節）。
     """
     if not top3_probs or not win_probs or not pred_odds:
         return []
     cars = sorted(set(top3_probs) & set(win_probs))
-    probs = rank_7t3_blend_probs(cars, win_probs, top3_probs)
+    probs = rank_7t3_blend_probs(cars, win_probs, top3_probs,
+                                 line_group=line_group, line_pos=line_pos)
     if not probs:
         return []
     band: list[tuple[float, tuple[int, int, int]]] = []

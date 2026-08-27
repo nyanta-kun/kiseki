@@ -168,7 +168,12 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
             n_no_board += 1
             print(f"  {rk}: 予測オッズを作れず skip（{e}）")
             continue
-        legs = rank_7t3_select(probs, pw, pred_odds)
+        # 🔴 ライン情報を必ず渡す（2026-08-26）。渡さないと同ライン隣接ボーナスが
+        #    効かず、確認窓で top1 的中 −1.0pt・ROI −13.7pt 相当の旧挙動に戻る。
+        line_group = {c: m.get("line_group") for c, m in meta.items()}
+        line_pos = {c: m.get("line_pos") for c, m in meta.items()}
+        legs = rank_7t3_select(probs, pw, pred_odds,
+                               line_group=line_group, line_pos=line_pos)
         if not legs:
             n_no_band += 1          # 帯（30倍以上）に届く目が1点も無い
             continue
@@ -180,7 +185,8 @@ def build(date_from: str, date_to: str, eval_model: str, win_model: str,
         order = [f for f, _ in sorted(probs.items(), key=lambda kv: (-kv[1], kv[0]))]
         cars_in_legs = sorted({int(x) for leg in legs for x in leg.split("-")})
         partners = [c for c in cars_in_legs if c not in (axis1, axis2)]
-        blend = rank_7t3_blend_probs(sorted(probs), pw, probs)
+        blend = rank_7t3_blend_probs(sorted(probs), pw, probs,
+                                     line_group=line_group, line_pos=line_pos)
         cands.append({
             "race_key": rk, "race_date": ents[0]["race_date"],
             "venue_name": ents[0].get("venue_name"), "race_no": ents[0].get("race_no"),
