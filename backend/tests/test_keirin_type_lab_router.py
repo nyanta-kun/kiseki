@@ -67,3 +67,25 @@ def test_each_query_gets_the_parameter_type_its_column_needs():
     assert got.get("_SQL_CURRENT") == {"d1", "d2"}, got.get("_SQL_CURRENT")
     assert got.get("_SQL_SOLD") == {"d1.replace('-', '')", "d2.replace('-', '')"}, \
         got.get("_SQL_SOLD")
+
+
+def test_venue_options_are_built_before_filtering():
+    """🔴 競輪場の選択肢は**絞り込む前**の一覧から作ること。
+
+    絞ってから作ると選んだ場しか候補に残らず、他の場へ切り替えられなくなる。
+    実装順（venues を作ってから rows を絞る）を構文で固定する。
+    """
+    import ast
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab).lstrip()
+    i_v = src.index("venues = sorted(")
+    i_f = src.index("rows = [r for r in rows if r[\"venue_name\"] == venue]")
+    assert i_v < i_f, "venues を作る前に rows を絞っている"
+    # 引数として受け取っていること
+    tree = ast.parse(src)
+    fn = tree.body[0]
+    names = [a.arg for a in fn.args.args] + [a.arg for a in fn.args.kwonlyargs]
+    assert "venue" in names
