@@ -311,6 +311,9 @@ export default function TypeLabPage() {
 
       {/* ── 買い目一覧 ── */}
       <div className="space-y-2">
+        <p className="text-[11px] text-gray-600 dark:text-gray-400">
+          発走の早い順（日付が複数ある場合は新しい日から）。
+        </p>
         {picks.map((p) => <PickCard key={`${p.race_key}-${p.plan_key}`} p={p} />)}
         {!loading && !picks.length && <Empty text="買い目がありません" />}
       </div>
@@ -489,8 +492,12 @@ function PickCard({ p }: { p: TypeLabPick }) {
     <div className={`rounded border-2 bg-white p-2 dark:bg-gray-900 sm:p-3 ${tone}`}>
       {/* 1行目: レース */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm">
-        <span className="text-gray-600 dark:text-gray-400">{p.race_date}</span>
+        {/* 発走時刻。一覧は**発走の早い順**に並んでいる（サーバー側で並べ替え済み）。 */}
+        <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-white dark:bg-gray-700">
+          {p.start_time ?? "--:--"}
+        </span>
         <span className="font-semibold text-gray-900 dark:text-white">{p.venue_name ?? "—"} {p.race_no ?? "?"}R</span>
+        <span className="text-gray-600 dark:text-gray-400">{p.race_date}</span>
         <span className="text-[10px] text-gray-600 dark:text-gray-400 sm:text-xs">{p.race_type ?? ""}</span>
         <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px]">
           型{p.type_label}{TYPE_NAME[p.type_label] ? ` ${TYPE_NAME[p.type_label]}` : ""}

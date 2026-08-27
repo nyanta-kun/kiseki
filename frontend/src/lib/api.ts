@@ -1912,6 +1912,7 @@ export type TypeLabComparisonRow = {
 export type TypeLabPick = {
   race_key: string; race_date: string; venue_name: string | null;
   race_no: number | null; race_type: string | null; day_index: number | null;
+  start_time: string | null;
   type_label: string; axis_sum: number | null; arare: number | null;
   axis1: number | null; axis2: number | null;
   mode: string; plan_key: string; bet_type: string;
