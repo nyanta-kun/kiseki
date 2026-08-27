@@ -11,10 +11,20 @@
     python scripts/backfill_type_lab_outcome.py --order-from-models --mode paper \
         --from 2026-08-05 --to 2026-08-26
 
-🔴 **復元した並びは必ず `axis1`/`axis2` と突き合わせる。** 一致しなければその行は
-   **書かない**（NULL のまま残す）。モデルが再学習されていると p3 が変わり、
-   「行を作ったときの並び」とは別物になる。黙って書くと、答え合わせの土台が
-   静かにずれる（CLAUDE.md「測る前に本番コードを読む」と同じ型の事故）。
+🔴🔴 **軸が1行でも食い違ったら、その回は1行も書かない。**
+   突き合わせられるのは `axis1`/`axis2` ＝ **並びの先頭2つだけ**で、3位以下は
+   照合しようがない。「先頭2つが一致した行だけ書く」では**足りない**:
+
+     2025-07-15 の実測 — 別ソースで復元した 47 行のうち
+       完全一致 24 / **先頭2つだけ一致 23** / 不一致 0
+
+   つまり先頭2つが合っていても**半分は3位以下が違う**。そして 3位以下こそが
+   「順当（3着が指数3〜4位）」と「軸2+穴（指数5〜7位）」を分ける当の情報。
+   食い違いが出る＝その期間の行は**このソースで作られていない**ということなので、
+   範囲を狭めるか別のソース（`--order-from-models`）を使うのが正しい。
+
+   ⚠️ 2026-08-27 に「先頭2つが合った行だけ書く」実装で 2025年ぶん 16,864 行を
+   埋めてしまい、上の実測に気づいて全部 NULL へ戻した。
 
 🔴 **`--order-from-models` は当日の本番バッチと同時に走らせないこと。**
    特徴量の構築とモデル読み込みでメモリを食う。
@@ -24,7 +34,6 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import defaultdict
-from datetime import date, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -148,27 +157,29 @@ def fill_order_from_models(date_from: str, date_to: str, mode: str) -> None:
         lo, hi = max(w_from, date_from), min(w_to, date_to)
         if lo > hi:
             continue
-        win_model = ev.replace("_eval", "_win")
-        d, end = date.fromisoformat(lo), date.fromisoformat(hi)
-        while d <= end:
-            day = d.isoformat()
-            d += timedelta(days=1)
-            p3, _ = predict_p3_pw(day, ev, win_model)
-            if not p3:
-                continue
-            _apply_order(day, day, mode, p3, ev)
+        # ⚠️ **窓ごとにまとめて1回**で予測する。同じ vintage 窓の中はモデルが同じなので
+        #    1日ずつ回す必要が無く、特徴量の構築は期間の長さにほとんど比例しない
+        #    （履歴の読み込みが支配的）。1日ずつだと 2025年ぶんで9時間かかった。
+        p3, _ = predict_p3_pw(lo, ev, ev.replace("_eval", "_win"), day_to=hi)
+        if not p3:
+            print(f"[order/{ev}] {lo}〜{hi}: 特徴量が作れませんでした", flush=True)
+            continue
+        _apply_order(lo, hi, mode, p3, ev)
 
 
 def _apply_order(date_from: str, date_to: str, mode: str,
-                 p3_by_race: dict, source: str) -> None:
-    """復元した p3 から `p3_order` を書く。`axis1`/`axis2` が合わない行は書かない。"""
+                 p3_by_race: dict, source: str) -> bool:
+    """復元した p3 から `p3_order` を書く。**軸が1行でも食い違ったら1行も書かない。**
+
+    戻り値は書いたかどうか（食い違いで見送ったら False）。
+    """
     with get_connection() as c:
         rows = c.execute(
             "SELECT id, race_key, axis1, axis2 FROM type_lab_picks "
             "WHERE p3_order IS NULL AND mode = ? AND race_date BETWEEN ? AND ?",
             (mode, date_from, date_to)).fetchall()
     if not rows:
-        return
+        return True
     upd, miss, no_p3 = [], 0, 0
     for pid, rk, a1, a2 in rows:
         p3 = p3_by_race.get(rk)
@@ -181,12 +192,26 @@ def _apply_order(date_from: str, date_to: str, mode: str,
             miss += 1
             continue
         upd.append(("-".join(str(x) for x in order), pid))
+
+    # 🔴🔴 **1行でも軸が食い違ったら、その回は1行も書かない。**
+    #    照合できるのは先頭2つだけで、先頭2つが合っていても3位以下は半分違う
+    #    （2025-07-15 実測: 完全一致 24 / 先頭2つだけ一致 23）。3位以下こそ
+    #    「順当」と「軸2+穴」を分ける情報なので、部分的に書くと土台が静かに壊れる。
+    if miss:
+        print(f"[order/{source}] {date_from}〜{date_to} mode={mode}: "
+              f"🔴 軸不一致 {miss:,} 行 → **この範囲は1行も書きません**"
+              f"（一致 {len(upd):,} / p3なし {no_p3:,}）。"
+              f"その期間の行はこのソースで作られていません。範囲を狭めるか "
+              f"--order-from-models を使ってください", flush=True)
+        return False
+
     with get_connection() as c:
         if upd:
             c.executemany("UPDATE type_lab_picks SET p3_order = ? WHERE id = ?", upd)
         c.commit()
     print(f"[order/{source}] {date_from}〜{date_to} mode={mode}: "
-          f"埋めた {len(upd):,} / 軸不一致 {miss:,} / p3なし {no_p3:,}", flush=True)
+          f"埋めた {len(upd):,} / p3なし {no_p3:,}", flush=True)
+    return True
 
 
 def main() -> None:
