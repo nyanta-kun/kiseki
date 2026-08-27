@@ -45,7 +45,13 @@ from src.type_lab import (                          # noqa: E402
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
 PAYBACK = 0.75
-N_ENTRIES = 7                     # 型ラボは 7車立て専用（設計・検証とも7車）
+#: 対象の車数。**既定は7**（設計・検証とも7車）。`--n-entries 9` は9車での
+#: 成立性を測る検証用で、日次バッチは 7 のまま。
+#: 🔴 9車は `odds_tf_n9` が要る（2026-08-28 新設）。無ければ `predict_board` が
+#:    例外を投げるので、黙って0件にはならない。
+N_ENTRIES = 7
+#: 保存する mode に付ける接尾辞（7車は空）。
+MODE_TAG = ""
 
 
 # ───────────────────────── 共通: 1レースぶんを行にする ─────────────────────────
@@ -93,7 +99,7 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             # 🔴 **並びを行へ焼き付ける**。後から `wt_entries` を引き直しても
             #    モデルが再学習されていれば別の並びになり、答え合わせにならない。
             p3_order="-".join(str(c) for c in shape.order),
-            mode=mode, plan_key=plan.key, bet_type=plan.bet_type,
+            mode=mode + MODE_TAG, plan_key=plan.key, bet_type=plan.bet_type,
             n_legs=len(legs), budget=BUDGET,
             legs=json.dumps(detail, ensure_ascii=False),
             pred_mean_payout=round(mean_expected_payout(stakes, odds), 1),
@@ -210,9 +216,9 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
 
     keys = _keys_of_date(day)
     if not keys:
-        print(f"[live] {day}: 7車立てのレースがありません")
+        print(f"[live] {day}: {N_ENTRIES}車立てのレースがありません")
         return []
-    print(f"[live] {day}: 7車立て {len(keys)}R")
+    print(f"[live] {day}: {N_ENTRIES}車立て {len(keys)}R")
     meta_all = _load_race_meta(keys)
     ent_all = _load_entries(keys)
 
@@ -244,7 +250,8 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
     return out
 
 
-def run_paper_vintage(date_from: str, date_to: str) -> list[dict]:
+def run_paper_vintage(date_from: str, date_to: str,
+                      on_month=None) -> list[dict]:
     """ペーパーを**月次 vintage モデル**で埋める（`/tmp/race_type_board.npz` を使わない）。
 
     月 M のレースは `lgbm_wt_{eval,win}_mYYMM`（学習は M の前月末まで）でだけ採点する
@@ -267,9 +274,18 @@ def run_paper_vintage(date_from: str, date_to: str) -> list[dict]:
         print(f"[paper/vintage] {lo}〜{hi}  {eval_model} / {win_model}", flush=True)
         d = date.fromisoformat(lo)
         end = date.fromisoformat(hi)
+        month: list[dict] = []
         while d <= end:
-            out.extend(run_live(d.isoformat(), eval_model, win_model, mode="paper"))
+            month.extend(run_live(d.isoformat(), eval_model, win_model, mode="paper"))
             d += timedelta(days=1)
+        # 🔴 **月ごとに保存する。** 以前は全期間ぶんを溜めて最後に一括保存していたため、
+        #    VPS DB が一度でもタイムアウトすると**その実行ぶんが丸ごと消えた**
+        #    （2026-08-27 に実際に 2025-04〜06 が失われた）。長時間ジョブでは
+        #    「途中まで残ること」が復旧コストを決める。
+        if on_month is not None and month:
+            on_month(month)
+        else:
+            out.extend(month)
     return out
 
 
@@ -362,11 +378,35 @@ def main() -> None:
     ap.add_argument("--models", choices=("board", "vintage"), default="board",
                     help="paper の予測をどこから取るか。board=/tmp/race_type_board.npz "
                          "（四半期 walk-forward）/ vintage=月次 vintage モデル")
+    ap.add_argument("--n-entries", type=int, default=7, choices=(7, 9),
+                    help="対象の車数（既定7）。9 は成立性を測る検証用")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    global N_ENTRIES, MODE_TAG
+    N_ENTRIES = int(a.n_entries)
+    # 🔴 **7車以外は mode に車数を付けて保存する**（'paper9' 等）。
+    #    API と画面は mode='paper' / 'live' しか読まないので、検証行が
+    #    実地検証の最中の画面へ混ざらない。付け忘れると 9車の行が
+    #    7車の一覧・まとめ・合計表に**黙って混入する**。
+    MODE_TAG = "" if N_ENTRIES == 7 else str(N_ENTRIES)
+    if N_ENTRIES != 7:
+        print(f"⚠️ 検証モード: {N_ENTRIES}車。保存する mode は "
+              f"'{a.mode}{MODE_TAG}'（画面には出ません）")
     if a.mode == "paper":
         if not (a.date_from and a.date_to):
             raise SystemExit("--from と --to が要ります")
+        if a.models == "vintage" and not a.dry_run:
+            # 月ごとに保存して先へ進む（失敗しても直前の月までは残る）
+            total = 0
+
+            def _flush(month_rows: list[dict]) -> None:
+                nonlocal total
+                total += save(month_rows)
+                print(f"  … 月ぶん保存 累計 {total} 行", flush=True)
+
+            run_paper_vintage(a.date_from, a.date_to, on_month=_flush)
+            print(f"保存 {total} 行  rule_version={rule_version()}")
+            return
         rows = (run_paper_vintage(a.date_from, a.date_to) if a.models == "vintage"
                 else run_paper(a.date_from, a.date_to))
     else:
