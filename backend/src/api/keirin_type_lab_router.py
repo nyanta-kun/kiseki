@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -40,6 +40,8 @@ class TypeLabPick(BaseModel):
     race_no: int | None = None
     race_type: str | None = None
     day_index: int | None = None
+    #: 発走時刻（JST の "HH:MM"）。取れなければ None
+    start_time: str | None = None
     type_label: str
     axis_sum: float | None = None
     arare: int | None = None
@@ -133,14 +135,21 @@ class TypeLabResponse(BaseModel):
     picks: list[TypeLabPick]
 
 
+# 🔴 発走時刻は `type_lab_picks` に持たず **`wt_races` から都度引く**
+#    （出走変更で動くことがあり、行に焼き付けると古い時刻が残る）。
+#    `wt_races.start_at` は **UNIX 秒の文字列**なので JST の HH:MM へ直す。
 _SQL = text("""
-    SELECT race_key, race_date, venue_name, race_no, race_type, day_index,
-           type_label, axis_sum, arare, axis1, axis2, mode, plan_key, bet_type,
-           n_legs, budget, legs, pred_mean_payout, pred_min_payout,
-           settled_at, win_combo, hit, payout, final_odds, rule_version
-    FROM keirin.type_lab_picks
-    WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
-    ORDER BY race_date DESC, race_key, plan_key
+    SELECT p.race_key, p.race_date, p.venue_name, p.race_no, p.race_type, p.day_index,
+           p.type_label, p.axis_sum, p.arare, p.axis1, p.axis2, p.mode, p.plan_key,
+           p.bet_type, p.n_legs, p.budget, p.legs, p.pred_mean_payout, p.pred_min_payout,
+           p.settled_at, p.win_combo, p.hit, p.payout, p.final_odds, p.rule_version,
+           r.start_at
+    FROM keirin.type_lab_picks p
+    LEFT JOIN keirin.wt_races r ON r.race_key = p.race_key
+    WHERE p.mode = :mode AND p.race_date BETWEEN :d1 AND :d2
+    ORDER BY p.race_date DESC,
+             -- 発走の早い順に並べる（race_key は場コード順で時系列にならない）
+             NULLIF(r.start_at, '')::bigint NULLS LAST, p.race_key, p.plan_key
 """)
 
 
@@ -169,6 +178,20 @@ _SQL_SOLD = text("""
     WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
       AND status <> 'deleted'
 """)
+
+
+#: 日本標準時。`wt_races.start_at` は UNIX 秒なので、表示前にこれで直す。
+JST = timezone(timedelta(hours=9))
+
+
+def _hhmm(start_at: object) -> str | None:
+    """UNIX 秒（文字列）→ JST の "HH:MM"。読めなければ None。"""
+    if start_at in (None, ""):
+        return None
+    try:
+        return datetime.fromtimestamp(int(str(start_at)), JST).strftime("%H:%M")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 def _median(v: list[float]) -> float:
@@ -248,6 +271,7 @@ async def get_type_lab(
                 race_key=r["race_key"], race_date=str(r["race_date"]),
                 venue_name=r["venue_name"], race_no=r["race_no"],
                 race_type=r["race_type"], day_index=r["day_index"],
+                start_time=_hhmm(r.get("start_at")),
                 type_label=r["type_label"],
                 axis_sum=float(r["axis_sum"]) if r["axis_sum"] is not None else None,
                 arare=r["arare"], axis1=r["axis1"], axis2=r["axis2"],

@@ -89,3 +89,28 @@ def test_venue_options_are_built_before_filtering():
     fn = tree.body[0]
     names = [a.arg for a in fn.args.args] + [a.arg for a in fn.args.kwonlyargs]
     assert "venue" in names
+
+
+def test_start_time_is_converted_from_unix_seconds_to_jst():
+    """🔴 `wt_races.start_at` は **UNIX 秒の文字列**。そのまま出すと数字が並ぶ。
+
+    2026-08-27 の伊東1R は 1787787000 → JST 10:30。
+    """
+    from src.api.keirin_type_lab_router import _hhmm
+
+    assert _hhmm("1787795880") == "10:58"
+    assert _hhmm(1787795880) == "10:58"
+    # 読めない値は None（画面では "--:--" になる）。例外で 500 にしない
+    for bad in (None, "", "abc", "9" * 30):
+        assert _hhmm(bad) is None
+
+
+def test_picks_are_ordered_by_start_time():
+    """🔴 一覧は**発走の早い順**。`race_key` は場コード順なので時系列にならない。"""
+    from src.api.keirin_type_lab_router import _SQL
+
+    sql = str(_SQL)
+    assert "LEFT JOIN keirin.wt_races" in sql
+    i_date = sql.index("ORDER BY")
+    order = sql[i_date:]
+    assert "start_at" in order and order.index("start_at") < order.index("p.race_key")
