@@ -525,3 +525,58 @@ def test_nine_car_trifecta_odds_model_is_distributed():
     sh = (REPO / "scripts" / "sync_models_to_vps.sh").read_text(encoding="utf-8")
     assert '"odds_tf_n9.txt"' in sh
     assert '"odds_tf_meta.json"' in sh
+
+
+# ──────────────── 監査で見つかったテストの穴（2026-08-28） ────────────────
+#
+# 2026-08-28 の全体レビューで、次の変異を注入しても既存テストが**1本も落ちなかった**。
+# どれも「例外もログも出ずに商品が別物になる」型なので、経路を固定する。
+
+def test_axis_sum_firm_matches_the_production_constant():
+    """🔴 `AXIS_SUM_FIRM` は 7C の `RANK_7C_P3_SUM_MIN` と**同じ値**であること。
+
+    既存テストは「型判定が `AXIS_SUM_FIRM` を境に割れるか」しか見ておらず、
+    **定数自身と比べている**ので 1.44 → 1.30 に変えても通ってしまった。
+    型ラボは本番から import せずハードコードしているので、片方だけ動くと
+    静かに別の商品になる。
+
+    ⚠️ **値は同じでも「量」は違う。** 7C は `_gate_p3_sum`（較正後の
+       `p3_sum_top2_cal`）を 1.44 と比べ、型ラボは `lgbm_wt_eval` の**生の p3**
+       を比べている。決勝・上位グレードは較正で 0.01〜0.034 下がるため、
+       境界帯のレースが型ラボでは「堅い」側へ寄る（実測 paper 全体の 2.8%・
+       決勝の 5.7%）。**どちらを使うかは未決**（`docs/type_lab/audit_2026_08_28.md`）。
+    """
+    import re
+    src = (REPO / "src" / "strategy_wt.py").read_text(encoding="utf-8")
+    m = re.search(r"^RANK_7C_P3_SUM_MIN\s*=\s*([0-9.]+)", src, flags=re.M)
+    assert m, "RANK_7C_P3_SUM_MIN が見つからない"
+    assert AXIS_SUM_FIRM == float(m.group(1)), (AXIS_SUM_FIRM, m.group(1))
+
+
+def test_prob_top_takes_the_highest_probability_combos_first():
+    """🔴 B/C/E は「**確率上位**から積む」。並びを逆にしても既存テストは通っていた。
+
+    EV順・確率昇順にすると別の商品になる（SUMMARY §2.3: 型A の表示的中は
+    確率順 35.2% ↔ EV順 8.5%）。
+    """
+    shape = _shape()
+    # 予測オッズは全点同じにして、確率だけで順序が決まるようにする
+    perms = [p for p in itertools.permutations(range(1, 8), 3)]
+    pred = {p: 50.0 for p in perms}
+    prob = {p: 0.0 for p in perms}
+    want = [(1, 2, 3), (1, 2, 4), (1, 2, 5)]
+    for i, k in enumerate(want):
+        prob[k] = 0.9 - i * 0.1                      # 明確に上位3点
+    plan = PLANS["C_hit"]
+    legs = build_legs(shape, plan, pred, prob)
+    assert legs is not None
+    assert list(legs)[:3] == want, list(legs)[:3]
+
+
+def test_prob_top_respects_the_odds_band():
+    """帯（`min_odds`）より下の目を拾わないこと。"""
+    shape = _shape()
+    perms = [p for p in itertools.permutations(range(1, 8), 3)]
+    pred = {p: 5.0 for p in perms}                   # 全点が E_hit の 30倍未満
+    prob = {p: 0.01 for p in perms}
+    assert build_legs(shape, PLANS["E_hit"], pred, prob) is None

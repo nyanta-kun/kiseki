@@ -77,10 +77,15 @@ const yenShort = (n: number | null | undefined) =>
   n == null ? "—" : n >= 10000 ? `${(n / 10000).toFixed(1)}万` : `${Math.round(n).toLocaleString()}`;
 const pct = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(1)}%`);
 
+/** n 日前の ISO 日付（**端末のローカル時刻**）。
+ *  🔴 `toISOString()` を使わないこと。あれは UTC なので JST 09:00 より前は
+ *     日付が1日戻り、**07:15 の日次バッチ後〜09:00 の間は当日の実地が
+ *     既定の期間から外れて見えない**（`shiftISO` はローカル基準なので
+ *     ずれ方も食い違う）。 */
 function isoDaysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** ISO 日付を n 日ずらす。`Date` の月跨ぎ処理に任せる。 */

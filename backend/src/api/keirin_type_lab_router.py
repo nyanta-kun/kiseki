@@ -131,7 +131,9 @@ class TypeLabSummary(BaseModel):
     type_label: str
     bet_type: str
     n: int
+    #: このプランが**出た**日数（＝件/日 の分母ではない）
     n_days: int
+    #: 件/日。分母は **窓の中で型ラボが動いた日数**（プランが出なかった日も含む）
     per_day: float
     n_settled: int
     n_hit: int
@@ -239,6 +241,8 @@ class TypeLabResponse(BaseModel):
     date_from: str
     date_to: str
     rule_versions: list[str]
+    #: 行数上限（`ROW_CAP`）で切ったか。切れているとまとめの母集団も切れている
+    truncated: bool = False
     #: 期間内に出てくる競輪場（**絞り込み前**の全件から作る。
     #: 絞り込み後だと選んだ場しか候補に残らず、他の場へ切り替えられなくなる）
     venues: list[str]
@@ -264,7 +268,14 @@ _SQL = text("""
     ORDER BY p.race_date DESC,
              -- 発走の早い順に並べる（race_key は場コード順で時系列にならない）
              NULLIF(r.start_at, '')::bigint NULLS LAST, p.race_key, p.plan_key
+    LIMIT :cap
 """)
+
+#: 一覧が1回に引く行の上限。🔴 **`legs` を含むので行数がそのまま転送量になる**
+#: （実測: `mode=paper` の全期間 53,017行で **39MB・5.4秒**。同じ画面が `/combo` と
+#: `/outcome` も並行で叩く）。まとめの母集団が切られるので、**切ったことは
+#: `truncated` で必ず返す**（黙って減らすと「件数が少ない」としか見えない）。
+ROW_CAP = 20_000
 
 
 #: 現行の入稿優先順位（`keirin/src/netkeirin_submit_wt.RANK_ORDER` と同じ並び）。
@@ -363,8 +374,10 @@ async def get_type_lab(
     # 上の注記のとおり、渡す型はテーブルごとに違う。
 
     # type_lab_picks.race_date は DATE なので `datetime.date` で渡す
-    res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2})
+    res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2,
+                                  "cap": ROW_CAP})
     rows = [dict(r._mapping) for r in res]
+    truncated = len(rows) >= ROW_CAP
 
     # 🔴 選択肢は**絞り込む前**に作る。絞ってから作ると選んだ場しか残らず
     #    他の場へ切り替えられなくなる。
@@ -418,6 +431,13 @@ async def get_type_lab(
                 current=_current_of(current.get(r["race_key"]), sold.get(r["race_key"])),
             ))
 
+    # 🔴 **件/日 の分母は「窓の中で型ラボが動いた日数」**（2026-08-28 是正）。
+    #    プランごとに「そのプランが出た日数」で割ると、**出なかった日が分母から消えて
+    #    件/日 が過大になる**。実測（`paper9`・窓 323日）で D_hit 1.72 ↔ 0.56 /
+    #    A_hit 1.85 ↔ 0.74 と最大 3.1倍ずれていた。「1日あたり何件売れるか」は
+    #    本ページの筆頭の判断指標なので、稀なプランほど読めなくなるのが効く。
+    window_days = max(len({str(r["race_date"]) for r in rows}), 1)
+
     summaries: list[TypeLabSummary] = []
     for plan in sorted(by_plan, key=lambda p: (PLAN_ORDER.index(p)
                                                if p in PLAN_ORDER else 99, p)):
@@ -425,12 +445,15 @@ async def get_type_lab(
         days = {str(x["race_date"]) for x in g}
         st = [x for x in g if x["settled_at"] is not None]
         hits = [x for x in st if x["hit"]]
-        gami = [x for x in hits if (x["payout"] or 0) < x["budget"]]
+        # 🔴 **表示的中は `払戻 > 賭け金`**（`combine_plans` と同じ定義に揃える）。
+        #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
+        #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
+        gami = [x for x in hits if (x["payout"] or 0) <= x["budget"]]
         inv = sum(int(x["budget"]) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
         two = [x for x in hits if (x["payout"] or 0) >= 2 * int(x["budget"])]
         big = [x for x in hits if (x["payout"] or 0) >= 100_000]
-        nd = max(len(days), 1)
+        nd = window_days
         summaries.append(TypeLabSummary(
             plan_key=plan, type_label=g[0]["type_label"], bet_type=g[0]["bet_type"],
             n=len(g), n_days=len(days), per_day=round(len(g) / nd, 2),
@@ -447,7 +470,7 @@ async def get_type_lab(
         ))
 
     return TypeLabResponse(mode=mode, date_from=d1, date_to=d2,
-                           rule_versions=sorted(versions),
+                           rule_versions=sorted(versions), truncated=truncated,
                            venues=venues, venue=venue,
                            summaries=summaries,
                            comparison=_comparison(by_plan, current),
@@ -493,7 +516,8 @@ def _comparison(by_plan: dict[str, list[dict[str, Any]]],
 
         def _side(get_pay, get_inv, get_hit):
             hits = [p for p in pairs if get_hit(p)]
-            shown = [p for p in hits if get_pay(p) >= get_inv(p)]
+            # 表示的中は `払戻 > 賭け金`（summaries / combine_plans と同じ定義）
+            shown = [p for p in hits if get_pay(p) > get_inv(p)]
             two = [p for p in hits if get_pay(p) >= 2 * get_inv(p)]
             inv = sum(get_inv(p) for p in pairs)
             ret = sum(get_pay(p) for p in pairs)
