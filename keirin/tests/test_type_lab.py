@@ -311,3 +311,17 @@ def test_live_path_imports_resolve():
     from src.preprocessing.feature_wt import (  # noqa: F401
         build_features_wt, load_raw_data_wt, prepare_X,
     )
+
+
+def test_daily_batch_settles_today_as_well():
+    """🔴 日次バッチは**当日ぶんも採点する**こと。
+
+    レースは一日中終わり続けるので、前日ぶんだけを採点していると
+    その日の結果が翌朝まで画面に出ない（2026-08-27 に指摘を受けた）。
+    随時反映は `type_lab_settle.sh`（毎時）が担うが、日次側も当日を見ておく。
+    """
+    daily = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    assert 'settle_type_lab_picks.py --date "$YEST"' in daily
+    assert 'settle_type_lab_picks.py --date "$TODAY"' in daily
+    hourly = (REPO / "scripts" / "type_lab_settle.sh").read_text(encoding="utf-8")
+    assert "settle_type_lab_picks.py" in hourly and "date +%F" in hourly

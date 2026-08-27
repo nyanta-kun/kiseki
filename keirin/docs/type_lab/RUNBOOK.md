@@ -39,12 +39,17 @@ python scripts/build_type_lab_picks.py --mode live --date $(date +%F)
 python scripts/settle_type_lab_picks.py --date $(date -v-1d +%F)
 ```
 
-VPS の cron へ入れる場合（既存の keirin バッチと同じホスト cron）:
+VPS の cron（既存の keirin バッチと同じホスト cron）:
 
 ```cron
 # 型ラボ（検証用・入稿しない）
-15 7 * * * $KEIRIN_HOME/scripts/type_lab_daily.sh >> $KEIRIN_HOME/data/logs/cron.log 2>&1
+15 7 * * *  $KEIRIN_HOME/scripts/type_lab_daily.sh  >> $KEIRIN_HOME/data/logs/cron.log 2>&1
+# 🔴 当日の結果を随時反映する。日次バッチだけだと**その日の結果が翌朝まで画面に出ない**
+25 * * * *  $KEIRIN_HOME/scripts/type_lab_settle.sh >> $KEIRIN_HOME/data/logs/cron.log 2>&1
 ```
+
+⚠️ **採点は「着順が1〜3着そろい、かつ確定オッズが引けた」行だけを埋める。**
+   未確定は `settled_at` を空のまま残すので、1時間ごとに流しても二重採点は起きない。
 
 ## 3. 見る
 
