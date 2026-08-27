@@ -7,7 +7,16 @@ import {
   DateNav, addMonths, clampToToday, fmtYMD, nextDay, prevDay, toISODate,
 } from "@/components/KeirinDateNav";
 import Link from "next/link";
-import { Bike, HelpCircle, ChevronDown, ChevronUp, BarChart2, ClipboardCheck, Send } from "lucide-react";
+import {
+  BarChart2,
+  Bike,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCheck,
+  FlaskConical,
+  HelpCircle,
+  Send,
+} from "lucide-react";
 import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposalsCount, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
@@ -1744,7 +1753,11 @@ export default function KeirinPage() {
         <h1 className="text-xl font-extrabold tracking-widest text-gray-900 dark:text-white">KEIRIN</h1>
         {/* 導線は「成績・売上 / 入稿確認 / 推奨ガイド」の3つに絞る（2026-08-14）。
             入稿設定は日常的に触るものではないので**入稿確認ページの中**へ移した
-            （ヘッダーが増え続けるとモバイルで潰れる）。 */}
+            （ヘッダーが増え続けるとモバイルで潰れる）。
+            ⚠️ 2026-08-27 に「型ラボ」を**期間限定で4つ目**として足した。
+               既存商品の全面置き換えを検証している間だけの導線で、
+               検証が終わったら消すか常設の1つと入れ替えること。
+               モバイルではラベルを畳む（推奨ガイドと同じ扱い）。 */}
         <div className="ml-auto flex items-center gap-3">
           {/* 2026-08-03: netkeirin売上推移を /keirin/stats に追加したのに合わせ、
               ラベルを「成績グラフ」→「成績・売上」へ変更し、**モバイルでも常時表示**する
@@ -1791,6 +1804,15 @@ export default function KeirinPage() {
           >
             <HelpCircle size={15} />
             <span className="hidden sm:inline">推奨ガイド</span>
+          </Link>
+          {/* 型ラボ（検証用・入稿しない）。既存商品とは別テーブル・別ページ。 */}
+          <Link
+            href="/keirin/type-lab"
+            className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 transition-colors"
+            aria-label="型ラボ（検証用）"
+          >
+            <FlaskConical size={15} />
+            <span className="hidden sm:inline">型ラボ</span>
           </Link>
         </div>
       </div>
