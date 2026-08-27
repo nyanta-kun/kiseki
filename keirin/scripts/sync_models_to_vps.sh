@@ -138,10 +138,13 @@ PROD_FILES=(
   # 🔴 三連単は PR#316/#317（2026-08-26）で**入稿の配分そのもの**に使うようになった。
   #    無いと `predict_board` が `OddsPredictionUnavailable` を投げ、
   #    7T1/7T3/7H1 の買い目が組めない（＝その枠が黙って0件になる）。
-  # ⚠️ 9車（`odds_tf_n9.txt`）は**まだ本番に置いていない**。学習して
-  #    `data/models/` へ入れた時点で `tests/test_model_sync_coverage.py` が
-  #    「配布リストに無い」と落ちるので、そこで足すこと。
+  # 2026-08-28 追加: 9車（型ラボの 9車実投入で本番へ入れた。
+  #   `train_odds_prediction_tf.py --n-car 9 --train-end 2025-12-31`）。
+  #   これが無いと `type_lab_daily.sh` の 9車ぶんが毎朝まるごと落ちる。
+  # ⚠️ `odds_tf_meta.json` は**車数ぶんをマージした1ファイル**。片方だけ古いと
+  #    `target_sum(9)` が引けず 9車だけ例外になるので、モデルとメタは必ず一緒に送る。
   "odds_tf_n7.txt"
+  "odds_tf_n9.txt"
   "odds_tf_meta.json"
 )
 # 🔴 **GitHub Releases への配布は 2026-08-12 に停止した（既定 OFF）。**

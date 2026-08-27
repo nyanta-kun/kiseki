@@ -236,3 +236,61 @@ def test_axis_gate_is_applied_before_conflict_detection():
                 combine_at = node.lineno
     assert gate_at is not None and combine_at is not None
     assert gate_at < combine_at, "軸信頼ゲートは combine_plans より前に掛けること"
+
+
+# ──────────────────── 9車の実投入（2026-08-28） ────────────────────
+
+def test_axis_gate_does_not_apply_to_nine_car():
+    """🔴 軸信頼ゲートは**7車の探索窓の分位**なので9車には掛けない。
+
+    9車は同じプランでも軸信頼の分布が丸ごと低い（A_hit の p20 は 7車 1.537 ↔
+    9車 1.504 / F_hit は 1.230 ↔ 1.160）。そのまま当てると「下位1/5を外す」ではなく
+    **絶対値で切る**ことになり、doc が明確に否定した操作と同じになる。
+    9車の結論（ROI 83.0/89.1%）もゲート無しで測った数字。
+    """
+    from src.services.keirin_type_lab_gate import passes_axis_gate
+
+    # 7車なら落ちる値
+    assert passes_axis_gate("A_hit", 1.50, 7) is False
+    # 9車・車数不明は通す
+    assert passes_axis_gate("A_hit", 1.50, 9) is True
+    assert passes_axis_gate("A_hit", 1.50, None) is True
+    assert passes_axis_gate("F_hit", 1.00, 9) is True
+
+
+def test_combo_passes_the_car_count_to_the_gate():
+    """🔴 `passes_axis_gate` に車数を渡すこと。
+
+    渡し忘れても例外は出ず、9車の行が7車の閾値で静かに削られるだけになる
+    （件数が減った理由が画面からは読めない）。実装を構文で固定する。
+    """
+    import ast
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab_combo)
+    tree = ast.parse(src.lstrip())
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "passes_axis_gate"]
+    assert calls, "passes_axis_gate を呼んでいない"
+    for c in calls:
+        assert len(c.args) >= 3, "passes_axis_gate に車数を渡していない"
+    # 判定に使う列を SELECT していること（渡す式があっても列が無ければ常に None）
+    assert "n_entries" in str(m._SQL_COMBO), "_SQL_COMBO が n_entries を引いていない"
+
+
+def test_nine_car_live_mode_is_selectable():
+    """`live9` が3つのエンドポイントすべてで受け付けられること。
+
+    片方だけ足すと、一覧は9車が見えるのに答え合わせだけ 422 になる。
+    """
+    import typing
+
+    from src.api import keirin_type_lab_router as m
+
+    for fn in (m.get_type_lab, m.get_type_lab_combo, m.get_type_lab_outcome):
+        # ⚠️ ルーターは `from __future__ import annotations` なので注釈は**文字列**。
+        #    `inspect.signature(...).annotation` だと空集合になる（一度踏んだ）。
+        allowed = set(typing.get_args(typing.get_type_hints(fn)["mode"]))
+        assert {"live", "live9", "paper", "paper9"} <= allowed, (fn.__name__, allowed)

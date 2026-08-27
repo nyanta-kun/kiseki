@@ -60,14 +60,26 @@ AXIS_GATE_MIN: dict[str, float] = {
 AXIS_GATE_SOURCE_WINDOW = ("2025-01-01", "2025-12-31")
 #: 下位何割を外す設計か（表示・ドキュメント用）。
 AXIS_GATE_DROP_RATIO = 0.2
+#: 上の表を測った車数。**これ以外の車数には掛けない**（下記）。
+AXIS_GATE_N_ENTRIES = 7
 
 
-def passes_axis_gate(plan_key: str, axis_sum: float | None) -> bool:
+def passes_axis_gate(plan_key: str, axis_sum: float | None,
+                     n_entries: int | None = AXIS_GATE_N_ENTRIES) -> bool:
     """そのプランの軸信頼ゲートを通るか。
 
     🔴 **判定できないものは通す**（`True` を返す）。閾値を持たないプランや
        `axis_sum` が無い行を落とすと、ゲートを入れた瞬間に**理由の分からない
        件数減**が起きる。落とすなら「測って下だった」ときだけにする。
+
+    🔴 **7車以外は通す**（2026-08-28・9車の実投入）。`AXIS_GATE_MIN` は
+       **7車の探索窓のプラン内五分位**で、9車は同じプランでも axis_sum の分布が
+       丸ごと 0.02〜0.07 低い（例 A_hit の p20 は 7車 1.537 ↔ 9車 1.504、
+       F_hit は 1.230 ↔ 1.160）。そのまま当てると「下位1/5を外す」ではなく
+       **絶対値で切る**ことになり、doc が明確に否定した操作と同じになる。
+       9車の結論（型F を決勝の F_hit だけにして ROI 83.0/89.1%）も
+       **ゲート無しで測った数字**なので、未検証の操作を上へ重ねない。
+       車数別の閾値を置くなら、9車の探索窓で測り直してから。
 
     >>> passes_axis_gate("A_hit", 1.70)
     True
@@ -77,7 +89,15 @@ def passes_axis_gate(plan_key: str, axis_sum: float | None) -> bool:
     True
     >>> passes_axis_gate("知らないプラン", 0.1)
     True
+    >>> passes_axis_gate("A_hit", 1.50, 9)      # 9車は素通し
+    True
+    >>> passes_axis_gate("A_hit", 1.50, None)   # 車数が読めない行も素通し
+    True
     """
+    # 車数が違う／読めないものは通す（上の「判定できないものは通す」と同じ理由。
+    # `n_entries` は NULL を許す列なので、不明を落とす側に倒さない）。
+    if n_entries is None or int(n_entries) != AXIS_GATE_N_ENTRIES:
+        return True
     if axis_sum is None:
         return True
     floor = AXIS_GATE_MIN.get(plan_key)

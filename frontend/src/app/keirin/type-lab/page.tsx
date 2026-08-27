@@ -42,11 +42,13 @@ const PLAN_NOTE: Record<string, string> = {
   F_pay: "三連単 1着=軸1固定・2着2車 → 3着流し（一撃）",
 };
 
-/** モード。`paper9` は9車の検証行（`build_type_lab_picks --n-entries 9` が書く）。
- *  三連単の予測オッズ `odds_tf_n9`（2026-08-27 新設）が入ったので**8プランとも組める**。
- *  🔴 **7車の実地検証と混ぜて読まないこと。** 型の出方が違う（9車は F 大混戦が
- *     58% を占める ↔ 7車は 31%）ので、件数も配当帯も別物になる。 */
-type TypeLabMode = "live" | "paper" | "paper9";
+/** モード。`live9` / `paper9` は9車（`build_type_lab_picks --n-entries 9` が書く）。
+ *  🔴 **7車と混ぜて読まないこと。** 型の出方が違い（9車は F 大混戦が 58% を占める
+ *     ↔ 7車は 31%）、同じプランでも確定オッズの中央値が 2〜3倍違う。
+ *  ⚠️ `live9` は型F を**決勝の F_hit だけ**に絞った実投入ぶん（2026-08-28〜・
+ *     約 5.6件/日）。`paper9` は絞る前の**全8プラン**の検証行なので、
+ *     両者は規則が別世代（`rule_version` が違う）。 */
+type TypeLabMode = "live" | "live9" | "paper" | "paper9";
 
 /** 決着クラスの表示。サーバー（`keirin_type_lab_outcome.FINISH_CLASSES`）と対。
  *  🔴 key を増やしたら**両方**へ足すこと（片方だけだと「—」になって気づけない）。 */
@@ -108,6 +110,10 @@ export default function TypeLabPage() {
   // 軸信頼ゲート（検証中の候補・既定はOFF）。既存の行に後から当てるだけなので
   // 実地検証の最中でも買い目は一切作り直さない。
   const [axisGate, setAxisGate] = useState(false);
+  /** 9車のモードか。軸信頼ゲートの閾値は**7車の探索窓の分位**なので、
+   *  サーバー側（`passes_axis_gate`）が9車を素通しする。押しても効かない操作を
+   *  押せるままにしないため、UI でも無効にして理由を出す。 */
+  const isNineCar = mode === "live9" || mode === "paper9";
   // 型分けの答え合わせ。買い目を引かない軽い専用 API（本体とは別に読む）。
   const [outcome, setOutcome] = useState<TypeLabOutcomeResponse | null>(null);
   const [outcomeErr, setOutcomeErr] = useState<string | null>(null);
@@ -200,6 +206,17 @@ export default function TypeLabPage() {
           どちらも <code>keirin.type_lab_picks</code> にしか書かれず、一覧・統計・入稿には出ません。
         </p>
         <p className="px-3 pb-3 leading-relaxed">
+          <b>9車は別モード</b>です（2026-08-28 から実地も生成）。型分けは車数を分けずに
+          そのまま効きますが（同じ型なら 7車でも 9車でもそろい率が揃う）、
+          <b>配当帯が 2〜3 倍違う</b>ので混ぜて集計できません。
+          9車は<b>型F を決勝の F_hit だけ</b>に絞ってあります —
+          型F が母集団の 55〜59% を占めてそこが弱く、全8プランだと ROI 69.8/72.8% と
+          両窓とも壁の下になるためです（型F を外すと 5.6件/日・表示的中 22.9%・
+          ROI 83.0/89.1%）。決勝だけ残すのは<b>9車の決勝は 100% が型F</b> で、
+          表示的中 14〜21%・払戻中央 3.5〜5.2万円と型F 全体より良い側だから。
+          ⚠️ ただし 20か月で 66件（CI [24, 174]）なので<b>収支は判定できません</b>。
+        </p>
+        <p className="px-3 pb-3 leading-relaxed">
           プラン名の <b>_hit</b> と <b>_pay</b> は<b>同じ型に対する狙いの違い</b>です。
           <b>_hit</b> は当たる回数を取りにいく形（点数を広げる・低い帯）、
           <b>_pay</b> は1点あたりの購入額を増やして払戻を取りにいく形（点数を絞る）。
@@ -219,8 +236,9 @@ export default function TypeLabPage() {
             value={mode} onChange={(e) => setMode(e.target.value as TypeLabMode)}
           >
             <option value="live">実地（当日・本番モデル）</option>
+            <option value="live9">9車実地（当日・型Fは決勝のみ）</option>
             <option value="paper">ペーパー（過去・vintage）</option>
-            <option value="paper9">9車ペーパー（検証）</option>
+            <option value="paper9">9車ペーパー（全8プラン・検証）</option>
           </select>
           <button
             onClick={() => void load()} disabled={loading}
@@ -361,23 +379,36 @@ export default function TypeLabPage() {
           <div className="flex flex-wrap items-center gap-2 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-800">
             <button
               type="button" onClick={() => setAxisGate(!axisGate)}
-              role="switch" aria-checked={axisGate}
+              role="switch" aria-checked={axisGate} disabled={isNineCar}
               className={`shrink-0 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                axisGate
+                isNineCar
+                  ? "cursor-not-allowed border-gray-300 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
+                  : axisGate
                   ? "border-emerald-600 bg-emerald-600 font-semibold text-white"
                   : "border-gray-300 bg-white text-gray-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
               }`}
             >
-              {axisGate ? "✓ " : ""}軸信頼ゲート
+              {axisGate && !isNineCar ? "✓ " : ""}軸信頼ゲート
             </button>
             <span className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
-              各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位2割</b>のレースを外します。
-              {combo?.axis_gate && combo.n_axis_gated_out > 0 && (
-                <> — 今回 <b>{combo.n_axis_gated_out}件</b>を除外</>
+              {isNineCar ? (
+                <>
+                  <b>9車には掛かりません。</b>閾値は7車の探索窓のプラン内分位で、
+                  9車は同じプランでも軸信頼の分布が丸ごと低いため、当てると
+                  「下位2割を外す」ではなく<b>絶対値で切る</b>形になります
+                  （否定済みの操作）。9車の成績はゲート無しの数字です。
+                </>
+              ) : (
+                <>
+                  各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位2割</b>のレースを外します。
+                  {combo?.axis_gate && combo.n_axis_gated_out > 0 && (
+                    <> — 今回 <b>{combo.n_axis_gated_out}件</b>を除外</>
+                  )}
+                </>
               )}
             </span>
           </div>
-          {axisGate && (
+          {axisGate && !isNineCar && (
             <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
               🔬 <b>検証中の候補で、まだ採用ではありません。</b>
               20か月の台（探索 2025年 / 確認 2026年）で、ペーパーでは

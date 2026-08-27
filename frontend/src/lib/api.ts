@@ -1945,7 +1945,7 @@ export type TypeLabResponse = {
 };
 
 export async function fetchKeirinTypeLab(params: {
-  mode?: "paper" | "paper9" | "live"; dateFrom?: string; dateTo?: string;
+  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string;
   venue?: string; limit?: number;
 } = {}): Promise<TypeLabResponse> {
   const q = new URLSearchParams();
@@ -1978,7 +1978,7 @@ export type TypeLabComboResponse = {
 
 export async function fetchKeirinTypeLabCombo(params: {
   plans: string[];
-  mode?: "paper" | "paper9" | "live"; dateFrom?: string; dateTo?: string; venue?: string;
+  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string; venue?: string;
   axisGate?: boolean;
 }): Promise<TypeLabComboResponse> {
   const q = new URLSearchParams();
@@ -2018,7 +2018,7 @@ export type TypeLabOutcomeResponse = {
 };
 
 export async function fetchKeirinTypeLabOutcome(params: {
-  mode?: "paper" | "paper9" | "live"; dateFrom?: string; dateTo?: string; venue?: string;
+  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string; venue?: string;
 } = {}): Promise<TypeLabOutcomeResponse> {
   const q = new URLSearchParams();
   if (params.mode) q.set("mode", params.mode);

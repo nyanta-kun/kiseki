@@ -413,3 +413,115 @@ def test_backfill_predicts_a_whole_window_at_once():
     assert "day_to=hi" in src, "窓をまとめて渡していない"
     build = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
     assert "max_date=day_to or day" in build
+
+
+# ──────────────────── 9車の実投入（2026-08-28） ────────────────────
+#
+# 🔴 ここが崩れると、**測っていない買い方を9車で売る**ことになる。
+#    9車の全8プランは両窓とも壁の下（ROI 69.8% / 72.8%）で、型F を外して
+#    はじめて 83.0% / 89.1% になる。決勝だけ F_hit を残すのが実投入の形。
+#    実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
+
+def test_nine_car_type_f_is_sold_only_for_the_final():
+    """9車の型F は**決勝の F_hit だけ**。準決勝・予選では1つも出さない。"""
+    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_hit"]
+    for rt in ("準決勝", "一予選", "二予選", "選抜", "特選", "特秀", "一般", "", None):
+        assert plans_for("F", 9, rt) == [], f"9車の型F が {rt!r} で出ている"
+
+
+def test_nine_car_final_match_is_exact_not_substring():
+    """🔴 `"決勝" in race_type` は準決勝を拾う（CLAUDE.md の既知の罠）。
+
+    9車の準決勝は確認窓 ROI 50.3% で**向きが反転する**ので、部分一致に戻すと
+    決勝の3倍近い件数を壁の下の母集団から売ることになる。
+    """
+    assert plans_for("F", 9, "準決勝") == []
+    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_hit"]
+
+
+def test_nine_car_other_types_are_unchanged():
+    """型A〜E は9車でも 7車と同じ買い方を売る（絞るのは型F だけ）。"""
+    for t in "ABCDE":
+        for rt in ("決勝", "準決勝", "一予選", None):
+            assert ([p.key for p in plans_for(t, 9, rt)]
+                    == [p.key for p in plans_for(t)]), f"型{t} が9車で変わっている"
+
+
+def test_seven_car_is_untouched_by_the_nine_car_rule():
+    """🔴 7車の挙動を変えていないこと（実地検証が走っている最中の変更なので）。"""
+    for t in "ABCDEF":
+        base = [p.key for p in plans_for(t)]
+        assert [p.key for p in plans_for(t, 7, "決勝")] == base
+        assert [p.key for p in plans_for(t, 7, "準決勝")] == base
+        assert [p.key for p in plans_for(t, 7, None)] == base
+
+
+def test_rule_version_separates_car_counts():
+    """🔴 7車の版は変えず、9車だけ別世代にする。
+
+    7車 53,017行の版が動くと「規則が変わった」と誤読される（買い方は不変）。
+    逆に9車を同じ版のままにすると、**全8プランで作った `paper9` の行**と
+    決勝限定の `live9` が同じ世代に見えてしまう。
+    """
+    assert rule_version() == rule_version(7)
+    assert rule_version(9) != rule_version(7)
+
+
+def test_build_script_passes_car_count_and_race_type_to_plans_for():
+    """🔴 `plans_for` を素で呼ぶと 9車でも全8プランが出る。
+
+    規則は正本にあるのに**呼び出し側が引数を渡し忘れる**のがこの型の壊れ方で、
+    例外も件数の急増も出ない（9車が 5.6件/日 → 17.6件/日 になるだけ）。
+    """
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "plans_for"]
+    assert calls, "build_type_lab_picks.py が plans_for を呼んでいない"
+    for c in calls:
+        assert len(c.args) >= 3, "plans_for に車数と種別を渡していない"
+
+
+def test_build_script_stamps_the_car_specific_rule_version():
+    """`rule_version()` を素で呼ぶと 9車の行が 7車の版で保存される。"""
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for c in (n for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "rule_version"):
+        assert c.args, "rule_version に車数を渡していない"
+
+
+def test_daily_batch_builds_both_car_counts():
+    """日次バッチが 7車と9車を**別々に**組むこと（`live` と `live9` に分かれる）。"""
+    sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    build = [ln for ln in sh.splitlines() if "build_type_lab_picks.py" in ln]
+    assert len(build) == 2, f"生成の呼び出しが2本ない: {build}"
+    assert sum("--n-entries 9" in ln for ln in build) == 1
+    assert sum("--n-entries" not in ln for ln in build) == 1
+
+
+def test_daily_batch_does_not_let_nine_car_kill_the_settle():
+    """🔴 9車が落ちても採点まで止めない（`set -e` で打ち切られるため）。
+
+    9車は `data/models/odds_tf_n9.txt` が要るので、配布漏れで必ず落ちる日がある。
+    その日の7車の採点を巻き添えにしてはいけない。
+    """
+    sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    # ⚠️ 生の文字列位置で比べないこと（冒頭のコメントに同じ語が出てくる）。
+    cmds = [ln for ln in sh.splitlines() if not ln.lstrip().startswith("#")]
+    nine = next(i for i, ln in enumerate(cmds)
+                if "build_type_lab_picks.py" in ln and "--n-entries 9" in ln)
+    assert cmds[nine].lstrip().startswith("if !"), "9車の生成が set -e から守られていない"
+    settle = next(i for i, ln in enumerate(cmds) if "settle_type_lab_picks.py" in ln)
+    assert nine < settle, "9車の生成が採点より後にある"
+
+
+def test_nine_car_trifecta_odds_model_is_distributed():
+    """🔴 9車の三連単モデルが VPS への配布リストにあること。
+
+    無いと `predict_board` が例外を投げ、毎朝 9車ぶんだけが丸ごと消える
+    （PR#349 と同じ型の事故）。
+    """
+    sh = (REPO / "scripts" / "sync_models_to_vps.sh").read_text(encoding="utf-8")
+    assert '"odds_tf_n9.txt"' in sh
+    assert '"odds_tf_meta.json"' in sh
