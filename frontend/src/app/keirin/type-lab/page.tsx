@@ -364,7 +364,7 @@ export default function TypeLabPage() {
               {axisGate ? "✓ " : ""}軸信頼ゲート
             </button>
             <span className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
-              各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位4割</b>のレースを外します。
+              各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位2割</b>のレースを外します。
               {combo?.axis_gate && combo.n_axis_gated_out > 0 && (
                 <> — 今回 <b>{combo.n_axis_gated_out}件</b>を除外</>
               )}
@@ -373,10 +373,11 @@ export default function TypeLabPage() {
           {axisGate && (
             <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
               🔬 <b>検証中の候補で、まだ採用ではありません。</b>
-              ペーパーでは 51.1 → 29.5件/日・表示的中 24.5 → 27.8%・ROI 80.1 → 85.0%
-              （全体との差 +4.9pt CI[+0.1, +9.9]・無作為に同数を落とす対照20本に20/20で勝ち）。
-              ただし<b>確認窓を判断に使ってしまっており</b>、向きが両窓で一致するのは6プラン中3つです。
-              実地で確かめるために置いています。
+              20か月の台（探索 2025年 / 確認 2026年）で、ペーパーでは
+              49.7 → 39.2件/日・表示的中 25.3 → 27.1%・ROI 79.3 → 82.4%
+              （全体との差 +3.1pt CI[+1.3, +4.8]・無作為に同数を落とす対照20本に20/20で勝ち）。
+              外した側は ROI 67.8%・表示的中 18.6% とはっきり悪く、向きは6プラン中5つで
+              両窓一致します。実地で確かめるために置いています。
             </div>
           )}
 

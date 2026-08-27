@@ -27,11 +27,15 @@ WALL = 74.85
 BUDGET = 10_000
 
 
-def load() -> list[dict]:
+def load(d1: str | None = None, d2: str | None = None) -> list[dict]:
+    """窓は引数で受ける。**直書きにしない**（窓を伸ばしたときに測り直せなくなる）。"""
+    from race_filter import CONFIRM
+    d1 = d1 or CONFIRM[0]
+    d2 = d2 or CONFIRM[1]
     q = ("SELECT plan_key, race_date, bet_type, n_legs, budget, legs, win_combo, "
          "       final_odds, hit, payout "
          "FROM type_lab_picks WHERE mode='paper' AND settled_at IS NOT NULL "
-         "  AND race_date BETWEEN '2026-05-01' AND '2026-08-26'")
+         f"  AND race_date BETWEEN '{d1}' AND '{d2}'")
     cols = ("plan_key", "race_date", "bet_type", "n_legs", "budget", "legs",
             "win_combo", "final_odds", "hit", "payout")
     with get_connection() as c:
@@ -93,12 +97,14 @@ def simulate(rows: list[dict], k: int, order: str) -> dict:
 
 
 def main() -> None:
-    rows = load()
+    import sys as _s
+    w = (_s.argv[1], _s.argv[2]) if len(_s.argv) > 2 else (None, None)
+    rows = load(*w)
     by = defaultdict(list)
     for r in rows:
         by[r["plan_key"]].append(r)
     days = len({r["race_date"] for r in rows})
-    print(f"確認窓 2026-05-01〜08-26 / {days}日\n")
+    print(f"窓 {min(r['race_date'] for r in rows)}〜{max(r['race_date'] for r in rows)} / {days}日\n")
 
     for plan in sorted(by):
         base = by[plan]
