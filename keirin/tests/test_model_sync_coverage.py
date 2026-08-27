@@ -186,3 +186,45 @@ def test_odds_prediction_model_path_matches_sync_list():
         assert expected.parent == op.META_PATH.parent, (
             "モデルと meta が別ディレクトリを向いている"
         )
+
+
+def test_trifecta_odds_models_are_distributed():
+    """🔴 **三連単の予測オッズも配布すること**（2026-08-28 追加）。
+
+    2026-08-11 に三連複（`odds_trio_*`）を配布リストへ入れたとき、
+    **三連単（`odds_tf_*`）は入れ忘れていた**。VPS の `odds_tf_n7.txt` は
+    2026-08-13 に手で置かれたきり同期されず、Mac で再学習しても
+    **本番は古いモデルのまま黙って回り続ける**状態だった。
+
+    三連単は PR#316/#317（2026-08-26）で**入稿の配分そのもの**に使うようになったので、
+    配布漏れは「その枠が黙って0件になる」という実害になる。
+
+    ⚠️ 車数は `SUPPORTED_N_CAR` に増えても、**モデルを `data/models/` へ置くまでは
+       配布リストに要らない**（置いていないものを転送しようとしても意味がない）。
+       そこで「**このマシンに実体があるものは必ず配布リストにある**」を検査する。
+       9車を学習して本番へ入れた瞬間にこのテストが落ち、足し忘れを防ぐ。
+    """
+    from src import odds_prediction_tf as tf
+
+    sync = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert f'"{tf.META_PATH.name}"' in sync, (
+        f"{tf.META_PATH.name} が sync_models_to_vps.sh にありません"
+    )
+    missing = []
+    for n in tf.SUPPORTED_N_CAR:
+        name = f"odds_tf_n{n}.txt"
+        if (tf.MODEL_DIR / name).exists() and f'"{name}"' not in sync:
+            missing.append(name)
+    assert not missing, (
+        f"{missing} が sync_models_to_vps.sh の転送対象にありません。"
+        "配布されないと三連単の買い目が組めず、その枠が黙って0件になります"
+    )
+
+
+def test_trifecta_odds_model_path_matches_sync_list():
+    """`load_model()` が組み立てる名前と配布リストの名前が一致すること。"""
+    from src import odds_prediction_tf as tf
+
+    sync = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert '"odds_tf_n7.txt"' in sync, "7車の三連単モデルは常に配布対象"
+    assert tf.META_PATH.parent == tf.MODEL_DIR, "モデルと meta が別ディレクトリを向いている"
