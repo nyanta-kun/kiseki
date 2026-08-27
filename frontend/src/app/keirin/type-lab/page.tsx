@@ -145,15 +145,10 @@ export default function TypeLabPage() {
           <input type="date" className="min-w-0 flex-1 rounded border px-2 py-1.5 text-sm"
                  value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
-        <select
-          className="w-full rounded border px-2 py-1.5 text-sm"
-          value={venue} onChange={(e) => setVenue(e.target.value)}
-        >
-          <option value="">すべての競輪場{venueOptions.length ? `（${venueOptions.length}場）` : ""}</option>
-          {(venueOptions.length ? venueOptions : (data?.venues ?? [])).map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
+        <VenueTabs
+          venues={venueOptions.length ? venueOptions : (data?.venues ?? [])}
+          value={venue} onChange={setVenue}
+        />
         {data?.rule_versions?.length ? (
           <div className="text-[10px] text-slate-400">rule_version: {data.rule_versions.join(", ")}</div>
         ) : null}
@@ -292,6 +287,42 @@ export default function TypeLabPage() {
     </main>
   );
 }
+
+/** 競輪場の切り替え。**タブ + 「すべて」ボタン**（2026-08-27 ユーザー指定）。
+ *
+ * 場は日によって 3〜10 程度あり、スマホ幅では並びきらないので**横スクロール**にする。
+ * `-mx-*`＋`px-*` で端まで流し、スクロールできることが見た目で分かるようにしている。
+ */
+function VenueTabs({ venues, value, onChange }: {
+  venues: string[]; value: string; onChange: (v: string) => void;
+}) {
+  if (!venues.length) return null;
+  const item = (v: string, label: string) => {
+    const active = value === v;
+    return (
+      <button
+        key={v || "__all__"} type="button" onClick={() => onChange(v)}
+        aria-pressed={active}
+        className={`shrink-0 rounded-full border px-3 py-1 text-xs transition-colors ${
+          active
+            ? "border-indigo-600 bg-indigo-600 font-semibold text-white"
+            : "border-slate-300 bg-white text-slate-600 hover:border-indigo-400 hover:text-indigo-600"
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div className="-mx-3 overflow-x-auto px-3 sm:mx-0 sm:px-0">
+      <div className="flex w-max gap-1.5 pb-0.5">
+        {item("", `すべて（${venues.length}場）`)}
+        {venues.map((v) => item(v, v))}
+      </div>
+    </div>
+  );
+}
+
 
 function Section({ title, note, children }: {
   title: string; note?: string; children: React.ReactNode;
