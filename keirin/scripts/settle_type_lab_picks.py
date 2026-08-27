@@ -94,6 +94,7 @@ def main() -> None:
     print(f"対象 {len(targets)} 行 / {len(keys)} レース  着順確定 {len(fin)}")
 
     n_ok = n_wait = 0
+    updates: list[tuple] = []
     with get_connection() as c:
         for t in targets:
             f = fin.get(t["race_key"])
@@ -111,11 +112,16 @@ def main() -> None:
                 n_wait += 1
                 continue
             payout = int(round(hit["stake"] * o)) if hit else 0
-            c.execute(
-                "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
-                "hit = ?, payout = ?, final_odds = ? WHERE id = ?",
-                (win, 1 if hit else 0, payout, float(o) if (hit and o) else None, t["id"]))
+            # 🔴 `hit` は PostgreSQL では boolean。1/0 を渡すと
+            #    DatatypeMismatch で落ちる（SQLite では通るので気づきにくい）。
+            updates.append((win, bool(hit), payout,
+                            float(o) if (hit and o) else None, t["id"]))
             n_ok += 1
+        # 1行ずつ UPDATE すると 16,000 行で数分かかる（VPS への往復）。まとめて送る。
+        if updates:
+            c.executemany(
+                "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
+                "hit = ?, payout = ?, final_odds = ? WHERE id = ?", updates)
         c.commit()
     print(f"採点 {n_ok} 行 / 保留 {n_wait} 行（着順または確定オッズ待ち）")
 
