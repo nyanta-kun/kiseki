@@ -23,8 +23,16 @@ from src.database import get_connection  # noqa: E402
 PLANS = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit")
 #: 控除率の壁（三連単 74.85% / 三連複 74.6% 前後）。ここを超えないと意味がない。
 WALL = 74.85
-EXPLORE = ("2026-01-01", "2026-04-30")
-CONFIRM = ("2026-05-01", "2026-08-26")
+# 🔴 **窓は 2026-08-27 に伸ばした**（2025年ぶんを vintage オッズで生成）。
+#    以前は 探索 2026-01〜04 / 確認 2026-05〜08 の各4か月しかなかった。
+#    いまは 探索=2025年（12か月・未使用）/ 確認=2026年（8か月）。
+#    ⚠️ 2026年は 2026-08-27 の一連の検証で既に見ている。**そこで作った閾値の
+#       再評価には使えない**が、2025年から作り直した新しい閾値の評価には使える。
+import os as _os
+EXPLORE = (_os.environ.get("TL_EX_FROM", "2025-01-01"),
+           _os.environ.get("TL_EX_TO", "2025-12-31"))
+CONFIRM = (_os.environ.get("TL_CF_FROM", "2026-01-01"),
+           _os.environ.get("TL_CF_TO", "2026-08-26"))
 
 
 def load() -> list[dict]:
