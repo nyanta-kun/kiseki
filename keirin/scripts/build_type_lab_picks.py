@@ -168,18 +168,23 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
 # ───────────────────────── live（本番モデル） ─────────────────────────
 
 def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
-                  win_model: str = "lgbm_wt_win") -> tuple[dict, dict]:
-    """指定日の {race_key: {車番: 3着内率}} と {race_key: {車番: 1着率}}。
+                  win_model: str = "lgbm_wt_win",
+                  day_to: str | None = None) -> tuple[dict, dict]:
+    """指定期間の {race_key: {車番: 3着内率}} と {race_key: {車番: 1着率}}。
 
     🔴 `run_live` と**答え合わせのバックフィル**の両方がここを呼ぶ。
        別々に書くと「行を作ったときの並び」と「後から復元した並び」がずれる。
+    ⚠️ `day_to` を渡すと `day`〜`day_to` をまとめて1回で予測する。特徴量の構築は
+       期間の長さにほとんど比例しない（履歴の読み込みが支配的）ので、
+       過去のバックフィルは**1日ずつ回すより桁で速い**。同じモデルで良い期間
+       （＝同じ vintage 窓の中）でだけまとめること。
     """
     from src.models.trainer import load_model
     from src.preprocessing.feature_wt import (
         build_features_wt, load_raw_data_wt, prepare_X,
     )
 
-    feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day))
+    feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day_to or day))
     if feats is None or not len(feats):
         return {}, {}
     X = prepare_X(feats)
