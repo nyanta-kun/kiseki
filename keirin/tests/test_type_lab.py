@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.type_lab import (  # noqa: E402
-    AXIS_SUM_FIRM, BEHIND_MID, BUDGET, PLANS, allocate, build_legs,
+    AXIS_SUM_FIRM, BEHIND_MID, BUDGET, PLANS, UNIT, allocate, build_legs,
     mean_expected_payout, min_expected_payout, plans_for, race_shape, rule_version,
 )
 
@@ -580,3 +580,65 @@ def test_prob_top_respects_the_odds_band():
     pred = {p: 5.0 for p in perms}                   # 全点が E_hit の 30倍未満
     prob = {p: 0.01 for p in perms}
     assert build_legs(shape, PLANS["E_hit"], pred, prob) is None
+
+
+def test_allocate_drops_legs_that_would_get_zero_yen():
+    """🔴 賭け金 0 円の点を返さない（2026-08-28）。
+
+    ダッチ配分では極端に高い予測オッズの点の取り分が 1 単位（100円）に満たず
+    0 円になる。実測で **B_hit の 61.7%（3,052行）** がこれを含み、
+    `pred_min_payout` の中央値が 0円、`pred_mean_payout` が設計の床（3万円）を
+    下回っていた。
+    """
+    plan = PLANS["B_hit"]
+    legs = [(1, 2, 3), (1, 2, 4), (1, 2, 5), (1, 2, 6)]
+    pred = {(1, 2, 3): 6.0, (1, 2, 4): 10.0, (1, 2, 5): 20.0,
+            (1, 2, 6): 4742.0}          # ← 4,742倍は 1単位に届かない
+    prob = {c: 0.1 for c in legs}
+    st = allocate(legs, pred, prob, plan)
+    assert st is not None
+    assert (1, 2, 6) not in st, "0円の点が残っている"
+    assert all(v > 0 for v in st.values())
+    assert sum(st.values()) == BUDGET, "落としたぶんが予算から漏れている"
+
+
+def test_dropping_zero_legs_barely_moves_the_money():
+    """⚠️ 商品の変更ではなく記録の是正。落としても他の点の配分はほぼ動かない。"""
+    plan = PLANS["B_hit"]
+    keep = [(1, 2, 3), (1, 2, 4), (1, 2, 5)]
+    pred = {(1, 2, 3): 6.0, (1, 2, 4): 10.0, (1, 2, 5): 20.0}
+    prob = {c: 0.1 for c in keep}
+    before = allocate(keep, pred, prob, plan)
+    after = allocate(keep + [(1, 2, 6)], {**pred, (1, 2, 6): 4742.0},
+                     {**prob, (1, 2, 6): 0.0001}, plan)
+    assert before is not None and after is not None
+    for c in keep:
+        assert abs(before[c] - after[c]) <= UNIT, (c, before[c], after[c])
+
+
+def test_allocate_keeps_every_leg_when_all_are_funded():
+    """0円が出ないときは1点も落とさない（点数を勝手に減らさない）。"""
+    plan = PLANS["B_hit"]
+    legs = [(1, 2, 3), (1, 2, 4), (1, 2, 5)]
+    pred = {(1, 2, 3): 6.0, (1, 2, 4): 10.0, (1, 2, 5): 20.0}
+    st = allocate(legs, pred, {c: 0.1 for c in legs}, plan)
+    assert st is not None and set(st) == set(legs)
+
+
+def test_conf_allocation_never_produces_zero_legs():
+    """信頼度傾斜は床が 1単位以上を保証するので、そもそも 0 円が出ない。"""
+    shape = _shape()
+    pred = {(1, 2, c): 10.0 + c for c in (3, 4, 5)}
+    st = allocate([(1, 2, 3), (1, 2, 4), (1, 2, 5)], pred,
+                  {c: 0.1 for c in pred}, PLANS["A_hit"])
+    assert st is not None and all(v > 0 for v in st.values())
+    assert shape is not None
+
+
+def test_build_script_records_the_funded_legs_only():
+    """🔴 `rows_for_race` は `legs` ではなく `stakes` を見ること。
+
+    `legs` のまま回すと**買っていない点を記録する**（`n_legs` も想定払戻もずれる）。
+    """
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    assert "legs = [c for c in legs if c in stakes]" in src
