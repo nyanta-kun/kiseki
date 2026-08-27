@@ -56,7 +56,16 @@ for t, (a, b, c) in enumerate(CANON):
     j = C3IDX[frozenset((a, b, c))]
     with np.errstate(divide="ignore", invalid="ignore"):
         q3[:, j] += np.where(PO[:, t] > 0, 1.0 / PO[:, t], 0.0)
-TRIO_PO = np.where(q3 > 0, PAYBACK / q3, np.nan).astype(np.float32)
+# 🔴 **`PAYBACK / q3` と書いてはいけない**（2026-08-28 是正）。
+#    PO_perm = 払戻率/p_perm なので Σ_perm(1/PO) = P(trio)/払戻率。よって
+#    三連複の予測オッズ = 払戻率/P(trio) = **1/Σ(1/PO)**。払戻率を掛けると
+#    二重になり一律 0.75 倍ずれる（`build_type_lab_picks._fold_to_trio` の
+#    docstring に同じ罠が書いてあるのに、こちらだけ直っていなかった）。
+#    ⚠️ 現物の `/tmp/race_type_board.npz` は 1/q3 で作られている（実測: 保存値と
+#       1/q3 の比が中央 1.0000000058）。この行が 0.75 のままだと、台を作り直した
+#       瞬間に三連複の予測オッズが一律 25% 下がり、平均想定払戻ゲートも
+#       `docs/type_lab/type_d.md` の数値も**エラー無しで別物になる**。
+TRIO_PO = np.where(q3 > 0, 1.0 / q3, np.nan).astype(np.float32)
 
 # ── DB: 三連複の確定オッズ と 遅れ率 ──
 con = psycopg2.connect(os.environ["KEIRIN_DB_URL"])

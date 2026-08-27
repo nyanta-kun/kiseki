@@ -54,6 +54,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 from src.database import get_connection  # noqa: E402
+from src.result_top3 import representative, winning_trifectas  # noqa: E402
 
 #: 復元ソースが正しいかの判定線（先頭2つの食い違い率・%）。
 #: 🔴 「行が合っているか」ではなく「**ソースが正しいか**」を見るための数字。
@@ -104,18 +105,30 @@ def fill_win_tf_odds(date_from: str, date_to: str, mode: str | None) -> None:
 
 
 def _finish(keys: list[str]) -> dict[str, tuple[int, int, int]]:
-    """{race_key: (1着, 2着, 3着)}。1〜3着がそろったレースだけ。"""
-    out: dict[str, dict[int, int]] = defaultdict(dict)
+    """{race_key: 決着の代表 (1着, 2着, 3着)}。3着以内が3車そろったレースだけ。
+
+    🔴 `{着順: 車番}` の辞書にしないこと。同着では2車が同じ着順を持つので
+       後勝ちで片方が消え、しかも並び順まかせで非決定的になる。当たり目の生成は
+       `src/result_top3.py` が正本（`settle_type_lab_picks` と同じ）。
+    ⚠️ ここが要るのは `win_tf_odds`（**レース単位の荒れ具合**）だけなので、
+       同着では `representative()` で代表を1つ選ぶ。払戻の判定には使わない。
+    """
+    out: dict[str, list[tuple[int, int]]] = defaultdict(list)
     with get_connection() as c:
         for i in range(0, len(keys), 900):
             ch = keys[i:i + 900]
-            q = ("SELECT race_key, frame_no, finish_order FROM wt_entries "
+            q = ("SELECT race_key, finish_order, frame_no FROM wt_entries "
                  f"WHERE race_key IN ({','.join('?' * len(ch))}) "
-                 "AND finish_order IS NOT NULL")
-            for rk, fn, fo in c.execute(q, ch).fetchall():
-                out[rk][int(fo)] = int(fn)
-    return {k: (v[1], v[2], v[3]) for k, v in out.items()
-            if all(i in v for i in (1, 2, 3))}
+                 "AND finish_order BETWEEN 1 AND 3 "
+                 "ORDER BY race_key, finish_order, frame_no")
+            for rk, fo, fn in c.execute(q, ch).fetchall():
+                out[rk].append((int(fo), int(fn)))
+    res: dict[str, tuple[int, int, int]] = {}
+    for k, v in out.items():
+        rep = representative(winning_trifectas(v))
+        if rep:
+            res[k] = tuple(rep)
+    return res
 
 
 def _tf_odds(keys: list[str], fin: dict) -> dict[str, float]:
