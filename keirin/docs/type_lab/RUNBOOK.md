@@ -43,10 +43,25 @@ python scripts/settle_type_lab_picks.py --from 2026-01-01 --to 2026-08-26
 
 ```bash
 cd keirin
-python scripts/build_type_lab_picks.py --mode live --date $(date +%F)
+python scripts/build_type_lab_picks.py --mode live --date $(date +%F)              # 7車 → mode='live'
+python scripts/build_type_lab_picks.py --mode live --date $(date +%F) --n-entries 9  # 9車 → mode='live9'
 ```
 
-翌朝、前日ぶんを採点する。
+🔴 **9車は 2026-08-28 から実投入**（`type_lab_daily.sh` が上の2本を回す）。
+`--n-entries 9` を付けると **型F は決勝の `F_hit` だけ**になる（判定は
+`src/type_lab.plans_for`）。全8プランのままだと ROI 69.8%/72.8% で両窓とも壁の下。
+実測: `carcount_2026_08_27.md` 追記 / 実装した規則を `paper9` へ当て直すと
+探索 5.51件/日・ROI 83.3% / 確認 5.97件/日・ROI 89.7%。
+
+🔴 **9車には `data/models/odds_tf_n9.txt` が要る**（本番版は 2026-08-28 学習・
+train_end 2025-12-31・`sync_models_to_vps.sh` の配布リストに入っている）。
+無いと `predict_board` が例外を投げ、9車ぶんが毎朝まるごと落ちる。
+日次バッチは 9車の失敗で**採点を巻き添えにしない**ようガードしてある。
+
+🔴 **軸信頼ゲートは9車には掛からない**（閾値が7車の探索窓の分位のため。
+`backend/src/services/keirin_type_lab_gate.py`）。画面でもトグルが無効になる。
+
+翌朝、前日ぶんを採点する（**mode を見ないので 9車も同じ経路で埋まる**）。
 
 ```bash
 python scripts/settle_type_lab_picks.py --date $(date -v-1d +%F)

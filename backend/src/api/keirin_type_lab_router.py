@@ -5,7 +5,23 @@
    型ラボは「既存商品の全面置き換え」を前提にした検証中の設計で、
    ペーパー検証（過去）と実地検証（当日）を混ぜずに見るための窓口。
 
-設計と実測: `keirin/docs/type_lab/SUMMARY.md`
+## モード（`mode`）
+
+| 値 | 中身 |
+|---|---|
+| `live` | 7車・当日・本番モデル |
+| `live9` | **9車・当日**（2026-08-28 実投入。型F は決勝の `F_hit` だけ） |
+| `paper` | 7車・過去・vintage |
+| `paper9` | 9車・過去・**全8プラン**（型F を絞る前の検証行） |
+
+🔴 **7車と9車は別モードのまま混ぜない。** 同じ `plan_key` でも確定オッズの中央値が
+   2〜3倍違う（型A 18.6 ↔ 27.7倍 / 型F 58.7 ↔ 101.9倍）ので、
+   まとめの「件/日・払戻中央・ROI」がどちらの話か読めなくなる。
+⚠️ `live9` と `paper9` は**規則が別世代**（`rule_version` が違う）。`paper9` は
+   型F を全部売っていたときの行。
+
+設計と実測: `keirin/docs/type_lab/SUMMARY.md` /
+`keirin/docs/type_lab/carcount_2026_08_27.md`
 """
 from __future__ import annotations
 
@@ -283,7 +299,7 @@ _SQL_SOLD = text("""
 # （この repo の既存クエリと同じ形）。
 _SQL_COMBO = text("""
     SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout,
-           axis_sum
+           axis_sum, n_entries
     FROM keirin.type_lab_picks
     WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
       AND plan_key = ANY(:plans)
@@ -332,7 +348,7 @@ def _rank_pos(rank: str) -> int:
 
 @router.get("", response_model=TypeLabResponse)
 async def get_type_lab(
-    mode: Literal["paper", "paper9", "live"] = "live",
+    mode: Literal["paper", "paper9", "live", "live9"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
@@ -546,7 +562,7 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
 @router.get("/combo", response_model=ComboResponse)
 async def get_type_lab_combo(
     plans: str = Query("", description="カンマ区切りのプラン（例 'A_hit,B_hit'）"),
-    mode: Literal["paper", "paper9", "live"] = "live",
+    mode: Literal["paper", "paper9", "live", "live9"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),
@@ -581,8 +597,11 @@ async def get_type_lab_combo(
     n_gated = 0
     if axis_gate:
         before = len(rows)
+        # 🔴 **車数を渡すこと。** 閾値は7車の探索窓の分位なので、9車へ当てると
+        #    「下位1/5を外す」ではなく絶対値で切る形になる（`passes_axis_gate` 参照）。
         rows = [r for r in rows
-                if passes_axis_gate(str(r["plan_key"]), r["axis_sum"])]
+                if passes_axis_gate(str(r["plan_key"]), r["axis_sum"],
+                                    r.get("n_entries"))]
         n_gated = before - len(rows)
 
     detail, total, n_conflict, n_days = combine_plans(rows)
@@ -605,7 +624,7 @@ _SQL_OUTCOME = text("""
 
 @router.get("/outcome", response_model=TypeLabOutcomeResponse)
 async def get_type_lab_outcome(
-    mode: Literal["paper", "paper9", "live"] = "live",
+    mode: Literal["paper", "paper9", "live", "live9"] = "live",
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),

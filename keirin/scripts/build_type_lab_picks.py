@@ -45,10 +45,12 @@ from src.type_lab import (                          # noqa: E402
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
 PAYBACK = 0.75
-#: 対象の車数。**既定は7**（設計・検証とも7車）。`--n-entries 9` は9車での
-#: 成立性を測る検証用で、日次バッチは 7 のまま。
-#: 🔴 9車は `odds_tf_n9` が要る（2026-08-28 新設）。無ければ `predict_board` が
-#:    例外を投げるので、黙って0件にはならない。
+#: 対象の車数。**既定は7**。`--n-entries 9` で9車を組む（2026-08-28 実投入。
+#: 日次バッチ `type_lab_daily.sh` が 7車と9車を別々に1回ずつ回す）。
+#: 🔴 **売るものは車数で違う**。9車の型F は決勝の `F_hit` だけで、それ以外の
+#:    型F は出さない（判定は `src.type_lab.plans_for`）。
+#: 🔴 9車は `odds_tf_n9` が要る。無ければ `predict_board` が例外を投げるので、
+#:    黙って0件にはならない（レースごとに skip の行がログへ出る）。
 N_ENTRIES = 7
 #: 保存する mode に付ける接尾辞（7車は空）。
 MODE_TAG = ""
@@ -72,7 +74,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         return []
     trio_odds, trio_prob = _fold_to_trio(tf_odds, tf_prob)
     out = []
-    for plan in plans_for(shape.type_label):
+    # 🔴 **車数と種別を渡すこと。** 9車の型F は決勝の F_hit だけを売る規則が
+    #    ここでしか効かない（`plans_for` を素で呼ぶと 9車でも全8プラン出る）。
+    for plan in plans_for(shape.type_label, N_ENTRIES, meta.get("race_type")):
         odds = trio_odds if plan.bet_type == "trio" else tf_odds
         prob = trio_prob if plan.bet_type == "trio" else tf_prob
         legs = build_legs(shape, plan, odds, prob)
@@ -104,7 +108,7 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             legs=json.dumps(detail, ensure_ascii=False),
             pred_mean_payout=round(mean_expected_payout(stakes, odds), 1),
             pred_min_payout=round(min_expected_payout(stakes, odds), 1),
-            rule_version=rule_version(),
+            rule_version=rule_version(N_ENTRIES),
         ))
     return out
 
@@ -379,19 +383,20 @@ def main() -> None:
                     help="paper の予測をどこから取るか。board=/tmp/race_type_board.npz "
                          "（四半期 walk-forward）/ vintage=月次 vintage モデル")
     ap.add_argument("--n-entries", type=int, default=7, choices=(7, 9),
-                    help="対象の車数（既定7）。9 は成立性を測る検証用")
+                    help="対象の車数（既定7）。9 は型F を決勝の F_hit だけに絞って組む")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     global N_ENTRIES, MODE_TAG
     N_ENTRIES = int(a.n_entries)
-    # 🔴 **7車以外は mode に車数を付けて保存する**（'paper9' 等）。
-    #    API と画面は mode='paper' / 'live' しか読まないので、検証行が
-    #    実地検証の最中の画面へ混ざらない。付け忘れると 9車の行が
-    #    7車の一覧・まとめ・合計表に**黙って混入する**。
+    # 🔴 **7車以外は mode に車数を付けて保存する**（'live9' / 'paper9'）。
+    #    付け忘れると 9車の行が 7車の一覧・まとめ・合計表へ**黙って混入する**。
+    #    分ける理由は隠すためではなく、**同じ plan_key でも配当帯が 2〜3倍違う**から
+    #    （型A 18.6倍 ↔ 27.7倍 / 型F 58.7倍 ↔ 101.9倍）。混ぜると
+    #    「1日あたり何件・いくら返る」がどちらの話か読めなくなる。
+    #    画面のモード選択には 7車とは別の項目として出る。
     MODE_TAG = "" if N_ENTRIES == 7 else str(N_ENTRIES)
     if N_ENTRIES != 7:
-        print(f"⚠️ 検証モード: {N_ENTRIES}車。保存する mode は "
-              f"'{a.mode}{MODE_TAG}'（画面には出ません）")
+        print(f"⚠️ {N_ENTRIES}車。保存する mode は '{a.mode}{MODE_TAG}'")
     if a.mode == "paper":
         if not (a.date_from and a.date_to):
             raise SystemExit("--from と --to が要ります")
@@ -405,7 +410,7 @@ def main() -> None:
                 print(f"  … 月ぶん保存 累計 {total} 行", flush=True)
 
             run_paper_vintage(a.date_from, a.date_to, on_month=_flush)
-            print(f"保存 {total} 行  rule_version={rule_version()}")
+            print(f"保存 {total} 行  rule_version={rule_version(N_ENTRIES)}")
             return
         rows = (run_paper_vintage(a.date_from, a.date_to) if a.models == "vintage"
                 else run_paper(a.date_from, a.date_to))
@@ -418,7 +423,7 @@ def main() -> None:
     if a.dry_run:
         print(f"[dry-run] {len(rows)} 行（保存しない）")
         return
-    print(f"保存 {save(rows)} 行  rule_version={rule_version()}")
+    print(f"保存 {save(rows)} 行  rule_version={rule_version(N_ENTRIES)}")
 
 
 if __name__ == "__main__":

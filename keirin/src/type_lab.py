@@ -31,6 +31,12 @@
 🔴 **配分はダッチ（∝1/予測オッズ）か信頼度傾斜**。均等は全型でガミ 12〜66%。
    信頼度傾斜の床 m は「当たったら最低 m 倍」の安全余裕で、**予測が中央 0.87 倍に下振れる
    （勝者の呪い）ので m=1.0 では実ガミが消えない**。既定は 1.3。
+
+## 車数（2026-08-28 に 9車を追加）
+
+**型判定は車数で分けない**（同じ型なら車数が違ってもそろい率が揃い、プールしても
+A 67.16% → F 38.37% と単調。境界 1.44 も据え置き）。分かれるのは**売るもの**だけで、
+それは `plans_for()` が車数と種別を見て決める。7車の挙動は変えていない。
 """
 from __future__ import annotations
 
@@ -49,7 +55,6 @@ BEHIND_MID = 11.0
 #: 信頼度傾斜の既定の床（＝当たったら最低この倍率を予測ベースで確保する）。
 DEFAULT_FLOOR_MULT = 1.3
 
-PERMS3 = list(itertools.permutations(range(1, 8), 3))
 
 
 # ───────────────────────────── 型判定 ─────────────────────────────
@@ -162,8 +167,49 @@ PLANS: dict[str, Plan] = {
 }
 
 
-def plans_for(type_label: str) -> list[Plan]:
-    return [p for p in PLANS.values() if p.type_label == type_label]
+#: 9車で型F を売る条件。**決勝だけ・`F_hit` だけ**（2026-08-28 実投入）。
+#:
+#: 🔴 9車は**型F が母集団の 55〜59%** を占め、そこが弱い
+#:    （型F 11.9件/日・表示的中 11.55%・ROI 65.1%）。全8プランのままだと
+#:    ROI 69.8%/72.8% と**両窓とも壁の下**になる。型F を外すと 5.6件/日・
+#:    表示的中 22.89%・ROI 83.0%/89.1%。
+#: 🔴 打ち手（相手を増やす／荒れ度で切る／1着固定フォーメーション）は3通りとも壁を
+#:    超えない。同じフォーメーションが**7車では ROI 77.0%** なので、
+#:    形ではなく **9車の型F という母集団が薄い**。
+#: 🟢 例外が決勝。**9車の決勝は 100% が型F** で、現行 `F_hit` のまま
+#:    表示的中 14〜21%・払戻中央 3.5〜5.2万円と型F 全体より良い側にある
+#:    （⚠️ 20か月で 66件・CI [24,174] なので**収支は判定できない**。
+#:    「看板レースは必ず出す」方針と衝突しないから残す、という判断）。
+#: 🔴 **「決勝」は完全一致で見ること。** `"決勝" in race_type` は準決勝も拾う
+#:    （CLAUDE.md の既知の罠。9車の準決勝は確認窓 ROI 50.3% で反転する）。
+#:
+#: 実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
+NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
+NINE_CAR_TYPE_F_PLANS = ("F_hit",)
+
+
+def plans_for(type_label: str, n_entries: int = 7,
+              race_type: str | None = None) -> list[Plan]:
+    """その型で売る買い方。**車数と種別で売らないものを外す**。
+
+    7車は `PLANS` をそのまま返す（実投入前と同じ挙動）。9車だけ、型F を
+    `NINE_CAR_TYPE_F_*` の条件へ絞る。
+
+    >>> [p.key for p in plans_for("F")]
+    ['F_hit', 'F_pay']
+    >>> [p.key for p in plans_for("F", 9, "決勝")]
+    ['F_hit']
+    >>> plans_for("F", 9, "準決勝")
+    []
+    >>> [p.key for p in plans_for("A", 9, "特選")]
+    ['A_hit', 'A_pay']
+    """
+    plans = [p for p in PLANS.values() if p.type_label == type_label]
+    if n_entries == 9 and type_label == "F":
+        if str(race_type or "") not in NINE_CAR_TYPE_F_RACE_TYPES:
+            return []
+        return [p for p in plans if p.key in NINE_CAR_TYPE_F_PLANS]
+    return plans
 
 
 def build_legs(shape: RaceShape, plan: Plan,
@@ -300,13 +346,24 @@ def min_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
     return min(stakes[c] * float(pred_odds[c]) for c in stakes)
 
 
-def rule_version() -> str:
-    """`PLANS` と主要定数から導く版。値を変えると自動で別世代になる。"""
+def rule_version(n_entries: int = 7) -> str:
+    """`PLANS` と主要定数から導く版。値を変えると自動で別世代になる。
+
+    🔴 **7車のハッシュは車数の規則を含めない。** 含めると 9車を足しただけで
+       既存の 7車 53,017行と新しい行の版が割れ、「規則が変わった」と誤読される
+       （7車の買い方は一切変えていない）。9車だけ `NINE_CAR_TYPE_F_*` を混ぜて
+       別世代にする — `paper9` の行は**全8プランで作った**ので、決勝限定へ絞った
+       今の規則とは実際に別物だから。
+    """
     import hashlib
     import json
-    payload = json.dumps(
+    payload: dict = (
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_legs,
              round(v.sigma_max, 6), v.alloc, v.floor_mult] for k, v in sorted(PLANS.items())}
-        | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET},
-        sort_keys=True, ensure_ascii=False)
-    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+        | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET})
+    if n_entries == 9:
+        payload["_sell9"] = [list(NINE_CAR_TYPE_F_RACE_TYPES),
+                             list(NINE_CAR_TYPE_F_PLANS)]
+    return hashlib.sha1(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:12]
