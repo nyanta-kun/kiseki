@@ -179,3 +179,60 @@ def test_combine_plans_rows_follow_the_display_order():
     detail, _, _, _ = combine_plans(rows)
     got = [d.plan_key for d in detail]
     assert got == sorted(got, key=PLAN_ORDER.index)
+
+
+# ---------------------------------------------------------------------------
+# 軸信頼ゲート（2026-08-27 追加）
+# ---------------------------------------------------------------------------
+def test_axis_gate_keeps_rows_it_cannot_judge():
+    """🔴 判定できない行は**通す**。
+
+    閾値を持たないプランや axis_sum が無い行を落とすと、ゲートを入れた瞬間に
+    理由の分からない件数減が起きる。落とすのは「測って下だった」ときだけ。
+    """
+    from src.services.keirin_type_lab_gate import passes_axis_gate
+
+    assert passes_axis_gate("A_hit", None) is True
+    assert passes_axis_gate("未知のプラン", 0.0) is True
+
+
+def test_axis_gate_thresholds_are_per_plan():
+    """🔴 絶対閾値では効かない（本番7Cの1.44含め全部0を跨ぐ）。
+
+    効くのは「各プランの中で相対的に下を外す」形だけなので、閾値は
+    **プランごとに違う値**でなければならない。全部同じ値になっていたら、
+    それは絶対閾値に退化している。
+    """
+    from src.services.keirin_type_lab_gate import AXIS_GATE_MIN
+
+    assert len(set(AXIS_GATE_MIN.values())) > 1
+    # 堅い型ほど高い（型A > 型F）。逆転していたら分位の取り違え
+    assert AXIS_GATE_MIN["A_hit"] > AXIS_GATE_MIN["F_hit"]
+    # 同じレースに出るプランは同じ閾値（A_hit/A_pay・F_hit/F_pay）
+    assert AXIS_GATE_MIN["A_hit"] == AXIS_GATE_MIN["A_pay"]
+    assert AXIS_GATE_MIN["F_hit"] == AXIS_GATE_MIN["F_pay"]
+
+
+def test_axis_gate_is_applied_before_conflict_detection():
+    """🔴 ゲートは競合判定の**前**に掛ける。
+
+    後に掛けると、片方だけゲートで落ちたレースが「競合ではない」のに
+    1プランだけ残り、母集団がずれる。実装順を構文で固定する。
+    """
+    import ast
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab_combo)
+    tree = ast.parse(src.lstrip())
+    gate_at = combine_at = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None)
+            if name == "passes_axis_gate" and gate_at is None:
+                gate_at = node.lineno
+            if name == "combine_plans" and combine_at is None:
+                combine_at = node.lineno
+    assert gate_at is not None and combine_at is not None
+    assert gate_at < combine_at, "軸信頼ゲートは combine_plans より前に掛けること"

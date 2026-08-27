@@ -19,6 +19,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+from ..services.keirin_type_lab_gate import (
+    AXIS_GATE_DROP_RATIO,
+    AXIS_GATE_MIN,
+    passes_axis_gate,
+)
 
 router = APIRouter(prefix="/api/keirin/type-lab", tags=["keirin-type-lab"])
 
@@ -148,6 +153,11 @@ class ComboResponse(BaseModel):
     plans: list[str]
     n_days: int
     n_conflict_races: int
+    #: 軸信頼ゲートを掛けたか / 掛けて落ちたレース数
+    axis_gate: bool = False
+    n_axis_gated_out: int = 0
+    axis_gate_min: dict[str, float] = {}
+    axis_gate_drop_ratio: float = AXIS_GATE_DROP_RATIO
     rows: list[ComboRow]
     total: ComboRow
 
@@ -215,7 +225,8 @@ _SQL_SOLD = text("""
 # 呼ぶので軽くしておく。`plan_key = ANY(:plans)` は asyncpg の配列渡し
 # （この repo の既存クエリと同じ形）。
 _SQL_COMBO = text("""
-    SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout
+    SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout,
+           axis_sum
     FROM keirin.type_lab_picks
     WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
       AND plan_key = ANY(:plans)
@@ -479,6 +490,7 @@ async def get_type_lab_combo(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),
+    axis_gate: bool = Query(False, description="プラン内で軸信頼が下位のレースを外す"),
     db: AsyncSession = Depends(get_db),
 ) -> ComboResponse:
     """チェックした複数プランを**1つの商品ライン**として合計する。
@@ -494,6 +506,7 @@ async def get_type_lab_combo(
                          n_shown_hit=0, invested=0, returned=0, roi=0.0)
         return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
                              plans=[], n_days=0, n_conflict_races=0,
+                             axis_gate=axis_gate, axis_gate_min=AXIS_GATE_MIN,
                              rows=[], total=empty)
 
     # race_date は DATE 列なので `datetime.date` を渡す（文字列だと 500）
@@ -503,7 +516,19 @@ async def get_type_lab_combo(
     if venue:
         rows = [r for r in rows if r["venue_name"] == venue]
 
+    # 🔴 ゲートは**競合の判定より前**に掛ける。後に掛けると、片方だけ落ちたレースが
+    #    「競合ではない」のに1プランだけ残って母集団がずれる。
+    n_gated = 0
+    if axis_gate:
+        before = len(rows)
+        rows = [r for r in rows
+                if passes_axis_gate(str(r["plan_key"]), r["axis_sum"])]
+        n_gated = before - len(rows)
+
     detail, total, n_conflict, n_days = combine_plans(rows)
     return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
                          plans=wanted, n_days=n_days,
-                         n_conflict_races=n_conflict, rows=detail, total=total)
+                         n_conflict_races=n_conflict,
+                         axis_gate=axis_gate, n_axis_gated_out=n_gated,
+                         axis_gate_min=AXIS_GATE_MIN,
+                         rows=detail, total=total)

@@ -83,6 +83,9 @@ export default function TypeLabPage() {
   const [comboPlans, setComboPlans] = useState<string[]>(DEFAULT_COMBO);
   const [combo, setCombo] = useState<TypeLabComboResponse | null>(null);
   const [comboErr, setComboErr] = useState<string | null>(null);
+  // 軸信頼ゲート（検証中の候補・既定はOFF）。既存の行に後から当てるだけなので
+  // 実地検証の最中でも買い目は一切作り直さない。
+  const [axisGate, setAxisGate] = useState(false);
 
   /** 期間の**幅を保ったまま**日数ぶん前後へずらす。 */
   const shiftRange = useCallback((sign: number) => {
@@ -114,14 +117,14 @@ export default function TypeLabPage() {
     if (!comboPlans.length) { setCombo(null); setComboErr(null); return; }
     try {
       setCombo(await fetchKeirinTypeLabCombo({
-        plans: comboPlans, mode, dateFrom, dateTo, venue,
+        plans: comboPlans, mode, dateFrom, dateTo, venue, axisGate,
       }));
       setComboErr(null);
     } catch (e) {
       setCombo(null);
       setComboErr(e instanceof Error ? e.message : String(e));
     }
-  }, [comboPlans, mode, dateFrom, dateTo, venue]);
+  }, [comboPlans, mode, dateFrom, dateTo, venue, axisGate]);
 
   useEffect(() => { void loadCombo(); }, [loadCombo]);
 
@@ -314,6 +317,35 @@ export default function TypeLabPage() {
           {comboErr && (
             <div className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
               {comboErr}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-800">
+            <button
+              type="button" onClick={() => setAxisGate(!axisGate)}
+              role="switch" aria-checked={axisGate}
+              className={`shrink-0 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                axisGate
+                  ? "border-emerald-600 bg-emerald-600 font-semibold text-white"
+                  : "border-gray-300 bg-white text-gray-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+              }`}
+            >
+              {axisGate ? "✓ " : ""}軸信頼ゲート
+            </button>
+            <span className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
+              各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位4割</b>のレースを外します。
+              {combo?.axis_gate && combo.n_axis_gated_out > 0 && (
+                <> — 今回 <b>{combo.n_axis_gated_out}件</b>を除外</>
+              )}
+            </span>
+          </div>
+          {axisGate && (
+            <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+              🔬 <b>検証中の候補で、まだ採用ではありません。</b>
+              ペーパーでは 51.1 → 29.5件/日・表示的中 24.5 → 27.8%・ROI 80.1 → 85.0%
+              （全体との差 +4.9pt CI[+0.1, +9.9]・無作為に同数を落とす対照20本に20/20で勝ち）。
+              ただし<b>確認窓を判断に使ってしまっており</b>、向きが両窓で一致するのは6プラン中3つです。
+              実地で確かめるために置いています。
             </div>
           )}
 

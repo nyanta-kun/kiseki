@@ -94,6 +94,10 @@ docs/prediction-factors.md             # 予想ファクター仕様書（要メ
 docs/system-architecture.md            # システム構成・CLIコマンド一覧
 docs/data-collection.md                # データ収集手順（ks + winticket）
 docs/bet-structure-guide.md            # 買い目戦略（旧体系の歴史的記録。現行は CLAUDE.md ランク体系参照）
+docs/trifecta_playbook.md              # ★三連単の買い方（実務ガイド・2026-08-27）。
+                                        #   確率の作り方(位置別合成PL+λμ)・帯/点数/種別のダイヤル・
+                                        #   否定済みの選別・入稿ゲートが三連単に掛かっていないこと・
+                                        #   実装の落とし穴。三連単の枠を触る前にここを読む
 ```
 
 ## 設計方針
@@ -619,8 +623,10 @@ docs/bet-structure-guide.md            # 買い目戦略（旧体系の歴史的
 > マージンを入れるなら `RANK_7T1_TARGET_PAYOUT` を上げるが、**母集団が変わるので
 > 推測で動かさず再構築で測ること**（7H3 が絶対閾値を動かして崩壊した前例）。
 >
-> ⚠️ 母集団が決勝系レースなので **7C と同じレースを取り合う**（`overlap_expected`）。
-> 重複時は的中体験を担う 7C に譲る（入稿優先順位で解決）。
+> ⚠️ 母集団が決勝系レースなので **7C と同じレースを取り合う**。
+> 重複時は的中体験を担う 7C に譲る（入稿優先順位で解決）。譲ったことは
+> `submission_skips` に `rank_conflict` として残る。**入稿失敗ではない**
+> （2026-08-26 に `overlap_expected` フラグごと失敗集計から外した）。
 > ⚠️ 廃止した 7H3 の設計と失敗の記録は `docs/rank_7h3_design.md` に残してある。
 > picks_history の RANK_7H3 行 7,090件は削除済み（退避:
 > `data/backup/picks_history_rank_7h3_before_abolition_20260813.csv`）。
