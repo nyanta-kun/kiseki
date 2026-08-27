@@ -1952,3 +1952,32 @@ export async function fetchKeirinTypeLab(params: {
   const s = q.toString();
   return get<TypeLabResponse>(`/keirin/type-lab${s ? `?${s}` : ""}`, { cache: "no-store" });
 }
+
+/** 複数プランを **1つの商品ライン**として合計したもの。
+ *  🔴 1レースの推奨は1プランなので、選んだプランが同じレースに複数当たったら
+ *     そのレースは丸ごと除外される（`n_conflict_races`）。 */
+export type TypeLabComboRow = {
+  plan_key: string;            // 合計行は "TOTAL"
+  n_races: number; n_settled: number;
+  n_hit: number; n_shown_hit: number;
+  invested: number; returned: number; roi: number;
+};
+export type TypeLabComboResponse = {
+  mode: string; date_from: string; date_to: string; venue: string | null;
+  plans: string[]; n_days: number; n_conflict_races: number;
+  rows: TypeLabComboRow[]; total: TypeLabComboRow;
+};
+
+export async function fetchKeirinTypeLabCombo(params: {
+  plans: string[];
+  mode?: "paper" | "live"; dateFrom?: string; dateTo?: string; venue?: string;
+}): Promise<TypeLabComboResponse> {
+  const q = new URLSearchParams();
+  q.set("plans", params.plans.join(","));
+  if (params.mode) q.set("mode", params.mode);
+  if (params.dateFrom) q.set("date_from", params.dateFrom);
+  if (params.dateTo) q.set("date_to", params.dateTo);
+  if (params.venue) q.set("venue", params.venue);
+  return get<TypeLabComboResponse>(`/keirin/type-lab/combo?${q.toString()}`,
+                                   { cache: "no-store" });
+}

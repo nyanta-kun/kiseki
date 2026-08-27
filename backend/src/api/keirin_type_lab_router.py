@@ -121,6 +121,37 @@ class TypeLabSummary(BaseModel):
     roi: float
 
 
+class ComboRow(BaseModel):
+    """選んだプランをひとまとめにしたときの1行（プラン別の内訳、または合計）。"""
+    plan_key: str             # 合計行は "TOTAL"
+    n_races: int              # 競合を除いたあとの対象レース数
+    n_settled: int
+    n_hit: int                # 生の的中（ガミを含む）
+    n_shown_hit: int          # 表示的中（払戻 > 賭け金）
+    invested: int
+    returned: int
+    roi: float
+
+
+class ComboResponse(BaseModel):
+    """複数プランを組み合わせた合計。
+
+    🔴 **1レースの推奨は1プラン**なので、選んだプランが同じレースに複数当たったら
+       そのレースは**丸ごと除外**する（どちらを買ったことにするか決められないため）。
+       除いた数は `n_conflict_races` で必ず返す。黙って落とすと、
+       競合だらけの選び方をしたときに「件数が少ない」としか見えなくなる。
+    """
+    mode: str
+    date_from: str
+    date_to: str
+    venue: str | None = None
+    plans: list[str]
+    n_days: int
+    n_conflict_races: int
+    rows: list[ComboRow]
+    total: ComboRow
+
+
 class TypeLabResponse(BaseModel):
     mode: str
     date_from: str
@@ -177,6 +208,17 @@ _SQL_SOLD = text("""
     FROM keirin.netkeirin_submissions
     WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
       AND status <> 'deleted'
+""")
+
+
+# 組み合わせ集計用。**買い目（legs）は引かない** — チェックを付け外しするたびに
+# 呼ぶので軽くしておく。`plan_key = ANY(:plans)` は asyncpg の配列渡し
+# （この repo の既存クエリと同じ形）。
+_SQL_COMBO = text("""
+    SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout
+    FROM keirin.type_lab_picks
+    WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
+      AND plan_key = ANY(:plans)
 """)
 
 
@@ -386,3 +428,82 @@ def _comparison(by_plan: dict[str, list[dict[str, Any]]],
             lab_roi=round(lab[3], 1), cur_roi=round(cur[3], 1),
         ))
     return out
+
+
+def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow, int, int]:
+    """選んだプランの行を1つの商品ラインとして合計する。
+
+    `rows` は `race_key` / `plan_key` / `budget` / `settled_at` / `hit` / `payout` /
+    `race_date` を持つ辞書の並び（**選んだプランだけに絞ってから渡すこと**）。
+
+    🔴 **1レースの推奨は1プラン。** 同じレースに選択中のプランが2つ以上当たったら、
+       そのレースは両方とも集計から外す（競合）。除いた数を第3の戻り値で返す。
+    🔴 **ROI・的中は採点済みの行だけで計算する。** 未採点を分母に入れると
+       当日の朝ほど ROI が 0 に近く見える。
+
+    戻り値: (プラン別の内訳, 合計, 競合で除いたレース数, 日数)
+    """
+    by_race: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_race.setdefault(str(r["race_key"]), []).append(r)
+    kept = [g[0] for g in by_race.values() if len(g) == 1]
+    n_conflict = sum(1 for g in by_race.values() if len(g) > 1)
+
+    def _row(key: str, group: list[dict[str, Any]]) -> ComboRow:
+        st = [x for x in group if x["settled_at"] is not None]
+        hits = [x for x in st if x["hit"]]
+        shown = [x for x in hits if int(x["payout"] or 0) > int(x["budget"])]
+        inv = sum(int(x["budget"]) for x in st)
+        ret = sum(int(x["payout"] or 0) for x in st)
+        return ComboRow(
+            plan_key=key, n_races=len(group), n_settled=len(st),
+            n_hit=len(hits), n_shown_hit=len(shown),
+            invested=inv, returned=ret,
+            roi=round(ret / inv * 100, 1) if inv else 0.0,
+        )
+
+    by_plan: dict[str, list[dict[str, Any]]] = {}
+    for r in kept:
+        by_plan.setdefault(str(r["plan_key"]), []).append(r)
+    out = [_row(p, by_plan[p])
+           for p in sorted(by_plan, key=lambda x: (PLAN_ORDER.index(x)
+                                                   if x in PLAN_ORDER else 99, x))]
+    days = {str(r["race_date"]) for r in kept}
+    return out, _row("TOTAL", kept), n_conflict, len(days)
+
+
+@router.get("/combo", response_model=ComboResponse)
+async def get_type_lab_combo(
+    plans: str = Query("", description="カンマ区切りのプラン（例 'A_hit,B_hit'）"),
+    mode: Literal["paper", "live"] = "live",
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    venue: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> ComboResponse:
+    """チェックした複数プランを**1つの商品ライン**として合計する。
+
+    プラン別のまとめ（`GET /api/keirin/type-lab`）は各プランを別々に見るが、
+    実際に売るときは1レースにつき1プランしか出せない。
+    ここでは「この組み合わせで売ったら1日いくつ出て、いくら返るか」を出す。
+    """
+    d1, d2, dd1, dd2 = window(date_from, date_to)
+    wanted = [p for p in PLAN_ORDER if p in {x.strip() for x in plans.split(",")}]
+    if not wanted:
+        empty = ComboRow(plan_key="TOTAL", n_races=0, n_settled=0, n_hit=0,
+                         n_shown_hit=0, invested=0, returned=0, roi=0.0)
+        return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+                             plans=[], n_days=0, n_conflict_races=0,
+                             rows=[], total=empty)
+
+    # race_date は DATE 列なので `datetime.date` を渡す（文字列だと 500）
+    res = await db.execute(_SQL_COMBO,
+                           {"mode": mode, "d1": dd1, "d2": dd2, "plans": wanted})
+    rows = [dict(r._mapping) for r in res]
+    if venue:
+        rows = [r for r in rows if r["venue_name"] == venue]
+
+    detail, total, n_conflict, n_days = combine_plans(rows)
+    return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+                         plans=wanted, n_days=n_days,
+                         n_conflict_races=n_conflict, rows=detail, total=total)
