@@ -58,8 +58,16 @@ VPS の cron（既存の keirin バッチと同じホスト cron）:
 # 型ラボ（検証用・入稿しない）
 15 7 * * *  $KEIRIN_HOME/scripts/type_lab_daily.sh  >> $KEIRIN_HOME/data/logs/cron.log 2>&1
 # 🔴 当日の結果を随時反映する。日次バッチだけだと**その日の結果が翌朝まで画面に出ない**
-25 * * * *  $KEIRIN_HOME/scripts/type_lab_settle.sh >> $KEIRIN_HOME/data/logs/cron.log 2>&1
+# 🔴 間隔は `intraday_results_wt.sh`（*/15 8-23,0）に合わせる。着順・確定オッズを
+#    入れているのはそちらなので、毎時1回だと**最大60分遅れて /keirin だけ先に進む**。
+#    :00/:15/:30/:45 の取得が終わってから走るよう5分ずらす。
+5,20,35,50 8-23,0 * * *  $KEIRIN_HOME/scripts/type_lab_settle.sh >> $KEIRIN_HOME/data/logs/cron.log 2>&1
 ```
+
+⚠️ **`type_lab_settle.sh` は前日ぶんと当日ぶんの両方を流す。**
+   ミッドナイトの最終レース（23:20〜23:30 発走）の着順が入るのは日付が変わった後で、
+   当日ぶんだけを見ていると 00 時台の実行が翌日を指してしまい、
+   その日の最後の数レースが翌朝の日次バッチまで埋まらない。
 
 ⚠️ **採点は「着順が1〜3着そろい、かつ確定オッズが引けた」行だけを埋める。**
    未確定は `settled_at` を空のまま残すので、1時間ごとに流しても二重採点は起きない。

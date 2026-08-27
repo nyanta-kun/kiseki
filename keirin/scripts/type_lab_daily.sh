@@ -6,7 +6,7 @@
 # 既存の keirin バッチとは独立で、書き込むのは keirin.type_lab_picks だけ。
 #
 # ⚠️ 当日ぶんの採点は**これだけでは足りない**。レースは一日中終わり続けるので、
-#    別に `type_lab_settle.sh` を1時間ごとに回している（cron 参照）。
+#    別に `type_lab_settle.sh` を15分ごとに回している（cron 参照）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # 🔴 VPS の keirin バッチは全て `.venv/bin/python3` を使う（`daily_picks_wt.sh` と同じ）。

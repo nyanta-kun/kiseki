@@ -318,10 +318,23 @@ def test_daily_batch_settles_today_as_well():
 
     レースは一日中終わり続けるので、前日ぶんだけを採点していると
     その日の結果が翌朝まで画面に出ない（2026-08-27 に指摘を受けた）。
-    随時反映は `type_lab_settle.sh`（毎時）が担うが、日次側も当日を見ておく。
+    随時反映は `type_lab_settle.sh` が担うが、日次側も当日を見ておく。
     """
     daily = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
     assert 'settle_type_lab_picks.py --date "$YEST"' in daily
     assert 'settle_type_lab_picks.py --date "$TODAY"' in daily
+
+
+def test_intraday_settle_covers_yesterday_too():
+    """🔴 随時採点は**前日ぶんも流す**こと。
+
+    ミッドナイトの最終レースは 23:20〜23:30 発走で、確定着順が入るのは
+    日付が変わった後。当日ぶんだけを見ていると 00 時以降の実行は
+    `date +%F` が翌日を指すため、その日の最後の数レースが翌朝 07:15 の
+    日次バッチまで埋まらない（2026-08-27 に「型ラボだけ結果が古い」と
+    指摘を受けた原因のひとつ）。
+    """
     hourly = (REPO / "scripts" / "type_lab_settle.sh").read_text(encoding="utf-8")
     assert "settle_type_lab_picks.py" in hourly and "date +%F" in hourly
+    assert 'settle_type_lab_picks.py --date "$YEST"' in hourly
+    assert 'settle_type_lab_picks.py --date "$TODAY"' in hourly
