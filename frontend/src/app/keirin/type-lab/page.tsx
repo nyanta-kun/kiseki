@@ -21,8 +21,9 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, FlaskConical, RefreshCw,
 } from "lucide-react";
 import {
-  fetchKeirinTypeLab, type TypeLabComparisonRow, type TypeLabPick,
-  type TypeLabResponse, type TypeLabSummary,
+  fetchKeirinTypeLab, fetchKeirinTypeLabCombo,
+  type TypeLabComboResponse, type TypeLabComboRow, type TypeLabComparisonRow,
+  type TypeLabPick, type TypeLabResponse, type TypeLabSummary,
 } from "@/lib/api";
 
 const TYPE_NAME: Record<string, string> = {
@@ -39,6 +40,11 @@ const PLAN_NOTE: Record<string, string> = {
   F_hit: "三連単 軸2車＋相手2車の6順列すべて（12点）",
   F_pay: "三連単 1着=軸1固定・2着2車 → 3着流し（一撃）",
 };
+
+/** 表示順。`PLAN_NOTE` の並びをそのまま使う（挿入順が保たれる）。 */
+const PLAN_KEYS = Object.keys(PLAN_NOTE);
+/** 組み合わせの初期値。**型ごとに1つずつ**＝競合が起きない並び。 */
+const DEFAULT_COMBO = ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit"];
 
 const yen = (n: number | null | undefined) =>
   n == null ? "—" : `${Math.round(n).toLocaleString()}円`;
@@ -72,6 +78,11 @@ export default function TypeLabPage() {
   const [venue, setVenue] = useState<string>("");
   // 選択肢は絞り込み前の一覧を保持する（絞ると自分の場しか返らないため）
   const [venueOptions, setVenueOptions] = useState<string[]>([]);
+  // 組み合わせ集計。チェックの付け外しで**軽い専用 API だけ**を叩き直す
+  // （買い目つきの本体を毎回引き直すと重い）。
+  const [comboPlans, setComboPlans] = useState<string[]>(DEFAULT_COMBO);
+  const [combo, setCombo] = useState<TypeLabComboResponse | null>(null);
+  const [comboErr, setComboErr] = useState<string | null>(null);
 
   /** 期間の**幅を保ったまま**日数ぶん前後へずらす。 */
   const shiftRange = useCallback((sign: number) => {
@@ -98,6 +109,27 @@ export default function TypeLabPage() {
   }, [mode, dateFrom, dateTo, venue]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadCombo = useCallback(async () => {
+    if (!comboPlans.length) { setCombo(null); setComboErr(null); return; }
+    try {
+      setCombo(await fetchKeirinTypeLabCombo({
+        plans: comboPlans, mode, dateFrom, dateTo, venue,
+      }));
+      setComboErr(null);
+    } catch (e) {
+      setCombo(null);
+      setComboErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [comboPlans, mode, dateFrom, dateTo, venue]);
+
+  useEffect(() => { void loadCombo(); }, [loadCombo]);
+
+  const togglePlan = useCallback((plan: string) => {
+    setComboPlans((prev) => (prev.includes(plan)
+      ? prev.filter((x) => x !== plan)
+      : [...prev, plan]));
+  }, []);
 
   const picks = useMemo(
     () => (data?.picks ?? []).filter((p) => !planFilter || p.plan_key === planFilter),
@@ -252,6 +284,82 @@ export default function TypeLabPage() {
         {planFilter
           ? <> 絞り込み中: <b>{planFilter}</b>（もう一度押すと解除）</>
           : <> プランを押すとその買い目だけに絞れます。</>}
+      </p>
+
+      {/* ── 組み合わせの合計 ── */}
+      <Section title="プランを組み合わせた合計"
+               note={combo ? `${combo.plans.length}プラン・${combo.n_days}日` : undefined}>
+        <div className="space-y-2 p-2 sm:p-3">
+          <p className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
+            売るプランを選んだときの合計です。
+            <b>1レースの推奨は1プラン</b>なので、選んだプランが<b>同じレースに2つ以上
+            当たったレースは集計から外します</b>（どちらを買ったことにするか決められないため）。
+            型ごとに1つずつ選べば競合は起きません。
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {PLAN_KEYS.map((plan) => (
+              <PlanCheck key={plan} plan={plan} checked={comboPlans.includes(plan)}
+                         onClick={() => togglePlan(plan)} />
+            ))}
+            <button type="button" onClick={() => setComboPlans(DEFAULT_COMBO)}
+                    className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              既定に戻す
+            </button>
+            <button type="button" onClick={() => setComboPlans([])}
+                    className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              すべて外す
+            </button>
+          </div>
+
+          {comboErr && (
+            <div className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+              {comboErr}
+            </div>
+          )}
+
+          {combo && combo.n_conflict_races > 0 && (
+            <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+              競合で除外: <b>{combo.n_conflict_races}レース</b>
+              （選んだプランのうち2つ以上が同じレースに当たったもの）
+            </div>
+          )}
+
+          {!comboPlans.length ? (
+            <Empty text="プランを選んでください" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs sm:text-sm">
+                <thead className="bg-gray-50 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                  <tr>
+                    <th className="p-2 text-left">プラン</th>
+                    <th className="p-2 text-right">対象R</th>
+                    <th className="p-2 text-right">的中</th>
+                    <th className="p-2 text-right">払戻</th>
+                    <th className="p-2 text-right">ROI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(combo?.rows ?? []).map((r) => (
+                    <ComboTr key={r.plan_key} r={r} />
+                  ))}
+                  {combo && <ComboTr r={combo.total} total nDays={combo.n_days} />}
+                  {!combo && (
+                    <tr><td colSpan={5} className="p-4 text-center text-gray-500 dark:text-gray-400">
+                      集計中…
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      <p className="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+        「対象R」は競合を除いたあとのレース数、括弧内は採点済みの数です。
+        <b>的中・払戻・ROI は採点済みのレースだけ</b>で計算しています
+        （未採点を分母に入れると、当日の朝ほど ROI が 0 に近く見えてしまうため）。
+        括弧の「表示」はガミ（払戻が賭け金以下）を除いた的中数です。
       </p>
 
       {/* ── 現行推奨との比較 ── */}
@@ -552,5 +660,69 @@ function PickCard({ p }: { p: TypeLabPick }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/** 組み合わせに入れるプランのチェック（複数選択ボタン）。 */
+function PlanCheck({ plan, checked, onClick }: {
+  plan: string; checked: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button" onClick={onClick} role="checkbox" aria-checked={checked}
+      title={PLAN_NOTE[plan] ?? plan}
+      className={`shrink-0 rounded-full border px-2.5 py-1 font-mono text-xs transition-colors ${
+        checked
+          ? "border-indigo-600 bg-indigo-600 font-semibold text-white"
+          : "border-gray-300 bg-white text-gray-700 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-indigo-500 dark:hover:text-indigo-300"
+      }`}
+    >
+      {checked ? "✓ " : ""}{plan}
+    </button>
+  );
+}
+
+/** 組み合わせ表の1行。合計行だけ強調する。 */
+function ComboTr({ r, total = false, nDays }: {
+  r: TypeLabComboRow; total?: boolean; nDays?: number;
+}) {
+  const perDay = nDays && nDays > 0 ? r.n_races / nDays : null;
+  return (
+    <tr className={`border-t border-gray-200 dark:border-gray-700 ${
+      total ? "bg-indigo-50 font-semibold dark:bg-indigo-950" : ""}`}>
+      <td className="p-2 text-gray-900 dark:text-gray-100">
+        {total ? (
+          <>
+            合計
+            {perDay != null && (
+              <span className="ml-1 text-[10px] font-normal text-gray-600 dark:text-gray-400">
+                {perDay.toFixed(1)}件/日
+              </span>
+            )}
+          </>
+        ) : <span className="font-mono">{r.plan_key}</span>}
+      </td>
+      <td className="p-2 text-right whitespace-nowrap text-gray-900 dark:text-gray-100">
+        {r.n_races}
+        <span className="ml-1 text-[10px] font-normal text-gray-600 dark:text-gray-400">
+          ({r.n_settled})
+        </span>
+      </td>
+      <td className="p-2 text-right whitespace-nowrap text-gray-900 dark:text-gray-100">
+        {r.n_hit}
+        <span className="ml-1 text-[10px] font-normal text-gray-600 dark:text-gray-400">
+          (表示 {r.n_shown_hit})
+        </span>
+      </td>
+      <td className="p-2 text-right whitespace-nowrap text-gray-900 dark:text-gray-100">
+        {yen(r.returned)}
+        <span className="ml-1 text-[10px] font-normal text-gray-600 dark:text-gray-400">
+          / 投資 {yen(r.invested)}
+        </span>
+      </td>
+      <td className="p-2 text-right whitespace-nowrap text-gray-700 dark:text-gray-300">
+        {r.roi.toFixed(1)}%
+      </td>
+    </tr>
   );
 }

@@ -114,3 +114,68 @@ def test_picks_are_ordered_by_start_time():
     i_date = sql.index("ORDER BY")
     order = sql[i_date:]
     assert "start_at" in order and order.index("start_at") < order.index("p.race_key")
+
+
+# ---------------------------------------------------------------------------
+# 複数プランの組み合わせ集計（2026-08-27 追加）
+# ---------------------------------------------------------------------------
+def _pick(race: str, plan: str, *, budget: int = 10000, payout: int | None = None,
+          settled: bool = True, day: str = "2026-08-27") -> dict:
+    return {"race_key": race, "plan_key": plan, "race_date": day, "budget": budget,
+            "settled_at": "x" if settled else None,
+            "hit": payout is not None, "payout": payout}
+
+
+def test_combine_plans_drops_races_where_two_selected_plans_collide():
+    """🔴 1レースの推奨は1プラン。
+
+    選んだプランが同じレースに2つ当たったら、どちらを買ったことにするか
+    決められないので**そのレースは丸ごと外す**。外した数は必ず返す
+    （黙って落とすと「件数が少ない」としか見えなくなる）。
+    """
+    from src.api.keirin_type_lab_router import combine_plans
+
+    rows = [
+        _pick("R1", "A_hit", payout=30000),
+        _pick("R1", "A_pay"),            # ← 同じレースに2プラン = 競合
+        _pick("R2", "B_hit", payout=25000),
+    ]
+    detail, total, n_conflict, n_days = combine_plans(rows)
+    assert n_conflict == 1
+    assert total.n_races == 1              # R1 は両方とも消える
+    assert [d.plan_key for d in detail] == ["B_hit"]
+    assert total.returned == 25000 and total.invested == 10000
+
+
+def test_combine_plans_totals_only_settled_rows():
+    """🔴 未採点を分母に入れると当日の朝ほど ROI が 0 に近く見える。"""
+    from src.api.keirin_type_lab_router import combine_plans
+
+    rows = [
+        _pick("R1", "A_hit", payout=20000),
+        _pick("R2", "B_hit", settled=False),   # 未採点
+    ]
+    _, total, _, _ = combine_plans(rows)
+    assert total.n_races == 2 and total.n_settled == 1
+    assert total.invested == 10000 and total.roi == 200.0
+
+
+def test_combine_plans_separates_gami_from_shown_hit():
+    """ガミ（払戻 <= 賭け金）は生の的中に入るが表示的中には入らない。"""
+    from src.api.keirin_type_lab_router import combine_plans
+
+    rows = [
+        _pick("R1", "A_hit", payout=8000),     # 当たったが賭け金割れ = ガミ
+        _pick("R2", "A_hit", payout=30000),
+    ]
+    _, total, _, _ = combine_plans(rows)
+    assert total.n_hit == 2 and total.n_shown_hit == 1
+
+
+def test_combine_plans_rows_follow_the_display_order():
+    from src.api.keirin_type_lab_router import PLAN_ORDER, combine_plans
+
+    rows = [_pick("R1", "F_hit"), _pick("R2", "A_hit"), _pick("R3", "C_hit")]
+    detail, _, _, _ = combine_plans(rows)
+    got = [d.plan_key for d in detail]
+    assert got == sorted(got, key=PLAN_ORDER.index)
