@@ -48,7 +48,26 @@ from typing import Mapping, Sequence
 BUDGET = 10_000
 UNIT = 100
 
-#: 軸の堅さの境界。7C/7M1 が共有する定数と同じ値を使う（別の値を持たせない）。
+#: 軸の堅さの境界。**値は 7C/7M1 の `RANK_7C_P3_SUM_MIN` と同じ**
+#: （テストで一致を固定してある）。
+#:
+#: 🔴 **ただし「同じ量」ではない。** 7C は `_gate_p3_sum`＝**較正後**の
+#:    `p3_sum_top2_cal` を 1.44 と比べるが、ここは `lgbm_wt_eval` の**生の p3** の
+#:    上位2合計を比べている。`keirin_p3_calibration` は決勝 +2.84pt・GII +2.10pt の
+#:    過大評価を直すもので、まさに「p3 の絶対値を見るゲート」のために作られている。
+#:
+#: 🟢 **測ったうえで生のままにしてある**（2026-08-28）。較正へ切り替えると
+#:    動くのは全体の **2.4%（845R）** だけで、その帯の二軸そろい率は 49.52%
+#:    ＝堅い側 65.00% と混戦側 40.08% の間。移しても**分離度は +24.25pt →
+#:    +24.43pt（+0.18pt）**しか変わらない:
+#:
+#:      セグメント別の境界帯そろい率  決勝 46.58% / 準決勝 48.96% / その他 50.60%
+#:      堅い−混戦の分離              決勝 +23.17pt / 準決勝 +19.32pt / その他 +25.28pt
+#:
+#:    ＝ 7C で見つかった病理（「決勝が最も通るのに最も効いていない」）は
+#:    **型ラボでは再現しない**。境界は決勝でもほぼ同じだけ効いている。
+#:    20か月の検証はすべて生の p3 で出しているので、+0.18pt のために作り直さない。
+#: ⚠️ 較正へ切り替えるなら**この定数だけでなく検証窓ごと引き直すこと**。
 AXIS_SUM_FIRM = 1.44
 #: 先頭の遅れ率の中央値（2025-01〜2026-08 の 7車 実測）。
 BEHIND_MID = 11.0
@@ -290,7 +309,39 @@ def allocate(legs: Sequence, pred_odds: Mapping, probs: Mapping, plan: Plan,
     'dutch' … 賭け金 ∝ 1/予測オッズ（**払戻を全点で揃える**）
     'conf'  … 各点に floor = 予算×floor_mult ÷ 予測オッズ を置き、残りを**確率に比例**して配る
               （一番期待していない点は floor のまま＝最低 floor_mult 倍・自信のある点ほど厚い）
+
+    🔴 **賭け金が 0 円になった点は返さない**（2026-08-28）。ダッチ配分では
+       極端に高い予測オッズの点の取り分が 1 単位（100円）に満たず 0 円になる。
+       `prob_top` が Σ(1/予測オッズ) の枠を超えた候補を `break` せず `continue` する
+       ため、B_hit ではこれが常態化していた（**実測 3,052行＝B_hit の 61.7%**）:
+
+         - `n_legs` が**実際に買う点数と違う**
+         - `pred_min_payout`（画面の「想定最低」）の中央値が **0円**
+         - `pred_mean_payout` が 0 点で薄まり、B_hit の設計「想定平均払戻 3万円の床」を
+           下回る（中央 26,461円）
+         - その点が当たると `hit=true, payout=0` になる（実績0件だが構造上起きうる）
+
+       ⚠️ **お金はほとんど動かない。** 4,742倍の点の重みは 1/4,742 で、落としても
+          他の点の配分はほぼ変わらない（＝商品の変更ではなく記録を実態に合わせる修正）。
+       ⚠️ 買う集合そのものを変えたい（`continue` → `break`）場合は別の話で、
+          そちらは商品が変わるので測ってから決めること。
     """
+    legs = list(legs)
+    for _ in range(len(legs)):
+        stakes = _allocate_once(legs, pred_odds, probs, plan, budget, unit)
+        if stakes is None:
+            return None
+        funded = [c for c in legs if stakes[c] > 0]
+        if len(funded) == len(legs):
+            return stakes
+        if not funded:
+            return None
+        legs = funded          # 0円の点を外して配り直す
+    return None
+
+
+def _allocate_once(legs: Sequence, pred_odds: Mapping, probs: Mapping, plan: Plan,
+                   budget: int, unit: int) -> dict | None:
     k = len(legs)
     n_units = budget // unit
     if k == 0 or k > n_units:

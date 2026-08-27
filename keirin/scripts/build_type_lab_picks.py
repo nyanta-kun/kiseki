@@ -85,6 +85,10 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         stakes = allocate(legs, odds, prob, plan)
         if not stakes:
             continue
+        # 🔴 **`stakes` を見る**（`legs` ではない）。`allocate` は賭け金 0 円の点を
+        #    落として返すので、`legs` のまま回すと**買っていない点を記録する**
+        #    （`n_legs` も想定払戻もずれる）。並びは `legs` の順を保つ。
+        legs = [c for c in legs if c in stakes]
         detail = [
             {"combo": _combo_str(c, plan.bet_type),
              "stake": int(stakes[c]),
