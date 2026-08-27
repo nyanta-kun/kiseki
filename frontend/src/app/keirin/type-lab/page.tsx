@@ -220,7 +220,7 @@ export default function TypeLabPage() {
           >
             <option value="live">実地（当日・本番モデル）</option>
             <option value="paper">ペーパー（過去・vintage）</option>
-            <option value="paper9">9車ペーパー（検証・買い目は三連複のみ）</option>
+            <option value="paper9">9車ペーパー（検証）</option>
           </select>
           <button
             onClick={() => void load()} disabled={loading}
