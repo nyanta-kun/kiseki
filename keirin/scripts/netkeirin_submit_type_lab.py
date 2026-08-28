@@ -172,6 +172,25 @@ def _load_rows(day: str) -> list[dict]:
     return out
 
 
+def races_taken_by_other_ranks(already: set[tuple[str, str]]) -> set[str]:
+    """**型ラボ以外のランク**が既に取っているレース。
+
+    🔴 **netkeirin は1レース1商品。** ループの `(race_key, plan) in already` は
+       同じランクの二重入稿しか止めないので、既存ランク・看板穴埋めが取った
+       レースへ型ラボが出すと **netkeirin 上で既存の商品を上書きする**。
+       全面置換後は既存が全部 OFF なので普段は空だが、移行期・ロールバック中・
+       看板穴埋めが動いた日に効く。
+
+    🔴 **`_already_submitted()` はランクを絞らず全ランクの行を返す**（取消も
+       「その日は処理済み」として含む）。だからここで別クエリを投げる必要はなく、
+       投げると二重管理になる。
+       ⚠️ 初版は専用クエリを書いたうえで `already` の race_key を差し引いており、
+          `already` が全ランクを含むせいで**常に空集合**になっていた
+          （＝ガードが一度も効かない。2026-08-28 の dry-run で発覚）。
+    """
+    return {rk for rk, rank in already if rank not in SELL_PLANS}
+
+
 def _combo_cars(combo: str) -> list[int]:
     return [int(x) for x in combo.replace("=", "-").split("-") if x.strip().isdigit()]
 
@@ -380,6 +399,8 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         return
 
     already = _already_submitted(sorted({str(r["race_key"]) for r in rows}))
+    # 🔴 **別ランクが取ったレースには出さない**（netkeirin は1レース1商品）。
+    taken = races_taken_by_other_ranks(already)
 
     # ── 昼・夕は「まだ入稿していないレース」を組み直してから読み直す ──
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への
@@ -424,6 +445,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             continue
         if (race_key, plan) in already:
             bump("already")
+            continue
+        if race_key in taken:
+            # 別ランク（既存商品・看板穴埋め）が既に取っている。入稿失敗ではない。
+            bump("taken_by_other_rank")
             continue
         if race_key in closed:
             # ⚠️ ログは静かに（波ごとに終わった開催が毎回並ぶと読めない）。

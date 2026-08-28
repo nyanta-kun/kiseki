@@ -261,3 +261,53 @@ def test_marquee_races_bypass_the_axis_gate():
     assert _passes_axis_gate(weak) is False
     assert _passes_axis_gate({**weak, "race_type": "決勝"}) is True
     assert _passes_axis_gate({**weak, "race_type": "特選"}) is True
+
+
+def test_races_taken_by_other_ranks_is_derived_from_already():
+    """🔴 別ランクが取ったレースを正しく拾う（netkeirin は1レース1商品）。
+
+    `_already_submitted()` は**ランクを絞らず全ランクの行を返す**。初版は
+    そこに気づかず専用クエリの結果から `already` の race_key を差し引いており、
+    **常に空集合**＝ガードが一度も効かなかった（2026-08-28 の dry-run で発覚）。
+    """
+    from scripts.netkeirin_submit_type_lab import races_taken_by_other_ranks
+
+    already = {("R1", "7S"), ("R2", "A_hit"), ("R3", "9C"), ("R2", "7C")}
+    assert races_taken_by_other_ranks(already) == {"R1", "R3", "R2"}
+    # 型ラボだけが取っているレースは「別ランクが取った」に入らない
+    assert races_taken_by_other_ranks({("R9", "F_pay")}) == set()
+    assert races_taken_by_other_ranks(set()) == set()
+
+
+def test_races_taken_by_other_ranks_are_skipped(monkeypatch):
+    """別ランクが取ったレースには出さない（ループ側の結線）。"""
+    from scripts import netkeirin_submit_type_lab as m
+
+    row = {
+        "race_key": "20260829_13_05", "race_date": "2026-08-29", "venue_name": "松阪",
+        "race_no": 5, "race_type": "予選", "n_entries": 7, "cup_grade": None,
+        "type_label": "A", "axis_sum": 1.9, "axis1": 1, "axis2": 4,
+        "p3_order": "1-4-5-6-7-2-3", "plan_key": "A_hit", "bet_type": "trifecta",
+        "n_legs": 1, "budget": 10_000, "pred_mean_payout": 30_000.0,
+        "pred_min_payout": 30_000.0,
+        "legs": [{"combo": "1-4-5", "stake": 10_000, "pred_odds": 3.0}],
+    }
+    monkeypatch.setattr(m, "_load_settings", lambda: {})
+    monkeypatch.setattr(m, "_approval_required", lambda: False)
+    monkeypatch.setattr(m, "_load_closed_races", lambda day: set())
+    monkeypatch.setattr(m, "_missing_market_inputs", lambda rk: None)
+    monkeypatch.setattr(m, "_build_entry_table", lambda rk, marks: None)
+    monkeypatch.setattr(m, "_load_rows", lambda day: [row])
+
+    submitted: list = []
+    monkeypatch.setattr(m, "submit_row", lambda *a, **k: (submitted.append(a) or (True, "t")))
+
+    # 既存ランク 7S が取っている → 出さない
+    monkeypatch.setattr(m, "_already_submitted", lambda keys: {("20260829_13_05", "7S")})
+    m.run("2026-08-29", "morning", dry_run=True, only_key=None, do_rebuild=False)
+    assert submitted == [], "別ランクが取ったレースへ出そうとした"
+
+    # 誰も取っていない → 出す
+    monkeypatch.setattr(m, "_already_submitted", lambda keys: set())
+    m.run("2026-08-29", "morning", dry_run=True, only_key=None, do_rebuild=False)
+    assert submitted, "誰も取っていないのに出さなかった"
