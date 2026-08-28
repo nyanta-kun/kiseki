@@ -686,3 +686,130 @@ def test_type_lab_page_dark_text_colors_have_dark_variants():
             continue
         bad.append(f"L{page[:m.start()].count(chr(10)) + 1}: {cls.strip()[:100]}")
     assert not bad, "濃い文字色に dark: 版が無い:\n" + "\n".join(bad)
+
+
+# ──────── 画面の手書きリスト（2026-08-28・監査 C-4） ────────
+#
+# 🔴 `page.tsx` の定数は正本の写しだが、**テストは API の `PLAN_ORDER` しか
+#    固定していなかった**。プランを増やすと、まとめには出るのに
+#    「組み合わせ」のチェックボックスから**静かに消える**（`PLAN_KEYS` は
+#    `PLAN_NOTE` の key から作られるため）。
+
+def _page_src() -> str:
+    return (REPO.parent / "frontend" / "src" / "app" / "keirin" / "type-lab"
+            / "page.tsx").read_text(encoding="utf-8")
+
+
+def _ts_object_keys(src: str, name: str) -> list[str]:
+    """`const NAME: Record<...> = { a: ..., b: ... }` の key を順に返す。
+
+    ⚠️ **行頭だけを見てはいけない。** 画面は 1行に複数の key を書いている
+       （`A: "鉄板", B: "堅い・中",`）。値の中のカンマを拾わないよう、
+       文字列リテラルを先に落としてから key を探す。
+    """
+    import re
+    m = re.search(r"const\s+%s[^=]*=\s*\{(.*?)\n\};" % re.escape(name), src, re.S)
+    assert m, f"{name} が見つからない"
+    body = re.sub(r'"(?:[^"\\]|\\.)*"', '""', m.group(1))     # 値を潰す
+    return re.findall(r"(?:^|[{,])\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", body, re.M)
+
+
+def test_page_plan_note_covers_every_plan():
+    """🔴 `PLAN_NOTE` が全プランを持つこと（`PLAN_KEYS` の素になっている）。
+
+    足りないとそのプランが「組み合わせ」のチェックボックスから消える。
+    """
+    keys = _ts_object_keys(_page_src(), "PLAN_NOTE")
+    assert set(keys) == set(PLANS), set(keys) ^ set(PLANS)
+
+
+def test_page_plan_note_order_matches_the_api():
+    """並びも API の `PLAN_ORDER` と揃える（画面ごとに順序が違うと読み違える）。"""
+    import ast
+    api = (REPO.parent / "backend" / "src" / "api"
+           / "keirin_type_lab_router.py").read_text(encoding="utf-8")
+    order = None
+    for node in ast.walk(ast.parse(api)):
+        if (isinstance(node, ast.Assign) and node.targets
+                and getattr(node.targets[0], "id", "") == "PLAN_ORDER"):
+            order = [e.value for e in node.value.elts]
+    assert order == _ts_object_keys(_page_src(), "PLAN_NOTE")
+
+
+def test_page_default_combo_is_one_plan_per_type():
+    """組み合わせの初期値は**型ごとに1つ**（＝競合が起きない並び）。
+
+    同じ型から2つ入れると、そのレースは競合で丸ごと除外され件数が黙って減る。
+    """
+    import re
+    src = _page_src()
+    m = re.search(r"const DEFAULT_COMBO = \[(.*?)\];", src, re.S)
+    assert m, "DEFAULT_COMBO が見つからない"
+    combo = re.findall(r'"([A-Za-z0-9_]+)"', m.group(1))
+    assert set(combo) <= set(PLANS), set(combo) - set(PLANS)
+    types = [PLANS[p].type_label for p in combo]
+    assert len(types) == len(set(types)), f"同じ型が2つ入っている: {types}"
+    assert set(types) == {p.type_label for p in PLANS.values()}, "型が欠けている"
+
+
+def test_page_finish_labels_match_the_server():
+    """決着クラスは**サーバーの `FINISH_CLASSES` と対**。片方だけ増やすと「—」になる。"""
+    import re
+    outc = (REPO.parent / "backend" / "src" / "services"
+            / "keirin_type_lab_outcome.py").read_text(encoding="utf-8")
+    m = re.search(r"FINISH_CLASSES[^=]*=\s*\[(.*?)\n\]", outc, re.S)
+    assert m, "FINISH_CLASSES が見つからない"
+    server = re.findall(r'"key":\s*"([a-z0-9_]+)"', m.group(1))
+    page = _page_src()
+    for name in ("FINISH_LABEL", "FINISH_TONE"):
+        assert _ts_object_keys(page, name) == server, (name, server)
+
+
+def test_page_type_names_cover_every_type():
+    """`TYPE_NAME` が 6型すべてを持つこと（欠けるとバッジが型記号だけになる）。"""
+    keys = _ts_object_keys(_page_src(), "TYPE_NAME")
+    assert set(keys) == {p.type_label for p in PLANS.values()}
+
+
+def test_confidence_tilt_floor_is_exact_not_approximate():
+    """🔴 床は `ceil`（切り上げ）。`int`（切り捨て）へ変えると**床を割る**。
+
+    既存の床テストは `>= BUDGET * floor_mult * 0.95` と 5% 緩めていたため、
+    `ceil → int` の変異を見逃していた（2026-08-28 の監査 D）。
+    床が実際に効く形（残りがほとんど無く、しかも確率が偏っていて
+    余りが1点へ寄る）で、**緩みなし**で検査する。
+
+    予測 11.0倍・8点なら floor は ceil(13000/1100) = **12単位**（切り捨てなら 11）。
+    12単位 = 1,200円 → 想定払戻 13,200円 ≥ 予算×1.3 = 13,000円。
+    11単位なら 12,100円で**床を割る**。
+    """
+    legs = [(1, 2, c) for c in range(3, 8)] + [(1, 3, c) for c in range(4, 7)]
+    assert len(legs) == 8
+    odds = {c: 11.0 for c in legs}
+    # 余りが1点へ寄るように確率を極端に偏らせる（他の点は床のまま残る）
+    prob = {c: (1.0 if i == 0 else 1e-6) for i, c in enumerate(legs)}
+    plan = PLANS["A_hit"]
+    st = allocate(legs, odds, prob, plan)
+    assert st is not None
+    assert sum(st.values()) == BUDGET
+    assert min_expected_payout(st, odds) >= BUDGET * plan.floor_mult, (
+        "床を割っている（`ceil` を `int` にしていないか）")
+
+
+def test_rebuilding_a_settled_row_drops_the_old_settlement():
+    """🔴 買い目を差し替えたら採点を捨てる（監査 B-2）。
+
+    `ON CONFLICT DO UPDATE` が `legs` だけ差し替えて `settled_at`/`hit`/`payout` を
+    残すと、**古い当たり外れが新しい買い目に付く**。しかも `settle` は
+    `settled_at IS NULL` しか見ないので**永久に直らない**。
+    RUNBOOK 手順1（台を作り直す → paper を再生成 → 採点）がまさにこの形。
+
+    ⚠️ 同じ内容で流し直したときは**消さない**（何度流しても害がない性質を保つ）。
+    """
+    import build_type_lab_picks as B
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    assert "SETTLE_COLS" in src
+    for col in ("settled_at", "win_combo", "hit", "payout", "final_odds", "win_tf_odds"):
+        assert col in B.SETTLE_COLS, col
+    # 条件つき（legs が変わったときだけ）であること
+    assert "IS DISTINCT FROM excluded.legs" in src

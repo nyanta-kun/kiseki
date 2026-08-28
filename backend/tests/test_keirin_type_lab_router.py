@@ -294,3 +294,39 @@ def test_nine_car_live_mode_is_selectable():
         #    `inspect.signature(...).annotation` だと空集合になる（一度踏んだ）。
         allowed = set(typing.get_args(typing.get_type_hints(fn)["mode"]))
         assert {"live", "live9", "paper", "paper9"} <= allowed, (fn.__name__, allowed)
+
+
+def test_rank_pos_treats_the_head_of_the_list_as_highest_priority():
+    """🔴 `_rank_pos` は**先頭ほど上位**。反転しても既存テストは通っていた。
+
+    1レースに複数ランクの候補があるとき、比較表は「実際に売られる1つ」＝
+    優先順位の最上位と並べる。向きを取り違えると**最下位のランクと比べた数字**を
+    出すことになるが、リストの中身しか固定していなかったため検出できなかった
+    （2026-08-28 の監査 D）。
+    """
+    from src.api.keirin_type_lab_router import CURRENT_RANK_ORDER, _rank_pos
+
+    assert _rank_pos(CURRENT_RANK_ORDER[0]) == 0
+    assert _rank_pos(CURRENT_RANK_ORDER[0]) < _rank_pos(CURRENT_RANK_ORDER[-1])
+    # 単調（先頭 → 末尾で増える）
+    pos = [_rank_pos(r) for r in CURRENT_RANK_ORDER]
+    assert pos == sorted(pos) and pos == list(range(len(CURRENT_RANK_ORDER)))
+    # 知らないランクは**最下位**へ（黙って最上位に割り込ませない）
+    assert _rank_pos("RANK_UNKNOWN") == len(CURRENT_RANK_ORDER)
+
+
+def test_comparison_picks_the_highest_priority_rank_for_a_race():
+    """同じレースに複数ランクがあるとき、比較の相手は優先順位の最上位。"""
+    import ast
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab)
+    tree = ast.parse(src.lstrip())
+    # `_rank_pos(...) < _rank_pos(...)` で選んでいること（`>` へ反転させない）
+    ops = [type(n.ops[0]).__name__ for n in ast.walk(tree)
+           if isinstance(n, ast.Compare)
+           and isinstance(n.left, ast.Call)
+           and getattr(n.left.func, "id", "") == "_rank_pos"]
+    assert ops == ["Lt"], ops
