@@ -74,6 +74,8 @@ def test_visible_rank_labels_returns_display_labels():
     src = SRC[SRC.index("async def visible_rank_labels"):]
     src = src[:src.index("\n\n\n")] if "\n\n\n" in src else src
     assert "_PAPER_RANK_LABELS.items()" in src
+    assert "TYPE_LAB_RANK_LABELS.items()" in src, \
+        "型ラボを含めていない（既存ランクを全 OFF にすると空リストになる）"
     assert "for internal, label in" in src and "label for internal, label" in src
 
 

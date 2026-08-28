@@ -1399,7 +1399,11 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 確認窓ROIが単調（85.9 / 84.4 / 80.8%）なので、この並びがそのまま期待値順になる。
 // 2026-08-06: 7H1（穴推奨・本命バスト型）を末尾へ追加した。S/A/B（的中率重視の
 // 予想ベース）とは系統が違い期待値順に並べられないため、末尾に置いて区別する。
-const RANK_ORDER = ["7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
+// 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
+//    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
+//    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
+const RANK_ORDER = ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay",
+  "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
   // （backend `_LEGACY_RANK_LABELS`）。RANK_ORDER には入れない＝絞り込みUIには出さない。
@@ -1411,6 +1415,9 @@ const RANK_LABEL: Record<string, string> = {
   "7T1": "7T1",
   "7T3": "7T3",
   "7C": "7C",
+  // 型ラボのプラン（2026-08-28〜）。バッジは型の名前で出す。
+  "A_hit": "型A", "B_hit": "型B", "C_hit": "型C",
+  "D_hit": "型D", "E_hit": "型E", "F_pay": "型F",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -1427,6 +1434,14 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7T1": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
   "7T3": "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400",
   "7C": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
+  // 型ラボ。堅い側(A/B)＝緑系 / 中(C/D)＝青紫系 / 荒れ側(E/F)＝橙赤系。
+  // `RANK_STYLE`（一覧のバッジ）と同じ色域に揃えてある。
+  "A_hit": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
+  "B_hit": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
+  "C_hit": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  "D_hit": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
+  "E_hit": "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
+  "F_pay": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

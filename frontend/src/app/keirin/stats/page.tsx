@@ -200,11 +200,24 @@ type CumMode = "period" | "month" | "year";
 type RankFilter =
   | "all" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"
   | "7T1"
-  | "7T3";
+  | "7T3"
+  // 型ラボのプラン（2026-08-28 の全面移行〜）。`rank_key` はプラン名そのもの。
+  | "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay";
 
 // 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "all", label: "全体" },
+  // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）を**先頭**に置く。いま売って
+  //    いる商品なので最初に選べるべき。1レースの型が売るプランを1つ決めるので、
+  //    ここでの絞り込みは「その型のレースだけ」を意味する。
+  //    ⚠️ backend の `_all_labels` に無いキーを送ると**全体の数字がそのランクの
+  //       名前で出る**（2026-08-05 の 7B の事故）。両方そろえること。
+  { key: "A_hit", label: "型A" },
+  { key: "B_hit", label: "型B" },
+  { key: "C_hit", label: "型C" },
+  { key: "D_hit", label: "型D" },
+  { key: "E_hit", label: "型E" },
+  { key: "F_pay", label: "型F" },
   // 7S（2026-08-14 に旧 7SS / 7A を統合）
   { key: "7S", label: "7S" },
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）

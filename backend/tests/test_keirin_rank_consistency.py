@@ -210,11 +210,16 @@ def test_settings_page_rank_order_covers_all_labels():
 
 
 def test_keirin_page_rank_order_covers_all_labels():
-    """トップページのサマリー「ランク別」展開の並び。"""
+    """トップページのサマリー「ランク別」展開の並び。
+
+    ⚠️ 2026-08-28〜: 型ラボのプランも**ここに載せる**（`visible_rank_labels` が
+       返すので、無いと「ランク別」に出ない）。許容集合は既存ランク＋型ラボ。
+    """
+    allowed = LABELS | _type_lab_labels()
     found = _extract("app/keirin/page.tsx", r"const RANK_ORDER = \[([^\]]*)\]")
-    assert LABELS <= found, f"keirin/page.tsx の RANK_ORDER に不足: {sorted(LABELS - found)}"
-    assert found <= LABELS, \
-        f"keirin/page.tsx の RANK_ORDER に未知のランク: {sorted(found - LABELS)}"
+    assert allowed <= found, f"keirin/page.tsx の RANK_ORDER に不足: {sorted(allowed - found)}"
+    assert found <= allowed, \
+        f"keirin/page.tsx の RANK_ORDER に未知のランク: {sorted(found - allowed)}"
 
 
 def test_keirin_page_label_and_badge_maps_cover_all_labels():
@@ -419,3 +424,51 @@ def test_keirin_page_has_a_badge_for_every_type_lab_plan():
                      r"const RANK_STYLE: Record<string, \{ bg: string; text: string; label: string \}> = \{(.*?)\n\};")
     assert _type_lab_labels() <= found, \
         f"keirin/page.tsx の RANK_STYLE に不足: {sorted(_type_lab_labels() - found)}"
+
+
+def test_summary_visible_ranks_include_type_lab():
+    """🔴 `visible_rank_labels` に型ラボが載ること。
+
+    ここが `_PAPER_RANK_LABELS` だけだと、既存ランクを全部 OFF にした瞬間に
+    **空リストが返り、サマリーの「ランク別」展開が丸ごと消える**
+    （フロントは `RANK_ORDER.filter(r => allow.includes(r))` で絞るため）。
+    """
+    import inspect
+
+    from src.api import keirin_router as m
+
+    src = inspect.getsource(m.visible_rank_labels)
+    assert "TYPE_LAB_RANK_LABELS" in src, \
+        "visible_rank_labels が型ラボを見ていない（ランク別展開が空になる）"
+
+
+def test_stats_rank_filter_knows_type_lab():
+    """🔴 `/stats` の絞り込みが型ラボの名前を知っていること。
+
+    知らないキーは `None`（＝全ランク）へ落ちるので、**全体の数字を
+    「A_hit」として出す**（2026-08-05 の 7B の事故と同型）。
+    """
+    import inspect
+
+    from src.api import keirin_router as m
+
+    src = inspect.getsource(m.get_stats)
+    assert "TYPE_LAB_RANK_LABELS" in src, "get_stats の _all_labels に型ラボが無い"
+
+
+def test_stats_page_rank_filters_include_type_lab():
+    """統計ページの絞り込みチップ。backend の許可集合とそろえる。"""
+    found = _extract("app/keirin/stats/page.tsx", r"type RankFilter =([^;]*);")
+    assert _type_lab_labels() <= found, \
+        f"stats/page.tsx の RankFilter に不足: {sorted(_type_lab_labels() - found)}"
+
+
+def test_keirin_page_summary_maps_include_type_lab():
+    """サマリーのラベル／バッジ配色。抜けるとそのプランだけ色無しで出る。"""
+    for name, pattern in (
+        ("RANK_LABEL", r"const RANK_LABEL: Record<string, string> = \{(.*?)\n\};"),
+        ("RANK_BADGE_STYLE", r"const RANK_BADGE_STYLE: Record<string, string> = \{(.*?)\n\};"),
+    ):
+        found = _extract("app/keirin/page.tsx", pattern)
+        assert _type_lab_labels() <= found, \
+            f"keirin/page.tsx の {name} に不足: {sorted(_type_lab_labels() - found)}"
