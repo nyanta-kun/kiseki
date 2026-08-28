@@ -1358,7 +1358,12 @@ async def visible_rank_labels(db: AsyncSession) -> list[str]:
         "SELECT rank_key FROM keirin.netkeirin_settings WHERE enabled = FALSE"
     ))).scalars().all()
     off = {f"RANK_{k}" for k in rows}
-    return [label for internal, label in _PAPER_RANK_LABELS.items() if internal not in off]
+    # 🔴 **型ラボのプランも含める**（2026-08-28 の全面移行）。ここが
+    #    `_PAPER_RANK_LABELS` だけだと、既存ランクを全部 OFF にした瞬間に
+    #    **空リストが返り、サマリーの「ランク別」展開が丸ごと消える**
+    #    （フロントは `RANK_ORDER.filter(r => allow.includes(r))` で絞るため）。
+    pairs = (*_PAPER_RANK_LABELS.items(), *TYPE_LAB_RANK_LABELS.items())
+    return [label for internal, label in pairs if internal not in off]
 
 
 async def _aggregate(
@@ -1698,7 +1703,10 @@ async def get_stats(
     #
     #    ⚠️ **ランクの候補としての実力はここでは測れない**（売った分しか入らない）。
     #       候補の性能は keirin 側の walk-forward スクリプトで測ること。
-    _all_labels = set(_PAPER_RANK_LABELS.values())
+    # 🔴 型ラボのプランも「絞り込める名前」に含める。含めないと
+    #    `rank=A_hit` が未知キー扱いで `None`（＝全ランク）へ落ち、
+    #    **全体の数字を「A_hit」として出す**（2026-08-05 の 7B の事故と同型）。
+    _all_labels = set(_PAPER_RANK_LABELS.values()) | set(TYPE_LAB_RANK_LABELS.values())
     _requested_keys = [k.strip() for k in rank.split(",") if k.strip()]
     if not _requested_keys or "all" in _requested_keys:
         rank_labels: list[str] | None = None

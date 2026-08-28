@@ -1342,7 +1342,11 @@ export type KeirinStatsResponse = {
   manual_missing_bet_detail?: number;
 };
 
+// 🔴 型ラボのプラン（2026-08-28 の全面移行〜）も絞り込める名前に含める。
+//    backend の `_all_labels` に無いキーを送ると**全体の数字がそのランクの名前で
+//    出る**（2026-08-05 の 7B の事故と同型）ので、両方をそろえること。
 export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7T1" | "7T3" | "7M1"
+  | TypeLabRankKey
   | "all";
 
 // netkeirin（ウマい車券）自動入稿設定。rank_key='_global' は全体ON/OFFの特殊行。
