@@ -3,7 +3,10 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bike, Loader2 } from "lucide-react";
-import { fetchNetkeirinSettings, type NetkeirinRankKey, type NetkeirinSetting } from "@/lib/api";
+import {
+  fetchNetkeirinSettings,
+  type NetkeirinRankKey, type NetkeirinSetting, type TypeLabRankKey,
+} from "@/lib/api";
 import { saveNetkeirinSettings } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -22,10 +25,37 @@ import { saveNetkeirinSettings } from "./actions";
 // （7H2 > 9H1 > 7S > 9C > 7B > 7C > 7T1 > 7H1 > 7M1）。ここは設定画面の表示順。
 // ⚠️ 2026-08-15 に 7H1 を最下位へ移した（三連単一本化の検証が終わるまで
 //    enabled=false のため、有効化しても他ランクの母集団を奪わない位置に置く）。
-const RANK_ORDER: NetkeirinRankKey[] =
+/** 既存ランク（型ラボのプランを除く）。テンプレートを編集できるのはこちらだけ。 */
+type LegacyRankKey = Exclude<NetkeirinRankKey, TypeLabRankKey>;
+
+const RANK_ORDER: LegacyRankKey[] =
   ["7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"];
 
-const RANK_LABEL: Record<NetkeirinRankKey, string> = {
+// 型ラボのプラン（2026-08-28 の全面移行〜）。**ON/OFF だけを出す。**
+// 🔴 文面（タイトル・コメント・印）は `netkeirin_settings` ではなく keirin 側
+//    `src/type_lab_submission.py` が正本で、ここでテンプレートを書いても
+//    型ラボの入稿には**反映されない**。効かない入力欄を出すほうが有害なので
+//    トグルだけにしてある。
+// 🔴 1レースの型（A〜F）が売るプランをちょうど1つ決めるので、**型ごとに1つ**。
+//    ここを OFF にすると、その型のレースは入稿されない（他の型が肩代わりしない）。
+// 並びは型の順（A→F）。入稿の優先順位という概念は型ラボには無い（型が排他）。
+const TYPE_LAB_ORDER: TypeLabRankKey[] =
+  ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay"];
+
+// 🔴 `Record<TypeLabRankKey, ...>` にしておく。プランを増やしたらここが
+//    型エラーになり、ラベルの付け忘れに気づける。
+const TYPE_LAB_LABEL: Record<TypeLabRankKey, string> = {
+  A_hit: "型A 鉄板（三連単・1着=◎/2着=○ 固定で3着流し 3〜5点）",
+  B_hit: "型B 堅い・中（三連単・確率上位から想定平均払戻3万円の床まで 3〜8点）",
+  C_hit: "型C 崩れ筋（三連単・予測20倍以上から確率上位 12点）",
+  D_hit: "型D 混戦・軸あり（三連複・◎○の2車軸＋相手4点／最人気の相手を1車外す）",
+  E_hit: "型E 混戦・中（三連単・予測30倍以上から確率上位 14点）",
+  F_pay: "型F 大混戦（三連単・1着=◎固定/2着2車/3着流し 4点・「穴狙い」付与）",
+};
+
+// 🔴 型ラボのプランは `TYPE_LAB_LABEL` が持つので**ここからは除く**。
+//    含めると「テンプレートを編集できるランク」として扱われる。
+const RANK_LABEL: Record<LegacyRankKey, string> = {
   _global: "全体",
   "7S": "7S（7車・三連複2軸流し5点）",
   "7B": "7B（◎◯一致・順序/相手で不一致・相手絞り3点）",
@@ -127,13 +157,16 @@ export default function NetkeirinSettingsPage() {
         if (cancelled) return;
         const next: EditState = { _global: emptyRow("_global") };
         for (const rank of RANK_ORDER) next[rank] = emptyRow(rank);
+        for (const rank of TYPE_LAB_ORDER) next[rank] = emptyRow(rank);
         // 全廃済みランク（S1/9SS等）の過去分の行がDBに残っている場合があるため、
         // 現行ランク（RANK_ORDER + '_global'）以外は取り込まない。取り込んでしまうと
         // 保存時のObject.values(rows)に混入し、バックエンドのNETKEIRIN_RANK_KEYS
         // allowlist検証で保存リクエスト全体が400エラーになってしまうため
         // （2026-08-01是正: S1='S1'/9SS='9SS'の既存行(enabled=false)で実際に確認）。
         for (const row of data) {
-          if (row.rank_key === "_global" || (RANK_ORDER as string[]).includes(row.rank_key)) {
+          if (row.rank_key === "_global"
+              || (RANK_ORDER as string[]).includes(row.rank_key)
+              || (TYPE_LAB_ORDER as string[]).includes(row.rank_key)) {
             next[row.rank_key] = row;
           }
         }
@@ -237,6 +270,31 @@ export default function NetkeirinSettingsPage() {
                 checked={rows._global.enabled}
                 onChange={(v) => update("_global", { enabled: v })}
               />
+            </div>
+          </section>
+
+          {/* 型ラボのプラン（2026-08-28 の全面移行〜）。**ON/OFF だけ。**
+              🔴 文面は keirin 側 `src/type_lab_submission.py` が正本なので、
+                 テンプレート欄は出さない（書いても反映されない＝有害）。 */}
+          <section className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+              <div className="text-sm font-semibold text-gray-800">型ラボのプラン</div>
+              <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                1レースの型（A〜F）が売るプランを<b>ちょうど1つ</b>決めます。
+                OFF にするとその型のレースは入稿されません（他の型は肩代わりしません）。
+                タイトル・コメント・印は<b>コード側が正本</b>で、この画面では編集できません。
+              </p>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {TYPE_LAB_ORDER.map((rank) => (
+                <div key={rank} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="text-sm text-gray-700">{TYPE_LAB_LABEL[rank]}</span>
+                  <Toggle
+                    checked={rows[rank].enabled}
+                    onChange={(v) => update(rank, { enabled: v })}
+                  />
+                </div>
+              ))}
             </div>
           </section>
 

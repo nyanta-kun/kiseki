@@ -1258,6 +1258,24 @@ _SETTLED_COND = """(
 # rank を合成しており allowlist を通らない。**売った事実は消せないので落とさず、
 # 表示名を与えるのが正しい**（2026-08-11 に「売っているのに一覧に出ない」を
 # 直した経緯と同じ方針）。
+#: 型ラボのプラン（2026-08-28 の全面移行〜）。**`picks_history` には無い**ので
+#: `_PAPER_RANK_LABELS` へは足さない（あちらは候補の器で、足すと
+#: `_VALID_PICK_RANKS` に混ざり「候補があるはずのランク」として扱われる）。
+#: ここが要るのは2つだけ:
+#:   ① `netkeirin_settings` の許可リスト（入稿設定画面の ON/OFF）
+#:   ② `_display_rank`（一覧のランクバッジ。無いと内部名が漏れて「非」になる）
+#: 🔴 **正本は keirin 側 `src/type_lab.SELL_PLANS`**（手書きの写し）。
+#:    ずれると設定画面で ON にできない／一覧が「非」になる、という形で出る。
+#:    `keirin/tests/test_type_lab_submit.py` が両者の一致を固定している。
+TYPE_LAB_RANK_LABELS: dict[str, str] = {
+    "RANK_A_hit": "A_hit",
+    "RANK_B_hit": "B_hit",
+    "RANK_C_hit": "C_hit",
+    "RANK_D_hit": "D_hit",
+    "RANK_E_hit": "E_hit",
+    "RANK_F_pay": "F_pay",
+}
+
 _LEGACY_RANK_LABELS: dict[str, str] = {
     "RANK_7A": "7A",      # 2026-08-14 に RANK_7S へ統合
     "RANK_7SS": "7SS",    # 2026-08-02 全廃 → 2026-08-14 に RANK_7S へ統合
@@ -1290,6 +1308,8 @@ def _display_rank(rank: str) -> str:
     """
     if rank in _PAPER_RANK_LABELS:
         return _PAPER_RANK_LABELS[rank]
+    if rank in TYPE_LAB_RANK_LABELS:
+        return TYPE_LAB_RANK_LABELS[rank]
     return _LEGACY_RANK_LABELS.get(rank, rank)
 
 
@@ -2424,7 +2444,12 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
 # _PAPER_RANK_LABELS から導出してランク名の二重管理をやめる。
 # DBには過去分の行（rank_key='S1'/'9SS' 等・enabled=false）が残るが、新規保存時の
 # バリデーション対象からは自動的に外れる（フロントも画面に表示しない）。
-NETKEIRIN_RANK_KEYS = ("_global", *_PAPER_RANK_LABELS.values())
+#: 入稿設定画面が編集してよい rank_key。
+#: 🔴 型ラボのプランも含める（**ON/OFF のためだけ**。文面は `netkeirin_settings` では
+#:    なく keirin 側 `src/type_lab_submission.py` が正本で、テンプレートを書いても
+#:    型ラボの入稿には反映されない）。
+NETKEIRIN_RANK_KEYS = ("_global", *_PAPER_RANK_LABELS.values(),
+                       *TYPE_LAB_RANK_LABELS.values())
 
 
 class NetkeirinSettingOut(BaseModel):
