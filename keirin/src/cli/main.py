@@ -1035,6 +1035,11 @@ def status_wt():
     click.echo(f"Date range: {earliest or 'N/A'} ~ {latest or 'N/A'}")
 
 
+#: DNF レースの重みを載せる列名。`FEATURE_COLS_WT` には入らない
+#: （`train_lgbm` が feature_cols を明示で受けるので特徴量には混ざらない）。
+DNF_WEIGHT_COL = "_dnf_sample_weight"
+
+
 @cli.command("train-wt")
 @click.option("--from", "from_date", default="2025-01-01", help="学習開始日")
 @click.option("--to", "to_date", default=None, help="学習終了日")
@@ -1058,9 +1063,15 @@ def status_wt():
 @click.option("--force-overwrite-vintage", "force_overwrite_vintage", is_flag=True, default=False,
               help="凍結vintage命名規則（_q9999/_w9/_m999999形式）に一致する --save-as を"
                    "意図的に上書きする場合のみ指定する。通常は不要（既定は上書き拒否）。")
+@click.option("--dnf-weight", "dnf_weight", type=float, default=1.0,
+              help="落車・失格(DNF)が起きたレースの学習時の重み（既定 1.0＝現行どおり）。"
+                   "0.2〜0.5 で汚染を薄める。**評価・バックフィルからは外さない**。"
+                   "ハード除外（WT_EXCLUDE_DNF_RACES=1）と違い予測の水準が動かないので、"
+                   "p3 の絶対値を見るゲート（7C/9C の 1.44/1.30・型ラボの型判定）を"
+                   "引き直さずに済む。")
 def train_wt(from_date: str, to_date: str | None, test_from: str | None, test_to: str | None,
              save_as: str | None, full_refit: bool, promote: bool, target_kind: str,
-             force_overwrite_vintage: bool):
+             force_overwrite_vintage: bool, dnf_weight: float):
     """winticket データでモデルを学習して data/models/ に保存
 
     例: python -m src.cli.main train-wt --from 2025-01-01
@@ -1101,17 +1112,34 @@ def train_wt(from_date: str, to_date: str | None, test_from: str | None, test_to
     # ローリング特徴の履歴計算は引き続き finish_order>=1 のみを参照（仕様変更なし）。
     df_train = df[df["finish_order"].notna()].copy()
 
-    # 落車・失格を含むレースの学習除外（2026-07-16 検証済み・既定OFF）。
-    # A/B検証の結果、除外すると「事故が起きなかった」という事後情報で学習母集団を
-    # 選別することになり、実運用（事故込み）との較正がズレて S1 テストROIが
-    # 122.8%→87.9% に劣化した。落車者のモデル事前順位分布はほぼ一様＝個人レベルの
-    # 落車予測（リーク）は存在しないことも確認済み。よって既定は含めて学習する。
-    # 再検証したい場合のみ環境変数 WT_EXCLUDE_DNF_RACES=1 で有効化。
+    # 落車・失格（DNF）を含むレースの扱い。**既定は現行どおり全部そのまま学習**。
+    #
+    # 🔴 **ハード除外は「事故が起きなかった」という事後情報で母集団を選ぶ形**で、
+    #    予測の水準（較正）が動く。型ラボの型判定は `axis_sum` を **絶対閾値 1.44**
+    #    と比べるので、水準が 0.010〜0.034 動くだけで**レースの 2.4% が堅い/混戦を
+    #    またぐ**（2026-08-28 実測）。**重み付けなら予測平均が動かない**ので閾値を
+    #    引き直さずに済む（2026-08-04 の検証で重み案が一貫して良かった理由）。
+    #
+    # 🔴 **対象は「DNF が起きたレース全部」**（2026-08-28 ユーザー判断）。軸が落車した
+    #    レースだけではない。型ラボ 7車 35,055R の実測:
+    #
+    #      DNF なし              33,363R (95.2%)  二軸そろい率 54.42%
+    #      DNF いるが軸ではない      945R ( 2.7%)  二軸そろい率 62.67%  ← 相手が消えて易しくなる
+    #      DNF が軸2車のどちらか     747R ( 2.1%)  二軸そろい率  0.00%  ← 構造的に取れない
+    #
+    #    ＝ **両方向に汚染している**。軸直撃だけを外すと片側しか直らない。
+    #
+    # ⚠️ **評価・バックフィルからは外さない**（事故込みが実運用）。ここで触るのは
+    #    学習の重みだけで、`df_te` は全レースのまま。
+    # ⚠️ 欠車（発走前の取消・除外）は `wt_entries` に行が作られないので
+    #    `finish_order == 0` には出てこない。ここで拾うのは**発走後の落車・失格**だけ。
+    #    さらに「オッズ板に居た」ことを条件にして、板から外れた車を除く。
     import os as _os_dnf
     _exclude_dnf = _os_dnf.environ.get("WT_EXCLUDE_DNF_RACES") == "1"
+    _need_dnf = _exclude_dnf or dnf_weight != 1.0
     from src.database import get_connection as _gc_dnf
     _dnf0 = (df_train[df_train["finish_order"] == 0][["race_key", "frame_no"]]
-             if _exclude_dnf else df_train.iloc[0:0][["race_key", "frame_no"]])
+             if _need_dnf else df_train.iloc[0:0][["race_key", "frame_no"]])
     _dnf_races: set[str] = set()
     if len(_dnf0):
         import re as _re_dnf
@@ -1132,11 +1160,22 @@ def train_wt(from_date: str, to_date: str | None, test_from: str | None, test_to
         for _row in _dnf0.itertuples(index=False):
             if int(_row.frame_no) in _boards.get(_row.race_key, set()):
                 _dnf_races.add(_row.race_key)
-        if _dnf_races:
-            _before = df_train["race_key"].nunique()
-            df_train = df_train[~df_train["race_key"].isin(_dnf_races)].copy()
-            click.echo(f"落車・失格レース除外: {len(_dnf_races):,}レースを学習から除外 "
-                       f"({_before:,} → {df_train['race_key'].nunique():,}レース)")
+        if _dnf_races and _exclude_dnf:
+            # 🔴 **ここでは落とさない**（2026-08-28 是正）。`df_train` を先に削ると
+            #    **テスト側（`df_te`）からも DNF レースが消える**ため、
+            #    「事故が起きなかったレースだけで測る」形になり選択バイアスが乗る。
+            #    実測: 除外ありの holdout は n が 127,547 → 120,592 に減り、
+            #    AUC が 0.7792 → 0.7855 に「良く」見えていた（母集団が易しいだけ）。
+            #    落とすのは学習側（`df_tr`）だけ。分割の後で行う。
+            click.echo(f"落車・失格レース除外: {len(_dnf_races):,}レースを"
+                       f"**学習側からのみ**除外する（評価は全レース）")
+        elif _dnf_races:
+            df_train[DNF_WEIGHT_COL] = 1.0
+            df_train.loc[df_train["race_key"].isin(_dnf_races), DNF_WEIGHT_COL] = dnf_weight
+            _n = int((df_train[DNF_WEIGHT_COL] != 1.0).sum())
+            click.echo(f"落車・失格レースの重み: {len(_dnf_races):,}レース "
+                       f"({_n:,}行) に w={dnf_weight} を適用 "
+                       f"（全 {df_train['race_key'].nunique():,}レース中）")
 
     n_dns = (df_train["finish_order"] == 0).sum()
     click.echo(f"Training samples: {len(df_train):,} entries / "
@@ -1165,8 +1204,17 @@ def train_wt(from_date: str, to_date: str | None, test_from: str | None, test_to
                    f"Test: {df_te['race_key'].nunique():,} races  "
                    f"(split: {split_date})")
 
+    # 🔴 ハード除外は**分割の後・学習側だけ**に効かせる（評価は全レースのまま）。
+    if _exclude_dnf and _dnf_races:
+        _b_tr, _b_te = df_tr["race_key"].nunique(), df_te["race_key"].nunique()
+        df_tr = df_tr[~df_tr["race_key"].isin(_dnf_races)].copy()
+        click.echo(f"  学習 {_b_tr:,} → {df_tr['race_key'].nunique():,}レース / "
+                   f"評価 {_b_te:,}レース（**減らさない**）")
+
     click.echo("Training LightGBM (winticket) ...")
-    model = train_lgbm(df_tr, feature_cols=FEATURE_COLS_WT, target_col=target_col)
+    _wcol = DNF_WEIGHT_COL if DNF_WEIGHT_COL in df_train.columns else None
+    model = train_lgbm(df_tr, feature_cols=FEATURE_COLS_WT, target_col=target_col,
+                       weight_col=_wcol)
 
     # --- ホールドアウト評価（保存前に算出。配信モデルとは独立の監視指標）---
     test_auc = None
@@ -1181,7 +1229,10 @@ def train_wt(from_date: str, to_date: str | None, test_from: str | None, test_to
     if full_refit:
         click.echo(f"[full-refit] 全データ {df_train['race_key'].nunique():,} races "
                    f"で配信用モデルを再学習 ...")
-        model = train_lgbm(df_train, feature_cols=FEATURE_COLS_WT, target_col=target_col)
+        _df_full = (df_train[~df_train["race_key"].isin(_dnf_races)]
+                    if (_exclude_dnf and _dnf_races) else df_train)
+        model = train_lgbm(_df_full, feature_cols=FEATURE_COLS_WT, target_col=target_col,
+                           weight_col=_wcol)
 
     model_name = save_as or "lgbm_wt"
     try:
