@@ -227,6 +227,52 @@ def test_保守倍率が取れなければ下限を出さない(monkeypatch):
     assert m._conservative_trio_board({frozenset({1, 2, 3}): 10.0}, 7) == {}
 
 
+def test_保守板は券種ごとに違う倍率を掛ける(monkeypatch):
+    """🔴 三連単へ三連複の倍率を掛けない（2026-08-29・実際にそうなっていた）。
+
+    盤面は**混ざって来る**（`_predicted_board_for` は三連単のランクでも三連複の
+    目を一緒に返す）。キーの型が券種そのものなので、目ごとに選ばせる。
+    """
+    import scripts.netkeirin_submit_wt as m
+
+    monkeypatch.setattr(m, "conservative_multiplier", lambda n, q: 0.80)
+    monkeypatch.setattr(m, "tf_conservative_multiplier", lambda n, q: 0.50)
+    board = {frozenset({1, 2, 3}): 10.0, (1, 2, 3): 100.0}
+    low = m._conservative_trio_board(board, 7)
+    assert low[frozenset({1, 2, 3})] == pytest.approx(8.0)
+    assert low[(1, 2, 3)] == pytest.approx(50.0), \
+        "三連単の目に三連複の倍率が掛かっています"
+
+
+def test_三連単の保守倍率が無ければその券種だけ落ちる(monkeypatch):
+    """三連複の倍率で代用しない。代用すると 2026-08-29 以前へ黙って戻る。"""
+    import scripts.netkeirin_submit_wt as m
+    from src.odds_prediction import OddsPredictionUnavailable
+
+    def _boom(n, q):
+        raise OddsPredictionUnavailable("三連単の保守倍率がメタにありません")
+
+    monkeypatch.setattr(m, "conservative_multiplier", lambda n, q: 0.80)
+    monkeypatch.setattr(m, "tf_conservative_multiplier", _boom)
+    low = m._conservative_trio_board({frozenset({1, 2, 3}): 10.0, (1, 2, 3): 100.0}, 7)
+    assert low == {frozenset({1, 2, 3}): pytest.approx(8.0)}
+
+
+def test_保守倍率は1点あたりで最低払戻の正本ではない():
+    """🔴 「k点の最小」の約束にこの倍率を流用しないこと（点数で甘さが変わる）。
+
+    正本は kiseki 側 `backend/src/services/keirin_payout_floor.py`。
+    ここでは**その所在をコメントに残していること**だけを機械的に固定する
+    （消えると同じ取り違えが再発する）。
+    """
+    src = Path(__file__).resolve().parents[1] / "scripts" / "netkeirin_submit_wt.py"
+    body = src.read_text(encoding="utf-8")
+    i = body.index("def _conservative_trio_board(")
+    block = body[i:i + 3000]
+    assert "keirin_payout_floor" in block, \
+        "最低払戻の正本への参照が消えています"
+
+
 # ── netkeirin の公開（2026-08-16 追加）─────────────────────────────────
 #
 # 仕様は `race_auth.html` の実機 JS から確定:

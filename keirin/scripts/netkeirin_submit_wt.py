@@ -121,7 +121,11 @@ from src.odds_prediction import (
     try_predicted_odds_for_legs,
     trio_hit_probability,
 )
-from src.odds_prediction_tf import try_predicted_trifecta_board
+from src.odds_prediction_tf import (
+    try_predicted_trifecta_board,
+    # 🔴 三連複の倍率と**別物**。名前で取り違えないよう別名で入れる。
+    conservative_multiplier as tf_conservative_multiplier,
+)
 from src.stake_allocation import group_by_stake, tilted_stakes
 from src.premium_pick import select_premium
 from src.strategy_wt import (
@@ -1240,16 +1244,47 @@ def _conservative_trio_board(board: dict, n_cars: int) -> dict:
     ⚠️ **保守板は「板」ではない。** Σ(1/o) は払戻率100%を超える下限包絡で、
        オッズとして表示してはいけない（`src/odds_prediction.py` の注意書き）。
        使ってよいのは「下振れしてもこの額は返る」という**金額の下限**としてだけ。
-    ⚠️ 三連単には使わない（このモデルは三連複しか予測しない）。
+
+    🔴 **券種ごとに別の倍率を掛ける**（2026-08-29）。以前はここに
+       「三連単には使わない」と書いてあったが、実際には 7H1/7T1/7H2/9H1 の
+       `predicted_low` がこの関数を通っており、**三連単の盤面へ三連複の倍率**
+       （7車 0.8428）が掛かっていた。三連単はばらつきが大きく
+       （honest 2026 の ±2倍以内 80.6% ↔ 三連複 91.6%）、同じ数字ではない。
+
+       🔴 **盤面は混ざって来る。** `_predicted_board_for` は三連単のランクでも
+          三連複の目を一緒に返す（キーの型が券種そのもの: 三連複=frozenset /
+          三連単=tuple）。したがって「盤面ごとに1つの倍率」ではなく
+          **目ごとに型で選ぶ**。引数で券種を受け取る形にすると、この混在盤面を
+          必ずどちらかへ倒すことになる。
+
+    🔴 **これは「1点あたり」の分位。** 商品としての「最低払戻」（k点の最小）へ
+       流用してはいけない——点数が増えるほど甘くなる。そちらの正本は
+       `backend/src/services/keirin_payout_floor.py::floor_ratio`
+       （実測は `keirin/docs/oddspred_gap_2026_08_29.md`）。
+
+    ⚠️ 倍率が取れない券種の目は**落とす**（＝その目に `odds_low` が付かない）。
+       三連複の倍率で代用すると 2026-08-29 以前の状態へ黙って戻る。
+       三連単の倍率は `scripts/calibrate_odds_tf_conservative.py --write` で
+       メタへ入れてから配ること。
     """
     if not board:
         return {}
-    try:
-        mult = conservative_multiplier(n_cars, CONSERVATIVE_QUANTILE)
-    except OddsPredictionUnavailable as e:
-        print(f"[odds-pred] 保守倍率を取れません（下限は出しません）: {e}", flush=True)
-        return {}
-    return {k: v * mult for k, v in board.items()}
+    mult: dict[str, float] = {}
+    for kind, fn in (("trio", conservative_multiplier),
+                     ("trifecta", tf_conservative_multiplier)):
+        if not any((isinstance(k, tuple)) == (kind == "trifecta") for k in board):
+            continue
+        try:
+            mult[kind] = fn(n_cars, CONSERVATIVE_QUANTILE)
+        except OddsPredictionUnavailable as e:
+            print(f"[odds-pred] {kind} の保守倍率を取れません（その券種の下限は"
+                  f"出しません）: {e}", flush=True)
+    out = {}
+    for k, v in board.items():
+        m = mult.get("trifecta" if isinstance(k, tuple) else "trio")
+        if m:
+            out[k] = v * m
+    return out
 
 
 def _skip(
@@ -2531,7 +2566,10 @@ def _process_rank(
                     record_legs, tilt_source,
                     marks=record_marks,
                     predicted_odds=pred_board,
-                    predicted_low=_conservative_trio_board(pred_board, int(cfg["n_cars"]))),
+                    # 🔴 盤面は三連複と三連単が混ざりうる。倍率は目ごとに
+                    #    キーの型で選ばれる（`_conservative_trio_board`）。
+                    predicted_low=_conservative_trio_board(
+                        pred_board, int(cfg["n_cars"]))),
                 title=title, comment=comment,
                 # ここはランクのゲートを通った自動経路のみ（_process_rank）。
                 origin=ORIGIN_RANK,
