@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -170,7 +170,9 @@ class ComboResponse(BaseModel):
        除いた数は `n_conflict_races` で必ず返す。黙って落とすと、
        競合だらけの選び方をしたときに「件数が少ない」としか見えなくなる。
     """
+    #: 選択中のモード。`mode` は互換のためのカンマ連結、`modes` が正。
     mode: str
+    modes: list[str] = []
     date_from: str
     date_to: str
     venue: str | None = None
@@ -226,6 +228,7 @@ class TypeLabOutcomeResponse(BaseModel):
        「全7車レースでの型の分布」とは一致しない。
     """
     mode: str
+    modes: list[str] = []
     date_from: str
     date_to: str
     venue: str | None = None
@@ -237,7 +240,9 @@ class TypeLabOutcomeResponse(BaseModel):
 
 
 class TypeLabResponse(BaseModel):
+    #: 選択中のモード。`mode` は互換のためのカンマ連結、`modes` が正。
     mode: str
+    modes: list[str] = []
     date_from: str
     date_to: str
     rule_versions: list[str]
@@ -264,7 +269,7 @@ _SQL = text("""
            r.start_at
     FROM keirin.type_lab_picks p
     LEFT JOIN keirin.wt_races r ON r.race_key = p.race_key
-    WHERE p.mode = :mode AND p.race_date BETWEEN :d1 AND :d2
+    WHERE p.mode = ANY(:modes) AND p.race_date BETWEEN :d1 AND :d2
     ORDER BY p.race_date DESC,
              -- 発走の早い順に並べる（race_key は場コード順で時系列にならない）
              NULLIF(r.start_at, '')::bigint NULLS LAST, p.race_key, p.plan_key
@@ -276,6 +281,48 @@ _SQL = text("""
 #: `/outcome` も並行で叩く）。まとめの母集団が切られるので、**切ったことは
 #: `truncated` で必ず返す**（黙って減らすと「件数が少ない」としか見えない）。
 ROW_CAP = 20_000
+
+#: 選べるモード。**車数 × 実地/ペーパー の4通り**。
+#: 🔴 `type_lab_picks.mode` の実値そのもの（`build_type_lab_picks` が
+#:    `mode + MODE_TAG` で書く）。ここを勝手な別名にすると SQL が空を返す。
+TYPE_LAB_MODES: tuple[str, ...] = ("live", "live9", "paper", "paper9")
+
+
+def parse_modes(mode: str | None) -> list[str]:
+    """`?mode=live,paper9` → `["live", "paper9"]`。**複数選択の唯一の正本**。
+
+    競輪場の絞り込みと同じ操作感にするため、モードも「すべて」＋個別の
+    複数選択にした（2026-08-28・ユーザー要望）。
+
+    - 空・`all` … 4つ全部（＝「すべて」）
+    - 知らない値は**捨てる**（増やすのではなく無視する。URL を手で書いたときに
+      500 を返すより、選べる範囲へ丸めるほうが画面が壊れない）
+    - 全部捨てられたら**既定の `live` 1つ**へ戻す（0件の SQL を投げない）
+    - 並びは `TYPE_LAB_MODES` の順に正規化する（**同じ選択なら同じ URL** になり、
+      キャッシュとログが読める）
+
+    >>> parse_modes("live")
+    ['live']
+    >>> parse_modes("paper9,live")
+    ['live', 'paper9']
+    >>> parse_modes("")
+    ['live', 'live9', 'paper', 'paper9']
+    >>> parse_modes("all")
+    ['live', 'live9', 'paper', 'paper9']
+    >>> parse_modes("live, live9 ,live")
+    ['live', 'live9']
+    >>> parse_modes("知らない値")
+    ['live']
+    """
+    if mode is None:
+        return ["live"]
+    raw = [x.strip() for x in str(mode).split(",")]
+    if not any(raw) or "all" in raw:
+        return list(TYPE_LAB_MODES)
+    picked = {x for x in raw if x in TYPE_LAB_MODES}
+    if not picked:
+        return ["live"]
+    return [m for m in TYPE_LAB_MODES if m in picked]
 
 
 #: 現行の入稿優先順位（`keirin/src/netkeirin_submit_wt.RANK_ORDER` と同じ並び）。
@@ -312,7 +359,7 @@ _SQL_COMBO = text("""
     SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout,
            axis_sum, n_entries
     FROM keirin.type_lab_picks
-    WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
+    WHERE mode = ANY(:modes) AND race_date BETWEEN :d1 AND :d2
       AND plan_key = ANY(:plans)
 """)
 
@@ -359,7 +406,8 @@ def _rank_pos(rank: str) -> int:
 
 @router.get("", response_model=TypeLabResponse)
 async def get_type_lab(
-    mode: Literal["paper", "paper9", "live", "live9"] = "live",
+    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）。"
+                                          "空または 'all' で全モード"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
@@ -370,11 +418,12 @@ async def get_type_lab(
 
     既定は直近7日の実地（`mode=live`）。ペーパー検証は `mode=paper` と期間を指定する。
     """
+    modes = parse_modes(mode)
     d1, d2, dd1, dd2 = window(date_from, date_to)
     # 上の注記のとおり、渡す型はテーブルごとに違う。
 
     # type_lab_picks.race_date は DATE なので `datetime.date` で渡す
-    res = await db.execute(_SQL, {"mode": mode, "d1": dd1, "d2": dd2,
+    res = await db.execute(_SQL, {"modes": modes, "d1": dd1, "d2": dd2,
                                   "cap": ROW_CAP})
     rows = [dict(r._mapping) for r in res]
     truncated = len(rows) >= ROW_CAP
@@ -469,7 +518,8 @@ async def get_type_lab(
             roi=round(ret / inv * 100, 1) if inv else 0.0,
         ))
 
-    return TypeLabResponse(mode=mode, date_from=d1, date_to=d2,
+    return TypeLabResponse(mode=",".join(modes), modes=modes,
+                           date_from=d1, date_to=d2,
                            rule_versions=sorted(versions), truncated=truncated,
                            venues=venues, venue=venue,
                            summaries=summaries,
@@ -586,7 +636,7 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
 @router.get("/combo", response_model=ComboResponse)
 async def get_type_lab_combo(
     plans: str = Query("", description="カンマ区切りのプラン（例 'A_hit,B_hit'）"),
-    mode: Literal["paper", "paper9", "live", "live9"] = "live",
+    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),
@@ -599,19 +649,21 @@ async def get_type_lab_combo(
     実際に売るときは1レースにつき1プランしか出せない。
     ここでは「この組み合わせで売ったら1日いくつ出て、いくら返るか」を出す。
     """
+    modes = parse_modes(mode)
     d1, d2, dd1, dd2 = window(date_from, date_to)
     wanted = [p for p in PLAN_ORDER if p in {x.strip() for x in plans.split(",")}]
     if not wanted:
         empty = ComboRow(plan_key="TOTAL", n_races=0, n_settled=0, n_hit=0,
                          n_shown_hit=0, invested=0, returned=0, roi=0.0)
-        return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+        return ComboResponse(mode=",".join(modes), modes=modes,
+                             date_from=d1, date_to=d2, venue=venue,
                              plans=[], n_days=0, n_conflict_races=0,
                              axis_gate=axis_gate, axis_gate_min=AXIS_GATE_MIN,
                              rows=[], total=empty)
 
     # race_date は DATE 列なので `datetime.date` を渡す（文字列だと 500）
     res = await db.execute(_SQL_COMBO,
-                           {"mode": mode, "d1": dd1, "d2": dd2, "plans": wanted})
+                           {"modes": modes, "d1": dd1, "d2": dd2, "plans": wanted})
     rows = [dict(r._mapping) for r in res]
     if venue:
         rows = [r for r in rows if r["venue_name"] == venue]
@@ -629,7 +681,8 @@ async def get_type_lab_combo(
         n_gated = before - len(rows)
 
     detail, total, n_conflict, n_days = combine_plans(rows)
-    return ComboResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+    return ComboResponse(mode=",".join(modes), modes=modes,
+                         date_from=d1, date_to=d2, venue=venue,
                          plans=wanted, n_days=n_days,
                          n_conflict_races=n_conflict,
                          axis_gate=axis_gate, n_axis_gated_out=n_gated,
@@ -642,13 +695,13 @@ _SQL_OUTCOME = text("""
     SELECT race_key, race_date, venue_name, plan_key, type_label, gap,
            settled_at, hit, win_combo, p3_order, win_tf_odds
     FROM keirin.type_lab_picks
-    WHERE mode = :mode AND race_date BETWEEN :d1 AND :d2
+    WHERE mode = ANY(:modes) AND race_date BETWEEN :d1 AND :d2
 """)
 
 
 @router.get("/outcome", response_model=TypeLabOutcomeResponse)
 async def get_type_lab_outcome(
-    mode: Literal["paper", "paper9", "live", "live9"] = "live",
+    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None),
@@ -660,11 +713,13 @@ async def get_type_lab_outcome(
     それぞれ「事前の分割 × 実際の決着」のマトリクスで出す。
     計算の正本は `services/keirin_type_lab_outcome.build_outcome`（純関数）。
     """
+    modes = parse_modes(mode)
     d1, d2, dd1, dd2 = window(date_from, date_to)
-    res = await db.execute(_SQL_OUTCOME, {"mode": mode, "d1": dd1, "d2": dd2})
+    res = await db.execute(_SQL_OUTCOME, {"modes": modes, "d1": dd1, "d2": dd2})
     rows = [dict(r._mapping) for r in res]
     if venue:
         rows = [r for r in rows if r["venue_name"] == venue]
     out = build_outcome(rows)
-    return TypeLabOutcomeResponse(mode=mode, date_from=d1, date_to=d2, venue=venue,
+    return TypeLabOutcomeResponse(mode=",".join(modes), modes=modes,
+                                  date_from=d1, date_to=d2, venue=venue,
                                   **out)

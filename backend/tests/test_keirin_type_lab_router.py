@@ -280,20 +280,58 @@ def test_combo_passes_the_car_count_to_the_gate():
     assert "n_entries" in str(m._SQL_COMBO), "_SQL_COMBO が n_entries を引いていない"
 
 
-def test_nine_car_live_mode_is_selectable():
-    """`live9` が3つのエンドポイントすべてで受け付けられること。
+def test_all_modes_are_selectable_on_every_endpoint():
+    """4モードすべてが3つのエンドポイントで受け付けられること。
 
     片方だけ足すと、一覧は9車が見えるのに答え合わせだけ 422 になる。
+
+    ⚠️ 2026-08-28 に **複数選択**へ変えたので、注釈は `Literal` ではなく `str`。
+       受け付ける値の正本は `parse_modes`（カンマ区切り）。
     """
-    import typing
+    import inspect
 
     from src.api import keirin_type_lab_router as m
 
     for fn in (m.get_type_lab, m.get_type_lab_combo, m.get_type_lab_outcome):
-        # ⚠️ ルーターは `from __future__ import annotations` なので注釈は**文字列**。
-        #    `inspect.signature(...).annotation` だと空集合になる（一度踏んだ）。
-        allowed = set(typing.get_args(typing.get_type_hints(fn)["mode"]))
-        assert {"live", "live9", "paper", "paper9"} <= allowed, (fn.__name__, allowed)
+        src = inspect.getsource(fn)
+        assert "modes = parse_modes(mode)" in src, f"{fn.__name__} が parse_modes を通していない"
+    for one in m.TYPE_LAB_MODES:
+        assert m.parse_modes(one) == [one]
+
+
+def test_parse_modes_normalizes_multi_select():
+    """複数選択の正規化。**同じ選択なら同じ URL** になること。"""
+    from src.api.keirin_type_lab_router import TYPE_LAB_MODES, parse_modes
+
+    assert parse_modes("paper9,live") == ["live", "paper9"]      # 並びは定義順
+    assert parse_modes("live, live9 ,live") == ["live", "live9"]  # 重複と空白
+    assert parse_modes("") == list(TYPE_LAB_MODES)                # 空＝すべて
+    assert parse_modes("all") == list(TYPE_LAB_MODES)
+    assert parse_modes(None) == ["live"]
+
+
+def test_parse_modes_never_returns_empty():
+    """🔴 知らない値だけでも空リストを返さない（0件の SQL を投げない）。
+
+    URL を手で書いたときに 500 や「全件0件」を出すより、選べる範囲へ丸める。
+    """
+    from src.api.keirin_type_lab_router import parse_modes
+
+    assert parse_modes("知らない値") == ["live"]
+    assert parse_modes(",,,") == ["live", "live9", "paper", "paper9"]
+    assert parse_modes("paper,知らない値") == ["paper"]
+
+
+def test_every_mode_query_uses_an_array_comparison():
+    """🔴 SQL は `mode = ANY(:modes)`。単一比較が1つでも残ると、そのタブだけ
+       「モードを複数選んでも1つしか出ない」という**気づきにくい**壊れ方をする。
+    """
+    from src.api import keirin_type_lab_router as m
+
+    for sql in (m._SQL, m._SQL_COMBO, m._SQL_OUTCOME):
+        text = str(sql)
+        assert "mode = ANY(:modes)" in text, text
+        assert "mode = :mode" not in text, text
 
 
 def test_rank_pos_treats_the_head_of_the_list_as_highest_priority():
