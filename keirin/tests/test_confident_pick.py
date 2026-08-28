@@ -6,10 +6,13 @@
 2. **1点でも盤面に無ければ EV を出さない**（部分計算で少点数ランクが有利になる）
 3. **同値でも結果が決定的**（実行のたびに変わらない）
 4. **入稿・承認の経路がランク名で決めていない**（旧仕様への逆戻り防止）
+5. **型ラボは Σp（的中確率）で選ぶ**（2026-08-28〜）。EV と尺度が違うので混ぜない
 """
 from __future__ import annotations
 
 import json
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -123,3 +126,77 @@ def test_picker_clears_the_day_before_setting_one():
     i_false = src.index("SET is_confident = FALSE")
     i_true = src.index("SET is_confident = TRUE")
     assert i_false < i_true, "先に1件立ててから全消ししています（毎回0件になります）"
+
+
+# ───────────────────── 型ラボ（2026-08-28〜） ─────────────────────
+#
+# ユーザー決定: 「20,000円以上の払い戻しになりそうで、最も的中率が高そうなレース」。
+#   候補 … pred_min_payout >= 20,000（**どの目が当たっても** 2万円以上）
+#   順位 … Σp（買い目の的中確率の合計）が最大
+
+def test_type_lab_hit_probability_sums_leg_probs():
+    from src.confident_pick import type_lab_hit_probability
+
+    legs = [{"prob": 0.12}, {"prob": 0.08}, {"prob": 0.05}]
+    assert type_lab_hit_probability(legs, 30_000) == pytest.approx(0.25)
+
+
+def test_type_lab_hit_probability_requires_min_payout():
+    """🔴 「平均」ではなく「最低」想定払戻で候補を絞る。
+
+    平均で見ると**当たった目によっては2万円に届かない**商品に
+    「自信あり」が付き、アイコンの約束と食い違う。
+    """
+    from src.confident_pick import TYPE_LAB_MIN_PAYOUT, type_lab_hit_probability
+
+    legs = [{"prob": 0.5}]
+    assert type_lab_hit_probability(legs, TYPE_LAB_MIN_PAYOUT) is not None
+    assert type_lab_hit_probability(legs, TYPE_LAB_MIN_PAYOUT - 1) is None
+    assert type_lab_hit_probability(legs, None) is None
+
+
+def test_type_lab_hit_probability_never_sums_partially():
+    """🔴 一部だけで足さない（点数の多い商品が不当に低く出る）。"""
+    from src.confident_pick import type_lab_hit_probability
+
+    assert type_lab_hit_probability([{"prob": 0.2}, {"prob": None}], 30_000) is None
+    assert type_lab_hit_probability([{"prob": 0.2}, {}], 30_000) is None
+    assert type_lab_hit_probability([], 30_000) is None
+
+
+def test_type_lab_pick_takes_max_hit_probability(monkeypatch):
+    """型ラボの行があれば Σp 最大の1件を選ぶ（EV 経路は使わない）。"""
+    from scripts import pick_confident_race_wt as m
+
+    rows = [
+        # 最低想定払戻が足りない → Σp が最大でも選ばれない
+        {"race_key": "20260829_11_01", "rank_key": "C_hit", "venue_name": "A",
+         "race_no": 1, "legs": [{"prob": 0.9}], "pred_min_payout": 19_000},
+        {"race_key": "20260829_11_02", "rank_key": "B_hit", "venue_name": "A",
+         "race_no": 2, "legs": [{"prob": 0.20}, {"prob": 0.10}],
+         "pred_min_payout": 28_000},
+        {"race_key": "20260829_11_03", "rank_key": "D_hit", "venue_name": "A",
+         "race_no": 3, "legs": [{"prob": 0.15}], "pred_min_payout": 35_000},
+    ]
+    monkeypatch.setattr(m, "_load_type_lab", lambda date: rows)
+
+    def _never(*a, **k):
+        raise AssertionError("型ラボがあるのに EV 経路を使った")
+
+    monkeypatch.setattr(m, "_load_alive", _never)
+    monkeypatch.setattr(m, "race_expected_value", _never)
+
+    assert m.pick("2026-08-29", dry_run=True) == ("20260829_11_02", "B_hit")
+
+
+def test_type_lab_and_legacy_scores_are_never_mixed(monkeypatch):
+    """🔴 EV と Σp は尺度が違う。型ラボが1件でもあれば EV 経路は見ない。"""
+    from scripts import pick_confident_race_wt as m
+
+    monkeypatch.setattr(m, "_load_type_lab", lambda date: [])
+    monkeypatch.setattr(m, "_load_alive", lambda date: [
+        {"race_key": "20260829_11_09", "rank_key": "7C", "venue_name": "A",
+         "race_no": 9, "bet_detail": "{}"}])
+    monkeypatch.setattr(m, "race_expected_value", lambda rk, bd: 1.5)
+    # 型ラボが0件なら従来どおり EV 経路へ落ちる
+    assert m.pick("2026-08-29", dry_run=True) == ("20260829_11_09", "7C")

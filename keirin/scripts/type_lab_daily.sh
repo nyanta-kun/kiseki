@@ -46,6 +46,16 @@ if ! "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" morning; then
   echo "[type_lab] ⚠️ 入稿に失敗（採点は続行する）"
 fi
 
+# 🔴 **入稿のあと・承認の前に1回だけ**。「自信あり」は netkeirin の仕様で
+#    1日1つしか付けられず、承認時に `netkeirin_submissions.is_confident` が読まれる。
+#    `daily_picks_wt.sh`（07:00）にも同じ呼び出しがあるが、あちらは型ラボの
+#    入稿より前に走るので当日の型ラボの行をまだ1件も見られない。
+# 🔴 昼・夕の波では走らせない（当日2回目を選ぶと1日1件が壊れる）。
+echo "[type_lab] $(date '+%F %T') 自信ありレースの選定 $TODAY"
+if ! "$PY" scripts/pick_confident_race_wt.py "$TODAY"; then
+  echo "[type_lab] ⚠️ 自信ありの選定に失敗（採点は続行する）"
+fi
+
 echo "[type_lab] $(date '+%F %T') settle $YEST"
 "$PY" scripts/settle_type_lab_picks.py --date "$YEST"
 echo "[type_lab] $(date '+%F %T') settle $TODAY"
