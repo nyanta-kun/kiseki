@@ -186,6 +186,26 @@ def test_only_type_f_is_longshot():
                if k != "F_pay")
 
 
+@pytest.mark.parametrize("n_entries,race_type", [(7, "決勝"), (7, "準決勝"),
+                                                 (7, "特選"), (9, "決勝")])
+def test_type_f_is_longshot_regardless_of_car_count(n_entries, race_type):
+    """🔴 穴狙いは**車数で変わらない**（アイコンはプランだけで決まる）。
+
+    9車の型F は決勝だけ売るが、売るときは 7車と同じ `F_pay` なので同じアイコン。
+    商品の性格とも一致する——9車決勝の `F_pay` は表示的中 2.99%（67件中2件）・
+    払戻中央 169,545円 で、この体系で最も極端な一撃枠。
+
+    ⚠️ 将来 `ACT_TYPE_BY_PLAN` を車数別に持つと、ここが落ちる。
+       落ちたときは「車数で売り方を変えた」という設計変更の合図として扱うこと。
+    """
+    from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
+    from src.netkeirin_client import ACT_TYPE_LONGSHOT
+
+    plans = sell_plans_for("F", n_entries, race_type)
+    assert [p.key for p in plans] == ["F_pay"]
+    assert ACT_TYPE_BY_PLAN[plans[0].key] == ACT_TYPE_LONGSHOT
+
+
 def test_act_type_travels_in_bet_detail():
     """🔴 承認制では入稿時の act_type は使われないので、商品と一緒に保存する。"""
     from scripts.netkeirin_submit_type_lab import _legs_of
