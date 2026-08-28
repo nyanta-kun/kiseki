@@ -380,8 +380,12 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
     # 🔴 **アイコンを買い目と一緒に保存する。** 承認制では入稿時ではなく
     #    承認時に netkeirin へ送るので、ここで渡した `act_type` は使われない。
     #    `approve_and_submit` が `bet_detail` からこれを読む。
+    # 🔴 **車数を必ず入れる。** 承認経路は印の数から車数を導くフォールバックを
+    #    持つが、型ラボは**買っていない車に印を付けない**（`marks_for`）ので
+    #    それでは足りず、「7/9車のみ対応」で承認が丸ごと失敗する。
     detail = build_bet_detail(legs, source="type_lab", marks=marks,
-                              predicted_odds=pred_odds, act_type=act_type)
+                              predicted_odds=pred_odds, act_type=act_type,
+                              n_cars=n_cars)
     if dry_run:
         if show_detail:
             _print_detail(row, sub, detail)
