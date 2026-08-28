@@ -1358,9 +1358,17 @@ export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C
 // 2026-08-13〜: 7T1（三連単・高配当枠／看板×別ライン・点数可変）へ置換。
 // 2026-08-24〜: 7T3（三連単・決勝の中配当枠／決勝限定・予測30倍以上から確率上位5点・
 //   ライン条件なし）を追加。7T1 は同日に母集団を決勝のみへ絞った。
+// 2026-08-28〜: 型ラボへ全面移行。プランは `rank_key` にプラン名そのものが入る
+//   （`type_lab_picks.plan_key` と同じ値）。**入稿設定では ON/OFF だけを扱う**
+//   ——文面は keirin 側 `src/type_lab_submission.py` が正本で、
+//   `netkeirin_settings` のテンプレートは型ラボの入稿に反映されない。
+export type TypeLabRankKey =
+  "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay";
+
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"
-  | "7T1" | "7T3";
+  | "7T1" | "7T3"
+  | TypeLabRankKey;
 
 export type NetkeirinSetting = {
   rank_key: NetkeirinRankKey;

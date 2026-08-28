@@ -153,7 +153,7 @@ def test_display_order_is_by_car_count_then_submit_priority():
 @pytest.mark.parametrize(("rel", "pattern"), [
     ("app/keirin/page.tsx", r"const RANK_ORDER = \[([^\]]*)\]"),
     ("app/keirin/settings/page.tsx",
-     r"const RANK_ORDER: NetkeirinRankKey\[\] =([^;]*);"),
+     r"const RANK_ORDER: LegacyRankKey\[\] =([^;]*);"),
 ])
 def test_frontend_rank_order_matches_backend_order(rel, pattern):
     """🔴 フロントの並びが backend の定義順と**同じ順序**であること。
@@ -203,7 +203,7 @@ def test_settings_page_rank_order_covers_all_labels():
     """入稿設定画面の並び（ここに無いランクは画面から ON/OFF できない）。"""
     found = _extract(
         "app/keirin/settings/page.tsx",
-        r"const RANK_ORDER: NetkeirinRankKey\[\] =([^;]*);",
+        r"const RANK_ORDER: LegacyRankKey\[\] =([^;]*);",
     )
     assert LABELS <= found, \
         f"settings/page.tsx の RANK_ORDER に不足: {sorted(LABELS - found)}"
@@ -360,3 +360,62 @@ def test_legacy_labels_are_not_remapped_to_successors():
     for internal, label in _LEGACY_RANK_LABELS.items():
         assert label not in LABELS, (
             f"{internal} の表示名 {label} が現行ランクと同じです（成績が混ざります）")
+
+
+# ───────────────────── 型ラボのプラン（2026-08-28〜） ─────────────────────
+#
+# 🔴 型ラボは `picks_history` に行を持たないので `_PAPER_RANK_LABELS` を通らない。
+#    そのぶん**別の場所に写しが増える**ので、ここで機械的に突き合わせる。
+
+def _type_lab_labels() -> set[str]:
+    from src.api.keirin_router import TYPE_LAB_RANK_LABELS
+
+    return set(TYPE_LAB_RANK_LABELS.values())
+
+
+def test_type_lab_labels_match_keirin_sell_plans():
+    """🔴 backend の写しが keirin 側の正本（`SELL_PLANS`）と一致すること。
+
+    ずれると「設定画面で ON にできない」「一覧が『非』になる」という形で出る。
+    """
+    import re
+
+    src = (KEIRIN_STRATEGY.parent / "type_lab.py").read_text(encoding="utf-8")
+    m = re.search(r"SELL_PLANS: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
+    assert m, "keirin/src/type_lab.py の SELL_PLANS を読めない"
+    canonical = set(re.findall(r'"([^"]+)"', m.group(1)))
+    assert canonical == _type_lab_labels(), (
+        "TYPE_LAB_RANK_LABELS が SELL_PLANS とずれている\n"
+        f"  keirin のみ: {sorted(canonical - _type_lab_labels())}\n"
+        f"  backend のみ: {sorted(_type_lab_labels() - canonical)}")
+
+
+def test_type_lab_plans_are_editable_in_settings():
+    """入稿設定の許可リストに入っていること（無いと画面から ON/OFF できない）。"""
+    from src.api.keirin_router import NETKEIRIN_RANK_KEYS
+
+    assert _type_lab_labels() <= set(NETKEIRIN_RANK_KEYS)
+
+
+def test_type_lab_plans_have_a_display_name():
+    """`_display_rank` が内部名を漏らさないこと（漏れると「非」バッジになる）。"""
+    from src.api.keirin_router import _display_rank
+
+    for label in _type_lab_labels():
+        assert _display_rank(f"RANK_{label}") == label
+
+
+def test_settings_page_lists_every_type_lab_plan():
+    """設定画面の型ラボ欄。ここに無いプランは画面から ON/OFF できない。"""
+    found = _extract("app/keirin/settings/page.tsx",
+                     r"const TYPE_LAB_ORDER: TypeLabRankKey\[\] =([^;]*);")
+    assert _type_lab_labels() <= found, \
+        f"settings/page.tsx の TYPE_LAB_ORDER に不足: {sorted(_type_lab_labels() - found)}"
+
+
+def test_keirin_page_has_a_badge_for_every_type_lab_plan():
+    """一覧のランクバッジ。抜けるとそのプランだけ内部名が漏れて「非」になる。"""
+    found = _extract("app/keirin/page.tsx",
+                     r"const RANK_STYLE: Record<string, \{ bg: string; text: string; label: string \}> = \{(.*?)\n\};")
+    assert _type_lab_labels() <= found, \
+        f"keirin/page.tsx の RANK_STYLE に不足: {sorted(_type_lab_labels() - found)}"

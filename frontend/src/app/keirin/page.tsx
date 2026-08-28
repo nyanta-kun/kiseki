@@ -259,6 +259,18 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   // 2026-07-31にgate_label('SS'/'S')による分岐が廃止され単一ランクへ統合済み
   // （旧7SSはSへ吸収）。同じ色を維持（旧"7S"の色をそのまま踏襲）。
   "7S":         { bg: "#16a34a", text: "#fff", label: "7S" },
+  // ── 型ラボのプラン（2026-08-28 の全面移行〜）─────────────────────────
+  // 🔴 ここに無いと `_display_rank` が返す内部名がそのまま漏れ、**「非」バッジ**に
+  //    なる（`picks_history` に行が無いので `_PAPER_RANK_LABELS` を通らない）。
+  //    表示名の正本は backend `TYPE_LAB_RANK_LABELS`。
+  // 色は型の性格で分ける: 堅い側(A/B)＝緑〜青緑 / 中(C/D)＝青〜紫 /
+  // 荒れ側(E/F)＝橙〜赤。既存ランクと被らない色域を使う。
+  "A_hit":      { bg: "#059669", text: "#fff", label: "型A" },
+  "B_hit":      { bg: "#0d9488", text: "#fff", label: "型B" },
+  "C_hit":      { bg: "#2563eb", text: "#fff", label: "型C" },
+  "D_hit":      { bg: "#6366f1", text: "#fff", label: "型D" },
+  "E_hit":      { bg: "#ea580c", text: "#fff", label: "型E" },
+  "F_pay":      { bg: "#dc2626", text: "#fff", label: "型F" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
