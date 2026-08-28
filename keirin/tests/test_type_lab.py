@@ -642,3 +642,47 @@ def test_build_script_records_the_funded_legs_only():
     """
     src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
     assert "legs = [c for c in legs if c in stakes]" in src
+
+
+# ──────────────── 画面のダークモード（2026-08-28） ────────────────
+
+def test_type_lab_page_has_no_dark_mode_contrast_holes():
+    """🔴 ダークモードで**背景だけ `dark:` を持ち文字色が明色前提**の箇所を禁じる。
+
+    スマホのダークモードで**プランのバッジ（`D_hit` 等）が読めなくなっていた**
+    （`bg-indigo-100 dark:bg-indigo-900 … text-indigo-800` で、暗い背景に暗い文字）。
+
+    ⚠️ この repo は逆向きの罠（「ダークモードは本文色がほぼ白で色指定の無い数値が
+       消える」）を既に踏んでいる。**背景と文字は必ず対で `dark:` を持たせる**。
+    """
+    import re
+    page = (REPO.parent / "frontend" / "src" / "app" / "keirin" / "type-lab"
+            / "page.tsx").read_text(encoding="utf-8")
+    bad = []
+    for m in re.finditer(r'className=(?:"([^"]*)"|\{`([^`]*)`\})', page, re.S):
+        cls = (m.group(1) or m.group(2) or "").replace("\n", " ")
+        line = page[:m.start()].count("\n") + 1
+        if "dark:bg-" not in cls:
+            continue
+        if re.search(r'(?<!dark:)\btext-[a-z]+-\d{2,3}\b', cls) and "dark:text-" not in cls:
+            bad.append(f"L{line}: {cls.strip()[:100]}")
+    assert not bad, "背景に dark: があるのに文字色に無い:\n" + "\n".join(bad)
+
+
+def test_type_lab_page_dark_text_colors_have_dark_variants():
+    """濃い文字色（600〜900）は暗い背景に沈むので `dark:` 版を必ず持つこと。
+
+    カードの背景は `dark:bg-gray-900` なので、`text-emerald-700` などは
+    そのままだと**ほぼ黒地に暗緑**になる。
+    """
+    import re
+    page = (REPO.parent / "frontend" / "src" / "app" / "keirin" / "type-lab"
+            / "page.tsx").read_text(encoding="utf-8")
+    palette = ("emerald|amber|red|indigo|teal|orange|sky|rose|green|blue|purple")
+    bad = []
+    for m in re.finditer(r'"([^"\n]*text-(?:%s)-[6-9]\d\d[^"\n]*)"' % palette, page):
+        cls = m.group(1)
+        if "dark:text-" in cls:
+            continue
+        bad.append(f"L{page[:m.start()].count(chr(10)) + 1}: {cls.strip()[:100]}")
+    assert not bad, "濃い文字色に dark: 版が無い:\n" + "\n".join(bad)
