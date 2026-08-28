@@ -361,14 +361,27 @@ COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
         "n_legs budget legs pred_mean_payout pred_min_payout rule_version").split()
 
 
+#: 買い目が変わったら**捨てる**採点結果の列。
+#: 🔴 買い目を差し替えたのに採点だけ残すと、**古い当たり外れが新しい買い目に付く**。
+#:    RUNBOOK 手順1（台を作り直す → paper を再生成する → 採点する）がまさにその形で、
+#:    再生成のあと `settle` は `settled_at IS NULL` しか見ないので**永久に直らない**。
+#:    例外もログも出ないので、UPSERT の時点で落とす。
+SETTLE_COLS = ("settled_at", "win_combo", "hit", "payout", "final_odds", "win_tf_odds")
+
+
 def save(rows: list[dict]) -> int:
     if not rows:
         return 0
     ph = ",".join("?" * len(COLS))
     upd = ", ".join(f"{c}=excluded.{c}" for c in COLS
                     if c not in ("race_key", "plan_key", "mode"))
+    # 買い目（`legs`）が変わった行だけ採点を落とす。変わっていなければ触らない
+    #    （同じ内容で流し直しても採点済みが消えない＝何度流しても害がない）。
+    clear = ", ".join(
+        f"{c} = CASE WHEN type_lab_picks.legs IS DISTINCT FROM excluded.legs "
+        f"THEN NULL ELSE type_lab_picks.{c} END" for c in SETTLE_COLS)
     sql = (f"INSERT INTO type_lab_picks ({', '.join(COLS)}) VALUES ({ph}) "
-           f"ON CONFLICT (race_key, plan_key, mode) DO UPDATE SET {upd}, "
+           f"ON CONFLICT (race_key, plan_key, mode) DO UPDATE SET {upd}, {clear}, "
            f"generated_at = NOW()")
     with get_connection() as c:
         for r in rows:
