@@ -1936,8 +1936,11 @@ export type TypeLabSummary = {
   two_plus_per_day: number; big_per_day: number;
   invested: number; returned: number; roi: number;
 };
+/** 型ラボのモード。**車数 × 実地/ペーパー の4通り**で、画面では複数選択できる。 */
+export type TypeLabMode = "live" | "live9" | "paper" | "paper9";
+
 export type TypeLabResponse = {
-  mode: string; date_from: string; date_to: string;
+  mode: string; modes: TypeLabMode[]; date_from: string; date_to: string;
   rule_versions: string[];
   venues: string[]; venue: string | null;
   summaries: TypeLabSummary[]; comparison: TypeLabComparisonRow[];
@@ -1945,11 +1948,12 @@ export type TypeLabResponse = {
 };
 
 export async function fetchKeirinTypeLab(params: {
-  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string;
+  /** 複数選択可。空配列＝「すべて」。 */
+  modes?: TypeLabMode[]; dateFrom?: string; dateTo?: string;
   venue?: string; limit?: number;
 } = {}): Promise<TypeLabResponse> {
   const q = new URLSearchParams();
-  if (params.mode) q.set("mode", params.mode);
+  q.set("mode", params.modes?.length ? params.modes.join(",") : "all");
   if (params.dateFrom) q.set("date_from", params.dateFrom);
   if (params.dateTo) q.set("date_to", params.dateTo);
   if (params.venue) q.set("venue", params.venue);
@@ -1968,7 +1972,7 @@ export type TypeLabComboRow = {
   invested: number; returned: number; roi: number;
 };
 export type TypeLabComboResponse = {
-  mode: string; date_from: string; date_to: string; venue: string | null;
+  mode: string; modes: TypeLabMode[]; date_from: string; date_to: string; venue: string | null;
   plans: string[]; n_days: number; n_conflict_races: number;
   /** 軸信頼ゲート（プラン内で軸信頼が下位のレースを外す）を掛けたか */
   axis_gate: boolean; n_axis_gated_out: number;
@@ -1978,13 +1982,13 @@ export type TypeLabComboResponse = {
 
 export async function fetchKeirinTypeLabCombo(params: {
   plans: string[];
-  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string; venue?: string;
+  modes?: TypeLabMode[]; dateFrom?: string; dateTo?: string; venue?: string;
   axisGate?: boolean;
 }): Promise<TypeLabComboResponse> {
   const q = new URLSearchParams();
   q.set("plans", params.plans.join(","));
   if (params.axisGate) q.set("axis_gate", "true");
-  if (params.mode) q.set("mode", params.mode);
+  q.set("mode", params.modes?.length ? params.modes.join(",") : "all");
   if (params.dateFrom) q.set("date_from", params.dateFrom);
   if (params.dateTo) q.set("date_to", params.dateTo);
   if (params.venue) q.set("venue", params.venue);
@@ -2011,17 +2015,17 @@ export type TypeLabOutcomeMatrix = {
   total: TypeLabOutcomeRow | null;
 };
 export type TypeLabOutcomeResponse = {
-  mode: string; date_from: string; date_to: string; venue: string | null;
+  mode: string; modes: TypeLabMode[]; date_from: string; date_to: string; venue: string | null;
   n_races: number; n_races_settled: number;
   n_unclassified: number; n_no_payout: number;
   matrices: TypeLabOutcomeMatrix[];
 };
 
 export async function fetchKeirinTypeLabOutcome(params: {
-  mode?: "paper" | "paper9" | "live" | "live9"; dateFrom?: string; dateTo?: string; venue?: string;
+  modes?: TypeLabMode[]; dateFrom?: string; dateTo?: string; venue?: string;
 } = {}): Promise<TypeLabOutcomeResponse> {
   const q = new URLSearchParams();
-  if (params.mode) q.set("mode", params.mode);
+  q.set("mode", params.modes?.length ? params.modes.join(",") : "all");
   if (params.dateFrom) q.set("date_from", params.dateFrom);
   if (params.dateTo) q.set("date_to", params.dateTo);
   if (params.venue) q.set("venue", params.venue);

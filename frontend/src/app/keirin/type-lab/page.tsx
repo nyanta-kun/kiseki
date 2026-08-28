@@ -24,7 +24,7 @@ import {
   fetchKeirinTypeLab, fetchKeirinTypeLabCombo, fetchKeirinTypeLabOutcome,
   type TypeLabComboResponse, type TypeLabComboRow, type TypeLabComparisonRow,
   type TypeLabOutcomeMatrix, type TypeLabOutcomeResponse,
-  type TypeLabPick, type TypeLabResponse, type TypeLabSummary,
+  type TypeLabMode, type TypeLabPick, type TypeLabResponse, type TypeLabSummary,
 } from "@/lib/api";
 
 const TYPE_NAME: Record<string, string> = {
@@ -48,7 +48,18 @@ const PLAN_NOTE: Record<string, string> = {
  *  ⚠️ `live9` は型F を**決勝の F_hit だけ**に絞った実投入ぶん（2026-08-28〜・
  *     約 5.6件/日）。`paper9` は絞る前の**全8プラン**の検証行なので、
  *     両者は規則が別世代（`rule_version` が違う）。 */
-type TypeLabMode = "live" | "live9" | "paper" | "paper9";
+/* `TypeLabMode` は API 型と**同じ定義を2箇所に置かない**ため `@/lib/api` から取る
+ * （2026-08-28。以前はここで別に宣言していた）。 */
+
+/** モードの表示名。**車数 × 実地/ペーパー**の4通り。
+ *  🔴 並びは「7車 → 9車」「実地 → ペーパー」。`type_lab_picks.mode` の実値と対にする。 */
+const MODE_OPTIONS: { key: TypeLabMode; label: string }[] = [
+  { key: "live",   label: "7車・実地" },
+  { key: "paper",  label: "7車・ペーパー" },
+  { key: "live9",  label: "9車・実地" },
+  { key: "paper9", label: "9車・ペーパー" },
+];
+const SEVEN_CAR_MODES: TypeLabMode[] = ["live", "paper"];
 
 /** 決着クラスの表示。サーバー（`keirin_type_lab_outcome.FINISH_CLASSES`）と対。
  *  🔴 key を増やしたら**両方**へ足すこと（片方だけだと「—」になって気づけない）。 */
@@ -96,7 +107,17 @@ function shiftISO(iso: string, days: number): string {
 }
 
 export default function TypeLabPage() {
-  const [mode, setMode] = useState<TypeLabMode>("live");
+  /** 選択中のモード（複数可）。**空配列＝「すべて」**（競輪場の絞り込みと同じ操作感）。 */
+  const [modes, setModes] = useState<TypeLabMode[]>(["live"]);
+  /** 表示順を `MODE_OPTIONS` に揃える。押した順で URL が変わると読みにくいため。 */
+  const toggleMode = useCallback((m: TypeLabMode) => {
+    setModes((prev) => {
+      const next = prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m];
+      // 🔴 全部外したら「すべて」に倒す。0件のリクエストを投げない。
+      if (!next.length) return [];
+      return MODE_OPTIONS.map((o) => o.key).filter((k) => next.includes(k));
+    });
+  }, []);
   const [dateFrom, setDateFrom] = useState(isoDaysAgo(6));
   const [dateTo, setDateTo] = useState(isoDaysAgo(0));
   const [data, setData] = useState<TypeLabResponse | null>(null);
@@ -118,7 +139,13 @@ export default function TypeLabPage() {
   /** 9車のモードか。軸信頼ゲートの閾値は**7車の探索窓の分位**なので、
    *  サーバー側（`passes_axis_gate`）が9車を素通しする。押しても効かない操作を
    *  押せるままにしないため、UI でも無効にして理由を出す。 */
-  const isNineCar = mode === "live9" || mode === "paper9";
+  /** 7車を1つでも選んでいるか。軸信頼ゲートは7車にしか掛からないので、
+   *  1つも無いときはトグルを無効にする。 */
+  const hasSevenCar = !modes.length || modes.some((m) => SEVEN_CAR_MODES.includes(m));
+  /** 7車と9車を混ぜて見ているか。**型の出方も配当帯も違う**ので注意を出す。 */
+  const mixedCarCount = (!modes.length)
+    || (modes.some((m) => SEVEN_CAR_MODES.includes(m))
+        && modes.some((m) => !SEVEN_CAR_MODES.includes(m)));
   // 型分けの答え合わせ。買い目を引かない軽い専用 API（本体とは別に読む）。
   const [outcome, setOutcome] = useState<TypeLabOutcomeResponse | null>(null);
   const [outcomeErr, setOutcomeErr] = useState<string | null>(null);
@@ -136,7 +163,7 @@ export default function TypeLabPage() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      const r = await fetchKeirinTypeLab({ mode, dateFrom, dateTo, venue, limit: 1000 });
+      const r = await fetchKeirinTypeLab({ modes, dateFrom, dateTo, venue, limit: 1000 });
       setData(r);
       // 絞っていないときの一覧を覚えておく（絞ると1場しか返らない）
       if (!venue) setVenueOptions(r.venues);
@@ -145,7 +172,7 @@ export default function TypeLabPage() {
     } finally {
       setLoading(false);
     }
-  }, [mode, dateFrom, dateTo, venue]);
+  }, [modes, dateFrom, dateTo, venue]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -153,26 +180,26 @@ export default function TypeLabPage() {
     if (!comboPlans.length) { setCombo(null); setComboErr(null); return; }
     try {
       setCombo(await fetchKeirinTypeLabCombo({
-        plans: comboPlans, mode, dateFrom, dateTo, venue, axisGate,
+        plans: comboPlans, modes, dateFrom, dateTo, venue, axisGate,
       }));
       setComboErr(null);
     } catch (e) {
       setCombo(null);
       setComboErr(e instanceof Error ? e.message : String(e));
     }
-  }, [comboPlans, mode, dateFrom, dateTo, venue, axisGate]);
+  }, [comboPlans, modes, dateFrom, dateTo, venue, axisGate]);
 
   useEffect(() => { void loadCombo(); }, [loadCombo]);
 
   const loadOutcome = useCallback(async () => {
     try {
-      setOutcome(await fetchKeirinTypeLabOutcome({ mode, dateFrom, dateTo, venue }));
+      setOutcome(await fetchKeirinTypeLabOutcome({ modes, dateFrom, dateTo, venue }));
       setOutcomeErr(null);
     } catch (e) {
       setOutcome(null);
       setOutcomeErr(e instanceof Error ? e.message : String(e));
     }
-  }, [mode, dateFrom, dateTo, venue]);
+  }, [modes, dateFrom, dateTo, venue]);
 
   useEffect(() => { void loadOutcome(); }, [loadOutcome]);
 
@@ -236,16 +263,8 @@ export default function TypeLabPage() {
 
       {/* ── 条件 ── */}
       <div className="space-y-2 rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 p-3">
-        <div className="flex items-center gap-2">
-          <select
-            className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 sm:flex-none"
-            value={mode} onChange={(e) => setMode(e.target.value as TypeLabMode)}
-          >
-            <option value="live">実地（当日・本番モデル）</option>
-            <option value="live9">9車実地（当日・型Fは決勝のみ）</option>
-            <option value="paper">ペーパー（過去・vintage）</option>
-            <option value="paper9">9車ペーパー（全8プラン・検証）</option>
-          </select>
+        <div className="flex items-start gap-2">
+          <ModeTabs value={modes} onToggle={toggleMode} onAll={() => setModes([])} />
           <button
             onClick={() => void load()} disabled={loading}
             className="flex shrink-0 items-center gap-1 rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
@@ -254,6 +273,14 @@ export default function TypeLabPage() {
             <span className="hidden sm:inline">再取得</span>
           </button>
         </div>
+        {mixedCarCount && (
+          <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            ⚠️ <b>7車と9車を混ぜて見ています。</b>型の出方が違い（9車は大混戦の型F が
+            58% ↔ 7車 31%）、同じプランでも確定オッズの帯が 2〜3倍違います。
+            合計の「件/日」「表示的中」がどちらの話か読めなくなるので、
+            比べるときは車数を分けてください。
+          </div>
+        )}
         <div className="flex items-center gap-1.5">
           {/* 日付送り。**期間の幅を保ったまま**前後へずらす（片側だけ動くと窓が伸び縮みする）。 */}
           <StepButton label="前の期間へ" onClick={() => shiftRange(-1)} dir="prev" />
@@ -385,19 +412,19 @@ export default function TypeLabPage() {
           <div className="flex flex-wrap items-center gap-2 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-800">
             <button
               type="button" onClick={() => setAxisGate(!axisGate)}
-              role="switch" aria-checked={axisGate} disabled={isNineCar}
+              role="switch" aria-checked={axisGate} disabled={!hasSevenCar}
               className={`shrink-0 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                isNineCar
+                !hasSevenCar
                   ? "cursor-not-allowed border-gray-300 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
                   : axisGate
                   ? "border-emerald-600 bg-emerald-600 font-semibold text-white"
                   : "border-gray-300 bg-white text-gray-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
               }`}
             >
-              {axisGate && !isNineCar ? "✓ " : ""}軸信頼ゲート
+              {axisGate && hasSevenCar ? "✓ " : ""}軸信頼ゲート
             </button>
             <span className="text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
-              {isNineCar ? (
+              {!hasSevenCar ? (
                 <>
                   <b>9車には掛かりません。</b>閾値は7車の探索窓のプラン内分位で、
                   9車は同じプランでも軸信頼の分布が丸ごと低いため、当てると
@@ -414,7 +441,7 @@ export default function TypeLabPage() {
               )}
             </span>
           </div>
-          {axisGate && !isNineCar && (
+          {axisGate && hasSevenCar && (
             <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
               🔬 <b>検証中の候補で、まだ採用ではありません。</b>
               20か月の台（探索 2025年 / 確認 2026年）で、ペーパーでは
@@ -594,6 +621,40 @@ function QuickRange({ label, onClick }: { label: string; onClick: () => void }) 
     </button>
   );
 }
+
+/** モードの選択（**複数可**）。競輪場の絞り込みと同じ操作感に揃えてある。
+ *  🔴 空配列＝「すべて」。ここを「4つ全部を選んだ状態」で表すと、
+ *     1つ外したときに「すべて」が消えるのか残るのかが曖昧になる。 */
+function ModeTabs({ value, onToggle, onAll }: {
+  value: TypeLabMode[]; onToggle: (m: TypeLabMode) => void; onAll: () => void;
+}) {
+  const all = value.length === 0;
+  const pill = (active: boolean) =>
+    `shrink-0 rounded-full border px-3 py-1 text-xs transition-colors ${
+      active
+        ? "border-indigo-600 bg-indigo-600 font-semibold text-white"
+        : "border-gray-300 bg-white text-gray-700 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-indigo-500 dark:hover:text-indigo-300"
+    }`;
+  return (
+    <div className="-mx-3 min-w-0 flex-1 overflow-x-auto px-3 sm:mx-0 sm:px-0">
+      <div className="flex w-max gap-1.5 pb-0.5">
+        <button type="button" onClick={onAll} aria-pressed={all} className={pill(all)}>
+          すべて
+        </button>
+        {MODE_OPTIONS.map((o) => (
+          <button
+            key={o.key} type="button" onClick={() => onToggle(o.key)}
+            aria-pressed={!all && value.includes(o.key)}
+            className={pill(!all && value.includes(o.key))}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 function VenueTabs({ venues, value, onChange }: {
   venues: string[]; value: string; onChange: (v: string) => void;

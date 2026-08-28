@@ -51,6 +51,61 @@ log = logging.getLogger(__name__)
 # 三連複の買い目だけを対象にする。`build_bet_detail` の bet_type 表記。
 TRIO_BET_TYPE = "3連複"
 
+#: 型ラボの「自信あり」に要求する**最低**想定払戻（円）。
+#: 🔴 「平均」ではなく「最低」で見る。ユーザー要件は「20,000円以上の払い戻しには
+#:    なりそうで、最も的中率が高そうなレース」（2026-08-28）。平均で見ると
+#:    **当たった目によっては2万円に届かない**ので、アイコンの約束と食い違う。
+#:    実測上その差はほぼ無い（確認窓で 表示的中 34.5% ↔ 35.3%）。
+TYPE_LAB_MIN_PAYOUT = 20_000
+
+
+def type_lab_hit_probability(legs, pred_min_payout) -> float | None:
+    """型ラボの1商品の**的中確率 Σp**。条件を満たさなければ None（＝候補外）。
+
+    `legs` は `type_lab_picks.legs`（`prob` を持つ辞書の並び）。買い目は互いに
+    排反なので、その合計がそのままこの商品の的中確率になる。
+
+    🔴 **行に焼き付いた `prob` を使う**（モデルを引き直さない）。再計算すると
+       再学習のぶんだけ当時と違う値になり、「なぜこのレースが選ばれたか」を
+       後から説明できなくなる（`p3_order` を焼き付けているのと同じ理由）。
+
+    🔴 **Σp は較正されていない**。PL 由来の確率は過信側に出ることが知られている
+       （[[keirin_7m1_ev_gate_rejected_2026_08_25]]: 本番PL 0.271 → 実測 0.151）。
+       実測でも探索窓は Σp中央 0.375 ↔ 実績 29.6% と過信（確認窓は 0.369 ↔ 35.3%
+       でほぼ一致）。**絶対値は信じず、1つしかない枠をどこへ置くかの相対比較に
+       だけ使う**——既存の EV と同じ扱い。
+
+    🟢 順序としては実績と対応することを両窓で確認済み（Σp 五分位の表示的中:
+       探索 7.26 → 25.56% / 確認 6.33 → 27.06%）。
+       再現: `keirin/scripts/exp_type_lab/` と `docs/type_lab/GO_LIVE_2026_08_28.md`。
+
+    >>> type_lab_hit_probability([{"prob": 0.1}, {"prob": 0.2}], 30_000)
+    0.30000000000000004
+    >>> type_lab_hit_probability([{"prob": 0.1}], 19_999) is None
+    True
+    >>> type_lab_hit_probability([], 30_000) is None
+    True
+    """
+    if not legs:
+        return None
+    try:
+        if pred_min_payout is None or float(pred_min_payout) < TYPE_LAB_MIN_PAYOUT:
+            return None
+    except (TypeError, ValueError):
+        return None
+    total = 0.0
+    for lg in legs:
+        p = lg.get("prob")
+        if p is None:
+            # 🔴 一部だけで足さない。欠けたまま合計すると点数の多い商品が
+            #    不当に低く出る（`expected_value_from_lines` と同じ理由）。
+            return None
+        try:
+            total += float(p)
+        except (TypeError, ValueError):
+            return None
+    return total or None
+
 
 def _parse_trio_combo(combo: str) -> frozenset[int] | None:
     """"1=2=5" → frozenset({1,2,5})。三連単（"-" 区切り）や壊れた値は None。"""

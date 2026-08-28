@@ -47,13 +47,15 @@ PERMS = list(itertools.permutations(range(1, 8), 3))
 PAYBACK = 0.75
 #: 対象の車数。**既定は7**。`--n-entries 9` で9車を組む（2026-08-28 実投入。
 #: 日次バッチ `type_lab_daily.sh` が 7車と9車を別々に1回ずつ回す）。
-#: 🔴 **売るものは車数で違う**。9車の型F は決勝の `F_hit` だけで、それ以外の
+#: 🔴 **売るものは車数で違う**。9車の型F は決勝の `F_pay` だけで、それ以外の
 #:    型F は出さない（判定は `src.type_lab.plans_for`）。
 #: 🔴 9車は `odds_tf_n9` が要る。無ければ `predict_board` が例外を投げるので、
 #:    黙って0件にはならない（レースごとに skip の行がログへ出る）。
 N_ENTRIES = 7
 #: 保存する mode に付ける接尾辞（7車は空）。
 MODE_TAG = ""
+#: `--race-key` で名指しされたレース（None なら日全体）。`run_live` だけが見る。
+ONLY_KEYS: set[str] | None = None
 
 
 # ───────────────────────── 共通: 1レースぶんを行にする ─────────────────────────
@@ -74,7 +76,7 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         return []
     trio_odds, trio_prob = _fold_to_trio(tf_odds, tf_prob)
     out = []
-    # 🔴 **車数と種別を渡すこと。** 9車の型F は決勝の F_hit だけを売る規則が
+    # 🔴 **車数と種別を渡すこと。** 9車の型F は決勝の F_pay だけを売る規則が
     #    ここでしか効かない（`plans_for` を素で呼ぶと 9車でも全8プラン出る）。
     for plan in plans_for(shape.type_label, N_ENTRIES, meta.get("race_type")):
         odds = trio_odds if plan.bet_type == "trio" else tf_odds
@@ -223,6 +225,14 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
     from src import odds_prediction_tf as odds_tf
 
     keys = _keys_of_date(day)
+    # 🔴 **レースを名指しで組み直せるようにしてある**（2026-08-28・本番入稿のため）。
+    #    並び予想・AI印が朝に未公開だったレースは、そのまま組むと「印なし＝最弱・
+    #    ライン無し＝全員同ライン」と読まれた買い目になる（`entry_health` の件）。
+    #    昼・夕の波で**まだ入稿していないレースだけ**組み直したいが、日全体を
+    #    組み直すと**既に売った買い目まで UPSERT で書き換わる**（売ったものと
+    #    記録が食い違う）。どのレースを組み直すかは入稿側が決める。
+    if ONLY_KEYS is not None:
+        keys = [k for k in keys if k in ONLY_KEYS]
     if not keys:
         print(f"[live] {day}: {N_ENTRIES}車立てのレースがありません")
         return []
@@ -400,11 +410,18 @@ def main() -> None:
                     help="paper の予測をどこから取るか。board=/tmp/race_type_board.npz "
                          "（四半期 walk-forward）/ vintage=月次 vintage モデル")
     ap.add_argument("--n-entries", type=int, default=7, choices=(7, 9),
-                    help="対象の車数（既定7）。9 は型F を決勝の F_hit だけに絞って組む")
+                    help="対象の車数（既定7）。9 は型F を決勝の F_pay だけに絞って組む")
+    ap.add_argument("--race-key", action="append", default=[],
+                    help="このレースだけ組み直す（複数指定可・live 専用）。"
+                         "指定すると日全体を触らないので、既に入稿した買い目を"
+                         "UPSERT で書き換えてしまう事故が起きない")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    global N_ENTRIES, MODE_TAG
+    global N_ENTRIES, MODE_TAG, ONLY_KEYS
     N_ENTRIES = int(a.n_entries)
+    ONLY_KEYS = set(a.race_key) or None
+    if ONLY_KEYS is not None and a.mode != "live":
+        raise SystemExit("--race-key は --mode live 専用です")
     # 🔴 **7車以外は mode に車数を付けて保存する**（'live9' / 'paper9'）。
     #    付け忘れると 9車の行が 7車の一覧・まとめ・合計表へ**黙って混入する**。
     #    分ける理由は隠すためではなく、**同じ plan_key でも配当帯が 2〜3倍違う**から
