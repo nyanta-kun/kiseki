@@ -423,8 +423,13 @@ def test_backfill_predicts_a_whole_window_at_once():
 #    実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 
 def test_nine_car_type_f_is_sold_only_for_the_final():
-    """9車の型F は**決勝の F_hit だけ**。準決勝・予選では1つも出さない。"""
-    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_hit"]
+    """9車の型F は**決勝の F_pay だけ**。準決勝・予選では1つも出さない。
+
+    🔴 2026-08-28 に `F_hit` → `F_pay`（本番移行）。車数や種別で hit/pay を
+       分けない方針に揃えた。決勝限定という**母集団の絞り**は残る——これは
+       「売る／売らない」の分岐で、hit/pay の分岐ではない。
+    """
+    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_pay"]
     for rt in ("準決勝", "一予選", "二予選", "選抜", "特選", "特秀", "一般", "", None):
         assert plans_for("F", 9, rt) == [], f"9車の型F が {rt!r} で出ている"
 
@@ -436,7 +441,7 @@ def test_nine_car_final_match_is_exact_not_substring():
     決勝の3倍近い件数を壁の下の母集団から売ることになる。
     """
     assert plans_for("F", 9, "準決勝") == []
-    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_hit"]
+    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_pay"]
 
 
 def test_nine_car_other_types_are_unchanged():

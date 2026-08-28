@@ -205,20 +205,67 @@ PLANS: dict[str, Plan] = {
 #:
 #: 実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
-NINE_CAR_TYPE_F_PLANS = ("F_hit",)
+#: 🔴 **2026-08-28 に `F_hit` → `F_pay` へ変更**（本番移行・ユーザー判断）。
+#:    車数や種別で hit / pay を分けない、という方針に揃えた。
+#:    ⚠️ ここは「売る／売らない」の分岐（`NINE_CAR_TYPE_F_RACE_TYPES`）とは別物。
+#:       決勝限定という**母集団の絞り**は実測に基づくので残す（9車の型F を
+#:       全部売ると表示的中 6.07%・ROI 60.5% で壁を大きく下回る）。
+#:    🔴 9車決勝の `F_pay` は **67件中 表示的中2件（2.99%）**で収支は判定できない。
+#:       `F_hit` なら 16.42%。それでも `F_hit` に戻さないのは、乖離・種別といった
+#:       条件で hit/pay を切り替える案が**無作為対照に負けた**ため（下記）。
+NINE_CAR_TYPE_F_PLANS = ("F_pay",)
+
+#: 実際に netkeirin へ入稿するプラン。**型ごとにちょうど1つ**なので
+#: 1レース1商品が構造的に守られる（型は排他）。
+#:
+#: 🔴 **生成（`type_lab_picks`）は8プランのまま**。ここで絞るのは入稿だけで、
+#:    A_pay / F_hit の行は比較台として残す。両者を混同すると
+#:    「売っていないものの成績」が消えて事後の比較ができなくなる。
+#:
+#: 🔴 **型F を `F_pay` にすると表示的中を 5.2pt 失い、10万円超の的中を 6倍にする**
+#:    （確認窓 2026・軸信頼ゲートあと・`scripts/exp_type_lab/composition.py`）:
+#:
+#:      構成                     件/日   表示的中   払戻中央   10万+/日    ROI
+#:      A〜E hit + F_pay（現行）  39.48    22.01%    27,830     0.307    78.7%
+#:      A〜E hit + F_hit          39.46    27.23%    25,730     0.050    83.1%
+#:
+#:    `SUMMARY.md` §4「この体系では看板は作れない」を破るのは `F_pay` だけ
+#:    （`F_hit` の 10万+ は 20日に1回＝実質ゼロ）。**店頭KPIの選択**であって
+#:    収支の判断ではない（ROI 差の CI 下限は −0.03 / −0.40 とぎりぎり）。
+#:
+#: 🔴 **型Fを条件で hit / pay へ振り分ける案は否定済み**（2026-08-28・
+#:    `scripts/exp_type_lab/typef_split_control.py`）。軸1と軸2の乖離
+#:    `d = (P(1着=軸1) − P(1着=軸2)) / (P(1着=軸1) + P(1着=軸2))` で半分ずつに
+#:    振り分け、**同数を無作為に振り分けた対照20本**と比べた:
+#:
+#:      母集団           全F_hit        全F_pay       無作為中央     乖離大→hit    乖離大→pay
+#:      7車 探索2025   25.64%/73.7%   9.12%/66.1%  17.37%/70.0%  17.05%(2/20)  17.71%(18/20)
+#:      7車 確認2026   25.19%/79.4%   8.52%/65.5%  17.02%/74.3%  15.85%(1/20)  17.86%(20/20)
+#:      9車 全期間     16.94%/69.2%   6.07%/60.5%  11.70%/65.2%  11.01%(2/20)  12.00%(18/20)
+#:
+#:    「乖離が大きいほど F_hit」は3母集団すべてで**無作為対照に負ける**。
+#:    向きを逆にすると無作為には勝つが、**得られるものが両端に届かない**
+#:    ——表示的中は全F_hit の 25.2% が最大、10万+ は全F_pay の 65件が最大で、
+#:    分割は中間（17.9% / 32件）を作るだけ。`SUMMARY.md` §2.6
+#:    「型は edge を作らない。決めるのは帯とカバレッジだけ」と同じ構造。
+SELL_PLANS: tuple[str, ...] = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
 
 
 def plans_for(type_label: str, n_entries: int = 7,
               race_type: str | None = None) -> list[Plan]:
-    """その型で売る買い方。**車数と種別で売らないものを外す**。
+    """その型で**組む**買い方。**車数と種別で組まないものを外す**。
 
-    7車は `PLANS` をそのまま返す（実投入前と同じ挙動）。9車だけ、型F を
-    `NINE_CAR_TYPE_F_*` の条件へ絞る。
+    7車は `PLANS` をそのまま返す（8プラン全部を `type_lab_picks` へ残す）。
+    9車だけ、型F を `NINE_CAR_TYPE_F_*` の条件へ絞る。
+
+    🔴 **これは「生成」の関数で「入稿」の関数ではない。** 実際に売るものは
+       `sell_plans_for()`。7車は A_pay / F_hit を組むが売らない——比較台を
+       残すためで、混同すると売っていない側の成績が消える。
 
     >>> [p.key for p in plans_for("F")]
     ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_hit']
+    ['F_pay']
     >>> plans_for("F", 9, "準決勝")
     []
     >>> [p.key for p in plans_for("A", 9, "特選")]
@@ -230,6 +277,29 @@ def plans_for(type_label: str, n_entries: int = 7,
             return []
         return [p for p in plans if p.key in NINE_CAR_TYPE_F_PLANS]
     return plans
+
+
+def sell_plans_for(type_label: str, n_entries: int = 7,
+                   race_type: str | None = None) -> list[Plan]:
+    """その型で **netkeirin へ入稿する**買い方（`SELL_PLANS` で絞ったもの）。
+
+    🔴 **必ず 0 個か 1 個**。型は排他なので、これが1レース1商品を構造的に保証する。
+       2つ返るようになったら優先順位の設計が別途要る＝設計が変わった合図なので、
+       `tests/test_type_lab_submit.py` が全型・全車数で 1 以下を固定している。
+
+    >>> [p.key for p in sell_plans_for("A")]
+    ['A_hit']
+    >>> [p.key for p in sell_plans_for("F")]
+    ['F_pay']
+    >>> [p.key for p in sell_plans_for("F", 9, "決勝")]
+    ['F_pay']
+    >>> sell_plans_for("F", 9, "準決勝")
+    []
+    >>> [p.key for p in sell_plans_for("A", 9, "特選")]
+    ['A_hit']
+    """
+    return [p for p in plans_for(type_label, n_entries, race_type)
+            if p.key in SELL_PLANS]
 
 
 def build_legs(shape: RaceShape, plan: Plan,
