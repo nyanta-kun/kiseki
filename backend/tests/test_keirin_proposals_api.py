@@ -130,6 +130,46 @@ def test_min_payout_low_is_none_for_old_records():
     assert _min_payout_low([]) is None
 
 
+# ── 点数を見ていなかった（2026-08-29 修正）──────────────────────────────
+#
+# `odds_low` は**1点あたり**の下側25%分位。そこから最小値を取ると点数が
+# 増えるほど甘くなり、実測では確定がこの額を割る確率が
+# 3点 48.3% / 5点 74.5% / 8点 89.8%（「下側25%分位」と名乗っているのに）。
+# 正本 `src.services.keirin_payout_floor` の点数別の表へ置き換えた。
+
+
+def _lines_pred(*specs):
+    """予測オッズ由来の行（`odds_source="predicted"`）。"""
+    return [{"bet_type": "3連複", "combo": c, "stake": s, "odds": o,
+             "odds_low": lo, "odds_source": "predicted"}
+            for c, s, o, lo in specs]
+
+
+def test_min_payout_low_は点数別の倍率を使う():
+    from src.services.keirin_payout_floor import floor_ratio
+
+    lines = _lines_pred(("1=2=3", 2500, 5.0, 4.2), ("1=2=4", 2500, 9.0, 7.6),
+                        ("1=2=5", 2500, 12.0, 10.1), ("1=2=6", 2500, 20.0, 16.9))
+    plan = min(x["stake"] * x["odds"] for x in lines)
+    assert _min_payout_low(lines) == pytest.approx(plan * floor_ratio(4, "trio"))
+    # 🔴 旧実装（1点あたりの分位の最小）より必ず小さい
+    assert _min_payout_low(lines) < min(x["stake"] * x["odds_low"] for x in lines)
+
+
+def test_min_payout_low_は三連単でより深く見る():
+    trio = _lines_pred(("1=2=3", 5000, 5.0, 4.2), ("1=2=4", 5000, 9.0, 7.6))
+    tf = [dict(x, bet_type="3連単") for x in trio]
+    assert _min_payout_low(tf) < _min_payout_low(trio)
+
+
+def test_min_payout_low_は板混じりの古い記録では従来どおり():
+    """板は買う帯で系統的に高い。k 補正を掛けると楽観を残したまま緩む。"""
+    lines = [dict(x, odds_source="board")
+             for x in _lines_pred(("1=2=3", 5000, 5.0, 4.2), ("1=2=4", 5000, 9.0, 7.6))]
+    assert _min_payout_low(lines) == pytest.approx(
+        min(x["stake"] * x["odds_low"] for x in lines))
+
+
 # ── /review のボタン整理（2026-08-16・ユーザー指定）────────────────────
 #
 # 操作は **入稿 / 取消 / 公開** の3つだけにする:

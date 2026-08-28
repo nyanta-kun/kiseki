@@ -42,7 +42,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.odds_prediction_tf import (  # noqa: E402
-    FEATURE_NAMES, MODEL_DIR, META_PATH, build_race_features,
+    FEATURE_NAMES, MODEL_DIR, META_PATH, build_race_features, conservative_quantiles,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -268,13 +268,22 @@ def main() -> None:
              target_sum, 1 / target_sum)
 
     res = {}
+    conservative = None
     for tag, part in (("train", tr), ("test", te)):
         raw = np.clip(np.power(10.0, booster.predict(part[list(FEATURE_NAMES)])), 1.0, None)
         p = pd.DataFrame({"rk": part.rk.to_numpy(), "raw": raw, "odds": part.odds.to_numpy()})
         res[tag + "_raw"] = _report(tag + "/素", p.odds.to_numpy(), p.raw.to_numpy())
         # レース内で再スケールして板として整合させる
         scale = p.groupby("rk").raw.transform(lambda s: (1 / s).sum() / target_sum)
-        res[tag] = _report(tag + "/整合", p.odds.to_numpy(), (p.raw * scale).to_numpy())
+        coherent = (p.raw * scale).to_numpy()
+        res[tag] = _report(tag + "/整合", p.odds.to_numpy(), coherent)
+        if tag == "train":
+            # 保守倍率（下側分位）。三連複と同じ定義・同じ窓（学習窓）で作る。
+            # 🔴 これが無いと `_conservative_board` が三連単へ**三連複の倍率**を
+            #    掛ける状態へ戻る（2026-08-29 まで実際にそうなっていた）。
+            conservative = conservative_quantiles(p.odds.to_numpy(), coherent)
+            log.info("保守倍率（学習窓の 実際/整合板 の下側分位）= %s",
+                     "  ".join(f"{k}:{v:.4f}" for k, v in conservative.items()))
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     booster.save_model(str(MODEL_DIR / f"odds_tf_n{N_CAR}.txt"))
@@ -296,7 +305,8 @@ def main() -> None:
                       "n_train_races": prev.get("n_train_races"),
                       "metrics": prev.get("metrics")}
     per[str(N_CAR)] = {"train_end": args.train_end,
-                       "n_train_races": int(tr.rk.nunique()), "metrics": res}
+                       "n_train_races": int(tr.rk.nunique()),
+                       "conservative": conservative, "metrics": res}
     ends = [str(v.get("train_end")) for v in per.values()
             if isinstance(v, dict) and v.get("train_end")]
     META_PATH.write_text(json.dumps({

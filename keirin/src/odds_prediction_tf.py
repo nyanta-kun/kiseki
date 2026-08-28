@@ -292,6 +292,46 @@ def target_sum(n_car: int) -> float:
     return float(v)
 
 
+def conservative_quantiles(final_odds, coherent_pred) -> dict[str, float]:
+    """`実際 / 整合板` の下側分位（p05 / p10 / p25）。
+
+    三連複側 `scripts/train_odds_prediction.py` と**同じ定義**にしてある
+    （学習窓で較正し、`odds_tf_meta.json` の `conservative` へ入れる）。
+    学習スクリプトと後追い較正スクリプトの両方がここを呼ぶ——
+    2箇所に書くと「表示に使う倍率」が静かに食い違う。
+    """
+    import numpy as _np
+    ratio = _np.asarray(final_odds, dtype=float) / _np.asarray(coherent_pred, dtype=float)
+    ratio = ratio[_np.isfinite(ratio) & (ratio > 0)]
+    if ratio.size == 0:
+        raise OddsPredictionUnavailable("保守倍率を計算できる行がありません")
+    return {f"p{int(q * 100):02d}": float(_np.quantile(ratio, q)) for q in (0.05, 0.10, 0.25)}
+
+
+def conservative_multiplier(n_car: int, quantile: str = "p25") -> float:
+    """整合板に掛けて「下振れしてもこの倍率は割らない」水準を作る倍率。
+
+    🔴 **三連複の値を流用しないこと**（2026-08-29 まで実際に流用していた）。
+       `netkeirin_submit_wt._conservative_board` が三連単の盤面へ
+       `src.odds_prediction.conservative_multiplier`（三連複の 0.8428）を
+       掛けており、券種が違うのに同じ倍率という状態だった。三連単のほうが
+       ばらつきが大きい（honest 2026 の ±2倍以内 80.6% ↔ 三連複 91.6%）。
+
+    ⚠️ 配分には使わない（レース内で一律なので比率が変わらない）。
+    ⚠️ **k点の最小値**（＝商品としての「最低払戻」）へこれを流用してはいけない。
+       それは `backend/src/services/keirin_payout_floor.py` の
+       `floor_ratio(点数, 券種)` の役目（1点あたりの分位を最小値の約束に
+       使うと、点数が増えるほど甘くなる）。
+    """
+    m = (load_meta().get("per_n_car") or {}).get(str(n_car), {})
+    c = (m.get("conservative") or {}).get(quantile)
+    if not c:
+        raise OddsPredictionUnavailable(
+            f"三連単 {n_car}車の保守倍率 {quantile} がメタにありません"
+            "（scripts/calibrate_odds_tf_conservative.py で入れること）")
+    return float(c)
+
+
 def predict_board(cars, p3, pw, meta) -> dict[tuple, float]:
     """全210点の予測オッズを返す。**レース内で再スケールして板として整合させる**。
 

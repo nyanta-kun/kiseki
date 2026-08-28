@@ -30,6 +30,7 @@ from ..db.session import AsyncSessionLocal, get_db
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
+from ..services.keirin_payout_floor import min_payout_floor
 from ..services.keirin_race_confidence import (
     confidence_from_entries,
     confidence_hit_count_from_entries,
@@ -2599,7 +2600,8 @@ def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
 
 
 def _min_payout_low(lines: list[dict]) -> float | None:
-    """**下振れしても割らない**最低払戻（円）。`odds_low` が全点に無ければ None。
+    """**下振れしても割らない**最低払戻（円）。計算の正本は
+    `src.services.keirin_payout_floor.min_payout_floor`。
 
     ## なぜ `odds` と別に要るのか（2026-08-16・実測が起点）
 
@@ -2612,18 +2614,21 @@ def _min_payout_low(lines: list[dict]) -> float | None:
     | 予測（構造モデル） | 1.181 | 16.7% |
 
     つまり従来の `min_payout` は**当たったときに実際より高い額を約束していた**。
-    `odds_low` は keirin 側 `_conservative_trio_board()` が作る下限包絡
-    （予測の整合板 × 学習窓較正の下側25%分位）で、これで測ると
-    「利益が出ると言った点が実はガミ」は 10.4% → 5.1% に下がる。
 
-    🔴 **`odds_low` はオッズではない。** 表示は従来どおり `odds` を出し、
-       ここで作るのは「下振れ時にいくら返るか」という金額だけ。
-    ⚠️ 三連単は予測モデルが無いので `odds_low` が付かない＝ None になる
-       （その場合は従来どおり `min_payout` で判断する）。
+    ## 🔴 2026-08-29: 点数を見ていなかった
+
+    旧実装は `min(賭け金 × odds_low)` で、`odds_low` は**1点あたり**の
+    下側25%分位。そこから最小値を取ると点数が増えるほど甘くなり、実測では
+    確定がこの額を割る確率が **3点 48.3% / 5点 74.5% / 8点 89.8%**
+    （「下側25%分位」と名乗っているのに 25% なのは1点のときだけ）。
+    正本の `floor_ratio(点数, 券種)` へ置き換えて分位を名乗れる形にした。
+    経緯と実測は `keirin/docs/oddspred_gap_2026_08_29.md`。
+
+    🔴 **表示（ここ）と入稿ゲートは別**。ゲート（`MIN_EXPECTED_PAYOUT_*`）は
+       商品内で一律の倍率なので閾値の付け替えと同値で、点数補正を入れると
+       足切りが強くなる。そちらは触っていない（正本の docstring 参照）。
     """
-    if not lines or any(x.get("odds_low") in (None, 0) for x in lines):
-        return None
-    return min(float(x["stake"]) * float(x["odds_low"]) for x in lines)
+    return min_payout_floor(lines)
 
 
 def _trio_probabilities(top3_pct: dict[int, float]) -> dict[frozenset, float]:
@@ -2832,7 +2837,9 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             # 🔴 判定は **下限側（`min_payout_low`）を優先する**。板由来の `odds`
             #    で測ると当たったときに実際より高い額を約束することになる
             #    （実測 中央 確定/表示 0.860・45%が0.8倍未満。`_min_payout_low` 参照）。
-            #    `odds_low` が無い記録（三連単・2026-08-16 以前の入稿）は従来どおり。
+            #    `odds_low` が無い記録（2026-08-16 以前の入稿）は従来どおり。
+            #    ⚠️ 三連単にも `odds_low` は付く（2026-08-26〜。倍率が三連複の
+            #       流用だったのは 2026-08-29 に是正済み）。
             "gami_risk": (
                 bool(detail and (lo_low if lo_low is not None else lo) < detail["total"])
                 if detail and (lo_low is not None or lo is not None) else None),
