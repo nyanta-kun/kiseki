@@ -159,14 +159,66 @@ def test_gates_pass_when_unmeasurable():
 
 # ───────────────────────── 既存経路を壊さない ─────────────────────────
 
-def test_existing_rank_submitter_is_untouched_by_type_lab():
-    """既存の入稿スクリプトが型ラボを import していない。
+def test_existing_rank_submitter_has_no_type_lab_branch():
+    """既存の入稿スクリプトに**型ラボ固有の分岐が無い**。
 
     移行は `netkeirin_settings` の ON/OFF で行う（ロールバックが SQL 1本で済む）。
-    既存側にコードで分岐を入れると、戻すのにデプロイが要る。
+    既存側に型ラボ専用の分岐を入れると、戻すのにデプロイが要る。
+
+    ⚠️ 2026-08-28 に `build_bet_detail` / `approve_and_submit` へ **汎用の**
+       `act_type` 受け渡しを足した（勝負アイコンを商品と一緒に持ち回る）。
+       型ラボへの参照は持たないので、この不変条件は保たれている。
     """
     src = (REPO / "scripts" / "netkeirin_submit_wt.py").read_text(encoding="utf-8")
     assert "type_lab" not in src
+
+
+# ───────────────────────── 勝負アイコン ─────────────────────────
+
+def test_only_type_f_is_longshot():
+    """穴狙いは型F（`F_pay`）だけ。**複数可**なので選定は要らない。"""
+    from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
+    from src.netkeirin_client import ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT
+
+    assert set(ACT_TYPE_BY_PLAN) == set(SELL_PLANS), "売るプランと表がずれている"
+    assert ACT_TYPE_BY_PLAN["F_pay"] == ACT_TYPE_LONGSHOT
+    assert all(v == ACT_TYPE_DEFAULT for k, v in ACT_TYPE_BY_PLAN.items()
+               if k != "F_pay")
+
+
+def test_act_type_travels_in_bet_detail():
+    """🔴 承認制では入稿時の act_type は使われないので、商品と一緒に保存する。"""
+    from scripts.netkeirin_submit_type_lab import _legs_of
+    from scripts.netkeirin_submit_wt import build_bet_detail
+    from src.netkeirin_client import ACT_TYPE_LONGSHOT
+
+    legs, odds = _legs_of(_row("trifecta", [{"combo": "1-4-5", "stake": 10_000,
+                                             "pred_odds": 30.0}]))
+    detail = json.loads(build_bet_detail(legs, source="type_lab", marks={1: "◎"},
+                                         predicted_odds=odds,
+                                         act_type=ACT_TYPE_LONGSHOT))
+    assert detail["act_type"] == ACT_TYPE_LONGSHOT
+    # 省略時は欄そのものを作らない（過去の行と形を揃える）
+    plain = json.loads(build_bet_detail(legs, source="type_lab", marks={1: "◎"},
+                                        predicted_odds=odds))
+    assert "act_type" not in plain
+
+
+def test_act_type_priority():
+    """優先順位: ランク表 > 自信あり > 商品が持つ指定 > 既定。
+
+    🔴 「自信あり」は1日1件の明示的な選定、穴狙いは複数可。**譲るのは複数可の側**。
+    🔴 ランク表が最優先なのは従来どおり（既存ランクの挙動を変えない）。
+    """
+    from scripts.netkeirin_submit_wt import resolve_act_type
+    from src.netkeirin_client import (ACT_TYPE_CONFIDENT, ACT_TYPE_DEFAULT,
+                                      ACT_TYPE_LONGSHOT)
+
+    assert resolve_act_type(ACT_TYPE_LONGSHOT, True, None) == ACT_TYPE_LONGSHOT
+    assert resolve_act_type(ACT_TYPE_LONGSHOT, False, ACT_TYPE_DEFAULT) == ACT_TYPE_LONGSHOT
+    assert resolve_act_type(None, True, ACT_TYPE_LONGSHOT) == ACT_TYPE_CONFIDENT
+    assert resolve_act_type(None, False, ACT_TYPE_LONGSHOT) == ACT_TYPE_LONGSHOT
+    assert resolve_act_type(None, False, None) == ACT_TYPE_DEFAULT
 
 
 def test_bet_detail_is_json_with_lines():

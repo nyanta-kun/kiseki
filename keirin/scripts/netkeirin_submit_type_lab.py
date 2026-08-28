@@ -108,15 +108,29 @@ from scripts.netkeirin_submit_wt import (                    # noqa: E402
     build_bet_detail,
 )
 
-#: 勝負アイコン。**帯で決める**（高オッズ帯を狙うプランは「穴狙い」）。
-#: A/B/D は素直な決着を厚く買うので既定、C（予測20倍以上）・E（30倍以上）・
-#: F_pay（一撃）は穴狙いとして出す。
+#: 勝負アイコン。**型F（`F_pay`）だけ「穴狙い」**（2026-08-28・ユーザー決定）。
+#:
+#: 🟢 「自信あり」と違い **穴狙いは1日に何件でも付けられる**ので、選定は要らず
+#:    プランで決め打ちできる。
+#: 🔴 `F_pay` は「1着=◎固定・2着2車・3着流し」の4点で、表示的中 8.5%・
+#:    払戻中央 56,580円・10万円超が 3.6日に1回。**この体系で唯一の一撃枠**
+#:    （`SUMMARY.md` §4 を破るのは F_pay だけ）。アイコンと商品の性格が一致する。
+#: ⚠️ `C_hit`（予測20倍以上）・`E_hit`（30倍以上）は帯こそ高いが表示的中は
+#:    23.2% / 18.2% で、当たる回数を売る商品なので既定のままにしてある。
+#:    変えるならこの表だけを直す。
+#:
+#: 🔴 **承認制では入稿時の act_type は使われない。** 承認経路
+#:    （`netkeirin_submit_wt.approve_and_submit`）が送る値を決めるので、
+#:    `build_bet_detail(..., act_type=...)` で**商品と一緒に持ち回る**。
+#:    ⚠️ 「自信あり」に選ばれたレースはそちらが優先される（1日1件の明示的な
+#:       選定なので、複数可の穴狙いが譲る）。実際には `F_pay` の Σp は低く
+#:       自信ありに選ばれることはほぼ無い。
 ACT_TYPE_BY_PLAN: dict[str, str] = {
     "A_hit": ACT_TYPE_DEFAULT,
     "B_hit": ACT_TYPE_DEFAULT,
-    "C_hit": ACT_TYPE_LONGSHOT,
+    "C_hit": ACT_TYPE_DEFAULT,
     "D_hit": ACT_TYPE_DEFAULT,
-    "E_hit": ACT_TYPE_LONGSHOT,
+    "E_hit": ACT_TYPE_DEFAULT,
     "F_pay": ACT_TYPE_LONGSHOT,
 }
 
@@ -362,8 +376,12 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
     entry_html = _build_entry_table(race_key, marks)
     sub = build_submission(row, entry_html)
 
+    act_type = ACT_TYPE_BY_PLAN.get(plan, ACT_TYPE_DEFAULT)
+    # 🔴 **アイコンを買い目と一緒に保存する。** 承認制では入稿時ではなく
+    #    承認時に netkeirin へ送るので、ここで渡した `act_type` は使われない。
+    #    `approve_and_submit` が `bet_detail` からこれを読む。
     detail = build_bet_detail(legs, source="type_lab", marks=marks,
-                              predicted_odds=pred_odds)
+                              predicted_odds=pred_odds, act_type=act_type)
     if dry_run:
         if show_detail:
             _print_detail(row, sub, detail)
@@ -373,7 +391,7 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
         race_date=date.fromisoformat(str(row["race_date"])),
         venue_name=venue, race_no=race_no, n_cars=n_cars,
         legs=legs, marks=marks, title=sub["title"], comment=sub["comment"],
-        act_type=ACT_TYPE_BY_PLAN.get(plan, ACT_TYPE_DEFAULT),
+        act_type=act_type,
     )
     if not ok:
         skip(race_key, plan, session, SKIP_SUBMIT_FAILED, msg, venue, race_no)

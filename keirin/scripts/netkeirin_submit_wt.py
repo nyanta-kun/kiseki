@@ -998,7 +998,8 @@ def build_bet_lines(legs: list[BetLeg],
 def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                      marks: dict[int, str] | None = None,
                      predicted_odds: dict | None = None,
-                     predicted_low: dict | None = None) -> str:
+                     predicted_low: dict | None = None,
+                     act_type: str | None = None) -> str:
     """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
 
     🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
@@ -1026,6 +1027,14 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     板の有無によらず全点へ `odds_low` として書く。
     🔴 **これはオッズではない。** 「下振れしてもこの倍率は割らない」水準で、
        最低払戻・ガミ判定にだけ使う（理由と実測は `_conservative_trio_board`）。
+
+    `act_type` は勝負アイコン（`ACT_TYPE_*`）。**商品を作った側が決めた値を
+    商品と一緒に持ち回るための欄**で、承認経路（`approve_and_submit`）が
+    フォールバックとして読む。
+    🔴 `RANK_CONFIGS` に `act_type` を持てるのは `RANK_CONFIGS` にあるランクだけ
+       なので、そこに載らない経路（別スクリプトが作る商品）はアイコンを
+       指定できなかった。ここへ入れておけば、承認経路がランク表を引かずに済む。
+    ⚠️ 省略時は欄そのものを作らない（過去の行と形を揃えるため）。
     """
     # 🔴 展開は `build_bet_lines()` に一本化する。入稿ゲート（平均払戻）も
     #    同じ関数から作った lines で判定するので、**判定と記録が食い違わない**。
@@ -1042,6 +1051,8 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                   "stake": int(lg.stake_per_line)} for lg in legs],
         "marks": {str(k): v for k, v in (marks or {}).items()},
     }
+    if act_type is not None:
+        payload["act_type"] = str(act_type)
     # ダッチ配分のときは保証倍率も一緒に残す（仕様書 §6 の前向き計測）。
     # 🔴 picks_history に列を足さずここへ入れているのは、**スキーマ変更を伴わずに
     #    記録したいから**。列が必要になったらここから移送できる。
@@ -3084,6 +3095,36 @@ def _legs_from_bet_detail(detail: dict) -> tuple[list[BetLeg], dict[int, str]]:
     return legs, marks
 
 
+def resolve_act_type(rank_act_type: str | None, is_confident: bool,
+                     detail_act_type: str | None) -> str:
+    """勝負アイコンをどれにするか。**優先順位の唯一の正本**。
+
+        1. ランク表（`RANK_CONFIGS[rank]["act_type"]`）— 7T1/7T3/7H1/7H2/9H1 の「穴狙い」
+        2. 「自信あり」（`is_confident`）— 1日1件の**明示的な選定**
+        3. 入稿データ自身が持つ `act_type` — ランク表に載らない経路が作った商品
+        4. 既定
+
+    🔴 **1 が 2 より先なのは従来どおり**（挙動を変えない）。既存の穴狙いランクは
+       もともと自信ありに選ばれない設計で、順序を入れ替えると過去と食い違う。
+    🔴 **2 が 3 より先。** 自信ありは1日1つしか付けられない明示的な選定で、
+       穴狙いは複数可。**譲るのは常に複数可の側**。
+
+    >>> resolve_act_type(ACT_TYPE_LONGSHOT, True, None)      # ランク表が最優先
+    '2'
+    >>> resolve_act_type(None, True, ACT_TYPE_LONGSHOT)      # 自信あり > 商品の指定
+    '1'
+    >>> resolve_act_type(None, False, ACT_TYPE_LONGSHOT)     # 商品の指定
+    '2'
+    >>> resolve_act_type(None, False, None)                  # 既定
+    '0'
+    """
+    if rank_act_type is not None:
+        return str(rank_act_type)
+    if is_confident:
+        return ACT_TYPE_CONFIDENT
+    return str(detail_act_type or ACT_TYPE_DEFAULT)
+
+
 def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
     """入稿案を承認して netkeirin へ送る。**買い目は再計算しない。**
 
@@ -3115,9 +3156,15 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
             #    `scripts/pick_confident_race_wt.py` で、ここは列を読むだけ。
             #    ⚠️ ランク側が `act_type` を明示している場合（7T1 の「穴狙い」等）は
             #       そちらを優先する。自信と穴狙いは同時に付けられない。
-            act_type=cfg.get(
-                "act_type",
-                ACT_TYPE_CONFIDENT if row.get("is_confident") else ACT_TYPE_DEFAULT),
+            #    🔴 `RANK_CONFIGS` に載らない経路が作った商品は、**入稿データ自身が
+            #       持つ `act_type`** を使う（2026-08-28）。それが無ければ既定。
+            #       「自信あり」は1日1件の明示的な選定なので、商品が持つアイコンより
+            #       優先する（穴狙いは複数可なので、譲るのは常にこちら側）。
+            #       ⚠️ ランク表を持つ既存ランクの挙動は**1つも変わらない**
+            #          （`cfg.get("act_type", ...)` が先に決まるため）。
+            act_type=resolve_act_type(cfg.get("act_type"),
+                                      bool(row.get("is_confident")),
+                                      detail.get("act_type")),
         )
     except Exception as e:  # noqa: BLE001 — 1件の失敗で承認画面を落とさない
         ok, msg = False, f"例外: {e}"
