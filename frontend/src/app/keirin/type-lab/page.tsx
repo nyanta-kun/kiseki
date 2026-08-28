@@ -193,7 +193,7 @@ export default function TypeLabPage() {
         <Link href="/keirin" className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100" aria-label="戻る">
           <ArrowLeft size={18} />
         </Link>
-        <FlaskConical size={18} className="text-indigo-600" />
+        <FlaskConical size={18} className="text-indigo-600 dark:text-indigo-300" />
         <h1 className="text-base font-bold text-gray-900 dark:text-white sm:text-lg">型ラボ</h1>
         <span className="rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200 sm:text-xs">
           検証用・入稿しません
@@ -282,7 +282,7 @@ export default function TypeLabPage() {
       </div>
 
       {err && (
-        <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950 p-3 text-sm text-red-700">{err}</div>
+        <div className="rounded border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-200">{err}</div>
       )}
 
       {/* ── プラン別サマリ ── */}
@@ -731,7 +731,8 @@ function Empty({ text = "データがありません" }: { text?: string }) {
 function Win({ a, b, fmt }: { a: number; b: number; fmt: (v: number) => string }) {
   return (
     <>
-      <b className={a >= b ? "text-emerald-700" : "text-gray-800 dark:text-gray-200"}>{fmt(a)}</b>
+      <b className={a >= b ? "text-emerald-700 dark:text-emerald-300"
+                     : "text-gray-800 dark:text-gray-200"}>{fmt(a)}</b>
       <span className="text-gray-500 dark:text-gray-400"> / {fmt(b)}</span>
     </>
   );
@@ -809,7 +810,7 @@ function Fragmented({ label, a, b, win }: {
   return (
     <>
       <span className="text-gray-600 dark:text-gray-400">{label}</span>
-      <span className={`text-right ${win ? "font-semibold text-emerald-700" : ""}`}>{a}</span>
+      <span className={`text-right ${win ? "font-semibold text-emerald-700 dark:text-emerald-300" : ""}`}>{a}</span>
       <span className="text-right text-gray-500 dark:text-gray-400">{b}</span>
     </>
   );
@@ -834,7 +835,7 @@ function PickCard({ p }: { p: TypeLabPick }) {
         <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px]">
           型{p.type_label}{TYPE_NAME[p.type_label] ? ` ${TYPE_NAME[p.type_label]}` : ""}
         </span>
-        <span className="rounded bg-indigo-100 dark:bg-indigo-900 px-1.5 py-0.5 font-mono text-[10px] text-indigo-800">
+        <span className="rounded bg-indigo-100 dark:bg-indigo-900 px-1.5 py-0.5 font-mono text-[10px] text-indigo-800 dark:text-indigo-100">
           {p.plan_key}
         </span>
       </div>
@@ -845,7 +846,9 @@ function PickCard({ p }: { p: TypeLabPick }) {
         <span className="ml-auto">
           {settled
             ? (p.hit
-                ? <b className={(p.payout ?? 0) >= p.budget ? "text-emerald-700" : "text-amber-700"}>
+                ? <b className={(p.payout ?? 0) >= p.budget
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-amber-700 dark:text-amber-300"}>
                     的中 {yen(p.payout)}（{p.win_combo} / {p.final_odds?.toFixed(1)}倍）
                     {(p.payout ?? 0) < p.budget ? " ※ガミ" : ""}
                   </b>
@@ -874,11 +877,11 @@ function PickCard({ p }: { p: TypeLabPick }) {
           {p.current.n_combos ? <span className="ml-1 text-gray-500 dark:text-gray-400">{p.current.n_combos}点</span> : null}
           {p.current.settled
             ? (p.current.hit
-                ? <span className="ml-1.5 text-emerald-700">的中 {yen(p.current.payout)}</span>
+                ? <span className="ml-1.5 text-emerald-700 dark:text-emerald-300">的中 {yen(p.current.payout)}</span>
                 : <span className="ml-1.5 text-gray-500 dark:text-gray-400">不的中</span>)
             : <span className="ml-1.5 text-gray-500 dark:text-gray-400">未採点</span>}
           {p.current.sold_rank_key
-            ? <span className="ml-1.5 rounded bg-indigo-100 dark:bg-indigo-900 px-1 text-indigo-700">入稿 {p.current.sold_rank_key}</span>
+            ? <span className="ml-1.5 rounded bg-indigo-100 dark:bg-indigo-900 px-1 text-indigo-700 dark:text-indigo-100">入稿 {p.current.sold_rank_key}</span>
             : <span className="ml-1.5 text-gray-500 dark:text-gray-400">（入稿なし）</span>}
           <div className="mt-0.5 break-all font-mono text-gray-600 dark:text-gray-400">{p.current.pred_combo ?? "—"}</div>
         </div>
