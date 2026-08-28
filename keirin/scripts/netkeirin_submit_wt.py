@@ -999,7 +999,8 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
                      marks: dict[int, str] | None = None,
                      predicted_odds: dict | None = None,
                      predicted_low: dict | None = None,
-                     act_type: str | None = None) -> str:
+                     act_type: str | None = None,
+                     n_cars: int | None = None) -> str:
     """入稿した買い目と1点ごとの金額を JSON 文字列にする（Web 表示用）。
 
     🔴 **展開まで済ませて保存する。** 傾斜配分では点ごとに金額が違い、しかも
@@ -1028,6 +1029,11 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     🔴 **これはオッズではない。** 「下振れしてもこの倍率は割らない」水準で、
        最低払戻・ガミ判定にだけ使う（理由と実測は `_conservative_trio_board`）。
 
+    `n_cars` は出走車数。🔴 **印から数えてはいけない商品がある**ので、
+    作った側が知っている値をここへ入れる（承認経路が読む）。
+    印を「買った車だけ」に付ける商品では `len(marks)` が車数より小さくなり、
+    `submit_pick_multi` の「7/9車のみ対応」で**承認が丸ごと失敗する**。
+
     `act_type` は勝負アイコン（`ACT_TYPE_*`）。**商品を作った側が決めた値を
     商品と一緒に持ち回るための欄**で、承認経路（`approve_and_submit`）が
     フォールバックとして読む。
@@ -1053,6 +1059,8 @@ def build_bet_detail(legs: list[BetLeg], source: str | None = None,
     }
     if act_type is not None:
         payload["act_type"] = str(act_type)
+    if n_cars:
+        payload["n_cars"] = int(n_cars)
     # ダッチ配分のときは保証倍率も一緒に残す（仕様書 §6 の前向き計測）。
     # 🔴 picks_history に列を足さずここへ入れているのは、**スキーマ変更を伴わずに
     #    記録したいから**。列が必要になったらここから移送できる。
@@ -3148,7 +3156,10 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
         ok, msg = NetkeirinClient(propose_only=False).submit_pick_multi(
             race_date=race_date, venue_name=row["venue_name"],
             race_no=int(row["race_no"]),
-            n_cars=int(cfg.get("n_cars") or 0) or _n_cars_from_marks(marks),
+            # 🔴 車数は ①ランク表 ②**入稿データ自身** ③印の数、の順で決める。
+            #    ③は「印が出走全車に付く」商品でしか正しくない（下記）。
+            n_cars=(int(cfg.get("n_cars") or 0) or int(detail.get("n_cars") or 0)
+                    or _n_cars_from_marks(marks)),
             legs=legs, marks=marks,
             title=row["title"] or "", comment=row["comment"] or "",
             # 🔴 「自信あり」は **選定済みの1レースだけ**（`is_confident`）。
@@ -3187,7 +3198,15 @@ def approve_and_submit(race_key: str, rank_key: str) -> tuple[bool, str]:
 
 
 def _n_cars_from_marks(marks: dict[int, str]) -> int:
-    """ランク設定が無いときの保険。印は出走全車に付くので車数と一致する。"""
+    """**最後の手段**。印の数を車数とみなす。
+
+    🔴 **「印が出走全車に付く」商品でしか正しくない。** 買った車にだけ印を付ける
+       商品（型ラボの `marks_for` はそう作る）では `len(marks)` が車数より小さくなり、
+       `submit_pick_multi` の「7/9車のみ対応」で**承認が丸ごと失敗する**
+       （2026-08-28 に実際に踏みかけた: 小倉10R の印は 5車ぶんで n_cars=5 になった）。
+    🟢 作った側は車数を知っているので、`build_bet_detail(n_cars=...)` で
+       入稿データへ入れておくこと。ここへ落ちてくるのは古い行だけにする。
+    """
     return len(marks)
 
 

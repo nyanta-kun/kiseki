@@ -224,6 +224,53 @@ def test_act_type_travels_in_bet_detail():
     assert "act_type" not in plain
 
 
+def test_bet_detail_carries_car_count():
+    """🔴 承認経路が使う車数を入稿データに入れる。
+
+    承認は印の数から車数を導くフォールバックを持つが、型ラボは**買った車にだけ**
+    印を付けるので `len(marks)` が車数より小さくなる。入れておかないと
+    `submit_pick_multi` の「7/9車のみ対応」で**承認が丸ごと失敗する**
+    （2026-08-28 に実際に踏みかけた: 印5車ぶんで n_cars=5 になった）。
+    """
+    from scripts.netkeirin_submit_type_lab import _legs_of
+    from scripts.netkeirin_submit_wt import build_bet_detail
+
+    legs, odds = _legs_of(_row("trifecta", [{"combo": "1-4-5", "stake": 10_000,
+                                             "pred_odds": 30.0}]))
+    # 印は買った3車だけ＝出走7車と一致しない
+    marks = {1: "◎", 4: "○", 5: "▲"}
+    detail = json.loads(build_bet_detail(legs, source="type_lab", marks=marks,
+                                         predicted_odds=odds, n_cars=7))
+    assert detail["n_cars"] == 7
+    assert len(detail["marks"]) == 3, "印は買った車だけ（この前提が崩れたら設計変更）"
+
+
+def test_submit_row_always_passes_car_count():
+    """入稿経路が `n_cars` を渡していることを AST で固定する。"""
+    tree = ast.parse(SUBMIT_PY.read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "id", "") == "build_bet_detail"]
+    assert calls, "build_bet_detail を呼んでいない"
+    for c in calls:
+        assert any(k.arg == "n_cars" for k in c.keywords), "n_cars を渡していない"
+
+
+def test_car_count_fallback_order():
+    """車数は ①ランク表 ②入稿データ ③印の数、の順。"""
+    import inspect
+
+    from scripts import netkeirin_submit_wt as m
+
+    src = inspect.getsource(m.approve_and_submit)
+    assert 'cfg.get("n_cars")' in src
+    assert 'detail.get("n_cars")' in src
+    assert "_n_cars_from_marks(marks)" in src
+    i_cfg = src.index('cfg.get("n_cars")')
+    i_det = src.index('detail.get("n_cars")')
+    i_mark = src.index("_n_cars_from_marks(marks)")
+    assert i_cfg < i_det < i_mark, "フォールバックの順序が違う"
+
+
 def test_act_type_priority():
     """優先順位: ランク表 > 自信あり > 商品が持つ指定 > 既定。
 
