@@ -379,6 +379,35 @@ COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
 SETTLE_COLS = ("settled_at", "win_combo", "hit", "payout", "final_odds", "win_tf_odds")
 
 
+def _drop_stale_plans(conn, rows: list[dict]) -> int:
+    """組み直しで**型が変わったときに残る古いプランの行**を消す。
+
+    🔴 一意キーは `(race_key, plan_key, mode)` なので、型が F→C に変わると
+       `C_hit` の行が増えるだけで **`F_pay` の行はそのまま残る**。
+       `netkeirin_submit_type_lab._load_rows` は行ごとに**その行自身の
+       `type_label`** で売る／売らないを決めるため、古い行も「型Fだから
+       F_pay を売ってよい」と判定され、**1レースに2商品が入稿される**。
+       2026-08-29 の昼の波で実際に4レース（小松島1R/8R・岸和田6R/9R）が
+       「堅い二軸から崩れ筋」と「大混戦の一撃」を同時に出していた。
+
+    ⚠️ **採点済みの行は消さない。** 売って結果まで入った行は検証台の実績で、
+       消すと後から復元できない（型が変わるのは組み直しのときだけで、
+       組み直しは売る前にしか走らないので通常は該当しない）。
+    """
+    keep: dict[tuple[str, str], set[str]] = {}
+    for r in rows:
+        keep.setdefault((str(r["race_key"]), str(r["mode"])), set()).add(str(r["plan_key"]))
+    n = 0
+    for (race_key, mode), plans in keep.items():
+        ph = ",".join("?" * len(plans))
+        cur = conn.execute(
+            f"DELETE FROM type_lab_picks WHERE race_key = ? AND mode = ? "
+            f"AND settled_at IS NULL AND plan_key NOT IN ({ph})",
+            (race_key, mode, *sorted(plans)))
+        n += getattr(cur, "rowcount", 0) or 0
+    return n
+
+
 def save(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -394,9 +423,13 @@ def save(rows: list[dict]) -> int:
            f"ON CONFLICT (race_key, plan_key, mode) DO UPDATE SET {upd}, {clear}, "
            f"generated_at = NOW()")
     with get_connection() as c:
+        dropped = _drop_stale_plans(c, rows)
         for r in rows:
             c.execute(sql, tuple(r[k] for k in COLS))
         c.commit()
+    if dropped:
+        print(f"[type_lab] 型が変わったレースの古いプラン {dropped} 行を削除しました",
+              flush=True)
     return len(rows)
 
 
