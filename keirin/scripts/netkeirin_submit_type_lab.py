@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 import subprocess
 import sys
 from datetime import date, datetime
@@ -481,6 +482,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     skip = _make_skip(dry_run)
     skipped: dict[str, int] = {}
     titles: list[str] = []
+    #: Discord の内訳用（`(会場, プラン)`）。**レース名は入れない**——通知は
+    #: 件数と内訳だけにする（一覧は上の print で cron.log に残る）。
+    submitted: list[tuple[str, str]] = []
     client = None if dry_run else NetkeirinClient(propose_only=propose_only)
 
     def bump(code: str) -> None:
@@ -541,6 +545,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             taken_by_type_lab.add(race_key)
             n_ok += 1
             titles.append(f"{venue}{race_no}R({plan}) {msg}")
+            submitted.append((str(venue), str(plan)))
         else:
             bump("failed")
 
@@ -567,7 +572,22 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         # 🔴 **通知の失敗で入稿を失敗扱いにしない。** ここへ来た時点で netkeirin
         #    への送信は終わっている。例外を上げると呼び出し側が再実行を考える。
         try:
-            body = "\n".join(f"・{t}" for t in titles[:40])
+            # 🔴 **レースを1件ずつ並べない**（2026-08-30 ユーザー指摘）。
+            #    50件超がスマホで数画面ぶん流れて、肝心の件数・異常が埋もれる。
+            #    1レース1商品なので、内訳（プラン・会場）と見送り理由だけで足りる。
+            #    レース名の一覧は cron.log に残っている（上の print）。
+            def _tally(items: list[str]) -> str:
+                c = Counter(items)
+                return " ・ ".join(f"{k} {v}" for k, v in
+                                   sorted(c.items(), key=lambda kv: (-kv[1], kv[0])))
+
+            body = (f"プラン {_tally([p for _, p in submitted])}\n"
+                    f"会場 {_tally([v for v, _ in submitted])}")
+            # `already` は「この波より前に入稿済み」で見送りではない。混ぜない。
+            gates = {k: v for k, v in sorted(skipped.items()) if k != "already"}
+            if gates:
+                body += ("\n見送り "
+                         + " ・ ".join(f"{k} {v}" for k, v in gates.items()))
             if n_publish_ng:
                 body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
             send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n{body}",
