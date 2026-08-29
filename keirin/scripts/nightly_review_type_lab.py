@@ -268,6 +268,124 @@ def _baseline_pool() -> dict[str, list[tuple[int, int]]]:
     return pool
 
 
+def _band_baseline() -> dict[str, dict]:
+    """プラン別の「決着帯」の参照分布（paper・本番と同じゲート適用後）。
+
+    🔴 **狙った帯で決着したかは `win_tf_odds`（確定三連単オッズ）で見る。**
+       券種にも的中にも関係なく全行に入っている唯一の「レースの荒れ具合」で、
+       `settle_type_lab_picks.py` がまさにこの答え合わせのために入れている
+       （三連複プランの行にも三連単の値を入れて型どうしを同じ物差しで比べる）。
+    🔴 `final_odds` を使ってはいけない——**的中時しか入らない**ので、
+       外れたレースの荒れ具合が測れず「狙い違い」と「買い目違い」を分離できない。
+    """
+    lo, hi = BASELINE_WINDOW
+    with get_connection() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT t.plan_key, t.axis_sum, t.n_entries, t.race_type, t.win_tf_odds, "
+            "       r.cup_grade FROM type_lab_picks t "
+            "LEFT JOIN wt_races r ON r.race_key = t.race_key "
+            "WHERE t.mode = ? AND t.race_date BETWEEN ? AND ? "
+            "  AND t.settled_at IS NOT NULL AND t.win_tf_odds IS NOT NULL",
+            ("paper", lo, hi))]
+    out: dict[str, dict] = {}
+    for d in rows:
+        if d["plan_key"] not in SELL_PLANS or not _gate_ok(d):
+            continue
+        b = out.setdefault(str(d["plan_key"]), {"bands": Counter(), "odds": []})
+        band = _OUTCOME.payout_band(d["win_tf_odds"])
+        if band:
+            b["bands"][band] += 1
+        b["odds"].append(float(d["win_tf_odds"]))
+    for b in out.values():
+        b["odds"].sort()
+        b["median"] = b["odds"][len(b["odds"]) // 2] if b["odds"] else None
+        n = sum(b["bands"].values())
+        b["n"] = n
+        # 狙い帯 = 参照でそのプランが最も多く落ちる帯（＋隣接1帯まで許容）。
+        b["target"] = b["bands"].most_common(1)[0][0] if n else None
+    return out
+
+
+def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
+    """狙ったオッズ帯で決着したか（2026-08-29・ユーザー要望）。
+
+    型ラボの各プランは**配当帯を狙って**買い目を組む（型A＝鉄板で安い帯・
+    型F＝大混戦で高い帯）。だから外れには2種類ある:
+
+      ① **帯は想定どおりだったが目を外した** → 買い目側の問題（相手の取り方）
+      ② **そもそも想定と違う帯で決着した**   → 型判定・荒れ度側の問題
+
+    ①と②は打ち手がまったく違うので、混ぜて「外れ○件」と数えても改善に繋がらない。
+
+    🔴 1日ぶんでは判断しない。参照分布との**ずれの向き**だけを見て台帳に積む。
+    """
+    out: list[str] = []
+    idx = {(str(d["race_key"]), str(d["plan_key"])): d for d in live}
+    order = [b["key"] for b in _OUTCOME.PAYOUT_BANDS]
+    labels = {b["key"]: b["label"] for b in _OUTCOME.PAYOUT_BANDS}
+    rows: dict[str, dict] = {}
+    for r in sold:
+        d = idx.get((r.race_key, r.rank_key))
+        if d is None or d.get("win_tf_odds") is None:
+            continue
+        b = _OUTCOME.payout_band(d["win_tf_odds"])
+        if not b:
+            continue
+        g = rows.setdefault(r.rank_key, {"bands": Counter(), "odds": [],
+                                         "hit_in": 0, "n_in": 0, "n": 0})
+        g["bands"][b] += 1
+        g["odds"].append(float(d["win_tf_odds"]))
+        g["n"] += 1
+        tgt = (base.get(r.rank_key) or {}).get("target")
+        if tgt and _near(order, b, tgt):
+            g["n_in"] += 1
+            g["hit_in"] += int(r.net_hit)
+    if not rows:
+        return ["  決着帯を出せる商品が無い（`win_tf_odds` 未確定）"]
+
+    out.append(f"  {'plan':<7}{'狙い帯':<10}{'当日の決着帯':<22}"
+               f"{'当日中央':>9}{'参照中央':>9}{'狙い帯で決着':>13}")
+    tot_in = tot_n = tot_hit_in = 0
+    for plan in sorted(rows):
+        g = rows[plan]
+        b = base.get(plan) or {}
+        g["odds"].sort()
+        med = g["odds"][len(g["odds"]) // 2]
+        dist = " ".join(f"{labels[k]}×{g['bands'][k]}" for k in order if g["bands"][k])
+        tgt = b.get("target")
+        base_rate = (sum(v for k, v in b.get("bands", {}).items()
+                         if _near(order, k, tgt)) / b["n"]) if b.get("n") else None
+        ref = f"（参照 {base_rate:.0%}）" if base_rate is not None else ""
+        out.append(f"  {plan:<7}{labels.get(tgt, '—'):<10}{dist:<22}"
+                   f"{med:>8,.1f}倍{(b.get('median') or 0):>8,.1f}倍"
+                   f"{g['n_in']:>4}/{g['n']}{ref}")
+        tot_in += g["n_in"]
+        tot_n += g["n"]
+        tot_hit_in += g["hit_in"]
+    if tot_n:
+        out.append("")
+        out.append(f"  狙い帯（±1帯）で決着 {tot_in}/{tot_n} = {tot_in / tot_n:.1%}")
+        if tot_in:
+            out.append(f"  そのうち的中 {tot_hit_in}/{tot_in} = {tot_hit_in / tot_in:.1%}")
+        out.append("    ※ 帯が合っているのに外れる＝**買い目側**（相手の取り方）。"
+                   "帯自体が外れる＝**型判定・荒れ度側**。打ち手が違うので分けて積む。")
+    return out
+
+
+def _near(order: list[str], band: str | None, target: str | None) -> bool:
+    """`band` が `target` と同じか隣（±1帯）か。
+
+    🔴 帯はちょうど1桁ずつ広いので、境界のすぐ外を「狙い違い」と数えると
+       ほとんどの日が狙い違いになる。隣までは「想定どおり」として扱う。
+    """
+    if band is None or target is None:
+        return False
+    try:
+        return abs(order.index(band) - order.index(target)) <= 1
+    except ValueError:
+        return False
+
+
 # ───────────────────────────── §1 異常検知 ─────────────────────────────
 
 def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
@@ -703,7 +821,7 @@ FIELDS = ["date", "dim", "key", "n", "bet", "payout", "n_hits", "n_net_hits",
           "firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami"]
 
 #: 積む軸。値の作り方は `_segments()`。
-LEDGER_DIMS = ("plan", "race_type", "band", "marquee")
+LEDGER_DIMS = ("plan", "race_type", "band", "marquee", "payout_band")
 
 
 def _band(hour: int | None) -> str:
@@ -728,6 +846,11 @@ def _segments(plan: str, meta: dict | None) -> list[tuple[str, str]]:
     out.append(("race_type", rt))
     out.append(("band", _band(meta.get("hour"))))
     out.append(("marquee", "看板" if meta.get("marquee") else "看板でない"))
+    # 🔴 決着帯（確定三連単オッズ）。**狙った帯で決着したか**を積むための軸で、
+    #    プラン別の狙い帯と突き合わせて初めて意味を持つ（§3.5）。
+    pb = meta.get("payout_band")
+    if pb:
+        out.append(("payout_band", pb))
     return out
 
 
@@ -803,7 +926,8 @@ def section_escalate(pool) -> list[str]:
         if not items:
             continue
         label = {"plan": "プラン", "race_type": "レース種別",
-                 "band": "発走時刻帯", "marquee": "看板か"}[dim]
+                 "band": "発走時刻帯", "marquee": "看板か",
+                 "payout_band": "決着帯（確定三連単）"}[dim]
         out.append(f"  【{label}】")
         for k, a in items:
             hit, roi = rate(a)
@@ -832,6 +956,14 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     live = _live_rows(day)
     pool = _baseline_pool()
     race_meta = _race_meta(day)
+    # 決着帯はレース単位の量（`win_tf_odds` は同じレースなら全プラン行で同じ）。
+    # `wt_races` には無いので型ラボの行から拾って `race_meta` へ足す。
+    for d in live:
+        if d.get("win_tf_odds") is None:
+            continue
+        m = race_meta.get(str(d["race_key"]))
+        if m is not None and "payout_band" not in m:
+            m["payout_band"] = _OUTCOME.payout_band(d["win_tf_odds"])
 
     lines: list[str] = []
     wd = "月火水木金土日"[date.fromisoformat(day).weekday()]
@@ -857,6 +989,10 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("## §3 外れの分解 — **台帳へ積む。反実仮想は出さない**")
     brk_lines, brk = section_breakdown(sold, live)
     lines += brk_lines
+    lines.append("")
+
+    lines.append("## §3.5 狙ったオッズ帯で決着したか — **外れを2種類に分ける**")
+    lines += section_landing(sold, live, _band_baseline())
     lines.append("")
 
     lines.append("## §4 軸信頼ゲートの答え合わせ — **累積で見る**")

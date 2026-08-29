@@ -11,6 +11,8 @@
 4. **台帳は同じ日を二度書かない。** 採点が進んでから再実行することがある
 5. **決着クラスは `dim="plan"` の行にだけ入れる。** 種別・時間帯・看板の行にも
    足すと、1商品が4回数えられて母集団が4倍に見える
+6. **狙い帯の判定は `win_tf_odds`（確定三連単）で行う。** `final_odds` は的中時しか
+   入らないので、外れたレースの荒れ具合が測れず「狙い違い」と「買い目違い」を分離できない
 """
 
 from __future__ import annotations
@@ -115,7 +117,8 @@ def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入�
 
     from collections import Counter
     brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {}}
-    meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False}}
+    meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False,
+                   "payout_band": "30_100"}}
     m.append_ledger("2026-08-29", [_R("A_hit", 0)], brk, meta)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
     got = {(r["dim"], r["key"]): r for r in rows}
@@ -123,6 +126,7 @@ def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入�
     assert got[("race_type", "一般")]["n"] == "1"
     assert got[("band", "18〜20時")]["n"] == "1", "JST の帯に入っていない"
     assert got[("marquee", "看板でない")]["n"] == "1"
+    assert got[("payout_band", "30_100")]["n"] == "1"
     # 🔴 決着クラスはプラン行にだけ
     assert got[("plan", "A_hit")]["firm34"] == "1"
     for dim in ("race_type", "band", "marquee"):
@@ -137,3 +141,31 @@ def test_発走時刻帯の境界():
     assert m._band(17) == "15〜17時" and m._band(18) == "18〜20時"
     assert m._band(20) == "18〜20時" and m._band(21) == "21時〜"
     assert m._band(None) == "unknown"
+
+
+def test_狙い帯の一致は隣の帯まで許す():
+    m = _load()
+    order = ["lt10", "10_30", "30_100", "100_300", "ge300"]
+    assert m._near(order, "30_100", "30_100")
+    assert m._near(order, "10_30", "30_100"), "隣の帯は想定どおりとして扱う"
+    assert m._near(order, "100_300", "30_100")
+    assert not m._near(order, "lt10", "30_100"), "2帯離れたら狙い違い"
+    assert not m._near(order, None, "30_100")
+    assert not m._near(order, "30_100", None)
+
+
+def test_決着帯は確定三連単オッズから作る():
+    """`final_odds`（的中時しか入らない）を使っていないこと。"""
+    import ast
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    # 文字列（docstring・SQL・メッセージ）以外で final_odds を触っていないこと。
+    # docstring には「使ってはいけない」と書いてあるので、素の grep では判定できない。
+    names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    consts = [n.value for n in ast.walk(tree)
+              if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    sql = [c for c in consts if "SELECT" in c.upper()]
+    assert any("win_tf_odds" in c for c in sql), "確定三連単オッズを引いていない"
+    assert not any("final_odds" in c for c in sql), (
+        "SQL で final_odds を引いている。的中時しか入らないので"
+        "外れたレースの荒れ具合が測れなくなる")
+    assert "final_odds" not in names
