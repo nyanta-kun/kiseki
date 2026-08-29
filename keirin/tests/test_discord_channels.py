@@ -70,12 +70,32 @@ def test_型ラボの入稿通知は入稿完了チャンネルへ出す():
 
 
 def test_通知の失敗で入稿を落とさない():
-    """入稿が終わったあとの通知なので、例外を上げると再実行を誘発する。"""
+    """入稿が終わったあとの通知なので、例外を上げると再実行を誘発する。
+
+    🔴 **文字数の窓で判定しない**（2026-08-30）。以前は `channel=` の前後
+       600/400 文字を見ていたので、**本文の組み立てが少し伸びただけで落ちた**
+       （2026-08-30 の通知簡素化で実際に落ちた）。守りたいのは
+       「`send()` が try の中にあること」なので、構文木で見る。
+    """
+    import ast
+
     src = (REPO / "scripts" / "netkeirin_submit_type_lab.py").read_text(encoding="utf-8")
-    i = src.index('channel="netkeirin"')
-    block = src[max(0, i - 600):i + 400]
-    assert "try:" in block and "except" in block, \
-        "型ラボの Discord 通知が try/except で守られていません"
+    tree = ast.parse(src)
+
+    def _sends(node) -> list[ast.Call]:
+        return [n for n in ast.walk(node)
+                if isinstance(n, ast.Call)
+                and getattr(n.func, "id", "") == "send"
+                and any(k.arg == "channel"
+                        and getattr(k.value, "value", None) == "netkeirin"
+                        for k in n.keywords)]
+
+    guarded = [c for t in ast.walk(tree) if isinstance(t, ast.Try)
+               for c in _sends(t)]
+    allsends = _sends(tree)
+    assert allsends, "型ラボの Discord 通知（send)が見つからない"
+    assert len(guarded) == len(allsends), \
+        "型ラボの Discord 通知が try/except の外にあります"
 
 
 def test_チャンネルキーの一覧が想定どおり():

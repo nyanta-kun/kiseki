@@ -118,7 +118,9 @@ def test_shell_passes_the_same_path_to_both():
 
     片方だけだと保留したまま誰も送らず、Discord が沈黙する。
     """
-    for name in ("daily_picks_wt.sh", "wave_submit_wt.sh"):
+    # 🔴 朝（daily_picks_wt.sh）は 2026-08-30 に旧ランク入稿・看板穴埋めごと
+    #    外したので対象外（PR #380）。残るのは昼・夕の波だけ。
+    for name in ("wave_submit_wt.sh",):
         src = (REPO / "scripts" / name).read_text(encoding="utf-8")
         assert "NOTICE_JSON=" in src, f"{name}: 一時ファイルの定義が無い"
         assert src.count('--defer-notify "$NOTICE_JSON"') == 2, (
