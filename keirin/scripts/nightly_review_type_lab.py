@@ -62,7 +62,7 @@ import importlib.util
 import random
 import sys
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -79,6 +79,8 @@ from src.sold_performance import (                            # noqa: E402
 from src.type_lab import SELL_PLANS                           # noqa: E402
 
 LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
+
+JST = timezone(timedelta(hours=9))
 
 #: 参照分布を作る窓。**ペーパー行（`mode='paper'`）の窓**であって検証窓ではない。
 #: 2025年は vintage オッズ・2026年は板 npz で作られており、どちらも OOS
@@ -206,6 +208,30 @@ def _live_rows(day: str) -> list[dict]:
     return [d for d in rows
             if str(d["type_label"]) == current[(str(d["race_key"]),
                                                 str(d["mode"]))][1]]
+
+
+def _race_meta(day: str) -> dict[str, dict]:
+    """レースの属性（種別・発走時刻・看板か）。台帳の軸を作るために引く。
+
+    🔴 発走時刻は `wt_races.start_at`（UNIX秒）。**JST へ直してから**時を取る
+       （そのまま `hour` を取ると9時間ずれ、夜の帯が昼に化ける）。
+    """
+    with get_connection() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT race_key, race_type, start_at, cup_grade FROM wt_races "
+            "WHERE race_date = ?", (day,))]
+    out: dict[str, dict] = {}
+    for d in rows:
+        sa = d.get("start_at")
+        hour = None
+        if sa:
+            hour = datetime.fromtimestamp(int(sa), JST).hour
+        out[str(d["race_key"])] = {
+            "race_type": d.get("race_type"),
+            "hour": hour,
+            "marquee": bool(is_fill_target(d.get("race_type"), d.get("cup_grade"))),
+        }
+    return out
 
 
 def _gate_ok(row: dict) -> bool:
@@ -665,24 +691,70 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
 
 # ─────────────────── §6 台帳と発火条件 ───────────────────
 
-FIELDS = ["date", "plan_key", "n", "bet", "payout", "n_hits", "n_net_hits",
+#: 台帳の列。**1行 = 1日 × 1軸 × 1値**。
+#:
+#: 🔴 プラン別だけでは足りない（2026-08-29 に拡張）。20か月の台で
+#:    **レース種別**（表示的中の順位が両窓で Spearman +0.907・チャレンジ予選 36% ↔
+#:    一般 14%）と**発走時刻帯**（18〜20時が両窓で最弱）という再現する差が見つかったが、
+#:    どちらの窓も一度は別の目的で使われており **前向きにしか確定させられない**。
+#:    積んでいなければ半年後にも同じことしか言えないので、軸ごとに毎晩積む。
+#: 🔴 決着クラスの内訳は `dim="plan"` の行にだけ入れる（他の軸で足すと二重に数える）。
+FIELDS = ["date", "dim", "key", "n", "bet", "payout", "n_hits", "n_net_hits",
           "firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami"]
 
+#: 積む軸。値の作り方は `_segments()`。
+LEDGER_DIMS = ("plan", "race_type", "band", "marquee")
 
-def append_ledger(day: str, sold, brk: dict) -> None:
+
+def _band(hour: int | None) -> str:
+    """発走時刻帯。境界は `backend/src/api/keirin_meeting.py` の 9/12/18 に合わせる
+    （そちらは開催の第1R、ここはレース自身の発走時刻を見る）。"""
+    if hour is None:
+        return "unknown"
+    for lo, hi, label in ((0, 11, "〜10時"), (11, 15, "11〜14時"),
+                          (15, 18, "15〜17時"), (18, 21, "18〜20時"),
+                          (21, 24, "21時〜")):
+        if lo <= hour < hi:
+            return label
+    return "unknown"
+
+
+def _segments(plan: str, meta: dict | None) -> list[tuple[str, str]]:
+    """1商品が属する (軸, 値) の一覧。"""
+    out = [("plan", plan)]
+    if meta is None:
+        return out
+    rt = str(meta.get("race_type") or "—")
+    out.append(("race_type", rt))
+    out.append(("band", _band(meta.get("hour"))))
+    out.append(("marquee", "看板" if meta.get("marquee") else "看板でない"))
+    return out
+
+
+def append_ledger(day: str, sold, brk: dict, race_meta: dict | None = None) -> None:
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     new = not LEDGER.exists()
-    rows = []
-    for plan, s in group_by(sold, "rank_key").items():
-        c = brk["per_plan"].get(plan, Counter())
-        rows.append({
-            "date": day, "plan_key": plan, "n": s.n_races, "bet": s.bet,
-            "payout": s.payout, "n_hits": s.n_hits, "n_net_hits": s.n_net_hits,
-            "firm34": c.get("firm34", 0), "firm_ana": c.get("firm_ana", 0),
-            "half34": c.get("half34", 0), "half_ana": c.get("half_ana", 0),
-            "broken": c.get("broken", 0),
-            "n_gami": int(brk["gami_by_plan"].get(plan, 0)),
-        })
+    race_meta = race_meta or {}
+    buckets: dict[tuple[str, str], dict] = {}
+    for r in sold:
+        meta = race_meta.get(r.race_key)
+        for dim, key in _segments(r.rank_key, meta):
+            b = buckets.setdefault((dim, key), {k: 0 for k in FIELDS[3:]})
+            b["n"] += 1
+            b["bet"] += r.bet
+            b["payout"] += r.payout
+            b["n_hits"] += int(r.hit)
+            b["n_net_hits"] += int(r.net_hit)
+    # 決着クラスとガミは plan 軸にだけ入れる（他の軸へ足すと二重計上になる）。
+    for plan, c in brk["per_plan"].items():
+        b = buckets.get(("plan", plan))
+        if b is None:
+            continue
+        for k in ("firm34", "firm_ana", "half34", "half_ana", "broken"):
+            b[k] = c.get(k, 0)
+        b["n_gami"] = int(brk["gami_by_plan"].get(plan, 0))
+    rows = [{"date": day, "dim": dim, "key": key, **vals}
+            for (dim, key), vals in sorted(buckets.items())]
     if not rows:
         return
     # 🔴 同じ日を二度書かない（採点が進んでから再実行することがある）。
@@ -702,38 +774,53 @@ def append_ledger(day: str, sold, brk: dict) -> None:
 
 
 def section_escalate(pool) -> list[str]:
-    """台帳が閾値までたまったプランだけを「検証候補」として挙げる。
+    """台帳が閾値までたまった**軸の値**だけを「検証候補」として挙げる。
 
     🔴 ここでも採否は決めない。挙げるのは「全期間で検証する価値がある」まで。
+    🔴 **プラン以外の軸には参照分布が無い**（`pool` はプラン別の paper 行）。
+       種別・時間帯・看板は**同じ軸の他の値との比較**しかできないので、
+       件数が足りたときに「最下位がどれだけ離れているか」だけを出す。
     """
     out: list[str] = []
     if not LEDGER.exists():
         return ["  台帳がまだ無い（次回から積み上がる）"]
-    agg: dict[str, dict[str, int]] = {}
+    agg: dict[tuple[str, str], dict[str, int]] = {}
     with LEDGER.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
-            a = agg.setdefault(r["plan_key"], {k: 0 for k in
-                                               ("n", "bet", "payout", "n_net_hits")})
-            for k in a:
-                a[k] += int(r.get(k) or 0)
-    for plan in sorted(agg):
-        a = agg[plan]
-        if not a["n"]:
+            k = (r.get("dim") or "plan", r.get("key") or r.get("plan_key") or "—")
+            a = agg.setdefault(k, {x: 0 for x in
+                                   ("n", "bet", "payout", "n_net_hits")})
+            for x in a:
+                a[x] += int(r.get(x) or 0)
+
+    def rate(a: dict) -> tuple[float, float]:
+        return (a["n_net_hits"] / a["n"] if a["n"] else 0.0,
+                a["payout"] / a["bet"] if a["bet"] else 0.0)
+
+    for dim in LEDGER_DIMS:
+        items = sorted(((k, v) for (d, k), v in agg.items() if d == dim and v["n"]),
+                       key=lambda kv: -rate(kv[1])[0])
+        if not items:
             continue
-        roi = a["payout"] / a["bet"] if a["bet"] else 0.0
-        hit = a["n_net_hits"] / a["n"]
-        mark = ""
-        if a["n"] >= ESCALATE_MIN_N:
-            base = pool.get(plan) or []
-            if base:
-                b_roi = sum(p for _, p in base) / sum(b for b, _ in base)
-                b_hit = sum(1 for b, p in base if p >= b) / len(base)
-                if roi < b_roi * 0.85 or hit < b_hit * 0.85:
-                    mark = "  ← 検証候補（参照より15%以上低い）"
-        out.append(f"  {plan:<8}累積 {a['n']:>4}件  表示的中 {hit:6.1%}"
-                   f"  ROI {roi:6.1%}"
-                   f"{'' if a['n'] >= ESCALATE_MIN_N else f'  （{ESCALATE_MIN_N}件まで判定しない）'}"
-                   f"{mark}")
+        label = {"plan": "プラン", "race_type": "レース種別",
+                 "band": "発走時刻帯", "marquee": "看板か"}[dim]
+        out.append(f"  【{label}】")
+        for k, a in items:
+            hit, roi = rate(a)
+            mark = ""
+            if dim == "plan" and a["n"] >= ESCALATE_MIN_N:
+                base = pool.get(k) or []
+                if base:
+                    b_roi = sum(p for _, p in base) / sum(b for b, _ in base)
+                    b_hit = sum(1 for b, p in base if p >= b) / len(base)
+                    if roi < b_roi * 0.85 or hit < b_hit * 0.85:
+                        mark = "  ← 検証候補（参照より15%以上低い）"
+            todo = "" if a["n"] >= ESCALATE_MIN_N else \
+                f"  （{ESCALATE_MIN_N}件まで判定しない）"
+            out.append(f"    {k:<14}累積 {a['n']:>4}件  表示的中 {hit:6.1%}"
+                       f"  ROI {roi:6.1%}{todo}{mark}")
+    out.append("    ※ 種別・時間帯・看板には参照分布が無い（paper 側にゲート後の"
+               "同一軸が無い）。**同じ軸の中の並びだけ**を見ること。")
     return out
 
 
@@ -744,6 +831,7 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     sold, n_skipped, subs = _sold(day)
     live = _live_rows(day)
     pool = _baseline_pool()
+    race_meta = _race_meta(day)
 
     lines: list[str] = []
     wd = "月火水木金土日"[date.fromisoformat(day).weekday()]
@@ -780,7 +868,8 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("")
 
     if append:
-        append_ledger(day, sold, brk)
+        append_ledger(day, sold, brk, race_meta)
+
     lines.append(f"## §6 台帳（{LEDGER.name}）と発火条件")
     lines += section_escalate(pool)
 

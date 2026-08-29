@@ -9,6 +9,8 @@
 3. **表示的中の定義は `SoldRace.net_hit`（払戻 >= 賭け金）と同じ。**
    素の的中で比べると、点数を増やしたときに「改善した」と誤読する
 4. **台帳は同じ日を二度書かない。** 採点が進んでから再実行することがある
+5. **決着クラスは `dim="plan"` の行にだけ入れる。** 種別・時間帯・看板の行にも
+   足すと、1商品が4回数えられて母集団が4倍に見える
 """
 
 from __future__ import annotations
@@ -97,4 +99,41 @@ def test_台帳は同じ日を上書きする(tmp_path, monkeypatch):
 
     m.append_ledger("2026-08-30", [_R("A_hit", 0)], brk)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
-    assert len(rows) == 2 and {r["date"] for r in rows} == {"2026-08-29", "2026-08-30"}
+    assert {r["date"] for r in rows} == {"2026-08-29", "2026-08-30"}
+
+
+def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入る(tmp_path, monkeypatch):
+    m = _load()
+    ledger = tmp_path / "ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+
+    class _R:
+        def __init__(self, plan, pay):
+            self.race_key, self.rank_key, self.origin = "rk", plan, None
+            self.bet, self.payout = 10_000, pay
+            self.hit, self.net_hit, self.n_points = pay > 0, pay >= 10_000, 5
+
+    from collections import Counter
+    brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {}}
+    meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False}}
+    m.append_ledger("2026-08-29", [_R("A_hit", 0)], brk, meta)
+    rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
+    got = {(r["dim"], r["key"]): r for r in rows}
+    assert set(d for d, _ in got) == set(m.LEDGER_DIMS), "軸が欠けている"
+    assert got[("race_type", "一般")]["n"] == "1"
+    assert got[("band", "18〜20時")]["n"] == "1", "JST の帯に入っていない"
+    assert got[("marquee", "看板でない")]["n"] == "1"
+    # 🔴 決着クラスはプラン行にだけ
+    assert got[("plan", "A_hit")]["firm34"] == "1"
+    for dim in ("race_type", "band", "marquee"):
+        row = next(r for (d, _), r in got.items() if d == dim)
+        assert row["firm34"] in ("0", ""), f"{dim} にも決着クラスが入っている（二重計上）"
+
+
+def test_発走時刻帯の境界():
+    m = _load()
+    assert m._band(10) == "〜10時" and m._band(11) == "11〜14時"
+    assert m._band(14) == "11〜14時" and m._band(15) == "15〜17時"
+    assert m._band(17) == "15〜17時" and m._band(18) == "18〜20時"
+    assert m._band(20) == "18〜20時" and m._band(21) == "21時〜"
+    assert m._band(None) == "unknown"
