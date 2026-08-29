@@ -1356,7 +1356,8 @@ export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C
 //   ——文面は keirin 側 `src/type_lab_submission.py` が正本で、
 //   `netkeirin_settings` のテンプレートは型ラボの入稿に反映されない。
 export type TypeLabRankKey =
-  "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay";
+  // 🔴 `F_hit` は 9車の型F（決勝以外）で売る（2026-08-30）。7車の型F は `F_pay`。
+  "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit";
 
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"

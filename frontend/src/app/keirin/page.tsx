@@ -274,6 +274,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "D_hit":      { bg: "#6366f1", text: "#fff", label: "D" },
   "E_hit":      { bg: "#ea580c", text: "#fff", label: "E" },
   "F_pay":      { bg: "#dc2626", text: "#fff", label: "F" },
+  // 9車の型F（決勝以外）で売る（2026-08-30）。型は同じなのでラベルも "F"。
+  "F_hit":      { bg: "#dc2626", text: "#fff", label: "F" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
@@ -1405,7 +1407,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
 //    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
 //    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
-const RANK_ORDER = ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay",
+const RANK_ORDER = ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit",
   "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
@@ -1421,7 +1423,7 @@ const RANK_LABEL: Record<string, string> = {
   // 型ラボのプラン（2026-08-28〜）。バッジは**記号1文字**で出す
   // （2026-08-29・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
   "A_hit": "A", "B_hit": "B", "C_hit": "C",
-  "D_hit": "D", "E_hit": "E", "F_pay": "F",
+  "D_hit": "D", "E_hit": "E", "F_pay": "F", "F_hit": "F",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -1446,6 +1448,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "D_hit": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
   "E_hit": "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
   "F_pay": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  "F_hit": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

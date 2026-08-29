@@ -379,9 +379,13 @@ def _type_lab_labels() -> set[str]:
 
 
 def test_type_lab_labels_match_keirin_sell_plans():
-    """🔴 backend の写しが keirin 側の正本（`SELL_PLANS`）と一致すること。
+    """🔴 backend の写しが keirin 側の正本と一致すること。
 
     ずれると「設定画面で ON にできない」「一覧が『非』になる」という形で出る。
+
+    🔴 比べる相手は `SELL_PLANS`（7車の固定集合）**ではなく**入稿しうるプラン全体。
+       9車の型F は決勝以外で `F_hit` を売るので（2026-08-30）、`SELL_PLANS` と
+       比べると新しい商品が「backend のみ」に見えて偽陽性になる。
     """
     import re
 
@@ -389,8 +393,17 @@ def test_type_lab_labels_match_keirin_sell_plans():
     m = re.search(r"SELL_PLANS: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
     assert m, "keirin/src/type_lab.py の SELL_PLANS を読めない"
     canonical = set(re.findall(r'"([^"]+)"', m.group(1)))
+
+    # 9車の型F が売るプラン（決勝＝表・それ以外＝既定）も入稿しうる。
+    m = re.search(r"NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
+    assert m, "NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE を読めない"
+    canonical |= set(re.findall(r':\s*"([^"]+)"', m.group(1)))
+    m = re.search(r'NINE_CAR_TYPE_F_SELL_DEFAULT = "([^"]+)"', src)
+    assert m, "NINE_CAR_TYPE_F_SELL_DEFAULT を読めない"
+    canonical.add(m.group(1))
+
     assert canonical == _type_lab_labels(), (
-        "TYPE_LAB_RANK_LABELS が SELL_PLANS とずれている\n"
+        "TYPE_LAB_RANK_LABELS が keirin 側の入稿しうるプランとずれている\n"
         f"  keirin のみ: {sorted(canonical - _type_lab_labels())}\n"
         f"  backend のみ: {sorted(_type_lab_labels() - canonical)}")
 

@@ -88,7 +88,7 @@ from src.submission_skips import (                           # noqa: E402
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
 )
 from src.marquee import is_fill_target                       # noqa: E402
-from src.type_lab import SELL_PLANS, sell_plans_for          # noqa: E402
+from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for  # noqa: E402
 from src.type_lab_submission import build_submission         # noqa: E402
 
 # 🔴 **共通部品は既存スクリプトから import する**（写さない）。
@@ -133,6 +133,11 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     "D_hit": ACT_TYPE_DEFAULT,
     "E_hit": ACT_TYPE_DEFAULT,
     "F_pay": ACT_TYPE_LONGSHOT,
+    # 🔴 9車の型F（決勝以外）で売る。**穴狙いアイコンは付けない**
+    #    （2026-08-30 ユーザー判断「穴狙いのアイコンは現状のまま様子見」）。
+    #    F_pay と同じ型だがアイコンの適用範囲を広げると効果の切り分けが
+    #    さらに難しくなる（今も商品との交絡が切れていない）。
+    "F_hit": ACT_TYPE_DEFAULT,
 }
 
 #: 軸信頼ゲートの正本。**backend 側のファイルを読み込んで束縛する**
@@ -188,7 +193,7 @@ def _load_rows(day: str) -> list[dict]:
     out = []
     for r in rows:
         d = dict(r)
-        if d["plan_key"] not in SELL_PLANS:
+        if d["plan_key"] not in SELLABLE_PLAN_KEYS:
             continue
         if str(d["type_label"]) != current[(str(d["race_key"]), str(d["mode"]))][1]:
             continue        # 組み直し前の古い型の行
@@ -220,7 +225,7 @@ def races_taken_by_other_ranks(already: set[tuple[str, str]]) -> set[str]:
           `already` が全ランクを含むせいで**常に空集合**になっていた
           （＝ガードが一度も効かない。2026-08-28 の dry-run で発覚）。
     """
-    return {rk for rk, rank in already if rank not in SELL_PLANS}
+    return {rk for rk, rank in already if rank not in SELLABLE_PLAN_KEYS}
 
 
 def _combo_cars(combo: str) -> list[int]:
@@ -447,7 +452,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #    「型Cの商品」と「組み直し前の型Fの商品」を同時に出した。
     #    ⚠️ 取消済みも `already` に含まれる＝取り消したレースは出し直さない
     #      （看板穴埋めと同じ方針）。
-    taken_by_type_lab = {rk for rk, rank in already if rank in SELL_PLANS}
+    taken_by_type_lab = {rk for rk, rank in already if rank in SELLABLE_PLAN_KEYS}
 
     # ── 昼・夕は「まだ入稿していないレース」を組み直してから読み直す ──
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への

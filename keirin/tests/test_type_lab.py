@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO))
 from src.type_lab import (  # noqa: E402
     AXIS_SUM_FIRM, BEHIND_MID, BUDGET, PLANS, UNIT, allocate, build_legs,
     mean_expected_payout, min_expected_payout, plans_for, race_shape, rule_version,
+    sell_plans_for,
 )
 
 CARS = list(range(1, 8))
@@ -422,30 +423,36 @@ def test_backfill_predicts_a_whole_window_at_once():
 #    はじめて 83.0% / 89.1% になる。決勝だけ F_hit を残すのが実投入の形。
 #    実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 
-def test_nine_car_type_f_is_sold_only_for_the_final():
-    """9車の型F は**決勝の F_pay だけ**。準決勝・予選では1つも出さない。
+def test_nine_car_type_f_sells_pay_for_the_final_and_hit_otherwise():
+    """9車の型F は**決勝は F_pay・それ以外は F_hit**（2026-08-30 ユーザー判断）。
 
-    🔴 2026-08-28 に `F_hit` → `F_pay`（本番移行）。車数や種別で hit/pay を
-       分けない方針に揃えた。決勝限定という**母集団の絞り**は残る——これは
-       「売る／売らない」の分岐で、hit/pay の分岐ではない。
+    🔴 **「決勝以外は売らない」に戻さないこと。** 2026-08-30 に 9車開催の
+       看板8件（選抜3・特選3・特秀2）が無商品になった。旧ランクの看板穴埋めも
+       型ラボ全面移行で機能しておらず、「看板には必ず出す」方針に反していた。
+    🔴 全部 `F_pay` にすると表示的中 6.07%・ROI 60.5% で壁の下。だから
+       決勝以外は当たる回数を売る `F_hit` に替える（ROI が上がるという主張ではない）。
+    🔴 **生成（`plans_for`）は絞らない。** 売る／売らないは `sell_plans_for` の責務。
+       生成側で空にすると比較台が消え、売らなかった側の成績が事後に測れない。
     """
-    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_pay"]
+    assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
     for rt in ("準決勝", "一予選", "二予選", "選抜", "特選", "特秀", "一般", "", None):
-        assert plans_for("F", 9, rt) == [], f"9車の型F が {rt!r} で出ている"
+        assert [p.key for p in sell_plans_for("F", 9, rt)] == ["F_hit"], rt
+    # 生成側は種別で落とさない（比較台を残す）
+    assert [p.key for p in plans_for("F", 9, "準決勝")] == ["F_hit", "F_pay"]
 
 
 def test_nine_car_final_match_is_exact_not_substring():
     """🔴 `"決勝" in race_type` は準決勝を拾う（CLAUDE.md の既知の罠）。
 
-    9車の準決勝は確認窓 ROI 50.3% で**向きが反転する**ので、部分一致に戻すと
-    決勝の3倍近い件数を壁の下の母集団から売ることになる。
+    決勝と準決勝で**売るプランが変わる**ので、部分一致に戻すと準決勝まで
+    `F_pay`（9車では表示的中 2.99%）になる。
     """
-    assert plans_for("F", 9, "準決勝") == []
-    assert [p.key for p in plans_for("F", 9, "決勝")] == ["F_pay"]
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
 
 
 def test_nine_car_other_types_are_unchanged():
-    """型A〜E は9車でも 7車と同じ買い方を売る（絞るのは型F だけ）。"""
+    """型A〜E は9車でも 7車と同じ買い方（絞るのは型F だけ）。"""
     for t in "ABCDE":
         for rt in ("決勝", "準決勝", "一予選", None):
             assert ([p.key for p in plans_for(t, 9, rt)]
