@@ -283,3 +283,28 @@ def test_day_total_counts_only_settled_races():
     """
     src = ast.unparse(_func("_day_total"))
     assert "not got.settled" in src
+
+
+# ── 型ラボの商品名（2026-08-29）─────────────────────────────────────────
+#
+# 🔴 移行で商品名が `A_hit`〜`F_pay` になった。そのまま Discord へ出すと
+#    内部キーだけが並んで何を売ったのか読めない。
+
+
+def test_型ラボのプランは読める名前になる():
+    assert m._rank_label("A_hit") == "型A 本線の三連単（二軸が堅い一戦）"
+    assert m._rank_label("D_hit").startswith("型D 混戦の三連複")
+
+
+def test_既存ランクの表記は変えない():
+    """過去の通知と見比べられなくなるので、ランクキーはそのまま出す。"""
+    for rank in ("7C", "9C", "7T1", "7S"):
+        assert m._rank_label(rank) == rank
+
+
+def test_名前は入稿タイトルと同じ正本から取る():
+    """入稿と結果で違う名前になると同じ商品だと分からなくなる。"""
+    from src.type_lab_submission import PLAN_TITLES
+
+    for key, title in PLAN_TITLES.items():
+        assert title in m._rank_label(key), f"{key} の名前が入稿タイトルと違う"

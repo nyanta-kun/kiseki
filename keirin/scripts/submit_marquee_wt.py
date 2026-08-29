@@ -367,6 +367,56 @@ def _send_merged_notice(path: str, date: str, done: list[str],
     return True
 
 
+def _has_submission(race_key: str) -> bool:
+    """そのレースに入稿の行があるか。
+
+    🔴 **子プロセスの終了コードで数えてはいけない。** `netkeirin_submit_wt.py` は
+       ランクが `netkeirin_settings.enabled=false` のとき何もせず 0 で終わる。
+       旧実装はそれを「成功」に数えていたため、型ラボへ移行して全ランクを
+       止めた 2026-08-29 に **1件も入稿していないのに「成功29件」**とログへ出た
+       （看板レース 23R のうち 15R が商品なしのまま）。
+       入稿できたかどうかは**結果（行の有無）で確かめる**。
+
+    ⚠️ **status も deleted_at も見ない**——重複判定（上の `submitted`）と
+       同じ条件にそろえる。あちらが取消済みも「処理済み」として扱うので、
+       ここへ来る看板レースは**行が1つも無いレースだけ**。したがって
+       「行がある＝いま作られた」で正しく、条件を足すと2箇所が食い違う
+       （`tests/test_cancel_force_and_marquee_dedup.py` が機械的に禁じている）。
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM netkeirin_submissions WHERE race_key = ? LIMIT 1",
+                (race_key,),
+            ).fetchone()
+        return row is not None
+    except Exception as e:      # noqa: BLE001 — 数えられないだけで処理は止めない
+        print(f"[marquee] {race_key}: 入稿の有無を確認できません: {e!r}", flush=True)
+        return False
+
+
+def _notify_unfilled(date: str, unfilled: list[str]) -> None:
+    """看板レースを埋められなかったことを **system チャンネル**へ出す。
+
+    🔴 **承認制でも出す。** `_notify_summary` を止めているのは「入稿案を入稿と
+       誤読させない」ためで、こちらは売り物が出ていないという**障害の通知**。
+       黙っていると「看板レースには必ず推奨を出す」（2026-08-09 ユーザー決定）が
+       静かに守られなくなる——実際 2026-08-29 に 15R が無商品のまま流れた。
+    """
+    if not unfilled:
+        return
+    from src.notify.discord import send
+
+    msg = (f"⚠️ **[看板レース] {date}: {len(unfilled)}件を埋められませんでした**\n"
+           + " / ".join(unfilled[:30])
+           + "\n（入稿が0件のまま終わったレース。ランクが全て無効化されている、"
+             "候補が作れない、などが原因）")
+    try:
+        send(msg, channel="system")
+    except Exception as e:      # noqa: BLE001 — 通知の失敗で処理を落とさない
+        print(f"[marquee] 未充足の通知に失敗: {e!r}", flush=True)
+
+
 def _notify_summary(date: str, done: list[str], failed: list[str],
                     skipped: list[str] | None = None) -> None:
     """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
@@ -536,6 +586,8 @@ def main() -> int:
     failed: list[str] = []
     # 平均払戻ゲートで見送った看板レース（成功でも失敗でもない別枠・§11.6.3）
     skipped_cheap: list[str] = []
+    # 子プロセスは正常終了したのに入稿が1件も作られなかったレース（2026-08-29 追加）
+    unfilled: list[str] = []
     for r in sorted(targets, key=lambda x: int(x["start_at"] or 0)):
         e = allidx.get(r["race_key"])
         if not e:
@@ -575,15 +627,26 @@ def main() -> int:
         if MEAN_PAYOUT_SKIP_TAG in p.stdout:
             skipped_cheap.append(label)
         elif p.returncode == 0 and "入稿失敗" not in p.stdout:
-            ok += 1
-            done.append(label)
+            # 🔴 終了コードではなく**行の有無**で数える（`_has_live_submission`）。
+            #    ランクが無効だと子プロセスは何もせず 0 で終わるので、
+            #    終了コードで数えると「成功」が水増しされる。
+            if args.dry_run or _has_submission(r["race_key"]):
+                ok += 1
+                done.append(label)
+            else:
+                unfilled.append(label)
+                print(f"[marquee] {label}: 入稿が作られなかった"
+                      f"（ランク無効・候補なし等）", flush=True)
         else:
             ng += 1
             failed.append(label)
             sys.stderr.write(p.stderr)
     print(f"[marquee] {date}: 完了（成功{ok}件・失敗{ng}件・"
           f"安い配当で見送り{len(skipped_cheap)}件・"
+          f"埋まらなかった{len(unfilled)}件・"
           f"予測オッズなしで次の波へ{len(deferred_no_odds)}件）", flush=True)
+    if not args.dry_run:
+        _notify_unfilled(date, unfilled)
     if not args.dry_run and (done or failed or skipped_cheap):
         # 🔴 ランク入稿が通知を保留していれば、そこへ穴埋めを足して1通送る。
         #    保留が無ければ従来どおり（手動実行・ランク入稿が落ちた日）。
