@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import re
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import date as Date
@@ -50,6 +51,13 @@ from ..services.keirin_sales_analysis import (
 )
 from ..services.keirin_sales_report import REVENUE_RATE
 from ..services.keirin_settlement import Settlement, payout_per_100, settle
+from ..services.keirin_settlement_cache import (
+    cached_settlement,
+    is_cacheable,
+)
+from ..services.keirin_settlement_cache import (
+    fingerprint as settle_fingerprint,
+)
 from ..services.keirin_skip_reasons import (
     describe as skip_reason_describe,
 )
@@ -59,6 +67,8 @@ from ..services.keirin_skip_reasons import (
 from ..services.keirin_submission_window import SUBMIT_DEADLINE_SEC, is_closed
 from .import_router import ApiKeyDep
 from .keirin_meeting import first_hour_jst, meeting_type_of_first_hour
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_bet_detail(raw: str | None) -> dict[str, Any] | None:
@@ -150,51 +160,74 @@ def _parse_combinations(pred_combo: str | None, is_wide: bool) -> tuple[list[lis
     return [], None
 
 
-async def _calc_synth_odds(
-    db: AsyncSession,
-    race_key: str,
-    pred_combo: str | None,
-    is_wide: bool,
+def _synth_odds_from_map(
+    legs: Sequence[Sequence[str]], odds_map: Mapping[str, Any],
 ) -> float | None:
-    """直近スナップショットのオッズから合成オッズ（= 1 / Σ(1/odds)）を計算して返す。データ不足時は None。
+    """買い目とオッズ表から合成オッズ（= 1 / Σ(1/odds)）を出す。データ不足時は None。
+
+    ⚠️ **買い目ごとにキー候補（`=`区切り / `-`区切り）を1つだけ採る。**
+       両方拾うと同じ買い目を二重に数えて合成オッズを過小に見せる
+       （`_parse_combinations` の docstring 参照）。
+    """
+    matched = []
+    for leg in legs:
+        for key in leg:
+            odds = odds_map.get(key)
+            if odds:
+                matched.append(float(odds))
+                break
+    if not matched:
+        return None
+    return round(1.0 / sum(1.0 / o for o in matched), 2)
+
+
+async def _fetch_snapshot_odds(
+    db: AsyncSession, wanted: Sequence[tuple[str, str, Sequence[str]]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """`(race_key, bet_type)` → `{combination: odds}`（**最新スナップショットのみ**）。
 
     wt_odds_snapshot は当日 morning(8時台)〜h20(20時台) まで複数回収集される。
     朝の時点では大半の組み合わせが Winticket 側の未確定プレースホルダ(9999.9倍)の
     ままであり、snapshot_type を 'morning' に固定すると意味のない値になりやすい
     （例: 全4点が9999.9のまま→合成2500.0倍という無情報値。2026-07-20 発覚）。
     そのレース・券種で収集済みの最新スナップショットを使う。
+
+    🔴 **レースごとに1本ずつ投げないこと**（2026-08-29）。`/keirin/picks` は
+       ループの中でこれを呼んでおり、`wt_entries` の1件取得と合わせて
+       **1レースあたり2往復**していた。実測 41行 0.37秒 ↔ 60行 0.47秒 ＝ 約5ms/行。
+       最新 `snapshot_at` を (race_key, bet_type) ごとに1回だけ求め、
+       欲しい combination だけを引く1本にまとめる。
     """
-    legs, bet_type = _parse_combinations(pred_combo, is_wide)
-    if not legs or bet_type is None:
-        return None
-    combos = [k for leg in legs for k in leg]
+    rows_in = [{"rk": rk, "bt": bt, "cb": cb}
+               for rk, bt, combos in wanted for cb in combos]
+    if not rows_in:
+        return {}
     rows = (await db.execute(
         text("""
-            SELECT combination, odds_value
-            FROM keirin.wt_odds_snapshot
-            WHERE race_key = :rk
-              AND bet_type = :bt
-              AND combination = ANY(:combos)
-              AND snapshot_at = (
-                SELECT MAX(snapshot_at) FROM keirin.wt_odds_snapshot
-                WHERE race_key = :rk AND bet_type = :bt
-              )
+            WITH want AS (
+              SELECT * FROM jsonb_to_recordset(CAST(:w AS jsonb))
+                            AS w(rk text, bt text, cb text)
+            ), latest AS (
+              SELECT d.rk, d.bt,
+                     (SELECT MAX(s.snapshot_at) FROM keirin.wt_odds_snapshot s
+                       WHERE s.race_key = d.rk AND s.bet_type = d.bt) AS at
+              FROM (SELECT DISTINCT rk, bt FROM want) d
+            )
+            SELECT w.rk AS race_key, w.bt AS bet_type,
+                   o.combination, o.odds_value
+            FROM want w
+            JOIN latest l ON l.rk = w.rk AND l.bt = w.bt AND l.at IS NOT NULL
+            JOIN keirin.wt_odds_snapshot o
+              ON o.race_key = w.rk AND o.bet_type = w.bt
+             AND o.combination = w.cb AND o.snapshot_at = l.at
         """),
-        {"rk": race_key, "bt": bet_type, "combos": combos},
+        {"w": json.dumps(rows_in)},
     )).mappings().all()
-
-    odds_map = {r["combination"]: r["odds_value"] for r in rows if r["odds_value"]}
-    # 買い目ごとにキー候補（=区切り/-区切り）のうち存在する方を1つだけ採用（二重計上防止）
-    matched = []
-    for leg in legs:
-        for key in leg:
-            if key in odds_map:
-                matched.append(odds_map[key])
-                break
-    if not matched:
-        return None
-
-    return round(1.0 / sum(1.0 / o for o in matched), 2)
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        if r["odds_value"]:
+            out.setdefault((r["race_key"], r["bet_type"]), {})[r["combination"]] = r["odds_value"]
+    return out
 
 
 def _calc_synth_odds_from_lines(
@@ -456,6 +489,42 @@ async def _fetch_finishers(
     return {rk: _finishers(v) for rk, v in rows.items()}
 
 
+async def _fetch_entries_by_race(
+    db: AsyncSession, race_keys: Sequence[str],
+) -> dict[str, list[Any]]:
+    """race_key → 出走表（車番昇順）。**1本にまとめて引く**。
+
+    🔴 レースごとに引かないこと。`/keirin/picks` は1日60レース返すので、
+       1レース1本にすると往復だけで 0.3秒近く積み上がる（2026-08-29 実測 約5ms/行）。
+    """
+    if not race_keys:
+        return {}
+    out: dict[str, list[Any]] = {}
+    for e in (await db.execute(
+        text("""
+            SELECT
+              race_key,
+              frame_no,
+              name,
+              race_point,
+              style,
+              line_pos,
+              line_group,
+              finish_order,
+              player_class,
+              pred_win_pct,
+              pred_top2_pct,
+              pred_top3_pct,
+              prediction_mark
+            FROM keirin.wt_entries
+            WHERE race_key = ANY(:keys)
+            ORDER BY race_key, frame_no
+        """), {"keys": list(race_keys)},
+    )).mappings().all():
+        out.setdefault(e["race_key"], []).append(e)
+    return out
+
+
 async def _fetch_winning_payouts(
     db: AsyncSession, won_by_race: Mapping[str, Sequence[str]],
 ) -> dict[str, dict[str, int]]:
@@ -490,6 +559,45 @@ async def _fetch_winning_payouts(
         if pay:
             out.setdefault(r["race_key"], {})[r["label"]] = pay
     return out
+
+
+#: 採点キャッシュ列（`202608291900_keirin`）が本番に居るか。None=未確認。
+#: 🔴 **列がある前提で SELECT してはいけない**（2026-08-29）。
+#:    `scripts/deploy-bluegreen.sh` は **新しい backend を healthy にして
+#:    トラフィックを渡した後**（Phase 3.5）に `alembic upgrade head` を走らせる。
+#:    つまり新コードが旧スキーマに当たる窓が必ずある。列を直接書くと、その間
+#:    `/summary` `/picks` `/review` が丸ごと 500 になる。
+_SETTLE_CACHE_READY: bool | None = None
+_SETTLE_CACHE_CHECKED_AT = 0.0
+#: 列がまだ無いときに再確認する間隔（秒）。マイグレーション完了後に
+#: プロセスを入れ替えなくても自然に有効化されるだけの短さにする。
+_SETTLE_CACHE_RECHECK_SEC = 60.0
+
+
+async def _settlement_cache_ready(db: AsyncSession) -> bool:
+    """採点キャッシュ列が使えるか。**一度 True になったら二度と引かない。**"""
+    global _SETTLE_CACHE_READY, _SETTLE_CACHE_CHECKED_AT
+    if _SETTLE_CACHE_READY:
+        return True
+    now = time.monotonic()
+    if (_SETTLE_CACHE_READY is False
+            and now - _SETTLE_CACHE_CHECKED_AT < _SETTLE_CACHE_RECHECK_SEC):
+        return False
+    _SETTLE_CACHE_CHECKED_AT = now
+    try:
+        found = (await db.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'keirin' AND table_name = 'netkeirin_submissions'
+              AND column_name = 'settled_fp'
+        """))).scalar()
+    except Exception as exc:                      # noqa: BLE001 - 判定できなければ使わない
+        logger.warning("採点キャッシュ列の確認に失敗（キャッシュなしで続行）: %s", exc)
+        _SETTLE_CACHE_READY = False
+        return False
+    _SETTLE_CACHE_READY = bool(found)
+    if not _SETTLE_CACHE_READY:
+        logger.info("採点キャッシュ列がまだありません（マイグレーション待ち）")
+    return _SETTLE_CACHE_READY
 
 
 async def _fetch_settled_submissions(
@@ -536,9 +644,16 @@ async def _fetch_settled_submissions(
     deleted_cond = ("ns.deleted_at IS NOT NULL" if deleted_only
                     else "ns.deleted_at IS NULL")
 
+    # 焼き付け済みの採点結果（`services/keirin_settlement_cache` が正本）。
+    # 指紋が一致する行はここで完結し、`wt_entries`/`wt_odds` を引かない。
+    use_cache = await _settlement_cache_ready(db)
+    cache_cols = """,
+                   ns.settled_fp, ns.settled_bet, ns.settled_payout,
+                   ns.settled_hit, ns.settled_n_combos""" if use_cache else ""
+
     subs = (await db.execute(
         text(f"""
-            SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, wr.race_date
+            SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, wr.race_date{cache_cols}
             FROM keirin.netkeirin_submissions ns
             JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
             WHERE wr.race_date BETWEEN :from_date AND :to_date
@@ -557,39 +672,108 @@ async def _fetch_settled_submissions(
     if not subs:
         return [], 0
 
-    keys = sorted({s["race_key"] for s in subs})
-    finishers = await _fetch_finishers(db, keys)
-    won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers.items()}
-    payouts = await _fetch_winning_payouts(db, won_by_race)
-
-    out: list[dict[str, Any]] = []
-    n_missing = 0
-    for s in subs:
-        rk = s["race_key"]
-        res = settle(_parse_bet_detail(s["bet_detail"]),
-                     finishers.get(rk), payouts.get(rk))
-        if res.bet <= 0:
-            # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
-            n_missing += 1
-            continue
-        # 🔴 **採点が終わっていない行は返さない**（2026-08-16）。着順が揃っていない、
-        #    あるいは当たっているのに確定配当が引けない状態で返すと
-        #    `hit=False` / `payout=0` の行になり、**当たっているレースが
-        #    「✗ 不的中」かつ払戻0円として集計**される（実際に発生した）。
-        #    落とせば `/review` は「未確定」に、成績側は件数から外れるだけで、
-        #    着順・配当が入った次の描画で自然に現れる。
-        if not res.settled:
-            continue
-        out.append({
-            "race_key": rk, "rank_key": s["rank_key"], "origin": s["origin"],
+    def _row(s: Any, res: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "race_key": s["race_key"], "rank_key": s["rank_key"], "origin": s["origin"],
             "race_date": str(s["race_date"]),
-            "bet": res.bet, "payout": res.payout, "hit": res.hit,
-            # 🔴 **netkeirin の表示的中率はこちら**（ガミ＝払戻<賭け金 を不的中と数える）。
+            # 🔴 **netkeirin の表示的中率は `net_hit`**（ガミ＝払戻<賭け金 を不的中と数える）。
             #    素の的中率だけを見ると点数を増やしたときに誤読する。
-            "net_hit": res.net_hit,
-            "n_combos": res.n_combos,
-        })
+            **res,
+        }
+
+    # 🔴 **焼き付け済みの行はここで完結させる**（2026-08-29）。当年ぶんは入稿1,091件を
+    #    毎リクエスト採点し直しており、`wt_odds`（7.2GB・shared_buffers は 128MB）への
+    #    2,138回のインデックス参照が冷えると 1.5秒かかっていた。
+    #    使ってよい条件は `services/keirin_settlement_cache` が持つ（指紋が不一致なら
+    #    黙って実採点へ落ちる＝遅くなるだけで値は常に正しい）。
+    out: list[dict[str, Any]] = []
+    pending: list[Any] = []
+    for s in subs:
+        hot = cached_settlement(s, s["bet_detail"]) if use_cache else None
+        if hot is not None:
+            out.append(_row(s, hot))
+        else:
+            pending.append(s)
+
+    n_missing = 0
+    if pending:
+        keys = sorted({s["race_key"] for s in pending})
+        finishers = await _fetch_finishers(db, keys)
+        won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers.items()}
+        payouts = await _fetch_winning_payouts(db, won_by_race)
+
+        fresh: list[tuple[str, str, str, Settlement]] = []
+        for s in pending:
+            rk = s["race_key"]
+            raw = s["bet_detail"]
+            res = settle(_parse_bet_detail(raw), finishers.get(rk), payouts.get(rk))
+            if res.bet <= 0:
+                # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
+                n_missing += 1
+                continue
+            # 🔴 **採点が終わっていない行は返さない**（2026-08-16）。着順が揃っていない、
+            #    あるいは当たっているのに確定配当が引けない状態で返すと
+            #    `hit=False` / `payout=0` の行になり、**当たっているレースが
+            #    「✗ 不的中」かつ払戻0円として集計**される（実際に発生した）。
+            #    落とせば `/review` は「未確定」に、成績側は件数から外れるだけで、
+            #    着順・配当が入った次の描画で自然に現れる。
+            if not res.settled:
+                continue
+            out.append(_row(s, {
+                "bet": res.bet, "payout": res.payout, "hit": res.hit,
+                "net_hit": res.net_hit, "n_combos": res.n_combos,
+            }))
+            # 🔴 **当日のレースは焼かない。** 採点は着順と確定配当が揃えば
+            #    成立するが、それらが後から直る（再取得・訂正）のは実質その日のうち。
+            #    焼くとその訂正が二度と反映されない。当日ぶんは60行程度で
+            #    実採点しても安い（重いのは当年ぶん）ので、ここだけ譲らない。
+            if (use_cache and is_cacheable(res.settled, res.bet)
+                    and str(s["race_date"]) < _today_jst().isoformat()):
+                fresh.append((rk, s["rank_key"], settle_fingerprint(raw), res))
+        await _persist_settlements(fresh)
+
     return out, n_missing
+
+
+async def _persist_settlements(
+    rows: Sequence[tuple[str, str, str, Settlement]],
+) -> None:
+    """採点結果を入稿の行へ焼き付ける（**best-effort**）。
+
+    🔴 **失敗しても呼び出し元へ伝えない。** これはキャッシュの充填であって
+       表示に必要な処理ではない。サマリーの3期間は別セッションで並行に走り
+       同じ行を書きに行くので、行ロックの競合や deadlock がありうる。
+       落ちても「次のリクエストがもう一度焼く」だけで、値は常に正しい。
+
+    🔴 **リクエストのセッションを使わない。** 読み取り中の長いトランザクションで
+       行ロックを持ち続けると、並行している他の期間を待たせてしまう。
+    """
+    if not rows:
+        return
+    # PK 順に並べる。同じ行を狙う並行 UPDATE のロック取得順を揃えて deadlock を避ける。
+    payload = [
+        {"rk": rk, "kk": kk, "fp": fp, "bet": res.bet, "pay": res.payout,
+         "hit": res.hit, "n": res.n_combos}
+        for rk, kk, fp, res in sorted(rows, key=lambda x: (x[0], x[1]))
+    ]
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                text("""
+                    UPDATE keirin.netkeirin_submissions ns
+                       SET settled_fp = v.fp, settled_bet = v.bet,
+                           settled_payout = v.pay, settled_hit = v.hit,
+                           settled_n_combos = v.n, settled_at = NOW()
+                      FROM jsonb_to_recordset(CAST(:w AS jsonb))
+                           AS v(rk text, kk text, fp text, bet int, pay int,
+                                hit boolean, n int)
+                     WHERE ns.race_key = v.rk AND ns.rank_key = v.kk
+                """),
+                {"w": json.dumps(payload)},
+            )
+            await s.commit()
+    except Exception as exc:                      # noqa: BLE001 - 充填の失敗は握りつぶす
+        logger.warning("採点結果の焼き付けに失敗（表示には影響しません）: %s", exc)
 
 
 async def _fetch_paper_picks(
@@ -977,6 +1161,24 @@ async def get_picks(
     won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers_by_race.items()}
     payouts_by_race = await _fetch_winning_payouts(db, won_by_race)
 
+    # 🔴 **出走表と合成オッズもまとめて引く**（2026-08-29）。以前はループの中で
+    #    `wt_entries` を1レース1本・`wt_odds_snapshot` を1レース1本ずつ引いており、
+    #    60レースで最大120往復していた。実測 41行 0.37秒 ↔ 60行 0.47秒 ＝ 約5ms/行。
+    entries_by_race = await _fetch_entries_by_race(db, _base_keys)
+    # 合成オッズは **`picks_history` の候補（`pred_combo`）にしか要らない**。
+    # 売った商品がある行は `bet_detail` の金額から出す（`_calc_synth_odds_from_lines`）。
+    _synth_legs: dict[str, tuple[list[list[str]], str]] = {}
+    for r in rows:
+        if r["rank"] is None or not r["pred_combo"]:
+            continue
+        legs, bet_type = _parse_combinations(r["pred_combo"], r["rank"] == "WIDE")
+        if legs and bet_type:
+            _synth_legs[r["base_key"]] = (legs, bet_type)
+    snapshot_odds = await _fetch_snapshot_odds(db, [
+        (rk, bt, [k for leg in legs for k in leg])
+        for rk, (legs, bt) in sorted(_synth_legs.items())
+    ])
+
     picks = []
     for r in rows:
         base_key = r["base_key"]
@@ -984,30 +1186,9 @@ async def get_picks(
         # 入稿記録だけの行（ゲート未通過で picks_history に無い）。
         submission_only = bool(r.get("submission_only"))
 
-        is_wide = has_pick and r["rank"] == "WIDE"
         race_key = (r["ph_race_key"] if include_all else r["race_key"]) if has_pick else base_key
 
-        entries = (await db.execute(
-            text("""
-                SELECT
-                  frame_no,
-                  name,
-                  race_point,
-                  style,
-                  line_pos,
-                  line_group,
-                  finish_order,
-                  player_class,
-                  pred_win_pct,
-                  pred_top2_pct,
-                  pred_top3_pct,
-                  prediction_mark
-                FROM keirin.wt_entries
-                WHERE race_key = :race_key
-                ORDER BY frame_no
-            """),
-            {"race_key": base_key},
-        )).mappings().all()
+        entries = entries_by_race.get(base_key, [])
 
         # 確定した3着以内（同着があれば4件以上）と、その当たり目。
         # 🔴 判定は `keirin_result_top3` が正本。フロントで組み立て直さない。
@@ -1054,8 +1235,10 @@ async def get_picks(
         # その買い目、無ければ picks_history の候補（`pred_combo`）から計算する。
         if sub_result is not None and submitted_bet:
             synth_odds = _calc_synth_odds_from_lines(submitted_bet["lines"])
-        elif has_pick:
-            synth_odds = await _calc_synth_odds(db, base_key, r["pred_combo"], is_wide)
+        elif has_pick and base_key in _synth_legs:
+            legs, bet_type = _synth_legs[base_key]
+            synth_odds = _synth_odds_from_map(
+                legs, snapshot_odds.get((base_key, bet_type), {}))
         else:
             synth_odds = None
 
@@ -1425,13 +1608,27 @@ async def _aggregate(
     result = _totals(sold)
     result["n_unpriced"] = n_unpriced
 
-    # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）
+    # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）と
+    # ランク別候補数（＝見送り含む全行の distinct レース数）。
     # write_candidates_wt が朝の候補選定時点で書き込む行を数えるため、結果確定前
     # （_SETTLED_COND）でもカウント対象に含める（2026-07-27: 朝時点でカウントされない
     # 不具合修正・的中/回収額はレース確定後でないと分からないため他の集計とは分離）。
-    cand_row = (await db.execute(
+    # （write_candidates_wt が候補時点で #CAND 行（rank='7PLUS_CAND'）を書き込み、
+    # 発走前オッズ確定時に #7S/#7A/#9S/#9A 等へ上書きされる）
+    #
+    # 🔴 **合計とランク別を GROUPING SETS で1回のスキャンにまとめる**（2026-08-29）。
+    #    以前は同じ WHERE の全く同じスキャンを2本投げており、`SPLIT_PART` の
+    #    関数結合でインデックスが効かない（当年で buffers 19,265）ぶんを二度払っていた。
+    #    実測（当年・本番DB）: 2本で 242ms → まとめて 111ms。1リクエストで3期間ぶん走る。
+    # ⚠️ **合計はランク別の和にできない。** 1レースが複数ランクに並ぶため、
+    #    distinct レース数は足し算にならない（GROUPING SETS が要るのはこのため）。
+    # ⚠️ `rank_filter` が NULL を含まないので、`rank IS NULL` の行と
+    #    合計行が混ざることはない。念のため `GROUPING()` で明示的に見分ける。
+    cand_rows = (await db.execute(
         text(f"""
-            SELECT COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
+            SELECT ph.rank AS rank,
+                   GROUPING(ph.rank) AS is_total,
+                   COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
             FROM keirin.picks_history ph
             JOIN keirin.wt_races wr
               ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
@@ -1439,10 +1636,12 @@ async def _aggregate(
               AND ph.route = 'wt'
               AND ph.rank IN {rank_filter}
               AND {_enabled_rank_cond()}
+            GROUP BY GROUPING SETS ((ph.rank), ())
         """),
         params,
-    )).mappings().one_or_none()
-    result["n_candidates"] = int(cand_row["n_candidates"] or 0) if cand_row else 0
+    )).mappings().all()
+    result["n_candidates"] = next(
+        (int(c["n_candidates"] or 0) for c in cand_rows if c["is_total"]), 0)
 
     # ランク別集計（全てペーパー・名目賭金）: RANK_7S/RANK_7A/RANK_9S/RANK_9A の4ランク。
     # 2026-08-01〜: gate_labelはもう表示ランクを分岐しない（_display_rank参照）ため
@@ -1453,32 +1652,14 @@ async def _aggregate(
     # ランク別も同じ母集団（実売）で割る。ここだけ picks_history に戻すと
     # 合計とランク別の和が合わなくなる。
     by_rank_items: dict[str, list[dict[str, Any]]] = {}
-    # ⚠️ 変数名に `r` を使わない。下の `for r in paper_cand_rows` が RowMapping で
+    # ⚠️ 変数名に `r` を使わない。下の候補数ループが `r` を RowMapping で
     #    束縛するため、同名だと mypy が代入不能として落ちる（既出の型衝突）。
     for sr in sold:
         by_rank_items.setdefault(_display_rank(f"RANK_{sr['rank_key']}"), []).append(sr)
     by_rank: dict[str, dict] = {k: _totals(v) for k, v in by_rank_items.items()}
 
-    # ランク別候補数 = 見送り含む全行の distinct レース数
-    # （write_candidates_wt が候補時点で #CAND 行（rank='7PLUS_CAND'）を書き込み、
-    # 発走前オッズ確定時に #7S/#7A/#9S/#9A 等へ上書きされる。結果確定前でも
-    # カウント対象に含める＝上の cand_row と同じ理由で _SETTLED_COND は付けない）
-    paper_cand_rows = (await db.execute(
-        text(f"""
-            SELECT ph.rank AS rank,
-                   COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE {where}
-              AND ph.route = 'wt'
-              AND ph.rank IN {rank_filter}
-              AND {_enabled_rank_cond()}
-            GROUP BY ph.rank
-        """),
-        params,
-    )).mappings().all()
-    for r in paper_cand_rows:
+    # ランク別候補数（上の GROUPING SETS から取り出す。合計行は除く）
+    for r in (c for c in cand_rows if not c["is_total"]):
         key = _display_rank(str(r["rank"]))
         n_cand = int(r["n_candidates"] or 0)
         if key not in by_rank and n_cand > 0:
@@ -2406,11 +2587,7 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         async with AsyncSessionLocal() as s:
             return await fn(s)
 
-    async def _totals(session: AsyncSession) -> tuple[dict, list]:
-        return (await _aggregate_paper(session),
-                await visible_rank_labels(session))
-
-    r_today, r_month, r_year, (paper_total, visible_ranks) = await asyncio.gather(
+    r_today, r_month, r_year, visible_ranks = await asyncio.gather(
         _period(db, "ph.race_date = :d", {"d": today_str}, today, today),
         _in_new_session(lambda s: _period(
             s, "ph.race_date LIKE :d", {"d": f"{month_prefix}-%"},
@@ -2418,7 +2595,7 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         _in_new_session(lambda s: _period(
             s, "ph.race_date LIKE :d", {"d": f"{year_prefix}-%"},
             Date(today.year, 1, 1), today)),
-        _in_new_session(_totals),
+        _in_new_session(lambda s: visible_rank_labels(s)),
     )
 
     result = {
@@ -2428,12 +2605,12 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
-        # ペーパー通算（2026-08-21 追加）。上3行とは母集団が違う
-        # （上=実際に売った商品・2026-07-24〜 / これ=picks_history・2024-01〜）。
-        # ⚠️ **2026-08-24 に画面から外した**（ユーザー判断・上記 `_merge_paper_into`）。
-        #    値は返し続ける——集計は並列化済みで 217ms（律速は year の 722ms）なので
-        #    外しても速くならず、残しておけば表示を戻すのが1ブロックで済む。
-        "paper_total": paper_total,
+        # 🔴 **`paper_total`（ペーパー通算）は 2026-08-29 に返すのをやめた。**
+        #    2026-08-24 に画面から外して以来 frontend の参照はゼロなのに、
+        #    毎リクエスト `picks_history` を2回フルスキャンし、
+        #    そのためだけに DB コネクションを1本（pool_size 5 のうち）掴んでいた。
+        #    集計する関数（`_aggregate_paper`）は残してあるので、表示を戻すときは
+        #    ここへ1行足すだけでよい。
         "visible_ranks": visible_ranks,
     }
 
@@ -2580,7 +2757,6 @@ async def update_netkeirin_settings(
 # 書き込み（承認・取消）だけは netkeirin のセッションが要るので webhook 経由。
 STATUS_PROPOSED = "proposed"
 STATUS_SUBMITTED = "submitted"
-logger = logging.getLogger(__name__)
 
 STATUS_DELETED = "deleted"
 
