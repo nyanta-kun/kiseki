@@ -68,7 +68,12 @@ fi
 REMOTE_DIR="/home/ysuzuki/GitHub/kiseki/keirin/data/analysis/nightly"
 printf '%s\n' "$OUT" | ssh -o ConnectTimeout=20 sekito "cat > '$REMOTE_DIR/${DAY}.triage.md'"
 # 🔴 `.env` を source しない（1行でも壊れていると全体が落ちる）。要る1つだけ grep で取る。
+# 🔴 **非対話 ssh には crontab の環境変数が無い。** `KEIRIN_DB_URL` を渡さないと
+#    `get_connection()` が RuntimeError で落ち、ページだけが古いまま残る
+#    （2026-08-30 に実際に踏んだ。所見ファイルは届くのでリンクは生きており、
+#     内容が更新されないことに気づきにくい）。
 ssh -o ConnectTimeout=90 sekito "cd /home/ysuzuki/GitHub/kiseki/keirin && \
+  export \$(grep -E '^KEIRIN_DB_URL=' .env | head -1) && \
   D=\$(grep -E '^KEIRIN_NIGHTLY_DIR=' .env | head -1 | cut -d= -f2-) && \
   PYTHONPATH=. .venv/bin/python3 scripts/nightly_report_html.py '$DAY' \
     --out 'data/analysis/nightly/${DAY}.html' \
