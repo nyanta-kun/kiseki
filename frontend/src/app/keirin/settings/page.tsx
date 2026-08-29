@@ -271,7 +271,11 @@ export default function NetkeirinSettingsPage() {
 
       {rows && (
         <>
-          {/* 全体ON/OFF ＋ 自動公開（2026-08-29）。
+          {/* 自動公開 ＋ 全体ON/OFF（2026-08-29）。
+              🔴 **並びは「自動公開 → 全体の自動入稿」**（2026-08-29・ユーザー指定）。
+                 自動公開が上位のスイッチで、下の自動入稿はそれに従属して
+                 グレーアウトする。従属する側を先に見せると、なぜ触れないのかが
+                 その場で分からない。
               🔴 **自動公開 ON のとき自動入稿は ON 固定**。入稿しないものは公開
                  できないので、この2つが独立に動けると「公開する設定なのに何も
                  出ない」という読めない状態が作れる。UI で固定するだけでなく
@@ -279,28 +283,6 @@ export default function NetkeirinSettingsPage() {
                  取っている（API を直接叩かれても崩れないように）。 */}
           <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-bold text-gray-800">全体の自動入稿</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  OFFにすると、各ランクのON/OFFに関わらず自動入稿を停止します。
-                  {autoPublish && (
-                    <span className="block text-amber-600 mt-0.5">
-                      自動公開がONの間は変更できません（OFFにするには先に自動公開をOFF）。
-                    </span>
-                  )}
-                </p>
-              </div>
-              <Toggle
-                checked={autoPublish ? true : rows._global.enabled}
-                disabled={autoPublish}
-                title={autoPublish
-                  ? "自動公開がONの間は自動入稿をOFFにできません"
-                  : undefined}
-                onChange={(v) => update("_global", { enabled: v })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
               <div>
                 <p className="text-sm font-bold text-gray-800">自動公開</p>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -321,6 +303,28 @@ export default function NetkeirinSettingsPage() {
                   // 自動公開 ON は自動入稿 ON が前提。同時に立てる。
                   update("_global", v ? { auto_publish: true, enabled: true }
                                       : { auto_publish: false })}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+              <div>
+                <p className="text-sm font-bold text-gray-800">全体の自動入稿</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  OFFにすると、各ランクのON/OFFに関わらず自動入稿を停止します。
+                  {autoPublish && (
+                    <span className="block text-amber-600 mt-0.5">
+                      自動公開がONの間は変更できません（OFFにするには先に自動公開をOFF）。
+                    </span>
+                  )}
+                </p>
+              </div>
+              <Toggle
+                checked={autoPublish ? true : rows._global.enabled}
+                disabled={autoPublish}
+                title={autoPublish
+                  ? "自動公開がONの間は自動入稿をOFFにできません"
+                  : undefined}
+                onChange={(v) => update("_global", { enabled: v })}
               />
             </div>
           </section>
