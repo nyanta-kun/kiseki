@@ -163,17 +163,34 @@ def _load_rows(day: str) -> list[dict]:
             "SELECT t.race_key, t.race_date, t.venue_name, t.race_no, t.race_type,"
             "       t.n_entries, t.type_label, t.axis_sum, t.axis1, t.axis2, t.p3_order,"
             "       t.mode, t.plan_key, t.bet_type, t.n_legs, t.budget, t.legs,"
-            "       t.pred_mean_payout, t.pred_min_payout, t.rule_version, r.cup_grade"
+            "       t.pred_mean_payout, t.pred_min_payout, t.rule_version,"
+            "       t.generated_at, r.cup_grade"
             "  FROM type_lab_picks t"
             "  LEFT JOIN wt_races r ON r.race_key = t.race_key"
             " WHERE t.race_date = ? AND t.mode IN (?, ?)",
             (day, "live", "live9"),
         ).fetchall()
+    # 🔴 **1レース1型。** 組み直しで型が変わると古い型の行が残ることがあり
+    #    （2026-08-29 に4レースで実際に起きた）、行ごとに `type_label` を見る
+    #    下の判定は古い行も「その型なら売ってよい」と通してしまう。
+    #    生成側（`build_type_lab_picks._drop_stale_plans`）で消しているが、
+    #    **読む側でも最新の型だけに絞る**（消し漏れがそのまま二重入稿になるため）。
+    current: dict[tuple[str, str], tuple] = {}
+    for r in rows:
+        d = dict(r)
+        key = (str(d["race_key"]), str(d["mode"]))
+        gen = d.get("generated_at")
+        if key not in current or (gen is not None and current[key][0] is not None
+                                  and gen > current[key][0]):
+            current[key] = (gen, str(d["type_label"]))
+
     out = []
     for r in rows:
         d = dict(r)
         if d["plan_key"] not in SELL_PLANS:
             continue
+        if str(d["type_label"]) != current[(str(d["race_key"]), str(d["mode"]))][1]:
+            continue        # 組み直し前の古い型の行
         # 🔴 **行があること自体を根拠にしない。** 生成側は8プラン組むので
         #    `SELL_PLANS` の絞りだけでは 9車の型F の種別条件が効かない。
         #    売る／売らないの判定は必ず `sell_plans_for` を通す（唯一の正本）。
@@ -423,6 +440,13 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     already = _already_submitted(sorted({str(r["race_key"]) for r in rows}))
     # 🔴 **別ランクが取ったレースには出さない**（netkeirin は1レース1商品）。
     taken = races_taken_by_other_ranks(already)
+    # 🔴 **型ラボ自身が取ったレースにも出さない。** `(race_key, plan) in already` は
+    #    同じプランの二重入稿しか止めないので、**別プランなら通ってしまう**。
+    #    組み直しで型が変わったレースがまさにこれで、2026-08-29 の昼に4レースが
+    #    「型Cの商品」と「組み直し前の型Fの商品」を同時に出した。
+    #    ⚠️ 取消済みも `already` に含まれる＝取り消したレースは出し直さない
+    #      （看板穴埋めと同じ方針）。
+    taken_by_type_lab = {rk for rk, rank in already if rank in SELL_PLANS}
 
     # ── 昼・夕は「まだ入稿していないレース」を組み直してから読み直す ──
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への
@@ -472,6 +496,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             # 別ランク（既存商品・看板穴埋め）が既に取っている。入稿失敗ではない。
             bump("taken_by_other_rank")
             continue
+        if race_key in taken_by_type_lab:
+            # 型ラボの別プランが既に取っている（1レース1商品）。
+            bump("taken_by_type_lab")
+            continue
         if race_key in closed:
             # ⚠️ ログは静かに（波ごとに終わった開催が毎回並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「締切超過」として出る。
@@ -502,6 +530,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         ok, msg = submit_row(row, session, client, dry_run,
                              show_detail=dry_run and n_ok < show, skip=skip)
         if ok:
+            # 🔴 **この回の中でも1レース1商品**（`already` は開始時の断面なので、
+            #    同じ実行の中で2つ目のプランが通るのを止められない）。
+            taken_by_type_lab.add(race_key)
             n_ok += 1
             titles.append(f"{venue}{race_no}R({plan}) {msg}")
         else:

@@ -430,3 +430,137 @@ def test_races_taken_by_other_ranks_are_skipped(monkeypatch):
     monkeypatch.setattr(m, "_already_submitted", lambda keys: set())
     m.run("2026-08-29", "morning", dry_run=True, only_key=None, do_rebuild=False)
     assert submitted, "誰も取っていないのに出さなかった"
+
+
+# ── 組み直しで型が変わったときの古い行（2026-08-29）──────────────────
+#
+# 🔴 一意キーが `(race_key, plan_key, mode)` なので、型が F→C に変わると
+#    `C_hit` の行が増えるだけで **`F_pay` の行が残る**。売る／売らないは
+#    行ごとの `type_label` で決めるため、古い行も「型Fだから F_pay を売って
+#    よい」と通り、**1レースに2商品**が入稿された（2026-08-29 昼・4レース）。
+#    生成側で消し、読む側で絞り、入稿ループでも止める（多重防御）。
+
+
+def test_生成側が型の変わった古いプランを消す():
+    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    assert "_drop_stale_plans" in src, "古いプランを消す処理がありません"
+    i = src.index("def _drop_stale_plans(")
+    block = src[i:src.index("\ndef ", i + 10)]
+    assert "DELETE FROM type_lab_picks" in block
+    assert "plan_key NOT IN" in block, "今回組んだプラン以外を消す形になっていません"
+    assert "settled_at IS NULL" in block, (
+        "採点済みの行まで消しています。売って結果まで入った行は検証台の実績で、"
+        "消すと後から復元できません")
+    # save() から必ず呼ばれること（呼ばれない実装だと存在しても効かない）
+    j = src.index("def save(")
+    assert "_drop_stale_plans(" in src[j:j + 1200], "save() から呼ばれていません"
+
+
+def test_読む側が最新の型だけに絞る():
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    i = src.index("def _load_rows(")
+    block = src[i:src.index("\ndef ", i + 10)]
+    assert "generated_at" in block, "最新の行を選ぶための列を取っていません"
+    assert 'current[' in block and "continue" in block, \
+        "古い型の行を落としていません"
+
+
+def test_型ラボ自身が取ったレースには出さない():
+    """`(race_key, plan) in already` は**同じプラン**の二重入稿しか止めない。"""
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert "taken_by_type_lab" in src, "型ラボ自身の重複ガードがありません"
+    i = src.index("for row in sorted(rows")
+    loop = src[i:i + 2500]
+    assert "if race_key in taken_by_type_lab:" in loop, "ループで見ていません"
+    # 入稿できたら同じ実行の中でも二度目を止める（`already` は開始時の断面）
+    assert "taken_by_type_lab.add(race_key)" in src, \
+        "同じ実行の中で2つ目のプランが通ってしまいます"
+    assert src.index("if race_key in taken_by_type_lab:") \
+        < src.index("taken_by_type_lab.add(race_key)"), "判定より後に登録しています"
+
+
+class _FakeCursor:
+    rowcount = 1
+
+
+class _FakeConn:
+    """`execute` を記録するだけの接続。DELETE の形を実際に見る。"""
+
+    def __init__(self, rows=()):
+        self.calls: list[tuple[str, tuple]] = []
+        self._rows = list(rows)
+
+    def execute(self, sql, params=()):
+        self.calls.append((" ".join(sql.split()), tuple(params)))
+        cur = _FakeCursor()
+        cur.fetchall = lambda: self._rows          # noqa: E731 — テスト用の簡易版
+        return cur
+
+    def commit(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_古いプランの削除は今回のプランを残す():
+    """型が F→C に変わったレースで、`C_hit` は残し `F_pay` を消す形になるか。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "build_type_lab_picks", REPO / "scripts" / "build_type_lab_picks.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    conn = _FakeConn()
+    m._drop_stale_plans(conn, [{"race_key": "20260829_73_01", "mode": "live",
+                                "plan_key": "C_hit"}])
+    assert len(conn.calls) == 1
+    sql, params = conn.calls[0]
+    assert sql.startswith("DELETE FROM type_lab_picks")
+    assert params == ("20260829_73_01", "live", "C_hit"), \
+        "今回組んだプランが除外リストに入っていません（自分を消してしまう）"
+
+
+def test_古いプランの削除はレースとモードごとにまとまる():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "build_type_lab_picks", REPO / "scripts" / "build_type_lab_picks.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    conn = _FakeConn()
+    m._drop_stale_plans(conn, [
+        {"race_key": "r1", "mode": "live", "plan_key": "A_hit"},
+        {"race_key": "r1", "mode": "live", "plan_key": "A_pay"},
+        {"race_key": "r2", "mode": "live9", "plan_key": "F_pay"},
+    ])
+    assert len(conn.calls) == 2, "レース×モードごとに1回にまとめていません"
+    r1 = next(c for c in conn.calls if c[1][0] == "r1")
+    assert r1[1] == ("r1", "live", "A_hit", "A_pay")
+
+
+def test_読み出しは古い型の行を落とす(monkeypatch):
+    """同じレースに型Fの古い行と型Cの新しい行があるとき、型Cだけ返す。"""
+    import datetime as _dt
+
+    import scripts.netkeirin_submit_type_lab as m
+
+    base = dict(race_date="2026-08-29", venue_name="小松島", race_no=1,
+                race_type="ガールズ一般", n_entries=7, day_index=1, axis_sum=1.5,
+                axis1=1, axis2=2, p3_order=None, mode="live", bet_type="trifecta",
+                n_legs=4, budget=10000, legs="[]", pred_mean_payout=30000,
+                pred_min_payout=20000, rule_version="x", cup_grade=None)
+    old = dict(base, race_key="R1", type_label="F", plan_key="F_pay",
+               generated_at=_dt.datetime(2026, 8, 29, 7, 16))
+    new = dict(base, race_key="R1", type_label="C", plan_key="C_hit",
+               generated_at=_dt.datetime(2026, 8, 29, 13, 6))
+    monkeypatch.setattr(m, "get_connection", lambda: _FakeConn([old, new]))
+
+    got = m._load_rows("2026-08-29")
+    assert [r["plan_key"] for r in got] == ["C_hit"], \
+        "組み直し前の型の行が残っています（1レース2商品になります）"
