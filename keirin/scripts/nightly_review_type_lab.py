@@ -17,6 +17,7 @@
 | §2 当日成績 | **してはいけない** | 参照分布の中のどこか。外れ値かどうかだけ |
 | §3 外れの分解 | **してはいけない** | 台帳へ積む。発火条件を超えた型だけ昇格 |
 | §4 ゲートの答え合わせ | **してはいけない** | 前向き検証の累積。当日の行は1日分の点 |
+| §5 自信ありの精度 | **してはいけない** | 同日内の無作為対照の分布の中の位置 |
 
 ## 🔴 この道具の最大の危険は「後知恵の積み上げ」である
 
@@ -83,6 +84,17 @@ LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
 #: 2025年は vintage オッズ・2026年は板 npz で作られており、どちらも OOS
 #: （[[keirin_type_lab_vintage_odds_models_2026_08_28]]）。
 BASELINE_WINDOW = ("2025-01-01", "2026-08-26")
+
+#: 🔴 **前向き確認の起点。累積を数える層はすべてここから数える。**
+#:
+#: 2026-08-29 に売る商品が総入れ替えになった（旧ランク 7S/7C/7B/7M1/9C/7T1… を
+#: すべて enabled=false にし、型ラボの 6プラン A_hit/B_hit/C_hit/D_hit/E_hit/F_pay
+#: だけを売る）。**商品が違えば母集団も買い方も違う**ので、ここより前の累積を
+#: 混ぜると「別の商品の成績」を型ラボの実績として読むことになる。
+#:
+#: ⚠️ ここより前のデータを消すわけではない。§2 の参照分布（ペーパー行の20か月）は
+#:    比較の相手として引き続き使う。分けるのは**前向きに数え上げる累積**だけ。
+REVIEW_EPOCH = "2026-08-29"
 
 #: 台帳がこの件数たまったプランだけを「検証候補」として名前を挙げる。
 #: 🔴 **日次では絶対に昇格させない。** 40件/日では ROI の 90% 区間が
@@ -482,9 +494,13 @@ def section_breakdown(sold, live: list[dict]) -> tuple[list[str], dict]:
 def section_gate(day: str, live: list[dict]) -> list[str]:
     """ゲートで**外した側**が本当に悪いままかを毎晩並べる。
 
-    🔴 これは前向き実地検証（2026-08-27〜）そのもの。ゲートは
+    🔴 これは前向き実地検証そのもの。ゲートは
        「確認窓を消費して選んだ」ため、採否は**この累積**で決める。
        当日の行は1日ぶんの点でしかないので、累積の表を必ず併記する。
+
+    ⚠️ 累積は `REVIEW_EPOCH`（＝型ラボ全面移行日）から数え直す。ゲートの試験自体は
+       2026-08-27 に始まっているが、その2日間は**売っていた商品が旧ランク**で
+       母集団が違う。混ぜると別商品の成績が混入する。
     """
     out: list[str] = []
 
@@ -513,18 +529,14 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
     out.append(line("ゲート通過", [d for d in sellable if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in sellable if not _gate_ok(d)]))
 
-    cum = _live_since(_GATE_TRIAL_START, day)
+    cum = _live_since(REVIEW_EPOCH, day)
     cum = [d for d in cum if d["plan_key"] in SELL_PLANS]
-    out.append(f"  累積（{_GATE_TRIAL_START} 〜 {day}・前向き実地検証）")
+    out.append(f"  累積（{REVIEW_EPOCH} 〜 {day}・前向き実地検証）")
     out.append(line("ゲート通過", [d for d in cum if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in cum if not _gate_ok(d)]))
     out.append("    ※ 期待は「落ちた側がはっきり悪い」（20か月の台では 通過 27.2%/83.1%"
                " ↔ 落ち 18.7%/68.7%）。逆転が続くならゲートを見直す。")
     return out
-
-
-#: 軸信頼ゲートの前向き実地検証の開始日（`keirin_type_lab_gate.py` の経緯より）。
-_GATE_TRIAL_START = "2026-08-27"
 
 
 def _live_since(start: str, end: str) -> list[dict]:
@@ -548,7 +560,110 @@ def _live_since(start: str, end: str) -> list[dict]:
                                                 str(d["mode"]))][1]]
 
 
-# ─────────────────── §5 台帳と発火条件 ───────────────────
+# ─────────────────── §5 「自信あり」フラグの精度 ───────────────────
+
+#: 「自信あり」が実際に付き始めた日（2026-08-13 は選定が走ったが0件）。
+CONFIDENT_SINCE = "2026-08-14"
+
+
+def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
+    """1日1つしか付けられない「自信あり」が、その日の他の商品より良かったか。
+
+    🔴 **同日内の無作為対照を必ず置く。** 「自信ありの表示的中は 25%」だけでは
+       何も言えない。比べる相手は全期間の平均ではなく
+       **その日に売った商品から無作為に1件選んだとき**で、
+       日ごとの当たりやすさ（開催の質・件数）を対照側にも同じだけ入れないと、
+       良い日が多かっただけの差を実力と読む。
+
+    🔴 **指標の世代を混ぜない。** 2026-08-28 までは EV（三連複の
+       Σ(的中確率×賭け金×オッズ)÷総賭け金）、型ラボへ全面移行した 2026-08-29
+       からは **Σp（買い目の的中確率の合計）**。`confident_ev` 列は同じだが
+       中身が別物で、大きさも桁が違う（1.3〜2.9 ↔ 0.32）。
+       世代の判定は日付ではなく **売ったプランが `SELL_PLANS` か**で行う
+       （移行が段階的でも自動で分かれる）。
+
+    ⚠️ 1日1件なので件数はゆっくりしか増えない。**当日の1件では絶対に判断しない。**
+    """
+    out: list[str] = []
+    with get_connection() as c:
+        subs = [dict(r) for r in c.execute(
+            "SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, "
+            "       ns.is_confident, ns.confident_ev, wr.race_date "
+            "FROM netkeirin_submissions ns "
+            "JOIN wt_races wr ON wr.race_key = ns.race_key "
+            "WHERE ns.deleted_at IS NULL AND wr.race_date BETWEEN ? AND ?",
+            (CONFIDENT_SINCE, day))]
+    if not subs:
+        return ["  対象期間の入稿が無い"]
+    finishes, payouts = _results(sorted({s["race_key"] for s in subs}))
+    races, _ = build_sold_races(subs, finishes, payouts)
+    flag = {(str(s["race_key"]), str(s["rank_key"])): bool(s["is_confident"])
+            for s in subs}
+
+    by_day: dict[str, list] = {}
+    for r in races:
+        by_day.setdefault(str(r.race_date), []).append(r)
+
+    eras: dict[str, list[str]] = {}
+    for d, rows in by_day.items():
+        picked = [r for r in rows if flag.get((r.race_key, r.rank_key))]
+        if not picked:
+            continue
+        # 世代は「その日の自信ありが型ラボの商品か」で決める。
+        era = "Σp（型ラボ）" if picked[0].rank_key in SELL_PLANS else "EV（旧ランク・三連複）"
+        eras.setdefault(era, []).append(d)
+
+    n_no_flag = sum(1 for d, rows in by_day.items()
+                    if rows and not any(flag.get((r.race_key, r.rank_key))
+                                        for r in rows))
+    for era in sorted(eras, reverse=True):
+        days = sorted(eras[era])
+        # 起点より前の世代は**参考**（別指標・別商品）。前向きに数える対象ではない。
+        ref = "" if days[-1] >= REVIEW_EPOCH else "（参考・起点より前の別商品）"
+        picked = [r for d in days for r in by_day[d]
+                  if flag.get((r.race_key, r.rank_key))]
+        s = summarize(picked)
+        out.append(f"  【{era}】{days[0]} 〜 {days[-1]}・{len(days)}日{ref}")
+        out.append(f"    自信あり   {s.n_races:>3}件  表示的中 "
+                   f"{(s.net_hit_rate or 0):6.1%}  ROI {(s.roi or 0):6.1%}"
+                   f"  払戻 {s.payout:,}円")
+        rng = random.Random(seed)
+        boot_roi: list[float] = []
+        boot_hit: list[float] = []
+        for _ in range(n_boot):
+            bet = pay = n = hits = 0
+            for d in days:
+                rows = by_day[d]
+                r = rows[rng.randrange(len(rows))]
+                bet += r.bet
+                pay += r.payout
+                n += 1
+                hits += int(r.net_hit)
+            if bet and n:
+                boot_roi.append(pay / bet)
+                boot_hit.append(hits / n)
+        if boot_roi:
+            boot_roi.sort()
+            boot_hit.sort()
+            out.append(f"    無作為対照      表示的中 [5% {_q(boot_hit, .05):.1%}"
+                       f" / 中央 {_q(boot_hit, .50):.1%}"
+                       f" / 95% {_q(boot_hit, .95):.1%}]"
+                       f"  ROI [5% {_q(boot_roi, .05):.1%}"
+                       f" / 中央 {_q(boot_roi, .50):.1%}"
+                       f" / 95% {_q(boot_roi, .95):.1%}]")
+            out.append(f"    → 自信ありは 表示的中 "
+                       f"{_pct(boot_hit, s.net_hit_rate or 0):.0f}%点"
+                       f" / ROI {_pct(boot_roi, s.roi or 0):.0f}%点"
+                       f"（同じ日から無作為に1件選ぶ {len(boot_roi):,}通りの中で）")
+    if n_no_flag:
+        out.append(f"  ⚠️ 自信ありが付かなかった日 {n_no_flag}日"
+                   f"（選定が落ちた／対象の買い目が無かった）")
+    out.append("    ※ 1日1件しか付かない。**当日の1件では判断しない。**"
+               "対照の 5〜95% の外へ出て、かつ日数が伸びてから見ること。")
+    return out
+
+
+# ─────────────────── §6 台帳と発火条件 ───────────────────
 
 FIELDS = ["date", "plan_key", "n", "bet", "payout", "n_hits", "n_net_hits",
           "firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami"]
@@ -635,6 +750,9 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append(f"# 型ラボ 夜間レビュー  {day}（{wd}）")
     lines.append(f"生成 {datetime.now():%Y-%m-%d %H:%M}  "
                  f"／ 売った商品 = netkeirin_submissions + bet_detail")
+    lines.append(f"前向き確認の起点 {REVIEW_EPOCH}（型ラボ全面移行日）"
+                 f"— §3〜§5 の累積はここから数える。"
+                 f"§2 の参照分布だけは20か月のペーパー行を相手にする。")
     lines.append("")
 
     lines.append("## §1 異常検知 — **単日で黒白がつく唯一の層。ここだけは今日直す**")
@@ -657,9 +775,13 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines += section_gate(day, live)
     lines.append("")
 
+    lines.append("## §5 「自信あり」フラグの精度 — **同日内の無作為対照と比べる**")
+    lines += section_confident(day, n_boot, seed=int(day.replace("-", "")))
+    lines.append("")
+
     if append:
         append_ledger(day, sold, brk)
-    lines.append(f"## §5 台帳（{LEDGER.name}）と発火条件")
+    lines.append(f"## §6 台帳（{LEDGER.name}）と発火条件")
     lines += section_escalate(pool)
 
     total = summarize(sold, n_no_detail=n_skipped)
