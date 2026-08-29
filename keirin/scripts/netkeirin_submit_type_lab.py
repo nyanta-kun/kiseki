@@ -98,6 +98,7 @@ from scripts.netkeirin_submit_wt import (                    # noqa: E402
     ORIGIN_RANK,
     _already_submitted,
     _approval_required,
+    auto_publish_submitted,
     _build_entry_table,
     _is_enabled,
     _load_closed_races,
@@ -544,8 +545,15 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     for t in titles:
         print(f"  + {t}")
 
+    # 🔴 自動公開は**通知より先**（文面が「下書き」から「公開済み」に変わる）。
+    #    承認制のときは netkeirin へ送ったものが無いので必ず空になる。
+    published = auto_publish_submitted(dry_run)
+    n_published = sum(1 for r in published if r.get("ok"))
+    n_publish_ng = len(published) - n_published
+
     if n_ok and not dry_run:
-        head = "入稿案" if propose_only else "下書き"
+        head = ("入稿案" if propose_only
+                else "公開" if n_published else "下書き")
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
         #    2026-08-28〜29 は存在しない "keirin" を渡していて **毎回 ValueError で
         #    落ちていた**（入稿そのものは終わっているのに `type_lab_daily.sh` が
@@ -554,8 +562,11 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         # 🔴 **通知の失敗で入稿を失敗扱いにしない。** ここへ来た時点で netkeirin
         #    への送信は終わっている。例外を上げると呼び出し側が再実行を考える。
         try:
-            send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n"
-                 + "\n".join(f"・{t}" for t in titles[:40]), channel="netkeirin")
+            body = "\n".join(f"・{t}" for t in titles[:40])
+            if n_publish_ng:
+                body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
+            send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n{body}",
+                 channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報
             print(f"[type_lab_submit] Discord通知失敗（入稿は完了している）: {e!r}",
                   flush=True)

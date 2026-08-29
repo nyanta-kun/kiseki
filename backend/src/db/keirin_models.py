@@ -278,12 +278,19 @@ class KeirinNetkeirinSetting(KeirinBase):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="自動入稿ON/OFF")
     title_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="タイトルテンプレート")
     comment_template: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="コメントテンプレート")
-    # 承認制（migration 202608110900_keirin）。`_global` 行の値だけを見る。
-    # ON にすると入稿バッチは netkeirin へ出さず「入稿案」だけ作り、
-    # 確認画面で承認したものだけが送られる。一時運用の想定なので画面から戻せる。
+    # 承認制（migration 202608110900_keirin / コメント改訂 202608291230_keirin）。
+    # `_global` 行の値だけを見る。
+    #   true  … 入稿バッチは netkeirin へ出さず「入稿案」だけ作る。
+    #           `/keirin/review` で承認したものだけが送られる。
+    #   false … 入稿データ作成と同時に netkeirin へ下書き入稿し、**そのまま公開**する
+    #           （`/keirin/settings` の「自動公開」ON。2026-08-29〜）。
+    # 🔴 **「自動公開」用の列を別に足さないこと。** 承認制と自動公開は同じ1つの
+    #    スイッチの裏表で、2列に分けると「承認を待つのに公開もする」という
+    #    ありえない組み合わせが作れる。**公開は不可逆**なので事故が戻せない。
     require_approval: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False,
-        comment="承認制（_global 行のみ有効・ONだと承認するまで netkeirin へ出ない）")
+        comment="承認制（_global 行のみ有効）。true=承認するまで netkeirin へ出ない / "
+                "false=入稿と同時に公開まで自動（画面の「自動公開」ON）")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 

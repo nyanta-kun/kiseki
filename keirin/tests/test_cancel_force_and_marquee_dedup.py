@@ -33,12 +33,24 @@ MARQUEE = ROOT / "scripts" / "submit_marquee_wt.py"
 # ① 重複判定
 # ---------------------------------------------------------------------------
 
+#: 重複判定に関わらない関数（SQL は読むが「出したかどうか」を決めていない）。
+#: 🔴 **安易に足さないこと。** ここへ入れた関数は下の縛りが一切効かなくなる。
+#:  - `_count_published` … 自動公開の実績を Discord へ出すためだけに
+#:    `status` を読む（2026-08-29）。入稿するかどうかの判断には使わない
+DEDUP_UNRELATED_FUNCS = ("_count_published",)
+
+
 def _sql_literals(path: Path, needle: str) -> list[str]:
     """ファイル中の文字列リテラルのうち needle を含むものを返す（AST・docstring混入なし）。
 
     ⚠️ grep だとコメントや docstring を拾って**偽陽性で通る**。
+    ⚠️ `DEDUP_UNRELATED_FUNCS` の関数は**除く**。重複判定と関係ない SQL まで
+       縛ると、報告用に1列読んだだけでこの検査が落ちる。
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree.body = [n for n in tree.body
+                 if not (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                         and n.name in DEDUP_UNRELATED_FUNCS)]
     out = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and needle in n.value:

@@ -294,7 +294,8 @@ def _rank_of(label: str) -> str:
 
 def _send_merged_notice(path: str, date: str, done: list[str],
                         failed: list[str],
-                        skipped: list[str] | None = None) -> bool:
+                        skipped: list[str] | None = None,
+                        fill_published: tuple[int, int] = (0, 0)) -> bool:
     """ランク入稿が保留した通知に**穴埋めぶんを足して1通**送る（2026-08-23）。
 
     🔴 **これが無いと Discord の件数が確認画面と食い違う。**
@@ -342,9 +343,20 @@ def _send_merged_notice(path: str, date: str, done: list[str],
                f"⚠️ 承認するまで netkeirin へは出ません。")
     else:
         from src.netkeirin_client import RACE_AUTH_URL
-        msg = (f"📮 **[netkeirin入稿完了] {d.get('target_date', date)}"
-               f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
-               f"確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。")
+        # 自動公開（承認制OFF）。ランク入稿ぶんは保留 JSON、看板穴埋めぶんは
+        # 行の状態から数える。🔴 **もう顧客から見えている**ので
+        #    「内容を確認の上、公開してください」は嘘になる。
+        n_pub = int(d.get("published") or 0) + fill_published[0]
+        n_ng = int(d.get("publish_failed") or 0) + fill_published[1]
+        if n_pub or n_ng:
+            msg = (f"🚀 **[netkeirin入稿・自動公開] {d.get('target_date', date)}"
+                   f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
+                   f"確認: {RACE_AUTH_URL}\n✅ 公開済み {n_pub}件"
+                   + (f" / ⚠️ 公開失敗 {n_ng}件（下書きのまま）" if n_ng else ""))
+        else:
+            msg = (f"📮 **[netkeirin入稿完了] {d.get('target_date', date)}"
+                   f"（{d.get('session_jp', '')}）: {breakdown}（計{total}件）**\n"
+                   f"確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。")
     # 🔴 ランク入稿ぶんの見送り（`_write_deferred_notice` が持ち越す）と
     #    看板穴埋めぶんの見送りを**合算して1行**にする（§11.6.3）。
     skips = (list(d.get("mean_payout_skips") or [])
@@ -395,6 +407,30 @@ def _has_submission(race_key: str) -> bool:
         return False
 
 
+def _count_published(race_keys: list[str]) -> tuple[int, int]:
+    """(公開済み, 公開されていない) を返す（自動公開の実績・2026-08-29）。
+
+    🔴 **子プロセスの stdout から拾わない。** 看板穴埋めは1レース1プロセスで
+       走るので、公開の成否は各子プロセスの中にしかない。ログの文字列を
+       あてにすると文面を変えた日に黙って数が狂う。**行の状態で数える**
+       （`_has_submission` が終了コードでなく行の有無で数えるのと同じ理由）。
+    """
+    if not race_keys:
+        return 0, 0
+    try:
+        with get_connection() as conn:
+            marks = ",".join("?" for _ in race_keys)
+            rows = conn.execute(
+                f"SELECT status FROM netkeirin_submissions WHERE race_key IN ({marks})",
+                tuple(race_keys),
+            ).fetchall()
+    except Exception as e:      # noqa: BLE001 — 数えられないだけで処理は止めない
+        print(f"[marquee] 公開状況を確認できません: {e!r}", flush=True)
+        return 0, 0
+    pub = sum(1 for r in rows if str(r["status"]) == "published")
+    return pub, len(race_keys) - pub
+
+
 def _notify_unfilled(date: str, unfilled: list[str]) -> None:
     """看板レースを埋められなかったことを **system チャンネル**へ出す。
 
@@ -418,7 +454,8 @@ def _notify_unfilled(date: str, unfilled: list[str]) -> None:
 
 
 def _notify_summary(date: str, done: list[str], failed: list[str],
-                    skipped: list[str] | None = None) -> None:
+                    skipped: list[str] | None = None,
+                    fill_published: tuple[int, int] = (0, 0)) -> None:
     """看板レースの入稿結果を**まとめて1通**だけ Discord へ出す。
 
     🔴 これは人手の入稿ではなく**自動入稿**なので「手動入稿」と書かない。
@@ -453,7 +490,15 @@ def _notify_summary(date: str, done: list[str], failed: list[str],
         body += f"\n💸 安い配当で {len(skipped)}件 見送り: " + " / ".join(skipped)
     if failed:
         body += "\n⚠️ 失敗: " + " / ".join(failed)
-    body += f"\n確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。"
+    body += f"\n確認: {RACE_AUTH_URL}"
+    # 自動公開なら「公開してください」と書かない（もう出ている）。
+    n_pub, n_ng = fill_published
+    if n_pub or n_ng:
+        body += f"\n✅ 公開済み {n_pub}件"
+        if n_ng:
+            body += f" / ⚠️ 公開失敗 {n_ng}件（下書きのまま）"
+    else:
+        body += "\n内容を確認の上、公開してください。"
     try:
         send(head + body, channel="netkeirin")
     except Exception as e:  # noqa: BLE001 — 通知失敗で入稿結果を失わない
@@ -583,6 +628,8 @@ def main() -> int:
 
     ok = ng = 0
     done: list[str] = []
+    # 入稿できたレースの race_key。自動公開の実績を**行の状態から**数えるのに使う。
+    done_keys: list[str] = []
     failed: list[str] = []
     # 平均払戻ゲートで見送った看板レース（成功でも失敗でもない別枠・§11.6.3）
     skipped_cheap: list[str] = []
@@ -633,6 +680,7 @@ def main() -> int:
             if args.dry_run or _has_submission(r["race_key"]):
                 ok += 1
                 done.append(label)
+                done_keys.append(str(r["race_key"]))
             else:
                 unfilled.append(label)
                 print(f"[marquee] {label}: 入稿が作られなかった"
@@ -647,12 +695,14 @@ def main() -> int:
           f"予測オッズなしで次の波へ{len(deferred_no_odds)}件）", flush=True)
     if not args.dry_run:
         _notify_unfilled(date, unfilled)
+    # 自動公開の実績（子プロセスが公開まで行う）。dry-run では数えない。
+    fill_published = (0, 0) if args.dry_run else _count_published(done_keys)
     if not args.dry_run and (done or failed or skipped_cheap):
         # 🔴 ランク入稿が通知を保留していれば、そこへ穴埋めを足して1通送る。
         #    保留が無ければ従来どおり（手動実行・ランク入稿が落ちた日）。
         if not _send_merged_notice(args.defer_notify, date, done, failed,
-                                   skipped_cheap):
-            _notify_summary(date, done, failed, skipped_cheap)
+                                   skipped_cheap, fill_published):
+            _notify_summary(date, done, failed, skipped_cheap, fill_published)
     elif not args.dry_run:
         # 穴埋めが0件でも、ランク入稿が保留した通知は必ず送る
         _send_merged_notice(args.defer_notify, date, [], [])
