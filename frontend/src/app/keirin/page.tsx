@@ -1642,8 +1642,12 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
                 「モデルが推奨した場合のサンプル確認」がベースなので、
                 実売との母集団の違いを断る必要が無い。
                 🔴 **上3行は実売とペーパーの合算のまま**（`_merge_paper_into`）。
-                   API は `paper_picks` / `paper_total` を返し続けているので、
-                   表示を戻すならこのブロックへ書き足すだけでよい。 */}
+                   API は行ごとの `paper_picks` を返し続けているので、
+                   行内の内訳を戻すならこのブロックへ書き足すだけでよい。
+                ⚠️ 通算行の `paper_total` は **2026-08-29 に API から外した**
+                   （参照ゼロなのに毎リクエスト picks_history を2回フルスキャン
+                    していた）。戻すときは backend の `get_summary` へ
+                   `_aggregate_paper` を1行足すこと。 */}
           </tbody>
         </table>
       </div>

@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 
@@ -55,8 +56,25 @@ def test_connection_fanout_is_bounded():
 
 def test_result_keys_unchanged():
     """フロントが読むキーを変えていないこと。"""
-    for key in ("today", "month", "year", "paper_total", "visible_ranks"):
+    for key in ("today", "month", "year", "visible_ranks"):
         assert f'"{key}"' in SRC
+
+
+def test_paper_total_is_not_computed():
+    """🔴 `paper_total` を復活させるなら**表示も一緒に戻すこと**（2026-08-29）。
+
+    2026-08-24 に画面から外して以来 frontend の参照はゼロなのに、
+    毎リクエスト `picks_history` を2回フルスキャンし、そのためだけに
+    DB コネクションを1本（pool_size 5 のうち）掴んでいた。
+    集計する関数（`_aggregate_paper`）は残してあるので、戻すのは1行で済む。
+    """
+    called = {
+        getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+        for n in ast.walk(ast.parse(SRC.lstrip())) if isinstance(n, ast.Call)
+    }
+    assert "_aggregate_paper" not in called, (
+        "画面に出ていない集計をレスポンスのために回さないこと"
+    )
 
 
 def test_paper_merge_still_applied_to_all_three_periods():
