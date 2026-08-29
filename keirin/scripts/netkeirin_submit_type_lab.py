@@ -515,8 +515,19 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
 
     if n_ok and not dry_run:
         head = "入稿案" if propose_only else "下書き"
-        send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n"
-             + "\n".join(f"・{t}" for t in titles[:40]), channel="keirin")
+        # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
+        #    2026-08-28〜29 は存在しない "keirin" を渡していて **毎回 ValueError で
+        #    落ちていた**（入稿そのものは終わっているのに `type_lab_daily.sh` が
+        #    「入稿に失敗」と記録し、Discord には1通も出ていなかった）。
+        #    有効なキーであることは `tests/test_discord_channels.py` が機械的に固定する。
+        # 🔴 **通知の失敗で入稿を失敗扱いにしない。** ここへ来た時点で netkeirin
+        #    への送信は終わっている。例外を上げると呼び出し側が再実行を考える。
+        try:
+            send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n"
+                 + "\n".join(f"・{t}" for t in titles[:40]), channel="netkeirin")
+        except Exception as e:      # noqa: BLE001 — 通知は付随情報
+            print(f"[type_lab_submit] Discord通知失敗（入稿は完了している）: {e!r}",
+                  flush=True)
 
 
 def main() -> None:

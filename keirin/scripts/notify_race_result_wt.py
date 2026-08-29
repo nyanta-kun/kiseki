@@ -288,7 +288,8 @@ def _sold_lines(base: str, finishers: list[tuple[int, int]],
             money = f"投資 ¥{bet:,}"
             buy = format_bet_lines((_as_dict(detail) or {}).get("lines")) or ""
             buy = f"{buy}  → " if buy else ""
-            head = (f"{rank}（取消）" if status == STATUS_DELETED else rank)
+            head = (f"{_rank_label(rank)}（取消）" if status == STATUS_DELETED
+                    else _rank_label(rank))
             out.append((f"{head}: {buy}{mark}  {money}", rank))
             continue
         mark = "🎯 **的中**" if hit else "❌ 不的中"
@@ -298,7 +299,7 @@ def _sold_lines(base: str, finishers: list[tuple[int, int]],
         #    「全推奨（取消含む）を通知し、取消ならそれと分かるようにする」。
         #    黙って落とすと、出した推奨の結果が追えなくなる。
         cancelled = (status == STATUS_DELETED)
-        head = f"{rank}（取消）" if cancelled else rank
+        head = f"{_rank_label(rank)}（取消）" if cancelled else _rank_label(rank)
         money = (f"想定 ¥{bet:,} → ¥{pay:,}" if cancelled
                  else f"投資 ¥{bet:,} → 払戻 ¥{pay:,}")
         # 🔴 買い目は**実際に入稿した bet_detail** が正本。picks_history は候補で、
@@ -308,6 +309,28 @@ def _sold_lines(base: str, finishers: list[tuple[int, int]],
         buy = f"{buy}  → " if buy else ""
         out.append((f"{head}: {buy}{mark}  {money}", rank))
     return out, pending
+
+
+def _rank_label(rank_key: str) -> str:
+    """Discord に出す商品名。型ラボのプランは読める名前へ直す（2026-08-29）。
+
+    🔴 **型ラボへ移行して商品名が `A_hit`〜`F_pay` になった。** そのまま出すと
+       Discord には内部キーだけが並び、何を売ったのか読めない。名前の正本は
+       `src/type_lab_submission.py`（入稿タイトルと同じ語）で、**ここで別の
+       言い回しを作らない**——同じ商品が入稿と結果で違う名前になる。
+
+    ⚠️ 既存ランク（7C・9C など）はそのまま返す。名前を足す価値が無いうえ、
+       過去の通知と見比べられなくなる。
+    """
+    try:
+        from src.type_lab_submission import PLAN_TITLES, TYPE_VIEWS
+    except Exception:                       # noqa: BLE001 — 通知は落とさない
+        return rank_key
+    title = PLAN_TITLES.get(rank_key)
+    if not title:
+        return rank_key
+    view = TYPE_VIEWS.get(rank_key.split("_")[0], "")
+    return f"型{rank_key.split('_')[0]} {title}" + (f"（{view}）" if view else "")
 
 
 def _race_payout_line(payouts: dict[str, int], won: list[str]) -> str | None:

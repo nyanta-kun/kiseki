@@ -29,9 +29,12 @@ def _mod():
 
 
 def test_odds_model_files_are_watched():
+    """🔴 三連単も入れる（2026-08-29）。型ラボの6プランのうち5つが三連単で、
+    配布漏れは商品の大半が消えることを意味する（実際 PR#349 で起きた）。"""
     m = _mod()
     assert set(m.ODDS_MODEL_FILES) == {
-        "odds_trio_n7.txt", "odds_trio_n9.txt", "odds_trio_meta.json"}
+        "odds_trio_n7.txt", "odds_trio_n9.txt", "odds_trio_meta.json",
+        "odds_tf_n7.txt", "odds_tf_n9.txt", "odds_tf_meta.json"}
 
 
 def test_missing_files_are_reported(tmp_path):
@@ -39,7 +42,7 @@ def test_missing_files_are_reported(tmp_path):
     assert m.check_missing(tmp_path, m.ODDS_MODEL_FILES) == list(m.ODDS_MODEL_FILES)
     (tmp_path / "odds_trio_n7.txt").write_text("x", encoding="utf-8")
     assert m.check_missing(tmp_path, m.ODDS_MODEL_FILES) == [
-        "odds_trio_n9.txt", "odds_trio_meta.json"]
+        n for n in m.ODDS_MODEL_FILES if n != "odds_trio_n7.txt"]
 
 
 def test_present_files_are_quiet(tmp_path):
