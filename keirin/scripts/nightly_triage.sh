@@ -8,6 +8,11 @@
 #    Mac が寝ていれば launchd が起床時に実行する（レポートは VPS に残るので
 #    遅れても失われない）。
 #
+# 🔴 **Discord へは何も送らない**（2026-08-30 変更・ユーザー要望）。
+#    リンクは 00:10 の `nightly_review.sh` が既に送っている。ここは所見を
+#    VPS へ書き戻して**同じ URL のページを更新する**だけ。Mac が寝ていても
+#    図表つきのページは 00:10 に出ており、所見だけが後から足りる形になる。
+#
 # 🔴 **仕分けの規則はプロンプトに固定する。** ここを緩めると、1日ぶんの
 #    ROI に反応して毎晩ルールを足す「後知恵の積み上げ」に戻る。
 set -uo pipefail
@@ -55,18 +60,20 @@ PEOF
 
 OUT="$(printf '%s\n%s\n' "$PROMPT" "$REPORT" | claude -p --allowed-tools "" 2>&1)"
 if [ -z "$OUT" ]; then
-  echo "[triage] Claude の出力が空。Discord へは送らない。"
+  echo "[triage] Claude の出力が空。ページは更新しない。"
   exit 1
 fi
 
-# Discord へは keirin の正本（`src/notify/discord.py`）から送る。
-# チャンネルは results（事実レポートの要約は nightly_review 自身が送っている）。
-# 🔴 パスは必ず絶対で書く。launchd は cwd を保証しない（相対の `.venv/bin/python3` は
-#    「そんなファイルは無い」で静かに失敗し、Discord へ何も出ないまま終わる）。
-printf '**型ラボ 課題の取捨 %s**\n%s\n' "$DAY" "$OUT" \
-  | (cd "$REPO" && "$REPO/.venv/bin/python3" -c "import sys; sys.path.insert(0, '.'); \
-from src.notify.discord import send; \
-sys.exit(0 if send(sys.stdin.read()[:1900], channel='results') else 1)") \
-  || echo "[triage] ⚠️ Discord への送信に失敗した（本文は下に出す）"
+# 所見を VPS へ書き戻し、同じ URL の HTML を作り直す。
+REMOTE_DIR="/home/ysuzuki/GitHub/kiseki/keirin/data/analysis/nightly"
+printf '%s\n' "$OUT" | ssh -o ConnectTimeout=20 sekito "cat > '$REMOTE_DIR/${DAY}.triage.md'"
+# 🔴 `.env` を source しない（1行でも壊れていると全体が落ちる）。要る1つだけ grep で取る。
+ssh -o ConnectTimeout=90 sekito "cd /home/ysuzuki/GitHub/kiseki/keirin && \
+  D=\$(grep -E '^KEIRIN_NIGHTLY_DIR=' .env | head -1 | cut -d= -f2-) && \
+  PYTHONPATH=. .venv/bin/python3 scripts/nightly_report_html.py '$DAY' \
+    --out 'data/analysis/nightly/${DAY}.html' \
+    --triage 'data/analysis/nightly/${DAY}.triage.md' && \
+  cp 'data/analysis/nightly/${DAY}.html' \"\$D/${DAY}.html\"" \
+  || { echo "[triage] ⚠️ ページの更新に失敗（所見は下に出す）"; }
 
 echo "$OUT"
