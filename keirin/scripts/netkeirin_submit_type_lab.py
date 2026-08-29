@@ -97,6 +97,7 @@ from src.type_lab_submission import build_submission         # noqa: E402
 #    2箇所に分かれる。このリポジトリが繰り返し事故を起こした型。
 from scripts.netkeirin_submit_wt import (                    # noqa: E402
     ORIGIN_RANK,
+    REVIEW_URL,
     _already_submitted,
     _approval_required,
     auto_publish_submitted,
@@ -562,8 +563,6 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     n_publish_ng = len(published) - n_published
 
     if n_ok and not dry_run:
-        head = ("入稿案" if propose_only
-                else "公開" if n_published else "下書き")
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
         #    2026-08-28〜29 は存在しない "keirin" を渡していて **毎回 ValueError で
         #    落ちていた**（入稿そのものは終わっているのに `type_lab_daily.sh` が
@@ -572,25 +571,25 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         # 🔴 **通知の失敗で入稿を失敗扱いにしない。** ここへ来た時点で netkeirin
         #    への送信は終わっている。例外を上げると呼び出し側が再実行を考える。
         try:
-            # 🔴 **レースを1件ずつ並べない**（2026-08-30 ユーザー指摘）。
-            #    50件超がスマホで数画面ぶん流れて、肝心の件数・異常が埋もれる。
-            #    1レース1商品なので、内訳（プラン・会場）と見送り理由だけで足りる。
+            # 🔴 **レースを1件ずつ並べない**（2026-08-30 ユーザー指摘）。50件超が
+            #    スマホで数画面ぶん流れて、肝心の件数が埋もれる。出すのは件数だけ。
             #    レース名の一覧は cron.log に残っている（上の print）。
-            def _tally(items: list[str]) -> str:
-                c = Counter(items)
-                return " ・ ".join(f"{k} {v}" for k, v in
-                                   sorted(c.items(), key=lambda kv: (-kv[1], kv[0])))
-
-            body = (f"プラン {_tally([p for _, p in submitted])}\n"
-                    f"会場 {_tally([v for v, _ in submitted])}")
-            # `already` は「この波より前に入稿済み」で見送りではない。混ぜない。
-            gates = {k: v for k, v in sorted(skipped.items()) if k != "already"}
-            if gates:
-                body += ("\n見送り "
-                         + " ・ ".join(f"{k} {v}" for k, v in gates.items()))
+            #
+            # 🔴 **本文はモードで変える**（2026-08-30 ユーザー指定）:
+            #      公開まで済んでいる → 何を売ったかが確定しているので**ランク別の件数**
+            #      下書き／入稿案のまま → まだ人の操作が要るので**確認ページのリンク**
+            #    「公開したのにリンクを出す」と何もすることが無いのにページを開かせ、
+            #    「下書きなのに内訳だけ出す」と承認を促す導線が消える。
+            if n_published:
+                c = Counter(p for _, p in submitted)
+                body = "ランク別 " + " ・ ".join(
+                    f"{k} {v}" for k, v in
+                    sorted(c.items(), key=lambda kv: (-kv[1], kv[0])))
+            else:
+                body = f"入稿確認 → {REVIEW_URL}"
             if n_publish_ng:
                 body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
-            send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n{body}",
+            send(f"📮 **NetKeirin入稿 {n_ok}件**（{day} / {session}）\n{body}",
                  channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報
             print(f"[type_lab_submit] Discord通知失敗（入稿は完了している）: {e!r}",
