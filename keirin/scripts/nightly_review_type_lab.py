@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import csv
 import importlib.util
+import json
 import random
 import sys
 from collections import Counter
@@ -138,7 +139,7 @@ def _sold(day: str) -> tuple[list, int, list[dict]]:
     with get_connection() as c:
         subs = [dict(r) for r in c.execute(
             "SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, ns.session, "
-            "       ns.venue_name, ns.race_no, ns.deleted_at, ns.cancel_reason, "
+            "       ns.title, ns.venue_name, ns.race_no, ns.deleted_at, ns.cancel_reason, "
             "       wr.race_date "
             "FROM netkeirin_submissions ns "
             "JOIN wt_races wr ON wr.race_key = ns.race_key "
@@ -195,7 +196,8 @@ def _live_rows(day: str) -> list[dict]:
             "SELECT t.race_key, t.race_date, t.venue_name, t.race_no, t.race_type, "
             "       t.n_entries, t.type_label, t.axis_sum, t.mode, t.plan_key, "
             "       t.budget, t.payout, t.hit, t.settled_at, t.win_combo, "
-            "       t.p3_order, t.win_tf_odds, t.generated_at, r.cup_grade "
+            "       t.p3_order, t.win_tf_odds, t.generated_at, t.legs, t.bet_type, "
+            "       t.pred_mean_payout, r.cup_grade "
             "FROM type_lab_picks t LEFT JOIN wt_races r ON r.race_key = t.race_key "
             "WHERE t.race_date = ? AND t.mode IN (?, ?)", (day, "live", "live9"))]
     current: dict[tuple[str, str], tuple] = {}
@@ -306,11 +308,13 @@ def _band_baseline() -> dict[str, dict]:
     return out
 
 
-def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
+def section_landing(sold, live: list[dict], base: dict[str, dict],
+                    titles: dict[str, str] | None = None) -> list[str]:
     """狙ったオッズ帯で決着したか（2026-08-29・ユーザー要望）。
 
-    型ラボの各プランは**配当帯を狙って**買い目を組む（型A＝鉄板で安い帯・
-    型F＝大混戦で高い帯）。だから外れには2種類ある:
+    型ラボの各プランは**配当帯を狙って**買い目を組み、**タイトルでそれを客に宣言する**
+    （本線の三連単 → 中配当 → 混戦 → 高配当 → 一撃の三連単）。
+    だから外れには2種類ある:
 
       ① **帯は想定どおりだったが目を外した** → 買い目側の問題（相手の取り方）
       ② **そもそも想定と違う帯で決着した**   → 型判定・荒れ度側の問題
@@ -318,6 +322,12 @@ def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
     ①と②は打ち手がまったく違うので、混ぜて「外れ○件」と数えても改善に繋がらない。
 
     🔴 1日ぶんでは判断しない。参照分布との**ずれの向き**だけを見て台帳に積む。
+
+    🔴 **タイトルは「その1レースの約束」ではなく「分布の約束」**（2026-08-29 実測）。
+       確認窓で「本線の三連単」でも 100倍以上が 18〜21%、「一撃の三連単」でも
+       30倍未満が 31% ある。序列（中央 A 18倍 < B 25 < C 32 < D 47 < E 52 < F 57倍）は
+       両窓で完全に単調なので**設計としては効いている**が、1レース単位では帯が重なる。
+       ここで見るのは分布のずれであって、個別レースの「約束違反」ではない。
     """
     out: list[str] = []
     idx = {(str(d["race_key"]), str(d["plan_key"])): d for d in live}
@@ -343,7 +353,8 @@ def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
     if not rows:
         return ["  決着帯を出せる商品が無い（`win_tf_odds` 未確定）"]
 
-    out.append(f"  {'plan':<7}{'狙い帯':<10}{'当日の決着帯':<22}"
+    titles = titles or {}
+    out.append(f"  {'plan':<7}{'タイトル':<14}{'狙い帯':<10}{'当日の決着帯':<22}"
                f"{'当日中央':>9}{'参照中央':>9}{'狙い帯で決着':>13}")
     tot_in = tot_n = tot_hit_in = 0
     for plan in sorted(rows):
@@ -356,7 +367,8 @@ def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
         base_rate = (sum(v for k, v in b.get("bands", {}).items()
                          if _near(order, k, tgt)) / b["n"]) if b.get("n") else None
         ref = f"（参照 {base_rate:.0%}）" if base_rate is not None else ""
-        out.append(f"  {plan:<7}{labels.get(tgt, '—'):<10}{dist:<22}"
+        out.append(f"  {plan:<7}{titles.get(plan, '—')[:13]:<14}"
+                   f"{labels.get(tgt, '—'):<10}{dist:<22}"
                    f"{med:>8,.1f}倍{(b.get('median') or 0):>8,.1f}倍"
                    f"{g['n_in']:>4}/{g['n']}{ref}")
         tot_in += g["n_in"]
@@ -369,6 +381,113 @@ def section_landing(sold, live: list[dict], base: dict[str, dict]) -> list[str]:
             out.append(f"  そのうち的中 {tot_hit_in}/{tot_in} = {tot_hit_in / tot_in:.1%}")
         out.append("    ※ 帯が合っているのに外れる＝**買い目側**（相手の取り方）。"
                    "帯自体が外れる＝**型判定・荒れ度側**。打ち手が違うので分けて積む。")
+    return out
+
+
+def section_bet_band(sold, live: list[dict], titles: dict[str, str]) -> list[str]:
+    """**買った買い目そのもの**が狙った帯にあったかを確定オッズで答え合わせする。
+
+    §3.5（レースがどの帯で決着したか）は**結果**なので制御できない。
+    こちらは「何倍の目を何点買ったか」＝**完全に自分で決めた量**で、
+    狙いとずれていれば買い目の作り方を直せる。
+
+    見るもの（プランごと）:
+
+      計画   入稿時の `pred_mean_payout`（平均想定払戻）と `min(stake × pred_odds)`
+      確定   同じ買い目を**確定オッズ**で引き直した `stake × odds` の中央と最小
+      実/予  その比。**1 を大きく割るなら予測オッズが上振れている**
+
+    🔴 予測オッズは系統的に上振れる（勝者の呪い）。全体で平均 ×1.10・
+       6倍超の帯では 実/予 0.64（`docs/type_lab/time_and_race_type_2026_08_29.md`）。
+       **プランごとにこの比を毎晩見ておくと、モデル配布漏れや帯の偏りが早く出る。**
+    🔴 「最低払戻」の下振れ幅は点数で変わる。正本は
+       `backend/src/services/keirin_payout_floor.py`（券種×点数の表）。
+       ここでは実測の最小をそのまま出す（推定値と実測を混ぜない）。
+    """
+    out: list[str] = []
+    idx = {(str(d["race_key"]), str(d["plan_key"])): d for d in live}
+    want: dict[tuple[str, str], set[str]] = {}
+    rows: list[dict] = []
+    for r in sold:
+        d = idx.get((r.race_key, r.rank_key))
+        if d is None:
+            continue
+        legs = d.get("legs")
+        if isinstance(legs, str):
+            legs = json.loads(legs or "[]")
+        if not legs:
+            continue
+        rows.append({"plan": r.rank_key, "race_key": r.race_key,
+                     "bet_type": str(d.get("bet_type") or ""), "legs": legs,
+                     "pred_mean": d.get("pred_mean_payout")})
+        want.setdefault((r.race_key, str(d.get("bet_type") or "")), set()).update(
+            str(x["combo"]) for x in legs)
+    if not rows:
+        return ["  買い目を引ける商品が無い"]
+
+    final: dict[tuple[str, str, str], float] = {}
+    with get_connection() as c:
+        for (rk, bt), combos in want.items():
+            cs = sorted(combos)
+            q = ("SELECT combination, odds_value FROM wt_odds WHERE race_key = ? "
+                 "AND bet_type = ? AND combination IN (%s)" % ",".join("?" * len(cs)))
+            for x in c.execute(q, tuple([rk, bt] + cs)):
+                d = dict(x)
+                final[(rk, bt, str(d["combination"]))] = float(d["odds_value"])
+
+    by_plan: dict[str, dict] = {}
+    for r in rows:
+        g = by_plan.setdefault(r["plan"], {"n": 0, "pts": [], "plan_mean": [],
+                                           "plan_min": [], "real_med": [],
+                                           "real_min": [], "bands": Counter(),
+                                           "n_missing": 0})
+        pay_plan = [float(x["stake"]) * float(x.get("pred_odds") or 0)
+                    for x in r["legs"]]
+        real = [(float(x["stake"]),
+                 final.get((r["race_key"], r["bet_type"], str(x["combo"]))))
+                for x in r["legs"]]
+        if any(o is None for _, o in real):
+            g["n_missing"] += 1
+            continue
+        pay_real = sorted(st * o for st, o in real)
+        g["n"] += 1
+        g["pts"].append(len(r["legs"]))
+        if r["pred_mean"]:
+            g["plan_mean"].append(float(r["pred_mean"]))
+        g["plan_min"].append(min(pay_plan) if pay_plan else 0.0)
+        g["real_med"].append(pay_real[len(pay_real) // 2])
+        g["real_min"].append(pay_real[0])
+        for _, o in real:
+            b = _OUTCOME.payout_band(o)
+            if b:
+                g["bands"][b] += 1
+
+    def med(xs: list[float]) -> float:
+        return sorted(xs)[len(xs) // 2] if xs else 0.0
+
+    labels = {b["key"]: b["label"] for b in _OUTCOME.PAYOUT_BANDS}
+    order = [b["key"] for b in _OUTCOME.PAYOUT_BANDS]
+    out.append(f"  {'plan':<7}{'タイトル':<14}{'点':>3}{'計画 平均':>10}{'計画 最低':>10}"
+               f"{'確定 中央':>10}{'確定 最低':>10}{'実/予':>7}   買い目の確定オッズ帯")
+    for plan in sorted(by_plan):
+        g = by_plan[plan]
+        if not g["n"]:
+            continue
+        pm, rm = med(g["plan_mean"]), med(g["real_med"])
+        nb = sum(g["bands"].values())
+        dist = " ".join(f"{labels[b]} {g['bands'][b] / nb:.0%}"
+                        for b in order if g["bands"][b])
+        out.append(f"  {plan:<7}{titles.get(plan, '—')[:13]:<14}"
+                   f"{med([float(x) for x in g['pts']]):>3.0f}"
+                   f"{pm:>9,.0f}円{med(g['plan_min']):>9,.0f}円"
+                   f"{rm:>9,.0f}円{med(g['real_min']):>9,.0f}円"
+                   f"{(rm / pm if pm else 0):>7.2f}   {dist}")
+    n_missing = sum(g["n_missing"] for g in by_plan.values())
+    if n_missing:
+        out.append(f"  ⚠️ 確定オッズを引けなかった商品 {n_missing}件"
+                   f"（板に無い目・未確定。**0 で埋めずに母集団から外している**）")
+    out.append("    ※ ここは**自分で決めた量**なので、狙いとずれていれば買い目の作り方を直せる。"
+               "実/予 が 1 を大きく割るなら予測オッズが上振れている。")
     return out
 
 
@@ -992,7 +1111,18 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("")
 
     lines.append("## §3.5 狙ったオッズ帯で決着したか — **外れを2種類に分ける**")
-    lines += section_landing(sold, live, _band_baseline())
+    # 🔴 タイトルは**実際に入稿した文言**を使う（客が見たものが正本）。
+    #    コード側の生成規則を写すと、文言を変えた日から静かに食い違う。
+    titles = {}
+    for x in subs:
+        if x["deleted_at"] is None and x.get("title"):
+            titles.setdefault(str(x["rank_key"]),
+                              str(x["title"]).split("｜")[0])
+    lines += section_landing(sold, live, _band_baseline(), titles)
+    lines.append("")
+
+    lines.append("## §3.6 買った買い目は狙った帯にあったか — **こちらは制御できる量**")
+    lines += section_bet_band(sold, live, titles)
     lines.append("")
 
     lines.append("## §4 軸信頼ゲートの答え合わせ — **累積で見る**")
