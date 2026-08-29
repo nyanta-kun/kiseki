@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from src.services.keirin_settlement_cache import (
     SETTLE_VERSION,
@@ -91,17 +95,41 @@ def test_only_settled_rows_are_cacheable():
 # 採点ロジックを変えたら SETTLE_VERSION を上げる
 # ---------------------------------------------------------------------------
 
-#: `keirin_settlement.py` の AST（docstring を除く）の指紋。
+#: `keirin_settlement.py` の**コードだけ**（docstring・コメントを除く）の指紋。
 #: 🔴 **これが変わったら「焼いた結果の意味が変わったか」を判断すること。**
 #:    変わったなら `SETTLE_VERSION` を上げる（全行の指紋がずれてキャッシュが
 #:    自動的に作り直される）。変わっていない（整形・リネームだけ）なら
 #:    この定数を新しい値へ更新する。
-#: コメントと docstring の手直しでは落ちない（AST を比べているため）。
-_SETTLEMENT_AST_DIGEST = "9f7b81d07867d452"
+_SETTLEMENT_CODE_DIGEST = "bc57f18cadb4e402"
+
+_SETTLEMENT_PY = (Path(__file__).resolve().parent.parent
+                  / "src" / "services" / "keirin_settlement.py")
+
+#: 版をまたいで同じ指紋になるかを確かめるための、外部プロセス用のワンライナー。
+_DIGEST_SNIPPET = (
+    "import ast,hashlib,sys;"
+    "t=ast.parse(open(sys.argv[1],encoding='utf-8').read());"
+    "[setattr(n,'body',n.body[1:] or [ast.Pass()])"
+    " for n in ast.walk(t)"
+    " if isinstance(n,(ast.Module,ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef))"
+    " and n.body and isinstance(n.body[0],ast.Expr)"
+    " and isinstance(n.body[0].value,ast.Constant)"
+    " and isinstance(n.body[0].value.value,str)];"
+    "print(hashlib.sha256(ast.unparse(t).encode()).hexdigest()[:16])"
+)
 
 
-def _ast_digest(path: Path) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+def _code_digest(src: str) -> str:
+    """docstring・コメント・空白を落としたコードの指紋。
+
+    🔴 **`ast.dump()` を使ってはいけない。** ノードのフィールドは Python の版で
+       増えるため、**同じファイルでも版が違うと違う値になる**。
+       実際にこれで CI が落ちた（2026-08-29: ローカル 3.14 と CI 3.12 で不一致・
+       ファイルは無変更）。版ごとに違う指紋は「中身が変わった」と嘘をつき、
+       定数を機械的に貼り替える習慣を作るだけでガードとして死ぬ。
+       `ast.unparse()` は 3.11〜3.14 で同一（`test_digest_is_stable_across_python`）。
+    """
+    tree = ast.parse(src)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Module | ast.ClassDef
                           | ast.FunctionDef | ast.AsyncFunctionDef):
@@ -111,18 +139,66 @@ def _ast_digest(path: Path) -> str:
                 and isinstance(body[0].value, ast.Constant) \
                 and isinstance(body[0].value.value, str):
             node.body = body[1:] or [ast.Pass()]
-    return hashlib.sha256(
-        ast.dump(ast.fix_missing_locations(tree)).encode()).hexdigest()[:16]
+    return hashlib.sha256(ast.unparse(tree).encode()).hexdigest()[:16]
 
 
 def test_settlement_logic_unchanged_since_version_was_set():
-    path = Path(__file__).resolve().parent.parent / "src" / "services" / "keirin_settlement.py"
-    digest = _ast_digest(path)
-    assert digest == _SETTLEMENT_AST_DIGEST, (
+    digest = _code_digest(_SETTLEMENT_PY.read_text(encoding="utf-8"))
+    assert digest == _SETTLEMENT_CODE_DIGEST, (
         f"keirin_settlement.py の中身が変わっています（{digest}）。\n"
         "採点の**意味**が変わったなら keirin_settlement_cache.SETTLE_VERSION を上げ、\n"
         "変わっていない（整形・リネームだけ）ならこのテストの "
-        "_SETTLEMENT_AST_DIGEST を更新してください。\n"
+        "_SETTLEMENT_CODE_DIGEST を更新してください。\n"
         "🔴 何もせず放置すると、古い採点で焼いた結果を新しい採点の結果として"
         "出し続けます（画面もログもエラーを出しません）。"
     )
+
+
+# --- ガードそのものが働くことを確かめる（定数を貼り替えるだけの儀式にしない）---
+
+_SRC_BASE = '''
+def settle(bet, payout):
+    """採点する。"""
+    # 払戻が賭け金以上なら的中
+    return payout >= bet
+'''
+
+
+def test_digest_ignores_docstrings_and_comments():
+    """🔴 説明の書き足しで落ちないこと。
+
+    このリポジトリは docstring を頻繁に書き足す。そこで落ちるガードは
+    「とりあえず定数を貼り替える」習慣を作り、本当の変更まで通してしまう。
+    """
+    edited = (_SRC_BASE
+              .replace("採点する。", "採点する（2026-08-29 追記）。")
+              .replace("# 払戻が賭け金以上なら的中", "# ガミは不的中"))
+    assert edited != _SRC_BASE
+    assert _code_digest(edited) == _code_digest(_SRC_BASE)
+
+
+def test_digest_reacts_to_a_logic_change():
+    """🔴 判定を変えたら必ず落ちること（ガミの境界を1つずらす）。"""
+    changed = _SRC_BASE.replace("payout >= bet", "payout > bet")
+    assert _code_digest(changed) != _code_digest(_SRC_BASE)
+
+
+def test_digest_is_stable_across_python():
+    """🔴 Python の版が違っても同じ値になること。
+
+    `ast.dump()` はノードのフィールドが版で増えるため使えない
+    （実測 2026-08-29: 3.11 / 3.12 / 3.13+ で3通りに割れ、CI だけが落ちた）。
+    手元にある Python 全部で `ast.unparse` の指紋が一致することを確かめる
+    （1つしか無い環境ではスキップ）。
+    """
+    exes = [p for v in ("3.11", "3.12", "3.13", "3.14")
+            if (p := shutil.which(f"python{v}"))]
+    if len(exes) < 2:
+        pytest.skip("比較できる Python が1つしかない")
+    got = {
+        exe: subprocess.run([exe, "-c", _DIGEST_SNIPPET, str(_SETTLEMENT_PY)],
+                            capture_output=True, text=True, check=True).stdout.strip()
+        for exe in exes
+    }
+    assert len(set(got.values())) == 1, f"版によって指紋が変わる: {got}"
+    assert next(iter(got.values())) == _SETTLEMENT_CODE_DIGEST
