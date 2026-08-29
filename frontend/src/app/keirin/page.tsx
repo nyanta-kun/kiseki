@@ -265,12 +265,15 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   //    表示名の正本は backend `TYPE_LAB_RANK_LABELS`。
   // 色は型の性格で分ける: 堅い側(A/B)＝緑〜青緑 / 中(C/D)＝青〜紫 /
   // 荒れ側(E/F)＝橙〜赤。既存ランクと被らない色域を使う。
-  "A_hit":      { bg: "#059669", text: "#fff", label: "型A" },
-  "B_hit":      { bg: "#0d9488", text: "#fff", label: "型B" },
-  "C_hit":      { bg: "#2563eb", text: "#fff", label: "型C" },
-  "D_hit":      { bg: "#6366f1", text: "#fff", label: "型D" },
-  "E_hit":      { bg: "#ea580c", text: "#fff", label: "型E" },
-  "F_pay":      { bg: "#dc2626", text: "#fff", label: "型F" },
+  // ⚠️ ラベルは**記号1文字**（2026-08-29・ユーザー要望で「型A」→「A」）。
+  //    既存ランク（7S/7C…）と並ぶ列なので、接頭辞の「型」は列の中で情報を
+  //    持たない（型ラボかどうかは色と `/keirin/type-lab` への導線で分かる）。
+  "A_hit":      { bg: "#059669", text: "#fff", label: "A" },
+  "B_hit":      { bg: "#0d9488", text: "#fff", label: "B" },
+  "C_hit":      { bg: "#2563eb", text: "#fff", label: "C" },
+  "D_hit":      { bg: "#6366f1", text: "#fff", label: "D" },
+  "E_hit":      { bg: "#ea580c", text: "#fff", label: "E" },
+  "F_pay":      { bg: "#dc2626", text: "#fff", label: "F" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
@@ -1415,9 +1418,10 @@ const RANK_LABEL: Record<string, string> = {
   "7T1": "7T1",
   "7T3": "7T3",
   "7C": "7C",
-  // 型ラボのプラン（2026-08-28〜）。バッジは型の名前で出す。
-  "A_hit": "型A", "B_hit": "型B", "C_hit": "型C",
-  "D_hit": "型D", "E_hit": "型E", "F_pay": "型F",
+  // 型ラボのプラン（2026-08-28〜）。バッジは**記号1文字**で出す
+  // （2026-08-29・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
+  "A_hit": "A", "B_hit": "B", "C_hit": "C",
+  "D_hit": "D", "E_hit": "E", "F_pay": "F",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",

@@ -2461,11 +2461,44 @@ NETKEIRIN_RANK_KEYS = ("_global", *_PAPER_RANK_LABELS.values(),
                        *TYPE_LAB_RANK_LABELS.values())
 
 
+def auto_publish_of(rank_key: str, require_approval: bool) -> bool:
+    """「自動公開」の表示値を返す（`_global` 行だけが意味を持つ）。
+
+    🔴 **専用の列は無い。承認制（`require_approval`）の裏返しがそのまま自動公開。**
+       2列に分けると「承認を待つのに公開もする」というありえない組み合わせが
+       作れてしまい、**公開は不可逆**なので事故が戻せない。
+    """
+    return rank_key == "_global" and not require_approval
+
+
+def global_mode_updates(auto_publish: bool | None) -> dict[str, bool]:
+    """`_global` 行の保存時に**追加で**書き込む列を返す（2026-08-29）。
+
+    🔴 `auto_publish is None`（＝送られてこなかった）なら**何も触らない**。
+       既定値で上書きすると、テンプレートを直しただけの保存が承認制を
+       勝手に切り替えてしまう。
+    🔴 自動公開 ON は「全体の自動入稿 ON」が前提（入稿しないものは公開できない）。
+       画面もトグルを ON 固定にしているが、API を直接叩かれても崩れないよう
+       ここでも整合を取る。
+    """
+    if auto_publish is None:
+        return {}
+    updates: dict[str, bool] = {"require_approval": not auto_publish}
+    if auto_publish:
+        updates["enabled"] = True
+    return updates
+
+
 class NetkeirinSettingOut(BaseModel):
     rank_key: str
     enabled: bool
     title_template: str
     comment_template: str
+    #: 自動公開（`_global` 行のみ意味を持つ・2026-08-29）。
+    #: 🔴 **専用の列は無い**。`require_approval` の裏返しをそのまま返す
+    #:    （承認制と自動公開は同じスイッチの裏表なので、2列に分けると
+    #:    「承認待ちなのに公開する」という状態が作れてしまう）。
+    auto_publish: bool = False
 
 
 class NetkeirinSettingIn(BaseModel):
@@ -2473,6 +2506,10 @@ class NetkeirinSettingIn(BaseModel):
     enabled: bool
     title_template: str
     comment_template: str
+    #: 自動公開（`_global` 行のみ）。**None なら触らない**。
+    #: 🔴 既定を False にしてはいけない。この項目を知らない古いクライアントや
+    #:    別経路の保存が「自動公開 OFF ＝ 承認制 ON」を黙って書き込んでしまう。
+    auto_publish: bool | None = None
 
 
 @router.get("/netkeirin-settings")
@@ -2485,6 +2522,7 @@ async def get_netkeirin_settings(db: AsyncSession = Depends(get_db)) -> list[Net
             enabled=r.enabled,
             title_template=r.title_template,
             comment_template=r.comment_template,
+            auto_publish=auto_publish_of(r.rank_key, r.require_approval),
         )
         for r in rows
     ]
@@ -2504,23 +2542,27 @@ async def update_netkeirin_settings(
                 status_code=400,
             )
     for item in body:
+        values = {
+            "rank_key": item.rank_key,
+            "enabled": item.enabled,
+            "title_template": item.title_template,
+            "comment_template": item.comment_template,
+        }
+        updates = {
+            "enabled": item.enabled,
+            "title_template": item.title_template,
+            "comment_template": item.comment_template,
+            "updated_at": func.now(),
+        }
+        # 自動公開は `_global` 行だけの設定で、実体は `require_approval` の裏返し。
+        if item.rank_key == "_global":
+            mode = global_mode_updates(item.auto_publish)
+            values.update(mode)
+            updates.update(mode)
         stmt = (
             pg_insert(KeirinNetkeirinSetting)
-            .values(
-                rank_key=item.rank_key,
-                enabled=item.enabled,
-                title_template=item.title_template,
-                comment_template=item.comment_template,
-            )
-            .on_conflict_do_update(
-                index_elements=["rank_key"],
-                set_={
-                    "enabled": item.enabled,
-                    "title_template": item.title_template,
-                    "comment_template": item.comment_template,
-                    "updated_at": func.now(),
-                },
-            )
+            .values(**values)
+            .on_conflict_do_update(index_elements=["rank_key"], set_=updates)
         )
         await db.execute(stmt)
     await db.commit()
@@ -3244,6 +3286,11 @@ async def set_approval_mode(body: ApprovalModeIn, _: ApiKeyDep,
     承認制は一時運用の想定なので、**画面から戻せる**ようにしてある
     （コード変更もデプロイも要らない）。
     ⚠️ ON にすると承認するまで netkeirin へ何も出ない。
+
+    🔴 **これは `/keirin/settings` の「自動公開」と同じ1つのスイッチ**
+       （2026-08-29〜）。OFF ＝ 自動公開 ON ＝ 入稿データ作成と同時に
+       netkeirin へ下書き入稿し、**そのまま公開まで**行う。
+       公開は不可逆なので、OFF にするのは「全部そのまま売ってよい」ときだけ。
     """
     await db.execute(text(
         "UPDATE keirin.netkeirin_settings SET require_approval = :v, updated_at = NOW() "

@@ -100,7 +100,14 @@ export function SettingsTab() {
         <p className="text-xs text-gray-500 mb-4">
           ONにすると、朝のバッチは netkeirin へ出さず「入稿案」だけを作ります。
           <a href="/keirin/review" className="text-blue-600 underline ml-1">確認・承認画面</a>
-          で承認するまで netkeirin へは何も出ません。OFF に戻すと従来どおり自動で下書きが作られます。
+          で承認するまで netkeirin へは何も出ません。
+          <br />
+          {/* 🔴 これは /keirin/settings の「自動公開」と同じ1つのスイッチ（2026-08-29）。
+              OFF ＝ 自動公開 ON ＝ 入稿と同時に公開まで自動で行う。公開は不可逆。 */}
+          OFF は
+          <a href="/keirin/settings" className="text-blue-600 underline mx-1">入稿設定</a>
+          の「自動公開」ON と同じで、<b>入稿データ作成と同時に公開まで自動</b>で行います
+          （公開は取り消せません）。
         </p>
         <div className="flex items-center gap-3">
           <button

@@ -1379,6 +1379,15 @@ export type NetkeirinSetting = {
   enabled: boolean;
   title_template: string;
   comment_template: string;
+  /**
+   * 自動公開（`_global` 行だけが意味を持つ・2026-08-29）。
+   * ON = 入稿データ作成と同時に netkeirin へ下書き入稿し、**そのまま公開**する。
+   * OFF = 承認制（入稿案だけ作り `/keirin/review` で承認する）。
+   * 🔴 バックエンドに専用の列は無く `require_approval` の裏返し。
+   *    `/admin` の「承認制」トグルと**同じ1つのスイッチ**なので、
+   *    ここを増やして2つのフラグにしないこと（公開は不可逆）。
+   */
+  auto_publish?: boolean;
 };
 
 export async function fetchNetkeirinSettings(): Promise<NetkeirinSetting[]> {

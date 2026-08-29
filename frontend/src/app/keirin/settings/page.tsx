@@ -107,23 +107,34 @@ function applyPreview(template: string, rank: string): string {
 type EditState = Record<string, NetkeirinSetting>;
 
 function emptyRow(rank_key: NetkeirinRankKey): NetkeirinSetting {
-  return { rank_key, enabled: true, title_template: "", comment_template: "" };
+  // 🔴 `auto_publish` の既定は **false（＝承認制）**。公開は不可逆なので、
+  //    値が取れなかったときに公開する側へ倒してはいけない。
+  return { rank_key, enabled: true, title_template: "", comment_template: "",
+           auto_publish: false };
 }
 
 // ---------------------------------------------------------------------------
 // トグルスイッチ（frontend/src/app/my/KeirinSettings.tsx と同じマークアップ）
 // ---------------------------------------------------------------------------
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled = false, title }: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  /** 触らせない（グレーアウト）。前提となる別の設定に従属しているときに使う。 */
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
+      title={title}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 flex-shrink-0 ${
         checked ? "bg-blue-500" : "bg-gray-300"
-      }`}
+      } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
     >
       <span
         className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
@@ -195,6 +206,9 @@ export default function NetkeirinSettingsPage() {
     });
   };
 
+  // 自動公開（`_global` 行だけが持つ）。読めないときは false＝承認制へ倒す。
+  const autoPublish = rows?._global.auto_publish ?? false;
+
   return (
     <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 space-y-5 pb-28">
       {/* ヘッダー */}
@@ -257,18 +271,56 @@ export default function NetkeirinSettingsPage() {
 
       {rows && (
         <>
-          {/* 全体ON/OFF */}
-          <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          {/* 全体ON/OFF ＋ 自動公開（2026-08-29）。
+              🔴 **自動公開 ON のとき自動入稿は ON 固定**。入稿しないものは公開
+                 できないので、この2つが独立に動けると「公開する設定なのに何も
+                 出ない」という読めない状態が作れる。UI で固定するだけでなく
+                 バックエンド（`PUT /keirin/netkeirin-settings`）でも同じ整合を
+                 取っている（API を直接叩かれても崩れないように）。 */}
+          <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-gray-800">全体の自動入稿</p>
                 <p className="text-xs text-gray-400 mt-0.5">
                   OFFにすると、各ランクのON/OFFに関わらず自動入稿を停止します。
+                  {autoPublish && (
+                    <span className="block text-amber-600 mt-0.5">
+                      自動公開がONの間は変更できません（OFFにするには先に自動公開をOFF）。
+                    </span>
+                  )}
                 </p>
               </div>
               <Toggle
-                checked={rows._global.enabled}
+                checked={autoPublish ? true : rows._global.enabled}
+                disabled={autoPublish}
+                title={autoPublish
+                  ? "自動公開がONの間は自動入稿をOFFにできません"
+                  : undefined}
                 onChange={(v) => update("_global", { enabled: v })}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+              <div>
+                <p className="text-sm font-bold text-gray-800">自動公開</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  ONにすると、入稿データの作成と同時に netkeirin へ入稿し、
+                  <b>そのまま公開まで</b>行います（入稿確認は行いません）。
+                  <br />
+                  OFFのときは「入稿案」だけを作り、
+                  <a href="/keirin/review" className="text-blue-600 underline">確認・承認画面</a>
+                  で承認するまで netkeirin へは何も出ません。
+                  <span className="block text-amber-600 mt-0.5">
+                    ⚠️ 公開は取り消せません（netkeirin は公開後の修正ができません）。
+                  </span>
+                </p>
+              </div>
+              <Toggle
+                checked={autoPublish}
+                onChange={(v) =>
+                  // 自動公開 ON は自動入稿 ON が前提。同時に立てる。
+                  update("_global", v ? { auto_publish: true, enabled: true }
+                                      : { auto_publish: false })}
               />
             </div>
           </section>

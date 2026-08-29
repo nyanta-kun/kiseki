@@ -251,6 +251,47 @@ docs/trifecta_playbook.md              # ★三連単の買い方（実務ガイ
 `/cancel` → webhook → `netkeirin_approve_wt.py --reason` → `cancel_submission` と
 通して保存する。**自由入力にしない**（あとで「どの操作で消えたか」を集計するため）。
 
+## 承認制 と 自動公開（`netkeirin_settings._global.require_approval`・2026-08-29）
+
+入稿は2状態しかない。**同じ1つの列**で切り替える。
+
+| 画面 | 状態 | 何が起きるか |
+|---|---|---|
+| `/keirin/settings` の「自動公開」ON | `require_approval = false` | 入稿データ作成 → netkeirin へ下書き入稿 → **そのまま公開**（顧客に出る） |
+| `/keirin/settings` の「自動公開」OFF<br>＝ `/admin` の「承認制」ON | `require_approval = true` | 入稿案（`status='proposed'`）だけ作る。`/keirin/review` で承認するまで netkeirin へ何も出ない |
+
+🔴 **「自動公開」用の列を別に足さないこと。** 2つのフラグに分けると
+   「承認を待つのに公開もする」という組み合わせが作れる。**公開は不可逆**
+   （netkeirin の文言「公開後は修正できなくなります」）なので事故が戻せない。
+
+🔴 **既定値の倒し方が2つで逆なのは意図的。**
+
+| 関数 | 読めなかったとき | 理由 |
+|---|---|---|
+| `_approval_required()` | **False**（fail-open・下書きを作る） | 承認制に倒すと入稿が全部止まったまま誰も気づかない |
+| `_auto_publish_enabled()` | **False**（fail-closed・公開しない） | 公開は不可逆。事故で公開してはいけない |
+
+同じ列を見ているので揃えたくなるが、**揃えると必ずどちらかが事故る**。
+
+🔴 **自動公開 ON のとき「全体の自動入稿」は ON 固定**（画面はグレーアウト、
+   API 側も `global_mode_updates()` で強制）。入稿しないものは公開できないので、
+   独立に動けると「公開する設定なのに何も出ない」という読めない状態になる。
+
+### 実装
+
+- 公開の対象は **その実行で netkeirin へ送ったものだけ**。`_record_submission()` が
+  `status='submitted'` で記録したときに `_submitted_this_run` へ積み、各スクリプトの
+  末尾で `auto_publish_submitted()` がまとめて `publish_submissions()` へ渡す
+  （netkeirin へは1リクエスト）
+- 🔴 **日付で `status='submitted'` を拾い直さない。** 人が意図して公開待ちに
+  残した過去の下書きまで公開してしまう
+- 呼ぶのは3経路: ランク入稿 / 手動・看板穴埋め（`netkeirin_submit_wt.main`）・
+  型ラボ（`netkeirin_submit_type_lab.run`）。看板穴埋めは1レース1プロセスなので
+  **子プロセスが自分のぶんを公開**し、親は行の状態（`_count_published`）から数える
+- ⚠️ **通知は公開の後に組み立てる。** 自動公開なのに「内容を確認の上、公開して
+  ください」と書くと嘘になる（このリポジトリが繰り返している型）
+- 検査: `keirin/tests/test_auto_publish.py` / `backend/tests/test_keirin_auto_publish_setting.py`
+
 ## 現行ランク体系（2026-08-17〜・**7S/7B/7C/7M1/7H1/7H2/7T1/9C/9H1 の9ペーパーランク**）
 
 > **【2026-08-17・中間層 RANK_7M1（混戦 × 市場乖離）を新設】**

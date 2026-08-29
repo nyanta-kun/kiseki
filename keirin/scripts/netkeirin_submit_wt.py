@@ -886,6 +886,76 @@ def _approval_required() -> bool:
     return bool(row["require_approval"]) if row else False
 
 
+#: この実行で **netkeirin へ実際に送った**（＝公開できる）入稿。
+#: `_record_submission()` が status='submitted' で記録したときだけ積む。
+#: 入稿案（proposed）は netkeirin に無いので公開できず、ここへは入らない。
+_submitted_this_run: list[tuple[str, str]] = []
+
+
+def _auto_publish_enabled() -> bool:
+    """自動公開（入稿と同時に netkeirin で公開まで行う）なら True。
+
+    見るのは承認制と**同じ** `netkeirin_settings._global.require_approval` で、
+    その裏返し。画面（`/keirin/settings` の「自動公開」）から切り替えられる。
+
+    🔴 **fail-closed（分からなければ False＝公開しない）**。`_approval_required()`
+       とは**逆向きの倒し方**なのは意図的である:
+
+       | 読めなかったとき | 起きること |
+       |---|---|
+       | 承認制を False へ倒す（fail-open） | いつもどおり下書きが作られる。取り返せる |
+       | 自動公開を True へ倒す | **公開してしまう。公開は不可逆** |
+
+       つまり「行が無い / 列が無い / DB が読めない」は必ず**公開しない**側へ倒す。
+       同じ列を見ているのに既定値が違うのはこのためで、揃えてはいけない。
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT require_approval FROM netkeirin_settings WHERE rank_key = ?",
+                ("_global",),
+            ).fetchone()
+    except Exception as e:
+        print(f"[netkeirin_submit] 自動公開の設定を読めませんでした"
+              f"（公開せず下書きのまま継続）: {e}", flush=True)
+        return False
+    if row is None:
+        return False
+    return not bool(row["require_approval"])
+
+
+def auto_publish_submitted(dry_run: bool = False) -> list[dict]:
+    """この実行で送った下書きを netkeirin で**公開**する（自動公開ONのときだけ）。
+
+    🔴 対象は「この実行で送ったもの」だけ。`status='submitted'` を日付で拾い直すと、
+       人が意図して公開待ちのまま残した過去の下書きまで巻き込む。
+    🔴 `publish_submissions()` へまとめて渡す（netkeirin へは1リクエスト）。
+    🔴 **公開できなくても入稿は成功している。** ここで例外を上げると呼び出し側が
+       「入稿失敗」と扱い、再実行で二重入稿しかねない。失敗はログに残すだけ。
+
+    戻り値は `publish_submissions()` の結果（自動公開OFF・対象なしなら空）。
+    """
+    targets = list(dict.fromkeys(_submitted_this_run))
+    _submitted_this_run.clear()
+    if dry_run or not targets:
+        return []
+    if not _auto_publish_enabled():
+        return []
+    try:
+        results = publish_submissions(targets)
+    except Exception as e:      # noqa: BLE001 — 入稿は終わっている
+        print(f"[netkeirin_submit] 自動公開に失敗（下書きのまま残ります）: {e!r}",
+              flush=True)
+        return []
+    ok = [r for r in results if r.get("ok")]
+    ng = [r for r in results if not r.get("ok")]
+    print(f"[netkeirin_submit] 自動公開: {len(ok)}件公開・{len(ng)}件失敗", flush=True)
+    for r in ng:
+        print(f"[netkeirin_submit] 公開失敗 {r['race_key']}({r['rank_key']}): "
+              f"{r.get('message')}", flush=True)
+    return results
+
+
 def _rank_file_keys(cfg: dict) -> list[str]:
     """そのランクが読む候補JSONの key を返す（`file_keys` があれば全部）。
 
@@ -1400,6 +1470,11 @@ def _record_submission(
         if not proposed:
             _mark_bought(conn, race_key, rank_key, _bet_detail_total(bet_detail))
         conn.commit()
+    if not proposed:
+        # 自動公開の対象（`auto_publish_submitted()` がまとめて公開する）。
+        # 🔴 ここで積む＝**送信の分岐がいくつあっても取りこぼさない**。
+        #    呼び出し側で集めると、経路が増えたときに足し忘れる。
+        _submitted_this_run.append((race_key, rank_key))
 
 
 # ---------------------------------------------------------------------------
@@ -2823,7 +2898,8 @@ def _process_manual(
     return 0, [f"{venue_name}{race_no}R({rank_key}): {msg}"]
 
 
-DEFERRED_NOTICE_VERSION = 1
+#: 保留通知 JSON の形式版。2 で `published` / `publish_failed`（自動公開の実績）を追加。
+DEFERRED_NOTICE_VERSION = 2
 
 
 def _write_deferred_notice(path: str, payload: dict) -> None:
@@ -2918,14 +2994,20 @@ def main() -> None:
         if args.dry_run:
             print(f"[dry-run][manual] {target_date} {session}: 完了（生成{n}件）", flush=True)
             return
+        # 🔴 通知より**先**に公開する。通知の文面（公開済みか下書きか）が変わるため。
+        published = auto_publish_submitted()
         if args.no_notify:
             print(f"[netkeirin_submit][auto] {target_date} {session}: "
                   f"通知は呼び出し側へ委譲（成功{n}件・失敗{len(failures)}件）", flush=True)
         elif n > 0:
             try:
+                # 自動公開なら「公開してください」と言ってはいけない（もう出ている）。
+                tail = ("\n✅ 自動公開: 公開済みです。"
+                        if any(r.get("ok") for r in published)
+                        else "\n内容を確認の上、公開してください。")
                 send(
                     f"📮 **[netkeirin手動入稿] {target_date}（{SESSION_LABEL_JP[session]}）: "
-                    f"{args.manual_rank_key} 1件**\n確認: {RACE_AUTH_URL}\n内容を確認の上、公開してください。",
+                    f"{args.manual_rank_key} 1件**\n確認: {RACE_AUTH_URL}{tail}",
                     channel="netkeirin",
                 )
             except Exception as e:
@@ -3044,6 +3126,12 @@ def main() -> None:
         print(f"[dry-run] {target_date} {session}: 完了（生成{total}件）", flush=True)
         return
 
+    # 🔴 通知より**先**に公開する（文面が「公開してください」から変わる）。
+    #    承認制のときは送ったものが無いので、ここは必ず空になる。
+    published = auto_publish_submitted()
+    n_published = sum(1 for r in published if r.get("ok"))
+    n_publish_ng = len(published) - n_published
+
     session_jp = SESSION_LABEL_JP[session]
     if total > 0:
         breakdown = "・".join(f"{k}{v}件" for k, v in submitted_counts.items() if v > 0)
@@ -3055,6 +3143,16 @@ def main() -> None:
                 f"{breakdown}（計{total}件）**\n"
                 f"確認・承認: {REVIEW_URL}\n"
                 f"⚠️ 承認するまで netkeirin へは出ません。"
+            )
+        elif published:
+            # 自動公開。**もう顧客から見えている**ので「公開してください」は嘘になる。
+            msg = (
+                f"🚀 **[netkeirin入稿・自動公開] {target_date}（{session_jp}）: "
+                f"{breakdown}（計{total}件）**\n"
+                f"確認: {RACE_AUTH_URL}\n"
+                f"✅ 公開済み {n_published}件"
+                + (f" / ⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
+                   if n_publish_ng else "")
             )
         else:
             msg = (
@@ -3078,6 +3176,9 @@ def main() -> None:
                 propose_only=bool(propose_only),
                 breakdown={k: v for k, v in submitted_counts.items() if v > 0},
                 total=total, failures=all_failures,
+                # 自動公開の実績。**看板穴埋め側が文面を組み立てる**ので、
+                # ここで数えたものを渡さないと「公開してください」と嘘を書く。
+                published=n_published, publish_failed=n_publish_ng,
                 mean_payout_skips=list(_mean_payout_skips)))
         else:
             try:
