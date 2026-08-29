@@ -205,6 +205,26 @@ PLANS: dict[str, Plan] = {
 #:
 #: 実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
+
+#: 🔴 **2026-08-30 変更（ユーザー判断）: 9車の型F は「決勝は `F_pay`・それ以外は
+#:    `F_hit`」で必ず売る。** それまでは決勝以外を**まるごと売らない**設計だった
+#:    （`plans_for` が空を返す）。
+#:
+#:    そのままでは 2026-08-30 に **9車開催の看板8件（選抜3・特選3・特秀2）が
+#:    無商品**になった。従来は旧ランクの看板穴埋め（7S）が拾っていたが、
+#:    型ラボ全面移行で 7S が無効になり、穴埋めが機能しなくなったため
+#:    （実測: 埋まらなかった看板 8/29 15件 → 8/30 21件）。
+#:
+#:    ⚠️ **売らない判断の根拠だった数字は消えていない。** 9車の型F を全部
+#:       `F_pay` で売ると表示的中 6.07%・ROI 60.5% で壁を大きく下回る。
+#:       そこで**決勝以外は `F_hit`**（当たる回数を売る側）に替える。
+#:       9車の型F 全体でも `F_hit` なら表示的中は `F_pay` より高い
+#:       （決勝で 16.42% ↔ 2.99%）。**収支は 20か月でも判定できていない**ので、
+#:       これは「看板には必ず出す」方針を優先した選択であって、
+#:       ROI が上がるという主張ではない。前向きに台帳で確かめる。
+NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = {"決勝": "F_pay"}
+#: 上の表に無い種別（＝決勝以外）で売るプラン。
+NINE_CAR_TYPE_F_SELL_DEFAULT = "F_hit"
 #: 🔴 **2026-08-28 に `F_hit` → `F_pay` へ変更**（本番移行・ユーザー判断）。
 #:    車数や種別で hit / pay を分けない、という方針に揃えた。
 #:    ⚠️ ここは「売る／売らない」の分岐（`NINE_CAR_TYPE_F_RACE_TYPES`）とは別物。
@@ -250,6 +270,17 @@ NINE_CAR_TYPE_F_PLANS = ("F_pay",)
 #:    「型は edge を作らない。決めるのは帯とカバレッジだけ」と同じ構造。
 SELL_PLANS: tuple[str, ...] = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
 
+#: 型ラボが**入稿しうる**プランの全体（2026-08-30）。
+#:
+#: 🔴 `SELL_PLANS` は 7車の固定集合で、**9車の型F はここに無い `F_hit` を売る**。
+#:    「型ラボの商品か」を判定する場所（既存ランクとの取り合い・重複判定）で
+#:    `SELL_PLANS` を使うと、9車の型F の入稿を**他ランクの商品と誤認する**。
+#:    そういう用途はこちらを使うこと。
+SELLABLE_PLAN_KEYS: frozenset[str] = (
+    frozenset(SELL_PLANS)
+    | {NINE_CAR_TYPE_F_SELL_DEFAULT}
+    | set(NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.values()))
+
 
 def plans_for(type_label: str, n_entries: int = 7,
               race_type: str | None = None) -> list[Plan]:
@@ -262,21 +293,21 @@ def plans_for(type_label: str, n_entries: int = 7,
        `sell_plans_for()`。7車は A_pay / F_hit を組むが売らない——比較台を
        残すためで、混同すると売っていない側の成績が消える。
 
+    🔴 **2026-08-30 から 9車の型F も種別で落とさない。** 以前は決勝以外を空にして
+       いたが、それは「生成」を止める形で「売らない」を実現していた。
+       **比較台が消えるので良くない**（売らなかった側の成績が事後に測れない）。
+       売る／売らないは `sell_plans_for` の責務へ寄せた。
+
     >>> [p.key for p in plans_for("F")]
     ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_pay']
-    >>> plans_for("F", 9, "準決勝")
-    []
+    ['F_hit', 'F_pay']
+    >>> [p.key for p in plans_for("F", 9, "準決勝")]
+    ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("A", 9, "特選")]
     ['A_hit', 'A_pay']
     """
-    plans = [p for p in PLANS.values() if p.type_label == type_label]
-    if n_entries == 9 and type_label == "F":
-        if str(race_type or "") not in NINE_CAR_TYPE_F_RACE_TYPES:
-            return []
-        return [p for p in plans if p.key in NINE_CAR_TYPE_F_PLANS]
-    return plans
+    return [p for p in PLANS.values() if p.type_label == type_label]
 
 
 def sell_plans_for(type_label: str, n_entries: int = 7,
@@ -291,15 +322,27 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F")]
     ['F_pay']
+    🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
+       それ以外は `F_hit` と種別で分かれるので、固定の集合では表せない。
+       ここでも返すのは**1つだけ**なので 1レース1商品は保たれる。
+
     >>> [p.key for p in sell_plans_for("F", 9, "決勝")]
     ['F_pay']
-    >>> sell_plans_for("F", 9, "準決勝")
-    []
+    >>> [p.key for p in sell_plans_for("F", 9, "準決勝")]
+    ['F_hit']
+    >>> [p.key for p in sell_plans_for("F", 9, None)]
+    ['F_hit']
     >>> [p.key for p in sell_plans_for("A", 9, "特選")]
     ['A_hit']
+    >>> [p.key for p in sell_plans_for("F", 7)]
+    ['F_pay']
     """
-    return [p for p in plans_for(type_label, n_entries, race_type)
-            if p.key in SELL_PLANS]
+    plans = plans_for(type_label, n_entries, race_type)
+    if n_entries == 9 and type_label == "F":
+        key = NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.get(
+            str(race_type or ""), NINE_CAR_TYPE_F_SELL_DEFAULT)
+        return [p for p in plans if p.key == key]
+    return [p for p in plans if p.key in SELL_PLANS]
 
 
 def build_legs(shape: RaceShape, plan: Plan,

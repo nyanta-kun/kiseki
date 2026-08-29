@@ -1458,6 +1458,9 @@ TYPE_LAB_RANK_LABELS: dict[str, str] = {
     "RANK_D_hit": "D_hit",
     "RANK_E_hit": "E_hit",
     "RANK_F_pay": "F_pay",
+    # 🔴 9車の型F（決勝以外）で売る（2026-08-30）。ここに無いと画面のラベルが
+    #    `RANK_F_hit` のまま出て、入稿設定の一覧からも消える。
+    "RANK_F_hit": "F_hit",
 }
 
 _LEGACY_RANK_LABELS: dict[str, str] = {
