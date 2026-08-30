@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -287,6 +288,12 @@ class KeirinNetkeirinSetting(KeirinBase):
     # 🔴 **「自動公開」用の列を別に足さないこと。** 承認制と自動公開は同じ1つの
     #    スイッチの裏表で、2列に分けると「承認を待つのに公開もする」という
     #    ありえない組み合わせが作れる。**公開は不可逆**なので事故が戻せない。
+    #: 軸信頼ゲートを掛けるか（`_global` 行のみ意味を持つ・migration 202608310722_keirin）。
+    #: 🔴 既定 True＝現行どおりゲートあり。OFF にすると型ラボの入稿が
+    #:    当日 72件 → 89件 相当まで増える（2026-08-31 実測）。
+    axis_gate_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"),
+        comment="軸信頼ゲートを掛けるか（_global 行のみ）")
     require_approval: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False,
         comment="承認制（_global 行のみ有効）。true=承認するまで netkeirin へ出ない / "

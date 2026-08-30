@@ -113,8 +113,9 @@ type EditState = Record<string, NetkeirinSetting>;
 function emptyRow(rank_key: NetkeirinRankKey): NetkeirinSetting {
   // 🔴 `auto_publish` の既定は **false（＝承認制）**。公開は不可逆なので、
   //    値が取れなかったときに公開する側へ倒してはいけない。
+  // 🔴 `axis_gate_enabled` の既定は **true（＝ゲートあり）**。現行の挙動。
   return { rank_key, enabled: true, title_template: "", comment_template: "",
-           auto_publish: false };
+           auto_publish: false, axis_gate_enabled: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +213,9 @@ export default function NetkeirinSettingsPage() {
 
   // 自動公開（`_global` 行だけが持つ）。読めないときは false＝承認制へ倒す。
   const autoPublish = rows?._global.auto_publish ?? false;
+  // 軸信頼ゲート（`_global` 行だけが持つ）。**読めないときは true＝ゲートあり**へ倒す
+  // （自動公開とは倒す向きが逆。あちらは「公開しない」・こちらは「絞る」が安全側）。
+  const axisGate = rows?._global.axis_gate_enabled ?? true;
 
   return (
     <div className="w-full sm:max-w-3xl sm:mx-auto px-3 sm:px-4 py-4 space-y-5 pb-28">
@@ -329,6 +333,35 @@ export default function NetkeirinSettingsPage() {
                   ? "自動公開がONの間は自動入稿をOFFにできません"
                   : undefined}
                 onChange={(v) => update("_global", { enabled: v })}
+              />
+            </div>
+
+            {/* 軸信頼ゲート（2026-08-31）。
+                🔴 **既定は ON。** 2026-08-27 の導入以来ずっと掛かっていたが
+                   画面から見えなかったので、存在と効き具合を出す。
+                🔴 看板レースは ON でも素通しする（`_passes_axis_gate`）。 */}
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+              <div>
+                <p className="text-sm font-bold text-gray-800">軸信頼ゲート</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  各プランの中で<b>軸信頼（上位2車の3着内率の合計）が下位2割</b>の
+                  レースを入稿しません。
+                  <br />
+                  実測 2026-08-31 は 89レース → <b>72レース</b>に絞っています。
+                  外した側は表示的中 18.7%・ROI 68.7% で、残す側より明確に弱い層です。
+                  <span className="block text-gray-400 mt-0.5">
+                    ※ 看板レース（決勝・特選クラス）はこのゲートを素通りします。
+                  </span>
+                  {!axisGate && (
+                    <span className="block text-amber-600 mt-0.5">
+                      ⚠️ OFF の間は下位2割も入稿します（件数は増え、質は下がります）。
+                    </span>
+                  )}
+                </p>
+              </div>
+              <Toggle
+                checked={axisGate}
+                onChange={(v) => update("_global", { axis_gate_enabled: v })}
               />
             </div>
           </section>

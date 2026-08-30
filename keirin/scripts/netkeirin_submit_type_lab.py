@@ -325,6 +325,30 @@ def _make_skip(dry_run: bool):
     return _dry
 
 
+def axis_gate_enabled() -> bool:
+    """入稿設定（`netkeirin_settings._global`）で軸信頼ゲートが ON か。
+
+    🔴 **読めなければ ON に倒す**（列が無い古い DB・行が無い・接続断）。
+       ゲートは「商品の定義」なので、設定が読めないことを理由に**外して**
+       しまうと、その日だけ落とすはずのレースを黙って売る。
+       `passes_axis_gate` の「判定できないものは通す」とは倒す向きが逆で、
+       あちらは1件の判定・こちらは仕組み全体の ON/OFF なので安全側が違う。
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT axis_gate_enabled FROM netkeirin_settings WHERE rank_key = ?",
+                ("_global",)).fetchone()
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[type_lab_submit] 軸信頼ゲートの設定を読めません（ONとして続行）: {e}",
+              flush=True)
+        return True
+    if row is None:
+        return True
+    v = dict(row).get("axis_gate_enabled")
+    return True if v is None else bool(v)
+
+
 def _passes_axis_gate(row: dict) -> bool:
     """軸信頼ゲートを通るか。**看板レースは素通しする**（2026-08-28・ユーザー判断）。
 
@@ -501,6 +525,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         print(f"[type_lab_submit] (dry-run のため組み直しは行いません: 対象 {n_todo}R)",
               flush=True)
 
+    # 🔴 **1回だけ読む。** 行ごとに問い合わせると当日 89行ぶん DB を叩く。
+    use_axis_gate = axis_gate_enabled()
+    if not use_axis_gate:
+        print("[type_lab_submit] ⚠️ 軸信頼ゲートは入稿設定で OFF です"
+              "（下位2割のレースも入稿します）", flush=True)
+
     n_ok = 0
     skip = _make_skip(dry_run)
     skipped: dict[str, int] = {}
@@ -549,7 +579,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                   f"{lineup} → この回は見送り（後の波で再判定）", venue, race_no)
             bump("lineup")
             continue
-        if not _passes_axis_gate(row):
+        if use_axis_gate and not _passes_axis_gate(row):
             # 軸信頼ゲートは「商品の定義」であってゲート落ちではない。
             # 記録すると毎日10件前後が見送り一覧を埋めて信号が死ぬので数だけ数える。
             bump("axis_gate")

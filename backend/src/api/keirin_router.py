@@ -2683,6 +2683,10 @@ class NetkeirinSettingOut(BaseModel):
     #:    （承認制と自動公開は同じスイッチの裏表なので、2列に分けると
     #:    「承認待ちなのに公開する」という状態が作れてしまう）。
     auto_publish: bool = False
+    #: 軸信頼ゲート（`_global` 行のみ意味を持つ・2026-08-31）。
+    #: 🔴 **既定 True＝ゲートあり**。この項目を知らない古いクライアントが
+    #:    読んでも「掛かっている」と解釈されるようにする（安全側）。
+    axis_gate_enabled: bool = True
 
 
 class NetkeirinSettingIn(BaseModel):
@@ -2694,6 +2698,8 @@ class NetkeirinSettingIn(BaseModel):
     #: 🔴 既定を False にしてはいけない。この項目を知らない古いクライアントや
     #:    別経路の保存が「自動公開 OFF ＝ 承認制 ON」を黙って書き込んでしまう。
     auto_publish: bool | None = None
+    #: 軸信頼ゲート（`_global` 行のみ）。**None なら触らない**（上と同じ理由）。
+    axis_gate_enabled: bool | None = None
 
 
 @router.get("/netkeirin-settings")
@@ -2707,6 +2713,7 @@ async def get_netkeirin_settings(db: AsyncSession = Depends(get_db)) -> list[Net
             title_template=r.title_template,
             comment_template=r.comment_template,
             auto_publish=auto_publish_of(r.rank_key, r.require_approval),
+            axis_gate_enabled=bool(getattr(r, "axis_gate_enabled", True)),
         )
         for r in rows
     ]
@@ -2743,6 +2750,10 @@ async def update_netkeirin_settings(
             mode = global_mode_updates(item.auto_publish)
             values.update(mode)
             updates.update(mode)
+            # 軸信頼ゲートも `_global` 行だけの設定。**None なら触らない**。
+            if item.axis_gate_enabled is not None:
+                values["axis_gate_enabled"] = item.axis_gate_enabled
+                updates["axis_gate_enabled"] = item.axis_gate_enabled
         stmt = (
             pg_insert(KeirinNetkeirinSetting)
             .values(**values)

@@ -1380,6 +1380,11 @@ export type NetkeirinSetting = {
    *    ここを増やして2つのフラグにしないこと（公開は不可逆）。
    */
   auto_publish?: boolean;
+  /** 軸信頼ゲートを掛けるか（`_global` 行のみ・2026-08-31）。
+   *  🔴 **既定は true＝ゲートあり**。古い API に当たって undefined のときも
+   *     「掛かっている」と読むこと（外れている側へ倒すと、落とすはずの
+   *     レースを黙って売る）。 */
+  axis_gate_enabled?: boolean;
 };
 
 export async function fetchNetkeirinSettings(): Promise<NetkeirinSetting[]> {
