@@ -204,3 +204,23 @@ def test_preview_script_never_writes():
     src = (REPO / "scripts" / "preview_type_lab_submission.py").read_text(encoding="utf-8")
     for banned in ("INSERT", "UPDATE", "DELETE", "NetkeirinClient", "submit_pick"):
         assert banned not in src, banned
+
+
+def test_plan_notes_do_not_contradict_the_buy_description():
+    """🔴 冒頭のレース見解と【買い目】が矛盾しないこと。
+
+    型A の見解は「着順まで踏み込んで狙える」と言い切っている。着順を決め打ち
+    しない `A_trio` と、◎を買わない `A_ana` は **`PLAN_NOTES` で上書きが要る**。
+    上書きを消すと型A の見解がそのまま出て、直後の説明と食い違う。
+    """
+    from src.type_lab_submission import PLAN_BODIES, PLAN_NOTES, TYPE_NOTES
+
+    assert "着順まで踏み込んで" in TYPE_NOTES["A"], "型A の見解の前提が変わった"
+    for plan in ("A_trio", "A_ana"):
+        note = PLAN_NOTES.get(plan)
+        assert note, f"{plan} は PLAN_NOTES での上書きが要る"
+        assert "着順まで踏み込んで" not in note, plan
+    # `A_trio` は「決め打ちしない」で揃っていること。
+    assert "決め打ち" in PLAN_NOTES["A_trio"] and "決め打ち" in PLAN_BODIES["A_trio"]
+    # `A_ana` は本文でも見解でも ◎ を推していないこと。
+    assert "◎" not in PLAN_NOTES["A_ana"] and "◎" not in PLAN_BODIES["A_ana"]
