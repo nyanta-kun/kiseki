@@ -763,6 +763,7 @@ def migrate_db():
                 axis_sum         REAL,
                 arare            INTEGER,
                 gap              REAL,
+                pw_ent           REAL,
                 axis1            INTEGER,
                 axis2            INTEGER,
                 mode             TEXT NOT NULL,

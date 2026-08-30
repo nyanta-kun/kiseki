@@ -29,7 +29,8 @@ def test_window_defaults_to_the_last_seven_days():
 
 def test_lists_are_not_empty():
     """表示順と優先順位の手書きリストが空になっていないこと。"""
-    assert len(PLAN_ORDER) == 8
+    # 型A が3分割された（2026-08-31）ので 8 → 10。
+    assert len(PLAN_ORDER) == 10
     assert CURRENT_RANK_ORDER[0] == "RANK_7H2" and CURRENT_RANK_ORDER[-1] == "RANK_7M1"
 
 

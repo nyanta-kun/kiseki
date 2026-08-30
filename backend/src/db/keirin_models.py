@@ -457,6 +457,8 @@ class KeirinTypeLabPick(KeirinBase):
     axis_sum: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="3着内率 上位2車の合計")
     arare: Mapped[int | None] = mapped_column(Integer, comment="荒れ度")
     gap: Mapped[float | None] = mapped_column(Numeric(6, 4), comment="相手の開き")
+    pw_ent: Mapped[float | None] = mapped_column(
+        Numeric, comment="1着率のエントロピー（型A の穴狙い振り分け・migration 202608310657_keirin）")
     axis1: Mapped[int | None] = mapped_column(Integer)
     axis2: Mapped[int | None] = mapped_column(Integer)
     #: 3着内率の降順に並べた車番（"3-1-5-7-2-4-6"）。答え合わせの土台。

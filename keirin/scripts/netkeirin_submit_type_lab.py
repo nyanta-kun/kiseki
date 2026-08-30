@@ -130,6 +130,12 @@ from scripts.netkeirin_submit_wt import (                    # noqa: E402
 #:       自信ありに選ばれることはほぼ無い。
 ACT_TYPE_BY_PLAN: dict[str, str] = {
     "A_hit": ACT_TYPE_DEFAULT,
+    "A_trio": ACT_TYPE_DEFAULT,
+    # 🔴 `A_ana` は**穴狙いそのもの**（指数1位を1点も買わない）。ここだけは
+    #    商品の性格と一致するのでアイコンを付ける。F_hit を既定のままにした
+    #    2026-08-30 の判断（「適用範囲を広げると切り分けが難しくなる」）とは
+    #    別の話で、こちらは買い目からして穴狙いにしか読めない。
+    "A_ana": ACT_TYPE_LONGSHOT,
     "B_hit": ACT_TYPE_DEFAULT,
     "C_hit": ACT_TYPE_DEFAULT,
     "D_hit": ACT_TYPE_DEFAULT,
@@ -169,7 +175,8 @@ def _load_rows(day: str) -> list[dict]:
         # （看板判定 `is_fill_target` がグレードを先に見るため）。
         rows = conn.execute(
             "SELECT t.race_key, t.race_date, t.venue_name, t.race_no, t.race_type,"
-            "       t.n_entries, t.type_label, t.axis_sum, t.axis1, t.axis2, t.p3_order,"
+            "       t.n_entries, t.type_label, t.axis_sum, t.pw_ent, t.axis1, t.axis2,"
+            "       t.p3_order,"
             "       t.mode, t.plan_key, t.bet_type, t.n_legs, t.budget, t.legs,"
             "       t.pred_mean_payout, t.pred_min_payout, t.rule_version,"
             "       t.generated_at, r.cup_grade"
@@ -192,6 +199,19 @@ def _load_rows(day: str) -> list[dict]:
                                   and gen > current[key][0]):
             current[key] = (gen, str(d["type_label"]))
 
+    # 🔴 **型A の売り分けにはレース単位の情報が要る**（2026-08-31）。
+    #    `A_trio` を選ぶ条件は「三連複2点が入稿ゲートを通ること」なので、
+    #    同じレースの `A_trio` 行の `pred_mean_payout` を先に集めておく。
+    #    ⚠️ **1点でも予測 2.0倍未満なら通らない**ので、平均だけ見て決めない
+    #       （`_gate_reason` と同じ2条件を当てる）。
+    trio_ok: dict[str, bool] = {}
+    for r in rows:
+        d = dict(r)
+        if d["plan_key"] != "A_trio":
+            continue
+        legs = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
+        trio_ok[str(d["race_key"])] = _gate_reason(dict(d, legs=legs)) is None
+
     out = []
     for r in rows:
         d = dict(r)
@@ -203,7 +223,9 @@ def _load_rows(day: str) -> list[dict]:
         #    `SELL_PLANS` の絞りだけでは 9車の型F の種別条件が効かない。
         #    売る／売らないの判定は必ず `sell_plans_for` を通す（唯一の正本）。
         allowed = {p.key for p in sell_plans_for(
-            str(d["type_label"]), int(d["n_entries"] or 7), d.get("race_type"))}
+            str(d["type_label"]), int(d["n_entries"] or 7), d.get("race_type"),
+            pw_ent=(float(d["pw_ent"]) if d.get("pw_ent") is not None else None),
+            trio_ok=trio_ok.get(str(d["race_key"])))}
         if d["plan_key"] not in allowed:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])

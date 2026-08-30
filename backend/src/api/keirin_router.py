@@ -1453,6 +1453,10 @@ _SETTLED_COND = """(
 #:    `keirin/tests/test_type_lab_submit.py` が両者の一致を固定している。
 TYPE_LAB_RANK_LABELS: dict[str, str] = {
     "RANK_A_hit": "A_hit",
+    # 🔴 型A の3分割（2026-08-31）。`sell_plans_for` が pw_ent と三連複ゲートで
+    #    1つだけ選ぶので、1レース1商品は保たれる。
+    "RANK_A_trio": "A_trio",
+    "RANK_A_ana": "A_ana",
     "RANK_B_hit": "B_hit",
     "RANK_C_hit": "C_hit",
     "RANK_D_hit": "D_hit",

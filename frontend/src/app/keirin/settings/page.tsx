@@ -40,12 +40,15 @@ const RANK_ORDER: LegacyRankKey[] =
 //    ここを OFF にすると、その型のレースは入稿されない（他の型が肩代わりしない）。
 // 並びは型の順（A→F）。入稿の優先順位という概念は型ラボには無い（型が排他）。
 const TYPE_LAB_ORDER: TypeLabRankKey[] =
-  ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit"];
+  ["A_hit", "A_trio", "A_ana",
+   "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit"];
 
 // 🔴 `Record<TypeLabRankKey, ...>` にしておく。プランを増やしたらここが
 //    型エラーになり、ラベルの付け忘れに気づける。
 const TYPE_LAB_LABEL: Record<TypeLabRankKey, string> = {
   A_hit: "型A 鉄板（三連単・1着=◎/2着=○ 固定で3着流し 3〜5点）",
+  A_trio: "型A 鉄板・三連複（◎○の2車軸＋相手2点／順序を捨てて当たる回数を取る）",
+  A_ana: "型A 波乱狙い（三連単・◎を外した6車から確率上位 5点・「穴狙い」付与）",
   B_hit: "型B 堅い・中（三連単・確率上位から想定平均払戻3万円の床まで 3〜8点）",
   C_hit: "型C 崩れ筋（三連単・予測20倍以上から確率上位 12点）",
   D_hit: "型D 混戦・軸あり（三連複・◎○の2車軸＋相手4点／最人気の相手を1車外す）",
