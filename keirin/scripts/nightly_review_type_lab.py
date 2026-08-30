@@ -39,7 +39,7 @@
 | 決着クラスの分類 | `backend/src/services/keirin_type_lab_outcome.py` |
 | 軸信頼ゲート | `backend/src/services/keirin_type_lab_gate.py` |
 | 看板レース | `backend/src/services/keirin_marquee.py`（`src/marquee` 経由） |
-| 売るプラン | `src/type_lab.SELL_PLANS` |
+| 売るプラン | `src/type_lab.SELLABLE_PLAN_KEYS` |
 
 ## 使い方
 
@@ -77,7 +77,7 @@ from src.notify.discord import send                           # noqa: E402
 from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
 )
-from src.type_lab import SELL_PLANS                           # noqa: E402
+from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for   # noqa: E402
 
 LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
 
@@ -246,26 +246,43 @@ def _gate_ok(row: dict) -> bool:
         int(row["n_entries"]) if row.get("n_entries") is not None else None))
 
 
-def _baseline_pool() -> dict[str, list[tuple[int, int]]]:
-    """参照分布の母集団。プラン → `(賭け金, 払戻)` の一覧。
+def _sellable(d: dict) -> bool:
+    """いまの売り方でそのプランを売るか（車数・種別まで見る）。
 
+    🔴 **`SELLABLE_PLAN_KEYS` に入っているかだけで判定しない。** 9車の型F は
+       決勝で `F_pay`・それ以外で `F_hit` と種別で分かれる（2026-08-30〜）。
+    """
+    want = {p.key for p in sell_plans_for(
+        str(d.get("type_label") or ""), int(d.get("n_entries") or 7),
+        d.get("race_type"))}
+    return str(d.get("plan_key")) in want
+
+
+def _baseline_pool() -> dict[tuple[str, int], list[tuple[int, int]]]:
+    """参照分布の母集団。**(プラン, 車数)** → `(賭け金, 払戻)` の一覧。
+
+    🔴 **7車だけで作らない**（2026-08-30 是正）。それまで `mode='paper'`（＝7車）
+       しか見ておらず、**9車を売った日を7車の物差しで測っていた**。
+       2026-08-30 は売った商品の **38% が9車**で、7車の参照
+       （表示的中 21.6% / ROI 75.3%）に対し 9車は 19.4% / 75.9%。
+       期待を高く置いたまま「分布の 6.5%点」と報告していた。
     🔴 **本番と同じゲートを掛けてから積む。** 掛けないと「ゲートで底を外した今日」を
        「底も含む過去」と比べることになり、今日が実力より良く見える。
     """
     lo, hi = BASELINE_WINDOW
     with get_connection() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT t.plan_key, t.axis_sum, t.n_entries, t.race_type, t.budget, "
-            "       t.payout, r.cup_grade "
+            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, "
+            "       t.budget, t.payout, r.cup_grade "
             "FROM type_lab_picks t LEFT JOIN wt_races r ON r.race_key = t.race_key "
-            "WHERE t.mode = ? AND t.race_date BETWEEN ? AND ? "
+            "WHERE t.mode IN (?, ?) AND t.race_date BETWEEN ? AND ? "
             "  AND t.settled_at IS NOT NULL AND t.budget > 0",
-            ("paper", lo, hi))]
-    pool: dict[str, list[tuple[int, int]]] = {}
+            ("paper", "paper9", lo, hi))]
+    pool: dict[tuple[str, int], list[tuple[int, int]]] = {}
     for d in rows:
-        if d["plan_key"] not in SELL_PLANS or not _gate_ok(d):
+        if not _sellable(d) or not _gate_ok(d):
             continue
-        pool.setdefault(str(d["plan_key"]), []).append(
+        pool.setdefault((str(d["plan_key"]), int(d["n_entries"] or 7)), []).append(
             (int(d["budget"]), int(d["payout"] or 0)))
     return pool
 
@@ -283,15 +300,16 @@ def _band_baseline() -> dict[str, dict]:
     lo, hi = BASELINE_WINDOW
     with get_connection() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT t.plan_key, t.axis_sum, t.n_entries, t.race_type, t.win_tf_odds, "
+            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, "
+            "       t.win_tf_odds, "
             "       r.cup_grade FROM type_lab_picks t "
             "LEFT JOIN wt_races r ON r.race_key = t.race_key "
-            "WHERE t.mode = ? AND t.race_date BETWEEN ? AND ? "
+            "WHERE t.mode IN (?, ?) AND t.race_date BETWEEN ? AND ? "
             "  AND t.settled_at IS NOT NULL AND t.win_tf_odds IS NOT NULL",
-            ("paper", lo, hi))]
+            ("paper", "paper9", lo, hi))]
     out: dict[str, dict] = {}
     for d in rows:
-        if d["plan_key"] not in SELL_PLANS or not _gate_ok(d):
+        if not _sellable(d) or not _gate_ok(d):
             continue
         b = out.setdefault(str(d["plan_key"]), {"bands": Counter(), "odds": []})
         band = _OUTCOME.payout_band(d["win_tf_odds"])
@@ -635,8 +653,8 @@ def _q(sorted_vals: list[float], p: float) -> float:
     return sorted_vals[min(len(sorted_vals) - 1, int(p * len(sorted_vals)))]
 
 
-def section_today(sold, n_skipped: int, pool, n_boot: int,
-                  seed: int) -> tuple[list[str], dict]:
+def section_today(sold, n_skipped: int, pool, n_boot: int, seed: int,
+                  cars_of: dict[str, int] | None = None) -> tuple[list[str], dict]:
     out: list[str] = []
     total = summarize(sold, n_no_detail=n_skipped)
     by_plan = group_by(sold, "rank_key")
@@ -656,7 +674,12 @@ def section_today(sold, n_skipped: int, pool, n_boot: int,
                    f"{pct(s.net_hit_rate):>9}{s.bet:>10,}{s.payout:>10,}"
                    f"{pct(s.roi):>8}{(s.median_payout or 0):>10,}")
 
-    mix = {label: s.n_races for label, s in by_plan.items()}
+    # 🔴 **車数まで込みで構成を揃える**（2026-08-30）。9車は7車より当たりにくいので、
+    #    プランだけで揃えると 9車を売った日の期待が高く出る。
+    mix: dict[tuple[str, int], int] = {}
+    for r in sold:
+        cars = int((cars_of or {}).get(r.race_key) or 7)
+        mix[(r.rank_key, cars)] = mix.get((r.rank_key, cars), 0) + 1
     boot = _bootstrap(pool, mix, n_boot, seed)
     stats: dict = {"n": total.n_races, "roi": total.roi,
                    "net_hit": total.net_hit_rate}
@@ -679,8 +702,8 @@ def section_today(sold, n_skipped: int, pool, n_boot: int,
         out.append("    🔴 5〜95%の幅がそのまま「1日では何も言えない」ことの実測。"
                    "この幅の中なら今日の数字は情報を持たない。")
     else:
-        missing = sorted(set(mix) - set(pool))
-        joined = "、".join(missing)
+        joined = "、".join(sorted(f"{p}/{c}車" for p, c in set(mix) - set(pool)))
+        missing = joined
         why = (f"売ったプランが参照母集団に無い（{joined}）"
                if missing else "売った商品が無い")
         out.append(f"  参照分布: 作れない — {why}")
@@ -786,14 +809,14 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
         return (f"    {label:<12}{n:>4}件  表示的中 {hits / n:6.1%}"
                 f"  ROI {pay / bet:6.1%}")
 
-    sellable = [d for d in live if d["plan_key"] in SELL_PLANS]
+    sellable = [d for d in live if d["plan_key"] in SELLABLE_PLAN_KEYS]
     out.append("  ※ 母集団は `type_lab_picks`（モデル側の行）。売った商品ではない\n  　 ——ゲートで落ちた側は売っていないので、売った側だけでは比べられない。")
     out.append(f"  当日（{day}）")
     out.append(line("ゲート通過", [d for d in sellable if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in sellable if not _gate_ok(d)]))
 
     cum = _live_since(REVIEW_EPOCH, day)
-    cum = [d for d in cum if d["plan_key"] in SELL_PLANS]
+    cum = [d for d in cum if d["plan_key"] in SELLABLE_PLAN_KEYS]
     out.append(f"  累積（{REVIEW_EPOCH} 〜 {day}・前向き実地検証）")
     out.append(line("ゲート通過", [d for d in cum if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in cum if not _gate_ok(d)]))
@@ -842,7 +865,7 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
        Σ(的中確率×賭け金×オッズ)÷総賭け金）、型ラボへ全面移行した 2026-08-29
        からは **Σp（買い目の的中確率の合計）**。`confident_ev` 列は同じだが
        中身が別物で、大きさも桁が違う（1.3〜2.9 ↔ 0.32）。
-       世代の判定は日付ではなく **売ったプランが `SELL_PLANS` か**で行う
+       世代の判定は日付ではなく **売ったプランが `SELLABLE_PLAN_KEYS` か**で行う
        （移行が段階的でも自動で分かれる）。
 
     ⚠️ 1日1件なので件数はゆっくりしか増えない。**当日の1件では絶対に判断しない。**
@@ -873,7 +896,7 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
         if not picked:
             continue
         # 世代は「その日の自信ありが型ラボの商品か」で決める。
-        era = "Σp（型ラボ）" if picked[0].rank_key in SELL_PLANS else "EV（旧ランク・三連複）"
+        era = "Σp（型ラボ）" if picked[0].rank_key in SELLABLE_PLAN_KEYS else "EV（旧ランク・三連複）"
         eras.setdefault(era, []).append(d)
 
     n_no_flag = sum(1 for d, rows in by_day.items()
@@ -1052,7 +1075,7 @@ def section_escalate(pool) -> list[str]:
             hit, roi = rate(a)
             mark = ""
             if dim == "plan" and a["n"] >= ESCALATE_MIN_N:
-                base = pool.get(k) or []
+                base = [x for (pk, _c), v in pool.items() if pk == k for x in v]
                 if base:
                     b_roi = sum(p for _, p in base) / sum(b for b, _ in base)
                     b_hit = sum(1 for b, p in base if p >= b) / len(base)
@@ -1100,8 +1123,9 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("")
 
     lines.append("## §2 当日成績（売った商品）— **単日では判断しない**")
+    cars_of = {str(d["race_key"]): int(d.get("n_entries") or 7) for d in live}
     today, _ = section_today(sold, n_skipped, pool, n_boot,
-                             seed=int(day.replace("-", "")))
+                             seed=int(day.replace("-", "")), cars_of=cars_of)
     lines += today
     lines.append("")
 

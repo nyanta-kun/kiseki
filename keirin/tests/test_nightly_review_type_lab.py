@@ -169,3 +169,30 @@ def test_決着帯は確定三連単オッズから作る():
         "SQL で final_odds を引いている。的中時しか入らないので"
         "外れたレースの荒れ具合が測れなくなる")
     assert "final_odds" not in names
+
+
+def test_参照分布は9車も含む():
+    """🔴 参照は `mode='paper'`（7車）だけで作らない（2026-08-30 是正）。
+
+    9車は7車より当たりにくい（表示的中 19.4% ↔ 21.6%）ので、7車だけの参照で
+    9車を売った日を測ると**期待を高く置いたまま「大きく下振れた」と読む**。
+    2026-08-30 は売った商品の 38% が9車だった。
+    """
+    import ast
+
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_baseline_pool")
+    consts = [c.value for c in ast.walk(fn)
+              if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+    assert "paper9" in consts, "参照分布に9車（paper9）が入っていない"
+    assert any("mode IN" in c for c in consts), "mode の絞りが単一値のまま"
+
+
+def test_参照の構成は車数まで揃える():
+    """🔴 プランだけで揃えない。9車を売った日の期待が高く出る。"""
+    m = _load()
+    pool = {("A_hit", 7): [(10_000, 30_000)], ("A_hit", 9): [(10_000, 0)]}
+    got = m._bootstrap(pool, {("A_hit", 9): 2}, n_boot=20, seed=1)
+    assert got and all(roi == 0.0 for roi, _ in got), \
+        "9車を指定したのに7車の母集団から引いている"
