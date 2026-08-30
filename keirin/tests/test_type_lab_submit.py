@@ -616,3 +616,67 @@ def test_読み出しは古い型の行を落とす(monkeypatch):
     got = m._load_rows("2026-08-29")
     assert [r["plan_key"] for r in got] == ["C_hit"], \
         "組み直し前の型の行が残っています（1レース2商品になります）"
+
+
+# ───────────────── 軸信頼ゲートの ON/OFF（2026-08-31） ─────────────────
+
+def test_axis_gate_enabled_falls_back_to_on(monkeypatch):
+    """🔴 **読めなければ ON に倒す。**
+
+    ゲートは「商品の定義」なので、設定が読めないことを理由に**外して**しまうと
+    その日だけ落とすはずのレースを黙って売る。自動公開（読めなければ承認制＝
+    公開しない側）とは倒す向きが逆であることを固定する。
+    """
+    import scripts.netkeirin_submit_type_lab as M
+
+    class _Boom:
+        def __enter__(self):
+            raise RuntimeError("DB に届かない")
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(M, "get_connection", lambda: _Boom())
+    assert M.axis_gate_enabled() is True
+
+
+def test_axis_gate_enabled_reads_the_global_row(monkeypatch):
+    """`_global` 行の値をそのまま返す。行が無い・NULL のときも ON。"""
+    import scripts.netkeirin_submit_type_lab as M
+
+    def _conn(value):
+        class _C:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql, params=None):
+                assert "netkeirin_settings" in sql and "_global" in str(params)
+
+                class _R:
+                    @staticmethod
+                    def fetchone():
+                        return None if value is _MISSING else {"axis_gate_enabled": value}
+                return _R()
+        return _C()
+
+    for value, want in ((True, True), (False, False), (None, True), (_MISSING, True)):
+        monkeypatch.setattr(M, "get_connection", lambda v=value: _conn(v))
+        assert M.axis_gate_enabled() is want, value
+
+
+_MISSING = object()
+
+
+def test_the_gate_is_still_applied_by_default():
+    """🔴 既定は ON。トグルを足しただけで挙動が変わっていないこと。"""
+    from src.database import get_connection  # noqa: F401  (import できることの確認)
+    import scripts.netkeirin_submit_type_lab as M
+    src = (REPO / "scripts" / "netkeirin_submit_type_lab.py").read_text(encoding="utf-8")
+    # ゲートの呼び出しはフラグと AND で結ばれていること（外し忘れの検出）。
+    assert "if use_axis_gate and not _passes_axis_gate(row):" in src
+    # フラグは run() の中で**1回だけ**読む（行ごとに DB を叩かない）。
+    assert src.count("use_axis_gate = axis_gate_enabled()") == 1
+    assert callable(M.axis_gate_enabled)

@@ -796,6 +796,7 @@ def migrate_db():
                 enabled           INTEGER NOT NULL DEFAULT 1,
                 title_template    TEXT NOT NULL DEFAULT '',
                 comment_template  TEXT NOT NULL DEFAULT '',
+                axis_gate_enabled INTEGER NOT NULL DEFAULT 1,
                 updated_at        TEXT DEFAULT (datetime('now'))
             )
         """)
