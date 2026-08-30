@@ -47,17 +47,37 @@ def test_sell_plans_matches_constant():
     assert set(SELL_PLANS) <= set(PLANS), "SELL_PLANS に PLANS 外のキーがある"
 
 
-def test_nine_car_type_f_is_final_only_and_pay():
-    """9車の型F は**決勝だけ**・**F_pay**。
+def test_nine_car_type_f_splits_by_race_type():
+    """9車の型F は**決勝は F_pay・それ以外は F_hit**（2026-08-30 ユーザー判断）。
 
-    🔴 決勝限定は「売る／売らない」の絞りで、hit/pay の分岐ではない。
-       9車の型F を全部売ると表示的中 6.07%・ROI 60.5% で壁を大きく下回る。
+    🔴 **決勝以外を「売らない」に戻さないこと。** 2026-08-30 に 9車開催の
+       看板8件（選抜3・特選3・特秀2）が無商品になり、旧ランクの看板穴埋めも
+       型ラボ全面移行で機能しなくなっていた（埋まらなかった看板 8/29 15件 →
+       8/30 21件）。「看板には必ず出す」方針を優先した選択。
+    🔴 全部 `F_pay` で売ると表示的中 6.07%・ROI 60.5% で壁の下。だから
+       決勝以外は当たる回数を売る `F_hit` に替えてある。
     """
     assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
-    assert sell_plans_for("F", 9, "準決勝") == []
-    assert sell_plans_for("F", 9, None) == []
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
+    # 7車は変えていない
+    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_pay"]
+    assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_pay"]
     # 型F以外は9車でも種別によらず売る
     assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
+
+
+def test_every_type_has_a_plan_for_9car():
+    """🔴 9車も全6型に売るものがある（**見送りの型を作らない**）。
+
+    ここが 0 に戻ったら、その型のレースは商品ゼロになる。看板が含まれていれば
+    「看板には必ず出す」方針に反する（2026-08-30 に実際に起きた）。
+    """
+    for t in "ABCDEF":
+        for rt in ("決勝", "準決勝", "選抜", "特選", "特秀", "一般", None):
+            got = sell_plans_for(t, 9, rt)
+            assert len(got) == 1, f"型{t}/9車/{rt} → {[p.key for p in got]}"
 
 
 # ───────────────────────── 賭け金を作り直さない ─────────────────────────
@@ -175,23 +195,46 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 
 # ───────────────────────── 勝負アイコン ─────────────────────────
 
-def test_only_type_f_is_longshot():
-    """穴狙いは型F（`F_pay`）だけ。**複数可**なので選定は要らない。"""
+def test_only_type_f_pay_is_longshot():
+    """穴狙いは `F_pay` だけ。**複数可**なので選定は要らない。
+
+    🔴 **アイコンの表は入稿しうるプラン全体を覆うこと。** 9車の型F が売る
+       `F_hit` が漏れると `.get(..., 既定)` で黙って既定へ落ちる。
+    🔴 `F_hit` に穴狙いを付けていないのは 2026-08-30 のユーザー判断
+       （「穴狙いのアイコンは現状のまま様子見」）。広げると効果の切り分けが
+       さらに難しくなる。
+    """
+    from src.type_lab import SELLABLE_PLAN_KEYS
     from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
     from src.netkeirin_client import ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT
 
-    assert set(ACT_TYPE_BY_PLAN) == set(SELL_PLANS), "売るプランと表がずれている"
+    assert set(ACT_TYPE_BY_PLAN) == set(SELLABLE_PLAN_KEYS), \
+        "入稿しうるプランと表がずれている"
     assert ACT_TYPE_BY_PLAN["F_pay"] == ACT_TYPE_LONGSHOT
     assert all(v == ACT_TYPE_DEFAULT for k, v in ACT_TYPE_BY_PLAN.items()
                if k != "F_pay")
 
 
+def test_sellable_plan_keys_covers_every_type_and_car_count():
+    """🔴 `SELLABLE_PLAN_KEYS` は実際に売りうるキーを全部含む。
+
+    ここが漏れると `_load_rows` の絞りでその商品が**黙って消える**。
+    """
+    from src.type_lab import SELLABLE_PLAN_KEYS
+
+    for t in "ABCDEF":
+        for n in (7, 9):
+            for rt in ("決勝", "準決勝", "選抜", "一般", None):
+                for pl in sell_plans_for(t, n, rt):
+                    assert pl.key in SELLABLE_PLAN_KEYS, (t, n, rt, pl.key)
+
+
 @pytest.mark.parametrize("n_entries,race_type", [(7, "決勝"), (7, "準決勝"),
                                                  (7, "特選"), (9, "決勝")])
-def test_type_f_is_longshot_regardless_of_car_count(n_entries, race_type):
-    """🔴 穴狙いは**車数で変わらない**（アイコンはプランだけで決まる）。
+def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
+    """🔴 `F_pay` を売るときのアイコンは**車数で変わらない**。
 
-    9車の型F は決勝だけ売るが、売るときは 7車と同じ `F_pay` なので同じアイコン。
+    ⚠️ 9車の**決勝以外**は `F_hit` を売るのでこの表には含めない（別テスト）。
     商品の性格とも一致する——9車決勝の `F_pay` は表示的中 2.99%（67件中2件）・
     払戻中央 169,545円 で、この体系で最も極端な一撃枠。
 

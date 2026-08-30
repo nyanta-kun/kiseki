@@ -40,7 +40,7 @@ const RANK_ORDER: LegacyRankKey[] =
 //    ここを OFF にすると、その型のレースは入稿されない（他の型が肩代わりしない）。
 // 並びは型の順（A→F）。入稿の優先順位という概念は型ラボには無い（型が排他）。
 const TYPE_LAB_ORDER: TypeLabRankKey[] =
-  ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay"];
+  ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit"];
 
 // 🔴 `Record<TypeLabRankKey, ...>` にしておく。プランを増やしたらここが
 //    型エラーになり、ラベルの付け忘れに気づける。
@@ -51,6 +51,7 @@ const TYPE_LAB_LABEL: Record<TypeLabRankKey, string> = {
   D_hit: "型D 混戦・軸あり（三連複・◎○の2車軸＋相手4点／最人気の相手を1車外す）",
   E_hit: "型E 混戦・中（三連単・予測30倍以上から確率上位 14点）",
   F_pay: "型F 大混戦（三連単・1着=◎固定/2着2車/3着流し 4点・「穴狙い」付与）",
+  F_hit: "型F 大混戦・9車の決勝以外（三連単・軸2車＋相手2車の6順列 12点）",
 };
 
 // 🔴 型ラボのプランは `TYPE_LAB_LABEL` が持つので**ここからは除く**。

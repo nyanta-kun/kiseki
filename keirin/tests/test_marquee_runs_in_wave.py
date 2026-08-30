@@ -18,6 +18,17 @@
 2. その呼び出しが `netkeirin_submit_wt.py`（ランク入稿）**より後**にあること
 
 ⚠️ 順序が逆転しても例外は出ないので、テストでしか守れない。
+
+## 🔴 2026-08-30: 朝（`daily_picks_wt.sh`）は対象外になった
+
+型ラボ全面移行にともない、朝のバッチからは**旧ランクの入稿と看板穴埋めを外した**
+（ユーザー決定・PR #380）。旧ランクは全て `enabled=false` で、穴埋めは存在しない
+7S を呼んで全滅していた（8/30「埋まらなかった21件」）。看板の担保は型ラボ側
+（9車の型F を決勝以外も売る・PR #379）へ移した。
+
+したがってここで順序を守るのは**昼・夕の波（`wave_submit_wt.sh`）だけ**。
+朝については「もう呼んでいないこと」を `test_daily_batch_no_longer_submits_legacy`
+で逆向きに固定する（消したはずのものが復活したら落ちる）。
 """
 from __future__ import annotations
 
@@ -49,7 +60,7 @@ def _index_of(lines: list[str], script: str) -> int:
     return -1
 
 
-@pytest.mark.parametrize("path", [DAILY, WAVE], ids=["daily_picks_wt", "wave_submit_wt"])
+@pytest.mark.parametrize("path", [WAVE], ids=["wave_submit_wt"])
 def test_wave_script_calls_marquee(path: Path):
     """各波のスクリプトが看板穴埋めを呼んでいること。"""
     lines = _code_lines(path)
@@ -58,7 +69,7 @@ def test_wave_script_calls_marquee(path: Path):
         "cron の独立エントリへ戻すと、波より先に走って看板を横取りしうる。")
 
 
-@pytest.mark.parametrize("path", [DAILY, WAVE], ids=["daily_picks_wt", "wave_submit_wt"])
+@pytest.mark.parametrize("path", [WAVE], ids=["wave_submit_wt"])
 def test_marquee_runs_after_rank_submission(path: Path):
     """穴埋めは**ランク入稿より後**であること（1レース1商品の横取り防止）。"""
     lines = _code_lines(path)
@@ -71,7 +82,7 @@ def test_marquee_runs_after_rank_submission(path: Path):
         "（横取りされても例外は出ず、ログ上は正常に見える）。")
 
 
-@pytest.mark.parametrize("path", [DAILY, WAVE], ids=["daily_picks_wt", "wave_submit_wt"])
+@pytest.mark.parametrize("path", [WAVE], ids=["wave_submit_wt"])
 def test_marquee_is_passed_the_batch_date(path: Path):
     """穴埋めにバッチの対象日を渡していること。
 
@@ -101,8 +112,11 @@ def test_marquee_receives_the_same_session_as_the_ranks():
 
     ⚠️ 壊れても例外は出ない。ずれるのは「バッチが遅れた日」だけなので、
        ふだんは何事も無く動いて見える。
+
+    🔴 2026-08-30 から朝（`daily_picks_wt.sh`）は対象外（旧ランク入稿・穴埋めごと
+       外した）。残るのは昼・夕の波だけ。
     """
-    for path in (DAILY, WAVE):
+    for path in (WAVE,):
         lines = _code_lines(path)
         i_m = _index_of(lines, "submit_marquee_wt.py")
         i_r = _index_of(lines, "netkeirin_submit_wt.py")
@@ -123,3 +137,28 @@ def test_marquee_receives_the_same_session_as_the_ranks():
         assert want in marquee, (
             f"{path.name}: ランクは {want} で走るのに穴埋めの波が違う"
             f"（ランク: {ranks} / 穴埋め: {marquee}）")
+
+
+def test_daily_batch_no_longer_submits_legacy():
+    """🔴 朝のバッチが旧ランク入稿・看板穴埋めを**呼ばないこと**（2026-08-30）。
+
+    復活すると、型ラボが取るはずのレースを 1レース1商品の制約で横取りする
+    （しかも旧ランクは全て無効なので、横取りした先で何も入稿しない）。
+    """
+    lines = _code_lines(DAILY)
+    assert _index_of(lines, "netkeirin_submit_wt.py") == -1, \
+        "朝のバッチに旧ランク入稿が復活しています"
+    assert _index_of(lines, "submit_marquee_wt.py") == -1, \
+        "朝のバッチに看板穴埋めが復活しています"
+
+
+def test_daily_batch_runs_the_type_lab():
+    """🔴 朝のバッチが型ラボを呼ぶこと（これが無いと当日の商品が出ない）。
+
+    別 cron の時刻合わせにしないのは、型ラボが**当日データ収集の後**でなければ
+    動かないため（自前でモデル推論するので `wave-picks-wt` には依存しないが
+    `wt_entries` は要る）。実行順で保証する。
+    """
+    lines = _code_lines(DAILY)
+    assert _index_of(lines, "type_lab_daily.sh") >= 0, \
+        "朝のバッチが型ラボを呼んでいません"

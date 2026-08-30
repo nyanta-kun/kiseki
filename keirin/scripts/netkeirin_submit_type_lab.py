@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 import subprocess
 import sys
 from datetime import date, datetime
@@ -88,7 +89,7 @@ from src.submission_skips import (                           # noqa: E402
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
 )
 from src.marquee import is_fill_target                       # noqa: E402
-from src.type_lab import SELL_PLANS, sell_plans_for          # noqa: E402
+from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for  # noqa: E402
 from src.type_lab_submission import build_submission         # noqa: E402
 
 # 🔴 **共通部品は既存スクリプトから import する**（写さない）。
@@ -96,6 +97,7 @@ from src.type_lab_submission import build_submission         # noqa: E402
 #    2箇所に分かれる。このリポジトリが繰り返し事故を起こした型。
 from scripts.netkeirin_submit_wt import (                    # noqa: E402
     ORIGIN_RANK,
+    REVIEW_URL,
     _already_submitted,
     _approval_required,
     auto_publish_submitted,
@@ -133,6 +135,11 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     "D_hit": ACT_TYPE_DEFAULT,
     "E_hit": ACT_TYPE_DEFAULT,
     "F_pay": ACT_TYPE_LONGSHOT,
+    # 🔴 9車の型F（決勝以外）で売る。**穴狙いアイコンは付けない**
+    #    （2026-08-30 ユーザー判断「穴狙いのアイコンは現状のまま様子見」）。
+    #    F_pay と同じ型だがアイコンの適用範囲を広げると効果の切り分けが
+    #    さらに難しくなる（今も商品との交絡が切れていない）。
+    "F_hit": ACT_TYPE_DEFAULT,
 }
 
 #: 軸信頼ゲートの正本。**backend 側のファイルを読み込んで束縛する**
@@ -188,7 +195,7 @@ def _load_rows(day: str) -> list[dict]:
     out = []
     for r in rows:
         d = dict(r)
-        if d["plan_key"] not in SELL_PLANS:
+        if d["plan_key"] not in SELLABLE_PLAN_KEYS:
             continue
         if str(d["type_label"]) != current[(str(d["race_key"]), str(d["mode"]))][1]:
             continue        # 組み直し前の古い型の行
@@ -220,7 +227,7 @@ def races_taken_by_other_ranks(already: set[tuple[str, str]]) -> set[str]:
           `already` が全ランクを含むせいで**常に空集合**になっていた
           （＝ガードが一度も効かない。2026-08-28 の dry-run で発覚）。
     """
-    return {rk for rk, rank in already if rank not in SELL_PLANS}
+    return {rk for rk, rank in already if rank not in SELLABLE_PLAN_KEYS}
 
 
 def _combo_cars(combo: str) -> list[int]:
@@ -447,7 +454,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #    「型Cの商品」と「組み直し前の型Fの商品」を同時に出した。
     #    ⚠️ 取消済みも `already` に含まれる＝取り消したレースは出し直さない
     #      （看板穴埋めと同じ方針）。
-    taken_by_type_lab = {rk for rk, rank in already if rank in SELL_PLANS}
+    taken_by_type_lab = {rk for rk, rank in already if rank in SELLABLE_PLAN_KEYS}
 
     # ── 昼・夕は「まだ入稿していないレース」を組み直してから読み直す ──
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への
@@ -476,6 +483,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     skip = _make_skip(dry_run)
     skipped: dict[str, int] = {}
     titles: list[str] = []
+    #: Discord の内訳用（`(会場, プラン)`）。**レース名は入れない**——通知は
+    #: 件数と内訳だけにする（一覧は上の print で cron.log に残る）。
+    submitted: list[tuple[str, str]] = []
     client = None if dry_run else NetkeirinClient(propose_only=propose_only)
 
     def bump(code: str) -> None:
@@ -536,6 +546,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             taken_by_type_lab.add(race_key)
             n_ok += 1
             titles.append(f"{venue}{race_no}R({plan}) {msg}")
+            submitted.append((str(venue), str(plan)))
         else:
             bump("failed")
 
@@ -552,8 +563,6 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     n_publish_ng = len(published) - n_published
 
     if n_ok and not dry_run:
-        head = ("入稿案" if propose_only
-                else "公開" if n_published else "下書き")
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
         #    2026-08-28〜29 は存在しない "keirin" を渡していて **毎回 ValueError で
         #    落ちていた**（入稿そのものは終わっているのに `type_lab_daily.sh` が
@@ -562,10 +571,25 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         # 🔴 **通知の失敗で入稿を失敗扱いにしない。** ここへ来た時点で netkeirin
         #    への送信は終わっている。例外を上げると呼び出し側が再実行を考える。
         try:
-            body = "\n".join(f"・{t}" for t in titles[:40])
+            # 🔴 **レースを1件ずつ並べない**（2026-08-30 ユーザー指摘）。50件超が
+            #    スマホで数画面ぶん流れて、肝心の件数が埋もれる。出すのは件数だけ。
+            #    レース名の一覧は cron.log に残っている（上の print）。
+            #
+            # 🔴 **本文はモードで変える**（2026-08-30 ユーザー指定）:
+            #      公開まで済んでいる → 何を売ったかが確定しているので**ランク別の件数**
+            #      下書き／入稿案のまま → まだ人の操作が要るので**確認ページのリンク**
+            #    「公開したのにリンクを出す」と何もすることが無いのにページを開かせ、
+            #    「下書きなのに内訳だけ出す」と承認を促す導線が消える。
+            if n_published:
+                c = Counter(p for _, p in submitted)
+                body = "ランク別 " + " ・ ".join(
+                    f"{k} {v}" for k, v in
+                    sorted(c.items(), key=lambda kv: (-kv[1], kv[0])))
+            else:
+                body = f"入稿確認 → {REVIEW_URL}"
             if n_publish_ng:
                 body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
-            send(f"🧪 **型ラボ {head} {n_ok}件**（{day} / {session}）\n{body}",
+            send(f"📮 **NetKeirin入稿 {n_ok}件**（{day} / {session}）\n{body}",
                  channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報
             print(f"[type_lab_submit] Discord通知失敗（入稿は完了している）: {e!r}",

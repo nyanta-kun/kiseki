@@ -74,6 +74,36 @@ BEHIND_MID = 11.0
 #: 信頼度傾斜の既定の床（＝当たったら最低この倍率を予測ベースで確保する）。
 DEFAULT_FLOOR_MULT = 1.3
 
+#: 合成オッズ `1/Σ(1/予測オッズ)` の下限（2026-08-30・ユーザー決定）。
+#:
+#: 🔴 **これは点数の上限を「配当の下限」から決める仕組み。** ダッチ配分は
+#:    「どこが当たっても合成オッズぶん」なので、**点数がそのまま払戻の天井**になる。
+#:    2026-08-30 四日市6R（C_hit・12点・合成 予測3.18倍）は**的中して払戻
+#:    10,080円**（投資10,000円）だった。
+#:
+#: 🔴 **点数が可変なプラン（`prob_top` ＝ B/C/E）にだけ掛ける。** 型F の6順列・
+#:    型D の「最人気を1点外した4点」・型A の「1着2着固定で3着流し」は
+#:    **構成が商品の定義**で、そこから確率順に削ると別物になる。
+#:
+#: ⚠️ **最初の測定は全プランに掛けていて交絡していた**（2026-08-30）。
+#:    「3倍なら表示的中を落とさず的中中央 +10%」に見えたのは、固定構成プランまで
+#:    削っていた効果。可変プラン限定で測り直すと 3倍はほぼ無効:
+#:
+#:      下限   表示的中(探索/確認)   的中中央          的中して1.2倍未満
+#:      現行   17.40% / 18.16%   21,920/22,820円   22.8% / 22.3%
+#:      3倍    17.30% / 18.07%   22,320/23,000円   22.6% / 22.3%  ← 効かない
+#:      4倍    16.52% / 17.46%   26,250/25,600円   17.3% / 18.0%
+#:
+#: 🔴 **ROI の改善策ではない。** どの下限でも 73〜78% で窓をまたぐと順位も
+#:    入れ替わる（控除率の壁）。動くのは店頭KPIだけ。
+#: 🔴 **点数を減らすと表示的中は上がる、ではない。** 7C の三連複で観測された
+#:    「点数減で表示的中↑」（[[keirin_trio_exclusion_model_2026_08_25]]）は
+#:    落ちる的中がほぼ全部ガミだったから。型ラボはダッチ＋2万円ゲートで
+#:    ガミが 2% しかなく、削ると**素の的中がそのまま消える**。
+SYNTHETIC_ODDS_FLOOR = 0.0
+#: 下限で削っても最低これだけは残す（1点にすると商品の性格が別物になる）。
+MIN_LEGS_AFTER_FLOOR = 2
+
 
 
 # ───────────────────────────── 型判定 ─────────────────────────────
@@ -205,6 +235,26 @@ PLANS: dict[str, Plan] = {
 #:
 #: 実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
+
+#: 🔴 **2026-08-30 変更（ユーザー判断）: 9車の型F は「決勝は `F_pay`・それ以外は
+#:    `F_hit`」で必ず売る。** それまでは決勝以外を**まるごと売らない**設計だった
+#:    （`plans_for` が空を返す）。
+#:
+#:    そのままでは 2026-08-30 に **9車開催の看板8件（選抜3・特選3・特秀2）が
+#:    無商品**になった。従来は旧ランクの看板穴埋め（7S）が拾っていたが、
+#:    型ラボ全面移行で 7S が無効になり、穴埋めが機能しなくなったため
+#:    （実測: 埋まらなかった看板 8/29 15件 → 8/30 21件）。
+#:
+#:    ⚠️ **売らない判断の根拠だった数字は消えていない。** 9車の型F を全部
+#:       `F_pay` で売ると表示的中 6.07%・ROI 60.5% で壁を大きく下回る。
+#:       そこで**決勝以外は `F_hit`**（当たる回数を売る側）に替える。
+#:       9車の型F 全体でも `F_hit` なら表示的中は `F_pay` より高い
+#:       （決勝で 16.42% ↔ 2.99%）。**収支は 20か月でも判定できていない**ので、
+#:       これは「看板には必ず出す」方針を優先した選択であって、
+#:       ROI が上がるという主張ではない。前向きに台帳で確かめる。
+NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = {"決勝": "F_pay"}
+#: 上の表に無い種別（＝決勝以外）で売るプラン。
+NINE_CAR_TYPE_F_SELL_DEFAULT = "F_hit"
 #: 🔴 **2026-08-28 に `F_hit` → `F_pay` へ変更**（本番移行・ユーザー判断）。
 #:    車数や種別で hit / pay を分けない、という方針に揃えた。
 #:    ⚠️ ここは「売る／売らない」の分岐（`NINE_CAR_TYPE_F_RACE_TYPES`）とは別物。
@@ -250,6 +300,17 @@ NINE_CAR_TYPE_F_PLANS = ("F_pay",)
 #:    「型は edge を作らない。決めるのは帯とカバレッジだけ」と同じ構造。
 SELL_PLANS: tuple[str, ...] = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
 
+#: 型ラボが**入稿しうる**プランの全体（2026-08-30）。
+#:
+#: 🔴 `SELL_PLANS` は 7車の固定集合で、**9車の型F はここに無い `F_hit` を売る**。
+#:    「型ラボの商品か」を判定する場所（既存ランクとの取り合い・重複判定）で
+#:    `SELL_PLANS` を使うと、9車の型F の入稿を**他ランクの商品と誤認する**。
+#:    そういう用途はこちらを使うこと。
+SELLABLE_PLAN_KEYS: frozenset[str] = (
+    frozenset(SELL_PLANS)
+    | {NINE_CAR_TYPE_F_SELL_DEFAULT}
+    | set(NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.values()))
+
 
 def plans_for(type_label: str, n_entries: int = 7,
               race_type: str | None = None) -> list[Plan]:
@@ -262,21 +323,21 @@ def plans_for(type_label: str, n_entries: int = 7,
        `sell_plans_for()`。7車は A_pay / F_hit を組むが売らない——比較台を
        残すためで、混同すると売っていない側の成績が消える。
 
+    🔴 **2026-08-30 から 9車の型F も種別で落とさない。** 以前は決勝以外を空にして
+       いたが、それは「生成」を止める形で「売らない」を実現していた。
+       **比較台が消えるので良くない**（売らなかった側の成績が事後に測れない）。
+       売る／売らないは `sell_plans_for` の責務へ寄せた。
+
     >>> [p.key for p in plans_for("F")]
     ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_pay']
-    >>> plans_for("F", 9, "準決勝")
-    []
+    ['F_hit', 'F_pay']
+    >>> [p.key for p in plans_for("F", 9, "準決勝")]
+    ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("A", 9, "特選")]
     ['A_hit', 'A_pay']
     """
-    plans = [p for p in PLANS.values() if p.type_label == type_label]
-    if n_entries == 9 and type_label == "F":
-        if str(race_type or "") not in NINE_CAR_TYPE_F_RACE_TYPES:
-            return []
-        return [p for p in plans if p.key in NINE_CAR_TYPE_F_PLANS]
-    return plans
+    return [p for p in PLANS.values() if p.type_label == type_label]
 
 
 def sell_plans_for(type_label: str, n_entries: int = 7,
@@ -291,15 +352,27 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F")]
     ['F_pay']
+    🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
+       それ以外は `F_hit` と種別で分かれるので、固定の集合では表せない。
+       ここでも返すのは**1つだけ**なので 1レース1商品は保たれる。
+
     >>> [p.key for p in sell_plans_for("F", 9, "決勝")]
     ['F_pay']
-    >>> sell_plans_for("F", 9, "準決勝")
-    []
+    >>> [p.key for p in sell_plans_for("F", 9, "準決勝")]
+    ['F_hit']
+    >>> [p.key for p in sell_plans_for("F", 9, None)]
+    ['F_hit']
     >>> [p.key for p in sell_plans_for("A", 9, "特選")]
     ['A_hit']
+    >>> [p.key for p in sell_plans_for("F", 7)]
+    ['F_pay']
     """
-    return [p for p in plans_for(type_label, n_entries, race_type)
-            if p.key in SELL_PLANS]
+    plans = plans_for(type_label, n_entries, race_type)
+    if n_entries == 9 and type_label == "F":
+        key = NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.get(
+            str(race_type or ""), NINE_CAR_TYPE_F_SELL_DEFAULT)
+        return [p for p in plans if p.key == key]
+    return [p for p in plans if p.key in SELL_PLANS]
 
 
 def build_legs(shape: RaceShape, plan: Plan,
@@ -325,6 +398,7 @@ def build_legs(shape: RaceShape, plan: Plan,
         cs = cs[1:]                                          # 最人気を1点外す
         cs.sort(key=lambda c: -float(probs.get(c, 0.0)))
         out = cs[:plan.n_partners]
+        # 型D は「最人気を1点外した4点」が商品の定義。下限で削らない。
         return out if len(out) == plan.n_partners else None
 
     # ── 三連単 ──
@@ -360,7 +434,37 @@ def build_legs(shape: RaceShape, plan: Plan,
         return None
 
     out = [tuple(c) for c in out if len(set(c)) == 3 and _pos(pred_odds.get(tuple(c)))]
+    if plan.structure == "prob_top":
+        out = _apply_synthetic_floor(out, pred_odds, probs)
     return out or None
+
+
+def _apply_synthetic_floor(legs: Sequence, pred_odds: Mapping,
+                           probs: Mapping) -> list:
+    """合成オッズが `SYNTHETIC_ODDS_FLOOR` を割らないところまで確率の高い順に残す。
+
+    🔴 **確率の高い順に積む**（予測オッズの安い順ではない）。落とすのは
+       「来にくいのに合成を薄める目」であって、配当の高い目ではない。
+    🔴 **`MIN_LEGS_AFTER_FLOOR` は必ず残す。** 1点まで削ると商品が別物になる。
+    ⚠️ 呼ぶのは `prob_top`（点数が可変なプラン）だけ。`all6` や `fixed12` に
+       掛けると順列や固定構成が欠けて商品が別物になる。
+    """
+    if SYNTHETIC_ODDS_FLOOR <= 0 or len(legs) <= MIN_LEGS_AFTER_FLOOR:
+        return list(legs)
+    ordered = sorted(legs, key=lambda c: -float(probs.get(c, 0.0)))
+    keep: list = []
+    inv = 0.0
+    for c in ordered:
+        o = pred_odds.get(c)
+        if not _pos(o):
+            continue
+        o = float(o)
+        if (len(keep) >= MIN_LEGS_AFTER_FLOOR and inv > 0
+                and 1.0 / (inv + 1.0 / o) < SYNTHETIC_ODDS_FLOOR):
+            break
+        keep.append(c)
+        inv += 1.0 / o
+    return keep
 
 
 def _pos(v) -> bool:
@@ -482,6 +586,7 @@ def rule_version(n_entries: int = 7) -> str:
     payload: dict = (
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_legs,
              round(v.sigma_max, 6), v.alloc, v.floor_mult] for k, v in sorted(PLANS.items())}
+        | {"_floor": [SYNTHETIC_ODDS_FLOOR, MIN_LEGS_AFTER_FLOOR]}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET})
     if n_entries == 9:
         payload["_sell9"] = [list(NINE_CAR_TYPE_F_RACE_TYPES),

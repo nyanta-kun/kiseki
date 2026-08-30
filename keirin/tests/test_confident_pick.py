@@ -104,13 +104,22 @@ def test_race_expected_value_rejects_broken_detail():
 
 
 def test_daily_batch_picks_after_submitting():
-    """🔴 選定は**入稿の後**に走ること。先だと母集団の一部だけで選んでしまう。"""
-    sh = (REPO / "scripts" / "daily_picks_wt.sh").read_text(encoding="utf-8")
-    i_rank = sh.index("scripts/netkeirin_submit_wt.py")
-    i_fill = sh.index("scripts/submit_marquee_wt.py")
+    """🔴 選定は**入稿の後**に走ること。先だと母集団の一部だけで選んでしまう。
+
+    🔴 2026-08-30 に朝のバッチから旧ランク入稿・看板穴埋めを外したので
+       （PR #380）、この順序を担保する場所は `type_lab_daily.sh` に移った。
+       朝のバッチはその1本を呼ぶだけ。
+    """
+    sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    i_submit = sh.index("scripts/netkeirin_submit_type_lab.py")
     i_pick = sh.index("scripts/pick_confident_race_wt.py")
-    assert i_pick > i_rank, "自信ありの選定がランク入稿より前にあります"
-    assert i_pick > i_fill, "自信ありの選定が看板穴埋めより前にあります"
+    assert i_pick > i_submit, "自信ありの選定が型ラボの入稿より前にあります"
+
+    daily = (REPO / "scripts" / "daily_picks_wt.sh").read_text(encoding="utf-8")
+    assert "scripts/type_lab_daily.sh" in daily, \
+        "朝のバッチが型ラボを呼んでいません（自信ありも走らなくなる）"
+    assert "scripts/pick_confident_race_wt.py" not in daily, \
+        "朝のバッチが自信ありを二重に呼んでいます（型ラボ側で呼ぶ）"
 
 
 def test_wave_submit_does_not_pick_again():

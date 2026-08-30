@@ -202,7 +202,7 @@ type RankFilter =
   | "7T1"
   | "7T3"
   // 型ラボのプラン（2026-08-28 の全面移行〜）。`rank_key` はプラン名そのもの。
-  | "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay";
+  | "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit";
 
 // 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
@@ -218,6 +218,7 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "D_hit", label: "型D" },
   { key: "E_hit", label: "型E" },
   { key: "F_pay", label: "型F" },
+  { key: "F_hit", label: "型F(9車)" },
   // 7S（2026-08-14 に旧 7SS / 7A を統合）
   { key: "7S", label: "7S" },
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）
