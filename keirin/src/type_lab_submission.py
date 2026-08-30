@@ -65,6 +65,34 @@ STAKE_UNIT = 100
 #: 既存ランクの `classify_shape` と違い「表示専用ラベル」ではない
 #: ＝ここに書いたことと実際に買うものが構造的にずれない。
 #: 🔴 拮抗度を断定する語を型A〜C（堅い側）と型D〜F（混戦側）で取り違えないこと。
+#: 本文冒頭のレース見解を**プランで上書き**する。
+#: 🔴 `A_ana` に型A の見解（「荒れる要素も見当たらない」）をそのまま出すと、
+#:    直後の買い目説明（◎が飛ぶ側に賭ける）と矛盾する。
+PLAN_NOTES: dict[str, str] = {
+    "A_ana": ("指数の上位2車ははっきり抜けている一方で、1着がどれになるかは"
+              "読みにくい一戦です。堅く見えるレースほど、上位が崩れたときの"
+              "配当は大きくなります。"),
+}
+
+#: 【二軸】ブロックを**プランで上書き**する。`{a1}` `{a2}` を差し込む。
+#: 🔴 `A_ana` は ◎ を1点も買わないので、既定の「二軸は◎○です」だけだと
+#:    買い目と説明が食い違う（買っていない車を軸として案内してしまう）。
+PLAN_AXIS_NOTES: dict[str, str] = {
+    # 🔴 ここで ◎ を軸1に付けないこと。`marks_for` は軸1を買わない商品では
+    #    **買っている車の指数上位**へ ◎ を振り直すので、文面で軸1を ◎ と
+    #    書くと印と食い違う。
+    "A_ana": ("【二軸】\n本レースの指数上位2車は {a1}番・{a2}番です。"
+              "ただしこの商品は {a1}番 が3着以内に残らない側に賭けているため、"
+              "買い目に {a1}番 は入っていません。印は買っている車だけに付けています。"),
+}
+
+#: タイトル後半（レース見解）を**プランで上書き**する。
+#: 🔴 `A_ana` は「◎が飛ぶ側」を売るので、型A の見解「二軸が堅い一戦」と
+#:    そのまま並べると **商品説明が自己矛盾する**（狙いと見解が逆）。
+PLAN_VIEWS: dict[str, str] = {
+    "A_ana": "堅く見えるが一着は読みにくい一戦",
+}
+
 TYPE_VIEWS: dict[str, str] = {
     "A": "二軸が堅い一戦",
     "B": "二軸は堅く相手は拮抗",
@@ -100,6 +128,10 @@ TYPE_NOTES: dict[str, str] = {
 PLAN_TITLES: dict[str, str] = {
     "A_hit": "本線の三連単",
     "A_pay": "一撃の三連単",
+    # 🔴 型A の3分割（2026-08-31）。**同じ型でも狙いが違うので文言は分ける。**
+    #    `A_trio` は「順序を捨てて当たる回数を取る」・`A_ana` は「軸が飛ぶ側を取る」。
+    "A_trio": "本線の三連複",
+    "A_ana": "波乱狙いの三連単",
     "B_hit": "本線の三連単",
     "C_hit": "中配当の三連単",
     "D_hit": "混戦の三連複",
@@ -121,6 +153,13 @@ PLAN_BODIES: dict[str, str] = {
               "着順まで読み切れる形と判断したので、順番の入れ替えは買っていません。"),
     "A_pay": ("買い目は三連単。1着は◎に固定し、2着を2車に広げて3着を流しました。"
               "点数を絞るぶん、1点あたりを厚くして払戻の大きさに寄せています。"),
+    "A_trio": ("買い目は三連複・◎○の2車軸から相手流し。"
+               "3車は読めても着順までは決め打ちしない形と判断したので、"
+               "順番の入れ替えを気にせず取れる三連複にしました。"),
+    "A_ana": ("買い目は三連単。この商品は指数1位の車を買っていません。"
+              "1着が読みにくいレースと判断し、指数1位が3着以内に残らない側に賭けて、"
+              "残りの車から確率の高い目を押さえました。"
+              "当たれば大きいぶん、外れる回数は多くなります。"),
     "B_hit": ("買い目は三連単。◎○を上位2車としつつ、着順は決め打ちせず"
               "当方の指数で確率の高い目から順に積みました。"
               "◎○が2着・3着へ回る目も含みます。"),
@@ -169,6 +208,16 @@ def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
        既存ランクの `marks = {**{c: "△" for c in partners}, axis1: "◎", axis2: "○"}`
        も同じく買い目由来。
 
+    🔴 **軸が買い目に無いときは、買っている車の指数上位から振り直す**（2026-08-31）。
+       `A_ana`（穴狙い）は ◎＝軸1 を1点も買わないので、そのままだと
+       **◎が無く○から始まる印**になり、買い手には意味が読めない。
+       印は「この商品が推している車」を表すものなので、商品が推している中の
+       最上位を ◎ にする。
+
+    >>> legs = [{"combo": "5-1-4"}, {"combo": "1-5-4"}]
+    >>> marks_for("3-5-1-4-2-6-7", legs, 3, 5) == {5: "◎", 1: "○", 4: "▲"}
+    True
+
     ⚠️ **E_hit では全車に印が付くことがある**（予測30倍以上の帯を広く押さえる商品で、
        実測の平均は 6.11車／7車中）。印が絞り込みの信号にならないのは
        商品の性格どおりなので、そこを隠すために印を間引かないこと。
@@ -185,6 +234,14 @@ def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
     for leg in legs:
         used |= set(_combo_cars(str(leg.get("combo", ""))))
     marks: dict[int, str] = {}
+    if used and int(axis1) not in used:
+        # 軸1を買っていない商品（穴狙い）。買っている車の指数上位から ◎○▲△。
+        ranked = [c for c in order if c in used]
+        ranked += sorted(c for c in used if c not in order)
+        for i, c in enumerate(ranked):
+            marks[int(c)] = "◎" if i == 0 else ("○" if i == 1 else
+                                                ("▲" if i == 2 else "△"))
+        return marks
     if axis1 in used or not used:
         marks[int(axis1)] = "◎"
     if axis2 in used or not used:
@@ -255,7 +312,7 @@ def build_title(plan_key: str, type_label: str) -> str:
     '混戦の三連複｜二軸が絞りきれない混戦'
     """
     head = PLAN_TITLES.get(plan_key, "型ラボ")
-    view = TYPE_VIEWS.get(type_label, "")
+    view = PLAN_VIEWS.get(plan_key) or TYPE_VIEWS.get(type_label, "")
     return f"{head}｜{view}" if view else head
 
 
@@ -270,8 +327,10 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
     n = len(legs)
     tail = "点" if bet_type == "trio" else "点"
     blocks = [
-        TYPE_NOTES.get(type_label, ""),
-        f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。",
+        PLAN_NOTES.get(plan_key) or TYPE_NOTES.get(type_label, ""),
+        (PLAN_AXIS_NOTES[plan_key].format(a1=axis1, a2=axis2)
+         if plan_key in PLAN_AXIS_NOTES else
+         f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"),
         (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
          f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"),
         CLOSING,

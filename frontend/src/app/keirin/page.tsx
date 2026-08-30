@@ -274,6 +274,9 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "D_hit":      { bg: "#6366f1", text: "#fff", label: "D" },
   "E_hit":      { bg: "#ea580c", text: "#fff", label: "E" },
   "F_pay":      { bg: "#dc2626", text: "#fff", label: "F" },
+  // 型A の3分割（2026-08-31）。バッジは型で揃えて "A"。
+  "A_trio":     { bg: "#0ea5e9", text: "#fff", label: "A" },
+  "A_ana":      { bg: "#0ea5e9", text: "#fff", label: "A" },
   // 9車の型F（決勝以外）で売る（2026-08-30）。型は同じなのでラベルも "F"。
   "F_hit":      { bg: "#dc2626", text: "#fff", label: "F" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
@@ -1407,7 +1410,8 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
 //    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
 //    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
-const RANK_ORDER = ["A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit",
+const RANK_ORDER = ["A_hit", "A_trio", "A_ana",
+  "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit",
   "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
@@ -1424,6 +1428,7 @@ const RANK_LABEL: Record<string, string> = {
   // （2026-08-29・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
   "A_hit": "A", "B_hit": "B", "C_hit": "C",
   "D_hit": "D", "E_hit": "E", "F_pay": "F", "F_hit": "F",
+  "A_trio": "A", "A_ana": "A",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -1448,6 +1453,8 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "D_hit": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
   "E_hit": "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
   "F_pay": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  "A_trio": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
+  "A_ana": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "F_hit": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
 };
 

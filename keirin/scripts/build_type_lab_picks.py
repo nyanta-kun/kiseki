@@ -71,6 +71,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         {c: v["race_point"] for c, v in cars.items()},
         {c: v["behind"] for c, v in cars.items()},
         meta.get("day_index") or 0,
+        # 🔴 1着率を渡すと `pw_ent` が入り、型A を穴狙いへ振り分けられる。
+        #    渡さなくても型判定は一切変わらない（`race_shape` の docstring）。
+        {c: v["pw"] for c, v in cars.items() if v.get("pw") is not None} or None,
     )
     if shape is None:
         return []
@@ -105,6 +108,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             day_index=meta.get("day_index"),
             type_label=shape.type_label, axis_sum=round(shape.axis_sum, 4),
             arare=shape.arare, gap=round(shape.gap, 4),
+            # 🔴 **行へ焼き付ける**（`p3_order` と同じ理由）。入稿時に引き直すと
+            #    モデルが再学習されていれば別の値になり、売り分けが再現しない。
+            pw_ent=round(shape.pw_ent, 6),
             axis1=shape.order[0], axis2=shape.order[1],
             # 🔴 **並びを行へ焼き付ける**。後から `wt_entries` を引き直しても
             #    モデルが再学習されていれば別の並びになり、答え合わせにならない。
@@ -252,7 +258,8 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
             continue
         if len(p3[rk]) != N_ENTRIES:
             continue
-        cars = {c: dict(p3=p3[rk][c], **ent[c]) for c in ent if c in p3[rk]}
+        cars = {c: dict(p3=p3[rk][c], pw=(pw.get(rk) or {}).get(c), **ent[c])
+                for c in ent if c in p3[rk]}
         try:
             board = odds_tf.predict_board(sorted(p3[rk]), p3[rk], pw[rk],
                                           {c: ent[c]["meta"] for c in ent})
@@ -367,7 +374,7 @@ def _load_entries(keys: list[str]) -> dict:
 
 
 COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
-        "type_label axis_sum arare gap axis1 axis2 p3_order mode plan_key bet_type "
+        "type_label axis_sum arare gap pw_ent axis1 axis2 p3_order mode plan_key bet_type "
         "n_legs budget legs pred_mean_payout pred_min_payout rule_version").split()
 
 

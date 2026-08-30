@@ -825,3 +825,86 @@ def test_rebuilding_a_settled_row_drops_the_old_settlement():
         assert col in B.SETTLE_COLS, col
     # 条件つき（legs が変わったときだけ）であること
     assert "IS DISTINCT FROM excluded.legs" in src
+
+
+# ───────────────── 型A の3分割（2026-08-31） ─────────────────
+#
+# 検証: `docs/type_lab/type_a_upset_2026_08_31.md` §12
+#   ① pw_ent 上位10% → A_ana（穴狙い）  ② 三連複2点が通る → A_trio  ③ 残り → A_hit
+
+def test_win_entropy_is_scale_free():
+    """1着率は 0-1 でも 0-100 でも同じ値になること（呼び出し側の単位事故を防ぐ）。"""
+    from src.type_lab import win_entropy
+    a = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
+    b = {c: v * 100 for c, v in a.items()}
+    assert abs(win_entropy(a) - win_entropy(b)) < 1e-12
+    assert win_entropy({}) == 0.0 and win_entropy(None) == 0.0
+
+
+def test_race_shape_without_win_probs_is_unchanged():
+    """🔴 `win_probs` を渡さなくても**型判定は一切変わらない**こと。
+
+    渡し忘れても商品が変わらない（`pw_ent` が 0 になり A_hit へ倒れるだけ）。
+    """
+    from src.type_lab import race_shape
+    args = (
+        {1: .80, 2: .70, 3: .40, 4: .35, 5: .30, 6: .25, 7: .20},
+        {c: 1 for c in range(1, 8)}, {c: c for c in range(1, 8)},
+        {c: "逃" for c in range(1, 8)}, {c: 100.0 for c in range(1, 8)},
+        {c: 5.0 for c in range(1, 8)}, 1,
+    )
+    a = race_shape(*args)
+    b = race_shape(*args, win_probs={c: 1.0 / 7 for c in range(1, 8)})
+    assert a is not None and b is not None
+    assert (a.type_label, a.axis_sum, a.arare, a.gap, a.order) == \
+           (b.type_label, b.axis_sum, b.arare, b.gap, b.order)
+    assert a.pw_ent == 0.0 and b.pw_ent > 0.0
+
+
+def test_type_a_sells_exactly_one_plan_in_every_combination():
+    """🔴 **1レース1商品**。型A が3つに割れても返るのは必ず1つ。"""
+    from src.type_lab import ANA_PW_ENT_MIN, sell_plans_for
+    for pw in (None, 0.0, ANA_PW_ENT_MIN - 1e-9, ANA_PW_ENT_MIN, 2.0):
+        for trio in (None, True, False):
+            for n in (7, 9):
+                got = sell_plans_for("A", n, "予選", pw_ent=pw, trio_ok=trio)
+                assert len(got) == 1, (pw, trio, n, [p.key for p in got])
+
+
+def test_type_a_split_priority():
+    """①穴狙い → ②三連複 → ③A_hit の順（同着なら穴狙いが勝つ）。"""
+    from src.type_lab import ANA_PW_ENT_MIN, sell_plans_for
+    k = lambda **kw: sell_plans_for("A", 7, "予選", **kw)[0].key   # noqa: E731
+    assert k(pw_ent=ANA_PW_ENT_MIN, trio_ok=True) == "A_ana"
+    assert k(pw_ent=ANA_PW_ENT_MIN, trio_ok=False) == "A_ana"
+    assert k(pw_ent=ANA_PW_ENT_MIN - 1e-9, trio_ok=True) == "A_trio"
+    assert k(pw_ent=ANA_PW_ENT_MIN - 1e-9, trio_ok=False) == "A_hit"
+    # 🔴 分からないものは現行へ倒す
+    assert k(pw_ent=None, trio_ok=True) == "A_trio"
+    assert k(pw_ent=None, trio_ok=None) == "A_hit"
+    # 🔴 9車には掛けない（閾値が7車の分位なので絶対値切りになる）
+    assert sell_plans_for("A", 9, "予選", pw_ent=2.0, trio_ok=True)[0].key == "A_hit"
+
+
+def test_ana_never_buys_the_first_axis():
+    """🔴 穴狙いは**軸1を1点も買わない**（買うと商品が矛盾する）。"""
+    import itertools
+    from src.type_lab import PLANS, RaceShape, build_legs
+    order = (3, 5, 1, 4, 2, 6, 7)
+    shape = RaceShape("A", 1.5, -1, 0.05, True, order, 1.6)
+    odds = {t: 50.0 for t in itertools.permutations(range(1, 8), 3)}
+    prob = {t: 1.0 / (i + 1) for i, t in enumerate(itertools.permutations(range(1, 8), 3))}
+    legs = build_legs(shape, PLANS["A_ana"], odds, prob)
+    assert legs and len(legs) == 5
+    assert all(order[0] not in c for c in legs), legs
+
+
+def test_a_trio_is_two_points_on_the_two_axes():
+    """A_trio は軸2車＋相手2車の三連複2点（順序を捨てるだけ）。"""
+    import itertools
+    from src.type_lab import PLANS, RaceShape, build_legs
+    order = (3, 5, 1, 4, 2, 6, 7)
+    shape = RaceShape("A", 1.5, -1, 0.05, True, order, 1.0)
+    odds = {frozenset(c): 8.0 for c in itertools.combinations(range(1, 8), 3)}
+    legs = build_legs(shape, PLANS["A_trio"], odds, {})
+    assert legs == [frozenset({3, 5, 1}), frozenset({3, 5, 4})]

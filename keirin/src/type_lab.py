@@ -74,6 +74,50 @@ BEHIND_MID = 11.0
 #: 信頼度傾斜の既定の床（＝当たったら最低この倍率を予測ベースで確保する）。
 DEFAULT_FLOOR_MULT = 1.3
 
+#: 型A を「穴狙い（軸1が飛ぶ側）」で売る境界。**1着率エントロピーの上位10%**
+#: （探索窓 2025-01-01〜12-31 の 7車 型A・3,338R の p90）。
+#:
+#: 🔴 **なぜ pw_ent か**（`keirin/docs/type_lab/type_a_upset_2026_08_31.md` §7・§12）:
+#:    「軸1が3着にも入らない」の事前検出は `pw_ent` 単一で **評価窓 AUC 0.680**。
+#:    11特徴の LightGBM は 0.656 で単一量に負ける＝学習すべき構造が無い。
+#:    上位10% で軸崩壊率は 9.6% → 19.7%（**2.04倍**）。
+#: 🔴 **上位20% 以上へ広げないこと。** 確認窓 ROI が 80.8% → 76.1% → 71.3%
+#:    （上位10% → 20% → 33%）と落ち始める。上位10% なら
+#:    「②のみ」比で表示的中 −1.7〜−3.0pt を払って看板が型A比 2.8〜4.2倍、
+#:    **ROI は両窓とも動かない**（探索 75.0 / 確認 83.5）。
+#: 🔴 **7車の分位なので 7車にだけ掛ける**（`AXIS_GATE_N_ENTRIES` と同じ理由）。
+#:    エントロピーの上限は車数で変わる（ln7=1.946 / ln9=2.197）ので、
+#:    9車に当てると「上位10%」ではなく**絶対値で切る**ことになる。
+ANA_PW_ENT_MIN = 1.4076
+#: 上の境界を作った窓。数字の出どころを行に残す。
+ANA_SOURCE_WINDOW = ("2025-01-01", "2025-12-31")
+#: 穴狙いを掛ける車数。**これ以外には掛けない**。
+ANA_N_ENTRIES = 7
+
+
+def win_entropy(win_probs: Mapping[int, float] | None) -> float:
+    """1着率のエントロピー。大きいほど1着が読めない。
+
+    渡された値の合計で正規化するので、0-1 でも 0-100 でも同じ値になる。
+
+    >>> round(win_entropy({1: 0.25, 2: 0.25, 3: 0.25, 4: 0.25}), 4)
+    1.3863
+    >>> round(win_entropy({1: 25, 2: 25, 3: 25, 4: 25}), 4)
+    1.3863
+    >>> win_entropy(None)
+    0.0
+    >>> win_entropy({1: 1.0})
+    0.0
+    """
+    if not win_probs:
+        return 0.0
+    vals = [float(v) for v in win_probs.values() if v is not None and float(v) > 0]
+    tot = sum(vals)
+    if tot <= 0:
+        return 0.0
+    e = -sum((v / tot) * math.log(v / tot) for v in vals)
+    return float(e) if e else 0.0        # 1車だけのとき -0.0 になるのを潰す
+
 
 
 # ───────────────────────────── 型判定 ─────────────────────────────
@@ -87,6 +131,9 @@ class RaceShape:
     gap: float
     firm: bool
     order: tuple[int, ...]   # 3着内率の降順（車番）
+    #: 1着率のエントロピー（大きいほど1着が読めない＝軸1が飛びやすい）。
+    #: 型A の売り分け（`sell_plan_for`）だけが使う。渡されなければ 0.0。
+    pw_ent: float = 0.0
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -99,11 +146,14 @@ def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
 def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object],
                line_pos: Mapping[int, object], style: Mapping[int, str],
                race_point: Mapping[int, float], behind_pct: Mapping[int, float],
-               day_index: int) -> RaceShape | None:
+               day_index: int,
+               win_probs: Mapping[int, float] | None = None) -> RaceShape | None:
     """レースの型を返す。3着内率が3車未満なら None。
 
     top3_probs: {車番: 3着内率 0-1}。**0-100 のパーセントを渡さないこと**
     behind_pct: {車番: ex_left_behind_pct（0-100 のパーセント）}
+    win_probs:  {車番: 1着率}。**渡さなくても型判定は一切変わらない**
+                （`pw_ent` が 0.0 になり、型A の穴狙いへ振り分けられなくなるだけ）。
     """
     if not top3_probs or len(top3_probs) < 3:
         return None
@@ -129,12 +179,14 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
             and float(race_point.get(second, 0.0)) > float(race_point.get(lead, 0.0))):
         s += 1
 
+    pw_ent = win_entropy(win_probs) if win_probs else 0.0
+
     firm = axis_sum >= AXIS_SUM_FIRM
     if firm:
         label = "A" if s <= -1 else ("B" if s == 0 else "C")
     else:
         label = "D" if s <= -1 else ("E" if s == 0 else "F")
-    return RaceShape(label, axis_sum, s, gap, firm, order)
+    return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent)
 
 
 # ───────────────────────────── 買い目 ─────────────────────────────
@@ -163,6 +215,12 @@ PLANS: dict[str, Plan] = {
                   note="1着=軸1・2着=軸2 固定で3着へ3車流し（表示的中を取る）"),
     "A_pay": Plan("A_pay", "A", "trifecta", "axis1_second2", 3, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（払戻を取る）"),
+    # 型A ②三連複 — 順序リスクだけ捨てる。三連複でも2万円取れるレースで A_hit と入れ替える。
+    "A_trio": Plan("A_trio", "A", "trio", "axis2_flow", 2, alloc="dutch",
+                   note="軸2車＋相手2車の三連複2点（順序を捨てて当たる回数を取る）"),
+    # 型A ①穴狙い — 軸1が飛ぶ側。軸1を外した6車から確率上位5点。
+    "A_ana": Plan("A_ana", "A", "trifecta", "bust_top", 0, max_legs=5, alloc="dutch",
+                  note="軸1を外した残り6車から確率上位5点（軸が飛ぶ側を取る）"),
     # 型B 堅い・中 — 確率上位を Σ(1/予測) の床まで積む。
     "B_hit": Plan("B_hit", "B", "trifecta", "prob_top", 0, max_legs=8,
                   sigma_max=1 / 3.0, alloc="dutch",
@@ -268,7 +326,8 @@ NINE_CAR_TYPE_F_PLANS = ("F_pay",)
 #:    ——表示的中は全F_hit の 25.2% が最大、10万+ は全F_pay の 65件が最大で、
 #:    分割は中間（17.9% / 32件）を作るだけ。`SUMMARY.md` §2.6
 #:    「型は edge を作らない。決めるのは帯とカバレッジだけ」と同じ構造。
-SELL_PLANS: tuple[str, ...] = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
+SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
+                               "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
 
 #: 型ラボが**入稿しうる**プランの全体（2026-08-30）。
 #:
@@ -305,13 +364,15 @@ def plans_for(type_label: str, n_entries: int = 7,
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
     ['F_hit', 'F_pay']
     >>> [p.key for p in plans_for("A", 9, "特選")]
-    ['A_hit', 'A_pay']
+    ['A_hit', 'A_pay', 'A_trio', 'A_ana']
     """
     return [p for p in PLANS.values() if p.type_label == type_label]
 
 
 def sell_plans_for(type_label: str, n_entries: int = 7,
-                   race_type: str | None = None) -> list[Plan]:
+                   race_type: str | None = None, *,
+                   pw_ent: float | None = None,
+                   trio_ok: bool | None = None) -> list[Plan]:
     """その型で **netkeirin へ入稿する**買い方（`SELL_PLANS` で絞ったもの）。
 
     🔴 **必ず 0 個か 1 個**。型は排他なので、これが1レース1商品を構造的に保証する。
@@ -322,6 +383,7 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F")]
     ['F_pay']
+
     🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
        それ以外は `F_hit` と種別で分かれるので、固定の集合では表せない。
        ここでも返すのは**1つだけ**なので 1レース1商品は保たれる。
@@ -336,8 +398,38 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F", 7)]
     ['F_pay']
+
+    🔴 **型A だけ3つに分かれる**（2026-08-31・`docs/type_lab/type_a_upset_2026_08_31.md` §12）。
+       型は排他なので**共食いではなく棲み分け**で、ここでも返すのは1つだけ:
+
+         ① `pw_ent >= ANA_PW_ENT_MIN`（1着率が読めない上位10%）→ `A_ana`（穴狙い）
+         ② そうでなく `trio_ok`（三連複2点が入稿ゲートを通る）→ `A_trio`
+         ③ 残り → `A_hit`（現行）
+
+       🔴 **判定できないものは A_hit へ倒す**（`pw_ent`/`trio_ok` が None なら現行のまま）。
+          `passes_axis_gate` と同じ思想で、分からないことを理由に商品を変えない。
+       🔴 **7車だけ**。`ANA_PW_ENT_MIN` は7車の分位で、9車に当てると絶対値切りになる。
+
+    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.50, trio_ok=True)]
+    ['A_ana']
+    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, trio_ok=True)]
+    ['A_trio']
+    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, trio_ok=False)]
+    ['A_hit']
+    >>> [p.key for p in sell_plans_for("A", 7)]
+    ['A_hit']
+    >>> [p.key for p in sell_plans_for("A", 9, pw_ent=1.50, trio_ok=True)]
+    ['A_hit']
     """
     plans = plans_for(type_label, n_entries, race_type)
+    if type_label == "A":
+        key = "A_hit"
+        if int(n_entries or 0) == ANA_N_ENTRIES:
+            if pw_ent is not None and float(pw_ent) >= ANA_PW_ENT_MIN:
+                key = "A_ana"
+            elif trio_ok:
+                key = "A_trio"
+        return [p for p in plans if p.key == key]
     if n_entries == 9 and type_label == "F":
         key = NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.get(
             str(race_type or ""), NINE_CAR_TYPE_F_SELL_DEFAULT)
@@ -358,6 +450,12 @@ def build_legs(shape: RaceShape, plan: Plan,
     rest = order[2:]
 
     if plan.bet_type == "trio":
+        if plan.structure == "axis2_flow":
+            # 軸2車＋相手を確率降順に n_partners 点。順序を捨てるだけで
+            # 相手選びは A_hit と同じ（p3 の並び順）。
+            cs = [frozenset({a1, a2, c}) for c in rest[:plan.n_partners]]
+            cs = [c for c in cs if _pos(pred_odds.get(c))]
+            return cs if len(cs) == plan.n_partners else None
         if plan.structure != "axis2_drop_fav":
             return None
         cs = [frozenset({a1, a2, c}) for c in rest]
@@ -383,6 +481,16 @@ def build_legs(shape: RaceShape, plan: Plan,
         for c in pool:
             trio = (a1, a2, c)
             out.extend(p for p in itertools.permutations(trio))
+    elif plan.structure == "bust_top":
+        # 🔴 **軸1（p3 1位）を買い目から完全に外す。** 「軸1が3着にも入らない」
+        #    ことに賭ける商品なので、軸1を含む目を1点でも買うと商品が矛盾する。
+        pool = set(order[1:])
+        cand = [k for k, v in pred_odds.items()
+                if _pos(v) and len(set(k)) == 3 and set(k) <= pool]
+        cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
+        out = [tuple(k) for k in cand[:plan.max_legs or 5]]
+        if len(out) < 2:
+            return None
     elif plan.structure == "prob_top":
         cand = [k for k, v in pred_odds.items()
                 if _pos(v) and float(v) >= plan.min_odds and len(set(k)) == 3]

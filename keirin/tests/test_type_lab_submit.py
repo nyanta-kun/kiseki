@@ -43,7 +43,8 @@ def test_every_type_has_a_plan_for_7car():
 
 def test_sell_plans_matches_constant():
     """`SELL_PLANS` は A〜E が hit・F が pay（2026-08-28 のユーザー決定）。"""
-    assert SELL_PLANS == ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
+    assert SELL_PLANS == ("A_hit", "A_trio", "A_ana",
+                          "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
     assert set(SELL_PLANS) <= set(PLANS), "SELL_PLANS に PLANS 外のキーがある"
 
 
@@ -195,14 +196,21 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 
 # ───────────────────────── 勝負アイコン ─────────────────────────
 
-def test_only_type_f_pay_is_longshot():
-    """穴狙いは `F_pay` だけ。**複数可**なので選定は要らない。
+#: 穴狙いアイコンを付けるプラン。**ここを増やすときは理由を書くこと。**
+LONGSHOT_PLANS = {"F_pay", "A_ana"}
+
+
+def test_only_declared_plans_are_longshot():
+    """穴狙いアイコンは `LONGSHOT_PLANS` だけ。**複数可**なので選定は要らない。
 
     🔴 **アイコンの表は入稿しうるプラン全体を覆うこと。** 9車の型F が売る
        `F_hit` が漏れると `.get(..., 既定)` で黙って既定へ落ちる。
     🔴 `F_hit` に穴狙いを付けていないのは 2026-08-30 のユーザー判断
        （「穴狙いのアイコンは現状のまま様子見」）。広げると効果の切り分けが
        さらに難しくなる。
+    🔴 `A_ana`（2026-08-31）は**指数1位を1点も買わない**商品なので、
+       買い目そのものが穴狙い。上の「様子見」は同じ型で hit/pay を分ける話で、
+       こちらは別の商品。
     """
     from src.type_lab import SELLABLE_PLAN_KEYS
     from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
@@ -210,9 +218,10 @@ def test_only_type_f_pay_is_longshot():
 
     assert set(ACT_TYPE_BY_PLAN) == set(SELLABLE_PLAN_KEYS), \
         "入稿しうるプランと表がずれている"
-    assert ACT_TYPE_BY_PLAN["F_pay"] == ACT_TYPE_LONGSHOT
+    assert {k for k, v in ACT_TYPE_BY_PLAN.items()
+            if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS
     assert all(v == ACT_TYPE_DEFAULT for k, v in ACT_TYPE_BY_PLAN.items()
-               if k != "F_pay")
+               if k not in LONGSHOT_PLANS)
 
 
 def test_sellable_plan_keys_covers_every_type_and_car_count():

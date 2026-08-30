@@ -1357,7 +1357,9 @@ export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C
 //   `netkeirin_settings` のテンプレートは型ラボの入稿に反映されない。
 export type TypeLabRankKey =
   // 🔴 `F_hit` は 9車の型F（決勝以外）で売る（2026-08-30）。7車の型F は `F_pay`。
-  "A_hit" | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit";
+  // 🔴 型A は3分割（2026-08-31）。`A_trio`＝三連複2点・`A_ana`＝穴狙い。
+  "A_hit" | "A_trio" | "A_ana" |
+  "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit";
 
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"
