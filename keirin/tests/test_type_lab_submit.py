@@ -42,13 +42,18 @@ def test_every_type_has_a_plan_for_7car():
 
 
 def test_sell_plans_matches_constant():
-    """`SELL_PLANS` は A〜E が hit・F が pay（2026-08-28 のユーザー決定）。"""
+    """`SELL_PLANS` は A〜E だけ。**型F はここに書かない**（2026-08-31）。
+
+    型F は種別で `F_pay`（決勝）/ `F_hit`（それ以外）に分かれるので固定の集合では
+    表せない。判定の正本は `sell_plans_for` の型F 分岐。
+    """
     assert SELL_PLANS == ("A_hit", "A_trio", "A_ana",
-                          "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
+                          "B_hit", "C_hit", "D_hit", "E_hit")
+    assert "F_pay" not in SELL_PLANS and "F_hit" not in SELL_PLANS
     assert set(SELL_PLANS) <= set(PLANS), "SELL_PLANS に PLANS 外のキーがある"
 
 
-def test_nine_car_type_f_splits_by_race_type():
+def test_type_f_splits_by_race_type():
     """9車の型F は**決勝は F_pay・それ以外は F_hit**（2026-08-30 ユーザー判断）。
 
     🔴 **決勝以外を「売らない」に戻さないこと。** 2026-08-30 に 9車開催の
@@ -62,11 +67,13 @@ def test_nine_car_type_f_splits_by_race_type():
     assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
-    # 🔴 **7車の型F は 2026-08-31 から看板枠（`F_sign`）を売る。**
-    #    `SIGNBOARD_TYPES` に "F" が入っているため。9車は未測定なので変えていない
-    #    （`SIGNBOARD_N_ENTRIES = 7`）。ここが落ちたらダイヤルが動いた合図。
-    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_sign"]
-    assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_sign"]
+    # 🔴 **7車も同じ規則**（2026-08-31）。車数で分けない。
+    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_pay"]
+    assert [p.key for p in sell_plans_for("F", 7, "チャレンジ決勝")] == ["F_pay"]
+    assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_hit"]
+    # 🔴 「準決勝」を部分一致で拾わないこと（拾うと表示的中の低い側が広がる）
+    assert [p.key for p in sell_plans_for("F", 7, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
     # 型F以外は9車でも種別によらず売る
     assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
 
@@ -250,12 +257,12 @@ def test_sellable_plan_keys_covers_every_type_and_car_count():
                     assert pl.key in SELLABLE_PLAN_KEYS, (t, n, rt, pl.key)
 
 
-@pytest.mark.parametrize("n_entries,race_type", [(7, "決勝"), (7, "準決勝"),
-                                                 (7, "特選"), (9, "決勝")])
+@pytest.mark.parametrize("n_entries,race_type", [(7, "決勝"), (7, "チャレンジ決勝"),
+                                                 (9, "決勝")])
 def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
     """🔴 `F_pay` を売るときのアイコンは**車数で変わらない**。
 
-    ⚠️ 9車の**決勝以外**は `F_hit` を売るのでこの表には含めない（別テスト）。
+    ⚠️ 決勝以外は `F_hit` を売るのでこの表には含めない（別テスト）。
     商品の性格とも一致する——9車決勝の `F_pay` は表示的中 2.99%（67件中2件）・
     払戻中央 169,545円 で、この体系で最も極端な一撃枠。
 
@@ -268,8 +275,7 @@ def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
     plans = sell_plans_for("F", n_entries, race_type)
     # 🔴 7車は看板枠（`F_sign`）・9車決勝は `F_pay`。**どちらも穴狙いアイコン**という
     #    このテストの主張は変わらない（2026-08-31 に看板枠を入れた）。
-    expect = "F_sign" if n_entries == 7 else "F_pay"
-    assert [p.key for p in plans] == [expect]
+    assert [p.key for p in plans] == ["F_pay"]
     assert ACT_TYPE_BY_PLAN[plans[0].key] == ACT_TYPE_LONGSHOT
 
 

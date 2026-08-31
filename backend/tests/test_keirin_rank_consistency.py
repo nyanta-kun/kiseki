@@ -403,12 +403,14 @@ def test_type_lab_labels_match_keirin_sell_plans():
     assert m, "keirin/src/type_lab.py の SELL_PLANS を読めない"
     canonical = set(re.findall(r'"([^"]+)"', m.group(1)))
 
-    # 9車の型F が売るプラン（決勝＝表・それ以外＝既定）も入稿しうる。
-    m = re.search(r"NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
-    assert m, "NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE を読めない"
+    # 型F が売るプラン（決勝＝表・それ以外＝既定）も入稿しうる。
+    # 🔴 **2026-08-31 に 9車専用ではなくなった**ので名前が `TYPE_F_SELL_*` に変わった
+    #    （旧名は別名として残っているが、値の定義はこちらにしかない）。
+    m = re.search(r"TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
+    assert m, "TYPE_F_SELL_BY_RACE_TYPE を読めない"
     canonical |= set(re.findall(r':\s*"([^"]+)"', m.group(1)))
-    m = re.search(r'NINE_CAR_TYPE_F_SELL_DEFAULT = "([^"]+)"', src)
-    assert m, "NINE_CAR_TYPE_F_SELL_DEFAULT を読めない"
+    m = re.search(r'TYPE_F_SELL_DEFAULT = "([^"]+)"', src)
+    assert m, "TYPE_F_SELL_DEFAULT を読めない"
     canonical.add(m.group(1))
 
     # 🔴 **backend 側は看板枠 `{型}_sign` を6型ぶん先回りで持つ**（2026-08-31）。
