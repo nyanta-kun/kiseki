@@ -34,6 +34,10 @@ SUBMIT_FAILED = "submit_failed"
 #: WT印・並びが未取得（`keirin/src/entry_health.py`）。指数も予測オッズも
 #: 学習データにほぼ無い入力で動くことになるので、その回は見送って次の波へ回す
 MISSING_LINEUP = "missing_lineup"
+#: 日次上限（`keirin_type_lab_gate.DAILY_CAP`）に達したので、その日はもう出さない。
+#: 🔴 **これは「悪いから落とした」ではない**。上限に当たっただけで、同じ商品が
+#:    別の日なら出る。バッジの文面もそう読めるようにしてある
+DAILY_CAP = "daily_cap"
 
 #: バッジに出す短いラベル。**8文字以内**（一覧の行に収める）
 LABELS: dict[str, str] = {
@@ -46,6 +50,7 @@ LABELS: dict[str, str] = {
     CANDIDATE_INVALID: "候補不正",
     SUBMIT_FAILED: "入稿失敗",
     MISSING_LINEUP: "並び未取得",
+    DAILY_CAP: "日次上限",
 }
 
 #: バッジの `title`（マウスオーバー）に出す説明。`reason_text` が無いときの代わり
@@ -59,6 +64,7 @@ DESCRIPTIONS: dict[str, str] = {
     CANDIDATE_INVALID: "候補の情報が不正で買い目を組めませんでした",
     SUBMIT_FAILED: "netkeirin への入稿が失敗しました",
     MISSING_LINEUP: "並び予想・AI印が未公開で、指数もオッズも当てにできないため見送りました",
+    DAILY_CAP: "その日の上限件数に達したため見送りました（商品が悪いわけではありません）",
 }
 
 #: すべてのコード（検査用）

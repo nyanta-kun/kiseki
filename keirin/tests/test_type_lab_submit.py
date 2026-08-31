@@ -208,6 +208,132 @@ def test_axis_gate_thresholds_are_in_a_sane_range():
         assert 1.0 < float(v) < 2.0, f"{k} の閾値 {v} が範囲外"
 
 
+def test_every_sellable_plan_has_priority_quantiles():
+    """🔴 **上限に当たったときの順位付けも、売りうるプラン全部が持つこと。**
+
+    `axis_priority` は知らないプランに 0.5 を返す。1つだけ 0.5 のプランがあると
+    **そのプランだけが常に中央へ寄る**（他が 0〜1 に散るので、上限が浅いときは
+    必ず残り、深いときは必ず消える）という偏りが静かに入る。
+    """
+    import importlib.util
+
+    from src.type_lab import SELLABLE_PLAN_KEYS
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    # 🔴 **7車で売りうるプランだけが対象**。9車は上限で落とさない設計なので
+    #    分位表を持たない（`_priority` が 1.0 を返す）。`F_pay` は 9車決勝専用。
+    sellable_7 = {p.key
+                  for t_ in "ABCDEF"
+                  for rt in ("決勝", "チャレンジ決勝", "準決勝", "特選", "初特選",
+                             "選抜", "一般", "予選", None)
+                  for p in sell_plans_for(t_, 7, rt)}
+    sellable_7 |= {"A_ana", "A_trio"}          # 型A の3分岐（pw_ent / trio_ok で選ばれる）
+    assert sellable_7 <= set(SELLABLE_PLAN_KEYS)
+    missing = sorted(k for k in sellable_7 if k not in gate.AXIS_PRIORITY_QUANTILES)
+    assert not missing, f"優先度の分位表が無いプラン: {missing}"
+    for k, qs in gate.AXIS_PRIORITY_QUANTILES.items():
+        assert len(qs) >= 2, f"{k} の分位が少なすぎる"
+        assert list(qs) == sorted(qs), f"{k} の分位が昇順でない"
+
+
+def test_daily_cap_exempts_finals_but_not_all_marquee():
+    """🔴 **上限の対象外は「決勝・準決勝＋グレード3以上」だけ。**
+
+    看板（`is_fill_target`）ぜんぶを外すと、特選・選抜に出る `F_sign`
+    （設計上 表示的中 5.28% の一撃商品）が全部残り、上限の狙い
+    「当たりやすい側を残す」と正面から衝突する——実測で対照20本に
+    ROI 8/20・11/20 と負ける（決勝＋準決勝なら 12/20・19/20）。
+    """
+    import importlib.util
+
+    from src.marquee import is_fill_target
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    # 決勝・準決勝は残す
+    for rt in ("決勝", "準決勝", "チャレンジ決勝", "チャレンジ準決勝", "ガールズ決勝"):
+        assert gate.daily_cap_exempt(rt), rt
+    # 看板ではあるが上限の対象にする（ここが `is_fill_target` との違い）
+    for rt in ("特選", "初特選", "選抜", "特秀"):
+        assert is_fill_target(rt), f"{rt} は看板のはず（前提の確認）"
+        assert not gate.daily_cap_exempt(rt), f"{rt} を上限の対象外にしている"
+    # グレードは看板の正本と同じ境界
+    assert gate.DAILY_CAP_EXEMPT_MIN_GRADE == _marquee_min_grade()
+
+
+def _marquee_min_grade() -> int:
+    import importlib.util
+
+    path = REPO.parent / "backend/src/services/keirin_marquee.py"
+    spec = importlib.util.spec_from_file_location("tl_marquee", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return int(mod.FILL_ALL_MIN_GRADE)
+
+
+def test_daily_cap_does_not_touch_generation():
+    """🔴 **上限は入稿だけに効き、`type_lab_picks` の生成には触らない。**
+
+    上限で落ちた商品も行は作られ、`settle_type_lab_picks.py` が採点する
+    （あちらは入稿を一切参照しない）。だから「上限を掛けていなければどうだったか」を
+    後から測れる。2026-09-01 のユーザー要件「測定はするためデータは作成し、
+    入稿取り消し扱いとする」がこれで満たされる。
+
+    生成側（`build_type_lab_picks.py`）に上限が漏れると、その日の商品そのものが
+    消えて**比較台が無くなる**ので、構造で止める。
+    """
+    build = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    for token in ("DAILY_CAP", "cap_budget", "daily_cap"):
+        assert token not in build, f"生成側に上限が漏れている: {token}"
+
+    settle = (REPO / "scripts" / "settle_type_lab_picks.py").read_text(encoding="utf-8")
+    for token in ("netkeirin_submissions", "submission_skips", "DAILY_CAP"):
+        assert token not in settle, f"採点側が入稿を見ている: {token}"
+
+
+def test_daily_cap_is_disabled_when_race_count_is_unavailable():
+    """🔴 **レース数が読めないときは上限を掛けない。**
+
+    上限は「レース数 × 割合」なので、レース数が 0 として扱われると上限も 0 になり
+    **その日は1件も入稿されない**。ゲートの「判定できないものは通す」と倒す向きを
+    揃える。2026-09-01 に実際にこの誤りを書き、テストが捕まえた。
+    """
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert "if n_races > 0:" in src, "レース数が 0 のときの分岐が無い"
+    i = src.index("if n_races > 0:")
+    tail = src[i:i + 900]
+    assert "日次上限は掛けません" in tail, "0 のときに上限を無効化していない"
+
+
+def test_daily_cap_is_bound_from_backend_source():
+    """日次上限と順位付けを写経していない（backend の正本を読み込む）。"""
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert "_GATE.DAILY_CAP_RACE_FRACTION" in src, "上限を正本から読んでいない"
+    assert "_GATE.daily_cap_exempt" in src, "除外の判定を正本から読んでいない"
+    assert "_GATE.axis_priority" in src, "順位付けを正本から読んでいない"
+    assert "= 0.5" not in src, "割合を写している"
+
+
+def test_daily_cap_is_checked_just_before_submitting():
+    """🔴 上限は **`submit_row` の直前**で見ること。
+
+    先に引くと、締切超過・並び未取得などで**出せなかった行にも枠を食わせる**。
+    その日の上限は「入稿できた件数」に対して効かなければ意味がない。
+    """
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    cap = src.index("if cap_budget is not None and not exempt")
+    sub = src.index("ok, msg = submit_row(")
+    closed = src.index("SKIP_CLOSED,")
+    assert closed < cap < sub, "上限の判定位置が違う（他の見送りの後・入稿の直前であること）"
+
+
 def test_mean_payout_gate_rejects_cheap_products():
     from scripts.netkeirin_submit_type_lab import _gate_reason
 
