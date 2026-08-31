@@ -1465,6 +1465,10 @@ TYPE_LAB_RANK_LABELS: dict[str, str] = {
     # 🔴 9車の型F（決勝以外）で売る（2026-08-30）。ここに無いと画面のラベルが
     #    `RANK_F_hit` のまま出て、入稿設定の一覧からも消える。
     "RANK_F_hit": "F_hit",
+    # 🔴 看板枠（2026-08-31）。**6型ぶんまとめて入れる**——実際に売るのは
+    #    keirin 側 `type_lab.SIGNBOARD_TYPES` の型だけだが、ダイヤルを回したときに
+    #    入稿設定の一覧から黙って消えないよう、最初から全部並べておく。
+    **{f"RANK_{t}_sign": f"{t}_sign" for t in "ABCDEF"},
 }
 
 _LEGACY_RANK_LABELS: dict[str, str] = {

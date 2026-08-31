@@ -279,6 +279,15 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "A_ana":      { bg: "#0ea5e9", text: "#fff", label: "A" },
   // 9車の型F（決勝以外）で売る（2026-08-30）。型は同じなのでラベルも "F"。
   "F_hit":      { bg: "#dc2626", text: "#fff", label: "F" },
+  // 看板枠（2026-08-31）。**6型ぶん置く**（`SIGNBOARD_TYPES` を回しても
+  // バッジが消えないように）。バッジは型の文字のまま——買い方が違うだけで
+  // レースの型は同じものを指しているため。
+  "A_sign":    { bg: "#0ea5e9", text: "#fff", label: "A" },
+  "B_sign":    { bg: "#0d9488", text: "#fff", label: "B" },
+  "C_sign":    { bg: "#2563eb", text: "#fff", label: "C" },
+  "D_sign":    { bg: "#4f46e5", text: "#fff", label: "D" },
+  "E_sign":    { bg: "#ea580c", text: "#fff", label: "E" },
+  "F_sign":    { bg: "#dc2626", text: "#fff", label: "F" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
@@ -1410,8 +1419,9 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
 //    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
 //    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
-const RANK_ORDER = ["A_hit", "A_trio", "A_ana",
-  "B_hit", "C_hit", "D_hit", "E_hit", "F_pay", "F_hit",
+const RANK_ORDER = ["A_hit", "A_trio", "A_ana", "A_sign",
+  "B_hit", "B_sign", "C_hit", "C_sign", "D_hit", "D_sign",
+  "E_hit", "E_sign", "F_pay", "F_hit", "F_sign",
   "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
@@ -1429,6 +1439,8 @@ const RANK_LABEL: Record<string, string> = {
   "A_hit": "A", "B_hit": "B", "C_hit": "C",
   "D_hit": "D", "E_hit": "E", "F_pay": "F", "F_hit": "F",
   "A_trio": "A", "A_ana": "A",
+  // 看板枠（2026-08-31）。型は同じなので記号も同じ。
+  "A_sign": "A", "B_sign": "B", "C_sign": "C", "D_sign": "D", "E_sign": "E", "F_sign": "F",
 };
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
@@ -1456,6 +1468,13 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "A_trio": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "A_ana": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "F_hit": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  // 看板枠（2026-08-31）。型ごとの色をそのまま使う。
+  "A_sign": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
+  "B_sign": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
+  "C_sign": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
+  "D_sign": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
+  "E_sign": "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
+  "F_sign": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

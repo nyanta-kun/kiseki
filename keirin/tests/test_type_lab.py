@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+import statistics
 import itertools
 import sys
 from pathlib import Path
@@ -438,7 +439,7 @@ def test_nine_car_type_f_sells_pay_for_the_final_and_hit_otherwise():
     for rt in ("準決勝", "一予選", "二予選", "選抜", "特選", "特秀", "一般", "", None):
         assert [p.key for p in sell_plans_for("F", 9, rt)] == ["F_hit"], rt
     # 生成側は種別で落とさない（比較台を残す）
-    assert [p.key for p in plans_for("F", 9, "準決勝")] == ["F_hit", "F_pay"]
+    assert [p.key for p in plans_for("F", 9, "準決勝")] == ["F_hit", "F_pay", "F_sign"]
 
 
 def test_nine_car_final_match_is_exact_not_substring():
@@ -908,3 +909,141 @@ def test_a_trio_is_two_points_on_the_two_axes():
     odds = {frozenset(c): 8.0 for c in itertools.combinations(range(1, 8), 3)}
     legs = build_legs(shape, PLANS["A_trio"], odds, {})
     assert legs == [frozenset({3, 5, 1}), frozenset({3, 5, 4})]
+
+
+# ───────────────────────── 看板枠（signboard）─────────────────────────
+
+def _sign_board(n_cars: int = 7) -> tuple[dict, dict]:
+    """予測オッズと確率の盤面。オッズは確率の逆数×控除率で作る（市場効率の素の形）。"""
+    import itertools as _it
+    combos = list(_it.permutations(range(1, n_cars + 1), 3))
+    # 確率は「先頭の車ほど強い」単調な形にして、確率順の並びを決定的にする
+    raw = {c: 1.0 / (c[0] * 2 + c[1] * 1.5 + c[2]) for c in combos}
+    tot = sum(raw.values())
+    probs = {c: v / tot for c, v in raw.items()}
+    odds = {c: 0.75 / p for c, p in probs.items()}
+    return odds, probs
+
+
+def _sign_shape(t: str = "F"):
+    from src.type_lab import RaceShape
+    return RaceShape(t, 1.0, 0, 0.0, False, (1, 2, 3, 4, 5, 6, 7))
+
+
+def test_signboard_respects_the_payout_target_and_the_odds_cap():
+    """🔴 看板枠の**商品の約束**は「どの点が当たっても計画払戻 T 円以上」。
+
+    それは Σ(1/予測オッズ) <= 予算/T と同値で、ダッチ配分と**対でしか成立しない**。
+    ここが崩れると「看板を狙う商品」が名前だけになるので構造で固定する。
+    """
+    from src.type_lab import (BUDGET, SIGNBOARD_MAX_ODDS, SIGNBOARD_TARGET,
+                              allocate, build_legs)
+
+    odds, probs = _sign_board()
+    plan = PLANS["F_sign"]
+    legs = build_legs(_sign_shape(), plan, odds, probs)
+    assert legs, "看板枠が組めない"
+    assert len(set(legs)) == len(legs)
+
+    share = sum(1.0 / odds[leg] for leg in legs)
+    assert share <= BUDGET / SIGNBOARD_TARGET + 1e-12, "市場シェアの枠を超えている"
+    assert all(odds[leg] <= SIGNBOARD_MAX_ODDS for leg in legs), "オッズ上限を超えた点がある"
+
+    stakes = allocate(legs, odds, probs, plan)
+    assert stakes and set(stakes) == set(legs)
+    assert sum(stakes.values()) == BUDGET
+    plans = [stakes[leg] * odds[leg] for leg in legs]
+
+    # 🔴 **T を割りうるのは賭け金の丸めの分だけ**。`allocate` は 100円単位で配るので
+    #    1点あたり最大 1単位（`UNIT`）足りず、計画払戻は最大 `UNIT × 予測オッズ` 下がる。
+    #    ＝ 高オッズの点ほど誤差が大きい（`SIGNBOARD_MAX_ODDS` が効く理由のひとつ）。
+    #    これは**構造的な上界**なので、ここが破れたら配分の実装が変わった合図。
+    from src.type_lab import UNIT
+    bound = SIGNBOARD_TARGET - UNIT * max(odds[leg] for leg in legs)
+    assert min(plans) >= bound, f"丸めの上界を超えて T を割った: {min(plans):,.0f} < {bound:,.0f}"
+    # 実務上はほぼ T に張り付く（本番台の実測でも計画最低の中央は 149,300円）
+    assert statistics.median(plans) >= SIGNBOARD_TARGET * 0.98
+    assert max(plans) / min(plans) < 1.2, "ダッチなのに払戻が揃っていない"
+    assert all(s > 0 for s in stakes.values()), "0円の点がある"
+
+
+def test_signboard_takes_the_highest_probability_points_that_fit():
+    """🔴 並べ方は**確率順**で固定（EV順・オッズ順は窓をまたぐと反転する）。
+
+    枠に入らない点は `continue` で飛ばして次を見る＝「入る中で確率が高い順」。
+    """
+    from src.type_lab import BUDGET, SIGNBOARD_TARGET, build_legs
+
+    odds, probs = _sign_board()
+    legs = build_legs(_sign_shape(), PLANS["F_sign"], odds, probs)
+    cap = BUDGET / SIGNBOARD_TARGET
+
+    # 実装と同じ貪欲を素で回して一致を見る（買い目そのものは本番関数から取っている）
+    want, s = [], 0.0
+    for c in sorted(odds, key=lambda k: -probs[k]):
+        if odds[c] > PLANS["F_sign"].max_odds:
+            continue
+        if s + 1.0 / odds[c] > cap:
+            continue
+        want.append(c)
+        s += 1.0 / odds[c]
+    assert list(legs) == want
+
+
+def test_signboard_is_sold_only_for_the_declared_types_and_car_count():
+    """🔴 看板枠は `SIGNBOARD_TYPES` の型・`SIGNBOARD_N_ENTRIES` の車数だけ。
+
+    🔴 **9車には掛けない**（型F が母集団の55〜59%と大きく、未測定）。
+    🔴 看板枠は型A の3分割・9車の型F の種別分岐**より先**に効く。
+    """
+    from src.type_lab import (SIGNBOARD_N_ENTRIES, SIGNBOARD_TYPES,
+                              SELLABLE_PLAN_KEYS, sell_plans_for)
+
+    assert SIGNBOARD_N_ENTRIES == 7
+    for t in "ABCDEF":
+        sold = [p.key for p in sell_plans_for(t, 7, "決勝",
+                                              pw_ent=9.9, trio_ok=True)]
+        assert len(sold) == 1, f"1レース1商品が壊れている: {t}"
+        if t in SIGNBOARD_TYPES:
+            assert sold == [f"{t}_sign"], t
+            assert f"{t}_sign" in SELLABLE_PLAN_KEYS, t
+        else:
+            assert sold != [f"{t}_sign"], t
+        # 9車には掛からない
+        assert [p.key for p in sell_plans_for(t, 9, "決勝")] != [f"{t}_sign"], t
+
+
+def test_signboard_plans_exist_for_every_type_even_when_not_sold():
+    """🔴 **生成は6型ぶん・売るのは `SIGNBOARD_TYPES` だけ**。
+
+    `plans_for` の docstring と同じ思想で、売らなかった型の看板枠の成績を
+    後から測れるようにしておく（ダイヤルを回す判断はそれでしかできない）。
+    """
+    for t in "ABCDEF":
+        assert f"{t}_sign" in PLANS
+        assert PLANS[f"{t}_sign"].structure == "signboard"
+        assert PLANS[f"{t}_sign"].alloc == "dutch", "ダッチでないと約束が成立しない"
+        assert f"{t}_sign" in [p.key for p in plans_for(t, 7)]
+
+
+def test_rule_version_splits_when_the_signboard_dial_moves():
+    """🔴 看板枠のダイヤル（型・計画払戻・オッズ上限・車数）を動かしたら版が割れること。
+
+    計画払戻 `SIGNBOARD_TARGET` は `Plan` の属性ではなく `build_legs` の中で使うので、
+    プラン定義だけをハッシュしていると**買うものが変わったのに版が同じ**になる。
+    そうなると `type_lab_picks` で新旧が混ざり、後から世代を分けられない。
+    """
+    import src.type_lab as tl
+
+    base = tl.rule_version(7)
+    for attr, value in (("SIGNBOARD_TYPES", ("F", "C")),
+                        ("SIGNBOARD_TARGET", 200_000),
+                        ("SIGNBOARD_MAX_ODDS", 300.0),
+                        ("SIGNBOARD_N_ENTRIES", 9)):
+        old = getattr(tl, attr)
+        try:
+            setattr(tl, attr, value)
+            assert tl.rule_version(7) != base, f"{attr} を変えても版が割れない"
+        finally:
+            setattr(tl, attr, old)
+    assert tl.rule_version(7) == base

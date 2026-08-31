@@ -372,6 +372,15 @@ def test_legacy_labels_are_not_remapped_to_successors():
 # 🔴 型ラボは `picks_history` に行を持たないので `_PAPER_RANK_LABELS` を通らない。
 #    そのぶん**別の場所に写しが増える**ので、ここで機械的に突き合わせる。
 
+def _signboard_labels(src: str) -> set[str]:
+    """看板枠として**入稿しうる**プラン。`SIGNBOARD_TYPES` の型だけ。"""
+    import re
+
+    m = re.search(r"SIGNBOARD_TYPES: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
+    assert m, "keirin/src/type_lab.py の SIGNBOARD_TYPES を読めない"
+    return {f"{t}_sign" for t in re.findall(r'"([^"]+)"', m.group(1))}
+
+
 def _type_lab_labels() -> set[str]:
     from src.api.keirin_router import TYPE_LAB_RANK_LABELS
 
@@ -402,10 +411,18 @@ def test_type_lab_labels_match_keirin_sell_plans():
     assert m, "NINE_CAR_TYPE_F_SELL_DEFAULT を読めない"
     canonical.add(m.group(1))
 
-    assert canonical == _type_lab_labels(), (
-        "TYPE_LAB_RANK_LABELS が keirin 側の入稿しうるプランとずれている\n"
-        f"  keirin のみ: {sorted(canonical - _type_lab_labels())}\n"
-        f"  backend のみ: {sorted(_type_lab_labels() - canonical)}")
+    # 🔴 **backend 側は看板枠 `{型}_sign` を6型ぶん先回りで持つ**（2026-08-31）。
+    #    実際に売るのは keirin 側 `SIGNBOARD_TYPES` の型だけだが、ダイヤルを
+    #    回した瞬間に設定画面から消えると「ON にできない」事故になるので、
+    #    最初から全部並べてある。**不足は許さない**ので検出力は落ちない。
+    labels = _type_lab_labels()
+    canonical |= _signboard_labels(src)
+    assert canonical <= labels, (
+        "TYPE_LAB_RANK_LABELS に keirin 側のプランが足りない\n"
+        f"    keirin のみ: {sorted(canonical - labels)}")
+    assert all(k in canonical or k.endswith("_sign") for k in labels), (
+        "TYPE_LAB_RANK_LABELS に素性の分からないプランがある\n"
+        f"    backend のみ: {sorted(labels - canonical)}")
 
 
 def test_type_lab_plans_are_editable_in_settings():
