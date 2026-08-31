@@ -67,12 +67,19 @@ def test_type_f_splits_by_race_type():
     assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
-    # 🔴 **7車も同じ規則**（2026-08-31）。車数で分けない。
-    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_pay"]
-    assert [p.key for p in sell_plans_for("F", 7, "チャレンジ決勝")] == ["F_pay"]
+    # 🔴 **7車は看板枠が先に来る**（2026-09-01 再投入）。`SIGNBOARD_RACE_TYPES`
+    #    （決勝系＋特選）に入る種別は `F_sign`、それ以外が `F_hit`。
+    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_sign"]
+    assert [p.key for p in sell_plans_for("F", 7, "チャレンジ決勝")] == ["F_sign"]
+    assert [p.key for p in sell_plans_for("F", 7, "準決勝")] == ["F_sign"]
+    assert [p.key for p in sell_plans_for("F", 7, "特選")] == ["F_sign"]
+    # 看板枠の対象外の種別は当たる回数を売る側のまま
     assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_hit"]
-    # 🔴 「準決勝」を部分一致で拾わないこと（拾うと表示的中の低い側が広がる）
-    assert [p.key for p in sell_plans_for("F", 7, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 7, "一般")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 7, "予選")] == ["F_hit"]
+    # 🔴 **看板枠は7車だけ**（`SIGNBOARD_N_ENTRIES`）。9車は従来どおり種別で分かれる。
+    #    ここで「準決勝」を部分一致で拾わないことも一緒に固定する
+    #    （拾うと表示的中の低い `F_pay` が母集団の何倍にも広がる）。
     assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
     # 型F以外は9車でも種別によらず売る
     assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
@@ -169,7 +176,8 @@ def test_every_sellable_plan_has_an_axis_gate_threshold():
     うち4件は `A_hit` の閾値を下回っていた。
 
     プランを増やすたびに人が気づく必要がある形にしない。
-    ⚠️ 看板枠（`*_sign`）は `SIGNBOARD_TYPES` が空のときは売らないので対象外。
+    ⚠️ 看板枠（`*_sign`）も `SIGNBOARD_TYPES` に入っていれば売るので対象に含める
+       （2026-09-01 に型F の看板枠を再投入した）。
     """
     import importlib.util
 
@@ -180,8 +188,7 @@ def test_every_sellable_plan_has_an_axis_gate_threshold():
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
 
-    missing = sorted(k for k in SELLABLE_PLAN_KEYS
-                     if not k.endswith("_sign") and k not in gate.AXIS_GATE_MIN)
+    missing = sorted(k for k in SELLABLE_PLAN_KEYS if k not in gate.AXIS_GATE_MIN)
     assert not missing, (
         f"閾値が無いまま売れてしまうプラン: {missing}。"
         f"探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内 p20 を引いて "
@@ -316,8 +323,8 @@ def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
 
     plans = sell_plans_for("F", n_entries, race_type)
     # 🔴 7車は看板枠（`F_sign`）・9車決勝は `F_pay`。**どちらも穴狙いアイコン**という
-    #    このテストの主張は変わらない（2026-08-31 に看板枠を入れた）。
-    assert [p.key for p in plans] == ["F_pay"]
+    #    このテストの主張は変わらない（2026-09-01 に看板枠を再投入した）。
+    assert [p.key for p in plans] == ["F_sign" if n_entries == 7 else "F_pay"]
     assert ACT_TYPE_BY_PLAN[plans[0].key] == ACT_TYPE_LONGSHOT
 
 
