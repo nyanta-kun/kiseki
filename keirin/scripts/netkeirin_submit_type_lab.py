@@ -85,6 +85,7 @@ from src.submission_skips import (                           # noqa: E402
     CLOSED as SKIP_CLOSED,
     GATE_MEAN_PAYOUT as SKIP_GATE_MEAN_PAYOUT,
     GATE_POINT_ODDS as SKIP_GATE_POINT_ODDS,
+    DAILY_CAP as SKIP_DAILY_CAP,
     MISSING_LINEUP as SKIP_MISSING_LINEUP,
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
 )
@@ -303,6 +304,25 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
         return (SKIP_GATE_POINT_ODDS,
                 f"予測 {min(odds):.1f} 倍の目があります（下限 {MIN_POINT_ODDS} 倍）")
     return None
+
+
+def _count_sellable_races(day: str) -> int:
+    """その日の**型ラボが売りうる 7車レース数**（日次上限の分母）。
+
+    🔴 **分母は 7車だけ**。9車と看板レースは上限の対象外なので、母数に入れると
+       上限だけが緩んで「対象外を増やすほど上限も上がる」という妙なことになる。
+    🔴 **読めなければ 0 を返す**＝上限を無効にする。分からないことを理由に
+       商品を落とさない（`passes_axis_gate` と同じ思想）。
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT count(*) FROM wt_races WHERE race_date = ? AND n_entries = ?",
+                (day, _GATE.AXIS_GATE_N_ENTRIES)).fetchone()
+        return int(tuple(row)[0]) if row else 0
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[type_lab_submit] レース数を読めません（日次上限を無効化）: {e}", flush=True)
+        return 0
 
 
 def _is_marquee(row: dict) -> bool:
@@ -556,7 +576,51 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     def bump(code: str) -> None:
         skipped[code] = skipped.get(code, 0) + 1
 
-    for row in sorted(rows, key=lambda r: (str(r["venue_name"] or ""), int(r["race_no"]))):
+    # ── 日次上限（2026-09-01）──────────────────────────────────────────
+    # 🔴 **上限は「その日に入稿した商品の数」に効く**（波をまたいだ合計）。
+    #    朝に出したぶんを差し引いた残りが、この回の予算になる。
+    # 🔴 **落とすのは軸信頼のプラン内順位が低い側**。期待値では並べられないことが
+    #    分かっている（`keirin_rank_priority_ev_rejected_2026_08_25`）ので、
+    #    足切りに使っているのと同じ量を順位付けにも使う。上限が実際に効く水準
+    #    （30/25件）では、無作為対照20本に**両窓・両指標とも勝つ**。
+    # ⚠️ 上限は `submit_row` の直前で見る。締切超過・並び未取得などで出さない行に
+    #    予算を食わせないため（先に引くと「出せなかった枠」で上限に達してしまう）。
+    cap_budget: int | None = None
+    cap_total = 0
+    n_races = _count_sellable_races(day) if _GATE.DAILY_CAP_RACE_FRACTION else 0
+    if n_races > 0:
+        cap_total = int(n_races * float(_GATE.DAILY_CAP_RACE_FRACTION))
+        cap_budget = max(0, cap_total - len(taken_by_type_lab))
+    elif _GATE.DAILY_CAP_RACE_FRACTION:
+        # 🔴 **レース数が読めなければ上限を掛けない**（`cap_budget` は None のまま）。
+        #    ここで 0 を上限として扱うと**その日は1件も出ない**。ゲートの
+        #    「判定できないものは通す」と倒す向きを揃える。
+        #    ⚠️ 2026-09-01 にこの誤りを実際に書いて、テストが捕まえた。
+        print("[type_lab_submit] ⚠️ レース数が取れないため日次上限は掛けません", flush=True)
+    if cap_budget is not None:
+        print(f"[type_lab_submit] 日次上限 {cap_total}件 "
+              f"（7車 {n_races}レース × {_GATE.DAILY_CAP_RACE_FRACTION}・"
+              f"既に {len(taken_by_type_lab)}件 → この回の枠 {cap_budget}件）", flush=True)
+
+    def _priority(r: dict) -> float:
+        """上限に当たったときの残す順（大きいほど先に残す）。
+
+        🔴 **9車は上限で落とさない（常に 1.0）。** 順位付けの実測は 7車しかなく
+           （`AXIS_PRIORITY_QUANTILES` は 7車の分位）、9車に当てると
+           `axis_priority` が 0.5 を返して**9車だけが常に中央へ寄る**という
+           根拠のない偏りが入る。9車は 0〜9件/日 と少なく、決勝・特選など
+           看板級が多いので、削るのは 7車側に寄せる。
+        """
+        if int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES:
+            return 1.0
+        if _GATE.DAILY_CAP_KEEP_MARQUEE and _is_marquee(r):
+            return 1.0
+        return _GATE.axis_priority(str(r["plan_key"]), r.get("axis_sum"))
+
+    # 🔴 **軸信頼の高い順に処理する**（上限に当たったとき何が残るかがこの順序で決まる）。
+    #    同点は会場・レース番号で決める（実行のたびに順序が変わらないように）。
+    for row in sorted(rows, key=lambda r: (
+            -_priority(r), str(r["venue_name"] or ""), int(r["race_no"]))):
         race_key = str(row["race_key"])
         plan = str(row["plan_key"])
         venue = str(row["venue_name"] or "?")
@@ -601,6 +665,17 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         if reason:
             skip(race_key, plan, session, reason[0], reason[1], venue, race_no)
             bump(reason[0])
+            continue
+
+        exempt = (int(row.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
+                  or (_GATE.DAILY_CAP_KEEP_MARQUEE and _is_marquee(row)))
+        if cap_budget is not None and not exempt and n_ok >= cap_budget:
+            # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
+            #    記録は1件ずつ残す＝画面で「日次上限」として出る。
+            skip(race_key, plan, session, SKIP_DAILY_CAP,
+                 f"その日の上限 {cap_total}件 に達していました",
+                 venue, race_no, quiet=True)
+            bump(SKIP_DAILY_CAP)
             continue
 
         ok, msg = submit_row(row, session, client, dry_run,
