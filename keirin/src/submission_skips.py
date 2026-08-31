@@ -68,6 +68,7 @@ CANDIDATE_INVALID = _canonical.CANDIDATE_INVALID
 SUBMIT_FAILED = _canonical.SUBMIT_FAILED
 MISSING_LINEUP = _canonical.MISSING_LINEUP
 DAILY_CAP = _canonical.DAILY_CAP
+AXIS_GATE = _canonical.AXIS_GATE
 ALL_CODES = _canonical.ALL_CODES
 label = _canonical.label
 describe = _canonical.describe

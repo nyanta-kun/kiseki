@@ -38,6 +38,13 @@ MISSING_LINEUP = "missing_lineup"
 #: 🔴 **これは「悪いから落とした」ではない**。上限に当たっただけで、同じ商品が
 #:    別の日なら出る。バッジの文面もそう読めるようにしてある
 DAILY_CAP = "daily_cap"
+#: 軸信頼ゲート（`keirin_type_lab_gate.AXIS_GATE_MIN`）で落ちた。
+#: 🔴 **2026-09-01 に記録を始めた。** それまでは「毎日10件前後が見送り一覧を埋めて
+#:    信号が死ぬ」ことを嫌って件数だけ数えていたが、日次上限の**分母**に効くように
+#:    なった（`DAILY_CAP_RACE_FRACTION` は「その回に判定するレース数」で割る）ので、
+#:    内訳が画面から追えないと上限の妥当性を検証できない。
+#: ⚠️ ログには出さない（`quiet`）。一覧のバッジにだけ出る。
+AXIS_GATE = "axis_gate"
 
 #: バッジに出す短いラベル。**8文字以内**（一覧の行に収める）
 LABELS: dict[str, str] = {
@@ -51,6 +58,7 @@ LABELS: dict[str, str] = {
     SUBMIT_FAILED: "入稿失敗",
     MISSING_LINEUP: "並び未取得",
     DAILY_CAP: "日次上限",
+    AXIS_GATE: "軸信頼",
 }
 
 #: バッジの `title`（マウスオーバー）に出す説明。`reason_text` が無いときの代わり
@@ -65,6 +73,7 @@ DESCRIPTIONS: dict[str, str] = {
     SUBMIT_FAILED: "netkeirin への入稿が失敗しました",
     MISSING_LINEUP: "並び予想・AI印が未公開で、指数もオッズも当てにできないため見送りました",
     DAILY_CAP: "その日の上限件数に達したため見送りました（商品が悪いわけではありません）",
+    AXIS_GATE: "そのプランの中で軸の信頼が下位のため見送りました（商品の定義によるもの）",
 }
 
 #: すべてのコード（検査用）
