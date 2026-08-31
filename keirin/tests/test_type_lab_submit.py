@@ -298,6 +298,24 @@ def test_daily_cap_does_not_touch_generation():
         assert token not in settle, f"採点側が入稿を見ている: {token}"
 
 
+def test_cap_excludes_exempt_from_both_sides():
+    """🔴 **枠外は分母からも枠の消費からも外す**（2026-09-01・ユーザー指定）。
+
+    枠外（9車・決勝・準決勝・グレード3以上）は落とさないので、母数に入れると
+    「枠外が多い日ほど普通のレースが削られる」という逆向きの効き方になる
+    （9車が12件ある日で7車が5件ぶん余計に消えていた）。
+    出る件数は「枠外ぜんぶ ＋ それ以外の半分」。
+    """
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    # 分母から外す
+    i = src.index("n_judged = sum(")
+    assert "not _exempt(r)" in src[i:i + 300], "分母から枠外を外していない"
+    # 枠も消費しない（上限の判定は枠外を除いた件数で見る）
+    assert "n_capped >= cap_budget" in src, "枠外込みの件数で上限を見ている"
+    j = src.index("n_capped += 1")
+    assert "if not _exempt(row):" in src[j - 200:j], "枠外が枠を消費している"
+
+
 def test_axis_gate_skips_are_recorded():
     """🔴 **軸信頼ゲートで落ちた分も記録する**（2026-09-01）。
 

@@ -547,6 +547,8 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
               "（下位2割のレースも入稿します）", flush=True)
 
     n_ok = 0
+    #: 上限を消費した件数（＝枠外を除いた入稿数）。`n_ok` は枠外も含む全体。
+    n_capped = 0
     skip = _make_skip(dry_run)
     skipped: dict[str, int] = {}
     titles: list[str] = []
@@ -630,7 +632,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     decided = [(r, _reject(r)) for r in ordered]
 
     # ── 上限 = その回に判定するレース数 × 割合 ──────────────────────────
-    n_judged = sum(1 for _, rj in decided if rj is None or rj[4])
+    # 🔴 **枠外（9車・決勝・準決勝・グレード3以上）は分母からも外す**（2026-09-01）。
+    #    枠外は落とさないので、母数に入れると「枠外が多い日ほど普通のレースが
+    #    削られる」という逆向きの効き方になる。上限は**枠外を除いたレースに対して**
+    #    掛ける。＝ 出る件数は「枠外ぜんぶ ＋ それ以外の半分」。
+    n_judged = sum(1 for r, rj in decided
+                   if (rj is None or rj[4]) and not _exempt(r))
     cap_budget: int | None = None
     if _GATE.DAILY_CAP_RACE_FRACTION and n_judged > 0:
         # 🔴 **最低 1 件は出す。** 判定対象が 1〜2 レースの回だと
@@ -638,9 +645,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         #    （2026-09-01 にこの退化をテストが捕まえた）。割合は「絞る」ための
         #    ものであって「出さない」ためのものではない。
         cap_budget = max(1, int(n_judged * float(_GATE.DAILY_CAP_RACE_FRACTION)))
+        n_ex = sum(1 for r, rj in decided if rj is None and _exempt(r))
         print(f"[type_lab_submit] 上限 {cap_budget}件"
-              f"（この回の判定対象 {n_judged}レース × {_GATE.DAILY_CAP_RACE_FRACTION}）",
-              flush=True)
+              f"（枠外を除いた判定対象 {n_judged}レース × {_GATE.DAILY_CAP_RACE_FRACTION}）"
+              f"＋ 枠外 {n_ex}件は上限の対象外", flush=True)
     elif _GATE.DAILY_CAP_RACE_FRACTION:
         # 🔴 **判定対象が 0 なら上限を掛けない**（`cap_budget` は None のまま）。
         #    0 を上限として扱うと1件も出ない。ゲートの「判定できないものは通す」と
@@ -663,12 +671,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             # この回の中で別の行が同じレースを取った（`already` は開始時の断面）。
             bump("taken_by_type_lab")
             continue
-        if cap_budget is not None and not _exempt(row) and n_ok >= cap_budget:
+        if cap_budget is not None and not _exempt(row) and n_capped >= cap_budget:
             # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「日次上限」として出る。
             skip(race_key, plan, session, SKIP_DAILY_CAP,
-                 f"この回の上限 {cap_budget}件（判定対象 {n_judged}レース×"
-                 f"{_GATE.DAILY_CAP_RACE_FRACTION}）に達していました",
+                 f"この回の上限 {cap_budget}件（枠外を除いた判定対象 {n_judged}"
+                 f"レース×{_GATE.DAILY_CAP_RACE_FRACTION}）に達していました",
                  venue, race_no, quiet=True)
             bump(SKIP_DAILY_CAP)
             continue
@@ -680,6 +688,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             #    同じ実行の中で2つ目のプランが通るのを止められない）。
             taken_by_type_lab.add(race_key)
             n_ok += 1
+            # 🔴 **枠外は枠を消費しない**（分母から外したのと対）。
+            if not _exempt(row):
+                n_capped += 1
             titles.append(f"{venue}{race_no}R({plan}) {msg}")
             submitted.append((str(venue), str(plan)))
         else:
