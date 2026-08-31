@@ -441,18 +441,32 @@ def test_dry_run_records_no_skips(monkeypatch):
     assert m._make_skip(False) is m._skip
 
 
-def test_marquee_races_bypass_the_axis_gate():
-    """看板レースは軸信頼ゲートを素通しする（「看板は必ず出す」を優先）。
+def test_marquee_races_do_not_bypass_the_axis_gate():
+    """🔴🔴 **看板レースにも軸信頼ゲートを掛ける**（2026-08-31・ユーザー判断 A案）。
 
-    ⚠️ 素通しは**軸信頼ゲートだけ**。平均払戻・1点オッズは看板にも掛ける。
+    2026-08-28 は素通しさせていたが、その層がはっきり弱かった:
+
+        看板でゲートを通る分   10.7件/日  表示的中 23.41%  ROI 88.8%
+        看板でゲートに落ちる分  3.8件/日  表示的中 16.92%  ROI 68.2%
+
+    掛けると全体 43.2→39.4件/日・表示的中 25.96→26.83%・ROI 82.4→83.8%（確認2026）。
+    同数を無作為に落とす対照20本に**表示的中で両窓とも 20/20** で勝つ。
+
+    🔴 代償は「看板レースに商品が出ない日がある」こと。ここが落ちたら
+       2026-08-09 の「看板は必ず出す」方針へ戻したという合図なので、
+       ユーザー判断を確かめてから直すこと。
     """
     from scripts.netkeirin_submit_type_lab import _passes_axis_gate
 
     weak = {"plan_key": "A_hit", "axis_sum": 1.0, "n_entries": 7,
             "race_type": "予選", "cup_grade": None}
     assert _passes_axis_gate(weak) is False
-    assert _passes_axis_gate({**weak, "race_type": "決勝"}) is True
-    assert _passes_axis_gate({**weak, "race_type": "特選"}) is True
+    assert _passes_axis_gate({**weak, "race_type": "決勝"}) is False
+    assert _passes_axis_gate({**weak, "race_type": "特選"}) is False
+    # 軸信頼が高ければ看板でも予選でも通る（落とすのは弱い層だけ）
+    firm = {**weak, "axis_sum": 1.90}
+    assert _passes_axis_gate(firm) is True
+    assert _passes_axis_gate({**firm, "race_type": "決勝"}) is True
 
 
 def test_races_taken_by_other_ranks_is_derived_from_already():
