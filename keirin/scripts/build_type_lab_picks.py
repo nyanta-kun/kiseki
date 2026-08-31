@@ -160,7 +160,7 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
     # 🔴 **NpzFile を添字アクセスのたびに引いてはいけない。**
     #    `z["PO"][i]` は毎回 30MB の配列を丸ごと伸長するので、
     #    レース×買い目のループに入れると桁違いに遅くなる（2026-08-27 に実際に踏んだ）。
-    z = {k: zf[k] for k in ("KEY", "DATE", "OKPRED", "P3", "PO", "PROB")}
+    z = {k: zf[k] for k in ("KEY", "DATE", "OKPRED", "P3", "PW", "PO")}
     keys = [str(k) for k in z["KEY"]]
     dates = [str(d) for d in z["DATE"]]
     sel = [i for i, d in enumerate(dates) if date_from <= d <= date_to]
@@ -179,7 +179,14 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
         cars = {c: dict(p3=float(z["P3"][i][c - 1]), **ent[c]) for c in ent}
         tf_odds = {PERMS[t]: float(z["PO"][i][t]) for t in range(210)
                    if np.isfinite(z["PO"][i][t]) and z["PO"][i][t] > 0}
-        tf_prob = {PERMS[t]: float(z["PROB"][i][t]) for t in range(210)}
+        # 🔴 **板の `PROB` は同ライン隣接ボーナスが入っていない**（2026-08-31 に
+        #    `rank_7t3_blend_probs(cars, pw, p3)` と比が 1.0000 で一致することを確認）。
+        #    paper も live と同じ関数で組み直して、両者の確率を揃える。
+        tf_prob = _pl_board(
+            {c: float(z["P3"][i][c - 1]) for c in ent},
+            {c: float(z["PW"][i][c - 1]) for c in ent},
+            {c: v["line_group"] for c, v in cars.items()},
+            {c: v["line_pos"] for c, v in cars.items()})
         m = meta_all.get(rk)
         if not m:
             continue
@@ -267,7 +274,9 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
             print(f"  {rk}: 予測オッズを作れず skip（{e}）")
             continue
         tf_odds = {tuple(k): float(v) for k, v in board.items() if v and v > 0}
-        tf_prob = _pl_board(p3[rk], pw[rk])
+        tf_prob = _pl_board(p3[rk], pw[rk],
+                            {c: v["line_group"] for c, v in cars.items()},
+                            {c: v["line_pos"] for c, v in cars.items()})
         m = meta_all.get(rk)
         if not m:
             continue
@@ -314,10 +323,24 @@ def run_paper_vintage(date_from: str, date_to: str,
     return out
 
 
-def _pl_board(p3: dict, pw: dict) -> dict:
-    """三連単の買い目確率（位置別合成 PL）。正本は `strategy_wt.rank_7t3_blend_probs`。"""
+def _pl_board(p3: dict, pw: dict,
+              line_group: dict | None = None, line_pos: dict | None = None) -> dict:
+    """三連単の買い目確率（位置別合成 PL ＋ **同ライン隣接ボーナス**）。
+
+    正本は `strategy_wt.rank_7t3_blend_probs`。
+
+    🔴 **ライン情報を必ず渡すこと**（2026-08-31）。渡さないとボーナスが効かず、
+       周辺確率の積のままになる——PL は「先頭→別ラインの車」を2着に置きがちで、
+       同ライン先頭→番手と食い違うのが 68.9%、うち 29.8% がそれ
+       （`docs/tf_rival614_line_pair_2026_08_26.md`）。
+    🔴 **ボーナスは「絞り込みの優先順位」に使って初めて効く。** 買い目が固定構成の
+       プラン（旧 `A_hit` の `fixed12` など）に入れても配分が変わるだけで、
+       実測ではむしろ表示的中が下がった（32.80 → 32.18% / 32.84 → 32.32%）。
+       だから同じ 2026-08-31 に `A_hit` / `F_hit` を `prob_top` へ替えている。
+    """
     from src.strategy_wt import rank_7t3_blend_probs
-    return rank_7t3_blend_probs(sorted(p3), pw, p3)
+    return rank_7t3_blend_probs(sorted(p3), pw, p3,
+                                line_group=line_group, line_pos=line_pos)
 
 
 # ───────────────────────── DB ─────────────────────────
