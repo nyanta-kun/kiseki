@@ -117,7 +117,17 @@ ANA_PW_ENT_MIN = 1.4076
 #:    （投資 約145万円/日）が要る。目標を動かすときはここを読むこと。
 #: 🔴 **7車でしか測っていない。** 9車（型F が母集団の55〜59%・ROI 65%）は
 #:    有望だが未測定なので `SIGNBOARD_N_ENTRIES` で 7車に限定してある。
-SIGNBOARD_TYPES: tuple[str, ...] = ("F",)
+#: 🔴🔴 **2026-08-31 夕に空へ戻した（ユーザー判断）。** 同日朝に `("F",)` で入れたが、
+#:    実売3日の内訳を見ると**優先すべきは看板ではなく的中体験**だった:
+#:
+#:      型ラボ実売 8/29-31  98件 ROI 44.3% ＝ 参照分布の 2.9%点（34回に1回）
+#:      内訳  F_pay 37件で**表示的中 0.00%** ↔ A_hit 81.9% / B_hit 92.0% / A_trio 91.1%
+#:
+#:    型F は母集団の約30%を占めるのに `F_pay` の表示的中は設計上 8.4%（12件に1件）で、
+#:    「毎日当たらない」体感の主因になっていた。**看板枠はそれを 4.5% へさらに下げる**
+#:    ので、いま入れる変更ではない。機構と実測は残してあるので、的中体験が戻ってから
+#:    `("F",)` などへ戻せる（`docs/type_lab/signboard_slot_2026_08_31.md`）。
+SIGNBOARD_TYPES: tuple[str, ...] = ()
 #: 計画払戻（ダッチなのでどの点が当たっても最低この額を狙う）。
 #:
 #: 🔴 **10万ちょうどで組んではいけない。** 予測オッズは確定より高めに出るため
@@ -334,9 +344,30 @@ NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
 #:       （決勝で 16.42% ↔ 2.99%）。**収支は 20か月でも判定できていない**ので、
 #:       これは「看板には必ず出す」方針を優先した選択であって、
 #:       ROI が上がるという主張ではない。前向きに台帳で確かめる。
-NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = {"決勝": "F_pay"}
+#: 🔴🔴 **2026-08-31 に 7車へも広げた（車数を問わない規則になった）。**
+#:    それまで 7車の型F は一律 `F_pay`（一撃）だったが、実売3日で
+#:    **37件すべて表示的中 0%**。`F_pay` の表示的中は設計上 8.4% しかない一方、
+#:    型F は母集団の約30%を占めるため、ここが「毎日当たらない」体感を作っていた。
+#:
+#:    確認窓2026（軸信頼ゲートあと）で型F の売り方だけを替えた実測:
+#:
+#:      型F の売り方              件/日   表示的中    ROI    50%割れの日   10万+/日
+#:      F_pay（〜2026-08-31）     39.4   22.00%   78.7%    18.5%      0.307
+#:      F_hit                    39.4   27.21%   83.0%     9.2%      0.050
+#:      **F_hit＋決勝だけF_pay**   39.4   26.80%   83.8%     8.8%      0.088
+#:
+#:    探索窓2025でも同じ向き（21.15→25.81% / 74.5→76.7% / 18.1→11.2%）。
+#:    🔴 **代償は看板**（10万+ が 0.307 → 0.088件/日）。的中体験と看板は
+#:       同じ予算では交換関係にあるので、方針が変わったらここを戻すこと。
+#:    🔴 **「決勝」は完全一致で引く。** 部分一致にすると「準決勝」を拾い、
+#:       表示的中の低い `F_pay` が母集団の何倍にも広がる（CLAUDE.md の既知の罠）。
+TYPE_F_SELL_BY_RACE_TYPE = {"決勝": "F_pay", "チャレンジ決勝": "F_pay"}
 #: 上の表に無い種別（＝決勝以外）で売るプラン。
-NINE_CAR_TYPE_F_SELL_DEFAULT = "F_hit"
+TYPE_F_SELL_DEFAULT = "F_hit"
+
+#: 旧名（9車専用だった頃の名前）。**参照している箇所があるので残す**。
+NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = TYPE_F_SELL_BY_RACE_TYPE
+NINE_CAR_TYPE_F_SELL_DEFAULT = TYPE_F_SELL_DEFAULT
 #: 🔴 **2026-08-28 に `F_hit` → `F_pay` へ変更**（本番移行・ユーザー判断）。
 #:    車数や種別で hit / pay を分けない、という方針に揃えた。
 #:    ⚠️ ここは「売る／売らない」の分岐（`NINE_CAR_TYPE_F_RACE_TYPES`）とは別物。
@@ -380,8 +411,10 @@ NINE_CAR_TYPE_F_PLANS = ("F_pay",)
 #:    ——表示的中は全F_hit の 25.2% が最大、10万+ は全F_pay の 65件が最大で、
 #:    分割は中間（17.9% / 32件）を作るだけ。`SUMMARY.md` §2.6
 #:    「型は edge を作らない。決めるのは帯とカバレッジだけ」と同じ構造。
+#: 🔴 **型F はここに書かない**（2026-08-31）。種別で `F_pay` / `F_hit` に分かれるので
+#:    固定の集合では表せない。判定は `sell_plans_for` の型F 分岐が正本。
 SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
-                               "B_hit", "C_hit", "D_hit", "E_hit", "F_pay")
+                               "B_hit", "C_hit", "D_hit", "E_hit")
 
 #: 型ラボが**入稿しうる**プランの全体（2026-08-30）。
 #:
@@ -392,8 +425,8 @@ SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
 SELLABLE_PLAN_KEYS: frozenset[str] = (
     frozenset(SELL_PLANS)
     | {f"{t}_sign" for t in SIGNBOARD_TYPES}
-    | {NINE_CAR_TYPE_F_SELL_DEFAULT}
-    | set(NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.values()))
+    | {TYPE_F_SELL_DEFAULT}
+    | set(TYPE_F_SELL_BY_RACE_TYPE.values()))
 
 
 def plans_for(type_label: str, n_entries: int = 7,
@@ -491,9 +524,11 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
             elif trio_ok:
                 key = "A_trio"
         return [p for p in plans if p.key == key]
-    if n_entries == 9 and type_label == "F":
-        key = NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.get(
-            str(race_type or ""), NINE_CAR_TYPE_F_SELL_DEFAULT)
+    # 🔴 **車数を問わない**（2026-08-31）。7車も 9車も「決勝は F_pay・それ以外は F_hit」。
+    #    以前は 9車だけの規則で、7車は `SELL_PLANS` の `F_pay` に落ちていた。
+    if type_label == "F":
+        key = TYPE_F_SELL_BY_RACE_TYPE.get(
+            str(race_type or ""), TYPE_F_SELL_DEFAULT)
         return [p for p in plans if p.key == key]
     return [p for p in plans if p.key in SELL_PLANS]
 
