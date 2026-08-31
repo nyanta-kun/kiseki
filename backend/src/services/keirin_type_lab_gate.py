@@ -193,9 +193,60 @@ def passes_axis_gate(plan_key: str, axis_sum: float | None,
 #:    ＝**看板の維持は KPI ではなく方針**（2026-08-09「看板レースには必ず推奨を出す」）。
 #:    やめるなら `DAILY_CAP_KEEP_MARQUEE` を False にするだけでよい。
 DAILY_CAP_RACE_FRACTION = 0.5
-#: 看板レース（`keirin/src/marquee.is_fill_target`）を上限の対象外にするか。
-#: 🔴 True だと上の実測どおり表示的中を 1.5〜1.8pt 払う。方針を優先した選択。
-DAILY_CAP_KEEP_MARQUEE = True
+#: 上限の**対象外**にするレース（＝必ず残す）。2026-09-01 ユーザー指定
+#: 「大きなレースの決勝・準決勝などは優先的に残したい」。
+#:
+#: 🔴 **`marquee.is_fill_target`（看板）をそのまま使ってはいけない。** あちらは
+#:    決勝/特選/選抜/特秀＋大会予選＋グレード3以上と広く、**特選・選抜が
+#:    `F_sign`（設計上 表示的中 5.28% の一撃商品）の主な出どころ**なので、
+#:    丸ごと除外すると上限の狙い（当たりやすい側を残す）と正面から衝突する。
+#:    除外の範囲を変えた実測（上限=レース数×0.5・探索2025 / 確認2026・対照20本）:
+#:
+#:      除外の範囲              除外/日      件/日        表示的中        ROI      対照(表示/ROI)
+#:      なし（全部が対象）        0.00   24.08/23.97  22.59/23.82%  76.7/84.3  19·20 / 19·20
+#:      看板ぜんぶ（広い）       10.2/10.6  24.10/23.98  21.06/22.18%  74.7/82.0  17·18 / **8·11**
+#:      決勝＋準決勝            9.6/9.5   24.08/23.97  22.30/23.41%  76.8/85.1  20·18 / 12·19
+#:      **＋グレード3以上（現行）** 9.8/9.7  24.08/23.97  22.32/23.45%  77.0/84.7  **20·20 / 14·18**
+#:      決勝のみ（準決勝は対象）    2.24     24.08/23.97  22.26/23.33%  76.0/83.1  20·18 / 12·14
+#:
+#:    ＝**決勝・準決勝へ絞ると、9.7件/日 を守りながら損失がほぼ消える**
+#:      （広い看板だと 表示的中 −1.3pt・ROI −2.7pt を払っていた）。
+#:
+#: 🔴 **「決勝」は部分一致でよい（ここだけは準決勝を拾わせたい）。** CLAUDE.md や
+#:    `keirin_marquee` の「準決勝を部分一致で拾うな」は**別の目的**の注意で、
+#:    ここでは準決勝も残すのが仕様。将来「バグ」として直さないこと。
+DAILY_CAP_EXEMPT_KEYWORDS: tuple[str, ...] = ("決勝",)
+#: このグレード以上の開催は種別を問わず対象外（`marquee.FILL_ALL_MIN_GRADE` と同値＝GIII以上）。
+#: 🔴 **0 で無効**。⚠️ `cup_grade` は 2026-08-14 から保存を始めた列で、それ以前は NULL。
+#:    NULL のときはキーワードだけで判定する（従来動作へのフォールバック）。
+DAILY_CAP_EXEMPT_MIN_GRADE = 3
+
+
+def daily_cap_exempt(race_type: str | None, cup_grade: int | None = None) -> bool:
+    """日次上限の**対象外**（＝必ず残す）レースか。
+
+    >>> daily_cap_exempt("決勝")
+    True
+    >>> daily_cap_exempt("準決勝")          # ここでは準決勝も残す（仕様）
+    True
+    >>> daily_cap_exempt("チャレンジ決勝")
+    True
+    >>> daily_cap_exempt("特選")            # 看板だが上限の対象にする
+    False
+    >>> daily_cap_exempt("特選", 3)         # グレード3以上なら残す
+    True
+    >>> daily_cap_exempt(None)
+    False
+    """
+    if cup_grade is not None and DAILY_CAP_EXEMPT_MIN_GRADE:
+        try:
+            if int(cup_grade) >= DAILY_CAP_EXEMPT_MIN_GRADE:
+                return True
+        except (TypeError, ValueError):
+            pass
+    if not race_type:
+        return False
+    return any(k in str(race_type) for k in DAILY_CAP_EXEMPT_KEYWORDS)
 
 #: 上限に当たったとき **何を残すか**。プランごとの `axis_sum` の分位（0/10/…/100%）で、
 #: `axis_priority()` がこれを使って 0〜1 の優先度へ写す。

@@ -613,7 +613,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         """
         if int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES:
             return 1.0
-        if _GATE.DAILY_CAP_KEEP_MARQUEE and _is_marquee(r):
+        if _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")):
             return 1.0
         return _GATE.axis_priority(str(r["plan_key"]), r.get("axis_sum"))
 
@@ -667,8 +667,11 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             bump(reason[0])
             continue
 
+        # 🔴 **除外は「大きなレースの決勝・準決勝」だけ**（看板ぜんぶではない）。
+        #    看板を丸ごと外すと `F_sign` が全部残って上限の狙いと衝突する
+        #    （`daily_cap_exempt` の実測表）。
         exempt = (int(row.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
-                  or (_GATE.DAILY_CAP_KEEP_MARQUEE and _is_marquee(row)))
+                  or _GATE.daily_cap_exempt(row.get("race_type"), row.get("cup_grade")))
         if cap_budget is not None and not exempt and n_ok >= cap_budget:
             # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「日次上限」として出る。

@@ -240,6 +240,44 @@ def test_every_sellable_plan_has_priority_quantiles():
         assert list(qs) == sorted(qs), f"{k} の分位が昇順でない"
 
 
+def test_daily_cap_exempts_finals_but_not_all_marquee():
+    """🔴 **上限の対象外は「決勝・準決勝＋グレード3以上」だけ。**
+
+    看板（`is_fill_target`）ぜんぶを外すと、特選・選抜に出る `F_sign`
+    （設計上 表示的中 5.28% の一撃商品）が全部残り、上限の狙い
+    「当たりやすい側を残す」と正面から衝突する——実測で対照20本に
+    ROI 8/20・11/20 と負ける（決勝＋準決勝なら 12/20・19/20）。
+    """
+    import importlib.util
+
+    from src.marquee import is_fill_target
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    # 決勝・準決勝は残す
+    for rt in ("決勝", "準決勝", "チャレンジ決勝", "チャレンジ準決勝", "ガールズ決勝"):
+        assert gate.daily_cap_exempt(rt), rt
+    # 看板ではあるが上限の対象にする（ここが `is_fill_target` との違い）
+    for rt in ("特選", "初特選", "選抜", "特秀"):
+        assert is_fill_target(rt), f"{rt} は看板のはず（前提の確認）"
+        assert not gate.daily_cap_exempt(rt), f"{rt} を上限の対象外にしている"
+    # グレードは看板の正本と同じ境界
+    assert gate.DAILY_CAP_EXEMPT_MIN_GRADE == _marquee_min_grade()
+
+
+def _marquee_min_grade() -> int:
+    import importlib.util
+
+    path = REPO.parent / "backend/src/services/keirin_marquee.py"
+    spec = importlib.util.spec_from_file_location("tl_marquee", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return int(mod.FILL_ALL_MIN_GRADE)
+
+
 def test_daily_cap_does_not_touch_generation():
     """🔴 **上限は入稿だけに効き、`type_lab_picks` の生成には触らない。**
 
@@ -278,7 +316,7 @@ def test_daily_cap_is_bound_from_backend_source():
     """日次上限と順位付けを写経していない（backend の正本を読み込む）。"""
     src = SUBMIT_PY.read_text(encoding="utf-8")
     assert "_GATE.DAILY_CAP_RACE_FRACTION" in src, "上限を正本から読んでいない"
-    assert "_GATE.DAILY_CAP_KEEP_MARQUEE" in src, "看板の扱いを正本から読んでいない"
+    assert "_GATE.daily_cap_exempt" in src, "除外の判定を正本から読んでいない"
     assert "_GATE.axis_priority" in src, "順位付けを正本から読んでいない"
     assert "= 0.5" not in src, "割合を写している"
 
