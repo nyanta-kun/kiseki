@@ -106,34 +106,50 @@ def _tf_boards(order):
     return odds, prob
 
 
-def test_type_a_buys_one_order_only():
-    """🔴 型A（鉄板）は着順まで読めるので **1順序だけ**。
+def test_type_a_buys_the_top_three_by_probability():
+    """🔴🔴 **2026-08-31: 型A は「1着=軸1・2着=軸2 固定」をやめ確率上位3点にした。**
 
-    入れ替えを足すと確認窓でガミ 0.6→17.9%・払戻中央 21,930→14,740円・
-    ROI 80.1→75.7% と一貫して悪化する（SUMMARY 追補 B）。
+    点数（3点）は据え置きで、**選び方だけ**を変えている。旧構成は確率を配分にしか
+    使わないので、同ライン隣接ボーナスを入れても買い目が変わらなかった
+    （配分だけ変わって表示的中はむしろ 32.80→32.18% / 32.84→32.32% と悪化）。
+    確率順へ替えると **34.40 / 34.91%**（ROI +1.6/+4.8pt）。
+
+    ⚠️ 旧構成の根拠（SUMMARY 追補B「入れ替えを足すとガミ 0.6→17.9%・
+       ROI 80.1→75.7%」）は **ROI で選んだ判断**で、今回は表示的中で選び直した。
+       ROI 優先へ戻すなら `fixed12` に戻すこと。
     """
     s = _shape({1: .80, 2: .70, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
     assert s.type_label == "A"
     odds, prob = _tf_boards(s.order)
     legs = build_legs(s, PLANS["A_hit"], odds, prob)
     assert len(legs) == 3
-    a1, a2 = s.order[0], s.order[1]
-    assert all(l[0] == a1 and l[1] == a2 for l in legs)
+    # 確率降順の上位3点であること（固定構成では無いこと）
+    want = sorted((k for k in prob if odds.get(k)), key=lambda k: -prob[k])[:3]
+    assert list(legs) == want
 
 
-def test_type_f_buys_all_six_orders():
-    """🔴 型F（大混戦）は3車が当たっても順序が読めないので **6順列すべて**。
+def test_type_f_buys_the_top_twelve_by_probability():
+    """🔴🔴 **2026-08-31: 型F は全順列（`all6`）をやめ確率上位12点にした。**
 
-    確認窓で `12` 単独 ROI 66.8% → `all6` 79.2%・2倍+/日 0.99 → 2.26。
+    点数（12点）は据え置きで、**選び方だけ**を変えている。
+    プラン単体で 表示的中 24.13 → 27.68% / 24.36 → 27.92%（両窓 +3.6pt）。
+
+    🔴 **ROI は落ちる**（確認窓 80.6 → 72.9%）。旧構成の根拠
+       （SUMMARY 追補B「`12`単独 ROI 66.8% → `all6` 79.2%」）は ROI で選んだ判断で、
+       今回は表示的中で選び直した。ラインナップ全体では他プランが吸収して
+       ΔROI の95%CI が 0 を跨ぐ（点推定 −0.2pt）が、**型F 単体では明確に劣る**。
+       ROI 優先へ戻すなら `all6` に戻すこと。
     """
     s = _shape(MIXED_P3, behind=LOW_BEHIND, day=3)
     assert s.type_label == "F"
     odds, prob = _tf_boards(s.order)
     legs = build_legs(s, PLANS["F_hit"], odds, prob)
-    assert len(legs) == 12                      # 相手2車 × 6順列
-    assert len({frozenset(l) for l in legs}) == 2
-    for trio in {frozenset(l) for l in legs}:
-        assert sum(1 for l in legs if frozenset(l) == trio) == 6
+    assert len(legs) == 12
+    want = sorted((k for k in prob if odds.get(k)), key=lambda k: -prob[k])[:12]
+    assert list(legs) == want
+    # ⚠️ このテスト盤面（`_tf_boards`）では上位12点がたまたま 2組×6順列 と一致する。
+    #    実データでは3車の組に縛られない（本番台の実測で表示的中が 3.6pt 動く）。
+    #    ここで組数を固定すると盤面の性質を商品の仕様と取り違えるので見ない。
 
 
 def test_axis1_second2_fixes_first_and_opens_second():
