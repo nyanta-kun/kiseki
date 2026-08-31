@@ -306,25 +306,6 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
     return None
 
 
-def _count_sellable_races(day: str) -> int:
-    """その日の**型ラボが売りうる 7車レース数**（日次上限の分母）。
-
-    🔴 **分母は 7車だけ**。9車と看板レースは上限の対象外なので、母数に入れると
-       上限だけが緩んで「対象外を増やすほど上限も上がる」という妙なことになる。
-    🔴 **読めなければ 0 を返す**＝上限を無効にする。分からないことを理由に
-       商品を落とさない（`passes_axis_gate` と同じ思想）。
-    """
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT count(*) FROM wt_races WHERE race_date = ? AND n_entries = ?",
-                (day, _GATE.AXIS_GATE_N_ENTRIES)).fetchone()
-        return int(tuple(row)[0]) if row else 0
-    except Exception as e:                                    # noqa: BLE001
-        print(f"[type_lab_submit] レース数を読めません（日次上限を無効化）: {e}", flush=True)
-        return 0
-
-
 def _is_marquee(row: dict) -> bool:
     """看板レース（＝穴埋め対象）か。判定は `keirin_marquee` の正本に束縛。"""
     return bool(is_fill_target(row.get("race_type"), row.get("cup_grade")))
@@ -576,40 +557,15 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     def bump(code: str) -> None:
         skipped[code] = skipped.get(code, 0) + 1
 
-    # ── 日次上限（2026-09-01）──────────────────────────────────────────
-    # 🔴 **上限は「その日に入稿した商品の数」に効く**（波をまたいだ合計）。
-    #    朝に出したぶんを差し引いた残りが、この回の予算になる。
-    # 🔴 **落とすのは軸信頼のプラン内順位が低い側**。期待値では並べられないことが
-    #    分かっている（`keirin_rank_priority_ev_rejected_2026_08_25`）ので、
-    #    足切りに使っているのと同じ量を順位付けにも使う。上限が実際に効く水準
-    #    （30/25件）では、無作為対照20本に**両窓・両指標とも勝つ**。
-    # ⚠️ 上限は `submit_row` の直前で見る。締切超過・並び未取得などで出さない行に
-    #    予算を食わせないため（先に引くと「出せなかった枠」で上限に達してしまう）。
-    cap_budget: int | None = None
-    cap_total = 0
-    n_races = _count_sellable_races(day) if _GATE.DAILY_CAP_RACE_FRACTION else 0
-    if n_races > 0:
-        cap_total = int(n_races * float(_GATE.DAILY_CAP_RACE_FRACTION))
-        cap_budget = max(0, cap_total - len(taken_by_type_lab))
-    elif _GATE.DAILY_CAP_RACE_FRACTION:
-        # 🔴 **レース数が読めなければ上限を掛けない**（`cap_budget` は None のまま）。
-        #    ここで 0 を上限として扱うと**その日は1件も出ない**。ゲートの
-        #    「判定できないものは通す」と倒す向きを揃える。
-        #    ⚠️ 2026-09-01 にこの誤りを実際に書いて、テストが捕まえた。
-        print("[type_lab_submit] ⚠️ レース数が取れないため日次上限は掛けません", flush=True)
-    if cap_budget is not None:
-        print(f"[type_lab_submit] 日次上限 {cap_total}件 "
-              f"（7車 {n_races}レース × {_GATE.DAILY_CAP_RACE_FRACTION}・"
-              f"既に {len(taken_by_type_lab)}件 → この回の枠 {cap_budget}件）", flush=True)
-
     def _priority(r: dict) -> float:
         """上限に当たったときの残す順（大きいほど先に残す）。
 
         🔴 **9車は上限で落とさない（常に 1.0）。** 順位付けの実測は 7車しかなく
            （`AXIS_PRIORITY_QUANTILES` は 7車の分位）、9車に当てると
            `axis_priority` が 0.5 を返して**9車だけが常に中央へ寄る**という
-           根拠のない偏りが入る。9車は 0〜9件/日 と少なく、決勝・特選など
-           看板級が多いので、削るのは 7車側に寄せる。
+           根拠のない偏りが入る。9車は 0〜9件/日 と少なく看板級が多い。
+        🔴 **決勝・準決勝（＋グレード3以上）も 1.0**。看板ぜんぶを外すと
+           `F_sign` が全部残って上限の狙いと衝突する（`daily_cap_exempt` の実測表）。
         """
         if int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES:
             return 1.0
@@ -617,66 +573,94 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             return 1.0
         return _GATE.axis_priority(str(r["plan_key"]), r.get("axis_sum"))
 
+    def _exempt(r: dict) -> bool:
+        return (int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
+                or _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")))
+
+    # ── 入稿しない理由を先に決める（副作用なし）────────────────────────────
+    # 🔴 **2パスにするのは日次上限の分母のため**（2026-09-01）。上限は
+    #    「その回に判定するレース数 × 割合」なので、**判定してみるまで分母が決まらない**。
+    #    1パスのまま「その日のレース総数」を分母にすると、朝で上限に達したとき
+    #    昼・夕の枠が 0 になる（並び未公開で後の波へ回した分が朝の分母に入るため）。
+    #: 戻り値 (記録コード|None, 説明, 静かに, 集計キー, 判定したか)
+    def _reject(r: dict):
+        rk = str(r["race_key"]); pk = str(r["plan_key"])
+        if not _is_enabled(settings, pk):
+            return (None, "", True, "disabled", False)
+        if (rk, pk) in already:
+            return (None, "", True, "already", False)
+        if rk in taken:
+            # 別ランク（既存商品・看板穴埋め）が既に取っている。入稿失敗ではない。
+            return (None, "", True, "taken_by_other_rank", False)
+        if rk in taken_by_type_lab:
+            # 型ラボの別プランが既に取っている（1レース1商品）。
+            return (None, "", True, "taken_by_type_lab", False)
+        if rk in closed:
+            # ⚠️ ログは静かに（波ごとに終わった開催が毎回並ぶと読めない）。
+            return (SKIP_CLOSED, "発走15分前を過ぎていました", True, "closed", False)
+        # 🔴 並び予想・AI印が未公開のレースは出さない（2026-08-26 の熊本7Rの型）。
+        #    欠測は欠測として扱われず、印なし＝最弱・ライン無し＝全員同ラインと
+        #    読まれた買い目が例外もログも無しに出来上がる。
+        #    ⚠️ **後の波で再判定するので「判定した」に数えない**（上限の分母から外す）。
+        lineup = _missing_market_inputs(rk)
+        if lineup:
+            return (SKIP_MISSING_LINEUP,
+                    f"{lineup} → この回は見送り（後の波で再判定）", False, "lineup", False)
+        if use_axis_gate and not _passes_axis_gate(r):
+            # 軸信頼ゲートは「商品の定義」であってゲート落ちではない。
+            # 記録すると毎日10件前後が見送り一覧を埋めて信号が死ぬので数だけ数える。
+            return (None, "", True, "axis_gate", True)
+        reason = _gate_reason(r)
+        if reason:
+            return (reason[0], reason[1], False, reason[0], True)
+        return None
+
     # 🔴 **軸信頼の高い順に処理する**（上限に当たったとき何が残るかがこの順序で決まる）。
     #    同点は会場・レース番号で決める（実行のたびに順序が変わらないように）。
-    for row in sorted(rows, key=lambda r: (
-            -_priority(r), str(r["venue_name"] or ""), int(r["race_no"]))):
+    ordered = sorted(rows, key=lambda r: (
+        -_priority(r), str(r["venue_name"] or ""), int(r["race_no"])))
+    decided = [(r, _reject(r)) for r in ordered]
+
+    # ── 上限 = その回に判定するレース数 × 割合 ──────────────────────────
+    n_judged = sum(1 for _, rj in decided if rj is None or rj[4])
+    cap_budget: int | None = None
+    if _GATE.DAILY_CAP_RACE_FRACTION and n_judged > 0:
+        # 🔴 **最低 1 件は出す。** 判定対象が 1〜2 レースの回だと
+        #    `int(n * 0.5)` が 0 になり、候補があるのに1件も出ない
+        #    （2026-09-01 にこの退化をテストが捕まえた）。割合は「絞る」ための
+        #    ものであって「出さない」ためのものではない。
+        cap_budget = max(1, int(n_judged * float(_GATE.DAILY_CAP_RACE_FRACTION)))
+        print(f"[type_lab_submit] 上限 {cap_budget}件"
+              f"（この回の判定対象 {n_judged}レース × {_GATE.DAILY_CAP_RACE_FRACTION}）",
+              flush=True)
+    elif _GATE.DAILY_CAP_RACE_FRACTION:
+        # 🔴 **判定対象が 0 なら上限を掛けない**（`cap_budget` は None のまま）。
+        #    0 を上限として扱うと1件も出ない。ゲートの「判定できないものは通す」と
+        #    倒す向きを揃える。⚠️ 2026-09-01 に逆を書いてテストが捕まえた。
+        print("[type_lab_submit] 判定対象が無いため上限は掛けません", flush=True)
+
+    for row, rj in decided:
         race_key = str(row["race_key"])
         plan = str(row["plan_key"])
         venue = str(row["venue_name"] or "?")
         race_no = int(row["race_no"])
 
-        if not _is_enabled(settings, plan):
-            bump("disabled")
-            continue
-        if (race_key, plan) in already:
-            bump("already")
-            continue
-        if race_key in taken:
-            # 別ランク（既存商品・看板穴埋め）が既に取っている。入稿失敗ではない。
-            bump("taken_by_other_rank")
+        if rj is not None:
+            code, detail, quiet, bucket, _judged = rj
+            if code:
+                skip(race_key, plan, session, code, detail, venue, race_no, quiet=quiet)
+            bump(bucket)
             continue
         if race_key in taken_by_type_lab:
-            # 型ラボの別プランが既に取っている（1レース1商品）。
+            # この回の中で別の行が同じレースを取った（`already` は開始時の断面）。
             bump("taken_by_type_lab")
             continue
-        if race_key in closed:
-            # ⚠️ ログは静かに（波ごとに終わった開催が毎回並ぶと読めない）。
-            #    記録は1件ずつ残す＝画面で「締切超過」として出る。
-            skip(race_key, plan, session, SKIP_CLOSED,
-                  "発走15分前を過ぎていました", quiet=True)
-            bump("closed")
-            continue
-        # 🔴 並び予想・AI印が未公開のレースは出さない（2026-08-26 の熊本7Rの型）。
-        #    欠測は欠測として扱われず、印なし＝最弱・ライン無し＝全員同ラインと
-        #    読まれた買い目が例外もログも無しに出来上がる。
-        lineup = _missing_market_inputs(race_key)
-        if lineup:
-            skip(race_key, plan, session, SKIP_MISSING_LINEUP,
-                  f"{lineup} → この回は見送り（後の波で再判定）", venue, race_no)
-            bump("lineup")
-            continue
-        if use_axis_gate and not _passes_axis_gate(row):
-            # 軸信頼ゲートは「商品の定義」であってゲート落ちではない。
-            # 記録すると毎日10件前後が見送り一覧を埋めて信号が死ぬので数だけ数える。
-            bump("axis_gate")
-            continue
-        reason = _gate_reason(row)
-        if reason:
-            skip(race_key, plan, session, reason[0], reason[1], venue, race_no)
-            bump(reason[0])
-            continue
-
-        # 🔴 **除外は「大きなレースの決勝・準決勝」だけ**（看板ぜんぶではない）。
-        #    看板を丸ごと外すと `F_sign` が全部残って上限の狙いと衝突する
-        #    （`daily_cap_exempt` の実測表）。
-        exempt = (int(row.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
-                  or _GATE.daily_cap_exempt(row.get("race_type"), row.get("cup_grade")))
-        if cap_budget is not None and not exempt and n_ok >= cap_budget:
+        if cap_budget is not None and not _exempt(row) and n_ok >= cap_budget:
             # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「日次上限」として出る。
             skip(race_key, plan, session, SKIP_DAILY_CAP,
-                 f"その日の上限 {cap_total}件 に達していました",
+                 f"この回の上限 {cap_budget}件（判定対象 {n_judged}レース×"
+                 f"{_GATE.DAILY_CAP_RACE_FRACTION}）に達していました",
                  venue, race_no, quiet=True)
             bump(SKIP_DAILY_CAP)
             continue

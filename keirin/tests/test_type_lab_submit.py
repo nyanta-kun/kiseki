@@ -298,18 +298,28 @@ def test_daily_cap_does_not_touch_generation():
         assert token not in settle, f"採点側が入稿を見ている: {token}"
 
 
-def test_daily_cap_is_disabled_when_race_count_is_unavailable():
-    """🔴 **レース数が読めないときは上限を掛けない。**
+def test_daily_cap_always_allows_at_least_one():
+    """🔴 **判定対象が少ない回でも最低1件は出す。**
 
-    上限は「レース数 × 割合」なので、レース数が 0 として扱われると上限も 0 になり
-    **その日は1件も入稿されない**。ゲートの「判定できないものは通す」と倒す向きを
-    揃える。2026-09-01 に実際にこの誤りを書き、テストが捕まえた。
+    `int(1 * 0.5)` は 0 なので、そのままだと候補があるのに1件も出ない回ができる。
+    割合は「絞る」ためのもので「出さない」ためのものではない。
+    2026-09-01 にこの退化をテストが捕まえた。
     """
     src = SUBMIT_PY.read_text(encoding="utf-8")
-    assert "if n_races > 0:" in src, "レース数が 0 のときの分岐が無い"
-    i = src.index("if n_races > 0:")
-    tail = src[i:i + 900]
-    assert "日次上限は掛けません" in tail, "0 のときに上限を無効化していない"
+    assert "max(1, int(n_judged" in src, "最低1件の下駄が無い"
+
+
+def test_daily_cap_is_disabled_when_race_count_is_unavailable():
+    """🔴 **判定対象が無いときは上限を掛けない。**
+
+    上限は「その回に判定するレース数 × 割合」なので、0 として扱われると上限も 0 になり
+    **1件も入稿されない**。ゲートの「判定できないものは通す」と倒す向きを揃える。
+    2026-09-01 に実際にこの誤りを書き、テストが捕まえた。
+    """
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert "n_judged > 0" in src, "判定対象が 0 のときの分岐が無い"
+    i = src.index("n_judged > 0")
+    assert "上限は掛けません" in src[i:i + 1200], "0 のときに上限を無効化していない"
 
 
 def test_daily_cap_is_bound_from_backend_source():
@@ -328,7 +338,7 @@ def test_daily_cap_is_checked_just_before_submitting():
     その日の上限は「入稿できた件数」に対して効かなければ意味がない。
     """
     src = SUBMIT_PY.read_text(encoding="utf-8")
-    cap = src.index("if cap_budget is not None and not exempt")
+    cap = src.index("if cap_budget is not None and not _exempt(row)")
     sub = src.index("ok, msg = submit_row(")
     closed = src.index("SKIP_CLOSED,")
     assert closed < cap < sub, "上限の判定位置が違う（他の見送りの後・入稿の直前であること）"
@@ -731,9 +741,13 @@ def test_型ラボ自身が取ったレースには出さない():
     """`(race_key, plan) in already` は**同じプラン**の二重入稿しか止めない。"""
     src = SUBMIT_PY.read_text(encoding="utf-8")
     assert "taken_by_type_lab" in src, "型ラボ自身の重複ガードがありません"
-    i = src.index("for row in sorted(rows")
+    # 🔴 判定は `_reject`（開始時の断面）と入稿ループ（この回の中）の**両方**で見る。
+    #    2026-09-01 に2パスへ組み替えたとき、片方だけだと同じ実行の中で
+    #    2つ目のプランが通る／既に取った行を再判定する、のどちらかが起きる。
+    assert 'if rk in taken_by_type_lab:' in src, "_reject で見ていません"
+    i = src.index("for row, rj in decided:")
     loop = src[i:i + 2500]
-    assert "if race_key in taken_by_type_lab:" in loop, "ループで見ていません"
+    assert "if race_key in taken_by_type_lab:" in loop, "入稿ループで見ていません"
     # 入稿できたら同じ実行の中でも二度目を止める（`already` は開始時の断面）
     assert "taken_by_type_lab.add(race_key)" in src, \
         "同じ実行の中で2つ目のプランが通ってしまいます"
@@ -886,7 +900,7 @@ def test_the_gate_is_still_applied_by_default():
     import scripts.netkeirin_submit_type_lab as M
     src = (REPO / "scripts" / "netkeirin_submit_type_lab.py").read_text(encoding="utf-8")
     # ゲートの呼び出しはフラグと AND で結ばれていること（外し忘れの検出）。
-    assert "if use_axis_gate and not _passes_axis_gate(row):" in src
+    assert "if use_axis_gate and not _passes_axis_gate(r):" in src
     # フラグは run() の中で**1回だけ**読む（行ごとに DB を叩かない）。
     assert src.count("use_axis_gate = axis_gate_enabled()") == 1
     assert callable(M.axis_gate_enabled)
