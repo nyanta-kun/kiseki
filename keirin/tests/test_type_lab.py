@@ -164,7 +164,11 @@ def test_axis1_second2_fixes_first_and_opens_second():
 
 
 def test_type_d_drops_the_most_popular_partner():
-    """型Dは軸2車＋相手4点で、**相手5車のうち最人気（予測オッズ最小）を外す**。"""
+    """型Dは軸2車＋相手3点で、**相手4車のうち最人気（予測オッズ最小）を外す**。
+
+    ⚠️ 相手は 2026-09-01 に 4点 → 3点へ減らした（ROI +2.7/+4.2pt ↔ 表示的中 −2.5/−1.8pt）。
+       「最人気を外す」という主張自体は変えていない。
+    """
     s = _shape({1: .60, 2: .50, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
     assert s.type_label == "D"
     a1, a2 = s.order[0], s.order[1]
@@ -172,7 +176,7 @@ def test_type_d_drops_the_most_popular_partner():
     odds = {frozenset({a1, a2, c}): 5.0 + i for i, c in enumerate(rest)}
     prob = {k: 1.0 / v for k, v in odds.items()}
     legs = build_legs(s, PLANS["D_hit"], odds, prob)
-    assert len(legs) == 4
+    assert len(legs) == PLANS["D_hit"].n_partners == 3
     fav = min(odds, key=lambda k: odds[k])
     assert fav not in legs, "最人気の相手が残っている"
 
