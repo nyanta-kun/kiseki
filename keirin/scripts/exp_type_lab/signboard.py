@@ -12,9 +12,13 @@
    （CLAUDE.md「買い目を検証で組み直さない」。2026-08-10 に丸1本の結論が反転した型）。
    §2 の「選び方の比較」だけは本番に無い腕を測るのでスクリプト内で組む。
 
+⚠️ **全節で20分ほどかかる**（1腕あたり 28,063レース × 210点）。節を選ぶか
+   `--limit` で間引いて動作確認すること。
+
 使い方:
-    python scripts/exp_type_lab/signboard.py            # 全節
-    python scripts/exp_type_lab/signboard.py --only 4   # 節を選ぶ
+    python scripts/exp_type_lab/signboard.py               # 全節（20分ほど）
+    python scripts/exp_type_lab/signboard.py --only 4      # 節を選ぶ
+    python scripts/exp_type_lab/signboard.py --limit 2000  # 動作確認（数字は読めない）
 """
 from __future__ import annotations
 
@@ -56,7 +60,12 @@ def _dsn() -> dict:
 
 
 def load():
-    z = np.load(BOARD, allow_pickle=True)
+    # 🔴🔴 **`NpzFile` の添字アクセスは毎回まるごと展開する。** `z["PO"][i]` を
+    #    レースごとに呼ぶと 56MB の解凍が数万回走り、数分で終わる測定が終わらない
+    #    （型ラボで一度踏んでいる。`keirin_type_lab_shipped_2026_08_27`）。
+    #    ここで**一度だけ**素の ndarray へ移す。
+    with np.load(BOARD, allow_pickle=True) as f:
+        z = {k: f[k] for k in ("PROB", "PO", "WIN", "PAY", "KEY", "DATE")}
     c = psycopg2.connect(**_dsn())
     cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""SELECT race_key, type_label, plan_key, payout
@@ -174,20 +183,29 @@ def run(z, ty, base, idx, pick, label, budget=BUDGET, thr=100_000):
         out[wl] = (len(pts) / nd, 100.0 * disp / n, 100.0 * pay / inv, b10 / nd,
                    b30 / nd, inv / nd, st.median(pts) if pts else 0,
                    st.median(plans) if plans else 0, dd[25], dd[974])
+    if len(out) < 2:                       # --limit で片方の窓が空になったとき
+        print(f"{label:26} | 窓が足りない（--limit 中？）: {sorted(out)}", flush=True)
+        return
     a, b = out["探索"], out["確認"]
     print(f"{label:26} | {a[0]:5.1f}枠 表示的中{a[1]:6.2f}% ROI{a[2]:5.1f}% "
           f"10万+{a[3]:5.2f} 30万+{a[4]:5.2f} 投資{a[5]/10000:5.1f}万 {a[6]:3.0f}点 "
           f"ΔROI[{a[8]:+5.1f},{a[9]:+5.1f}]"
           f" || {b[1]:6.2f}% {b[2]:5.1f}% {b[3]:5.2f} {b[4]:5.2f} "
-          f"{b[5]/10000:5.1f}万 {b[6]:3.0f}点 [{b[8]:+5.1f},{b[9]:+5.1f}]")
+          f"{b[5]/10000:5.1f}万 {b[6]:3.0f}点 [{b[8]:+5.1f},{b[9]:+5.1f}]", flush=True)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", type=int, default=0, help="節番号（0=全部）")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="レース数の上限（動作確認用。数字は読めない）")
     args = ap.parse_args()
     z, ty, base, idx = load()
-    print(f"台 {BOARD} / 現行商品と結合できたレース {len(idx)}\n")
+    if args.limit:
+        # 🔴 先頭から取ると**確認窓が空になる**（台は日付順）。等間隔で間引く。
+        idx = idx[:: max(1, len(idx) // args.limit)]
+        print("⚠️ --limit 付き＝動作確認用。数字を結論に使わないこと。")
+    print(f"台 {BOARD} / 現行商品と結合できたレース {len(idx)}\n", flush=True)
     head = (f"{'':26} | {'───────────── 探索 2024-07〜2025-12 ─────────────':^82}"
             f" || {'──────── 確認 2026 ────────':^54}")
 
