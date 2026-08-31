@@ -159,6 +159,48 @@ def test_axis_gate_is_bound_from_backend_source():
         assert v not in src, f"閾値 {v} を写している"
 
 
+def test_every_sellable_plan_has_an_axis_gate_threshold():
+    """🔴 **売りうるプランは全部 `AXIS_GATE_MIN` に閾値を持つこと。**
+
+    `passes_axis_gate` は「判定できないものは通す」設計なので、閾値表に鍵が
+    無いプランは**エラーを出さずにゲートを素通りする**。2026-08-31 に型A を
+    3分割（PR#384）したとき、この表だけが更新されず `A_ana` / `A_trio` が
+    素通りしていた——実測で型A の入稿 21件のうち **10件（48%）**がゲート未通過、
+    うち4件は `A_hit` の閾値を下回っていた。
+
+    プランを増やすたびに人が気づく必要がある形にしない。
+    ⚠️ 看板枠（`*_sign`）は `SIGNBOARD_TYPES` が空のときは売らないので対象外。
+    """
+    import importlib.util
+
+    from src.type_lab import SELLABLE_PLAN_KEYS
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    missing = sorted(k for k in SELLABLE_PLAN_KEYS
+                     if not k.endswith("_sign") and k not in gate.AXIS_GATE_MIN)
+    assert not missing, (
+        f"閾値が無いまま売れてしまうプラン: {missing}。"
+        f"探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内 p20 を引いて "
+        f"AXIS_GATE_MIN へ足すこと")
+
+
+def test_axis_gate_thresholds_are_in_a_sane_range():
+    """閾値は 3着内率2車の合計なので 0〜2。桁を間違えたら落とす。"""
+    import importlib.util
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+
+    for k, v in gate.AXIS_GATE_MIN.items():
+        assert 1.0 < float(v) < 2.0, f"{k} の閾値 {v} が範囲外"
+
+
 def test_mean_payout_gate_rejects_cheap_products():
     from scripts.netkeirin_submit_type_lab import _gate_reason
 
