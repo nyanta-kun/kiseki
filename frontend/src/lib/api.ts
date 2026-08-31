@@ -1358,8 +1358,12 @@ export type KeirinStatsRank = | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C
 export type TypeLabRankKey =
   // 🔴 `F_hit` は 9車の型F（決勝以外）で売る（2026-08-30）。7車の型F は `F_pay`。
   // 🔴 型A は3分割（2026-08-31）。`A_trio`＝三連複2点・`A_ana`＝穴狙い。
+  // 🔴 看板枠（2026-08-31）。**6型ぶん定義する**——実際に売るのは keirin 側
+  //    `SIGNBOARD_TYPES` の型だけ（既定は型F）だが、入稿設定の一覧・統計の
+  //    絞り込みはダイヤルを回す前から並べておく必要がある。
   "A_hit" | "A_trio" | "A_ana" |
-  "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit";
+  "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit" |
+  "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign";
 
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"

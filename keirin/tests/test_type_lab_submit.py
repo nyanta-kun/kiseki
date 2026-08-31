@@ -62,9 +62,11 @@ def test_nine_car_type_f_splits_by_race_type():
     assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
-    # 7車は変えていない
-    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_pay"]
-    assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_pay"]
+    # 🔴 **7車の型F は 2026-08-31 から看板枠（`F_sign`）を売る。**
+    #    `SIGNBOARD_TYPES` に "F" が入っているため。9車は未測定なので変えていない
+    #    （`SIGNBOARD_N_ENTRIES = 7`）。ここが落ちたらダイヤルが動いた合図。
+    assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_sign"]
+    assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_sign"]
     # 型F以外は9車でも種別によらず売る
     assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
 
@@ -197,7 +199,10 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 # ───────────────────────── 勝負アイコン ─────────────────────────
 
 #: 穴狙いアイコンを付けるプラン。**ここを増やすときは理由を書くこと。**
-LONGSHOT_PLANS = {"F_pay", "A_ana"}
+#: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
+#:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
+#:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
+LONGSHOT_PLANS = {"F_pay", "A_ana"} | {f"{t}_sign" for t in "ABCDEF"}
 
 
 def test_only_declared_plans_are_longshot():
@@ -216,8 +221,15 @@ def test_only_declared_plans_are_longshot():
     from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
     from src.netkeirin_client import ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT
 
-    assert set(ACT_TYPE_BY_PLAN) == set(SELLABLE_PLAN_KEYS), \
-        "入稿しうるプランと表がずれている"
+    # 🔴 **表は「入稿しうるプラン」を覆っていればよく、超過は許す**（2026-08-31）。
+    #    看板枠 `{型}_sign` は6型ぶん定義してあるが、実際に売るのは
+    #    `SIGNBOARD_TYPES` の型だけ。ダイヤルを回した瞬間に
+    #    `.get(..., 既定)` で黙って既定アイコンへ落ちるのを防ぐため、
+    #    表には最初から6型ぶん入れてある。**不足は許さない**ので検出力は落ちない。
+    assert set(SELLABLE_PLAN_KEYS) <= set(ACT_TYPE_BY_PLAN), \
+        "入稿しうるプランが表から漏れている"
+    assert all(k in SELLABLE_PLAN_KEYS or k.endswith("_sign")
+               for k in ACT_TYPE_BY_PLAN), "表に素性の分からないプランがある"
     assert {k for k, v in ACT_TYPE_BY_PLAN.items()
             if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS
     assert all(v == ACT_TYPE_DEFAULT for k, v in ACT_TYPE_BY_PLAN.items()
@@ -254,7 +266,10 @@ def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
     from src.netkeirin_client import ACT_TYPE_LONGSHOT
 
     plans = sell_plans_for("F", n_entries, race_type)
-    assert [p.key for p in plans] == ["F_pay"]
+    # 🔴 7車は看板枠（`F_sign`）・9車決勝は `F_pay`。**どちらも穴狙いアイコン**という
+    #    このテストの主張は変わらない（2026-08-31 に看板枠を入れた）。
+    expect = "F_sign" if n_entries == 7 else "F_pay"
+    assert [p.key for p in plans] == [expect]
     assert ACT_TYPE_BY_PLAN[plans[0].key] == ACT_TYPE_LONGSHOT
 
 

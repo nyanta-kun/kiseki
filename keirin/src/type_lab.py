@@ -89,6 +89,49 @@ DEFAULT_FLOOR_MULT = 1.3
 #:    エントロピーの上限は車数で変わる（ln7=1.946 / ln9=2.197）ので、
 #:    9車に当てると「上位10%」ではなく**絶対値で切る**ことになる。
 ANA_PW_ENT_MIN = 1.4076
+#: ── 看板枠（高額払戻を作る買い方）─────────────────────────────────────
+#:
+#: 🔴 **看板の本数は「点の選び方」では動かない。** 市場効率下では
+#:    P(払戻 >= X) = 帯ROI × 予算/X という恒等式に支配されるので、券種・点数・配分・
+#:    並べ方に依存しない（`keirin_highpay_payout_ceiling_2026_08_06`）。
+#:    本番検証台（`/tmp/tf20_board_vint.npz`・全210点・vintage）で 2026-08-31 に
+#:    選び方を7通り比べたが、10万+/日 は **1.67〜1.94（探索）/ 1.71〜1.86（確認）** で
+#:    ほぼ一定・ROI 差は**全案とも 95%CI が 0 を跨ぐ**（探索で有意に見えた「確率順」は
+#:    確認窓で符号が反転する）。
+#:
+#: 🟢 **動くのは3つだけ**: ①看板枠を置く型の数（＝枠/日）②計画払戻 `SIGNBOARD_TARGET`
+#:    ③1レースの予算。①②は下の定数、③は `BUDGET`。
+#:
+#: 実測（7車・確定払戻で採点・現行 = 表示的中 20.74% / ROI 76.7% / 10万+ 0.39件/日）:
+#:
+#:      看板枠を置く型   枠/日   表示的中   ROI    10万+/日   30万+/日
+#:      なし（現行）      0.0   20.74%   76.7%    0.39      0.02
+#:      F                14.2   19.84%   76.8%    0.55      0.02
+#:      F+C              23.1   16.53%   74.8%    0.85      0.03
+#:      F+C+E            27.5   15.26%   73.8%    0.98      0.05
+#:      F+C+E+B          33.5   12.40%   72.1%    1.18      0.06
+#:      全型              48.2    5.14%   70.7%    1.67      0.07
+#:
+#: 🔴 **1レース1万円では看板 5件/日 は作れない**（上限 1.7件/日・全レースを看板枠に
+#:    しても）。恒等式どおり本数は予算に比例するので、5件/日 には 1レース約3万円
+#:    （投資 約145万円/日）が要る。目標を動かすときはここを読むこと。
+#: 🔴 **7車でしか測っていない。** 9車（型F が母集団の55〜59%・ROI 65%）は
+#:    有望だが未測定なので `SIGNBOARD_N_ENTRIES` で 7車に限定してある。
+SIGNBOARD_TYPES: tuple[str, ...] = ("F",)
+#: 計画払戻（ダッチなのでどの点が当たっても最低この額を狙う）。
+#:
+#: 🔴 **10万ちょうどで組んではいけない。** 予測オッズは確定より高めに出るため
+#:    計画10万だと的中の **55%** しか10万に届かない。掃引実測（的中→10万の到達率）:
+#:    計画8万 35% / 10万 55% / 12万 71% / **15万 84%** / 20万 94%。
+#:    15万を超えると点数が減りすぎて 10万+ の本数自体が減る（1.67 → 1.42件/日）。
+SIGNBOARD_TARGET = 150_000
+#: 予測オッズの上限。**帯ROI が崩れる超高配当を買わないための蓋**
+#: （三連単の帯ROI は 600倍まで 71〜76% だが 600-1200倍 64.5% / 1200倍- 51.6%）。
+SIGNBOARD_MAX_ODDS = 600.0
+#: 看板枠を掛ける車数。**これ以外には掛けない**（`ANA_N_ENTRIES` と同じ理由で、
+#: 9車では測っていない）。
+SIGNBOARD_N_ENTRIES = 7
+
 #: 上の境界を作った窓。数字の出どころを行に残す。
 ANA_SOURCE_WINDOW = ("2025-01-01", "2025-12-31")
 #: 穴狙いを掛ける車数。**これ以外には掛けない**。
@@ -200,6 +243,7 @@ class Plan:
     structure: str           # 下記 build_legs の分岐
     n_partners: int          # 相手（3着列など）に使う車数
     min_odds: float = 0.0    # 予測オッズの下限（帯）
+    max_odds: float = 0.0    # 予測オッズの上限（0=なし）
     max_legs: int = 0        # 上限点数（0=なし）
     sigma_max: float = 0.0   # Σ(1/予測オッズ) の上限（0=なし）
     alloc: str = "conf"      # 'conf' | 'dutch'
@@ -242,6 +286,16 @@ PLANS: dict[str, Plan] = {
     "F_pay": Plan("F_pay", "F", "trifecta", "axis1_second2", 2, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（一撃を取る）"),
 }
+
+#: 看板枠（`structure="signboard"`）を全6型ぶん足す。**生成は常に行い、売るかどうかは
+#: `SIGNBOARD_TYPES` が決める**——売らなかった型の成績を後から測れるようにするため
+#: （`plans_for` の docstring と同じ思想）。
+for _t in "ABCDEF":
+    PLANS[f"{_t}_sign"] = Plan(
+        f"{_t}_sign", _t, "trifecta", "signboard", 0,
+        max_odds=SIGNBOARD_MAX_ODDS, alloc="dutch",
+        note=f"看板枠: 確率順に Σ(1/予測オッズ) <= 予算/{SIGNBOARD_TARGET:,} まで積む")
+del _t
 
 
 #: 9車で型F を売る条件。**決勝だけ・`F_hit` だけ**（2026-08-28 実投入）。
@@ -337,6 +391,7 @@ SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
 #:    そういう用途はこちらを使うこと。
 SELLABLE_PLAN_KEYS: frozenset[str] = (
     frozenset(SELL_PLANS)
+    | {f"{t}_sign" for t in SIGNBOARD_TYPES}
     | {NINE_CAR_TYPE_F_SELL_DEFAULT}
     | set(NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE.values()))
 
@@ -422,6 +477,12 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     """
     plans = plans_for(type_label, n_entries, race_type)
+    # 🔴 看板枠は**他のどの分岐よりも先**に見る。型A の3分割も 9車の型F の種別分岐も
+    #    「その型で何を売るか」の話なので、看板枠に指定された型ではそれらを上書きする。
+    #    ここでも返すのは1つだけなので 1レース1商品は保たれる。
+    if (type_label in SIGNBOARD_TYPES
+            and int(n_entries or 0) == SIGNBOARD_N_ENTRIES):
+        return [p for p in plans if p.key == f"{type_label}_sign"]
     if type_label == "A":
         key = "A_hit"
         if int(n_entries or 0) == ANA_N_ENTRIES:
@@ -490,6 +551,30 @@ def build_legs(shape: RaceShape, plan: Plan,
         cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
         out = [tuple(k) for k in cand[:plan.max_legs or 5]]
         if len(out) < 2:
+            return None
+    elif plan.structure == "signboard":
+        # 🔴 **看板枠。** 「ダッチにしたときどの点が当たっても計画払戻 T 円以上」を
+        #    制約 Σ(1/予測オッズ) <= 予算/T として表し、その枠に確率降順で詰める。
+        #    ダッチ配分（`alloc="dutch"`）と対で初めて意味を持つ構成なので、
+        #    配分を変えるなら商品が別物になると考えること。
+        #
+        # 🔴 **並べ方は確率順で固定する。** EV順・オッズ順・確率上位k点→EV順 も
+        #    測ったが、10万+/日 も ROI も窓をまたいで判別できない
+        #    （`SIGNBOARD_TYPES` の実測表）。**選び方は本数を動かさない。**
+        cap = float(BUDGET) / float(SIGNBOARD_TARGET)
+        cand = [k for k, v in pred_odds.items()
+                if _pos(v) and len(set(k)) == 3
+                and float(v) >= plan.min_odds
+                and (not plan.max_odds or float(v) <= plan.max_odds)]
+        cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
+        out, s = [], 0.0
+        for k in cand:
+            o = float(pred_odds[k])
+            if s + 1.0 / o > cap:
+                continue
+            out.append(tuple(k))
+            s += 1.0 / o
+        if not out:
             return None
     elif plan.structure == "prob_top":
         cand = [k for k, v in pred_odds.items()
@@ -631,9 +716,15 @@ def rule_version(n_entries: int = 7) -> str:
     import hashlib
     import json
     payload: dict = (
-        {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_legs,
-             round(v.sigma_max, 6), v.alloc, v.floor_mult] for k, v in sorted(PLANS.items())}
-        | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET})
+        {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
+             v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
+         for k, v in sorted(PLANS.items())}
+        | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
+        # 🔴 看板枠は**プランの属性だけでは表せない**（計画払戻 T が `build_legs` の
+        #    中で使われる）。ここに入れておかないと T を動かしても版が割れず、
+        #    新旧の行が同じ `rule_version` で混ざる。
+        | {"_sign": [list(SIGNBOARD_TYPES), SIGNBOARD_TARGET,
+                     SIGNBOARD_MAX_ODDS, SIGNBOARD_N_ENTRIES]})
     if n_entries == 9:
         payload["_sell9"] = [list(NINE_CAR_TYPE_F_RACE_TYPES),
                              list(NINE_CAR_TYPE_F_PLANS)]
