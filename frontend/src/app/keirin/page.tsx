@@ -1442,6 +1442,27 @@ const RANK_LABEL: Record<string, string> = {
   // 看板枠（2026-08-31）。型は同じなので記号も同じ。
   "A_sign": "A", "B_sign": "B", "C_sign": "C", "D_sign": "D", "E_sign": "E", "F_sign": "F",
 };
+
+/** サマリーの「ランク別」で**型の中の狙い**を見分けるための短い添え字。
+ *
+ *  🔴 一覧のバッジ（`RANK_LABEL`）は記号1文字のままにする（2026-08-29 のユーザー要望）。
+ *     こちらはサマリー専用——同じ型に 3〜4 プランが並ぶので、
+ *     `A A A A` では**どれがどれか分からない**（2026-08-31 のユーザー指摘）。 */
+const RANK_AIM: Record<string, string> = {
+  A_hit: "鉄板", A_trio: "三連複", A_ana: "穴", A_pay: "一撃", A_sign: "看板",
+  B_hit: "本線", B_sign: "看板",
+  C_hit: "崩れ筋", C_sign: "看板",
+  D_hit: "混戦", D_sign: "看板",
+  E_hit: "高配当", E_sign: "看板",
+  F_hit: "総流し", F_pay: "一撃", F_sign: "看板",
+};
+
+/** `A_hit@9` のような車数つきキーを `{ base, cars }` に割る。 */
+function splitRankKey(key: string): { base: string; cars: number | null } {
+  const i = key.indexOf("@");
+  return i < 0 ? { base: key, cars: null }
+               : { base: key.slice(0, i), cars: Number(key.slice(i + 1)) || null };
+}
 const RANK_BADGE_STYLE: Record<string, string> = {
   "7SS": "bg-green-200 text-green-900 dark:bg-green-800/60 dark:text-green-200",
   "7S": "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
@@ -1494,15 +1515,25 @@ function RankSubRow({ rankKey, data, showAll, labelMap = RANK_LABEL, badgeStyleM
   const hitRate = data.n_picks > 0
     ? `${((data.n_hits / data.n_picks) * 100).toFixed(0)}%`
     : "—";
-  const badgeClass = badgeStyleMap[rankKey] ?? "bg-gray-100 text-gray-600";
+  const { base, cars } = splitRankKey(rankKey);
+  const badgeClass = badgeStyleMap[base] ?? "bg-gray-100 text-gray-600";
+  const aim = RANK_AIM[base];
 
   return (
     <tr className="border-b border-gray-50 dark:border-gray-800 last:border-0 bg-gray-50/50 dark:bg-gray-800/30">
       <td className="py-1 px-2 sm:px-3">
-        <span className="flex items-center gap-1.5 pl-3">
+        <span className={`flex items-center gap-1 ${cars ? "pl-6" : "pl-3"}`}>
           <span className={`inline-flex items-center justify-center min-w-6 px-1 h-5 rounded text-xs font-bold ${badgeClass}`}>
-            {labelMap[rankKey] ?? rankKey}
+            {labelMap[base] ?? base}
           </span>
+          {aim && (
+            <span className="text-[10px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{aim}</span>
+          )}
+          {cars && (
+            <span className="text-[10px] px-1 rounded bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300 whitespace-nowrap">
+              {cars}車
+            </span>
+          )}
         </span>
       </td>
       {/* ランク別候補数（指数条件のみ・オッズ条件前） */}
@@ -1595,13 +1626,28 @@ function SummaryRow({ label, sub, data, showRanks, showAll, rankOrder = RANK_ORD
           {formatROI(data.roi)}
         </td>
       </tr>
-      {hasRanks && rankOrder.map(rk => {
+      {hasRanks && rankOrder.flatMap(rk => {
         // 0件のランクもゼロ埋めで表示する（省略しない）
         const rd = byRank[rk] ?? {
           n_picks: 0, n_hits: 0, total_bet: 0, total_payout: 0,
           roi: null, n_candidates: 0, max_payout: null,
         };
-        return <RankSubRow key={rk} rankKey={rk} data={rd} showAll={showAll} labelMap={rankLabelMap} badgeStyleMap={rankBadgeStyleMap} />;
+        const rows = [
+          <RankSubRow key={rk} rankKey={rk} data={rd} showAll={showAll} labelMap={rankLabelMap} badgeStyleMap={rankBadgeStyleMap} />,
+        ];
+        // 🔴 **7車と9車の内訳は、両方に件数があるときだけ開く**（2026-08-31）。
+        //    同じプランでも 9車は当たりにくい（表示的中 19.35% ↔ 7車 21.64%）ので、
+        //    混ぜたまま読むと 9車を多く売った日の期待が高すぎる。
+        //    片方しか無い日に内訳を出しても合計と同じ行が増えるだけなので出さない。
+        const cars = [7, 9].filter(n => (byRank[`${rk}@${n}`]?.n_picks ?? 0) > 0);
+        if (cars.length > 1) {
+          for (const n of cars) {
+            rows.push(
+              <RankSubRow key={`${rk}@${n}`} rankKey={`${rk}@${n}`} data={byRank[`${rk}@${n}`]!}
+                          showAll={showAll} labelMap={rankLabelMap} badgeStyleMap={rankBadgeStyleMap} />);
+          }
+        }
+        return rows;
       })}
     </>
   );
