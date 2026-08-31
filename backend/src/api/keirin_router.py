@@ -653,7 +653,8 @@ async def _fetch_settled_submissions(
 
     subs = (await db.execute(
         text(f"""
-            SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, wr.race_date{cache_cols}
+            SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail,
+                   wr.race_date, wr.n_entries{cache_cols}
             FROM keirin.netkeirin_submissions ns
             JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
             WHERE wr.race_date BETWEEN :from_date AND :to_date
@@ -676,6 +677,10 @@ async def _fetch_settled_submissions(
         return {
             "race_key": s["race_key"], "rank_key": s["rank_key"], "origin": s["origin"],
             "race_date": str(s["race_date"]),
+            # 🔴 車数は**サマリーを 7車/9車 に割るため**（2026-08-31）。同じプランでも
+            #    9車は当たりにくい（表示的中 19.35% ↔ 7車 21.64%）ので、混ぜたまま
+            #    読むと 9車を多く売った日の期待が高すぎる（PR #383 と同じ型の誤読）。
+            "n_entries": int(s["n_entries"]) if s["n_entries"] else None,
             # 🔴 **netkeirin の表示的中率は `net_hit`**（ガミ＝払戻<賭け金 を不的中と数える）。
             #    素の的中率だけを見ると点数を増やしたときに誤読する。
             **res,
@@ -1665,8 +1670,15 @@ async def _aggregate(
     by_rank_items: dict[str, list[dict[str, Any]]] = {}
     # ⚠️ 変数名に `r` を使わない。下の候補数ループが `r` を RowMapping で
     #    束縛するため、同名だと mypy が代入不能として落ちる（既出の型衝突）。
+    # 🔴 **車数ごとの行も同時に作る**（2026-08-31・キーは `{ランク}@{車数}`）。
+    #    フロントは合計行を出しつつ、7車と9車の両方に件数があるときだけ内訳を開く。
+    #    キーを分けずに混ぜると、同じプランでも当たりやすさが違う 7車/9車 が
+    #    1行に潰れて読めない。
     for sr in sold:
-        by_rank_items.setdefault(_display_rank(f"RANK_{sr['rank_key']}"), []).append(sr)
+        key = _display_rank(f"RANK_{sr['rank_key']}")
+        by_rank_items.setdefault(key, []).append(sr)
+        if sr.get("n_entries"):
+            by_rank_items.setdefault(f"{key}@{sr['n_entries']}", []).append(sr)
     by_rank: dict[str, dict] = {k: _totals(v) for k, v in by_rank_items.items()}
 
     # ランク別候補数（上の GROUPING SETS から取り出す。合計行は除く）
