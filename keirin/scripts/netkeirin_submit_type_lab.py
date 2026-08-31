@@ -85,6 +85,7 @@ from src.submission_skips import (                           # noqa: E402
     CLOSED as SKIP_CLOSED,
     GATE_MEAN_PAYOUT as SKIP_GATE_MEAN_PAYOUT,
     GATE_POINT_ODDS as SKIP_GATE_POINT_ODDS,
+    AXIS_GATE as SKIP_AXIS_GATE,
     DAILY_CAP as SKIP_DAILY_CAP,
     MISSING_LINEUP as SKIP_MISSING_LINEUP,
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
@@ -608,8 +609,15 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                     f"{lineup} → この回は見送り（後の波で再判定）", False, "lineup", False)
         if use_axis_gate and not _passes_axis_gate(r):
             # 軸信頼ゲートは「商品の定義」であってゲート落ちではない。
-            # 記録すると毎日10件前後が見送り一覧を埋めて信号が死ぬので数だけ数える。
-            return (None, "", True, "axis_gate", True)
+            # 🔴 **2026-09-01 から記録する**（それまでは件数だけ数えていた）。
+            #    日次上限の分母が「その回に判定するレース数」になり、内訳が
+            #    画面から追えないと上限の妥当性を検証できないため。
+            #    ⚠️ ログには出さない（`quiet`）——毎日10件前後あり、出すと
+            #      本当に見るべき見送り（並び未公開・ゲート落ち）が埋もれる。
+            return (SKIP_AXIS_GATE,
+                    f"軸信頼 {float(r['axis_sum']):.3f} がこのプランの下位1/5でした"
+                    if r.get("axis_sum") is not None else "軸信頼が下位1/5でした",
+                    True, "axis_gate", True)
         reason = _gate_reason(r)
         if reason:
             return (reason[0], reason[1], False, reason[0], True)

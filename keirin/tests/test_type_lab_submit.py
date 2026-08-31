@@ -298,6 +298,33 @@ def test_daily_cap_does_not_touch_generation():
         assert token not in settle, f"採点側が入稿を見ている: {token}"
 
 
+def test_axis_gate_skips_are_recorded():
+    """🔴 **軸信頼ゲートで落ちた分も記録する**（2026-09-01）。
+
+    それまでは「毎日10件前後が見送り一覧を埋める」ことを嫌って件数だけ数えていたが、
+    日次上限の分母が「その回に判定するレース数」になり、**軸信頼ゲート落ちは分母に
+    入る**。内訳が画面から追えないと上限の妥当性を検証できない。
+
+    ⚠️ ログには出さない（`quiet`）。毎日10件前後あり、出すと本当に見るべき見送り
+       （並び未公開・ゲート落ち）が埋もれる。
+    """
+    from src.submission_skips import ALL_CODES, AXIS_GATE, label
+
+    assert AXIS_GATE in ALL_CODES, "理由コードが正本に登録されていない"
+    assert label(AXIS_GATE), "バッジのラベルが無い"
+    assert len(label(AXIS_GATE)) <= 8, "ラベルは8文字以内（一覧の行に収める）"
+
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    i = src.index("if use_axis_gate and not _passes_axis_gate(r):")
+    block = src[i:i + 900]
+    assert "SKIP_AXIS_GATE" in block, "記録していない（件数だけ数えている）"
+    # 判定したことにする（＝上限の分母に入る）
+    assert block[block.index("return ("):].startswith("return (SKIP_AXIS_GATE"), \
+        "記録コードを返していない"
+    assert "True)" in block[block.index("return ("):block.index("return (") + 400], \
+        "「判定した」を返していない（上限の分母から漏れる）"
+
+
 def test_daily_cap_always_allows_at_least_one():
     """🔴 **判定対象が少ない回でも最低1件は出す。**
 
