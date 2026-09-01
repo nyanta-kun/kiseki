@@ -1126,6 +1126,10 @@ class CompositeIndexCalculator:
                 existing = existing_map[hid]
                 for attr, val in kwargs.items():
                     setattr(existing, attr, val)
+                # ⚠️ この datetime.now() は naive でコンテナの **UTC**。一方 INSERT 側は
+                #    列 default（DB セッションの Asia/Tokyo）なので、この列は
+                #    **UTC と JST が混在する**。`calculated_at` で処理の前後関係を
+                #    判断してはいけない（CLAUDE.md「タイムゾーンが列ごとに違う」）。
                 existing.calculated_at = datetime.now()
             else:
                 new_records.append(
@@ -1197,6 +1201,10 @@ class CompositeIndexCalculator:
             existing.win_probability = _d("win_probability")
             existing.place_probability = _d("place_probability")
             existing.out_probability = _d("out_probability")
+            # ⚠️ この datetime.now() は naive でコンテナの **UTC**。一方 INSERT 側は
+            #    列 default（DB セッションの Asia/Tokyo）なので、この列は
+            #    **UTC と JST が混在する**。`calculated_at` で処理の前後関係を
+            #    判断してはいけない（CLAUDE.md「タイムゾーンが列ごとに違う」）。
             existing.calculated_at = datetime.now()
         else:
             record = CalculatedIndex(
