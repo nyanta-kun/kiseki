@@ -316,7 +316,28 @@ export function RaceDetailClient({
                       {/* 馬名 + バッジ */}
                       <td className="py-2 px-1 whitespace-normal">
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-gray-800 font-medium truncate block max-w-[110px]">
+                          {/*
+                            スイートスポット該当馬は馬名を赤字にする。
+
+                            🔴 2026-09-01 復元。この表示は旧 IndicesTable.tsx にあったが、
+                               同コンポーネントが RaceDetailClient に置き換えられた際に
+                               描画だけが落ちていた（IndicesTable への参照は 0 件）。
+                               バックエンドは races.py で is_sweet_spot を毎回算出して
+                               返し続けていたため、エラーもログも出ないまま
+                               「計算しているのに画面に出ない」状態になっていた。
+                          */}
+                          <span
+                            className={cn(
+                              "font-medium truncate block max-w-[110px]",
+                              horse.is_sweet_spot ? "text-red-600 font-semibold" : "text-gray-800"
+                            )}
+                            title={
+                              horse.is_sweet_spot
+                                ? "スイートスポット該当: 単勝10倍以上 ∧ 期待値1.2〜5.0 ∧ バッジあり ∧ レース内3頭未満。"
+                                  + "表示のみの目安で、推奨（軸の信頼度）には使っていない。OOS 検証では脆弱。"
+                                : undefined
+                            }
+                          >
                             {horse.horse_name}
                           </span>
                           {isAnagusa && (
