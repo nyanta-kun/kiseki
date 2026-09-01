@@ -140,6 +140,13 @@ if echo "$CHANGED" | grep -qE "$FRONTEND_PAT"; then
   if command -v pnpm >/dev/null 2>&1; then
     ( cd frontend && pnpm lint ); mark $? "eslint"
     ( cd frontend && pnpm exec tsc --noEmit ); mark $? "tsc"
+    # CI の frontend ジョブと同じ並び。ここに無いと「手元で通ったのに CI で落ちる」
+    # が起きる（keirin を preflight に入れ忘れて 2026-08-12 に実際に往復した）。
+    if [ "$QUICK" -eq 0 ]; then
+      ( cd frontend && pnpm test ); mark $? "vitest"
+    else
+      echo "(--quick: vitest をスキップ)"
+    fi
   else
     echo "[!] pnpm が見つからないため eslint / tsc を実行できませんでした。"
     echo "    検査せずに通過させると preflight の意味が無くなるため失敗として扱います。"

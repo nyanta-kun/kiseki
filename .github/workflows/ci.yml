@@ -173,6 +173,12 @@ jobs:
       - name: Type check (tsc)
         run: pnpm exec tsc --noEmit
 
+      # 対象は DOM を使わない純ロジックだけ（方針は frontend/vitest.config.mts の冒頭）。
+      # コンポーネントの描画は backend/tests の静的検査で守る
+      # （test_frontend_display_flags_reachable.py）。
+      - name: Tests (vitest)
+        run: pnpm test
+
       - name: Build
         if: github.event_name == 'pull_request'
         run: pnpm build
