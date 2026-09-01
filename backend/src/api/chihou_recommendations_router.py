@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -415,35 +414,30 @@ async def _build_chihou_sweet_spot_cached(
         return result
 
 
-@router.get("/sweet-spot")
-async def get_chihou_sweet_spot_recommendations(
-    db: DbDep,
-    date: str = Query(..., description="開催日 YYYYMMDD"),
-) -> JSONResponse:
-    """地方競馬スイートスポット自動推奨を返す（最新オッズ反映・都度算出）。
-
-    返却内容:
-      - items: 全カテゴリの推奨を並べたリスト（category フィールドで識別）
-        * sweet_spot         — 高オッズ穴狙い Phase2 (指数1位 ∧ 単勝10-30倍 ∧ 割安5場 ∧ k≤2)
-        * place_bet          — 複穴 (開いたレース: 市場上位3頭シェア<0.63 ∧ 単勝30-50倍 ∧ 8頭以上)
-        * upset_place        — 穴軸複勝（人気薄リランカー軸）
-        * low_odds_trusted   — 信頼できる本命 (単勝<1.5)
-        * low_odds_untrusted — 信頼できない本命 (1.5≤単勝<2.0)
-      - summaries: カテゴリ別の当日確定済み件数・的中数・的中率・ROI
-        （bet_type="place" のカテゴリは win_roi に複勝ROIが入る）
-
-    プロセス内 30 秒メモリキャッシュ + フロント 60 秒 revalidate を併用。
-    JSONResponse で直接返すことで Pydantic の exclude_defaults を回避し
-    race_concentration フィールドが null でも確実に含まれる。
-    """
-    try:
-        candidates = await _build_chihou_sweet_spot_cached(db, date)
-    except Exception as e:
-        logger.error("地方スイートスポット生成失敗: %s", e)
-        return JSONResponse(content={"items": [], "summaries": {}})
-    items = [_chihou_sweet_spot_to_out(c) for c in candidates]
-    items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
-    summaries = _summarize_by_category(items)
-    response = ChihouSweetSpotResponse(items=items, summaries=summaries)
-    dumped = response.model_dump(mode="json")
-    return JSONResponse(content=dumped)
+# ---------------------------------------------------------------------------
+# 🔴 5カテゴリ推奨（sweet_spot / place_bet / upset_place / low_odds_*）は
+#    **実稼働停止**（2026-09-01）。エンドポイント `GET /sweet-spot` を外した。
+#
+# 経緯:
+#   - 画面側は 2026-08-05 に既に外れていた（`chihou/races/page.tsx` の
+#     「検証で ROI・的中率とも根拠が弱く、表示コストだけ高かったため外した」）。
+#   - 実測でも消費者ゼロ（フロントの呼び出し元は参照ゼロのコンポーネント2つだけ、
+#     backend/scripts・cron からの利用も 0 件）。誰も見ないものを毎回算出していた。
+#
+# **コードは参考として残す**（型ラボ推奨のブラッシュに使える条件があり得るため）:
+#   - 生成本体: `chihou_recommender.build_chihou_sweet_spot_recommendations()`
+#   - 判定条件: `indices/buy_signal.py` の `chihou_is_sweet_spot` /
+#     `chihou_is_place_bet` / `chihou_low_odds_trust_level` ほか
+#     （これらは**レース詳細の個別馬バッジで現役**なので消してはいけない）
+#   - 画面: `frontend/src/components/ChihouRecommendPanel{,Client}.tsx`
+#   - 変換・集計ヘルパー: 本ファイルの `_chihou_sweet_spot_to_out` /
+#     `_summarize_by_category` / `_build_chihou_sweet_spot_cached`
+#
+# 条件の良し悪しを測り直すときは HTTP を通す必要はない。オフラインの評価台は
+# `backend/scripts/aggregate_chihou_recent.py`（本番判定関数を import して集計）と
+# 前向き記録 `chihou.place_pick_races` / `chihou.place_picks`。
+#
+# 復帰させるときはこのブロックを消してエンドポイントを戻し、
+# `chihou/races/page.tsx` の `recommendPanel` に `ChihouRecommendPanel` を挿し直す。
+# 検査: `backend/tests/test_chihou_sweet_spot_retired.py`
+# ---------------------------------------------------------------------------

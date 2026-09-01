@@ -1,3 +1,15 @@
+/**
+ * 地方競馬 5カテゴリ推奨パネル。
+ *
+ * 🔴 実稼働停止（2026-09-01）。**参考として残しているだけで画面には出ていない。**
+ *    - 2026-08-05 に `chihou/races/page.tsx` の推奨タブから外された
+ *      （「検証で ROI・的中率とも根拠が弱く、表示コストだけ高かったため」）
+ *    - 2026-09-01 に API `GET /api/chihou/recommendations/sweet-spot` も撤去
+ *
+ * 復帰させるときは API を戻したうえで、`chihou/races/page.tsx` の
+ * `recommendPanel` に `ChihouRecommendPanel` を挿し直すこと。
+ * 経緯は backend/src/api/chihou_recommendations_router.py のコメントに集約している。
+ */
 "use client";
 
 import { useEffect, useState } from "react";
