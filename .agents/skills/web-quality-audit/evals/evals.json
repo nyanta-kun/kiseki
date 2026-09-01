@@ -1,0 +1,23 @@
+{
+  "skill_name": "web-quality-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "kisekiプロジェクトの品質チェックをして。対象は /sessions/peaceful-loving-planck/mnt/kiseki です。",
+      "expected_output": "9つの観点でチェックされた監査レポート（マークダウン形式）。総合スコア、カテゴリ別スコア、優先度順の課題一覧を含む。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "kisekiプロジェクトのセキュリティと性能を重点的にチェックして。対象は /sessions/peaceful-loving-planck/mnt/kiseki です。",
+      "expected_output": "セキュリティと性能を重点チェックした監査レポート。全9カテゴリのチェックは行いつつ、セキュリティと性能の分析がより詳細。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "kisekiプロジェクトのフロントエンドのコード品質を見てほしい。対象は /sessions/peaceful-loving-planck/mnt/kiseki/frontend です。",
+      "expected_output": "フロントエンド（Next.js/React/TypeScript）に特化した監査レポート。コンポーネント設計、パフォーマンス、アクセシビリティ等がフロントエンド観点で詳細に分析されている。",
+      "files": []
+    }
+  ]
+}
