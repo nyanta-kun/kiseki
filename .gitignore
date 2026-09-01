@@ -15,8 +15,12 @@ build/
 
 # ログ
 logs/
-# jvlink_agent は import しただけでカレントに作る（テストが import するため）
+# jvlink_agent / umaconn_agent は import しただけでカレントに作る（テストが import するため）。
+# 🔴 2本セットで書くこと。2026-09-01 まで umaconn_agent.log だけ漏れており、
+#    テストを走らせた場所に追跡対象のゴミが残っていた（実際にルートで2本が追跡下にあった）。
 jvlink_agent.log
+umaconn_agent.log
+odds_backfill.log
 
 # ドキュメント生成物（PDF仕様書・検証レポート）
 docs/sources/
