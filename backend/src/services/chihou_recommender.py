@@ -641,10 +641,31 @@ _CHIHOU_RECO_INDEX_VERSION = _CHIHOU_COMPOSITE_VERSION
 async def build_chihou_sweet_spot_recommendations(
     session: AsyncSession, date: str
 ) -> list[dict[str, Any]]:
-    """地方競馬スイートスポット自動推奨を生成する（DB保存なし・都度算出）。
+    """地方競馬 5カテゴリ推奨を生成する（DB保存なし・都度算出）。
 
-    抽出条件: 単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性競馬場 ∧ k≤2（混戦除外）。
-    v10 LightGBM win_probability バックテスト（2026-01〜04）でROI陽性コースのみ対象。
+    🔴 **実稼働停止（2026-09-01）。参考として残しているだけで、どこからも呼ばれない。**
+    画面は 2026-08-05 に外れ（「検証で ROI・的中率とも根拠が弱く、表示コストだけ
+    高かったため」）、HTTP エンドポイント `GET /api/chihou/recommendations/sweet-spot`
+    も撤去した。経緯と復帰手順は `api/chihou_recommendations_router.py` の
+    該当ブロックのコメントを参照。
+
+    残している理由は、条件そのものが他の推奨のブラッシュに使えるかもしれないため。
+    条件の良し悪しを測り直すときは HTTP を通す必要はなく、
+    `backend/scripts/aggregate_chihou_recent.py` と前向き記録
+    （`chihou.place_pick_races` / `chihou.place_picks`）で評価できる。
+
+    ⚠️ 旧 docstring の「単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性競馬場 ∧ k≤2」は
+       Phase1（EV ゲート時代）の記述で、Phase2(2026-06-05)で廃止済み。
+       現行の条件は各判定関数（`indices/buy_signal.py`）が正本:
+
+       - `sweet_spot`          指数1位 ∧ 単勝10〜30倍 ∧ 割安5場
+       - `place_bet`           1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位内 ∧ 8頭以上
+       - `upset_place`         人気薄リランカー軸
+       - `low_odds_trusted`    単勝<1.5
+       - `low_odds_untrusted`  1.5≤単勝<2.0
+
+    ⚠️ 判定関数そのもの（`chihou_is_sweet_spot` / `chihou_is_place_bet` 等）は
+       **レース詳細の個別馬バッジで現役**。この関数と一緒に消してはいけない。
     """
     # 当日レース取得
     races_result = await session.execute(
