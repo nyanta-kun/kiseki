@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.feature-health</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ysuzuki/GitHub/kiseki/scripts/feature_health_weekly.sh</string>
+  </array>
+
+  <!-- 月曜 06:00。日次 DB バックアップ（03:30〜04:25）と
+       odds 刈り込み（月曜 05:00）の後に置く。
+       Mac は毎日 03:15 に自動起床する（pmset repeat wakeorpoweron）。
+       スリープで撃ち漏らしても launchd が起床時に実行する。
+       週次の監視なので多少の遅延は無害。 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/feature_health_launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/feature_health_launchd.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
