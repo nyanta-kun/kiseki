@@ -139,6 +139,48 @@ function comboKey(combo: string): string {
   return combo;
 }
 
+/** 入稿文面（タイトル・コメント）。既定は畳んだ状態。
+ *
+ * 🔴 承認画面は**文面をコピーする場所**でもある（カードのクリックでテキスト選択が
+ *    潰れないよう `toggleFromCard` が選択中を無視しているのと同じ理由）。
+ *    畳むのは既定の見え方だけで、開いたあとは自由に選択・コピーできる。
+ */
+function SubmissionText({ title, comment }: {
+  title: string | null;
+  comment: string | null;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div>
+      {/* 🔴 開閉は必ず <button> で持つ。キーボード／読み上げの操作口になる
+             （このファイルの他のトグルと同じ約束）。 */}
+      <button
+        type="button"
+        onClick={() => setShow((v) => !v)}
+        aria-expanded={show}
+        className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-blue-600 dark:text-gray-300 dark:hover:text-blue-400"
+      >
+        {show ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        入稿文面（タイトル・コメント）
+      </button>
+      {show && (
+        <div className="mt-1 space-y-2">
+          <div>
+            <p className="text-xs font-medium text-gray-600 dark:text-gray-300">タイトル</p>
+            <p className="text-sm">{title || "（未設定）"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-600 dark:text-gray-300">コメント</p>
+            {/* コメントには HTML タグ入力（現状は出走表の <table> のみ）が混ざる。
+                生タグのままでは読めないので解釈して表として出す（CommentBody）。 */}
+            <CommentBody comment={comment} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EntryTable({ entries, axis1, axis2 }: {
   entries: KeirinProposalEntry[];
   axis1: number | null;
@@ -667,16 +709,11 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
           onClick={(e) => e.stopPropagation()}
           className="mt-2 cursor-auto space-y-3 border-t border-gray-200 pt-2 dark:border-gray-700"
         >
-          <div>
-            <p className="text-xs font-medium text-gray-600 dark:text-gray-300">タイトル</p>
-            <p className="text-sm">{p.title || "（未設定）"}</p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-gray-600 dark:text-gray-300">コメント</p>
-            {/* コメントには HTML タグ入力（現状は出走表の <table> のみ）が混ざる。
-                生タグのままでは読めないので解釈して表として出す（CommentBody）。 */}
-            <CommentBody comment={p.comment} />
-          </div>
+          {/* 入稿文面（タイトル・コメント）は**既定で畳む**（2026-09-02・ユーザー要望）。
+              承認判断で最初に見たいのは買い目と各指数で、文面はその後に確認・コピーする。
+              🔴 消さずに畳むだけにすること。文面は入稿の中身そのもので、
+                 「画面で見たものが入稿される」ことの確認対象に含まれる。 */}
+          <SubmissionText title={p.title} comment={p.comment} />
           <div>
             <p className="text-xs font-medium text-gray-600 dark:text-gray-300">
               買い目
