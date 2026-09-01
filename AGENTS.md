@@ -34,7 +34,10 @@ VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
 - Windows Agent: Python 3.x 32bit / pywin32 / JV-Link COM
 - パッケージ管理: uv (Python) / pnpm (Node)
 - コード品質: Ruff (Python) / ESLint + Prettier (TS)
-- テスト: pytest (Python) / Vitest (TS)
+- テスト: pytest (Python)。**TS 側のテスト基盤は未導入**（Vitest は入っておらず、
+  フロントの CI は eslint / tsc / build のみ・2026-09-01 実測）。フロントの不変条件を
+  守りたいときは `backend/tests` から静的に検査する
+  （例: `test_frontend_display_flags_reachable.py` = 表示フラグに到達可能な描画先があるか）
 
 ## 開発ルール
 - Python: Ruff準拠、型ヒント必須、docstring必須
@@ -59,8 +62,16 @@ kiseki は競輪 / 中央競馬 / 地方競馬が 1 リポジトリに同居す�
 |---|---|
 | `keirin` | **`keirin/`（2026-08-10 に別リポジトリから統合）**, `api/keirin_router.py`, `api/yoso_router.py`, `db/keirin_models.py`, `netkeirin/` |
 | `chihou` | `api/chihou_*.py`, `db/chihou_models.py`, `importers/chihou_*.py`, `indices/chihou_*.py`, `services/chihou_*.py`, `chihou_protocol.py` |
-| `jra` | `indices/`(chihou以外), `importers/`(chihou以外), `windows-agent/`, `api/{races,horses,performance,recommendations,agent_router,import_router}.py` |
-| `shared` | `db/models.py`, `db/session.py`, **`backend/alembic/`**, `utils/`, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, `.github/`, `AGENTS.md` |
+| `jra` | `indices/`(chihou以外), `importers/`(chihou以外), `windows-agent/`, `api/{races,horses,performance,recommendations,agent_router,import_router}.py`, **`backend/scripts/`**, **`frontend/`**（いずれも chihou/keirin 以外） |
+| `shared` | `db/models.py`, `db/session.py`, **`backend/alembic/`**, `utils/`, `main.py`, `config.py`, `indices/{base,composite}.py`, `betting/`, `api/{access,users,ws_manager}.py`, **`backend/src/realtime/`**, `.github/`, `AGENTS.md`, **`AGENTS.md`**, **`scripts/deploy-*` / `scripts/backup*` / `scripts/launchagents/`**, **フロントの横断部分**（`src/auth.*` / `src/proxy.*` / `src/app/layout.tsx` / `src/lib/api.ts` / 共通ナビ） |
+
+🔴 **2026-09-01 まで `backend/scripts`(118件) と `frontend`(104件) を含む追跡ファイル
+315 件が `other` に落ちていた。** `check_ownership.sh` は `other` を柱の集計から
+除外するため、**これらは shared 警告にも複数柱警告にも一切かからなかった**——
+並列開発ガードが最も効いてほしいコード領域で効いていなかった。分類漏れは
+「エラーにならず、ただ警告が出なくなる」形で壊れるので人が気づけない。
+`backend/tests/test_pillars_classification.py` が「コード領域が `other` に落ちないこと」を
+機械的に固定している。`other` に残ってよいのは docs / 引き継ぎメモ / 生成物だけ。
 
 **`shared` を触る作業は並列にしない。** 単独 PR で最優先に main へ入れ、他ブランチはその後に rebase する。
 
@@ -125,6 +136,14 @@ EOF
 `OWNERSHIP_STRICT` 未設定時に必ず 0 を返す設計で、CI では Step Summary へのレポート出力に
 留めている（柱をまたぐ正当な PR まで落としてしまうため）。
 
+CI のジョブは `guards` / `backend` / `keirin` / `windows-agent` / `frontend`。
+**`deploy` の `needs` には全部入れる**（2026-09-01 に `keirin` と `windows-agent` を追加）。
+それまで `needs` に無く、テストが落ちても deploy が走っていた。deploy は VPS で
+`git reset --hard origin/main` を打ち、**keirin は Docker ではなくホスト cron で動く**ため、
+壊れたコードがそのまま翌朝のバッチに乗る。
+⚠️ required status check は今も `Guards` のみなので、**マージ自体は止まらない**。
+止めたい場合は branch protection の `contexts` にジョブ名を足すこと。
+
 ### ツール一覧
 
 | コマンド | 用途 |
@@ -168,6 +187,10 @@ EOF
 - **`integrate.sh` のロールバックは `HEAD~1` ではなくマージ前の SHA へ戻す**。
   「Already up to date」等でマージコミットが作られなかった場合、`HEAD~1` は統合先の
   既存コミットを指すため `reset --hard` が無関係な作業を破壊する。
+- 🔴 **Windows スクリプトの改行コード検査は「変更があったか」で起動しない**（2026-09-01 追加）。
+  これは*触ったファイルが正しいか*ではなく*作業ツリーが健全か*の検査で、変更検知では
+  捕まえられない。`preflight.sh` の 4/8 として**常時実行**する（実測 0.05 秒）。
+  理由は「Windows スクリプトのエンコーディング規約」の項を参照。
 
 ## 🔴🔴 検証の作法 — 測る前に本番コードを読む（2026-08-23・1日で6回同じ型を踏んだ）
 
@@ -781,6 +804,20 @@ Windows への配備は作業ツリーから scp するので、それでは配�
 rm -f windows-agent/*.vbs windows-agent/*.ps1 windows-agent/*.bat
 git checkout -- windows-agent/
 ```
+
+🔴🔴 **この壊れ方は CI では絶対に検知できない**（2026-09-01 実測）。
+`eol=crlf` はチェックアウト時に適用されるので、**CI の fresh checkout は常に CRLF**
+になり `test_windows_script_encoding.py` は永久に緑を返す（実測: 新規 clone 19件すべて CRLF）。
+リポジトリ側の blob は正規化済み(LF)なので `git diff` にも出ない。
+一方 Windows は `Z:\` マウント経由で**この作業ツリーの実体**を読むため、
+**壊れているのは配備物だけ**という状態になる。
+→ 検査は `scripts/dev/preflight.sh` の 4/8 に置き、**変更の有無に関わらず常時実行**する。
+   「CI に足したから安心」は成り立たない。
+
+2026-09-01 の実測では 4 ファイル（`run_jvlink_race.vbs` / `run_jvlink_toku.vbs` /
+`start_agent.bat` / `register_start_jvlinkagent_task.ps1`）が LF のまま残っていた。
+うち 3 件は行末が CP932 先行バイトで発火条件を満たしていた
+（`.ps1` は UTF-8 BOM があるため規約違反だが機序は発火しない）。
 
 **VBS の構文検査（副作用ゼロ）**: VBScript は全体をコンパイルしてから実行するので、
 最初に通る場所に `WScript.Quit 0` を差し込めば構文だけ検査できる。
@@ -1409,7 +1446,13 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **個別馬の sweet_spot 表示**（推奨エンジンとは別・`/indices` 専用）:
 - `backend/src/indices/buy_signal.py::is_sweet_spot()` — 単勝≥10 ∧ EV∈[1.2,5.0] ∧ バッジ ∧ k≤2
-- `backend/src/api/races.py` `HorseIndexOut.is_sweet_spot` に付与、`IndicesTable.tsx` で該当馬名を**赤字**表示
+- `backend/src/api/races.py` `HorseIndexOut.is_sweet_spot` に付与、
+  **`RaceDetailClient.tsx`** で該当馬名を**赤字**表示
+  （🔴 2026-09-01 まで描画先は `IndicesTable.tsx` だけで、同ファイルが
+  `RaceDetailClient.tsx` へ置き換えられた際に**参照0件の死んだファイル**になり、
+  **描画だけが静かに落ちていた**。バックエンドは算出して返し続けるので
+  例外もログも型エラーも出ない。`test_frontend_display_flags_reachable.py` が
+  「その画面から辿れる描画先があること」を固定している）
 - 3年バックテスト 単ROI 1.182 だが OOS 検証では脆弱（memory `jra_signal_verification.md`）。
   表示バッジとしてのみ維持し、推奨エンジンには使わない
 
@@ -1646,7 +1689,7 @@ JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッ
 | カテゴリ | bet | 条件（Phase2 現行） |
 |---|---|---|
 | `sweet_spot` 高オッズ穴 | 単勝 | **指数1位 ∧ 単勝10〜30倍 ∧ 割安5場（浦和/金沢/高知/笠松/盛岡）**（旧 5seed 単ROI 1.17 ※要注意・下記参照） |
-| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ **指数3位以内** ∧ k≤2 ∧ **頭数≥8** |
+| `place_bet` 複穴 | 複勝 | 1番人気<2.0 ∧ 単勝≥10 ∧ **指数3位以内** ∧ **頭数≥8**（前向き記録の実測: 複勝的中 36.9% / 複勝ROI 0.77） |
 | `upset_place` 穴軸複勝 | 複勝 | 人気薄リランカー軸（単勝[10,15)×非オッズスコア×外部バッジ） |
 | `low_odds_trusted` 信頼本命 | 単勝 | 単勝<1.5（hit 約70% / 単ROI 0.8台） |
 | `low_odds_untrusted` 不信頼本命 | 単勝 | 1.5≤単勝<2.0（hit 約48% / 単ROI 0.8台） |
@@ -1654,6 +1697,32 @@ JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッ
 - 判定本体: `backend/src/indices/buy_signal.py::chihou_is_sweet_spot() / chihou_is_place_bet() / chihou_low_odds_trust_level()`
 - `sweet_spot` と `place_bet` は同一馬が両方に入ることを許容（並列）。低オッズ系とは構造的に排他
 - 実勢集計: `scripts/aggregate_chihou_recent.py` は上記の本番判定関数を import して同一条件で集計する
+
+🔴 **`place_bet` は 2026-09-01 まで別ルール（注目馬 `chihou_is_place_pick`）を配信していた。**
+カテゴリ名・画面タイトル・注記はいずれも断然人気穴を説明しているのに実装が食い違い、
+しかも注目馬は同じページの `ChihouFeaturedPlacePanel`（`/featured-place`）が既に
+配信していたため、**別ルールの札を掛けた二重配信**になっていた。
+どちらを出すべきかは前向き記録 `chihou.place_picks`（全出走馬の発走前スナップショット・
+採点済 572R）の上で**同一母集団・同一ヴィンテージの指数**で再計算して決めた:
+
+| | カバー | 買い目 | 複勝的中 (CI95) | 同条件の母集団 | リフト | 複勝ROI (CI95) |
+|---|---:|---:|---|---:|---:|---|
+| 注目馬 place_pick | 105R (18.4%) | 152点 | 22.37% [16.5, 29.6] | 11.91% | ×1.88 | 0.868 [0.557, 1.233] |
+| 断然人気穴 place_bet | 176R (30.8%) | 241点 | 36.93% [31.1, 43.2] | 17.78% | ×2.08 | 0.773 [0.619, 0.951] |
+
+両者とも母集団に対して本物の情報を持つ（CI がベースラインと重ならない）。
+**ROI は両方とも 1.0 に届かず CI が大きく重なる＝収支では選べない。**
+的中率・リフト・カバー率で断然人気穴を採った。注目馬は `/featured-place` に残る。
+配線は `backend/tests/test_chihou_place_bet_wiring.py` が AST で固定している。
+
+⚠️ **頭数は必ず `chihou_effective_head_count()` を通すこと。** `races.head_count` は
+レース後にしか入らないため、生の値を渡すと `chihou_is_place_bet` が**発走前は必ず False**
+を返し、推奨もバッジも「発走後だけ点く」状態になる。
+⚠️ router の「複勝推奨が4頭以上なら除外」ゲートは **`index_rank <= 3` が構造的な上限に
+なっているため一度も発火しない**（前向き記録 572R で発火 0 件を実測）。保険として残置。
+⚠️ **個別馬バッジ（`is_sweet_spot` / `is_place_bet`）は v11〜v14 の間ずっと点いていなかった。**
+`if CHIHOU_COMPOSITE_VERSION == 10:` の一時ガードを 4 回の昇格すべてで外し忘れており、
+ブロックごと不到達だった。判定はレース内順位しか使わず版に依存しない。
 
 **⚠️ 生存者バイアス監査・修正（2026-07-23）**: 旧バックテスト系スクリプトは
 `race_results` を INNER JOIN し「完走・正常決着馬のみ」で idx_rank（指数順位）を

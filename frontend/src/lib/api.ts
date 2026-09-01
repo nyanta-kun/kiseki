@@ -742,7 +742,7 @@ export type ChihouHorseIndex = {
   is_sweet_spot: boolean;
   /** 断然人気R複穴（Phase2: 1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内） */
   is_place_bet: boolean;
-  /** 注目馬（発走前6番人気以下 ∧ 指数3位内 ∧ 開いたレース ∧ 8頭以上）→ 馬名の右に★ */
+  /** 注目馬（発走前6番人気以下 ∧ 指数5位内 ∧ 開いたレース ∧ 8頭以上・1R最大2頭）→ 馬名の右に★ */
   is_place_pick?: boolean;
 };
 
@@ -826,13 +826,15 @@ export type ChihouTargetHorse = {
 
 /** 地方競馬スイートスポット推奨カテゴリ。 */
 export type ChihouRecommendCategory =
-  | "sweet_spot"          // 高オッズ穴狙い (単勝≥10 ∧ EV 1.0-2.0 ∧ ROI陽性9場 ∧ k≤2)
-  | "place_bet"           // 複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ EV 1.2-2.0、複勝買い)
+  // ⚠️ EV ゲートは Phase2(2026-06-05)で廃止済み。条件はランキング規則。
+  | "sweet_spot"          // 高オッズ穴狙い (指数1位 ∧ 単勝10〜30倍 ∧ 割安5場)
+  | "place_bet"           // 複穴 (1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位内 ∧ 8頭以上、複勝買い)
   | "upset_place"         // 穴軸複勝 (単勝10-15倍×人気薄リランカー×外部バッジ、的中精度特化)
   | "low_odds_trusted"    // 信頼できる本命 (単勝<1.5)
   | "low_odds_untrusted"; // 信頼できない本命 (1.5≤単勝<2.0)
 
-/** レース内の複勝確率集中度。top2_share>0.873=high(76.5%ヒット率) / ≤0.715=low(57%) */
+/** レース内の複勝確率集中度。top2_share>0.42=high / >0.36=medium / それ以下=low。
+ *  （旧しきい値 0.873/0.715 は Phase2 の較正変更で全レースが low に張り付いたため廃止） */
 export type RaceConcentration = {
   top2_share: number | null;
   hhi: number | null;
