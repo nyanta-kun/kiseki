@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+from .unit_distribution import FLOOR_THEN_LOWEST_PAYOUT, distribute_units
+
 BUDGET_DEFAULT = 10_000
 UNIT_DEFAULT = 100
 PER_POINT_CAP_DEFAULT = 5_000
@@ -112,23 +114,22 @@ def _round_stakes(
     （保証を上げる方向にしか使わない）。
     """
     inv = {k: 1.0 / odds[k] for k in legs}
-    total_inv = sum(inv.values())
-    if total_inv <= 0:
+    if sum(inv.values()) <= 0:
         return {}
-    raw = {k: budget * inv[k] / total_inv for k in legs}
-    stakes = {k: min(int(raw[k] // unit) * unit, cap) for k in legs}
-
-    # 端数・上限で余った予算を、払戻が小さい目から順に上限まで積む
-    while True:
-        rest = budget - sum(stakes.values())
-        if rest < unit:
-            break
-        room = [k for k in legs if stakes[k] + unit <= cap]
-        if not room:
-            break
-        target = min(room, key=lambda k: stakes[k] * odds[k])
-        stakes[target] += unit
-    return {k: v for k, v in stakes.items() if v > 0}
+    # 配り方の骨格は unit_distribution に一本化した（3方針の比較表もそちらにある）。
+    # ここの方針: 切り捨て → 1点上限 → 余りは「想定払戻が最小の目」へ。
+    # ⚠️ 寄せ先がオッズを参照するので、渡してよいのは朝オッズ／予測オッズだけ。
+    units = distribute_units(
+        inv,
+        budget // unit,
+        leftover=FLOOR_THEN_LOWEST_PAYOUT,
+        cap_units=cap // unit,
+        payout_per_unit=odds,
+        order=legs,
+    )
+    # ⚠️ 0 口の目は返さない（買わないため）。この落とし方は type_lab の
+    #    「0円点を落として配り直す」とは別方針で、こちらは配り直さない。
+    return {k: u * unit for k, u in units.items() if u > 0}
 
 
 def dutch_allocate(

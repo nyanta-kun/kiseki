@@ -44,6 +44,7 @@ import itertools
 import math
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+from .unit_distribution import FLOOR_THEN_LARGEST_REMAINDER, distribute_units
 
 BUDGET = 10_000
 UNIT = 100
@@ -791,21 +792,25 @@ def _allocate_once(legs: Sequence, pred_odds: Mapping, probs: Mapping, plan: Pla
 
 
 def _proportional(w: Sequence[float], n_units: int) -> list[int]:
-    """重み w で n_units を配る（各要素0以上・合計ちょうど n_units）。"""
+    """重み w で n_units を配る（各要素0以上・合計ちょうど n_units）。
+
+    配り方の骨格は `unit_distribution` に一本化した（3方針の比較表もそちらにある）。
+    ここの方針: 切り捨て → 余りは「比例誤差が最大の点」へ（オッズを見ない）。
+    重みが全部0のときだけ均等割りにするのはこの関数固有の扱い。
+    """
     k = len(w)
     if n_units <= 0:
         return [0] * k
-    tot = sum(w)
-    if tot <= 0:
+    if sum(w) <= 0:
         base = [n_units // k] * k
         for i in range(n_units - sum(base)):
             base[i] += 1
         return base
-    units = [int(n_units * x / tot) for x in w]
-    while sum(units) < n_units:
-        i = max(range(k), key=lambda j: n_units * w[j] / tot - units[j])
-        units[i] += 1
-    return units
+    units = distribute_units(
+        dict(enumerate(w)), n_units,
+        leftover=FLOOR_THEN_LARGEST_REMAINDER, order=list(range(k)),
+    )
+    return [units[i] for i in range(k)]
 
 
 def mean_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
