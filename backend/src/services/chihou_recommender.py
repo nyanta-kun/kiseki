@@ -29,17 +29,14 @@ from ..db.chihou_models import (
     ChihouRaceResult,
 )
 from ..indices.buy_signal import (
-    CHIHOU_OPEN_RACE_MAX_TOP3_SHARE,
-    CHIHOU_PICK_MAX_INDEX_RANK,
-    CHIHOU_PICK_MIN_POP_RANK,
+    CHIHOU_PLACE_BET_FAV_ODDS_MAX,
+    CHIHOU_PLACE_BET_MAX_INDEX_RANK,
     CHIHOU_PLACE_MIN_HEAD_COUNT,
+    CHIHOU_SWEET_SPOT_MIN_ODDS,
     chihou_effective_head_count,
-    chihou_is_place_pick,
+    chihou_is_place_bet,
     chihou_is_sweet_spot,
     chihou_low_odds_trust_level,
-    chihou_market_top3_share,
-    chihou_popularity_ranks,
-    chihou_select_place_picks,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_upset import get_chihou_upset_reranker
@@ -48,6 +45,13 @@ logger = logging.getLogger(__name__)
 
 # buy/pass判断の期待値閾値
 _BUY_EV_THRESHOLD = 1.0
+
+# 複穴（place_bet）の実測 複勝的中率。前向き記録 chihou.place_picks の
+# 採点済 572R（2026-08-14〜09-01）で 241点中 89的中 = 36.93%
+# CI95[31.09, 43.18]。同条件の母集団は 17.78% なのでリフト ×2.08。
+# 🔴 ここは **前向き記録で測った値だけ** を置く。探索窓の数字や
+#    look-ahead を含む検証値を入れてはいけない（画面と DB に流れる）。
+CHIHOU_PLACE_BET_MEASURED_HIT_RATE = 0.369
 
 
 def calc_race_concentration(place_probs: list[float]) -> dict[str, object]:
@@ -732,11 +736,16 @@ async def build_chihou_sweet_spot_recommendations(
         if not win_odds:
             continue  # オッズ未取得レースは対象外
 
-        # 注目馬（複穴）判定用。人気順位・シェアともこの時点の最新オッズから作る。
-        # ⚠️ 確定オッズを使ってはいけない（前身の条件がそれで崩壊した）。
+        # 複穴（place_bet）判定用。1番人気オッズはレース内最低単勝オッズで近似する
+        # （chihou_races_router の個別馬タグと同じ作り方）。
+        # ⚠️ 確定オッズを使ってはいけない。この時点の最新オッズだけを見る。
         _odds_by_hn = {int(k): v for k, v in win_odds.items() if str(k).isdigit()}
-        top3_share = chihou_market_top3_share(_odds_by_hn.values())
-        pop_ranks = chihou_popularity_ranks(_odds_by_hn)
+        _odds_values = [v for v in _odds_by_hn.values() if v is not None]
+        fav_odds: float | None = min(_odds_values) if _odds_values else None
+        # 🔴 頭数は effective を使うこと。`races.head_count` はレース後にしか入らないため、
+        #    発走前に生の head_count を渡すと chihou_is_place_bet が常に False を返し、
+        #    推奨が「エラー無しで1件も出ない」状態になる。
+        eff_head_count = chihou_effective_head_count(race.head_count, race.registered_count)
 
         # 複勝確率集中度（信頼度算出）
         place_probs = [
@@ -812,15 +821,26 @@ async def build_chihou_sweet_spot_recommendations(
             # 高オッズ穴 / 複穴 は重複可（同一馬が単勝・複勝両方の推奨に出ることを許容）
             if chihou_is_sweet_spot(idx_rank, wo, race.course_name):
                 sweet_horses.append({**base})
-            # 複穴（注目馬）: 発走前6番人気以下 × 指数5位内 × 開いたレース × 8頭以上
-            # ここでは適格判定だけ行い、1レース最大2頭への絞り込みは後段でまとめて行う
-            if chihou_is_place_pick(
-                pop_ranks.get(hn) if hn is not None else None,
-                idx_rank,
-                top3_share,
-                chihou_effective_head_count(race.head_count, race.registered_count),
+            # 複穴（place_bet）: 断然人気R × 単勝10倍以上 × 指数3位内 × 8頭以上
+            # 🔴 2026-09-01 まで、ここは注目馬（chihou_is_place_pick）を呼んでいた。
+            #    カテゴリ名・画面のタイトル・注記はいずれも断然人気穴を説明しており、
+            #    さらに注目馬は同じページの ChihouFeaturedPlacePanel が既に配信していたため、
+            #    「別ルールの札を掛けた注目馬の二重配信」になっていた。
+            #    前向き記録（chihou.place_picks・採点済 572R）で両者を同一母集団に
+            #    載せて比べた実測が下記。断然人気穴の方が的中率・リフト・カバー率とも上で、
+            #    ROI は両者とも 1.0 に届かず差は判別できない（CI が大きく重なる）。
+            #
+            #      注目馬     105R(18.4%) 152点 的中 22.37% [16.5,29.6] ROI 0.868 [0.557,1.233]
+            #                 （同条件の母集団 11.91% ＝ リフト ×1.88）
+            #      断然人気穴 176R(30.8%) 241点 的中 36.93% [31.1,43.2] ROI 0.773 [0.619,0.951]
+            #                 （同条件の母集団 17.78% ＝ リフト ×2.08）
+            if chihou_is_place_bet(
+                index_rank=idx_rank,
+                win_odds=wo,
+                fav_odds=fav_odds,
+                head_count=eff_head_count,
             ):
-                place_bet_horses.append({**base, "_idx_rank": idx_rank})
+                place_bet_horses.append({**base})
             level = chihou_low_odds_trust_level(wo)
             if level == "trusted":
                 low_trusted.append({**base})
@@ -893,31 +913,20 @@ async def build_chihou_sweet_spot_recommendations(
                 "created_at": now,
             })
 
-        # ---- 複穴（place_bet）: 人気薄の複勝圏候補を複勝買い ----
-        # 発走前6番人気以下 × 指数3位内 × 開いたレース × 8頭以上。
-        # 複勝圏率 51.5%（母集団 11.79% の 4.37倍・探索51.4%/確認51.6%）。
-        # **的中率の指標であって収支の保証ではない**。
-        # ⚠️ 旧記載の「複勝圏率 51.5% / ROI 1.110」は指数側の look-ahead による過大評価。
-        # 市場を見ない指数で測り直した honest な値は 複勝圏率 28.2%(×2.36)・ROI 0.96。
-        # 検証: docs/chihou_rebuild_2026_08.md 10〜11章
+        # ---- 複穴（place_bet）: 断然人気レースの高オッズ馬を複勝買い ----
+        # 1番人気 単勝<2.0 ∧ 対象馬 単勝≥10.0 ∧ 指数3位内 ∧ 8頭立て以上。
         #
-        # ⚠️ 頭数ゲート（旧 k<3）は付けない。上限は chihou_select_place_picks が持つ。
+        # 前向き記録（chihou.place_picks・採点済 572R・2026-08-14〜09-01）の実測:
+        #   176R(30.8%) 241点  複勝的中 36.93% CI95[31.09, 43.18]
+        #   同条件の母集団（断然人気R × 単勝10倍以上の全馬）は 17.78% ＝ リフト ×2.08
+        #   複勝ROI 0.773 CI95[0.619, 0.951]
         #
-        # 指数5位内まで緩めた（2026-08-13）ため1レースに最大5頭が適格になりうる。
-        # 「1レースに1〜2頭」に絞るのはここ。指数の良い順に最大2頭。
-        if place_bet_horses:
-            _keep = set(
-                chihou_select_place_picks(
-                    [
-                        (h["horse_number"], h["_idx_rank"])
-                        for h in place_bet_horses
-                        if h.get("horse_number") is not None and h.get("_idx_rank") is not None
-                    ]
-                )
-            )
-            place_bet_horses = [h for h in place_bet_horses if h.get("horse_number") in _keep]
-            for h in place_bet_horses:
-                h.pop("_idx_rank", None)
+        # 🔴 **的中率の指標であって収支の保証ではない**。ROI の CI は 1.0 を含まず、
+        #    控除率分のマイナスであることが確認されている。「予想の参考」用途。
+        #
+        # ⚠️ 1レースあたりの上限は設けない。`index_rank <= 3` が構造的な上限
+        #    （最大3頭）になっているため。router 側にある「4頭以上なら除外」ゲートは
+        #    この条件では**一度も発火しない**（前向き記録 572R で発火 0 件を実測）。
         if place_bet_horses:
             for h in place_bet_horses:
                 _attach_finish(h, race.id)
@@ -942,15 +951,21 @@ async def build_chihou_sweet_spot_recommendations(
                     result_correct = False
                     result_payout = 0
 
-            # EV は根拠ではない（的中率で選ぶ条件）。信頼度は実測の複勝圏率を入れる。
-            confidence = 0.515
+            # EV は根拠ではない（的中率で選ぶ条件）。信頼度は実測の複勝的中率を入れる。
+            # 🔴 数値は前向き記録の実測だけを書くこと。2026-09-01 まで、直上の
+            #    コメントが「look-ahead による過大評価」と明記していた 51.5% が
+            #    そのままユーザー向け reason に埋め込まれ、DB にも永続化されていた。
+            confidence = CHIHOU_PLACE_BET_MEASURED_HIT_RATE
             reason = (
-                f"注目馬（複勝）：発走前{CHIHOU_PICK_MIN_POP_RANK}番人気以下 ∧ "
-                f"指数{CHIHOU_PICK_MAX_INDEX_RANK}位以内 ∧ 上位が抜けていない開いたレース"
-                f"（市場上位3頭シェア {top3_share:.2f} < {CHIHOU_OPEN_RACE_MAX_TOP3_SHARE:.2f}）∧ "
+                f"複穴（複勝）：1番人気 単勝<{CHIHOU_PLACE_BET_FAV_ODDS_MAX:.1f}"
+                f"（このレースは {fav_odds:.1f}）の断然人気レース ∧ "
+                f"単勝{CHIHOU_SWEET_SPOT_MIN_ODDS:.0f}倍以上 ∧ "
+                f"指数{CHIHOU_PLACE_BET_MAX_INDEX_RANK}位以内 ∧ "
                 f"{CHIHOU_PLACE_MIN_HEAD_COUNT}頭立て以上。"
-                f"実測 複勝圏率 51.5%（人気薄全体 11.8% の 4.4倍）。"
-                f"的中率の指標であり収支は保証しない。 "
+                f"前向き記録の実測 複勝的中率 "
+                f"{CHIHOU_PLACE_BET_MEASURED_HIT_RATE * 100:.1f}%"
+                f"（同条件の母集団 17.8% の約2.1倍）・複勝ROI 0.77。"
+                f"的中率の指標であり収支は保証しない（控除率分マイナス）。 "
                 + " / ".join(
                     f"{h['horse_number']}番{h.get('horse_name') or ''}"
                     f"(単{(h.get('win_odds') or 0):.1f})"
