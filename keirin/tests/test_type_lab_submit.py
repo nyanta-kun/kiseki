@@ -372,7 +372,7 @@ def test_daily_cap_is_bound_from_backend_source():
     src = SUBMIT_PY.read_text(encoding="utf-8")
     assert "_GATE.DAILY_CAP_RACE_FRACTION" in src, "上限を正本から読んでいない"
     assert "_GATE.daily_cap_exempt" in src, "除外の判定を正本から読んでいない"
-    assert "_GATE.axis_priority" in src, "順位付けを正本から読んでいない"
+    assert "_GATE.cap_priority" in src, "順位付けを正本から読んでいない"
     assert "= 0.5" not in src, "割合を写している"
 
 
@@ -949,3 +949,86 @@ def test_the_gate_is_still_applied_by_default():
     # フラグは run() の中で**1回だけ**読む（行ごとに DB を叩かない）。
     assert src.count("use_axis_gate = axis_gate_enabled()") == 1
     assert callable(M.axis_gate_enabled)
+
+
+def _load_gate():
+    import importlib.util
+
+    path = REPO.parent / "backend/src/services/keirin_type_lab_gate.py"
+    spec = importlib.util.spec_from_file_location("tl_gate_rp", path)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    return gate
+
+
+def test_rp_sd_quantiles_cover_every_7car_sellable_plan():
+    """🔴 **7車で売るプランには必ず `rp_sd` の分位表がある。**
+
+    無ければ `rp_sd_priority` が None を返し、そのプランだけ**軸信頼だけで並ぶ**。
+    例外もログも出ないまま、新設プランが上限の順位付けから静かに外れる。
+
+    ⚠️ `F_pay` は 2026-08-31 の看板枠導入で **9車決勝だけ**になった
+    （7車の決勝・準決勝は `F_sign` へ回る）。9車は `_priority` が 1.0 を返して
+    表を引かないので、ここでは対象外にする。
+    """
+    from src.type_lab import SELLABLE_PLAN_KEYS
+
+    gate = _load_gate()
+    nine_car_only = {"F_pay"}
+    missing = sorted(k for k in SELLABLE_PLAN_KEYS
+                     if k not in nine_car_only and k not in gate.RP_SD_PRIORITY_QUANTILES)
+    assert not missing, (
+        f"rp_sd の分位表が無いプラン: {missing}。"
+        f"探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内分位を引いて足すこと")
+    for k, qs in gate.RP_SD_PRIORITY_QUANTILES.items():
+        assert len(qs) == 11, f"{k}: 分位の数が違う（0/10/…/100%の11点）"
+        assert list(qs) == sorted(qs), f"{k}: 分位が単調でない"
+
+
+def test_cap_priority_falls_back_to_axis_when_rp_sd_missing():
+    """🔴 競走得点が読めないレースを中央へ寄せない（軸信頼だけの従来動作へ落ちる）。
+
+    `axis_priority` の「知らなければ 0.5」と倒す向きが違うのは意図的。
+    0.5 を返すと**欠測のレースだけ**が中央へ寄るという根拠のない偏りが入る。
+    """
+    gate = _load_gate()
+    for plan in ("A_hit", "E_hit", "F_sign"):
+        for a in (1.20, 1.44, 1.90):
+            assert gate.cap_priority(plan, a, None) == gate.axis_priority(plan, a)
+            # 🔴 NaN は「上端」ではなく「読めなかった」（`v < qs[i]` が全て偽になる）
+            assert gate.cap_priority(plan, a, float("nan")) == gate.axis_priority(plan, a)
+
+
+def test_cap_priority_weights_axis_twice(): 
+    """合成の重みは 2:1（軸信頼:実力伯仲）。実測した腕と同じ形であること。"""
+    gate = _load_gate()
+    assert gate.RP_SD_PRIORITY_AXIS_WEIGHT == 2.0
+    hi_axis_lo_rp = gate.cap_priority("A_hit", 1.90, 0.1)
+    lo_axis_hi_rp = gate.cap_priority("A_hit", 1.00, 9.0)
+    assert hi_axis_lo_rp > lo_axis_hi_rp, "軸信頼のほうが重いこと"
+
+
+def test_submit_reads_race_point_once():
+    """🔴 競走得点は**1回だけ**引く（行ごとに引くと当日90行ぶん DB を叩く）。"""
+    src = SUBMIT_PY.read_text(encoding="utf-8")
+    assert src.count("_race_point_sd(") == 2, "定義と呼び出しが1組でない"
+    assert src.index("rp_sd = _race_point_sd(") < src.index("def _priority(r: dict) -> float:")
+
+
+def test_race_point_is_never_written_by_this_repo():
+    """🔴 **`race_point` は読むだけ**（表示用の値で上書きした事故と同じ轍を踏まない）。
+
+    `pred_*` と違って競走得点はスクレイパーが入れる生データで、`feature_wt` の
+    `score_rank` / `score_z` の入力そのもの。ここへ書くと特徴量が自己参照で汚れる
+    （2026-06〜07 に5週間汚染した実例がある）。だから入稿時に引き直してよい。
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    bad = []
+    for f in sorted(root.glob("scripts/**/*.py")) + sorted(root.glob("src/**/*.py")):
+        t = f.read_text(encoding="utf-8", errors="ignore")
+        for m in re.finditer(r"UPDATE\s+wt_entries\s+SET\s+([^\n]*)", t, re.I):
+            if "race_point" in m.group(1):
+                bad.append(f"{f.relative_to(root)}: {m.group(0)[:80]}")
+    assert not bad, "race_point を書き換えている: " + "; ".join(bad)
