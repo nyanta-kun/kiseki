@@ -145,8 +145,8 @@ class ChihouHorseIndexOut(BaseModel):
     external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
     win_odds: float | None = None          # 単勝オッズ（最新）
     ev: float | None = None               # 期待値 win_probability × win_odds
-    is_sweet_spot: bool = False           # v10スイートスポット該当馬（赤字表示）
-    is_place_bet: bool = False            # 断然人気複勝推奨（断然人気×EV1.2-2.0）
+    is_sweet_spot: bool = False           # スイートスポット該当馬（赤字表示）
+    is_place_bet: bool = False            # 複穴（断然人気R×単勝10倍以上×指数3位内×8頭以上）
     is_place_pick: bool = False           # 注目馬（6番人気以下×指数5位内×開いたR）→ ★表示
 
 
@@ -834,38 +834,54 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             )
         )
 
-    # --- スイートスポット・複勝推奨判定 (v10 win_probability ベース) ---
-    # CHIHOU_COMPOSITE_VERSION == 10 のときだけ評価する。
-    if CHIHOU_COMPOSITE_VERSION == 10:
-        # composite_index でレース内順位を付与（降順・同値は先着）
-        _ranked = sorted(
-            (i for i, h in enumerate(horses) if h.composite_index is not None),
-            key=lambda i: horses[i].composite_index,
-            reverse=True,
+    # --- スイートスポット・複勝推奨判定（個別馬バッジ） ---
+    # 🔴 2026-09-01 まで `if CHIHOU_COMPOSITE_VERSION == 10:` で囲まれていた。
+    #    v10 ロールアウト時の一時ガード（commit 90cea0d）だが、v11 / v12 / v13 / v14 と
+    #    4 回の昇格すべてで外し忘れており、**v11 以降このブロックは一度も実行されて
+    #    いなかった**。is_sweet_spot / is_place_bet は常に既定値 False のまま返り、
+    #    レース詳細の赤字・複勝バッジが例外もログも出さずに消えていた。
+    #    判定条件は composite_index の**レース内順位**しか使っておらず、指数の版に
+    #    依存しない。版で分岐する理由が元から無い。
+    # composite_index でレース内順位を付与（降順・同値は先着）
+    _ranked = sorted(
+        (i for i, h in enumerate(horses) if h.composite_index is not None),
+        key=lambda i: horses[i].composite_index,
+        reverse=True,
+    )
+    _rank_of: dict[int, int] = {i: r + 1 for r, i in enumerate(_ranked)}
+
+    # 単勝推奨（スイートスポット: 指数1位 × 単勝10-30倍 × 割安場）
+    for i, h in enumerate(horses):
+        h.is_sweet_spot = chihou_is_sweet_spot(
+            index_rank=_rank_of.get(i),
+            win_odds=h.win_odds,
+            course_name=course_name,
         )
-        _rank_of: dict[int, int] = {i: r + 1 for r, i in enumerate(_ranked)}
 
-        # 単勝推奨（スイートスポット: 指数1位 × 単勝10-30倍 × 割安場）
-        for i, h in enumerate(horses):
-            h.is_sweet_spot = chihou_is_sweet_spot(
-                index_rank=_rank_of.get(i),
-                win_odds=h.win_odds,
-                course_name=course_name,
-            )
-
-        # 断然人気複勝推奨: レース内最低単勝オッズ = 1番人気オッズの近似
-        fav_odds: float | None = min(win_odds_map.values()) if win_odds_map else None
-        for i, h in enumerate(horses):
-            h.is_place_bet = chihou_is_place_bet(
-                index_rank=_rank_of.get(i),
-                win_odds=h.win_odds,
-                fav_odds=fav_odds,
-                head_count=race_obj.head_count if race_obj else None,
-            )
-        # 混戦レース（複勝推奨が4頭以上）は除外
-        if sum(1 for h in horses if h.is_place_bet) >= 4:
-            for h in horses:
-                h.is_place_bet = False
+    # 断然人気複勝推奨: レース内最低単勝オッズ = 1番人気オッズの近似
+    _fav_values = [v for v in win_odds_map.values() if v is not None]
+    fav_odds: float | None = min(_fav_values) if _fav_values else None
+    # 🔴 頭数は effective を使う。`races.head_count` はレース後にしか入らないため、
+    #    生の head_count を渡すと発走前は常に None → chihou_is_place_bet が必ず
+    #    False になり、バッジが「発走後だけ点く」不整合になる。
+    _bet_head_count = (
+        chihou_effective_head_count(race_obj.head_count, race_obj.registered_count)
+        if race_obj
+        else None
+    )
+    for i, h in enumerate(horses):
+        h.is_place_bet = chihou_is_place_bet(
+            index_rank=_rank_of.get(i),
+            win_odds=h.win_odds,
+            fav_odds=fav_odds,
+            head_count=_bet_head_count,
+        )
+    # 混戦レース（複勝推奨が4頭以上）は除外。
+    # ⚠️ `index_rank <= 3` が構造的に最大3頭に抑えるため実際には発火しない
+    #    （前向き記録 572R で発火 0 件を実測）。保険として残す。
+    if sum(1 for h in horses if h.is_place_bet) >= 4:
+        for h in horses:
+            h.is_place_bet = False
 
     # --- 注目馬（発走前6番人気以下 × 指数5位内 × 開いたレース）---
     # 人気順位・シェアはこの時点で取得済みの最新オッズから作る。
