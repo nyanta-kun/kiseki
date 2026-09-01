@@ -30,7 +30,17 @@
 
 使い方:
     PYTHONPATH=. .venv/bin/python scripts/train_favbust_model.py            # 本番のみ
-    PYTHONPATH=. .venv/bin/python scripts/train_favbust_model.py --vintages # + 月次
+    PYTHONPATH=. .venv/bin/python scripts/train_favbust_model.py --vintages # + 月次（全月を再学習）
+    # 月次の自動実行（`ensure_monthly_vintage.sh` が毎月1日に呼ぶ形）
+    PYTHONPATH=. .venv/bin/python scripts/train_favbust_model.py \
+        --vintages --only-missing --rebuild-cache
+
+🔴 **`--vintages` を単体で使わないこと。** 全月を無条件に再学習し、凍結した過去
+   vintage を黙って上書きする（`_fit` は `atomic_pickle_dump` を直接呼ぶので
+   `save_model` の書き込み保護を通らない）。過去を作り直す意図があるときだけ。
+🔴 **`--rebuild-cache` を忘れないこと。** 学習セットはキャッシュされ、付けないと
+   古いまま。2026-09-01 時点のキャッシュは max race_date が 2026-08-06 だった
+   （`_fit` が覆えているか検査して落とすようにしたが、そもそも付けるのが正しい）。
 """
 from __future__ import annotations
 
@@ -158,8 +168,32 @@ def build_trainset(force: bool = False) -> list[dict]:
     return rows
 
 
-def _fit(rows: list[dict], name: str, upto: str | None) -> None:
-    """upto（含む）までのデータで学習して保存する。upto=None なら全期間。"""
+def _fit(rows: list[dict], name: str, upto: str | None, *,
+         only_missing: bool = False) -> None:
+    """upto（含む）までのデータで学習して保存する。upto=None なら全期間。
+
+    🔴 **`only_missing=True` なら既にあるモデルへは触らない**（2026-09-01）。
+       `--vintages` は全月を無条件に再学習するので、凍結した過去 vintage を
+       黙って上書きしていた（`atomic_pickle_dump` を直接呼んでおり
+       `save_model` の書き込み保護を通らない）。月次の自動実行では必須。
+
+    🔴 **学習セットが学習窓を覆っているかを確かめる**（2026-09-01）。
+       `build_trainset` のキャッシュは `--rebuild-cache` を付けないと更新されない。
+       実際 2026-09-01 時点のキャッシュは **max race_date が 2026-08-06** で、
+       そのまま m2609（upto=2026-08-31）を学習すると **8/06 までのデータで
+       「8/31 まで」のモデルを作る**ことになる。例外もログも出ないまま
+       契約（その月の前月末まで）を破るので、**足りなければ学習しない**。
+    """
+    if only_missing and (MODEL_DIR / f"{name}.pkl").exists():
+        print(f"  [skip] {name}: 既にあります", flush=True)
+        return
+    if upto is not None and rows:
+        newest = max(r["race_date"] for r in rows)
+        if newest < upto:
+            print(f"  [skip] {name}: 学習セットが {newest} までしかなく "
+                  f"{upto} を覆えません（--rebuild-cache で作り直してください）",
+                  flush=True)
+            return
     use = [r for r in rows if upto is None or r["race_date"] <= upto]
     if len(use) < 3000:
         print(f"  [skip] {name}: 学習データ {len(use)}件は少なすぎます", flush=True)
@@ -181,7 +215,10 @@ def _fit(rows: list[dict], name: str, upto: str | None) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vintages", action="store_true", help="月次vintageも学習する")
-    ap.add_argument("--rebuild-cache", action="store_true")
+    ap.add_argument("--rebuild-cache", action="store_true",
+                    help="学習セットのキャッシュを作り直す（月次実行では必須）")
+    ap.add_argument("--only-missing", action="store_true",
+                    help="既にあるモデルは飛ばす（凍結 vintage を上書きしない）")
     args = ap.parse_args()
 
     rows = build_trainset(force=args.rebuild_cache)
@@ -193,7 +230,7 @@ def main() -> None:
           f"特徴量 {len(FAVBUST_FEATURE_COLS)}列")
 
     print("\n本番モデル（全期間）:")
-    _fit(rows, "lgbm_wt_favbust", None)
+    _fit(rows, "lgbm_wt_favbust", None, only_missing=args.only_missing)
 
     if args.vintages:
         print("\n月次vintage:")
@@ -202,7 +239,8 @@ def main() -> None:
             # M月のモデルは「M月の前月末まで」で学習する（既存vintageと同じ契約）
             prev_end = (date.fromisoformat(w_from) - __import__("datetime")
                         .timedelta(days=1)).isoformat()
-            _fit(rows, f"lgbm_wt_favbust_{tag}", prev_end)
+            _fit(rows, f"lgbm_wt_favbust_{tag}", prev_end,
+                 only_missing=args.only_missing)
 
 
 if __name__ == "__main__":

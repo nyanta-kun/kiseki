@@ -78,8 +78,14 @@ def main() -> None:
             notify_discord_warning(
                 f"🚨 **[{_SCRIPT_NAME}] vintageモデル不足のため計算を開始せず中断しました**\n"
                 f"{report}\n"
-                f"`train_monthly_vintage_models.py --only-missing` で不足月を学習するか、"
-                f"`--skip-missing-models` を指定して当該月を除外して続行してください。"
+                f"不足しているモデルの種類で対処が違います:\n"
+                f"・`favbust` → `train_favbust_model.py --vintages --only-missing "
+                f"--rebuild-cache`\n"
+                f"・それ以外（eval/win/bad/top2）→ `train_monthly_vintage_models.py "
+                f"--only-missing`\n"
+                f"どちらも `ensure_monthly_vintage.sh`（毎月1日 00:05）が自動で行います。\n"
+                f"⚠️ `--skip-missing-models` は**その窓を除外して黙るだけ**で、"
+                f"再構築は行われません。"
             )
             print("[rebuild-7h1-pg] --skip-missing-models 未指定のため処理を中断します"
                   "（計算は一切行っていません）。")

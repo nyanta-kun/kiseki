@@ -112,6 +112,26 @@ if ! .venv/bin/python3 scripts/train_monthly_vintage_models.py --only-missing 2>
 fi
 log "Step1完了: 不足月の学習（0件学習=既に全月揃っている場合も正常終了）"
 
+# --- Step 1b: favbust の不足月を学習（2026-09-01 追加） ---
+# 🔴 train_monthly_vintage_models.py が作るのは eval/win/bad/top2 の4種だけで、
+#    favbust は入っていない。favbust を作れるのは train_favbust_model.py だけで、
+#    それを呼ぶ cron が1つも無かったため **完全な手動運用**になっていた。
+#    2026-08-06 の導入時に m2404〜m2608 を手で一括生成したきりで、
+#    最初の月替わり（2026-09-01）に lgbm_wt_favbust_m2609 が無く
+#    rebuild_7h1_walkforward_pg.py が毎朝 🚨 を出す状態になった。
+# 🔴 **Step 1 の後に置くこと。** favbust の学習セットは eval/win/bad の月次vintage で
+#    予測を作るので、先にそちらが揃っていないとその月が丸ごと欠ける。
+# 🔴 **--rebuild-cache は必須。** 学習セットはキャッシュされ、付けないと古いまま
+#    （2026-09-01 時点で max race_date が 2026-08-06 だった）。
+# 🔴 **--only-missing も必須。** 付けないと全月を再学習し、凍結した過去 vintage を
+#    黙って上書きする。
+if ! .venv/bin/python3 scripts/train_favbust_model.py \
+      --vintages --only-missing --rebuild-cache 2>&1 | tee -a "$LOG"; then
+  notify_failure "train_favbust_model.py --vintages --only-missing が失敗しました。ログ: $LOG"
+  exit 1
+fi
+log "Step1b完了: favbust の不足月の学習"
+
 # --- Step 2: VPSへモデルファイルを配布（sync_models_to_vps.shが検証まで行う） ---
 log "=== ensure_monthly_vintage: VPSへ配布開始 ==="
 if ! "$REPO_ROOT/scripts/sync_models_to_vps.sh" 2>&1 | tee -a "$LOG"; then
