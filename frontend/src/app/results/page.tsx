@@ -121,7 +121,7 @@ export default async function ResultsPage({
     data = await fetchPerformanceSummary(filters);
   } catch {
     return (
-      <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+      <div className="min-h-screen" style={{ background: "var(--page-bg)" }}>
         <main className="max-w-3xl mx-auto px-4 py-8">
           <FilterForm current={filters} />
           <div className="mt-6 text-center py-12 bg-white rounded-xl border border-gray-100 shadow-sm text-gray-400">
@@ -142,7 +142,7 @@ export default async function ResultsPage({
   const placeRoiSign = data.simulated_roi_place >= 1.0 ? "+" : "";
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+    <div className="min-h-screen" style={{ background: "var(--page-bg)" }}>
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
 
         {/* タイトル */}

@@ -26,11 +26,54 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ---------------------------------------------------------------------------
+ * ページ面（各柱のコンテンツ背景）のトークン。
+ *
+ * 🔴 2026-09-02 まで、各ページが `style={{ background: "#f0f5fb" }}` のように
+ *    16 箇所で直書きしており、`prefers-color-scheme` の対応が**実質死んでいた**
+ *    （dark: を使っているのは競輪配下 11 ファイルだけだった）。
+ *
+ * 🔴 **色を media / [data-theme] ブロックの中だけで定義しないこと。**
+ *    素の :root で必ず全トークンを定義し、暗い側は上書きだけにする。
+ *    片方にしか無い色は、もう片方のテーマで「無色」になって消える。
+ *
+ * 3状態を全部設計する:
+ *   - 素の :root                        … light（OS 設定が light / 未指定）
+ *   - prefers-color-scheme: dark        … OS が dark（[data-theme="light"] は除外）
+ *   - [data-theme="dark"]               … 明示指定（将来トグルを付けたときのため）
+ *
+ * ⚠️ カード類は `bg-white` のまま。面だけを暗くして影響範囲を閉じている。
+ *    カードまで暗くするならカード内の text-gray-* を全部見直す必要があり、
+ *    それは別の作業（目視確認が要る）。
+ * ------------------------------------------------------------------------- */
+:root {
+  --page-bg: #f0f5fb;          /* 中央・共通ページの面 */
+  --page-bg-chihou: #f0faf4;   /* 地方 */
+  --page-bg-chihou-alt: #f0f8f3;
+  --page-bg-subtle: #f8fafc;   /* 面の上の淡いブロック */
+  --footer-bg: #f0f5fb;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0a1628;
     --foreground: #e8f0fa;
+    --page-bg: #0d1b2e;
+    --page-bg-chihou: #0b1f16;
+    --page-bg-chihou-alt: #0a1d15;
+    --page-bg-subtle: #111c2b;
+    --footer-bg: #0d1b2e;
   }
+}
+
+:root[data-theme="dark"] {
+  --background: #0a1628;
+  --foreground: #e8f0fa;
+  --page-bg: #0d1b2e;
+  --page-bg-chihou: #0b1f16;
+  --page-bg-chihou-alt: #0a1d15;
+  --page-bg-subtle: #111c2b;
+  --footer-bg: #0d1b2e;
 }
 
 body {
