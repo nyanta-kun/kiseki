@@ -527,13 +527,13 @@ def plans_for(type_label: str, n_entries: int = 7,
        売る／売らないは `sell_plans_for` の責務へ寄せた。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay']
+    ['F_hit', 'F_pay', 'F_sign']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_hit', 'F_pay']
+    ['F_hit', 'F_pay', 'F_sign']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
-    ['F_hit', 'F_pay']
+    ['F_hit', 'F_pay', 'F_sign']
     >>> [p.key for p in plans_for("A", 9, "特選")]
-    ['A_hit', 'A_pay', 'A_trio', 'A_ana']
+    ['A_hit', 'A_pay', 'A_trio', 'A_ana', 'A_sign']
     """
     return [p for p in PLANS.values() if p.type_label == type_label]
 
@@ -551,7 +551,7 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     >>> [p.key for p in sell_plans_for("A")]
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F")]
-    ['F_pay']
+    ['F_hit']
 
     🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
        それ以外は `F_hit` と種別で分かれるので、固定の集合では表せない。
@@ -566,7 +566,7 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     >>> [p.key for p in sell_plans_for("A", 9, "特選")]
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F", 7)]
-    ['F_pay']
+    ['F_hit']
 
     🔴 **型A だけ3つに分かれる**（2026-08-31・`docs/type_lab/type_a_upset_2026_08_31.md` §12）。
        型は排他なので**共食いではなく棲み分け**で、ここでも返すのは1つだけ:

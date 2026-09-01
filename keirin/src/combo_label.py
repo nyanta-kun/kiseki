@@ -136,7 +136,7 @@ def format_pred_combo(text: str | None, *, labels: bool = True) -> str:
           `labels=False` でも原文を触らない。
 
     >>> format_pred_combo("三複:2=5=7,2=5=6 / 三単:5-2-3,5-2-4")
-    '三複:2=5=7,2=5=6 / 三単:5-2-3,4'
+    '三複:2=5=7,6 / 三単:5-2-3,4'
     >>> format_pred_combo("三単:5-2-3,5-2-4", labels=False)
     '5-2-3,4'
     >>> format_pred_combo("5=1-2,3,4")

@@ -13,7 +13,7 @@
 | `compute-stats` の計算ロジック変更 | 対応する特徴量の説明 |
 | モデル再学習（AUC更新） | 概要のバージョン・AUC値 + 更新履歴 |
 | 新コマンド追加 | `docs/system-architecture.md` のコマンド一覧 |
-| 戦略変更（閾値・ランク条件） | `docs/bet-structure-guide.md` + `docs/prediction-factors.md` |
+| 戦略変更（閾値・型ラボの条件） | `docs/RECOMMENDATION.md` + `docs/prediction-factors.md` |
 
 更新時は「最終更新」日付と「更新履歴」テーブルも必ず記入する。
 
@@ -84,7 +84,17 @@ data/models/lgbm.pkl (=lgbm_v6)         # 保持。日次/週次cronはwt版に�
 
 ### ドキュメント
 
+🔴 **競輪の推奨をこれから触るなら、まず `docs/RECOMMENDATION.md` を読む。**
+いま何を・どう選び・どう買い・どこで止めているかを1本にまとめてある
+（2026-09-01 に 130本 → 60本へ整理したときの統合先）。
+個別の実測表は `docs/type_lab/` が一次資料。
+
+⚠️ **`docs/` を消すときは参照も直すこと。** `src/` の定数コメントは「なぜこの値か」を
+docs へ委ねているので、消すと**根拠を辿れない定数**が残る。
+`tests/test_doc_references_resolve.py` が参照の実在を固定している。
+
 ```
+docs/RECOMMENDATION.md                  # ★競輪の推奨 — 現状の全体像（最初に読む）
 CONTINUATION.md                         # 2026-07-07までの検証履歴アーカイブ（★引継ぎメモではない）
                                         #   価値があるのは「リーク無し再検証で結論が
                                         #   変わったもの（要注意）」等の negative result 記録。
@@ -93,7 +103,7 @@ CONTINUATION.md                         # 2026-07-07までの検証履歴アー�
 docs/prediction-factors.md             # 予想ファクター仕様書（要メンテ）
 docs/system-architecture.md            # システム構成・CLIコマンド一覧
 docs/data-collection.md                # データ収集手順（ks + winticket）
-docs/bet-structure-guide.md            # 買い目戦略（旧体系の歴史的記録。現行は CLAUDE.md ランク体系参照）
+docs/bet-structure-guide.md            # 買い目戦略（★旧体系の歴史的記録。現行は docs/RECOMMENDATION.md）
 docs/trifecta_playbook.md              # ★三連単の買い方（実務ガイド・2026-08-27）。
                                         #   確率の作り方(位置別合成PL+λμ)・帯/点数/種別のダイヤル・
                                         #   否定済みの選別・入稿ゲートが三連単に掛かっていないこと・
