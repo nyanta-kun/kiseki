@@ -307,6 +307,46 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
     return None
 
 
+def _race_point_sd(race_keys: list[str]) -> dict[str, float]:
+    """レースごとの**競走得点の標準偏差**（小さいほど実力伯仲）。
+
+    日次上限の優先順位に使う（`keirin_type_lab_gate.cap_priority`）。
+    `axis_sum` と相関 0.220 でほぼ独立なのに、**軸信頼の五分位すべてで両窓とも
+    軸崩壊率を約2倍に分ける**（`docs/type_lab/axis_disadvantage_2026_09_01.md`）。
+
+    🟢 **`race_point` はスクレイパー由来の生データ**（`winticket.racePoint`）で、
+       `pred_*` のように再学習で上書きされない。だから入稿時に引き直してよい
+       （行へ焼き付ける必要があるのは**モデルの出力**の方）。
+    🔴 **読めなければその レースは辞書に入れない**。`cap_priority` が
+       `rp_sd=None` で軸信頼だけの従来動作へ落ちる。
+    """
+    if not race_keys:
+        return {}
+    vals: dict[str, list[float]] = {}
+    try:
+        with get_connection() as conn:
+            for i in range(0, len(race_keys), 400):
+                ch = race_keys[i:i + 400]
+                q = (f"SELECT race_key, race_point FROM wt_entries "
+                     f"WHERE race_key IN ({','.join('?' * len(ch))})")
+                for r in conn.execute(q, tuple(ch)).fetchall():
+                    d = dict(r)
+                    rp = d.get("race_point")
+                    if rp is not None and float(rp) > 0:
+                        vals.setdefault(str(d["race_key"]), []).append(float(rp))
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[type_lab_submit] 競走得点を読めません（軸信頼だけで並べます）: {e}",
+              flush=True)
+        return {}
+    out = {}
+    for rk, v in vals.items():
+        if len(v) < 3:
+            continue                       # ばらつきが意味を持たない
+        m = sum(v) / len(v)
+        out[rk] = (sum((x - m) ** 2 for x in v) / len(v)) ** 0.5
+    return out
+
+
 def _is_marquee(row: dict) -> bool:
     """看板レース（＝穴埋め対象）か。判定は `keirin_marquee` の正本に束縛。"""
     return bool(is_fill_target(row.get("race_type"), row.get("cup_grade")))
@@ -560,6 +600,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     def bump(code: str) -> None:
         skipped[code] = skipped.get(code, 0) + 1
 
+    # 🔴 **1回だけ読む**（行ごとに問い合わせると当日90行ぶん DB を叩く）。
+    rp_sd = _race_point_sd(sorted({str(r["race_key"]) for r in rows}))
+
     def _priority(r: dict) -> float:
         """上限に当たったときの残す順（大きいほど先に残す）。
 
@@ -569,12 +612,16 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
            根拠のない偏りが入る。9車は 0〜9件/日 と少なく看板級が多い。
         🔴 **決勝・準決勝（＋グレード3以上）も 1.0**。看板ぜんぶを外すと
            `F_sign` が全部残って上限の狙いと衝突する（`daily_cap_exempt` の実測表）。
+        🟢 **軸信頼だけでなく実力伯仲（競走得点のばらつき）も混ぜる**（2026-09-01）。
+           `rp_sd` は `axis_sum` と相関 0.220 でほぼ独立なのに軸崩壊率を約2倍に分ける。
+           同件数で 表示的中 +0.28〜+1.00pt（両窓とも 0 超）・10万+ も多く残る。
         """
         if int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES:
             return 1.0
         if _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")):
             return 1.0
-        return _GATE.axis_priority(str(r["plan_key"]), r.get("axis_sum"))
+        return _GATE.cap_priority(str(r["plan_key"]), r.get("axis_sum"),
+                                  rp_sd.get(str(r["race_key"])))
 
     def _exempt(r: dict) -> bool:
         return (int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
