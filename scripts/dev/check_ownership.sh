@@ -36,10 +36,12 @@ fi
 
 echo "=== 変更ファイルの柱判定 (base: $BASE_REF) ==="
 SHARED_FILES=""
+OTHER_FILES=""
 while IFS= read -r f; do
   pl="$(pillar_of "$f")"
   printf "  %-8s %s\n" "[$pl]" "$f"
   [ "$pl" = "shared" ] && SHARED_FILES="${SHARED_FILES}${f}"$'\n'
+  [ "$pl" = "other" ] && OTHER_FILES="${OTHER_FILES}${f}"$'\n'
 done <<< "$CHANGED"
 
 PILLARS="$(echo "$CHANGED" | pillars_of_files | grep -Ev '^(other)$' || true)"
@@ -59,6 +61,19 @@ if [ -n "$SHARED_FILES" ]; then
   echo "      → 単独 PR にして最優先でマージし、他ブランチは直後に rebase してください。"
   echo "$SHARED_FILES" | grep -q '^backend/alembic/' && {
     echo "      → alembic を含みます。必ず bash scripts/dev/check_migrations.sh を実行してください。"; }
+fi
+
+# 🔴 other は上の PILLARS 集計から除外されるため、放置すると
+#    「shared 警告にも複数柱警告にも一切かからないファイル」になる。
+#    2026-09-01 以前は backend/scripts (118件) と frontend (104件) が
+#    まるごとここへ落ちており、柱判定が実質的に効いていなかった。
+#    分類漏れを黙って捨てないよう、必ず件数と中身を出す。
+if [ -n "$OTHER_FILES" ]; then
+  echo
+  echo "  [i] 未分類 (other) $(echo "$OTHER_FILES" | grep -c .) 件 — 柱の集計対象外です:"
+  echo "$OTHER_FILES" | grep -v '^$' | sed 's/^/      - /'
+  echo "      → docs / 引き継ぎメモ等なら問題ありません。"
+  echo "         コードがここに出た場合は scripts/dev/pillars.sh の分類漏れです。"
 fi
 
 if [ "$N_PILLARS" -gt 1 ]; then
