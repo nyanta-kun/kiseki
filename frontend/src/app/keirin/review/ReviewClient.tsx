@@ -48,7 +48,7 @@ import { CANCEL_REASONS } from "../cancelReasons";
 
 import CommentBody from "./CommentBody";
 import ExpectedValueBadge from "@/components/ExpectedValueBadge";
-import RaceConfidenceBadge from "@/components/RaceConfidenceBadge";
+import KeirinAxisConfidenceBadge from "@/components/KeirinAxisConfidenceBadge";
 
 const MARK_LABEL: Record<number, string> = { 1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆" };
 
@@ -623,7 +623,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
             🔴 **最低払戻・最高払戻・期待値と同じ並びに置く**（2026-08-25 ユーザー指定）。
                「いくら賭けていくら返るか」の系列と、「どれくらい確からしいか」の
                系列が離れていると、スマホの2列表示で対応が読めない。 */}
-        <RaceConfidenceBadge pct={p.confidence_pct} hitCount={p.confidence_hit_count} />
+        <KeirinAxisConfidenceBadge pct={p.confidence_pct} hitCount={p.confidence_hit_count} />
         {/* 落車リスク（レースの波乱度の一部）。
             🔴 **大々的に出さない**（2026-08-21 ユーザー判断）。落車は常に存在する
                リスクで、警告として出すと毎回目に入るだけで判断を助けない。

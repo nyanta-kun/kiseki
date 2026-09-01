@@ -1,5 +1,10 @@
 /**
- * 軸信頼バッジ（2026-08-25 新設）。
+ * 競輪の軸信頼バッジ（2026-08-25 新設）。
+ *
+ * ⚠️ **競輪専用**。JRA / 地方の `RaceConfidenceTable` / `RaceConfidenceView` /
+ *    `ConfidencePanel` は「指数1位が単勝1番人気と一致するか」を第一分岐にした
+ *    的中重視 tier で、**まったく別の概念**。名前が似ていて取り違えやすいので
+ *    2026-09-01 に `KeirinAxisConfidenceBadge` から改名した。
  *
  * 100% ＝ 上位2車の3着内率の合計が 2.00（軸2車がどちらも確実に3着以内）。
  * 値の算出はサーバ側で完結しており、判定の正本は
@@ -34,7 +39,7 @@ function fillTone(pct: number): string {
   return "bg-gray-400/50 dark:bg-gray-400/40";
 }
 
-export default function RaceConfidenceBadge({
+export default function KeirinAxisConfidenceBadge({
   pct,
   hitCount,
   compact = false,
