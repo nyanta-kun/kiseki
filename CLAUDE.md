@@ -1676,10 +1676,36 @@ plist は `scripts/launchagents/` に複製あり。
   （31%帯: ルール 93.6/2.9/6.9 vs モデル 93.9/3.0/6.7）。alembic 移行に見合わない。
   **JRA で「指数差→着外率モデル」が効いたのはモデルの力でなく旧ルールの較正崩れが原因**の可能性が高い
 
-## 地方競馬 推奨カテゴリ（`/api/chihou/recommendations/sweet-spot`）
+## 地方競馬 推奨カテゴリ（5カテゴリ）— 🔴 実稼働停止・参考保持（2026-09-01）
 
-JRA とは別系統で、**5 カテゴリ** を都度算出して返す（オッズ取得後に毎リクエスト計算・
-30秒プロセス内キャッシュ）。
+> **この機能は動いていない。** 画面は 2026-08-05 に外れ（「検証で ROI・的中率とも
+> 根拠が弱く、表示コストだけ高かったため」）、HTTP エンドポイント
+> `GET /api/chihou/recommendations/sweet-spot` も 2026-09-01 に撤去した。
+> 実測でも消費者ゼロだった（フロントの呼び出し元は参照ゼロのコンポーネント2つだけ・
+> cron / backend/scripts からの利用も 0 件）。
+>
+> **コードは参考として残している**——条件そのものが他の推奨のブラッシュに
+> 使えるかもしれないため。以下の記述は「残してある条件の説明」であって
+> 「配信中の商品の説明」ではない。
+>
+> - 生成本体: `chihou_recommender.build_chihou_sweet_spot_recommendations()`
+> - 画面: `frontend/src/components/ChihouRecommendPanel{,Client}.tsx`
+> - 復帰手順と経緯: `api/chihou_recommendations_router.py` の該当ブロック
+> - 条件を測り直す台（HTTP は不要）: `backend/scripts/aggregate_chihou_recent.py` と
+>   前向き記録 `chihou.place_pick_races` / `chihou.place_picks`
+> - 検査: `backend/tests/test_chihou_sweet_spot_retired.py`（停止側と保持側の両方を固定）
+>
+> 🔴 **同じルータの他4本は生きている。** `POST /update-results`（cron）/
+> `POST /update-odds-decision`（毎分 cron）/ `GET /source`・`POST /submit`
+> （Claude Code Routine・リポジトリ外）/ `GET ""`。まとめて止めないこと。
+>
+> 🔴 **判定関数（`chihou_is_sweet_spot` / `chihou_is_place_bet` /
+> `chihou_low_odds_trust_level`）はレース詳細の個別馬バッジで現役。**
+> 停止したのは5カテゴリの配信だけで、条件の実装は生きている。混同して消すと
+> 画面のバッジが落ちる。
+
+JRA とは別系統で、**5 カテゴリ**を都度算出する設計だった（オッズ取得後に毎リクエスト
+計算・30秒プロセス内キャッシュ）。
 
 **Phase2（2026-06-05, commit `909124ac`）で sweet_spot / place_bet は EVゲートから
 ランキング規則へ全面移行済み**。較正済 win_probability では高オッズ馬の honest EV が
