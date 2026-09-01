@@ -21,7 +21,7 @@ export default async function RacesPage({ searchParams }: { searchParams: Search
   const targetDate = date ?? todayYYYYMMDD();
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+    <div className="min-h-screen" style={{ background: "var(--page-bg)" }}>
       {/* 日付ナビゲーション: 前後開催日の取得を Suspense 内で非同期化しスケルトンを即時表示 */}
       <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
         <Suspense fallback={<DateNavSkeleton currentDate={targetDate} />}>

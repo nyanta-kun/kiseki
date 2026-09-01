@@ -12,7 +12,7 @@ export default async function YosoLayout({ children }: { children: React.ReactNo
   if (!session?.user) redirect("/login");
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+    <div className="min-h-screen" style={{ background: "var(--page-bg)" }}>
       {/* タブナビゲーション */}
       <div style={{ background: "var(--primary-mid)" }} className="shadow-sm">
         <YosoTabNav />

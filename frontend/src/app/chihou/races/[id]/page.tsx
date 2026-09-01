@@ -39,7 +39,7 @@ const wrapperStyle = {
   bottom: 0,
   display: "flex",
   flexDirection: "column" as const,
-  background: "#f0faf4",
+  background: "var(--page-bg-chihou)",
   zIndex: 0,
 };
 

@@ -44,7 +44,7 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
   const targetDate = date ?? todayYYYYMMDD();
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0faf4" }}>
+    <div className="min-h-screen" style={{ background: "var(--page-bg-chihou)" }}>
       {/* DateNav: nearest-date フェッチを非同期化 → ページシェルを即ストリーム */}
       <div style={{ background: "var(--chihou-primary-mid)" }} className="shadow-sm">
         <Suspense

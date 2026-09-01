@@ -2,7 +2,7 @@ export default function Loading() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: "#f0f5fb" }}
+      style={{ background: "var(--page-bg)" }}
       aria-busy="true"
       aria-label="読み込み中"
     >

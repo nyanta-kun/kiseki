@@ -85,7 +85,7 @@ export default async function RacePage({ params }: { params: Params }) {
     bottom: 0,
     display: "flex",
     flexDirection: "column" as const,
-    background: "#f0f5fb",
+    background: "var(--page-bg)",
     zIndex: 0,
   };
 
