@@ -37,6 +37,7 @@ netkeirin の的中率は **ガミ（払戻 < 投資）を不的中として扱�
    下限はそれを見ていない。詳細は memory `keirin_netkeirin_gami_allocation_2026_08_07`。
 """
 from __future__ import annotations
+from .unit_distribution import RESERVE_ONE_THEN_LOWEST_UNITS_PER_WEIGHT, distribute_units
 
 # 入稿の下限（2026-08-19・ユーザー判断）。**7C の三連複だけに掛ける。**
 #
@@ -580,18 +581,11 @@ def allocate_budget(
     n_units = budget // unit
     if n_units < len(weights):
         raise ValueError(f"予算 {budget} 円では {len(weights)} 点に配分できません")
-    total = sum(weights.values())
-    if total <= 0:
-        raise ValueError("重みの合計が0以下です")
-
-    # 全点に1口ずつ配ってから、残りを比例配分する
-    units = {k: 1 for k in weights}
-    rest = n_units - len(weights)
-    share = {k: rest * w / total for k, w in weights.items()}
-    for k, s in share.items():
-        units[k] += int(s)
-    for _ in range(n_units - sum(units.values())):
-        units[min(units, key=lambda k: units[k] / max(weights[k], 1e-12))] += 1
+    # 配り方の骨格は unit_distribution に一本化した（3方針の比較表もそちらにある）。
+    # ここの方針: 全点に1口確保 → 残りを比例 → 余りは「口数/重み が最小の点」へ。
+    units = distribute_units(
+        weights, n_units, leftover=RESERVE_ONE_THEN_LOWEST_UNITS_PER_WEIGHT
+    )
     return {k: v * unit for k, v in units.items()}
 
 
