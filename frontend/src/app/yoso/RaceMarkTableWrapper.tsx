@@ -89,7 +89,7 @@ export function RaceMarkTableWrapper({ race, canInputIndex }: Props) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       {/* レースヘッダー */}
-      <div className="px-4 py-2.5 border-b border-gray-100" style={{ background: "#f8fafc" }}>
+      <div className="px-4 py-2.5 border-b border-gray-100" style={{ background: "var(--page-bg-subtle)" }}>
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500 w-6 text-center">
             {race.race_number}R

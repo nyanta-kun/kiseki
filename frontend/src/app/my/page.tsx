@@ -78,7 +78,7 @@ export default async function MyPage() {
   const paidMode = await fetchPaidMode();
 
   return (
-    <div className="min-h-screen" style={{ background: "#f0f5fb" }}>
+    <div className="min-h-screen" style={{ background: "var(--page-bg)" }}>
       <main id="main-content" className="max-w-3xl mx-auto px-4 py-6 space-y-4">
         <h1 className="text-lg font-bold text-gray-800">マイページ</h1>
 
