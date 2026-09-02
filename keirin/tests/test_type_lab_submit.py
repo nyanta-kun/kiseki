@@ -180,6 +180,11 @@ def test_every_sellable_plan_has_an_axis_gate_threshold():
     うち4件は `A_hit` の閾値を下回っていた。
 
     プランを増やすたびに人が気づく必要がある形にしない。
+
+    🔴 **2026-09-03 から「掛けない」も明示が要る。** ゲートを効くプランだけに絞った
+       （`AXIS_GATE_EXEMPT_PLANS`）ので、単に「表に無い」だけでは
+       うっかり漏れと意図した除外を区別できない。新しいプランは**どちらかへ書くまで**
+       このテストが落ちる。
     ⚠️ 看板枠（`*_sign`）も `SIGNBOARD_TYPES` に入っていれば売るので対象に含める
        （2026-09-01 に型F の看板枠を再投入した）。
     """
@@ -192,11 +197,15 @@ def test_every_sellable_plan_has_an_axis_gate_threshold():
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
 
-    missing = sorted(k for k in SELLABLE_PLAN_KEYS if k not in gate.AXIS_GATE_MIN)
+    known = set(gate.AXIS_GATE_MIN) | set(gate.AXIS_GATE_EXEMPT_PLANS)
+    missing = sorted(k for k in SELLABLE_PLAN_KEYS if k not in known)
     assert not missing, (
-        f"閾値が無いまま売れてしまうプラン: {missing}。"
-        f"探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内 p20 を引いて "
-        f"AXIS_GATE_MIN へ足すこと")
+        f"ゲートの扱いが決まっていないプラン: {missing}。"
+        f"掛けるなら 探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内 p20 を引いて "
+        f"AXIS_GATE_MIN へ、掛けないなら理由を添えて AXIS_GATE_EXEMPT_PLANS へ足すこと")
+    # 🔴 両方に入っている＝どちらか消し忘れ
+    both = sorted(set(gate.AXIS_GATE_MIN) & set(gate.AXIS_GATE_EXEMPT_PLANS))
+    assert not both, f"掛ける／掛けない の両方に入っています: {both}"
 
 
 def test_axis_gate_thresholds_are_in_a_sane_range():

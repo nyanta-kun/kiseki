@@ -210,9 +210,31 @@ def test_axis_gate_thresholds_are_per_plan():
     assert len(set(AXIS_GATE_MIN.values())) > 1
     # 堅い型ほど高い（型A > 型F）。逆転していたら分位の取り違え
     assert AXIS_GATE_MIN["A_hit"] > AXIS_GATE_MIN["F_hit"]
-    # 同じレースに出るプランは同じ閾値（A_hit/A_pay・F_hit/F_pay）
-    assert AXIS_GATE_MIN["A_hit"] == AXIS_GATE_MIN["A_pay"]
-    assert AXIS_GATE_MIN["F_hit"] == AXIS_GATE_MIN["F_pay"]
+
+
+def test_axis_gate_covers_only_the_plans_it_helps():
+    """🔴🔴 **ゲートは効くプランだけに掛ける**（2026-09-03・ユーザー判断）。
+
+    `passes_axis_gate` は表に無いプランを通すので、**この表から消すことが
+    「掛けない」の実装**。消し忘れ・足し忘れが静かな件数変化になるため固定する。
+
+    通過 − 落ちた の表示的中（探索 / 確認・`scripts/exp_type_lab/axis_gate_audit.py`）:
+
+        A_hit +10.36/+12.36  D_hit +9.35/+10.65  E_hit +4.30/+7.05  F_hit +4.96/+3.15
+        A_ana −1.68/−3.53（両窓で逆効果）  C_hit −2.57/+2.68  B_hit −1.44/+1.45
+        A_trio +3.98/−1.38   F_sign −0.32/+2.13（いずれも窓で符号反転）
+
+    `A_ana` は「軸1が飛ぶ側」に賭ける商品なので、軸信頼の高いレースを残すのは
+    **商品の狙いと正面から逆**。掛けること自体が設計と矛盾していた。
+    """
+    from src.services.keirin_type_lab_gate import AXIS_GATE_MIN, AXIS_GATE_PLANS
+
+    assert AXIS_GATE_PLANS == {"A_hit", "D_hit", "E_hit", "F_hit"}
+    assert set(AXIS_GATE_MIN) == AXIS_GATE_PLANS
+    # 掛けないプランは素通しになること（表に無い＝通す、が実装）
+    from src.services.keirin_type_lab_gate import passes_axis_gate
+    for key in ("A_ana", "A_trio", "B_hit", "C_hit", "F_sign"):
+        assert passes_axis_gate(key, 0.0) is True, key
 
 
 def test_axis_gate_is_applied_before_conflict_detection():
