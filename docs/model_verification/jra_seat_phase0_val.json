@@ -691,5 +691,12 @@
     "headroom_ok": false,
     "lift_ceiling": 1.312
   },
-  "primary_definition": "A"
+  "primary_definition": "A",
+  "label_agreement": {
+    "n_races": 1435,
+    "n_skipped_missing_popularity": 67,
+    "agreement": 0.908,
+    "pre_only_positive": 0.0571,
+    "final_only_positive": 0.0348
+  }
 }
