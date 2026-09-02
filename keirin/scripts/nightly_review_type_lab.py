@@ -936,6 +936,10 @@ def _live_since(start: str, end: str) -> list[dict]:
 #: 「自信あり」が実際に付き始めた日（2026-08-13 は選定が走ったが0件）。
 CONFIDENT_SINCE = "2026-08-14"
 
+#: 型ラボの選定が Σp → **EV（発走18時前 ∧ 合成3倍以上の中で最大）** に変わった日。
+#: ユーザー指示 2026-09-02。正本は `src.confident_pick.type_lab_confident_score`。
+CONFIDENT_RULE_EV_SINCE = "2026-09-03"
+
 
 def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
     """1日1つしか付けられない「自信あり」が、その日の他の商品より良かったか。
@@ -946,12 +950,16 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
        日ごとの当たりやすさ（開催の質・件数）を対照側にも同じだけ入れないと、
        良い日が多かっただけの差を実力と読む。
 
-    🔴 **指標の世代を混ぜない。** 2026-08-28 までは EV（三連複の
-       Σ(的中確率×賭け金×オッズ)÷総賭け金）、型ラボへ全面移行した 2026-08-29
-       からは **Σp（買い目の的中確率の合計）**。`confident_ev` 列は同じだが
-       中身が別物で、大きさも桁が違う（1.3〜2.9 ↔ 0.32）。
-       世代の判定は日付ではなく **売ったプランが `SELLABLE_PLAN_KEYS` か**で行う
-       （移行が段階的でも自動で分かれる）。
+    🔴 **指標の世代を混ぜない。** `confident_ev` 列は同じでも中身は3世代ある:
+
+         〜2026-08-28   旧EV  三連複のみ・盤面を引き直す（1.3〜2.9）
+         2026-08-29〜   Σp    買い目の的中確率の合計（0.32 前後）
+         2026-09-02〜   新EV  `legs` だけで出す・三連単も対象・候補は
+                              「発走18時前 ∧ 合成3倍以上」（`CONFIDENT_RULE_EV_SINCE`）
+
+       旧ランクか型ラボかは **売ったプランが `SELLABLE_PLAN_KEYS` か**で分かれるが、
+       型ラボの中の Σp ↔ 新EV は**プランでは分けられない**（同じプランのまま
+       選び方だけ変わった）ので日付で切る。
 
     ⚠️ 1日1件なので件数はゆっくりしか増えない。**当日の1件では絶対に判断しない。**
     """
@@ -981,7 +989,12 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
         if not picked:
             continue
         # 世代は「その日の自信ありが型ラボの商品か」で決める。
-        era = "Σp（型ラボ）" if picked[0].rank_key in SELLABLE_PLAN_KEYS else "EV（旧ランク・三連複）"
+        if picked[0].rank_key not in SELLABLE_PLAN_KEYS:
+            era = "旧EV（旧ランク・三連複）"
+        elif d >= CONFIDENT_RULE_EV_SINCE:
+            era = "新EV（型ラボ・18時前×合成3倍+）"
+        else:
+            era = "Σp（型ラボ）"
         eras.setdefault(era, []).append(d)
 
     n_no_flag = sum(1 for d, rows in by_day.items()

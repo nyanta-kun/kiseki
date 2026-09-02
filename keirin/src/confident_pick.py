@@ -31,6 +31,28 @@ netkeirin の「自信あり」アイコンは **1日に1つしか付けられ�
    期待値による選別は繰り返し否定されている）。ここでの用途は
    **「1つしか無い枠をどこに置くか」という相対比較**に限られる。
    絶対値が 1.0 を超えているかどうかには意味が無い。
+
+## 🔴🔴 型ラボ（2026-09-02〜）は行の `legs` だけで決める
+
+ユーザー指示（2026-09-02）:
+> **夕方くらいまでのレース**のうち、**合成が3倍以上**で**期待値が最も高い**レース
+
+    候補 … 発走 JST < 18時（`CONFIDENT_BEFORE_HOUR`）
+         ∧ 合成オッズ >= 3.0 倍（`CONFIDENT_MIN_SYNTH_ODDS`）
+    順位 … EV（`legs_expected_value`）が最大
+
+これは 2026-08-28 の決定（`pred_min_payout >= 20,000` → Σp 最大）を**置き換える**。
+
+🔴 **`legs` だけで完結する**（`race_expected_value` のように予測オッズを引き直さない）。
+   行に焼き付いた `prob` / `pred_odds` / `stake` を使うので、
+   ①モデルを再学習しても当時の選定を再現できる（`p3_order` と同じ理由）
+   ②三連単のプランも同じ尺度に載る——旧 `race_expected_value` は
+   `bet_type == "3連複"` 以外を全て None にするので、型ラボ 8プランのうち
+   三連複は `D_hit` / `A_trio` だけ＝**そのままでは自信ありがその2つにしか付かない**。
+
+🔴 **合成オッズは `pred_mean_payout / 予算` ではない。** ダッチ配分（`alloc="dutch"`）の
+   プランでは一致するが、信頼度傾斜（`alloc="conf"` ＝ `A_hit` / `F_hit` / `F_pay`）では
+   一致しない。必ず `1 / Σ(1/予測オッズ)` で出すこと。
 """
 
 from __future__ import annotations
@@ -39,6 +61,7 @@ import json
 import logging
 from collections.abc import Mapping
 
+from src.meeting_wave import NIGHT_FROM_HOUR
 from src.odds_prediction import (
     OddsPredictionUnavailable,
     _pl_trio,
@@ -51,60 +74,140 @@ log = logging.getLogger(__name__)
 # 三連複の買い目だけを対象にする。`build_bet_detail` の bet_type 表記。
 TRIO_BET_TYPE = "3連複"
 
-#: 型ラボの「自信あり」に要求する**最低**想定払戻（円）。
-#: 🔴 「平均」ではなく「最低」で見る。ユーザー要件は「20,000円以上の払い戻しには
-#:    なりそうで、最も的中率が高そうなレース」（2026-08-28）。平均で見ると
-#:    **当たった目によっては2万円に届かない**ので、アイコンの約束と食い違う。
-#:    実測上その差はほぼ無い（確認窓で 表示的中 34.5% ↔ 35.3%）。
-TYPE_LAB_MIN_PAYOUT = 20_000
+#: 「自信あり」の候補にする**発走時刻の上限**（JST の「時」・これ以降は候補外）。
+#:
+#: 🔴 **`meeting_wave.NIGHT_FROM_HOUR` をそのまま使う。新しい定数を作らない。**
+#:    入稿の波（朝7:00 / 昼13:00 / 夕18:00）と境界がずれると
+#:    「夕の波で入稿したのに夕方扱いされない」レースが出て説明できなくなる。
+#:    同じ 18 は `backend/api/keirin_meeting.MIDNIGHT_FROM_HOUR`（ミッドナイト境界）
+#:    でもあり、実測の第1R発走は 8/10/11/15/16/20 時だけで 17〜19 時台が空いている
+#:    ＝境界に余裕がある。
+CONFIDENT_BEFORE_HOUR = NIGHT_FROM_HOUR
+
+#: 「自信あり」の候補にする**合成オッズの下限**（倍）。ユーザー指示 2026-09-02。
+#:
+#: ⚠️ `B_hit` は `sigma_max = 1/3.0` で組むので**合成がちょうど 3.00 倍**に張り付く。
+#:    `>=` と `>` で `B_hit` が丸ごと入るか出るかが変わる。「3倍以上」なので `>=`。
+CONFIDENT_MIN_SYNTH_ODDS = 3.0
 
 
-def type_lab_hit_probability(legs, pred_min_payout) -> float | None:
-    """型ラボの1商品の**的中確率 Σp**。条件を満たさなければ None（＝候補外）。
+def start_hour_jst(start_at: str | int | None) -> float | None:
+    """`wt_races.start_at`（UNIX秒）から JST の「時」を返す。読めなければ None。
 
-    `legs` は `type_lab_picks.legs`（`prob` を持つ辞書の並び）。買い目は互いに
-    排反なので、その合計がそのままこの商品の的中確率になる。
+    🔴 **`backend/api/keirin_meeting.first_hour_jst` と同じ式**。リポジトリが
+       分かれていてコード共有できないため、値の一致は検査で縛る。
 
-    🔴 **行に焼き付いた `prob` を使う**（モデルを引き直さない）。再計算すると
-       再学習のぶんだけ当時と違う値になり、「なぜこのレースが選ばれたか」を
-       後から説明できなくなる（`p3_order` を焼き付けているのと同じ理由）。
-
-    🔴 **Σp は較正されていない**。PL 由来の確率は過信側に出ることが知られている
-       （[[keirin_7m1_ev_gate_rejected_2026_08_25]]: 本番PL 0.271 → 実測 0.151）。
-       実測でも探索窓は Σp中央 0.375 ↔ 実績 29.6% と過信（確認窓は 0.369 ↔ 35.3%
-       でほぼ一致）。**絶対値は信じず、1つしかない枠をどこへ置くかの相対比較に
-       だけ使う**——既存の EV と同じ扱い。
-
-    🟢 順序としては実績と対応することを両窓で確認済み（Σp 五分位の表示的中:
-       探索 7.26 → 25.56% / 確認 6.33 → 27.06%）。
-       再現: `keirin/scripts/exp_type_lab/` と `docs/type_lab/GO_LIVE_2026_08_28.md`。
-
-    >>> type_lab_hit_probability([{"prob": 0.1}, {"prob": 0.2}], 30_000)
-    0.30000000000000004
-    >>> type_lab_hit_probability([{"prob": 0.1}], 19_999) is None
+    >>> start_hour_jst(None) is None
     True
-    >>> type_lab_hit_probability([], 30_000) is None
+    >>> start_hour_jst("abc") is None
+    True
+    >>> start_hour_jst(0)          # 1970-01-01 00:00 UTC = 09:00 JST
+    9.0
+    """
+    if start_at is None or start_at == "":
+        return None
+    try:
+        return ((int(start_at) + 9 * 3600) % 86400) / 3600
+    except (TypeError, ValueError):
+        return None
+
+
+def synthetic_odds(legs) -> float | None:
+    """買い目の**合成オッズ** = 1 / Σ(1/予測オッズ)。1点でも欠けたら None。
+
+    🔴 **配分に依らない**（買い目の集合だけで決まる）。だから
+       `pred_mean_payout / 予算` で代用してはいけない——信頼度傾斜のプランでは別物。
+    🔴 **1点でも欠けたら None**。残りだけで合成すると点数が少ないほど大きく出るので
+       **欠測のあるレースほど有利に見える**（`backend` の
+       `_calc_synth_odds_from_lines` が踏んだのと同じ罠）。
+
+    >>> round(synthetic_odds([{"pred_odds": 10}, {"pred_odds": 10}]), 4)
+    5.0
+    >>> synthetic_odds([{"pred_odds": 10}, {"pred_odds": None}]) is None
+    True
+    >>> synthetic_odds([]) is None
     True
     """
     if not legs:
         return None
-    try:
-        if pred_min_payout is None or float(pred_min_payout) < TYPE_LAB_MIN_PAYOUT:
-            return None
-    except (TypeError, ValueError):
-        return None
     total = 0.0
     for lg in legs:
-        p = lg.get("prob")
-        if p is None:
-            # 🔴 一部だけで足さない。欠けたまま合計すると点数の多い商品が
-            #    不当に低く出る（`expected_value_from_lines` と同じ理由）。
-            return None
+        o = lg.get("pred_odds")
         try:
-            total += float(p)
+            o = float(o)
         except (TypeError, ValueError):
             return None
-    return total or None
+        if o <= 0:
+            return None
+        total += 1.0 / o
+    return (1.0 / total) if total > 0 else None
+
+
+def legs_expected_value(legs) -> float | None:
+    """行に焼き付いた買い目の **EV** = Σ(確率×賭け金×予測オッズ) ÷ Σ賭け金。
+
+    `expected_value_from_lines` と同じ定義だが、**盤面を引き直さず `legs` だけで出す**
+    ので三連単のプランにも使える（`bet_type` を見ない）。
+
+    🔴 **1点でも欠けたら None**（部分計算をしない）。一部だけで足すと
+       点数の少ない商品が不当に高く出る。
+
+    >>> round(legs_expected_value(
+    ...     [{"prob": 0.1, "stake": 5000, "pred_odds": 10},
+    ...      {"prob": 0.1, "stake": 5000, "pred_odds": 20}]), 4)
+    1.5
+    >>> legs_expected_value([{"prob": None, "stake": 100, "pred_odds": 10}]) is None
+    True
+    >>> legs_expected_value([]) is None
+    True
+    """
+    if not legs:
+        return None
+    total = ev = 0.0
+    for lg in legs:
+        try:
+            p = float(lg["prob"])
+            stake = float(lg["stake"])
+            odds = float(lg["pred_odds"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if stake <= 0 or odds <= 0:
+            return None
+        total += stake
+        ev += p * stake * odds
+    return (ev / total) if total > 0 else None
+
+
+def type_lab_confident_score(legs, start_at) -> float | None:
+    """型ラボ1商品の「自信あり」スコア（＝EV）。候補外なら None。
+
+    候補の条件（ユーザー指示 2026-09-02）:
+      ① 発走 JST < `CONFIDENT_BEFORE_HOUR`（18時）
+      ② 合成オッズ >= `CONFIDENT_MIN_SYNTH_ODDS`（3.0倍）
+
+    🔴 **発走時刻が読めないレースは候補にしない。** 「分からないものは通す」を
+       ここで採ると、時刻の取れない開催だけが終日どこからでも選ばれてしまい
+       ①の意味が消える（ゲートの「通す」思想は*商品を落とさない*ためのもので、
+       *1つしかない枠の取り合い*には当てはまらない）。
+
+    >>> legs = [{"prob": 0.1, "stake": 5000, "pred_odds": 10},
+    ...         {"prob": 0.1, "stake": 5000, "pred_odds": 20}]
+    >>> round(type_lab_confident_score(legs, 0), 4)      # 09:00 JST・合成 6.67倍
+    1.5
+    >>> type_lab_confident_score(legs, 0 + 9 * 3600) is None   # 18:00 JST
+    True
+    >>> type_lab_confident_score([{"prob": 0.5, "stake": 10000, "pred_odds": 2}], 0) is None
+    True
+    >>> type_lab_confident_score(legs, None) is None
+    True
+    """
+    hour = start_hour_jst(start_at)
+    if hour is None or hour >= CONFIDENT_BEFORE_HOUR:
+        return None
+    synth = synthetic_odds(legs)
+    if synth is None or synth < CONFIDENT_MIN_SYNTH_ODDS:
+        return None
+    return legs_expected_value(legs)
 
 
 def _parse_trio_combo(combo: str) -> frozenset[int] | None:

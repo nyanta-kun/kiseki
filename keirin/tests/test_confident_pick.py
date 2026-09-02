@@ -137,69 +137,133 @@ def test_picker_clears_the_day_before_setting_one():
     assert i_false < i_true, "先に1件立ててから全消ししています（毎回0件になります）"
 
 
-# ───────────────────── 型ラボ（2026-08-28〜） ─────────────────────
+# ───────────────────── 型ラボ（2026-09-02〜） ─────────────────────
 #
-# ユーザー決定: 「20,000円以上の払い戻しになりそうで、最も的中率が高そうなレース」。
-#   候補 … pred_min_payout >= 20,000（**どの目が当たっても** 2万円以上）
-#   順位 … Σp（買い目の的中確率の合計）が最大
+# ユーザー指示 2026-09-02:
+#   「夕方くらいまでのレースのうち、合成が3倍以上で期待値が最も高いレース」
+#     候補 … 発走 JST < 18時 ∧ 合成オッズ >= 3.0倍
+#     順位 … EV = Σ(確率×賭け金×予測オッズ) ÷ Σ賭け金 が最大
+#
+# 🔴 2026-08-28 の「pred_min_payout >= 20,000 → Σp 最大」を**置き換えた**。
+#    epoch 0 = 1970-01-01 09:00 JST なので、以下では時刻を 9*3600 秒単位で作る。
 
-def test_type_lab_hit_probability_sums_leg_probs():
-    from src.confident_pick import type_lab_hit_probability
-
-    legs = [{"prob": 0.12}, {"prob": 0.08}, {"prob": 0.05}]
-    assert type_lab_hit_probability(legs, 30_000) == pytest.approx(0.25)
+_H = 3600
 
 
-def test_type_lab_hit_probability_requires_min_payout():
-    """🔴 「平均」ではなく「最低」想定払戻で候補を絞る。
+def _legs(prob, odds, stake=5_000, n=2):
+    return [{"prob": prob, "stake": stake, "pred_odds": odds} for _ in range(n)]
 
-    平均で見ると**当たった目によっては2万円に届かない**商品に
-    「自信あり」が付き、アイコンの約束と食い違う。
+
+def test_synthetic_odds_is_allocation_free():
+    """🔴 合成オッズは買い目の集合だけで決まる（賭け金に依らない）。"""
+    from src.confident_pick import synthetic_odds
+
+    assert synthetic_odds([{"pred_odds": 10}, {"pred_odds": 10}]) == pytest.approx(5.0)
+    # 賭け金が違っても同じ値
+    assert synthetic_odds([{"pred_odds": 10, "stake": 100},
+                           {"pred_odds": 10, "stake": 9_900}]) == pytest.approx(5.0)
+
+
+def test_synthetic_odds_never_uses_partial_legs():
+    """🔴 1点でも欠けたら None。残りだけで合成すると欠測レースほど大きく出る。"""
+    from src.confident_pick import synthetic_odds
+
+    assert synthetic_odds([{"pred_odds": 10}, {"pred_odds": None}]) is None
+    assert synthetic_odds([{"pred_odds": 10}, {}]) is None
+    assert synthetic_odds([{"pred_odds": 10}, {"pred_odds": 0}]) is None
+    assert synthetic_odds([]) is None
+
+
+def test_legs_expected_value_weights_by_stake():
+    from src.confident_pick import legs_expected_value
+
+    legs = [{"prob": 0.1, "stake": 5_000, "pred_odds": 10},
+            {"prob": 0.1, "stake": 5_000, "pred_odds": 20}]
+    assert legs_expected_value(legs) == pytest.approx(1.5)
+    assert legs_expected_value([{"prob": 0.2, "stake": 100, "pred_odds": 10},
+                                {"prob": None, "stake": 100, "pred_odds": 10}]) is None
+    assert legs_expected_value([]) is None
+
+
+def test_confident_score_excludes_evening_and_later():
+    """🔴 「夕方くらいまで」= 発走 18時前。境界そのものは候補外。"""
+    from src.confident_pick import CONFIDENT_BEFORE_HOUR, type_lab_confident_score
+
+    assert CONFIDENT_BEFORE_HOUR == 18
+    legs = _legs(0.1, 10)                      # 合成 5.0倍
+    assert type_lab_confident_score(legs, 0) is not None            # 09:00 JST
+    assert type_lab_confident_score(legs, 8 * _H) is not None       # 17:00 JST
+    assert type_lab_confident_score(legs, 9 * _H) is None           # 18:00 JST（境界は外）
+    assert type_lab_confident_score(legs, 13 * _H) is None          # 22:00 JST
+
+
+def test_confident_score_requires_synthetic_odds_floor():
+    """🔴 合成3倍以上。`B_hit` は sigma_max=1/3 で 3.00 に張り付くので `>=`。"""
+    from src.confident_pick import CONFIDENT_MIN_SYNTH_ODDS, type_lab_confident_score
+
+    assert CONFIDENT_MIN_SYNTH_ODDS == 3.0
+    # 2点とも6.0倍 → 合成ちょうど3.0倍。「3倍以上」なので候補に入る
+    assert type_lab_confident_score(_legs(0.1, 6.0), 0) is not None
+    # 2点とも5.9倍 → 合成 2.95倍
+    assert type_lab_confident_score(_legs(0.1, 5.9), 0) is None
+
+
+def test_confident_score_drops_races_without_start_time():
+    """🔴 発走時刻が読めないレースは候補にしない。
+
+    ここで「分からないものは通す」を採ると、時刻の取れない開催だけが
+    終日どこからでも選ばれて時刻の条件が意味を失う。
     """
-    from src.confident_pick import TYPE_LAB_MIN_PAYOUT, type_lab_hit_probability
+    from src.confident_pick import type_lab_confident_score
 
-    legs = [{"prob": 0.5}]
-    assert type_lab_hit_probability(legs, TYPE_LAB_MIN_PAYOUT) is not None
-    assert type_lab_hit_probability(legs, TYPE_LAB_MIN_PAYOUT - 1) is None
-    assert type_lab_hit_probability(legs, None) is None
-
-
-def test_type_lab_hit_probability_never_sums_partially():
-    """🔴 一部だけで足さない（点数の多い商品が不当に低く出る）。"""
-    from src.confident_pick import type_lab_hit_probability
-
-    assert type_lab_hit_probability([{"prob": 0.2}, {"prob": None}], 30_000) is None
-    assert type_lab_hit_probability([{"prob": 0.2}, {}], 30_000) is None
-    assert type_lab_hit_probability([], 30_000) is None
+    legs = _legs(0.1, 10)
+    assert type_lab_confident_score(legs, None) is None
+    assert type_lab_confident_score(legs, "") is None
+    assert type_lab_confident_score(legs, "abc") is None
 
 
-def test_type_lab_pick_takes_max_hit_probability(monkeypatch):
-    """型ラボの行があれば Σp 最大の1件を選ぶ（EV 経路は使わない）。"""
+def test_confident_before_hour_matches_submission_wave():
+    """🔴 「夕方」の境界は入稿の波（`meeting_wave`）と同じ値でなければならない。
+
+    ずれると「夕の波で入稿したのに夕方扱いされない」レースが出る。
+    """
+    from src.confident_pick import CONFIDENT_BEFORE_HOUR
+    from src.meeting_wave import NIGHT_FROM_HOUR
+
+    assert CONFIDENT_BEFORE_HOUR == NIGHT_FROM_HOUR
+
+
+def test_type_lab_pick_takes_max_ev_among_eligible(monkeypatch):
+    """型ラボの行があれば候補内で EV 最大の1件を選ぶ（旧 EV 経路は使わない）。"""
     from scripts import pick_confident_race_wt as m
 
     rows = [
-        # 最低想定払戻が足りない → Σp が最大でも選ばれない
-        {"race_key": "20260829_11_01", "rank_key": "C_hit", "venue_name": "A",
-         "race_no": 1, "legs": [{"prob": 0.9}], "pred_min_payout": 19_000},
-        {"race_key": "20260829_11_02", "rank_key": "B_hit", "venue_name": "A",
-         "race_no": 2, "legs": [{"prob": 0.20}, {"prob": 0.10}],
-         "pred_min_payout": 28_000},
-        {"race_key": "20260829_11_03", "rank_key": "D_hit", "venue_name": "A",
-         "race_no": 3, "legs": [{"prob": 0.15}], "pred_min_payout": 35_000},
+        # EV は最大だが 22:00 発走 → 候補外
+        {"race_key": "20260902_11_01", "rank_key": "C_hit", "venue_name": "A",
+         "race_no": 1, "legs": _legs(0.30, 10), "start_at": 13 * _H},
+        # 合成 2.5倍（5.0倍×2点）→ 候補外
+        {"race_key": "20260902_11_02", "rank_key": "E_hit", "venue_name": "A",
+         "race_no": 2, "legs": _legs(0.25, 5.0), "start_at": 0},
+        # 候補。EV = 0.10 × 20 = 2.0
+        {"race_key": "20260902_11_03", "rank_key": "B_hit", "venue_name": "A",
+         "race_no": 3, "legs": _legs(0.10, 20), "start_at": 0},
+        # 候補。EV = 0.12 × 10 = 1.2
+        {"race_key": "20260902_11_04", "rank_key": "D_hit", "venue_name": "A",
+         "race_no": 4, "legs": _legs(0.12, 10), "start_at": 8 * _H},
     ]
     monkeypatch.setattr(m, "_load_type_lab", lambda date: rows)
 
     def _never(*a, **k):
-        raise AssertionError("型ラボがあるのに EV 経路を使った")
+        raise AssertionError("型ラボがあるのに旧 EV 経路を使った")
 
     monkeypatch.setattr(m, "_load_alive", _never)
     monkeypatch.setattr(m, "race_expected_value", _never)
 
-    assert m.pick("2026-08-29", dry_run=True) == ("20260829_11_02", "B_hit")
+    assert m.pick("2026-09-02", dry_run=True) == ("20260902_11_03", "B_hit")
 
 
 def test_type_lab_and_legacy_scores_are_never_mixed(monkeypatch):
-    """🔴 EV と Σp は尺度が違う。型ラボが1件でもあれば EV 経路は見ない。"""
+    """🔴 新旧の EV は計算方法も母集団も違う。型ラボが1件でもあれば旧経路は見ない。"""
     from scripts import pick_confident_race_wt as m
 
     monkeypatch.setattr(m, "_load_type_lab", lambda date: [])
@@ -207,5 +271,23 @@ def test_type_lab_and_legacy_scores_are_never_mixed(monkeypatch):
         {"race_key": "20260829_11_09", "rank_key": "7C", "venue_name": "A",
          "race_no": 9, "bet_detail": "{}"}])
     monkeypatch.setattr(m, "race_expected_value", lambda rk, bd: 1.5)
-    # 型ラボが0件なら従来どおり EV 経路へ落ちる
+    # 型ラボが0件なら従来どおり旧 EV 経路へ落ちる
     assert m.pick("2026-08-29", dry_run=True) == ("20260829_11_09", "7C")
+
+
+def test_alive_filter_qualifies_status_column():
+    """🔴 `status` は `wt_races` にもあるので必ず `s.` で修飾する。
+
+    2026-09-02 に発走時刻のため `wt_races` を JOIN したところ、裸の `status` が
+    `AmbiguousColumn` で落ちた。DB を叩かないと出ない類なので SQL の形で固定する。
+    """
+    import inspect
+
+    from scripts import pick_confident_race_wt as m
+
+    assert "s.status" in m._ALIVE
+    for fn in (m._load_alive, m._load_type_lab):
+        src = inspect.getsource(fn)
+        assert "netkeirin_submissions s " in src, fn.__name__
+        # 別名を付けずに裸の列を並べていないこと（SELECT 側も修飾する）
+        assert "SELECT race_key" not in src, fn.__name__
