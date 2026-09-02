@@ -1,0 +1,663 @@
+{
+  "window": {
+    "start": "20260407",
+    "end": "20260831",
+    "lead_minutes": 6
+  },
+  "n_races_fetched": 5753,
+  "n_races_used": 5286,
+  "definitions": {
+    "A_pop_rank_min": 8,
+    "B_odds_min": 10.0
+  },
+  "definition_A": {
+    "overall_base_rate": 0.2423,
+    "head_bin_spread": 0.4577,
+    "head_bin_spread_logit": 1.7117,
+    "distribution": {
+      "8-9": {
+        "races": 1346,
+        "E_dist": {
+          "-1": 1,
+          "0": 1167,
+          "1": 176,
+          "2": 2
+        },
+        "e_ge1": 178,
+        "unpop_horses": 2139,
+        "unpop_hits": 180,
+        "base_rate_e_ge1": 0.13224368499257058,
+        "unpop_hit_rate": 0.08415147265077139
+      },
+      "10-11": {
+        "races": 1983,
+        "E_dist": {
+          "-1": 2,
+          "0": 1458,
+          "1": 490,
+          "2": 33
+        },
+        "e_ge1": 524,
+        "unpop_horses": 6842,
+        "unpop_hits": 557,
+        "base_rate_e_ge1": 0.2642460917801311,
+        "unpop_hit_rate": 0.0814089447529962
+      },
+      "12-13": {
+        "races": 1303,
+        "E_dist": {
+          "-1": 1,
+          "0": 815,
+          "1": 433,
+          "2": 51,
+          "3": 3
+        },
+        "e_ge1": 487,
+        "unpop_horses": 6621,
+        "unpop_hits": 544,
+        "base_rate_e_ge1": 0.3737528779739064,
+        "unpop_hit_rate": 0.0821628152847002
+      },
+      "14-16": {
+        "races": 201,
+        "E_dist": {
+          "0": 109,
+          "1": 73,
+          "2": 16,
+          "3": 3
+        },
+        "e_ge1": 92,
+        "unpop_horses": 1474,
+        "unpop_hits": 114,
+        "base_rate_e_ge1": 0.4577114427860697,
+        "unpop_hit_rate": 0.0773405698778833
+      },
+      "5-7": {
+        "races": 453,
+        "E_dist": {
+          "-1": 1,
+          "0": 451,
+          "1": 1
+        },
+        "e_ge1": 0,
+        "unpop_horses": 0,
+        "unpop_hits": 0,
+        "base_rate_e_ge1": 0.0,
+        "unpop_hit_rate": null
+      }
+    },
+    "baselines": {
+      "base_a_expected_vacancy": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.1077,
+          "R1_capture": 0.1211,
+          "precision_e_ge1": 0.5227,
+          "lift": 2.157
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.21,
+          "R1_capture": 0.2287,
+          "precision_e_ge1": 0.5095,
+          "lift": 2.102
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.299,
+          "R1_capture": 0.319,
+          "precision_e_ge1": 0.4836,
+          "lift": 1.995
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.3778,
+          "R1_capture": 0.4,
+          "precision_e_ge1": 0.4579,
+          "lift": 1.89
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.4442,
+          "R1_capture": 0.4674,
+          "precision_e_ge1": 0.4307,
+          "lift": 1.777
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.5176,
+          "R1_capture": 0.5384,
+          "precision_e_ge1": 0.4183,
+          "lift": 1.726
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.6386,
+          "R1_capture": 0.6566,
+          "precision_e_ge1": 0.3869,
+          "lift": 1.597
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.744,
+          "R1_capture": 0.7599,
+          "precision_e_ge1": 0.3606,
+          "lift": 1.488
+        }
+      ],
+      "base_b0_head_count": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.0859,
+          "R1_capture": 0.0953,
+          "precision_e_ge1": 0.4167,
+          "lift": 1.719
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.171,
+          "R1_capture": 0.1842,
+          "precision_e_ge1": 0.4148,
+          "lift": 1.712
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.2459,
+          "R1_capture": 0.2581,
+          "precision_e_ge1": 0.3977,
+          "lift": 1.641
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.3162,
+          "R1_capture": 0.3305,
+          "precision_e_ge1": 0.3832,
+          "lift": 1.581
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.3927,
+          "R1_capture": 0.4093,
+          "precision_e_ge1": 0.3808,
+          "lift": 1.571
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.4699,
+          "R1_capture": 0.4882,
+          "precision_e_ge1": 0.3798,
+          "lift": 1.567
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.5902,
+          "R1_capture": 0.6072,
+          "precision_e_ge1": 0.3576,
+          "lift": 1.476
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.7026,
+          "R1_capture": 0.7183,
+          "precision_e_ge1": 0.3405,
+          "lift": 1.405
+        }
+      ],
+      "base_b_odds_top1": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.089,
+          "R1_capture": 0.0953,
+          "precision_e_ge1": 0.4318,
+          "lift": 1.782
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.1585,
+          "R1_capture": 0.1685,
+          "precision_e_ge1": 0.3845,
+          "lift": 1.587
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.224,
+          "R1_capture": 0.2358,
+          "precision_e_ge1": 0.3624,
+          "lift": 1.495
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.2873,
+          "R1_capture": 0.2989,
+          "precision_e_ge1": 0.3482,
+          "lift": 1.437
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.3333,
+          "R1_capture": 0.3427,
+          "precision_e_ge1": 0.3232,
+          "lift": 1.334
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.3825,
+          "R1_capture": 0.3935,
+          "precision_e_ge1": 0.3091,
+          "lift": 1.276
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.4832,
+          "R1_capture": 0.4932,
+          "precision_e_ge1": 0.2928,
+          "lift": 1.208
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.587,
+          "R1_capture": 0.5993,
+          "precision_e_ge1": 0.2845,
+          "lift": 1.174
+        }
+      ],
+      "base_c_current_gate": {
+        "selection_rate": 0.1858,
+        "n_races": 982,
+        "R2_capture": 0.306,
+        "precision_e_ge1": 0.3992,
+        "lift": 1.647
+      }
+    },
+    "base_a_lift_stratified_by_head_count": {
+      "8-9": {
+        "n_races": 1346,
+        "base_rate": 0.1322,
+        "top30_precision": 0.2233,
+        "lift": 1.689
+      },
+      "10-11": {
+        "n_races": 1983,
+        "base_rate": 0.2642,
+        "top30_precision": 0.3788,
+        "lift": 1.433
+      },
+      "12-13": {
+        "n_races": 1303,
+        "base_rate": 0.3738,
+        "top30_precision": 0.5103,
+        "lift": 1.365
+      },
+      "14-16": {
+        "n_races": 201,
+        "base_rate": 0.4577,
+        "top30_precision": 0.5167,
+        "lift": 1.129
+      },
+      "5-7": {
+        "n_races": 453,
+        "base_rate": 0.0,
+        "top30_precision": 0.0,
+        "lift": null
+      },
+      "_pooled": {
+        "n_races": 5286,
+        "base_rate": 0.2424,
+        "top30_precision": 0.3445,
+        "lift": 1.421
+      }
+    },
+    "headroom_ok": true,
+    "lift_ceiling": 4.127
+  },
+  "definition_B": {
+    "overall_base_rate": 0.7355,
+    "head_bin_spread": 0.5196,
+    "head_bin_spread_logit": 2.4436,
+    "distribution": {
+      "8-9": {
+        "races": 1346,
+        "E_dist": {
+          "0": 359,
+          "1": 682,
+          "2": 287,
+          "3": 18
+        },
+        "e_ge1": 988,
+        "unpop_horses": 6852,
+        "unpop_hits": 1311,
+        "base_rate_e_ge1": 0.7340267459138187,
+        "unpop_hit_rate": 0.19133099824868652
+      },
+      "10-11": {
+        "races": 1983,
+        "E_dist": {
+          "0": 446,
+          "1": 981,
+          "2": 504,
+          "3": 52
+        },
+        "e_ge1": 1539,
+        "unpop_horses": 13607,
+        "unpop_hits": 2148,
+        "base_rate_e_ge1": 0.7760968229954615,
+        "unpop_hit_rate": 0.1578599250385831
+      },
+      "12-13": {
+        "races": 1303,
+        "E_dist": {
+          "-1": 1,
+          "0": 262,
+          "1": 632,
+          "2": 376,
+          "3": 32
+        },
+        "e_ge1": 1040,
+        "unpop_horses": 10917,
+        "unpop_hits": 1480,
+        "base_rate_e_ge1": 0.7981580966999232,
+        "unpop_hit_rate": 0.13556837959146287
+      },
+      "14-16": {
+        "races": 201,
+        "E_dist": {
+          "0": 30,
+          "1": 108,
+          "2": 54,
+          "3": 9
+        },
+        "e_ge1": 171,
+        "unpop_horses": 2119,
+        "unpop_hits": 243,
+        "base_rate_e_ge1": 0.8507462686567164,
+        "unpop_hit_rate": 0.11467673430863615
+      },
+      "5-7": {
+        "races": 453,
+        "E_dist": {
+          "-1": 1,
+          "0": 301,
+          "1": 147,
+          "2": 4
+        },
+        "e_ge1": 150,
+        "unpop_horses": 1348,
+        "unpop_hits": 154,
+        "base_rate_e_ge1": 0.33112582781456956,
+        "unpop_hit_rate": 0.1142433234421365
+      }
+    },
+    "baselines": {
+      "base_a_expected_vacancy": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.0679,
+          "R1_capture": 0.1014,
+          "precision_e_ge1": 1.0,
+          "lift": 1.36
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.1358,
+          "R1_capture": 0.1797,
+          "precision_e_ge1": 1.0,
+          "lift": 1.36
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.2032,
+          "R1_capture": 0.2526,
+          "precision_e_ge1": 0.9975,
+          "lift": 1.356
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.2685,
+          "R1_capture": 0.322,
+          "precision_e_ge1": 0.9877,
+          "lift": 1.343
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.33,
+          "R1_capture": 0.3857,
+          "precision_e_ge1": 0.9712,
+          "lift": 1.32
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.3889,
+          "R1_capture": 0.4442,
+          "precision_e_ge1": 0.9539,
+          "lift": 1.297
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.5057,
+          "R1_capture": 0.5611,
+          "precision_e_ge1": 0.93,
+          "lift": 1.264
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.6096,
+          "R1_capture": 0.6606,
+          "precision_e_ge1": 0.8967,
+          "lift": 1.219
+        }
+      ],
+      "base_b0_head_count": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.0576,
+          "R1_capture": 0.059,
+          "precision_e_ge1": 0.8485,
+          "lift": 1.154
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.1134,
+          "R1_capture": 0.1164,
+          "precision_e_ge1": 0.8352,
+          "lift": 1.136
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.1667,
+          "R1_capture": 0.1696,
+          "precision_e_ge1": 0.8182,
+          "lift": 1.112
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.2199,
+          "R1_capture": 0.2258,
+          "precision_e_ge1": 0.8089,
+          "lift": 1.1
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.2721,
+          "R1_capture": 0.2809,
+          "precision_e_ge1": 0.8009,
+          "lift": 1.089
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.3277,
+          "R1_capture": 0.3388,
+          "precision_e_ge1": 0.8038,
+          "lift": 1.093
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.4357,
+          "R1_capture": 0.4526,
+          "precision_e_ge1": 0.8013,
+          "lift": 1.089
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.5406,
+          "R1_capture": 0.5585,
+          "precision_e_ge1": 0.7953,
+          "lift": 1.081
+        }
+      ],
+      "base_b_odds_top1": [
+        {
+          "selection_rate": 0.0499,
+          "n_races": 264,
+          "R2_capture": 0.043,
+          "R1_capture": 0.0427,
+          "precision_e_ge1": 0.6326,
+          "lift": 0.86
+        },
+        {
+          "selection_rate": 0.0999,
+          "n_races": 528,
+          "R2_capture": 0.0905,
+          "R1_capture": 0.087,
+          "precision_e_ge1": 0.6667,
+          "lift": 0.906
+        },
+        {
+          "selection_rate": 0.1498,
+          "n_races": 792,
+          "R2_capture": 0.1345,
+          "R1_capture": 0.1278,
+          "precision_e_ge1": 0.6604,
+          "lift": 0.898
+        },
+        {
+          "selection_rate": 0.2,
+          "n_races": 1057,
+          "R2_capture": 0.1811,
+          "R1_capture": 0.1713,
+          "precision_e_ge1": 0.666,
+          "lift": 0.906
+        },
+        {
+          "selection_rate": 0.2499,
+          "n_races": 1321,
+          "R2_capture": 0.2261,
+          "R1_capture": 0.2144,
+          "precision_e_ge1": 0.6654,
+          "lift": 0.905
+        },
+        {
+          "selection_rate": 0.2998,
+          "n_races": 1585,
+          "R2_capture": 0.269,
+          "R1_capture": 0.2539,
+          "precision_e_ge1": 0.6599,
+          "lift": 0.897
+        },
+        {
+          "selection_rate": 0.3999,
+          "n_races": 2114,
+          "R2_capture": 0.3593,
+          "R1_capture": 0.3375,
+          "precision_e_ge1": 0.6608,
+          "lift": 0.898
+        },
+        {
+          "selection_rate": 0.5,
+          "n_races": 2643,
+          "R2_capture": 0.455,
+          "R1_capture": 0.4307,
+          "precision_e_ge1": 0.6693,
+          "lift": 0.91
+        }
+      ],
+      "base_c_current_gate": {
+        "selection_rate": 0.1858,
+        "n_races": 982,
+        "R2_capture": 0.178,
+        "precision_e_ge1": 0.7047,
+        "lift": 0.958
+      }
+    },
+    "base_a_lift_stratified_by_head_count": {
+      "8-9": {
+        "n_races": 1346,
+        "base_rate": 0.734,
+        "top30_precision": 0.9529,
+        "lift": 1.298
+      },
+      "10-11": {
+        "n_races": 1983,
+        "base_rate": 0.7761,
+        "top30_precision": 0.9663,
+        "lift": 1.245
+      },
+      "12-13": {
+        "n_races": 1303,
+        "base_rate": 0.7982,
+        "top30_precision": 0.9538,
+        "lift": 1.195
+      },
+      "14-16": {
+        "n_races": 201,
+        "base_rate": 0.8507,
+        "top30_precision": 1.0,
+        "lift": 1.175
+      },
+      "5-7": {
+        "n_races": 453,
+        "base_rate": 0.3311,
+        "top30_precision": 0.5481,
+        "lift": 1.655
+      },
+      "_pooled": {
+        "n_races": 5286,
+        "base_rate": 0.7357,
+        "top30_precision": 0.9254,
+        "lift": 1.258
+      }
+    },
+    "headroom_ok": false,
+    "lift_ceiling": 1.36
+  },
+  "primary_definition": "A"
+}
