@@ -24,6 +24,9 @@ from ..db.models import (
     RacePayout,
     RaceResult,
     SpecialRegistration,
+    Win5Event,
+    Win5Leg,
+    Win5Payout,
 )
 from ..db.session import AsyncSessionLocal, get_db
 from ..importers import (
@@ -866,3 +869,193 @@ async def trigger_calculate(
     background_tasks.add_task(_run_calculate, date)
     logger.info(f"[calculate] バックグラウンドタスク登録: date={date}")
     return {"ok": True, "date": date, "message": "Calculation started in background"}
+
+
+# -------------------------------------------------------------------
+# WIN5（重勝式）インポート
+#
+# 🔴 **専用経路にする理由。** WF は RaceImporter が見ない（RA/SE しか
+# 処理しない）。0B11（速報馬体重）は「取り込むコードはあるのに rec_id の
+# 振り分け漏れで全件捨てられ、200 が返り続けていた」という事故を起こした。
+# WF も同じ構造なので、汎用の import 経路に混ぜず専用の口を用意し、
+# **経路そのものをテストで固定する**（tests/test_win5_import_route.py）。
+# -------------------------------------------------------------------
+
+
+class Win5LegRecord(BaseModel):
+    """WF 項番7（対象レース）+ 項番10（有効票数）の1脚分。"""
+
+    leg_no: int
+    jravan_race_id: str
+    valid_votes: int | None = None
+
+
+class Win5PayoutRecord(BaseModel):
+    """WF 項番16（重勝式払戻情報）の1件。"""
+
+    combination: str
+    payout: int | None = None
+    hit_votes: int | None = None
+
+
+class Win5Record(BaseModel):
+    """parse_wf の戻り値に対応する1レコード。"""
+
+    rec_id: str = "WF"
+    data_kubun: str | None = None
+    created_date: str | None = None
+    held_date: str
+    sold_votes: int | None = None
+    refund_flag: bool | None = None
+    void_flag: bool | None = None
+    no_hit_flag: bool | None = None
+    carryover_start: int | None = None
+    carryover_balance: int | None = None
+    legs: list[Win5LegRecord] = []
+    payouts: list[Win5PayoutRecord] = []
+
+
+class Win5ImportRequest(BaseModel):
+    """WIN5 インポートリクエスト。"""
+
+    records: list[Win5Record]
+
+
+# 区分1（重勝式詳細発表時）では払戻・有効票数・キャリーオーバー残高が未設定。
+# 後から届いた区分1で区分7（成績）の確定値を潰さないための判定に使う。
+_PRELIMINARY_KUBUN = {"1"}
+
+
+@router.post("/win5")
+async def import_win5(
+    body: Win5ImportRequest,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> dict:
+    """WF レコード（重勝式 WIN5）を取り込む。
+
+    ⚠️ **同じ開催日について WF は区分 1→2→3→7 と複数回届く。**
+    区分1 は払戻・有効票数・キャリーオーバー残高が未設定なので、
+    **後から届いた区分1で区分7（成績）の確定値を潰さない**。
+    値が None のフィールドは上書きしない（races.condition と同じ COALESCE 作法）。
+
+    🔴 **`unresolved_races` を必ず返す。** 合成した16桁 `jravan_race_id` が
+    `races` に1件も一致しないのに 200 が返るのが 0B11 型の失敗形なので、
+    呼び出し側が件数で気づけるようにする。
+
+    Returns:
+        imported: 取り込んだ開催数
+        legs: 書き込んだ脚の数
+        payouts: 書き込んだ的中組合せの数
+        unresolved_races: `races` に解決できなかった脚の数（**0 を確認すること**）
+        skipped_preliminary: 確定値を守るために上書きを見送ったフィールド数
+    """
+    if not body.records:
+        return {"imported": 0, "legs": 0, "payouts": 0,
+                "unresolved_races": 0, "skipped_preliminary": 0}
+
+    # 1. 対象レースの jravan_race_id を一括解決（N+1 回避）
+    all_ids = {leg.jravan_race_id for rec in body.records for leg in rec.legs}
+    race_id_map: dict[str, int] = {}
+    if all_ids:
+        rows = await db.execute(
+            select(Race.id, Race.jravan_race_id).where(Race.jravan_race_id.in_(all_ids))
+        )
+        race_id_map = {r.jravan_race_id: r.id for r in rows}
+
+    imported = n_legs = n_payouts = unresolved = skipped_prelim = 0
+
+    for rec in body.records:
+        is_prelim = rec.data_kubun in _PRELIMINARY_KUBUN
+
+        event_values: dict[str, object] = {
+            "held_date": rec.held_date,
+            "data_kubun": rec.data_kubun,
+            "created_date": rec.created_date,
+            "sold_votes": rec.sold_votes,
+            "refund_flag": rec.refund_flag,
+            "void_flag": rec.void_flag,
+            "no_hit_flag": rec.no_hit_flag,
+            "carryover_start": rec.carryover_start,
+            "carryover_balance": rec.carryover_balance,
+        }
+        # 確定値を空データで潰さない。None のフィールドは上書き対象から外す
+        update_set = {k: v for k, v in event_values.items()
+                      if k != "held_date" and v is not None}
+        skipped_prelim += sum(1 for k, v in event_values.items()
+                              if k != "held_date" and v is None)
+
+        stmt = pg_insert(Win5Event).values(event_values)
+        if update_set:
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_win5_events_held_date",
+                set_={k: getattr(stmt.excluded, k) for k in update_set},
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(constraint="uq_win5_events_held_date")
+        await db.execute(stmt)
+
+        event_id = (await db.execute(
+            select(Win5Event.id).where(Win5Event.held_date == rec.held_date)
+        )).scalar_one()
+        imported += 1
+
+        for leg in rec.legs:
+            race_db_id = race_id_map.get(leg.jravan_race_id)
+            if race_db_id is None:
+                unresolved += 1
+                logger.warning(
+                    "import_win5: race not found for jravan_race_id=%r (held_date=%s leg=%d)",
+                    leg.jravan_race_id, rec.held_date, leg.leg_no,
+                )
+            leg_values = {
+                "win5_event_id": event_id,
+                "leg_no": leg.leg_no,
+                "jravan_race_id": leg.jravan_race_id,
+                "race_id": race_db_id,
+                "valid_votes": leg.valid_votes,
+            }
+            leg_set = {k: v for k, v in leg_values.items()
+                       if k not in ("win5_event_id", "leg_no") and v is not None}
+            leg_stmt = pg_insert(Win5Leg).values(leg_values)
+            if leg_set:
+                leg_stmt = leg_stmt.on_conflict_do_update(
+                    constraint="uq_win5_legs_event_leg",
+                    set_={k: getattr(leg_stmt.excluded, k) for k in leg_set},
+                )
+            else:
+                leg_stmt = leg_stmt.on_conflict_do_nothing(
+                    constraint="uq_win5_legs_event_leg")
+            await db.execute(leg_stmt)
+            n_legs += 1
+
+        # 区分1 は払戻が未設定なので、既存の確定払戻を消さないよう何もしない
+        if is_prelim and not rec.payouts:
+            continue
+        for pay in rec.payouts:
+            pay_stmt = pg_insert(Win5Payout).values(
+                win5_event_id=event_id,
+                combination=pay.combination,
+                payout=pay.payout,
+                hit_votes=pay.hit_votes,
+            )
+            pay_stmt = pay_stmt.on_conflict_do_update(
+                constraint="uq_win5_payouts_event_combo",
+                set_={"payout": pay_stmt.excluded.payout,
+                      "hit_votes": pay_stmt.excluded.hit_votes},
+            )
+            await db.execute(pay_stmt)
+            n_payouts += 1
+
+    await db.commit()
+    logger.info(
+        "import_win5: imported=%d legs=%d payouts=%d unresolved_races=%d",
+        imported, n_legs, n_payouts, unresolved,
+    )
+    return {
+        "imported": imported,
+        "legs": n_legs,
+        "payouts": n_payouts,
+        "unresolved_races": unresolved,
+        "skipped_preliminary": skipped_prelim,
+    }
