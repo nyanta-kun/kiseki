@@ -26,7 +26,7 @@ export default async function YosoPage({ searchParams }: { searchParams: SearchP
         <DateNav currentDate={targetDate} prevDate={prevDate} nextDate={nextDate} />
       </div>
 
-      <h1 className="text-sm font-semibold text-gray-700 mb-3">予想一覧</h1>
+      <h1 className="text-sm font-semibold text-surface-heading mb-3">予想一覧</h1>
 
       <Suspense fallback={<div className="text-center py-12 text-gray-400 text-sm">読み込み中...</div>}>
         <YosoRaceList date={targetDate} canInputIndex={canInputIndex} />

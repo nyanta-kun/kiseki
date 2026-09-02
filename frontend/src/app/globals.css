@@ -52,6 +52,8 @@
   --page-bg-chihou-alt: #f0f8f3;
   --page-bg-subtle: #f8fafc;   /* 面の上の淡いブロック */
   --footer-bg: #f0f5fb;
+  --surface-heading: #1e2939;  /* 面の上の見出し（light は gray-800 相当） */
+  --surface-muted: #4a5565;    /* 面の上の補足文（gray-500 は面の上で 4.41 と足りないため gray-600） */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -63,6 +65,8 @@
     --page-bg-chihou-alt: #0a1d15;
     --page-bg-subtle: #111c2b;
     --footer-bg: #0d1b2e;
+    --surface-heading: #e8f0fa;
+    --surface-muted: #9fb1c7;
   }
 }
 
@@ -74,12 +78,36 @@
   --page-bg-chihou-alt: #0a1d15;
   --page-bg-subtle: #111c2b;
   --footer-bg: #0d1b2e;
+  --surface-heading: #e8f0fa;
+  --surface-muted: #9fb1c7;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* 面（カードの外）に直接置く文字。
+ * 🔴 ここに `text-gray-800` / `text-gray-500` を使ってはいけない。
+ *    面はテーマで反転するのに Tailwind の固定色は反転しないため、
+ *    dark で見出しが背景に溶ける（実測 コントラスト比 1.18）。
+ *    カードの中（`bg-white`）は面ではないので従来どおり text-gray-* でよい。 */
+.text-surface-heading {
+  color: var(--surface-heading);
+}
+
+.text-surface-muted {
+  color: var(--surface-muted);
+}
+
+/* 面の上のリンク（ホバーで見出し色まで上げる）。 */
+.link-surface-muted {
+  color: var(--surface-muted);
+}
+
+.link-surface-muted:hover {
+  color: var(--surface-heading);
 }
 
 /* 地方競馬テーマカラー（JRAネイビーと同等の暗さで揃えた濃いグリーン） */

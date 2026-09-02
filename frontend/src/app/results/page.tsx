@@ -147,8 +147,8 @@ export default async function ResultsPage({
 
         {/* タイトル */}
         <div>
-          <h1 className="text-lg font-bold text-gray-800">AI指数 実績</h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <h1 className="text-lg font-bold text-surface-heading">AI指数 実績</h1>
+          <p className="text-xs text-surface-muted mt-0.5">
             {fromYM}〜{toYM}　予測1位（composite_index最高）vs 実際着順
           </p>
         </div>
