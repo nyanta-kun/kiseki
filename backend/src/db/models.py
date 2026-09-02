@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -1210,3 +1211,137 @@ class HitTierPick(Base):
     final_win_popularity: Mapped[int | None] = mapped_column(Integer)
     place_payout_odds: Mapped[float | None] = mapped_column(Float)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# WIN5（重勝式）— WF レコード由来
+#
+# 🔴 `race_payouts` には入れない。WIN5 は
+#   (1) 単一レースに属さない（5レースの積）
+#   (2) 人気順という概念が無い
+#   (3) 的中票数・キャリーオーバー・各種フラグという行外の属性を持つ
+# の3点で粒度が合わず、押し込むと race_id を nullable にする破壊的変更と
+# ダミー combination が必要になる。
+#
+# レイアウトの出典: docs/sources/JV-Data4901.pdf「３０．重勝式(WIN5)」
+# （レコード長 7215 バイト。項番1〜17 を 2026-09-02 に原典で確認済み）
+# ---------------------------------------------------------------------------
+
+
+class Win5Event(Base):
+    """WIN5 の1開催（WF レコード1件 = 1行）。
+
+    WF のキーは **開催年（項番4）+ 開催月日（項番5）の2項目のみ**。
+    WIN5 通算回次のような項目は仕様に存在せず、1日1回なので日付だけで一意になる。
+
+    ⚠️ **同じ日について WF は複数回届く**（データ区分 1→2→3→7）。
+    区分1（重勝式詳細発表時）は払戻・有効票数・キャリーオーバー残高が未設定なので、
+    **後から届いた区分1で区分7（成績）の確定値を潰さないこと**。
+    取込側は非 NULL のときだけ更新する（races.condition と同じ作法）。
+    """
+
+    __tablename__ = "win5_events"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("held_date", name="uq_win5_events_held_date"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    held_date: Mapped[str] = mapped_column(
+        String(8), nullable=False, index=True,
+        comment="開催日 YYYYMMDD（WF 項番4 開催年 + 項番5 開催月日）",
+    )
+    data_kubun: Mapped[str | None] = mapped_column(
+        String(1),
+        comment="WF 項番2。1:詳細発表 2:1R目確定 3:払戻発表 7:成績(月曜・蓄積系のみ) 9:中止",
+    )
+    created_date: Mapped[str | None] = mapped_column(
+        String(8), comment="WF 項番3 データ作成年月日（≠開催日）"
+    )
+    sold_votes: Mapped[int | None] = mapped_column(
+        BigInteger,
+        comment="WF 項番9 発売票数。⚠️ 票数であって金額ではない（WF に金額の売上項目は無い）",
+    )
+    refund_flag: Mapped[bool | None] = mapped_column(Boolean, comment="WF 項番11 返還有無")
+    void_flag: Mapped[bool | None] = mapped_column(Boolean, comment="WF 項番12 不成立有無")
+    no_hit_flag: Mapped[bool | None] = mapped_column(Boolean, comment="WF 項番13 的中無")
+    carryover_start: Mapped[int | None] = mapped_column(
+        BigInteger, comment="WF 項番14 開催日当日開始時のキャリーオーバー額（円）"
+    )
+    carryover_balance: Mapped[int | None] = mapped_column(
+        BigInteger, comment="WF 項番15 次回へのキャリーオーバー額（円）"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Win5Leg(Base):
+    """WIN5 の対象5レース（WF 項番7 の繰返5 + 項番10 有効票数）。
+
+    項番7 には**年月日が無い**（場コード・回・日目・レース番号のみ）ので、
+    16桁の `jravan_race_id` は項番4・5 の開催年月日と結合して合成する。
+
+    ⚠️ `race_id` は nullable。合成した ID が `races` に無いとき（取込順序の前後）に
+    取込ごと落とさないため。**未解決の件数は取込エンドポイントの戻り値で必ず返すこと**
+    （「誰にも一致しないのに 200 が返る」のが 0B11 型の失敗形）。
+    """
+
+    __tablename__ = "win5_legs"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("win5_event_id", "leg_no", name="uq_win5_legs_event_leg"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    win5_event_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.win5_events.id", ondelete="CASCADE"), index=True
+    )
+    leg_no: Mapped[int] = mapped_column(Integer, nullable=False, comment="1〜5（項番7 の繰返順）")
+    jravan_race_id: Mapped[str] = mapped_column(
+        String(16), nullable=False, index=True,
+        comment="開催年月日(8) + 場コード(2) + 回(2) + 日目(2) + レース番号(2)",
+    )
+    race_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.races.id"), index=True,
+        comment="解決できた場合のみ。未解決は NULL のまま残し件数を報告する",
+    )
+    valid_votes: Mapped[int | None] = mapped_column(
+        BigInteger,
+        comment="WF 項番10 有効票数。そのレース確定時点で的中可能性が残る票数。未確定の脚は未設定",
+    )
+
+
+class Win5Payout(Base):
+    """WIN5 の的中組合せ（WF 項番16 の繰返243 のうち有効行のみ）。
+
+    通常は1件だが、同着・返還で複数になり得る（仕様上の上限243）。
+
+    🔴 **中止レコードを的中として取り込まないこと。** 仕様書の特記事項に
+    「重勝式中止（項番2=9）は 組番=0000000000 / 払戻金=000000100 /
+    的中票数=0000000000 を提供」とある。払戻金 100 は返還であって的中ではない。
+    """
+
+    __tablename__ = "win5_payouts"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("win5_event_id", "combination", name="uq_win5_payouts_event_combo"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    win5_event_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.win5_events.id", ondelete="CASCADE"), index=True
+    )
+    combination: Mapped[str] = mapped_column(
+        String(10), nullable=False,
+        comment="WF 項番16a 組番。5レース×馬番2桁の10桁。表示用の '05-11-03-08-14' は派生",
+    )
+    payout: Mapped[int | None] = mapped_column(
+        BigInteger, comment="WF 項番16b 払戻金（100円あたり・円）"
+    )
+    hit_votes: Mapped[int | None] = mapped_column(
+        BigInteger, comment="WF 項番16c 的中票数"
+    )
