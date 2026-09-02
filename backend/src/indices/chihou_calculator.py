@@ -1543,6 +1543,13 @@ class ChihouIndexCalculator:
             frame = entry.frame_number or 0
 
             # ⑤ 前走後方（running_style "3"or"4"、または passing_1 > 70%頭数）
+            #
+            # ⚠️ **running_style 側の条件は常に False。** UmaConn の差分 SE は
+            #    379 バイトで running_style（pos553）が届かず、実測で
+            #    chihou.race_results 全 411,645 行が '0'（2026-08-29）。
+            #    実際に効いているのは passing_1 の側だけ（充足率 64.5%）。
+            #    条件自体は残す — UmaConn が配信し始めたら自然に効き出す。
+            #    ただし**この分岐が効いている前提で分析してはいけない**。
             was_rear = (
                 (prev_style is not None and prev_style in ("3", "4")) or
                 (prev_pass1 is not None and float(prev_pass1) > float(prev_head) * 0.70)

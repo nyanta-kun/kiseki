@@ -189,6 +189,26 @@ def compute_pace_fit(df: pd.DataFrame, engine: "Engine") -> pd.Series:
         return pd.Series(50.0, index=df.index, name="pace_fit")
 
     style_rows["running_style"] = pd.to_numeric(style_rows["running_style"], errors="coerce")
+
+    # 🔴 running_style は UmaConn 経由では取得できない（2026-08-29 実測で
+    #    chihou.race_results 全 411,645 行が '0' の定数）。UmaConn の差分 SE は
+    #    379 バイトで、running_style は pos553 にあるため構造的に届かない
+    #    （importers/jvlink_parser.py L625 のコメント参照）。
+    #
+    #    そのまま計算すると front_score = (4.0 - 0) / 3.0 = 1.333 の**定数**になり、
+    #    pace_fit も全馬同値になる。**エラーは出ないので出力は自然に見える。**
+    #    定数の入力から「脚質適性」を名乗る指数を作って配ってはいけないので、
+    #    ここで検出してニュートラルを返す。
+    #    UmaConn 側が将来 running_style を配信し始めたら分岐が外れて本来の
+    #    計算に戻る（そのときは検証をやり直すこと）。
+    usable = style_rows["running_style"].dropna().nunique() > 1
+    if not usable:
+        logger.warning(
+            "running_style に有効な分散が無いため pace_fit をニュートラルにする"
+            "（UmaConn 経由では構造的に取得できない列。実測で全行 '0'）"
+        )
+        return pd.Series(50.0, index=df.index, name="pace_fit")
+
     # front_rate: 1=逃(1)/先(2), 0=差(3)/追(4) → (4 - style) / 3 で0-1スケール
     style_rows["front_score"] = (4.0 - style_rows["running_style"]) / 3.0
 
