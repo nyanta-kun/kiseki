@@ -229,6 +229,45 @@ def post_hr_payouts(hr_records: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WF（重勝式 WIN5）レコード送信
+# ---------------------------------------------------------------------------
+
+def post_wf_win5(wf_records: list[dict]) -> None:
+    """WF レコードを parse_wf でパースして /api/import/win5 へ送信する。
+
+    ⚠️ **この経路だけでは過去分の WIN5 は埋まらない。**
+    `COMPLETED_KEY_RACE` は `jvlink_agent.py` と共有されており、既に処理済みの
+    過去ファイルは JVSkip されて中身が読まれない。過去分は独立した completed を
+    持つ `win5_backfill.py` で取ること。ここが埋めるのは**これから届く分**だけ。
+
+    🔴 `parse_wf` が無いときは warning で握り潰さず ERROR にする。
+    0B11（速報馬体重）は「取り込むコードはあるのに振り分け漏れで全件捨てられ、
+    200 が返り続けていた」という事故で、warning は誰も読まなかった。
+    """
+    if not wf_records:
+        return
+    try:
+        from jvlink_parser import parse_wf  # noqa: PLC0415
+    except ImportError:
+        logger.error(
+            "jvlink_parser.parse_wf が見つかりません。WF %d 件を破棄します。"
+            "backend/src/importers/jvlink_parser.py を windows-agent/ へ配置してください",
+            len(wf_records),
+        )
+        return
+    parsed = [parse_wf(r.get("data", "")) for r in wf_records]
+    parsed = [p for p in parsed if p]
+    if not parsed:
+        return
+    res = post_to_backend("/api/import/win5", {"records": parsed}, BACKEND_URL, API_KEY)
+    if res:
+        logger.info(f"  POST /api/import/win5 {len(parsed)} 件 -> OK")
+    else:
+        logger.warning(f"  POST /api/import/win5 {len(parsed)} 件 -> NG (pending)")
+        save_pending("/api/import/win5", parsed, PENDING_DIR)
+
+
+# ---------------------------------------------------------------------------
 # JVOpen + JVRead ループ（時間制限対応）
 # ---------------------------------------------------------------------------
 
@@ -471,7 +510,7 @@ def run_historical_race(
     completed = load_completed_files(COMPLETED_KEY_RACE)
     logger.info(f"処理済みファイル: {len(completed):,} 件 (JVSkip 対象)")
 
-    total = {"files": 0, "skipped": 0, "ra_se": 0, "hr": 0, "start": time.time()}
+    total = {"files": 0, "skipped": 0, "ra_se": 0, "hr": 0, "wf": 0, "start": time.time()}
 
     def on_file_done(filename: str, records: list[dict]) -> None:
         # JVSkip 経由のスキップ通知（records が空で completed にある）
@@ -479,12 +518,13 @@ def run_historical_race(
             total["skipped"] += 1
             return
 
-        filtered = [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
+        filtered = [r for r in records if r.get("rec_id") in ("RA", "SE", "HR", "WF")]
         ra_se = [r for r in filtered if r.get("rec_id") in ("RA", "SE")]
         hr = [r for r in filtered if r.get("rec_id") == "HR"]
+        wf = [r for r in filtered if r.get("rec_id") == "WF"]
 
-        if not ra_se and not hr:
-            # RA/SE/HR がないファイルも completed に記録（再処理防止）
+        if not ra_se and not hr and not wf:
+            # RA/SE/HR/WF がないファイルも completed に記録（再処理防止）
             mark_file_completed(COMPLETED_KEY_RACE, filename, completed)
             return
 
@@ -497,6 +537,10 @@ def run_historical_race(
         if hr:
             post_hr_payouts(hr)
             total["hr"] += len(hr)
+
+        if wf:
+            post_wf_win5(wf)
+            total["wf"] += len(wf)
 
         mark_file_completed(COMPLETED_KEY_RACE, filename, completed)
         total["files"] += 1
