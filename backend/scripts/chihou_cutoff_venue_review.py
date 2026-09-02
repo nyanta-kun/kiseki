@@ -70,6 +70,7 @@ from scripts.inference_chihou_v14 import fetch_all_entrants  # noqa: E402
 from scripts.train_chihou_market_lgb import ALL_FEATURES, fetch, prep  # noqa: E402
 from scripts.train_chihou_v11_lightgbm import fetch_hist  # noqa: E402
 from src.chihou_protocol import TEST_START, TRAIN_END, record_test_usage  # noqa: E402
+from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION  # noqa: E402
 from src.indices.chihou_calculator import _scale_to_index_local  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -90,7 +91,7 @@ FROM chihou.calculated_indices ci
 JOIN chihou.races r ON r.id = ci.race_id
 LEFT JOIN chihou.race_results rr
        ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
-WHERE ci.version = 13
+WHERE ci.version = %(ver)s
   AND r.course != '83'
   AND r.date BETWEEN %(s)s AND %(e)s
 """
@@ -151,9 +152,21 @@ def summarize(d: pd.DataFrame) -> dict:
     }
 
 
-def load_db(conn, start: str, end: str) -> pd.DataFrame:
+def load_db(conn, start: str, end: str, version: int | None = None) -> pd.DataFrame:
+    """DB に保存済みの composite_index を読む。
+
+    🔴 **version は必ず現行の `CHIHOU_COMPOSITE_VERSION` を既定にする。**
+    2026-09-01 まで `ci.version = 13` がハードコードされており、v14 を
+    2026-08-14 にデプロイした後もこの関数は v13 の行だけを読んでいた。
+    `chihou_monthly_rollover.py` がこれをそのまま「一度きり評価」に使うため、
+    202608 のレポートは**見出しが v13 の部分月（8/1〜8/13・488R・45.5%）**、
+    同月比較表だけが v14（1,093R・37.9%）という食い違った状態で
+    TEST 台帳に記録されていた。version 指定漏れは例外にならず、
+    ただ古い行を静かに読むだけなので気づけない。
+    """
+    ver = CHIHOU_COMPOSITE_VERSION if version is None else version
     cur = conn.cursor()
-    cur.execute(DB_SQL, {"s": start, "e": end})
+    cur.execute(DB_SQL, {"s": start, "e": end, "ver": ver})
     df = pd.DataFrame(cur.fetchall(), columns=[d[0] for d in cur.description])
     cur.close()
     for c in ["composite_index", "finish_position", "abnormality_code", "head_count"]:
@@ -198,6 +211,9 @@ def main() -> None:
     p.add_argument("--from", dest="start", default="20260701")
     p.add_argument("--to", dest="end", default="20260731")
     p.add_argument("--source", choices=["db", "honest"], default="db")
+    p.add_argument("--index-version", type=int, default=None,
+                   help="読む calculated_indices の version。既定は現行の "
+                        "CHIHOU_COMPOSITE_VERSION。旧版と比べるときだけ指定する")
     p.add_argument("--seeds", default="42,123,456")
     p.add_argument("--json-out", default=None)
     args = p.parse_args()
@@ -213,7 +229,7 @@ def main() -> None:
     conn = connect()
     try:
         if args.source == "db":
-            df = load_db(conn, args.start, args.end)
+            df = load_db(conn, args.start, args.end, args.index_version)
         else:
             df = build_honest(conn, args.start, args.end, seeds)
     finally:
@@ -234,7 +250,8 @@ def main() -> None:
             rows.append(s)
     res = pd.DataFrame(rows).sort_values("cut_out_rate", ascending=False)
 
-    label = ("本番DB v13（in-sample・運用実態の再現）" if args.source == "db"
+    ver_used = args.index_version or CHIHOU_COMPOSITE_VERSION
+    label = (f"本番DB v{ver_used}（in-sample・運用実態の再現）" if args.source == "db"
              else f"honest 再学習（train ≤{TRAIN_END}）")
     print("\n" + "=" * 104)
     print(f"地方 足切り精度 競馬場別  {args.start}〜{args.end}  source={label}")

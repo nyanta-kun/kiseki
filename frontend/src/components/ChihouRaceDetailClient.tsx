@@ -623,7 +623,7 @@ export function ChihouRaceDetailClient({
             {" "}<span className="text-purple-400">薄紫</span>=1.5倍以上
           </p>
           <p>
-            <span className="opacity-50">グレー</span>=足切り候補（トップ差20以上、または差15以上かつ5位以下）
+            <span className="opacity-50">グレー</span>=足切り候補（トップ差30以上、または差24以上かつ7位以下）
           </p>
           <p>行クリックで指数内訳・近走成績を表示</p>
         </div>
