@@ -43,7 +43,8 @@ keirin/
 │   │   ├── backtest.py                # run_backtest/run_threshold_analysis/run_day_simulation
 │   │   └── upset_model.py             # 波乱レース予測モデル
 │   ├── notify/
-│   │   └── discord.py                 # Discord Webhook 通知（send/send_file）
+│   │   ├── discord.py                 # Discord Webhook 通知（send/send_file・6ch）
+│   │   └── issue_list.py             # 課題リストの整形（上限・畳み込み・差分抑止）
 │   └── cli/
 │       └── main.py                    # CLIエントリーポイント（全コマンド定義）
 ├── scripts/
@@ -52,6 +53,7 @@ keirin/
 │   ├── check_line_readiness.py        # ライン情報(winticket linePrediction)充足度判定（2026-08-01新設）
 │   ├── intraday_results_wt.sh         # ★本番日中（cron 0,10-23時）当日結果逐次収集・通知なし
 │   ├── weekly_retrain_wt.sh           # ★本番週次（cron 日23:30）
+│   ├── notify_issues.py               # 夜間レビュー §1 の異常 → Discord(review)
 │   ├── notify_picks.py                # wave-picks 通知 + PDF生成 → Discord
 │   │                                   # （「朝夕の推奨」は2026-07-31廃止。日次/夕方cronからの呼び出しなし）
 │   ├── notify_results_wt.py           # wt前日結果採点 + picks_history(route='wt') → Discord

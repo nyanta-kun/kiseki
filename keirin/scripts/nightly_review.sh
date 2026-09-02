@@ -55,3 +55,12 @@ sys.exit(0 if send(sys.stdin.read(), channel='results') else 1)" \
 else
   echo "[nightly_review] KEIRIN_NIGHTLY_URL 未設定のため Discord へは送らない"
 fi
+
+# ⑤ 課題（§1 の異常）を review チャンネルへ。**成績報告の results とは分ける**——
+#    ④ は事実、こちらは次の行動。混ぜると片方が読まれなくなる（2026-09-02 新設）。
+#    🔴 ここが VPS 側にあることに意味がある。課題の取捨（nightly_triage.sh）は
+#       Mac 依存で、Mac が寝ていると届かない。**異常だけは Claude を待たずに出す**。
+#    🔴 送信に失敗しても夜間チェーンは止めない（|| true）。
+PYTHONPATH=. "$PY" scripts/notify_issues.py --day "$DAY" --kind anomaly \
+  ${NIGHTLY_URL:+--url "$NIGHTLY_URL/$DAY.html"} \
+  || echo "[nightly_review] ⚠️ 課題通知に失敗（レビュー本体は完了している）"
