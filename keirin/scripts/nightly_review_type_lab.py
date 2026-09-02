@@ -62,15 +62,17 @@ import importlib.util
 import json
 import random
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 from types import ModuleType
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.database import get_connection                       # noqa: E402
+from src.entry_health import missing_market_inputs            # noqa: E402
 from src.evaluation.backtest_wt import _load_payouts_wt       # noqa: E402
 from src.marquee import is_fill_target                        # noqa: E402
 from src.notify.discord import send                           # noqa: E402
@@ -78,6 +80,7 @@ from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
 )
 from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for   # noqa: E402
+from src.submission_skips import MISSING_LINEUP               # noqa: E402
 
 LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
 
@@ -557,14 +560,34 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
     else:
         ok("1レース1商品（重複なし）")
 
-    # 見送り理由。並び・印の欠測は1件でも異常（2026-08-26 熊本の型）。
+    # 見送り理由。
     skips = _skips(day)
-    lineup = sum(n for code, n in skips.items() if "LINEUP" in code.upper())
     if skips:
         out.append("  ---- 見送り理由 " +
                    ", ".join(f"{k}={v}" for k, v in sorted(skips.items())))
-    if lineup:
-        ng(f"並び予想・AI印の欠測で見送り {lineup}件（上流のスクレイプを確認）")
+
+    # 🔴 **欠測で見送ったこと自体は異常ではない**（2026-09-02 是正）。
+    #    ミッドナイト開催は winticket の並び予想・AI印の公開が遅く、朝(07:00)・
+    #    昼(13:05) の波では構造的に取れない。ガードは「その回は見送る」だけで
+    #    レースを確保しないので、**後の波が拾い直す**——それが設計。
+    #    実測 2026-09-01: 16レースすべて いわき平・静岡・岐阜（発走 20:41〜23:30）で、
+    #    11レースは後の波で売れ、残る5レースも夕方の波で再判定されて
+    #    daily_cap / axis_gate / gate_mean_payout という**通常のゲート**で落ちている。
+    #    ここを NG にしていた 2026-09-02 以前は、**開催がある日はほぼ毎晩** 対処不要の
+    #    異常が出て、しかも件数が日ごとに変わるので通知の差分抑止も効かなかった。
+    # 🔴 異常なのは「**レビュー時点でも**取れていない」ほう。それが熊本(2026-08-26)の型で、
+    #    そのときだけ「上流のスクレイプを確認」という指示が正しい。
+    #    判定は本番の入稿ガードと同じ `entry_health.missing_market_inputs` に委ねる
+    #    （閾値をここへ写すと、片方だけ動いたときに黙って食い違う）。
+    st = _lineup_state(day)
+    if st.unresolved:
+        names = ", ".join(sorted(st.unresolved)[:5])
+        ng(f"並び予想・AI印がレビュー時点でも欠測 {len(st.unresolved)}レース"
+           f"（{names}）— 上流のスクレイプを確認")
+    elif st.races:
+        ok(f"並び・印の欠測で見送り {len(st.races)}レース"
+           f"（後の波で解決 {len(st.recovered)} / 拾い直せず {len(st.dropped)}）"
+           f" — 夜間開催は公開が遅く朝・昼の波では取れない")
     else:
         ok("並び・印の欠測なし")
 
@@ -603,6 +626,68 @@ def _recent_median_submits(day: str) -> int | None:
             "GROUP BY 1", (start.isoformat(), end.isoformat()))]
     vals = sorted(int(d["n"]) for d in rows if int(d["n"]) > 0)
     return vals[len(vals) // 2] if vals else None
+
+
+class LineupState(NamedTuple):
+    """`missing_lineup` で見送ったレースの、その後の顛末。
+
+    - `races`     … その日 1回でも欠測で見送ったレース
+    - `unresolved`… **レビュー時点でも**印・並びが取れていないレース（＝異常）
+    - `recovered` … 後の波で売れた、または別の理由で判定し直されたレース
+    - `dropped`   … 入力は届いたのに、どの波でも拾い直されなかったレース
+    """
+
+    races: frozenset[str]
+    unresolved: frozenset[str]
+    recovered: frozenset[str]
+    dropped: frozenset[str]
+
+
+def _lineup_state(day: str) -> LineupState:
+    """欠測で見送ったレースを、いまの入力の状態で仕分ける。
+
+    ⚠️ `unresolved` は **いま** の `wt_entries` を見る。夜間レビューは 00:10 に
+       走るので「その日の終わりまでに届かなかったか」を見ていることになる。
+       判定そのものは入稿ガードと同じ関数へ委ねる。
+    """
+    with get_connection() as c:
+        races = {str(r["race_key"]) for r in c.execute(
+            "SELECT DISTINCT race_key FROM submission_skips "
+            "WHERE race_date = ? AND reason_code = ?", (day, MISSING_LINEUP))}
+        if not races:
+            empty: frozenset[str] = frozenset()
+            return LineupState(empty, empty, empty, empty)
+        ph = ",".join("?" * len(races))
+        keys = sorted(races)
+        rows = [dict(r) for r in c.execute(
+            f"SELECT race_key, prediction_mark, line_group FROM wt_entries "
+            f"WHERE race_key IN ({ph})", tuple(keys))]
+        sold = {str(r["race_key"]) for r in c.execute(
+            f"SELECT DISTINCT race_key FROM netkeirin_submissions "
+            f"WHERE race_key IN ({ph}) AND deleted_at IS NULL", tuple(keys))}
+        rejudged = {str(r["race_key"]) for r in c.execute(
+            f"SELECT DISTINCT race_key FROM submission_skips "
+            f"WHERE race_key IN ({ph}) AND reason_code <> ?",
+            (*keys, MISSING_LINEUP))}
+
+    by_race: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_race[str(r["race_key"])].append(r)
+    return classify_lineup(races, by_race, sold, rejudged)
+
+
+def classify_lineup(races: set[str], entries: dict[str, list[dict]],
+                    sold: set[str], rejudged: set[str]) -> LineupState:
+    """欠測で見送ったレースを仕分ける（DB に触らない部分）。
+
+    🔴 出走表そのものが無いレースは `missing_market_inputs` が None を返す
+       （「分からない」を理由に異常を立てない）。ここでも同じ扱いにする。
+    """
+    unresolved = {k for k in races if missing_market_inputs(entries.get(k, []))}
+    recovered = (sold | rejudged) - unresolved
+    return LineupState(frozenset(races), frozenset(unresolved),
+                       frozenset(recovered),
+                       frozenset(races - unresolved - recovered))
 
 
 def _skips(day: str) -> dict[str, int]:

@@ -196,3 +196,76 @@ def test_参照の構成は車数まで揃える():
     got = m._bootstrap(pool, {("A_hit", 9): 2}, n_boot=20, seed=1)
     assert got and all(roi == 0.0 for roi, _ in got), \
         "9車を指定したのに7車の母集団から引いている"
+
+
+# ─────────── 並び・印の欠測（2026-09-02 是正）───────────
+#
+# 🔴 **欠測で見送ったこと自体は異常ではない。** ミッドナイト開催は winticket の
+#    公開が遅く、朝(07:00)・昼(13:05) の波では構造的に取れない。ガードはレースを
+#    確保せずに抜けるので後の波が拾い直す——それが設計。
+#    ここを NG にしていた間は、開催がある日はほぼ毎晩「対処不要の異常」が出ていた
+#    （実測 2026-08-28〜09-01 の5日中5日）。
+# 🔴 異常なのは「レビュー時点でも取れていない」ほう（2026-08-26 熊本の型）。
+
+_MARKED = [{"prediction_mark": 1, "line_group": 1},
+           {"prediction_mark": 0, "line_group": 2}]
+_NO_MARK = [{"prediction_mark": 0, "line_group": 1},
+            {"prediction_mark": 0, "line_group": 2}]
+_NO_LINE = [{"prediction_mark": 1, "line_group": 0},
+            {"prediction_mark": 2, "line_group": 0}]
+
+
+def test_後の波で売れた欠測は異常にしない():
+    m = _load()
+    st = m.classify_lineup({"R1"}, {"R1": _MARKED}, sold={"R1"}, rejudged=set())
+    assert st.unresolved == frozenset()
+    assert st.recovered == frozenset({"R1"})
+    assert st.dropped == frozenset()
+
+
+def test_後の波で別の理由に変わった欠測も異常にしない():
+    """daily_cap / axis_gate で落ちたなら、入力は届いている。"""
+    m = _load()
+    st = m.classify_lineup({"R1"}, {"R1": _MARKED}, sold=set(), rejudged={"R1"})
+    assert st.unresolved == frozenset()
+    assert st.recovered == frozenset({"R1"})
+
+
+def test_レビュー時点でも欠測なら異常():
+    m = _load()
+    st = m.classify_lineup({"R1", "R2"}, {"R1": _NO_MARK, "R2": _NO_LINE},
+                           sold=set(), rejudged=set())
+    assert st.unresolved == frozenset({"R1", "R2"})
+    assert st.recovered == frozenset()
+
+
+def test_入力は届いたのに拾い直されなかったレースは別枠():
+    """異常ではないが「売れずに終わった」ので数える。"""
+    m = _load()
+    st = m.classify_lineup({"R1"}, {"R1": _MARKED}, sold=set(), rejudged=set())
+    assert st.unresolved == frozenset()
+    assert st.recovered == frozenset()
+    assert st.dropped == frozenset({"R1"})
+
+
+def test_出走表が無いレースは異常にしない():
+    """「分からない」を理由に異常を立てない（入稿ガードと同じ扱い）。"""
+    m = _load()
+    st = m.classify_lineup({"R1"}, {}, sold=set(), rejudged=set())
+    assert st.unresolved == frozenset()
+
+
+def test_欠測の判定は入稿ガードへ委譲している():
+    """閾値をここへ写すと、片方だけ動いたときに黙って食い違う。"""
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "from src.entry_health import missing_market_inputs" in src
+    assert "missing_market_inputs(" in src
+    # 正本が返す文言を書いていたら、判定そのものを持ち込んでいる。
+    for token in ("WT印が全車ゼロ", "並び（ライン）が未取得"):
+        assert token not in src, f"入稿ガードの判定を写経している: {token}"
+
+
+def test_見送り理由の語彙も正本から取る():
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "from src.submission_skips import MISSING_LINEUP" in src
+    assert '"missing_lineup"' not in src, "reason_code をリテラルで書いている"
