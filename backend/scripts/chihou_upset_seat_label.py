@@ -353,6 +353,65 @@ def base_c_gate(races: list[dict], defn: str) -> dict[str, Any]:
     }
 
 
+FINAL_POP_SQL = """
+SELECT race_id, horse_number, finish_position, win_popularity
+FROM chihou.race_results WHERE race_id = ANY(%(race_ids)s)
+"""
+
+
+def label_agreement(conn, raw: list[dict]) -> dict[str, Any]:
+    """発走前オッズ順位で作ったラベルと、確定人気で作ったラベルの一致率。
+
+    🔴 **Phase 1 の学習窓を決めるための判断材料。**
+    評価ラベルは必ず発走前由来にする（これは動かさない）。問題は*学習*ラベルで、
+    発走前を要求すると窓は発走前オッズの蓄積期間（5か月）に縛られる一方、
+    確定人気で作ってよいなら年単位に広がる。一致率が十分高ければ後者を
+    正当化できる。
+
+    2026-09-02 実測（pop_rank>=8）: 地方 89.53% / JRA 90.80%。
+    しかも**非対称**で、発走前だけ陽性 7.59%/5.71% に対し確定だけ陽性は
+    2.88%/3.48%。確定人気ラベルは陽性を系統的に取りこぼす。
+    → **代用は却下**。学習も評価も発走前ラベルで行う。
+    """
+    ids = [r["race_id"] for r in raw]
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(FINAL_POP_SQL, {"race_ids": ids})
+        fin: dict[int, dict[int, Any]] = {}
+        for row in cur.fetchall():
+            fin.setdefault(row["race_id"], {})[row["horse_number"]] = row
+
+    agree = both = only_pre = only_fin = missing = 0
+    for r in raw:
+        hs = [h for h in r["horses"] if h["pre_win_odds"] and float(h["pre_win_odds"]) > 0]
+        slots = place_slots(len(hs))
+        if slots == 0:
+            continue
+        f = fin.get(r["race_id"], {})
+        if not f or any(f.get(h["horse_number"], {}).get("win_popularity") is None
+                        for h in hs):
+            missing += 1
+            continue
+        for rank, h in enumerate(sorted(hs, key=lambda x: float(x["pre_win_odds"])), start=1):
+            h["_pre_rank"] = rank
+        pre = any(h["_pre_rank"] >= POP_RANK_MIN
+                  and (f[h["horse_number"]]["finish_position"] or 99) <= slots for h in hs)
+        post = any((f[h["horse_number"]]["win_popularity"] or 99) >= POP_RANK_MIN
+                   and (f[h["horse_number"]]["finish_position"] or 99) <= slots for h in hs)
+        both += 1
+        agree += pre == post
+        only_pre += pre and not post
+        only_fin += post and not pre
+    if not both:
+        return {}
+    return {
+        "n_races": both,
+        "n_skipped_missing_popularity": missing,
+        "agreement": round(agree / both, 4),
+        "pre_only_positive": round(only_pre / both, 4),
+        "final_only_positive": round(only_fin / both, 4),
+    }
+
+
 def main() -> None:
     # 🔴 人気薄の閾値は柱ごとに違ってよい（頭数分布が違うため）。Phase 0 の仕事は
     #    「ヘッドルームのある帯に base rate が入る閾値を機械的に見つける」こと。
@@ -372,6 +431,8 @@ def main() -> None:
                     help="定義A: 人気薄とみなす発走前オッズ順位の下限")
     ap.add_argument("--odds-min", type=float, default=UNPOP_ODDS_MIN,
                     help="定義B: 人気薄とみなす発走前単勝オッズの下限")
+    ap.add_argument("--label-agreement", action="store_true",
+                    help="発走前ラベル vs 確定人気ラベルの一致率も測る（学習窓の判断用）")
     args = ap.parse_args()
 
     # 🔴 確定オッズでの測定を機械的に禁止する（計画 §7.1・過去2回の崩壊）
@@ -520,6 +581,19 @@ def main() -> None:
         print(f"  → 🔴 どちらも base rate が {HEADROOM[0]:.0%}〜{HEADROOM[1]:.0%} の外。"
               "閾値（POP_RANK_MIN / UNPOP_ODDS_MIN）を振り直すこと。"
               "定義を決めずに Phase 1 へ進んではいけない")
+
+    if args.label_agreement:
+        with _connect() as conn:
+            agr = label_agreement(conn, raw)
+        if agr:
+            print(f"\n=== ラベル定義の一致率（発走前オッズ順位 vs 確定人気）===")
+            print(f"  対象 {agr['n_races']} レース"
+                  f"（人気欠損で除外 {agr['n_skipped_missing_popularity']}）")
+            print(f"  一致率 {agr['agreement']:.2%}"
+                  f"  / 発走前だけ陽性 {agr['pre_only_positive']:.2%}"
+                  f"  / 確定だけ陽性 {agr['final_only_positive']:.2%}")
+            print("  ※ 一致率が低いか非対称なら、確定人気を学習ラベルに代用してはいけない")
+            result["label_agreement"] = agr
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
