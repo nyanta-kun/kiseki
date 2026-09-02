@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from src.api.keirin_router import _MANUAL_RANK_KEYS, _PAPER_RANK_LABELS
+from src.api.keirin_router import _PAPER_RANK_LABELS
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "src"
 KEIRIN_STRATEGY = (Path(__file__).resolve().parents[2]
@@ -240,52 +240,56 @@ def test_help_page_documents_every_rank():
         f"help/page.tsx にランク解説が無い: {sorted(LABELS - documented)}"
 
 
-def test_manual_submit_ranks_are_a_subset_of_labels():
-    """手動入稿の許可ランクは表示ランクの部分集合であること。
+def test_manual_submit_has_no_rank_or_axis_anywhere():
+    """🔴🔴 **手動入稿は型ラボ経路**（2026-09-03〜）。ランクも軸も選ばせない。
 
-    2券種の 7H1 は「軸2車を選ぶ」UIでは買い目を表現できないため**含めない**
-    のが正しい。ここでは「表示ランクに存在しないキーを許可していないか」だけを見る。
+    それまではフロントでランク（7S / 9C）と軸2車を選び、keirin 側で
+    `netkeirin_submit_wt.py --manual-rank-key` が走っていた。型ラボへ全面移行
+    （2026-08-28）した後もここだけ旧ランクのままで、`type_lab_picks` に行が残らず
+    **採点・`/keirin/type-lab`・成績集計から漏れていた**。
+
+    型ラボは型（A〜F）から商品が決まるので、選ばせるものが無い。
+    ⚠️ 3箇所（フロント / backend / keirin webhook）に散っていたランク集合のコピーは
+       全部消えた。**復活したら「また旧経路へ戻った」ということ**なので落とす。
     """
-    assert set(_MANUAL_RANK_KEYS) <= LABELS, \
-        f"_MANUAL_RANK_KEYS に表示ランク外のキー: {sorted(set(_MANUAL_RANK_KEYS) - LABELS)}"
-    assert "7H1" not in _MANUAL_RANK_KEYS, \
-        "7H1 は2券種のため手動入稿（軸2車指定）では表現できない"
+    import src.api.keirin_router as router
+
+    assert not hasattr(router, "_MANUAL_RANK_KEYS"), (
+        "_MANUAL_RANK_KEYS が復活しています（手動入稿が旧ランク経路へ戻っていないか）")
+    # 🔴 **コメントを除いてから見る。** 「なぜ撤去したか」の説明に名前が出てくるので、
+    #    素の文字列検索だと自分の注記で落ちる（2026-09-03 に実際に踏んだ）。
+    def _code_only(text: str) -> str:
+        out = []
+        for line in text.splitlines():
+            t = line.lstrip()
+            if t.startswith("//") or t.startswith("*") or t.startswith("/*"):
+                continue
+            out.append(line.split("//")[0])
+        return "\n".join(out)
+
+    for name, text in (("page.tsx", _read("app/keirin/page.tsx")),
+                       ("lib/api.ts", _read("lib/api.ts")),
+                       ("actions.ts", _read("app/keirin/actions.ts"))):
+        code = _code_only(text)
+        assert "MANUAL_SUBMIT_RANKS" not in code, f"{name} にランク選択が残っています"
+        assert "ManualKeirinRankKey" not in code, f"{name} に手動ランクの型が残っています"
 
 
-def test_frontend_manual_submit_ranks_match_backend():
-    """🔴 フロントの手動入稿の選択肢が backend の許可リストと一致すること。
+def test_manual_submit_rejects_rank_and_axis():
+    """🔴 古いクライアントが送ってきたら **400 で明示的に断る**。
 
-    2026-08-03 の 7B 新設から 2026-08-08 まで、フロントの `MANUAL_SUBMIT_RANKS` と
-    `ManualKeirinRankKey` は "7B" を含む一方 backend の `_MANUAL_RANK_KEYS` には
-    無く、**UI では選べるのに送信すると必ず 400「不正なrank_key」**になっていた。
-
-    既存の `test_manual_submit_ranks_are_a_subset_of_labels` は backend 内部の
-    包含関係しか見ておらず、フロントとの一致は検査範囲外だったため検出できなかった。
-
-    backend が受け付けないキーをフロントが出してはいけない（押すたびにエラー）。
-    逆向き（backend にあってフロントに無い）は「まだ UI を作っていない」だけなので許す。
+    黙って無視すると「軸を選んだのに効いていない」という読めない状態になる。
     """
-    text = _read("app/keirin/page.tsx")
-    m = re.search(
-        r"const MANUAL_SUBMIT_RANKS:[^=]*=\s*\{(.*?)\n\};", text, re.DOTALL)
-    assert m, "page.tsx の MANUAL_SUBMIT_RANKS が見つからない（定義の書き方を変えたら本テストも追随させること）"
-    front = set(re.findall(r'key:\s*"([^"]+)"', m.group(1)))
-    assert front, "MANUAL_SUBMIT_RANKS から key を1件も抽出できなかった"
+    import inspect
 
-    allowed = set(_MANUAL_RANK_KEYS)
-    assert front <= allowed, (
-        f"フロントが backend の許可外ランクを選ばせている: {sorted(front - allowed)}。"
-        " 送信すると必ず 400 になる。backend の _MANUAL_RANK_KEYS へ足すか、"
-        " フロントの選択肢から外すこと")
+    from src.api.keirin_router import trigger_submit_race
 
-    # 型（ManualKeirinRankKey）も同じ集合であること
-    api = _read("lib/api.ts")
-    tm = re.search(r"export type ManualKeirinRankKey\s*=\s*([^;]+);", api)
-    assert tm, "api.ts の ManualKeirinRankKey が見つからない"
-    typed = set(re.findall(r'"([^"]+)"', tm.group(1)))
-    assert typed == allowed, (
-        f"ManualKeirinRankKey({sorted(typed)}) が backend の "
-        f"_MANUAL_RANK_KEYS({sorted(allowed)}) と一致しない")
+    src_text = inspect.getsource(trigger_submit_race)
+    assert "rank_key is not None" in src_text and "status_code=400" in src_text, (
+        "rank_key/axis1/axis2 を受け取ったときに 400 を返す分岐がありません")
+    # 型ラボは3波。noon を弾くと昼の手動入稿ができない
+    assert '"noon"' in src_text, "session に noon が入っていません（型ラボは3波）"
+
 
 
 # ── 廃止済みだが実際に売ったランク（2026-08-16 追加）─────────────────

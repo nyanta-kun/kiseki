@@ -561,7 +561,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への
     #    書き込みなので、「何も変えずに中身を見る」という dry-run の約束を破る。
     #    2026-08-28 の初回検証で実際に本番の行を書き換えてしまった。
-    if do_rebuild and session != "morning" and not dry_run:
+    # 🔴 **手動入稿（`--race-key`）は session を問わず組み直す**（2026-09-03）。
+    #    手動は「いま出す」操作なので、朝に組んだ古い買い目をそのまま出すと
+    #    並びが出た後・オッズが動いた後の盤面と食い違う。
+    if do_rebuild and (session != "morning" or only_key) and not dry_run:
         todo = {int(r["n_entries"] or 7): [] for r in rows}
         for r in rows:
             rk = str(r["race_key"])
@@ -573,7 +576,7 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         rows = _load_rows(day)
         if only_key:
             rows = [r for r in rows if str(r["race_key"]) == only_key]
-    elif do_rebuild and session != "morning" and dry_run:
+    elif do_rebuild and (session != "morning" or only_key) and dry_run:
         n_todo = len({str(r["race_key"]) for r in rows
                       if (str(r["race_key"]), str(r["plan_key"])) not in already
                       and str(r["race_key"]) not in closed})

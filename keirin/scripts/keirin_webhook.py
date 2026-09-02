@@ -56,7 +56,6 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #      - 2026-08-16: 9A→9C（08-14）・7A廃止（08-14）に追随しておらず、
 #        Web のランク選択から **9C を選ぶと 400** になっていた
 #    検査: `tests/test_approve_cli_and_webhook.py`
-_MANUAL_ALLOWED_RANKS = ("7S", "7B", "9C")
 
 
 def _spawn(name: str, cmd: list[str], log_file: Path, extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
@@ -124,11 +123,25 @@ class Handler(BaseHTTPRequestHandler):
         self._respond(200, {"ok": ok, "message": message})
 
     def _handle_submit_race(self) -> tuple[bool, str, int]:
-        """race_key/date/sessionを検証し、単一レースのみを対象にnetkeirin_submit_wt.pyを起動する。
+        """race_key/date/session を検証し、**型ラボ**で単一レースを入稿する。
 
-        rank_key/axis1/axis2（任意項目）が揃っている場合は、推奨外レースの手動入稿
-        （kiseki Webのランク選択ダイアログ由来・2026-07-31新設）として
-        --manual-rank-key/--axis1/--axis2 を付与する。
+        🔴🔴 **2026-09-03 に旧ランク経路から型ラボ経路へ移した（ユーザー指示）。**
+           それまでは `netkeirin_submit_wt.py --manual-rank-key 7S/9C --axis1 --axis2` を
+           叩いていた。型ラボへ全面移行（2026-08-28）した後もここだけ旧ランクのままで、
+
+             - 買い目が旧ランクのロジックで作られる（型ラボの型判定を通らない）
+             - `type_lab_picks` に行が残らない → **採点・`/keirin/type-lab`・成績集計から漏れる**
+             - `bet_detail` の書式は共通なので入稿自体は通ってしまい、**気づきにくい**
+
+           という状態だった。型ラボは**型（A〜F）で商品が自動的に決まる**ので、
+           ランクも軸2車も選ばせる必要がない。
+
+        🔴 **`rank_key` / `axis1` / `axis2` が来たら 400 で拒否する。** 黙って無視すると
+           「軸を選んだのに効いていない」という読めない状態になる。フロントは
+           2026-09-03 に送信をやめているので、来るのは古いクライアントだけ。
+
+        ⚠️ `session` は型ラボの3波（morning / noon / evening）を受ける。
+           旧経路は morning / evening しか無かった。
         """
         length = int(self.headers.get("Content-Length", 0) or 0)
         try:
@@ -143,29 +156,21 @@ class Handler(BaseHTTPRequestHandler):
             return False, f"invalid race_key: {race_key}", 400
         if not _DATE_RE.match(date):
             return False, f"invalid date: {date}", 400
-        if session not in ("morning", "evening"):
+        if session not in ("morning", "noon", "evening"):
             return False, f"invalid session: {session}", 400
+        if any(body.get(k) is not None for k in ("rank_key", "axis1", "axis2")):
+            return (False,
+                    "型ラボでは型からプランと軸が決まるため rank_key/axis1/axis2 は"
+                    "受け付けません（2026-09-03 に旧ランク経路を廃止）", 400)
 
         cmd = [
-            str(KEIRIN_HOME / ".venv" / "bin" / "python3"), "scripts/netkeirin_submit_wt.py",
+            str(KEIRIN_HOME / ".venv" / "bin" / "python3"),
+            "scripts/netkeirin_submit_type_lab.py",
             date, session, "--race-key", race_key,
         ]
 
-        rank_key = body.get("rank_key")
-        axis1 = body.get("axis1")
-        axis2 = body.get("axis2")
-        if rank_key is not None or axis1 is not None or axis2 is not None:
-            rank_key = str(rank_key)
-            if rank_key not in _MANUAL_ALLOWED_RANKS:
-                return False, f"invalid rank_key: {rank_key}", 400
-            try:
-                axis1_i, axis2_i = int(axis1), int(axis2)
-            except (TypeError, ValueError):
-                return False, f"invalid axis1/axis2: {axis1}/{axis2}", 400
-            cmd += ["--manual-rank-key", rank_key, "--axis1", str(axis1_i), "--axis2", str(axis2_i)]
-
-        log.info("triggered /submit-race race_key=%s date=%s session=%s rank_key=%s",
-                  race_key, date, session, rank_key)
+        log.info("triggered /submit-race (type_lab) race_key=%s date=%s session=%s",
+                 race_key, date, session)
         ok, message = _spawn(
             f"submit-race-{race_key}",
             cmd,

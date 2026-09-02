@@ -19,7 +19,6 @@
 
 import { auth } from "@/auth";
 import { CANCEL_REASONS, type CancelReason } from "./cancelReasons";
-import type { ManualKeirinRankKey } from "@/lib/api";
 
 const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -70,19 +69,20 @@ export async function triggerKeirinFetchResultsAction(): Promise<Result> {
   return post("/keirin/fetch-results");
 }
 
+/**
+ * 指定レース1件を型ラボで入稿する。
+ *
+ * 🔴 **2026-09-03 にランク・軸の指定を廃止した。** 型ラボは型（A〜F）から商品が
+ *    決まるので、選ばせるものが無い。それまでは旧ランク（7S / 9C）と軸2車を送っており、
+ *    keirin 側で `netkeirin_submit_wt.py --manual-rank-key` が走って
+ *    **`type_lab_picks` に行が残らず、採点・成績集計から漏れていた**。
+ */
 export async function triggerKeirinSubmitRaceAction(
   raceKey: string,
   date: string,
-  session: "morning" | "evening",
-  manual?: { rankKey: ManualKeirinRankKey; axis1: number; axis2: number },
+  session: "morning" | "noon" | "evening",
 ): Promise<Result> {
-  const body: Record<string, unknown> = { race_key: raceKey, date, session };
-  if (manual) {
-    body.rank_key = manual.rankKey;
-    body.axis1 = manual.axis1;
-    body.axis2 = manual.axis2;
-  }
-  return post("/keirin/submit-race", body);
+  return post("/keirin/submit-race", { race_key: raceKey, date, session });
 }
 
 /**
