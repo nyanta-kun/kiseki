@@ -233,38 +233,32 @@ def post_hr_payouts(hr_records: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 def post_wf_win5(wf_records: list[dict]) -> None:
-    """WF レコードを parse_wf でパースして /api/import/win5 へ送信する。
+    """WF レコード（重勝式 WIN5）を /api/import/win5 へ送信する。
+
+    **生レコードのまま送り、パースはサーバ側で行う。** 実機の
+    `jvlink_parser.py` は git 管理外で 2026-05-04 付と4か月古く、更新手段も無い。
+    さらに main 版は `from ..bet_types import` という相対 import を持つため
+    実機へそのまま置けず、置くと**既存の HR 払戻経路まで巻き込んで壊れる**
+    （2026-09-02 に実機で確認）。`/api/import/weights`（0B11）と同じ形に揃える。
 
     ⚠️ **この経路だけでは過去分の WIN5 は埋まらない。**
     `COMPLETED_KEY_RACE` は `jvlink_agent.py` と共有されており、既に処理済みの
     過去ファイルは JVSkip されて中身が読まれない。過去分は独立した completed を
     持つ `win5_backfill.py` で取ること。ここが埋めるのは**これから届く分**だけ。
-
-    🔴 `parse_wf` が無いときは warning で握り潰さず ERROR にする。
-    0B11（速報馬体重）は「取り込むコードはあるのに振り分け漏れで全件捨てられ、
-    200 が返り続けていた」という事故で、warning は誰も読まなかった。
     """
     if not wf_records:
         return
-    try:
-        from jvlink_parser import parse_wf  # noqa: PLC0415
-    except ImportError:
-        logger.error(
-            "jvlink_parser.parse_wf が見つかりません。WF %d 件を破棄します。"
-            "backend/src/importers/jvlink_parser.py を windows-agent/ へ配置してください",
-            len(wf_records),
-        )
-        return
-    parsed = [parse_wf(r.get("data", "")) for r in wf_records]
-    parsed = [p for p in parsed if p]
-    if not parsed:
-        return
-    res = post_to_backend("/api/import/win5", {"records": parsed}, BACKEND_URL, API_KEY)
+    # 🔴 パースはサーバ側で行う。実機の jvlink_parser.py は git 管理外で
+    #    4か月古く、main 版は相対 import を持つため単体 import できない
+    #    （置き換えると既存の HR 払戻経路まで壊れる・2026-09-02 実機確認）。
+    #    /api/import/weights（0B11）と同じ形に揃える。
+    payload = [{"rec_id": r.get("rec_id", ""), "data": r.get("data", "")} for r in wf_records]
+    res = post_to_backend("/api/import/win5", {"records": payload}, BACKEND_URL, API_KEY)
     if res:
-        logger.info(f"  POST /api/import/win5 {len(parsed)} 件 -> OK")
+        logger.info(f"  POST /api/import/win5 {len(payload)} 件 -> OK")
     else:
-        logger.warning(f"  POST /api/import/win5 {len(parsed)} 件 -> NG (pending)")
-        save_pending("/api/import/win5", parsed, PENDING_DIR)
+        logger.warning(f"  POST /api/import/win5 {len(payload)} 件 -> NG (pending)")
+        save_pending("/api/import/win5", payload, PENDING_DIR)
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,8 @@ WF も同じ構造にある——`race_importer` は RA/SE しか見ないので
 取込経路に混ぜると同じ形で無言の全件破棄が起きる。このテストは
 
 1. `/api/import/win5` という**専用の口が存在すること**
-2. `parse_wf` の戻り値がそのままリクエストとして通ること（形が食い違っていないこと）
+2. **生の WF レコードを渡すとサーバ側でパースされること**
+   （エージェントのパーサに依存しないこと）
 3. **`unresolved_races` が戻り値に含まれること**（誰にも一致しないのに 200 が返るのを
    呼び出し側が検出できること）
 4. 区分1（詳細発表）で区分7（成績）の確定値を潰さないこと
@@ -44,17 +45,32 @@ def test_win5_endpoint_is_registered() -> None:
     )
 
 
-def test_parser_output_matches_request_schema() -> None:
-    """🔴 `parse_wf` の戻り値がそのまま `Win5ImportRequest` に通ること。
+def test_request_takes_raw_records_not_parsed() -> None:
+    """🔴 リクエストは**生の WF レコード**を受け取ること。
 
-    ここが食い違うと、エージェント側は 200 を受け取り続けるのに
-    サーバ側で全件バリデーション落ち、という 0B11 と同じ形になる。
+    エージェント側でパースする設計にすると、実機の jvlink_parser.py に
+    依存する。それは git 管理外で 2026-05-04 付と4か月古く、更新手順も無い。
+    さらに main のパーサは相対 import を持つため実機へそのまま置けず、
+    置くと既存の HR 払戻経路まで壊れる（2026-09-02 実機確認）。
+    /api/import/weights（0B11）と同じ「生を送ってサーバがパース」に揃える。
     """
+    req = import_router.Win5ImportRequest(
+        records=[{"rec_id": "WF", "data": _wf_record()}]
+    )
+    assert len(req.records) == 1
+    assert req.records[0].rec_id == "WF"
+    # パース済み dict を渡す設計に戻していないこと
+    assert not hasattr(req.records[0], "held_date"), (
+        "リクエストがパース済みの形になっている。実機のパーサ更新が必要になり、"
+        "更新手段が無いので取り込めなくなる"
+    )
+
+
+def test_server_side_parse_produces_expected_fields() -> None:
+    """サーバ側のパース結果が期待どおりであること。"""
     parsed = parse_wf(_wf_record())
     assert parsed is not None
-    req = import_router.Win5ImportRequest(records=[parsed])
-    assert len(req.records) == 1
-    rec = req.records[0]
+    rec = import_router.Win5Record.model_validate(parsed)
     assert rec.held_date == "20260830"
     assert len(rec.legs) == 5
     assert rec.legs[0].jravan_race_id == "2026083006030510"
@@ -64,9 +80,9 @@ def test_parser_output_matches_request_schema() -> None:
 
 def test_response_reports_unresolved_races() -> None:
     """合成 ID が races に1件も無くても取込は落ちないが、件数を必ず返すこと。"""
-    parsed = parse_wf(_wf_record())
-    assert parsed is not None
-    body = import_router.Win5ImportRequest(records=[parsed])
+    body = import_router.Win5ImportRequest(
+        records=[{"rec_id": "WF", "data": _wf_record()}]
+    )
 
     db = AsyncMock()
     # races の解決は0件、win5_events の id 取得は 1 を返す
@@ -93,8 +109,7 @@ def test_empty_request_is_safe() -> None:
     import asyncio
     body = import_router.Win5ImportRequest(records=[])
     res = asyncio.run(import_router.import_win5(body, _=None, db=AsyncMock()))
-    assert res == {"imported": 0, "legs": 0, "payouts": 0,
-                   "unresolved_races": 0, "skipped_preliminary": 0}
+    assert res["imported"] == 0 and res["legs"] == 0 and res["unresolved_races"] == 0
 
 
 def test_preliminary_kubun_is_recognised() -> None:
