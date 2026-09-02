@@ -36,7 +36,7 @@ from ..importers import (
     RaceImporter,
     TrainingImporter,
 )
-from ..importers.jvlink_parser import COURSE_NAMES, parse_we, parse_wh
+from ..importers.jvlink_parser import COURSE_NAMES, parse_we, parse_wf, parse_wh
 from ..importers.provisional_horse_importer import upsert_provisional_horses
 from ..indices.composite import CompositeIndexCalculator
 from ..services.recommender import update_results as update_recommendation_results
@@ -916,9 +916,23 @@ class Win5Record(BaseModel):
 
 
 class Win5ImportRequest(BaseModel):
-    """WIN5 インポートリクエスト。"""
+    """WIN5 インポートリクエスト。
 
-    records: list[Win5Record]
+    🔴 **生の WF レコードを受け取り、パースは**サーバ側**で行う。**
+    エージェント側でパースしない理由（2026-09-02 に実機で判明）:
+
+    - `windows-agent/jvlink_parser.py` は **git 管理外**で、実機のものは
+      2026-05-04 付と4か月古い。更新手順も自動化もどこにも無い
+    - main のパーサは `from ..bet_types import BET_TYPES` という**相対 import**を
+      持つため、そのまま実機へ置くと単体 import できず、**既存の HR 払戻経路
+      （`from jvlink_parser import parse_hr`）まで巻き込んで壊れる**（実測）
+
+    `/api/import/weights`（0B11）が同じ理由で「エージェントは生レコードを
+    POST し、サーバが `parse_wh` する」形になっている。WIN5 もそれに揃える。
+    こうすると**実機のパーサを一切更新しなくてよい**。
+    """
+
+    records: list[JvRecord]
 
 
 # 区分1（重勝式詳細発表時）では払戻・有効票数・キャリーオーバー残高が未設定。
@@ -951,11 +965,31 @@ async def import_win5(
         skipped_preliminary: 確定値を守るために上書きを見送ったフィールド数
     """
     if not body.records:
-        return {"imported": 0, "legs": 0, "payouts": 0,
-                "unresolved_races": 0, "skipped_preliminary": 0}
+        return {"imported": 0, "legs": 0, "payouts": 0, "unresolved_races": 0,
+                "skipped_preliminary": 0, "parsed": 0, "unparsed": 0}
+
+    # 0. サーバ側でパースする（エージェントのパーサは古く、更新手段も無い）
+    parsed_records: list[Win5Record] = []
+    unparsed = 0
+    for raw in body.records:
+        if raw.rec_id != "WF":
+            unparsed += 1
+            continue
+        parsed = parse_wf(raw.data)
+        if parsed is None:
+            unparsed += 1
+            continue
+        parsed_records.append(Win5Record.model_validate(parsed))
+    if not parsed_records:
+        logger.warning("import_win5: WF を1件もパースできませんでした（受信 %d 件）",
+                       len(body.records))
+        return {"imported": 0, "legs": 0, "payouts": 0, "unresolved_races": 0,
+                "skipped_preliminary": 0, "parsed": 0, "unparsed": unparsed}
+
+    records = parsed_records
 
     # 1. 対象レースの jravan_race_id を一括解決（N+1 回避）
-    all_ids = {leg.jravan_race_id for rec in body.records for leg in rec.legs}
+    all_ids = {leg.jravan_race_id for rec in records for leg in rec.legs}
     race_id_map: dict[str, int] = {}
     if all_ids:
         rows = await db.execute(
@@ -965,7 +999,7 @@ async def import_win5(
 
     imported = n_legs = n_payouts = unresolved = skipped_prelim = 0
 
-    for rec in body.records:
+    for rec in records:
         is_prelim = rec.data_kubun in _PRELIMINARY_KUBUN
 
         event_values: dict[str, object] = {
@@ -1058,4 +1092,6 @@ async def import_win5(
         "payouts": n_payouts,
         "unresolved_races": unresolved,
         "skipped_preliminary": skipped_prelim,
+        "parsed": len(records),
+        "unparsed": unparsed,
     }

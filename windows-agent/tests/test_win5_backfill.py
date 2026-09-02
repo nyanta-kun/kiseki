@@ -98,16 +98,19 @@ def test_backfill_does_not_guess_file_prefix() -> None:
     assert "--discover" in src, "接頭辞を実測するための調査モードを持つこと"
 
 
-def test_backfill_fails_loudly_when_parser_missing() -> None:
-    """🔴 parse_wf が無いときに warning で続行しないこと。"""
-    src = _BACKFILL.read_text(encoding="utf-8")
-    assert "sys.exit(1)" in src, "parser 不在で終了すること"
-    # _load_parser の中で warning にしていないこと
-    body = src[src.index("def _load_parser"):src.index("def load_completed")]
-    assert "logger.error" in body, "parser 不在は ERROR で報告すること"
-    assert "logger.warning" not in body, (
-        "parser 不在を warning にしている。0B11 はこの形で全件捨てて 200 を返し続けた"
+def test_backfill_does_not_parse_locally() -> None:
+    """🔴 エージェント側でパースしないこと（実機のパーサに依存しない）。
+
+    windows-agent/jvlink_parser.py は git 管理外で 2026-05-04 付と4か月古く、
+    更新手段も無い。さらに main のパーサは相対 import を持つため実機へ
+    そのまま置けず、置くと既存の HR 払戻経路まで壊れる（2026-09-02 実機確認）。
+    """
+    src = _code_only(_BACKFILL)
+    assert "from jvlink_parser import" not in src, (
+        "実機のパーサを import している。生レコードを POST してサーバ側で"
+        "パースする形（/api/import/weights と同じ）にすること"
     )
+    assert "parse_wf(" not in src, "エージェント側でパースしている"
 
 
 def test_backfill_reads_unresolved_races_from_response() -> None:
@@ -131,10 +134,14 @@ def test_historical_filter_includes_wf() -> None:
     )
 
 
-def test_historical_wf_post_errors_when_parser_missing() -> None:
+def test_historical_wf_post_sends_raw() -> None:
+    """日次経路も生レコードを送ること。"""
     src = _HISTORICAL.read_text(encoding="utf-8")
     body = src[src.index("def post_wf_win5"):src.index("# JVOpen + JVRead ループ")]
-    assert "logger.error" in body, "WF 経路の parser 不在は ERROR で報告すること"
+    assert "parse_wf" not in body, (
+        "日次経路がエージェント側でパースしている。実機のパーサ更新が必要になる"
+    )
+    assert '"rec_id"' in body and '"data"' in body, "生レコードの形で送ること"
 
 
 @pytest.mark.parametrize("flag", ["--from-year", "--option", "--discover", "--only-prefix"])

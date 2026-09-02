@@ -9,29 +9,44 @@
 |---|---|
 | `keiba.win5_events` / `win5_legs` / `win5_payouts` が存在する | 本番適用済み（PR #439・2026-09-02 確認） |
 | `/api/import/win5` が生きている | PR #442 |
-| `windows-agent/jvlink_parser.py` に **`parse_wf` が含まれている** | 🔴 下記 1. |
+| **実機のパーサ更新は不要** | パースはサーバ側で行う（下記 1.） |
 | メンテナンス窓を外している | **毎週火 08:00-15:00 は JVOpen を呼ばない**（`JVLINK_MAINTENANCE_WINDOWS`） |
 | TARGET が JV-Link を掴んでいない | JV-Link は同時1接続のみ |
+| 🔴 **`jvlink_agent.py --mode realtime` が止まっている** | 下記 1. |
 
-## 1. 🔴 パーサを実機へ配置する
+## 1. 🔴 JV-Link の排他を確保する
 
-`windows-agent/jvlink_parser.py` は **git 管理下に無く**、
-`backend/src/importers/jvlink_parser.py` を実機へコピーする運用になっている
-（この手順はどこにも文書化されていなかった。ここが初出）。
-
-```
-copy backend\src\importers\jvlink_parser.py windows-agent\jvlink_parser.py
-```
-
-配置できたか確認する:
+**JV-Link は同時1接続のみ。** 実機では `jvlink_agent.py --mode realtime` が
+常駐して接続を掴んでいる（2026-09-02 実測: `pythonw.exe` PID 2100）。
+これを止めないと `JVOpen` は通らない。
 
 ```
-cd windows-agent
-python -c "from jvlink_parser import parse_wf; print('parse_wf OK')"
+REM 稼働中のものを確認
+wmic process where "name='pythonw.exe'" get ProcessId,CommandLine
+
+REM realtime を止める（開催日を避けること）
+taskkill /PID <jvlink_agent の PID> /F
 ```
 
-⚠️ **これを飛ばすと `win5_backfill.py` は起動時に ERROR で止まる**（そういう設計にした）。
-以前の実装は warning で続行して全件捨てていたので、止まるのが正しい挙動。
+⚠️ **開催日（土日）に止めてはいけない。** realtime はオッズ・馬体重・
+速報成績を約30秒ごとに拾っており、止めると当日の指数が欠ける。
+JRA が開催しない平日（火曜のメンテナンス窓を除く）に行うこと。
+
+⚠️ バックフィル終了後は必ず realtime を戻すこと。
+
+### パーサについて（2026-09-02 に方針変更）
+
+**実機の `jvlink_parser.py` を更新する必要は無い。**
+`win5_backfill.py` は WF の生レコードをそのまま POST し、
+`/api/import/win5` がサーバ側で `parse_wf` する。
+
+🔴 更新しようとして分かったこと（実機で確認済み）:
+- 実機のパーサは **2026-05-04 付**で main より4か月古い
+- main のパーサは `from ..bet_types import BET_TYPES` という**相対 import** を
+  持つため、実機へ置くと単体 import できず、
+  **既存の HR 払戻経路（`from jvlink_parser import parse_hr`）まで壊れる**
+- したがって「パーサをコピーする」運用そのものが成立しない。
+  `/api/import/weights`（0B11）が生を送ってサーバでパースしているのと同じ形にした
 
 ## 2. 調査モード — WF がどのファイル名に入るかを実測する
 
@@ -88,13 +103,15 @@ ORDER BY held_date DESC LIMIT 10;
 
 | 症状 | 疑うところ |
 |---|---|
-| `events = 0` | パーサ不在 / completed の共有 / `--only-prefix` の絞りすぎ |
+| `events = 0` | completed の共有 / `--only-prefix` の絞りすぎ / WF が届いていない |
 | `unresolved > 0` | `races` の取込が先に済んでいない（RA/SE を先に流す） |
 | `with_payout = 0` | 中止レコードの弾き過ぎ、または区分7が届いていない |
 | 最古が 2011-04 より新しい | `--option 3`（セットアップ）を使っていない |
 
-⚠️ `win5_backfill.py` 自身も、1件も取り込めなかった場合と未解決が残った場合に
-ログへ 🔴 を出す。ログの最終行を必ず読むこと。
+⚠️ `win5_backfill.py` 自身も、1件も取り込めなかった場合・未解決が残った場合・
+サーバ側でパースできなかった場合にログへ 🔴 を出す。ログの最終行を必ず読むこと。
+
+⚠️ **終わったら realtime を戻す**（1. を参照）。
 
 ## 5. 取り込めたら
 

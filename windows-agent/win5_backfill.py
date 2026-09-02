@@ -16,6 +16,18 @@ WIN5 は蓄積系 dataspec **`RACE`** に含まれる（`docs/jvdata-spec.md` 30
 `payout_backfill.py` が HR で同じ問題を解いており、本スクリプトはその写しである。
 **独立した `WIN5_completed.txt`** を持つ。
 
+## 🔴 パースはサーバ側で行う（実機のパーサに依存しない）
+
+`windows-agent/jvlink_parser.py` は **git 管理外**で、実機のものは 2026-05-04 付と
+4か月古い。更新手順も自動化も無い。さらに main のパーサは
+`from ..bet_types import BET_TYPES` という**相対 import** を持つため、そのまま
+実機へ置くと単体 import できず、**既存の HR 払戻経路まで巻き込んで壊れる**
+（2026-09-02 に実機で確認）。
+
+そこで本スクリプトは **WF の生レコードをそのまま POST** し、
+`/api/import/win5` がサーバ側で `parse_wf` する。`/api/import/weights`（0B11）が
+同じ理由で採っている形と揃えた。**実機のパーサを更新する必要はない。**
+
 ## 🔴 WF がどのファイル名で届くかは未確認
 
 `payout_backfill.py` は `filename.startswith("H")` で HR ファイルを見分けているが、
@@ -85,32 +97,6 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_KEY = os.getenv("AGENT_API_KEY", "")
 
 
-# ---------------------------------------------------------------------------
-# パーサの self-check
-#
-# 🔴 jvlink_historical.py / jvlink_agent.py は `except ImportError:` を
-#    warning で握り潰して**正常終了する**。しかも windows-agent/ に
-#    jvlink_parser.py は無く、実機へコピーする運用で手順も文書化されていない。
-#    parse_wf が実機に届いていなければ、全件捨てて成功したように見える。
-#    ここでは**起動時に落とす**。
-# ---------------------------------------------------------------------------
-def _load_parser():
-    """`parse_wf` を読み込む。無ければ ERROR で終了する（warning にしない）。"""
-    sys.path.insert(0, str(BASE_DIR))
-    try:
-        from jvlink_parser import parse_wf  # type: ignore[import-not-found]
-    except ImportError as e:
-        logger.error(
-            "jvlink_parser.parse_wf を import できません: %s\n"
-            "  backend/src/importers/jvlink_parser.py を windows-agent/ へ配置してください。\n"
-            "  🔴 ここを warning にして続行してはいけません。"
-            "parse_wf が無いまま流すと WF を全件捨てて正常終了します（0B11 と同じ形）。",
-            e,
-        )
-        sys.exit(1)
-    return parse_wf
-
-
 def load_completed() -> set[str]:
     if not WIN5_COMPLETED_FILE.exists():
         return set()
@@ -160,7 +146,6 @@ def run_win5_backfill(
     only_prefix: str | None = None,
 ) -> None:
     from_time = f"{from_year}0101000000"
-    parse_wf = None if discover else _load_parser()
 
     mode = "調査（POST しない）" if discover else "取込"
     logger.info(
@@ -202,12 +187,8 @@ def run_win5_backfill(
             mark_completed(filename, completed)
             return
 
-        parsed = [parse_wf(r.get("data", "")) for r in wf]
-        records = [p for p in parsed if p]
-        if not records:
-            logger.warning("  [%s] WF %d 件を読んだが parse 結果が0件", filename, len(wf))
-            mark_completed(filename, completed)
-            return
+        # パースはサーバ側。生レコードをそのまま送る（実機のパーサに依存しない）
+        records = [{"rec_id": r.get("rec_id", ""), "data": r.get("data", "")} for r in wf]
 
         for i in range(0, len(records), POST_BATCH_SIZE):
             batch = records[i : i + POST_BATCH_SIZE]
@@ -216,6 +197,9 @@ def run_win5_backfill(
                 logger.error("  [%s] POST 失敗。completed に印を付けずに次へ", filename)
                 return
             total["events"] += res.get("imported", 0)
+            if res.get("unparsed"):
+                logger.warning("  [%s] サーバ側で %d 件をパースできませんでした",
+                               filename, res["unparsed"])
             unresolved = res.get("unresolved_races", 0)
             total["unresolved"] += unresolved
             if unresolved:
@@ -328,7 +312,7 @@ def run_win5_backfill(
     if total["events"] == 0:
         logger.error(
             "🔴 1件も取り込めていません。completed の共有・接頭辞の絞りすぎ・"
-            "parse_wf の不在のいずれかを疑ってください"
+            "WF が届いていないことのいずれかを疑ってください"
         )
     if total["unresolved"]:
         logger.warning(
