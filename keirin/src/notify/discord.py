@@ -1,7 +1,7 @@
 """Discord Webhook 通知
 
 チャンネルごとに個別のWebhook URLを使う（2026-07-24〜「二軸探偵」サーバー
-5チャンネル構成）。呼び出し側は必ず channel を明示指定すること
+構成。2026-09-02 に review を足して6チャンネル）。呼び出し側は必ず channel を明示指定すること
 （黙って別チャンネルに届く事故を防ぐため、デフォルト値は用意しない）。
 """
 import os
@@ -18,6 +18,9 @@ _WEBHOOK_ENV_KEYS: dict[str, str] = {
     "results": "DISCORD_WEBHOOK_URL_RESULTS",    # 成績報告
     "netkeirin": "DISCORD_WEBHOOK_URL_NETKEIRIN",  # netkeirin入稿完了
     "system": "DISCORD_WEBHOOK_URL_SYSTEM",      # システム障害
+    # 課題（状態と次の行動）。**成績報告の results とは分ける**——
+    # あちらは事実、こちらは行動で、混ぜると片方が読まれなくなる（2026-09-02 新設）。
+    "review": "DISCORD_WEBHOOK_URL_REVIEW",      # 夜間レビューの課題リスト
 }
 
 
@@ -39,7 +42,8 @@ def _load_webhook_url(channel: str) -> str:
 def send(content: str, channel: str) -> bool:
     """Discord にメッセージを送信。成功で True を返す。
 
-    channel: "picks" / "prerace" / "results" / "netkeirin" / "system" のいずれか。
+    channel: "picks" / "prerace" / "results" / "netkeirin" / "system" /
+             "review" のいずれか。
     """
     url = _load_webhook_url(channel)
     if not url:

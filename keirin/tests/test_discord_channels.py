@@ -106,6 +106,9 @@ def test_チャンネルキーの一覧が想定どおり():
        repo 全体で monkeypatch しているため（本番では ValueError になる。
        2026-08-29 の型ラボ入稿がその実例）。
     """
-    assert set(_WEBHOOK_ENV_KEYS) == {"picks", "prerace", "results", "netkeirin", "system"}
+    # review は課題（状態と次の行動）専用。**成績報告の results とは分ける**
+    # ——混ぜると片方が読まれなくなる（2026-09-02 追加）。
+    assert set(_WEBHOOK_ENV_KEYS) == {
+        "picks", "prerace", "results", "netkeirin", "system", "review"}
     assert "keirin" not in _WEBHOOK_ENV_KEYS, \
         "紛らわしいキーを増やさないこと（型ラボが 'keirin' で落ちた）"
