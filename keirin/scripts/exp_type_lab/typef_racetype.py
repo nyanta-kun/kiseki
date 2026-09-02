@@ -460,6 +460,92 @@ def marginal() -> None:
         print("")
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 4 — 看板枠の**計画払戻**を掃く（2026-09-02・特選を外した続き）
+#
+# 特選を外して最終日の表示的中を戻したぶん、10万+ が 0.306 -> 0.194件/日 に減った。
+# **種別を広げずに**取り戻せる唯一のダイヤルが `SIGNBOARD_TARGET`。
+#
+# 🔴 恒等式: 看板枠は `Σ(1/予測オッズ) <= 予算/T` の枠に確率降順で詰めるので、
+#    **T を下げると点数が増え、1点あたりの払戻が下がる**。つまり
+#    「当たる回数」と「10万円に届く割合」の交換で、10万+/日 の増減は自明ではない。
+#    既存の実測（`SIGNBOARD_TARGET` の節）は**的中→10万の到達率**だけ:
+#      計画8万 35% / 10万 55% / 12万 71% / 15万 84% / 20万 94%
+#    ここではラインナップ全体で 10万+/日 と表示的中の両方を測る。
+# 🔴 `build_legs` は `SIGNBOARD_TARGET` をモジュール大域で読むので、
+#    差し替えるだけで腕を作れる（`Plan` の属性ではない）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+import src.type_lab as _TL  # noqa: E402
+
+TARGETS = (80_000, 100_000, 120_000, 150_000, 200_000, 250_000)
+
+
+def target() -> None:
+    z = C.board()
+    rt = np.array([str(v) for v in z["RTYPE"]])
+    dayi = np.array([int(v) for v in z["DAYI"]])
+    tp = np.array([str(v) for v in z["TYPE"]])
+    axs = np.array([float(v) for v in z["AXIS_SUM"]])
+    sign_rt = tuple(SIGNBOARD_RACE_TYPES)          # 現行（決勝系+準決勝系）
+    orig = _TL.SIGNBOARD_TARGET
+    for label, win in (("探索 2024-07〜2025-12", "explore"), ("確認 2026-01〜08", "confirm")):
+        base = [int(i) for i in C.select(None, win) if tp[int(i)] in "ABCDEF"]
+        nd = C.days_of(C.select(None, win))
+        # 型F以外は T に依らないので先に1回だけ作る
+        fixed, fcands = {}, {}
+        for i in base:
+            x = ctx(i)
+            if x is None:
+                continue
+            tl = tp[i]
+            if tl == "F":
+                fcands[i] = x
+                continue
+            if tl == "A":
+                trio = _run_named(x, "A_trio")
+                key = ("A_ana" if x.shape.pw_ent >= ANA_PW_ENT_MIN
+                       else ("A_trio" if trio else "A_hit"))
+            else:
+                key = {"B": "B_hit", "C": "C_hit", "D": "D_hit", "E": "E_hit"}[tl]
+            if axs[i] < AXIS_GATE_MIN.get(key, 0.0):
+                continue
+            r = _run_named(x, key)
+            if r:
+                fixed[i] = r
+        print("")
+        print("=" * 112)
+        print(f"=== {label}  n={len(base):,}R  日数={nd}  看板枠の種別={sorted(sign_rt)} ===")
+        print(f"  {'計画払戻':>8s} {'件/日':>6s} {'枠/日':>6s} {'枠の点数':>8s} "
+              f"{'全体表示的中':>11s} {'最終日':>8s} {'10万+/日':>8s} {'30万+/日':>8s} {'ROI%':>7s}")
+        for T in TARGETS:
+            _TL.SIGNBOARD_TARGET = T
+            recs = list(fixed.values())
+            day3 = [r for i, r in fixed.items() if int(dayi[i]) >= 3]
+            nsign, ksign = 0, 0
+            for i, x in fcands.items():
+                key = "F_sign" if rt[i] in sign_rt else "F_hit"
+                if axs[i] < AXIS_GATE_MIN[key]:
+                    continue
+                r = _run_named(x, key)
+                if not r:
+                    continue
+                if key == "F_sign":
+                    nsign += 1
+                    ksign += r["k"]
+                recs.append(r)
+                if int(dayi[i]) >= 3:
+                    day3.append(r)
+            s, s3 = C.summarize(recs, nd), C.summarize(day3, nd)
+            print(f"  {T:8,d} {s['perday']:6.2f} {nsign/nd:6.2f} "
+                  f"{(ksign/nsign if nsign else 0):8.2f} {s['shown']:10.2f}% "
+                  f"{s3['shown']:7.2f}% {s['big_per_day']:8.3f} "
+                  f"{sum(1 for r in recs if r['pay'] >= 300_000)/nd:8.3f} {s['roi']:7.1f}")
+        _TL.SIGNBOARD_TARGET = orig
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "desc"
-    {"desc": desc, "plans": plans_cmd, "lineup": lineup, "marginal": marginal}[cmd]()
+    {"desc": desc, "plans": plans_cmd, "lineup": lineup, "marginal": marginal, "target": target}[cmd]()
