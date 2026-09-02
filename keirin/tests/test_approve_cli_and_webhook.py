@@ -233,27 +233,37 @@ def test_webhook_passes_all_venues_for_both_actions():
     assert 'action == "cancel" and body.get("all_venues")' not in src
 
 
-def test_webhook_manual_ranks_match_the_submitter():
-    """🔴 webhook の `_MANUAL_ALLOWED_RANKS` が submit 側と一致すること。
+def test_webhook_submit_race_uses_type_lab():
+    """🔴🔴 **手動入稿は型ラボのスクリプトを叩くこと**（2026-09-03〜）。
 
-    ランク集合のコピーは3箇所（submit / kiseki backend `_MANUAL_RANK_KEYS` /
-    webhook）。webhook だけ取り残されると **Web のランク選択から選んだのに 400**
-    になる（画面には「入稿に失敗しました」しか出ない）。
+    それまでは `netkeirin_submit_wt.py --manual-rank-key 7S/9C --axis1 --axis2` を
+    起動していた。型ラボへ全面移行した後もここだけ旧ランク経路で、
 
-    実害: 2026-08-14 の 9A→9C・7A廃止に追随しておらず、2026-08-16 まで
-    **9C を選ぶと必ず 400** だった。2026-08-02 にも同じ場所で同型の取り残しがある。
+      - 買い目が旧ランクのロジックで作られる（型の判定を通らない）
+      - `type_lab_picks` に行が残らない → 採点・成績集計から漏れる
+      - `bet_detail` の書式は共通なので**入稿自体は通り、気づけない**
+
+    という状態だった。ここが戻ると同じことが再発するので構文で固定する。
     """
-    import re
+    import ast
 
-    from scripts.netkeirin_submit_wt import MANUAL_ALLOWED_RANKS
-
-    src = WEBHOOK.read_text(encoding="utf-8")
-    m = re.search(r"_MANUAL_ALLOWED_RANKS = \(([^)]*)\)", src)
-    assert m, "webhook の _MANUAL_ALLOWED_RANKS 宣言を見つけられません"
-    webhook_ranks = tuple(re.findall(r'"([^"]+)"', m.group(1)))
-    assert webhook_ranks == MANUAL_ALLOWED_RANKS, (
-        "webhook と submit でランク集合が食い違います。\n"
-        f"  webhook: {webhook_ranks}\n  submit : {MANUAL_ALLOWED_RANKS}")
+    tree = ast.parse(WEBHOOK.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_handle_submit_race")
+    # 🔴 **docstring を外してから見る。** 「なぜ移したか」の説明に旧スクリプト名が
+    #    出てくるので、素の文字列検索だと自分の注記で落ちる（2026-09-03 に実際に踏んだ）。
+    stmts = fn.body[1:] if (fn.body and isinstance(fn.body[0], ast.Expr)
+                            and isinstance(fn.body[0].value, ast.Constant)) else fn.body
+    body = "\n".join(ast.unparse(x) for x in stmts)
+    assert "netkeirin_submit_type_lab.py" in body, "型ラボのスクリプトを叩いていません"
+    assert "netkeirin_submit_wt.py" not in body, "旧ランクのスクリプトが残っています"
+    assert "--manual-rank-key" not in body, "旧ランクの手動入稿フラグが残っています"
+    # 型ラボは3波。noon を弾くと昼の手動入稿ができない
+    # ⚠️ `ast.unparse` は引用符を正規化する（"noon" → 'noon'）ので引用符を含めない
+    assert "noon" in body, "session に noon が入っていません"
+    # ランク・軸が来たら 400（黙って無視しない）
+    assert "rank_key" in body and "400" in body, \
+        "rank_key/axis1/axis2 を拒否する分岐がありません"
 
 
 def test_webhook_routes_publish():

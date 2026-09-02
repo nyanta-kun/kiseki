@@ -17,7 +17,7 @@ import {
   HelpCircle,
   Send,
 } from "lucide-react";
-import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposalsCount, type KeirinPick, type KeirinSummary, type ManualKeirinRankKey } from "@/lib/api";
+import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposalsCount, type KeirinPick, type KeirinSummary } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
 import {
@@ -837,36 +837,20 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
 // S1は2026-07-31全廃・買い目構造が異なるため対象外。旧gate_label分岐由来の
 // 7SS/9SS（同日廃止・SはSへ統合済み）も対象外。
 // RANK_7SS（2026-08-05新設）は軸選定・買い目とも7S/7Aと同一なので技術的には
-// 手動入稿できるが、netkeirinの「自信あり」タグ（7SSのみ付与・上限1件/日と推定）を
-// 手動分で消費すると自動入稿側が落ちるため、あえて含めていない
-// （api.ts の ManualKeirinRankKey 参照）。
-// 車数(n_entries)ごとに候補を絞り込む。
-// 賭け金は 2026-08-07 に全ランク「1レース10,000円を点数で均等割り」へ統一した
-// （keirin 側 strategy_wt.unit_stake が単一正本）。7車5点=2,000円/点・
-// 9車7点=1,400円/点となり、統一前の固定単価と同じ値になる。
-// ⚠️ 7B は 2026-08-03 の新設以来ここに載っていたが、backend の
-// `_MANUAL_RANK_KEYS` には無いため**選ぶと必ず 400 で落ちていた**（2026-08-08 是正）。
-// backend 側が意図的に外している（hypo軸と本番の 7B 軸選定が一致するか未確認）ので、
-// 選択肢の方を落とす。7B を手動入稿したくなったら先に軸の一致を確認し、
-// backend の `_MANUAL_RANK_KEYS` と両方へ足すこと。
-const MANUAL_SUBMIT_RANKS: Record<7 | 9, { key: ManualKeirinRankKey; label: string }[]> = {
-  7: [
-    { key: "7S", label: "7S" },
-  ],
-  9: [
-    { key: "9C", label: "9C" },
-  ],
-};
-
+// 🔴🔴 **2026-09-03: 手動入稿を型ラボ経路へ移した（ユーザー指示）。**
+//    それまではランク（7S / 9C）と軸2車をここで選ばせ、keirin 側で
+//    `netkeirin_submit_wt.py --manual-rank-key` が走っていた。型ラボへ全面移行
+//    （2026-08-28）した後もここだけ旧ランクのままで、`type_lab_picks` に行が残らず
+//    **採点・`/keirin/type-lab`・成績集計から漏れていた**。
+//    型ラボは**型（A〜F）から商品が自動的に決まる**ので、選ばせるものが無い。
+//    → `MANUAL_SUBMIT_RANKS` / `ManualKeirinRankKey` は撤去。ダイアログは確認だけになる。
 function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => void }) {
   const nCars = pick.n_entries === 9 ? 9 : 7;
-  const options = MANUAL_SUBMIT_RANKS[nCars];
-  const [rankKey, setRankKey] = useState<ManualKeirinRankKey>(options[0].key);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const handleSubmit = async () => {
-    if (pick.hypo_axis1 == null || pick.hypo_axis2 == null || submitting) return;
+    if (submitting) return;
     setSubmitting(true);
     setResult(null);
     try {
@@ -874,7 +858,6 @@ function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => 
         baseRaceKey(pick.race_key),
         raceKeyToISODate(pick.race_key),
         submitSessionFromStartAt(pick.start_at),
-        { rankKey, axis1: pick.hypo_axis1, axis2: pick.hypo_axis2 },
       );
       setResult(r);
     } catch {
@@ -891,28 +874,16 @@ function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => 
         onClick={e => e.stopPropagation()}
       >
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1">
-          推奨外レースの入稿ランクを選択
+          このレースを型ラボで入稿
         </h3>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          {pick.venue_name}{pick.race_no}R（軸 {pick.hypo_axis1}-{pick.hypo_axis2}・{nCars}車立て）。
-          選んだランクのテンプレート文言で入稿します（賭け方・点数はランクにより変わりません）。
+          {pick.venue_name}{pick.race_no}R（{nCars}車立て）。
+          型（A〜F）を判定して商品・軸・買い目を自動で組み、入稿ゲート（想定平均払戻
+          2万円・1点2.0倍）を通ったものだけを入稿します。
+          <span className="block mt-1">
+            ゲートに掛かった場合は入稿されません（理由は確認画面に残ります）。
+          </span>
         </p>
-        <div className="flex gap-2 mb-4">
-          {options.map(o => (
-            <button
-              key={o.key}
-              type="button"
-              onClick={() => setRankKey(o.key)}
-              className={`flex-1 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
-                rankKey === o.key
-                  ? "bg-blue-500 border-blue-500 text-white"
-                  : "border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
         {result && (
           <p className={`text-xs mb-3 ${result.ok ? "text-gray-500 dark:text-gray-400" : "text-red-500"}`}>
             {result.ok ? "このレースの入稿を開始しました（結果はDiscordで確認してください）" : `エラー: ${result.message}`}
@@ -932,7 +903,7 @@ function SubmitRankDialog({ pick, onClose }: { pick: KeirinPick; onClose: () => 
             disabled={submitting || result?.ok}
             className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-600"
           >
-            {submitting ? "送信中…" : "このランクで入稿"}
+            {submitting ? "送信中…" : "型ラボで入稿"}
           </button>
         </div>
       </div>

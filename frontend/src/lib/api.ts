@@ -1277,15 +1277,9 @@ export async function fetchKeirinSummary(date?: string): Promise<KeirinSummary> 
   return get<KeirinSummary>(`/keirin/summary${q}`, { cache: "no-store" });
 }
 
-/** 推奨外レースの手動入稿用ランク。
- * S1（2026-07-31全廃）・旧gate_label分岐由来の7SS/9SS（同日廃止）に加え、
- * RANK_7SS（波乱軸選出・穴レース検知）も 2026-08-02 に全廃したため対象外
- * （backend/src/api/keirin_router.py の _MANUAL_RANK_KEYS と揃える）。 */
-// ⚠️ backend の `keirin_router._MANUAL_RANK_KEYS` と**必ず一致**させること。
-// ここに backend が受け付けないキーを載せると、UI では選べるのに送信すると
-// 必ず 400「不正なrank_key」になる（2026-08-03〜08-08 の間 "7B" が実際にそうなっていた）。
-// 一致は backend/tests/test_keirin_rank_consistency.py が機械的に検査する。
-export type ManualKeirinRankKey = "7S" | "7B" | "9C";
+// 🔴 `ManualKeirinRankKey` は 2026-09-03 に撤去した。手動入稿は型ラボ経路になり、
+//    型（A〜F）から商品が決まるのでランクも軸も選ばせない
+//    （backend `keirin_router` の `_MANUAL_RANK_KEYS` も同日に廃止）。
 
 
 export type KeirinStatItem = {

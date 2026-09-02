@@ -1767,28 +1767,26 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # （7SSのみ付与・上限1件/日と推定）を手動入稿で消費すると自動入稿側が落ちるため
 # あえて対象外のままにしている。
 #
-# 【2026-08-08 解消】以前はフロントの MANUAL_SUBMIT_RANKS と api.ts の
-# ManualKeirinRankKey が "7B" を含む一方ここには無く、**UI で選べるのに送信すると
-# 必ず 400「不正なrank_key」**になっていた（2026-08-03 の 7B 新設以来）。
-# 7B は hypo軸（_hypo_select_axis）と本番の軸選定が一致するか未確認なので
-# ここへ足すのではなく、フロントの選択肢から 7B を落として解消した。
-# 7B を手動入稿したくなったら先に軸の一致を確認し、フロントと両方へ足すこと。
-#
-# ⚠️ この tuple は**フロントの MANUAL_SUBMIT_RANKS / ManualKeirinRankKey の
-#    上位集合**でなければならない。test_keirin_rank_consistency.py が検査する。
-# 手動入稿で選べるランク。9車は 2026-08-14 に 9S/9A を廃止し 9C へ集約した。
-# ⚠️ keirin 側 `MANUAL_ALLOWED_RANKS` と**必ず一致させること**
-#    （`test_frontend_manual_submit_ranks_match_backend` が突き合わせている）。
-# 🔴 7A は 2026-08-14 に RANK_7S へ統合したので外した。
-_MANUAL_RANK_KEYS = ("7S", "7B", "9C")
+# 🔴🔴 **2026-09-03: 手動入稿を型ラボ経路へ移した（ユーザー指示）。**
+#    それまでは「ユーザーがランク（7S / 9C）と軸2車を選び、旧ランクのロジックで
+#    買い目を作る」形だった。型ラボへ全面移行（2026-08-28）した後もここだけ旧経路で、
+#    `type_lab_picks` に行が残らないため**採点・`/keirin/type-lab`・成績集計から漏れて**いた。
+#    型ラボは**型（A〜F）で商品が自動的に決まる**ので、ランクも軸も選ばせない。
+#    → `_MANUAL_RANK_KEYS` は廃止。フロントの `MANUAL_SUBMIT_RANKS` も同日に撤去した。
 
 
 class SubmitRaceIn(BaseModel):
+    """手動入稿の入力。**ランクも軸も受け取らない**（2026-09-03〜）。
+
+    型ラボは型（A〜F）から商品が決まるので、選ばせるものが無い。
+    古いクライアントが `rank_key` / `axis1` / `axis2` を送ってきたら
+    **400 で明示的に断る**（黙って無視すると「選んだのに効かない」になる）。
+    """
+
     race_key: str
     date: str
     session: str
-    # 推奨外レースの手動入稿用（2026-07-31新設）。3つとも指定時のみ有効。
-    # 未指定なら従来通りkeirin側の候補JSON検索に任せる（推奨レースの挙動は不変）。
+    #: 🔴 受け取るのは**拒否するため**だけ。挙動には一切使わない。
     rank_key: str | None = None
     axis1: int | None = None
     axis2: int | None = None
@@ -1800,10 +1798,10 @@ async def trigger_submit_race(body: SubmitRaceIn, _: ApiKeyDep) -> JSONResponse:
     スクリプト(netkeirin_submit_wt.py --race-key)をrace_key絞り込みで起動する中継。
     ON/OFF・テンプレート・ゲート・重複送信防止は通常の日次/夕方バッチと完全に同一ルール）。
 
-    rank_key/axis1/axis2 が揃っている場合は、推奨外レース（has_pick=false）を
-    ユーザーがダイアログでランク選択して手動入稿するケース。keirin側の候補JSON
-    検索を経由せず、指定した軸2車・ランクで直接入稿する
-    （netkeirin_submit_wt.py --manual-rank-key/--axis1/--axis2）。
+    🔴 **2026-09-03 から型ラボ経路**（keirin 側 `netkeirin_submit_type_lab.py
+    --race-key`）。推奨外レースでも型ラボが型を判定して商品を組むので、
+    ランクも軸2車も指定しない。`type_lab_picks` に行が残るので、
+    採点・`/keirin/type-lab`・成績集計にそのまま乗る。
 
     /keirin/picks 等が返す race_key は候補種別を示す "#CAND"/"#7S" 等のサフィックスを
     含む場合がある（本ルーター内の各クエリが SPLIT_PART(race_key, '#', 1) で剥がしている
@@ -1815,18 +1813,17 @@ async def trigger_submit_race(body: SubmitRaceIn, _: ApiKeyDep) -> JSONResponse:
         return JSONResponse(content={"ok": False, "message": f"不正なrace_key: {body.race_key}"}, status_code=400)
     if not _DATE_RE.match(body.date):
         return JSONResponse(content={"ok": False, "message": f"不正な日付: {body.date}"}, status_code=400)
-    if body.session not in ("morning", "evening"):
+    # ⚠️ 型ラボは3波（morning / noon / evening）。旧経路は morning / evening だけだった。
+    if body.session not in ("morning", "noon", "evening"):
         return JSONResponse(content={"ok": False, "message": f"不正なsession: {body.session}"}, status_code=400)
+    if body.rank_key is not None or body.axis1 is not None or body.axis2 is not None:
+        return JSONResponse(content={
+            "ok": False,
+            "message": ("型ラボでは型からプランと軸が決まるため rank_key/axis1/axis2 は"
+                        "受け付けません（2026-09-03 に旧ランク経路を廃止）"),
+        }, status_code=400)
 
     payload: dict[str, Any] = {"race_key": base_race_key, "date": body.date, "session": body.session}
-    if body.rank_key is not None or body.axis1 is not None or body.axis2 is not None:
-        if body.rank_key not in _MANUAL_RANK_KEYS:
-            return JSONResponse(content={"ok": False, "message": f"不正なrank_key: {body.rank_key}"}, status_code=400)
-        if body.axis1 is None or body.axis2 is None or body.axis1 == body.axis2:
-            return JSONResponse(content={"ok": False, "message": "axis1/axis2が不正です"}, status_code=400)
-        payload["rank_key"] = body.rank_key
-        payload["axis1"] = body.axis1
-        payload["axis2"] = body.axis2
 
     try:
         async with httpx.AsyncClient() as client:
