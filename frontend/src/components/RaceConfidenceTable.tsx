@@ -223,7 +223,7 @@ export function RaceConfidenceTable({ initialRows, date }: Props) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs px-1">
-        <span className="text-gray-500">
+        <span className="text-surface-muted">
           全{rows.length}レースを{sortLabel}順に表示
         </span>
         {stale && <span className="text-amber-600">最新のオッズを取得できていません</span>}

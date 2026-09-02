@@ -8,7 +8,7 @@ export default function Loading() {
     >
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 border-4 border-green-700 border-t-transparent rounded-full animate-spin motion-reduce:animate-none" />
-        <p className="text-sm text-gray-500">読み込み中...</p>
+        <p className="text-sm text-surface-muted">読み込み中...</p>
       </div>
     </div>
   );

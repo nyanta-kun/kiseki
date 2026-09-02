@@ -100,8 +100,8 @@ export default async function ChihouResultsPage({
 
         {/* タイトル */}
         <div>
-          <h1 className="text-lg font-bold text-gray-800">地方競馬 AI指数 実績</h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <h1 className="text-lg font-bold text-surface-heading">地方競馬 AI指数 実績</h1>
+          <p className="text-xs text-surface-muted mt-0.5">
             予測1位（composite_index最高）vs 実際着順
           </p>
         </div>
