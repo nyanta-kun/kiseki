@@ -17,6 +17,7 @@ import {
   HelpCircle,
   Send,
 } from "lucide-react";
+import { foldTrifecta, type Trifecta } from "@/lib/keirin-combo";
 import { fetchKeirinPicks, fetchKeirinSummary, fetchKeirinApprovalMode, fetchKeirinProposalsCount, type KeirinPick, type KeirinSummary } from "@/lib/api";
 // 副作用のある操作は Server Action 経由（APIキーをブラウザへ出さないため）。
 // 詳細は app/keirin/actions.ts の冒頭コメント参照。
@@ -137,16 +138,17 @@ function formatComboLabel(
   const sep = isTrio ? "=" : "-";
   const combos = parts.map((c) => c.split(sep).map(Number));
 
-  // 全ての目に共通して現れる2車があれば「軸2車＝相手列」へ畳む。
-  // ⚠️ 三連単は**着順に意味がある**ので、1着・2着が全目で同じときだけ畳む
-  //    （共通2車が入れ替わる形は畳むと着順を偽る）。
+  // 三連単はフォーメーションへ畳む（2026-09-03）。
+  // 🔴 **着順を偽らないこと。** 畳んだ表記が表す集合は、実際に買った集合と
+  //    **完全に一致**しなければならない。だから
+  //      ① まず (1着,2着) が同じ目をまとめて 3着だけを列挙する
+  //      ② そのうえで「1着が同じ ∧ 3着の集合が同じ」行の 2着だけをまとめる
+  //    の2段だけにする（1着・2着・3着を独立に掛け合わせると買っていない目が混ざる）。
+  // ⚠️ 型ラボの `prob_top`（確率上位k点）は任意の目の集合なので、単純な
+  //    「軸2車固定」では畳めない。実測で12点→約7行→さらに減る。
   if (isTrifecta) {
-    const [a1, a2] = combos[0];
-    if (combos.every((c) => c[0] === a1 && c[1] === a2)) {
-      const thirds = combos.map((c) => c[2]);
-      return { label, body: `${a1}-${a2}-${sortThirdsByTop3(thirds, entries).join(",")}` };
-    }
-    return { label, body: parts.join(" ") };
+    return { label, body: foldTrifecta(
+      combos as unknown as Trifecta[], (cars) => sortThirdsByTop3(cars, entries)) };
   }
   const counts = new Map<number, number>();
   for (const c of combos) for (const car of new Set(c)) counts.set(car, (counts.get(car) ?? 0) + 1);
@@ -949,6 +951,32 @@ function meetingHeaderBg(t: KeirinPick["meeting_type"]): string {
   return (t && MEETING_HEADER_BG[t]) || "bg-gray-50 dark:bg-gray-800";
 }
 
+/** 型ラボのプラン → 画面ラベル。**keirin 側 `PLAN_TITLES` と役割が違う**
+ *  （あちらは netkeirin の商品タイトル、ここは一覧の識別バッジ）。 */
+const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
+  A_hit: "本線", A_pay: "一撃", A_trio: "本線(複)", A_ana: "波乱",
+  B_hit: "本線", C_hit: "中配当", D_hit: "混戦(複)", E_hit: "高配当",
+  F_hit: "押さえ", F_pay: "一撃",
+  A_sign: "看板", B_sign: "看板", C_sign: "看板",
+  D_sign: "看板", E_sign: "看板", F_sign: "看板",
+};
+
+/** 型ラボの型（A〜F）バッジ。型が商品を決めるので、一覧でも先頭に出す。 */
+function TypeLabBadge({ type, plan }: { type?: string | null; plan?: string | null }) {
+  if (!type) return null;
+  const label = plan ? (TYPE_LAB_PLAN_LABEL[plan] ?? plan) : null;
+  return (
+    <span className="inline-flex items-center gap-1 flex-shrink-0">
+      <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+        {type}
+      </span>
+      {label && (
+        <span className="text-[10px] text-gray-500 dark:text-gray-400">{label}</span>
+      )}
+    </span>
+  );
+}
+
 function NoPickRow({ pick }: { pick: KeirinPick }) {
   const [collapsed, setCollapsed] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -957,6 +985,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
   const isSettled = computeIsSettled(pick.status, pick.start_at) && hasResult(pick.entries);
   const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
   const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
+  const tlCombo = pick.type_lab_combo
+    ? formatComboLabel(pick.type_lab_combo, pick.entries) : null;
   return (
     <div className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75`}>
       <div className={`w-full flex items-center gap-1 px-1 sm:px-2 ${meetingHeaderBg(pick.meeting_type)}${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
@@ -990,7 +1020,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
               {(pick.trifecta_payout ?? 0) > 0 && <>{pick.trio_payout > 0 && " "}単¥{(pick.trifecta_payout ?? 0).toLocaleString()}</>}
             </span>
           )}
-          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">推奨外</span>
+          <TypeLabBadge type={pick.type_lab_type} plan={pick.type_lab_plan} />
+          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">入稿外</span>
           <ChevronDown
             size={15}
             className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
@@ -1000,8 +1031,8 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
           <button
             type="button"
             onClick={() => setDialogOpen(true)}
-            title="ランクを選んでnetkeirinへ入稿"
-            aria-label="ランクを選んでnetkeirinへ入稿"
+            title="型ラボでnetkeirinへ入稿"
+            aria-label="型ラボでnetkeirinへ入稿"
             className="flex-shrink-0 p-1 mr-1 rounded text-gray-400 hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400"
           >
             <Send size={14} />
@@ -1010,7 +1041,24 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
       </div>
       {!collapsed && (
         <>
-          {hasHypo && (
+          {/* 🔴 **型ラボの買い目を出す**（2026-09-03）。それまで出していた
+              「参考買い目」は旧ランクの仮軸（`hypo_*`）で**三連複・軸2車流し固定**、
+              型ラボの商品（型C なら三連単12点 など）と食い違っていた。
+              手動入稿はこの型ラボの商品を出すので、画面と実際に出るものを揃える。 */}
+          {tlCombo ? (
+            <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-start gap-2 text-xs">
+              <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">買い目</span>
+              <span className="text-gray-500 dark:text-gray-400 tabular-nums break-all">
+                {tlCombo.label && <>{tlCombo.label}: </>}{tlCombo.body}
+                {pick.type_lab_n_legs ? <> ({pick.type_lab_n_legs}点)</> : null}
+                {pick.type_lab_mean_payout ? (
+                  <span className="text-gray-400 dark:text-gray-500">
+                    {" "}想定平均 ¥{pick.type_lab_mean_payout.toLocaleString()}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ) : hasHypo && (
             <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 text-xs">
               <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">参考買い目</span>
               <span className="text-gray-500 dark:text-gray-400 tabular-nums">
@@ -1024,7 +1072,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
           <EntryTable entries={pick.entries} />
           {isSettled && (
             <div className="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center justify-between gap-2">
-              <span className="text-xs text-gray-400 dark:text-gray-500">推奨外</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">入稿外</span>
               <PayoutInfo trio={pick.trio_payout} trifecta={pick.trifecta_payout} />
             </div>
           )}
@@ -1747,7 +1795,14 @@ export default function KeirinPage() {
   // 隠せる行（ピック無し・ガミ落ちで推奨外が確定した行）がある日だけ切替を出す。
   // 判定は一覧側の描画条件と**同じ式**にすること（片方だけ直すと、ボタンは
   // 出るのに何も隠れない／隠れるのにボタンが無い、という食い違いになる）。
-  const hasHideableRows = picks.some((p) => !p.has_pick || computeGamiSkip(p));
+  // 🔴 **判定は `sold`（実際に入稿したか）で行う**（2026-09-03・ユーザー指示）。
+  //    それまでは `has_pick`（旧ランクの候補が picks_history にあるか）で切っていたが、
+  //    型ラボへ全面移行（2026-08-28）した後は **picks_history に行が立たない**ので
+  //    「候補はあるが売っていない」と「そもそも候補が無い」が区別できていなかった。
+  //    店頭で意味があるのは「実際に入稿したか」だけなので、そちらへ揃える。
+  //    ⚠️ 一覧側の描画条件と**同じ式**にすること（片方だけ直すと、ボタンは出るのに
+  //       何も隠れない／隠れるのにボタンが無い、という食い違いになる）。
+  const hasHideableRows = picks.some((p) => !p.sold);
 
   // 🔴 **一覧の表示を summary に待たせないこと**（2026-08-23・実バグ）。
   //    以前は picks と summary を `Promise.allSettled` で待ってから
@@ -1931,12 +1986,14 @@ export default function KeirinPage() {
         <>
           <div className="space-y-2">
             {shownPicks.map((p, idx) => {
-              if (!p.has_pick) {
+              // 🔴 **入稿していない行は「入稿外」として扱う**（2026-09-03）。
+              //    `has_pick`（旧ランクの候補の有無）ではなく `sold` で切る。
+              if (!p.sold) {
                 if (hideNoPickRows) return null;
-                return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
+                if (!p.has_pick) {
+                  return <NoPickRow key={`nopick-${p.race_key}-${idx}`} pick={p} />;
+                }
               }
-              // ガミ落ち（オッズ条件で推奨外確定）も「推奨外を非表示」スイッチで隠す
-              if (hideNoPickRows && computeGamiSkip(p)) return null;
               // 入稿だけの行は picks_history の id を持たない。キーは race_key で作る
               // （id=null のまま並べると全部同じキーになり React が行を取り違える）。
               const rowId = p.id ?? p.race_key;
@@ -1988,7 +2045,7 @@ export default function KeirinPage() {
                       : "border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700"
                   }`}
                 >
-                  {hideNoPickRows ? "🙈 推奨外 非表示中" : "👁 推奨外 表示中"}
+                  {hideNoPickRows ? "🙈 入稿分のみ" : "👁 入稿外も表示"}
                 </button>
               )}
               {/* 場フィルタ。**一番左が「全て」**。開催が2場以上ある日だけ出す

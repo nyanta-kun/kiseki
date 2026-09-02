@@ -63,7 +63,12 @@ def test_trifecta_is_only_collapsed_when_order_is_fixed(src: str):
 
     共通2車が入れ替わる形（1-2-3 と 2-1-3）を畳むと**着順を偽る**。
     """
+    # 🔴 **2026-09-03 に畳み込みを `lib/keirin-combo.ts` へ出した。**
+    #    畳んだ表記と買った集合が一致することは vitest（`keirin-combo.test.ts`）が
+    #    **展開して集合比較**で固定しているので、ここは「page.tsx が自前で畳まず
+    #    その関数を使っていること」だけを見る（実装のコピーが増えるのを防ぐ）。
     fn = src[src.index("function formatComboLabel("):]
     fn = fn[:fn.index("\n}\n") + 3]
-    assert "c[0] === a1 && c[1] === a2" in fn, (
-        "三連単を着順を見ずに畳んでいます（1着2着が入れ替わる目を潰します）")
+    assert "foldTrifecta(" in fn, "三連単の畳み込みが keirin-combo.ts を経由していません"
+    assert "c[0] === a1 && c[1] === a2" not in src, (
+        "page.tsx に畳み込みの写しが残っています（keirin-combo.ts へ寄せること）")
