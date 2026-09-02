@@ -347,6 +347,9 @@ class Plan:
     sigma_max: float = 0.0   # Σ(1/予測オッズ) の上限（0=なし）
     alloc: str = "conf"      # 'conf' | 'dutch'
     floor_mult: float = DEFAULT_FLOOR_MULT
+    #: 三連単の買い目を**三連複へ畳んだ版**が入稿ゲートを通るなら、そちらを売る。
+    #: 詳細は `build_product` と `TRIO_FALLBACK` の節。
+    trio_fallback: bool = False
     note: str = ""
 
 
@@ -381,6 +384,7 @@ class Plan:
 PLANS: dict[str, Plan] = {
     # 型A 鉄板 — 3点。**2026-08-31 に固定構成（`fixed12`）から確率順へ替えた。**
     "A_hit": Plan("A_hit", "A", "trifecta", "prob_top", 0, max_legs=3, alloc="conf",
+                  trio_fallback=True,
                   note="確率上位3点（同ライン隣接ボーナス込み・表示的中を取る）"),
     "A_pay": Plan("A_pay", "A", "trifecta", "axis1_second2", 3, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（払戻を取る）"),
@@ -393,6 +397,7 @@ PLANS: dict[str, Plan] = {
     # 型B 堅い・中 — 確率上位を Σ(1/予測) の床まで積む。
     "B_hit": Plan("B_hit", "B", "trifecta", "prob_top", 0, max_legs=8,
                   sigma_max=1 / 3.0, alloc="dutch",
+                  trio_fallback=True,
                   note="確率上位から想定平均払戻 30,000円を割らない点数まで"),
     # 型C 堅いが崩れ筋 — 帯を切って点数を増やす側。
     # 🔴 **2026-09-01 に帯を 20倍 → 15倍へ下げた（点数は12点のまま）。**
@@ -416,6 +421,7 @@ PLANS: dict[str, Plan] = {
     #    100倍超が 51.2 / 60.4% で最悪。ただし100倍超はダッチ配分ゆえ投資の3%しかない）。
     "C_hit": Plan("C_hit", "C", "trifecta", "prob_top", 0, min_odds=15.0,
                   max_legs=12, alloc="dutch",
+                  trio_fallback=True,
                   note="予測15倍以上から確率上位12点"),
     # 型D 混戦・軸あり — 唯一の三連複。最人気の相手を外す。
     # 🔴 **2026-09-01 に相手を 4点 → 3点へ減らした。** 型D は「的中頻度に対して
@@ -433,9 +439,11 @@ PLANS: dict[str, Plan] = {
     # 型E 混戦・中 — 高い帯で点数を広げる。
     "E_hit": Plan("E_hit", "E", "trifecta", "prob_top", 0, min_odds=30.0,
                   max_legs=14, alloc="dutch",
+                  trio_fallback=True,
                   note="予測30倍以上から確率上位14点"),
     # 型F 大混戦 — 12点。**2026-08-31 に全順列（`all6`）から確率順へ替えた。**
     "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0, max_legs=12, alloc="conf",
+                  trio_fallback=True,
                   note="確率上位12点（同ライン隣接ボーナス込み）"),
     "F_pay": Plan("F_pay", "F", "trifecta", "axis1_second2", 2, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（一撃を取る）"),
@@ -780,6 +788,90 @@ def build_legs(shape: RaceShape, plan: Plan,
     return out or None
 
 
+#: 三連複へ畳まないプラン。**看板枠と穴狙いは「たまに大きく当たる」ために作ってある。**
+#: 順序を捨てると配当が落ちて存在理由が消える。
+#:
+#: 🔴 実測（`scripts/exp_type_lab/hit_menu.py`・確認窓 2026）で、全プランに当てると
+#:    表示的中は +2.09pt 伸びるが **10万+/日 が 0.194 → 0.106 と半減**する。
+#:    伸びのほとんどが `F_sign` を畳んだぶんで、看板を売り飛ばして的中を買っていた。
+#:    除くと効果は +0.53pt に落ちるが、**10万+ は 0.194 のまま動かない**。
+#: ⚠️ 属性で持たせているので、ここに名前を書く必要はない（`trio_fallback` を
+#:    立てないだけ）。この定数は「なぜ立てていないか」を残すための記録。
+TRIO_FALLBACK_EXCLUDED = ("F_sign", "A_ana", "A_pay", "F_pay")
+
+
+def build_product(shape: RaceShape, plan: Plan,
+                  tf_odds: Mapping, tf_probs: Mapping,
+                  trio_odds: Mapping, trio_probs: Mapping,
+                  min_mean_payout: float = 20_000.0,
+                  min_point_odds: float = 2.0):
+    """実際に売る1商品 `(bet_type, legs, stakes, odds, probs)`。組めなければ None。
+
+    三連単プランで `trio_fallback` が立っているときだけ、**同じ買い目を三連複へ畳んだ版**を
+    作り、それが入稿ゲート（平均想定払戻 > 2万円・1点でも予測 < 2.0倍なら見送り）を
+    通るならそちらを返す。通らなければ三連単のまま＝**件数は1件も減らない**。
+
+    ## なぜこれを入れるのか
+
+    的中は2段の積に分解できる:
+
+        P(表示的中) = P(軸2車そろい) × P(カバー | そろい) + P(そろわず) × P(カバー | そろわず)
+
+    実測（`scripts/exp_type_lab/hit_conditions.py`・売る商品 探索18,549 / 確認7,496件）:
+    全体で **そろい 53.9/52.7% × 換金(そろい時) 38.8/39.9% → 表示的中 24.62/25.04%**。
+    ＝ **軸はそろっているのに6割は換金できていない。** その主因が「順序違い」で、
+    2026-09-02 の実売37件では**そろった16件のうち9件が順序違い**だった。
+
+    ## 実測（`hit_menu.py`・探索 2024-07〜2025-12 / 確認 2026-01〜08）
+
+        腕                          件/日        表示的中          ROI        10万+/日
+        現行                     33.79/34.70  24.62/25.04%  77.3/82.7  0.179/0.194
+        **本関数（看板・穴を除く）**  33.79/34.70  25.13/25.57%  77.4/82.8  0.179/0.194
+        Δ表示的中  +0.51pt [+0.40,+0.61] / +0.53pt [+0.33,+0.75]（両窓とも 0 を跨がない）
+
+    **件数・ROI・10万+・払戻中央のどれも動かさずに表示的中だけ上がる**（日単位ブートストラップ）。
+    型別でも 8セル（4型×2窓）すべてプラス: A +0.82/+0.46・B +0.50/+0.83・
+    C +0.98/+0.85・E +0.84/+1.36。
+
+    🔴 **全面的な三連複化とは別物**。「常に三連複」は入稿ゲートを通るのが
+       0.19〜0.62件/日しかなく（＝平均想定払戻が2万円を割る）、件数が 1/10 以下になる。
+       効くのは「通るときだけ」という形だけ。
+    🔴 **ゲートは三連複側にも当てる**。当てないと想定払戻2万円の約束が崩れる。
+    """
+    if plan.bet_type == "trio":
+        legs = build_legs(shape, plan, trio_odds, trio_probs)
+        if not legs:
+            return None
+        st = allocate(legs, trio_odds, trio_probs, plan)
+        return ("trio", legs, st, trio_odds, trio_probs) if st else None
+
+    legs = build_legs(shape, plan, tf_odds, tf_probs)
+    if not legs:
+        return None
+    st = allocate(legs, tf_odds, tf_probs, plan)
+    if not st:
+        return None
+    base = ("trifecta", [c for c in legs if c in st], st, tf_odds, tf_probs)
+    if not plan.trio_fallback:
+        return base
+
+    folded = sorted({frozenset(c) for c in legs}, key=lambda x: sorted(x))
+    folded = [c for c in folded if _pos(trio_odds.get(c))]
+    if len(folded) < 2:
+        return base
+    tri_plan = Plan(f"{plan.key}~trio", plan.type_label, "trio", "axis2_flow",
+                    len(folded), alloc="dutch")
+    st3 = allocate(folded, trio_odds, trio_probs, tri_plan)
+    if not st3:
+        return base
+    keys = [c for c in folded if c in st3]
+    if mean_expected_payout(st3, trio_odds) <= min_mean_payout:
+        return base
+    if min(float(trio_odds[c]) for c in keys) < min_point_odds:
+        return base
+    return ("trio", keys, st3, trio_odds, trio_probs)
+
+
 def _pos(v) -> bool:
     try:
         return v is not None and float(v) > 0
@@ -901,8 +993,13 @@ def rule_version(n_entries: int = 7) -> str:
     import hashlib
     import json
     payload: dict = (
+        # 🔴 **`Plan` に属性を足したらここにも足すこと。** 入れ忘れると規則を
+        #    変えても版が割れず、**新旧の行が同じ `rule_version` で混ざる**
+        #    （`_sign` を後から足したのと同じ理由。2026-09-03 に `trio_fallback`
+        #    を足したときも一度この抜けを踏んだ）。
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
-             v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
+             v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult,
+             v.trio_fallback]
          for k, v in sorted(PLANS.items())}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
         # 🔴 看板枠は**プランの属性だけでは表せない**（計画払戻 T が `build_legs` の

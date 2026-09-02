@@ -39,7 +39,7 @@ sys.path.insert(0, str(REPO))
 
 from src.database import get_connection            # noqa: E402
 from src.type_lab import (                          # noqa: E402
-    BUDGET, PLANS, allocate, build_legs, mean_expected_payout,
+    BUDGET, PLANS, build_product, mean_expected_payout,
     min_expected_payout, plans_for, race_shape, rule_version,
 )
 
@@ -82,20 +82,19 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
     # 🔴 **車数と種別を渡すこと。** 9車の型F は決勝の F_pay だけを売る規則が
     #    ここでしか効かない（`plans_for` を素で呼ぶと 9車でも全8プラン出る）。
     for plan in plans_for(shape.type_label, N_ENTRIES, meta.get("race_type")):
-        odds = trio_odds if plan.bet_type == "trio" else tf_odds
-        prob = trio_prob if plan.bet_type == "trio" else tf_prob
-        legs = build_legs(shape, plan, odds, prob)
-        if not legs:
+        # 🔴 **`build_product` を通すこと**（`build_legs` を直接呼ばない）。
+        #    三連複への畳み込み（`trio_fallback`）はこの関数の中にあり、
+        #    ここで素通しにすると **live と paper で商品が変わる**。
+        got = build_product(shape, plan, tf_odds, tf_prob, trio_odds, trio_prob)
+        if not got:
             continue
-        stakes = allocate(legs, odds, prob, plan)
-        if not stakes:
-            continue
+        bet_type, legs, stakes, odds, prob = got
         # 🔴 **`stakes` を見る**（`legs` ではない）。`allocate` は賭け金 0 円の点を
         #    落として返すので、`legs` のまま回すと**買っていない点を記録する**
         #    （`n_legs` も想定払戻もずれる）。並びは `legs` の順を保つ。
         legs = [c for c in legs if c in stakes]
         detail = [
-            {"combo": _combo_str(c, plan.bet_type),
+            {"combo": _combo_str(c, bet_type),
              "stake": int(stakes[c]),
              "pred_odds": round(float(odds[c]), 2),
              "prob": round(float(prob.get(c, 0.0)), 6)}
@@ -115,7 +114,7 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             # 🔴 **並びを行へ焼き付ける**。後から `wt_entries` を引き直しても
             #    モデルが再学習されていれば別の並びになり、答え合わせにならない。
             p3_order="-".join(str(c) for c in shape.order),
-            mode=mode + MODE_TAG, plan_key=plan.key, bet_type=plan.bet_type,
+            mode=mode + MODE_TAG, plan_key=plan.key, bet_type=bet_type,
             n_legs=len(legs), budget=BUDGET,
             legs=json.dumps(detail, ensure_ascii=False),
             pred_mean_payout=round(mean_expected_payout(stakes, odds), 1),

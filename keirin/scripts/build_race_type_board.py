@@ -12,7 +12,10 @@
 出力 /tmp/race_type_board.npz  （上記に加えて）
   TRIO_ODDS(N,35)   確定三連複オッズ（CANON3 の順）
   TRIO_WIN(N)       的中三連複の index / TRIO_PAY(N) その確定オッズ
-  TRIO_PO(N,35)     **予測**三連複オッズ = 0.75 / Σ_perm (1/PO)
+  TRIO_PO(N,35)     **予測**三連複オッズ = 1 / Σ_perm (1/PO)
+                    （🔴 `0.75 / Σ` ではない。実装は下の `TRIO_PO = 1.0 / q3` が正で、
+                      本番 `build_type_lab_picks._fold_to_trio` と同じ式。
+                      2026-09-03 まで**この行だけ**古い記述が残っていた）
   BEHIND(N,7)       先頭の自力判定に使う遅れ率
   ARARE(N)          荒れ度スコア / TYPE(N) 型ラベル A〜F
   AGREE(N)          モデル上位2車 == 公式印◎○

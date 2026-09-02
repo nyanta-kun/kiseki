@@ -1067,3 +1067,109 @@ def test_rule_version_splits_when_the_signboard_dial_moves():
         finally:
             setattr(tl, attr, old)
     assert tl.rule_version(7) == base
+
+
+# ───────────────── 三連複へ畳む（`trio_fallback`・2026-09-03） ─────────────────
+#
+# 的中は2段の積: P(表示的中) = P(軸2車そろい) × P(カバー | そろい) + …
+# 実測（`scripts/exp_type_lab/hit_conditions.py`）で全体 そろい 53.9/52.7% ×
+# 換金(そろい時) 38.8/39.9% と分かり、**そろっているのに6割は換金できていない**。
+# 主因が順序違いなので、ゲートを通るときだけ三連複へ畳む。
+
+def _flat_board(n=7):
+    """7車ぶんの三連単・三連複の盤面（等確率・オッズは確率の逆数×0.75）。"""
+    import itertools as _it
+
+    tf_prob = {c: 1.0 / 210 for c in _it.permutations(range(1, n + 1), 3)}
+    tf_odds = {c: 0.75 / p for c, p in tf_prob.items()}
+    t3_prob, t3_odds = {}, {}
+    for c in _it.combinations(range(1, n + 1), 3):
+        k = frozenset(c)
+        t3_prob[k] = sum(tf_prob[p] for p in _it.permutations(c))
+        t3_odds[k] = 0.75 / t3_prob[k]
+    return tf_odds, tf_prob, t3_odds, t3_prob
+
+
+def _flat_shape(label="C"):
+    from src.type_lab import RaceShape
+
+    return RaceShape(label, 1.50, 0, 0.05, True, tuple(range(1, 8)), 1.2)
+
+
+def test_build_product_folds_to_trio_when_gate_passes():
+    """畳んだ三連複がゲートを通るなら三連複で売る（順序違いを拾う）。"""
+    from src.type_lab import PLANS, build_product
+
+    tf_o, tf_p, t3_o, t3_p = _flat_board()
+    got = build_product(_flat_shape("C"), PLANS["C_hit"], tf_o, tf_p, t3_o, t3_p)
+    assert got is not None
+    bet_type, legs, stakes, odds, _ = got
+    assert bet_type == "trio"
+    assert all(isinstance(c, frozenset) for c in legs)
+    # ゲートは三連複側にも当たっている
+    assert sum(stakes[c] * odds[c] for c in stakes) / len(stakes) > 20_000
+
+
+def test_build_product_keeps_trifecta_when_trio_gate_fails():
+    """🔴 畳んでゲートを落ちたら三連単のまま＝**件数は1件も減らない**。"""
+    from src.type_lab import PLANS, build_product
+
+    tf_o, tf_p, t3_o, t3_p = _flat_board()
+    # 三連複のオッズを潰すと平均想定払戻が2万円を割る
+    t3_o = {k: 1.5 for k in t3_o}
+    got = build_product(_flat_shape("C"), PLANS["C_hit"], tf_o, tf_p, t3_o, t3_p)
+    assert got is not None
+    assert got[0] == "trifecta"
+
+
+def test_signboard_and_longshot_are_never_folded():
+    """🔴 **看板枠と穴狙いは畳まない。**
+
+    全プランに当てると表示的中は +2.09pt 伸びるが **10万+/日 が 0.194 → 0.106 と
+    半減する**（`hit_menu.py`・確認窓）。伸びのほとんどが `F_sign` を畳んだぶんで、
+    看板を売り飛ばして的中を買っていた。
+    """
+    from src.type_lab import PLANS, TRIO_FALLBACK_EXCLUDED
+
+    for key in TRIO_FALLBACK_EXCLUDED:
+        assert not PLANS[key].trio_fallback, key
+    # 畳む側（当たる回数を売るプラン）は立っている
+    for key in ("A_hit", "B_hit", "C_hit", "E_hit", "F_hit"):
+        assert PLANS[key].trio_fallback, key
+
+
+def test_rule_version_splits_on_trio_fallback():
+    """🔴 `Plan` の属性を足したら `rule_version` の payload にも足すこと。
+
+    入れ忘れると規則を変えても版が割れず、**新旧の行が同じ `rule_version` で混ざる**
+    （2026-09-03 に実際に一度踏んだ）。
+    """
+    import dataclasses
+
+    from src.type_lab import PLANS, rule_version
+
+    before = rule_version(7)
+    orig = PLANS["C_hit"]
+    PLANS["C_hit"] = dataclasses.replace(orig, trio_fallback=not orig.trio_fallback)
+    try:
+        assert rule_version(7) != before
+    finally:
+        PLANS["C_hit"] = orig
+
+
+def test_row_builder_goes_through_build_product():
+    """🔴 生成は `build_product` を通ること（`build_legs` を直接呼ばない）。
+
+    素通しにすると三連複への畳み込みが効かず、**live と paper で商品が変わる**。
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "scripts/build_type_lab_picks.py"
+    tree = ast.parse(src.read_text())
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "rows_for_race")
+    called = {n.func.id for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert "build_product" in called
+    assert "build_legs" not in called and "allocate" not in called
