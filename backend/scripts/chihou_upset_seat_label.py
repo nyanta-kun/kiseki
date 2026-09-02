@@ -78,7 +78,10 @@ SELECT r.id            AS race_id,
        r.race_number   AS race_number,
        r.head_count    AS head_count,
        r.distance      AS distance,
-       r.grade         AS grade
+       r.grade         AS grade,
+       r.surface       AS surface,
+       r.race_type_code    AS race_type_code,
+       r.weight_type_code  AS weight_type_code
 FROM chihou.races r
 WHERE r.date BETWEEN %(start)s AND %(end)s
   AND r.course != '83'          -- JRA 混在の除外（計画 §10-6・実データで744R確認）
