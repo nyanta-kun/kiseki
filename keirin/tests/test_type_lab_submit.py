@@ -1032,3 +1032,46 @@ def test_race_point_is_never_written_by_this_repo():
             if "race_point" in m.group(1):
                 bad.append(f"{f.relative_to(root)}: {m.group(0)[:80]}")
     assert not bad, "race_point を書き換えている: " + "; ".join(bad)
+
+
+# ─────────────── 欠測時の型は記録として信用できない ───────────────
+
+def test_missing_lineup_skip_warns_that_the_type_is_not_trustworthy():
+    """🔴 **欠測で見送った行の `rank_key` を型として読ませない**（2026-09-02）。
+
+    並びが取れないと `arare` の加算5項のうち4項（ライン構成・ラインの維持・
+    先頭の脚質・番手の得点）が全レース同値になり、荒れ度が実質「開催日目 − 2」
+    だけの関数へ退化する。印が全車ゼロだと `axis_sum` も下がるので必ず混戦側へ
+    落ち、**同じ回の欠測レースが全部同じ型**になる（2026-08-29 は18件すべて F、
+    2026-08-31 は19件中18件が E、2026-09-01 は16件すべて F）。
+
+    後の波で並びが取れると型はばらけるので（2026-09-01 は16件中12件が別の型）、
+    見送りを型別に集計すると「特定の型だけ取りこぼしている」と読み違える。
+    実際 2026-09-02 に読み違えた。理由の文言に警告を残して次の人を止める。
+    """
+    tree = ast.parse(SUBMIT_PY.read_text(encoding="utf-8"))
+    texts: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Tuple):
+            continue
+        elts = node.value.elts
+        if not elts or not (isinstance(elts[0], ast.Name)
+                            and elts[0].id == "SKIP_MISSING_LINEUP"):
+            continue
+        # 理由の文言（f文字列・連結いずれでも中の定数を全部拾う）
+        texts.append("".join(
+            n.value for n in ast.walk(elts[1]) if isinstance(n, ast.Constant)
+            and isinstance(n.value, str)))
+    assert texts, "SKIP_MISSING_LINEUP を返す箇所が見つからない"
+    for t in texts:
+        assert "信用できない" in t, f"欠測時の型が信用できない旨が文言に無い: {t!r}"
+
+
+def test_entry_health_records_the_type_degradation():
+    """欠測時に型判定が退化することを `entry_health` が記録していること。
+
+    ここが唯一の説明の置き場所。消えると同じ読み違えがまた起きる。
+    """
+    doc = (REPO / "src" / "entry_health.py").read_text(encoding="utf-8")
+    for marker in ("開催日目", "arare", "集計は", "reason_code"):
+        assert marker in doc, f"欠測時の型退化の記録に {marker} が無い"
