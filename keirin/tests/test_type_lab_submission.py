@@ -224,3 +224,46 @@ def test_plan_notes_do_not_contradict_the_buy_description():
     assert "決め打ち" in PLAN_NOTES["A_trio"] and "決め打ち" in PLAN_BODIES["A_trio"]
     # `A_ana` は本文でも見解でも ◎ を推していないこと。
     assert "◎" not in PLAN_NOTES["A_ana"] and "◎" not in PLAN_BODIES["A_ana"]
+
+
+# ────────── 型の見解に買い方を書かない（2026-09-03・実害から） ──────────
+
+def test_type_notes_do_not_describe_the_bet_construction():
+    """🔴🔴 **`TYPE_NOTES` / `TYPE_VIEWS` に買い方を書かない。**
+
+    型の見解は**同じ型の全プランで共有される**（型F なら `F_hit` 12点 /
+    `F_pay` 4点 / `F_sign` 2〜3点）。買い方に踏み込むと必ずどれかと矛盾する。
+
+    実害: 2026-08-31 に `F_hit` を `all6`（全6順列）から `prob_top`（確率上位12点）へ
+    替えたとき、`PLAN_BODIES["F_hit"]` は直したが `TYPE_NOTES["F"]` の
+    **「順番を決め打ちしない組み立てにしています」が取り残された**。
+    実測（2026-08-29 以降の実入稿）で全6順列を買っている組の割合は
+    F_hit 30.6% / F_pay 0.0% / F_sign 0.0% ＝ **三連単3点の `F_sign` とは正面から矛盾**。
+
+    買い方は `PLAN_BODIES` の役割。ここは「レースをどう読んだか」だけにする。
+    """
+    from src.type_lab_submission import TYPE_NOTES, TYPE_VIEWS
+
+    # 買い方に踏み込む語。**買い目の作りを説明する語だけ**を並べる
+    # （「読み」に使う語＝拮抗・混戦・抜けた などは対象外）。
+    banned = ("組み立て", "買い目", "点数", "流し", "軸2車", "三連単", "三連複",
+              "固定し", "順番を決め打ち", "配分")
+    for label, text in list(TYPE_NOTES.items()) + list(TYPE_VIEWS.items()):
+        for w in banned:
+            assert w not in text, (
+                f"TYPE_NOTES/TYPE_VIEWS['{label}'] に買い方の記述『{w}』があります。"
+                " 型の見解は同じ型の全プランで共有されるので、買い方は PLAN_BODIES へ")
+
+
+def test_plan_bodies_cover_every_sellable_plan():
+    """🔴 売りうるプランは全部 `PLAN_TITLES` / `PLAN_BODIES` を持つこと。
+
+    欠けると `build_submission` が KeyError で落ちる＝**その商品だけ入稿できない**。
+    看板枠（`{型}_sign`）はループで生やしているので、型を増やしたら自動で付く。
+    """
+    from src.type_lab import SELLABLE_PLAN_KEYS
+    from src.type_lab_submission import PLAN_BODIES, PLAN_TITLES
+
+    for key in SELLABLE_PLAN_KEYS:
+        assert key in PLAN_TITLES, f"{key} のタイトルがありません"
+        assert key in PLAN_BODIES, f"{key} の本文がありません"
