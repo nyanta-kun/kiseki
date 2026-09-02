@@ -201,6 +201,23 @@ def _i(data: str, start: int, end: int) -> int | None:
     return v if v != 0 else None
 
 
+def _n(data: str, start: int, end: int) -> int | None:
+    """1-indexed バイト位置から整数を抽出する（**0 を 0 のまま返す**）。
+
+    🔴 `_i()` は `v != 0` で **0 を None に潰す**。多くのフィールドでは
+    「0 = 未設定」なので都合が良いが、**WIN5 では 0 が意味を持つ**——
+    キャリーオーバー 0 円（前回で的中が出た＝繰越なし）、的中票数 0、
+    払戻金 0（的中無の場合は仕様上 `000000000`）はいずれも実在する値で、
+    None に潰すと「取れなかった」と区別できなくなる。
+
+    空文字・非数字のときだけ None を返す。
+    """
+    raw = data[start - 1 : end].strip()
+    if not raw or not raw.isdigit():
+        return None
+    return int(raw)
+
+
 def _decode(data: str, start: int, end: int) -> str:
     """全角(Kanji)フィールドを SJIS → Unicode へ変換して返す。
 
@@ -1645,6 +1662,126 @@ def parse_tk(data: str) -> list[dict[str, Any]]:
 
 # -------------------------------------------------------------------
 # レコード種別ディスパッチ
+# ---------------------------------------------------------------------------
+# WF: 重勝式(WIN5)
+# ---------------------------------------------------------------------------
+
+_WF_LEGS = 5
+_WF_LEG_FROM = 22
+_WF_LEG_LEN = 8
+_WF_VOTES_FROM = 79
+_WF_VOTES_LEN = 11
+_WF_PAY_FROM = 167
+_WF_PAY_LEN = 29
+_WF_PAY_MAX = 243
+
+
+def parse_wf(data: str) -> dict[str, Any] | None:
+    """WFレコード（重勝式 WIN5）をパースする。
+
+    レイアウト出典: `docs/sources/JV-Data4901.pdf`「３０．重勝式(WIN5)」
+    （レコード長 **7215** バイト。2026-09-02 に原典で確認）::
+
+         1-  2  レコード種別ID "WF"
+         3      データ区分  1:詳細発表 2:1R目確定 3:払戻発表 7:成績(月曜) 9:中止 0:削除
+         4- 11  データ作成年月日 yyyymmdd（≠開催日）
+        12- 15  開催年 yyyy          ┐ この2つがキー（WIN5 に通算回次の項目は無い）
+        16- 19  開催月日 mmdd        ┘
+        20- 21  予備
+        22- 61  <重勝式対象レース情報> 8バイト × 5
+                  +0 競馬場コード(2) +2 開催回(2) +4 開催日目(2) +6 レース番号(2)
+        62- 67  予備
+        68- 78  重勝式発売票数(11)   ※ 票数。**金額ではない**
+        79-133  <有効票数情報> 11バイト × 5（対象レース情報と同じ順）
+       134      返還フラグ
+       135      不成立フラグ
+       136      的中無フラグ
+       137-151  キャリーオーバー金額初期(15)  開催日当日開始時
+       152-166  キャリーオーバー金額残高(15)  次回への繰越
+       167-7213 <重勝式払戻情報> 29バイト × 243
+                  +0 組番(10) +10 払戻金(9) +19 的中票数(10)
+       7214-7215 CR/LF
+
+    ⚠️ **全角フィールドが1つも無い**ので `_decode` は使わない。
+
+    🔴 **中止レコードを的中として取り込まないこと。** 仕様書の特記事項に
+    「重勝式中止（項番2=9）は 組番=0000000000 / 払戻金=000000100 /
+    的中票数=0000000000 を提供」とある。**払戻金 100 は返還であって的中ではない**。
+    本関数は組番が全ゼロの枠を落とすことでこれを弾く。
+
+    🔴 **`_i()` ではなく `_n()` を使う。** WIN5 はキャリーオーバー 0 円・
+    的中票数 0・払戻金 0 がいずれも意味を持つ値で、`_i()` だと None に潰れる。
+
+    Args:
+        data: WF レコード文字列（1バイト=1文字）
+
+    Returns:
+        取り込み用の dict。データ区分が "0"（該当レコード削除）なら None。
+        レコード種別が WF でない・短すぎる場合も None。
+    """
+    if len(data) < _WF_PAY_FROM:
+        return None
+    if _s(data, 1, 2) != "WF":
+        return None
+
+    data_kubun = _s(data, 3, 3)
+    if data_kubun == "0":  # 該当レコード削除（提供ミス等）
+        return None
+
+    held_date = _s(data, 12, 15) + _s(data, 16, 19)
+
+    legs: list[dict[str, Any]] = []
+    for i in range(_WF_LEGS):
+        b = _WF_LEG_FROM + i * _WF_LEG_LEN
+        course = _s(data, b, b + 1)
+        kai = _s(data, b + 2, b + 3)
+        day = _s(data, b + 4, b + 5)
+        race_num = _s(data, b + 6, b + 7)
+        if not (course and race_num):
+            continue
+        v = _WF_VOTES_FROM + i * _WF_VOTES_LEN
+        legs.append({
+            "leg_no": i + 1,
+            "course": course,
+            "kai": kai,
+            "day": day,
+            "race_num": race_num,
+            # 項番7 には年月日が無いので開催年月日と結合して16桁にする
+            "jravan_race_id": held_date + course + kai + day + race_num,
+            "valid_votes": _n(data, v, v + _WF_VOTES_LEN - 1),
+        })
+
+    payouts: list[dict[str, Any]] = []
+    for i in range(_WF_PAY_MAX):
+        b = _WF_PAY_FROM + i * _WF_PAY_LEN
+        if b + _WF_PAY_LEN - 1 > len(data):
+            break
+        combo = _s(data, b, b + 9)
+        if not combo or not combo.isdigit() or int(combo) == 0:
+            # 未使用枠、および中止時の 0000000000（払戻100は返還であって的中ではない）
+            continue
+        payouts.append({
+            "combination": combo,
+            "payout": _n(data, b + 10, b + 18),
+            "hit_votes": _n(data, b + 19, b + 28),
+        })
+
+    return {
+        "rec_id": "WF",
+        "data_kubun": data_kubun,
+        "created_date": _s(data, 4, 11),
+        "held_date": held_date,
+        "sold_votes": _n(data, 68, 78),
+        "refund_flag": _s(data, 134, 134) == "1",
+        "void_flag": _s(data, 135, 135) == "1",
+        "no_hit_flag": _s(data, 136, 136) == "1",
+        "carryover_start": _n(data, 137, 151),
+        "carryover_balance": _n(data, 152, 166),
+        "legs": legs,
+        "payouts": payouts,
+    }
+
+
 # -------------------------------------------------------------------
 
 
