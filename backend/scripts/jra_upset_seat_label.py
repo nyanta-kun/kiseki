@@ -79,7 +79,10 @@ SELECT r.id            AS race_id,
        r.race_number   AS race_number,
        r.head_count    AS head_count,
        r.distance      AS distance,
-       r.grade         AS grade
+       r.grade         AS grade,
+       r.surface       AS surface,
+       r.race_type_code    AS race_type_code,
+       r.weight_type_code  AS weight_type_code
 FROM keiba.races r
 WHERE r.date BETWEEN %(start)s AND %(end)s
   AND r.post_time ~ '^[0-9]{4}$'
