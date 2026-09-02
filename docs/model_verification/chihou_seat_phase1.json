@@ -1,0 +1,253 @@
+{
+  "preregistration": "docs/upset_seat_preregistration_2026_09_02.md",
+  "pop_rank_min": 8,
+  "n_train": 2955,
+  "n_eval": 2331,
+  "eval_base_rate": 0.2347,
+  "selection_points": [
+    0.1,
+    0.2,
+    0.3
+  ],
+  "constant_features": [
+    "is_turf"
+  ],
+  "arms": {
+    "base_a_expected_vacancy": {
+      "R2": {
+        "0.1": 0.2267,
+        "0.2": 0.4095,
+        "0.3": 0.5558
+      },
+      "stratified_lift": 1.511
+    },
+    "base_b0_head_count": {
+      "R2": {
+        "0.1": 0.1956,
+        "0.2": 0.3528,
+        "0.3": 0.5064
+      },
+      "stratified_lift": 1.138
+    },
+    "base_b_odds_top1": {
+      "R2": {
+        "0.1": 0.1718,
+        "0.2": 0.3218,
+        "0.3": 0.4168
+      },
+      "stratified_lift": 1.205
+    },
+    "m_noodds": {
+      "R2": {
+        "0.1": 0.1718,
+        "0.2": 0.3309,
+        "0.3": 0.4644
+      },
+      "stratified_lift": 1.236
+    },
+    "m_odds2": {
+      "R2": {
+        "0.1": 0.1773,
+        "0.2": 0.3547,
+        "0.3": 0.5046
+      },
+      "stratified_lift": 1.272
+    },
+    "base_c_current_gate": {
+      "selection_rate": 0.1978,
+      "R2": 0.3528
+    }
+  },
+  "verdict": {
+    "m_noodds": {
+      "pass": false,
+      "details": [
+        {
+          "rate": 0.1,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0548,
+          "ci": [
+            -0.0974,
+            -0.0114
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.1,
+          "vs": "base_b0_head_count",
+          "diff": -0.0238,
+          "ci": [
+            -0.0667,
+            0.0215
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.1,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0,
+          "ci": [
+            -0.0414,
+            0.0436
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0786,
+          "ci": [
+            -0.1278,
+            -0.0294
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_b0_head_count",
+          "diff": -0.0219,
+          "ci": [
+            -0.0716,
+            0.027
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0091,
+          "ci": [
+            -0.0423,
+            0.0622
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0914,
+          "ci": [
+            -0.1387,
+            -0.0427
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_b0_head_count",
+          "diff": -0.042,
+          "ci": [
+            -0.0906,
+            0.0074
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0475,
+          "ci": [
+            -0.0055,
+            0.1
+          ],
+          "pass": false
+        }
+      ]
+    },
+    "m_odds2": {
+      "pass": false,
+      "details": [
+        {
+          "rate": 0.1,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0494,
+          "ci": [
+            -0.0896,
+            -0.0094
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.1,
+          "vs": "base_b0_head_count",
+          "diff": -0.0183,
+          "ci": [
+            -0.0645,
+            0.0286
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.1,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0055,
+          "ci": [
+            -0.0328,
+            0.0447
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0548,
+          "ci": [
+            -0.1027,
+            -0.0069
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_b0_head_count",
+          "diff": 0.0018,
+          "ci": [
+            -0.0492,
+            0.0533
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.2,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0329,
+          "ci": [
+            -0.0161,
+            0.0847
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_a_expected_vacancy",
+          "diff": -0.0512,
+          "ci": [
+            -0.0978,
+            -0.0037
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_b0_head_count",
+          "diff": -0.0018,
+          "ci": [
+            -0.0531,
+            0.0495
+          ],
+          "pass": false
+        },
+        {
+          "rate": 0.3,
+          "vs": "base_b_odds_top1",
+          "diff": 0.0878,
+          "ci": [
+            0.0348,
+            0.1423
+          ],
+          "pass": true
+        }
+      ]
+    }
+  }
+}
