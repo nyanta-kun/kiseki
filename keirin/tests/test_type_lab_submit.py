@@ -68,11 +68,15 @@ def test_type_f_splits_by_race_type():
     assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
     # 🔴 **7車は看板枠が先に来る**（2026-09-01 再投入）。`SIGNBOARD_RACE_TYPES`
-    #    （決勝系＋特選）に入る種別は `F_sign`、それ以外が `F_hit`。
+    #    に入る種別は `F_sign`、それ以外が `F_hit`。
     assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_sign"]
     assert [p.key for p in sell_plans_for("F", 7, "チャレンジ決勝")] == ["F_sign"]
     assert [p.key for p in sell_plans_for("F", 7, "準決勝")] == ["F_sign"]
-    assert [p.key for p in sell_plans_for("F", 7, "特選")] == ["F_sign"]
+    # 🔴🔴 **特選は 2026-09-02 に看板枠から外した**（`SIGNBOARD_RACE_TYPES` の節）。
+    #    最終日に集中する唯一の種別で、ここが `F_sign`（表示的中は設計上5%）だと
+    #    最終日の表示的中が 24.89 → 19.14% に落ちる。**この行が最終日の見え方を決める。**
+    for rt in ("特選", "初特選", "特秀"):
+        assert [p.key for p in sell_plans_for("F", 7, rt)] == ["F_hit"], rt
     # 看板枠の対象外の種別は当たる回数を売る側のまま
     assert [p.key for p in sell_plans_for("F", 7, "選抜")] == ["F_hit"]
     assert [p.key for p in sell_plans_for("F", 7, "一般")] == ["F_hit"]
@@ -247,6 +251,12 @@ def test_daily_cap_exempts_finals_but_not_all_marquee():
     （設計上 表示的中 5.28% の一撃商品）が全部残り、上限の狙い
     「当たりやすい側を残す」と正面から衝突する——実測で対照20本に
     ROI 8/20・11/20 と負ける（決勝＋準決勝なら 12/20・19/20）。
+
+    ⚠️ **この根拠を測った時点では特選にも `F_sign` が出ていた**（2026-09-02 に
+       `SIGNBOARD_RACE_TYPES` から外した）。いま特選に出るのは `F_hit` なので
+       衝突の度合いは当時より小さいが、**上限の対象外は「決勝・準決勝＋グレード」
+       という境界そのものは変えていない**。看板の全体を外す案を再検討するなら
+       測り直すこと。
     """
     import importlib.util
 
