@@ -197,3 +197,84 @@ describe("面の上の文字色", () => {
     expect(text, "面の上の補足文は text-surface-muted を使ってください").not.toMatch(/text-gray-(400|500)/);
   });
 });
+
+// ─────────── グラフの視認性（2026-09-03・実際に読めなくなった箇所から） ───────────
+//
+// 🔴 Recharts の既定ツールチップは「白い面 ＋ 系列色そのままの文字」。
+//    暗いテーマでは面ごと浮き、明るいテーマでも淡い系列（#c7d2fe / #d1d5db）が
+//    白地に載って読めない。実際 2026-09-03 に競輪の売上グラフで
+//    「販売無償pt」「内訳不明」「日付」が消えていた。
+
+/** 相対輝度（WCAG）。 */
+function luminance(hex: string): number {
+  const h = hex.replace("#", "");
+  const v = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+/** globals.css の指定ブロックからトークンを読む。 */
+function tokensIn(css: string, startMarker: string): Record<string, string> {
+  const i = css.indexOf(startMarker);
+  const block = css.slice(i, css.indexOf("}", i));
+  const out: Record<string, string> = {};
+  for (const m of block.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)) out[m[1]] = m[2];
+  return out;
+}
+
+describe("グラフの配色", () => {
+  it("ツールチップの文字が面に対して 4.5:1 以上（両テーマ）", () => {
+    const css = readFileSync(GLOBALS, "utf-8");
+    const light = tokensIn(css, "--chart-surface");
+    const dark = tokensIn(css, '[data-theme="dark"]');
+    for (const [name, t] of [["light", light], ["dark", dark]] as const) {
+      expect(t["chart-surface"], `${name}: --chart-surface が無い`).toBeTruthy();
+      expect(contrast(t["chart-fg"], t["chart-surface"]),
+        `${name}: --chart-fg が面に対して薄すぎる`).toBeGreaterThanOrEqual(4.5);
+      // 補足文は 4.5:1（本文と同じ扱い。数値の隣に出るため）
+      expect(contrast(t["chart-muted"], t["chart-surface"]),
+        `${name}: --chart-muted が面に対して薄すぎる`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("🔴 素の <Tooltip /> と contentStyle 頼みの Tooltip が残っていない", () => {
+    const offenders: string[] = [];
+    for (const f of walk(SRC)) {
+      const text = readFileSync(f, "utf-8");
+      // `content=` を渡していない Tooltip は Recharts 既定の面と文字色になる。
+      // ⚠️ `>` までで切ると `content={props => …}` のアロー関数で切れて誤検知する。
+      //    次の兄弟要素までを見る。
+      let at = text.indexOf("<Tooltip");
+      while (at >= 0) {
+        const rest = text.slice(at + 8);
+        const end = rest.search(/<(Legend|Bar|Line|Area|CartesianGrid|XAxis|YAxis|Reference|\/)/);
+        const body = rest.slice(0, end < 0 ? 600 : end);
+        if (!body.includes("content=")) {
+          offenders.push(`${f.replace(SRC, "src")} : <Tooltip${body.slice(0, 40).replace(/\n/g, " ")}…`);
+        }
+        at = text.indexOf("<Tooltip", at + 8);
+      }
+    }
+    expect(offenders,
+      "Recharts 既定のツールチップは白い面＋系列色の文字で読めない。"
+      + " lib/chart-theme.tsx の <ChartTooltip /> を content に渡すこと").toEqual([]);
+  });
+
+  it("🔴 グラフの線・目盛り・凡例に色を直書きしていない", () => {
+    const offenders: string[] = [];
+    for (const f of walk(SRC)) {
+      if (f.endsWith("chart-theme.tsx")) continue;
+      const text = readFileSync(f, "utf-8");
+      if (/CartesianGrid[^>]*stroke="#/.test(text)) offenders.push(`${f} : CartesianGrid stroke`);
+      if (/wrapperStyle=\{\{[^}]*color: "#/.test(text)) offenders.push(`${f} : Legend color`);
+      // 軸の目盛りの色は chartAxisTick() 経由にする
+      if (/tick=\{\{\s*fontSize: \d+,\s*fill: "#/.test(text)) offenders.push(`${f} : axis tick fill`);
+    }
+    expect(offenders.map((o) => o.replace(SRC, "src")),
+      "lib/chart-theme.tsx の CHART_GRID / chartAxisTick / chartLegendStyle を使うこと")
+      .toEqual([]);
+  });
+});
