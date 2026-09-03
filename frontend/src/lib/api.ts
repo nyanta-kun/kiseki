@@ -1926,6 +1926,9 @@ export async function fetchKeirinApprovalMode(): Promise<{ require_approval: boo
 // ---------------------------------------------------------------------------
 export type TypeLabLeg = {
   combo: string; stake: number; pred_odds: number; prob: number;
+  /** 買い目の役割。base=本線（下帯）/ band・sign=押さえ（上帯・2026-09-04〜）。
+   *  上帯を入れる前の行には無いので、読む側は base とみなす。 */
+  role?: string;
 };
 export type TypeLabCurrentPick = {
   rank: string; pred_combo: string | null; n_combos: number | null;

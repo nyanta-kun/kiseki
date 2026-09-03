@@ -79,7 +79,8 @@ from src.notify.discord import send                           # noqa: E402
 from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
 )
-from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for   # noqa: E402
+from src.type_lab import (                                    # noqa: E402
+    SELLABLE_PLAN_KEYS, sell_plans_for, split_legs_by_role)
 from src.submission_skips import MISSING_LINEUP               # noqa: E402
 
 LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
@@ -414,7 +415,7 @@ def section_bet_band(sold, live: list[dict], titles: dict[str, str]) -> list[str
 
     見るもの（プランごと）:
 
-      計画   入稿時の `pred_mean_payout`（平均想定払戻）と `min(stake × pred_odds)`
+      計画   買い目そのものから出した `stake × pred_odds` の平均と最低
       確定   同じ買い目を**確定オッズ**で引き直した `stake × odds` の中央と最小
       実/予  その比。**1 を大きく割るなら予測オッズが上振れている**
 
@@ -436,6 +437,11 @@ def section_bet_band(sold, live: list[dict], titles: dict[str, str]) -> list[str
         legs = d.get("legs")
         if isinstance(legs, str):
             legs = json.loads(legs or "[]")
+        # 🔴 **下帯（本線）だけを見る**（2026-09-04・上帯の重ね買い）。上帯は
+        #    100-600倍を押さえる枠なので、混ぜると「狙った帯に買えているか」の
+        #    答え合わせが上帯の裾に支配される。計画側も同じ買い目から出すので
+        #    母数は揃う。
+        legs = split_legs_by_role(legs) or legs
         if not legs:
             continue
         rows.append({"plan": r.rank_key, "race_key": r.race_key,
@@ -473,8 +479,12 @@ def section_bet_band(sold, live: list[dict], titles: dict[str, str]) -> list[str
         pay_real = sorted(st * o for st, o in real)
         g["n"] += 1
         g["pts"].append(len(r["legs"]))
-        if r["pred_mean"]:
-            g["plan_mean"].append(float(r["pred_mean"]))
+        # 🔴 **計画の平均は買い目そのものから出す**（行の `pred_mean_payout` を
+        #    使わない）。あちらは入稿ゲート用の設計値で、上帯を重ねた商品では
+        #    「本線を予算全額で組んだとき」の値＝実際の賭け金の 1.25倍になり、
+        #    確定側と割ると 実/予 が理由なく 0.8 に見える（2026-09-04）。
+        if pay_plan:
+            g["plan_mean"].append(sum(pay_plan) / len(pay_plan))
         g["plan_min"].append(min(pay_plan) if pay_plan else 0.0)
         g["real_med"].append(pay_real[len(pay_real) // 2])
         g["real_min"].append(pay_real[0])

@@ -62,6 +62,7 @@ import logging
 from collections.abc import Mapping
 
 from src.meeting_wave import NIGHT_FROM_HOUR
+from src.type_lab import split_legs_by_role
 from src.odds_prediction import (
     OddsPredictionUnavailable,
     _pl_trio,
@@ -200,10 +201,21 @@ def type_lab_confident_score(legs, start_at) -> float | None:
     True
     >>> type_lab_confident_score(legs, None) is None
     True
+
+    🔴 **上帯（押さえ）は除いて判定する**（2026-09-04）。上帯は 100倍以上の目を
+       予算の 2割で押さえる枠なので、混ぜると合成オッズが下がり、
+       **買い方を何も変えていないのに「自信あり」の候補集合が入れ替わる**。
+       判定の対象は本線（下帯）の商品性。
+
+    >>> hold = legs + [{"prob": 0.002, "stake": 200, "pred_odds": 300,
+    ...                 "role": "band"}]
+    >>> round(type_lab_confident_score(hold, 0), 4)
+    1.5
     """
     hour = start_hour_jst(start_at)
     if hour is None or hour >= CONFIDENT_BEFORE_HOUR:
         return None
+    legs = split_legs_by_role(legs) or legs
     synth = synthetic_odds(legs)
     if synth is None or synth < CONFIDENT_MIN_SYNTH_ODDS:
         return None

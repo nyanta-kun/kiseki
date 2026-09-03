@@ -294,6 +294,11 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
 
     🔴 **判定できないものは通す**（`stake_allocation` の各ゲートと同じ思想）。
        分からないことを理由に商品を落とさない。
+
+    🔴 **上帯（押さえ）を重ねてもここは変わらない**（2026-09-04）。
+       `pred_mean_payout` は**上帯を重ねる前**＝本線を予算全額で組んだときの値で
+       記録している（`build_type_lab_picks`）。混成の平均で判定すると
+       100-600倍の目に押し上げられて**ゲートが事実上無効**になる。
     """
     mean_pay = row.get("pred_mean_payout")
     if mean_pay is not None and float(mean_pay) <= MIN_MEAN_PAYOUT:

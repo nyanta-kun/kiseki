@@ -39,9 +39,9 @@ sys.path.insert(0, str(REPO))
 
 from src.database import get_connection            # noqa: E402
 from src.type_lab import (                          # noqa: E402
-    BUDGET, PLANS, allocate, build_legs, build_with_gate_fallback,
-    mean_expected_payout, min_expected_payout, plans_for, race_shape,
-    rule_version,
+    BUDGET, PLANS, ROLE_BASE, add_upper_band, allocate, build_legs,
+    build_with_gate_fallback, mean_expected_payout, min_expected_payout,
+    plans_for, race_shape, rule_version,
 )
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
@@ -93,11 +93,24 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         if not built:
             continue
         legs, stakes, plan_used = built
+        # 🔴 **上帯はゲート判定の後に重ねる**（`add_upper_band` の docstring）。
+        #    下帯の賭け金が 8割へ縮み、空いた 2割で高オッズの目を買い足す。
+        #    掛からない条件（9車・三連複・組めない）ではそのまま返る。
+        # 🔴 **想定払戻は上帯を重ねる*前*の値を記録する。** これが入稿ゲートの
+        #    入力（`_gate_reason`）で、変えると母集団が静かに動く。上帯は下帯と
+        #    同じ目を選ぶことがあり、そのとき賭け金が合算されて平均が跳ねるので、
+        #    「重ねた後の下帯」から出すのも**正しくない**。画面へ出す実額は
+        #    `legs`（役割つき）から引くこと。
+        gate_mean = round(mean_expected_payout(stakes, odds), 1)
+        gate_min = round(min_expected_payout(stakes, odds), 1)
+        legs, stakes, roles = add_upper_band(
+            legs, stakes, plan_used, odds, prob, N_ENTRIES)
         detail = [
             {"combo": _combo_str(c, plan_used.bet_type),
              "stake": int(stakes[c]),
              "pred_odds": round(float(odds[c]), 2),
-             "prob": round(float(prob.get(c, 0.0)), 6)}
+             "prob": round(float(prob.get(c, 0.0)), 6),
+             "role": roles.get(c, ROLE_BASE)}
             for c in legs
         ]
         out.append(dict(
@@ -117,8 +130,8 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             mode=mode + MODE_TAG, plan_key=plan_used.key, bet_type=plan_used.bet_type,
             n_legs=len(legs), budget=BUDGET,
             legs=json.dumps(detail, ensure_ascii=False),
-            pred_mean_payout=round(mean_expected_payout(stakes, odds), 1),
-            pred_min_payout=round(min_expected_payout(stakes, odds), 1),
+            pred_mean_payout=gate_mean,
+            pred_min_payout=gate_min,
             rule_version=rule_version(N_ENTRIES),
         ))
     return out

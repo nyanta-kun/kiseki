@@ -24,8 +24,23 @@ import {
   fetchKeirinTypeLab, fetchKeirinTypeLabCombo, fetchKeirinTypeLabOutcome,
   type TypeLabComboResponse, type TypeLabComboRow, type TypeLabComparisonRow,
   type TypeLabOutcomeMatrix, type TypeLabOutcomeResponse,
+  type TypeLabLeg,
   type TypeLabMode, type TypeLabPick, type TypeLabResponse, type TypeLabSummary,
 } from "@/lib/api";
+
+// 🔴 上帯（押さえ）は 2026-09-04 から。**役割の無い行は本線**として扱う
+//    （それ以前の行には `role` が無い）。判定の正本は keirin/src/type_lab.py。
+const isUpper = (l: TypeLabLeg) => (l.role ?? "base") !== "base";
+const baseLegs = (ls: TypeLabLeg[]) => ls.filter((l) => !isUpper(l));
+const upperLegs = (ls: TypeLabLeg[]) => ls.filter(isUpper);
+/** 本線の想定平均払戻（実際の賭け金 × 予測オッズ）。
+ *  🔴 行の `pred_mean_payout` は**入稿ゲート用の設計値**（本線を予算全額で
+ *  組んだときの値）なので、上帯を重ねた商品では実額と 25% ずれる。 */
+const baseMeanPayout = (ls: TypeLabLeg[]) => {
+  const base = baseLegs(ls);
+  if (!base.length) return null;
+  return base.reduce((a, l) => a + l.stake * l.pred_odds, 0) / base.length;
+};
 
 const TYPE_NAME: Record<string, string> = {
   A: "鉄板", B: "堅い・中", C: "堅いが崩れ筋",
@@ -910,8 +925,15 @@ function PickCard({ p }: { p: TypeLabPick }) {
       </div>
       {/* 2行目: 商品と結果（モバイルでは折り返す） */}
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-600 dark:text-gray-400">
-        <span className="text-gray-800 dark:text-gray-200">{p.bet_type === "trio" ? "三連複" : "三連単"} {p.n_legs}点</span>
-        <span>想定平均 {yen(p.pred_mean_payout)}</span>
+        <span className="text-gray-800 dark:text-gray-200">
+          {p.bet_type === "trio" ? "三連複" : "三連単"} {baseLegs(p.legs).length}点
+          {upperLegs(p.legs).length > 0
+            ? <span className="ml-1 text-gray-500 dark:text-gray-400">＋押さえ{upperLegs(p.legs).length}点</span>
+            : null}
+        </span>
+        <span title="本線が当たったときの想定払戻（実際の賭け金から算出）">
+          本線想定 {yen(baseMeanPayout(p.legs) ?? p.pred_mean_payout)}
+        </span>
         <span className="ml-auto">
           {settled
             ? (p.hit
@@ -957,11 +979,16 @@ function PickCard({ p }: { p: TypeLabPick }) {
       )}
       {/* 買い目 */}
       <div className="mt-1.5 flex flex-wrap gap-1">
-        {p.legs.map((l) => (
+        {[...baseLegs(p.legs), ...upperLegs(p.legs)].map((l) => (
           <span key={l.combo}
+                title={isUpper(l) ? "押さえ（上帯・予算の2割）" : "本線（下帯）"}
                 className={`rounded px-1.5 py-0.5 font-mono text-[10px] leading-tight sm:text-xs ${
                   settled && p.win_combo === l.combo
-                    ? "bg-emerald-600 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200"}`}>
+                    ? "bg-emerald-600 text-white"
+                    : isUpper(l)
+                      ? "border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200"}`}>
+            {isUpper(l) ? <span className="mr-0.5 opacity-70">押</span> : null}
             {l.combo}
             <span className="ml-1 opacity-70">
               {(l.stake / 100).toFixed(0)}00円/{l.pred_odds.toFixed(1)}倍
