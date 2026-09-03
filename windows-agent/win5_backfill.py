@@ -46,7 +46,9 @@ WIN5 は蓄積系 dataspec **`RACE`** に含まれる（`docs/jvdata-spec.md` 30
     # 2回目: 実際に取り込む（接頭辞が分かっていれば --only-prefix で高速化）
     python win5_backfill.py --from-year 2011 --option 3
 
-⚠️ option=3（セットアップ）は JVOpen が数時間ブロックする。
+⚠️ option=4（ダイアログ無しセットアップ）を使うこと。option=3 はモーダル
+   ダイアログを出すことがあり、閉じる者がいないと COM ごとブロックする。
+   いずれも JVOpen が数時間ブロックする。
    メンテナンス窓（既定: 毎週火 08:00-15:00）を避けること。
 """
 
@@ -85,16 +87,31 @@ WIN5_COMPLETED_FILE = COMPLETED_DIR / "WIN5_completed.txt"
 DATASPEC_RACE = "RACE"
 POST_BATCH_SIZE = 50
 
+# 🔴 .env は**プロジェクトルートのものだけ**を読む。
+#    windows-agent/.env にも同名キーがあるが BACKEND_URL がローカルIP
+#    （http://192.168.11.26:8000）で、CHANGE_NOTIFY_API_KEY は空。
+#    load_dotenv は既定で override=False なので、先に windows-agent/.env を
+#    読むと**古い値が勝ってしまう**。稼働中の jvlink_agent.py:66-67 は
+#    親ディレクトリの .env だけを読んでおり、それに揃える。
+#    （2026-09-03 実機で確認。payout_backfill.py は両方読む書き方のままなので
+#      同じ問題を抱えている可能性がある——別途要確認）
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(BASE_DIR / ".env")
     load_dotenv(BASE_DIR.parent / ".env")
 except ImportError:
     pass
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
-API_KEY = os.getenv("AGENT_API_KEY", "")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://api.galloplab.com")
+# 🔴 キー名は CHANGE_NOTIFY_API_KEY。AGENT_API_KEY は .env に存在しない
+#    （payout_backfill.py はこちらを見ており、実機では常に空になる）
+API_KEY = os.getenv("CHANGE_NOTIFY_API_KEY", "")
+
+# デュアルSID構成: JRAVAN_SID_2 があれば蓄積系はそちらを使う。
+# realtime は SID1 固定なので、**realtime を止めずに同時実行できる**
+# （jvlink_agent.py:70-73 / jvlink_historical.py:189 と同じ扱い）。
+JRAVAN_SID = os.getenv("JRAVAN_SID", "")
+JRAVAN_SID_2 = os.getenv("JRAVAN_SID_2", "")
 
 
 def load_completed() -> set[str]:
@@ -212,7 +229,11 @@ def run_win5_backfill(
         total["files"] += 1
         mark_completed(filename, completed)
 
-    opt_label = "セットアップ/全再ダウンロード" if option == 3 else "通常/ローカルキャッシュ優先"
+    opt_label = {
+        1: "通常/ローカルキャッシュ優先",
+        3: "セットアップ/全再ダウンロード（ダイアログあり）",
+        4: "セットアップ/全再ダウンロード（ダイアログ無し）",
+    }.get(option, str(option))
     logger.info("JVOpen %s from=%s option=%s (%s)...", DATASPEC_RACE, from_time, option, opt_label)
 
     _done = threading.Event()
@@ -325,8 +346,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description="WIN5（WF レコード）バックフィル")
     p.add_argument("--from-year", type=int, default=2011,
                    help="取得開始年（WIN5 は 2011年4月開始・default: 2011）")
-    p.add_argument("--option", type=int, default=1, choices=[1, 3],
-                   help="JVOpen option: 1=通常(キャッシュ) 3=セットアップ(全再DL)")
+    p.add_argument("--option", type=int, default=1, choices=[1, 3, 4],
+                   help="JVOpen option: 1=通常(キャッシュ) 3=セットアップ(全再DL) "
+                        "4=ダイアログ無しセットアップ。**4 を推奨**——"
+                        "3 はモーダルダイアログを出すことがあり、pythonw 起動だと"
+                        "閉じる者がいないため COM ごとブロックする"
+                        "（CLAUDE.md「サーバーメンテナンス窓では JVOpen を呼ばない」の項）")
     p.add_argument("--discover", action="store_true",
                    help="POST せず、ファイル名別の rec_id 内訳だけを出す（接頭辞の実測用）")
     p.add_argument("--only-prefix",
@@ -336,12 +361,31 @@ def main() -> None:
     try:
         import win32com.client
 
-        jv = win32com.client.Dispatch("JVDTLab.JVLink.1")
-        rc = jv.JVInit("UNKNOWN")
+        jv = win32com.client.Dispatch("JVDTLab.JVLink")
+        # 蓄積系は SID2 を使う（未設定なら SID1）。jvlink_historical.init_jvlink と同じ
+        use_sid = JRAVAN_SID_2 if JRAVAN_SID_2 else JRAVAN_SID
+        if not use_sid:
+            logger.error(
+                "JRAVAN_SID / JRAVAN_SID_2 が未設定です。%s の .env を確認してください",
+                BASE_DIR.parent / ".env",
+            )
+            sys.exit(1)
+        rc = jv.JVInit(use_sid)
         if rc != 0:
             logger.error("JVInit エラー: rc=%s", rc)
             sys.exit(1)
-        logger.info("JVLink 初期化 OK")
+        sid_label = "SID2(蓄積系専用)" if JRAVAN_SID_2 else "SID1(共通)"
+        logger.info("JVLink 初期化 OK (%s)", sid_label)
+        if not JRAVAN_SID_2:
+            logger.warning(
+                "JRAVAN_SID_2 が未設定のため realtime と同じ SID を使います。"
+                "開催日に流すと realtime と競合する可能性があります"
+            )
+        if not API_KEY:
+            logger.error(
+                "CHANGE_NOTIFY_API_KEY が空です。POST は全て 401 になります"
+            )
+            sys.exit(1)
         run_win5_backfill(
             jv,
             from_year=args.from_year,

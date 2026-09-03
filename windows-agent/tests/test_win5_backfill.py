@@ -147,3 +147,54 @@ def test_historical_wf_post_sends_raw() -> None:
 @pytest.mark.parametrize("flag", ["--from-year", "--option", "--discover", "--only-prefix"])
 def test_backfill_cli_flags(flag: str) -> None:
     assert flag in _BACKFILL.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# 設定の読み方（2026-09-03 に実機で踏んだ）
+#
+# payout_backfill.py を写したとき、環境変数の読み方ごと写してしまい、
+# 実機で BACKEND_URL=http://192.168.11.26:8000 / API_KEY=空 になっていた。
+# そのまま流していたら POST が全て失敗し、1件も取り込めなかった。
+# ---------------------------------------------------------------------------
+
+
+def test_reads_env_from_project_root_only() -> None:
+    """🔴 windows-agent/.env を読まないこと。
+
+    実機の windows-agent/.env は BACKEND_URL がローカルIP、
+    CHANGE_NOTIFY_API_KEY が空。load_dotenv は override=False なので、
+    先にこちらを読むと**古い値が勝つ**。稼働中の jvlink_agent.py は
+    親ディレクトリの .env だけを読んでおり、それに揃える。
+    """
+    src = _code_only(_BACKFILL)
+    assert "load_dotenv(BASE_DIR.parent" in src, "プロジェクトルートの .env を読むこと"
+    assert "load_dotenv(BASE_DIR /" not in src, (
+        "windows-agent/.env を読んでいる。ローカルIPの BACKEND_URL が勝ってしまう"
+    )
+
+
+def test_uses_correct_api_key_name() -> None:
+    """🔴 AGENT_API_KEY は .env に存在しない。CHANGE_NOTIFY_API_KEY が正。"""
+    src = _code_only(_BACKFILL)
+    assert "CHANGE_NOTIFY_API_KEY" in src
+    assert "AGENT_API_KEY" not in src, (
+        "AGENT_API_KEY を見ている。実機の .env に無いので常に空になり POST が 401 になる"
+    )
+
+
+def test_supports_dual_sid() -> None:
+    """蓄積系は JRAVAN_SID_2 を使う（realtime を止めずに同時実行するため）。"""
+    src = _code_only(_BACKFILL)
+    assert "JRAVAN_SID_2" in src, (
+        "デュアルSID に対応していない。JRAVAN_SID_2 を使えば realtime（SID1）と"
+        "同時実行できる（jvlink_agent.py:70-73 / jvlink_historical.py:189）"
+    )
+    assert 'JVInit("UNKNOWN")' not in src, (
+        "JVInit に UNKNOWN を渡している。実際の利用キーを渡すこと"
+    )
+
+
+def test_fails_fast_when_api_key_missing() -> None:
+    """APIキーが空なら流す前に止まること（全 POST が 401 になるため）。"""
+    src = _code_only(_BACKFILL)
+    assert "if not API_KEY" in src, "APIキー未設定を起動時に検出すること"
