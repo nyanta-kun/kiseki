@@ -111,8 +111,29 @@ def digest(msg: Message) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
+def last_sent_day(state_path: Path, kind: str) -> str:
+    """その種別で最後に送った日（未送信なら空文字）。
+
+    🔴 **「その夜に1通は必ず出す」を成り立たせるために要る。** 差分抑止
+       (`should_send`) は*内容*で判断するので、同じ内容が続く夜も、異常が無い夜も
+       黙る。それが 2026-09-02〜03 に「レポートchへ一度も届かない」を作った
+       （`.notified.json` が存在しないことで判明）。日で見る目印を分けて持ち、
+       **内容の抑止は本文の詳しさに使い、送るか否かは日で決める。**
+    """
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(state.get(kind, {}).get("day", ""))
+
+
 def should_send(state_path: Path, kind: str, fingerprint: str) -> bool:
-    """前回と同じ内容なら False。中身が空（＝課題なし）でも False。"""
+    """前回と同じ内容なら False。中身が空（＝課題なし）でも False。
+
+    ⚠️ **これは「詳しい本文を出すか」の判定**であって「送るか」ではない
+       （2026-09-04 に役割を分けた）。呼び出し側は False のときも
+       `build_repeat_message` / `build_quiet_message` で1行を出すこと。
+    """
     if not fingerprint or fingerprint == EMPTY_DIGEST:
         return False
     try:
@@ -148,5 +169,36 @@ def build_anomaly_message(day: str, ng_items: list[str], url: str = "",
         sections=[Section("今夜やること", [f"・[異常] {t}" for t in ng_items],
                           cap=5)],
         tallies=[f"正常 {n_ok} 項目"] if n_ok else [],
+        footer=f"📊 <{url}>" if url else "",
+    )
+
+
+def build_quiet_message(day: str, n_ok: int, url: str = "") -> Message:
+    """異常が無い夜の1行。**沈黙させない**ための最小の通知。
+
+    🔴 沈黙は「正常」と「壊れている」を区別できない。2026-09-02〜03 の2夜は
+       どちらも異常0件で、設計どおり1通も送らなかった結果
+       「夜間分析が動いていない」と読まれた（実際は動いていた）。
+    """
+    return Message(
+        day=day,
+        sections=[Section("今夜やること", [], hide_when_empty=False,
+                          empty_text="🟢 異常なし")],
+        tallies=[f"正常 {n_ok} 項目"] if n_ok else [],
+        footer=f"📊 <{url}>" if url else "",
+    )
+
+
+def build_repeat_message(day: str, n_ng: int, url: str = "") -> Message:
+    """前夜と同じ異常が続いている夜の1行。
+
+    🔴 **本文は再掲しない。** 同じリストを毎晩貼ると読まれなくなる
+       （`should_send` を入れた元の理由）。件数とリンクだけ出して、
+       「続いている」ことは必ず伝える。
+    """
+    return Message(
+        day=day,
+        sections=[Section("今夜やること", [], hide_when_empty=False,
+                          empty_text=f"🟡 継続中の異常 {n_ng} 件（内容は前夜と同じ）")],
         footer=f"📊 <{url}>" if url else "",
     )

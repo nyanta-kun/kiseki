@@ -8,10 +8,12 @@
 #    Mac が寝ていれば launchd が起床時に実行する（レポートは VPS に残るので
 #    遅れても失われない）。
 #
-# 🔴 **Discord へは何も送らない**（2026-08-30 変更・ユーザー要望）。
-#    リンクは 00:10 の `nightly_review.sh` が既に送っている。ここは所見を
-#    VPS へ書き戻して**同じ URL のページを更新する**だけ。Mac が寝ていても
-#    図表つきのページは 00:10 に出ており、所見だけが後から足りる形になる。
+# 🔴 **所見はレポートch へ毎晩1通送る**（2026-09-04 変更・ユーザー要望）。
+#    2026-08-30 に「Discord へは何も送らない・ページ更新のみ」としたが、
+#    **レポートchには一度も何も届かず**（`notify_issues` も異常のある夜しか
+#    送らないため）、夜間分析そのものが止まっていると読まれた。
+#    事実の1行＋リンクは 00:10 の `nightly_review.sh` が成績報告ch へ、
+#    異常の有無は同 00:10 が レポートch へ出す。ここが出すのは**所見**だけ。
 #
 # 🔴 **仕分けの規則はプロンプトに固定する。** ここを緩めると、1日ぶんの
 #    ROI に反応して毎晩ルールを足す「後知恵の積み上げ」に戻る。
@@ -80,5 +82,14 @@ ssh -o ConnectTimeout=90 sekito "cd /home/ysuzuki/GitHub/kiseki/keirin && \
     --triage 'data/analysis/nightly/${DAY}.triage.md' && \
   cp 'data/analysis/nightly/${DAY}.html' \"\$D/${DAY}.html\"" \
   || { echo "[triage] ⚠️ ページの更新に失敗（所見は下に出す）"; }
+
+# 所見を Discord のレポートch へ。**ページ更新が失敗しても送る**
+# （所見そのものは手元にあるので、届かないより届いたほうがよい）。
+# 🔴 `KEIRIN_NIGHTLY_URL` は VPS の .env にしか無いので向こうで解決する。
+ssh -o ConnectTimeout=60 sekito "cd /home/ysuzuki/GitHub/kiseki/keirin && \
+  U=\$(grep -E '^KEIRIN_NIGHTLY_URL=' .env | head -1 | cut -d= -f2-) && \
+  PYTHONPATH=. .venv/bin/python3 scripts/notify_triage.py \
+    --day '$DAY' \${U:+--url \"\$U/${DAY}.html\"}" \
+  || { echo "[triage] ⚠️ 所見の Discord 送信に失敗"; }
 
 echo "$OUT"
