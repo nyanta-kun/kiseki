@@ -79,6 +79,7 @@ from src.netkeirin_client import (                           # noqa: E402
     NetkeirinClient,
 )
 from src.notify.discord import send                          # noqa: E402
+from src.confident_pick import start_time_jst                 # noqa: E402
 from src.stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS   # noqa: E402
 from src.submission_skips import (                           # noqa: E402
     CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
@@ -310,6 +311,61 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
         return (SKIP_GATE_POINT_ODDS,
                 f"予測 {min(odds):.1f} 倍の目があります（下限 {MIN_POINT_ODDS} 倍）")
     return None
+
+
+#: 取消済みは対象外（`pick_confident_race_wt._ALIVE` と同じ条件）。
+_ALIVE_SUB = "COALESCE(s.status, 'submitted') <> 'deleted'"
+
+
+def _pick_confident(day: str) -> None:
+    """その日の「自信あり」を1件選ぶ（**朝だけ**・入稿と公開のあと）。
+
+    🔴 **入稿通知より前に呼ぶ**（2026-09-04・ユーザー指示「入稿通知に自信ありの
+       レースと発走時刻を出す」）。以前は `type_lab_daily.sh` が入稿スクリプトの
+       *あと*に呼んでいたので、通知の時点ではまだ1件も立っておらず
+       **必ず「なし」になってしまう**。順序（入稿 → 公開 → 選定）は変えていない。
+    🔴 **昼・夕では呼ばない**（当日2回目を選ぶと「1日1件」が壊れる）。
+    🔴 **失敗しても入稿は成功している。** 通知と同じ扱いで、例外はログだけ残す。
+    """
+    try:
+        from scripts.pick_confident_race_wt import pick
+        pick(day)
+    except Exception as e:      # noqa: BLE001 — 選定は付随処理
+        print(f"[type_lab_submit] 自信ありの選定に失敗（入稿は完了している）: {e!r}",
+              flush=True)
+
+
+def _confident_line(day: str) -> str:
+    """入稿通知に出す「自信あり」の1行。**無ければ「なし」と書く**（黙って省かない）。
+
+    🔴 `netkeirin_submissions.is_confident` が唯一の正本（`pick_confident_race_wt`）。
+       ここは読むだけで、判定も選定もしない。
+    🔴 **列は必ず `s.` で修飾する。** `wt_races` にも `status` があるので、
+       裸で書くと PostgreSQL が `AmbiguousColumn` で落ちる（2026-09-02 に実際に踏んだ）。
+    """
+    ymd = day.replace("-", "")
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT s.venue_name, s.race_no, s.rank_key, r.start_at "
+                "FROM netkeirin_submissions s "
+                "LEFT JOIN wt_races r ON r.race_key = s.race_key "
+                # 🔴 **`= 1` と書かない。** PostgreSQL では boolean 列なので
+                #    `operator does not exist: boolean = integer` で落ちる
+                #    （SQLite では INTEGER なので気づけない）。
+                "WHERE s.race_key LIKE ? AND s.is_confident "
+                f"  AND {_ALIVE_SUB} "
+                "ORDER BY s.race_key LIMIT 1",
+                (f"{ymd}%",),
+            ).fetchone()
+    except Exception as e:      # noqa: BLE001 — 通知は付随情報
+        return f"🎯 自信あり: 取得できず（{e!r}）"
+    if not row:
+        return "🎯 自信あり: なし"
+    d = dict(row)
+    when = start_time_jst(d.get("start_at"))
+    return (f"🎯 自信あり: {d.get('venue_name') or '?'}{d.get('race_no') or '?'}R"
+            f"（{d.get('rank_key')}・発走 {when or '時刻不明'}）")
 
 
 def _race_point_sd(race_keys: list[str]) -> dict[str, float]:
@@ -779,6 +835,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     n_published = sum(1 for r in published if r.get("ok"))
     n_publish_ng = len(published) - n_published
 
+    # 🔴 「自信あり」の選定は**通知より前**（通知がどのレースかを出すため）。
+    if n_ok and not dry_run and session == "morning":
+        _pick_confident(day)
+
     if n_ok and not dry_run:
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
         #    2026-08-28〜29 は存在しない "keirin" を渡していて **毎回 ValueError で
@@ -806,6 +866,9 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                 body = f"入稿確認 → {REVIEW_URL}"
             if n_publish_ng:
                 body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
+            # 🔴 **自信ありは毎回1行出す**（無い日も「なし」と書く。行が消えると
+            #    「選定が落ちた」のか「該当が無かった」のか読み手に区別できない）。
+            body += f"\n{_confident_line(day)}"
             send(f"📮 **NetKeirin入稿 {n_ok}件**（{day} / {session}）\n{body}",
                  channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報
