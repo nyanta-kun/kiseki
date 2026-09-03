@@ -1163,3 +1163,164 @@ new−市場 +0.20499 / new−prod −0.00476 [−0.01508,+0.00567] ⇒ **`new` 
 ### 18.5 次の分岐
 
 §15.6 に従い **「確認成功 → §16 の実装（v28）へ進む」**。実装は未着手。
+
+---
+
+## 19. 下流インパクト実測（2026-09-04）— 🔴 §16.3 の表は誤りだった
+
+- スクリプト: `backend/scripts/jra_v28_downstream_impact.py` / 結果: `docs/model_verification/jra_v28_downstream_impact.json`
+- `prod` / `new` の確率は `jra_winplace_final_confirm.fit_arms` を import して再現
+  （学習 148,885行/10,887R・評価 648R/8,443頭・発走前オッズ 641/648R が §18 と完全一致）
+- 判定は全て本番関数を import して実行（`is_sweet_spot` / `jra_is_place_axis` /
+  `calculate_race_confidence` / `calculate_recommend_rank` / `place_ev.pick_race`）
+- 🔴 **閾値は1つも動かしていない。ROI は計算していない**
+
+### 19.1 §16.3 の訂正（呼び出し元を `src/` 全体で辿った実測）
+
+| §16.3 の記述 | 実測 |
+|---|---|
+| `buy_signal.py:198` `HIGHODDS_MAX_PP_RANK` が `place_probability` の消費者 | **誤り。`is_sweet_spot()` は `place_probability` を一切読まない**（`win_probability`×単勝オッズ の EV とバッジのみ）。k≤2 を使うのは `jra_is_place_axis()` で、**`src/` に呼び出し元が無い**（tests のみ）。`recommender.py:403` の `place_prob_rank` も**誰も読んでいない** |
+| `upset_reranker.py:98,136` が `pp` をレース内 rank に使用 | **誤り。`src/` に JRA 側の呼び出し元が無い**（学習・監視スクリプト専用）。しかも `_rank_desc` は composite/DM/サブ指数にしか当たらず **`pp` は生値** |
+| `place_ev.py` は別系統で DB は読まない | **誤り。生きている唯一の消費者**（`api/races.py:1304` / `recommender.py:775`）。DB の `place_probability` を `pp`（生値）と **`pp_rank`（レース内 rank）の両方**として使う |
+| tier は `composite_index` を見るので動かないはず | 🔴 **誤り。`calculate_race_confidence` は `win_probabilities` を受け取り「勝率集中スコア」15点を作る**（`confidence.py:243-252`）。`races.py:1313` / `recommender.py:752` / `jra_race_confidence.py:160` が全て渡している |
+
+⚠️ **私（親）が3度目に同じ型の誤りを犯した。**「仕組みの存在から挙動を推論して報告しない・
+呼び出し元を辿ること」（`CLAUDE.md`）。**§16.3 の表を信じて測ると、動いていないものを測って
+動いているものを見落とす。**
+
+### 19.2 🔴 tier は動く（5.15%のレース）
+
+| | S | A | B | C+ | C |
+|---|---|---|---|---|---|
+| prod (641R) | 124 (19.3%) | 91 (14.2%) | 134 (20.9%) | 130 (20.3%) | 162 (25.3%) |
+| new (641R) | 128 (20.0%) | 92 (14.3%) | 129 (20.1%) | 130 (20.3%) | 162 (25.3%) |
+
+**tier が動いたレース 33/641 = 5.15%**（A→S 9 / S→A 5 / B→A 12 / A→B 7）。
+`confidence_score` は **462/641 = 72.1%** で動く（|Δ| p90 4・最大 9）。
+
+**原因を実測で特定**: 同じ641Rで `win_probabilities` を渡さずに `calculate_race_confidence` を
+呼び直すと **confidence_score 差 0件・tier 差 0件**。渡すと 462件 / 33件。
+⇒ 差は **100%「勝率集中スコア」15点由来**で `composite_index` は無関係。
+
+**規模は地方 v14（S+A 70.4%→35.8%）とは桁が違う**（S+A 33.5% → 34.3%・**+0.8pt**）。
+tier 別の質も不変（S 勝率 0.490 → 0.487 / C 0.1781 → 0.1781）＝分布が壊れた形跡はない。
+
+### 19.3 下流の実測（2026Q3・641R）
+
+| 指標 | prod | new |
+|---|---|---|
+| pp1位馬の実複勝率 | 0.5324 | **0.5478** |
+| coverage@3 | 0.4753 | **0.4861** |
+| `place_ev` 推奨1頭の実複勝率 | 0.2619 | **0.2665** |
+| sweet_spot 該当馬の実複勝率 | 0.2146 | 0.2177 |
+| pp1位馬の**予測**複勝確率 平均 | 0.6603 | **0.5968** |
+
+- **`pp` のレース内 rank が動いた馬 54.9%**、pp1位が入れ替わったレース 145/648 = 22.4%
+- `pp_rank≤2` のメンバー入れ替え 15.68%、動いたレース 30.6%
+- `is_sweet_spot` 該当 522 → 496・入替率 28.35%。⚠️ **この変化は `place_probability` ではなく
+  `win_probability`（EV）経由**
+- ⚠️ **pp1位馬は予測 0.66 → 0.60 と下がるのに実複勝率は 0.532 → 0.548 と上がる**
+  ＝過信側から較正が戻っている
+
+🔴 **`place_ev` の推奨馬は 12.75%（3窓プール 15.0%）のレースで別馬に変わり、的中率は
+窓で符号が割れる**（Q3 +0.5pt / Q1 +1.3pt / **Q2 −1.8pt**、プールでは 0.2761 → 0.2704 と
+わずかに悪化）。**「改善」と言い切れない。デプロイ後に前向き記録で監視すること。**
+
+### 19.4 クリップは実在する（Q3 で 0頭だっただけ）
+
+`Σp_place = place_slots` の最大乖離: 2026Q3 **0.0（クリップ0頭）** だが、
+**2026Q1 で1頭・乖離 0.0876 / 2026Q2 で1頭・乖離 0.0523** が発生。
+⇒ **§16.2-2 の「クリップして再正規化するか」を「Q3 で起きなかったから不要」と判断してはいけない。**
+
+### 19.5 🔴 2026Q1 のオッズ依存指標は信用しない
+
+`odds_history` は 2026-03-28 以降にしか無く、Q1 は 858R 中 **64R（3月最終週のみ）**しか
+発走前オッズが揃わない。**「tier 動いた 0/64 = 0%」は「動かない」ではなく「n=64 で検出できない」。**
+オッズ非依存の指標（pp_rank・分布）は全858Rで算出している。
+
+### 19.6 実装への反映
+
+- **`place_ev` が唯一の生きた消費者**なので、v28 のデプロイ判断は
+  **`place_ev` の前向き記録（`hit_tier_picks` / `chihou_place_pick_log` 相当）で監視する**
+- `HIGHODDS_MAX_PP_RANK` / `jra_is_place_axis` / `upset_reranker` は
+  **本番から呼ばれていないので閾値の再調整は不要**（死んでいることの記録は別途必要）
+- tier は動くが +0.8pt・質は不変。**デプロイを止める理由にはならないが、
+  リリースノートに明記し前向き記録で確認する**
+
+---
+
+## 20. v28 実装（2026-09-04・デプロイは未実行）
+
+### 20.1 差分
+
+- `composite.py`: `COMPOSITE_VERSION = 28`（`SUBINDEX_MIN_VERSION = 26` は不変）/
+  `V28_FEATURE_NAMES = OUT_PROB_FEATURE_NAMES + PAST_FORM_FEATURE_NAMES`（38列）/
+  `place_slots_for_field()` / `normalize_place_to_slots()` / `_build_v28_features()` /
+  v28 用の2ヘッドを lazy load（未配置なら None → Harville へフォールバック）
+- `train_jra_iswin_head.py`（38列化）/ `train_jra_placed_head.py`（新規）/
+  `inference_v28.py`（新規・冪等）/ `tests/test_v28_winplace.py`（新規29件）
+- 🔴 **`composite_index` / `out_probability` / `reg_rank` / tier ロジック・閾値は一切変更なし**
+
+### 20.2 train/serve 一致の担保（5重）
+
+1. 新特徴は `past_form` の入口2つだけを使う（別実装ゼロ）
+2. 列順の正本は `composite.V28_FEATURE_NAMES` の1か所。学習・配信・バックフィルが全部これを参照
+3. `test_train_and_serve_build_identical_38_columns` が合成1レースで**NaN 位置まで完全一致**を固定
+4. `ARMS["feat"]["names"] == V28_FEATURE_NAMES` をテストで固定（検証の列並びと一致）
+5. 実データ `race_id=137801`（14頭）を**配信経路の async DB セッション**に通し学習経路と突き合わせ
+   → 4特徴が14頭全頭一致・`Σp_win=1.0` / `Σp_place=3.0`・新特徴の NaN が残存・**交差6ペア**
+
+### 20.3 🔴 実装中に見つかった、検証を無効にしかけた問題
+
+**v27 の `train_jra_iswin_head` は `jra_calibration_ab` 経路で学習していた**
+（`fillna(50.0)` なし・`head_count>=8` で5〜7頭立てを除外）。
+**検証の `base` 腕とは別物だった。** 気付かずに38列だけ足していれば、
+**検証結果と無関係なモデルを出荷するところだった。**
+v28 では検証実装（= 本番 `_build_v26_features` の再現）に揃えた。
+証拠: refit 148,885行/10,887R・評価 648R/8,443頭が §18 と完全一致。
+
+### 20.4 `place_slots` / `head_count` の出所
+
+🔴 **`place_slots` は `races.head_count` を一切見ない**（発走前 NULL のため）。
+学習＝レース内実行数 / 配信＝`len(results)` / バックフィル＝そのレースの行数。
+規則は `place_slots_for_field()` の1か所のみ。
+
+**実測で `head_count ≠ 実行数` の行が 8,306/157,328 = 5.3% あった**
+（`sanity_check_place_slots` がメトリクスに記録）。地方の `head_count` skew と同じ型。
+
+### 20.5 クリップの扱い
+
+**クリップのみ・再正規化なし**に固定（`normalize_place_to_slots` の docstring に明記）。
+根拠: (a) 検証実装がこの式で、変えると §18.1 の確認成功が無効になる
+(b) 再正規化すると1頭の外れ値がレース全体の確率を動かす。
+§19.4 のとおり「起きないから不要」ではなく「起きても1頭に閉じ込める」判断。
+`test_clip_only_no_renormalize` が固定。
+
+### 20.6 出荷モデルの honest test（TRAIN ≤20250630 → 2026Q3 に一度だけ）
+
+| | v28 独立ヘッド | Harville |
+|---|---|---|
+| `place_ll` slots=3 (625R) | **0.44984** | 0.45774（Δ −0.00790） |
+| `coverage@3` | **0.4869** | 0.4805 |
+| 複勝 Spearman | **0.3651** | 0.3625 |
+| 交差 | **611R / 3,440ペア** | 0R / 0ペア |
+
+Σ乖離 0.0 / クリップ 0頭。方向・規模とも §18.1 と整合（学習終端が違うので絶対値は不一致）。
+v28 単勝ヘッド: norm ECE 0.0065 / MCE 0.011 / Brier 0.0641。
+
+### 20.7 🔴 未確認事項・残る差（デプロイ前に読むこと）
+
+1. **`pace_handicap_pit` の頭数補正にだけ train/serve 差が残る。**
+   学習は `races.head_count`（確定）、配信は NULL のため `len(results)`（取消馬を含む）へ
+   フォールバック。**影響は `_apply_field_size_adjustment` の閾値だけで、
+   確率の正規化・`place_slots` には一切影響しない。検証実装も同じ挙動。**
+2. 配信時のフィールドは学習時の母集団（`abnormality_code ∈ {1,2}` 除去後）と厳密には一致しない。
+   ただし **v27 の Harville（`n = len(results)`）と同じ挙動**で、v28 が新たに持ち込んだ差ではない
+3. **`record_test_usage()` は今回呼んでいない。** honest test 窓は §18 で台帳に記録済みで、
+   今回は採否判断ではなく出荷モデルの数値報告。追記が要るかはユーザー判断
+4. 🔴 **新規バグ発見（本 PR では直していない）**: `inference_v27.py` が `ci.version = 26` 固定で
+   サブ指数を引いており **2026-08-02 以降を埋められない**。
+   地方の `chihou_cutoff_venue_review.py:93` の `ci.version = 13` ハードコードと**同じ型**。
+   `inference_v28.py` は `SUBINDEX_SOURCE_SQL` を使っているので同じ問題は持たない
+5. **デプロイ・バックフィルは未実行**（`inference_v28.py` は `--dry-run` のみ）。
+   §16.4 の3段（デプロイ → 全期間バックフィル → 当日/翌日の calculate）は未着手

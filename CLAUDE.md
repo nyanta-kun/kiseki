@@ -1462,6 +1462,77 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **地方競馬は対象外**（下記の別系統）。
 
+### 総合指数 v28（単勝ヘッド38列 + 複勝の独立ヘッド・2026-09-04）
+
+`COMPOSITE_VERSION = 28`。事前登録・結果は
+`docs/jra_winplace_structure_plan_2026_09_04.md`（§16 が実装設計・§18 が 2026Q3 の確認）。
+**`composite_index` / `out_probability` / `reg_rank` / tier 判定は v27 から変更なし。**
+変えたのは確率の2本だけ。
+
+| 対象 | v27 | v28 |
+|---|---|---|
+| 単勝ヘッドの特徴 | 34列・`fillna(50.0)` | **38列**（+ `past_form.PAST_FORM_FEATURE_NAMES`） |
+| `place_probability` | `_harville_place_probs(win)` | **独立 is_placed ヘッド → `Σp = place_slots`** |
+
+- モデル: `models/v28_iswin_calib.txt` + `models/v28_placed_head.txt`
+  （**v27 の `v26_iswin_calib.txt` は残してある**。読めなければ自動で v27 の34列ヘッド /
+  Harville へ落ちるのでロールバックは model ファイルを消すだけで済む）
+- 学習: `scripts/train_jra_iswin_head.py` / `scripts/train_jra_placed_head.py`
+- 全期間バックフィル: `scripts/inference_v28.py`（冪等・`version=28` 行として保存）
+- 2026Q3 一度きり評価（648R・`jra_winplace_final_confirm.py`）:
+  複勝 `place_ll` 0.47118→0.45934（**95%CI [−0.01515, −0.00832]**）/
+  単勝 多項対数損失 2.08355→2.07998（点推定のみ・CI は 0 を跨ぐ）
+
+#### 🔴 新特徴は `src/indices/past_form.py` からのみ取る
+
+脚質 / 着順分散5 / 勝率複勝率比5 / `pace_handicap_pit` の4列。
+**学習も配信も同じ純関数**（`compute_race_past_form_features`）を通す:
+学習は `build_past_form_features_bulk`、配信は `build_past_form_features_for_race`。
+別実装を書いた瞬間に train/serve skew が入る（地方 v13→v14 は同型の skew で 9pt 落とした）。
+
+- **欠損は NaN のまま LightGBM に渡す。`50.0` で埋めない**（過去5走が揃うのは 58.5% だけ）。
+  34列側の `fillna(50.0)` は維持する（`nan` 腕は検証で不採用）
+- 🔴 本番 `PaceHandicapCalculator` は **point-in-time ではない**（枠別勝率・上がり3F・
+  騎手戦法に日付条件が無い）。`past_form.compute_pace_handicap_pit` が PIT 安全な
+  部分再構成なので、**そちらだけを使う**
+
+#### 🔴 `place_slots` は `races.head_count` から作らない
+
+`races.head_count` は**発走前 NULL**（`3.2`）。ここから複勝の枠数を作ると配信時にだけ壊れる。
+必ず**実際のフィールドの馬数**から `composite.place_slots_for_field(n)` で作る
+（`n>=8`→3 / `5<=n<=7`→2 / `n<5`→0）。実測で `head_count ≠ 実行数` の行が 5.3% ある。
+
+- `place_slots=0`（5頭未満）は払戻対象着順が無いので**独立ヘッドの学習から除外**し、
+  配信では Harville へ落とす
+- ラベルは `finish_position <= place_slots`（`=2` のレースは2着以内）。
+  一律 `<=3` にすると 5〜7頭立てを「3着以内ヘッドを2着以内で採点」することになる
+
+#### 正規化は「クリップのみ・再正規化なし」
+
+`composite.normalize_place_to_slots` が単一真実源。`raw * slots / Σraw` の後に
+`clip(EPS, 1-EPS)` するだけで、**クリップ後の再正規化はしない**（検証実装と同一）。
+1 を超える馬は 118,397頭中 7頭・2026Q3 では 0頭。崩れを1頭に閉じ込める方が、
+押し戻し分で他馬の確率を動かすより害が小さい。
+
+#### 下流の実測（計画 §19・`scripts/jra_v28_downstream_impact.py`）
+
+🔴 **§16.3 が挙げた消費者の表は実測で否定された。呼び出し元を `src/` 全体で辿ること。**
+
+- **`place_ev.py` が `place_probability` の唯一の生きた消費者**
+  （`api/races.py` / `recommender.py` から呼ばれる）。`buy_signal.jra_is_place_axis` /
+  `upset_reranker` は **`src/` に呼び出し元が無い**ので閾値の再調整は不要
+- 🔴 **tier は動く（641R 中 33R = 5.15%）**。`calculate_race_confidence` が
+  `win_probabilities` を受け取って「勝率集中スコア」15点を作るため。
+  `composite_index` は無関係（渡さずに呼ぶと差 0件）。規模は S+A 33.5%→34.3% の **+0.8pt** で
+  地方 v14（70.4%→35.8%）とは桁が違い、tier 別の質も不変
+- 単勝順位と複勝順位の**交差がほぼ全レースで出る**（0R → 610R）ので `pp` のレース内 rank は
+  54.9% の馬で動く。pp1位馬の実複勝率は 0.5324 → **0.5478**（予測は 0.66→0.60 と過信が戻る）
+- ⚠️ **top1勝率は 0.2855→0.2747（−1.08pt）と悪化する**
+- 🔴 **`place_ev` の推奨馬は 12.75% のレースで別馬に変わり、的中率は窓で符号が割れる**
+  （Q3 +0.5pt / Q1 +1.3pt / **Q2 −1.8pt**）。**「改善」と言い切れないので前向き記録で監視する**
+
+⚠️ **版を上げたら「デプロイ → バックフィル → 当日/翌日の calculate」の3段を必ず行う。**
+
 ### 総合指数 v27（順位回帰 + 着外率合成・2026-08-02）
 
 `COMPOSITE_VERSION = 27`。v26 の「LGB LambdaRank 0.3 + v24線形和 0.7」を廃止し、

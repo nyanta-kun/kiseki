@@ -1,0 +1,1744 @@
+{
+  "generated_at": "2026-09-04T07:29:17",
+  "purpose": "docs/jra_winplace_structure_plan_2026_09_04.md §16.3 / §18.3 の「下流の閾値がどう動くか」の実測（閾値の探索・最適化はしない）",
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)",
+  "config": {
+    "arms": [
+      "prod",
+      "new"
+    ],
+    "windows": [
+      "2026Q1",
+      "2026Q2",
+      "2026Q3"
+    ],
+    "data_start": "20230101",
+    "seeds": [
+      42,
+      123,
+      456
+    ],
+    "valid_days": 90,
+    "max_lead_min": 60.0,
+    "composite_version_for_downstream": 27,
+    "frozen_thresholds": {
+      "HIGHODDS_MAX_PP_RANK": 2,
+      "tier_confidence_cuts": [
+        65,
+        80
+      ],
+      "sweet_spot": "odds>=10 / EV in [1.2,5.0] / badge / race-level k<3 cancel",
+      "place_ev_floor": 0.2
+    },
+    "odds": "🔴 発走前オッズのみ（odds_history・確定オッズと確定人気は不使用）"
+  },
+  "call_site_audit": {
+    "is_sweet_spot": "api/races.py:1221（本番）。place_probability は**読まない**（win_probability × 発走前オッズ の EV とバッジのみ）",
+    "jra_is_place_axis__HIGHODDS_MAX_PP_RANK": "🔴 src/ に呼び出し元が無い（tests のみ）。recommender.py:403 が作る place_prob_rank も src/ の誰も読んでいない",
+    "upset_reranker(JRA)": "🔴 src/ に呼び出し元が無い。chihou_upset.py が _rank_desc だけ import。pp は生値で使う設計で レース内 rank は作っていない（§16.3 の記述と異なる）",
+    "place_ev": "🔴 生きている（api/races.py:1304 / services/recommender.py:775）。pp（生値）と pp_rank（レース内 rank）の**両方**を特徴に持つ。§16.3 の「DB は読まない」は誤り",
+    "confidence.calculate_race_confidence": "🔴 win_probabilities を受け取り「勝率集中スコア」15点を作る。composite_index だけではないので tier は理屈の上でも動きうる"
+  },
+  "windows": {
+    "2026Q1": {
+      "eval": {
+        "date_min": "20260104",
+        "date_max": "20260329",
+        "n_rows": 12148,
+        "n_races": 858
+      },
+      "train_end": "20251231",
+      "fit_info": {
+        "train_rows": 113020,
+        "valid_rows": 11717,
+        "valid_cut": "20251003",
+        "train_date_min": "20230506",
+        "train_date_max": "20251228",
+        "best_iters_win__prod": [
+          96,
+          232,
+          171
+        ],
+        "best_iters_win__new": [
+          202,
+          174,
+          129
+        ],
+        "best_iters_place__new": [
+          251,
+          238,
+          279
+        ],
+        "new_place_clipped_horses": 1
+      },
+      "self_checks": {
+        "max_abs_dev_p_win_sum_from_1__prod": 0.0,
+        "max_abs_dev_p_win_sum_from_1__new": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__prod": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__new": 0.087627,
+        "races_dropped_missing_v27_composite": 0,
+        "new_place_clipped_horses": 1
+      },
+      "visual_check": [
+        "",
+        "==========================================================================================================================================",
+        "🔴 目視確認（2026Q1） race_id=56064 20260328 中山3R nan n=16 place_slots=3",
+        "   tier: prod=A(conf=70) / new=A(conf=70)  ｜ market_agree=True  ｜ place_ev pick: prod=None / new=None",
+        "==========================================================================================================================================",
+        "  馬番   着  CI順     発走前O  p_win prod  p_win new p_place prod p_place new  pp順 prod  pp順 new  sweet p/n   k<=2軸 p/n",
+        "   1  10   12    236.1     0.00669    0.00728      0.02380     0.03749        15       13          ×/×           ×/×",
+        "   2   1    4      7.2     0.11489    0.11226      0.35941     0.37571         4        3          ×/×           ×/×",
+        "   3   4    8     30.4     0.02850    0.02297      0.09909     0.11533         9        9          ×/×           ×/×",
+        "   4  15   15    438.3     0.01099    0.00884      0.03893     0.02029        13       15          ×/×           ×/×",
+        "   5   3    2      3.8     0.18898    0.21601      0.52854     0.55655         2        2          ×/×           ×/×",
+        "   6   8    5     67.2     0.05809    0.03802      0.19538     0.17252         6        6          ○/○           ×/×",
+        "   7  13   14    192.5     0.01937    0.01083      0.06803     0.05891        10       11          ×/×           ×/×",
+        "   8   2    1      1.8     0.24568    0.27614      0.62517     0.67866         1        1          ×/×           ×/×",
+        "   9   6   11    117.9     0.01257    0.01407      0.04443     0.06920        12       10          ×/×           ×/×",
+        "  10   7   10    205.6     0.01534    0.01289      0.05410     0.05365        11       12          ×/×           ×/×",
+        "  11   5    7     82.4     0.03138    0.02597      0.10879     0.11805         8        8          ×/×           ×/×",
+        "  12   9    6     30.3     0.07328    0.06963      0.24202     0.19382         5        5          ×/×           ×/×",
+        "  13  12   13    414.4     0.00771    0.00453      0.02739     0.02780        14       14          ×/×           ×/×",
+        "  14  14    9     18.1     0.04536    0.05028      0.15480     0.15007         7        7          ×/×           ×/×",
+        "  15  16   16    468.4     0.00407    0.00262      0.01451     0.00970        16       16          ×/×           ×/×",
+        "  16  11    3      8.2     0.13710    0.12765      0.41560     0.36225         3        4          ×/×           ×/×",
+        "   Σ                       1.00000    1.00000      3.00000     3.00000",
+        "（期待: Σp_win=1.00000（両腕）/ Σp_place=3.00000（両腕））"
+      ],
+      "odds": {
+        "max_lead_min": 60.0,
+        "n_races": 858,
+        "n_races_full_prerace_odds": 64,
+        "coverage_pct": 7.46,
+        "lead_min_median": 0.38
+      },
+      "horse_level_odds_races": {
+        "n_horses": 865,
+        "n_races": 64,
+        "sweet_spot": {
+          "n_prod": 42,
+          "n_new": 39,
+          "both": 34,
+          "prod_only": 8,
+          "new_only": 5,
+          "union": 47,
+          "jaccard": 0.7234,
+          "turnover_rate_vs_prod": 0.3095,
+          "n_races_with_any_prod": 34,
+          "n_races_with_any_new": 32,
+          "place_rate_prod": 0.0952,
+          "place_rate_new": 0.1538,
+          "win_rate_prod": 0.0476,
+          "win_rate_new": 0.0513,
+          "place_rate_prod_only": 0.0,
+          "place_rate_new_only": 0.4
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 128,
+          "n_new": 128,
+          "both": 110,
+          "prod_only": 18,
+          "new_only": 18,
+          "member_turnover_rate": 0.1406,
+          "n_races": 64,
+          "n_races_membership_changed": 18,
+          "pct_races_membership_changed": 0.2812,
+          "place_rate_prod": 0.5938,
+          "place_rate_new": 0.5938,
+          "place_rate_prod_only": 0.3889,
+          "place_rate_new_only": 0.3889
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 4,
+          "n_new": 4,
+          "both": 4,
+          "prod_only": 0,
+          "new_only": 0,
+          "turnover_rate_vs_prod": 0.0,
+          "place_rate_prod": 0.0,
+          "place_rate_new": 0.0
+        },
+        "pp_rank_shift": {
+          "n_horses": 865,
+          "n_moved": 476,
+          "pct_moved": 0.5503,
+          "abs_shift_hist": {
+            "0": 389,
+            "1": 282,
+            "2": 114,
+            "3": 46,
+            "4": 20,
+            "5": 14,
+            "6+": 0
+          },
+          "abs_shift_mean": 0.9225,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 5,
+          "n_races_rank1_changed": 14
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.21618,
+            "std_all": 0.19836,
+            "rank1_mean": 0.65545,
+            "rank1_p10": 0.48284,
+            "rank1_p50": 0.66108,
+            "rank1_p90": 0.80495,
+            "rank1_max": 0.87548,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6562
+          },
+          "new": {
+            "mean_all": 0.21618,
+            "std_all": 0.18014,
+            "rank1_mean": 0.60496,
+            "rank1_p10": 0.45684,
+            "rank1_p50": 0.59959,
+            "rank1_p90": 0.73471,
+            "rank1_max": 0.94816,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6875
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 64,
+              "place_rate": 0.6562,
+              "win_rate": 0.2344
+            },
+            "top2": {
+              "n": 128,
+              "place_rate": 0.5938,
+              "win_rate": 0.2031
+            },
+            "top3": {
+              "n": 192,
+              "place_rate": 0.5104,
+              "win_rate": 0.1771
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 64,
+              "place_rate": 0.6875,
+              "win_rate": 0.2656
+            },
+            "top2": {
+              "n": 128,
+              "place_rate": 0.5938,
+              "win_rate": 0.1953
+            },
+            "top3": {
+              "n": 192,
+              "place_rate": 0.5469,
+              "win_rate": 0.2031
+            }
+          }
+        }
+      },
+      "horse_level_all_races": {
+        "n_horses": 12148,
+        "n_races": 858,
+        "sweet_spot": {
+          "n_prod": 42,
+          "n_new": 39,
+          "both": 34,
+          "prod_only": 8,
+          "new_only": 5,
+          "union": 47,
+          "jaccard": 0.7234,
+          "turnover_rate_vs_prod": 0.3095,
+          "n_races_with_any_prod": 34,
+          "n_races_with_any_new": 32,
+          "place_rate_prod": 0.0952,
+          "place_rate_new": 0.1538,
+          "win_rate_prod": 0.0476,
+          "win_rate_new": 0.0513,
+          "place_rate_prod_only": 0.0,
+          "place_rate_new_only": 0.4
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 1716,
+          "n_new": 1716,
+          "both": 1453,
+          "prod_only": 263,
+          "new_only": 263,
+          "member_turnover_rate": 0.1533,
+          "n_races": 858,
+          "n_races_membership_changed": 258,
+          "pct_races_membership_changed": 0.3007,
+          "place_rate_prod": 0.5664,
+          "place_rate_new": 0.5664,
+          "place_rate_prod_only": 0.4829,
+          "place_rate_new_only": 0.4829
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 4,
+          "n_new": 4,
+          "both": 4,
+          "prod_only": 0,
+          "new_only": 0,
+          "turnover_rate_vs_prod": 0.0,
+          "place_rate_prod": 0.0,
+          "place_rate_new": 0.0
+        },
+        "pp_rank_shift": {
+          "n_horses": 12148,
+          "n_moved": 6823,
+          "pct_moved": 0.5617,
+          "abs_shift_hist": {
+            "0": 5325,
+            "1": 4289,
+            "2": 1600,
+            "3": 559,
+            "4": 238,
+            "5": 112,
+            "6+": 25
+          },
+          "abs_shift_mean": 0.8933,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 12,
+          "n_races_rank1_changed": 200
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.21073,
+            "std_all": 0.19632,
+            "rank1_mean": 0.65156,
+            "rank1_p10": 0.49185,
+            "rank1_p50": 0.64769,
+            "rank1_p90": 0.81604,
+            "rank1_max": 0.94972,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6084
+          },
+          "new": {
+            "mean_all": 0.21073,
+            "std_all": 0.17648,
+            "rank1_mean": 0.59383,
+            "rank1_p10": 0.45217,
+            "rank1_p50": 0.58226,
+            "rank1_p90": 0.7569,
+            "rank1_max": 1.0,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6131
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 858,
+              "place_rate": 0.6084,
+              "win_rate": 0.2751
+            },
+            "top2": {
+              "n": 1716,
+              "place_rate": 0.5664,
+              "win_rate": 0.2448
+            },
+            "top3": {
+              "n": 2574,
+              "place_rate": 0.5054,
+              "win_rate": 0.2032
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 858,
+              "place_rate": 0.6131,
+              "win_rate": 0.2786
+            },
+            "top2": {
+              "n": 1716,
+              "place_rate": 0.5664,
+              "win_rate": 0.2395
+            },
+            "top3": {
+              "n": 2574,
+              "place_rate": 0.5167,
+              "win_rate": 0.2055
+            }
+          }
+        }
+      },
+      "race_level_odds_races": {
+        "n_races": 64,
+        "tier_dist": {
+          "prod": {
+            "S": 14,
+            "A": 4,
+            "B": 14,
+            "C+": 13,
+            "C": 19
+          },
+          "new": {
+            "S": 14,
+            "A": 4,
+            "B": 14,
+            "C+": 13,
+            "C": 19
+          }
+        },
+        "tier_dist_pct": {
+          "prod": {
+            "S": 0.2188,
+            "A": 0.0625,
+            "B": 0.2188,
+            "C+": 0.2031,
+            "C": 0.2969
+          },
+          "new": {
+            "S": 0.2188,
+            "A": 0.0625,
+            "B": 0.2188,
+            "C+": 0.2031,
+            "C": 0.2969
+          }
+        },
+        "tier_changed_races": 0,
+        "tier_changed_pct": 0.0,
+        "tier_transitions": {},
+        "confidence_score_delta": {
+          "n_changed": 45,
+          "pct_changed": 0.7031,
+          "mean": -0.1094,
+          "abs_p50": 1,
+          "abs_p90": 4,
+          "abs_max": 6
+        },
+        "place_ev_pick": {
+          "n_races_any_pick": 56,
+          "n_pick_prod": 55,
+          "n_pick_new": 56,
+          "n_same_horse": 46,
+          "pct_changed": 0.1786,
+          "hit_rate_prod": 0.2545,
+          "hit_rate_new": 0.2679
+        },
+        "tier_top1_hit": {
+          "prod": {
+            "S": {
+              "n": 14,
+              "win_rate": 0.3571,
+              "place_rate": 0.7143
+            },
+            "A": {
+              "n": 4,
+              "win_rate": 0.0,
+              "place_rate": 0.75
+            },
+            "B": {
+              "n": 14,
+              "win_rate": 0.2857,
+              "place_rate": 0.7143
+            },
+            "C+": {
+              "n": 13,
+              "win_rate": 0.5385,
+              "place_rate": 0.8462
+            },
+            "C": {
+              "n": 19,
+              "win_rate": 0.1053,
+              "place_rate": 0.5789
+            }
+          },
+          "new": {
+            "S": {
+              "n": 14,
+              "win_rate": 0.3571,
+              "place_rate": 0.7143
+            },
+            "A": {
+              "n": 4,
+              "win_rate": 0.0,
+              "place_rate": 0.75
+            },
+            "B": {
+              "n": 14,
+              "win_rate": 0.2857,
+              "place_rate": 0.7143
+            },
+            "C+": {
+              "n": 13,
+              "win_rate": 0.5385,
+              "place_rate": 0.8462
+            },
+            "C": {
+              "n": 19,
+              "win_rate": 0.1053,
+              "place_rate": 0.5789
+            }
+          }
+        }
+      }
+    },
+    "2026Q2": {
+      "eval": {
+        "date_min": "20260404",
+        "date_max": "20260628",
+        "n_rows": 12000,
+        "n_races": 864
+      },
+      "train_end": "20260331",
+      "fit_info": {
+        "train_rows": 124737,
+        "valid_rows": 12148,
+        "valid_cut": "20260101",
+        "train_date_min": "20230506",
+        "train_date_max": "20260329",
+        "best_iters_win__prod": [
+          138,
+          145,
+          135
+        ],
+        "best_iters_win__new": [
+          265,
+          145,
+          201
+        ],
+        "best_iters_place__new": [
+          414,
+          402,
+          387
+        ],
+        "new_place_clipped_horses": 1
+      },
+      "self_checks": {
+        "max_abs_dev_p_win_sum_from_1__prod": 0.0,
+        "max_abs_dev_p_win_sum_from_1__new": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__prod": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__new": 0.052306,
+        "races_dropped_missing_v27_composite": 0,
+        "new_place_clipped_horses": 1
+      },
+      "visual_check": [
+        "",
+        "==========================================================================================================================================",
+        "🔴 目視確認（2026Q2） race_id=56332 20260404 中山4R nan n=14 place_slots=3",
+        "   tier: prod=C(conf=44) / new=C(conf=41)  ｜ market_agree=False  ｜ place_ev pick: prod=10 / new=10",
+        "==========================================================================================================================================",
+        "  馬番   着  CI順     発走前O  p_win prod  p_win new p_place prod p_place new  pp順 prod  pp順 new  sweet p/n   k<=2軸 p/n",
+        "   1   6    9     39.4     0.04587    0.04890      0.14697     0.19063         9        8          ×/×           ×/×",
+        "   2  12   14     53.7     0.03256    0.02421      0.10587     0.06188        13       13          ×/×           ×/×",
+        "   3  10   13    111.7     0.03464    0.03031      0.11236     0.08358        11       12          ×/×           ×/×",
+        "   4   8    7      3.0     0.19481    0.18199      0.51056     0.28947         1        5          ×/×           ×/×",
+        "   5   7    5     20.7     0.09464    0.08657      0.28595     0.30436         4        3          ×/×           ×/×",
+        "   6  14   11     98.9     0.03380    0.03431      0.10975     0.09105        12       11          ×/×           ×/×",
+        "   7  11   12    100.1     0.02221    0.01558      0.07301     0.04680        14       14          ×/×           ×/×",
+        "   8   2    8     23.1     0.05166    0.03840      0.16441     0.15586         8        9          ×/×           ×/×",
+        "   9  13   10     35.4     0.04576    0.04097      0.14662     0.13024        10       10          ×/×           ×/×",
+        "  10   5    2     15.3     0.11753    0.13547      0.34459     0.39700         2        2          ○/○           ×/×",
+        "  11   3    3     13.0     0.06924    0.05660      0.21589     0.26701         7        7          ×/×           ×/×",
+        "  12   1    4      6.2     0.08292    0.10928      0.25427     0.28763         5        6          ×/×           ×/×",
+        "  13   9    1      5.7     0.10314    0.10968      0.30822     0.40017         3        1          ×/×           ×/×",
+        "  14   4    6      3.9     0.07122    0.08773      0.22153     0.29432         6        4          ×/×           ×/×",
+        "   Σ                       1.00000    1.00000      3.00000     3.00000",
+        "（期待: Σp_win=1.00000（両腕）/ Σp_place=3.00000（両腕））"
+      ],
+      "odds": {
+        "max_lead_min": 60.0,
+        "n_races": 864,
+        "n_races_full_prerace_odds": 641,
+        "coverage_pct": 74.19,
+        "lead_min_median": 0.41
+      },
+      "horse_level_odds_races": {
+        "n_horses": 8854,
+        "n_races": 641,
+        "sweet_spot": {
+          "n_prod": 509,
+          "n_new": 499,
+          "both": 425,
+          "prod_only": 84,
+          "new_only": 74,
+          "union": 583,
+          "jaccard": 0.729,
+          "turnover_rate_vs_prod": 0.3104,
+          "n_races_with_any_prod": 363,
+          "n_races_with_any_new": 361,
+          "place_rate_prod": 0.2004,
+          "place_rate_new": 0.1984,
+          "win_rate_prod": 0.0393,
+          "win_rate_new": 0.0481,
+          "place_rate_prod_only": 0.2262,
+          "place_rate_new_only": 0.2162
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 1282,
+          "n_new": 1282,
+          "both": 1070,
+          "prod_only": 212,
+          "new_only": 212,
+          "member_turnover_rate": 0.1654,
+          "n_races": 641,
+          "n_races_membership_changed": 208,
+          "pct_races_membership_changed": 0.3245,
+          "place_rate_prod": 0.5445,
+          "place_rate_new": 0.5569,
+          "place_rate_prod_only": 0.3774,
+          "place_rate_new_only": 0.4528
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 51,
+          "n_new": 48,
+          "both": 29,
+          "prod_only": 22,
+          "new_only": 19,
+          "turnover_rate_vs_prod": 0.8039,
+          "place_rate_prod": 0.3529,
+          "place_rate_new": 0.3125
+        },
+        "pp_rank_shift": {
+          "n_horses": 8854,
+          "n_moved": 4957,
+          "pct_moved": 0.5599,
+          "abs_shift_hist": {
+            "0": 3897,
+            "1": 3005,
+            "2": 1215,
+            "3": 456,
+            "4": 187,
+            "5": 61,
+            "6+": 33
+          },
+          "abs_shift_mean": 0.9126,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 10,
+          "n_races_rank1_changed": 139
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.21606,
+            "std_all": 0.19531,
+            "rank1_mean": 0.64658,
+            "rank1_p10": 0.49053,
+            "rank1_p50": 0.64272,
+            "rank1_p90": 0.80251,
+            "rank1_max": 0.95473,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6115
+          },
+          "new": {
+            "mean_all": 0.21605,
+            "std_all": 0.17947,
+            "rank1_mean": 0.60049,
+            "rank1_p10": 0.45999,
+            "rank1_p50": 0.5953,
+            "rank1_p90": 0.74842,
+            "rank1_max": 1.0,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6303
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 641,
+              "place_rate": 0.6115,
+              "win_rate": 0.2808
+            },
+            "top2": {
+              "n": 1282,
+              "place_rate": 0.5445,
+              "win_rate": 0.2309
+            },
+            "top3": {
+              "n": 1923,
+              "place_rate": 0.4956,
+              "win_rate": 0.2038
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 641,
+              "place_rate": 0.6303,
+              "win_rate": 0.2793
+            },
+            "top2": {
+              "n": 1282,
+              "place_rate": 0.5569,
+              "win_rate": 0.2395
+            },
+            "top3": {
+              "n": 1923,
+              "place_rate": 0.507,
+              "win_rate": 0.2106
+            }
+          }
+        }
+      },
+      "horse_level_all_races": {
+        "n_horses": 12000,
+        "n_races": 864,
+        "sweet_spot": {
+          "n_prod": 509,
+          "n_new": 499,
+          "both": 425,
+          "prod_only": 84,
+          "new_only": 74,
+          "union": 583,
+          "jaccard": 0.729,
+          "turnover_rate_vs_prod": 0.3104,
+          "n_races_with_any_prod": 363,
+          "n_races_with_any_new": 361,
+          "place_rate_prod": 0.2004,
+          "place_rate_new": 0.1984,
+          "win_rate_prod": 0.0393,
+          "win_rate_new": 0.0481,
+          "place_rate_prod_only": 0.2262,
+          "place_rate_new_only": 0.2162
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 1728,
+          "n_new": 1728,
+          "both": 1439,
+          "prod_only": 289,
+          "new_only": 289,
+          "member_turnover_rate": 0.1672,
+          "n_races": 864,
+          "n_races_membership_changed": 280,
+          "pct_races_membership_changed": 0.3241,
+          "place_rate_prod": 0.5341,
+          "place_rate_new": 0.5457,
+          "place_rate_prod_only": 0.3668,
+          "place_rate_new_only": 0.436
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 51,
+          "n_new": 48,
+          "both": 29,
+          "prod_only": 22,
+          "new_only": 19,
+          "turnover_rate_vs_prod": 0.8039,
+          "place_rate_prod": 0.3529,
+          "place_rate_new": 0.3125
+        },
+        "pp_rank_shift": {
+          "n_horses": 12000,
+          "n_moved": 6699,
+          "pct_moved": 0.5583,
+          "abs_shift_hist": {
+            "0": 5301,
+            "1": 4011,
+            "2": 1674,
+            "3": 632,
+            "4": 257,
+            "5": 77,
+            "6+": 48
+          },
+          "abs_shift_mean": 0.9155,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 10,
+          "n_races_rank1_changed": 188
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.21475,
+            "std_all": 0.19419,
+            "rank1_mean": 0.64262,
+            "rank1_p10": 0.48804,
+            "rank1_p50": 0.6413,
+            "rank1_p90": 0.80089,
+            "rank1_max": 0.95473,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6019
+          },
+          "new": {
+            "mean_all": 0.21475,
+            "std_all": 0.17828,
+            "rank1_mean": 0.59646,
+            "rank1_p10": 0.44922,
+            "rank1_p50": 0.59259,
+            "rank1_p90": 0.74308,
+            "rank1_max": 1.0,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.6181
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 864,
+              "place_rate": 0.6019,
+              "win_rate": 0.2766
+            },
+            "top2": {
+              "n": 1728,
+              "place_rate": 0.5341,
+              "win_rate": 0.228
+            },
+            "top3": {
+              "n": 2592,
+              "place_rate": 0.4931,
+              "win_rate": 0.2006
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 864,
+              "place_rate": 0.6181,
+              "win_rate": 0.2847
+            },
+            "top2": {
+              "n": 1728,
+              "place_rate": 0.5457,
+              "win_rate": 0.2361
+            },
+            "top3": {
+              "n": 2592,
+              "place_rate": 0.4996,
+              "win_rate": 0.2068
+            }
+          }
+        }
+      },
+      "race_level_odds_races": {
+        "n_races": 641,
+        "tier_dist": {
+          "prod": {
+            "S": 113,
+            "A": 108,
+            "B": 158,
+            "C+": 123,
+            "C": 139
+          },
+          "new": {
+            "S": 121,
+            "A": 104,
+            "B": 154,
+            "C+": 123,
+            "C": 139
+          }
+        },
+        "tier_dist_pct": {
+          "prod": {
+            "S": 0.1763,
+            "A": 0.1685,
+            "B": 0.2465,
+            "C+": 0.1919,
+            "C": 0.2168
+          },
+          "new": {
+            "S": 0.1888,
+            "A": 0.1622,
+            "B": 0.2402,
+            "C+": 0.1919,
+            "C": 0.2168
+          }
+        },
+        "tier_changed_races": 34,
+        "tier_changed_pct": 0.053,
+        "tier_transitions": {
+          "A->B": 6,
+          "A->S": 13,
+          "B->A": 10,
+          "S->A": 5
+        },
+        "confidence_score_delta": {
+          "n_changed": 483,
+          "pct_changed": 0.7535,
+          "mean": 0.2075,
+          "abs_p50": 2,
+          "abs_p90": 4,
+          "abs_max": 12
+        },
+        "place_ev_pick": {
+          "n_races_any_pick": 550,
+          "n_pick_prod": 547,
+          "n_pick_new": 539,
+          "n_same_horse": 457,
+          "pct_changed": 0.1691,
+          "hit_rate_prod": 0.2925,
+          "hit_rate_new": 0.2746
+        },
+        "tier_top1_hit": {
+          "prod": {
+            "S": {
+              "n": 113,
+              "win_rate": 0.5133,
+              "place_rate": 0.8407
+            },
+            "A": {
+              "n": 108,
+              "win_rate": 0.287,
+              "place_rate": 0.7315
+            },
+            "B": {
+              "n": 158,
+              "win_rate": 0.3038,
+              "place_rate": 0.6392
+            },
+            "C+": {
+              "n": 123,
+              "win_rate": 0.2764,
+              "place_rate": 0.6504
+            },
+            "C": {
+              "n": 139,
+              "win_rate": 0.2086,
+              "place_rate": 0.4388
+            }
+          },
+          "new": {
+            "S": {
+              "n": 121,
+              "win_rate": 0.4959,
+              "place_rate": 0.843
+            },
+            "A": {
+              "n": 104,
+              "win_rate": 0.2981,
+              "place_rate": 0.7115
+            },
+            "B": {
+              "n": 154,
+              "win_rate": 0.2987,
+              "place_rate": 0.6429
+            },
+            "C+": {
+              "n": 123,
+              "win_rate": 0.2764,
+              "place_rate": 0.6504
+            },
+            "C": {
+              "n": 139,
+              "win_rate": 0.2086,
+              "place_rate": 0.4388
+            }
+          }
+        }
+      }
+    },
+    "2026Q3": {
+      "eval": {
+        "date_min": "20260704",
+        "date_max": "20260830",
+        "n_rows": 8443,
+        "n_races": 648
+      },
+      "train_end": "20260630",
+      "fit_info": {
+        "train_rows": 136885,
+        "valid_rows": 12000,
+        "valid_cut": "20260402",
+        "train_date_min": "20230506",
+        "train_date_max": "20260628",
+        "best_iters_win__prod": [
+          141,
+          140,
+          150
+        ],
+        "best_iters_win__new": [
+          147,
+          147,
+          200
+        ],
+        "best_iters_place__new": [
+          334,
+          257,
+          274
+        ],
+        "new_place_clipped_horses": 0
+      },
+      "self_checks": {
+        "max_abs_dev_p_win_sum_from_1__prod": 0.0,
+        "max_abs_dev_p_win_sum_from_1__new": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__prod": 0.0,
+        "max_abs_dev_p_place_sum_from_slots__new": 0.0,
+        "races_dropped_missing_v27_composite": 0,
+        "new_place_clipped_horses": 0
+      },
+      "visual_check": [
+        "",
+        "==========================================================================================================================================",
+        "🔴 目視確認（2026Q3） race_id=133784 20260704 函館10R 竜飛崎特別 n=14 place_slots=3",
+        "   tier: prod=C+(conf=54) / new=C+(conf=50)  ｜ market_agree=False  ｜ place_ev pick: prod=8 / new=8",
+        "==========================================================================================================================================",
+        "  馬番   着  CI順     発走前O  p_win prod  p_win new p_place prod p_place new  pp順 prod  pp順 new  sweet p/n   k<=2軸 p/n",
+        "   1   2    4      7.1     0.16100    0.15410      0.47079     0.38463         3        4          ×/×           ×/×",
+        "   2   1    2      1.8     0.16699    0.17059      0.48378     0.44328         2        2          ×/×           ×/×",
+        "   3  11    5     38.5     0.03984    0.04154      0.13674     0.22987         7        5          ○/○           ×/×",
+        "   4   8   12    245.1     0.00778    0.00535      0.02764     0.03455        12       13          ×/×           ×/×",
+        "   5   9    3      7.3     0.13881    0.12913      0.41963     0.39779         4        3          ×/×           ×/×",
+        "   6   3   11    221.8     0.00537    0.00496      0.01911     0.04683        14       12          ×/×           ×/×",
+        "   7  13   13     70.5     0.01174    0.01325      0.04151     0.05912        11       11          ×/×           ×/×",
+        "   8  12    9     15.5     0.07066    0.11372      0.23398     0.20389         5        6          ×/×           ×/×",
+        "   9   5    7     33.7     0.02994    0.03053      0.10388     0.17325         9        9          ×/×           ×/×",
+        "  10  14   10     17.4     0.03767    0.05490      0.12959     0.14871         8       10          ×/×           ×/×",
+        "  11   4    6     53.8     0.06008    0.05658      0.20147     0.19322         6        7          ×/×           ×/×",
+        "  12   7   14    305.7     0.00642    0.00586      0.02284     0.02693        13       14          ×/×           ×/×",
+        "  13  10    8     78.8     0.02875    0.02580      0.09988     0.18115        10        8          ○/○           ×/×",
+        "  14   6    1      5.0     0.23495    0.19370      0.60916     0.47677         1        1          ×/×           ×/×",
+        "   Σ                       1.00000    1.00000      3.00000     3.00000",
+        "（期待: Σp_win=1.00000（両腕）/ Σp_place=3.00000（両腕））"
+      ],
+      "odds": {
+        "max_lead_min": 60.0,
+        "n_races": 648,
+        "n_races_full_prerace_odds": 641,
+        "coverage_pct": 98.92,
+        "lead_min_median": 0.38
+      },
+      "horse_level_odds_races": {
+        "n_horses": 8358,
+        "n_races": 641,
+        "sweet_spot": {
+          "n_prod": 522,
+          "n_new": 496,
+          "both": 435,
+          "prod_only": 87,
+          "new_only": 61,
+          "union": 583,
+          "jaccard": 0.7461,
+          "turnover_rate_vs_prod": 0.2835,
+          "n_races_with_any_prod": 382,
+          "n_races_with_any_new": 369,
+          "place_rate_prod": 0.2146,
+          "place_rate_new": 0.2177,
+          "win_rate_prod": 0.0383,
+          "win_rate_new": 0.0343,
+          "place_rate_prod_only": 0.1724,
+          "place_rate_new_only": 0.1803
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 1282,
+          "n_new": 1282,
+          "both": 1081,
+          "prod_only": 201,
+          "new_only": 201,
+          "member_turnover_rate": 0.1568,
+          "n_races": 641,
+          "n_races_membership_changed": 196,
+          "pct_races_membership_changed": 0.3058,
+          "place_rate_prod": 0.5047,
+          "place_rate_new": 0.5055,
+          "place_rate_prod_only": 0.4577,
+          "place_rate_new_only": 0.4627
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 67,
+          "n_new": 67,
+          "both": 51,
+          "prod_only": 16,
+          "new_only": 16,
+          "turnover_rate_vs_prod": 0.4776,
+          "place_rate_prod": 0.2537,
+          "place_rate_new": 0.2687
+        },
+        "pp_rank_shift": {
+          "n_horses": 8358,
+          "n_moved": 4589,
+          "pct_moved": 0.5491,
+          "abs_shift_hist": {
+            "0": 3769,
+            "1": 2913,
+            "2": 1070,
+            "3": 393,
+            "4": 155,
+            "5": 34,
+            "6+": 24
+          },
+          "abs_shift_mean": 0.8607,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 13,
+          "n_races_rank1_changed": 143
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.22733,
+            "std_all": 0.20206,
+            "rank1_mean": 0.65983,
+            "rank1_p10": 0.51341,
+            "rank1_p50": 0.66347,
+            "rank1_p90": 0.80849,
+            "rank1_max": 0.94357,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.5304
+          },
+          "new": {
+            "mean_all": 0.22733,
+            "std_all": 0.17921,
+            "rank1_mean": 0.59578,
+            "rank1_p10": 0.46278,
+            "rank1_p50": 0.58648,
+            "rank1_p90": 0.73894,
+            "rank1_max": 0.97111,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.5476
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 641,
+              "place_rate": 0.5304,
+              "win_rate": 0.2855
+            },
+            "top2": {
+              "n": 1282,
+              "place_rate": 0.5047,
+              "win_rate": 0.2356
+            },
+            "top3": {
+              "n": 1923,
+              "place_rate": 0.4743,
+              "win_rate": 0.2007
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 641,
+              "place_rate": 0.5476,
+              "win_rate": 0.2777
+            },
+            "top2": {
+              "n": 1282,
+              "place_rate": 0.5055,
+              "win_rate": 0.2278
+            },
+            "top3": {
+              "n": 1923,
+              "place_rate": 0.4862,
+              "win_rate": 0.2064
+            }
+          }
+        }
+      },
+      "horse_level_all_races": {
+        "n_horses": 8443,
+        "n_races": 648,
+        "sweet_spot": {
+          "n_prod": 522,
+          "n_new": 496,
+          "both": 435,
+          "prod_only": 87,
+          "new_only": 61,
+          "union": 583,
+          "jaccard": 0.7461,
+          "turnover_rate_vs_prod": 0.2835,
+          "n_races_with_any_prod": 382,
+          "n_races_with_any_new": 369,
+          "place_rate_prod": 0.2146,
+          "place_rate_new": 0.2177,
+          "win_rate_prod": 0.0383,
+          "win_rate_new": 0.0343,
+          "place_rate_prod_only": 0.1724,
+          "place_rate_new_only": 0.1803
+        },
+        "pp_rank_top2_membership": {
+          "threshold": 2,
+          "n_prod": 1296,
+          "n_new": 1296,
+          "both": 1091,
+          "prod_only": 205,
+          "new_only": 205,
+          "member_turnover_rate": 0.1582,
+          "n_races": 648,
+          "n_races_membership_changed": 200,
+          "pct_races_membership_changed": 0.3086,
+          "place_rate_prod": 0.5054,
+          "place_rate_new": 0.5062,
+          "place_rate_prod_only": 0.4585,
+          "place_rate_new_only": 0.4634
+        },
+        "place_axis": {
+          "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+          "n_prod": 67,
+          "n_new": 67,
+          "both": 51,
+          "prod_only": 16,
+          "new_only": 16,
+          "turnover_rate_vs_prod": 0.4776,
+          "place_rate_prod": 0.2537,
+          "place_rate_new": 0.2687
+        },
+        "pp_rank_shift": {
+          "n_horses": 8443,
+          "n_moved": 4639,
+          "pct_moved": 0.5494,
+          "abs_shift_hist": {
+            "0": 3804,
+            "1": 2950,
+            "2": 1082,
+            "3": 394,
+            "4": 155,
+            "5": 34,
+            "6+": 24
+          },
+          "abs_shift_mean": 0.8596,
+          "abs_shift_p50": 1,
+          "abs_shift_p90": 2,
+          "abs_shift_max": 13,
+          "n_races_rank1_changed": 145
+        },
+        "place_probability_dist": {
+          "prod": {
+            "mean_all": 0.22753,
+            "std_all": 0.2021,
+            "rank1_mean": 0.66027,
+            "rank1_p10": 0.51332,
+            "rank1_p50": 0.66373,
+            "rank1_p90": 0.80881,
+            "rank1_max": 0.94357,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.5324
+          },
+          "new": {
+            "mean_all": 0.22753,
+            "std_all": 0.17937,
+            "rank1_mean": 0.59678,
+            "rank1_p10": 0.46295,
+            "rank1_p50": 0.58863,
+            "rank1_p90": 0.7391,
+            "rank1_max": 0.97111,
+            "n_gt_1": 0,
+            "rank1_actual_place_rate": 0.5478
+          }
+        },
+        "pp_topk_hit": {
+          "prod": {
+            "top1": {
+              "n": 648,
+              "place_rate": 0.5324,
+              "win_rate": 0.2855
+            },
+            "top2": {
+              "n": 1296,
+              "place_rate": 0.5054,
+              "win_rate": 0.2353
+            },
+            "top3": {
+              "n": 1944,
+              "place_rate": 0.4753,
+              "win_rate": 0.2001
+            }
+          },
+          "new": {
+            "top1": {
+              "n": 648,
+              "place_rate": 0.5478,
+              "win_rate": 0.2762
+            },
+            "top2": {
+              "n": 1296,
+              "place_rate": 0.5062,
+              "win_rate": 0.2269
+            },
+            "top3": {
+              "n": 1944,
+              "place_rate": 0.4861,
+              "win_rate": 0.2058
+            }
+          }
+        }
+      },
+      "race_level_odds_races": {
+        "n_races": 641,
+        "tier_dist": {
+          "prod": {
+            "S": 124,
+            "A": 91,
+            "B": 134,
+            "C+": 130,
+            "C": 162
+          },
+          "new": {
+            "S": 128,
+            "A": 92,
+            "B": 129,
+            "C+": 130,
+            "C": 162
+          }
+        },
+        "tier_dist_pct": {
+          "prod": {
+            "S": 0.1934,
+            "A": 0.142,
+            "B": 0.209,
+            "C+": 0.2028,
+            "C": 0.2527
+          },
+          "new": {
+            "S": 0.1997,
+            "A": 0.1435,
+            "B": 0.2012,
+            "C+": 0.2028,
+            "C": 0.2527
+          }
+        },
+        "tier_changed_races": 33,
+        "tier_changed_pct": 0.0515,
+        "tier_transitions": {
+          "A->B": 7,
+          "A->S": 9,
+          "B->A": 12,
+          "S->A": 5
+        },
+        "confidence_score_delta": {
+          "n_changed": 462,
+          "pct_changed": 0.7207,
+          "mean": 0.1139,
+          "abs_p50": 1,
+          "abs_p90": 4,
+          "abs_max": 9
+        },
+        "place_ev_pick": {
+          "n_races_any_pick": 549,
+          "n_pick_prod": 546,
+          "n_pick_new": 544,
+          "n_same_horse": 479,
+          "pct_changed": 0.1275,
+          "hit_rate_prod": 0.2619,
+          "hit_rate_new": 0.2665
+        },
+        "tier_top1_hit": {
+          "prod": {
+            "S": {
+              "n": 124,
+              "win_rate": 0.4839,
+              "place_rate": 0.7419
+            },
+            "A": {
+              "n": 91,
+              "win_rate": 0.3846,
+              "place_rate": 0.6374
+            },
+            "B": {
+              "n": 134,
+              "win_rate": 0.3358,
+              "place_rate": 0.6045
+            },
+            "C+": {
+              "n": 130,
+              "win_rate": 0.1769,
+              "place_rate": 0.4538
+            },
+            "C": {
+              "n": 162,
+              "win_rate": 0.1605,
+              "place_rate": 0.4198
+            }
+          },
+          "new": {
+            "S": {
+              "n": 128,
+              "win_rate": 0.4922,
+              "place_rate": 0.7344
+            },
+            "A": {
+              "n": 92,
+              "win_rate": 0.3587,
+              "place_rate": 0.6739
+            },
+            "B": {
+              "n": 129,
+              "win_rate": 0.3411,
+              "place_rate": 0.5814
+            },
+            "C+": {
+              "n": 130,
+              "win_rate": 0.1769,
+              "place_rate": 0.4538
+            },
+            "C": {
+              "n": 162,
+              "win_rate": 0.1605,
+              "place_rate": 0.4198
+            }
+          }
+        }
+      }
+    }
+  },
+  "pooled_all_windows": {
+    "horse_level_odds_races": {
+      "n_horses": 18077,
+      "n_races": 1346,
+      "sweet_spot": {
+        "n_prod": 1073,
+        "n_new": 1034,
+        "both": 894,
+        "prod_only": 179,
+        "new_only": 140,
+        "union": 1213,
+        "jaccard": 0.737,
+        "turnover_rate_vs_prod": 0.2973,
+        "n_races_with_any_prod": 779,
+        "n_races_with_any_new": 762,
+        "place_rate_prod": 0.2032,
+        "place_rate_new": 0.206,
+        "win_rate_prod": 0.0391,
+        "win_rate_new": 0.0416,
+        "place_rate_prod_only": 0.1899,
+        "place_rate_new_only": 0.2071
+      },
+      "pp_rank_top2_membership": {
+        "threshold": 2,
+        "n_prod": 2692,
+        "n_new": 2692,
+        "both": 2261,
+        "prod_only": 431,
+        "new_only": 431,
+        "member_turnover_rate": 0.1601,
+        "n_races": 1346,
+        "n_races_membership_changed": 422,
+        "pct_races_membership_changed": 0.3135,
+        "place_rate_prod": 0.5279,
+        "place_rate_new": 0.5342,
+        "place_rate_prod_only": 0.4153,
+        "place_rate_new_only": 0.4548
+      },
+      "place_axis": {
+        "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+        "n_prod": 122,
+        "n_new": 119,
+        "both": 84,
+        "prod_only": 38,
+        "new_only": 35,
+        "turnover_rate_vs_prod": 0.5984,
+        "place_rate_prod": 0.2869,
+        "place_rate_new": 0.2773
+      },
+      "pp_rank_shift": {
+        "n_horses": 18077,
+        "n_moved": 10022,
+        "pct_moved": 0.5544,
+        "abs_shift_hist": {
+          "0": 8055,
+          "1": 6200,
+          "2": 2399,
+          "3": 895,
+          "4": 362,
+          "5": 109,
+          "6+": 57
+        },
+        "abs_shift_mean": 0.8891,
+        "abs_shift_p50": 1,
+        "abs_shift_p90": 2,
+        "abs_shift_max": 13,
+        "n_races_rank1_changed": 296
+      },
+      "place_probability_dist": {
+        "prod": {
+          "mean_all": 0.22128,
+          "std_all": 0.19867,
+          "rank1_mean": 0.65331,
+          "rank1_p10": 0.49959,
+          "rank1_p50": 0.65021,
+          "rank1_p90": 0.8048,
+          "rank1_max": 0.95473,
+          "n_gt_1": 0,
+          "rank1_actual_place_rate": 0.575
+        },
+        "new": {
+          "mean_all": 0.22127,
+          "std_all": 0.17946,
+          "rank1_mean": 0.59846,
+          "rank1_p10": 0.46038,
+          "rank1_p50": 0.59162,
+          "rank1_p90": 0.74402,
+          "rank1_max": 1.0,
+          "n_gt_1": 0,
+          "rank1_actual_place_rate": 0.5936
+        }
+      },
+      "pp_topk_hit": {
+        "prod": {
+          "top1": {
+            "n": 1346,
+            "place_rate": 0.575,
+            "win_rate": 0.2808
+          },
+          "top2": {
+            "n": 2692,
+            "place_rate": 0.5279,
+            "win_rate": 0.2318
+          },
+          "top3": {
+            "n": 4038,
+            "place_rate": 0.4861,
+            "win_rate": 0.2011
+          }
+        },
+        "new": {
+          "top1": {
+            "n": 1346,
+            "place_rate": 0.5936,
+            "win_rate": 0.2779
+          },
+          "top2": {
+            "n": 2692,
+            "place_rate": 0.5342,
+            "win_rate": 0.2318
+          },
+          "top3": {
+            "n": 4038,
+            "place_rate": 0.499,
+            "win_rate": 0.2083
+          }
+        }
+      }
+    },
+    "horse_level_all_races": {
+      "n_horses": 32591,
+      "n_races": 2370,
+      "sweet_spot": {
+        "n_prod": 1073,
+        "n_new": 1034,
+        "both": 894,
+        "prod_only": 179,
+        "new_only": 140,
+        "union": 1213,
+        "jaccard": 0.737,
+        "turnover_rate_vs_prod": 0.2973,
+        "n_races_with_any_prod": 779,
+        "n_races_with_any_new": 762,
+        "place_rate_prod": 0.2032,
+        "place_rate_new": 0.206,
+        "win_rate_prod": 0.0391,
+        "win_rate_new": 0.0416,
+        "place_rate_prod_only": 0.1899,
+        "place_rate_new_only": 0.2071
+      },
+      "pp_rank_top2_membership": {
+        "threshold": 2,
+        "n_prod": 4740,
+        "n_new": 4740,
+        "both": 3983,
+        "prod_only": 757,
+        "new_only": 757,
+        "member_turnover_rate": 0.1597,
+        "n_races": 2370,
+        "n_races_membership_changed": 738,
+        "pct_races_membership_changed": 0.3114,
+        "place_rate_prod": 0.538,
+        "place_rate_new": 0.5424,
+        "place_rate_prod_only": 0.432,
+        "place_rate_new_only": 0.4597
+      },
+      "place_axis": {
+        "note": "🔴 src/ に呼び出し元が無い（tests のみ）。将来配線された場合の参考値",
+        "n_prod": 122,
+        "n_new": 119,
+        "both": 84,
+        "prod_only": 38,
+        "new_only": 35,
+        "turnover_rate_vs_prod": 0.5984,
+        "place_rate_prod": 0.2869,
+        "place_rate_new": 0.2773
+      },
+      "pp_rank_shift": {
+        "n_horses": 32591,
+        "n_moved": 18161,
+        "pct_moved": 0.5572,
+        "abs_shift_hist": {
+          "0": 14430,
+          "1": 11250,
+          "2": 4356,
+          "3": 1585,
+          "4": 650,
+          "5": 223,
+          "6+": 97
+        },
+        "abs_shift_mean": 0.8928,
+        "abs_shift_p50": 1,
+        "abs_shift_p90": 2,
+        "abs_shift_max": 13,
+        "n_races_rank1_changed": 533
+      },
+      "place_probability_dist": {
+        "prod": {
+          "mean_all": 0.21656,
+          "std_all": 0.19716,
+          "rank1_mean": 0.65068,
+          "rank1_p10": 0.49686,
+          "rank1_p50": 0.64805,
+          "rank1_p90": 0.80658,
+          "rank1_max": 0.95473,
+          "n_gt_1": 0,
+          "rank1_actual_place_rate": 0.5852
+        },
+        "new": {
+          "mean_all": 0.21656,
+          "std_all": 0.17802,
+          "rank1_mean": 0.5956,
+          "rank1_p10": 0.45499,
+          "rank1_p50": 0.58755,
+          "rank1_p90": 0.74512,
+          "rank1_max": 1.0,
+          "n_gt_1": 0,
+          "rank1_actual_place_rate": 0.597
+        }
+      },
+      "pp_topk_hit": {
+        "prod": {
+          "top1": {
+            "n": 2370,
+            "place_rate": 0.5852,
+            "win_rate": 0.2785
+          },
+          "top2": {
+            "n": 4740,
+            "place_rate": 0.538,
+            "win_rate": 0.2361
+          },
+          "top3": {
+            "n": 7110,
+            "place_rate": 0.4927,
+            "win_rate": 0.2014
+          }
+        },
+        "new": {
+          "top1": {
+            "n": 2370,
+            "place_rate": 0.597,
+            "win_rate": 0.2802
+          },
+          "top2": {
+            "n": 4740,
+            "place_rate": 0.5424,
+            "win_rate": 0.2348
+          },
+          "top3": {
+            "n": 7110,
+            "place_rate": 0.5021,
+            "win_rate": 0.206
+          }
+        }
+      }
+    },
+    "race_level_odds_races": {
+      "n_races": 1346,
+      "tier_dist": {
+        "prod": {
+          "S": 251,
+          "A": 203,
+          "B": 306,
+          "C+": 266,
+          "C": 320
+        },
+        "new": {
+          "S": 263,
+          "A": 200,
+          "B": 297,
+          "C+": 266,
+          "C": 320
+        }
+      },
+      "tier_dist_pct": {
+        "prod": {
+          "S": 0.1865,
+          "A": 0.1508,
+          "B": 0.2273,
+          "C+": 0.1976,
+          "C": 0.2377
+        },
+        "new": {
+          "S": 0.1954,
+          "A": 0.1486,
+          "B": 0.2207,
+          "C+": 0.1976,
+          "C": 0.2377
+        }
+      },
+      "tier_changed_races": 67,
+      "tier_changed_pct": 0.0498,
+      "tier_transitions": {
+        "A->B": 13,
+        "A->S": 22,
+        "B->A": 22,
+        "S->A": 10
+      },
+      "confidence_score_delta": {
+        "n_changed": 990,
+        "pct_changed": 0.7355,
+        "mean": 0.1478,
+        "abs_p50": 1,
+        "abs_p90": 4,
+        "abs_max": 12
+      },
+      "place_ev_pick": {
+        "n_races_any_pick": 1155,
+        "n_pick_prod": 1148,
+        "n_pick_new": 1139,
+        "n_same_horse": 982,
+        "pct_changed": 0.1498,
+        "hit_rate_prod": 0.2761,
+        "hit_rate_new": 0.2704
+      },
+      "tier_top1_hit": {
+        "prod": {
+          "S": {
+            "n": 251,
+            "win_rate": 0.49,
+            "place_rate": 0.7849
+          },
+          "A": {
+            "n": 203,
+            "win_rate": 0.3251,
+            "place_rate": 0.6897
+          },
+          "B": {
+            "n": 306,
+            "win_rate": 0.317,
+            "place_rate": 0.6275
+          },
+          "C+": {
+            "n": 266,
+            "win_rate": 0.2406,
+            "place_rate": 0.5639
+          },
+          "C": {
+            "n": 320,
+            "win_rate": 0.1781,
+            "place_rate": 0.4375
+          }
+        },
+        "new": {
+          "S": {
+            "n": 263,
+            "win_rate": 0.4867,
+            "place_rate": 0.7833
+          },
+          "A": {
+            "n": 200,
+            "win_rate": 0.32,
+            "place_rate": 0.695
+          },
+          "B": {
+            "n": 297,
+            "win_rate": 0.3165,
+            "place_rate": 0.6195
+          },
+          "C+": {
+            "n": 266,
+            "win_rate": 0.2406,
+            "place_rate": 0.5639
+          },
+          "C": {
+            "n": 320,
+            "win_rate": 0.1781,
+            "place_rate": 0.4375
+          }
+        }
+      }
+    }
+  }
+}

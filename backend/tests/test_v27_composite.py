@@ -111,7 +111,14 @@ class TestBlendV27:
 
 class TestVersion:
     def test_composite_version(self) -> None:
-        assert COMPOSITE_VERSION == 27
+        """🔴 v28 で版を上げた（2026-09-04）。**v27 の合成ロジックは変えていない。**
+
+        v28 で変わったのは単勝ヘッドの特徴（34→38列）と `place_probability` の作り方
+        （Harville → 独立ヘッド）だけで、`blend_v27` / `V27_OUT_WEIGHT` /
+        `V27_INDEX_SCALE` は不変（本ファイルの残りのテストがそれを固定している）。
+        版そのものの検査は `tests/test_v28_winplace.py::TestVersions`。
+        """
+        assert COMPOSITE_VERSION == 28
 
 
 @pytest.mark.skipif(

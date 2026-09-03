@@ -1,35 +1,57 @@
-"""JRA is_win 較正ヘッド 学習スクリプト（本番 win_probability 較正用）
+"""JRA v28 単勝ヘッド（is_win 較正ヘッド・38特徴）の学習スクリプト。
 
-jra_calibration_ab.py の検証で、softmax(composite) は未較正(OOS ECE 0.033・最上位
-decile +16pt 過信)、is_win binary LGB の生出力＋レース内正規化が OOS ECE 0.0027 と
-ほぼ完璧に較正されると判明。本スクリプトはその is_win ヘッドを本番モデルとして学習・
-保存する。composite.py が推論時にレース内正規化して win_probability に使う。
+本番 `composite.py` が `win_probability` の較正に使うモデルを学習・保存する。
+推論時にレース内正規化（Σ=1）されて `win_probability` になる。
 
-- 特徴量: composite._build_v26_features と同一(v24サブ17 + レースメタ10 + 馬メタ7 = 34)
-- 目的: binary is_win (1着=1)
-- 境界: `src/jra_protocol.py`（TRAIN ≤ TRAIN_END / VAL / TEST）に従う
+## v28 で変わったこと（計画 §16.1）
 
-## ⚠️ 2026-08-22 修正: 本番モデルを全期間 refit していた
+特徴を **34列 → 38列**にした。足したのは `src/indices/past_form.py` の
+`PAST_FORM_FEATURE_NAMES`:
 
-旧実装は OOS sanity 用に別モデルを1本作った上で、**本番モデルだけ `--start`〜`--end`
-の全期間で refit** していた（`train_model(df, seed=0)`）。`train_jra_reg_rank.py` /
-`train_jra_out_rate.py` は `jra_protocol.TRAIN_DATA_END` で切る修正が入っていたが、
-本スクリプトだけ取り残されていた。
+    runner_type_ord / finish_var5 / win_place_ratio5 / pace_handicap_pit
 
-実害（実測 / v27 index・keiba.race_results）:
-    win_probability 最上位馬の勝率
-      2023〜2026H1・2026-05-01〜06-05（= 旧モデルの訓練内）  0.42〜0.44
-      2026-06-06〜08-22（= 旧モデルの訓練外）                0.258
-    composite_index 1位馬（reg_rank ヘッド・境界修正済み）は全期間 0.29〜0.32 で安定。
-つまり差分は丸ごと暗記であり、**2026-06-05 以前で信頼度指標を検証すると本命の勝率が
-26% ではなく 43% に見える**。`models/v26_iswin_calib_metrics.json` の
-`oos_sanity.iswin_norm_ece` は訓練内窓を含まない別モデルの数字なので嘘ではないが、
-**出荷モデルの数字ではない**点に注意（ECE 自体も p<0.05 帯に質量の 56% が偏るため
-上位帯の崩れを隠す。信頼性テーブルを併記する）。
+🔴 **新特徴は `past_form` モジュールからのみ取得する。別実装をしない。**
+本スクリプトの入口は `build_past_form_features_bulk`、配信側（`composite.py`）の
+入口は `build_past_form_features_for_race`。**どちらも同じ純関数**
+`compute_race_past_form_features` を通るので train/serve skew が入らない
+（地方 v13→v14 は「市場込みで学習・市場なしで配信」の skew で指数1位馬の勝率を
+9pt 落とした）。列の順序は `composite.V28_FEATURE_NAMES` が正本。
 
-出力:
-  models/v26_iswin_calib.txt    - 較正ヘッド（TRAIN_DATA_END までで学習）
-  models/v26_iswin_calib_metrics.json
+🔴 **新特徴の欠損は NaN のまま LightGBM に渡す**（`50.0` で埋めない）。
+過去5走が揃うのは 58.5% のみで、`finish_var5` / `win_place_ratio5` の 41.5% と
+`runner_type_ord` の 10.1% が NaN になる。検証時から NaN 意味論で測っている（§16.2-5）。
+34列側の `fillna(50.0)` は v27 から変更なし（`nan` 腕は §11.1 で不採用）。
+
+## 🔴 データセットは検証実装と同一の作り方にする
+
+Phase C（§11.1 Δ=−0.00750）も 2026Q3 の確認成功（§18.1）も
+`scripts/jra_winplace_feature_ab.build_dataset` で出した数字なので、
+本番の学習が違う母集団・違う変換を使うと**検証結果が本番に対して無効になる**。
+そこで本スクリプトは検証と同じ部品を使う:
+
+| 部位 | 使うもの | 検証で使っていたもの |
+|---|---|---|
+| 34列の変換 | `train_jra_out_rate.featurize`（`fillna(50.0)` 込み） | 同じ（`prod_featurize`） |
+| 母集団 | `jra_prob_scoring.build_population` | 同じ |
+| 新特徴4列 | `src.indices.past_form`（本番モジュール） | `jra_place_residual_diag.build_pit_features`。
+`tests/test_past_form.py::test_parity_with_winplace_feature_ab_*` が値の一致を固定している |
+
+⚠️ v27 までの本スクリプトは `jra_calibration_ab.QUERY` / `featurize` を使っており
+`fillna(50.0)` が無く、かつ `head_count >= 8` で 5〜7頭立てを落としていた。
+v28 では**検証実装（＝本番 `_build_v26_features` の再現）に揃えた**。
+5〜7頭立ては複勝の独立ヘッド（`train_jra_placed_head.py`）の学習に必要でもある。
+
+## 境界（`src/jra_protocol.py`）
+
+- honest test 用のモデルは TRAIN（≤`TRAIN_END`）のみで学習し、TEST に一度だけ当てる
+- **本番モデルは `TRAIN_DATA_END`（= `TEST_START` の前日）まで**で refit する。
+  🔴 全期間 refit にすると DB の過去分が全て in-sample になり一度きり評価が成立しない
+  （2026-08-22 に本スクリプトだけ取り残されていて実害が出た。`composite.py` の
+  `_V26_ISWIN_MODEL_PATH` 上のコメントを参照）
+
+出力（🔴 **既存の v27 モデルは上書きしない**。ロールバック可能にするため新規名）:
+  models/v28_iswin_calib.txt
+  models/v28_iswin_calib_metrics.json
 
 使い方:
   cd backend
@@ -41,6 +63,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 _here = Path(__file__).resolve()
@@ -54,76 +77,241 @@ load_dotenv(_root.parent / ".env")
 
 import lightgbm as lgb  # noqa: E402
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 import psycopg2  # noqa: E402
 
-from scripts.jra_calibration_ab import (  # noqa: E402
-    ALL_FEATURES,
-    QUERY,
-    calib_metrics,
-    featurize,
-    race_normalize,
-)
+from scripts.jra_calibration_ab import calib_metrics, race_normalize  # noqa: E402
+from scripts.jra_prob_scoring import JRA_COURSES, build_population  # noqa: E402
+from scripts.train_jra_out_rate import featurize as prod_featurize  # noqa: E402
 from src import jra_protocol  # noqa: E402
-from src.indices.composite import SUBINDEX_SOURCE_SQL  # noqa: E402
+from src.indices.composite import (  # noqa: E402
+    OUT_PROB_FEATURE_NAMES,
+    SUBINDEX_SOURCE_SQL,
+    V28_FEATURE_NAMES,
+)
+from src.indices.past_form import (  # noqa: E402
+    CourseFeature,
+    PastRunStore,
+    RaceContext,
+    build_past_form_features_bulk,
+    load_course_features,
+    load_past_run_store,
+    past_form_feature_row,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("train_iswin")
 
 MODELS_DIR = _root / "models"
-MODEL_PATH = MODELS_DIR / "v26_iswin_calib.txt"
-METRICS_PATH = MODELS_DIR / "v26_iswin_calib_metrics.json"
+MODEL_PATH = MODELS_DIR / "v28_iswin_calib.txt"
+METRICS_PATH = MODELS_DIR / "v28_iswin_calib_metrics.json"
+
+# v28 の新特徴（34列の後ろに付く4列）。順序の正本は `composite.V28_FEATURE_NAMES`
+NEW_FEATURE_NAMES: list[str] = list(V28_FEATURE_NAMES[len(OUT_PROB_FEATURE_NAMES):])
 
 PARAMS = dict(
     objective="binary", metric="binary_logloss", num_leaves=31, max_depth=6,
     min_data_in_leaf=100, lambda_l1=0.1, lambda_l2=0.1, learning_rate=0.05,
     feature_fraction=0.7, bagging_fraction=0.7, bagging_freq=5, verbose=-1,
 )
-# early stopping の上限。旧実装は 500 固定だったが、VAL で best_iteration を選ぶ。
+# early stopping の上限。VAL で best_iteration を選ぶ。
+# ⚠️ `scripts/jra_winplace_feature_ab.py` が PARAMS / MAX_ROUND を import して
+#    4腕の学習に使っている（検証と本番でハイパラを共有するため）。名前を変えないこと。
 MAX_ROUND = 2000
 
-# サブ指数は v26 以降不変（composite.SUBINDEX_MIN_VERSION 参照）。共有 QUERY は
-# `version = 26` 固定だが v26 行は 2026-08-02 で止まっており、以降は v27 行しかない。
-# 固定のままだと **honest test 窓が途中で切れて本命勝率の実測が痩せる**ため、
-# composite と同じ「(race_id, horse_id) ごとに最大版」に差し替えて引く。
-SUBINDEX_QUERY = QUERY.replace(
-    "FROM keiba.calculated_indices ci",
-    f"FROM ({SUBINDEX_SOURCE_SQL}) ci",
-).replace("WHERE ci.version = %(ver)s", "WHERE TRUE")
+# 🔴 検証 `jra_place_residual_diag.FETCH_SQL`（= `jra_winplace_feature_ab` が使う SQL）と
+#    同じ母集団条件。表示用の列（race_name / horse_name 等）だけ落とし、
+#    `r.course`（`racecourse_features` を引くキー）を足してある。
+#
+#    サブ指数は `SUBINDEX_SOURCE_SQL`（version >= SUBINDEX_MIN_VERSION の最大版）で引く。
+#    🔴 特定の版に固定すると本番が版を上げた瞬間に学習データが静かに凍結する。
+V28_FETCH_SQL = f"""
+WITH ci AS ({SUBINDEX_SOURCE_SQL})
+SELECT
+    r.date, ci.race_id, ci.horse_id, rr.horse_number,
+    ci.speed_index, ci.last_3f_index, ci.course_aptitude, ci.position_advantage,
+    ci.rotation_index, ci.jockey_index, ci.pace_index, ci.pedigree_index,
+    ci.training_index, ci.anagusa_index, ci.paddock_index, ci.rebound_index,
+    ci.rivals_growth_index, ci.career_phase_index, ci.distance_change_index,
+    ci.jockey_trainer_combo_index, ci.going_pedigree_index,
+    r.distance, r.head_count, r.surface, r.condition, r.grade, r.course,
+    re.frame_number, re.horse_age, re.weight_carried, re.horse_weight,
+    re.jvan_time_dm, re.jvan_battle_dm,
+    rr.weight_change, rr.abnormality_code, rr.finish_position
+FROM ci
+JOIN keiba.races r         ON r.id = ci.race_id
+JOIN keiba.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
+LEFT JOIN keiba.race_results rr ON rr.race_id = ci.race_id AND rr.horse_id = ci.horse_id
+WHERE r.date >= %(start)s AND r.date <= %(end)s
+  AND r.course IN {JRA_COURSES}
+"""
 
 
-def fetch(conn, start, end):
-    import pandas as pd
-    cur = conn.cursor()
-    cur.execute(SUBINDEX_QUERY, {"start": start, "end": end})
+def dsn() -> str:
+    return (
+        f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
+        f"dbname={os.getenv('DB_NAME')} user={os.getenv('DB_USER')} "
+        f"password={os.getenv('DB_PASSWORD')}"
+    )
+
+
+def _query(conn: object, sql: str, params: dict) -> pd.DataFrame:
+    cur = conn.cursor()  # type: ignore[attr-defined]
+    cur.execute(sql, params)
     cols = [d[0] for d in cur.description]
-    df = pd.DataFrame(cur.fetchall(), columns=cols)
+    rows = cur.fetchall()
     cur.close()
-    df["date"] = df["date"].astype(str)
-    return featurize(df)
+    return pd.DataFrame(rows, columns=cols)
 
 
-def _xy(df):
-    return (df[ALL_FEATURES].values.astype(float),
-            (df["finish_position"] == 1).astype(int).values)
+def attach_past_form(df: pd.DataFrame, conn: object, *, end: str) -> pd.DataFrame:
+    """🔴 v28 の新特徴4列を `past_form` モジュール経由で付ける（**別実装をしない**）。
 
+    フィールド（= `pace_handicap_pit` の `pace_type` を決める馬の集合）は
+    **`build_population` 後のレース内の行**にする。配信側は
+    `composite.calculate_and_save` の `results`（= そのレースの出走馬）を渡すので、
+    どちらも「そのレースで確率を正規化する集合」で一致する。
 
-def train_model(df, seed=0, num_round=None, valid_df=None):
-    """is_win ヘッドを学習する。
+    `RaceContext.head_count` には `races.head_count` を渡す（検証実装
+    `jra_winplace_feature_ab._pace_handicap_pit` と同一）。これは
+    `_apply_field_size_adjustment` の頭数にだけ使われ、NULL ならフィールドの
+    馬数へフォールバックする。
+    🔴 **`place_slots` はここから作らない**（`head_count` は発走前 NULL）。
 
-    valid_df を渡すと early stopping で best_iteration を選ぶ。
-    渡さない場合は num_round 固定ラウンドで学習する（本番 refit 用）。
+    Args:
+        df: `build_population` 済みの DataFrame（`race_id` / `horse_id` / `date` /
+            `course` / `head_count` を持つこと）。
+        conn: psycopg2 の接続。
+        end: 過去走の取得範囲の上限 `YYYYMMDD`。**PIT の保証ではない**
+            （PIT は `PastRunStore.before` の `date <` が担う）。
+
+    Returns:
+        `PAST_FORM_FEATURE_NAMES` の4列（欠損は NaN）と `runner_type` を足した DataFrame。
     """
-    X, y = _xy(df)
-    ds = lgb.Dataset(X, y, feature_name=ALL_FEATURES)
+    store: PastRunStore = load_past_run_store(conn, end_date=end)
+    course_features: dict[str, CourseFeature] = load_course_features(conn)
+
+    race_fields = []
+    for race_id, g in df.groupby("race_id", sort=False):
+        r0 = g.iloc[0]
+        course = None if r0["course"] is None else str(r0["course"])
+        race_fields.append((
+            race_id,
+            RaceContext(
+                date=str(r0["date"]),
+                course=course,
+                head_count=r0["head_count"],
+                course_feature=course_features.get(course or ""),
+            ),
+            [int(h) for h in g["horse_id"]],
+        ))
+
+    feats = build_past_form_features_bulk(race_fields, store=store)
+
+    rows = [
+        past_form_feature_row(feats.get((rid, int(hid)), {}))
+        for rid, hid in zip(df["race_id"], df["horse_id"])
+    ]
+    out = df.copy()
+    extra = pd.DataFrame(rows, columns=NEW_FEATURE_NAMES, index=out.index)
+    for c in NEW_FEATURE_NAMES:
+        out[c] = extra[c]
+    out["runner_type"] = [
+        feats.get((rid, int(hid)), {}).get("runner_type", "unknown")
+        for rid, hid in zip(df["race_id"], df["horse_id"])
+    ]
+    return out
+
+
+def load_v28_dataset(start: str, end: str) -> pd.DataFrame:
+    """🔴 v28 の学習データセットを作る（単勝ヘッドと複勝の独立ヘッドで共有する）。
+
+    `train_jra_placed_head.py` もこの関数を呼ぶ。2本のヘッドが別々にデータを
+    組み立てると、そこだけ挙動がずれうるため。
+
+    Returns:
+        38特徴（`V28_FEATURE_NAMES`）+ `place_slots` / `n_runners` / `finish_position`
+        / `date` / `race_id` / `horse_id` を持つ DataFrame。
+    """
+    conn = psycopg2.connect(dsn())
+    logger.info("対象レース取得 %s〜%s ...", start, end)
+    raw = _query(conn, V28_FETCH_SQL, {"start": start, "end": end})
+    raw["date"] = raw["date"].astype(str)
+    logger.info("  %d行 / %dレース", len(raw), raw["race_id"].nunique())
+
+    df = prod_featurize(raw)      # 🔴 本番 `_build_v26_features` と同一の変換（fillna(50.0)）
+    df = build_population(df)     # 🔴 検証と同一の母集団（+ n_runners / place_slots）
+
+    logger.info("過去走由来の新特徴を生成（past_form モジュール経由）...")
+    df = attach_past_form(df, conn, end=end)
+    conn.close()
+
+    miss = {c: round(float(df[c].isna().mean() * 100), 2) for c in NEW_FEATURE_NAMES}
+    logger.info("新特徴の欠損率(%%): %s （🔴 NaN のまま学習に渡す）", miss)
+    return df.reset_index(drop=True)
+
+
+def is_win_label(df: pd.DataFrame) -> np.ndarray:
+    """単勝ヘッドのラベル（1着 = 1）。"""
+    return (
+        (pd.to_numeric(df["finish_position"], errors="coerce") == 1).astype(int).to_numpy()
+    )
+
+
+def _xy(df: pd.DataFrame, label_fn: Callable[[pd.DataFrame], np.ndarray]
+        ) -> tuple[np.ndarray, np.ndarray]:
+    return df[V28_FEATURE_NAMES].to_numpy(dtype=float), label_fn(df)
+
+
+def train_model(df: pd.DataFrame, label_fn: Callable[[pd.DataFrame], np.ndarray],
+                seed: int = 0, num_round: int | None = None,
+                valid_df: pd.DataFrame | None = None) -> lgb.Booster:
+    """38特徴の binary ヘッドを学習する（単勝ヘッド・複勝の独立ヘッドで共有）。
+
+    `valid_df` を渡すと early stopping で best_iteration を選ぶ。
+    渡さない場合は `num_round` 固定ラウンドで学習する（本番 refit 用）。
+    """
+    X, y = _xy(df, label_fn)
+    ds = lgb.Dataset(X, y, feature_name=list(V28_FEATURE_NAMES))
     if valid_df is None:
         return lgb.train(dict(PARAMS, seed=seed), ds, num_boost_round=num_round or MAX_ROUND)
-    Xv, yv = _xy(valid_df)
+    Xv, yv = _xy(valid_df, label_fn)
     dv = lgb.Dataset(Xv, yv, reference=ds)
     return lgb.train(dict(PARAMS, seed=seed), ds, num_boost_round=MAX_ROUND,
                      valid_sets=[dv], callbacks=[lgb.early_stopping(100, verbose=False)])
 
 
-def main():
+def _fmt(v: object, w: int) -> str:
+    fv = float(v)  # type: ignore[arg-type]
+    return f"{'NaN':>{w}}" if np.isnan(fv) else f"{fv:>{w}.3f}"
+
+
+def visual_check(df: pd.DataFrame, preds: np.ndarray, title: str) -> None:
+    """🔴 実データを1レース表示して目視確認する（`CLAUDE.md` 検証の作法）。
+
+    見るのは2点: `Σp_win = 1.0`（レース内正規化後）/ 新特徴が **NaN のまま**渡っていること。
+    """
+    d = df.copy()
+    d["_p"] = preds
+    rid = int(d["race_id"].iloc[0])
+    g = d[d["race_id"] == rid].sort_values("horse_number")
+    tot = float(g["_p"].sum())
+    print("\n" + "=" * 104)
+    print(f"🔴 目視確認 [{title}] race_id={rid} {g.iloc[0]['date']} "
+          f"n={len(g)} place_slots={int(g.iloc[0]['place_slots'])}")
+    print("=" * 104)
+    print(f"{'馬番':>4}{'着':>4}{'脚質ord':>9}{'着順分散5':>11}{'勝複比5':>10}"
+          f"{'pace_pit':>10}{'raw':>12}{'p_win':>10}")
+    for _, r in g.iterrows():
+        print(f"{int(r['horse_number']):>4}{int(r['finish_position']):>4}"
+              f"{_fmt(r['runner_type_ord'], 9)}{_fmt(r['finish_var5'], 11)}"
+              f"{_fmt(r['win_place_ratio5'], 10)}{_fmt(r['pace_handicap_pit'], 10)}"
+              f"{float(r['_p']):>12.5f}{float(r['_p']) / tot:>10.5f}")
+    print(f"{'Σ':>4}{'':>4}{'':>9}{'':>11}{'':>10}{'':>10}{tot:>12.5f}"
+          f"{float((g['_p'] / tot).sum()):>10.5f}   ← 期待 Σp_win=1.00000")
+
+
+def main() -> None:
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="20230501")
@@ -138,14 +326,10 @@ def main():
     seeds = [int(s) for s in args.seeds.split(",")]
     logger.info("protocol: %s", jra_protocol.describe())
 
-    dsn = (f"host={os.getenv('DB_HOST')} port={os.getenv('DB_PORT')} "
-           f"dbname={os.getenv('DB_NAME')} user={os.getenv('DB_USER')} password={os.getenv('DB_PASSWORD')}")
-    conn = psycopg2.connect(dsn)
-    df = fetch(conn, args.start, args.end)
-    conn.close()
-    df = df[df["finish_position"].notna()].reset_index(drop=True)
-    logger.info("全データ: %d行 %dレース (%s〜%s)",
-                len(df), df["race_id"].nunique(), df["date"].min(), df["date"].max())
+    df = load_v28_dataset(args.start, args.end)
+    logger.info("全データ: %d行 %dレース (%s〜%s) 特徴=%d列",
+                len(df), df["race_id"].nunique(), df["date"].min(), df["date"].max(),
+                len(V28_FEATURE_NAMES))
 
     tr = df[df["date"] <= args.train_end]
     va = df[(df["date"] > args.train_end) & (df["date"] <= args.valid_end)]
@@ -157,46 +341,46 @@ def main():
     # ── ラウンド数を VAL で選ぶ（seed 平均の best_iteration 中央値） ──
     best_iters, te_preds = [], []
     for seed in seeds:
-        m = train_model(tr, seed=seed, valid_df=va)
+        m = train_model(tr, is_win_label, seed=seed, valid_df=va)
         best_iters.append(int(m.best_iteration))
         if len(te):
-            Xte, _ = _xy(te)
-            te_preds.append(m.predict(Xte, num_iteration=m.best_iteration))
+            te_preds.append(m.predict(te[V28_FEATURE_NAMES].to_numpy(dtype=float),
+                                      num_iteration=m.best_iteration))
     n_rounds = int(np.median(best_iters))
     logger.info("best_iter=%s → refit rounds=%d", best_iters, n_rounds)
 
     metrics: dict = {
+        "head": "is_win (v28 / 38特徴)",
         "train_period": [df["date"].min(), args.train_end],
         "valid_period": [args.train_end, args.valid_end],
         "seeds": seeds,
         "best_iters": best_iters,
         "refit_rounds": n_rounds,
-        "features": ALL_FEATURES,
+        "features": list(V28_FEATURE_NAMES),
+        "n_features": len(V28_FEATURE_NAMES),
         "params": PARAMS,
+        "new_feature_missing_pct": {
+            c: round(float(df[c].isna().mean() * 100), 2) for c in NEW_FEATURE_NAMES
+        },
     }
 
     # ── honest test: TRAIN のみで学習したモデルを TEST に一度だけ当てる ──
-    # 本番 refit モデル（VAL を含む）で TEST を測ると VAL 分だけ有利になるため、
-    # 較正の数字は必ずこちらの train-only モデルで出す。
+    # ⚠️ 本番 refit モデル（VAL を含む）で TEST を測ると VAL 分だけ有利になるため、
+    #    較正の数字は必ずこちらの train-only モデルで出す。
     if len(te):
         raw_te = np.mean(te_preds, axis=0)
         norm_te = race_normalize(raw_te, te["race_id"])
-        y_te = (te["finish_position"] == 1).astype(int).values
+        y_te = is_win_label(te)
         cm_raw = calib_metrics(raw_te, y_te)
         cm_norm = calib_metrics(norm_te, y_te)
-        cm_softmax = calib_metrics(te["softmax_win"].values.astype(float), y_te)
-        # レース内 win_probability 最上位馬の勝率（= 本命の堅さの実測値）
-        import pandas as pd
         top = (pd.DataFrame({"r": te["race_id"].values, "p": norm_te, "y": y_te})
                .sort_values("p", ascending=False).groupby("r").head(1))
         metrics["test"] = {
             "period": [te["date"].min(), te["date"].max()],
             "n": int(len(te)), "n_races": int(te["race_id"].nunique()),
-            "softmax_ece": round(cm_softmax["ece"], 4),
             "iswin_raw_ece": round(cm_raw["ece"], 4),
             "iswin_norm_ece": round(cm_norm["ece"], 4),
             "iswin_norm_mce": round(cm_norm["mce"], 4),
-            "softmax_brier": round(cm_softmax["brier"], 4),
             "iswin_norm_brier": round(cm_norm["brier"], 4),
             "top1_mean_pred": round(float(top["p"].mean()), 4),
             "top1_actual_win_rate": round(float(top["y"].mean()), 4),
@@ -207,22 +391,19 @@ def main():
                 for b, n, pr, ac, gp in cm_norm["table"]
             ],
         }
-        logger.info("honest test (%s〜%s, %dR): softmax ECE=%.4f / iswin raw ECE=%.4f "
-                    "/ iswin norm ECE=%.4f",
+        logger.info("honest test (%s〜%s, %dR): iswin norm ECE=%.4f / "
+                    "本命 予測=%.3f 実測勝率=%.3f",
                     te["date"].min(), te["date"].max(), te["race_id"].nunique(),
-                    cm_softmax["ece"], cm_raw["ece"], cm_norm["ece"])
-        # ECE は p<0.05 帯に質量が偏って上位帯の崩れを隠すため、本命の実測を併記する。
-        logger.info("honest test 本命(win_probability最上位)の予測=%.3f 実測勝率=%.3f",
-                    top["p"].mean(), top["y"].mean())
+                    cm_norm["ece"], top["p"].mean(), top["y"].mean())
+        visual_check(te, raw_te, "honest test / is_win v28")
     else:
         logger.warning("test 期間にデータなし（TEST_START=%s）", jra_protocol.TEST_START)
 
     # ── 本番モデル: **TEST_START の前日まで**で refit ──
     # （seed 平均は取れないため先頭 seed で固定ラウンド学習）。
-    # TEST を学習に含めるとその四半期の一度きり評価が in-sample になる。
     fit = df[df["date"] <= args.refit_end]
     logger.info("refit: %d行 (%s〜%s)", len(fit), fit["date"].min(), fit["date"].max())
-    final = train_model(fit, seed=seeds[0], num_round=n_rounds)
+    final = train_model(fit, is_win_label, seed=seeds[0], num_round=n_rounds)
     MODELS_DIR.mkdir(exist_ok=True)
     final.save_model(str(MODEL_PATH))
     metrics["model_path"] = str(MODEL_PATH)
