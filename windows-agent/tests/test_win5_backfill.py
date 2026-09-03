@@ -198,3 +198,34 @@ def test_fails_fast_when_api_key_missing() -> None:
     """APIキーが空なら流す前に止まること（全 POST が 401 になるため）。"""
     src = _code_only(_BACKFILL)
     assert "if not API_KEY" in src, "APIキー未設定を起動時に検出すること"
+
+
+def test_jvopen_is_wrapped_in_dialog_guard() -> None:
+    """🔴 JVOpen を BlockingCallGuard で包むこと。
+
+    2026-08-06〜08-12 に JVOpen が**6日間永久ブロック**した実障害がある。
+    原因は JV-Link 5.0.0 のリリース通知モーダルで、pythonw には押す者がいない。
+    jvlink_agent.py / jvlink_historical.py はガードを使っているが、
+    win5_backfill.py は使っておらず、**2026-09-03 に同じ形で 80 分固まった**
+    （ダウンロードが1バイトも発生しないまま JVOpen が返らない）。
+
+    ⚠️ 症状は「エラーも出ず、ログのハートビートだけが延々と進む」。
+    ファイルの更新を見に行かないと止まっていることに気づけない。
+    """
+    src = _code_only(_BACKFILL)
+    assert "BlockingCallGuard" in src, (
+        "JVOpen がガードで包まれていない。モーダルが出ると永久にブロックする"
+        "（jvlink_historical.py:307 と同じ形にすること）"
+    )
+    guard_pos = src.index("BlockingCallGuard(")
+    open_pos = src.index("jv.JVOpen(")
+    assert guard_pos < open_pos, "BlockingCallGuard が JVOpen を包んでいない"
+
+
+def test_setup_option_uses_long_timeout() -> None:
+    """セットアップ（option 3/4）は数時間かかるので上限を長く取ること。"""
+    src = _code_only(_BACKFILL)
+    assert "JVOPEN_TIMEOUT_SETUP" in src
+    assert "option in (3, 4)" in src, (
+        "option 3/4 のときに長い上限を使っていない。既定の1時間で切られる"
+    )

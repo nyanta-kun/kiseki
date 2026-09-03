@@ -76,6 +76,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+sys.path.insert(0, str(Path(__file__).parent))
+
+# 🔴 JVOpen 中のモーダルダイアログを自動で閉じるガード。
+#    2026-08-06〜08-12 に JVOpen が6日間永久ブロックした実障害の対策で、
+#    原因は JV-Link 5.0.0 のリリース通知モーダル。pythonw には押す者がいない。
+#    jvlink_agent.py / jvlink_historical.py は使っているが、本スクリプトは
+#    使っていなかったため 2026-09-03 に同じ形で 80 分固まった
+#    （ダウンロードが1バイトも発生しないまま JVOpen が返らない）。
+from link_common import BlockingCallGuard  # noqa: E402
+
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 COMPLETED_DIR = DATA_DIR / "completed"
@@ -86,6 +96,10 @@ WIN5_COMPLETED_FILE = COMPLETED_DIR / "WIN5_completed.txt"
 
 DATASPEC_RACE = "RACE"
 POST_BATCH_SIZE = 50
+
+# JVOpen の上限（jvlink_historical.py:91-92 と同じ既定値）
+JVOPEN_TIMEOUT_DIFF = int(os.getenv("JVOPEN_TIMEOUT_DIFF", "3600"))
+JVOPEN_TIMEOUT_SETUP = int(os.getenv("JVOPEN_TIMEOUT_SETUP", "21600"))
 
 # 🔴 .env は**プロジェクトルートのものだけ**を読む。
 #    windows-agent/.env にも同名キーがあるが BACKEND_URL がローカルIP
@@ -247,8 +261,12 @@ def run_win5_backfill(
 
     hb = threading.Thread(target=_heartbeat, daemon=True)
     hb.start()
+    # セットアップ（option 3/4）は数時間かかるので上限を長く取る。
+    # 上限で落とすのは、居座ると realtime も他のバックフィルも巻き添えになるため。
+    timeout = JVOPEN_TIMEOUT_SETUP if option in (3, 4) else JVOPEN_TIMEOUT_DIFF
     try:
-        result = jv.JVOpen(DATASPEC_RACE, from_time, option, 0, 0, "")
+        with BlockingCallGuard(f"JVOpen({DATASPEC_RACE})", timeout, logger):
+            result = jv.JVOpen(DATASPEC_RACE, from_time, option, 0, 0, "")
     finally:
         _done.set()
 
