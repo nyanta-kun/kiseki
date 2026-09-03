@@ -45,6 +45,7 @@ import math
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 from .unit_distribution import FLOOR_THEN_LARGEST_REMAINDER, distribute_units
+from .stake_allocation import MIN_MEAN_PAYOUT
 
 BUDGET = 10_000
 UNIT = 100
@@ -882,6 +883,89 @@ def mean_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
     return sum(stakes[c] * float(pred_odds[c]) for c in stakes) / len(stakes)
 
 
+#: 入稿ゲート（平均想定払戻 <= `MIN_MEAN_PAYOUT`）に落ちたとき、**代わりに組む買い方**。
+#:
+#: 🔴 **代替は元と同じ `key` を名乗る。** 行の一意キーは (race_key, plan_key, mode) で、
+#:    別名にすると 1レース2商品になり、入稿・採点・画面のすべてが二重に動く。
+#:    どちらで組んだかは `min_odds` が行の `legs` に出るので後から判別できる。
+#:
+#: 🔴 **既に組めている買い目は1つも書き換えない**（置換ではなくフォールバック）。
+#:    `F_hit` を丸ごと帯15倍へ置換する案は測って**不採用**にした——型F 単体では
+#:    2倍+ が +5.3〜9.0% と良く見えるが、ラインナップ全体では利得が +5.6% に薄まる
+#:    一方で**表示的中の −0.8pt はそのまま残る**（2026-09-03・両窓一致）。
+#:
+#: 実測（`scripts/exp_type_lab/typef_band_lineup.py`・全8プラン込み・探索 / 確認）:
+#:
+#:              件/日          表示的中        2倍+/日         ROI
+#:   現行      39.04 / 39.86  24.68 / 24.76%  6.69 / 7.10   78.2 / 81.7
+#:   置換      41.25 / 42.03  23.82 / 23.95%  7.19 / 7.50   77.9 / 81.2
+#:   本案      41.25 / 42.02  24.69 / 24.65%  7.12 / 7.43   77.9 / 81.1
+#:
+#:   ＝**在庫 +2.2件/日・2倍以上の的中 +4.7〜6.5%** を、**表示的中の代償ほぼゼロ**
+#:     （+0.01 / −0.11pt）で得る。`F_hit` は平均想定払戻ゲートに 24% 落ちており、
+#:     帯を入れると想定払戻が上がって通るようになるのが増分の正体。
+#:
+#: 🔴 **ROI は改善しない**（−0.3 / −0.6pt）。得られるのは在庫と的中体験であって
+#:    収支ではない。この層は ±2.5pt に約15.6年かかるので ROI では採否を決めない。
+#: 🔴 **帯は 15倍が最適点で、上げれば上げるほど良いのではない。** 型F 単体の
+#:    対応比較（同一レース）で 2倍+ は 15〜20倍が頂点で、30倍では確認窓 −7.2% と
+#:    崩れる（払戻中央は上がり続けるのに大きく獲れた回数は減る）。
+#: ⚠️ 日次上限との相互作用（件/日 +5.4% が他の商品を押し出さないか）は**未検証**。
+GATE_FALLBACK: dict[str, Plan] = {
+    "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0,
+                  min_odds=15.0, max_legs=12, alloc="conf",
+                  note="F_hit がゲートに落ちたとき: 予測15倍以上から確率上位12点"),
+}
+
+
+def _build_plan(shape: "RaceShape", plan: Plan,
+                pred_odds: Mapping, probs: Mapping):
+    """買い目と賭け金。賭け金 0 円の点（`allocate` が落とす）は返さない。"""
+    legs = build_legs(shape, plan, pred_odds, probs)
+    if not legs:
+        return None
+    stakes = allocate(legs, pred_odds, probs, plan)
+    if not stakes:
+        return None
+    return [c for c in legs if c in stakes], stakes
+
+
+def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
+                             pred_odds: Mapping, probs: Mapping,
+                             n_entries: int = 7,
+                             min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """買い目と賭け金を作る。**入稿ゲートに落ちるなら代替の買い方へ切り替える。**
+
+    戻り値は `(legs, stakes, plan_used)`。組めなければ `None`。
+
+    🔴 **paper も live もこの関数を通すこと。** 生成側だけに書くと、検証台と
+       本番で母集団が割れる（型ラボが「正本は1つ」を掲げている理由そのもの）。
+
+    🔴 **7車だけに掛ける。** 測ったのは7車で、9車は同じ買い方でも予測オッズの
+       分布が丸ごと違う（目が多いぶん高く出る）ため、同じ 15倍 は別の操作になる。
+       このリポジトリは車数をまたいだ移植で繰り返し失敗している（7C の定数・
+       3ヘッド軸・7M1）。9車で使うなら9車の窓で測り直してから。
+    """
+    if n_entries != 7:
+        got = _build_plan(shape, plan, pred_odds, probs)
+        return (*got, plan) if got else None
+    def _build(pl: Plan):
+        return _build_plan(shape, pl, pred_odds, probs)
+
+    got = _build(plan)
+    fb = GATE_FALLBACK.get(plan.key)
+    if fb is None:
+        return (*got, plan) if got else None
+    # 本命が組めた上でゲートを通るなら、そのまま使う（既存の行は書き換えない）
+    if got and mean_expected_payout(got[1], pred_odds) > min_mean_payout:
+        return (*got, plan)
+    alt = _build(fb)
+    if alt and mean_expected_payout(alt[1], pred_odds) > min_mean_payout:
+        return (*alt, fb)
+    # 代替もゲートに落ちるなら、元の結果をそのまま返す（見送りの判断は入稿側）
+    return (*got, plan) if got else None
+
+
 def min_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
     """買った点の**最低**想定払戻（円）。信頼度傾斜の床がここに出る。"""
     if not stakes:
@@ -905,12 +989,23 @@ def rule_version(n_entries: int = 7) -> str:
              v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
          for k, v in sorted(PLANS.items())}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
+
         # 🔴 看板枠は**プランの属性だけでは表せない**（計画払戻 T が `build_legs` の
         #    中で使われる）。ここに入れておかないと T を動かしても版が割れず、
         #    新旧の行が同じ `rule_version` で混ざる。
         | {"_sign": [list(SIGNBOARD_TYPES), SIGNBOARD_TARGET,
                      SIGNBOARD_MAX_ODDS, SIGNBOARD_N_ENTRIES,
                      sorted(SIGNBOARD_RACE_TYPES)]})
+    if n_entries == 7:
+        # 🔴 フォールバックは `PLANS` に無いので、ここへ入れないと帯を動かしても
+        #    版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
+        #    ⚠️ **7車のときだけ入れる。** 9車には掛けていないので、9車の版まで
+        #       割ると「規則が変わった」と誤読される（車数の規則を7車のハッシュへ
+        #       入れない、という既存の判断と同じ理由）。
+        payload["_fallback"] = {
+            k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
+                v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
+            for k, v in sorted(GATE_FALLBACK.items())}
     if n_entries == 9:
         payload["_sell9"] = [list(NINE_CAR_TYPE_F_RACE_TYPES),
                              list(NINE_CAR_TYPE_F_PLANS)]

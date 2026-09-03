@@ -39,8 +39,9 @@ sys.path.insert(0, str(REPO))
 
 from src.database import get_connection            # noqa: E402
 from src.type_lab import (                          # noqa: E402
-    BUDGET, PLANS, allocate, build_legs, mean_expected_payout,
-    min_expected_payout, plans_for, race_shape, rule_version,
+    BUDGET, PLANS, allocate, build_legs, build_with_gate_fallback,
+    mean_expected_payout, min_expected_payout, plans_for, race_shape,
+    rule_version,
 )
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
@@ -84,18 +85,16 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
     for plan in plans_for(shape.type_label, N_ENTRIES, meta.get("race_type")):
         odds = trio_odds if plan.bet_type == "trio" else tf_odds
         prob = trio_prob if plan.bet_type == "trio" else tf_prob
-        legs = build_legs(shape, plan, odds, prob)
-        if not legs:
+        # 🔴 **`build_with_gate_fallback` を通す**（`build_legs` を直に呼ばない）。
+        #    入稿ゲートに落ちる買い方には代替が定義されていることがあり、
+        #    素で組むと **paper と live で母集団が割れる**。
+        #    賭け金 0 円の点の除去（`allocate` が落とす）もこの関数の中で済む。
+        built = build_with_gate_fallback(shape, plan, odds, prob, N_ENTRIES)
+        if not built:
             continue
-        stakes = allocate(legs, odds, prob, plan)
-        if not stakes:
-            continue
-        # 🔴 **`stakes` を見る**（`legs` ではない）。`allocate` は賭け金 0 円の点を
-        #    落として返すので、`legs` のまま回すと**買っていない点を記録する**
-        #    （`n_legs` も想定払戻もずれる）。並びは `legs` の順を保つ。
-        legs = [c for c in legs if c in stakes]
+        legs, stakes, plan_used = built
         detail = [
-            {"combo": _combo_str(c, plan.bet_type),
+            {"combo": _combo_str(c, plan_used.bet_type),
              "stake": int(stakes[c]),
              "pred_odds": round(float(odds[c]), 2),
              "prob": round(float(prob.get(c, 0.0)), 6)}
@@ -115,7 +114,7 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             # 🔴 **並びを行へ焼き付ける**。後から `wt_entries` を引き直しても
             #    モデルが再学習されていれば別の並びになり、答え合わせにならない。
             p3_order="-".join(str(c) for c in shape.order),
-            mode=mode + MODE_TAG, plan_key=plan.key, bet_type=plan.bet_type,
+            mode=mode + MODE_TAG, plan_key=plan_used.key, bet_type=plan_used.bet_type,
             n_legs=len(legs), budget=BUDGET,
             legs=json.dumps(detail, ensure_ascii=False),
             pred_mean_payout=round(mean_expected_payout(stakes, odds), 1),
