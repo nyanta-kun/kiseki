@@ -21,6 +21,9 @@
  *    レースを見ている最中に誤って全体設定を倒しうる。
  */
 import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { useAutoRefresh } from "../useAutoRefresh";
+import { toISODate } from "@/components/KeirinDateNav";
+import { todayYYYYMMDD } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Settings } from "lucide-react";
@@ -867,6 +870,26 @@ export default function ReviewClient({ date, items, nProposed, nUnpublished = 0,
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
   }, []);
+
+  /**
+   * 結果の反映を待つあいだ、開いたままでも追従させる（2026-09-03）。
+   *
+   * この画面はサーバーコンポーネントが `items` を作るので、`router.refresh()` で
+   * **取り直して差分だけ描き替える**（承認・取消の後に既に使っている手）。
+   * クライアントの状態（`expanded` / `forceTargets` / 入力中の内容）は
+   * 再マウントされないので保たれる。
+   *
+   * 🔴 **`pending` の間は回さない。** 承認や取消が飛んでいる最中に取り直すと、
+   *    反映前の一覧が返ってきて「押したのに戻った」ように見える。
+   * 🔴 **今日のときだけ**。過去日は動かないので、開きっぱなしで叩き続けない。
+   */
+  // 🔴 **この画面の `date` は `YYYY-MM-DD`**（一覧は `YYYYMMDD`）。書式を取り違えると
+  //    比較が永久に false になり、**エラーも警告も出ないまま自動更新だけが死ぬ**。
+  //    既存ヘルパの合成で作る（JST の今日を出す関数をこれ以上増やさない）。
+  useAutoRefresh(() => router.refresh(), {
+    live: date === toISODate(todayYYYYMMDD()),
+    busy: pending,
+  });
   /**
    * netkeirin 側の公開待ち件数。**こちらの記録と食い違うことがある。**
    *

@@ -27,6 +27,7 @@ import {
 } from "./actions";
 import { todayYYYYMMDD } from "@/lib/utils";
 import KeirinAxisConfidenceBadge from "@/components/KeirinAxisConfidenceBadge";
+import { useAutoRefresh } from "./useAutoRefresh";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -1758,6 +1759,8 @@ const HIDE_NOPICK_KEY = "keirin:hideNoPickRows";
 export default function KeirinPage() {
   const [date, setDate] = useState(todayYYYYMMDD());
   const [picks, setPicks] = useState<KeirinPick[]>([]);
+  /** 最後にピックを取り込めた時刻。自動更新が効いているかを画面で確かめられるように出す。 */
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [summary, setSummary] = useState<KeirinSummary | null>(null);
   const [loadingPicks, setLoadingPicks] = useState(false);
   // サマリーは一覧と**別に**待つ（一覧を人質に取らせない・loadData のコメント参照）
@@ -1818,7 +1821,7 @@ export default function KeirinPage() {
     setError(null);
     const iso = toISODate(d);
     void fetchKeirinPicks(iso, true)
-      .then((v) => { setPicks(v); setError(null); })
+      .then((v) => { setPicks(v); setError(null); setUpdatedAt(Date.now()); })
       .catch(() => { setError("ピックの取得に失敗しました。"); setPicks([]); })
       .finally(() => setLoadingPicks(false));
     void fetchKeirinSummary(iso)
@@ -1826,6 +1829,30 @@ export default function KeirinPage() {
       .catch(() => { /* サマリーは付随情報。落ちても一覧は出す */ })
       .finally(() => setLoadingSummary(false));
   }, []);
+
+  /**
+   * 自動更新用の**静かな**再取得（2026-09-03）。
+   *
+   * 🔴 `loadData` を使い回してはいけない。あれは `setLoadingPicks(true)` を立てるので、
+   *    裏で回すたびに**一覧がスケルトンへ戻る**（読んでいる最中に画面が消える）。
+   *    ここは取れたときだけ差し替え、失敗しても**いま出ている内容を残す**
+   *    （自動更新の失敗でエラー表示に化けさせない。手動更新はこれまで通り出す）。
+   */
+  const reloadQuiet = useCallback(() => {
+    const iso = toISODate(date);
+    void fetchKeirinPicks(iso, true)
+      .then((v) => { setPicks(v); setError(null); setUpdatedAt(Date.now()); })
+      .catch(() => { /* 自動更新の失敗は黙って見送る（次の周期で拾う） */ });
+    void fetchKeirinSummary(iso)
+      .then(setSummary)
+      .catch(() => { /* サマリーは付随情報 */ });
+  }, [date]);
+
+  // 🔴 **今日のときだけ**回す。過去日は採点が終わっていて動かないので、
+  //    開いたままにされると無駄に叩き続ける（手動の「採点更新」は残してある）。
+  // ⚠️ 採点 cron は前日分も見るが、前日を開いたまま待つ画面ではないので今日に絞る。
+  const isToday = date === todayYYYYMMDD();
+  useAutoRefresh(reloadQuiet, { live: isToday, busy: refreshing });
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -2087,6 +2114,15 @@ export default function KeirinPage() {
           {refreshMsg && (
             <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight text-center">
               {refreshMsg}
+            </p>
+          )}
+          {/* 最終更新。**自動更新が効いているかを画面で確かめられるようにする**
+              （黙って裏で回すだけだと、止まっていても誰も気づけない。地方の
+              オッズ鮮度バッジと同じ考え方）。 */}
+          {updatedAt !== null && (
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-tight text-center">
+              最終更新 {new Date(updatedAt).toLocaleTimeString("ja-JP", { hour12: false })}
+              {isToday ? "（1分ごとに自動更新）" : "（過去日のため自動更新なし）"}
             </p>
           )}
         </div>
