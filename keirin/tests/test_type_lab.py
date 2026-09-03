@@ -669,12 +669,26 @@ def test_conf_allocation_never_produces_zero_legs():
 
 
 def test_build_script_records_the_funded_legs_only():
-    """🔴 `rows_for_race` は `legs` ではなく `stakes` を見ること。
+    """🔴 記録するのは `legs` ではなく**賭け金が付いた点**だけ。
 
     `legs` のまま回すと**買っていない点を記録する**（`n_legs` も想定払戻もずれる）。
+
+    ⚠️ 2026-09-03 にこの絞り込みは `scripts/build_type_lab_picks.py` から
+       正本の `src/type_lab.py::_build_plan` へ移った（入稿ゲートの
+       フォールバックを paper と live の両方へ通すため）。**検査も移す**——
+       消すと不変条件そのものが無検査になる。
     """
-    src = (REPO / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
-    assert "legs = [c for c in legs if c in stakes]" in src
+    from src.type_lab import PLANS, RaceShape, _build_plan
+
+    # 予測オッズが極端に高い点は取り分が 1 単位に満たず 0 円になる（`allocate` が落とす）
+    shape = RaceShape("A", 1.60, 1, 0.30, False, tuple(range(1, 8)), 1.2)
+    pred = {(1, 2, 3): 3.0, (1, 2, 4): 4.0, (1, 2, 5): 20000.0}
+    probs = {(1, 2, 3): 0.5, (1, 2, 4): 0.4, (1, 2, 5): 1e-9}
+    got = _build_plan(shape, PLANS["A_hit"], pred, probs)
+    assert got is not None
+    legs, stakes = got
+    assert set(legs) == set(stakes), "賭け金の付かない点を返している"
+    assert all(v > 0 for v in stakes.values())
 
 
 # ──────────────── 画面のダークモード（2026-08-28） ────────────────
