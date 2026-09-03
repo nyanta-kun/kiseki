@@ -113,6 +113,28 @@ def start_hour_jst(start_at: str | int | None) -> float | None:
         return None
 
 
+def start_time_jst(start_at: str | int | None) -> str | None:
+    """`wt_races.start_at`（UNIX秒）から JST の発走時刻 "HH:MM"。読めなければ None。
+
+    🔴 **`start_hour_jst` と同じ式から作る**（オフセットを2か所に書かない）。
+       あちらは候補の足切り（18時前か）に使う「時」で、こちらは人に見せる表示。
+
+    >>> start_time_jst(0)              # 1970-01-01 00:00 UTC = 09:00 JST
+    '09:00'
+    >>> start_time_jst(str(3600 * 6 + 41 * 60))   # 06:41 UTC = 15:41 JST
+    '15:41'
+    >>> start_time_jst(None) is None
+    True
+    >>> start_time_jst("abc") is None
+    True
+    """
+    hour = start_hour_jst(start_at)
+    if hour is None:
+        return None
+    total = int(round(hour * 3600)) % 86400
+    return f"{total // 3600:02d}:{total % 3600 // 60:02d}"
+
+
 def synthetic_odds(legs) -> float | None:
     """買い目の**合成オッズ** = 1 / Σ(1/予測オッズ)。1点でも欠けたら None。
 

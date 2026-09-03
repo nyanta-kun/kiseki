@@ -1094,3 +1094,85 @@ def test_entry_health_records_the_type_degradation():
     doc = (REPO / "src" / "entry_health.py").read_text(encoding="utf-8")
     for marker in ("開催日目", "arare", "集計は", "reason_code"):
         assert marker in doc, f"欠測時の型退化の記録に {marker} が無い"
+
+
+# ───────── 入稿通知に「自信あり」を出す（2026-09-04・ユーザー指示） ─────────
+
+def _conn_returning(row):
+    class _C(_FakeConn):
+        def execute(self, sql, params=()):
+            cur = super().execute(sql, params)
+            cur.fetchone = lambda: row          # noqa: E731 — テスト用
+            return cur
+    return _C()
+
+
+def test_confident_line_shows_race_and_start_time(monkeypatch):
+    """自信ありがあれば **どのレースか + 発走時刻** を出す。"""
+    import scripts.netkeirin_submit_type_lab as M
+
+    row = {"venue_name": "松戸", "race_no": 9, "rank_key": "F_hit",
+           "start_at": str(3600 * 6 + 41 * 60)}      # 06:41 UTC = 15:41 JST
+    monkeypatch.setattr(M, "get_connection", lambda: _conn_returning(row))
+    line = M._confident_line("2026-09-04")
+    assert line == "🎯 自信あり: 松戸9R（F_hit・発走 15:41）", line
+
+
+def test_confident_line_says_none_when_not_picked(monkeypatch):
+    """🔴 **無い日も1行出す。** 行ごと消すと「選定が落ちた」のか
+    「該当が無かった」のか読み手に区別できない。"""
+    import scripts.netkeirin_submit_type_lab as M
+
+    monkeypatch.setattr(M, "get_connection", lambda: _conn_returning(None))
+    assert M._confident_line("2026-09-04") == "🎯 自信あり: なし"
+
+
+def test_confident_line_survives_db_failure(monkeypatch):
+    """通知は付随情報。DB が落ちていても例外を上げない（入稿は終わっている）。"""
+    import scripts.netkeirin_submit_type_lab as M
+
+    class _Boom:
+        def __enter__(self):
+            raise RuntimeError("DB に届かない")
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(M, "get_connection", lambda: _Boom())
+    assert M._confident_line("2026-09-04").startswith("🎯 自信あり: 取得できず")
+
+
+def test_confident_query_qualifies_every_column():
+    """🔴 `wt_races` を JOIN するので**列は `s.` / `r.` で修飾する**。
+
+    `wt_races` にも `status` があり、裸で書くと PostgreSQL が `AmbiguousColumn`
+    で落ちる（2026-09-02 に発走時刻の JOIN を足して実際に踏んだ）。
+    """
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M._confident_line)
+    assert "JOIN wt_races r" in src
+    for frag in ("s.venue_name", "s.race_no", "s.rank_key", "r.start_at",
+                 "s.race_key LIKE", "s.is_confident", "{_ALIVE_SUB}"):
+        assert frag in src, frag
+    assert M._ALIVE_SUB == "COALESCE(s.status, 'submitted') <> 'deleted'"
+    # 🔴 `is_confident` は PostgreSQL では **boolean**。`= 1` と比べると
+    #    `operator does not exist: boolean = integer` で落ちる（SQLite では通る）。
+    assert "is_confident = 1" not in src
+
+
+def test_confident_pick_runs_before_the_notification():
+    """🔴 **選定 → 通知**の順であること。逆だと通知が必ず「なし」になる。
+
+    2026-09-04 以前は `type_lab_daily.sh` が入稿スクリプトの**あと**に
+    選定を呼んでいたので、通知の時点では1件も立っていなかった。
+    """
+    src = (REPO / "scripts" / "netkeirin_submit_type_lab.py").read_text(
+        encoding="utf-8")
+    assert src.index("_pick_confident(day)") < src.index("_confident_line(day)")
+    assert 'session == "morning"' in src, "昼・夕でも選び直しています（1日1件が壊れる）"
+    daily = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    assert "pick_confident_race_wt.py" not in daily.replace(
+        "`scripts/pick_confident_race_wt.py::pick`", ""),         "日次スクリプトから二重に呼んでいます"
