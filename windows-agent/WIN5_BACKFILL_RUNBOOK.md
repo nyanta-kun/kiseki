@@ -54,10 +54,11 @@ WF の**ファイル名接頭辞は未確認**なので、推測でスキップ�
 まず POST せずに内訳だけ見る。
 
 ```
-python win5_backfill.py --from-year 2011 --option 3 --discover
+python win5_backfill.py --from-year 2011 --option 4 --discover
 ```
 
-- `--option 3` は**セットアップ**（全再ダウンロード）。JVOpen が**数時間ブロックする**
+- `--option 4` は**ダイアログ無しセットアップ**（全再ダウンロード）。JVOpen が**数時間ブロックする**。
+  `--option 3` はモーダルダイアログを出すことがあり、閉じる者がいないと COM ごと固まる
 - ログ末尾に「ファイル名の先頭1文字ごとの rec_id 内訳」が出る。
   `WF はここ` と付いた接頭辞を控える
 - この段階では **DB を一切触らない**
@@ -66,10 +67,10 @@ python win5_backfill.py --from-year 2011 --option 3 --discover
 
 ```
 # 接頭辞が分かった場合（速い）
-python win5_backfill.py --from-year 2011 --option 3 --only-prefix <控えた文字>
+python win5_backfill.py --from-year 2011 --option 4 --only-prefix <控えた文字>
 
 # 分からなかった場合（遅いが確実。未処理ファイルを全部読む）
-python win5_backfill.py --from-year 2011 --option 3
+python win5_backfill.py --from-year 2011 --option 4
 ```
 
 ## 4. 🔴 実行後の確認 — 200 が返ったことは取り込めた証拠にならない
@@ -106,7 +107,7 @@ ORDER BY held_date DESC LIMIT 10;
 | `events = 0` | completed の共有 / `--only-prefix` の絞りすぎ / WF が届いていない |
 | `unresolved > 0` | `races` の取込が先に済んでいない（RA/SE を先に流す） |
 | `with_payout = 0` | 中止レコードの弾き過ぎ、または区分7が届いていない |
-| 最古が 2011-04 より新しい | `--option 3`（セットアップ）を使っていない |
+| 最古が 2011-04 より新しい | `--option 4`（ダイアログ無しセットアップ）を使っていない |
 
 ⚠️ `win5_backfill.py` 自身も、1件も取り込めなかった場合・未解決が残った場合・
 サーバ側でパースできなかった場合にログへ 🔴 を出す。ログの最終行を必ず読むこと。
