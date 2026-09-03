@@ -1114,6 +1114,18 @@ export type KeirinPick = {
    * 売っていない行は `bet_amount` も `payout` も 0 が返る。
    */
   sold?: boolean;
+  /** 型ラボがこのレースに組んだ商品（**入稿していないレースでも入る**）。
+   *
+   * 🔴 旧ランクの仮軸 `hypo_*` は三連複・軸2車流し固定で、型ラボの商品
+   *    （型C なら三連単12点 など）と食い違う。表示はこちらを優先すること。
+   *    判定がまだ回っていないレースは全部 null。 */
+  type_lab_type?: string | null;
+  type_lab_plan?: string | null;
+  type_lab_bet_type?: string | null;
+  type_lab_n_legs?: number | null;
+  type_lab_mean_payout?: number | null;
+  /** 買い目を空白区切りで並べたもの（三連複 `1=2=4` / 三連単 `1-2-4`）。 */
+  type_lab_combo?: string | null;
   /** 入稿を見送った理由のコード（売っていない行だけ非 null）。
    *  語彙の正本は backend/src/services/keirin_skip_reasons.py。 */
   skip_reason?: string | null;

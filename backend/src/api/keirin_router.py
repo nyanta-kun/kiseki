@@ -958,7 +958,13 @@ async def get_picks(
                   ph.gap34,
                   ph.gate_label,
                   sk.reason_code            AS skip_reason,
-                  sk.reason_text            AS skip_reason_text
+                  sk.reason_text            AS skip_reason_text,
+                  tl.type_label             AS tl_type,
+                  tl.plan_key               AS tl_plan,
+                  tl.bet_type               AS tl_bet_type,
+                  tl.n_legs                 AS tl_n_legs,
+                  tl.pred_mean_payout       AS tl_mean_payout,
+                  tl.legs                   AS tl_legs
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
@@ -1002,6 +1008,34 @@ async def get_picks(
                     ORDER BY x.decided_at DESC
                     LIMIT 1
                 ) sk ON TRUE
+                -- 🔴 **型ラボが「このレースに何を売るつもりか」**（2026-09-03）。
+                --    入稿していないレースでも、型ラボは型を判定して商品を組んでいる。
+                --    一覧の「参考買い目」は旧ランクの仮軸（`hypo_*`＝三連複 軸2車流し）
+                --    のままで、**型ラボの商品と食い違っていた**（実際は型C なら
+                --    三連単12点など）。手動入稿はその型ラボの商品を出すので、
+                --    画面もそちらを見せる。
+                -- 🔴 **プランは `submission_skips` の最新行から取る。** そこに残る
+                --    `rank_key` は型ラボが実際に「売ろうとした」プランそのもの
+                --    （`sell_plans_for` の結果）。backend で売り分けの規則を
+                --    写し持つと keirin 側と二重管理になる。
+                --    判定がまだ回っていないレースは NULL のまま（出さない）。
+                LEFT JOIN LATERAL (
+                    SELECT x.rank_key
+                    FROM keirin.submission_skips x
+                    WHERE x.race_key = wr.race_key
+                    ORDER BY x.decided_at DESC
+                    LIMIT 1
+                ) tlp ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT t.type_label, t.plan_key, t.bet_type, t.n_legs,
+                           t.pred_mean_payout, t.legs
+                    FROM keirin.type_lab_picks t
+                    WHERE t.race_key = wr.race_key
+                      AND t.mode IN ('live', 'live9')
+                      AND t.plan_key = COALESCE(ns.rank_key, tlp.rank_key)
+                    ORDER BY t.id DESC
+                    LIMIT 1
+                ) tl ON TRUE
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
@@ -1298,6 +1332,19 @@ async def get_picks(
             # 🔴 **文言はサーバーが決める**。語彙の正本は
             #    services/keirin_skip_reasons.py で、入稿側（keirin）も同じ
             #    ファイルを読む。フロントで日本語を組み立てると三重管理になる。
+            # 🔴 **型ラボがこのレースに組んだ商品**（2026-09-03）。入稿していない
+            #    レースでも型・プラン・買い目が決まっているので、そのまま見せる。
+            #    手動入稿はこれを出すので、画面と実際に出るものが一致する。
+            #    ⚠️ 旧ランクの仮軸（`hypo_*`）は三連複 軸2車流し固定で、型ラボの
+            #       商品（型C なら三連単12点 など）と食い違う。置き換えではなく
+            #       別キーで返し、フロントは型ラボ側を優先して出す。
+            "type_lab_type": r.get("tl_type"),
+            "type_lab_plan": r.get("tl_plan"),
+            "type_lab_bet_type": r.get("tl_bet_type"),
+            "type_lab_n_legs": r.get("tl_n_legs"),
+            "type_lab_mean_payout": (
+                int(r["tl_mean_payout"]) if r.get("tl_mean_payout") is not None else None),
+            "type_lab_combo": _type_lab_combo(r.get("tl_legs")),
             "skip_reason": (None if sold else (r.get("skip_reason") or None)),
             "skip_reason_label": (
                 None if sold or not r.get("skip_reason")
@@ -2846,6 +2893,28 @@ def _payout_range(lines: list[dict]) -> tuple[float | None, float | None]:
 #    ⚠️ **ここへ写しを戻さないこと。** 閾値の写しが増えると、入稿ゲートと画面で
 #       別の平均払戻を計算する状態（2026-08-26 まで実在した）へ逆戻りする。
 #       見送った件数は `keirin.submission_skips` とログ・Discord に出る。
+
+
+def _type_lab_combo(legs: object) -> str | None:
+    """`type_lab_picks.legs` → 表示用の買い目文字列（空白区切り）。
+
+    🔴 **並び順を変えない。** `legs` は確率降順（＝賭け金の重い順）で保存されている。
+       フロントの `formatComboLabel` がフォーメーションへ畳むので、ここでは
+       区切り文字（三連複 `=` / 三連単 `-`）を保ったまま並べるだけにする。
+    """
+    if not legs:
+        return None
+    try:
+        rows = json.loads(legs) if isinstance(legs, str) else legs
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    out: list[str] = []
+    for x in rows:
+        if isinstance(x, dict) and x.get("combo"):
+            out.append(str(x["combo"]))
+    return " ".join(out) or None
 
 
 def _min_payout_low(lines: list[dict]) -> float | None:
