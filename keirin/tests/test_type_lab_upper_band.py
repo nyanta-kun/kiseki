@@ -13,15 +13,16 @@ from __future__ import annotations
 import itertools
 
 from src.type_lab import (
-    BUDGET, PLANS, ROLE_BASE, UPPER_BANDS, UPPER_BAND_N_ENTRIES,
-    UPPER_BAND_TOTAL, RaceShape, add_upper_band, allocate, build_legs,
-    mean_expected_payout, rule_version, split_legs_by_role,
+    BUDGET, PLANS, ROLE_BASE, UPPER_BAND_PLANS, UPPER_BANDS,
+    UPPER_BAND_N_ENTRIES, UPPER_BAND_TOTAL, RaceShape, add_upper_band,
+    allocate, build_legs, mean_expected_payout, rule_version,
+    split_legs_by_role,
 )
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
 
 
-def _shape(label: str = "C") -> RaceShape:
+def _shape(label: str = "F") -> RaceShape:
     return RaceShape(label, 1.30, 1, 0.10, False, tuple(range(1, 8)), 1.5)
 
 
@@ -39,7 +40,7 @@ def _board(high: float = 400.0, low: float = 12.0) -> tuple[dict, dict]:
     return po, pr
 
 
-def _built(plan_key: str = "C_hit", **kw):
+def _built(plan_key: str = "F_hit", **kw):
     po, pr = _board(**kw)
     plan = PLANS[plan_key]
     legs = build_legs(_shape(plan.type_label), plan, po, pr)
@@ -85,7 +86,7 @@ def test_overlapping_leg_keeps_base_role_and_sums_stake():
     pr = {c: (1.0 / po[c]) for c in PERMS}
     tot = sum(pr.values())
     pr = {c: v / tot for c, v in pr.items()}
-    plan = PLANS["C_hit"]
+    plan = PLANS["F_hit"]
     legs = [(1, 2, 3), (1, 3, 2)]
     stakes = allocate(legs, po, pr, plan)
     legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
@@ -104,14 +105,45 @@ def test_not_applied_to_nine_cars():
 
 
 def test_not_applied_to_trio_plans():
-    """三連複プラン（`D_hit` / `A_trio`）には掛けない（1商品に2券種は混ぜられない）。"""
+    """三連複プランには掛けない（1商品に2券種は混ぜられない）。
+
+    🔴 **許可リストに入っていても掛からない**ことを見る（券種の門は独立）。
+    """
+    import src.type_lab as tl
     po = {frozenset(c): 30.0 for c in itertools.combinations(range(1, 8), 3)}
     pr = {c: 1.0 / len(po) for c in po}
     plan = PLANS["D_hit"]
     legs = build_legs(_shape("D"), plan, po, pr)
     stakes = allocate(legs, po, pr, plan)
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    orig = tl.UPPER_BAND_PLANS
+    try:
+        tl.UPPER_BAND_PLANS = frozenset({"D_hit"})
+        legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    finally:
+        tl.UPPER_BAND_PLANS = orig
     assert st2 == stakes and set(roles.values()) == {ROLE_BASE}
+
+
+def test_only_the_allowed_plans_get_the_upper_band():
+    """**押さえを乗せるのは面で買う `E_hit` / `F_hit` だけ**（ユーザー決定 2026-09-04）。
+
+    🔴 点数を絞る商品（`A_hit` 3点・`F_pay` 4点・`F_sign` 2〜3点）は
+       「少ない点に厚く置いて払戻を作る」設計なので、薄い押さえを足すと
+       その集中を自分で薄める。
+    """
+    assert UPPER_BAND_PLANS == frozenset({"E_hit", "F_hit"})
+    po, pr = _board()
+    for key in ("E_hit", "F_hit", "A_hit", "B_hit", "C_hit", "F_pay", "F_sign"):
+        plan = PLANS[key]
+        legs = build_legs(_shape(plan.type_label), plan, po, pr)
+        if not legs:
+            continue
+        stakes = allocate(legs, po, pr, plan)
+        if not stakes:
+            continue
+        _, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+        got = set(roles.values()) != {ROLE_BASE}
+        assert got is (key in UPPER_BAND_PLANS), key
 
 
 def test_falls_back_to_todays_product_when_band_is_empty():
@@ -136,22 +168,36 @@ def test_gate_value_is_recorded_before_the_upper_band():
 
     import scripts.build_type_lab_picks as B
 
-    po, pr = _board()
-    plan = PLANS["A_hit"]
-    legs = build_legs(_shape("A"), plan, po, pr)
-    stakes = allocate(legs, po, pr, plan)
-    before = mean_expected_payout(stakes, po)
+    from src.type_lab import build_with_gate_fallback, race_shape
 
+    po, pr = _board()
     meta = {"race_key": "20260804_26_04", "race_date": "2026-08-04",
             "venue_name": "西武園", "race_no": 4, "race_type": "予選",
-            "day_index": 1}
-    # 型A（`axis_sum` 1.50 >= 1.44 で堅い）になる盤面。
-    p3 = {1: 0.80, 2: 0.70, 3: 0.30, 4: 0.25, 5: 0.20, 6: 0.15, 7: 0.10}
-    cars = {c: dict(p3=p3[c], pw=p3[c] / 2, line_group=(c - 1) // 3,
-                    line_pos=(c - 1) % 3, style="逃", race_point=100 - c,
+            "day_index": 2}
+    # 型F（`axis_sum` 0.90 < 1.44 で混戦）になる盤面。
+    p3 = {1: 0.50, 2: 0.40, 3: 0.30, 4: 0.25, 5: 0.20, 6: 0.15, 7: 0.10}
+    # ⚠️ ライン番号は 1 始まりにする（0 は falsy で `_line_members` が拾わない）。
+    cars = {c: dict(p3=p3[c], pw=p3[c] / 2, line_group=(c - 1) // 3 + 1,
+                    line_pos=(c - 1) % 3 + 1, style="逃", race_point=100 - c,
                     behind=0) for c in range(1, 8)}
+    # 🔴 比較の基準は**同じ盤面から**作る（`race_shape` を通さないと並びが違う）。
+    shape = race_shape({c: v["p3"] for c, v in cars.items()},
+                       {c: v["line_group"] for c, v in cars.items()},
+                       {c: v["line_pos"] for c, v in cars.items()},
+                       {c: v["style"] for c, v in cars.items()},
+                       {c: v["race_point"] for c, v in cars.items()},
+                       {c: v["behind"] for c, v in cars.items()},
+                       meta["day_index"],
+                       {c: v["pw"] for c, v in cars.items()})
+    assert shape.type_label == "F", shape.type_label
+    # 🔴 `F_hit` は平均想定払戻ゲートに落ちると帯15倍へ切り替わる（`GATE_FALLBACK`）。
+    #    基準もその関数を通す（切り替わっても `key` は `F_hit` のまま＝許可リストに乗る）。
+    _, base_stakes, used = build_with_gate_fallback(shape, PLANS["F_hit"], po, pr, 7)
+    assert used.key == "F_hit"
+    before = mean_expected_payout(base_stakes, po)
+
     rows = B.rows_for_race(meta, cars, po, pr, "paper")
-    row = next((r for r in rows if r["plan_key"] == "A_hit"), None)
+    row = next((r for r in rows if r["plan_key"] == "F_hit"), None)
     assert row is not None, [r["plan_key"] for r in rows]
     got = json.loads(row["legs"])
     base = [lg for lg in got if lg.get("role", ROLE_BASE) == ROLE_BASE]

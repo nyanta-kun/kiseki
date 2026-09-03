@@ -590,6 +590,57 @@ def phase7() -> None:
                   f"ΔROI [{ci_r[0]:+.1f},{ci_r[1]:+.1f}]pt")
 
 
+
+# ═══════════ Phase 8 — 上帯を掛ける型を絞る（ユーザー指定 2026-09-04）═══════════
+#
+# 全プランへ掛けたのが Phase4/6 の測定。ここでは**型で絞ったときに何が残るか**を測る。
+# 🔴 per-plan の効き（Phase5）は変わらない——変わるのは**ラインナップ全体の平均**
+#    （掛ける母集団が減るぶん薄まる）。絞る判断は「当たりにくい型にだけ押さえを置く」
+#    という店頭の考え方の問題で、収支では決められない。
+
+#: 掛ける範囲の候補。値は「そのプランに掛けるか」の判定関数。
+SCOPES: dict[str, object] = {
+    "全プラン": lambda t, k: True,
+    "型E+F すべて": lambda t, k: t in "EF",
+    "E_hit + F_hit のみ": lambda t, k: k in ("E_hit", "F_hit"),
+    "F_hit のみ": lambda t, k: k == "F_hit",
+    "E_hit のみ": lambda t, k: k == "E_hit",
+}
+
+
+def phase8(up: int = 2000) -> None:
+    parts = [("帯100-600倍8点", 1000), ("看板15万", 1000)]
+    z = C.board()
+    tp = np.array([str(v) for v in z["TYPE"]])
+    for label, win in (("探索 2024-07〜2025-12", "explore"),
+                       ("確認 2026-01〜08 (本番相当)", "confirm")):
+        rows = build(win)
+        nd = C.days_of(C.select(None, win))
+        cur = [r["cur"] for r in rows]
+        # 1レースぶん1回だけ組む
+        made = [(combo_product(r["x"], r["cur_key"], parts, BUDGET - up)
+                 if r["cur"] else None) for r in rows]
+        print("\n" + "=" * 132)
+        print(f"███ Phase8 上帯を掛ける型を絞る  {label}   n={len(rows):,}R / {nd}日")
+        print(HDR4)
+        show4("現行", agg([v for v in cur if v], nd))
+        for name, hit in SCOPES.items():
+            # 🔴 **`cur` と同じ長さで作る**（対応のあるブートストラップが行を突き合わせる）。
+            #    売れないレースを詰めて短くすると zip がずれ、CI が別物になる。
+            arm, n_on = [], 0
+            for r, c, b in zip(rows, cur, made):
+                on = bool(c) and b is not None and hit(tp[r["i"]], r["cur_key"])
+                arm.append(b if on else c)
+                n_on += on
+            s = agg([v for v in arm if v], nd)
+            show4(f"{name}（{n_on}R に適用）", s)
+            a_p = [c for c, b in zip(cur, arm) if c and b]
+            b_p = [b for c, b in zip(cur, arm) if c and b]
+            ci_s, ci_r = boot(a_p, b_p)
+            print(f"      └ Δ表示的中 [{ci_s[0]:+.2f},{ci_s[1]:+.2f}]pt  "
+                  f"ΔROI [{ci_r[0]:+.1f},{ci_r[1]:+.1f}]pt")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "phase1"
     if cmd == "phase1":
@@ -598,6 +649,8 @@ if __name__ == "__main__":
         phase3()
     elif cmd == "phase7":
         phase7()
+    elif cmd == "phase8":
+        phase8()
     elif cmd == "phase6":
         phase6()
     elif cmd == "phase4":

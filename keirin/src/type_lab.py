@@ -318,6 +318,30 @@ UPPER_BANDS: tuple[UpperBand, ...] = (
 )
 #: 上帯を掛ける車数。**これ以外には掛けない**。
 UPPER_BAND_N_ENTRIES = 7
+#: 上帯を掛ける**プラン**（ユーザー決定 2026-09-04）。空なら全プラン。
+#:
+#: 🔴 **測ったのは全プラン**。絞ると per-plan の効き（下記）は変わらないが、
+#:    掛ける母集団が減るぶん**ラインナップ全体の平均は薄まる**。
+#:    `E_hit` + `F_hit` は確認窓で全商品の 26.5%（807 + 1,476 ÷ 8,610）。
+#:
+#:    プラン単体の Δ表示的中（探索 / 確認・`overlay_upper_band_2026_09_04.md` §5）:
+#:      **E_hit +2.54 / +2.73pt   F_hit +1.76 / +1.83pt**
+#:      （掛けないもの: A_hit +1.03/+1.38・B_hit +2.63/+2.75・C_hit +2.47/+2.30・
+#:        F_sign +3.48/+3.70・A_ana +2.00/+5.69）
+#:
+#: 🟢 **ねらいは2つ**:
+#:    ① **当たりにくい型にだけ押さえを置く**。型E/F は軸崩壊が 27.8 / 28.8% と
+#:       最も高く（型A は 12.7%）、100倍以上での決着も 64.9 / 69.2% と最も多い
+#:       （`docs/type_lab/axis_bust_conditional_2026_09_03.md` §1）。
+#:    ② **点数を絞っている商品には押さえを入れない**。`F_pay`（1着固定4点）・
+#:       `F_sign`（看板枠2〜3点）・`A_hit`（3点）・`A_trio`（2点）・`D_hit`（3点）は
+#:       「少ない点に厚く置いて払戻を作る」設計なので、薄い押さえを足すと
+#:       その集中を自分で薄める。**押さえは面で買う商品（`E_hit` 14点 /
+#:       `F_hit` 12点）にだけ乗せる**。
+#: ⚠️ 収支では決められない（どのプランでも ΔROI の CI は 0 を跨ぐ）。
+#: 🔴 `F_hit` がゲートに落ちて帯15倍へ切り替わったときも `key` は `F_hit` のままなので
+#:    ここに掛かる（`GATE_FALLBACK`）。**そちらも12点の面買い**なので狙いは同じ。
+UPPER_BAND_PLANS: frozenset[str] = frozenset({"E_hit", "F_hit"})
 #: 上帯の合計予算。下帯の予算は `BUDGET - UPPER_BAND_TOTAL`。
 UPPER_BAND_TOTAL = sum(b.budget for b in UPPER_BANDS)
 #: 行の `legs[].role`。上帯を入れる前の行には無いので、読む側は既定を `base` にする。
@@ -1100,7 +1124,7 @@ def add_upper_band(legs: Sequence, stakes: Mapping, plan: Plan,
 
     >>> po = {(1, 2, 3): 5.0, (1, 3, 2): 9.0, (4, 5, 6): 200.0, (4, 6, 5): 300.0}
     >>> pr = {(1, 2, 3): .2, (1, 3, 2): .1, (4, 5, 6): .01, (4, 6, 5): .008}
-    >>> plan = PLANS["A_hit"]
+    >>> plan = PLANS["F_hit"]                 # 掛かるのは E_hit / F_hit だけ
     >>> legs = [(1, 2, 3), (1, 3, 2)]
     >>> st = allocate(legs, po, pr, plan)
     >>> sum(st.values())
@@ -1123,7 +1147,8 @@ def add_upper_band(legs: Sequence, stakes: Mapping, plan: Plan,
     bands = UPPER_BANDS if bands is None else bands
     plain = (list(legs), dict(stakes), {tuple(c): ROLE_BASE for c in legs})
     if (not bands or int(n_entries or 0) != UPPER_BAND_N_ENTRIES
-            or plan.bet_type != "trifecta"):
+            or plan.bet_type != "trifecta"
+            or (UPPER_BAND_PLANS and plan.key not in UPPER_BAND_PLANS)):
         return plain
     up_total = sum(b.budget for b in bands)
     base = allocate(legs, pred_odds, probs, plan, budget=BUDGET - up_total)
@@ -1198,8 +1223,9 @@ def rule_version(n_entries: int = 7) -> str:
         #       入れない、という既存の判断と同じ理由）。
         # 🔴 上帯も `PLANS` の外なので、ここへ入れないと帯や予算を動かしても
         #    版が割れず新旧の行が混ざる（`_sign` / `_fallback` と同じ理由）。
-        payload["_upper"] = [[b.kind, b.budget, b.structure, b.min_odds,
-                              b.max_odds, b.max_legs, b.target] for b in UPPER_BANDS]
+        payload["_upper"] = [[[b.kind, b.budget, b.structure, b.min_odds,
+                               b.max_odds, b.max_legs, b.target] for b in UPPER_BANDS],
+                             sorted(UPPER_BAND_PLANS)]
         payload["_fallback"] = {
             k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
                 v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
