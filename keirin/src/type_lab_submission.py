@@ -54,6 +54,12 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 
+#: 買い目の役割。**`src.type_lab.ROLE_BASE` と同じ値**（このモジュールは
+#: backend からファイル読み込みで束縛できるよう標準ライブラリしか import しない
+#: ——看板判定の正本と同じ制約——ので、定数だけここに持つ）。
+#: 一致は `tests/test_type_lab_submission.py` が固定する。
+ROLE_BASE = "base"
+
 #: 賭け金の最小単位（円）。これ以下の差は端数とみなす。
 #: `src.strategy_wt.STAKE_UNIT` と同値だが、上記の import 制約のため参照しない。
 #: ⚠️ 向こうを変えたらここも変えること（`tests/test_type_lab_submission.py` が固定）。
@@ -256,6 +262,15 @@ ENTRY_TABLE_LEAD = (
 )
 
 
+def _base_legs(legs: Sequence[Mapping]) -> list:
+    """本線（下帯）の買い目だけ。**役割の無い行は本線**とみなす。
+
+    >>> _base_legs([{"combo": "1-2-3"}, {"combo": "4-5-6", "role": "band"}])
+    [{'combo': '1-2-3'}]
+    """
+    return [lg for lg in legs if (lg.get("role") or ROLE_BASE) == ROLE_BASE]
+
+
 # ───────────────────────────── 印 ─────────────────────────────
 
 def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
@@ -290,7 +305,16 @@ def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
     >>> legs = [{"combo": "2=5=7"}, {"combo": "1=5=7"}]
     >>> marks_for([7, 5, 6, 1, 2, 4, 3], legs, 7, 5) == {7: "◎", 5: "○", 1: "▲", 2: "△"}
     True
+
+    🔴 **上帯（押さえ）の目には印を付けない**（2026-09-04）。上帯は 100倍以上の
+       目を予算の 2割で広く押さえる枠なので、印にまで反映すると
+       **7車ほぼ全部に印が付いて「推している車」の信号が消える**。
+
+    >>> legs = [{"combo": "1-4-5"}, {"combo": "6-7-3", "role": "band"}]
+    >>> marks_for("1-4-5-2-3-7-6", legs, 1, 4) == {1: "◎", 4: "○", 5: "▲"}
+    True
     """
+    legs = _base_legs(legs) or list(legs)
     order = _order_list(p3_order)
     used: set[int] = set()
     for leg in legs:
@@ -349,7 +373,15 @@ def alloc_note(legs: Sequence[Mapping]) -> str:
     True
     >>> alloc_note([])
     ''
+
+    🔴 **上帯（押さえ）は混ぜない**（2026-09-04）。上帯はダッチで薄く置くので、
+       混ぜると本線が均等でも必ず「傾斜」と説明することになる。
+
+    >>> alloc_note([{"stake": 3400}, {"stake": 3300}, {"stake": 3300},
+    ...             {"stake": 200, "role": "band"}])
+    '金額は各点ほぼ均等に置いています。'
     """
+    legs = _base_legs(legs) or list(legs)
     stakes = [int(l.get("stake", 0)) for l in legs if l.get("stake") is not None]
     if not stakes:
         return ""
@@ -358,6 +390,35 @@ def alloc_note(legs: Sequence[Mapping]) -> str:
     return ("金額は均等ではなく、当方が想定する発走時オッズに応じて配分しています。"
             "配当が低くなりやすい目に厚く、高くなりやすい目に薄く置き、"
             "どの目で決まっても払戻が投資を上回ることを狙う組み立てです。")
+
+
+def upper_note(legs: Sequence[Mapping]) -> str:
+    """上帯（押さえ）の説明文。上帯が無ければ空文字。
+
+    🔴 **払戻の見込みは行の buy から出す**（固定文に金額を書かない）。上帯は
+       ダッチなので同じ切れの中では払戻が揃うが、`band`（計画2〜3万）と
+       `sign`（計画15万）で桁が違う。
+
+    >>> upper_note([{"stake": 8000, "pred_odds": 4.0}])
+    ''
+    >>> upper_note([{"stake": 8000, "pred_odds": 4.0},
+    ...             {"stake": 200, "pred_odds": 120.0, "role": "band"},
+    ...             {"stake": 100, "pred_odds": 300.0, "role": "sign"}]
+    ...            ).startswith("なお、指数上位だけでは届かない")
+    True
+    """
+    up = [lg for lg in legs if (lg.get("role") or ROLE_BASE) != ROLE_BASE]
+    if not up:
+        return ""
+    pays = sorted(float(lg.get("stake") or 0) * float(lg.get("pred_odds") or 0)
+                  for lg in up)
+    span = (f"{pays[0]:,.0f}円" if pays[0] >= pays[-1] * 0.95
+            else f"{pays[0]:,.0f}〜{pays[-1]:,.0f}円")
+    return ("なお、指数上位だけでは届かない高配当の決着に備えて、"
+            f"当方の予測で100倍以上になる目を{len(up)}点、"
+            "予算の2割だけ押さえに回しています（本線8割・押さえ2割）。"
+            f"押さえが的中したときの払戻は{span}を見込みます。"
+            "本線が本命で、押さえはあくまで保険としてお考えください。")
 
 
 # ───────────────────────────── 組み立て ─────────────────────────────
@@ -386,7 +447,9 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
     構成は既存ランク（看板テンプレート）と同じ:
       レース見解 → 【二軸】 → 【買い目】 → 【ご購入にあたって】 → 【参考データ】
     """
-    n = len(legs)
+    # 🔴 **点数は下帯（本線）で数える。** 上帯は押さえなので `upper_note` が
+    #    別に点数を書く。合算すると「三連単15点」になって商品の性格が変わる。
+    n = len(_base_legs(legs) or legs)
     tail = "点" if bet_type == "trio" else "点"
     blocks = [
         PLAN_NOTES.get(plan_key) or TYPE_NOTES.get(type_label, ""),
@@ -394,7 +457,8 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
          if plan_key in PLAN_AXIS_NOTES else
          f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"),
         (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
-         f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"),
+         f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"
+         + (f"\n{upper_note(legs)}" if upper_note(legs) else "")),
         CLOSING,
     ]
     if entry_table_html:

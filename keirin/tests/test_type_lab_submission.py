@@ -267,3 +267,18 @@ def test_plan_bodies_cover_every_sellable_plan():
     for key in SELLABLE_PLAN_KEYS:
         assert key in PLAN_TITLES, f"{key} のタイトルがありません"
         assert key in PLAN_BODIES, f"{key} の本文がありません"
+
+
+def test_role_base_matches_the_source_of_truth():
+    """役割の定数は `src.type_lab` と同じ値であること。
+
+    🔴 このモジュールは標準ライブラリしか import できない（上のテスト）ので
+       定数を**複製している**。ずれると押さえの目に印が付き、点数の説明も狂う。
+    """
+    from src.type_lab import ROLE_BASE as SRC_ROLE_BASE
+    from src.type_lab_submission import ROLE_BASE, _base_legs
+
+    assert ROLE_BASE == SRC_ROLE_BASE
+    legs = [{"combo": "1-2-3", "stake": 8000},
+            {"combo": "6-7-5", "stake": 2000, "role": "band"}]
+    assert _base_legs(legs) == legs[:1]

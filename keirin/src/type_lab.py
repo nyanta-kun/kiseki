@@ -238,6 +238,92 @@ ANA_SOURCE_WINDOW = ("2025-01-01", "2025-12-31")
 ANA_N_ENTRIES = 7
 
 
+# ─────────────────────────── 上帯（多穴の重ね買い）───────────────────────────
+#
+# 🔴🔴 **2026-09-04 新設。予算 10,000円のうち 2割を「上帯」へ回す。**
+#    商品は増やさない・投資は増やさない・1レース1商品のまま。**下帯（従来の買い目）
+#    の賭け金を 8割へ縮め、空いた 2割で高オッズの目を買い足す**（バーベル）。
+#
+# 発端（ユーザー観察 2026-09-04）:
+#   > 100倍を超える配当の的中が無い。100倍を超えるようなレースは、指数上位を軸に
+#   > 取る買い目だと外れている。現在の帯の上に多穴狙いと下帯を重ねられないか。
+#
+#    実地の裏づけ（08-29〜09-03 の入稿 329件）: **28.6% が 100倍以上で決着し的中は
+#    3件（3.2%）**。その 94件の **48% は指数1位を含まず**、3車とも指数5位以内なのは
+#    32% だけ ＝ **上から点数を増やしても構造的に届かない層**。
+#
+# 実測（`docs/type_lab/overlay_upper_band_2026_09_04.md` /
+#      `scripts/exp_type_lab/overlay_ana.py`・探索 2024-07〜2025-12 / 確認 2026-01〜08）:
+#
+#     腕                     表示的中(探/確)   10万+/日      100倍的中/日   ROI
+#     現行                   24.68 / 24.76%   0.215/0.222   0.240/0.231   78.2/81.7
+#     ＋帯100-600倍8点 1割    26.74 / 27.04%   0.208/0.213   0.956/1.000   78.2/81.2
+#     ＋看板15万 1割          24.65 / 24.94%   0.313/0.333   0.355/0.343   77.9/81.1
+#     **＋両方（下8割）**     26.42 / 26.71%   0.290/0.338   1.100/1.139   77.5/80.4
+#
+#     Δ表示的中の対応ブートストラップ（探索 / 確認）は **[+1.49,+2.02] / [+1.53,+2.33]pt
+#     で両窓とも 0 を上回る**。ΔROI は両窓とも 0 を跨ぐ（点推定 −0.5〜−1.3pt）。
+#
+# 🔴🔴 **効いているのは「帯」であって「点数」ではない。** 同じ 1,000円・8点を
+#    帯なしの次点8点へ置く対照では **的中が 25→46% に跳ねるのに表示的中は +0.3pt**
+#    （ガミ 46%）。薄いスライスの払戻は `予算 ÷ Σ(1/オッズ)` なので、
+#    **投資 10,000円を上回れるのは高オッズの目だけ**。帯30-100倍でも +0.3〜0.6pt 止まり。
+#
+# 🔴 **1日数レースに絞らない**（全商品へ薄く重ねるのが最効率）。レース選別には情報が無く
+#    （`pw_ent` 上位で選んでも 10万+ で無作為対照に勝てない・両窓 3〜12/20）、
+#    これは `P(払戻>=X) = 帯ROI × 予算/X` の恒等式の帰結
+#    （`docs/type_lab/axis_bust_conditional_2026_09_03.md` §4）。
+#    **表示的中 1pt あたりに買える 10万+/日**: 薄く重ねる **0.65** ↔ 別商品として
+#    重ねる 0.071 ↔ 差し替え 0.062 ↔ `SIGNBOARD_RACE_TYPES` に特選を足す 0.058。
+#
+# 🔴 **入稿ゲートは下帯だけに掛ける。** 混成商品の平均想定払戻は 100-600倍の目に
+#    引き上げられるので、素で掛けると**いま落ちているレースが静かに通り母集団が変わる**。
+#    `gate_mean_payout_floor` が閾値を下帯の予算比で割り戻す（＝今日と同じ母集団）。
+# 🔴 **三連複プラン（`D_hit` / `A_trio`）には掛けない。** 1商品に2券種は混ぜられない。
+# 🔴 **7車だけ。** 9車では測っていない（`ANA_N_ENTRIES` / `SIGNBOARD_N_ENTRIES` と同じ理由）。
+# ⚠️ 代償は **払戻中央 −20%（26,000 → 20,910円）とガミ率 1.8 → 8.2%**。
+
+
+@dataclass(frozen=True)
+class UpperBand:
+    """上帯ひと切れ。`kind` が行の `legs[].role` に出る。
+
+    structure='prob_top' … 予測オッズ [min_odds, max_odds] から確率上位 max_legs 点
+    structure='signboard' … Σ(1/予測オッズ) <= 予算/target の枠へ確率順に詰める
+    """
+    kind: str
+    budget: int
+    structure: str
+    min_odds: float = 0.0
+    max_odds: float = 0.0
+    max_legs: int = 0
+    target: int = 0
+    note: str = ""
+
+
+#: 重ねる上帯。**合計は必ず `BUDGET` 未満**（残りが下帯の予算）。
+#:
+#: 🟢 2つ入れているのは**買えるものが違う**から。`band` は表示的中と 100倍の的中を、
+#:    `sign` は 10万+ の本数を作る。片方だけなら上の表のとおり効果も片方だけになる。
+#: 🔴 `band` の点数は **8点が頂点**。4点だと表示的中の増分が半減し（+1.4〜2.0pt）、
+#:    12点は 1,000円では組めない（1点あたりが 100円未満になり `allocate` が落とす）。
+#: 🔴 `band` の上限 600倍は `SIGNBOARD_MAX_ODDS` と同じ理由（帯ROI が崩れる）。
+#:    上限なしだと確認窓 ROI が 81.1 → 80.1% に落ちる。
+UPPER_BANDS: tuple[UpperBand, ...] = (
+    UpperBand("band", 1_000, "prob_top", min_odds=100.0, max_odds=600.0, max_legs=8,
+              note="予測100-600倍から確率上位8点（100倍超の決着を拾う）"),
+    UpperBand("sign", 1_000, "signboard", max_odds=SIGNBOARD_MAX_ODDS,
+              target=SIGNBOARD_TARGET,
+              note="計画払戻15万円の枠（一撃の看板を作る）"),
+)
+#: 上帯を掛ける車数。**これ以外には掛けない**。
+UPPER_BAND_N_ENTRIES = 7
+#: 上帯の合計予算。下帯の予算は `BUDGET - UPPER_BAND_TOTAL`。
+UPPER_BAND_TOTAL = sum(b.budget for b in UPPER_BANDS)
+#: 行の `legs[].role`。上帯を入れる前の行には無いので、読む側は既定を `base` にする。
+ROLE_BASE = "base"
+
+
 def win_entropy(win_probs: Mapping[int, float] | None) -> float:
     """1着率のエントロピー。大きいほど1着が読めない。
 
@@ -966,6 +1052,114 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
     return (*got, plan) if got else None
 
 
+#: 上帯の配分は必ずダッチ（∝1/予測オッズ）。どの点が当たっても払戻が揃うので、
+#: 薄いスライスでも「当たれば投資を超える」が構造的に保たれる。
+_UPPER_PLAN = Plan("_upper", "?", "trifecta", "prob_top", 0, alloc="dutch")
+
+
+def _upper_legs(band: UpperBand, pred_odds: Mapping, probs: Mapping):
+    """上帯ひと切れの買い目。組めなければ None。"""
+    cand = [tuple(k) for k, v in pred_odds.items()
+            if _pos(v) and len(set(k)) == 3
+            and float(v) >= band.min_odds
+            and (not band.max_odds or float(v) <= band.max_odds)]
+    cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
+    if band.structure == "prob_top":
+        out = cand[:band.max_legs or 8]
+    elif band.structure == "signboard":
+        cap = float(band.budget) / float(band.target)
+        out, s = [], 0.0
+        for k in cand:
+            o = float(pred_odds[k])
+            if s + 1.0 / o > cap:
+                continue
+            out.append(k)
+            s += 1.0 / o
+    else:
+        return None
+    return out or None
+
+
+def add_upper_band(legs: Sequence, stakes: Mapping, plan: Plan,
+                   pred_odds: Mapping, probs: Mapping,
+                   n_entries: int = 7,
+                   bands: Sequence[UpperBand] | None = None,
+                   ) -> tuple[list, dict, dict]:
+    """下帯の賭け金を縮めて上帯を重ねる。戻り値 `(legs, stakes, roles)`。
+
+    `roles` は 買い目 -> `UpperBand.kind`（下帯は `ROLE_BASE`）。
+
+    🔴 **掛けられないときは今日と同じ商品をそのまま返す**（例外を投げない・
+       黙って別物にしない）。掛けないのは次の場合:
+       ①7車以外 ②三連複プラン ③上帯が1つでも組めない ④下帯を縮めると組めない。
+    🔴 **重複した目は賭け金を足し、役割は下帯のまま**。同じ目を2行に分けると
+       入稿でも採点でも二重に数えられる。
+    🔴 **呼ぶのは `build_with_gate_fallback` の後**。ゲートの判定（と `F_hit` の
+       帯15倍フォールバック）は**下帯を予算全額で組んだ状態**で行う——ここを
+       混ぜると入稿母集団が静かに変わる（上の節）。
+
+    >>> po = {(1, 2, 3): 5.0, (1, 3, 2): 9.0, (4, 5, 6): 200.0, (4, 6, 5): 300.0}
+    >>> pr = {(1, 2, 3): .2, (1, 3, 2): .1, (4, 5, 6): .01, (4, 6, 5): .008}
+    >>> plan = PLANS["A_hit"]
+    >>> legs = [(1, 2, 3), (1, 3, 2)]
+    >>> st = allocate(legs, po, pr, plan)
+    >>> sum(st.values())
+    10000
+
+    ⚠️ 上帯どうしが同じ目を選ぶことは**普通に起きる**（`sign` は 1,000円で計画
+       15万円を狙うので 150倍以上の目しか入らず、そこは `band` の8点とよく重なる）。
+       そのときは賭け金が厚くなるだけで行は増えない。
+
+    >>> lg2, st2, roles = add_upper_band(legs, st, plan, po, pr)
+    >>> sum(st2.values())
+    10000
+    >>> sum(v for k, v in st2.items() if roles[k] == ROLE_BASE)
+    8000
+    >>> sorted(set(roles.values()))
+    ['band', 'base']
+    """
+    # 🔴 既定は**呼ばれた時点の** `UPPER_BANDS` を読む。引数の既定値にすると
+    #    def 時に束縛され、定数を差し替えても効かない（検証で実際に踏んだ）。
+    bands = UPPER_BANDS if bands is None else bands
+    plain = (list(legs), dict(stakes), {tuple(c): ROLE_BASE for c in legs})
+    if (not bands or int(n_entries or 0) != UPPER_BAND_N_ENTRIES
+            or plan.bet_type != "trifecta"):
+        return plain
+    up_total = sum(b.budget for b in bands)
+    base = allocate(legs, pred_odds, probs, plan, budget=BUDGET - up_total)
+    if not base:
+        return plain
+    out_legs = [c for c in legs if c in base]
+    out: dict = dict(base)
+    roles = {c: ROLE_BASE for c in out_legs}
+    for band in bands:
+        ul = _upper_legs(band, pred_odds, probs)
+        if not ul:
+            return plain
+        us = allocate(ul, pred_odds, probs, _UPPER_PLAN, budget=band.budget)
+        if not us:
+            return plain
+        for c in ul:
+            if c not in us:
+                continue
+            if c in out:
+                out[c] += us[c]
+            else:
+                out[c] = us[c]
+                out_legs.append(c)
+                roles[c] = band.kind
+    return out_legs, out, roles
+
+
+def split_legs_by_role(legs: Sequence[Mapping], role: str = ROLE_BASE) -> list:
+    """行の `legs`（dict の列）から役割で絞る。**役割が無い行は下帯とみなす**。
+
+    >>> split_legs_by_role([{"combo": "1-2-3"}, {"combo": "4-5-6", "role": "band"}])
+    [{'combo': '1-2-3'}]
+    """
+    return [lg for lg in legs if (lg.get("role") or ROLE_BASE) == role]
+
+
 def min_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
     """買った点の**最低**想定払戻（円）。信頼度傾斜の床がここに出る。"""
     if not stakes:
@@ -1002,6 +1196,10 @@ def rule_version(n_entries: int = 7) -> str:
         #    ⚠️ **7車のときだけ入れる。** 9車には掛けていないので、9車の版まで
         #       割ると「規則が変わった」と誤読される（車数の規則を7車のハッシュへ
         #       入れない、という既存の判断と同じ理由）。
+        # 🔴 上帯も `PLANS` の外なので、ここへ入れないと帯や予算を動かしても
+        #    版が割れず新旧の行が混ざる（`_sign` / `_fallback` と同じ理由）。
+        payload["_upper"] = [[b.kind, b.budget, b.structure, b.min_odds,
+                              b.max_odds, b.max_legs, b.target] for b in UPPER_BANDS]
         payload["_fallback"] = {
             k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
                 v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]

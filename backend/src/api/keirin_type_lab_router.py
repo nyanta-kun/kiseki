@@ -55,6 +55,9 @@ class TypeLabLeg(BaseModel):
     stake: int
     pred_odds: float
     prob: float
+    #: 買い目の役割。`base`＝本線（下帯）/ `band`・`sign`＝押さえ（上帯）。
+    #: 🔴 **上帯を入れる前の行には無い**ので既定は `base`（`src/type_lab.ROLE_BASE`）。
+    role: str = "base"
 
 
 class TypeLabPick(BaseModel):
