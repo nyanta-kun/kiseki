@@ -1,0 +1,696 @@
+{
+  "window": "2026",
+  "test_period": [
+    "20260104",
+    "20260801"
+  ],
+  "requested_period": [
+    "20260104",
+    "20260801"
+  ],
+  "train_end": "20250630",
+  "valid_end": "20251231",
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    164,
+    206,
+    173
+  ],
+  "features": [
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm"
+  ],
+  "n_races": 2046,
+  "n_horses": 28324,
+  "population": "JRA のみ (races.course IN 01..10) / abnormality_code in (1,2) 除外 / finish_position NULL・0 除外 / 障害含む / place_slots = 3(n>=8), 2(5<=n<=7), 0(n<5)。⚠️ keiba.race_results には地方・海外の行も混ざるため course 条件は必須",
+  "model_note": "DB の calculated_indices.win_probability は使っていない。jra_rank_quality_review.py と同じ walk-forward で is_win ヘッドを組み直し、本番と同じレース内 L1 正規化 + CompositeIndexCalculator._harville_place_probs を適用した",
+  "market_note": "市場は評価にのみ使用。特徴量には含めない。発走前オッズは keiba.odds_history(bet_type='win') の発走 60 分前以内で最後のスナップショット。fetched_at は naive UTC なので post_time(JST) を to_timestamp(...) AT TIME ZONE 'UTC' で naive UTC に落として比較する。now() は使っていない。🔴 odds_history は 2026-03-28 01:38:42 より前の行が存在しないため、それ以前の窓では市場ベースラインを作れない。確定オッズ・確定人気(win_popularity)での代用はしていない",
+  "market_coverage": {
+    "market_window": [
+      "20260401",
+      "20260801"
+    ],
+    "n_races_eval_window": 2046,
+    "n_races_in_market_window": 1188,
+    "n_races_with_prerace_odds": 961,
+    "coverage_pct_of_market_window": 80.89,
+    "coverage_pct_of_eval_window": 46.97,
+    "max_lead_min": 60.0,
+    "by_month": [
+      {
+        "ym": "202601",
+        "n_races": 276,
+        "n_prerace_odds": 0,
+        "coverage_pct": 0.0
+      },
+      {
+        "ym": "202602",
+        "n_races": 282,
+        "n_prerace_odds": 0,
+        "coverage_pct": 0.0
+      },
+      {
+        "ym": "202603",
+        "n_races": 300,
+        "n_prerace_odds": 0,
+        "coverage_pct": 0.0
+      },
+      {
+        "ym": "202604",
+        "n_races": 264,
+        "n_prerace_odds": 106,
+        "coverage_pct": 40.15
+      },
+      {
+        "ym": "202605",
+        "n_races": 336,
+        "n_prerace_odds": 306,
+        "coverage_pct": 91.07
+      },
+      {
+        "ym": "202606",
+        "n_races": 264,
+        "n_prerace_odds": 229,
+        "coverage_pct": 86.74
+      },
+      {
+        "ym": "202607",
+        "n_races": 288,
+        "n_prerace_odds": 284,
+        "coverage_pct": 98.61
+      },
+      {
+        "ym": "202608",
+        "n_races": 36,
+        "n_prerace_odds": 36,
+        "coverage_pct": 100.0
+      }
+    ],
+    "lead_min_stats": {
+      "median": 0.4,
+      "mean": 2.02,
+      "p90": 1.66,
+      "max": 59.21
+    }
+  },
+  "visual_check": [
+    "\n========================================================================================================",
+    "目視確認 [発走前オッズあり] race_id=56332 date=20260404 post_time=1135 n=14 place_slots=3",
+    "========================================================================================================",
+    "  馬番   着順      発走前O      確定O      p_win(モデル)      p_mkt(発走前)         p_place",
+    "   1    6      39.4     42.8          0.0368          0.0201          0.1207",
+    "   2   12      53.7     60.0          0.0243          0.0148          0.0809",
+    "   3   10     111.7    136.9          0.0302          0.0071          0.0996",
+    "   4    8       3.0      2.9          0.2068          0.2642          0.5382",
+    "   5    7      20.7     22.1          0.0859          0.0383          0.2660",
+    "   6   14      98.9    104.7          0.0331          0.0080          0.1090",
+    "   7   11     100.1    108.5          0.0234          0.0079          0.0780",
+    "   8    2      23.1     18.5          0.0481          0.0343          0.1556",
+    "   9   13      35.4     38.3          0.0366          0.0224          0.1199",
+    "  10    5      15.3     14.8          0.1522          0.0518          0.4304",
+    "  11    3      13.0     13.6          0.0665          0.0610          0.2107",
+    "  12    1       6.2      6.3          0.0709          0.1278          0.2235",
+    "  13    9       5.7      5.7          0.1060          0.1391          0.3198",
+    "  14    4       3.9      4.0          0.0794          0.2032          0.2478",
+    " 合計                                  1.0000          1.0000          3.0000",
+    "（合計行: p_win と p_mkt はレース内 Σ=1 になっていること）",
+    "\n========================================================================================================",
+    "目視確認 [発走前オッズなし（市場列は作らない）] race_id=1 date=20260322 post_time=0955 n=16 place_slots=3",
+    "========================================================================================================",
+    "  馬番   着順      発走前O      確定O      p_win(モデル)         p_place",
+    "   1   11         -     54.2          0.0182          0.0663",
+    "   2   16         -    479.1          0.0017          0.0064",
+    "   3   12         -    246.3          0.0157          0.0575",
+    "   4    3         -      1.7          0.2760          0.6849",
+    "   5   10         -     66.8          0.0044          0.0163",
+    "   6   14         -    139.3          0.0068          0.0250",
+    "   7    4         -      5.9          0.0570          0.1990",
+    "   8   15         -    485.9          0.0049          0.0180",
+    "   9    1         -      8.2          0.2136          0.5917",
+    "  10    7         -    288.3          0.0080          0.0295",
+    "  11    8         -    576.2          0.0040          0.0148",
+    "  12    5         -    366.8          0.0274          0.0988",
+    "  13   13         -     22.4          0.0926          0.3095",
+    "  14    6         -     12.2          0.0382          0.1363",
+    "  15    2         -      6.7          0.0946          0.3153",
+    "  16    9         -     17.1          0.1371          0.4306",
+    " 合計                                  1.0000          3.0000",
+    "（合計行: p_win と p_mkt はレース内 Σ=1 になっていること）"
+  ],
+  "results": {
+    "model_overall": {
+      "population": "20260104〜20260801 の全レース（市場に依存しない）",
+      "win": {
+        "n_races": 2045,
+        "skipped_races": 1,
+        "mnl_logloss": 2.09415,
+        "mnl_logloss_se": 0.0191,
+        "uniform_logloss": 2.60305,
+        "info_gain_nats": 0.50889,
+        "info_gain_nats_se": 0.01885,
+        "info_gain_pct": 19.55,
+        "top1_win_rate": 0.2776,
+        "top1_place_rate": 0.5953,
+        "top1_mean_pred": 0.2764,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 2833,
+            "pred_pct": 0.508,
+            "actual_pct": 0.353,
+            "gap_pct": -0.155
+          },
+          {
+            "decile": 2,
+            "n": 2832,
+            "pred_pct": 1.061,
+            "actual_pct": 0.777,
+            "gap_pct": -0.284
+          },
+          {
+            "decile": 3,
+            "n": 2833,
+            "pred_pct": 1.693,
+            "actual_pct": 1.941,
+            "gap_pct": 0.248
+          },
+          {
+            "decile": 4,
+            "n": 2832,
+            "pred_pct": 2.477,
+            "actual_pct": 2.331,
+            "gap_pct": -0.146
+          },
+          {
+            "decile": 5,
+            "n": 2832,
+            "pred_pct": 3.465,
+            "actual_pct": 2.86,
+            "gap_pct": -0.605
+          },
+          {
+            "decile": 6,
+            "n": 2833,
+            "pred_pct": 4.865,
+            "actual_pct": 4.73,
+            "gap_pct": -0.135
+          },
+          {
+            "decile": 7,
+            "n": 2832,
+            "pred_pct": 6.859,
+            "actual_pct": 7.133,
+            "gap_pct": 0.274
+          },
+          {
+            "decile": 8,
+            "n": 2833,
+            "pred_pct": 9.931,
+            "actual_pct": 9.672,
+            "gap_pct": -0.26
+          },
+          {
+            "decile": 9,
+            "n": 2832,
+            "pred_pct": 14.858,
+            "actual_pct": 15.113,
+            "gap_pct": 0.255
+          },
+          {
+            "decile": 10,
+            "n": 2832,
+            "pred_pct": 26.522,
+            "actual_pct": 27.366,
+            "gap_pct": 0.844
+          }
+        ]
+      }
+    },
+    "market_comparison": {
+      "available": true,
+      "market_window": [
+        "20260401",
+        "20260801"
+      ],
+      "n_races_in_market_window": 1188,
+      "n_races_with_prerace_odds": 961,
+      "coverage_pct": 80.89,
+      "coverage_pct_of_full_eval_window": 46.97,
+      "subset_note": "🔴 発走前オッズが全馬分そろったレースだけの部分集合。評価窓全体の数字ではない",
+      "win": {
+        "model": {
+          "n_races": 961,
+          "skipped_races": 0,
+          "mnl_logloss": 2.08683,
+          "mnl_logloss_se": 0.02787,
+          "uniform_logloss": 2.57753,
+          "info_gain_nats": 0.49071,
+          "info_gain_nats_se": 0.02751,
+          "info_gain_pct": 19.038,
+          "top1_win_rate": 0.2778,
+          "top1_place_rate": 0.5879,
+          "top1_mean_pred": 0.2765,
+          "reliability": [
+            {
+              "decile": 1,
+              "n": 1299,
+              "pred_pct": 0.535,
+              "actual_pct": 0.462,
+              "gap_pct": -0.073
+            },
+            {
+              "decile": 2,
+              "n": 1299,
+              "pred_pct": 1.117,
+              "actual_pct": 1.155,
+              "gap_pct": 0.038
+            },
+            {
+              "decile": 3,
+              "n": 1299,
+              "pred_pct": 1.771,
+              "actual_pct": 2.002,
+              "gap_pct": 0.231
+            },
+            {
+              "decile": 4,
+              "n": 1299,
+              "pred_pct": 2.566,
+              "actual_pct": 2.309,
+              "gap_pct": -0.256
+            },
+            {
+              "decile": 5,
+              "n": 1299,
+              "pred_pct": 3.607,
+              "actual_pct": 2.694,
+              "gap_pct": -0.913
+            },
+            {
+              "decile": 6,
+              "n": 1299,
+              "pred_pct": 5.054,
+              "actual_pct": 4.234,
+              "gap_pct": -0.82
+            },
+            {
+              "decile": 7,
+              "n": 1299,
+              "pred_pct": 7.117,
+              "actual_pct": 7.467,
+              "gap_pct": 0.35
+            },
+            {
+              "decile": 8,
+              "n": 1299,
+              "pred_pct": 10.314,
+              "actual_pct": 10.239,
+              "gap_pct": -0.075
+            },
+            {
+              "decile": 9,
+              "n": 1299,
+              "pred_pct": 15.24,
+              "actual_pct": 16.782,
+              "gap_pct": 1.542
+            },
+            {
+              "decile": 10,
+              "n": 1298,
+              "pred_pct": 26.68,
+              "actual_pct": 26.656,
+              "gap_pct": -0.024
+            }
+          ]
+        },
+        "market_prerace": {
+          "n_races": 961,
+          "skipped_races": 0,
+          "mnl_logloss": 1.9232,
+          "mnl_logloss_se": 0.0304,
+          "uniform_logloss": 2.57753,
+          "info_gain_nats": 0.65433,
+          "info_gain_nats_se": 0.02979,
+          "info_gain_pct": 25.386,
+          "top1_win_rate": 0.3257,
+          "top1_place_rate": 0.641,
+          "top1_mean_pred": 0.3434,
+          "reliability": [
+            {
+              "decile": 1,
+              "n": 1299,
+              "pred_pct": 0.34,
+              "actual_pct": 0.231,
+              "gap_pct": -0.109
+            },
+            {
+              "decile": 2,
+              "n": 1299,
+              "pred_pct": 0.644,
+              "actual_pct": 0.385,
+              "gap_pct": -0.259
+            },
+            {
+              "decile": 3,
+              "n": 1299,
+              "pred_pct": 1.057,
+              "actual_pct": 1.001,
+              "gap_pct": -0.056
+            },
+            {
+              "decile": 4,
+              "n": 1299,
+              "pred_pct": 1.679,
+              "actual_pct": 1.386,
+              "gap_pct": -0.293
+            },
+            {
+              "decile": 5,
+              "n": 1299,
+              "pred_pct": 2.644,
+              "actual_pct": 2.463,
+              "gap_pct": -0.18
+            },
+            {
+              "decile": 6,
+              "n": 1299,
+              "pred_pct": 4.097,
+              "actual_pct": 3.695,
+              "gap_pct": -0.402
+            },
+            {
+              "decile": 7,
+              "n": 1299,
+              "pred_pct": 6.227,
+              "actual_pct": 8.468,
+              "gap_pct": 2.241
+            },
+            {
+              "decile": 8,
+              "n": 1299,
+              "pred_pct": 9.89,
+              "actual_pct": 9.469,
+              "gap_pct": -0.421
+            },
+            {
+              "decile": 9,
+              "n": 1299,
+              "pred_pct": 15.532,
+              "actual_pct": 15.627,
+              "gap_pct": 0.095
+            },
+            {
+              "decile": 10,
+              "n": 1298,
+              "pred_pct": 31.895,
+              "actual_pct": 31.279,
+              "gap_pct": -0.616
+            }
+          ]
+        }
+      },
+      "model_minus_market_logloss": {
+        "n_races": 961,
+        "delta_logloss": 0.16363,
+        "ci95": [
+          0.12496,
+          0.20232
+        ]
+      }
+    },
+    "place": {
+      "slots_3": {
+        "model": {
+          "place_slots": 3,
+          "n_races": 2007,
+          "n_horses": 28069,
+          "coverage_at_k": 0.4976,
+          "place_logloss": 0.42607,
+          "spearman_in_race": 0.3899,
+          "spearman_n_races": 2007,
+          "cross_races": 0,
+          "cross_pairs": 0,
+          "tied_pairs": 0,
+          "cross_tol": 1e-09
+        },
+        "market_prerace": {
+          "place_slots": 3,
+          "n_races": 941,
+          "n_horses": 12861,
+          "coverage_at_k": 0.5211,
+          "place_logloss": 0.415,
+          "spearman_in_race": 0.4304,
+          "spearman_n_races": 941,
+          "cross_races": 0,
+          "cross_pairs": 0,
+          "tied_pairs": 98,
+          "cross_tol": 1e-09
+        }
+      },
+      "slots_2": {
+        "model": {
+          "place_slots": 2,
+          "n_races": 39,
+          "n_horses": 255,
+          "coverage_at_k": 0.5385,
+          "place_logloss": 0.51658,
+          "spearman_in_race": 0.3867,
+          "spearman_n_races": 39,
+          "cross_races": 0,
+          "cross_pairs": 0,
+          "tied_pairs": 0,
+          "cross_tol": 1e-09
+        },
+        "market_prerace": {
+          "place_slots": 2,
+          "n_races": 20,
+          "n_horses": 128,
+          "coverage_at_k": 0.675,
+          "place_logloss": 0.45094,
+          "spearman_in_race": 0.5032,
+          "spearman_n_races": 20,
+          "cross_races": 0,
+          "cross_pairs": 0,
+          "tied_pairs": 2,
+          "cross_tol": 1e-09
+        }
+      }
+    },
+    "by_surface": {
+      "flat": {
+        "n_races": 1975,
+        "n_horses": 27496,
+        "model": {
+          "n_races": 1974,
+          "skipped_races": 1,
+          "mnl_logloss": 2.09108,
+          "mnl_logloss_se": 0.01945,
+          "uniform_logloss": 2.60884,
+          "info_gain_nats": 0.51776,
+          "info_gain_nats_se": 0.01918,
+          "info_gain_pct": 19.847,
+          "top1_win_rate": 0.28,
+          "top1_place_rate": 0.5949,
+          "top1_mean_pred": 0.2762,
+          "reliability": [
+            {
+              "decile": 1,
+              "n": 2750,
+              "pred_pct": 0.5,
+              "actual_pct": 0.364,
+              "gap_pct": -0.137
+            },
+            {
+              "decile": 2,
+              "n": 2750,
+              "pred_pct": 1.039,
+              "actual_pct": 0.691,
+              "gap_pct": -0.348
+            },
+            {
+              "decile": 3,
+              "n": 2749,
+              "pred_pct": 1.657,
+              "actual_pct": 1.928,
+              "gap_pct": 0.271
+            },
+            {
+              "decile": 4,
+              "n": 2750,
+              "pred_pct": 2.434,
+              "actual_pct": 2.4,
+              "gap_pct": -0.034
+            },
+            {
+              "decile": 5,
+              "n": 2749,
+              "pred_pct": 3.415,
+              "actual_pct": 2.692,
+              "gap_pct": -0.723
+            },
+            {
+              "decile": 6,
+              "n": 2750,
+              "pred_pct": 4.81,
+              "actual_pct": 4.545,
+              "gap_pct": -0.265
+            },
+            {
+              "decile": 7,
+              "n": 2750,
+              "pred_pct": 6.801,
+              "actual_pct": 7.055,
+              "gap_pct": 0.254
+            },
+            {
+              "decile": 8,
+              "n": 2749,
+              "pred_pct": 9.881,
+              "actual_pct": 9.567,
+              "gap_pct": -0.314
+            },
+            {
+              "decile": 9,
+              "n": 2750,
+              "pred_pct": 14.821,
+              "actual_pct": 15.127,
+              "gap_pct": 0.306
+            },
+            {
+              "decile": 10,
+              "n": 2749,
+              "pred_pct": 26.475,
+              "actual_pct": 27.501,
+              "gap_pct": 1.026
+            }
+          ]
+        }
+      },
+      "jump": {
+        "n_races": 71,
+        "n_horses": 828,
+        "model": {
+          "n_races": 71,
+          "skipped_races": 0,
+          "mnl_logloss": 2.17967,
+          "mnl_logloss_se": 0.10088,
+          "uniform_logloss": 2.44196,
+          "info_gain_nats": 0.2623,
+          "info_gain_nats_se": 0.09865,
+          "info_gain_pct": 10.741,
+          "top1_win_rate": 0.2113,
+          "top1_place_rate": 0.6056,
+          "top1_mean_pred": 0.2803,
+          "reliability": [
+            {
+              "decile": 1,
+              "n": 83,
+              "pred_pct": 1.404,
+              "actual_pct": 3.614,
+              "gap_pct": 2.211
+            },
+            {
+              "decile": 2,
+              "n": 83,
+              "pred_pct": 2.261,
+              "actual_pct": 2.41,
+              "gap_pct": 0.149
+            },
+            {
+              "decile": 3,
+              "n": 83,
+              "pred_pct": 2.979,
+              "actual_pct": 1.205,
+              "gap_pct": -1.774
+            },
+            {
+              "decile": 4,
+              "n": 83,
+              "pred_pct": 3.854,
+              "actual_pct": 3.614,
+              "gap_pct": -0.24
+            },
+            {
+              "decile": 5,
+              "n": 82,
+              "pred_pct": 4.991,
+              "actual_pct": 8.537,
+              "gap_pct": 3.546
+            },
+            {
+              "decile": 6,
+              "n": 83,
+              "pred_pct": 6.5,
+              "actual_pct": 7.229,
+              "gap_pct": 0.729
+            },
+            {
+              "decile": 7,
+              "n": 83,
+              "pred_pct": 8.515,
+              "actual_pct": 4.819,
+              "gap_pct": -3.696
+            },
+            {
+              "decile": 8,
+              "n": 83,
+              "pred_pct": 11.288,
+              "actual_pct": 12.048,
+              "gap_pct": 0.76
+            },
+            {
+              "decile": 9,
+              "n": 83,
+              "pred_pct": 16.026,
+              "actual_pct": 21.687,
+              "gap_pct": 5.66
+            },
+            {
+              "decile": 10,
+              "n": 82,
+              "pred_pct": 28.123,
+              "actual_pct": 20.732,
+              "gap_pct": -7.392
+            }
+          ]
+        }
+      }
+    }
+  }
+}
