@@ -54,6 +54,24 @@
   --footer-bg: #f0f5fb;
   --surface-heading: #1e2939;  /* 面の上の見出し（light は gray-800 相当） */
   --surface-muted: #4a5565;    /* 面の上の補足文（gray-500 は面の上で 4.41 と足りないため gray-600） */
+
+  /* -------------------------------------------------------------------------
+   * グラフのトークン（2026-09-03 新設）。
+   *
+   * 🔴 **Recharts の既定ツールチップは「白い面 ＋ 系列色そのままの文字」**。
+   *    暗いテーマでは面ごと浮き、明るいテーマでも淡い系列（`#c7d2fe` /
+   *    `#d1d5db` など）が白地に載って**読めない**。実際 2026-09-03 に
+   *    競輪の売上グラフで「販売無償pt」「内訳不明」「日付」が消えていた。
+   * 🔴 だから面・枠・文字は**必ずここのトークン**を使い、系列色は
+   *    文字ではなく**色見本（swatch）**で表す（`lib/chart-theme.tsx`）。
+   * ⚠️ グリッド線の `#f0f0f0` も同じ理由で暗いテーマだと見えない。
+   * ------------------------------------------------------------------------- */
+  --chart-surface: #ffffff;    /* ツールチップの面 */
+  --chart-border: #e5e7eb;
+  --chart-fg: #1f2937;         /* ツールチップの本文（面の上で 4.5:1 以上） */
+  --chart-muted: #4a5565;
+  --chart-grid: #e5e7eb;       /* グリッド線 */
+  --chart-axis: #6b7280;       /* 軸の目盛り文字 */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -67,6 +85,12 @@
     --footer-bg: #0d1b2e;
     --surface-heading: #e8f0fa;
     --surface-muted: #9fb1c7;
+    --chart-surface: #111c2b;
+    --chart-border: #33445c;
+    --chart-fg: #e8f0fa;
+    --chart-muted: #9fb1c7;
+    --chart-grid: #253549;
+    --chart-axis: #9fb1c7;
   }
 }
 
@@ -80,6 +104,12 @@
   --footer-bg: #0d1b2e;
   --surface-heading: #e8f0fa;
   --surface-muted: #9fb1c7;
+  --chart-surface: #111c2b;
+  --chart-border: #33445c;
+  --chart-fg: #e8f0fa;
+  --chart-muted: #9fb1c7;
+  --chart-grid: #253549;
+  --chart-axis: #9fb1c7;
 }
 
 body {

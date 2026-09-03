@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { fetchOddsData } from "@/lib/api";
 import type { OddsDataPoint, PerformanceFilters } from "@/lib/api";
+import { CHART_GRID, ChartTooltip, chartLegendStyle } from "@/lib/chart-theme";
 
 // ---------------------------------------------------------------------------
 // バケット定義
@@ -331,17 +332,15 @@ type CustomTooltipProps = {
   label?: string;
 };
 
-function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
+/** 🔴 **`bg-white` 固定 ＋ 系列色を文字色**にしていたので共通へ寄せた（2026-09-03）。
+ *  暗いテーマで面が浮き、淡い系列は明るいテーマでも読めない。
+ *  `ChartTooltip` は面・枠・文字をトークンで描き、系列は色見本で表す。 */
+function CustomTooltip(props: CustomTooltipProps) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-md px-3 py-2 text-xs">
-      <p className="font-bold text-gray-700 mb-1">{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name}: {p.name === "ROI" ? `${p.value}%` : `${p.value}件`}
-        </p>
-      ))}
-    </div>
+    <ChartTooltip
+      {...props}
+      formatter={(value, name) => [name === "ROI" ? `${value}%` : `${value}件`, name]}
+    />
   );
 }
 
@@ -451,7 +450,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
         {/* ヒストグラム */}
         <ResponsiveContainer width="100%" height={200}>
           <ComposedChart data={winBuckets} margin={{ top: 4, right: 32, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} />
             <YAxis
               yAxisId="left"
@@ -467,7 +466,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
               label={{ value: "ROI%", angle: 90, position: "insideRight", style: { fontSize: 10 } }}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 10, color: "#111827" }} />
+            <Legend wrapperStyle={chartLegendStyle(10, 0)} />
             <Bar
               yAxisId="left"
               dataKey="count"
@@ -516,7 +515,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
         {/* ヒストグラム */}
         <ResponsiveContainer width="100%" height={200}>
           <ComposedChart data={placeBuckets} margin={{ top: 4, right: 32, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} />
             <YAxis
               yAxisId="left"
@@ -532,7 +531,7 @@ export function OddsRangeSensitivity({ filters }: Props) {
               label={{ value: "ROI%", angle: 90, position: "insideRight", style: { fontSize: 10 } }}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 10, color: "#111827" }} />
+            <Legend wrapperStyle={chartLegendStyle(10, 0)} />
             <Bar
               yAxisId="left"
               dataKey="count"

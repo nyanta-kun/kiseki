@@ -23,6 +23,7 @@ import { fetchKeirinSoldPerformance, type KeirinSoldPerformanceResponse } from "
 import AnalysisTab from "./AnalysisTab";
 import SoldTab, { type SoldGroupBy } from "./SoldTab";
 import { formatYen } from "./format";
+import { CHART_GRID, ChartTooltip, chartAxisTick, chartLegendStyle } from "@/lib/chart-theme";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -670,16 +671,16 @@ export default function KeirinStatsPage() {
         ) : (
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={chartData} margin={{ top: 8, right: 48, left: 8, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
               <XAxis
                 dataKey="date"
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="left"
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 tickFormatter={v => formatYen(v)}
                 width={52}
@@ -688,7 +689,7 @@ export default function KeirinStatsPage() {
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 10, fill: "#60a5fa" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 tickFormatter={v => `${(v * 100).toFixed(0)}%`}
                 width={44}
@@ -705,7 +706,7 @@ export default function KeirinStatsPage() {
                 )}
               />
               <Legend
-                wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                wrapperStyle={chartLegendStyle(11, 8)}
                 iconSize={10}
               />
               <ReferenceLine yAxisId="right" y={1} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
@@ -814,16 +815,16 @@ export default function KeirinStatsPage() {
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <ComposedChart data={salesChartData} margin={{ top: 8, right: 48, left: 8, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
               <XAxis
                 dataKey="date"
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="left"
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 width={44}
                 domain={[0, salesYAxisMax]}
@@ -831,14 +832,17 @@ export default function KeirinStatsPage() {
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 10, fill: "#60a5fa" }}
+                tick={chartAxisTick(10)}
                 tickLine={false}
                 tickFormatter={v => `${v}%`}
                 width={44}
                 domain={[0, "auto"]}
               />
-              <Tooltip />
-              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
+              {/* 🔴 素の `<Tooltip />` は Recharts 既定＝**白い面 ＋ 系列色そのままの文字**。
+                  「販売無償pt」(#c7d2fe) と「内訳不明」(#d1d5db) が白地に載って読めず、
+                  暗いテーマでは面ごと浮いていた（2026-09-03 のスクリーンショット）。 */}
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
               <ReferenceLine yAxisId="right" y={100} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
               {/* 販売ptの内訳。**有償ptを下に積む**（売上金額の対象はこちらで、
                   無償ptは収益にならない）。stackId が同じ Bar は宣言順に下から

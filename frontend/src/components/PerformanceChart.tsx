@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { MonthlyStats, ConfidenceStats } from "@/lib/api";
+import { CHART_GRID, ChartTooltip, chartAxisTick, chartLegendStyle } from "@/lib/chart-theme";
 
 type ConfidenceFilter = "ALL" | "HIGH" | "MID" | "LOW";
 
@@ -102,28 +103,29 @@ export function PerformanceChart({ monthly, initialFilter }: Props) {
                   data={data}
                   margin={{ top: 4, right: 16, left: -8, bottom: 0 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                   <XAxis
                     dataKey="month"
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
+                    tick={chartAxisTick(10)}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
                     domain={[0, 100]}
                     tickFormatter={(v) => `${v}%`}
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
+                    tick={chartAxisTick(10)}
                     axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip
-                    formatter={(v, name) => [`${v}%`, name]}
-                    labelFormatter={(label) => {
-                      const entry = data.find((d) => d.month === label);
-                      return entry ? `${label}（${entry.レース数}レース）` : label;
-                    }}
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
-                  />
+                  <Tooltip content={
+                    <ChartTooltip
+                      formatter={(v, name) => [`${v}%`, name]}
+                      labelFormatter={(label) => {
+                        const entry = data.find((d) => d.month === label);
+                        return entry ? `${label}（${entry.レース数}レース）` : label;
+                      }}
+                    />
+                  } />
                   <Legend
                     iconType="circle"
                     iconSize={8}
@@ -173,28 +175,29 @@ export function PerformanceChart({ monthly, initialFilter }: Props) {
                   data={data}
                   margin={{ top: 4, right: 16, left: -8, bottom: 0 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                   <XAxis
                     dataKey="month"
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
+                    tick={chartAxisTick(10)}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
                     tickFormatter={(v) => `${v}%`}
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
+                    tick={chartAxisTick(10)}
                     axisLine={false}
                     tickLine={false}
                   />
                   <ReferenceLine y={100} stroke="#9ca3af" strokeDasharray="4 2" label={{ value: "±0", fontSize: 10, fill: "#9ca3af" }} />
-                  <Tooltip
-                    formatter={(v, name) => [`${v}%`, name]}
-                    labelFormatter={(label) => {
-                      const entry = data.find((d) => d.month === label);
-                      return entry ? `${label}（${entry.レース数}レース）` : label;
-                    }}
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
-                  />
+                  <Tooltip content={
+                    <ChartTooltip
+                      formatter={(v, name) => [`${v}%`, name]}
+                      labelFormatter={(label) => {
+                        const entry = data.find((d) => d.month === label);
+                        return entry ? `${label}（${entry.レース数}レース）` : label;
+                      }}
+                    />
+                  } />
                   <Line
                     type="monotone"
                     dataKey="回収率"

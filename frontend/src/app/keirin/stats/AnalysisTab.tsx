@@ -36,6 +36,7 @@ import type {
   KeirinSubmissionRoute,
 } from "@/lib/api";
 import { formatCoef, formatDelta, formatPct, formatYen } from "./format";
+import { CHART_GRID, ChartTooltip, chartAxisTick, chartLegendStyle } from "@/lib/chart-theme";
 
 // ---------------------------------------------------------------------------
 // 配色
@@ -156,7 +157,8 @@ function EmptyState({ label }: { label: string }) {
   return <div className="h-40 flex items-center justify-center text-gray-400 text-sm">{label}</div>;
 }
 
-const AXIS_TICK = { fontSize: 10, fill: "#9ca3af" };
+// 🔴 軸の目盛りもトークン経由（`#9ca3af` の直書きは暗いテーマで沈む）。
+const AXIS_TICK = chartAxisTick(10);
 
 // ---------------------------------------------------------------------------
 // 本体
@@ -305,7 +307,7 @@ export default function AnalysisTab({ data, loading }: {
         {timeline.length === 0 ? <EmptyState label="レース別データなし" /> : (
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={timeline} margin={{ top: 8, right: 44, left: 4, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
               <XAxis
                 dataKey="idx"
                 type="number"
@@ -320,14 +322,15 @@ export default function AnalysisTab({ data, loading }: {
               <YAxis yAxisId="right" orientation="right" tick={{ ...AXIS_TICK, fill: COLOR_LINE }}
                      tickLine={false} width={40} domain={[0, 100]}
                      tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip
-                formatter={(value, name) => [
-                  name === "累積的中率" ? `${value}%` : Number(value).toLocaleString(),
-                  name,
-                ]}
-                labelFormatter={(v) => timeline[Number(v)]?.label ?? ""}
-                contentStyle={{ fontSize: 11 }}
-              />
+              <Tooltip content={
+                <ChartTooltip
+                  formatter={(value, name) => [
+                    name === "累積的中率" ? `${value}%` : Number(value).toLocaleString(),
+                    name,
+                  ]}
+                  labelFormatter={(v) => timeline[Number(v)]?.label ?? ""}
+                />
+              } />
               {/* Recharts の Legend は使わない。棒の色は Cell 単位（的中/不的中）で
                   決まるため、系列としての色が無く凡例が黒く出てしまう。下の自前凡例で示す。 */}
               <Bar yAxisId="left" dataKey="売上pt" radius={[2, 2, 0, 0]} maxBarSize={10}>
@@ -364,15 +367,15 @@ export default function AnalysisTab({ data, loading }: {
         {dailyChart.length === 0 ? <EmptyState label="日別データなし" /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={dailyChart} margin={{ top: 8, right: 44, left: 4, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
               <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} interval="preserveStartEnd" />
               <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} width={34} />
               <YAxis yAxisId="right" orientation="right" tick={{ ...AXIS_TICK, fill: COLOR_LINE }}
                      tickLine={false} width={40} domain={[0, 100]}
                      tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip contentStyle={{ fontSize: 11 }}
-                       formatter={(value, name) => [name === "的中率" ? `${value}%` : value, name]} />
-              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
+              <Tooltip content={<ChartTooltip
+                       formatter={(value, name) => [name === "的中率" ? `${value}%` : value, name]} />} />
+              <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
               <Bar yAxisId="left" dataKey="予想レース数" fill={COLOR_COUNT} radius={[2, 2, 0, 0]} maxBarSize={22} />
               <Line yAxisId="right" type="monotone" dataKey="的中率" stroke={COLOR_LINE}
                     strokeWidth={2} dot={{ r: 2 }} connectNulls />
@@ -388,17 +391,17 @@ export default function AnalysisTab({ data, loading }: {
         {dailyChart.length === 0 ? <EmptyState label="日別データなし" /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={dailyChart} margin={{ top: 8, right: 44, left: 4, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
               <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} interval="preserveStartEnd" />
               <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} width={46}
                      tickFormatter={(v: number) => v.toLocaleString()} />
               <YAxis yAxisId="right" orientation="right" tick={{ ...AXIS_TICK, fill: COLOR_LINE }}
                      tickLine={false} width={40} domain={[0, 100]}
                      tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip contentStyle={{ fontSize: 11 }}
+              <Tooltip content={<ChartTooltip
                        formatter={(value, name) => [
-                         name === "的中率" ? `${value}%` : Number(value).toLocaleString(), name]} />
-              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
+                         name === "的中率" ? `${value}%` : Number(value).toLocaleString(), name]} />} />
+              <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
               <Bar yAxisId="left" dataKey="売上pt" fill={COLOR_SALES} radius={[2, 2, 0, 0]} maxBarSize={22} />
               <Line yAxisId="right" type="monotone" dataKey="的中率" stroke={COLOR_LINE}
                     strokeWidth={2} dot={{ r: 2 }} connectNulls />
@@ -473,15 +476,15 @@ export default function AnalysisTab({ data, loading }: {
         {dailyChart.length === 0 ? <EmptyState label="日別データなし" /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={dailyChart} margin={{ top: 8, right: 44, left: 4, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
               <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} interval="preserveStartEnd" />
               <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} width={30} allowDecimals={false} />
               <YAxis yAxisId="right" orientation="right" tick={{ ...AXIS_TICK, fill: COLOR_LINE }}
                      tickLine={false} width={40} domain={[0, 100]}
                      tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip contentStyle={{ fontSize: 11 }}
-                       formatter={(value, name) => [name === "ガミ率" ? `${value}%` : value, name]} />
-              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconSize={10} />
+              <Tooltip content={<ChartTooltip
+                       formatter={(value, name) => [name === "ガミ率" ? `${value}%` : value, name]} />} />
+              <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
               <Bar yAxisId="left" dataKey="実質的中" stackId="hit" fill={COLOR_HIT} maxBarSize={22} />
               <Bar yAxisId="left" dataKey="ガミ的中" stackId="hit" fill={COLOR_GARAMI} radius={[2, 2, 0, 0]} maxBarSize={22} />
               <Line yAxisId="right" type="monotone" dataKey="ガミ率" stroke={COLOR_LINE}
@@ -505,18 +508,18 @@ export default function AnalysisTab({ data, loading }: {
         {(data.leadtime.length === 0) ? <EmptyState label="リードタイムデータなし" /> : (
           <ResponsiveContainer width="100%" height={240}>
             <ComposedChart data={data.leadtime} margin={{ top: 8, right: 8, left: 4, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
               <XAxis dataKey="lead_hours" tick={AXIS_TICK} tickLine={false}
                      label={{ value: "← 締切直前　　締切の何時間前　　早い先行購入 →",
                               position: "insideBottom", offset: -10,
-                              style: { fontSize: 10, fill: "#9ca3af" } }} />
+                              style: chartAxisTick(10) }} />
               <YAxis tick={AXIS_TICK} tickLine={false} width={46}
                      tickFormatter={(v: number) => v.toLocaleString()} />
-              <Tooltip contentStyle={{ fontSize: 11 }}
+              <Tooltip content={<ChartTooltip
                        labelFormatter={(v) => `締切 ${v} 時間前`}
                        formatter={(value, name) => [
                          `${Number(value).toLocaleString()} pt`,
-                         MEETING_LABELS[String(name)] ?? name]} />
+                         MEETING_LABELS[String(name)] ?? name]} />} />
               {/* 凡例は下に自前で置く。Recharts の Legend は dataKey のアルファベット順に
                   並んでしまい、朝→深夜という読み順が崩れるため（v3 で payload 指定も不可）。 */}
               {leadtimeKeys.map((k, i) => (
