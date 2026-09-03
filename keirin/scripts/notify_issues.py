@@ -35,7 +35,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.notify.issue_list import (                     # noqa: E402
-    EMPTY_DIGEST, build_anomaly_message, digest, remember, render, should_send)
+    EMPTY_DIGEST, build_anomaly_message, build_quiet_message,
+    build_repeat_message, digest, last_sent_day, remember, render, should_send)
 
 NIGHTLY = REPO / "data" / "analysis" / "nightly"
 STATE = NIGHTLY / ".notified.json"
@@ -89,20 +90,30 @@ def main() -> int:
 
     ng, n_ok = parse_alerts(src.read_text(encoding="utf-8"))
     msg = build_anomaly_message(day, ng, url=a.url, n_ok=n_ok)
-    body = render(msg)
     fp = digest(msg) if ng else EMPTY_DIGEST
+
+    # 🔴 **毎晩必ず1通出す**（2026-09-04・ユーザー要望）。送るか否かは**日**で決め、
+    #    内容の差分抑止は**本文の詳しさ**にだけ使う。分けないと
+    #    「異常なし」と「前夜と同じ」の夜が無音になり、動いているのに
+    #    止まって見える（2026-09-02〜03 に実際にそう読まれた）。
+    if not ng:
+        kind_label, msg = "異常なし", build_quiet_message(day, n_ok, url=a.url)
+    elif should_send(STATE, a.kind, fp):
+        kind_label = "課題リスト"
+    else:
+        kind_label, msg = "継続中", build_repeat_message(day, len(ng), url=a.url)
+    body = render(msg)
 
     if a.dry_run:
         print(body)
-        print(f"\n[dry-run] NG {len(ng)}件 / OK {n_ok}件 / "
+        print(f"\n[dry-run] {kind_label} / NG {len(ng)}件 / OK {n_ok}件 / "
               f"{len(body)}文字 / digest={fp}")
         return 0
 
-    if not a.force and not should_send(STATE, a.kind, fp):
-        # 🔴 **不発を無音にしない。** 「異常なし」も「前夜と同じ」も、
-        #    ログに残らないと「通知が壊れている」と区別できない。
-        why = "異常なし" if not ng else "前夜と同じ内容"
-        print(f"[notify_issues] 送信せず（{why}）NG {len(ng)}件")
+    # 同じ日に既に送っていれば出さない（`nightly_review.sh` は何度流しても
+    # 害が無い設計なので、再実行での二重投稿だけを止める）。
+    if not a.force and last_sent_day(STATE, a.kind) == day:
+        print(f"[notify_issues] 送信せず（本日送信済み）NG {len(ng)}件")
         return 0
 
     from src.notify.discord import send      # 送信するときだけ読む
@@ -110,7 +121,7 @@ def main() -> int:
         print("[notify_issues] ⚠️ Discord への送信に失敗")
         return 1
     remember(STATE, a.kind, fp, day)
-    print(f"[notify_issues] 送信 NG {len(ng)}件 / {len(body)}文字")
+    print(f"[notify_issues] 送信（{kind_label}）NG {len(ng)}件 / {len(body)}文字")
     return 0
 
 

@@ -23,7 +23,8 @@ sys.path.insert(0, str(REPO))
 
 from src.notify.issue_list import (  # noqa: E402
     DISCORD_LIMIT, EMPTY_DIGEST, Message, Section, build_anomaly_message,
-    contains_daily_performance, digest, remember, render, should_send)
+    build_quiet_message, build_repeat_message, contains_daily_performance,
+    digest, last_sent_day, remember, render, should_send)
 
 _spec = importlib.util.spec_from_file_location(
     "notify_issues", REPO / "scripts" / "notify_issues.py")
@@ -145,3 +146,42 @@ def test_CLIが未生成の日で1を返す(kind: str, tmp_path: Path, monkeypat
     monkeypatch.setattr(sys, "argv",
                         ["notify_issues.py", "--day", "1999-01-01", "--kind", kind])
     assert notify_issues.main() == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 「毎晩必ず1通」（2026-09-04）
+#
+# 🔴 2026-09-02〜03 の2夜は異常0件で、設計どおり1通も送らなかった。
+#    その結果「夜間分析が動いていない」と読まれた（実際は動いていた）。
+#    沈黙は正常と故障を区別できないので、**送るか否かは日で決める**。
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_異常なしの夜も本文が出る() -> None:
+    body = render(build_quiet_message("2026-09-03", 5, url="https://x/y.html"))
+    assert "🟢 異常なし" in body
+    assert "https://x/y.html" in body
+    # 単日の成績数字は課題側の規則どおり載せない。
+    assert not contains_daily_performance(body), body
+
+
+def test_継続中の夜は件数だけで本文を再掲しない() -> None:
+    body = render(build_repeat_message("2026-09-03", 3, url="https://x/y.html"))
+    assert "🟡 継続中の異常 3 件" in body
+    assert "https://x/y.html" in body
+    assert len(body) < 200, body
+
+
+def test_最後に送った日を読める(tmp_path: Path) -> None:
+    state = tmp_path / ".notified.json"
+    assert last_sent_day(state, "anomaly") == ""      # 未送信
+    remember(state, "anomaly", "abc123", "2026-09-03")
+    assert last_sent_day(state, "anomaly") == "2026-09-03"
+    # 種別が違えば独立（課題と所見は別々に1通ずつ出す）。
+    assert last_sent_day(state, "triage") == ""
+
+
+def test_状態ファイルが壊れていても日は空で返る(tmp_path: Path) -> None:
+    state = tmp_path / ".notified.json"
+    state.write_text("{壊れている", encoding="utf-8")
+    # 🔴 例外で落ちると夜間チェーンごと止まる。空＝未送信として送る側に倒す。
+    assert last_sent_day(state, "anomaly") == ""
