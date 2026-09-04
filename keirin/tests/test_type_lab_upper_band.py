@@ -1,5 +1,9 @@
 """上帯（多穴の重ね買い）を固定する（2026-09-04）。
 
+🔴 **いま `UPPER_BANDS` は空**（同日夕方に前向き実測で切り戻した）。仕組みそのものは
+   残してあるので、ここでは `bands=(_PERM_BAND,)` を明示して機構を検査し、
+   「既定では何も重ならない」ことを別に固定する。
+
 予算 10,000円のうち 2割を高オッズの目へ回すバーベル。**商品も投資も増やさない**。
 実測は `docs/type_lab/overlay_upper_band_2026_09_04.md`。
 
@@ -14,10 +18,14 @@ import itertools
 
 from src.type_lab import (
     BUDGET, PLANS, ROLE_BASE, UPPER_BAND_PLANS, UPPER_BANDS,
-    UPPER_BAND_N_ENTRIES, UPPER_BAND_TOTAL, RaceShape, add_upper_band,
-    allocate, build_legs, mean_expected_payout, rule_version,
-    split_legs_by_role,
+    UPPER_BAND_N_ENTRIES, RaceShape, add_upper_band, allocate, build_legs,
+    mean_expected_payout, rule_version, split_legs_by_role,
 )
+from src.type_lab import _PERM_BAND
+
+#: 機構を検査するときに使う上帯（本番は空）。
+BANDS = (_PERM_BAND,)
+UP_TOTAL = sum(b.budget for b in BANDS)
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
 
@@ -53,11 +61,11 @@ def _built(plan_key: str = "F_hit", **kw):
 def test_budget_is_unchanged_and_split_8_2():
     plan, po, pr, legs, stakes = _built()
     assert sum(stakes.values()) == BUDGET
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     assert sum(st2.values()) == BUDGET, "投資は増やさない"
     base = sum(v for c, v in st2.items() if roles[c] == ROLE_BASE)
-    assert base == BUDGET - UPPER_BAND_TOTAL == 8000
-    assert set(roles.values()) <= {ROLE_BASE} | {b.kind for b in UPPER_BANDS}
+    assert base == BUDGET - UP_TOTAL == 8000
+    assert set(roles.values()) <= {ROLE_BASE} | {b.kind for b in BANDS}
     assert len(legs2) == len(st2) == len(set(legs2)), "同じ目を2行に分けない"
 
 
@@ -70,20 +78,20 @@ def test_upper_legs_are_unbought_orders_of_backed_trios():
     from collections import Counter
 
     plan, po, pr, legs, stakes = _built()
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     cnt = Counter(frozenset(c) for c in legs)
     upper = [c for c in legs2 if roles[c] != ROLE_BASE]
     assert upper, "上帯が乗っていません"
     for c in upper:
         assert c not in set(legs), "既に買っている目を重ねています"
         assert cnt[frozenset(c)] >= 2, "下帯が1通りしか買っていない3車を拾っています"
-    assert len(upper) <= UPPER_BANDS[0].max_legs
+    assert len(upper) <= _PERM_BAND.max_legs
 
 
 def test_base_legs_are_not_reselected():
     """下帯の**買い目は一切変えない**（縮むのは賭け金だけ）。"""
     plan, po, pr, legs, stakes = _built()
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     assert [c for c in legs2 if roles[c] == ROLE_BASE] == list(legs)
 
 
@@ -97,7 +105,7 @@ def test_overlapping_leg_keeps_base_role_and_sums_stake():
     plan = PLANS["F_hit"]
     legs = [(1, 2, 3), (1, 3, 2)]
     stakes = allocate(legs, po, pr, plan)
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     assert roles[(1, 2, 3)] == ROLE_BASE
     assert sum(st2.values()) == BUDGET
     assert len(legs2) == len(set(legs2))
@@ -107,7 +115,7 @@ def test_overlapping_leg_keeps_base_role_and_sums_stake():
 
 def test_not_applied_to_nine_cars():
     plan, po, pr, legs, stakes = _built()
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 9)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 9, BANDS)
     assert st2 == stakes and set(roles.values()) == {ROLE_BASE}
     assert UPPER_BAND_N_ENTRIES == 7
 
@@ -126,7 +134,7 @@ def test_not_applied_to_trio_plans():
     orig = tl.UPPER_BAND_PLANS
     try:
         tl.UPPER_BAND_PLANS = frozenset({"D_hit"})
-        legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+        legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     finally:
         tl.UPPER_BAND_PLANS = orig
     assert st2 == stakes and set(roles.values()) == {ROLE_BASE}
@@ -149,7 +157,7 @@ def test_only_the_allowed_plans_get_the_upper_band():
         stakes = allocate(legs, po, pr, plan)
         if not stakes:
             continue
-        _, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+        _, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
         got = set(roles.values()) != {ROLE_BASE}
         assert got is (key in UPPER_BAND_PLANS), key
 
@@ -157,7 +165,7 @@ def test_only_the_allowed_plans_get_the_upper_band():
 def test_falls_back_to_todays_product_when_band_is_empty():
     """100倍以上の目が1つも無い盤面では**今日と同じ商品**を返す。"""
     plan, po, pr, legs, stakes = _built(high=40.0, low=16.0)
-    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
+    legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     assert st2 == stakes and set(roles.values()) == {ROLE_BASE}
 
 
@@ -175,6 +183,7 @@ def test_gate_value_is_recorded_before_the_upper_band():
     import json
 
     import scripts.build_type_lab_picks as B
+    import src.type_lab as tl
 
     from src.type_lab import build_with_gate_fallback, race_shape
 
@@ -204,7 +213,13 @@ def test_gate_value_is_recorded_before_the_upper_band():
     assert used.key == "F_hit"
     before = mean_expected_payout(base_stakes, po)
 
-    rows = B.rows_for_race(meta, cars, po, pr, "paper")
+    # 🔴 本番の `UPPER_BANDS` は空なので、**機構を見るために一時的に有効化**する。
+    orig = tl.UPPER_BANDS
+    try:
+        tl.UPPER_BANDS = BANDS
+        rows = B.rows_for_race(meta, cars, po, pr, "paper")
+    finally:
+        tl.UPPER_BANDS = orig
     row = next((r for r in rows if r["plan_key"] == "F_hit"), None)
     assert row is not None, [r["plan_key"] for r in rows]
     got = json.loads(row["legs"])
@@ -239,7 +254,6 @@ def test_split_legs_by_role_defaults_to_base():
     """役割の無い行（2026-09-04 より前）は全部 下帯として読む。"""
     old = [{"combo": "1-2-3"}, {"combo": "1-3-2"}]
     assert split_legs_by_role(old) == old
-    assert UPPER_BANDS, "上帯が空です（重ね買いが丸ごと止まります）"
 
 
 def test_bands_are_read_at_call_time():
@@ -251,12 +265,23 @@ def test_bands_are_read_at_call_time():
     """
     import src.type_lab as tl
     plan, po, pr, legs, stakes = _built()
+    _, st_off, roles_off = add_upper_band(legs, stakes, plan, po, pr, 7)
+    assert st_off == stakes and set(roles_off.values()) == {ROLE_BASE}, (
+        "本番の `UPPER_BANDS` は空のはず（2026-09-04 に切り戻し）")
     orig = tl.UPPER_BANDS
     try:
-        tl.UPPER_BANDS = ()
-        _, st_off, roles_off = add_upper_band(legs, stakes, plan, po, pr, 7)
-        assert st_off == stakes and set(roles_off.values()) == {ROLE_BASE}
+        tl.UPPER_BANDS = BANDS
+        _, st_on, roles_on = add_upper_band(legs, stakes, plan, po, pr, 7)
+        assert set(roles_on.values()) != {ROLE_BASE}
     finally:
         tl.UPPER_BANDS = orig
-    _, st_on, roles_on = add_upper_band(legs, stakes, plan, po, pr, 7)
-    assert set(roles_on.values()) != {ROLE_BASE}
+
+
+def test_upper_band_is_off_in_production():
+    """🔴 **いまは重ね買いをしない**（2026-09-04 夕方・前向き実測で切り戻し）。
+
+    9/1〜9/4 の95行で反実仮想を採点したところ、上帯で拾えたのは1件だけで
+    元から当たっていた30件が2割減し、ROI 80.1 → 66.6% だった。
+    戻すときは `UPPER_BANDS = (_PERM_BAND,)` の1行。
+    """
+    assert UPPER_BANDS == ()
