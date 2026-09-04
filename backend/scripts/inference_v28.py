@@ -21,6 +21,22 @@
   🔴 **`races.head_count` から作らない**（発走前 NULL。配信時にだけ壊れる）。
   ここでの「そのレースの行数」は `calculated_indices` にある馬 ＝ 算出時点の
   `race_entries` であり、本番 `calculate_and_save` の `results` と同じ集合になる。
+  🔴 **`build_population` の母集団フィルタは掛けない**（取消・除外を落とすと配信より
+  小さいフィールドになる）。学習側も同じ集合で数える
+  （`train_jra_iswin_head.attach_serving_field`・レビュー指摘1+2）。
+
+## 🔴 `--limit-races` は DB 書き込みを行わない（`--dry-run` を強制する）
+
+`--limit-races N` は `df` を N レースに絞るが、`DELETE` は `--start`/`--end` の
+**全範囲**を対象にする。素直に組み合わせると、既定範囲（20230506〜20991231）の
+`version = 28` 行を**全部消してから N レースだけ書き戻す**——v28 世代がほぼ全消しになる。
+
+安全側として **`--limit-races` を指定したら書き込みを行わない**ことにした。
+DELETE を同じレース集合に限定する手もあるが、このフラグの用途は
+**目視確認**であって部分バックフィルではない。「消す範囲を賢くする」より
+「消さない」ほうが、取り違えたときの被害がゼロで済む。
+部分バックフィルがしたいときは `--start` / `--end` で期間を切ること
+（DELETE と INSERT が同じ集合になるので冪等が保たれる）。
 
 ## サブ指数の取得元を版で固定しない
 
@@ -129,8 +145,18 @@ def main() -> None:
     p.add_argument("--sleep", type=float, default=0.2, help="バッチ間スリープ秒（VPS DB 負荷対策）")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--limit-races", type=int, default=0,
-                   help="先頭 N レースだけ処理する（目視確認用・0 で無制限）")
+                   help="先頭 N レースだけ処理する（目視確認用・0 で無制限）。"
+                        "🔴 指定すると DB 書き込みを行わない（--dry-run 相当）")
     args = p.parse_args()
+
+    # 🔴 DELETE は --start/--end の全範囲を対象にするので、--limit-races と
+    #    書き込みを併用すると v28 世代がほぼ全消しになる。書き込ませない（docstring 参照）
+    if args.limit_races and not args.dry_run:
+        logger.warning(
+            "--limit-races は目視確認用なので DB 書き込みを行わない（--dry-run を強制）。"
+            "部分バックフィルは --start / --end で期間を切ること"
+        )
+        args.dry_run = True
 
     for path in (REG_RANK_MODEL, OUT_RATE_MODEL, ISWIN_MODEL, PLACED_MODEL):
         if not path.exists():
@@ -232,12 +258,22 @@ def main() -> None:
 
 
 def _visual_check(df: pd.DataFrame) -> None:
-    """🔴 実データを1レース表示して目視確認する（`CLAUDE.md` 検証の作法）。"""
+    """🔴 実データを1レース表示して目視確認する（`CLAUDE.md` 検証の作法）。
+
+    ⚠️ 本ループ（`main`）と**同じ Harville フォールバック**を持つこと。
+    5頭未満（`slots == 0`）のレースが範囲の先頭に来ると
+    `normalize_place_to_slots` が `[]` を返し、`place_p[i]` で IndexError になる。
+    """
     g = df[df["race_id"] == df["race_id"].iloc[0]].sort_values("horse_number")
     slots = place_slots_for_field(len(g))
     raw_w = g["_win_raw"].to_numpy(dtype=float)
-    win_p = raw_w / raw_w.sum()
+    total_w = float(raw_w.sum())
+    win_p = raw_w / total_w if total_w > 0 else np.full(len(g), 1.0 / max(1, len(g)))
     place_p = normalize_place_to_slots(g["_placed_raw"].to_numpy(dtype=float), slots)
+    if not place_p:  # n < 5（複勝の発売なし）→ 本ループと同じく Harville へ落とす
+        place_p = CompositeIndexCalculator._harville_place_probs(
+            [float(x) for x in win_p]
+        )
     print("\n" + "=" * 112)
     print(f"🔴 目視確認 race_id={int(g.iloc[0]['race_id'])} {g.iloc[0]['date']} "
           f"n={len(g)} place_slots={slots}")
@@ -257,7 +293,11 @@ def _visual_check(df: pd.DataFrame) -> None:
               f"{float(r['_out']):>10.4f}")
     print(f"{'Σ':>4}{'':>9}{'':>11}{'':>10}{'':>10}{win_p.sum():>11.5f}"
           f"{g['_placed_raw'].sum():>12.5f}{sum(place_p):>11.5f}")
-    print(f"（期待: Σp_win=1.00000 / Σp_place={slots}.00000 / raw_placed だけはずれてよい）")
+    if slots > 0:
+        print(f"（期待: Σp_win=1.00000 / Σp_place={slots}.00000 / raw_placed だけはずれてよい）")
+    else:
+        print(f"（🔴 n={len(g)} < 5 で複勝の発売なし ⇒ p_place は Harville フォールバック"
+              f"（本ループと同じ）。期待: Σp_win=1.00000）")
 
 
 if __name__ == "__main__":

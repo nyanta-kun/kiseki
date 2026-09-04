@@ -524,28 +524,39 @@ def _load_v28_placed_model() -> lgb.Booster | None:  # type: ignore[name-defined
         return None
 
 
-def place_slots_for_field(n_runners: int) -> int:
-    """出走頭数から**払戻対象着順**（複勝の枠数）を返す。
+def place_slots_for_field(n_field: int) -> int:
+    """フィールドの馬数から**払戻対象着順**（複勝の枠数）を返す。
 
     JRA ルール: `n >= 8` → 3着以内 / `5 <= n <= 7` → 2着以内 / `n < 5` → 複勝の発売なし。
 
     🔴 **`races.head_count` から作ってはいけない。** `head_count` は発走前 NULL で、
     配信時にだけ壊れる（`CLAUDE.md` 3.2 / `docs/jra_rebuild_2026_08.md` 3.2）。
     地方では `head_count` の train/serve skew（学習=確定頭数・配信=登録頭数フォールバック）
-    が約10%のレースで実際に起きている。**引数は必ず「実際のフィールドの馬数」**
-    （配信は `calculate_and_save` の `results` の長さ、学習は
-    `jra_prob_scoring.build_population` 後のレース内行数）を渡すこと。
+    が約10%のレースで実際に起きている。
+
+    🔴 **引数は「そのレースのエントリー全馬の数」**（2026-09-04・PR #462 レビュー指摘1+2）。
+
+    - 配信: `calculate_and_save` の `results` の長さ ＝ `race_entries` の全馬
+    - 学習: `train_jra_iswin_head.attach_serving_field`
+      （`jra_prob_scoring.build_population` を掛ける**前**のレース内行数）
+    - バックフィル: `inference_v28.py` のレース内行数（＝ `calculated_indices` の全馬）
+
+    ⚠️ **完走馬の数で数えてはいけない。** 配信は取消を物理的に知り得ない
+    （`race_entries` に取消の列が無く、`abnormality_code` は `race_results` ＝
+    確定後にしか存在しない）。完走馬で数えると **11.15%** のレースで学習と配信の
+    フィールドがずれる。代償として払戻規則（**出走**頭数基準）と枠数がずれるのは
+    **0.863%** のレース。詳細は `train_jra_iswin_head.attach_serving_field` の docstring。
 
     Args:
-        n_runners: そのレースのフィールドの馬数。
+        n_field: そのレースのフィールド（エントリー全馬）の数。
 
     Returns:
         3 / 2 / 0。0 は「複勝が成立しない」＝独立ヘッドのラベルが定義できないレース
         （§18.3-2。学習からは除外し、配信では Harville へ落とす）。
     """
-    if n_runners >= 8:
+    if n_field >= 8:
         return 3
-    if n_runners >= 5:
+    if n_field >= 5:
         return 2
     return 0
 
@@ -963,9 +974,10 @@ class CompositeIndexCalculator:
                 logger.error(f"{win_tag} iswin calibration failed for race={race.id}: {e}")
 
         # v28: 複勝は独立 is_placed ヘッド → レース内で Σp = place_slots に正規化。
-        # 🔴 `place_slots` は **実際のフィールドの馬数**から取る（`races.head_count` は
-        #    発走前 NULL で配信時に壊れる）。ヘッドが読めない / n<5 で複勝が
-        #    成立しない場合は Harville（v27 と同じ）へ落ちる。
+        # 🔴 `place_slots` は **`results`（= `race_entries` の全馬）の数**から取る
+        #    （`races.head_count` は発走前 NULL で配信時に壊れる）。学習側も同じ集合で
+        #    数える（`train_jra_iswin_head.attach_serving_field`）。ヘッドが読めない /
+        #    n<5 で複勝が成立しない場合は Harville（v27 と同じ）へ落ちる。
         calib_place: list[float] | None = None
         placed_model = _load_v28_placed_model()
         slots = place_slots_for_field(len(results))

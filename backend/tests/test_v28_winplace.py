@@ -443,3 +443,262 @@ async def test_serve_uses_field_size_when_head_count_is_null() -> None:
     assert len(feats) == _N
     assert all(f["pace_handicap_pit"] is not None for f in feats.values())
     assert C.place_slots_for_field(len(horses)) == 3
+
+
+# ---------------------------------------------------------------------------
+# 6. 🔴 取消馬がいるレースでの train/serve 一致（レビュー指摘1+2・2026-09-04）
+# ---------------------------------------------------------------------------
+#
+# `test_train_and_serve_build_identical_38_columns` は両経路に**同じ馬リスト**を
+# 渡しているので、この skew を検出できない。実際の学習は
+# `build_population`（`abnormality_code ∈ {1,2}` と `finish_position` NULL/≤0 を除去）
+# を通った行だけを持ち、配信は `race_entries` の全馬を持つ。
+#
+# レース単位の量（`place_slots` と `pace_type`）をどちらの集合から決めるかで
+# 結果が変わる。ここでは
+#
+#   学習経路 = 取消2頭を含む9頭で文脈を決め、ラベル行だけ7頭に絞る
+#   配信経路 = 9頭全部
+#
+# として、生き残った7頭の38列が**完全に一致する**ことを固定する。
+
+# ⚠️ `head_count` は 34列側の特徴（index 18）で、v26 から続く**別の** train/serve 差を
+#    持つ（学習は `races.head_count` の生値 / 配信は NULL のとき `len(results)`）。
+#    本テストは v28 が持ち込んだフィールド定義の差だけを見たいので、ここでは
+#    両経路が同じ値になるよう実数を置く。`head_count` の差は本 PR の対象外
+#    （v27 も同じ挙動。報告に残してある）。
+_SCR_RACE = dict(date="20260215", course="05", head_count=9, distance=1800,
+                 surface="芝", condition="良", grade="G3")
+
+# 9頭。index 0,1 が取消（abnormality_code=1）で、この2頭だけが escape。
+# 全9頭: escape2 + leader1 → indicator 2.5 → **fast**
+# 完走7頭: escape0 + leader1 → indicator 0.5 → **slow**
+# ⇒ フィールドの取り方を間違えると `pace_handicap_pit` がレース全馬で 10 点動く。
+# place_slots も 9頭→3 / 7頭→2 と変わる。
+_SCR_PASSING = [2, 2, 5, 8, 8, 8, 8, 8, 8]      # /14 → escape, escape, leader, mid×6
+_SCR_ABNORMAL = [1, 1, 0, 0, 0, 0, 0, 0, 0]
+
+
+def _scr_horses() -> list[dict]:
+    rng = np.random.default_rng(11)
+    rows = []
+    for i in range(9):
+        r = {"horse_id": 200 + i, "horse_number": i + 1,
+             "frame_number": i // 2 + 1, "horse_age": 3 + (i % 4),
+             "weight_carried": 55.0 + i * 0.5, "horse_weight": 470 + i * 2,
+             "weight_change": i - 3,
+             "jvan_time_dm": 44.0 + i, "jvan_battle_dm": 46.0 + i,
+             "abnormality_code": _SCR_ABNORMAL[i],
+             # 取消馬は着順が無い（本番の `race_results` と同じ形）
+             "finish_position": None if _SCR_ABNORMAL[i] else float(i - 1)}
+        for c in _SUBINDEX_DB_COLS:
+            r[c] = float(round(rng.uniform(30, 70), 1))
+        rows.append(r)
+    return rows
+
+
+def _scr_past_rows(horses: list[dict]) -> list[dict]:
+    """全馬に同じ形の過去走を6走ずつ与える（脚質だけ `_SCR_PASSING` で分ける）。"""
+    rows = []
+    for i, h in enumerate(horses):
+        for k in range(6):
+            rows.append({
+                "horse_id": h["horse_id"], "race_id": 800 + k,
+                "date": f"20251{k % 2}{10 + k:02d}",
+                "finish_position": float((i + k) % 12 + 1),
+                "passing_4": float(_SCR_PASSING[i]),
+                "head_count": 14.0,
+            })
+    return rows
+
+
+def _scr_raw_df(horses: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"race_id": 2, "date": _SCR_RACE["date"], "course": _SCR_RACE["course"],
+         "head_count": _SCR_RACE["head_count"], "distance": _SCR_RACE["distance"],
+         "surface": _SCR_RACE["surface"], "condition": _SCR_RACE["condition"],
+         "grade": _SCR_RACE["grade"], **h}
+        for h in horses
+    ])
+
+
+def _scr_train_df() -> pd.DataFrame:
+    """学習経路。🔴 **本番の `build_v28_frame` をそのまま通す**（順序を写経しない）。"""
+    from scripts.train_jra_iswin_head import build_v28_frame
+
+    horses = _scr_horses()
+    return build_v28_frame(
+        _scr_raw_df(horses), _FakeConn(_scr_past_rows(horses)), end="20260215"
+    )
+
+
+def _scr_train_df_old_order() -> pd.DataFrame:
+    """🔴 **修正前**の順序（`build_population` → `attach_past_form`）を再現する。
+
+    このテストが回帰を検出できることを示すためだけに置いてある。
+    本番コードはこの順序を通らない。
+    """
+    from scripts.jra_prob_scoring import build_population
+    from scripts.train_jra_iswin_head import attach_past_form
+    from scripts.train_jra_out_rate import featurize as prod_featurize
+
+    horses = _scr_horses()
+    df = prod_featurize(_scr_raw_df(horses))
+    df = build_population(df)
+    df = attach_past_form(df, _FakeConn(_scr_past_rows(horses)), end="20260215")
+    return df.reset_index(drop=True)
+
+
+async def _scr_serve_df() -> tuple[np.ndarray, list[int], int]:
+    """配信経路。`race_entries` の全馬（9頭）で 38列を作る。"""
+    from src.indices.past_form import build_past_form_features_for_race
+
+    horses = _scr_horses()
+    results = [
+        {"horse_id": h["horse_id"],
+         **{k: h[c] for k, c in zip(_SUBINDEX_SERVE_KEYS, _SUBINDEX_DB_COLS)}}
+        for h in horses
+    ]
+    race = SimpleNamespace(id=2, **_SCR_RACE)
+    entries = {
+        h["horse_id"]: SimpleNamespace(
+            frame_number=h["frame_number"], horse_age=h["horse_age"],
+            weight_carried=h["weight_carried"], horse_weight=h["horse_weight"],
+            jvan_time_dm=h["jvan_time_dm"], jvan_battle_dm=h["jvan_battle_dm"])
+        for h in horses
+    }
+    wc = {h["horse_id"]: h["weight_change"] for h in horses}
+    x26 = C._build_v26_features(results, race, entries, wc)
+
+    ordered = sorted(_scr_past_rows(horses), key=lambda r: r["date"], reverse=True)
+    ordered = sorted(ordered, key=lambda r: r["horse_id"])
+    rows = [
+        SimpleNamespace(
+            RaceResult=SimpleNamespace(
+                horse_id=r["horse_id"], race_id=r["race_id"],
+                finish_position=r["finish_position"], passing_4=r["passing_4"]),
+            Race=SimpleNamespace(date=r["date"], head_count=r["head_count"]),
+        )
+        for r in ordered
+    ]
+    course_row = SimpleNamespace(
+        straight_distance=_COURSE_ROW[1], corner_tightness=_COURSE_ROW[2],
+        start_to_corner_m=_COURSE_ROW[3])
+    db = AsyncMock()
+    db.execute.side_effect = [
+        SimpleNamespace(all=lambda: rows),
+        SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: course_row)),
+    ]
+    feats = await build_past_form_features_for_race(
+        db, race=race, horse_ids=[r["horse_id"] for r in results]
+    )
+    x38 = C._build_v28_features(x26, results, feats)
+    return x38, [r["horse_id"] for r in results], C.place_slots_for_field(len(results))
+
+
+class TestScratchedHorseFieldSkew:
+    def test_fixture_actually_has_scratched_horses(self) -> None:
+        """この fixture が本当に「取消がいて頭数が変わる」形であること。"""
+        from scripts.jra_prob_scoring import build_population
+        from scripts.train_jra_out_rate import featurize as prod_featurize
+
+        raw = prod_featurize(_scr_raw_df(_scr_horses()))
+        assert len(raw) == 9
+        assert len(build_population(raw)) == 7
+        # 🔴 枠数まで変わるケース（実測 0.863% のレースで起きる型）
+        assert C.place_slots_for_field(9) == 3
+        assert C.place_slots_for_field(7) == 2
+
+    async def test_train_and_serve_agree_when_a_horse_is_scratched(self) -> None:
+        """🔴 学習=完走馬7行 / 配信=エントリー9頭 で、共通の7頭の38列が一致すること。"""
+        train = _scr_train_df()
+        serve_x, serve_ids, serve_slots = await _scr_serve_df()
+
+        assert len(train) == 7 and serve_x.shape == (9, 38)
+        idx = {hid: i for i, hid in enumerate(serve_ids)}
+        serve_sub = serve_x[[idx[int(h)] for h in train["horse_id"]], :]
+        train_x = train[C.V28_FEATURE_NAMES].to_numpy(dtype=float)
+
+        np.testing.assert_array_equal(np.isnan(train_x), np.isnan(serve_sub))
+        np.testing.assert_allclose(
+            np.nan_to_num(train_x, nan=-12345.0), np.nan_to_num(serve_sub, nan=-12345.0),
+            rtol=0, atol=0,
+        )
+        # place_slots も配信と一致する（完走数 7 の 2 ではなく、エントリー数 9 の 3）
+        assert serve_slots == 3
+        assert set(train["place_slots"]) == {3}
+        assert set(train["place_slots_finishers"]) == {2}  # 払戻規則側は 2（代償）
+
+    async def test_old_order_would_have_been_caught(self) -> None:
+        """🔴 このテストが**回帰を検出できる**ことを固定する。
+
+        修正前の順序（`build_population` → `attach_past_form`）だと、
+        `pace_type` が fast → slow に変わって `pace_handicap_pit` がレース全馬で動く。
+        つまり上のテストは素通りしない。
+        """
+        old = _scr_train_df_old_order()
+        serve_x, serve_ids, _ = await _scr_serve_df()
+        idx = {hid: i for i, hid in enumerate(serve_ids)}
+        serve_sub = serve_x[[idx[int(h)] for h in old["horse_id"]], :]
+        old_x = old[C.V28_FEATURE_NAMES].to_numpy(dtype=float)
+
+        i_pace = C.V28_FEATURE_NAMES.index("pace_handicap_pit")
+        assert not np.allclose(old_x[:, i_pace], serve_sub[:, i_pace])
+        # 旧実装は完走数からしか枠数を作れなかった
+        assert C.place_slots_for_field(int(old["n_runners"].iloc[0])) == 2
+
+    def test_pace_type_flips_when_the_field_is_defined_wrong(self) -> None:
+        """レース単位の `pace_type` が「取消を含むか」で反転することを実測で示す。"""
+        from src.indices.past_form import predict_pace_type
+
+        all9 = ["escape", "escape", "leader"] + ["mid"] * 6
+        fin7 = ["leader"] + ["mid"] * 6
+        assert predict_pace_type(all9) == "fast"
+        assert predict_pace_type(fin7) == "slow"
+
+
+# ---------------------------------------------------------------------------
+# 7. inference_v28 の安全側の作り（レビュー指摘3・4）
+# ---------------------------------------------------------------------------
+
+
+class TestInferenceV28Safety:
+    def test_visual_check_falls_back_to_harville_for_small_field(self, capsys) -> None:
+        """🔴 5頭未満（slots=0）が範囲の先頭に来ても IndexError にならないこと。
+
+        `normalize_place_to_slots` は `place_slots <= 0` で `[]` を返すので、
+        本ループと同じ Harville フォールバックが無いと `place_p[i]` で落ちる。
+        """
+        from scripts.inference_v28 import _visual_check
+
+        n = 4                                      # 4頭立て ⇒ place_slots_for_field=0
+        df = pd.DataFrame({
+            "race_id": [1] * n, "date": ["20260215"] * n,
+            "horse_number": range(1, n + 1),
+            "runner_type_ord": [0.0, 1.0, 2.0, np.nan],
+            "finish_var5": [1.0, 2.0, np.nan, np.nan],
+            "win_place_ratio5": [0.5, 0.25, np.nan, np.nan],
+            "pace_handicap_pit": [55.0, 60.0, 65.0, 70.0],
+            "_win_raw": [0.4, 0.3, 0.2, 0.1],
+            "_placed_raw": [0.8, 0.6, 0.4, 0.2],
+            "_out": [0.2, 0.4, 0.6, 0.8],
+        })
+        assert C.place_slots_for_field(n) == 0
+        _visual_check(df)                          # 例外が出ないこと
+        out = capsys.readouterr().out
+        assert "Harville" in out
+
+    def test_limit_races_forces_dry_run(self, monkeypatch) -> None:
+        """🔴 `--limit-races` 指定時は DB 書き込みに進まないこと。
+
+        DELETE は `--start`/`--end` の全範囲を対象にするので、絞ったまま書くと
+        v28 世代がほぼ全消しになる（指摘3）。
+        """
+        import scripts.inference_v28 as inf
+
+        src = Path(inf.__file__).read_text(encoding="utf-8")
+        # 実装が「--limit-races → dry_run を立てる」形であることを固定する
+        assert "if args.limit_races and not args.dry_run:" in src
+        assert "args.dry_run = True" in src
+        # DELETE より前に dry-run の早期 return があること
+        assert src.index("dry-run のため DB 更新はスキップ") < src.index("DELETE FROM keiba.calculated_indices")

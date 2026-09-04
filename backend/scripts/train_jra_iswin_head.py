@@ -88,6 +88,7 @@ from src.indices.composite import (  # noqa: E402
     OUT_PROB_FEATURE_NAMES,
     SUBINDEX_SOURCE_SQL,
     V28_FEATURE_NAMES,
+    place_slots_for_field,
 )
 from src.indices.past_form import (  # noqa: E402
     CourseFeature,
@@ -164,13 +165,77 @@ def _query(conn: object, sql: str, params: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-def attach_past_form(df: pd.DataFrame, conn: object, *, end: str) -> pd.DataFrame:
+def attach_serving_field(df: pd.DataFrame) -> pd.DataFrame:
+    """🔴 レース単位の「フィールド」を**配信条件（エントリー全馬）**で定義する。
+
+    ## なぜエントリー全馬なのか（2026-09-04・PR #462 のレビュー指摘1+2）
+
+    v28 の最初の実装は、レース単位の量（`place_slots` と `pace_handicap_pit` の
+    `pace_type`）を **`build_population` 後の行**＝ `abnormality_code ∈ {1,2}`
+    （取消・除外）と `finish_position` NULL/≤0 を落とした**完走馬だけ**で決めていた。
+    ところが配信側 `composite.calculate_and_save` は `race_entries` の**全馬**で決める。
+
+    🔴 **配信は取消を物理的に知り得ない。** `race_entries` に取消を示す列は無く、
+    `abnormality_code` は `race_results`＝レース確定後にしか存在しない。
+    したがって「配信を学習に合わせる」ことはできない。**学習を配信に合わせる。**
+
+    実測（JRA 11,592レース）:
+
+    | 事象 | 件数 | 割合 |
+    |---|---|---|
+    | エントリー数 ≠ 完走数 | 1,293 | **11.15%**（差 +1 が 1,112 / +2 が 107 / +3 が 16 / +5 が 1） |
+    | そのうち `place_slots` が変わる | 100 | **0.863%** |
+
+    エントリー数で決めると 11.15% のレースで `pace_type` の skew が消える
+    （`pace_type` はレース単位なので、ずれると `PACE_SCORE_TABLE` 経由で
+    **そのレース全馬**の `pace_handicap_pit` が動く）。
+    代償は 0.863% のレースでラベルが払戻規則（出走頭数≥8 で3着まで）とずれること。
+    **11.15% を消すほうが桁で大きい**という判断（ユーザー決定・2026-09-04）。
+
+    ## 🔴 文脈とラベルを分離する
+
+    - **文脈（レース単位の量）= エントリー全馬**: `place_slots` / `pace_type` /
+      `field_head_count`。この関数が付ける `n_entries` / `place_slots` がそれ
+    - **ラベルに使う行 = 完走馬のみ**: `jra_prob_scoring.build_population` が
+      従来どおり `abnormality_code ∈ {1,2}` と `finish_position` NULL/≤0 を落とす
+
+    つまり `attach_serving_field` → `attach_past_form` → `build_population` の順に
+    通す。`build_population` は `place_slots` を完走数から作り直すので、
+    `load_v28_dataset` がそのあと `place_slots`（配信条件）で上書きし、
+    完走数側は `place_slots_finishers` として残して監視に使う。
+
+    Args:
+        df: `build_population` を**掛ける前**の DataFrame（`race_id` を持つこと）。
+            1行 = 1エントリー（`race_entries` × `calculated_indices` の JOIN 結果）。
+
+    Returns:
+        `n_entries` / `place_slots` を足した DataFrame。
+    """
+    out = df.copy()
+    n_entries = out.groupby("race_id")["race_id"].transform("size")
+    out["n_entries"] = n_entries.astype(int)
+    out["place_slots"] = [place_slots_for_field(int(v)) for v in out["n_entries"]]
+    return out
+
+
+def attach_past_form(
+    df: pd.DataFrame,
+    conn: object,
+    *,
+    end: str,
+    store: PastRunStore | None = None,
+    course_features: dict[str, CourseFeature] | None = None,
+) -> pd.DataFrame:
     """🔴 v28 の新特徴4列を `past_form` モジュール経由で付ける（**別実装をしない**）。
 
-    フィールド（= `pace_handicap_pit` の `pace_type` を決める馬の集合）は
-    **`build_population` 後のレース内の行**にする。配信側は
-    `composite.calculate_and_save` の `results`（= そのレースの出走馬）を渡すので、
-    どちらも「そのレースで確率を正規化する集合」で一致する。
+    🔴 **フィールド（= `pace_handicap_pit` の `pace_type` を決める馬の集合）は
+    「そのレースのエントリー全馬」にする。** つまり `build_population` を掛ける
+    **前**の df をこの関数に渡すこと（`attach_serving_field` の docstring を参照）。
+    配信側は `composite.calculate_and_save` の `results` ＝ `race_entries` の全馬を
+    渡すので、これで両者が同じ集合になる。
+
+    ⚠️ 掛ける順序を `build_population` → `attach_past_form` に戻すと、
+    11.15% のレースで `pace_type` が配信とずれる（レビュー指摘1+2 の再発）。
 
     `RaceContext.head_count` には `races.head_count` を渡す（検証実装
     `jra_winplace_feature_ab._pace_handicap_pit` と同一）。これは
@@ -179,17 +244,21 @@ def attach_past_form(df: pd.DataFrame, conn: object, *, end: str) -> pd.DataFram
     🔴 **`place_slots` はここから作らない**（`head_count` は発走前 NULL）。
 
     Args:
-        df: `build_population` 済みの DataFrame（`race_id` / `horse_id` / `date` /
-            `course` / `head_count` を持つこと）。
-        conn: psycopg2 の接続。
+        df: `build_population` を**掛ける前**の DataFrame（`race_id` / `horse_id` /
+            `date` / `course` / `head_count` を持つこと）。
+        conn: psycopg2 の接続。`store` と `course_features` を両方渡すなら未使用。
         end: 過去走の取得範囲の上限 `YYYYMMDD`。**PIT の保証ではない**
             （PIT は `PastRunStore.before` の `date <` が担う）。
+        store: 事前に作った過去走の索引（A/B 比較で使い回す用。既定は毎回ロード）。
+        course_features: 事前に引いたコース特性（同上）。
 
     Returns:
         `PAST_FORM_FEATURE_NAMES` の4列（欠損は NaN）と `runner_type` を足した DataFrame。
     """
-    store: PastRunStore = load_past_run_store(conn, end_date=end)
-    course_features: dict[str, CourseFeature] = load_course_features(conn)
+    if store is None:
+        store = load_past_run_store(conn, end_date=end)
+    if course_features is None:
+        course_features = load_course_features(conn)
 
     race_fields = []
     for race_id, g in df.groupby("race_id", sort=False):
@@ -229,8 +298,22 @@ def load_v28_dataset(start: str, end: str) -> pd.DataFrame:
     `train_jra_placed_head.py` もこの関数を呼ぶ。2本のヘッドが別々にデータを
     組み立てると、そこだけ挙動がずれうるため。
 
+    ## 🔴 文脈はエントリー全馬・ラベルは完走馬のみ（レビュー指摘1+2・2026-09-04）
+
+    順序に意味がある。**変えないこと。**
+
+        prod_featurize        … 34列の変換（本番 `_build_v26_features` と同一）
+        attach_serving_field  … n_entries / place_slots を**エントリー全馬**から
+        attach_past_form      … pace_type も**エントリー全馬**から（この前に絞らない）
+        build_population      … ここではじめてラベル行（完走馬）に絞る
+
+    `build_population` は `place_slots` を完走数から作り直すので、そのあと
+    配信条件（エントリー数）の値で上書きし、完走数側は `place_slots_finishers`
+    に退避する（`train_jra_placed_head.sanity_check_place_slots` が両者の差を記録する）。
+
     Returns:
-        38特徴（`V28_FEATURE_NAMES`）+ `place_slots` / `n_runners` / `finish_position`
+        38特徴（`V28_FEATURE_NAMES`）+ `place_slots`（**エントリー数から**）/
+        `place_slots_finishers` / `n_entries` / `n_runners` / `finish_position`
         / `date` / `race_id` / `horse_id` を持つ DataFrame。
     """
     conn = psycopg2.connect(dsn())
@@ -238,16 +321,46 @@ def load_v28_dataset(start: str, end: str) -> pd.DataFrame:
     raw = _query(conn, V28_FETCH_SQL, {"start": start, "end": end})
     raw["date"] = raw["date"].astype(str)
     logger.info("  %d行 / %dレース", len(raw), raw["race_id"].nunique())
-
-    df = prod_featurize(raw)      # 🔴 本番 `_build_v26_features` と同一の変換（fillna(50.0)）
-    df = build_population(df)     # 🔴 検証と同一の母集団（+ n_runners / place_slots）
-
-    logger.info("過去走由来の新特徴を生成（past_form モジュール経由）...")
-    df = attach_past_form(df, conn, end=end)
+    df = build_v28_frame(raw, conn, end=end)
     conn.close()
 
     miss = {c: round(float(df[c].isna().mean() * 100), 2) for c in NEW_FEATURE_NAMES}
     logger.info("新特徴の欠損率(%%): %s （🔴 NaN のまま学習に渡す）", miss)
+    return df
+
+
+def build_v28_frame(
+    raw: pd.DataFrame,
+    conn: object,
+    *,
+    end: str,
+    store: PastRunStore | None = None,
+    course_features: dict[str, CourseFeature] | None = None,
+) -> pd.DataFrame:
+    """🔴 生の DB 行 → 学習用の DataFrame。**順序が正本**（`load_v28_dataset` の中身）。
+
+    DB 接続から切り離してあるのは、`tests/test_v28_winplace.py` が擬似接続で
+    **この関数そのもの**を通せるようにするため。テストが順序を写経すると、
+    そこだけ本番とずれても誰も気付かない。
+
+    Args:
+        raw: `V28_FETCH_SQL` の結果（1行 = 1エントリー・`date` は str）。
+        conn: psycopg2 互換の接続（`store` / `course_features` を渡すなら未使用）。
+        end: 過去走の取得範囲の上限。
+        store / course_features: 事前構築ぶんの使い回し（任意）。
+    """
+    df = prod_featurize(raw)         # 🔴 本番 `_build_v26_features` と同一の変換（fillna(50.0)）
+    df = attach_serving_field(df)    # 🔴 レース単位の量は**エントリー全馬**から（配信条件）
+    df = attach_past_form(df, conn, end=end, store=store, course_features=course_features)
+
+    # 🔴 ここではじめてラベル行に絞る（`abnormality_code ∈ {1,2}` / finish_position NULL・≤0）
+    n_before = len(df)
+    df["_place_slots_entries"] = df["place_slots"]        # build_population が上書きするので退避
+    df = build_population(df)        # n_runners と「完走数ベースの place_slots」を付ける
+    df["place_slots_finishers"] = df["place_slots"]       # 払戻規則そのもの（監視用）
+    df["place_slots"] = df.pop("_place_slots_entries")    # 🔴 学習が使うのは配信条件のほう
+    logger.info("母集団: %d行 → %d行（ラベル行のみ。文脈はエントリー全馬のまま）",
+                n_before, len(df))
     return df.reset_index(drop=True)
 
 
@@ -322,6 +435,9 @@ def main() -> None:
                    help="本番モデルを refit する終端。既定は TEST_START の前日。"
                         "TEST を学習に含めると一度きり評価が in-sample になる")
     p.add_argument("--seeds", default="42,123,456")
+    p.add_argument("--skip-honest-test", action="store_true",
+                   help="🔴 TEST 窓での honest test を省く。TEST 窓を既に消費した後に "
+                        "実装の修正でモデルだけ作り直すときに使う（refit 境界は不変）")
     args = p.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
     logger.info("protocol: %s", jra_protocol.describe())
@@ -334,6 +450,11 @@ def main() -> None:
     tr = df[df["date"] <= args.train_end]
     va = df[(df["date"] > args.train_end) & (df["date"] <= args.valid_end)]
     te = df[df["date"] > args.valid_end].reset_index(drop=True)
+    if args.skip_honest_test:
+        # 🔴 TEST 窓（`jra_protocol.TEST_START` 以降）に一切触らない。
+        #    ラウンド選択は VAL の early stopping だけで行うので影響しない
+        logger.warning("--skip-honest-test: TEST 窓 %d行を評価に使わない", len(te))
+        te = te.iloc[0:0]
     logger.info("train=%d valid=%d test=%d", len(tr), len(va), len(te))
     if not len(tr) or not len(va):
         raise SystemExit("train / valid が空。--start / --train-end / --valid-end を確認すること")
@@ -396,6 +517,8 @@ def main() -> None:
                     te["date"].min(), te["date"].max(), te["race_id"].nunique(),
                     cm_norm["ece"], top["p"].mean(), top["y"].mean())
         visual_check(te, raw_te, "honest test / is_win v28")
+    elif args.skip_honest_test:
+        metrics["honest_test"] = "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json"
     else:
         logger.warning("test 期間にデータなし（TEST_START=%s）", jra_protocol.TEST_START)
 

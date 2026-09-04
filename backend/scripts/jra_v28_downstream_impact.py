@@ -123,7 +123,16 @@ WINDOWS: list[tuple[str, str, str]] = [
     ("2026Q3", "20260701", "20260830"),
 ]
 
-# 本番 v27 の指数を引く（composite_index は v28 でも**変えない**設計＝両腕で共通）
+# 🔴 **本番 v27 の指数**を引く（このスクリプトは v27 を prod 腕として使う）。
+#    composite_index は v28 でも変えない設計なので、両腕がこの同じ v27 行を共有する。
+#
+# ⚠️ ここに `COMPOSITE_VERSION` を書いてはいけない。本 PR で 27 → 28 に上がったため、
+#    `COMPOSITE_VERSION` を使うと「まだ DB に存在しない v28 行」を引きに行き、
+#    v27 指数が 1 行も取れず全レースが落ちて 0 件になる（レビュー指摘5）。
+#    「学習ソースの版を固定しない」（`composite.SUBINDEX_SOURCE_SQL`）とは逆で、
+#    **比較の prod 腕は特定の版に固定するのが正しい**。両者を混同しないこと。
+PROD_CI_VERSION = 27
+
 CI_SQL = f"""
 SELECT ci.race_id, ci.horse_id, ci.composite_index,
        ci.speed_index, ci.adjusted_speed_index, ci.last_3f_index, ci.course_aptitude,
@@ -150,7 +159,13 @@ def attach_side_data(ev: pd.DataFrame, start: str, end: str,
                      max_lead_min: float) -> tuple[pd.DataFrame, dict, dict]:
     """評価行に v27 指数・発走前オッズを結合し、外部指数の辞書を返す。"""
     conn = _connect()
-    ci = _query(conn, CI_SQL, {"ver": COMPOSITE_VERSION, "start": start, "end": end})
+    ci = _query(conn, CI_SQL, {"ver": PROD_CI_VERSION, "start": start, "end": end})
+    if not len(ci):
+        conn.close()
+        raise SystemExit(
+            f"🔴 データ無し: calculated_indices に version={PROD_CI_VERSION} の行が "
+            f"{start}〜{end} に1件も無い。prod 腕（本番 v27 指数）が作れないので中止する"
+        )
     od = _query(conn, PRERACE_ODDS_SQL, {"courses": JRA_COURSES, "start": start,
                                          "end": end, "max_lead": max_lead_min})
     ext = fetch_external(conn, start, end)
@@ -387,6 +402,8 @@ def _rate(num: int, den: int) -> float | None:
 
 def summarize(recs: pd.DataFrame, odds_ok_only: bool) -> dict:
     """馬単位のレコードから下流指標を集計する。"""
+    if not len(recs):     # 列すら無い空 DataFrame が来ても KeyError にしない
+        return {"n_horses": 0, "n_races": 0, "note": "データ無し"}
     d = recs[recs["odds_ok"]] if odds_ok_only else recs
     out: dict[str, Any] = {"n_horses": int(len(d)), "n_races": int(d["race_id"].nunique())}
     if not len(d):
@@ -501,6 +518,8 @@ def summarize(recs: pd.DataFrame, odds_ok_only: bool) -> dict:
 
 
 def summarize_race_level(rl: pd.DataFrame, odds_ok_only: bool) -> dict:
+    if not len(rl):       # 列すら無い空 DataFrame が来ても KeyError にしない
+        return {"n_races": 0, "note": "データ無し"}
     d = rl[rl["odds_ok"]] if odds_ok_only else rl
     out: dict[str, Any] = {"n_races": int(len(d))}
     if not len(d):
@@ -611,7 +630,9 @@ def main() -> None:
             "windows": [w[0] for w in windows],
             "data_start": args.data_start, "seeds": seeds,
             "valid_days": args.valid_days, "max_lead_min": args.max_lead_min,
-            "composite_version_for_downstream": COMPOSITE_VERSION,
+            # 🔴 prod 腕は「本番 v27 の指数」で固定。COMPOSITE_VERSION（=28）ではない
+            "prod_ci_version": PROD_CI_VERSION,
+            "composite_version_in_code": COMPOSITE_VERSION,
             "frozen_thresholds": {
                 "HIGHODDS_MAX_PP_RANK": HIGHODDS_MAX_PP_RANK,
                 "tier_confidence_cuts": [65, 80],
@@ -671,6 +692,18 @@ def main() -> None:
         ci_ok = ev.groupby("race_id")[V27 + "composite_index"].transform(lambda s: s.notna().all())
         n_drop_races = int(ev.loc[~ci_ok, "race_id"].nunique())
         ev = ev[ci_ok].reset_index(drop=True)
+        # 🔴 空になったら「データ無し」と報告して次の窓へ。ここを素通りさせると
+        #    空の DataFrame に列が無く `KeyError: 'odds_ok'` という無関係な例外になる
+        if not len(ev):
+            logger.warning("  窓 %s: 🔴 データ無し（v%d 指数が引けた行が0件）。スキップする",
+                           label, PROD_CI_VERSION)
+            results["windows"][label] = {
+                "error": f"データ無し: calculated_indices の version={PROD_CI_VERSION} が"
+                         f"全レースで欠けている（{w_start}〜{w_end}）",
+                "races_dropped_missing_v27_composite": n_drop_races,
+                "odds": odds_info,
+            }
+            continue
 
         # --- 自己検査（Σ）---
         sums = ev.groupby("race_id").agg(
@@ -772,6 +805,9 @@ def main() -> None:
     print("=" * 120)
     for label in results["windows"]:
         w = results["windows"][label]
+        if "error" in w:      # データ無しでスキップした窓
+            print(f"\n── {label}  🔴 {w['error']}")
+            continue
         print(f"\n── {label}  評価 {w['eval']['date_min']}〜{w['eval']['date_max']} "
               f"{w['eval']['n_races']}R / {w['eval']['n_rows']}頭 "
               f"｜ 発走前オッズ全馬そろい {w['odds']['n_races_full_prerace_odds']}"

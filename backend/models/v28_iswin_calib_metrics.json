@@ -14,11 +14,11 @@
     456
   ],
   "best_iters": [
-    151,
-    150,
-    114
+    155,
+    170,
+    131
   ],
-  "refit_rounds": 150,
+  "refit_rounds": 155,
   "features": [
     "speed_index",
     "last_3f_index",
@@ -80,92 +80,7 @@
     "win_place_ratio5": 41.38,
     "pace_handicap_pit": 0.0
   },
-  "test": {
-    "period": [
-      "20260704",
-      "20260830"
-    ],
-    "n": 8443,
-    "n_races": 648,
-    "iswin_raw_ece": 0.014,
-    "iswin_norm_ece": 0.0065,
-    "iswin_norm_mce": 0.011,
-    "iswin_norm_brier": 0.0641,
-    "top1_mean_pred": 0.2816,
-    "top1_actual_win_rate": 0.2623,
-    "iswin_norm_reliability": [
-      {
-        "decile": 1,
-        "n": 845,
-        "pred_pct": 0.57,
-        "actual_pct": 0.24,
-        "gap_pct": -0.34
-      },
-      {
-        "decile": 2,
-        "n": 844,
-        "pred_pct": 1.16,
-        "actual_pct": 2.01,
-        "gap_pct": 0.86
-      },
-      {
-        "decile": 3,
-        "n": 844,
-        "pred_pct": 1.83,
-        "actual_pct": 1.66,
-        "gap_pct": -0.17
-      },
-      {
-        "decile": 4,
-        "n": 845,
-        "pred_pct": 2.68,
-        "actual_pct": 2.01,
-        "gap_pct": -0.67
-      },
-      {
-        "decile": 5,
-        "n": 844,
-        "pred_pct": 3.74,
-        "actual_pct": 2.96,
-        "gap_pct": -0.77
-      },
-      {
-        "decile": 6,
-        "n": 844,
-        "pred_pct": 5.18,
-        "actual_pct": 6.28,
-        "gap_pct": 1.1
-      },
-      {
-        "decile": 7,
-        "n": 845,
-        "pred_pct": 7.33,
-        "actual_pct": 8.05,
-        "gap_pct": 0.71
-      },
-      {
-        "decile": 8,
-        "n": 844,
-        "pred_pct": 10.75,
-        "actual_pct": 10.31,
-        "gap_pct": -0.44
-      },
-      {
-        "decile": 9,
-        "n": 844,
-        "pred_pct": 16.05,
-        "actual_pct": 16.71,
-        "gap_pct": 0.66
-      },
-      {
-        "decile": 10,
-        "n": 844,
-        "pred_pct": 27.47,
-        "actual_pct": 26.66,
-        "gap_pct": -0.81
-      }
-    ]
-  },
+  "honest_test": "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json",
   "model_path": "/Users/ysuzuki/GitHub/kiseki-wt/jra/v28-place-head/backend/models/v28_iswin_calib.txt",
   "refit_period": [
     "20230506",

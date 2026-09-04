@@ -29,9 +29,21 @@ Phase D-1 は一律 `<= 3` でラベルを作っていたため、5〜7頭立て
 `place_slots` に揃える。
 
 🔴 `place_slots` は **`races.head_count` から作らない**。`head_count` は発走前 NULL で
-配信時にだけ壊れる（地方で train/serve skew の前例あり）。**実際のフィールドの
-馬数**から作る — 学習は `jra_prob_scoring.build_population` が数えたレース内行数、
-配信は `composite.place_slots_for_field(len(results))`。**同じ関数の同じ規則**である。
+配信時にだけ壊れる（地方で train/serve skew の前例あり）。
+
+🔴 **`place_slots` は「そのレースのエントリー全馬の数」から作る**
+（2026-09-04・PR #462 のレビュー指摘1+2）。学習は
+`train_jra_iswin_head.attach_serving_field`（`build_population` を掛ける**前**の行数）、
+配信は `composite.place_slots_for_field(len(results))`（`race_entries` の全馬）。
+**同じ関数の同じ規則・同じ集合**である。
+
+⚠️ **代償を明記する。** 払戻規則は「**出走**頭数 ≥ 8 で3着まで」なので、取消が出て
+出走が 8 頭を割ったレースでは、学習ラベルが払戻規則とずれる。実測 **100/11,592 =
+0.863%**。一方でエントリー数を使わないと `pace_type` が **11.15%** のレースで
+配信とずれ、`PACE_SCORE_TABLE` 経由でそのレース**全馬**の `pace_handicap_pit` が動く。
+**0.863% を飲んで 11.15% を消す**（ユーザー決定・2026-09-04）。
+配信側は取消を物理的に知り得ない（`race_entries` に取消の列が無く `abnormality_code` は
+`race_results` ＝ 確定後にしか存在しない）ので、逆向きに揃える選択肢は無い。
 
 ## 正規化とクリップ
 
@@ -120,26 +132,66 @@ def drop_no_place_slots(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def sanity_check_place_slots(df: pd.DataFrame) -> dict:
-    """🔴 `place_slots` が **フィールドの馬数**から作られていることを実測で検査する。
+    """🔴 `place_slots` が**配信側と同じ集合**から作られていることを実測で検査する。
 
-    `races.head_count` から作ると発走前 NULL で壊れるため、
-    `build_population` が数えた `n_runners` と `composite.place_slots_for_field` の
-    規則が一致していることをここで固定する。ずれていれば即座に落ちる。
+    ⚠️ 旧実装は `place_slots == place_slots_for_field(n_runners)` しか見ていなかった。
+    `n_runners` は `build_population` が数えた**完走馬**の数なので、
+    「学習が完走馬で数えている」こと自体が素通りしていた
+    （検査が自分自身と突き合わせているだけだった）。
+
+    ここで見るのは **配信が使う頭数 = そのレースのエントリー数**（`n_entries`）と
+    一致していること。合わせて、払戻規則そのもの（完走数ベース）とどれだけずれるかを
+    **メトリクスに残す**。この乖離は「消した skew の代償」であって異常ではないので、
+    落とさずに数だけ記録する。
+
+    Args:
+        df: `train_jra_iswin_head.load_v28_dataset` の出力（`n_entries` /
+            `n_runners` / `place_slots` / `place_slots_finishers` を持つこと）。
+
+    Raises:
+        SystemExit: `place_slots` がエントリー数の規則と1行でもずれている場合。
     """
-    n = pd.to_numeric(df["n_runners"], errors="coerce").to_numpy()
+    for col in ("n_entries", "n_runners", "place_slots", "place_slots_finishers"):
+        if col not in df.columns:
+            raise SystemExit(
+                f"{col} 列が無い。load_v28_dataset を経由していない可能性がある"
+            )
+    n_entries = pd.to_numeric(df["n_entries"], errors="coerce").to_numpy()
+    n_runners = pd.to_numeric(df["n_runners"], errors="coerce").to_numpy()
     slots = pd.to_numeric(df["place_slots"], errors="coerce").to_numpy()
-    expect = np.asarray([place_slots_for_field(int(v)) for v in n])
+    slots_fin = pd.to_numeric(df["place_slots_finishers"], errors="coerce").to_numpy()
+
+    # 🔴 配信は `place_slots_for_field(len(results))`＝エントリー全馬。同じ値になること
+    expect = np.asarray([place_slots_for_field(int(v)) for v in n_entries])
     bad = int((expect != slots).sum())
     if bad:
         raise SystemExit(
-            f"place_slots が place_slots_for_field(n_runners) と {bad} 行で不一致"
+            f"place_slots が配信側の定義 place_slots_for_field(n_entries) と {bad} 行で不一致"
         )
+
+    per_race = df.groupby("race_id").agg(
+        n_entries=("n_entries", "first"), n_runners=("n_runners", "first"),
+        slots=("place_slots", "first"), slots_fin=("place_slots_finishers", "first"))
+    n_race = int(len(per_race))
+    field_diff = int((per_race["n_entries"] != per_race["n_runners"]).sum())
+    slots_diff = int((per_race["slots"] != per_race["slots_fin"]).sum())
+
     hc = pd.to_numeric(df["head_count"], errors="coerce").to_numpy()
-    hc_mismatch = int(np.nansum(hc != n))
     return {
-        "rule": "place_slots_for_field(n_runners): n>=8→3 / 5<=n<=7→2 / n<5→0",
-        "n_runners_source": "jra_prob_scoring.build_population（レース内の実行数）",
-        "rows_where_head_count_differs_from_n_runners": hc_mismatch,
+        "rule": "place_slots_for_field(n_entries): n>=8→3 / 5<=n<=7→2 / n<5→0",
+        "n_entries_source": "🔴 build_population を掛ける**前**のレース内行数"
+                            "（= 配信の race_entries 全馬。取消・除外を含む）",
+        "n_runners_source": "jra_prob_scoring.build_population 後の完走馬の数（監視用）",
+        "n_races": n_race,
+        "races_where_n_entries_differs_from_n_runners": field_diff,
+        "races_where_n_entries_differs_pct": round(100 * field_diff / max(1, n_race), 3),
+        "races_where_place_slots_differs_from_payout_rule": slots_diff,
+        "races_where_place_slots_differs_pct": round(100 * slots_diff / max(1, n_race), 3),
+        "place_slots_deviation_note":
+            "🔴 払戻規則は「出走頭数」基準なので、この件数ぶんラベルが規則とずれる。"
+            "配信は取消を知り得ないため意図的に飲んでいる代償（モジュール docstring 参照）",
+        "rows_where_head_count_differs_from_n_runners": int(np.nansum(hc != n_runners)),
+        "rows_where_head_count_differs_from_n_entries": int(np.nansum(hc != n_entries)),
         "slots_distribution": {
             str(int(k)): int(v) for k, v in pd.Series(slots).value_counts().items()
         },
@@ -165,6 +217,9 @@ def main() -> None:
     p.add_argument("--valid-end", default=jra_protocol.VAL_END)
     p.add_argument("--refit-end", default=jra_protocol.TRAIN_DATA_END)
     p.add_argument("--seeds", default="42,123,456")
+    p.add_argument("--skip-honest-test", action="store_true",
+                   help="🔴 TEST 窓での honest test を省く。TEST 窓を既に消費した後に "
+                        "実装の修正でモデルだけ作り直すときに使う（refit 境界は不変）")
     p.add_argument("--no-harville-baseline", action="store_true",
                    help="honest test の Harville ベースライン（is_win ヘッドの学習が要る）を省く")
     args = p.parse_args()
@@ -178,6 +233,10 @@ def main() -> None:
     tr_all = df[df["date"] <= args.train_end]
     va_all = df[(df["date"] > args.train_end) & (df["date"] <= args.valid_end)]
     te = df[df["date"] > args.valid_end].reset_index(drop=True)
+    if args.skip_honest_test:
+        # 🔴 TEST 窓（一度きり評価・§18 で消費済み）に一切触らない
+        logger.warning("--skip-honest-test: TEST 窓 %d行を評価に使わない", len(te))
+        te = te.iloc[0:0]
 
     # 🔴 place_slots=0 は学習からのみ除外する（評価対象にも入らない）
     tr, va = drop_no_place_slots(tr_all), drop_no_place_slots(va_all)
@@ -228,7 +287,9 @@ def main() -> None:
         norm = np.full(len(te), np.nan)
         n_clipped = 0
         for _, idx in te.groupby("race_id", sort=False).indices.items():
-            slots = place_slots_for_field(len(idx))
+            # 🔴 `len(idx)` は完走馬の数。配信は**エントリー数**で枠数を決めるので、
+            #    `load_v28_dataset` が付けた `place_slots`（エントリー基準）を使う
+            slots = int(te["place_slots"].to_numpy()[idx[0]])
             if slots <= 0:
                 continue
             vals = normalize_place_to_slots(raw_te[idx], slots)
@@ -265,6 +326,8 @@ def main() -> None:
                     metrics["test_sum_deviation_max"], n_clipped)
 
         visual_check(te)
+    elif args.skip_honest_test:
+        metrics["honest_test"] = "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json"
     else:
         logger.warning("test 期間にデータなし（TEST_START=%s）", jra_protocol.TEST_START)
 
