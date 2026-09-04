@@ -79,7 +79,8 @@ from src.netkeirin_client import (                           # noqa: E402
     NetkeirinClient,
 )
 from src.notify.discord import send                          # noqa: E402
-from src.confident_pick import start_time_jst                 # noqa: E402
+from src.confident_pick import (                             # noqa: E402
+    pick_best, start_time_jst, type_lab_confident_score)
 from src.stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS   # noqa: E402
 from src.submission_skips import (                           # noqa: E402
     CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
@@ -100,6 +101,7 @@ from src.type_lab_submission import build_submission         # noqa: E402
 #    2箇所に分かれる。このリポジトリが繰り返し事故を起こした型。
 from scripts.netkeirin_submit_wt import (                    # noqa: E402
     ORIGIN_RANK,
+    resolve_act_type,
     REVIEW_URL,
     _already_submitted,
     _approval_required,
@@ -186,7 +188,9 @@ def _load_rows(day: str) -> list[dict]:
             "       t.p3_order,"
             "       t.mode, t.plan_key, t.bet_type, t.n_legs, t.budget, t.legs,"
             "       t.pred_mean_payout, t.pred_min_payout, t.rule_version,"
-            "       t.generated_at, r.cup_grade"
+            # 🔴 発走時刻は「自信あり」の候補条件（18時前）に要る。
+            #    `type_lab_picks` に列が無いので `wt_races` から引く。
+            "       t.generated_at, r.cup_grade, r.start_at"
             "  FROM type_lab_picks t"
             "  LEFT JOIN wt_races r ON r.race_key = t.race_key"
             " WHERE t.race_date = ? AND t.mode IN (?, ?)",
@@ -317,21 +321,77 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
 _ALIVE_SUB = "COALESCE(s.status, 'submitted') <> 'deleted'"
 
 
-def _pick_confident(day: str) -> None:
-    """その日の「自信あり」を1件選ぶ（**朝だけ**・入稿と公開のあと）。
+def _plan_attempts(decided, cap_budget, exempt) -> list[dict]:
+    """この回で入稿を**試みる**行を、入稿ループと同じ順序・同じ条件で並べる。
 
-    🔴 **入稿通知より前に呼ぶ**（2026-09-04・ユーザー指示「入稿通知に自信ありの
-       レースと発走時刻を出す」）。以前は `type_lab_daily.sh` が入稿スクリプトの
-       *あと*に呼んでいたので、通知の時点ではまだ1件も立っておらず
-       **必ず「なし」になってしまう**。順序（入稿 → 公開 → 選定）は変えていない。
-    🔴 **昼・夕では呼ばない**（当日2回目を選ぶと「1日1件」が壊れる）。
-    🔴 **失敗しても入稿は成功している。** 通知と同じ扱いで、例外はログだけ残す。
+    ⚠️ 「全部成功する」前提の**近似**（実際に失敗すると同じレースの次のプランが
+       試され、上限の消費もずれる）。使うのは「自信あり」の**候補を作るためだけ**で、
+       DB へ書くのは実際にアイコン付きで入稿できた行だけ（`_write_confident`）。
     """
+    seen: set[str] = set()
+    out: list[dict] = []
+    n_capped = 0
+    for row, rj in decided:
+        if rj is not None:
+            continue
+        rk = str(row["race_key"])
+        if rk in seen:
+            continue
+        if (cap_budget is not None and not exempt(row)
+                and n_capped >= cap_budget):
+            continue
+        out.append(row)
+        seen.add(rk)
+        if not exempt(row):
+            n_capped += 1
+    return out
+
+
+def _choose_confident(rows: list[dict]):
+    """入稿する行から「自信あり」を1件選ぶ。戻り値 `((race_key, plan_key)|None, {キー: EV})`。
+
+    🔴 判定は `src.confident_pick.type_lab_confident_score` が唯一の正本
+       （発走18時前 ∧ 合成3倍以上 の中で EV 最大）。ここは母集団を渡すだけ。
+    🔴 **入稿の前に呼ぶ**。netkeirin にアイコンが渡るのは入稿の瞬間だけなので、
+       あとから選んでも付けられない（2026-09-04 豊橋3R）。
+    """
+    scored = [(str(r["race_key"]), str(r["plan_key"]),
+               type_lab_confident_score(r.get("legs") or [], r.get("start_at")))
+              for r in rows]
+    ev = {(rk, pk): v for rk, pk, v in scored if v is not None}
+    best = pick_best(scored)
+    if best is None:
+        print(f"[type_lab_submit] 自信あり: 候補なし（対象 {len(rows)}件 / "
+              f"EV算出 {len(ev)}件）", flush=True)
+    else:
+        lab = {(str(r["race_key"]), str(r["plan_key"])):
+               f"{r['venue_name']}{r['race_no']}R({r['plan_key']})" for r in rows}
+        print(f"[type_lab_submit] 自信あり → {lab.get(best, best[0])} "
+              f"EV={ev.get(best, 0):.3f}（対象 {len(rows)}件 / EV算出 {len(ev)}件）",
+              flush=True)
+    return best, ev
+
+
+def _write_confident(day: str, done: tuple[str, str] | None, ev: dict) -> None:
+    """「自信あり」を DB へ記録する。**入稿できた行だけ** true にする。
+
+    🔴 先に当日を全部 false にする（1日1件はこの2文で担保する。
+       `pick_confident_race_wt.pick` と同じ形）。
+    🔴 失敗しても入稿は完了しているので例外は握り潰す。
+    """
+    ymd = day.replace("-", "")
     try:
-        from scripts.pick_confident_race_wt import pick
-        pick(day)
-    except Exception as e:      # noqa: BLE001 — 選定は付随処理
-        print(f"[type_lab_submit] 自信ありの選定に失敗（入稿は完了している）: {e!r}",
+        with get_connection() as conn:
+            conn.execute("UPDATE netkeirin_submissions SET is_confident = FALSE "
+                         "WHERE race_key LIKE ?", (f"{ymd}%",))
+            for (rk, pk), v in ev.items():
+                conn.execute("UPDATE netkeirin_submissions SET confident_ev = ? "
+                             "WHERE race_key = ? AND rank_key = ?", (v, rk, pk))
+            if done:
+                conn.execute("UPDATE netkeirin_submissions SET is_confident = TRUE "
+                             "WHERE race_key = ? AND rank_key = ?", done)
+    except Exception as e:      # noqa: BLE001 — 記録は付随処理
+        print(f"[type_lab_submit] 自信ありの記録に失敗（入稿は完了している）: {e!r}",
               flush=True)
 
 
@@ -544,8 +604,11 @@ def _print_detail(row: dict, sub: dict, detail: str) -> None:
 
 def submit_row(row: dict, session: str, client: NetkeirinClient | None,
                dry_run: bool, show_detail: bool = False,
-               skip=None) -> tuple[bool, str]:
-    """1行を入稿する。戻り値 (入稿したか, メッセージ)。"""
+               skip=None, confident: bool = False) -> tuple[bool, str]:
+    """1行を入稿する。戻り値 (入稿したか, メッセージ)。
+
+    `confident=True` なら勝負アイコンを「自信あり」にする（1日1件・`run` が決める）。
+    """
     race_key = str(row["race_key"])
     plan = str(row["plan_key"])
     venue = str(row["venue_name"] or "?")
@@ -563,7 +626,12 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
     entry_html = _build_entry_table(race_key, marks)
     sub = build_submission(row, entry_html)
 
-    act_type = ACT_TYPE_BY_PLAN.get(plan, ACT_TYPE_DEFAULT)
+    # 🔴 **「自信あり」はここで決める**（2026-09-04）。netkeirin へアイコンが渡るのは
+    #    `submit_pick_multi` の瞬間だけなので、**入稿より後に選ぶと永久に付かない**。
+    #    2026-09-04 の実測: 豊橋3R は 07:12:57 に入稿・07:12:59 に公開され、
+    #    `is_confident` が立ったのはその後だったため netkeirin にはアイコンが無かった。
+    act_type = resolve_act_type(None, confident,
+                                ACT_TYPE_BY_PLAN.get(plan, ACT_TYPE_DEFAULT))
     # 🔴 **アイコンを買い目と一緒に保存する。** 承認制では入稿時ではなく
     #    承認時に netkeirin へ送るので、ここで渡した `act_type` は使われない。
     #    `approve_and_submit` が `bet_detail` からこれを読む。
@@ -782,6 +850,20 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         #    倒す向きを揃える。⚠️ 2026-09-01 に逆を書いてテストが捕まえた。
         print("[type_lab_submit] 判定対象が無いため上限は掛けません", flush=True)
 
+    # ── 「自信あり」を**入稿の前に**決める（2026-09-04）─────────────────────
+    # 🔴 netkeirin へアイコンが渡るのは `submit_pick_multi` の瞬間だけ。
+    #    以前は `type_lab_daily.sh` が入稿の**あと**に選んでいたため、
+    #    `netkeirin_submissions.is_confident` は立つのに**アイコンは付かなかった**
+    #    （2026-09-04 豊橋3R で発覚）。
+    # 🔴 **朝だけ**（昼・夕で選び直すと「1日1件」が壊れる）。
+    # ⚠️ dry-run でも**選定はする**（読み取りだけ・DB は書かない）。
+    #    `--show` で実際に付くアイコンを確認できるようにするため。
+    confident_key, confident_ev = None, {}
+    if session == "morning":
+        confident_key, confident_ev = _choose_confident(
+            _plan_attempts(decided, cap_budget, _exempt))
+    confident_done: tuple[str, str] | None = None
+
     for row, rj in decided:
         race_key = str(row["race_key"])
         plan = str(row["plan_key"])
@@ -808,9 +890,13 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             bump(SKIP_DAILY_CAP)
             continue
 
+        is_conf = confident_key == (race_key, plan)
         ok, msg = submit_row(row, session, client, dry_run,
-                             show_detail=dry_run and n_ok < show, skip=skip)
+                             show_detail=dry_run and n_ok < show, skip=skip,
+                             confident=is_conf)
         if ok:
+            if is_conf:
+                confident_done = (race_key, plan)
             # 🔴 **この回の中でも1レース1商品**（`already` は開始時の断面なので、
             #    同じ実行の中で2つ目のプランが通るのを止められない）。
             taken_by_type_lab.add(race_key)
@@ -835,9 +921,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     n_published = sum(1 for r in published if r.get("ok"))
     n_publish_ng = len(published) - n_published
 
-    # 🔴 「自信あり」の選定は**通知より前**（通知がどのレースかを出すため）。
-    if n_ok and not dry_run and session == "morning":
-        _pick_confident(day)
+    # 🔴 **DB に書くのは「アイコンを付けて入稿できた行」だけ**（2026-09-04）。
+    #    選んだ行が上限や netkeirin 側の失敗で出なかったときに立ててしまうと、
+    #    DB は「自信あり」なのに netkeirin にアイコンが無い、という
+    #    まさに今回直した食い違いに戻る。
+    if session == "morning" and not dry_run:
+        _write_confident(day, confident_done, confident_ev)
 
     if n_ok and not dry_run:
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。
