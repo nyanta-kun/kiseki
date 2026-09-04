@@ -1,0 +1,1029 @@
+{
+  "generated_at": "2026-09-04T07:00:49",
+  "preregistration": "docs/jra_winplace_structure_plan_2026_09_04.md §15",
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)",
+  "config": {
+    "arms": [
+      "prod",
+      "new"
+    ],
+    "baseline": "prod",
+    "arm_features": {
+      "prod": 34,
+      "new": 38
+    },
+    "train_end": "20260630",
+    "eval_start": "20260701",
+    "eval_end": "20260830",
+    "data_start": "20230101",
+    "seeds": [
+      42,
+      123,
+      456
+    ],
+    "bootstrap": 2000,
+    "valid_days": 90,
+    "max_lead_min": 60.0,
+    "primary_win": "レース単位 多項対数損失（jra_prob_scoring.win_scores）",
+    "primary_place": "place_ll（is_placed 二値対数損失・place_slots=3）",
+    "criterion": "確認成功=両方で new の点推定が改善側 / 確認失敗=どちらかが有意に悪化（95%CI が 0 を跨がず悪化側）/ それ以外=判断保留",
+    "ci_note": "🔴 95%CI は併記のみ。2026Q3 は検出力が無いため判定に使わない（§15.3）",
+    "place_label": "finish_position <= place_slots（🔴 §13.1 罠1 の修正）"
+  },
+  "population": {
+    "train": {
+      "n_rows": 148885,
+      "n_races": 10887,
+      "date_min": "20230506",
+      "date_max": "20260628"
+    },
+    "eval": {
+      "n_rows": 8443,
+      "n_races": 648,
+      "date_min": "20260704",
+      "date_max": "20260830"
+    },
+    "eval_slots3": {
+      "n_rows": 8292,
+      "n_races": 625
+    }
+  },
+  "fit_info": {
+    "train_rows": 136885,
+    "valid_rows": 12000,
+    "valid_cut": "20260402",
+    "train_date_min": "20230506",
+    "train_date_max": "20260628",
+    "best_iters_win__prod": [
+      141,
+      140,
+      150
+    ],
+    "best_iters_win__new": [
+      147,
+      147,
+      200
+    ],
+    "is_placed_head_dropped_rows": {
+      "train": 4,
+      "valid": 0,
+      "reason": "place_slots=0（5頭未満）はラベルが定義できないため独立ヘッドの学習から除外"
+    },
+    "best_iters_place__new": [
+      334,
+      257,
+      274
+    ],
+    "new_place_clipped_horses": 0
+  },
+  "self_checks": {
+    "max_abs_dev_p_win_sum_from_1__prod": 0.0,
+    "max_abs_dev_p_place_sum_from_slots__prod": 0.0,
+    "max_abs_dev_p_win_sum_from_1__new": 0.0,
+    "max_abs_dev_p_place_sum_from_slots__new": 0.0,
+    "new_place_clipped_horses": 0,
+    "is_placed_head_dropped_rows": {
+      "train": 4,
+      "valid": 0,
+      "reason": "place_slots=0（5頭未満）はラベルが定義できないため独立ヘッドの学習から除外"
+    },
+    "same_population_rows": 8443,
+    "same_population_races": 648
+  },
+  "visual_check": [
+    "",
+    "==================================================================================================================================",
+    "🔴 目視確認 race_id=133783 20260704 函館9R 恵山特別 n=9 place_slots=3",
+    "==================================================================================================================================",
+    "  馬番   着馬名                         脚質      着順分散     勝/複  p_win prod   p_win new  raw_placed  p_place prod  p_place new",
+    "   1   3グランセゾン                 leader     10.00    0.00     0.12574     0.14351     0.49454       0.40876      0.48476",
+    "   2   6マイバラード                    mid     10.20    0.00     0.02727     0.02169     0.15536       0.10026      0.15229",
+    "   3   5ゴーゴータカシ                leader     12.70    0.00     0.18485     0.18735     0.56514       0.54766      0.55396",
+    "   4   8タイキルッジェーロ              closer       NaN     NaN     0.28108     0.24318     0.59677       0.70242      0.58497",
+    "   5   4アルディスティーノ              escape     33.50   -1.00     0.08539     0.11230     0.33861       0.29324      0.33191",
+    "   6   1ウインベラーノ                escape      8.30    0.00     0.11034     0.13958     0.44611       0.36657      0.43728",
+    "   7   2グレーヌドジョワ               leader     17.70    0.50     0.16503     0.13931     0.41233       0.50523      0.40417",
+    "   8   7キセキノエンジェル                 mid      6.80   -1.00     0.00559     0.00447     0.01540       0.02100      0.01509",
+    "   9   9スタードメイソン               closer     26.70    1.00     0.01473     0.00860     0.03628       0.05487      0.03556",
+    "   Σ                                                        1.00000     1.00000     3.06054       3.00000      3.00000",
+    "（期待: Σp_win=1.00000（両腕）/ p_place prod と p_place new の Σ=3.00000 / raw_placed だけはずれてよい）"
+  ],
+  "primary_win": {
+    "by_arm": {
+      "prod": {
+        "n_races": 647,
+        "skipped_races": 1,
+        "mnl_logloss": 2.08355,
+        "mnl_logloss_se": 0.03429,
+        "uniform_logloss": 2.53825,
+        "info_gain_nats": 0.4547,
+        "info_gain_nats_se": 0.03355,
+        "info_gain_pct": 17.914,
+        "top1_win_rate": 0.2855,
+        "top1_place_rate": 0.5324,
+        "top1_mean_pred": 0.2756,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 845,
+            "pred_pct": 0.66,
+            "actual_pct": 0.947,
+            "gap_pct": 0.287
+          },
+          {
+            "decile": 2,
+            "n": 844,
+            "pred_pct": 1.229,
+            "actual_pct": 1.777,
+            "gap_pct": 0.548
+          },
+          {
+            "decile": 3,
+            "n": 844,
+            "pred_pct": 1.902,
+            "actual_pct": 1.422,
+            "gap_pct": -0.48
+          },
+          {
+            "decile": 4,
+            "n": 845,
+            "pred_pct": 2.74,
+            "actual_pct": 2.367,
+            "gap_pct": -0.373
+          },
+          {
+            "decile": 5,
+            "n": 844,
+            "pred_pct": 3.774,
+            "actual_pct": 2.844,
+            "gap_pct": -0.931
+          },
+          {
+            "decile": 6,
+            "n": 844,
+            "pred_pct": 5.223,
+            "actual_pct": 6.754,
+            "gap_pct": 1.531
+          },
+          {
+            "decile": 7,
+            "n": 845,
+            "pred_pct": 7.352,
+            "actual_pct": 6.627,
+            "gap_pct": -0.725
+          },
+          {
+            "decile": 8,
+            "n": 844,
+            "pred_pct": 10.812,
+            "actual_pct": 10.545,
+            "gap_pct": -0.267
+          },
+          {
+            "decile": 9,
+            "n": 844,
+            "pred_pct": 16.025,
+            "actual_pct": 16.232,
+            "gap_pct": 0.207
+          },
+          {
+            "decile": 10,
+            "n": 844,
+            "pred_pct": 27.048,
+            "actual_pct": 27.37,
+            "gap_pct": 0.321
+          }
+        ]
+      },
+      "new": {
+        "n_races": 647,
+        "skipped_races": 1,
+        "mnl_logloss": 2.07998,
+        "mnl_logloss_se": 0.03446,
+        "uniform_logloss": 2.53825,
+        "info_gain_nats": 0.45826,
+        "info_gain_nats_se": 0.03365,
+        "info_gain_pct": 18.054,
+        "top1_win_rate": 0.2747,
+        "top1_place_rate": 0.5278,
+        "top1_mean_pred": 0.2799,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 845,
+            "pred_pct": 0.566,
+            "actual_pct": 0.828,
+            "gap_pct": 0.263
+          },
+          {
+            "decile": 2,
+            "n": 844,
+            "pred_pct": 1.115,
+            "actual_pct": 1.659,
+            "gap_pct": 0.544
+          },
+          {
+            "decile": 3,
+            "n": 844,
+            "pred_pct": 1.799,
+            "actual_pct": 1.303,
+            "gap_pct": -0.495
+          },
+          {
+            "decile": 4,
+            "n": 845,
+            "pred_pct": 2.653,
+            "actual_pct": 1.893,
+            "gap_pct": -0.76
+          },
+          {
+            "decile": 5,
+            "n": 844,
+            "pred_pct": 3.716,
+            "actual_pct": 3.318,
+            "gap_pct": -0.399
+          },
+          {
+            "decile": 6,
+            "n": 844,
+            "pred_pct": 5.174,
+            "actual_pct": 5.806,
+            "gap_pct": 0.632
+          },
+          {
+            "decile": 7,
+            "n": 845,
+            "pred_pct": 7.367,
+            "actual_pct": 8.876,
+            "gap_pct": 1.509
+          },
+          {
+            "decile": 8,
+            "n": 844,
+            "pred_pct": 10.809,
+            "actual_pct": 9.479,
+            "gap_pct": -1.33
+          },
+          {
+            "decile": 9,
+            "n": 844,
+            "pred_pct": 16.118,
+            "actual_pct": 16.706,
+            "gap_pct": 0.588
+          },
+          {
+            "decile": 10,
+            "n": 844,
+            "pred_pct": 27.448,
+            "actual_pct": 27.014,
+            "gap_pct": -0.434
+          }
+        ]
+      }
+    },
+    "new_minus_prod": {
+      "n_races": 647,
+      "delta_logloss": -0.00356,
+      "ci95": [
+        -0.01358,
+        0.00707
+      ]
+    },
+    "point_estimate_improves": true,
+    "significantly_worse": false
+  },
+  "primary_place": {
+    "detail": {
+      "by_quarter": [
+        {
+          "quarter": "2026Q3",
+          "n_races": 625,
+          "arm_place_ll": 0.45934,
+          "base_place_ll": 0.47118,
+          "delta": -0.01184,
+          "improved": true
+        }
+      ],
+      "n_quarters": 1,
+      "n_improved_quarters": 1,
+      "quarter_equal_weight": {
+        "delta": -0.01184,
+        "ci95": [
+          -0.01524,
+          -0.00844
+        ]
+      },
+      "race_pooled": {
+        "delta": -0.01184,
+        "ci95": [
+          -0.01515,
+          -0.00832
+        ],
+        "n_races": 625
+      },
+      "criterion_ci_excludes_zero_improving": true,
+      "criterion_min_improved_quarters": true,
+      "min_improved_required": 1
+    },
+    "point_estimate_improves": true,
+    "significantly_worse": false
+  },
+  "verdict": "確認成功",
+  "verdict_inputs": {
+    "win_point_improves": true,
+    "place_point_improves": true,
+    "win_significantly_worse": false,
+    "place_significantly_worse": false
+  },
+  "secondary_place": {
+    "prod": {
+      "slots_3": {
+        "place_slots": 3,
+        "n_races": 625,
+        "n_horses": 8292,
+        "coverage_at_k": 0.4763,
+        "place_logloss": 0.45986,
+        "spearman_in_race": 0.3534,
+        "spearman_n_races": 625,
+        "cross_races": 0,
+        "cross_pairs": 0,
+        "tied_pairs": 0,
+        "cross_tol": 1e-09
+      },
+      "slots_2": {
+        "place_slots": 2,
+        "n_races": 23,
+        "n_horses": 151,
+        "coverage_at_k": 0.5652,
+        "place_logloss": 0.55732,
+        "spearman_in_race": 0.351,
+        "spearman_n_races": 23,
+        "cross_races": 0,
+        "cross_pairs": 0,
+        "tied_pairs": 0,
+        "cross_tol": 1e-09
+      }
+    },
+    "new": {
+      "slots_3": {
+        "place_slots": 3,
+        "n_races": 625,
+        "n_horses": 8292,
+        "coverage_at_k": 0.4859,
+        "place_logloss": 0.44895,
+        "spearman_in_race": 0.3642,
+        "spearman_n_races": 625,
+        "cross_races": 610,
+        "cross_pairs": 3533,
+        "tied_pairs": 0,
+        "cross_tol": 1e-09
+      },
+      "slots_2": {
+        "place_slots": 2,
+        "n_races": 23,
+        "n_horses": 151,
+        "coverage_at_k": 0.5217,
+        "place_logloss": 0.55373,
+        "spearman_in_race": 0.3662,
+        "spearman_n_races": 23,
+        "cross_races": 16,
+        "cross_pairs": 25,
+        "tied_pairs": 0,
+        "cross_tol": 1e-09
+      }
+    }
+  },
+  "cutoffs": {
+    "source": "docs/model_verification/jra_place_head_ab.json",
+    "note": "🔴 §15.5: Phase C/D の探索窓で凍結したものをそのまま使う（2026Q3 で切り直さない）",
+    "values": {
+      "finish_var_tertile": [
+        7.3,
+        16.299999999999997
+      ],
+      "win_place_ratio_tertile": [
+        0.0,
+        0.5
+      ],
+      "pwin_decile": [
+        0.009312887800225588,
+        0.015307306932451985,
+        0.022447170730696565,
+        0.03147550179785475,
+        0.04303675138812031,
+        0.0588427984042831,
+        0.08120754811036882,
+        0.11633527978073017,
+        0.17748820679225696
+      ]
+    }
+  },
+  "residual_by_level": {
+    "prod": {
+      "n_horses": 8292,
+      "n_races": 625,
+      "overall_place_residual_pt": 0.0241,
+      "cuts": {
+        "runner_type": {
+          "escape": {
+            "n": 894,
+            "place_residual_pt": 1.9467,
+            "ci95_pt": [
+              -0.7789,
+              4.8359
+            ]
+          },
+          "leader": {
+            "n": 2664,
+            "place_residual_pt": 1.7122,
+            "ci95_pt": [
+              0.4815,
+              2.8429
+            ]
+          },
+          "mid": {
+            "n": 2470,
+            "place_residual_pt": -0.8045,
+            "ci95_pt": [
+              -2.0129,
+              0.3634
+            ]
+          },
+          "closer": {
+            "n": 1418,
+            "place_residual_pt": -2.9276,
+            "ci95_pt": [
+              -4.266,
+              -1.5374
+            ]
+          },
+          "unknown": {
+            "n": 846,
+            "place_residual_pt": -0.1929,
+            "ci95_pt": [
+              -0.9266,
+              0.5617
+            ]
+          }
+        },
+        "finish_var_tertile": {
+          "T1_low": {
+            "n": 1865,
+            "place_residual_pt": 0.6564,
+            "ci95_pt": [
+              -0.8499,
+              2.1484
+            ]
+          },
+          "T2_mid": {
+            "n": 1693,
+            "place_residual_pt": -0.7544,
+            "ci95_pt": [
+              -2.2064,
+              0.8724
+            ]
+          },
+          "T3_high": {
+            "n": 1566,
+            "place_residual_pt": 1.5053,
+            "ci95_pt": [
+              -0.0042,
+              3.0525
+            ]
+          },
+          "unknown": {
+            "n": 3168,
+            "place_residual_pt": -0.7273,
+            "ci95_pt": [
+              -1.437,
+              -0.0043
+            ]
+          }
+        },
+        "win_place_ratio_tertile": {
+          "T1_low": {
+            "n": 1810,
+            "place_residual_pt": 3.8703,
+            "ci95_pt": [
+              2.2134,
+              5.3944
+            ]
+          },
+          "T2_mid": {
+            "n": 904,
+            "place_residual_pt": 0.9259,
+            "ci95_pt": [
+              -1.442,
+              3.4051
+            ]
+          },
+          "T3_high": {
+            "n": 697,
+            "place_residual_pt": -1.54,
+            "ci95_pt": [
+              -3.9715,
+              1.0124
+            ]
+          },
+          "unknown": {
+            "n": 3168,
+            "place_residual_pt": -0.7273,
+            "ci95_pt": [
+              -1.437,
+              -0.0043
+            ]
+          },
+          "no_place": {
+            "n": 1713,
+            "place_residual_pt": -2.6063,
+            "ci95_pt": [
+              -3.8118,
+              -1.3719
+            ]
+          }
+        }
+      }
+    },
+    "new": {
+      "n_horses": 8292,
+      "n_races": 625,
+      "overall_place_residual_pt": 0.0241,
+      "cuts": {
+        "runner_type": {
+          "escape": {
+            "n": 894,
+            "place_residual_pt": 0.7426,
+            "ci95_pt": [
+              -1.92,
+              3.5917
+            ]
+          },
+          "leader": {
+            "n": 2664,
+            "place_residual_pt": 0.8316,
+            "ci95_pt": [
+              -0.3278,
+              1.9176
+            ]
+          },
+          "mid": {
+            "n": 2470,
+            "place_residual_pt": -0.3862,
+            "ci95_pt": [
+              -1.5428,
+              0.7354
+            ]
+          },
+          "closer": {
+            "n": 1418,
+            "place_residual_pt": -1.2733,
+            "ci95_pt": [
+              -2.6547,
+              0.0883
+            ]
+          },
+          "unknown": {
+            "n": 846,
+            "place_residual_pt": -0.1416,
+            "ci95_pt": [
+              -0.8472,
+              0.585
+            ]
+          }
+        },
+        "finish_var_tertile": {
+          "T1_low": {
+            "n": 1865,
+            "place_residual_pt": 0.0656,
+            "ci95_pt": [
+              -1.3864,
+              1.5159
+            ]
+          },
+          "T2_mid": {
+            "n": 1693,
+            "place_residual_pt": -0.6867,
+            "ci95_pt": [
+              -2.1283,
+              0.9402
+            ]
+          },
+          "T3_high": {
+            "n": 1566,
+            "place_residual_pt": 1.4559,
+            "ci95_pt": [
+              -0.0324,
+              2.9952
+            ]
+          },
+          "unknown": {
+            "n": 3168,
+            "place_residual_pt": -0.3913,
+            "ci95_pt": [
+              -1.0965,
+              0.315
+            ]
+          }
+        },
+        "win_place_ratio_tertile": {
+          "T1_low": {
+            "n": 1810,
+            "place_residual_pt": 1.3251,
+            "ci95_pt": [
+              -0.3027,
+              2.7963
+            ]
+          },
+          "T2_mid": {
+            "n": 904,
+            "place_residual_pt": 1.0459,
+            "ci95_pt": [
+              -1.3057,
+              3.5787
+            ]
+          },
+          "T3_high": {
+            "n": 697,
+            "place_residual_pt": -0.1253,
+            "ci95_pt": [
+              -2.5618,
+              2.4587
+            ]
+          },
+          "unknown": {
+            "n": 3168,
+            "place_residual_pt": -0.3913,
+            "ci95_pt": [
+              -1.0965,
+              0.315
+            ]
+          },
+          "no_place": {
+            "n": 1713,
+            "place_residual_pt": -1.1775,
+            "ci95_pt": [
+              -2.3604,
+              0.053
+            ]
+          }
+        }
+      }
+    }
+  },
+  "key_level_shrink": [
+    {
+      "cut": "finish_var_tertile",
+      "level": "T1_low",
+      "prod_pt": 0.6564,
+      "new_pt": 0.0656,
+      "prod_ci95_pt": [
+        -0.8499,
+        2.1484
+      ],
+      "new_ci95_pt": [
+        -1.3864,
+        1.5159
+      ],
+      "abs_shrink_pct": 90.0,
+      "new_ci_crosses_zero": true
+    },
+    {
+      "cut": "finish_var_tertile",
+      "level": "T3_high",
+      "prod_pt": 1.5053,
+      "new_pt": 1.4559,
+      "prod_ci95_pt": [
+        -0.0042,
+        3.0525
+      ],
+      "new_ci95_pt": [
+        -0.0324,
+        2.9952
+      ],
+      "abs_shrink_pct": 3.3,
+      "new_ci_crosses_zero": true
+    },
+    {
+      "cut": "win_place_ratio_tertile",
+      "level": "T1_low",
+      "prod_pt": 3.8703,
+      "new_pt": 1.3251,
+      "prod_ci95_pt": [
+        2.2134,
+        5.3944
+      ],
+      "new_ci95_pt": [
+        -0.3027,
+        2.7963
+      ],
+      "abs_shrink_pct": 65.8,
+      "new_ci_crosses_zero": true
+    }
+  ],
+  "market": {
+    "max_lead_min": 60.0,
+    "n_races_eval": 648,
+    "n_races_with_prerace_odds": 641,
+    "coverage_pct": 98.92,
+    "lead_min_median": 0.38,
+    "lead_min_p90": 0.67,
+    "monthly_coverage": [
+      {
+        "ym": "202607",
+        "n_races": 288,
+        "n_prerace_odds": 284,
+        "coverage_pct": 98.61
+      },
+      {
+        "ym": "202608",
+        "n_races": 360,
+        "n_prerace_odds": 357,
+        "coverage_pct": 99.17
+      }
+    ],
+    "subset_note": "🔴 発走前オッズが全馬分そろったレースだけの部分集合",
+    "by_series": {
+      "prod": {
+        "n_races": 640,
+        "skipped_races": 1,
+        "mnl_logloss": 2.08163,
+        "mnl_logloss_se": 0.03445,
+        "uniform_logloss": 2.53905,
+        "info_gain_nats": 0.45742,
+        "info_gain_nats_se": 0.03375,
+        "info_gain_pct": 18.015,
+        "top1_win_rate": 0.2855,
+        "top1_place_rate": 0.5304,
+        "top1_mean_pred": 0.2752,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 836,
+            "pred_pct": 0.66,
+            "actual_pct": 0.957,
+            "gap_pct": 0.297
+          },
+          {
+            "decile": 2,
+            "n": 836,
+            "pred_pct": 1.229,
+            "actual_pct": 1.794,
+            "gap_pct": 0.565
+          },
+          {
+            "decile": 3,
+            "n": 836,
+            "pred_pct": 1.9,
+            "actual_pct": 1.316,
+            "gap_pct": -0.585
+          },
+          {
+            "decile": 4,
+            "n": 836,
+            "pred_pct": 2.738,
+            "actual_pct": 2.392,
+            "gap_pct": -0.345
+          },
+          {
+            "decile": 5,
+            "n": 835,
+            "pred_pct": 3.769,
+            "actual_pct": 2.874,
+            "gap_pct": -0.895
+          },
+          {
+            "decile": 6,
+            "n": 836,
+            "pred_pct": 5.211,
+            "actual_pct": 6.699,
+            "gap_pct": 1.487
+          },
+          {
+            "decile": 7,
+            "n": 836,
+            "pred_pct": 7.334,
+            "actual_pct": 6.459,
+            "gap_pct": -0.874
+          },
+          {
+            "decile": 8,
+            "n": 836,
+            "pred_pct": 10.807,
+            "actual_pct": 10.526,
+            "gap_pct": -0.281
+          },
+          {
+            "decile": 9,
+            "n": 836,
+            "pred_pct": 16.032,
+            "actual_pct": 16.388,
+            "gap_pct": 0.356
+          },
+          {
+            "decile": 10,
+            "n": 835,
+            "pred_pct": 27.032,
+            "actual_pct": 27.425,
+            "gap_pct": 0.393
+          }
+        ]
+      },
+      "new": {
+        "n_races": 640,
+        "skipped_races": 1,
+        "mnl_logloss": 2.07687,
+        "mnl_logloss_se": 0.03458,
+        "uniform_logloss": 2.53905,
+        "info_gain_nats": 0.46218,
+        "info_gain_nats_se": 0.03379,
+        "info_gain_pct": 18.203,
+        "top1_win_rate": 0.2746,
+        "top1_place_rate": 0.5257,
+        "top1_mean_pred": 0.2795,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 836,
+            "pred_pct": 0.566,
+            "actual_pct": 0.837,
+            "gap_pct": 0.271
+          },
+          {
+            "decile": 2,
+            "n": 836,
+            "pred_pct": 1.116,
+            "actual_pct": 1.675,
+            "gap_pct": 0.559
+          },
+          {
+            "decile": 3,
+            "n": 836,
+            "pred_pct": 1.8,
+            "actual_pct": 1.196,
+            "gap_pct": -0.604
+          },
+          {
+            "decile": 4,
+            "n": 836,
+            "pred_pct": 2.652,
+            "actual_pct": 1.914,
+            "gap_pct": -0.738
+          },
+          {
+            "decile": 5,
+            "n": 835,
+            "pred_pct": 3.713,
+            "actual_pct": 3.353,
+            "gap_pct": -0.36
+          },
+          {
+            "decile": 6,
+            "n": 836,
+            "pred_pct": 5.163,
+            "actual_pct": 5.742,
+            "gap_pct": 0.578
+          },
+          {
+            "decile": 7,
+            "n": 836,
+            "pred_pct": 7.354,
+            "actual_pct": 8.732,
+            "gap_pct": 1.378
+          },
+          {
+            "decile": 8,
+            "n": 836,
+            "pred_pct": 10.799,
+            "actual_pct": 9.45,
+            "gap_pct": -1.35
+          },
+          {
+            "decile": 9,
+            "n": 836,
+            "pred_pct": 16.119,
+            "actual_pct": 16.866,
+            "gap_pct": 0.747
+          },
+          {
+            "decile": 10,
+            "n": 835,
+            "pred_pct": 27.43,
+            "actual_pct": 27.066,
+            "gap_pct": -0.364
+          }
+        ]
+      },
+      "market_prerace": {
+        "n_races": 640,
+        "skipped_races": 1,
+        "mnl_logloss": 1.87188,
+        "mnl_logloss_se": 0.03727,
+        "uniform_logloss": 2.53905,
+        "info_gain_nats": 0.66717,
+        "info_gain_nats_se": 0.03615,
+        "info_gain_pct": 26.276,
+        "top1_win_rate": 0.3495,
+        "top1_place_rate": 0.624,
+        "top1_mean_pred": 0.3478,
+        "reliability": [
+          {
+            "decile": 1,
+            "n": 836,
+            "pred_pct": 0.356,
+            "actual_pct": 0.239,
+            "gap_pct": -0.116
+          },
+          {
+            "decile": 2,
+            "n": 836,
+            "pred_pct": 0.671,
+            "actual_pct": 0.12,
+            "gap_pct": -0.551
+          },
+          {
+            "decile": 3,
+            "n": 836,
+            "pred_pct": 1.14,
+            "actual_pct": 1.316,
+            "gap_pct": 0.176
+          },
+          {
+            "decile": 4,
+            "n": 836,
+            "pred_pct": 1.844,
+            "actual_pct": 1.794,
+            "gap_pct": -0.05
+          },
+          {
+            "decile": 5,
+            "n": 835,
+            "pred_pct": 2.895,
+            "actual_pct": 3.353,
+            "gap_pct": 0.459
+          },
+          {
+            "decile": 6,
+            "n": 836,
+            "pred_pct": 4.397,
+            "actual_pct": 3.828,
+            "gap_pct": -0.569
+          },
+          {
+            "decile": 7,
+            "n": 836,
+            "pred_pct": 6.503,
+            "actual_pct": 7.057,
+            "gap_pct": 0.554
+          },
+          {
+            "decile": 8,
+            "n": 836,
+            "pred_pct": 10.138,
+            "actual_pct": 7.775,
+            "gap_pct": -2.363
+          },
+          {
+            "decile": 9,
+            "n": 836,
+            "pred_pct": 16.03,
+            "actual_pct": 19.378,
+            "gap_pct": 3.348
+          },
+          {
+            "decile": 10,
+            "n": 835,
+            "pred_pct": 32.744,
+            "actual_pct": 31.976,
+            "gap_pct": -0.768
+          }
+        ]
+      }
+    },
+    "prod_minus_market": {
+      "n_races": 640,
+      "delta_logloss": 0.20975,
+      "ci95": [
+        0.16341,
+        0.25517
+      ]
+    },
+    "new_minus_market": {
+      "n_races": 640,
+      "delta_logloss": 0.20499,
+      "ci95": [
+        0.16079,
+        0.24842
+      ]
+    },
+    "new_minus_prod_on_subset": {
+      "n_races": 640,
+      "delta_logloss": -0.00476,
+      "ci95": [
+        -0.01508,
+        0.00567
+      ]
+    },
+    "phase_b_gap_nats": 0.16363,
+    "pct_of_2026Q3_gap_filled_by_new": 2.27
+  }
+}
