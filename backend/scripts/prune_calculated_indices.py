@@ -54,7 +54,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("prune_ci")
 
 # 明示的に版を指定しているスクリプトがあるため残す（モジュール docstring の表を参照）
-PINNED_BY_SCRIPTS = [22, 24]
+#
+# 🔴 27 は 2026-09-04 に追加した。DEFAULT_KEEP は COMPOSITE_VERSION から導出するので、
+#   版を 28 へ上げた瞬間に **直前の本番版 v27 が既定の保持リストから静かに外れる**。
+#   デプロイ後・v28 のバックフィル完了前にこれを --execute で回すと、
+#   「現行データ(v27)を消したうえで v28 もまだ無い」状態になる。
+#   `anagusa_top3_walkforward.py:101` が v27 を直書きで参照してもいる。
+PINNED_BY_SCRIPTS = [22, 24, 27]
 DEFAULT_KEEP = sorted({*PINNED_BY_SCRIPTS, SUBINDEX_MIN_VERSION, COMPOSITE_VERSION})
 
 
