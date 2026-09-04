@@ -325,7 +325,14 @@ def test_cap_excludes_exempt_from_both_sides():
     （9車が12件ある日で7車が5件ぶん余計に消えていた）。
     出る件数は「枠外ぜんぶ ＋ それ以外の半分」。
     """
-    src = SUBMIT_PY.read_text(encoding="utf-8")
+    # 🔴 **`run` の本体だけを見る**（2026-09-04）。`_plan_attempts`（自信ありの
+    #    候補を作る近似）にも同じ形の上限判定があるので、ファイル全文を
+    #    先頭から探すとそちらに当たる。
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
     # 分母から外す
     i = src.index("n_judged = sum(")
     assert "not _exempt(r)" in src[i:i + 300], "分母から枠外を外していない"
@@ -803,7 +810,13 @@ def test_読む側が最新の型だけに絞る():
 
 def test_型ラボ自身が取ったレースには出さない():
     """`(race_key, plan) in already` は**同じプラン**の二重入稿しか止めない。"""
-    src = SUBMIT_PY.read_text(encoding="utf-8")
+    # 🔴 **`run` の本体だけを見る**（`_plan_attempts` にも `for row, rj in decided:`
+    #    があり、ファイル全文の先頭から探すとそちらに当たる・2026-09-04）。
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
     assert "taken_by_type_lab" in src, "型ラボ自身の重複ガードがありません"
     # 🔴 判定は `_reject`（開始時の断面）と入稿ループ（この回の中）の**両方**で見る。
     #    2026-09-01 に2パスへ組み替えたとき、片方だけだと同じ実行の中で
@@ -1163,16 +1176,42 @@ def test_confident_query_qualifies_every_column():
     assert "is_confident = 1" not in src
 
 
-def test_confident_pick_runs_before_the_notification():
-    """🔴 **選定 → 通知**の順であること。逆だと通知が必ず「なし」になる。
+def test_confident_is_decided_before_submitting():
+    """🔴🔴 **「自信あり」は入稿より前に決める**（2026-09-04 の実バグ）。
 
-    2026-09-04 以前は `type_lab_daily.sh` が入稿スクリプトの**あと**に
-    選定を呼んでいたので、通知の時点では1件も立っていなかった。
+    netkeirin へ勝負アイコンが渡るのは `submit_pick_multi` の瞬間だけ。入稿の
+    **あと**に選ぶと `netkeirin_submissions.is_confident` は立つのに
+    **アイコンは永久に付かない**（09-04 豊橋3R: 07:12:57 入稿・07:12:59 公開で、
+    選定はその後だった）。
     """
-    src = (REPO / "scripts" / "netkeirin_submit_type_lab.py").read_text(
-        encoding="utf-8")
-    assert src.index("_pick_confident(day)") < src.index("_confident_line(day)")
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
+    assert src.index("_choose_confident(") < src.index("submit_row("), (
+        "入稿より後に選んでいます（アイコンが付きません）")
+    assert src.index("submit_row(") < src.index("_write_confident("), (
+        "入稿できたかを見ずに DB へ書いています")
     assert 'session == "morning"' in src, "昼・夕でも選び直しています（1日1件が壊れる）"
+    assert "resolve_act_type(None, confident," in inspect.getsource(M.submit_row), (
+        "アイコンの優先順位を正本（resolve_act_type）に通していません")
+
+
+def test_confident_flag_is_written_only_for_the_submitted_row():
+    """選んだ行が入稿できなかったら DB にも立てない（DB と netkeirin を食い違わせない）。"""
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
+    i = src.index("confident_done = (race_key, plan)")
+    assert "if ok:" in src[max(0, i - 300):i], "入稿の成否を見ずに記録しています"
+
+
+def test_daily_script_no_longer_picks_confident():
+    """日次スクリプトからの二重呼び出しが無いこと（入稿スクリプトが決める）。"""
     daily = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
     assert "pick_confident_race_wt.py" not in daily.replace(
-        "`scripts/pick_confident_race_wt.py::pick`", ""),         "日次スクリプトから二重に呼んでいます"
+        "`scripts/pick_confident_race_wt.py::pick`", ""), (
+        "日次スクリプトから二重に呼んでいます")
