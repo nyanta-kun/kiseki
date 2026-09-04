@@ -56,6 +56,11 @@ from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
 from .pace_handicap import PaceHandicapCalculator
 from .paddock import PaddockIndexCalculator
+from .past_form import (
+    PAST_FORM_FEATURE_NAMES,
+    build_past_form_features_for_race,
+    past_form_feature_row,
+)
 from .pedigree import PedigreeIndexCalculator
 from .rebound import ReboundIndexCalculator
 from .rivals_growth import RivalsGrowthIndexCalculator
@@ -176,7 +181,29 @@ logger = logging.getLogger(__name__)
 #     価値は表示順・足切り・推奨tierの精度に限定される。
 #   モデル: backend/models/jra_reg_rank_lgb.txt + backend/models/jra_out_rate_lgb.txt
 #   学習: scripts/train_jra_reg_rank.py / scripts/train_jra_out_rate.py
-COMPOSITE_VERSION = 27
+# v28: 単勝ヘッドに過去走特徴4列 + 複勝を独立ヘッド化 (2026-09-04)
+#   事前登録・結果: docs/jra_winplace_structure_plan_2026_09_04.md §16（実装設計）/
+#   §18（2026Q3 一度きり評価「確認成功」）。
+#
+#   ① 単勝ヘッド: 34列 → **38列**（`PAST_FORM_FEATURE_NAMES` の4列を追加）。
+#      追加分は `src/indices/past_form.py` からのみ取得する（学習・配信で同一の純関数）。
+#      🔴 新特徴は欠損を **NaN のまま** LightGBM に渡す（`50.0` で埋めない）。
+#      34列側の `fillna(50.0)` は v27 から変更なし。
+#   ② `place_probability`: Harville 変換 → **独立 is_placed ヘッド** →
+#      レース内で `Σp = place_slots` に正規化（`place_slots` は 3 (n>=8) / 2 (5<=n<=7)）。
+#   ③ `composite_index` / `out_probability` / `reg_rank` は**変更しない**（本件の検証範囲外）。
+#
+#   2026Q3 一度きり評価（648R / 8,443頭・`jra_winplace_final_confirm.py`）:
+#     単勝 多項対数損失 2.08355 → 2.07998（Δ −0.00356・95%CI は 0 を跨ぐ）
+#     複勝 place_ll (slots=3) 0.47118 → 0.45934（Δ −0.01184・95%CI [−0.01515, −0.00832]）
+#     単勝順位と複勝順位の交差が 0R → 610R に出た（Harville では表現できない構造）
+#   ⚠️ top1 勝率は 0.2855 → 0.2747（−1.08pt）と悪化する。`composite_index` は変えないので
+#      tier 判定は動かないが、`win_probability` / `place_probability` を読む下流
+#      （`buy_signal.py` / `upset_reranker.py` / `place_ev.py`）は §16.3 の実測比較が要る。
+#   モデル: backend/models/v28_iswin_calib.txt + backend/models/v28_placed_head.txt
+#   学習: scripts/train_jra_iswin_head.py / scripts/train_jra_placed_head.py
+#   バックフィル: scripts/inference_v28.py
+COMPOSITE_VERSION = 28
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -292,6 +319,25 @@ _OUT_PROB_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "jra_out
 # 着外率ヘッドの特徴量（v26 と同一の 34 列・同順）
 OUT_PROB_FEATURE_NAMES: list[str] = list(_V26_FEATURE_NAMES)
 
+# ---------------------------------------------------------------------------
+# v28: 単勝ヘッドの特徴 38 列 / 複勝の独立ヘッド
+# ---------------------------------------------------------------------------
+# 🔴 **34列の後ろに `PAST_FORM_FEATURE_NAMES` を連結した順序が正準**。
+# 学習（`scripts/train_jra_iswin_head.py` / `scripts/train_jra_placed_head.py`）も
+# 配信（`_build_v28_features`）もこの定数を通ること。順序がずれると静かに壊れる
+# （地方 v13→v14 の train/serve skew は指数1位馬の勝率を 9pt 落とした）。
+V28_FEATURE_NAMES: list[str] = list(_V26_FEATURE_NAMES) + list(PAST_FORM_FEATURE_NAMES)
+
+# v28 単勝ヘッド（38列）。読めなければ v27 の 34列ヘッド（`_V26_ISWIN_MODEL_PATH`）へ落ちる。
+# 学習: scripts/train_jra_iswin_head.py
+_V28_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v28_iswin_calib.txt"
+
+# v28 複勝の独立ヘッド（is_placed binary・38列）。
+# 🔴 ラベルは `finish_position <= place_slots`（`place_slots` ごとに変える。§13.1 罠1）。
+# 読めなければ `_harville_place_probs` へ落ちる（v27 と同じ挙動）。
+# 学習: scripts/train_jra_placed_head.py
+_V28_PLACED_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v28_placed_head.txt"
+
 # 学習・検証がサブ指数（17列）を読み出してよい `calculated_indices.version` の下限。
 #
 # 🔴 **`version = COMPOSITE_VERSION` で引いてはいけないし、特定の版に固定してもいけない。**
@@ -343,6 +389,9 @@ V27_INDEX_SCALE = 55.3
 # 通常レースでは発動しない）。
 V27_MIN_SPREAD = 0.02
 
+# 確率のクリップ幅。検証実装（`jra_place_head_ab.EPS` / `jra_winplace_final_confirm.EPS`）と同値。
+_PROB_EPS = 1e-9
+
 _reg_rank_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _reg_rank_load_attempted: bool = False
 
@@ -351,6 +400,12 @@ _iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _iswin_load_attempted: bool = False
 _out_prob_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _out_prob_load_attempted: bool = False
+
+# v28 の2ヘッド（38列）。どちらも読めなければ v27 の挙動へフォールバックする
+_v28_iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_v28_iswin_load_attempted: bool = False
+_v28_placed_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
+_v28_placed_load_attempted: bool = False
 
 
 
@@ -417,6 +472,134 @@ def _load_reg_rank_model() -> lgb.Booster | None:  # type: ignore[name-defined]
     except Exception as e:
         logger.error(f"reg_rank model load failed: {e}")
         return None
+
+
+def _load_v28_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """v28 単勝ヘッド（38列）を lazy load する。無ければ None（v27 の34列ヘッドへ）。"""
+    global _v28_iswin_model_cache, _v28_iswin_load_attempted
+    if _v28_iswin_model_cache is not None:
+        return _v28_iswin_model_cache
+    if _v28_iswin_load_attempted:
+        return None
+    _v28_iswin_load_attempted = True
+    if not _V28_ISWIN_MODEL_PATH.exists():
+        logger.warning(
+            f"v28 iswin model not found: {_V28_ISWIN_MODEL_PATH}, win_probability は v27 の34列ヘッド"
+        )
+        return None
+    try:
+        import lightgbm as lgb
+        _v28_iswin_model_cache = lgb.Booster(model_file=str(_V28_ISWIN_MODEL_PATH))
+        logger.info(f"v28 iswin model loaded: {_V28_ISWIN_MODEL_PATH}")
+        return _v28_iswin_model_cache
+    except Exception as e:
+        logger.error(f"v28 iswin model load failed: {e}")
+        return None
+
+
+def _load_v28_placed_model() -> lgb.Booster | None:  # type: ignore[name-defined]
+    """v28 複勝の独立ヘッド（38列）を lazy load する。
+
+    🔴 無ければ None を返し、`place_probability` は v27 と同じ
+    `_harville_place_probs`（単勝からの Harville 変換）へフォールバックする。
+    """
+    global _v28_placed_model_cache, _v28_placed_load_attempted
+    if _v28_placed_model_cache is not None:
+        return _v28_placed_model_cache
+    if _v28_placed_load_attempted:
+        return None
+    _v28_placed_load_attempted = True
+    if not _V28_PLACED_MODEL_PATH.exists():
+        logger.warning(
+            f"v28 placed head not found: {_V28_PLACED_MODEL_PATH}, place_probability は Harville"
+        )
+        return None
+    try:
+        import lightgbm as lgb
+        _v28_placed_model_cache = lgb.Booster(model_file=str(_V28_PLACED_MODEL_PATH))
+        logger.info(f"v28 placed head loaded: {_V28_PLACED_MODEL_PATH}")
+        return _v28_placed_model_cache
+    except Exception as e:
+        logger.error(f"v28 placed head load failed: {e}")
+        return None
+
+
+def place_slots_for_field(n_field: int) -> int:
+    """フィールドの馬数から**払戻対象着順**（複勝の枠数）を返す。
+
+    JRA ルール: `n >= 8` → 3着以内 / `5 <= n <= 7` → 2着以内 / `n < 5` → 複勝の発売なし。
+
+    🔴 **`races.head_count` から作ってはいけない。** `head_count` は発走前 NULL で、
+    配信時にだけ壊れる（`CLAUDE.md` 3.2 / `docs/jra_rebuild_2026_08.md` 3.2）。
+    地方では `head_count` の train/serve skew（学習=確定頭数・配信=登録頭数フォールバック）
+    が約10%のレースで実際に起きている。
+
+    🔴 **引数は「そのレースのエントリー全馬の数」**（2026-09-04・PR #462 レビュー指摘1+2）。
+
+    - 配信: `calculate_and_save` の `results` の長さ ＝ `race_entries` の全馬
+    - 学習: `train_jra_iswin_head.attach_serving_field`
+      （`jra_prob_scoring.build_population` を掛ける**前**のレース内行数）
+    - バックフィル: `inference_v28.py` のレース内行数（＝ `calculated_indices` の全馬）
+
+    ⚠️ **完走馬の数で数えてはいけない。** 配信は取消を物理的に知り得ない
+    （`race_entries` に取消の列が無く、`abnormality_code` は `race_results` ＝
+    確定後にしか存在しない）。完走馬で数えると **11.15%** のレースで学習と配信の
+    フィールドがずれる。代償として払戻規則（**出走**頭数基準）と枠数がずれるのは
+    **0.863%** のレース。詳細は `train_jra_iswin_head.attach_serving_field` の docstring。
+
+    Args:
+        n_field: そのレースのフィールド（エントリー全馬）の数。
+
+    Returns:
+        3 / 2 / 0。0 は「複勝が成立しない」＝独立ヘッドのラベルが定義できないレース
+        （§18.3-2。学習からは除外し、配信では Harville へ落とす）。
+    """
+    if n_field >= 8:
+        return 3
+    if n_field >= 5:
+        return 2
+    return 0
+
+
+def normalize_place_to_slots(
+    raw_probs: np.ndarray | list[float], place_slots: int
+) -> list[float]:
+    """独立ヘッドの生出力をレース内で `Σp = place_slots` に正規化する。
+
+    🔴 **検証実装と同一の式**（`scripts/jra_place_head_ab.py::_top3_norm` /
+    `scripts/jra_winplace_final_confirm.py::normalize_to_slots`）。ここを変えると
+    §18.1 の 2026Q3 確認成功（`place_ll` −0.01184）が本番に対して無効になる。
+
+        scaled = raw * place_slots / Σraw    （Σraw <= 0 のときは raw のまま）
+        p      = clip(scaled, EPS, 1 - EPS)
+
+    🔴 **クリップのみで、クリップ後の再正規化はしない**（決定・固定した）。理由:
+
+    - **検証実装がそうだった。** §13.1 罠2 で「クリップすると `Σ = place_slots` が
+      その分だけ崩れる（最大乖離 0.134）」と分かったうえで、探索・確認・2026Q3 の
+      全窓をこの式で測っている。再正規化を足すと本番が別物になる。
+    - 発生頻度が極端に低い。探索6Q+確認4Q（118,397頭）で **7頭**、
+      2026Q3（8,443頭）では **0頭**（§18.3-3）。
+      ⚠️ ただし **0頭なのは Q3 がたまたまそうだっただけ**で、2026Q1 で1頭（乖離 0.0876）/
+      2026Q2 で1頭（乖離 0.0523）が実測されている（§19.4）。「起きないから気にしない」
+      ではなく「起きても1頭に閉じ込める」という判断であることに注意。
+    - 再正規化すると 1 を超えた馬を押し戻した分が**他の馬の確率を動かす**ため、
+      1頭の外れ値がレース全体の確率を汚す。崩れを1頭に閉じ込めるほうが害が小さい。
+
+    Args:
+        raw_probs: 独立ヘッドの生出力（レース1本ぶん・順序は `results` と一致）。
+        place_slots: `place_slots_for_field` の返り値（3 / 2）。
+
+    Returns:
+        正規化後の複勝確率のリスト。`place_slots <= 0` のときは空リストを返す
+        （呼び出し側が Harville へ落とすこと）。
+    """
+    arr = np.asarray(raw_probs, dtype=float)
+    if arr.size == 0 or place_slots <= 0:
+        return []
+    total = float(arr.sum())
+    scaled = arr * place_slots / total if total > 0 else arr
+    return [float(v) for v in np.clip(scaled, _PROB_EPS, 1.0 - _PROB_EPS)]
 
 
 def _zscore(values: np.ndarray) -> np.ndarray:
@@ -531,6 +714,34 @@ def _build_v26_features(
             float(e.jvan_battle_dm) if e and e.jvan_battle_dm is not None else 50.0,
         ])
     return np.asarray(rows, dtype=float)
+
+
+def _build_v28_features(
+    x_v26: np.ndarray,
+    results: list[dict],
+    past_form: dict[int, dict[str, object]],
+) -> np.ndarray:
+    """34列（v26）の右に `PAST_FORM_FEATURE_NAMES` の4列を連結して 38列にする。
+
+    🔴 **新特徴の欠損は NaN のまま渡す**（`past_form.past_form_feature_row` が
+    `None → NaN` にする）。`50.0` で埋めてはいけない — 検証時から NaN 意味論で
+    測っている（計画 §16.2-5。`nan` 腕＝34列側の fillna 廃止は §11.1 で不採用なので
+    34列側の `fillna(50.0)` はそのまま維持する）。
+
+    Args:
+        x_v26: `_build_v26_features` の出力（行順は `results` と一致）。
+        results: `calculate_and_save` の算出結果（`horse_id` を使う）。
+        past_form: `past_form.build_past_form_features_for_race` の返り値。
+            引けなかった馬は空 dict 扱い（全列 NaN）になる。
+
+    Returns:
+        `(len(results), 38)` の float 配列。列順は `V28_FEATURE_NAMES`。
+    """
+    extra = np.asarray(
+        [past_form_feature_row(past_form.get(r["horse_id"], {})) for r in results],
+        dtype=float,
+    ).reshape(len(results), len(PAST_FORM_FEATURE_NAMES))
+    return np.hstack([x_v26, extra])
 
 
 class CompositeIndexCalculator:
@@ -703,6 +914,19 @@ class CompositeIndexCalculator:
             except Exception as e:
                 logger.error(f"v26 feature build failed for race={race.id}: {e}")
 
+        # v28: 過去走由来の4特徴（脚質 / 着順分散5 / 勝率複勝率比5 / pace_handicap_pit）。
+        # 🔴 `past_form` モジュール経由でのみ取得する（学習と同じ純関数を通る）。
+        # 本番 `PaceHandicapCalculator` は point-in-time ではないので使わない（計画 §11.3）。
+        X_v28: np.ndarray | None = None
+        if results and X_v26 is not None:
+            try:
+                past_form = await build_past_form_features_for_race(
+                    self.db, race=race, horse_ids=[r["horse_id"] for r in results]
+                )
+                X_v28 = _build_v28_features(X_v26, results, past_form)
+            except Exception as e:
+                logger.error(f"v28 past_form feature build failed for race={race.id}: {e}")
+
         # 着外率（6着以下確率）。Web の足切り判定と v27 の下位補正に使う
         out_probs: list[float] | None = None
         out_model = _load_out_prob_model()
@@ -730,20 +954,45 @@ class CompositeIndexCalculator:
 
         # is_win 較正ヘッドで win_probability を較正（softmax の最上位過信を解消）
         # composite_index ランキングは上で確定済み。確率のみ較正値に置換する。
+        # v28 は 38列ヘッド、無ければ v27 の 34列ヘッド、それも無ければ softmax。
         calib_win: list[float] | None = None
-        iswin = _load_iswin_model()
-        if iswin is not None and X_v26 is not None:
+        iswin_v28 = _load_v28_iswin_model()
+        win_model: lgb.Booster | None  # type: ignore[name-defined]
+        win_X: np.ndarray | None
+        if iswin_v28 is not None and X_v28 is not None:
+            win_model, win_X, win_tag = iswin_v28, X_v28, "v28"
+        else:
+            win_model, win_X, win_tag = _load_iswin_model(), X_v26, "v27"
+        if win_model is not None and win_X is not None:
             try:
-                raw_w = np.asarray(iswin.predict(X_v26), dtype=float)
+                raw_w = np.asarray(win_model.predict(win_X), dtype=float)
                 raw_w = np.clip(raw_w, 1e-9, 1.0)
                 total = float(raw_w.sum())
                 if total > 0:
                     calib_win = [float(x) for x in (raw_w / total)]  # レース内正規化(Σ=1)
             except Exception as e:
-                logger.error(f"v26 iswin calibration failed for race={race.id}: {e}")
+                logger.error(f"{win_tag} iswin calibration failed for race={race.id}: {e}")
 
-        # 全馬の指数が揃ってから勝率・複勝率を算出（較正win or softmax + Harville）
-        self._attach_probabilities(results, win_override=calib_win)
+        # v28: 複勝は独立 is_placed ヘッド → レース内で Σp = place_slots に正規化。
+        # 🔴 `place_slots` は **`results`（= `race_entries` の全馬）の数**から取る
+        #    （`races.head_count` は発走前 NULL で配信時に壊れる）。学習側も同じ集合で
+        #    数える（`train_jra_iswin_head.attach_serving_field`）。ヘッドが読めない /
+        #    n<5 で複勝が成立しない場合は Harville（v27 と同じ）へ落ちる。
+        calib_place: list[float] | None = None
+        placed_model = _load_v28_placed_model()
+        slots = place_slots_for_field(len(results))
+        if placed_model is not None and X_v28 is not None and slots > 0:
+            try:
+                raw_p = np.asarray(placed_model.predict(X_v28), dtype=float)
+                raw_p = np.clip(raw_p, _PROB_EPS, 1.0 - _PROB_EPS)
+                calib_place = normalize_place_to_slots(raw_p, slots)
+            except Exception as e:
+                logger.error(f"v28 placed head inference failed for race={race.id}: {e}")
+
+        # 全馬の指数が揃ってから勝率・複勝率を算出
+        self._attach_probabilities(
+            results, win_override=calib_win, place_override=calib_place
+        )
 
         # バルク upsert（1 SELECT/レース + add_all で馬ごと N 往復を回避）
         await self._bulk_upsert_for_race(race_id, results)
@@ -934,24 +1183,33 @@ class CompositeIndexCalculator:
 
     @staticmethod
     def _attach_probabilities(
-        results: list[dict], win_override: list[float] | None = None
+        results: list[dict],
+        win_override: list[float] | None = None,
+        place_override: list[float] | None = None,
     ) -> None:
         """全馬の勝率・複勝率を算出して results に追記する。
 
         勝率: is_win 較正ヘッドの正規化出力（win_override）があればそれを使用。
               無ければ Softmax(composite_index / SOFTMAX_TEMPERATURE) にフォールバック。
-        複勝率: Harville 公式で上位3着以内確率を近似（採用した勝率分布から計算）。
+        複勝率: **v28 は独立 is_placed ヘッドの正規化出力（place_override）**。
+              🔴 無ければ v27 と同じ Harville 変換（`_harville_place_probs`）へ落ちる。
+              モデル未配置・推論失敗・n<5（複勝が成立しない）のいずれでも落ちること。
 
         Args:
             results: _compute_composite の戻り値リスト（in-place 更新）
             win_override: is_win 較正ヘッドのレース内正規化勝率（順は results と一致）。
+            place_override: 独立 is_placed ヘッドを `Σp = place_slots` に正規化した
+                複勝確率（順は results と一致）。長さが合わなければ無視して Harville。
         """
         scores = [r["composite_index"] for r in results]
         if win_override is not None and len(win_override) == len(results):
             win_probs = win_override
         else:
             win_probs = CompositeIndexCalculator._softmax(scores)
-        place_probs = CompositeIndexCalculator._harville_place_probs(win_probs)
+        if place_override is not None and len(place_override) == len(results):
+            place_probs = list(place_override)
+        else:
+            place_probs = CompositeIndexCalculator._harville_place_probs(win_probs)
 
         for row, wp, pp in zip(results, win_probs, place_probs):
             row["win_probability"] = round(wp, 4)

@@ -1,0 +1,92 @@
+{
+  "head": "is_win (v28 / 38特徴)",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20260630"
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    155,
+    170,
+    131
+  ],
+  "refit_rounds": 155,
+  "features": [
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm",
+    "runner_type_ord",
+    "finish_var5",
+    "win_place_ratio5",
+    "pace_handicap_pit"
+  ],
+  "n_features": 38,
+  "params": {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "num_leaves": 31,
+    "max_depth": 6,
+    "min_data_in_leaf": 100,
+    "lambda_l1": 0.1,
+    "lambda_l2": 0.1,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.7,
+    "bagging_fraction": 0.7,
+    "bagging_freq": 5,
+    "verbose": -1
+  },
+  "new_feature_missing_pct": {
+    "runner_type_ord": 10.11,
+    "finish_var5": 41.38,
+    "win_place_ratio5": 41.38,
+    "pace_handicap_pit": 0.0
+  },
+  "honest_test": "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json",
+  "model_path": "/Users/ysuzuki/GitHub/kiseki-wt/jra/v28-place-head/backend/models/v28_iswin_calib.txt",
+  "refit_period": [
+    "20230506",
+    "20260628"
+  ],
+  "n_rows": 148885,
+  "n_races": 10887,
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)"
+}

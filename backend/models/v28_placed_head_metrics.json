@@ -1,0 +1,117 @@
+{
+  "head": "is_placed (v28 / 38特徴・独立ヘッド)",
+  "label": "finish_position <= place_slots（🔴 place_slots ごとに変える・§13.1 罠1）",
+  "place_slots": {
+    "rule": "place_slots_for_field(n_entries): n>=8→3 / 5<=n<=7→2 / n<5→0",
+    "n_entries_source": "🔴 build_population を掛ける**前**のレース内行数（= 配信の race_entries 全馬。取消・除外を含む）",
+    "n_runners_source": "jra_prob_scoring.build_population 後の完走馬の数（監視用）",
+    "n_races": 11535,
+    "races_where_n_entries_differs_from_n_runners": 1236,
+    "races_where_n_entries_differs_pct": 10.715,
+    "races_where_place_slots_differs_from_payout_rule": 43,
+    "races_where_place_slots_differs_pct": 0.373,
+    "place_slots_deviation_note": "🔴 払戻規則は「出走頭数」基準なので、この件数ぶんラベルが規則とずれる。配信は取消を知り得ないため意図的に飲んでいる代償（モジュール docstring 参照）",
+    "rows_where_head_count_differs_from_n_runners": 8306,
+    "rows_where_head_count_differs_from_n_entries": 7970,
+    "slots_distribution": {
+      "3": 155391,
+      "2": 1937
+    }
+  },
+  "dropped_rows": {
+    "train": 0,
+    "valid": 0,
+    "reason": "place_slots=0（5頭未満）は払戻対象着順が無くラベルが定義できない"
+  },
+  "normalization": "composite.normalize_place_to_slots（Σp=place_slots・クリップのみ／再正規化なし）",
+  "train_period": [
+    "20230506",
+    "20250630"
+  ],
+  "valid_period": [
+    "20250630",
+    "20260630"
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "best_iters": [
+    238,
+    259,
+    210
+  ],
+  "refit_rounds": 238,
+  "features": [
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm",
+    "runner_type_ord",
+    "finish_var5",
+    "win_place_ratio5",
+    "pace_handicap_pit"
+  ],
+  "n_features": 38,
+  "params": {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "num_leaves": 31,
+    "max_depth": 6,
+    "min_data_in_leaf": 100,
+    "lambda_l1": 0.1,
+    "lambda_l2": 0.1,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.7,
+    "bagging_fraction": 0.7,
+    "bagging_freq": 5,
+    "verbose": -1
+  },
+  "max_round": 2000,
+  "new_feature_missing_pct": {
+    "runner_type_ord": 10.11,
+    "finish_var5": 41.38,
+    "win_place_ratio5": 41.38,
+    "pace_handicap_pit": 0.0
+  },
+  "honest_test": "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json",
+  "model_path": "/Users/ysuzuki/GitHub/kiseki-wt/jra/v28-place-head/backend/models/v28_placed_head.txt",
+  "refit_period": [
+    "20230506",
+    "20260628"
+  ],
+  "n_rows": 148885,
+  "n_races": 10887,
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)"
+}

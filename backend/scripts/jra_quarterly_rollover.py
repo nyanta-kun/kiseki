@@ -76,6 +76,12 @@ MODEL_FILES = [
     "jra_reg_rank_metrics.json",
     "jra_out_rate_lgb.txt",
     "jra_out_rate_metrics.json",
+    # v28 の2ヘッド。2026-09-04 まで退避対象にも再学習対象にも入っておらず、
+    # win_probability / place_probability だけが四半期ローリングから取り残されていた。
+    "v28_iswin_calib.txt",
+    "v28_iswin_calib_metrics.json",
+    "v28_placed_head.txt",
+    "v28_placed_head_metrics.json",
 ]
 JRA_COURSES = ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10")
 
@@ -234,12 +240,30 @@ def phase_retrain() -> None:
     # 着外率ヘッド → 順位回帰ヘッドの順。後者は前者の featurize / load_df を使う
     run([py, "scripts/train_jra_out_rate.py"])
     run([py, "scripts/train_jra_reg_rank.py"])
+    # 🔴 v28 の2ヘッド。2026-09-04 まで**ここに入っていなかった**ため、
+    #   win_probability を作る is_win ヘッドは四半期ごとに再学習されておらず、
+    #   place_probability の独立ヘッドも同じ経路から漏れるところだった。
+    #   is_win → is_placed の順（後者は前者の build_v28_frame を使う）。
+    run([py, "scripts/train_jra_iswin_head.py"])
+    run([py, "scripts/train_jra_placed_head.py"])
 
 
 def phase_backfill() -> None:
-    """デプロイ後に v27 を全期間再計算し、着外率も揃える。"""
+    """デプロイ後に現行版を全期間再計算し、着外率も揃える。
+
+    🔴 **`inference_v27.py` を直書きしてはいけない。** 2026-09-04 まで直書きで、
+    v28 へ上げると「v27 の行を埋め続けるが本番は v28 を読む」という
+    **誰にも使われないバックフィル**になるところだった（エラーもログも出ない）。
+    地方 `chihou_cutoff_venue_review.py` の `ci.version = 13` 直書きと同じ型。
+    """
     py = _python()
-    run([py, "scripts/inference_v27.py"])
+    script = f"scripts/inference_v{COMPOSITE_VERSION}.py"
+    if not (_root / script).exists():
+        raise SystemExit(
+            f"{script} が無い。COMPOSITE_VERSION={COMPOSITE_VERSION} に対応する "
+            f"バックフィルスクリプトを作ってから実行すること"
+        )
+    run([py, script])
     run([py, "scripts/backfill_jra_out_probability.py"])
 
 
@@ -288,7 +312,9 @@ def write_report(label: str, evaluated: dict | None, retrained: bool) -> Path:
             )
         lines.append("")
     if retrained:
-        lines += ["## 再学習", "", "`train_jra_out_rate.py` / `train_jra_reg_rank.py` を実行済み。",
+        lines += ["## 再学習", "",
+                  "`train_jra_out_rate.py` / `train_jra_reg_rank.py` / "
+                  "`train_jra_iswin_head.py` / `train_jra_placed_head.py` を実行済み。",
                   f"旧モデルは `data/backup/jra_model_{datetime.date.today():%Y%m%d}/` に退避。", ""]
     lines += [
         "## 次に人が行うこと",
