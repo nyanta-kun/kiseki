@@ -21,9 +21,11 @@
 """
 from __future__ import annotations
 
+import itertools
 import random
 import sys
 from collections import defaultdict
+from statistics import median
 from pathlib import Path
 
 import numpy as np
@@ -641,6 +643,139 @@ def phase8(up: int = 2000) -> None:
                   f"ΔROI [{ci_r[0]:+.1f},{ci_r[1]:+.1f}]pt")
 
 
+
+# ═══════ Phase 9 — 上帯を「並び違いの補完」に替える（ユーザー提案 2026-09-04）═══════
+#
+# > 100倍ちょっとに100円ずつ置くのは目が増えて的中率は上がるかもだが、**ガミも多く
+# > 当たった感が少ない**。これよりは通常買い目のうち、**2つ以上同じ組み合わせの
+# > 並び違いがあるもの**を補完してダッチ配分するのが良さそう。
+#
+# 🔴 指摘は算数として正しい。上帯2,000円のうち `band` は 1,000円/8点＝**ほぼ 100円均等**
+#    （100円が最小単位なのでダッチが効かない）。120倍の目が当たっても 12,000円で、
+#    投資 10,000円に対して 1.2倍＝表示的中には入るが「当たった感」は無い。
+#
+# 対案（`perm`）: 下帯で**同じ3車の並びを2つ以上買っている**トリオについて、
+#    残りの順列を埋める。モデルがその3車を推している証拠がある目だけを拾うので、
+#    無関係な高オッズをばらまくより「惜しい」を回収できるはず。
+#
+# 見るのは上帯**だけ**の素性も込み: 的中/日・払戻中央・**2万円未満の割合**
+# （＝当たった感の無い的中）。
+
+from collections import Counter as _Counter
+
+
+def perm_fill_legs(x, base_legs, min_bought: int = 2, max_legs: int = 0,
+                   min_odds: float = 0.0):
+    """下帯で2つ以上の並びを買っているトリオの、**残りの順列**を確率降順に。"""
+    cnt = _Counter(frozenset(c) for c in base_legs)
+    have = set(tuple(c) for c in base_legs)
+    cand = []
+    for trio, n in cnt.items():
+        if n < min_bought:
+            continue
+        for p in itertools.permutations(sorted(trio)):
+            if p in have:
+                continue
+            o = x.po_tf.get(p)
+            if o and o >= min_odds:
+                cand.append(p)
+    cand.sort(key=lambda c: -float(x.pr_tf.get(c, 0.0)))
+    return (cand[:max_legs] if max_legs else cand) or None
+
+
+def _upper_variant(x, cur_key: str, spec: list, base_budget: int):
+    """下帯 base_budget ＋ spec=[(種類, 予算, 引数…)] を1商品に。戻り値 (rec, 上帯だけの rec)。"""
+    plan = PLANS[cur_key]
+    if plan.bet_type != "trifecta":
+        return None, None
+    low_legs = build_legs(x.shape, plan, x.po_tf, x.pr_tf)
+    if not low_legs:
+        return None, None
+    lo = allocate(low_legs, x.po_tf, x.pr_tf, plan, budget=base_budget)
+    if not lo:
+        return None, None
+    st, up_st = dict(lo), {}
+    for kind, b, *rest in spec:
+        if kind == "band":
+            legs = band_legs2(x, rest[0], rest[1], rest[2])
+        elif kind == "sign":
+            legs = sign_legs(x, b, rest[0])
+        elif kind == "perm":
+            legs = perm_fill_legs(x, low_legs, rest[0], rest[1],
+                                  rest[2] if len(rest) > 2 else 0.0)
+        else:
+            raise ValueError(kind)
+        if not legs:
+            return None, None
+        hi = allocate(legs, x.po_tf, x.pr_tf, _DUTCH, budget=b)
+        if not hi:
+            return None, None
+        for c, v in hi.items():
+            st[c] = st.get(c, 0) + v
+            up_st[c] = up_st.get(c, 0) + v
+    if min(float(x.po_tf[c]) for c in st) < MIN_POINT_ODDS:
+        return None, None
+    rec = _rec(x, st)
+    # 上帯だけの成績（当たった目が上帯かどうか・その払戻）
+    up = dict(date=x.date, inv=float(sum(up_st.values())), k=len(up_st),
+              pay=(float(st[x.win_tf] / 100.0 * x.pay_tf * 100.0)
+                   if x.win_tf in up_st else 0.0),
+              odds=x.pay_tf)
+    return rec, up
+
+
+ARMS9: dict[str, tuple[int, list]] = {
+    "現行 band8点1割+看板1割":   (8000, [("band", 1000, 100.0, 600.0, 8), ("sign", 1000, 150_000)]),
+    "band のみ 2割(8点)":        (8000, [("band", 2000, 100.0, 600.0, 8)]),
+    "band 150倍+ 5点2割":        (8000, [("band", 2000, 150.0, 600.0, 5)]),
+    "perm(>=2) 2割 全部":        (8000, [("perm", 2000, 2, 0)]),
+    "perm(>=2) 2割 上位6点":      (8000, [("perm", 2000, 2, 6)]),
+    "perm(>=2) 2割 上位4点":      (8000, [("perm", 2000, 2, 4)]),
+    "perm(>=3) 2割 全部":        (8000, [("perm", 2000, 3, 0)]),
+    "perm 1割 + 看板1割":         (8000, [("perm", 1000, 2, 0), ("sign", 1000, 150_000)]),
+    "perm 1割 + band 1割":       (8000, [("perm", 1000, 2, 0), ("band", 1000, 100.0, 600.0, 8)]),
+}
+
+HDR9 = (f"  {'腕':28s} {'点数':>5s} {'表示的中%':>9s} {'ガミ%':>6s} {'ROI%':>7s} "
+        f"{'払戻中央':>9s} {'10万+/日':>8s} {'100倍的中/日':>11s}"
+        f" | {'上帯的中/日':>10s} {'上帯払戻中央':>12s} {'2万未満':>7s}")
+
+
+def phase9(plans=("E_hit", "F_hit")) -> None:
+    for label, win in (("探索 2024-07〜2025-12", "explore"),
+                       ("確認 2026-01〜08 (本番相当)", "confirm")):
+        rows = build(win)
+        nd = C.days_of(C.select(None, win))
+        cur = [r["cur"] for r in rows]
+        target = [bool(c) and r["cur_key"] in plans for r, c in zip(rows, cur)]
+        print("\n" + "=" * 150)
+        print(f"███ Phase9 上帯の中身  {label}   対象 {sum(target)}R"
+              f"（{'+'.join(plans)}）/ {nd}日")
+        print(HDR9)
+        base = agg([c for c in cur if c], nd)
+        print(f"  {'上帯なし（現行の下帯だけ）':28s} {base['k']:5.1f} {base['shown']:8.2f}% "
+              f"{base['gami']:6.2f} {base['roi']:7.1f} {base['med_pay']:9,.0f} "
+              f"{base['big_per_day']:8.3f} {base['o100']:11.3f} |")
+        for name, (bb, spec) in ARMS9.items():
+            arm, ups, n_on = [], [], 0
+            for r, c, on in zip(rows, cur, target):
+                rec, up = (_upper_variant(r["x"], r["cur_key"], spec, bb)
+                           if on else (None, None))
+                if rec:
+                    arm.append(rec); ups.append(up); n_on += 1
+                elif c:
+                    arm.append(c)
+            s = agg(arm, nd)
+            hits = [u["pay"] for u in ups if u["pay"] > 0]
+            small = sum(1 for p in hits if p < 20_000)
+            print(f"  {name:28s} {s['k']:5.1f} {s['shown']:8.2f}% {s['gami']:6.2f} "
+                  f"{s['roi']:7.1f} {s['med_pay']:9,.0f} {s['big_per_day']:8.3f} "
+                  f"{s['o100']:11.3f} | {len(hits)/nd:10.3f} "
+                  f"{(median(hits) if hits else 0):12,.0f} "
+                  f"{(small/len(hits)*100 if hits else 0):6.1f}%"
+                  f"   （適用 {n_on}R・上帯 {sum(u['k'] for u in ups)/max(n_on,1):.1f}点）")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "phase1"
     if cmd == "phase1":
@@ -649,6 +784,8 @@ if __name__ == "__main__":
         phase3()
     elif cmd == "phase7":
         phase7()
+    elif cmd == "phase9":
+        phase9()
     elif cmd == "phase8":
         phase8()
     elif cmd == "phase6":
