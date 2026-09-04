@@ -392,32 +392,48 @@ def alloc_note(legs: Sequence[Mapping]) -> str:
             "どの目で決まっても払戻が投資を上回ることを狙う組み立てです。")
 
 
+#: 上帯（押さえ）の役割 → 文面。**`src.type_lab.UPPER_BANDS` の `kind` と対応する**。
+#: 知らない役割は当たり障りのない言い方へ落とす（文面のために商品を止めない）。
+UPPER_LABELS: dict[str, str] = {
+    "perm": "本線と同じ3車で着順だけが違う並び",
+    "band": "当方の予測で100倍以上になる目",
+    "sign": "一撃の大きい目",
+}
+
+
 def upper_note(legs: Sequence[Mapping]) -> str:
     """上帯（押さえ）の説明文。上帯が無ければ空文字。
 
-    🔴 **払戻の見込みは行の buy から出す**（固定文に金額を書かない）。上帯は
-       ダッチなので同じ切れの中では払戻が揃うが、`band`（計画2〜3万）と
-       `sign`（計画15万）で桁が違う。
+    🔴 **払戻の見込みは行の買い目から出す**（固定文に金額を書かない）。
+    🔴 **何を押さえているかは `role` から書く**（2026-09-04）。中身を替えたのに
+       文面が「100倍以上の目」のままだと、売っていないものを説明することになる。
 
     >>> upper_note([{"stake": 8000, "pred_odds": 4.0}])
     ''
     >>> upper_note([{"stake": 8000, "pred_odds": 4.0},
-    ...             {"stake": 200, "pred_odds": 120.0, "role": "band"},
-    ...             {"stake": 100, "pred_odds": 300.0, "role": "sign"}]
-    ...            ).startswith("なお、指数上位だけでは届かない")
+    ...             {"stake": 500, "pred_odds": 40.0, "role": "perm"},
+    ...             {"stake": 500, "pred_odds": 60.0, "role": "perm"}]
+    ...            ).startswith("なお、本線と同じ3車で着順だけが違う並びを2点")
     True
     """
     up = [lg for lg in legs if (lg.get("role") or ROLE_BASE) != ROLE_BASE]
     if not up:
         return ""
+    labels: list[str] = []
+    for lg in up:
+        lab = UPPER_LABELS.get(str(lg.get("role") or ""), "押さえの目")
+        if lab not in labels:
+            labels.append(lab)
     pays = sorted(float(lg.get("stake") or 0) * float(lg.get("pred_odds") or 0)
                   for lg in up)
     span = (f"{pays[0]:,.0f}円" if pays[0] >= pays[-1] * 0.95
             else f"{pays[0]:,.0f}〜{pays[-1]:,.0f}円")
-    return ("なお、指数上位だけでは届かない高配当の決着に備えて、"
-            f"当方の予測で100倍以上になる目を{len(up)}点、"
+    aim = ("3車は合っていたのに着順で取りこぼす分を拾うための保険です。"
+           if any((lg.get("role") or "") == "perm" for lg in up) else "")
+    return ("なお、" + "と".join(labels) + f"を{len(up)}点、"
             "予算の2割だけ押さえに回しています（本線8割・押さえ2割）。"
-            f"押さえが的中したときの払戻は{span}を見込みます。"
+            + aim
+            + f"押さえが的中したときの払戻は{span}を見込みます。"
             "本線が本命で、押さえはあくまで保険としてお考えください。")
 
 

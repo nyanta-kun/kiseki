@@ -282,3 +282,17 @@ def test_role_base_matches_the_source_of_truth():
     legs = [{"combo": "1-2-3", "stake": 8000},
             {"combo": "6-7-5", "stake": 2000, "role": "band"}]
     assert _base_legs(legs) == legs[:1]
+
+
+def test_upper_labels_cover_every_band_kind():
+    """🔴 上帯の中身を替えたら文面も替える（売っていないものを説明しない）。
+
+    2026-09-04 に `band`（100倍以上を8点）→ `perm`（並び違いの補完）へ替えたとき、
+    文面が「当方の予測で100倍以上になる目」のままだと嘘になる。
+    """
+    from src.type_lab import UPPER_BANDS
+    from src.type_lab_submission import UPPER_LABELS
+
+    for band in UPPER_BANDS:
+        assert band.kind in UPPER_LABELS, (
+            f"上帯 {band.kind} の説明文がありません（`UPPER_LABELS` に足す）")

@@ -57,19 +57,27 @@ def test_budget_is_unchanged_and_split_8_2():
     assert sum(st2.values()) == BUDGET, "投資は増やさない"
     base = sum(v for c, v in st2.items() if roles[c] == ROLE_BASE)
     assert base == BUDGET - UPPER_BAND_TOTAL == 8000
-    assert set(roles.values()) <= {ROLE_BASE, "band", "sign"}
+    assert set(roles.values()) <= {ROLE_BASE} | {b.kind for b in UPPER_BANDS}
     assert len(legs2) == len(st2) == len(set(legs2)), "同じ目を2行に分けない"
 
 
-def test_upper_legs_stay_in_their_odds_band():
-    """`band` は 100-600倍・`sign` は 600倍以下（帯ROI が崩れる上を買わない）。"""
+def test_upper_legs_are_unbought_orders_of_backed_trios():
+    """上帯は**下帯で2通り以上買っている3車の、まだ買っていない並び**だけ。
+
+    🔴 ここが「惜しく外した分を拾う」の定義そのもの（2026-09-04・ユーザー判断）。
+       無関係な高オッズをばらまく形に戻ると、当たっても 1.2倍のガミばかりになる。
+    """
+    from collections import Counter
+
     plan, po, pr, legs, stakes = _built()
     legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7)
-    for c, role in roles.items():
-        if role == "band":
-            assert 100.0 <= po[c] <= 600.0
-        elif role == "sign":
-            assert po[c] <= 600.0
+    cnt = Counter(frozenset(c) for c in legs)
+    upper = [c for c in legs2 if roles[c] != ROLE_BASE]
+    assert upper, "上帯が乗っていません"
+    for c in upper:
+        assert c not in set(legs), "既に買っている目を重ねています"
+        assert cnt[frozenset(c)] >= 2, "下帯が1通りしか買っていない3車を拾っています"
+    assert len(upper) <= UPPER_BANDS[0].max_legs
 
 
 def test_base_legs_are_not_reselected():
@@ -231,7 +239,7 @@ def test_split_legs_by_role_defaults_to_base():
     """役割の無い行（2026-09-04 より前）は全部 下帯として読む。"""
     old = [{"combo": "1-2-3"}, {"combo": "1-3-2"}]
     assert split_legs_by_role(old) == old
-    assert len(UPPER_BANDS) == 2
+    assert UPPER_BANDS, "上帯が空です（重ね買いが丸ごと止まります）"
 
 
 def test_bands_are_read_at_call_time():
