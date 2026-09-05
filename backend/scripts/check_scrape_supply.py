@@ -59,7 +59,12 @@
     3. netkeiba のレース網羅率 — 当日の開催レース数に対し、`sekito.netkeiba` に
        1 行でもあるレースの割合。**中央・地方を必ず分けて見る**（今回の障害は
        「中央 0.28 / 地方 0.00」という、合算では薄まって見えない形で出た）。
-    4. 吉馬のレース網羅率 — 同上。正常時は実測 1.0 近く。
+       タイム指数は**新馬戦を分母から除く**。過去走から作られる指標なので初出走馬
+       しかいない新馬戦には原理的に存在しない（実測: 直近60日の中央で 62R 中 0R）。
+       除外しないと正常な日でも中央が 83% 前後に留まり、閾値 80% すれすれになる。
+    4. 吉馬のレース網羅率 — 同上。正常時は実測 1.0。
+       ⚠️ 吉馬は**新馬戦でも取れている**（2026-09-05 実測 36/36R）ので、
+       3 の新馬除外をここへ広げないこと。
     5. 穴ぐさの当日ピック — 中央開催日にピックが 0 件なら WARN。穴ぐさは
        全レースにピックが付くわけではないので、比率ではなく有無で見る。
 
@@ -195,20 +200,51 @@ def check_job_failures(s, target: date, rep: Report) -> None:
         rep.warn(f"ジョブ失敗: {name} が {n} 回 failed（タイムアウト kill もここに出る）")
 
 
-def _coverage(s, table: str, target: date, column: str | None = None) -> tuple[int, int]:
-    """当日の (中央, 地方) 別に、1 行でも取れているレース数を返す。"""
-    cond = f" and {column} is not null" if column else ""
+def _coverage(
+    s, table: str, target: date, column: str | None = None, *, skip_maiden: bool = False
+) -> tuple[int, int, int, int]:
+    """開催レースを分母に、(中央 分母, 中央 取得, 地方 分母, 地方 取得) を返す。
+
+    分母は `sekito.races`（＝実際に開催されたレース）で、分子はそのうち対象
+    テーブルに 1 行でもデータがあるレース。**分子と分母に同じ除外を掛ける**ため、
+    データ側ではなくレース側から数える。
+
+    skip_maiden: 新馬戦を分母から外す。タイム指数は過去走から作られるので、
+        初出走馬しかいない新馬戦には**原理的に存在しない**。
+        実測（2026-09-05 時点・直近60日の中央）:
+            新馬     62R 中   0R 取得 (0%)   ← 構造的にゼロ
+            未勝利  230R 中 108R 取得 (47%)  ← タイムアウトによる欠損
+            その他  356R 中 123R 取得 (35%)  ← 同上
+        除外しないと、正常な日でも中央が 83% 前後に留まり閾値 80% すれすれになる。
+        ⚠️ 吉馬は新馬戦でも取れている（2026-09-05 実測 36/36R）ので、この除外を
+        他のチェックへ広げないこと。パドックも当日の目視評価なので新馬にも存在する。
+    """
+    cond = f" and n.{column} is not null" if column else ""
+    # 🔴 coalesce は必須。`race_name not like ...` は race_name が NULL のとき
+    #    NULL を返すので、その行は分母からも分子からも**黙って消える**。
+    #    地方は実測でレースの約半分が race_name NULL（2026-09-05: 21R 中 13R）。
+    #    coalesce 無しだと 9/4 の地方が 19/36R → 8/19R に化けた。
+    #    この監視自体が「静かに数が減る」型で壊れては本末転倒なので、ここは触らない。
+    maiden = " and coalesce(r.race_name, '') not like '%新馬%'" if skip_maiden else ""
     row = s.execute(
         text(
-            "select count(distinct (course_code, race_no))"
-            "         filter (where left(course_code,1) = 'J'),"
-            "       count(distinct (course_code, race_no))"
-            "         filter (where left(course_code,1) <> 'J')"
-            f"  from sekito.{table} where date = :d{cond}"
+            "with x as ("
+            "  select r.course_code, exists ("
+            f"      select 1 from sekito.{table} n"
+            "       where n.date = r.date and n.course_code = r.course_code"
+            f"         and n.race_no = r.race_no{cond}"
+            "  ) as got"
+            f"   from sekito.races r where r.date = :d{maiden}"
+            ")"
+            "select count(*) filter (where left(course_code,1) = 'J'),"
+            "       count(*) filter (where left(course_code,1) = 'J' and got),"
+            "       count(*) filter (where left(course_code,1) <> 'J'),"
+            "       count(*) filter (where left(course_code,1) <> 'J' and got)"
+            "  from x"
         ),
         {"d": target},
     ).one()
-    return int(row[0]), int(row[1])
+    return int(row[0]), int(row[1]), int(row[2]), int(row[3])
 
 
 def _judge(rep: Report, label: str, got: int, held: int, floor: float) -> None:
@@ -224,23 +260,21 @@ def _judge(rep: Report, label: str, got: int, held: int, floor: float) -> None:
 
 def check_netkeiba_coverage(s, target: date, rep: Report) -> None:
     """③ netkeiba の網羅率。中央・地方を必ず分けて見る。"""
-    jra_held, nar_held = _race_counts(s, target)
+    # タイム指数（新馬戦は分母から除く）
+    jra_held, jra_got, nar_held, nar_got = _coverage(
+        s, "netkeiba", target, "idx_max", skip_maiden=True
+    )
+    _judge(rep, "netkeiba タイム指数[中央・新馬除く]", jra_got, jra_held, COVERAGE_MIN)
+    _judge(rep, "netkeiba タイム指数[地方・新馬除く]", nar_got, nar_held, COVERAGE_MIN)
 
-    for column, label, floor in (
-        ("idx_max", "netkeiba タイム指数", COVERAGE_MIN),
-        ("p_rank", "netkeiba パドック", PADDOCK_COVERAGE_MIN),
-    ):
-        jra_got, nar_got = _coverage(s, "netkeiba", target, column)
-        _judge(rep, f"{label}[中央]", jra_got, jra_held, floor)
-        # パドックは中央のみが対象（scripts_schedules id 64 が JRA 限定）
-        if column != "p_rank":
-            _judge(rep, f"{label}[地方]", nar_got, nar_held, floor)
+    # パドック（中央のみ。scripts_schedules id 64 が JRA 限定）
+    jra_held, jra_got, _, _ = _coverage(s, "netkeiba", target, "p_rank")
+    _judge(rep, "netkeiba パドック[中央]", jra_got, jra_held, PADDOCK_COVERAGE_MIN)
 
 
 def check_kichiuma_coverage(s, target: date, rep: Report) -> None:
-    """④ 吉馬の網羅率。"""
-    jra_held, nar_held = _race_counts(s, target)
-    jra_got, nar_got = _coverage(s, "kichiuma", target)
+    """④ 吉馬の網羅率。新馬戦でも取れているので除外しない。"""
+    jra_held, jra_got, nar_held, nar_got = _coverage(s, "kichiuma", target)
     _judge(rep, "吉馬[中央]", jra_got, jra_held, COVERAGE_MIN)
     _judge(rep, "吉馬[地方]", nar_got, nar_held, COVERAGE_MIN)
 
