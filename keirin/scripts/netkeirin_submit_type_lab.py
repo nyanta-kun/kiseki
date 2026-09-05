@@ -978,7 +978,6 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                         n_ok += 1
                         titles.append(f"{venue}{race_no}R({hp_plan}) 高額枠 {msg}")
                         submitted.append((str(venue), hp_plan))
-                        bump("highpay")
                         continue
                     bump("failed")
                     continue
@@ -1011,7 +1010,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             bump("failed")
 
     tag = "[dry-run] " if dry_run else ""
-    print(f"[type_lab_submit] {tag}{day} {session}: 入稿 {n_ok}件  "
+    # 🔴 **高額枠は「入稿」に数える**（2026-09-06）。`bump()` は見送りの集計なので、
+    #    そこへ足すとログが「見送り {'highpay': 3}」となり出したのに出していない
+    #    ように読める（実際に 2026-09-06 の朝そう出た）。
+    hp_done = n_highpay - sum(1 for _rk, rank in already if rank in HIGHPAY_PLAN_KEYS)
+    hp_txt = f"（うち高額枠 {hp_done}件）" if hp_done else ""
+    print(f"[type_lab_submit] {tag}{day} {session}: 入稿 {n_ok}件{hp_txt}  "
           f"見送り {dict(sorted(skipped.items()))}", flush=True)
     for t in titles:
         print(f"  + {t}")
