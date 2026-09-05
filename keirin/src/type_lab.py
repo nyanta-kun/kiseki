@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 from .unit_distribution import FLOOR_THEN_LARGEST_REMAINDER, distribute_units
 from .stake_allocation import MIN_MEAN_PAYOUT
@@ -75,6 +75,42 @@ AXIS_SUM_FIRM = 1.44
 BEHIND_MID = 11.0
 #: 信頼度傾斜の既定の床（＝当たったら最低この倍率を予測ベースで確保する）。
 DEFAULT_FLOOR_MULT = 1.3
+
+#: **当たれば最低これだけは返す**という床の倍率（2026-09-05・ユーザー要望
+#: 「最低2倍を担保しながら、買い目に対しての信頼度を得点化し、信頼度が高いところから
+#: 払い戻しが多くなる様に傾斜配分する」）。
+#:
+#: 🟢 **入稿ゲートと同じ制約なので、通る買い目なら必ず組める。** 床を全点へ置くには
+#:    `予算 × mult / オッズ` の合計が予算以下、すなわち **Σ(1/オッズ) <= 1/mult**。
+#:    mult=2.0 は `Σ <= 0.5` で、入稿ゲート（平均想定払戻 2万円超）とまったく同じ式。
+#:
+#: 🔴 **これは配分の話であって買い目の話ではない。** 買う目は1点も変えない。
+#:    変わるのは「どの点にいくら置くか」だけ。
+#:
+#: 実測（7車・hit系6プラン・入稿ゲート通過分・本番のモデル確率と予測オッズ・
+#: 探索2025 / 確認2026）:
+#:
+#:      案                    ROI          2万円未満の点があるレース
+#:      現行                 76.0 / 80.6   22.1% / 21.8%
+#:      **conf 最低2.0倍**   **76.1 / 80.7**   **8.5% / 8.3%**
+#:
+#:    ＝ **収支は動かさずに「当たったのに2万円に届かない」を 1/3 以下へ**。
+#:    的中率・表示的中・10万+ はいずれもほぼ不変。プラン別の ΔROI は
+#:    −1.0〜+1.7pt でばらつくが大勢は不変（最大の改善は `F_hit` の
+#:    61.4/60.8% → 22.5/22.4%、次いで `A_hit` 21.8/24.0% → 9.9/10.9%）。
+#:
+#: 🟢 **傾斜も実際に付く。** 1レース内の想定払戻のひらき（最高÷最低・確認窓）は
+#:    `B_hit` 1.18→1.83 / `C_hit` 1.19→1.59 / `E_hit` 1.20→1.87 / `D_hit` 1.03→1.21。
+#:    床を置いたぶん残りが確率比例で乗るので、**確信のある点ほど払戻が厚い**。
+#:    逆に元から `conf` の2つは床が予算を食うのでひらきは縮む
+#:    （`A_hit` 1.45→1.22 / `F_hit` 2.17→1.60）。狙いは「最低額の底上げ」なので想定内。
+#:
+#: ⚠️ **穴狙い・看板（`A_ana` / `F_sign` / `F_pay`）には掛けない。** `A_ana` は
+#:    実測で **ROI 78.6 → 65.7（−12.9pt）** と大きく悪化する。想定払戻25万円級の
+#:    商品に全点2万円の床を置くと、高配当の目への傾斜が床に食われて崩れる。
+#:    そもそもこの3つは「2万円未満の点」が元から 0.0〜0.3% でこの手当てが要らない。
+#: ⚠️ `A_trio`（三連複2点）も対象外（2万未満 1.6%・元から dutch で均等）。
+MIN_PAYOUT_MULT = 2.0
 
 #: 型A を「穴狙い（軸1が飛ぶ側）」で売る境界。**1着率エントロピーの上位10%**
 #: （探索窓 2025-01-01〜12-31 の 7車 型A・3,338R の p90）。
@@ -578,6 +614,7 @@ class Plan:
 PLANS: dict[str, Plan] = {
     # 型A 鉄板 — 3点。**2026-08-31 に固定構成（`fixed12`）から確率順へ替えた。**
     "A_hit": Plan("A_hit", "A", "trifecta", "prob_top", 0, max_legs=3, alloc="conf",
+                  floor_mult=MIN_PAYOUT_MULT,
                   note="確率上位3点（同ライン隣接ボーナス込み・表示的中を取る）"),
     "A_pay": Plan("A_pay", "A", "trifecta", "axis1_second2", 3, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（払戻を取る）"),
@@ -589,7 +626,7 @@ PLANS: dict[str, Plan] = {
                   note="軸1を外した残り6車から確率上位5点（軸が飛ぶ側を取る）"),
     # 型B 堅い・中 — 確率上位を Σ(1/予測) の床まで積む。
     "B_hit": Plan("B_hit", "B", "trifecta", "prob_top", 0, max_legs=8,
-                  sigma_max=1 / 3.0, alloc="dutch",
+                  sigma_max=1 / 3.0, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
                   note="確率上位から想定平均払戻 30,000円を割らない点数まで"),
     # 型C 堅いが崩れ筋 — 帯を切って点数を増やす側。
     # 🔴 **2026-09-01 に帯を 20倍 → 15倍へ下げた（点数は12点のまま）。**
@@ -612,7 +649,7 @@ PLANS: dict[str, Plan] = {
     # ⚠️ 帯そのものの回収率は妥当（買っている目の帯別回収率は 20〜30倍が両窓とも 84.6% で最良、
     #    100倍超が 51.2 / 60.4% で最悪。ただし100倍超はダッチ配分ゆえ投資の3%しかない）。
     "C_hit": Plan("C_hit", "C", "trifecta", "prob_top", 0, min_odds=15.0,
-                  max_legs=12, alloc="dutch",
+                  max_legs=12, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
                   note="予測15倍以上から確率上位12点"),
     # 型D 混戦・軸あり — 唯一の三連複。最人気の相手を外す。
     # 🔴 **2026-09-01 に相手を 4点 → 3点へ減らした。** 型D は「的中頻度に対して
@@ -625,14 +662,16 @@ PLANS: dict[str, Plan] = {
     #    確認窓だけ）。件数はゲート通過が上がるぶん微増する。戻すなら 4 に戻すだけでよい。
     # ⚠️ 「最人気を外さない（軸2車流し）」案は測って否定した——通過率が 78 / 52 / 33%（相手2/3/4点）
     #    まで落ち、確認窓の ROI も 71.7 / 70.9 / 69.9% と現行を下回る。
-    "D_hit": Plan("D_hit", "D", "trio", "axis2_drop_fav", 3, alloc="dutch",
+    "D_hit": Plan("D_hit", "D", "trio", "axis2_drop_fav", 3, alloc="conf",
+                  floor_mult=MIN_PAYOUT_MULT,
                   note="軸2車＋相手3点（相手4車のうち最人気1車を外す）"),
     # 型E 混戦・中 — 高い帯で点数を広げる。
     "E_hit": Plan("E_hit", "E", "trifecta", "prob_top", 0, min_odds=30.0,
-                  max_legs=14, alloc="dutch",
+                  max_legs=14, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
                   note="予測30倍以上から確率上位14点"),
     # 型F 大混戦 — 12点。**2026-08-31 に全順列（`all6`）から確率順へ替えた。**
     "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0, max_legs=12, alloc="conf",
+                  floor_mult=MIN_PAYOUT_MULT,
                   note="確率上位12点（同ライン隣接ボーナス込み）"),
     "F_pay": Plan("F_pay", "F", "trifecta", "axis1_second2", 2, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（一撃を取る）"),
@@ -1302,8 +1341,34 @@ def apply_line_swap(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapp
 GATE_FALLBACK: dict[str, Plan] = {
     "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0,
                   min_odds=15.0, max_legs=12, alloc="conf",
+                  floor_mult=MIN_PAYOUT_MULT,
                   note="F_hit がゲートに落ちたとき: 予測15倍以上から確率上位12点"),
 }
+
+#: 最低2倍の床が置けないときに落とす配分（＝2026-09-05 以前の配分）。
+#:
+#: 🔴 **床が置けないレースを見送りにしない。** `Σ(1/予測オッズ) > 1/MIN_PAYOUT_MULT`
+#:    だと `allocate` が None を返し、そのまま返すと **商品が丸ごと消える**
+#:    （実測で hit系の 8.3〜8.5%）。母集団を静かに削るのが一番たちが悪いので、
+#:    その分は**変更前の配分のまま売る**。＝ この変更で在庫は1件も減らない。
+#: ⚠️ 落ちた分は「2万円未満の点があるレース」として残る（8.3〜8.5%）。
+#:    構造的に2倍が組めない買い目なので、なくすには買い目の側を変えるしかない。
+ALLOC_BEFORE_MIN_PAYOUT: dict[str, tuple[str, float]] = {
+    "A_hit": ("conf", DEFAULT_FLOOR_MULT),
+    "B_hit": ("dutch", DEFAULT_FLOOR_MULT),
+    "C_hit": ("dutch", DEFAULT_FLOOR_MULT),
+    "D_hit": ("dutch", DEFAULT_FLOOR_MULT),
+    "E_hit": ("dutch", DEFAULT_FLOOR_MULT),
+    "F_hit": ("conf", DEFAULT_FLOOR_MULT),
+}
+
+
+def alloc_fallback(plan: Plan) -> Plan | None:
+    """最低2倍が組めないときに使う、変更前の配分のプラン。無ければ None。"""
+    before = ALLOC_BEFORE_MIN_PAYOUT.get(plan.key)
+    if before is None or (plan.alloc, plan.floor_mult) == before:
+        return None
+    return replace(plan, alloc=before[0], floor_mult=before[1])
 
 
 def _build_plan(shape: "RaceShape", plan: Plan,
@@ -1313,6 +1378,11 @@ def _build_plan(shape: "RaceShape", plan: Plan,
     if not legs:
         return None
     stakes = allocate(legs, pred_odds, probs, plan)
+    if not stakes:
+        # 🔴 最低2倍の床が置けないだけなら、変更前の配分で売る（見送りにしない）。
+        fb = alloc_fallback(plan)
+        if fb is not None:
+            stakes = allocate(legs, pred_odds, probs, fb)
     if not stakes:
         return None
     return [c for c in legs if c in stakes], stakes
