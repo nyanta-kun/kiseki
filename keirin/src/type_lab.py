@@ -434,6 +434,10 @@ class RaceShape:
     #: 1着率のエントロピー（大きいほど1着が読めない＝軸1が飛びやすい）。
     #: 型A の売り分け（`sell_plan_for`）だけが使う。渡されなければ 0.0。
     pw_ent: float = 0.0
+    #: 並び（ライン）のうち **3車以上のものだけ** を車番昇順のタプルで持つ。
+    #: `line_legs`（ライン決着への差し替え）だけが使う。渡されなければ空。
+    #: 🔴 単騎（`line_group` が空／0）は含めない。
+    lines: tuple[tuple[int, ...], ...] = ()
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -486,7 +490,22 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
         label = "A" if s <= -1 else ("B" if s == 0 else "C")
     else:
         label = "D" if s <= -1 else ("E" if s == 0 else "F")
-    return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent)
+    return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent,
+                     _lines_of(line_group))
+
+
+def _lines_of(line_group: Mapping[int, object]) -> tuple[tuple[int, ...], ...]:
+    """3車以上のラインだけを、車番昇順のタプルにして返す。
+
+    >>> _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None})
+    ((1, 2, 3),)
+    """
+    groups: dict[str, list[int]] = {}
+    for car, g in line_group.items():
+        if g is None or str(g) in ("", "0"):
+            continue
+        groups.setdefault(str(g), []).append(int(car))
+    return tuple(tuple(sorted(v)) for v in sorted(groups.values()) if len(v) >= 3)
 
 
 # ───────────────────────────── 買い目 ─────────────────────────────
@@ -1040,6 +1059,124 @@ def mean_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
     return sum(stakes[c] * float(pred_odds[c]) for c in stakes) / len(stakes)
 
 
+#: ライン決着（同一ラインの3車がそのまま1・2・3着）への差し替えを掛けるプラン。
+#:
+#: 🔴 **発端はユーザー観察「他の並びの買い目は買っていて外している」**（2026-09-05）。
+#:    買い目と実際の決着をライン構成で突き合わせると、はっきりずれていた
+#:    （33,730レース・現行ルールで入稿相当・2025+2026）:
+#:
+#:      決着の形          買い目に占める割合   実際の決着   差    その形が決着したとき集合を買えた率
+#:      2ライン(2+1)        71.1%           60.5%    +10.6         50.4%
+#:      3ライン バラ         20.0%           20.2%     -0.2         37.5%
+#:      **同一ライン3車**      **8.9%**        **19.3%** **-10.4**    **62.2%**
+#:
+#:    ＝**並びがそのまま来る決着は19.3%起きているのに、買い目の8.9%しか充てていない。**
+#:    しかもライン決着は買えたときの集合カバーが最も高い（62.2%）。
+#:
+#: 🔴 **既存の同ライン隣接ボーナス（`rank_7t3_blend_probs` の λ=2.0 / μ=1.5）では足りない。**
+#:    λμ は 1-2着・2-3着の隣接を見るので3車ラインは 3.0倍されているはずだが、
+#:    それでも上表の -10.4pt が残る。方向は正しいが量が足りていない。
+#:
+#: 🔴 **「印（WTの◎○▲△）で並べ替える」案は否定済み。** 同じ枠で4通り測って
+#:    全部が基準（モデル確率順）にも市場人気順にも**両窓で負けた**
+#:    （印3車4通り優先 36.13/36.53% ↔ 基準 37.30/37.57%）。印の偏り
+#:    （◎○＋無印を 29.0% 買って決着は 17.1%）は記述としては本物だが、
+#:    印で機械的に並べ替えると悪化する。**効くのはラインだけ。**
+#:
+#: ⚠️ **`A_hit`（3点）には掛けない。** 下位2点＝本線の2/3を捨てることになり、
+#:    実測でも **-3.26 / -1.74pt と両窓で悪化**した。`A_trio` / `D_hit` は三連複で
+#:    順序リスクが無く、`A_ana` は軸1を外す商品、`F_sign` / `F_pay` は看板枠なので
+#:    いずれも対象外（`F_sign` は 3点しかなく発動も19〜22%）。
+LINE_SWAP_PLANS: frozenset[str] = frozenset({"B_hit", "C_hit", "E_hit", "F_hit"})
+
+#: 差し替える点数。**先に2点を試し、入稿ゲートを割るなら1点へ落とす**（下記）。
+#:
+#: 🔴 **ゲートを割るなら差し替えない、が肝。** 素で2点差し替えると的中は
+#:    +3.51 / +3.62pt と大きいが、**平均想定払戻が2万円を割って入稿ゲートの通過が
+#:    88.8% → 58.0% に落ちる**（C_hit は 97.9% → 41.6%）。母集団が1/3消えるので
+#:    「的中率が上がった」の意味が変わってしまう。ゲートを守る形にすると効果は
+#:    半分になるが、**件数・払戻・ROI のどれも犠牲にしない**。
+#:
+#:    実測（7車・確定オッズ・探索2025 / 確認2026）:
+#:
+#:      案                    的中          ROI        ゲート通過    払戻中央
+#:      現行                25.68 / 26.55  78.3 / 80.6  87.8 / 89.0  24,150 / 25,600
+#:      素の2点差し替え       28.61 / 29.33  78.6 / 79.2  78.5 / 80.3  22,592 / 23,398
+#:      **2点→無理なら1点**  **27.57 / 28.83**  79.0 / 80.6  87.8 / 89.0  24,262 / 24,873
+#:
+#:    Δ = **+1.88pt CI[+1.63,+2.13] / +2.27pt CI[+1.91,+2.66]**（レース単位ブートストラップ）。
+#:    **無作為対照10本**（同じレース・同じ点数を無作為な目に差し替え）は
+#:    24.82〜24.94 / 25.73〜25.89% で **10/10 で勝つ**。発動は 29 / 31%。
+#:
+#:    プラン別（7車・Δ的中 探索 / 確認・すべて両窓プラス）:
+#:      E_hit +6.74 / +6.47（発動68/63%） C_hit +2.89 / +3.88（35/44%）
+#:      B_hit +1.25 / +2.29（25/28%）    F_hit +1.26 / +1.16（36/37%）
+#:
+#:    9車でも同じ向き（+2.12 CI[+1.50,+2.80] / +1.37 CI[+0.53,+2.29]・対照10/10・
+#:    発動20%）なので車数で分けていない。**車数依存の定数を持たない**構造的な
+#:    操作なので、7車の分位を9車へ当てる過去の失敗とは型が違う。
+#: ⚠️ 検証は**確定オッズ**で並べている。本番は予測オッズなので差し替える目の
+#:    並び順がぶれる。向きは変わらないはずだが量は前向き実測で確かめること。
+LINE_SWAP_LEGS: tuple[int, ...] = (2, 1)
+#: 差し替えたあとに残す最低点数。これを割るなら差し替えない。
+LINE_SWAP_MIN_KEEP = 3
+
+
+def line_legs(shape: "RaceShape", plan: Plan, legs: Sequence,
+              pred_odds: Mapping, m: int) -> list[tuple[int, ...]] | None:
+    """`legs` の確率下位 m 点を「同一ライン3車の目」へ差し替えたものを返す。
+
+    組めなければ None。**点数は変えない。**
+
+    🔴 **ラインは買い目に出ている車だけで数える。** 3車のうち1車でも買い目に
+       出ていないラインは対象外（その車を新しく持ち込む操作は測っていない）。
+    🔴 **差し替え先は予測オッズ昇順（＝人気順）**。確率順ではない——検証は
+       市場のオッズ順で測っており、そこが情報源になっている。
+    🔴 **落とすのは末尾 m 点。** `prob_top` は確率降順で組まれているので
+       末尾＝最も確率の低い点。上位を触ると本線が崩れる（`A_hit` の悪化と同じ理由）。
+    """
+    if plan.bet_type != "trifecta" or plan.key not in LINE_SWAP_PLANS:
+        return None
+    legs = list(legs)
+    if m < 1 or len(legs) - m < LINE_SWAP_MIN_KEEP:
+        return None
+    cars = {c for leg in legs for c in leg}
+    have = set(legs)
+    cand: list[tuple[int, ...]] = []
+    for line in shape.lines:
+        mem = [c for c in line if c in cars]
+        if len(mem) < 3:
+            continue
+        for p in itertools.permutations(mem[:3]):
+            if p not in have and _pos(pred_odds.get(p)):
+                cand.append(p)
+    if len(cand) < m:
+        return None
+    cand.sort(key=lambda p: float(pred_odds[p]))
+    return legs[:len(legs) - m] + cand[:m]
+
+
+def apply_line_swap(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapping,
+                    pred_odds: Mapping, probs: Mapping,
+                    min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """ライン決着への差し替え。**入稿ゲートを割るなら差し替えない。**
+
+    戻り値は `(legs, stakes)`。掛からなければ受け取ったものをそのまま返す。
+
+    🔴 **賭け金 0 円の点が出る差し替えは採らない**（点数が変わるため）。
+    """
+    for m in LINE_SWAP_LEGS:
+        nl = line_legs(shape, plan, legs, pred_odds, m)
+        if not nl:
+            continue
+        st = allocate(nl, pred_odds, probs, plan)
+        if not st or len(st) != len(nl):
+            continue
+        if mean_expected_payout(st, pred_odds) > min_mean_payout:
+            return nl, st
+    return list(legs), stakes
+
+
 #: 入稿ゲート（平均想定払戻 <= `MIN_MEAN_PAYOUT`）に落ちたとき、**代わりに組む買い方**。
 #:
 #: 🔴 **代替は元と同じ `key` を名乗る。** 行の一意キーは (race_key, plan_key, mode) で、
@@ -1103,24 +1240,31 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
        このリポジトリは車数をまたいだ移植で繰り返し失敗している（7C の定数・
        3ヘッド軸・7M1）。9車で使うなら9車の窓で測り直してから。
     """
+    def _done(got, pl: Plan):
+        # 🔴 **ライン決着への差し替えは最後に掛ける**（買い方が確定してから）。
+        #    ゲートを割るなら差し替えないので、ここで母集団は動かない。
+        legs, stakes = apply_line_swap(shape, pl, got[0], got[1],
+                                       pred_odds, probs, min_mean_payout)
+        return legs, stakes, pl
+
     if n_entries != 7:
         got = _build_plan(shape, plan, pred_odds, probs)
-        return (*got, plan) if got else None
+        return _done(got, plan) if got else None
     def _build(pl: Plan):
         return _build_plan(shape, pl, pred_odds, probs)
 
     got = _build(plan)
     fb = GATE_FALLBACK.get(plan.key)
     if fb is None:
-        return (*got, plan) if got else None
+        return _done(got, plan) if got else None
     # 本命が組めた上でゲートを通るなら、そのまま使う（既存の行は書き換えない）
     if got and mean_expected_payout(got[1], pred_odds) > min_mean_payout:
-        return (*got, plan)
+        return _done(got, plan)
     alt = _build(fb)
     if alt and mean_expected_payout(alt[1], pred_odds) > min_mean_payout:
-        return (*alt, fb)
+        return _done(alt, fb)
     # 代替もゲートに落ちるなら、元の結果をそのまま返す（見送りの判断は入稿側）
-    return (*got, plan) if got else None
+    return _done(got, plan) if got else None
 
 
 #: 上帯の配分は必ずダッチ（∝1/予測オッズ）。どの点が当たっても払戻が揃うので、
@@ -1293,7 +1437,14 @@ def rule_version(n_entries: int = 7) -> str:
         #    新旧の行が同じ `rule_version` で混ざる。
         | {"_sign": [list(SIGNBOARD_TYPES), SIGNBOARD_TARGET,
                      SIGNBOARD_MAX_ODDS, SIGNBOARD_N_ENTRIES,
-                     sorted(SIGNBOARD_RACE_TYPES)]})
+                     sorted(SIGNBOARD_RACE_TYPES)]}
+
+        # 🔴 ライン決着への差し替えも `PLANS` の属性では表せない（`build_with_gate_fallback`
+        #    の中で効く）。ここへ入れないと対象プランや差し替え点数を動かしても
+        #    版が割れず、新旧の行が同じ `rule_version` で混ざる（`_sign` と同じ理由）。
+        #    ⚠️ 7車にも9車にも掛けているので、`if n_entries == 7` の中には入れない。
+        | {"_line": [sorted(LINE_SWAP_PLANS), list(LINE_SWAP_LEGS),
+                     LINE_SWAP_MIN_KEEP]})
     if n_entries == 7:
         # 🔴 フォールバックは `PLANS` に無いので、ここへ入れないと帯を動かしても
         #    版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
