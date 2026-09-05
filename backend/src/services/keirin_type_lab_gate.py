@@ -123,6 +123,9 @@ AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
     "B_sign",
     "C_sign",
     "D_sign",
+    "B_big",     # 同上。`_big` は軸1を買わない商品なので軸信頼で絞るのは正面から逆
+    "C_big",
+    "D_big",
 })
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
 #:

@@ -268,6 +268,35 @@ SIGNBOARD_MAX_ODDS = 600.0
 #: 9車では測っていない）。
 SIGNBOARD_N_ENTRIES = 7
 
+#: ── 5本の内訳（2026-09-06・ユーザー判断「②」）─────────────────────────────
+#:
+#: **偶数本目（2本目・4本目）を「特大狙い」`{型}_big` にする**＝5本なら 3:2。
+#:
+#: 🔴 **並べ替えても中身は変わらない**（置き場所に情報が無いことは実測済み）。
+#:    偶数本目にしているのは**短い日でも比率が保たれる**から
+#:    （3本しか出ない日でも sign / big / sign と 1本は特大になる）。
+#:
+#: 実測（`scripts/exp_type_lab/big30.py`・型B/C/D の捨てる側・探索 / 確認・
+#: ラインナップ全体＝実売 47.4件/日 に足したとき）:
+#:
+#:      メニュー                    表示的中        ROI        10万+/月   30万+/月  50万+/月
+#:      高額枠なし                  25.31%       69.6%        3.54      0.00     0.00
+#:      ① 計画15万 ×5              23.33/23.34  69.8/70.3    9.55/9.50  0.34/0.16  0/0
+#:      **② 15万×3 ＋ big×2（現行）** 23.23/23.25  70.1/70.7  8.28/8.43  **0.93/1.03** 0.32/0.25
+#:      ③ big ×5                  23.08/23.10  70.4/71.3    6.37/6.83  1.82/2.35  0.81/0.63
+#:
+#: 🟢🟢 **どのメニューでも 表示的中 23.1〜23.6%・ROI 69.8〜71.3% で判別できない。**
+#:    動くのは払戻の裾だけ＝**「10万+ を月9.5回」か「30万+ を月2回」かの商品判断**。
+#: 🔴 **50万超は計画30万以上でしか出ない**（計画15万は 3,180R で 0件）。
+#: 🔴 **「軸1を外すと ROI が上がる」は母集団を替えると消える**（捨てる側 +18.6/+7.8pt ↔
+#:    残す側 −2.4/−13.7pt）。**ROI を根拠にしないこと。** 買い方が決めるのは裾だけ。
+#: ⚠️ ROI の CI は腕あたり ±20〜30pt。30万+ の件数も確認窓で 1〜23件しかない。
+#:    **順序（計画額を上げると増える）はダッチの算数なので信頼できるが、絶対値はブレる。**
+#: ⚠️ 実測と限界: `docs/highpay_5slots_2026_09_06.md` 9章
+HIGHPAY_BIG_TARGET = 400_000
+#: 何本目を「特大狙い」にするか（1始まり）。空なら全部 `{型}_sign`。
+HIGHPAY_BIG_SLOTS: frozenset[int] = frozenset({2, 4})
+
 #: 上の境界を作った窓。数字の出どころを行に残す。
 ANA_SOURCE_WINDOW = ("2025-01-01", "2025-12-31")
 #: 穴狙いを掛ける車数。**これ以外には掛けない**。
@@ -632,6 +661,12 @@ class Plan:
     sigma_max: float = 0.0   # Σ(1/予測オッズ) の上限（0=なし）
     alloc: str = "conf"      # 'conf' | 'dutch'
     floor_mult: float = DEFAULT_FLOOR_MULT
+    #: `structure='signboard'` の計画払戻（0 なら `SIGNBOARD_TARGET`）。
+    target: int = 0
+    #: `structure='signboard'` で **軸1（p3 1位）を含む目を全部外す**か。
+    #: `bust_top` と同じ狙い（軸1が3着にも入らない側）を、点数ではなく
+    #: 計画払戻で決める形にしたもの。
+    bust: bool = False
     note: str = ""
 
 
@@ -766,6 +801,13 @@ for _t in "ABCDEF":
         f"{_t}_sign", _t, "trifecta", "signboard", 0,
         max_odds=SIGNBOARD_MAX_ODDS, alloc="dutch",
         note=f"看板枠: 確率順に Σ(1/予測オッズ) <= 予算/{SIGNBOARD_TARGET:,} まで積む")
+    # 特大狙い（高額枠の2本目・4本目）。**軸1を外して計画払戻を上げる**。
+    PLANS[f"{_t}_big"] = Plan(
+        f"{_t}_big", _t, "trifecta", "signboard", 0,
+        max_odds=SIGNBOARD_MAX_ODDS, alloc="dutch",
+        target=HIGHPAY_BIG_TARGET, bust=True,
+        note=f"特大狙い: 軸1を外し、確率順に Σ(1/予測オッズ) <= 予算/"
+             f"{HIGHPAY_BIG_TARGET:,} まで積む")
 del _t
 
 
@@ -942,20 +984,29 @@ HIGHPAY_TYPES: tuple[str, ...] = ("B", "C", "D")
 HIGHPAY_SLOTS_PER_DAY = 5
 #: 高額枠を置く車数。**これ以外には置かない**（9車は未測定）。
 HIGHPAY_N_ENTRIES = 7
+
+#: 5本の内訳（`HIGHPAY_BIG_TARGET` / `HIGHPAY_BIG_SLOTS`）は
+#: `SIGNBOARD_N_ENTRIES` の直後にある（`PLANS` を組む前に要るため）。
 #: 高額枠として売りうるプラン。
-HIGHPAY_PLAN_KEYS: frozenset[str] = frozenset(f"{t}_sign" for t in HIGHPAY_TYPES)
+HIGHPAY_PLAN_KEYS: frozenset[str] = (
+    frozenset(f"{t}_sign" for t in HIGHPAY_TYPES)
+    | frozenset(f"{t}_big" for t in HIGHPAY_TYPES))
 
 
-def highpay_plan_for(type_label: str | None, n_entries: int | None) -> str | None:
+def highpay_plan_for(type_label: str | None, n_entries: int | None,
+                     n_done: int = 0) -> str | None:
     """日次上限で捨てるレースに置く**高額枠**のプラン。置けなければ None。
 
-    🔴 **順序も本数もここでは決めない**（呼び出し側の日次の状態）。ここは
-       「この型・この車数なら高額枠を置いてよいか」だけを答える純関数。
+    `n_done` はその日に既に出した高額枠の本数（0 始まり）。**本数の上限は
+    ここでは見ない**（呼び出し側の日次の状態）。ここが決めるのは
+    「この型・この車数なら置いてよいか」と「何本目だから sign か big か」だけ。
 
-    >>> highpay_plan_for("B", 7)
-    'B_sign'
+    >>> [highpay_plan_for("B", 7, i) for i in range(5)]
+    ['B_sign', 'B_big', 'B_sign', 'B_big', 'B_sign']
     >>> highpay_plan_for("D", 7)
     'D_sign'
+    >>> highpay_plan_for("C", 7, 1)
+    'C_big'
     >>> highpay_plan_for("A", 7) is None
     True
     >>> highpay_plan_for("F", 7) is None
@@ -969,7 +1020,8 @@ def highpay_plan_for(type_label: str | None, n_entries: int | None) -> str | Non
         return None
     if str(type_label or "") not in HIGHPAY_TYPES:
         return None
-    return f"{type_label}_sign"
+    kind = "big" if (int(n_done) + 1) in HIGHPAY_BIG_SLOTS else "sign"
+    return f"{type_label}_{kind}"
 
 
 SELLABLE_PLAN_KEYS: frozenset[str] = (
@@ -997,13 +1049,13 @@ def plans_for(type_label: str, n_entries: int = 7,
        売る／売らないは `sell_plans_for` の責務へ寄せた。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("A", 9, "特選")]
-    ['A_hit', 'A_pay', 'A_trio', 'A_ana', 'A_sign']
+    ['A_hit', 'A_pay', 'A_trio', 'A_ana', 'A_sign', 'A_big']
     """
     return [p for p in PLANS.values() if p.type_label == type_label]
 
@@ -1190,9 +1242,15 @@ def build_legs(shape: RaceShape, plan: Plan,
         # 🔴 **並べ方は確率順で固定する。** EV順・オッズ順・確率上位k点→EV順 も
         #    測ったが、10万+/日 も ROI も窓をまたいで判別できない
         #    （`SIGNBOARD_TYPES` の実測表）。**選び方は本数を動かさない。**
-        cap = float(BUDGET) / float(SIGNBOARD_TARGET)
+        # 🔴 **`plan.bust` は「軸1を含む目を全部外す」**（`bust_top` と同じ狙いを
+        #    点数ではなく計画払戻で決める形）。30万超はこの形でしか出ない——
+        #    計画15万は探索・確認あわせて 3,180R で **50万+ が0件**
+        #    （`docs/highpay_5slots_2026_09_06.md` 9章）。
+        cap = float(BUDGET) / float(plan.target or SIGNBOARD_TARGET)
+        pool = set(order[1:]) if plan.bust else None
         cand = [k for k, v in pred_odds.items()
                 if _pos(v) and len(set(k)) == 3
+                and (pool is None or set(k) <= pool)
                 and float(v) >= plan.min_odds
                 and (not plan.max_odds or float(v) <= plan.max_odds)]
         cand.sort(key=lambda k: -float(probs.get(k, 0.0)))

@@ -470,7 +470,7 @@ def test_nine_car_type_f_sells_pay_for_the_final_and_line_otherwise():
         assert [p.key for p in sell_plans_for("F", 7, rt)] == ["F_hit"], rt
     # 生成側は種別で落とさない（比較台を残す）
     assert [p.key for p in plans_for("F", 9, "準決勝")] == [
-        "F_hit", "F_pay", "F_line", "F_sign"]
+        "F_hit", "F_pay", "F_line", "F_sign", "F_big"]
 
 
 def test_nine_car_final_match_is_exact_not_substring():

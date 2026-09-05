@@ -467,7 +467,9 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 #: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
 #:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
 #:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
-LONGSHOT_PLANS = {"F_pay", "A_ana"} | {f"{t}_sign" for t in "ABCDEF"}
+LONGSHOT_PLANS = ({"F_pay", "A_ana"}
+                  | {f"{t}_sign" for t in "ABCDEF"}
+                  | {f"{t}_big" for t in "ABCDEF"})
 
 
 def test_only_declared_plans_are_longshot():
@@ -493,7 +495,7 @@ def test_only_declared_plans_are_longshot():
     #    表には最初から6型ぶん入れてある。**不足は許さない**ので検出力は落ちない。
     assert set(SELLABLE_PLAN_KEYS) <= set(ACT_TYPE_BY_PLAN), \
         "入稿しうるプランが表から漏れている"
-    assert all(k in SELLABLE_PLAN_KEYS or k.endswith("_sign")
+    assert all(k in SELLABLE_PLAN_KEYS or k.endswith(("_sign", "_big"))
                for k in ACT_TYPE_BY_PLAN), "表に素性の分からないプランがある"
     assert {k for k, v in ACT_TYPE_BY_PLAN.items()
             if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS
@@ -1257,7 +1259,8 @@ def test_highpay_types_are_the_measured_ones():
                               SELLABLE_PLAN_KEYS, highpay_plan_for)
 
     assert HIGHPAY_TYPES == ("B", "C", "D")
-    assert HIGHPAY_PLAN_KEYS == {"B_sign", "C_sign", "D_sign"}
+    assert HIGHPAY_PLAN_KEYS == {"B_sign", "C_sign", "D_sign",
+                                 "B_big", "C_big", "D_big"}
     assert HIGHPAY_PLAN_KEYS <= SELLABLE_PLAN_KEYS, "売りうるプランとして登録されていない"
     assert HIGHPAY_SLOTS_PER_DAY == 5
     # 7車だけ（9車は未測定）
@@ -1266,6 +1269,50 @@ def test_highpay_types_are_the_measured_ones():
         assert highpay_plan_for(t, 9) is None, f"9車に高額枠を置いている: {t}"
     for t in ("A", "E", "F"):
         assert highpay_plan_for(t, 7) is None, f"対象外の型に高額枠を置いている: {t}"
+
+
+def test_highpay_alternates_sign_and_big():
+    """🔴 **5本の内訳は 3:2**（偶数本目が「特大狙い」）。ユーザー判断②（2026-09-06）。
+
+    偶数本目にしているのは**短い日でも比率が保たれる**から
+    （3本しか出ない日でも sign / big / sign と1本は特大になる）。
+    置き場所に情報は無いので、並べ替えても中身は変わらない。
+    """
+    from src.type_lab import (HIGHPAY_BIG_SLOTS, HIGHPAY_BIG_TARGET,
+                              HIGHPAY_SLOTS_PER_DAY, PLANS, highpay_plan_for)
+
+    got = [highpay_plan_for("B", 7, i) for i in range(HIGHPAY_SLOTS_PER_DAY)]
+    assert got == ["B_sign", "B_big", "B_sign", "B_big", "B_sign"], got
+    assert sum(1 for g in got if g.endswith("_big")) == len(HIGHPAY_BIG_SLOTS)
+    # 🔴 `_big` は「軸1を外して計画払戻を上げる」＝30万超が出る唯一の形
+    for t in ("B", "C", "D"):
+        pl = PLANS[f"{t}_big"]
+        assert pl.structure == "signboard" and pl.bust and pl.alloc == "dutch"
+        assert pl.target == HIGHPAY_BIG_TARGET == 400_000
+    # `_sign` は据え置き（計画15万・軸1を外さない）
+    for t in ("B", "C", "D"):
+        assert not PLANS[f"{t}_sign"].bust and PLANS[f"{t}_sign"].target == 0
+
+
+def test_big_plan_never_buys_the_first_axis():
+    """🔴 `_big` は**指数1位を含む目を1点も買わない**（文面がそう書いてある）。"""
+    import itertools
+
+    from src.type_lab import PLANS, RaceShape, build_legs
+
+    order = (1, 2, 3, 4, 5, 6, 7)
+    shape = RaceShape(type_label="B", axis_sum=1.5, arare=0, gap=0.2,
+                      firm=True, order=order)
+    combos = list(itertools.permutations(order, 3))
+    pred = {c: 80.0 for c in combos}
+    probs = {c: 1.0 / len(combos) for c in combos}
+    legs = build_legs(shape, PLANS["B_big"], pred, probs)
+    assert legs, "組めていない"
+    assert all(order[0] not in c for c in legs), f"軸1を含む目を買っている: {legs}"
+    legs_sign = build_legs(shape, PLANS["B_sign"], pred, probs)
+    assert any(order[0] in c for c in legs_sign), "看板枠まで軸1を外している"
+    # 計画払戻が高いぶん点数は少ない
+    assert len(legs) < len(legs_sign), (len(legs), len(legs_sign))
 
 
 def test_highpay_is_only_reachable_from_the_daily_cap_branch():
@@ -1347,25 +1394,34 @@ def _hp_row(rk: str, race_no: int, plan: str, type_label: str, axis_sum: float):
     }
 
 
+def _hp_plan_rows(rows):
+    """レースキー → プラン → 行（`_load_highpay_rows` が返す形）。"""
+    legs = {"B_sign": [{"combo": "1-4-5", "stake": 3300, "pred_odds": 45.0},
+                       {"combo": "1-5-4", "stake": 3300, "pred_odds": 46.0},
+                       {"combo": "4-1-5", "stake": 3400, "pred_odds": 44.0}],
+            "B_big": [{"combo": "4-5-6", "stake": 5000, "pred_odds": 80.0},
+                      {"combo": "5-4-6", "stake": 5000, "pred_odds": 82.0}]}
+    pay = {"B_sign": 150_000.0, "B_big": 400_000.0}
+    return {r["race_key"]: {k: dict(r, plan_key=k, pred_mean_payout=pay[k],
+                                    legs=legs[k]) for k in legs}
+            for r in rows}
+
+
 def test_highpay_replaces_a_capped_race(monkeypatch):
-    """🔴 上限で捨てるはずのレースが、高額枠として出る（1レース1商品のまま）。"""
+    """🔴 上限で捨てるはずのレースが、高額枠として出る（1レース1商品のまま）。
+
+    内訳は **1本目 `_sign` / 2本目 `_big`**（`HIGHPAY_BIG_SLOTS`）。
+    """
     rows = [_hp_row(f"20260906_13_{i:02d}", i, "B_hit", "B", 1.9 - i * 0.01)
             for i in range(1, 5)]
-    sign = {r["race_key"]: dict(r, plan_key="B_sign",
-                                pred_mean_payout=150_000.0,
-                                legs=[{"combo": "1-4-5", "stake": 3300, "pred_odds": 45.0},
-                                      {"combo": "1-5-4", "stake": 3300, "pred_odds": 46.0},
-                                      {"combo": "4-1-5", "stake": 3400, "pred_odds": 44.0}])
-            for r in rows}
-    m, sent = _highpay_env(monkeypatch, rows, sign)
+    m, sent = _highpay_env(monkeypatch, rows, _hp_plan_rows(rows))
     m.run("2026-09-06", "morning", dry_run=False, only_key=None, do_rebuild=False)
 
     normal = [x for x in sent if x[2] == m.ORIGIN_RANK]
     high = [x for x in sent if x[2] == m.ORIGIN_HIGHPAY]
     # 4レース × 0.5 = 2件が通常の商品、残り2件が高額枠へ回る
     assert len(normal) == 2, sent
-    assert len(high) == 2, sent
-    assert all(p == "B_sign" for _, p, _ in high), sent
+    assert [p for _, p, _ in high] == ["B_sign", "B_big"], sent
     # 1レース1商品（同じレースが2回出ていない）
     assert len({rk for rk, _, _ in sent}) == len(sent), sent
 
@@ -1398,10 +1454,11 @@ def test_highpay_respects_the_submission_gates(monkeypatch):
     """
     rows = [_hp_row(f"20260906_13_{i:02d}", i, "C_hit", "C", 1.6 - i * 0.01)
             for i in range(1, 5)]
-    # 1点だけ 1.5倍 ＝ `MIN_POINT_ODDS` 未満
-    sign = {r["race_key"]: dict(r, plan_key="C_sign", pred_mean_payout=150_000.0,
-                                legs=[{"combo": "1-4-5", "stake": 5000, "pred_odds": 1.5},
-                                      {"combo": "1-5-4", "stake": 5000, "pred_odds": 60.0}])
+    # 1点だけ 1.5倍 ＝ `MIN_POINT_ODDS` 未満（sign / big の両方に入れる）
+    bad = [{"combo": "1-4-5", "stake": 5000, "pred_odds": 1.5},
+           {"combo": "1-5-4", "stake": 5000, "pred_odds": 60.0}]
+    sign = {r["race_key"]: {k: dict(r, plan_key=k, pred_mean_payout=150_000.0,
+                                    legs=bad) for k in ("C_sign", "C_big")}
             for r in rows}
     m, sent = _highpay_env(monkeypatch, rows, sign)
     monkeypatch.setattr(m, "_skip", lambda *a, **k: None)

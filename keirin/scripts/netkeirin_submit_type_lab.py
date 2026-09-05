@@ -160,6 +160,7 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     #    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、
     #    買い目からして穴狙いにしか読めない（型の名前ではなく買い方で決めている）。
     **{f"{t}_sign": ACT_TYPE_LONGSHOT for t in "ABCDEF"},
+    **{f"{t}_big": ACT_TYPE_LONGSHOT for t in "ABCDEF"},
 }
 
 #: 軸信頼ゲートの正本。**backend 側のファイルを読み込んで束縛する**
@@ -260,8 +261,12 @@ def _load_rows(day: str) -> list[dict]:
     return out
 
 
-def _load_highpay_rows(day: str) -> dict[str, dict]:
-    """レースキー → **高額枠**の行（`{型}_sign`）。無ければそのレースは入らない。
+def _load_highpay_rows(day: str) -> dict[str, dict[str, dict]]:
+    """レースキー → プラン → **高額枠**の行。無ければそのレースは入らない。
+
+    何本目を `{型}_sign`（計画15万）にして何本目を `{型}_big`（軸1外し×計画40万）に
+    するかは `type_lab.highpay_plan_for(..., n_done)` が決めるので、
+    **両方の行を持っておいて呼び出し側が選ぶ**。
 
     🔴 **通常の商品の候補（`_load_rows`）とは別に読む。** 高額枠は
        `sell_plans_for` が返すものではなく（あれはレース単位の純関数で、
@@ -271,16 +276,18 @@ def _load_highpay_rows(day: str) -> dict[str, dict]:
     ⚠️ 型・車数の判定は `type_lab.highpay_plan_for` が唯一の正本。
     """
     rows, current = _fetch_rows(day)
-    out: dict[str, dict] = {}
+    out: dict[str, dict[str, dict]] = {}
     for r in rows:
         d = dict(r)
         rk, mode = str(d["race_key"]), str(d["mode"])
         if str(d["type_label"]) != current[(rk, mode)][1]:
             continue        # 組み直し前の古い型の行
-        if str(d["plan_key"]) != highpay_plan_for(d["type_label"], d["n_entries"]):
+        if str(d["plan_key"]) not in HIGHPAY_PLAN_KEYS:
             continue
+        if highpay_plan_for(d["type_label"], d["n_entries"]) is None:
+            continue        # 型・車数が対象外
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
-        out[rk] = d
+        out.setdefault(rk, {})[str(d["plan_key"])] = d
     return out
 
 
@@ -947,7 +954,13 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                           f"{HIGHPAY_SLOTS_PER_DAY - n_highpay}本"
                           f"（本日 {n_highpay}本 出済み・"
                           f"候補 {len(highpay_rows)}レース）", flush=True)
-                hp = highpay_rows.get(race_key)
+                want = highpay_plan_for(row.get("type_label"),
+                                        row.get("n_entries"), n_highpay)
+                avail = highpay_rows.get(race_key) or {}
+                # 🔴 **狙いの行が無ければもう片方で出す**（`{型}_big` は 2026-09-06
+                #    新設なので、生成が回る前の日は行が無い）。枠を空けるより
+                #    商品を出す側へ倒す——ゲートの「判定できないものは通す」と同じ。
+                hp = avail.get(want) or next(iter(avail.values()), None)
             if hp is not None and (race_key, str(hp["plan_key"])) not in already:
                 hp_plan = str(hp["plan_key"])
                 hp_reason = _gate_reason(hp)
