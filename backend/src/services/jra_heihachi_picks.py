@@ -32,14 +32,19 @@ from ..indices.dm_signals import (
     HEIHACHI_MIN_PLACE_PROB,
 )
 
-# バックテスト実測（[[jra_heihachi_badge]] 2023-01〜2026-09, n=128）。
-# 年別複勝ROIは 2023:0.83 / 2024:0.96 / 2025:1.48 / 2026:1.41 とばらつきが大きい
-# （dm_signals.py の SIGNAL_HEIHACHI 節に経緯あり）。
-# 画面に「長期の目安」として出すための参考値で、当日実績とは別物。
-HEIHACHI_REFERENCE_N = 128
-HEIHACHI_REFERENCE_PLACE_RATE = 0.328
-HEIHACHI_REFERENCE_WIN_ROI = 1.223
-HEIHACHI_REFERENCE_PLACE_ROI = 1.138
+# バッジの実測（[[jra_heihachi_badge]]）。
+#
+# 🔴 **回収率は出さない。** 2026-09-06 の頑健性評価で、TEST(2026Q3)では全候補が
+# 複勝ROI 1 を割ったのに対し 3着内率の分離だけが残った
+# （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。ROI を「長期の目安」として
+# 画面に出すと支持されない主張になるため、参考値は**3着内率とその同期間ベースライン
+# だけ**にした。ROI を見たいときは推奨ページの年間バックテスト欄で n と年を確認する。
+#
+# 期間は v28 の学習終端(TRAIN_END=2025-06-30)より後だけを使う。
+HEIHACHI_REFERENCE_WINDOW = "2025-07〜2026-09"
+HEIHACHI_REFERENCE_N = 35
+HEIHACHI_REFERENCE_PLACE_RATE = 0.429
+HEIHACHI_REFERENCE_BASE_PLACE_RATE = 0.217
 
 # 指数は (race_id, horse_id) ごとに最新版を1行だけ取る（v27/v28 が混在するため）。
 # 単勝オッズは jra_race_confidence と同じく odds_history の最新を正とする
@@ -172,10 +177,10 @@ async def build_heihachi_picks(db: AsyncSession, date: str) -> dict[str, Any]:
             "grades": sorted(HEIHACHI_GRADES),
         },
         "reference": {
+            "window": HEIHACHI_REFERENCE_WINDOW,
             "n": HEIHACHI_REFERENCE_N,
             "place_rate": HEIHACHI_REFERENCE_PLACE_RATE,
-            "win_roi": HEIHACHI_REFERENCE_WIN_ROI,
-            "place_roi": HEIHACHI_REFERENCE_PLACE_ROI,
+            "base_place_rate": HEIHACHI_REFERENCE_BASE_PLACE_RATE,
         },
     }
 
