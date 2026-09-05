@@ -434,8 +434,10 @@ class RaceShape:
     #: 1着率のエントロピー（大きいほど1着が読めない＝軸1が飛びやすい）。
     #: 型A の売り分け（`sell_plan_for`）だけが使う。渡されなければ 0.0。
     pw_ent: float = 0.0
-    #: 並び（ライン）のうち **3車以上のものだけ** を車番昇順のタプルで持つ。
-    #: `line_legs`（ライン決着への差し替え）だけが使う。渡されなければ空。
+    #: 並び（ライン）のうち **3車以上のものだけ**。各ラインは **隊列順**
+    #: （先頭 → 番手 → 3番手…）に並べる。`line_legs` だけが使う。
+    #: 🔴 **車番順ではない。** 先頭と番手を見分けられないと「両方向を買う」判断が
+    #:    できなくなる（下記 `LINE_SWAP_MIN_ODDS` / `line_legs` のコメント）。
     #: 🔴 単騎（`line_group` が空／0）は含めない。
     lines: tuple[tuple[int, ...], ...] = ()
 
@@ -491,21 +493,39 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
     else:
         label = "D" if s <= -1 else ("E" if s == 0 else "F")
     return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent,
-                     _lines_of(line_group))
+                     _lines_of(line_group, line_pos))
 
 
-def _lines_of(line_group: Mapping[int, object]) -> tuple[tuple[int, ...], ...]:
-    """3車以上のラインだけを、車番昇順のタプルにして返す。
+def _lines_of(line_group: Mapping[int, object],
+              line_pos: Mapping[int, object] | None = None,
+              ) -> tuple[tuple[int, ...], ...]:
+    """3車以上のラインだけを **隊列順**（先頭→番手→3番手）のタプルで返す。
 
-    >>> _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None})
+    `line_pos` が無い車は最後尾へ回し、同順位は車番で並べる。
+
+    >>> _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None},
+    ...           {1: 3, 2: 1, 3: 2, 4: 1, 5: 2})
+    ((2, 3, 1),)
+    >>> _lines_of({1: 1, 2: 1, 3: 1}, None)
     ((1, 2, 3),)
     """
+    pos = line_pos or {}
+
+    def _p(car: int) -> tuple[int, int]:
+        v = pos.get(car)
+        try:
+            n = int(str(v))
+        except (TypeError, ValueError):
+            n = 0
+        return (n if n > 0 else 99, car)
+
     groups: dict[str, list[int]] = {}
     for car, g in line_group.items():
         if g is None or str(g) in ("", "0"):
             continue
         groups.setdefault(str(g), []).append(int(car))
-    return tuple(tuple(sorted(v)) for v in sorted(groups.values()) if len(v) >= 3)
+    return tuple(tuple(sorted(v, key=_p))
+                 for v in sorted(groups.values()) if len(v) >= 3)
 
 
 # ───────────────────────────── 買い目 ─────────────────────────────
@@ -1121,6 +1141,51 @@ LINE_SWAP_LEGS: tuple[int, ...] = (2, 1)
 #: 差し替えたあとに残す最低点数。これを割るなら差し替えない。
 LINE_SWAP_MIN_KEEP = 3
 
+#: 差し替え先に採ってよい**予測オッズの下限**。
+#:
+#: 🔴🔴 **これが無いと「当たりは増えないのに払戻だけ下がる日」が出る**（2026-09-05・
+#:    導入初日にユーザーが実データで指摘）。ダッチ配分では
+#:    **全点の払戻 = 予算 ÷ Σ(1/オッズ)** なので、人気の目（＝安い目）を1点足すと
+#:    Σ が跳ね、**既存の当たり目の払戻がその比率でそのまま下がる**。
+#:    実例 2026-09-05: 立川12R(C_hit) 36,280 → 18,140円・防府3R(E_hit) 38,000 → 19,000円
+#:    ＝ Σ がちょうど2倍。**入稿ゲート（平均想定払戻2万円超）はこれを止められない**
+#:    （下がった後でも2万円を超えていれば通ってしまう）。
+#:
+#: 🔴 **「希釈を一切許さない」ことはできない。** ライン決着の目は人気があるから安く、
+#:    安いから配分を食う——同じコインの裏表。差し替え後の想定払戻に下限比 r を
+#:    掛けて掃引すると、**r を上げるほど的中の増分が消える**（探索/確認）:
+#:
+#:      r        発動   Δ的中pt        既存的中の払戻維持
+#:      なし   40/44%  +2.53/+3.13      80/79%
+#:      0.70   32/35%  +1.13/+1.19      87/87%
+#:      0.80   25/27%  +0.59/+0.47      93/94%
+#:      0.90   17/18%  **-0.01/-0.01**  98/101%
+#:      1.00    8/ 9%  **-0.18/-0.19**  105/108%
+#:
+#: 🟢 **効いたのは「差し替え先そのものの安さ」に下限を置く形**（比率ではなく絶対値）。
+#:    安すぎる候補を飛ばして次に安いものを採るので、**発動はむしろ増える**
+#:    （安すぎてゲートに落ちていた分が通るようになる）:
+#:
+#:      下限     発動   Δ的中pt        既存的中の払戻維持   ROI(探索/確認)
+#:      なし   40/44%  +2.53/+3.13      80/79%          77.4/81.7
+#:       5倍  49/52%  +2.99/+3.42      81/80%          77.4/81.5
+#:      **10倍**  **52/56%**  **+1.48/+1.69**  **92/93%**      **77.3/81.1**
+#:      15倍  53/57%  +0.64/+0.72      98/97%          77.2/80.9
+#:      20倍  53/57%  +0.17/+0.17     101/100%         77.0/80.7
+#:      30倍  53/57%  -0.25/-0.27     103/103%         77.0/80.7
+#:
+#:    10倍を採ったのは**ユーザーの許容条件**「的中レースが増え、多少の払戻が
+#:    下がるなら許容。当たりが増えずに払戻だけ下がるのは想定と異なる」に合うため。
+#:    Δ的中 +1.48pt CI[+1.15,+1.81] / +1.69pt CI[+1.22,+2.15]・**無作為対照10本に
+#:    10/10 で勝つ**（同じ下限・同じ発動条件で無作為な目に差し替えた対照）。
+#:    5倍のほうが的中は伸びるが払戻維持が 80% で導入前と変わらず、指摘の解決にならない。
+#:
+#: ⚠️ **プラン別では `B_hit` だけ ROI が落ちる**（82.8→80.8 / 82.7→81.3）。
+#:    `sigma_max` で想定平均払戻3万円の床を持つ商品なので、10倍の目を足す影響が
+#:    他より大きい。的中は +0.69/+0.80pt と両窓プラスなので残しているが、
+#:    **前向き実測で最初に見るのはここ**。
+LINE_SWAP_MIN_ODDS = 10.0
+
 
 def line_legs(shape: "RaceShape", plan: Plan, legs: Sequence,
               pred_odds: Mapping, m: int) -> list[tuple[int, ...]] | None:
@@ -1130,8 +1195,24 @@ def line_legs(shape: "RaceShape", plan: Plan, legs: Sequence,
 
     🔴 **ラインは買い目に出ている車だけで数える。** 3車のうち1車でも買い目に
        出ていないラインは対象外（その車を新しく持ち込む操作は測っていない）。
-    🔴 **差し替え先は予測オッズ昇順（＝人気順）**。確率順ではない——検証は
-       市場のオッズ順で測っており、そこが情報源になっている。
+    🔴 **差し替え先は「隊列順」と「先頭×番手だけ入れ替えた順」の2通りを先に採る。**
+       ライン内2車の先着を実測すると（2車とも3着以内・215,636ペア）:
+
+         先頭×番手(1-2)  **57.3%**   ← ほぼ五分。**両方向を買う**
+         先頭×3番手(1-3)  82.3%      ← 逆転しない。一方向でよい
+         番手×3番手(2-3)  87.1%      ← 同上
+         4番手が絡む      89%        ← 同上
+
+       3車ラインの先頭×番手に限れば **53.7%** と完全に五分。
+       ⚠️ **ユーザー発案**（2026-09-05）。「順位の入れ替わりがありそうなものは両方、
+          逆転無さそうであれば1方向のみ」。安い順に2点採る旧案と比べ、
+          **同じ的中増を少ない Σ で買える**（探索/確認）:
+
+            安い順          Δ的中 +1.37/+1.59pt  Σ +8.3/+8.8%  既存払戻維持 93/94%
+            **先頭×番手優先**  Δ的中 +1.04/+1.34pt  **Σ +5.7/+6.3%**  **維持 95/95%**
+
+          ＝ Σ 1% あたり 0.165pt → **0.182pt** へ改善。残りの4通りは安い順。
+    🔴 **`LINE_SWAP_MIN_ODDS` 未満は採らない**（定数のコメント参照）。
     🔴 **落とすのは末尾 m 点。** `prob_top` は確率降順で組まれているので
        末尾＝最も確率の低い点。上位を触ると本線が崩れる（`A_hit` の悪化と同じ理由）。
     """
@@ -1142,17 +1223,30 @@ def line_legs(shape: "RaceShape", plan: Plan, legs: Sequence,
         return None
     cars = {c for leg in legs for c in leg}
     have = set(legs)
-    cand: list[tuple[int, ...]] = []
+
+    def _ok(p) -> bool:
+        o = pred_odds.get(p)
+        # 🔴 安すぎる目は採らない（`LINE_SWAP_MIN_ODDS`）。ダッチ配分では
+        #    1点足すだけで既存の当たり目の払戻がその比率で下がるため。
+        return p not in have and _pos(o) and float(o) >= LINE_SWAP_MIN_ODDS
+
+    head: list[tuple[int, ...]] = []      # 先頭×番手の2通り（順位が入れ替わる側）
+    rest: list[tuple[int, ...]] = []      # それ以外の並び
     for line in shape.lines:
         mem = [c for c in line if c in cars]
         if len(mem) < 3:
             continue
-        for p in itertools.permutations(mem[:3]):
-            if p not in have and _pos(pred_odds.get(p)):
-                cand.append(p)
+        m3 = tuple(mem[:3])               # 隊列の先頭3車
+        pair = (m3[1], m3[0], m3[2])      # 先頭と番手だけ入れ替えた並び
+        for p in (m3, pair):
+            if _ok(p):
+                head.append(p)
+        rest += [p for p in itertools.permutations(m3)
+                 if p not in (m3, pair) and _ok(p)]
+    rest.sort(key=lambda p: float(pred_odds[p]))
+    cand = head + rest
     if len(cand) < m:
         return None
-    cand.sort(key=lambda p: float(pred_odds[p]))
     return legs[:len(legs) - m] + cand[:m]
 
 
@@ -1444,7 +1538,7 @@ def rule_version(n_entries: int = 7) -> str:
         #    版が割れず、新旧の行が同じ `rule_version` で混ざる（`_sign` と同じ理由）。
         #    ⚠️ 7車にも9車にも掛けているので、`if n_entries == 7` の中には入れない。
         | {"_line": [sorted(LINE_SWAP_PLANS), list(LINE_SWAP_LEGS),
-                     LINE_SWAP_MIN_KEEP]})
+                     LINE_SWAP_MIN_KEEP, LINE_SWAP_MIN_ODDS]})
     if n_entries == 7:
         # 🔴 フォールバックは `PLANS` に無いので、ここへ入れないと帯を動かしても
         #    版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
