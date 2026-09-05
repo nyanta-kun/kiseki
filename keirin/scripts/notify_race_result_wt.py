@@ -35,6 +35,7 @@ CHECK_MINUTES のいずれかに一致した分だけ取得する（バックオ
 from __future__ import annotations
 
 import argparse
+import unicodedata
 import json
 import os
 import re
@@ -236,6 +237,84 @@ def _confirmed_payouts(conn, base: str) -> dict[str, int]:
     return out
 
 
+#: Discord モバイルの1行に収まる目安（**全角換算**）。
+#:
+#: 🔴 **1行に情報を詰めない。** 実測（2026-09-06・ユーザー報告のスクリーンショット）で
+#:    18全角ぶんを超えると折り返し、`投資 ¥10,000 → 払戻` / `¥19,680` のように
+#:    **金額が行をまたいで割れる**。数字が2行に散ると読めない。
+#: ⚠️ 目安であって強制ではない（買い目が長いレースは超える）。`tests` は
+#:    代表的な入力で超えないことだけを固定する。
+LINE_BUDGET = 18.0
+
+
+def _wide_len(text: str) -> float:
+    """全角換算の表示幅。Markdown の `*` と絵文字幅も見る（ざっくりでよい）。"""
+    body = text.replace("**", "")
+    n = 0.0
+    for ch in body:
+        if unicodedata.east_asian_width(ch) in ("W", "F", "A"):
+            n += 1.0
+        else:
+            n += 0.5
+    return n
+
+
+def _product_block(head: str, buy: str, mark: str, money: str) -> str:
+    """1商品ぶんの表示。**1行に詰めず3行に割る**（2026-09-06）。
+
+        🎯 的中 — 型A 本線の三連単
+        　1-2-5,3,4
+        　投資 ¥10,000 → 払戻 ¥19,680
+
+    🔴 **金額は必ず1行に収める**（`投資 → 払戻` を割らない）。
+    🔴 **結果の記号を行頭に置く**。的中/不的中を縦に並べて拾えるようにするため。
+
+    >>> print(_product_block("型D 混戦の三連複", "1=3=2,5,6", "❌ 不的中",
+    ...                      "投資 ¥10,000 → 払戻 **¥0**"))
+    ❌ 不的中 — 型D 混戦の三連複
+    　1=3=2,5,6
+    　投資 ¥10,000 → 払戻 **¥0**
+    >>> print(_product_block("7C", "", "🎯 **的中**", "投資 ¥10,000 → 払戻 **¥42,400**"))
+    🎯 **的中** — 7C
+    　投資 ¥10,000 → 払戻 **¥42,400**
+    """
+    out = [f"{mark} — {head}"]
+    out.extend(_wrap_buy(buy))
+    out.append(f"　{money}")
+    return "\n".join(out)
+
+
+def _wrap_buy(buy: str) -> list[str]:
+    """買い目を**目の切れ目で**折り返す（12点のプランは1行に入らない）。
+
+    🔴 端末に折り返させると `1-2,3-4,5` が途中で切れて読めなくなる。
+       こちらで空白の位置で割っておく。
+
+    >>> _wrap_buy("")
+    []
+    >>> _wrap_buy("1=3=2,5,6")
+    ['\u30001=3=2,5,6']
+    >>> for ln in _wrap_buy("4-2-3,1,7,5 3-4-2 1-4-2 3-2-4 2-3-4 1-7-2 2-4-3"):
+    ...     print(ln)
+    　4-2-3,1,7,5 3-4-2 1-4-2
+    　3-2-4 2-3-4 1-7-2 2-4-3
+    """
+    if not buy:
+        return []
+    out: list[str] = []
+    cur = ""
+    for part in buy.split(" "):
+        nxt = f"{cur} {part}" if cur else part
+        if cur and _wide_len(f"　{nxt}") > LINE_BUDGET:
+            out.append(f"　{cur}")
+            cur = part
+        else:
+            cur = nxt
+    if cur:
+        out.append(f"　{cur}")
+    return out
+
+
 def _sold_lines(base: str, finishers: list[tuple[int, int]],
                 payouts: dict[str, int]) -> tuple[list[tuple[str, str]], bool]:
     """入稿した推奨の採点行。**取消したものも含む**。
@@ -287,10 +366,9 @@ def _sold_lines(base: str, finishers: list[tuple[int, int]],
             mark = "⏳ 確定待ち"
             money = f"投資 ¥{bet:,}"
             buy = format_bet_lines((_as_dict(detail) or {}).get("lines")) or ""
-            buy = f"{buy}  → " if buy else ""
             head = (f"{_rank_label(rank)}（取消）" if status == STATUS_DELETED
                     else _rank_label(rank))
-            out.append((f"{head}: {buy}{mark}  {money}", rank))
+            out.append((_product_block(head, buy, mark, money), rank))
             continue
         mark = "🎯 **的中**" if hit else "❌ 不的中"
         if hit and pay < bet:
@@ -300,14 +378,13 @@ def _sold_lines(base: str, finishers: list[tuple[int, int]],
         #    黙って落とすと、出した推奨の結果が追えなくなる。
         cancelled = (status == STATUS_DELETED)
         head = f"{_rank_label(rank)}（取消）" if cancelled else _rank_label(rank)
-        money = (f"想定 ¥{bet:,} → ¥{pay:,}" if cancelled
-                 else f"投資 ¥{bet:,} → 払戻 ¥{pay:,}")
+        money = (f"想定 ¥{bet:,} → 払戻 ¥{pay:,}" if cancelled
+                 else f"投資 ¥{bet:,} → 払戻 **¥{pay:,}**")
         # 🔴 買い目は**実際に入稿した bet_detail** が正本。picks_history は候補で、
         #    看板の穴埋めで売ったレースには行が無く買い目が空欄になっていた。
         buy = format_bet_lines((_as_dict(detail) or {}).get("lines")) \
             or format_pred_combo(combos.get(rank), labels=False)
-        buy = f"{buy}  → " if buy else ""
-        out.append((f"{head}: {buy}{mark}  {money}", rank))
+        out.append((_product_block(head, buy, mark, money), rank))
     return out, pending
 
 
@@ -329,8 +406,10 @@ def _rank_label(rank_key: str) -> str:
     title = PLAN_TITLES.get(rank_key)
     if not title:
         return rank_key
-    view = TYPE_VIEWS.get(rank_key.split("_")[0], "")
-    return f"型{rank_key.split('_')[0]} {title}" + (f"（{view}）" if view else "")
+    # 🔴 **見解（`TYPE_VIEWS`）は付けない**（2026-09-06）。型ごとに固定の文で
+    #    毎レース同じものが並ぶうえ、13文字ぶん増えて商品名の行が必ず折り返す。
+    #    見解は入稿の文面（`type_lab_submission`）に載っているのでそちらで足りる。
+    return f"型{rank_key.split('_')[0]} {title}"
 
 
 def _race_payout_line(payouts: dict[str, int], won: list[str]) -> str | None:
@@ -347,7 +426,7 @@ def _race_payout_line(payouts: dict[str, int], won: list[str]) -> str | None:
         pay = next((payouts[c] for c in won if sep in c and c in payouts), None)
         if pay:
             parts.append(f"{kind} ¥{pay:,}")
-    return "確定配当: " + " / ".join(parts) if parts else None
+    return "配当 " + " ／ ".join(parts) if parts else None
 
 
 def _day_total(date: str) -> tuple[int, int, int]:
@@ -414,7 +493,7 @@ def _build_message(t: dict, base: str) -> tuple[str, bool]:
     won = winning_combo_labels(finishers)
 
     lines = [f"🏁 **{t['venue_name']}{t['race_no']}R 確定**",
-             f"着順: {order}"]
+             f"着順 {order}"]
     pay_line = _race_payout_line(payouts, won)
     if pay_line:
         lines.append(pay_line)
@@ -431,7 +510,9 @@ def _build_message(t: dict, base: str) -> tuple[str, bool]:
     bet, pay, n = _day_total(t["date"])
     if n:
         roi = f"{pay / bet * 100:.1f}%" if bet else "—"
-        lines.append(f"── 本日累計（{n}R 確定）: 投資 ¥{bet:,} → **払戻 ¥{pay:,}**（回収 {roi}）")
+        # 🔴 **2行に割る**。1行だと `払` / `戻` で割れる（2026-09-06 の実報告）。
+        lines.append(f"── 本日 {n}R ・ 回収 **{roi}**")
+        lines.append(f"　投資 ¥{bet:,} → 払戻 ¥{pay:,}")
     return "\n".join(lines), pending
 
 
