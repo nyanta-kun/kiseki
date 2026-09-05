@@ -18,7 +18,12 @@ function empty(date: string): HeihachiPicks {
       graded_only: d.gradedOnly,
       grades: [],
     },
-    reference: { window: "2025-07〜2026-09", n: 35, place_rate: 0.429, base_place_rate: 0.217 },
+    reference: {
+      in_sample: { window: "2025-07〜2026-06", n: 26, place_rate: 0.538, base_place_rate: 0.215 },
+      out_of_sample: {
+        window: "2026-06-29〜2026-09-06", n: 9, place_rate: 0.111, base_place_rate: 0.228,
+      },
+    },
   };
 }
 

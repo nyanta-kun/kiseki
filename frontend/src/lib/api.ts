@@ -1071,6 +1071,14 @@ export type HeihachiCandidate = {
   result_place_odds: number | null;
 };
 
+/** ある期間での3着内率と、同期間の全出走馬のベースライン。 */
+export type HeihachiWindowStat = {
+  window: string;
+  n: number;
+  place_rate: number;
+  base_place_rate: number;
+};
+
 /** 既定しきい値。単一真実源は backend の HEIHACHI_* 定数。 */
 export type HeihachiDefaults = {
   max_index_rank: number;
@@ -1087,12 +1095,18 @@ export type HeihachiPicks = {
   defaults: HeihachiDefaults;
   /**
    * バッジの実測（3着内率の分離のみ）。当日実績とは別物。
-   * 回収率は返らない — TEST窓では全候補が複勝ROI 1 を割っており、
-   * 「長期の目安」として出すと支持されない主張になるため
-   * （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。
-   * ROI は年間バックテスト欄で n と年を見て判断する。
+   *
+   * 回収率は返らない — TEST窓では全候補が複勝ROI 1 を割っており、「長期の目安」
+   * として出すと支持されない主張になるため。
+   *
+   * ⚠️ v28 の本番モデルは 2026-06-28 までで refit されているので、それ以前は
+   * in-sample。`in_sample` は当てはまりの良さであって将来の性能ではない。
+   * 学習に使っていないのは `out_of_sample` の窓だけ。
    */
-  reference: { window: string; n: number; place_rate: number; base_place_rate: number };
+  reference: {
+    in_sample: HeihachiWindowStat;
+    out_of_sample: HeihachiWindowStat;
+  };
 };
 
 export async function fetchHeihachiPicks(date: string): Promise<HeihachiPicks> {
