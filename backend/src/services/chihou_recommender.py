@@ -139,7 +139,7 @@ async def _fetch_external_raw(
                 ELSE NULL
             END AS idx_ave
         FROM chihou.races r
-        JOIN sekito.racecourse rc ON r.course = rc.netkeiba_id
+        JOIN keiba.racecourse_map rc ON r.course = rc.netkeiba_id
         JOIN chihou.race_entries re ON re.race_id = r.id
         LEFT JOIN sekito.kichiuma k
             ON k.date = TO_DATE(r.date, 'YYYYMMDD')

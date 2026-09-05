@@ -75,7 +75,7 @@ def check_external_index_coverage(cur, recent_start: str, end: str, baseline_sta
             COUNT(*) AS total
         FROM chihou.races r
         JOIN chihou.race_entries re ON re.race_id = r.id
-        LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+        LEFT JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
         LEFT JOIN sekito.kichiuma k
           ON k.date = TO_DATE(r.date, 'YYYYMMDD') AND k.course_code = rc.code
              AND k.race_no = r.race_number AND k.horse_no = re.horse_number
