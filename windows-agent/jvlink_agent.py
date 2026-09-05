@@ -179,6 +179,11 @@ RT_ODDS_TRIFECTA = "0B36"      # 速報オッズ（三連単 O6レコード, 832
 # これは設計上限 1000万行以内で許容範囲
 EXOTIC_ODDS_WINDOW_MINUTES = 30
 
+# realtime ループ内で翌日ぶんの前日発売オッズを取りに行く間隔（秒）。
+# VPS cron の odds_prefetch は command loop モードでしか処理されず、開催日は
+# realtime モードで動いているため一度も実行されない（下の run_realtime_monitor 参照）。
+ODDS_PREFETCH_INTERVAL_SEC = 3600
+
 # レコード種別IDとデータ内容の対応
 RECORD_TYPES = {
     "RA": "レース情報",
@@ -892,6 +897,9 @@ def run_realtime_monitor(jv) -> None:
     # メンテナンス窓に入ったことを1回だけログするためのフラグ（30秒ごとの連投を防ぐ）
     in_maintenance = [False]
 
+    # 翌日ぶん前日発売オッズの最終取得時刻（0 = 起動直後に1回走らせる）
+    last_odds_prefetch = [0.0]
+
     while True:
         with _wd_lock:
             _last_heartbeat[0] = time.time()
@@ -912,6 +920,27 @@ def run_realtime_monitor(jv) -> None:
             if in_maintenance[0]:
                 logger.info("メンテナンス窓を抜けました。realtime を再開します。")
                 in_maintenance[0] = False
+
+            # --- 翌日ぶんの前日発売オッズ（1時間に1回） ---
+            # 開催日は agent が realtime モードで動くため、VPS cron が毎時投げる
+            # odds_prefetch コマンドは **一度も実行されない**（あれは run_command_loop
+            # でしか処理されない）。実測: 2026-09-05 に9回キュー投入された翌日ぶんが
+            # 1回も走らず、日曜の朝までオッズが空だった。realtime ループ自身が
+            # 1時間に1回だけ翌日ぶんを取りに行く。
+            # 本日レースなし（race_keys 空）の日でも翌日ぶんは欲しいので、
+            # 下の race_keys 空チェックより **前** に置くこと。
+            _now_ts = time.time()
+            if _now_ts - last_odds_prefetch[0] >= ODDS_PREFETCH_INTERVAL_SEC:
+                last_odds_prefetch[0] = _now_ts
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d")
+                try:
+                    run_odds_prefetch(jv, tomorrow)
+                except Exception as e:
+                    # 翌日ぶんが取れなくても当日の realtime は止めない
+                    logger.warning(f"[odds_prefetch] 翌日ぶん({tomorrow})の取得に失敗: {e}")
+                with _wd_lock:
+                    _last_heartbeat[0] = time.time()
+
             # 速報オッズ取得（0B31: レースキー単位）
             # 正しい仕様: JVRTOpen("0B31", raceKey16) でレースごとにO1レコードを取得
             # race_keys / upcoming_keys / result_query_race_keys はすべてここで1回だけ取得した

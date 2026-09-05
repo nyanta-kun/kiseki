@@ -204,3 +204,43 @@ python jvlink_agent.py
 | `JRAVAN_SID が設定されていません` | `.env` のパスとJRAVAN_SID値を確認 |
 | `pywin32` インストールエラー | Python 32bit版を使用しているか確認 |
 | `-3` エラーが続く | JV-Linkサーバーのダウンロード中。しばらく待機 |
+
+## オッズ取得のタイミング（2026-09-06 追記）
+
+### いつ取れるか
+
+`kiseki-JVLink-Realtime`（`run_jvlink_realtime.vbs` → `jvlink_agent.py --mode realtime`）は
+**毎日 07:00 と 09:00 の2本のトリガー**で起動し、約35秒ごとに当日全レースの
+単複オッズ（`0B31`/O1）を取る。エキゾチック（馬連〜三連単）は発走30分前以内のレースのみ。
+
+つまり **当日のオッズが DB に入り始めるのは 07:00**。それ以前は空。
+
+### 🔴 起動を取りこぼすと丸一日空になる
+
+2026-09-06（日曜・開催日）に、**Parallels の Windows VM が suspended のまま**だったため
+07:00・09:00 の両トリガーを取りこぼし、08:11 時点で当日36レースのオッズが 0件だった。
+
+対策として `StartWhenAvailable = True` を設定した（既定は False）。これで起動時刻に
+VM が止まっていても、立ち上がった時点で取りこぼした回を実行する。
+
+```powershell
+$t = Get-ScheduledTask -TaskName 'kiseki-JVLink-Realtime'
+$t.Settings.StartWhenAvailable = $true
+Set-ScheduledTask -TaskName 'kiseki-JVLink-Realtime' -Settings $t.Settings
+```
+
+VM 自体が止まっていたら何も動かないので、**開催日の朝は VM が running か確認する**こと:
+
+```bash
+prlctl list -a     # STATUS が running であること
+```
+
+### 翌日ぶん（前日発売オッズ）
+
+VPS cron の `odds_prefetch_trigger.sh` は agent が **command loop モード**のときしか
+処理されない。開催日は realtime モードで動いているので、**キュー投入しても実行されない**
+（実測: 2026-09-05 に9回投入して ODDS PREFETCH の実行ログはゼロ）。
+
+そのため **realtime ループ自身が1時間に1回、翌日ぶんを取りに行く**
+（`ODDS_PREFETCH_INTERVAL_SEC = 3600`）。cron 経路は非開催日向けとして残してある。
+両方走っても upsert なので害はない。
