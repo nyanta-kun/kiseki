@@ -44,12 +44,7 @@ from ..indices.confidence import (
     calculate_recommend_rank,
     is_market_favorite,
 )
-
-# JRA 2桁コード → sekito course_code
-_JRA_TO_SEKITO: dict[str, str] = {
-    "01": "JSPK", "02": "JHKD", "03": "JFKS", "04": "JNGT", "05": "JTOK",
-    "06": "JNKY", "07": "JCKO", "08": "JKYO", "09": "JHSN", "10": "JKKR",
-}
+from ..utils.racecourse import JRA_TO_SEKITO
 
 
 def _parse_nb_num(raw: str | None) -> float | None:
@@ -72,7 +67,7 @@ async def _fetch_external_data_batch(
     result: dict[int, dict[int, dict[str, int | None]]] = {}
 
     for race in races:
-        sekito_code = _JRA_TO_SEKITO.get(race.course)
+        sekito_code = JRA_TO_SEKITO.get(race.course)
         if not sekito_code:
             continue
         race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))

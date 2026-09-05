@@ -57,6 +57,7 @@ from ..indices.confidence import (
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
 from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
+from ..utils.racecourse import JRA_TO_SEKITO
 from .ws_manager import manager as ws_manager
 from .ws_manager import results_manager
 
@@ -82,20 +83,6 @@ def _check_ws_origin(ws: WebSocket) -> None:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
-
-# JRA 2桁コード → sekito.anagusa course_code
-_JRA_TO_SEKITO: dict[str, str] = {
-    "01": "JSPK",
-    "02": "JHKD",
-    "03": "JFKS",
-    "04": "JNGT",
-    "05": "JTOK",
-    "06": "JNKY",
-    "07": "JCKO",
-    "08": "JKYO",
-    "09": "JHSN",
-    "10": "JKKR",
-}
 
 
 def _compute_upside_scores(horses: list[HorseIndexOut]) -> None:
@@ -171,7 +158,7 @@ async def _fetch_anagusa_picks(db: AsyncSession, race: Race) -> dict[int, tuple[
     Returns:
         {horse_no: (rank, comment)} — rank は A/B/C のいずれか、comment は専門紙の推奨コメント（無ければNone）
     """
-    sekito_code = _JRA_TO_SEKITO.get(race.course)
+    sekito_code = JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
         return {}
     race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
@@ -201,7 +188,7 @@ async def _fetch_external_ranks(db: AsyncSession, race: Race) -> dict[int, dict[
     Returns:
         {horse_no: {"nb_course_rank": int|None, "nb_ave_rank": int|None, "km_rank": int|None}}
     """
-    sekito_code = _JRA_TO_SEKITO.get(race.course)
+    sekito_code = JRA_TO_SEKITO.get(race.course)
     if not sekito_code:
         return {}
     race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
@@ -796,7 +783,7 @@ async def list_races(
     for r in races:
         out = RaceOut.model_validate(r)
         out.has_indices = r.id in indexed_ids
-        sekito_code = _JRA_TO_SEKITO.get(r.course)
+        sekito_code = JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         out.result_confirmed = r.id in confirmed_race_ids
         # 出馬表未確定（head_count NULL かつ確定出馬表が無い）レースのみ
