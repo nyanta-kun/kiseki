@@ -94,7 +94,19 @@ PLAN_AXIS_NOTES: dict[str, str] = {
     "A_ana": ("【二軸】\n本レースの指数上位2車は {a1}番・{a2}番です。"
               "ただしこの商品は {a1}番 が3着以内に残らない側に賭けているため、"
               "買い目に {a1}番 は入っていません。印は買っている車だけに付けています。"),
+    # 🔴 **「指数上位2車」と書かない。** この商品の軸は並びから取っているので、
+    #    指数の1位・2位と一致するとは限らない（9車型F で 44.5%）。
+    "F_line": ("【二軸】\n本レースで軸に据えたのは ◎{a1}番・○{a2}番。"
+               "指数の上位2車ではなく、並びの中で最も力があると見たライン、"
+               "その2車です。全ての買い目にこの2車が入っています。"),
 }
+
+#: 🔴 **軸が「指数上位2車」ではないプラン**（2026-09-06）。`type_lab_picks.axis1/axis2`
+#:    は指数（3着内率）の上位2車なので、そのまま印と文面に使うと**買い目と食い違う**。
+#:    `F_line` の軸は「3着内率の合計が最大のライン」の2車で、指数上位2車と一致するのは
+#:    9車型F の 44.5% しかない。ここに入るプランは **全買い目に共通して入っている車**
+#:    （＝定義どおりの軸）を `axes_from_legs` で拾い直す。
+LINE_AXIS_PLANS: frozenset[str] = frozenset({"F_line"})
 
 #: タイトル後半（レース見解）を**プランで上書き**する。
 #: 🔴 `A_ana` は「◎が飛ぶ側」を売るので、型A の見解「二軸が堅い一戦」と
@@ -179,6 +191,9 @@ PLAN_TITLES: dict[str, str] = {
     #    12点で面を押さえる性格をそのまま出す。
     "F_hit": "押さえの三連単",
     "F_pay": "一撃の三連単",
+    # 🔴 **「軸」と名乗るが◎○とは限らない**（軸は指数上位2車ではなく
+    #    「3着内率の合計が最大のライン」の2車）。文面で ◎○ に触れないこと。
+    "F_line": "ライン狙いの三連複",
 }
 
 #: 🔴 看板枠は**6型とも同じ文言**。型は「どのレースを看板枠に回すか」を決めるだけで、
@@ -227,6 +242,12 @@ PLAN_BODIES: dict[str, str] = {
               "◎○が2着・3着へ回る目も含みます。"),
     "F_pay": ("買い目は三連単。1着は◎に固定し、2着を2車に広げて3着を流しました。"
               "点数を絞るぶん、1点あたりを厚くして払戻の大きさに寄せています。"),
+    # 🔴 **◎○と書かない。** 軸は指数上位2車ではなく「3着内率の合計が最大の
+    #    ライン」の2車なので、◎○と一致しないことがある（一致するのは
+    #    9車型F の 44.5%）。買い方をそのまま説明する。
+    "F_line": ("買い目は三連複。並びの中で最も力のあるライン、その2車を軸に相手へ流しました。"
+               "大混戦で着順までは読み切れないと判断したので、順番の入れ替わりを気にせず"
+               "取れる三連複にしています。点数は当方が想定する配当が残る範囲まで広げました。"),
 }
 
 #: 🔴 **「◎○が2着・3着へ回る目も含みます」を必ず入れる。** 看板枠は配当の大きい目
@@ -339,6 +360,34 @@ def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
     for i, c in enumerate(rest):
         marks[int(c)] = "▲" if i == 0 else "△"
     return marks
+
+
+def axes_from_legs(legs: Sequence[Mapping],
+                   p3_order: Sequence[int] | str) -> tuple[int, ...]:
+    """**全ての買い目に共通して入っている車**＝この商品の軸。指数順で返す。
+
+    🔴 `type_lab_picks.axis1/axis2` は指数上位2車なので、軸をラインから取る
+       `F_line` では使えない（一致するのは 44.5%）。軸は「毎点に入っている車」
+       という定義そのものから拾い直す。
+
+    🔴 **上帯（押さえ）は除く**（`_base_legs`）。上帯を混ぜると共通車が消える。
+
+    >>> legs = [{"combo": "1=4=5"}, {"combo": "1=4=2"}, {"combo": "1=4=7"}]
+    >>> axes_from_legs(legs, "4-1-5-2-7-3-6")
+    (4, 1)
+    >>> axes_from_legs([{"combo": "1=2=3"}, {"combo": "4=5=6"}], "1-2-3-4-5-6-7")
+    ()
+    """
+    base = _base_legs(legs) or list(legs)
+    common: set[int] | None = None
+    for leg in base:
+        cars = set(_combo_cars(str(leg.get("combo", ""))))
+        common = cars if common is None else (common & cars)
+    if not common:
+        return ()
+    order = _order_list(p3_order)
+    return tuple(sorted(common,
+                        key=lambda c: (order.index(c) if c in order else 99, c)))
 
 
 def _order_list(p3_order: Sequence[int] | str) -> list[int]:
@@ -494,12 +543,19 @@ def build_submission(row: Mapping, entry_table_html: str | None = None) -> dict:
        正本にしているのと同じ理由）。
     """
     legs = list(row.get("legs") or [])
+    plan_key = str(row["plan_key"])
+    order = row.get("p3_order") or []
+    a1, a2 = int(row["axis1"]), int(row["axis2"])
+    # 🔴 軸をラインから取るプランは `axis1/axis2`（指数上位2車）を使わない。
+    #    2車そろって拾えたときだけ差し替える（拾えなければ従来どおり）。
+    if plan_key in LINE_AXIS_PLANS:
+        got = axes_from_legs(legs, order)
+        if len(got) >= 2:
+            a1, a2 = int(got[0]), int(got[1])
     return {
-        "title": build_title(str(row["plan_key"]), str(row["type_label"])),
+        "title": build_title(plan_key, str(row["type_label"])),
         "comment": build_comment(
-            str(row["plan_key"]), str(row["type_label"]),
-            int(row["axis1"]), int(row["axis2"]), legs,
+            plan_key, str(row["type_label"]), a1, a2, legs,
             str(row.get("bet_type") or "trifecta"), entry_table_html),
-        "marks": marks_for(row.get("p3_order") or [], legs,
-                           int(row["axis1"]), int(row["axis2"])),
+        "marks": marks_for(order, legs, a1, a2),
     }

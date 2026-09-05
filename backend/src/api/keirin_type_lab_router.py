@@ -47,7 +47,7 @@ router = APIRouter(prefix="/api/keirin/type-lab", tags=["keirin-type-lab"])
 #: 表示順。`keirin/src/type_lab.PLANS` と揃える（片方だけ増やしても落ちないが並びが崩れる）。
 PLAN_ORDER = ["A_hit", "A_trio", "A_ana", "A_pay", "A_sign",
               "B_hit", "B_sign", "C_hit", "C_sign", "D_hit", "D_sign",
-              "E_hit", "E_sign", "F_hit", "F_pay", "F_sign"]
+              "E_hit", "E_sign", "F_hit", "F_pay", "F_line", "F_sign"]
 
 
 class TypeLabLeg(BaseModel):

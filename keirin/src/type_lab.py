@@ -425,6 +425,17 @@ UPPER_BAND_N_ENTRIES = 7
 #: 🔴 `F_hit` がゲートに落ちて帯15倍へ切り替わったときも `key` は `F_hit` のままなので
 #:    ここに掛かる（`GATE_FALLBACK`）。**そちらも12点の面買い**なので狙いは同じ。
 UPPER_BAND_PLANS: frozenset[str] = frozenset({"E_hit", "F_hit"})
+#: 9車型F の三連複（`line_axis2_flow`）で積める Σ(1/予測オッズ) の上限。
+#: **ダッチ配分では計画払戻 = 予算 ÷ Σ なので、これは「計画払戻が
+#: `MIN_MEAN_PAYOUT` を割らない最大点数まで積む」と同じこと**。
+#: 入稿ゲート（平均想定払戻 > 2万円）と同じ値なので、通る限界まで積んで止まる。
+TRIO_LINE_SIGMA_MAX = BUDGET / MIN_MEAN_PAYOUT
+#: 3点未満しか積めないなら**商品にしない**。
+#: 🔴 「1万円以下は当たりと扱わない」（2026-09-06 ユーザー方針）ので、
+#:    ここで落ちたレースは入稿しない。実測では落ちる 5〜8% のレースは
+#:    現行の三連単12点でも当たっていない（8〜9月の実地3件はすべて不的中）。
+TRIO_LINE_MIN_LEGS = 3
+
 #: 上帯の合計予算。下帯の予算は `BUDGET - UPPER_BAND_TOTAL`。
 UPPER_BAND_TOTAL = sum(b.budget for b in UPPER_BANDS)
 #: 行の `legs[].role`。上帯を入れる前の行には無いので、読む側は既定を `base` にする。
@@ -470,12 +481,19 @@ class RaceShape:
     #: 1着率のエントロピー（大きいほど1着が読めない＝軸1が飛びやすい）。
     #: 型A の売り分け（`sell_plan_for`）だけが使う。渡されなければ 0.0。
     pw_ent: float = 0.0
-    #: 並び（ライン）のうち **3車以上のものだけ**。各ラインは **隊列順**
-    #: （先頭 → 番手 → 3番手…）に並べる。`line_legs` だけが使う。
+    #: 並び（ライン）のうち **2車以上のもの**。各ラインは **隊列順**
+    #: （先頭 → 番手 → 3番手…）に並べる。
     #: 🔴 **車番順ではない。** 先頭と番手を見分けられないと「両方向を買う」判断が
     #:    できなくなる（下記 `LINE_SWAP_MIN_ODDS` / `line_legs` のコメント）。
     #: 🔴 単騎（`line_group` が空／0）は含めない。
+    #: ⚠️ `line_legs`（ライン決着への差し替え）は 3車ないと組めないので
+    #:    あちら側で 2車ラインを弾いている。
     lines: tuple[tuple[int, ...], ...] = ()
+    #: **3着内率の合計が最も大きいラインの上位2車**（3着内率の降順）。2車以上の
+    #: ラインが1本も無ければ空。`line_axis2_flow`（9車型F の三連複）だけが使う。
+    #: 🔴 **隊列順ではなく3着内率順**。買うのは三連複なので順序は要らず、
+    #:    「どの2車を軸にするか」だけが問題になる。
+    line_pair: tuple[int, ...] = ()
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -528,21 +546,55 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
         label = "A" if s <= -1 else ("B" if s == 0 else "C")
     else:
         label = "D" if s <= -1 else ("E" if s == 0 else "F")
-    return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent,
-                     _lines_of(line_group, line_pos))
+    lines = _lines_of(line_group, line_pos)
+    return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent, lines,
+                     _strongest_pair(lines, top3_probs))
+
+
+def _strongest_pair(lines: Sequence[Sequence[int]],
+                    top3_probs: Mapping[int, float]) -> tuple[int, ...]:
+    """3着内率の合計が最大のラインの上位2車を、3着内率の降順で返す。
+
+    2車以上のラインが無ければ空タプル。
+
+    >>> _strongest_pair(((1, 2, 3), (4, 5)),
+    ...                 {1: .5, 2: .3, 3: .1, 4: .45, 5: .44, 6: .2})
+    (4, 5)
+    >>> _strongest_pair((), {1: .5})
+    ()
+    """
+    best: tuple[float, tuple[int, ...]] | None = None
+    for line in lines:
+        mem = sorted((c for c in line if c in top3_probs),
+                     key=lambda c: (-float(top3_probs[c]), c))[:2]
+        if len(mem) < 2:
+            continue
+        score = sum(float(top3_probs[c]) for c in mem)
+        cand = (score, tuple(mem))
+        if best is None or cand > best:
+            best = cand
+    return best[1] if best else ()
 
 
 def _lines_of(line_group: Mapping[int, object],
               line_pos: Mapping[int, object] | None = None,
+              min_size: int = 2,
               ) -> tuple[tuple[int, ...], ...]:
-    """3車以上のラインだけを **隊列順**（先頭→番手→3番手）のタプルで返す。
+    """`min_size` 車以上のラインを **隊列順**（先頭→番手→3番手）のタプルで返す。
 
     `line_pos` が無い車は最後尾へ回し、同順位は車番で並べる。
 
+    🔴 **既定は 2車以上**（2026-09-06 に 3車以上から広げた）。9車型F の
+       `line_axis2_flow` が「2車ラインも軸の候補にする」ため。ライン決着への
+       差し替え (`line_legs`) は 3車ないと組めないので、**あちら側で
+       `len(mem) < 3` を弾いている**——ここを広げても差し替えは変わらない。
+
     >>> _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None},
     ...           {1: 3, 2: 1, 3: 2, 4: 1, 5: 2})
-    ((2, 3, 1),)
+    ((2, 3, 1), (4, 5))
     >>> _lines_of({1: 1, 2: 1, 3: 1}, None)
+    ((1, 2, 3),)
+    >>> _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2}, None, min_size=3)
     ((1, 2, 3),)
     """
     pos = line_pos or {}
@@ -561,7 +613,7 @@ def _lines_of(line_group: Mapping[int, object],
             continue
         groups.setdefault(str(g), []).append(int(car))
     return tuple(tuple(sorted(v, key=_p))
-                 for v in sorted(groups.values()) if len(v) >= 3)
+                 for v in sorted(groups.values()) if len(v) >= min_size)
 
 
 # ───────────────────────────── 買い目 ─────────────────────────────
@@ -675,6 +727,35 @@ PLANS: dict[str, Plan] = {
                   note="確率上位12点（同ライン隣接ボーナス込み）"),
     "F_pay": Plan("F_pay", "F", "trifecta", "axis1_second2", 2, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（一撃を取る）"),
+    # 型F ③9車の主力 — 三連複。**2026-09-06 に 9車の非決勝を F_hit から移した。**
+    #
+    # 発端はユーザー観察「9車の型Fが半分以上を占めるのに二軸が34%しか当たらない」。
+    # 9車型F は 9車レースの 57.7% を占め、売らないと商品が大幅に減る。
+    #
+    # 実測（paper 1,958R・F_hit を売る母集団・探索2025 / 確認2026・確定オッズ）:
+    #   ① 現行 三連単12点   商品 1117(90%) / 659(92%)  表示的中 22.38 / 19.88%  ROI 78.5 / 67.1
+    #   ⑫ **本プラン**      商品 1139(92%) / 681(95%)  表示的中 31.61 / 33.48%  ROI 79.2 / 86.4
+    #   Δ表示的中 +9.00pt CI[+6.27,+11.81] / +13.64pt CI[+9.98,+17.36]（**両窓とも0を跨がない**）
+    #   ⚠️ **商品数は現行より増える**（固定点数はゲートに落ちたレースを丸ごと失うが、
+    #      本プランは通る最大点数へ落とすので落ちない）。平均 6.19 / 6.25点。
+    #
+    # 🔴 **点数は固定しない。** 固定k点はどれも劣る（固定4点 24.88/27.20・
+    #    固定6点 27.67/30.32・固定7点 28.92/30.58 で件数も少ない）。
+    # 🔴 **配分はダッチ。** conf傾斜（床2倍＝他プランと同じ）は表示的中 −0.88/−0.74pt
+    #    CI[−1.50,−0.35]/[−1.47,−0.15]・ROI −1.6/−1.0pt で**両指標とも負ける**。
+    #    床1倍に緩めると表示的中 +0.61/+1.02pt だが ROI −4.0pt CI[−6.1,−1.8]/[−7.2,−0.5]。
+    #    三連複はダッチが全点の払戻を揃え、Σ の上限が計画払戻2万円（＝投資の2.2倍）を
+    #    保証するので**床の仕事が無い**。三連複の予測オッズ誤差は小さく
+    #    （live 実測 実払戻/計画の最小 0.456・0.45未満は 0/65件）、最悪でも投資を割らない。
+    #    三連単は 10.8% が 0.45未満なので、あちらでは床が効いている。
+    # 🔴 **目標払戻を上げてはいけない。** T=20,000(=`MIN_MEAN_PAYOUT`) が最良で、
+    #    22,000 / 25,000 / 30,000 / 35,000 と上げると表示的中もROIも単調に下がる。
+    # ⚠️ 測定は**確定オッズ**。本番は予測オッズなので点数と「組めないレース」の
+    #    割合は変わる。前向き実測で確かめること。
+    # 詳細: `docs/type_lab/nine_car_type_f_2026_09_06.md`
+    "F_line": Plan("F_line", "F", "trio", "line_axis2_flow", 0,
+                   sigma_max=TRIO_LINE_SIGMA_MAX, alloc="dutch",
+                   note="最強ラインの2車＋相手を計画払戻2万円まで（9車型F）"),
 }
 
 #: 看板枠（`structure="signboard"`）を全6型ぶん足す。**生成は常に行い、売るかどうかは
@@ -744,6 +825,9 @@ NINE_CAR_TYPE_F_RACE_TYPES = ("決勝",)
 TYPE_F_SELL_BY_RACE_TYPE = {"決勝": "F_pay", "チャレンジ決勝": "F_pay"}
 #: 上の表に無い種別（＝決勝以外）で売るプラン。
 TYPE_F_SELL_DEFAULT = "F_hit"
+#: 決勝以外を**この車数のときだけ**差し替えるプラン（9車の型F は三連複）。
+TYPE_F_SELL_LINE = "F_line"
+TYPE_F_LINE_N_ENTRIES = 9
 
 #: 旧名（9車専用だった頃の名前）。**参照している箇所があるので残す**。
 NINE_CAR_TYPE_F_SELL_BY_RACE_TYPE = TYPE_F_SELL_BY_RACE_TYPE
@@ -798,14 +882,14 @@ SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
 
 #: 型ラボが**入稿しうる**プランの全体（2026-08-30）。
 #:
-#: 🔴 `SELL_PLANS` は 7車の固定集合で、**9車の型F はここに無い `F_hit` を売る**。
+#: 🔴 `SELL_PLANS` は 7車の固定集合で、**9車の型F はここに無い `F_line` を売る**。
 #:    「型ラボの商品か」を判定する場所（既存ランクとの取り合い・重複判定）で
 #:    `SELL_PLANS` を使うと、9車の型F の入稿を**他ランクの商品と誤認する**。
 #:    そういう用途はこちらを使うこと。
 SELLABLE_PLAN_KEYS: frozenset[str] = (
     frozenset(SELL_PLANS)
     | {f"{t}_sign" for t in SIGNBOARD_TYPES}
-    | {TYPE_F_SELL_DEFAULT}
+    | {TYPE_F_SELL_DEFAULT, TYPE_F_SELL_LINE}
     | set(TYPE_F_SELL_BY_RACE_TYPE.values()))
 
 
@@ -826,11 +910,11 @@ def plans_for(type_label: str, n_entries: int = 7,
        売る／売らないは `sell_plans_for` の責務へ寄せた。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
-    ['F_hit', 'F_pay', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
-    ['F_hit', 'F_pay', 'F_sign']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign']
     >>> [p.key for p in plans_for("A", 9, "特選")]
     ['A_hit', 'A_pay', 'A_trio', 'A_ana', 'A_sign']
     """
@@ -853,15 +937,16 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['F_hit']
 
     🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
-       それ以外は `F_hit` と種別で分かれるので、固定の集合では表せない。
-       ここでも返すのは**1つだけ**なので 1レース1商品は保たれる。
+       それ以外は `F_line`（**9車だけ三連複**・2026-09-06）と分かれるので、
+       固定の集合では表せない。ここでも返すのは**1つだけ**なので
+       1レース1商品は保たれる。7車の決勝以外は `F_hit`（三連単12点）のまま。
 
     >>> [p.key for p in sell_plans_for("F", 9, "決勝")]
     ['F_pay']
     >>> [p.key for p in sell_plans_for("F", 9, "準決勝")]
-    ['F_hit']
+    ['F_line']
     >>> [p.key for p in sell_plans_for("F", 9, None)]
-    ['F_hit']
+    ['F_line']
     >>> [p.key for p in sell_plans_for("A", 9, "特選")]
     ['A_hit']
     >>> [p.key for p in sell_plans_for("F", 7)]
@@ -911,6 +996,13 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     if type_label == "F":
         key = TYPE_F_SELL_BY_RACE_TYPE.get(
             str(race_type or ""), TYPE_F_SELL_DEFAULT)
+        # 🔴 **9車の非決勝だけ三連複へ**（2026-09-06）。決勝系は `F_pay` のまま
+        #    （9車の決勝は年40件前後しか無く、ここだけでは採否を決められない）。
+        #    7車は測っていないので触らない——車数をまたいだ移植でこのリポジトリは
+        #    繰り返し失敗している（7C の定数・3ヘッド軸・7M1）。
+        if (key == TYPE_F_SELL_DEFAULT
+                and int(n_entries or 0) == TYPE_F_LINE_N_ENTRIES):
+            key = TYPE_F_SELL_LINE
         return [p for p in plans if p.key == key]
     return [p for p in plans if p.key in SELL_PLANS]
 
@@ -928,6 +1020,39 @@ def build_legs(shape: RaceShape, plan: Plan,
     rest = order[2:]
 
     if plan.bet_type == "trio":
+        if plan.structure == "line_axis2_flow":
+            # 🔴 **軸は `shape.order` の上位2車ではなくラインから取る**
+            #    （`shape.line_pair` = 3着内率の合計が最大のラインの上位2車）。
+            #    9車型F の実測（paper 1,958R・探索2025 / 確認2026）:
+            #      軸2車がそろう率 36.48 / 37.55%（`order` の上位2車は 35.35 / 31.02%）
+            #    軸1・軸2が同一ラインのレースでは**現行の軸と100%一致する**ので、
+            #    いま当てられているレースは動かない。効くのは別ライン群だけ。
+            #    ⚠️ 軸2を全体の3着内率上位から取ると 31.0%（確認窓）まで落ちる。
+            #       **軸2はライン内から取ること。**
+            pair = tuple(shape.line_pair)
+            if len(pair) != 2:
+                return None
+            a, b = pair
+            cs: list[frozenset] = []
+            s = 0.0
+            for c in order:
+                if c in pair:
+                    continue
+                k = frozenset({a, b, c})
+                o = pred_odds.get(k)
+                if not _pos(o):
+                    continue
+                # 🔴 **超えたら止める（`continue` ではない）。** 相手は3着内率の
+                #    降順なので、ここで飛ばして先の高オッズ点を拾うと「安い相手を
+                #    外して穴だけ買う」別の商品になる。実測したのは前方から
+                #    積める限り積む形。
+                if plan.sigma_max and s + 1.0 / float(o) > plan.sigma_max:
+                    break
+                cs.append(k)
+                s += 1.0 / float(o)
+                if plan.max_legs and len(cs) >= plan.max_legs:
+                    break
+            return cs if len(cs) >= TRIO_LINE_MIN_LEGS else None
         if plan.structure == "axis2_flow":
             # 軸2車＋相手を確率降順に n_partners 点。順序を捨てるだけで
             # 相手選びは A_hit と同じ（p3 の並び順）。
@@ -1626,8 +1751,13 @@ def rule_version(n_entries: int = 7) -> str:
                 v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
             for k, v in sorted(GATE_FALLBACK.items())}
     if n_entries == 9:
+        # 🔴 ルーティング（決勝以外を `F_line` へ）と Σ の上限は `PLANS` の
+        #    属性だけでは表せないので、ここへ入れないと新旧の行が同じ
+        #    `rule_version` で混ざる（`_sign` / `_line` と同じ理由）。
         payload["_sell9"] = [list(NINE_CAR_TYPE_F_RACE_TYPES),
-                             list(NINE_CAR_TYPE_F_PLANS)]
+                             list(NINE_CAR_TYPE_F_PLANS),
+                             TYPE_F_SELL_LINE, TYPE_F_LINE_N_ENTRIES,
+                             round(TRIO_LINE_SIGMA_MAX, 6), TRIO_LINE_MIN_LEGS]
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()[:12]
