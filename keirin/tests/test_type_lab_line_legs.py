@@ -43,11 +43,18 @@ def _board(base: float, line_odds: dict) -> tuple[dict, dict]:
 
 # ───────────────────────── lines の取り出し ─────────────────────────
 
-def test_lines_of_keeps_only_three_car_lines():
-    """3車以上のラインだけ。単騎（0 / 空 / None）は含めない。"""
-    assert _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None}) == ((1, 2, 3),)
-    assert _lines_of({1: 1, 2: 1, 3: 2, 4: 2, 5: 2, 6: 2, 7: 0}) == ((3, 4, 5, 6),)
+def test_lines_of_keeps_lines_of_two_or_more_cars():
+    """2車以上のライン。単騎（0 / 空 / None）は含めない。
+
+    🔴 **2026-09-06 に既定を 3車以上 → 2車以上へ広げた**（9車型F の `F_line` が
+       2車ラインも軸の候補にするため）。ライン決着への差し替えは 3車ないと
+       組めないので `line_legs` 側で弾いている（下のテストで固定）。
+    """
+    assert _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 0, 7: None}) == ((1, 2, 3), (4, 5))
+    assert _lines_of({1: 1, 2: 1, 3: 2, 4: 2, 5: 2, 6: 2, 7: 0}) == ((1, 2), (3, 4, 5, 6))
     assert _lines_of({c: 0 for c in range(1, 8)}) == ()
+    # min_size で従来の「3車以上」も取れる
+    assert _lines_of({1: 1, 2: 1, 3: 1, 4: 2, 5: 2}, None, min_size=3) == ((1, 2, 3),)
 
 
 def test_lines_of_orders_by_formation_not_car_number():
@@ -68,7 +75,7 @@ def test_race_shape_fills_lines():
         {c: 100.0 for c in cars}, {c: 10.0 for c in cars}, 1,
     )
     assert shape is not None
-    assert shape.lines == ((3, 1, 2),)      # 隊列順
+    assert shape.lines == ((3, 1, 2), (4, 5))      # 隊列順・2車ラインも入る
 
 
 # ───────────────────────── 掛けるプランの範囲 ─────────────────────────

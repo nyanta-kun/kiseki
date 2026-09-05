@@ -445,22 +445,32 @@ def test_backfill_predicts_a_whole_window_at_once():
 #    はじめて 83.0% / 89.1% になる。決勝だけ F_hit を残すのが実投入の形。
 #    実測: `keirin/docs/type_lab/carcount_2026_08_27.md`（2026-08-28 追記）
 
-def test_nine_car_type_f_sells_pay_for_the_final_and_hit_otherwise():
-    """9車の型F は**決勝は F_pay・それ以外は F_hit**（2026-08-30 ユーザー判断）。
+def test_nine_car_type_f_sells_pay_for_the_final_and_line_otherwise():
+    """9車の型F は**決勝は F_pay・それ以外は F_line（三連複）**（2026-09-06）。
 
     🔴 **「決勝以外は売らない」に戻さないこと。** 2026-08-30 に 9車開催の
        看板8件（選抜3・特選3・特秀2）が無商品になった。旧ランクの看板穴埋めも
        型ラボ全面移行で機能しておらず、「看板には必ず出す」方針に反していた。
     🔴 全部 `F_pay` にすると表示的中 6.07%・ROI 60.5% で壁の下。だから
-       決勝以外は当たる回数を売る `F_hit` に替える（ROI が上がるという主張ではない）。
+       決勝以外は当たる回数を売る側へ替える（ROI が上がるという主張ではない）。
+    🔴 **2026-09-06 に決勝以外を `F_hit`（三連単12点）→ `F_line`（三連複）へ。**
+       実測 paper 1,958R: 表示的中 22.38 / 19.88% → 31.61 / 33.48%
+       （Δ +9.00pt CI[+6.27,+11.81] / +13.64pt CI[+9.98,+17.36]・両窓とも0を跨がない）。
+       商品数も 90/92% → 92/95% と**増える**。詳細は
+       `docs/type_lab/nine_car_type_f_2026_09_06.md`。
+    🔴 **7車は替えていない**（測っていない）。車数をまたいだ移植で繰り返し失敗している。
     🔴 **生成（`plans_for`）は絞らない。** 売る／売らないは `sell_plans_for` の責務。
        生成側で空にすると比較台が消え、売らなかった側の成績が事後に測れない。
     """
     assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
     for rt in ("準決勝", "一予選", "二予選", "選抜", "特選", "特秀", "一般", "", None):
-        assert [p.key for p in sell_plans_for("F", 9, rt)] == ["F_hit"], rt
+        assert [p.key for p in sell_plans_for("F", 9, rt)] == ["F_line"], rt
+    # 7車は据え置き（決勝・準決勝は看板枠へ回るので、それ以外で見る）
+    for rt in ("一予選", "選抜", "特選", "一般", None):
+        assert [p.key for p in sell_plans_for("F", 7, rt)] == ["F_hit"], rt
     # 生成側は種別で落とさない（比較台を残す）
-    assert [p.key for p in plans_for("F", 9, "準決勝")] == ["F_hit", "F_pay", "F_sign"]
+    assert [p.key for p in plans_for("F", 9, "準決勝")] == [
+        "F_hit", "F_pay", "F_line", "F_sign"]
 
 
 def test_nine_car_final_match_is_exact_not_substring():
@@ -469,7 +479,7 @@ def test_nine_car_final_match_is_exact_not_substring():
     決勝と準決勝で**売るプランが変わる**ので、部分一致に戻すと準決勝まで
     `F_pay`（9車では表示的中 2.99%）になる。
     """
-    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_line"]
     assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
 
 

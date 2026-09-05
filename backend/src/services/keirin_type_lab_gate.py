@@ -116,6 +116,7 @@ AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
     "F_sign",    # 窓で符号反転（−0.32 / +2.13pt）
     "A_pay",     # 比較台。売らない
     "F_pay",     # 9車の決勝だけ。7車では売らない（9車はそもそもゲート対象外）
+    "F_line",    # 9車の決勝以外だけ。同上（`passes_axis_gate` は7車以外を素通しする）
 })
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
 #:

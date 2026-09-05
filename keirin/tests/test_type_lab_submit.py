@@ -54,19 +54,21 @@ def test_sell_plans_matches_constant():
 
 
 def test_type_f_splits_by_race_type():
-    """9車の型F は**決勝は F_pay・それ以外は F_hit**（2026-08-30 ユーザー判断）。
+    """9車の型F は**決勝は F_pay・それ以外は F_line**（2026-09-06）。
 
     🔴 **決勝以外を「売らない」に戻さないこと。** 2026-08-30 に 9車開催の
        看板8件（選抜3・特選3・特秀2）が無商品になり、旧ランクの看板穴埋めも
        型ラボ全面移行で機能しなくなっていた（埋まらなかった看板 8/29 15件 →
        8/30 21件）。「看板には必ず出す」方針を優先した選択。
     🔴 全部 `F_pay` で売ると表示的中 6.07%・ROI 60.5% で壁の下。だから
-       決勝以外は当たる回数を売る `F_hit` に替えてある。
+       決勝以外は当たる回数を売る側に替えてある。
+    🔴 **2026-09-06 に決勝以外を `F_hit`（三連単12点）→ `F_line`（三連複）へ。**
+       `docs/type_lab/nine_car_type_f_2026_09_06.md`。**7車は替えていない。**
     """
     assert [p.key for p in sell_plans_for("F", 9, "決勝")] == ["F_pay"]
-    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
-    assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_hit"]
-    assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_line"]
+    assert [p.key for p in sell_plans_for("F", 9, "選抜")] == ["F_line"]
+    assert [p.key for p in sell_plans_for("F", 9, None)] == ["F_line"]
     # 🔴 **7車は看板枠が先に来る**（2026-09-01 再投入）。`SIGNBOARD_RACE_TYPES`
     #    に入る種別は `F_sign`、それ以外が `F_hit`。
     assert [p.key for p in sell_plans_for("F", 7, "決勝")] == ["F_sign"]
@@ -84,7 +86,7 @@ def test_type_f_splits_by_race_type():
     # 🔴 **看板枠は7車だけ**（`SIGNBOARD_N_ENTRIES`）。9車は従来どおり種別で分かれる。
     #    ここで「準決勝」を部分一致で拾わないことも一緒に固定する
     #    （拾うと表示的中の低い `F_pay` が母集団の何倍にも広がる）。
-    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_hit"]
+    assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_line"]
     # 型F以外は9車でも種別によらず売る
     assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
 
@@ -1000,13 +1002,14 @@ def test_rp_sd_quantiles_cover_every_7car_sellable_plan():
     例外もログも出ないまま、新設プランが上限の順位付けから静かに外れる。
 
     ⚠️ `F_pay` は 2026-08-31 の看板枠導入で **9車決勝だけ**になった
-    （7車の決勝・準決勝は `F_sign` へ回る）。9車は `_priority` が 1.0 を返して
-    表を引かないので、ここでは対象外にする。
+    （7車の決勝・準決勝は `F_sign` へ回る）。`F_line` は 2026-09-06 から
+    **9車の決勝以外だけ**。9車は `_priority` が 1.0 を返して表を引かないので、
+    どちらもここでは対象外にする。
     """
     from src.type_lab import SELLABLE_PLAN_KEYS
 
     gate = _load_gate()
-    nine_car_only = {"F_pay"}
+    nine_car_only = {"F_pay", "F_line"}
     missing = sorted(k for k in SELLABLE_PLAN_KEYS
                      if k not in nine_car_only and k not in gate.RP_SD_PRIORITY_QUANTILES)
     assert not missing, (
