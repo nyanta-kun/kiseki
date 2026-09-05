@@ -104,3 +104,71 @@ def test_defaults_are_pinned_to_frontend_fallback() -> None:
     assert HEIHACHI_MAX_ODDS == 40.0
     assert HEIHACHI_MIN_PLACE_PROB == 0.30
     assert HEIHACHI_GRADES == frozenset({"OP特別", "Listed", "G3", "G2", "G1", "重賞"})
+
+
+# ---------------------------------------------------------------------------
+# 年間バックテスト集計（aggregate_backtest）
+# 行は (graded, index_rank, win_odds, place_odds, place_prob, is_win)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_KW = {
+    "max_index_rank": 3,
+    "min_odds": 10.0,
+    "max_odds": 40.0,
+    "min_place_prob": 0.30,
+    "graded_only": True,
+}
+
+
+def test_aggregate_backtest_empty() -> None:
+    from src.services.jra_heihachi_picks import aggregate_backtest
+
+    got = aggregate_backtest([], **_DEFAULT_KW)  # type: ignore[arg-type]
+    assert got["n"] == 0
+    assert got["win_roi"] is None and got["place_roi"] is None
+
+
+def test_aggregate_backtest_counts_and_roi() -> None:
+    from src.services.jra_heihachi_picks import aggregate_backtest
+
+    rows = [
+        (True, 1, 20.0, 4.0, 0.40, True),    # 該当・1着
+        (True, 2, 15.0, 3.0, 0.35, False),   # 該当・3着内（複勝のみ）
+        (True, 3, 12.0, None, 0.31, False),  # 該当・着外
+        (True, 1, 5.0, 2.0, 0.50, True),     # オッズ下限未満で除外
+        (False, 1, 20.0, 4.0, 0.40, True),   # 平場なので除外
+    ]
+    got = aggregate_backtest(rows, **_DEFAULT_KW)  # type: ignore[arg-type]
+    assert got["n"] == 3
+    assert got["win_hits"] == 1 and got["place_hits"] == 2
+    assert got["win_roi"] == 20.0 / 3
+    assert got["place_roi"] == 7.0 / 3
+
+
+def test_aggregate_backtest_odds_band_matches_frontend() -> None:
+    """オッズは下限を含み上限を含まない（frontend matchesHeihachi と同じ）。"""
+    from src.services.jra_heihachi_picks import aggregate_backtest
+
+    for odds, expected in [(9.99, 0), (10.0, 1), (39.99, 1), (40.0, 0)]:
+        rows = [(True, 1, odds, None, 0.40, False)]
+        got = aggregate_backtest(rows, **_DEFAULT_KW)  # type: ignore[arg-type]
+        assert got["n"] == expected, odds
+
+
+def test_aggregate_backtest_graded_only_toggle() -> None:
+    from src.services.jra_heihachi_picks import aggregate_backtest
+
+    rows = [(False, 1, 20.0, 4.0, 0.40, True)]
+    assert aggregate_backtest(rows, **_DEFAULT_KW)["n"] == 0  # type: ignore[arg-type]
+    assert aggregate_backtest(rows, **{**_DEFAULT_KW, "graded_only": False})["n"] == 1  # type: ignore[arg-type]
+
+
+def test_aggregate_backtest_rank_and_place_prob_floors() -> None:
+    from src.services.jra_heihachi_picks import aggregate_backtest
+
+    assert aggregate_backtest(
+        [(True, 4, 20.0, None, 0.40, False)], **_DEFAULT_KW  # type: ignore[arg-type]
+    )["n"] == 0
+    assert aggregate_backtest(
+        [(True, 1, 20.0, None, 0.29, False)], **_DEFAULT_KW  # type: ignore[arg-type]
+    )["n"] == 0

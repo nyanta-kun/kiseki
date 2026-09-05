@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { HeihachiPicks, fetchHeihachiPicksBrowser } from "@/lib/api";
+import { HeihachiBacktestPanel } from "./HeihachiBacktestPanel";
 import {
   HEIHACHI_RANGES,
   HeihachiThresholds,
@@ -23,6 +24,9 @@ import { cn } from "@/lib/utils";
  * 回収率は**その日の確定分のみ**を母数にした実績なので、朝は n=0 になる。
  * 長期の目安は reference（バックテスト実測）を併記する。
  */
+
+/** 上部に出す年間バックテストの対象年。丸1年ぶん確定している直近の年。 */
+const BACKTEST_YEAR = 2025;
 
 /** 着順バッジの色。1着=金、複勝圏=青、それ以外は無彩色。 */
 function posColor(p: number): string {
@@ -109,6 +113,9 @@ export function HeihachiPicksTable({ initial, date }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* --- 同じしきい値の年間バックテスト（当日サマリーの上） --- */}
+      <HeihachiBacktestPanel year={BACKTEST_YEAR} thresholds={thresholds} />
+
       {/* --- 回収率サマリ --- */}
       <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
         <div className="flex items-baseline justify-between gap-2 mb-2">

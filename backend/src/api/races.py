@@ -55,7 +55,12 @@ from ..indices.confidence import (
     is_market_favorite,
 )
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
-from ..services.jra_heihachi_picks import build_heihachi_picks
+from ..services.jra_heihachi_picks import (
+    BACKTEST_MAX_YEAR,
+    BACKTEST_MIN_YEAR,
+    build_heihachi_backtest,
+    build_heihachi_picks,
+)
 from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from ..utils.racecourse import JRA_TO_SEKITO
@@ -497,6 +502,23 @@ class HeihachiReferenceOut(BaseModel):
     place_roi: float
 
 
+class HeihachiBacktestOut(BaseModel):
+    """同じしきい値を過去1年に当てた場合の成績。"""
+
+    year: int
+    # その年の JRA 開催日数（1日12レース以上ある日）
+    days: int
+    races: int
+    picks_per_day: float | None
+    n: int
+    win_hits: int
+    place_hits: int
+    win_rate: float | None
+    place_rate: float | None
+    win_roi: float | None
+    place_roi: float | None
+
+
 class HeihachiPicksOut(BaseModel):
     date: str
     candidates: list[HeihachiCandidateOut]
@@ -675,6 +697,38 @@ async def get_heihachi_picks(
     ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
     """
     return HeihachiPicksOut(**await build_heihachi_picks(db, date))
+
+
+@router.get("/heihachi/backtest")
+async def get_heihachi_backtest(
+    db: DbDep,
+    year: int = Query(..., ge=BACKTEST_MIN_YEAR, le=BACKTEST_MAX_YEAR, description="対象年"),
+    max_index_rank: int = Query(..., ge=1, le=5),
+    min_odds: float = Query(..., ge=0.0, le=1000.0),
+    max_odds: float = Query(..., gt=0.0, le=1000.0),
+    min_place_prob: float = Query(..., ge=0.0, le=1.0),
+    graded_only: bool = Query(True),
+) -> HeihachiBacktestOut:
+    """**同じしきい値**を指定年に当てた場合の的中率・回収率を返す。
+
+    推奨ページのスライダーを動かすたびに呼ばれるので、対象年の判定材料
+    （指数順位5位以内・確定済み）はプロセス内にキャッシュし、絞り込みは
+    メモリ上で行う（初回のみ数秒、以降は数十ミリ秒）。
+
+    ⚠️ 判定条件はフロントの `lib/heihachi.ts` matchesHeihachi() と同じにすること。
+    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
+    """
+    return HeihachiBacktestOut(
+        **await build_heihachi_backtest(
+            db,
+            year,
+            max_index_rank=max_index_rank,
+            min_odds=min_odds,
+            max_odds=max_odds,
+            min_place_prob=min_place_prob,
+            graded_only=graded_only,
+        )
+    )
 
 
 @router.get("")

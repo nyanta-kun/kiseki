@@ -248,8 +248,8 @@ export type RaceHistoryEntry = {
 // ---------------------------------------------------------------------------
 
 type CacheInit =
-  | { cache: RequestCache }
-  | { next: { revalidate: number } };
+  | { cache: RequestCache; signal?: AbortSignal }
+  | { next: { revalidate: number }; signal?: AbortSignal };
 
 /**
  * バックエンド API への GET リクエスト。
@@ -1096,6 +1096,48 @@ export async function fetchHeihachiPicks(date: string): Promise<HeihachiPicks> {
 /** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし） */
 export async function fetchHeihachiPicksBrowser(date: string): Promise<HeihachiPicks> {
   return get<HeihachiPicks>(`/races/heihachi?date=${date}`, { cache: "no-store" });
+}
+
+/** 同じしきい値を過去1年に当てた場合の成績。 */
+export type HeihachiBacktest = {
+  year: number;
+  /** その年の JRA 開催日数（1日12レース以上ある日） */
+  days: number;
+  races: number;
+  picks_per_day: number | null;
+  n: number;
+  win_hits: number;
+  place_hits: number;
+  win_rate: number | null;
+  place_rate: number | null;
+  win_roi: number | null;
+  place_roi: number | null;
+};
+
+/** 推奨ページのスライダーを動かすたびに呼ぶ（サーバー側は年データをキャッシュ済み）。 */
+export async function fetchHeihachiBacktest(
+  year: number,
+  t: {
+    maxIndexRank: number;
+    minOdds: number;
+    maxOdds: number;
+    minPlaceProb: number;
+    gradedOnly: boolean;
+  },
+  signal?: AbortSignal,
+): Promise<HeihachiBacktest> {
+  const params = new URLSearchParams({
+    year: String(year),
+    max_index_rank: String(t.maxIndexRank),
+    min_odds: String(t.minOdds),
+    max_odds: String(t.maxOdds),
+    min_place_prob: String(t.minPlaceProb),
+    graded_only: String(t.gradedOnly),
+  });
+  return get<HeihachiBacktest>(`/races/heihachi/backtest?${params}`, {
+    cache: "no-store",
+    signal,
+  });
 }
 
 // ---------------------------------------------------------------------------
