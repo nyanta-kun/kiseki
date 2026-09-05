@@ -55,6 +55,7 @@ from ..indices.confidence import (
     is_market_favorite,
 )
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
+from ..services.jra_heihachi_picks import build_heihachi_picks
 from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from ..utils.racecourse import JRA_TO_SEKITO
@@ -456,6 +457,53 @@ class OddsOut(BaseModel):
 # エンドポイント
 # -------------------------------------------------------------------
 
+class HeihachiCandidateOut(BaseModel):
+    """平八バッジの候補馬1頭（指数順位5位以内）。該当判定はフロント側が行う。"""
+
+    race_id: int
+    course_name: str | None
+    race_number: int
+    race_name: str | None
+    post_time: str | None
+    grade: str | None
+    horse_number: int
+    horse_name: str | None
+    index_rank: int
+    composite_index: float | None
+    place_probability: float | None
+    win_odds: float | None
+    finish_position: int | None
+    result_win_odds: float | None
+    result_place_odds: float | None
+
+
+class HeihachiDefaultsOut(BaseModel):
+    """既定しきい値。単一真実源は indices/dm_signals.py の HEIHACHI_* 定数。"""
+
+    max_index_rank: int
+    min_odds: float
+    max_odds: float
+    min_place_prob: float
+    graded_only: bool
+    grades: list[str]
+
+
+class HeihachiReferenceOut(BaseModel):
+    """バッジの長期実測（バックテスト）。当日実績と混同しないよう別枠で返す。"""
+
+    n: int
+    place_rate: float
+    win_roi: float
+    place_roi: float
+
+
+class HeihachiPicksOut(BaseModel):
+    date: str
+    candidates: list[HeihachiCandidateOut]
+    defaults: HeihachiDefaultsOut
+    reference: HeihachiReferenceOut
+
+
 class RaceConfidenceOut(BaseModel):
     """推奨ページ（レース信頼度一覧）の1行。
 
@@ -610,6 +658,23 @@ async def get_race_confidence(
     """
     rows = await build_race_confidence_list(db, date)
     return [RaceConfidenceOut(**row) for row in rows]
+
+
+@router.get("/heihachi")
+async def get_heihachi_picks(
+    db: DbDep,
+    date: str = Query(..., description="開催日 YYYYMMDD"),
+) -> HeihachiPicksOut:
+    """指定日の**平八バッジ候補**（指数順位5位以内の全馬）と既定しきい値を返す。
+
+    推奨ページのしきい値はスライダーで動かせるため、**どれをバッジ対象にするかは
+    フロント側 `lib/heihachi.ts` が決める**（一覧・回収率・レース詳細のバッジで
+    判定を1箇所に集約するため）。既定値と実測値は `indices/dm_signals.py` の
+    SIGNAL_HEIHACHI 節を参照。
+
+    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
+    """
+    return HeihachiPicksOut(**await build_heihachi_picks(db, date))
 
 
 @router.get("")
@@ -1185,6 +1250,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         surface=race.surface,
         distance=race.distance,
         exclude_horse_numbers=scratched_hns,
+        grade=race.grade,
     )
 
     # 購入シグナル算出（v26 breakaway ROI 検証ベース）

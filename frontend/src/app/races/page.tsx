@@ -1,10 +1,10 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchRaceConfidence } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchHeihachiPicks } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { RaceConfidenceView } from "@/components/RaceConfidenceView";
+import { HeihachiPicksView } from "@/components/HeihachiPicksView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -64,11 +64,11 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    // 推奨タブのデータを並列プリフェッチ: RaceConfidenceView での同一フェッチは
+    // 推奨タブのデータを並列プリフェッチ: HeihachiPicksView での同一フェッチは
     // Next の fetch キャッシュから即解決する
     [races] = await Promise.all([
       fetchRacesByDate(date),
-      fetchRaceConfidence(date).catch(() => []),
+      fetchHeihachiPicks(date).catch(() => null),
     ]);
   } catch {
     return (
@@ -113,12 +113,15 @@ async function RaceList({ date }: { date: string }) {
     if (!sortedGroups[name]) sortedGroups[name] = courseGroups[name];
   }
 
-  // 推奨タブ = レース信頼度一覧。
-  // 2026-08-22 に刷新し、旧「推奨カード / 穴ぐさ条件推奨 / 本日の注目馬」は破棄した
-  // （コンポーネント自体は他所から使えるよう残してある）。
+  // 推奨タブ = 平八バッジ該当馬の一覧。
+  // 2026-08-22 に「レース信頼度一覧」へ刷新したが、2026-09-06 に推奨対象を
+  // 平八バッジ（OP特別以上 ∧ 指数3位以内 ∧ 単勝10〜40倍 ∧ 複勝確率30%以上）の
+  // 馬一覧へ置き換えた [[jra_heihachi_badge]]。全レースを並べるのをやめ、
+  // 「買う対象だけを出す」画面にする。RaceConfidenceView/Table は他所から
+  // 使えるよう残してある。
   const recommendPanel = (
     <Suspense fallback={<ConfidenceTableSkeleton />}>
-      <RaceConfidenceView date={date} />
+      <HeihachiPicksView date={date} />
     </Suspense>
   );
 

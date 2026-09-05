@@ -440,6 +440,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
                 anagusa_rank=h.get("anagusa_rank"),
                 nb_ave_rank=h.get("nb_ave_rank"),
                 km_rank=h.get("km_rank"),
+                place_probability=h.get("place_probability"),
                 dm_signals=None,
             )
             for h in horses
@@ -466,6 +467,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             surface=race.surface,
             distance=race.distance,
             exclude_horse_numbers=_scr_hns,
+            grade=race.grade,
         )
         sig_by_hn = {obj.horse_number: (obj.dm_signals or []) for obj in sig_objs}
         for h in horses:

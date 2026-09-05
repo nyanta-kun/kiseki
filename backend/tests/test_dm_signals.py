@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from src.indices.dm_signals import (
     SIGNAL_ANAGUSA_ELITE,
+    SIGNAL_HEIHACHI,
     SIGNAL_UPSET_CANDIDATE,
     _ranks_descending,
     compute_dm_signals,
@@ -30,6 +31,7 @@ class Horse:
     anagusa_rank: str | None = None
     nb_ave_rank: int | None = None
     km_rank: int | None = None
+    place_probability: float | None = None
     dm_signals: list[str] | None = field(default=None)
 
 
@@ -318,3 +320,81 @@ def test_anagusa_elite_multiple_horses_allowed() -> None:
     compute_dm_signals(horses, win_odds_map={1: 12.0, 2: 11.0, 3: 20.0})
     assert SIGNAL_ANAGUSA_ELITE in (horses[0].dm_signals or [])
     assert SIGNAL_ANAGUSA_ELITE in (horses[1].dm_signals or [])
+
+
+# ---------------------------------------------------------------------------
+# 平八badge (SIGNAL_HEIHACHI) — 2026-09-06追加 [[jra_heihachi_badge]]
+# 平地OP特別以上 ∧ composite順位≤3 ∧ 単勝10〜40倍 ∧ 複勝確率≥0.30
+# ---------------------------------------------------------------------------
+
+
+def _heihachi_horses(odds_target: float, place_prob: float | None) -> list[Horse]:
+    """1番が comp1位・対象、2〜4番は comp下位のフィラー(人気側)。"""
+    return [
+        Horse(1, composite_index=80.0, jvan_time_dm=None, jvan_battle_dm=None,
+              place_probability=place_prob),
+        Horse(2, composite_index=70.0, jvan_time_dm=None, jvan_battle_dm=None,
+              place_probability=0.60),
+        Horse(3, composite_index=60.0, jvan_time_dm=None, jvan_battle_dm=None,
+              place_probability=0.50),
+        Horse(4, composite_index=50.0, jvan_time_dm=None, jvan_battle_dm=None,
+              place_probability=0.40),
+    ], {1: odds_target, 2: 2.0, 3: 3.0, 4: 4.0}
+
+
+def test_heihachi_basic() -> None:
+    """OP特別 ∧ 指数1位 ∧ 15倍 ∧ 複勝確率0.35 → 平八"""
+    horses, odds = _heihachi_horses(15.0, 0.35)
+    compute_dm_signals(horses, win_odds_map=odds, grade="OP特別")
+    assert SIGNAL_HEIHACHI in (horses[0].dm_signals or [])
+
+
+def test_heihachi_requires_selected_grade() -> None:
+    """平場(grade=None)では付与しない — レース選定がROIを担っているため"""
+    horses, odds = _heihachi_horses(15.0, 0.35)
+    compute_dm_signals(horses, win_odds_map=odds, grade=None)
+    assert SIGNAL_HEIHACHI not in (horses[0].dm_signals or [])
+
+
+def test_heihachi_excludes_jump_races() -> None:
+    """障害(J.G3)は母数が少なく別物なので対象外"""
+    horses, odds = _heihachi_horses(15.0, 0.35)
+    compute_dm_signals(horses, win_odds_map=odds, grade="J.G3")
+    assert SIGNAL_HEIHACHI not in (horses[0].dm_signals or [])
+
+
+def test_heihachi_odds_band_is_exclusive_at_both_ends() -> None:
+    """単勝10倍未満・40倍以上は対象外（10.0は含み、40.0は含まない）"""
+    for odds_v, expected in [(9.9, False), (10.0, True), (39.9, True), (40.0, False)]:
+        horses, odds = _heihachi_horses(odds_v, 0.35)
+        compute_dm_signals(horses, win_odds_map=odds, grade="G3")
+        assert (SIGNAL_HEIHACHI in (horses[0].dm_signals or [])) is expected, odds_v
+
+
+def test_heihachi_requires_place_probability() -> None:
+    """複勝確率が閾値未満 / 欠損なら付与しない"""
+    for pp, expected in [(0.29, False), (0.30, True), (None, False)]:
+        horses, odds = _heihachi_horses(15.0, pp)
+        compute_dm_signals(horses, win_odds_map=odds, grade="G1")
+        assert (SIGNAL_HEIHACHI in (horses[0].dm_signals or [])) is expected, pp
+
+
+def test_heihachi_requires_composite_top3() -> None:
+    """composite順位4位以下は対象外"""
+    horses = _fillers([2, 3, 4]) + [
+        Horse(1, composite_index=10.0, jvan_time_dm=None, jvan_battle_dm=None,
+              place_probability=0.50),
+    ]
+    compute_dm_signals(
+        horses, win_odds_map={1: 15.0, 2: 2.0, 3: 3.0, 4: 4.0}, grade="OP特別"
+    )
+    assert SIGNAL_HEIHACHI not in (horses[-1].dm_signals or [])
+
+
+def test_heihachi_ignores_scratched_horse() -> None:
+    """取消馬には付与しない"""
+    horses, odds = _heihachi_horses(15.0, 0.35)
+    compute_dm_signals(
+        horses, win_odds_map=odds, grade="OP特別", exclude_horse_numbers={1}
+    )
+    assert horses[0].dm_signals == []
