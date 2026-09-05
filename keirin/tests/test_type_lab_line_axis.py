@@ -192,3 +192,46 @@ def test_trio_plan_is_generated_for_every_car_count():
     from src.type_lab import plans_for
     for n in (7, 9):
         assert "F_line" in [p.key for p in plans_for("F", n, "選抜")]
+
+
+# ───────────────────────── 入稿文面（軸の差し替え） ─────────────────────────
+
+def test_submission_uses_the_line_axes_not_the_index_top_two():
+    """🔴 **`F_line` の印と文面は買い目から軸を拾い直すこと。**
+
+    `type_lab_picks.axis1/axis2` は指数（3着内率）の上位2車で、`F_line` の軸
+    （最強ラインの2車）と一致するのは 9車型F の 44.5% しかない。そのまま使うと
+    **◎が「1点にしか出てこない車」に付き、毎点に入っている本当の軸が △ になる**。
+    例外もログも出ないまま、印と買い目が食い違う。
+    """
+    from src.type_lab_submission import axes_from_legs, build_submission
+
+    # 指数順は 1-7-5-3-9-… だが、買っているのは 1 と 9 を軸にした7点
+    legs = [{"combo": f"1={c}=9", "stake": 1000, "pred_odds": 20.0}
+            for c in (6, 3, 7, 5, 2, 8, 4)]
+    row = {"plan_key": "F_line", "type_label": "F",
+           "axis1": 1, "axis2": 7,            # ← 指数上位2車（7 は軸ではない）
+           "p3_order": "1-7-5-3-9-2-6-8-4", "bet_type": "trio", "legs": legs}
+    assert axes_from_legs(legs, row["p3_order"]) == (1, 9)
+
+    sub = build_submission(row)
+    assert sub["marks"][1] == "◎"
+    assert sub["marks"][9] == "○", "毎点に入っている車が ○ になること"
+    assert sub["marks"][7] != "○", "指数2位でも軸でなければ ○ にしない"
+    assert "◎1番・○9番" in sub["comment"]
+    # 🔴 指数上位2車だと誤解させる文言を入れない
+    assert "指数の上位2車ではなく" in sub["comment"]
+
+
+def test_axes_from_legs_returns_nothing_without_a_common_car():
+    """共通の車が無ければ空（差し替えず従来どおりに落ちる）。"""
+    from src.type_lab_submission import axes_from_legs
+    assert axes_from_legs([{"combo": "1=2=3"}, {"combo": "4=5=6"}], "1-2-3-4-5-6-7") == ()
+
+
+def test_axes_from_legs_ignores_the_upper_band():
+    """🔴 上帯（押さえ）を混ぜると共通車が消える。`_base_legs` で除くこと。"""
+    from src.type_lab_submission import axes_from_legs
+    legs = [{"combo": "1=4=5"}, {"combo": "1=4=2"},
+            {"combo": "6=7=3", "role": "band"}]
+    assert axes_from_legs(legs, "1-4-5-2-3-7-6") == (1, 4)
