@@ -13,7 +13,8 @@
 必ず同じ判定を通るようにするため、判定ロジックを2箇所に置かない。
 
 既定値の単一真実源は `indices/dm_signals.py` の HEIHACHI_* 定数で、ここから
-そのまま配信する。長期の期待値は `HEIHACHI_REFERENCE_*`（バックテスト実測）。
+そのまま配信する。参考値は `HEIHACHI_REFERENCE_IN_SAMPLE` /
+`HEIHACHI_REFERENCE_OUT_OF_SAMPLE`（後者だけが指数の学習期間の外）。
 """
 
 from __future__ import annotations
@@ -34,17 +35,30 @@ from ..indices.dm_signals import (
 
 # バッジの実測（[[jra_heihachi_badge]]）。
 #
-# 🔴 **回収率は出さない。** 2026-09-06 の頑健性評価で、TEST(2026Q3)では全候補が
-# 複勝ROI 1 を割ったのに対し 3着内率の分離だけが残った
+# 🔴 **回収率は出さない。** TEST(2026Q3)では全候補が複勝ROI 1 を割った
 # （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。ROI を「長期の目安」として
-# 画面に出すと支持されない主張になるため、参考値は**3着内率とその同期間ベースライン
-# だけ**にした。ROI を見たいときは推奨ページの年間バックテスト欄で n と年を確認する。
+# 画面に出すと支持されない主張になるため、参考値は3着内率とベースラインだけにした。
 #
-# 期間は v28 の学習終端(TRAIN_END=2025-06-30)より後だけを使う。
-HEIHACHI_REFERENCE_WINDOW = "2025-07〜2026-09"
-HEIHACHI_REFERENCE_N = 35
-HEIHACHI_REFERENCE_PLACE_RATE = 0.429
-HEIHACHI_REFERENCE_BASE_PLACE_RATE = 0.217
+# 🔴🔴 **さらに重要: v28 本番モデルの refit 期間は 2023-05-06〜2026-06-28**
+# （backend/models/v28_iswin_calib_metrics.json の `refit_period`）。
+# `inference_v28.py` はこの refit モデルでバックフィルするので、
+# **2026-06-28 以前の `calculated_indices` v28 は全部 in-sample**。
+# 真に out-of-sample なのは 2026-06-29 以降だけ。
+# in-sample の数字は「当てはまりの良さ」であって将来の性能ではないので、
+# 両方を並べて返し、画面でもそう表示する。
+HEIHACHI_REFERENCE_IN_SAMPLE = {
+    "window": "2025-07〜2026-06",
+    "n": 26,
+    "place_rate": 0.538,
+    "base_place_rate": 0.215,
+}
+# 唯一 honest な窓。n が小さすぎて有効性の確認にはならない（否定にもならない）。
+HEIHACHI_REFERENCE_OUT_OF_SAMPLE = {
+    "window": "2026-06-29〜2026-09-06",
+    "n": 9,
+    "place_rate": 0.111,
+    "base_place_rate": 0.228,
+}
 
 # 指数は (race_id, horse_id) ごとに最新版を1行だけ取る（v27/v28 が混在するため）。
 # 単勝オッズは jra_race_confidence と同じく odds_history の最新を正とする
@@ -177,10 +191,8 @@ async def build_heihachi_picks(db: AsyncSession, date: str) -> dict[str, Any]:
             "grades": sorted(HEIHACHI_GRADES),
         },
         "reference": {
-            "window": HEIHACHI_REFERENCE_WINDOW,
-            "n": HEIHACHI_REFERENCE_N,
-            "place_rate": HEIHACHI_REFERENCE_PLACE_RATE,
-            "base_place_rate": HEIHACHI_REFERENCE_BASE_PLACE_RATE,
+            "in_sample": HEIHACHI_REFERENCE_IN_SAMPLE,
+            "out_of_sample": HEIHACHI_REFERENCE_OUT_OF_SAMPLE,
         },
     }
 

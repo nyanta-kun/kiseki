@@ -493,19 +493,29 @@ class HeihachiDefaultsOut(BaseModel):
     grades: list[str]
 
 
-class HeihachiReferenceOut(BaseModel):
-    """バッジの実測（3着内率の分離のみ）。当日実績と混同しないよう別枠で返す。
-
-    回収率は返さない。TEST(2026Q3)では全候補が複勝ROI 1 を割っており、
-    「長期の目安」として出すと支持されない主張になるため
-    （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。ROI は年間
-    バックテスト欄（`/races/heihachi/backtest`）で n と年を見て判断する。
-    """
+class HeihachiWindowStatOut(BaseModel):
+    """ある期間での3着内率と、同期間の全出走馬のベースライン。"""
 
     window: str
     n: int
     place_rate: float
     base_place_rate: float
+
+
+class HeihachiReferenceOut(BaseModel):
+    """バッジの実測（3着内率の分離のみ）。当日実績と混同しないよう別枠で返す。
+
+    回収率は返さない。TEST(2026Q3)では全候補が複勝ROI 1 を割っており、
+    「長期の目安」として出すと支持されない主張になるため
+    （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。
+
+    🔴 v28 本番モデルの refit 期間は 2023-05-06〜2026-06-28 なので、
+    **2026-06-28 以前の指数値は全部 in-sample**。in-sample の数字は
+    「当てはまりの良さ」であって将来の性能ではないため、両方を分けて返す。
+    """
+
+    in_sample: HeihachiWindowStatOut
+    out_of_sample: HeihachiWindowStatOut
 
 
 class HeihachiBacktestOut(BaseModel):

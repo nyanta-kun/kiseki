@@ -140,12 +140,22 @@ export function HeihachiPicksTable({ initial, date }: Props) {
           当日の確定分のみを母数にした実績です（未確定は除外）。
           <strong>
             このバッジは回収率ではなく「3着内率の分離」を狙うタグです。
-          </strong>
-          既定値での実測は {ref.window} の n={ref.n} で 3着内率{" "}
-          {(ref.place_rate * 100).toFixed(1)}%（同期間の全出走馬は{" "}
-          {(ref.base_place_rate * 100).toFixed(1)}%）。
-          回収率は窓によって1を割ります（2026Q3 は複勝0.19・n=9）。
-          上の年間欄で n と年を確かめてから使ってください。
+          </strong>{" "}
+          既定値での実測（3着内率）:{" "}
+          {ref.in_sample.window} は {(ref.in_sample.place_rate * 100).toFixed(1)}%
+          （全出走馬 {(ref.in_sample.base_place_rate * 100).toFixed(1)}% / n=
+          {ref.in_sample.n}）。
+          <strong className="text-red-700">
+            {" "}
+            ただし指数 v28 は 2026-06-28 までのデータで学習しているため、これは
+            in-sample の数字です。学習に使っていない {ref.out_of_sample.window} では{" "}
+            {(ref.out_of_sample.place_rate * 100).toFixed(1)}%（全出走馬{" "}
+            {(ref.out_of_sample.base_place_rate * 100).toFixed(1)}% / n=
+            {ref.out_of_sample.n}）で、
+            <u>バッジの有効性は out-of-sample では確認できていません</u>
+            （n={ref.out_of_sample.n} なので否定もできません）。
+          </strong>{" "}
+          回収率も窓によって1を割ります。上の年間欄で n と年を確かめてから使ってください。
         </p>
       </div>
 

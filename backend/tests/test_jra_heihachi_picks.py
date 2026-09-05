@@ -185,5 +185,22 @@ def test_reference_is_hit_rate_only() -> None:
 
     assert not hasattr(mod, "HEIHACHI_REFERENCE_WIN_ROI")
     assert not hasattr(mod, "HEIHACHI_REFERENCE_PLACE_ROI")
-    # 参考値はベースラインを上回っていること（下回ったら分離できていない）
-    assert mod.HEIHACHI_REFERENCE_PLACE_RATE > mod.HEIHACHI_REFERENCE_BASE_PLACE_RATE
+
+
+def test_reference_separates_in_sample_from_oos() -> None:
+    """in-sample と out-of-sample を必ず分けて返す。
+
+    v28 本番モデルの refit 期間は 2023-05-06〜2026-06-28（models/
+    v28_iswin_calib_metrics.json）。それ以前の指数値は全部 in-sample なので、
+    ひとつの数字にまとめると「当てはまりの良さ」を将来の性能として見せてしまう。
+    """
+    import src.services.jra_heihachi_picks as mod
+
+    ins = mod.HEIHACHI_REFERENCE_IN_SAMPLE
+    oos = mod.HEIHACHI_REFERENCE_OUT_OF_SAMPLE
+    for d in (ins, oos):
+        assert set(d) == {"window", "n", "place_rate", "base_place_rate"}
+    # OOS 窓は refit 終端(2026-06-28)より後から始まること
+    assert oos["window"].startswith("2026-06-29")
+    # in-sample を OOS として出していないこと（同じ窓なら分ける意味がない）
+    assert ins["window"] != oos["window"]
