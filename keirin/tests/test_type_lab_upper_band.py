@@ -34,8 +34,11 @@ def _shape(label: str = "F") -> RaceShape:
     return RaceShape(label, 1.30, 1, 0.10, False, tuple(range(1, 8)), 1.5)
 
 
-def _board(high: float = 400.0, low: float = 12.0) -> tuple[dict, dict]:
+def _board(high: float = 400.0, low: float = 30.0) -> tuple[dict, dict]:
     """予測オッズが low → high へ滑らかに並ぶ盤面。確率は 1/オッズ に比例。
+
+    ⚠️ `low` は **最低2倍の床（`MIN_PAYOUT_MULT`）が置ける水準**にしてある。
+       安くしすぎると `allocate` が None を返し、上帯ではなく配分の検査になる。
 
     🔴 **全点が同じオッズの盤面では上帯を測れない**。下帯（確率上位）と
        上帯（100-600倍の確率上位）が同じ目になり、賭け金が足されるだけで
@@ -163,8 +166,13 @@ def test_only_the_allowed_plans_get_the_upper_band():
 
 
 def test_falls_back_to_todays_product_when_band_is_empty():
-    """100倍以上の目が1つも無い盤面では**今日と同じ商品**を返す。"""
-    plan, po, pr, legs, stakes = _built(high=40.0, low=16.0)
+    """上帯の条件を満たす目が1つも無いときは**今日と同じ商品**を返す。
+
+    `_PERM_BAND` は「下帯で2通り以上買っている3車」が条件なので、
+    1組合せ1通りしか買わない `A_hit`（3点）では必ず空になる。
+    ⚠️ `low` は最低2倍の床が置ける水準にしてある（`_board` の注記と同じ理由）。
+    """
+    plan, po, pr, legs, stakes = _built("A_hit", high=80.0, low=30.0)
     legs2, st2, roles = add_upper_band(legs, stakes, plan, po, pr, 7, BANDS)
     assert st2 == stakes and set(roles.values()) == {ROLE_BASE}
 

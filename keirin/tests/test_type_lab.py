@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 import statistics
 import itertools
 import sys
@@ -623,7 +624,9 @@ def test_allocate_drops_legs_that_would_get_zero_yen():
     `pred_min_payout` の中央値が 0円、`pred_mean_payout` が設計の床（3万円）を
     下回っていた。
     """
-    plan = PLANS["B_hit"]
+    # ⚠️ ダッチ配分そのものの検査なので、`PLANS` の配分設定に依存させない
+    #    （`B_hit` は 2026-09-05 に `conf` 最低2倍へ移った）。
+    plan = replace(PLANS["B_hit"], alloc="dutch")
     legs = [(1, 2, 3), (1, 2, 4), (1, 2, 5), (1, 2, 6)]
     pred = {(1, 2, 3): 6.0, (1, 2, 4): 10.0, (1, 2, 5): 20.0,
             (1, 2, 6): 4742.0}          # ← 4,742倍は 1単位に届かない
@@ -826,13 +829,13 @@ def test_confidence_tilt_floor_is_exact_not_approximate():
     床が実際に効く形（残りがほとんど無く、しかも確率が偏っていて
     余りが1点へ寄る）で、**緩みなし**で検査する。
 
-    予測 11.0倍・8点なら floor は ceil(13000/1100) = **12単位**（切り捨てなら 11）。
-    12単位 = 1,200円 → 想定払戻 13,200円 ≥ 予算×1.3 = 13,000円。
-    11単位なら 12,100円で**床を割る**。
+    予測 17.0倍・8点なら floor は ceil(20000/1700) = **12単位**（切り捨てなら 11）。
+    12単位 = 1,200円 → 想定払戻 20,400円 ≥ 予算×2.0 = 20,000円。
+    11単位なら 18,700円で**床を割る**。
     """
     legs = [(1, 2, c) for c in range(3, 8)] + [(1, 3, c) for c in range(4, 7)]
     assert len(legs) == 8
-    odds = {c: 11.0 for c in legs}
+    odds = {c: 17.0 for c in legs}
     # 余りが1点へ寄るように確率を極端に偏らせる（他の点は床のまま残る）
     prob = {c: (1.0 if i == 0 else 1e-6) for i, c in enumerate(legs)}
     plan = PLANS["A_hit"]
