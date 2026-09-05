@@ -1048,7 +1048,7 @@ class ChihouIndexCalculator:
                    CASE WHEN n.idx_ave ~ '^-?[0-9]+\\*?$'
                         THEN regexp_replace(n.idx_ave, '\\*', '')::float ELSE NULL END AS idx_ave
             FROM chihou.races r
-            LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+            LEFT JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
             JOIN chihou.race_entries re ON re.race_id = r.id
             LEFT JOIN sekito.kichiuma k
               ON k.date = TO_DATE(r.date, 'YYYYMMDD') AND k.course_code = rc.code

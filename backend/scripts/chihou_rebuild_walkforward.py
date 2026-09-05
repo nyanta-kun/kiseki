@@ -117,7 +117,7 @@ FROM (
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 LEFT JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
-LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+LEFT JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
 LEFT JOIN sekito.netkeiba nk
   ON nk.course_code = rc.code AND nk.date = to_date(r.date, 'YYYYMMDD')
      AND nk.race_no = r.race_number AND nk.horse_no = re.horse_number
@@ -161,7 +161,7 @@ FROM (
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
-LEFT JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+LEFT JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
 LEFT JOIN sekito.netkeiba nk
   ON nk.course_code = rc.code AND nk.date = to_date(r.date, 'YYYYMMDD')
      AND nk.race_no = r.race_number AND nk.horse_no = re.horse_number

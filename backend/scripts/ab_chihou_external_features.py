@@ -71,7 +71,7 @@ FROM chihou.calculated_indices ci
 JOIN chihou.races r ON r.id = ci.race_id
 JOIN chihou.race_entries re ON re.race_id = ci.race_id AND re.horse_id = ci.horse_id
 JOIN chihou.race_results rr ON rr.race_id = ci.race_id AND rr.horse_number = re.horse_number
-JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
 LEFT JOIN sekito.netkeiba nk
   ON nk.course_code=rc.code AND nk.date=to_date(r.date,'YYYYMMDD')
      AND nk.race_no=r.race_number AND nk.horse_no=re.horse_number AND nk.is_time_index = true

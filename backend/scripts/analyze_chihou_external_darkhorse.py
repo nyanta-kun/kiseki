@@ -45,7 +45,7 @@ SELECT r.id race_id, r.date, r.course_name,
        rr.horse_number hn, rr.finish_position fp, rr.win_odds, rr.place_odds,
        nk.idx_ave nk_idx, kc.sp_score kc_sp, ci.composite_index comp
 FROM chihou.races r
-JOIN sekito.racecourse rc ON rc.netkeiba_id = r.course
+JOIN keiba.racecourse_map rc ON rc.netkeiba_id = r.course
 JOIN chihou.race_results rr ON rr.race_id = r.id
 LEFT JOIN sekito.netkeiba nk
   ON nk.course_code=rc.code AND nk.date=to_date(r.date,'YYYYMMDD')
