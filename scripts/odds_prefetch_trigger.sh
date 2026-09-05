@@ -5,6 +5,15 @@
 #   0 0-14 * * * /home/ysuzuki/GitHub/kiseki/scripts/odds_prefetch_trigger.sh
 # JST換算: UTC 0:00-14:00 = JST 9:00-23:00 （JRA前日発売開始〜終了目安）
 #
+# ⚠️ このコマンドは agent が **command loop モード**のときしか処理されない。
+#    開催日は realtime モードで動いているため、ここでキュー投入しても実行されない
+#    （実測: 2026-09-05 に9回投入 → ODDS PREFETCH の実行ログはゼロ、
+#     日曜の朝までオッズが空だった）。
+#    そのため **realtime ループ自身が1時間に1回 翌日ぶんを取る**ようにした
+#    （windows-agent/jvlink_agent.py の ODDS_PREFETCH_INTERVAL_SEC）。
+#    この cron は非開催日（command loop が動いている日）向けの経路として残す。
+#    両方走っても upsert なので害はない。
+#
 # 使い方:
 #   ./odds_prefetch_trigger.sh              # 翌日のオッズを取得
 #   ./odds_prefetch_trigger.sh 20260406     # 指定日のオッズを取得
