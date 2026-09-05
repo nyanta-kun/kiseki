@@ -105,6 +105,7 @@ export function HeihachiPicksTable({ initial, date }: Props) {
       settled: n,
       winHits: winHits.length,
       placeHits: placeHits.length,
+      placeRate: n ? placeHits.length / n : null,
       winRoi: n ? winRet / n : null,
       placeRoi: n ? placeRet / n : null,
     };
@@ -129,17 +130,22 @@ export function HeihachiPicksTable({ initial, date }: Props) {
           </p>
           {stale && <span className="text-[10px] text-red-600 font-bold">更新できません</span>}
         </div>
-        <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="grid grid-cols-4 gap-2 text-center">
+          <Stat label="3着内率" value={pct(summary.placeRate)} sub={`${summary.placeHits}/${summary.settled}`} />
           <Stat label="単勝回収率" value={pct(summary.winRoi)} sub={`的中 ${summary.winHits}/${summary.settled}`} />
           <Stat label="複勝回収率" value={pct(summary.placeRoi)} sub={`的中 ${summary.placeHits}/${summary.settled}`} />
           <Stat label="対象馬" value={`${summary.total}頭`} sub={`確定 ${summary.settled}頭`} />
         </div>
         <p className="mt-2 text-[10px] leading-relaxed text-amber-900/80">
-          当日の確定分のみを母数にした実績です（未確定は除外）。既定値での長期の目安は
-          n={ref.n} で 3着内率 {(ref.place_rate * 100).toFixed(1)}%・単勝{" "}
-          {(ref.win_roi * 100).toFixed(0)}%・複勝 {(ref.place_roi * 100).toFixed(0)}%
-          。<strong>年別の複勝回収率は 2023:83% / 2024:96% / 2025:148% / 2026:141% とばらつきが
-          大きく（各年 n=22〜42）、上の年間欄で確かめてから使ってください。</strong>
+          当日の確定分のみを母数にした実績です（未確定は除外）。
+          <strong>
+            このバッジは回収率ではなく「3着内率の分離」を狙うタグです。
+          </strong>
+          既定値での実測は {ref.window} の n={ref.n} で 3着内率{" "}
+          {(ref.place_rate * 100).toFixed(1)}%（同期間の全出走馬は{" "}
+          {(ref.base_place_rate * 100).toFixed(1)}%）。
+          回収率は窓によって1を割ります（2026Q3 は複勝0.19・n=9）。
+          上の年間欄で n と年を確かめてから使ってください。
         </p>
       </div>
 

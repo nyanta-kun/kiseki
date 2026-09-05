@@ -172,3 +172,18 @@ def test_aggregate_backtest_rank_and_place_prob_floors() -> None:
     assert aggregate_backtest(
         [(True, 1, 20.0, None, 0.39, False)], **_DEFAULT_KW  # type: ignore[arg-type]
     )["n"] == 0
+
+
+def test_reference_is_hit_rate_only() -> None:
+    """参考値に回収率を載せない（TEST窓で1を割るため・的中率タグとして扱う）。
+
+    [[jra_heihachi_badge]] / docs/jra_heihachi_threshold_sweep_2026_09_06.md
+    回収率を「長期の目安」として画面に出すと支持されない主張になる。
+    ROI は年間バックテスト欄で n と年を見て判断する。
+    """
+    import src.services.jra_heihachi_picks as mod
+
+    assert not hasattr(mod, "HEIHACHI_REFERENCE_WIN_ROI")
+    assert not hasattr(mod, "HEIHACHI_REFERENCE_PLACE_ROI")
+    # 参考値はベースラインを上回っていること（下回ったら分離できていない）
+    assert mod.HEIHACHI_REFERENCE_PLACE_RATE > mod.HEIHACHI_REFERENCE_BASE_PLACE_RATE

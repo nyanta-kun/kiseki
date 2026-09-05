@@ -1085,8 +1085,14 @@ export type HeihachiPicks = {
   date: string;
   candidates: HeihachiCandidate[];
   defaults: HeihachiDefaults;
-  /** バックテスト実測（長期の目安）。当日実績とは別物。 */
-  reference: { n: number; place_rate: number; win_roi: number; place_roi: number };
+  /**
+   * バッジの実測（3着内率の分離のみ）。当日実績とは別物。
+   * 回収率は返らない — TEST窓では全候補が複勝ROI 1 を割っており、
+   * 「長期の目安」として出すと支持されない主張になるため
+   * （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。
+   * ROI は年間バックテスト欄で n と年を見て判断する。
+   */
+  reference: { window: string; n: number; place_rate: number; base_place_rate: number };
 };
 
 export async function fetchHeihachiPicks(date: string): Promise<HeihachiPicks> {

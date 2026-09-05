@@ -494,12 +494,18 @@ class HeihachiDefaultsOut(BaseModel):
 
 
 class HeihachiReferenceOut(BaseModel):
-    """バッジの長期実測（バックテスト）。当日実績と混同しないよう別枠で返す。"""
+    """バッジの実測（3着内率の分離のみ）。当日実績と混同しないよう別枠で返す。
 
+    回収率は返さない。TEST(2026Q3)では全候補が複勝ROI 1 を割っており、
+    「長期の目安」として出すと支持されない主張になるため
+    （docs/jra_heihachi_threshold_sweep_2026_09_06.md）。ROI は年間
+    バックテスト欄（`/races/heihachi/backtest`）で n と年を見て判断する。
+    """
+
+    window: str
     n: int
     place_rate: float
-    win_roi: float
-    place_roi: float
+    base_place_rate: float
 
 
 class HeihachiBacktestOut(BaseModel):
