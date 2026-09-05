@@ -18,7 +18,7 @@ function empty(date: string): HeihachiPicks {
       graded_only: d.gradedOnly,
       grades: [],
     },
-    reference: { n: 1017, place_rate: 0.346, win_roi: 1.171, place_roi: 1.147 },
+    reference: { n: 128, place_rate: 0.328, win_roi: 1.223, place_roi: 1.138 },
   };
 }
 

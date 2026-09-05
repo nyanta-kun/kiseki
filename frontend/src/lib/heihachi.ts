@@ -31,19 +31,24 @@ export type HeihachiThresholds = {
 /** バックエンド既定値のフォールバック（API が落ちているときだけ使う）。 */
 export const HEIHACHI_FALLBACK_DEFAULTS: HeihachiThresholds = {
   maxIndexRank: 3,
-  minOdds: 10,
+  minOdds: 15,
   maxOdds: 40,
-  minPlaceProb: 0.3,
+  minPlaceProb: 0.4,
   gradedOnly: true,
 };
 
-/** スライダーの可動域。maxIndexRank の上限は API が返す候補の絞り込み幅と揃えること。 */
+/**
+ * スライダーの可動域。maxIndexRank の上限は API が返す候補の絞り込み幅と揃えること。
+ * 単勝オッズは下限・上限で1本の範囲スライダー（2つのつまみ）として扱う。
+ */
 export const HEIHACHI_RANGES = {
   maxIndexRank: { min: 1, max: 5, step: 1 },
-  minOdds: { min: 1, max: 30, step: 0.5 },
-  maxOdds: { min: 10, max: 100, step: 1 },
-  minPlaceProb: { min: 0, max: 0.6, step: 0.01 },
+  odds: { min: 1, max: 100, step: 1 },
+  minPlaceProb: { min: 0, max: 0.7, step: 0.01 },
 } as const;
+
+/** 単勝オッズ範囲スライダーで、下限と上限が潰れないよう空ける最小幅。 */
+export const HEIHACHI_ODDS_MIN_GAP = 1;
 
 const STORAGE_KEY = "heihachi_thresholds_v1";
 /** 同一タブ内の他コンポーネントへ変更を伝えるイベント（storage は別タブにしか飛ばない）。 */

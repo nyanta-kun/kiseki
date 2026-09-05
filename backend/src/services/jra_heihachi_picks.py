@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from sqlalchemy import text as _text
@@ -31,12 +32,14 @@ from ..indices.dm_signals import (
     HEIHACHI_MIN_PLACE_PROB,
 )
 
-# バックテスト実測（[[jra_heihachi_badge]] 2023-01〜2026-09, n=1,017）。
+# バックテスト実測（[[jra_heihachi_badge]] 2023-01〜2026-09, n=128）。
+# 年別複勝ROIは 2023:0.83 / 2024:0.96 / 2025:1.48 / 2026:1.41 とばらつきが大きい
+# （dm_signals.py の SIGNAL_HEIHACHI 節に経緯あり）。
 # 画面に「長期の目安」として出すための参考値で、当日実績とは別物。
-HEIHACHI_REFERENCE_N = 1017
-HEIHACHI_REFERENCE_PLACE_RATE = 0.346
-HEIHACHI_REFERENCE_WIN_ROI = 1.171
-HEIHACHI_REFERENCE_PLACE_ROI = 1.147
+HEIHACHI_REFERENCE_N = 128
+HEIHACHI_REFERENCE_PLACE_RATE = 0.328
+HEIHACHI_REFERENCE_WIN_ROI = 1.223
+HEIHACHI_REFERENCE_PLACE_ROI = 1.138
 
 # 指数は (race_id, horse_id) ごとに最新版を1行だけ取る（v27/v28 が混在するため）。
 # 単勝オッズは jra_race_confidence と同じく odds_history の最新を正とする
@@ -174,4 +177,177 @@ async def build_heihachi_picks(db: AsyncSession, date: str) -> dict[str, Any]:
             "win_roi": HEIHACHI_REFERENCE_WIN_ROI,
             "place_roi": HEIHACHI_REFERENCE_PLACE_ROI,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 年間バックテスト（推奨ページの「同じしきい値を過去1年に当てたら」欄）
+# ---------------------------------------------------------------------------
+
+# 対象年の判定材料を1行=1頭で取る。ランクは取消・除外を抜いた母集団で振る。
+_BACKTEST_SQL = _text("""
+    SELECT
+        r.grade,
+        rk.index_rank,
+        rr.win_odds,
+        rr.place_odds,
+        ci.place_probability,
+        (rr.finish_position = 1) AS is_win
+    FROM keiba.race_results rr
+    JOIN keiba.races r ON r.id = rr.race_id
+    JOIN LATERAL (
+        SELECT rank() OVER (ORDER BY ci2.composite_index DESC) AS index_rank,
+               ci2.horse_id
+        FROM keiba.calculated_indices ci2
+        JOIN keiba.race_results rr2
+          ON rr2.race_id = ci2.race_id AND rr2.horse_id = ci2.horse_id
+        WHERE ci2.race_id = r.id
+          AND ci2.version = :version
+          AND ci2.composite_index IS NOT NULL
+          AND COALESCE(rr2.abnormality_code, 0) NOT IN (1, 2)
+    ) rk ON rk.horse_id = rr.horse_id
+    JOIN keiba.calculated_indices ci
+      ON ci.race_id = r.id AND ci.horse_id = rr.horse_id AND ci.version = :version
+    WHERE r.date >= :from_date AND r.date <= :to_date
+      AND rr.win_odds IS NOT NULL
+      AND rr.finish_position IS NOT NULL
+      AND ci.place_probability IS NOT NULL
+      AND rk.index_rank <= :rank_max
+""")
+
+# 開催日数・総レース数。1日12レース未満の日は JRA 開催日ではないとみなす。
+_COUNTS_SQL = _text("""
+    SELECT COUNT(*) AS days, COALESCE(SUM(n), 0) AS races
+    FROM (
+        SELECT date, COUNT(*) AS n
+        FROM keiba.races
+        WHERE date >= :from_date AND date <= :to_date
+        GROUP BY date
+        HAVING COUNT(*) >= 12
+    ) d
+""")
+
+# 参照可能な年（v28 のバックフィル範囲）。範囲外は 400 にする。
+BACKTEST_MIN_YEAR = 2023
+BACKTEST_MAX_YEAR = 2026
+_BACKTEST_INDEX_VERSION = 28
+
+# 年ごとの行キャッシュ。確定済みレースしか入らないので、過去年は不変。
+# 当年は日々増えるため TTL を付ける。
+_BACKTEST_CACHE: dict[int, tuple[float, list[tuple[bool, int, float, float | None, float, bool]]]] = {}
+_BACKTEST_TTL_SEC = 3600.0
+
+
+async def _load_backtest_rows(
+    db: AsyncSession, year: int
+) -> list[tuple[bool, int, float, float | None, float, bool]]:
+    """対象年の判定材料を (graded, index_rank, win_odds, place_odds, place_prob, is_win) で返す。
+
+    1年ぶんでも指数順位5位以内に絞れば2万行以下なので、プロセス内に持って
+    しきい値変更のたびに Python 側で絞る（スライダーを動かすたびに
+    年間集計 SQL を投げると重すぎるため）。
+    """
+    now = time.monotonic()
+    cached = _BACKTEST_CACHE.get(year)
+    if cached and now - cached[0] < _BACKTEST_TTL_SEC:
+        return cached[1]
+    result = await db.execute(
+        _BACKTEST_SQL,
+        {
+            "from_date": f"{year}0101",
+            "to_date": f"{year}1231",
+            "rank_max": CANDIDATE_INDEX_RANK_MAX,
+            "version": _BACKTEST_INDEX_VERSION,
+        },
+    )
+    rows = [
+        (
+            row.grade in HEIHACHI_GRADES,
+            int(row.index_rank),
+            float(row.win_odds),
+            float(row.place_odds) if row.place_odds is not None else None,
+            float(row.place_probability),
+            bool(row.is_win),
+        )
+        for row in result
+    ]
+    _BACKTEST_CACHE[year] = (now, rows)
+    return rows
+
+
+def aggregate_backtest(
+    rows: list[tuple[bool, int, float, float | None, float, bool]],
+    *,
+    max_index_rank: int,
+    min_odds: float,
+    max_odds: float,
+    min_place_prob: float,
+    graded_only: bool,
+) -> dict[str, Any]:
+    """しきい値を当てて的中率・回収率を集計する（DB アクセスなしの純粋関数）。
+
+    ⚠️ 判定条件はフロントの `lib/heihachi.ts` matchesHeihachi() と同じにすること
+    （オッズ下限は含み、上限は含まない）。ずれると画面上で
+    「当日の一覧」と「年間バックテスト」が別の条件を指すことになる。
+    """
+    hit = [
+        r
+        for r in rows
+        if (r[0] or not graded_only)
+        and r[1] <= max_index_rank
+        and min_odds <= r[2] < max_odds
+        and r[4] >= min_place_prob
+    ]
+    n = len(hit)
+    if n == 0:
+        return {
+            "n": 0, "win_hits": 0, "place_hits": 0,
+            "win_rate": None, "place_rate": None, "win_roi": None, "place_roi": None,
+        }
+    win_hits = [r for r in hit if r[5]]
+    place_hits = [r for r in hit if r[3] is not None]
+    return {
+        "n": n,
+        "win_hits": len(win_hits),
+        "place_hits": len(place_hits),
+        "win_rate": len(win_hits) / n,
+        "place_rate": len(place_hits) / n,
+        "win_roi": sum(r[2] for r in win_hits) / n,
+        "place_roi": sum(r[3] or 0.0 for r in place_hits) / n,
+    }
+
+
+async def build_heihachi_backtest(
+    db: AsyncSession,
+    year: int,
+    *,
+    max_index_rank: int,
+    min_odds: float,
+    max_odds: float,
+    min_place_prob: float,
+    graded_only: bool,
+) -> dict[str, Any]:
+    """指定年に同じしきい値を当てた場合の成績を返す。"""
+    rows = await _load_backtest_rows(db, year)
+    # 開催日数 = その日に12レース以上ある日。keiba.races には JRA 以外の
+    # 疎なレコードも入っており（2025年は2〜11Rしかない日が229日）、
+    # 単純な COUNT(DISTINCT date) だと頻度が実態の1/3以下に薄まる。
+    counts = await db.execute(_COUNTS_SQL, {"from_date": f"{year}0101", "to_date": f"{year}1231"})
+    row = counts.one()
+    days = int(row.days or 0)
+    races = int(row.races or 0)
+    agg = aggregate_backtest(
+        rows,
+        max_index_rank=max_index_rank,
+        min_odds=min_odds,
+        max_odds=max_odds,
+        min_place_prob=min_place_prob,
+        graded_only=graded_only,
+    )
+    return {
+        "year": year,
+        "days": days,
+        "races": races,
+        "picks_per_day": (agg["n"] / days) if days else None,
+        **agg,
     }

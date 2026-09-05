@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { HeihachiPicks, fetchHeihachiPicksBrowser } from "@/lib/api";
+import { HeihachiBacktestPanel } from "./HeihachiBacktestPanel";
 import {
+  HEIHACHI_ODDS_MIN_GAP,
   HEIHACHI_RANGES,
   HeihachiThresholds,
   clearThresholds,
   matchesHeihachi,
 } from "@/lib/heihachi";
+import { RangeSlider } from "./RangeSlider";
 import { useHeihachiThresholds } from "@/lib/useHeihachiThresholds";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +26,9 @@ import { cn } from "@/lib/utils";
  * 回収率は**その日の確定分のみ**を母数にした実績なので、朝は n=0 になる。
  * 長期の目安は reference（バックテスト実測）を併記する。
  */
+
+/** 上部に出す年間バックテストの対象年。丸1年ぶん確定している直近の年。 */
+const BACKTEST_YEAR = 2025;
 
 /** 着順バッジの色。1着=金、複勝圏=青、それ以外は無彩色。 */
 function posColor(p: number): string {
@@ -109,6 +115,9 @@ export function HeihachiPicksTable({ initial, date }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* --- 同じしきい値の年間バックテスト（当日サマリーの上） --- */}
+      <HeihachiBacktestPanel year={BACKTEST_YEAR} thresholds={thresholds} />
+
       {/* --- 回収率サマリ --- */}
       <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
         <div className="flex items-baseline justify-between gap-2 mb-2">
@@ -129,8 +138,8 @@ export function HeihachiPicksTable({ initial, date }: Props) {
           当日の確定分のみを母数にした実績です（未確定は除外）。既定値での長期の目安は
           n={ref.n} で 3着内率 {(ref.place_rate * 100).toFixed(1)}%・単勝{" "}
           {(ref.win_roi * 100).toFixed(0)}%・複勝 {(ref.place_roi * 100).toFixed(0)}%
-          （2023〜2026の4年とも複勝100%超）。
-          <strong>既定値から動かした場合、この長期実測は当てはまりません。</strong>
+          。<strong>年別の複勝回収率は 2023:83% / 2024:96% / 2025:148% / 2026:141% とばらつきが
+          大きく（各年 n=22〜42）、上の年間欄で確かめてから使ってください。</strong>
         </p>
       </div>
 
@@ -150,19 +159,14 @@ export function HeihachiPicksTable({ initial, date }: Props) {
             format={(v) => `${v}位以内`}
             onChange={(v) => set({ maxIndexRank: v })}
           />
-          <Slider
-            label="単勝オッズ下限"
-            value={thresholds.minOdds}
-            range={HEIHACHI_RANGES.minOdds}
-            format={(v) => `${v.toFixed(1)}倍以上`}
-            onChange={(v) => set({ minOdds: Math.min(v, thresholds.maxOdds - 0.5) })}
-          />
-          <Slider
-            label="単勝オッズ上限"
-            value={thresholds.maxOdds}
-            range={HEIHACHI_RANGES.maxOdds}
-            format={(v) => `${v.toFixed(0)}倍未満`}
-            onChange={(v) => set({ maxOdds: Math.max(v, thresholds.minOdds + 0.5) })}
+          <RangeSlider
+            label="単勝オッズ"
+            lower={thresholds.minOdds}
+            upper={thresholds.maxOdds}
+            range={HEIHACHI_RANGES.odds}
+            minGap={HEIHACHI_ODDS_MIN_GAP}
+            display={`${thresholds.minOdds.toFixed(0)}倍以上 ${thresholds.maxOdds.toFixed(0)}倍未満`}
+            onChange={(minOdds, maxOdds) => set({ minOdds, maxOdds })}
           />
           <Slider
             label="複勝確率下限"
