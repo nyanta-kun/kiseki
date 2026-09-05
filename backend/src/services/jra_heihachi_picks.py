@@ -32,12 +32,14 @@ from ..indices.dm_signals import (
     HEIHACHI_MIN_PLACE_PROB,
 )
 
-# バックテスト実測（[[jra_heihachi_badge]] 2023-01〜2026-09, n=1,017）。
+# バックテスト実測（[[jra_heihachi_badge]] 2023-01〜2026-09, n=128）。
+# 年別複勝ROIは 2023:0.83 / 2024:0.96 / 2025:1.48 / 2026:1.41 とばらつきが大きい
+# （dm_signals.py の SIGNAL_HEIHACHI 節に経緯あり）。
 # 画面に「長期の目安」として出すための参考値で、当日実績とは別物。
-HEIHACHI_REFERENCE_N = 1017
-HEIHACHI_REFERENCE_PLACE_RATE = 0.346
-HEIHACHI_REFERENCE_WIN_ROI = 1.171
-HEIHACHI_REFERENCE_PLACE_ROI = 1.147
+HEIHACHI_REFERENCE_N = 128
+HEIHACHI_REFERENCE_PLACE_RATE = 0.328
+HEIHACHI_REFERENCE_WIN_ROI = 1.223
+HEIHACHI_REFERENCE_PLACE_ROI = 1.138
 
 # 指数は (race_id, horse_id) ごとに最新版を1行だけ取る（v27/v28 が混在するため）。
 # 単勝オッズは jra_race_confidence と同じく odds_history の最新を正とする

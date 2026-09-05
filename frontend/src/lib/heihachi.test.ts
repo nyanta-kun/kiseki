@@ -10,8 +10,8 @@ import {
 const subject = (over: Partial<Parameters<typeof matchesHeihachi>[0]> = {}) => ({
   grade: "OP特別" as string | null,
   indexRank: 1 as number | null,
-  winOdds: 15 as number | null,
-  placeProbability: 0.35 as number | null,
+  winOdds: 20 as number | null,
+  placeProbability: 0.45 as number | null,
   ...over,
 });
 
@@ -30,15 +30,25 @@ describe("matchesHeihachi", () => {
   });
 
   it("オッズは下限を含み上限を含まない", () => {
-    expect(matchesHeihachi(subject({ winOdds: 9.9 }), D)).toBe(false);
-    expect(matchesHeihachi(subject({ winOdds: 10 }), D)).toBe(true);
+    expect(matchesHeihachi(subject({ winOdds: 14.9 }), D)).toBe(false);
+    expect(matchesHeihachi(subject({ winOdds: 15 }), D)).toBe(true);
     expect(matchesHeihachi(subject({ winOdds: 39.9 }), D)).toBe(true);
     expect(matchesHeihachi(subject({ winOdds: 40 }), D)).toBe(false);
   });
 
+  it("既定値は 15〜40倍 / 複勝確率40% / 指数3位以内 / OP特別以上", () => {
+    expect(D).toEqual({
+      maxIndexRank: 3,
+      minOdds: 15,
+      maxOdds: 40,
+      minPlaceProb: 0.4,
+      gradedOnly: true,
+    });
+  });
+
   it("指数順位・複勝確率の下限を見る", () => {
     expect(matchesHeihachi(subject({ indexRank: 4 }), D)).toBe(false);
-    expect(matchesHeihachi(subject({ placeProbability: 0.29 }), D)).toBe(false);
+    expect(matchesHeihachi(subject({ placeProbability: 0.39 }), D)).toBe(false);
   });
 
   it("欠損は該当にしない", () => {

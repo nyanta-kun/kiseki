@@ -343,38 +343,38 @@ def _heihachi_horses(odds_target: float, place_prob: float | None) -> list[Horse
 
 
 def test_heihachi_basic() -> None:
-    """OP特別 ∧ 指数1位 ∧ 15倍 ∧ 複勝確率0.35 → 平八"""
-    horses, odds = _heihachi_horses(15.0, 0.35)
+    """OP特別 ∧ 指数1位 ∧ 20倍 ∧ 複勝確率0.45 → 平八"""
+    horses, odds = _heihachi_horses(20.0, 0.45)
     compute_dm_signals(horses, win_odds_map=odds, grade="OP特別")
     assert SIGNAL_HEIHACHI in (horses[0].dm_signals or [])
 
 
 def test_heihachi_requires_selected_grade() -> None:
     """平場(grade=None)では付与しない — レース選定がROIを担っているため"""
-    horses, odds = _heihachi_horses(15.0, 0.35)
+    horses, odds = _heihachi_horses(20.0, 0.45)
     compute_dm_signals(horses, win_odds_map=odds, grade=None)
     assert SIGNAL_HEIHACHI not in (horses[0].dm_signals or [])
 
 
 def test_heihachi_excludes_jump_races() -> None:
     """障害(J.G3)は母数が少なく別物なので対象外"""
-    horses, odds = _heihachi_horses(15.0, 0.35)
+    horses, odds = _heihachi_horses(20.0, 0.45)
     compute_dm_signals(horses, win_odds_map=odds, grade="J.G3")
     assert SIGNAL_HEIHACHI not in (horses[0].dm_signals or [])
 
 
 def test_heihachi_odds_band_is_exclusive_at_both_ends() -> None:
-    """単勝10倍未満・40倍以上は対象外（10.0は含み、40.0は含まない）"""
-    for odds_v, expected in [(9.9, False), (10.0, True), (39.9, True), (40.0, False)]:
-        horses, odds = _heihachi_horses(odds_v, 0.35)
+    """単勝15倍未満・40倍以上は対象外（15.0は含み、40.0は含まない）"""
+    for odds_v, expected in [(14.9, False), (15.0, True), (39.9, True), (40.0, False)]:
+        horses, odds = _heihachi_horses(odds_v, 0.45)
         compute_dm_signals(horses, win_odds_map=odds, grade="G3")
         assert (SIGNAL_HEIHACHI in (horses[0].dm_signals or [])) is expected, odds_v
 
 
 def test_heihachi_requires_place_probability() -> None:
     """複勝確率が閾値未満 / 欠損なら付与しない"""
-    for pp, expected in [(0.29, False), (0.30, True), (None, False)]:
-        horses, odds = _heihachi_horses(15.0, pp)
+    for pp, expected in [(0.39, False), (0.40, True), (None, False)]:
+        horses, odds = _heihachi_horses(20.0, pp)
         compute_dm_signals(horses, win_odds_map=odds, grade="G1")
         assert (SIGNAL_HEIHACHI in (horses[0].dm_signals or [])) is expected, pp
 
@@ -393,7 +393,7 @@ def test_heihachi_requires_composite_top3() -> None:
 
 def test_heihachi_ignores_scratched_horse() -> None:
     """取消馬には付与しない"""
-    horses, odds = _heihachi_horses(15.0, 0.35)
+    horses, odds = _heihachi_horses(20.0, 0.45)
     compute_dm_signals(
         horses, win_odds_map=odds, grade="OP特別", exclude_horse_numbers={1}
     )
