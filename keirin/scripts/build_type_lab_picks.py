@@ -188,7 +188,16 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
         ent = ent_all.get(rk)
         if not ent or len(ent) != N_ENTRIES:
             continue
-        cars = {c: dict(p3=float(z["P3"][i][c - 1]), **ent[c]) for c in ent}
+        # 🔴 **`pw`（1着率）を必ず入れる。** 入れないと `rows_for_race` が
+        #    `win_probs=None` で `race_shape` を呼び、**`pw_ent` が全行 0.0 になる**。
+        #    `pw_ent` は型A の売り分け（`A_ana`）の唯一の入力なので、
+        #    **ペーパーでは A_ana が一度も選ばれなくなる**——例外もログも出ない。
+        #    実害: 2026-01〜08 のペーパー 2,431行が `pw_ent = 0`（2025年は
+        #    `run_paper_vintage`→`run_live` 経由なので正常）で、A_ana の採否を
+        #    確認窓で検証できない状態が続いていた（2026-09-05 発見）。
+        #    検査: `tests/test_type_lab_pw_ent.py`
+        cars = {c: dict(p3=float(z["P3"][i][c - 1]),
+                        pw=float(z["PW"][i][c - 1]), **ent[c]) for c in ent}
         tf_odds = {PERMS[t]: float(z["PO"][i][t]) for t in range(210)
                    if np.isfinite(z["PO"][i][t]) and z["PO"][i][t] > 0}
         # 🔴 **板の `PROB` は同ライン隣接ボーナスが入っていない**（2026-08-31 に
