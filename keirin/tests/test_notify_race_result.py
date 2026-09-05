@@ -185,7 +185,7 @@ def test_race_payout_is_reported():
     assert ast.unparse(_func("_build_message")).count("_race_payout_line") == 1
     payouts = {"1=3=7": 1640, "7-1-3": 4720}
     won = ["1=3=7", "7-1-3"]
-    assert m._race_payout_line(payouts, won) == "確定配当: 3連複 ¥1,640 / 3連単 ¥4,720"
+    assert m._race_payout_line(payouts, won) == "配当 3連複 ¥1,640 ／ 3連単 ¥4,720"
 
 
 def test_race_payout_uses_the_finishing_order_for_trifecta():
@@ -292,8 +292,11 @@ def test_day_total_counts_only_settled_races():
 
 
 def test_型ラボのプランは読める名前になる():
-    assert m._rank_label("A_hit") == "型A 本線の三連単（二軸が堅い一戦）"
-    assert m._rank_label("D_hit").startswith("型D 混戦の三連複")
+    """🔴 **見解の括弧は付けない**（2026-09-06）。型ごとに固定の文なので毎レース
+    同じものが並び、13文字ぶん増えて商品名の行が必ず折り返していた。"""
+    assert m._rank_label("A_hit") == "型A 本線の三連単"
+    assert m._rank_label("D_hit") == "型D 混戦の三連複"
+    assert "（" not in m._rank_label("A_hit"), "見解が付いている"
 
 
 def test_既存ランクの表記は変えない():
@@ -308,3 +311,63 @@ def test_名前は入稿タイトルと同じ正本から取る():
 
     for key, title in PLAN_TITLES.items():
         assert title in m._rank_label(key), f"{key} の名前が入稿タイトルと違う"
+
+
+# ── 表示の折り返し（2026-09-06 ユーザー報告）──────────────────────────────
+#
+# 🔴 スクリーンショットで `投資 ¥10,000 → 払戻` / `¥19,680` と**金額が行をまたいで
+#    割れて**いた。1行に詰めず、金額は必ず1行へ収める。
+
+
+def test_金額は行をまたがない():
+    """1商品は3行（結果／買い目／金額）で、どの行も1行に収まる。"""
+    got = m._product_block("型D 混戦の三連複", "1=3=2,5,6", "❌ 不的中",
+                           "投資 ¥10,000 → 払戻 **¥0**")
+    lines = got.split("\n")
+    assert len(lines) == 3, got
+    assert lines[0].startswith("❌"), "結果の記号が行頭に無い"
+    assert "→" in lines[2] and "\n" not in lines[2]
+    for ln in lines:
+        assert m._wide_len(ln) <= m.LINE_BUDGET, f"折り返す: {ln} ({m._wide_len(ln)})"
+
+
+def test_買い目が無いときは2行():
+    got = m._product_block("7C", "", "🎯 **的中**", "投資 ¥10,000 → 払戻 **¥42,400**")
+    assert got.split("\n") == ["🎯 **的中** — 7C", "　投資 ¥10,000 → 払戻 **¥42,400**"]
+
+
+def test_代表的な行が1行に収まる():
+    """実際に出ている文言を並べて、折り返さないことを固定する。"""
+    samples = [
+        "🏁 **久留米8R 確定**",
+        "着順 **4**△ − **3**○ − **1**◎",
+        m._race_payout_line({"1=3=7": 240, "4-3-1": 5380}, ["1=3=7", "4-3-1"]),
+        "❌ 不的中 — 型D 混戦の三連複",
+        "　1=3=2,5,6",
+        "　投資 ¥10,000 → 払戻 **¥0**",
+        "── 本日 59R ・ 回収 **56.1%**",
+        "　投資 ¥590,000 → 払戻 ¥330,920",
+    ]
+    for ln in samples:
+        assert m._wide_len(ln) <= m.LINE_BUDGET, f"折り返す: {ln} ({m._wide_len(ln)})"
+
+
+def test_当日累計は2行に割る():
+    """🔴 1行だと `払` / `戻` で割れる（実報告）。"""
+    src = ast.unparse(_func("_build_message"))
+    assert "本日 " in src and "回収" in src
+    assert "本日累計" not in src, "1行にまとめた古い書式が残っている"
+
+
+def test_買い目は目の切れ目で折り返す():
+    """🔴 12点のプランは1行に入らない。端末に折り返させると `1-2,3-4,5` が
+    途中で切れる。空白（目の切れ目）で自分で割っておく。"""
+    long_buy = "4-2-3,1,7,5 3-4-2 1-4-2 3-2-4 2-3-4 1-7-2 2-4-3 1-3-2 1-2-3"
+    got = m._wrap_buy(long_buy)
+    assert len(got) >= 2, got
+    for ln in got:
+        assert ln.startswith("　")
+        assert m._wide_len(ln) <= m.LINE_BUDGET, f"折り返す: {ln}"
+    # 目そのものは1つも壊れていない
+    assert " ".join(l.lstrip("　") for l in got) == long_buy
+    assert m._wrap_buy("") == []
