@@ -92,3 +92,7 @@ netkeirin/*.pdf
 keirin/data/
 keirin/.venv/
 keirin/*.log
+
+# 平八データセットの中間生成物（再取得できるので追跡しない）
+data/heihachi/raw/
+scripts/heihachi/ocr
