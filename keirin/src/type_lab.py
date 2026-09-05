@@ -886,11 +886,98 @@ SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
 #:    「型ラボの商品か」を判定する場所（既存ランクとの取り合い・重複判定）で
 #:    `SELL_PLANS` を使うと、9車の型F の入稿を**他ランクの商品と誤認する**。
 #:    そういう用途はこちらを使うこと。
+#: ── 高額枠（日次上限で捨てているレースへ看板枠を置く）──────────────────────
+#:
+#: 🔴🔴 **2026-09-06 新設。既存商品を1件も減らさずに 10万+ を増やす枠。**
+#:
+#: 発端（ユーザー 2026-09-06）:
+#:   > 3万円前後を30%で出す現在の商品はあるべきものだが、届かない高額払戻を
+#:   > 出している予想家がいる。高額1本で1日の回収率が100%を超えるので宣伝にもなる。
+#:   > 1日5本程度この狙いができる商品を足したい。
+#:   > 重ならないレースで提案できるならそこに追加、なければどこかの置き換え。
+#:
+#: 制約（同日ユーザー確認）: **1レース1万円は netkeirin のルールで変更不可**・
+#: **予想家アカウントは1つ**（＝1レース1商品は外せない）。
+#:
+#: 🟢 **重ならないレースは実在する。** `DAILY_CAP_RACE_FRACTION = 0.5` で
+#:    判定対象の半分を意図的に売り残しており、実運用（2026-09-01〜05・5日）の
+#:    見送りは **`daily_cap` 13.4R/日**（型B 2.8 / 型C 2.6 / 型F 2.4 / 型E 1.8 /
+#:    型D 1.2）＋ `gate_mean_payout` 4.4R/日。**5本は置き換えずに置ける。**
+#:
+#: 🔴 **捨てている側でも看板枠の産出は変わらない**（`type_lab_picks` の paper
+#:    33,586行に日次上限の並び＝`axis_sum` 降順・決勝系は枠外 を当てた実測）:
+#:
+#:      残す(上位50%)  探索 的中5.18% ROI81.2% 10万+3.87%/商品 ↔ 確認 5.35% 74.8% 3.70%
+#:      **落とす(下位50%)** 探索 4.82% 72.8% 3.87%          ↔ 確認 5.14% 74.8% **3.71%**
+#:
+#:    ＝ **10万+ 率は両窓ともほぼ同一**（ROI は探索で 8pt 低いが確認では同値＝
+#:    窓で一致しないので「同等」と読む）。看板の本数は置き場所では動かない
+#:    （`P(払戻>=X) = 帯ROI × 予算/X` の恒等式・`SIGNBOARD_TYPES` の節と同じ）。
+#:
+#: 🟢 **型は B / C / D を採る**（落とす側での型別・探索 / 確認）:
+#:
+#:      型   枠/日      ROI%(探索 / 確認)        10万+%(探索 / 確認)
+#:      B   1.62〜1.80  91.3 / 81.6              5.13 / 3.48
+#:      C   2.18〜3.15  90.3 / 79.4              4.84 / 4.00
+#:      D   2.91〜3.30  85.1 / 81.5              4.46 / 4.03
+#:      F  10.19〜14.37 70.9 / 75.5              3.70 / 3.73
+#:      E   3.15〜3.47  60.8 / 70.6              3.43 / 3.61
+#:      A   2.19〜2.40  57.2 / 48.7              3.21 / 2.59   ← 最悪
+#:
+#:    **B+C+D をまとめると 枠/日 4.85〜5.77・的中 5.6%・ROI 81.0〜87.9%・
+#:    払戻中央 12.0〜13.7万円・10万+ 3.95〜4.70%/商品**（＝5本/日で **月5.9〜7.1回**）。
+#:    🔴 型A・型E は両窓とも ROI が壁の下なので入れない。型F は現行の
+#:    `SIGNBOARD_TYPES` が決勝系で既に使っているので、ここでは重複させない。
+#:    ⚠️ ROI の CI は ±20〜30pt と広い。**採用の根拠は「10万+ を増やせること」**で、
+#:       ROI が上がることではない（型別の順序は点推定が両窓で一致するだけ）。
+#:
+#: 🔴 **これは「日ごとに何本」という配分の話なので `sell_plans_for` には入らない。**
+#:    あの関数はレース単位の純関数で日次の状態を持たない。実際の割り当ては
+#:    `netkeirin_submit_type_lab` の日次上限のすぐ横で行う（上限に当たった行を
+#:    捨てる代わりに看板枠へ差し替える）。ここに置くのは**判定の純関数だけ**。
+#: ⚠️ 7車のみ（`SIGNBOARD_N_ENTRIES` と同じ理由で9車は未測定）。
+#: ⚠️ 実測と再現: `docs/highpay_5slots_2026_09_06.md`
+HIGHPAY_TYPES: tuple[str, ...] = ("B", "C", "D")
+#: 1日に置く本数。**既存の看板枠 `F_sign`（決勝系・約3本/日）とは別枠**で数える。
+HIGHPAY_SLOTS_PER_DAY = 5
+#: 高額枠を置く車数。**これ以外には置かない**（9車は未測定）。
+HIGHPAY_N_ENTRIES = 7
+#: 高額枠として売りうるプラン。
+HIGHPAY_PLAN_KEYS: frozenset[str] = frozenset(f"{t}_sign" for t in HIGHPAY_TYPES)
+
+
+def highpay_plan_for(type_label: str | None, n_entries: int | None) -> str | None:
+    """日次上限で捨てるレースに置く**高額枠**のプラン。置けなければ None。
+
+    🔴 **順序も本数もここでは決めない**（呼び出し側の日次の状態）。ここは
+       「この型・この車数なら高額枠を置いてよいか」だけを答える純関数。
+
+    >>> highpay_plan_for("B", 7)
+    'B_sign'
+    >>> highpay_plan_for("D", 7)
+    'D_sign'
+    >>> highpay_plan_for("A", 7) is None
+    True
+    >>> highpay_plan_for("F", 7) is None
+    True
+    >>> highpay_plan_for("B", 9) is None
+    True
+    >>> highpay_plan_for(None, 7) is None
+    True
+    """
+    if int(n_entries or 0) != HIGHPAY_N_ENTRIES:
+        return None
+    if str(type_label or "") not in HIGHPAY_TYPES:
+        return None
+    return f"{type_label}_sign"
+
+
 SELLABLE_PLAN_KEYS: frozenset[str] = (
     frozenset(SELL_PLANS)
     | {f"{t}_sign" for t in SIGNBOARD_TYPES}
     | {TYPE_F_SELL_DEFAULT, TYPE_F_SELL_LINE}
-    | set(TYPE_F_SELL_BY_RACE_TYPE.values()))
+    | set(TYPE_F_SELL_BY_RACE_TYPE.values())
+    | HIGHPAY_PLAN_KEYS)
 
 
 def plans_for(type_label: str, n_entries: int = 7,

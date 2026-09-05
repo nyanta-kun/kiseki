@@ -171,6 +171,7 @@ STATUS_PUBLISHED = "published"
 ORIGIN_RANK = "rank"                  # ランクのゲートを通った自動入稿
 ORIGIN_MARQUEE_FILL = "marquee_fill"  # 看板レースの穴埋め（--marquee）
 ORIGIN_MANUAL = "manual"              # 手動入稿（Web /submit-race → --manual-rank-key のみ）
+ORIGIN_HIGHPAY = "highpay_fill"       # 高額枠（日次上限で捨てるレースへ置いた看板枠）
 
 # session → その回で入稿する開催の波（`src/meeting_wave.py`）。
 # 🔴 **1つの開催は必ず1つの波でしか入稿されない**。netkeirin は公開後に

@@ -117,6 +117,12 @@ AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
     "A_pay",     # 比較台。売らない
     "F_pay",     # 9車の決勝だけ。7車では売らない（9車はそもそもゲート対象外）
     "F_line",    # 9車の決勝以外だけ。同上（`passes_axis_gate` は7車以外を素通しする）
+    # 🔴 高額枠（`type_lab.HIGHPAY_PLAN_KEYS`）は **日次上限で捨てるレースに置く**
+    #    商品なので、軸信頼で絞るのは意味が無い（母集団が定義上「軸信頼の低い側」）。
+    #    `F_sign` を exempt にしているのと同じ理由（看板枠は当てにいく商品ではない）。
+    "B_sign",
+    "C_sign",
+    "D_sign",
 })
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
 #:

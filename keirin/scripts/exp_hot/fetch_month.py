@@ -29,11 +29,15 @@ def parse_list(yid: int, date: str, raw: str) -> list[dict]:
         if not (g and jyo and num):
             continue
         buy = re.search(r'<th>購入金額</th>\s*<td>([\d,]+)円</td>', li)
+        pub = re.search(r'<th>公開日時</th>\s*<td>(.*?)</td>', li)
+        cmt = re.search(r'<div class="Comment">\s*<p class="Txt">(.*?)</p>', li, re.S)
         bal = re.findall(r'<em>([\-\+\d,]+)</em>円', li)
         out.append({
             "yid": yid, "date": date, "gid": g.group(1), "venue": jyo.group(1),
             "race_no": int(num.group(1)), "race_name": (nam.group(1) if nam else ""),
             "bet": int(buy.group(1).replace(",", "")) if buy else None,
+            "published_at": pub.group(1).strip() if pub else None,
+            "comment": re.sub(r"<[^>]+>", "", cmt.group(1)).strip() if cmt else None,
             "payout": int(bal[0].replace(",", "").replace("+", "")) if len(bal) >= 1 else None,
             "profit": int(bal[1].replace(",", "").replace("+", "")) if len(bal) >= 2 else None,
         })

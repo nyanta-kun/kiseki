@@ -93,13 +93,16 @@ from src.submission_skips import (                           # noqa: E402
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
 )
 from src.marquee import is_fill_target                       # noqa: E402
-from src.type_lab import SELLABLE_PLAN_KEYS, sell_plans_for  # noqa: E402
+from src.type_lab import (                                  # noqa: E402
+    HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, SELLABLE_PLAN_KEYS,
+    highpay_plan_for, sell_plans_for)
 from src.type_lab_submission import build_submission         # noqa: E402
 
 # 🔴 **共通部品は既存スクリプトから import する**（写さない）。
 #    ここに写した瞬間、締切の秒数・見送りの記録形式・出走表の列構成が
 #    2箇所に分かれる。このリポジトリが繰り返し事故を起こした型。
 from scripts.netkeirin_submit_wt import (                    # noqa: E402
+    ORIGIN_HIGHPAY,
     ORIGIN_RANK,
     resolve_act_type,
     REVIEW_URL,
@@ -179,8 +182,13 @@ _GATE = _load_axis_gate()
 
 # ───────────────────────────── 読み出し ─────────────────────────────
 
-def _load_rows(day: str) -> list[dict]:
-    """当日の型ラボの行（`mode` が live / live9）。売るプランだけに絞って返す。"""
+def _fetch_rows(day: str) -> tuple[list, dict[tuple[str, str], tuple]]:
+    """当日の型ラボの行（`mode` が live / live9）と、レースごとの**最新の型**。
+
+    🔴 **`_load_rows` と `_load_highpay_rows` が同じ断面を見るために切り出してある。**
+       別々に SQL を書くと、組み直しで型が変わったときの「最新の型だけ」の
+       絞り方が片方だけ古くなる（2026-08-29 に1レース2商品を出した型の再発）。
+    """
     with get_connection() as conn:
         # `cup_grade` は `type_lab_picks` に無いので `wt_races` から引く
         # （看板判定 `is_fill_target` がグレードを先に見るため）。
@@ -211,6 +219,12 @@ def _load_rows(day: str) -> list[dict]:
         if key not in current or (gen is not None and current[key][0] is not None
                                   and gen > current[key][0]):
             current[key] = (gen, str(d["type_label"]))
+    return rows, current
+
+
+def _load_rows(day: str) -> list[dict]:
+    """当日の型ラボの行のうち、**通常の商品として売るプラン**だけ。"""
+    rows, current = _fetch_rows(day)
 
     # 🔴 **型A の売り分けにはレース単位の情報が要る**（2026-08-31）。
     #    `A_trio` を選ぶ条件は「三連複2点が入稿ゲートを通ること」なので、
@@ -243,6 +257,30 @@ def _load_rows(day: str) -> list[dict]:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         out.append(d)
+    return out
+
+
+def _load_highpay_rows(day: str) -> dict[str, dict]:
+    """レースキー → **高額枠**の行（`{型}_sign`）。無ければそのレースは入らない。
+
+    🔴 **通常の商品の候補（`_load_rows`）とは別に読む。** 高額枠は
+       `sell_plans_for` が返すものではなく（あれはレース単位の純関数で、
+       高額枠は「日ごとに何本」という日次の配分）、**日次上限に当たった行の
+       置き換え先**としてだけ使う。混ぜて読むと通常の入稿ループが
+       いきなり看板枠を売り始める。
+    ⚠️ 型・車数の判定は `type_lab.highpay_plan_for` が唯一の正本。
+    """
+    rows, current = _fetch_rows(day)
+    out: dict[str, dict] = {}
+    for r in rows:
+        d = dict(r)
+        rk, mode = str(d["race_key"]), str(d["mode"])
+        if str(d["type_label"]) != current[(rk, mode)][1]:
+            continue        # 組み直し前の古い型の行
+        if str(d["plan_key"]) != highpay_plan_for(d["type_label"], d["n_entries"]):
+            continue
+        d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
+        out[rk] = d
     return out
 
 
@@ -606,7 +644,8 @@ def _print_detail(row: dict, sub: dict, detail: str) -> None:
 
 def submit_row(row: dict, session: str, client: NetkeirinClient | None,
                dry_run: bool, show_detail: bool = False,
-               skip=None, confident: bool = False) -> tuple[bool, str]:
+               skip=None, confident: bool = False,
+               origin: str = ORIGIN_RANK) -> tuple[bool, str]:
     """1行を入稿する。戻り値 (入稿したか, メッセージ)。
 
     `confident=True` なら勝負アイコンを「自信あり」にする（1日1件・`run` が決める）。
@@ -660,7 +699,7 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
     _record_submission(
         race_key, plan, session, venue, race_no, None,
         int(row["axis1"]), int(row["axis2"]), msg, bet_detail=detail,
-        title=sub["title"], comment=sub["comment"], origin=ORIGIN_RANK)
+        title=sub["title"], comment=sub["comment"], origin=origin)
     return True, sub["title"]
 
 
@@ -687,6 +726,19 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #    ⚠️ 取消済みも `already` に含まれる＝取り消したレースは出し直さない
     #      （看板穴埋めと同じ方針）。
     taken_by_type_lab = {rk for rk, rank in already if rank in SELLABLE_PLAN_KEYS}
+
+    # ── 高額枠（2026-09-06）──────────────────────────────────────────────
+    # 🔴 **日次上限で捨てるレースにだけ置く。** 既存商品を1件も減らさない。
+    #    実運用の見送り（2026-09-01〜05）は `daily_cap` だけで 13.4R/日 あり、
+    #    うち型B 2.8・型C 2.6・型D 1.2 ＝ **5本ぶんは余っている**。
+    # 🔴 **残数は「その日に既に出した高額枠」から数える**（波をまたいで 5本）。
+    #    `already` はこの実行の開始時の断面なので、同じ回で出した分は
+    #    `n_highpay` を足して数える。
+    n_highpay = sum(1 for _rk, rank in already if rank in HIGHPAY_PLAN_KEYS)
+    # ⚠️ **候補の読み出しは遅延させる**（上限に当たるまで DB を引かない）。
+    #    上限が効かない小さい回では1度も要らないし、テストで `run` を回すたびに
+    #    DB を開かせないため。
+    highpay_rows: dict[str, dict] | None = None
 
     # ── 昼・夕は「まだ入稿していないレース」を組み直してから読み直す ──
     # 🔴 **dry-run では組み直さない。** 組み直しは `type_lab_picks` への
@@ -883,6 +935,40 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             bump("taken_by_type_lab")
             continue
         if cap_budget is not None and not _exempt(row) and n_capped >= cap_budget:
+            # 🔴 **捨てる前に高額枠へ差し替えられないか見る**（2026-09-06）。
+            #    ここへ来た行は他のゲートを全部通っている（並びも印もある・
+            #    締切前・軸信頼も通過）ので、同じレースの `{型}_sign` を
+            #    そのまま出せる。**上限の枠は消費しない**（枠外と同じ扱い）。
+            hp = None
+            if n_highpay < HIGHPAY_SLOTS_PER_DAY:
+                if highpay_rows is None:
+                    highpay_rows = _load_highpay_rows(day)
+                    print(f"[type_lab_submit] 高額枠 残り "
+                          f"{HIGHPAY_SLOTS_PER_DAY - n_highpay}本"
+                          f"（本日 {n_highpay}本 出済み・"
+                          f"候補 {len(highpay_rows)}レース）", flush=True)
+                hp = highpay_rows.get(race_key)
+            if hp is not None and (race_key, str(hp["plan_key"])) not in already:
+                hp_plan = str(hp["plan_key"])
+                hp_reason = _gate_reason(hp)
+                if hp_reason is not None:
+                    # 高額枠として出せない（想定払戻・1点オッズ）。通常の見送りへ落ちる。
+                    skip(race_key, hp_plan, session, hp_reason[0], hp_reason[1],
+                         venue, race_no, quiet=True)
+                else:
+                    ok, msg = submit_row(hp, session, client, dry_run,
+                                         show_detail=dry_run and n_ok < show,
+                                         skip=skip, origin=ORIGIN_HIGHPAY)
+                    if ok:
+                        n_highpay += 1
+                        taken_by_type_lab.add(race_key)
+                        n_ok += 1
+                        titles.append(f"{venue}{race_no}R({hp_plan}) 高額枠 {msg}")
+                        submitted.append((str(venue), hp_plan))
+                        bump("highpay")
+                        continue
+                    bump("failed")
+                    continue
             # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「日次上限」として出る。
             skip(race_key, plan, session, SKIP_DAILY_CAP,

@@ -3,7 +3,7 @@
 exp_gensen/fetch_gensen.py と同じ API・同じキャッシュ方式。
 """
 from __future__ import annotations
-import json, sys, time, urllib.parse, urllib.request
+import json, os, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 
 BASE = "https://keirin.netkeiba.com"
@@ -12,7 +12,8 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 ROOT = Path(__file__).resolve().parent / "raw"
 (ROOT / "list").mkdir(parents=True, exist_ok=True)
 (ROOT / "detail").mkdir(parents=True, exist_ok=True)
-INTERVAL = 0.8
+#: 取得間隔（秒）。並列で回すときは `NETKEIBA_INTERVAL=2.0` で広げる。
+INTERVAL = float(os.environ.get("NETKEIBA_INTERVAL", "0.8"))
 
 
 def _get(url: str, data: bytes | None = None) -> str:
