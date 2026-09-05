@@ -65,12 +65,19 @@ SPARSE_NULL_RATE = 0.20
 #    **本当に新しい異常が出たときに気づけなくなる**（2026-09-01 に自動化した際、
 #    検出3件すべてが既知で毎回赤になることが分かったため整理した）。
 #    ⚠️ 逆に、原因未特定のものをここへ入れて黙らせないこと。
+#
+# 🔴 **2026-09-05: paddock_index をここから外した。** 上流が「恒久的に死んでいる」
+#    前提で登録したエントリが、上流を直せる状態になった後も残り続け、
+#    **修理可能な障害を無期限に黙らせていた**。
+#    実際の停止原因は netkeiba 側ではなく、sync-jra-from-jvlink の
+#    `ON CONFLICT DO NOTHING` が sekito.races.start_time を 00:00 に固定し、
+#    netkeiba-paddock が「発走20分以内」に永久に一致しなくなっていたこと。
+#    同日に修正済み（sekito@86c4c16）。
+#    これ以降 paddock_index の sd=0 は **[要対応]** として鳴る。鳴ったら
+#    scripts/check_scrape_supply.py で上流の網羅率を見ること。
+#    ⚠️ 教訓として残す: このリストに入れるときは「いつ・何を満たせば外すか」を
+#    必ず一緒に書くこと。書かないと、直った後も誰も外さない。
 KNOWN_ISSUES = {
-    "paddock_index": (
-        "上流 sekito.netkeiba のスクレイプが 2026-05 に停止し is_paddock が 0 件。"
-        " v26 学習期間中も全月 sd=0 だったためモデル寄与は元々ゼロ。"
-        " memory: netkeiba_scrape_stopped_2026_05 / jra_rank_quality_redesign_2026_08_02"
-    ),
     "going_pedigree_index": (
         "**レース当日に算出すると必ず全馬 50** になる（算出時点で races.condition が"
         " 未確定＝重/不でないため早期 return する）。値が入るのは後日バックフィルした"
