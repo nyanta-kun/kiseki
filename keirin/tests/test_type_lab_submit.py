@@ -467,7 +467,9 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 #: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
 #:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
 #:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
-LONGSHOT_PLANS = {"F_pay", "A_ana"} | {f"{t}_sign" for t in "ABCDEF"}
+LONGSHOT_PLANS = ({"F_pay", "A_ana"}
+                  | {f"{t}_sign" for t in "ABCDEF"}
+                  | {f"{t}_big" for t in "ABCDEF"})
 
 
 def test_only_declared_plans_are_longshot():
@@ -493,7 +495,7 @@ def test_only_declared_plans_are_longshot():
     #    表には最初から6型ぶん入れてある。**不足は許さない**ので検出力は落ちない。
     assert set(SELLABLE_PLAN_KEYS) <= set(ACT_TYPE_BY_PLAN), \
         "入稿しうるプランが表から漏れている"
-    assert all(k in SELLABLE_PLAN_KEYS or k.endswith("_sign")
+    assert all(k in SELLABLE_PLAN_KEYS or k.endswith(("_sign", "_big"))
                for k in ACT_TYPE_BY_PLAN), "表に素性の分からないプランがある"
     assert {k for k, v in ACT_TYPE_BY_PLAN.items()
             if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS
@@ -802,12 +804,22 @@ def test_生成側が型の変わった古いプランを消す():
 
 
 def test_読む側が最新の型だけに絞る():
+    """🔴 通常の商品も**高額枠**も、同じ断面（`_fetch_rows`）から最新の型だけを見る。
+
+    ⚠️ 2026-09-06 に高額枠（`{型}_sign`）の読み出しを足したとき、SQL と
+       「最新の型だけ」の絞りを `_fetch_rows` へ切り出した。**別々に書くと
+       片方だけ古くなる**（組み直しで型が変わったレースに2商品出た型の再発）。
+    """
     src = SUBMIT_PY.read_text(encoding="utf-8")
-    i = src.index("def _load_rows(")
+    i = src.index("def _fetch_rows(")
     block = src[i:src.index("\ndef ", i + 10)]
     assert "generated_at" in block, "最新の行を選ぶための列を取っていません"
-    assert 'current[' in block and "continue" in block, \
-        "古い型の行を落としていません"
+    assert "current[" in block, "最新の型を決めていません"
+    for fn in ("_load_rows", "_load_highpay_rows"):
+        j = src.index(f"def {fn}(")
+        b = src[j:src.index("\ndef ", j + 10)]
+        assert "_fetch_rows(" in b, f"{fn} が共通の断面を使っていません"
+        assert "current[" in b and "continue" in b, f"{fn} が古い型の行を落としていません"
 
 
 def test_型ラボ自身が取ったレースには出さない():
@@ -1006,12 +1018,16 @@ def test_rp_sd_quantiles_cover_every_7car_sellable_plan():
     **9車の決勝以外だけ**。9車は `_priority` が 1.0 を返して表を引かないので、
     どちらもここでは対象外にする。
     """
-    from src.type_lab import SELLABLE_PLAN_KEYS
+    from src.type_lab import HIGHPAY_PLAN_KEYS, SELLABLE_PLAN_KEYS
 
     gate = _load_gate()
+    # 🔴 **高額枠は順位付けに載らない**（2026-09-06）。あれは「日次上限に当たった行の
+    #    置き換え先」で、`_priority` で並ぶのは置き換えられる**元の行**のほう。
+    #    分位表を作っても一度も引かれない。
     nine_car_only = {"F_pay", "F_line"}
     missing = sorted(k for k in SELLABLE_PLAN_KEYS
-                     if k not in nine_car_only and k not in gate.RP_SD_PRIORITY_QUANTILES)
+                     if k not in nine_car_only and k not in HIGHPAY_PLAN_KEYS
+                     and k not in gate.RP_SD_PRIORITY_QUANTILES)
     assert not missing, (
         f"rp_sd の分位表が無いプラン: {missing}。"
         f"探索窓 {gate.AXIS_GATE_SOURCE_WINDOW} のプラン内分位を引いて足すこと")
@@ -1218,3 +1234,233 @@ def test_daily_script_no_longer_picks_confident():
     assert "pick_confident_race_wt.py" not in daily.replace(
         "`scripts/pick_confident_race_wt.py::pick`", ""), (
         "日次スクリプトから二重に呼んでいます")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 高額枠（2026-09-06）— 日次上限で捨てるレースへ看板枠を置く
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_highpay_types_are_the_measured_ones():
+    """🔴 **型B・C・D だけ**。型A・E は両窓とも ROI が壁の下、型F は既存の看板枠と重なる。
+
+    捨てる側（日次上限の下位50%）での実測（探索2025 / 確認2026・`*_sign`）:
+
+        型B  ROI 91.3 / 81.6%   10万+ 5.13 / 3.48%
+        型C  ROI 90.3 / 79.4%   10万+ 4.84 / 4.00%
+        型D  ROI 85.1 / 81.5%   10万+ 4.46 / 4.03%
+        型E  ROI 60.8 / 70.6%   ← 壁の下
+        型A  ROI 57.2 / 48.7%   ← 最悪
+
+    ⚠️ ROI の CI は ±20〜30pt と広い。採用の根拠は「10万+ を増やせること」で、
+       型の順序は点推定が両窓で一致するというだけ。
+    """
+    from src.type_lab import (HIGHPAY_N_ENTRIES, HIGHPAY_PLAN_KEYS,
+                              HIGHPAY_SLOTS_PER_DAY, HIGHPAY_TYPES,
+                              SELLABLE_PLAN_KEYS, highpay_plan_for)
+
+    assert HIGHPAY_TYPES == ("B", "C", "D")
+    assert HIGHPAY_PLAN_KEYS == {"B_sign", "C_sign", "D_sign",
+                                 "B_big", "C_big", "D_big"}
+    assert HIGHPAY_PLAN_KEYS <= SELLABLE_PLAN_KEYS, "売りうるプランとして登録されていない"
+    assert HIGHPAY_SLOTS_PER_DAY == 5
+    # 7車だけ（9車は未測定）
+    assert HIGHPAY_N_ENTRIES == 7
+    for t in "ABCDEF":
+        assert highpay_plan_for(t, 9) is None, f"9車に高額枠を置いている: {t}"
+    for t in ("A", "E", "F"):
+        assert highpay_plan_for(t, 7) is None, f"対象外の型に高額枠を置いている: {t}"
+
+
+def test_highpay_alternates_sign_and_big():
+    """🔴 **5本の内訳は 3:2**（偶数本目が「特大狙い」）。ユーザー判断②（2026-09-06）。
+
+    偶数本目にしているのは**短い日でも比率が保たれる**から
+    （3本しか出ない日でも sign / big / sign と1本は特大になる）。
+    置き場所に情報は無いので、並べ替えても中身は変わらない。
+    """
+    from src.type_lab import (HIGHPAY_BIG_SLOTS, HIGHPAY_BIG_TARGET,
+                              HIGHPAY_SLOTS_PER_DAY, PLANS, highpay_plan_for)
+
+    got = [highpay_plan_for("B", 7, i) for i in range(HIGHPAY_SLOTS_PER_DAY)]
+    assert got == ["B_sign", "B_big", "B_sign", "B_big", "B_sign"], got
+    assert sum(1 for g in got if g.endswith("_big")) == len(HIGHPAY_BIG_SLOTS)
+    # 🔴 `_big` は「軸1を外して計画払戻を上げる」＝30万超が出る唯一の形
+    for t in ("B", "C", "D"):
+        pl = PLANS[f"{t}_big"]
+        assert pl.structure == "signboard" and pl.bust and pl.alloc == "dutch"
+        assert pl.target == HIGHPAY_BIG_TARGET == 400_000
+    # `_sign` は据え置き（計画15万・軸1を外さない）
+    for t in ("B", "C", "D"):
+        assert not PLANS[f"{t}_sign"].bust and PLANS[f"{t}_sign"].target == 0
+
+
+def test_big_plan_never_buys_the_first_axis():
+    """🔴 `_big` は**指数1位を含む目を1点も買わない**（文面がそう書いてある）。"""
+    import itertools
+
+    from src.type_lab import PLANS, RaceShape, build_legs
+
+    order = (1, 2, 3, 4, 5, 6, 7)
+    shape = RaceShape(type_label="B", axis_sum=1.5, arare=0, gap=0.2,
+                      firm=True, order=order)
+    combos = list(itertools.permutations(order, 3))
+    pred = {c: 80.0 for c in combos}
+    probs = {c: 1.0 / len(combos) for c in combos}
+    legs = build_legs(shape, PLANS["B_big"], pred, probs)
+    assert legs, "組めていない"
+    assert all(order[0] not in c for c in legs), f"軸1を含む目を買っている: {legs}"
+    legs_sign = build_legs(shape, PLANS["B_sign"], pred, probs)
+    assert any(order[0] in c for c in legs_sign), "看板枠まで軸1を外している"
+    # 計画払戻が高いぶん点数は少ない
+    assert len(legs) < len(legs_sign), (len(legs), len(legs_sign))
+
+
+def test_highpay_is_only_reachable_from_the_daily_cap_branch():
+    """🔴 **高額枠は「上限で捨てる行」の置き換えでしか出ない。**
+
+    普通に売れた行の横に足す形にすると 1レース2商品になり、
+    通常の入稿ループが看板枠を売り始める（`_load_rows` は高額枠を返さない）。
+    """
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
+    i = src.index("n_capped >= cap_budget")
+    j = src.index("SKIP_DAILY_CAP", i)
+    assert "_load_highpay_rows(" in src[i:j], "上限の枝の中で高額枠を読んでいない"
+    assert src.count("_load_highpay_rows(") == 1, "高額枠を上限の枝の外でも読んでいる"
+    assert "ORIGIN_HIGHPAY" in src[i:j], "出自を highpay_fill で記録していない"
+    # 通常の候補には混ざらない
+    load = inspect.getsource(M._load_rows)
+    assert "highpay" not in load, "通常の候補に高額枠が混ざっている"
+
+
+def test_highpay_does_not_consume_the_daily_cap():
+    """🔴 **高額枠は上限の枠を消費しない**（枠外と同じ扱い）。
+
+    消費すると「上限に当たった → 高額枠を出す → さらに上限が減る」となり、
+    高額枠を出した日ほど通常の商品が減る。上限は**通常の商品の本数**を決める
+    ためのもので、捨てたレースの再利用はその外側。
+    """
+    import inspect
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    src = inspect.getsource(M.run)
+    i = src.index("n_capped >= cap_budget")
+    j = src.index("SKIP_DAILY_CAP", i)
+    assert "n_capped" not in src[i + 30:j], "高額枠の枝で上限の枠を消費している"
+
+
+def _highpay_env(monkeypatch, rows, highpay, already=frozenset()):
+    """`run` を DB・netkeirin 無しで回すための最小の足場。"""
+    from scripts import netkeirin_submit_type_lab as m
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(m, "_load_settings", lambda: {})
+    monkeypatch.setattr(m, "_approval_required", lambda: False)
+    monkeypatch.setattr(m, "_load_closed_races", lambda day: set())
+    monkeypatch.setattr(m, "_already_submitted", lambda keys: set(already))
+    monkeypatch.setattr(m, "races_taken_by_other_ranks", lambda a: set())
+    monkeypatch.setattr(m, "_missing_market_inputs", lambda rk: None)
+    monkeypatch.setattr(m, "_build_entry_table", lambda rk, marks: None)
+    monkeypatch.setattr(m, "_race_point_sd", lambda keys: {})
+    monkeypatch.setattr(m, "_load_rows", lambda day: rows)
+    monkeypatch.setattr(m, "_load_highpay_rows", lambda day: highpay)
+    monkeypatch.setattr(m, "send", lambda *a, **k: None)
+
+    def _fake_submit(row, session, client, dry_run, show_detail=False,
+                     skip=None, confident=False, origin=m.ORIGIN_RANK):
+        sent.append((str(row["race_key"]), str(row["plan_key"]), origin))
+        return True, "ok"
+
+    monkeypatch.setattr(m, "submit_row", _fake_submit)
+    return m, sent
+
+
+def _hp_row(rk: str, race_no: int, plan: str, type_label: str, axis_sum: float):
+    return {
+        "race_key": rk, "race_date": "2026-09-06", "venue_name": "松阪",
+        "race_no": race_no, "race_type": "予選", "n_entries": 7, "cup_grade": None,
+        "type_label": type_label, "axis_sum": axis_sum, "pw_ent": 1.2,
+        "axis1": 1, "axis2": 4, "p3_order": "1-4-5-6-7-2-3",
+        "mode": "live", "plan_key": plan, "bet_type": "trifecta",
+        "n_legs": 3, "budget": 10_000, "pred_mean_payout": 30_000.0,
+        "pred_min_payout": 25_000.0, "start_at": None,
+        "legs": [{"combo": "1-4-5", "stake": 6400, "pred_odds": 2.6},
+                 {"combo": "1-4-7", "stake": 2100, "pred_odds": 9.9},
+                 {"combo": "1-4-6", "stake": 1500, "pred_odds": 16.2}],
+    }
+
+
+def _hp_plan_rows(rows):
+    """レースキー → プラン → 行（`_load_highpay_rows` が返す形）。"""
+    legs = {"B_sign": [{"combo": "1-4-5", "stake": 3300, "pred_odds": 45.0},
+                       {"combo": "1-5-4", "stake": 3300, "pred_odds": 46.0},
+                       {"combo": "4-1-5", "stake": 3400, "pred_odds": 44.0}],
+            "B_big": [{"combo": "4-5-6", "stake": 5000, "pred_odds": 80.0},
+                      {"combo": "5-4-6", "stake": 5000, "pred_odds": 82.0}]}
+    pay = {"B_sign": 150_000.0, "B_big": 400_000.0}
+    return {r["race_key"]: {k: dict(r, plan_key=k, pred_mean_payout=pay[k],
+                                    legs=legs[k]) for k in legs}
+            for r in rows}
+
+
+def test_highpay_replaces_a_capped_race(monkeypatch):
+    """🔴 上限で捨てるはずのレースが、高額枠として出る（1レース1商品のまま）。
+
+    内訳は **1本目 `_sign` / 2本目 `_big`**（`HIGHPAY_BIG_SLOTS`）。
+    """
+    rows = [_hp_row(f"20260906_13_{i:02d}", i, "B_hit", "B", 1.9 - i * 0.01)
+            for i in range(1, 5)]
+    m, sent = _highpay_env(monkeypatch, rows, _hp_plan_rows(rows))
+    m.run("2026-09-06", "morning", dry_run=False, only_key=None, do_rebuild=False)
+
+    normal = [x for x in sent if x[2] == m.ORIGIN_RANK]
+    high = [x for x in sent if x[2] == m.ORIGIN_HIGHPAY]
+    # 4レース × 0.5 = 2件が通常の商品、残り2件が高額枠へ回る
+    assert len(normal) == 2, sent
+    assert [p for _, p, _ in high] == ["B_sign", "B_big"], sent
+    # 1レース1商品（同じレースが2回出ていない）
+    assert len({rk for rk, _, _ in sent}) == len(sent), sent
+
+
+def test_highpay_quota_counts_earlier_waves(monkeypatch):
+    """🔴 **本数はその日で数える。** 朝で5本出したら昼・夕は0本。
+
+    `already`（その日の入稿の断面）に高額枠が5件あれば、上限に当たっても
+    差し替えない＝候補の読み出しすら起きない。
+    """
+    from src.type_lab import HIGHPAY_SLOTS_PER_DAY
+
+    rows = [_hp_row(f"20260906_13_{i:02d}", i, "B_hit", "B", 1.9 - i * 0.01)
+            for i in range(1, 5)]
+    done = {(f"20260906_99_{i:02d}", "B_sign") for i in range(HIGHPAY_SLOTS_PER_DAY)}
+    m, sent = _highpay_env(monkeypatch, rows, {}, already=done)
+
+    def _boom(day):
+        raise AssertionError("枠を使い切っているのに候補を読んでいる")
+
+    monkeypatch.setattr(m, "_load_highpay_rows", _boom)
+    m.run("2026-09-06", "noon", dry_run=False, only_key=None, do_rebuild=False)
+    assert all(o == m.ORIGIN_RANK for _, _, o in sent), sent
+
+
+def test_highpay_respects_the_submission_gates(monkeypatch):
+    """🔴 高額枠にも入稿ゲート（想定払戻・1点オッズ）は掛ける。
+
+    掛けないと「予測 2.0倍未満の目を含む看板枠」が出る。
+    """
+    rows = [_hp_row(f"20260906_13_{i:02d}", i, "C_hit", "C", 1.6 - i * 0.01)
+            for i in range(1, 5)]
+    # 1点だけ 1.5倍 ＝ `MIN_POINT_ODDS` 未満（sign / big の両方に入れる）
+    bad = [{"combo": "1-4-5", "stake": 5000, "pred_odds": 1.5},
+           {"combo": "1-5-4", "stake": 5000, "pred_odds": 60.0}]
+    sign = {r["race_key"]: {k: dict(r, plan_key=k, pred_mean_payout=150_000.0,
+                                    legs=bad) for k in ("C_sign", "C_big")}
+            for r in rows}
+    m, sent = _highpay_env(monkeypatch, rows, sign)
+    monkeypatch.setattr(m, "_skip", lambda *a, **k: None)
+    m.run("2026-09-06", "morning", dry_run=False, only_key=None, do_rebuild=False)
+    assert all(o == m.ORIGIN_RANK for _, _, o in sent), "ゲートに掛かる高額枠が出た"
