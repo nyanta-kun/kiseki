@@ -22,10 +22,18 @@ import { cn } from "@/lib/utils";
  * 単勝ROI 1.40前後が一貫(FULL n=535, 単ROI1.417, drop1=1.329)。95%信頼区間は
  * わずかに1を跨ぐため回収率を保証するものではないが、「穴」より一段強い
  * シグナルとして扱う。
+ *
+ * 「平八」(2026-09-06追加、[[jra_heihachi_badge]]): 平地OP特別以上 ∧ 指数順位3位以内
+ * ∧ 単勝10〜40倍 ∧ 複勝確率≥0.30。note の予想家「平八」の馬印19,429件を逆解析して
+ * 得た「穴サイドで3着内率が構造的に高いゾーン」を、印を使わず自前の指数だけで
+ * 再現したタグ。n=1,017 (2.83件/開催日) で 3着内率34.6%(同オッズ帯ベース17.8%)、
+ * 複勝ROI 1.147・単勝ROI 1.171、年別複勝ROIは2023-2026の4年とも1超。
+ * レース選定(OP特別以上)がROIを担っており、平場・条件戦では複回収94%で機能しない。
  */
 export const DM_SIGNAL_META: Record<string, { label: string; cls: string; title: string }> = {
   "穴": { label: "🔍穴", cls: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300", title: "レース内で最も有力な穴候補1頭(単勝≥10倍 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battleのいずれかが上位評価、複勝的中約20%・回収率の保証はなし)" },
   "特穴": { label: "💥特穴", cls: "bg-red-100 text-red-800 border-red-400 font-extrabold", title: "穴ぐさ(A/B/C) ∧ 指数順位3位以内 ∧ 単勝10倍以上(単勝ROI約1.4・2窓で一貫。ただし信頼区間はわずかに1を跨ぎ回収率を保証するものではない)" },
+  "平八": { label: "🎯平八", cls: "bg-amber-100 text-amber-900 border-amber-400 font-extrabold", title: "OP特別以上 ∧ 指数順位3位以内 ∧ 単勝10〜40倍 ∧ 複勝確率30%以上。3着内率34.6%(同オッズ帯の全馬は17.8%)・複勝ROI約1.15で2023〜2026の4年とも1超。回収率を保証するものではない" },
 };
 
 type Props = {

@@ -159,6 +159,7 @@ export default async function RacePage({ params }: { params: Params }) {
             isPremium={isPremium}
             raceNumber={raceNumber}
             paywallEnabled={paidMode}
+            grade={race?.grade ?? null}
           />
         </div>
       </main>

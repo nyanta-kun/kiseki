@@ -1044,6 +1044,60 @@ export async function fetchRaceConfidenceBrowser(date: string): Promise<RaceConf
   return get<RaceConfidenceRow[]>(`/races/confidence?date=${date}`, { cache: "no-store" });
 }
 
+/**
+ * 平八バッジの候補馬1頭（指数順位5位以内）。
+ * どれをバッジ対象にするかは `lib/heihachi.ts` の matchesHeihachi() が決める
+ * （推奨ページのスライダーで動かせるため、判定はフロント側に集約している）。
+ */
+export type HeihachiCandidate = {
+  race_id: number;
+  course_name: string | null;
+  race_number: number;
+  race_name: string | null;
+  post_time: string | null;
+  grade: string | null;
+  horse_number: number;
+  horse_name: string | null;
+  /** レース内の composite_index 順位（1=1位、取消馬を除いた順位） */
+  index_rank: number;
+  composite_index: number | null;
+  /** モデルの複勝圏確率（0〜1） */
+  place_probability: number | null;
+  /** 判定に使う単勝オッズ（確定後は確定オッズ） */
+  win_odds: number | null;
+  finish_position: number | null;
+  result_win_odds: number | null;
+  /** 複勝払戻オッズ。7頭以下は2着までしか払わないので、的中判定はこの有無で行う */
+  result_place_odds: number | null;
+};
+
+/** 既定しきい値。単一真実源は backend の HEIHACHI_* 定数。 */
+export type HeihachiDefaults = {
+  max_index_rank: number;
+  min_odds: number;
+  max_odds: number;
+  min_place_prob: number;
+  graded_only: boolean;
+  grades: string[];
+};
+
+export type HeihachiPicks = {
+  date: string;
+  candidates: HeihachiCandidate[];
+  defaults: HeihachiDefaults;
+  /** バックテスト実測（長期の目安）。当日実績とは別物。 */
+  reference: { n: number; place_rate: number; win_roi: number; place_roi: number };
+};
+
+export async function fetchHeihachiPicks(date: string): Promise<HeihachiPicks> {
+  return get<HeihachiPicks>(`/races/heihachi?date=${date}`, { next: { revalidate: 60 } });
+}
+
+/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし） */
+export async function fetchHeihachiPicksBrowser(date: string): Promise<HeihachiPicks> {
+  return get<HeihachiPicks>(`/races/heihachi?date=${date}`, { cache: "no-store" });
+}
+
 // ---------------------------------------------------------------------------
 // 競輪
 // ---------------------------------------------------------------------------

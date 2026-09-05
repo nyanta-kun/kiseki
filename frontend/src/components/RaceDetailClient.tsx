@@ -14,6 +14,8 @@ import {
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { DmSignalBadges, DM_SIGNAL_META } from "@/components/DmSignalBadges";
+import { SIGNAL_HEIHACHI, matchesHeihachi } from "@/lib/heihachi";
+import { useHeihachiThresholds } from "@/lib/useHeihachiThresholds";
 import { IndexBar } from "./IndexBar";
 import { cn, indexColor, horseNumToFrame, frameColorClass, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
 import { HorseHistorySection } from "./HorseHistorySection";
@@ -27,6 +29,8 @@ type Props = {
   isPremium?: boolean;
   raceNumber?: number;
   paywallEnabled?: boolean;
+  /** 平八バッジのレース選定に使う。keiba.races.grade をそのまま渡す。 */
+  grade?: string | null;
 };
 
 type SortKey = "composite" | "speed" | "last3f" | "jockey" | "rotation" | "finish";
@@ -134,7 +138,12 @@ export function RaceDetailClient({
   isPremium = false,
   raceNumber = 1,
   paywallEnabled = false,
+  grade = null,
 }: Props) {
+  // 平八バッジは推奨ページのスライダーで動かしたしきい値に追随する
+  // （判定は lib/heihachi.ts が単一真実源。サーバー側 dm_signals の "平八" は
+  //  既定値ベースなので表示からは外し、ここで付け直す）。
+  const { thresholds: heihachi } = useHeihachiThresholds();
   const mounted = useIsMounted();
   const [resultsMap, setResultsMap] = useState<Map<number, number | null>>(
     () => toResultsMap(initialResults)
@@ -349,7 +358,24 @@ export function RaceDetailClient({
                             </span>
                           )}
                           {/* 穴候補（レース内最有力1頭のみ・軸信頼度は購入指針パネルのrecommend_rankに一本化） */}
-                          <DmSignalBadges signals={horse.dm_signals} compact />
+                          {/* 平八はユーザーのしきい値で判定し直すので、サーバー側のタグは落とす */}
+                          <DmSignalBadges
+                            signals={[
+                              ...(horse.dm_signals ?? []).filter((t) => t !== SIGNAL_HEIHACHI),
+                              ...(matchesHeihachi(
+                                {
+                                  grade,
+                                  indexRank: horse.composite_rank,
+                                  winOdds: winOdds,
+                                  placeProbability: horse.place_probability,
+                                },
+                                heihachi,
+                              )
+                                ? [SIGNAL_HEIHACHI]
+                                : []),
+                            ]}
+                            compact
+                          />
                         </div>
                       </td>
 
