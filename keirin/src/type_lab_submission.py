@@ -108,11 +108,25 @@ PLAN_AXIS_NOTES: dict[str, str] = {
 #:    （＝定義どおりの軸）を `axes_from_legs` で拾い直す。
 LINE_AXIS_PLANS: frozenset[str] = frozenset({"F_line"})
 
+# 🔴🔴 **軸1を買わないプランは全部ここに要る**（2026-09-06）。`{型}_big` を足した日、
+#    この表だけ `A_ana` のままだったので既定の「二軸は◎○です」が出て、
+#    **本文の中で自己矛盾した**——実データ 豊橋3R `C_big`:
+#      「二軸は、◎7番・○1番です」 ↔ 印は ◎1番・○5番・買い目に7番は1点も無い。
+#    `tests/test_type_lab_submission.py::test_軸1を買わないプランには専用の二軸文がある`
+#    が `Plan.bust` / `structure == "bust_top"` から機械的に要求する。
+for _t in "ABCDEF":
+    PLAN_AXIS_NOTES[f"{_t}_big"] = PLAN_AXIS_NOTES["A_ana"]
+del _t
+
+
 #: タイトル後半（レース見解）を**プランで上書き**する。
 #: 🔴 `A_ana` は「◎が飛ぶ側」を売るので、型A の見解「二軸が堅い一戦」と
 #:    そのまま並べると **商品説明が自己矛盾する**（狙いと見解が逆）。
 PLAN_VIEWS: dict[str, str] = {
     "A_ana": "堅く見えるが一着は読みにくい一戦",
+    # 🔴 `{型}_big` も軸1を買わない。型の見解（例: 型C「堅い二軸から崩れ筋」）を
+    #    そのまま出すと「堅い二軸」と「その二軸を買わない」が並んでちぐはぐになる。
+    **{f"{_t}_big": "指数1位が3着にも残らない側" for _t in "ABCDEF"},
 }
 
 #: 🔴 看板枠は**型の見解をそのまま使う**（`TYPE_VIEWS` / `TYPE_NOTES`）。型は

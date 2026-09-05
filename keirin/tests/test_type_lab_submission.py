@@ -296,3 +296,43 @@ def test_upper_labels_cover_every_band_kind():
     for band in UPPER_BANDS:
         assert band.kind in UPPER_LABELS, (
             f"上帯 {band.kind} の説明文がありません（`UPPER_LABELS` に足す）")
+
+
+def test_軸1を買わないプランには専用の二軸文がある():
+    """🔴🔴 **軸1を買わない商品に既定の「二軸は◎○です」を出さない**（2026-09-06）。
+
+    `{型}_big` を足した日、`PLAN_AXIS_NOTES` だけ `A_ana` のままだったため
+    既定文が出て**本文が自己矛盾した**。実データ 豊橋3R `C_big`:
+
+        「本レースで照らし出した二軸は、◎7番・○1番です」
+          ↔ 印は ◎1番・○5番 で、買い目に 7番 は1点も無い
+
+    `marks_for` は軸1を買わない商品では**買っている車**へ印を振り直すので、
+    文面で軸1を ◎ と書くと必ず食い違う。プランを足すたびに気づける形で縛る。
+    """
+    from src.type_lab import PLANS
+    from src.type_lab_submission import PLAN_AXIS_NOTES
+
+    bust = {k for k, p in PLANS.items()
+            if getattr(p, "bust", False) or p.structure == "bust_top"}
+    assert bust, "軸1を買わないプランが1つも無い（前提の確認）"
+    missing = sorted(bust - set(PLAN_AXIS_NOTES))
+    assert not missing, (
+        f"専用の二軸文が無い: {missing}。既定文『二軸は◎○です』が出て"
+        f"買い目と食い違う（`PLAN_AXIS_NOTES` へ足すこと）")
+    for k in bust:
+        text = PLAN_AXIS_NOTES[k]
+        assert "◎{a1}" not in text and "◎ {a1}" not in text, \
+            f"{k}: 買っていない軸1に ◎ を付けている"
+        assert "入っていません" in text, f"{k}: 買い目に無いことを書いていない"
+
+
+def test_軸1を買わないプランは型の見解をそのまま使わない():
+    """🔴 型C の見解「堅い二軸から崩れ筋」と「その二軸を買わない」が並ぶとちぐはぐ。"""
+    from src.type_lab import PLANS
+    from src.type_lab_submission import PLAN_VIEWS
+
+    bust = {k for k, p in PLANS.items()
+            if getattr(p, "bust", False) or p.structure == "bust_top"}
+    missing = sorted(bust - set(PLAN_VIEWS))
+    assert not missing, f"タイトルの見解を上書きしていない: {missing}"
