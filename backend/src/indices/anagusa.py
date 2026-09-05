@@ -29,25 +29,10 @@ from datetime import date as _date
 from sqlalchemy import select, text
 
 from ..db.models import Race, RaceEntry
+from ..utils.racecourse import JRA_TO_SEKITO
 from .base import IndexCalculator
 
 logger = logging.getLogger(__name__)
-
-# --------------------------------------------------------------------------
-# sekito.anagusa コードマッピング (sekito → JRA-VAN 2桁課コード)
-# --------------------------------------------------------------------------
-SEKITO_COURSE_MAP: dict[str, str] = {
-    "JSPK": "01",  # 札幌
-    "JHKD": "02",  # 函館
-    "JFKS": "03",  # 福島
-    "JNGT": "04",  # 新潟
-    "JTOK": "05",  # 東京
-    "JNKY": "06",  # 中山
-    "JCKO": "07",  # 中京
-    "JKYO": "08",  # 京都
-    "JHSN": "09",  # 阪神
-    "JKKR": "10",  # 小倉
-}
 
 # --------------------------------------------------------------------------
 # バックテスト実績値（2024〜2026年）
@@ -195,9 +180,7 @@ class AnagusaIndexCalculator(IndexCalculator):
         # asyncpg は DATE カラムに datetime.date オブジェクトが必要（文字列不可）
         race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
 
-        # sekito course_code → JRA 2桁コードの逆引き
-        jra_to_sekito = {v: k for k, v in SEKITO_COURSE_MAP.items()}
-        sekito_code = jra_to_sekito.get(race.course)
+        sekito_code = JRA_TO_SEKITO.get(race.course)
         if not sekito_code:
             return {}
 
