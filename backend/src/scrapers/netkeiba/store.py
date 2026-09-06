@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 
@@ -115,3 +116,40 @@ def upsert(session: Session, target: str, race_date: date, course_code: str,
 
     session.commit()
     return written
+
+
+_DATA_ANALYSIS_UPSERT = text(
+    """
+    INSERT INTO sekito.netkeiba_data_analysis
+        (date, course_code, race_no, top_horse_1, top_horse_2, top_horse_3,
+         analysis_data, scraped_at)
+    VALUES (:date, :course_code, :race_no, :top1, :top2, :top3,
+            CAST(:analysis AS jsonb), NOW())
+    ON CONFLICT (date, course_code, race_no)
+    DO UPDATE SET top_horse_1 = EXCLUDED.top_horse_1,
+                  top_horse_2 = EXCLUDED.top_horse_2,
+                  top_horse_3 = EXCLUDED.top_horse_3,
+                  analysis_data = EXCLUDED.analysis_data,
+                  scraped_at = NOW()
+    """
+)
+
+
+def upsert_data_analysis(session: Session, race_date: date, course_code: str,
+                         race_no: int, parsed: dict) -> None:
+    """`sekito.netkeiba_data_analysis` へ UPSERT する。
+
+    こちらはレース単位の 1 行なので、`sekito.netkeiba` のような
+    「取った列だけ更新する」配慮は要らない（書くのはこのジョブだけ）。
+    """
+    top = list(parsed.get("top_horses") or [])
+    top += [None] * (3 - len(top))
+    session.execute(
+        _DATA_ANALYSIS_UPSERT,
+        {
+            "date": race_date, "course_code": course_code, "race_no": race_no,
+            "top1": top[0], "top2": top[1], "top3": top[2],
+            "analysis": json.dumps(parsed.get("analysis_data") or {}, ensure_ascii=False),
+        },
+    )
+    session.commit()
