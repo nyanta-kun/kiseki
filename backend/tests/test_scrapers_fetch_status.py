@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import pytest
 
 from src.scrapers.fetch_status import (
+    _SHOULD_FETCH_SQL,
     ALL_DATA_TYPES,
     FetchStatusManager,
     _norm_date,
@@ -32,7 +33,10 @@ class _FakeResult:
 
 
 class _FakeSession:
-    """`SELECT` 1 本ぶんだけを差し替える最小のスタブ。"""
+    """`SELECT` 1 本ぶんだけを差し替える最小のスタブ。
+
+    経過時間は DB が返す前提なので、スタブも「時間」を直接返す。
+    """
 
     def __init__(self, row=None):
         self.row = row
@@ -44,8 +48,7 @@ class _FakeSession:
 def _mgr(status=None, retry_count=0, age_hours=0.0):
     if status is None:
         return FetchStatusManager(_FakeSession(None))
-    updated_at = datetime.now() - timedelta(hours=age_hours)
-    return FetchStatusManager(_FakeSession((status, retry_count, updated_at)))
+    return FetchStatusManager(_FakeSession((status, retry_count, age_hours)))
 
 
 def _should(mgr, data_type="kichiuma", **kw):
@@ -94,6 +97,19 @@ def test_updated_atがNULLでも取りに行く():
     """移設前は `updated_at and ...` で NULL を「経過済み」として扱っていた。"""
     mgr = FetchStatusManager(_FakeSession(("not_available", 0, None)))
     assert _should(mgr) is True
+
+
+def test_経過時間はDB側のNOWで計算する():
+    """🔴 Python の `datetime.now()` と比べてはいけない。
+
+    2026-09-06 実測: DB は Asia/Tokyo だが kiseki の backend コンテナは UTC。
+    naive 比較のまま移すと経過時間が 9 時間ぶん過小に出て、再試行が
+    それだけ遅れる（例外は出ず、ただ取りに行かなくなる）。
+    移設元 sekito のコンテナは JST だったので、この差は移設で初めて生まれた。
+    """
+    sql = str(_SHOULD_FETCH_SQL)
+    assert "NOW() - updated_at" in sql, "経過時間の計算が SQL 側から消えている"
+    assert "EXTRACT(EPOCH" in sql
 
 
 @pytest.mark.parametrize(
