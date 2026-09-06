@@ -42,6 +42,10 @@ TARGET_COLUMNS: dict[str, tuple[str, ...]] = {
                    "idx_course", "idx_third", "idx_second", "idx_last",
                    "is_time_index"),
     "training": ("training", "is_training"),
+    # 🔴 paddock に horse_name を**入れない**。
+    #    2026-09-06 の障害は、パドックが `horse_name = EXCLUDED.horse_name` で
+    #    朝に正しく入った馬名を化けた値で上書きしていたこと。馬名の持ち主は
+    #    time_index であって paddock ではない（[[paddock-mojibake]]）。
     "paddock": ("p_rank", "p_comment", "p_type", "is_paddock"),
     "blood": ("sire", "broodmare_sire", "broodmare_sire_color", "is_blood"),
 }
