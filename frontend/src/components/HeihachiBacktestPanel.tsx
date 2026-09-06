@@ -81,7 +81,7 @@ export function HeihachiBacktestPanel({ year, thresholds }: Props) {
         <div className="h-16 rounded-lg bg-slate-100 animate-pulse motion-reduce:animate-none" />
       ) : data.n === 0 ? (
         <p className="text-xs text-slate-500 py-3 text-center">
-          この条件に該当する馬は {year} 年に1頭もありません。しきい値を緩めてください。
+          {year} 年に該当なし
         </p>
       ) : (
         <div
@@ -97,14 +97,6 @@ export function HeihachiBacktestPanel({ year, thresholds }: Props) {
             <Stat label="複勝回収率" value={pct(data.place_roi)} sub="100円均等"
               color={roiColor(data.place_roi)} />
           </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-600">
-            確定オッズでの100円均等買い。複勝の的中は払戻の有無で判定（7頭以下は2着まで）。{" "}
-            <strong>
-              ⚠️ 指数 v28 の本番モデルは 2026-06-28 までのデータで学習しているため、
-              それ以前の年の数字は in-sample（当てはまりの良さ）です。将来の成績では
-              ありません。学習に使っていないのは 2026-06-29 以降だけです。
-            </strong>
-          </p>
         </div>
       )}
     </div>

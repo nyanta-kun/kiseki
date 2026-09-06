@@ -24,7 +24,11 @@ import { cn } from "@/lib/utils";
  * ここで行う ── 一覧・回収率・バッジが必ず同じ判定を通るようにするため。
  *
  * 回収率は**その日の確定分のみ**を母数にした実績なので、朝は n=0 になる。
- * 長期の目安は reference（バックテスト実測）を併記する。
+ * 長期の目安は上の年間バックテスト欄で見る。
+ *
+ * 🔴 利用者は作者1人なので、注意書き（in-sample の断り・条件の意味）は画面に
+ * 置かない。スマホの縦を食うだけで、読み手は既に前提を知っている。
+ * 根拠は `docs/jra_heihachi_threshold_sweep_2026_09_06.md` に残してある。
  */
 
 /** 上部に出す年間バックテストの対象年。丸1年ぶん確定している直近の年。 */
@@ -111,7 +115,6 @@ export function HeihachiPicksTable({ initial, date }: Props) {
     };
   }, [picks]);
 
-  const ref = data.reference;
   const set = (patch: Partial<HeihachiThresholds>) => setThresholds({ ...thresholds, ...patch });
 
   return (
@@ -136,36 +139,12 @@ export function HeihachiPicksTable({ initial, date }: Props) {
           <Stat label="複勝回収率" value={pct(summary.placeRoi)} sub={`的中 ${summary.placeHits}/${summary.settled}`} />
           <Stat label="対象馬" value={`${summary.total}頭`} sub={`確定 ${summary.settled}頭`} />
         </div>
-        <p className="mt-2 text-[10px] leading-relaxed text-amber-900/80">
-          当日の確定分のみを母数にした実績です（未確定は除外）。
-          <strong>
-            このバッジは回収率ではなく「3着内率の分離」を狙うタグです。
-          </strong>{" "}
-          既定値での実測（3着内率）:{" "}
-          {ref.in_sample.window} は {(ref.in_sample.place_rate * 100).toFixed(1)}%
-          （全出走馬 {(ref.in_sample.base_place_rate * 100).toFixed(1)}% / n=
-          {ref.in_sample.n}）。
-          <strong className="text-red-700">
-            {" "}
-            ただし指数 v28 は 2026-06-28 までのデータで学習しているため、これは
-            in-sample の数字です。学習に使っていない {ref.out_of_sample.window} では{" "}
-            {(ref.out_of_sample.place_rate * 100).toFixed(1)}%（全出走馬{" "}
-            {(ref.out_of_sample.base_place_rate * 100).toFixed(1)}% / n=
-            {ref.out_of_sample.n}）で、
-            <u>バッジの有効性は out-of-sample では確認できていません</u>
-            （n={ref.out_of_sample.n} なので否定もできません）。
-          </strong>{" "}
-          回収率も窓によって1を割ります。上の年間欄で n と年を確かめてから使ってください。
-        </p>
       </div>
 
       {/* --- しきい値スライダー --- */}
       <details className="rounded-xl border border-gray-200 bg-white p-3" open>
         <summary className="cursor-pointer text-xs font-bold text-gray-700 select-none">
           ⚙️ しきい値を調整
-          <span className="ml-2 font-normal text-gray-500">
-            （レース詳細の 🎯平八 バッジにも反映されます）
-          </span>
         </summary>
         <div className="mt-3 space-y-3">
           <Slider
@@ -200,9 +179,6 @@ export function HeihachiPicksTable({ initial, date }: Props) {
                 className="h-4 w-4"
               />
               OP特別以上のみ
-              <span className="text-[10px] text-gray-500">
-                （外すと平場も対象。実測では平場は複勝回収94%で機能しません）
-              </span>
             </label>
             <button
               type="button"
@@ -218,11 +194,8 @@ export function HeihachiPicksTable({ initial, date }: Props) {
       {/* --- 一覧 --- */}
       {picks.length === 0 ? (
         <p className="text-sm text-gray-500 py-8 text-center">
-          この条件に該当する馬はいません。
-          <br />
-          <span className="text-[11px]">
-            （候補 {data.candidates.length} 頭 — しきい値を緩めると増えます。オッズ未取得のうちは0件です）
-          </span>
+          該当なし
+          <span className="ml-1 text-[11px]">（候補 {data.candidates.length} 頭）</span>
         </p>
       ) : (
         <div className="overflow-x-auto">
