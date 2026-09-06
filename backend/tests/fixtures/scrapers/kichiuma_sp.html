@@ -1,0 +1,27 @@
+<!doctype html>
+<!--
+  吉馬の SP 能力値ページの構造だけを写したフィクスチャ。
+  数値はダミー。列構成と見出しの表記（"SP 能力値" に全角スペース、
+  記号列と数値列が "SP信頼" / "SP信頼.1" に割れる）は実ページと同一。
+  先頭にある見出し無しの表は、SP 表の同定が位置ではなく列名で行われることを固定する囮。
+-->
+<html><body>
+<table><tr><td>広告</td></tr></table>
+<table><tr><td>0</td><td>1</td></tr></table>
+<table>
+  <tr><th>馬</th><th>評価</th><th>SP 能力値</th><th>競　走　馬　名</th><th>先行力</th>
+      <th>SP信頼</th><th>SP信頼</th><th>SP調整</th><th>SP調整</th>
+      <th>SP最大</th><th>SP最大</th><th>末脚力</th><th>末脚力</th></tr>
+  <tr><td>1</td><td>◎</td><td>78.0</td><td>ダミーウマイチ</td><td>77</td>
+      <td>◎</td><td>81</td><td>◎</td><td>81</td><td>◎</td><td>82</td><td>◎</td><td>88</td></tr>
+  <tr><td>2</td><td>▲</td><td>63.3</td><td>ダミーウマニ</td><td>62</td>
+      <td>▲</td><td>66</td><td>▲</td><td>66</td><td>▲</td><td>66</td><td>▲</td><td>90</td></tr>
+  <!-- 馬番はあるが SP が空（取消馬など）。主キーが揃うので残す -->
+  <tr><td>3</td><td>－</td><td>－</td><td>トリケシウマ</td><td>－</td>
+      <td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td></tr>
+  <!-- 馬番も SP も空（注記行など）。捨てる -->
+  <tr><td>－</td><td>－</td><td>－</td><td>合計</td><td>－</td>
+      <td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td><td>－</td></tr>
+</table>
+<table><tr><th>■レース短評</th></tr><tr><td>ダミー短評</td></tr></table>
+</body></html>

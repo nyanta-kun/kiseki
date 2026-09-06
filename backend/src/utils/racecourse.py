@@ -106,6 +106,15 @@ SEKITO_TO_JRA: dict[str, str] = {v: k for k, v in JRA_TO_SEKITO.items()}
 # sekito 4 文字コード → Racecourse（中央・地方すべて）
 BY_CODE: dict[str, Racecourse] = {rc.code: rc for rc in RACECOURSES}
 
+# 表示名 → Racecourse（中央・地方すべて）。
+# 外部サイトは競馬場を名前でしか出さないことがある（例: 穴ぐさの場タブ「東京 4R」）ため、
+# 名前からコードを引く経路が要る。sekito 側は `sekito.racecourse` を name で引いていた。
+BY_NAME: dict[str, Racecourse] = {rc.name: rc for rc in RACECOURSES}
+
+# netkeiba 場コード → Racecourse。地方は `chihou.races.course` がこの体系で入っている
+# （2026-09-06 実測: 30=門別 / 44=大井 …）。中央は JRA 2 桁課コードと同じ値。
+BY_NETKEIBA_ID: dict[str, Racecourse] = {rc.netkeiba_id: rc for rc in RACECOURSES}
+
 
 def is_jra(code: str) -> bool:
     """sekito の 4 文字コードが中央のものか。
