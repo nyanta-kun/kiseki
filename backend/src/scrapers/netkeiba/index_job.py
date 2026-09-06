@@ -30,15 +30,17 @@ from sqlalchemy.orm import Session
 from ...utils.racecourse import BY_CODE
 from ..fetch_status import FetchStatusManager
 from ..targets import TargetRace
-from . import ip_restriction, time_index
+from . import data_analysis, ip_restriction, time_index, training
 from . import race_id as rid
 from .decode import decode_page
 from .rate_limiter import RateLimiter
-from .store import upsert
+from .store import upsert, upsert_data_analysis
 
 logger = logging.getLogger(__name__)
 
 DATA_TYPE = "netkeiba_time_index"
+TRAINING_DATA_TYPE = "netkeiba_training"
+DATA_ANALYSIS_DATA_TYPE = "netkeiba_data_analysis"
 
 # 途中で IP 制限を再確認する間隔（レース数）。25 分かかるジョブなので、
 # 起動時の 1 回だけでは足りない。
@@ -57,6 +59,8 @@ class IndexResult:
     skipped: int = 0
     unavailable: int = 0
     errors: int = 0
+    training_success: int = 0
+    analysis_success: int = 0
     aborted_reason: str | None = None
     failed_races: list[str] = field(default_factory=list)
 
@@ -122,6 +126,8 @@ def scrape(
     environment_id: str = "local",
     dry_run: bool = False,
     force: bool = False,
+    with_training: bool = True,
+    with_data_analysis: bool = True,
     limiter: RateLimiter | None = None,
     http: requests.Session | None = None,
 ) -> IndexResult:
@@ -134,6 +140,8 @@ def scrape(
         environment_id: IP 制限を記録するときのキー接尾辞。
         dry_run: DB へ書かない。
         force: 取得済みでも取り直す。
+        with_training: 調教も取る（**中央のみ**。地方に調教ページは無い）。
+        with_data_analysis: データ分析も取る（sekito のレース詳細 UI が使う）。
         limiter: 差し替え用（省略時は時間帯別の既定）。
         http: 差し替え用のログイン済みセッション（省略時はここでログインする）。
 
@@ -240,6 +248,94 @@ def scrape(
             logger.info("%s: %d 頭", label, written)
         result.success += 1
 
-    logger.info("タイム指数 取得完了 - 成功 %d / スキップ %d / データ無し %d / エラー %d",
-                result.success, result.skipped, result.unavailable, result.errors)
+        # --- 調教（中央のみ）---
+        if with_training and target.is_jra:
+            if _fetch_training(session, http, limiter, status, target, race_id,
+                               label, dry_run=dry_run, force=force):
+                result.training_success += 1
+
+        # --- データ分析 ---
+        if with_data_analysis:
+            if _fetch_data_analysis(session, http, limiter, status, target, race_id,
+                                    label, dry_run=dry_run, force=force):
+                result.analysis_success += 1
+
+    logger.info(
+        "取得完了 - 指数 成功%d/スキップ%d/無し%d/エラー%d, 調教 %d, 分析 %d",
+        result.success, result.skipped, result.unavailable, result.errors,
+        result.training_success, result.analysis_success,
+    )
     return result
+
+
+def _fetch_training(session, http, limiter, status, target, race_id, label,
+                    *, dry_run: bool, force: bool) -> bool:
+    """調教を取る。**中央のみ**（地方に oikiri.html は無い）。
+
+    タイム指数と違い、取れなくてもレースの成否には影響しない。取りこぼしは
+    `not_available` として記録して次へ進む。
+    """
+    if not dry_run and not force and not status.should_fetch(
+        target.date, target.course_code, target.race_no, TRAINING_DATA_TYPE
+    ):
+        return False
+    try:
+        limiter.wait()
+        response = http.get(rid.training_url(race_id), timeout=30)
+        response.raise_for_status()
+        records = training.parse(decode_page(response))
+    except Exception as e:
+        logger.warning("%s の調教取得でエラー: %s", label, e)
+        return False
+
+    if not records:
+        if not dry_run:
+            status.mark_not_available(target.date, target.course_code, target.race_no,
+                                      TRAINING_DATA_TYPE, reason="調教評価なし")
+        return False
+
+    if dry_run:
+        logger.info("[dry-run] %s 調教: %d 頭 (先頭 %s)",
+                    label, len(records), records[0]["training"])
+        return True
+
+    for r in records:
+        r["is_training"] = True
+    upsert(session, "training", target.date, target.course_code, target.race_no, records)
+    status.mark_fetched(target.date, target.course_code, target.race_no, TRAINING_DATA_TYPE)
+    return True
+
+
+def _fetch_data_analysis(session, http, limiter, status, target, race_id, label,
+                         *, dry_run: bool, force: bool) -> bool:
+    """データ分析を取る。書き込み先は `sekito.netkeiba_data_analysis`。"""
+    if not dry_run and not force and not status.should_fetch(
+        target.date, target.course_code, target.race_no, DATA_ANALYSIS_DATA_TYPE
+    ):
+        return False
+    try:
+        limiter.wait()
+        response = http.get(
+            rid.data_analysis_url(race_id, is_jra=target.is_jra), timeout=30
+        )
+        response.raise_for_status()
+        parsed = data_analysis.parse(decode_page(response))
+    except Exception as e:
+        logger.warning("%s のデータ分析取得でエラー: %s", label, e)
+        return False
+
+    if parsed is None:
+        if not dry_run:
+            status.mark_not_available(target.date, target.course_code, target.race_no,
+                                      DATA_ANALYSIS_DATA_TYPE, reason="データ分析なし")
+        return False
+
+    if dry_run:
+        logger.info("[dry-run] %s 分析: 上位馬 %s, 項目 %d",
+                    label, parsed["top_horses"], len(parsed["analysis_data"]))
+        return True
+
+    upsert_data_analysis(session, target.date, target.course_code, target.race_no, parsed)
+    status.mark_fetched(target.date, target.course_code, target.race_no,
+                        DATA_ANALYSIS_DATA_TYPE)
+    return True

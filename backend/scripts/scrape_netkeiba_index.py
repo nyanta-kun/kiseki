@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""netkeiba のタイム指数を取得して `sekito.netkeiba` へ入れる（CLI）。
+"""netkeiba のタイム指数・調教・データ分析を取得する（CLI）。
 
 sekito の `bin/scrape/netkeiba-index`（scripts_schedules id=63・`30 8 * * *`）の
 移設先。中身は `src/scrapers/netkeiba/index_job.py`。
@@ -7,6 +7,15 @@ sekito の `bin/scrape/netkeiba-index`（scripts_schedules id=63・`30 8 * * *`�
 ⚠️ **この CLI はまだ cron に載せない。** sekito 側の id=63 が生きているあいだは
    手動検証だけに使う。二重に走らせても `should_fetch` で片方がスキップされるので
    データは壊れないが、netkeiba への負荷が倍になる。
+
+取得するもの（1 レースあたりのリクエスト数）:
+
+    タイム指数    speed.html      中央・地方とも
+    調教          oikiri.html     **中央のみ**（地方にページが無い）
+    データ分析    data_top.html   中央・地方とも。sekito のレース詳細 UI が使う
+
+    → 中央 3 / 地方 2 リクエスト。blood と horse_weight は 2026-09-06 に
+      取得対象から外した（JRA-VAN が上位互換）。
 
 🔴 **所要時間**: 2026-09-06 実測で 79 レース / 24.8 分（194 リクエスト・7.7 秒/件）。
    ほとんどがレートリミッタの待ちで、速くする唯一の方法は取得項目を減らすこと。
@@ -56,6 +65,10 @@ def main() -> int:
     parser.add_argument("--only", choices=("jra", "nar"), help="中央のみ / 地方のみ")
     parser.add_argument("--dry-run", action="store_true", help="DB へ書かない")
     parser.add_argument("--force", action="store_true", help="取得済みでも取り直す")
+    parser.add_argument("--no-training", action="store_true",
+                        help="調教を取らない（中央のみの項目）")
+    parser.add_argument("--no-data-analysis", action="store_true",
+                        help="データ分析を取らない（sekito のレース詳細 UI が使う）")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -88,10 +101,15 @@ def main() -> int:
             password=settings.netkeiba_password,
             environment_id=settings.scraper_environment_id,
             dry_run=args.dry_run, force=args.force,
+            with_training=not args.no_training,
+            with_data_analysis=not args.no_data_analysis,
         )
 
-    logging.info("=== タイム指数取得 終了 (成功 %d / スキップ %d / 無し %d / エラー %d) ===",
-                 result.success, result.skipped, result.unavailable, result.errors)
+    logging.info(
+        "=== 取得 終了 (指数 成功%d/スキップ%d/無し%d/エラー%d, 調教 %d, 分析 %d) ===",
+        result.success, result.skipped, result.unavailable, result.errors,
+        result.training_success, result.analysis_success,
+    )
     if result.failed_races:
         logging.warning("失敗したレース: %s", ", ".join(result.failed_races[:10]))
 

@@ -14,9 +14,19 @@ paddock.html は **UTF-8** なので必ず化ける。しかもその UPSERT は
 
 化けの全量（U+FFFD を含む行）:
 
-    馬名   22,707 行  2026-05-06 〜 2026-09-06   ← requests 移行以降
+    馬名の化け  22,707 行  2026-05-06 〜 2026-09-06   ← requests 移行以降
       中央  4,462 行
       地方 18,245 行
+    馬名が空       711 行  2026-06-20 〜 2026-09-05
+      中央    614 行（調教由来）
+      地方     97 行（血統由来）
+
+## 化けだけでなく「空」も直す
+
+調教と血統の取得は、**馬名を持たないまま行を作る**ことがある（それらのページに
+馬名が無い形で解析が通ったとき）。2026-09-06 実測で 711 行（調教由来 614 /
+血統由来 97）。化け文字を含まないので「化けの検出」では拾えないが、
+`sekito.netkeiba` に馬名の無い行があってよい理由は無いので同時に埋める。
 
 ## なぜ逆変換ではなく別ソースから直すのか
 
@@ -84,7 +94,8 @@ UPDATE sekito.netkeiba n
    AND e.horse_number = n.horse_no
    AND h.id = e.horse_id
    AND h.name IS NOT NULL
-   AND position(:bad in n.horse_name) > 0
+   AND h.name <> ''
+   AND (position(:bad in n.horse_name) > 0 OR coalesce(n.horse_name, '') = '')
    AND n.date >= :since
 """
 
@@ -105,15 +116,16 @@ UPDATE sekito.netkeiba n
    AND e.horse_number = n.horse_no
    AND h.id = e.horse_id
    AND h.name IS NOT NULL
-   AND position(:bad in n.horse_name) > 0
+   AND h.name <> ''
+   AND (position(:bad in n.horse_name) > 0 OR coalesce(n.horse_name, '') = '')
    AND n.date >= :since
 """
 
 _COUNT_SQL = """
-SELECT count(*) FILTER (WHERE left(course_code, 1) = 'J')  AS jra,
-       count(*) FILTER (WHERE left(course_code, 1) <> 'J') AS nar
+SELECT count(*) FILTER (WHERE position(:bad in horse_name) > 0)  AS broken,
+       count(*) FILTER (WHERE coalesce(horse_name, '') = '')     AS empty
   FROM sekito.netkeiba
- WHERE position(:bad in horse_name) > 0
+ WHERE (position(:bad in horse_name) > 0 OR coalesce(horse_name, '') = '')
    AND date >= :since
 """
 
@@ -134,7 +146,7 @@ def main() -> int:
 
     with SyncSessionLocal() as session:
         before = session.execute(text(_COUNT_SQL), params).fetchone()
-        logging.info("化けている行: 中央 %d / 地方 %d（%s 以降）",
+        logging.info("直す対象: 化け %d 行 / 空 %d 行（%s 以降）",
                      before[0], before[1], args.since)
 
         if not args.apply:
@@ -150,10 +162,10 @@ def main() -> int:
         remaining = after[0] + after[1]
         if remaining:
             # 出走取消などで出馬表に載っていない馬。再取得でしか直せない。
-            logging.warning("直せなかった行が残っています: 中央 %d / 地方 %d",
+            logging.warning("直せなかった行が残っています: 化け %d / 空 %d",
                             after[0], after[1])
             return 1
-        logging.info("残った化け行: 0")
+        logging.info("残り: 0 行")
     return 0
 
 
