@@ -1487,9 +1487,14 @@ export type TypeLabRankKey =
   // 🔴 看板枠（2026-08-31）。**6型ぶん定義する**——実際に売るのは keirin 側
   //    `SIGNBOARD_TYPES` の型だけ（既定は型F）だが、入稿設定の一覧・統計の
   //    絞り込みはダイヤルを回す前から並べておく必要がある。
+  // 🔴 `F_line` は 9車の型F（決勝以外）の三連複版（2026-09-06・PR#476 で
+  //    `F_hit` を置換）。🔴 `{型}_big` は高額枠の「特大狙い」（同・PR#477）で、
+  //    売るのは keirin 側 `HIGHPAY_TYPES`（既定 B/C/D）だけだが `_sign` と
+  //    同じ理由で6型ぶん定義する。
   "A_hit" | "A_trio" | "A_ana" |
-  "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit" |
-  "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign";
+  "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit" | "F_line" |
+  "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign" |
+  "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big";
 
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"

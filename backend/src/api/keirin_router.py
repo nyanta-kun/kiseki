@@ -1517,10 +1517,17 @@ TYPE_LAB_RANK_LABELS: dict[str, str] = {
     # 🔴 9車の型F（決勝以外）で売る（2026-08-30）。ここに無いと画面のラベルが
     #    `RANK_F_hit` のまま出て、入稿設定の一覧からも消える。
     "RANK_F_hit": "F_hit",
+    # 🔴 9車の型F（決勝以外）の三連複版（2026-09-06・PR#476）。`F_hit` を置換した。
+    #    **足し忘れていて実際に「非」バッジになった**（2026-09-06 の入稿5件）。
+    "RANK_F_line": "F_line",
     # 🔴 看板枠（2026-08-31）。**6型ぶんまとめて入れる**——実際に売るのは
     #    keirin 側 `type_lab.SIGNBOARD_TYPES` の型だけだが、ダイヤルを回したときに
     #    入稿設定の一覧から黙って消えないよう、最初から全部並べておく。
     **{f"RANK_{t}_sign": f"{t}_sign" for t in "ABCDEF"},
+    # 🔴 高額枠の「特大狙い」（2026-09-06・PR#477）。売るのは keirin 側
+    #    `type_lab.HIGHPAY_TYPES`（既定は B/C/D）だけだが、`_sign` と同じ理由で
+    #    6型ぶん先回りで置く。こちらも足し忘れて「非」になっていた。
+    **{f"RANK_{t}_big": f"{t}_big" for t in "ABCDEF"},
 }
 
 _LEGACY_RANK_LABELS: dict[str, str] = {

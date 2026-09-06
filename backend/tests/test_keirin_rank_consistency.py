@@ -385,6 +385,73 @@ def _signboard_labels(src: str) -> set[str]:
     return {f"{t}_sign" for t in re.findall(r'"([^"]+)"', m.group(1))}
 
 
+def _highpay_labels(src: str) -> set[str]:
+    """高額枠として**入稿しうる**プラン（`HIGHPAY_TYPES` × sign/big）。"""
+    import re
+
+    m = re.search(r"HIGHPAY_TYPES: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
+    assert m, "keirin/src/type_lab.py の HIGHPAY_TYPES を読めない"
+    types = re.findall(r'"([^"]+)"', m.group(1))
+    return {f"{t}_{kind}" for t in types for kind in ("sign", "big")}
+
+
+#: `SELLABLE_PLAN_KEYS` の式に出てよい定数名と、それを解決する関数
+#: （`_sellable_plan_keys` が使う）。**ここに無い名前が式に現れたら落とす。**
+_SELLABLE_TERMS = frozenset({
+    "SELL_PLANS", "SIGNBOARD_TYPES", "TYPE_F_SELL_DEFAULT", "TYPE_F_SELL_LINE",
+    "TYPE_F_SELL_BY_RACE_TYPE", "HIGHPAY_PLAN_KEYS", "HIGHPAY_TYPES",
+})
+
+
+def _sellable_plan_keys(src: str) -> set[str]:
+    """keirin 側 `SELLABLE_PLAN_KEYS`（＝入稿しうるプラン全体）を再現する。
+
+    🔴 **正本の式に項が増えたら落ちる**ようにしてある（2026-09-06 追加）。
+       それまでは項を1つずつ手で写していたため、`SELLABLE_PLAN_KEYS` に
+       `TYPE_F_SELL_LINE` と `HIGHPAY_PLAN_KEYS` が足された 2026-09-06 に
+       **この検査が黙って取りこぼし**、`F_line`（5件）と `C_big`（1件）の
+       入稿が `/keirin` で「非」バッジになった。
+       ——「増えたことに気づけない写し」は写しの中で一番危ない形なので、
+       写す範囲そのものを機械的に固定する。
+    """
+    import re
+
+    # ⚠️ 式の途中にも `)` が出る（`frozenset(SELL_PLANS)`）ので、閉じ括弧では
+    #    区切らず**空行まで**を式として読む。
+    m = re.search(r"SELLABLE_PLAN_KEYS: frozenset\[str\] = (.*?)\n\n",
+                  src, re.DOTALL)
+    assert m, "keirin/src/type_lab.py の SELLABLE_PLAN_KEYS を読めない"
+    expr = m.group(1)
+    names = {n for n in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", expr)}
+    unknown = names - _SELLABLE_TERMS
+    assert not unknown, (
+        "SELLABLE_PLAN_KEYS に、このテストが解決できない項が増えています: "
+        f"{sorted(unknown)}\n"
+        "    → backend の TYPE_LAB_RANK_LABELS とフロントの各一覧へ足したうえで、"
+        "このテストの _SELLABLE_TERMS / _sellable_plan_keys も更新すること。")
+
+    keys: set[str] = set()
+    if "SELL_PLANS" in names:
+        m2 = re.search(r"SELL_PLANS: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
+        assert m2, "SELL_PLANS を読めない"
+        keys |= set(re.findall(r'"([^"]+)"', m2.group(1)))
+    if "SIGNBOARD_TYPES" in names:
+        keys |= _signboard_labels(src)
+    if "HIGHPAY_PLAN_KEYS" in names or "HIGHPAY_TYPES" in names:
+        keys |= _highpay_labels(src)
+    for const in ("TYPE_F_SELL_DEFAULT", "TYPE_F_SELL_LINE"):
+        if const in names:
+            m2 = re.search(rf'{const} = "([^"]+)"', src)
+            assert m2, f"{const} を読めない"
+            keys.add(m2.group(1))
+    if "TYPE_F_SELL_BY_RACE_TYPE" in names:
+        m2 = re.search(r"TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
+        assert m2, "TYPE_F_SELL_BY_RACE_TYPE を読めない"
+        keys |= set(re.findall(r':\s*"([^"]+)"', m2.group(1)))
+    assert keys, "SELLABLE_PLAN_KEYS からプランを1つも拾えなかった"
+    return keys
+
+
 def _type_lab_labels() -> set[str]:
     from src.api.keirin_router import TYPE_LAB_RANK_LABELS
 
@@ -396,37 +463,24 @@ def test_type_lab_labels_match_keirin_sell_plans():
 
     ずれると「設定画面で ON にできない」「一覧が『非』になる」という形で出る。
 
-    🔴 比べる相手は `SELL_PLANS`（7車の固定集合）**ではなく**入稿しうるプラン全体。
-       9車の型F は決勝以外で `F_hit` を売るので（2026-08-30）、`SELL_PLANS` と
-       比べると新しい商品が「backend のみ」に見えて偽陽性になる。
+    🔴 比べる相手は `SELL_PLANS`（7車の固定集合）**ではなく**
+       `SELLABLE_PLAN_KEYS`（入稿しうるプラン全体）。9車の型F は決勝以外で
+       別プランを売るので（2026-08-30〜）、`SELL_PLANS` と比べると
+       新しい商品が「backend のみ」に見えて偽陽性になる。
     """
-    import re
-
     src = (KEIRIN_STRATEGY.parent / "type_lab.py").read_text(encoding="utf-8")
-    m = re.search(r"SELL_PLANS: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
-    assert m, "keirin/src/type_lab.py の SELL_PLANS を読めない"
-    canonical = set(re.findall(r'"([^"]+)"', m.group(1)))
+    canonical = _sellable_plan_keys(src)
 
-    # 型F が売るプラン（決勝＝表・それ以外＝既定）も入稿しうる。
-    # 🔴 **2026-08-31 に 9車専用ではなくなった**ので名前が `TYPE_F_SELL_*` に変わった
-    #    （旧名は別名として残っているが、値の定義はこちらにしかない）。
-    m = re.search(r"TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
-    assert m, "TYPE_F_SELL_BY_RACE_TYPE を読めない"
-    canonical |= set(re.findall(r':\s*"([^"]+)"', m.group(1)))
-    m = re.search(r'TYPE_F_SELL_DEFAULT = "([^"]+)"', src)
-    assert m, "TYPE_F_SELL_DEFAULT を読めない"
-    canonical.add(m.group(1))
-
-    # 🔴 **backend 側は看板枠 `{型}_sign` を6型ぶん先回りで持つ**（2026-08-31）。
-    #    実際に売るのは keirin 側 `SIGNBOARD_TYPES` の型だけだが、ダイヤルを
-    #    回した瞬間に設定画面から消えると「ON にできない」事故になるので、
-    #    最初から全部並べてある。**不足は許さない**ので検出力は落ちない。
+    # 🔴 **backend 側は `{型}_sign` / `{型}_big` を6型ぶん先回りで持つ**
+    #    （看板枠 2026-08-31・高額枠 2026-09-06）。実際に売るのは keirin 側
+    #    `SIGNBOARD_TYPES` / `HIGHPAY_TYPES` の型だけだが、ダイヤルを回した瞬間に
+    #    設定画面から消えると「ON にできない」事故になるので、最初から全部並べてある。
+    #    **不足は許さない**ので検出力は落ちない。
     labels = _type_lab_labels()
-    canonical |= _signboard_labels(src)
     assert canonical <= labels, (
         "TYPE_LAB_RANK_LABELS に keirin 側のプランが足りない\n"
         f"    keirin のみ: {sorted(canonical - labels)}")
-    assert all(k in canonical or k.endswith("_sign") for k in labels), (
+    assert all(k in canonical or k.endswith(("_sign", "_big")) for k in labels), (
         "TYPE_LAB_RANK_LABELS に素性の分からないプランがある\n"
         f"    backend のみ: {sorted(labels - canonical)}")
 
