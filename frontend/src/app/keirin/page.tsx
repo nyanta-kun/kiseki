@@ -268,29 +268,45 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   //    表示名の正本は backend `TYPE_LAB_RANK_LABELS`。
   // 色は型の性格で分ける: 堅い側(A/B)＝緑〜青緑 / 中(C/D)＝青〜紫 /
   // 荒れ側(E/F)＝橙〜赤。既存ランクと被らない色域を使う。
-  // ⚠️ ラベルは**記号1文字**（2026-08-29・ユーザー要望で「型A」→「A」）。
-  //    既存ランク（7S/7C…）と並ぶ列なので、接頭辞の「型」は列の中で情報を
-  //    持たない（型ラボかどうかは色と `/keirin/type-lab` への導線で分かる）。
-  "A_hit":      { bg: "#059669", text: "#fff", label: "A" },
-  "B_hit":      { bg: "#0d9488", text: "#fff", label: "B" },
-  "C_hit":      { bg: "#2563eb", text: "#fff", label: "C" },
-  "D_hit":      { bg: "#6366f1", text: "#fff", label: "D" },
-  "E_hit":      { bg: "#ea580c", text: "#fff", label: "E" },
-  "F_pay":      { bg: "#dc2626", text: "#fff", label: "F" },
-  // 型A の3分割（2026-08-31）。バッジは型で揃えて "A"。
-  "A_trio":     { bg: "#0ea5e9", text: "#fff", label: "A" },
-  "A_ana":      { bg: "#0ea5e9", text: "#fff", label: "A" },
-  // 9車の型F（決勝以外）で売る（2026-08-30）。型は同じなのでラベルも "F"。
-  "F_hit":      { bg: "#dc2626", text: "#fff", label: "F" },
+  //
+  // ⚠️ ラベルは **型の記号 + 狙いの1文字**（2026-09-06・ユーザー要望）。
+  //    2026-08-29〜09-05 は記号1文字（"A"/"F"）だったが、その後プランが
+  //    型ごとに 2〜5 個へ増え（A は hit/trio/ana/sign/big の5つ）、一覧の
+  //    バッジが同じ "A" ばかりで**どの商品かが読めなくなった**。
+  //    添え字はプラン名の後半の頭文字（hit=h / pay=p / trio=t / ana=a /
+  //    line=l / sign=s / big=b）。日本語の狙い名はサマリーの `RANK_AIM` にある。
+  //    🔴 `RANK_LABEL`（サマリーのバッジ）と**必ず同じ文字**にすること。
+  "A_hit":      { bg: "#059669", text: "#fff", label: "Ah" },
+  "B_hit":      { bg: "#0d9488", text: "#fff", label: "Bh" },
+  "C_hit":      { bg: "#2563eb", text: "#fff", label: "Ch" },
+  "D_hit":      { bg: "#6366f1", text: "#fff", label: "Dh" },
+  "E_hit":      { bg: "#ea580c", text: "#fff", label: "Eh" },
+  "F_pay":      { bg: "#dc2626", text: "#fff", label: "Fp" },
+  // 型A の3分割（2026-08-31）。色は型で揃え、添え字で狙いを分ける。
+  "A_trio":     { bg: "#0ea5e9", text: "#fff", label: "At" },
+  "A_ana":      { bg: "#0ea5e9", text: "#fff", label: "Aa" },
+  // 9車の型F（決勝以外）で売る（2026-08-30）。
+  "F_hit":      { bg: "#dc2626", text: "#fff", label: "Fh" },
+  // 9車の型F（決勝以外）の三連複版（2026-09-06・PR#476 で `F_hit` を置換）。
+  // 🔴 ここに無いと内部名 `RANK_F_line` が漏れて「非」バッジになる。実際に
+  //    2026-09-06 の入稿5件が「非」で出た。
+  "F_line":     { bg: "#b91c1c", text: "#fff", label: "Fl" },
   // 看板枠（2026-08-31）。**6型ぶん置く**（`SIGNBOARD_TYPES` を回しても
-  // バッジが消えないように）。バッジは型の文字のまま——買い方が違うだけで
-  // レースの型は同じものを指しているため。
-  "A_sign":    { bg: "#0ea5e9", text: "#fff", label: "A" },
-  "B_sign":    { bg: "#0d9488", text: "#fff", label: "B" },
-  "C_sign":    { bg: "#2563eb", text: "#fff", label: "C" },
-  "D_sign":    { bg: "#4f46e5", text: "#fff", label: "D" },
-  "E_sign":    { bg: "#ea580c", text: "#fff", label: "E" },
-  "F_sign":    { bg: "#dc2626", text: "#fff", label: "F" },
+  // バッジが消えないように）。色は型のまま・添え字で看板と分かる。
+  "A_sign":    { bg: "#0ea5e9", text: "#fff", label: "As" },
+  "B_sign":    { bg: "#0d9488", text: "#fff", label: "Bs" },
+  "C_sign":    { bg: "#2563eb", text: "#fff", label: "Cs" },
+  "D_sign":    { bg: "#4f46e5", text: "#fff", label: "Ds" },
+  "E_sign":    { bg: "#ea580c", text: "#fff", label: "Es" },
+  "F_sign":    { bg: "#dc2626", text: "#fff", label: "Fs" },
+  // 高額枠の「特大狙い」（2026-09-06・PR#477）。売るのは `HIGHPAY_TYPES`
+  // （既定 B/C/D）だけだが、`_sign` と同じ理由で6型ぶん置く。
+  "A_big":     { bg: "#0369a1", text: "#fff", label: "Ab" },
+  "B_big":     { bg: "#0f766e", text: "#fff", label: "Bb" },
+  "C_big":     { bg: "#1d4ed8", text: "#fff", label: "Cb" },
+  "D_big":     { bg: "#4338ca", text: "#fff", label: "Db" },
+  "E_big":     { bg: "#c2410c", text: "#fff", label: "Eb" },
+  "F_big":     { bg: "#991b1b", text: "#fff", label: "Fb" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
@@ -957,9 +973,11 @@ function meetingHeaderBg(t: KeirinPick["meeting_type"]): string {
 const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
   A_hit: "本線", A_pay: "一撃", A_trio: "本線(複)", A_ana: "波乱",
   B_hit: "本線", C_hit: "中配当", D_hit: "混戦(複)", E_hit: "高配当",
-  F_hit: "押さえ", F_pay: "一撃",
+  F_hit: "押さえ", F_pay: "一撃", F_line: "ライン(複)",
   A_sign: "看板", B_sign: "看板", C_sign: "看板",
   D_sign: "看板", E_sign: "看板", F_sign: "看板",
+  A_big: "特大", B_big: "特大", C_big: "特大",
+  D_big: "特大", E_big: "特大", F_big: "特大",
 };
 
 /** 型ラボの型（A〜F）バッジ。型が商品を決めるので、一覧でも先頭に出す。 */
@@ -1439,9 +1457,10 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
 //    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
 //    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
-const RANK_ORDER = ["A_hit", "A_trio", "A_ana", "A_sign",
-  "B_hit", "B_sign", "C_hit", "C_sign", "D_hit", "D_sign",
-  "E_hit", "E_sign", "F_pay", "F_hit", "F_sign",
+const RANK_ORDER = ["A_hit", "A_trio", "A_ana", "A_sign", "A_big",
+  "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
+  "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
+  "F_pay", "F_hit", "F_line", "F_sign", "F_big",
   "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
@@ -1454,13 +1473,15 @@ const RANK_LABEL: Record<string, string> = {
   "7T1": "7T1",
   "7T3": "7T3",
   "7C": "7C",
-  // 型ラボのプラン（2026-08-28〜）。バッジは**記号1文字**で出す
-  // （2026-08-29・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
-  "A_hit": "A", "B_hit": "B", "C_hit": "C",
-  "D_hit": "D", "E_hit": "E", "F_pay": "F", "F_hit": "F",
-  "A_trio": "A", "A_ana": "A",
-  // 看板枠（2026-08-31）。型は同じなので記号も同じ。
-  "A_sign": "A", "B_sign": "B", "C_sign": "C", "D_sign": "D", "E_sign": "E", "F_sign": "F",
+  // 型ラボのプラン（2026-08-28〜）。バッジは**型の記号＋狙いの1文字**で出す
+  // （2026-09-06・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
+  "A_hit": "Ah", "B_hit": "Bh", "C_hit": "Ch",
+  "D_hit": "Dh", "E_hit": "Eh", "F_pay": "Fp", "F_hit": "Fh",
+  "A_trio": "At", "A_ana": "Aa", "F_line": "Fl",
+  // 看板枠（2026-08-31）。
+  "A_sign": "As", "B_sign": "Bs", "C_sign": "Cs", "D_sign": "Ds", "E_sign": "Es", "F_sign": "Fs",
+  // 高額枠の「特大狙い」（2026-09-06）。
+  "A_big": "Ab", "B_big": "Bb", "C_big": "Cb", "D_big": "Db", "E_big": "Eb", "F_big": "Fb",
 };
 
 /** サマリーの「ランク別」で**型の中の狙い**を見分けるための短い添え字。
@@ -1469,12 +1490,12 @@ const RANK_LABEL: Record<string, string> = {
  *     こちらはサマリー専用——同じ型に 3〜4 プランが並ぶので、
  *     `A A A A` では**どれがどれか分からない**（2026-08-31 のユーザー指摘）。 */
 const RANK_AIM: Record<string, string> = {
-  A_hit: "鉄板", A_trio: "三連複", A_ana: "穴", A_pay: "一撃", A_sign: "看板",
-  B_hit: "本線", B_sign: "看板",
-  C_hit: "崩れ筋", C_sign: "看板",
-  D_hit: "混戦", D_sign: "看板",
-  E_hit: "高配当", E_sign: "看板",
-  F_hit: "総流し", F_pay: "一撃", F_sign: "看板",
+  A_hit: "鉄板", A_trio: "三連複", A_ana: "穴", A_pay: "一撃", A_sign: "看板", A_big: "特大",
+  B_hit: "本線", B_sign: "看板", B_big: "特大",
+  C_hit: "崩れ筋", C_sign: "看板", C_big: "特大",
+  D_hit: "混戦", D_sign: "看板", D_big: "特大",
+  E_hit: "高配当", E_sign: "看板", E_big: "特大",
+  F_hit: "総流し", F_pay: "一撃", F_line: "ライン", F_sign: "看板", F_big: "特大",
 };
 
 /** `A_hit@9` のような車数つきキーを `{ base, cars }` に割る。 */
@@ -1509,6 +1530,7 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "A_trio": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "A_ana": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "F_hit": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  "F_line": "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
   // 看板枠（2026-08-31）。型ごとの色をそのまま使う。
   "A_sign": "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400",
   "B_sign": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
@@ -1516,6 +1538,13 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "D_sign": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400",
   "E_sign": "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400",
   "F_sign": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  // 高額枠の「特大狙い」（2026-09-06）。型の色を濃いめにして看板枠と分ける。
+  "A_big": "bg-sky-200 text-sky-900 dark:bg-sky-800/60 dark:text-sky-200",
+  "B_big": "bg-teal-200 text-teal-900 dark:bg-teal-800/60 dark:text-teal-200",
+  "C_big": "bg-blue-200 text-blue-900 dark:bg-blue-800/60 dark:text-blue-200",
+  "D_big": "bg-indigo-200 text-indigo-900 dark:bg-indigo-800/60 dark:text-indigo-200",
+  "E_big": "bg-orange-200 text-orange-900 dark:bg-orange-800/60 dark:text-orange-200",
+  "F_big": "bg-red-200 text-red-900 dark:bg-red-800/60 dark:text-red-200",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */

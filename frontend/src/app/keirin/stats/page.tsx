@@ -205,8 +205,12 @@ type RankFilter =
   // 型ラボのプラン（2026-08-28 の全面移行〜）。`rank_key` はプラン名そのもの。
   | "A_hit" | "A_trio" | "A_ana"
   | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit"
+  // 9車の型F（決勝以外）の三連複版（2026-09-06・PR#476 で `F_hit` を置換）
+  | "F_line"
   // 看板枠（2026-08-31）
-  | "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign";
+  | "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign"
+  // 高額枠の「特大狙い」（2026-09-06・PR#477）
+  | "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big";
 
 // 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
@@ -225,6 +229,7 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "A_trio", label: "型A三連複" },
   { key: "A_ana", label: "型A穴" },
   { key: "F_hit", label: "型F(9車)" },
+  { key: "F_line", label: "型Fライン(9車)" },
   // 看板枠（2026-08-31）。売っているのは既定で型F だけだが、他の型も
   // 過去分を絞り込めるようにしておく（ダイヤルを回したときの比較に要る）。
   { key: "A_sign", label: "型A看板" },
@@ -233,6 +238,14 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "D_sign", label: "型D看板" },
   { key: "E_sign", label: "型E看板" },
   { key: "F_sign", label: "型F看板" },
+  // 高額枠の「特大狙い」（2026-09-06）。売っているのは既定で B/C/D だけだが、
+  // 看板枠と同じ理由で6型ぶん並べておく。
+  { key: "A_big", label: "型A特大" },
+  { key: "B_big", label: "型B特大" },
+  { key: "C_big", label: "型C特大" },
+  { key: "D_big", label: "型D特大" },
+  { key: "E_big", label: "型E特大" },
+  { key: "F_big", label: "型F特大" },
   // 7S（2026-08-14 に旧 7SS / 7A を統合）
   { key: "7S", label: "7S" },
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）
