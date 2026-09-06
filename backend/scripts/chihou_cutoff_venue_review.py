@@ -64,12 +64,22 @@ from scripts.chihou_rank_quality_review import (  # noqa: E402
     DATA_START,
     VALID_END,
     connect,
-    train_binary,
 )
 from scripts.inference_chihou_v14 import fetch_all_entrants  # noqa: E402
-from scripts.train_chihou_market_lgb import ALL_FEATURES, fetch, prep  # noqa: E402
+from scripts.train_chihou_market_lgb import (  # noqa: E402
+    PROD_FEATURES,
+    fetch,
+    prep,
+    train_binary_control,
+)
 from scripts.train_chihou_v11_lightgbm import fetch_hist  # noqa: E402
 from src.chihou_protocol import TEST_START, TRAIN_END, record_test_usage  # noqa: E402
+from src.indices.chihou_cutoff import (  # noqa: E402
+    CUT_GAP_HARD,
+    CUT_GAP_SOFT,
+    CUT_RANK_MIN,
+    cut_flags,
+)
 from src.indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION  # noqa: E402
 from src.indices.chihou_calculator import _scale_to_index_local  # noqa: E402
 
@@ -78,10 +88,6 @@ logger = logging.getLogger("chihou_cutoff_venue")
 
 MODELS_DIR = _root / "models"
 
-# frontend/src/components/ChihouRaceDetailClient.tsx と一致させること
-CUT_GAP_HARD = 30.0
-CUT_GAP_SOFT = 24.0
-CUT_RANK_MIN = 7
 
 DB_SQL = """
 SELECT r.date, r.course_name, ci.race_id, ci.horse_id,
@@ -98,14 +104,22 @@ WHERE ci.version = %(ver)s
 
 
 def mark_cut(df: pd.DataFrame, comp_col: str) -> pd.DataFrame:
-    """出走馬全体で gap と順位を確定させ、足切りフラグを立てる。"""
+    """出走馬全体で gap と順位を確定させ、足切りフラグを立てる。
+
+    判定の正本は `src.indices.chihou_cutoff.cut_flags`（2026-09-06 に移設）。
+    ここで同じ式を書き直すと本番と静かに食い違うので呼ぶだけにする。
+    """
     d = df.copy()
     g = d.groupby("race_id")[comp_col]
     d["gap"] = g.transform("max") - d[comp_col]
     d["rank"] = g.rank(ascending=False, method="first")
-    d["cut"] = (d["gap"] >= CUT_GAP_HARD) | (
-        (d["gap"] >= CUT_GAP_SOFT) & (d["rank"] >= CUT_RANK_MIN)
-    )
+    cut = np.zeros(len(d), dtype=bool)
+    pos = {ix: i for i, ix in enumerate(d.index)}
+    for _, grp in d.groupby("race_id", sort=False):
+        flags = cut_flags([float(x) for x in grp[comp_col].to_numpy(dtype=float)])
+        for ix, f in zip(grp.index, flags, strict=True):
+            cut[pos[ix]] = f
+    d["cut"] = cut
     return d
 
 
@@ -186,18 +200,35 @@ def build_honest(conn, start: str, end: str, seeds: list[int]) -> pd.DataFrame:
     df_tv = df_tv[df_tv["finish_position"].notna() & (df_tv["finish_position"] > 0)]
     tr = df_tv[df_tv["date"] <= TRAIN_END]
     va = df_tv[df_tv["date"] > TRAIN_END]
-    logger.info(f"train {len(tr):,} / valid {len(va):,}")
+    logger.info(f"train {len(tr):,} / 学習に使わない {len(va):,}（TRAIN_END 以降）")
 
     logger.info(f"対象期間の出走馬全体を取得 {start}〜{end}")
     te_raw = fetch_all_entrants(conn, start, end)
     te = prep(conn, te_raw, df_hist)
     te["finish_position"] = pd.to_numeric(te["finish_position"], errors="coerce")
 
-    logger.info("is_top3 学習・予測")
-    p = train_binary(tr, va, te,
-                     (tr["finish_position"] <= 3).astype(int).values,
-                     (va["finish_position"] <= 3).astype(int).values,
-                     list(ALL_FEATURES), seeds)
+    # 🔴 2026-09-06: 本番 v14 の学習レシピに揃えた。
+    #
+    # それまでは `train_binary`（ALL_FEATURES=44・early stopping・5seed 平均）で
+    # 学習していたが、本番 v14 は `train_binary_control`（PROD_FEATURES=39・
+    # 固定 NUM_ROUNDS・seed 0 の単一モデル）である。違いは2つとも
+    # **composite の散らばりを変える**:
+    #   - 市場特徴 5 本の有無 … gap 分布そのものが変わる（p50 20.6 → 14.9）
+    #   - round 数と seed 平均 … 平均するほど予測が中央に寄り gap が縮む
+    # gap は絶対量なので、この状態で閾値を較正すると**本番に無いモデルに
+    # 対して較正する**ことになる。`ci.version = 13` 直書きと同じ型の不一致。
+    #
+    # honest 性は「TRAIN_END までしか学習に使わない」ことで担保する。
+    # レシピは本番と同一にし、学習窓だけを変える。
+    logger.info("is_top3 学習・予測（本番 v14 レシピ / train ≤%s）", TRAIN_END)
+    if seeds != [0]:
+        logger.warning("本番は seed 0 の単一モデル。--seeds %s は本番と別物になる", seeds)
+    x_tr = tr[list(PROD_FEATURES)].fillna(0.0).values.astype(np.float64)
+    y_tr = (tr["finish_position"] <= 3).astype(int).values
+    model = train_binary_control(x_tr, y_tr, seed=seeds[0],
+                                 feature_names=list(PROD_FEATURES))
+    x_te = te[list(PROD_FEATURES)].fillna(0.0).values.astype(np.float64)
+    p = model.predict(x_te)
     te = te.copy()
     te["_p"] = p
     te["composite_index"] = te.groupby("race_id")["_p"].transform(

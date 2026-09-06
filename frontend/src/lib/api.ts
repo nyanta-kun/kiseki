@@ -744,6 +744,8 @@ export type ChihouHorseIndex = {
   is_place_bet: boolean;
   /** 注目馬（発走前6番人気以下 ∧ 指数5位内 ∧ 開いたレース ∧ 8頭以上・1R最大2頭）→ 馬名の右に★ */
   is_place_pick?: boolean;
+  /** 足切り候補（グレーアウト表示）。ルールの正本は backend の `indices/chihou_cutoff.py` */
+  is_cut_off?: boolean;
 };
 
 export type ChihouRaceRanks = {

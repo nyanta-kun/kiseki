@@ -61,17 +61,23 @@ from src.indices.chihou_calculator import CHIHOU_INDEX_SCALE  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("chihou_cutoff")
 
+from src.indices.chihou_cutoff import cut_flags  # noqa: E402
+
 MODELS_DIR = _root / "models"
 
 
 def apply_rule(comp: np.ndarray, gap_hard: float, gap_soft: float,
                rank_min: int) -> np.ndarray:
-    """現行フロントと同形のルール: gap>=hard または (gap>=soft かつ 順位>=rank_min)。"""
-    gap = comp.max() - comp
-    order = np.argsort(-comp, kind="stable")
-    rank = np.empty(len(comp), dtype=int)
-    rank[order] = np.arange(1, len(comp) + 1)
-    return (gap >= gap_hard) | ((gap >= gap_soft) & (rank >= rank_min))
+    """足切りルールを1レース分に当てる。判定の正本は `src.indices.chihou_cutoff`。
+
+    スイープ用に閾値を引数で受けるが、**ルールの形そのものは正本と共有する**
+    （2026-09-06 に自前実装を廃止。3か所に同じ式が書かれていた）。
+    """
+    return np.asarray(
+        cut_flags([float(x) for x in comp],
+                  gap_hard=gap_hard, gap_soft=gap_soft, rank_min=rank_min),
+        dtype=bool,
+    )
 
 
 def evaluate_rule(df: pd.DataFrame, comp_col: str, gap_hard: float,

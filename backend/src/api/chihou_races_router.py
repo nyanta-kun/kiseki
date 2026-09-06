@@ -34,6 +34,7 @@ from ..indices.buy_signal import (
     chihou_select_place_picks,
 )
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
+from ..indices.chihou_cutoff import cut_flags
 from ..indices.confidence import (
     CHIHOU_DISPERSION_FULL_SCORE,
     CHIHOU_GAP_FULL_SCORE,
@@ -148,6 +149,9 @@ class ChihouHorseIndexOut(BaseModel):
     is_sweet_spot: bool = False           # スイートスポット該当馬（赤字表示）
     is_place_bet: bool = False            # 複穴（断然人気R×単勝10倍以上×指数3位内×8頭以上）
     is_place_pick: bool = False           # 注目馬（6番人気以下×指数5位内×開いたR）→ ★表示
+    # 足切り候補（Web でグレーアウト表示する馬）。ルールの正本は
+    # `src/indices/chihou_cutoff.py`（2026-09-06 に frontend から移設）。
+    is_cut_off: bool = False
 
 
 class ChihouRaceRanks(BaseModel):
@@ -931,6 +935,13 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     _picked = set(resolve_place_picks(_logged, _recomputed))
     for h in horses:
         h.is_place_pick = h.horse_number in _picked
+
+    # --- 足切り（グレーアウト）判定 ---
+    # 2026-09-06: ルールの正本を frontend から `indices/chihou_cutoff.py` へ移した。
+    # 以前は frontend が composite_index から自前で gap と順位を作っており、
+    # 閾値が backend の検証スクリプト2本と三重管理になっていた。
+    for h, cut in zip(horses, cut_flags([h.composite_index for h in horses]), strict=True):
+        h.is_cut_off = cut
 
     # --- 信頼度・推奨度ランク算出 ---
     ranks: ChihouRaceRanks | None = None
