@@ -14,9 +14,11 @@
 #   場タブは CSS の切替でしかなく、初期 HTML に全場のパネルが同梱されている。
 #   レースごとに叩く必要はない（叩くとサラブレ側に無駄な負荷をかける）。
 #
-# ⚠️ ピックが 0 件だと exit 1 になる。穴ぐさは全レースにピックが付くわけでは
-#   ないので比率では見られないが、**開催日に 1 件も無いのは異常**（上流の停止か
-#   ログイン失効）。check_scrape_supply.py も同じ見方をしている。
+# ⚠️ **ピックが 0 件でも正常終了する。**
+#   このジョブは土日月に走るが、月曜はピックが出ない（2026-09-06 実測: 直近 60 日で
+#   穴ぐさが入っている日は土 9 日 / 日 9 日のみ、月曜は 0 日）。0 件を異常にすると
+#   毎週月曜に必ずエラーが出る。
+#   「中央開催日なのに 0 件」の判定は check_scrape_supply.py が持っている。
 #
 # VPS cron 設定（ホストは JST）:
 #   10 7 * * 6,0,1 /home/ysuzuki/GitHub/kiseki/scripts/scrape_anagusa.sh >> /home/ysuzuki/GitHub/kiseki/logs/scrape_anagusa.log 2>&1
@@ -25,7 +27,7 @@
 #   /home/ysuzuki/GitHub/kiseki/scripts/scrape_anagusa.sh
 #   /home/ysuzuki/GitHub/kiseki/scripts/scrape_anagusa.sh --date 2026-09-06 --dry-run
 #
-# 終了コード: 取得できたら 0、0 件なら 1。
+# 終了コード: 取得できたら 0。取得自体に失敗したら非 0。
 
 set -u
 
