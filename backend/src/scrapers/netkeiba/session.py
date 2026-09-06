@@ -156,16 +156,16 @@ def _do_login(session: requests.Session, user_id: str, password: str) -> None:
 
     # hidden を含む既存の input を全部拾ってから ID / パスワードを上書きする。
     # CSRF トークンなどをフォームから引き継ぐため。
-    payload = {
-        inp.get("name"): (inp.get("value") or "")
-        for inp in form.find_all("input")
-        if inp.get("name")
-    }
+    payload: dict[str, str] = {}
+    for inp in form.find_all("input"):
+        name = _attr(inp, "name")
+        if name:
+            payload[name] = _attr(inp, "value")
     payload["login_id"] = user_id
     payload["pswd"] = password
 
     r2 = session.post(
-        form.get("action") or LOGIN_URL,
+        _attr(form, "action") or LOGIN_URL,
         data=payload,
         headers={"Origin": "https://regist.netkeiba.com", "Referer": LOGIN_URL},
         allow_redirects=True,
@@ -174,6 +174,21 @@ def _do_login(session: requests.Session, user_id: str, password: str) -> None:
     r2.raise_for_status()
 
     _assert_logged_in(session)
+
+
+def _attr(tag, name: str) -> str:
+    """タグ属性を必ず str で返す。
+
+    bs4 の `Tag.get()` は多値属性のために `str | AttributeValueList | None` を
+    返す。`class` のような多値属性でなくても型はこれなので、そのまま
+    `requests.post(url=...)` へ渡すと型検査で落ちる。多値で来たら先頭を採る。
+    """
+    value = tag.get(name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value[0]) if value else ""
 
 
 def _assert_logged_in(session: requests.Session) -> None:
