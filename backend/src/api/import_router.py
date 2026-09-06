@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -869,6 +869,105 @@ async def trigger_calculate(
     background_tasks.add_task(_run_calculate, date)
     logger.info(f"[calculate] バックグラウンドタスク登録: date={date}")
     return {"ok": True, "date": date, "message": "Calculation started in background"}
+
+
+# -------------------------------------------------------------------
+# パドック到着後の指数引き直し
+#
+# 🔴 **なぜ必要か（2026-09-06 の実測で発覚）。**
+# パドック評価は各レースの発走20分前に netkeiba へ出る。一方この日の指数は
+# 前夜 22:31〜01:11 と当日 07:30 のバッチでしか算出されない。
+# つまり **パドックが指数に入る経路が構造的に存在しなかった**。
+#   9/6 実測: パドック到着 09:42〜10:33 / 指数の算出 00:03〜00:49
+#   → composite v6 の paddock_index は 491頭すべて 50.0（sd=0）のままだった。
+#
+# 上流のスクレイプを直しただけでは指数は復旧しない。パドックが「その馬の
+# 最後の算出より後に」届いたレースだけを選んで引き直す。
+#
+# 🔴 日付単位の /calculate を使い回さないこと。3分間隔で36レース全部を
+#    再算出することになり、開催中ずっと無駄な負荷がかかる。
+# -------------------------------------------------------------------
+
+# パドックが最後の算出より後に届いたレースを拾う。
+#   - fetch_status='fetched' だけを見る（not_available / race_cancelled は引き直す意味がない）
+#   - p_rank が実際に入っていることも確認する（fetched でも中身が空のことがある）
+#   - 未算出のレース（calculated_at が無い）も対象に含める
+_PADDOCK_STALE_RACES_SQL = text(
+    """
+        SELECT r.id, rm.code AS sekito_code, r.race_number
+          FROM keiba.races r
+          JOIN keiba.racecourse_map rm ON rm.jra_code = r.course
+          JOIN sekito.data_fetch_status dfs
+            ON dfs.date = to_date(r.date, 'YYYYMMDD')
+           AND dfs.course_code = rm.code
+           AND dfs.race_no = r.race_number
+           AND dfs.data_type = 'netkeiba_paddock'
+           AND dfs.fetch_status = 'fetched'
+         WHERE r.date = :date
+           AND EXISTS (
+                 SELECT 1 FROM sekito.netkeiba n
+                  WHERE n.date = dfs.date
+                    AND n.course_code = dfs.course_code
+                    AND n.race_no = dfs.race_no
+                    AND n.p_rank IS NOT NULL)
+           AND COALESCE(
+                 (SELECT MAX(ci.calculated_at)
+                    FROM keiba.calculated_indices ci
+                   WHERE ci.race_id = r.id),
+                 TIMESTAMP '1970-01-01') < dfs.fetched_at
+     ORDER BY r.race_number
+    """
+)
+
+
+async def _run_paddock_refresh(date: str) -> None:
+    """パドックが届いたのに指数へ反映されていないレースだけを引き直す。"""
+    async with AsyncSessionLocal() as db:
+        try:
+            rows = (await db.execute(_PADDOCK_STALE_RACES_SQL, {"date": date})).all()
+        except Exception as e:
+            logger.error(f"[paddock-refresh] 対象抽出に失敗: date={date} error={e}", exc_info=True)
+            return
+
+    if not rows:
+        logger.info(f"[paddock-refresh] 引き直し対象なし: date={date}")
+        return
+
+    logger.info(f"[paddock-refresh] 開始: date={date} races={len(rows)}")
+    done = 0
+    for race_id, sekito_code, race_number in rows:
+        # レースごとに独立セッションにする。1レースの失敗で残りを巻き込まない。
+        async with AsyncSessionLocal() as session:
+            try:
+                calc = CompositeIndexCalculator(session)
+                await calc.calculate_and_save(race_id)
+                await session.commit()
+                done += 1
+            except Exception as e:
+                await session.rollback()
+                logger.error(
+                    f"[paddock-refresh] 失敗: race_id={race_id} "
+                    f"({sekito_code} {race_number}R) error={e}",
+                    exc_info=True,
+                )
+    logger.info(f"[paddock-refresh] 完了: date={date} {done}/{len(rows)} 件を引き直し")
+
+
+@router.post("/calculate-paddock-refresh")
+async def trigger_paddock_refresh(
+    background_tasks: BackgroundTasks,
+    _: ApiKeyDep,
+    date: str = Query(description="対象日 YYYYMMDD"),
+) -> dict:
+    """パドックが届いたのに指数へ未反映のレースだけを引き直す。
+
+    開催中に数分間隔で叩かれる想定。対象が無ければ何もしないので、
+    空振りのコストは対象抽出クエリ1本だけで済む。
+    """
+    if len(date) != 8 or not date.isdigit():
+        raise HTTPException(status_code=400, detail="date must be YYYYMMDD")
+    background_tasks.add_task(_run_paddock_refresh, date)
+    return {"ok": True, "date": date, "message": "Paddock refresh started in background"}
 
 
 # -------------------------------------------------------------------
