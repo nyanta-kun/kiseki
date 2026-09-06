@@ -24,7 +24,9 @@
 #   /home/ysuzuki/GitHub/kiseki/scripts/scrape_kichiuma.sh --date 2026-09-06 --course JHSN --race 1 --dry-run
 #   /home/ysuzuki/GitHub/kiseki/scripts/scrape_kichiuma.sh --only nar
 #
-# 終了コード: 1 件でも成功したら 0。対象が有ったのに全滅したら 1。
+# 終了コード: 取得できたか既に取得済みなら 0。対象が有ったのに 1 件も片付かなければ 1。
+#   ⚠️ スキップは異常ではない。06:30 の回は 00:30 で取れたぶんが弾かれるので、
+#      取りこぼしが無い日ほどスキップだらけになる（それが正常）。
 
 set -u
 
