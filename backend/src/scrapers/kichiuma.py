@@ -30,6 +30,7 @@ import random
 import re
 import time
 from io import StringIO
+from typing import NamedTuple
 
 import pandas as pd
 import requests
@@ -41,6 +42,24 @@ from .fetch_status import FetchStatusManager, detect_race_cancellation
 from .targets import TargetRace
 
 logger = logging.getLogger(__name__)
+
+
+class ScrapeResult(NamedTuple):
+    """1 実行ぶんの結果。
+
+    🔴 **スキップを失敗と混ぜないこと。** 吉馬は 1 日 2 回走らせる運用で、
+    2 回目は前の回で取れたぶんが `should_fetch` に弾かれる。ここを
+    「成功 0 件」とだけ見ると、正常な日に毎回 異常終了することになる。
+    """
+
+    success: int
+    skipped: int
+    errors: int
+
+    @property
+    def handled(self) -> int:
+        """取りに行く必要が無かったものも含めて「片付いた」件数。"""
+        return self.success + self.skipped
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -234,7 +253,7 @@ def scrape(
     *,
     dry_run: bool = False,
     force: bool = False,
-) -> tuple[int, int]:
+) -> ScrapeResult:
     """対象レースぶんの吉馬データを取得する。
 
     Args:
@@ -244,15 +263,16 @@ def scrape(
         force: `should_fetch` を無視して取り直す。
 
     Returns:
-        (成功件数, エラー件数)。
+        成功 / スキップ / エラーの件数。**スキップは異常ではない** —
+        1 日 2 回走らせる運用で、2 回目がほぼ全件スキップになるのは正常。
     """
     if not targets:
         logger.info("対象レースがありません")
-        return 0, 0
+        return ScrapeResult(0, 0, 0)
 
     status = FetchStatusManager(session)
     http = _make_http_session()
-    success = errors = 0
+    success = errors = skipped = 0
 
     for target in targets:
         rc = BY_CODE[target.course_code]
@@ -262,9 +282,11 @@ def scrape(
             current = status.get_status(target.date, target.course_code, target.race_no, DATA_TYPE)
             if current and current[0] == "race_cancelled":
                 logger.info("レース中止済みのためスキップ: %s", label)
+                skipped += 1
                 continue
             if not status.should_fetch(target.date, target.course_code, target.race_no, DATA_TYPE):
                 logger.debug("%s 吉馬: 取得済み", label)
+                skipped += 1
                 continue
 
         url = build_url(target, rc.kichiuma_id)
@@ -325,5 +347,5 @@ def scrape(
         # サーバ負荷を抑える（移設前と同じ 0.5〜2.0 秒のジッタ）
         time.sleep(random.uniform(0.5, 2.0))
 
-    logger.info("吉馬 取得完了 - 成功: %d, エラー: %d", success, errors)
-    return success, errors
+    logger.info("吉馬 取得完了 - 成功: %d, スキップ: %d, エラー: %d", success, skipped, errors)
+    return ScrapeResult(success, skipped, errors)

@@ -50,6 +50,24 @@ ALL_DATA_TYPES: tuple[str, ...] = (
 _NOT_AVAILABLE_RETRY_HOURS = {"netkeiba_time_index": 1}
 _NOT_AVAILABLE_RETRY_HOURS_DEFAULT = 6
 
+# 🔴 経過時間は **DB 側で** 計算する。Python の `datetime.now()` と比べてはいけない。
+#
+#   2026-09-06 実測: DB は Asia/Tokyo（`updated_at` は timestamp without time zone に
+#   JST の値が入る）。移設元の sekito コンテナは JST なので naive 比較で合っていたが、
+#   移設先の kiseki backend コンテナは **UTC**。そのまま持ってくると経過時間が
+#   9 時間ぶん過小に出て、6 時間の再試行が実質 15 時間後、1 時間の再試行が
+#   実質 10 時間後になる。**取りに行かなすぎる方向に、例外を出さずに壊れる。**
+#   NOW() 同士で引けばコンテナの TZ に依存しない。
+_SHOULD_FETCH_SQL = text(
+    """
+    SELECT fetch_status,
+           retry_count,
+           EXTRACT(EPOCH FROM (NOW() - updated_at)) / 3600.0 AS elapsed_hours
+    FROM sekito.data_fetch_status
+    WHERE date = :d AND course_code = :c AND race_no = :n AND data_type = :t
+    """
+)
+
 
 def _norm_date(value: str | date_type | datetime) -> str:
     """日付を 'YYYY-MM-DD' に正規化する（'YYYYMMDD' も受ける）。"""
@@ -84,31 +102,27 @@ class FetchStatusManager:
         if force:
             return True
 
-        row = self.session.execute(
-            text(
-                """
-                SELECT fetch_status, retry_count, updated_at
-                FROM sekito.data_fetch_status
-                WHERE date = :d AND course_code = :c AND race_no = :n AND data_type = :t
-                """
-            ),
-            {"d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type},
-        ).fetchone()
+        row = self.session.execute(_SHOULD_FETCH_SQL, {
+            "d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type,
+        }).fetchone()
 
         if row is None:
             return True
 
-        status, retry_count, updated_at = row
+        status, retry_count, elapsed_hours = row
+        # updated_at が NULL のときは SQL 側も NULL を返す。移設前は
+        # `updated_at and ...` で「経過済み」として扱っていたのでそれに合わせる。
+        elapsed = float("inf") if elapsed_hours is None else float(elapsed_hours)
 
         if status in ("fetched", "race_cancelled"):
             return False
 
         if status == "not_available":
             hours = _NOT_AVAILABLE_RETRY_HOURS.get(data_type, _NOT_AVAILABLE_RETRY_HOURS_DEFAULT)
-            return self._elapsed_hours(updated_at) >= hours
+            return elapsed >= hours
 
         if status == "not_yet_published":
-            return self._elapsed_hours(updated_at) >= 1
+            return elapsed >= 1
 
         if status == "fetch_failed":
             if (retry_count or 0) >= max_retries:
@@ -117,22 +131,10 @@ class FetchStatusManager:
                     _norm_date(date), course_code, race_no, data_type, retry_count,
                 )
                 return False
-            return self._elapsed_hours(updated_at) >= 1
+            return elapsed >= 1
 
         # pending / 未知の状態は取りに行く
         return True
-
-    @staticmethod
-    def _elapsed_hours(updated_at: datetime | None) -> float:
-        """`updated_at` からの経過時間。移設前と同じく naive な `now()` 比較。
-
-        `data_fetch_status.updated_at` は timestamp without time zone で、
-        DB の `NOW()`（= コンテナと同じ JST）が入る。tz を付けると比較で
-        例外になるので、あえて naive のまま扱う。
-        """
-        if updated_at is None:
-            return float("inf")
-        return (datetime.now() - updated_at).total_seconds() / 3600.0
 
     def get_status(
         self, date: str | date_type, course_code: str, race_no: int, data_type: str

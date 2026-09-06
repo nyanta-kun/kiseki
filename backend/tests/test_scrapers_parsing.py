@@ -167,3 +167,26 @@ def test_kichiuma_safe_float(raw, expected):
 )
 def test_kichiuma_safe_int(raw, expected):
     assert safe_int(raw) == expected
+
+
+# --------------------------------------------------------------------------
+# 実行結果の集計
+# --------------------------------------------------------------------------
+
+def test_スキップは失敗ではない():
+    """🔴 吉馬は 1 日 2 回走らせる（00:30 と 06:30）。
+
+    2 回目は前の回で取れたぶんが `should_fetch` に弾かれるので、**取りこぼしが
+    無い日ほどスキップだらけになる**。ここを「成功 0 件なら異常」と数えると、
+    正常な日に毎晩 cron がエラーを吐き続けることになる。
+    """
+    from src.scrapers.kichiuma import ScrapeResult
+
+    全部スキップ = ScrapeResult(success=0, skipped=79, errors=0)
+    assert 全部スキップ.handled == 79
+
+    全滅 = ScrapeResult(success=0, skipped=0, errors=79)
+    assert 全滅.handled == 0
+
+    一部成功 = ScrapeResult(success=3, skipped=76, errors=0)
+    assert 一部成功.handled == 79

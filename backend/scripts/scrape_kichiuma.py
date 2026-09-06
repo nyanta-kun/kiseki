@@ -23,7 +23,9 @@ id=92 `30 6 * * *` の 2 本）の移設先。中身は `src/scrapers/kichiuma.p
     ... scripts/scrape_kichiuma.py --only jra
     ... scripts/scrape_kichiuma.py --only nar
 
-終了コード: 1 件でも成功したら 0。対象が有ったのに全滅したら 1。
+終了コード: 取得できたか既に取得済みなら 0。対象が有ったのに 1 件も片付かなければ 1。
+    ⚠️ **スキップは異常ではない**。06:30 の回は 00:30 で取れたぶんが
+    `should_fetch` に弾かれるので、正常な日ほどスキップだらけになる。
 """
 
 from __future__ import annotations
@@ -81,14 +83,20 @@ def main() -> int:
             race_nos=races,
         )
         logging.info("対象レース: %d 件", len(targets))
-        success, errors = kichiuma.scrape(
+        result = kichiuma.scrape(
             session, targets, dry_run=args.dry_run, force=args.force
         )
-    logging.info("=== 吉馬取得処理 終了 (成功 %d / エラー %d) ===", success, errors)
+    logging.info(
+        "=== 吉馬取得処理 終了 (成功 %d / スキップ %d / エラー %d) ===",
+        result.success, result.skipped, result.errors,
+    )
 
     if not targets:
         return 0
-    return 0 if success else 1
+    # 🔴 スキップは異常ではない。1 日 2 回走らせる運用なので、2 回目は
+    # ほぼ全件が `should_fetch` に弾かれる（それが正常）。ここを
+    # 「成功 0 件なら失敗」にすると、取りこぼしが無い日ほど毎回 異常終了する。
+    return 0 if result.handled else 1
 
 
 if __name__ == "__main__":
