@@ -127,7 +127,7 @@ def parse(html: str, target_date: str | date_type) -> list[AnagusaRecord]:
         course_name_default = sw.get_text(strip=True)
         for horse_el in panel.select(".anagusa-horse"):
             try:
-                rank_set = set(horse_el.get("class", []) or []) & {"a", "b", "c"}
+                rank_set = set(horse_el.get("class") or []) & {"a", "b", "c"}
                 rank = rank_set.pop().upper() if len(rank_set) == 1 else "-"
 
                 place_el = horse_el.select_one(".place")
