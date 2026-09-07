@@ -110,7 +110,8 @@ def test_埋め戻しは取得済みフラグを立てる():
     from src.scrapers.netkeiba.backfill import _IS_FLAG
 
     assert _IS_FLAG == {
-        "blood": "is_blood", "training": "is_training", "paddock": "is_paddock",
+        "blood": "is_blood", "training": "is_training",
+        "paddock": "is_paddock", "time_index": "is_time_index",
     }
     for target, flag in _IS_FLAG.items():
         assert flag in TARGET_COLUMNS[target], f"{target} の列に {flag} が無い"

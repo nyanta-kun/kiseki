@@ -60,6 +60,12 @@ def test_血統表が無いページは空を返す():
     assert parse("<html><body></body></html>") == []
 
 
-def test_埋め戻しの対象は3種類():
-    """馬名と評価は JV-Link / 逆変換で直したので、再取得が要るのはこの 3 つだけ。"""
+def test_化けを直す対象は3種類():
+    """馬名と評価は JV-Link / 逆変換で直したので、再取得が要るのはこの 3 つだけ。
+
+    ⚠️ `time_index` は `TARGETS` に入らない。あちらは**化けではなく欠損**を
+    埋めるので、行に対する条件では対象を選べない
+    （`missing_time_index_races()` を使う）。
+    """
     assert set(TARGETS) == {"blood", "training", "paddock"}
+    assert "time_index" not in TARGETS
