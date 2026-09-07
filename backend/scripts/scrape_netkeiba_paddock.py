@@ -49,6 +49,7 @@ from sqlalchemy import text  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
+from src.utils.cron_run import record  # noqa: E402
 from src.scrapers.netkeiba import paddock_job  # noqa: E402
 from src.scrapers.targets import TargetRace  # noqa: E402
 
@@ -87,7 +88,7 @@ def main() -> int:
         logging.error("NETKEIBA_USER_ID / NETKEIBA_PASSWORD が設定されていません")
         return 2
 
-    with SyncSessionLocal() as session:
+    with record("scrape_netkeiba_paddock") as run, SyncSessionLocal() as session:
         if args.force:
             target_date = (
                 datetime.strptime(args.date, "%Y-%m-%d").date()
@@ -111,6 +112,7 @@ def main() -> int:
             return 0
 
         if not races:
+            run.summary = "対象0件"
             return 0
 
         result = paddock_job.scrape(
@@ -120,6 +122,8 @@ def main() -> int:
             environment_id=settings.scraper_environment_id,
             dry_run=args.dry_run,
         )
+        run.summary = (f"対象{result.targets} 成功{result.success}"
+                       f" 未公開{result.unavailable} エラー{result.errors}")
 
     logging.info("パドック取得 終了 (対象 %d / 成功 %d / 未公開 %d / エラー %d)",
                  result.targets, result.success, result.unavailable, result.errors)

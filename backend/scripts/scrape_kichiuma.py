@@ -42,6 +42,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from src.db.session import SyncSessionLocal  # noqa: E402
+from src.utils.cron_run import record  # noqa: E402
 from src.scrapers import kichiuma  # noqa: E402
 from src.scrapers.targets import target_races  # noqa: E402
 
@@ -73,7 +74,7 @@ def main() -> int:
     races = [int(r) for r in args.race.split(",") if r.strip()] if args.race else None
 
     logging.info("=== 吉馬取得処理 開始 (date=%s) ===", target)
-    with SyncSessionLocal() as session:
+    with record("scrape_kichiuma") as run, SyncSessionLocal() as session:
         targets = target_races(
             session,
             target,
@@ -86,6 +87,8 @@ def main() -> int:
         result = kichiuma.scrape(
             session, targets, dry_run=args.dry_run, force=args.force
         )
+        run.summary = (f"対象{len(targets)} 成功{result.success}"
+                       f" スキップ{result.skipped} エラー{result.errors}")
     logging.info(
         "=== 吉馬取得処理 終了 (成功 %d / スキップ %d / エラー %d) ===",
         result.success, result.skipped, result.errors,

@@ -54,8 +54,13 @@
 チェックと閾値の根拠:
     1. 当日 JRA の発走時刻 — `start_time` が 00:00 または NULL のレースが 1 件でも
        あれば WARN。**その日のパドックが空振りすることを、始まる前に知らせる**のが狙い。
-    2. スクレイプジョブの失敗 — 当日の `script_requests.status='failed'` が 1 件でも
-       あれば WARN。今回の netkeiba-index はこれだけで検知できた。
+    2. cron ジョブの死活 — 当日の `keiba.cron_runs` を見て、(a) 期待したジョブが
+       1 回も起動していない (b) exit_code が 0 以外 (c) 終了記録が無い（途中で死んだ）
+       のいずれかで WARN。**(c) が netkeiba-index の 10 分タイムアウト kill を
+       捕まえていたもの。**
+       🔴 2026-09-08 に `sekito.script_requests` から作り直した。統合 Phase 2 で
+       スクレイプジョブを kiseki の host cron へ移した結果、旧実装は対象 0 件に
+       なり**何が失敗しても OK を返す**状態だった。
     3. netkeiba のレース網羅率 — 当日の開催レース数に対し、`sekito.netkeiba` に
        1 行でもあるレースの割合。**中央・地方を必ず分けて見る**（今回の障害は
        「中央 0.28 / 地方 0.00」という、合算では薄まって見えない形で出た）。
@@ -180,24 +185,80 @@ def check_next_day_post_time(s, target: date, rep: Report) -> None:
         rep.ok(f"当日({nxt}) の中央 {total}R すべてに発走時刻が入っている")
 
 
+# ② が「その日に走っているはず」とみなすジョブ。
+#
+# 🔴 **曜日を持つのは、走らなかったことを検知するため。** 「失敗が無い」だけを
+#    見ると、ジョブが一度も起動しなかったとき（cron が壊れた・コンテナが落ちて
+#    いた）に必ず OK を返してしまう。実際 2026-09-07 の切替では、旧②が
+#    `sekito.script_requests` を見続けて**何が失敗しても OK を返す**状態になった。
+#
+# 曜日は Python の weekday()（月=0 … 日=6）。None は毎日。
+_EXPECTED_JOBS: tuple[tuple[str, frozenset[int] | None, str], ...] = (
+    ("scrape_kichiuma", None, "吉馬（00:30 と 06:30 の 2 回）"),
+    ("scrape_netkeiba_index", None, "netkeiba タイム指数・調教・分析（08:30）"),
+    # 穴ぐさとパドックは土日月のみ。
+    # ⚠️ 穴ぐさは月曜にピックが出ないが**ジョブ自体は走る**ので、ここには含める。
+    ("scrape_anagusa", frozenset({5, 6, 0}), "穴ぐさ（土日月 07:10）"),
+)
+
+
 def check_job_failures(s, target: date, rep: Report) -> None:
-    """② 当日のスクレイプジョブが失敗していないか。"""
+    """② 当日の kiseki cron ジョブが「走ったか」「どう終わったか」。
+
+    🔴 2026-09-08 に作り直した。それまでは `sekito.script_requests` を見ていたが、
+    統合 Phase 2 でスクレイプジョブをすべて kiseki の host cron へ移した結果
+    **対象が 0 件になり、何が失敗しても OK を返す状態**になっていた
+    （切替直後の実測: 有効なスクレイプ系 sekito ジョブ 0 件）。
+
+    見るのは 3 つ。どれも「success を返しながら壊れる」型を捕まえるためにある。
+
+      1. 期待したジョブがその日に **1 回も起動していない**
+      2. 起動したが **exit_code が 0 以外**
+      3. 起動したが **終了記録が無い**（＝途中で死んだ）
+         ← `netkeiba-index` が毎日 10 分でタイムアウト kill されていたのがこれ
+    """
     rows = s.execute(
         text(
-            "select ss.script_name, count(*)"
-            "  from sekito.script_requests sr"
-            "  left join sekito.scripts_schedules ss on ss.id = sr.schedule_id"
-            " where cast(sr.created_at as date) = :d and sr.status = 'failed'"
-            " group by 1 order by 2 desc"
+            "select job_name,"
+            "       count(*) as runs,"
+            "       count(*) filter (where exit_code is not null and exit_code <> 0) as failed,"
+            "       count(*) filter (where finished_at is null"
+            "                          and started_at < now() - interval '2 hours') as stuck,"
+            "       max(summary) filter (where exit_code = 0) as last_ok_summary"
+            "  from keiba.cron_runs"
+            " where cast(started_at as date) = :d"
+            " group by 1"
         ),
         {"d": target},
     ).all()
+    by_job = {r[0]: r for r in rows}
 
-    if not rows:
-        rep.ok("当日のスクレイプジョブに failed なし")
-        return
-    for name, n in rows:
-        rep.warn(f"ジョブ失敗: {name} が {n} 回 failed（タイムアウト kill もここに出る）")
+    for job, weekdays, label in _EXPECTED_JOBS:
+        if weekdays is not None and target.weekday() not in weekdays:
+            continue
+        row = by_job.get(job)
+        if row is None:
+            rep.warn(f"ジョブ未実行: {label} が当日 1 回も起動していない")
+            continue
+        _, runs, failed, stuck, summary = row
+        if failed:
+            rep.warn(f"ジョブ失敗: {job} が {failed}/{runs} 回 異常終了")
+        elif stuck:
+            rep.warn(
+                f"ジョブが終了記録なし: {job} が {stuck} 回（2時間以上前に開始して"
+                f"未完了）。タイムアウト kill やコンテナ再起動で途中死した可能性"
+            )
+        else:
+            rep.ok(f"{label}: {runs} 回すべて正常終了" + (f" — {summary}" if summary else ""))
+
+    # 期待リストに無いジョブの異常も拾う（埋め戻しなど一時的なものを含む）
+    for job, runs, failed, stuck, _ in rows:
+        if any(job == name for name, _, _ in _EXPECTED_JOBS):
+            continue
+        if failed:
+            rep.warn(f"ジョブ失敗: {job} が {failed}/{runs} 回 異常終了")
+        elif stuck:
+            rep.warn(f"ジョブが終了記録なし: {job} が {stuck} 回")
 
 
 def _coverage(

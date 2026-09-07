@@ -51,6 +51,7 @@ if str(_root) not in sys.path:
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
+from src.utils.cron_run import record  # noqa: E402
 from src.scrapers.netkeiba import index_job  # noqa: E402
 from src.scrapers.targets import target_races  # noqa: E402
 
@@ -87,7 +88,7 @@ def main() -> int:
     races = [int(r) for r in args.race.split(",") if r.strip()] if args.race else None
 
     logging.info("=== タイム指数取得 開始 (date=%s) ===", target_date)
-    with SyncSessionLocal() as session:
+    with record("scrape_netkeiba_index") as run, SyncSessionLocal() as session:
         targets = target_races(
             session, target_date,
             include_jra=args.only != "nar",
@@ -103,6 +104,11 @@ def main() -> int:
             dry_run=args.dry_run, force=args.force,
             with_training=not args.no_training,
             with_data_analysis=not args.no_data_analysis,
+        )
+        run.summary = (
+            f"対象{len(targets)} 指数成功{result.success}/スキップ{result.skipped}"
+            f"/無し{result.unavailable}/エラー{result.errors} "
+            f"調教{result.training_success} 分析{result.analysis_success}"
         )
 
     logging.info(
