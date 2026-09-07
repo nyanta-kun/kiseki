@@ -63,6 +63,7 @@ from sqlalchemy import text  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
+from src.utils.cron_run import record  # noqa: E402
 from src.scrapers.netkeiba import backfill  # noqa: E402
 from src.scrapers.netkeiba.store import REPLACEMENT_CHAR  # noqa: E402
 
@@ -106,7 +107,7 @@ def main() -> int:
     targets = list(ORDER) if args.target == "all" else [args.target]
     is_time_index = args.target == TIME_INDEX
 
-    with SyncSessionLocal() as session:
+    with record(f"backfill_netkeiba:{args.target}") as run, SyncSessionLocal() as session:
         if is_time_index and args.count:
             pending = backfill.missing_time_index_races(session)
             days = len({t.date for t, _ in pending})
@@ -142,6 +143,8 @@ def main() -> int:
                 logging.warning("失敗: %s", ", ".join(result.failed_races[:5]))
             remaining = backfill.missing_time_index_races(session)
             logging.info("=== 残り %d レース ===", len(remaining))
+            run.summary = (f"対象{len(pending)} 成功{result.success} 空{result.empty}"
+                           f" エラー{result.errors} 残り{len(remaining)}")
             return 2 if result.aborted_reason and result.aborted_reason != "budget" else 0
 
         # 予算は対象間で分け合う。1 つ目が食い尽くさないようにする。
@@ -171,9 +174,12 @@ def main() -> int:
                 break
 
         logging.info("=== 残りの化け ===")
+        left = []
         for t in targets:
             rows, races = _count(session, t)
             logging.info("%-9s 化け %5d 行 / %4d レース", t, rows, races)
+            left.append(f"{t}={races}R")
+        run.summary = "残り " + " ".join(left)
 
     return 2 if aborted else 0
 

@@ -39,6 +39,7 @@ if str(_root) not in sys.path:
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
+from src.utils.cron_run import record  # noqa: E402
 from src.scrapers import anagusa  # noqa: E402
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -67,7 +68,7 @@ def main() -> int:
         return 2
 
     logging.info("=== 穴ぐさ取得処理 開始 (date=%s) ===", target)
-    with SyncSessionLocal() as session:
+    with record("scrape_anagusa") as run, SyncSessionLocal() as session:
         records = anagusa.scrape(
             session,
             target,
@@ -75,6 +76,7 @@ def main() -> int:
             settings.sarabure_pass,
             dry_run=args.dry_run,
         )
+        run.summary = f"ピック{len(records)}件"
     logging.info("=== 穴ぐさ取得処理 終了 (%d 件) ===", len(records))
 
     # 🔴 0 件を異常扱いにしない。
