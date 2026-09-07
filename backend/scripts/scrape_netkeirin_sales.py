@@ -314,6 +314,9 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
     `sale_date` の列は **`YYYYMMDD` の文字列**（`YYYY-MM-DD` ではない）。
     月合計はその接頭辞6桁で絞る。
 
+    2026-09-07 から「自信あり」1レース（`confident`）と的中レースの売上
+    （`race_stats`）も付ける。どちらも**付随情報**で、読めなくても本体は返す。
+
     returns 当日行が無ければ None
     """
     ymd = sale_date.strftime("%Y%m%d")
@@ -332,6 +335,15 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
                 "FROM keirin.netkeirin_sales_daily WHERE sale_date LIKE %s",
                 (ymd[:6] + "%",))
             n_days, month_points, month_paid = cur.fetchone()
+            # 🔴 **付加情報の失敗で本体を落とさない。** 的中・自信ありは
+            #    「あると嬉しい」情報で、売上の報告そのものではない。
+            #    ここで例外を上げると通知が丸ごと消える。
+            try:
+                confident = _fetch_confident(cur, ymd)
+                race_stats = _fetch_race_stats(cur, ymd)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("的中・自信ありの読み取りに失敗: %s", e)
+                confident, race_stats = None, None
     finally:
         conn.close()
     return {
@@ -342,6 +354,69 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
         "month_n_days": int(n_days or 0),
         "month_sold_points": int(month_points or 0),
         "month_sold_paid_points": int(month_paid or 0),
+        "confident": confident,
+        "race_stats": race_stats,
+    }
+
+
+def _fetch_confident(cur, ymd: str) -> dict | None:
+    """その日の「自信あり」1レースの的中と売上（2026-09-07 追加）。
+
+    🔴 **結合キーは `race_key`**（`YYYYMMDD_場2桁_R2桁`）。`netkeirin_sales_race`
+       は集計ID から同じ形の派生列を持っており、両テーブルで同一体系
+       （`picks_history.race_key` はランク接尾辞つきなので使えない）。
+    🔴 **取消済みは除く**（`status = 'deleted'`）。取り消した商品は売れていない。
+    ⚠️ 的中は **`netkeirin_sales_race` 側**を正とする。売上と同じ一次資料から
+       読むことで「Discord の的中と売上が別ソース」になるのを防ぐ。
+       レース別を取り込んでいない回は列が None になり「採点待ち」と出る。
+    """
+    cur.execute(
+        "SELECT s.venue_name, s.race_no, s.rank_key, "
+        "       r.n_hits_incl_garami, r.n_hits_excl_garami, "
+        "       r.payout_amount, r.n_sold, r.sold_paid_points "
+        "FROM keirin.netkeirin_submissions s "
+        "LEFT JOIN keirin.netkeirin_sales_race r ON r.race_key = s.race_key "
+        "WHERE s.race_key LIKE %s AND s.is_confident "
+        "  AND COALESCE(s.status, 'submitted') <> 'deleted' "
+        "ORDER BY s.race_key LIMIT 1",
+        (ymd + "%",))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "label": f"{row[0] or '?'}{row[1] or '?'}R",
+        "rank_key": row[2],
+        "n_hits_incl": row[3],
+        "n_hits_excl": row[4],
+        "payout": row[5],
+        "n_sold": row[6],
+        "sold_paid_points": row[7],
+    }
+
+
+def _fetch_race_stats(cur, ymd: str) -> dict | None:
+    """その日の**的中レースの売上**（2026-09-07 追加）。
+
+    ⚠️ レース別を取り込んでいない日は行が無いので None（節ごと出さない）。
+       0件と書くと「1本も当たらなかった」と誤読する。
+    """
+    cur.execute(
+        "SELECT COUNT(*), "
+        "       COUNT(*) FILTER (WHERE n_hits_excl_garami > 0), "
+        "       COUNT(*) FILTER (WHERE n_hits_incl_garami > 0), "
+        "       COALESCE(SUM(sold_paid_points), 0), "
+        "       COALESCE(SUM(sold_paid_points) "
+        "                FILTER (WHERE n_hits_excl_garami > 0), 0), "
+        "       COALESCE(SUM(n_sold) "
+        "                FILTER (WHERE n_hits_excl_garami > 0), 0) "
+        "FROM keirin.netkeirin_sales_race WHERE race_date = %s", (ymd,))
+    n, n_hit, n_hit_incl, paid, paid_hit, n_sold_hit = cur.fetchone()
+    if not n:
+        return None
+    return {
+        "n_races": int(n), "n_hit": int(n_hit or 0),
+        "n_hit_incl": int(n_hit_incl or 0), "paid": int(paid or 0),
+        "paid_hit": int(paid_hit or 0), "n_sold_hit": int(n_sold_hit or 0),
     }
 
 

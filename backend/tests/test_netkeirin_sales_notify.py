@@ -15,6 +15,10 @@
 4. **通知の失敗で取り込みを落とさない**。売上は既に DB にあり、通知はその報告
 5. **行が無い日は送らない**。0円と書くと「売れなかった」と誤読する
    （実際は開催が無いか netkeirin 側の集計待ち）
+6. **コードブロックで桁を揃えない**（2026-09-07 ユーザー指摘）。Discord の
+   スマホ表示はコードブロックを折り返さず、幅の広い行が切れて崩れる
+7. **「自信あり」と「的中レースの売上」を出す**（2026-09-07 ユーザー指示）。
+   的中は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを混ぜない）
 
 ⚠️ `scripts/scrape_netkeirin_sales.py` 自体は import しない。あれは `requests` /
    `psycopg2` を要求するスクリプトで、backend の CI venv には `requests` が無い
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import json
+import unicodedata
 from pathlib import Path
 
 from src.services import keirin_sales_report as rep
@@ -98,6 +103,113 @@ def test_Noneが混じっても落ちない():
     msg = rep.build_sales_message(
         _summary(n_sold=None, sold_points=None, sold_paid_points=None))
     assert "0 pt" in msg
+
+
+# ---------------------------------------------------------------------------
+# スマホ表示のレイアウト（2026-09-07 ユーザー指摘）
+# ---------------------------------------------------------------------------
+
+def _width(text: str) -> int:
+    """全角を2桁として数えた表示幅。"""
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
+def test_コードブロックを使わない():
+    """🔴 Discord のスマホ表示はコードブロックを**折り返さない**。
+
+    幅の広い行が途中で切れてレイアウトが崩れる（2026-09-07 の実スクショ）。
+    通常テキストなら端末幅で自然に折り返す。
+    """
+    assert "```" not in rep.build_sales_message(_full_summary())
+
+
+def test_1行が長くならない():
+    """スマホの1行に収まる幅（全角2桁換算）に保つ。"""
+    for line in rep.build_sales_message(_full_summary()).split("\n"):
+        assert _width(line.replace("**", "")) <= 46, line
+
+
+# ---------------------------------------------------------------------------
+# 自信あり / 的中レースの売上（2026-09-07 ユーザー指示）
+# ---------------------------------------------------------------------------
+
+def _confident(**kw) -> dict:
+    base = {"label": "防府4R", "rank_key": "E_hit", "n_hits_incl": 1,
+            "n_hits_excl": 1, "payout": 75880, "n_sold": 18,
+            "sold_paid_points": 4230}
+    base.update(kw)
+    return base
+
+
+def _race_stats(**kw) -> dict:
+    base = {"n_races": 49, "n_hit": 14, "n_hit_incl": 14, "paid": 26585,
+            "paid_hit": 6220, "n_sold_hit": 29}
+    base.update(kw)
+    return base
+
+
+def _full_summary(**kw) -> dict:
+    base = {"confident": _confident(), "race_stats": _race_stats()}
+    base.update(kw)
+    return _summary(**base)
+
+
+def test_自信ありのレースと的中と売上を出す():
+    msg = rep.build_sales_message(_full_summary())
+    assert "防府4R" in msg and "E_hit" in msg
+    assert "的中" in msg and "75,880 円" in msg
+    assert f"{rep.revenue_yen(4230):,} 円" in msg      # そのレースの売上
+    assert "4,230 pt" in msg
+
+
+def test_自信ありが無い日も1行出す():
+    """🔴 行ごと消えると「選定が落ちた」のか「該当が無かった」のか分からない。"""
+    msg = rep.build_sales_message(_summary(race_stats=_race_stats()))
+    assert "🎯 **自信あり** なし" in msg
+
+
+def test_自信ありのガミを的中と混ぜない():
+    """netkeirin の表示的中は `n_hits_excl_garami`。払戻＜賭け金は「ガミ」。"""
+    msg = rep.build_sales_message(
+        _full_summary(confident=_confident(n_hits_incl=1, n_hits_excl=0,
+                                           payout=8000)))
+    assert "ガミ" in msg and "⭕ 的中" not in msg
+
+
+def test_自信ありが採点前なら採点待ちと書く():
+    """レース別を取り込んでいない回。黙って「不的中」にしない。"""
+    msg = rep.build_sales_message(
+        _full_summary(confident=_confident(n_hits_incl=None, n_hits_excl=None)))
+    assert "採点待ち" in msg
+    assert "不的中" not in msg
+
+
+def test_不的中は不的中と書く():
+    msg = rep.build_sales_message(
+        _full_summary(confident=_confident(n_hits_incl=0, n_hits_excl=0,
+                                           payout=0)))
+    assert "不的中" in msg
+
+
+def test_的中レースの件数と売上を出す():
+    msg = rep.build_sales_message(_full_summary())
+    assert "14 / 49 R" in msg
+    assert "28.6%" in msg                              # 的中率
+    assert f"{rep.revenue_yen(6220):,} 円" in msg      # 的中レースの売上
+    assert "23.4%" in msg                              # 当日売上に占める割合
+
+
+def test_ガミ込みの件数が違うときだけ併記する():
+    assert "ガミ込み" not in rep.build_sales_message(_full_summary())
+    msg = rep.build_sales_message(_full_summary(race_stats=_race_stats(n_hit_incl=16)))
+    assert "ガミ込み 16" in msg
+
+
+def test_レース別が無い回は的中レースの節を出さない():
+    """🔴 0件と書くと「1本も当たらなかった」と誤読する。取り込んでいないだけ。"""
+    msg = rep.build_sales_message(_summary(confident=_confident()))
+    assert "的中レース" not in msg
+    assert "売上" in msg                                # 本体は出す
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +300,22 @@ def test_シェルがwebhookを渡している():
     **通知だけが静かに止まる**（取り込みは成功し続ける）。"""
     sh = _SHELL.read_text(encoding="utf-8")
     assert "export DISCORD_WEBHOOK_URL_NETKEIRIN" in sh
+
+
+def test_スクリプトが自信ありと的中レースを読む():
+    """🔴 SQL を消すと**通知だけが静かに痩せる**（売上は出続ける）。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "_fetch_confident" in src and "_fetch_race_stats" in src
+    # 結合キーは race_key（picks_history のランク接尾辞つきキーではない）
+    assert "r.race_key = s.race_key" in src
+    # 取消済みの商品は売れていない
+    assert "COALESCE(s.status, 'submitted') <> 'deleted'" in src
+    # 的中の定義は netkeirin の表示的中（ガミ除く）と揃える
+    assert "n_hits_excl_garami" in src
+
+
+def test_付加情報の失敗で通知が消えない():
+    """🔴 的中・自信ありは付随情報。読めなくても売上の報告は送る。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    i = src.index("confident = _fetch_confident(")
+    assert "try:" in src[max(0, i - 400):i], "付加情報が try で包まれていません"

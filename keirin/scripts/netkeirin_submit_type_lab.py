@@ -1060,9 +1060,14 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                 body = f"入稿確認 → {REVIEW_URL}"
             if n_publish_ng:
                 body += f"\n⚠️ 公開失敗 {n_publish_ng}件（下書きのまま）"
-            # 🔴 **自信ありは毎回1行出す**（無い日も「なし」と書く。行が消えると
-            #    「選定が落ちた」のか「該当が無かった」のか読み手に区別できない）。
-            body += f"\n{_confident_line(day)}"
+            # 🔴 **自信ありは選定した回（朝）だけ出す**（2026-09-07 ユーザー指示）。
+            #    アイコンが netkeirin へ渡るのは入稿の瞬間だけで、選定も朝の1回
+            #    （`session == "morning"`）。昼・夕は同じ行を読み直しているだけなので、
+            #    同じレース名が1日3回流れて「昼にも何か決まった」と読めてしまう。
+            #    ⚠️ **朝は無い日も「なし」と書く**（行ごと消すと「選定が落ちた」のか
+            #      「該当が無かった」のか読み手に区別できない）。
+            if session == "morning":
+                body += f"\n{_confident_line(day)}"
             send(f"📮 **NetKeirin入稿 {n_ok}件**（{day} / {session}）\n{body}",
                  channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報

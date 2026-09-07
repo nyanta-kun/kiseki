@@ -1464,3 +1464,40 @@ def test_highpay_respects_the_submission_gates(monkeypatch):
     monkeypatch.setattr(m, "_skip", lambda *a, **k: None)
     m.run("2026-09-06", "morning", dry_run=False, only_key=None, do_rebuild=False)
     assert all(o == m.ORIGIN_RANK for _, _, o in sent), "ゲートに掛かる高額枠が出た"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 入稿通知（2026-09-07）— 「自信あり」は選定した回にだけ出す
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_confident_line_is_notified_only_in_the_morning():
+    """🔴 **「自信あり」の行は選定した回（朝）の通知にだけ出す**（2026-09-07 指示）。
+
+    アイコンが netkeirin へ渡るのは入稿の瞬間だけで、選定も朝の1回だけ
+    （`_choose_confident` は `session == "morning"` でしか呼ばれない）。
+    昼・夕は DB を読み直して同じ行を出しているだけなので、同じレース名が
+    1日3回流れ「昼にも何か決まった」と読めてしまう。
+
+    ⚠️ 朝の分は**無い日も1行出す**（`_confident_line` が「なし」を返す）。
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    import scripts.netkeirin_submit_type_lab as M
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(M.run)))
+
+    def _calls_confident_line(node) -> bool:
+        return any(isinstance(n, ast.Name) and n.id == "_confident_line"
+                   for n in ast.walk(node))
+
+    guarded = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.If) and _calls_confident_line(n)
+        and ast.unparse(n.test).replace("'", '"') == 'session == "morning"'
+    ]
+    assert guarded, "通知の「自信あり」が朝の回に限定されていません"
+    # 通知本文へ入るのは、その `if` の中の1か所だけであること
+    assert sum(1 for n in ast.walk(tree)
+               if isinstance(n, ast.Name) and n.id == "_confident_line") == 1
