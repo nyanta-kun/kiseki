@@ -13,8 +13,18 @@
 #   日中（9-15時）は 5.0s で、同じ件数に 1.7 倍かかる。
 #   ⚠️ 01:10 の backfill-netkeiba-time-index と重ならない時刻にすること。
 #
+# 🔴 **`--target time_index` は別枠**（化けではなく欠損の埋め戻し）
+#   netkeiba-index が 2026-05 以降ずっと 10 分でタイムアウト kill されていたため
+#   約 3,600 レースのタイム指数が欠けている（2026-09-07 実測 3,607・115 日ぶん）。
+#   sekito 側の backfill-netkeiba-time-index (id=96) が担っていたが、
+#   **そのジョブ自体も 10 分 kill されていて実質進んでいなかった**（初回 32 レースのみ）。
+#   kiseki の cron には scheduler のタイムアウトが無いので予算がそのまま効く。
+#
+#   30 3 * * * .../backfill_netkeiba.sh --target time_index --minutes 110 >> .../logs/backfill_netkeiba.log 2>&1
+#
 # 残りが 0 になったら cron から外してよい。件数は次で見る:
 #   docker exec galloplab-backend-1 uv run python /app/scripts/backfill_netkeiba.py --count
+#   docker exec galloplab-backend-1 uv run python /app/scripts/backfill_netkeiba.py --target time_index --count
 #
 # VPS cron 設定（ホストは JST・一時的なジョブ）:
 #   30 3 * * * /home/ysuzuki/GitHub/kiseki/scripts/backfill_netkeiba.sh --target all --minutes 110 >> /home/ysuzuki/GitHub/kiseki/logs/backfill_netkeiba.log 2>&1

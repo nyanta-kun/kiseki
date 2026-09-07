@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import date
 
 import requests
 from sqlalchemy import text
@@ -34,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from ...utils.racecourse import BY_CODE
 from ..targets import TargetRace
-from . import blood, ip_restriction, paddock, training
+from . import blood, ip_restriction, paddock, time_index, training
 from . import race_id as rid
 from .decode import decode_page
 from .rate_limiter import RateLimiter
@@ -42,7 +43,9 @@ from .store import REPLACEMENT_CHAR, upsert
 
 logger = logging.getLogger(__name__)
 
-# 取得対象 → (対象を選ぶ条件, ページの種類)
+# 化けを直す対象 → 対象行を選ぶ条件。
+# ⚠️ `time_index` はここに入らない。**化けではなく「行が無い」**ことを直すので、
+#    行に対する条件では表現できない（`missing_time_index_races()` を使う）。
 TARGETS: dict[str, str] = {
     "blood": "position(:bad in coalesce(sire,'')) > 0 "
              "OR position(:bad in coalesce(broodmare_sire,'')) > 0",
@@ -53,7 +56,11 @@ TARGETS: dict[str, str] = {
 
 
 # 取得対象 → 「取得済み」を示す列。
-_IS_FLAG = {"blood": "is_blood", "training": "is_training", "paddock": "is_paddock"}
+_IS_FLAG = {"blood": "is_blood", "training": "is_training",
+            "paddock": "is_paddock", "time_index": "is_time_index"}
+
+# タイム指数の埋め戻しを始める日。requests 移行（2026-05-04）以降が欠けている。
+TIME_INDEX_FROM = date(2026, 5, 4)
 
 
 @dataclass
@@ -102,7 +109,65 @@ def pending_races(session: Session, target: str, *, limit: int | None = None
     return [(TargetRace(d, cc, int(rn)), jravan) for d, cc, rn, jravan in rows]
 
 
+_MISSING_TIME_INDEX_SQL = text(
+    """
+    WITH supply AS (
+      SELECT to_date(r.date, 'YYYYMMDD') AS d, m.code AS course_code,
+             r.race_number AS race_no, coalesce(r.jravan_race_id, '') AS jravan
+      FROM keiba.races r
+      JOIN keiba.racecourse_map m ON m.jra_code = r.course
+      WHERE r.date BETWEEN :ymd_from AND :ymd_to
+        -- 🔴 新馬戦にタイム指数は**原理的に存在しない**（過去走から作る指標のため）。
+        --    2026-09-07 実測: 該当 111 件すべてで指数なし。叩くだけ無駄になる。
+        AND coalesce(r.race_condition_code, '') <> '701'
+      UNION ALL
+      SELECT to_date(r.date, 'YYYYMMDD'), m.code, r.race_number, ''
+      FROM chihou.races r
+      JOIN keiba.racecourse_map m ON m.netkeiba_id = r.course AND m.jra_code IS NULL
+      WHERE r.date BETWEEN :ymd_from AND :ymd_to
+      -- 地方には競走条件コードが無いので新馬の除外ができない。
+      -- 取りに行って空なら not_available を記録するので、無駄は 1 回で止まる。
+    )
+    SELECT s.d, s.course_code, s.race_no, s.jravan
+    FROM supply s
+    WHERE NOT EXISTS (
+        SELECT 1 FROM sekito.netkeiba n
+        WHERE n.date = s.d AND n.course_code = s.course_code
+          AND n.race_no = s.race_no AND n.idx_max IS NOT NULL)
+      AND NOT EXISTS (
+        -- 一度取りに行って「無い」と分かったレースは二度と叩かない。
+        -- ⚠️ 移設元は毎晩の対象を「指数が無いレース」だけで決めていたので、
+        --    埋まらないレースを**毎晩ずっと叩き続ける**形になっていた。
+        SELECT 1 FROM sekito.data_fetch_status f
+        WHERE f.date = s.d AND f.course_code = s.course_code
+          AND f.race_no = s.race_no AND f.data_type = 'netkeiba_time_index'
+          AND f.fetch_status IN ('not_available', 'race_cancelled'))
+    ORDER BY s.d, s.course_code, s.race_no
+    """
+)
+
+
+def missing_time_index_races(
+    session: Session, *, date_from: date | None = None, date_to: date | None = None,
+    limit: int | None = None,
+) -> list[tuple[TargetRace, str]]:
+    """タイム指数が入っていないレースを古い順に返す。
+
+    化けの修復とは別で、**そもそも行が無い**ものを埋める。
+    2026-05 以降ずっと `netkeiba-index` が 10 分でタイムアウト kill されていたため、
+    約 3,600 レースぶんが欠けている（2026-09-07 実測 3,607・115 日ぶん）。
+    """
+    rows = session.execute(_MISSING_TIME_INDEX_SQL, {
+        "ymd_from": (date_from or TIME_INDEX_FROM).strftime("%Y%m%d"),
+        "ymd_to": (date_to or date.today()).strftime("%Y%m%d"),
+    }).all()
+    out = [(TargetRace(d, cc, int(rn)), j) for d, cc, rn, j in rows]
+    return out[:limit] if limit else out
+
+
 def _url_for(target: str, race: TargetRace, race_id: str) -> str | None:
+    if target == "time_index":
+        return rid.time_index_url(race_id, is_jra=race.is_jra)
     if target == "blood":
         return rid.blood_url(race_id, is_jra=race.is_jra)
     if target == "training":
@@ -114,6 +179,8 @@ def _url_for(target: str, race: TargetRace, race_id: str) -> str | None:
 
 
 def _parse_for(target: str, page: str) -> list[dict]:
+    if target == "time_index":
+        return time_index.parse(page)
     if target == "blood":
         return blood.parse(page)
     if target == "training":

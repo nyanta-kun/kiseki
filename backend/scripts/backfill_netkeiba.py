@@ -12,6 +12,16 @@
     paddock     391 行 /   73 レース（全て中央）  パドックの寸評
 
 計 841 リクエスト。夜間（レート制限が最も緩い時間帯）で 1.5〜2 時間の見込み。
+（2026-09-07 に完了済み。残 0 件）
+
+## `--target time_index` は別枠
+
+こちらは化けではなく **そもそも行が無い** ものを埋める。`netkeiba-index` が
+2026-05 以降ずっと 10 分でタイムアウト kill されていたため約 3,600 レースが欠けている
+（2026-09-07 実測 3,607・115 日ぶん）。sekito 側の `backfill-netkeiba-time-index`
+(id=96) がこれを担っていたが、**そのジョブ自体も 10 分 kill されていて実質進んで
+いなかった**（初回で 32 レースのみ）。kiseki の cron には scheduler のタイムアウトが
+無いので、`--minutes` の予算がそのまま効く。
 
 ## 使い方
 
@@ -27,6 +37,10 @@
 
     # 3 つ全部を順に（夜間バッチ想定）
     ... scripts/backfill_netkeiba.py --target all --minutes 110
+
+    # タイム指数の欠損を埋める（化けの修復とは別枠）
+    ... scripts/backfill_netkeiba.py --target time_index --count
+    ... scripts/backfill_netkeiba.py --target time_index --minutes 110
 
 ⚠️ **状態を持たない。** 対象は「いま化けている行」から毎回引き直すので、
    途中で止まっても次回そのまま続きから走る。予算時間で切ってよい。
@@ -52,7 +66,9 @@ from src.db.session import SyncSessionLocal  # noqa: E402
 from src.scrapers.netkeiba import backfill  # noqa: E402
 from src.scrapers.netkeiba.store import REPLACEMENT_CHAR  # noqa: E402
 
+# 化けの修復（対象が少ない順）。`time_index` は別枠（欠損の埋め戻し）。
 ORDER = ("paddock", "training", "blood")
+TIME_INDEX = "time_index"
 
 
 def _count(session, target: str) -> tuple[int, int]:
@@ -73,8 +89,9 @@ def _count(session, target: str) -> tuple[int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="化けた netkeiba データを取り直す")
-    parser.add_argument("--target", choices=(*ORDER, "all"), default="all",
-                        help="取り直す項目。all は寸評→調教→血統の順（対象が少ない順）")
+    parser.add_argument("--target", choices=(*ORDER, TIME_INDEX, "all"), default="all",
+                        help="取り直す項目。all は寸評→調教→血統の順（対象が少ない順）。"
+                             "time_index は別枠で、化けではなく**欠損**を埋める")
     parser.add_argument("--minutes", type=float,
                         help="予算時間（分）。超えたら途中で止める")
     parser.add_argument("--limit", type=int, help="対象レース数の上限（試験用）")
@@ -87,8 +104,15 @@ def main() -> int:
                         stream=sys.stdout)
 
     targets = list(ORDER) if args.target == "all" else [args.target]
+    is_time_index = args.target == TIME_INDEX
 
     with SyncSessionLocal() as session:
+        if is_time_index and args.count:
+            pending = backfill.missing_time_index_races(session)
+            days = len({t.date for t, _ in pending})
+            logging.info("time_index 欠損 %d レース / %d 日ぶん", len(pending), days)
+            return 0
+
         if args.count:
             for t in targets:
                 rows, races = _count(session, t)
@@ -98,6 +122,27 @@ def main() -> int:
         if not settings.netkeiba_user_id or not settings.netkeiba_password:
             logging.error("NETKEIBA_USER_ID / NETKEIBA_PASSWORD が設定されていません")
             return 2
+
+        if is_time_index:
+            pending = backfill.missing_time_index_races(session, limit=args.limit)
+            days = len({t.date for t, _ in pending})
+            logging.info("=== time_index: 欠損 %d レース / %d 日ぶん ===",
+                         len(pending), days)
+            result = backfill.run(
+                session, TIME_INDEX, pending,
+                user_id=settings.netkeiba_user_id,
+                password=settings.netkeiba_password,
+                environment_id=settings.scraper_environment_id,
+                budget_seconds=args.minutes * 60 if args.minutes else None,
+                dry_run=args.dry_run,
+            )
+            logging.info("成功 %d / 空 %d / エラー %d", result.success,
+                         result.empty, result.errors)
+            if result.failed_races:
+                logging.warning("失敗: %s", ", ".join(result.failed_races[:5]))
+            remaining = backfill.missing_time_index_races(session)
+            logging.info("=== 残り %d レース ===", len(remaining))
+            return 2 if result.aborted_reason and result.aborted_reason != "budget" else 0
 
         # 予算は対象間で分け合う。1 つ目が食い尽くさないようにする。
         budget = (args.minutes * 60 / len(targets)) if args.minutes else None
