@@ -126,3 +126,67 @@ def test_未知の見出しは捨てるが警告を出す(caplog):
 def test_データが無いページはNoneを返す():
     assert parse_analysis("<p>データがありません</p>") is None
     assert parse_analysis("<html><body></body></html>") is None
+
+
+# 1 頭 2 行のレイアウト。2026-08-02 中京7R で確認した実ページの構造。
+# 馬番の行と評価の行が分かれており、評価側に Umaban が無い。
+_TRAINING_HTML_TWO_ROW = """
+<table>
+  <tr><th>枠</th><th>馬番</th><th>印</th><th>馬名</th><th>日付</th><th>評価</th></tr>
+  <tr class="OikiriDataHead1 HorseList">
+    <td class="Waku1">1</td>
+    <td class="Umaban">1</td>
+    <td class="CheckMark Horse_Select">印</td>
+    <td class="Horse_Info fc">ダミーウマ</td>
+    <td class="TrainingReview_Cell">じっくりと本数を積まれ、直前は上々。</td>
+  </tr>
+  <tr class="OikiriDataHead1 HorseList">
+    <td class="Training_Day">2026/07/29(水)</td>
+    <td>美Ｗ</td><td>稍</td><td>助手</td>
+    <td class="TrainingTimeData txt_l">84.0(16.4)67.6</td>
+    <td>7</td>
+    <td class="TrainingLoad">強め</td>
+    <td class="Training_Critic">態勢整う</td>
+    <td class="Rank_B">B</td>
+  </tr>
+  <tr class="OikiriDataHead2 HorseList">
+    <td class="Waku2">2</td>
+    <td class="Umaban">2</td>
+    <td class="CheckMark Horse_Select">印</td>
+    <td class="Horse_Info fc">ダミーウマニ</td>
+    <td class="TrainingReview_Cell">脚取りに力強さ。</td>
+  </tr>
+  <tr class="OikiriDataHead1 HorseList">
+    <td class="Training_Day">2026/07/29(水)</td>
+    <td>栗坂</td><td>稍</td><td>Ｍデム</td>
+    <td class="TrainingTimeData txt_l">-55.4(15.0)40.4</td>
+    <td></td>
+    <td class="TrainingLoad">強め</td>
+    <td class="Training_Critic">平行線</td>
+    <td class="Rank_C">C</td>
+  </tr>
+</table>
+"""
+
+
+def test_1頭2行のレイアウトでも取れる():
+    """🔴 2026-09-07 に埋め戻しで 158 レースが空振りして分かったバグ。
+
+    同じ oikiri.html に「1 頭 1 行」と「1 頭 2 行」の 2 つの並びがある。
+    後者は**評価の行に Umaban が無い**ので、「同じ `<tr>` に馬番と評価がある」
+    前提だと必ず 0 件になる。ページにデータがあるのに `not_available` を
+    記録してしまう——例外も出ない静かな取りこぼし。
+
+    行を無視してセルを文書順に走査し、`.Umaban` から次の `.Umaban` までを
+    1 頭ぶんとみなすことで、どちらの並びでも同じ結果になる。
+    """
+    assert parse_training(_TRAINING_HTML_TWO_ROW) == [
+        {"horse_no": 1, "training": "態勢整う B"},
+        {"horse_no": 2, "training": "平行線 C"},
+    ]
+
+
+def test_両レイアウトで同じ形のレコードを返す():
+    one_row = parse_training(_TRAINING_HTML)
+    two_row = parse_training(_TRAINING_HTML_TWO_ROW)
+    assert {k for r in one_row for k in r} == {k for r in two_row for k in r}
