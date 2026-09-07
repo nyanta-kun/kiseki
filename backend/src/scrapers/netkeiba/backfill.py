@@ -52,6 +52,10 @@ TARGETS: dict[str, str] = {
 }
 
 
+# 取得対象 → 「取得済み」を示す列。
+_IS_FLAG = {"blood": "is_blood", "training": "is_training", "paddock": "is_paddock"}
+
+
 @dataclass
 class BackfillResult:
     """1 実行ぶんの結果。"""
@@ -214,6 +218,10 @@ def run(
         if dry_run:
             logger.info("[dry-run] %s: %d 頭", label, len(records))
         else:
+            # 取得できたことを示すフラグ。日次ジョブと同じ列を立てる
+            # （立て忘れると NOT NULL の `is_*` に NULL を書こうとして落ちる）。
+            for r in records:
+                r[_IS_FLAG[target]] = True
             upsert(session, target, race.date, race.course_code, race.race_no, records)
             logger.info("%s: %d 頭", label, len(records))
         result.success += 1
