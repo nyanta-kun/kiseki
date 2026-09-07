@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -1344,4 +1345,58 @@ class Win5Payout(Base):
     )
     hit_votes: Mapped[int | None] = mapped_column(
         BigInteger, comment="WF 項番16c 的中票数"
+    )
+
+
+class CronRun(Base):
+    """kiseki の host cron ジョブの実行記録。
+
+    ## なぜ要るか（2026-09-08）
+
+    統合 Phase 2 で sekito のスクレイプジョブをすべて kiseki の host cron へ移した
+    結果、`check_scrape_supply.py` の②「当日のスクレイプジョブに failed なし」が
+    **完全に空になった**。あのチェックは `sekito.script_requests` を見ており、
+    そこに書くのは sekito のスケジューラだけだから。
+
+        2026-09-07 の切替直後に実測: 有効なスクレイプ系 sekito ジョブ 0 件
+        → 以後、何が失敗しても②は必ず OK を返す
+
+    ②は「netkeiba-index が毎日 10 分でタイムアウト kill されている」ことを唯一
+    検知していたチェックだった。同じ事実を kiseki 側で持つための表。
+
+    ## 「走ったか」と「どう終わったか」を分けて持つ
+
+    開始時に 1 行入れ、終了時に `finished_at` / `exit_code` を埋める。
+    **開始行が残ったまま終了が無ければ「途中で死んだ」**と分かる。
+    成否だけを終了時に 1 行書く形だと、この状態が「実行されなかった」と
+    区別できない。
+
+    `summary` はジョブ自身が書く要約（件数など）。**success を返しながら 0 件**
+    という、このリポジトリが繰り返し踏んでいる壊れ方を人が読んで気づくため。
+    """
+
+    __tablename__ = "cron_runs"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_cron_runs_job_started", "job_name", "started_at"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_name: Mapped[str] = mapped_column(
+        String(64), nullable=False,
+        comment="ラッパスクリプト名（例: scrape_netkeiba_index）",
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+        comment="開始時刻",
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        comment="終了時刻。NULL のまま古い行は『途中で死んだ』",
+    )
+    exit_code: Mapped[int | None] = mapped_column(
+        Integer, comment="終了コード。NULL は実行中または異常終了"
+    )
+    summary: Mapped[str | None] = mapped_column(
+        Text, comment="ジョブ自身が書く要約（件数など）。0 件 success を人が読んで気づくため"
     )
