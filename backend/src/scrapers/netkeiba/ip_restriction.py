@@ -41,9 +41,14 @@ kiseki は cron 起動なので、この門番が居ない。**ゲートを持�
 
 ## 復旧
 
-解除の検知と復旧は移設時点ではまだ sekito 側にある
-（`bin/maintenance/check-ip-restriction` / 毎時）。netkeiba を完全に移し終えたら
-こちらへ持ってくること。
+`try_recover()` が netkeiba へ 1 回だけアクセスして、通れば制限フラグを落とす。
+毎時 cron から呼ぶ（sekito `bin/maintenance/check-ip-restriction` の移設先）。
+
+🔴 **復旧のとき `scheduler_enabled` を true に戻す。** 移植版は自分では
+false にしないが、過去に sekito 側が落とした値が残っていることがある。
+その状態で sekito のコンテナが再起動すると `loadSchedules()` が何も読まず、
+**スケジューラごと止まって自力で戻れなくなる**（上記の罠）。復旧の機会に
+直しておく。
 """
 
 from __future__ import annotations
@@ -52,10 +57,12 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import requests
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ...utils import discord
+from .decode import decode_page
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +81,8 @@ IP_RESTRICTION_PATTERNS: tuple[str, ...] = (
 
 # `system_settings` のキー。接尾辞に環境 ID が付く（例: netkeiba_ip_restricted_server）。
 # 読むときは接頭辞一致で全環境ぶんを見る（sekito の scheduler.js と同じ）。
+CHECK_URL = "https://race.netkeiba.com/top/"
+
 _RESTRICTED_KEY_PREFIX = "netkeiba_ip_restricted"
 _DETECTED_AT_KEY_PREFIX = "netkeiba_ip_restriction_detected_at"
 
@@ -202,3 +211,115 @@ def mark_restricted(
             "NetKeiba へのアクセスを控え、解除されるまでお待ちください。"
         )
     return True
+
+
+# 本文にこれが出ていたら、HTTP 200 でも制限中とみなす。
+# ⚠️ 誤検知しても**安全側**（制限中のままなので取りに行かない）に倒れるだけ。
+#    逆に見逃すと制限中に叩き続けるので、緩めにしてある。
+_BLOCKED_PAGE_MARKERS = (
+    "アクセスが制限", "Access Denied", "403 Forbidden", "400 Bad Request",
+    "IPアドレス", "Bot", "ロボット", "自動アクセス",
+)
+
+# これより短い本文は、まともなページが返っていない。
+_MIN_PAGE_BYTES = 100
+
+
+def can_access(*, timeout: float = 15.0) -> bool:
+    """netkeiba に通れるか、1 リクエストだけ試す。
+
+    ⚠️ この 1 回は**レートリミッタを通さない**。毎時 1 回だけ、しかも制限中に
+    しか呼ばれないので、間隔を空ける意味がない。
+
+    Returns:
+        通れれば True。制限中・異常なら False。
+    """
+    from .session import random_user_agent
+
+    try:
+        response = requests.get(
+            CHECK_URL, headers={"User-Agent": random_user_agent()}, timeout=timeout
+        )
+    except requests.Timeout:
+        logger.warning("netkeiba アクセス確認: タイムアウト")
+        return False
+    except Exception as e:
+        logger.error("netkeiba アクセス確認でエラー: %s", e)
+        return False
+
+    if response.status_code in (400, 403):
+        logger.warning("netkeiba アクセス確認: HTTP %d（IP 制限または Bot 検出）",
+                       response.status_code)
+        return False
+
+    body = decode_page(response)
+    if len(body) < _MIN_PAGE_BYTES:
+        logger.warning("netkeiba アクセス確認: 本文が短すぎる（%d 文字）", len(body))
+        return False
+
+    hit = next((m for m in _BLOCKED_PAGE_MARKERS if m in body), None)
+    if hit:
+        logger.warning("netkeiba アクセス確認: 制限を示す文言があります（%r）", hit)
+        return False
+
+    logger.info("netkeiba アクセス確認: 正常（status=%d, %d 文字）",
+                response.status_code, len(body))
+    return True
+
+
+def try_recover(session: Session, *, notify: bool = True) -> bool:
+    """制限中なら解除を確認し、通れるならフラグを落とす。
+
+    Returns:
+        復旧したら True。制限中でない・まだ通れないなら False。
+    """
+    keys = restricted_keys(session)
+    if not keys:
+        logger.debug("IP 制限中ではありません")
+        _ensure_scheduler_enabled(session)
+        return False
+
+    logger.info("IP 制限の解除を確認します（立っているキー: %s）", ", ".join(keys))
+    if not can_access():
+        logger.warning("まだ制限中です。解除を待ちます")
+        return False
+
+    session.execute(
+        text(
+            "UPDATE sekito.system_settings SET value = 'false', updated_at = CURRENT_TIMESTAMP "
+            "WHERE key LIKE :prefix AND value = 'true'"
+        ),
+        {"prefix": f"{_RESTRICTED_KEY_PREFIX}%"},
+    )
+    _ensure_scheduler_enabled(session)
+    session.commit()
+
+    logger.info("✅ IP 制限が解除されました（落としたキー: %s）", ", ".join(keys))
+    if notify:
+        discord.send(
+            "✅ **NetKeiba IP制限が解除されました**\n\n"
+            f"**解除時刻**: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')} JST\n"
+            f"**落としたフラグ**: {', '.join(keys)}\n\n"
+            "netkeiba 系ジョブは次回の起動から通常どおり動きます。"
+        )
+    return True
+
+
+def _ensure_scheduler_enabled(session: Session) -> None:
+    """`scheduler_enabled` が false なら true に戻す。
+
+    🔴 移植版は自分では false にしないが、過去に sekito 側が落とした値が
+    残っていることがある。`scheduler.js` の `runJob()` はこの値を見ないので
+    普段は無害だが、**その状態で sekito のコンテナが再起動すると
+    `loadSchedules()` が何も読まず、復旧ジョブごと止まって自力で戻れなくなる。**
+    復旧の機会に直しておく。
+    """
+    result = session.execute(
+        text(
+            "UPDATE sekito.system_settings SET value = 'true', updated_at = CURRENT_TIMESTAMP "
+            "WHERE key = 'scheduler_enabled' AND value <> 'true'"
+        )
+    )
+    if getattr(result, "rowcount", 0):
+        logger.warning("scheduler_enabled が false でした。true に戻しました "
+                       "（この状態で sekito が再起動すると全ジョブが止まります）")

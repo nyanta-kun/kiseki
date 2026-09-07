@@ -196,3 +196,91 @@ def test_待機なしで上限まで数える():
     """履歴の管理だけを見る（実待機はしない）。"""
     limiter = RateLimiter(config_for_hour(3))
     assert limiter.request_count == 0
+
+
+# --------------------------------------------------------------------------
+# IP 制限からの復旧
+# --------------------------------------------------------------------------
+
+class _RecoverySession:
+    """`restricted_keys` の結果と UPDATE を記録するスタブ。"""
+
+    def __init__(self, keys=()):
+        self.keys = list(keys)
+        self.updates: list[str] = []
+        self.committed = False
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if sql.strip().upper().startswith("UPDATE"):
+            self.updates.append(sql)
+
+            class _R:
+                rowcount = 1
+            return _R()
+
+        rows = [(k,) for k in self.keys]
+
+        class _Sel:
+            def all(self):
+                return rows
+
+        return _Sel()
+
+    def commit(self):
+        self.committed = True
+
+
+def test_制限中でなければアクセスしない(monkeypatch):
+    """毎時走るので、制限が無いときに毎回叩きに行かないこと。"""
+    from src.scrapers.netkeiba import ip_restriction as ipr
+
+    called = []
+    monkeypatch.setattr(ipr, "can_access", lambda **kw: called.append(1) or True)
+    assert ipr.try_recover(_RecoverySession(), notify=False) is False
+    assert called == [], "制限が無いのにネットワークへ出ている"
+
+
+def test_まだ通れなければフラグを落とさない(monkeypatch):
+    from src.scrapers.netkeiba import ip_restriction as ipr
+
+    monkeypatch.setattr(ipr, "can_access", lambda **kw: False)
+    s = _RecoverySession(["netkeiba_ip_restricted_server"])
+    assert ipr.try_recover(s, notify=False) is False
+    # フラグを落とす UPDATE（value='false'）が出ていないこと。
+    # キー名はバインドパラメータなので SQL 文字列には現れない
+    assert not any("'false'" in u for u in s.updates)
+
+
+def test_通れたらフラグを落とす(monkeypatch):
+    from src.scrapers.netkeiba import ip_restriction as ipr
+
+    monkeypatch.setattr(ipr, "can_access", lambda **kw: True)
+    monkeypatch.setattr(ipr.discord, "send", lambda *a, **kw: True)
+    s = _RecoverySession(["netkeiba_ip_restricted_server"])
+    assert ipr.try_recover(s, notify=False) is True
+    assert any("'false'" in u and "LIKE :prefix" in u for u in s.updates), s.updates
+    assert s.committed
+
+
+def test_復旧のたびにscheduler_enabledを直す(monkeypatch):
+    """🔴 false のまま sekito が再起動すると、復旧ジョブごと止まって戻れなくなる。
+
+    移植版は自分では false にしないが、過去に sekito 側が落とした値が残ることが
+    ある。毎時走るこのジョブで見つけたら直す。
+    """
+    from src.scrapers.netkeiba import ip_restriction as ipr
+
+    monkeypatch.setattr(ipr, "can_access", lambda **kw: True)
+    s = _RecoverySession(["netkeiba_ip_restricted_local"])
+    ipr.try_recover(s, notify=False)
+    assert any("scheduler_enabled" in u for u in s.updates)
+
+
+def test_制限が無いときもscheduler_enabledは点検する(monkeypatch):
+    """制限が無い日でも、落ちたままの値を放置しない。"""
+    from src.scrapers.netkeiba import ip_restriction as ipr
+
+    s = _RecoverySession()
+    ipr.try_recover(s, notify=False)
+    assert any("scheduler_enabled" in u for u in s.updates)
