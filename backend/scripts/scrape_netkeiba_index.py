@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -51,7 +52,7 @@ if str(_root) not in sys.path:
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
-from src.utils.cron_run import record  # noqa: E402
+from src.utils.cron_run import RunRecord, record  # noqa: E402
 from src.scrapers.netkeiba import index_job  # noqa: E402
 from src.scrapers.targets import target_races  # noqa: E402
 
@@ -88,7 +89,10 @@ def main() -> int:
     races = [int(r) for r in args.race.split(",") if r.strip()] if args.race else None
 
     logging.info("=== タイム指数取得 開始 (date=%s) ===", target_date)
-    with record("scrape_netkeiba_index") as run, SyncSessionLocal() as session:
+    # 🔴 `--dry-run` は記録しない。試し打ちを cron_runs に残すと、監視から見て
+    #    「ジョブが正常に走った」と区別がつかず、本物の未実行を見逃す。
+    ctx = nullcontext(RunRecord(job_name="(記録しない)")) if (args.dry_run) else record("scrape_netkeiba_index")
+    with ctx as run, SyncSessionLocal() as session:
         targets = target_races(
             session, target_date,
             include_jra=args.only != "nar",

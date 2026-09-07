@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 _root = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ if str(_root) not in sys.path:
 
 from src.db.session import SyncSessionLocal  # noqa: E402
 from src.scrapers.netkeiba import ip_restriction  # noqa: E402
-from src.utils.cron_run import record  # noqa: E402
+from src.utils.cron_run import RunRecord, record  # noqa: E402
 
 
 def main() -> int:
@@ -61,7 +62,14 @@ def main() -> int:
                         format="%(asctime)s [%(levelname)s] %(message)s",
                         stream=sys.stdout)
 
-    with record("check_ip_restriction") as run, SyncSessionLocal() as session:
+    # 🔴 `--status` / `--check` は記録しない。手で状態を見た回数が
+    #    「ジョブが走った」ことになると、本物の未実行を見逃す。
+    ctx = (
+        nullcontext(RunRecord(job_name="(記録しない)"))
+        if (args.status or args.check)
+        else record("check_ip_restriction")
+    )
+    with ctx as run, SyncSessionLocal() as session:
         keys = ip_restriction.restricted_keys(session)
 
         if args.status:
