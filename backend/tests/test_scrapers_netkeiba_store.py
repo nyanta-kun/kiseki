@@ -87,3 +87,30 @@ def test_馬番が無い行は捨てる():
 def test_未知の取得対象は例外にする():
     with pytest.raises(ValueError):
         _run("unknown_target", [{"horse_no": 1}])
+
+
+def test_Noneの列は書かない():
+    """🔴 NULL を書かない。
+
+    理由は 2 つ。(1) `is_*` は NOT NULL（既定 false）なので、明示的な NULL は
+    制約違反で落ちる（2026-09-07 に埋め戻しの初回実行で踏んだ）。
+    (2) この表は複数のジョブが別々の列を書くので、持っていない値を NULL で
+    上書きしてはいけない。
+    """
+    s, n = _run("time_index", [{"horse_no": 1, "idx_max": "81", "idx_ave": None}])
+    sql, params = s.executed[0]
+    assert n == 1
+    assert "idx_max" in sql
+    assert "idx_ave" not in sql, "None を NULL として書こうとしている"
+    assert "idx_ave" not in params[0]
+
+
+def test_埋め戻しは取得済みフラグを立てる():
+    """立て忘れると NOT NULL の `is_*` に NULL を書こうとして落ちる。"""
+    from src.scrapers.netkeiba.backfill import _IS_FLAG
+
+    assert _IS_FLAG == {
+        "blood": "is_blood", "training": "is_training", "paddock": "is_paddock",
+    }
+    for target, flag in _IS_FLAG.items():
+        assert flag in TARGET_COLUMNS[target], f"{target} の列に {flag} が無い"

@@ -85,6 +85,12 @@ def upsert(session: Session, target: str, race_date: date, course_code: str,
                "race_no": race_no, "horse_no": int(horse_no)}
         for col in columns:
             value = record.get(col)
+            if value is None:
+                # 🔴 None は列ごと落とす。**NULL を書かない。**
+                #    理由は 2 つ。(1) `is_*` は NOT NULL（既定 false）なので明示的な
+                #    NULL は制約違反になる。(2) この表は複数のジョブが別々の列を
+                #    書くので、持っていない値を NULL で上書きしてはいけない。
+                continue
             if _is_broken(value):
                 # 壊れた値で正しい値を上書きしない。2026-09-06 の障害の再発防止。
                 logger.warning("復号に失敗した値は書きません: %s %s %sR 馬番%s %s",
