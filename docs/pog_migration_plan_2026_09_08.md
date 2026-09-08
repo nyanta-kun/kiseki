@@ -247,6 +247,30 @@ sekito-backend の直近24時間のログ:
 父・母・母父のセルには詳細リンクのアイコンが同居するので、セル全体のテキストを取ると
 `Palace Pier[]` になる。最初の `<a>` の title を使う。
 
+## 5.3 5a の実走結果（2026-09-08）
+
+    keiba.pog_horses            16,959 行
+      2024年産  7,945（netkeiba の総件数 7,943 と一致）
+      2023年産  7,765 / 2022年以前は各 70（POG 指名馬のみ）
+    捏造された 01-01 の生年月日   0 件（sekito 側は 7,859 件）
+    本物の生年月日               8,999 件
+    指名馬 1,388頭               **全頭マスタにあり**
+
+指名 1,390 行のうち 2 行は `netkeiba_horse_id` が NULL（2010年・2016年の空指名）で、
+これは sekito 側でも同じ。移植の欠落ではない。
+
+### 実走で分かった運用上の注意
+
+🔴 **`ssh sekito 'docker exec ...'` で長いジョブを回さない。**
+初回の全ページ実走は 31/80 ページで**セッションと道連れに死んだ**
+（`cron_runs` に開始行だけが残り、監視が言う「終了記録なし」の形になった）。
+`docker exec -d` で分離して回すこと。
+
+    ssh sekito 'docker exec -d -w /app galloplab-backend-1 sh -c \
+      "/app/.venv/bin/python scripts/scrape_pog_horses.py --birth-year 2024 > /tmp/pog_scrape.log 2>&1"'
+
+所要は 80 ページで約 21 分（レートリミッタの待ちが支配的）。
+
 ---
 
 ## 6. やってはいけないこと

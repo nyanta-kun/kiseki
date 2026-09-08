@@ -122,7 +122,14 @@ def main() -> int:
         logging.error("1 件も取得できませんでした")
         return 1
     # 総件数の 80% に届かないのは「途中で静かに止まった」形。人が気づけるように残す。
-    if result.parsed < result.total_reported * 0.8 and not args.to_page:
+    #
+    # 🔴 一部だけを取る指定（--from-page / --to-page）では鳴らさない。
+    #    2026-09-08 の初回実走で 31 ページ目まで進んだところで接続が切れ、
+    #    `--from-page 32` で再開したところ、**正常に完走したのに警告が出た**
+    #    （49/80 ページぶんしか取っていないので当然そうなる）。
+    #    毎回鳴る警告は読まれなくなり、本物の中断を隠す。
+    partial = args.from_page > 1 or args.to_page is not None
+    if not partial and result.parsed < result.total_reported * 0.8:
         logging.warning(
             "取得 %d 件は総件数 %d の 80%% 未満です。再実行を検討してください",
             result.parsed, result.total_reported,
