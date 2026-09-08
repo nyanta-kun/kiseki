@@ -667,6 +667,10 @@ class Plan:
     #: `bust_top` と同じ狙い（軸1が3着にも入らない側）を、点数ではなく
     #: 計画払戻で決める形にしたもの。
     bust: bool = False
+    #: **帯（`min_odds`）の下から最も人気の1点を買い足す**ときの、その1点の
+    #: 予測オッズ下限（0=差し込まない）。点数は変えず、確率最下位の1点と入れ替える。
+    #: 🔴 **7車だけの操作**（`build_with_gate_fallback` が9車では外す）。
+    underband_min: float = 0.0
     note: str = ""
 
 
@@ -735,9 +739,38 @@ PLANS: dict[str, Plan] = {
     #    実測とやり直し手順: `docs/type_lab/synthetic_floor_recheck_2026_09_02.md`
     # ⚠️ 帯そのものの回収率は妥当（買っている目の帯別回収率は 20〜30倍が両窓とも 84.6% で最良、
     #    100倍超が 51.2 / 60.4% で最悪。ただし100倍超はダッチ配分ゆえ投資の3%しかない）。
+    # 🔴 **2026-09-08 に「帯の下から最も人気の1点」を買い足す形を足した**
+    #    （`underband_min=5.0`・点数は12点のまま・確率最下位の1点と入れ替え）。
+    #
+    #    発端はユーザー観察（2026-09-08 大垣7R）。決着 7-3-5 は p3 上位3車の順当
+    #    決着かつ**市場最人気**（6.0倍）だったが、帯15倍に切られて買い目に無かった。
+    #    分解すると **C_hit が外したレースの 29.7 / 26.9%（探索 / 確認）は
+    #    「決着の目が帯15倍未満だった」**（切った目の予測オッズ中央 7.7倍）。
+    #
+    # 🔴🔴 **帯そのものを下げてはいけない。** 平均想定払戻2万の入稿ゲートに落ちて
+    #    **在庫が消える**（確認窓 件/日 8.86 → 帯10倍 7.60 → 帯8倍 5.68 → 帯なし 1.40）。
+    #    帯なしの ROI が 101% に見えるのは 1.40件/日＝303R の選択効果。
+    #    「帯を下げてゲート落ちは現行で拾う」形でも +3.29pt（帯8倍）止まりで、
+    #    **1点だけ差し込む形（+5.28pt）に負ける**。
+    #
+    #    実測（型C・入稿ゲート通過分・探索2024-07〜2025-12 / 確認2026-01〜08）:
+    #                     件/日        表示的中         払戻中央        ROI     発火
+    #      現行         9.94 / 8.86  27.07 / 28.27%  25,860/25,665  80.4/81.7   —
+    #      **本案**     9.94 / 8.86  **33.56/33.54%** 21,005/21,030 81.7/81.2  75/74%
+    #      Δ表示的中 **+6.47 CI[+5.68,+7.29] / +5.28 CI[+3.97,+6.64]**（両窓とも0を跨がない）
+    #
+    #    ＝**件/日は1件も減らない**（ゲートに落ちたら `GATE_FALLBACK` で現行へ戻すため）。
+    # 🔴 **ROI では採否を決めていない**（+1.3 / −0.6pt と窓で符号が反転する）。
+    #    代償は払戻中央 −18〜19%・平均想定払戻中央 30,031→24,024 円で、
+    #    2026-09-01 の帯 20→15（表示的中 +3.9/+4.6pt・払戻中央 −4,400円）と
+    #    **同じダイヤルの1ノッチ**。10万+ は 0.005 → 0.000件/日 になるが、
+    #    型C の看板は `C_sign` / `C_big` が別行で担っている（型C 本体は元から作れない）。
+    # 🔴 選び方の根拠と「1点だけ」の理由は `_insert_underband` の docstring。
+    #    再現: `scripts/exp_type_lab/type_c_lowband.py` / `docs/type_lab/type_c.md` 11章
     "C_hit": Plan("C_hit", "C", "trifecta", "prob_top", 0, min_odds=15.0,
                   max_legs=12, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
-                  note="予測15倍以上から確率上位12点"),
+                  underband_min=5.0,
+                  note="予測15倍以上から確率上位12点＋帯下の最人気1点"),
     # 型D 混戦・軸あり — 唯一の三連複。最人気の相手を外す。
     # 🔴 **2026-09-01 に相手を 4点 → 3点へ減らした。** 型D は「的中頻度に対して
     #    払戻が足りない」（的中 26.87% に対し損益分岐に要る 37,222円 ↔ 実際 28,696円）。
@@ -1279,6 +1312,7 @@ def build_legs(shape: RaceShape, plan: Plan,
                 break
         if plan.sigma_max and len(out) < 2:
             return None
+        out = _insert_underband(out, plan, pred_odds)
     else:
         return None
 
@@ -1291,6 +1325,40 @@ def _pos(v) -> bool:
         return v is not None and float(v) > 0
     except (TypeError, ValueError):
         return False
+
+
+def _insert_underband(out: list, plan: Plan, pred_odds: Mapping) -> list:
+    """帯（`plan.min_odds`）で切っている目から**最も人気の1点**を買い足す。
+
+    点数は変えない（確率最下位の1点と入れ替える）。差し込む目が無ければそのまま返す。
+
+    🔴 **選ぶのは「モデルが最有力とみる目」ではなく「最も人気の目」**（2026-09-08）。
+       対照実験で、差し込む目の選び方はほとんど効かないと分かっている
+       （型C・入稿ゲート通過分・探索2025 / 確認2026・表示的中）:
+
+         モデル確率1位   32.75 / 32.65%
+         無作為 20 seed  中央 32.35 / 32.29%（範囲 31.82〜32.97）← 確率1位と区別できない
+         **市場1位（最安）** **33.56 / 33.54%**
+
+       ＝効いているのは「帯の下の目を1点でも持つこと」自体であって、モデルの
+       目利きではない。文面・画面もそのつもりで書くこと（「順当だから買う」ではない）。
+
+    🔴 **1点だけ**。2点差し込むと +3.81 / +2.93pt まで落ちる（1点は +6.47 / +5.28pt）。
+       2点目を入れると平均想定払戻が2万円ゲートを割るレースが増え、
+       `GATE_FALLBACK` 経由で現行へ戻る回数が増えるため（発火 74% → 34%）。
+    🔴 **先頭へ入れる。** 末尾だと `line_legs`（ライン決着への差し替え）が
+       後ろから m 点を置き換えるときに、差し込んだ1点が真っ先に消える。
+    """
+    if not plan.underband_min or not plan.min_odds or len(out) < 2:
+        return out
+    have = set(out)
+    cand = [k for k, v in pred_odds.items()
+            if _pos(v) and len(set(k)) == 3 and k not in have
+            and plan.underband_min <= float(v) < plan.min_odds]
+    if not cand:
+        return out
+    top = min(cand, key=lambda k: (float(pred_odds[k]), tuple(k)))
+    return [top] + list(out)[:len(out) - 1]
 
 
 # ───────────────────────────── 配分 ─────────────────────────────
@@ -1613,6 +1681,13 @@ GATE_FALLBACK: dict[str, Plan] = {
                   min_odds=15.0, max_legs=12, alloc="conf",
                   floor_mult=MIN_PAYOUT_MULT,
                   note="F_hit がゲートに落ちたとき: 予測15倍以上から確率上位12点"),
+    # 🔴 **`C_hit` は「帯下の1点を差し込む前」へ戻す**（2026-09-08）。
+    #    差し込むと安い点に予算の3〜4割が乗るので、平均想定払戻が2万円を割る
+    #    レースが 25% 出る。そこを見送りにすると**在庫が 8.86 → 7.30件/日 へ減る**
+    #    ので、割ったレースだけ差込なしの12点で売る。これで件/日は現行と同じ。
+    #    ⚠️ `replace` で作る（帯・点数・配分を二重管理にしない）。
+    "C_hit": replace(PLANS["C_hit"], underband_min=0.0,
+                     note="C_hit がゲートに落ちたとき: 帯下の差込なしで12点"),
 }
 
 #: 最低2倍の床が置けないときに落とす配分（＝2026-09-05 以前の配分）。
@@ -1682,8 +1757,12 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         return legs, stakes, pl
 
     if n_entries != 7:
-        got = _build_plan(shape, plan, pred_odds, probs)
-        return _done(got, plan) if got else None
+        # 🔴 **帯下の差込は7車で測った操作**（`_insert_underband`）。9車は予測オッズの
+        #    分布が丸ごと違ううえ `GATE_FALLBACK` も掛からない（ゲートに落ちたら
+        #    そのまま在庫が消える）ので、ここで外す。9車で使うなら9車の窓で測り直すこと。
+        pl = replace(plan, underband_min=0.0) if plan.underband_min else plan
+        got = _build_plan(shape, pl, pred_odds, probs)
+        return _done(got, pl) if got else None
     def _build(pl: Plan):
         return _build_plan(shape, pl, pred_odds, probs)
 
@@ -1895,6 +1974,11 @@ def rule_version(n_entries: int = 7) -> str:
             k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
                 v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
             for k, v in sorted(GATE_FALLBACK.items())}
+        # 🔴 帯下の差込も上の一覧に入っていない属性なので、ここへ入れないと
+        #    下限を動かしても版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
+        #    ⚠️ **9車では外している**ので 7車の側にだけ入れる。
+        payload["_underband"] = {k: v.underband_min
+                                 for k, v in sorted(PLANS.items()) if v.underband_min}
     if n_entries == 9:
         # 🔴 ルーティング（決勝以外を `F_line` へ）と Σ の上限は `PLANS` の
         #    属性だけでは表せないので、ここへ入れないと新旧の行が同じ

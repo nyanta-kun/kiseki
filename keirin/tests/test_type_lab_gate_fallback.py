@@ -34,17 +34,26 @@ def _flat_board(odds: float) -> tuple[dict, dict]:
     return po, pr
 
 
-def test_fallback_is_defined_for_f_hit_only():
-    """フォールバックを持つのは `F_hit` だけ（増やすときは実測を伴うこと）。"""
-    assert set(GATE_FALLBACK) == {"F_hit"}
+def test_fallback_is_defined_for_the_two_measured_plans_only():
+    """フォールバックを持つのは実測した2つだけ（増やすときは実測を伴うこと）。
+
+    `F_hit` … 帯なし12点がゲートに落ちた分を帯15倍で拾う（2026-09-03）
+    `C_hit` … 帯下の1点を差し込んだ結果落ちた分を、差込なしの12点で拾う（2026-09-08）
+    """
+    assert set(GATE_FALLBACK) == {"C_hit", "F_hit"}
     assert GATE_FALLBACK["F_hit"].min_odds == 15.0
     assert GATE_FALLBACK["F_hit"].max_legs == PLANS["F_hit"].max_legs
     assert GATE_FALLBACK["F_hit"].alloc == PLANS["F_hit"].alloc
+    # C_hit の代替は「差込を外しただけ」＝他の属性は本命と同じであること
+    assert GATE_FALLBACK["C_hit"].underband_min == 0.0
+    for f in ("min_odds", "max_legs", "alloc", "floor_mult", "structure"):
+        assert getattr(GATE_FALLBACK["C_hit"], f) == getattr(PLANS["C_hit"], f), f
 
 
 def test_fallback_keeps_the_same_plan_key():
     """🔴 代替は元と同じ `key` を名乗る。別名だと1レース2商品になる。"""
     assert GATE_FALLBACK["F_hit"].key == "F_hit"
+    assert GATE_FALLBACK["C_hit"].key == "C_hit"
 
 
 def test_no_fallback_when_the_gate_already_passes():
@@ -92,9 +101,9 @@ def test_plans_without_a_fallback_are_untouched():
     """フォールバックを持たないプランは、ゲートに落ちてもそのまま返す
     （見送りの判断は入稿側の責務）。"""
     po, pr = _flat_board(2.5)           # 想定払戻が2万円に届かない
-    got = build_with_gate_fallback(_shape(), PLANS["C_hit"], po, pr)
+    got = build_with_gate_fallback(_shape(), PLANS["E_hit"], po, pr)
     if got is not None:                 # 組めるなら本命のまま
-        assert got[2] is PLANS["C_hit"]
+        assert got[2] is PLANS["E_hit"]
 
 
 def test_rule_version_splits_on_fallback_change(monkeypatch):
