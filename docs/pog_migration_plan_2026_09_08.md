@@ -144,12 +144,34 @@ memory の「マテビュー2本とトリガを keiba へ移設」は、**2本�
 **リスナーを kiseki へ移す時点では両方を REFRESH できる必要がある**
 （＝ kiseki 側リスナーの導入は sekito リスナーの停止とは別のタイミングでよい）。
 
+### 5b-1 の本番検証（2026-09-08 16:21 JST デプロイ）
+
+    alembic head                202609081613_shared
+    keiba.race_results   ->  keiba.notify_mv_horse_runs_dirty
+    chihou.race_results  ->  keiba.notify_mv_horse_runs_dirty
+    16:28:27  [mv-refresh] scheduled refresh   ← 差し替え後に届いた通知
+
+sekito のリスナーが差し替え後も通知を受け取っている（＝端から端まで通っている）ことを
+実データで確認した。トリガの状態だけを見て済ませないこと。
+
+### REFRESH の実測コスト — 5b-2 を単独で先行させない根拠
+
+sekito-backend の直近24時間のログ:
+
+    REFRESH 回数        96 回/日
+    所要時間            中央値 30.9秒（min 22.7 / max 37.7）
+    合計                **約50分/日**（DB 時間の約 3.4%）
+    debounce            **本番は 5分**（リポジトリの実装は 30秒。乖離している）
+
+`keiba.mv_horse_runs` を先に作って kiseki 側でも REFRESH すると、
+**消費者がいないのに +50分/日**を払うことになる。5b-2 は消費者（5d）と同時に行い、
+その時点で sekito 側リスナーを `mv_graded_wins` だけに絞る。
+
 ---
 
 ## 5. 着手前に決める / 測ること
 
-1. **44 endpoint のうち実際に使われているのはどれか。**
-   nginx のアクセスログで実測してから移植対象を決める。2,668行を素直に写すのは無駄が大きい
+1. ~~44 endpoint のうち実際に使われているのはどれか~~ → **実測済み（下記 §5.1）**
 2. **青本データ（`pog_aobon` 7,818行）の入手経路。**
    毎年どうやって入れているのか（`POG2026_指名候補スコア.xlsx` が sekito リポジトリにある）。
    自動化されていないなら移植対象は「テーブルと取込口」だけでよい
@@ -158,6 +180,36 @@ memory の「マテビュー2本とトリガを keiba へ移設」は、**2本�
    2026 の指名は 73 件で確定済み → **次のドラフトは 2027年春**。5e はそこから逆算する
 5. **`sekito.users`(10) と `keiba.users`(11) の対応表。** email で機械的に付くか、
    手で決める必要があるか
+
+### 5.1 エンドポイントの実測（nginx access log・2026-08-25〜09-08 の14日）
+
+`/api/pog/*` に来たリクエストは **44本中 7本だけ**。うち4本がほぼ全量:
+
+| endpoint | 件数 |
+|---|---:|
+| `GET /owners-history` | 143 |
+| `GET /group/:id/recent-races` | 143 |
+| `GET /owners` | 142 |
+| `GET /group/:id/user/:uid/horses` | 111 |
+| `GET /group/:id/user/all/horses` | 9 |
+| `GET /group/:id/sire-count` | 1 |
+| `GET /graded-wins` | 1 |
+
+画面ロード（SPA ルート）も3本だけ:
+
+    /pog-details                22
+    /pog/group/:id/user/:uid    18
+    /pog/group/:id/user/all      3
+
+日別は 8〜107件で、**土日（開催日）に寄る**。
+
+→ **移植の第一陣は 5 endpoint + 2〜3画面**で足りる。2,668行を素直に写す必要はない。
+
+🔴 **「残り37本は死んでいる」と読んではいけない。**
+ドラフト系（`/suggest` `/aobon` `/roll` `/confirm` `POST /user`）は**年1回・春だけ**
+使われる。14日の窓はオフシーズンなので、出てこないのは当然。
+記録室・ランキング・スコア集計系も「めったに見ない画面」であって不要とは限らない。
+判断材料にしてよいのは**移植の順序**であって、削除の可否ではない。
 
 ---
 
