@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -1309,6 +1310,75 @@ class Win5Payout(Base):
     )
     hit_votes: Mapped[int | None] = mapped_column(
         BigInteger, comment="WF 項番16c 的中票数"
+    )
+
+
+class PogHorse(Base):
+    """POG 指名候補の馬マスタ（netkeiba 由来）。`sekito.horse` の後継。
+
+    ## 何のためのものか
+
+    POG（ペーパーオーナーゲーム）はデビュー前の2歳馬を指名する遊びなので、
+    JV-Link にまだ登録されていない馬の一覧が要る。netkeiba の馬検索を
+    生産年で全件ページングして集めたものがこれにあたる
+    （sekito 側の実測: 2024年産 7,855頭 / 2023年産 7,764頭）。
+
+    指名（`sekito.pog_user`）の結合キーは **netkeiba_horse_id** で内部 id ではない。
+    引っ越しでキーが変わらないので、指名データはそのまま使える。
+
+    ## 🔴 成績の集計列は持たない
+
+    `sekito.horse` は win / place / show / out / prize / prize_jra / prize_other を
+    列として保持していたが、**これを更新する処理が存在しない**。2026-09-08 の実測:
+
+        2022年産以前  70頭中 58〜70頭に値あり（当時の別処理が埋めていた）
+        2023年産      7,764頭中 66頭
+        2024年産      7,855頭中 **0頭**（実際には 2,538頭が出走済み）
+
+    その結果 `/api/pog/group/:id/stable-ranking` や `/horse-performance` は
+    2024年産の総賞金を **0 と返していた**（本番 API で確認済み）。
+    一方 `/owners` など後から直された経路は `mv_horse_runs` から都度集計しており正しい。
+
+    **保存した集計は必ず腐る。** 成績は `keiba.race_results` / `chihou.race_results`
+    から都度導出すること（同じ集計は既に `mv_horse_runs` が持っている）。
+
+    ## name を広げてある
+
+    `sekito.horse.name` は varchar(15) で、スクレイパが `name[:15]` と切り詰めていた。
+    本番に15文字ちょうどの行が 56 件あり切り詰めの疑いがあるため、ここでは 100 にする。
+    """
+
+    __tablename__ = "pog_horses"
+    __table_args__ = (  # type: ignore[assignment]
+        # 一意制約が索引を作るので、同じ列に index=True を重ねない
+        UniqueConstraint("netkeiba_horse_id", name="uq_pog_horses_netkeiba_id"),
+        Index("ix_pog_horses_birth_year", "birth_year"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    netkeiba_horse_id: Mapped[str] = mapped_column(
+        String(20), nullable=False,
+        comment="netkeiba の馬ID。先頭4桁が生産年。指名の結合キー",
+    )
+    name: Mapped[str | None] = mapped_column(
+        String(100), comment="馬名（カタカナ）。未命名馬は空のことがある"
+    )
+    sex: Mapped[str | None] = mapped_column(String(4), comment="性別")
+    birth_year: Mapped[int | None] = mapped_column(
+        SmallInteger, comment="生産年。世代で引くための列（netkeiba_horse_id 先頭4桁と同じ）"
+    )
+    birthday: Mapped[date | None] = mapped_column(Date, comment="生年月日")
+    sire: Mapped[str | None] = mapped_column(Text, comment="父")
+    broodmare: Mapped[str | None] = mapped_column(Text, comment="母")
+    broodmare_sire: Mapped[str | None] = mapped_column(Text, comment="母父")
+    stable: Mapped[str | None] = mapped_column(Text, comment="厩舎（調教師名）")
+    owner: Mapped[str | None] = mapped_column(Text, comment="馬主")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
