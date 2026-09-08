@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Horse, Jockey, Race, RaceEntry, RaceResult, Trainer
 from .jvlink_parser import parse_ra, parse_se
-from .provisional_horse_importer import try_merge_provisional
 
 logger = logging.getLogger(__name__)
 
@@ -372,15 +371,6 @@ class RaceImporter:
                 )
             ).fetchall()
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
-
-            # provisional_horses との照合マージ（2歳馬の初出走時に補完）
-            for code, h_data in new_horses.items():
-                race_date = next(
-                    (p.get("race_date", "") for p in se_list if p.get("jravan_horse_code") == code),
-                    "",
-                )
-                birth_year = int(race_date[:4]) - 2 if len(race_date) >= 4 else None
-                await try_merge_provisional(self.db, code, h_data["name"], birth_year)
 
         # --- 騎手 ---
         new_jockeys: dict[str, dict[str, Any]] = {}
