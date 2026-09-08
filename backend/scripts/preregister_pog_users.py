@@ -24,7 +24,22 @@ POG の参加者は先に `keiba.users` へ入れておかないとログイン�
 どちらも sekito 側で Firebase uid ではなく手書き id（`sekito-kuroki` /
 `sekito-ida`）で作られている。**実在が確認できないメールを勝手に登録しない**
 （ホワイトリストは「ログインしてよい人」の一覧なので、間違ったアドレスを
-入れるとその宛先の持ち主に GallopLab が開く）。`--allow-email` で明示指定すれば入る。
+入れるとその宛先の持ち主に GallopLab が開く）。
+
+🔴 **2026-09-08 のユーザー回答: この 2 人はダミーで、本人のアクセス予定は無い。**
+そこで `--dummy` を付けると **`is_active=false`** で登録する。
+POG の表示と対応表のためだけの行になる。
+
+`is_active=false` が効く場所は**画面**。`/api/users/upsert` 自体は拒否しないが、
+`auth.ts` が `token.is_active` に載せ、`proxy.ts` が `/login?error=account_suspended`
+へ戻す（無効化済みアカウントと同じ扱い）。**バックエンド API は元々無認証**なので、
+これは「UI を開かせない」ためのゲートであって秘密を守る仕組みではない。
+
+⚠️ **ダミーを `@gmail.com` に「直して」はいけない。** `ida@gmail.com` のような
+アドレスは**実在する他人の Google アカウント**でありうる。ホワイトリストに
+入れた瞬間その持ち主に GallopLab が開く。ドメインが存在しないままの方が安全。
+
+実在するアカウントを承知の上で入れる場合だけ `--allow-email` を使う。
 
 ## 対応表
 
@@ -38,10 +53,10 @@ UID で認証にしか使わない）。POG のテーブルを keiba へ移す�
     docker exec -w /app galloplab-backend-1 /app/.venv/bin/python \
         scripts/preregister_pog_users.py
 
-    # 実際に登録する
-    ... scripts/preregister_pog_users.py --apply
-    # 怪しいメールも承知の上で入れる
-    ... scripts/preregister_pog_users.py --apply --allow-email ida@example.com
+    # 実際に登録する（保留 2 人はダミーとして is_active=false で入れる）
+    ... scripts/preregister_pog_users.py --apply --dummy
+    # 実在するアカウントだと確認できたメールを通常登録する
+    ... scripts/preregister_pog_users.py --apply --allow-email kuroki@example.com
 """
 
 from __future__ import annotations
@@ -88,7 +103,9 @@ def main() -> int:
     )
     parser.add_argument("--apply", action="store_true", help="実際に登録する")
     parser.add_argument("--allow-email", action="append", default=[],
-                        help="怪しい判定でも登録するメール（複数指定可）")
+                        help="実在を確認できたメールを通常登録する（複数指定可）")
+    parser.add_argument("--dummy", action="store_true",
+                        help="保留になったメールを is_active=false（ログイン不可）で登録する")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO,
@@ -110,10 +127,16 @@ def main() -> int:
             elif not email:
                 state = "スキップ（メール無し）"
             elif is_suspicious(email) and email.lower() not in allow:
-                state = "🔴 保留（メールの実在が要確認）"
+                if args.dummy:
+                    state = "ダミー登録（ログイン不可）"
+                    to_create.append({"email": email, "nickname": r["nickname"],
+                                      "is_active": False})
+                else:
+                    state = "🔴 保留（メールの実在が要確認）"
             else:
                 state = "新規登録する"
-                to_create.append({"email": email, "nickname": r["nickname"]})
+                to_create.append({"email": email, "nickname": r["nickname"],
+                                  "is_active": True})
             print(f"  {r['sekito_id']:>9}  {r['nickname'] or '':<12}  "
                   f"{str(r['keiba_id'] or '-'):>8}  {state}  {email}")
         print()
@@ -127,12 +150,16 @@ def main() -> int:
             session.execute(
                 text(
                     "INSERT INTO keiba.users (email, role, is_active) "
-                    "VALUES (:email, 'member', true) "
+                    "VALUES (:email, 'member', :is_active) "
                     "ON CONFLICT (email) DO NOTHING"
                 ),
                 c,
             )
-            logging.info("登録: %s（%s）", c["email"], c["nickname"])
+            logging.info(
+                "登録: %s（%s）%s",
+                c["email"], c["nickname"],
+                "" if c["is_active"] else " ← ログイン不可",
+            )
         session.commit()
 
         after = [dict(r) for r in session.execute(SELECT_SQL).mappings()]
