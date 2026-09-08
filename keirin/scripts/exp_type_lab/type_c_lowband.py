@@ -12,6 +12,11 @@
   - 採否は確認窓(2026)。予測オッズモデル train_end 2025-12-31 のため探索窓は in-sample
   - ROI では採否を決めない（表示的中で見る）。C_hit は軸信頼ゲート対象外
 
+  セクション: diag（伸びしろ）/ arms（帯と差込の腕）/ ctrl（対照とCI）/
+             band（帯を下げてゲート落ちは現行）/ final（採用候補）/
+             verify（本番の関数で再現するか）/ floor（差込の下限の掃引）/
+             minpay（差込点が当たるといくら返るか）
+
     PYTHONPATH=. .venv/bin/python scripts/exp_type_lab/type_c_lowband.py diag
 """
 from __future__ import annotations
@@ -478,7 +483,110 @@ def verify() -> None:
             print(C.line(nm, C.summarize(recs, nd)))
         print(f"  差込が実際に効いたレース {fired:,}/{seen:,} ({fired/max(seen,1)*100:.1f}%)")
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 6 — 差し込む点の下限（`underband_min`）の掃引（2026-09-08・ユーザー指摘）
+#
+# > 置き換える1点のオッズがあまりに低い場合、金額の割り当てが多くなってしまう
+#
+# `conf` の床は 予算 × `MIN_PAYOUT_MULT` ÷ 予測オッズ なので、安い点ほど必ず厚い。
+# **下限は事故防止であると同時に性能の設定でもある**（下限なしは表示的中も落ちる）。
+# 🔴 見るのは「表示的中」だけでなく **差込点に乗る賭け金の割合**（懸念そのもの）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+FLOORS = (0.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)
+
+
+def _sold(x, plan):
+    """本番の入口で組んで、入稿ゲートを通ったものだけ返す。"""
+    from src.type_lab import build_with_gate_fallback
+    got = build_with_gate_fallback(x.shape, plan, x.po_tf, x.pr_tf, n_entries=7,
+                                   min_mean_payout=MIN_MEAN_PAYOUT)
+    if not got:
+        return None
+    legs, st, used = got
+    if mean_expected_payout(st, x.po_tf) <= MIN_MEAN_PAYOUT:
+        return None
+    if min(float(x.po_tf[c]) for c in st) < MIN_POINT_ODDS:
+        return None
+    return legs, st, used
+
+
+def floor() -> None:
+    from dataclasses import replace as _replace
+    for label, win in WIN:
+        base = C.select("C", win)
+        nd = C.days_of(C.select(None, win))
+        xs = [x for i in base if (x := ctx(int(i))) is not None]
+        print(f"\n===== 型C {label}  {len(xs):,}R / {nd}日 =====")
+        print("  下限   件/日  表示的中%   払戻中央   ROI%  発火%"
+              "   差込点の賭け金/予算            差込点の予測オッズ")
+        print("                                                  "
+              "中央    p95    最大     中央   最小")
+        for lo in FLOORS:
+            pl = _replace(CUR, underband_min=lo)
+            recs, shares, odds, fired, seen = [], [], [], 0, 0
+            for x in xs:
+                got = _sold(x, pl)
+                if not got:
+                    continue
+                legs, st, _ = got
+                seen += 1
+                under = [c for c in st if float(x.po_tf[c]) < pl.min_odds]
+                if under:
+                    fired += 1
+                    shares.append(st[under[0]] / sum(st.values()))
+                    odds.append(float(x.po_tf[under[0]]))
+                pay = (float(st[x.win_tf] / 100.0 * x.pay_tf * 100.0)
+                       if x.win_tf in st else 0.0)
+                recs.append(dict(date=x.date, inv=float(sum(st.values())), pay=pay,
+                                 k=len(st), mean=mean_expected_payout(st, x.po_tf)))
+            s = C.summarize(recs, nd)
+            if shares:
+                sh, od = sorted(shares), sorted(odds)
+                ext = (f" {sh[len(sh)//2]*100:6.1f}% {sh[int(len(sh)*.95)]*100:6.1f}%"
+                       f" {sh[-1]*100:6.1f}%  {od[len(od)//2]:7.1f} {od[0]:6.1f}")
+            else:
+                ext = "        —"
+            nm = "なし" if lo == 0 else f"{lo:.0f}倍"
+            print(f"  {nm:5s} {s['perday']:6.2f} {s['shown']:8.2f} {s['med_pay']:10,.0f}"
+                  f" {s['roi']:6.1f} {fired/max(seen,1)*100:6.1f}{ext}")
+
+
+def minpay() -> None:
+    """差し込んだ1点が当たったときいくら返るか（理屈でなく実データで確かめる）。"""
+    def q(a, p):
+        return sorted(a)[min(int(len(a) * p), len(a) - 1)]
+    for label, win in WIN:
+        ins, allmin, hit = [], [], []
+        for i in C.select("C", win):
+            x = ctx(int(i))
+            if x is None:
+                continue
+            got = _sold(x, CUR)
+            if not got:
+                continue
+            _, st, _ = got
+            pays = {c: st[c] * float(x.po_tf[c]) for c in st}
+            allmin.append(min(pays.values()))
+            under = [c for c in st if float(x.po_tf[c]) < CUR.min_odds]
+            if not under:
+                continue
+            ins.append(pays[under[0]])
+            if x.win_tf == under[0]:
+                hit.append(float(st[x.win_tf] / 100.0 * x.pay_tf * 100.0))
+        print(f"\n=== 型C {label} ===")
+        print(f"  商品内の最低想定払戻   最小 {min(allmin):,.0f}円 /"
+              f" p05 {q(allmin, .05):,.0f} / 中央 {q(allmin, .5):,.0f}")
+        print(f"  差込点の想定払戻       最小 {min(ins):,.0f}円 / p05 {q(ins, .05):,.0f} /"
+              f" 中央 {q(ins, .5):,.0f} / 最大 {max(ins):,.0f}")
+        print(f"  うち2万円未満          {sum(1 for v in ins if v < 20_000):,}/{len(ins):,}件"
+              " （床が置けず旧配分へ落ちたレース）")
+        if hit:
+            print(f"  差込点が実際に当たった {len(hit):,}件  確定払戻 中央 {q(hit, .5):,.0f}円"
+                  f" / 最小 {min(hit):,.0f} / 投資割れ {sum(1 for v in hit if v < 10_000):,}件")
+
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "diag"
-    {"diag": diag, "arms": arms, "ctrl": ctrl, "band": band, "final": final, "verify": verify}[cmd]()
+    {"diag": diag, "arms": arms, "ctrl": ctrl, "band": band, "final": final,
+     "verify": verify, "floor": floor, "minpay": minpay}[cmd]()
