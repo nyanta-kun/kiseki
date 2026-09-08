@@ -81,15 +81,36 @@ sekito.users(10) --uid--> sekito.pog_user
 
 ---
 
-## 3. 🔴 順序の罠（本丸）
+## 3. 🔴 順序の罠（本丸）— 書き込み経路の依存は 2026-09-08 に解消
 
-`keiba.race_results` と `chihou.race_results` の INSERT トリガが
-**sekito スキーマの関数** `sekito.notify_mv_horse_runs_dirty()` を呼んでいる。
+`keiba.race_results` と `chihou.race_results` の文トリガが
+**sekito スキーマの関数** `sekito.notify_mv_horse_runs_dirty()` を呼んでいた。
 
 - sekito コンテナを先に落とす → POG のマテビューが更新されなくなる
 - sekito スキーマを先に DROP → **本番のレース結果取り込みがトリガ関数欠損で失敗する**
 
-→ **マテビューとトリガの移設は他のどのサブフェーズよりも先に、単独で行う。**
+### 実測した依存の全体（2026-09-08）
+
+`keiba` / `chihou` の中で sekito を参照しているオブジェクトを全部数えた:
+
+| 種別 | 件数 |
+|---|---|
+| 関数 | **0** |
+| ビュー・マテビュー | **0** |
+| 外部キー | **0** |
+| トリガ | **2**（`trg_notify_mv_horse_runs_dirty_{keiba,chihou}`） |
+
+→ **書き込み経路の sekito 依存はこの2トリガだけ**だった。
+
+### 5b-1（完了）
+
+同じ本体の関数を `keiba` へ作り、両トリガの参照先を差し替えた。
+**通知チャンネル名 `mv_horse_runs_dirty` は変えていない**ので、sekito の
+`services/mv-refresh-listener.js` はそのまま両マテビューを REFRESH し続ける。挙動の変化はゼロ。
+
+⚠️ sekito 側の関数は**残してある**（後述のとおり `mv_graded_wins` がまだ sekito に居るため）。
+⚠️ sekito の node-pg-migrate は適用済み記録があるので再実行されないが、
+**DB を作り直すと `20260503000003` が参照先を sekito へ戻す**。移植完了時に消すこと。
 
 ---
 
@@ -99,12 +120,29 @@ sekito.users(10) --uid--> sekito.pog_user
 
 | # | 内容 | 依存 | 備考 |
 |---|---|---|---|
-| **5b** | `mv_horse_runs` + トリガ + LISTEN/NOTIFY リスナーを keiba スキーマへ | なし | 🔴 最優先。ここだけで単独 PR |
+| ~~5b-1~~ | ~~トリガの参照先を `keiba.notify_mv_horse_runs_dirty()` へ~~ | なし | ✅ **2026-09-08 完了**。書き込み経路の sekito 依存は消えた |
+| 5b-2 | `keiba.mv_horse_runs` + kiseki 側 REFRESH リスナー | なし | 消費者（5d）と同時でよい。先に作ると REFRESH が二重に走るだけ |
+| 5b-3 | `mv_graded_wins` の移設 | **`sekito.entries` / `sekito.races` の移設** | 🔴 単独では**動かせない**（下記） |
 | 5a | 馬マスタ（`sekito.horse` → `keiba.pog_horses`）+ `netkeiba-horses-bulk` 移植 | なし | 供給を止めない。年1回なので cron 化は任意 |
 | 5c | 認証の接続（`sekito.users` ↔ `keiba.users` を email で対応付け） | **Phase 4（ブランド・認証方式）の決定** | ここが Phase 5 全体のボトルネック |
 | 5d | 読み取り API + 画面（統計・成績・ランキング） | 5a, 5b | 44 endpoint を**使われている分だけ**に絞る |
 | 5e | 書き込み（ドラフト指名・サイコロ・管理） | 5c, 5d | 🔴 **ドラフト期間外にカットオーバーする** |
 | 5f | 通知3ジョブ移設 + nginx 切替 + sekito 停止 | 全部 | `keiba.cron_runs` に記録させる |
+
+### 🔴 マテビュー2本は性質が違う
+
+| マテビュー | 依存 | 移設可否 |
+|---|---|---|
+| `mv_horse_runs`(1.34M) | `keiba.*` と `chihou.*` **のみ** | **単独で移せる** |
+| `mv_graded_wins` | `sekito.entries` / `sekito.races` / `sekito.jvlink_to_sekito_course()` | **移せない**。sekito の実データ移設待ち |
+
+memory の「マテビュー2本とトリガを keiba へ移設」は、**2本を同時にはできない**。
+`mv_graded_wins` は netkeiba 由来の `sekito.entries` で馬IDを解決しているため、
+`sekito.entries` / `sekito.races` の引っ越しとセットでしか動かせない。
+
+両マテビューは同じ通知チャンネルで REFRESH されているので、
+**リスナーを kiseki へ移す時点では両方を REFRESH できる必要がある**
+（＝ kiseki 側リスナーの導入は sekito リスナーの停止とは別のタイミングでよい）。
 
 ---
 
