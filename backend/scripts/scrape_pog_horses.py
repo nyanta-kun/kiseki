@@ -50,7 +50,7 @@ from src.db.session import SyncSessionLocal  # noqa: E402
 from src.scrapers.netkeiba import pog_horse_list  # noqa: E402
 from src.scrapers.netkeiba.rate_limiter import RateLimiter  # noqa: E402
 from src.scrapers.netkeiba.session import USER_AGENTS, login  # noqa: E402
-from src.utils.cron_run import RunRecord, record  # noqa: E402
+from src.utils.cron_run import RunRecord  # noqa: E402
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -72,13 +72,21 @@ def main() -> int:
     birth_year = args.birth_year if args.birth_year else today.year - 2
 
     logging.info("=== POG 馬一覧取得 開始 (生産年=%d) ===", birth_year)
-    # 🔴 `--dry-run` は記録しない。試し打ちを cron_runs に残すと、監視から見て
-    #    「ジョブが正常に走った」と区別がつかず、本物の未実行を見逃す。
-    ctx = (
-        nullcontext(RunRecord(job_name="(記録しない)"))
-        if args.dry_run
-        else record("scrape_pog_horses")
-    )
+    # 🔴 このジョブは cron_runs に記録しない（2026-09-09）。
+    #
+    #    `keiba.cron_runs` は **host cron が回すジョブ**の実行記録で、監視
+    #    （check_scrape_supply）は「終了記録が無い行＝途中で死んだ」を警告する。
+    #    ところがこれは cron に載せない年1回の手動ジョブなので、手で流したものが
+    #    SSH 切断などで死ぬたびに**翌朝の監視が鳴る**。
+    #
+    #    実際 2026-09-08 に踏んだ: `ssh sekito 'docker exec ...'` で流した実走が
+    #    31/80 ページでセッションごと死に、翌朝の Discord 通知が
+    #    「ジョブが終了記録なし: scrape_pog_horses が1回」と鳴った。
+    #    監視は正しいが**鳴らない方がよい警告**で、これが続くと本物を見逃す。
+    #
+    #    手動ジョブは人が端末を見ているので、記録より騒がしさの害の方が大きい。
+    #    cron に載せるなら record() を戻すこと。
+    ctx = nullcontext(RunRecord(job_name="(記録しない)"))
     with ctx as run, SyncSessionLocal() as session:
         limiter = RateLimiter()
         # 一覧は未ログインでも引けるが、他のジョブと同じ足跡にするためログインする。
