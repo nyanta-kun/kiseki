@@ -483,6 +483,12 @@ UPPER_LABELS: dict[str, str] = {
 #:    `test_module_imports_only_the_standard_library`）。ずれると文面だけが
 #:    静かに事実と食い違うので、`tests/test_type_lab_underband.py` の
 #:    `test_submission_band_table_matches_the_plans` が一致を固定している。
+#: 🔴 **`F_hit` は意図して入れていない**（2026-09-08）。あちらも代替（帯15倍）に
+#:    帯下の1点を差し込むが、**本命の下限が 5.0倍**なので 5〜15倍の目は差込でなく
+#:    通常の買い目であり、`pred_odds` からは見分けられない。付けると通常の買い目を
+#:    「押さえの1点」と説明することになる。`F_hit` の文面はもともと「安い目を
+#:    買わない」と言っていないので、直す必要も無い。
+#:    検査: `tests/test_type_lab_type_f_floor.py::test_the_copy_does_not_claim_to_avoid_cheap_points`
 UNDERBAND_BANDS: dict[str, float] = {"C_hit": 15.0}
 
 

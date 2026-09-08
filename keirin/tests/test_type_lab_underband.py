@@ -117,7 +117,7 @@ def test_falls_back_to_the_plain_twelve_when_the_gate_would_reject():
 
     legs, stakes, used = build_with_gate_fallback(shape, PLANS["C_hit"], po, pr,
                                                   n_entries=7)
-    assert used is GATE_FALLBACK["C_hit"], "ゲートに落ちたのに現行へ戻していない"
+    assert used in GATE_FALLBACK["C_hit"], "ゲートに落ちたのに現行へ戻していない"
     assert used.key == "C_hit", "代替が別の plan_key を名乗ると1レース2商品になる"
     assert (7, 3, 5) not in stakes
     assert len(stakes) == 12

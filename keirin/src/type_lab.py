@@ -790,9 +790,27 @@ PLANS: dict[str, Plan] = {
                   max_legs=14, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
                   note="予測30倍以上から確率上位14点"),
     # 型F 大混戦 — 12点。**2026-08-31 に全順列（`all6`）から確率順へ替えた。**
-    "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0, max_legs=12, alloc="conf",
-                  floor_mult=MIN_PAYOUT_MULT,
-                  note="確率上位12点（同ライン隣接ボーナス込み）"),
+    # 🔴 **2026-09-08 に「安すぎる目を買わない」下限 5.0倍を入れた（帯なし → 5倍）。**
+    #
+    #    型C の帯下差込（11章）を受けた確認で、**帯が無い F_hit は最安 3.5倍の目まで
+    #    買っており、1点に予算の最大 49% が乗っていた**（`conf` の床は
+    #    予算 × 2.0 ÷ 予測オッズ なので安い点ほど必ず厚い）。
+    #
+    #    掃引（表示的中・売る母集団・探索 / 確認。**件/日はどの下限でも 9.46 / 9.00 で不変**）:
+    #      下限 3倍 +0.00 / +0.05pt   4倍 +0.21 / +0.26   **5倍 +0.65 [+0.37,+0.94] /
+    #      +0.62 [+0.10,+1.13]**   6倍 +0.85 / +0.31   8倍 +0.39 / −0.21
+    #    ＝**両窓とも CI が 0 を跨がないのは 5倍だけ**（6倍・8倍は確認窓で跨ぐ）。
+    #    副次的に 1点最大 49 → 40% ・最安 3.5 → 5.0倍 ・平均想定払戻2万ゲートに
+    #    落ちる割合 23.4 → 15.9%（＝代替へ回らず本命のまま売れる）。
+    # 🔴 **これは帯ではない。** 帯15倍への丸ごと置換は 2026-09-03 に測って不採用
+    #    （表示的中 −0.8pt）。5倍は「大混戦なのに単勝並みに安い目」を落とすだけ。
+    # ⚠️ 9車の `F_hit` にも掛かる（`build_with_gate_fallback` は帯を車数で分けない）。
+    #    9車で売るのは `F_pay` / `F_line` なので実売への影響は無いが、比較台の値は動く。
+    #    そのぶん `rule_version` は 7車・9車の**両方**が割れる（挙動が実際に変わるため）。
+    # 詳細: `docs/type_lab/type_f.md` 「帯の下の1点と安すぎる目の下限」
+    "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0, min_odds=5.0, max_legs=12,
+                  alloc="conf", floor_mult=MIN_PAYOUT_MULT,
+                  note="予測5倍以上から確率上位12点（同ライン隣接ボーナス込み）"),
     "F_pay": Plan("F_pay", "F", "trifecta", "axis1_second2", 2, alloc="conf",
                   note="1着=軸1固定・2着を2車・3着流し（一撃を取る）"),
     # 型F ③9車の主力 — 三連複。**2026-09-06 に 9車の非決勝を F_hit から移した。**
@@ -1676,18 +1694,41 @@ def apply_line_swap(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapp
 #:    対応比較（同一レース）で 2倍+ は 15〜20倍が頂点で、30倍では確認窓 −7.2% と
 #:    崩れる（払戻中央は上がり続けるのに大きく獲れた回数は減る）。
 #: ⚠️ 日次上限との相互作用（件/日 +5.4% が他の商品を押し出さないか）は**未検証**。
-GATE_FALLBACK: dict[str, Plan] = {
-    "F_hit": Plan("F_hit", "F", "trifecta", "prob_top", 0,
-                  min_odds=15.0, max_legs=12, alloc="conf",
-                  floor_mult=MIN_PAYOUT_MULT,
-                  note="F_hit がゲートに落ちたとき: 予測15倍以上から確率上位12点"),
+#: 🔴 **値は「上から順に試す並び」**（2026-09-08 に単体 → 並びへ変えた）。
+#:    `F_hit` は代替（帯15倍）に**帯下の1点差込**を足したが、差込がゲートを割ると
+#:    三段目が無く**商品が丸ごと消える**（実測 件/日 −1.3〜2.0%）。差込なしの
+#:    帯15倍を後ろに置くことで**在庫は1件も減らない**（型C の設計思想と同じ）。
+GATE_FALLBACK: dict[str, tuple[Plan, ...]] = {
+    "F_hit": (
+        # 🔴 **2026-09-08 追加: 代替にも帯下の最人気を1点だけ差し込む。**
+        #    型C（11章）と同じ操作だが、**F_hit は 76〜77% のレースでそもそも帯を
+        #    持たない**ので効くのはここだけ。決着の目を帯15倍で切っていたのは
+        #    型F 全体の 5.54 / 5.12%（型C は 29.7 / 26.9%）＝**伸びしろは 1/5**。
+        #
+        #    実測（売る母集団・三段連鎖・探索 / 確認・②の下限5倍込み）:
+        #      件/日 9.46 / 9.00（**不変**）  表示的中 26.80 → 28.49 / 26.18 → 27.31
+        #      Δ **+1.68 [+1.23,+2.16] / +1.13 [+0.36,+1.90]**（両窓とも0を跨がない）
+        #      ROI 70.9 → 71.0 / 71.9 → 71.2（判別不能）  払戻中央 −6%
+        #      10万+/日 0.004 / 0.005 で**不変**（F_hit は元から看板を作らない）
+        # 🔴 選び方は型C と同じで**ほとんど効かない**（無作為20seed と僅差・
+        #    4つの窓×母集団のうち1つは無作為の範囲内）。効いているのは
+        #    「帯の下の目を1点でも持つこと」自体。
+        Plan("F_hit", "F", "trifecta", "prob_top", 0,
+             min_odds=15.0, max_legs=12, alloc="conf",
+             floor_mult=MIN_PAYOUT_MULT, underband_min=5.0,
+             note="F_hit がゲートに落ちたとき: 予測15倍以上＋帯下の最人気1点"),
+        Plan("F_hit", "F", "trifecta", "prob_top", 0,
+             min_odds=15.0, max_legs=12, alloc="conf",
+             floor_mult=MIN_PAYOUT_MULT,
+             note="上も落ちたとき: 予測15倍以上から確率上位12点（差込なし）"),
+    ),
     # 🔴 **`C_hit` は「帯下の1点を差し込む前」へ戻す**（2026-09-08）。
     #    差し込むと安い点に予算の3〜4割が乗るので、平均想定払戻が2万円を割る
     #    レースが 25% 出る。そこを見送りにすると**在庫が 8.86 → 7.30件/日 へ減る**
     #    ので、割ったレースだけ差込なしの12点で売る。これで件/日は現行と同じ。
     #    ⚠️ `replace` で作る（帯・点数・配分を二重管理にしない）。
-    "C_hit": replace(PLANS["C_hit"], underband_min=0.0,
-                     note="C_hit がゲートに落ちたとき: 帯下の差込なしで12点"),
+    "C_hit": (replace(PLANS["C_hit"], underband_min=0.0,
+                      note="C_hit がゲートに落ちたとき: 帯下の差込なしで12点"),),
 }
 
 #: 最低2倍の床が置けないときに落とす配分（＝2026-09-05 以前の配分）。
@@ -1767,16 +1808,20 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         return _build_plan(shape, pl, pred_odds, probs)
 
     got = _build(plan)
-    fb = GATE_FALLBACK.get(plan.key)
-    if fb is None:
+    fbs = GATE_FALLBACK.get(plan.key) or ()
+    if not fbs:
         return _done(got, plan) if got else None
     # 本命が組めた上でゲートを通るなら、そのまま使う（既存の行は書き換えない）
     if got and mean_expected_payout(got[1], pred_odds) > min_mean_payout:
         return _done(got, plan)
-    alt = _build(fb)
-    if alt and mean_expected_payout(alt[1], pred_odds) > min_mean_payout:
-        return _done(alt, fb)
-    # 代替もゲートに落ちるなら、元の結果をそのまま返す（見送りの判断は入稿側）
+    # 🔴 **上から順に試す。** 途中で通ったらそこで止める（`F_hit` は
+    #    「帯15倍＋差込」→「帯15倍」の2段。差込が割ったぶんを後段が拾うので
+    #    在庫が減らない）。
+    for fb in fbs:
+        alt = _build(fb)
+        if alt and mean_expected_payout(alt[1], pred_odds) > min_mean_payout:
+            return _done(alt, fb)
+    # どれもゲートに落ちるなら、元の結果をそのまま返す（見送りの判断は入稿側）
     return _done(got, plan) if got else None
 
 
@@ -1970,10 +2015,15 @@ def rule_version(n_entries: int = 7) -> str:
                                b.max_odds, b.max_legs, b.target, b.min_bought]
                               for b in UPPER_BANDS],
                              sorted(UPPER_BAND_PLANS)]
+        # 🔴 **並びごと・順序も含めて載せる**（2026-09-08）。試す順を入れ替えると
+        #    商品が変わるので、順序が版に効かないと新旧の行が混ざる。
+        #    `underband_min` も入れる（代替側の差込がここにしか無いため）。
         payload["_fallback"] = {
-            k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
-                v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
-            for k, v in sorted(GATE_FALLBACK.items())}
+            k: [[v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
+                 v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult,
+                 v.underband_min]
+                for v in vs]
+            for k, vs in sorted(GATE_FALLBACK.items())}
         # 🔴 帯下の差込も上の一覧に入っていない属性なので、ここへ入れないと
         #    下限を動かしても版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
         #    ⚠️ **9車では外している**ので 7車の側にだけ入れる。

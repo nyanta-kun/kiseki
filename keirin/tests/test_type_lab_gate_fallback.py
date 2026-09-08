@@ -37,23 +37,31 @@ def _flat_board(odds: float) -> tuple[dict, dict]:
 def test_fallback_is_defined_for_the_two_measured_plans_only():
     """フォールバックを持つのは実測した2つだけ（増やすときは実測を伴うこと）。
 
-    `F_hit` … 帯なし12点がゲートに落ちた分を帯15倍で拾う（2026-09-03）
+    `F_hit` … 帯なし12点がゲートに落ちた分を「帯15倍＋帯下1点差込」→「帯15倍」で拾う
     `C_hit` … 帯下の1点を差し込んだ結果落ちた分を、差込なしの12点で拾う（2026-09-08）
     """
     assert set(GATE_FALLBACK) == {"C_hit", "F_hit"}
-    assert GATE_FALLBACK["F_hit"].min_odds == 15.0
-    assert GATE_FALLBACK["F_hit"].max_legs == PLANS["F_hit"].max_legs
-    assert GATE_FALLBACK["F_hit"].alloc == PLANS["F_hit"].alloc
+    for k, vs in GATE_FALLBACK.items():
+        assert isinstance(vs, tuple) and vs, f"{k} の値は試す順の並びであること"
+    f0, f1 = GATE_FALLBACK["F_hit"]
+    assert f0.min_odds == f1.min_odds == 15.0
+    assert f0.underband_min == 5.0, "1段目は帯下の1点を差し込む"
+    assert f1.underband_min == 0.0, "2段目は差込なし（在庫を落とさないための受け皿）"
+    for f in (f0, f1):
+        assert f.max_legs == PLANS["F_hit"].max_legs
+        assert f.alloc == PLANS["F_hit"].alloc
     # C_hit の代替は「差込を外しただけ」＝他の属性は本命と同じであること
-    assert GATE_FALLBACK["C_hit"].underband_min == 0.0
+    (c0,) = GATE_FALLBACK["C_hit"]
+    assert c0.underband_min == 0.0
     for f in ("min_odds", "max_legs", "alloc", "floor_mult", "structure"):
-        assert getattr(GATE_FALLBACK["C_hit"], f) == getattr(PLANS["C_hit"], f), f
+        assert getattr(c0, f) == getattr(PLANS["C_hit"], f), f
 
 
 def test_fallback_keeps_the_same_plan_key():
     """🔴 代替は元と同じ `key` を名乗る。別名だと1レース2商品になる。"""
-    assert GATE_FALLBACK["F_hit"].key == "F_hit"
-    assert GATE_FALLBACK["C_hit"].key == "C_hit"
+    for key, vs in GATE_FALLBACK.items():
+        for v in vs:
+            assert v.key == key
 
 
 def test_no_fallback_when_the_gate_already_passes():
@@ -62,7 +70,7 @@ def test_no_fallback_when_the_gate_already_passes():
     legs, stakes, used = build_with_gate_fallback(_shape(), PLANS["F_hit"], po, pr)
     assert mean_expected_payout(stakes, po) > MIN_MEAN_PAYOUT
     assert used is PLANS["F_hit"]
-    assert used.min_odds == 0.0          # 帯が掛かっていない
+    assert used.min_odds == 5.0          # 帯15倍は掛かっていない（本命の下限だけ）
 
 
 def test_fallback_fires_when_the_gate_would_reject():
@@ -91,9 +99,13 @@ def test_fallback_fires_when_the_gate_would_reject():
         "前提が崩れている: この盤面では F_hit がゲートに落ちるはず")
 
     legs, stakes, used = build_with_gate_fallback(shape, PLANS["F_hit"], po, pr)
-    assert used is GATE_FALLBACK["F_hit"]
+    assert used in GATE_FALLBACK["F_hit"]
     assert used.key == "F_hit", "代替が別の plan_key を名乗ると1レース2商品になる"
-    assert all(po[c] >= 15.0 for c in stakes), "帯15倍未満の点を買っている"
+    # 🔴 1段目は帯下の最人気を1点だけ差し込むので「全点が帯以上」ではない。
+    #    例外はその1点だけで、`underband_min` は下回らないこと。
+    under = [c for c in stakes if po[c] < 15.0]
+    assert len(under) <= 1, "帯15倍未満の点を2点以上買っている"
+    assert all(po[c] >= used.underband_min for c in under)
     assert mean_expected_payout(stakes, po) > MIN_MEAN_PAYOUT
 
 
@@ -108,10 +120,19 @@ def test_plans_without_a_fallback_are_untouched():
 
 def test_rule_version_splits_on_fallback_change(monkeypatch):
     """🔴 帯を動かしたら版が割れること。割れないと新旧の行が同じ版で混ざる。"""
+    from dataclasses import replace
     before = rule_version(7)
     alt = dict(GATE_FALLBACK)
-    alt["F_hit"] = GATE_FALLBACK["F_hit"].__class__(
-        **{**GATE_FALLBACK["F_hit"].__dict__, "min_odds": 20.0})
+    alt["F_hit"] = tuple(replace(v, min_odds=20.0) for v in GATE_FALLBACK["F_hit"])
+    monkeypatch.setattr("src.type_lab.GATE_FALLBACK", alt)
+    assert rule_version(7) != before
+
+
+def test_rule_version_splits_when_the_fallback_order_changes(monkeypatch):
+    """🔴 試す順を入れ替えたら版が割れること（順序で商品が変わるため）。"""
+    before = rule_version(7)
+    alt = dict(GATE_FALLBACK)
+    alt["F_hit"] = tuple(reversed(GATE_FALLBACK["F_hit"]))
     monkeypatch.setattr("src.type_lab.GATE_FALLBACK", alt)
     assert rule_version(7) != before
 
@@ -142,15 +163,15 @@ def test_fallback_is_seven_car_only():
 
     _, _, used7 = build_with_gate_fallback(shape, PLANS["F_hit"], po, pr, 7)
     _, _, used9 = build_with_gate_fallback(shape, PLANS["F_hit"], po, pr, 9)
-    assert used7 is GATE_FALLBACK["F_hit"]
+    assert used7 in GATE_FALLBACK["F_hit"]
     assert used9 is PLANS["F_hit"], "9車でフォールバックが発火している"
 
 
 def test_nine_car_rule_version_is_unchanged_by_the_fallback(monkeypatch):
     """🔴 9車の挙動は変えていないので、9車の版は割らないこと。"""
+    from dataclasses import replace
     before9 = rule_version(9)
     alt = dict(GATE_FALLBACK)
-    alt["F_hit"] = GATE_FALLBACK["F_hit"].__class__(
-        **{**GATE_FALLBACK["F_hit"].__dict__, "min_odds": 20.0})
+    alt["F_hit"] = tuple(replace(v, min_odds=20.0) for v in GATE_FALLBACK["F_hit"])
     monkeypatch.setattr("src.type_lab.GATE_FALLBACK", alt)
     assert rule_version(9) == before9
