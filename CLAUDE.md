@@ -20,8 +20,12 @@ VPS (160.251.234.83) - Docker
 VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
   ├─ keiba.*     — JRA レース・指数・オッズ
   ├─ sekito.*    — 穴ぐさ・外部指数（netkeiba/kichiuma）
-  │   ├─ sekito.v_races       — keiba.races の sekito 向けビュー
-  │   ├─ sekito.v_entries     — keiba.race_entries + odds の sekito 向けビュー
+  │   ├─ sekito.races        — 🔴 **実テーブル**。keiba.races / chihou.races からの
+  │   │                        供給が要る（scripts/sync_sekito_races.sh・毎日 06:00）
+  │   ├─ sekito.v_races       — 上の **sekito.races のビュー**（keiba.races 直読みではない）
+  │   ├─ sekito.v_entries     — keiba.race_entries + odds のビュー。ただし
+  │   │                        **netkeiba_horse_id は sekito.entries 由来**で、
+  │   │                        そちらは 2026-05-03 で凍結している（2026-06 以降 0%）
   │   ├─ sekito.v_horse_runs  — keiba+chihou race_results 統合 view（POG 用・重複排除済）
   │   └─ sekito.mv_horse_runs — 同マテビュー（LISTEN/NOTIFY イベント駆動 REFRESH）
   └─ chihou.*    — 地方競馬（UmaConn経由）
