@@ -1,4 +1,5 @@
 import { handlers } from "@/auth";
+import { restoreForwardedUrl } from "@/lib/forwardedHost";
 import { NextRequest } from "next/server";
 
 // Next.js はルートハンドラに渡す req.url から nginx が除去した basePath を除いた形で渡す。
@@ -42,5 +43,21 @@ function injectBasePath(req: NextRequest): NextRequest {
   return req;
 }
 
-export const GET = (req: NextRequest) => handlers.GET(injectBasePath(req));
-export const POST = (req: NextRequest) => handlers.POST(injectBasePath(req));
+// 🔴 ブランド併存（galloplab.com と sekito-stable.com）のためのホスト復元。
+// 経緯と落とし穴は src/lib/forwardedHost.ts の docstring に書いた。
+// 要点だけ: コンテナ内の Next.js は `req.url` を自分のバインドアドレスで
+// 組み立てるので、`trustHost: true` だけでは実ホストに届かない。
+function restoreForwardedHost(req: NextRequest): NextRequest {
+  const restored = restoreForwardedUrl(req.url, req.headers);
+  if (restored === req.url) return req;
+  return new NextRequest(restored, {
+    method: req.method,
+    headers: req.headers,
+    body: req.body,
+  });
+}
+
+const prepare = (req: NextRequest) => injectBasePath(restoreForwardedHost(req));
+
+export const GET = (req: NextRequest) => handlers.GET(prepare(req));
+export const POST = (req: NextRequest) => handlers.POST(prepare(req));

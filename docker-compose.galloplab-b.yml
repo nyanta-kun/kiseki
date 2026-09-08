@@ -69,7 +69,9 @@ services:
       - AUTH_PASSWORD=${AUTH_PASSWORD}
       - AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
       - AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
-      - AUTH_URL=https://galloplab.com/api/auth
+      # 🔴 AUTH_URL は渡さない。理由は docker-compose.galloplab.yml を参照
+      #（単一値では複数ホストを賄えない。ホスト解決は
+      #  frontend/src/lib/forwardedHost.ts が行う）。
       - INTERNAL_API_KEY=${CHANGE_NOTIFY_API_KEY}
       - NEXT_PUBLIC_API_URL=https://api.galloplab.com
     tmpfs:
