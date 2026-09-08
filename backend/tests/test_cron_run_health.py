@@ -170,3 +170,34 @@ def test_期待リストに無いジョブの異常も拾う():
             ("backfill_netkeiba:time_index", 1, 1, 0, None)]
     rep = _check(rows, MONDAY)
     assert any("backfill_netkeiba" in w for w in rep.warns), rep.warns
+
+
+# --------------------------------------------------------------------------
+# 記録しない実行
+# --------------------------------------------------------------------------
+
+def test_試し打ちや件数確認は記録対象から外れている():
+    """🔴 `--dry-run` / `--count` / `--status` を記録すると監視が鈍る。
+
+    手で叩いた回数が cron_runs に残ると、監視から見て「今日はジョブが走った」
+    ことになり、**本物の未実行を見逃す**。②の 1 番目のチェック
+    （1 回も起動していない）が効かなくなる。
+
+    2026-09-08 に実際に `--count` の実行が summary なしで記録されていたので直した。
+    """
+    from pathlib import Path
+
+    scripts = Path(__file__).parents[1] / "scripts"
+    targets = {
+        "scrape_netkeiba_index.py": "args.dry_run",
+        "scrape_netkeiba_paddock.py": "args.dry_run or args.list",
+        "scrape_anagusa.py": "args.dry_run",
+        "scrape_kichiuma.py": "args.dry_run",
+        "check_ip_restriction.py": "args.status or args.check",
+        "backfill_netkeiba.py": "args.count or args.dry_run",
+    }
+    for name, cond in targets.items():
+        text = (scripts / name).read_text(encoding="utf-8")
+        assert "nullcontext" in text, f"{name} に記録スキップが無い"
+        for token in cond.replace(" or ", " ").split():
+            assert token in text, f"{name} の条件に {token} が無い"

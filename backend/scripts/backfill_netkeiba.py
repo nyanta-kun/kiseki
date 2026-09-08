@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 _root = Path(__file__).resolve().parents[1]
@@ -63,7 +64,7 @@ from sqlalchemy import text  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db.session import SyncSessionLocal  # noqa: E402
-from src.utils.cron_run import record  # noqa: E402
+from src.utils.cron_run import RunRecord, record  # noqa: E402
 from src.scrapers.netkeiba import backfill  # noqa: E402
 from src.scrapers.netkeiba.store import REPLACEMENT_CHAR  # noqa: E402
 
@@ -107,7 +108,16 @@ def main() -> int:
     targets = list(ORDER) if args.target == "all" else [args.target]
     is_time_index = args.target == TIME_INDEX
 
-    with record(f"backfill_netkeiba:{args.target}") as run, SyncSessionLocal() as session:
+    # 🔴 `--count` と `--dry-run` は記録しない。
+    #    数えるだけ・試すだけの実行を cron_runs に残すと、監視から見て
+    #    「ジョブが正常に走った」と区別がつかなくなる。手で叩いた回数で
+    #    「今日は走った」ことになってしまい、本物の未実行を見逃す。
+    ctx = (
+        nullcontext(RunRecord(job_name="(記録しない)"))
+        if (args.count or args.dry_run)
+        else record(f"backfill_netkeiba:{args.target}")
+    )
+    with ctx as run, SyncSessionLocal() as session:
         if is_time_index and args.count:
             pending = backfill.missing_time_index_races(session)
             days = len({t.date for t, _ in pending})
