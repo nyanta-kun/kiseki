@@ -1,7 +1,15 @@
-# Phase 4（ブランドと認証）の判断材料 — 2026-09-08
+# Phase 4（ブランドと認証）— 決定と、そこから決まる作業
 
-統合の残り（POG 移植の 5c/5d/5e と、Phase 3 の UI 移植）は**すべてここで止まっている**。
-決めるのはユーザーだが、決めるのに要る事実をここに集めた。実測はすべて 2026-09-08。
+## 🔴 決定（2026-09-08・ユーザー）
+
+| | |
+|---|---|
+| **認証** | **A. Google に一本化**（kiseki の Auth.js v5 + Google OAuth） |
+| **ブランド** | **併存**。`sekito-stable.com` と `galloplab.com` の両方を維持し、POG は sekito のドメインのまま中身を kiseki の Next.js に差し替える |
+
+この組み合わせは「**2 ドメイン・1 認証**」になる。何が要るかは §7 に書いた。
+
+以下は判断材料として集めた実測（すべて 2026-09-08）。
 
 関連: `docs/pog_migration_plan_2026_09_08.md`
 
@@ -103,12 +111,73 @@ POG の内部キーは `users.id`。移行時は **`sekito.users.id` → `keiba.
 
 ---
 
+## 7. 決定から決まる作業（5c）
+
+### 🔴 kiseki はホワイトリスト方式
+
+`POST /api/users/upsert`（Auth.js のログイン時に呼ばれる）は
+**email が事前登録されていなければ 404 で拒否する**。合言葉を廃止した代わりの入口ゲート。
+
+    事前登録あり・google_sub NULL   → 初回ログインで google_sub を確定して紐付け
+    事前登録なし                    → 404「このメールアドレスは登録されていません」
+
+つまり POG の 9 人は**先に `keiba.users` へ登録しておく**必要がある
+（`POST /api/admin/users` / `google_sub` は NULL のままでよい）。
+
+⚠️ **2 人はこのままでは登録できない。**
+
+    kuroki@sekito-stable.com    独自ドメイン。Google アカウントとして実在するか要確認
+    ida@gmail-stable.com        `gmail.com` の打ち間違いに見える
+
+この 2 人は sekito 側でも Firebase uid ではなく手書き id で作られている。
+**実在する Google アカウントのメールを聞くところから。**
+
+### 🔴 2 ドメイン・1 認証で要ること
+
+現状の実測:
+
+    AUTH_URL      https://galloplab.com/api/auth   ← **単一値**
+    trustHost     true（既に有効）
+    nginx         galloplab.com/api/auth/ → :3002（Next.js）
+                  sekito-stable.com/      → :8080（sekito の Vue）
+                  sekito-stable.com/api/  → :5000（sekito の Node）
+                  sekito-stable.com/kiseki → **404 を返す設定が残っている**
+
+`AUTH_URL` が固定なので、**今のままでは sekito-stable.com でログインできない**
+（コールバックが galloplab.com へ飛ぶ）。要るのは次の 4 つ:
+
+| # | 作業 | 誰が |
+|---|---|---|
+| 1 | `AUTH_URL` の固定をやめ、`trustHost` にホスト解決を任せる（`injectBasePath()` は AUTH_URL を読むので併せて見直す） | コード |
+| 2 | Google Cloud のリダイレクト URI に `https://sekito-stable.com/api/auth/callback/google` を追加 | 🔴 **ユーザーの操作** |
+| 3 | nginx で sekito-stable.com の `/api/auth/` と移植済み画面パスを :3002 へ向ける（`/kiseki` の 404 も撤去） | 🔴 **本番設定・要承認** |
+| 4 | `keiba.users` へ 9 人を事前登録し、`sekito.users.id → keiba.users.id` の対応表を作る | コード + 上記のメール確認 |
+
+⚠️ **セッションはドメインごとに別**（Cookie がホストに紐づく）。
+galloplab と sekito-stable の両方を使う人は**それぞれでログインが要る**。
+
+### 履歴: 以前 kiseki は sekito-stable.com/kiseki に載っていた
+
+`frontend/src/app/api/auth/[...nextauth]/route.ts` の `injectBasePath()` は
+`AUTH_URL=https://sekito-stable.com/kiseki/api/auth` を例として書いており、
+nginx にも `location /kiseki { return 404; }` が残っている。
+**サブパス運用の実装は既にある**ので、1 の作業はゼロからではない。
+
+### Socket.IO を忘れない
+
+POG のドラフトはサイコロを `socket.io` で全員へ配信している
+（`sekito-stable.com/socket.io/` → :5000）。5e（ドラフト）を移すときは
+この経路も kiseki 側で用意する必要がある。
+
+---
+
 ## 6. 決めなくても進むもの / 止まるもの
 
-| | |
-|---|---|
-| 決めなくても進む | 5b-3（`sekito.entries` / `sekito.races` の移設調査） |
-| **止まる** | 5c（認証の接続）・5d（読み取り API + 画面）・5e（ドラフト）・Phase 3（UI 移植） |
+決定が出たので 5c に着手できる。**残る外部依存は 2 つだけ**:
+
+| # | 待ち | 誰が |
+|---|---|---|
+| 1 | `kuroki@` / `ida@` の実在する Google アカウントのメール | ユーザー |
+| 2 | Google Cloud のリダイレクト URI 追加 / nginx の変更承認 | ユーザー |
 
 5a（馬マスタ・スクレイパ）と 5b-1（トリガの脱 sekito）は 2026-09-08 に完了済み。
-**認証を待たずにできる整備は、ほぼ尽きている。**
