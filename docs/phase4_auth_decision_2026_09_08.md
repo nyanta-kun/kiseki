@@ -148,13 +148,54 @@ POG の内部キーは `users.id`。移行時は **`sekito.users.id` → `keiba.
 
 | # | 作業 | 誰が |
 |---|---|---|
-| 1 | `AUTH_URL` の固定をやめ、`trustHost` にホスト解決を任せる（`injectBasePath()` は AUTH_URL を読むので併せて見直す） | コード |
+| 1 | ~~`AUTH_URL` の固定をやめ `trustHost` に任せる~~ → **🔴 試して失敗した（§8）。sekito 用の frontend コンテナをもう1つ立てる方向へ変更** | コード |
 | 2 | Google Cloud のリダイレクト URI に `https://sekito-stable.com/api/auth/callback/google` を追加 | 🔴 **ユーザーの操作** |
 | 3 | nginx で sekito-stable.com の `/api/auth/` と移植済み画面パスを :3002 へ向ける（`/kiseki` の 404 も撤去） | 🔴 **本番設定・要承認** |
 | 4 | `keiba.users` へ 9 人を事前登録し、`sekito.users.id → keiba.users.id` の対応表を作る | コード + 上記のメール確認 |
 
 ⚠️ **セッションはドメインごとに別**（Cookie がホストに紐づく）。
 galloplab と sekito-stable の両方を使う人は**それぞれでログインが要る**。
+
+---
+
+## 8. 🔴 `AUTH_URL` を外す案は失敗した（2026-09-09 実測）
+
+`trustHost: true` があるので `AUTH_URL` を渡さなければホストごとに解決される、
+という読みで #524 を入れたが、**本番の Google ログインが壊れた**。
+
+    AUTH_URL を外した直後の https://galloplab.com/api/auth/providers
+      → callbackUrl **https://0.0.0.0:3000/api/auth/callback/google**
+
+コンテナ内の Next.js はリクエストのホストを**自分のバインドアドレス**として解決しており、
+`trustHost: true` だけでは nginx 越しの実ホストに届かない。
+nginx に `X-Forwarded-Host $host` を足しても変わらなかった（試して確認済み）。
+
+    22:1x  #524 デプロイ → 壊れる
+    22:2x  X-Forwarded-Host を足す → 変わらず
+    22:3x  #525 で revert → 復旧（callbackUrl が galloplab に戻ったことを確認）
+
+**影響**: 壊れていた約15分のあいだ、**新規ログインだけ**が失敗する。
+proxy はトークンしか見ないので、既にセッションを持っている人は無影響。
+
+### ここから決まる設計変更
+
+**`AUTH_URL` はこの構成で実際に仕事をしている。** 1 コンテナで 2 ホストを賄う方向は捨て、
+**`sekito-stable.com` 用に AUTH_URL を持つ frontend コンテナをもう 1 つ立てる**。
+
+    galloplab-frontend-1   AUTH_URL=https://galloplab.com/api/auth        :3002
+    sekito-frontend-next   AUTH_URL=https://sekito-stable.com/api/auth    :3004（仮）
+
+nginx はホストごとに向き先を変えるだけで済む。ブランド併存とも素直に噛み合う
+（ロゴ・配色・OGP をコンテナごとに変えられる）。
+⚠️ ただし **`AUTH_SECRET` を共有するとセッションが混ざる**ので、
+分けるか共有するかは意識して決めること。
+
+### やってはいけない検証の近道
+
+`providers` エンドポイントは**ログインを完了しなくても callback URL を教えてくれる**。
+今回もこれで即座に壊れが分かった。**認証まわりを変えたら必ずこれを見る。**
+
+    curl -s https://<host>/api/auth/providers
 
 ### 履歴: 以前 kiseki は sekito-stable.com/kiseki に載っていた
 
