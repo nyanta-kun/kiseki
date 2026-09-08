@@ -196,6 +196,10 @@ def check_next_day_post_time(s, target: date, rep: Report) -> None:
 _EXPECTED_JOBS: tuple[tuple[str, frozenset[int] | None, str], ...] = (
     ("scrape_kichiuma", None, "吉馬（00:30 と 06:30 の 2 回）"),
     ("scrape_netkeiba_index", None, "netkeiba タイム指数・調教・分析（08:30）"),
+    # 🔴 これが止まると sekito のサイトと POG の出走通知が**静かに空になる**。
+    #    2026-09-07 に「不要」と判断して止め、9/9 に気づいた（sekito.races の
+    #    9/9〜9/11 が 0 件・/api/races が {"venues":[]}）。例外は出ない。
+    ("sync_sekito_races", None, "sekito へのレース供給（06:00）"),
     # 穴ぐさとパドックは土日月のみ。
     # ⚠️ 穴ぐさは月曜にピックが出ないが**ジョブ自体は走る**ので、ここには含める。
     ("scrape_anagusa", frozenset({5, 6, 0}), "穴ぐさ（土日月 07:10）"),
