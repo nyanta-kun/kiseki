@@ -189,11 +189,16 @@ def test_prob_top_respects_band_and_sigma():
     legs = build_legs(s, PLANS["B_hit"], odds, prob)
     assert legs and len(legs) <= PLANS["B_hit"].max_legs
     assert sum(1.0 / odds[l] for l in legs) <= PLANS["B_hit"].sigma_max + 1e-9
-    # 帯（型C は予測20倍以上）
+    # 帯（型C は予測15倍以上）。🔴 2026-09-08 から**帯の下の最人気を1点だけ**
+    # 買い足すので「全点が帯以上」ではなくなった（`_insert_underband`）。
+    # 例外はその1点だけで、下限（`underband_min`）は下回らないこと。
     c = _shape(FIRM_P3, behind=LOW_BEHIND, day=3)
     assert c.type_label == "C"
     legs_c = build_legs(c, PLANS["C_hit"], odds, prob)
-    assert legs_c and all(odds[l] >= PLANS["C_hit"].min_odds for l in legs_c)
+    assert legs_c
+    under = [l for l in legs_c if odds[l] < PLANS["C_hit"].min_odds]
+    assert len(under) <= 1, "帯より安い点を2点以上買っている"
+    assert all(odds[l] >= PLANS["C_hit"].underband_min for l in under)
 
 
 # ─────────────────────────── 配分 ───────────────────────────

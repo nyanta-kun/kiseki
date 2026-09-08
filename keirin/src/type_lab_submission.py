@@ -240,9 +240,12 @@ PLAN_BODIES: dict[str, str] = {
     "B_hit": ("買い目は三連単。◎○を上位2車としつつ、着順は決め打ちせず"
               "当方の指数で確率の高い目から順に積みました。"
               "◎○が2着・3着へ回る目も含みます。"),
+    # 🔴 **2026-09-08 に「素直な決着は買わないので」を外した。** 帯の下から
+    #    最人気の1点を買い足すようになったので、事実と食い違う
+    #    （その1点があるかは `underband_note` が買い目から判定して書き足す）。
     "C_hit": ("買い目は三連単。当方が想定する発走時オッズで一定の配当が付く目に絞り、"
               "そのなかから確率の高い順に積みました。"
-              "素直な決着は買わないので、◎○が2着・3着へ回る目も含みます。"),
+              "着順は決め打ちしないので、◎○が2着・3着へ回る目も含みます。"),
     "D_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
               "ただし相手のうち、最も人気を集めている1車をあえて外しています。"
               "そこを買うと当たっても配当が残らないためです。"),
@@ -473,6 +476,52 @@ UPPER_LABELS: dict[str, str] = {
 }
 
 
+#: 帯下の差込を持つプランと、その帯（`type_lab.PLANS[k].min_odds`）。
+#:
+#: 🔴 **写しである。** この module は標準ライブラリ以外を import できない
+#:    （backend が `keirin_marquee` と同じくファイル読み込みで束縛するため・
+#:    `test_module_imports_only_the_standard_library`）。ずれると文面だけが
+#:    静かに事実と食い違うので、`tests/test_type_lab_underband.py` の
+#:    `test_submission_band_table_matches_the_plans` が一致を固定している。
+UNDERBAND_BANDS: dict[str, float] = {"C_hit": 15.0}
+
+
+def underband_note(plan_key: str, legs: Sequence[Mapping]) -> str:
+    """帯（`min_odds`）の下から差し込んだ1点があるときだけ付く一文。無ければ空。
+
+    🔴 **固定文にしない。** 差込が入るのは実測 77%（帯の下に目が無いレースと、
+       入稿ゲートに落ちて `GATE_FALLBACK` で差込なしへ戻ったレースには入らない）。
+       固定で書くと **4回に1回は買っていないものを説明する**（`alloc_note` と同じ理由）。
+    🔴 **「本命が来ると読んだ」とは書かない。** 差し込む目はモデルの確率ではなく
+       **市場の人気**で選んでいる（`type_lab._insert_underband` の対照実験）。
+       買っている理由は「取りこぼしを防ぐため」であって「自信があるから」ではない。
+
+    >>> underband_note("C_hit", [{"pred_odds": 20.0}, {"pred_odds": 30.0}])
+    ''
+    >>> underband_note("E_hit", [{"pred_odds": 6.2}])
+    ''
+    >>> underband_note("C_hit", [{"pred_odds": 6.2}, {"pred_odds": 20.0}]
+    ...                ).startswith("ただし順当に決まったときの")
+    True
+    """
+    band = UNDERBAND_BANDS.get(plan_key)
+    if not band:
+        return ""
+    n = 0
+    for lg in _base_legs(legs) or list(legs):
+        try:
+            o = float(lg.get("pred_odds"))
+        except (TypeError, ValueError):
+            continue
+        n += 0 < o < band
+    if not n:
+        return ""
+    # 🔴 型の見解（`TYPE_NOTES["C"]`）が「素直な決着だけを買わず」と言うので、
+    #    同じ語を繰り返さず「ただし」で受ける。
+    return ("ただし順当に決まったときの取りこぼしを防ぐため、"
+            f"人気を集めている目も{n}点だけ押さえています。")
+
+
 def upper_note(legs: Sequence[Mapping]) -> str:
     """上帯（押さえ）の説明文。上帯が無ければ空文字。
 
@@ -545,7 +594,11 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
          if plan_key in PLAN_AXIS_NOTES else
          f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"),
         (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
-         f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"
+         # 🔴 帯下の差込は**本文の直後**（買い目そのものの説明）。上帯の押さえは
+         #    点数の後（本線とは別枠の説明）なので位置を分けている。
+         + (f"\n{underband_note(plan_key, legs)}"
+            if underband_note(plan_key, legs) else "")
+         + f"\n{'三連複' if bet_type == 'trio' else '三連単'} {n}{tail}。{alloc_note(legs)}"
          + (f"\n{upper_note(legs)}" if upper_note(legs) else "")),
         CLOSING,
     ]
