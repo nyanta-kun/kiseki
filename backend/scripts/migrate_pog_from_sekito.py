@@ -125,7 +125,11 @@ def main() -> int:
             text("SELECT count(*) FROM keiba.pog_picks")
         ).scalar_one()
 
-        members: list[tuple[int, int]] = []  # (year, keiba_user_id)
+        # (year, keiba_user_id, nickname)。nickname は POG での表示名で、
+        # keiba.users.name（Google の表示名）とは別物。
+        nickname_of = {r["sekito_id"]: r["nickname"]
+                       for r in session.execute(USER_MAP_SQL).mappings()}
+        members: list[tuple[int, int, str | None]] = []
         unknown_member = 0
         for g in groups:
             for raw in (g["user_ids"] or "").split(","):
@@ -136,7 +140,7 @@ def main() -> int:
                 if kid is None:
                     unknown_member += 1
                     continue
-                members.append((g["year"], kid))
+                members.append((g["year"], kid, nickname_of.get(int(raw))))
 
         logging.info("グループ %d / メンバー %d 件 / 指名 %d 件",
                      len(groups), len(members), len(picks))
@@ -191,13 +195,16 @@ def main() -> int:
         }
 
         # ---- メンバー ----
-        for year, kid in members:
+        for year, kid, nickname in members:
             session.execute(
                 text(
-                    "INSERT INTO keiba.pog_group_members (group_id, user_id) "
-                    "VALUES (:g, :u) ON CONFLICT DO NOTHING"
+                    "INSERT INTO keiba.pog_group_members "
+                    "       (group_id, user_id, nickname) "
+                    "VALUES (:g, :u, :n) "
+                    "ON CONFLICT (group_id, user_id) DO UPDATE "
+                    "   SET nickname = EXCLUDED.nickname"
                 ),
-                {"g": year_to_id[year], "u": kid},
+                {"g": year_to_id[year], "u": kid, "n": nickname},
             )
 
         # ---- 指名（全消し → 入れ直し。行の識別子が無いため）----

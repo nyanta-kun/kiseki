@@ -100,7 +100,7 @@ def _owners_sql(*, asof: bool) -> str:
         SELECT
             RANK() OVER (ORDER BY SUM(ha.prize) DESC)::int AS rank,
             ha.user_id,
-            u.name,
+            COALESCE(m.nickname, u.name) AS name,
             SUM(ha.win)::int         AS win,
             SUM(ha.place)::int       AS place,
             SUM(ha.show)::int        AS show,
@@ -111,9 +111,13 @@ def _owners_sql(*, asof: bool) -> str:
             CASE WHEN th.prize = 0 THEN NULL ELSE h.name END AS top_horse
         FROM horse_agg ha
         JOIN keiba.users u ON u.id = ha.user_id
+        -- 表示名は POG のハンドル（松 / 永）を優先する。keiba.users.name は
+        -- Google の表示名で、事前登録しただけの人は NULL（実測 20人中9人）。
+        LEFT JOIN keiba.pog_group_members m
+               ON m.group_id = :group_id AND m.user_id = ha.user_id
         LEFT JOIN top_horse th ON th.user_id = ha.user_id
         LEFT JOIN keiba.pog_horses h ON h.netkeiba_horse_id = th.netkeiba_horse_id
-        GROUP BY ha.user_id, u.name, th.prize, h.name
+        GROUP BY ha.user_id, m.nickname, u.name, th.prize, h.name
         ORDER BY prize DESC
     """
 
@@ -145,7 +149,7 @@ _HORSES_SQL = """
     WITH horse_agg AS ({agg})
     SELECT
         ha.user_id,
-        u.name AS owner_name,
+        COALESCE(m.nickname, u.name) AS owner_name,
         p.pick_order,
         COALESCE(NULLIF(h.name, ''), '母' || h.broodmare) AS horse_name,
         h.netkeiba_horse_id,
@@ -156,6 +160,8 @@ _HORSES_SQL = """
       ON p.group_id = :group_id AND p.user_id = ha.user_id
      AND p.netkeiba_horse_id IS NOT DISTINCT FROM ha.netkeiba_horse_id
     JOIN keiba.users u ON u.id = ha.user_id
+    LEFT JOIN keiba.pog_group_members m
+           ON m.group_id = :group_id AND m.user_id = ha.user_id
     LEFT JOIN keiba.pog_horses h ON h.netkeiba_horse_id = ha.netkeiba_horse_id
     {user_filter}
     ORDER BY ha.prize DESC, ha.user_id, p.pick_order
