@@ -210,13 +210,30 @@ _RECORD_SQL = text(
     """
 )
 
+# 🔴 通知するのは**最新年度のグループだけ**（2026-09-10 ユーザー決定）。
+#
+# POG の年度は**ダービー週で入れ替わる**。実測（sekito の指名 created_at）:
+#
+#     2025年度の指名  2025-05-28 〜        ← ダービー週
+#     2026年度の指名  2026-05-28 〜 05-31  ← ダービー週
+#
+# なので「**指名がある最新年度**」を採れば、日付の計算をしなくても
+# ドラフトの瞬間に切り替わる。グループ行そのものは前もって作られることがある
+# （2026年度は 5/4 に作成され、指名は 5/28 から）ので、**行の有無ではなく
+# 指名の有無**で判定すること。
+#
+# ⚠️ 2025年度と2026年度は**同じ Discord チャンネル**へ送る設定になっている。
+#    全グループへ送ると、去年の指名馬の通知が現役の年度に混ざる。
 _GROUPS_SQL = text(
     """
     SELECT id, year, name, discord_webhook_url, notification_settings
     FROM keiba.pog_groups
     WHERE discord_enabled AND discord_webhook_url IS NOT NULL
       AND (notification_platform IS NULL OR notification_platform = 'discord')
-    ORDER BY year DESC
+      AND year = (
+          SELECT max(g.year) FROM keiba.pog_groups g
+          JOIN keiba.pog_picks p ON p.group_id = g.id AND p.pick_order > 0
+      )
     """
 )
 
