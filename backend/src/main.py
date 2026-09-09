@@ -19,6 +19,7 @@ from .api.jra_pick_log_router import router as jra_pick_log_router
 from .api.keirin_router import router as keirin_router
 from .api.keirin_type_lab_router import router as keirin_type_lab_router
 from .api.performance import router as performance_router
+from .api.pog_router import router as pog_router
 from .api.races import router as races_router
 from .api.recommendations import router as recommendations_router
 from .api.users import admin_router as users_admin_router
@@ -92,6 +93,7 @@ app.include_router(chihou_performance_router)      # GET  /api/chihou/performanc
 app.include_router(chihou_recommendations_router)  # GET/POST /api/chihou/recommendations
 app.include_router(chihou_pick_log_router)          # POST /api/chihou/place-picks/*
 app.include_router(jra_pick_log_router)             # POST /api/jra/hit-tier/*
+app.include_router(pog_router)                      # GET  /api/pog/*（統合 Phase 5）
 app.include_router(keirin_router)                  # GET /api/keirin/*
 
 # MS2以降で順次有効化:
