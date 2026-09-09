@@ -45,6 +45,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+from ..services.pog_horse_search import search_horses
+from ..services.pog_horse_search import suggest as suggest_horse_values
 from ..services.pog_recent_races import fetch_recent_races
 from ..services.pog_standings import fetch_horses, fetch_owners
 
@@ -196,3 +198,67 @@ async def get_membership(
     )
     latest = row.scalar_one_or_none()
     return MembershipOut(is_member=latest is not None, latest_year=latest)
+
+
+class HorseSearchOut(BaseModel):
+    """ドラフトの候補馬 1 頭。"""
+
+    netkeiba_horse_id: str
+    # 🔴 未命名馬（＝ドラフトの主対象）は名前が NULL でありうる。
+    #    2023年産は 7,765頭中 2,975頭が NULL だった。`str` にすると 500 になる。
+    name: str | None
+    sire: str
+    broodmare: str
+    broodmare_sire: str
+    sex: str | None
+    stable: str
+    birth_year: int | None
+
+
+class HorseSearchResponse(BaseModel):
+    """候補馬の検索結果。`total` は絞り込み後の総数（ページ送りに使う）。"""
+
+    items: list[HorseSearchOut]
+    total: int
+
+
+@router.get("/horse-search", response_model=HorseSearchResponse)
+async def search_draft_horses(
+    db: DbDep,
+    birth_year: int | None = Query(None, description="産年。ドラフトでは必ず指定する"),
+    name: str = Query("", description="馬名の部分一致"),
+    sire: str = Query("", description="父名の部分一致"),
+    broodmare: str = Query("", description="母名の部分一致"),
+    page: int = Query(1, ge=1, description="1 起点のページ番号"),
+) -> HorseSearchResponse:
+    """ドラフトの候補馬を検索する（移設元 `/aobon`）。
+
+    🔴 移設元は `keiba.provisional_horses` を UNION しており、そのテーブルを
+    Phase 5a で消したため**本番で 500 を返していた**（sekito 側は #42 で修復）。
+    こちらは最初から `keiba.pog_horses` だけを見る。
+    """
+    items, total = await search_horses(
+        db,
+        birth_year=birth_year,
+        name=name,
+        sire=sire,
+        broodmare=broodmare,
+        page=page,
+    )
+    return HorseSearchResponse(
+        items=[HorseSearchOut(**i) for i in items], total=total
+    )
+
+
+@router.get("/horse-suggest", response_model=list[str])
+async def suggest_draft_horses(
+    db: DbDep,
+    field: str = Query(..., description="name / sire / broodmare"),
+    q: str = Query("", description="部分一致させる文字列"),
+    birth_year: int | None = Query(None, description="産年で絞る"),
+) -> list[str]:
+    """検索欄の入力補完（移設元 `/suggest`）。"""
+    try:
+        return await suggest_horse_values(db, field=field, q=q, birth_year=birth_year)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
