@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -163,7 +164,7 @@ def main() -> int:
                     VALUES (:year, :name, :notification_platform,
                             :discord_webhook_url, :discord_enabled,
                             :line_group_id, :line_enabled,
-                            :notification_settings)
+                            CAST(:notification_settings AS jsonb))
                     ON CONFLICT (year) DO UPDATE SET
                         name = EXCLUDED.name,
                         notification_platform = EXCLUDED.notification_platform,
@@ -175,7 +176,13 @@ def main() -> int:
                         updated_at = now()
                     """
                 ),
-                {k: v for k, v in g.items() if k not in ("id", "user_ids")},
+                # ⚠️ psycopg2 は素の dict を JSONB へ渡せない
+                #    （can't adapt type 'dict'）。文字列にして SQL 側で CAST する。
+                {
+                    k: (json.dumps(v) if k == "notification_settings" and v is not None
+                        else v)
+                    for k, v in g.items() if k not in ("id", "user_ids")
+                },
             )
         session.flush()
         year_to_id = {
