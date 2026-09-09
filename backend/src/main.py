@@ -1,5 +1,8 @@
 """GallopLab - FastAPI エントリポイント"""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -26,6 +29,29 @@ from .api.users import admin_router as users_admin_router
 from .api.users import router as users_router
 from .api.yoso_router import router as yoso_router
 from .config import settings
+from .realtime.mv_refresh import refresher as mv_refresher
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """常駐タスクの起動と停止。
+
+    🔴 **POG のマテビュー更新はここでしか回っていない。**
+    `keiba.mv_horse_runs` / `keiba.mv_graded_wins` は更新が止まっても
+    最後の内容を返し続けるので、止まったことに誰も気づけない
+    （移設元では sekito のバックエンドが担っており、sekito を落とすと
+    kiseki の POG が静かに凍る状態だった）。詳細は realtime/mv_refresh.py。
+
+    ⚠️ **ワーカーを複数立てるならここを見直すこと。** 今は uvicorn 1 プロセスで
+    動いているのでそのまま起動してよいが、多重化すると同じ REFRESH が
+    プロセス数だけ走る（`CONCURRENTLY` 同士は待ち合うので壊れはしないが無駄）。
+    """
+    await mv_refresher.start()
+    try:
+        yield
+    finally:
+        await mv_refresher.stop()
+
 
 app = FastAPI(
     title="GallopLab API",
@@ -33,6 +59,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url=None if settings.api_env == "production" else "/docs",
     redoc_url=None if settings.api_env == "production" else "/redoc",
+    lifespan=lifespan,
 )
 
 # 🔴 **API レスポンスは圧縮する**（2026-08-23 追加）。
