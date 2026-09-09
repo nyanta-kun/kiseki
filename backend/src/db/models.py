@@ -1500,6 +1500,56 @@ class PogPick(Base):
     )
 
 
+class PogNotification(Base):
+    """POG 通知の送信記録（重複送信を防ぐ）。`sekito.pog_notifications` の後継。
+
+    通知は 3 種類あり、重複判定の粒度が違う:
+
+        result   レースごと・馬ごと（group, 'result', 日付, 場, R, 馬名）
+        entry    その日ぶんをまとめて 1 通（group, 'entry', 日付）
+        barrier  同上（group, 'barrier', 日付）
+
+    ## 🔴 一意制約を DB 側に置く
+
+    移設元は「送信済みか SELECT → 送る → INSERT」だった。`pog-result` は
+    **10 分ごとに走る**ので、前の実行が長引くと同じ結果を二度送りうる。
+    ここでは **COALESCE を使った一意インデックス**で DB に守らせる
+    （`uq_pog_notifications_dedup`）。素の UNIQUE は NULL 同士を別物として扱うので、
+    `course_code` などが NULL の entry / barrier を弾けない。
+    `UNIQUE NULLS NOT DISTINCT` は PostgreSQL 15 以降の構文で、**手元の検証環境
+    （14.17）では試せない**ため採らなかった。
+
+    ⚠️ それでも「送信 → 記録」の順は変えていない。記録を先にすると、送信に
+    失敗したときに**二度と送られない**（通知が消える方が、まれな重複より悪い）。
+    """
+
+    __tablename__ = "pog_notifications"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_pog_notifications_lookup", "group_id", "notification_type", "race_date"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.pog_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    notification_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="result / entry / barrier / summary"
+    )
+    race_date: Mapped[date] = mapped_column(Date, nullable=False)
+    course_code: Mapped[str | None] = mapped_column(
+        String(8), comment="result のみ。entry / barrier は NULL"
+    )
+    race_no: Mapped[int | None] = mapped_column(Integer)
+    horse_name: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str | None] = mapped_column(
+        Text, comment="送った内容の要約。人が後から読んで分かるため"
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class CronRun(Base):
     """kiseki の host cron ジョブの実行記録。
 
