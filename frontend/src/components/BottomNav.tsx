@@ -12,18 +12,28 @@ type NavItem = {
 
 // 競輪は admin 限定（2026-08-03・AppNav/HamburgerMenu/proxy.ts と同基準）。
 // netkeirin入稿トリガー等を含むため一般メンバーには導線を出さない。
-function navItems(isAdmin: boolean): NavItem[] {
+function navItems(isAdmin: boolean, pogYear: number | null): NavItem[] {
   return [
     { icon: "🏇", label: "中央", href: "/races", matchPath: "/races" },
     { icon: "🏘", label: "地方", href: "/chihou/races", matchPath: "/chihou" },
     ...(isAdmin ? [{ icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
+    // POG は sekito から引き継いだ参加者だけに出す（ロールではなく参加実績で判定）
+    ...(pogYear
+      ? [{ icon: "🐴", label: "POG", href: `/pog/${pogYear}`, matchPath: "/pog" }]
+      : []),
     { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
   ];
 }
 
-export function BottomNav({ isAdmin = false }: { isAdmin?: boolean }) {
+export function BottomNav({
+  isAdmin = false,
+  pogYear = null,
+}: {
+  isAdmin?: boolean;
+  pogYear?: number | null;
+}) {
   const pathname = usePathname();
-  const NAV_ITEMS = navItems(isAdmin);
+  const NAV_ITEMS = navItems(isAdmin, pogYear);
 
   return (
     <nav
