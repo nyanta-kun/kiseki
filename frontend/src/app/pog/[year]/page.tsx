@@ -6,9 +6,11 @@ import {
   fetchPogGroups,
   fetchPogOwners,
   fetchPogOwnersAsOf,
+  fetchPogRecentRaces,
   formatPrize,
   formatRecord,
 } from "@/lib/pog";
+import { RecentRaces } from "../RecentRaces";
 import { YearTabs } from "../YearTabs";
 
 export const metadata: Metadata = {
@@ -52,9 +54,11 @@ export default async function PogStandingsPage({
 
   // 🔴 順位変動は `/owners` と同じ集計に asof を足したものを使う。
   //    別クエリで出すと、変動していないのに矢印が出る（移設元が踏んだ）。
-  const [owners, lastWeek] = await Promise.all([
+  const [owners, lastWeek, recent] = await Promise.all([
     fetchPogOwners(year),
     fetchPogOwnersAsOf(year, isoDaysAgo(7)),
+    // 今週の出走。過去年度でも今週の枠で引くので、たいていは空になる。
+    fetchPogRecentRaces(year).catch(() => []),
   ]);
   const before = new Map(lastWeek.map((o) => [o.user_id, o.rank]));
 
@@ -105,6 +109,13 @@ export default async function PogStandingsPage({
             </li>
           ))}
         </ol>
+      )}
+
+      {recent.length > 0 && (
+        <section className="mt-6">
+          <h2 className="mb-2 text-sm font-bold">今週の出走</h2>
+          <RecentRaces races={recent} />
+        </section>
       )}
 
       <p className="mt-4 text-center">
