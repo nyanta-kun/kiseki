@@ -102,6 +102,38 @@ export function formatRecord(h: {
   return `${h.win}-${h.place}-${h.show}-${h.out}`;
 }
 
+export type PogRecentRace = {
+  date: string;
+  course_code: string;
+  course_name: string | null;
+  race_no: number;
+  race_name: string | null;
+  ground: string | null;
+  distance: number | null;
+  post_time: string | null;
+  horse_no: number | null;
+  netkeiba_horse_id: string | null;
+  horse_name: string | null;
+  jockey: string | null;
+  ninki: number | null;
+  tan: number | null;
+  result: string | null;
+  prize: number;
+  sex: string | null;
+  sire: string | null;
+  broodmare: string | null;
+  broodmare_sire: string | null;
+  owners: string[] | null;
+};
+
+/** 指名馬の今週の出走。結果が出ていれば着順も入る。 */
+export function fetchPogRecentRaces(year: number): Promise<PogRecentRace[]> {
+  // 開催中は着順が入れ替わる。短めにする。
+  return get<PogRecentRace[]>(`/pog/recent-races?year=${year}`, {
+    next: { revalidate: 60 },
+  });
+}
+
 export type PogMembership = {
   is_member: boolean;
   latest_year: number | null;
