@@ -1441,6 +1441,10 @@ class PogGroupMember(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey(f"{SCHEMA}.users.id"), primary_key=True
     )
+    nickname: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="POG での表示名（松 / 永 など）。keiba.users.name とは別物",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
