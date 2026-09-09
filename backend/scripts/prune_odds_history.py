@@ -1,4 +1,19 @@
-"""`keiba.odds_history` を刈り込む（13GB / 60.4M 行・年 約18GB 増）。
+"""`keiba.odds_history` / `chihou.odds_history` を刈り込む（合計 25GB）。
+
+`--schema` で対象を選ぶ（既定 keiba）。**削除条件の正本はこのファイル 1 つ**。
+
+## 地方（`--schema chihou`）— 2026-09-09 追加
+
+12GB / 83.4M 行。**剪定が一度も無く、月 17M 行（約 2.5GB）ずつ増えていた。**
+ディスクは 99GB 中 73% 使用で、この増加が最大の圧迫要因だった。
+
+    2026-08-01〜07 の実測: 全体 3,403,554 行 / うち発走後 2,021,758 行 = **59.4%**
+
+中央より発走後の比率が高い（中央は 39.9%）。地方は開催数が多く、realtime が
+終わったレースを叩き続ける時間が長いため。
+
+⚠️ **地方は win / place しか取っていない**（83.4M 行すべて）。exotic ポリシーは
+対象 0 件で空回りするので、既定の policy は `post` だけにしてある。
 
 台帳 `docs/jra_rebuild_2026_08.md` 課題#11。
 
@@ -94,33 +109,33 @@ assert set(ALWAYS_COLLAPSE) <= set(EXOTIC_BET_TYPES)
 # 支える索引が無く、バッチのたびに 6,000万行を全走査する（実測で1バッチが返らない）。
 # `race_id` には索引があるので、対象レースを絞ってから条件を当てる形にする。
 DATES_SQL = """
-SELECT DISTINCT date FROM keiba.races
+SELECT DISTINCT date FROM {schema}.races
 WHERE post_time ~ '^[0-9]{4}$' AND date >= %(start)s AND date < %(before)s
 ORDER BY date
 """
 
 RACES_SQL = """
 SELECT id, to_timestamp(date || post_time, 'YYYYMMDDHH24MI') - interval '9 hours'
-FROM keiba.races
+FROM {schema}.races
 WHERE date = %(date)s AND post_time ~ '^[0-9]{4}$'
 """
 
 COUNT_SQL = {
     # 発走後に書かれた行（realtime の空回り）
     "post": """
-    SELECT count(*) FROM keiba.odds_history
+    SELECT count(*) FROM {schema}.odds_history
     WHERE race_id = %(race_id)s AND fetched_at > %(post_utc)s
     """,
     # exotic 券種の「発走前・最終スナップショット以外」
     "exotic": """
     WITH latest AS (
       SELECT bet_type, combination, max(fetched_at) AS last_at
-      FROM keiba.odds_history
+      FROM {schema}.odds_history
       WHERE race_id = %(race_id)s AND bet_type IN %(collapse)s
         AND fetched_at <= %(post_utc)s
       GROUP BY 1,2
     )
-    SELECT count(*) FROM keiba.odds_history o
+    SELECT count(*) FROM {schema}.odds_history o
     JOIN latest l ON l.bet_type = o.bet_type AND l.combination = o.combination
     WHERE o.race_id = %(race_id)s AND o.bet_type IN %(collapse)s
       AND o.fetched_at <= %(post_utc)s AND o.fetched_at < l.last_at
@@ -129,23 +144,23 @@ COUNT_SQL = {
 
 DELETE_SQL = {
     "post": """
-    DELETE FROM keiba.odds_history
+    DELETE FROM {schema}.odds_history
     WHERE race_id = %(race_id)s AND fetched_at > %(post_utc)s
     """,
     "exotic": """
     WITH latest AS (
       SELECT bet_type, combination, max(fetched_at) AS last_at
-      FROM keiba.odds_history
+      FROM {schema}.odds_history
       WHERE race_id = %(race_id)s AND bet_type IN %(collapse)s
         AND fetched_at <= %(post_utc)s
       GROUP BY 1,2
     ), doomed AS (
-      SELECT o.ctid FROM keiba.odds_history o
+      SELECT o.ctid FROM {schema}.odds_history o
       JOIN latest l ON l.bet_type = o.bet_type AND l.combination = o.combination
       WHERE o.race_id = %(race_id)s AND o.bet_type IN %(collapse)s
         AND o.fetched_at <= %(post_utc)s AND o.fetched_at < l.last_at
     )
-    DELETE FROM keiba.odds_history WHERE ctid IN (SELECT ctid FROM doomed)
+    DELETE FROM {schema}.odds_history WHERE ctid IN (SELECT ctid FROM doomed)
     """,
 }
 
@@ -160,8 +175,11 @@ def connect():
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--policy", default="post,exotic",
-                   help="post（発走後）/ exotic（exotic の最終以外）をカンマ区切りで")
+    p.add_argument("--schema", default="keiba", choices=("keiba", "chihou"),
+                   help="対象スキーマ。chihou は win/place しか無いので policy=post のみ")
+    p.add_argument("--policy", default=None,
+                   help="post（発走後）/ exotic（exotic の最終以外）をカンマ区切り。"
+                        "既定は keiba なら post,exotic / chihou なら post")
     p.add_argument("--start", default="20000101")
     p.add_argument("--before", default=None,
                    help="この日より前を対象にする（既定は今日。当日分は触らない）")
@@ -176,7 +194,10 @@ def main() -> None:
 
     import datetime
     before = args.before or datetime.date.today().strftime("%Y%m%d")
-    policies = [x.strip() for x in args.policy.split(",") if x.strip()]
+    # 🔴 地方は win / place しか取っていない（2026-09-09 実測: 83.4M 行すべて）。
+    #    exotic ポリシーは対象 0 件で空回りするだけなので既定から外す。
+    default_policy = "post,exotic" if args.schema == "keiba" else "post"
+    policies = [x.strip() for x in (args.policy or default_policy).split(",") if x.strip()]
     for pol in policies:
         if pol not in COUNT_SQL:
             raise SystemExit(f"未知の policy: {pol}")
@@ -192,12 +213,24 @@ def main() -> None:
             return ALWAYS_COLLAPSE
         return EXOTIC_BET_TYPES
 
+    sc = args.schema  # choices で制限済み。SQL へ埋め込むのはここだけ
+    # ⚠️ `.format()` を使わないこと。SQL 中の正規表現 `'^[0-9]{4}$'` を
+    #    置換フィールドとして食われる（実際に IndexError で落ちた）。
+    def _sql(t: str) -> str:
+        return t.replace("{schema}", sc)
+
+    dates_sql = _sql(DATES_SQL)
+    races_sql = _sql(RACES_SQL)
+    count_sql = {k: _sql(v) for k, v in COUNT_SQL.items()}
+    delete_sql = {k: _sql(v) for k, v in DELETE_SQL.items()}
+
     conn = connect()
     cur = conn.cursor()
-    cur.execute(DATES_SQL, {"start": args.start, "before": before})
+    cur.execute(dates_sql, {"start": args.start, "before": before})
     dates = [r[0] for r in cur.fetchall()]
-    cur.execute("SELECT count(*) FROM keiba.odds_history")
+    cur.execute(f"SELECT count(*) FROM {sc}.odds_history")
     total = cur.fetchone()[0]
+    logger.info(f"対象 {sc}.odds_history / policy={','.join(policies)}")
     logger.info(f"対象期間 {args.start}〜{before}（当日は触らない）/ 開催日 {len(dates)}")
     logger.info(f"exotic 時系列の保持: {keep_cutoff} 以降のレースは潰さない"
                 f"（--exotic-keep-days={args.exotic_keep_days}、"
@@ -207,7 +240,7 @@ def main() -> None:
         return
 
     def _races(date: str) -> list[tuple[int, object]]:
-        cur.execute(RACES_SQL, {"date": date})
+        cur.execute(races_sql, {"date": date})
         return cur.fetchall()
 
     if not args.execute:
@@ -219,11 +252,11 @@ def main() -> None:
         for date in sample:
             for race_id, post_utc in _races(date):
                 cur.execute(
-                    "SELECT count(*) FROM keiba.odds_history WHERE race_id = %s", (race_id,)
+                    f"SELECT count(*) FROM {sc}.odds_history WHERE race_id = %s", (race_id,)
                 )
                 sampled_total += cur.fetchone()[0]
                 for pol in policies:
-                    cur.execute(COUNT_SQL[pol], {
+                    cur.execute(count_sql[pol], {
                         "race_id": race_id, "post_utc": post_utc,
                         "collapse": _collapse_for(date),
                     })
@@ -243,7 +276,7 @@ def main() -> None:
     for i, date in enumerate(dates, 1):
         for race_id, post_utc in _races(date):
             for pol in policies:
-                cur.execute(DELETE_SQL[pol], {
+                cur.execute(delete_sql[pol], {
                     "race_id": race_id, "post_utc": post_utc,
                     "collapse": _collapse_for(date),
                 })
