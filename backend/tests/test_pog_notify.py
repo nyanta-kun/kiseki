@@ -63,3 +63,61 @@ def test_タイムスタンプにタイムゾーンが付く():
     e = build_embed("赤兎", date(2026, 9, 6), _rows())
     ts = e["timestamp"]
     assert ts.endswith("+00:00") or ts.endswith("Z"), ts
+
+
+# --------------------------------------------------------------------------
+# 出走想定・枠順確定
+# --------------------------------------------------------------------------
+
+from src.services.pog_notify import build_barrier_embed, build_entry_embed  # noqa: E402
+
+
+def _entries():
+    return [
+        {"course_name": "阪神", "race_no": 2, "horse_name": "ショウナンバトレニ",
+         "jockey": "武豊", "barrier": None, "horse_no": None, "weight": None,
+         "owner_name": "友"},
+        {"course_name": "中山", "race_no": 5, "horse_name": "ルーメンルーナエ",
+         "jockey": None, "barrier": 3, "horse_no": 6, "weight": 55,
+         "owner_name": None},
+    ]
+
+
+def test_出走想定は頭数を出す():
+    e = build_entry_embed("赤兎", date(2026, 9, 12), _entries())
+    assert e["title"] == "🏇 赤兎 POG馬出走想定"
+    assert "計**2頭**" in e["description"]
+    assert e["color"] == 0x3498DB
+
+
+def test_出走想定は枠と騎手を持っている分だけ出す():
+    e = build_entry_embed("赤兎", date(2026, 9, 12), _entries())
+    hanshin = e["fields"][0]["value"]
+    nakayama = e["fields"][1]["value"]
+    assert "武豊" in hanshin and "枠)" not in hanshin      # 枠は未定
+    assert "(3枠)" in nakayama                              # 騎手は未定
+    assert "**(友)**" in hanshin and "()" not in nakayama
+
+
+def test_枠順確定は2行で出す():
+    """馬名の行と、枠・馬番・騎手・斤量の行。移設元と同じ形。"""
+    e = build_barrier_embed("赤兎", date(2026, 9, 12), _entries())
+    assert e["title"] == "🎯 赤兎 POG馬枠順確定"
+    assert e["color"] == 0xE74C3C
+    nakayama = e["fields"][1]["value"].split("\n")
+    assert len(nakayama) == 2
+    assert "3枠6番" in nakayama[1] and "55kg" in nakayama[1]
+
+
+def test_枠順が無い項目は未定と出す():
+    """🔴 None をそのまま埋めると 'None枠None番' になる。"""
+    e = build_barrier_embed("赤兎", date(2026, 9, 12), _entries())
+    hanshin = e["fields"][0]["value"]
+    assert "未定枠未定番" in hanshin
+    assert "None" not in hanshin
+
+
+def test_日付をまたぐ通知もタイムゾーン付き():
+    for build in (build_entry_embed, build_barrier_embed):
+        ts = build("赤兎", date(2026, 9, 12), _entries())["timestamp"]
+        assert ts.endswith("+00:00") or ts.endswith("Z"), ts
