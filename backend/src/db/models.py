@@ -1382,6 +1382,120 @@ class PogHorse(Base):
     )
 
 
+class PogGroup(Base):
+    """POG のグループ（1年 = 1グループ）。`sekito.pog_group` の後継。
+
+    2005 年から続いていて 2026-09-09 時点で 22 グループ。
+    通知設定はグループ単位で持つ（Discord / LINE）。2026 年度は Discord のみ。
+
+    ## 🔴 `user_ids` は持ち込まない
+
+    移設元は **text 列にカンマ区切り**（`"3,4,6,8"`）でメンバーを持っていた。
+    参照整合性が効かず、退会・改名のたびに文字列を編集することになる。
+    ここでは `pog_group_members` へ正規化する。
+    """
+
+    __tablename__ = "pog_groups"
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("year", name="uq_pog_groups_year"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    year: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, comment="POG の年度。1年 = 1グループ"
+    )
+    name: Mapped[str | None] = mapped_column(Text, comment="グループ名（例: 赤兎）")
+    notification_platform: Mapped[str | None] = mapped_column(
+        String(20), comment="discord / line。2026 年度は discord のみ"
+    )
+    discord_webhook_url: Mapped[str | None] = mapped_column(String(500))
+    discord_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
+    line_group_id: Mapped[str | None] = mapped_column(String(255))
+    line_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
+    notification_settings: Mapped[dict | None] = mapped_column(
+        JSONB, comment="entry / barrier / result / summary の各通知の on-off"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class PogGroupMember(Base):
+    """POG グループの参加者。`sekito.pog_group.user_ids`（カンマ区切り text）の後継。"""
+
+    __tablename__ = "pog_group_members"
+    __table_args__ = {"schema": SCHEMA}
+
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.pog_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PogPick(Base):
+    """POG の指名。`sekito.pog_user` の後継（2026-09-09 時点 1,401 行・22年分）。
+
+    ## 🔴 馬は `netkeiba_horse_id` で持つ（外部キーは張らない）
+
+    移設元と同じキー。**内部 id にしないのは移行でキーが変わらないため**で、
+    これが POG 移植を現実的にしている。`keiba.pog_horses` への FK を張らないのは、
+    ドラフト当日に馬マスタがまだ追いついていない馬を指名できるようにするため
+    （sekito 側も張っていない）。
+
+    ## 列名の変更
+
+    移設元の `order` は SQL の予約語で、常に引用符が要る（`pu."order"`）。
+    `pick_order` へ改名した。`order != 0` が「有効な指名」の意味だったのも
+    分かりにくいので、`visible` と合わせて使う。
+    """
+
+    __tablename__ = "pog_picks"
+    __table_args__ = (  # type: ignore[assignment]
+        Index("ix_pog_picks_group_user", "group_id", "user_id"),
+        Index("ix_pog_picks_horse", "netkeiba_horse_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.pog_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.users.id"), nullable=False
+    )
+    netkeiba_horse_id: Mapped[str | None] = mapped_column(
+        String(20), comment="指名した馬。keiba.pog_horses と同じキー（空指名は NULL）"
+    )
+    pick_order: Mapped[int | None] = mapped_column(
+        Integer, comment="指名順。移設元の `order`（予約語だったので改名）"
+    )
+    draft_order: Mapped[int | None] = mapped_column(Integer, comment="ドラフトの順番")
+    visible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class CronRun(Base):
     """kiseki の host cron ジョブの実行記録。
 
