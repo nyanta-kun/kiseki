@@ -46,6 +46,22 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# 🔴 **この常駐のログだけは本番で見えるようにする。**
+#    kiseki のバックエンドは `logging.basicConfig` も `dictConfig` も呼んでおらず、
+#    uvicorn が握るのは `uvicorn.*` のロガーだけ。そのため `src.*` の
+#    `logger.info(...)` は**本番で 1 行も出ていない**（2026-09-10 実測。
+#    WARNING 以上は Python の `lastResort` が stderr へ出すので失敗は見える）。
+#    ここは「動いていること」を確認できないと止まっても気づけない性質の処理
+#    なので、このロガーにだけ stderr ハンドラを付ける。
+#    ⚠️ 全体を INFO にはしない。毎分の cron が叩く API のログまで増えて、
+#       ログローテーションの容量計算が変わる。
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False  # uvicorn 側へ二重に流さない
+
 CHANNEL = "mv_horse_runs_dirty"
 
 #: 通知をまとめる時間。🔴 REFRESH 1 回（実測 25〜35 秒）より必ず長く。
