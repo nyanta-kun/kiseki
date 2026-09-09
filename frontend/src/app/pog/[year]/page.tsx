@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import {
+  currentWeekRange,
+  fetchGradedRaces,
   fetchPogGroups,
   fetchPogOwners,
   fetchPogOwnersAsOf,
@@ -10,6 +12,7 @@ import {
   formatPrize,
   formatRecord,
 } from "@/lib/pog";
+import { GradedRaces } from "../GradedRaces";
 import { RecentRaces } from "../RecentRaces";
 import { YearTabs } from "../YearTabs";
 
@@ -54,11 +57,14 @@ export default async function PogStandingsPage({
 
   // 🔴 順位変動は `/owners` と同じ集計に asof を足したものを使う。
   //    別クエリで出すと、変動していないのに矢印が出る（移設元が踏んだ）。
-  const [owners, lastWeek, recent] = await Promise.all([
+  const [weekStart, weekEnd] = currentWeekRange();
+  const [owners, lastWeek, recent, graded] = await Promise.all([
     fetchPogOwners(year),
     fetchPogOwnersAsOf(year, isoDaysAgo(7)),
     // 今週の出走。過去年度でも今週の枠で引くので、たいていは空になる。
     fetchPogRecentRaces(year).catch(() => []),
+    // 今週の重賞。POG の年度に依らないので、落ちても順位表は出す。
+    fetchGradedRaces(weekStart, weekEnd).catch(() => []),
   ]);
   const before = new Map(lastWeek.map((o) => [o.user_id, o.rank]));
 
@@ -115,6 +121,13 @@ export default async function PogStandingsPage({
         <section className="mt-6">
           <h2 className="mb-2 text-sm font-bold">今週の出走</h2>
           <RecentRaces races={recent} />
+        </section>
+      )}
+
+      {graded.length > 0 && (
+        <section className="mt-6">
+          <h2 className="mb-2 text-sm font-bold">今週の重賞</h2>
+          <GradedRaces races={graded} />
         </section>
       )}
 

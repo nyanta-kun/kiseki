@@ -55,6 +55,7 @@ from ..indices.confidence import (
     is_market_favorite,
 )
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
+from ..services.graded_races import fetch_graded_races
 from ..services.jra_heihachi_picks import (
     BACKTEST_MAX_YEAR,
     BACKTEST_MIN_YEAR,
@@ -745,6 +746,40 @@ async def get_heihachi_backtest(
             graded_only=graded_only,
         )
     )
+
+
+class GradedRaceOut(BaseModel):
+    """今週の重賞 1 件。"""
+
+    race_id: int
+    #: `jra` / `chihou`。詳細ページのリンク先が分かれるのでフロントに渡す。
+    kind: str
+    date: str
+    course_name: str | None
+    race_number: int
+    race_name: str | None
+    #: `HHMM`。**未確定のレースは None**（出馬表が届く前）。
+    post_time: str | None
+    grade: str | None
+    #: 結果が入っていなければ None。
+    winner_name: str | None
+
+
+@router.get("/graded", response_model=list[GradedRaceOut])
+async def list_graded_races(
+    db: DbDep,
+    start: str = Query(..., description="開始日 YYYYMMDD（両端を含む）"),
+    end: str = Query(..., description="終了日 YYYYMMDD（両端を含む）"),
+) -> list[GradedRaceOut]:
+    """指定期間の重賞を中央・地方まとめて返す（移設元 `/api/races/graded`）。
+
+    🔴 移設元は**地方の優勝馬を凍結した `sekito.entries` から引いており**、
+    2026-06 以降ずっと空欄だった（services/graded_races.py の docstring 参照）。
+
+    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
+    """
+    rows = await fetch_graded_races(db, start=start, end=end)
+    return [GradedRaceOut(**r) for r in rows]
 
 
 @router.get("")
