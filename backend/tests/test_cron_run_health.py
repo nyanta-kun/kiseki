@@ -150,6 +150,7 @@ def test_全部正常ならWARNなし():
     rows = [("scrape_netkeiba_index", 1, 0, 0, "対象79 指数成功79"),
             ("scrape_kichiuma", 2, 0, 0, "対象79 成功79"),
             ("sync_sekito_races", 1, 0, 0, "kaisai10 JRA0 NAR126"),
+            ("notify_pog_results", 84, 0, 0, "対象0 送信0"),
             ("scrape_anagusa", 1, 0, 0, "ピック55件")]
     rep = _check(rows, MONDAY)
     assert rep.warns == [], rep.warns
@@ -159,7 +160,8 @@ def test_走らない曜日のジョブは未実行を咎めない():
     """穴ぐさは土日月のみ。火曜に無くても異常ではない。"""
     rows = [("scrape_netkeiba_index", 1, 0, 0, None),
             ("scrape_kichiuma", 2, 0, 0, None),
-            ("sync_sekito_races", 1, 0, 0, None)]
+            ("sync_sekito_races", 1, 0, 0, None),
+            ("notify_pog_results", 84, 0, 0, None)]
     rep = _check(rows, TUESDAY)
     assert rep.warns == [], rep.warns
 
@@ -175,6 +177,20 @@ def test_供給同期が止まったら気づける():
             ("scrape_anagusa", 1, 0, 0, None)]
     rep = _check(rows, MONDAY)
     assert any("sync_sekito_races" in w or "レース供給" in w for w in rep.warns), rep.warns
+
+
+def test_POG通知が止まったら気づける():
+    """🔴 移設元は 2026-05-02 から 2025年度グループへ通知できなくなっていた。
+
+    馬名突合の上流（sekito.entries）が凍結しただけで、ジョブは success を
+    返し続ける。「今日 1 回も動いていない」だけが cron 側の網になる。
+    """
+    rows = [("scrape_netkeiba_index", 1, 0, 0, None),
+            ("scrape_kichiuma", 2, 0, 0, None),
+            ("scrape_anagusa", 1, 0, 0, None),
+            ("sync_sekito_races", 1, 0, 0, None)]
+    rep = _check(rows, MONDAY)
+    assert any("notify_pog_results" in w or "POG 結果通知" in w for w in rep.warns), rep.warns
 
 
 def test_期待リストに無いジョブの異常も拾う():
