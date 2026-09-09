@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { HamburgerMenu } from "./HamburgerMenu";
 
-type Props = { isAdmin: boolean };
+type Props = { isAdmin: boolean; pogYear?: number | null };
 
-export function AppNav({ isAdmin }: Props) {
+export function AppNav({ isAdmin, pogYear = null }: Props) {
   const pathname = usePathname();
   const isChihou = pathname.startsWith("/chihou");
 
@@ -18,6 +18,8 @@ export function AppNav({ isAdmin }: Props) {
     ...(isAdmin ? [{ label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
     { label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
     { label: "予想", href: "/yoso", matchPath: "/yoso" },
+    // POG は sekito から引き継いだ参加者だけに出す（ロールではなく参加実績で判定）
+    ...(pogYear ? [{ label: "POG", href: `/pog/${pogYear}`, matchPath: "/pog" }] : []),
     { label: "マイページ", href: "/my", matchPath: "/my" },
   ];
 

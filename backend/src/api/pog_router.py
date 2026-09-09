@@ -45,6 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+from ..services.pog_recent_races import fetch_recent_races
 from ..services.pog_standings import fetch_horses, fetch_owners
 
 logger = logging.getLogger(__name__)
@@ -150,3 +151,48 @@ async def get_group_horses(
     """
     group_id = await _group_id_for_year(db, year)
     return await fetch_horses(db, group_id, user_id=user_id)
+
+
+@router.get("/recent-races")
+async def get_recent_races(
+    db: DbDep, year: int = Query(..., description="POG の年度（例 2026）")
+) -> list[dict]:
+    """指名馬の今週の出走（結果が出ていれば着順も）。
+
+    14日のアクセスログで **143 回**と POG で最も叩かれていた画面の中身。
+    移設元は地方を**凍結した `sekito.entries`** から引いていたので、
+    2026-06 以降の地方の出走が 1 件も出ていなかった（services 側の docstring 参照）。
+    """
+    group_id = await _group_id_for_year(db, year)
+    return await fetch_recent_races(db, group_id)
+
+
+class MembershipOut(BaseModel):
+    """その利用者が POG に参加しているか。ナビの出し分けに使う。"""
+
+    is_member: bool
+    latest_year: int | None
+
+
+@router.get("/membership", response_model=MembershipOut)
+async def get_membership(
+    db: DbDep, user_id: int = Query(..., description="keiba.users.id")
+) -> MembershipOut:
+    """POG の参加者かどうかを返す。
+
+    🔴 **ナビに POG を出すかの判定に使う。** POG は sekito から引き継いだ
+    9 人のもので、GallopLab の利用者全員に見せるものではない。ロールを
+    増やさずに済むよう、**参加実績（pog_group_members）そのもの**で判定する。
+
+    `latest_year` は最も新しい参加年度。リンク先をその年にするために返す。
+    """
+    row = await db.execute(
+        text(
+            "SELECT max(g.year) FROM keiba.pog_group_members m "
+            "  JOIN keiba.pog_groups g ON g.id = m.group_id "
+            " WHERE m.user_id = :user_id"
+        ),
+        {"user_id": user_id},
+    )
+    latest = row.scalar_one_or_none()
+    return MembershipOut(is_member=latest is not None, latest_year=latest)

@@ -101,3 +101,21 @@ export function formatRecord(h: {
 }): string {
   return `${h.win}-${h.place}-${h.show}-${h.out}`;
 }
+
+export type PogMembership = {
+  is_member: boolean;
+  latest_year: number | null;
+};
+
+/**
+ * POG の参加者かどうか。ナビに POG を出すかの判定に使う。
+ *
+ * 🔴 POG は sekito から引き継いだ9人のもので、GallopLab の利用者全員に
+ * 見せるものではない。ロールを増やさず**参加実績そのもの**で判定する。
+ */
+export function fetchPogMembership(userId: number): Promise<PogMembership> {
+  // 参加者は年に一度しか変わらない。長めにキャッシュしてよい。
+  return get<PogMembership>(`/pog/membership?user_id=${userId}`, {
+    next: { revalidate: 3600 },
+  });
+}

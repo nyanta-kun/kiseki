@@ -7,6 +7,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { Footer } from "@/components/Footer";
 import ServiceWorkerRegister from "./sw-register";
 import "./globals.css";
+import { fetchPogMembership } from "@/lib/pog";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -93,6 +94,13 @@ export default async function RootLayout({
 }>) {
   const session = await auth();
   const isAdmin = session?.user?.role === "admin";
+  // POG の導線は**参加者にだけ**出す。GallopLab の利用者全員のものではない。
+  // 失敗してもページ全体を落とさない（ナビが1つ減るだけ）。
+  const pogYear = session?.user?.db_id
+    ? await fetchPogMembership(session.user.db_id)
+        .then((m) => m.latest_year)
+        .catch(() => null)
+    : null;
   const paidMode = await fetchPaidMode();
 
   return (
@@ -110,13 +118,13 @@ export default async function RootLayout({
         </a>
 
         {/* 共有ヘッダー（/ と /login では非表示） */}
-        <SiteHeader isAdmin={isAdmin} />
+        <SiteHeader isAdmin={isAdmin} pogYear={pogYear} />
 
         <div className="flex-1 min-h-0 flex flex-col pb-14 md:pb-0">
           {children}
         </div>
         {paidMode && <Footer />}
-        <BottomNav isAdmin={isAdmin} />
+        <BottomNav isAdmin={isAdmin} pogYear={pogYear} />
         <ServiceWorkerRegister />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />

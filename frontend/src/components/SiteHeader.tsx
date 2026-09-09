@@ -10,9 +10,10 @@ const HIDE_HEADER_PATHS = new Set(["/", "/login"]);
 
 type Props = {
   isAdmin: boolean;
+  pogYear?: number | null;
 };
 
-export function SiteHeader({ isAdmin }: Props) {
+export function SiteHeader({ isAdmin, pogYear = null }: Props) {
   const pathname = usePathname();
   if (HIDE_HEADER_PATHS.has(pathname)) return null;
 
@@ -51,7 +52,7 @@ export function SiteHeader({ isAdmin }: Props) {
         )}
         <div className="flex-1 min-w-0" />
         <LiveStreamButton />
-        <AppNav isAdmin={isAdmin} />
+        <AppNav isAdmin={isAdmin} pogYear={pogYear} />
       </div>
     </header>
   );
