@@ -151,3 +151,51 @@ export function fetchPogMembership(userId: number): Promise<PogMembership> {
     next: { revalidate: 3600 },
   });
 }
+
+export type GradedRace = {
+  race_id: number;
+  /** `jra` / `chihou`。詳細ページのリンク先が分かれる。 */
+  kind: "jra" | "chihou";
+  /** `YYYYMMDD`。 */
+  date: string;
+  course_name: string | null;
+  race_number: number;
+  race_name: string | null;
+  /** `HHMM`。出馬表が届く前は null。 */
+  post_time: string | null;
+  grade: string | null;
+  winner_name: string | null;
+};
+
+/**
+ * 今週の重賞（直前の土曜〜翌週日曜）。
+ *
+ * 移設元は POG 詳細ページの中の重賞パネルで、14 日のログで 106 回叩かれていた。
+ * 🔴 あちらは**地方の優勝馬を凍結した `sekito.entries` から引いており**、
+ * 2026-06〜09 の地方重賞 10 件すべてが空欄だった（kiseki は 11/11 取得）。
+ */
+export function fetchGradedRaces(start: string, end: string): Promise<GradedRace[]> {
+  // 開催中は優勝馬が入れ替わる。今週の出走と同じ間隔にする。
+  return get<GradedRace[]>(`/races/graded?start=${start}&end=${end}`, {
+    next: { revalidate: 60 },
+  });
+}
+
+/**
+ * 「今週」の範囲を直前の土曜〜翌週日曜で返す（`YYYYMMDD`）。
+ *
+ * 移設元 `GradedRacesTable.getWeekRange()` と同じ式。**変えると重賞パネルに
+ * 出る範囲が変わる**ので、移植時はここを合わせること。
+ *
+ * ⚠️ `toISOString()` を使わない。あれは UTC に倒すので、日本時間の 00:00〜08:59 に
+ * 見ると**前日**の日付になり、土曜の朝だけ範囲が 1 日ずれる。
+ */
+export function currentWeekRange(now: Date = new Date()): [string, string] {
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  const saturday = new Date(now);
+  saturday.setDate(now.getDate() - ((now.getDay() + 1) % 7));
+  const sunday = new Date(saturday);
+  sunday.setDate(saturday.getDate() + 8);
+  return [fmt(saturday), fmt(sunday)];
+}

@@ -38,9 +38,13 @@ VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
 - Windows Agent: Python 3.x 32bit / pywin32 / JV-Link COM
 - パッケージ管理: uv (Python) / pnpm (Node)
 - コード品質: Ruff (Python) / ESLint + Prettier (TS)
-- テスト: pytest (Python)。**TS 側のテスト基盤は未導入**（Vitest は入っておらず、
-  フロントの CI は eslint / tsc / build のみ・2026-09-01 実測）。フロントの不変条件を
-  守りたいときは `backend/tests` から静的に検査する
+- テスト: pytest (Python) / **Vitest (TS)**。
+  ⚠️ 旧記述の「TS 側のテスト基盤は未導入」は**現在は誤り**。`frontend/package.json` に
+  `vitest` があり CI の Frontend ジョブが `pnpm test` を実行する
+  （2026-09-10 実測: 8 ファイル 106 件）。純関数は `src/lib/*.test.ts` に置く
+- ただし **描画されているか**は Vitest では見ていない（DOM を組み立てるテストは無い）。
+  「算出しているのに画面に出ていない」型の欠落は引き続き `backend/tests` から
+  静的に検査する
   （例: `test_frontend_display_flags_reachable.py` = 表示フラグに到達可能な描画先があるか）
 
 ## 開発ルール
