@@ -234,6 +234,28 @@ def main() -> int:
             inserted += 1
         session.commit()
 
+        # ---- 通知履歴 ----
+        # 🔴 これを写さないと、kiseki 側の通知ジョブが**既に送ったぶんを再送する**
+        #    （重複判定は keiba.pog_notifications を見るため）。
+        #    グループの対応は年度で取る（id は別体系）。
+        notif = session.execute(
+            text(
+                """
+                INSERT INTO keiba.pog_notifications
+                    (group_id, notification_type, race_date, course_code,
+                     race_no, horse_name, content, sent_at)
+                SELECT kg.id, n.notification_type, n.race_date, n.course_code,
+                       n.race_no, n.horse_name, n.notification_content, n.sent_at
+                FROM sekito.pog_notifications n
+                JOIN sekito.pog_group sg ON sg.id = n.group_id
+                JOIN keiba.pog_groups kg ON kg.year = sg.year
+                ON CONFLICT DO NOTHING
+                """
+            )
+        ).rowcount
+        session.commit()
+        logging.info("通知履歴を引き継ぎ: %d 件", notif)
+
         # ---- 突き合わせ ----
         got = session.execute(text("SELECT count(*) FROM keiba.pog_picks")).scalar_one()
         gm = session.execute(
