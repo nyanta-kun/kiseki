@@ -63,32 +63,48 @@ if [ ! -f "$BACKEND/scripts/prune_odds_history.py" ]; then
   exit 1
 fi
 
-# 🔴 削除は取り消せない。直近のバックアップが無ければ実行しない。
-LATEST_DUMP=$(ls -t "$BACKUP_DIR"/hrdb-keiba-*.dump 2>/dev/null | head -1)
-if [ -z "$LATEST_DUMP" ]; then
-  log "ERROR: keiba のバックアップが見つかりません ($BACKUP_DIR)。刈り込みを中止"
-  exit 1
-fi
-# 36時間以上古いバックアップしか無ければ、バックアップ側が壊れている可能性がある
-if [ -n "$(find "$LATEST_DUMP" -mmin +2160 2>/dev/null)" ]; then
-  log "ERROR: 最新バックアップが古すぎます ($LATEST_DUMP)。刈り込みを中止"
-  exit 1
-fi
+# 🔴 削除は取り消せない。スキーマごとに、直近のバックアップが無ければ実行しない。
+check_backup() {  # $1 = スキーマ名 → 標準出力に dump のパス
+  local schema="$1" dump
+  dump=$(ls -t "$BACKUP_DIR"/hrdb-"$schema"-*.dump 2>/dev/null | head -1)
+  if [ -z "$dump" ]; then
+    log "ERROR: $schema のバックアップが見つかりません ($BACKUP_DIR)。刈り込みを中止"
+    return 1
+  fi
+  # 36時間以上古いバックアップしか無ければ、バックアップ側が壊れている可能性がある
+  if [ -n "$(find "$dump" -mmin +2160 2>/dev/null)" ]; then
+    log "ERROR: $schema の最新バックアップが古すぎます ($dump)。刈り込みを中止"
+    return 1
+  fi
+  echo "$dump"
+}
 
 START=$(date -v-${LOOKBACK_DAYS}d '+%Y%m%d' 2>/dev/null || date -d "-${LOOKBACK_DAYS} days" '+%Y%m%d')
-log "=== 開始 start=$START (backup: $(basename "$LATEST_DUMP")) ==="
-
 cd "$BACKEND" || { log "ERROR: cd 失敗"; exit 1; }
-OUT=$("$PY" scripts/prune_odds_history.py --start "$START" --execute --sleep 0.2 2>&1)
-RC=$?
 
-echo "$OUT" | grep -E "現在の総行数|削除完了|ERROR|Traceback" | while read -r line; do
-  log "  $line"
+# 🔴 地方も刈る（2026-09-09 追加）。それまで**一度も刈っていなかった**ため
+#    12GB / 83.4M 行まで育ち、月 2.5GB ペースで増えていた。発走後の行が 62%。
+#    中央より比率が高いのは、開催数が多く realtime が終わったレースを叩き続ける
+#    時間が長いため。地方は win/place しか無いので policy は post だけ（既定）。
+RC=0
+for SCHEMA in keiba chihou; do
+  DUMP=$(check_backup "$SCHEMA") || { RC=1; continue; }
+  log "=== $SCHEMA 開始 start=$START (backup: $(basename "$DUMP")) ==="
+  OUT=$("$PY" scripts/prune_odds_history.py --schema "$SCHEMA" --start "$START" \
+        --execute --sleep 0.2 2>&1)
+  SCHEMA_RC=$?
+
+  echo "$OUT" | grep -E "現在の総行数|削除完了|ERROR|Traceback" | while read -r line; do
+    log "  $line"
+  done
+
+  if [ "$SCHEMA_RC" -ne 0 ]; then
+    log "ERROR: $SCHEMA rc=$SCHEMA_RC"
+    log "$(echo "$OUT" | tail -5)"
+    RC="$SCHEMA_RC"
+  fi
+  log "=== $SCHEMA 終了 rc=$SCHEMA_RC ==="
 done
 
-if [ "$RC" -ne 0 ]; then
-  log "ERROR: rc=$RC"
-  log "$(echo "$OUT" | tail -5)"
-fi
 log "=== 終了 rc=$RC ==="
 exit "$RC"
