@@ -181,13 +181,15 @@ export async function setVisible(
 /**
  * その巡を確定する（管理者のみ）。
  *
- * 🔴 **送った人だけが更新される。** 全員ぶんを渡すこと。
- * 勝った人に枠番、同じ馬で負けた人に 0 を入れる。
+ * 🔴 **送った人だけが更新される。触ってはいけない人を入れないこと。**
+ * 何を送るかは `lib/pogDraft.ts` の `computeConfirmTargets` が決める
+ * （別の馬を指名した人まで 0 にすると、その人が指名し直す羽目になる）。
+ * `pick_order: null` は「未確定へ戻す」。
  */
 export async function setOrder(
   year: number,
   draftOrder: number,
-  targets: { user_id: number; pick_order: number }[],
+  targets: { user_id: number; pick_order: number | null }[],
 ): Promise<{ error?: string }> {
   const me = await who();
   if (!me?.isAdmin) return { error: "管理者のみ操作できます" };
