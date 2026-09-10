@@ -214,27 +214,39 @@ def test_axis_gate_thresholds_are_per_plan():
 
 
 def test_axis_gate_covers_only_the_plans_it_helps():
-    """🔴🔴 **ゲートは効くプランだけに掛ける**（2026-09-03・ユーザー判断）。
+    """🔴🔴 **ゲートの適用範囲を固定する。**
 
     `passes_axis_gate` は表に無いプランを通すので、**この表から消すことが
     「掛けない」の実装**。消し忘れ・足し忘れが静かな件数変化になるため固定する。
 
-    通過 − 落ちた の表示的中（探索 / 確認・`scripts/exp_type_lab/axis_gate_audit.py`）:
+    ── 2026-09-11: **`A_ana` 以外の全プランへ広げ、閾値を p30 にした**
+    （ユーザー判断・`docs/type_lab/axis_gate_recheck_2026_09_09.md` §5 の腕⑥）。
+    **目的は件数を減らすこと**で、的中率の改善ではない
+    （件/日 40.99→31.69・Δ表示的中 +0.24 CI[−0.21,+0.66]＝0を跨ぐ・10万+ −8%）。
+    2026-09-03 に `A_trio` / `B_hit` / `C_hit` / `F_sign` を外したのは
+    「効く根拠が無いものに件数を払わない」判断だったが、**件数を減らすこと自体が
+    目的になったので判断が逆になった**。窓で符号が反転することは承知の上。
 
-        A_hit +10.36/+12.36  D_hit +9.35/+10.65  E_hit +4.30/+7.05  F_hit +4.96/+3.15
-        A_ana −1.68/−3.53（両窓で逆効果）  C_hit −2.57/+2.68  B_hit −1.44/+1.45
-        A_trio +3.98/−1.38   F_sign −0.32/+2.13（いずれも窓で符号反転）
+    🔴 **`A_ana` だけは掛けてはいけない。** プラン内で両台・両窓ともマイナスで、
+    落ちる側の ROI が 128〜134%＝掛けると利益の出る裾を捨てる。
+    含める腕（③全プラン p30）だと 10万+ が **−18%** になる。
+    あれは「軸1が飛ぶ側」に賭ける商品なので、軸信頼の高いレースを残すのは
+    **商品の狙いと正面から逆**。
 
-    `A_ana` は「軸1が飛ぶ側」に賭ける商品なので、軸信頼の高いレースを残すのは
-    **商品の狙いと正面から逆**。掛けること自体が設計と矛盾していた。
+    🔴 **高額枠（`{型}_sign` / `{型}_big`）と 9車専用（`F_pay` / `F_line`）は対象外。**
+    腕⑥を測った台に高額枠の行が無く、測っていないものを一緒に動かさない。
     """
     from src.services.keirin_type_lab_gate import AXIS_GATE_MIN, AXIS_GATE_PLANS
 
-    assert AXIS_GATE_PLANS == {"A_hit", "D_hit", "E_hit", "F_hit"}
+    assert AXIS_GATE_PLANS == {
+        "A_hit", "A_trio", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit", "F_sign",
+    }
     assert set(AXIS_GATE_MIN) == AXIS_GATE_PLANS
-    # 掛けないプランは素通しになること（表に無い＝通す、が実装）
+    # 🔴 `A_ana` は掛けない（素通し）。ここが腕⑥の唯一の除外。
     from src.services.keirin_type_lab_gate import passes_axis_gate
-    for key in ("A_ana", "A_trio", "B_hit", "C_hit", "F_sign"):
+    assert passes_axis_gate("A_ana", 0.0) is True
+    # 高額枠・9車専用も素通しのまま（表に無い＝通す、が実装）
+    for key in ("B_sign", "C_big", "F_pay", "F_line"):
         assert passes_axis_gate(key, 0.0) is True, key
 
 
