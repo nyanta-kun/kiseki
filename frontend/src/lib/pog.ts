@@ -311,3 +311,38 @@ export function fetchPogRankingMetrics(): Promise<Record<string, string>> {
     next: { revalidate: 3600 },
   });
 }
+
+export type PogSiblingHorse = {
+  year: number;
+  netkeiba_horse_id: string;
+  horse_name: string;
+  sex: string | null;
+  sire: string | null;
+  stable: string | null;
+  owner_name: string | null;
+  pick_order: number;
+  win: number;
+  place: number;
+  show: number;
+  out: number;
+  prize: number;
+};
+
+export type PogSiblingGroup = {
+  broodmare: string;
+  nomination_count: number;
+  horses: PogSiblingHorse[];
+};
+
+/**
+ * 同じ母から複数回指名されている馬。ドラフトの下調べに使う。
+ *
+ * ⚠️ 2017年度以前の指名馬は戦績が出ない（`keiba.horses` の生年別カバレッジが
+ * 2013年産以前で極端に薄いため）。
+ */
+export function fetchPogSiblings(minNominations = 2): Promise<PogSiblingGroup[]> {
+  return get<PogSiblingGroup[]>(
+    `/pog/siblings?min_nominations=${minNominations}`,
+    { next: { revalidate: 3600 } },
+  );
+}

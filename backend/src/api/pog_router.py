@@ -51,6 +51,7 @@ from ..services.pog_rankings import METRICS as RANKING_METRICS
 from ..services.pog_rankings import fetch_ranking
 from ..services.pog_recent_races import fetch_recent_races
 from ..services.pog_records import fetch_graded_wins, fetch_score_summary
+from ..services.pog_siblings import fetch_siblings
 from ..services.pog_standings import fetch_horses, fetch_owners
 
 logger = logging.getLogger(__name__)
@@ -410,3 +411,55 @@ async def get_ranking(
 async def list_ranking_metrics() -> dict[str, str]:
     """使える指標と表示名の対応を返す。"""
     return {k: m.label for k, m in RANKING_METRICS.items()}
+
+
+class SiblingHorseOut(BaseModel):
+    """兄弟馬 1 頭。"""
+
+    year: int
+    netkeiba_horse_id: str
+    horse_name: str
+    sex: str | None
+    sire: str | None
+    stable: str | None
+    owner_name: str | None
+    pick_order: int
+    win: int
+    place: int
+    show: int
+    out: int
+    prize: int
+
+
+class SiblingGroupOut(BaseModel):
+    """同じ母から指名された馬のまとまり。"""
+
+    broodmare: str
+    nomination_count: int
+    horses: list[SiblingHorseOut]
+
+
+@router.get("/siblings", response_model=list[SiblingGroupOut])
+async def list_siblings(
+    db: DbDep,
+    min_nominations: int = Query(2, ge=2, le=20, description="何回以上指名された母を出すか"),
+) -> list[SiblingGroupOut]:
+    """同じ母から複数回指名されている馬をまとめて返す（移設元 `/sibling-horses`）。
+
+    ドラフトの下調べ（この母の上の子はどうだったか）に使う。
+
+    🔴 移設元は `sekito.horse` の保存列から戦績を作っていたが、その列は
+    更新されておらず新しい世代ほど空だった。ここは `keiba.horse_runs` から数える。
+
+    ⚠️ **2017年度以前の指名馬は成績が出ない。** `keiba.horses` の生年別
+    カバレッジが 2013年産以前で極端に薄いため（2009年産は 229頭のみ）。
+    """
+    rows = await fetch_siblings(db, min_nominations=min_nominations)
+    return [
+        SiblingGroupOut(
+            broodmare=g["broodmare"],
+            nomination_count=g["nomination_count"],
+            horses=[SiblingHorseOut(**h) for h in g["horses"]],
+        )
+        for g in rows
+    ]
