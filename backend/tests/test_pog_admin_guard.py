@@ -90,3 +90,18 @@ def test_フロントは管理者だけに通す():
     for fn in ("createPogGroup", "replacePogMembers", "deletePogGroup", "getPogGroup"):
         body = src.split(f"export async function {fn}", 1)[1].split("\n}", 1)[0]
         assert "assertAdmin()" in body, f"{fn} が role を確かめていない"
+
+
+def test_グループ削除でサイコロも消す():
+    """`pog_rolls` は年度キーで `pog_groups` への FK が無く CASCADE で消えない。
+
+    2026-09-10 の実地検証（ダミーの 2099 年度）で、グループを消した後に
+    出目だけが残るのを確認した。残しても害は小さいが、同じ年度を作り直すと
+    前回の出目が見えてしまう。
+    """
+    src = Path(m.__file__).read_text(encoding="utf-8")
+    body = src.split("async def delete_group", 1)[1]
+    assert "DELETE FROM keiba.pog_rolls" in body, "サイコロが消えずに残る"
+    assert body.index("DELETE FROM keiba.pog_rolls") < body.index(
+        "DELETE FROM keiba.pog_groups"
+    ), "グループを先に消すと年度が引けなくなる"
