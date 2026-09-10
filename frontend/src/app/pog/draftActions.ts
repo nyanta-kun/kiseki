@@ -13,7 +13,11 @@ import { auth } from "@/auth";
  *     代理入力 …… 呼び出し側が `role === "admin"` であること
  *     管理操作 …… 同上
  *
- * ⚠️ セッションの `user.id` は文字列で入っていることがあるので数値に直して比べる。
+ * 🔴 **DB のユーザー ID は `session.user.db_id`。`user.id` ではない。**
+ * `user.id` は Auth.js 自身が振る ID（Google の sub 由来）で、`keiba.users.id`
+ * とは無関係。取り違えると `Number(...)` が NaN になり、**全員が
+ * 「ログインが必要です」で弾かれる**（2026-09-10 にダミーの 2099 年度で
+ * 実際に踏んだ。画面はログインへリダイレクトされるだけで理由が出ない）。
  */
 const BACKEND_URL =
   process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -53,10 +57,8 @@ type Who = { userId: number; isAdmin: boolean };
 /** ログイン中の利用者。未ログインなら null。 */
 async function who(): Promise<Who | null> {
   const session = await auth();
-  const raw = session?.user?.id;
-  if (raw === undefined || raw === null) return null;
-  const userId = Number(raw);
-  if (!Number.isInteger(userId)) return null;
+  const userId = session?.user?.db_id;
+  if (typeof userId !== "number") return null;
   return { userId, isAdmin: session?.user?.role === "admin" };
 }
 
