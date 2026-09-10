@@ -1471,6 +1471,11 @@ class PogPick(Base):
     __table_args__ = (  # type: ignore[assignment]
         Index("ix_pog_picks_group_user", "group_id", "user_id"),
         Index("ix_pog_picks_horse", "netkeiba_horse_id"),
+        # 🔴 指名は 1 人・1 巡につき 1 件（移設元 `sekito.pog_user` の主キー）。
+        #    これが無いとドラフトの指名し直しが上書きにならず行が増える。
+        UniqueConstraint(
+            "group_id", "user_id", "draft_order", name="uq_pog_picks_group_user_order"
+        ),
         {"schema": SCHEMA},
     )
 
