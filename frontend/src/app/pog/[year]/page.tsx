@@ -162,6 +162,12 @@ export default async function PogStandingsPage({
         >
           兄弟馬
         </Link>
+        <Link
+          href={`/pog/${year}/draft`}
+          className="text-emerald-600 underline dark:text-emerald-400"
+        >
+          ドラフト
+        </Link>
       </p>
     </main>
   );
