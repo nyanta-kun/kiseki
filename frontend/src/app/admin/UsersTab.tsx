@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { createUser, updateUser } from "./actions";
 import type { User, InvitationCode } from "./AdminTabs";
 import { CodesTab } from "./CodesTab";
+import { MenuToggles } from "./MenuToggles";
 
 const PAGE_SIZE = 10;
 
@@ -98,6 +99,7 @@ export function UsersTab({ users, codes }: UsersTabProps) {
                 <th className="px-4 py-3 text-left whitespace-nowrap">名前</th>
                 <th className="px-4 py-3 text-left whitespace-nowrap">予想家名</th>
                 <th className="px-4 py-3 text-left whitespace-nowrap">公開</th>
+                <th className="px-4 py-3 text-left whitespace-nowrap">表示メニュー</th>
                 <th className="px-4 py-3 text-left whitespace-nowrap">ロール</th>
                 <th className="px-4 py-3 text-left whitespace-nowrap">有効</th>
                 <th className="px-4 py-3 text-left whitespace-nowrap">プレミアム</th>
@@ -123,6 +125,9 @@ export function UsersTab({ users, codes }: UsersTabProps) {
                     >
                       {user.is_yoso_public ? "公開" : "非公開"}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <MenuToggles user={user} />
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span
@@ -208,7 +213,7 @@ export function UsersTab({ users, codes }: UsersTabProps) {
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-gray-400 text-sm">
+                  <td colSpan={12} className="px-4 py-8 text-center text-gray-400 text-sm">
                     ユーザーが存在しません
                   </td>
                 </tr>

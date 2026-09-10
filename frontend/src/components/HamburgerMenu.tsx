@@ -4,26 +4,29 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions/auth";
+import { DEFAULT_MENU_FLAGS, type MenuFlags } from "@/lib/menuAccess";
+import { buildNavItems } from "./AppNav";
 
 type Props = {
   isAdmin?: boolean;
+  /** 実際に見えるメニュー。項目の組み立ては `buildNavItems` に一本化してある。 */
+  access?: MenuFlags;
+  pogYear?: number | null;
 };
 
-export function HamburgerMenu({ isAdmin = false }: Props) {
+export function HamburgerMenu({
+  isAdmin = false,
+  access = DEFAULT_MENU_FLAGS,
+  pogYear = null,
+}: Props) {
   // pathnameが変わると自動的に閉じる派生state（useEffect不要）
   const [openedOnPath, setOpenedOnPath] = useState<string | null>(null);
   const pathname = usePathname();
   const isChihou = pathname.startsWith("/chihou");
 
-  const NAV_ITEMS = [
-    { icon: "🏇", label: "中央競馬", href: "/races", matchPath: "/races" },
-    { icon: "🏘", label: "地方競馬", href: "/chihou/races", matchPath: "/chihou" },
-    // 競輪は admin 限定（2026-08-03・AppNav/BottomNav/proxy.ts と同基準）
-    ...(isAdmin ? [{ icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
-    { icon: "📊", label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
-    { icon: "🎯", label: "予想", href: "/yoso", matchPath: "/yoso" },
-    { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
-  ];
+  // 🔴 ここで独自に項目を並べ直さないこと。2026-09-10 まで**このメニューにだけ
+  //    POG が無かった**（AppNav と BottomNav には在った）。
+  const NAV_ITEMS = buildNavItems(access, pogYear, isChihou);
   const isOpen = openedOnPath === pathname;
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -103,7 +106,7 @@ export function HamburgerMenu({ isAdmin = false }: Props) {
           const isActive = pathname.startsWith(item.matchPath);
           return (
             <Link
-              key={item.label}
+              key={item.key}
               href={item.href}
               role="menuitem"
               onClick={() => setOpenedOnPath(null)}

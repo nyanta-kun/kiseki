@@ -186,11 +186,17 @@ async def get_membership(
 ) -> MembershipOut:
     """POG の参加者かどうかを返す。
 
-    🔴 **ナビに POG を出すかの判定に使う。** POG は sekito から引き継いだ
-    9 人のもので、GallopLab の利用者全員に見せるものではない。ロールを
-    増やさずに済むよう、**参加実績（pog_group_members）そのもの**で判定する。
+    `latest_year` は最も新しい参加年度。**ナビの POG のリンク先を
+    その年にするために**使う。
 
-    `latest_year` は最も新しい参加年度。リンク先をその年にするために返す。
+    🔴 **可視性の判定には使わなくなった**（2026-09-10）。POG を出すかは
+    管理者が付ける `keiba.users.menu_pog` で決まる（判定の正本は
+    `services/menu_access.py`）。参加実績で判定していた頃は、
+    **その年度に指名しなかった人からリンクが消える**（＝過去の順位表も
+    見られなくなる）という取り違えがあった。
+
+    ⚠️ そのため `is_member=False` でもナビに POG が出ることがある。
+    そのときのリンク先は `/pog`（最新年度へ転送される）。
     """
     row = await db.execute(
         text(

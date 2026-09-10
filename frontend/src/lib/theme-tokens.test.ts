@@ -74,6 +74,8 @@ describe("globals.css のテーマ定義", () => {
     "--page-bg",
     "--page-bg-chihou",
     "--page-bg-chihou-alt",
+    // POG（2026-09-10 新設）。面を持つ柱が増えたら必ずここへ足すこと。
+    "--page-bg-pog",
     "--page-bg-subtle",
     "--footer-bg",
     "--surface-heading",
@@ -145,7 +147,10 @@ describe("面の上の文字色", () => {
     return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
   }
 
-  const SURFACES = ["--page-bg", "--page-bg-chihou", "--page-bg-chihou-alt", "--page-bg-subtle", "--footer-bg"];
+  // 🔴 `--pog-card` も面として扱う。POG のカードは他の柱と違い `bg-white` 直書きを
+  //    やめてトークン化してあり（`app/pog/ui.tsx`）、暗いテーマでは実際に暗くなる。
+  //    面として検査しないと、カードの中の文字だけ突き合わせから漏れる。
+  const SURFACES = ["--page-bg", "--page-bg-chihou", "--page-bg-chihou-alt", "--page-bg-pog", "--pog-card", "--page-bg-subtle", "--footer-bg"];
   const TEXTS = ["--surface-heading", "--surface-muted"];
 
   // light 同士 / dark 同士だけを突き合わせる（混ぜると意味のない比較になる）。

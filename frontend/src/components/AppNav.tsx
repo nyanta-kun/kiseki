@@ -2,26 +2,75 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
+import type { MenuFlags } from "@/lib/menuAccess";
 import { HamburgerMenu } from "./HamburgerMenu";
 
-type Props = { isAdmin: boolean; pogYear?: number | null };
+export type NavProps = {
+  isAdmin: boolean;
+  /** 実際に見えるメニュー（`lib/menu.ts` が毎リクエスト引いた値）。 */
+  access: MenuFlags;
+  pogYear?: number | null;
+};
 
-export function AppNav({ isAdmin, pogYear = null }: Props) {
+export type NavItem = {
+  key: string;
+  icon: string;
+  label: string;
+  shortLabel: string;
+  href: string;
+  matchPath: string;
+};
+
+/**
+ * ナビの項目を組み立てる。
+ *
+ * 🔴 **AppNav / HamburgerMenu / BottomNav の唯一の情報源。** 3 か所で別々に
+ * 組んでいた頃は、ハンバーガーにだけ POG が無い（2026-09-10 実測）といった
+ * 取りこぼしが静かに起きていた。表示先が増えてもここだけ直せばよいようにする。
+ *
+ * @param access 見えるメニュー。ここで弾いた項目はどの表示先にも出ない。
+ */
+export function buildNavItems(access: MenuFlags, pogYear: number | null, isChihou: boolean): NavItem[] {
+  const items: NavItem[] = [];
+  if (access.jra) {
+    items.push({ key: "jra", icon: "🏇", label: "中央競馬", shortLabel: "中央", href: "/races", matchPath: "/races" });
+  }
+  if (access.chihou) {
+    items.push({ key: "chihou", icon: "🏘", label: "地方競馬", shortLabel: "地方", href: "/chihou/races", matchPath: "/chihou" });
+  }
+  if (access.keirin) {
+    items.push({ key: "keirin", icon: "🚴", label: "競輪", shortLabel: "競輪", href: "/keirin", matchPath: "/keirin" });
+  }
+  // 実績は「今いる柱」の実績へ送る。中央も地方も見えないなら出さない。
+  if (access.jra || access.chihou) {
+    const useChihou = isChihou ? access.chihou : !access.jra;
+    const href = useChihou ? "/chihou/results" : "/results";
+    items.push({ key: "results", icon: "📊", label: "実績", shortLabel: "実績", href, matchPath: href });
+  }
+  // 予想は中央のレースに紐づく（`menuOfPath` と同じ束ね方）。
+  if (access.jra) {
+    items.push({ key: "yoso", icon: "🎯", label: "予想", shortLabel: "予想", href: "/yoso", matchPath: "/yoso" });
+  }
+  if (access.pog) {
+    items.push({
+      key: "pog",
+      icon: "🐴",
+      label: "POG",
+      shortLabel: "POG",
+      // 参加実績が無ければ `/pog` へ。あちらが最新年度へ転送する。
+      href: pogYear ? `/pog/${pogYear}` : "/pog",
+      matchPath: "/pog",
+    });
+  }
+  items.push({ key: "my", icon: "👤", label: "マイページ", shortLabel: "マイページ", href: "/my", matchPath: "/my" });
+  return items;
+}
+
+export function AppNav({ isAdmin, access, pogYear = null }: NavProps) {
   const pathname = usePathname();
   const isChihou = pathname.startsWith("/chihou");
-
-  const NAV_ITEMS = [
-    { label: "中央", href: "/races", matchPath: "/races" },
-    { label: "地方", href: "/chihou/races", matchPath: "/chihou" },
-    // 競輪は admin 限定（2026-08-03）。netkeirin入稿トリガー等を含むため
-    // proxy.ts でもルートガードしている。ここはリンクを出さないための表示制御。
-    ...(isAdmin ? [{ label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
-    { label: "実績", href: isChihou ? "/chihou/results" : "/results", matchPath: isChihou ? "/chihou/results" : "/results" },
-    { label: "予想", href: "/yoso", matchPath: "/yoso" },
-    // POG は sekito から引き継いだ参加者だけに出す（ロールではなく参加実績で判定）
-    ...(pogYear ? [{ label: "POG", href: `/pog/${pogYear}`, matchPath: "/pog" }] : []),
-    { label: "マイページ", href: "/my", matchPath: "/my" },
-  ];
+  const navItems = buildNavItems(access, pogYear, isChihou);
 
   const inactiveCls = isChihou
     ? "text-green-200 hover:text-white border-green-400/40 hover:border-white/40 hover:bg-white/10"
@@ -31,11 +80,11 @@ export function AppNav({ isAdmin, pogYear = null }: Props) {
     <>
       {/* PC用ナビゲーション */}
       <nav className="hidden md:flex items-center gap-2" aria-label="グローバルナビゲーション">
-        {NAV_ITEMS.map(({ label, href, matchPath }) => {
+        {navItems.map(({ key, shortLabel, href, matchPath }) => {
           const isActive = pathname.startsWith(matchPath);
           return (
             <Link
-              key={label}
+              key={key}
               href={href}
               className={`text-xs px-2.5 py-1 rounded border transition-colors ${
                 isActive
@@ -43,7 +92,7 @@ export function AppNav({ isAdmin, pogYear = null }: Props) {
                   : inactiveCls
               }`}
             >
-              {label}
+              {shortLabel}
             </Link>
           );
         })}
@@ -61,7 +110,7 @@ export function AppNav({ isAdmin, pogYear = null }: Props) {
         )}
       </nav>
       {/* スマホ用ハンバーガーメニュー */}
-      <HamburgerMenu isAdmin={isAdmin} />
+      <HamburgerMenu isAdmin={isAdmin} access={access} pogYear={pogYear} />
     </>
   );
 }

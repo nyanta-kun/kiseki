@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { fetchPogGroups } from "@/lib/pog";
 import { getDraftBoard } from "../../draftActions";
+import { PogShell } from "../../PogShell";
+import { EmptyState } from "../../ui";
 import { DraftClient } from "./DraftClient";
 
 export const metadata: Metadata = {
@@ -31,39 +32,25 @@ export default async function PogDraftPage({
 
   // 初回の盤面はここで取る（伏せ札の出し分けはサーバが担う）。
   const board = await getDraftBoard(year);
-  if (!board.data) {
-    return (
-      <main className="mx-auto max-w-3xl p-4">
-        <p className="text-sm text-rose-600">
-          盤面を読めませんでした: {board.error}
-        </p>
-      </main>
-    );
-  }
 
   return (
-    <main className="mx-auto max-w-5xl p-4">
-      <h1 className="mb-1 text-lg font-bold">POG ドラフト {year}</h1>
-      <p className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
-        指名は<strong>伏せた状態</strong>で入り、管理者が巡ごとに一斉公開します。
-        同じ馬が重なったらサイコロで決め、負けた人は次の巡で指名し直します。
-      </p>
-
-      <DraftClient
-        year={year}
-        me={userId}
-        isAdmin={session?.user?.role === "admin"}
-        initialBoard={board.data}
-      />
-
-      <p className="mt-6 text-center text-sm">
-        <Link
-          href={`/pog/${year}`}
-          className="text-emerald-600 underline dark:text-emerald-400"
-        >
-          順位表へ
-        </Link>
-      </p>
-    </main>
+    <PogShell
+      title={`POG ドラフト ${year}`}
+      description="指名は伏せた状態で入り、管理者が巡ごとに一斉公開します。同じ馬が重なったらサイコロで決め、負けた人は次の巡で指名し直します。"
+      year={year}
+      groups={groups}
+      yearBasePath="/pog/:year/draft"
+    >
+      {board.data ? (
+        <DraftClient
+          year={year}
+          me={userId}
+          isAdmin={session?.user?.role === "admin"}
+          initialBoard={board.data}
+        />
+      ) : (
+        <EmptyState>盤面を読めませんでした: {board.error}</EmptyState>
+      )}
+    </PogShell>
   );
 }

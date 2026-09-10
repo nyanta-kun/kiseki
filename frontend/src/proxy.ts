@@ -52,6 +52,22 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL("/login?error=account_suspended", req.nextUrl.origin));
   }
 
+  // 🔴 **表示メニュー（POG / 中央 / 地方）のガードはここには無い。**
+  //
+  // 管理者がユーザーごとに切り替えるフラグは DB にあり、Auth.js の JWT は
+  // サインイン時にしか作られない（v5 の `jwt` コールバックはサーバ
+  // コンポーネントから Cookie を書き戻せない）。ここで token を見て判定すると
+  // **管理者が切り替えても再ログインまで反映されない**。
+  //
+  // → 実効ガードは各セクションの `layout.tsx` にある
+  //   （`src/lib/menu.ts` の `requireMenu`。毎リクエスト DB に聞く）。
+  //   ここは認証とロールだけを見る。
+  //
+  // ⚠️ 下の `/` `/login` から `/races` への転送は、中央が OFF の人だと
+  //    セクションガードで一度跳ね返される（`landingPath` が見える場所へ送る）。
+  //    余分な 1 ホップは許容する。middleware から DB を引くと全遷移に
+  //    往復が増えるため。
+
   // 管理画面は admin ロールのみ
   if (pathname.startsWith("/admin")) {
     if (token.role !== "admin") {

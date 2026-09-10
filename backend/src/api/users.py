@@ -18,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db.models import Race, User, UserAccessGrant
 from ..db.session import get_db
+from ..services.menu_access import (
+    MenuFlags,
+    normalize_menu_flags,
+    resolve_menu_access,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,16 @@ class UserResponse(BaseModel):
     yoso_name: str | None        # 予想家名
     is_yoso_public: bool         # 予想公開フラグ
 
+    # 表示メニューの**保存値**（管理画面のチェックボックスの状態）。
+    # 実際に見えるかは `menu_access` が別に返す（admin 素通し・競輪は
+    # admin 限定のため、保存値と可視性は一致しない）。
+    menu_pog: bool
+    menu_jra: bool
+    menu_chihou: bool
+    menu_keirin: bool
+    #: 実際の可視性。`{"pog": bool, "jra": bool, "chihou": bool, "keirin": bool}`
+    menu_access: dict[str, bool]
+
     model_config = {"from_attributes": False}
 
 
@@ -153,6 +168,12 @@ class UpdateUserRequest(BaseModel):
     role: str | None = None
     is_active: bool | None = None
     can_input_index: bool | None = None
+    # 表示メニュー。省略した項目は変更しない（部分更新）。
+    # 🔴 POG を ON にすると中央・地方も自動で ON になる（`normalize_menu_flags`）。
+    menu_pog: bool | None = None
+    menu_jra: bool | None = None
+    menu_chihou: bool | None = None
+    menu_keirin: bool | None = None
 
 
 class MonthCoverage(BaseModel):
@@ -208,9 +229,22 @@ class UpdateSettingRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # エンドポイント
 # ---------------------------------------------------------------------------
+def _user_menu_flags(user: User) -> MenuFlags:
+    """User ORM から表示メニューの保存値を取り出す。"""
+    return MenuFlags(
+        pog=user.menu_pog,
+        jra=user.menu_jra,
+        chihou=user.menu_chihou,
+        keirin=user.menu_keirin,
+    )
+
+
 async def _make_user_response(user: User, db: AsyncSession) -> UserResponse:
     """User ORM オブジェクトを UserResponse に変換する。"""
     is_premium, access_expires_at = await get_user_premium_status(user.id, db)
+    # 🔴 保存値も**読み出しで正規化して**返す。DB を直接更新された行が
+    #    「POG だけ ON」で残っていても、画面には規則どおりの姿を見せる。
+    flags = normalize_menu_flags(_user_menu_flags(user))
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -225,6 +259,11 @@ async def _make_user_response(user: User, db: AsyncSession) -> UserResponse:
         last_login_at=user.last_login_at,
         yoso_name=user.yoso_name,
         is_yoso_public=user.is_yoso_public,
+        menu_pog=flags.pog,
+        menu_jra=flags.jra,
+        menu_chihou=flags.chihou,
+        menu_keirin=flags.keirin,
+        menu_access=resolve_menu_access(user.role, flags).to_dict(),
     )
 
 
@@ -275,6 +314,51 @@ async def upsert_user(
     await db.commit()
     await db.refresh(user)
     return await _make_user_response(user, db)
+
+
+class MenuAccessResponse(BaseModel):
+    """表示メニューの可視性レスポンス（フロントのナビ・ルートガード用）。"""
+
+    user_id: int
+    role: str
+    is_active: bool
+    #: 実際に見えるもの。`{"pog": bool, "jra": bool, "chihou": bool, "keirin": bool}`
+    access: dict[str, bool]
+
+
+@router.get("/{user_id}/menu", response_model=MenuAccessResponse)
+async def get_menu_access(
+    user_id: int,
+    _: ApiKeyDep,
+    db: DbDep,
+) -> MenuAccessResponse:
+    """そのユーザーに見えるメニューを返す。
+
+    🔴 **ナビの表示とルートガードの両方がこれを使う。** フロントは
+    `frontend/src/lib/menu.ts` から毎リクエスト引く（Auth.js の JWT は
+    サインイン時にしか作られないので、管理者が切り替えても再ログインまで
+    反映されない。フラグは「今の値」が要る）。
+
+    存在しない・無効なユーザーには全部 false を返す（404 にしない。
+    ナビを描くだけの呼び出しでページ全体を落とさないため）。
+    """
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        return MenuAccessResponse(
+            user_id=user_id,
+            role="member",
+            is_active=False,
+            access=MenuFlags(
+                pog=False, jra=False, chihou=False, keirin=False
+            ).to_dict(),
+        )
+    flags = normalize_menu_flags(_user_menu_flags(user))
+    return MenuAccessResponse(
+        user_id=user.id,
+        role=user.role,
+        is_active=user.is_active,
+        access=resolve_menu_access(user.role, flags).to_dict(),
+    )
 
 
 @admin_router.post("/users", response_model=UserResponse)
@@ -349,11 +433,33 @@ async def update_user(
     if body.can_input_index is not None:
         user.can_input_index = body.can_input_index
 
+    # 表示メニュー: 送られてきた項目だけ差し替えてから規則を通す。
+    # 🔴 正規化を挟まずに代入すると「POG だけ ON」の行が作れてしまい、
+    #    POG の順位表から中央・地方のレースへ張ったリンクが全部 404 になる。
+    if any(
+        v is not None
+        for v in (body.menu_pog, body.menu_jra, body.menu_chihou, body.menu_keirin)
+    ):
+        current = _user_menu_flags(user)
+        merged = MenuFlags(
+            pog=current.pog if body.menu_pog is None else body.menu_pog,
+            jra=current.jra if body.menu_jra is None else body.menu_jra,
+            chihou=current.chihou if body.menu_chihou is None else body.menu_chihou,
+            keirin=current.keirin if body.menu_keirin is None else body.menu_keirin,
+        )
+        normalized = normalize_menu_flags(merged)
+        user.menu_pog = normalized.pog
+        user.menu_jra = normalized.jra
+        user.menu_chihou = normalized.chihou
+        user.menu_keirin = normalized.keirin
+
     await db.commit()
     await db.refresh(user)
     logger.info(
-        "ユーザー更新: id=%d email=%s role=%s is_active=%s can_input_index=%s",
+        "ユーザー更新: id=%d email=%s role=%s is_active=%s can_input_index=%s "
+        "menu=pog:%s/jra:%s/chihou:%s/keirin:%s",
         user.id, user.email, user.role, user.is_active, user.can_input_index,
+        user.menu_pog, user.menu_jra, user.menu_chihou, user.menu_keirin,
     )
     return await _make_user_response(user, db)
 

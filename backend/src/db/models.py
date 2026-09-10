@@ -790,6 +790,24 @@ class User(Base):
         String(50), unique=True, nullable=True, comment="予想公開時の表示名（予想名）"
     )
 
+    # ---- 表示メニューの ON/OFF（2026-09-10・管理者がユーザーごとに制御する）----
+    # 🔴 判定の正本は `services/menu_access.py`。ここは**保存値**でしかない。
+    #    「POG が ON なら中央・地方も ON」「admin は全部見える」「競輪は当面
+    #    admin 限定」といった規則はすべてあちらに書いてある。この列を直接読んで
+    #    可視性を決めてはいけない（規則を通さないと POG だけ ON の行が作れる）。
+    menu_pog: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", comment="POG を表示するか"
+    )
+    menu_jra: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", comment="中央競馬を表示するか"
+    )
+    menu_chihou: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", comment="地方競馬を表示するか"
+    )
+    menu_keirin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", comment="競輪を表示するか"
+    )
+
 
 class InvitationCode(Base):
     """招待コード"""

@@ -1,13 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { GoogleAnalytics } from "@next/third-parties/google";
-import { auth } from "@/auth";
 import { SiteHeader } from "@/components/SiteHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { Footer } from "@/components/Footer";
 import ServiceWorkerRegister from "./sw-register";
 import "./globals.css";
-import { fetchPogMembership } from "@/lib/pog";
+import { getMenuContext } from "@/lib/menu";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -92,15 +91,12 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = await auth();
-  const isAdmin = session?.user?.role === "admin";
-  // POG の導線は**参加者にだけ**出す。GallopLab の利用者全員のものではない。
-  // 失敗してもページ全体を落とさない（ナビが1つ減るだけ）。
-  const pogYear = session?.user?.db_id
-    ? await fetchPogMembership(session.user.db_id)
-        .then((m) => m.latest_year)
-        .catch(() => null)
-    : null;
+  // 🔴 表示メニューは**管理者がユーザーごとに切り替える**（2026-09-10）。
+  //    ここはナビを描くためだけの読み出しで、実効ガードは各セクションの
+  //    `layout.tsx`（`requireMenu`）にある。ナビから消すだけでは URL 直打ちを
+  //    止められない。`getMenuContext` は React の `cache()` で 1 リクエスト内に
+  //    畳まれるので、セクションガードと合わせても HTTP は 1 回。
+  const { isAdmin, access, pogYear } = await getMenuContext();
   const paidMode = await fetchPaidMode();
 
   return (
@@ -118,13 +114,13 @@ export default async function RootLayout({
         </a>
 
         {/* 共有ヘッダー（/ と /login では非表示） */}
-        <SiteHeader isAdmin={isAdmin} pogYear={pogYear} />
+        <SiteHeader isAdmin={isAdmin} access={access} pogYear={pogYear} />
 
         <div className="flex-1 min-h-0 flex flex-col pb-14 md:pb-0">
           {children}
         </div>
         {paidMode && <Footer />}
-        <BottomNav isAdmin={isAdmin} pogYear={pogYear} />
+        <BottomNav access={access} pogYear={pogYear} />
         <ServiceWorkerRegister />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
