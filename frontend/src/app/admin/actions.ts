@@ -36,7 +36,18 @@ export async function createUser(
 
 export async function updateUser(
   userId: number,
-  patch: { role?: string; is_active?: boolean }
+  patch: {
+    role?: string;
+    is_active?: boolean;
+    // 表示メニュー。省略した項目はバックエンド側で変更されない（部分更新）。
+    // 🔴 POG を true にすると中央・地方も自動で true になる
+    //    （`backend/src/services/menu_access.py` の規則）。ここで先回りして
+    //    3 つ送る必要は無い。
+    menu_pog?: boolean;
+    menu_jra?: boolean;
+    menu_chihou?: boolean;
+    menu_keirin?: boolean;
+  }
 ): Promise<{ error?: string }> {
   const res = await fetch(`${BACKEND_URL}/admin/users/${userId}`, {
     method: "PATCH",

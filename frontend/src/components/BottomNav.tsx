@@ -3,37 +3,40 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type NavItem = {
-  icon: string;
-  label: string;
-  href: string;
-  matchPath: string;
-};
+import { DEFAULT_MENU_FLAGS, type MenuFlags } from "@/lib/menuAccess";
+import { buildNavItems } from "./AppNav";
 
-// 競輪は admin 限定（2026-08-03・AppNav/HamburgerMenu/proxy.ts と同基準）。
-// netkeirin入稿トリガー等を含むため一般メンバーには導線を出さない。
-function navItems(isAdmin: boolean, pogYear: number | null): NavItem[] {
-  return [
-    { icon: "🏇", label: "中央", href: "/races", matchPath: "/races" },
-    { icon: "🏘", label: "地方", href: "/chihou/races", matchPath: "/chihou" },
-    ...(isAdmin ? [{ icon: "🚴", label: "競輪", href: "/keirin", matchPath: "/keirin" }] : []),
-    // POG は sekito から引き継いだ参加者だけに出す（ロールではなく参加実績で判定）
-    ...(pogYear
-      ? [{ icon: "🐴", label: "POG", href: `/pog/${pogYear}`, matchPath: "/pog" }]
-      : []),
-    { icon: "👤", label: "マイページ", href: "/my", matchPath: "/my" },
-  ];
-}
+/**
+ * スマホのボトムナビ。
+ *
+ * 🔴 項目は `buildNavItems`（AppNav）に一本化してある。ここで並べ直さないこと。
+ *
+ * ⚠️ 管理（/admin）はここに出さない。ヘッダとハンバーガーにあり、
+ *    ボトムナビは横幅を等分するので枠を 1 つ増やすと全部が細くなる。
+ *
+ * ⚠️ ボトムナビは**横幅を等分**するので、項目が増えるほど 1 つが細くなる。
+ *    実績・予想はハンバーガー側に任せ、ここには柱（中央・地方・競輪・POG）と
+ *    マイページだけを出す。
+ */
+const BOTTOM_KEYS = new Set(["jra", "chihou", "keirin", "pog", "my"]);
 
 export function BottomNav({
-  isAdmin = false,
+  access = DEFAULT_MENU_FLAGS,
   pogYear = null,
 }: {
-  isAdmin?: boolean;
+  access?: MenuFlags;
   pogYear?: number | null;
 }) {
   const pathname = usePathname();
-  const NAV_ITEMS = navItems(isAdmin, pogYear);
+  const NAV_ITEMS = buildNavItems(
+    access,
+    pogYear,
+    pathname.startsWith("/chihou"),
+  ).filter((item) => BOTTOM_KEYS.has(item.key));
+
+  // 見えるものがマイページだけなら、ボトムナビを出す意味が無い（画面下を
+  // 14px ぶん占めるだけになる）。
+  if (NAV_ITEMS.length <= 1) return null;
 
   return (
     <nav
@@ -48,7 +51,7 @@ export function BottomNav({
         const isActive = pathname.startsWith(item.matchPath);
         return (
           <Link
-            key={item.label}
+            key={item.key}
             href={item.href}
             aria-current={isActive ? "page" : undefined}
             className="flex-1 flex flex-col items-center justify-center gap-0.5 h-14 transition-colors"
@@ -60,7 +63,7 @@ export function BottomNav({
               className="text-xs leading-none"
               style={{ color: isActive ? "#ffffff" : "rgba(255,255,255,0.5)" }}
             >
-              {item.label}
+              {item.shortLabel}
             </span>
             {isActive && (
               <span

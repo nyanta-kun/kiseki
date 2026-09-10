@@ -6,9 +6,11 @@ import { fetchPogGroups } from "@/lib/pog";
 export default async function PogIndexPage() {
   const groups = await fetchPogGroups();
   if (groups.length === 0) {
+    // 年度が 1 つも無いと `PogShell`（年度タブ・ページタブ）が組めないので、
+    // ここだけは素の面に文言を出す。
     return (
-      <main className="p-4">
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
+      <main className="min-h-screen p-6" style={{ background: "var(--page-bg-pog)" }}>
+        <p className="mx-auto max-w-6xl text-sm text-surface-muted">
           POG のグループがまだありません。
         </p>
       </main>

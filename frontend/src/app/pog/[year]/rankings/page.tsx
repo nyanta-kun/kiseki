@@ -8,7 +8,8 @@ import {
   fetchPogRankingMetrics,
   type PogRankingRow,
 } from "@/lib/pog";
-import { YearTabs } from "../../YearTabs";
+import { PogShell } from "../../PogShell";
+import { Card, CardHeader, EmptyState, RankBadge } from "../../ui";
 
 export const metadata: Metadata = {
   title: "POG ランキング | GallopLab",
@@ -46,6 +47,30 @@ function formatSub(metric: string, row: PogRankingRow): string {
   }
 }
 
+/** 重賞の内訳。持っている行だけ出す。 */
+function GradeCounts({ row }: { row: PogRankingRow }) {
+  const items: [string, number][] = [
+    ["G1", row.g1],
+    ["G2", row.g2],
+    ["G3", row.g3],
+  ];
+  const shown = items.filter(([, n]) => n > 0);
+  if (shown.length === 0) return null;
+  return (
+    <span className="flex shrink-0 gap-1">
+      {shown.map(([g, n]) => (
+        <span
+          key={g}
+          className="rounded px-1 py-0.5 text-[10px] font-bold"
+          style={{ background: "var(--pog-accent-soft)", color: "var(--pog-accent)" }}
+        >
+          {g}×{n}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export default async function PogRankingsPage({
   params,
   searchParams,
@@ -62,129 +87,145 @@ export default async function PogRankingsPage({
   if (!groups.some((g) => g.year === year)) notFound();
 
   const metrics = await fetchPogRankingMetrics();
-  const metric =
-    rawMetric && rawMetric in metrics ? rawMetric : DEFAULT_METRIC;
+  const metric = rawMetric && rawMetric in metrics ? rawMetric : DEFAULT_METRIC;
   // scope=all で通算（移設元の「全グループ」）。既定はその年度。
   const isAll = scope === "all";
   const ranking = await fetchPogRanking(metric, isAll ? undefined : year);
 
-  const link = (m: string, s: string) =>
-    `/pog/${year}/rankings?metric=${m}&scope=${s}`;
+  const link = (m: string, s: string) => `/pog/${year}/rankings?metric=${m}&scope=${s}`;
+  const maxValue = ranking.rows.reduce((m, r) => Math.max(m, r.value), 0);
 
-  return (
-    <main className="mx-auto max-w-3xl p-4">
-      <h1 className="mb-1 text-lg font-bold">POG ランキング</h1>
-      <p className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
-        指名馬を種牡馬・母父・厩舎・馬主などで束ねた集計。成績は出走のたびに数え直す。
-      </p>
-
-      <YearTabs groups={groups} current={year} />
-
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
       {/* スコープ */}
-      <div className="mb-3 flex gap-2 text-sm">
-        <Link
-          href={link(metric, "year")}
-          className={`rounded px-3 py-1 ${
-            isAll
-              ? "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-              : "bg-emerald-600 font-medium text-white"
-          }`}
-        >
-          {year} 年度
-        </Link>
-        <Link
-          href={link(metric, "all")}
-          className={`rounded px-3 py-1 ${
-            isAll
-              ? "bg-emerald-600 font-medium text-white"
-              : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-          }`}
-        >
-          通算
-        </Link>
-      </div>
-
-      {/* 指標 */}
-      <div className="mb-4 flex flex-wrap gap-1.5 text-xs">
-        {Object.entries(metrics).map(([key, label]) => (
+      <div
+        className="flex shrink-0 rounded-lg p-0.5"
+        style={{ background: "var(--pog-card)", border: "1px solid var(--pog-card-border)" }}
+      >
+        {[
+          { key: "year", label: `${year} 年度`, on: !isAll },
+          { key: "all", label: "通算", on: isAll },
+        ].map((s) => (
           <Link
-            key={key}
-            href={link(key, isAll ? "all" : "year")}
-            className={`rounded border px-2 py-1 ${
-              key === metric
-                ? "border-emerald-600 bg-emerald-50 font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                : "border-neutral-200 text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
-            }`}
+            key={s.key}
+            href={link(metric, s.key)}
+            aria-current={s.on ? "page" : undefined}
+            className="rounded-md px-3 py-1 text-xs font-medium transition-colors"
+            style={
+              s.on
+                ? { background: "var(--pog-accent)", color: "#fff" }
+                : { color: "var(--surface-muted)" }
+            }
           >
-            {label}
+            {s.label}
           </Link>
         ))}
       </div>
 
-      <h2 className="mb-2 text-sm font-bold">
-        {ranking.label}
-        <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
-          {isAll ? "通算" : `${year} 年度`}
-        </span>
-      </h2>
-
-      {ranking.rows.length === 0 ? (
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          該当がありません。
-        </p>
-      ) : (
-        <ol className="space-y-1.5">
-          {ranking.rows.map((r, i) => (
-            <li
-              key={r.key}
-              className="flex items-baseline gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+      {/* 指標 */}
+      <div className="flex flex-wrap gap-1">
+        {Object.entries(metrics).map(([key, label]) => {
+          const on = key === metric;
+          return (
+            <Link
+              key={key}
+              href={link(key, isAll ? "all" : "year")}
+              aria-current={on ? "page" : undefined}
+              className="rounded-md px-2 py-1 text-xs transition-colors"
+              style={
+                on
+                  ? {
+                      background: "var(--pog-accent-soft)",
+                      color: "var(--pog-accent)",
+                      border: "1px solid var(--pog-accent)",
+                      fontWeight: 600,
+                    }
+                  : {
+                      background: "var(--pog-card)",
+                      color: "var(--surface-muted)",
+                      border: "1px solid var(--pog-card-border)",
+                    }
+              }
             >
-              <span className="w-6 shrink-0 text-right text-xs tabular-nums text-neutral-400">
-                {i + 1}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{r.key}</span>
-              <span className="shrink-0 text-xs text-neutral-500 dark:text-neutral-400">
-                {formatSub(metric, r)}
-              </span>
-              <span className="shrink-0 font-semibold tabular-nums">
-                {formatValue(metric, r)}
-              </span>
-            </li>
-          ))}
-        </ol>
+              {label}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <PogShell
+      title="POG ランキング"
+      description="指名馬を種牡馬・母父・厩舎などで束ねた集計"
+      year={year}
+      groups={groups}
+      yearBasePath="/pog/:year/rankings"
+      toolbar={toolbar}
+    >
+      {ranking.rows.length === 0 ? (
+        <EmptyState>該当がありません。</EmptyState>
+      ) : (
+        <Card>
+          <CardHeader
+            title={ranking.label}
+            meta={`${isAll ? "通算" : `${year} 年度`} / ${ranking.rows.length} 件`}
+          />
+          {/* 上位が長くなるので PC は 2 段に折り返す（CSS の段組み）。
+              左段を上から埋めてから右段へ移るので、順位は読み下しのまま。
+              ⚠️ 段の間の仕切りは `column-rule`。`border-l` を偶数番目に付ける
+                 やり方では段の境目と一致しない（何番目で折り返すかは高さ次第）。 */}
+          <ol
+            className="lg:columns-2 lg:gap-0"
+            style={{ columnRule: "1px solid var(--pog-card-border)" }}
+          >
+            {ranking.rows.map((r, i) => (
+              <li
+                key={r.key}
+                // 🔴 相対量は**行の背景**で見せる（2026-09-10）。棒を別の行に置くと
+                //    1 件 56px になり、30 件で 1,680px＝画面 2.5 枚ぶんになる。
+                //    背景なら 1 行 37px に収まり、量の比較もできる。
+                className="relative isolate break-inside-avoid border-b px-3 py-1.5 last:border-b-0"
+                style={{ borderColor: "var(--pog-card-border)" }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 -z-10"
+                  style={{
+                    width: `${maxValue > 0 ? Math.max(1.5, (r.value / maxValue) * 100) : 0}%`,
+                    background: "var(--pog-accent-soft)",
+                  }}
+                />
+                <div className="flex items-baseline gap-2">
+                  <RankBadge rank={i + 1} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-surface-heading">
+                    {r.key}
+                  </span>
+                  <GradeCounts row={r} />
+                  <span className="hidden shrink-0 text-[11px] text-surface-muted sm:inline">
+                    {formatSub(metric, r) || `${r.count} 頭`}
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-surface-heading">
+                    {formatValue(metric, r)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
       )}
 
       {metric === "sire-win-rate" && (
-        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="mt-3 text-xs text-surface-muted">
           ⚠️ 出走が 1 走でも母数に入るため、上位は少数の産駒で埋まりやすい（移設元と同じ）。
         </p>
       )}
       {metric === "stable-ranking" && (
-        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="mt-3 text-xs text-surface-muted">
           ⚠️ 美浦 / 栗東の東西分けは出せない（所属地のデータが kiseki に無いため）。
         </p>
       )}
-
-      <p className="mt-6 flex flex-wrap justify-center gap-4 text-sm">
-        <Link
-          href={`/pog/${year}`}
-          className="text-emerald-600 underline dark:text-emerald-400"
-        >
-          順位表へ
-        </Link>
-        <Link
-          href={`/pog/${year}/records`}
-          className="text-emerald-600 underline dark:text-emerald-400"
-        >
-          記録室へ
-        </Link>
-        <Link
-          href={`/pog/${year}/score`}
-          className="text-emerald-600 underline dark:text-emerald-400"
-        >
-          スコア集計へ
-        </Link>
-      </p>
-    </main>
+    </PogShell>
   );
 }

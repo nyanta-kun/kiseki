@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Card, CardHeader } from "../../ui";
 import {
   computeConfirmTargets,
   computeDisplayOrders,
@@ -112,13 +113,31 @@ export function DraftClient({
 
   return (
     <div className="space-y-4">
-      {msg && <p className="rounded bg-neutral-100 px-3 py-2 text-xs dark:bg-neutral-800">{msg}</p>}
+      {msg && (
+        <p
+          className="rounded-lg px-3 py-2 text-xs"
+          style={{ background: "var(--pog-accent-soft)", color: "var(--pog-accent)" }}
+          role="status"
+        >
+          {msg}
+        </p>
+      )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] border-collapse text-xs">
+      <Card>
+        <CardHeader title="盤面" meta={`${board.members.length} 人 / ${rows.length} 巡`} />
+        {/* 参加者ぶん列が並ぶので横スクロールは避けられない。
+            ⚠️ 「巡」の列だけ `sticky left-0` で残す。これが無いと横に流したとき
+               何巡目の行を見ているのか分からなくなる（移設元もそうだった）。 */}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] border-collapse text-xs">
           <thead>
             <tr className="border-b-2 border-neutral-300 dark:border-neutral-600">
-              <th className="px-1 py-2 text-left">巡</th>
+              <th
+                className="sticky left-0 z-10 px-2 py-2 text-left"
+                style={{ background: "var(--pog-card)" }}
+              >
+                巡
+              </th>
               {board.members.map((m) => (
                 <th key={m.user_id} className="px-1 py-2 text-left">
                   {m.name}
@@ -134,7 +153,12 @@ export function DraftClient({
               const anyHidden = inRound.some((p) => !p.visible);
               return (
                 <tr key={d} className="border-b border-neutral-200 dark:border-neutral-700">
-                  <td className="px-1 py-2 align-top font-bold tabular-nums">{d}</td>
+                  <td
+                    className="sticky left-0 z-10 px-2 py-2 align-top font-bold tabular-nums"
+                    style={{ background: "var(--pog-card)" }}
+                  >
+                    {d}
+                  </td>
                   {board.members.map((m) => {
                     const p = cell(m.user_id, d);
                     return (
@@ -218,9 +242,13 @@ export function DraftClient({
               );
             })}
           </tbody>
-        </table>
-      </div>
+          </table>
+        </div>
+      </Card>
 
+      {/* PC は指名フォームとサイコロを横に並べる。ドラフト中は両方を同時に
+          使うので、縦積みだとサイコロが画面外に落ちる。 */}
+      <div className="grid gap-4 lg:grid-cols-2">
       <PickForm
         year={year}
         me={me}
@@ -246,10 +274,16 @@ export function DraftClient({
         }}
         onMsg={setMsg}
       />
+      </div>
 
       {isAdmin && (
-        <div className="rounded border border-neutral-200 p-3 dark:border-neutral-700">
-          <h3 className="mb-1 text-xs font-bold">未入力の人を飛ばす（{round} 巡目）</h3>
+        <div
+          className="rounded-xl border p-3 shadow-sm"
+          style={{ background: "var(--pog-card)", borderColor: "var(--pog-card-border)" }}
+        >
+          <h3 className="mb-1 text-xs font-bold text-surface-heading">
+            未入力の人を飛ばす（{round} 巡目）
+          </h3>
           <div className="flex flex-wrap gap-1.5">
             {board.members.map((m) => (
               <button
@@ -313,8 +347,13 @@ function PickForm({
   }
 
   return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-700">
-      <h3 className="mb-2 text-xs font-bold">指名する（{birthYear} 年産）</h3>
+    <div
+      className="rounded-xl border p-3 shadow-sm"
+      style={{ background: "var(--pog-card)", borderColor: "var(--pog-card-border)" }}
+    >
+      <h3 className="mb-2 text-xs font-bold text-surface-heading">
+        指名する（{birthYear} 年産）
+      </h3>
       <div className="mb-2 flex flex-wrap items-end gap-2 text-xs">
         <label className="flex flex-col gap-0.5">
           <span className="text-neutral-500">巡</span>
@@ -460,8 +499,13 @@ function DiceBox({
   }
 
   return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-700">
-      <h3 className="mb-2 text-xs font-bold">サイコロ（{round} 巡目）</h3>
+    <div
+      className="rounded-xl border p-3 shadow-sm"
+      style={{ background: "var(--pog-card)", borderColor: "var(--pog-card-border)" }}
+    >
+      <h3 className="mb-2 text-xs font-bold text-surface-heading">
+        サイコロ（{round} 巡目）
+      </h3>
       <div className="flex items-center gap-3">
         <button
           type="button"

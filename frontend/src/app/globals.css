@@ -50,6 +50,13 @@
   --page-bg: #f0f5fb;          /* 中央・共通ページの面 */
   --page-bg-chihou: #f0faf4;   /* 地方 */
   --page-bg-chihou-alt: #f0f8f3;
+  --page-bg-pog: #f2f8f4;      /* POG（地方より青寄りの淡いグリーン） */
+  /* POG のアクセント。カードの枠・見出し・現在地の帯に使う。
+   * 地方（`--chihou-accent`）と紛らわしいので、POG は少し青へ寄せている。 */
+  --pog-accent: #0f8a5f;
+  --pog-accent-soft: #d9f0e5;
+  --pog-card: #ffffff;
+  --pog-card-border: #dbe7e1;
   --page-bg-subtle: #f8fafc;   /* 面の上の淡いブロック */
   --footer-bg: #f0f5fb;
   --surface-heading: #1e2939;  /* 面の上の見出し（light は gray-800 相当） */
@@ -81,6 +88,11 @@
     --page-bg: #0d1b2e;
     --page-bg-chihou: #0b1f16;
     --page-bg-chihou-alt: #0a1d15;
+    --page-bg-pog: #0a1d17;
+    --pog-accent: #3fbd8b;
+    --pog-accent-soft: #123527;
+    --pog-card: #101f1a;
+    --pog-card-border: #244135;
     --page-bg-subtle: #111c2b;
     --footer-bg: #0d1b2e;
     --surface-heading: #e8f0fa;
@@ -100,6 +112,11 @@
   --page-bg: #0d1b2e;
   --page-bg-chihou: #0b1f16;
   --page-bg-chihou-alt: #0a1d15;
+  --page-bg-pog: #0a1d17;
+  --pog-accent: #3fbd8b;
+  --pog-accent-soft: #123527;
+  --pog-card: #101f1a;
+  --pog-card-border: #244135;
   --page-bg-subtle: #111c2b;
   --footer-bg: #0d1b2e;
   --surface-heading: #e8f0fa;
@@ -194,4 +211,11 @@ body {
   .index-bar-fill {
     transition: none;
   }
+}
+
+/* POG の折りたたみ（`app/pog/ui.tsx` の `Collapsible`）。
+ * 開いたときに三角を回す。`<details>` の既定マーカーは
+ * `marker:content-['']` で消してあり、これが唯一の開閉サインになる。 */
+details[open] > summary > span:first-child {
+  transform: rotate(90deg);
 }

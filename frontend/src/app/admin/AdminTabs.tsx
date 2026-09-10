@@ -20,6 +20,13 @@ export type User = {
   last_login_at: string | null;
   yoso_name: string | null;
   is_yoso_public: boolean;
+  // 表示メニューの**保存値**（チェックボックスの状態）。
+  menu_pog: boolean;
+  menu_jra: boolean;
+  menu_chihou: boolean;
+  menu_keirin: boolean;
+  /** 実際の可視性。admin は保存値に関わらず全 true になる。 */
+  menu_access: { pog: boolean; jra: boolean; chihou: boolean; keirin: boolean };
 };
 
 export type InvitationCode = {

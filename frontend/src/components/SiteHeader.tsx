@@ -5,27 +5,39 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { LiveStreamButton } from "@/components/LiveStreamButton";
+import { DEFAULT_MENU_FLAGS, type MenuFlags } from "@/lib/menuAccess";
 
 const HIDE_HEADER_PATHS = new Set(["/", "/login"]);
 
 type Props = {
   isAdmin: boolean;
+  /** 実際に見えるメニュー（`lib/menu.ts` がルートレイアウトで引いた値）。 */
+  access?: MenuFlags;
   pogYear?: number | null;
 };
 
-export function SiteHeader({ isAdmin, pogYear = null }: Props) {
+export function SiteHeader({ isAdmin, access = DEFAULT_MENU_FLAGS, pogYear = null }: Props) {
   const pathname = usePathname();
   if (HIDE_HEADER_PATHS.has(pathname)) return null;
 
   const isChihou = pathname.startsWith("/chihou");
   const isKeirin = pathname.startsWith("/keirin");
+  const isPog = pathname.startsWith("/pog");
   const headerBg = isChihou ? "var(--chihou-primary)" : "var(--primary)";
 
-  const logoHref = isChihou ? "/chihou/races" : "/races";
+  // ロゴの行き先は「その人に見える場所」。中央が OFF の人を `/races` へ送ると
+  // セクションガードに弾かれて一度余分に飛ぶ。
+  const logoHref = isChihou && access.chihou
+    ? "/chihou/races"
+    : access.jra
+      ? "/races"
+      : access.chihou
+        ? "/chihou/races"
+        : "/my";
 
   return (
     <header style={{ background: headerBg }} className="sticky top-0 z-10 shadow-md">
-      <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
         <Link
           href={logoHref}
           aria-label="GallopLab トップへ"
@@ -50,9 +62,14 @@ export function SiteHeader({ isAdmin, pogYear = null }: Props) {
             競輪
           </span>
         )}
+        {isPog && (
+          <span className="text-emerald-100 text-xs font-medium px-2 py-0.5 rounded-full border border-emerald-400/60 bg-emerald-800/40 flex-shrink-0">
+            POG
+          </span>
+        )}
         <div className="flex-1 min-w-0" />
         <LiveStreamButton />
-        <AppNav isAdmin={isAdmin} pogYear={pogYear} />
+        <AppNav isAdmin={isAdmin} access={access} pogYear={pogYear} />
       </div>
     </header>
   );
