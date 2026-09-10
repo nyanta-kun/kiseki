@@ -21,9 +21,10 @@ export default async function PogDraftPage({
   if (!Number.isInteger(year)) notFound();
 
   // 🔴 ドラフトは書き込み画面。ログインしていないと誰の指名か決まらない。
+  //    DB のユーザー ID は `db_id`。`user.id` は Auth.js 自身の ID で別物。
   const session = await auth();
-  const userId = Number(session?.user?.id);
-  if (!Number.isInteger(userId)) redirect("/login");
+  const userId = session?.user?.db_id;
+  if (typeof userId !== "number") redirect("/login");
 
   const groups = await fetchPogGroups();
   if (!groups.some((g) => g.year === year)) notFound();
