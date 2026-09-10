@@ -51,8 +51,16 @@ def test_leaky_ex_features_excluded_from_feature_cols_wt():
     #             →60（race_type 7 + ライン実力 5・2026-08-04）
     # 2026-08-19: ライン先頭比較・ライン内結束の6特徴を追加（60→66）。
     # 根拠は `LINE_LEADER_COLS_WT` の定義部と `scripts/exp_line_leader_ab.py`。
-    assert len(FEATURE_COLS_WT) == 66
+    # 2026-09-10: 節内成績 4特徴を追加（66→70）。実装は 2026-08-20 に入っていたが
+    # FEATURE_COLS_WT に足し忘れていた。根拠は `MEETING_FORM_COLS_WT` の定義部と
+    # `scripts/exp_meeting_form_ab.py`。
+    assert len(FEATURE_COLS_WT) == 70
     # 同時に検証したレース単位集約は「AUCは上がるが1位3着内率が窓で符号反転」
     # のため不採用。誤って再混入しないことを保証する（ex_* と同型の回帰テスト）。
     for c in ("rp_mean", "rp_std", "rp_gap_top2", "rp_gap_top_self"):
+        assert c not in FEATURE_COLS_WT
+    # 2026-09-10: 走りの質（FORM_QUALITY_COLS_WT）は A/B で窓をまたいで符号が
+    # 割れた（ΔAUC +0.00003 / −0.00011）ため不採用。節内成績と同時に足すと
+    # 節内成績単独より悪くなる（w2 の上位2車そろい率 −0.17pt）。
+    for c in ("b_sink_rate_90", "b_hold_rate_90", "fh_lost_rate_90"):
         assert c not in FEATURE_COLS_WT

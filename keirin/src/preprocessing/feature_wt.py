@@ -275,6 +275,12 @@ def build_features_wt(df: pd.DataFrame) -> pd.DataFrame:
     df = add_race_type_features_wt(df)
     df = add_line_strength_features_wt(df)
 
+    # 節内成績（2026-09-10 配線）。実装は 2026-08-20 に入っていたが
+    # `FEATURE_COLS_WT` にも `build_features_wt` にも繋がっておらず、
+    # **3週間ぶん学習にも推論にも一度も使われていなかった**。
+    # A/B は `scripts/exp_meeting_form_ab.py` / `docs/unused_morning_inputs_2026_09_10.md`。
+    df = add_meeting_form_features_wt(df)
+
     # 頭対頭対戦成績(H2H)は2026-07-28に実装しFEATURE_COLS_WTへ追加したが、S1/S9の
     # honest全期間walk-forwardでROIが悪化(S1 443.0%→363.5%・S9 412.8%→286.8%)した
     # ため本番投入を撤回した（S7のみ改善401.1%→424.8%。詳細
@@ -1338,6 +1344,30 @@ FEATURE_COLS_WT = [
     *RACE_TYPE_COLS_WT,
     # ライン実力（2026-08-04追加・競輪はライン戦なのに構造しか持っていなかった）
     *LINE_STRENGTH_COLS_WT,
+    # 節内成績（実装 2026-08-20 / **配線は 2026-09-10**・同一開催の前日までの自分の成績）。
+    #
+    # 🔴 **実装済みなのに 3週間ここに入っていなかった。** `H2H_COLS_WT` のように
+    #    「検証して非採用」と書かれていたわけではなく、単に足し忘れ。
+    #    `scripts/exp_meeting_form_ab.py`（2窓 × 5seed・既存A/Bと同一方法論）:
+    #
+    #      腕            窓  ΔAUC       Δ1位勝率  Δ1位3着内  Δ上位2車そろい
+    #      +節内成績     w1  +0.00058   +0.33pt   +0.29pt    +0.35pt
+    #      +節内成績     w2  +0.00068   +0.14pt   +0.27pt    +0.09pt
+    #      +走りの質     w1  +0.00003   +0.22pt   +0.15pt    +0.09pt
+    #      +走りの質     w2  −0.00011   −0.02pt   +0.03pt    +0.02pt   ← 窓で符号反転
+    #      +両方         w2  +0.00061   +0.02pt   +0.08pt    **−0.17pt**
+    #
+    #    baseline の seed 標準偏差は AUC 0.00013 / 0.00005。**両窓・全指標プラスは
+    #    節内成績だけ**で、直近採用の `line_leader` 6列（+0.00044/+0.00072・
+    #    +0.24/+0.25pt）と同等以上。
+    # 🔴 **`FORM_QUALITY_COLS_WT`（走りの質3列）は入れない**（窓で符号が割れる）。
+    #    **両方入れると `+節内成績` 単独より悪くなる**（w2 の上位2車そろい −0.17pt）。
+    # 🟢 効いているのは実質 `cup_mean_order_n`（節内の平均着順・頭数正規化）1本
+    #    （分割重要度 21〜22位/73。他3列は 53〜62位）。ただし
+    #    `cup_n_so_far` が無いと「初日」と「全部外した」が区別できないので必ず一緒に入れる。
+    # ⚠️ 同一(節,選手,日)で2走することは無い（実測 0.000% / n=225,544）ので、
+    #    当日ぶんの未確定着順による train/serve skew は起きない。
+    *MEETING_FORM_COLS_WT,
     # 頭対頭対戦成績(H2H)は2026-07-28に検証→S1/S9悪化のため撤回・非採用（add_h2h_features_wt参照）
     # レース単位集約(rp_mean/rp_std/rp_gap_top2/rp_gap_top_self)は2026-08-04に検証→
     # AUCは上がるが1位3着内率が窓で符号反転（−0.20pt/+0.07pt）のため非採用
