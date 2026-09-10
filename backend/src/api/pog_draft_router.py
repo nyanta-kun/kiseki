@@ -260,7 +260,8 @@ async def delete_pick(
     )
     await db.commit()
     await _notify(year, "pick")
-    return {"deleted": res.rowcount}
+    # `Result` の型定義に rowcount が無い（DML では実際には返る）。
+    return {"deleted": res.rowcount}  # type: ignore[attr-defined]
 
 
 class VisibleIn(BaseModel):
@@ -283,7 +284,7 @@ async def set_visible(db: DbDep, _: ApiKeyDep, year: int, body: VisibleIn) -> di
     )
     await db.commit()
     await _notify(year, "visible")
-    return {"updated": res.rowcount}
+    return {"updated": res.rowcount}  # type: ignore[attr-defined]
 
 
 class OrderTarget(BaseModel):
