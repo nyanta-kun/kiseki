@@ -223,6 +223,7 @@ class DeleteOut(BaseModel):
     year: int
     deleted_picks: int
     deleted_members: int
+    deleted_rolls: int
 
 
 @router.post("/groups/{year}/delete", response_model=DeleteOut)
@@ -257,12 +258,23 @@ async def delete_group(
             {"g": group_id},
         )
     ).scalar_one()
+    # 🔴 `pog_rolls` は年度をキーに持ち `pog_groups` への FK が無いので
+    #    CASCADE で消えない。明示的に消す（2026-09-10 の実地検証で
+    #    グループを消した後に出目だけ残るのを確認した）。
+    rolls = (
+        await db.execute(
+            text("DELETE FROM keiba.pog_rolls WHERE year = :y"), {"y": year}
+        )
+    ).rowcount  # type: ignore[attr-defined]
     await db.execute(
         text("DELETE FROM keiba.pog_groups WHERE id = :g"), {"g": group_id}
     )
     await db.commit()
     # 🔴 消したことは必ず残す（戻せない操作なので）。
     logger.warning(
-        "POG グループを削除: year=%s picks=%d members=%d", year, picks, members
+        "POG グループを削除: year=%s picks=%d members=%d rolls=%d",
+        year, picks, members, rolls,
     )
-    return DeleteOut(year=year, deleted_picks=picks, deleted_members=members)
+    return DeleteOut(
+        year=year, deleted_picks=picks, deleted_members=members, deleted_rolls=rolls
+    )
