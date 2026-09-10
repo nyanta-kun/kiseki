@@ -5,6 +5,7 @@ import { UsersTab } from "./UsersTab";
 import { CodesTab } from "./CodesTab";
 import { DataTab } from "./DataTab";
 import { SettingsTab } from "./SettingsTab";
+import { PogTab } from "./PogTab";
 
 export type User = {
   id: number;
@@ -34,12 +35,13 @@ export type InvitationCode = {
   created_at: string;
 };
 
-type Tab = "users" | "data" | "settings";
+type Tab = "users" | "data" | "settings" | "pog";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "ユーザー" },
   { id: "data", label: "データ" },
   { id: "settings", label: "設定" },
+  { id: "pog", label: "POG" },
 ];
 
 interface AdminTabsProps {
@@ -75,6 +77,7 @@ export function AdminTabs({ users, codes }: AdminTabsProps) {
       {activeTab === "users" && <UsersTab users={users} codes={codes} />}
       {activeTab === "data" && <DataTab />}
       {activeTab === "settings" && <SettingsTab />}
+      {activeTab === "pog" && <PogTab users={users} />}
     </div>
   );
 }
