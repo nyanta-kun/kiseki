@@ -156,6 +156,12 @@ export default async function PogStandingsPage({
         >
           ランキング
         </Link>
+        <Link
+          href="/pog/siblings"
+          className="text-emerald-600 underline dark:text-emerald-400"
+        >
+          兄弟馬
+        </Link>
       </p>
     </main>
   );
