@@ -13,19 +13,20 @@ Windows (Parallels) - Python 32bit + pywin32
 
 VPS (160.251.234.83) - Docker
   ├─ galloplab-backend-1  :8003  FastAPI (kiseki)
-  └─ galloplab-frontend-1 :3002  Next.js (kiseki)
+  ├─ galloplab-frontend-1 :3002  Next.js (kiseki)
+  ├─ sekito-backend-1     :5000  Node.js (sekito)  ← 表示だけ（下記）
+  └─ sekito-frontend-1    :8080  Vue.js  (sekito)  ← 表示だけ（下記）
 
-  🔴 **sekito のコンテナは 2026-09-10 に停止した**（統合 Phase 5 完了）。
-     `sekito-backend-1`(:5000) / `sekito-frontend-1`(:8080) はもう動いていない。
-     `sekito-stable.com` も nginx で **galloplab のコンテナへ向けてある**
-     （ブランド併存。設定の実体は /etc/nginx/sites-enabled/sekito-stable.com、
-     旧設定は /etc/nginx/backup/ に退避）。
-     ⚠️ 旧 sekito の SPA パス（`/pog/group/27/user/4` 等）は kiseki に無く 404。
-     ページ構成とドメインの整理は別途行う。
+  🔴 **sekito は「表示だけ」動かしている**（2026-09-10）。統合 Phase 5 で
+     機能はすべて kiseki へ移し終えたが、`sekito-stable.com` は**旧 sekito の
+     画面のまま**にしてある（利用者の導線を切らないため）。
+     有効なジョブは 3 件だけ（自身のログ掃除・プロセス掃除・no-op の
+     `jra-races-retry`）。**通知もスクレイプもすべて無効**で、書き手は kiseki。
+     galloplab のページ整理が済んだ時点で完全停止する。
 
 VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
   ├─ keiba.*     — JRA レース・指数・オッズ
-  ├─ sekito.*    — 🔴 **スキーマは残す**（コンテナを止めただけ）。書き手は全て kiseki
+  ├─ sekito.*    — 🔴 **書き手は全て kiseki**（sekito のジョブは無効）
   │   ├─ sekito.races        — 🔴 **実テーブル**。keiba.races / chihou.races からの
   │   │                        供給が要る（scripts/sync_sekito_races.sh・毎日 06:00）。
   │   │                        kiseki のスクレイパが対象レースをここから引くので**まだ要る**
@@ -39,18 +40,49 @@ VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
   └─ chihou.*    — 地方競馬（UmaConn経由）
 ```
 
-## 🔴 sekito は停止済み（2026-09-10）
+## 🔴 sekito はいつでも止められる（2026-09-10 に一度停止して戻した）
+
+移管は完了しており、**止めても kiseki は影響を受けない**ことを実測で確認済み:
+
+    keiba/chihou のビューが sekito を参照       0 件（pg_depend）
+    直近に書かれている sekito のテーブルの書き手  すべて kiseki
+    sekito の常駐 2 つ                          mv-refresh は kiseki が引き継ぎ済み。
+                                                scheduler の有効ジョブ 3 件は自身の
+                                                掃除か no-op
 
 `keiba.horse_runs` は **`keiba.mv_horse_runs` のビュー**。以前は
 `sekito.mv_horse_runs` を指しており、その REFRESH を **sekito のバックエンドが
-回していた**ため、sekito を止めると POG が静かに凍る状態だった。移設済み。
+回していた**ため、気づかず止めると POG が静かに凍る状態だった（移設済み）。
 
-停止と同時に失われた機能（いずれも書き込みが半年以上前に停止・2026-09-10 にユーザー決定で廃止）:
+### 完全停止の手順
+
+```bash
+docker stop sekito-backend-1 sekito-frontend-1
+sudo cp /etc/nginx/backup/sekito-stable.com.galloplab-20260910 \
+        /etc/nginx/sites-enabled/sekito-stable.com   # galloplab へ向ける
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+⚠️ **止める前に galloplab 側のページ整理を済ませること。** 旧 sekito の SPA パス
+（`/pog/group/27/user/4` 等）は kiseki に無く 404 になる。
+
+⚠️ **旧 sekito は PWA としてブラウザにキャッシュされる。** 止めた後も端末に
+残った旧アプリが `/api/users/me?uid=<firebase-uid>` を呼び、404 を受けて
+`/register` へ飛ぶ（2026-09-10 に実際に発生）。利用者にサイトデータの削除を
+案内するか、旧 API のパスに 410 を返す手当てが要る。
+
+### 停止時に失われる機能（いずれも書き込みが半年以上前に停止・廃止決定済み）
+
 注目レース／注目馬のお気に入り・予想投稿（`sekito.user_predictions`）・
-sekito 版の平八・LINE webhook。**データは DB に残っている**ので必要なら SQL で取れる。
+sekito 版の平八・LINE webhook。**データは DB に残る**ので必要なら SQL で取れる。
 
-戻す場合: `docker start sekito-backend-1 sekito-frontend-1` +
-nginx 設定を `/etc/nginx/backup/sekito-stable.com.bak-20260910` から戻して reload。
+### OAuth クライアントが 2 つある
+
+`.env` の `AUTH_GOOGLE_ID` は `569364577725-...`。別に `1036764004685-...` も
+あり、**リダイレクト URI の登録先を取り違えると `redirect_uri_mismatch` になる**
+（2026-09-10 に実際に踏んだ）。どちらに何が登録済みかは、client_id と
+redirect_uri を変えて `accounts.google.com/o/oauth2/v2/auth` を叩けば判別できる
+（`authError` が返れば未登録）。
 
 ## 技術スタック
 - Backend: Python 3.12+ / FastAPI / SQLAlchemy 2.0 / Alembic
