@@ -47,6 +47,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.session import get_db
 from ..services.pog_horse_search import search_horses
 from ..services.pog_horse_search import suggest as suggest_horse_values
+from ..services.pog_rankings import METRICS as RANKING_METRICS
+from ..services.pog_rankings import fetch_ranking
 from ..services.pog_recent_races import fetch_recent_races
 from ..services.pog_records import fetch_graded_wins, fetch_score_summary
 from ..services.pog_standings import fetch_horses, fetch_owners
@@ -352,3 +354,59 @@ async def get_score_summary(
     return [
         ScoreOut(**{**s.__dict__, "wins": WinsOut(**s.wins.__dict__)}) for s in scores
     ]
+
+
+class RankingRow(BaseModel):
+    """ランキング 1 行。指標によって使う欄が変わる。"""
+
+    #: 束ねた単位（種牡馬名 / 母父名 / 厩舎名 / 馬名 / 馬主名）。
+    key: str
+    #: その束に属する指名頭数。
+    count: int
+    #: 主指標。指標により 指名数 / 平均賞金(万) / 勝率(%) など。
+    value: float
+    #: 補助の整数（勝ち数・出走した頭数など）。使わない指標では None。
+    sub: int | None
+    #: 母数（出走数など）。使わない指標では None。
+    total: int | None
+    g1: int
+    g2: int
+    g3: int
+
+
+class RankingOut(BaseModel):
+    """ランキング 1 本。"""
+
+    metric: str
+    label: str
+    rows: list[RankingRow]
+
+
+@router.get("/rankings", response_model=RankingOut)
+async def get_ranking(
+    db: DbDep,
+    metric: str = Query(..., description="指標。/api/pog/ranking-metrics で一覧"),
+    year: int | None = Query(None, description="POG の年度。省略すると全年度（通算）"),
+    limit: int = Query(50, ge=1, le=200),
+) -> RankingOut:
+    """POG のランキングを返す（移設元の 18 エンドポイントを 1 本にまとめたもの）。
+
+    移設元は 9 指標 × 2 スコープ（`/group/:id/*` と `/all-groups/*`）に
+    分かれていたが、どれも「何かで束ねて数える」だけなので統合した。
+    `year` の有無がスコープに対応する。
+    """
+    try:
+        rows = await fetch_ranking(db, metric=metric, year=year, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RankingOut(
+        metric=metric,
+        label=RANKING_METRICS[metric].label,
+        rows=[RankingRow(**r) for r in rows],
+    )
+
+
+@router.get("/ranking-metrics", response_model=dict[str, str])
+async def list_ranking_metrics() -> dict[str, str]:
+    """使える指標と表示名の対応を返す。"""
+    return {k: m.label for k, m in RANKING_METRICS.items()}

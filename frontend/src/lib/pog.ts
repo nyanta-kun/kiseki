@@ -270,3 +270,44 @@ export function fetchPogScores(year: number): Promise<PogScore[]> {
     next: { revalidate: 300 },
   });
 }
+
+export type PogRankingRow = {
+  key: string;
+  count: number;
+  value: number;
+  sub: number | null;
+  total: number | null;
+  g1: number;
+  g2: number;
+  g3: number;
+};
+
+export type PogRanking = {
+  metric: string;
+  label: string;
+  rows: PogRankingRow[];
+};
+
+/**
+ * POG のランキング。`year` を省くと通算。
+ *
+ * 移設元は 9 指標 × 2 スコープ = 18 エンドポイントに分かれていたが、
+ * どれも「何かで束ねて数える」だけなので 1 本にまとめてある。
+ */
+export function fetchPogRanking(
+  metric: string,
+  year?: number,
+  limit = 30,
+): Promise<PogRanking> {
+  const y = year === undefined ? "" : `&year=${year}`;
+  return get<PogRanking>(`/pog/rankings?metric=${metric}${y}&limit=${limit}`, {
+    next: { revalidate: 300 },
+  });
+}
+
+/** 使える指標と表示名。 */
+export function fetchPogRankingMetrics(): Promise<Record<string, string>> {
+  return get<Record<string, string>>("/pog/ranking-metrics", {
+    next: { revalidate: 3600 },
+  });
+}

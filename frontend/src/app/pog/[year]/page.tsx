@@ -150,6 +150,12 @@ export default async function PogStandingsPage({
         >
           スコア集計
         </Link>
+        <Link
+          href={`/pog/${year}/rankings`}
+          className="text-emerald-600 underline dark:text-emerald-400"
+        >
+          ランキング
+        </Link>
       </p>
     </main>
   );
