@@ -13,23 +13,44 @@ Windows (Parallels) - Python 32bit + pywin32
 
 VPS (160.251.234.83) - Docker
   ├─ galloplab-backend-1  :8003  FastAPI (kiseki)
-  ├─ galloplab-frontend-1 :3002  Next.js (kiseki)
-  ├─ sekito-backend-1     :5000  Node.js (sekito)
-  └─ sekito-frontend-1    :8080  Vue.js  (sekito)
+  └─ galloplab-frontend-1 :3002  Next.js (kiseki)
+
+  🔴 **sekito のコンテナは 2026-09-10 に停止した**（統合 Phase 5 完了）。
+     `sekito-backend-1`(:5000) / `sekito-frontend-1`(:8080) はもう動いていない。
+     `sekito-stable.com` も nginx で **galloplab のコンテナへ向けてある**
+     （ブランド併存。設定の実体は /etc/nginx/sites-enabled/sekito-stable.com、
+     旧設定は /etc/nginx/backup/ に退避）。
+     ⚠️ 旧 sekito の SPA パス（`/pog/group/27/user/4` 等）は kiseki に無く 404。
+     ページ構成とドメインの整理は別途行う。
 
 VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
   ├─ keiba.*     — JRA レース・指数・オッズ
-  ├─ sekito.*    — 穴ぐさ・外部指数（netkeiba/kichiuma）
+  ├─ sekito.*    — 🔴 **スキーマは残す**（コンテナを止めただけ）。書き手は全て kiseki
   │   ├─ sekito.races        — 🔴 **実テーブル**。keiba.races / chihou.races からの
-  │   │                        供給が要る（scripts/sync_sekito_races.sh・毎日 06:00）
-  │   ├─ sekito.v_races       — 上の **sekito.races のビュー**（keiba.races 直読みではない）
-  │   ├─ sekito.v_entries     — keiba.race_entries + odds のビュー。ただし
-  │   │                        **netkeiba_horse_id は sekito.entries 由来**で、
-  │   │                        そちらは 2026-05-03 で凍結している（2026-06 以降 0%）
-  │   ├─ sekito.v_horse_runs  — keiba+chihou race_results 統合 view（POG 用・重複排除済）
-  │   └─ sekito.mv_horse_runs — 同マテビュー（LISTEN/NOTIFY イベント駆動 REFRESH）
+  │   │                        供給が要る（scripts/sync_sekito_races.sh・毎日 06:00）。
+  │   │                        kiseki のスクレイパが対象レースをここから引くので**まだ要る**
+  │   ├─ sekito.netkeiba / kichiuma / anagusa — 外部指数。kiseki のスクレイパが書く
+  │   ├─ sekito.v_*          — sekito の画面用ビュー。**kiseki からの参照は 0 件**
+  │   │                        （2026-09-10 に pg_depend で確認済み）
+  │   └─ sekito.mv_horse_runs / mv_graded_wins
+  │                          — 🔴 **kiseki は使わない**。後継は `keiba.mv_horse_runs` /
+  │                            `keiba.mv_graded_wins`（2026-09-10 移設・REFRESH は
+  │                            `backend/src/realtime/mv_refresh.py` が LISTEN/NOTIFY で回す）
   └─ chihou.*    — 地方競馬（UmaConn経由）
 ```
+
+## 🔴 sekito は停止済み（2026-09-10）
+
+`keiba.horse_runs` は **`keiba.mv_horse_runs` のビュー**。以前は
+`sekito.mv_horse_runs` を指しており、その REFRESH を **sekito のバックエンドが
+回していた**ため、sekito を止めると POG が静かに凍る状態だった。移設済み。
+
+停止と同時に失われた機能（いずれも書き込みが半年以上前に停止・2026-09-10 にユーザー決定で廃止）:
+注目レース／注目馬のお気に入り・予想投稿（`sekito.user_predictions`）・
+sekito 版の平八・LINE webhook。**データは DB に残っている**ので必要なら SQL で取れる。
+
+戻す場合: `docker start sekito-backend-1 sekito-frontend-1` +
+nginx 設定を `/etc/nginx/backup/sekito-stable.com.bak-20260910` から戻して reload。
 
 ## 技術スタック
 - Backend: Python 3.12+ / FastAPI / SQLAlchemy 2.0 / Alembic
