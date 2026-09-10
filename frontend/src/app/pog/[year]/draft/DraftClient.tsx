@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  computeConfirmTargets,
+  computeDisplayOrders,
+  toApiTargets,
+  type DraftCell,
+} from "@/lib/pogDraft";
+import {
   deletePick,
   getDraftBoard,
   getDraftRolls,
@@ -91,6 +97,11 @@ export function DraftClient({
 
   const round = roundOverride ?? Math.max(board.max_draft_order || 1, 1);
   const setRound = setRoundOverride;
+  // 各巡が「何頭目」の段階か。確定時の枠番はこれを使う（巡の番号ではない）。
+  const displayOrders = computeDisplayOrders(
+    board.picks as DraftCell[],
+    board.members.length,
+  );
 
   const rows = Array.from(
     { length: Math.max(board.max_draft_order, round) },
@@ -155,21 +166,28 @@ export function DraftClient({
                               <button
                                 type="button"
                                 disabled={busy}
-                                onClick={() =>
-                                  run(
-                                    () =>
-                                      setOrder(year, d, [
-                                        ...inRound.map((q) => ({
-                                          user_id: q.user_id,
-                                          pick_order: q.user_id === m.user_id ? d : 0,
-                                        })),
-                                      ]),
-                                    `${d}巡目: ${m.name} を勝ちにしました`,
-                                  )
-                                }
+                                onClick={() => {
+                                  // 🔴 誰を更新するかは `lib/pogDraft.ts` が決める。
+                                  //    ここで「押した人以外を 0」にすると、
+                                  //    別の馬を指名した人まで落としてしまう。
+                                  const targets = computeConfirmTargets(
+                                    inRound as DraftCell[],
+                                    m.user_id,
+                                    displayOrders[d] ?? 1,
+                                  );
+                                  if (targets.length === 0) return;
+                                  void run(
+                                    () => setOrder(year, d, toApiTargets(targets)),
+                                    `${d}巡目を更新しました（${targets.length}人）`,
+                                  );
+                                }}
                                 className="mt-0.5 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] text-white"
                               >
-                                この人が勝ち
+                                {p.pick_order == null
+                                  ? "確定"
+                                  : p.pick_order > 0
+                                    ? "確定を戻す"
+                                    : "この人を勝ちに"}
                               </button>
                             )}
                           </div>

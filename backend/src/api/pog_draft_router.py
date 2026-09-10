@@ -291,8 +291,10 @@ class OrderTarget(BaseModel):
     """1 人ぶんの確定内容。"""
 
     user_id: int
-    #: その人のチーム内の枠番。**0 = その巡は取れなかった**。
-    pick_order: int
+    #: その人の**何頭目か**。`0` = その巡は取れなかった。`null` = 未確定へ戻す。
+    #: 🔴 巡の番号ではない（2巡目で 1 頭目を取ることがある）。規則は
+    #:    `frontend/src/lib/pogDraft.ts` に集約してある。
+    pick_order: int | None
 
 
 class OrderIn(BaseModel):
