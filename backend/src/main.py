@@ -23,6 +23,7 @@ from .api.keirin_router import router as keirin_router
 from .api.keirin_type_lab_router import router as keirin_type_lab_router
 from .api.performance import router as performance_router
 from .api.pog_admin_router import router as pog_admin_router
+from .api.pog_draft_router import router as pog_draft_router
 from .api.pog_router import router as pog_router
 from .api.races import router as races_router
 from .api.recommendations import router as recommendations_router
@@ -123,6 +124,7 @@ app.include_router(chihou_pick_log_router)          # POST /api/chihou/place-pic
 app.include_router(jra_pick_log_router)             # POST /api/jra/hit-tier/*
 app.include_router(pog_router)                      # GET  /api/pog/*（統合 Phase 5）
 app.include_router(pog_admin_router)                 # POST /api/pog/admin/*（X-API-Key・管理者のみ）
+app.include_router(pog_draft_router)                 # GET/POST /api/pog/draft/*（X-API-Key）
 app.include_router(keirin_router)                  # GET /api/keirin/*
 
 # MS2以降で順次有効化:
