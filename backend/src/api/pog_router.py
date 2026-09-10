@@ -48,6 +48,7 @@ from ..db.session import get_db
 from ..services.pog_horse_search import search_horses
 from ..services.pog_horse_search import suggest as suggest_horse_values
 from ..services.pog_recent_races import fetch_recent_races
+from ..services.pog_records import fetch_graded_wins, fetch_score_summary
 from ..services.pog_standings import fetch_horses, fetch_owners
 
 logger = logging.getLogger(__name__)
@@ -262,3 +263,92 @@ async def suggest_draft_horses(
         return await suggest_horse_values(db, field=field, q=q, birth_year=birth_year)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class GradedWinOut(BaseModel):
+    """POG 指名馬の重賞勝ち 1 件。"""
+
+    date: str
+    source: str
+    race_id: int
+    course_code: str | None
+    course_name: str | None
+    race_no: int
+    race_name: str | None
+    grade: str | None
+    netkeiba_horse_id: str | None
+    horse_name: str | None
+    owner_name: str | None
+    user_id: int
+    pog_year: int
+
+
+@router.get("/graded-wins", response_model=list[GradedWinOut])
+async def list_graded_wins(
+    db: DbDep,
+    year: int | None = Query(None, description="POG の年度。省略すると全年度"),
+    user_id: int | None = Query(None, description="馬主。省略すると全員"),
+) -> list[GradedWinOut]:
+    """POG 指名馬の重賞勝ちを新しい順に返す（移設元 `/graded-wins`・記録室）。
+
+    🔴 移設元は `sekito.entries`（2026-05-03 で凍結）に依存した
+    `sekito.mv_graded_wins` を見ており、地方は 2026-04-15 で止まり、
+    中央も馬 ID が 2026年 89件中 51件しか付いていなかった。
+    """
+    return [GradedWinOut(**r) for r in await fetch_graded_wins(db, year=year, user_id=user_id)]
+
+
+class WinsOut(BaseModel):
+    """重賞勝ちの内訳。"""
+
+    derby: int
+    g1: int
+    g2: int
+    g3: int
+    nar: int
+    overseas_derby: int
+    overseas_other: int
+
+
+class ScoreOut(BaseModel):
+    """スコア集計 1 人ぶん。"""
+
+    rank: int
+    prize_rank: int
+    user_id: int
+    name: str | None
+    total_prize: int
+    basic_points: int
+    rank_prize: int
+    special_prize: int
+    total_points: int
+    win: int
+    place: int
+    show: int
+    out: int
+    horse_count: int
+    horses_raced: int
+    horses_won: int
+    all_raced: bool
+    all_won: bool
+    wins: WinsOut
+
+
+@router.get("/score-summary", response_model=list[ScoreOut])
+async def get_score_summary(
+    db: DbDep, year: int = Query(..., description="POG の年度（例 2026）")
+) -> list[ScoreOut]:
+    """スコア集計（精算表）を合計pt の降順で返す（移設元 `/score-summary`）。
+
+    🔴 **実際の精算に使う数字。** 計算は `services/pog_score.py` の純関数に
+    切り出してあり、`tests/test_pog_score.py` が固定している。
+
+    🔴 移設元との違い: **中央交流競走を地方重賞（500pt）として数える**。
+    JV-Link は中央交流を `G1/G2/G3` として持つため、格だけで判定すると
+    中央 G1（1,000pt）になってしまう。詳細は pog_score.py の docstring。
+    """
+    group_id = await _group_id_for_year(db, year)
+    scores = await fetch_score_summary(db, group_id=group_id, year=year)
+    return [
+        ScoreOut(**{**s.__dict__, "wins": WinsOut(**s.wins.__dict__)}) for s in scores
+    ]

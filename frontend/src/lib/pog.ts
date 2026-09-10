@@ -199,3 +199,74 @@ export function currentWeekRange(now: Date = new Date()): [string, string] {
   sunday.setDate(saturday.getDate() + 8);
   return [fmt(saturday), fmt(sunday)];
 }
+
+export type PogGradedWin = {
+  date: string;
+  source: "jra" | "chihou";
+  race_id: number;
+  course_code: string | null;
+  course_name: string | null;
+  race_no: number;
+  race_name: string | null;
+  grade: string | null;
+  netkeiba_horse_id: string | null;
+  horse_name: string | null;
+  owner_name: string | null;
+  user_id: number;
+  pog_year: number;
+};
+
+/**
+ * POG 指名馬の重賞勝ち（記録室）。`year` を省略すると全年度。
+ *
+ * 🔴 移設元は凍結した `sekito.entries` 経由で馬 ID を解決していたため、
+ * **2026年度の重賞勝ちを 1 件も計上できていなかった**（実測）。
+ */
+export function fetchPogGradedWins(year?: number): Promise<PogGradedWin[]> {
+  const q = year === undefined ? "" : `?year=${year}`;
+  return get<PogGradedWin[]>(`/pog/graded-wins${q}`, { next: { revalidate: 300 } });
+}
+
+export type PogWins = {
+  derby: number;
+  g1: number;
+  g2: number;
+  g3: number;
+  nar: number;
+  overseas_derby: number;
+  overseas_other: number;
+};
+
+export type PogScore = {
+  rank: number;
+  prize_rank: number;
+  user_id: number;
+  name: string | null;
+  total_prize: number;
+  basic_points: number;
+  rank_prize: number;
+  special_prize: number;
+  total_points: number;
+  win: number;
+  place: number;
+  show: number;
+  out: number;
+  horse_count: number;
+  horses_raced: number;
+  horses_won: number;
+  all_raced: boolean;
+  all_won: boolean;
+  wins: PogWins;
+};
+
+/**
+ * スコア集計（精算表）。
+ *
+ * 🔴 **実際の精算に使う数字。** 計算はバックエンドの純関数
+ * `services/pog_score.py` に集約してあり、フロントでは足し引きしない。
+ */
+export function fetchPogScores(year: number): Promise<PogScore[]> {
+  return get<PogScore[]>(`/pog/score-summary?year=${year}`, {
+    next: { revalidate: 300 },
+  });
+}

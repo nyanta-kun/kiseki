@@ -131,12 +131,24 @@ export default async function PogStandingsPage({
         </section>
       )}
 
-      <p className="mt-4 text-center">
+      <p className="mt-4 flex flex-wrap justify-center gap-4 text-sm">
         <Link
           href={`/pog/${year}/horses`}
-          className="text-sm text-emerald-600 underline dark:text-emerald-400"
+          className="text-emerald-600 underline dark:text-emerald-400"
         >
-          全馬の一覧を見る
+          全馬の一覧
+        </Link>
+        <Link
+          href={`/pog/${year}/records`}
+          className="text-emerald-600 underline dark:text-emerald-400"
+        >
+          記録室
+        </Link>
+        <Link
+          href={`/pog/${year}/score`}
+          className="text-emerald-600 underline dark:text-emerald-400"
+        >
+          スコア集計
         </Link>
       </p>
     </main>
