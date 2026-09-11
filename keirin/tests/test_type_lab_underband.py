@@ -97,9 +97,15 @@ def test_other_plans_are_untouched():
 # ───────────────────────── ゲートとの噛み合わせ ─────────────────────────
 
 def test_falls_back_to_the_plain_twelve_when_the_gate_would_reject():
-    """🔴 差込で平均想定払戻が2万円を割ったら、差込なしの12点で売る。
+    """🔴 **差込でゲートを割っても在庫を落とさない**（母集団を静かに削らない）。
 
-    これが無いと在庫が 8.86 → 7.30件/日 へ減る（＝母集団を静かに削る）。
+    これが無いと在庫が 8.86 → 7.30件/日 へ減る。
+
+    ── 2026-09-11: **通る道が変わった。** `C_hit` に `tau_adaptive` が入り、
+    ゲートを割ったらまず**点数を縮めて**通す（帯下の1点は残る）。縮めても通らない
+    ときだけ `GATE_FALLBACK`（差込なしの12点）へ落ちる。
+    **守るべき不変条件は「在庫が消えないこと」と「`plan_key` が `C_hit` のままである
+    こと」**で、どちらの道で通ったかではない。
     """
     shape = _shape()
     # 残りが 28倍の板。差し込むと安い点の床（予算×2.0÷6.2 ≈ 3,300円）が予算の
@@ -117,11 +123,18 @@ def test_falls_back_to_the_plain_twelve_when_the_gate_would_reject():
 
     legs, stakes, used = build_with_gate_fallback(shape, PLANS["C_hit"], po, pr,
                                                   n_entries=7)
-    assert used in GATE_FALLBACK["C_hit"], "ゲートに落ちたのに現行へ戻していない"
+    # 🔴 在庫が消えないこと・別 plan_key を名乗らないこと・ゲートを通ること
+    assert stakes, "ゲートに落ちたのに在庫を落としている"
     assert used.key == "C_hit", "代替が別の plan_key を名乗ると1レース2商品になる"
-    assert (7, 3, 5) not in stakes
-    assert len(stakes) == 12
     assert mean_expected_payout(stakes, po) > MIN_MEAN_PAYOUT
+    # τ適応で通る道（点数を縮める）か、`GATE_FALLBACK`（差込なし12点）のどちらか
+    if used in GATE_FALLBACK["C_hit"]:
+        assert (7, 3, 5) not in stakes
+        assert len(stakes) == 12
+    else:
+        assert used.tau_adaptive, "τ適応でも代替でもない道で通っている"
+        assert len(stakes) < (PLANS["C_hit"].max_legs or 12), (
+            "τ適応なら点数を縮めて通しているはず")
 
 
 def test_no_fallback_when_the_insert_already_passes_the_gate():
