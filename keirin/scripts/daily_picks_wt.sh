@@ -396,9 +396,20 @@ bash scripts/type_lab_daily.sh \
   2>&1 | tee -a "$LOG_DIR/netkeirin_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 型ラボの処理に失敗（継続）"
 
-# --- 2c. 前日処理（入稿より後ろ）---
+# --- 2c. 前日処理（入稿より後ろ・**06:30 が落ちたときの保険**）---
 # 当日の商品を1分でも早く出すため、当日予想・入稿に不要な前日処理はここで実行する。
-run_previous_day_tasks
+#
+# 🔴🔴 **2026-09-11 に本体を `scripts/previous_day_wt.sh`（cron 06:30）へ切り出した。**
+#    ここは**その回が走らなかったときだけ**動く保険。既に処理済みなら何もしない。
+#    ⚠️ 消さないこと——06:30 の cron 不発（VPS 再起動・デプロイ中など）で前日成績が
+#    永久に取り残されるのを防ぐ。`collect-wt` は結果確定済みをスキップするので
+#    二重に走っても安い（実測で前日処理全体が 9分28秒・済んでいれば数秒）。
+if [[ -f "$LOG_DIR/previous_day_done_${YESTERDAY}" ]]; then
+  echo "[$(date '+%H:%M:%S')] 前日処理は 06:30 の回で実施済み（スキップ）"
+else
+  echo "[$(date '+%H:%M:%S')] 前日処理（06:30 の回が未実施のため保険で実行）"
+  run_previous_day_tasks
+fi
 
 # --- 3. VPS PostgreSQL 同期（wt_entries/picks_history 等を反映）---
 # wave-picks-wt で race_point(AI確率) が更新された wt_entries と
