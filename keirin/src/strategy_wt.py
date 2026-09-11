@@ -4565,6 +4565,28 @@ RANK_7T3_BLEND_W: tuple[float, float, float] = (1.0, 0.5, 0.0)
 #     隣接ペアを定義上除いている（決勝系 n=636 で改善しないことを実測済み）。
 #  経緯と全数値: `docs/tf_rival614_line_pair_2026_08_26.md`
 RANK_7T3_LINE_ADJ_W: tuple[float, float] = (2.0, 1.5)
+#: 同・**逆向き**（番手 → 先頭＝差し）の係数 `(λr, μr)`。
+#:
+#: 🔴🔴 **`_line_next` は `line_pos[b] == line_pos[a] + 1` の一方向しか見ていなかった**
+#:    （2026-09-11 まで）。つまり「番手が先頭を差す」並びには係数が1つも掛からず、
+#:    **λ 1本が「隣接の強さ」と「向き」を兼ねていた**。較正するとその歪みが2方向に出る
+#:    （`docs/type_lab/line_order_2026_09_10.md` §6・探索 / 確認）:
+#:
+#:      P(1-2着が同ライン)      モデル 43.0 / 43.2%  ↔  実測 56.3 / 57.6%（**過小**）
+#:      P(隊列順 | 同ライン)    モデル 75.2 / 75.3%  ↔  実測 63.4 / 63.8%（**過大**）
+#:
+#:    先頭×番手が1-2着を占めた 12,458 / 4,961 件で、モデルの含意 74.15 / 74.14% に対し
+#:    **実測 60.36 / 61.50%**。**向きは第2のノブでしか直せない。**
+#:    較正から出る λr ≈ 1.76 と、掃引の最良 1.9 がほぼ一致する。
+#:
+#: ⚠️ **`μr = 1.0`（2-3着の逆向きには掛けない）。** 掃引で μr を動かす腕は
+#:    両窓で符号が一致しなかった。λ/λr だけが確かな量。
+#: 🔴 **これは確率そのものを差し替える定数ではない。** 本番の確率
+#:    （`RANK_7T3_LINE_ADJ_W` を掛けたもの）は据え置きで、
+#:    `type_lab.apply_order_swap` が**並べ替えの評価にだけ**この係数を使う。
+#:    確率ごと差し替える腕（選択もやり直す）は件/日 −7.3〜7.8% で、
+#:    **落ちるのは当たっていた側**だったため採らなかった（同 doc §6）。
+RANK_7T3_LINE_ADJ_REV_W: tuple[float, float] = (1.9, 1.0)
 
 
 def rank_7t3_is_target_race_type(race_type: str | None) -> bool:
@@ -4598,6 +4620,44 @@ def _line_next(line_group: Mapping[int, object] | None,
         return int(pb) == int(pa) + 1
     except (TypeError, ValueError):
         return False
+
+
+def rank_7t3_order_swap_probs(
+    cars: Sequence[int], win_probs: Mapping[int, float],
+    top3_probs: Mapping[int, float],
+    w: tuple[float, float, float] = RANK_7T3_BLEND_W,
+    line_group: Mapping[int, object] | None = None,
+    line_pos: Mapping[int, object] | None = None,
+    adj_w: tuple[float, float] = RANK_7T3_LINE_ADJ_W,
+    rev_w: tuple[float, float] = RANK_7T3_LINE_ADJ_REV_W,
+) -> dict[tuple[int, int, int], float]:
+    """**並べ替えの評価にだけ使う**三連単確率。順方向 λ/μ に加えて逆方向 λr/μr を掛ける。
+
+    `rank_7t3_blend_probs` と同じ位置別合成 PL を土台に:
+
+        P ← P × λ^[y は x の直後] × μ^[z は y の直後]
+              × λr^[y は x の直前] × μr^[z は y の直前]
+
+    🔴 **買い目の選択には使わないこと。** 選択まで差し替えると件/日 が 7.3〜7.8% 減り、
+       **落ちるのは当たっていた側**（`line_order_2026_09_10.md` §6）。
+       使うのは `type_lab.apply_order_swap`（組んだ後の並べ替え）だけ。
+    """
+    base = rank_7t3_blend_probs(cars, win_probs, top3_probs, w,
+                                line_group, line_pos, adj_w)
+    if not base or not line_group or not line_pos:
+        return base
+    lr, mr = float(rev_w[0]), float(rev_w[1])
+    if lr == 1.0 and mr == 1.0:
+        return base
+    out: dict[tuple[int, int, int], float] = {}
+    for (x, y, z), v in base.items():
+        if lr != 1.0 and _line_next(line_group, line_pos, y, x):
+            v *= lr
+        if mr != 1.0 and _line_next(line_group, line_pos, z, y):
+            v *= mr
+        out[(x, y, z)] = v
+    tot = sum(out.values())
+    return {k: v / tot for k, v in out.items()} if tot > 0 else base
 
 
 def rank_7t3_blend_probs(

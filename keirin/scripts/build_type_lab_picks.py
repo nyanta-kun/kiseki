@@ -62,7 +62,7 @@ ONLY_KEYS: set[str] | None = None
 # ───────────────────────── 共通: 1レースぶんを行にする ─────────────────────────
 
 def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
-                  mode: str) -> list[dict]:
+                  mode: str, tf_order_prob: dict | None = None) -> list[dict]:
     """1レースから、その型の全プランぶんの行を作る。"""
     shape = race_shape(
         {c: v["p3"] for c, v in cars.items()},
@@ -89,7 +89,10 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         #    入稿ゲートに落ちる買い方には代替が定義されていることがあり、
         #    素で組むと **paper と live で母集団が割れる**。
         #    賭け金 0 円の点の除去（`allocate` が落とす）もこの関数の中で済む。
-        built = build_with_gate_fallback(shape, plan, odds, prob, N_ENTRIES)
+        # 🔴 **並べ替え用の確率は三連単のときだけ渡す**（三連複は順序が無い）。
+        built = build_with_gate_fallback(
+            shape, plan, odds, prob, N_ENTRIES,
+            order_probs=None if plan.bet_type == "trio" else tf_order_prob)
         if not built:
             continue
         legs, stakes, plan_used = built
@@ -203,15 +206,16 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
         # 🔴 **板の `PROB` は同ライン隣接ボーナスが入っていない**（2026-08-31 に
         #    `rank_7t3_blend_probs(cars, pw, p3)` と比が 1.0000 で一致することを確認）。
         #    paper も live と同じ関数で組み直して、両者の確率を揃える。
-        tf_prob = _pl_board(
-            {c: float(z["P3"][i][c - 1]) for c in ent},
-            {c: float(z["PW"][i][c - 1]) for c in ent},
-            {c: v["line_group"] for c, v in cars.items()},
-            {c: v["line_pos"] for c, v in cars.items()})
+        _p3 = {c: float(z["P3"][i][c - 1]) for c in ent}
+        _pw = {c: float(z["PW"][i][c - 1]) for c in ent}
+        _lg = {c: v["line_group"] for c, v in cars.items()}
+        _lp = {c: v["line_pos"] for c, v in cars.items()}
+        tf_prob = _pl_board(_p3, _pw, _lg, _lp)
+        tf_order_prob = _pl_board_order(_p3, _pw, _lg, _lp)
         m = meta_all.get(rk)
         if not m:
             continue
-        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, "paper"))
+        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, "paper", tf_order_prob))
     return out
 
 
@@ -295,13 +299,14 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
             print(f"  {rk}: 予測オッズを作れず skip（{e}）")
             continue
         tf_odds = {tuple(k): float(v) for k, v in board.items() if v and v > 0}
-        tf_prob = _pl_board(p3[rk], pw[rk],
-                            {c: v["line_group"] for c, v in cars.items()},
-                            {c: v["line_pos"] for c, v in cars.items()})
+        lg = {c: v["line_group"] for c, v in cars.items()}
+        lp = {c: v["line_pos"] for c, v in cars.items()}
+        tf_prob = _pl_board(p3[rk], pw[rk], lg, lp)
+        tf_order_prob = _pl_board_order(p3[rk], pw[rk], lg, lp)
         m = meta_all.get(rk)
         if not m:
             continue
-        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, mode))
+        out.extend(rows_for_race(m, cars, tf_odds, tf_prob, mode, tf_order_prob))
     return out
 
 
@@ -362,6 +367,22 @@ def _pl_board(p3: dict, pw: dict,
     from src.strategy_wt import rank_7t3_blend_probs
     return rank_7t3_blend_probs(sorted(p3), pw, p3,
                                 line_group=line_group, line_pos=line_pos)
+
+
+def _pl_board_order(p3: dict, pw: dict,
+                    line_group: dict | None = None,
+                    line_pos: dict | None = None) -> dict:
+    """**並べ替えの評価にだけ使う**三連単確率（順方向 λ/μ ＋ 逆方向 λr/μr）。
+
+    正本は `strategy_wt.rank_7t3_order_swap_probs`。
+
+    🔴 **買い目の選択には使わない。** 選択まで差し替えると件/日 が 7.3〜7.8% 減り、
+       落ちるのは当たっていた側（`docs/type_lab/line_order_2026_09_10.md` §6）。
+       使うのは `type_lab.apply_order_swap`（組んだ後の並べ替え）だけ。
+    """
+    from src.strategy_wt import rank_7t3_order_swap_probs
+    return rank_7t3_order_swap_probs(sorted(p3), pw, p3,
+                                     line_group=line_group, line_pos=line_pos)
 
 
 # ───────────────────────── DB ─────────────────────────

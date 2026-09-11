@@ -45,7 +45,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 from .unit_distribution import FLOOR_THEN_LARGEST_REMAINDER, distribute_units
-from .stake_allocation import MIN_MEAN_PAYOUT
+from .stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS
 
 BUDGET = 10_000
 UNIT = 100
@@ -667,6 +667,33 @@ class Plan:
     #: `bust_top` と同じ狙い（軸1が3着にも入らない側）を、点数ではなく
     #: 計画払戻で決める形にしたもの。
     bust: bool = False
+    #: **点数をゲートに決めさせる**（`max_legs` を上限としてではなく、
+    #: 「平均想定払戻が `MIN_MEAN_PAYOUT` を割らない最大点数」まで積む）。
+    #:
+    #: 🔴 **`sigma_max` では代用できない。** あちらは `Σ(1/予測オッズ)` を見るが、
+    #:    その等式（平均想定払戻 = 予算 ÷ Σ）が成り立つのは**ダッチ配分のときだけ**。
+    #:    `conf` 傾斜では成り立たないので、`mean_expected_payout` を直接見る。
+    #:
+    #: 🟢 **条件量は要らない**（2026-09-11・`docs/type_lab/band_by_race_2026_09_10.md`）。
+    #:    「そのレースの決着がどの帯に落ちるか」を予測する量（最良は `sig14`＝
+    #:    Σ(1/予測オッズ)・AUC 0.660/0.675）で (帯,点数) を振り分ける腕は、
+    #:    **この τ適応に負ける**（型E で −2.46/−3.98pt）。機序も出ていて、
+    #:    τ適応が選ぶ平均点数を `sig14` 3群で見ると **14.91 / 10.46 / 6.74点**＝
+    #:    **条件量で設計した (14,10,6) をゲートが素で再現している。**
+    #:
+    #: 実測（`C_hit`・確認 2026 / 探索 2024-07〜2025-12・件/日は不変）:
+    #:
+    #:      表示的中  33.54 / 33.56%  →  **35.06 / 35.23%**
+    #:      Δ  **+1.53 [+0.37,+2.77] / +1.65 [+0.99,+2.29]**（両窓 CI 0跨がず）
+    #:      払戻中央 −3.7 / −3.1%   ガミ率 +1.1 / −0.1pt   10万+ ほぼ不変
+    #:      維持/破壊/救済 590 / 52 / 81   無作為対照 **20/20 両窓**
+    #:      ラインナップ全体 +0.30 [+0.07,+0.54] / +0.37 [+0.23,+0.52]
+    #:
+    #: 🔴 **「点数を減らすだけ」では効かない**（+0.91 [−0.10,+1.99]＝確認窓 CI 0跨ぎ）。
+    #:    **増やす側も入れて初めて +1.53** になる。実点数は 6〜16 に散る
+    #:    （12点未満 40.9% / 12点超 33.9%）。
+    #: ⚠️ 9車は未測定。`build_with_gate_fallback` が7車以外で外す。
+    tau_adaptive: bool = False
     #: **帯（`min_odds`）の下から最も人気の1点を買い足す**ときの、その1点の
     #: 予測オッズ下限（0=差し込まない）。点数は変えず、確率最下位の1点と入れ替える。
     #: 🔴 **7車だけの操作**（`build_with_gate_fallback` が9車では外す）。
@@ -767,10 +794,12 @@ PLANS: dict[str, Plan] = {
     #    型C の看板は `C_sign` / `C_big` が別行で担っている（型C 本体は元から作れない）。
     # 🔴 選び方の根拠と「1点だけ」の理由は `_insert_underband` の docstring。
     #    再現: `scripts/exp_type_lab/type_c_lowband.py` / `docs/type_lab/type_c.md` 11章
+    # 🔴 **2026-09-11: 点数を固定12点から「ゲートが許す最大」へ**（ユーザー判断・
+    #    `docs/type_lab/band_by_race_2026_09_10.md`）。`tau_adaptive=True` がそれ。
     "C_hit": Plan("C_hit", "C", "trifecta", "prob_top", 0, min_odds=15.0,
                   max_legs=12, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
-                  underband_min=5.0,
-                  note="予測15倍以上から確率上位12点＋帯下の最人気1点"),
+                  underband_min=5.0, tau_adaptive=True,
+                  note="予測15倍以上から確率上位・想定2万を割らない点数＋帯下の最人気1点"),
     # 型D 混戦・軸あり — 唯一の三連複。最人気の相手を外す。
     # 🔴 **2026-09-01 に相手を 4点 → 3点へ減らした。** 型D は「的中頻度に対して
     #    払戻が足りない」（的中 26.87% に対し損益分岐に要る 37,222円 ↔ 実際 28,696円）。
@@ -1666,6 +1695,195 @@ def apply_line_swap(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapp
     return list(legs), stakes
 
 
+#: 並べ替え（`apply_order_swap`）を掛けるプラン。
+#:
+#: 🔴🔴 **2026-09-11 新設。** 買い目を組んだあと、**各点を同じ3車の別の並びへ入れ替える**
+#:    （`strategy_wt.rank_7t3_order_swap_probs` が最大の並び）。
+#:    **組合せも点数も件数も1つも動かない**——動くのは「どの並びで買うか」だけ。
+#:
+#: 🟢 なぜ効くか: `_line_next` が一方向しか見ておらず、**「番手が先頭を差す」並びに
+#:    係数が掛かっていなかった**（`RANK_7T3_LINE_ADJ_REV_W` の節に較正の実測）。
+#:
+#: 実測（三連単の当てにいく商品・**n も件/日も全腕で完全に同一**・探索 / 確認）:
+#:
+#:      腕                表示的中            Δpt        CI95              ②順序違い
+#:      現行              29.47 / 29.99%      —          —                 27.70 / 27.09%
+#:      **λr1.9 帯順守**  **30.08 / 30.69%**  **+0.62 / +0.70**  [+0.36,+0.89] / [+0.29,+1.11]  27.08 / 26.37%
+#:      λr1.9 帯無視      30.43 / 31.21%      +0.97 / +1.22      —          26.63 / 25.83%
+#:
+#: 🔴🔴 **帯（`plan.min_odds`）を守ること。** 守らないと効果は倍になるが、
+#:    **増分は丸ごと `E_hit`（+2.96/+3.59 ↔ 帯順守 +0.12/−0.12）＝帯30倍を実質外した分**。
+#:    それは DESIGN 2.4 の「価格の道具」を黙って外す操作で、4.3 の「③帯下決着」を
+#:    買い目の直し方で薄めることになる（`mark_order` の本線1点と同型）。
+#:    **設計を保つなら直すのは型判定であって帯ではない**（DESIGN 5c）。
+#:
+#: 🟢 **帯順守で両窓とも効くのは `B_hit`（帯なし）と `F_hit`（帯5倍）だけ**
+#:    （+1.03/+1.83・+1.15/+1.12）。`C_hit`(+0.06/−0.09) と `E_hit` は帯が先に
+#:    順序の選択肢を潰している。`F_sign` は +1.84/+1.98 だが**一撃商品なので入れない**
+#:    （KPI は払戻中央と 10万+ であって表示的中ではない・DESIGN 2.1）。
+#: ⚠️ 三連複（`A_trio` / `D_hit`）は順序が無いので定義上 0.00。
+#: ⚠️ **オラクル天井は 29.5→51.5% / 30.0→52.0%** で、取れているのはその 2.6〜2.8% だけ。
+ORDER_SWAP_PLANS: frozenset[str] = frozenset({"B_hit", "F_hit"})
+
+
+def apply_order_swap(plan: Plan, legs: Sequence, stakes: Mapping,
+                     pred_odds: Mapping, order_probs: Mapping | None,
+                     min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """各点を**同じ3車の別の並び**へ入れ替える。戻り値は `(legs, stakes)`。
+
+    🔴 **帯（`min_odds` / `max_odds`）を守る。** 帯の外の並びへは移さない。
+    🔴 **入稿ゲートの2条件を両方守る**——平均想定払戻 > `MIN_MEAN_PAYOUT` と
+       **全点の予測オッズ >= `MIN_POINT_ODDS`**。どちらかを割るなら入れ替えない
+       （件数を1件も減らさないため）。
+       ⚠️ 後者は実測で違反0件だが、`B_hit` は `min_odds=0` なので**帯だけでは塞げない**
+       （2026-09-11 の検証で指摘された穴）。
+    🔴 **買っていない並びにしか移さない**（同じ目を2点買わない）。
+    """
+    if (plan.key not in ORDER_SWAP_PLANS or plan.bet_type != "trifecta"
+            or not order_probs or not legs):
+        return list(legs), stakes
+    lo, hi = float(plan.min_odds or 0.0), float(plan.max_odds or 0.0)
+    have = {tuple(c) for c in legs}
+    out: list[tuple[int, ...]] = []
+    for c in legs:
+        c = tuple(c)
+        alts = [c]
+        for q in itertools.permutations(sorted(set(c))):
+            if q == c or q in have:
+                continue
+            o = pred_odds.get(q)
+            if not _pos(o) or float(o) < max(lo, MIN_POINT_ODDS):
+                continue
+            if hi and float(o) > hi:
+                continue
+            alts.append(q)
+        best = max(alts, key=lambda q: float(order_probs.get(q, 0.0)))
+        if best != c:
+            have.discard(c)
+            have.add(best)
+        out.append(best)
+    if out == [tuple(c) for c in legs]:
+        return list(legs), stakes
+    st = allocate(out, pred_odds, order_probs, plan)
+    if not st or len(st) != len(out):
+        return list(legs), stakes
+    if mean_expected_payout(st, pred_odds) <= min_mean_payout:
+        return list(legs), stakes
+    return out, st
+
+
+# ── 押さえ目（軸2車が1-2着 ∧ 3着が人気薄）──────────────────────────────
+#
+# 🔴🔴 **2026-09-11 新設。** 発端はユーザー観察（2026-09-10 京王閣7R・決着 3-1-7）——
+#    `F_hit` 12点は **1-3-x を4点・3-1-x を3点**と「軸2車が1-2着」の形を7点も押さえて
+#    いたのに、**3着に7番（指数7位・無印）を置いた目が1点も無かった**。確定 110.4倍。
+#
+# 🔴 **予算1万円固定なので、100円の押さえが「払戻 > 賭け金」になるには
+#    確定オッズ > 100倍 が要る。** それ未満で当たるとガミ＝ユーザーが明確に否定した
+#    「中途半端な金額の目を押さえて払い戻しが減る」状態になる。
+#    無条件に押さえると **83% がガミ**（100円が4,170円になるだけ）。
+#
+# 🟢 **絞りは予測オッズだけでよい。** 指数順位・印・ラインで絞る必要は無く、
+#    予測オッズで選ぶと自動的に **指数7位 72.6% / 無印 99.1% / 別ライン 85.5%** になる
+#    ＝同じ集合を指している。16通りの絞り方を掃引して、100倍超の比率を動かす軸は
+#    予測オッズだけだった（`docs/type_lab/osae_2026_09_10.md` §4）。
+#
+# 実測（確認 2026 / 探索 2024-07〜2025-12・当てにいく商品・**件/日と投資は不変**）:
+#
+#      表示的中 26.94 → 27.14% / 27.38 → 27.51%
+#      Δ **+0.20 [+0.11,+0.30] / +0.13 [+0.07,+0.19]**（両窓 CI 0跨がず）
+#      払戻中央 −1.6 / −1.0%   ガミ率 3.36→3.41 / 3.71→4.01%
+#      10万+/日・ROI・件/日 **不変**   救済 18 / 破壊 0（確認8か月＝**12日に1回**）
+#      無作為対照20seed に両窓 20/20（ただし無作為も +0.08pt 上がる＝
+#      **効果の 1/3〜1/2 は「点を足しただけ」**）
+#
+# 🔴🔴 **発端の京王閣7R は拾えない。** あのレースは平均想定払戻 20,690円 とゲートの際で、
+#    押さえ2点を足すと 19,629円 に落ちる。通すには押さえの予測オッズ合計 **366.8倍** が
+#    必要だった（確定ですら 110.4+132.8 = 243.2倍）。一般に
+#    **100円の押さえは「予測オッズ > 平均想定払戻 ÷ 100（中央 267〜273倍）」でない限り
+#    必ず平均を薄める**ので、ゲート際の商品では落ちる。落ちたら現行のまま売る＝在庫は減らない。
+#: 押さえ目に採る3着の**予測オッズ下限**。
+#:
+#: 🔴 **下限は必須。** 無しだと**ガミ率が 3.36 → 6.99% と倍**になる。
+#: 🟢 較正は取れている——予測125倍+ で選ぶと、当たった押さえの **90.9〜100% が確定100倍超**
+#:    （予測100-150倍→確定100倍超 56.2% / 150-250倍→100.0% / 250倍+→100.0%）。
+#: ⚠️ **100倍+ なら救済 0.125件/日**（125倍+ は 0.093）と拾う回数は増えるが、
+#:    ガミも 0.042 → 0.009件/日 と増える。125 は「拾う回数」と「ガミ」の中間点。
+OSAE_MIN_PRED_ODDS = 125.0
+#: 押さえ目の最大点数。
+OSAE_MAX_LEGS = 2
+#: 押さえ目1点あたりの賭け金（**床の外・固定**）。
+#:
+#: 🔴 **通常の配分に乗せてはいけない。** `conf` の床は `予算 × floor_mult ÷ 予測オッズ`
+#:    なので、30倍の目なら 700円・7.7倍なら 2,600円になる。
+#:    **「100円の押さえ」は床を通した瞬間に別物になる。**
+#: 🟢 床の思想（当たったら最低2倍）とは矛盾しない——**100円 × 100倍 = 10,000円 = 予算そのもの**。
+OSAE_STAKE = 100
+#: 押さえ目を足すプラン。
+#:
+#: 🔴🔴 **2026-09-11: 空＝無効。ユーザー判断で「様子見」。**
+#:    機構とテストは残してあるので、下の集合を戻せばそのまま効く。
+#:
+#:    見送った理由は効果が小さいからではなく、**確認窓で 0 と区別できない**から:
+#:      Δ表示的中 +0.070 [+0.000,+0.154]（確認）・McNemar **p=0.125**
+#:      ＝ 216営業日で正味 +5件。効果の 45〜51% は無作為対照でも出る。
+#:      探索窓は +0.091 [+0.045,+0.142] で有意だが、**両窓で確かとは言えない**。
+#:    加えて **ガミが +1〜7件増える**（押さえ自体 0〜4件 + 破壊 1〜3件）。
+#:    ⚠️ 同時に ① τ適応 ② λr を入れており、**3つ同時だと切り分けられない**という
+#:       事情もある。①② の前向き実測が落ち着いてから再検討する。
+#:
+#: 戻すときの集合は `{"A_hit", "B_hit", "C_hit", "E_hit", "F_hit"}`:
+#: 🔴 **一撃商品（`A_ana` / `*_sign` / `*_big`）へは足さない。** 表示的中は最も上がるが、
+#:    あちらのKPIである払戻中央を 3〜5% 削る（`F_sign` 135,960 → 128,940円・DESIGN 2.1）。
+#: ⚠️ 三連複（`A_trio` / `D_hit`）は「1-2着に置く」形が存在しないので対象外。
+#: ⚠️ `C_hit` は τ適応と重なって効果が消える（発動率 26.2→22.7%）。戻すなら測り直すこと。
+OSAE_PLANS: frozenset[str] = frozenset()
+
+
+def apply_osae(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapping,
+               pred_odds: Mapping, probs: Mapping,
+               min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """**軸2車を1-2着に置き、3着が人気薄**の目を固定100円で押さえる。
+
+    戻り値は `(legs, stakes)`。掛からなければ受け取ったものをそのまま返す。
+
+    🔴 **押さえは床の外・固定 `OSAE_STAKE` 円。** 残りを本番の `allocate` へ掛け直す
+       （＝**全点から按分**）。確率最下位から削る案は測って不採用——その点は元々薄いので
+       払戻が 1/3 になり、**既存の的中がガミへ落ちる**（破壊 21/11 ↔ 按分 10/0）。
+    🔴 **ゲートを割るなら押さえない**（在庫を1件も減らさない）。
+    """
+    if (plan.key not in OSAE_PLANS or plan.bet_type != "trifecta"
+            or not legs or len(shape.order) < 3):
+        return list(legs), stakes
+    a1, a2 = shape.order[0], shape.order[1]
+    rest = shape.order[2:]
+    have = {tuple(c) for c in legs}
+    cand = []
+    for first, second in ((a1, a2), (a2, a1)):
+        for third in rest:
+            k = (first, second, third)
+            if k in have:
+                continue
+            o = pred_odds.get(k)
+            if _pos(o) and float(o) >= OSAE_MIN_PRED_ODDS:
+                cand.append((float(o), k))
+    if not cand:
+        return list(legs), stakes
+    cand.sort(key=lambda t: -t[0])
+    add = [k for _o, k in cand[:OSAE_MAX_LEGS]]
+    rest_budget = BUDGET - OSAE_STAKE * len(add)
+    st = allocate(list(legs), pred_odds, probs, plan, budget=rest_budget)
+    if not st or len(st) != len(legs):
+        return list(legs), stakes
+    out_st = dict(st)
+    for k in add:
+        out_st[k] = OSAE_STAKE
+    out_legs = [tuple(c) for c in legs] + add
+    if mean_expected_payout(out_st, pred_odds) <= min_mean_payout:
+        return list(legs), stakes
+    return out_legs, out_st
+
+
 #: 入稿ゲート（平均想定払戻 <= `MIN_MEAN_PAYOUT`）に落ちたとき、**代わりに組む買い方**。
 #:
 #: 🔴 **代替は元と同じ `key` を名乗る。** 行の一意キーは (race_key, plan_key, mode) で、
@@ -1727,8 +1945,14 @@ GATE_FALLBACK: dict[str, tuple[Plan, ...]] = {
     #    レースが 25% 出る。そこを見送りにすると**在庫が 8.86 → 7.30件/日 へ減る**
     #    ので、割ったレースだけ差込なしの12点で売る。これで件/日は現行と同じ。
     #    ⚠️ `replace` で作る（帯・点数・配分を二重管理にしない）。
+    # 🔴 **2026-09-11: `tau_adaptive` は意図して継承する**（`replace` で外していない）。
+    #    `C_hit` は 22.2% のレースでここへ回るので無視できない量。差込を外した側でも
+    #    「ゲートが許す最大点数」で組むほうが一貫する（点数だけ12点に固定する理由が無い）。
+    #    ⚠️ `tau_adaptive_stacked_2026_09_11.md` の実測はこの継承込みの数字。
+    #       外すなら測り直すこと。
     "C_hit": (replace(PLANS["C_hit"], underband_min=0.0,
-                      note="C_hit がゲートに落ちたとき: 帯下の差込なしで12点"),),
+                      note="C_hit がゲートに落ちたとき: "
+                           "帯下の差込なしで想定2万を割らない点数"),),
 }
 
 #: 最低2倍の床が置けないときに落とす配分（＝2026-09-05 以前の配分）。
@@ -1757,6 +1981,63 @@ def alloc_fallback(plan: Plan) -> Plan | None:
     return replace(plan, alloc=before[0], floor_mult=before[1])
 
 
+#: `tau_adaptive` で積める点数の上限。
+#:
+#: 🔴🔴 **これは「表示的中 ↔ 払戻中央」の交換レートを決めるダイヤル**であって、
+#:    最適値のある定数ではない。**2026-09-11 にユーザーが 12 を選択**——
+#:    理由は「払戻中央をあまり下げたくない」。
+#:
+#: 掃引の実測（`tau_adaptive_stacked_2026_09_11.md` §10・型C 単体・確認 / 探索。
+#: **全水準で両窓とも Δ が正・CI が 0 を跨がず・無作為対照20seed に 20/20**）:
+#:
+#:      上限   平均点数   Δ表示的中(確認/探索)   払戻中央(対現行)   ガミ率
+#:      12     11.5      **+1.87 / +1.31**     **−1.7 / −3.7%**   5.62 / 5.35%
+#:      14     12.7        +3.00 / +2.06        −7.2 / −6.3%      7.20 / 5.75%
+#:      16     13.5        +3.65 / +2.99        −7.6 / −8.1%      7.65 / 6.18%
+#:      なし   15.0        +3.89 / +3.49       −11.0 / −10.4%     8.86 / 7.12%
+#:
+#: 🟢 **件/日（33.02 / 32.16）も 10万+/日（0.213 / 0.180）もどの水準でも1件も動かない。**
+#:    動くのは表示的中と払戻中央だけ。目安は **払戻中央 −1% ごとに 表示的中 +0.2〜0.4pt**。
+#: 🔴 **隣り合う水準の優劣は判別できない**（確認窓 16 > 18・探索窓 16 < 18 と反転し
+#:    CI が大きく重なる）。読めるのは 12 ↔ 16 ↔ 上限なし のように離れた水準の間だけ。
+#: ⚠️ 12 では **75.8 / 75.4% のレースがこの上限に張り付く**＝実質「12点を上限に、
+#:    ゲートを割るレースだけ縮める」動き。増やす側は使っていない。
+TAU_ADAPTIVE_MAX_LEGS = 12
+#: 同・下限。これを割るなら τ適応をやめて元の `max_legs` で組む。
+#:
+#: 🔴 **較正されていない定数。一度も発火していない**（2026-09-11 実測・
+#:    `tau_adaptive_stacked_2026_09_11.md` §10）。`1` に下げても結果は完全に同一で、
+#:    選ばれる最小点数は**両窓とも6点**・8点以下は 2.18/2.37% しかない
+#:    （`min_odds=15.0` の帯と `floor_mult` の床が先に効くため）。
+#:    **暴走止めとして残しているだけ**なので、「3が最適」という根拠は無い。
+TAU_ADAPTIVE_MIN_LEGS = 3
+
+
+def _tau_adaptive_legs(shape: "RaceShape", plan: Plan,
+                       pred_odds: Mapping, probs: Mapping,
+                       min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """**平均想定払戻がゲートを割らない最大点数**まで積んだ買い目と賭け金。
+
+    `plan.max_legs` を `TAU_ADAPTIVE_MIN_LEGS`〜`TAU_ADAPTIVE_MAX_LEGS` で振り、
+    ゲートを通る中で**最も点数の多いもの**を採る。組めなければ `None`。
+
+    🔴 **`mean_expected_payout` を直接見ること。** `Σ(1/予測オッズ)` で代用できるのは
+       ダッチ配分のときだけで、`conf` 傾斜では等式が成り立たない。
+    🔴 **点数を増やす側も試す。** 減らすだけだと効果が半分以下になる
+       （+0.91 [−0.10,+1.99]＝確認窓で CI が 0 を跨ぐ）。
+    """
+    best = None
+    for k in range(TAU_ADAPTIVE_MIN_LEGS, TAU_ADAPTIVE_MAX_LEGS + 1):
+        got = _build_plan(shape, replace(plan, max_legs=k, tau_adaptive=False),
+                          pred_odds, probs)
+        if not got:
+            continue
+        if mean_expected_payout(got[1], pred_odds) <= min_mean_payout:
+            break          # 点数を増やすほど平均は下がる一方なので、ここで打ち切る
+        best = got
+    return best
+
+
 def _build_plan(shape: "RaceShape", plan: Plan,
                 pred_odds: Mapping, probs: Mapping):
     """買い目と賭け金。賭け金 0 円の点（`allocate` が落とす）は返さない。"""
@@ -1777,7 +2058,8 @@ def _build_plan(shape: "RaceShape", plan: Plan,
 def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
                              pred_odds: Mapping, probs: Mapping,
                              n_entries: int = 7,
-                             min_mean_payout: float = MIN_MEAN_PAYOUT):
+                             min_mean_payout: float = MIN_MEAN_PAYOUT,
+                             order_probs: Mapping | None = None):
     """買い目と賭け金を作る。**入稿ゲートに落ちるなら代替の買い方へ切り替える。**
 
     戻り値は `(legs, stakes, plan_used)`。組めなければ `None`。
@@ -1795,6 +2077,17 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         #    ゲートを割るなら差し替えないので、ここで母集団は動かない。
         legs, stakes = apply_line_swap(shape, pl, got[0], got[1],
                                        pred_odds, probs, min_mean_payout)
+        # 🔴 **並べ替えはさらにその後**（2026-09-11）。差し替えが「どの3車を買うか」を
+        #    決めてから、「その3車をどの並びで買うか」を直す。順序が逆だと
+        #    差し替え先の並びを評価できない。こちらもゲートを割るなら掛けない。
+        #    ⚠️ `order_probs` が無ければ何もしない（後方互換・欠測は素通し）。
+        legs, stakes = apply_order_swap(pl, legs, stakes, pred_odds,
+                                        order_probs, min_mean_payout)
+        # 🔴 **押さえ目は最後**（2026-09-11）。買い目と並びが確定してから
+        #    「まだ買っていない人気薄の3着」を固定100円で足す。ここも
+        #    ゲートを割るなら足さない＝在庫は1件も減らない。
+        legs, stakes = apply_osae(shape, pl, legs, stakes, pred_odds, probs,
+                                  min_mean_payout)
         return legs, stakes, pl
 
     if n_entries != 7:
@@ -1805,6 +2098,12 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         got = _build_plan(shape, pl, pred_odds, probs)
         return _done(got, pl) if got else None
     def _build(pl: Plan):
+        # 🔴 τ適応は**7車だけ**（上の `n_entries != 7` で既に分岐済み）。
+        #    ゲートを通る最大点数を探し、見つからなければ従来どおり組む。
+        if pl.tau_adaptive:
+            got = _tau_adaptive_legs(shape, pl, pred_odds, probs, min_mean_payout)
+            if got:
+                return got
         return _build_plan(shape, pl, pred_odds, probs)
 
     got = _build(plan)
