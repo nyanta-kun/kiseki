@@ -134,6 +134,46 @@ fi
   >> "$LOG_DIR/odds_snapshot_${TODAY}.log" 2>&1 \
   || echo "[$(date '+%H:%M:%S')] 夕方オッズ退避に失敗（継続）"
 
+# ═══════════════════════════════════════════════════════════════════════
+# 🔴🔴 2026-09-11: 旧ランクの候補生成を止めた（ユーザー判断）
+#
+# 対象は 7H1 / 7H2 / 9H1 / 7T1 / 7T3 の5本。**コードは消していない**ので、
+# この5行のコメントを外せばそのまま戻る。
+#
+# 【なぜ止めたか】
+# 🔴 **旧ランク15種は 2026-08-28 を最後に1件も入稿していない**
+#    （`netkeirin_settings.enabled` が全て false）。にもかかわらず毎朝
+#    候補だけを作り続けており、**2026-09-11 の実測でこの5本に 36分**かかっていた:
+#
+#      工程   09-10      09-11
+#      7H1    1分22秒 →  6分50秒
+#      7H2    1分12秒 →  6分34秒
+#      9H1    1分11秒 →  6分52秒
+#      7T1    1分12秒 →  7分30秒
+#      7T3    1分15秒 →  約8分
+#      型ラボ到達  07:12  →  07:52（**40分遅れ**）
+#
+# 🔴 遅くなる機序: `build_*_candidates.py` は **RSS 600〜700MB**（実測 679MB）を使う。
+#    VPS は実メモリ 1.9GB で常駐サービスが約600MB使うため**スワップに落ちる**
+#    （実測 377MB）。売らない商品のために当日の入稿が遅れていた。
+#
+# 【復活させる価値が無いことは測ってある】
+# 🔴 `docs/type_lab/old_rank_revival_2026_09_11.md`:
+#    同一レースのペア比較で **10万+ は旧7種すべてが型ラボの `{型}_sign` に負ける**
+#    （7M1 −1.72pt / 7H1 −1.81pt / 7T2 −2.10pt / 7S −3.9pt・いずれも CI が 0 を跨がない）。
+#    旧の実売865商品での 10万+ は **2件（0.23%）**・30万+ は 0件。
+#    「旧だけが高額を当てている」ように見えたのは `picks_history`＝**ゲート未通過の候補**
+#    を見ていたため。
+#
+# 【止めても壊れないことの確認（2026-09-11）】
+# 🟢 型ラボ本体 `build_type_lab_picks.py` は**コメントで触れているだけ**で実行時依存なし。
+# 🟢 元から `|| echo ...（継続）` 設計＝失敗しても日次は続く。止めても同じ。
+# 🟢 `backfill_*` / `rebuild_*_walkforward_pg.py` / `exp_*` は手動実行のみ。
+# 🟢 **モデル（`lgbm_wt_favbust` / `lgbm_upset_screen` / `odds_tf_n7`）は残る。**
+#    「旧ランクの発想を型ラボへ移植できるか」の検証には影響しない。
+#
+# ⚠️ 戻すときは**なぜ戻すか**を書くこと。件数ではなく当日の入稿時刻を犠牲にする。
+# ═══════════════════════════════════════════════════════════════════════
 # 1c. 7H1（穴推奨・本命バスト型）の候補を夕方の最新データで作り直す。
 #     ⚠️ **この早期 exit より前に置くこと。** 下の「朝に◎◯未公開だったレース」の
 #     抽出が0件だと 2. で exit 0 して以降が丸ごと走らないため、後ろに置くと
@@ -143,29 +183,29 @@ fi
 #     出力は _night 側。notify_prerace_wt.py は昼→夜の順に読み race_key で重複排除
 #     するので、**朝に出た分の買い目は上書きされない**（既に入稿済みのため正しい）。
 echo "[$(date '+%H:%M:%S')] 7H1（穴推奨）候補を夕方データで再生成..."
-.venv/bin/python3 scripts/build_7h1_candidates.py --date "$TODAY" \
-  --out "data/picks/wave_picks_wt_${TODAY}_night_s7h1_candidates.json" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7H1候補の夕方再生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7h1_candidates.py --date "$TODAY" \
+#   --out "data/picks/wave_picks_wt_${TODAY}_night_s7h1_candidates.json" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7H1候補の夕方再生成に失敗（他ランクには影響しないため継続）"
 
 # 7H2（穴推奨・印なし2軸）も夕方データで作り直す。7H2 の軸は WT公式印の
 # 付いていない車から選ぶので、朝に印が未確定だったレースは朝の生成では
 # 印なし集合が正しく取れていない（全車フォールバックになる）。
 # 出力は _night 側で、昼→夜の順に読んで race_key で重複排除される。
 echo "[$(date '+%H:%M:%S')] 7H2（穴推奨・印なし2軸）候補を夕方データで再生成..."
-.venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
-  --out "data/picks/wave_picks_wt_${TODAY}_night_s7h2_candidates.json" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7H2候補の夕方再生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
+#   --out "data/picks/wave_picks_wt_${TODAY}_night_s7h2_candidates.json" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7H2候補の夕方再生成に失敗（他ランクには影響しないため継続）"
 
 # 9H1（穴推奨・9車高配当）も夕方データで作り直す。9H1 の選別に使う波乱スコアは
 # ライン構成と WT公式印を見るので、朝に印・ラインが未確定だったレースは朝の生成で
 # 拾えていない。出力は _night 側で、昼→夜の順に読んで race_key で重複排除される。
 echo "[$(date '+%H:%M:%S')] 9H1（穴推奨・9車）候補を夕方データで再生成..."
-.venv/bin/python3 scripts/build_9h1_candidates.py --date "$TODAY" \
-  --out "data/picks/wave_picks_wt_${TODAY}_night_s9h1_candidates.json" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 9H1候補の夕方再生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_9h1_candidates.py --date "$TODAY" \
+#   --out "data/picks/wave_picks_wt_${TODAY}_night_s9h1_candidates.json" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 9H1候補の夕方再生成に失敗（他ランクには影響しないため継続）"
 
 # 2. 朝に情報不足だったレースだけを抽出（0件なら以降を行わず正常終了）
 echo "[$(date '+%H:%M:%S')] 朝8:00に◎◯未公開だったレースを抽出..."
@@ -220,14 +260,14 @@ echo "[$(date '+%H:%M:%S')] S7（Sランク）朝夜統合再選出..."
 echo "[$(date '+%H:%M:%S')] 7T1/7T3 候補の再生成（夕方の入力で引き直す）..."
 #     ⚠️ ファイル名は展開せずベタ書きする。シェル変数で組むと綴りを間違えても
 #        エラーにならず、**朝の候補へ黙って落ちる**（この節が防ぎたい状態そのもの）。
-.venv/bin/python3 scripts/build_7t1_candidates.py --date "$TODAY" \
-  --out "data/picks/wave_picks_wt_${TODAY}_night_s7t1_candidates.json" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7T1候補の再生成に失敗（朝の候補を使うため継続）"
-.venv/bin/python3 scripts/build_7t3_candidates.py --date "$TODAY" \
-  --out "data/picks/wave_picks_wt_${TODAY}_night_s7t3_candidates.json" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7T3候補の再生成に失敗（朝の候補を使うため継続）"
+# .venv/bin/python3 scripts/build_7t1_candidates.py --date "$TODAY" \
+#   --out "data/picks/wave_picks_wt_${TODAY}_night_s7t1_candidates.json" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7T1候補の再生成に失敗（朝の候補を使うため継続）"
+# .venv/bin/python3 scripts/build_7t3_candidates.py --date "$TODAY" \
+#   --out "data/picks/wave_picks_wt_${TODAY}_night_s7t3_candidates.json" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7T3候補の再生成に失敗（朝の候補を使うため継続）"
 
 # 3b. 🔴 **netkeirin への入稿はここでは行わない**（2026-08-07 に分離）。
 #     このスクリプトは 16:00 に走るが、ミッドナイト開催（第1R 20時）の三連複は
