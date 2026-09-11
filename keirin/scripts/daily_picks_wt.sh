@@ -227,6 +227,46 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 予想生成: 対象レース無し or 失敗（継続）"
 
+# ═══════════════════════════════════════════════════════════════════════
+# 🔴🔴 2026-09-11: 旧ランクの候補生成を止めた（ユーザー判断）
+#
+# 対象は 7H1 / 7H2 / 9H1 / 7T1 / 7T3 の5本。**コードは消していない**ので、
+# この5行のコメントを外せばそのまま戻る。
+#
+# 【なぜ止めたか】
+# 🔴 **旧ランク15種は 2026-08-28 を最後に1件も入稿していない**
+#    （`netkeirin_settings.enabled` が全て false）。にもかかわらず毎朝
+#    候補だけを作り続けており、**2026-09-11 の実測でこの5本に 36分**かかっていた:
+#
+#      工程   09-10      09-11
+#      7H1    1分22秒 →  6分50秒
+#      7H2    1分12秒 →  6分34秒
+#      9H1    1分11秒 →  6分52秒
+#      7T1    1分12秒 →  7分30秒
+#      7T3    1分15秒 →  約8分
+#      型ラボ到達  07:12  →  07:52（**40分遅れ**）
+#
+# 🔴 遅くなる機序: `build_*_candidates.py` は **RSS 600〜700MB**（実測 679MB）を使う。
+#    VPS は実メモリ 1.9GB で常駐サービスが約600MB使うため**スワップに落ちる**
+#    （実測 377MB）。売らない商品のために当日の入稿が遅れていた。
+#
+# 【復活させる価値が無いことは測ってある】
+# 🔴 `docs/type_lab/old_rank_revival_2026_09_11.md`:
+#    同一レースのペア比較で **10万+ は旧7種すべてが型ラボの `{型}_sign` に負ける**
+#    （7M1 −1.72pt / 7H1 −1.81pt / 7T2 −2.10pt / 7S −3.9pt・いずれも CI が 0 を跨がない）。
+#    旧の実売865商品での 10万+ は **2件（0.23%）**・30万+ は 0件。
+#    「旧だけが高額を当てている」ように見えたのは `picks_history`＝**ゲート未通過の候補**
+#    を見ていたため。
+#
+# 【止めても壊れないことの確認（2026-09-11）】
+# 🟢 型ラボ本体 `build_type_lab_picks.py` は**コメントで触れているだけ**で実行時依存なし。
+# 🟢 元から `|| echo ...（継続）` 設計＝失敗しても日次は続く。止めても同じ。
+# 🟢 `backfill_*` / `rebuild_*_walkforward_pg.py` / `exp_*` は手動実行のみ。
+# 🟢 **モデル（`lgbm_wt_favbust` / `lgbm_upset_screen` / `odds_tf_n7`）は残る。**
+#    「旧ランクの発想を型ラボへ移植できるか」の検証には影響しない。
+#
+# ⚠️ 戻すときは**なぜ戻すか**を書くこと。件数ではなく当日の入稿時刻を犠牲にする。
+# ═══════════════════════════════════════════════════════════════════════
 # --- 7H1（穴推奨・本命バスト型）候補生成（2026-08-06 新設）---
 # 7H1 は既存6ランクと**入口が違う**。既存は wave-picks-wt が作る選手単位の予測から
 # 軸2車を選ぶが、7H1 はレース単位のバスト予測モデル（lgbm_wt_favbust）を使うため
@@ -235,9 +275,9 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
 # ⚠️ ここは本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
 #    過去分の再構築で本番モデルを使うと in-sample になるので backfill 側は vintage を使うこと。
 # 0件でも継続する（絶対閾値による選別なので該当なしの日が約7%ある＝正常）。
-.venv/bin/python3 scripts/build_7h1_candidates.py --date "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7H1候補生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7h1_candidates.py --date "$TODAY" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7H1候補生成に失敗（他ランクには影響しないため継続）"
 
 # --- 7H2（穴推奨・印なし2軸の高配当）候補生成（2026-08-10 新設）---
 # 7H1 と同じく入口が独立している。こちらはレース単位の学習モデルを使わず、
@@ -245,18 +285,18 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
 # **WT公式印の付いていない車**から選ぶ。エントロピー（荒れる読み）で7車の約20%へ絞り、
 # さらに◎の3着内率シェアが厚い上位20%を除外する。実測 約10.2件/日。
 # ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
-.venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7H2候補生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7H2候補生成に失敗（他ランクには影響しないため継続）"
 
 # --- 9H1（穴推奨・9車高配当）候補生成（2026-08-08 新設）---
 # 7H1 と同じく入口が独立している。こちらはレース単位の波乱スコア
 # （lgbm_upset_screen・6/7/9車の統合学習）でレースを選ぶ。
 # ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
 # 9車立ては1日10件前後しかなく、選別後は 0〜3件/日。0件の日は正常。
-.venv/bin/python3 scripts/build_9h1_candidates.py --date "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 9H1候補生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_9h1_candidates.py --date "$TODAY" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 9H1候補生成に失敗（他ランクには影響しないため継続）"
 
 # --- 7T1（三連単の高配当枠）候補生成（2026-08-13 新設・旧 7H3 を置換）---
 # 7H1/7H2/9H1 と違い**レース単位の学習モデルを持たない**。既存の3着内率・1着率と
@@ -265,9 +305,9 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
 #    （黙って0件にしない設計）。他ランクには影響しないので日次バッチは継続する。
 # ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
 # 選別後は 13〜14件/日（看板 × 上位2車が別ライン）。0件の日は正常。
-.venv/bin/python3 scripts/build_7t1_candidates.py --date "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7T1候補生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7t1_candidates.py --date "$TODAY" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7T1候補生成に失敗（他ランクには影響しないため継続）"
 
 # --- 7T3（三連単の決勝・中配当枠）候補生成（2026-08-24 新設）---
 # 7T1 と同じ三連単オッズ予測モデルを使うが、**軸を置かない**（帯30倍以上から
@@ -276,9 +316,9 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
 #    結果として同ラインだけを拾う（判定の正本を2箇所に持たないための設計）。
 # ⚠️ 夕方（evening_picks_wt.sh）では作らない。7T1 と同じく**朝1回で当日全開催ぶん**。
 # 選別後は 3〜4件/日（7T1 に譲った後は 1〜2件/日）。0件の日は正常。
-.venv/bin/python3 scripts/build_7t3_candidates.py --date "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 7T3候補生成に失敗（他ランクには影響しないため継続）"
+# .venv/bin/python3 scripts/build_7t3_candidates.py --date "$TODAY" \
+#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
+#   || echo "[$(date '+%H:%M:%S')] 7T3候補生成に失敗（他ランクには影響しないため継続）"
 
 # 「朝夕の推奨」Discord通知（notify_picks.py）は2026-07-31にユーザー要望により廃止。
 # 発走15分前の個別通知（notify_prerace_wt.py）のみ残す。
