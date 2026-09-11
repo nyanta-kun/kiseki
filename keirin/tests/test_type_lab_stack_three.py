@@ -90,9 +90,12 @@ def test_osae_never_touches_one_shot_products_or_trio():
 
     一撃商品は表示的中こそ上がるが、KPI である払戻中央を 3〜5% 削る（DESIGN 2.1）。
     """
-    assert OSAE_PLANS == {"A_hit", "B_hit", "C_hit", "E_hit", "F_hit"}
+    # 🔴 2026-09-11: ユーザー判断で**空＝無効（様子見）**。確認窓で 0 と区別できず
+    #    （McNemar p=0.125）、ガミが +1〜7件増えるため。機構は残してある。
+    #    戻すときも一撃商品と三連複は**入れないこと**。
     for key in ("A_ana", "F_sign", "F_pay", "A_trio", "D_hit", "F_line"):
         assert key not in OSAE_PLANS, key
+    assert OSAE_PLANS <= {"A_hit", "B_hit", "C_hit", "E_hit", "F_hit"}
 
 
 def test_osae_only_adds_long_shots_at_a_flat_stake():
@@ -105,6 +108,9 @@ def test_osae_only_adds_long_shots_at_a_flat_stake():
     assert OSAE_STAKE * OSAE_MIN_PRED_ODDS >= 10_000, "押さえが予算を超えられない"
     shape = _shape()
     plan = PLANS["F_hit"]
+    if plan.key not in OSAE_PLANS:
+        import pytest
+        pytest.skip("押さえ目は現在無効（様子見）。機構の検査は戻したときに有効化する")
     po = {c: 30.0 for c in itertools.permutations(CARS, 3)}
     po[(1, 2, 7)] = 400.0
     po[(2, 1, 7)] = 300.0
@@ -131,6 +137,9 @@ def test_osae_backs_off_when_it_would_break_the_gate():
     """
     shape = _shape()
     plan = PLANS["F_hit"]
+    if plan.key not in OSAE_PLANS:
+        import pytest
+        pytest.skip("押さえ目は現在無効（様子見）")
     # 全点が安く、平均想定払戻がゲートのすぐ上しかない板
     po = {c: 2.05 for c in itertools.permutations(CARS, 3)}
     po[(1, 2, 7)] = 400.0
