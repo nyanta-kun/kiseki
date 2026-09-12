@@ -336,3 +336,71 @@ def test_軸1を買わないプランは型の見解をそのまま使わない(
             if getattr(p, "bust", False) or p.structure == "bust_top"}
     missing = sorted(bust - set(PLAN_VIEWS))
     assert not missing, f"タイトルの見解を上書きしていない: {missing}"
+
+
+def test_型の読みは見解の先頭と一致する():
+    """🔴 `TYPE_READS` は `TYPE_NOTES` の先頭と一致させる（二重管理の防止・2026-09-12）。
+
+    高額枠（`{型}_sign` / `{型}_big`）は `TYPE_READS`（型の読みだけ）を使い、
+    当てにいく商品は `TYPE_NOTES`（読み＋買い方）を使う。**同じ読みを2か所に
+    書いている**ので、片方だけ直すと商品ごとに違う読みが出る。
+    """
+    from src.type_lab_submission import TYPE_NOTES, TYPE_READS
+
+    assert set(TYPE_READS) == set(TYPE_NOTES) == set("ABCDEF")
+    for t in "ABCDEF":
+        assert TYPE_NOTES[t].startswith(TYPE_READS[t]), (
+            f"型{t}: TYPE_READS が TYPE_NOTES の先頭と一致しない")
+        # 買い方の語を読みに混ぜない（混ぜると高額枠で食い違う）
+        for word in ("拾いま", "押さえ", "狙いま", "買わず", "寄せて", "決め打ち"):
+            assert word not in TYPE_READS[t], f"型{t}の読みに買い方（{word}）が入っている"
+
+
+def test_高額枠は型の読みだけを見解に使う():
+    """🔴 `{型}_sign` / `{型}_big` は `TYPE_NOTES` をそのまま使わない（2026-09-12）。
+
+    実測（実入稿）で食い違っていた例:
+      `B_big`  見解「上位2車を信頼したうえで…広めに拾います」↔ 軸1を1点も買わない・2点
+      `D_sign` 見解「3車がそろうことだけを狙います」（三連複の説明）↔ 商品は三連単
+    """
+    from src.type_lab_submission import PLAN_NOTES, TYPE_NOTES, TYPE_READS
+
+    for t in "ABCDEF":
+        for suffix in ("_sign", "_big"):
+            key = f"{t}{suffix}"
+            assert key in PLAN_NOTES, f"{key} の見解が型の文のままになっている"
+            assert PLAN_NOTES[key].startswith(TYPE_READS[t])
+            # ⚠️ 型F は `TYPE_NOTES` に買い方が入っていない（2026-09-03 に是正済み）ので
+            #    読みと一致する。**それ以外の型では必ず短くなる**（買い方を落とすため）。
+            if TYPE_NOTES[t] != TYPE_READS[t]:
+                assert PLAN_NOTES[key] != TYPE_NOTES[t], \
+                    f"{key} が買い方入りの見解をそのまま使っている"
+        # `_big` は軸1を買わないことを見解でも断る
+        assert "崩れる側" in PLAN_NOTES[f"{t}_big"]
+
+
+def test_買い目に無い軸を軸として案内しない():
+    """🔴 `_sign` は軸2が1点も入らないことがある（実測 2.2%・2026-09-12）。
+
+    実例 2026-09-12 川崎10R `C_sign`: 本文「二軸は、◎1番・○3番です」に対し
+    印 1◎ 4▲ 6△ 7△・買い目 1-4-7 / 4-1-6 で **3番を1点も買っていない**。
+    `marks_for` は買っている車から印を振り直すので印は正しく、文だけが食い違っていた。
+    """
+    from src.type_lab_submission import axis_note, build_comment, marks_for
+
+    legs = [{"combo": "1-4-7", "stake": 8600, "pred_odds": 17.5},
+            {"combo": "4-1-6", "stake": 1400, "pred_odds": 106.4}]
+    # 軸2（3番）が買い目に無い
+    note = axis_note("C_sign", 1, 3, legs)
+    assert "○3番" not in note, "買っていない車を ○ として案内している"
+    assert "3番 が入る目は買い目にありません" in note
+    # 印にも ○ は無い（既存の挙動）
+    assert "○" not in "".join(marks_for("1-3-4-7-6-2-5", legs, 1, 3).values())
+    # 本文全体でも矛盾が出ない
+    body = build_comment("C_sign", "C", 1, 3, legs, "trifecta")
+    assert "◎1番・○3番" not in body
+
+    # 両方入っていれば従来どおり
+    ok = [{"combo": "1-3-4", "stake": 5000, "pred_odds": 20.0},
+          {"combo": "3-1-4", "stake": 5000, "pred_odds": 25.0}]
+    assert axis_note("C_sign", 1, 3, ok).endswith("◎1番・○3番です。")

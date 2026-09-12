@@ -1061,11 +1061,28 @@ SELL_PLANS: tuple[str, ...] = ("A_hit", "A_trio", "A_ana",
 #: ⚠️ 実測と再現: `docs/highpay_5slots_2026_09_06.md`
 HIGHPAY_TYPES: tuple[str, ...] = ("B", "C", "D")
 #: 1日に置く本数。**既存の看板枠 `F_sign`（決勝系・約3本/日）とは別枠**で数える。
-HIGHPAY_SLOTS_PER_DAY = 5
+#:
+#: 🔴 **5 → 10 は「供給源を増やす」変更とセットでしか効かない**（2026-09-12）。
+#:    実測（`docs/type_lab/highpay_slots_measured_2026_09_12.md`・制約込み・両窓）:
+#:
+#:      ① 本数 5→10 だけ                    Δ10万+/日 +0.000〜+0.029  ＝ 実質ゼロ
+#:      ② 軸ゲート落ちを供給源に足すだけ(5本)  +0.032〜+0.091          ＝ 枠が無い
+#:      ①+②（本数10＋供給源追加）            **+0.125〜+0.204（両窓 CI 0跨がず）**
+#:
+#:    機序: 従来の供給源（B/C/D の**日次上限落ち**）は **1日 4.1〜5.7本で飽和**して
+#:    いて現行5枠を既に埋めている（本番実測 4.67本/日＝充填93%）。**枠だけ増やしても
+#:    玉が無い。** 玉を増やす唯一の手が**軸信頼ゲート落ち 12.8本/日**で、
+#:    その呼び出し口は `netkeirin_submit_type_lab.py::run` の `_try_highpay` にある。
+#: ⚠️ 代償は全体の表示的中 **−3.3〜−3.8pt**。既存商品は1件も減らない（純増を検算済み）。
+#: ⚠️ `HIGHPAY_BIG_SLOTS = {2, 4}` は据え置き（ユーザー判断 2026-09-12）なので、
+#:    **6〜10本目は全部 `{型}_sign`（計画15万）**になる。
+#: ⚠️ 前向きの判定基準は `docs/type_lab/PLAN_axis_gate_inventory_2026_09_12.md` §11。
+#:    `HIGHPAY_TYPES` に型F を足す案は**不要**（12セル中8つで CI 0 跨ぎ）。
+HIGHPAY_SLOTS_PER_DAY = 10
 #: 高額枠を置く車数。**これ以外には置かない**（9車は未測定）。
 HIGHPAY_N_ENTRIES = 7
 
-#: 5本の内訳（`HIGHPAY_BIG_TARGET` / `HIGHPAY_BIG_SLOTS`）は
+#: 内訳（`HIGHPAY_BIG_TARGET` / `HIGHPAY_BIG_SLOTS`）は
 #: `SIGNBOARD_N_ENTRIES` の直後にある（`PLANS` を組む前に要るため）。
 #: 高額枠として売りうるプラン。
 HIGHPAY_PLAN_KEYS: frozenset[str] = (
