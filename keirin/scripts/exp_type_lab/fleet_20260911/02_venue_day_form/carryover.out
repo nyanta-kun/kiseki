@@ -1,0 +1,13 @@
+/private/tmp/claude-501/-Users-ysuzuki-GitHub-kiseki/da42d5d7-4330-448a-8026-572403e4f747/scratchpad/fleet/02_venue_day_form/carryover.py:5: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  d = pd.read_sql("""
+/private/tmp/claude-501/-Users-ysuzuki-GitHub-kiseki/da42d5d7-4330-448a-8026-572403e4f747/scratchpad/fleet/02_venue_day_form/carryover.py:17: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  print(d.groupby("day_index").apply(lambda g: pd.Series({"days": len(g), "carry": (g.n_prev / g.n).mean()})).round(3))
+会場×日 (day_index>=2, 2025-01〜): 3169
+前日も同開催に出走していた選手の割合: 平均 0.980  中央 0.988  p10 0.961
+             days  carry
+day_index               
+2          1540.0  0.982
+3          1537.0  0.980
+4            90.0  0.939
+5             1.0  0.556
+6             1.0  0.667

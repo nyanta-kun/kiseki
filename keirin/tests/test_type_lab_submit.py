@@ -412,7 +412,13 @@ def test_daily_cap_is_checked_just_before_submitting():
     """
     src = SUBMIT_PY.read_text(encoding="utf-8")
     cap = src.index("if cap_budget is not None and not _exempt(row)")
-    sub = src.index("ok, msg = submit_row(")
+    # 🔴 **`run` の入稿ループの中の `submit_row` を見る**（2026-09-12）。
+    #    ① `_plan_attempts` にも `for row, rj in decided:` がある
+    #    ② 高額枠のヘルパー `_try_highpay` はループより手前で定義される
+    #    ——どちらもファイル先頭から探すと当たる（位置だけで挙動は同じ）。
+    run_at = src.index("def run(")
+    loop = src.index("for row, rj in decided:", run_at)
+    sub = src.index("ok, msg = submit_row(", loop)
     closed = src.index("SKIP_CLOSED,")
     assert closed < cap < sub, "上限の判定位置が違う（他の見送りの後・入稿の直前であること）"
 
@@ -837,13 +843,27 @@ def test_型ラボ自身が取ったレースには出さない():
     #    2つ目のプランが通る／既に取った行を再判定する、のどちらかが起きる。
     assert 'if rk in taken_by_type_lab:' in src, "_reject で見ていません"
     i = src.index("for row, rj in decided:")
-    loop = src[i:i + 2500]
+    # 🔴 ループの末尾まで見る（2026-09-12）。軸信頼ゲートの枝が伸びたので
+    #    固定長 2500 文字では入稿成功の枝まで届かない。
+    loop = src[i:]
     assert "if race_key in taken_by_type_lab:" in loop, "入稿ループで見ていません"
     # 入稿できたら同じ実行の中でも二度目を止める（`already` は開始時の断面）
     assert "taken_by_type_lab.add(race_key)" in src, \
         "同じ実行の中で2つ目のプランが通ってしまいます"
-    assert src.index("if race_key in taken_by_type_lab:") \
-        < src.index("taken_by_type_lab.add(race_key)"), "判定より後に登録しています"
+    assert loop.index("if race_key in taken_by_type_lab:") \
+        < loop.index("taken_by_type_lab.add(race_key)"), "判定より後に登録しています"
+    # 🔴 **高額枠のヘルパーも自分で重複を見る**（2026-09-12）。②軸信頼ゲートの
+    #    呼び出し口はループの重複判定より**手前**にあるので、ヘルパーが見なければ
+    #    同じ実行の中で1レース2商品になりうる。
+    import ast
+    helper = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "_try_highpay")
+    body = ast.unparse(helper)
+    assert "if race_key in taken_by_type_lab:" in body, \
+        "`_try_highpay` が重複ガードを持っていません（1レース2商品になります）"
+    assert body.index("if race_key in taken_by_type_lab:") \
+        < body.index("taken_by_type_lab.add(race_key)"), \
+        "`_try_highpay` が登録より後にガードしています"
 
 
 class _FakeCursor:
@@ -1262,7 +1282,15 @@ def test_highpay_types_are_the_measured_ones():
     assert HIGHPAY_PLAN_KEYS == {"B_sign", "C_sign", "D_sign",
                                  "B_big", "C_big", "D_big"}
     assert HIGHPAY_PLAN_KEYS <= SELLABLE_PLAN_KEYS, "売りうるプランとして登録されていない"
-    assert HIGHPAY_SLOTS_PER_DAY == 5
+    # 🔴 5 → 10（2026-09-12・ユーザー判断）。**本数だけ増やしても効かない**
+    #    （Δ10万+/日 +0.000〜+0.029）。効くのは供給源に軸ゲート落ちを足した組で
+    #    +0.125〜+0.204（両窓 CI 0跨がず）。呼び出し口は
+    #    `netkeirin_submit_type_lab.run._try_highpay` の2か所
+    #    （`test_highpay_is_tried_from_both_gates` が固定している）。
+    #    実測: `docs/type_lab/highpay_slots_measured_2026_09_12.md`
+    assert HIGHPAY_SLOTS_PER_DAY == 10
+    # 🔴 **型F を足してはいけない**（12セル中8つで CI 0 跨ぎ＝効果が無いのに
+    #    表示的中だけ下げる）。軸ゲート落ちの在庫は B/C/D が 51.3%・型F は 22.5%。
     # 7車だけ（9車は未測定）
     assert HIGHPAY_N_ENTRIES == 7
     for t in "ABCDEF":
@@ -1271,8 +1299,58 @@ def test_highpay_types_are_the_measured_ones():
         assert highpay_plan_for(t, 7) is None, f"対象外の型に高額枠を置いている: {t}"
 
 
+def test_highpay_is_tried_from_both_gates():
+    """🔴 高額枠の差し替えは **①日次上限 ②軸信頼ゲート の両方**から試す（2026-09-12）。
+
+    ②を足したのは①の供給が枯れているため。B/C/D の上限落ちは 1日 4.1〜5.7本で
+    飽和しており（本番実測 4.67本/日＝充填93%）、`HIGHPAY_SLOTS_PER_DAY` を
+    5→10 にしても玉が無い（Δ10万+/日 +0.000〜+0.029＝実質ゼロ）。
+    玉を増やす唯一の手が軸ゲート落ち 12.8本/日。
+    実測: `docs/type_lab/highpay_slots_measured_2026_09_12.md`
+
+    🔴 **片方の呼び出しが消えると「本数だけ増えた」状態に静かに戻る**
+    （例外もログも出ず、10万+ だけが元に戻る）。だから構造で固定する。
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "netkeirin_submit_type_lab.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    run = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "run")
+    helper = [n for n in ast.walk(run)
+              if isinstance(n, ast.FunctionDef) and n.name == "_try_highpay"]
+    assert len(helper) == 1, "`run` の中に `_try_highpay` が無い"
+
+    calls = [n for n in ast.walk(run)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id == "_try_highpay"]
+    assert len(calls) == 2, (
+        f"`_try_highpay` の呼び出しが {len(calls)} か所。"
+        "①日次上限 ②軸信頼ゲート の2か所から呼ぶこと")
+
+    # ② の呼び出しが `bucket == "axis_gate"` の枝の中にあること
+    axis_branch = [
+        n for n in ast.walk(run)
+        if isinstance(n, ast.If) and any(
+            isinstance(c, ast.Constant) and c.value == "axis_gate"
+            for c in ast.walk(n.test))
+        and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == "_try_highpay" for c in ast.walk(n))]
+    assert axis_branch, "軸信頼ゲートの枝から `_try_highpay` を呼んでいない"
+
+    # 🔴 高額枠は上限の枠を消費しない（`n_capped` を増やさない）
+    body = ast.unparse(helper[0])
+    assert "n_capped" not in body, "高額枠が日次上限の枠を消費している"
+
+
 def test_highpay_alternates_sign_and_big():
-    """🔴 **5本の内訳は 3:2**（偶数本目が「特大狙い」）。ユーザー判断②（2026-09-06）。
+    """🔴 **内訳は「偶数本目が特大狙い」**（2・4本目のみ）。ユーザー判断②（2026-09-06）。
+
+    ⚠️ 本数を 10 にしても `HIGHPAY_BIG_SLOTS = {2, 4}` は据え置き（ユーザー判断
+       2026-09-12）なので、**6〜10本目は全部 `{型}_sign`（計画15万）**になる。
+       `_big` を外すと 10万+ と表示的中が両方改善する代わりに 30万+ を3〜6割失う
+       （`PLAN_axis_gate_inventory_2026_09_12.md` §12・**未実施**）。
 
     偶数本目にしているのは**短い日でも比率が保たれる**から
     （3本しか出ない日でも sign / big / sign と1本は特大になる）。
@@ -1282,7 +1360,9 @@ def test_highpay_alternates_sign_and_big():
                               HIGHPAY_SLOTS_PER_DAY, PLANS, highpay_plan_for)
 
     got = [highpay_plan_for("B", 7, i) for i in range(HIGHPAY_SLOTS_PER_DAY)]
-    assert got == ["B_sign", "B_big", "B_sign", "B_big", "B_sign"], got
+    assert got[:5] == ["B_sign", "B_big", "B_sign", "B_big", "B_sign"], got
+    # 6本目以降は全部 `_sign`（`HIGHPAY_BIG_SLOTS` は据え置きなので増えない）
+    assert all(g == "B_sign" for g in got[5:]), got
     assert sum(1 for g in got if g.endswith("_big")) == len(HIGHPAY_BIG_SLOTS)
     # 🔴 `_big` は「軸1を外して計画払戻を上げる」＝30万超が出る唯一の形
     for t in ("B", "C", "D"):
@@ -1315,22 +1395,41 @@ def test_big_plan_never_buys_the_first_axis():
     assert len(legs) < len(legs_sign), (len(legs), len(legs_sign))
 
 
-def test_highpay_is_only_reachable_from_the_daily_cap_branch():
-    """🔴 **高額枠は「上限で捨てる行」の置き換えでしか出ない。**
+def test_highpay_is_only_reachable_from_rejected_rows():
+    """🔴 **高額枠は「売らないと決めた行」の置き換えでしか出ない。**
 
     普通に売れた行の横に足す形にすると 1レース2商品になり、
     通常の入稿ループが看板枠を売り始める（`_load_rows` は高額枠を返さない）。
+
+    ⚠️ 2026-09-12 に呼び出し口が **①日次上限 ②軸信頼ゲート の2つ**になった
+    （旧テスト名は `..._from_the_daily_cap_branch`）。増えたのは**どちらも
+    「売らないと決めた行」**なので上の不変条件は変わらない。
+    本数と供給源の実測は `docs/type_lab/highpay_slots_measured_2026_09_12.md`。
     """
+    import ast
     import inspect
 
     import scripts.netkeirin_submit_type_lab as M
 
     src = inspect.getsource(M.run)
-    i = src.index("n_capped >= cap_budget")
-    j = src.index("SKIP_DAILY_CAP", i)
-    assert "_load_highpay_rows(" in src[i:j], "上限の枝の中で高額枠を読んでいない"
-    assert src.count("_load_highpay_rows(") == 1, "高額枠を上限の枝の外でも読んでいる"
-    assert "ORIGIN_HIGHPAY" in src[i:j], "出自を highpay_fill で記録していない"
+    # 読み込みはヘルパーの中で1回だけ
+    assert src.count("_load_highpay_rows(") == 1, "高額枠を2か所で読んでいる"
+    helper = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "_try_highpay")
+    body = ast.unparse(helper)
+    assert "_load_highpay_rows(" in body, "ヘルパーの外で高額枠を読んでいる"
+    assert "ORIGIN_HIGHPAY" in body, "出自を highpay_fill で記録していない"
+
+    # 🔴 呼び出しは2か所とも**通常の入稿より手前**（＝見送りの枝の中）
+    i = src.index("for row, rj in decided:")
+    loop = src[i:]
+    normal = loop.index("is_conf = confident_key ==")
+    calls = [m for m in range(len(loop))
+             if loop.startswith("_try_highpay(", m)]
+    assert len(calls) == 2, f"呼び出しが {len(calls)} か所（①上限 ②軸ゲート の2つ）"
+    for c in calls:
+        assert c < normal, "通常の入稿より後ろで高額枠を出している（1レース2商品）"
+
     # 通常の候補には混ざらない
     load = inspect.getsource(M._load_rows)
     assert "highpay" not in load, "通常の候補に高額枠が混ざっている"

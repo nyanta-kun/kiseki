@@ -134,8 +134,27 @@ from scripts.netkeirin_submit_wt import (                    # noqa: E402
 #:    （`netkeirin_submit_wt.approve_and_submit`）が送る値を決めるので、
 #:    `build_bet_detail(..., act_type=...)` で**商品と一緒に持ち回る**。
 #:    ⚠️ 「自信あり」に選ばれたレースはそちらが優先される（1日1件の明示的な
-#:       選定なので、複数可の穴狙いが譲る）。実際には `F_pay` の Σp は低く
-#:       自信ありに選ばれることはほぼ無い。
+#:       選定なので、複数可の穴狙いが譲る）。
+#:
+#: 🔴 **「一撃商品が自信ありに選ばれることはほぼ無い」は 2026-09-02 以降は誤り**
+#:    （2026-09-12 に是正）。旧記述は「`F_pay` の Σp は低いから」という理屈だったが、
+#:    **PR#445 で自信ありの規則が「Σp 最大」→「発走18時前 ∧ 合成3倍以上 ∧ EV 最大」へ
+#:    変わって向きが逆になった**——`合成3倍以上` のゲートは当たりやすい帯
+#:    （合成 2.0〜2.5倍）を弾いて高配当側を残すため、一撃商品が選ばれやすい。
+#:    実測（`netkeirin_submissions.is_confident`・2026-09-02〜09-12 の11件）:
+#:      `E_hit` 5 / **`F_sign` 2** / `A_ana` 1 / `A_trio` 1 / `C_hit` 1 / `D_hit` 1
+#:    ＝ **11件中3件（27%）が一撃商品**。`F_sign` は設計上 表示的中 約4.76%
+#:    （`DESIGN.md` 2.1）なので、その日は「自信あり」が最も当たらない商品に付き、
+#:    同時に穴狙いアイコンが消える。
+#: 🟢 **これは仕様として維持する**（2026-09-12 ユーザー判断）。PR#445 は自信ありを
+#:    「当たりやすい1本」から**「大きく獲る1本」へ意図的に再定義**した変更
+#:    （表示的中 33.8→18.1%・払戻中央 1.5〜2倍・10万+ 0→5件）なので、
+#:    一撃商品が選ばれるのは意図と整合する。**頻度の見積もりだけが古かった。**
+#: ⚠️ 自信ありの規則を次に触るときは、この相互作用（穴狙いアイコンを上書きする）を
+#:    必ず併せて見ること。規則の正本は `src/confident_pick.py`。
+#: ⚠️ **高額枠（`{型}_sign` / `{型}_big` の入稿経路）は自信ありの母集団に入らない。**
+#:    `_choose_confident` が見るのは `_plan_attempts(decided, ...)`＝通常商品の行だけで、
+#:    高額枠は `_load_highpay_rows` から別に読むため。＝ 枠を増やしても競合しない。
 ACT_TYPE_BY_PLAN: dict[str, str] = {
     "A_hit": ACT_TYPE_DEFAULT,
     "A_trio": ACT_TYPE_DEFAULT,
@@ -925,6 +944,79 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             _plan_attempts(decided, cap_budget, _exempt))
     confident_done: tuple[str, str] | None = None
 
+    # ── 高額枠（`{型}_sign` 計画15万 / `{型}_big` 軸1外し×計画40万）の差し替え ──
+    #
+    # 🔴 **呼び出し口は2つある**（2026-09-12・`docs/type_lab/PLAN_axis_gate_inventory_2026_09_12.md`）:
+    #      ① 日次上限で捨てる行（2026-09-06 から）
+    #      ② **軸信頼ゲートで落ちる行**（2026-09-12 追加）
+    #    ②を足したのは、①の供給が枯れていたため。B/C/D の上限落ちは
+    #    **1日 4.1〜5.7本で飽和**しており（本番実測 4.67本/日＝充填93%）、
+    #    `HIGHPAY_SLOTS_PER_DAY` を 5→10 にしても**玉が無い**
+    #    （Δ10万+/日 +0.000〜+0.029＝実質ゼロ）。玉を増やす唯一の手が
+    #    **軸ゲート落ち 12.8本/日**で、本数と供給源を両方直すと
+    #    **Δ10万+/日 +0.125〜+0.204（両窓とも CI が 0 を跨がない）**。
+    #    実測: `docs/type_lab/highpay_slots_measured_2026_09_12.md`
+    #
+    # ⚠️ **上限の枠は消費しない**（`n_capped` を増やさない＝枠外と同じ扱い）。
+    # ⚠️ 型・車数の判定は `highpay_plan_for` が唯一の正本。型A/E/F と9車はここで
+    #    None になるので、軸ゲート落ちのうち使えるのは B/C/D（実測 51.3%）だけ。
+    #    🔴 **`HIGHPAY_TYPES` に型F を足してはいけない**（12セル中8つで CI 0 跨ぎ＝
+    #    効果が無いのに表示的中だけ下げる。同文書 §10）。
+    # ⚠️ ループは軸信頼の高い順なので、**従来の供給（上限落ち）が先に枠を取る**。
+    #    軸ゲート落ちは残った枠を埋める側＝既存の挙動を変えない。
+    def _try_highpay(row: dict, race_key: str, venue: str, race_no: int) -> str:
+        """高額枠へ差し替えられるなら出す。
+
+        returns:
+          "ok"     … 高額枠として入稿した（呼び出し側は本来の見送りを記録しない）
+          "failed" … 出そうとして netkeirin 側で失敗した（`bump("failed")` 相当）
+          "none"   … 対象外（呼び出し側は本来の見送りをそのまま記録する）
+        """
+        nonlocal n_highpay, highpay_rows, n_ok
+        # 🔴🔴 **重複ガードはここに置く**（2026-09-12）。②軸信頼ゲートの呼び出し口は
+        #    ループの `if race_key in taken_by_type_lab:` より**手前**にあるので、
+        #    ここで見ないと **同じ実行の中で1レース2商品**になりうる
+        #    （`already` は開始時の断面なので止められない）。
+        #    ①上限の枝はこの判定より後ろなので二重だが、両方の口を1か所で守るため
+        #    ヘルパー側に置く。`tests/test_type_lab_submit.py` が固定している。
+        if race_key in taken_by_type_lab:
+            return "none"
+        if n_highpay >= HIGHPAY_SLOTS_PER_DAY:
+            return "none"
+        if highpay_rows is None:
+            highpay_rows = _load_highpay_rows(day)
+            print(f"[type_lab_submit] 高額枠 残り "
+                  f"{HIGHPAY_SLOTS_PER_DAY - n_highpay}本"
+                  f"（本日 {n_highpay}本 出済み・"
+                  f"候補 {len(highpay_rows)}レース）", flush=True)
+        want = highpay_plan_for(row.get("type_label"),
+                                row.get("n_entries"), n_highpay)
+        avail = highpay_rows.get(race_key) or {}
+        # 🔴 **狙いの行が無ければもう片方で出す**（`{型}_big` は 2026-09-06
+        #    新設なので、生成が回る前の日は行が無い）。枠を空けるより
+        #    商品を出す側へ倒す——ゲートの「判定できないものは通す」と同じ。
+        hp = avail.get(want) or next(iter(avail.values()), None)
+        if hp is None or (race_key, str(hp["plan_key"])) in already:
+            return "none"
+        hp_plan = str(hp["plan_key"])
+        hp_reason = _gate_reason(hp)
+        if hp_reason is not None:
+            # 高額枠として出せない（想定払戻・1点オッズ）。本来の見送りへ落ちる。
+            skip(race_key, hp_plan, session, hp_reason[0], hp_reason[1],
+                 venue, race_no, quiet=True)
+            return "none"
+        ok, msg = submit_row(hp, session, client, dry_run,
+                             show_detail=dry_run and n_ok < show,
+                             skip=skip, origin=ORIGIN_HIGHPAY)
+        if not ok:
+            return "failed"
+        n_highpay += 1
+        taken_by_type_lab.add(race_key)
+        n_ok += 1
+        titles.append(f"{venue}{race_no}R({hp_plan}) 高額枠 {msg}")
+        submitted.append((str(venue), hp_plan))
+        return "ok"
+
     for row, rj in decided:
         race_key = str(row["race_key"])
         plan = str(row["plan_key"])
@@ -933,6 +1025,21 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
 
         if rj is not None:
             code, detail, quiet, bucket, _judged = rj
+            # 🔴 **軸信頼ゲートで落ちる行も高額枠へ回す**（2026-09-12）。
+            #    軸信頼ゲートは「**当てにいく商品としては**売らない」という判定で、
+            #    一撃商品（軸1を1点も買わず計画払戻へ積む）としては売れる。
+            #    実測で Δ10万+/日 +0.125〜+0.204（両窓 CI 0跨がず）・
+            #    **既存商品は1件も減らない**（`highpay_slots_measured_2026_09_12.md`）。
+            # ⚠️ 出せたときは `axis_gate` の見送りを**記録しない**（上限側と同じ作法）。
+            #    その結果 `submission_skips` の `axis_gate` は 12.8 → 6〜9件/日 へ
+            #    **半減する（消えるのではない）**。見送りを日次で追う集計はこれを織り込むこと。
+            if bucket == "axis_gate":
+                hp = _try_highpay(row, race_key, venue, race_no)
+                if hp == "ok":
+                    continue
+                if hp == "failed":
+                    bump("failed")
+                    continue
             if code:
                 skip(race_key, plan, session, code, detail, venue, race_no, quiet=quiet)
             bump(bucket)
@@ -946,41 +1053,12 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             #    ここへ来た行は他のゲートを全部通っている（並びも印もある・
             #    締切前・軸信頼も通過）ので、同じレースの `{型}_sign` を
             #    そのまま出せる。**上限の枠は消費しない**（枠外と同じ扱い）。
-            hp = None
-            if n_highpay < HIGHPAY_SLOTS_PER_DAY:
-                if highpay_rows is None:
-                    highpay_rows = _load_highpay_rows(day)
-                    print(f"[type_lab_submit] 高額枠 残り "
-                          f"{HIGHPAY_SLOTS_PER_DAY - n_highpay}本"
-                          f"（本日 {n_highpay}本 出済み・"
-                          f"候補 {len(highpay_rows)}レース）", flush=True)
-                want = highpay_plan_for(row.get("type_label"),
-                                        row.get("n_entries"), n_highpay)
-                avail = highpay_rows.get(race_key) or {}
-                # 🔴 **狙いの行が無ければもう片方で出す**（`{型}_big` は 2026-09-06
-                #    新設なので、生成が回る前の日は行が無い）。枠を空けるより
-                #    商品を出す側へ倒す——ゲートの「判定できないものは通す」と同じ。
-                hp = avail.get(want) or next(iter(avail.values()), None)
-            if hp is not None and (race_key, str(hp["plan_key"])) not in already:
-                hp_plan = str(hp["plan_key"])
-                hp_reason = _gate_reason(hp)
-                if hp_reason is not None:
-                    # 高額枠として出せない（想定払戻・1点オッズ）。通常の見送りへ落ちる。
-                    skip(race_key, hp_plan, session, hp_reason[0], hp_reason[1],
-                         venue, race_no, quiet=True)
-                else:
-                    ok, msg = submit_row(hp, session, client, dry_run,
-                                         show_detail=dry_run and n_ok < show,
-                                         skip=skip, origin=ORIGIN_HIGHPAY)
-                    if ok:
-                        n_highpay += 1
-                        taken_by_type_lab.add(race_key)
-                        n_ok += 1
-                        titles.append(f"{venue}{race_no}R({hp_plan}) 高額枠 {msg}")
-                        submitted.append((str(venue), hp_plan))
-                        continue
-                    bump("failed")
-                    continue
+            hp = _try_highpay(row, race_key, venue, race_no)
+            if hp == "ok":
+                continue
+            if hp == "failed":
+                bump("failed")
+                continue
             # ⚠️ ログは静かに（上限に当たった行が毎回ずらりと並ぶと読めない）。
             #    記録は1件ずつ残す＝画面で「日次上限」として出る。
             skip(race_key, plan, session, SKIP_DAILY_CAP,

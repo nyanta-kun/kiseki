@@ -149,6 +149,32 @@ TYPE_VIEWS: dict[str, str] = {
 #: コメント冒頭のレース見解（1〜2文）。
 #: ⚠️ 「軸」という語を型D〜F で使うときは注意する。型ラボの軸2車は
 #:    **3着内率の上位2車**であって、そこが1・2着に来ると言っているのではない。
+#: 🔴 **型の「読み」だけを述べた部分**（買い方に触れない）。`TYPE_NOTES` の先頭がこれ。
+#:
+#: 高額枠（`{型}_sign` / `{型}_big`）は**ここだけを使う**。`TYPE_NOTES` の後半には
+#: 買い方が入っており（「3着の可能性がある目を広めに拾います」「3車がそろうことだけを
+#: 狙います」等）、**絞って配当を狙う高額枠に流用すると本文が商品と食い違う**。
+#: 2026-09-12 の実測（実入稿）:
+#:   - `B_big`: 見解「**上位2車を信頼したうえで**…広めに拾います」↔ 直後の【二軸】が
+#:     「この商品は 4番 が3着以内に残らない側に賭けているため買い目に 4番 は入っていません」
+#:     ＋実際は **2点**。
+#:   - `D_sign` / `D_big`: 見解「**3車がそろうことだけを狙います**」＝三連複の説明だが
+#:     商品は**三連単**（型Dの見解は `D_hit` 向けの文）。
+#:   - `E_sign`: 「配当が付く帯だけを**広く**押さえます」↔ 実際は2〜3点。
+#: ⚠️ **二重管理にしない。** `tests/test_type_lab_submission.py` の
+#:    `test_型の読みは見解の先頭と一致する` が `TYPE_NOTES[t].startswith(TYPE_READS[t])`
+#:    を機械的に固定している（片方だけ直すと落ちる）。
+TYPE_READS: dict[str, str] = {
+    "A": "指数の上位2車がはっきり抜け、レースが荒れる要素も見当たらない一戦です。",
+    "B": "指数の上位2車は堅い一方、3番手以下が団子で相手を1車に絞りきれません。",
+    "C": ("指数の上位2車は堅いのですが、ライン構成・開催日目から崩れる余地のある"
+          "一戦と読みました。"),
+    "D": "指数の上位2車が絞りきれない混戦です。",
+    "E": "上位が拮抗し、決着が読みにくい一戦です。",
+    "F": ("指数が横一線の大混戦です。抜けた1車がおらず、"
+          "どの車にも上位に来る目があると読みました。"),
+}
+
 TYPE_NOTES: dict[str, str] = {
     "A": ("指数の上位2車がはっきり抜け、レースが荒れる要素も見当たらない一戦です。"
           "着順まで踏み込んで狙えると読みました。"),
@@ -170,6 +196,18 @@ TYPE_NOTES: dict[str, str] = {
     "F": ("指数が横一線の大混戦です。抜けた1車がおらず、"
           "どの車にも上位に来る目があると読みました。"),
 }
+
+# 🔴 **高額枠は型の「読み」だけを出す**（2026-09-12）。`TYPE_NOTES` をそのまま使うと
+#    後半の買い方の記述が商品と食い違う（`TYPE_READS` の節に実測）。
+#    ⚠️ `PLAN_NOTES` は `build_comment` が `TYPE_NOTES` より優先して使う。
+# 🔴 `{型}_big` は軸1を1点も買わないので、読みの後に**その一文を足す**
+#    （`PLAN_VIEWS` の「指数1位が3着にも残らない側」・`PLAN_AXIS_NOTES` の断り書き・
+#    `PLAN_BODIES` の「指数1位が絡む目は1点も買っていません」と向きを揃える）。
+for _t in "ABCDEF":
+    PLAN_NOTES[f"{_t}_sign"] = TYPE_READS[_t]
+    PLAN_NOTES[f"{_t}_big"] = (
+        TYPE_READS[_t] + "この商品はその指数1位が崩れる側に賭けています。")
+del _t
 
 # ───────────────────────────── プラン → 商品名・買い目の説明 ────────────────
 
@@ -388,6 +426,45 @@ def marks_for(p3_order: Sequence[int] | str, legs: Sequence[Mapping],
     return marks
 
 
+def axis_note(plan_key: str, axis1: int, axis2: int,
+              legs: Sequence[Mapping]) -> str:
+    """【二軸】ブロック。**買い目に入っていない車を「軸」として案内しない**。
+
+    🔴 `{型}_sign` は「配当の大きい目」から積むので、**軸2（○）が1点も
+       入らないことがある**（実測 2026-09-01〜 の `_sign` 810件中 18件＝2.2%・
+       型C 4% / 型E 5%）。既定文「二軸は、◎{a1}番・○{a2}番です」を出すと
+       **印にも買い目にも無い車を軸として案内する**ことになる。実例
+       2026-09-12 川崎10R `C_sign`:
+         本文「二軸は、◎1番・○3番です」 ↔ 印 1◎ 4▲ 6△ 7△・買い目 1-4-7 / 4-1-6
+       `marks_for` は買っている車から印を振り直すので**印の側は正しく**、
+       食い違うのはこの文だけだった。
+
+    🔴 **欠けているときは ◎○ を文面で名指ししない**（`PLAN_AXIS_NOTES["A_ana"]` と
+       同じ作法）。`marks_for` が買っている車の指数上位へ ◎ を振り直すため、
+       文面で軸1を ◎ と書くと印と食い違う。
+
+    >>> axis_note("B_hit", 1, 3, [{"combo": "1-3-4"}])
+    '【二軸】\\n本レースで照らし出した二軸は、◎1番・○3番です。'
+    >>> "3番 が入る目は買い目にありません" in axis_note("C_sign", 1, 3, [{"combo": "1-4-7"}])
+    True
+    >>> axis_note("A_ana", 4, 3, [{"combo": "3-1-2"}]).startswith("【二軸】\\n本レースの指数上位2車は 4番")
+    True
+    """
+    if plan_key in PLAN_AXIS_NOTES:
+        return PLAN_AXIS_NOTES[plan_key].format(a1=axis1, a2=axis2)
+    used: set[int] = set()
+    for leg in (_base_legs(legs) or list(legs)):
+        used |= set(_combo_cars(str(leg.get("combo", ""))))
+    missing = [c for c in (int(axis1), int(axis2)) if c not in used]
+    if not used or not missing:
+        return f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"
+    return ("【二軸】\n"
+            f"本レースの指数上位2車は {axis1}番・{axis2}番です。"
+            "ただしこの商品は配当の大きい目に絞ったため、"
+            f"{'・'.join(f'{c}番' for c in missing)} が入る目は買い目にありません。"
+            "印は買っている車だけに付けています。")
+
+
 def axes_from_legs(legs: Sequence[Mapping],
                    p3_order: Sequence[int] | str) -> tuple[int, ...]:
     """**全ての買い目に共通して入っている車**＝この商品の軸。指数順で返す。
@@ -596,9 +673,9 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
     tail = "点" if bet_type == "trio" else "点"
     blocks = [
         PLAN_NOTES.get(plan_key) or TYPE_NOTES.get(type_label, ""),
-        (PLAN_AXIS_NOTES[plan_key].format(a1=axis1, a2=axis2)
-         if plan_key in PLAN_AXIS_NOTES else
-         f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"),
+        # 🔴 **買い目から判定する**（2026-09-12）。`_sign` は軸2が1点も入らないことが
+        #    あり、既定文をそのまま出すと買っていない車を軸として案内する。
+        axis_note(plan_key, axis1, axis2, legs),
         (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
          # 🔴 帯下の差込は**本文の直後**（買い目そのものの説明）。上帯の押さえは
          #    点数の後（本線とは別枠の説明）なので位置を分けている。
