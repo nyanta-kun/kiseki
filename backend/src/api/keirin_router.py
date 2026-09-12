@@ -964,7 +964,8 @@ async def get_picks(
                   tl.bet_type               AS tl_bet_type,
                   tl.n_legs                 AS tl_n_legs,
                   tl.pred_mean_payout       AS tl_mean_payout,
-                  tl.legs                   AS tl_legs
+                  tl.legs                   AS tl_legs,
+                  rs.type_label             AS shape_type
                 FROM keirin.wt_races wr
                 JOIN keirin.venue_info vi
                   ON wr.venue_id = vi.venue_code
@@ -1036,6 +1037,14 @@ async def get_picks(
                     ORDER BY t.id DESC
                     LIMIT 1
                 ) tl ON TRUE
+                -- 🔴 **型だけの表（全車数）**（2026-09-12）。上の `tl` は
+                --    **売る商品の行**なので、商品を組まない車数（5車・6車・8車）は
+                --    必ず NULL になる。型判定そのものは車数に依らないので、
+                --    `scripts/build_race_shapes.py` が全レースぶんここへ書く。
+                --    これが無いと、同じ推奨外でも型が出る行と出ない行が混ざる
+                --    （実測 2026-09-12: 直近1週間で31レース）。
+                LEFT JOIN keirin.race_shapes rs
+                  ON rs.race_key = wr.race_key
                 WHERE wr.race_date = :date
                 ORDER BY wr.start_at, wr.race_no,
                     CASE ph.rank
@@ -1338,7 +1347,11 @@ async def get_picks(
             #    ⚠️ 旧ランクの仮軸（`hypo_*`）は三連複 軸2車流し固定で、型ラボの
             #       商品（型C なら三連単12点 など）と食い違う。置き換えではなく
             #       別キーで返し、フロントは型ラボ側を優先して出す。
-            "type_lab_type": r.get("tl_type"),
+            #    🔴 **型は商品が無いレースにも出す**（2026-09-12）。商品を組むのは
+            #       7車・9車だけだが、型判定は車数に依らない。`tl_type` は
+            #       「売る商品の行に焼き付いた型」なので**そちらを優先**し、
+            #       無ければ全車数ぶんの `keirin.race_shapes` へ落ちる。
+            "type_lab_type": r.get("tl_type") or r.get("shape_type"),
             "type_lab_plan": r.get("tl_plan"),
             "type_lab_bet_type": r.get("tl_bet_type"),
             "type_lab_n_legs": r.get("tl_n_legs"),

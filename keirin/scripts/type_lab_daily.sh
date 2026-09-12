@@ -41,6 +41,16 @@ fi
 
 # 🔴 入稿の失敗で採点を止めない。採点が落ちると前日の成績が画面に出ないまま
 #    翌日を迎える（入稿の失敗より復旧が遅れる）。
+# 🔴 **型（A〜F）は全車数ぶん出す**（2026-09-12）。商品を組むのは上の2回＝
+#    7車と9車だけだが、型判定そのものは車数に依らない。ここを回さないと
+#    5車・6車・8車のレースだけ `/keirin` の一覧から型が消える
+#    （実測: 直近1週間で31レース）。**買い目には一切触らない**ので、
+#    失敗しても入稿・採点は続ける。
+echo "[type_lab] $(date '+%F %T') build shapes $TODAY"
+if ! "$PY" scripts/build_race_shapes.py --date "$TODAY"; then
+  echo "[type_lab] ⚠️ 型判定（表示用）の生成に失敗（入稿・採点は続行する）"
+fi
+
 echo "[type_lab] $(date '+%F %T') submit morning $TODAY"
 if ! "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" morning; then
   echo "[type_lab] ⚠️ 入稿に失敗（採点は続行する）"
