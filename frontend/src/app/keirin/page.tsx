@@ -802,28 +802,37 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
   hit: boolean; payout: number; trioPayout: number; trifectaPayout?: number; bet: number; isPurchased: boolean; isMiwokuri: boolean; isGamiSkip?: boolean;
   paperHit?: boolean | null; paperPayout?: number | null;
 }) {
-  const tp = trifectaPayout ?? 0;
-  const trioEl = (trioPayout > 0 || tp > 0)
-    ? (
-      <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
-        {trioPayout > 0 && <>複¥{trioPayout.toLocaleString()}</>}
-        {tp > 0 && <>{trioPayout > 0 && " "}単¥{tp.toLocaleString()}</>}
-      </span>
-    )
+  // 🔴 複/単は**上下2行**（`PayoutStack`）。推奨外カードと同じ部品を通す
+  //    （横並びだと `複¥13,490 単¥116,420` でスマホが3〜4行に折り返す）。
+  // ⚠️ 下の分岐が `!trioEl` を見るので、**払戻が無いときは null のまま**にすること。
+  //    常に要素を返すと「払戻なし」の行にも空の器と余白が付く。
+  const trioEl = (trioPayout > 0 || (trifectaPayout ?? 0) > 0)
+    ? <PayoutStack trio={trioPayout} trifecta={trifectaPayout} />
     : null;
+
+  /** 結果の見出し（✓¥… / ✗ / 見送り …）と払戻を1つの器に入れる。
+   *
+   *  🔴 見出しにも下限幅を置く（2026-09-12）。`✗`(12px) と `✓ ¥173,250`(66px) で
+   *     幅が5倍違うため、置かないと**行ごとに ✓/✗ の x が動く**（実測 568〜624px）。
+   *     右端は払戻側で揃っているので、揃わないのは見出しだけだった。
+   *     4.75rem = 76px は7桁の払戻まで収まる幅（実測の最長は6桁で 66px）。 */
+  const withPayout = (head: React.ReactNode) => (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      <span className="sm:min-w-[4.75rem] text-right flex-shrink-0">{head}</span>
+      {trioEl}
+    </div>
+  );
 
   if (isGamiSkip) {
     const label = <span className="text-xs text-orange-400 dark:text-orange-500">ガミ落ち</span>;
-    if (!trioEl) return label;
-    return <div className="flex items-center gap-1.5 flex-shrink-0">{label}{trioEl}</div>;
+    return trioEl ? withPayout(label) : label;
   }
 
   if (isMiwokuri) {
     const label = hit
       ? <span className="text-xs text-purple-500 font-semibold">見送 的中</span>
       : <span className="text-xs text-gray-400 dark:text-gray-500">見送り</span>;
-    if (!trioEl) return label;
-    return <div className="flex items-center gap-1.5 flex-shrink-0">{label}{trioEl}</div>;
+    return trioEl ? withPayout(label) : label;
   }
 
   if (isPurchased) {
@@ -834,12 +843,10 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
           ✓ ¥{payout.toLocaleString()}
         </span>
       );
-      if (!trioEl) return hitEl;
-      return <div className="flex items-center gap-1.5 flex-shrink-0">{hitEl}{trioEl}</div>;
+      return trioEl ? withPayout(hitEl) : hitEl;
     }
     const missEl = <span className="text-xs text-red-500 font-semibold">✗</span>;
-    if (!trioEl) return missEl;
-    return <div className="flex items-center gap-1.5 flex-shrink-0">{missEl}{trioEl}</div>;
+    return trioEl ? withPayout(missEl) : missEl;
   }
 
   // 売っていない行。レースの配当に加えて**モデルとしての当たり外れ**を出す
@@ -847,9 +854,7 @@ function CollapsedResult({ hit, payout, trioPayout, trifectaPayout, bet, isPurch
   const paperEl = <PaperChip hit={paperHit} payout={paperPayout} />;
   if (!trioEl && paperHit == null) return null;
   if (!trioEl) return paperEl;
-  return (
-    <div className="flex items-center gap-1.5 flex-shrink-0">{paperEl}{trioEl}</div>
-  );
+  return withPayout(paperEl);
 }
 
 // 推奨外レースの手動入稿で選べるランク。
@@ -996,17 +1001,42 @@ function RaceHeadCols({
   startTime?: string | null;
   dim?: boolean;
 }) {
-  const cls = `font-semibold text-sm whitespace-nowrap ${
+  const cls = `font-semibold text-sm ${
     dim ? "text-gray-600 dark:text-gray-300" : "text-gray-800 dark:text-gray-100"
   }`;
   return (
-    <>
-      <span className={`${cls} sm:min-w-[3.5rem]`}>{venueName}</span>
-      <span className={`${cls} sm:min-w-[2.25rem] tabular-nums`}>{raceNo}R</span>
+    // 🔴 **3つで1ユニット**（2026-09-12）。中で折り返させないので、狭い画面では
+    //    3つまとめて次の行へ落ちる（「松山 1R」で切れて時刻だけ次行、が起きない）。
+    <span className={`inline-flex items-baseline gap-1 whitespace-nowrap ${cls}`}>
+      {/* 会場名は最長4文字（いわき平）＝ 3.5rem。列として揃える下限 */}
+      <span className="sm:min-w-[3.5rem]">{venueName}</span>
+      {/* 🔴 **R は右寄せ**（ユーザー指定）。左寄せだと 1R と 12R で
+          「R」の位置が1桁ぶんずれ、続く発走時刻まで動いて見える。 */}
+      <span className="sm:min-w-[2rem] text-right tabular-nums">{raceNo}R</span>
       {/* 発走時刻は**会場・R の直後**に固定する。間に開催グレードや見送りの
           バッジを挟むと、バッジが付く行だけ時刻がずれる。 */}
-      <span className={`${cls} sm:min-w-[3rem] tabular-nums`}>{startTime ?? ""}</span>
-    </>
+      <span className="sm:min-w-[2.75rem] tabular-nums">{startTime ?? ""}</span>
+    </span>
+  );
+}
+
+/** 確定後の払戻（複 / 単）。**上下2行**に積む。
+ *
+ *  🔴 横に並べると `複¥13,490 単¥116,420` で 150px を超え、スマホでは
+ *     ヘッダが3〜4行に折り返していた（2026-09-12・ユーザー報告のスクショ）。
+ *     2行に積めば幅は半分で済み、行数が**確定後は必ず2行**に定まる。
+ *  ⚠️ 確定後はレース名（`A級 チャレンジ予選`）を出さない。2行のぶん縦を使うので、
+ *     同じ行に名前まで置くとまた折り返す。名前は展開すれば読める。 */
+function PayoutStack({ trio, trifecta }: { trio: number; trifecta?: number }) {
+  const tf = trifecta ?? 0;
+  if (trio <= 0 && tf <= 0) return null;
+  return (
+    // 🔴 下限幅を置く。桁数（`複¥180` ↔ `単¥116,420`）で幅が倍近く変わるので、
+    //    置かないと左隣の的中/不的中マーク（✓ / ✗）が行ごとに動く。
+    <span className="text-[10px] sm:text-xs text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0 text-right leading-tight sm:min-w-[5rem]">
+      {trio > 0 && <span className="block">複¥{trio.toLocaleString()}</span>}
+      {tf > 0 && <span className="block">単¥{tf.toLocaleString()}</span>}
+    </span>
   );
 }
 
@@ -1036,17 +1066,53 @@ const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
 };
 
 /** 型ラボの型（A〜F）バッジ。型が商品を決めるので、一覧でも先頭に出す。 */
-function TypeLabBadge({ type, plan }: { type?: string | null; plan?: string | null }) {
-  if (!type) return null;
+function TypeLabBadge({ type, plan, compact }: {
+  type?: string | null; plan?: string | null;
+  /** スマホでプラン名を出さない（確定後の行で横幅を空けるため） */
+  compact?: boolean;
+}) {
   const label = plan ? (TYPE_LAB_PLAN_LABEL[plan] ?? plan) : null;
   return (
+    // 🔴 **型が無くても場所は空ける**（2026-09-12）。ここが消えると、その行だけ
+    //    「入稿外」が左へ寄ってランクの列が崩れる。
     <span className="inline-flex items-center gap-1 flex-shrink-0">
-      <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-        {type}
+      {type ? (
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+          {type}
+        </span>
+      ) : <span className="w-5 h-5" aria-hidden />}
+      {/* プラン名は2〜5文字（本線 / 本線(複) / ライン(複)）。下限を置いて
+          後ろの「入稿外」が長さで動かないようにする。 */}
+      <span className={`text-[10px] text-gray-500 dark:text-gray-400 sm:min-w-[3.25rem]${
+        compact ? " hidden sm:inline-block" : ""}`}>
+        {label ?? ""}
       </span>
-      {label && (
-        <span className="text-[10px] text-gray-500 dark:text-gray-400">{label}</span>
-      )}
+    </span>
+  );
+}
+
+/** ヘッダ右端の「ランク（型＋プラン）＋ 入稿外」。**左揃えの1列**にする。
+ *
+ *  🔴 以前は右揃えのまま並べていたため、プラン名の長さ（`本線` ↔ `本線(複)`）で
+ *     **型のチップの x がレースごとにずれていた**（実測 1205px ↔ 1237px）。
+ *     下限幅を置いて左から詰めれば、チップも「入稿外」も列として揃う。 */
+function RankSlot({ type, plan, compact }: {
+  type?: string | null; plan?: string | null;
+  /** 確定後の行。**スマホではプラン名と「入稿外」を落として型のチップだけ**にする。
+   *
+   *  🔴 確定後は払戻（複/単の2行）が右側に入り、390px では左に 120〜127px しか
+   *     残らない。会場・R・時刻(94px) ＋ %(52px) ＋ ★(14px) で 172px 要るので、
+   *     そのままだと**行が3行になる**（実測 83行中 56行）。プラン名(30px)と
+   *     「入稿外」(28px)を落とせば 188px 確保でき、確定後は必ず2行に収まる。
+   *  ⚠️ 落とすのは**スマホの確定後だけ**。型のチップ（A〜F）は残す。
+   *     入稿していないことは行全体の淡色（`opacity-75`）と入稿ボタンの不在で分かる。 */
+  compact?: boolean;
+}) {
+  return (
+    <span className="flex-shrink-0 flex items-center gap-1 sm:min-w-[6.75rem]">
+      <TypeLabBadge type={type} plan={plan} compact={compact} />
+      <span className={`text-[10px] text-gray-300 dark:text-gray-600${
+        compact ? " hidden sm:inline" : ""}`}>入稿外</span>
     </span>
   );
 }
@@ -1074,9 +1140,14 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
         >
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+            <div className="flex items-baseline gap-1 sm:gap-2 flex-wrap">
               <RaceHeadCols venueName={pick.venue_name} raceNo={pick.race_no} startTime={startTime} dim />
-              {(pick.grade || pick.race_type) && (
+              {/* 🔴 **この列の先頭は信頼度の%**（2026-09-12・ユーザー指定）。
+                  以前は末尾に置いていたため、開催グレードの有無とレース名の長さで
+                  **行ごとに x が動いていた**。長さが動かないものを先に置く。 */}
+              <KeirinAxisConfidenceBadge pct={pick.confidence_pct} hitCount={pick.confidence_hit_count} compact />
+              {/* ⚠️ 確定後はレース名を出さない（払戻が2行になるぶん縦を使うため）。 */}
+              {!isSettled && (pick.grade || pick.race_type) && (
                 <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
               )}
               {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。
@@ -1084,19 +1155,15 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
               {pick.is_marquee && (
                 <span className="text-amber-500/70 dark:text-amber-400/70 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
-              {/* レース信頼度。**折りたたみ中も見える**位置に置く（2026-08-25 ユーザー指定）。 */}
-              <KeirinAxisConfidenceBadge pct={pick.confidence_pct} hitCount={pick.confidence_hit_count} compact />
             </div>
           </div>
-          {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用） */}
+          {/* 確定後は折りたたみ時も払戻をインライン表示（推奨外レースの結果確認用）。
+              複・単は上下2行（`PayoutStack` の docstring）。 */}
           {collapsed && isSettled && hasPayout && (
-            <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums flex-shrink-0">
-              {pick.trio_payout > 0 && <>複¥{pick.trio_payout.toLocaleString()}</>}
-              {(pick.trifecta_payout ?? 0) > 0 && <>{pick.trio_payout > 0 && " "}単¥{(pick.trifecta_payout ?? 0).toLocaleString()}</>}
-            </span>
+            <PayoutStack trio={pick.trio_payout} trifecta={pick.trifecta_payout} />
           )}
-          <TypeLabBadge type={pick.type_lab_type} plan={pick.type_lab_plan} />
-          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0">入稿外</span>
+          <RankSlot type={pick.type_lab_type} plan={pick.type_lab_plan}
+                    compact={collapsed && isSettled && hasPayout} />
           <ChevronDown
             size={15}
             className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
@@ -1279,8 +1346,21 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
           {/* 左バッジ = display_rank(7S/7A/9S/9A/7SS)の直接表示（全ランク統一）。購入対象は緑○で囲う */}
           <RankBadge rank={badgeRank} purchased={isBuyConfirmed} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+            <div className="flex items-baseline gap-1 sm:gap-2 flex-wrap">
               <RaceHeadCols venueName={pick.venue_name} raceNo={pick.race_no} startTime={startTime} />
+              {/* 🔴 **この列の先頭は信頼度の%**（2026-09-12・ユーザー指定）。
+                  以前は末尾に置いていたため、開催グレード・見送り・取消バッジの
+                  有無とレース名の長さで**行ごとに x が動いていた**。
+                  長さが動かないものを先に置けば、そこが列の基準になる。 */}
+              <KeirinAxisConfidenceBadge pct={pick.confidence_pct} hitCount={pick.confidence_hit_count} compact />
+              {/* 🔴 **順序は「% → レース名 → グレード → ★ → 状態バッジ」**
+                  （2026-09-12・ユーザー指定）。出たり出なかったりするもの
+                  （GIII・手動・見送・取消）を**後ろへ寄せる**ことで、
+                  前にあるものの x が行ごとに動かなくなる。 */}
+              {/* ⚠️ 確定後はレース名を出さない（払戻が2行になるぶん縦を使うため）。 */}
+              {!isSettled && (pick.grade || pick.race_type) && (
+                <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
+              )}
               {/* 開催グレード。GIII 以上は売上・注目が別格なので FI/FII と分けて出す
                   （実測: GI 開催は1レースあたりの有償ptが他会場の5.0倍）。
                   🔴 未知の grade は `cup_grade_label` が null になるので**出さない**
@@ -1292,6 +1372,10 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 >
                   {pick.cup_grade_label}
                 </span>
+              )}
+              {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。 */}
+              {pick.is_marquee && (
+                <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
               )}
               {/* ランクのゲートを通らず入稿したレース。同じ 7A でも経路が違うので、
                   混ぜたまま出すと「ランクの成績」と読まれてしまう
@@ -1332,15 +1416,6 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                   取消 {cancelReason}
                 </span>
               )}
-              {(pick.grade || pick.race_type) && (
-                <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
-              )}
-              {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。 */}
-              {pick.is_marquee && (
-                <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>
-              )}
-              {/* レース信頼度。**折りたたみ中も見える**位置に置く（2026-08-25 ユーザー指定）。 */}
-              <KeirinAxisConfidenceBadge pct={pick.confidence_pct} hitCount={pick.confidence_hit_count} compact />
             </div>
           </div>
           {/* 折りたたみ時: 結果サマリー or オッズ（最低=ガミ判定値・合成）をインライン表示 */}
