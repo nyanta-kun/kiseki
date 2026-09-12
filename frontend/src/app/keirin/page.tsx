@@ -968,6 +968,61 @@ function meetingHeaderBg(t: KeirinPick["meeting_type"]): string {
   return (t && MEETING_HEADER_BG[t]) || "bg-gray-50 dark:bg-gray-800";
 }
 
+/** 一覧カードのヘッダ左側「会場 / R / 発走時刻」。
+ *
+ *  🔴 **推奨カードと推奨外カードで必ず同じものを使う**（2026-09-12）。
+ *     以前は2か所が別々にマークアップを持ち、**カードごとに列の開始位置が
+ *     ずれていた**（外側 `px-3 sm:px-4` ↔ `px-1 sm:px-2` + ボタン `px-2 sm:px-3`
+ *     で sm 以上 4px ずれる）。見た目の問題に見えるが、直し方は
+ *     「両方の padding を合わせる」ではなく**同じ部品を通す**こと
+ *     （合わせ直しても次の変更でまたずれる）。
+ *
+ *  🔴 **固定幅 (`w-`) は使わない。** 会場名は2〜4文字（松山 / 佐世保 / いわき平）、
+ *     R は 1〜2桁で、固定幅だと桁が増えたときに折り返して行の高さが倍になる
+ *     （POG の一覧で実測: 320px 幅で 41px → 85px）。`min-w-` +
+ *     `whitespace-nowrap` にして、溢れる前に後ろの種別側が畳まれるようにする。
+ *
+ *  🔴 **列幅を効かせるのは `sm` 以上だけ**（2026-09-12・実測して決めた）。
+ *     390px 幅ではヘッダ左側に残るのは **134〜189px** しかなく（右側の型バッジ・
+ *     「入稿外」・シェブロン・入稿ボタンで埋まる）、3列ぶんの下限
+ *     56+36+48+余白 = 156px を置くと**発走時刻が必ず次の行へ落ちる**。
+ *     スマホでは素の幅（会場2文字なら28px）に任せて1行に収め、
+ *     横に余裕のある `sm` 以上でだけ列として揃える。 */
+function RaceHeadCols({
+  venueName, raceNo, startTime, dim,
+}: {
+  venueName?: string | null;
+  raceNo?: number | null;
+  startTime?: string | null;
+  dim?: boolean;
+}) {
+  const cls = `font-semibold text-sm whitespace-nowrap ${
+    dim ? "text-gray-600 dark:text-gray-300" : "text-gray-800 dark:text-gray-100"
+  }`;
+  return (
+    <>
+      <span className={`${cls} sm:min-w-[3.5rem]`}>{venueName}</span>
+      <span className={`${cls} sm:min-w-[2.25rem] tabular-nums`}>{raceNo}R</span>
+      {/* 発走時刻は**会場・R の直後**に固定する。間に開催グレードや見送りの
+          バッジを挟むと、バッジが付く行だけ時刻がずれる。 */}
+      <span className={`${cls} sm:min-w-[3rem] tabular-nums`}>{startTime ?? ""}</span>
+    </>
+  );
+}
+
+/** ヘッダ右端の入稿ボタンと**同じ幅の空き**。
+ *
+ *  🔴 ボタンが無い行でこれを省くと、その行だけシェブロンが右へ寄る
+ *     （実測 22px）。列を揃えるには「無いときも場所を空ける」しかない。
+ *
+ *  🔴 **スマホでは空けない**（2026-09-12・実測して決めた）。390px では確定済みの
+ *     行に払戻（`複¥370 単¥1,060`）が入り、22px 取られるだけで会場・R・時刻が
+ *     折り返して**カード高が 128px → 170px** になる。競輪の一覧もスマホは
+ *     縦が予算（POG と同じ）で、横1列の見栄えより行数のほうが高くつく。 */
+function SendSlot() {
+  return <span className="hidden sm:block flex-shrink-0 w-[22px]" aria-hidden />;
+}
+
 /** 型ラボのプラン → 画面ラベル。**keirin 側 `PLAN_TITLES` と役割が違う**
  *  （あちらは netkeirin の商品タイトル、ここは一覧の識別バッジ）。 */
 const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
@@ -1008,18 +1063,19 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
     ? formatComboLabel(pick.type_lab_combo, pick.entries) : null;
   return (
     <div className={`${meetingBg(pick.meeting_type)} rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden opacity-75`}>
-      <div className={`w-full flex items-center gap-1 px-1 sm:px-2 ${meetingHeaderBg(pick.meeting_type)}${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
+      {/* 🔴 padding は推奨カード（`PickCard`）と**同じ値**にする（2026-09-12）。
+          以前はここだけ外側 `px-1 sm:px-2` + ボタン `px-2 sm:px-3` で、
+          sm 以上で 4px 内側に寄っていた。 */}
+      <div className={`w-full flex items-center gap-1 px-3 sm:px-4 py-2 ${meetingHeaderBg(pick.meeting_type)}${collapsed ? "" : " border-b border-gray-100 dark:border-gray-700"}`}>
         <button
           type="button"
           onClick={() => setCollapsed(v => !v)}
-          className="flex-1 min-w-0 flex items-center gap-2 px-2 sm:px-3 py-2 text-left"
+          className="flex-1 min-w-0 flex items-center gap-2 text-left"
         >
           <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500">—</span>
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
-              <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.venue_name}</span>
-              <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{pick.race_no}R</span>
-              {startTime && <span className="font-semibold text-gray-600 dark:text-gray-300 text-sm">{startTime}</span>}
+              <RaceHeadCols venueName={pick.venue_name} raceNo={pick.race_no} startTime={startTime} dim />
               {(pick.grade || pick.race_type) && (
                 <span className="text-gray-400 dark:text-gray-500 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>
               )}
@@ -1040,23 +1096,23 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             </span>
           )}
           <TypeLabBadge type={pick.type_lab_type} plan={pick.type_lab_plan} />
-          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0 mr-1">入稿外</span>
+          <span className="text-[10px] text-gray-300 dark:text-gray-600 flex-shrink-0">入稿外</span>
           <ChevronDown
             size={15}
             className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
           />
         </button>
-        {hasHypo && !isSettled && (
+        {hasHypo && !isSettled ? (
           <button
             type="button"
             onClick={() => setDialogOpen(true)}
             title="型ラボでnetkeirinへ入稿"
             aria-label="型ラボでnetkeirinへ入稿"
-            className="flex-shrink-0 p-1 mr-1 rounded text-gray-400 hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400"
+            className="flex-shrink-0 p-1 rounded text-gray-400 hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400"
           >
             <Send size={14} />
           </button>
-        )}
+        ) : <SendSlot />}
       </div>
       {!collapsed && (
         <>
@@ -1224,8 +1280,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
           <RankBadge rank={badgeRank} purchased={isBuyConfirmed} />
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
-              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.venue_name}</span>
-              <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{pick.race_no}R</span>
+              <RaceHeadCols venueName={pick.venue_name} raceNo={pick.race_no} startTime={startTime} />
               {/* 開催グレード。GIII 以上は売上・注目が別格なので FI/FII と分けて出す
                   （実測: GI 開催は1レースあたりの有償ptが他会場の5.0倍）。
                   🔴 未知の grade は `cup_grade_label` が null になるので**出さない**
@@ -1276,9 +1331,6 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                 >
                   取消 {cancelReason}
                 </span>
-              )}
-              {startTime && (
-                <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{startTime}</span>
               )}
               {(pick.grade || pick.race_type) && (
                 <span className="text-gray-500 dark:text-gray-400 text-xs">{pick.grade ?? ""} {pick.race_type ?? ""}</span>

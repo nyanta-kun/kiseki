@@ -78,7 +78,8 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                       #    relation does not exist で落ちる（INSERT 系は
                       #    テーブル名を直接展開するので動いてしまい気づけない）。
                       r"|netkeirin_submissions|netkeirin_sales_daily"
-                      r"|netkeirin_sales_race|submission_skips|type_lab_picks)\b",
+                      r"|netkeirin_sales_race|submission_skips|type_lab_picks"
+                      r"|race_shapes)\b",
                       r"keirin.\1", rest, flags=re.IGNORECASE)
 
         if action == "IGNORE":
@@ -115,7 +116,8 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
-                 r"|netkeirin_sales_race|submission_skips|type_lab_picks)\b",
+                 r"|netkeirin_sales_race|submission_skips|type_lab_picks"
+                 r"|race_shapes)\b",
                  r"keirin.\1", sql, flags=re.IGNORECASE)
     # psycopg2 は % をフォーマット文字として扱う。
     # LIKE '7PLUS%' 等リテラル % を先に %% にエスケープしてから :name / ? を変換する。
@@ -786,6 +788,31 @@ def migrate_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_type_lab_picks_date "
                      "ON type_lab_picks(race_date, mode)")
+
+        # レースの型（A〜F）を**全車数**ぶん持つ表（2026-09-12 新設。本番は
+        # kiseki alembic 202609120900_keirin が正本・この CREATE TABLE は
+        # テスト用 SQLite 専用）。
+        # 🔴 **商品ではない。** 型ラボが売るのは 7車・9車だけで、この表は
+        #    `/keirin` の一覧に「このレースはどういう型か」を出すためだけに使う
+        #    （`scripts/build_race_shapes.py` が書く）。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS race_shapes (
+                race_key    TEXT PRIMARY KEY,
+                race_date   TEXT NOT NULL,
+                n_entries   INTEGER,
+                type_label  TEXT NOT NULL,
+                axis_sum    REAL,
+                arare       INTEGER,
+                gap         REAL,
+                pw_ent      REAL,
+                axis1       INTEGER,
+                axis2       INTEGER,
+                p3_order    TEXT,
+                computed_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_race_shapes_date "
+                     "ON race_shapes(race_date)")
 
         # netkeirin自動入稿のランク別ON/OFF・タイトル/コメントテンプレート設定
         # （2026-07-28新設。本番はkiseki alembic migration s2t3u4v5w6x7が正本・

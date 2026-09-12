@@ -43,6 +43,14 @@ send('🚨 **[type_lab_wave.sh] KEIRIN_DB_URL が未設定のため入稿を中�
   exit 1
 fi
 
+# 🔴 **型（表示用）を組み直してから入稿する**（2026-09-12）。朝に並び予想・AI印が
+#    未公開だったレースは「印なし＝最弱・ライン無し＝全員同ライン」と読まれた型に
+#    なっている。表示専用なので上書きして構わない（買い目には触らない）。
+echo "[type_lab] $(date '+%F %T') build shapes $TODAY"
+if ! "$PY" scripts/build_race_shapes.py --date "$TODAY"; then
+  echo "[type_lab] ⚠️ 型判定（表示用）の生成に失敗（入稿は続行する）"
+fi
+
 echo "[type_lab] $(date '+%F %T') === 型ラボ入稿（波: ${SESSION}） $TODAY ==="
 "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" "$SESSION" \
   2>&1 | tee -a "$LOG_DIR/type_lab_${TODAY}.log"
