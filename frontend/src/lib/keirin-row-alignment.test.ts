@@ -93,9 +93,23 @@ describe("競輪一覧カードのヘッダ", () => {
     const slot = fnBody("RankSlot");
     expect(slot).toContain("<TypeLabBadge");
     expect(slot).toContain("入稿外");
-    expect(slot).toMatch(/sm:min-w-\[/);
+    expect(slot).toContain("RANK_SLOT_WIDTH");
     // 型が無い行でチップぶんの場所が消えると、その行だけ列が崩れる
     expect(fnBody("TypeLabBadge")).not.toMatch(/if \(!type\) return null/);
+  });
+
+  it("推奨カードもランク列ぶんの幅を空ける（払戻の列を揃える）", () => {
+    // 🔴 推奨カードにはランク表示が無い（型とプランは左の丸バッジが担う）。
+    //    空けないと**払戻の列が推奨と推奨外でずれる**（ユーザー報告のスクショ:
+    //    推奨外は右端 1183px・推奨は 1416px）。
+    expect(fnBody("PickCard")).toContain("<RankSlotSpacer />");
+    // 幅は1箇所で持ち、RankSlot と Spacer の両方がそれを使う
+    expect(SRC).toMatch(/const RANK_SLOT_WIDTH = "sm:min-w-\[[\d.]+rem\]"/);
+    for (const fn of ["RankSlot", "RankSlotSpacer"]) {
+      expect(fnBody(fn)).toContain("RANK_SLOT_WIDTH");
+      // 直書きに戻すと片方だけ変わってまたずれる
+      expect(fnBody(fn)).not.toMatch(/sm:min-w-\[[\d.]+rem\]/);
+    }
   });
 
   it("列幅と送信欄の空きは sm 以上でだけ効かせる", () => {
