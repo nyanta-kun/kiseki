@@ -62,6 +62,42 @@ describe("競輪一覧カードのヘッダ", () => {
     expect(fnBody("NoPickRow")).toContain("<SendSlot />");
   });
 
+  for (const card of ["PickCard", "NoPickRow"]) {
+    it(`${card} は「会場・R・時刻」の直後に信頼度の%を置く`, () => {
+      const body = fnBody(card);
+      const head = body.indexOf("<RaceHeadCols");
+      const pct = body.indexOf("<KeirinAxisConfidenceBadge");
+      const name = body.indexOf("pick.race_type");
+      expect(head).toBeGreaterThan(-1);
+      expect(pct).toBeGreaterThan(head);
+      // 🔴 %はレース名より**前**。逆にすると名前の長さで%の x が動く。
+      expect(pct).toBeLessThan(name);
+    });
+
+    it(`${card} は確定後にレース名を出さない`, () => {
+      // 払戻が2行になるぶん縦を使うので、同じ行に名前まで置くとまた折り返す。
+      expect(fnBody(card)).toContain("{!isSettled && (pick.grade || pick.race_type)");
+    });
+  }
+
+  it("払戻は複/単を上下2行に積む（両カードで同じ部品）", () => {
+    const stack = fnBody("PayoutStack");
+    expect(stack).toContain('<span className="block">複¥');
+    expect(stack).toContain('<span className="block">単¥');
+    // 横並びに戻すと `複¥13,490 単¥116,420` でスマホが3〜4行に折り返す。
+    expect(fnBody("NoPickRow")).toContain("<PayoutStack");
+    expect(fnBody("CollapsedResult")).toContain("<PayoutStack");
+  });
+
+  it("ランク（型＋プラン）と「入稿外」は左揃えの1列にする", () => {
+    const slot = fnBody("RankSlot");
+    expect(slot).toContain("<TypeLabBadge");
+    expect(slot).toContain("入稿外");
+    expect(slot).toMatch(/sm:min-w-\[/);
+    // 型が無い行でチップぶんの場所が消えると、その行だけ列が崩れる
+    expect(fnBody("TypeLabBadge")).not.toMatch(/if \(!type\) return null/);
+  });
+
   it("列幅と送信欄の空きは sm 以上でだけ効かせる", () => {
     const cols = fnBody("RaceHeadCols");
     expect(cols).toContain("sm:min-w-[3.5rem]");
