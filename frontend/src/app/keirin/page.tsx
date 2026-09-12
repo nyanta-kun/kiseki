@@ -1096,6 +1096,10 @@ function TypeLabBadge({ type, plan, compact }: {
  *  🔴 以前は右揃えのまま並べていたため、プラン名の長さ（`本線` ↔ `本線(複)`）で
  *     **型のチップの x がレースごとにずれていた**（実測 1205px ↔ 1237px）。
  *     下限幅を置いて左から詰めれば、チップも「入稿外」も列として揃う。 */
+/** ランク列の下限幅。**`RankSlot` と `RankSlotSpacer` で必ず同じ値を使う**。
+ *  片方だけ変えると、推奨カードと推奨外カードで払戻の列がずれる。 */
+const RANK_SLOT_WIDTH = "sm:min-w-[6.75rem]";
+
 function RankSlot({ type, plan, compact }: {
   type?: string | null; plan?: string | null;
   /** 確定後の行。**スマホではプラン名と「入稿外」を落として型のチップだけ**にする。
@@ -1109,12 +1113,23 @@ function RankSlot({ type, plan, compact }: {
   compact?: boolean;
 }) {
   return (
-    <span className="flex-shrink-0 flex items-center gap-1 sm:min-w-[6.75rem]">
+    <span className={`flex-shrink-0 flex items-center gap-1 ${RANK_SLOT_WIDTH}`}>
       <TypeLabBadge type={type} plan={plan} compact={compact} />
       <span className={`text-[10px] text-gray-300 dark:text-gray-600${
         compact ? " hidden sm:inline" : ""}`}>入稿外</span>
     </span>
   );
+}
+
+/** ランク列と**同じ幅の空き**。推奨カード（`PickCard`）用。
+ *
+ *  🔴 推奨カードにはランク表示が無い（型とプランは左の丸バッジが担う）ので、
+ *     空けておかないと**払戻の列が推奨と推奨外でずれる**（ユーザー報告の
+ *     スクショ: 推奨外は右端 1183px・推奨は 1416px）。
+ *  ⚠️ スマホでは空けない（`SendSlot` と同じ理由。確定後の行は横が
+ *     120〜127px しか残らず、空けると行が増える）。 */
+function RankSlotSpacer() {
+  return <span className={`hidden sm:block flex-shrink-0 ${RANK_SLOT_WIDTH}`} aria-hidden />;
 }
 
 function NoPickRow({ pick }: { pick: KeirinPick }) {
@@ -1444,6 +1459,9 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               )}
             </span>
           )}
+          {/* 🔴 推奨カードにはランク表示が無いので、**その幅ぶんを空けて**
+              払戻・オッズの列を推奨外カードと揃える（`RankSlotSpacer`）。 */}
+          <RankSlotSpacer />
           <ChevronDown
             size={15}
             className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
