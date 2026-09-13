@@ -479,6 +479,13 @@ class KeirinTypeLabPick(KeirinBase):
     legs: Mapped[Any] = mapped_column(JSONB, nullable=False)
     pred_mean_payout: Mapped[float | None] = mapped_column(Numeric(12, 1))
     pred_min_payout: Mapped[float | None] = mapped_column(Numeric(12, 1))
+    #: その商品に実際に適用した帯（`Plan.min_odds`・**代替へ落ちた後**）。0 = 帯なし。
+    band_min_odds: Mapped[float | None] = mapped_column(
+        Numeric(8, 2), comment="適用した帯（予測オッズの下限）")
+    #: 確率降順 上位 `PROB_TOP_N` 目の [[目, 予測オッズ], ...]。
+    #: 🔴 後から作り直せない（モデル再学習で確率も予測オッズも変わる）。
+    prob_ranked: Mapped[Any | None] = mapped_column(
+        JSONB, comment="確率降順の目と予測オッズ（外れの5分類の入力）")
     rule_version: Mapped[str] = mapped_column(String(16), nullable=False)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now())
@@ -491,3 +498,13 @@ class KeirinTypeLabPick(KeirinBase):
         Numeric(10, 2), comment="買った目の確定オッズ（的中時のみ）")
     win_tf_odds: Mapped[float | None] = mapped_column(
         Numeric(10, 2), comment="決着 1-2-3 の三連単確定オッズ（券種・的中を問わず）")
+    #: 決着の目の**予測**オッズと確率順位（`prob_ranked` から引く）。圏外なら NULL。
+    #: 🔴 `final_odds` / `win_tf_odds` は**確定**オッズで別物。帯は予測オッズで
+    #:    定義されているので ③帯下決着 の判定は予測で揃える。
+    win_pred_odds: Mapped[float | None] = mapped_column(
+        Numeric(10, 2), comment="決着の目の予測オッズ")
+    win_prob_rank: Mapped[int | None] = mapped_column(
+        Integer, comment="決着の目の確率順位（1始まり）")
+    #: 外れの5分類（`DESIGN.md` 4.3）。正本は `keirin/src/type_lab.py::classify_miss`。
+    miss_class: Mapped[str | None] = mapped_column(
+        String(12), comment="hit | read_axis | read_band | legs_budget | legs_model")

@@ -768,6 +768,7 @@ def migrate_db():
                 pw_ent           REAL,
                 axis1            INTEGER,
                 axis2            INTEGER,
+                p3_order         TEXT,
                 mode             TEXT NOT NULL,
                 plan_key         TEXT NOT NULL,
                 bet_type         TEXT NOT NULL,
@@ -783,6 +784,12 @@ def migrate_db():
                 hit              INTEGER,
                 payout           INTEGER,
                 final_odds       REAL,
+                win_tf_odds      REAL,
+                band_min_odds    REAL,
+                prob_ranked      TEXT,
+                win_pred_odds    REAL,
+                win_prob_rank    INTEGER,
+                miss_class       TEXT,
                 UNIQUE (race_key, plan_key, mode)
             )
         """)

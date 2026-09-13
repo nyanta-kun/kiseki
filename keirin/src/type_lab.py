@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 from .unit_distribution import FLOOR_THEN_LARGEST_REMAINDER, distribute_units
@@ -2280,6 +2281,183 @@ def split_legs_by_role(legs: Sequence[Mapping], role: str = ROLE_BASE) -> list:
     [{'combo': '1-2-3'}]
     """
     return [lg for lg in legs if (lg.get("role") or ROLE_BASE) == role]
+
+
+#: `prob_ranked`（確率降順の目と予測オッズ）に焼き付ける点数。
+#:
+#: 🔴 **決着の目が入っていないと ③帯下決着 を ④bモデルの限界 と誤分類する。**
+#:    どこまで積めば足りるかは実測で決めた（板 7車 36,237R・`band_gate_rows`）。
+#:    帯下決着（＝決着の予測オッズ < 帯）がこの順位までに入る割合:
+#:
+#:      帯         <=20      <=40      <=60      <=100
+#:      型C L=15  98.27%   99.81%   100.00%   100.00%
+#:      型E L=30  89.38%   95.45%    98.48%    99.77%
+#:      型F L= 5 100.00%  100.00%   100.00%   100.00%
+#:
+#:    型E（帯30倍）が一番深い。100 で 99.77% が入り、取りこぼしは型E の
+#:    ③（その商品の 21.19%）の 0.23% ＝ 全体の 0.05pt。
+#: ⚠️ 三連単は 7車 210目 / 9車 504目。三連複（35 / 84目）は**全部入る**ので
+#:    この上限は実質効かない。
+PROB_RANKED_N = 100
+
+#: `miss_class` の値。**排他**（`DESIGN.md` 4.3）。
+MISS_CLASSES: tuple[str, ...] = (
+    "hit", "read_axis", "read_band", "legs_budget", "legs_model")
+
+
+def classify_miss(*, hit: bool, axis_hit: bool | None, band_min_odds: float | None,
+                  win_pred_odds: float | None, win_prob_rank: int | None,
+                  n_legs: int | None) -> str:
+    """1商品の結果を排他5分類にする（`DESIGN.md` 4.3 の正本）。
+
+    **打ち手が層ごとに正反対**なので、まとめて「表示的中が低い」と数えてはいけない。
+
+    | 値 | 意味 | 直すべき層 |
+    |---|---|---|
+    | `hit` | 的中 | — |
+    | `read_axis` | 軸2車のどちらかが3着外＝**前提の崩壊** | 型判定・軸選定（読み） |
+    | `read_band` | 軸はそろったが決着が**商品の帯の下** | 型判定（読み）。**帯ではない** |
+    | `legs_budget` | 帯の中で決着し、モデルは k 位以内に置いていたのに買えていない | 買い目 |
+    | `legs_model` | 帯の中で決着し、確率順位でも k 位より下 | モデル |
+
+    🔴 **③ `read_band` のラベルは設計上まだ未決着**（`DESIGN.md` 4.3 の「同じ数字に
+       正反対の読みがある」）。「型判定の失敗」と「価格方針のコスト」の両論があるので、
+       **独立の値として数え、フラットな表示的中へ混ぜないこと。**
+
+    >>> classify_miss(hit=True, axis_hit=False, band_min_odds=15.0,
+    ...               win_pred_odds=3.0, win_prob_rank=1, n_legs=12)
+    'hit'
+    >>> classify_miss(hit=False, axis_hit=False, band_min_odds=15.0,
+    ...               win_pred_odds=3.0, win_prob_rank=1, n_legs=12)
+    'read_axis'
+    >>> classify_miss(hit=False, axis_hit=True, band_min_odds=15.0,
+    ...               win_pred_odds=3.0, win_prob_rank=1, n_legs=12)
+    'read_band'
+    >>> classify_miss(hit=False, axis_hit=True, band_min_odds=15.0,
+    ...               win_pred_odds=40.0, win_prob_rank=5, n_legs=12)
+    'legs_budget'
+    >>> classify_miss(hit=False, axis_hit=True, band_min_odds=15.0,
+    ...               win_pred_odds=40.0, win_prob_rank=60, n_legs=12)
+    'legs_model'
+
+    帯を持たないプラン（`min_odds=0`）では ③ は構造的に起きない:
+
+    >>> classify_miss(hit=False, axis_hit=True, band_min_odds=0.0,
+    ...               win_pred_odds=1.5, win_prob_rank=1, n_legs=3)
+    'legs_budget'
+
+    🔴 **分からないものは「読み」ではなく「モデル」へ倒す。** `prob_ranked` に決着の目が
+       入っていない（＝ `PROB_RANKED_N` 位より下）ときは `win_prob_rank` も
+       `win_pred_odds` も None になる。その目は確率順位が十分に低いので
+       `legs_model` が正しい:
+
+    >>> classify_miss(hit=False, axis_hit=True, band_min_odds=30.0,
+    ...               win_pred_odds=None, win_prob_rank=None, n_legs=14)
+    'legs_model'
+
+    ⚠️ `axis_hit` が None（軸が記録されていない古い行）は判定できないので
+       `read_axis` を飛ばす。読みの失敗を買い目の失敗として数える側へ倒すのは
+       危険なので、**呼び出し側で None を作らないこと**。
+
+    >>> classify_miss(hit=False, axis_hit=None, band_min_odds=0.0,
+    ...               win_pred_odds=None, win_prob_rank=None, n_legs=3)
+    'legs_model'
+    """
+    if hit:
+        return "hit"
+    if axis_hit is False:
+        return "read_axis"
+    if (band_min_odds and float(band_min_odds) > 0
+            and win_pred_odds is not None
+            and float(win_pred_odds) < float(band_min_odds)):
+        return "read_band"
+    if n_legs and win_prob_rank is not None and int(win_prob_rank) <= int(n_legs):
+        return "legs_budget"
+    return "legs_model"
+
+
+def prob_ranked_rows(pred_odds: Mapping, probs: Mapping, bet_type: str,
+                  n: int = PROB_RANKED_N) -> list[list]:
+    """確率降順の上位 n 目を `[[目, 予測オッズ], ...]` で返す（行へ焼き付ける形）。
+
+    🔴 **後から作り直せない。** モデルを再学習すると確率も予測オッズも変わるので、
+       生成した時点の値を残しておかないと「モデルが届かなかったのか」を答えられない
+       （`p3_order` / `pw_ent` と同じ理由）。
+
+    >>> po = {(1, 2, 3): 4.0, (1, 3, 2): 9.0, (2, 1, 3): 30.0}
+    >>> pr = {(1, 2, 3): 0.20, (1, 3, 2): 0.10, (2, 1, 3): 0.05}
+    >>> prob_ranked_rows(po, pr, "trifecta", 2)
+    [['1-2-3', 4.0], ['1-3-2', 9.0]]
+    >>> prob_ranked_rows({frozenset({1, 2, 3}): 2.5}, {frozenset({1, 2, 3}): 0.3}, "trio")
+    [['1=2=3', 2.5]]
+
+    予測オッズが欠けている目は**落とす**（帯の判定に使えないため）。順位は
+    残った目で詰め直される。
+
+    >>> prob_ranked_rows({(1, 2, 3): 4.0}, {(1, 2, 3): 0.2, (1, 3, 2): 0.1}, "trifecta")
+    [['1-2-3', 4.0]]
+    """
+    out = []
+    for c in sorted(probs, key=lambda k: -float(probs[k])):
+        v = pred_odds.get(c)
+        if v is None or not (float(v) > 0):
+            continue
+        out.append([combo_str(c, bet_type), round(float(v), 2)])
+        if len(out) >= n:
+            break
+    return out
+
+
+def lookup_prob_ranked(prob_ranked: Sequence | None,
+                    win_combo: str | None) -> tuple[float | None, int | None]:
+    """焼き付けた `prob_ranked` から決着の目の (予測オッズ, 確率順位) を引く。
+
+    見つからなければ `(None, None)`＝ `PROB_RANKED_N` 位より下。
+
+    >>> lookup_prob_ranked([['1-2-3', 4.0], ['1-3-2', 9.0]], '1-3-2')
+    (9.0, 2)
+    >>> lookup_prob_ranked([['1-2-3', 4.0]], '7-6-5')
+    (None, None)
+    >>> lookup_prob_ranked(None, '1-2-3')
+    (None, None)
+    """
+    if not prob_ranked or not win_combo:
+        return None, None
+    for i, row in enumerate(prob_ranked):
+        if row and str(row[0]) == str(win_combo):
+            return float(row[1]), i + 1
+    return None, None
+
+
+def combo_str(c, bet_type: str) -> str:
+    """目を行に残す文字列へ。三連複は `1=2=3`・三連単は `1-2-3`。
+
+    >>> combo_str((3, 1, 2), "trifecta")
+    '3-1-2'
+    >>> combo_str(frozenset({3, 1, 2}), "trio")
+    '1=2=3'
+    """
+    return ("=".join(str(x) for x in sorted(c)) if bet_type == "trio"
+            else "-".join(str(x) for x in c))
+
+
+def axis_hit_of(axis1: int | None, axis2: int | None,
+                win_combo: str | None) -> bool | None:
+    """軸2車がそろって3着以内に入ったか。判定できなければ None。
+
+    `win_combo` は三連単 `1-2-3` でも三連複 `1=2=3` でもよい（3着以内の集合しか見ない）。
+
+    >>> axis_hit_of(1, 2, '2-1-5')
+    True
+    >>> axis_hit_of(1, 2, '1=3=5')
+    False
+    >>> axis_hit_of(None, 2, '1-2-3') is None
+    True
+    """
+    if not axis1 or not axis2 or not win_combo:
+        return None
+    top3 = {int(x) for x in re.split(r"[-=]", str(win_combo)) if x.isdigit()}
+    return int(axis1) in top3 and int(axis2) in top3
 
 
 def min_expected_payout(stakes: Mapping, pred_odds: Mapping) -> float:
