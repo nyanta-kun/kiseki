@@ -46,6 +46,13 @@ export type ChartTooltipProps = {
   labelFormatter?: (label: string | number) => ReactNode;
   /** 値が数値のとき既定で3桁区切りにする。`formatter` があればそちらが優先。 */
   localize?: boolean;
+  /**
+   * 系列の下に足す補足行。**描いていない系列の値を出したいとき**に使う
+   *（例: 売上金額は棒に比例するだけなので系列にはせず、ここへ出す）。
+   * Recharts は `content` の要素をクローンするだけなので、ホバー中の
+   * ラベルは props からは取れない。**ラベルを受け取る関数**で渡すこと。
+   */
+  footer?: (label: string | number) => ReactNode;
 };
 
 /**
@@ -55,7 +62,7 @@ export type ChartTooltipProps = {
  * クローンするので、こちらで受け取るのは整形の指定だけでよい。
  */
 export function ChartTooltip({
-  active, payload, label, formatter, labelFormatter, localize = true,
+  active, payload, label, formatter, labelFormatter, localize = true, footer,
 }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
@@ -95,6 +102,14 @@ export function ChartTooltip({
           );
         })}
       </div>
+      {footer && label !== undefined && (
+        <div
+          className="mt-1.5 pt-1.5 border-t"
+          style={{ borderColor: "var(--chart-border)" }}
+        >
+          {footer(label)}
+        </div>
+      )}
     </div>
   );
 }

@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 #: 売上金額 = 販売有償pt × この率。**ここが唯一の正本**
@@ -56,6 +56,59 @@ def revenue_yen(sold_paid_points: int | float | None) -> int:
        そのまま掛けると売上を過大に見せる。
     """
     return round(int(sold_paid_points or 0) * REVENUE_RATE)
+
+
+def monthly_rollup(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """日別の売上行を**月別**へ畳む（売上金額つき・2026-09-13 新設）。
+
+    `items` は `/api/keirin/netkeirin-sales` が返す日別行と同じ形
+    （`date`=YYYY-MM-DD / `n_sold` / `sold_points` / `sold_paid_points` /
+    `stake_amount` / `payout_amount`）。
+
+    🔴 **売上は「月合計の有償pt × 料率」で出す。日別の円を足さない。**
+       日ごとに丸めてから足すと端数が積み上がる。2026-08 実測:
+
+           月合計方式  401,720 pt × 0.30 = 120,516 円（実際の入金 120,517 円）
+           日別合算    日ごとに round →  120,519 円（3 円ずれる）
+
+       有償ptは 5 pt 刻みの日があるので `x.5` が月に数回出る。
+
+    ⚠️ **回収率は月内の平均ではなく「合計払戻 ÷ 合計賭け金」**。日別の率を
+       平均すると賭け金の小さい日が過大に効いて実勢とズレる。
+
+    ⚠️ `paid_known` は**月内に1日でも有償ptの欠測があれば False**。欠測を 0 と
+       して積むと「その日は全部無償だった」という静かな嘘になる（棒も表も
+       自然に見えてしまう）。
+    """
+    by: dict[str, dict[str, Any]] = {}
+    for it in items:
+        month = str(it.get("date") or "")[:7]
+        if len(month) != 7:
+            continue
+        cur = by.get(month)
+        if cur is None:
+            cur = by[month] = {
+                "month": month, "n_days": 0, "n_sold": 0,
+                "sold_points": 0, "sold_paid_points": 0, "paid_known": True,
+                "stake_amount": 0, "payout_amount": 0,
+            }
+        cur["n_days"] += 1
+        cur["n_sold"] += int(it.get("n_sold") or 0)
+        cur["sold_points"] += int(it.get("sold_points") or 0)
+        cur["sold_paid_points"] += int(it.get("sold_paid_points") or 0)
+        cur["paid_known"] = cur["paid_known"] and it.get("sold_paid_points") is not None
+        cur["stake_amount"] += int(it.get("stake_amount") or 0)
+        cur["payout_amount"] += int(it.get("payout_amount") or 0)
+
+    out: list[dict[str, Any]] = []
+    for month in sorted(by):
+        m = by[month]
+        stake = m["stake_amount"]
+        m["recovery_rate_pct"] = (
+            round(m["payout_amount"] / stake * 100, 1) if stake > 0 else None)
+        m["revenue_yen"] = revenue_yen(m["sold_paid_points"])
+        out.append(m)
+    return out
 
 
 def _hit_mark(n_incl: int | None, n_excl: int | None) -> str:
