@@ -82,10 +82,15 @@ def test_売上に販売ptを掛けていない():
     assert f"{round(25500 * rep.REVENUE_RATE):,} 円" not in msg  # 7,650円
 
 
-def test_当月の総売上を出す():
+def test_当月ぶんの売上を出す():
+    """🔴 「累計」と書かない（2026-09-13 ユーザー指摘）。
+
+    値は当月分だけなのに、月をまたいで積み上がった額だと読まれる。
+    """
     msg = rep.build_sales_message(_summary())
     assert f"{round(177015 * rep.REVENUE_RATE):,}" in msg        # 53,105円
-    assert "累計" in msg
+    assert "8月の売上" in msg
+    assert "累計" not in msg
 
 
 def test_日付は年月日で出す():
@@ -379,6 +384,13 @@ def test_月別は月順に並び日数を持つ():
     assert [r["n_days"] for r in rows] == [2, 1]
 
 
+def _sales_endpoint_source() -> str:
+    src = (_BACKEND / "src" / "api" / "keirin_router.py").read_text(encoding="utf-8")
+    fn = next(f for f in ast.walk(ast.parse(src))
+              if isinstance(f, ast.AsyncFunctionDef) and f.name == "get_netkeirin_sales")
+    return ast.get_source_segment(src, fn) or ""
+
+
 def test_売上APIが月別を返す():
     """🔴 画面が日別を畳み直すと端数処理が割れる。API 側で畳んで返すこと。"""
     src = (_BACKEND / "src" / "api" / "keirin_router.py").read_text(encoding="utf-8")
@@ -389,3 +401,16 @@ def test_売上APIが月別を返す():
     assert "monthly" in keys
     assert "monthly_rollup" in {n.func.id for n in ast.walk(fn)
                                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+
+
+def test_月別は期間フィルタを掛けずに集計する():
+    """🔴 月が丸ごとでないと売上として読めない（2026-09-13 に実際に表示した）。
+
+    「直近30日」の窓で畳むと 2026-08 が 17日分＝70,688円になり、月の売上として
+    読むと半分近い嘘になる。月別の集計元クエリには `BETWEEN` を入れないこと。
+    """
+    src = _sales_endpoint_source()
+    # 月別の集計元は日付で絞らない SELECT（items 用の SELECT とは別物）
+    assert "FROM keirin.netkeirin_sales_daily ORDER BY sale_date" in src
+    # items 側（期間フィルタあり）と取り違えていないこと
+    assert "monthly_rollup(items)" not in src

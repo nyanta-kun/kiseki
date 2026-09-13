@@ -517,7 +517,21 @@ export default function KeirinStatsPage() {
   })();
   // ツールチップ補足行用（日付/月 → 売上金額）。
   const salesRevenueByKey = new Map(salesRows.map(r => [r.key, r.paidKnown ? r.revenueYen : null]));
+  // 🔴 期間フィルタに依存しない全月（API が全期間で畳んで返す）。
   const salesMonths = salesData?.monthly ?? [];
+  const monthsTotal = {
+    nDays: salesMonths.reduce((a, m) => a + m.n_days, 0),
+    nSold: salesMonths.reduce((a, m) => a + m.n_sold, 0),
+    points: salesMonths.reduce((a, m) => a + m.sold_points, 0),
+    paid: salesMonths.reduce((a, m) => a + m.sold_paid_points, 0),
+    paidKnown: salesMonths.every(m => m.paid_known),
+    revenueYen: salesMonths.reduce((a, m) => a + m.revenue_yen, 0),
+    recoveryPct: (() => {
+      const stake = salesMonths.reduce((a, m) => a + m.stake_amount, 0);
+      const payout = salesMonths.reduce((a, m) => a + m.payout_amount, 0);
+      return stake > 0 ? Math.round((payout / stake) * 1000) / 10 : null;
+    })(),
+  };
 
   const rankLabel = rankFilters.includes("all")
     ? "全体"
@@ -809,6 +823,13 @@ export default function KeirinStatsPage() {
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
             netkeirin 売上推移（販売pt＝有償/無償の内訳・回収率）
+            {/* 月別は必ず丸ごとの月を出す（期間で切ると月の売上として読めない）。
+                下の期間サマリだけがフィルタに従うので、その差を明示する。 */}
+            {salesGranularity === "monthly" && (
+              <span className="ml-1.5 font-normal text-gray-400 dark:text-gray-500">
+                期間フィルタに関係なく全月
+              </span>
+            )}
           </p>
           {/* 粒度切り替え（売上タブ専用・フロントで日別を月別に畳む） */}
           <div className="flex items-center gap-1.5">
@@ -970,14 +991,18 @@ export default function KeirinStatsPage() {
       </div>
 
       {/* 月別の売上表（2026-09-13 ユーザー依頼）。
-          ⚠️ **粒度の切り替えに連動させない**。ここは「月にいくら入るか」を見る
-             ための表で、日別に割ると用途が消える。
+          🔴 **期間フィルタにも粒度トグルにも連動させない**（API が全期間で畳んで
+             返す）。フィルタを掛けると「直近30日」で 2026-08 が 17日分＝70,688円に
+             なり、月の売上として読むと半分近い嘘になる（実際に表示した）。
           ⚠️ 横スクロールは**この器の中だけ**で起こす（`overflow-x-auto`）。
              ページごと横に流れると一覧が読めなくなる。 */}
       {salesMonths.length > 0 && (
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
             月別の売上（販売有償pt × {((salesData?.period_summary.revenue_rate ?? 0.3) * 100).toFixed(0)}%）
+            <span className="ml-1.5 font-normal text-gray-400 dark:text-gray-500">
+              期間フィルタに関係なく全月
+            </span>
           </p>
           <div className="overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4">
             <table className="min-w-full text-xs whitespace-nowrap">
@@ -1021,39 +1046,35 @@ export default function KeirinStatsPage() {
                     </td>
                   </tr>
                 ))}
-                {salesData && (
-                  <tr className="font-bold text-gray-800 dark:text-gray-100">
-                    <td className="py-1.5 pr-3">合計</td>
-                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
-                      {salesMonths.reduce((a, m) => a + m.n_days, 0)}
-                    </td>
-                    <td className="py-1.5 px-2 text-right">
-                      {salesData.period_summary.total_n_sold.toLocaleString()}
-                    </td>
-                    <td className="py-1.5 px-2 text-right">
-                      {salesData.period_summary.total_sold_points.toLocaleString()}
-                    </td>
-                    <td className="py-1.5 px-2 text-right">
-                      {salesData.period_summary.total_sold_paid_points.toLocaleString()}
-                    </td>
-                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
-                      {Math.max(
-                        salesData.period_summary.total_sold_points
-                          - salesData.period_summary.total_sold_paid_points, 0,
-                      ).toLocaleString()}
-                    </td>
-                    <td className={`py-1.5 px-2 text-right ${
-                      (salesData.period_summary.recovery_rate_pct ?? 0) >= 100
-                        ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
-                    }`}>
-                      {salesData.period_summary.recovery_rate_pct != null
-                        ? `${salesData.period_summary.recovery_rate_pct}%` : "—"}
-                    </td>
-                    <td className="py-1.5 pl-2 text-right text-emerald-600 dark:text-emerald-400">
-                      {`¥${salesData.period_summary.total_revenue_yen.toLocaleString()}`}
-                    </td>
-                  </tr>
-                )}
+                {/* 🔴 合計は**全月の足し上げ**。上の期間サマリ（フィルタ依存）を
+                    そのまま置くと、行の合計と合わない数字が最下段に並ぶ。 */}
+                <tr className="font-bold text-gray-800 dark:text-gray-100">
+                  <td className="py-1.5 pr-3 whitespace-nowrap">
+                    合計<span className="ml-1 text-[10px] font-normal text-gray-400">全期間</span>
+                  </td>
+                  <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                    {monthsTotal.nDays.toLocaleString()}
+                  </td>
+                  <td className="py-1.5 px-2 text-right">{monthsTotal.nSold.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right">{monthsTotal.points.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right">
+                    {monthsTotal.paidKnown ? monthsTotal.paid.toLocaleString() : "—"}
+                  </td>
+                  <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                    {monthsTotal.paidKnown
+                      ? Math.max(monthsTotal.points - monthsTotal.paid, 0).toLocaleString()
+                      : "—"}
+                  </td>
+                  <td className={`py-1.5 px-2 text-right ${
+                    (monthsTotal.recoveryPct ?? 0) >= 100
+                      ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                  }`}>
+                    {monthsTotal.recoveryPct != null ? `${monthsTotal.recoveryPct}%` : "—"}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right text-emerald-600 dark:text-emerald-400">
+                    {monthsTotal.paidKnown ? `¥${monthsTotal.revenueYen.toLocaleString()}` : "—"}
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
