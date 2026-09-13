@@ -1570,8 +1570,34 @@ export type NetkeirinSalesItem = {
   revenue_yen: number;
 };
 
+/**
+ * 月別ロールアップ（バックエンド `keirin_sales_report.monthly_rollup` が正本）。
+ *
+ * 🔴 **フロントで日別を畳み直さないこと。** 売上は「月合計の有償pt × 料率」で
+ *    出す決まりで、日別の円を足すと端数が積み上がる（2026-08 実測で3円ずれる）。
+ */
+export type NetkeirinSalesMonth = {
+  /** YYYY-MM */
+  month: string;
+  /** その月にデータがあった日数（月の途中かどうかの判断に使う）。 */
+  n_days: number;
+  n_sold: number;
+  sold_points: number;
+  sold_paid_points: number;
+  /** 月内に1日でも有償ptの欠測があれば false（内訳を信用してはいけない）。 */
+  paid_known: boolean;
+  stake_amount: number;
+  payout_amount: number;
+  /** 合計払戻 / 合計賭け金（日別の率の平均ではない）。 */
+  recovery_rate_pct: number | null;
+  /** 売上金額(円) = sold_paid_points * revenue_rate。 */
+  revenue_yen: number;
+};
+
 export type NetkeirinSalesResponse = {
   items: NetkeirinSalesItem[];
+  /** 月別ロールアップ（月順）。 */
+  monthly: NetkeirinSalesMonth[];
   period_summary: {
     total_stake: number;
     total_payout: number;

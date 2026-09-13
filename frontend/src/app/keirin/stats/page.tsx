@@ -7,6 +7,7 @@ import {
   ComposedChart,
   Bar,
   Cell,
+  LabelList,
   Line,
   XAxis,
   YAxis,
@@ -464,9 +465,8 @@ export default function KeirinStatsPage() {
   // ⚠️ 回収率は月内の平均ではなく **合計払戻 / 合計賭け金** で再計算すること
   //    （日別の率を平均すると賭け金の小さい日が過大に効いて実勢とズレる）。
   const salesRows = (() => {
-    const items = salesData?.items ?? [];
     if (salesGranularity === "daily") {
-      return items.map(i => ({
+      return (salesData?.items ?? []).map(i => ({
         key: i.date,
         soldPoints: i.sold_points ?? 0,
         soldPaidPoints: i.sold_paid_points ?? 0,
@@ -475,27 +475,22 @@ export default function KeirinStatsPage() {
         paidKnown: i.sold_paid_points != null,
         stake: i.stake_amount,
         payout: i.payout_amount,
+        revenueYen: i.revenue_yen,
       }));
     }
-    const byMonth = new Map<string, {
-      soldPoints: number; soldPaidPoints: number; paidKnown: boolean;
-      stake: number; payout: number;
-    }>();
-    for (const i of items) {
-      const m = i.date.slice(0, 7);
-      const cur = byMonth.get(m)
-        ?? { soldPoints: 0, soldPaidPoints: 0, paidKnown: true, stake: 0, payout: 0 };
-      cur.soldPoints += i.sold_points ?? 0;
-      cur.soldPaidPoints += i.sold_paid_points ?? 0;
-      // 月内に1日でも欠測があれば、その月の内訳は信用できない
-      cur.paidKnown = cur.paidKnown && i.sold_paid_points != null;
-      cur.stake += i.stake_amount;
-      cur.payout += i.payout_amount;
-      byMonth.set(m, cur);
-    }
-    return [...byMonth.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, v]) => ({ key, ...v }));
+    // 🔴 月別は**フロントで畳み直さない**（2026-09-13）。売上は「月合計の有償pt
+    //    × 料率」で出す決まりで、日別の円を足すと端数が積み上がる
+    //    （2026-08 実測: 月合計 120,516円 ↔ 日別合算 120,519円）。
+    //    正本はバックエンドの `keirin_sales_report.monthly_rollup`。
+    return (salesData?.monthly ?? []).map(m => ({
+      key: m.month,
+      soldPoints: m.sold_points,
+      soldPaidPoints: m.sold_paid_points,
+      paidKnown: m.paid_known,
+      stake: m.stake_amount,
+      payout: m.payout_amount,
+      revenueYen: m.revenue_yen,
+    }));
   })();
   // 棒は「有償pt（下）＋ 無償pt（上）」の積み上げ。合計は従来の販売ptに一致する。
   // 内訳が取れない期間は分割せず灰色の「内訳不明」として総販売ptを1本で積む
@@ -506,9 +501,23 @@ export default function KeirinStatsPage() {
     販売無償pt: r.paidKnown ? Math.max(r.soldPoints - r.soldPaidPoints, 0) : null,
     内訳不明: r.paidKnown ? null : r.soldPoints,
     回収率: r.stake > 0 ? Math.round((r.payout / r.stake) * 1000) / 10 : null,
+    // 系列としては描かない（有償ptの棒に比例するだけで、線にしても情報が増えない）。
+    // 月別のときだけ棒の上へラベルで出し、ツールチップには常に補足行として出す。
+    売上金額: r.paidKnown ? r.revenueYen : null,
   }));
   const maxSoldPoints = Math.max(...salesRows.map(r => r.soldPoints), 1);
-  const salesYAxisMax = Math.ceil(maxSoldPoints / 100) * 100 + 100;
+  // 月別は棒の上に売上金額のラベルを載せるので、天井に当たらないよう2割の余白を
+  // 取り、目盛りが半端な数にならないよう上位2桁で切り上げる
+  //（素の `+12%` だと軸の一番上が「695184」のような読めない数字になる）。
+  const salesYAxisMax = (() => {
+    if (salesGranularity !== "monthly") return Math.ceil(maxSoldPoints / 100) * 100 + 100;
+    const padded = maxSoldPoints * 1.2;
+    const step = 10 ** Math.max(Math.floor(Math.log10(padded)) - 1, 0);
+    return Math.ceil(padded / step) * step;
+  })();
+  // ツールチップ補足行用（日付/月 → 売上金額）。
+  const salesRevenueByKey = new Map(salesRows.map(r => [r.key, r.paidKnown ? r.revenueYen : null]));
+  const salesMonths = salesData?.monthly ?? [];
 
   const rankLabel = rankFilters.includes("all")
     ? "全体"
@@ -795,7 +804,7 @@ export default function KeirinStatsPage() {
       </>)}
 
       {/* ── 売上タブ ───────────────────────────────────────── */}
-      {tab === "sales" && (
+      {tab === "sales" && (<>
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
@@ -854,7 +863,20 @@ export default function KeirinStatsPage() {
               {/* 🔴 素の `<Tooltip />` は Recharts 既定＝**白い面 ＋ 系列色そのままの文字**。
                   「販売無償pt」(#c7d2fe) と「内訳不明」(#d1d5db) が白地に載って読めず、
                   暗いテーマでは面ごと浮いていた（2026-09-03 のスクリーンショット）。 */}
-              <Tooltip content={<ChartTooltip />} />
+              {/* 売上金額は棒に比例するだけなので系列にはせず、補足行として出す
+                  （線にすると有償ptの棒を縮尺違いでなぞるだけになる）。 */}
+              <Tooltip content={<ChartTooltip footer={(l) => {
+                const rev = salesRevenueByKey.get(String(l));
+                return (
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ color: "var(--chart-muted)" }}>売上金額</span>
+                    <span className="tabular-nums ml-auto pl-3 font-semibold"
+                          style={{ color: "var(--chart-fg)" }}>
+                      {rev != null ? `¥${rev.toLocaleString()}` : "—"}
+                    </span>
+                  </div>
+                );
+              }} />} />
               <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
               <ReferenceLine yAxisId="right" y={100} stroke="#94a3b8" strokeDasharray="4 2" strokeWidth={1} />
               {/* 販売ptの内訳。**有償ptを下に積む**（売上金額の対象はこちらで、
@@ -862,7 +884,22 @@ export default function KeirinStatsPage() {
                   積まれるので、有償→無償→内訳不明 の順を変えないこと。
                   角丸は最上段だけに付ける（下段に付けると継ぎ目に隙間が出る）。 */}
               <Bar yAxisId="left" dataKey="販売有償pt" stackId="sold" fill="#6366f1" maxBarSize={28} />
-              <Bar yAxisId="left" dataKey="販売無償pt" stackId="sold" fill="#c7d2fe" radius={[2, 2, 0, 0]} maxBarSize={28} />
+              <Bar yAxisId="left" dataKey="販売無償pt" stackId="sold" fill="#c7d2fe" radius={[2, 2, 0, 0]} maxBarSize={28}>
+                {/* 月別のときだけ棒の上に売上金額を出す（日別は本数が多く潰れる）。
+                    ラベルは積み上げの**最上段の棒**に付ける。有償ptの棒に付けると
+                    無償ptの棒に隠れる。 */}
+                {salesGranularity === "monthly" && (
+                  <LabelList
+                    dataKey="売上金額"
+                    position="top"
+                    offset={6}
+                    fill="var(--chart-fg)"
+                    fontSize={11}
+                    fontWeight={700}
+                    formatter={(v) => (typeof v === "number" ? `¥${v.toLocaleString()}` : "")}
+                  />
+                )}
+              </Bar>
               <Bar yAxisId="left" dataKey="内訳不明" stackId="sold" fill="#d1d5db" radius={[2, 2, 0, 0]} maxBarSize={28} />
               <Line
                 yAxisId="right"
@@ -931,7 +968,104 @@ export default function KeirinStatsPage() {
           </div>
         )}
       </div>
+
+      {/* 月別の売上表（2026-09-13 ユーザー依頼）。
+          ⚠️ **粒度の切り替えに連動させない**。ここは「月にいくら入るか」を見る
+             ための表で、日別に割ると用途が消える。
+          ⚠️ 横スクロールは**この器の中だけ**で起こす（`overflow-x-auto`）。
+             ページごと横に流れると一覧が読めなくなる。 */}
+      {salesMonths.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
+            月別の売上（販売有償pt × {((salesData?.period_summary.revenue_rate ?? 0.3) * 100).toFixed(0)}%）
+          </p>
+          <div className="overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4">
+            <table className="min-w-full text-xs whitespace-nowrap">
+              <thead>
+                <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
+                  <th className="text-left font-medium py-1.5 pr-3">月</th>
+                  <th className="text-right font-medium py-1.5 px-2">日数</th>
+                  <th className="text-right font-medium py-1.5 px-2">販売個数</th>
+                  <th className="text-right font-medium py-1.5 px-2">販売pt</th>
+                  <th className="text-right font-medium py-1.5 px-2">有償pt</th>
+                  <th className="text-right font-medium py-1.5 px-2">無償pt</th>
+                  <th className="text-right font-medium py-1.5 px-2">回収率</th>
+                  <th className="text-right font-medium py-1.5 pl-2">売上金額</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums text-gray-700 dark:text-gray-200">
+                {salesMonths.map(m => (
+                  <tr key={m.month} className="border-b border-gray-50 dark:border-gray-800">
+                    <td className="py-1.5 pr-3 font-semibold text-gray-800 dark:text-gray-100">{m.month}</td>
+                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">{m.n_days}</td>
+                    <td className="py-1.5 px-2 text-right">{m.n_sold.toLocaleString()}</td>
+                    <td className="py-1.5 px-2 text-right">{m.sold_points.toLocaleString()}</td>
+                    {/* 🔴 有償ptが1日でも欠測なら内訳は出さない（0と書くと「全部無償
+                        だった」に見える）。売上もその月は伏せる。 */}
+                    <td className="py-1.5 px-2 text-right">
+                      {m.paid_known ? m.sold_paid_points.toLocaleString() : "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                      {m.paid_known
+                        ? Math.max(m.sold_points - m.sold_paid_points, 0).toLocaleString()
+                        : "—"}
+                    </td>
+                    <td className={`py-1.5 px-2 text-right ${
+                      (m.recovery_rate_pct ?? 0) >= 100
+                        ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                    }`}>
+                      {m.recovery_rate_pct != null ? `${m.recovery_rate_pct}%` : "—"}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                      {m.paid_known ? `¥${m.revenue_yen.toLocaleString()}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {salesData && (
+                  <tr className="font-bold text-gray-800 dark:text-gray-100">
+                    <td className="py-1.5 pr-3">合計</td>
+                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                      {salesMonths.reduce((a, m) => a + m.n_days, 0)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right">
+                      {salesData.period_summary.total_n_sold.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 px-2 text-right">
+                      {salesData.period_summary.total_sold_points.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 px-2 text-right">
+                      {salesData.period_summary.total_sold_paid_points.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                      {Math.max(
+                        salesData.period_summary.total_sold_points
+                          - salesData.period_summary.total_sold_paid_points, 0,
+                      ).toLocaleString()}
+                    </td>
+                    <td className={`py-1.5 px-2 text-right ${
+                      (salesData.period_summary.recovery_rate_pct ?? 0) >= 100
+                        ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+                    }`}>
+                      {salesData.period_summary.recovery_rate_pct != null
+                        ? `${salesData.period_summary.recovery_rate_pct}%` : "—"}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right text-emerald-600 dark:text-emerald-400">
+                      {`¥${salesData.period_summary.total_revenue_yen.toLocaleString()}`}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
+            売上は「販売有償pt」が対象（無償ptは収益にならない）。集計はレース日の
+            翌日に確定するため当月の行は途中集計で、売上は速報値。
+            netkeirin の実際の入金額とは端数処理の分だけ数円ずれることがある
+            （2026-08 実測: 本表 ¥120,516 ／ 実入金 ¥120,517）。
+          </p>
+        </div>
       )}
+      </>)}
 
       {/* ── 分析タブ ───────────────────────────────────────── */}
       {tab === "sold" && (

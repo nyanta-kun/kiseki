@@ -319,3 +319,73 @@ def test_付加情報の失敗で通知が消えない():
     src = _SCRIPT.read_text(encoding="utf-8")
     i = src.index("confident = _fetch_confident(")
     assert "try:" in src[max(0, i - 400):i], "付加情報が try で包まれていません"
+
+
+# ---------------------------------------------------------------------------
+# 月別ロールアップ（画面の月別グラフと最下部の月次表・2026-09-13）
+# ---------------------------------------------------------------------------
+
+def _day(date: str, paid: int | None, **kw) -> dict:
+    base = {
+        "date": date, "n_sold": 1, "sold_points": (paid or 0) * 2,
+        "sold_paid_points": paid, "stake_amount": 0, "payout_amount": 0,
+    }
+    base.update(kw)
+    return base
+
+
+def test_月別の売上は月合計の有償ptへ料率を掛ける():
+    """🔴 日別に丸めてから足すと端数が積み上がる（2026-08 実測で 3 円ずれた）。
+
+    有償ptは 5 pt 刻みの日があるので `× 0.30` が `x.5` になる日が月に数回出る。
+    """
+    days = [_day("2026-08-04", 6815), _day("2026-08-11", 14955),
+            _day("2026-08-14", 18265), _day("2026-08-22", 10255)]
+    [m] = rep.monthly_rollup(days)
+
+    paid = 6815 + 14955 + 18265 + 10255
+    assert m["sold_paid_points"] == paid
+    assert m["revenue_yen"] == rep.revenue_yen(paid)
+    # 日別合算（= 誤った出し方）とは実際に食い違う
+    assert m["revenue_yen"] != sum(rep.revenue_yen(d["sold_paid_points"]) for d in days)
+
+
+def test_月別の回収率は合計払戻を合計賭け金で割る():
+    """⚠️ 日別の率を平均すると賭け金の小さい日が過大に効く。"""
+    days = [
+        _day("2026-08-01", 100, stake_amount=90_000, payout_amount=45_000),
+        _day("2026-08-02", 100, stake_amount=10_000, payout_amount=20_000),
+    ]
+    [m] = rep.monthly_rollup(days)
+
+    assert m["recovery_rate_pct"] == 65.0          # 65,000 / 100,000
+    # 日別の率（50% と 200%）の平均 125% にはならない
+    assert m["recovery_rate_pct"] != 125.0
+
+
+def test_有償ptが欠測の月は内訳不明として立てる():
+    """🔴 欠測を 0 として積むと「その日は全部無償だった」という静かな嘘になる。"""
+    [m] = rep.monthly_rollup([_day("2026-08-01", 100), _day("2026-08-02", None)])
+
+    assert m["paid_known"] is False
+    assert rep.monthly_rollup([_day("2026-08-01", 100)])[0]["paid_known"] is True
+
+
+def test_月別は月順に並び日数を持つ():
+    rows = rep.monthly_rollup(
+        [_day("2026-09-01", 10), _day("2026-08-31", 10), _day("2026-08-01", 10)])
+
+    assert [r["month"] for r in rows] == ["2026-08", "2026-09"]
+    assert [r["n_days"] for r in rows] == [2, 1]
+
+
+def test_売上APIが月別を返す():
+    """🔴 画面が日別を畳み直すと端数処理が割れる。API 側で畳んで返すこと。"""
+    src = (_BACKEND / "src" / "api" / "keirin_router.py").read_text(encoding="utf-8")
+    fn = next(f for f in ast.walk(ast.parse(src))
+              if isinstance(f, ast.AsyncFunctionDef) and f.name == "get_netkeirin_sales")
+    keys = {k.value for n in ast.walk(fn) if isinstance(n, ast.Dict)
+            for k in n.keys if isinstance(k, ast.Constant)}
+    assert "monthly" in keys
+    assert "monthly_rollup" in {n.func.id for n in ast.walk(fn)
+                                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}

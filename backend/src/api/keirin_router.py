@@ -49,7 +49,7 @@ from ..services.keirin_sales_analysis import (
     build_route_breakdown,
     build_summary,
 )
-from ..services.keirin_sales_report import REVENUE_RATE
+from ..services.keirin_sales_report import REVENUE_RATE, monthly_rollup
 from ..services.keirin_settlement import Settlement, payout_per_100, settle
 from ..services.keirin_settlement_cache import (
     cached_settlement,
@@ -2292,6 +2292,11 @@ async def get_netkeirin_sales(
 
     return JSONResponse(content={
         "items": items,
+        # 月別ロールアップ（2026-09-13）。画面のグラフ（月別）と最下部の月次表が
+        # これを使う。🔴 **フロントで日別を畳み直さないこと**——売上の端数処理が
+        # 割れる（日別の円を足すと 2026-08 で 3 円ずれる。`monthly_rollup` の
+        # docstring を参照）。
+        "monthly": monthly_rollup(items),
         "period_summary": {
             "total_stake": total_stake,
             "total_payout": total_payout,
