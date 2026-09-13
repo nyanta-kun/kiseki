@@ -46,6 +46,26 @@ function formatRoundHalfUp(value: number, decimals = 1): string {
   return rounded.toFixed(decimals);
 }
 
+// 合成オッズを「損益分岐に要る的中率」へ直す。ダッチ配分ではどの目が当たっても
+// 払戻は投資 × 合成なので、損益分岐は 1/合成。
+//
+// 🔴 **合成を上げても収支は良くならない**（`docs/type_lab/synth_odds_floor_2026_09_14.md`）。
+//    実測では「実際の的中率 ÷ 必要的中率」が**どの合成帯でも 76〜85%** で平ら:
+//
+//      合成 2.0-2.5  必要 44.1%  実際 32.90%  達成率 75%   ROI 78.4
+//      合成 3.0-4.0  必要 31.4%  実際 25.05%  達成率 80%   ROI 83.1
+//      合成 6.0+     必要  6.6%  実際  5.01%  達成率 76%   ROI 65.7
+//
+//    ＝ 合成を上げると必要的中率は下がるが、実際の的中率が**同じ比で**下がる。
+//    差の 15〜25% は控除率で、点数では埋まらない。
+// 🔴 したがってこの数字は「この商品が損か得か」ではなく
+//    **「何回に1回当たれば元が取れるか」**として読むこと。合成が低い商品
+//    （2.0〜2.5倍）は**いちばん当たる帯**で、表示的中 32.90% が出ている。
+function breakEvenPct(synthOdds: number): string {
+  if (!(synthOdds > 0)) return "—";
+  return `${Math.round(100 / synthOdds)}%`;
+}
+
 // pred_win_pct/pred_top2_pct/pred_top3_pct（選手ごと独立モデルの生確率）を
 // レース内合計が一定値になるよう補正する。実装は `@/lib/keirinProb`（review
 // 画面・netkeirin 入稿コメントと同じ正規化を使うための単一正本）。
@@ -1455,6 +1475,7 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               {pick.synth_odds != null && !isMiwokuri && (
                 <span className="text-gray-500 dark:text-gray-400">
                   合成<span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>
+                  <span className="ml-0.5 text-gray-400 dark:text-gray-500">(要{breakEvenPct(pick.synth_odds)})</span>
                 </span>
               )}
             </span>
@@ -1505,8 +1526,12 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
               </span>
             )}
             {pick.synth_odds != null && !isMiwokuri && (
-              <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+              <span
+                className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0"
+                title="損益分岐に要る的中率（=100÷合成）。実際の的中率はどの合成帯でも必要値の76〜85%で、合成を上げても収支は変わらない"
+              >
                 合成 <span className="font-semibold text-gray-700 dark:text-gray-200">{formatRoundHalfUp(pick.synth_odds)}</span>倍
+                <span className="ml-1 text-gray-400 dark:text-gray-500">要 {breakEvenPct(pick.synth_odds)}</span>
               </span>
             )}
             {pick.gap23 != null && !isMiwokuri && (

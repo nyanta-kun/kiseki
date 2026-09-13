@@ -2297,12 +2297,24 @@ def rule_version(n_entries: int = 7) -> str:
        （7車の買い方は一切変えていない）。9車だけ `NINE_CAR_TYPE_F_*` を混ぜて
        別世代にする — `paper9` の行は**全8プランで作った**ので、決勝限定へ絞った
        今の規則とは実際に別物だから。
+
+    🔴🔴 **既知の衝突: `9619f3cb7668` は2つの別商品にまたがっている**（2026-09-14 判明）。
+       `Plan.target` / `Plan.bust` / `Plan.tau_adaptive` / `ORDER_SWAP_PLANS` /
+       `OSAE_PLANS` が payload に載っていなかったため、#567（2026-09-11・τ適応・
+       並べ替え・押さえ目）で商品が変わったのに版が割れなかった。
+       境界は **2026-09-11**（`C_hit` の平均点数が 12.0 → 11.4 → 10.6 と実データで動く）。
+       **この版で母集団を絞る検証は、日付でも切ること。** 遡って直すことはできない。
     """
     import hashlib
     import json
     payload: dict = (
+        # 🔴 **`Plan` の属性を足したら、ここにも足すこと**（2026-09-14）。
+        #    `target` / `bust` / `tau_adaptive` は 2026-09-06〜09-11 に足されたのに
+        #    ここへ載っておらず、**商品が変わっても版が割れていなかった**。
+        #    実測: `tau_adaptive` を反転しても `9619f3cb7668` のまま。
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
-             v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult]
+             v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult,
+             v.target, v.bust, v.tau_adaptive]
          for k, v in sorted(PLANS.items())}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
 
@@ -2318,7 +2330,15 @@ def rule_version(n_entries: int = 7) -> str:
         #    版が割れず、新旧の行が同じ `rule_version` で混ざる（`_sign` と同じ理由）。
         #    ⚠️ 7車にも9車にも掛けているので、`if n_entries == 7` の中には入れない。
         | {"_line": [sorted(LINE_SWAP_PLANS), list(LINE_SWAP_LEGS),
-                     LINE_SWAP_MIN_KEEP, LINE_SWAP_MIN_ODDS]})
+                     LINE_SWAP_MIN_KEEP, LINE_SWAP_MIN_ODDS]}
+
+        # 🔴 並べ替え（`apply_order_swap`）と押さえ目（`apply_osae`）も `PLANS` の
+        #    属性では表せない（`build_with_gate_fallback` の中で効く）。`_line` と同じ理由。
+        #    ⚠️ どちらも**車数ガードを持たない**（7車にも9車にも掛かる）ので、
+        #       `if n_entries == 7` の中には入れない。
+        | {"_order": sorted(ORDER_SWAP_PLANS)}
+        | {"_osae": [sorted(OSAE_PLANS), OSAE_MIN_PRED_ODDS,
+                     OSAE_MAX_LEGS, OSAE_STAKE]})
     if n_entries == 7:
         # 🔴 フォールバックは `PLANS` に無いので、ここへ入れないと帯を動かしても
         #    版が割れず新旧の行が混ざる（`_sign` と同じ理由）。
