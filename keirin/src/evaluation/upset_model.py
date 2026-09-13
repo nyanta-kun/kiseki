@@ -173,7 +173,13 @@ def train_upset_model(df_race: pd.DataFrame,
         "learning_rate": 0.03,
         "num_leaves": 15,
         "min_child_samples": 50,
-        "subsample": 0.8,
+        # 🔴 **`subsample` は書かない**（2026-09-14）。sklearn API の
+        #    `LGBMClassifier` は `subsample_freq=0` が既定で、これは LightGBM の
+        #    `bagging_freq=0`＝**bagging 無効**。`subsample=0.8` と書いても
+        #    **一度も効いていなかった**（実測で確認）。
+        #    有効化するなら `subsample_freq>=1` とセットだが、それは**モデルを
+        #    変える操作**なので `src/keirin_protocol.py` の TEST（4窓）が要る。
+        #    ここでは設定を実態に合わせるだけに留める（挙動は一切変わらない）。
         "colsample_bytree": 0.8,
         "scale_pos_weight": scale_pos_weight,
         "random_state": 42,

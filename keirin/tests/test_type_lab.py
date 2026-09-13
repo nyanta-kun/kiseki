@@ -298,6 +298,76 @@ def test_rule_version_changes_with_the_plans():
     assert rule_version() == before
 
 
+#: `rule_version` に載せなくてよい `Plan` の属性。**識別子と説明だけ。**
+#: 🔴 ここへ足すのは「商品の中身を変えない属性」だけにすること。
+_RULE_VERSION_EXEMPT_FIELDS = {"key", "type_label", "note"}
+
+
+def test_rule_version_covers_every_plan_field():
+    """🔴 **`Plan` に属性を足したら `rule_version` にも足す**（2026-09-14）。
+
+    `target` / `bust` / `tau_adaptive` は 2026-09-06〜09-11 に足されたのに
+    `rule_version` の payload へ載っておらず、**商品が変わっても版が割れなかった**
+    （#567 の τ適応・並べ替え・押さえ目が `9619f3cb7668` のまま入った）。
+    版で母集団を絞る検証が静かに壊れるので、属性の追加漏れを機械的に弾く。
+    """
+    import dataclasses
+
+    fields = [f for f in dataclasses.fields(PLANS["A_hit"])
+              if f.name not in _RULE_VERSION_EXEMPT_FIELDS]
+    assert fields, "Plan の属性が取れていない"
+    #: 属性ごとの「別の値」。型で決め打ちせず、実際に違う値を作る。
+    def _other(cur):
+        if isinstance(cur, bool):
+            return not cur
+        if isinstance(cur, (int, float)):
+            return float(cur) + 7.0
+        if isinstance(cur, str):
+            return cur + "_x"
+        raise AssertionError(f"未知の型: {type(cur)}")
+
+    missed = []
+    for f in fields:
+        for key in ("A_hit", "C_hit", "C_big", "F_line"):
+            plan = PLANS[key]
+            before = rule_version(7), rule_version(9)
+            PLANS[key] = dataclasses.replace(plan, **{f.name: _other(getattr(plan, f.name))})
+            try:
+                after = rule_version(7), rule_version(9)
+            finally:
+                PLANS[key] = plan
+            if after != before:
+                break
+        else:
+            missed.append(f.name)
+    assert not missed, (
+        f"rule_version の payload に載っていない Plan の属性: {missed}。"
+        " 載せないと商品を変えても版が割れず、新旧の行が同じ版で混ざる")
+
+
+def test_rule_version_covers_the_post_build_hooks():
+    """`PLANS` の外で商品を変える機構も版に載っていること（`_line` と同じ理由）。
+
+    `apply_order_swap` / `apply_osae` は `build_with_gate_fallback` の中で効き、
+    **車数ガードを持たない**（7車にも9車にも掛かる）。
+    """
+    import src.type_lab as T
+
+    for name, other in (("ORDER_SWAP_PLANS", frozenset({"__none__"})),
+                        ("OSAE_PLANS", frozenset({"__none__"})),
+                        ("OSAE_MIN_PRED_ODDS", 1.0),
+                        ("OSAE_MAX_LEGS", 99),
+                        ("OSAE_STAKE", 999)):
+        cur = getattr(T, name)
+        before = T.rule_version(7), T.rule_version(9)
+        setattr(T, name, other)
+        try:
+            after = T.rule_version(7), T.rule_version(9)
+        finally:
+            setattr(T, name, cur)
+        assert after != before, f"{name} を変えても rule_version が割れない"
+
+
 def test_every_type_has_at_least_one_plan():
     for t in "ABCDEF":
         assert plans_for(t), f"型{t} に買い方が無い"
