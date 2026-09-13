@@ -1,7 +1,7 @@
 """netkeirin 売上の日次レポート（2026-08-16 新設）。
 
 毎朝 9:40 の売上取り込み（`scripts/scrape_netkeirin_sales.sh`）のあとに、前日の
-販売実績と当月の累計売上を Discord へ送るための計算・文面・送信をまとめる。
+販売実績と当月ぶんの売上を Discord へ送るための計算・文面・送信をまとめる。
 
 ## 🔴 標準ライブラリ以外を import しないこと
 
@@ -193,7 +193,10 @@ def build_sales_message(s: Mapping[str, Any]) -> str:
         f"販売 {int(s['n_sold'] or 0):,} 点",
         f"販売pt {int(s['sold_points'] or 0):,} pt"
         f"（販売有償pt {paid:,} pt）",
-        f"{d[4:6]}月 累計 {revenue_yen(month_paid):,} 円"
+        # 🔴 **「累計」と書かない**（2026-09-13 ユーザー指摘）。値は当月分だけ
+        #    （`sale_date LIKE 'YYYYMM%'`）なのに、月をまたいで積み上がった額だと
+        #    読まれる。月を明示して「その月の売上」と書く。
+        f"{int(d[4:6])}月の売上 {revenue_yen(month_paid):,} 円"
         f"（{int(s['month_n_days'] or 0)}日 / 有償 {month_paid:,} pt）",
     ]
     lines += [""] + _confident_lines(s.get("confident"))

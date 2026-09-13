@@ -2217,6 +2217,11 @@ async def get_sold_performance(
     })
 
 
+def _iso_date(ymd: str) -> str:
+    """`YYYYMMDD` → `YYYY-MM-DD`（`netkeirin_sales_daily.sale_date` は文字列）。"""
+    return f"{ymd[0:4]}-{ymd[4:6]}-{ymd[6:8]}"
+
+
 @router.get("/netkeirin-sales")
 async def get_netkeirin_sales(
     from_date: str = "",
@@ -2271,7 +2276,7 @@ async def get_netkeirin_sales(
         total_sold_paid_points += int(r["sold_paid_points"] or 0)
         total_n_sold += int(r["n_sold"] or 0)
         items.append({
-            "date": f"{sd[0:4]}-{sd[4:6]}-{sd[6:8]}",
+            "date": _iso_date(sd),
             "n_predictions": r["n_predictions"],
             "n_predictions_staked": r["n_predictions_staked"],
             "n_hits_incl_garami": r["n_hits_incl_garami"],
@@ -2290,13 +2295,39 @@ async def get_netkeirin_sales(
             "avg_sold_hour": r["avg_sold_hour"],
         })
 
+    # 月別ロールアップ（2026-09-13）。画面のグラフ（月別）と最下部の月次表が使う。
+    #
+    # 🔴 **期間フィルタを掛けない（全期間・月は必ず丸ごと）。** 掛けると
+    #    「直近30日」で 2026-08 が 17日分＝有償 235,625pt・売上 70,688円になり、
+    #    月の売上として読むと**半分近い嘘**になる（2026-09-13 に実際に表示した）。
+    #    月は月単位で完結していないと意味を持たないので、フィルタは日別の推移と
+    #    期間サマリにだけ効かせる。
+    #
+    # 🔴 **フロントで日別を畳み直さないこと**——売上の端数処理が割れる
+    #    （日別の円を足すと 2026-08 で3円ずれる。`monthly_rollup` の docstring）。
+    month_rows = (await db.execute(
+        text(
+            "SELECT sale_date, n_sold, sold_points, sold_paid_points, "
+            "       stake_amount, payout_amount "
+            "FROM keirin.netkeirin_sales_daily ORDER BY sale_date"
+        ),
+    )).mappings().all()
+    monthly = monthly_rollup([
+        {
+            # `monthly_rollup` は日別行（YYYY-MM-DD）を受ける取り決め。
+            "date": _iso_date(str(r["sale_date"])),
+            "n_sold": r["n_sold"],
+            "sold_points": r["sold_points"],
+            "sold_paid_points": r["sold_paid_points"],
+            "stake_amount": r["stake_amount"],
+            "payout_amount": r["payout_amount"],
+        }
+        for r in month_rows
+    ])
+
     return JSONResponse(content={
         "items": items,
-        # 月別ロールアップ（2026-09-13）。画面のグラフ（月別）と最下部の月次表が
-        # これを使う。🔴 **フロントで日別を畳み直さないこと**——売上の端数処理が
-        # 割れる（日別の円を足すと 2026-08 で 3 円ずれる。`monthly_rollup` の
-        # docstring を参照）。
-        "monthly": monthly_rollup(items),
+        "monthly": monthly,
         "period_summary": {
             "total_stake": total_stake,
             "total_payout": total_payout,
