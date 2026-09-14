@@ -19,6 +19,9 @@
    スマホ表示はコードブロックを折り返さず、幅の広い行が切れて崩れる
 7. **「自信あり」と「的中レースの売上」を出す**（2026-09-07 ユーザー指示）。
    的中は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを混ぜない）
+8. **直近7日の見張りを出す**（2026-09-14）。表示的中率と運用フロア30%の差・
+   10万円以上の件数。**判定ではなく見張り**（停止条件は2週連続などで、
+   `keirin/docs/PREREG_SALES_ALLOCATION_2026_09_14.md` が正本）
 
 ⚠️ `scripts/scrape_netkeirin_sales.py` 自体は import しない。あれは `requests` /
    `psycopg2` を要求するスクリプトで、backend の CI venv には `requests` が無い
@@ -153,8 +156,19 @@ def _race_stats(**kw) -> dict:
     return base
 
 
+def _guard(**kw) -> dict:
+    # 9/6〜9/12 の実測（日別 389商品・レース別で10万円以上4件）。
+    # 表示的中は実測 102（26.2%）だが、下限30%を上回る場合の文面を検査するため
+    # 既定は 125（32.1%）にしてある。実測値の検査は `test_実測の26パーセントは下限を割る`
+    base = {"start": "20260906", "end": "20260912", "n_days": 7,
+            "n_pred": 389, "n_hit": 125, "n_race_days": 7, "n_big": 4}
+    base.update(kw)
+    return base
+
+
 def _full_summary(**kw) -> dict:
-    base = {"confident": _confident(), "race_stats": _race_stats()}
+    base = {"confident": _confident(), "race_stats": _race_stats(),
+            "guard": _guard()}
     base.update(kw)
     return _summary(**base)
 
@@ -215,6 +229,95 @@ def test_レース別が無い回は的中レースの節を出さない():
     msg = rep.build_sales_message(_summary(confident=_confident()))
     assert "的中レース" not in msg
     assert "売上" in msg                                # 本体は出す
+
+
+# ---------------------------------------------------------------------------
+# 直近7日の見張り（2026-09-14）
+# ---------------------------------------------------------------------------
+
+def test_見張りの定数はPREREGの値():
+    """🔴 停止条件の正本は PREREG。値を変えるなら文書と同時に変えること。"""
+    assert rep.HIT_RATE_FLOOR_PCT == 30.0
+    assert rep.GUARD_WINDOW_DAYS == 7
+    assert rep.BIG_PAYOUT_YEN == 100_000
+    assert rep.BIG_PAYOUT_WEEKLY_MIN == 2
+    prereg = (_BACKEND.parent / "keirin" / "docs"
+              / "PREREG_SALES_ALLOCATION_2026_09_14.md")
+    if prereg.exists():                # 文書は別PRで入るので、あれば突き合わせる
+        text = prereg.read_text(encoding="utf-8")
+        assert "30%" in text and "10万円" in text
+
+
+def test_見張りは表示的中率と下限までの差を出す():
+    msg = rep.build_sales_message(_full_summary())
+    assert "直近7日" in msg and "09/06〜09/12" in msg
+    assert "表示的中 32.1%" in msg                      # 125 / 389
+    assert "下限30%まで +2.1pt" in msg
+    assert "10万円以上 4件" in msg
+    assert "⚠️" not in msg
+
+
+def test_下限を割ったら警告を付ける():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_hit=80)))  # 20.6%
+    assert "⚠️ 表示的中 20.6%" in msg
+    assert "下限30%を 9.4pt 割れ" in msg
+
+
+def test_実測の26パーセントは下限を割る():
+    """9/6〜9/12 の実測（102 / 389 = 26.2%）は 2026-09-14 に上げた下限30%を割る。"""
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_hit=102)))
+    assert "⚠️ 表示的中 26.2%" in msg
+    assert "下限30%を 3.8pt 割れ" in msg
+
+
+def test_高額払戻が目安未満なら警告を付ける():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_big=1)))
+    assert "⚠️ 10万円以上 1件" in msg
+
+
+def test_レース別が欠けた日は件数に注記する():
+    """🔴 欠けた日を0件と数えると「高額が出なかった」と誤読する。"""
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_race_days=5)))
+    assert "5/7日分" in msg
+
+
+def test_レース別が1日も無ければ件数を出さない():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_race_days=0, n_big=0)))
+    assert "未取込" in msg
+    assert "10万円以上 0件" not in msg
+
+
+def test_窓が7日に満たなければ日数を書く():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_days=4)))
+    assert "（4日分）" in msg
+
+
+def test_見張りが無い回は節を出さない():
+    msg = rep.build_sales_message(_summary())
+    assert "直近7日" not in msg
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_pred=0)))
+    assert "直近7日" not in msg
+
+
+def test_スクリプトが見張りを読む():
+    """🔴 SQL を消すと**見張りだけが静かに消える**（売上は出続ける）。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "_fetch_guard" in src
+    # 表示的中率は netkeirin の公表値（日別・ガミ除く）から
+    assert "FROM keirin.netkeirin_sales_daily WHERE sale_date BETWEEN" in src
+    assert "SUM(n_hits_excl_garami)" in src
+    # 境目の金額と窓は正本から取る（写さない）
+    assert "BIG_PAYOUT_YEN" in src and "GUARD_WINDOW_DAYS" in src
+    assert "100000" not in src and "100_000" not in src
+
+
+def test_見張りの失敗で他の付加情報を消さない():
+    """🔴 自信あり・的中レースとは別の try に入れる。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    i = src.index("guard = _fetch_guard(")
+    j = src.index("race_stats = _fetch_race_stats(")
+    assert j < i, "見張りは的中レースの後に読む"
+    assert "try:" in src[j:i], "見張りが自信あり・的中レースと同じ try に入っています"
 
 
 # ---------------------------------------------------------------------------
