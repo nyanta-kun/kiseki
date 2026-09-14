@@ -1522,6 +1522,8 @@ TYPE_LAB_RANK_LABELS: dict[str, str] = {
     #    表示に要るので下に残す（消すと過去行が「非」バッジになる）。
     "RANK_T_firm": "T_firm",
     "RANK_T_mid": "T_mid",
+    # 一軸（2026-09-15）: 荒れ段のうち1着率1位が抜けたレースで1着を固定する本線。
+    "RANK_T_axis": "T_axis",
     "RANK_T_upset": "T_upset",
     "RANK_A_hit": "A_hit",
     # 🔴 型A の3分割（2026-08-31）。`sell_plans_for` が pw_ent と三連複ゲートで

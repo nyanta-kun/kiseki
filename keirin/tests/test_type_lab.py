@@ -1174,3 +1174,30 @@ def test_rule_version_splits_when_the_signboard_dial_moves():
         finally:
             setattr(tl, attr, old)
     assert tl.rule_version(7) == base
+
+
+def test_一軸は荒れの段かつ1着率の差が大きいときだけ1着固定で組む():
+    """🔴 `T_axis` は 軸信頼 <= 1.353 ∧ 1着率1位−2位 >= 0.30 のときだけ、1着=1着率1位で組む。"""
+    import itertools
+    from dataclasses import replace
+
+    from src.type_lab import PLANS, RaceShape, build_legs, race_shape
+
+    cars = range(1, 8)
+    w = {1: .5, 2: .12, 3: .1, 4: .09, 5: .08, 6: .06, 7: .05}
+    prob = {k: w[k[0]] * w[k[1]] * w[k[2]] for k in itertools.permutations(cars, 3)}
+    tot = sum(prob.values())
+    prob = {k: v / tot for k, v in prob.items()}
+    odds = {k: 0.75 / v for k, v in prob.items()}
+    base = RaceShape("F", 1.30, 0, 0.1, False, tuple(cars), 1.5, (), (), 1, 0.38)
+    legs = build_legs(base, PLANS["T_axis"], odds, prob)
+    assert legs and all(k[0] == 1 for k in legs) and 3 <= len(legs) <= 8
+    assert build_legs(replace(base, win_gap=0.29), PLANS["T_axis"], odds, prob) is None
+    assert build_legs(replace(base, axis_sum=1.40), PLANS["T_axis"], odds, prob) is None
+    assert build_legs(replace(base, win_top=0), PLANS["T_axis"], odds, prob) is None
+
+    shape = race_shape({1: .8, 2: .5, 3: .4, 4: .3, 5: .3, 6: .2, 7: .2},
+                       {c: c for c in cars}, {c: 1 for c in cars}, {c: "逃" for c in cars},
+                       {c: 70.0 for c in cars}, {c: 0.0 for c in cars}, 1,
+                       {1: .5, 2: .2, 3: .1, 4: .08, 5: .06, 6: .04, 7: .02})
+    assert shape.win_top == 1 and abs(shape.win_gap - 0.30) < 1e-9

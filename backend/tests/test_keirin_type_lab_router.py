@@ -32,7 +32,8 @@ def test_lists_are_not_empty():
     # 型A が3分割された（2026-08-31）ので 8 → 10。看板枠を6型ぶん足して 16。
     # 9車型F の三連複 `F_line` を足して 17（2026-09-06）。
     # 段分け商品 固め/広め/荒れ（T_firm/T_mid/T_upset）を先頭に足して 26（2026-09-15）。
-    assert len(PLAN_ORDER) == 26
+    # 一軸（T_axis）を広めと荒れの間に足して 27（2026-09-15）。
+    assert len(PLAN_ORDER) == 27
     assert len(set(PLAN_ORDER)) == len(PLAN_ORDER), "表示順に重複がある"
     assert CURRENT_RANK_ORDER[0] == "RANK_7H2" and CURRENT_RANK_ORDER[-1] == "RANK_7M1"
 

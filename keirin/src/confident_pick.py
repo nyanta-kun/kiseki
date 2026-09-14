@@ -284,7 +284,7 @@ def type_lab_confident_score(legs, start_at) -> float | None:
 #: 自信ありの候補にする段の商品。
 TIER_CONFIDENT_PLANS: frozenset[str] = frozenset({"T_firm"})
 #: 段の商品すべて（候補にしないものも含む）。行の読み込みで型ラボの商品と認識するため。
-TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset"})
+TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset"})
 #: 優先するレース種別の語。**部分一致**なので準決勝・チャレンジ決勝も含む（意図どおり）。
 CONFIDENT_PRIORITY_KEYWORD = "決勝"
 

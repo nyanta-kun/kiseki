@@ -1673,3 +1673,26 @@ def test_段の日は自信ありを固めの決勝系から選ぶ():
     best, ev = m._choose_confident(rows)
     assert best == ("R2", "T_firm")
     assert ("R3", "T_mid") not in ev
+
+
+def test_荒れの段で一軸の行が入稿ゲートを通れば一軸を売る(monkeypatch):
+    """🔴 一軸は荒れの段だけ。`T_axis` 行が入稿ゲートを通れば一軸、落ちれば荒れへ戻す。"""
+    import datetime as _dt
+
+    import scripts.netkeirin_submit_type_lab as m
+
+    g = _dt.datetime(2026, 9, 15, 7, 16)
+    base = dict(race_date="2026-09-15", venue_name="大垣", race_no=6, race_type="チャレンジ選抜",
+                n_entries=7, day_index=1, axis1=2, axis2=7, p3_order=None, mode="live",
+                bet_type="trifecta", n_legs=4, budget=10000, legs="[]",
+                pred_mean_payout=30000, pred_min_payout=20000, rule_version="x",
+                cup_grade=None, generated_at=g, pw_ent=1.0)
+    rows = []
+    for rk, ax, axis_min in (("R1", 1.30, 20000), ("R2", 1.30, 14000), ("R3", 1.40, 20000)):
+        for pk in ("T_firm", "T_mid", "T_axis", "T_upset"):
+            rows.append(dict(base, race_key=rk, type_label="F", axis_sum=ax, plan_key=pk,
+                             pred_min_payout=(axis_min if pk == "T_axis" else 20000)))
+    rows.append(dict(base, race_key="R4", type_label="F", axis_sum=1.30, plan_key="T_upset"))
+    monkeypatch.setattr(m, "get_connection", lambda: _FakeConn(rows))
+    got = {(r["race_key"], r["plan_key"]) for r in m._load_rows("2026-09-15")}
+    assert got == {("R1", "T_axis"), ("R2", "T_upset"), ("R3", "T_mid"), ("R4", "T_upset")}
