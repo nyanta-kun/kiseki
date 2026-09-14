@@ -425,8 +425,8 @@ def test_段の商品は既存と重ならない名前():
     """ユーザー決定: 固め／広め／荒れ。旧キーの「本線」「押さえ」「高配当」は使わない。"""
     from src.type_lab_submission import TIER_LABELS
 
-    assert TIER_LABELS == {"T_firm": "固め", "T_mid": "広め", "T_axis": "一軸", "T_upset": "荒れ"}
-    assert PLAN_TITLES["T_axis"] == "一軸の三連単"
+    assert TIER_LABELS == {"T_firm": "固め", "T_mid": "広め", "T_axis": "手広く", "T_upset": "荒れ"}
+    assert PLAN_TITLES["T_axis"] == "手広く狙う三連単"
     assert PLAN_TITLES["T_firm"] == "固めの三連単"
     assert PLAN_TITLES["T_mid"] == "広めの三連単"
     assert PLAN_TITLES["T_upset"] == "荒れ狙いの三連単"
@@ -485,5 +485,8 @@ def test_一軸は買い目の1着を軸として印と文面に出す():
                bet_type="trifecta", legs=legs)
     sub = build_submission(row)
     assert sub["marks"][4] == "◎" and sub["marks"][2] == "○"
-    assert "◎4番" in sub["comment"] and "【一軸】" in sub["comment"]
-    assert sub["title"].startswith("一軸の三連単")
+    assert "◎4番" in sub["comment"] and "○2番" in sub["comment"]
+    assert sub["title"].startswith("手広く狙う三連単")
+    # 🔴 ブランド「二軸探偵」: 販売面（タイトル・本文）に「一軸」を出さない（2026-09-15 ユーザー指示）
+    assert "一軸" not in sub["title"] and "一軸" not in sub["comment"]
+    assert "【二軸】" in sub["comment"]

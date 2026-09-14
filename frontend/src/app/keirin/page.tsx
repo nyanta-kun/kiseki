@@ -300,8 +300,8 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   //    （ユーザー決定）。固め＝硬い段 / 広め＝やや波乱段 / 荒れ＝波乱段。
   "T_firm":     { bg: "#047857", text: "#fff", label: "固め" },
   "T_mid":      { bg: "#1d4ed8", text: "#fff", label: "広め" },
-  // 一軸（2026-09-15）＝荒れ段のうち1着率1位が抜けたレース。本線系の紫で固め・広めと区別する。
-  "T_axis":     { bg: "#6d28d9", text: "#fff", label: "一軸" },
+  // 手広く（T_axis・2026-09-15）＝荒れ段のうち1着率1位が抜けたレース。本線系の紫で固め・広めと区別する。
+  "T_axis":     { bg: "#6d28d9", text: "#fff", label: "手広く" },
   "T_upset":    { bg: "#c2410c", text: "#fff", label: "荒れ" },
   "A_hit":      { bg: "#059669", text: "#fff", label: "Ah" },
   "B_hit":      { bg: "#0d9488", text: "#fff", label: "Bh" },
@@ -1083,7 +1083,7 @@ function SendSlot() {
 /** 型ラボのプラン → 画面ラベル。**keirin 側 `PLAN_TITLES` と役割が違う**
  *  （あちらは netkeirin の商品タイトル、ここは一覧の識別バッジ）。 */
 const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
-  T_firm: "固め", T_mid: "広め", T_axis: "一軸", T_upset: "荒れ",
+  T_firm: "固め", T_mid: "広め", T_axis: "手広く", T_upset: "荒れ",
   A_hit: "本線", A_pay: "一撃", A_trio: "本線(複)", A_ana: "波乱",
   B_hit: "本線", C_hit: "中配当", D_hit: "混戦(複)", E_hit: "高配当",
   F_hit: "押さえ", F_pay: "一撃", F_line: "ライン(複)",
@@ -1654,7 +1654,7 @@ const RANK_LABEL: Record<string, string> = {
   // 型ラボのプラン（2026-08-28〜）。バッジは**型の記号＋狙いの1文字**で出す
   // （2026-09-06・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
   // 段分け商品（2026-09-15〜）。`RANK_STYLE` と同じ文字。
-  "T_firm": "固め", "T_mid": "広め", "T_axis": "一軸", "T_upset": "荒れ",
+  "T_firm": "固め", "T_mid": "広め", "T_axis": "手広く", "T_upset": "荒れ",
   "A_hit": "Ah", "B_hit": "Bh", "C_hit": "Ch",
   "D_hit": "Dh", "E_hit": "Eh", "F_pay": "Fp", "F_hit": "Fh",
   "A_trio": "At", "A_ana": "Aa", "F_line": "Fl",

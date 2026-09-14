@@ -960,7 +960,7 @@ PLANS["T_upset"] = Plan("T_upset", "T", "trifecta", "tier_upset", 0,
 TIER_ONE_AXIS_WIN_GAP_MIN = 0.30
 PLANS["T_axis"] = Plan("T_axis", "T", "trifecta", "tier_axis", 0, max_legs=8,
                        alloc="dutch", target=TIER_TARGET_PAYOUT,
-                       note="一軸: 荒れの段で1着率が抜けた車を1着に固定し、2・3着を確率順に合成2.2倍まで・3〜8点")
+                       note="手広く: 荒れの段で1着率が抜けた車を1着に固定し、2・3着を確率順に合成2.2倍まで・3〜8点")
 #: 段のプラン（表示順）。
 TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_axis", "T_upset")
 TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset"})

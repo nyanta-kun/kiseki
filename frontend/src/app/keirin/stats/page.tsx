@@ -226,7 +226,7 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   // 🔴 段分け商品（2026-09-15〜・7車の主力）を最初に置く。
   { key: "T_firm", label: "固め" },
   { key: "T_mid", label: "広め" },
-  { key: "T_axis", label: "一軸" },
+  { key: "T_axis", label: "手広く" },
   { key: "T_upset", label: "荒れ" },
   { key: "A_hit", label: "型A" },
   { key: "B_hit", label: "型B" },
