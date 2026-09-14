@@ -450,7 +450,9 @@ def _choose_confident(rows: list[dict]):
     """
     # 🔴 段の商品が1件でもあれば段の規則で選ぶ（2026-09-14・`pick_confident_race_wt.pick` と同じ分岐）。
     #    尺度（Σp ↔ EV）が違うので混ぜない。
-    if any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows):
+    tier_day = any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows)
+    metric = "スコア(決勝系は1+Σp)" if tier_day else "EV"
+    if tier_day:
         scored = [(str(r["race_key"]), str(r["plan_key"]),
                    tier_confident_score(str(r["plan_key"]), r.get("legs") or [],
                                         r.get("start_at"), r.get("race_type")))
@@ -468,7 +470,7 @@ def _choose_confident(rows: list[dict]):
         lab = {(str(r["race_key"]), str(r["plan_key"])):
                f"{r['venue_name']}{r['race_no']}R({r['plan_key']})" for r in rows}
         print(f"[type_lab_submit] 自信あり → {lab.get(best, best[0])} "
-              f"EV={ev.get(best, 0):.3f}（対象 {len(rows)}件 / EV算出 {len(ev)}件）",
+              f"{metric}={ev.get(best, 0):.3f}（対象 {len(rows)}件 / 算出 {len(ev)}件）",
               flush=True)
     return best, ev
 
