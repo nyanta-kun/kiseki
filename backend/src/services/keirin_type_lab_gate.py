@@ -158,6 +158,13 @@ AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
     "B_big",     # 同上。`_big` は軸1を買わない商品なので軸信頼で絞るのは正面から逆
     "C_big",
     "D_big",
+    # 🔴 **段分け商品（2026-09-15〜・7車）。** 段そのものが軸信頼（axis_sum）の四分位で
+    #    決まるので、軸信頼でさらに絞ると「波乱」段を丸ごと落とす（段分けと二重計上）。
+    #    検証: 軸信頼の高い順に上限50%を掛けると 10万+ が 0.43→0.13/日 に落ちる
+    #    （`scratchpad/policy_limits.py`・memory keirin-firm-upset-policy-2026-09-14）。
+    "T_firm",    # 硬い（axis_sum 上位50%）: 合成2.2倍・3〜5点
+    "T_mid",     # やや波乱（25〜50%）: 合成2.2倍・3〜8点
+    "T_upset",   # 波乱（下位25%）: 人気1位ラインを1-2着から外す・計画10万
 })
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
 #:
@@ -328,6 +335,30 @@ DAILY_CAP_EXEMPT_KEYWORDS: tuple[str, ...] = ("決勝",)
 #: 🔴 **0 で無効**。⚠️ `cup_grade` は 2026-08-14 から保存を始めた列で、それ以前は NULL。
 #:    NULL のときはキーワードだけで判定する（従来動作へのフォールバック）。
 DAILY_CAP_EXEMPT_MIN_GRADE = 3
+
+
+#: **日次上限に数えないプラン**（2026-09-15〜）。段分け商品は「7車の全レースを売る」
+#: 方針で、上限を掛けると軸信頼の低い「波乱」段から落ちて高額払戻が消える
+#: （全レース 表示的中 25.8%・10万+ 0.43/日 ↔ 上限50% 29.4%・0.13/日・確認窓）。
+#: `A_ana`（7車・型A の穴狙い）も段より先に売る7車の商品なので同じく数えない。
+#: 🔴 レース側の `daily_cap_exempt` とは別。こちらは**プランで**枠外にする。
+#: 🔴 入稿側 `netkeirin_submit_type_lab.CAP_FREE_PLANS` と同じ集合（テストで固定）。
+DAILY_CAP_EXEMPT_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset", "A_ana"})
+
+
+def daily_cap_exempt_plan(plan_key: str | None) -> bool:
+    """日次上限に**数えない**プランか（段分け商品は全レース売るので数えない）。
+
+    >>> daily_cap_exempt_plan("T_firm")
+    True
+    >>> daily_cap_exempt_plan("A_ana")
+    True
+    >>> daily_cap_exempt_plan("A_hit")
+    False
+    >>> daily_cap_exempt_plan(None)
+    False
+    """
+    return str(plan_key or "") in DAILY_CAP_EXEMPT_PLANS
 
 
 def daily_cap_exempt(race_type: str | None, cup_grade: int | None = None) -> bool:

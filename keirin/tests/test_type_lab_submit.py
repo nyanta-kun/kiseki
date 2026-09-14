@@ -473,7 +473,7 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 #: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
 #:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
 #:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
-LONGSHOT_PLANS = ({"F_pay", "A_ana"}
+LONGSHOT_PLANS = ({"F_pay", "A_ana", "T_upset"}
                   | {f"{t}_sign" for t in "ABCDEF"}
                   | {f"{t}_big" for t in "ABCDEF"})
 
@@ -937,12 +937,14 @@ def test_読み出しは古い型の行を落とす(monkeypatch):
 
     import scripts.netkeirin_submit_type_lab as m
 
+    # 🔴 9車で作る（2026-09-14）。7車は段で売るようになり型の行（C_hit 等）は売らないため、
+    #    「組み直し前の型の行を落とす」ことは型で売る9車で確かめる。
     base = dict(race_date="2026-08-29", venue_name="小松島", race_no=1,
-                race_type="ガールズ一般", n_entries=7, day_index=1, axis_sum=1.5,
+                race_type="ガールズ一般", n_entries=9, day_index=1, axis_sum=1.5,
                 axis1=1, axis2=2, p3_order=None, mode="live", bet_type="trifecta",
                 n_legs=4, budget=10000, legs="[]", pred_mean_payout=30000,
                 pred_min_payout=20000, rule_version="x", cup_grade=None)
-    old = dict(base, race_key="R1", type_label="F", plan_key="F_pay",
+    old = dict(base, race_key="R1", type_label="F", plan_key="F_line",
                generated_at=_dt.datetime(2026, 8, 29, 7, 16))
     new = dict(base, race_key="R1", type_label="C", plan_key="C_hit",
                generated_at=_dt.datetime(2026, 8, 29, 13, 6))
@@ -1038,7 +1040,7 @@ def test_rp_sd_quantiles_cover_every_7car_sellable_plan():
     **9車の決勝以外だけ**。9車は `_priority` が 1.0 を返して表を引かないので、
     どちらもここでは対象外にする。
     """
-    from src.type_lab import HIGHPAY_PLAN_KEYS, SELLABLE_PLAN_KEYS
+    from src.type_lab import HIGHPAY_PLAN_KEYS, SELLABLE_PLAN_KEYS, TIER_PLAN_KEYS
 
     gate = _load_gate()
     # 🔴 **高額枠は順位付けに載らない**（2026-09-06）。あれは「日次上限に当たった行の
@@ -1047,6 +1049,7 @@ def test_rp_sd_quantiles_cover_every_7car_sellable_plan():
     nine_car_only = {"F_pay", "F_line"}
     missing = sorted(k for k in SELLABLE_PLAN_KEYS
                      if k not in nine_car_only and k not in HIGHPAY_PLAN_KEYS
+                     and k not in TIER_PLAN_KEYS          # 段は日次上限に数えない（全レース）
                      and k not in gate.RP_SD_PRIORITY_QUANTILES)
     assert not missing, (
         f"rp_sd の分位表が無いプラン: {missing}。"
@@ -1600,3 +1603,73 @@ def test_confident_line_is_notified_only_in_the_morning():
     # 通知本文へ入るのは、その `if` の中の1か所だけであること
     assert sum(1 for n in ast.walk(tree)
                if isinstance(n, ast.Name) and n.id == "_confident_line") == 1
+
+
+
+# ───────────────── 段（固め／広め／荒れ）— 2026-09-14 ─────────────────
+
+def test_7車は段で売りA_anaだけ段より先(monkeypatch):
+    """7車は軸信頼で段を選ぶ。型A ∧ 1着が読めない（pw_ent 上位10%）だけは `A_ana`。"""
+    import datetime as _dt
+
+    import scripts.netkeirin_submit_type_lab as m
+    from src.type_lab import ANA_PW_ENT_MIN
+
+    g = _dt.datetime(2026, 9, 15, 7, 16)
+    base = dict(race_date="2026-09-15", venue_name="川崎", race_no=1, race_type="予選",
+                n_entries=7, day_index=1, axis1=1, axis2=2, p3_order=None, mode="live",
+                bet_type="trifecta", n_legs=4, budget=10000, legs="[]",
+                pred_mean_payout=30000, pred_min_payout=20000, rule_version="x",
+                cup_grade=None, generated_at=g, pw_ent=1.0)
+    rows = []
+    for rk, t, ax, pw in (("R1", "C", 1.60, 1.0), ("R2", "E", 1.40, 1.0),
+                          ("R3", "F", 1.30, 1.0), ("R4", "A", 1.60, ANA_PW_ENT_MIN + 0.01)):
+        for pk in ("C_hit", "A_ana", "T_firm", "T_mid", "T_upset"):
+            rows.append(dict(base, race_key=rk, type_label=t, axis_sum=ax, pw_ent=pw, plan_key=pk))
+    monkeypatch.setattr(m, "get_connection", lambda: _FakeConn(rows))
+    got = {(r["race_key"], r["plan_key"]) for r in m._load_rows("2026-09-15")}
+    assert got == {("R1", "T_firm"), ("R2", "T_mid"), ("R3", "T_upset"), ("R4", "A_ana")}
+
+
+def test_固め広めは全点の想定払戻でゲートを判定する():
+    """🔴 固め・広めは「全点 >= 1.5万円」。平均2万ゲートを当てると最低3点のレースが落ちる。"""
+    import scripts.netkeirin_submit_type_lab as m
+    leg = [{"combo": "1-2-3", "stake": 5000, "pred_odds": 3.2}]
+    ok = dict(plan_key="T_firm", pred_mean_payout=17_000, pred_min_payout=15_500, legs=leg)
+    assert m._gate_reason(ok) is None                       # 平均2万未満でも通す
+    low = dict(ok, pred_min_payout=14_000)
+    assert m._gate_reason(low) is not None
+    two = dict(ok, legs=[{"combo": "1-2-3", "stake": 5000, "pred_odds": 1.9}])
+    assert m._gate_reason(two) is not None                  # 2倍未満の目は落とす
+    up = dict(plan_key="T_upset", pred_mean_payout=19_000, pred_min_payout=90_000, legs=leg)
+    assert m._gate_reason(up) is not None                   # 荒れは平均2万ゲートのまま
+
+
+def test_段とA_anaは日次上限に数えない():
+    """🔴 7車は全レース（日次上限なし）。上限50%は荒れを捨て 10万+ を 1/3 にする。"""
+    import scripts.netkeirin_submit_type_lab as m
+    from src.type_lab import TIER_PLAN_KEYS
+    assert TIER_PLAN_KEYS | {"A_ana"} == m.CAP_FREE_PLANS
+    # backend の定義（Web 側）と食い違わないこと
+    assert m.CAP_FREE_PLANS == m._GATE.DAILY_CAP_EXEMPT_PLANS
+
+
+def test_段の日は自信ありを固めの決勝系から選ぶ():
+    """🔴 入稿側の自信ありも段の規則（`tier_confident_score`）で選ぶ。旧EVと混ぜない。"""
+    import scripts.netkeirin_submit_type_lab as m
+
+    legs = [{"combo": "1-2-3", "prob": 0.2, "stake": 5000, "pred_odds": 4.5},
+            {"combo": "1-3-2", "prob": 0.1, "stake": 5000, "pred_odds": 9.0}]
+    wide = [{"combo": "1-2-3", "prob": 0.3, "stake": 5000, "pred_odds": 4.5},
+            {"combo": "1-3-2", "prob": 0.2, "stake": 5000, "pred_odds": 9.0}]
+    rows = [
+        dict(race_key="R1", plan_key="T_firm", legs=legs, start_at=0, race_type="予選",
+             venue_name="川崎", race_no=1),
+        dict(race_key="R2", plan_key="T_firm", legs=legs, start_at=13 * 3600, race_type="準決勝",
+             venue_name="川崎", race_no=9),
+        dict(race_key="R3", plan_key="T_mid", legs=wide, start_at=0, race_type="決勝",
+             venue_name="川崎", race_no=11),
+    ]
+    best, ev = m._choose_confident(rows)
+    assert best == ("R2", "T_firm")
+    assert ("R3", "T_mid") not in ev

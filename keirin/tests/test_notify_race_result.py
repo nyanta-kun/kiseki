@@ -371,3 +371,15 @@ def test_買い目は目の切れ目で折り返す():
     # 目そのものは1つも壊れていない
     assert " ".join(l.lstrip("　") for l in got) == long_buy
     assert m._wrap_buy("") == []
+
+
+
+# ── 段の商品（2026-09-14）─────────────────────────────────────────
+
+
+def test_段の商品は段の名前が頭に来る():
+    """🔴 7車は型ではなく段で売る。「型T」を付けない。"""
+    assert m._rank_label("T_firm") == "固めの三連単"
+    assert m._rank_label("T_mid") == "広めの三連単"
+    assert m._rank_label("T_upset") == "荒れ狙いの三連単"
+    assert m._rank_label("A_ana") == "型A 波乱狙いの三連単"   # A_ana は従来どおり

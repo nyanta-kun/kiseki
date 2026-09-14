@@ -400,6 +400,15 @@ def _highpay_labels(src: str) -> set[str]:
 _SELLABLE_TERMS = frozenset({
     "SELL_PLANS", "SIGNBOARD_TYPES", "TYPE_F_SELL_DEFAULT", "TYPE_F_SELL_LINE",
     "TYPE_F_SELL_BY_RACE_TYPE", "HIGHPAY_PLAN_KEYS", "HIGHPAY_TYPES",
+    # 段分け商品（2026-09-15〜・7車の主力 固め/広め/荒れ）
+    "TIER_PLAN_KEYS",
+})
+
+#: 🔴 **売らなくなったが過去の入稿の表示に要る**型ラボのプラン（2026-09-15 の段分け移行）。
+#:    `TYPE_LAB_RANK_LABELS` から消すと過去行が「非」バッジになるので残す。
+#:    「素性の分からないプラン」扱いにしないための明示リスト。
+_RETIRED_TYPE_LAB_PLANS = frozenset({
+    "A_hit", "A_trio", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit", "F_pay", "F_line",
 })
 
 
@@ -444,6 +453,10 @@ def _sellable_plan_keys(src: str) -> set[str]:
             m2 = re.search(rf'{const} = "([^"]+)"', src)
             assert m2, f"{const} を読めない"
             keys.add(m2.group(1))
+    if "TIER_PLAN_KEYS" in names:
+        m2 = re.search(r"TIER_PLAN_KEYS: frozenset\[str\] = frozenset\(\{([^}]*)\}\)", src)
+        assert m2, "TIER_PLAN_KEYS を読めない"
+        keys |= set(re.findall(r'"([^"]+)"', m2.group(1)))
     if "TYPE_F_SELL_BY_RACE_TYPE" in names:
         m2 = re.search(r"TYPE_F_SELL_BY_RACE_TYPE = \{([^}]*)\}", src)
         assert m2, "TYPE_F_SELL_BY_RACE_TYPE を読めない"
@@ -480,7 +493,8 @@ def test_type_lab_labels_match_keirin_sell_plans():
     assert canonical <= labels, (
         "TYPE_LAB_RANK_LABELS に keirin 側のプランが足りない\n"
         f"    keirin のみ: {sorted(canonical - labels)}")
-    assert all(k in canonical or k.endswith(("_sign", "_big")) for k in labels), (
+    assert all(k in canonical or k.endswith(("_sign", "_big")) or k in _RETIRED_TYPE_LAB_PLANS
+               for k in labels), (
         "TYPE_LAB_RANK_LABELS に素性の分からないプランがある\n"
         f"    backend のみ: {sorted(labels - canonical)}")
 

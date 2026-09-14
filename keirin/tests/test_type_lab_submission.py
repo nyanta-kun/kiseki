@@ -134,8 +134,15 @@ def test_every_plan_has_a_title_and_body():
 
 
 def test_every_type_has_a_view_and_note():
-    types = {p.type_label for p in PLANS.values()}
+    """段の商品（type_label "T"）は型ではないので型の網羅から外し、キーごとの見解を要求する。"""
+    from src.type_lab import TIER_PLAN_KEYS
+    from src.type_lab_submission import PLAN_NOTES, PLAN_VIEWS
+
+    types = {p.type_label for k, p in PLANS.items() if k not in TIER_PLAN_KEYS}
     assert types <= set(TYPE_VIEWS) and types <= set(TYPE_NOTES)
+    assert "T" not in TYPE_VIEWS and "T" not in TYPE_NOTES
+    for key in TIER_PLAN_KEYS:
+        assert PLAN_VIEWS.get(key) and PLAN_NOTES.get(key), key
 
 
 def test_title_is_two_blocks():
@@ -404,3 +411,64 @@ def test_買い目に無い軸を軸として案内しない():
     ok = [{"combo": "1-3-4", "stake": 5000, "pred_odds": 20.0},
           {"combo": "3-1-4", "stake": 5000, "pred_odds": 25.0}]
     assert axis_note("C_sign", 1, 3, ok).endswith("◎1番・○3番です。")
+
+
+# ───────────────────────── 段の商品（2026-09-14） ─────────────────────────
+#
+# 🔴 2026-09-15 から7車は型ではなく段（固め／広め／荒れ）で売る。崩れると
+#    **型の見解（例: 型A「二軸が堅い一戦」）が段の商品に付き、タイトルと中身が食い違う**。
+
+TIER_KEYS = ("T_firm", "T_mid", "T_upset")
+
+
+def test_段の商品は既存と重ならない名前():
+    """ユーザー決定: 固め／広め／荒れ。旧キーの「本線」「押さえ」「高配当」は使わない。"""
+    from src.type_lab_submission import TIER_LABELS
+
+    assert TIER_LABELS == {"T_firm": "固め", "T_mid": "広め", "T_upset": "荒れ"}
+    assert PLAN_TITLES["T_firm"] == "固めの三連単"
+    assert PLAN_TITLES["T_mid"] == "広めの三連単"
+    assert PLAN_TITLES["T_upset"] == "荒れ狙いの三連単"
+    old = {v for k, v in PLAN_TITLES.items() if k not in TIER_KEYS}
+    for k in TIER_KEYS:
+        assert PLAN_TITLES[k] not in old, k
+        assert PLAN_TITLES[k].startswith(TIER_LABELS[k]), k
+
+
+@pytest.mark.parametrize("key", TIER_KEYS)
+@pytest.mark.parametrize("type_label", list("ABCDEF"))
+def test_段の商品に型の見解を付けない(key, type_label):
+    """🔴 型は段と独立に決まる。型の見解を付けると「型Aの鉄板を広めで売る」になる。"""
+    title = build_title(key, type_label)
+    assert TYPE_VIEWS[type_label] not in title, (key, type_label, title)
+    comment = build_comment(key, type_label, 1, 2, _legs("1-2-3", "2-1-3", "1-2-4"), "trifecta")
+    assert TYPE_NOTES[type_label] not in comment, (key, type_label)
+
+
+def test_段の商品の本文は数字も装飾も入れない():
+    for key in TIER_KEYS:
+        body = PLAN_BODIES[key]
+        assert "**" not in body
+        assert not re.search(r"\d[\d,.]*\s*万?円", body), (key, body)
+
+
+def test_荒れは二軸を案内しない():
+    """🔴 荒れは人気1位のラインを1・2着から外す。軸が買い目に無いことがあるので
+    「二軸は◎○です」を出すと買っていない車を軸として案内する。"""
+    c = build_comment("T_upset", "F", 1, 2, _legs("3-4-5", "4-3-6"), "trifecta")
+    assert "照らし出した二軸は" not in c
+    assert "人気1位" in c
+
+
+def test_固めと広めは買い目から二軸を判定する():
+    c = build_comment("T_firm", "A", 1, 2, _legs("1-2-3", "2-1-3"), "trifecta")
+    assert "照らし出した二軸は、◎1番・○2番" in c
+
+
+def test_荒れは穴狙いアイコン_固めと広めは既定():
+    from scripts.netkeirin_submit_type_lab import (
+        ACT_TYPE_BY_PLAN, ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT)
+
+    assert ACT_TYPE_BY_PLAN["T_upset"] == ACT_TYPE_LONGSHOT
+    assert ACT_TYPE_BY_PLAN["T_firm"] == ACT_TYPE_DEFAULT
+    assert ACT_TYPE_BY_PLAN["T_mid"] == ACT_TYPE_DEFAULT

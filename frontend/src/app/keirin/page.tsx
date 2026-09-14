@@ -296,6 +296,11 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   //    添え字はプラン名の後半の頭文字（hit=h / pay=p / trio=t / ana=a /
   //    line=l / sign=s / big=b）。日本語の狙い名はサマリーの `RANK_AIM` にある。
   //    🔴 `RANK_LABEL`（サマリーのバッジ）と**必ず同じ文字**にすること。
+  // 🔴 段分け商品（2026-09-15〜・7車の主力）。既存の型ラボ名と重ならない名前で出す
+  //    （ユーザー決定）。固め＝硬い段 / 広め＝やや波乱段 / 荒れ＝波乱段。
+  "T_firm":     { bg: "#047857", text: "#fff", label: "固め" },
+  "T_mid":      { bg: "#1d4ed8", text: "#fff", label: "広め" },
+  "T_upset":    { bg: "#c2410c", text: "#fff", label: "荒れ" },
   "A_hit":      { bg: "#059669", text: "#fff", label: "Ah" },
   "B_hit":      { bg: "#0d9488", text: "#fff", label: "Bh" },
   "C_hit":      { bg: "#2563eb", text: "#fff", label: "Ch" },
@@ -1076,6 +1081,7 @@ function SendSlot() {
 /** 型ラボのプラン → 画面ラベル。**keirin 側 `PLAN_TITLES` と役割が違う**
  *  （あちらは netkeirin の商品タイトル、ここは一覧の識別バッジ）。 */
 const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
+  T_firm: "固め", T_mid: "広め", T_upset: "荒れ",
   A_hit: "本線", A_pay: "一撃", A_trio: "本線(複)", A_ana: "波乱",
   B_hit: "本線", C_hit: "中配当", D_hit: "混戦(複)", E_hit: "高配当",
   F_hit: "押さえ", F_pay: "一撃", F_line: "ライン(複)",
@@ -1627,7 +1633,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 // 🔴 型ラボのプラン（2026-08-28 の全面移行〜）は**先頭**に置く。いま売っている
 //    商品なので、サマリーの「ランク別」で最初に見えるべき。既存ランクは
 //    `netkeirin_settings` で OFF なら `visible_ranks` に載らず自動的に消える。
-const RANK_ORDER = ["A_hit", "A_trio", "A_ana", "A_sign", "A_big",
+const RANK_ORDER = ["T_firm", "T_mid", "T_upset", "A_hit", "A_trio", "A_ana", "A_sign", "A_big",
   "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
   "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
   "F_pay", "F_hit", "F_line", "F_sign", "F_big",
@@ -1645,6 +1651,8 @@ const RANK_LABEL: Record<string, string> = {
   "7C": "7C",
   // 型ラボのプラン（2026-08-28〜）。バッジは**型の記号＋狙いの1文字**で出す
   // （2026-09-06・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
+  // 段分け商品（2026-09-15〜）。`RANK_STYLE` と同じ文字。
+  "T_firm": "固め", "T_mid": "広め", "T_upset": "荒れ",
   "A_hit": "Ah", "B_hit": "Bh", "C_hit": "Ch",
   "D_hit": "Dh", "E_hit": "Eh", "F_pay": "Fp", "F_hit": "Fh",
   "A_trio": "At", "A_ana": "Aa", "F_line": "Fl",
@@ -1660,6 +1668,7 @@ const RANK_LABEL: Record<string, string> = {
  *     こちらはサマリー専用——同じ型に 3〜4 プランが並ぶので、
  *     `A A A A` では**どれがどれか分からない**（2026-08-31 のユーザー指摘）。 */
 const RANK_AIM: Record<string, string> = {
+  T_firm: "3〜5点", T_mid: "3〜8点", T_upset: "10万狙い",
   A_hit: "鉄板", A_trio: "三連複", A_ana: "穴", A_pay: "一撃", A_sign: "看板", A_big: "特大",
   B_hit: "本線", B_sign: "看板", B_big: "特大",
   C_hit: "崩れ筋", C_sign: "看板", C_big: "特大",
@@ -1691,6 +1700,10 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "7C": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
   // 型ラボ。堅い側(A/B)＝緑系 / 中(C/D)＝青紫系 / 荒れ側(E/F)＝橙赤系。
   // `RANK_STYLE`（一覧のバッジ）と同じ色域に揃えてある。
+  // 段分け商品（2026-09-15〜）。固め＝緑 / 広め＝青 / 荒れ＝橙（型ラボの色域に合わせる）。
+  "T_firm": "bg-emerald-200 text-emerald-900 dark:bg-emerald-800/60 dark:text-emerald-200",
+  "T_mid": "bg-blue-200 text-blue-900 dark:bg-blue-800/60 dark:text-blue-200",
+  "T_upset": "bg-orange-200 text-orange-900 dark:bg-orange-800/60 dark:text-orange-200",
   "A_hit": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400",
   "B_hit": "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400",
   "C_hit": "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",

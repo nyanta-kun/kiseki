@@ -86,6 +86,9 @@ from src.confident_pick import (  # noqa: E402
     pick_best,
     race_expected_value,
     type_lab_confident_score,
+    CONFIDENT_PRIORITY_KEYWORD,
+    TIER_PLAN_KEYS,
+    tier_confident_score,
 )
 from src.database import get_connection  # noqa: E402
 from src.type_lab import SELL_PLANS  # noqa: E402
@@ -124,7 +127,7 @@ def _load_type_lab(date: str) -> list[dict]:
             #    INNER JOIN なのは時刻の取れないレースを候補にしないため
             #    （`type_lab_confident_score` の「読めなければ None」と揃える）。
             "SELECT s.race_key, s.rank_key, s.venue_name, s.race_no,"
-            "       t.legs, r.start_at "
+            "       t.legs, r.start_at, r.race_type "
             "FROM netkeirin_submissions s "
             "JOIN type_lab_picks t "
             "  ON t.race_key = s.race_key AND t.plan_key = s.rank_key "
@@ -136,7 +139,9 @@ def _load_type_lab(date: str) -> list[dict]:
     out = []
     for r in rows:
         d = dict(r)
-        if d["rank_key"] not in SELL_PLANS:
+        # 🔴 段の商品（`T_*`・2026-09-14〜）は `SELL_PLANS`（7車の型ごとの集合）に
+        #    入らないので、ここで落とさないよう別に通す。
+        if d["rank_key"] not in SELL_PLANS and d["rank_key"] not in TIER_PLAN_KEYS:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         out.append(d)
@@ -149,7 +154,18 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
     #    一緒に並べて max を取ってはいけない。全面置換後は既存ランクが出ないので
     #    通常は型ラボだけになるが、移行期・ロールバック中は両方が並びうる。
     tl_rows = _load_type_lab(date)
-    if tl_rows:
+    # 🔴🔴 **段の商品が1件でもあれば段の規則で選ぶ**（2026-09-14）。
+    #    固めの中から「決勝系を優先・無ければ18時前」で的中確率 Σp 最大
+    #    （正本は `src.confident_pick.tier_confident_score`・理由はその節）。
+    #    旧規則（合成3倍以上×EV最大）と尺度が違うので混ぜない。
+    tier_day = any(r["rank_key"] in TIER_PLAN_KEYS for r in tl_rows)
+    if tier_day:
+        rows, metric = tl_rows, "Σp"
+        scored = [(r["race_key"], r["rank_key"],
+                   tier_confident_score(r["rank_key"], r["legs"], r["start_at"],
+                                        r.get("race_type")))
+                  for r in rows]
+    elif tl_rows:
         rows, metric = tl_rows, "EV"
         scored = [(r["race_key"], r["rank_key"],
                    type_lab_confident_score(r["legs"], r["start_at"]))
@@ -165,7 +181,9 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
 
     usable = [(rk, rank, v) for rk, rank, v in scored if v is not None]
     print(f"[confident] {date}: 対象 {len(rows)}件 / {metric}算出 {len(usable)}件"
-          + (f"（型ラボ・発走 {CONFIDENT_BEFORE_HOUR}時前 かつ "
+          + (f"（固めに限る・「{CONFIDENT_PRIORITY_KEYWORD}」を含む種別を優先、"
+             f"無ければ発走 {CONFIDENT_BEFORE_HOUR}時前）" if tier_day else
+             f"（型ラボ・発走 {CONFIDENT_BEFORE_HOUR}時前 かつ "
              f"合成 {CONFIDENT_MIN_SYNTH_ODDS}倍以上に限る）"
              if tl_rows else ""), flush=True)
     label = {(r["race_key"], r["rank_key"]):

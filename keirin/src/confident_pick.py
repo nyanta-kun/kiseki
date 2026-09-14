@@ -260,6 +260,88 @@ def type_lab_confident_score(legs, start_at) -> float | None:
     return legs_expected_value(legs)
 
 
+# ───────────────────── 段の商品（2026-09-14〜） ─────────────────────
+#
+# 🔴🔴 **2026-09-15 から7車は段（固め／広め／荒れ）で売る**（ユーザー決定 2026-09-14）。
+#    旧規則「発走18時前 ∧ 合成3倍以上 ∧ EV最大」は**段の商品では成り立たない**:
+#    固め・広めは合成2.2倍（どの目が当たっても約2.2万円）を狙って組むので合成3倍に届かず、
+#    **候補が荒れ（計画10万円・表示的中 約10%）ばかりになる**。表示的中が最も低い商品に
+#    毎日「自信あり」が付くことになり、アイコンの意味と逆になる。
+#
+#    新規則（ユーザー決定 2026-09-14）:
+#      候補 … 固め（`T_firm`）だけ。9車・`A_ana`・広め・荒れは候補にしない
+#      優先 … レース種別に「決勝」を含む（準決勝・チャレンジ決勝を含む）レースを先に見る
+#      順位 … その中で的中確率（買い目の確率の和 Σp）が最大
+#      無ければ … 発走 JST < 18時（`CONFIDENT_BEFORE_HOUR`）の固めで Σp 最大
+#
+#    🟢 **決勝・準決勝を優先する根拠**: 売上分析（2026-08-01〜09-12・種別と時間帯を統制）で
+#       自信ありの販売件数は **準決勝 16.0件・決勝 13.8件 ↔ 予選 6.7件**（約2倍）。
+#       自信ありはレースの格で3倍売れ方が違う（`memory keirin-sales-drivers-2026-09-14`）。
+#    ⚠️ スコアは「決勝系なら 1+Σp、それ以外は Σp」で表す（Σp ≦ 1 なので決勝系が必ず上に来る）。
+#       `pick_best`（最大を取る）をそのまま使うための形で、**値そのものに意味は無い**。
+#       `confident_ev` 列にはこの値が入るので、旧 EV と日をまたいで比べないこと。
+
+#: 自信ありの候補にする段の商品。
+TIER_CONFIDENT_PLANS: frozenset[str] = frozenset({"T_firm"})
+#: 段の商品すべて（候補にしないものも含む）。行の読み込みで型ラボの商品と認識するため。
+TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset"})
+#: 優先するレース種別の語。**部分一致**なので準決勝・チャレンジ決勝も含む（意図どおり）。
+CONFIDENT_PRIORITY_KEYWORD = "決勝"
+
+
+def legs_hit_probability(legs) -> float | None:
+    """買い目の的中確率 Σp（行に焼き付いた `prob` の和）。1点でも欠けたら None。
+
+    🔴 **部分計算をしない**（`legs_expected_value` と同じ理由）。
+
+    >>> round(legs_hit_probability([{"prob": 0.1}, {"prob": 0.2}]), 4)
+    0.3
+    >>> legs_hit_probability([{"prob": 0.1}, {"prob": None}]) is None
+    True
+    >>> legs_hit_probability([]) is None
+    True
+    """
+    if not legs:
+        return None
+    total = 0.0
+    for lg in legs:
+        try:
+            total += float(lg["prob"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return total
+
+
+def tier_confident_score(plan_key: str, legs, start_at, race_type) -> float | None:
+    """段の商品1件の「自信あり」スコア。候補外なら None。
+
+    >>> legs = [{"prob": 0.2, "stake": 5000, "pred_odds": 4.5},
+    ...         {"prob": 0.1, "stake": 5000, "pred_odds": 9.0}]
+    >>> round(tier_confident_score("T_firm", legs, 0, "予選"), 4)      # 09:00 JST
+    0.3
+    >>> round(tier_confident_score("T_firm", legs, 13 * 3600, "準決勝"), 4)   # 22:00 でも決勝系
+    1.3
+    >>> tier_confident_score("T_firm", legs, 9 * 3600, "予選") is None      # 18:00 JST・決勝系でない
+    True
+    >>> tier_confident_score("T_upset", legs, 0, "決勝") is None
+    True
+
+    🔴 **上帯（押さえ）は除いて判定する**（`type_lab_confident_score` と同じ）。
+    """
+    if plan_key not in TIER_CONFIDENT_PLANS:
+        return None
+    legs = split_legs_by_role(legs) or legs
+    p = legs_hit_probability(legs)
+    if p is None:
+        return None
+    if CONFIDENT_PRIORITY_KEYWORD in str(race_type or ""):
+        return 1.0 + p
+    hour = start_hour_jst(start_at)
+    if hour is None or hour >= CONFIDENT_BEFORE_HOUR:
+        return None
+    return p
+
+
 def _parse_trio_combo(combo: str) -> frozenset[int] | None:
     """"1=2=5" → frozenset({1,2,5})。三連単（"-" 区切り）や壊れた値は None。"""
     text = str(combo)
