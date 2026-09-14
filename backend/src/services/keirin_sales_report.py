@@ -29,7 +29,8 @@
    コードブロックを折り返さず、幅の広い行が途中で切れてレイアウトが崩れる。
    通常テキストで**1行を短く**書くこと（端末幅で自然に折り返す）。
 
-本文は3節: 当日の売上 → 「自信あり」1レースの的中と売上 → 的中レースの売上。
+本文は4節: 当日の売上 → 「自信あり」1レースの的中と売上 → 的中レースの売上 →
+**直近7日の見張り**（表示的中率と10万円以上の件数・2026-09-14 追加）。
 的中の定義は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを除く）で、
 ガミ（払戻＜賭け金）は「的中」と混ぜずに別の記号で出す。
 """
@@ -47,6 +48,36 @@ REVENUE_RATE = 0.30
 
 #: Discord へ送るときのタイムアウト（秒）
 _TIMEOUT = 15
+
+# ── 直近7日の見張り（2026-09-14 追加）────────────────────────────────────
+#
+# 売上ドライバー分析（`keirin/docs/sales_kpi.md` §12）で、商品配分は
+#
+#     表示的中率 = (H × 高額産出枠の的中 + (N − H) × 本線の的中) ÷ N
+#
+# の1本の式で決まり、高額枠を増やすほど表示的中率が下がると分かった。
+# 停止条件（`keirin/docs/PREREG_SALES_ALLOCATION_2026_09_14.md`）を
+# **人が毎週 SQL を叩いて確かめる運用は続かない**ので、毎朝届く通知に載せる。
+#
+# 🔴 **ここは「見張り」であって「判定」ではない。** 停止条件は
+#    「2週連続で下限割れ」「3週連続で10万円以上が週2件未満」で、1日の通知で
+#    割れていても即座に戻さない（1週の窓は下振れで簡単に割れる）。
+#    通知は ⚠️ を付けるだけにする。
+
+#: 見張りの窓（暦日）。**sale_date の暦7日**で数える（開催の無い日は日数が減る）。
+GUARD_WINDOW_DAYS = 7
+
+#: 表示的中率の**運用フロア**（%）。KPI 正本の 20% に 2pt のマージンを取った値。
+#: 🔴 20% は競合ベンチマークで**測定ではない**（自社データで「的中率は売上に
+#:    効かない」と言えるのは実測した 20〜36% の範囲内だけ）。だから手前で止める。
+HIT_RATE_FLOOR_PCT = 22.0
+
+#: 「高額払戻」の境目（円・払戻額）。売上は**直近7日にこの額以上が何回出たか**で
+#: 決まる（spearman 0.522・p=0.0006・0〜1回 10,952pt/日 ↔ 3回以上 30,924pt/日）。
+BIG_PAYOUT_YEN = 100_000
+
+#: 1週間に欲しい高額払戻の件数（目安）。9/1〜9/12 の実測は 2.9件/週。
+BIG_PAYOUT_WEEKLY_MIN = 2
 
 
 def revenue_yen(sold_paid_points: int | float | None) -> int:
@@ -172,12 +203,54 @@ def _hit_race_lines(r: Mapping[str, Any] | None) -> list[str]:
     ]
 
 
+def _guard_lines(g: Mapping[str, Any] | None) -> list[str]:
+    """直近7日の**表示的中率**と**10万円以上の件数**（2026-09-14 追加）。
+
+    必要なキー: `start` / `end`（YYYYMMDD）/ `n_days` / `n_pred` / `n_hit`
+    任意のキー: `n_race_days`（レース別を取り込めた日数）/ `n_big`
+
+    🔴 **表示的中率は日別テーブルの `n_hits_excl_garami ÷ n_predictions`**。
+       netkeirin が公表している値そのもので、ガミを混ぜない。
+    🔴 **レース別を取り込めていない日があれば件数に注記する。** 10万円以上は
+       レース別にしか無いので、欠けた日を 0件として数えると「出なかった」と
+       誤読する。1日も無ければ件数を出さない。
+    """
+    if not g or not int(g.get("n_pred") or 0):
+        return []
+    start, end = str(g["start"]), str(g["end"])
+    n_days = int(g.get("n_days") or 0)
+    head = (f"🛡 **直近{GUARD_WINDOW_DAYS}日** "
+            f"{start[4:6]}/{start[6:]}〜{end[4:6]}/{end[6:]}")
+    if n_days < GUARD_WINDOW_DAYS:
+        head += f"（{n_days}日分）"
+
+    rate = int(g.get("n_hit") or 0) / int(g["n_pred"]) * 100
+    margin = rate - HIT_RATE_FLOOR_PCT
+    if margin >= 0:
+        hit = f"表示的中 {rate:.1f}%（下限{HIT_RATE_FLOOR_PCT:g}%まで +{margin:.1f}pt）"
+    else:
+        hit = (f"⚠️ 表示的中 {rate:.1f}%"
+               f"（下限{HIT_RATE_FLOOR_PCT:g}%を {-margin:.1f}pt 割れ）")
+
+    label = f"{BIG_PAYOUT_YEN // 10_000}万円以上"
+    race_days = int(g.get("n_race_days") or 0)
+    if not race_days:
+        big = f"{label} 未取込（レース別なし）"
+    else:
+        n_big = int(g.get("n_big") or 0)
+        mark = "" if n_big >= BIG_PAYOUT_WEEKLY_MIN else "⚠️ "
+        note = "" if race_days >= n_days else f"・{race_days}/{n_days}日分"
+        big = f"{mark}{label} {n_big}件（目安 週{BIG_PAYOUT_WEEKLY_MIN}件以上{note}）"
+    return [head, hit, big]
+
+
 def build_sales_message(s: Mapping[str, Any]) -> str:
     """日次売上の本文を組む。
 
     必要なキー: `sale_date`(YYYYMMDD) / `n_sold` / `sold_points` /
     `sold_paid_points` / `month_n_days` / `month_sold_paid_points`
-    任意のキー: `confident`（自信ありの1レース）/ `race_stats`（的中レースの売上）
+    任意のキー: `confident`（自信ありの1レース）/ `race_stats`（的中レースの売上）/
+    `guard`（直近7日の見張り）
 
     🔴 **コードブロック（```）で桁を揃えない**（2026-09-07 ユーザー指摘）。
        Discord のスマホ表示はコードブロックを折り返さず、幅の広い行が
@@ -203,6 +276,9 @@ def build_sales_message(s: Mapping[str, Any]) -> str:
     hit = _hit_race_lines(s.get("race_stats"))
     if hit:
         lines += [""] + hit
+    guard = _guard_lines(s.get("guard"))
+    if guard:
+        lines += [""] + guard
     return "\n".join(lines)
 
 

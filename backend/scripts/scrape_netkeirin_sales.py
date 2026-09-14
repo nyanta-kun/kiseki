@@ -297,7 +297,7 @@ def _dsn() -> str:
 #    keirin の venv（FastAPI も SQLAlchemy も無い）で動くため。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.services.keirin_sales_report import (  # noqa: E402
-    build_sales_message, post_to_discord,
+    BIG_PAYOUT_YEN, GUARD_WINDOW_DAYS, build_sales_message, post_to_discord,
 )
 
 #: 通知先の Discord チャンネル（keirin/.env の webhook URL 環境変数名）
@@ -344,6 +344,13 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
             except Exception as e:  # noqa: BLE001
                 logger.warning("的中・自信ありの読み取りに失敗: %s", e)
                 confident, race_stats = None, None
+            # 見張り（直近7日）も付加情報。**別の try に分ける**——片方の失敗で
+            # もう片方まで消さないため。
+            try:
+                guard = _fetch_guard(cur, sale_date)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("直近7日の見張りの読み取りに失敗: %s", e)
+                guard = None
     finally:
         conn.close()
     return {
@@ -356,6 +363,7 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
         "month_sold_paid_points": int(month_paid or 0),
         "confident": confident,
         "race_stats": race_stats,
+        "guard": guard,
     }
 
 
@@ -417,6 +425,38 @@ def _fetch_race_stats(cur, ymd: str) -> dict | None:
         "n_races": int(n), "n_hit": int(n_hit or 0),
         "n_hit_incl": int(n_hit_incl or 0), "paid": int(paid or 0),
         "paid_hit": int(paid_hit or 0), "n_sold_hit": int(n_sold_hit or 0),
+    }
+
+
+def _fetch_guard(cur, sale_date: date) -> dict | None:
+    """直近7日の表示的中率と10万円以上の件数（2026-09-14 追加）。
+
+    窓は **sale_date の暦日**で `GUARD_WINDOW_DAYS` 日（当日を含む）。
+    🔴 **表示的中率は日別テーブル**（netkeirin の公表値そのもの）から、
+       **10万円以上はレース別テーブル**から読む（日別には払戻の内訳が無い）。
+       レース別を取り込めた日数を別に返し、欠けた日を「0件」と読ませない。
+    🔴 境目の金額は `keirin_sales_report.BIG_PAYOUT_YEN` を使う（ここへ写さない）。
+    """
+    start = (sale_date - timedelta(days=GUARD_WINDOW_DAYS - 1)).strftime("%Y%m%d")
+    end = sale_date.strftime("%Y%m%d")
+    cur.execute(
+        "SELECT COUNT(*), COALESCE(SUM(n_predictions), 0), "
+        "       COALESCE(SUM(n_hits_excl_garami), 0) "
+        "FROM keirin.netkeirin_sales_daily WHERE sale_date BETWEEN %s AND %s",
+        (start, end))
+    n_days, n_pred, n_hit = cur.fetchone()
+    if not n_pred:
+        return None
+    cur.execute(
+        "SELECT COUNT(DISTINCT race_date), "
+        "       COUNT(*) FILTER (WHERE payout_amount >= %s) "
+        "FROM keirin.netkeirin_sales_race WHERE race_date BETWEEN %s AND %s",
+        (BIG_PAYOUT_YEN, start, end))
+    n_race_days, n_big = cur.fetchone()
+    return {
+        "start": start, "end": end, "n_days": int(n_days or 0),
+        "n_pred": int(n_pred or 0), "n_hit": int(n_hit or 0),
+        "n_race_days": int(n_race_days or 0), "n_big": int(n_big or 0),
     }
 
 
