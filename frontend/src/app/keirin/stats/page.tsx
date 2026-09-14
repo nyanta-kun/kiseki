@@ -204,6 +204,8 @@ type RankFilter =
   | "7T1"
   | "7T3"
   // 型ラボのプラン（2026-08-28 の全面移行〜）。`rank_key` はプラン名そのもの。
+  // 段分け商品（2026-09-15〜）
+  | "T_firm" | "T_mid" | "T_upset"
   | "A_hit" | "A_trio" | "A_ana"
   | "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit"
   // 9車の型F（決勝以外）の三連複版（2026-09-06・PR#476 で `F_hit` を置換）
@@ -221,6 +223,10 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   //    ここでの絞り込みは「その型のレースだけ」を意味する。
   //    ⚠️ backend の `_all_labels` に無いキーを送ると**全体の数字がそのランクの
   //       名前で出る**（2026-08-05 の 7B の事故）。両方そろえること。
+  // 🔴 段分け商品（2026-09-15〜・7車の主力）を最初に置く。
+  { key: "T_firm", label: "固め" },
+  { key: "T_mid", label: "広め" },
+  { key: "T_upset", label: "荒れ" },
   { key: "A_hit", label: "型A" },
   { key: "B_hit", label: "型B" },
   { key: "C_hit", label: "型C" },

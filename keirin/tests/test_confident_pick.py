@@ -291,3 +291,77 @@ def test_alive_filter_qualifies_status_column():
         assert "netkeirin_submissions s " in src, fn.__name__
         # 別名を付けずに裸の列を並べていないこと（SELECT 側も修飾する）
         assert "SELECT race_key" not in src, fn.__name__
+
+
+# ───────────────────── 段の商品（2026-09-14〜） ─────────────────────
+#
+# ユーザー決定 2026-09-14: 固め（T_firm）の中から、種別に「決勝」を含むレースを優先し
+# 的中確率 Σp 最大。無ければ発走18時前の固めで Σp 最大。9車・A_ana・広め・荒れは候補外。
+# 🔴 旧規則（合成3倍以上）のままだと、合成2.2倍で組む固め・広めが候補から外れ、
+#    表示的中 約10% の荒れにばかり付く。
+
+
+def test_tier_score_only_for_firm():
+    from src.confident_pick import tier_confident_score
+
+    legs = _legs(0.2, 5.0)
+    assert tier_confident_score("T_firm", legs, 0, "予選") == pytest.approx(0.4)
+    for key in ("T_mid", "T_upset", "A_ana", "F_line", "C_hit"):
+        assert tier_confident_score(key, legs, 0, "決勝") is None, key
+
+
+def test_tier_score_prefers_final_races_even_at_night():
+    """🔴 決勝系（準決勝・チャレンジ決勝を含む）は時刻を問わず、Σp が小さくても上に来る。"""
+    from src.confident_pick import tier_confident_score
+
+    night_final = tier_confident_score("T_firm", _legs(0.05, 10), 13 * _H, "準決勝")
+    morning = tier_confident_score("T_firm", _legs(0.40, 3.0), 0, "予選")
+    assert night_final is not None and morning is not None
+    assert night_final > morning
+    assert tier_confident_score("T_firm", _legs(0.05, 10), 13 * _H, "チャレンジ決勝") is not None
+
+
+def test_tier_score_non_final_needs_before_18():
+    from src.confident_pick import tier_confident_score
+
+    legs = _legs(0.2, 5.0)
+    assert tier_confident_score("T_firm", legs, 8 * _H, "特選") is not None   # 17:00 JST
+    assert tier_confident_score("T_firm", legs, 9 * _H, "特選") is None       # 18:00 JST
+    assert tier_confident_score("T_firm", legs, None, "特選") is None
+
+
+def test_tier_pick_uses_new_rule(monkeypatch):
+    """段の商品がある日は段の規則。決勝系の固め → 無ければ18時前の固め。"""
+    from scripts import pick_confident_race_wt as m
+
+    rows = [
+        # 荒れ・決勝 → 候補外
+        {"race_key": "20260915_11_11", "rank_key": "T_upset", "venue_name": "A",
+         "race_no": 11, "legs": _legs(0.10, 50), "start_at": 12 * _H, "race_type": "決勝"},
+        # 固め・予選・朝・Σp 大
+        {"race_key": "20260915_11_01", "rank_key": "T_firm", "venue_name": "A",
+         "race_no": 1, "legs": _legs(0.30, 3.0), "start_at": 0, "race_type": "予選"},
+        # 固め・準決勝・夜・Σp 小 → これが選ばれる
+        {"race_key": "20260915_12_10", "rank_key": "T_firm", "venue_name": "B",
+         "race_no": 10, "legs": _legs(0.15, 7.0), "start_at": 11 * _H, "race_type": "準決勝"},
+        # 広め → 候補外
+        {"race_key": "20260915_12_05", "rank_key": "T_mid", "venue_name": "B",
+         "race_no": 5, "legs": _legs(0.45, 2.5), "start_at": 0, "race_type": "決勝"},
+    ]
+    monkeypatch.setattr(m, "_load_type_lab", lambda date: rows)
+    assert m.pick("2026-09-15", dry_run=True) == ("20260915_12_10", "T_firm")
+
+    # 決勝系の固めが無ければ18時前の固め
+    monkeypatch.setattr(m, "_load_type_lab", lambda date: rows[:2])
+    assert m.pick("2026-09-15", dry_run=True) == ("20260915_11_01", "T_firm")
+
+
+def test_tier_rows_are_loaded_with_race_type():
+    """🔴 決勝系の優先には種別が要る。SELECT から落ちると黙って18時前だけになる。"""
+    import inspect
+
+    from scripts import pick_confident_race_wt as m
+
+    src = inspect.getsource(m._load_type_lab)
+    assert "r.race_type" in src
+    assert "TIER_PLAN_KEYS" in src

@@ -1517,6 +1517,12 @@ _SETTLED_COND = """(
 #:    ずれると設定画面で ON にできない／一覧が「非」になる、という形で出る。
 #:    `keirin/tests/test_type_lab_submit.py` が両者の一致を固定している。
 TYPE_LAB_RANK_LABELS: dict[str, str] = {
+    # 🔴 **段分け商品（2026-09-15〜・7車の主力）。** 軸信頼の四分位で 硬い/やや波乱/波乱
+    #    に分けて売る。旧キー（A_hit〜F_hit 等）は売らなくなるが、過去の入稿の
+    #    表示に要るので下に残す（消すと過去行が「非」バッジになる）。
+    "RANK_T_firm": "T_firm",
+    "RANK_T_mid": "T_mid",
+    "RANK_T_upset": "T_upset",
     "RANK_A_hit": "A_hit",
     # 🔴 型A の3分割（2026-08-31）。`sell_plans_for` が pw_ent と三連複ゲートで
     #    1つだけ選ぶので、1レース1商品は保たれる。

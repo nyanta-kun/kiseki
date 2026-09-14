@@ -80,7 +80,7 @@ from src.netkeirin_client import (                           # noqa: E402
 )
 from src.notify.discord import send                          # noqa: E402
 from src.confident_pick import (                             # noqa: E402
-    pick_best, start_time_jst, type_lab_confident_score)
+    pick_best, start_time_jst, tier_confident_score, type_lab_confident_score)
 from src.stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS   # noqa: E402
 from src.submission_skips import (                           # noqa: E402
     CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
@@ -95,7 +95,12 @@ from src.submission_skips import (                           # noqa: E402
 from src.marquee import is_fill_target                       # noqa: E402
 from src.type_lab import (                                  # noqa: E402
     HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, SELLABLE_PLAN_KEYS,
+    TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
     highpay_plan_for, sell_plans_for)
+
+#: **日次上限に数えず落とさないプラン**（2026-09-14）。7車は段（全レース）と、段より先に見る `A_ana`。
+#: 検証: 上限50%（軸信頼の高い順）は荒れを 11.7→3.8件/日へ捨て 10万+ を 0.43→0.13件/日へ減らす。
+CAP_FREE_PLANS: frozenset[str] = TIER_PLAN_KEYS | {"A_ana"}
 from src.type_lab_submission import build_submission         # noqa: E402
 
 # 🔴 **共通部品は既存スクリプトから import する**（写さない）。
@@ -175,6 +180,12 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     "F_hit": ACT_TYPE_DEFAULT,
     # 🔴 9車型F の主力。**穴狙いではない**（当たる回数を取る商品）ので既定のまま。
     "F_line": ACT_TYPE_DEFAULT,
+    # 🔴 段の商品（2026-09-14）。**荒れ（`T_upset`）は穴狙い**——人気1位のラインを
+    #    1・2着から外して計画払戻10万円を狙う構成で、買い目からして穴狙いにしか読めない。
+    #    固め・広めは当てにいく商品なので既定。
+    "T_firm": ACT_TYPE_DEFAULT,
+    "T_mid": ACT_TYPE_DEFAULT,
+    "T_upset": ACT_TYPE_LONGSHOT,
     # 🔴 看板枠は**6型すべてに穴狙いアイコンを付ける**。`A_ana` と同じ理屈で、
     #    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、
     #    買い目からして穴狙いにしか読めない（型の名前ではなく買い方で決めている）。
@@ -272,7 +283,8 @@ def _load_rows(day: str) -> list[dict]:
         allowed = {p.key for p in sell_plans_for(
             str(d["type_label"]), int(d["n_entries"] or 7), d.get("race_type"),
             pw_ent=(float(d["pw_ent"]) if d.get("pw_ent") is not None else None),
-            trio_ok=trio_ok.get(str(d["race_key"])))}
+            trio_ok=trio_ok.get(str(d["race_key"])),
+            axis_sum=(float(d["axis_sum"]) if d.get("axis_sum") is not None else None))}
         if d["plan_key"] not in allowed:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
@@ -371,6 +383,19 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
        記録している（`build_type_lab_picks`）。混成の平均で判定すると
        100-600倍の目に押し上げられて**ゲートが事実上無効**になる。
     """
+    # 🔴 **固め・広めは「全点の想定払戻 >= 1.5万円」**（2026-09-14）。合成2.2倍（払戻約2.2万）で
+    #    組むので平均2万ゲートだと端数で落ち、最低3点へ広げたレースは平均が2万を割る。
+    if str(row.get("plan_key")) in TIER_POINT_GATE_PLANS:
+        min_pay = row.get("pred_min_payout")
+        if min_pay is not None and float(min_pay) < TIER_POINT_PAYOUT_MIN * 0.999:
+            return (SKIP_GATE_MEAN_PAYOUT,
+                    f"買い目の最低想定払戻 {float(min_pay):,.0f}円 < {TIER_POINT_PAYOUT_MIN:,}円")
+        odds = [float(lg.get("pred_odds") or 0) for lg in row["legs"]]
+        odds = [o for o in odds if o > 0]
+        if odds and min(odds) < MIN_POINT_ODDS:
+            return (SKIP_GATE_POINT_ODDS,
+                    f"予測 {min(odds):.1f} 倍の目があります（下限 {MIN_POINT_ODDS} 倍）")
+        return None
     mean_pay = row.get("pred_mean_payout")
     if mean_pay is not None and float(mean_pay) <= MIN_MEAN_PAYOUT:
         return (SKIP_GATE_MEAN_PAYOUT,
@@ -416,14 +441,26 @@ def _plan_attempts(decided, cap_budget, exempt) -> list[dict]:
 def _choose_confident(rows: list[dict]):
     """入稿する行から「自信あり」を1件選ぶ。戻り値 `((race_key, plan_key)|None, {キー: EV})`。
 
-    🔴 判定は `src.confident_pick.type_lab_confident_score` が唯一の正本
-       （発走18時前 ∧ 合成3倍以上 の中で EV 最大）。ここは母集団を渡すだけ。
+    🔴 判定は `src.confident_pick` が唯一の正本。段の商品がある日は
+       `tier_confident_score`（固めの中から決勝系優先・無ければ18時前で Σp 最大）、
+       無い日は `type_lab_confident_score`（発走18時前 ∧ 合成3倍以上 の中で EV 最大）。
+       ここは母集団を渡すだけ。
     🔴 **入稿の前に呼ぶ**。netkeirin にアイコンが渡るのは入稿の瞬間だけなので、
        あとから選んでも付けられない（2026-09-04 豊橋3R）。
     """
-    scored = [(str(r["race_key"]), str(r["plan_key"]),
-               type_lab_confident_score(r.get("legs") or [], r.get("start_at")))
-              for r in rows]
+    # 🔴 段の商品が1件でもあれば段の規則で選ぶ（2026-09-14・`pick_confident_race_wt.pick` と同じ分岐）。
+    #    尺度（Σp ↔ EV）が違うので混ぜない。
+    tier_day = any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows)
+    metric = "スコア(決勝系は1+Σp)" if tier_day else "EV"
+    if tier_day:
+        scored = [(str(r["race_key"]), str(r["plan_key"]),
+                   tier_confident_score(str(r["plan_key"]), r.get("legs") or [],
+                                        r.get("start_at"), r.get("race_type")))
+                  for r in rows]
+    else:
+        scored = [(str(r["race_key"]), str(r["plan_key"]),
+                   type_lab_confident_score(r.get("legs") or [], r.get("start_at")))
+                  for r in rows]
     ev = {(rk, pk): v for rk, pk, v in scored if v is not None}
     best = pick_best(scored)
     if best is None:
@@ -433,7 +470,7 @@ def _choose_confident(rows: list[dict]):
         lab = {(str(r["race_key"]), str(r["plan_key"])):
                f"{r['venue_name']}{r['race_no']}R({r['plan_key']})" for r in rows}
         print(f"[type_lab_submit] 自信あり → {lab.get(best, best[0])} "
-              f"EV={ev.get(best, 0):.3f}（対象 {len(rows)}件 / EV算出 {len(ev)}件）",
+              f"{metric}={ev.get(best, 0):.3f}（対象 {len(rows)}件 / 算出 {len(ev)}件）",
               flush=True)
     return best, ev
 
@@ -832,11 +869,14 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             return 1.0
         if _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")):
             return 1.0
+        if str(r.get("plan_key")) in CAP_FREE_PLANS:
+            return 1.0
         return _GATE.cap_priority(str(r["plan_key"]), r.get("axis_sum"),
                                   rp_sd.get(str(r["race_key"])))
 
     def _exempt(r: dict) -> bool:
         return (int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
+                or str(r.get("plan_key")) in CAP_FREE_PLANS
                 or _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")))
 
     # ── 入稿しない理由を先に決める（副作用なし）────────────────────────────

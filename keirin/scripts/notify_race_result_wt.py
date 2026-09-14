@@ -400,12 +400,19 @@ def _rank_label(rank_key: str) -> str:
        過去の通知と見比べられなくなる。
     """
     try:
-        from src.type_lab_submission import PLAN_TITLES, TYPE_VIEWS
+        from src import type_lab_submission as _tls
+        PLAN_TITLES = _tls.PLAN_TITLES
+        TIER_LABELS = getattr(_tls, "TIER_LABELS", {})
     except Exception:                       # noqa: BLE001 — 通知は落とさない
         return rank_key
     title = PLAN_TITLES.get(rank_key)
     if not title:
         return rank_key
+    # 🔴 **段の商品（2026-09-14）は「型X」を付けない。** 7車は型ではなく段で売るので、
+    #    「型T」は意味を持たない。タイトルが段の名前（固め／広め／荒れ）で始まるので
+    #    そのまま出す＝段の名前が頭に来る。
+    if rank_key in TIER_LABELS:
+        return title
     # 🔴 **見解（`TYPE_VIEWS`）は付けない**（2026-09-06）。型ごとに固定の文で
     #    毎レース同じものが並ぶうえ、13文字ぶん増えて商品名の行が必ず折り返す。
     #    見解は入稿の文面（`type_lab_submission`）に載っているのでそちらで足りる。

@@ -891,6 +891,72 @@ for _t in "ABCDEF":
 del _t
 
 
+# ── 段（固め／広め／荒れ）— 2026-09-15 から 7車の売り物 ──────────────────────
+#
+# 🔴🔴 **2026-09-14 ユーザー決定: 7車は型A〜F のプランをやめ、軸信頼で3段に分けて売る。**
+#    検証の経緯と数値は memory `keirin-firm-upset-policy-2026-09-14`（台＝/tmp/race_type_board.npz・
+#    7車・探索2024-07〜2025-12 / 確認2026-01〜08・ライン差し替え/並べ替え込み）:
+#
+#      固め（軸信頼 > 1.464）   確率順・合成2.2倍・3〜5点・払戻をそろえる配分
+#      広め（1.353〜1.464）      同上・3〜8点
+#      荒れ（≦ 1.353）          人気1位のラインを1-2着から外し、15倍以上を計画10万円
+#
+#    全体（7車・全レース・日次上限なし）: 表示的中 26.2 / 25.8%・10万+ 0.39 / 0.43件/日。
+#    固めは確率順ダッチにしただけで今の本線より表示的中 +2.8〜3.5pt（両窓CI 0跨がず）。
+#    荒れの「人気1位ライン外し」は計画10万のままより +2.5 / +3.1pt・点数を揃えた無作為対照に 20/20。
+#
+# 🔴 **境目は探索窓（2024-07〜2025-12）の 7車 axis_sum 四分位で固定**（確認窓を見て決めていない）。
+#    日ごとの相対順位にしない（その日のレース構成で段が動くと商品の定義が揺れる）。
+# 🔴 **`A_ana` は段より先に見る**（型A ∧ 1着が読めない上位10%）。段分けでは全部「固め」か
+#    「広め」に入るが、同じレースで 10万+ が A_ana 29/17件 ↔ 段 1/0件（両窓CI 0跨がず）。
+# ⚠️ 9車は現行のまま（段を当てると表示的中 19% ↔ 現行 28%）。5/6/8車は予測オッズが無く組めない。
+TIER_N_ENTRIES = 7
+#: 固め（axis_sum がこれを超える）。探索窓 7車の中央値。
+TIER_AXIS_FIRM_MIN = 1.464
+#: 広め（これを超え、固めの境目以下）。探索窓 7車の下位25%点。これ以下は荒れ。
+TIER_AXIS_MID_MIN = 1.353
+#: 固め・広めの計画払戻（合成オッズ 2.2倍）。
+TIER_TARGET_PAYOUT = 22_000
+#: 固め・広めの最低点数（「1点・2点で外すより3点で押さえる」2026-09-14 ユーザー方針）。
+TIER_MIN_LEGS = 3
+#: 固め・広めの入稿ゲート: **全点**の想定払戻がこれ以上（平均2万ゲートの代わり）。
+TIER_POINT_PAYOUT_MIN = 15_000
+#: 荒れの計画払戻と、買う目の予測オッズ下限。
+TIER_UPSET_TARGET = 100_000
+TIER_UPSET_MIN_ODDS = 15.0
+PLANS["T_firm"] = Plan("T_firm", "T", "trifecta", "tier_firm", 0, max_legs=5,
+                       alloc="dutch", target=TIER_TARGET_PAYOUT,
+                       note="固め: 確率順に合成2.2倍まで・3〜5点・払戻をそろえる")
+PLANS["T_mid"] = Plan("T_mid", "T", "trifecta", "tier_firm", 0, max_legs=8,
+                      alloc="dutch", target=TIER_TARGET_PAYOUT,
+                      note="広め: 確率順に合成2.2倍まで・3〜8点・払戻をそろえる")
+PLANS["T_upset"] = Plan("T_upset", "T", "trifecta", "tier_upset", 0,
+                        min_odds=TIER_UPSET_MIN_ODDS, max_odds=SIGNBOARD_MAX_ODDS,
+                        alloc="dutch", target=TIER_UPSET_TARGET,
+                        note="荒れ: 人気1位のラインを1-2着から外し15倍以上を計画10万円")
+#: 段の3プラン（表示順）。
+TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_upset")
+TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset"})
+#: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
+TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid"})
+
+
+def tier_plan_key(axis_sum: float | None) -> str | None:
+    """軸信頼から段のプランキー。判定できなければ None。
+
+    >>> tier_plan_key(1.50), tier_plan_key(1.40), tier_plan_key(1.30), tier_plan_key(None)
+    ('T_firm', 'T_mid', 'T_upset', None)
+    """
+    if axis_sum is None:
+        return None
+    a = float(axis_sum)
+    if a > TIER_AXIS_FIRM_MIN:
+        return "T_firm"
+    if a > TIER_AXIS_MID_MIN:
+        return "T_mid"
+    return "T_upset"
+
+
 #: 9車で型F を売る条件。**決勝だけ・`F_hit` だけ**（2026-08-28 実投入）。
 #:
 #: 🔴 9車は**型F が母集団の 55〜59%** を占め、そこが弱い
@@ -1126,7 +1192,8 @@ SELLABLE_PLAN_KEYS: frozenset[str] = (
     | {f"{t}_sign" for t in SIGNBOARD_TYPES}
     | {TYPE_F_SELL_DEFAULT, TYPE_F_SELL_LINE}
     | set(TYPE_F_SELL_BY_RACE_TYPE.values())
-    | HIGHPAY_PLAN_KEYS)
+    | HIGHPAY_PLAN_KEYS
+    | TIER_PLAN_KEYS)
 
 
 def plans_for(type_label: str, n_entries: int = 7,
@@ -1145,8 +1212,11 @@ def plans_for(type_label: str, n_entries: int = 7,
        **比較台が消えるので良くない**（売らなかった側の成績が事後に測れない）。
        売る／売らないは `sell_plans_for` の責務へ寄せた。
 
+    🔴 **7車は段の3プラン（`T_firm`/`T_mid`/`T_upset`）を型に関係なく足す**（2026-09-14）。
+       段は軸信頼で決まり型をまたぐので、どの型のレースでも3つとも組んで残す。
+
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_upset']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
     ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
@@ -1154,13 +1224,17 @@ def plans_for(type_label: str, n_entries: int = 7,
     >>> [p.key for p in plans_for("A", 9, "特選")]
     ['A_hit', 'A_pay', 'A_trio', 'A_ana', 'A_sign', 'A_big']
     """
-    return [p for p in PLANS.values() if p.type_label == type_label]
+    own = [p for p in PLANS.values() if p.type_label == type_label]
+    if int(n_entries or 0) == TIER_N_ENTRIES:
+        own += [PLANS[k] for k in TIER_PLAN_ORDER]
+    return own
 
 
 def sell_plans_for(type_label: str, n_entries: int = 7,
                    race_type: str | None = None, *,
                    pw_ent: float | None = None,
-                   trio_ok: bool | None = None) -> list[Plan]:
+                   trio_ok: bool | None = None,
+                   axis_sum: float | None = None) -> list[Plan]:
     """その型で **netkeirin へ入稿する**買い方（`SELL_PLANS` で絞ったもの）。
 
     🔴 **必ず 0 個か 1 個**。型は排他なので、これが1レース1商品を構造的に保証する。
@@ -1211,6 +1285,24 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     ['A_hit']
     """
     plans = plans_for(type_label, n_entries, race_type)
+    # 🔴🔴 **7車は段で売る**（2026-09-14 ユーザー決定・2026-09-15 から）。看板枠・型A の3分割・
+    #    型F の種別分岐より**先**に見る。ただし `A_ana`（型A ∧ 1着が読めない上位10%）は段より先。
+    #    `axis_sum` を渡さない呼び出し（比較・分析用）は従来の型別の規則のまま。
+    #
+    #    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, axis_sum=1.60)]
+    #    ['T_firm']
+    #    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.50, axis_sum=1.60)]
+    #    ['A_ana']
+    #    >>> [p.key for p in sell_plans_for("F", 7, "決勝", axis_sum=1.30)]
+    #    ['T_upset']
+    #    >>> [p.key for p in sell_plans_for("F", 9, "準決勝", axis_sum=1.30)]
+    #    ['F_line']
+    if int(n_entries or 0) == TIER_N_ENTRIES and axis_sum is not None:
+        if (type_label == "A" and pw_ent is not None
+                and float(pw_ent) >= ANA_PW_ENT_MIN):
+            return [p for p in plans if p.key == "A_ana"]
+        key = tier_plan_key(axis_sum)
+        return [p for p in plans if p.key == key]
     # 🔴 看板枠は**他のどの分岐よりも先**に見る。型A の3分割も 9車の型F の種別分岐も
     #    「その型で何を売るか」の話なので、看板枠に指定された型ではそれらを上書きする。
     #    ここでも返すのは1つだけなので 1レース1商品は保たれる。
@@ -1348,6 +1440,55 @@ def build_legs(shape: RaceShape, plan: Plan,
         cand = [k for k, v in pred_odds.items()
                 if _pos(v) and len(set(k)) == 3
                 and (pool is None or set(k) <= pool)
+                and float(v) >= plan.min_odds
+                and (not plan.max_odds or float(v) <= plan.max_odds)]
+        cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
+        out, s = [], 0.0
+        for k in cand:
+            o = float(pred_odds[k])
+            if s + 1.0 / o > cap:
+                continue
+            out.append(tuple(k))
+            s += 1.0 / o
+        if not out:
+            return None
+    elif plan.structure == "tier_firm":
+        # 🔴 **確率順に、合成オッズ（予算 ÷ 計画払戻）を割る直前で止める点数**を
+        #    `TIER_MIN_LEGS`〜`max_legs` に丸める。途中を飛ばさない（`break`）。
+        #    点数を決めてから 2倍未満の目を除いた先頭 k 点を採る（検証 `july_policy.py` と同一）。
+        cand = [k for k, v in pred_odds.items() if _pos(v) and len(set(k)) == 3]
+        cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
+        cap = float(BUDGET) / float(plan.target or TIER_TARGET_PAYOUT)
+        s = 0.0
+        k_fit = 0
+        for k in cand:
+            if s + 1.0 / float(pred_odds[k]) > cap:
+                break
+            s += 1.0 / float(pred_odds[k])
+            k_fit += 1
+        k_use = max(TIER_MIN_LEGS, min(plan.max_legs or TIER_MIN_LEGS, k_fit))
+        out = [k for k in cand if float(pred_odds[k]) >= MIN_POINT_ODDS][:k_use]
+        if len(out) < TIER_MIN_LEGS:
+            return None
+    elif plan.structure == "tier_upset":
+        # 🔴 **人気1位＝予測オッズ盤の1着人気**（その車が1着の目の Σ1/予測オッズ が最大）。
+        #    実際の締切オッズではない（発走前に分かる量だけで組む）。
+        #    その車のライン全員を 1・2着から外し、`min_odds`〜`max_odds` の目を確率順に
+        #    Σ(1/予測オッズ) <= 予算/計画払戻 まで積む（看板枠と同じ詰め方＝超えた目は飛ばす）。
+        cars_all = {c for k in pred_odds for c in k}
+        share = {c: sum(1.0 / float(v) for k, v in pred_odds.items()
+                        if _pos(v) and k[0] == c) for c in cars_all}
+        if not share:
+            return None
+        f1 = max(sorted(share), key=lambda c: share[c])
+        fav_line = {f1}
+        for line in shape.lines:
+            if f1 in line:
+                fav_line |= set(line)
+        cap = float(BUDGET) / float(plan.target or TIER_UPSET_TARGET)
+        cand = [k for k, v in pred_odds.items()
+                if _pos(v) and len(set(k)) == 3
+                and k[0] not in fav_line and k[1] not in fav_line
                 and float(v) >= plan.min_odds
                 and (not plan.max_odds or float(v) <= plan.max_odds)]
         cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
@@ -2365,6 +2506,10 @@ def rule_version(n_entries: int = 7) -> str:
         #    ⚠️ **9車では外している**ので 7車の側にだけ入れる。
         payload["_underband"] = {k: v.underband_min
                                  for k, v in sorted(PLANS.items()) if v.underband_min}
+        # 🔴 段の境目・最低点数・全点ゲートは `PLANS` の属性に無いので載せる（2026-09-14）。
+        payload["_tier"] = [TIER_AXIS_FIRM_MIN, TIER_AXIS_MID_MIN, TIER_TARGET_PAYOUT,
+                            TIER_MIN_LEGS, TIER_POINT_PAYOUT_MIN, TIER_UPSET_TARGET,
+                            TIER_UPSET_MIN_ODDS, sorted(TIER_POINT_GATE_PLANS)]
     if n_entries == 9:
         # 🔴 ルーティング（決勝以外を `F_line` へ）と Σ の上限は `PLANS` の
         #    属性だけでは表せないので、ここへ入れないと新旧の行が同じ
