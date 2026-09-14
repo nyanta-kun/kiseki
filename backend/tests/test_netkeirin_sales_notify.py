@@ -19,7 +19,7 @@
    スマホ表示はコードブロックを折り返さず、幅の広い行が切れて崩れる
 7. **「自信あり」と「的中レースの売上」を出す**（2026-09-07 ユーザー指示）。
    的中は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを混ぜない）
-8. **直近7日の見張りを出す**（2026-09-14）。表示的中率と運用フロア22%の差・
+8. **直近7日の見張りを出す**（2026-09-14）。表示的中率と運用フロア30%の差・
    10万円以上の件数。**判定ではなく見張り**（停止条件は2週連続などで、
    `keirin/docs/PREREG_SALES_ALLOCATION_2026_09_14.md` が正本）
 
@@ -157,9 +157,11 @@ def _race_stats(**kw) -> dict:
 
 
 def _guard(**kw) -> dict:
-    # 9/6〜9/12 の実測（日別 389商品・表示的中102・レース別で10万円以上4件）
+    # 9/6〜9/12 の実測（日別 389商品・レース別で10万円以上4件）。
+    # 表示的中は実測 102（26.2%）だが、下限30%を上回る場合の文面を検査するため
+    # 既定は 125（32.1%）にしてある。実測値の検査は `test_実測の26パーセントは下限を割る`
     base = {"start": "20260906", "end": "20260912", "n_days": 7,
-            "n_pred": 389, "n_hit": 102, "n_race_days": 7, "n_big": 4}
+            "n_pred": 389, "n_hit": 125, "n_race_days": 7, "n_big": 4}
     base.update(kw)
     return base
 
@@ -235,7 +237,7 @@ def test_レース別が無い回は的中レースの節を出さない():
 
 def test_見張りの定数はPREREGの値():
     """🔴 停止条件の正本は PREREG。値を変えるなら文書と同時に変えること。"""
-    assert rep.HIT_RATE_FLOOR_PCT == 22.0
+    assert rep.HIT_RATE_FLOOR_PCT == 30.0
     assert rep.GUARD_WINDOW_DAYS == 7
     assert rep.BIG_PAYOUT_YEN == 100_000
     assert rep.BIG_PAYOUT_WEEKLY_MIN == 2
@@ -243,14 +245,14 @@ def test_見張りの定数はPREREGの値():
               / "PREREG_SALES_ALLOCATION_2026_09_14.md")
     if prereg.exists():                # 文書は別PRで入るので、あれば突き合わせる
         text = prereg.read_text(encoding="utf-8")
-        assert "22%" in text and "10万円" in text
+        assert "30%" in text and "10万円" in text
 
 
 def test_見張りは表示的中率と下限までの差を出す():
     msg = rep.build_sales_message(_full_summary())
     assert "直近7日" in msg and "09/06〜09/12" in msg
-    assert "表示的中 26.2%" in msg                      # 102 / 389
-    assert "下限22%まで +4.2pt" in msg
+    assert "表示的中 32.1%" in msg                      # 125 / 389
+    assert "下限30%まで +2.1pt" in msg
     assert "10万円以上 4件" in msg
     assert "⚠️" not in msg
 
@@ -258,7 +260,14 @@ def test_見張りは表示的中率と下限までの差を出す():
 def test_下限を割ったら警告を付ける():
     msg = rep.build_sales_message(_full_summary(guard=_guard(n_hit=80)))  # 20.6%
     assert "⚠️ 表示的中 20.6%" in msg
-    assert "下限22%を 1.4pt 割れ" in msg
+    assert "下限30%を 9.4pt 割れ" in msg
+
+
+def test_実測の26パーセントは下限を割る():
+    """9/6〜9/12 の実測（102 / 389 = 26.2%）は 2026-09-14 に上げた下限30%を割る。"""
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_hit=102)))
+    assert "⚠️ 表示的中 26.2%" in msg
+    assert "下限30%を 3.8pt 割れ" in msg
 
 
 def test_高額払戻が目安未満なら警告を付ける():

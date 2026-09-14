@@ -286,7 +286,7 @@ def section_design(data: dict) -> tuple[list[str], dict]:
         "| 総本数 N | フロア | 置ける H | 10万円以上/週 |",
         "|--:|--:|--:|--:|",
     ]
-    for fl in (24.0, HIT_RATE_FLOOR_PCT, 20.0):
+    for fl in (HIT_RATE_FLOOR_PCT + 2, HIT_RATE_FLOOR_PCT, HIT_RATE_FLOOR_PCT - 2):
         hh = max_payout_slots(n, h_hit, h_pay, fl)
         out.append(f"| {n:.1f} | {fl:g}% | {hh:.1f} | {hh * 7 * p10 / 100:.1f} |")
     return out, params
