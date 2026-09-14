@@ -418,14 +418,15 @@ def test_買い目に無い軸を軸として案内しない():
 # 🔴 2026-09-15 から7車は型ではなく段（固め／広め／荒れ）で売る。崩れると
 #    **型の見解（例: 型A「二軸が堅い一戦」）が段の商品に付き、タイトルと中身が食い違う**。
 
-TIER_KEYS = ("T_firm", "T_mid", "T_upset")
+TIER_KEYS = ("T_firm", "T_mid", "T_axis", "T_upset")
 
 
 def test_段の商品は既存と重ならない名前():
     """ユーザー決定: 固め／広め／荒れ。旧キーの「本線」「押さえ」「高配当」は使わない。"""
     from src.type_lab_submission import TIER_LABELS
 
-    assert TIER_LABELS == {"T_firm": "固め", "T_mid": "広め", "T_upset": "荒れ"}
+    assert TIER_LABELS == {"T_firm": "固め", "T_mid": "広め", "T_axis": "一軸", "T_upset": "荒れ"}
+    assert PLAN_TITLES["T_axis"] == "一軸の三連単"
     assert PLAN_TITLES["T_firm"] == "固めの三連単"
     assert PLAN_TITLES["T_mid"] == "広めの三連単"
     assert PLAN_TITLES["T_upset"] == "荒れ狙いの三連単"
@@ -472,3 +473,17 @@ def test_荒れは穴狙いアイコン_固めと広めは既定():
     assert ACT_TYPE_BY_PLAN["T_upset"] == ACT_TYPE_LONGSHOT
     assert ACT_TYPE_BY_PLAN["T_firm"] == ACT_TYPE_DEFAULT
     assert ACT_TYPE_BY_PLAN["T_mid"] == ACT_TYPE_DEFAULT
+
+
+def test_一軸は買い目の1着を軸として印と文面に出す():
+    """🔴 一軸の軸は1着率1位。`axis1/axis2`（3着内率の上位2車）と違っても買い目の1着を ◎ にする。"""
+    from src.type_lab_submission import build_submission
+    legs = [{"combo": "4-2-5", "stake": 4000, "pred_odds": 5.0, "prob": 0.05},
+            {"combo": "4-5-2", "stake": 3000, "pred_odds": 7.0, "prob": 0.03},
+            {"combo": "4-2-1", "stake": 3000, "pred_odds": 7.0, "prob": 0.02}]
+    row = dict(plan_key="T_axis", type_label="F", axis1=2, axis2=4, p3_order="2-4-5-1-3-6-7",
+               bet_type="trifecta", legs=legs)
+    sub = build_submission(row)
+    assert sub["marks"][4] == "◎" and sub["marks"][2] == "○"
+    assert "◎4番" in sub["comment"] and "【一軸】" in sub["comment"]
+    assert sub["title"].startswith("一軸の三連単")

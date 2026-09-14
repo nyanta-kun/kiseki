@@ -40,7 +40,7 @@ const RANK_ORDER: LegacyRankKey[] =
 //    ここを OFF にすると、その型のレースは入稿されない（他の型が肩代わりしない）。
 // 並びは型の順（A→F）。入稿の優先順位という概念は型ラボには無い（型が排他）。
 const TYPE_LAB_ORDER: TypeLabRankKey[] =
-  ["T_firm", "T_mid", "T_upset",
+  ["T_firm", "T_mid", "T_axis", "T_upset",
    "A_hit", "A_trio", "A_ana", "A_sign", "A_big",
    "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
    "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
@@ -53,6 +53,7 @@ const TYPE_LAB_LABEL: Record<TypeLabRankKey, string> = {
   //    （日次上限・軸信頼ゲートは掛けない）。旧プランは過去分の絞り込み用に残す。
   T_firm: "固め（7車・軸信頼 上位50%／三連単・確率上位を3〜5点・払戻をそろえる）",
   T_mid: "広め（7車・軸信頼 25〜50%／三連単・3〜8点で押さえる・払戻をそろえる）",
+  T_axis: "一軸（7車・軸信頼 下位25%のうち1着率1位−2位が0.30以上／三連単・1着を1着率1位に固定し2・3着を確率順・払戻をそろえる）",
   T_upset: "荒れ（7車・軸信頼 下位25%／三連単・人気1位のラインを1-2着から外し払戻10万円前後・「穴狙い」付与）",
   A_hit: "型A 鉄板（三連単・1着=◎/2着=○ 固定で3着流し 3〜5点）",
   A_trio: "型A 鉄板・三連複（◎○の2車軸＋相手2点／順序を捨てて当たる回数を取る）",

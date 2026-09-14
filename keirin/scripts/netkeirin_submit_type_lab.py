@@ -185,6 +185,8 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     #    固め・広めは当てにいく商品なので既定。
     "T_firm": ACT_TYPE_DEFAULT,
     "T_mid": ACT_TYPE_DEFAULT,
+    # 🔴 一軸（2026-09-15）は1着を固定して当てにいく本線。穴狙いではない。
+    "T_axis": ACT_TYPE_DEFAULT,
     "T_upset": ACT_TYPE_LONGSHOT,
     # 🔴 看板枠は**6型すべてに穴狙いアイコンを付ける**。`A_ana` と同じ理屈で、
     #    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、
@@ -270,6 +272,19 @@ def _load_rows(day: str) -> list[dict]:
         legs = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         trio_ok[str(d["race_key"])] = _gate_reason(dict(d, legs=legs)) is None
 
+    # 🔴 **一軸（`T_axis`）も同じ形**（2026-09-15）。生成側は条件（荒れの段 ∧ 1着率1位−2位
+    #    >= 0.30）を満たすレースでしか `T_axis` を組まないので、**行があり入稿ゲートを通れば一軸**。
+    #    ゲートに落ちたら `sell_plans_for` が荒れ（`T_upset`）へ戻す。
+    one_axis_ok: dict[str, bool] = {}
+    for r in rows:
+        d = dict(r)
+        if d["plan_key"] != "T_axis":
+            continue
+        if str(d["type_label"]) != current[(str(d["race_key"]), str(d["mode"]))][1]:
+            continue        # 組み直し前の古い型の行（下の本ループと同じ絞り）
+        legs = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
+        one_axis_ok[str(d["race_key"])] = _gate_reason(dict(d, legs=legs)) is None
+
     out = []
     for r in rows:
         d = dict(r)
@@ -284,7 +299,8 @@ def _load_rows(day: str) -> list[dict]:
             str(d["type_label"]), int(d["n_entries"] or 7), d.get("race_type"),
             pw_ent=(float(d["pw_ent"]) if d.get("pw_ent") is not None else None),
             trio_ok=trio_ok.get(str(d["race_key"])),
-            axis_sum=(float(d["axis_sum"]) if d.get("axis_sum") is not None else None))}
+            axis_sum=(float(d["axis_sum"]) if d.get("axis_sum") is not None else None),
+            one_axis_ok=one_axis_ok.get(str(d["race_key"])))}
         if d["plan_key"] not in allowed:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])

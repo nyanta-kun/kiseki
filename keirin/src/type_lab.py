@@ -523,6 +523,10 @@ class RaceShape:
     #: 🔴 **隊列順ではなく3着内率順**。買うのは三連複なので順序は要らず、
     #:    「どの2車を軸にするか」だけが問題になる。
     line_pair: tuple[int, ...] = ()
+    #: **1着率1位の車番**と、**1着率1位 − 2位**（2026-09-15・一軸 `T_axis` だけが使う）。
+    #: 1着率を渡さなければ 0 / 0.0（＝一軸は組まれない）。
+    win_top: int = 0
+    win_gap: float = 0.0
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -569,6 +573,11 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
         s += 1
 
     pw_ent = win_entropy(win_probs) if win_probs else 0.0
+    win_top, win_gap = 0, 0.0
+    if win_probs and len(win_probs) >= 2:
+        wr = sorted(win_probs, key=lambda c: (-float(win_probs[c]), c))
+        win_top = int(wr[0])
+        win_gap = float(win_probs[wr[0]]) - float(win_probs[wr[1]])
 
     firm = axis_sum >= AXIS_SUM_FIRM
     if firm:
@@ -577,7 +586,7 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
         label = "D" if s <= -1 else ("E" if s == 0 else "F")
     lines = _lines_of(line_group, line_pos)
     return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent, lines,
-                     _strongest_pair(lines, top3_probs))
+                     _strongest_pair(lines, top3_probs), win_top, win_gap)
 
 
 def _strongest_pair(lines: Sequence[Sequence[int]],
@@ -934,11 +943,29 @@ PLANS["T_upset"] = Plan("T_upset", "T", "trifecta", "tier_upset", 0,
                         min_odds=TIER_UPSET_MIN_ODDS, max_odds=SIGNBOARD_MAX_ODDS,
                         alloc="dutch", target=TIER_UPSET_TARGET,
                         note="荒れ: 人気1位のラインを1-2着から外し15倍以上を計画10万円")
-#: 段の3プラン（表示順）。
-TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_upset")
-TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset"})
+# ── 一軸（2026-09-15 ユーザー決定・大垣6R の問いから）─────────────────────────────
+#
+# 🔴 **荒れの段でも、1着率1位が2位を 0.30 以上離していれば「一軸型」として売る。**
+#    検証（memory `keirin-firm-upset-policy-2026-09-14` 追補13〜16・台は段と同じ）:
+#      荒れ段 ∧ 1着率1位−2位 >= 0.30 は 1.26 / 1.11 R/日。軸（1着率1位）の1着は
+#      実測 52.3 / 53.8%・モデル約54% で**較正が合う**（0.20〜0.30 は実40%↔予45%で過大）。
+#      同じレースで 荒れ(T_upset) 表示的中 9.3 / 9.6% ↔ 一軸 27.2 / 30.8%
+#      （差 +124 / +51件・両窓CI 0跨がず）。代わりに 10万+ 0.04〜0.05件/日 を失う
+#      （回収率 82.6→71.9 / 113.7→79.5%・収支差のCIは0跨ぎ）。
+# 🔴 **2・3着は確率順**（固め/広めと同じ詰め方）。ボックス（3車/4車）・2着を2車に絞る・
+#    「軸の番手を2着に先に並べる」・相手を2着か3着に必須——はどれも確率順に並ぶか負ける
+#    （ボックス3車 −46 / −24件・両窓CI 0跨がず）。相手の抜けはモデルが既に織り込む。
+# 🔴 **0.30 未満へ広げない**（0.20〜0.30 は収支悪化が探索窓で有意 −280万）。
+#: 一軸にする「1着率1位 − 2位」の下限（荒れの段だけに掛ける）。
+TIER_ONE_AXIS_WIN_GAP_MIN = 0.30
+PLANS["T_axis"] = Plan("T_axis", "T", "trifecta", "tier_axis", 0, max_legs=8,
+                       alloc="dutch", target=TIER_TARGET_PAYOUT,
+                       note="一軸: 荒れの段で1着率が抜けた車を1着に固定し、2・3着を確率順に合成2.2倍まで・3〜8点")
+#: 段のプラン（表示順）。
+TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_axis", "T_upset")
+TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset"})
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
-TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid"})
+TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
 
 
 def tier_plan_key(axis_sum: float | None) -> str | None:
@@ -1212,11 +1239,13 @@ def plans_for(type_label: str, n_entries: int = 7,
        **比較台が消えるので良くない**（売らなかった側の成績が事後に測れない）。
        売る／売らないは `sell_plans_for` の責務へ寄せた。
 
-    🔴 **7車は段の3プラン（`T_firm`/`T_mid`/`T_upset`）を型に関係なく足す**（2026-09-14）。
-       段は軸信頼で決まり型をまたぐので、どの型のレースでも3つとも組んで残す。
+    🔴 **7車は段のプラン（`T_firm`/`T_mid`/`T_axis`/`T_upset`）を型に関係なく足す**（2026-09-14）。
+       段は軸信頼で決まり型をまたぐので、どの型のレースでも全部組んで残す。
+       ⚠️ `T_axis` だけは条件（荒れの段 ∧ 1着率1位−2位 >= 0.30）を満たすレースでしか
+       `build_legs` が組まない＝行があること自体が「一軸で売れる」印になる。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_upset']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_axis', 'T_upset']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
     ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
@@ -1234,7 +1263,8 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
                    race_type: str | None = None, *,
                    pw_ent: float | None = None,
                    trio_ok: bool | None = None,
-                   axis_sum: float | None = None) -> list[Plan]:
+                   axis_sum: float | None = None,
+                   one_axis_ok: bool | None = None) -> list[Plan]:
     """その型で **netkeirin へ入稿する**買い方（`SELL_PLANS` で絞ったもの）。
 
     🔴 **必ず 0 個か 1 個**。型は排他なので、これが1レース1商品を構造的に保証する。
@@ -1297,11 +1327,20 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     #    ['T_upset']
     #    >>> [p.key for p in sell_plans_for("F", 9, "準決勝", axis_sum=1.30)]
     #    ['F_line']
+    #    >>> [p.key for p in sell_plans_for("F", 7, axis_sum=1.30, one_axis_ok=True)]
+    #    ['T_axis']
+    #    >>> [p.key for p in sell_plans_for("F", 7, axis_sum=1.40, one_axis_ok=True)]
+    #    ['T_mid']
+    # 🔴 **一軸は荒れの段だけ**（2026-09-15）。`one_axis_ok` は「そのレースの `T_axis` 行が
+    #    組めて入稿ゲートを通る」（`A_trio` の `trio_ok` と同じ形・呼び出し側が行から作る）。
+    #    ゲートに落ちたら荒れ（`T_upset`）へ戻す。
     if int(n_entries or 0) == TIER_N_ENTRIES and axis_sum is not None:
         if (type_label == "A" and pw_ent is not None
                 and float(pw_ent) >= ANA_PW_ENT_MIN):
             return [p for p in plans if p.key == "A_ana"]
         key = tier_plan_key(axis_sum)
+        if key == "T_upset" and one_axis_ok:
+            key = "T_axis"
         return [p for p in plans if p.key == key]
     # 🔴 看板枠は**他のどの分岐よりも先**に見る。型A の3分割も 9車の型F の種別分岐も
     #    「その型で何を売るか」の話なので、看板枠に指定された型ではそれらを上書きする。
@@ -1452,11 +1491,18 @@ def build_legs(shape: RaceShape, plan: Plan,
             s += 1.0 / o
         if not out:
             return None
-    elif plan.structure == "tier_firm":
+    elif plan.structure in ("tier_firm", "tier_axis"):
         # 🔴 **確率順に、合成オッズ（予算 ÷ 計画払戻）を割る直前で止める点数**を
         #    `TIER_MIN_LEGS`〜`max_legs` に丸める。途中を飛ばさない（`break`）。
         #    点数を決めてから 2倍未満の目を除いた先頭 k 点を採る（検証 `july_policy.py` と同一）。
-        cand = [k for k, v in pred_odds.items() if _pos(v) and len(set(k)) == 3]
+        # 🔴 **一軸（`tier_axis`）は荒れの段 ∧ 1着率1位−2位 >= 下限 のときだけ組み、
+        #    1着が1着率1位の目だけを候補にする**（詰め方は固め・広めと同一・検証 `one_axis_23.py` の P）。
+        if plan.structure == "tier_axis" and not (
+                shape.win_top and float(shape.axis_sum) <= TIER_AXIS_MID_MIN
+                and float(shape.win_gap) >= TIER_ONE_AXIS_WIN_GAP_MIN):
+            return None
+        cand = [k for k, v in pred_odds.items() if _pos(v) and len(set(k)) == 3
+                and (plan.structure != "tier_axis" or k[0] == shape.win_top)]
         cand.sort(key=lambda k: -float(probs.get(k, 0.0)))
         cap = float(BUDGET) / float(plan.target or TIER_TARGET_PAYOUT)
         s = 0.0
@@ -2509,7 +2555,8 @@ def rule_version(n_entries: int = 7) -> str:
         # 🔴 段の境目・最低点数・全点ゲートは `PLANS` の属性に無いので載せる（2026-09-14）。
         payload["_tier"] = [TIER_AXIS_FIRM_MIN, TIER_AXIS_MID_MIN, TIER_TARGET_PAYOUT,
                             TIER_MIN_LEGS, TIER_POINT_PAYOUT_MIN, TIER_UPSET_TARGET,
-                            TIER_UPSET_MIN_ODDS, sorted(TIER_POINT_GATE_PLANS)]
+                            TIER_UPSET_MIN_ODDS, sorted(TIER_POINT_GATE_PLANS),
+                            TIER_ONE_AXIS_WIN_GAP_MIN]
     if n_entries == 9:
         # 🔴 ルーティング（決勝以外を `F_line` へ）と Σ の上限は `PLANS` の
         #    属性だけでは表せないので、ここへ入れないと新旧の行が同じ

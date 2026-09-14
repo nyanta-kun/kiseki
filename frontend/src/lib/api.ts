@@ -1491,8 +1491,8 @@ export type TypeLabRankKey =
   //    `F_hit` を置換）。🔴 `{型}_big` は高額枠の「特大狙い」（同・PR#477）で、
   //    売るのは keirin 側 `HIGHPAY_TYPES`（既定 B/C/D）だけだが `_sign` と
   //    同じ理由で6型ぶん定義する。
-  // 段分け商品（2026-09-15〜・7車の主力）: 固め / 広め / 荒れ
-  "T_firm" | "T_mid" | "T_upset" |
+  // 段分け商品（2026-09-15〜・7車の主力）: 固め / 広め / 一軸 / 荒れ
+  "T_firm" | "T_mid" | "T_axis" | "T_upset" |
   "A_hit" | "A_trio" | "A_ana" |
   "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit" | "F_line" |
   "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign" |

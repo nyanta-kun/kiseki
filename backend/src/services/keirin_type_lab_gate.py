@@ -164,6 +164,7 @@ AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
     #    （`scratchpad/policy_limits.py`・memory keirin-firm-upset-policy-2026-09-14）。
     "T_firm",    # 硬い（axis_sum 上位50%）: 合成2.2倍・3〜5点
     "T_mid",     # やや波乱（25〜50%）: 合成2.2倍・3〜8点
+    "T_axis",    # 波乱段のうち1着率1位−2位 >= 0.30: 1着=1着率1位に固定・2-3着を確率順
     "T_upset",   # 波乱（下位25%）: 人気1位ラインを1-2着から外す・計画10万
 })
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
@@ -343,13 +344,16 @@ DAILY_CAP_EXEMPT_MIN_GRADE = 3
 #: `A_ana`（7車・型A の穴狙い）も段より先に売る7車の商品なので同じく数えない。
 #: 🔴 レース側の `daily_cap_exempt` とは別。こちらは**プランで**枠外にする。
 #: 🔴 入稿側 `netkeirin_submit_type_lab.CAP_FREE_PLANS` と同じ集合（テストで固定）。
-DAILY_CAP_EXEMPT_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_upset", "A_ana"})
+DAILY_CAP_EXEMPT_PLANS: frozenset[str] = frozenset(
+    {"T_firm", "T_mid", "T_axis", "T_upset", "A_ana"})
 
 
 def daily_cap_exempt_plan(plan_key: str | None) -> bool:
     """日次上限に**数えない**プランか（段分け商品は全レース売るので数えない）。
 
     >>> daily_cap_exempt_plan("T_firm")
+    True
+    >>> daily_cap_exempt_plan("T_axis")
     True
     >>> daily_cap_exempt_plan("A_ana")
     True
