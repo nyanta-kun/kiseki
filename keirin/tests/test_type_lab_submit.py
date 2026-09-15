@@ -1610,6 +1610,7 @@ def test_confident_line_is_notified_only_in_the_morning():
 
 def test_7車は段で売りA_anaだけ段より先(monkeypatch):
     """7車は軸信頼で段を選ぶ。型A ∧ 1着が読めない（pw_ent 上位10%）だけは `A_ana`。"""
+    monkeypatch.setattr("src.type_lab.TIER_SELL_ENABLED", True)   # 段の販売 ON 前提（既定は OFF・2026-09-16〜）
     import datetime as _dt
 
     import scripts.netkeirin_submit_type_lab as m
@@ -1659,8 +1660,9 @@ def test_段とA_anaは日次上限に数えない():
     assert m.CAP_FREE_PLANS == m._GATE.DAILY_CAP_EXEMPT_PLANS
 
 
-def test_段の日は自信ありを固めの決勝系から選ぶ():
+def test_段の日は自信ありを固めの決勝系から選ぶ(monkeypatch):
     """🔴 入稿側の自信ありも段の規則（`tier_confident_score`）で選ぶ。旧EVと混ぜない。"""
+    monkeypatch.setattr("src.type_lab.TIER_SELL_ENABLED", True)   # 段の販売 ON 前提（既定は OFF・2026-09-16〜）
     import scripts.netkeirin_submit_type_lab as m
 
     legs = [{"combo": "1-2-3", "prob": 0.2, "stake": 5000, "pred_odds": 4.5},
@@ -1686,6 +1688,7 @@ def test_荒れの段で一軸の行が入稿ゲートを通れば一軸を売�
     🔴 2026-09-15: ゲートは「当たったときの払戻の悪い側」。R2 は予測のままなら 18,000円で
        旧ゲートを通るが、悪い側 14,842円で落ちて荒れへ戻る。
     """
+    monkeypatch.setattr("src.type_lab.TIER_SELL_ENABLED", True)   # 段の販売 ON 前提（既定は OFF・2026-09-16〜）
     import datetime as _dt
 
     import scripts.netkeirin_submit_type_lab as m

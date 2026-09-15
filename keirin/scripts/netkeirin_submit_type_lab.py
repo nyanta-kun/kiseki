@@ -101,7 +101,21 @@ from src.type_lab import (                                  # noqa: E402
 
 #: **日次上限に数えず落とさないプラン**（2026-09-14）。7車は段（全レース）と、段より先に見る `A_ana`。
 #: 検証: 上限50%（軸信頼の高い順）は荒れを 11.7→3.8件/日へ捨て 10万+ を 0.43→0.13件/日へ減らす。
+#: 🔴 **販売スイッチ `type_lab.TIER_SELL_ENABLED` が True のときだけ効く**（2026-09-16〜 False）。
+#:    判定は必ず `cap_free_plans()` を通す（定数を直接見ると、スイッチを切っても `A_ana` が
+#:    上限外のまま残る＝e018af8 の規則に戻らない）。
 CAP_FREE_PLANS: frozenset[str] = TIER_PLAN_KEYS | {"A_ana"}
+from src import type_lab as _type_lab                        # noqa: E402
+
+
+def tier_sell_enabled() -> bool:
+    """段の販売スイッチ（`src.type_lab.TIER_SELL_ENABLED`）。呼ぶたびに読む（テストで差し替えるため）。"""
+    return bool(_type_lab.TIER_SELL_ENABLED)
+
+
+def cap_free_plans() -> frozenset[str]:
+    """日次上限に数えないプラン。段の販売を止めている間は空（e018af8 と同じく全プランを数える）。"""
+    return CAP_FREE_PLANS if tier_sell_enabled() else frozenset()
 from src.type_lab_submission import build_submission         # noqa: E402
 
 # 🔴 **共通部品は既存スクリプトから import する**（写さない）。
@@ -277,7 +291,7 @@ def _load_rows(day: str) -> list[dict]:
     #    >= 0.30）を満たすレースでしか `T_axis` を組まないので、**行があり入稿ゲートを通れば一軸**。
     #    ゲートに落ちたら `sell_plans_for` が荒れ（`T_upset`）へ戻す。
     one_axis_ok: dict[str, bool] = {}
-    for r in rows:
+    for r in rows if tier_sell_enabled() else ():   # 販売停止中は判定しない（2026-09-16〜）
         d = dict(r)
         if d["plan_key"] != "T_axis":
             continue
@@ -477,7 +491,8 @@ def _choose_confident(rows: list[dict]):
     """
     # 🔴 段の商品が1件でもあれば段の規則で選ぶ（2026-09-14・`pick_confident_race_wt.pick` と同じ分岐）。
     #    尺度（Σp ↔ EV）が違うので混ぜない。
-    tier_day = any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows)
+    #    🔴 段の販売を止めている間（`TIER_SELL_ENABLED=False`）は必ず旧規則（2026-09-16〜）。
+    tier_day = tier_sell_enabled() and any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows)
     metric = "スコア(決勝系は1+Σp)" if tier_day else "EV"
     if tier_day:
         scored = [(str(r["race_key"]), str(r["plan_key"]),
@@ -497,7 +512,7 @@ def _choose_confident(rows: list[dict]):
         lab = {(str(r["race_key"]), str(r["plan_key"])):
                f"{r['venue_name']}{r['race_no']}R({r['plan_key']})" for r in rows}
         print(f"[type_lab_submit] 自信あり → {lab.get(best, best[0])} "
-              f"{metric}={ev.get(best, 0):.3f}（対象 {len(rows)}件 / 算出 {len(ev)}件）",
+              f"{metric}={ev.get(best, 0):.3f}（対象 {len(rows)}件 / {metric}算出 {len(ev)}件）",
               flush=True)
     return best, ev
 
@@ -896,14 +911,14 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             return 1.0
         if _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")):
             return 1.0
-        if str(r.get("plan_key")) in CAP_FREE_PLANS:
+        if str(r.get("plan_key")) in cap_free_plans():
             return 1.0
         return _GATE.cap_priority(str(r["plan_key"]), r.get("axis_sum"),
                                   rp_sd.get(str(r["race_key"])))
 
     def _exempt(r: dict) -> bool:
         return (int(r.get("n_entries") or 7) != _GATE.AXIS_GATE_N_ENTRIES
-                or str(r.get("plan_key")) in CAP_FREE_PLANS
+                or str(r.get("plan_key")) in cap_free_plans()
                 or _GATE.daily_cap_exempt(r.get("race_type"), r.get("cup_grade")))
 
     # ── 入稿しない理由を先に決める（副作用なし）────────────────────────────
