@@ -967,6 +967,167 @@ TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upse
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
 TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
 
+# ── 段の入稿ゲートを「当たったときの払戻の悪い側」で判定する（2026-09-15 ユーザー決定）──
+#
+# 🔴 **当たった目の確定オッズは予測オッズより系統的に低い。** 予測帯が低いほど下振れが大きく、
+#    同じ帯でも当たり目は外れ目より1〜2割安い。そのため「全点の 賭け金×予測オッズ >= 1.5万円」を
+#    満たしても、当たると 1.5万円を割る（2026-09-15 の実売で 1.1〜1.5万円の当たりが続出）。
+#    → 各点の **賭け金 × 予測オッズ × 下振れ係数** の最小が `TIER_POINT_PAYOUT_MIN` 未満なら見送る。
+#
+# 係数は **当たり目の 確定÷予測 の下側25%点（p25）**。台は paper 2025（vintage 予測オッズ＝OOS）の
+# 三連単・当たったレース（レース単位で1件。7,567R のうち台 `/tmp/race_type_board.npz` にある 5,874R）。
+# 引き直しは `scripts/exp_type_lab/tier_realized_factor.py`（出力をそのまま貼る。手で丸めない）。
+#
+# セル: 予測帯 [0,5) [5,10) [10,20) [20,40) [40,∞) × 種別（「チャレンジ」で始まる／他）×
+#       段（axis_sum > 1.464 固め／> 1.353 広め／他 荒れ）。
+# 参照順: (帯,種別,段) → (帯,*,段) → (帯,種別,*) → (帯,*,*)。**n >= 30 のセルだけ**を載せる。
+#
+# 実測（台で段を本番関数で組み直し・確認窓 2026-01-01〜08-04・216日）:
+#
+#      見送り 11.96件/日（固め 9.44・広め 2.22・手広く 0.31＝手広くは荒れへ戻る）
+#      残す段の表示的中          31.78 → 27.51%
+#      1.5万円未満の当たり        2.42 → 0.68件/日
+#      全体の表示的中            25.58 → 20.76%   回収率 86.1 → 88.2%
+#
+# 🔴 **表示的中は下がる**（安く当たる側を捨てる規則なので設計上そうなる）。
+#    採ったのは「当たったのに 1.5万円に届かない」を減らすため（ユーザー決定・変えない）。
+# ⚠️ 対象は **T_firm / T_mid / T_axis だけ**（`TIER_POINT_GATE_PLANS`）。他プラン・9車は変えない。
+#: 予測帯の境目（`o >= 境目` を満たす個数が帯番号）。
+TIER_REALIZED_BANDS: tuple[float, ...] = (5.0, 10.0, 20.0, 40.0)
+#: 係数に使う分位（当たり目の 確定÷予測 の下側25%点）。
+TIER_REALIZED_QUANTILE = 0.25
+#: セルを使う最小件数（これ未満のセルは表に載せず、次の参照先へ落とす）。
+TIER_REALIZED_MIN_N = 30
+#: (帯, 種別 'challenge'|'other'|'*', 段 'firm'|'mid'|'upset'|'*') → (件数, p25)。
+TIER_REALIZED_FACTOR: dict[tuple[int, str, str], tuple[int, float]] = {
+    (0, '*', '*'): (882, 0.744186046511628),
+    (0, '*', 'firm'): (803, 0.7323943661971831),
+    (0, '*', 'mid'): (59, 0.9510086455331411),
+    (0, 'challenge', '*'): (440, 0.7119741100323626),
+    (0, 'challenge', 'firm'): (425, 0.708215297450425),
+    (0, 'other', '*'): (442, 0.8),
+    (0, 'other', 'firm'): (378, 0.7692307692307693),
+    (0, 'other', 'mid'): (49, 0.9510086455331411),
+    (1, '*', '*'): (1001, 0.696798493408663),
+    (1, '*', 'firm'): (709, 0.6688963210702341),
+    (1, '*', 'mid'): (185, 0.7835325365205843),
+    (1, '*', 'upset'): (107, 0.8245614035087719),
+    (1, 'challenge', '*'): (326, 0.6680805938494168),
+    (1, 'challenge', 'firm'): (285, 0.667384284176534),
+    (1, 'other', '*'): (675, 0.7096774193548386),
+    (1, 'other', 'firm'): (424, 0.6692160611854684),
+    (1, 'other', 'mid'): (158, 0.7765451664025358),
+    (1, 'other', 'upset'): (93, 0.8702064896755163),
+    (2, '*', '*'): (1377, 0.6983930778739185),
+    (2, '*', 'firm'): (764, 0.670840787119857),
+    (2, '*', 'mid'): (361, 0.7295504789977892),
+    (2, '*', 'upset'): (252, 0.71),
+    (2, 'challenge', '*'): (344, 0.6456140350877192),
+    (2, 'challenge', 'firm'): (275, 0.6321334503950834),
+    (2, 'challenge', 'mid'): (46, 0.6556291390728477),
+    (2, 'other', '*'): (1033, 0.7133058984910837),
+    (2, 'other', 'firm'): (489, 0.6858407079646018),
+    (2, 'other', 'mid'): (315, 0.738665308201732),
+    (2, 'other', 'upset'): (229, 0.7328833172613308),
+    (3, '*', '*'): (1492, 0.7169709989258861),
+    (3, '*', 'firm'): (683, 0.7264231096006798),
+    (3, '*', 'mid'): (433, 0.733890214797136),
+    (3, '*', 'upset'): (376, 0.6811145510835913),
+    (3, 'challenge', '*'): (230, 0.6633221850613155),
+    (3, 'challenge', 'firm'): (140, 0.6488434965455092),
+    (3, 'challenge', 'mid'): (44, 0.8099022004889976),
+    (3, 'challenge', 'upset'): (46, 0.6274768824306473),
+    (3, 'other', '*'): (1262, 0.7239985299522234),
+    (3, 'other', 'firm'): (543, 0.7447485677912157),
+    (3, 'other', 'mid'): (389, 0.7255813953488371),
+    (3, 'other', 'upset'): (330, 0.6976744186046511),
+    (4, '*', '*'): (1122, 0.6466632177961718),
+    (4, '*', 'firm'): (451, 0.6466632177961718),
+    (4, '*', 'mid'): (346, 0.6482861400894189),
+    (4, '*', 'upset'): (325, 0.6370402802101577),
+    (4, 'challenge', '*'): (221, 0.5832122093023256),
+    (4, 'challenge', 'firm'): (121, 0.5485812553740327),
+    (4, 'challenge', 'mid'): (50, 0.5863915371555439),
+    (4, 'challenge', 'upset'): (50, 0.6168499829912688),
+    (4, 'other', '*'): (901, 0.6681625529793069),
+    (4, 'other', 'firm'): (330, 0.6783369803063457),
+    (4, 'other', 'mid'): (296, 0.6579873328641801),
+    (4, 'other', 'upset'): (275, 0.6422777685813607),
+}
+
+
+def tier_realized_factor(pred_odds: float | None, race_type: str | None,
+                         axis_sum: float | None) -> float | None:
+    """予測オッズ・種別・軸信頼から下振れ係数（当たり目の 確定÷予測 の p25）。
+
+    参照順は (帯,種別,段) → (帯,*,段) → (帯,種別,*) → (帯,*,*)。表には n >= 30 のセルしか無い。
+
+    - `race_type` が None なら「他」（「チャレンジ」で始まらない）として引く。
+    - `axis_sum` が None なら段の決まったセルを飛ばし、(帯,種別,*) → (帯,*,*) で引く
+      （段の行は axis_sum から組むので実際には来ない）。
+    - 予測オッズが無い・0以下なら None（判定できない）。
+
+    >>> tier_realized_factor(3.2, "予選", 1.50) == TIER_REALIZED_FACTOR[(0, "other", "firm")][1]
+    True
+    >>> tier_realized_factor(3.2, "チャレンジ", 1.30) == TIER_REALIZED_FACTOR[(0, "challenge", "*")][1]
+    True
+    >>> tier_realized_factor(0, "予選", 1.50) is None
+    True
+    """
+    try:
+        o = float(pred_odds) if pred_odds is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    if not o > 0:
+        return None
+    b = sum(1 for edge in TIER_REALIZED_BANDS if o >= edge)
+    ch = "challenge" if str(race_type or "").startswith("チャレンジ") else "other"
+    keys: list[tuple[int, str, str]] = []
+    if axis_sum is not None:
+        a = float(axis_sum)
+        t = ("firm" if a > TIER_AXIS_FIRM_MIN
+             else ("mid" if a > TIER_AXIS_MID_MIN else "upset"))
+        keys += [(b, ch, t), (b, "*", t)]
+    keys += [(b, ch, "*"), (b, "*", "*")]
+    for k in keys:
+        got = TIER_REALIZED_FACTOR.get(k)
+        if got is not None and got[0] >= TIER_REALIZED_MIN_N:
+            return got[1]
+    return None
+
+
+def tier_realized_min_payout(legs: Sequence[Mapping], race_type: str | None,
+                             axis_sum: float | None) -> float | None:
+    """段の入稿ゲートの入力: 各点の **賭け金 × 予測オッズ × 下振れ係数** の最小（円）。
+
+    `legs` は `type_lab_picks.legs` の形（`combo` / `stake` / `pred_odds`）。
+
+    🔴 **判定できないものは通す**（入稿ゲートの既存の思想と同じ）:
+       賭け金が 0 以下・予測オッズが無い（0以下）・係数が引けない点は**その点を飛ばす**。
+       評価できる点が1つも無ければ None を返し、呼び出し側は見送らない。
+
+    >>> legs = [{"combo": "1-2-3", "stake": 5000, "pred_odds": 4.0}]
+    >>> round(tier_realized_min_payout(legs, "予選", 1.50))
+    15385
+    >>> tier_realized_min_payout([{"combo": "1-2-3", "stake": 5000}], "予選", 1.50) is None
+    True
+    """
+    worst: float | None = None
+    for lg in legs or ():
+        try:
+            stake = float(lg.get("stake") or 0)
+            odds = float(lg.get("pred_odds") or 0)
+        except (TypeError, ValueError):
+            continue
+        if stake <= 0 or odds <= 0:
+            continue
+        f = tier_realized_factor(odds, race_type, axis_sum)
+        if f is None:
+            continue
+        v = stake * odds * f
+        worst = v if worst is None else min(worst, v)
+    return worst
+
 
 def tier_plan_key(axis_sum: float | None) -> str | None:
     """軸信頼から段のプランキー。判定できなければ None。
@@ -2557,6 +2718,11 @@ def rule_version(n_entries: int = 7) -> str:
                             TIER_MIN_LEGS, TIER_POINT_PAYOUT_MIN, TIER_UPSET_TARGET,
                             TIER_UPSET_MIN_ODDS, sorted(TIER_POINT_GATE_PLANS),
                             TIER_ONE_AXIS_WIN_GAP_MIN]
+        # 🔴 入稿ゲートの下振れ係数も `PLANS` の外なので載せる（2026-09-15）。表を引き直すと版が割れる。
+        payload["_tier_realized"] = [list(TIER_REALIZED_BANDS), TIER_REALIZED_QUANTILE,
+                                     TIER_REALIZED_MIN_N,
+                                     sorted([list(k), list(v)]
+                                            for k, v in TIER_REALIZED_FACTOR.items())]
     if n_entries == 9:
         # 🔴 ルーティング（決勝以外を `F_line` へ）と Σ の上限は `PLANS` の
         #    属性だけでは表せないので、ここへ入れないと新旧の行が同じ

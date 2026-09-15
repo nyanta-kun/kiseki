@@ -1632,14 +1632,19 @@ def test_7車は段で売りA_anaだけ段より先(monkeypatch):
 
 
 def test_固め広めは全点の想定払戻でゲートを判定する():
-    """🔴 固め・広めは「全点 >= 1.5万円」。平均2万ゲートを当てると最低3点のレースが落ちる。"""
+    """🔴 固め・広めは「全点 >= 1.5万円」。平均2万ゲートを当てると最低3点のレースが落ちる。
+
+    🔴 2026-09-15 から全点の判定は「賭け金×予測×下振れ係数」（悪い側の見込み）。
+       詳細は `tests/test_type_lab_tier_realized_gate.py`。
+    """
     import scripts.netkeirin_submit_type_lab as m
-    leg = [{"combo": "1-2-3", "stake": 5000, "pred_odds": 3.2}]
-    ok = dict(plan_key="T_firm", pred_mean_payout=17_000, pred_min_payout=15_500, legs=leg)
+    leg = [{"combo": "1-2-3", "stake": 5000, "pred_odds": 4.0}]   # 悪い側 15,385円
+    ok = dict(plan_key="T_firm", race_type="予選", axis_sum=1.50,
+              pred_mean_payout=17_000, pred_min_payout=20_000, legs=leg)
     assert m._gate_reason(ok) is None                       # 平均2万未満でも通す
-    low = dict(ok, pred_min_payout=14_000)
-    assert m._gate_reason(low) is not None
-    two = dict(ok, legs=[{"combo": "1-2-3", "stake": 5000, "pred_odds": 1.9}])
+    low = dict(ok, legs=[{"combo": "1-2-3", "stake": 5000, "pred_odds": 3.5}])
+    assert m._gate_reason(low) is not None                  # 予測 17,500 でも悪い側 13,462 で落とす
+    two = dict(ok, legs=[{"combo": "1-2-3", "stake": 12_000, "pred_odds": 1.9}])
     assert m._gate_reason(two) is not None                  # 2倍未満の目は落とす
     up = dict(plan_key="T_upset", pred_mean_payout=19_000, pred_min_payout=90_000, legs=leg)
     assert m._gate_reason(up) is not None                   # 荒れは平均2万ゲートのまま
@@ -1676,7 +1681,11 @@ def test_段の日は自信ありを固めの決勝系から選ぶ():
 
 
 def test_荒れの段で一軸の行が入稿ゲートを通れば一軸を売る(monkeypatch):
-    """🔴 一軸は荒れの段だけ。`T_axis` 行が入稿ゲートを通れば一軸、落ちれば荒れへ戻す。"""
+    """🔴 一軸は荒れの段だけ。`T_axis` 行が入稿ゲートを通れば一軸、落ちれば荒れへ戻す。
+
+    🔴 2026-09-15: ゲートは「当たったときの払戻の悪い側」。R2 は予測のままなら 18,000円で
+       旧ゲートを通るが、悪い側 14,842円で落ちて荒れへ戻る。
+    """
     import datetime as _dt
 
     import scripts.netkeirin_submit_type_lab as m
@@ -1688,10 +1697,13 @@ def test_荒れの段で一軸の行が入稿ゲートを通れば一軸を売�
                 pred_mean_payout=30000, pred_min_payout=20000, rule_version="x",
                 cup_grade=None, generated_at=g, pw_ent=1.0)
     rows = []
-    for rk, ax, axis_min in (("R1", 1.30, 20000), ("R2", 1.30, 14000), ("R3", 1.40, 20000)):
+    # 帯1（5〜10倍）・チャレンジ×荒れは n<30 なので (帯1,*,荒れ) 0.8246 を引く
+    pass_legs = '[{"combo": "2-7-1", "stake": 5000, "pred_odds": 6.0}]'   # 悪い側 24,737円
+    fail_legs = '[{"combo": "2-7-1", "stake": 3000, "pred_odds": 6.0}]'   # 予測 18,000 ↔ 悪い側 14,842円
+    for rk, ax, axis_legs in (("R1", 1.30, pass_legs), ("R2", 1.30, fail_legs), ("R3", 1.40, pass_legs)):
         for pk in ("T_firm", "T_mid", "T_axis", "T_upset"):
             rows.append(dict(base, race_key=rk, type_label="F", axis_sum=ax, plan_key=pk,
-                             pred_min_payout=(axis_min if pk == "T_axis" else 20000)))
+                             legs=(axis_legs if pk == "T_axis" else "[]")))
     rows.append(dict(base, race_key="R4", type_label="F", axis_sum=1.30, plan_key="T_upset"))
     monkeypatch.setattr(m, "get_connection", lambda: _FakeConn(rows))
     got = {(r["race_key"], r["plan_key"]) for r in m._load_rows("2026-09-15")}
