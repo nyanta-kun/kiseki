@@ -48,7 +48,9 @@
         --no-discord     Discord へ送らない
         --boot N         参照分布のブートストラップ回数（既定 2000）
 
-台帳: `data/analysis/type_lab_nightly_ledger.csv`（追記のみ・1日1プラン1行）
+台帳: `data/analysis/type_lab_nightly_ledger_<起点YYYYMMDD>.csv`（1日×1軸×1値で1行）
+      **起点（`REVIEW_EPOCH`）ごとに別ファイル**。起点を動かすと新しい台帳から積み直し、
+      旧台帳は消さずにそのまま残る（2026-09-15 のリセットで導入）。
 
 ⚠️ **過去日へ遡って実行しないこと。** §4 のゲート判定は `axis_sum`＝その日の
    本番モデルの出力に依存する。モデルを再学習した後に遡ると、別のモデルの目で
@@ -80,10 +82,9 @@ from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
 )
 from src.type_lab import (                                    # noqa: E402
-    SELLABLE_PLAN_KEYS, sell_plans_for, split_legs_by_role)
+    SELLABLE_PLAN_KEYS, TIER_PLAN_KEYS, sell_plans_for, split_legs_by_role)
+from src.confident_pick import TIER_CONFIDENT_PLANS           # noqa: E402
 from src.submission_skips import MISSING_LINEUP               # noqa: E402
-
-LEDGER = REPO / "data" / "analysis" / "type_lab_nightly_ledger.csv"
 
 JST = timezone(timedelta(hours=9))
 
@@ -101,7 +102,34 @@ BASELINE_WINDOW = ("2025-01-01", "2026-08-26")
 #:
 #: ⚠️ ここより前のデータを消すわけではない。§2 の参照分布（ペーパー行の20か月）は
 #:    比較の相手として引き続き使う。分けるのは**前向きに数え上げる累積**だけ。
-REVIEW_EPOCH = "2026-08-29"
+#:
+#: 🔴 **2026-09-15 に起点を 2026-08-29 → 2026-09-15 へ移した**（ユーザー要望）。
+#:    この日、7車の売り物を型ラボの型別プラン（A_hit/B_hit/…/F_hit）から
+#:    **段の商品 T_firm/T_mid/T_axis/T_upset**（軸信頼で固め／広め／荒れに分ける）へ
+#:    差し替えた。段の商品は**軸信頼ゲートと日次上限の対象外**なので、1日の件数も
+#:    （09-14 まで 43〜67件 ↔ 09-15 は 79件）、どのレースを売るかも、買い方も違う。
+#:    **商品が違えば母集団も買い方も違う**——08-29 のときと同じ理由で、ここより前の
+#:    累積を混ぜると「別の商品の成績」を段の商品の実績として読むことになる。
+#:    9車は従来のプランのままだが、7車と同じ台帳の合計に入るので一緒に数え直す。
+REVIEW_EPOCH = "2026-09-15"
+
+#: 起点の意味（レポートの見出しに出す）。起点を動かしたら一緒に書き換える。
+REVIEW_EPOCH_LABEL = "7車を段の商品へ差し替えた日"
+
+
+def ledger_path(epoch: str = REVIEW_EPOCH) -> Path:
+    """起点ごとの台帳のパス。
+
+    🔴 **起点を動かしたら台帳も分ける。** 同じファイルに積み足すと §6 が旧起点からの
+       累積を合算し、「100件たまった」と言っている件数の大半が別商品になる。
+       旧台帳は消さず・書き換えず・読まないまま残す（非破壊のリセット）。
+       2026-08-29〜09-14 の台帳は `type_lab_nightly_ledger.csv`（接尾辞なし）。
+    """
+    return REPO / "data" / "analysis" / (
+        f"type_lab_nightly_ledger_{epoch.replace('-', '')}.csv")
+
+
+LEDGER = ledger_path()
 
 #: 台帳がこの件数たまったプランだけを「検証候補」として名前を挙げる。
 #: 🔴 **日次では絶対に昇格させない。** 40件/日では ROI の 90% 区間が
@@ -110,6 +138,11 @@ ESCALATE_MIN_N = 100
 
 #: 異常検知で「入稿が少なすぎる」と言う閾値（直近7日の中央値に対する比）。
 LOW_SUBMIT_RATIO = 0.5
+
+#: 「入稿が少なすぎる」を判定するのに要る基準日（起点以降・開催あり）の最少日数。
+#: 🔴 **起点より前の日を基準に含めない**（段の商品は日次上限の外なので件数の水準が違う）。
+#:    起点直後で足りない日は NG にも OK にもせず「判定しない」と明示する。
+LOW_SUBMIT_MIN_BASE_DAYS = 3
 
 
 def _bind(rel: str, name: str) -> ModuleType:
@@ -389,13 +422,24 @@ def section_landing(sold, live: list[dict], base: dict[str, dict],
         base_rate = (sum(v for k, v in b.get("bands", {}).items()
                          if _near(order, k, tgt)) / b["n"]) if b.get("n") else None
         ref = f"（参照 {base_rate:.0%}）" if base_rate is not None else ""
+        ref_med = (f"{b['median']:>8,.1f}倍" if b.get("median") is not None
+                   else f"{'—':>9}")
+        landed = f"{g['n_in']:>4}/{g['n']}" if tgt else f"{'—':>6}"
         out.append(f"  {plan:<7}{titles.get(plan, '—')[:13]:<14}"
                    f"{labels.get(tgt, '—'):<10}{dist:<22}"
-                   f"{med:>8,.1f}倍{(b.get('median') or 0):>8,.1f}倍"
-                   f"{g['n_in']:>4}/{g['n']}{ref}")
+                   f"{med:>8,.1f}倍{ref_med}{landed}{ref}")
+        if not tgt:
+            # 🔴 狙い帯が決まらないプランを分母に入れない（入れると「狙い帯で決着 0%」に化ける）。
+            continue
         tot_in += g["n_in"]
         tot_n += g["n"]
         tot_hit_in += g["hit_in"]
+    no_ref = sorted(p for p in rows if not (base.get(p) or {}).get("target"))
+    if no_ref:
+        # 🔴 参照の無いプラン（段の商品など）は狙い帯が決まらないので分子に入らない。
+        #    「狙い帯で決着 0件」を狙い違いと読まないよう名前を出す。
+        out.append(f"  ※ 参照（ペーパー行）が無く狙い帯を決められないプラン: "
+                   f"{', '.join(no_ref)}（下の「狙い帯で決着」の分子には入らない）")
     if tot_n:
         out.append("")
         out.append(f"  狙い帯（±1帯）で決着 {tot_in}/{tot_n} = {tot_in / tot_n:.1%}")
@@ -554,12 +598,20 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
 
     alive = [s for s in subs if s["deleted_at"] is None]
     sess = Counter(str(s["session"] or "—") for s in alive)
-    med = _recent_median_submits(day)
+    med, n_base = _recent_median_submits(day)
     detail = " / ".join(f"{k} {v}" for k, v in sorted(sess.items()))
-    if med and len(alive) < med * LOW_SUBMIT_RATIO:
-        ng(f"入稿 {len(alive)}件（{detail}）— 直近7日の中央値 {med}件 を大きく下回る")
+    if med is None:
+        # 🔴 黙って OK にしない（起点直後に「入稿が止まった」を見逃すことになる）。
+        #    `----` 行は HTML で「情報」、課題通知（notify_issues）では数えない。
+        out.append(f"  ---- 入稿 {len(alive)}件（{detail}）— 件数の判定なし："
+                   f"起点 {REVIEW_EPOCH} 以降の基準日が {n_base}日"
+                   f"（{LOW_SUBMIT_MIN_BASE_DAYS}日たまるまで比べない）")
+    elif len(alive) < med * LOW_SUBMIT_RATIO:
+        ng(f"入稿 {len(alive)}件（{detail}）— 直近7日（起点以降 {n_base}日）の"
+           f"中央値 {med}件 を大きく下回る")
     else:
-        ok(f"入稿 {len(alive)}件（{detail}）— 直近7日の中央値 {med if med else '—'}件")
+        ok(f"入稿 {len(alive)}件（{detail}）— 直近7日（起点以降 {n_base}日）の"
+           f"中央値 {med}件")
 
     # 1レース2商品（2026-08-29 に実際に起きた型。生成側・読み側・入稿ループの
     # 3重ガードが入っているが、**壊れたときに気づけるのはここだけ**）。
@@ -624,8 +676,8 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
     return out, n_ng
 
 
-def _recent_median_submits(day: str) -> int | None:
-    """直近7日（当日を除く）の入稿件数の中央値。開催が無い日は数えない。"""
+def _recent_median_submits(day: str) -> tuple[int | None, int]:
+    """直近7日（当日を除く・**起点以降だけ**）の入稿件数の中央値と基準日数。"""
     end = date.fromisoformat(day) - timedelta(days=1)
     start = end - timedelta(days=6)
     with get_connection() as c:
@@ -634,8 +686,27 @@ def _recent_median_submits(day: str) -> int | None:
             "JOIN wt_races wr ON wr.race_key = ns.race_key "
             "WHERE ns.deleted_at IS NULL AND wr.race_date BETWEEN ? AND ? "
             "GROUP BY 1", (start.isoformat(), end.isoformat()))]
-    vals = sorted(int(d["n"]) for d in rows if int(d["n"]) > 0)
-    return vals[len(vals) // 2] if vals else None
+    return median_submits({str(d["d"]): int(d["n"]) for d in rows}, day)
+
+
+def median_submits(counts: dict[str, int], day: str, epoch: str = REVIEW_EPOCH,
+                   min_days: int = LOW_SUBMIT_MIN_BASE_DAYS
+                   ) -> tuple[int | None, int]:
+    """日ごとの入稿件数から (中央値 | None, 基準日数) を出す（DB に触らない部分）。
+
+    - 当日と、起点より前の日は数えない
+    - 開催が無い日（0件）は数えない
+    - 基準日が `min_days` に足りなければ中央値は None（＝判定しない）
+
+    🔴 起点より前を混ぜない理由: 段の商品（2026-09-15〜）は日次上限の外で、
+       件数の水準が旧商品と違う（09-14 まで 43〜67件 ↔ 09-15 は 79件）。
+       混ぜると基準が下へ引っ張られ、本当に落ちた日を見逃す。
+    """
+    vals = sorted(n for d, n in counts.items()
+                  if epoch <= str(d)[:10] < day and int(n) > 0)
+    if len(vals) < min_days:
+        return None, len(vals)
+    return vals[len(vals) // 2], len(vals)
 
 
 class LineupState(NamedTuple):
@@ -769,40 +840,89 @@ def section_today(sold, n_skipped: int, pool, n_boot: int, seed: int,
                    f"{pct(s.net_hit_rate):>9}{s.bet:>10,}{s.payout:>10,}"
                    f"{pct(s.roi):>8}{(s.median_payout or 0):>10,}")
 
-    # 🔴 **車数まで込みで構成を揃える**（2026-08-30）。9車は7車より当たりにくいので、
-    #    プランだけで揃えると 9車を売った日の期待が高く出る。
-    mix: dict[tuple[str, int], int] = {}
-    for r in sold:
-        cars = int((cars_of or {}).get(r.race_key) or 7)
-        mix[(r.rank_key, cars)] = mix.get((r.rank_key, cars), 0) + 1
-    boot = _bootstrap(pool, mix, n_boot, seed)
+    ref = reference_block(sold, pool, cars_of, n_boot, seed)
     stats: dict = {"n": total.n_races, "roi": total.roi,
                    "net_hit": total.net_hit_rate}
-    if boot and total.roi is not None:
-        rois = sorted(b[0] for b in boot)
-        hits = sorted(b[1] for b in boot)
-        stats["roi_pct"] = _pct(rois, total.roi)
-        stats["hit_pct"] = _pct(hits, total.net_hit_rate or 0.0)
-        out.append("")
+    out.append("")
+    out += ref["missing_lines"]
+    if ref["boot"]:
+        rois = sorted(b[0] for b in ref["boot"])
+        hits = sorted(b[1] for b in ref["boot"])
+        stats["roi_pct"] = _pct(rois, ref["roi"])
+        stats["hit_pct"] = _pct(hits, ref["net_hit"])
+        scope = ("売った商品すべて" if ref["n_covered"] == ref["n_total"] else
+                 f"**参照のある商品だけ {ref['n_covered']}/{ref['n_total']}件**"
+                 f"（上の合計とは別の数字）")
         out.append(f"  参照分布（{BASELINE_WINDOW[0]}〜{BASELINE_WINDOW[1]} の"
-                   f"ペーパー行から同じプラン構成・同じ件数を {len(boot):,}回 復元抽出）")
-        out.append(f"    ROI      今日 {total.roi:6.1%}"
+                   f"ペーパー行から同じプラン構成・同じ件数を {len(ref['boot']):,}回 復元抽出）"
+                   f"— 比べる対象: {scope}")
+        out.append(f"    ROI      今日 {ref['roi']:6.1%}"
                    f"  → 分布の {stats['roi_pct']:5.1f}%点"
                    f"   [5% {_q(rois, .05):.1%} / 中央 {_q(rois, .50):.1%}"
                    f" / 95% {_q(rois, .95):.1%}]")
-        out.append(f"    表示的中 今日 {(total.net_hit_rate or 0):6.1%}"
+        out.append(f"    表示的中 今日 {ref['net_hit']:6.1%}"
                    f"  → 分布の {stats['hit_pct']:5.1f}%点"
                    f"   [5% {_q(hits, .05):.1%} / 中央 {_q(hits, .50):.1%}"
                    f" / 95% {_q(hits, .95):.1%}]")
         out.append("    🔴 5〜95%の幅がそのまま「1日では何も言えない」ことの実測。"
                    "この幅の中なら今日の数字は情報を持たない。")
-    else:
-        joined = "、".join(sorted(f"{p}/{c}車" for p, c in set(mix) - set(pool)))
-        missing = joined
-        why = (f"売ったプランが参照母集団に無い（{joined}）"
-               if missing else "売った商品が無い")
-        out.append(f"  参照分布: 作れない — {why}")
+    elif not sold:
+        out.append("  参照分布: 作れない — 売った商品が無い")
     return out, stats
+
+
+def split_by_reference(sold, pool, cars_of: dict[str, int] | None = None
+                       ) -> tuple[list, dict[tuple[str, int], int]]:
+    """売った商品を「参照分布がある (プラン, 車数)」と「無い」に分ける。
+
+    🔴 **参照の無い商品を黙って落とさない**（2026-09-15 是正）。旧実装は
+       `_bootstrap` が母集団に無いプランを捨てたまま、**今日の全体の ROI** を
+       残りのプランだけで作った分布と比べていた。段の商品（T_*）はペーパー行が
+       無いので、09-15 以降は「A_ana 3件と9車の分布」に「段 76件を含む全体」を
+       当てはめることになる。
+    🔴 車数まで込みで揃える（2026-08-30）。9車は7車より当たりにくい。
+    """
+    covered: list = []
+    missing: dict[tuple[str, int], int] = {}
+    for r in sold:
+        key = (r.rank_key, int((cars_of or {}).get(r.race_key) or 7))
+        if pool.get(key):
+            covered.append(r)
+        else:
+            missing[key] = missing.get(key, 0) + 1
+    return covered, missing
+
+
+def reference_block(sold, pool, cars_of: dict[str, int] | None,
+                    n_boot: int, seed: int) -> dict:
+    """§2 の参照分布を作る（Markdown と HTML で共用する）。
+
+    戻り値: `boot`（(ROI, 表示的中) の列・参照が作れなければ空）、
+    `roi` / `net_hit`（**参照のある商品だけ**の今日の値）、`n_covered` / `n_total`、
+    `missing`（参照の無い (プラン, 車数) → 件数）、`missing_lines`（表示用）。
+
+    🔴 HTML 側で構成を作り直さないこと。2026-08-30〜09-15 の HTML は構成の鍵を
+       プラン名だけで作っており、母集団の鍵 (プラン, 車数) と一致せず
+       **§2 の参照分布が一度も描かれていなかった**。
+    """
+    covered, missing = split_by_reference(sold, pool, cars_of)
+    mix: dict[tuple[str, int], int] = {}
+    for r in covered:
+        key = (r.rank_key, int((cars_of or {}).get(r.race_key) or 7))
+        mix[key] = mix.get(key, 0) + 1
+    s = summarize(covered)
+    boot = _bootstrap(pool, mix, n_boot, seed) if covered and s.roi is not None else []
+    lines: list[str] = []
+    if missing:
+        joined = "、".join(f"{p}/{c}車 {n}件" for (p, c), n in sorted(missing.items()))
+        lines.append(f"  参照分布なし: {joined}")
+        if any(p in TIER_PLAN_KEYS for p, _ in missing):
+            lines.append("    ※ 段の商品（T_firm/T_mid/T_axis/T_upset）は 2026-09-15 新設で"
+                         "ペーパー行が無い。**旧プランの分布は当てはめない**"
+                         "（母集団も買い方も違う）。これらは §6 の台帳で前向きに積む。")
+    return {"boot": boot, "roi": s.roi or 0.0, "net_hit": s.net_hit_rate or 0.0,
+            "n_covered": len(covered), "n_total": len(sold), "missing": missing,
+            "missing_lines": lines}
 
 
 # ─────────────────── §3 外れの分解（台帳へ積む） ───────────────────
@@ -879,9 +999,18 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
        「確認窓を消費して選んだ」ため、採否は**この累積**で決める。
        当日の行は1日ぶんの点でしかないので、累積の表を必ず併記する。
 
-    ⚠️ 累積は `REVIEW_EPOCH`（＝型ラボ全面移行日）から数え直す。ゲートの試験自体は
-       2026-08-27 に始まっているが、その2日間は**売っていた商品が旧ランク**で
-       母集団が違う。混ぜると別商品の成績が混入する。
+    ⚠️ 累積は `REVIEW_EPOCH` から数え直す。ゲートの試験自体は 2026-08-27 に
+       始まっているが、その2日間は**売っていた商品が旧ランク**で母集団が違う。
+
+    🔴🔴 **2026-09-15 から、7車で売る商品にゲートは掛かっていない。** 段の商品
+       （T_*）と `A_ana` はゲート対象外（`AXIS_GATE_EXEMPT_PLANS`）、9車は
+       `passes_axis_gate` が素通しにする。以前の母集団（`SELLABLE_PLAN_KEYS`）は
+       段の商品を含むので、**全部が「ゲート通過」側に入り**通過側の成績を段の
+       商品の成績で上書きしていた。
+       → 母集団は「**ゲートの閾値を持つプラン**（`AXIS_GATE_PLANS`）で、
+         型別の規則なら売っていた1行」に限る。型ラボは比較台として7車でも
+         型別プランを組み続けているので、ゲートが分けるかどうかは引き続き測れる。
+         ただし**今は売り物を動かしていないゲートの参考値**として読むこと。
     """
     out: list[str] = []
 
@@ -904,20 +1033,38 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
         return (f"    {label:<12}{n:>4}件  表示的中 {hits / n:6.1%}"
                 f"  ROI {pay / bet:6.1%}")
 
-    sellable = [d for d in live if d["plan_key"] in SELLABLE_PLAN_KEYS]
+    sellable = gate_population(live)
     out.append("  ※ 母集団は `type_lab_picks`（モデル側の行）。売った商品ではない\n  　 ——ゲートで落ちた側は売っていないので、売った側だけでは比べられない。")
+    out.append("  ※ 2026-09-15〜 7車の売り物（段の商品 T_*・A_ana）はゲート対象外。"
+               "ここは**比較台として組み続けている型別プラン**で、\n"
+               "  　 ゲートの閾値を持つプランだけを見る（今は売り物を動かしていない参考値）。")
     out.append(f"  当日（{day}）")
     out.append(line("ゲート通過", [d for d in sellable if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in sellable if not _gate_ok(d)]))
 
-    cum = _live_since(REVIEW_EPOCH, day)
-    cum = [d for d in cum if d["plan_key"] in SELLABLE_PLAN_KEYS]
+    cum = gate_population(_live_since(REVIEW_EPOCH, day))
     out.append(f"  累積（{REVIEW_EPOCH} 〜 {day}・前向き実地検証）")
     out.append(line("ゲート通過", [d for d in cum if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in cum if not _gate_ok(d)]))
     out.append("    ※ 期待は「落ちた側がはっきり悪い」（20か月の台では 通過 27.2%/83.1%"
                " ↔ 落ち 18.7%/68.7%）。逆転が続くならゲートを見直す。")
     return out
+
+
+def gate_population(rows: list[dict]) -> list[dict]:
+    """§4 の母集団: ゲートの閾値を持つプランで、型別の規則なら売っていた行。
+
+    - 段の商品（`TIER_PLAN_KEYS`）は外す（ゲート対象外。入れると全部「通過」に入る）
+    - 閾値の無いプラン（`A_ana`・看板枠・高額枠など）も外す（同じ理由）
+    - 1レースから複数プランを数えない（`_sellable` は型別の規則で1つだけ返す。
+      `axis_sum` を渡さないので段の分岐には入らない）
+    - 7車だけ（9車は `passes_axis_gate` が素通しにするので分けられない）
+    """
+    return [d for d in rows
+            if str(d.get("plan_key")) not in TIER_PLAN_KEYS
+            and str(d.get("plan_key")) in _GATE.AXIS_GATE_PLANS
+            and int(d.get("n_entries") or 0) == _GATE.AXIS_GATE_N_ENTRIES
+            and _sellable(d)]
 
 
 def _live_since(start: str, end: str) -> list[dict]:
@@ -949,6 +1096,39 @@ CONFIDENT_SINCE = "2026-08-14"
 #: 型ラボの選定が Σp → **EV（発走18時前 ∧ 合成3倍以上の中で最大）** に変わった日。
 #: ユーザー指示 2026-09-02。正本は `src.confident_pick.type_lab_confident_score`。
 CONFIDENT_RULE_EV_SINCE = "2026-09-03"
+
+#: 段の商品の世代名（候補は `TIER_CONFIDENT_PLANS`＝固め T_firm だけ）。
+CONFIDENT_ERA_TIER = "段（固めT_firm・決勝系優先×Σp）"
+
+
+def confident_era(rank_key: str, day: str) -> str:
+    """その日の「自信あり」がどの選び方の世代か。
+
+    🔴 **段の商品は `SELLABLE_PLAN_KEYS` にも入っている**ので、プランが型ラボかどうか
+       だけで分けると 09-15 以降の T_firm が「新EV（18時前×合成3倍+）」に入る。
+       選び方は `tier_confident_score`（決勝系優先・Σp）で別物なので先に分ける。
+    """
+    if rank_key in TIER_PLAN_KEYS:
+        return CONFIDENT_ERA_TIER
+    if rank_key not in SELLABLE_PLAN_KEYS:
+        return "旧EV（旧ランク・三連複）"
+    if day >= CONFIDENT_RULE_EV_SINCE:
+        return "新EV（型ラボ・18時前×合成3倍+）"
+    return "Σp（型ラボ）"
+
+
+def confident_control_pool(era: str, rows: list) -> list:
+    """同日内の無作為対照を引く母集団。
+
+    🔴 **段の世代は候補と同じ商品（固め）から引く。** 自信ありの候補は固めだけなので、
+       その日に売った全商品（荒れ T_upset・表示的中 約10% を含む）から引くと、
+       「固めを選んだ」ことだけで自信ありが良く見える。見たいのは
+       「固めの中で決勝系優先×Σp が効いているか」。
+       それ以前の世代は候補が売った商品全体なので従来どおり全体から引く。
+    """
+    if era == CONFIDENT_ERA_TIER:
+        return [r for r in rows if r.rank_key in TIER_CONFIDENT_PLANS]
+    return rows
 
 
 def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
@@ -998,14 +1178,7 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
         picked = [r for r in rows if flag.get((r.race_key, r.rank_key))]
         if not picked:
             continue
-        # 世代は「その日の自信ありが型ラボの商品か」で決める。
-        if picked[0].rank_key not in SELLABLE_PLAN_KEYS:
-            era = "旧EV（旧ランク・三連複）"
-        elif d >= CONFIDENT_RULE_EV_SINCE:
-            era = "新EV（型ラボ・18時前×合成3倍+）"
-        else:
-            era = "Σp（型ラボ）"
-        eras.setdefault(era, []).append(d)
+        eras.setdefault(confident_era(picked[0].rank_key, d), []).append(d)
 
     n_no_flag = sum(1 for d, rows in by_day.items()
                     if rows and not any(flag.get((r.race_key, r.rank_key))
@@ -1013,7 +1186,13 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
     for era in sorted(eras, reverse=True):
         days = sorted(eras[era])
         # 起点より前の世代は**参考**（別指標・別商品）。前向きに数える対象ではない。
-        ref = "" if days[-1] >= REVIEW_EPOCH else "（参考・起点より前の別商品）"
+        # 🔴 起点をまたぐ世代（9車だけの日が起点後に出た「新EV」など）は起点以降の日だけを
+        #    前向きの数に入れる。起点前の日は同じ世代でも売っていた商品が違う。
+        if days[-1] >= REVIEW_EPOCH:
+            days = [d for d in days if d >= REVIEW_EPOCH]
+            ref = ""
+        else:
+            ref = "（参考・起点より前の別商品）"
         picked = [r for d in days for r in by_day[d]
                   if flag.get((r.race_key, r.rank_key))]
         s = summarize(picked)
@@ -1027,7 +1206,7 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
         for _ in range(n_boot):
             bet = pay = n = hits = 0
             for d in days:
-                rows = by_day[d]
+                rows = confident_control_pool(era, by_day[d]) or by_day[d]
                 r = rows[rng.randrange(len(rows))]
                 bet += r.bet
                 pay += r.payout
@@ -1048,7 +1227,9 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
             out.append(f"    → 自信ありは 表示的中 "
                        f"{_pct(boot_hit, s.net_hit_rate or 0):.0f}%点"
                        f" / ROI {_pct(boot_roi, s.roi or 0):.0f}%点"
-                       f"（同じ日から無作為に1件選ぶ {len(boot_roi):,}通りの中で）")
+                       f"（同じ日の"
+                       f"{'固め（T_firm）' if era == CONFIDENT_ERA_TIER else '売った商品'}"
+                       f"から無作為に1件選ぶ {len(boot_roi):,}通りの中で）")
     if n_no_flag:
         out.append(f"  ⚠️ 自信ありが付かなかった日 {n_no_flag}日"
                    f"（選定が落ちた／対象の買い目が無かった）")
@@ -1105,6 +1286,11 @@ def _segments(plan: str, meta: dict | None) -> list[tuple[str, str]]:
 
 
 def append_ledger(day: str, sold, brk: dict, race_meta: dict | None = None) -> None:
+    # 🔴 起点より前の日を今の台帳へ積まない（遡って流すと別商品の成績が混ざる）。
+    if day < REVIEW_EPOCH:
+        print(f"[nightly_review] {day} は起点 {REVIEW_EPOCH} より前なので台帳 "
+              f"{LEDGER.name} へは積まない")
+        return
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     new = not LEDGER.exists()
     race_meta = race_meta or {}
@@ -1154,9 +1340,10 @@ def section_escalate(pool) -> list[str]:
        種別・時間帯・看板は**同じ軸の他の値との比較**しかできないので、
        件数が足りたときに「最下位がどれだけ離れているか」だけを出す。
     """
-    out: list[str] = []
+    out: list[str] = [f"  起点 {REVIEW_EPOCH}（{REVIEW_EPOCH_LABEL}）からの累積"
+                      f"（台帳 {LEDGER.name}）。起点より前の台帳は参照しない。"]
     if not LEDGER.exists():
-        return ["  台帳がまだ無い（次回から積み上がる）"]
+        return out + ["  台帳がまだ無い（次回から積み上がる）"]
     agg: dict[tuple[str, str], dict[str, int]] = {}
     with LEDGER.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -1189,6 +1376,10 @@ def section_escalate(pool) -> list[str]:
                     b_hit = sum(1 for b, p in base if p >= b) / len(base)
                     if roi < b_roi * 0.85 or hit < b_hit * 0.85:
                         mark = "  ← 検証候補（参照より15%以上低い）"
+                else:
+                    # 🔴 参照の無いプラン（段の商品など）は「参照より低い」を言えない。
+                    #    黙って印なしにすると「問題なし」と読まれるので明示する。
+                    mark = "  （参照分布なし＝参照比の発火判定はできない。同じ軸の並びで見る）"
             todo = "" if a["n"] >= ESCALATE_MIN_N else \
                 f"  （{ESCALATE_MIN_N}件まで判定しない）"
             out.append(f"    {k:<14}累積 {a['n']:>4}件  表示的中 {hit:6.1%}"
@@ -1220,9 +1411,9 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append(f"# 型ラボ 夜間レビュー  {day}（{wd}）")
     lines.append(f"生成 {datetime.now():%Y-%m-%d %H:%M}  "
                  f"／ 売った商品 = netkeirin_submissions + bet_detail")
-    lines.append(f"前向き確認の起点 {REVIEW_EPOCH}（型ラボ全面移行日）"
-                 f"— §3〜§5 の累積はここから数える。"
-                 f"§2 の参照分布だけは20か月のペーパー行を相手にする。")
+    lines.append(f"前向き確認の起点 {REVIEW_EPOCH}（{REVIEW_EPOCH_LABEL}）"
+                 f"— §1 の件数基準・§4〜§6 の累積はここから数える。"
+                 f"§2 の参照分布だけはペーパー行（段の商品には無い）を相手にする。")
     lines.append("")
 
     lines.append("## §1 異常検知 — **単日で黒白がつく唯一の層。ここだけは今日直す**")
