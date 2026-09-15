@@ -13,6 +13,10 @@
    足すと、1商品が4回数えられて母集団が4倍に見える
 6. **狙い帯の判定は `win_tf_odds`（確定三連単）で行う。** `final_odds` は的中時しか
    入らないので、外れたレースの荒れ具合が測れず「狙い違い」と「買い目違い」を分離できない
+7. **累積は起点（`REVIEW_EPOCH`）から数え、台帳も起点ごとに分ける**（2026-09-15 リセット）。
+   旧台帳は消さず・読まない。起点より前の日は今の台帳へ積まない
+8. **参照分布の無い商品を黙って落とさない。** 段の商品（T_*）にはペーパー行が無い
+9. **§4 の母集団にゲート対象外のプラン（段の商品など）を入れない**
 """
 
 from __future__ import annotations
@@ -93,15 +97,15 @@ def test_台帳は同じ日を上書きする(tmp_path, monkeypatch):
             self.hit, self.net_hit, self.n_points = pay > 0, pay >= 10_000, 5
 
     brk = {"per_plan": {}, "gami_by_plan": {}}
-    m.append_ledger("2026-08-29", [_R("A_hit", 0)], brk)
-    m.append_ledger("2026-08-29", [_R("A_hit", 50_000)], brk)
+    m.append_ledger("2026-09-15", [_R("A_hit", 0)], brk)
+    m.append_ledger("2026-09-15", [_R("A_hit", 50_000)], brk)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
     assert len(rows) == 1, "同じ日が二重に積まれている"
     assert rows[0]["payout"] == "50000", "再実行で新しい値に置き換わっていない"
 
-    m.append_ledger("2026-08-30", [_R("A_hit", 0)], brk)
+    m.append_ledger("2026-09-16", [_R("A_hit", 0)], brk)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
-    assert {r["date"] for r in rows} == {"2026-08-29", "2026-08-30"}
+    assert {r["date"] for r in rows} == {"2026-09-15", "2026-09-16"}
 
 
 def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入る(tmp_path, monkeypatch):
@@ -119,7 +123,7 @@ def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入�
     brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {}}
     meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False,
                    "payout_band": "30_100"}}
-    m.append_ledger("2026-08-29", [_R("A_hit", 0)], brk, meta)
+    m.append_ledger("2026-09-15", [_R("A_hit", 0)], brk, meta)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
     got = {(r["dim"], r["key"]): r for r in rows}
     assert set(d for d, _ in got) == set(m.LEDGER_DIMS), "軸が欠けている"
@@ -269,3 +273,167 @@ def test_見送り理由の語彙も正本から取る():
     src = SCRIPT.read_text(encoding="utf-8")
     assert "from src.submission_skips import MISSING_LINEUP" in src
     assert '"missing_lineup"' not in src, "reason_code をリテラルで書いている"
+
+
+# ─────────── 起点のリセット（2026-09-15・段の商品へ差し替え）───────────
+
+
+class _Sold:
+    def __init__(self, race_key, plan, bet=10_000, pay=0):
+        self.race_key, self.rank_key, self.origin = race_key, plan, None
+        self.bet, self.payout = bet, pay
+        self.hit, self.net_hit, self.n_points = pay > 0, pay >= bet, 5
+        self.payouts = [pay] if pay else []
+
+
+def test_起点は段の商品への差し替え日():
+    m = _load()
+    assert m.REVIEW_EPOCH == "2026-09-15"
+
+
+def test_台帳は起点ごとに別ファイルで旧台帳を指さない():
+    m = _load()
+    assert m.LEDGER == m.ledger_path(m.REVIEW_EPOCH)
+    assert m.LEDGER.name == "type_lab_nightly_ledger_20260915.csv"
+    # 🔴 2026-08-29〜09-14 の台帳（接尾辞なし）は非破壊で残し、読まない
+    assert m.LEDGER.name != "type_lab_nightly_ledger.csv"
+    assert m.ledger_path("2026-08-29") != m.LEDGER
+
+
+def test_起点より前の日は台帳へ積まない(tmp_path, monkeypatch):
+    m = _load()
+    ledger = tmp_path / "ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    brk = {"per_plan": {}, "gami_by_plan": {}}
+    m.append_ledger("2026-09-14", [_Sold("k", "F_sign")], brk)
+    assert not ledger.exists(), "起点より前の日が新しい台帳へ積まれている"
+    m.append_ledger("2026-09-15", [_Sold("k", "T_firm")], brk)
+    assert ledger.exists()
+
+
+def test_発火判定は今の台帳だけを読む(tmp_path, monkeypatch):
+    m = _load()
+    old = tmp_path / "type_lab_nightly_ledger.csv"
+    old.write_text("date,dim,key,n,bet,payout,n_hits,n_net_hits\n"
+                   "2026-09-01,plan,A_hit,500,5000000,1000,0,0\n", encoding="utf-8")
+    monkeypatch.setattr(m, "LEDGER", tmp_path / "type_lab_nightly_ledger_20260915.csv")
+    out = "\n".join(m.section_escalate({}))
+    assert "A_hit" not in out and "500" not in out, "旧台帳の件数が混ざっている"
+    assert "台帳がまだ無い" in out
+
+
+def test_参照の無いプランは発火判定できないと明示する(tmp_path, monkeypatch):
+    m = _load()
+    ledger = tmp_path / "l.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    brk = {"per_plan": {}, "gami_by_plan": {}}
+    m.append_ledger("2026-09-15", [_Sold(f"k{i}", "T_upset") for i in range(120)], brk)
+    out = "\n".join(m.section_escalate({("A_hit", 7): [(10_000, 0)]}))
+    assert "T_upset" in out and "参照分布なし" in out
+
+
+def test_入稿件数の基準は起点以降の日だけ():
+    m = _load()
+    counts = {"2026-09-12": 46, "2026-09-13": 55, "2026-09-14": 53,
+              "2026-09-15": 79, "2026-09-16": 81, "2026-09-17": 0}
+    # 起点前の3日を混ぜない → 基準日 2日（09-17 は開催なし）で判定しない
+    med, n = m.median_submits(counts, "2026-09-18")
+    assert (med, n) == (None, 2)
+    counts["2026-09-17"] = 77
+    med, n = m.median_submits(counts, "2026-09-18")
+    assert (med, n) == (79, 3)
+    # 当日は基準に入れない
+    assert m.median_submits({"2026-09-15": 79}, "2026-09-15", min_days=1) == (None, 0)
+
+
+def test_基準日が足りない日は件数を黙って_OK_にしない():
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "件数の判定なし" in src
+    # `----` 行は notify_issues の NG/OK 集計に入らない（情報として出す）
+    from importlib import util
+    spec = util.spec_from_file_location("ni", REPO / "scripts" / "notify_issues.py")
+    ni = util.module_from_spec(spec)
+    spec.loader.exec_module(ni)
+    ng, n_ok = ni.parse_alerts("## §1 異常検知\n  ---- 入稿 79件 — 件数の判定なし\n"
+                               "  [OK] 1レース1商品\n## §2\n")
+    assert ng == [] and n_ok == 1
+
+
+def test_参照分布の無い段の商品は黙って落とさない():
+    m = _load()
+    pool = {("A_ana", 7): [(10_000, 0)], ("F_line", 9): [(10_000, 30_000)]}
+    sold = [_Sold("r1", "T_firm", pay=22_000), _Sold("r2", "T_upset"),
+            _Sold("r3", "A_ana"), _Sold("r4", "F_line", pay=30_000)]
+    cars = {"r1": 7, "r2": 7, "r3": 7, "r4": 9}
+    covered, missing = m.split_by_reference(sold, pool, cars)
+    assert [r.race_key for r in covered] == ["r3", "r4"]
+    assert missing == {("T_firm", 7): 1, ("T_upset", 7): 1}
+    ref = m.reference_block(sold, pool, cars, n_boot=30, seed=1)
+    assert ref["n_covered"] == 2 and ref["n_total"] == 4
+    # 今日の値は参照のある商品だけで作る（T_firm の当たりを混ぜない）
+    assert ref["roi"] == 30_000 / 20_000
+    assert any("参照分布なし" in x for x in ref["missing_lines"])
+    assert any("旧プランの分布は当てはめない" in x for x in ref["missing_lines"])
+
+
+def test_段の商品だけの日は参照分布を作らない():
+    m = _load()
+    pool = {("A_hit", 7): [(10_000, 30_000)]}
+    ref = m.reference_block([_Sold("r1", "T_firm")], pool, {"r1": 7}, 30, 1)
+    assert ref["boot"] == [], "旧プランの分布を段の商品へ当てはめている"
+
+
+def test_HTML_は参照分布を本体の関数で作る():
+    """🔴 2026-08-30〜09-15 の HTML は構成の鍵がプラン名だけで母集団と合わず、図が出ていなかった。"""
+    src = (REPO / "scripts" / "nightly_report_html.py").read_text(encoding="utf-8")
+    assert "NR.reference_block(" in src
+    assert "NR._bootstrap(" not in src
+
+
+def test_ゲートの答え合わせから段の商品を外す():
+    m = _load()
+    rows = [
+        {"plan_key": "T_firm", "type_label": "A", "n_entries": 7, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
+        {"plan_key": "T_upset", "type_label": "F", "n_entries": 7, "axis_sum": 1.2,
+         "race_type": "予選", "cup_grade": None},
+        {"plan_key": "A_hit", "type_label": "A", "n_entries": 7, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
+        {"plan_key": "A_ana", "type_label": "A", "n_entries": 7, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
+        {"plan_key": "A_trio", "type_label": "A", "n_entries": 7, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
+        {"plan_key": "A_hit", "type_label": "A", "n_entries": 9, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
+    ]
+    got = [(d["plan_key"], d["n_entries"]) for d in m.gate_population(rows)]
+    # 段の商品・閾値の無い A_ana・型別規則で売らない A_trio・9車は入らない
+    assert got == [("A_hit", 7)]
+    assert "T_firm" in m.SELLABLE_PLAN_KEYS, "前提: 段の商品は売りうるプランに入っている"
+
+
+def test_自信ありの世代は段を別に数える():
+    m = _load()
+    assert m.confident_era("T_firm", "2026-09-15") == m.CONFIDENT_ERA_TIER
+    assert m.confident_era("F_sign", "2026-09-14").startswith("新EV")
+    assert m.confident_era("E_hit", "2026-09-01").startswith("Σp")
+
+
+def test_段の自信ありは固めの中の無作為と比べる():
+    m = _load()
+    rows = [_Sold("r1", "T_firm"), _Sold("r2", "T_upset"), _Sold("r3", "T_firm")]
+    pool = m.confident_control_pool(m.CONFIDENT_ERA_TIER, rows)
+    assert {r.rank_key for r in pool} == {"T_firm"}
+    assert len(m.confident_control_pool("新EV（型ラボ・18時前×合成3倍+）", rows)) == 3
+
+
+def test_狙い帯の無いプランは決着率の分母に入れない():
+    """🔴 段の商品は参照が無く狙い帯が決まらない。分母に入れると「狙い帯で決着 0%」に化ける。"""
+    m = _load()
+    sold = [_Sold("r1", "T_firm"), _Sold("r2", "T_upset")]
+    live = [{"race_key": "r1", "plan_key": "T_firm", "win_tf_odds": 12.0},
+            {"race_key": "r2", "plan_key": "T_upset", "win_tf_odds": 150.0}]
+    out = "\n".join(m.section_landing(sold, live, {}))
+    assert "狙い帯（±1帯）で決着" not in out
+    assert "狙い帯を決められないプラン: T_firm, T_upset" in out
+    assert " 0.0倍" not in out, "参照が無いのに参照中央を 0倍と出している"

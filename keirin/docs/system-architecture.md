@@ -53,6 +53,11 @@ keirin/
 │   ├── check_line_readiness.py        # ライン情報(winticket linePrediction)充足度判定（2026-08-01新設）
 │   ├── intraday_results_wt.sh         # ★本番日中（cron 0,10-23時）当日結果逐次収集・通知なし
 │   ├── weekly_retrain_wt.sh           # ★本番週次（cron 日23:30）
+│   ├── nightly_review.sh              # ★型ラボ夜間レビュー（VPS cron 00:10・前日分）
+│   ├── nightly_review_type_lab.py     # 夜間レビュー本体（§1〜§6・台帳は起点 REVIEW_EPOCH ごとに別ファイル）
+│   │                                   # 2026-09-15 に起点を移してリセット（段の商品へ差し替え）
+│   ├── nightly_report_html.py         # 夜間レビューの HTML（数字は本体の関数を呼ぶ）
+│   ├── nightly_triage.sh              # Mac 側。Claude が §1〜§6 から課題を仕分ける
 │   ├── notify_issues.py               # 夜間レビュー §1 の異常 → Discord(review)
 │   ├── notify_picks.py                # wave-picks 通知 + PDF生成 → Discord
 │   │                                   # （「朝夕の推奨」は2026-07-31廃止。日次/夕方cronからの呼び出しなし）

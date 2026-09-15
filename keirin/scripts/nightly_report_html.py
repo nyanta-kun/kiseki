@@ -32,7 +32,6 @@ sys.path.insert(0, str(REPO))
 
 import nightly_review_type_lab as NR  # noqa: E402  （同じ scripts/ 配下）
 from src.sold_performance import group_by, summarize  # noqa: E402
-from src.type_lab import SELL_PLANS  # noqa: E402
 
 # ── 配色。淡色/暗色の両方で読めるトークンだけを使う ───────────────────
 CSS = """
@@ -204,7 +203,8 @@ def build(day: str, n_boot: int = 2000) -> str:
     A(f"<h1>型ラボ 夜間レビュー　{esc(day)}（{wd}）</h1>")
     A(f'<p class="sub">生成 {datetime.now():%Y-%m-%d %H:%M}　／　'
       f'売った商品＝netkeirin_submissions + bet_detail　／　'
-      f'前向き確認の起点 {esc(NR.REVIEW_EPOCH)}</p>')
+      f'前向き確認の起点 {esc(NR.REVIEW_EPOCH)}（{esc(NR.REVIEW_EPOCH_LABEL)}）'
+      f'・台帳 {esc(NR.LEDGER.name)}</p>')
 
     # KPI
     A('<div class="kpis">')
@@ -239,23 +239,34 @@ def build(day: str, n_boot: int = 2000) -> str:
 
     # §2
     A('<h2>§2 当日成績 <small>単日では判断しない — 参照分布の中のどこか、だけを見る</small></h2>')
-    mix = {k: s.n_races for k, s in by_plan.items()}
-    boot = NR._bootstrap(pool, mix, n_boot, seed=int(day.replace("-", "")))
-    if boot and total.roi is not None:
-        rois = sorted(b[0] for b in boot)
-        hits = sorted(b[1] for b in boot)
+    # 🔴 構成はここで作り直さない（`NR.reference_block` を使う）。2026-08-30〜09-15 は
+    #    プラン名だけの鍵で構成を作っており、母集団の鍵 (プラン, 車数) と合わず
+    #    この図が一度も描かれていなかった。
+    cars_of = {str(d["race_key"]): int(d.get("n_entries") or 7) for d in live}
+    ref = NR.reference_block(sold, pool, cars_of, n_boot, seed=int(day.replace("-", "")))
+    if ref["boot"] or ref["missing_lines"]:
         A('<div class="card">')
-        A(f'<div class="l" style="font-size:12px;color:var(--mut)">ROI</div>')
+    if ref["boot"]:
+        rois = sorted(b[0] for b in ref["boot"])
+        hits = sorted(b[1] for b in ref["boot"])
+        partial = ref["n_covered"] != ref["n_total"]
+        A('<div class="l" style="font-size:12px;color:var(--mut)">ROI</div>')
         A(range_marker(NR._q(rois, .05), NR._q(rois, .50), NR._q(rois, .95),
-                       total.roi, NR._pct(rois, total.roi)))
-        A(f'<div class="l" style="font-size:12px;color:var(--mut)">表示的中</div>')
+                       ref["roi"], NR._pct(rois, ref["roi"])))
+        A('<div class="l" style="font-size:12px;color:var(--mut)">表示的中</div>')
         A(range_marker(NR._q(hits, .05), NR._q(hits, .50), NR._q(hits, .95),
-                       total.net_hit_rate or 0, NR._pct(hits, total.net_hit_rate or 0)))
-        A(f'<p class="note">同じプラン構成・同じ件数を {len(boot):,}回 復元抽出した分布'
+                       ref["net_hit"], NR._pct(hits, ref["net_hit"])))
+        scope = (f'<b>参照のある商品だけ {ref["n_covered"]}/{ref["n_total"]}件</b>'
+                 f'（上の KPI とは別の数字）' if partial else "売った商品すべて")
+        A(f'<p class="note">同じプラン構成・同じ件数を {len(ref["boot"]):,}回 復元抽出した分布'
           f'（{esc(NR.BASELINE_WINDOW[0])}〜{esc(NR.BASELINE_WINDOW[1])} のペーパー行）。'
-          f'今日は ROI が <b>{NR._pct(rois, total.roi):.0f}%点</b>・'
-          f'表示的中が <b>{NR._pct(hits, total.net_hit_rate or 0):.0f}%点</b>。'
+          f'比べる対象: {scope}。'
+          f'今日は ROI が <b>{NR._pct(rois, ref["roi"]):.0f}%点</b>・'
+          f'表示的中が <b>{NR._pct(hits, ref["net_hit"]):.0f}%点</b>。'
           f'<b>この帯の内側なら今日の数字は情報を持たない。</b></p>')
+    for line in ref["missing_lines"]:
+        A(f'<p class="note">{esc_md(line.strip())}</p>')
+    if ref["boot"] or ref["missing_lines"]:
         A("</div>")
 
     A('<div class="card"><div class="scroll"><table><tr>'
@@ -321,7 +332,11 @@ def build(day: str, n_boot: int = 2000) -> str:
     for line in NR.section_landing(sold, live, base, titles):
         if line.strip().startswith("狙い帯（"):
             A(f'<p class="note" style="font-size:13px;color:var(--fg)">{esc(line.strip())}</p>')
-    A('<p class="note">狙い帯は参照（20か月）でそのプランが最も多く落ちる帯（±1帯を許容）。</p>')
+    for line in NR.section_landing(sold, live, base, titles):
+        if line.strip().startswith("※ 参照（ペーパー行）が無く"):
+            A(f'<p class="note">{esc(line.strip())}</p>')
+    A('<p class="note">狙い帯は参照（ペーパー行）でそのプランが最も多く落ちる帯（±1帯を許容）。'
+      '段の商品（T_*）にはペーパー行が無いので狙い帯は決まらない。</p>')
     A("</div>")
 
     A('<h2>§3.6 買った買い目は狙った帯にあったか <small>結果と違い、これは自分で決めた量</small></h2>')
