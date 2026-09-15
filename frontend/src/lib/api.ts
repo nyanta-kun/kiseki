@@ -1391,6 +1391,14 @@ export type KeirinSummary = {
   /** Web に出してよい表示ラベル（入稿対象ONのランクだけ・2026-08-12）。
    *  未指定の古いAPIに当たったときは絞り込まない（fail-open）。 */
   visible_ranks?: string[];
+  /** 🔴 2026-09-15〜: `today/month/year` の合計は**直近で売っているプランだけ**。
+   *  こちらは「無効も表示」用の全部込みの合計（`by_rank` は持たない＝既定側を使う）。 */
+  all?: Record<"today" | "month" | "year", Omit<KeirinPeriodSummary, "by_rank">>;
+  /** 直近14日（商品差し替え日 2026-09-15 より前は数えない）に売っていない表示ラベル。
+   *  窓内に実売が無いとき（fail-open）は空。無ければ絞らない。 */
+  inactive_ranks?: string[];
+  /** 「直近」の判定に使った期間（両端含む・YYYY-MM-DD）。`filtered=false` は絞っていない。 */
+  active_window?: { from: string; to: string; filtered: boolean };
 };
 
 export async function fetchKeirinPicks(date: string, includeAll = false): Promise<KeirinPick[]> {

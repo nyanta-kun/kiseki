@@ -28,6 +28,7 @@ import {
 import { todayYYYYMMDD } from "@/lib/utils";
 import KeirinAxisConfidenceBadge from "@/components/KeirinAxisConfidenceBadge";
 import { useAutoRefresh } from "./useAutoRefresh";
+import { countHiddenInactive, filterInactiveRanks, pickSummaryPeriod } from "@/lib/keirinSummaryActive";
 
 // ---------------------------------------------------------------------------
 // ユーティリティ
@@ -296,13 +297,17 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   //    添え字はプラン名の後半の頭文字（hit=h / pay=p / trio=t / ana=a /
   //    line=l / sign=s / big=b）。日本語の狙い名はサマリーの `RANK_AIM` にある。
   //    🔴 `RANK_LABEL`（サマリーのバッジ）と**必ず同じ文字**にすること。
-  // 🔴 段分け商品（2026-09-15〜・7車の主力）。既存の型ラボ名と重ならない名前で出す
-  //    （ユーザー決定）。固め＝硬い段 / 広め＝やや波乱段 / 荒れ＝波乱段。
-  "T_firm":     { bg: "#047857", text: "#fff", label: "固め" },
-  "T_mid":      { bg: "#1d4ed8", text: "#fff", label: "広め" },
-  // 手広く（T_axis・2026-09-15）＝荒れ段のうち1着率1位が抜けたレース。本線系の紫で固め・広めと区別する。
-  "T_axis":     { bg: "#6d28d9", text: "#fff", label: "手広く" },
-  "T_upset":    { bg: "#c2410c", text: "#fff", label: "荒れ" },
+  // 🔴 段分け商品（2026-09-15〜・7車の主力）。固め＝硬い段 / 広め＝やや波乱段 /
+  //    手広く＝荒れ段のうち1着率1位が抜けたレース / 荒れ＝波乱段。
+  //    バッジは他の型ラボと同じ**記号＋プラン名後半の頭文字**で出す（2026-09-15・
+  //    ユーザー要望「他と同様にアルファベット２文字表示」）。T＝段（tier）、
+  //    firm=f / mid=m / axis=a / upset=u。日本語名はサマリーの `RANK_AIM` と
+  //    一覧カードの `TYPE_LAB_PLAN_LABEL` に残してある。
+  "T_firm":     { bg: "#047857", text: "#fff", label: "Tf" },
+  "T_mid":      { bg: "#1d4ed8", text: "#fff", label: "Tm" },
+  // 手広く（T_axis）は本線系の紫で固め・広めと区別する。
+  "T_axis":     { bg: "#6d28d9", text: "#fff", label: "Ta" },
+  "T_upset":    { bg: "#c2410c", text: "#fff", label: "Tu" },
   "A_hit":      { bg: "#059669", text: "#fff", label: "Ah" },
   "B_hit":      { bg: "#0d9488", text: "#fff", label: "Bh" },
   "C_hit":      { bg: "#2563eb", text: "#fff", label: "Ch" },
@@ -1653,8 +1658,8 @@ const RANK_LABEL: Record<string, string> = {
   "7C": "7C",
   // 型ラボのプラン（2026-08-28〜）。バッジは**型の記号＋狙いの1文字**で出す
   // （2026-09-06・ユーザー要望。上の `RANK_STYLE` と必ず同じ文字にすること）。
-  // 段分け商品（2026-09-15〜）。`RANK_STYLE` と同じ文字。
-  "T_firm": "固め", "T_mid": "広め", "T_axis": "手広く", "T_upset": "荒れ",
+  // 段分け商品（2026-09-15〜）。`RANK_STYLE` と同じ文字（固め=Tf / 広め=Tm / 手広く=Ta / 荒れ=Tu）。
+  "T_firm": "Tf", "T_mid": "Tm", "T_axis": "Ta", "T_upset": "Tu",
   "A_hit": "Ah", "B_hit": "Bh", "C_hit": "Ch",
   "D_hit": "Dh", "E_hit": "Eh", "F_pay": "Fp", "F_hit": "Fh",
   "A_trio": "At", "A_ana": "Aa", "F_line": "Fl",
@@ -1670,7 +1675,8 @@ const RANK_LABEL: Record<string, string> = {
  *     こちらはサマリー専用——同じ型に 3〜4 プランが並ぶので、
  *     `A A A A` では**どれがどれか分からない**（2026-08-31 のユーザー指摘）。 */
 const RANK_AIM: Record<string, string> = {
-  T_firm: "3〜5点", T_mid: "3〜8点", T_axis: "1着固定", T_upset: "10万狙い",
+  // 段分け商品はバッジが2文字（Tf/Tm/Ta/Tu）になったので、ここで日本語名を出す。
+  T_firm: "固め", T_mid: "広め", T_axis: "手広く", T_upset: "荒れ",
   A_hit: "鉄板", A_trio: "三連複", A_ana: "穴", A_pay: "一撃", A_sign: "看板", A_big: "特大",
   B_hit: "本線", B_sign: "看板", B_big: "特大",
   C_hit: "崩れ筋", C_sign: "看板", C_big: "特大",
@@ -1900,10 +1906,41 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
     const allow = summary.visible_ranks;
     return allow ? RANK_ORDER.filter(r => allow.includes(r)) : RANK_ORDER;
   }, [summary.visible_ranks]);
+  // 🔴 **直近で売っていないプランは既定で行からも合計からも外す**（2026-09-15・ユーザー要望
+  //    「無効にしたモデルについては表示、集計から通常表示では外して」）。
+  //    判定は API（直近14日・商品差し替え日 2026-09-15 より前は数えない）。
+  //    合計は API が両方返すので、トグルで**再取得しない**（サマリーは重い API）。
+  //    ⚠️ `inactive_ranks` / `all` が無い古い API に当たったら絞らない（fail-open）。
+  const [showInactive, setShowInactive] = useState(false);
+  const inactiveRanks = summary.inactive_ranks;
+  const nHiddenInactive = useMemo(
+    () => countHiddenInactive(visibleRankOrder, inactiveRanks),
+    [visibleRankOrder, inactiveRanks]);
+  const rankOrder = useMemo(
+    () => filterInactiveRanks(visibleRankOrder, inactiveRanks, showInactive),
+    [visibleRankOrder, inactiveRanks, showInactive]);
+  const hasInactive = (inactiveRanks?.length ?? 0) > 0 && !!summary.all;
+  const win = summary.active_window;
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
       <div className="px-3 sm:px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center gap-1">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 flex-1">投資・回収サマリー</h2>
+        {hasInactive && (
+          <button
+            onClick={() => setShowInactive(v => !v)}
+            aria-pressed={showInactive}
+            title={`直近で売っていないプラン${win ? `（${win.from}〜${win.to} に実売なし）` : ""}を${showInactive ? "隠す" : "行と合計に含めて表示する"}`}
+            className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors whitespace-nowrap ${
+              showInactive
+                ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30"
+                : "text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400"
+            }`}
+          >
+            <span className="hidden sm:inline">無効も表示</span>
+            <span className="sm:hidden">無効</span>
+            {nHiddenInactive > 0 && <span className="tabular-nums">{nHiddenInactive}</span>}
+          </button>
+        )}
         <button
           onClick={() => setShowAll(v => !v)}
           className={`sm:hidden flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
@@ -1942,9 +1979,9 @@ function SummaryCard({ summary }: { summary: KeirinSummary }) {
             {/* 入稿対象OFFのランクは行ごと出さない（2026-08-12）。集計側でも
                 除外済みだが、ランク別展開は0件でも行を描くので明示的に絞る。
                 古いAPI（visible_ranks 無し）に当たったら絞らない＝fail-open。 */}
-            <SummaryRow label="当日" data={summary.today} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
-            <SummaryRow label="当月" data={summary.month} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
-            <SummaryRow label="当年" data={summary.year} showRanks={expanded} showAll={showAll} rankOrder={visibleRankOrder} />
+            <SummaryRow label="当日" data={pickSummaryPeriod(summary.today, summary.all?.today, showInactive)} showRanks={expanded} showAll={showAll} rankOrder={rankOrder} />
+            <SummaryRow label="当月" data={pickSummaryPeriod(summary.month, summary.all?.month, showInactive)} showRanks={expanded} showAll={showAll} rankOrder={rankOrder} />
+            <SummaryRow label="当年" data={pickSummaryPeriod(summary.year, summary.all?.year, showInactive)} showRanks={expanded} showAll={showAll} rankOrder={rankOrder} />
             {/* ⚠️ **ペーパーの表記は 2026-08-24 に全て外した**（ユーザー判断）。
                 外したのは3つ —— 行内の「うちペーパー N件」・「ペーパー 2024-01〜」の
                 通算行・表下の注記。
