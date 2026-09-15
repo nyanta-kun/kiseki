@@ -920,6 +920,23 @@ del _t
 #    「広め」に入るが、同じレースで 10万+ が A_ana 29/17件 ↔ 段 1/0件（両窓CI 0跨がず）。
 # ⚠️ 9車は現行のまま（段を当てると表示的中 19% ↔ 現行 28%）。5/6/8車は予測オッズが無く組めない。
 TIER_N_ENTRIES = 7
+#: 🔴🔴 **段の「販売」スイッチ（2026-09-16〜 False）。** 生成・採点は止めない。
+#:
+#:    2026-09-15 に段で売り始めたが、同日の確定57Rで段の実売が 表示的中 21.1%・回収率 37.3%、
+#:    同じ日の行を前日までの規則（e018af8 の入稿スクリプト）で dry-run した反実仮想が
+#:    31.2%・78.1%（荒れ 0/19）と明確に悪く、**ユーザーが「明朝から昨日までの規則に戻す。
+#:    段商品は検証を続ける」と決定した**（2026-09-15）。
+#:
+#:    False のとき、**入稿（販売）の判断はすべて e018af8 時点と同じ**になる:
+#:      - `sell_plans_for` は段の分岐を通らない（型別の規則・看板枠・型A 3分割・型F 種別分岐）
+#:      - 入稿スクリプトの日次上限は段も `A_ana` も免除しない（`netkeirin_submit_type_lab.cap_free_plans`）
+#:      - 一軸（`T_axis`）の入稿ゲート判定をしない
+#:      - 「自信あり」は段の規則（固め・決勝系優先・Σp）を使わず、旧規則（18時前 ∧ 合成3倍 ∧ EV最大）
+#:    生成側（`plans_for` / `build_legs` / `rule_version`）は**触らない**＝`T_*` の行は組まれ採点される。
+#:    True に戻せば段の販売が復活する（コードは消していない）。
+#:    🔴 **`rule_version` には入れない。** 行の中身（買い目）はこのスイッチで変わらないので、
+#:       入れると同じ買い目の行が版だけ割れて夜間レビューの世代が無意味に分かれる。
+TIER_SELL_ENABLED: bool = False
 #: 固め（axis_sum がこれを超える）。探索窓 7車の中央値。
 TIER_AXIS_FIRM_MIN = 1.464
 #: 広め（これを超え、固めの境目以下）。探索窓 7車の下位25%点。これ以下は荒れ。
@@ -1495,7 +1512,9 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
     # 🔴 **一軸は荒れの段だけ**（2026-09-15）。`one_axis_ok` は「そのレースの `T_axis` 行が
     #    組めて入稿ゲートを通る」（`A_trio` の `trio_ok` と同じ形・呼び出し側が行から作る）。
     #    ゲートに落ちたら荒れ（`T_upset`）へ戻す。
-    if int(n_entries or 0) == TIER_N_ENTRIES and axis_sum is not None:
+    # 🔴 **販売スイッチ（`TIER_SELL_ENABLED`）が False なら段の分岐に入らない**（2026-09-16〜）。
+    if (TIER_SELL_ENABLED and int(n_entries or 0) == TIER_N_ENTRIES
+            and axis_sum is not None):
         if (type_label == "A" and pw_ent is not None
                 and float(pw_ent) >= ANA_PW_ENT_MIN):
             return [p for p in plans if p.key == "A_ana"]

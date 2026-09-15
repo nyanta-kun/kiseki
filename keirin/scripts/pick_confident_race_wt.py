@@ -91,6 +91,7 @@ from src.confident_pick import (  # noqa: E402
     tier_confident_score,
 )
 from src.database import get_connection  # noqa: E402
+from src import type_lab as _type_lab  # noqa: E402
 from src.type_lab import SELL_PLANS  # noqa: E402
 
 # 取消済みは対象外（人が落としたものに自信アイコンを置かない）。
@@ -141,7 +142,10 @@ def _load_type_lab(date: str) -> list[dict]:
         d = dict(r)
         # 🔴 段の商品（`T_*`・2026-09-14〜）は `SELL_PLANS`（7車の型ごとの集合）に
         #    入らないので、ここで落とさないよう別に通す。
-        if d["rank_key"] not in SELL_PLANS and d["rank_key"] not in TIER_PLAN_KEYS:
+        #    ⚠️ 段の販売を止めている間（`TIER_SELL_ENABLED=False`・2026-09-16〜）は通さない
+        #       （e018af8 と同じく `SELL_PLANS` だけ）。
+        tier_ok = _type_lab.TIER_SELL_ENABLED and d["rank_key"] in TIER_PLAN_KEYS
+        if d["rank_key"] not in SELL_PLANS and not tier_ok:
             continue
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         out.append(d)
@@ -158,7 +162,9 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
     #    固めの中から「決勝系を優先・無ければ18時前」で的中確率 Σp 最大
     #    （正本は `src.confident_pick.tier_confident_score`・理由はその節）。
     #    旧規則（合成3倍以上×EV最大）と尺度が違うので混ぜない。
-    tier_day = any(r["rank_key"] in TIER_PLAN_KEYS for r in tl_rows)
+    #    🔴 段の販売を止めている間（`TIER_SELL_ENABLED=False`）は必ず旧規則（2026-09-16〜）。
+    tier_day = (_type_lab.TIER_SELL_ENABLED
+                and any(r["rank_key"] in TIER_PLAN_KEYS for r in tl_rows))
     if tier_day:
         rows, metric = tl_rows, "Σp"
         scored = [(r["race_key"], r["rank_key"],

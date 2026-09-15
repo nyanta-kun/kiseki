@@ -332,6 +332,7 @@ def test_tier_score_non_final_needs_before_18():
 
 def test_tier_pick_uses_new_rule(monkeypatch):
     """段の商品がある日は段の規則。決勝系の固め → 無ければ18時前の固め。"""
+    monkeypatch.setattr("src.type_lab.TIER_SELL_ENABLED", True)   # 段の販売 ON 前提（既定は OFF・2026-09-16〜）
     from scripts import pick_confident_race_wt as m
 
     rows = [
