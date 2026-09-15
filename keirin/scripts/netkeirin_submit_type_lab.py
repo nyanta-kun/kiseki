@@ -96,6 +96,7 @@ from src.marquee import is_fill_target                       # noqa: E402
 from src.type_lab import (                                  # noqa: E402
     HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, SELLABLE_PLAN_KEYS,
     TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
+    tier_realized_min_payout,
     highpay_plan_for, sell_plans_for)
 
 #: **日次上限に数えず落とさないプラン**（2026-09-14）。7車は段（全レース）と、段より先に見る `A_ana`。
@@ -399,13 +400,23 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
        記録している（`build_type_lab_picks`）。混成の平均で判定すると
        100-600倍の目に押し上げられて**ゲートが事実上無効**になる。
     """
-    # 🔴 **固め・広めは「全点の想定払戻 >= 1.5万円」**（2026-09-14）。合成2.2倍（払戻約2.2万）で
+    # 🔴 **固め・広め・手広くは「全点」で見る**（2026-09-14）。合成2.2倍（払戻約2.2万）で
     #    組むので平均2万ゲートだと端数で落ち、最低3点へ広げたレースは平均が2万を割る。
+    # 🔴🔴 **判定は「当たったときの払戻の悪い側の見込み」**（2026-09-15 ユーザー決定）。
+    #    各点の 賭け金 × 予測オッズ × 下振れ係数（当たり目の 確定÷予測 の p25）の最小が
+    #    1.5万円未満なら見送る。予測のままだと当たり目は確定で1〜3割安くなり、
+    #    1.1〜1.5万円の当たりが続出した。係数表と実測は `type_lab.TIER_REALIZED_FACTOR`。
+    #    ⚠️ `pred_min_payout`（素の予測）では判定しない。係数は全セル 1 未満なので
+    #       新しい判定は旧判定を含む（旧で落ちる行は新でも落ちる）。
+    #    ⚠️ 手広く（`T_axis`）はここに落ちると `one_axis_ok=False` になり荒れで売る
+    #       （`_load_rows` が同じ `_gate_reason` を呼ぶ）。
     if str(row.get("plan_key")) in TIER_POINT_GATE_PLANS:
-        min_pay = row.get("pred_min_payout")
-        if min_pay is not None and float(min_pay) < TIER_POINT_PAYOUT_MIN * 0.999:
+        worst = tier_realized_min_payout(
+            row.get("legs") or [], row.get("race_type"),
+            float(row["axis_sum"]) if row.get("axis_sum") is not None else None)
+        if worst is not None and worst < TIER_POINT_PAYOUT_MIN:
             return (SKIP_GATE_MEAN_PAYOUT,
-                    f"買い目の最低想定払戻 {float(min_pay):,.0f}円 < {TIER_POINT_PAYOUT_MIN:,}円")
+                    f"当たったときの見込み払戻（悪い側） {worst:,.0f}円 < {TIER_POINT_PAYOUT_MIN:,}円")
         odds = [float(lg.get("pred_odds") or 0) for lg in row["legs"]]
         odds = [o for o in odds if o > 0]
         if odds and min(odds) < MIN_POINT_ODDS:
