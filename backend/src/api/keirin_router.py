@@ -28,6 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.keirin_models import KeirinNetkeirinSetting
 from ..db.session import AsyncSessionLocal, get_db
+from ..services.keirin_active_ranks import (
+    active_window,
+    inactive_labels,
+    is_active,
+    resolve_active,
+)
 from ..services.keirin_crash_risk import race_risk, risk_band
 from ..services.keirin_cup_grade import grade_label
 from ..services.keirin_marquee import is_marquee_race
@@ -1649,8 +1655,17 @@ async def _aggregate(
     *,
     from_dt: Date | None = None,
     to_dt: Date | None = None,
-) -> dict:
+    active: frozenset[str] | None = None,
+) -> tuple[dict, dict]:
     """サマリーの1期間ぶん。
+
+    returns (直近で売っているプランだけの期間集計, 全プラン込みの合計)
+      - 1つ目は `by_rank`（ランク別・**全プラン**）を含む。合計だけが絞られる
+      - 2つ目は合計の数字だけ（`by_rank` は1つ目と同じなので持たない）
+      - `active is None`（絞らない・fail-open）なら2つの合計は一致する
+    🔴 **実売の行は1回だけ取り、Python で2通りに集計する**（2026-09-15）。
+       サマリーは 0.7〜4 秒かかる重い API なので、「無効も表示」のトグルのたびに
+       取り直させないために、両方をレスポンスに載せる。
 
     🔴 **投資・払戻・的中は「実際に売った商品」から数える**（2026-08-19）。
        以前は `picks_history` の `bet_amount > 0` を母集団にしていたが、これは
@@ -1696,8 +1711,15 @@ async def _aggregate(
             sum(i["payout"] for i in items),
             max(won) if won else None)
 
-    result = _totals(sold)
+    # 🔴 **直近で売っていないプランは既定の合計から外す**（2026-09-15・ユーザー要望
+    #    「無効にしたモデルについては表示、集計から通常表示では外して」）。
+    #    判定は `services/keirin_active_ranks`。全部込みの合計も同じ行から作る。
+    active_sold = [i for i in sold
+                   if is_active(_display_rank(f"RANK_{i['rank_key']}"), active)]
+    result = _totals(active_sold)
     result["n_unpriced"] = n_unpriced
+    all_totals = _totals(sold)
+    all_totals["n_unpriced"] = n_unpriced
 
     # 総候補レース数（判定前候補+見送り含む・対象ランクの distinct レース数）と
     # ランク別候補数（＝見送り含む全行の distinct レース数）。
@@ -1715,24 +1737,45 @@ async def _aggregate(
     #    distinct レース数は足し算にならない（GROUPING SETS が要るのはこのため）。
     # ⚠️ `rank_filter` が NULL を含まないので、`rank IS NULL` の行と
     #    合計行が混ざることはない。念のため `GROUPING()` で明示的に見分ける。
+    # 🔴 **「直近で売っているプランだけ」の候補数も同じスキャンで数える**（2026-09-15）。
+    #    `(is_active)` の集合を足し、`is_active = TRUE` の行を既定の合計にする。
+    #    distinct レース数はランク別の和から作れないので、ここを Python で
+    #    足し合わせてはいけない（1レースが複数ランクに並ぶ）。
+    #    絞らないとき（`active is None`）は定数 TRUE にして、集合の形を変えない。
+    track_active = active is not None
+    active_expr = "ph.rank = ANY(:active_ranks)" if track_active else "TRUE"
+    cand_params = dict(params)
+    if track_active:
+        cand_params["active_ranks"] = [
+            internal for internal, label in _PAPER_RANK_LABELS.items()
+            if is_active(label, active)]
     cand_rows = (await db.execute(
         text(f"""
-            SELECT ph.rank AS rank,
-                   GROUPING(ph.rank) AS is_total,
-                   COUNT(DISTINCT SPLIT_PART(ph.race_key, '#', 1)) AS n_candidates
-            FROM keirin.picks_history ph
-            JOIN keirin.wt_races wr
-              ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
-            WHERE {where}
-              AND ph.route = 'wt'
-              AND ph.rank IN {rank_filter}
-              AND {_enabled_rank_cond()}
-            GROUP BY GROUPING SETS ((ph.rank), ())
+            SELECT c.rank AS rank,
+                   c.is_active AS is_active,
+                   GROUPING(c.rank) AS g_rank,
+                   GROUPING(c.is_active) AS g_active,
+                   COUNT(DISTINCT SPLIT_PART(c.race_key, '#', 1)) AS n_candidates
+            FROM (
+              SELECT ph.rank, ph.race_key, ({active_expr}) AS is_active
+              FROM keirin.picks_history ph
+              JOIN keirin.wt_races wr
+                ON SPLIT_PART(ph.race_key, '#', 1) = wr.race_key
+              WHERE {where}
+                AND ph.route = 'wt'
+                AND ph.rank IN {rank_filter}
+                AND {_enabled_rank_cond()}
+            ) c
+            GROUP BY GROUPING SETS ((c.rank), (c.is_active), ())
         """),
-        params,
+        cand_params,
     )).mappings().all()
+    all_totals["n_candidates"] = next(
+        (int(c["n_candidates"] or 0) for c in cand_rows
+         if c["g_rank"] and c["g_active"]), 0)
     result["n_candidates"] = next(
-        (int(c["n_candidates"] or 0) for c in cand_rows if c["is_total"]), 0)
+        (int(c["n_candidates"] or 0) for c in cand_rows
+         if c["g_rank"] and not c["g_active"] and c["is_active"]), 0)
 
     # ランク別集計（全てペーパー・名目賭金）: RANK_7S/RANK_7A/RANK_9S/RANK_9A の4ランク。
     # 2026-08-01〜: gate_labelはもう表示ランクを分岐しない（_display_rank参照）ため
@@ -1757,7 +1800,7 @@ async def _aggregate(
     by_rank: dict[str, dict] = {k: _totals(v) for k, v in by_rank_items.items()}
 
     # ランク別候補数（上の GROUPING SETS から取り出す。合計行は除く）
-    for r in (c for c in cand_rows if not c["is_total"]):
+    for r in (c for c in cand_rows if not c["g_rank"]):
         key = _display_rank(str(r["rank"]))
         n_cand = int(r["n_candidates"] or 0)
         if key not in by_rank and n_cand > 0:
@@ -1765,7 +1808,33 @@ async def _aggregate(
         if key in by_rank:
             by_rank[key]["n_candidates"] = n_cand
     result["by_rank"] = by_rank
-    return result
+    return result, all_totals
+
+
+async def _active_rank_labels(
+    db: AsyncSession, today: Date,
+) -> frozenset[str] | None:
+    """基準日 `today` から見て**直近で売っている**表示ラベルの集合（2026-09-15）。
+
+    窓は `services/keirin_active_ranks.active_window`（直近14日・差し替え日より前は
+    数えない）。取消した入稿（`deleted_at IS NOT NULL`）は売っていないので数えない。
+    採点が済んでいるかは問わない（朝に入稿しただけのプランも「売っている」）。
+
+    🔴 窓内に1件も無ければ None（＝絞らない・fail-open）。
+    ⚠️ `wt_races.race_date` は `YYYY-MM-DD` の文字列なので ISO 文字列で比べる。
+    """
+    lo, hi = active_window(today)
+    keys = (await db.execute(
+        text("""
+            SELECT DISTINCT ns.rank_key
+            FROM keirin.netkeirin_submissions ns
+            JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
+            WHERE wr.race_date BETWEEN :from_date AND :to_date
+              AND ns.deleted_at IS NULL
+        """),
+        {"from_date": lo.isoformat(), "to_date": hi.isoformat()},
+    )).scalars().all()
+    return resolve_active(_display_rank(f"RANK_{k}") for k in keys)
 
 
 @router.post("/refresh")
@@ -2510,14 +2579,17 @@ PAPER_TOTAL_SINCE = "2024-01-01"
 
 async def _paper_slice(
     db: AsyncSession, since: str, until: str,
-) -> dict[str, int]:
-    """`since`〜`until`（両端含む）のペーパー集計。現行ランクのみ。
+) -> dict[str, dict[str, int]]:
+    """`since`〜`until`（両端含む）のペーパー集計を**表示ラベル別**に返す。現行ランクのみ。
 
     サマリーの期間行が **実販売開始前**を埋めるために使う（`REAL_SALES_FROM`）。
+    ランク別に持つのは「直近で売っているプランだけ」の合計を作るため（2026-09-15）。
+    件数・金額は行数の和なのでランク別から合計を作ってよい（distinct ではない）。
     """
-    r = (await db.execute(
+    rows = (await db.execute(
         text(f"""
-            SELECT COUNT(*)                                    AS n_picks,
+            SELECT ph.rank                                     AS rank,
+                   COUNT(*)                                    AS n_picks,
                    COUNT(*) FILTER (WHERE ph.payout > 0)       AS n_hits,
                    COALESCE(SUM(ph.bet_amount), 0)             AS total_bet,
                    COALESCE(SUM(ph.payout), 0)                 AS total_payout,
@@ -2528,17 +2600,21 @@ async def _paper_slice(
               AND ph.route = 'wt'
               AND ph.rank IN {_RANKS_ALL}
               AND {_enabled_rank_cond()}
+            GROUP BY ph.rank
         """),
         {"s": since, "u": until},
-    )).mappings().first()
-    d: dict[str, Any] = dict(r) if r is not None else {}
-    return {
-        "n_picks": int(d.get("n_picks") or 0),
-        "n_hits": int(d.get("n_hits") or 0),
-        "total_bet": int(d.get("total_bet") or 0),
-        "total_payout": int(d.get("total_payout") or 0),
-        "max_payout": int(d["max_payout"]) if d.get("max_payout") else 0,
-    }
+    )).mappings().all()
+    out: dict[str, dict[str, int]] = {}
+    for d in rows:
+        cur = out.setdefault(_display_rank(str(d["rank"])), dict(_EMPTY_PAPER))
+        _add_paper(cur, {
+            "n_picks": int(d["n_picks"] or 0),
+            "n_hits": int(d["n_hits"] or 0),
+            "total_bet": int(d["total_bet"] or 0),
+            "total_payout": int(d["total_payout"] or 0),
+            "max_payout": int(d["max_payout"]) if d["max_payout"] else 0,
+        })
+    return out
 
 
 _EMPTY_PAPER: dict[str, int] = {
@@ -2546,9 +2622,27 @@ _EMPTY_PAPER: dict[str, int] = {
 }
 
 
+def _add_paper(acc: dict[str, int], part: dict[str, int]) -> None:
+    """ペーパー集計 `part` を `acc` へ足し込む（最大払戻は max）。"""
+    for k in ("n_picks", "n_hits", "total_bet", "total_payout"):
+        acc[k] += part[k]
+    acc["max_payout"] = max(acc["max_payout"], part["max_payout"])
+
+
+def _sum_paper(
+    by_label: dict[str, dict[str, int]], active: frozenset[str] | None,
+) -> dict[str, int]:
+    """ラベル別のペーパー集計を、`active` に含まれるものだけ合算する（None なら全部）。"""
+    acc = dict(_EMPTY_PAPER)
+    for label, part in by_label.items():
+        if is_active(label, active):
+            _add_paper(acc, part)
+    return acc
+
+
 async def _paper_for_period(
     db: AsyncSession, from_dt: Date, to_dt: Date,
-) -> dict[str, int]:
+) -> dict[str, dict[str, int]]:
     """期間 `from_dt`〜`to_dt` のうち、**実販売開始前に重なる部分**のペーパー集計。
 
     🔴 当年だけでなく **当日・当月にも効かせる**（2026-08-22・ユーザー要望
@@ -2556,12 +2650,13 @@ async def _paper_for_period(
        遡ったとき、そのままだと実売が無いので全部 0 になり、
        **その日に何を推奨していたかが画面から消える**。
 
-    重なりが無ければ 0 の辞書を返す（合算しても何も変わらない）。
+    重なりが無ければ空の辞書を返す（`_sum_paper` で 0 になり、合算しても何も変わらない）。
+    戻り値は表示ラベル別（`_paper_slice`）。合計は `_sum_paper` で作る。
     """
     end = Date.fromisoformat(REAL_SALES_FROM) - timedelta(days=1)
     lo, hi = from_dt, min(to_dt, end)
     if lo > hi:
-        return dict(_EMPTY_PAPER)
+        return {}
     return await _paper_slice(db, lo.isoformat(), hi.isoformat())
 
 
@@ -2701,8 +2796,15 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     #    追加の接続は3本に抑える（プールは pool_size 5 + max_overflow 15）。
     # ⚠️ 塊を細かく割りすぎないこと。接続本数が増えるだけで、律速は
     #    いちばん重い `year` の集計なので 4分割より先は縮まない。
+    # 🔴 **直近で売っていないプランは既定の合計・ランク別から外す**（2026-09-15）。
+    #    判定は期間の集計より先に1回だけ行い、3期間で同じ集合を使う
+    #    （期間ごとに判定すると当日と当年で「有効」が食い違う）。
+    #    ⚠️ gather より前に `db` を使い終えること（同じセッションの並行使用は不可）。
+    active = await _active_rank_labels(db, today)
+    active_from, active_to = active_window(today)
+
     async def _period(session: AsyncSession, cond: str, params: dict,
-                      from_dt: Date, to_dt: Date) -> dict:
+                      from_dt: Date, to_dt: Date) -> tuple[dict, dict]:
         # 🔴 投資・払戻・的中は**実際に売った商品**から数える（`_aggregate` の
         #    docstring 参照）。期間は SQL 条件（候補数用）と日付（実売用）の
         #    両方を渡す —— 片方だけにすると母集団がずれる。
@@ -2710,9 +2812,13 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
         #    （`_paper_for_period`）。当年だけに効かせていた頃は、日付ナビで
         #    実販売開始前へ遡ると当日・当月が全部 0 になり、その日に何を推奨して
         #    いたかが画面から消えていた（2026-08-22 是正）。
-        return _merge_paper_into(
-            await _aggregate(session, cond, params, from_dt=from_dt, to_dt=to_dt),
-            await _paper_for_period(session, from_dt, to_dt))
+        # 🔴 「直近で売っているプランだけ」と「全部込み」の両方を返す。
+        #    ペーパーもそれぞれに合う分だけを足す（片方にだけ足すと合計がずれる）。
+        period, all_totals = await _aggregate(
+            session, cond, params, from_dt=from_dt, to_dt=to_dt, active=active)
+        paper = await _paper_for_period(session, from_dt, to_dt)
+        return (_merge_paper_into(period, _sum_paper(paper, active)),
+                _merge_paper_into(all_totals, _sum_paper(paper, None)))
 
     async def _in_new_session(fn):
         async with AsyncSessionLocal() as s:
@@ -2730,9 +2836,20 @@ async def get_summary(date: str = "", db: AsyncSession = Depends(get_db)) -> JSO
     )
 
     result = {
-        "today": r_today,
-        "month": r_month,
-        "year": r_year,
+        # 🔴 既定の3期間は**直近で売っているプランだけ**の合計（`by_rank` は全プラン）。
+        "today": r_today[0],
+        "month": r_month[0],
+        "year": r_year[0],
+        # 「無効も表示」用の全部込みの合計（2026-09-15 追加）。`by_rank` は上と同じなので
+        # 載せない（フロントは上の `by_rank` と組み合わせて使う）。
+        "all": {"today": r_today[1], "month": r_month[1], "year": r_year[1]},
+        # 直近で売っていない表示ラベル（表示順）。絞らないとき（窓内に実売なし）は空。
+        "inactive_ranks": inactive_labels(
+            (*_PAPER_RANK_LABELS.values(), *TYPE_LAB_RANK_LABELS.values(),
+             *_LEGACY_RANK_LABELS.values()),
+            active),
+        "active_window": {"from": active_from.isoformat(), "to": active_to.isoformat(),
+                          "filtered": active is not None},
         # フロントの「ランク別」展開・絞り込みチップはこの一覧で絞る。
         # 集計側（_aggregate）は既に入稿OFFを除外しているので by_rank には
         # 現れないが、**チップは行が0件でも描かれる**ので明示的に渡す。
