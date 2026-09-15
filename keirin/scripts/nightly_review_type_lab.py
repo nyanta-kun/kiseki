@@ -48,9 +48,10 @@
         --no-discord     Discord へ送らない
         --boot N         参照分布のブートストラップ回数（既定 2000）
 
-台帳: `data/analysis/type_lab_nightly_ledger_<起点YYYYMMDD>.csv`（1日×1軸×1値で1行）
-      **起点（`REVIEW_EPOCH`）ごとに別ファイル**。起点を動かすと新しい台帳から積み直し、
-      旧台帳は消さずにそのまま残る（2026-09-15 のリセットで導入）。
+台帳: `data/analysis/type_lab_nightly_ledger.csv`（起点 2026-08-29・1日×1軸×1値で1行）
+      **起点（`REVIEW_EPOCH`）ごとに別ファイル**（`ledger_path`）。起点を動かすと新しい
+      台帳から積み直し、旧台帳は消さずにそのまま残る。
+      **除外日（`EXCLUDED_DAYS`＝2026-09-15）は台帳へ積まず、累積にも数えない。**
 
 ⚠️ **過去日へ遡って実行しないこと。** §4 のゲート判定は `axis_sum`＝その日の
    本番モデルの出力に依存する。モデルを再学習した後に遡ると、別のモデルの目で
@@ -103,18 +104,64 @@ BASELINE_WINDOW = ("2025-01-01", "2026-08-26")
 #: ⚠️ ここより前のデータを消すわけではない。§2 の参照分布（ペーパー行の20か月）は
 #:    比較の相手として引き続き使う。分けるのは**前向きに数え上げる累積**だけ。
 #:
-#: 🔴 **2026-09-15 に起点を 2026-08-29 → 2026-09-15 へ移した**（ユーザー要望）。
-#:    この日、7車の売り物を型ラボの型別プラン（A_hit/B_hit/…/F_hit）から
-#:    **段の商品 T_firm/T_mid/T_axis/T_upset**（軸信頼で固め／広め／荒れに分ける）へ
-#:    差し替えた。段の商品は**軸信頼ゲートと日次上限の対象外**なので、1日の件数も
-#:    （09-14 まで 43〜67件 ↔ 09-15 は 79件）、どのレースを売るかも、買い方も違う。
-#:    **商品が違えば母集団も買い方も違う**——08-29 のときと同じ理由で、ここより前の
-#:    累積を混ぜると「別の商品の成績」を段の商品の実績として読むことになる。
-#:    9車は従来のプランのままだが、7車と同じ台帳の合計に入るので一緒に数え直す。
-REVIEW_EPOCH = "2026-09-15"
+#: 🔴 **2026-09-15 の経緯（起点を一度移して、同日に戻した）。**
+#:    この日だけ7車の売り物を**段の商品 T_firm/T_mid/T_axis/T_upset** へ差し替え、
+#:    PR#581 で起点を 2026-09-15 へ移して台帳を分けた。ところが同日の実績が悪く、
+#:    PR#583 で **2026-09-16 から段の販売を止めて 9/14 までの規則へ戻した**
+#:    （`src.type_lab.TIER_SELL_ENABLED = False`。段の行は検証用に生成・採点を継続）。
+#:    → ユーザー決定「夜間レビューは 9/15 のみ除外」: 起点は 2026-08-29 のまま、
+#:      **9/15 の1日だけを `EXCLUDED_DAYS` で累積・台帳・基準から外す**。
+REVIEW_EPOCH = "2026-08-29"
 
 #: 起点の意味（レポートの見出しに出す）。起点を動かしたら一緒に書き換える。
-REVIEW_EPOCH_LABEL = "7車を段の商品へ差し替えた日"
+REVIEW_EPOCH_LABEL = "型ラボ全面移行日"
+
+#: 🔴 **累積から除外する日**（日付 → 理由）。起点以降でも、売っていた商品が違う日は
+#:    前向きの数に入れない。ここに入れた日は次の**すべて**から外れる:
+#:
+#:    - §1 入稿件数の基準日（`median_submits`）
+#:    - §4 ゲートの累積（`drop_excluded_days`）
+#:    - §5 自信ありの累積（同上）
+#:    - §6 台帳への追記（`append_ledger`）と台帳の集計（`section_escalate`）
+#:
+#:    その日自体のレビューを流したときは、**レポート（§1〜§3 の当日の数字・異常検知・
+#:    通知）は通常どおり出し、台帳へは積まない**。冒頭に除外日だと明記する。
+EXCLUDED_DAYS: dict[str, str] = {
+    "2026-09-15": "段商品を売った日・9/16 に販売停止・ユーザー決定",
+}
+
+
+def _day_str(v: object) -> str:
+    """日付を `YYYY-MM-DD` に揃える（DATE 型・TEXT・`YYYYMMDD` のどれでも）。
+
+    🔴 `race_date` の型はテーブルごとに違う（`wt_races` と `type_lab_picks` で
+       DATE ↔ TEXT）。文字列比較の前に揃えないと除外が黙って効かない。
+    """
+    s = str(v)[:10]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
+
+def is_excluded_day(v: object) -> bool:
+    """累積から除外する日か（`EXCLUDED_DAYS`）。"""
+    return _day_str(v) in EXCLUDED_DAYS
+
+
+def drop_excluded_days(rows: list, key: str = "race_date") -> list:
+    """除外日の行を落とす（dict でも属性を持つオブジェクトでもよい）。"""
+    def day_of(r: object) -> object:
+        return r.get(key) if isinstance(r, dict) else getattr(r, key, "")
+    return [r for r in rows if not is_excluded_day(day_of(r))]
+
+
+def excluded_days_note() -> str:
+    """レポート冒頭に出す「累積から除外した日」の1行。"""
+    return "、".join(f"{d}（{why}）" for d, why in sorted(EXCLUDED_DAYS.items()))
+
+
+#: 起点に対応する台帳ファイル名の例外（接尾辞なしで作られていた台帳）。
+_LEGACY_LEDGER_NAMES = {"2026-08-29": "type_lab_nightly_ledger.csv"}
 
 
 def ledger_path(epoch: str = REVIEW_EPOCH) -> Path:
@@ -123,10 +170,15 @@ def ledger_path(epoch: str = REVIEW_EPOCH) -> Path:
     🔴 **起点を動かしたら台帳も分ける。** 同じファイルに積み足すと §6 が旧起点からの
        累積を合算し、「100件たまった」と言っている件数の大半が別商品になる。
        旧台帳は消さず・書き換えず・読まないまま残す（非破壊のリセット）。
-       2026-08-29〜09-14 の台帳は `type_lab_nightly_ledger.csv`（接尾辞なし）。
+    🔴 起点 2026-08-29 の台帳は**接尾辞なし** `type_lab_nightly_ledger.csv`
+       （分ける仕組みより前に作られた）。起点を 08-29 へ戻したので、ここを読み・積む。
+       PR#581〜#583 の間にできうる `type_lab_nightly_ledger_20260915.csv` は読まない
+       （消さない）。
     """
-    return REPO / "data" / "analysis" / (
-        f"type_lab_nightly_ledger_{epoch.replace('-', '')}.csv")
+    name = _LEGACY_LEDGER_NAMES.get(epoch)
+    if name is None:
+        name = f"type_lab_nightly_ledger_{epoch.replace('-', '')}.csv"
+    return REPO / "data" / "analysis" / name
 
 
 LEDGER = ledger_path()
@@ -139,9 +191,10 @@ ESCALATE_MIN_N = 100
 #: 異常検知で「入稿が少なすぎる」と言う閾値（直近7日の中央値に対する比）。
 LOW_SUBMIT_RATIO = 0.5
 
-#: 「入稿が少なすぎる」を判定するのに要る基準日（起点以降・開催あり）の最少日数。
-#: 🔴 **起点より前の日を基準に含めない**（段の商品は日次上限の外なので件数の水準が違う）。
-#:    起点直後で足りない日は NG にも OK にもせず「判定しない」と明示する。
+#: 「入稿が少なすぎる」を判定するのに要る基準日（起点以降・除外日を除く・開催あり）の最少日数。
+#: 🔴 **起点より前の日と除外日を基準に含めない**（2026-09-15 の段の商品は日次上限の外で
+#:    件数の水準が違う: 09-14 まで 43〜67件 ↔ 09-15 は 79件）。
+#:    基準日が足りない日は NG にも OK にもせず「判定しない」と明示する。
 LOW_SUBMIT_MIN_BASE_DAYS = 3
 
 
@@ -604,13 +657,13 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
         # 🔴 黙って OK にしない（起点直後に「入稿が止まった」を見逃すことになる）。
         #    `----` 行は HTML で「情報」、課題通知（notify_issues）では数えない。
         out.append(f"  ---- 入稿 {len(alive)}件（{detail}）— 件数の判定なし："
-                   f"起点 {REVIEW_EPOCH} 以降の基準日が {n_base}日"
+                   f"起点 {REVIEW_EPOCH} 以降（除外日を除く）の基準日が {n_base}日"
                    f"（{LOW_SUBMIT_MIN_BASE_DAYS}日たまるまで比べない）")
     elif len(alive) < med * LOW_SUBMIT_RATIO:
-        ng(f"入稿 {len(alive)}件（{detail}）— 直近7日（起点以降 {n_base}日）の"
+        ng(f"入稿 {len(alive)}件（{detail}）— 直近7日（除外日を除く {n_base}日）の"
            f"中央値 {med}件 を大きく下回る")
     else:
-        ok(f"入稿 {len(alive)}件（{detail}）— 直近7日（起点以降 {n_base}日）の"
+        ok(f"入稿 {len(alive)}件（{detail}）— 直近7日（除外日を除く {n_base}日）の"
            f"中央値 {med}件")
 
     # 1レース2商品（2026-08-29 に実際に起きた型。生成側・読み側・入稿ループの
@@ -694,16 +747,17 @@ def median_submits(counts: dict[str, int], day: str, epoch: str = REVIEW_EPOCH,
                    ) -> tuple[int | None, int]:
     """日ごとの入稿件数から (中央値 | None, 基準日数) を出す（DB に触らない部分）。
 
-    - 当日と、起点より前の日は数えない
+    - 当日と、起点より前の日と、除外日（`EXCLUDED_DAYS`）は数えない
     - 開催が無い日（0件）は数えない
     - 基準日が `min_days` に足りなければ中央値は None（＝判定しない）
 
-    🔴 起点より前を混ぜない理由: 段の商品（2026-09-15〜）は日次上限の外で、
-       件数の水準が旧商品と違う（09-14 まで 43〜67件 ↔ 09-15 は 79件）。
-       混ぜると基準が下へ引っ張られ、本当に落ちた日を見逃す。
+    🔴 除外日を混ぜない理由: 2026-09-15 の段の商品は日次上限の外で、
+       件数の水準が違う（09-14 まで 43〜67件 ↔ 09-15 は 79件）。
+       混ぜると基準が上へ引っ張られ、普通の日を「少なすぎる」と言いうる。
     """
     vals = sorted(n for d, n in counts.items()
-                  if epoch <= str(d)[:10] < day and int(n) > 0)
+                  if epoch <= _day_str(d) < day and not is_excluded_day(d)
+                  and int(n) > 0)
     if len(vals) < min_days:
         return None, len(vals)
     return vals[len(vals) // 2], len(vals)
@@ -917,9 +971,10 @@ def reference_block(sold, pool, cars_of: dict[str, int] | None,
         joined = "、".join(f"{p}/{c}車 {n}件" for (p, c), n in sorted(missing.items()))
         lines.append(f"  参照分布なし: {joined}")
         if any(p in TIER_PLAN_KEYS for p, _ in missing):
-            lines.append("    ※ 段の商品（T_firm/T_mid/T_axis/T_upset）は 2026-09-15 新設で"
-                         "ペーパー行が無い。**旧プランの分布は当てはめない**"
-                         "（母集団も買い方も違う）。これらは §6 の台帳で前向きに積む。")
+            lines.append("    ※ 段の商品（T_firm/T_mid/T_axis/T_upset）は 2026-09-15 の1日だけ売り、"
+                         "9/16 に販売停止（検証用に生成・採点は継続）。ペーパー行が無いので"
+                         "**旧プランの分布は当てはめない**（母集団も買い方も違う）。"
+                         "この日は累積（§4〜§6）からも除外している。")
     return {"boot": boot, "roi": s.roi or 0.0, "net_hit": s.net_hit_rate or 0.0,
             "n_covered": len(covered), "n_total": len(sold), "missing": missing,
             "missing_lines": lines}
@@ -1002,15 +1057,13 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
     ⚠️ 累積は `REVIEW_EPOCH` から数え直す。ゲートの試験自体は 2026-08-27 に
        始まっているが、その2日間は**売っていた商品が旧ランク**で母集団が違う。
 
-    🔴🔴 **2026-09-15 から、7車で売る商品にゲートは掛かっていない。** 段の商品
-       （T_*）と `A_ana` はゲート対象外（`AXIS_GATE_EXEMPT_PLANS`）、9車は
-       `passes_axis_gate` が素通しにする。以前の母集団（`SELLABLE_PLAN_KEYS`）は
-       段の商品を含むので、**全部が「ゲート通過」側に入り**通過側の成績を段の
-       商品の成績で上書きしていた。
+    🔴🔴 **2026-09-15 の1日だけ、7車で売った商品にゲートは掛かっていなかった。**
+       段の商品（T_*）はゲート対象外で、`SELLABLE_PLAN_KEYS` を母集団にすると
+       **全部が「ゲート通過」側に入る**。9/16 に段の販売を止めて型別プランへ戻した
+       （`TIER_SELL_ENABLED = False`）が、段の行は検証用に生成され続ける。
        → 母集団は「**ゲートの閾値を持つプラン**（`AXIS_GATE_PLANS`）で、
-         型別の規則なら売っていた1行」に限る。型ラボは比較台として7車でも
-         型別プランを組み続けているので、ゲートが分けるかどうかは引き続き測れる。
-         ただし**今は売り物を動かしていないゲートの参考値**として読むこと。
+         型別の規則なら売っていた1行」に限る（段の行・`A_ana`・9車は入らない）。
+       → 累積は除外日（`EXCLUDED_DAYS`＝2026-09-15）を落としてから数える。
     """
     out: list[str] = []
 
@@ -1035,15 +1088,15 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
 
     sellable = gate_population(live)
     out.append("  ※ 母集団は `type_lab_picks`（モデル側の行）。売った商品ではない\n  　 ——ゲートで落ちた側は売っていないので、売った側だけでは比べられない。")
-    out.append("  ※ 2026-09-15〜 7車の売り物（段の商品 T_*・A_ana）はゲート対象外。"
-               "ここは**比較台として組み続けている型別プラン**で、\n"
-               "  　 ゲートの閾値を持つプランだけを見る（今は売り物を動かしていない参考値）。")
+    out.append("  ※ ゲートの閾値を持つ型別プラン（7車）だけを見る。段の商品 T_*・A_ana・"
+               "9車はゲートで分けられないので入れない。")
     out.append(f"  当日（{day}）")
     out.append(line("ゲート通過", [d for d in sellable if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in sellable if not _gate_ok(d)]))
 
-    cum = gate_population(_live_since(REVIEW_EPOCH, day))
-    out.append(f"  累積（{REVIEW_EPOCH} 〜 {day}・前向き実地検証）")
+    cum = gate_population(drop_excluded_days(_live_since(REVIEW_EPOCH, day)))
+    out.append(f"  累積（{REVIEW_EPOCH} 〜 {day}・除外日 {'・'.join(sorted(EXCLUDED_DAYS))}"
+               f" を除く・前向き実地検証）")
     out.append(line("ゲート通過", [d for d in cum if _gate_ok(d)]))
     out.append(line("ゲート落ち", [d for d in cum if not _gate_ok(d)]))
     out.append("    ※ 期待は「落ちた側がはっきり悪い」（20か月の台では 通過 27.2%/83.1%"
@@ -1170,8 +1223,11 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
             for s in subs}
 
     by_day: dict[str, list] = {}
-    for r in races:
-        by_day.setdefault(str(r.race_date), []).append(r)
+    # 🔴 除外日（2026-09-15・段の商品を売った日）は世代の判定にも対照にも入れない。
+    for r in drop_excluded_days(races):
+        by_day.setdefault(_day_str(r.race_date), []).append(r)
+    if EXCLUDED_DAYS:
+        out.append(f"  ※ 累積から除外した日: {excluded_days_note()}")
 
     eras: dict[str, list[str]] = {}
     for d, rows in by_day.items():
@@ -1291,6 +1347,11 @@ def append_ledger(day: str, sold, brk: dict, race_meta: dict | None = None) -> N
         print(f"[nightly_review] {day} は起点 {REVIEW_EPOCH} より前なので台帳 "
               f"{LEDGER.name} へは積まない")
         return
+    # 🔴 除外日も積まない（レポートは出すが、累積には入れない）。
+    if is_excluded_day(day):
+        print(f"[nightly_review] {day} は累積から除外した日（{EXCLUDED_DAYS[_day_str(day)]}）"
+              f"なので台帳 {LEDGER.name} へは積まない")
+        return
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     new = not LEDGER.exists()
     race_meta = race_meta or {}
@@ -1341,12 +1402,17 @@ def section_escalate(pool) -> list[str]:
        件数が足りたときに「最下位がどれだけ離れているか」だけを出す。
     """
     out: list[str] = [f"  起点 {REVIEW_EPOCH}（{REVIEW_EPOCH_LABEL}）からの累積"
-                      f"（台帳 {LEDGER.name}）。起点より前の台帳は参照しない。"]
+                      f"（台帳 {LEDGER.name}）。他の起点の台帳は参照しない。"]
+    if EXCLUDED_DAYS:
+        out.append(f"  累積から除外した日: {excluded_days_note()}")
     if not LEDGER.exists():
         return out + ["  台帳がまだ無い（次回から積み上がる）"]
     agg: dict[tuple[str, str], dict[str, int]] = {}
     with LEDGER.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
+            # 🔴 除外日の行が台帳に紛れていても数えない（手で流した・旧コードが積んだ等）。
+            if is_excluded_day(r.get("date") or ""):
+                continue
             k = (r.get("dim") or "plan", r.get("key") or r.get("plan_key") or "—")
             a = agg.setdefault(k, {x: 0 for x in
                                    ("n", "bet", "payout", "n_net_hits")})
@@ -1414,6 +1480,12 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append(f"前向き確認の起点 {REVIEW_EPOCH}（{REVIEW_EPOCH_LABEL}）"
                  f"— §1 の件数基準・§4〜§6 の累積はここから数える。"
                  f"§2 の参照分布だけはペーパー行（段の商品には無い）を相手にする。")
+    if EXCLUDED_DAYS:
+        lines.append(f"累積から除外した日: {excluded_days_note()}"
+                     f"— §1 の件数基準・§4〜§6 の累積・台帳のいずれにも入れない。")
+    if is_excluded_day(day):
+        lines.append(f"⚠️ **この日（{day}）は累積から除外した日。** §1〜§3 の当日の数字は"
+                     f"出すが、台帳（§6）へは積まず、§4〜§6 の累積にも入らない。")
     lines.append("")
 
     lines.append("## §1 異常検知 — **単日で黒白がつく唯一の層。ここだけは今日直す**")

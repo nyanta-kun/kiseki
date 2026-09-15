@@ -55,7 +55,7 @@ keirin/
 │   ├── weekly_retrain_wt.sh           # ★本番週次（cron 日23:30）
 │   ├── nightly_review.sh              # ★型ラボ夜間レビュー（VPS cron 00:10・前日分）
 │   ├── nightly_review_type_lab.py     # 夜間レビュー本体（§1〜§6・台帳は起点 REVIEW_EPOCH ごとに別ファイル）
-│   │                                   # 2026-09-15 に起点を移してリセット（段の商品へ差し替え）
+│   │                                   # 起点 2026-08-29・2026-09-15（段の商品を売った日）だけ累積から除外
 │   ├── nightly_report_html.py         # 夜間レビューの HTML（数字は本体の関数を呼ぶ）
 │   ├── nightly_triage.sh              # Mac 側。Claude が §1〜§6 から課題を仕分ける
 │   ├── notify_issues.py               # 夜間レビュー §1 の異常 → Discord(review)

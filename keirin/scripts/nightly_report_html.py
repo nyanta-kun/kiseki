@@ -204,7 +204,15 @@ def build(day: str, n_boot: int = 2000) -> str:
     A(f'<p class="sub">生成 {datetime.now():%Y-%m-%d %H:%M}　／　'
       f'売った商品＝netkeirin_submissions + bet_detail　／　'
       f'前向き確認の起点 {esc(NR.REVIEW_EPOCH)}（{esc(NR.REVIEW_EPOCH_LABEL)}）'
-      f'・台帳 {esc(NR.LEDGER.name)}</p>')
+      f'・台帳 {esc(NR.LEDGER.name)}'
+      + (f'　／　累積から除外した日 {esc(NR.excluded_days_note())}'
+         if NR.EXCLUDED_DAYS else '')
+      + '</p>')
+    if NR.is_excluded_day(day):
+        # 🔴 除外日そのもののページでは、当日の数字を累積の一部と読まれないよう先に言う。
+        A(f'<p class="warnbox"><b>この日（{esc(day)}）は累積から除外した日</b>'
+          f'（{esc(NR.EXCLUDED_DAYS[NR._day_str(day)])}）。§1〜§3 の当日の数字は出すが、'
+          f'台帳（§6）へは積まず、§4〜§6 の累積にも入らない。</p>')
 
     # KPI
     A('<div class="kpis">')
