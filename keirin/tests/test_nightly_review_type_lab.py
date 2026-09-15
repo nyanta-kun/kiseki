@@ -13,8 +13,10 @@
    足すと、1商品が4回数えられて母集団が4倍に見える
 6. **狙い帯の判定は `win_tf_odds`（確定三連単）で行う。** `final_odds` は的中時しか
    入らないので、外れたレースの荒れ具合が測れず「狙い違い」と「買い目違い」を分離できない
-7. **累積は起点（`REVIEW_EPOCH`）から数え、台帳も起点ごとに分ける**（2026-09-15 リセット）。
-   旧台帳は消さず・読まない。起点より前の日は今の台帳へ積まない
+7. **累積は起点（`REVIEW_EPOCH`＝2026-08-29）から数え、台帳も起点ごとに分ける。**
+   他の起点の台帳は消さず・読まない。起点より前の日は今の台帳へ積まない
+7b. **除外日（`EXCLUDED_DAYS`＝2026-09-15）は累積・基準・台帳のどれにも入れない。**
+   その日自体を流してもレポートは出し、台帳は増やさない
 8. **参照分布の無い商品を黙って落とさない。** 段の商品（T_*）にはペーパー行が無い
 9. **§4 の母集団にゲート対象外のプラン（段の商品など）を入れない**
 """
@@ -97,15 +99,15 @@ def test_台帳は同じ日を上書きする(tmp_path, monkeypatch):
             self.hit, self.net_hit, self.n_points = pay > 0, pay >= 10_000, 5
 
     brk = {"per_plan": {}, "gami_by_plan": {}}
-    m.append_ledger("2026-09-15", [_R("A_hit", 0)], brk)
-    m.append_ledger("2026-09-15", [_R("A_hit", 50_000)], brk)
+    m.append_ledger("2026-09-16", [_R("A_hit", 0)], brk)
+    m.append_ledger("2026-09-16", [_R("A_hit", 50_000)], brk)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
     assert len(rows) == 1, "同じ日が二重に積まれている"
     assert rows[0]["payout"] == "50000", "再実行で新しい値に置き換わっていない"
 
-    m.append_ledger("2026-09-16", [_R("A_hit", 0)], brk)
+    m.append_ledger("2026-09-17", [_R("A_hit", 0)], brk)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
-    assert {r["date"] for r in rows} == {"2026-09-15", "2026-09-16"}
+    assert {r["date"] for r in rows} == {"2026-09-16", "2026-09-17"}
 
 
 def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入る(tmp_path, monkeypatch):
@@ -123,7 +125,7 @@ def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入�
     brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {}}
     meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False,
                    "payout_band": "30_100"}}
-    m.append_ledger("2026-09-15", [_R("A_hit", 0)], brk, meta)
+    m.append_ledger("2026-09-16", [_R("A_hit", 0)], brk, meta)
     rows = list(csv.DictReader(ledger.open(encoding="utf-8")))
     got = {(r["dim"], r["key"]): r for r in rows}
     assert set(d for d, _ in got) == set(m.LEDGER_DIMS), "軸が欠けている"
@@ -286,18 +288,39 @@ class _Sold:
         self.payouts = [pay] if pay else []
 
 
-def test_起点は段の商品への差し替え日():
+def test_起点は型ラボ全面移行日のまま():
+    """🔴 2026-09-15 に一度 09-15 へ移したが、ユーザー決定で 08-29 に戻した（9/15 のみ除外）。"""
     m = _load()
-    assert m.REVIEW_EPOCH == "2026-09-15"
+    assert m.REVIEW_EPOCH == "2026-08-29"
+    assert m.REVIEW_EPOCH_LABEL == "型ラボ全面移行日"
 
 
-def test_台帳は起点ごとに別ファイルで旧台帳を指さない():
+def test_除外日は2026_09_15だけで理由がある():
+    m = _load()
+    assert set(m.EXCLUDED_DAYS) == {"2026-09-15"}
+    assert "段" in m.EXCLUDED_DAYS["2026-09-15"]
+
+
+def test_除外日の判定は日付の型に依らない():
+    """🔴 `race_date` は DATE と TEXT が混在する。揃えずに比べると除外が黙って効かない。"""
+    from datetime import date
+    m = _load()
+    assert m.is_excluded_day("2026-09-15")
+    assert m.is_excluded_day(date(2026, 9, 15))
+    assert m.is_excluded_day("20260915")
+    assert m.is_excluded_day("2026-09-15 00:00:00")
+    assert not m.is_excluded_day("2026-09-14")
+    assert not m.is_excluded_day(date(2026, 9, 16))
+
+
+def test_台帳は起点_08_29_の旧ファイルを読み書きする():
     m = _load()
     assert m.LEDGER == m.ledger_path(m.REVIEW_EPOCH)
-    assert m.LEDGER.name == "type_lab_nightly_ledger_20260915.csv"
-    # 🔴 2026-08-29〜09-14 の台帳（接尾辞なし）は非破壊で残し、読まない
-    assert m.LEDGER.name != "type_lab_nightly_ledger.csv"
-    assert m.ledger_path("2026-08-29") != m.LEDGER
+    # 🔴 2026-08-29〜の台帳は接尾辞なし（VPS に 09-14 まで 643行ある）
+    assert m.LEDGER.name == "type_lab_nightly_ledger.csv"
+    # PR#581〜#583 の間にできうる 09-15 起点の台帳は指さない
+    assert m.ledger_path("2026-09-15").name == "type_lab_nightly_ledger_20260915.csv"
+    assert m.ledger_path("2026-09-15") != m.LEDGER
 
 
 def test_起点より前の日は台帳へ積まない(tmp_path, monkeypatch):
@@ -305,21 +328,45 @@ def test_起点より前の日は台帳へ積まない(tmp_path, monkeypatch):
     ledger = tmp_path / "ledger.csv"
     monkeypatch.setattr(m, "LEDGER", ledger)
     brk = {"per_plan": {}, "gami_by_plan": {}}
-    m.append_ledger("2026-09-14", [_Sold("k", "F_sign")], brk)
-    assert not ledger.exists(), "起点より前の日が新しい台帳へ積まれている"
-    m.append_ledger("2026-09-15", [_Sold("k", "T_firm")], brk)
+    m.append_ledger("2026-08-28", [_Sold("k", "7C")], brk)
+    assert not ledger.exists(), "起点より前の日が台帳へ積まれている"
+    m.append_ledger("2026-08-29", [_Sold("k", "A_hit")], brk)
     assert ledger.exists()
 
 
-def test_発火判定は今の台帳だけを読む(tmp_path, monkeypatch):
+def test_除外日は台帳へ積まず既存の行も変えない(tmp_path, monkeypatch):
     m = _load()
-    old = tmp_path / "type_lab_nightly_ledger.csv"
-    old.write_text("date,dim,key,n,bet,payout,n_hits,n_net_hits\n"
-                   "2026-09-01,plan,A_hit,500,5000000,1000,0,0\n", encoding="utf-8")
-    monkeypatch.setattr(m, "LEDGER", tmp_path / "type_lab_nightly_ledger_20260915.csv")
+    ledger = tmp_path / "ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    brk = {"per_plan": {}, "gami_by_plan": {}}
+    m.append_ledger("2026-09-15", [_Sold("k", "T_firm")], brk)
+    assert not ledger.exists(), "除外日が台帳へ積まれている"
+    m.append_ledger("2026-09-14", [_Sold("k", "A_hit")], brk)
+    before = ledger.read_text(encoding="utf-8")
+    m.append_ledger("2026-09-15", [_Sold("k", "T_firm", pay=50_000)], brk)
+    assert ledger.read_text(encoding="utf-8") == before, "除外日の実行で台帳が書き換わった"
+    m.append_ledger("2026-09-16", [_Sold("k", "A_hit")], brk)
+    dates = {r["date"] for r in csv.DictReader(ledger.open(encoding="utf-8"))}
+    assert dates == {"2026-09-14", "2026-09-16"}
+
+
+def test_発火判定は今の台帳だけを読み除外日を数えない(tmp_path, monkeypatch):
+    m = _load()
+    head = "date,dim,key,n,bet,payout,n_hits,n_net_hits\n"
+    cur = tmp_path / "type_lab_nightly_ledger.csv"
+    cur.write_text(head
+                   + "2026-09-14,plan,A_hit,7,70000,10000,1,1\n"
+                   # 除外日の行が紛れていても数えない
+                   + "2026-09-15,plan,A_hit,900,9000000,0,0,0\n", encoding="utf-8")
+    other = tmp_path / "type_lab_nightly_ledger_20260915.csv"
+    other.write_text(head + "2026-09-15,plan,T_firm,500,5000000,1000,0,0\n",
+                     encoding="utf-8")
+    monkeypatch.setattr(m, "LEDGER", cur)
     out = "\n".join(m.section_escalate({}))
-    assert "A_hit" not in out and "500" not in out, "旧台帳の件数が混ざっている"
-    assert "台帳がまだ無い" in out
+    assert "累積    7件" in out, out
+    assert "907" not in out and "900" not in out, "除外日の行を数えている"
+    assert "T_firm" not in out and "500" not in out, "他の起点の台帳が混ざっている"
+    assert "累積から除外した日: 2026-09-15" in out
 
 
 def test_参照の無いプランは発火判定できないと明示する(tmp_path, monkeypatch):
@@ -327,23 +374,97 @@ def test_参照の無いプランは発火判定できないと明示する(tmp_
     ledger = tmp_path / "l.csv"
     monkeypatch.setattr(m, "LEDGER", ledger)
     brk = {"per_plan": {}, "gami_by_plan": {}}
-    m.append_ledger("2026-09-15", [_Sold(f"k{i}", "T_upset") for i in range(120)], brk)
+    m.append_ledger("2026-09-16", [_Sold(f"k{i}", "T_upset") for i in range(120)], brk)
     out = "\n".join(m.section_escalate({("A_hit", 7): [(10_000, 0)]}))
     assert "T_upset" in out and "参照分布なし" in out
 
 
-def test_入稿件数の基準は起点以降の日だけ():
+def test_入稿件数の基準から除外日を外す():
     m = _load()
     counts = {"2026-09-12": 46, "2026-09-13": 55, "2026-09-14": 53,
-              "2026-09-15": 79, "2026-09-16": 81, "2026-09-17": 0}
-    # 起点前の3日を混ぜない → 基準日 2日（09-17 は開催なし）で判定しない
-    med, n = m.median_submits(counts, "2026-09-18")
-    assert (med, n) == (None, 2)
-    counts["2026-09-17"] = 77
-    med, n = m.median_submits(counts, "2026-09-18")
-    assert (med, n) == (79, 3)
+              "2026-09-15": 79, "2026-09-16": 81}
+    # 09-17 の基準: 09-12〜09-16 のうち 09-15 を除く4日 → 46,53,55,81 の [2] = 55
+    med, n = m.median_submits(counts, "2026-09-17")
+    assert n == 4, "除外日（09-15）を基準日に数えている"
+    assert med == 55
+    # 除外日自体を流したときの基準にも、除外日は入らない（当日なので元々入らない）
+    med, n = m.median_submits(counts, "2026-09-15")
+    assert n == 3 and med == 53
+    # 起点より前は数えない
+    assert m.median_submits({"2026-08-28": 30, "2026-08-29": 40}, "2026-08-30",
+                            min_days=1) == (40, 1)
     # 当日は基準に入れない
-    assert m.median_submits({"2026-09-15": 79}, "2026-09-15", min_days=1) == (None, 0)
+    assert m.median_submits({"2026-09-16": 79}, "2026-09-16", min_days=1) == (None, 0)
+
+
+def test_ゲートと自信ありの累積から除外日を落とす():
+    from datetime import date
+    m = _load()
+    rows = [{"race_date": "2026-09-14"}, {"race_date": "2026-09-15"},
+            {"race_date": date(2026, 9, 15)}, {"race_date": "2026-09-16"}]
+    assert [r["race_date"] for r in m.drop_excluded_days(rows)] == ["2026-09-14", "2026-09-16"]
+
+    class _R:
+        def __init__(self, d):
+            self.race_date = d
+    got = m.drop_excluded_days([_R(date(2026, 9, 15)), _R(date(2026, 9, 16))])
+    assert [str(r.race_date) for r in got] == ["2026-09-16"]
+    # 本体が実際にこの関数を通していること（§4 の累積・§5 の日ごとの束ね）
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    for fn_name in ("section_gate", "section_confident"):
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == fn_name)
+        calls = {getattr(c.func, "id", "") for c in ast.walk(fn) if isinstance(c, ast.Call)}
+        assert "drop_excluded_days" in calls, f"{fn_name} が除外日を落としていない"
+
+
+def _stub_db(monkeypatch, mod, sold):
+    """DB を引く関数を差し替える（`build_report` / HTML の `build` を DB なしで回す）。"""
+    empty = frozenset()
+    monkeypatch.setattr(mod, "_sold", lambda day: (list(sold), 0, []))
+    monkeypatch.setattr(mod, "_live_rows", lambda day: [])
+    monkeypatch.setattr(mod, "_baseline_pool", lambda: {})
+    monkeypatch.setattr(mod, "_band_baseline", lambda: {})
+    monkeypatch.setattr(mod, "_race_meta", lambda day: {})
+    monkeypatch.setattr(mod, "_recent_median_submits", lambda day: (50, 7))
+    monkeypatch.setattr(mod, "_skips", lambda day: {})
+    monkeypatch.setattr(mod, "_lineup_state",
+                        lambda day: mod.LineupState(empty, empty, empty, empty))
+    monkeypatch.setattr(mod, "_live_since", lambda s, e: [])
+    monkeypatch.setattr(mod, "section_confident", lambda day, n_boot, seed: ["  (stub)"])
+
+
+def test_除外日を流してもレポートは出て台帳は増えない(tmp_path, monkeypatch):
+    m = _load()
+    ledger = tmp_path / "type_lab_nightly_ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    _stub_db(monkeypatch, m, [_Sold("r1", "T_firm", pay=22_000), _Sold("r2", "T_upset")])
+
+    report, summary, n_ng = m.build_report("2026-09-15", n_boot=10, append=True)
+    assert "## §1 異常検知" in report and "## §6" in report
+    assert "累積から除外した日: 2026-09-15" in report
+    assert "この日（2026-09-15）は累積から除外した日" in report
+    assert "売った商品 2件" in summary, "除外日でも当日の数字は出す"
+    assert not ledger.exists(), "除外日の実行で台帳が作られた"
+
+    report, _, _ = m.build_report("2026-09-16", n_boot=10, append=True)
+    assert "この日（2026-09-16）は累積から除外した日" not in report
+    assert ledger.exists(), "除外日でない日は台帳へ積む"
+
+
+def test_HTML_も除外日を明記する(monkeypatch):
+    sys.path.insert(0, str(REPO / "scripts"))
+    spec = importlib.util.spec_from_file_location(
+        "nightly_report_html", REPO / "scripts" / "nightly_report_html.py")
+    h = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(h)
+    _stub_db(monkeypatch, h.NR, [_Sold("r1", "T_firm")])
+    body, _n_ng, total = h.build("2026-09-15", n_boot=10)
+    assert "累積から除外した日" in body
+    assert "この日（2026-09-15）は累積から除外した日" in body
+    assert total.n_races == 1
+    body, _, _ = h.build("2026-09-16", n_boot=10)
+    assert "この日（2026-09-16）は累積から除外した日" not in body
 
 
 def test_基準日が足りない日は件数を黙って_OK_にしない():

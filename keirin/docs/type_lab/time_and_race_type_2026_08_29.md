@@ -103,11 +103,14 @@
 `scripts/nightly_review_type_lab.py` の台帳を **プラン／種別／時間帯／看板の4軸**へ
 広げた（2026-08-29）。`REVIEW_EPOCH` からの累積で確かめる。
 
-> ⚠️ **2026-09-15 に `REVIEW_EPOCH` を 2026-09-15 へ移し、台帳をリセットした。**
-> 7車の売り物が段の商品（T_firm/T_mid/T_axis/T_upset）へ差し替わり、母集団も買い方も
-> 変わったため。2026-08-29〜09-14 の累積は旧台帳 `data/analysis/type_lab_nightly_ledger.csv`
-> に残してあり（VPS 上・643行）、新台帳 `type_lab_nightly_ledger_20260915.csv` とは合算しない。
-> この文書が問うた「種別・時間帯の差」は、段の商品について起点から積み直しになる。
+> ⚠️ **2026-09-15 の1日だけ累積から除外している**（`EXCLUDED_DAYS`）。
+> この日は7車の売り物が段の商品（T_firm/T_mid/T_axis/T_upset）へ差し替わり
+> （PR#581 で一度 `REVIEW_EPOCH` を 09-15 へ移して台帳を分けた）、実績が悪く
+> 9/16 から 9/14 までの規則へ戻した（PR#583・`TIER_SELL_ENABLED = False`）。
+> ユーザー決定「夜間レビューは 9/15 のみ除外」により、**起点は 2026-08-29 のまま**、
+> 台帳 `data/analysis/type_lab_nightly_ledger.csv` へ積み続け、09-15 は台帳にも
+> §1 の件数基準・§4〜§6 の累積にも入れない。`type_lab_nightly_ledger_20260915.csv`
+> （VPS にできていれば）は読まず、消さない。
 
 ## 6. 次の判断（ユーザー）
 
