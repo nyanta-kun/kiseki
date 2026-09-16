@@ -55,7 +55,14 @@ from ..services.keirin_sales_analysis import (
     build_route_breakdown,
     build_summary,
 )
-from ..services.keirin_sales_report import REVENUE_RATE, monthly_rollup
+from ..services.keirin_sales_report import (
+    REFERRAL_RATE,
+    REVENUE_RATE,
+    monthly_rollup,
+    net_revenue_yen,
+    referral_yen,
+    revenue_yen,
+)
 from ..services.keirin_settlement import Settlement, payout_per_100, settle
 from ..services.keirin_settlement_cache import (
     cached_settlement,
@@ -2211,6 +2218,8 @@ async def get_stats(
 #    通知は VPS の **keirin venv** から同じ値を読むので、ここへ数値を書き戻すと
 #    画面と通知で売上が食い違う。別名は後方互換のために残している。
 NETKEIRIN_REVENUE_RATE = REVENUE_RATE
+#: ベイベーさんへの紹介料率。こちらも別名のみ（正本は同じモジュール）。
+NETKEIRIN_REFERRAL_RATE = REFERRAL_RATE
 
 
 @router.get("/sold-performance")
@@ -2366,7 +2375,11 @@ async def get_netkeirin_sales(
             "n_sold": r["n_sold"],
             "sold_points": r["sold_points"],
             "sold_paid_points": r["sold_paid_points"],
-            "revenue_yen": round(int(r["sold_paid_points"] or 0) * NETKEIRIN_REVENUE_RATE),
+            # 総額・紹介料・手取りの3点を返す。🔴 **画面が掛け直さない**
+            #    （率も端数処理もここだけに置く）。
+            "revenue_yen": revenue_yen(r["sold_paid_points"]),
+            "referral_yen": referral_yen(revenue_yen(r["sold_paid_points"])),
+            "net_revenue_yen": net_revenue_yen(revenue_yen(r["sold_paid_points"])),
             "avg_sold_points": r["avg_sold_points"],
             "avg_sold_minutes": r["avg_sold_minutes"],
             "avg_sold_hour": r["avg_sold_hour"],
@@ -2413,7 +2426,12 @@ async def get_netkeirin_sales(
             "total_sold_paid_points": total_sold_paid_points,
             "total_n_sold": total_n_sold,
             "revenue_rate": NETKEIRIN_REVENUE_RATE,
-            "total_revenue_yen": round(total_sold_paid_points * NETKEIRIN_REVENUE_RATE),
+            "total_revenue_yen": revenue_yen(total_sold_paid_points),
+            # 🔴 紹介料は**期間の売上（円）から**出す（日別の紹介料を足さない）。
+            #    段ごとに切り捨てる決まりで、足すと端数が積み上がる。
+            "referral_rate": NETKEIRIN_REFERRAL_RATE,
+            "total_referral_yen": referral_yen(revenue_yen(total_sold_paid_points)),
+            "total_net_revenue_yen": net_revenue_yen(revenue_yen(total_sold_paid_points)),
         },
     })
 
@@ -2539,11 +2557,15 @@ async def get_netkeirin_analysis(
 
     daily = build_daily([dict(r) for r in daily_rows])
     races = build_races(races_src)
+    # 🔴 金額はここで確定させる（フロントで有償ptへ率を掛け直さない）。
+    #    掛け直すと紹介料の切り捨てが画面側に散らばり、売上タブと食い違う。
+    summary = build_summary(daily, races)
+    analysis_gross = revenue_yen(summary["sold_paid_points"])
 
     return JSONResponse(content={
         "from_date": from_dt.isoformat(),
         "to_date": to_dt.isoformat(),
-        "summary": build_summary(daily, races),
+        "summary": summary,
         "daily": daily,
         "races": races,
         "correlations": build_correlations(daily, races),
@@ -2553,6 +2575,10 @@ async def get_netkeirin_analysis(
         "by_origin": build_origin_breakdown(races),
         "by_route": build_route_breakdown(races),
         "revenue_rate": NETKEIRIN_REVENUE_RATE,
+        "referral_rate": NETKEIRIN_REFERRAL_RATE,
+        "total_revenue_yen": analysis_gross,
+        "total_referral_yen": referral_yen(analysis_gross),
+        "total_net_revenue_yen": net_revenue_yen(analysis_gross),
     })
 
 

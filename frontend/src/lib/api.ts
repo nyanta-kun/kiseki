@@ -1576,8 +1576,12 @@ export type NetkeirinSalesItem = {
   avg_sold_points: number | null;
   avg_sold_minutes: number | null;
   avg_sold_hour: number | null;
-  /** 売上金額(円) = sold_paid_points * revenue_rate（バックエンドで算出）。 */
+  /** 売上の総額(円) = sold_paid_points * revenue_rate（バックエンドで算出）。 */
   revenue_yen: number;
+  /** ベイベーさんへの紹介料(円) = revenue_yen * referral_rate の切り捨て。 */
+  referral_yen: number;
+  /** 手取り(円) = revenue_yen - referral_yen。**画面の「売上金額」はこちら**。 */
+  net_revenue_yen: number;
 };
 
 /**
@@ -1600,8 +1604,17 @@ export type NetkeirinSalesMonth = {
   payout_amount: number;
   /** 合計払戻 / 合計賭け金（日別の率の平均ではない）。 */
   recovery_rate_pct: number | null;
-  /** 売上金額(円) = sold_paid_points * revenue_rate。 */
+  /** その月の売上の総額(円)。 */
   revenue_yen: number;
+  /**
+   * その月の紹介料(円)。
+   *
+   * 🔴 **日別の紹介料を足した額ではない**（月の売上から切り捨てる）。
+   *    売上そのものと同じで、段ごとに丸めると端数が積み上がる。
+   */
+  referral_yen: number;
+  /** その月の手取り(円) = revenue_yen - referral_yen。 */
+  net_revenue_yen: number;
 };
 
 export type NetkeirinSalesResponse = {
@@ -1617,8 +1630,14 @@ export type NetkeirinSalesResponse = {
     total_n_sold: number;
     /** 販売有償ptに対する予想家取り分（0.30）。 */
     revenue_rate: number;
-    /** 期間の売上金額(円) = total_sold_paid_points * revenue_rate。 */
+    /** 期間の売上の総額(円) = total_sold_paid_points * revenue_rate。 */
     total_revenue_yen: number;
+    /** 売上(円)に対するベイベーさんの紹介料率(0.30)。 */
+    referral_rate: number;
+    /** 期間の紹介料(円)。 */
+    total_referral_yen: number;
+    /** 期間の手取り(円)。**画面の「売上金額」はこちら**。 */
+    total_net_revenue_yen: number;
   };
 };
 
@@ -1770,6 +1789,16 @@ export type KeirinSalesAnalysisResponse = {
   /** 経路別（ゲート通過 / 名義違い / 真の穴埋め）の内訳。 */
   by_route: Array<KeirinSalesBucket & { route: KeirinSubmissionRoute }>;
   revenue_rate: number;
+  /** 売上(円)に対するベイベーさんの紹介料率(0.30)。 */
+  referral_rate: number;
+  /**
+   * 期間合計の金額。🔴 **フロントで有償ptへ率を掛け直さないこと**
+   * （端数処理が散らばり、売上タブと食い違う）。
+   */
+  total_revenue_yen: number;
+  total_referral_yen: number;
+  /** 手取り。画面の「売上金額」はこちら。 */
+  total_net_revenue_yen: number;
 };
 
 /** 売上×成績の集計バケット（ランク別・出自別で共通）。 */
