@@ -273,6 +273,14 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
 // 異なるため、同一ページ内でタブ分割する（2026-08-03・ユーザー指摘）。
 // 期間フィルタは両タブ共通、ランク/粒度/累積ROIは成績タブ専用。
 // 2026-08-11: 「分析」タブを追加（netkeirin のレース別データを使った売上×的中の相関）。
+/**
+ * ベイベーさんへの紹介料の名目（2026-09-16 ユーザー決定・売上を 7:3 で分ける）。
+ *
+ * ⚠️ 金額と率は**必ず API が返した値**を使うこと（`keirin_sales_report` が正本）。
+ *    ここに置くのは表示名だけで、計算をフロントへ持ち込まない。
+ */
+const REFERRAL_LABEL = "ベイベー紹介料";
+
 // 2026-08-15: 「実売」タブを追加。**成績タブは picks_history（ペーパー成績）**で、
 //   netkeirin で売れるのは1レース1商品なので母集団が違う（実測: 入稿472件のうち
 //   250件＝53% に picks_history 行が無い）。実際に売った商品だけの数字はここで見る。
@@ -483,6 +491,8 @@ export default function KeirinStatsPage() {
         stake: i.stake_amount,
         payout: i.payout_amount,
         revenueYen: i.revenue_yen,
+        referralYen: i.referral_yen,
+        netRevenueYen: i.net_revenue_yen,
       }));
     }
     // 🔴 月別は**フロントで畳み直さない**（2026-09-13）。売上は「月合計の有償pt
@@ -497,6 +507,8 @@ export default function KeirinStatsPage() {
       stake: m.stake_amount,
       payout: m.payout_amount,
       revenueYen: m.revenue_yen,
+      referralYen: m.referral_yen,
+      netRevenueYen: m.net_revenue_yen,
     }));
   })();
   // 棒は「有償pt（下）＋ 無償pt（上）」の積み上げ。合計は従来の販売ptに一致する。
@@ -510,7 +522,9 @@ export default function KeirinStatsPage() {
     回収率: r.stake > 0 ? Math.round((r.payout / r.stake) * 1000) / 10 : null,
     // 系列としては描かない（有償ptの棒に比例するだけで、線にしても情報が増えない）。
     // 月別のときだけ棒の上へラベルで出し、ツールチップには常に補足行として出す。
-    売上金額: r.paidKnown ? r.revenueYen : null,
+    // 🔴 出すのは**手取り**（ベイベーさんへの紹介料を引いた額）。総額を載せると
+    //    棒の上のラベルだけが実際に入る額より大きくなる。
+    売上金額: r.paidKnown ? r.netRevenueYen : null,
   }));
   const maxSoldPoints = Math.max(...salesRows.map(r => r.soldPoints), 1);
   // 月別は棒の上に売上金額のラベルを載せるので、天井に当たらないよう2割の余白を
@@ -522,8 +536,11 @@ export default function KeirinStatsPage() {
     const step = 10 ** Math.max(Math.floor(Math.log10(padded)) - 1, 0);
     return Math.ceil(padded / step) * step;
   })();
-  // ツールチップ補足行用（日付/月 → 売上金額）。
-  const salesRevenueByKey = new Map(salesRows.map(r => [r.key, r.paidKnown ? r.revenueYen : null]));
+  // ツールチップ補足行用（日付/月 → 売上の内訳）。手取りと紹介料を並べて出す。
+  const salesRevenueByKey = new Map(salesRows.map(r => [
+    r.key,
+    r.paidKnown ? { net: r.netRevenueYen, referral: r.referralYen } : null,
+  ]));
   // 🔴 期間フィルタに依存しない全月（API が全期間で畳んで返す）。
   const salesMonths = salesData?.monthly ?? [];
   const monthsTotal = {
@@ -533,6 +550,10 @@ export default function KeirinStatsPage() {
     paid: salesMonths.reduce((a, m) => a + m.sold_paid_points, 0),
     paidKnown: salesMonths.every(m => m.paid_known),
     revenueYen: salesMonths.reduce((a, m) => a + m.revenue_yen, 0),
+    // 🔴 合計は**月ごとの確定額の足し上げ**（全期間の売上から改めて切り捨てない）。
+    //    実際に月ごとに支払う額の合計がここに出ていないと、表の行と合わない。
+    referralYen: salesMonths.reduce((a, m) => a + m.referral_yen, 0),
+    netRevenueYen: salesMonths.reduce((a, m) => a + m.net_revenue_yen, 0),
     recoveryPct: (() => {
       const stake = salesMonths.reduce((a, m) => a + m.stake_amount, 0);
       const payout = salesMonths.reduce((a, m) => a + m.payout_amount, 0);
@@ -896,13 +917,22 @@ export default function KeirinStatsPage() {
               <Tooltip content={<ChartTooltip footer={(l) => {
                 const rev = salesRevenueByKey.get(String(l));
                 return (
-                  <div className="flex items-center gap-1.5">
-                    <span style={{ color: "var(--chart-muted)" }}>売上金額</span>
-                    <span className="tabular-nums ml-auto pl-3 font-semibold"
-                          style={{ color: "var(--chart-fg)" }}>
-                      {rev != null ? `¥${rev.toLocaleString()}` : "—"}
-                    </span>
-                  </div>
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ color: "var(--chart-muted)" }}>売上金額</span>
+                      <span className="tabular-nums ml-auto pl-3 font-semibold"
+                            style={{ color: "var(--chart-fg)" }}>
+                        {rev ? `¥${rev.net.toLocaleString()}` : "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ color: "var(--chart-muted)" }}>{REFERRAL_LABEL}</span>
+                      <span className="tabular-nums ml-auto pl-3"
+                            style={{ color: "var(--chart-muted)" }}>
+                        {rev ? `−¥${rev.referral.toLocaleString()}` : "—"}
+                      </span>
+                    </div>
+                  </>
                 );
               }} />} />
               <Legend wrapperStyle={chartLegendStyle(11, 8)} iconSize={10} />
@@ -971,9 +1001,11 @@ export default function KeirinStatsPage() {
             </div>
           </div>
         )}
-        {/* 売上金額（= 販売有償pt × 30%）。総販売ptではなく**有償pt**が対象。
-            料率はバックエンド NETKEIRIN_REVENUE_RATE が正で、APIが算出済みの
-            値をそのまま表示する（フロントで再計算しない）。 */}
+        {/* 売上金額（= 販売有償pt × 30% − ベイベーさんへの紹介料）。総販売ptでは
+            なく**有償pt**が対象。料率も端数処理もバックエンドが正で、APIが
+            算出済みの値をそのまま表示する（フロントで再計算しない）。
+            🔴 大きく出すのは**手取り**。総額を大きく出すと、実際には入らない
+               紹介料ぶんまで収益として読むことになる。 */}
         {salesData && (
           <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 flex items-end justify-between gap-3 flex-wrap">
             <div>
@@ -984,13 +1016,20 @@ export default function KeirinStatsPage() {
                 {salesData.period_summary.total_sold_paid_points.toLocaleString()}
                 <span className="text-xs font-normal text-gray-400 ml-1">
                   × {(salesData.period_summary.revenue_rate * 100).toFixed(0)}%
+                  {` = ¥${salesData.period_summary.total_revenue_yen.toLocaleString()}`}
                 </span>
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-400 dark:text-gray-500">{REFERRAL_LABEL}</p>
+              <p className="text-sm font-bold text-gray-500 dark:text-gray-400 tabular-nums">
+                {`−¥${salesData.period_summary.total_referral_yen.toLocaleString()}`}
               </p>
             </div>
             <div className="text-right">
               <p className="text-xs text-gray-400 dark:text-gray-500">売上金額</p>
               <p className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {`¥${salesData.period_summary.total_revenue_yen.toLocaleString()}`}
+                {`¥${salesData.period_summary.total_net_revenue_yen.toLocaleString()}`}
               </p>
             </div>
           </div>
@@ -1006,7 +1045,7 @@ export default function KeirinStatsPage() {
       {salesMonths.length > 0 && (
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
-            月別の売上（販売有償pt × {((salesData?.period_summary.revenue_rate ?? 0.3) * 100).toFixed(0)}%）
+            月別の売上（{REFERRAL_LABEL}を引いた手取り）
             <span className="ml-1.5 font-normal text-gray-400 dark:text-gray-500">
               期間フィルタに関係なく全月
             </span>
@@ -1022,6 +1061,7 @@ export default function KeirinStatsPage() {
                   <th className="text-right font-medium py-1.5 px-2">有償pt</th>
                   <th className="text-right font-medium py-1.5 px-2">無償pt</th>
                   <th className="text-right font-medium py-1.5 px-2">回収率</th>
+                  <th className="text-right font-medium py-1.5 px-2">{REFERRAL_LABEL}</th>
                   <th className="text-right font-medium py-1.5 pl-2">売上金額</th>
                 </tr>
               </thead>
@@ -1048,8 +1088,11 @@ export default function KeirinStatsPage() {
                     }`}>
                       {m.recovery_rate_pct != null ? `${m.recovery_rate_pct}%` : "—"}
                     </td>
+                    <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                      {m.paid_known ? `−¥${m.referral_yen.toLocaleString()}` : "—"}
+                    </td>
                     <td className="py-1.5 pl-2 text-right font-bold text-emerald-600 dark:text-emerald-400">
-                      {m.paid_known ? `¥${m.revenue_yen.toLocaleString()}` : "—"}
+                      {m.paid_known ? `¥${m.net_revenue_yen.toLocaleString()}` : "—"}
                     </td>
                   </tr>
                 ))}
@@ -1078,18 +1121,22 @@ export default function KeirinStatsPage() {
                   }`}>
                     {monthsTotal.recoveryPct != null ? `${monthsTotal.recoveryPct}%` : "—"}
                   </td>
+                  <td className="py-1.5 px-2 text-right text-gray-400 dark:text-gray-500">
+                    {monthsTotal.paidKnown ? `−¥${monthsTotal.referralYen.toLocaleString()}` : "—"}
+                  </td>
                   <td className="py-1.5 pl-2 text-right text-emerald-600 dark:text-emerald-400">
-                    {monthsTotal.paidKnown ? `¥${monthsTotal.revenueYen.toLocaleString()}` : "—"}
+                    {monthsTotal.paidKnown ? `¥${monthsTotal.netRevenueYen.toLocaleString()}` : "—"}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
-            売上は「販売有償pt」が対象（無償ptは収益にならない）。集計はレース日の
+            売上は「販売有償pt」が対象（無償ptは収益にならない）。表示額は
+            {REFERRAL_LABEL}（売上の30%・切り捨て）を引いた手取り。集計はレース日の
             翌日に確定するため当月の行は途中集計で、売上は速報値。
             netkeirin の実際の入金額とは端数処理の分だけ数円ずれることがある
-            （2026-08 実測: 本表 ¥120,516 ／ 実入金 ¥120,517）。
+            （2026-08 実測: 総額 ¥120,516 ／ netkeirin の実入金 ¥120,517）。
           </p>
         </div>
       )}

@@ -287,8 +287,12 @@ export default function AnalysisTab({ data, loading }: {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <Stat label="売上（有償pt）" value={s.sold_paid_points.toLocaleString()}
                 sub={`総販売pt ${s.sold_points.toLocaleString()}`} />
-          <Stat label="売上金額" value={formatYen(Math.round(s.sold_paid_points * data.revenue_rate))}
-                sub={`有償pt × ${(data.revenue_rate * 100).toFixed(0)}%`} tone="good" />
+          {/* 🔴 **手取り**（ベイベーさんへの紹介料を引いた額）。総額と紹介料は
+              sub に出す。ここで有償ptへ率を掛け直すと端数処理が散らばり、
+              売上タブと食い違う（金額はすべて API が確定させている）。 */}
+          <Stat label="売上金額" value={formatYen(data.total_net_revenue_yen)}
+                sub={`総額 ${formatYen(data.total_revenue_yen)} − ベイベー ${formatYen(data.total_referral_yen)}`}
+                tone="good" />
           <Stat label="販売個数" value={s.n_sold.toLocaleString()} />
           <Stat label="的中率（ガミ除く）" value={formatPct(s.hit_rate_excl)}
                 sub={`${s.n_hits_excl_garami}/${s.n_predictions}`} />

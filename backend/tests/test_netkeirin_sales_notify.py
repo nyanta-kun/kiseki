@@ -66,6 +66,38 @@ def test_売上は有償ptから出す():
 
 
 # ---------------------------------------------------------------------------
+# ベイベーさんへの紹介料（2026-09-16 ユーザー決定・7:3）
+# ---------------------------------------------------------------------------
+
+def test_紹介料率の正本は1つ():
+    """🔴 写すと画面と Discord で紹介料が食い違う（売上率と同じ約束）。"""
+    from src.api.keirin_router import NETKEIRIN_REFERRAL_RATE
+
+    assert NETKEIRIN_REFERRAL_RATE is rep.REFERRAL_RATE
+
+
+def test_紹介料は売上の円に掛けて切り捨てる():
+    """🔴 掛ける対象は**円**。販売有償ptに掛けると 0.30 × 0.30 になり、
+    紹介料を実際の 1/10 に見せる。"""
+    assert rep.referral_yen(120_516) == 36_154      # 36,154.8 → 切り捨て
+    assert rep.referral_yen(9) == 2                 # 2.7 → 切り捨て
+    assert rep.referral_yen(None) == 0
+    assert rep.referral_yen(0) == 0
+
+
+def test_手取りは売上から紹介料を引いた額():
+    for gross in (0, 1, 9, 10, 3_276, 120_517):
+        assert rep.net_revenue_yen(gross) == gross - rep.referral_yen(gross)
+
+
+def test_紹介料は浮動小数を経由しない():
+    """⚠️ `int(x * 0.3)` は 0.3 が真の値よりわずかに小さく格納されるぶん、
+    桁が増えると本来割り切れる額で 1 円下振れしうる。整数演算なら厳密。"""
+    for gross in range(0, 300_000, 7):
+        assert rep.referral_yen(gross) == gross * 3 // 10
+
+
+# ---------------------------------------------------------------------------
 # 本文
 # ---------------------------------------------------------------------------
 
@@ -88,9 +120,20 @@ def test_当月ぶんの売上を出す():
     値は当月分だけなのに、月をまたいで積み上がった額だと読まれる。
     """
     msg = rep.build_sales_message(_summary())
-    assert f"{round(177015 * rep.REVENUE_RATE):,}" in msg        # 53,105円
+    assert f"{rep.net_revenue_yen(rep.revenue_yen(177015)):,}" in msg
     assert "8月の売上" in msg
     assert "累計" not in msg
+
+
+def test_売上は紹介料を引いた手取りで出す():
+    """🔴 総額を「売上」として太字で出すと、実際には入らない紹介料ぶんまで
+    収益として読むことになる。内訳は次の行に併記する。"""
+    msg = rep.build_sales_message(_summary())
+    gross = rep.revenue_yen(10920)
+
+    assert f"売上 **{rep.net_revenue_yen(gross):,} 円**" in msg
+    assert f"総額 {gross:,} 円" in msg
+    assert f"{rep.REFERRAL_NAME} {rep.referral_yen(gross):,} 円" in msg
 
 
 def test_日付は年月日で出す():
@@ -163,7 +206,8 @@ def test_自信ありのレースと的中と売上を出す():
     msg = rep.build_sales_message(_full_summary())
     assert "防府4R" in msg and "E_hit" in msg
     assert "的中" in msg and "75,880 円" in msg
-    assert f"{rep.revenue_yen(4230):,} 円" in msg      # そのレースの売上
+    # そのレースの売上（紹介料を引いた手取り）
+    assert f"{rep.net_revenue_yen(rep.revenue_yen(4230)):,} 円" in msg
     assert "4,230 pt" in msg
 
 
@@ -200,7 +244,8 @@ def test_的中レースの件数と売上を出す():
     msg = rep.build_sales_message(_full_summary())
     assert "14 / 49 R" in msg
     assert "28.6%" in msg                              # 的中率
-    assert f"{rep.revenue_yen(6220):,} 円" in msg      # 的中レースの売上
+    # 的中レースの売上（紹介料を引いた手取り）
+    assert f"{rep.net_revenue_yen(rep.revenue_yen(6220)):,} 円" in msg
     assert "23.4%" in msg                              # 当日売上に占める割合
 
 
@@ -355,6 +400,28 @@ def test_月別の売上は月合計の有償ptへ料率を掛ける():
     assert m["revenue_yen"] != sum(rep.revenue_yen(d["sold_paid_points"]) for d in days)
 
 
+def test_月別に紹介料と手取りが入る():
+    [m] = rep.monthly_rollup([_day("2026-08-04", 6815)])
+
+    assert m["referral_yen"] == rep.referral_yen(m["revenue_yen"])
+    assert m["net_revenue_yen"] == m["revenue_yen"] - m["referral_yen"]
+
+
+def test_月別の紹介料は月の売上から出す():
+    """🔴 日別の紹介料を足すと端数が積み上がる（売上そのものと同じ理由）。
+
+    月の額は月で完結していないと「その月に払う紹介料」として読めない。
+    """
+    days = [_day("2026-08-04", 6815), _day("2026-08-11", 14955),
+            _day("2026-08-14", 18265), _day("2026-08-22", 10255)]
+    [m] = rep.monthly_rollup(days)
+
+    assert m["referral_yen"] == rep.referral_yen(m["revenue_yen"])
+    # 日別合算（= 誤った出し方）とは実際に食い違う
+    assert m["referral_yen"] != sum(
+        rep.referral_yen(rep.revenue_yen(d["sold_paid_points"])) for d in days)
+
+
 def test_月別の回収率は合計払戻を合計賭け金で割る():
     """⚠️ 日別の率を平均すると賭け金の小さい日が過大に効く。"""
     days = [
@@ -401,6 +468,17 @@ def test_売上APIが月別を返す():
     assert "monthly" in keys
     assert "monthly_rollup" in {n.func.id for n in ast.walk(fn)
                                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+
+
+def test_売上APIが紹介料と手取りを返す():
+    """🔴 画面が率を掛け直すと端数処理が散らばり、タブごとに額が食い違う。
+
+    金額は API が確定させ、フロントはそのまま出すだけにする。
+    """
+    src = _sales_endpoint_source()
+    for key in ("referral_yen", "net_revenue_yen",
+                "total_referral_yen", "total_net_revenue_yen"):
+        assert f'"{key}"' in src, key
 
 
 def test_月別は期間フィルタを掛けずに集計する():

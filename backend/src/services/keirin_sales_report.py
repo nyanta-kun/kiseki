@@ -29,6 +29,10 @@
    コードブロックを折り返さず、幅の広い行が途中で切れてレイアウトが崩れる。
    通常テキストで**1行を短く**書くこと（端末幅で自然に折り返す）。
 
+🔴 **「売上」と書く額はすべて紹介料を引いた手取り**（2026-09-16）。総額と
+   紹介料は当日ぶんの内訳としてだけ出す。段ごとに切り捨てるので、レース別の
+   手取りを足しても当日の手取りとはぴったり一致しない（売上そのものと同じ）。
+
 本文は3節: 当日の売上 → 「自信あり」1レースの的中と売上 → 的中レースの売上。
 的中の定義は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを除く）で、
 ガミ（払戻＜賭け金）は「的中」と混ぜずに別の記号で出す。
@@ -45,6 +49,17 @@ from typing import Any
 #: （API も日次通知もこの値を読む。写して使わないこと）。
 REVENUE_RATE = 0.30
 
+#: ベイベーさんへの紹介料（2026-09-16 ユーザー決定）。7:3 で 3 を渡す。
+#: 🔴 **掛ける対象は「売上（円）」であって販売有償ptではない**
+#:    （pt に掛けると 0.30 × 0.30 になり紹介料を 1/10 に見せる）。
+#: 分数で持つのは `referral_yen` が整数演算で厳密に切り捨てるため。
+#: 率だけ書き換えれば計算も追随する（0.3 を別に書くと二重定義になる）。
+_REFERRAL_NUM, _REFERRAL_DEN = 3, 10
+REFERRAL_RATE = _REFERRAL_NUM / _REFERRAL_DEN
+
+#: 紹介料の名目。画面にも通知にもこの名前で出す。
+REFERRAL_NAME = "ベイベー"
+
 #: Discord へ送るときのタイムアウト（秒）
 _TIMEOUT = 15
 
@@ -56,6 +71,28 @@ def revenue_yen(sold_paid_points: int | float | None) -> int:
        そのまま掛けると売上を過大に見せる。
     """
     return round(int(sold_paid_points or 0) * REVENUE_RATE)
+
+
+def referral_yen(revenue: int | float | None) -> int:
+    """売上（円）から**ベイベーさんへの紹介料**（円）を出す。**切り捨て**。
+
+    ⚠️ 渡すのは `revenue_yen()` が返した**円**。販売有償ptを渡してはいけない。
+
+    ⚠️ **整数演算で割る**（`int(x * 0.3)` と書かない）。0.3 は二進で真の 0.3 より
+       わずかに小さく格納されるので、桁が増えると本来割り切れる額で 1 円
+       下振れしうる。`* 3 // 10` なら定義として厳密に切り捨てになる。
+    """
+    return max(int(revenue or 0), 0) * _REFERRAL_NUM // _REFERRAL_DEN
+
+
+def net_revenue_yen(revenue: int | float | None) -> int:
+    """紹介料を差し引いた**手取り**（円）。
+
+    🔴 画面にも通知にも「売上」として出すのはこちら。総額を売上として出すと、
+       実際には入らない紹介料ぶんを収益として読むことになる。
+    """
+    r = int(revenue or 0)
+    return r - referral_yen(r)
 
 
 def monthly_rollup(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -107,6 +144,11 @@ def monthly_rollup(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         m["recovery_rate_pct"] = (
             round(m["payout_amount"] / stake * 100, 1) if stake > 0 else None)
         m["revenue_yen"] = revenue_yen(m["sold_paid_points"])
+        # 🔴 **紹介料は「その月の売上」から出す**（日別の紹介料を足さない）。
+        #    売上そのものと同じ理由で、段ごとに切り捨てると端数が積み上がる。
+        #    月の額は月で完結していないと「その月に払う紹介料」として読めない。
+        m["referral_yen"] = referral_yen(m["revenue_yen"])
+        m["net_revenue_yen"] = m["revenue_yen"] - m["referral_yen"]
         out.append(m)
     return out
 
@@ -142,7 +184,7 @@ def _confident_lines(c: Mapping[str, Any] | None) -> list[str]:
     payout = int(c.get("payout") or 0)
     line2 = f"{mark}　払戻 {payout:,} 円"
     paid = int(c.get("sold_paid_points") or 0)
-    line3 = (f"売上 {revenue_yen(paid):,} 円"
+    line3 = (f"売上 {net_revenue_yen(revenue_yen(paid)):,} 円"
              f"（{int(c.get('n_sold') or 0):,} 点 / 有償 {paid:,} pt）")
     return [head, line2, line3]
 
@@ -167,7 +209,7 @@ def _hit_race_lines(r: Mapping[str, Any] | None) -> list[str]:
     share = f"　全体の {paid_hit / paid * 100:.1f}%" if paid else ""
     return [
         head,
-        f"売上 {revenue_yen(paid_hit):,} 円{share}",
+        f"売上 {net_revenue_yen(revenue_yen(paid_hit)):,} 円{share}",
         f"販売 {int(r.get('n_sold_hit') or 0):,} 点 / 有償 {paid_hit:,} pt",
     ]
 
@@ -187,16 +229,22 @@ def build_sales_message(s: Mapping[str, Any]) -> str:
     d = str(s["sale_date"])
     paid = int(s["sold_paid_points"] or 0)
     month_paid = int(s["month_sold_paid_points"] or 0)
+    gross = revenue_yen(paid)
+    month_gross = revenue_yen(month_paid)
     lines = [
         f"💰 **netkeirin 売上 {d[:4]}-{d[4:6]}-{d[6:]}**",
-        f"売上 **{revenue_yen(paid):,} 円**（販売有償pt × {REVENUE_RATE}）",
+        # 🔴 **太字にするのは手取り**（2026-09-16）。総額を「売上」として出すと、
+        #    実際には入らない紹介料ぶんまで収益として読むことになる。
+        #    内訳は次の行に出す（1行に詰めるとスマホで折り返して崩れる）。
+        f"売上 **{net_revenue_yen(gross):,} 円**",
+        f"（総額 {gross:,} 円 − {REFERRAL_NAME} {referral_yen(gross):,} 円）",
         f"販売 {int(s['n_sold'] or 0):,} 点",
         f"販売pt {int(s['sold_points'] or 0):,} pt"
         f"（販売有償pt {paid:,} pt）",
         # 🔴 **「累計」と書かない**（2026-09-13 ユーザー指摘）。値は当月分だけ
         #    （`sale_date LIKE 'YYYYMM%'`）なのに、月をまたいで積み上がった額だと
         #    読まれる。月を明示して「その月の売上」と書く。
-        f"{int(d[4:6])}月の売上 {revenue_yen(month_paid):,} 円"
+        f"{int(d[4:6])}月の売上 {net_revenue_yen(month_gross):,} 円"
         f"（{int(s['month_n_days'] or 0)}日 / 有償 {month_paid:,} pt）",
     ]
     lines += [""] + _confident_lines(s.get("confident"))
