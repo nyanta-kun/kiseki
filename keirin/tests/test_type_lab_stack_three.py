@@ -25,9 +25,40 @@ def _shape():
 
 # ───────────────────────── ① τ適応 ─────────────────────────
 
-def test_tau_adaptive_is_only_on_c_hit():
-    """🔴 τ適応は `C_hit` だけ。広げるなら測り直すこと（9車は未測定）。"""
-    assert [k for k, v in PLANS.items() if v.tau_adaptive] == ["C_hit"]
+def test_tau_adaptive_plans():
+    """🔴 τ適応を掛けるプラン。広げるなら測り直すこと（9車は未測定）。
+
+    2026-09-17 に `E_hit` を追加（ユーザー決定）。点数14固定 → 計画払戻の床で決める。
+    帯・券種・配分は変えていない。実測は `PLANS["E_hit"]` のコメント。
+    """
+    assert sorted(k for k, v in PLANS.items() if v.tau_adaptive) == ["C_hit", "E_hit"]
+
+
+def test_c_hit_keeps_the_default_tau_floor_and_cap():
+    """🔴 `E_hit` のためにプラン別の床・上限を足したとき、`C_hit` を巻き添えにしない。
+
+    既定（0/0）なら従来どおり `min_mean_payout`（入稿ゲートの2万円）と
+    `TAU_ADAPTIVE_MAX_LEGS`（=12）を使う。ここが 0 でなくなったら
+    2026-09-11 にユーザーが選んだ取引条件が黙って変わる。
+    """
+    c = PLANS["C_hit"]
+    assert c.tau_floor == 0 and c.tau_max_legs == 0
+
+
+def test_e_hit_tau_floor_is_the_price_band_the_user_chose():
+    """🔴 `E_hit` の床は商品の役割（平均想定払戻 3〜5万帯）から決めた値。
+
+    床を下げるほど表示的中は上がるが、平均想定払戻が帯から落ちる
+    （30,000 → 32,122円＝下端 / 25,000 以下は点数上限20に張り付いて床が効かない）。
+    35,000 は**帯を守れる最も低い床**（2026-09-17 ユーザー決定）。
+    `type_e.md` §0 のとおり `E_hit` の設計根拠は成績ではなくカバレッジと売上なので、
+    帯を壊す方向へ勝手に下げないことを固定する。
+    """
+    e = PLANS["E_hit"]
+    assert e.tau_floor == 35_000
+    assert e.tau_max_legs == 20
+    # 帯・券種・配分は据え置き（変えたのは点数の決め方だけ）
+    assert e.min_odds == 30.0 and e.bet_type == "trifecta" and e.alloc == "conf"
 
 
 def test_tau_adaptive_upper_bound_is_the_dial_the_user_chose():

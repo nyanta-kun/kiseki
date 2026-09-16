@@ -707,6 +707,19 @@ class Plan:
     #: 予測オッズ下限（0=差し込まない）。点数は変えず、確率最下位の1点と入れ替える。
     #: 🔴 **7車だけの操作**（`build_with_gate_fallback` が9車では外す）。
     underband_min: float = 0.0
+    #: τ適応の床（0 なら `build_with_gate_fallback` の `min_mean_payout`＝2万円）。
+    #:
+    #: 🔴 **商品ごとに「守りたい価格帯」が違うので、床はプラン別に持つ**（2026-09-17）。
+    #:    `C_hit` は入稿ゲートと同じ2万円でよいが、`E_hit` は平均想定払戻を
+    #:    **3〜5万帯**（`docs/sales_kpi.md`・pt/R 309 で最も売れる）に置くのが商品定義
+    #:    （`docs/type_lab/type_e.md` §0）なので、同じ床を使うと帯から落ちる。
+    tau_floor: int = 0
+    #: τ適応で積む点数の上限（0 なら `TAU_ADAPTIVE_MAX_LEGS`）。
+    #:
+    #: 🔴 **`TAU_ADAPTIVE_MAX_LEGS`（=12）はユーザーが `C_hit` 向けに選んだダイヤル**
+    #:    なので、他プランのためにあの定数を動かさない。`E_hit` は床 35,000円だと
+    #:    平均 16.9点になり 12 では床に届く前に頭打ちになる。
+    tau_max_legs: int = 0
     note: str = ""
 
 
@@ -824,9 +837,45 @@ PLANS: dict[str, Plan] = {
                   floor_mult=MIN_PAYOUT_MULT,
                   note="軸2車＋相手3点（相手4車のうち最人気1車を外す）"),
     # 型E 混戦・中 — 高い帯で点数を広げる。
+    # 🔴🔴 **2026-09-17: 点数を14固定から「計画払戻の床」に決めさせた**（ユーザー決定）。
+    #    帯（30倍）も券種（三連単）も配分も変えていない。**変えたのは点数の決め方だけ。**
+    #
+    #    経緯: `E_hit` は「当てにいく商品」なのに そろった時の的中率が 28.10% と
+    #    突出して低い（他は 41〜56%）。外れの本体は順序（§14: 集合を買えたのに 60% を
+    #    順序で落とす）で、そこは事前に読めない（`type_e_2026_09_01.md` §3/§10）。
+    #    残っていたのは「同じ帯の中で点数を増やす」ダイヤルだけだった。
+    #
+    #    🔴 **`docs/type_lab/type_e_2026_09_01.md` §5① の `sigma_max=1/3.5` は使えない。**
+    #    あの等式（平均想定払戻 = 予算 ÷ Σ）が成り立つのは**ダッチ配分のときだけ**で、
+    #    `E_hit` は `conf`。`tau_floor` で `mean_expected_payout` を直接見る。
+    #    §5① の「+2.29/+1.73pt 両窓有意」は**この方法では再現しない**（下表）。
+    #
+    #    実測（板7車・入稿ゲート通過後・同一レース対比較・確認 2026 / 探索 2024-07〜2025-12。
+    #    件/日は全腕で不変 3.32 / 2.78）:
+    #
+    #      床        点数   表示的中(確認/探索)   払戻中央   平均想定   10万+/日   Δ表示的中 CI(確認 / 探索)
+    #      現行14点  14.0   22.32 / 19.58%       34,530    40,780    0.023     —
+    #      40,000    14.3   21.61 / 19.37%       35,500    41,198    0.028     −0.72 ❌ / −0.20 ❌
+    #      **35,000** 16.9  **23.31 / 21.62%**   31,280    **36,046** 0.019    +0.99[0.00,+2.12] ❌ / +2.05[+1.23,+2.93] ✅
+    #      30,000    19.3   24.86 / 23.19%       28,390    32,122    0.019     +2.55 ✅ / +3.62 ✅
+    #      25,000以下 20.0  25.00 / 23.94%       26,865    32,022    0.014     +2.69 ✅ / +4.38 ✅
+    #
+    #    🔴 **35,000 を選んだのは商品の役割（ユーザー決定 2026-09-17）。** 床を下げるほど
+    #    的中は上がるが、**平均想定払戻が 3〜5万帯から落ちる**（30,000 で 32,122 ＝下端、
+    #    25,000 以下は点数上限20に張り付いて床が効いていない）。`E_hit` の設計根拠は
+    #    成績ではなく**カバレッジと売上**（`type_e.md` §0: 3〜5万帯は pt/R 309 で最も売れる・
+    #    券種も三連単は三連複の 4〜5倍）なので、帯を守れる最も低い床を採った。
+    #    ⚠️ 確認窓の Δ は CI が 0 に接する（+0.99[0.00,+2.12]）。**効果は探索窓でしか
+    #    有意でない。** 前向きの実測で確かめること。
+    #    ⚠️ ROI は 92.4→88.0（確認）/ 78.0→77.9（探索）。確認窓の現行 92.4% 自体が
+    #    上振れ（§12: doc 88.6%・CI[74.4,104.0]・探索 74.0%）なので、下がったのは
+    #    「代替が悪い」ではなく上振れが取り消された分。
+    #    ⚠️ 10万+ は 0.023→0.019 だが、**実運用の `E_hit` は 10万+ が0件**
+    #    （2026-08-18〜09-16 の実入稿 86件・最大払戻 85,300円）なので看板は失わない。
     "E_hit": Plan("E_hit", "E", "trifecta", "prob_top", 0, min_odds=30.0,
                   max_legs=14, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
-                  note="予測30倍以上から確率上位14点"),
+                  tau_adaptive=True, tau_floor=35_000, tau_max_legs=20,
+                  note="予測30倍以上から確率上位・想定3.5万を割らない点数まで"),
     # 型F 大混戦 — 12点。**2026-08-31 に全順列（`all6`）から確率順へ替えた。**
     # 🔴 **2026-09-08 に「安すぎる目を買わない」下限 5.0倍を入れた（帯なし → 5倍）。**
     #
@@ -2402,21 +2451,27 @@ def _tau_adaptive_legs(shape: "RaceShape", plan: Plan,
                        min_mean_payout: float = MIN_MEAN_PAYOUT):
     """**平均想定払戻がゲートを割らない最大点数**まで積んだ買い目と賭け金。
 
-    `plan.max_legs` を `TAU_ADAPTIVE_MIN_LEGS`〜`TAU_ADAPTIVE_MAX_LEGS` で振り、
-    ゲートを通る中で**最も点数の多いもの**を採る。組めなければ `None`。
+    `plan.max_legs` を `TAU_ADAPTIVE_MIN_LEGS`〜上限で振り、**床**を割らない中で
+    **最も点数の多いもの**を採る。組めなければ `None`。
 
+    🔴 **床と上限はプラン別に持てる**（2026-09-17）。既定（`tau_floor=0` /
+       `tau_max_legs=0`）なら従来どおり `min_mean_payout`（＝入稿ゲートの2万円）と
+       `TAU_ADAPTIVE_MAX_LEGS`（＝12）を使うので、`C_hit` の挙動は1ミリも動かない。
+       `E_hit` だけ床 35,000円・上限20点（商品定義が 3〜5万帯なので `Plan.tau_floor`）。
     🔴 **`mean_expected_payout` を直接見ること。** `Σ(1/予測オッズ)` で代用できるのは
        ダッチ配分のときだけで、`conf` 傾斜では等式が成り立たない。
     🔴 **点数を増やす側も試す。** 減らすだけだと効果が半分以下になる
        （+0.91 [−0.10,+1.99]＝確認窓で CI が 0 を跨ぐ）。
     """
+    floor = float(plan.tau_floor or min_mean_payout)
+    kmax = int(plan.tau_max_legs or TAU_ADAPTIVE_MAX_LEGS)
     best = None
-    for k in range(TAU_ADAPTIVE_MIN_LEGS, TAU_ADAPTIVE_MAX_LEGS + 1):
+    for k in range(TAU_ADAPTIVE_MIN_LEGS, kmax + 1):
         got = _build_plan(shape, replace(plan, max_legs=k, tau_adaptive=False),
                           pred_odds, probs)
         if not got:
             continue
-        if mean_expected_payout(got[1], pred_odds) <= min_mean_payout:
+        if mean_expected_payout(got[1], pred_odds) <= floor:
             break          # 点数を増やすほど平均は下がる一方なので、ここで打ち切る
         best = got
     return best
@@ -2681,7 +2736,7 @@ def rule_version(n_entries: int = 7) -> str:
         #    実測: `tau_adaptive` を反転しても `9619f3cb7668` のまま。
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
              v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult,
-             v.target, v.bust, v.tau_adaptive]
+             v.target, v.bust, v.tau_adaptive, v.tau_floor, v.tau_max_legs]
          for k, v in sorted(PLANS.items())}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
 
