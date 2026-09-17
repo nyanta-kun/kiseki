@@ -1199,11 +1199,11 @@ async def get_picks(
     #    の記録として残すが、画面には取消と分かるように出す。
     submitted = {
         (m["race_key"], m["rank_key"]): (m["bet_detail"], m["deleted_at"] is not None,
-                                         m["cancel_reason"])
+                                         m["cancel_reason"], bool(m["is_confident"]))
         for m in (await db.execute(
             text("""
                 SELECT ns.race_key, ns.rank_key, ns.bet_detail, ns.deleted_at,
-                       ns.cancel_reason
+                       ns.cancel_reason, ns.is_confident
                 FROM keirin.netkeirin_submissions ns
                 JOIN keirin.wt_races wr ON wr.race_key = ns.race_key
                 WHERE wr.race_date = :date
@@ -1272,8 +1272,9 @@ async def get_picks(
         trio_pay, trifecta_pay = _race_payout_display(pays, won)
 
         # 入稿の原本（keirin 側が入稿の瞬間に保存した買い目と金額配分）。
-        submitted_raw, submission_cancelled, cancel_reason = submitted.get(
-            (base_key, (r["rank"] or "").replace("RANK_", "")), (None, False, None))
+        submitted_raw, submission_cancelled, cancel_reason, is_confident = submitted.get(
+            (base_key, (r["rank"] or "").replace("RANK_", "")),
+            (None, False, None, False))
         submitted_bet = _parse_bet_detail(submitted_raw)
         # 🔴 **この行が「売った商品」かどうか**（2026-08-25）。取消したものは
         #    売っていないので False。以前は `picks_history.bet_amount > 0` を
@@ -1349,6 +1350,12 @@ async def get_picks(
             # 🔴 **売った商品かどうか。フロントの購入判定はこれだけを見る**
             #    （2026-08-25）。`bet_amount > 0` で判定してはいけない。
             "sold": sold,
+            # 🔴 **本日の「自信あり」（1日1件）**。正本は
+            #    `netkeirin_submissions.is_confident` で、選定は keirin 側
+            #    （`netkeirin_submit_type_lab._choose_confident`＝発走18時前 ∧
+            #    合成3倍以上のうち EV 最大）。ここは読むだけで判定はしない。
+            #    netkeirin のアイコンと同じ根拠なので、画面とアイコンが食い違わない。
+            "is_confident": is_confident,
             # 入稿しなかった理由（`keirin.submission_skips`）。売っていない行に
             # だけ意味がある。
             # 🔴 **文言はサーバーが決める**。語彙の正本は

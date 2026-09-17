@@ -1421,6 +1421,20 @@ function PickCard({ pick, cardId }: { pick: KeirinPick; cardId?: string }) {
                   {pick.cup_grade_label}
                 </span>
               )}
+              {/* 🔴 **本日の「自信あり」（1日1件）**（2026-09-17・ユーザー要望）。
+                  一覧に出ていなかったため、どれが選ばれたのか画面から分からなかった。
+                  ⚠️ **看板の★（オレンジ）とは別物**なので色と文字で区別する。
+                     同じ★だけだと「決勝だから付いている」と読めてしまう。
+                  ⚠️ 文言・配色は `keirin/review` の「★自信」と揃える。画面ごとに
+                     表記が割れていると同じ意味だと分からない（看板★と同じ方針）。 */}
+              {pick.is_confident && (
+                <span
+                  className="px-1 py-0.5 rounded text-[10px] font-semibold bg-yellow-400 text-yellow-950 dark:bg-yellow-500 dark:text-yellow-950"
+                  title="本日の「自信あり」に選ばれたレース（当日の候補で期待値が最高）。netkeirin では1日1つしか付けられません"
+                >
+                  ★自信
+                </span>
+              )}
               {/* 看板レースの★は**レース名の後ろ**（2026-08-14・ユーザー要望）。 */}
               {pick.is_marquee && (
                 <span className="text-amber-500 dark:text-amber-400 text-sm" title="看板レース（決勝・特選クラス）">★</span>

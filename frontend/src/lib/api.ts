@@ -1196,6 +1196,10 @@ export type KeirinPick = {
   race_type: string | null;
   /** 看板レース（決勝・特選クラス）。判定はAPI側（services/keirin_marquee.py）が正本。 */
   is_marquee?: boolean;
+  /** 本日の「自信あり」（**1日1件**）。正本は `netkeirin_submissions.is_confident` で、
+   *  選定は keirin 側（`_choose_confident`＝発走18時前 ∧ 合成3倍以上のうち EV 最大）。
+   *  netkeirin のアイコンと同じ根拠なので、画面とアイコンが食い違わない。 */
+  is_confident?: boolean;
   start_at: number | string | null;
   status: number;
   n_entries: number | null;
