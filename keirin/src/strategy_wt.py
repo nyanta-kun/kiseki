@@ -1175,7 +1175,7 @@ def rank_7s_wt_mark3_overlap_n(
     """S7/S9の軸2車とWINTICKET公式印◎◯△（mark1/2/3・honmei/taikou/ana）との
     重なり数を返す（rank_7s_wt_overlap_nの◎◯のみの判定に△を加えた拡張版）。
 
-    wt_ana: prediction_mark==3（△）の frame_no。
+    wt_ana: prediction_mark==3（▲＝単穴）の frame_no。
     いずれか欠損時は None（判定不能・rank_7s_daily_select/rank_9s_daily_select では
     フェイルセーフとして除外対象扱いにする）。
     """
@@ -1909,7 +1909,7 @@ def rank_7b_select_legs(
 
     others:     軸2車を除いた残り車（通常5車）
     top3_probs: {frame_no: pred_prob}
-    wt_ana:     prediction_mark==3（△）の frame_no。None なら除外しない。
+    wt_ana:     prediction_mark==3（▲＝単穴）の frame_no。None なら除外しない。
 
     △を切ることが配当を戻す本体（検証: 的中中央値3.4倍→6.1倍・ガミ率42.4%→10.8%・
     20倍超175本→435本）。的中率は下がる（47.0%→27.3%）が、これは
