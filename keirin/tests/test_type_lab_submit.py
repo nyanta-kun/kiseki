@@ -1291,7 +1291,14 @@ def test_highpay_types_are_the_measured_ones():
     #    `netkeirin_submit_type_lab.run._try_highpay` の2か所
     #    （`test_highpay_is_tried_from_both_gates` が固定している）。
     #    実測: `docs/type_lab/highpay_slots_measured_2026_09_12.md`
-    assert HIGHPAY_SLOTS_PER_DAY == 10
+    # 🔴🔴 **2026-09-19 に 10 → 5 へ戻した**（ユーザー判断）。前向き実測で
+    #    代償（表示的中）が得（10万+）に見合わなかった。実入稿 09-12〜09-18・
+    #    396件の同一母集団対比較: 表示的中 22.47 → **23.47%**・10万+ 2 → 1件・
+    #    ROI 56.5 → 56.3%・件/日 56.6 → 53.6。
+    #    🟢 **供給源（軸ゲート落ち）は残す**ので、下の
+    #       `test_highpay_is_tried_from_both_gates` は変わらない。
+    #    実測: `docs/type_lab/highpay_slots_measured_2026_09_12.md` 11章
+    assert HIGHPAY_SLOTS_PER_DAY == 5
     # 🔴 **型F を足してはいけない**（12セル中8つで CI 0 跨ぎ＝効果が無いのに
     #    表示的中だけ下げる）。軸ゲート落ちの在庫は B/C/D が 51.3%・型F は 22.5%。
     # 7車だけ（9車は未測定）
