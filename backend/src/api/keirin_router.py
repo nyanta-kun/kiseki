@@ -3349,9 +3349,11 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
             # 勝負アイコン「自信あり」に選ばれた1レース（1日1件）。
             # 選定は keirin の `pick_confident_race_wt.py`。
             "is_confident": bool(r["is_confident"]),
-            # 「自信あり」の選定に使った期待値（全点を予測オッズで統一して計算）。
-            # 🔴 上の `expected_value` とは**別物**。あちらは板のオッズ由来で、
-            #    夜開催は朝の時点で板が育っていないため終日の比較には使えない。
+            # 「自信あり」の選定に使った値。**2026-09-19 から Σp（買い目の的中確率・
+            # 0〜1）**で、それ以前は期待値 EV だった（列名は互換のため据え置き）。
+            # 🔴 上の `expected_value`（回収率・1.00 で収支トントン）とは**単位が違う**。
+            #    同じバッジに載せると全件が「1.00 未満」に見えるので混ぜないこと。
+            #    中身は世代で変わる（旧EV → Σp → EV → Σp）。日をまたいで比べない。
             "confident_ev": (float(r["confident_ev"])
                              if r["confident_ev"] is not None else None),
             # 最低払戻・最高払戻・期待値に**予測オッズが混ざっているか**。
