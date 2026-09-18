@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""WT印 ◎○△ の3車で決まったのに並び違いで外す回はどれだけあるか（2026-09-10）。
+"""WT印 ◎○▲ の3車で決まったのに並び違いで外す回はどれだけあるか（2026-09-10）。
 
-印は `A_prediction_mark`（1=◎ / 2=○ / 3=△ / 4=注）。板の index で
+印は `A_prediction_mark`（**1=◎ / 2=○ / 3=▲(単穴) / 4=△(連下)**・正本は
+`src/preprocessing/feature_wt.py` L221）。🔴 **本稿は mark3 までしか使っていない**
+＝「◎○△」と書いてきたものは実体が **◎○▲** で、mark4(△=連下) は未使用。
+4印を使った検証は `docs/type_lab/mark_inside_narrow_2026_09_19.md` を参照。板の index で
 `miss_anatomy_rows.pkl`（本番の商品・買い目・結果）と突き合わせる。
 """
 from __future__ import annotations

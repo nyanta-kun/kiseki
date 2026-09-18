@@ -484,7 +484,8 @@ def _choose_confident(rows: list[dict]):
 
     🔴 判定は `src.confident_pick` が唯一の正本。段の商品がある日は
        `tier_confident_score`（固めの中から決勝系優先・無ければ18時前で Σp 最大）、
-       無い日は `type_lab_confident_score`（発走18時前 ∧ 合成3倍以上 の中で EV 最大）。
+       無い日は `type_lab_confident_score`（発走18時前 ∧ **合成2.5倍以上** の中で
+       **Σp（的中確率）最大**・2026-09-19〜）。
        ここは母集団を渡すだけ。
     🔴 **入稿の前に呼ぶ**。netkeirin にアイコンが渡るのは入稿の瞬間だけなので、
        あとから選んでも付けられない（2026-09-04 豊橋3R）。
@@ -493,7 +494,7 @@ def _choose_confident(rows: list[dict]):
     #    尺度（Σp ↔ EV）が違うので混ぜない。
     #    🔴 段の販売を止めている間（`TIER_SELL_ENABLED=False`）は必ず旧規則（2026-09-16〜）。
     tier_day = tier_sell_enabled() and any(str(r["plan_key"]) in TIER_PLAN_KEYS for r in rows)
-    metric = "スコア(決勝系は1+Σp)" if tier_day else "EV"
+    metric = "スコア(決勝系は1+Σp)" if tier_day else "Σp"
     if tier_day:
         scored = [(str(r["race_key"]), str(r["plan_key"]),
                    tier_confident_score(str(r["plan_key"]), r.get("legs") or [],

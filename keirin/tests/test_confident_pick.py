@@ -6,7 +6,7 @@
 2. **1点でも盤面に無ければ EV を出さない**（部分計算で少点数ランクが有利になる）
 3. **同値でも結果が決定的**（実行のたびに変わらない）
 4. **入稿・承認の経路がランク名で決めていない**（旧仕様への逆戻り防止）
-5. **型ラボは Σp（的中確率）で選ぶ**（2026-08-28〜）。EV と尺度が違うので混ぜない
+5. **型ラボは Σp（的中確率）で選ぶ**（2026-09-19〜）。EV と尺度が違うので混ぜない
 """
 from __future__ import annotations
 
@@ -139,12 +139,13 @@ def test_picker_clears_the_day_before_setting_one():
 
 # ───────────────────── 型ラボ（2026-09-02〜） ─────────────────────
 #
-# ユーザー指示 2026-09-02:
-#   「夕方くらいまでのレースのうち、合成が3倍以上で期待値が最も高いレース」
-#     候補 … 発走 JST < 18時 ∧ 合成オッズ >= 3.0倍
-#     順位 … EV = Σ(確率×賭け金×予測オッズ) ÷ Σ賭け金 が最大
+# ユーザー指示 2026-09-19:
+#   「自信ありが穴寄り。的中信頼度が高いところへのフラグにしたい。合成は2.5倍以上」
+#     候補 … 発走 JST < 18時 ∧ 合成オッズ >= 2.5倍
+#     順位 … Σp（買い目の的中確率の合計）が最大
 #
-# 🔴 2026-08-28 の「pred_min_payout >= 20,000 → Σp 最大」を**置き換えた**。
+# 🔴 2026-09-02 の「合成3倍以上 → EV 最大」を**置き換えた**。EV 最大は下限に関わらず
+#    合成15倍前後の一撃商品を選ぶので、**下限だけ動かしても選定は1件も変わらない**。
 #    epoch 0 = 1970-01-01 09:00 JST なので、以下では時刻を 9*3600 秒単位で作る。
 
 _H = 3600
@@ -198,14 +199,14 @@ def test_confident_score_excludes_evening_and_later():
 
 
 def test_confident_score_requires_synthetic_odds_floor():
-    """🔴 合成3倍以上。`B_hit` は sigma_max=1/3 で 3.00 に張り付くので `>=`。"""
+    """🔴 合成2.5倍以上（2026-09-19）。ガミに近い1本を自信ありにしないための下限。"""
     from src.confident_pick import CONFIDENT_MIN_SYNTH_ODDS, type_lab_confident_score
 
-    assert CONFIDENT_MIN_SYNTH_ODDS == 3.0
-    # 2点とも6.0倍 → 合成ちょうど3.0倍。「3倍以上」なので候補に入る
-    assert type_lab_confident_score(_legs(0.1, 6.0), 0) is not None
-    # 2点とも5.9倍 → 合成 2.95倍
-    assert type_lab_confident_score(_legs(0.1, 5.9), 0) is None
+    assert CONFIDENT_MIN_SYNTH_ODDS == 2.5
+    # 2点とも5.0倍 → 合成ちょうど2.5倍。「2.5倍以上」なので候補に入る
+    assert type_lab_confident_score(_legs(0.1, 5.0), 0) is not None
+    # 2点とも4.9倍 → 合成 2.45倍
+    assert type_lab_confident_score(_legs(0.1, 4.9), 0) is None
 
 
 def test_confident_score_drops_races_without_start_time():
@@ -233,21 +234,25 @@ def test_confident_before_hour_matches_submission_wave():
     assert CONFIDENT_BEFORE_HOUR == NIGHT_FROM_HOUR
 
 
-def test_type_lab_pick_takes_max_ev_among_eligible(monkeypatch):
-    """型ラボの行があれば候補内で EV 最大の1件を選ぶ（旧 EV 経路は使わない）。"""
+def test_type_lab_pick_takes_max_hit_prob_among_eligible(monkeypatch):
+    """型ラボの行があれば候補内で **Σp 最大**の1件を選ぶ（旧 EV 経路は使わない）。
+
+    🔴 EV 最大なら最も高配当な行（B_hit・EV=2.0）が選ばれる。Σp 最大では
+       **当たりやすい行（E_hit・Σp=0.50）**が選ばれる。この差が本テストの主眼。
+    """
     from scripts import pick_confident_race_wt as m
 
     rows = [
-        # EV は最大だが 22:00 発走 → 候補外
+        # Σp は最大だが 22:00 発走 → 候補外
         {"race_key": "20260902_11_01", "rank_key": "C_hit", "venue_name": "A",
          "race_no": 1, "legs": _legs(0.30, 10), "start_at": 13 * _H},
-        # 合成 2.5倍（5.0倍×2点）→ 候補外
+        # 候補。合成ちょうど 2.5倍（5.0倍×2点）・Σp = 0.50 ← 最大
         {"race_key": "20260902_11_02", "rank_key": "E_hit", "venue_name": "A",
          "race_no": 2, "legs": _legs(0.25, 5.0), "start_at": 0},
-        # 候補。EV = 0.10 × 20 = 2.0
+        # 候補。Σp = 0.20（EV なら 2.0 で最大だが選ばれない）
         {"race_key": "20260902_11_03", "rank_key": "B_hit", "venue_name": "A",
          "race_no": 3, "legs": _legs(0.10, 20), "start_at": 0},
-        # 候補。EV = 0.12 × 10 = 1.2
+        # 候補。Σp = 0.24
         {"race_key": "20260902_11_04", "rank_key": "D_hit", "venue_name": "A",
          "race_no": 4, "legs": _legs(0.12, 10), "start_at": 8 * _H},
     ]
@@ -259,7 +264,27 @@ def test_type_lab_pick_takes_max_ev_among_eligible(monkeypatch):
     monkeypatch.setattr(m, "_load_alive", _never)
     monkeypatch.setattr(m, "race_expected_value", _never)
 
-    assert m.pick("2026-09-02", dry_run=True) == ("20260902_11_03", "B_hit")
+    assert m.pick("2026-09-02", dry_run=True) == ("20260902_11_02", "E_hit")
+
+
+def test_confident_score_is_hit_probability_not_ev():
+    """🔴 スコアは Σp であって EV ではない（`confident_ev` 列の中身が変わった）。"""
+    from src.confident_pick import (legs_expected_value, legs_hit_probability,
+                                    type_lab_confident_score)
+
+    legs = _legs(0.1, 10)                      # 2点・合成5.0倍
+    assert legs_hit_probability(legs) == pytest.approx(0.2)
+    assert legs_expected_value(legs) == pytest.approx(1.0)
+    assert type_lab_confident_score(legs, 0) == pytest.approx(0.2)
+
+
+def test_hit_probability_never_uses_partial_legs():
+    """🔴 1点でも欠けたら None（点数の少ない商品が不当に低く出る）。"""
+    from src.confident_pick import legs_hit_probability
+
+    assert legs_hit_probability([{"prob": 0.1}, {}]) is None
+    assert legs_hit_probability([{"prob": 0.1}, {"prob": None}]) is None
+    assert legs_hit_probability([]) is None
 
 
 def test_type_lab_and_legacy_scores_are_never_mixed(monkeypatch):

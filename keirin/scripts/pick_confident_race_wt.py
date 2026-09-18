@@ -5,7 +5,12 @@ netkeirin の「自信あり」は **1日に1つしか付けられない**。従
 付けており、7SS が複数出た日は**先に入稿したものが取っていた**（選定ではなかった）。
 
 ユーザー決定（2026-08-13）:
-**朝の時点で当日全レースを見て、期待値が最も高い1レースだけに付ける。**
+**朝の時点で当日全レースを見て、1レースだけに付ける。**
+
+🔴 **何を「最も良い」とするかは世代で変わっている。**段の販売中は段の規則、
+   止めている間（現行）は型ラボの規則で、**どちらも Σp（的中確率）最大**
+   （2026-09-19〜）。以下の「## 期待値」は型ラボが1件も無い日に落ちる
+   旧ランク経路（`race_expected_value`）の説明。
 
 ## 期待値
 
@@ -172,7 +177,7 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
                                         r.get("race_type")))
                   for r in rows]
     elif tl_rows:
-        rows, metric = tl_rows, "EV"
+        rows, metric = tl_rows, "Σp"
         scored = [(r["race_key"], r["rank_key"],
                    type_lab_confident_score(r["legs"], r["start_at"]))
                   for r in rows]

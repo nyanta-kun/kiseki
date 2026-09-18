@@ -646,9 +646,11 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         <div>
           <span className="text-gray-500">最高払戻</span> {yen(p.max_payout)}
         </div>
-        {/* 🔴 「自信あり」の選定に使った期待値を優先して出す（全点を予測オッズで
-            統一したもの）。選定前（confident_ev が未算出）のときだけ
-            `expected_value` を出す。
+        {/* 🔴 期待値バッジには**板由来の `expected_value` だけ**を渡す（2026-09-19）。
+            `confident_ev` は 2026-09-19 から**Σp（買い目の的中確率・0〜1）**に変わり、
+            期待値（回収率・1.00 で収支トントン・満尺 2.00）とは**単位が違う**。
+            混ぜて渡すと全件が「1.00 未満＝赤の極小バー」になり、表示が嘘になる。
+            選定値は下の「自信あり Σp」として別に出す。
             ⚠️ 2026-08-21 から**出どころのラベルは出さない**（ユーザー判断）。
                入稿の配分・足切り・表示オッズが全て予測オッズに揃ったため、
                「予測かどうか」は画面で区別する意味が無くなった。
@@ -658,12 +660,23 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
         <div>
           {/* ⚠️ 算出できないとき（三連単・オッズ欠け）は**セルを空にしない**。
               空だと「0 に近い」と読まれる。 */}
-          {(p.confident_ev ?? p.expected_value) == null ? (
+          {p.expected_value == null ? (
             <span className="text-gray-500">期待値 —</span>
           ) : (
-            <ExpectedValueBadge ev={p.confident_ev ?? p.expected_value} />
+            <ExpectedValueBadge ev={p.expected_value} />
           )}
         </div>
+        {/* 「自信あり」の選定に使った Σp（買い目の的中確率の合計）。
+            🔴 **期待値ではない**ので同じバッジに載せない。1日1件の選定が
+               「なぜこのレースか」を後から読めるように全件へ残している。 */}
+        {p.confident_ev != null && (
+          <div>
+            <span className="text-gray-500" title="「自信あり」の選定に使った的中確率 Σp（買い目のどれかが当たる確率）。発走18時前・合成2.5倍以上のレースの中で最大の1件に付く。">
+              自信あり Σp
+            </span>{" "}
+            {(p.confident_ev * 100).toFixed(1)}%
+          </div>
+        )}
         {/* 軸信頼。畳んだ状態でも見える位置に置く（2026-08-25 ユーザー指定）。
             🔴 **最低払戻・最高払戻・期待値と同じ並びに置く**（2026-08-25 ユーザー指定）。
                「いくら賭けていくら返るか」の系列と、「どれくらい確からしいか」の
