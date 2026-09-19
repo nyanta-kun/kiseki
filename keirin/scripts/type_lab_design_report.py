@@ -36,7 +36,11 @@ import json
 import os
 import pickle
 import statistics as st
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.type_lab import MISS_CLASSES  # noqa: E402
 
 BOARD_ROWS = Path("/tmp/miss_anatomy_rows.pkl")
 
@@ -144,7 +148,7 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
         raise SystemExit("KEIRIN_DB_URL が未設定です")
     sql = """
         SELECT p.race_date, p.plan_key, p.axis1, p.axis2, p.win_combo,
-               p.hit, p.payout, p.budget, p.legs
+               p.hit, p.payout, p.budget, p.legs, {miss}
         FROM keirin.type_lab_picks p
         JOIN keirin.netkeirin_submissions s
           ON s.race_key = p.race_key AND s.rank_key = p.plan_key
@@ -152,12 +156,21 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
         WHERE p.mode LIKE 'live%%' AND p.settled_at IS NOT NULL
           AND p.race_date BETWEEN %s AND %s
     """
+    # 🔴 `miss_class` は migration `202609111730_keirin` で足した列。**デプロイは
+    #    `git pull` → `alembic upgrade` の順**なので、その隙間ではまだ存在しない。
+    #    ここは日々の障害対応で使う読み取り専用ツールなので、**落ちずに
+    #    「未分類」へ落とす**（5分類が出ないだけで他の段は読める）。
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute(sql, (day_from, day_to))
+        try:
+            cur.execute(sql.format(miss="p.miss_class"), (day_from, day_to))
+        except psycopg2.errors.UndefinedColumn:
+            conn.rollback()
+            cur.execute(sql.format(miss="NULL"), (day_from, day_to))
         raw = cur.fetchall()
 
     out = []
-    for date, plan, a1, a2, win_combo, hit, payout, budget, legs in raw:
+    for (date, plan, a1, a2, win_combo, hit, payout, budget, legs,
+         miss_class) in raw:
         fin = finishers(win_combo)
         if not fin:
             continue
@@ -168,10 +181,41 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
                   for leg in (legs or [])}
         axes = {a for a in (a1, a2) if a is not None}
         out.append(dict(plan=str(plan), date=str(date), hit=bool(hit),
+                        miss_class=(str(miss_class) if miss_class else None),
                         set_hit=frozenset(fin) in bought,
                         both_in3=bool(axes) and axes <= set(fin),
                         pay=float(payout or 0), inv=float(budget or 0)))
     return out
+
+
+def print_miss_class(title: str, rows: list[dict]) -> None:
+    """外れの5分類（`DESIGN.md` 4.3）。**層ごとに打ち手が正反対**なので割って出す。
+
+    🔴 **`miss_class` は 2026-09-11 以降に採点した行にしか入らない**
+       （判定の入力は生成時にしか無く、過去分は作り直せない）。
+       入っていない行は「未分類」として別に数える——0 件と混ぜない。
+    """
+    labeled = [r for r in rows if r.get("miss_class")]
+    print(f"\n  ── 外れの5分類（DESIGN.md 4.3）: {title} ──")
+    if not labeled:
+        print(f"    分類済み 0 / {len(rows)} 件。"
+              "`miss_class` は 2026-09-11 以降の採点にしか入りません")
+        return
+    if len(labeled) < len(rows):
+        print(f"    ⚠️ 分類済み {len(labeled)} / {len(rows)} 件"
+              "（残りは列を足す前に採点された行）")
+    print(f"    {'商品':9s} {'n':>5s} " + " ".join(f"{k:>12s}" for k in MISS_CLASSES))
+    print(f"    {'':9s} {'':>5s} " + " ".join(
+        f"{v:>12s}" for v in ("的中", "軸崩壊(読み)", "帯下(読み)", "予算(買い目)",
+                              "モデル")))
+    for plan in sorted({r["plan"] for r in labeled}) + ["*全体*"]:
+        sub = (labeled if plan == "*全体*"
+               else [r for r in labeled if r["plan"] == plan])
+        cnt = {k: sum(1 for r in sub if r["miss_class"] == k) for k in MISS_CLASSES}
+        print(f"    {plan:9s} {len(sub):5d} " + " ".join(
+            f"{cnt[k] / len(sub) * 100:11.2f}%" for k in MISS_CLASSES))
+    print("    🔴 ③帯下決着 は**フラットな表示的中へ混ぜない**"
+          "（DESIGN.md 4.3 の未決着・帯商品が必ず不当に低く出る）")
 
 
 # ───────────────────────────── 表示 ─────────────────────────────
@@ -240,6 +284,7 @@ def main() -> None:
             return
         print_kpi(f"実入稿 {d0}〜{d1 or d0}", rows)
         print_two_stage(f"実入稿 {d0}〜{d1 or d0}", rows)
+        print_miss_class(f"実入稿 {d0}〜{d1 or d0}", rows)
         print("\n  🔴 単日は 40件前後しかない。目標値との差は「ずれた」であって"
               "「悪化した」ではない（DESIGN.md 4.1）。")
 

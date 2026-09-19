@@ -36,6 +36,9 @@ from src.database import get_connection  # noqa: E402
 from src.result_top3 import (  # noqa: E402
     representative, winning_trifectas, winning_trios,
 )
+from src.type_lab import (  # noqa: E402
+    axis_hit_of, classify_miss, lookup_prob_ranked,
+)
 
 
 def _load_targets(where: str, params: tuple, redo: bool = False) -> list[dict]:
@@ -45,11 +48,16 @@ def _load_targets(where: str, params: tuple, redo: bool = False) -> list[dict]:
        既定（False）は未採点だけを見るので、何度流しても害がない。
     """
     cond = where if redo else f"settled_at IS NULL AND {where}"
+    # 🔴 **外れの5分類（`DESIGN.md` 4.3）に要る列も一緒に引く。** 判定の入力は
+    #    生成時に焼き付けた `band_min_odds` / `prob_ranked` / `axis1` / `axis2` /
+    #    `n_legs` だけで、ここでモデルを引き直さない（引き直すと再学習後は別物）。
+    cols = ("id", "race_key", "bet_type", "legs",
+            "axis1", "axis2", "n_legs", "band_min_odds", "prob_ranked")
     with get_connection() as c:
         rows = c.execute(
-            f"SELECT id, race_key, bet_type, legs FROM type_lab_picks WHERE {cond}",
+            f"SELECT {', '.join(cols)} FROM type_lab_picks WHERE {cond}",
             params).fetchall()
-    return [dict(zip(("id", "race_key", "bet_type", "legs"), r)) for r in rows]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def _finish(keys: list[str]) -> dict:
@@ -185,17 +193,43 @@ def main() -> None:
             tf_rep = representative(winning_trifectas(f))
             tf = "-".join(str(x) for x in tf_rep) if tf_rep else ""
             tf_odds = odds.get(t["race_key"], {}).get(("trifecta", tf))
+            # ── 外れの5分類（`DESIGN.md` 4.3・正本は `src.type_lab.classify_miss`）──
+            # 🔴 **決着の目は「買った当たり目」ではなく実際の決着**を使う。`win` は
+            #    的中時は買った目（＝決着と同じ）だが、外れたときは代表の決着なので
+            #    どちらでも決着を指す。ここを `legs` から取ると外れた行が全部
+            #    引けなくなる。
+            prob_ranked = t.get("prob_ranked")
+            if isinstance(prob_ranked, str):
+                prob_ranked = json.loads(prob_ranked) if prob_ranked else None
+            # 🔴🔴 **焼き付けが無い行には分類を書かない。** `prob_ranked` が NULL
+            #    （= migration `202609111730_keirin` より前に生成された行）だと
+            #    決着の確率順位が引けず、`classify_miss` は必ず `legs_model` を返す。
+            #    それは「モデルの限界だった」という**確信のある誤った札**で、
+            #    ③帯下決着 と ④a予算 を丸ごと飲み込む。分からないものは
+            #    NULL のまま残し、レポート側で「未分類」として別に数える。
+            if prob_ranked is None:
+                win_po = win_rank = miss_class = None
+            else:
+                win_po, win_rank = lookup_prob_ranked(prob_ranked, win)
+                miss_class = classify_miss(
+                    hit=bool(hit),
+                    axis_hit=axis_hit_of(t.get("axis1"), t.get("axis2"), win),
+                    band_min_odds=t.get("band_min_odds"),
+                    win_pred_odds=win_po, win_prob_rank=win_rank,
+                    n_legs=t.get("n_legs"))
             # 🔴 `hit` は PostgreSQL では boolean。1/0 を渡すと
             #    DatatypeMismatch で落ちる（SQLite では通るので気づきにくい）。
             updates.append((win, bool(hit), payout,
                             float(o) if (hit and o) else None,
-                            float(tf_odds) if tf_odds else None, t["id"]))
+                            float(tf_odds) if tf_odds else None,
+                            win_po, win_rank, miss_class, t["id"]))
             n_ok += 1
         # 1行ずつ UPDATE すると 16,000 行で数分かかる（VPS への往復）。まとめて送る。
         if updates:
             c.executemany(
                 "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
-                "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ? "
+                "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ?, "
+                "win_pred_odds = ?, win_prob_rank = ?, miss_class = ? "
                 "WHERE id = ?", updates)
         c.commit()
     print(f"採点 {n_ok} 行 / 保留 {n_wait} 行（着順または確定オッズ待ち）")

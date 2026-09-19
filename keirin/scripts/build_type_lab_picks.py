@@ -40,8 +40,8 @@ sys.path.insert(0, str(REPO))
 from src.database import get_connection            # noqa: E402
 from src.type_lab import (                          # noqa: E402
     BUDGET, PLANS, ROLE_BASE, add_upper_band, allocate, build_legs,
-    build_with_gate_fallback, mean_expected_payout, min_expected_payout,
-    plans_for, race_shape, rule_version,
+    build_with_gate_fallback, combo_str, mean_expected_payout,
+    min_expected_payout, plans_for, prob_ranked_rows, race_shape, rule_version,
 )
 
 PERMS = list(itertools.permutations(range(1, 8), 3))
@@ -135,14 +135,22 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             legs=json.dumps(detail, ensure_ascii=False),
             pred_mean_payout=gate_mean,
             pred_min_payout=gate_min,
+            # 🔴 **外れの5分類（`DESIGN.md` 4.3）の入力を焼き付ける。**
+            #    決着の目の予測オッズと確率順位は**生成時のモデルにしか無い**ので、
+            #    後から引き直すと別の値になる（`p3_order` と同じ理由）。
+            #    帯は `plan_used`（**代替へ落ちた後**）から取ること。`plan` のままだと
+            #    `GATE_FALLBACK` で別の帯に化けた商品に元の帯が付く。
+            band_min_odds=round(float(plan_used.min_odds), 2),
+            prob_ranked=json.dumps(
+                prob_ranked_rows(odds, prob, plan_used.bet_type), ensure_ascii=False),
             rule_version=rule_version(N_ENTRIES),
         ))
     return out
 
 
-def _combo_str(c, bet_type: str) -> str:
-    return ("=".join(str(x) for x in sorted(c)) if bet_type == "trio"
-            else "-".join(str(x) for x in c))
+#: 🔴 目の文字列は `src.type_lab.combo_str` が正本。ここで別に持つと、
+#:    採点側（`prob_ranked` の突き合わせ）と表記が割れたとき**黙って外れ扱い**になる。
+_combo_str = combo_str
 
 
 def _fold_to_trio(tf_odds: dict, tf_prob: dict) -> tuple[dict, dict]:
@@ -440,7 +448,8 @@ def _load_entries(keys: list[str]) -> dict:
 
 COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
         "type_label axis_sum arare gap pw_ent axis1 axis2 p3_order mode plan_key bet_type "
-        "n_legs budget legs pred_mean_payout pred_min_payout rule_version").split()
+        "n_legs budget legs pred_mean_payout pred_min_payout band_min_odds prob_ranked "
+        "rule_version").split()
 
 
 #: 買い目が変わったら**捨てる**採点結果の列。
@@ -448,7 +457,11 @@ COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
 #:    RUNBOOK 手順1（台を作り直す → paper を再生成する → 採点する）がまさにその形で、
 #:    再生成のあと `settle` は `settled_at IS NULL` しか見ないので**永久に直らない**。
 #:    例外もログも出ないので、UPSERT の時点で落とす。
-SETTLE_COLS = ("settled_at", "win_combo", "hit", "payout", "final_odds", "win_tf_odds")
+SETTLE_COLS = ("settled_at", "win_combo", "hit", "payout", "final_odds",
+               "win_tf_odds",
+               # 🔴 5分類も採点で入る列。買い目が変われば分類も変わるので
+               #    ここへ入れないと**古い分類が新しい買い目に付く**。
+               "win_pred_odds", "win_prob_rank", "miss_class")
 
 
 def _drop_stale_plans(conn, rows: list[dict]) -> int:
