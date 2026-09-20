@@ -31,12 +31,25 @@ fi
 # ① Markdown（台帳への追記もここで行う）。Discord へは送らない。
 PYTHONPATH=. "$PY" scripts/nightly_review_type_lab.py "$DAY" --no-discord
 
+# ②' 監査（2026-09-20）後の前向き観測。**商品は据え置きのまま毎日積むだけ**。
+#    🔴 ここが落ちても夜間チェーンは止めない（観測であって運用ではない）。
+WATCH="data/analysis/nightly/$DAY.watch.md"
+PYTHONPATH=. "$PY" scripts/audit_watch.py --end "$DAY" --out "$WATCH" \
+  || echo "[nightly_review] ⚠️ 前向き観測の生成に失敗（レビュー本体は続ける）"
+
 # ② 図表つき HTML と、Discord 用の1行要約。
 SUM="data/analysis/nightly/$DAY.summary.txt"
 TRI="data/analysis/nightly/$DAY.triage.md"
 PYTHONPATH=. "$PY" scripts/nightly_report_html.py "$DAY" \
   --out "data/analysis/nightly/$DAY.html" --summary-out "$SUM" \
+  $([ -f "$WATCH" ] && echo "--watch $WATCH" || true) \
   $([ -f "$TRI" ] && echo "--triage $TRI" || true)
+
+# 構成が動いていたら Discord の1行にも出す。**据え置きが破れたことは、
+# その日の成績より先に知りたい**（観測の前提が変わるため）。
+if [ -f "$WATCH" ] && grep -q '構成が動いている' "$WATCH"; then
+  printf '\n🔴 商品構成が監査時点から動いています（§1 を見ること）' >> "$SUM"
+fi
 
 # ③ 配信（nginx が読める場所へ置く。/home は 0750 で辿れない）。
 if [ -n "$NIGHTLY_DIR" ]; then

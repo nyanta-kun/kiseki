@@ -19,6 +19,10 @@
    スマホ表示はコードブロックを折り返さず、幅の広い行が切れて崩れる
 7. **「自信あり」と「的中レースの売上」を出す**（2026-09-07 ユーザー指示）。
    的中は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを混ぜない）
+8. **直近7日の見張りを出す**（2026-09-20）。表示的中率と10万円以上の件数。
+   **数を見せるだけで判定しない**——しきい値も ⚠️ も置かない
+   （監査 `keirin/docs/AUDIT_2026_09_20.md` §5。的中率は売上に効かず、
+   10万円以上は週2〜3件しか出ないので線を引くと偶然で点滅する）
 
 ⚠️ `scripts/scrape_netkeirin_sales.py` 自体は import しない。あれは `requests` /
    `psycopg2` を要求するスクリプトで、backend の CI venv には `requests` が無い
@@ -196,8 +200,17 @@ def _race_stats(**kw) -> dict:
     return base
 
 
+def _guard(**kw) -> dict:
+    # 9/13〜9/19 の実測（日別 399商品・表示的中 86 = 21.6%）。
+    base = {"start": "20260913", "end": "20260919", "n_days": 7,
+            "n_pred": 399, "n_hit": 86, "n_race_days": 7, "n_big": 3}
+    base.update(kw)
+    return base
+
+
 def _full_summary(**kw) -> dict:
-    base = {"confident": _confident(), "race_stats": _race_stats()}
+    base = {"confident": _confident(), "race_stats": _race_stats(),
+            "guard": _guard()}
     base.update(kw)
     return _summary(**base)
 
@@ -492,3 +505,82 @@ def test_月別は期間フィルタを掛けずに集計する():
     assert "FROM keirin.netkeirin_sales_daily ORDER BY sale_date" in src
     # items 側（期間フィルタあり）と取り違えていないこと
     assert "monthly_rollup(items)" not in src
+
+
+# ---------------------------------------------------------------------------
+# 直近7日の見張り（2026-09-20）
+# ---------------------------------------------------------------------------
+
+def test_見張りの定数は監査の値():
+    """🔴 10万円は監査 §5 の「翌日 ×1.49」を測った境目。勝手に動かさない。"""
+    assert rep.GUARD_WINDOW_DAYS == 7
+    assert rep.BIG_PAYOUT_YEN == 100_000
+
+
+def test_表示的中にフロアを置かない():
+    """🔴 PR#577 の 30% フロアは 2026-09-20 に不採用（届かない線だった）。
+
+    実勢 24.6%（直近38日）で 7日窓 32 本すべてが 30% 未満。毎朝「割れ」と
+    出しても警告が背景になるだけなので、**しきい値の定数自体を持たない**。
+    """
+    assert not hasattr(rep, "HIT_RATE_FLOOR_PCT")
+    assert not hasattr(rep, "BIG_PAYOUT_WEEKLY_MIN")
+
+
+def test_見張りは表示的中率と高額の件数を出す():
+    msg = rep.build_sales_message(_full_summary())
+    assert "直近7日" in msg and "09/13〜09/19" in msg
+    assert "表示的中 21.6%" in msg                      # 86 / 399
+    assert "10万円以上 3件" in msg
+
+
+def test_見張りは警告を出さない():
+    """🔴 どちらの数字も「悪い」と決めつけない。判定は honest な板で行う。"""
+    for guard in (_guard(n_hit=20), _guard(n_big=0), _guard(n_hit=300)):
+        msg = rep.build_sales_message(_full_summary(guard=guard))
+        assert "⚠️" not in msg
+
+
+def test_レース別が欠けた日は件数に注記する():
+    """🔴 欠けた日を0件と数えると「高額が出なかった」と誤読する。"""
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_race_days=5)))
+    assert "5/7日分" in msg
+
+
+def test_レース別が1日も無ければ件数を出さない():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_race_days=0, n_big=0)))
+    assert "未取込" in msg
+    assert "10万円以上 0件" not in msg
+
+
+def test_窓が7日に満たなければ日数を書く():
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_days=4)))
+    assert "（4日分）" in msg
+
+
+def test_見張りが無い回は節を出さない():
+    msg = rep.build_sales_message(_summary())
+    assert "直近7日" not in msg
+    msg = rep.build_sales_message(_full_summary(guard=_guard(n_pred=0)))
+    assert "直近7日" not in msg
+
+
+def test_スクリプトが見張りを読む():
+    """🔴 SQL を消すと**見張りだけが静かに消える**（売上は出続ける）。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "_fetch_guard" in src
+    # 表示的中率は netkeirin の公表値（日別・ガミ除く）から
+    assert "FROM keirin.netkeirin_sales_daily WHERE sale_date BETWEEN" in src
+    assert "SUM(n_hits_excl_garami)" in src
+    # 境目の金額と窓は正本から取る（写さない）
+    assert "BIG_PAYOUT_YEN" in src and "GUARD_WINDOW_DAYS" in src
+    assert "100000" not in src and "100_000" not in src
+
+
+def test_見張りの失敗で他の付加情報を消さない():
+    """🔴 自信あり・的中レースとは別の try に入れる。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    i = src.index("guard = _fetch_guard(")
+    j = src.index("race_stats = _fetch_race_stats(")
+    assert j < i, "見張りは的中レースの後に読む"
+    assert "try:" in src[j:i], "見張りが自信あり・的中レースと同じ try に入っています"

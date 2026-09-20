@@ -367,17 +367,23 @@ def build(day: str, n_boot: int = 2000) -> str:
     return "".join(P), n_ng, total
 
 
-def render(day: str, body: str, triage: str | None) -> str:
+def render(day: str, body: str, triage: str | None, watch: str | None = None) -> str:
     head = (f'<meta charset="utf-8"><meta name="viewport" '
             f'content="width=device-width,initial-scale=1">'
             f'<meta name="robots" content="noindex,nofollow">'
             f'<title>型ラボ 夜間レビュー {esc(day)}</title><style>{CSS}</style>')
+    wat = ""
+    if watch:
+        # 🔴 **本文より前に置く**。据え置きの確認と売上（最優先KPI）は、
+        #    その日の成績より先に目へ入れる（`scripts/audit_watch.py`）。
+        wat = ('<h2>監査後の前向き観測 <small>商品は据え置き・観測のみ</small></h2>'
+               '<div class="card"><div class="prose">' + esc_md(watch) + "</div></div>")
     tri = ""
     if triage:
         tri = ('<h2>課題の取捨 <small>Claude による仕分け</small></h2>'
                '<div class="card"><div class="prose">' + esc_md(triage) + "</div></div>")
     return (f"<!doctype html><html lang=\"ja\"><head>{head}</head><body>"
-            f'<div class="wrap">{body}{tri}'
+            f'<div class="wrap">{wat}{body}{tri}'
             f'<p class="note" style="margin-top:32px">'
             f'このページは自動生成です（`keirin/scripts/nightly_report_html.py`）。'
             f'数字の出どころは同日の Markdown レポートと同一の関数。</p>'
@@ -390,6 +396,8 @@ def main() -> int:
     ap.add_argument("--out", default="")
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--triage", default="", help="Claude の所見（テキストファイル）")
+    ap.add_argument("--watch", default="",
+                    help="監査後の前向き観測（scripts/audit_watch.py の Markdown）")
     ap.add_argument("--summary-out", default="",
                     help="Discord へ出す1行要約の書き出し先")
     args = ap.parse_args()
@@ -398,10 +406,14 @@ def main() -> int:
     triage = ""
     if args.triage and Path(args.triage).exists():
         triage = Path(args.triage).read_text(encoding="utf-8").strip()
+    watch = ""
+    if args.watch and Path(args.watch).exists():
+        watch = Path(args.watch).read_text(encoding="utf-8").strip()
     out = Path(args.out) if args.out else (
         REPO / "data" / "analysis" / "nightly" / f"{args.day}.html")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(args.day, body, triage or None), encoding="utf-8")
+    out.write_text(render(args.day, body, triage or None, watch or None),
+                   encoding="utf-8")
     print(f"[nightly_html] 保存: {out}  （異常 {n_ng}件）")
 
     if args.summary_out:
