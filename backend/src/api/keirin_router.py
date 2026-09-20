@@ -502,6 +502,27 @@ async def _fetch_finishers(
     return {rk: _finishers(v) for rk, v in rows.items()}
 
 
+async def _fetch_valid_cars(
+    db: AsyncSession, race_keys: Sequence[str],
+) -> dict[str, frozenset[int]]:
+    """race_key → 実際に出走表に載っている車番の集合（2026-09-20 新設）。
+
+    🔴 欠車（出走取消）は `wt_entries` から行ごと消える（`pipeline_wt.py`）。
+       買い目にここに無い車番が含まれる leg は「返還」対象——
+       欠車の存在を知らずに組んだ買い目がそのまま全損計上されるバグの修正に使う
+       （`sub_settle/REPORT_settle.md` S1・live 9行 25,400円で実測）。
+    """
+    if not race_keys:
+        return {}
+    out: dict[str, set[int]] = {}
+    for e in (await db.execute(
+        text("SELECT race_key, frame_no FROM keirin.wt_entries WHERE race_key = ANY(:keys)"),
+        {"keys": list(race_keys)},
+    )).mappings().all():
+        out.setdefault(e["race_key"], set()).add(int(e["frame_no"]))
+    return {rk: frozenset(v) for rk, v in out.items()}
+
+
 async def _fetch_entries_by_race(
     db: AsyncSession, race_keys: Sequence[str],
 ) -> dict[str, list[Any]]:
@@ -733,12 +754,15 @@ async def _fetch_settled_submissions(
         finishers = await _fetch_finishers(db, keys)
         won_by_race = {rk: winning_combo_labels(f) for rk, f in finishers.items()}
         payouts = await _fetch_winning_payouts(db, won_by_race)
+        # 🔴 2026-09-20 追加: 欠車返還の判定に使う（下記 settle() 呼び出し参照）。
+        valid_cars = await _fetch_valid_cars(db, keys)
 
         fresh: list[tuple[str, str, str, Settlement]] = []
         for s in pending:
             rk = s["race_key"]
             raw = s["bet_detail"]
-            res = settle(_parse_bet_detail(raw), finishers.get(rk), payouts.get(rk))
+            res = settle(_parse_bet_detail(raw), finishers.get(rk), payouts.get(rk),
+                         valid_cars=valid_cars.get(rk))
             if res.bet <= 0:
                 # 買い目が記録されていない（2026-08-07 以前）。件数だけ数えて集計から外す。
                 n_missing += 1

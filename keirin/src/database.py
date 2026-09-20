@@ -783,6 +783,9 @@ def migrate_db():
                 hit              INTEGER,
                 payout           INTEGER,
                 final_odds       REAL,
+                -- 🔴 欠車（出走取消）の車番を含む leg の返還額（2026-09-20）。
+                --    本番は alembic 202609200900_keirin が正本。
+                void_refund      INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (race_key, plan_key, mode)
             )
         """)

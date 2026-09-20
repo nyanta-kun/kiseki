@@ -74,6 +74,58 @@ def _finish(keys: list[str]) -> dict:
     return {k: v for k, v in out.items() if winning_trifectas(v)}
 
 
+def _entrants(keys: list[str]) -> dict:
+    """{race_key: {実際に出走表に載っている車番, ...}}（2026-09-20 新設）。
+
+    🔴 欠車（出走取消）は `wt_entries` から行ごと消える。買い目の leg に
+       ここに無い車番が含まれる場合は「返還」対象——欠車を知らずに組んだ
+       leg がそのまま全損計上されていたバグの修正に使う
+       （`sub_settle/REPORT_settle.md` S1・live 9行 25,400円で実測）。
+    """
+    out: dict = defaultdict(set)
+    with get_connection() as c:
+        for i in range(0, len(keys), 900):
+            ch = keys[i:i + 900]
+            q = ("SELECT race_key, frame_no FROM wt_entries "
+                 f"WHERE race_key IN ({','.join('?' * len(ch))})")
+            for rk, fn in c.execute(q, ch).fetchall():
+                out[rk].add(int(fn))
+    return dict(out)
+
+
+def _has_void_refund() -> bool:
+    """`type_lab_picks.void_refund` が既にあるか（2026-09-20 新設）。
+
+    🔴 **デプロイの一瞬だけ列が無い窓がある。** VPS の deploy は
+       `git pull` → `alembic upgrade head` の順なので、その間に走った
+       この cron（15分おき）は新しいコードと古いスキーマの組で動く。
+       列が無ければ返還額の記録だけ諦めて**採点は続ける**（次の回で埋まる）。
+       落とすとその回の採点が丸ごと飛ぶ。
+    """
+    with get_connection() as c:
+        try:
+            c.execute("SELECT void_refund FROM type_lab_picks LIMIT 1").fetchall()
+            return True
+        except Exception:                      # noqa: BLE001  列が無い / 参照できない
+            return False
+
+
+def _void_stake(legs: list[dict], present: set[int] | None) -> int:
+    """`legs` のうち欠車の車番を含む leg の stake 合計（返還額）。
+
+    `present` が None（出走表を引けない）のときは判定しない（0 を返す）。
+    欠車の車番を含む買い目は出走していない車番を含むので**構造的に当たらない**
+    （的中判定・払戻計算には影響しない。動くのは投資額の分母だけ）。
+    """
+    if present is None:
+        return 0
+    total = 0
+    for l in legs:
+        if any(c not in present for c in _cars(l["combo"])):
+            total += int(l.get("stake") or 0)
+    return total
+
+
 def _odds(keys: list[str]) -> dict:
     """{race_key: {('trio'|'trifecta', 正規化した組み合わせ): 確定オッズ}}"""
     out = defaultdict(dict)
@@ -150,6 +202,12 @@ def main() -> None:
         return
     keys = sorted({t["race_key"] for t in targets})
     fin, odds = _finish(keys), _odds(keys)
+    # 🔴 2026-09-20 追加: 欠車返還の判定に使う出走表（全車番）。
+    entrants = _entrants(keys)
+    has_void = _has_void_refund()
+    if not has_void:
+        print("⚠️ type_lab_picks.void_refund がまだ無い（マイグレーション前）。"
+              "欠車返還の記録は飛ばして採点だけ進める。")
     print(f"対象 {len(targets)} 行 / {len(keys)} レース  着順確定 {len(fin)}")
 
     n_ok = n_wait = 0
@@ -161,6 +219,11 @@ def main() -> None:
                 n_wait += 1
                 continue
             legs = json.loads(t["legs"]) if isinstance(t["legs"], str) else t["legs"]
+            # 🔴 2026-09-20 追加: 欠車（出走取消）の車番を含む leg は返還対象。
+            #    出走していない車番を含む買い目は構造的に当たらないので、
+            #    的中判定・payout 計算そのものには影響しない
+            #    （動くのは void_refund として別記録する投資額側だけ）。
+            void_refund = _void_stake(legs, entrants.get(t["race_key"]))
             # 🔴 当たり目は**複数ありうる**（同着）。正本 `src/result_top3.py` で作る。
             wins = (winning_trios(f) if t["bet_type"] == "trio"
                     else winning_trifectas(f))
@@ -203,16 +266,20 @@ def main() -> None:
             tf_odds = odds.get(t["race_key"], {}).get(("trifecta", tf))
             # 🔴 `hit` は PostgreSQL では boolean。1/0 を渡すと
             #    DatatypeMismatch で落ちる（SQLite では通るので気づきにくい）。
-            updates.append((win, bool(hit), payout,
-                            float(o) if (hit and o) else None,
-                            float(tf_odds) if tf_odds else None, t["id"]))
+            row = [win, bool(hit), payout,
+                   float(o) if (hit and o) else None,
+                   float(tf_odds) if tf_odds else None]
+            if has_void:
+                row.append(void_refund)
+            updates.append(tuple(row) + (t["id"],))
             n_ok += 1
         # 1行ずつ UPDATE すると 16,000 行で数分かかる（VPS への往復）。まとめて送る。
         if updates:
             c.executemany(
                 "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
-                "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ? "
-                "WHERE id = ?", updates)
+                "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ?"
+                + (", void_refund = ? " if has_void else " ")
+                + "WHERE id = ?", updates)
         c.commit()
     print(f"採点 {n_ok} 行 / 保留 {n_wait} 行（着順または確定オッズ待ち）")
 

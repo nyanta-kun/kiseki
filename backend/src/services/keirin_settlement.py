@@ -81,7 +81,9 @@ _SEP_RE = re.compile(r"[-=]")
 class Settlement:
     """1入稿（＝1商品）の採点結果。"""
 
-    #: 投資額（`lines[].stake` の合計）。**採点できなくても出す**（発走前から表示する）
+    #: 投資額（`lines[].stake` の合計）。**採点できなくても出す**（発走前から表示する）。
+    #: 🔴 2026-09-20: `valid_cars` を渡した場合は欠車を含む leg の返還ぶんを
+    #:    差し引いた**実際に賭けたままの額**（下記 `void_refund` 参照）。
     bet: int
     payout: int
     #: 買い目が当たったか。**配当が引けたかとは無関係**
@@ -93,6 +95,10 @@ class Settlement:
     pred_combo: str | None
     #: 確定した当たり目（同着なら複数）。未確定なら空
     winning_combos: list[str] = field(default_factory=list)
+    #: 🔴 2026-09-20 新設。欠車（出走取消）の車番を含む leg の返還額。
+    #:    `bet` からは既に差し引き済み（二重に引かないこと）。
+    #:    `valid_cars=None`（未指定）のときは常に 0（旧来どおりの挙動）。
+    void_refund: int = 0
 
     @property
     def net_hit(self) -> bool:
@@ -135,19 +141,27 @@ def combo_label(combo: Any, ordered: bool) -> str | None:
     三連複は車番昇順を `=` で、三連単は着順どおり `-` でつなぐ
     （`winning_combo_labels` と同じ書き方）。3車ぶん読めなければ None。
     """
+    cars = _combo_cars(combo)
+    if cars is None:
+        return None
+    return "-".join(map(str, cars)) if ordered else "=".join(map(str, sorted(cars)))
+
+
+def _combo_cars(combo: Any) -> list[int] | None:
+    """買い目の車番（表記順）。3車ぶん読めなければ None。"""
     try:
         cars = [int(x) for x in _SEP_RE.split(str(combo).strip()) if x != ""]
     except (TypeError, ValueError):
         return None
-    if len(cars) != 3:
-        return None
-    return "-".join(map(str, cars)) if ordered else "=".join(map(str, sorted(cars)))
+    return cars if len(cars) == 3 else None
 
 
 def settle(
     bet_detail: Any,
     finishers: Iterable[Sequence[int]] | None,
     payouts: Mapping[str, int] | None = None,
+    *,
+    valid_cars: Iterable[int] | None = None,
 ) -> Settlement:
     """1入稿を採点する。
 
@@ -158,12 +172,34 @@ def settle(
         payouts: `{当たり目の表記: 100円あたりの確定払戻}`。
             表記は `combo_label` / `winning_combo_labels` と同じ
             （三連複 `1=2=4` / 三連単 `1-2-4`）。`payout_per_100` で作る
+        valid_cars: 実際に出走した車番の集合（2026-09-20 新設）。渡すと、
+            この集合に無い車番（欠車＝出走取消）を含む leg を**返還**扱いにし、
+            その stake を `bet` から除いて `void_refund` に計上する。
+            `None`（既定）なら従来どおり欠車判定をしない。
 
     🔴 引けない配当を `bet_detail.odds` で代用しない。入稿時点のオッズは
        発走までに動くので、払戻を過大にも過小にもする。
+    🔴 欠車の車番を含む leg は**構造的に当たらない**（出走していない車番が
+       3着以内に入ることはない）ので、返還にしても的中判定・払戻計算には
+       影響しない。動くのは投資額（分母）だけ（`sub_settle/REPORT_settle.md` S1）。
     """
     detail = as_bet_detail(bet_detail) or {}
-    lines = detail.get("lines") or []
+    all_lines = detail.get("lines") or []
+    valid_set = None if valid_cars is None else {int(c) for c in valid_cars}
+
+    lines: list[Any] = []
+    void_refund = 0
+    for line in all_lines:
+        cars = _combo_cars(line.get("combo"))
+        if (valid_set is not None and cars is not None
+                and any(c not in valid_set for c in cars)):
+            try:
+                void_refund += int(line.get("stake") or 0)
+            except (TypeError, ValueError):
+                pass
+            continue
+        lines.append(line)
+
     labels: list[str | None] = []
     bet = 0
     for line in lines:
@@ -174,11 +210,13 @@ def settle(
         ordered = _ORDERED.get(str(line.get("bet_type") or ""))
         # 未知の券種は**黙って外れにしない**。読めない行が1つでもあれば未採点。
         labels.append(None if ordered is None else combo_label(line.get("combo"), ordered))
-    pred = " ".join(str(x.get("combo")) for x in lines) or None
+    # 🔴 買い目の表示（`pred_combo`）は返還ぶんも含めた「実際に買った全部」を出す。
+    pred = " ".join(str(x.get("combo")) for x in all_lines) or None
     won = winning_combo_labels(finishers or [])
 
     base = Settlement(bet=bet, payout=0, hit=False, settled=False,
-                      n_combos=len(lines), pred_combo=pred, winning_combos=won)
+                      n_combos=len(lines), pred_combo=pred, winning_combos=won,
+                      void_refund=void_refund)
     if not lines or not won:
         return base                      # 買い目が無い / まだ着順が揃っていない
     if any(x is None for x in labels):
@@ -201,4 +239,5 @@ def settle(
     return Settlement(bet=bet, payout=payout, hit=hit,
                       # 外れは着順だけで確定する（配当を待つ理由がない）
                       settled=(not hit) or payout_known,
-                      n_combos=len(lines), pred_combo=pred, winning_combos=won)
+                      n_combos=len(lines), pred_combo=pred, winning_combos=won,
+                      void_refund=void_refund)

@@ -10,8 +10,23 @@ race_pointをまだ確定しておらず、異常に低い暫定値（平均4.3�
 異常に低ければ非ゼロ終了する（daily_picks_wt.shが再収集→再チェックの
 リトライに使う・詳細はCLAUDE.md/メモリ参照）。
 
+## 🔴 日次だけでは過去の汚染を見つけられない（2026-09-20 監査 item5）
+
+本チェックは `daily_picks_wt.sh` から**その日ぶんにしか掛かっていない**。
+そのため 2026-06-12（43・61 会場の 24 レース・210 行）の汚染は
+**誰にも検知されないまま残り続けた**（`docs/prediction-factors.md` が
+「汚染は 2026-06-18〜07-23 で解消済み」と書いている窓の**外**）。
+さらに再取得パイプライン（`pipeline_wt.py::_get_collected_keys`）は
+結果が入った行をスキップするので、**自動経路では二度と直らない**。
+
+→ `--scan` で**同じ規則を過去全期間へ遡って**掛けられるようにした。
+   見つけるためのものなので**常に終了コード 0**（日次ゲートと違い、既知の
+   汚染日があるだけで CI やバッチを止めない）。
+
 使い方:
     PYTHONPATH=. .venv/bin/python3 scripts/check_race_point_sanity.py --date 2026-07-23
+    PYTHONPATH=. .venv/bin/python3 scripts/check_race_point_sanity.py --scan
+    PYTHONPATH=. .venv/bin/python3 scripts/check_race_point_sanity.py --scan --from 2026-01-01
 """
 from __future__ import annotations
 
@@ -71,11 +86,78 @@ def check(target_date: str) -> tuple[bool, str]:
     )
 
 
+def _daily_avgs(date_from: str | None, date_to: str | None) -> list[tuple[str, float, int]]:
+    """日ごとの (開催日, 平均race_point, 件数)。読み取りのみ。"""
+    where, params = "WHERE e.race_point IS NOT NULL", []
+    if date_from:
+        where += " AND r.race_date >= ?"
+        params.append(date_from)
+    if date_to:
+        where += " AND r.race_date <= ?"
+        params.append(date_to)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT r.race_date d, AVG(e.race_point) avg_rp, COUNT(*) n "
+            "FROM wt_entries e JOIN wt_races r ON e.race_key = r.race_key "
+            f"{where} GROUP BY r.race_date ORDER BY r.race_date", params).fetchall()
+    return [(str(r["d"]), float(r["avg_rp"]), int(r["n"])) for r in rows
+            if r["avg_rp"] is not None]
+
+
+def anomalies(days: list[tuple[str, float, int]]
+              ) -> list[tuple[str, float, float, int]]:
+    """日ごとの平均から異常な開催日を拾う（純関数・2026-09-20 追加）。
+
+    days: (開催日, 平均race_point, 件数) を**日付順**に並べたもの
+    returns 異常と判定した (開催日, 平均, 基準中央値, 件数) の並び
+
+    🔴 **規則は日次ゲートと同じもの**（直近 `BASELINE_DAYS` 日の中央値の
+       `RATIO_THRESHOLD` 未満）。別の規則を書くと「日次は通ったのに
+       遡ると異常」という説明できない状態になる。
+    """
+    out = []
+    for i, (day, avg, n) in enumerate(days):
+        if n < MIN_ENTRIES:
+            continue
+        base = [a for _, a, _ in days[max(0, i - BASELINE_DAYS):i]]
+        if len(base) < 3:
+            continue
+        med = statistics.median(base)
+        if med > 0 and avg / med < RATIO_THRESHOLD:
+            out.append((day, avg, med, n))
+    return out
+
+
+def scan(date_from: str | None = None, date_to: str | None = None
+         ) -> list[tuple[str, float, float, int]]:
+    """DB を引いて `anomalies` を掛ける（読み取りのみ）。"""
+    return anomalies(_daily_avgs(date_from, date_to))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", required=True)
+    ap.add_argument("--date", help="その日だけを検査する（日次バッチ用）")
+    ap.add_argument("--scan", action="store_true",
+                    help="過去へ遡って同じ規則を掛ける（報告のみ・常に終了コード0）")
+    ap.add_argument("--from", dest="date_from", help="--scan の開始日")
+    ap.add_argument("--to", dest="date_to", help="--scan の終了日")
     args = ap.parse_args()
 
+    if args.scan:
+        hits = scan(args.date_from, args.date_to)
+        if not hits:
+            print("[race_point_sanity] 遡及検査: 異常な開催日はありません")
+        else:
+            print(f"[race_point_sanity] 遡及検査: {len(hits)} 日に異常の疑い")
+            for day, avg, med, n in hits:
+                print(f"  {day}  平均 {avg:6.2f}  直近中央値 {med:6.2f}  "
+                      f"({avg / med * 100:3.0f}%)  n={n}")
+            print("  ⚠️ 自動では直らない（再取得は結果の入った行をスキップする）。"
+                  "扱いは監査 item5 を参照。")
+        sys.exit(0)                    # 🔴 見つけるための道具。止めるための道具ではない
+
+    if not args.date:
+        ap.error("--date か --scan のどちらかが要ります")
     is_ok, message = check(args.date)
     print(f"[race_point_sanity] {message}")
     sys.exit(0 if is_ok else 1)
