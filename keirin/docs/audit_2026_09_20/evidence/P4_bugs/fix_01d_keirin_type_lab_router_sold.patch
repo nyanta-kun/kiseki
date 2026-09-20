@@ -1,0 +1,37 @@
+--- a/backend/src/api/keirin_type_lab_router.py
++++ b/backend/src/api/keirin_type_lab_router.py
+@@ -355,7 +355,10 @@
+     SELECT split_part(race_key, '#', 1) AS rk, rank_key
+     FROM keirin.netkeirin_submissions
+     WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
+-      AND status <> 'deleted'
++      -- 🔴 2026-09-20 修正: `status <> 'deleted'` だと status='proposed'
++      --    （承認待ち・netkeirin へ未送信）まで「売っている」判定に入り、
++      --    "SOLD" の名前に反して未送信の案を売った扱いにしていた。
++      AND status IN ('submitted', 'published')
+ """)
+ 
+ 
+@@ -364,7 +367,10 @@
+ # （この repo の既存クエリと同じ形）。
+ _SQL_COMBO = text("""
+     SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout,
+-           axis_sum, n_entries
++           axis_sum, n_entries,
++           -- 🔴 2026-09-20 追加: 欠車返還ぶん。列が無い旧DBでも動くよう
++           --    COALESCE で 0 埋え（マイグレーション未適用でも壊れない）。
++           COALESCE(void_refund, 0) AS void_refund
+     FROM keirin.type_lab_picks
+     WHERE mode = ANY(:modes) AND race_date BETWEEN :d1 AND :d2
+       AND plan_key = ANY(:plans)
+@@ -505,7 +511,9 @@
+         #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
+         #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
+         gami = [x for x in hits if (x["payout"] or 0) <= x["budget"]]
+-        inv = sum(int(x["budget"]) for x in st)
++        # 🔴 2026-09-20 修正: 欠車返還ぶん（void_refund）は実際には賭かっていない
++        #    ので投資額から除く（払戻・的中判定は元から無関係＝変えない）。
++        inv = sum(int(x["budget"]) - int(x.get("void_refund") or 0) for x in st)
+         ret = sum(int(x["payout"] or 0) for x in st)
+         two = [x for x in hits if (x["payout"] or 0) >= 2 * int(x["budget"])]
+         big = [x for x in hits if (x["payout"] or 0) >= 100_000]

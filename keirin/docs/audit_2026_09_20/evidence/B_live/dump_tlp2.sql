@@ -1,0 +1,1 @@
+\copy (SELECT race_key, race_date, race_type, n_entries, day_index, type_label, mode, plan_key, bet_type, n_legs, budget, pred_mean_payout, rule_version, hit, payout, final_odds FROM keirin.type_lab_picks WHERE mode IN ('paper','paper9')) TO 'tlp_paper.csv' WITH CSV HEADER

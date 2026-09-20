@@ -1,0 +1,1 @@
+\copy (SELECT race_id, race_date, race_key, race_label, n_predictions, n_predictions_staked, n_hits_incl_garami, n_hits_excl_garami, n_miss, stake_amount, payout_amount, n_sold, sold_points, sold_paid_points, avg_sold_points FROM keirin.netkeirin_sales_race) TO 'sales_race.csv' WITH CSV HEADER

@@ -1,0 +1,1 @@
+\copy (SELECT e.race_key, e.frame_no, e.finish_order FROM keirin.wt_entries e JOIN keirin.netkeirin_submissions ns ON ns.race_key=e.race_key WHERE e.finish_order IS NOT NULL) TO 'finishers.csv' WITH CSV HEADER
