@@ -120,8 +120,24 @@ def main() -> None:
     ap.add_argument("--date")
     ap.add_argument("--redo", action="store_true",
                     help="採点済みの行も採り直す（採点ロジックを直したあとの是正用）")
+    # 🔴 2026-09-20 追加。日次バッチ（`type_lab_settle.sh`）は当日+前日しか
+    #    見ないため、着順は確定していても確定オッズだけ引けなかった行
+    #    （`n_wait` に積まれる。的中している行ほど「配当が引けない」で
+    #    永久保留になりやすく、しかも外れは着順だけで確定するので**この保留は
+    #    的中側だけに偏る**＝ROI・的中率を静かに下振れさせる）は、その日付が
+    #    2日を過ぎた瞬間、日次バッチのどの呼び出しからも二度と対象にならない
+    #    （実測 2026-09-20: paper 12行・paper9 1行が該当。詳細は
+    #    `keirin/docs/AUDIT_2026_09_20.md §8` item8）。
+    #    `--pending-only` は日付を問わず `settled_at IS NULL` の行を全部拾う
+    #    ので、日次バッチへ3本目として足せば取りこぼしが自然に埋まる。
+    ap.add_argument("--pending-only", action="store_true",
+                    help="日付を問わず未採点の行を全部対象にする（取りこぼしの掃除用）")
     a = ap.parse_args()
-    if a.date:
+    if a.pending_only:
+        if a.redo:
+            ap.error("--pending-only と --redo は併用できない（全期間の採り直しになる）")
+        where, params = "1=1", ()
+    elif a.date:
         where, params = "race_date = ?", (a.date,)
     elif a.date_from and a.date_to:
         where, params = "race_date BETWEEN ? AND ?", (a.date_from, a.date_to)

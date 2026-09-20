@@ -617,6 +617,7 @@ async def _fetch_settled_submissions(
     db: AsyncSession, from_dt: Date, to_dt: Date,
     rank_labels: list[str] | None, *, only_missing_from_picks: bool,
     deleted_only: bool = False,
+    include_proposed: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """入稿の原本（`bet_detail`）と確定結果から**売った1商品ずつ**を採点して返す。
 
@@ -626,6 +627,14 @@ async def _fetch_settled_submissions(
       True  … picks_history に行があるレースを除く（`/stats` の「全入稿」用。
               1レース1行に保つため。理由は下の NOT EXISTS のコメント参照）
       False … **売った全商品**（`/sold-performance` 用）
+
+    include_proposed:
+      False … **netkeirin へ送った商品だけ**（status が submitted / published）。
+              実績の集計は必ずこちら。`proposed`（承認待ち・未送信の入稿案）を
+              混ぜると売っていない分が実績に入る（2026-09-20 監査: 採点済み 2,118 行中
+              proposed 15 行 + deleted 13 行が混入していた）
+      True  … 承認待ちの案も採点する（`/submissions` のレビュー画面のカード用。
+              「送っていたらどうだったか」を案ごとに見せるため）
 
     returns (行, 買い目が記録されていなかった件数)
     🔴 **`bet_detail` の保存は 2026-08-07 開始**。それ以前の入稿は「入稿した事実」しか
@@ -654,8 +663,13 @@ async def _fetch_settled_submissions(
     #    **取り消した分だけ**を採点する（レビュー画面の「取り消した分の参考値」用）。
     #    ⚠️ 両方を混ぜる口は作らない。混ぜると実績サマリーに売っていない分が
     #       紛れ込む（`winning_combos` を取消にも付けたときと同じ事故）。
+    sent_statuses = ("('submitted', 'published', 'proposed')" if include_proposed
+                     else "('submitted', 'published')")
     deleted_cond = ("ns.deleted_at IS NOT NULL" if deleted_only
                     else "ns.deleted_at IS NULL")
+    # 取消のみの口は status='deleted' なので status では絞らない。
+    if not deleted_only:
+        deleted_cond += f" AND ns.status IN {sent_statuses}"
 
     # 焼き付け済みの採点結果（`services/keirin_settlement_cache` が正本）。
     # 指紋が一致する行はここで完結し、`wt_entries`/`wt_odds` を引かない。
@@ -3417,7 +3431,7 @@ async def get_proposals(date: str = "", db: AsyncSession = Depends(get_db)) -> J
     #    `_fetch_settled_submissions` を使う（`/sold-performance` と同じ経路）。
     day = Date.fromisoformat(target)
     settled, _ = await _fetch_settled_submissions(
-        db, day, day, None, only_missing_from_picks=False)
+        db, day, day, None, only_missing_from_picks=False, include_proposed=True)
     by_key = {(x["race_key"], x["rank_key"]): x for x in settled}
     # 🔴 **取消分も同じ経路で採点する**（2026-08-24）。カードの「参考 買っていれば」は
     #    `bet_detail` の**入稿時点オッズ**で画面が計算していたため、確定オッズで

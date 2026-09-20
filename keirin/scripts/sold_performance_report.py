@@ -36,8 +36,12 @@ def _fetch(start: str, end: str) -> tuple[list[dict], dict, dict]:
             "SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, wr.race_date "
             "FROM netkeirin_submissions ns "
             "JOIN wt_races wr ON wr.race_key = ns.race_key "
-            # 🔴 取消済み（論理削除）は商品ではない
-            "WHERE ns.deleted_at IS NULL AND wr.race_date BETWEEN ? AND ? "
+            # 🔴 取消済み（論理削除）は商品ではない。
+            # 🔴 2026-09-20 修正: `status='proposed'`（承認待ち・netkeirin へ未送信）
+            #    も「世に出た商品」ではないので同時に除く（backend側
+            #    `_fetch_settled_submissions` と同型のバグ）。
+            "WHERE ns.deleted_at IS NULL AND ns.status IN ('submitted', 'published') "
+            "  AND wr.race_date BETWEEN ? AND ? "
             "ORDER BY wr.race_date, ns.race_no", (start, end))]
         keys = sorted({s["race_key"] for s in subs})
         if not keys:
