@@ -61,6 +61,7 @@ sys.path.insert(0, str(REPO))
 
 from scripts.sold_performance_report import _fetch  # noqa: E402
 from src.database import get_connection  # noqa: E402
+from src.entrants import valid_cars_by_race  # noqa: E402
 from src.sold_performance import SoldRace, build_sold_races, summarize  # noqa: E402
 
 #: 監査の基準日。ここから前向きに積む（これ以前は監査の対象で、観測ではない）。
@@ -528,7 +529,11 @@ def section_health(start: str, end: str, pending: Sequence[Mapping[str, Any]],
 # ── 本体 ───────────────────────────────────────────────────────
 def build(start: str, end: str, n_boot: int, seed: int) -> tuple[str, bool]:
     subs, finishes, payouts = _fetch(start, end)
-    races, _ = build_sold_races(subs, finishes, payouts)
+    # 🔴 欠車を含む leg は返還（2026-09-20 監査 item2）。渡さないと Web の実売集計と
+    #    投資額が食い違い、§3 の ROI だけ古い定義のままになる。
+    races, _ = build_sold_races(
+        subs, finishes, payouts,
+        valid_cars_by_race(s["race_key"] for s in subs))
     # 🔴 「採点できていない」は**外れではない**。当日の発走前と、前日以前の
     #    取りこぼし（#590 で拾い直す対象）は別物なので分けて数える。
     settled = {r.race_key for r in races}
