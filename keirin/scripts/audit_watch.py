@@ -139,7 +139,8 @@ def live_config() -> dict[str, Any]:
         cfg[f"type_lab.{name}"] = _val(TL, name)
     cfg["type_lab.PLANS"] = sorted(getattr(TL, "PLANS", {}))
     for name in ("CONFIDENT_BEFORE_HOUR", "CONFIDENT_MIN_SYNTH_ODDS",
-                 "CONFIDENT_PRIORITY_KEYWORD", "TIER_CONFIDENT_PLANS"):
+                 "CONFIDENT_PRIORITY_KEYWORD", "TIER_CONFIDENT_PLANS",
+                 "TYPE_LAB_CONFIDENT_PLANS"):
         cfg[f"confident.{name}"] = _val(CP, name)
     for name in ("AXIS_GATE_MIN", "AXIS_GATE_EXEMPT_PLANS", "AXIS_GATE_DROP_RATIO",
                  "DAILY_CAP_RACE_FRACTION", "DAILY_CAP_EXEMPT_KEYWORDS",
@@ -445,6 +446,7 @@ REVISED: tuple[tuple[str, str, str], ...] = (
     ("型E 点数＝計画払戻の床 (#586)", "2026-09-17", "E_hit"),
     ("高額枠 5本 (#588)", "2026-09-19", "__highpay__"),
     ("自信あり 第3世代 (#589)", "2026-09-19", "__confident__"),
+    ("自信あり 的中型に限定 (#596)", "2026-09-21", "__confident__"),
 )
 
 

@@ -484,8 +484,8 @@ def _choose_confident(rows: list[dict]):
 
     🔴 判定は `src.confident_pick` が唯一の正本。段の商品がある日は
        `tier_confident_score`（固めの中から決勝系優先・無ければ18時前で Σp 最大）、
-       無い日は `type_lab_confident_score`（発走18時前 ∧ **合成2.5倍以上** の中で
-       **Σp（的中確率）最大**・2026-09-19〜）。
+       無い日は `type_lab_confident_score`（**当たる回数を狙うプラン** ∧ 発走18時前
+       ∧ **合成2.5倍以上** の中で **Σp（的中確率）最大**・2026-09-20〜）。
        ここは母集団を渡すだけ。
     🔴 **入稿の前に呼ぶ**。netkeirin にアイコンが渡るのは入稿の瞬間だけなので、
        あとから選んでも付けられない（2026-09-04 豊橋3R）。
@@ -501,8 +501,12 @@ def _choose_confident(rows: list[dict]):
                                         r.get("start_at"), r.get("race_type")))
                   for r in rows]
     else:
+        # 🔴 2026-09-20: プランも渡す。払戻狙いの商品（`_sign`/`_pay`/`_big`/`_ana`）は
+        #    設計上 3.6〜5% しか当たらないので候補から外す
+        #    （正本 `confident_pick.TYPE_LAB_CONFIDENT_PLANS`）。
         scored = [(str(r["race_key"]), str(r["plan_key"]),
-                   type_lab_confident_score(r.get("legs") or [], r.get("start_at")))
+                   type_lab_confident_score(str(r["plan_key"]), r.get("legs") or [],
+                                            r.get("start_at")))
                   for r in rows]
     ev = {(rk, pk): v for rk, pk, v in scored if v is not None}
     best = pick_best(scored)

@@ -1,6 +1,6 @@
 {
-  "taken_at": "2026-09-20 10:26",
-  "git": "0413a42a5270ddb7f609556f54d390760dafe65e",
+  "taken_at": "2026-09-20 14:22",
+  "git": "94daa85262fbc8ebab9816bd147576818d82d3e4",
   "note": "監査 2026-09-20 時点の商品構成。差分が出たら「据え置き」が破れている。",
   "config": {
     "__source__": "live",
@@ -85,6 +85,16 @@
     "confident.CONFIDENT_PRIORITY_KEYWORD": "決勝",
     "confident.TIER_CONFIDENT_PLANS": [
       "T_firm"
+    ],
+    "confident.TYPE_LAB_CONFIDENT_PLANS": [
+      "A_hit",
+      "A_trio",
+      "B_hit",
+      "C_hit",
+      "D_hit",
+      "E_hit",
+      "F_hit",
+      "F_line"
     ],
     "gate.AXIS_GATE_MIN": {
       "A_hit": 1.596,
