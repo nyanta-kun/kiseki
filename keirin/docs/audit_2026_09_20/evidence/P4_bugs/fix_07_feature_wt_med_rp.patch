@@ -1,0 +1,44 @@
+--- a/keirin/src/preprocessing/feature_wt.py
++++ b/keirin/src/preprocessing/feature_wt.py
+@@ -34,7 +34,28 @@
+     "cls1": 4,
+ }
+ 
++# 🔴 2026-09-20 追加。`race_point==0.0`（欠損扱い）の穴埋め値を**固定**する。
++#
++# 旧実装は `df["race_point"].median()` を**この呼び出しの df の中だけ**で
++# 都度計算していた。学習は数年分（〜74万行）で呼ぶので中央値は安定するが、
++# 配信（`build_type_lab_picks.py` の `predict_p3_pw` 等）は**その日1日ぶん**
++# （400〜650行程度）だけで呼ぶため、学習時と配信時で埋める値が毎回わずかに
++# ずれる train/serve skew になっていた（実測 2026-09-20:
++# 全期間 2022-12-01〜2026-09-20・737,145行の中央値 85.55 に対し、
++# 単日サンプルは 82.4〜91.44 で ±3〜7% 振れる）。影響行数は
++# `race_point==0.0` の 2,501/739,646 行（0.34%）に限られる（他の行はこの
++# 補完を通らない）ので実害の規模は小さいが、**学習と配信が同じ関数を通る
++# という設計方針（CLAUDE.md「学習と配信が同じ関数を通るか」）には反する**。
++#
++# 値は 2026-09-20 時点の全期間中央値（`race_point<>0.0` の行だけで算出）。
++# モデルを再学習するたびに再計算しなくてよいよう、後方互換のため**固定値**
++# として持つ（再計算する場合は SQL:
++#   SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY race_point)
++#   FROM keirin.wt_entries WHERE race_point IS NOT NULL AND race_point <> 0.0;
++# ）。
++MED_RACE_POINT_FILL = 85.55
+ 
++
+ def load_raw_data_wt(min_date: str = "2025-01-01", max_date: str | None = None) -> pd.DataFrame:
+     """wt_entries + wt_races + venue_info から生データを取得"""
+     where = "WHERE r.race_date >= :min_date"
+@@ -164,8 +185,10 @@
+     # （全車0.0＝ガールズ/新人戦は中央値算出の対象自体がNaNになりグローバル中央値で
+     # 一律補完されるため、レース単位で見ても不自然にならない）。
+     df["race_point"] = df["race_point"].replace(0.0, np.nan)
+-    med_rp = df["race_point"].median()
+-    df["race_point"] = df["race_point"].fillna(med_rp if not pd.isna(med_rp) else 50.0)
++    # 🔴 2026-09-20 修正: `df` の中だけで中央値を取ると学習(数年分)と配信(1日ぶん)
++    #    で埋める値がずれる（train/serve skew）。固定値 `MED_RACE_POINT_FILL` へ
++    #    揃える（詳細は同定数のコメント参照）。
++    df["race_point"] = df["race_point"].fillna(MED_RACE_POINT_FILL)
+ 
+     df["gear_ratio"] = df["gear_ratio"].fillna(3.92)
+ 

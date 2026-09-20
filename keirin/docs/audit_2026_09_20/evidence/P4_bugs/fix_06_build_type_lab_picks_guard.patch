@@ -1,0 +1,50 @@
+--- a/keirin/scripts/build_type_lab_picks.py
++++ b/keirin/scripts/build_type_lab_picks.py
+@@ -38,6 +38,7 @@
+ sys.path.insert(0, str(REPO))
+ 
+ from src.database import get_connection            # noqa: E402
++from src.entry_health import missing_market_inputs  # noqa: E402
+ from src.type_lab import (                          # noqa: E402
+     BUDGET, PLANS, ROLE_BASE, add_upper_band, allocate, build_legs,
+     build_with_gate_fallback, mean_expected_payout, min_expected_payout,
+@@ -284,12 +285,29 @@
+         return []
+ 
+     out = []
++    n_skipped_lineup = 0
+     for rk in keys:
+         ent = ent_all.get(rk)
+         if not ent or len(ent) != N_ENTRIES or rk not in p3:
+             continue
+         if len(p3[rk]) != N_ENTRIES:
+             continue
++        # 🔴 2026-09-20 追加: 生成側にも `missing_market_inputs` ガードを掛ける。
++        #    従来は入稿側（`netkeirin_submit_type_lab.py`）だけが見ており、
++        #    ここ（`build_type_lab_picks.py`）は退化した並び・印のまま
++        #    p3/型/軸を計算して `type_lab_picks` に書き続けていた
++        #    （`src/entry_health.py` の docstring は「商品への影響は無い」と
++        #    書いているが、それは入稿側の再判定に依存した結果論であって、
++        #    ここで止めていたわけではない）。組み直し（`rebuild()` の
++        #    `--race-key` 呼び出し）は同じ関数を再度呼ぶだけなので、ここで
++        #    弾いても後の波の再判定は変わらず、退化した行が
++        #    `type_lab_picks` に一切残らなくなる。
++        lineup_issue = missing_market_inputs(
++            {"prediction_mark": e.get("mark"), "line_group": e.get("line_group")}
++            for e in ent.values())
++        if lineup_issue:
++            n_skipped_lineup += 1
++            continue
+         cars = {c: dict(p3=p3[rk][c], pw=(pw.get(rk) or {}).get(c), **ent[c])
+                 for c in ent if c in p3[rk]}
+         try:
+@@ -307,6 +325,9 @@
+         if not m:
+             continue
+         out.extend(rows_for_race(m, cars, tf_odds, tf_prob, mode, tf_order_prob))
++    if n_skipped_lineup:
++        print(f"[live] {day}: 並び・印が未取得のため {n_skipped_lineup}R を見送りました"
++              "（後の波の組み直しで再判定されます）")
+     return out
+ 
+ 

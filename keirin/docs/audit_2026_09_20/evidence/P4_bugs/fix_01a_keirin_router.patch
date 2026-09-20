@@ -1,0 +1,17 @@
+--- a/backend/src/api/keirin_router.py
++++ b/backend/src/api/keirin_router.py
+@@ -654,8 +654,13 @@
+     #    **取り消した分だけ**を採点する（レビュー画面の「取り消した分の参考値」用）。
+     #    ⚠️ 両方を混ぜる口は作らない。混ぜると実績サマリーに売っていない分が
+     #       紛れ込む（`winning_combos` を取消にも付けたときと同じ事故）。
++    # 🔴 2026-09-20 修正: `deleted_at IS NULL` だけでは `status='proposed'`
++    #    （承認待ち・netkeirin にはまだ**送っていない**入稿案）が「売った商品」に
++    #    混ざる。「世に出た」= status が submitted/published のときだけ
++    #    （`scripts/netkeirin_submit_wt.py` の STATUS_* 定義・削除時は status も
++    #    'deleted' に揃うので deleted_at 側の判定と矛盾しない）。
+     deleted_cond = ("ns.deleted_at IS NOT NULL" if deleted_only
+-                    else "ns.deleted_at IS NULL")
++                    else "ns.deleted_at IS NULL AND ns.status IN ('submitted', 'published')")
+ 
+     # 焼き付け済みの採点結果（`services/keirin_settlement_cache` が正本）。
+     # 指紋が一致する行はここで完結し、`wt_entries`/`wt_odds` を引かない。

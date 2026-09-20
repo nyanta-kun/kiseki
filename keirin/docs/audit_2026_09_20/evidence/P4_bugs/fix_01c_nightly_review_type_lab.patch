@@ -1,0 +1,51 @@
+--- a/keirin/scripts/nightly_review_type_lab.py
++++ b/keirin/scripts/nightly_review_type_lab.py
+@@ -230,11 +230,13 @@
+         subs = [dict(r) for r in c.execute(
+             "SELECT ns.race_key, ns.rank_key, ns.origin, ns.bet_detail, ns.session, "
+             "       ns.title, ns.venue_name, ns.race_no, ns.deleted_at, ns.cancel_reason, "
+-            "       wr.race_date "
++            "       ns.status, wr.race_date "
+             "FROM netkeirin_submissions ns "
+             "JOIN wt_races wr ON wr.race_key = ns.race_key "
+             "WHERE wr.race_date = ?", (day,))]
+-    alive = [s for s in subs if s["deleted_at"] is None]
++    # 🔴 2026-09-20 修正: `deleted_at IS NULL` だけでは status='proposed'
++    #    （承認待ち・netkeirin へ未送信）が「売った商品」に混ざる。
++    alive = [s for s in subs if s["deleted_at"] is None and s["status"] in ("submitted", "published")]
+     keys = sorted({s["race_key"] for s in alive})
+     finishes, payouts = _results(keys)
+     races, n_skipped = build_sold_races(alive, finishes, payouts)
+@@ -737,7 +739,9 @@
+         rows = [dict(r) for r in c.execute(
+             "SELECT wr.race_date d, count(*) n FROM netkeirin_submissions ns "
+             "JOIN wt_races wr ON wr.race_key = ns.race_key "
+-            "WHERE ns.deleted_at IS NULL AND wr.race_date BETWEEN ? AND ? "
++            # 🔴 2026-09-20 修正: proposed（未送信の承認待ち案）を売った件数に数えない。
++            "WHERE ns.deleted_at IS NULL AND ns.status IN ('submitted', 'published') "
++            "  AND wr.race_date BETWEEN ? AND ? "
+             "GROUP BY 1", (start.isoformat(), end.isoformat()))]
+     return median_submits({str(d["d"]): int(d["n"]) for d in rows}, day)
+ 
+@@ -799,7 +803,9 @@
+             f"WHERE race_key IN ({ph})", tuple(keys))]
+         sold = {str(r["race_key"]) for r in c.execute(
+             f"SELECT DISTINCT race_key FROM netkeirin_submissions "
+-            f"WHERE race_key IN ({ph}) AND deleted_at IS NULL", tuple(keys))}
++            # 🔴 2026-09-20 修正: proposed は売っていない。
++            f"WHERE race_key IN ({ph}) AND deleted_at IS NULL "
++            f"  AND status IN ('submitted', 'published')", tuple(keys))}
+         rejudged = {str(r["race_key"]) for r in c.execute(
+             f"SELECT DISTINCT race_key FROM submission_skips "
+             f"WHERE race_key IN ({ph}) AND reason_code <> ?",
+@@ -1213,7 +1219,9 @@
+             "       ns.is_confident, ns.confident_ev, wr.race_date "
+             "FROM netkeirin_submissions ns "
+             "JOIN wt_races wr ON wr.race_key = ns.race_key "
+-            "WHERE ns.deleted_at IS NULL AND wr.race_date BETWEEN ? AND ?",
++            # 🔴 2026-09-20 修正: proposed は売っていない。
++            "WHERE ns.deleted_at IS NULL AND ns.status IN ('submitted', 'published') "
++            "  AND wr.race_date BETWEEN ? AND ?",
+             (CONFIDENT_SINCE, day))]
+     if not subs:
+         return ["  対象期間の入稿が無い"]

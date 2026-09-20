@@ -1,0 +1,1 @@
+\copy (SELECT race_key, race_date, race_type, n_entries, day_index, type_label, mode, plan_key, bet_type, n_legs, budget, pred_mean_payout, pred_min_payout, rule_version, generated_at, settled_at, win_combo, hit, payout, final_odds, axis_sum, gap, arare FROM keirin.type_lab_picks WHERE mode IN ('live','live9')) TO 'tlp_live.csv' WITH CSV HEADER
