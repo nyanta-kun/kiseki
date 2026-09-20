@@ -261,7 +261,8 @@ def _sales(start: str, end: str) -> tuple[list[dict], dict[str, dict]]:
     ymd = lambda s: s.replace("-", "")  # noqa: E731
     with get_connection() as c:
         daily = [dict(r) for r in c.execute(
-            "SELECT sale_date, n_sold, sold_paid_points, n_hits_excl_garami, n_predictions "
+            "SELECT sale_date, n_sold, sold_paid_points, n_predictions, "
+            "       n_hits_incl_garami, n_hits_excl_garami "
             "FROM netkeirin_sales_daily WHERE sale_date BETWEEN ? AND ? "
             "ORDER BY sale_date", (ymd(start), ymd(end)))]
         race = {}
@@ -287,6 +288,23 @@ def _cancelled_keys(start: str, end: str) -> set[str]:
             "WHERE cancel = 1 AND race_date BETWEEN ? AND ?", (start, end))}
 
 
+def _race_types(keys: Iterable[str]) -> dict[str, str]:
+    """レース種別（決勝・準決勝…）。「自信あり」をどこへ置いたかを見るため。"""
+    keys = sorted(set(keys))
+    if not keys:
+        return {}
+    out: dict[str, str] = {}
+    with get_connection() as c:
+        for i in range(0, len(keys), 900):
+            chunk = keys[i:i + 900]
+            q = ("SELECT race_key, race_type FROM wt_races WHERE race_key IN (%s)"
+                 % ",".join("?" * len(chunk)))
+            for r in c.execute(q, chunk):
+                d = dict(r)
+                out[d["race_key"]] = str(d.get("race_type") or "—")
+    return out
+
+
 def _confident_keys(start: str, end: str) -> set[str]:
     """「自信あり」を付けて出したレース。
 
@@ -305,45 +323,93 @@ def _confident_keys(start: str, end: str) -> set[str]:
 def section_sales(start: str, end: str, subs: list[Mapping[str, Any]],
                   races: Sequence[SoldRace], conf: set[str]) -> list[str]:
     daily, per_race = _sales(start, end)
+    if not daily:
+        return ["（売上はまだ1日も取得できていない。netkeirin の取得は翌朝 9:40）"]
     meta = {s["race_key"]: s for s in subs}
     payout = {r.race_key: r.payout for r in races}
 
-    lines = ["| 日 | 商品 | 有償pt | 手取り | 高額枠pt | 自信ありpt | 10万+ |",
-             "|---|--:|--:|--:|--:|--:|--:|"]
-    tot_pt = tot_days = tot_sign = 0
+    def day_rows(day: str) -> list[dict]:
+        return [r for r in per_race.values() if r["race_date"] == day]
+
+    def big_of(day: str) -> int:
+        return sum(1 for r in day_rows(day)
+                   if payout.get(r["race_key"], 0) >= SIGNBOARD_PAYOUT)
+
+    def yen(pt: float) -> int:
+        return _SALES.net_revenue_yen(_SALES.revenue_yen(pt))
+
+    def iso(day: str) -> str:
+        return f"{day[:4]}-{day[4:6]}-{day[6:]}"
+
+    # ── 週次（長く観測するほどここだけ見れば足りる）────────────────
+    weeks: dict[str, list[dict]] = {}
     for d in daily:
+        y, w, _ = date.fromisoformat(iso(d["sale_date"])).isocalendar()
+        weeks.setdefault(f"{y}-W{w:02d}", []).append(d)
+    lines = ["**週次**", "",
+             "| 週 | 日数 | 商品 | 有償pt | 手取り/日 | 表示的中 | 10万+ |",
+             "|---|--:|--:|--:|--:|--:|--:|"]
+    for label, rows in weeks.items():
+        pt = sum(int(r.get("sold_paid_points") or 0) for r in rows)
+        n = sum(int(r.get("n_predictions") or 0) for r in rows)
+        hit = sum(int(r.get("n_hits_excl_garami") or 0) for r in rows)
+        big = sum(big_of(r["sale_date"]) for r in rows)
+        lines.append(f"| {label} | {len(rows)} | {n} | {pt:,} "
+                     f"| {yen(pt / len(rows)):,}円 "
+                     f"| {(hit / n if n else 0):.1%} | {big} |")
+
+    # ── 日次は直近14日だけ（累積が伸びても読める長さに保つ）──────────
+    recent = daily[-14:]
+    lines += ["", f"**直近{len(recent)}日**", "",
+              "| 日 | 商品 | 有償pt | 手取り | 高額枠pt | 自信ありpt | 10万+ |",
+              "|---|--:|--:|--:|--:|--:|--:|"]
+    for d in recent:
         day = d["sale_date"]
-        iso = f"{day[:4]}-{day[4:6]}-{day[6:]}"
         pt = int(d.get("sold_paid_points") or 0)
         hi = cf = 0
-        for rk, row in per_race.items():
-            if row["race_date"] != day:
-                continue
-            m = meta.get(rk)
-            if not m:
-                continue
-            p = int(row.get("sold_paid_points") or 0)
-            if (m.get("origin") or "") == "highpay_fill":
+        for r in day_rows(day):
+            rk = r["race_key"]
+            p = int(r.get("sold_paid_points") or 0)
+            if (meta.get(rk, {}).get("origin") or "") == "highpay_fill":
                 hi += p
             if rk in conf:
                 cf += p
-        big = sum(1 for rk, row in per_race.items()
-                  if row["race_date"] == day and payout.get(rk, 0) >= SIGNBOARD_PAYOUT)
-        tot_pt += pt
-        tot_days += 1
-        tot_sign += big
-        lines.append(f"| {iso} | {int(d.get('n_predictions') or 0)} | {pt:,} "
-                     f"| {_SALES.net_revenue_yen(_SALES.revenue_yen(pt)):,}円 "
-                     f"| {hi:,} | {cf:,} | {big} |")
+        lines.append(f"| {iso(day)} | {int(d.get('n_predictions') or 0)} | {pt:,} "
+                     f"| {yen(pt):,}円 | {hi:,} | {cf:,} | {big_of(day)} |")
 
-    if not daily:
-        return ["（売上はまだ1日も取得できていない。netkeirin の取得は翌朝 9:40）"]
-
-    avg = _SALES.net_revenue_yen(_SALES.revenue_yen(tot_pt / tot_days))
+    # ── 売れ行き（期間計）───────────────────────────────────────
+    pt_all = sum(int(d.get("sold_paid_points") or 0) for d in daily)
+    n_all = sum(int(d.get("n_predictions") or 0) for d in daily)
+    sold_all = sum(int(d.get("n_sold") or 0) for d in daily)
+    incl = sum(int(d.get("n_hits_incl_garami") or 0) for d in daily)
+    excl = sum(int(d.get("n_hits_excl_garami") or 0) for d in daily)
+    rows_all = list(per_race.values())
+    zero = sum(1 for r in rows_all if not int(r.get("n_sold") or 0))
+    paid = sorted(p for p in (payout.get(r.race_key, 0) for r in races if r.net_hit) if p)
     lines += ["",
-              f"**累計 {tot_days} 日** 手取り **{avg:,}円/日**"
-              f"（監査の型ラボ期 6,458円/日）・10万+ {tot_sign} 件",
+              f"**累計 {len(daily)} 日** 手取り **{yen(pt_all / len(daily)):,}円/日**"
+              f"（監査の型ラボ期 6,458円/日）・10万+ "
+              f"{sum(big_of(d['sale_date']) for d in daily)} 件",
               "",
+              f"- 売れ行き: {sold_all / n_all:.2f} 個/商品"
+              f"（無売上 {zero / len(rows_all):.1%}・レース別 {len(rows_all)} 件）"
+              if rows_all and n_all else "- 売れ行き: —",
+              f"- ガミ率 {((incl - excl) / incl if incl else 0):.1%}"
+              f"（当たった {incl} 件のうち払戻が賭け金に届かなかった割合）",
+              f"- 表示的中の中央払戻 "
+              f"{(paid[len(paid) // 2] if paid else 0):,}円（{len(paid)} 件）"]
+
+    # ── 自信ありの置き場所（監査 §5 で最も効率の良い単一ダイヤル）──────
+    types = _race_types(conf)
+    if types:
+        tally: dict[str, int] = {}
+        for t in types.values():
+            tally[t] = tally.get(t, 0) + 1
+        top = " / ".join(f"{k} {v}" for k, v in
+                         sorted(tally.items(), key=lambda kv: -kv[1])[:6])
+        lines.append(f"- 自信あり {len(types)} 件の置き場所: {top}")
+
+    lines += ["",
               "⚠️ 最終日が欠けているのは未取得（翌朝 9:40 に入る）。0 ではない。",
               "⚠️ 売上に効くのは**高額のラベル・自信あり・決勝・10万+的中の翌日**"
               "（監査 §5）。**的中率・本数・公開の早さには反応しない**ので、"
