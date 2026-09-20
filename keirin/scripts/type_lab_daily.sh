@@ -68,3 +68,12 @@ echo "[type_lab] $(date '+%F %T') settle $YEST"
 "$PY" scripts/settle_type_lab_picks.py --date "$YEST"
 echo "[type_lab] $(date '+%F %T') settle $TODAY"
 "$PY" scripts/settle_type_lab_picks.py --date "$TODAY"
+# 🔴 2026-09-20 追加: 上の2本は当日+前日しか見ないため、着順は確定していても
+#    確定オッズだけ2日を超えて遅れた行（的中しているのに配当が引けず
+#    保留された行ほど残りやすい＝ROI・的中率を静かに下振れさせる）は
+#    どの日次バッチからも二度と拾われず永久保留になる（実測 2026-09-20:
+#    paper 12行・paper9 1行が該当・詳細は
+#    keirin/docs/AUDIT_2026_09_20.md §8 item8）。1日1回・数百行のSELECTなので
+#    ここ（朝バッチ）で日付を問わず拾い直す。
+echo "[type_lab] $(date '+%F %T') settle pending (catch-up)"
+"$PY" scripts/settle_type_lab_picks.py --pending-only

@@ -355,7 +355,9 @@ _SQL_SOLD = text("""
     SELECT split_part(race_key, '#', 1) AS rk, rank_key
     FROM keirin.netkeirin_submissions
     WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
-      AND status <> 'deleted'
+      -- 🔴 「削除以外」で絞ると `proposed`（承認待ち・netkeirin へ未送信）まで
+      --    「売った」扱いになる（2026-09-20 監査）。送ったものだけを数える。
+      AND status IN ('submitted', 'published')
 """)
 
 
