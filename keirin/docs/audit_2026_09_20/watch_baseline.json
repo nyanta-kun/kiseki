@@ -1,0 +1,157 @@
+{
+  "taken_at": "2026-09-20 10:26",
+  "git": "0413a42a5270ddb7f609556f54d390760dafe65e",
+  "note": "監査 2026-09-20 時点の商品構成。差分が出たら「据え置き」が破れている。",
+  "config": {
+    "__source__": "live",
+    "type_lab.BUDGET": 10000,
+    "type_lab.AXIS_SUM_FIRM": 1.44,
+    "type_lab.MIN_PAYOUT_MULT": 2.0,
+    "type_lab.SIGNBOARD_TYPES": [
+      "F"
+    ],
+    "type_lab.SIGNBOARD_RACE_TYPES": [
+      "チャレンジ決勝",
+      "チャレンジ準決勝",
+      "決勝",
+      "準決勝"
+    ],
+    "type_lab.SIGNBOARD_TARGET": 150000,
+    "type_lab.SIGNBOARD_MAX_ODDS": 600.0,
+    "type_lab.HIGHPAY_TYPES": [
+      "B",
+      "C",
+      "D"
+    ],
+    "type_lab.HIGHPAY_SLOTS_PER_DAY": 5,
+    "type_lab.HIGHPAY_BIG_SLOTS": [
+      "2",
+      "4"
+    ],
+    "type_lab.HIGHPAY_BIG_TARGET": 400000,
+    "type_lab.HIGHPAY_PLAN_KEYS": [
+      "B_big",
+      "B_sign",
+      "C_big",
+      "C_sign",
+      "D_big",
+      "D_sign"
+    ],
+    "type_lab.UPPER_BANDS": [],
+    "type_lab.UPPER_BAND_PLANS": [
+      "E_hit",
+      "F_hit"
+    ],
+    "type_lab.OSAE_PLANS": [],
+    "type_lab.TYPE_F_SELL_BY_RACE_TYPE": {
+      "チャレンジ決勝": "F_pay",
+      "決勝": "F_pay"
+    },
+    "type_lab.TYPE_F_SELL_DEFAULT": "F_hit",
+    "type_lab.TYPE_F_SELL_LINE": "F_line",
+    "type_lab.TIER_SELL_ENABLED": false,
+    "type_lab.MIN_MEAN_PAYOUT": 20000,
+    "type_lab.PLANS": [
+      "A_ana",
+      "A_big",
+      "A_hit",
+      "A_pay",
+      "A_sign",
+      "A_trio",
+      "B_big",
+      "B_hit",
+      "B_sign",
+      "C_big",
+      "C_hit",
+      "C_sign",
+      "D_big",
+      "D_hit",
+      "D_sign",
+      "E_big",
+      "E_hit",
+      "E_sign",
+      "F_big",
+      "F_hit",
+      "F_line",
+      "F_pay",
+      "F_sign",
+      "T_axis",
+      "T_firm",
+      "T_mid",
+      "T_upset"
+    ],
+    "confident.CONFIDENT_BEFORE_HOUR": 18,
+    "confident.CONFIDENT_MIN_SYNTH_ODDS": 2.5,
+    "confident.CONFIDENT_PRIORITY_KEYWORD": "決勝",
+    "confident.TIER_CONFIDENT_PLANS": [
+      "T_firm"
+    ],
+    "gate.AXIS_GATE_MIN": {
+      "A_hit": 1.596,
+      "A_trio": 1.528,
+      "B_hit": 1.539,
+      "C_hit": 1.5,
+      "D_hit": 1.304,
+      "E_hit": 1.284,
+      "F_hit": 1.246,
+      "F_sign": 1.267
+    },
+    "gate.AXIS_GATE_EXEMPT_PLANS": [
+      "A_ana",
+      "A_pay",
+      "B_big",
+      "B_sign",
+      "C_big",
+      "C_sign",
+      "D_big",
+      "D_sign",
+      "F_line",
+      "F_pay",
+      "T_axis",
+      "T_firm",
+      "T_mid",
+      "T_upset"
+    ],
+    "gate.AXIS_GATE_DROP_RATIO": 0.2,
+    "gate.DAILY_CAP_RACE_FRACTION": 0.5,
+    "gate.DAILY_CAP_EXEMPT_KEYWORDS": [
+      "決勝"
+    ],
+    "gate.DAILY_CAP_EXEMPT_PLANS": [
+      "A_ana",
+      "T_axis",
+      "T_firm",
+      "T_mid",
+      "T_upset"
+    ],
+    "db.netkeirin_settings.enabled": [
+      "A_ana",
+      "A_big",
+      "A_hit",
+      "A_sign",
+      "A_trio",
+      "B_big",
+      "B_hit",
+      "B_sign",
+      "C_big",
+      "C_hit",
+      "C_sign",
+      "D_big",
+      "D_hit",
+      "D_sign",
+      "E_big",
+      "E_hit",
+      "E_sign",
+      "F_big",
+      "F_hit",
+      "F_line",
+      "F_pay",
+      "F_sign",
+      "_global",
+      "T_axis",
+      "T_firm",
+      "T_mid",
+      "T_upset"
+    ]
+  }
+}
