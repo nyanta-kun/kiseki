@@ -192,10 +192,10 @@ def test_confident_score_excludes_evening_and_later():
 
     assert CONFIDENT_BEFORE_HOUR == 18
     legs = _legs(0.1, 10)                      # 合成 5.0倍
-    assert type_lab_confident_score(legs, 0) is not None            # 09:00 JST
-    assert type_lab_confident_score(legs, 8 * _H) is not None       # 17:00 JST
-    assert type_lab_confident_score(legs, 9 * _H) is None           # 18:00 JST（境界は外）
-    assert type_lab_confident_score(legs, 13 * _H) is None          # 22:00 JST
+    assert type_lab_confident_score("C_hit", legs, 0) is not None            # 09:00 JST
+    assert type_lab_confident_score("C_hit", legs, 8 * _H) is not None       # 17:00 JST
+    assert type_lab_confident_score("C_hit", legs, 9 * _H) is None           # 18:00 JST（境界は外）
+    assert type_lab_confident_score("C_hit", legs, 13 * _H) is None          # 22:00 JST
 
 
 def test_confident_score_requires_synthetic_odds_floor():
@@ -204,9 +204,9 @@ def test_confident_score_requires_synthetic_odds_floor():
 
     assert CONFIDENT_MIN_SYNTH_ODDS == 2.5
     # 2点とも5.0倍 → 合成ちょうど2.5倍。「2.5倍以上」なので候補に入る
-    assert type_lab_confident_score(_legs(0.1, 5.0), 0) is not None
+    assert type_lab_confident_score("C_hit", _legs(0.1, 5.0), 0) is not None
     # 2点とも4.9倍 → 合成 2.45倍
-    assert type_lab_confident_score(_legs(0.1, 4.9), 0) is None
+    assert type_lab_confident_score("C_hit", _legs(0.1, 4.9), 0) is None
 
 
 def test_confident_score_drops_races_without_start_time():
@@ -218,9 +218,9 @@ def test_confident_score_drops_races_without_start_time():
     from src.confident_pick import type_lab_confident_score
 
     legs = _legs(0.1, 10)
-    assert type_lab_confident_score(legs, None) is None
-    assert type_lab_confident_score(legs, "") is None
-    assert type_lab_confident_score(legs, "abc") is None
+    assert type_lab_confident_score("C_hit", legs, None) is None
+    assert type_lab_confident_score("C_hit", legs, "") is None
+    assert type_lab_confident_score("C_hit", legs, "abc") is None
 
 
 def test_confident_before_hour_matches_submission_wave():
@@ -275,7 +275,7 @@ def test_confident_score_is_hit_probability_not_ev():
     legs = _legs(0.1, 10)                      # 2点・合成5.0倍
     assert legs_hit_probability(legs) == pytest.approx(0.2)
     assert legs_expected_value(legs) == pytest.approx(1.0)
-    assert type_lab_confident_score(legs, 0) == pytest.approx(0.2)
+    assert type_lab_confident_score("C_hit", legs, 0) == pytest.approx(0.2)
 
 
 def test_hit_probability_never_uses_partial_legs():
@@ -391,3 +391,66 @@ def test_tier_rows_are_loaded_with_race_type():
     src = inspect.getsource(m._load_type_lab)
     assert "r.race_type" in src
     assert "TIER_PLAN_KEYS" in src
+
+
+def test_confident_score_excludes_payout_oriented_plans():
+    """🔴 払戻狙いの商品（`_sign`/`_pay`/`_big`/`_ana`）に「自信あり」を付けない。
+
+    それらは**設計上 3.6〜5% しか当たらない**（型ラボ期 2026-08-29〜09-19 の実測:
+    `F_sign` 3.6% / `A_ana` 4.3% / `F_pay` 5.1% / 高額枠 4.8〜8.7%）。当たる回数を
+    約束していない商品にアイコンを貼ると、意味が逆になる。
+
+    実測では自信あり 22件のうち **6件**がこれらのプランに置かれ、全部外れていた。
+    """
+    from src.confident_pick import type_lab_confident_score
+
+    legs = _legs(0.1, 10)                      # 条件①②は満たす買い目
+    for plan in ("F_sign", "F_pay", "A_ana", "B_sign", "C_big", "D_sign"):
+        assert type_lab_confident_score(plan, legs, 0) is None, plan
+    for plan in ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit"):
+        assert type_lab_confident_score(plan, legs, 0) is not None, plan
+
+
+def test_confident_plans_are_an_allow_list():
+    """🔴 知らないプランは既定で候補外（禁止リストではなく許可制）。
+
+    プランを足したときに**黙って「自信あり」が付く**側へ倒れないようにする。
+    """
+    from src.confident_pick import TYPE_LAB_CONFIDENT_PLANS, type_lab_confident_score
+
+    assert type_lab_confident_score("Z_new", _legs(0.1, 10), 0) is None
+    assert "F_sign" not in TYPE_LAB_CONFIDENT_PLANS
+    assert "A_ana" not in TYPE_LAB_CONFIDENT_PLANS
+
+
+def test_confident_plans_cover_the_hit_oriented_products():
+    """🔴 売っている「当たる回数狙い」の商品が候補から漏れていないこと。
+
+    漏れると、その商品しか出ていない日に自信ありが付かなくなる。
+    """
+    from src.confident_pick import TYPE_LAB_CONFIDENT_PLANS
+    from src.type_lab import SELL_PLANS
+
+    hit_oriented = {p for p in SELL_PLANS if not p.endswith(("_ana", "_sign",
+                                                             "_pay", "_big"))}
+    assert hit_oriented <= TYPE_LAB_CONFIDENT_PLANS
+    # 型F（種別で分かれるので SELL_PLANS に無い）も当たる回数狙いの側は入れる
+    assert {"F_hit", "F_line"} <= TYPE_LAB_CONFIDENT_PLANS
+
+
+def test_callers_pass_the_plan():
+    """🔴 呼び出し側が渡し忘れると**制限が効かないまま通る**（引数が増えたのに
+    位置引数で legs を渡すと `plan_key=legs` になり、全部が候補外になる）。
+    """
+    import ast
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    for name in ("pick_confident_race_wt.py", "netkeirin_submit_type_lab.py"):
+        tree = ast.parse((repo / "scripts" / name).read_text(encoding="utf-8"))
+        calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                 and n.func.id == "type_lab_confident_score"]
+        assert calls, name
+        for call in calls:
+            assert len(call.args) == 3, f"{name}:{call.lineno} 引数が3つでない"

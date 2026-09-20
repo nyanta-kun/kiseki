@@ -244,10 +244,36 @@ def legs_expected_value(legs) -> float | None:
     return (ev / total) if total > 0 else None
 
 
-def type_lab_confident_score(legs, start_at) -> float | None:
+#: 「自信あり」を付けてよい型ラボのプラン（2026-09-20 新設・ユーザー判断）。
+#:
+#: 🔴🔴 **払戻を狙う商品（`_sign` / `_pay` / `_big` / `_ana`）には付けない。**
+#:    それらは**設計上 3.6〜5% しか当たらない**（型ラボ期の実測: `F_sign` 3.6% /
+#:    `A_ana` 4.3% / `F_pay` 5.1% / 高額枠 4.8〜8.7%）。当たる回数を約束していない
+#:    商品に「自信あり」と書くのは、アイコンの意味と逆になる。
+#:
+#: 実測（2026-08-29〜09-19・22件）: 自信ありの置き場所は **E_hit 6 / F_sign 4 /
+#: C_hit 3 / B_hit 2 / D_hit 2 / A_ana 2 / …** で、**6件が 3.6〜4.3% のプラン**。
+#: 表示的中は 5/22（22.7%）にとどまり、直近14日は13日が外れだった。
+#:
+#: 🟢 **段の商品では既に同じ手当てをしてある**（下の `TIER_CONFIDENT_PLANS`）。
+#:    そのときの理由書き——「表示的中が最も低い商品に毎日『自信あり』が付くことに
+#:    なり、アイコンの意味と逆になる」——が、型ラボ側にも同じだけ当てはまる。
+#:
+#: ⚠️ **許可制にしてある**（禁止リストではない）。プランを足したときの既定は
+#:    「付けない」側。`_hit` を名乗る新しいプランを足したら、ここへ明示的に
+#:    加えること（`tests/test_confident_pick.py` が売り物との対応を見ている）。
+#: ⚠️ `D_hit`(20.0%) / `E_hit`(19.5%) は的中率が低いほうだが**残してある**。
+#:    外すと候補が無い日が出るうえ、22日の実測で選び分けの優劣は付かない。
+TYPE_LAB_CONFIDENT_PLANS: frozenset[str] = frozenset({
+    "A_hit", "A_trio", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit", "F_line",
+})
+
+
+def type_lab_confident_score(plan_key, legs, start_at) -> float | None:
     """型ラボ1商品の「自信あり」スコア（＝Σp・的中確率）。候補外なら None。
 
-    候補の条件（ユーザー指示 2026-09-19）:
+    候補の条件:
+      ⓪ プランが `TYPE_LAB_CONFIDENT_PLANS`（＝当たる回数を狙う商品・2026-09-20）
       ① 発走 JST < `CONFIDENT_BEFORE_HOUR`（18時）
       ② 合成オッズ >= `CONFIDENT_MIN_SYNTH_ODDS`（2.5倍）
 
@@ -258,13 +284,16 @@ def type_lab_confident_score(legs, start_at) -> float | None:
 
     >>> legs = [{"prob": 0.1, "stake": 5000, "pred_odds": 10},
     ...         {"prob": 0.1, "stake": 5000, "pred_odds": 20}]
-    >>> round(type_lab_confident_score(legs, 0), 4)      # 09:00 JST・合成 6.67倍
+    >>> round(type_lab_confident_score("C_hit", legs, 0), 4)   # 09:00 JST・合成 6.67倍
     0.2
-    >>> type_lab_confident_score(legs, 0 + 9 * 3600) is None   # 18:00 JST
+    >>> type_lab_confident_score("F_sign", legs, 0) is None    # 払戻狙いには付けない
     True
-    >>> type_lab_confident_score([{"prob": 0.5, "stake": 10000, "pred_odds": 2}], 0) is None
+    >>> type_lab_confident_score("C_hit", legs, 0 + 9 * 3600) is None   # 18:00 JST
     True
-    >>> type_lab_confident_score(legs, None) is None
+    >>> type_lab_confident_score("C_hit", [{"prob": 0.5, "stake": 10000,
+    ...                                    "pred_odds": 2}], 0) is None
+    True
+    >>> type_lab_confident_score("C_hit", legs, None) is None
     True
 
     🔴 **上帯（押さえ）は除いて判定する**（2026-09-04）。上帯は 100倍以上の目を
@@ -274,9 +303,11 @@ def type_lab_confident_score(legs, start_at) -> float | None:
 
     >>> hold = legs + [{"prob": 0.002, "stake": 200, "pred_odds": 300,
     ...                 "role": "band"}]
-    >>> round(type_lab_confident_score(hold, 0), 4)
+    >>> round(type_lab_confident_score("C_hit", hold, 0), 4)
     0.2
     """
+    if str(plan_key) not in TYPE_LAB_CONFIDENT_PLANS:
+        return None
     hour = start_hour_jst(start_at)
     if hour is None or hour >= CONFIDENT_BEFORE_HOUR:
         return None

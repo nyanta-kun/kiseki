@@ -178,8 +178,11 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
                   for r in rows]
     elif tl_rows:
         rows, metric = tl_rows, "Σp"
+        # 🔴 2026-09-20: プランも渡す。払戻狙いの商品（`_sign`/`_pay`/`_big`/`_ana`）は
+        #    設計上 3.6〜5% しか当たらないので「自信あり」の候補から外す
+        #    （正本 `confident_pick.TYPE_LAB_CONFIDENT_PLANS`）。
         scored = [(r["race_key"], r["rank_key"],
-                   type_lab_confident_score(r["legs"], r["start_at"]))
+                   type_lab_confident_score(r["rank_key"], r["legs"], r["start_at"]))
                   for r in rows]
     else:
         rows, metric = _load_alive(date), "旧EV"
@@ -194,8 +197,8 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
     print(f"[confident] {date}: 対象 {len(rows)}件 / {metric}算出 {len(usable)}件"
           + (f"（固めに限る・「{CONFIDENT_PRIORITY_KEYWORD}」を含む種別を優先、"
              f"無ければ発走 {CONFIDENT_BEFORE_HOUR}時前）" if tier_day else
-             f"（型ラボ・発走 {CONFIDENT_BEFORE_HOUR}時前 かつ "
-             f"合成 {CONFIDENT_MIN_SYNTH_ODDS}倍以上に限る）"
+             f"（型ラボ・当たる回数を狙うプラン かつ 発走 {CONFIDENT_BEFORE_HOUR}時前 "
+             f"かつ 合成 {CONFIDENT_MIN_SYNTH_ODDS}倍以上に限る）"
              if tl_rows else ""), flush=True)
     label = {(r["race_key"], r["rank_key"]):
              f"{r['venue_name']}{r['race_no']}R({r['rank_key']})" for r in rows}
