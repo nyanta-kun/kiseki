@@ -79,6 +79,7 @@ from src.entry_health import missing_market_inputs            # noqa: E402
 from src.evaluation.backtest_wt import _load_payouts_wt       # noqa: E402
 from src.marquee import is_fill_target                        # noqa: E402
 from src.notify.discord import send                           # noqa: E402
+from src.entrants import valid_cars_by_race  # noqa: E402
 from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
 )
@@ -239,7 +240,9 @@ def _sold(day: str) -> tuple[list, int, list[dict]]:
     alive = [s for s in subs if s["deleted_at"] is None and s["status"] in ("submitted", "published")]
     keys = sorted({s["race_key"] for s in alive})
     finishes, payouts = _results(keys)
-    races, n_skipped = build_sold_races(alive, finishes, payouts)
+    # 🔴 欠車を含む leg は返還（2026-09-20 監査 item2）。渡さないと Web と食い違う。
+    races, n_skipped = build_sold_races(alive, finishes, payouts,
+                                        valid_cars_by_race(keys))
     return races, n_skipped, subs
 
 
@@ -1225,8 +1228,9 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
             (CONFIDENT_SINCE, day))]
     if not subs:
         return ["  対象期間の入稿が無い"]
-    finishes, payouts = _results(sorted({s["race_key"] for s in subs}))
-    races, _ = build_sold_races(subs, finishes, payouts)
+    keys = sorted({s["race_key"] for s in subs})
+    finishes, payouts = _results(keys)
+    races, _ = build_sold_races(subs, finishes, payouts, valid_cars_by_race(keys))
     flag = {(str(s["race_key"]), str(s["rank_key"])): bool(s["is_confident"])
             for s in subs}
 

@@ -151,6 +151,7 @@ def settle_submission(
     bet_detail: Any,
     finishers: Iterable[Sequence[int]] | None,
     payouts: Mapping[str, int] | None = None,
+    valid_cars: Iterable[int] | None = None,
 ) -> Settlement | None:
     """1入稿を採点する。**買い目が読めない入稿だけ None**。
 
@@ -160,6 +161,9 @@ def settle_submission(
             （同着があると3件を超える）。未確定なら None
         payouts: `{当たり目の表記: 100円あたりの確定払戻}`。
             表記は三連複 `1=2=4` / 三連単 `1-2-4`（`payout_per_100` で作る）
+        valid_cars: 実際に出走した車番（2026-09-20 新設・`src/entrants.py`）。
+            渡すと欠車を含む leg を返還として `bet` から除く。**渡さなければ
+            従来どおり**（出走表を引けないときに全額返還にする方が危ない）
 
     🔴 **採点が終わったかは `Settlement.settled` を見ること。** False は「外れ」では
        なく「まだ分からない」で、集計にも通知にも混ぜてはいけない。
@@ -168,7 +172,7 @@ def settle_submission(
        9.0倍→6.3倍・43%過大）。以前ここだけが代用しており、Web が「未確定」と
        出すレースに Discord が金額を出していた。
     """
-    out = settle(bet_detail, finishers, payouts)
+    out = settle(bet_detail, finishers, payouts, valid_cars=valid_cars)
     return out if out.bet > 0 else None
 
 
@@ -176,6 +180,7 @@ def build_sold_races(
     submissions: Iterable[Mapping[str, Any]],
     finishes: Mapping[str, Sequence[Sequence[int]]],
     payouts: Mapping[str, Mapping[str, int]] | None = None,
+    valid_cars: Mapping[str, Iterable[int]] | None = None,
 ) -> tuple[list[SoldRace], int]:
     """入稿の一覧から `SoldRace` を組み立てる。
 
@@ -185,6 +190,10 @@ def build_sold_races(
 
     finishes: race_key → `(着順, 車番)` の並び（3着以内・同着なら4件以上）
     payouts:  race_key → `{当たり目の表記: 100円あたりの確定払戻}`
+    valid_cars: race_key → 出走している車番（`src/entrants.valid_cars_by_race`）。
+      🔴 **渡さないと欠車を含む leg を全損のまま数える**（2026-09-20 監査 item2）。
+         Web の実売集計は `backend/src/api/keirin_router.py` で渡しているので、
+         ここで渡し忘れると**同じ商品の投資額が画面と食い違う**。
 
     returns (売れたレース, 採点できなかった件数)
     🔴 **採点が終わっていない入稿は「外れ」ではなく `skipped`** に数える。
@@ -195,7 +204,8 @@ def build_sold_races(
     for s in submissions:
         rk = str(s.get("race_key") or "")
         got = settle_submission(
-            s.get("bet_detail"), finishes.get(rk), (payouts or {}).get(rk))
+            s.get("bet_detail"), finishes.get(rk), (payouts or {}).get(rk),
+            valid_cars=(valid_cars or {}).get(rk))
         if got is None or not got.settled:
             skipped += 1
             continue

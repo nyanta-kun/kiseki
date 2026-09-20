@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from src.database import get_connection  # noqa: E402
+from src.entrants import valid_cars_by_race  # noqa: E402
 from src.evaluation.backtest_wt import _load_payouts_wt  # noqa: E402
 from src.sold_performance import (  # noqa: E402
     build_sold_races, group_by, summarize, winning_combo_labels,
@@ -98,7 +99,11 @@ def main() -> int:
               f"それ以前は買い目も金額も残っていないため集計できません。", file=sys.stderr)
 
     subs, finishes, payouts = _fetch(args.start, args.end)
-    races, skipped = build_sold_races(subs, finishes, payouts)
+    # 🔴 欠車を含む leg は返還（2026-09-20 監査 item2）。渡さないと Web の実売集計
+    #    （`backend/src/api/keirin_router.py`）と投資額が食い違う。
+    races, skipped = build_sold_races(
+        subs, finishes, payouts,
+        valid_cars_by_race(s["race_key"] for s in subs))
     total = summarize(races, n_no_detail=skipped)
 
     print(f"=== 実際に売った商品の成績  {args.start} 〜 {args.end} ===")

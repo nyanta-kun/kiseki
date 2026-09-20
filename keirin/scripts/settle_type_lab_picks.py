@@ -32,7 +32,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-from src.database import get_connection  # noqa: E402
+from src.database import get_connection
+from src.entrants import valid_cars_by_race  # noqa: E402
 from src.result_top3 import (  # noqa: E402
     representative, winning_trifectas, winning_trios,
 )
@@ -75,22 +76,13 @@ def _finish(keys: list[str]) -> dict:
 
 
 def _entrants(keys: list[str]) -> dict:
-    """{race_key: {実際に出走表に載っている車番, ...}}（2026-09-20 新設）。
+    """{race_key: {出走している車番}}（2026-09-20）。
 
-    🔴 欠車（出走取消）は `wt_entries` から行ごと消える。買い目の leg に
-       ここに無い車番が含まれる場合は「返還」対象——欠車を知らずに組んだ
-       leg がそのまま全損計上されていたバグの修正に使う
-       （`sub_settle/REPORT_settle.md` S1・live 9行 25,400円で実測）。
+    引き方の正本は `src/entrants.py`。**ここに SQL を書き直さない**——
+    同じ判定が経路ごとに分かれると、同じ商品の投資額が画面・Discord・
+    夜間レビューで食い違う（2026-08-25 に一度やった型）。
     """
-    out: dict = defaultdict(set)
-    with get_connection() as c:
-        for i in range(0, len(keys), 900):
-            ch = keys[i:i + 900]
-            q = ("SELECT race_key, frame_no FROM wt_entries "
-                 f"WHERE race_key IN ({','.join('?' * len(ch))})")
-            for rk, fn in c.execute(q, ch).fetchall():
-                out[rk].add(int(fn))
-    return dict(out)
+    return valid_cars_by_race(keys)
 
 
 def _has_void_refund() -> bool:
