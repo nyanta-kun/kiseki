@@ -38,6 +38,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.database import get_connection            # noqa: E402
+from src.entry_health import missing_market_inputs  # noqa: E402
 from src.type_lab import (                          # noqa: E402
     BUDGET, PLANS, ROLE_BASE, add_upper_band, allocate, build_legs,
     build_with_gate_fallback, mean_expected_payout, min_expected_payout,
@@ -284,11 +285,25 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
         return []
 
     out = []
+    n_skipped_lineup = 0
     for rk in keys:
         ent = ent_all.get(rk)
         if not ent or len(ent) != N_ENTRIES or rk not in p3:
             continue
         if len(p3[rk]) != N_ENTRIES:
+            continue
+        # 🔴 2026-09-20 追加: 生成側にも `missing_market_inputs` ガードを掛ける。
+        #    従来は入稿側（`netkeirin_submit_type_lab.py`）だけが見ており、
+        #    ここ（`build_type_lab_picks.py`）は退化した並び・印のまま
+        #    p3/型/軸を計算して `type_lab_picks` に書き続けていた
+        #    （`src/entry_health.py` の docstring は「商品への影響は無い」と
+        #    書いているが、それは入稿側の再判定に依存した結果論であって、
+        #    ここで止めていたわけではない）。組み直し（`rebuild()` の
+        #    `--race-key` 呼び出し）は同じ関数を再度呼ぶだけなので、ここで
+        #    弾いても後の波の再判定は変わらず、退化した行が
+        #    `type_lab_picks` に一切残らなくなる。
+        if _lineup_issue(ent):
+            n_skipped_lineup += 1
             continue
         cars = {c: dict(p3=p3[rk][c], pw=(pw.get(rk) or {}).get(c), **ent[c])
                 for c in ent if c in p3[rk]}
@@ -307,6 +322,9 @@ def run_live(day: str, eval_model: str = "lgbm_wt_eval",
         if not m:
             continue
         out.extend(rows_for_race(m, cars, tf_odds, tf_prob, mode, tf_order_prob))
+    if n_skipped_lineup:
+        print(f"[live] {day}: 並び・印が未取得のため {n_skipped_lineup}R を見送りました"
+              "（後の波の組み直しで再判定されます）")
     return out
 
 
@@ -413,6 +431,22 @@ def _load_race_meta(keys: list[str]) -> dict:
 
 _META_COLS = ("race_point", "line_group", "line_size", "line_pos", "is_line_leader",
               "player_class", "style", "first_rate", "second_rate", "third_rate")
+
+
+def _lineup_issue(ent: dict) -> str | None:
+    """並び・印が未公開なら理由、揃っていれば None（2026-09-20 監査 item6）。
+
+    判定の正本は `src/entry_health.py::missing_market_inputs`（入稿側と同じ関数）。
+    ここは `_load_entries` が返す行（`mark` / `line_group`）を正本が読む形
+    （`prediction_mark` / `line_group`）へ詰め替えるだけ。
+
+    🔴 **列名の詰め替えを間違えても例外は出ない。** `mark` のまま渡すと
+       正本は「印が全車ゼロ」と読んで**全レースを見送る**ことになる。
+       だから関数に切り出してテストで固定する。
+    """
+    return missing_market_inputs(
+        {"prediction_mark": e.get("mark"), "line_group": e.get("line_group")}
+        for e in ent.values())
 
 
 def _load_entries(keys: list[str]) -> dict:

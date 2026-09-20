@@ -366,7 +366,10 @@ _SQL_SOLD = text("""
 # （この repo の既存クエリと同じ形）。
 _SQL_COMBO = text("""
     SELECT race_key, race_date, venue_name, plan_key, budget, settled_at, hit, payout,
-           axis_sum, n_entries
+           axis_sum, n_entries,
+           -- 🔴 2026-09-20 追加: 欠車（出走取消）の車番を含む leg の返還額。
+           --    賭かっていないので投資額から差し引く（下記 `inv` 参照）。
+           COALESCE(void_refund, 0) AS void_refund
     FROM keirin.type_lab_picks
     WHERE mode = ANY(:modes) AND race_date BETWEEN :d1 AND :d2
       AND plan_key = ANY(:plans)
@@ -507,7 +510,9 @@ async def get_type_lab(
         #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
         #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
         gami = [x for x in hits if (x["payout"] or 0) <= x["budget"]]
-        inv = sum(int(x["budget"]) for x in st)
+        # 🔴 2026-09-20 修正: 欠車返還ぶん（void_refund）は実際には賭かっていない
+        #    ので投資額から除く（払戻・的中判定は元から無関係＝変えない）。
+        inv = sum(int(x["budget"]) - int(x.get("void_refund") or 0) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
         two = [x for x in hits if (x["payout"] or 0) >= 2 * int(x["budget"])]
         big = [x for x in hits if (x["payout"] or 0) >= 100_000]
@@ -605,6 +610,7 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
 
     `rows` は `race_key` / `plan_key` / `budget` / `settled_at` / `hit` / `payout` /
     `race_date` を持つ辞書の並び（**選んだプランだけに絞ってから渡すこと**）。
+    `void_refund`（欠車返還・2026-09-20 新設）は任意。無ければ 0 として扱う。
 
     🔴 **1レースの推奨は1プラン。** 同じレースに選択中のプランが2つ以上当たったら、
        そのレースは両方とも集計から外す（競合）。除いた数を第3の戻り値で返す。
@@ -623,7 +629,9 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
         st = [x for x in group if x["settled_at"] is not None]
         hits = [x for x in st if x["hit"]]
         shown = [x for x in hits if int(x["payout"] or 0) > int(x["budget"])]
-        inv = sum(int(x["budget"]) for x in st)
+        # 🔴 2026-09-20 修正: 欠車返還ぶん（void_refund）は実際には賭かっていない
+        #    ので投資額から除く（払戻・的中判定は元から無関係＝変えない）。
+        inv = sum(int(x["budget"]) - int(x.get("void_refund") or 0) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
         return ComboRow(
             plan_key=key, n_races=len(group), n_settled=len(st),

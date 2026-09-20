@@ -491,3 +491,8 @@ class KeirinTypeLabPick(KeirinBase):
         Numeric(10, 2), comment="買った目の確定オッズ（的中時のみ）")
     win_tf_odds: Mapped[float | None] = mapped_column(
         Numeric(10, 2), comment="決着 1-2-3 の三連単確定オッズ（券種・的中を問わず）")
+    #: 欠車（出走取消）の車番を含む leg の返還額（2026-09-20・migration 202609200900_keirin）。
+    #: 🔴 `budget` は生成時点の予算のまま残す。投資額は `budget - void_refund` で出す。
+    void_refund: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+        comment="欠車返還ぶん（投資額から差し引く）")

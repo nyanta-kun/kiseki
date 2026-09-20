@@ -52,7 +52,9 @@ from typing import Any
 
 #: 採点ロジックの世代。`keirin_settlement.settle()` の**意味**を変えたら上げること。
 #: 上げると全行の指紋が変わり、キャッシュは自動的に作り直される（値は常に正しい）。
-SETTLE_VERSION = 1
+# 🔴 2026-09-20: 2 に更新。`settle()` に `valid_cars`（欠車返還判定）を追加した
+#    ので、旧バージョンで焼いたキャッシュ（欠車を全損計上した値）を無効化する。
+SETTLE_VERSION = 2
 
 #: 指紋の列幅（`netkeirin_submissions.settled_fp`）。
 FINGERPRINT_LEN = 32
