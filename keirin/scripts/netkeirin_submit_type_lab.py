@@ -813,6 +813,52 @@ def submit_row(row: dict, session: str, client: NetkeirinClient | None,
     return True, sub["title"]
 
 
+def _races_missing_rows(day: str, closed: set[str]) -> dict[int, list[str]]:
+    """**`type_lab_picks` に行が1つも無いレース**を車数別に返す（2026-09-21 新設）。
+
+    ## なぜ要るか（本番で商品が丸ごと消えた）
+
+    `build_type_lab_picks` は 2026-09-20（#593）から、並び予想・AI印が未公開の
+    レースを生成時点で弾くようになった（`_lineup_issue`）。それ自体は正しい
+    （退化した盤面のまま買い目を書かない）が、**行が1つも残らない**。
+
+    昼・夕の波は `_load_rows`＝**`type_lab_picks` から**候補を読むので、
+    行が無いレースは `todo` にすら入らず、**永久に拾い直されない**。
+
+    実害 2026-09-21: 高知(74)・佐世保(85) のミッドナイト18Rが
+    picks 0件・入稿0件。9/10〜9/20 は毎日 16〜18R で picks があり
+    10〜18件入稿していたので、**この日だけ丸ごと消えた**。
+    （夕方の波のログも「7車 3R を組み直します／入稿 0件」で、
+      そもそも候補に入っていなかったことが残っている）
+
+    ## 何を返すか
+
+    その日の `wt_races` のうち **`type_lab_picks`（mode live/live9）に
+    1行も無く、締切前**のレース。ここで返したものは `rebuild()` が
+    `--race-key` で名指し生成する。
+
+    🟢 **ガードは外さない。** 並びがまだ出ていなければ `build_type_lab_picks`
+       が再び弾くだけで、退化した行は書かれない。
+    🟢 **既に売ったレースは定義上ここに入らない**（行があるため）＝
+       `--race-key` 生成が売済みの行を書き換える事故は起きない。
+    """
+    with get_connection() as c:
+        rows = c.execute(
+            "SELECT r.race_key, r.n_entries FROM wt_races r "
+            " WHERE r.race_date = ? AND r.n_entries IN (?, ?) "
+            "   AND NOT EXISTS (SELECT 1 FROM type_lab_picks t "
+            "                    WHERE t.race_key = r.race_key AND t.mode IN (?, ?)) "
+            " ORDER BY r.race_key",
+            (day, 7, 9, "live", "live9"),
+        ).fetchall()
+    out: dict[int, list[str]] = {}
+    for rk, n in rows:
+        if str(rk) in closed:
+            continue
+        out.setdefault(int(n or 7), []).append(str(rk))
+    return out
+
+
 def run(day: str, session: str, dry_run: bool, only_key: str | None,
         do_rebuild: bool, show: int = 0) -> None:
     settings = _load_settings()
@@ -864,6 +910,17 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             if (rk, str(r["plan_key"])) in already or rk in closed:
                 continue
             todo[int(r["n_entries"] or 7)].append(rk)
+        # 🔴 **行が1つも無いレースも組み直しの対象に入れる**（2026-09-21）。
+        #    `rows` は `type_lab_picks` 由来なので、生成時に弾かれたレースは
+        #    ここに現れず**永久に拾えない**。2026-09-21 にミッドナイト18Rが
+        #    丸ごと消えた（`_races_missing_rows` の docstring）。
+        for n_cars, keys in _races_missing_rows(day, closed).items():
+            if only_key:
+                keys = [k for k in keys if k == only_key]
+            if keys:
+                print(f"[type_lab_submit] 行が無いレース {len(keys)}R "
+                      f"（{n_cars}車）も組み直します", flush=True)
+                todo.setdefault(n_cars, []).extend(keys)
         for n_cars, keys in todo.items():
             rebuild(day, sorted(set(keys)), n_cars)
         rows = _load_rows(day)
