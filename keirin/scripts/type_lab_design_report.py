@@ -90,11 +90,16 @@ def summarize(sub: list[dict], n_days: int) -> dict | None:
         return None
     n = len(sub)
     won = [r["pay"] for r in sub if r["pay"] > r["inv"]]
+    # 🔴 **払戻中央の母集団は「的中した全件」**（ガミを除かない）。2026-09-21 是正。
+    #    `exp_type_lab/common.summarize` / Web / `sold_performance` はすべて
+    #    的中全体で取っており、ここだけガミ除外後だった。同じ列名で別の量になる。
+    #    実測の系統差: live **+3.9%** / paper **+5.6%**（ガミ除外後のほうが高く出る）。
+    hits = [r["pay"] for r in sub if r["pay"] > 0]
     return dict(
         n=n, per_day=n / max(n_days, 1),
         hit=100 * sum(1 for r in sub if r["hit"]) / n,
         shown=100 * len(won) / n,
-        med=st.median(won) if won else 0.0,
+        med=st.median(hits) if hits else 0.0,
         hp=sum(1 for r in sub if r["pay"] >= 100_000) / max(n_days, 1),
         roi=100 * sum(r["pay"] for r in sub) / sum(r["inv"] for r in sub),
     )
@@ -144,7 +149,11 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
         raise SystemExit("KEIRIN_DB_URL が未設定です")
     sql = """
         SELECT p.race_date, p.plan_key, p.axis1, p.axis2, p.win_combo,
-               p.hit, p.payout, p.budget, p.legs
+               p.hit, p.payout, p.budget, p.legs,
+               -- 🔴 欠車返還は実際には賭かっていないので投資額から除く
+               --    （Web の `keirin_type_lab_router` と同じ扱いに揃える。
+               --      2026-09-21 まで**ここだけ引いていなかった**）
+               COALESCE(p.void_refund, 0) AS void_refund
         FROM keirin.type_lab_picks p
         JOIN keirin.netkeirin_submissions s
           ON s.race_key = p.race_key AND s.rank_key = p.plan_key
@@ -157,7 +166,7 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
         raw = cur.fetchall()
 
     out = []
-    for date, plan, a1, a2, win_combo, hit, payout, budget, legs in raw:
+    for date, plan, a1, a2, win_combo, hit, payout, budget, legs, void in raw:
         fin = finishers(win_combo)
         if not fin:
             continue
@@ -170,7 +179,8 @@ def live_rows(day_from: str, day_to: str) -> list[dict]:
         out.append(dict(plan=str(plan), date=str(date), hit=bool(hit),
                         set_hit=frozenset(fin) in bought,
                         both_in3=bool(axes) and axes <= set(fin),
-                        pay=float(payout or 0), inv=float(budget or 0)))
+                        pay=float(payout or 0),
+                        inv=float(budget or 0) - float(void or 0)))
     return out
 
 

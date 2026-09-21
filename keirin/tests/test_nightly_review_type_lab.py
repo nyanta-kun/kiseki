@@ -77,12 +77,22 @@ def test_参照分布はプランごとに引く():
 
 
 def test_表示的中はガミを不的中として数える():
+    """🔴 **元返し（払戻＝賭け金）もガミ側**（2026-09-21 是正）。
+
+    定義の正本は `backend/src/services/keirin_settlement.PickResult.net_hit` で
+    **払戻 > 賭け金**。以前はここだけ `>=` で、元返しを表示的中に数えていた。
+    """
     m = _load()
     # 払戻 9,999 円 = 当たっているが賭け金 10,000 円を割る＝ガミ
     pool = {"A_hit": [(10_000, 9_999)]}
     got = m._bootstrap(pool, {"A_hit": 4}, n_boot=20, seed=1)
     assert got and all(hit == 0.0 for _, hit in got)
+    # 元返しちょうども表示的中にしない
     pool = {"A_hit": [(10_000, 10_000)]}
+    got = m._bootstrap(pool, {"A_hit": 4}, n_boot=20, seed=1)
+    assert got and all(hit == 0.0 for _, hit in got)
+    # 1円でも上回れば表示的中
+    pool = {"A_hit": [(10_000, 10_001)]}
     got = m._bootstrap(pool, {"A_hit": 4}, n_boot=20, seed=1)
     assert got and all(hit == 1.0 for _, hit in got)
 
@@ -96,7 +106,7 @@ def test_台帳は同じ日を上書きする(tmp_path, monkeypatch):
         def __init__(self, plan, pay):
             self.race_key, self.rank_key, self.origin = "k", plan, None
             self.bet, self.payout = 10_000, pay
-            self.hit, self.net_hit, self.n_points = pay > 0, pay >= 10_000, 5
+            self.hit, self.net_hit, self.n_points = pay > 0, pay > 10_000, 5
 
     brk = {"per_plan": {}, "gami_by_plan": {}}
     m.append_ledger("2026-09-16", [_R("A_hit", 0)], brk)
@@ -119,7 +129,7 @@ def test_台帳は軸ごとに積み決着クラスはプラン行にだけ入�
         def __init__(self, plan, pay):
             self.race_key, self.rank_key, self.origin = "rk", plan, None
             self.bet, self.payout = 10_000, pay
-            self.hit, self.net_hit, self.n_points = pay > 0, pay >= 10_000, 5
+            self.hit, self.net_hit, self.n_points = pay > 0, pay > 10_000, 5
 
     from collections import Counter
     brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {}}
@@ -284,7 +294,7 @@ class _Sold:
     def __init__(self, race_key, plan, bet=10_000, pay=0):
         self.race_key, self.rank_key, self.origin = race_key, plan, None
         self.bet, self.payout = bet, pay
-        self.hit, self.net_hit, self.n_points = pay > 0, pay >= bet, 5
+        self.hit, self.net_hit, self.n_points = pay > 0, pay > bet, 5
         self.payouts = [pay] if pay else []
 
 

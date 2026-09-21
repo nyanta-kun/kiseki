@@ -134,7 +134,10 @@ def stat(rs):
                 roi=sum(r["pay"] for r in rs) / sum(r["inv"] for r in rs) * 100,
                 both=nb / len(rs) * 100,
                 conv=(sum(1 for r in rs if r["both"] and r["shown"]) / nb * 100) if nb else 0.0,
-                med=st.median([r["pay"] for r in rs if r["pay"] > r["inv"]] or [0]),
+                # 🔴 **払戻中央の母集団は「的中した全件」**（ガミを除かない・2026-09-21 是正）。
+                #    `common.summarize` / Web / `sold_performance` はすべて的中全体。
+                #    ガミ除外後で取ると系統的に高く出る（実測 live +3.9% / paper +5.6%）。
+                med=st.median([r["pay"] for r in rs if r["pay"] > 0] or [0]),
                 big=sum(1 for r in rs if r["pay"] >= 100_000))
 
 

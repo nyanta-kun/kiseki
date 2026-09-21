@@ -509,12 +509,23 @@ async def get_type_lab(
         # 🔴 **表示的中は `払戻 > 賭け金`**（`combine_plans` と同じ定義に揃える）。
         #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
         #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
-        gami = [x for x in hits if (x["payout"] or 0) <= x["budget"]]
         # 🔴 2026-09-20 修正: 欠車返還ぶん（void_refund）は実際には賭かっていない
         #    ので投資額から除く（払戻・的中判定は元から無関係＝変えない）。
-        inv = sum(int(x["budget"]) - int(x.get("void_refund") or 0) for x in st)
+        # 🔴 2026-09-21 追記: **ガミと 2倍+ の判定も同じ純額で行う**。ROI の分母
+        #    だけ純額で、ガミ/2倍+ は gross の `budget` と比べていた＝
+        #    「実際に賭けた金では黒字なのにガミ」と数えうる状態だった。
+        #    実測では現状 0 行（`void_refund>0` が 15行しかない）だが、
+        #    **同じ表の中で基準額が2つある**のは将来必ず誤読を生む。
+        def _net(x: dict) -> int:
+            return int(x["budget"]) - int(x.get("void_refund") or 0)
+
+        # 🔴 **表示的中は `払戻 > 賭け金`**（`combine_plans` と同じ定義に揃える）。
+        #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
+        #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
+        gami = [x for x in hits if (x["payout"] or 0) <= _net(x)]
+        inv = sum(_net(x) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
-        two = [x for x in hits if (x["payout"] or 0) >= 2 * int(x["budget"])]
+        two = [x for x in hits if (x["payout"] or 0) >= 2 * _net(x)]
         big = [x for x in hits if (x["payout"] or 0) >= 100_000]
         nd = window_days
         summaries.append(TypeLabSummary(
@@ -628,10 +639,12 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
     def _row(key: str, group: list[dict[str, Any]]) -> ComboRow:
         st = [x for x in group if x["settled_at"] is not None]
         hits = [x for x in st if x["hit"]]
-        shown = [x for x in hits if int(x["payout"] or 0) > int(x["budget"])]
-        # 🔴 2026-09-20 修正: 欠車返還ぶん（void_refund）は実際には賭かっていない
-        #    ので投資額から除く（払戻・的中判定は元から無関係＝変えない）。
-        inv = sum(int(x["budget"]) - int(x.get("void_refund") or 0) for x in st)
+        # 🔴 欠車返還ぶんを除いた**純額**を基準にする（ROI の分母と揃える・2026-09-21）
+        def _net(x: dict[str, Any]) -> int:
+            return int(x["budget"]) - int(x.get("void_refund") or 0)
+
+        shown = [x for x in hits if int(x["payout"] or 0) > _net(x)]
+        inv = sum(_net(x) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
         return ComboRow(
             plan_key=key, n_races=len(group), n_settled=len(st),

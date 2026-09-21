@@ -368,7 +368,8 @@ def _baseline_pool() -> dict[tuple[str, int], list[tuple[int, int]]]:
     with get_connection() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, "
-            "       t.budget, t.payout, r.cup_grade "
+            "       t.budget, t.payout, COALESCE(t.void_refund, 0) AS void_refund, "
+            "       r.cup_grade "
             "FROM type_lab_picks t LEFT JOIN wt_races r ON r.race_key = t.race_key "
             "WHERE t.mode IN (?, ?) AND t.race_date BETWEEN ? AND ? "
             "  AND t.settled_at IS NOT NULL AND t.budget > 0",
@@ -377,8 +378,9 @@ def _baseline_pool() -> dict[tuple[str, int], list[tuple[int, int]]]:
     for d in rows:
         if not _sellable(d) or not _gate_ok(d):
             continue
+        # 🔴 欠車返還は投資から除く（Web と同じ扱い・2026-09-21 是正）
         pool.setdefault((str(d["plan_key"]), int(d["n_entries"] or 7)), []).append(
-            (int(d["budget"]), int(d["payout"] or 0)))
+            (int(d["budget"]) - int(d.get("void_refund") or 0), int(d["payout"] or 0)))
     return pool
 
 
@@ -866,7 +868,8 @@ def _bootstrap(pool: dict[str, list[tuple[int, int]]], mix: dict[str, int],
                 bet += b
                 pay += p
                 n += 1
-                hits += int(p >= b)      # 表示的中の定義は `SoldRace.net_hit` に合わせる
+                # 表示的中の定義は `SoldRace.net_hit`（払戻 **>** 賭け金）に合わせる
+                hits += int(p > b)
         if bet and n:
             out.append((pay / bet, hits / n))
     return out
@@ -1081,11 +1084,15 @@ def section_gate(day: str, live: list[dict]) -> list[str]:
         for d in rows:
             if d["settled_at"] is None or not d.get("budget"):
                 continue
-            b, p = int(d["budget"]), int(d["payout"] or 0)
+            # 🔴 欠車返還は投資から除く（Web と同じ扱い・2026-09-21 是正）
+            b = int(d["budget"]) - int(d.get("void_refund") or 0)
+            p = int(d["payout"] or 0)
             n += 1
             bet += b
             pay += p
-            hits += int(p >= b)
+            # 🔴 表示的中は **払戻 > 賭け金**（元返しはガミ側）。ここだけ `>=` だった。
+            #    正本は `backend/src/services/keirin_settlement.PickResult.net_hit`。
+            hits += int(p > b)
         return n, bet, pay, hits
 
     def line(label: str, rows: list[dict]) -> str:
@@ -1451,7 +1458,8 @@ def section_escalate(pool) -> list[str]:
                 base = [x for (pk, _c), v in pool.items() if pk == k for x in v]
                 if base:
                     b_roi = sum(p for _, p in base) / sum(b for b, _ in base)
-                    b_hit = sum(1 for b, p in base if p >= b) / len(base)
+                    # 表示的中は 払戻 **>** 賭け金（元返しはガミ側）
+                    b_hit = sum(1 for b, p in base if p > b) / len(base)
                     if roi < b_roi * 0.85 or hit < b_hit * 0.85:
                         mark = "  ← 検証候補（参照より15%以上低い）"
                 else:
