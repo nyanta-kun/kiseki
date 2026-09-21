@@ -54,7 +54,10 @@ from typing import Any
 #: 上げると全行の指紋が変わり、キャッシュは自動的に作り直される（値は常に正しい）。
 # 🔴 2026-09-20: 2 に更新。`settle()` に `valid_cars`（欠車返還判定）を追加した
 #    ので、旧バージョンで焼いたキャッシュ（欠車を全損計上した値）を無効化する。
-SETTLE_VERSION = 2
+# 🔴 2026-09-21: 3 へ。`PickResult.net_hit` を `payout >= bet` → `payout > bet` に
+#    是正した（元返しは表示的中に数えない。CLAUDE.md と Web 型ラボの定義に揃えた）。
+#    **意味が変わったので版を上げる**＝焼き付け済みの行は採点し直される。
+SETTLE_VERSION = 3
 
 #: 指紋の列幅（`netkeirin_submissions.settled_fp`）。
 FINGERPRINT_LEN = 32

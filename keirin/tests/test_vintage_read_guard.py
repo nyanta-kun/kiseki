@@ -103,3 +103,38 @@ def test_cli_scripts_call_the_guard(script: str) -> None:
     assert "assert_vintage_for_past(" in src, (
         f"{script}.py がガードを呼んでいない。--*-model の既定値が本番モデル名なので"
         " 過去日を渡すと無言で in-sample になる")
+
+
+# ───────────── 型ラボの経路（2026-09-21 追加） ─────────────
+
+def test_type_lab_predict_calls_the_guard() -> None:
+    """🔴 型ラボの2本だけ検査を通っていなかった。
+
+    `backfill_*_rank_wt.py` 20本以上は全部 `assert_vintage_for_past` を呼ぶのに、
+    `build_type_lab_picks.run_live` と `build_race_shapes.build` は呼んでおらず、
+    `--date <過去日>` を渡すと**静かに in-sample** になった。
+
+    3つの呼び出し元（`run_live` / `build_race_shapes` /
+    `backfill_type_lab_outcome`）が必ず通る `predict_p3_pw` の中で掛けること。
+    呼び出し側に置くと4本目で忘れる。
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent
+           / "scripts" / "build_type_lab_picks.py").read_text(encoding="utf-8")
+    head = src.split("def predict_p3_pw", 1)[1].split("\ndef ", 1)[0]
+    assert "assert_vintage_for_past(" in head, "predict_p3_pw の中で検査していない"
+    assert "day_to or day" in head, "対象範囲の終端を渡していない"
+
+
+def test_type_lab_guard_actually_rejects_a_past_date() -> None:
+    """関数を通さずに規則だけ確認（DB もモデルも要らない形で固定する）。"""
+    with pytest.raises(ValueError):
+        assert_vintage_for_past(
+            "2026-06-30", {"eval": "lgbm_wt_eval", "win": "lgbm_wt_win"}, today=TODAY)
+    # vintage を渡せば通る
+    assert_vintage_for_past(
+        "2026-06-30", {"eval": "lgbm_wt_eval_m2606", "win": "lgbm_wt_win_m2606"},
+        today=TODAY)
+    # 当日・未来は本番モデルで正しい（ライブ予想）
+    assert_vintage_for_past(
+        TODAY.isoformat(), {"eval": "lgbm_wt_eval", "win": "lgbm_wt_win"}, today=TODAY)

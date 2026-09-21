@@ -27,7 +27,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -48,9 +48,13 @@ def _load_targets(where: str, params: tuple, redo: bool = False) -> list[dict]:
     cond = where if redo else f"settled_at IS NULL AND {where}"
     with get_connection() as c:
         rows = c.execute(
-            f"SELECT id, race_key, bet_type, legs FROM type_lab_picks WHERE {cond}",
+            # `race_date` / `plan_key` は採点そのものには使わないが、
+            # 「当たっているのに確定オッズが引けず保留」の行を名指しで報告するのに要る。
+            f"SELECT id, race_key, bet_type, legs, race_date, plan_key "
+            f"FROM type_lab_picks WHERE {cond}",
             params).fetchall()
-    return [dict(zip(("id", "race_key", "bet_type", "legs"), r)) for r in rows]
+    return [dict(zip(("id", "race_key", "bet_type", "legs", "race_date", "plan_key"), r))
+            for r in rows]
 
 
 def _finish(keys: list[str]) -> dict:
@@ -203,6 +207,16 @@ def main() -> None:
     print(f"対象 {len(targets)} 行 / {len(keys)} レース  着順確定 {len(fin)}")
 
     n_ok = n_wait = 0
+    # 🔴 保留を**2種類に分けて数える**（2026-09-21 追加）。
+    #    着順待ちは時間が解決するが、「着順は確定・当たり目も分かっているのに
+    #    確定オッズだけ引けない」保留は**構造的に的中側にしか発生しない**
+    #    （外れは着順だけで確定するため）。混ぜて1つの数にしていると、
+    #    的中率と ROI が静かに下振れしていることに気づけない。
+    #    実測 2026-09-21: 3日以上前の未採点 122行のうち着順が確定している
+    #    7行は**全部が的中・外れは 0 行**。該当6レースは `wt_odds` にも
+    #    `wt_race_payouts` にも行が無く、**オッズは復元不能**（＝待っても
+    #    埋まらない）。直せないものなので、せめて見えるようにする。
+    stuck: list[tuple[str, str]] = []
     updates: list[tuple] = []
     with get_connection() as c:
         for t in targets:
@@ -233,6 +247,7 @@ def main() -> None:
             if missing:
                 # 当たっているのに確定オッズが引けない。0 を書くと外れと区別できないので待つ
                 n_wait += 1
+                stuck.append((str(t["race_date"]), f"{t['race_key']}#{t['plan_key']}"))
                 continue
             payout = sum(int(round(l["stake"]
                                    * odds[t["race_key"]][(t["bet_type"], l["combo"])]))
@@ -274,6 +289,16 @@ def main() -> None:
                 + "WHERE id = ?", updates)
         c.commit()
     print(f"採点 {n_ok} 行 / 保留 {n_wait} 行（着順または確定オッズ待ち）")
+    if stuck:
+        # 🔴 **この保留は的中側にしか出ない。** 黙って数を積むだけにしない。
+        old = [x for x in stuck if x[0] < str(date.today() - timedelta(days=7))]
+        print(f"  ⚠️ うち **{len(stuck)} 行は当たっているのに確定オッズが引けず保留**"
+              f"（うち7日以上前 {len(old)} 行）。この保留は構造的に的中側だけに"
+              f"発生するので、放置すると的中率・ROI が下振れする。")
+        for d, k in sorted(stuck)[:10]:
+            print(f"     {d} {k}")
+        if len(stuck) > 10:
+            print(f"     … 他 {len(stuck) - 10} 行")
 
 
 if __name__ == "__main__":

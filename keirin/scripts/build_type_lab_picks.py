@@ -71,6 +71,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         {c: v["line_pos"] for c, v in cars.items()},
         {c: v["style"] for c, v in cars.items()},
         {c: v["race_point"] for c, v in cars.items()},
+        # ⚠️ `behind` = `ex_left_behind_pct` は**開催中に更新される列**。
+        #    ここで読んだ値は朝の値で、後から DB を読み直しても同じにならない
+        #    （詳細は `type_lab.BEHIND_MID` / `type_lab.type_label_of`）。
         {c: v["behind"] for c, v in cars.items()},
         meta.get("day_index") or 0,
         # 🔴 1着率を渡すと `pw_ent` が入り、型A を穴狙いへ振り分けられる。
@@ -238,6 +241,17 @@ def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
     from src.preprocessing.feature_wt import (
         build_features_wt, load_raw_data_wt, prepare_X,
     )
+    from src.wt_vintage_config import assert_vintage_for_past
+
+    # 🔴 **過去日を本番モデル（full_refit）でスコアリングさせない**（2026-09-21 追加）。
+    #    `backfill_*_rank_wt.py` 20本以上は全部この検査を通しているのに、
+    #    **型ラボの2本（`run_live` と `build_race_shapes.build`）だけ通っていなかった**。
+    #    既定が本番モデル名なので、`--date <過去日>` を渡すと**エラーにも警告にも
+    #    ならず静かに in-sample な数字が出る**。
+    #    ここは3つの呼び出し元（`run_live` / `build_race_shapes` /
+    #    `backfill_type_lab_outcome`）が必ず通る一本道なので、**関数の中で掛ける**
+    #    （呼び出し側に置くと4本目で忘れる）。
+    assert_vintage_for_past(day_to or day, {"eval": eval_model, "win": win_model})
 
     feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day_to or day))
     if feats is None or not len(feats):

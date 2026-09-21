@@ -104,7 +104,8 @@ class SoldRace:
     bet: int
     payout: int
     hit: bool
-    #: 払戻 >= 賭け金。**netkeirin の表示的中はこちら**
+    #: 払戻 **>** 賭け金（元返しは含めない）。**netkeirin の表示的中はこちら**。
+    #: 判定の正本は `backend/src/services/keirin_settlement.PickResult.net_hit`。
     net_hit: bool
     n_points: int
 

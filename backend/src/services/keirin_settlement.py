@@ -102,8 +102,20 @@ class Settlement:
 
     @property
     def net_hit(self) -> bool:
-        """払戻が投資以上か。**netkeirin の表示的中率はこちら**（ガミは不的中）。"""
-        return self.hit and self.payout >= self.bet
+        """払戻が投資を**上回った**か。**netkeirin の表示的中率はこちら**。
+
+        🔴 **`>` であって `>=` ではない**（2026-09-21 是正）。CLAUDE.md の定義は
+        「`n_hits_excl_garami`（払戻＞賭け金）」で、Web の型ラボ集計
+        （`keirin_type_lab_router` のガミ判定 `payout <= budget`）も `>` 側。
+        ここだけ `>=` だったため、**払戻と賭け金がちょうど同額の行**を
+        表示的中に数えていた。実測: `type_lab_picks` 11行 / `picks_history` 29行
+        （それぞれ 0.01% / 0.06%）。数としては小さいが、**同じ「表示的中」という
+        名前の量が経路で違う**のは、比べた瞬間に誤読を生む。
+
+        ⚠️ 元返し（払戻＝賭け金）は「当たったが儲かっていない」＝ガミの一種。
+           ユーザーから見て「当たった」と見える payout > bet に揃える。
+        """
+        return self.hit and self.payout > self.bet
 
 
 def payout_per_100(odds_value: Any) -> int | None:

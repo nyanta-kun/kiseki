@@ -102,7 +102,7 @@ def test_only_settled_rows_are_cacheable():
 #:    この定数を新しい値へ更新する。
 # 2026-09-20: `settle()` に `valid_cars`（欠車返還）を足したので更新。
 #: 同時に `SETTLE_VERSION` を 1→2 へ上げてある（下の検査が対で見ている）。
-_SETTLEMENT_CODE_DIGEST = "4291bbfa7b6f9ba3"
+_SETTLEMENT_CODE_DIGEST = "59515f621ddafa9c"
 
 _SETTLEMENT_PY = (Path(__file__).resolve().parent.parent
                   / "src" / "services" / "keirin_settlement.py")

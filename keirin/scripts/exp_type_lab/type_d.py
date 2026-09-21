@@ -87,8 +87,13 @@ def show(title: str, arms: list[tuple[str, object, bool, str]], agree=None):
     print(f"\n### {title}")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w, agree=agree)
-        nd = C.days_of(idx)
-        print(f"\n[{w}] 母集団 {len(idx):,}R / {nd}日")
+        # 🔴 **件/日 の分母は「窓の全開催日」**（2026-09-21 是正）。
+        #    `C.days_of(idx)` は**そのセグメントが出た日数**なので、
+        #    型や印一致で絞るほど分母が小さくなり件/日が過大になる。
+        #    実測: 型D 1.156倍 / ∧印一致 1.366倍 / **∧印不一致 1.782倍**（探索窓）。
+        #    既知の 3.1倍バグと同型。
+        nd = C.days_of(C.select(None, w))
+        print(f"\n[{w}] 母集団 {len(idx):,}R / 窓の開催 {nd}日")
         print(C.HEAD)
         for name, build, tilt, kind in arms:
             s = C.summarize(run(idx, build, tilt=tilt, kind=kind), n_days_all=nd)
@@ -278,8 +283,13 @@ def show2(title, arms, agree=None):
     print(f"\n### {title}")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w, agree=agree)
-        nd = C.days_of(idx)
-        print(f"\n[{w}] 母集団 {len(idx):,}R / {nd}日")
+        # 🔴 **件/日 の分母は「窓の全開催日」**（2026-09-21 是正）。
+        #    `C.days_of(idx)` は**そのセグメントが出た日数**なので、
+        #    型や印一致で絞るほど分母が小さくなり件/日が過大になる。
+        #    実測: 型D 1.156倍 / ∧印一致 1.366倍 / **∧印不一致 1.782倍**（探索窓）。
+        #    既知の 3.1倍バグと同型。
+        nd = C.days_of(C.select(None, w))
+        print(f"\n[{w}] 母集団 {len(idx):,}R / 窓の開催 {nd}日")
         print(C.HEAD)
         for name, fn in arms:
             print(C.line(name, C.summarize(run2(idx, fn), n_days_all=nd)))
@@ -429,7 +439,7 @@ def section6():
     print("\n### 6. 型Dの中でのレース選別（三連複 軸2+po上位4点）")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         print(f"\n[{w}] 母集団 {len(idx):,}R / {nd}日")
         print(C.HEAD)
         segs = {
@@ -504,7 +514,7 @@ def section8():
     print("\n### 8. 絞り込みの組み合わせ")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         print(f"\n[{w}] 母集団 {len(idx):,}R / {nd}日")
         print(C.HEAD)
         for bn, b in builds:
@@ -546,7 +556,7 @@ def section10():
     print("\n### 10. 平均想定払戻の帯（三連複・§11.2.1 の pt/R を当てた粗い試算）")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         print(f"\n[{w}] {len(idx):,}R / {nd}日")
         for nm, b in cands:
             recs = run(idx, b)
@@ -567,7 +577,7 @@ def section11():
     print("\n### 11. 型D と既存ランクの母集団の重なり")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         agree = z["AGREE"][idx]
         pw_top_is_maru = np.array([
             C.pw_order(int(i))[0] == next((c for c in range(1, 8)
@@ -606,7 +616,7 @@ def section12():
     print("\n### 12. 採用候補（軸2+人気1番目外し4点）の安定性")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         recs = run(idx, b)
         s = C.summarize(recs, n_days_all=nd)
         lo, hi = boot_ci(recs, "shown")
@@ -616,10 +626,13 @@ def section12():
         # 半期ごと
         d = np.array([r["date"] for r in recs])
         half = np.array([x[:4] + ("H1" if x[5:7] <= "06" else "H2") for x in d])
+        # 🔴 半期の 件/日 も分母は**その半期の全開催日**（腕が出た日数ではない）
+        alld = np.array([str(x) for x in C.board()["DATE"][C.select(None, w)]])
+        allhalf = np.array([x[:4] + ("H1" if x[5:7] <= "06" else "H2") for x in alld])
         print(C.HEAD)
         for h in sorted(set(half)):
             sub = [r for r, k in zip(recs, half) if k == h]
-            ndh = len({r["date"] for r in sub})
+            ndh = len(set(alld[allhalf == h])) or 1
             print(C.line(f"{h} (n={len(sub)})", C.summarize(sub, n_days_all=ndh)))
 
 
@@ -699,7 +712,7 @@ def section15():
     print("\n### 15. 最終比較（推定 pt/日 は §11.2.1 の帯別 pt/R を当てた粗い試算）")
     for w in ("explore", "confirm"):
         idx = C.select(TYPE, w)
-        nd = C.days_of(idx)
+        nd = C.days_of(C.select(None, w))   # 🔴 件/日 の分母は窓の全開催日
         print(f"\n[{w}] {len(idx):,}R / {nd}日")
         print("  {:24s} {:>6s} {:>8s} {:>9s} {:>10s} {:>8s} {:>8s} {:>7s} {:>7s}".format(
             "腕", "件/日", "表示的中%", "払戻中央", "平均払戻中央", "2倍+/日", "推定pt/日",

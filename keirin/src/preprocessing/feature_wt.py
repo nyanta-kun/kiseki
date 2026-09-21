@@ -3,7 +3,10 @@ winticket 特徴量エンジニアリング
 
 wt_entries + wt_races + venue_info から学習用データセットを構築する。
 """
+import ast
+import hashlib
 import os
+import pathlib
 from collections import defaultdict
 from pathlib import Path
 import pandas as pd
@@ -1448,6 +1451,36 @@ FEATURE_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "feature_cach
 _FEATURE_CACHE_ENV = "KEIRIN_FEATURE_CACHE"
 
 
+def _feature_code_version() -> str:
+    """このモジュールの**コードの版**（コメント・docstring を無視したハッシュ）。
+
+    🔴 **キャッシュ鍵に入れる。** 旧実装の鍵は
+    `期間 × len(FEATURE_COLS_WT) × (行数, MAX(race_date))` だけで、
+    **列数が変わらない修正では鍵が変わらなかった**。
+
+    実害（2026-09-21 実測）: 2026-09-20 に `MED_RACE_POINT_FILL` を固定値化した
+    のに、9/11 に作られた `wtfeat_20250601_20260630_f70_210526_20260630.pkl` は
+    **旧の範囲依存中央値のまま**（`race_point` に 85.40 が826行・85.55 は84行）。
+    過去期間は行数も MAX(date) も動かないので、放っておくと**永久に再利用される**。
+    実際、同日の A/B 2本がこのキャッシュを読んでいた。
+
+    ⚠️ **コメントと docstring では無効化しない。** このリポジトリは注記が厚く、
+       素のソースをハッシュすると注記を足すたびに 227秒の再計算が走る。
+       AST から docstring を落として比較するので、**値が変わる変更だけ**が拾われる。
+    """
+    tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef,
+                                 ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        body = getattr(node, "body", None)
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            node.body = body[1:] or [ast.Pass()]
+    return hashlib.sha1(ast.dump(tree).encode("utf-8")).hexdigest()[:10]
+
+
 def _wt_data_fingerprint(min_date: str, max_date: str | None) -> str:
     """対象期間のデータ指紋 (MAX(race_date), COUNT(*)) を VPS から取る（ミリ秒）。"""
     from src.database import get_connection
@@ -1482,7 +1515,11 @@ def load_features_wt(min_date: str, max_date: str | None = None, *,
 
     fp = _wt_data_fingerprint(min_date, max_date)
     tag = f"{min_date}_{max_date or 'latest'}".replace("-", "")
-    path = FEATURE_CACHE_DIR / f"wtfeat_{tag}_f{len(FEATURE_COLS_WT)}_{fp}.pkl"
+    # 🔴 **コードの版を鍵に含める**（2026-09-21）。列数だけだと、列が変わらない
+    #    修正（補完値の固定・窓の取り方の是正など）でキャッシュが無効化されず、
+    #    修正前の特徴で A/B を回してしまう。実際に踏んだ（`_feature_code_version`）。
+    ver = _feature_code_version()
+    path = FEATURE_CACHE_DIR / f"wtfeat_{tag}_f{len(FEATURE_COLS_WT)}_v{ver}_{fp}.pkl"
     if path.exists():
         print(f"  [feature-cache] {path.name} を利用（再計算なし）", flush=True)
         return pd.read_pickle(path)
@@ -1497,6 +1534,7 @@ def load_features_wt(min_date: str, max_date: str | None = None, *,
     df.to_pickle(path)
     print(f"  [feature-cache] {path.name} を保存", flush=True)
     # 同一期間の古い指紋のキャッシュはデータが増えた時点で不要になるため削除する
+    # 同一期間の古い鍵（指紋違い・**コード版違い**）は不要になるため削除する
     for old in FEATURE_CACHE_DIR.glob(f"wtfeat_{tag}_f{len(FEATURE_COLS_WT)}_*.pkl"):
         if old != path:
             old.unlink(missing_ok=True)

@@ -34,17 +34,33 @@ _TACHIKAWA_3R = {
 
 
 class _Conn:
-    """conn.execute(...).fetchone() だけを満たす最小のスタブ。"""
+    """入稿記録の取得と、同着判定に要る2本のクエリを満たす最小のスタブ。
 
-    def __init__(self, bet_detail):
+    ⚠️ 2026-09-21 に `resolve_payout` が**同着のもう一方も払う**ようになり、
+       着順（`TOP3_SQL`）と確定オッズ（`wt_odds`）も引くようになった。
+       ここは**同着でないレース**（3着まで1通り）を返すので、
+       既存のテストが期待する値は1円も変わらない。
+    """
+
+    def __init__(self, bet_detail, finishers=((1, 1), (2, 2), (3, 3))):
         self._bd = bet_detail
+        self._fin = list(finishers)
 
-    def execute(self, _sql, _params=None):
+    def execute(self, sql, _params=None):
         conn = self
+        is_top3 = "finish_order BETWEEN 1 AND 3" in sql
+        is_odds = "FROM wt_odds" in sql
 
         class _Cur:
             def fetchone(self):
+                if is_top3 or is_odds:
+                    return None
                 return (json.dumps(conn._bd),) if conn._bd is not None else None
+
+            def fetchall(self):
+                if is_top3:
+                    return conn._fin
+                return []
 
         return _Cur()
 

@@ -154,7 +154,11 @@ def summarize(recs: list[dict], n_days_all: int | None = None) -> dict:
     inv = sum(r["inv"] for r in recs)
     pay = sum(r["pay"] for r in recs)
     hits = [r for r in recs if r["pay"] > 0]
-    gami = [r for r in hits if r["pay"] < r["inv"]]
+    # 🔴 **表示的中は `払戻 > 投資`**（元返しはガミ側）。2026-09-21 是正。
+    #    正本は `backend/src/services/keirin_settlement.PickResult.net_hit`、
+    #    Web も `keirin_type_lab_router` のガミ判定 `payout <= budget` で同じ。
+    #    ここだけ `<` だったため、**元返しの行を表示的中に数えていた**。
+    gami = [r for r in hits if r["pay"] <= r["inv"]]
     ratios = sorted(r["pay"] / r["inv"] for r in hits)
     pays = sorted(r["pay"] for r in hits)
     means = sorted(r["mean"] for r in recs if r.get("mean"))
