@@ -71,6 +71,9 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
         {c: v["line_pos"] for c, v in cars.items()},
         {c: v["style"] for c, v in cars.items()},
         {c: v["race_point"] for c, v in cars.items()},
+        # ⚠️ `behind` = `ex_left_behind_pct` は**開催中に更新される列**。
+        #    ここで読んだ値は朝の値で、後から DB を読み直しても同じにならない
+        #    （詳細は `type_lab.BEHIND_MID` / `type_lab.type_label_of`）。
         {c: v["behind"] for c, v in cars.items()},
         meta.get("day_index") or 0,
         # 🔴 1着率を渡すと `pw_ent` が入り、型A を穴狙いへ振り分けられる。

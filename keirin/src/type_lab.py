@@ -71,7 +71,20 @@ UNIT = 100
 #:    20か月の検証はすべて生の p3 で出しているので、+0.18pt のために作り直さない。
 #: ⚠️ 較正へ切り替えるなら**この定数だけでなく検証窓ごと引き直すこと**。
 AXIS_SUM_FIRM = 1.44
-#: 先頭の遅れ率の中央値（2025-01〜2026-08 の 7車 実測）。
+#: ライン先頭の「遅れ率」(`wt_entries.ex_left_behind_pct`) を堅い/緩いに分ける境界。
+#:
+#: 🔴 **旧コメントの「先頭の遅れ率の中央値（2025-01〜2026-08 の 7車 実測）」は
+#:    再現しない**（2026-09-21 実測）。`line_pos=1` の中央値は **4.0** で、
+#:    `>= 11.0` に当たるのは **31.0%**。中央値なら 4.0 付近になるはずで、
+#:    11.0 が何の実測から来たのかは追えなかった。
+#:    **値は動かさない**（動かすと売る型が変わる）。記述だけ事実に直す。
+#:
+#: ⚠️ 入力の `ex_left_behind_pct` は **開催中に更新される列**で、
+#:    `feature_wt.py` が「将来アドホック実験で誤って採用しないよう明記しておく」と
+#:    書いているもの（学習特徴からは除外済み）。ここは商品ロジック側での採用。
+#:    実測: 同一節の連続日で値が変わる **15.00%**・この境界を跨ぐのは
+#:    ライン先頭で **1.94%**。過去の型を調べるときは `type_label_of` を使い、
+#:    **組み直さないこと**（組み直すと 6.04% のレースで型が変わる）。
 BEHIND_MID = 11.0
 #: 信頼度傾斜の既定の床（＝当たったら最低この倍率を予測ベースで確保する）。
 DEFAULT_FLOOR_MULT = 1.3
@@ -580,13 +593,47 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
         win_gap = float(win_probs[wr[0]]) - float(win_probs[wr[1]])
 
     firm = axis_sum >= AXIS_SUM_FIRM
-    if firm:
-        label = "A" if s <= -1 else ("B" if s == 0 else "C")
-    else:
-        label = "D" if s <= -1 else ("E" if s == 0 else "F")
+    label = type_label_of(axis_sum, s)
     lines = _lines_of(line_group, line_pos)
     return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent, lines,
                      _strongest_pair(lines, top3_probs), win_top, win_gap)
+
+
+def type_label_of(axis_sum: float, arare: int) -> str:
+    """型ラベル A〜F を `axis_sum`（軸の堅さ）と `arare`（ライン形の点）から決める。
+
+    🔴 **過去のレースの型を調べるときは、`wt_entries` から組み直さずに
+       `type_lab_picks` に焼き付いた `axis_sum` / `arare` をこの関数へ渡すこと。**
+
+    組み直すと**再現しない**。実測（`mode IN ('live','live9')` の 1,872R・2026-09-21）:
+
+        axis_sum が焼き付けと違うレース   **1,870 / 1,872 = 99.89%**
+        型ラベルが変わるレース            113 / 1,872 = **6.04%**
+          内訳 firm（axis_sum）だけ反転   73 (3.90%)
+               arare（behind）だけ変化    32 (1.71%)
+               両方                        8 (0.43%)
+
+    理由は2つあり、**どちらも直せない性質のもの**:
+
+    - `wt_entries.pred_top3_pct` は入稿後に `backfill_index_pct_wt.py` が
+      **月次 vintage モデルで上書き**する。商品が使ったのは生成時の
+      `lgbm_wt_eval`（メモリ上）なので、DB から読み直すと別の値になる
+    - `arare` の入力の1つ `ex_left_behind_pct` は**開催中に更新される**
+      （実測: 同一節の連続日で 15.00% が変化・閾値 `BEHIND_MID` を跨ぐのは
+      ライン先頭で 1.94%）。`feature_wt.py` が
+      「将来アドホック実験で誤って採用しないよう明記しておく」と書いている列
+
+    >>> type_label_of(1.50, -2), type_label_of(1.50, 0), type_label_of(1.50, 3)
+    ('A', 'B', 'C')
+    >>> type_label_of(1.40, -2), type_label_of(1.40, 0), type_label_of(1.40, 3)
+    ('D', 'E', 'F')
+    """
+    firm = float(axis_sum) >= AXIS_SUM_FIRM
+    if int(arare) <= -1:
+        return "A" if firm else "D"
+    if int(arare) == 0:
+        return "B" if firm else "E"
+    return "C" if firm else "F"
 
 
 def _strongest_pair(lines: Sequence[Sequence[int]],
