@@ -56,6 +56,14 @@ from src.strategy_wt import (rank_7t3_blend_probs,                 # noqa: E402
 sys.path.insert(0, str(REPO / "scripts" / "exp_type_lab"))
 import common as C                                                 # noqa: E402
 
+# 🔴🔴 **本番の `apply_add_perm` を必ず切る**（2026-09-21・実際に踏んだ）。
+#    このスクリプトが提案した操作が採用されて `ADD_PERM_PLANS` が埋まると、
+#    **`base` 腕にもそれが掛かる**ので「1点足した状態からさらに足す/削る」を
+#    測ることになり、腕の効果が半分近く小さく出る（実測: base の点数
+#    8.59 → 8.78・⑨ の Δ が +0.66 → +0.37）。腕は下の `_add_perm` /
+#    `_add_n` / `_swap_tail` が自前で作るので、本番側は常に無効化する。
+TL.ADD_PERM_PLANS = frozenset()
+
 _s = importlib.util.spec_from_file_location(
     "gate", REPO.parent / "backend/src/services/keirin_type_lab_gate.py")
 _G = importlib.util.module_from_spec(_s)
@@ -265,25 +273,47 @@ def build(x: Ctx, plan) -> dict | None:
             legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True)
         elif ARM == "add_odds3":
             legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True, n_sets=3)
-        elif ARM in ("add_rand", "add_rand_odds", "add_rand_odds3"):
+        elif ARM == "add_odds2":
+            legs, st = _add_n(legs, st, pl, pod, prb, 2)
+        elif ARM == "add_full":
+            legs, st = _add_n(legs, st, pl, pod, prb, -1)
+        elif ARM == "swap_tail1":
+            legs, st = _swap_tail(legs, st, pl, pod, prb, 1)
+        elif ARM == "swap_tail2":
+            legs, st = _swap_tail(legs, st, pl, pod, prb, 2)
+        elif ARM == "ctl_tail1":
+            legs, st = _swap_tail(legs, st, pl, pod, prb, 1, seed=max(SEED, 1))
+        elif ARM in ("add_rand", "add_rand_odds", "add_rand_odds3",
+                     "add_rand_odds2"):
             legs, st = _add_rand(legs, st, pl, pod, prb, SEED,
                                  cheapest=ARM.startswith("add_rand_odds"),
-                                 n_sets=3 if ARM == "add_rand_odds3" else 1)
+                                 n_sets={"add_rand_odds3": 3,
+                                         "add_rand_odds2": 2}.get(ARM, 1))
     mean = float(TL.mean_expected_payout(st, pod))
     gate = mean > MIN_MEAN_PAYOUT and min(float(pod[c]) for c in st) >= MIN_POINT_ODDS
     if trio:
         pay = float(st[x.win_t3] * x.odds_t3) if x.win_t3 in st else 0.0
         sethit = exact = x.win_t3 in st
         nsets = len(st)
+        diag = dict(first_hit=False, n_first=0,
+                    sigma=float(sum(1.0 / float(pod[c]) for c in st)),
+                    win_stake=float(st.get(x.win_t3, 0.0)))
     else:
         pay = float(st[x.win_tf]) * x.pay_tf if x.win_tf in st else 0.0
         sets = {frozenset(c) for c in st}
         sethit = frozenset(x.win_tf) in sets
         exact = x.win_tf in st
         nsets = len(sets)
+        # 🔴 診断: **先頭の目の集合**が決着したか、その集合を何点買っているか。
+        #    「1点足すだけで先頭集合の並び違いを拾えるか」に答えるための量。
+        first = frozenset(tuple(legs[0]))
+        diag = dict(first_hit=bool(frozenset(x.win_tf) == first),
+                    n_first=sum(1 for c in st if frozenset(c) == first),
+                    sigma=float(sum(1.0 / float(pod[c]) for c in st)),
+                    win_stake=float(st.get(x.win_tf, 0.0)))
     return dict(key=pl.key, k=len(st), inv=float(sum(st.values())), pay=pay,
                 mean=mean, gate=bool(gate), sethit=bool(sethit), exact=bool(exact),
-                nsets=nsets, struct=pl.structure)
+                nsets=nsets, struct=pl.structure, **diag)
 
 
 def _add_rand(legs, st, plan, pred_odds, probs, seed: int, cheapest: bool = False,
@@ -388,9 +418,91 @@ def _add_perm(legs, st, plan, pred_odds, probs, free: bool,
     return new, nst
 
 
+def _first_set_cands(legs, plan, pred_odds, free: bool = False):
+    """先頭の目と同じ3車で、まだ買っていない並び（帯の中）を**予測オッズ昇順**で返す。"""
+    have = {tuple(c) for c in legs}
+    lo = 0.0 if free else float(plan.min_odds or 0.0)
+    hi = float(plan.max_odds or 0.0)
+    out = []
+    for k in itertools.permutations(sorted(frozenset(tuple(legs[0])))):
+        if k in have or not TL._pos(pred_odds.get(k)):
+            continue
+        o = float(pred_odds[k])
+        if o < max(lo, MIN_POINT_ODDS) or (hi and o > hi):
+            continue
+        out.append(k)
+    out.sort(key=lambda k: float(pred_odds[k]))
+    return out
+
+
+def _add_n(legs, st, plan, pred_odds, probs, n: int):
+    """先頭集合の未購入の並びを**安い順に n 点足す**（n<0 なら全部）。"""
+    legs = [tuple(c) for c in legs]
+    if not legs:
+        return legs, st
+    cand = _first_set_cands(legs, plan, pred_odds)
+    if not cand:
+        return legs, st
+    new = legs + (cand if n < 0 else cand[:n])
+    nst = TL.allocate(new, pred_odds, probs, plan)
+    if not nst or len(nst) != len(new):
+        return legs, st
+    if TL.mean_expected_payout(nst, pred_odds) <= MIN_MEAN_PAYOUT:
+        return legs, st
+    if min(float(pred_odds[c]) for c in nst) < MIN_POINT_ODDS:
+        return legs, st
+    return new, nst
+
+
+def _swap_tail(legs, st, plan, pred_odds, probs, m: int, seed: int = 0):
+    """**確率下位の末尾 m 点を落として**、先頭集合の未購入の並びを安い順に m 点入れる。
+
+    ユーザー指摘（2026-09-21）:
+    > 安いオッズの買い目を足すと掛け金が下がると思います。
+    > 確率順位の下位を減らし、金額の再配分が必要ではないですか？
+
+    点数据え置きなので `Σ(1/予測オッズ)` の増加は「足す」形より小さい
+    （落とす末尾は確率最下位＝予測オッズが高く 1/オッズ が小さいので、
+    差し引きでは増える。ゼロにはならない）。
+    seed>0 は**無作為対照**（入れる m 点を帯の中の無作為な未購入目にする）。
+    """
+    legs = [tuple(c) for c in legs]
+    if len(legs) - m < 3:                     # 残りが3点未満になるなら触らない
+        return legs, st
+    keep = legs[:-m]
+    if seed:
+        have = set(keep)
+        lo = float(plan.min_odds or 0.0)
+        hi = float(plan.max_odds or 0.0)
+        pool = [tuple(k) for k, v in pred_odds.items()
+                if tuple(k) not in have and TL._pos(v) and len(set(k)) == 3
+                and float(v) >= max(lo, MIN_POINT_ODDS)
+                and (not hi or float(v) <= hi)]
+        if len(pool) < m:
+            return legs, st
+        pool.sort()
+        add = random.Random(seed * 3_581 + hash(legs[0]) % 99_991).sample(pool, m)
+    else:
+        cand = _first_set_cands(keep, plan, pred_odds)
+        if len(cand) < m:
+            return legs, st
+        add = cand[:m]
+    new = keep + add
+    nst = TL.allocate(new, pred_odds, probs, plan)
+    if not nst or len(nst) != len(new):
+        return legs, st
+    if TL.mean_expected_payout(nst, pred_odds) <= MIN_MEAN_PAYOUT:
+        return legs, st
+    if min(float(pred_odds[c]) for c in nst) < MIN_POINT_ODDS:
+        return legs, st
+    return new, nst
+
+
 ARMS = ["base", "d2", "d3", "top1_full", "swap_odds", "d2_odds", "ctl_d2",
         "add_band", "add_free", "add_rand",
-        "add_odds", "add_odds3", "add_rand_odds", "add_rand_odds3"]
+        "add_odds", "add_odds3", "add_rand_odds", "add_rand_odds3",
+        "add_odds2", "add_full", "swap_tail1", "swap_tail2", "ctl_tail1",
+        "add_rand_odds2"]
 
 
 def main() -> None:
@@ -405,7 +517,8 @@ def main() -> None:
     use = [k for k in ARMS if not a.arms or k in a.arms.split(",")]
     rows: dict[str, list] = {k: [] for k in use}
     for s in range(1, a.ctl_seeds):
-        for base_arm in ("ctl_d2", "add_rand", "add_rand_odds", "add_rand_odds3"):
+        for base_arm in ("ctl_d2", "add_rand", "add_rand_odds", "add_rand_odds3",
+                         "ctl_tail1", "add_rand_odds2"):
             if base_arm in use:
                 rows[f"{base_arm}#{s}"] = []
     ndays: dict[str, int] = {}

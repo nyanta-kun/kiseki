@@ -48,6 +48,15 @@ def stats(rs, nd):
     s["sethit"] = sum(1 for r in rs if r["sethit"]) / len(rs) * 100
     s["exact"] = sum(1 for r in rs if r["exact"]) / len(rs) * 100
     s["nsets"] = sum(r["nsets"] for r in rs) / len(rs)
+    # 🔴 診断: 先頭の目の集合が決着した回だけを見る（「1点で足りるか」の答え）
+    fh = [r for r in rs if r.get("first_hit")]
+    s["first_rate"] = len(fh) / len(rs) * 100
+    s["first_exact"] = (sum(1 for r in fh if r["exact"]) / len(fh) * 100) if fh else 0.0
+    s["first_shown"] = (sum(1 for r in fh if r["pay"] > r["inv"]) / len(fh) * 100) if fh else 0.0
+    s["n_first"] = sum(r.get("n_first", 0) for r in rs) / len(rs)
+    s["sigma"] = sum(r.get("sigma", 0.0) for r in rs) / len(rs)
+    won = [r for r in rs if r["pay"] > 0 and r.get("win_stake")]
+    s["win_stake"] = median([r["win_stake"] for r in won]) if won else 0.0
     s["big"] = s["big_per_day"]
     return s
 
@@ -92,7 +101,11 @@ def boot_delta(base, arm):
     return d.mean(), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5)), n
 
 
-NAME = {"base": "⓪ 現行", "d2": "① 深さ d=2", "d3": "② 深さ d=3",
+NAME = {"base": "⓪ 現行", "add_odds2": "2点足す(安い順)",
+        "add_rand_odds2": "対照(無作為2点)",
+        "add_full": "先頭集合を全部足す", "swap_tail1": "末尾1点と入れ替え",
+        "swap_tail2": "末尾2点と入れ替え", "ctl_tail1": "対照(末尾1点↔無作為)",
+        "add_odds": "⑨ 1点足す(オッズ最安)", "d2": "① 深さ d=2", "d3": "② 深さ d=3",
         "top1_full": "③ 最上位集合を全順列", "swap_odds": "④ 集合内を予測オッズ順",
         "d2_odds": "⑤ d=2 + オッズ順", "ctl_d2": "⑥ 無作為対照(d=2)"}
 
@@ -114,6 +127,18 @@ for win in ("explore", "confirm"):
         print("  {:24s} {:6.2f} {:5.2f} {:6.2f} {:7.2f} {:7.2f} {:8.2f} {:9,.0f} {:8.3f} {:7.1f}"
               .format(NAME.get(k, k), s["perday"], s["k"], s["nsets"], s["sethit"],
                       s["hit"], s["shown"], s["med_pay"], s["big"], s["roi"]))
+    print("\n  診断 — 先頭の目の集合が決着した回だけ（『1点で足りるか』）")
+    print("  {:24s} {:>8s} {:>9s} {:>10s} {:>8s} {:>7s} {:>10s}".format(
+        "腕", "先頭集合", "うち的中", "うち表示的中", "先頭点数", "Σ(1/O)", "当たり賭け金"))
+    for k in ROWS:
+        rs = sel(ROWS[k], win)
+        s = stats(rs, nd)
+        if not s.get("n"):
+            continue
+        print("  {:24s} {:7.2f}% {:8.2f}% {:9.2f}% {:8.2f} {:7.4f} {:9,.0f}円".format(
+            NAME.get(k, k), s["first_rate"], s["first_exact"], s["first_shown"],
+            s["n_first"], s["sigma"], s["win_stake"]))
+
     print("\n  Δ表示的中（対 ⓪現行・レース単位ブートストラップ95%CI）")
     for k in ROWS:
         if k == "base":
