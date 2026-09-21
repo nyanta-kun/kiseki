@@ -2339,6 +2339,105 @@ def apply_osae(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapping,
     return out_legs, out_st
 
 
+#: 並び違いの押さえ（`apply_add_perm`）を掛けるプラン。
+#:
+#: 🔴🔴 **2026-09-21 新設（ユーザー提案）。** 買い目**先頭の目**と同じ3車で、まだ
+#:    買っていない並びを**1点足す**。組合せ（どの3車を買うか）は1つも変わらない。
+#:
+#:    > 三連単で多点買う際に1点目の並び違いで確定し、その目を買っていないことが多い。
+#:    > 多点広げる前に、絶対に逆転がないというケースを除いて、1点目の並び違いは
+#:    > 買った方が良いのでは？（実例 09-21 広島2R `E_hit` 決着 4-3-1 /
+#:    > 大宮2R `A_ana` 決着 7-2-1）
+#:
+#: 🔴🔴 **足す1点は「予測オッズが最も安い並び」。確率最上位ではない。**
+#:    発端の2件はどちらも決着がモデル確率で最下位側（広島 36位 / 大宮は6順列中7位）
+#:    なのに、予測オッズでは集合内で最も人気だった（大宮 37.5倍＝{1,2,7} の最安）。
+#:    既知の「モデル確率の人気-穴バイアス」（実測/モデル 0〜5倍 1.52 → 300倍+ 0.78）
+#:    の症状で、実測でも市場基準が上（全体 Δ表示的中 確率最上位 +0.59/+0.64 ↔
+#:    **オッズ最安 +0.66/+0.71**）。
+#:
+#: 実測（`scripts/exp_type_lab/order_depth.py` / 探索 2024-07〜2025-12・確認 2026-01〜08・
+#: 1レース1商品・入稿ゲート通過後・**件/日と投資は完全に不変**）:
+#:
+#:      プラン   Δ表示的中(探索/確認)   無作為対照   ΔROI(確認)          払戻中央  10万+
+#:      A_hit   +2.10 / +1.89        +0.23/+0.54  -1.31 [-3.62,+1.55]  -4.4%   0(元々)
+#:      B_hit   +1.19 / +1.76        +0.41/+0.61  -1.13 [-3.29,+1.58]  -6.8%   0(元々)
+#:      E_hit   +1.29 / +0.85        +0.09/+0.21  -0.25 [-2.34,+2.10]  -1.2%   不変
+#:      全体    +0.66 / +0.71        +0.20〜0.37  -0.68 [-1.55,+0.25]  -3.7%   -2%
+#:
+#:    Δ表示的中は3プランとも**両窓で CI が 0 を跨がない**。ΔROI はどれも判別不能
+#:    （`A_hit` は探索窓で **+0.09**＝窓で符号反転）。
+#:    **無作為対照6 seed**（同じレース・同じ1点を帯の中の無作為な目にした腕）に
+#:    **6/6 で勝つ**（対照は全体 +0.20〜+0.37 で、効果の約 1/5 は「点を足しただけ」）。
+#:
+#: 🔴 **`C_hit` は入れない**（Δ +0.10 で対照 +0.32 に負け・ΔROI −0.95 は有意）。
+#:    τ適応で既に点数がゲートまで積まれており、足す余地が無い。
+#: 🔴🔴 **`A_ana` は入れない。** 表示的中は +0.88 上がるが **ΔROI −11.9pt（探索窓で
+#:    有意）**・払戻中央 −8.3%。軸1を外す穴狙い商品に安い並びを足すと払戻が崩れる
+#:    （一撃商品へ押さえを足さない `OSAE_PLANS` の判断と同じ）。
+#:    ＝ **発端の大宮2R はこのプランなので、あのレースを救う操作は商品全体では損**。
+#: ⚠️ `F_hit` は Δ +1.00/+0.52 だが対照 +0.35 との差が小さいので入れていない。
+#: ⚠️ 三連複（`A_trio` / `D_hit`）は順序が無いので対象外。
+#:
+#: 🔴 **「買い目を減らして並び違いを入れる」形は否定された**（同スクリプトの腕①②③⑤）。
+#:    点数据え置きで深さを優先すると、順序を当てる率は上がる（集合を当てた回の的中
+#:    57.0 → 62.5%）が**集合カバレッジを 7.3pt 失う**ので差し引きマイナス
+#:    （全体 −0.65/−0.47 〜 −1.42/−1.28・1点目を6順列すべては −1.40/−1.56）。
+#:    現行の配分（平均 8.6点 / 4.8集合）は既に効率境界の近くにある。
+#: 🔴 **上位3集合へ各1点足す腕（全体 +0.83/+0.88）は採らない。** 同数(3点)の無作為
+#:    対照が +0.60〜+0.81 で**CIが大きく重なる**＝上積みは「3点足したこと」で説明でき、
+#:    並び違いを選んだ効果として立証できていない。
+#: ⚠️ 確認窓は既に何度も使っている。⚠️ 9車は未測定（`build_with_gate_fallback` が
+#:    7車以外では掛けない）。
+ADD_PERM_PLANS: frozenset[str] = frozenset({"A_hit", "B_hit", "E_hit"})
+
+
+def apply_add_perm(plan: Plan, legs: Sequence, stakes: Mapping,
+                   pred_odds: Mapping, probs: Mapping,
+                   min_mean_payout: float = MIN_MEAN_PAYOUT):
+    """買い目**先頭の目**と同じ3車の未購入の並びを、**予測オッズ最安**で1点足す。
+
+    戻り値は `(legs, stakes)`。掛からなければ受け取ったものをそのまま返す。
+
+    🔴 **帯（`min_odds` / `max_odds`）を守る。** 帯の外の並びは採らない（商品の
+       価格帯に触らないため）。実測でも帯を無視しても効果はほぼ増えない
+       （全体 確認窓 +0.64 → +0.67）ので、外す理由が無い。
+    🔴 **入稿ゲートの2条件を両方守る**——平均想定払戻 > `min_mean_payout` と
+       全点の予測オッズ >= `MIN_POINT_ODDS`。割るなら足さない（件数を1件も
+       減らさないため。`apply_osae` と同じ作法）。
+    🔴 **足した1点も含めて `allocate` を掛け直す**（＝全点から按分）。固定額で
+       足す形は測っていない。
+    """
+    if (plan.key not in ADD_PERM_PLANS or plan.bet_type != "trifecta"
+            or not legs):
+        return list(legs), stakes
+    out = [tuple(c) for c in legs]
+    have = set(out)
+    lo, hi = float(plan.min_odds or 0.0), float(plan.max_odds or 0.0)
+    cand = []
+    for k in itertools.permutations(sorted(frozenset(out[0]))):
+        if k in have or not _pos(pred_odds.get(k)):
+            continue
+        o = float(pred_odds[k])
+        if o < max(lo, MIN_POINT_ODDS) or (hi and o > hi):
+            continue
+        cand.append(k)
+    if not cand:
+        return out, stakes
+    # 🔴 **最安**を採る（市場が集合内で最も来やすいと見ている並び）。
+    new = out + [min(cand, key=lambda k: float(pred_odds[k]))]
+    st = allocate(new, pred_odds, probs, plan)
+    # 賭け金 0 円の点が出る配分は採らない（点数が変わるため・`apply_line_swap` と同じ）
+    if not st or len(st) != len(new):
+        return out, stakes
+    if mean_expected_payout(st, pred_odds) <= min_mean_payout:
+        return out, stakes
+    if min(float(pred_odds[c]) for c in st) < MIN_POINT_ODDS:
+        return out, stakes
+    return new, st
+
+
+
 #: 入稿ゲート（平均想定払戻 <= `MIN_MEAN_PAYOUT`）に落ちたとき、**代わりに組む買い方**。
 #:
 #: 🔴 **代替は元と同じ `key` を名乗る。** 行の一意キーは (race_key, plan_key, mode) で、
@@ -2549,6 +2648,14 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         #    ゲートを割るなら足さない＝在庫は1件も減らない。
         legs, stakes = apply_osae(shape, pl, legs, stakes, pred_odds, probs,
                                   min_mean_payout)
+        # 🔴 **並び違いの押さえは最後**（2026-09-21）。どの3車をどの並びで買うかが
+        #    確定してから、先頭の目と同じ3車の未購入の並びを1点足す。ここも
+        #    ゲートを割るなら足さない＝在庫は1件も減らない。
+        # 🔴 **7車だけ**（測ったのは7車で、9車は予測オッズの分布が丸ごと違う。
+        #    車数をまたいだ移植で繰り返し失敗している——7C の定数・3ヘッド軸・7M1）。
+        if n_entries == 7:
+            legs, stakes = apply_add_perm(pl, legs, stakes, pred_odds, probs,
+                                          min_mean_payout)
         return legs, stakes, pl
 
     if n_entries != 7:
@@ -2791,6 +2898,10 @@ def rule_version(n_entries: int = 7) -> str:
         #       入れない、という既存の判断と同じ理由）。
         # 🔴 上帯も `PLANS` の外なので、ここへ入れないと帯や予算を動かしても
         #    版が割れず新旧の行が混ざる（`_sign` / `_fallback` と同じ理由）。
+        # 🔴 並び違いの押さえも `PLANS` の外なので、ここへ入れないと対象プランを
+        #    動かしても版が割れず新旧の行が混ざる（`_osae` と同じ理由）。
+        #    ⚠️ **7車のときだけ入れる**（`_done` が7車以外では掛けない）。
+        payload["_addperm"] = sorted(ADD_PERM_PLANS)
         payload["_upper"] = [[[b.kind, b.budget, b.structure, b.min_odds,
                                b.max_odds, b.max_legs, b.target, b.min_bought]
                               for b in UPPER_BANDS],
