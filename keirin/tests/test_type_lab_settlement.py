@@ -189,3 +189,37 @@ def test_fold_to_trio_matches_the_definition():
     assert abs(odds[frozenset({1, 2, 3})] - 1.0 / s) < 1e-9
     # 払戻率を掛けると 0.75 倍ずれる（その値になっていないこと）
     assert abs(odds[frozenset({1, 2, 3})] - 0.75 / s) > 1e-6
+
+
+# ───────────────── 保留の偏りを見えるようにする（2026-09-21） ─────────────────
+
+def test_odds_holdback_is_reported_separately_from_finish_holdback():
+    """🔴 「当たっているのに確定オッズが引けず保留」を黙って数に混ぜない。
+
+    外れは着順だけで確定するので、**この保留は構造的に的中側にしか発生しない**。
+    着順待ち（時間が解決する）と同じ `n_wait` に丸めると、的中率・ROI が
+    静かに下振れしていることに気づけない。
+
+    実測（2026-09-21・`--pending-only`）: 3日以上前の未採点 122行のうち
+    着順が確定している **7行は全部が的中・外れは 0 行**。該当6レースは
+    `wt_odds` にも `wt_race_payouts` にも行が無く**オッズは復元不能**なので、
+    「待てば埋まる」ものではない。直せない以上、せめて見えるようにする。
+    """
+    src = (REPO / "scripts" / "settle_type_lab_picks.py").read_text(encoding="utf-8")
+    # 当たり目の確定オッズが無い分岐で、専用のリストへ積んでいること
+    assert "stuck.append(" in src, "オッズ待ちの行を名指しで拾っていない"
+    # 実行の最後に、的中側に偏る旨つきで必ず出すこと
+    assert "当たっているのに確定オッズが引けず保留" in src
+    assert "的中側だけに" in src
+    # 報告に要る列を SELECT していること（無いと KeyError で落ちる）
+    assert "race_date, plan_key" in src
+
+
+def test_daily_batch_runs_pending_only():
+    """日付を跨いだ取りこぼしが二度と拾われない経路を作らない。
+
+    日次（`type_lab_daily.sh`）は当日+前日しか見ないので、`--pending-only` が
+    無いと「着順は確定したが当時オッズが引けなかった」行が永久に残る。
+    """
+    src = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    assert "--pending-only" in src
