@@ -92,3 +92,57 @@ def test_no_index_still_returns_none():
     for r in rows:
         r["pred_win_pct"] = None
     assert _build(rows) is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 1着率 ≦ 2着内率 ≦ 3着内率 の表示上の保証（2026-09-21 追加）
+#
+# 🔴 3つは別々の二値モデルで順序の制約が無く、正規化後も実測で破れる
+#    （2026年 142,107行: 7車の 1.18% / 9車の 2.82% のレース・最大 +31.5pt）。
+#    破れると**顧客に出す表**に「1着率 12.0% / 2着内率 9.4%」という
+#    論理的にあり得ない行が載る。
+# ⚠️ Web 側 `frontend/src/lib/keirinProb.ts::monotoneRow` と同じ手当て。
+#    **片方だけ変えないこと**（顧客の表と画面が食い違う）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _cells(html_text: str) -> list[list[str]]:
+    """データ行だけ（ヘッダ行は <td> を持たないので落ちる）。"""
+    rows = [re.findall(r'<td align="center">([^<]*)</td>', tr)
+            for tr in re.findall(r"<tr>(.*?)</tr>", html_text)]
+    return [r for r in rows if r]
+
+
+def _pcts(row: list[str]) -> list[float]:
+    """1着率 / 2着内率 / 3着内率（列 3 以降）を数値で。"""
+    return [float(c.rstrip("%")) for c in row[3:] if c.endswith("%")]
+
+
+def test_monotone_is_enforced_when_model_outputs_violate_it():
+    """1着率 > 2着内率 の行があっても、表示では押し上げて逆転させない。"""
+    rows = _rows([50.0, 40.0, 25.0, 22.0, 20.0, 18.0, 15.0])
+    # 1番車だけ「1着率が突出して2着内率を追い越す」形にする（実データで起きる形）
+    rows[0]["pred_win_pct"] = 80.0
+    rows[0]["pred_top2_pct"] = 20.0
+    html_text = _build(rows)
+    for row in _cells(html_text):
+        v = _pcts(row)
+        assert len(v) == 3, row
+        assert v[0] <= v[1] + 1e-9, f"1着率 > 2着内率: {row}"
+        assert v[1] <= v[2] + 1e-9, f"2着内率 > 3着内率: {row}"
+
+
+def test_monotone_pushes_up_and_never_lowers_the_win_rate():
+    """🔴 直すのは上げる方向だけ。1着率を下げて辻褄を合わせない。"""
+    rows = _rows([50.0, 40.0, 25.0, 22.0, 20.0, 18.0, 15.0])
+    base_win = _pcts(_cells(_build(rows))[0])[0]
+    rows[0]["pred_top2_pct"] = 0.01          # 2着内率だけ壊す
+    after_win = _pcts(_cells(_build(rows))[0])[0]
+    assert after_win == base_win
+
+
+def test_monotone_does_not_change_a_healthy_table():
+    """破れていない表は1文字も変わらない（既存の見た目を動かさない）。"""
+    rows = _rows([50.0, 40.0, 25.0, 22.0, 20.0, 18.0, 15.0])
+    for row in _cells(_build(rows)):
+        v = _pcts(row)
+        assert v[0] <= v[1] <= v[2]

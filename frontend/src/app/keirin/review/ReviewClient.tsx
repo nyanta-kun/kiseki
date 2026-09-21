@@ -31,7 +31,7 @@ import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Settings } from "lucid
 import type {
   KeirinProposal, KeirinProposalEntry, KeirinProposalSummary,
 } from "@/lib/api";
-import { makeRaceNormalizer } from "@/lib/keirinProb";
+import { makeRaceNormalizer, monotoneRow } from "@/lib/keirinProb";
 import { DateNav } from "@/components/KeirinDateNav";
 
 import {
@@ -217,6 +217,10 @@ function EntryTable({ entries, axis1, axis2 }: {
     entries.map((e) => e.pred_top2_pct), Math.min(entries.length, 2));
   const normTop3 = makeRaceNormalizer(
     entries.map((e) => e.pred_top3_pct), Math.min(entries.length, 3));
+  // 別モデルなので 1着率 ≦ 2着内率 ≦ 3着内率 が保証されない。表示の直前だけ押し上げる。
+  const rowProb = (e: { pred_win_pct?: number | null; pred_top2_pct?: number | null;
+                        pred_top3_pct?: number | null }) =>
+    monotoneRow(normWin(e.pred_win_pct), normTop2(e.pred_top2_pct), normTop3(e.pred_top3_pct));
 
   if (entries.length === 0) return null;
   return (
@@ -253,13 +257,13 @@ function EntryTable({ entries, axis1, axis2 }: {
                   {e.race_point?.toFixed(2) ?? "—"}
                 </td>
                 <td className="py-0.5 pr-2 text-right tabular-nums">
-                  {pct(normWin(e.pred_win_pct))}
+                  {pct(rowProb(e).win)}
                 </td>
                 <td className="py-0.5 pr-2 text-right tabular-nums">
-                  {pct(normTop2(e.pred_top2_pct))}
+                  {pct(rowProb(e).top2)}
                 </td>
                 <td className="py-0.5 pr-2 text-right tabular-nums">
-                  {pct(normTop3(e.pred_top3_pct))}
+                  {pct(rowProb(e).top3)}
                 </td>
                 <td className="py-0.5 pr-2">
                   {e.line_group ? `${e.line_group}-${e.line_pos ?? ""}` : "単騎"}

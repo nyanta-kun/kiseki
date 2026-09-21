@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
-import { makeRaceNormalizer } from "@/lib/keirinProb";
+import { makeRaceNormalizer, monotoneRow } from "@/lib/keirinProb";
 import {
   DateNav, addMonths, clampToToday, fmtYMD, nextDay, prevDay, toISODate,
 } from "@/components/KeirinDateNav";
@@ -719,6 +719,11 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
     entries.map((e) => e.pred_top2_pct), Math.min(entries.length, 2));
   const normTop3 = makeRaceNormalizer(
     entries.map((e) => e.pred_top3_pct), Math.min(entries.length, 3));
+  // 3つは別モデルなので 1着率 ≦ 2着内率 ≦ 3着内率 が保証されない（7車の1.18%・
+  // 9車の2.82%のレースで破れる）。表示の直前だけ押し上げる。詳細は lib/keirinProb。
+  const rowProb = (e: { pred_win_pct?: number | null; pred_top2_pct?: number | null;
+                        pred_top3_pct?: number | null }) =>
+    monotoneRow(normWin(e.pred_win_pct), normTop2(e.pred_top2_pct), normTop3(e.pred_top3_pct));
   return (
     // 🔴 数値列が4本（単勝率・2着内率・複勝率・競走得点）になり、狭い端末では
     //    テーブルが card 幅を超える。**ページごと横スクロールさせない**ため、
@@ -760,13 +765,13 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
             <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
             <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-500 dark:text-gray-300 text-xs">{e.style ?? "—"}</td>
             <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
-              {normWin(e.pred_win_pct) != null ? `${normWin(e.pred_win_pct)!.toFixed(1)}%` : "—"}
+              {rowProb(e).win != null ? `${rowProb(e).win!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
-              {normTop2(e.pred_top2_pct) != null ? `${normTop2(e.pred_top2_pct)!.toFixed(1)}%` : "—"}
+              {rowProb(e).top2 != null ? `${rowProb(e).top2!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
-              {normTop3(e.pred_top3_pct) != null ? `${normTop3(e.pred_top3_pct)!.toFixed(1)}%` : "—"}
+              {rowProb(e).top3 != null ? `${rowProb(e).top3!.toFixed(1)}%` : "—"}
             </td>
             <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}

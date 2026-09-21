@@ -57,3 +57,36 @@ export function makeRaceNormalizer(
   return (v) =>
     v != null && shift != null ? 100 * sigmoid(logit(v / 100) + shift) : null;
 }
+
+/**
+ * 1着率 ≦ 2着内率 ≦ 3着内率 を**表示の直前に**満たすよう押し上げる。
+ *
+ * 🔴 **なぜ要るか。** 3つは別々の二値モデル（`lgbm_wt_win` / `lgbm_wt_top2` /
+ *    `lgbm_wt_eval`）の出力で、順序の制約は学習にも推論にも一切入っていない。
+ *    正規化を通した後でも実測で破れる（2026-09-21・2026年142,107行）:
+ *
+ *      車数   行の違反率   違反を含むレースの割合
+ *       7車     0.17%          **1.18%**（約85レースに1回）
+ *       9車     0.33%          **2.82%**（約35レースに1回）
+ *
+ *    最大の逸脱は 1着率 − 2着内率 で +31.5pt。破れると出走表の1行に
+ *    「1着率 12.0% / 2着内率 9.4% / 3着内率 41.0%」という**論理的にあり得ない
+ *    表示**が出る。
+ *
+ * 🟢 **表示だけの手当て**。`pred_top2_pct` は選定にもゲートにも使われていない
+ *    （`src/` での利用 0 件）ので、買い目・採点には一切波及しない。
+ * ⚠️ **下げるのではなく上げる**（累積 max）。下げると「1着率」を実際より小さく
+ *    見せることになり、単勝の見立てを歪める。上げるのは「2着内率は少なくとも
+ *    1着率以上」という定義上必ず真の下限を当てているだけ。
+ * ⚠️ 🔴 **この実装は netkeirin 入稿コメントの出走表と揃っていること**
+ *    （keirin 側 `scripts/netkeirin_submit_wt.py::_build_entry_table`）。
+ */
+export function monotoneRow(
+  win: number | null,
+  top2: number | null,
+  top3: number | null,
+): { win: number | null; top2: number | null; top3: number | null } {
+  const t2 = top2 != null && win != null ? Math.max(top2, win) : top2;
+  const t3 = top3 != null && t2 != null ? Math.max(top3, t2) : top3;
+  return { win, top2: t2, top3: t3 };
+}
