@@ -135,18 +135,36 @@ def run(rows, name: str, cap: bool = False) -> dict:
     return out
 
 
-def summarize(rs) -> dict:
+def summarize(rs, n_days_all: int | None = None) -> dict:
+    """`common.summarize` と**同じ定義**で集計する（2026-09-21 是正）。
+
+    🔴 このローカル複製は3か所で `common.summarize` と食い違っていた:
+
+    | 量 | 旧（ここ） | 正（`common.summarize`） |
+    |---|---|---|
+    | 表示的中 | `pay >= bet`（元返しを的中に数える） | `pay > inv` |
+    | ガミ率の分母 | 全件 | **的中数** |
+    | 件/日 の分母 | **そのセグメントが出た日数** | 窓の全開催日 |
+
+    件/日 の分母は既知の 3.1倍バグと同型で、実測で最大 **1.78倍**過大になる。
+    `n_days_all` を渡すこと（呼び出し側が `C.days_of(C.select(None, win))`）。
+
+    ⚠️ ここを `common.summarize` へ丸ごと寄せられないのは、`syn` / `lo` /
+       `inv_day` という**この実験にしか無い列**があるため。共通部分の定義は
+       上の表のとおり必ず一致させること。
+    """
     n = len(rs)
     if not n:
         return dict(n=0)
-    days = len({r["date"] for r in rs})
-    shown = sum(1 for r in rs if r["pay"] >= r["bet"])
+    days = n_days_all or len({r["date"] for r in rs})
+    shown = sum(1 for r in rs if r["pay"] > r["bet"])
     hit = sum(1 for r in rs if r["pay"] > 0)
     inv = sum(r["bet"] for r in rs)
     pay = sum(r["pay"] for r in rs)
     pays = [r["pay"] for r in rs if r["pay"] > 0]
     return dict(n=n, per_day=n / days, shown=shown / n * 100,
-                hit=hit / n * 100, gami=(hit - shown) / n * 100,
+                hit=hit / n * 100,
+                gami=(hit - shown) / hit * 100 if hit else 0.0,
                 roi=pay / inv * 100, med=median(pays) if pays else 0.0,
                 big=sum(1 for r in rs if r["pay"] >= 100_000) / days,
                 syn=median(r["syn"] for r in rs), k=np.mean([r["k"] for r in rs]),
@@ -180,12 +198,14 @@ def arms() -> None:
     allrows = _rows()
     for label, win in (("確認 2026-01〜08", "confirm"), ("探索 2024-07〜2025-12", "explore")):
         rows = [r for r in allrows if r["win"] == win]
-        print(f"\n=== {label}  n={len(rows):,}R ===")
+        # 🔴 件/日 の分母は**窓の全開催日**（そのセグメントが出た日数ではない）
+        nd = C.days_of(C.select(None, win))
+        print(f"\n=== {label}  n={len(rows):,}R / {nd}日 ===")
         print(HDR)
         base = None
         for nm in names:
             rs = run(rows, nm)
-            t = summarize(rs)
+            t = summarize(rs, nd)
             print(_line(nm, t))
             if nm == "cur":
                 base = {r["key"]: r for r in rs}
@@ -206,7 +226,8 @@ def band() -> None:
     for label, win in (("確認 2026", "confirm"), ("探索 2024-07〜2025-12", "explore")):
         rows = [r for r in allrows if r["win"] == win]
         rs = run(rows, "cur")
-        days = len({r["date"] for r in rs})
+        # 🔴 窓の全開催日（そのセグメントが出た日数ではない）
+        days = C.days_of(C.select(None, win))
         print(f"\n=== {label}  {len(rs):,}件 / {days}日 ===")
         print(f"{'合成帯':12s}{'n':>7}{'件/日':>7}{'必要的中':>9}{'表示的中':>9}"
               f"{'達成率':>8}{'ROI':>8}{'払戻中央':>10}{'10万+/日':>9}")
@@ -215,7 +236,7 @@ def band() -> None:
             g = [r for r in rs if lo <= r["syn"] < hi]
             if not g:
                 continue
-            t = summarize(g)
+            t = summarize(g, days)
             need = 100.0 / np.mean([r["syn"] for r in g])
             tag = "全体" if lo == 0 else f"{lo:g}〜{hi:g}" if hi < 1e9 else f"{lo:g}〜"
             print(f"{tag:12s}{t['n']:7,}{t['n']/days:7.2f}{need:8.2f}%{t['shown']:8.2f}%"
@@ -230,7 +251,8 @@ def plans() -> None:
     allrows = _rows()
     for label, win in (("確認 2026-01〜08", "confirm"), ("探索 2024-07〜2025-12", "explore")):
         rows = [r for r in allrows if r["win"] == win]
-        print(f"\n=== {label} ===")
+        nd = C.days_of(C.select(None, win))   # 🔴 件/日 の分母は窓の全開催日
+        print(f"\n=== {label}  /{nd}日 ===")
         res = {nm: run(rows, nm) for nm in names}
         keys = sorted({r["plan"] for r in res[names[0]]})
         for k in keys:
@@ -240,7 +262,7 @@ def plans() -> None:
                 g = [r for r in res[nm] if r["plan"] == k]
                 if not g:
                     continue
-                t = summarize(g)
+                t = summarize(g, nd)
                 print(f"{nm:12s}{t['per_day']:7.2f}{t['k']:6.1f}{t['syn']:7.2f}{t['lo']:6.1f}%"
                       f"{t['shown']:8.2f}%{t['med']:10,.0f}{t['roi']:6.1f}%")
 
