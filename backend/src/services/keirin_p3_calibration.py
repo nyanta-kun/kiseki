@@ -83,7 +83,10 @@ keirin 側（`keirin/src/p3_calibration.py`）はこのファイルを**読み�
 """
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import math
+import os as _os
+import sys as _sys
 
 # 係数の推定窓。引き直したらここも更新する（どの期間の較正かが追えなくなる）。
 # 🔴 2026-08-20 に引き直した。**推定窓は同じ 2025年**だが、ライン特徴の追加(60→66)と
@@ -115,6 +118,37 @@ _BY_RACE_TYPE: dict[str, tuple[float, float]] = {
     "その他": (0.9868, -0.0264),   # n=142,717
 }
 _IDENTITY = (1.0, 0.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 確率のレース内正規化（`keirin_prob_normalize.py`）を束縛する。
+#
+# 🔴 **相対 import は使えない。** keirin 側は `spec_from_file_location` で
+#    このファイルをパッケージ文脈なしに読み込むため、`from .keirin_prob_normalize`
+#    は ImportError になる。ファイル指定で読むこと（`importlib` は標準ライブラリ）。
+# 🔴 **式をここへ写さない。** 写した瞬間に二重管理になる。
+# ═══════════════════════════════════════════════════════════════════════════
+_NORM_PATH = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "keirin_prob_normalize.py")
+_NORM_MODULE_NAME = "kiseki_keirin_prob_normalize"
+
+
+def _load_normalizer():
+    cached = _sys.modules.get(_NORM_MODULE_NAME)
+    if cached is not None:
+        return cached
+    if not _os.path.exists(_NORM_PATH):
+        raise ImportError(f"確率正規化の正本が見つかりません: {_NORM_PATH}")
+    spec = _importlib_util.spec_from_file_location(_NORM_MODULE_NAME, _NORM_PATH)
+    if spec is None or spec.loader is None:      # pragma: no cover - 実質起きない
+        raise ImportError(f"正本を読み込めません: {_NORM_PATH}")
+    module = _importlib_util.module_from_spec(spec)
+    _sys.modules[_NORM_MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_norm = _load_normalizer()
 
 
 def race_type_group(race_type: str | None) -> str:
@@ -218,6 +252,64 @@ def calibrated_p3_sum_top2(top3_probs: dict[int, float],
 CONFIDENCE_FULL_SUM = 2.0
 
 
+#: 正規化を掛けてよい生の Σp3 の範囲。**実データは全部この中に入る**ので、
+#: 外れる入力は「モデル未配布・未算出・出走表が壊れている」のいずれか。
+#:
+#: 実測（2024-01 以降・75,036R・全車数）:
+#:     min 1.833 / 0.1%tile 2.337 / 中央 3.018 / 99.9%tile 3.762 / max 4.407
+#:     Σ < 1.0 のレース **0件** / Σ > 9.0 のレース **0件**
+#:
+#: ⚠️ 幅を狭めるときは上の実測を取り直すこと（狭すぎると正常なレースが
+#:    正規化されず、車数の歪みが残ったまま表示される）。
+_NORMALIZE_RAW_SUM_MIN = 1.0
+_NORMALIZE_RAW_SUM_MAX = 9.0
+
+
+def normalized_calibrated_p3_sum_top2(top3_probs, race_type=None, cup_grade=None):
+    """**表示専用**の「上位2車の3着内率合計」。較正 → `Σ = 3.0` 正規化の順に通す。
+
+    🔴 `calibrated_p3_sum_top2`（ゲート用）との違いは**最後に正規化するかどうかだけ**。
+       ゲート側の閾値（`RANK_7C_P3_SUM_MIN` 等）は生／較正後の値の上で掃引して
+       決めた定数なので、**そちらには入れない**（入れると別のゲートになる）。
+
+    ## なぜ表示には要るのか（2026-09-21 実測）
+
+    3着内率モデルはレース内で正規化せず、車数も入力に持たないため、Σp3 が
+    **5車 2.77 / 7車 3.02 / 9車 3.16**（理想 3.0）と車数で単調にずれる。
+    較正（Platt）は1車ごとの単調変換なので**合計は揃えない**。その結果、
+    「上位2車が枠3つのうちどれだけを占めるか」を百分率で見せている信頼度が
+    車数で歪む:
+
+        信頼度の平均（2026年・19,987R）  生 → 正規化
+          5車 77.5 → 82.6（**−5.1pt 過小**）  6車 74.5 → 76.5
+          7車 73.2 → 72.6                    9車 64.1 → 60.6（**+3.5pt 過大**）
+        緑帯(72%以上)の発生率  9車 21.0% → 12.1%
+
+    ⚠️ **順序は「較正 → 正規化」**。較正は種別・グレードの偏り、正規化は車数の偏りと
+       別のものを直しており、`Σ = 3.0` は定義上の**厳密な制約**なので最後に効かせる。
+
+    >>> normalized_calibrated_p3_sum_top2({1: 0.5}) is None
+    True
+    >>> normalized_calibrated_p3_sum_top2({}) is None
+    True
+    """
+    if not top3_probs or len(top3_probs) < 2:
+        return None
+    raw_sum = sum(float(v) for v in top3_probs.values())
+    cal = {f: calibrate_top3(p, race_type, cup_grade) for f, p in top3_probs.items()}
+    # 🔴 **壊れた入力から信頼度を作らない。** 正規化は「合計を 3 に引き伸ばす」ので、
+    #    全車 0（モデル未配布・未算出）だと 1e-6 が 1.0 まで拡大され
+    #    **信頼度 100% になる**（2026-09-21 に実際に踏み、既存テスト
+    #    `keirin/tests/test_mean_payout_gate_by_cars.py` が捕まえた）。
+    #    正す相手は「そこそこ合っている確率の数%のずれ」だけなので、
+    #    合計が常識的な範囲に無い入力は**正規化せずにそのまま通す**
+    #    （＝従来どおりの値になり、全車0なら 0% が出る）。
+    if _NORMALIZE_RAW_SUM_MIN <= raw_sum <= _NORMALIZE_RAW_SUM_MAX:
+        cal = _norm.normalize_to_slots(cal, _norm.TOP3_SLOTS)
+    top2 = sorted(cal, key=lambda f: (-cal[f], f))[:2]
+    return cal[top2[0]] + cal[top2[1]]
+
+
 def confidence_pct(top3_probs, race_type=None, cup_grade=None):
     """レース信頼度（0〜100 の整数）。判定できなければ None。
 
@@ -230,7 +322,7 @@ def confidence_pct(top3_probs, race_type=None, cup_grade=None):
     >>> confidence_pct({}) is None
     True
     """
-    total = calibrated_p3_sum_top2(top3_probs, race_type, cup_grade)
+    total = normalized_calibrated_p3_sum_top2(top3_probs, race_type, cup_grade)
     if total is None:
         return None
     pct = 100.0 * float(total) / CONFIDENCE_FULL_SUM

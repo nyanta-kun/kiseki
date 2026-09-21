@@ -618,20 +618,37 @@ def _build_entry_table(race_key: str, marks: dict[int, str]) -> str | None:
         _solve_logit_shift(top3_probs, min(len(entries), 3)) if any(p > 0 for p in top3_probs) else None
     )
 
-    def _pct(raw, prob, shift):
+    def _val(raw, prob, shift):
+        """正規化後の値（%）。出せないときは None。"""
         if shift is None or raw is None:
-            return "―"
-        return f"{100 * _sigmoid(_logit(prob) + shift):.1f}%"
+            return None
+        return 100 * _sigmoid(_logit(prob) + shift)
+
+    def _fmt(v):
+        return "―" if v is None else f"{v:.1f}%"
 
     rows_html = []
     for e, wp, t2, tp in zip(entries, win_probs, top2_probs, top3_probs):
         frame_no = int(e["frame_no"])
         mark = html.escape(marks.get(frame_no, ""))
         name = html.escape(e["name"] or "―")
-        cells = [f"{frame_no}", mark, name, _pct(e["pred_win_pct"], wp, win_shift)]
+        v_win = _val(e["pred_win_pct"], wp, win_shift)
+        v_t2 = _val(e["pred_top2_pct"], t2, top2_shift)
+        v_t3 = _val(e["pred_top3_pct"], tp, top3_shift)
+        # 🔴 3つは別モデル（`lgbm_wt_win` / `lgbm_wt_top2` / `lgbm_wt_eval`）で
+        #    順序の制約が無く、正規化後も 1着率 > 2着内率 が実測で起きる
+        #    （2026-09-21 実測: 7車の 1.18% / 9車の 2.82% のレース・最大 +31.5pt）。
+        #    **顧客に出す表**なので、表示の直前だけ累積 max で押し上げる。
+        #    ⚠️ Web 側 `frontend/src/lib/keirinProb.ts::monotoneRow` と同じ手当て。
+        #       片方だけ変えると顧客に見せている表と画面が食い違う。
+        if v_t2 is not None and v_win is not None:
+            v_t2 = max(v_t2, v_win)
+        if v_t3 is not None and v_t2 is not None:
+            v_t3 = max(v_t3, v_t2)
+        cells = [f"{frame_no}", mark, name, _fmt(v_win)]
         if has_top2:
-            cells.append(_pct(e["pred_top2_pct"], t2, top2_shift))
-        cells.append(_pct(e["pred_top3_pct"], tp, top3_shift))
+            cells.append(_fmt(v_t2))
+        cells.append(_fmt(v_t3))
         rows_html.append(
             "<tr>" + "".join(f'<td align="center">{c}</td>' for c in cells) + "</tr>"
         )
