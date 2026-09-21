@@ -81,6 +81,7 @@ TARGET_STRUCT = ("prob_top", "bust_top")
 
 ARM = "base"
 SEED = 0
+x_trio = None
 _orig_build_legs = TL.build_legs
 
 
@@ -259,7 +260,9 @@ def ctx(i: int) -> Ctx | None:
 
 
 def build(x: Ctx, plan) -> dict | None:
+    global x_trio
     trio = plan.bet_type == "trio"
+    x_trio = x.pr_t3
     pod, prb = (x.po_t3, x.pr_t3) if trio else (x.po_tf, x.pr_tf)
     got = TL.build_with_gate_fallback(x.shape, plan, pod, prb, 7,
                                       order_probs=None if trio else x.or_tf)
@@ -273,6 +276,16 @@ def build(x: Ctx, plan) -> dict | None:
             legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True)
         elif ARM == "add_odds3":
             legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True, n_sets=3)
+        elif ARM in ("add_set3", "add_set2"):
+            legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True,
+                                 n_sets=3 if ARM == "add_set3" else 2)
+        elif ARM in ("ctl_set3", "ctl_set2"):
+            legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True,
+                                 n_sets=3 if ARM == "ctl_set3" else 2,
+                                 pick_sets="random", seed=max(SEED, 1))
+        elif ARM == "add_trio3":
+            legs, st = _add_perm(legs, st, pl, pod, prb, False, by_odds=True,
+                                 n_sets=3, pick_sets="trio", trio_prob=x_trio)
         elif ARM == "add_odds2":
             legs, st = _add_n(legs, st, pl, pod, prb, 2)
         elif ARM == "add_full":
@@ -364,7 +377,8 @@ def _add_rand(legs, st, plan, pred_odds, probs, seed: int, cheapest: bool = Fals
 
 
 def _add_perm(legs, st, plan, pred_odds, probs, free: bool,
-              by_odds: bool = False, n_sets: int = 1):
+              by_odds: bool = False, n_sets: int = 1,
+              pick_sets: str = "top", seed: int = 0, trio_prob=None):
     """**買い目上位 `n_sets` 個の集合**について、未購入順列を1点ずつ足す。
 
     by_odds=False … 足す1点は**確率最上位**（モデル基準）
@@ -388,6 +402,14 @@ def _add_perm(legs, st, plan, pred_odds, probs, free: bool,
         S = frozenset(c)
         if S not in seen:
             seen.append(S)
+    # 🔴 **どの集合へ足すか**。`top` が実装（買い目上位）。`random` は**公平な対照**
+    #    （買っている集合から無作為に選ぶ＝集合を増やさないので点数も同じ）。
+    #    `trio` は三連複確率の上位（集合の選び方そのものを替える腕）。
+    if pick_sets == "random":
+        seen = list(seen)
+        random.Random(seed * 6_151 + hash(tuple(sorted(legs[0]))) % 99_991).shuffle(seen)
+    elif pick_sets == "trio" and trio_prob is not None:
+        seen.sort(key=lambda S: -float(trio_prob.get(S, 0.0)))
     add: list = []
     for S in seen[:n_sets]:
         cand = []
@@ -502,7 +524,9 @@ ARMS = ["base", "d2", "d3", "top1_full", "swap_odds", "d2_odds", "ctl_d2",
         "add_band", "add_free", "add_rand",
         "add_odds", "add_odds3", "add_rand_odds", "add_rand_odds3",
         "add_odds2", "add_full", "swap_tail1", "swap_tail2", "ctl_tail1",
-        "add_rand_odds2"]
+        "add_rand_odds2",
+        # 🔴 上位3集合に各1点（両提示レースを拾える形）と**公平な対照**
+        "add_set3", "ctl_set3", "add_trio3", "add_set2", "ctl_set2"]
 
 
 def main() -> None:
@@ -518,7 +542,7 @@ def main() -> None:
     rows: dict[str, list] = {k: [] for k in use}
     for s in range(1, a.ctl_seeds):
         for base_arm in ("ctl_d2", "add_rand", "add_rand_odds", "add_rand_odds3",
-                         "ctl_tail1", "add_rand_odds2"):
+                         "ctl_tail1", "add_rand_odds2", "ctl_set3", "ctl_set2"):
             if base_arm in use:
                 rows[f"{base_arm}#{s}"] = []
     ndays: dict[str, int] = {}

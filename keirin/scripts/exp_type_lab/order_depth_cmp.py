@@ -102,6 +102,9 @@ def boot_delta(base, arm):
 
 
 NAME = {"base": "⓪ 現行", "add_odds2": "2点足す(安い順)",
+        "add_set3": "上位3集合に各1点", "ctl_set3": "対照(無作為3集合)",
+        "add_set2": "上位2集合に各1点", "ctl_set2": "対照(無作為2集合)",
+        "add_trio3": "三連複確率上位3集合",
         "add_rand_odds2": "対照(無作為2点)",
         "add_full": "先頭集合を全部足す", "swap_tail1": "末尾1点と入れ替え",
         "swap_tail2": "末尾2点と入れ替え", "ctl_tail1": "対照(末尾1点↔無作為)",
