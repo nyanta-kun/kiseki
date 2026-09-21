@@ -36,7 +36,88 @@ import logging
 import re
 from typing import Any
 
+from .result_top3 import TOP3_SQL, winning_trifectas, winning_trios
+
 logger = logging.getLogger(__name__)
+
+
+def payout_per_100(odds_value: float | None) -> int:
+    """確定オッズ → 100円賭けたときの払戻金（公式は10円単位で切り捨て）。
+
+    🔴 `src/evaluation/backtest_wt.py::_load_payouts_wt` と**同じ式**。
+       あちらは pandas を引くので採点の軽い経路からは import せず、
+       `tests/test_dead_heat_payout.py` が両者の一致を固定している。
+    """
+    if odds_value is None:
+        return 0
+    return round(float(odds_value) * 100) // 10 * 10
+
+
+def dead_heat_extra_payout(conn: Any, race_key: str,
+                           stakes: dict[Any, int], paid_key: Any) -> int:
+    """**同着でもう一方の当たり目も買っていた**ぶんの払戻を足す。
+
+    ## なぜ要るか（2026-09-21 に確定した実バグ）
+
+    競輪には同着があり、3着が2車同着なら三連複の当たりは2通りになる。
+    `result_top3.hit_trio` / `hit_trifecta` は**買った目のうち当たったものを1つ**
+    しか返さず、`resolve_payout` も `winning_key` を単数で受ける設計だったため、
+    **2通りとも買っていたレースで片方しか払戻が記録されていなかった**。
+
+    実測: `picks_history` **13行**（7C×6 / 9C×3 / 7B / 7S / 9F）。
+    確定事例 `20260822_31_03#9C`（3着が7番と9番の同着・`3=5=7 ¥5,400` と
+    `3=5=9 ¥2,500` を両方入稿）は記録 **¥12,420 ↔ 正しくは ¥25,419**。
+
+    ⚠️ **型ラボ（`settle_type_lab_picks.py`）と実売の正本
+       （`backend/src/services/keirin_settlement.py`）は元から全当たり目を
+       合算していて正しい。** 直すのは既存ランク経路だけ。
+
+    ## 設計
+
+    🔴 **呼び出し側（`notify_results_wt.py` の12箇所・backfill 14本）を
+       1つも変えずに直せるよう、共通入口の `resolve_payout` の中で足す。**
+       同着でないレースでは `wins` が1通りなので**返り値は必ず 0**＝
+       既存の数字はビット単位で変わらない。
+
+    Args:
+        stakes: 入稿記録から作った {買い目: 賭け金}
+        paid_key: すでに払戻を計上した当たり目（これは二重に数えない）
+    """
+    if not stakes:
+        return 0
+    ordered = isinstance(paid_key, tuple)
+    fin = conn.execute(TOP3_SQL, (race_key,)).fetchall()
+    wins = winning_trifectas(fin) if ordered else winning_trios(fin)
+    others = [w for w in wins if w != paid_key and w in stakes]
+    if not others:
+        return 0
+
+    market = "trifecta" if ordered else "trio"
+    # 🔴 `combination` の書式を仮定しない。三連複も `-` 区切りで入っている
+    #    （実測 `20260822_31_03` の trio は `3-5-7` / `3-5-9`）。`=` 決め打ちで
+    #    引くと**1件も見つからないのに例外は出ず、静かに 0 円**になる。
+    #    `_load_payouts_wt` と同じく**パースしてキーを作る**。
+    rows = conn.execute(
+        "SELECT combination, odds_value FROM wt_odds WHERE race_key = ? AND bet_type = ?",
+        (race_key, market),
+    ).fetchall()
+    board: dict[Any, float] = {}
+    for combo, odds_value in rows:
+        parts = [x for x in re.split(r"[-=→]", str(combo)) if x != ""]
+        try:
+            nums = [int(x) for x in parts]
+        except ValueError:
+            continue
+        board[tuple(nums) if ordered else frozenset(nums)] = odds_value
+
+    extra = 0
+    for w in others:
+        if w not in board:
+            logger.warning(
+                f"同着のもう一方の払戻が引けない {race_key} {market} {sorted(w)}")
+            continue
+        extra += payout_per_100(board[w]) * stakes[w] // 100
+    return extra
 
 # bet_detail の bet_type 表記。netkeirin の商品名に合わせた日本語が入る。
 TRIO = "3連複"
@@ -140,7 +221,10 @@ def resolve_payout(
             return 0, total
         stake = stakes.get(winning_key)
         if stake is not None:
-            return odds_payout * stake // 100, total
+            # 🔴 同着では当たり目が複数ある。**買っていれば全部払い戻される**ので、
+            #    もう一方のぶんもここで足す（同着でなければ 0 が返る）。
+            pay = odds_payout * stake // 100
+            return pay + dead_heat_extra_payout(conn, race_key, stakes, winning_key), total
         # 入稿記録はあるが的中点が無い（欠車での組み替え等）。黙って0にしない。
         logger.warning(
             f"入稿記録に的中点が無い {race_key}#{rank_key} winning={sorted(winning_key)}"
@@ -180,4 +264,6 @@ def payout_from_submitted(
         )
         return None
 
-    return odds_payout * stake // 100, total
+    # 🔴 同着のもう一方も買っていれば足す（`resolve_payout` と同じ扱い）。
+    pay = odds_payout * stake // 100
+    return pay + dead_heat_extra_payout(conn, race_key, stakes, winning_key), total
