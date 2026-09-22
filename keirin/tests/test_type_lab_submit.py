@@ -1355,25 +1355,23 @@ def test_highpay_is_tried_from_both_gates():
 
 
 def test_highpay_alternates_sign_and_big():
-    """🔴 **内訳は「偶数本目が特大狙い」**（2・4本目のみ）。ユーザー判断②（2026-09-06）。
+    """🔴 **内訳は `HIGHPAY_BIG_SLOTS` が決める**（何本目を特大狙いにするか）。
 
-    ⚠️ 本数を 10 にしても `HIGHPAY_BIG_SLOTS = {2, 4}` は据え置き（ユーザー判断
-       2026-09-12）なので、**6〜10本目は全部 `{型}_sign`（計画15万）**になる。
-       `_big` を外すと 10万+ と表示的中が両方改善する代わりに 30万+ を3〜6割失う
-       （`PLAN_axis_gate_inventory_2026_09_12.md` §12・**未実施**）。
-
-    偶数本目にしているのは**短い日でも比率が保たれる**から
-    （3本しか出ない日でも sign / big / sign と1本は特大になる）。
-    置き場所に情報は無いので、並べ替えても中身は変わらない。
+    ⚠️ **2026-09-22 に空にした**（ユーザー判断）＝5本とも `{型}_sign`（計画15万）。
+       `_big` は実売32件で的中0・売上も `_sign` と差が無く、台でも全指標が非負だった
+       （`type_lab.HIGHPAY_BIG_SLOTS` の節）。失うのは30万超の払戻だけ。
+       戻すなら `frozenset({2, 4})` へ戻す——ここは**その内訳の規則**を固定する
+       （偶数本目にしていたのは短い日でも比率が保たれるから）。
     """
     from src.type_lab import (HIGHPAY_BIG_SLOTS, HIGHPAY_BIG_TARGET,
                               HIGHPAY_SLOTS_PER_DAY, PLANS, highpay_plan_for)
 
     got = [highpay_plan_for("B", 7, i) for i in range(HIGHPAY_SLOTS_PER_DAY)]
-    assert got[:5] == ["B_sign", "B_big", "B_sign", "B_big", "B_sign"], got
-    # 6本目以降は全部 `_sign`（`HIGHPAY_BIG_SLOTS` は据え置きなので増えない）
-    assert all(g == "B_sign" for g in got[5:]), got
-    assert sum(1 for g in got if g.endswith("_big")) == len(HIGHPAY_BIG_SLOTS)
+    want = ["B_big" if (i + 1) in HIGHPAY_BIG_SLOTS else "B_sign"
+            for i in range(HIGHPAY_SLOTS_PER_DAY)]
+    assert got == want, got
+    assert sum(1 for g in got if g.endswith("_big")) == len(
+        [i for i in HIGHPAY_BIG_SLOTS if i <= HIGHPAY_SLOTS_PER_DAY])
     # 🔴 `_big` は「軸1を外して計画払戻を上げる」＝30万超が出る唯一の形
     for t in ("B", "C", "D"):
         pl = PLANS[f"{t}_big"]
@@ -1519,8 +1517,9 @@ def _hp_plan_rows(rows):
 def test_highpay_replaces_a_capped_race(monkeypatch):
     """🔴 上限で捨てるはずのレースが、高額枠として出る（1レース1商品のまま）。
 
-    内訳は **1本目 `_sign` / 2本目 `_big`**（`HIGHPAY_BIG_SLOTS`）。
+    内訳は `HIGHPAY_BIG_SLOTS` が決める（2026-09-22 から空＝全部 `_sign`）。
     """
+    from src.type_lab import highpay_plan_for
     rows = [_hp_row(f"20260906_13_{i:02d}", i, "B_hit", "B", 1.9 - i * 0.01)
             for i in range(1, 5)]
     m, sent = _highpay_env(monkeypatch, rows, _hp_plan_rows(rows))
@@ -1530,7 +1529,8 @@ def test_highpay_replaces_a_capped_race(monkeypatch):
     high = [x for x in sent if x[2] == m.ORIGIN_HIGHPAY]
     # 4レース × 0.5 = 2件が通常の商品、残り2件が高額枠へ回る
     assert len(normal) == 2, sent
-    assert [p for _, p, _ in high] == ["B_sign", "B_big"], sent
+    assert [p for _, p, _ in high] == [highpay_plan_for("B", 7, 0),
+                                       highpay_plan_for("B", 7, 1)], sent
     # 1レース1商品（同じレースが2回出ていない）
     assert len({rk for rk, _, _ in sent}) == len(sent), sent
 

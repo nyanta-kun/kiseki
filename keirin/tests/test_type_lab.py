@@ -107,26 +107,36 @@ def _tf_boards(order):
     return odds, prob
 
 
-def test_type_a_buys_the_top_three_by_probability():
-    """🔴🔴 **2026-08-31: 型A は「1着=軸1・2着=軸2 固定」をやめ確率上位3点にした。**
+BAND_PLANS = ("A_hit", "B_hit", "C_hit")
 
-    点数（3点）は据え置きで、**選び方だけ**を変えている。旧構成は確率を配分にしか
-    使わないので、同ライン隣接ボーナスを入れても買い目が変わらなかった
-    （配分だけ変わって表示的中はむしろ 32.80→32.18% / 32.84→32.32% と悪化）。
-    確率順へ替えると **34.40 / 34.91%**（ROI +1.6/+4.8pt）。
 
-    ⚠️ 旧構成の根拠（SUMMARY 追補B「入れ替えを足すとガミ 0.6→17.9%・
-       ROI 80.1→75.7%」）は **ROI で選んだ判断**で、今回は表示的中で選び直した。
-       ROI 優先へ戻すなら `fixed12` に戻すこと。
+@pytest.mark.parametrize("key", BAND_PLANS)
+def test_firm_types_buy_to_a_single_payout_target(key):
+    """🔴🔴 **2026-09-22: 堅い3型（A/B/C）は計画払戻 `HIT_BAND_TARGET` 円のダッチ。**
+
+    旧構成（A=確率上位3点・B=Σ床3万・C=帯15倍12点／いずれも信頼度傾斜）は
+    表示的中 35〜38% と最良だったが払戻中央 2万円前後で、**4万円以上を
+    0.04〜0.13件/日 しか作れていなかった**。狙う払戻を1つに決めて点数を
+    そこから導く形へ替えた（`type_lab.HIT_BAND_TARGET` の節に掃引の実測）。
+
+    ここで固定するのは「点数ではなく払戻を決めている」こと:
+      ① 確率降順で採る　② Σ(1/予測オッズ) <= 予算/目標（＝どの目でも目標以上）
     """
+    from src.type_lab import BUDGET, HIT_BAND_TARGET
+
     s = _shape({1: .80, 2: .70, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
-    assert s.type_label == "A"
     odds, prob = _tf_boards(s.order)
-    legs = build_legs(s, PLANS["A_hit"], odds, prob)
-    assert len(legs) == 3
-    # 確率降順の上位3点であること（固定構成では無いこと）
-    want = sorted((k for k in prob if odds.get(k)), key=lambda k: -prob[k])[:3]
-    assert list(legs) == want
+    plan = PLANS[key]
+    assert plan.structure == "signboard" and plan.alloc == "dutch"
+    assert plan.target == HIT_BAND_TARGET
+    legs = build_legs(s, plan, odds, prob)
+    assert legs, key
+    # ① 確率降順（採れた点の中で順序が保たれている）
+    assert list(legs) == sorted(legs, key=lambda k: -prob[k]), key
+    # ② どの目が当たっても目標額を割らない
+    assert sum(1.0 / odds[l] for l in legs) <= BUDGET / HIT_BAND_TARGET + 1e-9, key
+    st = allocate(legs, odds, prob, plan)
+    assert st and min(st[l] * odds[l] for l in legs) >= HIT_BAND_TARGET * 0.9, key
 
 
 def test_type_f_buys_the_top_twelve_by_probability():
@@ -183,22 +193,25 @@ def test_type_d_drops_the_most_popular_partner():
 
 
 def test_prob_top_respects_band_and_sigma():
+    # 🔴 2026-09-22: `B_hit` / `C_hit` は `signboard` へ移ったので、`prob_top` の
+    #    帯・点数・Σ の検査は今も `prob_top` で組む `F_hit` と、ゲート落ちの代替
+    #    （`GATE_FALLBACK["C_hit"]` ＝ 2026-09-21 までの型C）で行う。
+    from src.type_lab import GATE_FALLBACK
+
     s = _shape(FIRM_P3, day=3)
-    assert s.type_label == "B"
     odds, prob = _tf_boards(s.order)
-    legs = build_legs(s, PLANS["B_hit"], odds, prob)
-    assert legs and len(legs) <= PLANS["B_hit"].max_legs
-    assert sum(1.0 / odds[l] for l in legs) <= PLANS["B_hit"].sigma_max + 1e-9
-    # 帯（型C は予測15倍以上）。🔴 2026-09-08 から**帯の下の最人気を1点だけ**
-    # 買い足すので「全点が帯以上」ではなくなった（`_insert_underband`）。
-    # 例外はその1点だけで、下限（`underband_min`）は下回らないこと。
+    f = PLANS["F_hit"]
+    legs = build_legs(s, f, odds, prob)
+    assert legs and len(legs) <= f.max_legs
+    assert all(odds[l] >= f.min_odds for l in legs)
+    # 帯（旧・型C は予測15倍以上）と Σ の上限は、代替の側に残っている。
     c = _shape(FIRM_P3, behind=LOW_BEHIND, day=3)
     assert c.type_label == "C"
-    legs_c = build_legs(c, PLANS["C_hit"], odds, prob)
-    assert legs_c
-    under = [l for l in legs_c if odds[l] < PLANS["C_hit"].min_odds]
-    assert len(under) <= 1, "帯より安い点を2点以上買っている"
-    assert all(odds[l] >= PLANS["C_hit"].underband_min for l in under)
+    fb = GATE_FALLBACK["C_hit"][0]
+    assert fb.structure == "prob_top" and fb.min_odds == 15.0
+    legs_c = build_legs(c, fb, odds, prob)
+    assert legs_c and len(legs_c) <= fb.max_legs
+    assert all(odds[l] >= fb.min_odds for l in legs_c), "帯より安い点を買っている"
 
 
 # ─────────────────────────── 配分 ───────────────────────────
@@ -233,7 +246,7 @@ def test_confidence_tilt_refuses_when_the_floor_does_not_fit():
     legs = [(1, 2, 3), (1, 2, 4)]
     odds = {legs[0]: 1.2, legs[1]: 1.3}
     prob = {l: 0.5 for l in legs}
-    assert allocate(legs, odds, prob, PLANS["A_hit"]) is None
+    assert allocate(legs, odds, prob, PLANS["F_hit"]) is None
 
 
 def test_mean_expected_payout_matches_the_definition():
@@ -775,7 +788,9 @@ def test_build_script_records_the_funded_legs_only():
     shape = RaceShape("A", 1.60, 1, 0.30, False, tuple(range(1, 8)), 1.2)
     pred = {(1, 2, 3): 3.0, (1, 2, 4): 4.0, (1, 2, 5): 20000.0}
     probs = {(1, 2, 3): 0.5, (1, 2, 4): 0.4, (1, 2, 5): 1e-9}
-    got = _build_plan(shape, PLANS["A_hit"], pred, probs)
+    # 🔴 2026-09-22: `A_hit` は `signboard` へ移り max_odds を持つので、
+    #    「極端に高い点の取り分が 0 円になる」形は `conf` のプランで固定する。
+    got = _build_plan(shape, PLANS["F_hit"], pred, probs)
     assert got is not None
     legs, stakes = got
     assert set(legs) == set(stakes), "賭け金の付かない点を返している"

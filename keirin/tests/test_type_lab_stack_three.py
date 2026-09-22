@@ -30,8 +30,10 @@ def test_tau_adaptive_plans():
 
     2026-09-17 に `E_hit` を追加（ユーザー決定）。点数14固定 → 計画払戻の床で決める。
     帯・券種・配分は変えていない。実測は `PLANS["E_hit"]` のコメント。
+    🔴 2026-09-22 に `C_hit` が外れた（計画払戻5万円のダッチへ移り、点数は目標額から
+       決まるようになった）。τ適応は `GATE_FALLBACK["C_hit"]`（旧構成）に残っている。
     """
-    assert sorted(k for k, v in PLANS.items() if v.tau_adaptive) == ["C_hit", "E_hit"]
+    assert sorted(k for k, v in PLANS.items() if v.tau_adaptive) == ["E_hit"]
 
 
 def test_c_hit_keeps_the_default_tau_floor_and_cap():
