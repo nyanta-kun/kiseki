@@ -1,0 +1,63 @@
+# gitleaks の設定（pre-commit と CI が読む）
+#
+# 既定のルール一式に、このリポジトリで実際に漏れた形を足す。
+# 2026-09-23: hrdb_user のパスワードが scripts/realtime_start.sh と sekito の
+# 3 ファイルにコミットされていた。既定ルールは `PGPASSWORD=...` は拾うが
+# **`postgresql://user:password@host` 形式を拾わない**（実測）。
+# 漏れた当の形を検知できないままでは意味がないので、ここで足す。
+[extend]
+useDefault = true
+
+[[rules]]
+id = "db-url-with-password"
+description = "DB 接続 URL にパスワードが直書きされている"
+# postgresql:// / postgres:// / mysql:// / mongodb:// の user:pass@host
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[a-z0-9_.-]+:([^\s:@/"']{6,})@'''
+secretGroup = 1
+keywords = ["postgres://", "postgresql://", "mysql://", "mongodb://", "redis://", "amqp://"]
+
+[rules.allowlist]
+# プレースホルダは通す。実値と紛れない綴りだけを並べること。
+# regexTarget = "match" を指定しないと、既定では「検知した秘密の部分」だけと
+# 照合され、前後を含めたこの書き方が当たらない（2026-09-23 実測）。
+regexTarget = "match"
+regexes = [
+  # ${VAR} / {var}（f-string）/ <説明> / ダミー語
+  '''://[a-z0-9_.-]+:(\$?\{[A-Za-z_]+\}|\$[A-Z_]+|<[^>]+>|xxx+|(?i:password|changeme|dummy|redacted|your[-_a-z]*password)|\*+)@''',
+]
+
+[[rules]]
+id = "db-password-assignment"
+description = "DB パスワードの代入が平文で書かれている"
+regex = '''(?i)\b(?:DB_PASSWORD|POSTGRES_PASSWORD|PGPASSWORD|MYSQL_PWD)\s*[:=]\s*["']?([^\s"'#]{8,})'''
+secretGroup = 1
+keywords = ["db_password", "postgres_password", "pgpassword", "mysql_pwd"]
+
+[rules.allowlist]
+regexTarget = "match"
+regexes = [
+  # ${VAR} / <説明> / ダミー語 / your_secure_password の類
+  '''(?i)(?:DB_PASSWORD|POSTGRES_PASSWORD|PGPASSWORD|MYSQL_PWD)\s*[:=]\s*["']?(\$?\{[A-Za-z_]+\}|\$[A-Z_]+|<[^>]+>|xxx+|changeme|dummy|redacted|your[-_a-z]*password)''',
+  # 環境変数から読んでいるだけの行（os.getenv / os.environ / process.env）
+  '''(?i)(?:DB_PASSWORD|POSTGRES_PASSWORD|PGPASSWORD|MYSQL_PWD)\s*[:=]\s*(?:os\.(?:getenv|environ)|process\.env|System\.getenv)''',
+]
+
+# リポジトリ全体の除外。**「うるさいから」で足さないこと。**
+# 足すときは、なぜ誤検知と言えるかを 1 行で残す。
+[allowlist]
+# 個別の誤検知（2026-09-23 に全件を目視で確認したもの）
+# ここも regexTarget を指定しないと「秘密の部分」としか照合されない
+regexTarget = "match"
+regexes = [
+  # CI のテスト用ダミー値。本番の認証には使われない
+  '''AUTH_SECRET:\s*["']ci-test-secret-[a-z0-9-]+["']''',
+  # localStorage のキー名であって鍵ではない
+  '''STORAGE_KEY\s*=\s*["']heihachi_thresholds_v\d+["']''',
+]
+paths = [
+  # テスト用の固定値（本物の資格情報ではない）
+  '''backend/tests/.*''',
+  '''keirin/tests/.*''',
+  # 取得した HTML / JSON の生データ。トークン様の文字列を含むが外部サイトの出力
+  '''keirin/scripts/exp_hot/raw/.*''',
+]
