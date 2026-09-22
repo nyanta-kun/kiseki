@@ -17,6 +17,51 @@
 
 更新時は「最終更新」日付と「更新履歴」テーブルも必ず記入する。
 
+## 🔴🔴 2026-09-22: 旧ランクを破棄した（先に読む）
+
+**本番で動いているのは型ラボ（`src/type_lab.py`）だけ。** 旧ランク16種
+（7S/7A/7B/7SS/7C/7M1/7H1/7H2/7T1/7T3/9S/9A/9C/9H1/S1…）は 2026-08-28 に
+`netkeirin_settings.enabled` を全て false にしたあと、生成・採点・再構築だけが
+惰性で走り続けていた（実測 **1日あたり約2時間**）。2026-09-22 にそれを止めた。
+
+| 止めたもの | どこにあった |
+|---|---|
+| `wave-picks-wt` / `reselect_7s_evening.py` / `write_candidates_wt.py` | `daily_picks_wt.sh`（07:00） |
+| `notify_results_wt.py` / `monitor_wide_wt.py` | `previous_day_wt.sh`(06:30) / `daily_picks_wt.sh` / `intraday_results_wt.sh` |
+| `reconcile_walkforward_tail.sh`（08:40・**1時間37分/日**） | VPS crontab |
+| `evening_picks_wt.sh`（16:00） | VPS crontab |
+| `notify_prerace_wt.py`（毎分） | VPS crontab |
+| `backfill_missing_prerace_wt.py`（00:40） | VPS crontab |
+
+🔴 **ファイルは消していない。** 過去分析の台としては有効なので残してある。
+退役したバッチは `KEIRIN_ALLOW_OLD_RANKS=1` を付けたときだけ動く。
+本番経路に戻っていないことは `tests/test_old_ranks_retired.py` が固定している。
+
+🔴 **出走表の指数（1着率・2着内率・3着内率）は書き手が変わった。**
+`wt_entries.pred_{win,top2,top3}_pct` を書いていたのは `wave-picks-wt` だけ
+だったので、旧ランクを止めるなら道連れになる。いまは
+`build_type_lab_picks.predict_index_pct`（朝バッチ `type_lab_morning.py` が呼ぶ）。
+**3着内率の出どころが `lgbm_wt` → `lgbm_wt_eval` に変わった**ので値が少し動く。
+過去分を埋める `backfill_index_pct_wt.py`（月次 vintage の `lgbm_wt_eval_mYYMM`）と
+**これで初めて同じ系列**になった。
+
+🔴 **朝の生成は1プロセスにまとめた**（`scripts/type_lab_morning.py`）。
+7車の買い目・9車の買い目・表示用の型・出走表の指数は同じ日の同じ特徴量しか
+要らないのに、別プロセスだと `build_features_wt`（実測 約6分50秒）がその都度
+走っていた。朝バッチの実測 **24分52秒 → 10分前後**。
+
+### 「9月も旧ランクを売っていたら高額が出ていたのでは」は測って否定した
+
+候補（`picks_history`）のままだと 10万+ が8件に見えるが、**1レース1商品の
+優先順位を当てると5件が上位ランクに取られて3件**になり、入稿ゲート
+（予測オッズが無いので遡って適用できない）がさらに削る。同じ9月の型ラボ実売は
+**10万+ 7件・30万+ 1件（最高 713,880円）**、旧ランクは仮想の1,001商品でも
+**10万+ 3件・30万+ 0件（最高 255,480円）**。旧ランクの**実売** 1,050商品
+（2026-07-24〜08-28）でも 10万+ は2件（どちらも 7T1）。
+⚠️ 9月の旧ランク行は `reconcile_walkforward_tail.sh` が毎朝作り直していた
+**再構成**で、最終オッズで採点を近似する＝当たりやすい側に出る。
+詳細: `docs/type_lab/old_rank_revival_2026_09_11.md`
+
 ## 🔴 2026-09-20 監査の注記（先に読む）
 
 **検証済みの事実の正本は `docs/AUDIT_2026_09_20.md`。** 本ファイルと食い違う場合はそちらが正。

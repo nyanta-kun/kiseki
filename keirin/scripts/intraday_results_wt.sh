@@ -9,7 +9,7 @@
 #
 # Discordダイジェスト送信について（2026-07-24〜）:
 #   picks_history のDB更新（採点）自体は毎回サイレントに行うが、Discordの
-#   「results」チャンネルへは DIGEST_HOURS で指定した時刻(毎時0分)のみ送信する
+#   （2026-09-22: 旧ランク破棄に伴い Discord の日中ダイジェストは廃止）
 #   （15分毎に毎回送信するとスパムになるため）。当日の最終・正式版ダイジェストは
 #   翌朝8:00の daily_picks_wt.sh（前日分・非silent）が引き続き担う。
 set -e
@@ -81,9 +81,6 @@ fi
 CURRENT_HOUR=$(date +%H)
 CURRENT_MIN=$(date +%M)
 
-# 日中Discordダイジェストを送信する時刻（毎時0分実行時のみ判定・1日4回）
-DIGEST_HOURS=" 12 15 18 21 "
-
 # 0:00 実行時: 前日最終レース（23時台発走分）の結果を取得する
 # cron スケジュール `*/15 10-23,0 * * *` のうち hour=0 かつ分0の実行が該当する
 if [[ "$CURRENT_HOUR" == "00" && "$CURRENT_MIN" == "00" ]]; then
@@ -96,9 +93,6 @@ if [[ "$CURRENT_HOUR" == "00" && "$CURRENT_MIN" == "00" ]]; then
   .venv/bin/python3 -m src.cli.main collect-wt --date "$PREV" \
     >> "$LOG_DIR/intraday_${PREV}.log" 2>&1 \
     || echo "[$(date '+%F %H:%M:%S')] 前日最終レース取得に失敗（継続）"
-  .venv/bin/python3 scripts/notify_results_wt.py "$PREV" --silent \
-    >> "$LOG_DIR/intraday_${PREV}.log" 2>&1 \
-    || echo "[$(date '+%F %H:%M:%S')] 前日採点に失敗（継続）"
 fi
 
 echo "[$(date '+%F %H:%M:%S')] 日中 当日結果取得 $TODAY ..."
@@ -106,24 +100,12 @@ echo "[$(date '+%F %H:%M:%S')] 日中 当日結果取得 $TODAY ..."
   2>&1 | tee -a "$LOG_DIR/intraday_${TODAY}.log"
 echo "[$(date '+%H:%M:%S')] 日中取得 完了"
 
-# 採点: picks_history.payout を更新する。DIGEST_HOURS の毎時0分実行時のみ
-# Discordの「results」チャンネルへ日中ダイジェスト（その時点までの当日確定分）を送信する。
-NOTIFY_ARGS=(--silent)
-if [[ "$CURRENT_MIN" == "00" && "$DIGEST_HOURS" == *" $CURRENT_HOUR "* ]]; then
-  NOTIFY_ARGS=()
-  echo "[$(date '+%H:%M:%S')] 日中採点（Discordダイジェスト送信あり: ${CURRENT_HOUR}:00）..."
-else
-  echo "[$(date '+%H:%M:%S')] 日中採点（--silent）..."
-fi
-.venv/bin/python3 scripts/notify_results_wt.py "$TODAY" "${NOTIFY_ARGS[@]}" \
-  2>&1 >> "$LOG_DIR/intraday_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 日中採点に失敗（継続）"
-
-# 未来レース候補を復元（notify_results_wt.py の DELETE で消えた #CAND を戻す）
-echo "[$(date '+%H:%M:%S')] 未来レース候補復元..."
-.venv/bin/python3 scripts/write_candidates_wt.py "$TODAY" \
-  2>&1 >> "$LOG_DIR/intraday_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 候補復元に失敗（継続）"
+# 🔴 **2026-09-22: 旧ランクの採点とダイジェストをここから外した**（旧ランク破棄）。
+#    外したのは `notify_results_wt.py`（`picks_history` の採点＋Discord の日中
+#    ダイジェスト）と `write_candidates_wt.py`（採点の DELETE で消えた #CAND を
+#    戻すための復元）。どちらも旧ランク専用で、**型ラボの採点は
+#    `type_lab_settle.sh`（15分ごと）が別に回している**。
+#    ⚠️ `collect-wt`（上）は残す。結果と確定オッズは型ラボの採点の入力。
 
 # VPS PostgreSQL 同期（wt_races.status / wt_entries.finish_order / picks_history.payout を反映）
 if [[ -n "$KEIRIN_DB_URL" ]]; then

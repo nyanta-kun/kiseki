@@ -1177,7 +1177,11 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
   // 発走済みでも結果未取込のうちは「未確定」。不的中を出すのは確定後だけ。
   const isSettled = computeIsSettled(pick.status, pick.start_at) && hasResult(pick.entries);
   const hasPayout = pick.trio_payout > 0 || (pick.trifecta_payout ?? 0) > 0;
-  const hasHypo = pick.hypo_axis1 != null && pick.hypo_axis2 != null;
+  // 🔴 手動入稿ボタンの表示条件（2026-09-22）。以前は旧ランクの仮軸
+  //    （`hypo_*`）の有無に乗っていたが、それは「軸が立つ7車・9車か」の代理に
+  //    過ぎなかった。型ラボが売るのは7車・9車だけなので、車数と型で直接判定する。
+  const canManualSubmit =
+    (pick.n_entries === 7 || pick.n_entries === 9) && pick.type_lab_type != null;
   const tlCombo = pick.type_lab_combo
     ? formatComboLabel(pick.type_lab_combo, pick.entries) : null;
   return (
@@ -1222,7 +1226,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
             className={`flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-150${collapsed ? "" : " rotate-180"}`}
           />
         </button>
-        {hasHypo && !isSettled ? (
+        {canManualSubmit && !isSettled ? (
           <button
             type="button"
             onClick={() => setDialogOpen(true)}
@@ -1239,7 +1243,9 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
           {/* 🔴 **型ラボの買い目を出す**（2026-09-03）。それまで出していた
               「参考買い目」は旧ランクの仮軸（`hypo_*`）で**三連複・軸2車流し固定**、
               型ラボの商品（型C なら三連単12点 など）と食い違っていた。
-              手動入稿はこの型ラボの商品を出すので、画面と実際に出るものを揃える。 */}
+              手動入稿はこの型ラボの商品を出すので、画面と実際に出るものを揃える。
+              🔴 2026-09-22: 旧ランク破棄に伴い `hypo_*` のフォールバックも撤去した
+              （型がまだ出ていないレースは買い目の行そのものを出さない）。 */}
           {tlCombo ? (
             <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-start gap-2 text-xs">
               <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">買い目</span>
@@ -1253,15 +1259,7 @@ function NoPickRow({ pick }: { pick: KeirinPick }) {
                 ) : null}
               </span>
             </div>
-          ) : hasHypo && (
-            <div className="px-3 sm:px-4 py-1.5 border-b border-gray-50 dark:border-gray-700 flex items-center gap-2 text-xs">
-              <span className="text-gray-400 dark:text-gray-500 flex-shrink-0">参考買い目</span>
-              <span className="text-gray-500 dark:text-gray-400 tabular-nums">
-                3連複: {pick.hypo_axis1}={pick.hypo_axis2}-{sortThirdsByTop3(pick.hypo_others ?? [], pick.entries).join(",")}
-                {" "}({(pick.hypo_others ?? []).length}点)
-              </span>
-            </div>
-          )}
+          ) : null}
           <LineRow entries={pick.entries} />
 
           <EntryTable entries={pick.entries} />

@@ -111,22 +111,19 @@ echo "[$(date '+%H:%M:%S')] 前日($YESTERDAY) winticket結果再収集..."
   2>&1 | tee -a "$LOG_DIR/collect_wt_${YESTERDAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 前日再収集に失敗（継続）"
 
-echo "[$(date '+%H:%M:%S')] 前日成績をDiscordへ通知..."
-.venv/bin/python3 scripts/notify_results_wt.py "$YESTERDAY" \
-  2>&1 | tee -a "$LOG_DIR/notify_wt_${YESTERDAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 前日成績通知に失敗（継続）"
-
-# ワイド朝→直前(確定)ドリフト監視（前日分を記録・しばらく監視・通知なし）
-# 朝≥2.5倍で推奨したW12が確定で2.5未満に落ちる問題(6/10:平均-63%)を継続計測。
-.venv/bin/python3 scripts/monitor_wide_wt.py "$YESTERDAY" \
-  >> "$LOG_DIR/wide_monitor_run.log" 2>&1 \
-  || echo "[$(date '+%H:%M:%S')] ワイド監視に失敗（継続）"
+# 🔴 **2026-09-22: 旧ランクの採点・通知をここから外した**（旧ランク破棄）。
+#    外したのは `notify_results_wt.py`（`picks_history` の採点と Discord の
+#    成績ダイジェスト）と `monitor_wide_wt.py`（ワイドのドリフト監視）。
+#    どちらも旧ランク／廃止した券種の話で、型ラボの採点は
+#    `settle_type_lab_picks.py`（朝バッチ＋15分ごとの `type_lab_settle.sh`）が
+#    別経路で行う。
+# 🔴 **`collect-wt` は残す。** 結果（`wt_entries.finish_order`）と確定オッズは
+#    型ラボの採点の入力そのもので、これを止めると前日の成績が永久に埋まらない。
 
 # --- 結果バックフィル（直近数日の取りこぼし回収）---
 # cron不発(Macスリープ等)で日次が飛ぶと、結果再収集は「前日のみ」なのでその日の
 # 結果が永久に取り残される（6/6で39R未取得→勝ち予想が消える事象が発生）。
-# 直近2〜4日前の未確定レースを再収集し（collect-wtは結果確定済みのみスキップ＝安価）、
-# picks_history を --silent で静かに修復（Discord通知はしない＝重複通知を避ける）。
+# 直近2〜4日前の未確定レースを再収集する（collect-wtは結果確定済みのみスキップ＝安価）。
 echo "[$(date '+%H:%M:%S')] 結果バックフィル（T-2〜T-4の取りこぼし回収）..."
 for n in 2 3 4; do
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -136,8 +133,6 @@ for n in 2 3 4; do
   fi
   .venv/bin/python3 -m src.cli.main collect-wt --date "$BD" --full-scan \
     >> "$LOG_DIR/backfill_wt.log" 2>&1 || echo "  backfill collect $BD 失敗（継続）"
-  .venv/bin/python3 scripts/notify_results_wt.py "$BD" --silent \
-    >> "$LOG_DIR/backfill_wt.log" 2>&1 || echo "  backfill rescore $BD 失敗（継続）"
 done
 }
 
@@ -216,16 +211,39 @@ echo "[$(date '+%H:%M:%S')] 朝オッズをスナップショット退避..."
   2>&1 | tee -a "$LOG_DIR/odds_snapshot_${TODAY}.log" || \
   echo "[$(date '+%H:%M:%S')] 朝オッズ退避に失敗（処理は継続）"
 
-echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+gap12≥0.07）..."
-# 7+車専用モード: gami≥5.0倍(三連複最安目) + gap12≥0.07 のレースのみ推奨
-# Sランク: gap12≥0.10(HOLD~143%) / Aランク: gap12[0.07,0.10)(HOLD~138%)
-# 2026-08-01: 8:00一本化により --start-to-hour 指定を撤去。当日の全レース
-# （夜レース含む）を対象に生成する（旧evening_picks_wt.shの役割を統合）。
-# wave-picks-wt は対象レース0件でも継続（静かな日は正常終了）。
-.venv/bin/python3 -m src.cli.main wave-picks-wt --date "$TODAY" \
-  --min-gap12 0.07 --include-7plus \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 予想生成: 対象レース無し or 失敗（継続）"
+# ═══════════════════════════════════════════════════════════════════════
+# 🔴🔴 2026-09-22: 旧ランクを破棄した（ユーザー決定「旧ランクは破棄し、
+#     型ラボのみに整理、最適化」）。ここにあった3本を止めた:
+#
+#       wave-picks-wt          7分16秒   旧7ランクの候補生成（7S/7A/7B/7SS/7C/7M1/9C）
+#       reselect_7s_evening.py    2秒    7S の日次件数上限
+#       write_candidates_wt.py    1秒    候補を picks_history へ書く
+#
+# 【なぜ止めたか】
+# 🔴 **旧ランク16種は 2026-08-28 を最後に1件も入稿していない**
+#    （`netkeirin_settings.enabled` が全て false・2026-09-22 実測で有効なのは
+#    型ラボの27キーだけ）。`notify_prerace_wt.py` も `_rank_enabled` で
+#    OFF ランクのライブ判定を飛ばすので、**作った候補はどこへも出ていない**。
+# 🔴 「9月も売っていたら高額が出ていたのでは」は測って否定済み（2026-09-22）。
+#    候補のままだと10万+が8件に見えるが、**1レース1商品の優先順位を当てると5件が
+#    上位ランクに取られて3件**になり、さらに入稿ゲート（遡って適用できない）が
+#    残りを削る。同じ9月の型ラボ実売は 10万+ 7件・30万+ 1件（最高 713,880円）で、
+#    旧ランクは仮想の1,001商品でも 10万+ 3件・30万+ 0件（最高 255,480円）。
+#    旧ランクの**実売** 1,050商品（7/24〜8/28）でも 10万+ は2件だけ。
+#    `docs/type_lab/old_rank_revival_2026_09_11.md` の結論と一致する。
+#
+# 【止めても壊れないことの確認（2026-09-22）】
+# 🟢 **出走表の指数（1着率・2着内率・3着内率）は型ラボ側へ移した。**
+#    `wt_entries.pred_*_pct` を書いていたのは `wave-picks-wt` だけだったので、
+#    ここを止めるなら道連れになる。`type_lab_morning.py` が同じ特徴量から書く
+#    （`build_type_lab_picks.predict_index_pct`）。
+# 🟢 型ラボは `wave-picks-wt` に依存しない（自前で `lgbm_wt_eval` / `lgbm_wt_win`
+#    を通す）。要るのは `collect-wt` が埋める `wt_entries` だけ。
+# 🟢 `picks_history` の過去行は消していない。`/keirin` の表示からは外すが、
+#    過去分析のスクリプト（`rebuild_*_walkforward_pg.py` 等）は手動で使える。
+#
+# ⚠️ 戻すときは**なぜ戻すか**を書くこと。上の測定を覆す材料が要る。
+# ═══════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════
 # 🔴🔴 2026-09-11: 旧ランクの候補生成を止めた（ユーザー判断）
@@ -267,87 +285,8 @@ echo "[$(date '+%H:%M:%S')] 予想生成（winticket・7+車専用 gami≥5倍+g
 #
 # ⚠️ 戻すときは**なぜ戻すか**を書くこと。件数ではなく当日の入稿時刻を犠牲にする。
 # ═══════════════════════════════════════════════════════════════════════
-# --- 7H1（穴推奨・本命バスト型）候補生成（2026-08-06 新設）---
-# 7H1 は既存6ランクと**入口が違う**。既存は wave-picks-wt が作る選手単位の予測から
-# 軸2車を選ぶが、7H1 はレース単位のバスト予測モデル（lgbm_wt_favbust）を使うため
-# 独立したスクリプトで候補を作る。出力先は data/picks/ で、notify_prerace_wt.py が
-# 他ランクと同じように読む。
-# ⚠️ ここは本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
-#    過去分の再構築で本番モデルを使うと in-sample になるので backfill 側は vintage を使うこと。
-# 0件でも継続する（絶対閾値による選別なので該当なしの日が約7%ある＝正常）。
-# .venv/bin/python3 scripts/build_7h1_candidates.py --date "$TODAY" \
-#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-#   || echo "[$(date '+%H:%M:%S')] 7H1候補生成に失敗（他ランクには影響しないため継続）"
-
-# --- 7H2（穴推奨・印なし2軸の高配当）候補生成（2026-08-10 新設）---
-# 7H1 と同じく入口が独立している。こちらはレース単位の学習モデルを使わず、
-# モデル3着内率のエントロピー（絶対閾値）でレースを選び、軸2車を
-# **WT公式印の付いていない車**から選ぶ。エントロピー（荒れる読み）で7車の約20%へ絞り、
-# さらに◎の3着内率シェアが厚い上位20%を除外する。実測 約10.2件/日。
-# ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
-# .venv/bin/python3 scripts/build_7h2_candidates.py --date "$TODAY" \
-#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-#   || echo "[$(date '+%H:%M:%S')] 7H2候補生成に失敗（他ランクには影響しないため継続）"
-
-# --- 9H1（穴推奨・9車高配当）候補生成（2026-08-08 新設）---
-# 7H1 と同じく入口が独立している。こちらはレース単位の波乱スコア
-# （lgbm_upset_screen・6/7/9車の統合学習）でレースを選ぶ。
-# ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
-# 9車立ては1日10件前後しかなく、選別後は 0〜3件/日。0件の日は正常。
-# .venv/bin/python3 scripts/build_9h1_candidates.py --date "$TODAY" \
-#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-#   || echo "[$(date '+%H:%M:%S')] 9H1候補生成に失敗（他ランクには影響しないため継続）"
-
-# --- 7T1（三連単の高配当枠）候補生成（2026-08-13 新設・旧 7H3 を置換）---
-# 7H1/7H2/9H1 と違い**レース単位の学習モデルを持たない**。既存の3着内率・1着率と
-# **三連単オッズ予測モデル**（data/models/odds_tf_n7.txt）で決まる。
-# 🔴 このオッズモデルを使うのは本ランクが初めて。**未配備だとスクリプトが落ちる**
-#    （黙って0件にしない設計）。他ランクには影響しないので日次バッチは継続する。
-# ⚠️ ここも本番モデル（全期間学習）を使う。当日のレースは未来なので honest。
-# 選別後は 13〜14件/日（看板 × 上位2車が別ライン）。0件の日は正常。
-# .venv/bin/python3 scripts/build_7t1_candidates.py --date "$TODAY" \
-#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-#   || echo "[$(date '+%H:%M:%S')] 7T1候補生成に失敗（他ランクには影響しないため継続）"
-
-# --- 7T3（三連単の決勝・中配当枠）候補生成（2026-08-24 新設）---
-# 7T1 と同じ三連単オッズ予測モデルを使うが、**軸を置かない**（帯30倍以上から
-# 位置別合成 PL の確率上位5点）。母集団は決勝のみでライン条件を持たない。
-# 🔴 入稿の優先順位は 7T1 の**直後**。7T1（決勝×別ライン）が取ったレースは降りるので、
-#    結果として同ラインだけを拾う（判定の正本を2箇所に持たないための設計）。
-# ⚠️ 夕方（evening_picks_wt.sh）では作らない。7T1 と同じく**朝1回で当日全開催ぶん**。
-# 選別後は 3〜4件/日（7T1 に譲った後は 1〜2件/日）。0件の日は正常。
-# .venv/bin/python3 scripts/build_7t3_candidates.py --date "$TODAY" \
-#   2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-#   || echo "[$(date '+%H:%M:%S')] 7T3候補生成に失敗（他ランクには影響しないため継続）"
-
 # 「朝夕の推奨」Discord通知（notify_picks.py）は2026-07-31にユーザー要望により廃止。
 # 発走15分前の個別通知（notify_prerace_wt.py）のみ残す。
-
-# --- S7（Sランク）日次件数上限（RANK_7S_DAILY_CAP）適用（2026-08-01: 8:00一本化に伴い移設）---
-# rank_7s_daily_select()（src/strategy_wt.py）自体は日次上限を適用しない設計
-# （「朝夕どちらか一方のバッチだけでは日次合計が分からないため」— 元々2バッチ
-# 構成を前提にしたコメントがコード内に残っている）。RANK_7S_DAILY_CAP=12は
-# reselect_7s_evening.py が呼ぶ rank_7s_evening_reselect() の中でのみ適用される。
-# 8:00一本化で朝夕2バッチが無くなった後も、この安全網（entropyゲート通過が
-# 異常発生した日に日次12件へトリムする仕組み）を掛け続けるため、旧
-# evening_picks_wt.sh が担っていたこの呼び出しを本スクリプトへ移設する
-# （reselect_7s_evening.py 自体は無編集。night_raw用ファイルが存在しない/空の
-# ため day_raw のみでの日次トリムとして機能する＝1バッチでも安全網は有効）。
-# 7A/S9/9A/S1等の他ランクにはそもそも同種の日次合計マージ処理が無い
-# （各々 rank_*_daily_select() を1回呼ぶだけで完結する設計のため、8:00一本化で
-# 対応不要）。
-echo "[$(date '+%H:%M:%S')] S7（Sランク）日次件数上限を適用..."
-.venv/bin/python3 scripts/reselect_7s_evening.py "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] S7日次上限適用に失敗（継続）"
-
-# 候補レース（gap12条件のみ・gamiフィルタなし）を picks_history に即時書き込み
-# → 同日中から推奨ページに候補レースを表示するため
-# （reselect_7s_evening.py の後に実行＝S7はトリム後の最終候補で書き込まれる）
-echo "[$(date '+%H:%M:%S')] 候補レースを picks_history に書き込み..."
-.venv/bin/python3 scripts/write_candidates_wt.py "$TODAY" \
-  2>&1 | tee -a "$LOG_DIR/picks_wt_${TODAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 候補書き込みに失敗（継続）"
 
 # --- 2b. netkeirin（ウマい車券）へ現行4ランク(7S/7A/9S/9A)候補を下書き自動入稿
 #     （2026-07-23新設・2026-07-28全ランク対応。ランクごとのON/OFFは
