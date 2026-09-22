@@ -41,6 +41,10 @@ windows-agent/test_*.py
 .claude/*
 !.claude/agents/
 !.claude/commands/
+# 2026-09-23: 共有の権限・フック設定も追跡する。秘密情報のコミットを止める
+# PreToolUse フックは、clone を作った人の環境任せにすると意味が無い。
+!.claude/settings.json
+!.claude/hooks/
 .claude/settings.local.json
 
 # worktree をリポジトリ内に置いた場合の保険
