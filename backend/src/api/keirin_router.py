@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import re
 import time
 from collections.abc import Iterable, Mapping, Sequence
@@ -909,54 +908,19 @@ def _submitted_pick_result(
 
 
 # ---------------------------------------------------------------------------
-# 推奨外レースの仮想買い目（hypo_*）— 2026-07-31新設
+# 🔴🔴 2026-09-22: 推奨外レースの仮想買い目（`hypo_*`）を撤去した（旧ランク破棄）。
 #
-# keirin repo src/strategy_wt.py の s7_select_axis/s7_field_entropy/
-# s7_wt_overlap_n と同一ロジックのPython移植（モデル・オッズ不要・
-# wt_entries.pred_win_pct/pred_top3_pct/prediction_mark のみから計算できるため
-# kiseki backend単独で完結する。keirin repoへの問い合わせ不要）。
-# 閾値(S7_AXIS_SUM_MAX等)はモデル生出力(0-1)で較正されているため、
-# pred_win_pct/pred_top3_pct（0-100のパーセント値）は使う側で/100すること。
+# `hypo_*` は旧ランク 7S/9S の軸選定（単勝×複勝の上位3重なり）をそのまま移植した
+# もので、**三連複・軸2車流し固定**。型ラボは型（A〜F）から商品が決まり、型C なら
+# 三連単12点というように買い目の形そのものが違うため、画面の「参考買い目」は
+# 実際に売るものと食い違っていた（2026-09-03 に推奨外の表示は型ラボの買い目へ
+# 切り替え済みで、`hypo_*` はその**フォールバック**としてだけ残っていた）。
+#
+# 旧ランクを破棄した以上、食い違う方の買い目を画面に出す理由が無い。
+# ⚠️ 手動入稿ボタンの表示条件も `hypo_*` の有無に乗っていた（軸が立つ7車・9車か
+#    どうかの代理）。**`n_entries` と型（`race_shapes`）で判定するよう置き換えた**ので、
+#    ボタンは消えていない。
 # ---------------------------------------------------------------------------
-
-def _hypo_select_axis(
-    win_probs: dict[int, float], top3_probs: dict[int, float],
-) -> tuple[int, int, float] | None:
-    if not win_probs or not top3_probs or len(win_probs) < 3 or len(top3_probs) < 3:
-        return None
-    win_top3 = {f for f, _ in sorted(win_probs.items(), key=lambda kv: -kv[1])[:3]}
-    place_top3 = {f for f, _ in sorted(top3_probs.items(), key=lambda kv: -kv[1])[:3]}
-    overlap = win_top3 & place_top3
-    if not overlap:
-        return None
-    if len(overlap) >= 2:
-        cands = sorted(overlap, key=lambda f: -top3_probs[f])
-        axis1, axis2 = cands[0], cands[1]
-    else:
-        axis1 = next(iter(overlap))
-        rest = sorted((f for f in top3_probs if f != axis1), key=lambda f: -top3_probs[f])
-        if not rest:
-            return None
-        axis2 = rest[0]
-    return axis1, axis2, top3_probs[axis1] + top3_probs[axis2]
-
-
-def _hypo_field_entropy(top3_probs: dict[int, float]) -> float:
-    vals = list(top3_probs.values())
-    total = sum(vals)
-    if total <= 0:
-        return 0.0
-    ent = 0.0
-    for v in vals:
-        s = max(v / total, 1e-9)
-        ent -= s * math.log(s)
-    return ent
-
-
-def _hypo_wt_overlap_n(axis1: int, axis2: int, honmei: int | None, taikou: int | None) -> int | None:
-    if honmei is None or taikou is None:
-        return None
-    return len({axis1, axis2} & {honmei, taikou})
 
 
 @router.get("/picks")
@@ -1342,25 +1306,6 @@ async def get_picks(
         else:
             synth_odds = None
 
-        # 推奨外レースの仮想買い目（hypo_*）。7/9車のみ・軸選定可能な場合のみ非null。
-        hypo_axis1 = hypo_axis2 = hypo_others = hypo_axis_sum = hypo_entropy = hypo_wt_overlap_n = None
-        if not has_pick and r["n_entries"] in (7, 9):
-            win_probs = {int(e["frame_no"]): float(e["pred_win_pct"]) for e in entries
-                         if e["pred_win_pct"] is not None}
-            top3_probs = {int(e["frame_no"]): float(e["pred_top3_pct"]) for e in entries
-                          if e["pred_top3_pct"] is not None}
-            sel = _hypo_select_axis(win_probs, top3_probs)
-            if sel is not None:
-                hypo_axis1, hypo_axis2, hypo_axis_sum = sel
-                hypo_others = sorted(
-                    int(e["frame_no"]) for e in entries
-                    if int(e["frame_no"]) not in (hypo_axis1, hypo_axis2)
-                )
-                hypo_entropy = _hypo_field_entropy(top3_probs)
-                honmei = next((int(e["frame_no"]) for e in entries if e["prediction_mark"] == 1), None)
-                taikou = next((int(e["frame_no"]) for e in entries if e["prediction_mark"] == 2), None)
-                hypo_wt_overlap_n = _hypo_wt_overlap_n(hypo_axis1, hypo_axis2, honmei, taikou)
-
         picks.append({
             "id": r["id"],
             "race_key": race_key,
@@ -1486,12 +1431,6 @@ async def get_picks(
             "gap23": float(r["gap23"]) if (has_pick and r.get("gap23") is not None) else None,
             "gap34": float(r["gap34"]) if (has_pick and r.get("gap34") is not None) else None,
             "gate_label": r["gate_label"] if has_pick else None,
-            "hypo_axis1": hypo_axis1,
-            "hypo_axis2": hypo_axis2,
-            "hypo_others": hypo_others,
-            "hypo_axis_sum": hypo_axis_sum,
-            "hypo_entropy": hypo_entropy,
-            "hypo_wt_overlap_n": hypo_wt_overlap_n,
             "meeting_type": meeting_type.get(base_key),
             "submitted_bet": submitted_bet,
             # 入稿を取り消した（＝売っていない）。買い目は記録として残すが、

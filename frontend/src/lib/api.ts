@@ -1238,9 +1238,9 @@ export type KeirinPick = {
   sold?: boolean;
   /** 型ラボがこのレースに組んだ商品（**入稿していないレースでも入る**）。
    *
-   * 🔴 旧ランクの仮軸 `hypo_*` は三連複・軸2車流し固定で、型ラボの商品
-   *    （型C なら三連単12点 など）と食い違う。表示はこちらを優先すること。
-   *    判定がまだ回っていないレースは全部 null。 */
+   * 🔴 判定がまだ回っていないレースは全部 null。
+   *    （2026-09-22 まで併存していた旧ランクの仮軸 `hypo_*`＝三連複・軸2車流し
+   *     固定は撤去した。型ラボとは買い目の形そのものが違うため。） */
   type_lab_type?: string | null;
   type_lab_plan?: string | null;
   type_lab_bet_type?: string | null;
@@ -1310,13 +1310,6 @@ export type KeirinPick = {
 
   /** 大会名（例「オールスター競輪」）。 */
   cup_name?: string | null;
-  /** 推奨外(has_pick=false)レースの仮想買い目。軸選定不能・7/9車以外はnull */
-  hypo_axis1: number | null;
-  hypo_axis2: number | null;
-  hypo_others: number[] | null;
-  hypo_axis_sum: number | null;
-  hypo_entropy: number | null;
-  hypo_wt_overlap_n: number | null;
   /** 開催（会場×日）の種別。**その開催の第1レース**の発走時刻で決まる。
    *  発走時刻が取れない開催は null（色を付けない）。
    *  netkeirin 入稿の波と境界を揃えてある（backend `keirin_meeting.py` 参照）。 */
