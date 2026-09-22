@@ -628,7 +628,8 @@ def test_daily_batch_builds_both_car_counts():
         "（特徴量構築が二重になる）")
 
     src = (REPO / "scripts" / "type_lab_morning.py").read_text(encoding="utf-8")
-    assert "_build_picks(day, 7)" in src and "_build_picks(day, 9)" in src, (
+    # ⚠️ 引数は増えうるので前方一致で見る（`--dry-run` を足したときに落ちた）。
+    assert "_build_picks(day, 7" in src and "_build_picks(day, 9" in src, (
         "type_lab_morning.py が7車と9車を別々に組んでいない")
 
 
@@ -647,14 +648,14 @@ def test_daily_batch_does_not_let_nine_car_kill_the_settle():
         return [ast.unparse(c) for c in ast.walk(node) if isinstance(c, ast.Call)]
 
     guarded = [c for n in ast.walk(main) if isinstance(n, ast.Try) for c in _calls(n)]
-    assert any("_build_picks(day, 9)" in c for c in guarded), (
+    assert any("_build_picks(day, 9" in c for c in guarded), (
         "9車の生成が try で守られていない"
     )
     assert any("shapes.build" in c for c in guarded), "型の生成が try で守られていない"
     assert any("predict_index_pct" in c for c in guarded), (
         "指数の書き込みが try で守られていない")
     # 7車は守らない（落ちたら非ゼロで終わる）
-    assert not any("_build_picks(day, 7)" in c for c in guarded), (
+    assert not any("_build_picks(day, 7" in c for c in guarded), (
         "7車の失敗まで握り潰している")
 
     sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
