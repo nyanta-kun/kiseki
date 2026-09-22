@@ -104,15 +104,15 @@ JOBS: list[Job] = [
     Job(
         "scrape-projected",
         ["scripts/scrape_projected_entries.sh"],
-        cron=["0 21 * * 3"],
+        cron=["0 19 * * 3"],
         max_age=8 * D,
-        note="水曜夜。⚠️ 時刻は MacBook の plist と要照合（リポジトリに plist が無かった）",
+        note="水曜 19:00（MacBook の plist と照合済み 2026-09-23）。netkeiba の出走想定は水曜 20:00 までに出揃うため、取りこぼしがあれば時刻を見直す",
     ),
     Job(
         "scrape-special-jockeys",
         ["scripts/scrape_special_jockeys.sh"],
         cron=["30 18 * * *"],
-        note="TOKU 取得(18:00)の 30 分後。⚠️ 時刻は MacBook の plist と要照合",
+        note="TOKU 取得(18:00)の 30 分後（MacBook の plist と照合済み 2026-09-23）",
     ),
     Job(
         "jra-odds-prune",
