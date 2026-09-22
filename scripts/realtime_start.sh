@@ -5,6 +5,10 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# PATH の明示と秘密情報（KEIRIN_DB_URL）の読み込み
+# shellcheck source=macmini/_env.sh
+. "$SCRIPT_DIR/macmini/_env.sh"
+: "${KEIRIN_DB_URL:?~/.config/kiseki/env に KEIRIN_DB_URL がありません}"
 LOGPREFIX="[realtime_start $(date '+%Y-%m-%d %H:%M:%S')]"
 TODAY=$(date '+%Y%m%d')
 
@@ -12,12 +16,20 @@ echo "$LOGPREFIX START (today=$TODAY)"
 
 # 当日の開催チェック + 最終レース発走時刻取得
 # post_timeが "0000" または NULL のレースは除外
-LAST_POST_TIME=$(PGPASSWORD="aEBkrj45Id26" psql \
-  -h sekito-stable.com -U hrdb_user -d hrdb -tA \
+#
+# 2026-09-23: 接続文字列を平文で持っていた（git にコミットされていた）ため、
+# 秘密情報は ~/.config/kiseki/env（600）に集約し、_env.sh 経由で読む形にした。
+# 同時に psql のエラーを握り潰していた `2>/dev/null` を外す。
+# 2026-03〜07 に realtime_start.sh が毎日「開催なし」と誤報していた真因は
+# cron の PATH に psql が無いエラーをここで捨てていたことだった。
+LAST_POST_TIME=$(psql "$KEIRIN_DB_URL" -tA \
   -c "SELECT MAX(post_time) FROM keiba.races
       WHERE date = '$TODAY'
         AND post_time IS NOT NULL
-        AND post_time != '0000';" 2>/dev/null || echo "")
+        AND post_time != '0000';") || {
+    echo "$LOGPREFIX ERROR: psql に失敗しました（開催なしと区別できないため中止）" >&2
+    exit 1
+}
 
 if [ -z "$LAST_POST_TIME" ] || [ "$LAST_POST_TIME" = "" ]; then
     echo "$LOGPREFIX SKIP: 本日($TODAY)の開催なし (post_time未登録)"
