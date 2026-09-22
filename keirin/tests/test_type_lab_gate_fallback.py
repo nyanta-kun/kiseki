@@ -38,7 +38,7 @@ def test_fallback_is_defined_for_the_two_measured_plans_only():
     """フォールバックを持つのは実測した2つだけ（増やすときは実測を伴うこと）。
 
     `F_hit` … 帯なし12点がゲートに落ちた分を「帯15倍＋帯下1点差込」→「帯15倍」で拾う
-    `C_hit` … 帯下の1点を差し込んだ結果落ちた分を、差込なしの12点で拾う（2026-09-08）
+    `C_hit` … 計画払戻5万円のダッチが組めない分を、2026-09-21 までの構成で拾う（2026-09-22）
     """
     assert set(GATE_FALLBACK) == {"C_hit", "F_hit"}
     for k, vs in GATE_FALLBACK.items():
@@ -50,11 +50,14 @@ def test_fallback_is_defined_for_the_two_measured_plans_only():
     for f in (f0, f1):
         assert f.max_legs == PLANS["F_hit"].max_legs
         assert f.alloc == PLANS["F_hit"].alloc
-    # C_hit の代替は「差込を外しただけ」＝他の属性は本命と同じであること
+    # 🔴 **2026-09-22: `C_hit` の代替は本命の派生ではなく「旧構成そのもの」。**
+    #    本命がダッチ（`signboard`）へ移ったので、`replace(PLANS["C_hit"], ...)` で作ると
+    #    代替が本命と同じものになり、ゲートに落ちたレースの在庫がそのまま消える。
     (c0,) = GATE_FALLBACK["C_hit"]
-    assert c0.underband_min == 0.0
-    for f in ("min_odds", "max_legs", "alloc", "floor_mult", "structure"):
-        assert getattr(c0, f) == getattr(PLANS["C_hit"], f), f
+    assert c0.structure == "prob_top", "代替が本命と同じ構成になっている"
+    assert (c0.min_odds, c0.max_legs, c0.alloc) == (15.0, 12, "conf")
+    assert c0.tau_adaptive and c0.underband_min == 0.0
+    assert PLANS["C_hit"].structure == "signboard", "本命はダッチであること"
 
 
 def test_fallback_keeps_the_same_plan_key():

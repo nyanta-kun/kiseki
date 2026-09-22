@@ -21,7 +21,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from src.type_lab import PLANS  # noqa: E402
+from src.type_lab import HIT_BAND_TARGET, PLANS  # noqa: E402
 from src.type_lab_submission import (  # noqa: E402
     CLOSING, PLAN_BODIES, PLAN_TITLES, STAKE_UNIT, TYPE_NOTES, TYPE_VIEWS,
     alloc_note, build_comment, build_submission, build_title, marks_for,
@@ -93,7 +93,16 @@ def test_alloc_note_is_empty_without_stakes():
 
 #: 確率上位から積むプラン。買い目の 56〜73% が ◎○ を1・2着に置いていない
 #: （実測 2026-06〜08）ので、「軸2車流し」と書いてはいけない。
-PROB_TOP_PLANS = ("B_hit", "C_hit", "E_hit")
+#: 🔴 **`PLANS` から導く**（手で並べると商品を替えたとき片方だけ残る）。
+#:    2026-09-22 に `B_hit` / `C_hit` が `signboard` へ移り、この表から外れた。
+PROB_TOP_PLANS = tuple(sorted(
+    k for k, v in PLANS.items()
+    if v.structure == "prob_top" and v.bet_type == "trifecta" and k in PLAN_BODIES))
+#: 当てにいく側で計画払戻を決めて積む商品（看板枠は別の文面を持つので除く）。
+BAND_PLANS = tuple(sorted(
+    k for k, v in PLANS.items()
+    if v.structure == "signboard" and v.target == HIT_BAND_TARGET
+    and k in PLAN_BODIES))
 
 
 @pytest.mark.parametrize("plan", PROB_TOP_PLANS)
@@ -102,6 +111,20 @@ def test_prob_top_plans_do_not_claim_axis_flow(plan):
     assert "軸2車流し" not in body and "2車軸" not in body, plan
     # 逆に「◎○が2着・3着へ回る」ことは必ず書く（買い手の期待を外さないため）
     assert "2着" in body and "3着" in body, plan
+
+
+@pytest.mark.parametrize("plan", BAND_PLANS)
+def test_band_plans_do_not_promise_the_axis_cars(plan):
+    """🔴 計画払戻を決めて確率順に積む商品は、**◎○が1点も入らないことがある**。
+
+    だから `prob_top` の商品と違い「◎○が2着・3着へ回る目も含みます」と書かない
+    （買い手の期待を外す）。代わりに「着順は決め打ちしていません」とだけ言い、
+    ◎○が入るかどうかは `axis_note` が買い目から判定して書く。
+    """
+    body = PLAN_BODIES[plan]
+    assert "軸2車流し" not in body and "2車軸" not in body, plan
+    assert "◎○が2着" not in body, plan
+    assert "着順は決め打ちしていません" in body, plan
 
 
 def test_axis_flow_plans_do_say_so():
@@ -146,7 +169,7 @@ def test_every_type_has_a_view_and_note():
 
 
 def test_title_is_two_blocks():
-    assert build_title("A_hit", "A") == "本線の三連単｜二軸が堅い一戦"
+    assert build_title("A_hit", "A") == "中配当狙いの三連単｜二軸が堅い一戦"
 
 
 @pytest.mark.parametrize("plan", sorted(PLANS))

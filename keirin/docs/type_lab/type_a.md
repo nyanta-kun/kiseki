@@ -1,5 +1,12 @@
 # 型A「鉄板」— 購入可能な買い方の網羅探索（2026-08-27）
 
+> 🔴🔴 **2026-09-22 以降、ここで設計した買い方は本番から外れている。**
+> 堅い3型（A/B/C）は「どの目が来ても5万円」のダッチ（`type_lab.HIT_BAND_TARGET`）へ替わった。
+> 経緯と実測は `docs/type_lab/product_redesign_2026_09_22.md`。
+> 本書は**旧構成の設計記録**として読むこと（`C_hit` の旧構成は
+> `GATE_FALLBACK["C_hit"]` に残っており、ゲート落ちのときだけ使われる）。
+
+
 再現: `.venv/bin/python scripts/exp_type_lab/type_a.py [desc|trio|stake|tf|hybrid|agree|gate|grid|dial|final|month|tftilt|ratio|tfdial|tffinal|all]`
 台: `/tmp/race_type_board.npz`（7車 36,427R・vintage walk-forward の p3/pw）
 窓: 探索 2024-07〜2025-12（5,692R / 549日）／ 確認 2026-01〜2026-08（2,415R / 216日）

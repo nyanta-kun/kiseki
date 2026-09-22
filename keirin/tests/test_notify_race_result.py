@@ -294,7 +294,7 @@ def test_day_total_counts_only_settled_races():
 def test_型ラボのプランは読める名前になる():
     """🔴 **見解の括弧は付けない**（2026-09-06）。型ごとに固定の文なので毎レース
     同じものが並び、13文字ぶん増えて商品名の行が必ず折り返していた。"""
-    assert m._rank_label("A_hit") == "型A 本線の三連単"
+    assert m._rank_label("A_hit") == "型A 中配当狙いの三連単"
     assert m._rank_label("D_hit") == "型D 混戦の三連複"
     assert "（" not in m._rank_label("A_hit"), "見解が付いている"
 

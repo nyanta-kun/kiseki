@@ -23,7 +23,11 @@ from src.type_lab import (
     min_expected_payout,
 )
 
-HIT = ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit")
+#: 🔴 2026-09-22: 堅い3型（A/B/C）は計画払戻5万円の**ダッチ**へ移った。
+#:    ダッチは全点の払戻が揃うので、2倍保証は床ではなく**目標額そのもの**が担保する
+#:    （5万円 = 予算の5倍）。信頼度傾斜の床が効くのは残る3プラン。
+HIT = ("D_hit", "E_hit", "F_hit")
+DUTCH_HIT = ("A_hit", "B_hit", "C_hit")
 KEEP = ("A_ana", "A_trio", "A_pay", "F_pay", "F_sign")
 PERMS = list(itertools.permutations(range(1, 8), 3))
 
@@ -38,6 +42,17 @@ def test_hit_plans_guarantee_two_times(key):
     p = PLANS[key]
     assert p.alloc == "conf"
     assert p.floor_mult == MIN_PAYOUT_MULT
+
+
+@pytest.mark.parametrize("key", DUTCH_HIT)
+def test_dutch_hit_plans_guarantee_two_times_by_the_target(key):
+    """🔴 ダッチの3商品は「どの目でも目標額」なので、目標が予算の2倍以上なら保証される。"""
+    from src.type_lab import HIT_BAND_TARGET
+
+    p = PLANS[key]
+    assert p.alloc == "dutch" and p.structure == "signboard"
+    assert p.target == HIT_BAND_TARGET >= BUDGET * MIN_PAYOUT_MULT
+    assert alloc_fallback(p) is None, "ダッチでは床が効かないので代替を持たせない"
 
 
 @pytest.mark.parametrize("key", KEEP)
@@ -56,7 +71,7 @@ def test_floor_is_exact_at_two_times():
     assert len(legs) == 8
     odds = {c: 17.0 for c in legs}
     prob = {c: (1.0 if i == 0 else 1e-6) for i, c in enumerate(legs)}
-    st = allocate(legs, odds, prob, PLANS["A_hit"])
+    st = allocate(legs, odds, prob, PLANS["F_hit"])
     assert st is not None
     assert sum(st.values()) == BUDGET
     assert min_expected_payout(st, odds) >= BUDGET * MIN_PAYOUT_MULT
@@ -67,7 +82,7 @@ def test_confidence_gets_a_bigger_payout():
     legs = [(1, 2, c) for c in range(3, 8)]
     odds = {c: 40.0 for c in legs}
     prob = {c: (10.0 if i == 0 else 1.0) for i, c in enumerate(legs)}
-    st = allocate(legs, odds, prob, PLANS["C_hit"])
+    st = allocate(legs, odds, prob, PLANS["F_hit"])
     assert st is not None
     pays = {c: st[c] * odds[c] for c in legs}
     assert pays[legs[0]] > pays[legs[-1]], "傾斜が付いていない"
@@ -87,28 +102,31 @@ def test_fallback_returns_the_previous_allocation():
 def test_product_is_still_built_when_the_floor_does_not_fit():
     """🔴 Σ(1/予測オッズ) > 1/2.0 でも商品は作る（変更前の配分で売る）。
 
-    `C_hit` は12点。全点 16.0倍なら床は ceil(20000/1600)=13単位 × 12 = 156単位で
+    `D_hit` は相手3点の三連複。全点 5.0倍なら床は ceil(20000/500)=40単位 × 3 = 120単位で
     予算（100単位）に収まらない。ここで None を返すと母集団が静かに 8% 消える。
+    ⚠️ 2026-09-22 まではこの検査を `C_hit`（12点・16倍）で書いていたが、
+       あちらはダッチへ移って床を持たなくなったので、いまも `conf` で組む型D へ移した。
     """
-    shape = RaceShape("C", 1.50, 0, 0.10, True, tuple(range(1, 8)), 0.0, ())
-    po = {c: 16.0 for c in PERMS}          # C_hit の帯（15倍）は満たす
-    pr = {c: 1.0 / len(PERMS) for c in PERMS}
-    plan = PLANS["C_hit"]
-    assert allocate([(1, 2, c) for c in range(3, 8)] + [(1, 3, c) for c in range(4, 8)]
-                    + [(1, 4, c) for c in range(5, 8)], po, pr, plan) is None
+    shape = RaceShape("D", 1.20, 0, 0.10, False, tuple(range(1, 8)), 0.0, ())
+    a1, a2 = shape.order[0], shape.order[1]
+    trio = [frozenset({a1, a2, c}) for c in shape.order[2:]]
+    po = {k: 5.0 for k in trio}
+    pr = {k: 1.0 / len(trio) for k in trio}
+    plan = PLANS["D_hit"]
+    assert allocate(trio[:3], po, pr, plan) is None
     got = build_with_gate_fallback(shape, plan, po, pr)
     assert got is not None, "床が置けないだけで商品が消えている"
     legs, stakes, used = got
     assert sum(stakes.values()) == BUDGET
-    assert used.key == "C_hit"
+    assert used.key == "D_hit"
 
 
 def test_fallback_is_not_used_when_the_floor_fits():
     """床が置けるレースでは変更前の配分へ落ちない（＝2倍保証が効いている）。"""
-    shape = RaceShape("C", 1.50, 0, 0.10, True, tuple(range(1, 8)), 0.0, ())
+    shape = RaceShape("F", 1.10, 2, 0.05, False, tuple(range(1, 8)), 1.4, ())
     po = {c: 60.0 for c in PERMS}
     pr = {c: 1.0 / len(PERMS) for c in PERMS}
-    got = build_with_gate_fallback(shape, PLANS["C_hit"], po, pr)
+    got = build_with_gate_fallback(shape, PLANS["F_hit"], po, pr)
     assert got is not None
     legs, stakes, _ = got
     assert min_expected_payout(stakes, po) >= BUDGET * MIN_PAYOUT_MULT

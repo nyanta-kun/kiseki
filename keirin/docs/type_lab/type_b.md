@@ -1,5 +1,12 @@
 # 型B「堅い・中」の商品設計（2026-08-27）
 
+> 🔴🔴 **2026-09-22 以降、ここで設計した買い方は本番から外れている。**
+> 堅い3型（A/B/C）は「どの目が来ても5万円」のダッチ（`type_lab.HIT_BAND_TARGET`）へ替わった。
+> 経緯と実測は `docs/type_lab/product_redesign_2026_09_22.md`。
+> 本書は**旧構成の設計記録**として読むこと（`C_hit` の旧構成は
+> `GATE_FALLBACK["C_hit"]` に残っており、ゲート落ちのときだけ使われる）。
+
+
 再現: `scripts/exp_type_lab/type_b.py <節番号>`（台 `/tmp/race_type_board.npz` / 共通 `scripts/exp_type_lab/common.py`）
 
 ## 0. 前提
