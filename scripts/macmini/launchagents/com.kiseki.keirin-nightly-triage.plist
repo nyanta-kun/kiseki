@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kiseki.keirin-nightly-triage</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/ysuzuki/GitHub/kiseki/scripts/macmini/run_job.sh</string>
+		<string>keirin-nightly-triage</string>
+		<string>/bin/bash</string>
+		<string>scripts/nightly_triage.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-nightly-triage.launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-nightly-triage.launchd.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>0</integer>
+		<key>Minute</key>
+		<integer>12</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/keirin</string>
+</dict>
+</plist>
