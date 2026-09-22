@@ -49,6 +49,24 @@ def highpay_row(x, plans: dict, n_done: int):
                 mean=mean, n=len(stakes))
 
 
+#: 軸信頼ゲートを外す腕のためのスイッチ（`+nogate`）。
+AXIS_GATE = True
+
+#: 引き直した軸信頼ゲートの閾値（探索窓 2024-07〜2025-12・入稿ゲート通過後の
+#: プラン内分位。`scripts/exp_type_lab/axis_gate_redraw.py` が出す）。
+#: 🔴 `A_ana` は `AXIS_GATE_EXEMPT_PLANS` なので表に入れない（掛けると逆効果）。
+AXIS_GATE_QUANTILES: dict[int, dict[str, float]] = {
+    10: {"A_hit": 1.543, "A_trio": 1.469, "B_hit": 1.461, "C_hit": 1.455,
+         "D_hit": 1.208, "E_hit": 1.206, "F_hit": 1.198, "F_sign": 1.185},
+    20: {"A_hit": 1.595, "A_trio": 1.504, "B_hit": 1.483, "C_hit": 1.469,
+         "D_hit": 1.265, "E_hit": 1.263, "F_hit": 1.246, "F_sign": 1.238},
+    30: {"A_hit": 1.632, "A_trio": 1.527, "B_hit": 1.505, "C_hit": 1.485,
+         "D_hit": 1.305, "E_hit": 1.297, "F_hit": 1.279, "F_sign": 1.276},
+    40: {"A_hit": 1.666, "A_trio": 1.551, "B_hit": 1.529, "C_hit": 1.501,
+         "D_hit": 1.337, "E_hit": 1.326, "F_hit": 1.304, "F_sign": 1.304},
+}
+
+
 def run(arm_name: str, plans: dict, idx, cache, cap=True, highpay=True):
     byday = defaultdict(list)
     for i in idx:
@@ -62,7 +80,8 @@ def run(arm_name: str, plans: dict, idx, cache, cap=True, highpay=True):
             main, _ = race_rows(x, plans)
             if main is None:
                 continue
-            passes = _G.passes_axis_gate(main["plan"], float(x.shape.axis_sum), 7)
+            passes = (_G.passes_axis_gate(main["plan"], float(x.shape.axis_sum), 7)
+                      if AXIS_GATE else True)
             cand.append((x, main, passes))
         # 日次上限: 枠外（決勝・高グレード）を除いた判定対象の半分
         judged = [c for c in cand if not _G.daily_cap_exempt(c[0].rtype, c[0].cupg)
@@ -190,11 +209,16 @@ def main():
     print(HEAD)
     big0 = TL.HIGHPAY_BIG_SLOTS
     addperm0, gf0 = TL.ADD_PERM_PLANS, dict(TL.GATE_FALLBACK)
+    gate_min0 = dict(_G.AXIS_GATE_MIN)
     for a in args.arms.split(","):
         spec = a.split("+")
         base = spec[0]
         # 🔴 高額枠の内訳（_big=計画40万）を止める腕は module 定数を差し替える
         TL.HIGHPAY_BIG_SLOTS = frozenset() if "h1" in spec[1:] else big0
+        globals()["AXIS_GATE"] = "nogate" not in spec[1:]
+        _q = [t for t in spec[1:] if t.startswith("p") and t[1:].isdigit()]
+        _G.AXIS_GATE_MIN = (dict(AXIS_GATE_QUANTILES[int(_q[0][1:])])
+                            if _q else dict(gate_min0))
         TL.ADD_PERM_PLANS = frozenset() if base == "v0907" else addperm0
         if base == "v0907":
             plans = v0907()
@@ -222,6 +246,7 @@ def main():
                 print("   " + line(k, summarize(g[k], ndays)), flush=True)
     TL.HIGHPAY_BIG_SLOTS, TL.ADD_PERM_PLANS = big0, addperm0
     TL.GATE_FALLBACK = gf0
+    _G.AXIS_GATE_MIN = gate_min0
 
 
 if __name__ == "__main__":

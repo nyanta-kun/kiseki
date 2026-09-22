@@ -45,10 +45,15 @@ def main():
     ok = [int(i) for i in idx if cache[int(i)] is not None]
     big0 = TL.HIGHPAY_BIG_SLOTS
     addperm0, gf0 = TL.ADD_PERM_PLANS, dict(TL.GATE_FALLBACK)
+    gate_min0 = dict(R._G.AXIS_GATE_MIN)
 
     def build_arm(a):
         spec = a.split("+"); base = spec[0]
         TL.HIGHPAY_BIG_SLOTS = frozenset() if "h1" in spec[1:] else big0
+        R.AXIS_GATE = "nogate" not in spec[1:]
+        _q = [t for t in spec[1:] if t.startswith("p") and t[1:].isdigit()]
+        R._G.AXIS_GATE_MIN = (dict(R.AXIS_GATE_QUANTILES[int(_q[0][1:])])
+                              if _q else dict(gate_min0))
         TL.ADD_PERM_PLANS = frozenset() if base == "v0907" else addperm0
         TL.GATE_FALLBACK = ({k: v for k, v in gf0.items() if k != "F_hit"}
                             if base == "v0907" else gf0)
@@ -63,6 +68,8 @@ def main():
         else:
             plans = R.core_floor(int(base))
         out = R.run(a, plans, ok, cache)
+        R.AXIS_GATE = True
+        R._G.AXIS_GATE_MIN = dict(gate_min0)
         TL.HIGHPAY_BIG_SLOTS, TL.ADD_PERM_PLANS = big0, addperm0
         TL.GATE_FALLBACK = gf0
         return by_day(out)
