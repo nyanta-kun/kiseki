@@ -51,13 +51,13 @@ def _stamp(msg: str) -> None:
     print(f"[type_lab_morning] {datetime.now():%F %T} {msg}", flush=True)
 
 
-def _build_picks(day: str, n_entries: int) -> int:
+def _build_picks(day: str, n_entries: int, dry_run: bool = False) -> int:
     """`build_type_lab_picks` の live をモジュール経由で1回分回す。"""
     B.N_ENTRIES = n_entries
     B.MODE_TAG = "" if n_entries == 7 else str(n_entries)
     B.ONLY_KEYS = None
     rows = B.run_live(day)
-    return B.save(rows)
+    return len(rows) if dry_run else B.save(rows)
 
 
 def main() -> int:
@@ -65,16 +65,22 @@ def main() -> int:
     ap.add_argument("--date", default=None)
     ap.add_argument("--skip-index", action="store_true",
                     help="出走表の指数を書かない（生成だけ試したいとき）")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="1件も保存せずに件数だけ出す。**当日の行を書き換えずに**"
+                         "経路が通るかを確かめるために使う（既に入稿した買い目を"
+                         "UPSERT で書き換える事故を避ける）")
     a = ap.parse_args()
     day = a.date or date.today().isoformat()
+    if a.dry_run:
+        _stamp("dry-run: 1件も保存しません")
 
     _stamp(f"build live {day}（7車）")
-    n7 = _build_picks(day, 7)
+    n7 = _build_picks(day, 7, a.dry_run)
     _stamp(f"7車 {n7} 行")
 
     _stamp(f"build live9 {day}（9車）")
     try:
-        n9 = _build_picks(day, 9)
+        n9 = _build_picks(day, 9, a.dry_run)
         _stamp(f"9車 {n9} 行")
     except Exception:  # noqa: BLE001
         traceback.print_exc()
@@ -82,7 +88,8 @@ def main() -> int:
 
     _stamp("build shapes（表示用の型・全車数）")
     try:
-        _stamp(f"型 {shapes.save(shapes.build(day))} 行")
+        rows = shapes.build(day)
+        _stamp(f"型 {len(rows) if a.dry_run else shapes.save(rows)} 行")
     except Exception:  # noqa: BLE001
         traceback.print_exc()
         _stamp("⚠️ 型判定（表示用）の生成に失敗（入稿・採点は続行する）")
@@ -90,7 +97,10 @@ def main() -> int:
     if not a.skip_index:
         _stamp("write index（出走表の1着率・2着内率・3着内率）")
         try:
-            _stamp(f"指数 {B.save_index_pct(B.predict_index_pct(day))} 行")
+            idx = B.predict_index_pct(day)
+            _stamp(f"指数 {len(idx) if a.dry_run else B.save_index_pct(idx)} 行")
+            if a.dry_run and idx:
+                _stamp(f"  先頭3件: {idx[:3]}")
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             _stamp("⚠️ 指数の書き込みに失敗（入稿・採点は続行する）")
