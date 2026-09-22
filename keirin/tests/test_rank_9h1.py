@@ -324,20 +324,10 @@ def test_formation_path_submits_with_longshot_flag():
     assert 'act_type=cfg.get(' in src
 
 
-def test_daily_pipeline_generates_9h1_candidates():
-    """朝・夕の両バッチが 9H1 候補を作ること。
-
-    どちらかが漏れると「候補JSONが無い日は静かに0件」になり、
-    ログにも異常が出ないまま推奨が止まる（7SS の入稿漏れと同型の fail-closed）。
-    """
-    from pathlib import Path
-    root = Path(__file__).resolve().parent.parent
-    for name in ("daily_picks_wt.sh", "evening_picks_wt.sh"):
-        text = (root / "scripts" / name).read_text(encoding="utf-8")
-        assert "build_9h1_candidates.py" in text, f"{name} が 9H1 候補を作っていない"
-    ev = (root / "scripts" / "evening_picks_wt.sh").read_text(encoding="utf-8")
-    assert "_night_s9h1_candidates.json" in ev, "夕方分の出力先が _night になっていない"
-
+# 🔴 2026-09-22: 「日次バッチに配線されていること」の検査はここから外した。
+#    旧ランクは破棄され本番の日次経路からは呼ばれない（逆向きの不変条件を
+#    `tests/test_old_ranks_retired.py` が固定している）。候補生成の実装は
+#    過去分析の台として残っているので、以下の中身の検査はそのまま有効。
 
 def test_build_9h1_candidates_refuses_production_models_for_past():
     """過去日を本番モデルでスコアしようとしたら落ちること。

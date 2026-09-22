@@ -50,13 +50,25 @@ def test_type_rule_is_not_duplicated_here():
 
 
 def test_batches_build_shapes():
-    for name in ("type_lab_daily.sh", "type_lab_wave.sh"):
-        sh = (REPO / "scripts" / name).read_text(encoding="utf-8")
-        assert "scripts/build_race_shapes.py" in sh, (
-            f"{name} が build_race_shapes.py を呼んでいない")
-        # 🔴 型の生成で入稿・採点を止めない（表示専用なので巻き添えにしない）。
-        assert re.search(r"if ! \"\$PY\" scripts/build_race_shapes\.py", sh), (
-            f"{name}: build_race_shapes.py の失敗で set -e が後続を止めている")
+    """朝も昼・夕も表示用の型を作ること。
+
+    🔴 **朝は `type_lab_morning.py` の中で作る**（2026-09-22）。7車の買い目・
+       9車の買い目・型・出走表の指数は同じ特徴量しか要らないのに、別プロセス
+       だと `build_features_wt`（約6分50秒）がその都度走っていた。
+    🔴 型の生成で入稿・採点を止めない（表示専用なので巻き添えにしない）。
+    """
+    morning = (REPO / "scripts" / "type_lab_morning.py").read_text(encoding="utf-8")
+    assert "shapes.build(" in morning and "shapes.save(" in morning, (
+        "type_lab_morning.py が型を作っていない")
+    daily = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
+    assert "scripts/type_lab_morning.py" in daily, (
+        "type_lab_daily.sh が type_lab_morning.py を呼んでいない")
+
+    wave = (REPO / "scripts" / "type_lab_wave.sh").read_text(encoding="utf-8")
+    assert "scripts/build_race_shapes.py" in wave, (
+        "type_lab_wave.sh が build_race_shapes.py を呼んでいない")
+    assert re.search(r"if ! \"\$PY\" scripts/build_race_shapes\.py", wave), (
+        "type_lab_wave.sh: build_race_shapes.py の失敗で set -e が後続を止めている")
 
 
 def test_shapes_table_exists_in_sqlite_fallback():

@@ -225,6 +225,94 @@ def run_paper(date_from: str, date_to: str) -> list[dict]:
 
 # ───────────────────────── live（本番モデル） ─────────────────────────
 
+#: その日の特徴量のプロセス内キャッシュ。キーは (day, day_to)。
+_FEATURE_CACHE: dict[tuple[str, str | None], tuple[object, object]] = {}
+
+
+def build_day_features(day: str, day_to: str | None = None):
+    """`(feats, X)` を返す。**同じプロセスの2回目以降はキャッシュを返す。**
+
+    🔴 **1回あたり約7分かかる**（VPS 実測 2026-09-22: `build_race_shapes` の
+       所要 6分49秒はほぼ全部これ）。朝のバッチは 7車の買い目・9車の買い目・
+       表示用の型・出走表の指数と**同じ日の同じ特徴量を4回**要求するので、
+       素直に呼ぶと 7分 × 4 になる。`scripts/type_lab_morning.py` が
+       1プロセスで順に呼ぶことで1回に畳む。
+
+    ⚠️ **キャッシュはプロセスの寿命と同じ**（モジュール変数・TTL なし）。
+       `collect-wt` が並び予想や印を更新しても、同じプロセスの中では
+       古いままになる。だから**常駐プロセスからは呼ばない**こと。
+       昼・夕の波は毎回新しいプロセスなので影響を受けない。
+       ⚠️ 逆に、1つのバッチの中では**揃っている方が正しい**——買い目を組んだ
+       ときの並びと、表示用の型・出走表の指数が食い違わない
+       （`predict_p3_pw` の docstring が言う「別々に書くとずれる」と同じ理由）。
+    """
+    from src.preprocessing.feature_wt import (
+        build_features_wt, load_raw_data_wt, prepare_X,
+    )
+    key = (day, day_to)
+    if key not in _FEATURE_CACHE:
+        feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day_to or day))
+        if feats is None or not len(feats):
+            _FEATURE_CACHE[key] = (None, None)
+        else:
+            _FEATURE_CACHE[key] = (feats, prepare_X(feats))
+    return _FEATURE_CACHE[key]
+
+
+def predict_index_pct(day: str, eval_model: str = "lgbm_wt_eval",
+                      win_model: str = "lgbm_wt_win",
+                      top2_model: str = "lgbm_wt_top2") -> list[tuple]:
+    """Web の出走表に出す指数（1着率 / 2着内率 / 3着内率）を作る。
+
+    戻り値は `wt_entries` の UPDATE に渡す `(win, top2, p3, race_key, frame_no)`。
+
+    🔴 **2026-09-22 に `wave-picks-wt`（旧ランク）からここへ移した。**
+       旧ランクは全て入稿 OFF（2026-08-28〜）なのに、この指数を書くためだけに
+       毎朝7分かけて候補を作り続けていた。型ラボは同じ特徴量から同じ2モデルを
+       既に通しているので、ここで書けば**追加コストは top2 の推論1回だけ**。
+
+    ⚠️ **表示される値が変わる**。旧経路の3着内率は `lgbm_wt`（全期間 full_refit）
+       だったが、ここは型ラボと同じ `lgbm_wt_eval` を使う。過去分を埋める
+       `backfill_index_pct_wt.py` は月次 vintage の `lgbm_wt_eval_mYYMM` なので、
+       **今日の値と過去の値がこれで初めて同じ系列になる**。
+    ⚠️ 2着内率のモデルが無ければ **None を書く**（列は空欄になる）。旧経路と
+       同じ挙動で、モデル配布前にコードだけ出ても壊れない。
+    """
+    import pandas as pd
+    from src.models.trainer import load_model
+
+    feats, X = build_day_features(day)
+    if feats is None:
+        return []
+    win = load_model(win_model).predict_proba(X)[:, 1]
+    p3 = load_model(eval_model).predict_proba(X)[:, 1]
+    try:
+        top2 = load_model(top2_model).predict_proba(X)[:, 1]
+    except FileNotFoundError:
+        print(f"[index] {top2_model} が無いので2着内率は書きません")
+        top2 = [None] * len(X)
+
+    def _pct(v):
+        return round(float(v) * 100, 1) if v is not None and pd.notna(v) else None
+
+    return [
+        (_pct(w), _pct(t), _pct(p), rk, int(fn))
+        for rk, fn, w, t, p in zip(feats["race_key"], feats["frame_no"], win, top2, p3)
+    ]
+
+
+def save_index_pct(rows: list[tuple]) -> int:
+    """`predict_index_pct` の結果を `wt_entries` へ書く。"""
+    if not rows:
+        return 0
+    with get_connection() as c:
+        c.executemany(
+            "UPDATE wt_entries SET pred_win_pct = ?, pred_top2_pct = ?, pred_top3_pct = ? "
+            "WHERE race_key = ? AND frame_no = ?", rows)
+        c.commit()
+    return len(rows)
+
+
 def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
                   win_model: str = "lgbm_wt_win",
                   day_to: str | None = None) -> tuple[dict, dict]:
@@ -238,9 +326,6 @@ def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
        （＝同じ vintage 窓の中）でだけまとめること。
     """
     from src.models.trainer import load_model
-    from src.preprocessing.feature_wt import (
-        build_features_wt, load_raw_data_wt, prepare_X,
-    )
     from src.wt_vintage_config import assert_vintage_for_past
 
     # 🔴 **過去日を本番モデル（full_refit）でスコアリングさせない**（2026-09-21 追加）。
@@ -253,10 +338,9 @@ def predict_p3_pw(day: str, eval_model: str = "lgbm_wt_eval",
     #    （呼び出し側に置くと4本目で忘れる）。
     assert_vintage_for_past(day_to or day, {"eval": eval_model, "win": win_model})
 
-    feats = build_features_wt(load_raw_data_wt(min_date=day, max_date=day_to or day))
-    if feats is None or not len(feats):
+    feats, X = build_day_features(day, day_to)
+    if feats is None:
         return {}, {}
-    X = prepare_X(feats)
     p3v = load_model(eval_model).predict_proba(X)[:, 1]
     pwv = load_model(win_model).predict_proba(X)[:, 1]
     p3, pw = defaultdict(dict), defaultdict(dict)

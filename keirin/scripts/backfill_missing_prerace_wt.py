@@ -40,6 +40,7 @@ VPS cron（毎日 00:40 JST・intraday_results_wt.sh の 00:00 実行の後）:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -115,6 +116,16 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=7, help="遡って確認する日数（既定7日・今日は含めない）")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    # 🔴🔴 2026-09-22: 旧ランク破棄により cron（00:40）から外した。
+    #    ここが補完するのは `RANK_7S` の `picks_history` 行だけで、7S は
+    #    2026-08-28 以降 1件も売っていない（`netkeirin_settings.enabled=false`）。
+    #    ファイルは過去分の台を直す用途で残してある。手で回すときは
+    #    `KEIRIN_ALLOW_OLD_RANKS=1` を付ける。
+    if os.environ.get("KEIRIN_ALLOW_OLD_RANKS") != "1":
+        print("旧ランク（RANK_7S）の補完は 2026-09-22 に破棄しました。"
+              "手で回すなら KEIRIN_ALLOW_OLD_RANKS=1 を付けてください。", file=sys.stderr)
+        raise SystemExit(1)
 
     today = date.today()
     date_to = (today - timedelta(days=1)).isoformat()

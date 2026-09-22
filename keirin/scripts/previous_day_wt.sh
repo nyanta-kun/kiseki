@@ -74,22 +74,20 @@ echo "[$(date '+%H:%M:%S')] 前日($YESTERDAY) winticket結果再収集..."
   2>&1 | tee -a "$LOG_DIR/collect_wt_${YESTERDAY}.log" \
   || echo "[$(date '+%H:%M:%S')] 前日再収集に失敗（継続）"
 
-echo "[$(date '+%H:%M:%S')] 前日成績をDiscordへ通知..."
-.venv/bin/python3 scripts/notify_results_wt.py "$YESTERDAY" \
-  2>&1 | tee -a "$LOG_DIR/notify_wt_${YESTERDAY}.log" \
-  || echo "[$(date '+%H:%M:%S')] 前日成績通知に失敗（継続）"
-
-# ワイド朝→直前(確定)ドリフト監視（前日分を記録・しばらく監視・通知なし）
-# 朝≥2.5倍で推奨したW12が確定で2.5未満に落ちる問題(6/10:平均-63%)を継続計測。
-.venv/bin/python3 scripts/monitor_wide_wt.py "$YESTERDAY" \
-  >> "$LOG_DIR/wide_monitor_run.log" 2>&1 \
-  || echo "[$(date '+%H:%M:%S')] ワイド監視に失敗（継続）"
+# 🔴 **2026-09-22: 旧ランクの採点・通知をここから外した**（旧ランク破棄）。
+#    外したのは `notify_results_wt.py`（`picks_history` の採点と Discord の
+#    成績ダイジェスト）と `monitor_wide_wt.py`（ワイドのドリフト監視）。
+#    どちらも旧ランク／廃止した券種の話で、型ラボの採点は
+#    `settle_type_lab_picks.py`（朝バッチ＋15分ごとの `type_lab_settle.sh`）が
+#    別経路で行う。
+# 🔴 **`collect-wt` は残す。** 結果（`wt_entries.finish_order`）と確定オッズは
+#    型ラボの採点の入力そのもので、これを止めると前日の成績が永久に埋まらない。
 
 # --- 結果バックフィル（直近数日の取りこぼし回収）---
 # cron不発(Macスリープ等)で日次が飛ぶと、結果再収集は「前日のみ」なのでその日の
 # 結果が永久に取り残される（6/6で39R未取得→勝ち予想が消える事象が発生）。
-# 直近2〜4日前の未確定レースを再収集し（collect-wtは結果確定済みのみスキップ＝安価）、
-# picks_history を --silent で静かに修復（Discord通知はしない＝重複通知を避ける）。
+# 直近2〜4日前の未確定レースを再収集する（collect-wtは結果確定済みのみスキップ＝安価）。
+# 拾った結果は `settle_type_lab_picks.py --pending-only`（朝バッチ）が採点へ回す。
 echo "[$(date '+%H:%M:%S')] 結果バックフィル（T-2〜T-4の取りこぼし回収）..."
 for n in 2 3 4; do
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -99,8 +97,6 @@ for n in 2 3 4; do
   fi
   .venv/bin/python3 -m src.cli.main collect-wt --date "$BD" --full-scan \
     >> "$LOG_DIR/backfill_wt.log" 2>&1 || echo "  backfill collect $BD 失敗（継続）"
-  .venv/bin/python3 scripts/notify_results_wt.py "$BD" --silent \
-    >> "$LOG_DIR/backfill_wt.log" 2>&1 || echo "  backfill rescore $BD 失敗（継続）"
 done
 
 # 🔴 **完了マーカー。** 07:00 の `daily_picks_wt.sh` はこれを見て保険を飛ばす。

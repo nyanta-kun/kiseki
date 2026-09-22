@@ -23,9 +23,13 @@
 以前は「WINTICKET が表示する予想率で当方モデルの出力ではない」と書いてあったが
 **逆**。`wt_entries.pred_win_pct` / `pred_top3_pct` は**当方モデルの出力**である。
 
-- 書き込み元は `src/cli/main.py`（`wave-picks-wt`）の1箇所だけで、
-  `lgbm_wt_win` / `lgbm_wt`（eval）の `predict_proba` をそのまま %化して
-  `UPDATE wt_entries SET pred_win_pct = ?, pred_top3_pct = ?` している。
+- 書き込み元は `scripts/build_type_lab_picks.py::predict_index_pct` の1箇所だけで
+  （朝バッチ `type_lab_morning.py` が呼ぶ）、`lgbm_wt_win` / `lgbm_wt_eval` の
+  `predict_proba` をそのまま %化して `wt_entries` を UPDATE している。
+  ⚠️ **2026-09-22 まで書いていたのは `src/cli/main.py`（`wave-picks-wt`）で、
+     3着内率は `lgbm_wt`（`lgbm_wt_eval` ではない）だった。**旧ランク破棄に伴い
+     移設し、同時に過去分を埋める `backfill_index_pct_wt.py`（月次 vintage の
+     `lgbm_wt_eval_mYYMM`）と**同じ系列**になった。
 - スクレイパ（`src/scraper/pipeline_wt.py`）の `wt_entries` INSERT にこの2列は
   **含まれない**。WINTICKET から取っているのは `prediction_mark`（◎◯▲の記号）だけ。
 

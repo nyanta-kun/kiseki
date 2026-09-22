@@ -614,28 +614,54 @@ def test_build_script_stamps_the_car_specific_rule_version():
 
 
 def test_daily_batch_builds_both_car_counts():
-    """日次バッチが 7車と9車を**別々に**組むこと（`live` と `live9` に分かれる）。"""
+    """朝バッチが 7車と9車を**別々に**組むこと（`live` と `live9` に分かれる）。
+
+    🔴 2026-09-22 から呼び出しは `type_lab_morning.py` の中にある（1プロセスで
+       特徴量を1回だけ作るため）。`type_lab_daily.sh` はそれを1回呼ぶだけ。
+    """
     sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
-    build = [ln for ln in sh.splitlines() if "build_type_lab_picks.py" in ln]
-    assert len(build) == 2, f"生成の呼び出しが2本ない: {build}"
-    assert sum("--n-entries 9" in ln for ln in build) == 1
-    assert sum("--n-entries" not in ln for ln in build) == 1
+    cmds = [ln for ln in sh.splitlines() if not ln.lstrip().startswith("#")]
+    assert sum("scripts/type_lab_morning.py" in ln for ln in cmds) == 1, (
+        f"朝の生成の呼び出しが1本ない: {cmds}")
+    assert not any("build_type_lab_picks.py" in ln for ln in cmds), (
+        "type_lab_daily.sh から直接 build_type_lab_picks.py を呼んでいる"
+        "（特徴量構築が二重になる）")
+
+    src = (REPO / "scripts" / "type_lab_morning.py").read_text(encoding="utf-8")
+    assert "_build_picks(day, 7)" in src and "_build_picks(day, 9)" in src, (
+        "type_lab_morning.py が7車と9車を別々に組んでいない")
 
 
 def test_daily_batch_does_not_let_nine_car_kill_the_settle():
-    """🔴 9車が落ちても採点まで止めない（`set -e` で打ち切られるため）。
+    """🔴 9車が落ちても入稿・採点まで止めない。
 
     9車は `data/models/odds_tf_n9.txt` が要るので、配布漏れで必ず落ちる日がある。
-    その日の7車の採点を巻き添えにしてはいけない。
+    その日の7車を巻き添えにしてはいけない。7車だけが致命的。
     """
+    src = (REPO / "scripts" / "type_lab_morning.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    main = next(n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def _calls(node) -> list[str]:
+        return [ast.unparse(c) for c in ast.walk(node) if isinstance(c, ast.Call)]
+
+    guarded = [c for n in ast.walk(main) if isinstance(n, ast.Try) for c in _calls(n)]
+    assert any("_build_picks(day, 9)" in c for c in guarded), (
+        "9車の生成が try で守られていない"
+    )
+    assert any("shapes.build" in c for c in guarded), "型の生成が try で守られていない"
+    assert any("predict_index_pct" in c for c in guarded), (
+        "指数の書き込みが try で守られていない")
+    # 7車は守らない（落ちたら非ゼロで終わる）
+    assert not any("_build_picks(day, 7)" in c for c in guarded), (
+        "7車の失敗まで握り潰している")
+
     sh = (REPO / "scripts" / "type_lab_daily.sh").read_text(encoding="utf-8")
-    # ⚠️ 生の文字列位置で比べないこと（冒頭のコメントに同じ語が出てくる）。
     cmds = [ln for ln in sh.splitlines() if not ln.lstrip().startswith("#")]
-    nine = next(i for i, ln in enumerate(cmds)
-                if "build_type_lab_picks.py" in ln and "--n-entries 9" in ln)
-    assert cmds[nine].lstrip().startswith("if !"), "9車の生成が set -e から守られていない"
+    build = next(i for i, ln in enumerate(cmds) if "type_lab_morning.py" in ln)
     settle = next(i for i, ln in enumerate(cmds) if "settle_type_lab_picks.py" in ln)
-    assert nine < settle, "9車の生成が採点より後にある"
+    assert build < settle, "生成が採点より後にある"
 
 
 def test_nine_car_trifecta_odds_model_is_distributed():

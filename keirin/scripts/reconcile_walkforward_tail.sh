@@ -30,6 +30,31 @@
 # --tail-only で末尾ウィンドウ（当月）のみ再構築すれば足りる。
 set -e
 set -o pipefail
+
+# ═══════════════════════════════════════════════════════════════════════
+# 🔴🔴 2026-09-22: 旧ランク破棄により **cron から外した**（ユーザー決定）。
+#
+# 旧ランク16種は 2026-08-28 を最後に1件も入稿していない
+# （`netkeirin_settings.enabled` が全て false）。このスクリプトが作る／直すのは
+# その旧ランクの候補と `picks_history` だけで、売り物には一切繋がっていない。
+# 実測の負荷は大きく、止める価値がある（2026-09-22・VPS）:
+#
+#     reconcile_walkforward_tail.sh   08:40→10:17 = **1時間37分**／日
+#     evening_picks_wt.sh (16:00)     collect-wt + wave-picks-wt で十数分／日
+#
+# **過去分析の台としては有効**なので、ファイルは残してある。手で回すときは
+# 明示的に許可する:
+#
+#     KEIRIN_ALLOW_OLD_RANKS=1 bash scripts/reconcile_walkforward_tail.sh
+#
+# ⚠️ cron へ戻すときは**なぜ戻すか**を書くこと。`docs/type_lab/old_rank_revival_2026_09_11.md`
+#    と 2026-09-22 の9月実測（旧ランクを売っていても 10万+ は最大3件・30万+ は0件・
+#    同月の型ラボ実売は 10万+ 7件・30万+ 1件）を覆す材料が要る。
+# ═══════════════════════════════════════════════════════════════════════
+if [ "${KEIRIN_ALLOW_OLD_RANKS:-0}" != "1" ]; then
+  echo "[reconcile_walkforward_tail] 旧ランクは 2026-09-22 に破棄しました。手で回すなら KEIRIN_ALLOW_OLD_RANKS=1 を付けてください。" >&2
+  exit 1
+fi
 export PATH="/usr/sbin:/sbin:$PATH"
 cd "$(dirname "$0")/.."
 LOG_DIR="data/logs"

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 型ラボの朝バッチ。
-#   1. 当日ぶんの買い目を組む（7車 mode=live / 9車 mode=live9）
+#   1. 当日ぶんの買い目・表示用の型・出走表の指数を組む
+#      （`type_lab_morning.py` が1プロセスで: 7車 live / 9車 live9 / race_shapes /
+#        wt_entries の指数）
 #   2. **netkeirin へ入稿する**（2026-08-28 の本番移行から。それ以前は検証のみ）
 #   3. 前日ぶんを採点する（当日の遅い開催が翌朝に確定するため）
 #   4. 当日ぶんも採点する（朝の時点で終わっているレースを取りこぼさない）
@@ -29,28 +31,21 @@ PY="${KEIRIN_PYTHON:-.venv/bin/python3}"
 TODAY="$(date +%F)"
 YEST="$(date -d '1 day ago' +%F 2>/dev/null || date -v-1d +%F)"
 
-echo "[type_lab] $(date '+%F %T') build live $TODAY  ($PY)"
-"$PY" scripts/build_type_lab_picks.py --mode live --date "$TODAY"
-# 🔴 9車の失敗で**入稿と採点まで止めない**（`set -e` はここで打ち切る）。9車は
-#    `data/models/odds_tf_n9.txt` が要るので、配布漏れがあると必ずここで落ちる。
-#    その日の7車を巻き添えにしないよう、失敗は記録して先へ進む。
-echo "[type_lab] $(date '+%F %T') build live9 $TODAY"
-if ! "$PY" scripts/build_type_lab_picks.py --mode live --date "$TODAY" --n-entries 9; then
-  echo "[type_lab] ⚠️ 9車の生成に失敗（7車の入稿・採点は続行する）"
-fi
+# 🔴 **生成は1プロセスにまとめてある**（2026-09-22・`type_lab_morning.py`）。
+#    7車の買い目・9車の買い目・表示用の型・出走表の指数は**同じ日の同じ特徴量**
+#    しか要らないのに、別プロセスだと `build_features_wt`（実測 約6分50秒）が
+#    その都度走っていた。1本にすると朝の所要が 24分52秒 → 10分前後になる。
+# 🔴 失敗の伝播は従来どおり: 7車が落ちたときだけ非ゼロで終わり、9車・型・指数の
+#    失敗は記録して先へ進む（入稿と採点を巻き添えにしない）。
+# 🔴 **出走表の指数（1着率・2着内率・3着内率）はここで書く。** 2026-09-22 まで
+#    `daily_picks_wt.sh` の `wave-picks-wt`（旧ランクの候補生成）が書いていたが、
+#    旧ランクは 2026-08-28 に全て入稿 OFF になっており、指数を書くためだけに
+#    毎朝7分走っていた。
+echo "[type_lab] $(date '+%F %T') build morning $TODAY  ($PY)"
+"$PY" scripts/type_lab_morning.py --date "$TODAY"
 
 # 🔴 入稿の失敗で採点を止めない。採点が落ちると前日の成績が画面に出ないまま
 #    翌日を迎える（入稿の失敗より復旧が遅れる）。
-# 🔴 **型（A〜F）は全車数ぶん出す**（2026-09-12）。商品を組むのは上の2回＝
-#    7車と9車だけだが、型判定そのものは車数に依らない。ここを回さないと
-#    5車・6車・8車のレースだけ `/keirin` の一覧から型が消える
-#    （実測: 直近1週間で31レース）。**買い目には一切触らない**ので、
-#    失敗しても入稿・採点は続ける。
-echo "[type_lab] $(date '+%F %T') build shapes $TODAY"
-if ! "$PY" scripts/build_race_shapes.py --date "$TODAY"; then
-  echo "[type_lab] ⚠️ 型判定（表示用）の生成に失敗（入稿・採点は続行する）"
-fi
-
 echo "[type_lab] $(date '+%F %T') submit morning $TODAY"
 if ! "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" morning; then
   echo "[type_lab] ⚠️ 入稿に失敗（採点は続行する）"
