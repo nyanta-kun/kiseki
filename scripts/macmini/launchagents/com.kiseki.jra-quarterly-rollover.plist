@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kiseki.jra-quarterly-rollover</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/ysuzuki/GitHub/kiseki/scripts/macmini/run_job.sh</string>
+		<string>jra-quarterly-rollover</string>
+		<string>/Users/ysuzuki/GitHub/kiseki/backend/.venv/bin/python</string>
+		<string>scripts/jra_quarterly_rollover.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/jra-quarterly-rollover.launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/jra-quarterly-rollover.launchd.log</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Day</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>3</integer>
+			<key>Minute</key>
+			<integer>20</integer>
+			<key>Month</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>Day</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>3</integer>
+			<key>Minute</key>
+			<integer>20</integer>
+			<key>Month</key>
+			<integer>4</integer>
+		</dict>
+		<dict>
+			<key>Day</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>3</integer>
+			<key>Minute</key>
+			<integer>20</integer>
+			<key>Month</key>
+			<integer>7</integer>
+		</dict>
+		<dict>
+			<key>Day</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>3</integer>
+			<key>Minute</key>
+			<integer>20</integer>
+			<key>Month</key>
+			<integer>10</integer>
+		</dict>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/backend</string>
+</dict>
+</plist>

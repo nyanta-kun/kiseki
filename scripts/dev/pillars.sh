@@ -48,7 +48,7 @@ pillar_of() {
     .planning/*) echo shared ;;   # ルート直下の計画文書 (backend/.planning/* は柱判定に委ねる)
     # 全柱に効くインフラ運用スクリプト。デプロイは3柱すべてを同時に入れ替え、
     # バックアップ / スキーマ操作は DB 全体 (keiba / sekito / chihou) を触る。
-    scripts/deploy-*|scripts/backup*|scripts/launchagents/*) echo shared ;;
+    scripts/deploy-*|scripts/backup*|scripts/launchagents/*|scripts/macmini/*) echo shared ;;
     scripts/setup_schema.py|scripts/clear_imported_data.py) echo shared ;;
 
     # ---- 柱ごと: キーワードで判定 (shared 判定の後に評価すること) ----
