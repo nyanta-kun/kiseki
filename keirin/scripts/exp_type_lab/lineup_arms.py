@@ -100,8 +100,10 @@ def run(arm_name: str, plans: dict, idx, cache, cap=True, highpay=True):
             if not exempt:
                 n_capped += 1
             inv, pay = settle(x, main["stakes"], main["trio"])
+            # 🔴 買い目そのものも返す（外部で正本の採点へ回せるように）
             recs.append(dict(day=day, plan=main["plan"], inv=inv, pay=pay,
-                             mean=main["mean"], n=main["n"], slot="main"))
+                             mean=main["mean"], n=main["n"], slot="main",
+                             race_key=x.key, stakes=main["stakes"], trio=main["trio"]))
         if highpay:
             n_done = 0
             for x in dropped:
@@ -112,7 +114,8 @@ def run(arm_name: str, plans: dict, idx, cache, cap=True, highpay=True):
                     continue
                 inv, pay = settle(x, hp["stakes"], hp["trio"])
                 recs.append(dict(day=day, plan=hp["plan"], inv=inv, pay=pay,
-                                 mean=hp["mean"], n=hp["n"], slot="highpay"))
+                                 mean=hp["mean"], n=hp["n"], slot="highpay",
+                                 race_key=x.key, stakes=hp["stakes"], trio=hp["trio"]))
                 n_done += 1
     return recs
 
