@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kiseki.keirin-lab-review-night</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/ysuzuki/GitHub/kiseki/scripts/macmini/run_job.sh</string>
+		<string>keirin-lab-review-night</string>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>cd keirin &amp;&amp; .venv/bin/python scripts/lab_halfday_review.py --label 夜</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-lab-review-night.launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-lab-review-night.launchd.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>23</integer>
+		<key>Minute</key>
+		<integer>50</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/ysuzuki/GitHub/kiseki-dev/keirin-lab</string>
+</dict>
+</plist>
