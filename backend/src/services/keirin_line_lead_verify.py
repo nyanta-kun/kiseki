@@ -40,6 +40,10 @@ class LeadRow:
     payout: int
     void_refund: int = 0
     win_combo: str | None = None
+    #: 買い目ごとの予測オッズ（`combos` と同じ順）。想定払戻 = 賭け金 × 予測オッズ の表示用。
+    pred_odds: tuple[float, ...] = ()
+    #: 決着した目の三連単確定オッズ（倍率）。**買っていなくても入る**（レースの荒れ具合）。
+    win_tf_odds: float | None = None
 
     @property
     def invest(self) -> int:
@@ -56,6 +60,10 @@ class SoldRow:
     bet: int
     payout: int
     settled: bool
+    #: 買い目の表示（例 `"3連単 1-2-3 ×1,200円"`）。`bet_detail.lines` から作る。
+    lines: tuple[str, ...] = ()
+    #: 入稿タイトル（買い手に見える商品名）。
+    title: str | None = None
 
 
 @dataclass
@@ -105,6 +113,28 @@ class Tally:
             "max_payout": self.max_payout,
             "roi": self.roi,
         }
+
+
+def sold_lines(bet_detail: object) -> tuple[str, ...]:
+    """`netkeirin_submissions.bet_detail` → 買い目の表示（`"3連単 1-2-3 ×1,200円"`）。
+
+    読めない値は空（表示が消えるだけで 500 にしない）。
+
+    >>> sold_lines('{"lines": [{"bet_type": "3連単", "combo": "1-3-2", "stake": 5700}]}')
+    ('3連単 1-3-2 ×5,700円',)
+    >>> sold_lines(None), sold_lines("壊れた")
+    ((), ())
+    """
+    import json
+
+    try:
+        d = json.loads(bet_detail) if isinstance(bet_detail, str) else bet_detail
+        if not isinstance(d, dict):
+            return ()
+        lines = d.get("lines") or []
+        return tuple(f"{x.get('bet_type', '')} {x['combo']} ×{int(x.get('stake') or 0):,}円".strip() for x in lines)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return ()
 
 
 def _day(race_key: str) -> str:
@@ -181,13 +211,31 @@ def build_line_lead_report(leads: Iterable[LeadRow], sold: Iterable[SoldRow]) ->
                 "start_at": r.start_at,
                 "combos": list(r.combos),
                 "stake": (r.stakes[0] if r.stakes else 0),
+                # 買い目1点ずつ（予測オッズが無い古い行は None）
+                "legs": [
+                    {
+                        "combo": c,
+                        "stake": st,
+                        "pred_odds": (r.pred_odds[i] if i < len(r.pred_odds) else None),
+                        "won": bool(r.hit and c == r.win_combo),
+                    }
+                    for i, (c, st) in enumerate(zip(r.combos, r.stakes, strict=False))
+                ],
                 "invest": r.invest,
                 "settled": r.settled,
                 "hit": r.hit,
                 "payout": r.payout,
                 "win_combo": r.win_combo,
+                "win_tf_odds": r.win_tf_odds,
                 "sold": [
-                    {"rank_key": s.rank_key, "bet": s.bet, "payout": s.payout, "settled": s.settled}
+                    {
+                        "rank_key": s.rank_key,
+                        "bet": s.bet,
+                        "payout": s.payout,
+                        "settled": s.settled,
+                        "lines": list(s.lines),
+                        "title": s.title,
+                    }
                     for s in sold_by_race.get(r.race_key, [])
                 ],
             }

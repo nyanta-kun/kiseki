@@ -89,3 +89,35 @@ def test_レースは日付の新しい順で同日は発走の早い順():
     leads = [_lead("20260901_31_03", start=200), _lead("20260901_31_01", start=100), _lead("20260902_31_01", start=300)]
     keys = [r["race_key"] for r in build_line_lead_report(leads, [])["races"]]
     assert keys == ["20260902_31_01", "20260901_31_01", "20260901_31_03"]
+
+
+def test_1日の画面用に買い目の明細と決着の配当を返す():
+    from dataclasses import replace
+
+    r = replace(
+        _lead("20260901_31_03", 60_000, n=3, stake=3300),
+        combos=("1-2-3", "1-2-4", "1-2-5"),
+        pred_odds=(12.5, 30.0, 45.0),
+        win_combo="1-2-4",
+        win_tf_odds=18.2,
+    )
+    race = build_line_lead_report(
+        [r], [SoldRow("20260901_31_03", "C_hit", 10_000, 0, True, ("3連単 1-3-2 ×5,700円",), "題")]
+    )["races"][0]
+    assert [leg["won"] for leg in race["legs"]] == [False, True, False]
+    assert race["legs"][0]["pred_odds"] == 12.5 and race["legs"][0]["stake"] == 3300
+    assert race["win_tf_odds"] == 18.2
+    assert race["sold"][0]["lines"] == ["3連単 1-3-2 ×5,700円"] and race["sold"][0]["title"] == "題"
+
+
+def test_売った商品の買い目の表示():
+    from src.services.keirin_line_lead_verify import sold_lines
+
+    d = {
+        "lines": [
+            {"bet_type": "3連単", "combo": "1-3-2", "stake": 5700},
+            {"bet_type": "3連複", "combo": "1-2-3", "stake": 300},
+        ]
+    }
+    assert sold_lines(d) == ("3連単 1-3-2 ×5,700円", "3連複 1-2-3 ×300円")
+    assert sold_lines(None) == () and sold_lines("壊れた") == () and sold_lines({"lines": [{}]}) == ()

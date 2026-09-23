@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hhmmJst, profit, roiTone } from "./keirinLineLead";
+import { expectedPayout, hhmmJst, profit, roiTone, shiftDay } from "./keirinLineLead";
 
 describe("keirinLineLead", () => {
   it("発走時刻は JST で表示する（端末のタイムゾーンに依存しない）", () => {
@@ -19,5 +19,16 @@ describe("keirinLineLead", () => {
     expect(roiTone(99.9)).not.toContain("emerald");
     expect(roiTone(50)).toContain("rose");
     expect(roiTone(null)).toContain("gray-400");
+  });
+
+  it("日付の前後移動は月・年をまたぐ", () => {
+    expect(shiftDay("2026-09-30", 1)).toBe("2026-10-01");
+    expect(shiftDay("2026-01-01", -1)).toBe("2025-12-31");
+  });
+
+  it("想定払戻は賭け金 × 予測オッズ（無ければ null）", () => {
+    expect(expectedPayout({ stake: 3300, pred_odds: 45.5 })).toBe(150150);
+    expect(expectedPayout({ stake: 3300, pred_odds: null })).toBeNull();
+    expect(expectedPayout({ stake: 3300, pred_odds: 0 })).toBeNull();
   });
 });

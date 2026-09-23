@@ -44,7 +44,24 @@ export type LineLeadDay = {
   diff: number;
 };
 
-export type LineLeadSold = { rank_key: string; bet: number; payout: number; settled: boolean };
+export type LineLeadSold = {
+  rank_key: string;
+  bet: number;
+  payout: number;
+  settled: boolean;
+  /** 買い目の表示（`"3連単 1-2-3 ×1,200円"`） */
+  lines: string[];
+  /** 入稿タイトル（買い手に見える商品名） */
+  title: string | null;
+};
+
+export type LineLeadLeg = {
+  combo: string;
+  stake: number;
+  pred_odds: number | null;
+  /** この目で当たった */
+  won: boolean;
+};
 
 export type LineLeadRace = {
   race_key: string;
@@ -55,11 +72,14 @@ export type LineLeadRace = {
   start_at: number | null;
   combos: string[];
   stake: number;
+  legs: LineLeadLeg[];
   invest: number;
   settled: boolean;
   hit: boolean;
   payout: number;
   win_combo: string | null;
+  /** 決着した目の三連単確定オッズ（倍率・買っていなくても入る） */
+  win_tf_odds: number | null;
   sold: LineLeadSold[];
 };
 
@@ -99,4 +119,16 @@ export function hhmmJst(startAt: number | null | undefined): string | null {
   if (startAt == null || !Number.isFinite(startAt) || startAt <= 0) return null;
   const d = new Date((startAt + 9 * 3600) * 1000);
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/** ISO 日付（YYYY-MM-DD）を n 日ずらす（端末のローカル日付基準）。 */
+export function shiftDay(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** 想定払戻（賭け金 × 予測オッズ）。予測オッズが無ければ null。 */
+export function expectedPayout(leg: Pick<LineLeadLeg, "stake" | "pred_odds">): number | null {
+  return leg.pred_odds == null || leg.pred_odds <= 0 ? null : Math.round(leg.stake * leg.pred_odds);
 }
