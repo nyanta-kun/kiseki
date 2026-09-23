@@ -23,6 +23,7 @@
 設計と実測: `keirin/docs/type_lab/SUMMARY.md` /
 `keirin/docs/type_lab/carcount_2026_08_27.md`
 """
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
+from ..services.keirin_line_lead_verify import LeadRow, SoldRow, build_line_lead_report
 from ..services.keirin_type_lab_gate import (
     AXIS_GATE_DROP_RATIO,
     AXIS_GATE_MIN,
@@ -45,11 +47,37 @@ from ..services.keirin_type_lab_outcome import build_outcome, finish_class
 router = APIRouter(prefix="/api/keirin/type-lab", tags=["keirin-type-lab"])
 
 #: 表示順。`keirin/src/type_lab.PLANS` と揃える（片方だけ増やしても落ちないが並びが崩れる）。
-PLAN_ORDER = ["T_firm", "T_mid", "T_axis", "T_upset",
-              "A_hit", "A_trio", "A_ana", "A_pay", "A_sign", "A_big",
-              "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
-              "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
-              "F_hit", "F_pay", "F_line", "F_sign", "F_big"]
+PLAN_ORDER = [
+    "T_firm",
+    "T_mid",
+    "T_axis",
+    "T_upset",
+    "A_hit",
+    "A_trio",
+    "A_ana",
+    "A_pay",
+    "A_sign",
+    "A_big",
+    "B_hit",
+    "B_sign",
+    "B_big",
+    "C_hit",
+    "C_sign",
+    "C_big",
+    "D_hit",
+    "D_sign",
+    "D_big",
+    "E_hit",
+    "E_sign",
+    "E_big",
+    "F_hit",
+    "F_pay",
+    "F_line",
+    "F_sign",
+    "F_big",
+    # 逃げ先頭ライン（2026-09-24・検証中・入稿しない）。検証ページは `/line-lead`。
+    "L_lead",
+]
 
 
 class TypeLabLeg(BaseModel):
@@ -107,20 +135,22 @@ class CurrentPick(BaseModel):
     ⚠️ `netkeirin_submissions`（売った商品）は 2026-07-24 以降しか無いので、
        ペーパー検証の長い窓では `picks_history` しか使えない。
     """
-    rank: str                     # 'RANK_7S' など（現行の優先順位で最上位のもの）
+
+    rank: str  # 'RANK_7S' など（現行の優先順位で最上位のもの）
     pred_combo: str | None = None
     n_combos: int | None = None
     bet_amount: int | None = None
     hit: bool | None = None
     payout: int | None = None
     settled: bool = False
-    sold_rank_key: str | None = None      # 実際に入稿された rank_key（あれば）
+    sold_rank_key: str | None = None  # 実際に入稿された rank_key（あれば）
 
 
 class ComparisonRow(BaseModel):
     """型ラボのプラン と 現行推奨 を**同じレース集合**で比べた行。"""
+
     plan_key: str
-    n_races: int                  # 両方に採点済みの記録があるレース数
+    n_races: int  # 両方に採点済みの記録があるレース数
     lab_shown_hit: float
     cur_shown_hit: float
     lab_median_payout: float
@@ -134,6 +164,7 @@ class ComparisonRow(BaseModel):
 
 class TypeLabSummary(BaseModel):
     """プラン別のまとめ。**判断指標だけ**を返す（ROI は参考）。"""
+
     plan_key: str
     type_label: str
     bet_type: str
@@ -145,13 +176,13 @@ class TypeLabSummary(BaseModel):
     n_settled: int
     n_hit: int
     n_gami: int
-    hit_rate: float           # 生の的中率（%）
-    shown_hit_rate: float     # 表示的中（ガミ除く・%）
+    hit_rate: float  # 生の的中率（%）
+    shown_hit_rate: float  # 表示的中（ガミ除く・%）
     gami_rate: float
     median_payout: float
     median_pred_mean: float
-    two_plus_per_day: float   # 2倍以上の的中 件/日
-    big_per_day: float        # 10万円以上 件/日
+    two_plus_per_day: float  # 2倍以上の的中 件/日
+    big_per_day: float  # 10万円以上 件/日
     invested: int
     returned: int
     roi: float
@@ -159,11 +190,12 @@ class TypeLabSummary(BaseModel):
 
 class ComboRow(BaseModel):
     """選んだプランをひとまとめにしたときの1行（プラン別の内訳、または合計）。"""
-    plan_key: str             # 合計行は "TOTAL"
-    n_races: int              # 競合を除いたあとの対象レース数
+
+    plan_key: str  # 合計行は "TOTAL"
+    n_races: int  # 競合を除いたあとの対象レース数
     n_settled: int
-    n_hit: int                # 生の的中（ガミを含む）
-    n_shown_hit: int          # 表示的中（払戻 > 賭け金）
+    n_hit: int  # 生の的中（ガミを含む）
+    n_shown_hit: int  # 表示的中（払戻 > 賭け金）
     invested: int
     returned: int
     roi: float
@@ -177,6 +209,7 @@ class ComboResponse(BaseModel):
        除いた数は `n_conflict_races` で必ず返す。黙って落とすと、
        競合だらけの選び方をしたときに「件数が少ない」としか見えなくなる。
     """
+
     #: 選択中のモード。`mode` は互換のためのカンマ連結、`modes` が正。
     mode: str
     modes: list[str] = []
@@ -234,6 +267,7 @@ class TypeLabOutcomeResponse(BaseModel):
        買い目が組めずゲートで落ちたレースは入っていないので、
        「全7車レースでの型の分布」とは一致しない。
     """
+
     mode: str
     modes: list[str] = []
     date_from: str
@@ -336,8 +370,18 @@ def parse_modes(mode: str | None) -> list[str]:
 #: 1レースに複数ランクの候補があるとき、**実際に売られるのは最上位の1つだけ**なので
 #: 比較でもそれに揃える。
 #: 🔴 向こうを変えたらここも変えること（手書きリスト）。
-CURRENT_RANK_ORDER = ["RANK_7H2", "RANK_9H1", "RANK_7T1", "RANK_7T3", "RANK_7S",
-                      "RANK_9C", "RANK_7B", "RANK_7C", "RANK_7H1", "RANK_7M1"]
+CURRENT_RANK_ORDER = [
+    "RANK_7H2",
+    "RANK_9H1",
+    "RANK_7T1",
+    "RANK_7T3",
+    "RANK_7S",
+    "RANK_9C",
+    "RANK_7B",
+    "RANK_7C",
+    "RANK_7H1",
+    "RANK_7M1",
+]
 
 # 🔴 **テーブルごとに `race_date` の型が違う**（2026-08-27 に両方 date にして 500 を出した）:
 #     keirin.type_lab_picks.race_date        … DATE      → `datetime.date` を渡す
@@ -398,8 +442,7 @@ def _median(v: list[float]) -> float:
     return float(s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2)
 
 
-def window(date_from: str | None, date_to: str | None
-           ) -> tuple[str, str, date, date]:
+def window(date_from: str | None, date_to: str | None) -> tuple[str, str, date, date]:
     """(表示用の文字列 d1, d2, DATE 比較用の date dd1, dd2)。
 
     🔴 asyncpg は DATE 列へ文字列を渡せない（`'str' object has no attribute
@@ -412,14 +455,12 @@ def window(date_from: str | None, date_to: str | None
 
 
 def _rank_pos(rank: str) -> int:
-    return (CURRENT_RANK_ORDER.index(rank) if rank in CURRENT_RANK_ORDER
-            else len(CURRENT_RANK_ORDER))
+    return CURRENT_RANK_ORDER.index(rank) if rank in CURRENT_RANK_ORDER else len(CURRENT_RANK_ORDER)
 
 
 @router.get("", response_model=TypeLabResponse)
 async def get_type_lab(
-    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）。"
-                                          "空または 'all' で全モード"),
+    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）。" "空または 'all' で全モード"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
@@ -435,8 +476,7 @@ async def get_type_lab(
     # 上の注記のとおり、渡す型はテーブルごとに違う。
 
     # type_lab_picks.race_date は DATE なので `datetime.date` で渡す
-    res = await db.execute(_SQL, {"modes": modes, "d1": dd1, "d2": dd2,
-                                  "cap": ROW_CAP})
+    res = await db.execute(_SQL, {"modes": modes, "d1": dd1, "d2": dd2, "cap": ROW_CAP})
     rows = [dict(r._mapping) for r in res]
     truncated = len(rows) >= ROW_CAP
 
@@ -454,8 +494,7 @@ async def get_type_lab(
         prev = current.get(c["rk"])
         if prev is None or _rank_pos(c["rank"]) < _rank_pos(prev["rank"]):
             current[c["rk"]] = c
-    sold_res = await db.execute(_SQL_SOLD,
-                                {"d1": d1.replace("-", ""), "d2": d2.replace("-", "")})
+    sold_res = await db.execute(_SQL_SOLD, {"d1": d1.replace("-", ""), "d2": d2.replace("-", "")})
     sold = {r._mapping["rk"]: r._mapping["rank_key"] for r in sold_res}
 
     picks: list[TypeLabPick] = []
@@ -467,30 +506,38 @@ async def get_type_lab(
         versions.add(str(r["rule_version"]))
         by_plan.setdefault(r["plan_key"], []).append(r)
         if len(picks) < limit:
-            picks.append(TypeLabPick(
-                race_key=r["race_key"], race_date=str(r["race_date"]),
-                venue_name=r["venue_name"], race_no=r["race_no"],
-                race_type=r["race_type"], day_index=r["day_index"],
-                start_time=_hhmm(r.get("start_at")),
-                type_label=r["type_label"],
-                axis_sum=float(r["axis_sum"]) if r["axis_sum"] is not None else None,
-                arare=r["arare"], axis1=r["axis1"], axis2=r["axis2"],
-                mode=r["mode"], plan_key=r["plan_key"], bet_type=r["bet_type"],
-                n_legs=r["n_legs"], budget=r["budget"],
-                legs=[TypeLabLeg(**leg) for leg in legs],
-                pred_mean_payout=(float(r["pred_mean_payout"])
-                                  if r["pred_mean_payout"] is not None else None),
-                pred_min_payout=(float(r["pred_min_payout"])
-                                 if r["pred_min_payout"] is not None else None),
-                settled=r["settled_at"] is not None, win_combo=r["win_combo"],
-                hit=(bool(r["hit"]) if r["hit"] is not None else None),
-                payout=r["payout"],
-                final_odds=(float(r["final_odds"]) if r["final_odds"] is not None else None),
-                finish_class=finish_class(r.get("win_combo"), r.get("p3_order")),
-                win_tf_odds=(float(r["win_tf_odds"])
-                             if r["win_tf_odds"] is not None else None),
-                current=_current_of(current.get(r["race_key"]), sold.get(r["race_key"])),
-            ))
+            picks.append(
+                TypeLabPick(
+                    race_key=r["race_key"],
+                    race_date=str(r["race_date"]),
+                    venue_name=r["venue_name"],
+                    race_no=r["race_no"],
+                    race_type=r["race_type"],
+                    day_index=r["day_index"],
+                    start_time=_hhmm(r.get("start_at")),
+                    type_label=r["type_label"],
+                    axis_sum=float(r["axis_sum"]) if r["axis_sum"] is not None else None,
+                    arare=r["arare"],
+                    axis1=r["axis1"],
+                    axis2=r["axis2"],
+                    mode=r["mode"],
+                    plan_key=r["plan_key"],
+                    bet_type=r["bet_type"],
+                    n_legs=r["n_legs"],
+                    budget=r["budget"],
+                    legs=[TypeLabLeg(**leg) for leg in legs],
+                    pred_mean_payout=(float(r["pred_mean_payout"]) if r["pred_mean_payout"] is not None else None),
+                    pred_min_payout=(float(r["pred_min_payout"]) if r["pred_min_payout"] is not None else None),
+                    settled=r["settled_at"] is not None,
+                    win_combo=r["win_combo"],
+                    hit=(bool(r["hit"]) if r["hit"] is not None else None),
+                    payout=r["payout"],
+                    final_odds=(float(r["final_odds"]) if r["final_odds"] is not None else None),
+                    finish_class=finish_class(r.get("win_combo"), r.get("p3_order")),
+                    win_tf_odds=(float(r["win_tf_odds"]) if r["win_tf_odds"] is not None else None),
+                    current=_current_of(current.get(r["race_key"]), sold.get(r["race_key"])),
+                )
+            )
 
     # 🔴 **件/日 の分母は「窓の中で型ラボが動いた日数」**（2026-08-28 是正）。
     #    プランごとに「そのプランが出た日数」で割ると、**出なかった日が分母から消えて
@@ -500,12 +547,12 @@ async def get_type_lab(
     window_days = max(len({str(r["race_date"]) for r in rows}), 1)
 
     summaries: list[TypeLabSummary] = []
-    for plan in sorted(by_plan, key=lambda p: (PLAN_ORDER.index(p)
-                                               if p in PLAN_ORDER else 99, p)):
+    for plan in sorted(by_plan, key=lambda p: (PLAN_ORDER.index(p) if p in PLAN_ORDER else 99, p)):
         g = by_plan[plan]
         days = {str(x["race_date"]) for x in g}
         st = [x for x in g if x["settled_at"] is not None]
         hits = [x for x in st if x["hit"]]
+
         # 🔴 **表示的中は `払戻 > 賭け金`**（`combine_plans` と同じ定義に揃える）。
         #    以前はここだけ `<` で、`払戻 == 賭け金` を表示的中に数えていた
         #    （3か所で `<` / `>` / `>=` と割れていた。実測 5行）。
@@ -528,28 +575,43 @@ async def get_type_lab(
         two = [x for x in hits if (x["payout"] or 0) >= 2 * _net(x)]
         big = [x for x in hits if (x["payout"] or 0) >= 100_000]
         nd = window_days
-        summaries.append(TypeLabSummary(
-            plan_key=plan, type_label=g[0]["type_label"], bet_type=g[0]["bet_type"],
-            n=len(g), n_days=len(days), per_day=round(len(g) / nd, 2),
-            n_settled=len(st), n_hit=len(hits), n_gami=len(gami),
-            hit_rate=round(len(hits) / len(st) * 100, 2) if st else 0.0,
-            shown_hit_rate=round((len(hits) - len(gami)) / len(st) * 100, 2) if st else 0.0,
-            gami_rate=round(len(gami) / len(hits) * 100, 2) if hits else 0.0,
-            median_payout=round(_median([float(x["payout"] or 0) for x in hits]), 0),
-            median_pred_mean=round(_median([float(x["pred_mean_payout"] or 0) for x in g]), 0),
-            two_plus_per_day=round(len(two) / nd, 3),
-            big_per_day=round(len(big) / nd, 3),
-            invested=inv, returned=ret,
-            roi=round(ret / inv * 100, 1) if inv else 0.0,
-        ))
+        summaries.append(
+            TypeLabSummary(
+                plan_key=plan,
+                type_label=g[0]["type_label"],
+                bet_type=g[0]["bet_type"],
+                n=len(g),
+                n_days=len(days),
+                per_day=round(len(g) / nd, 2),
+                n_settled=len(st),
+                n_hit=len(hits),
+                n_gami=len(gami),
+                hit_rate=round(len(hits) / len(st) * 100, 2) if st else 0.0,
+                shown_hit_rate=round((len(hits) - len(gami)) / len(st) * 100, 2) if st else 0.0,
+                gami_rate=round(len(gami) / len(hits) * 100, 2) if hits else 0.0,
+                median_payout=round(_median([float(x["payout"] or 0) for x in hits]), 0),
+                median_pred_mean=round(_median([float(x["pred_mean_payout"] or 0) for x in g]), 0),
+                two_plus_per_day=round(len(two) / nd, 3),
+                big_per_day=round(len(big) / nd, 3),
+                invested=inv,
+                returned=ret,
+                roi=round(ret / inv * 100, 1) if inv else 0.0,
+            )
+        )
 
-    return TypeLabResponse(mode=",".join(modes), modes=modes,
-                           date_from=d1, date_to=d2,
-                           rule_versions=sorted(versions), truncated=truncated,
-                           venues=venues, venue=venue,
-                           summaries=summaries,
-                           comparison=_comparison(by_plan, current),
-                           picks=picks)
+    return TypeLabResponse(
+        mode=",".join(modes),
+        modes=modes,
+        date_from=d1,
+        date_to=d2,
+        rule_versions=sorted(versions),
+        truncated=truncated,
+        venues=venues,
+        venue=venue,
+        summaries=summaries,
+        comparison=_comparison(by_plan, current),
+        picks=picks,
+    )
 
 
 def _current_of(c: dict[str, Any] | None, sold_rank: str | None) -> CurrentPick | None:
@@ -559,23 +621,25 @@ def _current_of(c: dict[str, Any] | None, sold_rank: str | None) -> CurrentPick 
     # bet_amount が 0 の行は「まだ採点されていない」として扱う。
     settled = bool(c.get("bet_amount"))
     return CurrentPick(
-        rank=c["rank"], pred_combo=c.get("pred_combo"), n_combos=c.get("n_combos"),
+        rank=c["rank"],
+        pred_combo=c.get("pred_combo"),
+        n_combos=c.get("n_combos"),
         bet_amount=c.get("bet_amount"),
         hit=(bool(c["hit"]) if settled and c.get("hit") is not None else None),
-        payout=c.get("payout"), settled=settled, sold_rank_key=sold_rank,
+        payout=c.get("payout"),
+        settled=settled,
+        sold_rank_key=sold_rank,
     )
 
 
-def _comparison(by_plan: dict[str, list[dict[str, Any]]],
-                current: dict[str, dict[str, Any]]) -> list[ComparisonRow]:
+def _comparison(by_plan: dict[str, list[dict[str, Any]]], current: dict[str, dict[str, Any]]) -> list[ComparisonRow]:
     """プランごとに、**両方に採点済みの記録があるレースだけ**で並べて比べる。
 
     🔴 母集団を揃えないと比較にならない（CLAUDE.md「検証の作法」#3）。
        型ラボが出していないレースや、現行に候補が無いレースは両方から外す。
     """
     out: list[ComparisonRow] = []
-    for plan in sorted(by_plan, key=lambda x: (PLAN_ORDER.index(x)
-                                               if x in PLAN_ORDER else 99, x)):
+    for plan in sorted(by_plan, key=lambda x: (PLAN_ORDER.index(x) if x in PLAN_ORDER else 99, x)):
         pairs = []
         for g in by_plan[plan]:
             if g["settled_at"] is None:
@@ -596,23 +660,32 @@ def _comparison(by_plan: dict[str, list[dict[str, Any]]],
             two = [p for p in hits if get_pay(p) >= 2 * get_inv(p)]
             inv = sum(get_inv(p) for p in pairs)
             ret = sum(get_pay(p) for p in pairs)
-            return (len(shown) / len(pairs) * 100,
-                    _median([float(get_pay(p)) for p in hits]),
-                    len(two) / nd, (ret / inv * 100) if inv else 0.0)
+            return (
+                len(shown) / len(pairs) * 100,
+                _median([float(get_pay(p)) for p in hits]),
+                len(two) / nd,
+                (ret / inv * 100) if inv else 0.0,
+            )
 
-        lab = _side(lambda p: float(p[0]["payout"] or 0),
-                    lambda p: float(p[0]["budget"]),
-                    lambda p: bool(p[0]["hit"]))
-        cur = _side(lambda p: float(p[1]["payout"] or 0),
-                    lambda p: float(p[1]["bet_amount"] or 0),
-                    lambda p: bool(p[1]["hit"]))
-        out.append(ComparisonRow(
-            plan_key=plan, n_races=len(pairs), n_days=len(days),
-            lab_shown_hit=round(lab[0], 2), cur_shown_hit=round(cur[0], 2),
-            lab_median_payout=round(lab[1], 0), cur_median_payout=round(cur[1], 0),
-            lab_two_per_day=round(lab[2], 3), cur_two_per_day=round(cur[2], 3),
-            lab_roi=round(lab[3], 1), cur_roi=round(cur[3], 1),
-        ))
+        lab = _side(lambda p: float(p[0]["payout"] or 0), lambda p: float(p[0]["budget"]), lambda p: bool(p[0]["hit"]))
+        cur = _side(
+            lambda p: float(p[1]["payout"] or 0), lambda p: float(p[1]["bet_amount"] or 0), lambda p: bool(p[1]["hit"])
+        )
+        out.append(
+            ComparisonRow(
+                plan_key=plan,
+                n_races=len(pairs),
+                n_days=len(days),
+                lab_shown_hit=round(lab[0], 2),
+                cur_shown_hit=round(cur[0], 2),
+                lab_median_payout=round(lab[1], 0),
+                cur_median_payout=round(cur[1], 0),
+                lab_two_per_day=round(lab[2], 3),
+                cur_two_per_day=round(cur[2], 3),
+                lab_roi=round(lab[3], 1),
+                cur_roi=round(cur[3], 1),
+            )
+        )
     return out
 
 
@@ -639,6 +712,7 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
     def _row(key: str, group: list[dict[str, Any]]) -> ComboRow:
         st = [x for x in group if x["settled_at"] is not None]
         hits = [x for x in st if x["hit"]]
+
         # 🔴 欠車返還ぶんを除いた**純額**を基準にする（ROI の分母と揃える・2026-09-21）
         def _net(x: dict[str, Any]) -> int:
             return int(x["budget"]) - int(x.get("void_refund") or 0)
@@ -647,18 +721,22 @@ def combine_plans(rows: list[dict[str, Any]]) -> tuple[list[ComboRow], ComboRow,
         inv = sum(_net(x) for x in st)
         ret = sum(int(x["payout"] or 0) for x in st)
         return ComboRow(
-            plan_key=key, n_races=len(group), n_settled=len(st),
-            n_hit=len(hits), n_shown_hit=len(shown),
-            invested=inv, returned=ret,
+            plan_key=key,
+            n_races=len(group),
+            n_settled=len(st),
+            n_hit=len(hits),
+            n_shown_hit=len(shown),
+            invested=inv,
+            returned=ret,
             roi=round(ret / inv * 100, 1) if inv else 0.0,
         )
 
     by_plan: dict[str, list[dict[str, Any]]] = {}
     for r in kept:
         by_plan.setdefault(str(r["plan_key"]), []).append(r)
-    out = [_row(p, by_plan[p])
-           for p in sorted(by_plan, key=lambda x: (PLAN_ORDER.index(x)
-                                                   if x in PLAN_ORDER else 99, x))]
+    out = [
+        _row(p, by_plan[p]) for p in sorted(by_plan, key=lambda x: (PLAN_ORDER.index(x) if x in PLAN_ORDER else 99, x))
+    ]
     days = {str(r["race_date"]) for r in kept}
     return out, _row("TOTAL", kept), n_conflict, len(days)
 
@@ -683,17 +761,26 @@ async def get_type_lab_combo(
     d1, d2, dd1, dd2 = window(date_from, date_to)
     wanted = [p for p in PLAN_ORDER if p in {x.strip() for x in plans.split(",")}]
     if not wanted:
-        empty = ComboRow(plan_key="TOTAL", n_races=0, n_settled=0, n_hit=0,
-                         n_shown_hit=0, invested=0, returned=0, roi=0.0)
-        return ComboResponse(mode=",".join(modes), modes=modes,
-                             date_from=d1, date_to=d2, venue=venue,
-                             plans=[], n_days=0, n_conflict_races=0,
-                             axis_gate=axis_gate, axis_gate_min=AXIS_GATE_MIN,
-                             rows=[], total=empty)
+        empty = ComboRow(
+            plan_key="TOTAL", n_races=0, n_settled=0, n_hit=0, n_shown_hit=0, invested=0, returned=0, roi=0.0
+        )
+        return ComboResponse(
+            mode=",".join(modes),
+            modes=modes,
+            date_from=d1,
+            date_to=d2,
+            venue=venue,
+            plans=[],
+            n_days=0,
+            n_conflict_races=0,
+            axis_gate=axis_gate,
+            axis_gate_min=AXIS_GATE_MIN,
+            rows=[],
+            total=empty,
+        )
 
     # race_date は DATE 列なので `datetime.date` を渡す（文字列だと 500）
-    res = await db.execute(_SQL_COMBO,
-                           {"modes": modes, "d1": dd1, "d2": dd2, "plans": wanted})
+    res = await db.execute(_SQL_COMBO, {"modes": modes, "d1": dd1, "d2": dd2, "plans": wanted})
     rows = [dict(r._mapping) for r in res]
     if venue:
         rows = [r for r in rows if r["venue_name"] == venue]
@@ -705,19 +792,25 @@ async def get_type_lab_combo(
         before = len(rows)
         # 🔴 **車数を渡すこと。** 閾値は7車の探索窓の分位なので、9車へ当てると
         #    「下位1/5を外す」ではなく絶対値で切る形になる（`passes_axis_gate` 参照）。
-        rows = [r for r in rows
-                if passes_axis_gate(str(r["plan_key"]), r["axis_sum"],
-                                    r.get("n_entries"))]
+        rows = [r for r in rows if passes_axis_gate(str(r["plan_key"]), r["axis_sum"], r.get("n_entries"))]
         n_gated = before - len(rows)
 
     detail, total, n_conflict, n_days = combine_plans(rows)
-    return ComboResponse(mode=",".join(modes), modes=modes,
-                         date_from=d1, date_to=d2, venue=venue,
-                         plans=wanted, n_days=n_days,
-                         n_conflict_races=n_conflict,
-                         axis_gate=axis_gate, n_axis_gated_out=n_gated,
-                         axis_gate_min=AXIS_GATE_MIN,
-                         rows=detail, total=total)
+    return ComboResponse(
+        mode=",".join(modes),
+        modes=modes,
+        date_from=d1,
+        date_to=d2,
+        venue=venue,
+        plans=wanted,
+        n_days=n_days,
+        n_conflict_races=n_conflict,
+        axis_gate=axis_gate,
+        n_axis_gated_out=n_gated,
+        axis_gate_min=AXIS_GATE_MIN,
+        rows=detail,
+        total=total,
+    )
 
 
 # 答え合わせ用。**買い目（legs）は引かない**（分類に要らないので軽くする）。
@@ -750,6 +843,144 @@ async def get_type_lab_outcome(
     if venue:
         rows = [r for r in rows if r["venue_name"] == venue]
     out = build_outcome(rows)
-    return TypeLabOutcomeResponse(mode=",".join(modes), modes=modes,
-                                  date_from=d1, date_to=d2, venue=venue,
-                                  **out)
+    return TypeLabOutcomeResponse(mode=",".join(modes), modes=modes, date_from=d1, date_to=d2, venue=venue, **out)
+
+
+# ─────────────────── 逃げ先頭ライン（`L_lead`）の検証（2026-09-24） ───────────────────
+#
+# 🔴 `L_lead` は**検証中・入稿しない**ランク。「もし売っていたら」を、同じレースで
+#    実際に出した商品（買わなくなるランク）と並べて見るための窓口。
+#    計算の正本は `services/keirin_line_lead_verify.build_line_lead_report`（純関数）。
+
+_SQL_LINE_LEAD = text("""
+    SELECT p.race_key, p.race_date, p.venue_name, p.race_no, p.race_type, p.legs,
+           p.settled_at, p.hit, p.payout, p.win_combo,
+           COALESCE(p.void_refund, 0) AS void_refund,
+           NULLIF(r.start_at, '')::bigint AS start_at
+    FROM keirin.type_lab_picks p
+    LEFT JOIN keirin.wt_races r ON r.race_key = p.race_key
+    WHERE p.plan_key = 'L_lead' AND p.mode = 'live'
+      AND p.race_date BETWEEN :d1 AND :d2
+""")
+
+# 実際に出した商品（送信済み・公開済み）。🔴 `proposed` は netkeirin へ未送信なので数えない
+# （`_SQL_SOLD` と同じ理由・2026-09-20 監査）。
+_SQL_LINE_LEAD_SOLD = text("""
+    SELECT split_part(race_key, '#', 1) AS rk, rank_key,
+           COALESCE(settled_bet, 0) AS bet, COALESCE(settled_payout, 0) AS payout,
+           settled_at IS NOT NULL AS settled
+    FROM keirin.netkeirin_submissions
+    WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
+      AND status IN ('submitted', 'published')
+""")
+
+
+class LineLeadTally(BaseModel):
+    n: int
+    pending: int
+    invest: int
+    payout: int
+    hits: int
+    shown_hits: int
+    max_payout: int
+    roi: float | None = None
+
+
+class LineLeadSummary(BaseModel):
+    lead: LineLeadTally
+    displaced: LineLeadTally
+    current: LineLeadTally
+    combined: LineLeadTally
+    lead_roi_wo_top3: float | None = None
+    lead_days_over_100: int
+    n_days: int
+
+
+class LineLeadDay(BaseModel):
+    date: str
+    lead: LineLeadTally
+    displaced: LineLeadTally
+    current: LineLeadTally
+    combined: LineLeadTally
+    diff: int
+
+
+class LineLeadSold(BaseModel):
+    rank_key: str
+    bet: int
+    payout: int
+    settled: bool
+
+
+class LineLeadRace(BaseModel):
+    race_key: str
+    race_date: str
+    venue_name: str | None = None
+    race_no: int | None = None
+    race_type: str | None = None
+    start_at: int | None = None
+    combos: list[str]
+    stake: int
+    invest: int
+    settled: bool
+    hit: bool
+    payout: int
+    win_combo: str | None = None
+    sold: list[LineLeadSold]
+
+
+class LineLeadResponse(BaseModel):
+    date_from: str
+    date_to: str
+    summary: LineLeadSummary
+    days: list[LineLeadDay]
+    races: list[LineLeadRace]
+
+
+def _lead_row(r: dict[str, Any]) -> LeadRow:
+    legs_raw = r["legs"]
+    legs = json.loads(legs_raw) if isinstance(legs_raw, str) else (legs_raw or [])
+    return LeadRow(
+        race_key=str(r["race_key"]),
+        race_date=str(r["race_date"]),
+        venue_name=r.get("venue_name"),
+        race_no=r.get("race_no"),
+        race_type=r.get("race_type"),
+        start_at=r.get("start_at"),
+        combos=tuple(str(x["combo"]) for x in legs),
+        stakes=tuple(int(x["stake"]) for x in legs),
+        settled=r.get("settled_at") is not None,
+        hit=bool(r.get("hit")),
+        payout=int(r.get("payout") or 0),
+        void_refund=int(r.get("void_refund") or 0),
+        win_combo=r.get("win_combo"),
+    )
+
+
+@router.get("/line-lead", response_model=LineLeadResponse)
+async def get_type_lab_line_lead(
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> LineLeadResponse:
+    """逃げ先頭ライン（`L_lead`・検証中）と、それにより買わなくなる商品の成績。
+
+    既定は直近7日。新ランクの日別・レース別の成績と、同じレースで実際に出した商品、
+    現行（売った全商品）↔ 置き換えた場合 の日別収支を返す。
+    """
+    d1, d2, dd1, dd2 = window(date_from, date_to)
+    res = await db.execute(_SQL_LINE_LEAD, {"d1": dd1, "d2": dd2})
+    leads = [_lead_row(dict(r._mapping)) for r in res]
+    sold_res = await db.execute(_SQL_LINE_LEAD_SOLD, {"d1": d1.replace("-", ""), "d2": d2.replace("-", "")})
+    sold = [
+        SoldRow(
+            race_key=str(m["rk"]),
+            rank_key=str(m["rank_key"]),
+            bet=int(m["bet"]),
+            payout=int(m["payout"]),
+            settled=bool(m["settled"]),
+        )
+        for m in (r._mapping for r in sold_res)
+    ]
+    out = build_line_lead_report(leads, sold)
+    return LineLeadResponse(date_from=d1, date_to=d2, **out)

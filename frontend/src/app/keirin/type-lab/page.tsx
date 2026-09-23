@@ -75,6 +75,8 @@ const PLAN_NOTE: Record<string, string> = {
   F_line: "三連複 最強ラインの2車軸＋相手流し（9車の型F・点数は計画払戻2万円まで）",
   F_sign: "三連単 看板枠（当たれば15万円を狙うダッチ）",
   F_big: "三連単 特大狙い（軸1を外し、当たれば40万円を狙うダッチ）",
+  // 逃げ先頭ライン（2026-09-24〜・**検証中・入稿しない**）。詳細は /keirin/type-lab/line-lead
+  L_lead: "逃げ先頭：得点1位でないラインの逃げ先頭→番手→3着・1レース1万円均等（検証中）",
 };
 
 /** モード。`live9` / `paper9` は9車（`build_type_lab_picks --n-entries 9` が書く）。
@@ -260,6 +262,10 @@ export default function TypeLabPage() {
         <span className="rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200 sm:text-xs">
           検証用・入稿しません
         </span>
+        <Link href="/keirin/type-lab/line-lead"
+          className="ml-auto whitespace-nowrap rounded border border-indigo-300 px-2 py-0.5 text-[11px] text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950 sm:text-xs">
+          逃げ先頭の検証
+        </Link>
       </header>
 
       <details className="rounded border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 text-xs">

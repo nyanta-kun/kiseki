@@ -94,7 +94,7 @@ from src.submission_skips import (                           # noqa: E402
 )
 from src.marquee import is_fill_target                       # noqa: E402
 from src.type_lab import (                                  # noqa: E402
-    HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, SELLABLE_PLAN_KEYS,
+    HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, LINE_LEAD_PLAN_KEYS, SELLABLE_PLAN_KEYS,
     TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
     tier_realized_min_payout,
     highpay_plan_for, sell_plans_for)
@@ -842,14 +842,18 @@ def _races_missing_rows(day: str, closed: set[str]) -> dict[int, list[str]]:
     🟢 **既に売ったレースは定義上ここに入らない**（行があるため）＝
        `--race-key` 生成が売済みの行を書き換える事故は起きない。
     """
+    # 🔴 **売らない検証ランク（`L_lead`・2026-09-24〜）の行は数えない。** その行だけが
+    #    残ったレースを「組み終わった」と見なすと、売り物の行が無いまま拾い直されない。
+    lead = sorted(LINE_LEAD_PLAN_KEYS)
     with get_connection() as c:
         rows = c.execute(
             "SELECT r.race_key, r.n_entries FROM wt_races r "
             " WHERE r.race_date = ? AND r.n_entries IN (?, ?) "
             "   AND NOT EXISTS (SELECT 1 FROM type_lab_picks t "
-            "                    WHERE t.race_key = r.race_key AND t.mode IN (?, ?)) "
+            "                    WHERE t.race_key = r.race_key AND t.mode IN (?, ?) "
+            f"                     AND t.plan_key NOT IN ({','.join('?' * len(lead))})) "
             " ORDER BY r.race_key",
-            (day, 7, 9, "live", "live9"),
+            (day, 7, 9, "live", "live9", *lead),
         ).fetchall()
     out: dict[int, list[str]] = {}
     for rk, n in rows:

@@ -71,3 +71,12 @@ def test_only_runs_outside_morning_and_not_in_dry_run():
 
 def test_parses():
     ast.parse(_src())
+
+
+def test_line_lead_rows_do_not_count_as_built():
+    """売らない検証ランク（`L_lead`・2026-09-24〜）の行だけでは「組み終わった」にしない。
+
+    その行だけが残ったレースを除外すると、売り物の行が無いまま拾い直されない。
+    """
+    fn = _src().split("def _races_missing_rows(", 1)[1].split("\ndef ", 1)[0]
+    assert "LINE_LEAD_PLAN_KEYS" in fn and "plan_key NOT IN" in fn
