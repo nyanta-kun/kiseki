@@ -586,7 +586,8 @@ COLS = ("race_key race_date venue_name race_no race_type n_entries day_index "
 SETTLE_COLS = ("settled_at", "win_combo", "hit", "payout", "final_odds", "win_tf_odds")
 
 
-def _drop_stale_plans(conn, rows: list[dict]) -> int:
+def _drop_stale_plans(conn, rows: list[dict],
+                      only_plans: set[str] | None = None) -> int:
     """組み直しで**型が変わったときに残る古いプランの行**を消す。
 
     🔴 一意キーは `(race_key, plan_key, mode)` なので、型が F→C に変わると
@@ -600,22 +601,31 @@ def _drop_stale_plans(conn, rows: list[dict]) -> int:
     ⚠️ **採点済みの行は消さない。** 売って結果まで入った行は検証台の実績で、
        消すと後から復元できない（型が変わるのは組み直しのときだけで、
        組み直しは売る前にしか走らないので通常は該当しない）。
+
+    🔴 **`only_plans` を渡したら、消す対象もそのプランだけに限る**（`--only-plans`・2026-09-24）。
+       指定したプランの行だけを書く流し方で素のまま呼ぶと、同じレースの**他のプランの
+       未採点の行を全部消す**（keep に他のプランが無いため）。
     """
     keep: dict[tuple[str, str], set[str]] = {}
     for r in rows:
         keep.setdefault((str(r["race_key"]), str(r["mode"])), set()).add(str(r["plan_key"]))
+    only = sorted(only_plans) if only_plans else []
     n = 0
     for (race_key, mode), plans in keep.items():
         ph = ",".join("?" * len(plans))
+        restrict = f" AND plan_key IN ({','.join('?' * len(only))})" if only else ""
         cur = conn.execute(
             f"DELETE FROM type_lab_picks WHERE race_key = ? AND mode = ? "
-            f"AND settled_at IS NULL AND plan_key NOT IN ({ph})",
-            (race_key, mode, *sorted(plans)))
+            f"AND settled_at IS NULL AND plan_key NOT IN ({ph}){restrict}",
+            (race_key, mode, *sorted(plans), *only))
         n += getattr(cur, "rowcount", 0) or 0
     return n
 
 
-def save(rows: list[dict]) -> int:
+def save(rows: list[dict], only_plans: set[str] | None = None) -> int:
+    """行を UPSERT する。`only_plans` を渡すと**そのプランの行だけ**を書き、掃除もそこに限る。"""
+    if only_plans:
+        rows = [r for r in rows if str(r["plan_key"]) in only_plans]
     if not rows:
         return 0
     ph = ",".join("?" * len(COLS))
@@ -630,7 +640,7 @@ def save(rows: list[dict]) -> int:
            f"ON CONFLICT (race_key, plan_key, mode) DO UPDATE SET {upd}, {clear}, "
            f"generated_at = NOW()")
     with get_connection() as c:
-        dropped = _drop_stale_plans(c, rows)
+        dropped = _drop_stale_plans(c, rows, only_plans)
         for r in rows:
             c.execute(sql, tuple(r[k] for k in COLS))
         c.commit()
@@ -655,6 +665,10 @@ def main() -> None:
                     help="このレースだけ組み直す（複数指定可・live 専用）。"
                          "指定すると日全体を触らないので、既に入稿した買い目を"
                          "UPSERT で書き換えてしまう事故が起きない")
+    ap.add_argument("--only-plans", default="",
+                    help="このプランの行だけを書く（カンマ区切り・例 L_lead）。"
+                         "**他のプランの行は書き換えも削除もしない**ので、入稿済みの日に"
+                         "新しいプランだけを足すときに使う（2026-09-24）")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     global N_ENTRIES, MODE_TAG, ONLY_KEYS
@@ -662,6 +676,9 @@ def main() -> None:
     ONLY_KEYS = set(a.race_key) or None
     if ONLY_KEYS is not None and a.mode != "live":
         raise SystemExit("--race-key は --mode live 専用です")
+    only_plans = {p.strip() for p in a.only_plans.split(",") if p.strip()} or None
+    if only_plans and not only_plans <= set(PLANS):
+        raise SystemExit(f"--only-plans に知らないプランがあります: {sorted(only_plans - set(PLANS))}")
     # 🔴 **7車以外は mode に車数を付けて保存する**（'live9' / 'paper9'）。
     #    付け忘れると 9車の行が 7車の一覧・まとめ・合計表へ**黙って混入する**。
     #    分ける理由は隠すためではなく、**同じ plan_key でも配当帯が 2〜3倍違う**から
@@ -692,12 +709,15 @@ def main() -> None:
         day = a.date or date.today().isoformat()
         rows = run_live(day)
     from collections import Counter
+    if only_plans:
+        rows = [r for r in rows if str(r["plan_key"]) in only_plans]
+        print(f"--only-plans {sorted(only_plans)}: 他のプランの行は書かない・消さない")
     print("プラン別:", dict(Counter(r["plan_key"] for r in rows)))
     print("型別:", dict(Counter(r["type_label"] for r in rows)))
     if a.dry_run:
         print(f"[dry-run] {len(rows)} 行（保存しない）")
         return
-    print(f"保存 {save(rows)} 行  rule_version={rule_version(N_ENTRIES)}")
+    print(f"保存 {save(rows, only_plans)} 行  rule_version={rule_version(N_ENTRIES)}")
 
 
 if __name__ == "__main__":
