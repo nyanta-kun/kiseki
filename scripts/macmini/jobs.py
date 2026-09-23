@@ -30,6 +30,8 @@ from pathlib import Path
 
 HOME = "/Users/ysuzuki"
 KISEKI = f"{HOME}/GitHub/kiseki"
+# 自動実行専用の clone（対話開発と混ざらない・netkeirin への入稿権限を持たない）
+LAB = f"{HOME}/GitHub/kiseki-dev/keirin-lab"
 RUN_JOB = f"{KISEKI}/scripts/macmini/run_job.sh"
 LOG_DIR = f"{KISEKI}/logs/jobs"
 STATE_DIR = Path(HOME) / ".local/state/jobs"
@@ -76,11 +78,31 @@ JOBS: list[Job] = [
         max_age=32 * D,
         note="月初に不足月の vintage モデルを学習して VPS へ配布",
     ),
+    # 🔴 keirin-nightly-triage（毎日 00:12・夜間レポートを Claude に読ませて
+    #    「所見」を Discord へ出す）は 2026-09-23 に停止した。半日レビュー
+    #    （下記 keirin-lab-review-*）が同じ役割を担い、通知が二重になるため。
+    #    ⚠️ VPS cron 00:10 の nightly_review.sh は**止めていない**。あちらは
+    #    台帳（type_lab_nightly_ledger.csv）への追記・監査後の前向き観測・
+    #    HTML 配布を行っており、半日レビューはそれらを持たない。
     Job(
-        "keirin-nightly-triage",
-        ["/bin/bash", "scripts/nightly_triage.sh"],
-        cron=["12 0 * * *"],
-        cwd=f"{KISEKI}/keirin",
+        "keirin-lab-review-noon",
+        ["/bin/bash", "-c",
+         "cd keirin && .venv/bin/python scripts/lab_halfday_review.py --label 昼"],
+        cron=["0 14 * * *"],
+        cwd=LAB,
+        max_age=26 * H,
+        note="半日レビュー（昼）。予測オッズ誤差・確率較正・当落傾向を review ch へ",
+    ),
+    Job(
+        "keirin-lab-review-night",
+        ["/bin/bash", "-c",
+         "cd keirin && .venv/bin/python scripts/lab_halfday_review.py --label 夜"],
+        cron=["50 23 * * *"],
+        cwd=LAB,
+        max_age=26 * H,
+        note=("半日レビュー（夜）。⚠️ 23:50 はミッドナイトの最終レース"
+              "（23:20〜23:30 発走）の確定着順が入る前なので、当日最後の数レースは"
+              "翌日の昼回で拾う。累積窓（90日）での解析なので影響は小さい"),
     ),
     # --- JRA（JV-Link / Windows VM 依存） ---
     Job(

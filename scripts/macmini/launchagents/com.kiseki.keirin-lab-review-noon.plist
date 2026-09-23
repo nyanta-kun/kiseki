@@ -3,29 +3,30 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.kiseki.keirin-nightly-triage</string>
+	<string>com.kiseki.keirin-lab-review-noon</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
 		<string>/Users/ysuzuki/GitHub/kiseki/scripts/macmini/run_job.sh</string>
-		<string>keirin-nightly-triage</string>
+		<string>keirin-lab-review-noon</string>
 		<string>/bin/bash</string>
-		<string>scripts/nightly_triage.sh</string>
+		<string>-c</string>
+		<string>cd keirin &amp;&amp; .venv/bin/python scripts/lab_halfday_review.py --label 昼</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardErrorPath</key>
-	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-nightly-triage.launchd.log</string>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-lab-review-noon.launchd.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-nightly-triage.launchd.log</string>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-lab-review-noon.launchd.log</string>
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Hour</key>
-		<integer>0</integer>
+		<integer>14</integer>
 		<key>Minute</key>
-		<integer>12</integer>
+		<integer>0</integer>
 	</dict>
 	<key>WorkingDirectory</key>
-	<string>/Users/ysuzuki/GitHub/kiseki/keirin</string>
+	<string>/Users/ysuzuki/GitHub/kiseki-dev/keirin-lab</string>
 </dict>
 </plist>
