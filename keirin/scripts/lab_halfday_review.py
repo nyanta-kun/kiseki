@@ -27,11 +27,9 @@ docs/SELF_IMPROVEMENT_ROUTINE.md の四半期ゲートでのみ行う。
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import random
 import sys
-import urllib.request
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -292,20 +290,19 @@ def hypothesis(t: dict, paper_eff: float | None) -> str:
     return f"[裏付け:{strength}] {base}\n   → 検討: {action}。{note}"
 
 
-def post_discord(text: str, env_path: Path) -> bool:
-    url = None
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("DISCORD_WEBHOOK_URL_REVIEW="):
-                url = line.split("=", 1)[1].strip().strip('"').strip("'")
-    url = url or os.environ.get("DISCORD_WEBHOOK_URL_REVIEW")
-    if not url:
-        print("WARN: DISCORD_WEBHOOK_URL_REVIEW が見つからないため送信しません", file=sys.stderr)
-        return False
-    body = json.dumps({"content": text[:1900]}).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as res:
-        return 200 <= res.status < 300
+def post_discord(text: str) -> bool:
+    """既存の通知実装（`src/notify/discord.py`）へ委譲する。
+
+    🔴 自前で urllib を叩かないこと。Discord は既定の User-Agent
+    （`Python-urllib/3.x`）を **403 で弾く**（2026-09-23 実測。VPS の curl は 204 なのに
+    Mac の自前実装だけ 403 になり、URL の問題と誤診しかけた）。
+    既存実装は `User-Agent: DiscordBot (keirin-ai, 1.0)` を付けており、
+    チャンネル名の検証（`tests/test_discord_channels.py`）も効く。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.notify.discord import send
+
+    return send(text, channel="review")
 
 
 def main() -> int:
@@ -367,8 +364,7 @@ def main() -> int:
 
     print(text)
     if not args.dry_run:
-        env = Path(__file__).resolve().parent.parent / ".env"
-        ok = post_discord(text, env)
+        ok = post_discord(text)
         print(f"\nDiscord 送信: {'成功' if ok else '失敗'}", file=sys.stderr)
         return 0 if ok else 1
     return 0
