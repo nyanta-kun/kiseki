@@ -84,6 +84,13 @@ class SpeedIndexCalculator(IndexCalculator):
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
+        # 🔴 基準タイムキャッシュを事前ロードする（_single_race_speed_score が参照する）。
+        #    無いと _std_time_cache が空のまま → (0.0, 0.0) → std_dev < 0.01 で None →
+        #    全走が None になり、**常に SPEED_INDEX_MEAN(50) を返す**。
+        #    calculate_batch 側は v14 (2026-04-11) で同じ修正を入れたが、
+        #    こちらは呼び出し元が無かったため残っていた（composite.py の v14 注記を参照）。
+        await self._preload_standard_times(race_id)
+
         rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         scores = self._compute_scores(rows)
         score = self._weighted_average(scores)
@@ -106,9 +113,7 @@ class SpeedIndexCalculator(IndexCalculator):
             logger.warning(f"Race not found: race_id={race_id}")
             return {}
 
-        entries_result = await self.db.execute(
-            select(RaceEntry).where(RaceEntry.race_id == race_id)
-        )
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
         entries = entries_result.scalars().all()
         if not entries:
             return {}
@@ -133,9 +138,7 @@ class SpeedIndexCalculator(IndexCalculator):
     # 内部メソッド
     # ------------------------------------------------------------------
 
-    async def _get_past_results_for_horse(
-        self, horse_id: int, before_date: str, exclude_race_id: int
-    ) -> list[Any]:
+    async def _get_past_results_for_horse(self, horse_id: int, before_date: str, exclude_race_id: int) -> list[Any]:
         """単一馬の過去レース結果を取得する。
 
         Args:
@@ -235,9 +238,7 @@ class SpeedIndexCalculator(IndexCalculator):
                 scores.append(s)
         return scores
 
-    def _single_race_speed_score(
-        self, result: RaceResult, race: Race, entry: RaceEntry
-    ) -> float | None:
+    def _single_race_speed_score(self, result: RaceResult, race: Race, entry: RaceEntry) -> float | None:
         """1レース分のスピードスコアを算出する。
 
         Args:
@@ -362,9 +363,7 @@ class SpeedIndexCalculator(IndexCalculator):
             race_id: DB の races.id（このレースの出走馬の過去レース条件を収集）
         """
         # 対象レースの過去結果に登場するコース・距離・芝ダ・馬場の組み合わせを取得
-        entries_result = await self.db.execute(
-            select(RaceEntry).where(RaceEntry.race_id == race_id)
-        )
+        entries_result = await self.db.execute(select(RaceEntry).where(RaceEntry.race_id == race_id))
         entries = entries_result.scalars().all()
         horse_ids = [e.horse_id for e in entries]
 
