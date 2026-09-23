@@ -222,7 +222,10 @@ def main():
         _q = [t for t in spec[1:] if t.startswith("p") and t[1:].isdigit()]
         _G.AXIS_GATE_MIN = (dict(AXIS_GATE_QUANTILES[int(_q[0][1:])])
                             if _q else dict(gate_min0))
-        TL.ADD_PERM_PLANS = frozenset() if base == "v0907" else addperm0
+        TL.ADD_PERM_PLANS = (
+            frozenset() if base == "v0907" or "noaddperm" in spec[1:]
+            else (addperm0 - {"A_hit", "B_hit"}) if "noaddperm_ab" in spec[1:]
+            else addperm0)
         if base == "v0907":
             plans = v0907()
             TL.GATE_FALLBACK = {k: v for k, v in gf0.items() if k != "F_hit"}
