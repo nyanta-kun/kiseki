@@ -18,8 +18,10 @@ RUN adduser --disabled-password --gecos '' appuser && \
     chown -R appuser /app /home/appuser/.cache
 USER appuser
 
-COPY --chown=appuser:appuser pyproject.toml .
-RUN uv sync --no-dev
+# 🔴 uv.lock は uv sync より前に置くこと。後ろの `COPY . .` で入れると
+#    ビルドは pyproject から解決し、実行時の `uv run` が別のロックを読む形になる。
+COPY --chown=appuser:appuser pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen
 
 COPY --chown=appuser:appuser . .
 
