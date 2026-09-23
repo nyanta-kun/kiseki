@@ -11,6 +11,18 @@ on:
   pull_request:
     branches: [main]
 
+# 🔴 main への push は必ず1本ずつ走らせる。2026-09-23 に PR を 16 秒差でマージしたところ、
+#    2つの run の `Build & Push Backend Image` が重なって同じタグ
+#    `ghcr.io/nyanta-kun/kiseki/backend:main` へ同時 push し、続く2つの deploy が
+#    どちらも `galloplab-backend-b exited (2)` で落ちた（run 35807603221 / 35807622871）。
+#    単独で走らせ直したら同じコードで成功している（run 35808130222）。
+#    deploy は VPS 上で `git reset --hard origin/main` と blue-green 切り替えを打つため、
+#    2本同時に走らせてはいけない。
+#    PR では古い run を打ち切ってよいが、main では打ち切らない（デプロイの中断は危険）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   guards:
     name: Guards (並列開発ガード)
