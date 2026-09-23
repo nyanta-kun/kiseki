@@ -23,14 +23,14 @@
 |---|---|---|
 | 運用ルール全般 | `CLAUDE.md` / `AGENTS.md` | |
 | 競輪 — 検証済みの事実 | `keirin/docs/AUDIT_2026_09_20.md` | 旧文書と食い違えば**こちらが正** |
-| 競輪 — 推奨の全体像 | `keirin/docs/RECOMMENDATION.md` | ⚠️ 一部が古い（§3.4 参照） |
+| 競輪 — 推奨の全体像 | `keirin/docs/RECOMMENDATION.md` | |
 | 競輪 — 型ラボの一次資料 | `keirin/docs/type_lab/`（`SUMMARY.md`・`RUNBOOK.md`・`type_{a..f}.md`） | |
 | 競輪 — 自己改善ルーチン | `keirin/docs/SELF_IMPROVEMENT_ROUTINE.md` | |
 | 中央 — 再整理の作業台帳 | `docs/jra_rebuild_2026_08.md` | |
 | 中央 — v28 | `docs/jra_winplace_structure_plan_2026_09_04.md` | |
 | 中央 — ラップ特徴 | `docs/jra_lap_feature_plan_2026_09_16.md` | |
 | 中央 — TEST 使用台帳 | `backend/scripts/JRA_TEST_USAGE_LEDGER.md` | |
-| 地方 — 再整理の作業台帳 | `docs/chihou_rebuild_2026_08.md` | ⚠️ §15.3 が古い（§3.4） |
+| 地方 — 再整理の作業台帳 | `docs/chihou_rebuild_2026_08.md` | |
 | sekito 統合 / POG | `docs/pog_migration_plan_2026_09_08.md` / `docs/phase4_auth_decision_2026_09_08.md` | |
 | ブランチ棚卸し | `docs/branch_cleanup_2026_09_23.md` | |
 | Mac mini 移行 | `scripts/macmini/README.md` | |
@@ -204,17 +204,23 @@
   ほかに風・師匠・身体測定・条件別成績・LambdaRank・他券種オッズの特徴量化も否定済み。
   O10・T7・money-flow などの live 追跡は、旧ランクの破棄とともに停止した。
 
-#### 古いまま残っている記述（直すまで注意）
+#### 古い記述の是正（2026-09-23 済み）
+
+台帳作成時に見つけた古い記述は、本番コードと突き合わせて次のとおり直した。
 
 - `RECOMMENDATION.md`
-  - §2.1: E_hit が「14点・ダッチ」のまま（実際は τ適応・信頼度配分）
-  - §2.2: 看板枠に特選が入ったまま
-  - §5: 時刻が 07:20 のまま
-  - §8: 制約欄が「看板は必ず出す」のまま。§8 の5件も 09-02 のまま
-- `CLAUDE.md`（ルート）の競輪節: 「看板レースには必ず推奨を出す」のまま
-- `docs/chihou_rebuild_2026_08.md` §15.3: 誤った「P4 未活用」と「P2」が残っている
-- `docs/upset_seat_decomposition_plan_2026_09_02.md`: 「草案・未着手」のまま（実際は Phase 0〜1 を実施済み）
-- `frontend/src/app/keirin/page.tsx` のヘッダーの型ラボリンク: コメントが「検証用・入稿しない」のまま
+  - E_hit の点数（14点固定 → τ適応 3〜20点・conf）
+  - 看板枠の種別（特選系を外した）
+  - 9車型F の `F_line` 分岐
+  - 運用時刻（07:20 → 07:00 の `daily_picks_wt.sh` から呼ぶ）
+  - §8 の5件を現状へ仕分け
+  - 制約欄の「看板は必ず出す」を取り消し済みと明記
+- ルート `CLAUDE.md` / `AGENTS.md` の看板レース節: 取り消し済みと明記し、旧ランク前提の記述を削除
+- `keirin/CLAUDE.md` / `docs/type_lab/RUNBOOK.md` の cron 時刻
+- `docs/chihou_rebuild_2026_08.md` §15: 時点スナップショットであることを明記し、各項目に現状を注記
+- `docs/upset_seat_decomposition_plan_2026_09_02.md`: 状態を「Phase 1 で決着」へ
+- 型ラボの「検証用・入稿しない」表記（ヘッダーのリンク・`api.ts`）。⚠️ `backend/src/db/keirin_models.py` の docstring「型ラボ（検証用）」は未修正（ファイル全体が ruff-format 未適用で、直すと無関係な整形差分が出るため）
+- `AUDIT_2026_09_20.md` §2.1 の関数パス（`_passes_axis_gate` の所在は `scripts/netkeirin_submit_type_lab.py`）
 
 ---
 
@@ -256,7 +262,6 @@
 | `calculated_indices` の旧世代の削除（`prune_calculated_indices.py` は地方に未対応） | 未着手 |
 | `odds_history` 刈り込み（#531）の実行結果の確認 | 未確認 |
 | v14 で tier が動いたことに伴う買い目閾値の見直し | 未着手 |
-| `docs/chihou_rebuild_2026_08.md` §15.3 の訂正 | 未着手 |
 
 ### 4.4 競輪
 

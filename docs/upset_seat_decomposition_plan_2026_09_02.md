@@ -2,7 +2,7 @@
 
 - 起草日: 2026-09-02
 - 対象柱: `jra` / `chihou`（`keirin` は対象外）
-- 状態: **草案・未着手**。事前登録も TEST 消費もまだ行っていない
+- 状態: **Phase 1 で決着（2026-09-02）**。事前登録（`upset_seat_preregistration_2026_09_02.md`）に沿って Phase 0〜1 を実施し、地方（#430）・JRA（#431）とも **stop rule #1 で学習モデルは不採用**。学習しない `base_a`（期待空席数）が全腕で最良。Phase 2 は実施しない。結果は事前登録 §17
 - 前提文書: `docs/chihou_rebuild_2026_08.md` 17章 / `docs/PROJECT_STATUS.md` §3.2（旧 2026-08-23 引き継ぎメモ） / `backend/docs/chihou_exotic_type_lab_2026_08_29.md` §10 / `docs/jra_new_index_results.md` Phase3
 
 ---

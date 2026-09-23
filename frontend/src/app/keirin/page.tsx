@@ -2237,11 +2237,13 @@ export default function KeirinPage() {
             <HelpCircle size={15} />
             <span className="hidden sm:inline">推奨ガイド</span>
           </Link>
-          {/* 型ラボ（検証用・入稿しない）。既存商品とは別テーブル・別ページ。 */}
+          {/* 型ラボ。2026-08-29 の全面移行から**売っている商品そのもの**（旧ランクは #603 で全廃）。
+              当初は「検証期間だけの4つ目のリンク」として置いたもので、常設にするか
+              一覧へ統合するかは未決（`docs/PROJECT_STATUS.md` §4.4）。 */}
           <Link
             href="/keirin/type-lab"
             className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 transition-colors"
-            aria-label="型ラボ（検証用）"
+            aria-label="型ラボ"
           >
             <FlaskConical size={15} />
             <span className="hidden sm:inline">型ラボ</span>
