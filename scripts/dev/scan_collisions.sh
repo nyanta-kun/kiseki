@@ -24,14 +24,35 @@ BASE="origin/main"
 git rev-parse --verify "$BASE" >/dev/null 2>&1 || BASE="main"
 
 files_of() {
-  local br="$1" mb
+  local br mb
+  br="$(resolve_ref "$1")"
   mb="$(git merge-base "$br" "$BASE" 2>/dev/null)" || return 0
   git diff --name-only "$mb".."$br" 2>/dev/null
 }
 
+# 🔴 **origin のブランチも見ること**（2026-09-23 修正）。
+#    worktree 構成では全ブランチが1リポジトリの refs/heads にあったが、柱ごとに
+#    clone を分けた（~/GitHub/kiseki-dev/）結果、**他フォルダの作業ブランチは
+#    origin にしか無くなった**。refs/heads だけを見ていた旧実装は、構成変更の時点で
+#    「他の clone との衝突」を1件も検出できなくなっていた（空振りするだけで
+#    エラーにならないので気づけない）。
+#
+#    ローカルに同名ブランチがある場合は origin 側を落とす（同じ作業を2回出さない）。
 active_branches() {
-  git for-each-ref --format='%(refname:short)' refs/heads \
-    | grep -vE '^(main|master)$'
+  {
+    git for-each-ref --format='%(refname:short)' refs/heads
+    # ⚠️ %(refname:short) は refs/remotes/origin/HEAD を **origin** と略すので、
+    #    短縮名で HEAD を弾こうとしても引っかからない。フル名で落とすこと。
+    git for-each-ref --format='%(refname)' refs/remotes/origin \
+      | grep -vE '/HEAD$' \
+      | sed 's|^refs/remotes/origin/||'
+  } | grep -vE '^(main|master)$' | sort -u
+}
+
+#: ブランチ名を実在する ref へ解決する（ローカル優先・無ければ origin/）。
+resolve_ref() {
+  git rev-parse --verify -q "$1" >/dev/null && { echo "$1"; return; }
+  echo "origin/$1"
 }
 
 report_pair() {

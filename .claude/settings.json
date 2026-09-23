@@ -2,7 +2,8 @@
   "$comment": [
     "リポジトリ共有の Claude Code 設定（git 管理下・全 clone に効く）。",
     "個人環境・機械固有の設定は .claude/settings.local.json（git 管理外）へ書くこと。",
-    "2026-09-23 新設: 秘密情報のコミットを機械的に止めるため。"
+    "2026-09-23 新設: 秘密情報のコミットを機械的に止めるため。",
+    "2026-09-23 追加: SessionStart フックで「自分の clone の遅れ」「本番が実際に動かしているコミット」「他 clone の作業」を毎回モデルへ渡す（古いコードで現状を調べる事故を防ぐ）。stdout がそのままコンテキストに入る。"
   ],
   "hooks": {
     "PreToolUse": [
@@ -14,6 +15,19 @@
             "if": "Bash(git commit *)",
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/secret-guard.sh",
             "statusMessage": "秘密情報の検査中"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/scripts/dev/session_context.sh",
+            "timeout": 25,
+            "statusMessage": "リポジトリの現在地を確認中"
           }
         ]
       }
