@@ -152,11 +152,11 @@ docs へ委ねているので、消すと**根拠を辿れない定数**が残�
 
 ```
 docs/RECOMMENDATION.md                  # ★競輪の推奨 — 現状の全体像（最初に読む）
-CONTINUATION.md                         # 2026-07-07までの検証履歴アーカイブ（★引継ぎメモではない）
-                                        #   価値があるのは「リーク無し再検証で結論が
-                                        #   変わったもの（要注意）」等の negative result 記録。
-                                        #   現行の状態は本ファイル、未対応作業は
-                                        #   kiseki側メモリ open_tasks_register を正本とする
+docs/AUDIT_2026_09_20.md                # ★検証済み事実の正本（旧文書と食い違えばこちらが正）
+../docs/PROJECT_STATUS.md               # ★全柱の現況台帳（実装状況・検証結果・未検証）。
+                                        #   旧 CONTINUATION.md（〜2026-07-07 の検証履歴）と
+                                        #   引き継ぎメモ群は 2026-09-23 にここへ統合して削除。
+                                        #   引き継ぎメモは新設せず、この台帳を書き換える
 docs/prediction-factors.md             # 予想ファクター仕様書（要メンテ）
 docs/system-architecture.md            # システム構成・CLIコマンド一覧
 docs/data-collection.md                # データ収集手順（ks + winticket）

@@ -112,7 +112,7 @@ def _tracked_files() -> list[str]:
         ("frontend/src/components/RaceCard.tsx", "jra"),
         # --- other は「コード以外」だけ ---
         ("README.md", "other"),
-        ("HANDOFF_2026-08-31.md", "other"),
+        ("docs/PROJECT_STATUS.md", "other"),
     ],
 )
 def test_representative_paths_keep_their_pillar(path: str, expected: str) -> None:
@@ -128,11 +128,7 @@ def test_no_code_file_falls_through_to_other() -> None:
     other は check_ownership.sh の柱集計から除外される＝警告が一切出なくなる。
     ここに落ちたコードは並列開発ガードの外側に出る。
     """
-    targets = [
-        p
-        for p in _tracked_files()
-        if p.startswith(CODE_PREFIXES) and p.endswith(CODE_SUFFIXES)
-    ]
+    targets = [p for p in _tracked_files() if p.startswith(CODE_PREFIXES) and p.endswith(CODE_SUFFIXES)]
     assert targets, "対象ファイルが1件も取れていません（git ls-files の失敗を疑う）"
 
     classified = _classify(targets)

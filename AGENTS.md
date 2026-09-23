@@ -374,6 +374,13 @@ netkeirin の分析支援ツール「予想家成績状況」
   - `has_anagusa` 判定はスコア閾値でなく sekito.anagusa のピック有無で行う
   - `anagusa_rank`（A/B/C）は API の `HorseIndexOut` レスポンスに含まれる（DBには未格納）
 
+## 現況台帳（引き継ぎメモは作らない）
+
+全柱の「最新の実装状況・検証結果・未検証」は **`docs/PROJECT_STATUS.md`** に一本化してある
+（2026-09-23 に `HANDOFF_*.md` ・ `keirin/CONTINUATION.md` 等を統合して削除）。
+🔴 **日付入りの引き継ぎメモを新設せず、台帳を直接書き換えること。**
+`backend/tests/test_no_handoff_memos.py` が再発を止めている。
+
 ## コミュニケーションルール
 - **応答は常に日本語で行うこと**
 
