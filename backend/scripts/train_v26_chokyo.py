@@ -58,9 +58,14 @@ WINDOW_DAYS = 35
 HISTORY_FLOOR = "20230101"
 
 CHOKYO_FEATURES = [
+    # 絶対系（同トレセン比）
     "chokyo_4f_z", "chokyo_last1f_z", "chokyo_accel",
     "chokyo_days_since", "chokyo_count_35d",
+    # 個体相対系（馬自身の過去norm比 = 上昇気配）+ 最終追い特定
+    "chokyo_self_4f_dev", "chokyo_self_1f_dev", "chokyo_final_last1f_z",
 ]
+BASELINE_DAYS = 180  # 自己ベースライン参照窓（prep窓より前 35〜180日）
+MIN_BASELINE = 3     # 自己ベースライン算出の最低本数
 
 SLOPE_HISTORY_QUERY = """
 SELECT h.id AS horse_id, st.training_date, st.center,
@@ -80,10 +85,10 @@ def _to_date(yyyymmdd: str):
         return None
 
 
-def load_slope(conn, end: str):
+def load_slope(conn, end: str, floor: str = HISTORY_FLOOR):
     """坂路履歴を取得し、トレセン別z統計と horse_id→works のマップを返す。"""
     cur = conn.cursor()
-    cur.execute(SLOPE_HISTORY_QUERY, {"floor": HISTORY_FLOOR, "end": end})
+    cur.execute(SLOPE_HISTORY_QUERY, {"floor": floor, "end": end})
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     cur.close()
@@ -123,6 +128,10 @@ def load_slope(conn, end: str):
     return cstats, works_by_horse
 
 
+def _valid(v) -> bool:
+    return v is not None and not pd.isna(v)
+
+
 def _features_for(race_date, horse_id, works_by_horse, cstats) -> dict[str, float]:
     nan = {f: np.nan for f in CHOKYO_FEATURES}
     works = works_by_horse.get(int(horse_id))
@@ -134,28 +143,39 @@ def _features_for(race_date, horse_id, works_by_horse, cstats) -> dict[str, floa
     cand = [w for w in works if 0 < (rd - w["date"]).days <= WINDOW_DAYS]
     if not cand:
         return nan
-    # 本追い = 最速4F
-    best = min(cand, key=lambda w: w["time_4f"])
-    last = max(cand, key=lambda w: w["date"])
+    best = min(cand, key=lambda w: w["time_4f"])      # 本追い=最速4F
+    final = max(cand, key=lambda w: w["date"])         # 最終追い=直近
     cs = cstats.get(best["center"])
-    if cs is None:
-        f4z = f1z = np.nan
-    else:
-        f4z = (best["time_4f"] - cs["m4f"]) / cs["s4f"]
-        f1z = ((best["lap_200_0"] - cs["m1f"]) / cs["s1f"]
-               if best["lap_200_0"] is not None and not pd.isna(best["lap_200_0"]) else np.nan)
+
+    def _z(v, mkey, skey):
+        if cs is None or not _valid(v):
+            return np.nan
+        return (v - cs[mkey]) / cs[skey]
+
+    f4z = _z(best["time_4f"], "m4f", "s4f")
+    f1z = _z(best["lap_200_0"], "m1f", "s1f")
+    final_1fz = _z(final["lap_200_0"], "m1f", "s1f")
     accel = (
         best["lap_400_200"] - best["lap_200_0"]
-        if best["lap_400_200"] is not None and best["lap_200_0"] is not None
-        and not pd.isna(best["lap_400_200"]) and not pd.isna(best["lap_200_0"])
-        else np.nan
+        if _valid(best["lap_400_200"]) and _valid(best["lap_200_0"]) else np.nan
     )
+
+    # 個体相対: prep窓より前(35〜180日)の自己norm比。負=今回の追いが自分の平常より速い=上昇
+    base = [w for w in works if WINDOW_DAYS < (rd - w["date"]).days <= BASELINE_DAYS]
+    b4 = [w["time_4f"] for w in base if _valid(w["time_4f"])]
+    b1 = [w["lap_200_0"] for w in base if _valid(w["lap_200_0"])]
+    self_4f = (best["time_4f"] - float(np.median(b4))) if len(b4) >= MIN_BASELINE and _valid(best["time_4f"]) else np.nan
+    self_1f = (final["lap_200_0"] - float(np.median(b1))) if len(b1) >= MIN_BASELINE and _valid(final["lap_200_0"]) else np.nan
+
     return {
         "chokyo_4f_z": f4z,
         "chokyo_last1f_z": f1z,
         "chokyo_accel": accel,
-        "chokyo_days_since": float((rd - last["date"]).days),
+        "chokyo_days_since": float((rd - final["date"]).days),
         "chokyo_count_35d": float(len(cand)),
+        "chokyo_self_4f_dev": self_4f,
+        "chokyo_self_1f_dev": self_1f,
+        "chokyo_final_last1f_z": final_1fz,
     }
 
 
@@ -248,6 +268,15 @@ def main() -> None:
     p.add_argument("--learning-rate", type=float, default=0.05)
     p.add_argument("--num-iterations", type=int, default=500)
     p.add_argument("--seeds", type=int, default=5)
+    # データ窓（既定=v26標準。option=1の1年データで早期A/Bする場合は recent 窓を指定）
+    p.add_argument("--train-start", default="20230501")
+    p.add_argument("--train-end", default="20250630")
+    p.add_argument("--valid-start", default="20250701")
+    p.add_argument("--valid-end", default="20251231")
+    p.add_argument("--test-start", default="20260101")
+    p.add_argument("--test-end", default="20260430")
+    p.add_argument("--slope-floor", default=HISTORY_FLOOR,
+                   help="坂路履歴取得の下限日(既定20230101)。option=1の1年データなら20250527等")
     args = p.parse_args()
 
     dsn = (
@@ -257,11 +286,11 @@ def main() -> None:
     )
     conn = psycopg2.connect(dsn)
 
-    cstats, works = load_slope(conn, "20260430")
+    cstats, works = load_slope(conn, args.test_end, args.slope_floor)
 
-    df_train = attach_chokyo(featurize(fetch_dataset(conn, "20230501", "20250630")), works, cstats)
-    df_valid = attach_chokyo(featurize(fetch_dataset(conn, "20250701", "20251231")), works, cstats)
-    df_test = attach_chokyo(featurize(fetch_dataset(conn, "20260101", "20260430")), works, cstats)
+    df_train = attach_chokyo(featurize(fetch_dataset(conn, args.train_start, args.train_end)), works, cstats)
+    df_valid = attach_chokyo(featurize(fetch_dataset(conn, args.valid_start, args.valid_end)), works, cstats)
+    df_test = attach_chokyo(featurize(fetch_dataset(conn, args.test_start, args.test_end)), works, cstats)
     conn.close()
 
     for d in (df_train, df_valid, df_test):

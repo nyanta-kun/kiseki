@@ -504,7 +504,11 @@ def fetch_realtime_data(nv, dataspec: str, key: str) -> list[dict]:
     """
     rc = nv.NVRTOpen(dataspec, key)
     if rc < 0:
-        logger.debug(f"NVRTOpen no data: rc={rc}, dataspec={dataspec}, key={key[:16]}")
+        logger.info(f"NVRTOpen no data: rc={rc}, dataspec={dataspec}, key={key[:16]}")
+        try:
+            nv.NVClose()
+        except Exception:
+            pass
         return []
 
     records: list[dict] = []
@@ -1325,13 +1329,14 @@ def main() -> None:
             all_results: list[dict] = []
             for i, race_key in enumerate(race_keys):
                 result_key = race_key[:10] + race_key[14:]  # YYYYMMDDJJRR (12文字)
+                logger.info(f"  [{i+1}/{len(race_keys)}] race_key={race_key} result_key={result_key}")
                 records = fetch_realtime_data(nv, RT_RESULT, result_key)
                 recs = [r for r in records if r.get("rec_id") in ("RA", "SE", "HR")]
                 if recs:
                     logger.info(f"  [{i+1}/{len(race_keys)}] {result_key}: {len(recs)} 件")
                     all_results.extend(recs)
                 else:
-                    logger.debug(f"  [{i+1}/{len(race_keys)}] {result_key}: データなし")
+                    logger.info(f"  [{i+1}/{len(race_keys)}] {result_key}: データなし")
             if all_results:
                 ra_se, hr = _split_race_hr(all_results)
                 if ra_se:

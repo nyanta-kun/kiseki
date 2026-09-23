@@ -38,6 +38,27 @@ const RULE_COLORS: Record<string, string> = {
   Rule4: "bg-orange-50 text-orange-700 border-orange-200",
 };
 
+function calcDailyRoi(items: AnagusaRuleItem[]) {
+  const settled = items.filter((i) => i.finish_position != null);
+  const n = settled.length;
+  if (n === 0) return null;
+  const winReturn = settled.reduce(
+    (s, i) => s + (i.finish_position === 1 && i.win_odds != null ? i.win_odds : 0),
+    0,
+  );
+  const placeReturn = settled.reduce(
+    (s, i) => s + (i.finish_position! <= 3 && i.place_odds != null ? i.place_odds : 0),
+    0,
+  );
+  return { n, total: items.length, winRoi: winReturn / n, placeRoi: placeReturn / n };
+}
+
+function roiColor(roi: number) {
+  if (roi >= 1.0) return "text-emerald-600 font-bold";
+  if (roi >= 0.7) return "text-yellow-600";
+  return "text-red-500";
+}
+
 export function AnagusaRulePanel({ initialItems, date }: Props) {
   const [items, setItems] = useState<AnagusaRuleItem[]>(initialItems);
 
@@ -53,6 +74,8 @@ export function AnagusaRulePanel({ initialItems, date }: Props) {
     return () => clearInterval(timer);
   }, [date]);
 
+  const roi = calcDailyRoi(items);
+
   if (items.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
@@ -66,7 +89,7 @@ export function AnagusaRulePanel({ initialItems, date }: Props) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      <SectionHeader count={items.length} />
+      <SectionHeader count={items.length} roi={roi} />
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -197,13 +220,26 @@ export function AnagusaRulePanel({ initialItems, date }: Props) {
   );
 }
 
-function SectionHeader({ count }: { count?: number }) {
+type RoiStats = { n: number; total: number; winRoi: number; placeRoi: number } | null;
+
+function SectionHeader({ count, roi }: { count?: number; roi?: RoiStats }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-gray-100">
       <span className="text-sm font-bold text-gray-700">穴ぐさ条件推奨</span>
       {count != null && count > 0 && (
         <span className="px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-100 text-orange-700">
           {count}頭
+        </span>
+      )}
+      {roi != null && (
+        <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
+          <span className="text-gray-400">|</span>
+          <span>当日ベタ買い</span>
+          <span className="text-gray-400">{roi.n}/{roi.total}頭確定</span>
+          <span className="text-gray-400">単:</span>
+          <span className={roiColor(roi.winRoi)}>{roi.winRoi.toFixed(3)}</span>
+          <span className="text-gray-400">複:</span>
+          <span className={roiColor(roi.placeRoi)}>{roi.placeRoi.toFixed(3)}</span>
         </span>
       )}
       <span className="ml-auto text-[10px] text-gray-400">rank_A × 場/面/距離</span>

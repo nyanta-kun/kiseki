@@ -84,6 +84,10 @@ class SpeedIndexCalculator(IndexCalculator):
             logger.warning(f"Race not found: race_id={race_id}")
             return SPEED_INDEX_MEAN
 
+        # sync の _single_race_speed_score が参照する基準タイムを事前ロードする。
+        # これがないと _std_time_cache が空のままで常に SPEED_INDEX_MEAN を返す既知の不具合になる。
+        await self._preload_standard_times(race_id)
+
         rows = await self._get_past_results_for_horse(horse_id, race.date, race_id)
         scores = self._compute_scores(rows)
         score = self._weighted_average(scores)
