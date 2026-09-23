@@ -106,9 +106,7 @@ def _make_result(finish_time: float, finish_position: int = 1, abnormality: int 
     return r
 
 
-def _make_race(
-    course: str = "05", distance: int = 1600, surface: str = "芝", condition: str = "良"
-) -> MagicMock:
+def _make_race(course: str = "05", distance: int = 1600, surface: str = "芝", condition: str = "良") -> MagicMock:
     r = MagicMock()
     r.course = course
     r.distance = distance
@@ -135,55 +133,39 @@ class TestSingleRaceSpeedScore:
     def test_average_horse_gets_mean(self) -> None:
         """基準タイムちょうどなら指数 ≈ 50（斤量補正なし）。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(93.0), _make_race(), _make_entry(BASE_WEIGHT)
-        )
+        result = calc._single_race_speed_score(_make_result(93.0), _make_race(), _make_entry(BASE_WEIGHT))
         assert result == pytest.approx(SPEED_INDEX_MEAN, abs=0.1)
 
     def test_fast_horse_gets_above_mean(self) -> None:
         """基準より1σ速い (91.0秒) → 指数 ≈ 60。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(91.0), _make_race(), _make_entry(BASE_WEIGHT)
-        )
+        result = calc._single_race_speed_score(_make_result(91.0), _make_race(), _make_entry(BASE_WEIGHT))
         assert result == pytest.approx(60.0, abs=0.1)
 
     def test_slow_horse_gets_below_mean(self) -> None:
         """基準より1σ遅い (95.0秒) → 指数 ≈ 40。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(95.0), _make_race(), _make_entry(BASE_WEIGHT)
-        )
+        result = calc._single_race_speed_score(_make_result(95.0), _make_race(), _make_entry(BASE_WEIGHT))
         assert result == pytest.approx(40.0, abs=0.1)
 
     def test_weight_correction_heavy(self) -> None:
         """重い斤量（60kg）は補正でタイムが加算され指数が下がる。"""
         calc = self._calc()
-        score_base = calc._single_race_speed_score(
-            _make_result(93.0), _make_race(), _make_entry(55.0)
-        )
-        score_heavy = calc._single_race_speed_score(
-            _make_result(93.0), _make_race(), _make_entry(60.0)
-        )
+        score_base = calc._single_race_speed_score(_make_result(93.0), _make_race(), _make_entry(55.0))
+        score_heavy = calc._single_race_speed_score(_make_result(93.0), _make_race(), _make_entry(60.0))
         assert score_heavy < score_base  # 5kg分の不利
 
     def test_weight_correction_light(self) -> None:
         """軽い斤量（52kg）は補正でタイムが減算され指数が上がる。"""
         calc = self._calc()
-        score_base = calc._single_race_speed_score(
-            _make_result(93.0), _make_race(), _make_entry(55.0)
-        )
-        score_light = calc._single_race_speed_score(
-            _make_result(93.0), _make_race(), _make_entry(52.0)
-        )
+        score_base = calc._single_race_speed_score(_make_result(93.0), _make_race(), _make_entry(55.0))
+        score_light = calc._single_race_speed_score(_make_result(93.0), _make_race(), _make_entry(52.0))
         assert score_light > score_base
 
     def test_scratch_returns_none(self) -> None:
         """除外馬（abnormality_code=1）は None を返す。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(93.0, abnormality=1), _make_race(), _make_entry()
-        )
+        result = calc._single_race_speed_score(_make_result(93.0, abnormality=1), _make_race(), _make_entry())
         assert result is None
 
     def test_no_finish_time_returns_none(self) -> None:
@@ -204,17 +186,13 @@ class TestSingleRaceSpeedScore:
     def test_index_clipped_at_100(self) -> None:
         """超高速タイム → 100 でクリップ。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(40.0), _make_race(), _make_entry(BASE_WEIGHT)
-        )
+        result = calc._single_race_speed_score(_make_result(40.0), _make_race(), _make_entry(BASE_WEIGHT))
         assert result == 100.0
 
     def test_index_clipped_at_0(self) -> None:
         """超低速タイム → 0 でクリップ。"""
         calc = self._calc()
-        result = calc._single_race_speed_score(
-            _make_result(200.0), _make_race(), _make_entry(BASE_WEIGHT)
-        )
+        result = calc._single_race_speed_score(_make_result(200.0), _make_race(), _make_entry(BASE_WEIGHT))
         assert result == 0.0
 
 
@@ -305,3 +283,48 @@ class TestCalculateBatch:
         calc = self._build_calc_with_past_data(horse_ids, past_scores)
         result = await calc.calculate_batch(race_id=1)
         assert result[101] > result[102]
+
+
+# ---------------------------------------------------------------------------
+# SpeedIndexCalculator.calculate（単一馬）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCalculateSinglePreloadsStandardTimes:
+    """単一馬経路でも基準タイムを事前ロードすること。
+
+    🔴 これを外すと _std_time_cache が空のまま _single_race_speed_score が走り、
+       (0.0, 0.0) → std_dev < 0.01 → None となって **常に SPEED_INDEX_MEAN を返す**。
+       エラーもログも出ないので、値を見ても気づけない（v14 で calculate_batch 側に
+       入れた修正と同じ罠）。
+    """
+
+    async def test_calculate_awaits_preload(self) -> None:
+        db = MagicMock()
+        race = MagicMock()
+        race.date = "2026-01-01"
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=race)
+        db.execute = AsyncMock(return_value=result)
+
+        calc = SpeedIndexCalculator(db)
+        calc._preload_standard_times = AsyncMock(return_value=None)
+        calc._get_past_results_for_horse = AsyncMock(return_value=[])
+
+        await calc.calculate(race_id=1, horse_id=101)
+
+        calc._preload_standard_times.assert_awaited_once_with(1)
+
+    async def test_missing_race_returns_mean_without_preload(self) -> None:
+        """レースが無いときは事前ロードせず SPEED_INDEX_MEAN を返す。"""
+        db = MagicMock()
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=None)
+        db.execute = AsyncMock(return_value=result)
+
+        calc = SpeedIndexCalculator(db)
+        calc._preload_standard_times = AsyncMock(return_value=None)
+
+        assert await calc.calculate(race_id=1, horse_id=101) == SPEED_INDEX_MEAN
+        calc._preload_standard_times.assert_not_awaited()
