@@ -98,8 +98,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # 🔴 --frozen を付けること。付けないと uv sync は読めないロックを黙って
+      #    作り直して先へ進むため、「ロックが正しい」ことを検証できない。
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --frozen
 
       - name: Lint (ruff)
         run: uv run ruff check .
