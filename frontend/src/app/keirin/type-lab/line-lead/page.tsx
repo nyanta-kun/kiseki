@@ -6,19 +6,20 @@
  * 「もし売っていたら」を、**同じレースで実際に出した商品（買わなくなるランク）**と
  * 並べて見る。置き換えの定義と会計は `backend/src/services/keirin_line_lead_verify.py`。
  *
- * - 新ランク: 得点1位でないラインの逃げ先頭（得点5位以下）→番手→3着・1レース1万円均等
- * - 買わなくなるランク: 新ランクの行があるレースで netkeirin へ出した商品
- * - 現行 ↔ 置き換え: 売った全商品 ↔ 新ランクのレースだけ置き換えた場合
+ * 表示は2つ（2026-09-24 ユーザー要望で「1日」を追加・既定）:
+ * - **1日**: その日の推奨レースを発走順に、買い目（1点ごとの賭け金・想定払戻）と結果、
+ *   同じレースで売っていた商品を並べる。◀ ▶ で日を移動する
+ * - **期間の集計**: まとめ・日別の表・レース一覧（日付を押すとその日の「1日」へ移る）
  *
  * 🔴 **1日・1か月の数字で判断しない。** 的中は 1日 0.7本前後で、大当たり数本で
  *    回収率が大きく動く（2026-09 は1本で +20pt）。「大当たり3本を除く回収率」を必ず併せて見る。
  * 設計と実測: keirin/docs/type_lab/line_lead_2026_09_24.md
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, FlaskConical, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, FlaskConical, RefreshCw } from "lucide-react";
 import {
-  fetchLineLead, hhmmJst, profit, roiTone,
+  expectedPayout, fetchLineLead, hhmmJst, profit, roiTone, shiftDay,
   type LineLeadDay, type LineLeadRace, type LineLeadResponse, type LineLeadTally,
 } from "@/lib/keirinLineLead";
 
@@ -30,45 +31,43 @@ const man = (n: number | null | undefined) =>
 const pct = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(1)}%`);
 const signed = (n: number) => `${n >= 0 ? "+" : ""}${man(n)}`;
 
-/** n 日前の ISO 日付（**端末のローカル時刻**・`/keirin/type-lab` と同じ理由で UTC を使わない）。 */
-function isoDaysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** 今日の ISO 日付（**端末のローカル時刻**・`/keirin/type-lab` と同じ理由で UTC を使わない）。 */
+const today = () => shiftDay(new Date().toLocaleDateString("sv-SE"), 0);
 const mmdd = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
+const WEEK = "日月火水木金土";
+const withWeekday = (iso: string) => `${mmdd(iso)}（${WEEK[new Date(`${iso}T00:00:00`).getDay()]}）`;
 
+type View = "day" | "range";
 const PRESETS: { label: string; days: number }[] = [
   { label: "7日", days: 6 }, { label: "30日", days: 29 }, { label: "90日", days: 89 },
 ];
 
 export default function LineLeadPage() {
-  const [dateFrom, setDateFrom] = useState(isoDaysAgo(6));
-  const [dateTo, setDateTo] = useState(isoDaysAgo(0));
+  const [view, setView] = useState<View>("day");
+  const [day, setDay] = useState<string>(today());
+  const [dateFrom, setDateFrom] = useState(shiftDay(today(), -6));
+  const [dateTo, setDateTo] = useState(today());
   const [data, setData] = useState<LineLeadResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [day, setDay] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      setData(await fetchLineLead({ dateFrom, dateTo }));
+      setData(await fetchLineLead(view === "day"
+        ? { dateFrom: day, dateTo: day } : { dateFrom, dateTo }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [view, day, dateFrom, dateTo]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const races = useMemo(
-    () => (data?.races ?? []).filter((r) => !day || r.race_date === day),
-    [data, day],
-  );
-  const s = data?.summary;
+  /** 期間の集計から、その日の「1日」へ移る。 */
+  const openDay = (d: string) => { setDay(d); setView("day"); };
 
   return (
     <main className="w-full px-3 py-3 sm:mx-auto sm:max-w-6xl sm:px-4 sm:py-4 space-y-3 pb-16">
@@ -104,77 +103,201 @@ export default function LineLeadPage() {
         </div>
       </details>
 
-      <section className="flex flex-wrap items-end gap-2 text-xs">
-        <label className="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
-          開始
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded border border-gray-300 bg-white px-1.5 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
-        </label>
-        <label className="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
-          終了
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="rounded border border-gray-300 bg-white px-1.5 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
-        </label>
-        {PRESETS.map((p) => (
-          <button key={p.label} type="button"
-            onClick={() => { setDateFrom(isoDaysAgo(p.days)); setDateTo(isoDaysAgo(0)); setDay(""); }}
-            className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-            {p.label}
+      <div role="tablist" className="flex gap-1 text-xs">
+        {([["day", "1日"], ["range", "期間の集計"]] as const).map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k)}
+            className={`rounded px-3 py-1.5 ${view === k
+              ? "bg-indigo-600 text-white dark:bg-indigo-500"
+              : "border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"}`}>
+            {label}
           </button>
         ))}
         <button type="button" onClick={() => void load()} aria-label="再読み込み"
-          className="rounded border border-gray-300 p-1.5 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+          className="ml-auto rounded border border-gray-300 p-1.5 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </button>
-      </section>
+      </div>
+
+      {view === "day" ? (
+        <section className="flex items-center gap-1.5 text-xs">
+          <button type="button" aria-label="前の日" onClick={() => setDay(shiftDay(day, -1))}
+            className="rounded border border-gray-300 p-1.5 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            <ChevronLeft size={14} />
+          </button>
+          <input type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)}
+            aria-label="日付"
+            className="rounded border border-gray-300 bg-white px-1.5 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+          <button type="button" aria-label="次の日" onClick={() => setDay(shiftDay(day, 1))}
+            className="rounded border border-gray-300 p-1.5 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            <ChevronRight size={14} />
+          </button>
+          <button type="button" onClick={() => setDay(today())}
+            className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            今日
+          </button>
+          <span className="font-semibold text-gray-900 dark:text-gray-100">{withWeekday(day)}</span>
+        </section>
+      ) : (
+        <section className="flex flex-wrap items-end gap-2 text-xs">
+          <label className="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
+            開始
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-1.5 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+          </label>
+          <label className="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
+            終了
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-1.5 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+          </label>
+          {PRESETS.map((p) => (
+            <button key={p.label} type="button"
+              onClick={() => { setDateFrom(shiftDay(today(), -p.days)); setDateTo(today()); }}
+              className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+              {p.label}
+            </button>
+          ))}
+        </section>
+      )}
 
       {err && <p className="rounded bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950 dark:text-rose-300">{err}</p>}
 
-      {s && (
-        <section className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <SummaryCard title="新ランク（逃げ先頭）" t={s.lead}
-            extra={[
-              ["大当たり3本を除く回収率", pct(s.lead_roi_wo_top3)],
-              ["回収率100%超えの日", `${s.lead_days_over_100} / ${s.n_days}日`],
-            ]} />
-          <SummaryCard title="買わなくなるランク" t={s.displaced}
-            extra={[["新ランクとの収支差", signed(profit(s.lead) - profit(s.displaced))]]} />
-          <div className="rounded border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900">
-            <div className="mb-1 font-semibold text-gray-800 dark:text-gray-100">現行 ↔ 置き換え</div>
-            <Row k="現行 回収率" v={<span className={roiTone(s.current.roi)}>{pct(s.current.roi)}</span>} />
-            <Row k="置き換え 回収率" v={<span className={roiTone(s.combined.roi)}>{pct(s.combined.roi)}</span>} />
-            <Row k="現行 収支" v={yen(profit(s.current))} />
-            <Row k="置き換え 収支" v={yen(profit(s.combined))} />
-            <Row k="差" v={<b className={profit(s.combined) >= profit(s.current) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
-              {signed(profit(s.combined) - profit(s.current))}</b>} />
-            <Row k="表示的中（現行 → 置き換え）" v={`${s.current.shown_hits} → ${s.combined.shown_hits}`} />
-          </div>
-        </section>
+      {data && view === "day" && <DayView data={data} />}
+      {data && view === "range" && <RangeView data={data} onOpenDay={openDay} />}
+    </main>
+  );
+}
+
+// ───────────────────────────── 1日 ─────────────────────────────
+
+function DayView({ data }: { data: LineLeadResponse }) {
+  const s = data.summary;
+  const races = [...data.races].sort((a, b) => (a.start_at ?? 0) - (b.start_at ?? 0));
+  return (
+    <>
+      <section className="rounded border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 sm:grid-cols-4">
+          <Row k="推奨レース" v={`${s.lead.n + s.lead.pending}R${s.lead.pending ? `（未確定 ${s.lead.pending}）` : ""}`} />
+          <Row k="的中" v={`${s.lead.hits}本`} />
+          <Row k="投資（確定分）" v={yen(s.lead.invest)} />
+          <Row k="払戻" v={yen(s.lead.payout)} />
+          <Row k="回収率" v={<span className={roiTone(s.lead.roi)}>{pct(s.lead.roi)}</span>} />
+          <Row k="最高払戻" v={yen(s.lead.max_payout)} />
+          <Row k="買わなくなるランク 回収率" v={<span className={roiTone(s.displaced.roi)}>{pct(s.displaced.roi)}</span>} />
+          <Row k="置き換えの収支差" v={
+            <b className={profit(s.combined) >= profit(s.current) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
+              {signed(profit(s.combined) - profit(s.current))}
+            </b>} />
+        </div>
+      </section>
+      {races.length === 0 ? (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          この日の推奨レースはありません（生成は毎朝 7:11・昼と夕に組み直し）。
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {races.map((r) => <RaceCard key={r.race_key} r={r} />)}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function RaceCard({ r }: { r: LineLeadRace }) {
+  const t = hhmmJst(r.start_at);
+  const badge = !r.settled
+    ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800 dark:text-gray-300">未確定</span>
+    : r.hit
+      ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">的中 {yen(r.payout)}</span>
+      : <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800 dark:text-gray-400">外れ</span>;
+  const legs = r.legs.length ? r.legs : r.combos.map((c) => ({ combo: c, stake: r.stake, pred_odds: null, won: false }));
+  return (
+    <li className={`rounded border p-2.5 text-xs ${r.hit
+      ? "border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-950/30"
+      : "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {t && <span className="font-mono text-gray-600 dark:text-gray-400">{t}</span>}
+        <b className="text-sm text-gray-900 dark:text-gray-100">{r.venue_name ?? ""}{r.race_no ?? ""}R</b>
+        {r.race_type && <span className="text-gray-500 dark:text-gray-400">{r.race_type}</span>}
+        <span className="ml-auto">{badge}</span>
+      </div>
+
+      <table className="mt-1.5 w-full">
+        <thead className="text-[10px] text-gray-500 dark:text-gray-400">
+          <tr><th className="text-left font-normal">三連単</th><th className="text-right font-normal">賭け金</th>
+            <th className="text-right font-normal">予測</th><th className="text-right font-normal">想定払戻</th></tr>
+        </thead>
+        <tbody>
+          {legs.map((l) => (
+            <tr key={l.combo} className={l.won ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-gray-800 dark:text-gray-200"}>
+              <td className="font-mono">{l.combo}{l.won ? " ◎" : ""}</td>
+              <td className="text-right">{yen(l.stake)}</td>
+              <td className="text-right">{l.pred_odds ? `${l.pred_odds.toFixed(1)}倍` : "—"}</td>
+              <td className="text-right">{yen(expectedPayout(l))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-0.5 text-right text-[10px] text-gray-500 dark:text-gray-400">
+        {legs.length}点・合計 {yen(r.invest)}
+      </div>
+
+      {r.settled && (
+        <div className="mt-1 text-gray-700 dark:text-gray-300">
+          結果 <b className="font-mono">{r.win_combo ?? "—"}</b>
+          {r.win_tf_odds != null && <>（三連単 {r.win_tf_odds.toFixed(1)}倍）</>}
+        </div>
       )}
 
-      {data && <DayTable days={data.days} selected={day} onSelect={setDay} />}
-
-      {data && (
-        <section className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs">
-            <h2 className="font-semibold text-gray-800 dark:text-gray-100">
-              レース別{day ? `（${mmdd(day)}）` : ""}
-            </h2>
-            <span className="text-gray-500 dark:text-gray-400">{races.length}R</span>
-            {day && (
-              <button type="button" onClick={() => setDay("")}
-                className="text-indigo-700 underline dark:text-indigo-300">全日を表示</button>
+      <div className="mt-1.5 border-t border-gray-100 pt-1.5 text-gray-600 dark:border-gray-800 dark:text-gray-400">
+        <span className="text-[10px]">買わなくなるランク</span>
+        {r.sold.length === 0 ? (
+          <div>なし（このレースは売っていない）</div>
+        ) : r.sold.map((x) => (
+          <div key={x.rank_key} className="mt-0.5">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <b className="text-gray-800 dark:text-gray-200">{x.rank_key}</b>
+              {x.title && <span className="truncate">{x.title}</span>}
+              <span className="ml-auto whitespace-nowrap">
+                {!x.settled ? "未確定" : x.payout > 0 ? `払戻 ${yen(x.payout)}` : "外れ"}
+              </span>
+            </div>
+            {x.lines.length > 0 && (
+              <div className="font-mono text-[11px] break-all">{x.lines.join(" / ")}</div>
             )}
           </div>
-          {races.length === 0 && (
-            <p className="text-xs text-gray-500 dark:text-gray-400">対象レースはありません。</p>
-          )}
-          <ul className="space-y-1.5">
-            {races.map((r) => <RaceItem key={r.race_key} r={r} />)}
-          </ul>
-        </section>
-      )}
-    </main>
+        ))}
+      </div>
+    </li>
+  );
+}
+
+// ───────────────────────────── 期間の集計 ─────────────────────────────
+
+function RangeView({ data, onOpenDay }: { data: LineLeadResponse; onOpenDay: (d: string) => void }) {
+  const s = data.summary;
+  return (
+    <>
+      <section className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <SummaryCard title="新ランク（逃げ先頭）" t={s.lead}
+          extra={[
+            ["大当たり3本を除く回収率", pct(s.lead_roi_wo_top3)],
+            ["回収率100%超えの日", `${s.lead_days_over_100} / ${s.n_days}日`],
+          ]} />
+        <SummaryCard title="買わなくなるランク" t={s.displaced}
+          extra={[["新ランクとの収支差", signed(profit(s.lead) - profit(s.displaced))]]} />
+        <div className="rounded border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900">
+          <div className="mb-1 font-semibold text-gray-800 dark:text-gray-100">現行 ↔ 置き換え</div>
+          <Row k="現行 回収率" v={<span className={roiTone(s.current.roi)}>{pct(s.current.roi)}</span>} />
+          <Row k="置き換え 回収率" v={<span className={roiTone(s.combined.roi)}>{pct(s.combined.roi)}</span>} />
+          <Row k="現行 収支" v={yen(profit(s.current))} />
+          <Row k="置き換え 収支" v={yen(profit(s.combined))} />
+          <Row k="差" v={<b className={profit(s.combined) >= profit(s.current) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
+            {signed(profit(s.combined) - profit(s.current))}</b>} />
+          <Row k="表示的中（現行 → 置き換え）" v={`${s.current.shown_hits} → ${s.combined.shown_hits}`} />
+        </div>
+      </section>
+      <DayTable days={data.days} onSelect={onOpenDay} />
+    </>
   );
 }
 
@@ -202,25 +325,21 @@ function SummaryCard({ title, t, extra }: { title: string; t: LineLeadTally; ext
   );
 }
 
-function DayTable({ days, selected, onSelect }: {
-  days: LineLeadDay[]; selected: string; onSelect: (d: string) => void;
-}) {
+function DayTable({ days, onSelect }: { days: LineLeadDay[]; onSelect: (d: string) => void }) {
   if (days.length === 0) {
     return <p className="text-xs text-gray-500 dark:text-gray-400">この期間の記録はありません。</p>;
   }
   return (
     <section className="space-y-1.5">
-      <h2 className="text-xs font-semibold text-gray-800 dark:text-gray-100">日別（日付を押すとレース別を絞り込み）</h2>
+      <h2 className="text-xs font-semibold text-gray-800 dark:text-gray-100">日別（日付を押すとその日の推奨・買い目・結果へ）</h2>
       {/* スマホ: 1日=1カード */}
       <ul className="space-y-1.5 sm:hidden">
         {days.map((d) => (
           <li key={d.date}>
             <button type="button" onClick={() => onSelect(d.date)}
-              className={`w-full rounded border p-2 text-left text-xs ${selected === d.date
-                ? "border-indigo-400 bg-indigo-50 dark:border-indigo-600 dark:bg-indigo-950"
-                : "border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"}`}>
+              className="w-full rounded border border-gray-200 bg-white p-2 text-left text-xs dark:border-gray-700 dark:bg-gray-900">
               <div className="flex items-baseline justify-between">
-                <b className="text-gray-900 dark:text-gray-100">{mmdd(d.date)}</b>
+                <b className="text-gray-900 dark:text-gray-100">{withWeekday(d.date)}</b>
                 <span className={roiTone(d.lead.roi)}>新 {pct(d.lead.roi)}</span>
               </div>
               <div className="mt-1 grid grid-cols-3 gap-1 text-gray-700 dark:text-gray-300">
@@ -257,9 +376,8 @@ function DayTable({ days, selected, onSelect }: {
           <tbody>
             {days.map((d) => (
               <tr key={d.date} onClick={() => onSelect(d.date)}
-                className={`cursor-pointer border-b border-gray-100 text-right dark:border-gray-800 ${selected === d.date
-                  ? "bg-indigo-50 dark:bg-indigo-950" : "hover:bg-gray-50 dark:hover:bg-gray-800"}`}>
-                <td className="p-1.5 text-left font-semibold text-gray-900 dark:text-gray-100">{mmdd(d.date)}</td>
+                className="cursor-pointer border-b border-gray-100 text-right hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800">
+                <td className="p-1.5 text-left font-semibold text-indigo-700 underline dark:text-indigo-300">{withWeekday(d.date)}</td>
                 <td className="p-1.5">{d.lead.n}{d.lead.pending ? <span className="text-gray-400">+{d.lead.pending}</span> : null}</td>
                 <td className="p-1.5">{d.lead.hits}</td>
                 <td className="p-1.5">{man(d.lead.invest)}</td>
@@ -280,44 +398,5 @@ function DayTable({ days, selected, onSelect }: {
         </table>
       </div>
     </section>
-  );
-}
-
-function RaceItem({ r }: { r: LineLeadRace }) {
-  const t = hhmmJst(r.start_at);
-  const result = !r.settled
-    ? <span className="text-gray-400">未確定</span>
-    : r.hit
-      ? <b className="text-emerald-700 dark:text-emerald-300">的中 {yen(r.payout)}</b>
-      : <span className="text-gray-500 dark:text-gray-400">外れ{r.win_combo ? `（${r.win_combo}）` : ""}</span>;
-  return (
-    <li className="rounded border border-gray-200 bg-white p-2 text-xs dark:border-gray-700 dark:bg-gray-900">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <b className="text-gray-900 dark:text-gray-100">
-          {mmdd(r.race_date)} {r.venue_name ?? ""}{r.race_no ?? ""}R
-        </b>
-        {t && <span className="text-gray-500 dark:text-gray-400">{t}</span>}
-        {r.race_type && <span className="text-gray-500 dark:text-gray-400">{r.race_type}</span>}
-        <span className="ml-auto">{result}</span>
-      </div>
-      <div className="mt-1 text-gray-700 dark:text-gray-300">
-        三連単 {r.combos.length}点 × {yen(r.stake)}：
-        <span className="break-all">
-          {r.combos.map((c) => (
-            <span key={c} className={`mr-1 ${r.hit && c === r.win_combo ? "font-bold text-emerald-700 dark:text-emerald-300" : ""}`}>{c}</span>
-          ))}
-        </span>
-      </div>
-      <div className="mt-0.5 text-gray-600 dark:text-gray-400">
-        買わなくなるランク：
-        {r.sold.length === 0
-          ? "なし（売っていないレース）"
-          : r.sold.map((x) => (
-            <span key={x.rank_key} className="mr-2">
-              {x.rank_key} {x.settled ? (x.payout > 0 ? `払戻 ${yen(x.payout)}` : "外れ") : "未確定"}
-            </span>
-          ))}
-      </div>
-    </li>
   );
 }

@@ -36,7 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_db
-from ..services.keirin_line_lead_verify import LeadRow, SoldRow, build_line_lead_report
+from ..services.keirin_line_lead_verify import LeadRow, SoldRow, build_line_lead_report, sold_lines
 from ..services.keirin_type_lab_gate import (
     AXIS_GATE_DROP_RATIO,
     AXIS_GATE_MIN,
@@ -460,7 +460,7 @@ def _rank_pos(rank: str) -> int:
 
 @router.get("", response_model=TypeLabResponse)
 async def get_type_lab(
-    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）。" "空または 'all' で全モード"),
+    mode: str = Query("live", description="カンマ区切りで複数可（例 'live,paper9'）。空または 'all' で全モード"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     venue: str | None = Query(None, description="競輪場名で絞り込む（例 '伊東'）"),
@@ -854,7 +854,7 @@ async def get_type_lab_outcome(
 
 _SQL_LINE_LEAD = text("""
     SELECT p.race_key, p.race_date, p.venue_name, p.race_no, p.race_type, p.legs,
-           p.settled_at, p.hit, p.payout, p.win_combo,
+           p.settled_at, p.hit, p.payout, p.win_combo, p.win_tf_odds,
            COALESCE(p.void_refund, 0) AS void_refund,
            NULLIF(r.start_at, '')::bigint AS start_at
     FROM keirin.type_lab_picks p
@@ -868,7 +868,7 @@ _SQL_LINE_LEAD = text("""
 _SQL_LINE_LEAD_SOLD = text("""
     SELECT split_part(race_key, '#', 1) AS rk, rank_key,
            COALESCE(settled_bet, 0) AS bet, COALESCE(settled_payout, 0) AS payout,
-           settled_at IS NOT NULL AS settled
+           settled_at IS NOT NULL AS settled, bet_detail, title
     FROM keirin.netkeirin_submissions
     WHERE substring(race_key, 1, 8) BETWEEN :d1 AND :d2
       AND status IN ('submitted', 'published')
@@ -910,6 +910,16 @@ class LineLeadSold(BaseModel):
     bet: int
     payout: int
     settled: bool
+    #: 買い目の表示（`"3連単 1-2-3 ×1,200円"`）
+    lines: list[str] = []
+    title: str | None = None
+
+
+class LineLeadLeg(BaseModel):
+    combo: str
+    stake: int
+    pred_odds: float | None = None
+    won: bool = False
 
 
 class LineLeadRace(BaseModel):
@@ -921,11 +931,14 @@ class LineLeadRace(BaseModel):
     start_at: int | None = None
     combos: list[str]
     stake: int
+    legs: list[LineLeadLeg] = []
     invest: int
     settled: bool
     hit: bool
     payout: int
     win_combo: str | None = None
+    #: 決着した目の三連単確定オッズ（倍率・買っていなくても入る）
+    win_tf_odds: float | None = None
     sold: list[LineLeadSold]
 
 
@@ -949,6 +962,8 @@ def _lead_row(r: dict[str, Any]) -> LeadRow:
         start_at=r.get("start_at"),
         combos=tuple(str(x["combo"]) for x in legs),
         stakes=tuple(int(x["stake"]) for x in legs),
+        pred_odds=tuple(float(x.get("pred_odds") or 0.0) for x in legs),
+        win_tf_odds=(float(r["win_tf_odds"]) if r.get("win_tf_odds") is not None else None),
         settled=r.get("settled_at") is not None,
         hit=bool(r.get("hit")),
         payout=int(r.get("payout") or 0),
@@ -979,6 +994,8 @@ async def get_type_lab_line_lead(
             bet=int(m["bet"]),
             payout=int(m["payout"]),
             settled=bool(m["settled"]),
+            lines=sold_lines(m["bet_detail"]),
+            title=m["title"],
         )
         for m in (r._mapping for r in sold_res)
     ]
