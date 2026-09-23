@@ -70,8 +70,9 @@ python scripts/settle_type_lab_picks.py --date $(date -v-1d +%F)
 VPS の cron（既存の keirin バッチと同じホスト cron）:
 
 ```cron
-# 型ラボ（検証用・入稿しない）
-15 7 * * *  $KEIRIN_HOME/scripts/type_lab_daily.sh  >> $KEIRIN_HOME/data/logs/cron.log 2>&1
+# 型ラボ本体（組む → 入稿 → 採点）は独立 cron ではなく、07:00 の daily_picks_wt.sh の中から
+# type_lab_daily.sh を呼ぶ（当日データ収集の完了を待つため・2026-08-30〜）。旧 `15 7` の行は廃止
+0 7 * * *  $KEIRIN_HOME/scripts/daily_picks_wt.sh  >> $KEIRIN_HOME/data/logs/cron.log 2>&1
 # 🔴 当日の結果を随時反映する。日次バッチだけだと**その日の結果が翌朝まで画面に出ない**
 # 🔴 間隔は `intraday_results_wt.sh`（*/15 8-23,0）に合わせる。着順・確定オッズを
 #    入れているのはそちらなので、毎時1回だと**最大60分遅れて /keirin だけ先に進む**。

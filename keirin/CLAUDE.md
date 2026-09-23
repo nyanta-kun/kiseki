@@ -125,7 +125,7 @@ src/preprocessing/feature_wt.py        # FEATURE_COLS_WT（60特徴・rolling統
 src/evaluation/backtest_wt.py           # wt用バックテスト（通常/--tiered/--value）
 src/models/trainer.py                   # train_lgbm（feature_cols/weight_col引数で両ルート共用）
 src/cli/main.py                         # CLIコマンド（collect-wt/train-wt/backtest-wt/wave-picks-wt等）
-scripts/daily_picks_wt.sh               # 日次運用（cron 8:00）
+scripts/daily_picks_wt.sh               # 日次運用（cron 07:00・中で type_lab_daily.sh を呼ぶ）
 scripts/notify_results_wt.py            # wt成績採点・通知・picks_history(route='wt')
 ```
 重要: `finish_order=0`は欠車/失格=着外。top3判定は `between(1,3)`（0を3着内に誤算入するバグを2026-06-08修正、性能激変）。
@@ -152,11 +152,11 @@ docs へ委ねているので、消すと**根拠を辿れない定数**が残�
 
 ```
 docs/RECOMMENDATION.md                  # ★競輪の推奨 — 現状の全体像（最初に読む）
-CONTINUATION.md                         # 2026-07-07までの検証履歴アーカイブ（★引継ぎメモではない）
-                                        #   価値があるのは「リーク無し再検証で結論が
-                                        #   変わったもの（要注意）」等の negative result 記録。
-                                        #   現行の状態は本ファイル、未対応作業は
-                                        #   kiseki側メモリ open_tasks_register を正本とする
+docs/AUDIT_2026_09_20.md                # ★検証済み事実の正本（旧文書と食い違えばこちらが正）
+../docs/PROJECT_STATUS.md               # ★全柱の現況台帳（実装状況・検証結果・未検証）。
+                                        #   旧 CONTINUATION.md（〜2026-07-07 の検証履歴）と
+                                        #   引き継ぎメモ群は 2026-09-23 にここへ統合して削除。
+                                        #   引き継ぎメモは新設せず、この台帳を書き換える
 docs/prediction-factors.md             # 予想ファクター仕様書（要メンテ）
 docs/system-architecture.md            # システム構成・CLIコマンド一覧
 docs/data-collection.md                # データ収集手順（ks + winticket）

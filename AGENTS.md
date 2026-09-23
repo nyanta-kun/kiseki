@@ -315,7 +315,16 @@ CI のジョブは `guards` / `backend` / `keirin` / `windows-agent` / `frontend
 ### 看板レース（決勝・特選クラス）
 
 売上は看板レースに集中する（2026-08-08 実測: 当日売上の84%）。
-**看板レースとその前後には必ず推奨を出す**方針（2026-08-09 ユーザー決定）。
+
+🔴 **「看板レースとその前後には必ず推奨を出す」方針（2026-08-09）は 2026-08-31 に
+ユーザーが取り消した。** 型ラボ移行後は看板レースにも軸信頼ゲートを掛けるので、
+看板レースに商品が出ない日がある（事故ではない）。根拠と実測は
+`keirin/scripts/netkeirin_submit_type_lab.py::_passes_axis_gate` の docstring・
+`keirin/docs/AUDIT_2026_09_20.md` §2.1。看板穴埋め（`submit_marquee_wt.py`・
+`origin='marquee_fill'`）は 2026-08-30 に朝バッチから外れ、8/28 を最後に 0 件。
+看板の扱いは型ラボの看板枠 `F_sign`（`SIGNBOARD_RACE_TYPES`）と高額枠が担う。
+
+判定そのもの（`is_marquee`）は Web 表示・売上分析などで現役:
 
 - 判定の**唯一の正本**: `backend/src/services/keirin_marquee.py`（API が `is_marquee` を返す）
 - 入稿の実行側 `keirin/src/marquee.py` は**その正本をファイル読み込みして束縛する**
@@ -325,14 +334,6 @@ CI のジョブは `guards` / `backend` / `keirin` / `windows-agent` / `frontend
   （FastAPI も SQLAlchemy も無い）からこのファイルを直接読むため、依存を足すと
   **Web は無事なまま入稿だけが落ちる**
 - ⚠️ **「準決勝」は「決勝」を部分一致で拾う**。除外しないと全体の約14.5%が看板になる
-- ⚠️ **「必ず出す」は「その回で必ず出す」ではない**（2026-08-26 に限定）。
-  ランク入稿が後の波へ持ち越したレース（`submission_skips` の `defer_wave`）は、
-  その回の看板穴埋めも**埋めない**。三連単をダッチ配分するランク（7H1/7H2/9H1）は
-  朝は板が無く必ず持ち越すので、埋めるとそのランクは自分の波で永久に取れなくなる
-  （実測 2026-08-25 松戸3R）。レースは失われず、**自分の波でランクが出すか、
-  そこで落ちればその回の看板穴埋めが埋める**（持ち越しは自分の波では起きない）。
-  代償は看板レースの朝の露出が遅れること。読み出しは
-  `src/submission_skips.deferred_race_keys()`（**session で絞る**）
 
 ### netkeirin 売上データと「分析」タブ（2026-08-11）
 
@@ -373,6 +374,13 @@ netkeirin の分析支援ツール「予想家成績状況」
   - course_code は JSPK/JHKD/JFKS/JNGT/JTOK/JNKY/JCKO/JKYO/JHSN/JKKR（sekito独自コード）
   - `has_anagusa` 判定はスコア閾値でなく sekito.anagusa のピック有無で行う
   - `anagusa_rank`（A/B/C）は API の `HorseIndexOut` レスポンスに含まれる（DBには未格納）
+
+## 現況台帳（引き継ぎメモは作らない）
+
+全柱の「最新の実装状況・検証結果・未検証」は **`docs/PROJECT_STATUS.md`** に一本化してある
+（2026-09-23 に `HANDOFF_*.md` ・ `keirin/CONTINUATION.md` 等を統合して削除）。
+🔴 **日付入りの引き継ぎメモを新設せず、台帳を直接書き換えること。**
+`backend/tests/test_no_handoff_memos.py` が再発を止めている。
 
 ## コミュニケーションルール
 - **応答は常に日本語で行うこと**

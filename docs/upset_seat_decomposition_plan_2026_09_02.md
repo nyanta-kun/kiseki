@@ -2,8 +2,8 @@
 
 - 起草日: 2026-09-02
 - 対象柱: `jra` / `chihou`（`keirin` は対象外）
-- 状態: **草案・未着手**。事前登録も TEST 消費もまだ行っていない
-- 前提文書: `docs/chihou_rebuild_2026_08.md` 17章 / `HANDOFF_2026-08-23.md` / `backend/docs/chihou_exotic_type_lab_2026_08_29.md` §10 / `docs/jra_new_index_results.md` Phase3
+- 状態: **Phase 1 で決着（2026-09-02）**。事前登録（`upset_seat_preregistration_2026_09_02.md`）に沿って Phase 0〜1 を実施し、地方（#430）・JRA（#431）とも **stop rule #1 で学習モデルは不採用**。学習しない `base_a`（期待空席数）が全腕で最良。Phase 2 は実施しない。結果は事前登録 §17
+- 前提文書: `docs/chihou_rebuild_2026_08.md` 17章 / `docs/PROJECT_STATUS.md` §3.2（旧 2026-08-23 引き継ぎメモ） / `backend/docs/chihou_exotic_type_lab_2026_08_29.md` §10 / `docs/jra_new_index_results.md` Phase3
 
 ---
 
@@ -27,7 +27,7 @@
 |---|---|---|
 | 1 | 人気薄の中の precision は尽きている。地方2年 walk-forward で指数1位 20.8% / 3位 21.9% と差が無い | `docs/chihou_rebuild_2026_08.md:1201-1222` |
 | 2 | 詰まっているのは recall。来た人気薄を指数5位内に置けた率 **27.8%**、レース単位捕捉率 **31.9%**（⚠️ **ゲート無し**＝全レースで指数5位内を見た場合の値。現行商品はゲートで71%のレースを捨てており実効 recall は約 10.5%・§11.2） | 同上 |
-| 3 | JRA では指数の複勝上乗せが walk-forward 実測で**有意にマイナス** −0.022 [−0.040, −0.003] | `HANDOFF_2026-08-23.md:34` |
+| 3 | JRA では指数の複勝上乗せが walk-forward 実測で**有意にマイナス** −0.022 [−0.040, −0.003] | `docs/PROJECT_STATUS.md` §3.1（旧 2026-08-23 引き継ぎメモ） |
 | 4 | 荒れ率は頭数でほぼ決まる（8頭 35.2% → 12頭 57.1% → 14頭 64.0%・25,744R） | `docs/chihou_rebuild_2026_08.md:1186, 1325` |
 | 5 | 単純ルール `odds_top1 ≥ 3.5` は選択率 16.7% で hit 34.95%（base 19.53%）＝ **lift 1.79** | `backend/models/chaos_classifier_v1_metrics.json` の `simple_rules.odds_top1_ge35` |
 | 6 | 学習済 chaos_classifier は AUC 0.711、test の top10% lift 2.342 が **fresh では 1.667** まで落ちる | 同上 `results.a.lift_test` / `lift_fresh` |
