@@ -10,6 +10,7 @@
    **キーの正しさは静的に検査する**しかない。
 """
 from __future__ import annotations
+import json
 
 import ast
 import re
@@ -112,3 +113,41 @@ def test_チャンネルキーの一覧が想定どおり():
         "picks", "prerace", "results", "netkeirin", "system", "review"}
     assert "keirin" not in _WEBHOOK_ENV_KEYS, \
         "紛らわしいキーを増やさないこと（型ラボが 'keirin' で落ちた）"
+
+
+def test_上限を超える本文は切り詰めてから送る(monkeypatch):
+    """🔴 Discord の content 上限は 2000 **文字**（バイトではない）。
+
+    超えると 400 が返り、`send` は URLError を握って False を返すだけなので
+    呼び出し元には「送信失敗」としか見えない（本文が長くなったせいだと分からない）。
+
+    切り詰めは呼び出し元ごとに手書きされていた（`notify_results_wt.py` の
+    `msg[:1900]` 等）が、2026-09-23 に `lab_halfday_review.py` を
+    `send()` へ委譲したとき**その保険だけが落ちた**。同型の取りこぼしを防ぐため
+    `send()` 側で必ず切る。
+    """
+    from src.notify import discord as d
+
+    captured = {}
+
+    class _Resp:
+        status = 204
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _fake_urlopen(req, timeout=10):
+        captured["body"] = json.loads(req.data.decode())
+        return _Resp()
+
+    monkeypatch.setattr(d, "_load_webhook_url", lambda ch: "https://example.invalid/hook")
+    monkeypatch.setattr(d.urllib.request, "urlopen", _fake_urlopen)
+
+    assert d.send("あ" * 5000, channel="review") is True
+    sent = captured["body"]["content"]
+    assert len(sent) <= d.CONTENT_LIMIT, f"切り詰められていない: {len(sent)} 文字"
+    assert sent.endswith("…(以降を省略)"), "省略したことが本文に残っていない"
+
+    # 上限以下はそのまま（余計な加工をしない）
+    captured.clear()
+    d.send("短い本文", channel="review")
+    assert captured["body"]["content"] == "短い本文"

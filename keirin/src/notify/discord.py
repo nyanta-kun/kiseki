@@ -39,6 +39,11 @@ def _load_webhook_url(channel: str) -> str:
     return os.environ.get(env_key, "")
 
 
+#: Discord の1メッセージあたりの上限（文字数）。余白を取って 1900 で切る。
+CONTENT_LIMIT = 1900
+_TRUNCATED_MARK = "\n…(以降を省略)"
+
+
 def send(content: str, channel: str) -> bool:
     """Discord にメッセージを送信。成功で True を返す。
 
@@ -49,6 +54,14 @@ def send(content: str, channel: str) -> bool:
     if not url:
         print(f"[Discord] {_WEBHOOK_ENV_KEYS[channel]} が未設定です")
         return False
+
+    # 🔴 Discord の content 上限は 2000 **文字**（バイトではない）。超えると 400 が返り、
+    #    呼び出し元には「送信失敗」としか見えない。切り詰めは呼び出し元ごとに手書き
+    #    されていた（notify_results_wt.py の `msg[:1900]` 等）が、書き忘れると
+    #    その経路だけが静かに落ちるのでここへ集約する。
+    #    末尾を落とした事実は本文に残す（黙って切ると「途中で終わる通知」になる）。
+    if len(content) > CONTENT_LIMIT:
+        content = content[: CONTENT_LIMIT - len(_TRUNCATED_MARK)] + _TRUNCATED_MARK
 
     payload = json.dumps({"content": content}).encode()
     req = urllib.request.Request(
