@@ -573,12 +573,13 @@ def test_nine_car_final_match_is_exact_not_substring():
 
 def test_nine_car_other_types_are_unchanged():
     """型A〜E は9車でも 7車と同じ買い方（絞るのは型F だけ）。"""
-    from src.type_lab import TIER_PLAN_KEYS
+    from src.type_lab import LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
+    seven_only = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS
     for t in "ABCDE":
         for rt in ("決勝", "準決勝", "一予選", None):
-            # 🔴 7車だけ段の3プランを足している（2026-09-14）。型のプランだけで比べる。
+            # 🔴 7車だけ段の3プランと逃げ先頭ライン（2026-09-24）を足している。型のプランだけで比べる。
             assert ([p.key for p in plans_for(t, 9, rt)]
-                    == [p.key for p in plans_for(t) if p.key not in TIER_PLAN_KEYS]), \
+                    == [p.key for p in plans_for(t) if p.key not in seven_only]), \
                 f"型{t} が9車で変わっている"
 
 
@@ -930,7 +931,9 @@ def test_page_default_combo_is_one_plan_per_type():
     types = [PLANS[p].type_label for p in combo]
     assert len(types) == len(set(types)), f"同じ型が2つ入っている: {types}"
     # 🔴 段プラン（type_label "T"）は型ではないので網羅対象から外す（2026-09-14）。
-    assert set(types) == {p.type_label for p in PLANS.values() if p.type_label != "T"}, \
+    #    逃げ先頭ライン（"L"・2026-09-24・検証中）も型ではない。
+    assert set(types) == {p.type_label for p in PLANS.values()
+                          if p.type_label not in ("T", "L")}, \
         "型が欠けている"
 
 
@@ -950,7 +953,8 @@ def test_page_finish_labels_match_the_server():
 def test_page_type_names_cover_every_type():
     """`TYPE_NAME` が 6型すべてを持つこと（欠けるとバッジが型記号だけになる）。"""
     keys = _ts_object_keys(_page_src(), "TYPE_NAME")
-    assert set(keys) == {p.type_label for p in PLANS.values() if p.type_label != "T"}
+    assert set(keys) == {p.type_label for p in PLANS.values()
+                         if p.type_label not in ("T", "L")}
 
 
 def test_confidence_tilt_floor_is_exact_not_approximate():

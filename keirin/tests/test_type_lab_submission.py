@@ -157,14 +157,17 @@ def test_every_plan_has_a_title_and_body():
 
 
 def test_every_type_has_a_view_and_note():
-    """段の商品（type_label "T"）は型ではないので型の網羅から外し、キーごとの見解を要求する。"""
-    from src.type_lab import TIER_PLAN_KEYS
+    """段の商品（type_label "T"）と逃げ先頭ライン（"L"・2026-09-24）は型ではないので
+    型の網羅から外し、キーごとの見解を要求する。"""
+    from src.type_lab import LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
     from src.type_lab_submission import PLAN_NOTES, PLAN_VIEWS
 
-    types = {p.type_label for k, p in PLANS.items() if k not in TIER_PLAN_KEYS}
+    not_types = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS
+    types = {p.type_label for k, p in PLANS.items() if k not in not_types}
     assert types <= set(TYPE_VIEWS) and types <= set(TYPE_NOTES)
     assert "T" not in TYPE_VIEWS and "T" not in TYPE_NOTES
-    for key in TIER_PLAN_KEYS:
+    assert "L" not in TYPE_VIEWS and "L" not in TYPE_NOTES
+    for key in not_types:
         assert PLAN_VIEWS.get(key) and PLAN_NOTES.get(key), key
 
 

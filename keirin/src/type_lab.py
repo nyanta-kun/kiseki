@@ -589,6 +589,9 @@ class RaceShape:
     #: 1着率を渡さなければ 0 / 0.0（＝一軸は組まれない）。
     win_top: int = 0
     win_gap: float = 0.0
+    #: 逃げ先頭ライン（`L_lead`）の買い目 `(先頭, 番手, 3着)`。条件を満たすラインが
+    #: 無ければ空（＝そのレースに `L_lead` の行は作られない）。`line_lead_legs` の docstring。
+    lead_legs: tuple[tuple[int, int, int], ...] = ()
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -645,7 +648,8 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
     label = type_label_of(axis_sum, s)
     lines = _lines_of(line_group, line_pos)
     return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent, lines,
-                     _strongest_pair(lines, top3_probs), win_top, win_gap)
+                     _strongest_pair(lines, top3_probs), win_top, win_gap,
+                     line_lead_legs(top3_probs, lines, style, race_point))
 
 
 def type_label_of(axis_sum: float, arare: int) -> str:
@@ -750,6 +754,109 @@ def _lines_of(line_group: Mapping[int, object],
                  for v in sorted(groups.values()) if len(v) >= min_size)
 
 
+# ── 逃げ先頭ライン（`L_lead`・2026-09-24 新設・**検証中・入稿しない**）──────────────
+#
+# 🔴🔴 **生成と採点だけ。売らない**（ユーザー決定 2026-09-24「実入稿は様子を見てから」）。
+#    `sell_plans_for` のどの分岐にも入れていない＝入稿スクリプトは構造的に拾えない
+#    （`tests/test_type_lab_line_lead.py` が固定）。売るなら別途判断すること。
+#
+# 狙う決着: **得点1位が居ないラインで、先頭が「逃」・先頭の競走得点がレース内5位以下**の
+#    ラインが、そのまま **先頭→番手** で1・2着に入る形。市場はこれを低く見ている。
+#
+# 実測（7車・確定オッズ・1点1000円・探索 2024-10〜2025-12 / 確認 2026-01〜08-04）:
+#    発生倍率（実的中 ÷ Σ0.75/オッズ）   逃げ先頭・得点1位でないライン 1.19 / 1.20（CI 下限 1.13）
+#    3着を絞った回収率                   ③ 102.7 / 110.1%（最大3本を除くと 93 / 92%）
+#    1レース1万円均等                    ③ 111.7 / 116.2%・9月（形を決めた後）116.4%
+#    ⚠️ 条件は両窓を見ながら選んだ。**確定的な証拠ではない**ので前向きに測る
+#       （`docs/type_lab/line_lead_2026_09_24.md`）。
+# 🔴 **条件をこれ以上重ねない。** 2車ライン・得点合計・平均得点差を足すと過去2年は
+#    上がって見えるが、9月（新しいデータ）では 78〜88% に落ちた（同 doc §5）。
+#: 対象の車数（7車だけで測った）。
+LINE_LEAD_N_ENTRIES = 7
+#: 得点1位のラインの車数の上限。4車ラインだと他のラインの出番が無い（回収率 43〜63%）。
+LINE_LEAD_RP1_LINE_MAX = 3
+#: 先頭の脚質。「逃」だけが両窓で効いた（逃 90.6/97.5% ↔ 両 73.7/70.7% ↔ 追 79.9/47.3%）。
+LINE_LEAD_STYLE = "逃"
+#: 先頭の競走得点のレース内順位の下限（同点は上位側へ寄せる `min` 方式）。
+LINE_LEAD_LEAD_RP_RANK_MIN = 5
+#: 3着から外す「最下位」の順位（3着内率・競走得点とも）。7車の最下位。
+LINE_LEAD_THIRD_DROP_RANK = 7
+
+
+def _rank_desc(values: Mapping[int, float], car: int) -> int:
+    """降順の順位（同点は上位側・pandas の `rank(method='min')` と同じ）。"""
+    v = float(values[car])
+    return 1 + sum(1 for c, x in values.items() if c != car and float(x) > v)
+
+
+def line_lead_legs(top3_probs: Mapping[int, float],
+                   lines: Sequence[Sequence[int]],
+                   style: Mapping[int, str],
+                   race_point: Mapping[int, float]) -> tuple[tuple[int, int, int], ...]:
+    """逃げ先頭ライン（`L_lead`）の買い目 `(先頭, 番手, 3着)` を返す。
+
+    条件（すべて朝の出走表で決まる）:
+      1. 7車立てで、全車の競走得点と3着内率がある
+      2. 得点1位の居るラインが `LINE_LEAD_RP1_LINE_MAX` 車以下（単騎なら1車）
+      3. 2車以上のラインのうち **得点1位が居ない**もので、先頭が `LINE_LEAD_STYLE`・
+         先頭の競走得点がレース内 `LINE_LEAD_LEAD_RP_RANK_MIN` 位以下
+      4. 3着は先頭・番手以外。ただし次を外す:
+         ・**第三のライン**（対象ラインでも得点1位のラインでもない2車以上のライン）の番手以降
+           （発生倍率 0.99 / 1.00 ＝偏りなし・回収率 83 / 90%）
+         ・3着内率がレース最下位 ・競走得点がレース最下位
+
+    `lines` は `_lines_of` の戻り値（隊列順）。条件を満たすラインが複数あれば全部返す。
+    得点1位が同点なら車番の小さい方（検証台と同じ）。
+
+    >>> p3 = {1: .9, 2: .5, 3: .6, 4: .4, 5: .3, 6: .2, 7: .1}
+    >>> rp = {1: 100.0, 2: 95.0, 3: 94.0, 4: 93.0, 5: 80.0, 6: 79.0, 7: 70.0}
+    >>> st = {1: "逃", 2: "追", 3: "追", 4: "両", 5: "逃", 6: "追", 7: "追"}
+    >>> line_lead_legs(p3, ((1, 2, 3), (5, 6), (4, 7)), st, rp)
+    ((5, 6, 1), (5, 6, 2), (5, 6, 3), (5, 6, 4))
+    >>> line_lead_legs(p3, ((1, 2, 3, 4), (5, 6)), st, rp)   # 得点1位のラインが4車
+    ()
+    >>> st2 = {**st, 5: "両"}
+    >>> line_lead_legs(p3, ((1, 2, 3), (5, 6), (4, 7)), st2, rp)   # 先頭が逃でない
+    ()
+    """
+    cars = list(top3_probs)
+    if len(cars) != LINE_LEAD_N_ENTRIES:
+        return ()
+    # 🔴 **競走得点 0（未格付け）は欠けとして順位から外す**（その車の得点順位は付かない）。
+    #    レースごと落とさない。検証台（特徴キャッシュは 0 を NaN に置き換えている）と同じ扱い。
+    #    得点の無い先頭は条件3を満たさず、得点の無い3着は「得点最下位」で外れない。
+    rp = {c: float(race_point.get(c) or 0.0) for c in cars}
+    rp = {c: v for c, v in rp.items() if v > 0.0}
+    if len(rp) < 2:
+        return ()
+    p3 = {c: float(top3_probs[c]) for c in cars}
+    rp1 = min(rp, key=lambda c: (-rp[c], c))
+    rp1_line = next((tuple(ln) for ln in lines if rp1 in ln), (rp1,))
+    if len(rp1_line) > LINE_LEAD_RP1_LINE_MAX:
+        return ()
+    out: list[tuple[int, int, int]] = []
+    for ln in lines:
+        if len(ln) < 2 or rp1 in ln:
+            continue
+        lead, ban = int(ln[0]), int(ln[1])
+        if str(style.get(lead, "")) != LINE_LEAD_STYLE:
+            continue
+        if lead not in rp or _rank_desc(rp, lead) < LINE_LEAD_LEAD_RP_RANK_MIN:
+            continue
+        for c in sorted(cars):
+            if c in (lead, ban):
+                continue
+            third_line = next((tuple(x) for x in lines if c in x), None)
+            if (third_line is not None and third_line != tuple(ln)
+                    and third_line != rp1_line and third_line.index(c) >= 1):
+                continue
+            if (_rank_desc(p3, c) == LINE_LEAD_THIRD_DROP_RANK
+                    or (c in rp and _rank_desc(rp, c) == LINE_LEAD_THIRD_DROP_RANK)):
+                continue
+            out.append((lead, ban, int(c)))
+    return tuple(out)
+
+
 # ───────────────────────────── 買い目 ─────────────────────────────
 
 @dataclass(frozen=True)
@@ -764,7 +871,7 @@ class Plan:
     max_odds: float = 0.0    # 予測オッズの上限（0=なし）
     max_legs: int = 0        # 上限点数（0=なし）
     sigma_max: float = 0.0   # Σ(1/予測オッズ) の上限（0=なし）
-    alloc: str = "conf"      # 'conf' | 'dutch'
+    alloc: str = "conf"      # 'conf' | 'dutch' | 'equal'（均等・`L_lead` だけ）
     floor_mult: float = DEFAULT_FLOOR_MULT
     #: `structure='signboard'` の計画払戻（0 なら `SIGNBOARD_TARGET`）。
     target: int = 0
@@ -1145,6 +1252,16 @@ TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_axis", "T_upset")
 TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset"})
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
 TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
+
+# ── 逃げ先頭ライン（検証中・入稿しない）。条件と根拠は `line_lead_legs` の上の節 ──
+#: 🔴 **1レース1万円を均等に割る**（`alloc="equal"`・100円単位で切り捨て）。
+#:    検証はこの買い方で測った（`docs/type_lab/line_lead_2026_09_24.md` §6）。
+PLANS["L_lead"] = Plan("L_lead", "L", "trifecta", "line_lead", 0, alloc="equal",
+                       note="逃げ先頭ライン: 得点1位でない逃げ先頭（得点5位以下）の"
+                            "先頭→番手→3着・1レース1万円均等（検証中・入稿しない）")
+#: 逃げ先頭ラインのプラン（表示順）。**`sell_plans_for` には入れない。**
+LINE_LEAD_PLAN_ORDER: tuple[str, ...] = ("L_lead",)
+LINE_LEAD_PLAN_KEYS: frozenset[str] = frozenset(LINE_LEAD_PLAN_ORDER)
 
 # ── 段の入稿ゲートを「当たったときの払戻の悪い側」で判定する（2026-09-15 ユーザー決定）──
 #
@@ -1607,7 +1724,7 @@ def plans_for(type_label: str, n_entries: int = 7,
        `build_legs` が組まない＝行があること自体が「一軸で売れる」印になる。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_axis', 'T_upset']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_axis', 'T_upset', 'L_lead']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
     ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
@@ -1618,6 +1735,10 @@ def plans_for(type_label: str, n_entries: int = 7,
     own = [p for p in PLANS.values() if p.type_label == type_label]
     if int(n_entries or 0) == TIER_N_ENTRIES:
         own += [PLANS[k] for k in TIER_PLAN_ORDER]
+    # 🔴 逃げ先頭ライン（`L_lead`）も型に関係なく組む（検証中・入稿しない）。
+    #    条件を満たすラインが無いレースでは `build_legs` が None を返し、行は作られない。
+    if int(n_entries or 0) == LINE_LEAD_N_ENTRIES:
+        own += [PLANS[k] for k in LINE_LEAD_PLAN_ORDER]
     return own
 
 
@@ -1746,6 +1867,12 @@ def build_legs(shape: RaceShape, plan: Plan,
 
     pred_odds / probs のキーは三連単なら (1着,2着,3着) のタプル、三連複なら frozenset。
     """
+    # 逃げ先頭ライン: 買い目は `race_shape` が `line_lead_legs` で作ってある。
+    #    予測オッズの無い目は配分できないので外す（板は7車の全210目を持つので通常は落ちない）。
+    if plan.structure == "line_lead":
+        legs = [c for c in shape.lead_legs if c in pred_odds]
+        return legs or None
+
     order = list(shape.order)
     a1, a2 = order[0], order[1]
     rest = order[2:]
@@ -2029,6 +2156,10 @@ def _allocate_once(legs: Sequence, pred_odds: Mapping, probs: Mapping, plan: Pla
     if plan.alloc == "dutch":
         w = [1.0 / x for x in o]
         units = _proportional(w, n_units)
+    elif plan.alloc == "equal":
+        # 🔴 **余りは配らない**（1万円 ÷ 3点 = 3,300円×3 = 9,900円）。検証と同じ形で、
+        #    余りを配ると点ごとの賭け金が揃わず「均等」でなくなる。
+        units = [n_units // k] * k
     else:
         floor = [max(int(math.ceil(budget * plan.floor_mult / x / unit)), 1) for x in o]
         if sum(floor) > n_units:
@@ -2987,7 +3118,10 @@ def rule_version(n_entries: int = 7) -> str:
         {k: [v.bet_type, v.structure, v.n_partners, v.min_odds, v.max_odds,
              v.max_legs, round(v.sigma_max, 6), v.alloc, v.floor_mult,
              v.target, v.bust, v.tau_adaptive, v.tau_floor, v.tau_max_legs]
-         for k, v in sorted(PLANS.items())}
+         # 🔴 **逃げ先頭ライン（`L_lead`）は入れない**（2026-09-24）。検証用の行を1種類
+         #    足しただけで既存の全プランの版が割れると、夜間レビューの世代が無意味に
+         #    分かれる。`L_lead` の行は `line_lead_rule_version()` を別に持つ。
+         for k, v in sorted(PLANS.items()) if k not in LINE_LEAD_PLAN_KEYS}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
 
         # 🔴 看板枠は**プランの属性だけでは表せない**（計画払戻 T が `build_legs` の
@@ -3062,3 +3196,20 @@ def rule_version(n_entries: int = 7) -> str:
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()[:12]
+
+
+def line_lead_rule_version() -> str:
+    """逃げ先頭ライン（`L_lead`）の行の版。`rule_version` とは別に持つ。
+
+    🔴 `rule_version` から `L_lead` を外したので、条件（`LINE_LEAD_*`）や配分を
+       動かしたときはこちらで版が割れる。先頭に `L` を付けて既存の版と見分ける。
+    """
+    import hashlib
+    import json
+    p = PLANS["L_lead"]
+    payload = {"plan": [p.bet_type, p.structure, p.alloc, BUDGET, UNIT],
+               "cond": [LINE_LEAD_N_ENTRIES, LINE_LEAD_RP1_LINE_MAX, LINE_LEAD_STYLE,
+                        LINE_LEAD_LEAD_RP_RANK_MIN, LINE_LEAD_THIRD_DROP_RANK]}
+    return "L" + hashlib.sha1(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:11]

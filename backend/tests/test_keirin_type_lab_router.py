@@ -2,6 +2,7 @@
 
 ここで固定するのは、壊れると**ページが 500 になって何も見えない**点。
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -33,7 +34,8 @@ def test_lists_are_not_empty():
     # 9車型F の三連複 `F_line` を足して 17（2026-09-06）。
     # 段分け商品 固め/広め/荒れ（T_firm/T_mid/T_upset）を先頭に足して 26（2026-09-15）。
     # 一軸（T_axis）を広めと荒れの間に足して 27（2026-09-15）。
-    assert len(PLAN_ORDER) == 27
+    # 逃げ先頭ライン（L_lead・検証中・入稿しない）を末尾に足して 28（2026-09-24）。
+    assert len(PLAN_ORDER) == 28
     assert len(set(PLAN_ORDER)) == len(PLAN_ORDER), "表示順に重複がある"
     assert CURRENT_RANK_ORDER[0] == "RANK_7H2" and CURRENT_RANK_ORDER[-1] == "RANK_7M1"
 
@@ -66,12 +68,10 @@ def test_each_query_gets_the_parameter_type_its_column_needs():
         d = node.args[1]
         if not isinstance(d, ast.Dict):
             continue
-        got[target] = {ast.unparse(v) for k, v in zip(d.keys, d.values)
-                       if getattr(k, "value", "") in ("d1", "d2")}
+        got[target] = {ast.unparse(v) for k, v in zip(d.keys, d.values) if getattr(k, "value", "") in ("d1", "d2")}
     assert got.get("_SQL") == {"dd1", "dd2"}, got.get("_SQL")
     assert got.get("_SQL_CURRENT") == {"d1", "d2"}, got.get("_SQL_CURRENT")
-    assert got.get("_SQL_SOLD") == {"d1.replace('-', '')", "d2.replace('-', '')"}, \
-        got.get("_SQL_SOLD")
+    assert got.get("_SQL_SOLD") == {"d1.replace('-', '')", "d2.replace('-', '')"}, got.get("_SQL_SOLD")
 
 
 def test_venue_options_are_built_before_filtering():
@@ -87,7 +87,7 @@ def test_venue_options_are_built_before_filtering():
 
     src = inspect.getsource(m.get_type_lab).lstrip()
     i_v = src.index("venues = sorted(")
-    i_f = src.index("rows = [r for r in rows if r[\"venue_name\"] == venue]")
+    i_f = src.index('rows = [r for r in rows if r["venue_name"] == venue]')
     assert i_v < i_f, "venues を作る前に rows を絞っている"
     # 引数として受け取っていること
     tree = ast.parse(src)
@@ -124,11 +124,24 @@ def test_picks_are_ordered_by_start_time():
 # ---------------------------------------------------------------------------
 # 複数プランの組み合わせ集計（2026-08-27 追加）
 # ---------------------------------------------------------------------------
-def _pick(race: str, plan: str, *, budget: int = 10000, payout: int | None = None,
-          settled: bool = True, day: str = "2026-08-27") -> dict:
-    return {"race_key": race, "plan_key": plan, "race_date": day, "budget": budget,
-            "settled_at": "x" if settled else None,
-            "hit": payout is not None, "payout": payout}
+def _pick(
+    race: str,
+    plan: str,
+    *,
+    budget: int = 10000,
+    payout: int | None = None,
+    settled: bool = True,
+    day: str = "2026-08-27",
+) -> dict:
+    return {
+        "race_key": race,
+        "plan_key": plan,
+        "race_date": day,
+        "budget": budget,
+        "settled_at": "x" if settled else None,
+        "hit": payout is not None,
+        "payout": payout,
+    }
 
 
 def test_combine_plans_drops_races_where_two_selected_plans_collide():
@@ -142,12 +155,12 @@ def test_combine_plans_drops_races_where_two_selected_plans_collide():
 
     rows = [
         _pick("R1", "A_hit", payout=30000),
-        _pick("R1", "A_pay"),            # ← 同じレースに2プラン = 競合
+        _pick("R1", "A_pay"),  # ← 同じレースに2プラン = 競合
         _pick("R2", "B_hit", payout=25000),
     ]
     detail, total, n_conflict, n_days = combine_plans(rows)
     assert n_conflict == 1
-    assert total.n_races == 1              # R1 は両方とも消える
+    assert total.n_races == 1  # R1 は両方とも消える
     assert [d.plan_key for d in detail] == ["B_hit"]
     assert total.returned == 25000 and total.invested == 10000
 
@@ -158,7 +171,7 @@ def test_combine_plans_totals_only_settled_rows():
 
     rows = [
         _pick("R1", "A_hit", payout=20000),
-        _pick("R2", "B_hit", settled=False),   # 未採点
+        _pick("R2", "B_hit", settled=False),  # 未採点
     ]
     _, total, _, _ = combine_plans(rows)
     assert total.n_races == 2 and total.n_settled == 1
@@ -170,7 +183,7 @@ def test_combine_plans_separates_gami_from_shown_hit():
     from src.api.keirin_type_lab_router import combine_plans
 
     rows = [
-        _pick("R1", "A_hit", payout=8000),     # 当たったが賭け金割れ = ガミ
+        _pick("R1", "A_hit", payout=8000),  # 当たったが賭け金割れ = ガミ
         _pick("R2", "A_hit", payout=30000),
     ]
     _, total, _, _ = combine_plans(rows)
@@ -241,11 +254,19 @@ def test_axis_gate_covers_only_the_plans_it_helps():
     from src.services.keirin_type_lab_gate import AXIS_GATE_MIN, AXIS_GATE_PLANS
 
     assert AXIS_GATE_PLANS == {
-        "A_hit", "A_trio", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit", "F_sign",
+        "A_hit",
+        "A_trio",
+        "B_hit",
+        "C_hit",
+        "D_hit",
+        "E_hit",
+        "F_hit",
+        "F_sign",
     }
     assert set(AXIS_GATE_MIN) == AXIS_GATE_PLANS
     # 🔴 `A_ana` は掛けない（素通し）。ここが腕⑥の唯一の除外。
     from src.services.keirin_type_lab_gate import passes_axis_gate
+
     assert passes_axis_gate("A_ana", 0.0) is True
     # 高額枠・9車専用も素通しのまま（表に無い＝通す、が実装）
     for key in ("B_sign", "C_big", "F_pay", "F_line"):
@@ -279,6 +300,7 @@ def test_axis_gate_is_applied_before_conflict_detection():
 
 # ──────────────────── 9車の実投入（2026-08-28） ────────────────────
 
+
 def test_axis_gate_does_not_apply_to_nine_car():
     """🔴 軸信頼ゲートは**7車の探索窓の分位**なので9車には掛けない。
 
@@ -310,8 +332,7 @@ def test_combo_passes_the_car_count_to_the_gate():
 
     src = inspect.getsource(m.get_type_lab_combo)
     tree = ast.parse(src.lstrip())
-    calls = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "passes_axis_gate"]
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "passes_axis_gate"]
     assert calls, "passes_axis_gate を呼んでいない"
     for c in calls:
         assert len(c.args) >= 3, "passes_axis_gate に車数を渡していない"
@@ -342,9 +363,9 @@ def test_parse_modes_normalizes_multi_select():
     """複数選択の正規化。**同じ選択なら同じ URL** になること。"""
     from src.api.keirin_type_lab_router import TYPE_LAB_MODES, parse_modes
 
-    assert parse_modes("paper9,live") == ["live", "paper9"]      # 並びは定義順
+    assert parse_modes("paper9,live") == ["live", "paper9"]  # 並びは定義順
     assert parse_modes("live, live9 ,live") == ["live", "live9"]  # 重複と空白
-    assert parse_modes("") == list(TYPE_LAB_MODES)                # 空＝すべて
+    assert parse_modes("") == list(TYPE_LAB_MODES)  # 空＝すべて
     assert parse_modes("all") == list(TYPE_LAB_MODES)
     assert parse_modes(None) == ["live"]
 
@@ -363,7 +384,7 @@ def test_parse_modes_never_returns_empty():
 
 def test_every_mode_query_uses_an_array_comparison():
     """🔴 SQL は `mode = ANY(:modes)`。単一比較が1つでも残ると、そのタブだけ
-       「モードを複数選んでも1つしか出ない」という**気づきにくい**壊れ方をする。
+    「モードを複数選んでも1つしか出ない」という**気づきにくい**壊れ方をする。
     """
     from src.api import keirin_type_lab_router as m
 
@@ -402,8 +423,9 @@ def test_comparison_picks_the_highest_priority_rank_for_a_race():
     src = inspect.getsource(m.get_type_lab)
     tree = ast.parse(src.lstrip())
     # `_rank_pos(...) < _rank_pos(...)` で選んでいること（`>` へ反転させない）
-    ops = [type(n.ops[0]).__name__ for n in ast.walk(tree)
-           if isinstance(n, ast.Compare)
-           and isinstance(n.left, ast.Call)
-           and getattr(n.left.func, "id", "") == "_rank_pos"]
+    ops = [
+        type(n.ops[0]).__name__
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Compare) and isinstance(n.left, ast.Call) and getattr(n.left.func, "id", "") == "_rank_pos"
+    ]
     assert ops == ["Lt"], ops
