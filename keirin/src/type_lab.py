@@ -754,11 +754,15 @@ def _lines_of(line_group: Mapping[int, object],
                  for v in sorted(groups.values()) if len(v) >= min_size)
 
 
-# ── 逃げ先頭ライン（`L_lead`・2026-09-24 新設・**検証中・入稿しない**）──────────────
+# ── 逃げ先頭ライン（`L_lead`・2026-09-24 新設・検証中）──────────────────────────────
 #
-# 🔴🔴 **生成と採点だけ。売らない**（ユーザー決定 2026-09-24「実入稿は様子を見てから」）。
-#    `sell_plans_for` のどの分岐にも入れていない＝入稿スクリプトは構造的に拾えない
-#    （`tests/test_type_lab_line_lead.py` が固定）。売るなら別途判断すること。
+# 🔴🔴 **行は条件を満たす全レースで作るが、売るのは「型ラボが売らないレースへ1日5本」だけ**
+#    （2026-09-24 ユーザー決定「1日上限5本・穴狙いとして・現在売っていないレースに追加」
+#    「モーニングを除外として、早い未販売の5レース」）。
+#    - `sell_plans_for` / `SELLABLE_PLAN_KEYS` には**入れない**（型ラボ本体の経路では売らない）。
+#      売るのは入稿スクリプトの別の段（`netkeirin_submit_type_lab.LINE_LEAD_SLOTS_PER_DAY`）
+#    - 固定: `tests/test_type_lab_line_lead.py`（本体で売らない）・
+#      `tests/test_type_lab_line_lead_sell.py`（別の段で1日5本）
 #
 # 狙う決着: **得点1位が居ないラインで、先頭が「逃」・先頭の競走得点がレース内5位以下**の
 #    ラインが、そのまま **先頭→番手** で1・2着に入る形。市場はこれを低く見ている。
@@ -1253,13 +1257,13 @@ TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upse
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
 TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
 
-# ── 逃げ先頭ライン（検証中・入稿しない）。条件と根拠は `line_lead_legs` の上の節 ──
+# ── 逃げ先頭ライン（検証中・型ラボが売らないレースへ1日5本）。条件と根拠は `line_lead_legs` の上の節 ──
 #: 🔴 **1レース1万円を均等に割る**（`alloc="equal"`・100円単位で切り捨て）。
 #:    検証はこの買い方で測った（`docs/type_lab/line_lead_2026_09_24.md` §6）。
 PLANS["L_lead"] = Plan("L_lead", "L", "trifecta", "line_lead", 0, alloc="equal",
                        note="逃げ先頭ライン: 得点1位でない逃げ先頭（得点5位以下）の"
-                            "先頭→番手→3着・1レース1万円均等（検証中・入稿しない）")
-#: 逃げ先頭ラインのプラン（表示順）。**`sell_plans_for` には入れない。**
+                            "先頭→番手→3着・1レース1万円均等（検証中・型ラボが売らないレースへ1日5本）")
+#: 逃げ先頭ラインのプラン（表示順）。**`sell_plans_for` には入れない**（売るのは入稿スクリプトの別の段）。
 LINE_LEAD_PLAN_ORDER: tuple[str, ...] = ("L_lead",)
 LINE_LEAD_PLAN_KEYS: frozenset[str] = frozenset(LINE_LEAD_PLAN_ORDER)
 
@@ -1735,7 +1739,7 @@ def plans_for(type_label: str, n_entries: int = 7,
     own = [p for p in PLANS.values() if p.type_label == type_label]
     if int(n_entries or 0) == TIER_N_ENTRIES:
         own += [PLANS[k] for k in TIER_PLAN_ORDER]
-    # 🔴 逃げ先頭ライン（`L_lead`）も型に関係なく組む（検証中・入稿しない）。
+    # 🔴 逃げ先頭ライン（`L_lead`）も型に関係なく組む（検証中・売るのは入稿スクリプトの別の段）。
     #    条件を満たすラインが無いレースでは `build_legs` が None を返し、行は作られない。
     if int(n_entries or 0) == LINE_LEAD_N_ENTRIES:
         own += [PLANS[k] for k in LINE_LEAD_PLAN_ORDER]

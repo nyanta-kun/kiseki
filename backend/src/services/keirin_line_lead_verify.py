@@ -1,13 +1,15 @@
 """逃げ先頭ライン（`L_lead`）の検証集計（2026-09-24 新設・**DB にも FastAPI にも依存しない純関数**）。
 
-`L_lead` は型ラボの**検証中・入稿しない**ランク（keirin `src/type_lab.py` の
-`line_lead_legs`）。ここでは「もし売っていたら」を見るために、次の3つを並べる:
+`L_lead` は型ラボの**検証中**のランク（keirin `src/type_lab.py` の `line_lead_legs`）。
+行は条件を満たす全レースで作り、**実際に出すのは型ラボが売らないレースへ1日5本**
+（2026-09-24〜・穴狙い・`origin='line_lead'`）。ここでは「全部売っていたら」を見るために並べる:
 
 | 区分 | 中身 |
 |---|---|
 | 新ランク | `type_lab_picks`（`plan_key='L_lead'`・7車の実地）。1レース1万円の均等買い |
-| 買わなくなるランク | **同じレースで実際に netkeirin へ出した商品**（送信済み・公開済み） |
-| ポートフォリオ | 実際に売った全商品（現行） ↔ 新ランクのレースだけ置き換えた場合 |
+| 新ランク（実際に出した分） | 上のうち `netkeirin_submissions` に `L_lead` として出したレース（`lead_sold`） |
+| 買わなくなるランク | **同じレースで実際に netkeirin へ出した他の商品**（`L_lead` 自身は含めない） |
+| ポートフォリオ | 実際に売った他の全商品（現行） ↔ 新ランクのレースだけ置き換えた場合 |
 
 🔴 **置き換えの定義**: 新ランクの行があるレースでは、そのレースで売った商品を**外して**
    新ランクを入れる。売っていなかったレースには新ランクを**足す**。それ以外は現行のまま。
@@ -44,6 +46,8 @@ class LeadRow:
     pred_odds: tuple[float, ...] = ()
     #: 決着した目の三連単確定オッズ（倍率）。**買っていなくても入る**（レースの荒れ具合）。
     win_tf_odds: float | None = None
+    #: 実際に netkeirin へ出したか（2026-09-24〜 型ラボが売らないレースへ1日5本・穴狙い）。
+    submitted: bool = False
 
     @property
     def invest(self) -> int:
@@ -173,10 +177,14 @@ def build_line_lead_report(leads: Iterable[LeadRow], sold: Iterable[SoldRow]) ->
         return days.setdefault(date, {}).setdefault(name, Tally())
 
     tot = {k: Tally() for k in ("lead", "displaced", "current", "combined")}
+    #: 実際に出した `L_lead`（型ラボが売らないレースへ1日5本・2026-09-24〜）。
+    lead_sold = Tally()
 
     for r in leads:
         for t in (_t(r.race_date, "lead"), tot["lead"], _t(r.race_date, "combined"), tot["combined"]):
             t.add(r.invest, r.payout, r.settled, r.hit)
+        if r.submitted:
+            lead_sold.add(r.invest, r.payout, r.settled, r.hit)
     for s in sold:
         d = _day(s.race_key)
         for t in (_t(d, "current"), tot["current"]):
@@ -227,6 +235,7 @@ def build_line_lead_report(leads: Iterable[LeadRow], sold: Iterable[SoldRow]) ->
                 "payout": r.payout,
                 "win_combo": r.win_combo,
                 "win_tf_odds": r.win_tf_odds,
+                "submitted": r.submitted,
                 "sold": [
                     {
                         "rank_key": s.rank_key,
@@ -247,6 +256,7 @@ def build_line_lead_report(leads: Iterable[LeadRow], sold: Iterable[SoldRow]) ->
             "lead_roi_wo_top3": tot["lead"].roi_without_top(3),
             "lead_days_over_100": lead_over,
             "n_days": lead_days,
+            "lead_sold": lead_sold.as_dict(),
         },
         "days": day_rows,
         "races": races,

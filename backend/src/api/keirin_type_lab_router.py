@@ -75,7 +75,7 @@ PLAN_ORDER = [
     "F_line",
     "F_sign",
     "F_big",
-    # 逃げ先頭ライン（2026-09-24・検証中・入稿しない）。検証ページは `/line-lead`。
+    # 逃げ先頭ライン（2026-09-24・検証中・型ラボが売らないレースへ1日5本）。検証ページは `/line-lead`。
     "L_lead",
 ]
 
@@ -848,8 +848,9 @@ async def get_type_lab_outcome(
 
 # ─────────────────── 逃げ先頭ライン（`L_lead`）の検証（2026-09-24） ───────────────────
 #
-# 🔴 `L_lead` は**検証中・入稿しない**ランク。「もし売っていたら」を、同じレースで
-#    実際に出した商品（買わなくなるランク）と並べて見るための窓口。
+# 🔴 `L_lead` は**検証中**のランク（行は全レース・売るのは型ラボが売らないレースへ1日5本）。
+#    「全部売っていたら」を、同じレースで実際に出した他の商品（買わなくなるランク）と
+#    並べて見るための窓口。`L_lead` 自身の入稿は `submitted` の印と `lead_sold` に分ける。
 #    計算の正本は `services/keirin_line_lead_verify.build_line_lead_report`（純関数）。
 
 _SQL_LINE_LEAD = text("""
@@ -894,6 +895,8 @@ class LineLeadSummary(BaseModel):
     lead_roi_wo_top3: float | None = None
     lead_days_over_100: int
     n_days: int
+    #: 実際に出した `L_lead`（型ラボが売らないレースへ1日5本・2026-09-24〜）
+    lead_sold: LineLeadTally | None = None
 
 
 class LineLeadDay(BaseModel):
@@ -939,6 +942,8 @@ class LineLeadRace(BaseModel):
     win_combo: str | None = None
     #: 決着した目の三連単確定オッズ（倍率・買っていなくても入る）
     win_tf_odds: float | None = None
+    #: このレースで `L_lead` を実際に netkeirin へ出したか
+    submitted: bool = False
     sold: list[LineLeadSold]
 
 
@@ -950,7 +955,7 @@ class LineLeadResponse(BaseModel):
     races: list[LineLeadRace]
 
 
-def _lead_row(r: dict[str, Any]) -> LeadRow:
+def _lead_row(r: dict[str, Any], submitted: set[str] | None = None) -> LeadRow:
     legs_raw = r["legs"]
     legs = json.loads(legs_raw) if isinstance(legs_raw, str) else (legs_raw or [])
     return LeadRow(
@@ -969,6 +974,7 @@ def _lead_row(r: dict[str, Any]) -> LeadRow:
         payout=int(r.get("payout") or 0),
         void_refund=int(r.get("void_refund") or 0),
         win_combo=r.get("win_combo"),
+        submitted=str(r["race_key"]) in (submitted or set()),
     )
 
 
@@ -984,9 +990,13 @@ async def get_type_lab_line_lead(
     現行（売った全商品）↔ 置き換えた場合 の日別収支を返す。
     """
     d1, d2, dd1, dd2 = window(date_from, date_to)
-    res = await db.execute(_SQL_LINE_LEAD, {"d1": dd1, "d2": dd2})
-    leads = [_lead_row(dict(r._mapping)) for r in res]
     sold_res = await db.execute(_SQL_LINE_LEAD_SOLD, {"d1": d1.replace("-", ""), "d2": d2.replace("-", "")})
+    sold_all = [dict(r._mapping) for r in sold_res]
+    # 🔴 `L_lead` 自身の入稿は「買わなくなるランク」に数えない（2026-09-24〜 実際に出すため）。
+    #    どのレースで出したかは印として別に持つ。
+    lead_submitted = {str(m["rk"]) for m in sold_all if str(m["rank_key"]) == "L_lead"}
+    res = await db.execute(_SQL_LINE_LEAD, {"d1": dd1, "d2": dd2})
+    leads = [_lead_row(dict(r._mapping), lead_submitted) for r in res]
     sold = [
         SoldRow(
             race_key=str(m["rk"]),
@@ -997,7 +1007,8 @@ async def get_type_lab_line_lead(
             lines=sold_lines(m["bet_detail"]),
             title=m["title"],
         )
-        for m in (r._mapping for r in sold_res)
+        for m in sold_all
+        if str(m["rank_key"]) != "L_lead"
     ]
     out = build_line_lead_report(leads, sold)
     return LineLeadResponse(date_from=d1, date_to=d2, **out)

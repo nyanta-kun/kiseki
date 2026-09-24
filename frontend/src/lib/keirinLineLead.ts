@@ -33,6 +33,8 @@ export type LineLeadSummary = {
   lead_roi_wo_top3: number | null;
   lead_days_over_100: number;
   n_days: number;
+  /** 実際に netkeirin へ出した分（型ラボが売らないレースへ1日5本・2026-09-24〜） */
+  lead_sold?: LineLeadTally | null;
 };
 
 export type LineLeadDay = {
@@ -80,6 +82,8 @@ export type LineLeadRace = {
   win_combo: string | null;
   /** 決着した目の三連単確定オッズ（倍率・買っていなくても入る） */
   win_tf_odds: number | null;
+  /** このレースで実際に netkeirin へ出したか（穴狙い） */
+  submitted?: boolean;
   sold: LineLeadSold[];
 };
 

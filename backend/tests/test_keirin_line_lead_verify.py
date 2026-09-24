@@ -121,3 +121,23 @@ def test_売った商品の買い目の表示():
     }
     assert sold_lines(d) == ("3連単 1-3-2 ×5,700円", "3連複 1-2-3 ×300円")
     assert sold_lines(None) == () and sold_lines("壊れた") == () and sold_lines({"lines": [{}]}) == ()
+
+
+def test_実際に出した分を別に数える():
+    from dataclasses import replace
+
+    leads = [replace(_lead("20260925_28_02", 80_000), submitted=True), _lead("20260925_28_03", 0)]
+    s = build_line_lead_report(leads, [])
+    assert s["summary"]["lead_sold"]["n"] == 1 and s["summary"]["lead_sold"]["payout"] == 80_000
+    assert s["summary"]["lead"]["n"] == 2
+    assert [r["submitted"] for r in s["races"]] == [True, False]
+
+
+def test_API_はL_lead自身の入稿を買わなくなるランクに数えない():
+    import inspect
+
+    from src.api import keirin_type_lab_router as m
+
+    src = inspect.getsource(m.get_type_lab_line_lead)
+    assert 'if str(m["rank_key"]) != "L_lead"' in src
+    assert "lead_submitted" in src
