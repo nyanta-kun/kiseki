@@ -2,11 +2,13 @@
 
 「1日上限5本・穴狙いとして・現在売っていないレースに追加」
 「モーニングを除外として、早い未販売の5レース」
+→ 同日改訂「本数の上限を外し、除外も提示条件としてください」（準決勝系・型E を外す）
 
 ここで固定するのは:
 
 - 型ラボの本体が**全部終わった後**に回り、どの商品も出ていないレースにだけ出す（既存を減らさない）
-- **モーニング開催を外し、発走の早い順**に、**1日5本**（波をまたいで数える）
+- **モーニング開催・準決勝系・型E を外し**、発走の早い順に**本数の上限なし**で出す
+  （上限を掛けたときは波をまたいで数える）
 - 出どころ `origin='line_lead'`・勝負アイコンは**穴狙い**
 - 手動入稿（`--race-key`）では回さない・入稿設定で無効にできる・失敗しても型ラボの入稿を止めない
 - `L_lead` で出したレースを昼・夕に**組み直さない**（売った買い目が書き換わる）
@@ -26,7 +28,8 @@ def _ts(h: int, m: int = 0) -> str:
     return str(int(datetime(2026, 9, 25, h, m, tzinfo=_JST).timestamp()))
 
 
-def _row(rk: str, plan: str, start: str, *, type_label: str = "B", axis_sum: float = 1.9):
+def _row(rk: str, plan: str, start: str, *, type_label: str = "B", axis_sum: float = 1.9,
+         race_type: str = "予選"):
     legs = ([{"combo": "5-6-1", "stake": 3300, "pred_odds": 80.0},
              {"combo": "5-6-2", "stake": 3300, "pred_odds": 90.0},
              {"combo": "5-6-3", "stake": 3300, "pred_odds": 120.0}]
@@ -35,7 +38,7 @@ def _row(rk: str, plan: str, start: str, *, type_label: str = "B", axis_sum: flo
              {"combo": "1-4-7", "stake": 2100, "pred_odds": 9.9},
              {"combo": "1-4-6", "stake": 1500, "pred_odds": 16.2}])
     return {"race_key": rk, "race_date": "2026-09-25", "venue_name": "場",
-            "race_no": int(rk[-2:]), "race_type": "予選", "n_entries": 7, "cup_grade": None,
+            "race_no": int(rk[-2:]), "race_type": race_type, "n_entries": 7, "cup_grade": None,
             "type_label": type_label, "axis_sum": axis_sum, "pw_ent": 1.2,
             "axis1": 1, "axis2": 4, "p3_order": "1-4-5-6-7-2-3", "mode": "live",
             "plan_key": plan, "bet_type": "trifecta", "n_legs": 3, "budget": 10_000,
@@ -44,7 +47,7 @@ def _row(rk: str, plan: str, start: str, *, type_label: str = "B", axis_sum: flo
             "start_at": start, "legs": legs}
 
 
-def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots=None):
+def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots="unset"):
     from scripts import netkeirin_submit_type_lab as m
 
     sent: list[tuple] = []
@@ -62,7 +65,7 @@ def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots=
     monkeypatch.setattr(m, "auto_publish_submitted", lambda dry: [])
     monkeypatch.setattr(m, "_write_confident", lambda *a, **k: None)
     monkeypatch.setattr(m, "send", lambda *a, **k: None)
-    if slots is not None:
+    if slots != "unset":
         monkeypatch.setattr(m, "LINE_LEAD_SLOTS_PER_DAY", slots)
 
     def _fake_submit(row, session, client, dry_run, show_detail=False,
@@ -93,7 +96,7 @@ def _leads(*keys):
     return [_row(k, "L_lead", START[k]) for k in keys]
 
 
-def test_売っていないレースに早い順で1日5本(monkeypatch):
+def test_売っていないレースに上限なしで早い順(monkeypatch):
     # 型ラボは 28_01 だけ売る（1レースなので上限 max(1, 0) = 1件）
     rows = [_row("20260925_28_01", "B_hit", START["20260925_28_01"])]
     leads = _leads("20260925_28_01", "20260925_28_02", "20260925_28_03", "20260925_28_04",
@@ -102,7 +105,7 @@ def test_売っていないレースに早い順で1日5本(monkeypatch):
     m.run("2026-09-25", "morning", dry_run=False, only_key=None, do_rebuild=False)
     lead = [rk for rk, p, o in sent if p == "L_lead"]
     assert lead == ["20260925_28_02", "20260925_28_03", "20260925_28_04",
-                    "20260925_28_05", "20260925_28_06"], sent
+                    "20260925_28_05", "20260925_28_06", "20260925_28_07"], sent
     assert all(o == m.ORIGIN_LINE_LEAD for _rk, p, o in sent if p == "L_lead")
     # 1レース1商品（型ラボが売った 28_01 には出ない）
     assert len({rk for rk, _, _ in sent}) == len(sent), sent
@@ -115,13 +118,45 @@ def test_モーニング開催は外す(monkeypatch):
     assert [rk for rk, p, _ in sent if p == "L_lead"] == ["20260925_28_02"], sent
 
 
-def test_本数は波をまたいで数える(monkeypatch):
+def test_上限を掛けたときは波をまたいで数える(monkeypatch):
     leads = _leads("20260925_28_02", "20260925_28_03", "20260925_28_04")
     already = {("20260925_28_05", "L_lead"), ("20260925_28_06", "L_lead"),
                ("20260925_28_07", "L_lead"), ("20260925_28_01", "L_lead")}
-    m, sent = _env(monkeypatch, _TL, leads, DAY, already=already)
+    m, sent = _env(monkeypatch, _TL, leads, DAY, already=already, slots=5)
     m.run("2026-09-25", "noon", dry_run=False, only_key=None, do_rebuild=False)
     assert [rk for rk, p, _ in sent if p == "L_lead"] == ["20260925_28_02"], sent
+
+
+def test_上限の既定は無し():
+    from scripts import netkeirin_submit_type_lab as m
+    assert m.LINE_LEAD_SLOTS_PER_DAY is None
+
+
+def test_準決勝系と型Eは出さない(monkeypatch):
+    leads = [_row("20260925_28_02", "L_lead", START["20260925_28_02"], race_type="準決勝"),
+             _row("20260925_28_03", "L_lead", START["20260925_28_03"], type_label="E"),
+             _row("20260925_28_04", "L_lead", START["20260925_28_04"], race_type="決勝"),
+             _row("20260925_28_05", "L_lead", START["20260925_28_05"], type_label="F")]
+    m, sent = _env(monkeypatch, _TL, leads, DAY)
+    m.run("2026-09-25", "morning", dry_run=False, only_key=None, do_rebuild=False)
+    # 決勝（準決勝ではない）と型F は対象のまま
+    assert [rk for rk, p, _ in sent if p == "L_lead"] == ["20260925_28_04", "20260925_28_05"], sent
+
+
+def test_型の除外はそのレースの最新の型で見る(monkeypatch):
+    """`L_lead` の行の型が古くても、型ラボの最新の型が E なら出さない。"""
+    from scripts import netkeirin_submit_type_lab as m
+
+    lead = dict(_row("20260925_28_02", "L_lead", START["20260925_28_02"], type_label="F"),
+                legs="[]")
+    other = dict(_row("20260925_28_03", "L_lead", START["20260925_28_03"], type_label="E"),
+                 legs="[]")
+    current = {("20260925_28_02", "live"): (2, "E"), ("20260925_28_03", "live"): (2, "B")}
+    monkeypatch.setattr(m, "_fetch_rows", lambda day: ([lead, other], current))
+    rows = m._load_line_lead_rows("2026-09-25")
+    assert {r["race_key"]: r["type_label"] for r in rows} == {
+        "20260925_28_02": "E", "20260925_28_03": "B"}
+    assert [r["race_key"] for r in m.line_lead_candidates(rows, set())] == ["20260925_28_03"]
 
 
 def test_既に何かを出したレースと締切後には出さない(monkeypatch):

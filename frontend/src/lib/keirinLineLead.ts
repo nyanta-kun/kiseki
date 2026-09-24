@@ -33,7 +33,7 @@ export type LineLeadSummary = {
   lead_roi_wo_top3: number | null;
   lead_days_over_100: number;
   n_days: number;
-  /** 実際に netkeirin へ出した分（型ラボが売らないレースへ1日5本・2026-09-24〜） */
+  /** 実際に netkeirin へ出した分（型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし・2026-09-24〜） */
   lead_sold?: LineLeadTally | null;
 };
 

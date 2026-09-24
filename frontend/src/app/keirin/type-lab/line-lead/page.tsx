@@ -3,7 +3,7 @@
 /**
  * 逃げ先頭ライン（`L_lead`）の検証ページ（2026-09-24 新設・検証中）
  *
- * 行は条件を満たす全レースで作り、**売るのは型ラボが売らないレースへ1日5本**（穴狙い）。
+ * 行は条件を満たす全レースで作り、**売るのは型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし**（穴狙い）。
  * 「全部売っていたら」を、**同じレースで実際に出した他の商品（買わなくなるランク）**と
  * 並べて見る。実際に出したレースには「入稿済み」の印を付ける。
  * 置き換えの定義と会計は `backend/src/services/keirin_line_lead_verify.py`。
@@ -81,7 +81,7 @@ export default function LineLeadPage() {
         <FlaskConical size={18} className="text-indigo-600 dark:text-indigo-300" />
         <h1 className="text-base font-bold text-gray-900 dark:text-white sm:text-lg">逃げ先頭ラインの検証</h1>
         <span className="rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200 sm:text-xs">
-          検証中・入稿は1日5本
+          検証中・売っていないレースへ入稿
         </span>
       </header>
 
@@ -97,7 +97,7 @@ export default function LineLeadPage() {
           </p>
           <p>
             <b>入稿</b>: 対象の全レースを記録・採点し、実際に出すのは<b>型ラボが売っていない・モーニング開催でない・
-            発走の早いレースへ1日5本</b>（穴狙いアイコン）。出したレースには「入稿済み」の印が付きます。
+            準決勝系・型E でないレース</b>（穴狙いアイコン）。出したレースには「入稿済み」の印が付きます。
           </p>
           <p>
             <b>買わなくなるランク</b>: 新ランクのレースで実際に netkeirin へ出した他の商品（新ランク自身は含めない）。

@@ -756,13 +756,13 @@ def _lines_of(line_group: Mapping[int, object],
 
 # ── 逃げ先頭ライン（`L_lead`・2026-09-24 新設・検証中）──────────────────────────────
 #
-# 🔴🔴 **行は条件を満たす全レースで作るが、売るのは「型ラボが売らないレースへ1日5本」だけ**
+# 🔴🔴 **行は条件を満たす全レースで作るが、売るのは「型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし」だけ**
 #    （2026-09-24 ユーザー決定「1日上限5本・穴狙いとして・現在売っていないレースに追加」
-#    「モーニングを除外として、早い未販売の5レース」）。
+#    「モーニングを除外として、早い未販売の5レース」→ 同日改訂「本数の上限を外し、除外も提示条件」）。
 #    - `sell_plans_for` / `SELLABLE_PLAN_KEYS` には**入れない**（型ラボ本体の経路では売らない）。
 #      売るのは入稿スクリプトの別の段（`netkeirin_submit_type_lab.LINE_LEAD_SLOTS_PER_DAY`）
 #    - 固定: `tests/test_type_lab_line_lead.py`（本体で売らない）・
-#      `tests/test_type_lab_line_lead_sell.py`（別の段で1日5本）
+#      `tests/test_type_lab_line_lead_sell.py`（別の段・準決勝系と型Eを除く・上限なし）
 #
 # 狙う決着: **得点1位が居ないラインで、先頭が「逃」・先頭の競走得点がレース内5位以下**の
 #    ラインが、そのまま **先頭→番手** で1・2着に入る形。市場はこれを低く見ている。
@@ -1257,12 +1257,12 @@ TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upse
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
 TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
 
-# ── 逃げ先頭ライン（検証中・型ラボが売らないレースへ1日5本）。条件と根拠は `line_lead_legs` の上の節 ──
+# ── 逃げ先頭ライン（検証中・型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）。条件と根拠は `line_lead_legs` の上の節 ──
 #: 🔴 **1レース1万円を均等に割る**（`alloc="equal"`・100円単位で切り捨て）。
 #:    検証はこの買い方で測った（`docs/type_lab/line_lead_2026_09_24.md` §6）。
 PLANS["L_lead"] = Plan("L_lead", "L", "trifecta", "line_lead", 0, alloc="equal",
                        note="逃げ先頭ライン: 得点1位でない逃げ先頭（得点5位以下）の"
-                            "先頭→番手→3着・1レース1万円均等（検証中・型ラボが売らないレースへ1日5本）")
+                            "先頭→番手→3着・1レース1万円均等（検証中・型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）")
 #: 逃げ先頭ラインのプラン（表示順）。**`sell_plans_for` には入れない**（売るのは入稿スクリプトの別の段）。
 LINE_LEAD_PLAN_ORDER: tuple[str, ...] = ("L_lead",)
 LINE_LEAD_PLAN_KEYS: frozenset[str] = frozenset(LINE_LEAD_PLAN_ORDER)

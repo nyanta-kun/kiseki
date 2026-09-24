@@ -371,11 +371,20 @@ def _load_highpay_rows(day: str) -> dict[str, dict[str, dict]]:
 
 # ── 逃げ先頭ライン（`L_lead`）の販売（2026-09-24 ユーザー決定）─────────────────────────
 #
-# 🔴 **型ラボが売らないレースにだけ、1日5本まで足す。** 型ラボの本体の処理（上限・高額枠・
-#    自信あり）が全部終わった**後**に回るので、既存の商品は1件も減らない。
+# 🔴 **型ラボが売らないレースにだけ足す（本数の上限なし・2026-09-24 改訂）。** 型ラボの
+#    本体の処理（上限・高額枠・自信あり）が全部終わった**後**に回るので、既存の商品は
+#    1件も減らない。
 #    - 対象: その日にどの商品も出していない・締切前・**モーニング開催でない**レース
-#    - 順序: **発走の早い順**（ユーザー指定「早い未販売の5レース」）
+#    - 除外: **準決勝系**と**型E**（`line_lead_excluded`）
+#    - 順序: 発走の早い順（上限が無いので入稿の順番でしかない）
 #    - アイコン: 穴狙い（`ACT_TYPE_BY_PLAN["L_lead"]`）・出どころ `origin='line_lead'`
+# 🔴 **上限を外した理由**: 当初の「1日5本・早い順」は 2026-09 の実売で 9/1〜9/24 の
+#    98本中1的中（約5%）。9月の的中は午後以降に偏り、早い5本から全部漏れた。除外後の
+#    本数は過去2年で平均 3.7本/日・9月 5.1本/日しか無く、上限を外しても本数はほぼ増えない。
+# 🔴 **除外を2条件に絞った理由**: 準決勝系・型E は探索（2025）・確認（2026-01〜08）の
+#    両方で外すと回収率が上がり、9月でも下がらなかった。他に候補だった「型F の決勝系」
+#    「型C のミッドナイト」は 2025 で見つけた条件で、2026 では外すと下がった（130.5% →
+#    113〜116%）ので採らない。
 # 🔴 **`SELLABLE_PLAN_KEYS` には入れない。** 入れないので、`L_lead` で出したレースは
 #    昼・夕の波から見て「別ランクが取ったレース」（`races_taken_by_other_ranks`）になり、
 #    型ラボは出さない・組み直さない＝1レース1商品が保たれる。
@@ -385,8 +394,10 @@ def _load_highpay_rows(day: str) -> dict[str, dict[str, dict]]:
 #    根拠: `docs/type_lab/line_lead_2026_09_24.md` §9
 # ⚠️ 止めるときは `LINE_LEAD_SLOTS_PER_DAY = 0`、または入稿設定（`netkeirin_settings`）で
 #    `L_lead` を無効にする（`_is_enabled` を見る）。
-#: 1日に出す `L_lead` の上限（波をまたいで数える）。
-LINE_LEAD_SLOTS_PER_DAY = 5
+#: 1日に出す `L_lead` の上限（波をまたいで数える）。**`None` = 上限なし**・`0` = 停止。
+LINE_LEAD_SLOTS_PER_DAY: int | None = None
+#: 出さない型（型E は過去2年の両窓で `L_lead` が弱い: 88 / 81%）。
+LINE_LEAD_EXCLUDED_TYPES = frozenset({"E"})
 #: 第1Rの発走がこの時刻（JST・時）より前の開催を**モーニング**とみなして外す
 #: （`backend/src/api/keirin_meeting.py` の `DAY_FROM_HOUR` と同じ境目）。
 LINE_LEAD_MORNING_BEFORE_HOUR = 9
@@ -418,14 +429,36 @@ def morning_meeting_races(races: Sequence[tuple[str, object, object]]) -> set[st
             if first.get((str(rk)[:8], str(venue)), 99.0) < LINE_LEAD_MORNING_BEFORE_HOUR}
 
 
+def line_lead_excluded(row: dict) -> str | None:
+    """`L_lead` を出さない条件に当たれば理由を、当たらなければ `None` を返す。
+
+    - **準決勝系**（レース名に「準決勝」を含む。「決勝」だけの決勝系は対象のまま）
+    - **型E**（`LINE_LEAD_EXCLUDED_TYPES`）
+
+    >>> line_lead_excluded({"race_type": "準決勝", "type_label": "F"})
+    '準決勝系'
+    >>> line_lead_excluded({"race_type": "決勝", "type_label": "E"})
+    '型E'
+    >>> line_lead_excluded({"race_type": "決勝", "type_label": "F"}) is None
+    True
+    """
+    if "準決勝" in str(row.get("race_type") or ""):
+        return "準決勝系"
+    if str(row.get("type_label")) in LINE_LEAD_EXCLUDED_TYPES:
+        return f"型{row.get('type_label')}"
+    return None
+
+
 def line_lead_candidates(rows: Sequence[dict], busy: set[str]) -> list[dict]:
     """`L_lead` の行から、出してよいものを**発走の早い順**に返す（本数では切らない）。
 
     `busy` は出してはいけないレース（どれかの商品が出ている・締切後・モーニング開催）。
+    除外条件（`line_lead_excluded`）に当たる行も外す。
     発走時刻が読めない行は最後に回す（同順は `race_key`）。
 
     >>> rows = [{"race_key": "b", "start_at": "200"}, {"race_key": "a", "start_at": "100"},
-    ...         {"race_key": "c", "start_at": None}, {"race_key": "d", "start_at": "50"}]
+    ...         {"race_key": "c", "start_at": None}, {"race_key": "d", "start_at": "50"},
+    ...         {"race_key": "e", "start_at": "60", "race_type": "準決勝"}]
     >>> [r["race_key"] for r in line_lead_candidates(rows, {"d"})]
     ['a', 'b', 'c']
     """
@@ -434,17 +467,24 @@ def line_lead_candidates(rows: Sequence[dict], busy: set[str]) -> list[dict]:
             return (int(str(r.get("start_at"))), str(r["race_key"]))
         except (TypeError, ValueError):
             return (1 << 62, str(r["race_key"]))
-    return sorted((r for r in rows if str(r["race_key"]) not in busy), key=_t)
+    return sorted((r for r in rows
+                   if str(r["race_key"]) not in busy and line_lead_excluded(r) is None),
+                  key=_t)
 
 
 def _load_line_lead_rows(day: str) -> list[dict]:
     """当日の `L_lead` の行（7車・`mode='live'`）。買い目は `legs` を JSON から戻して返す。"""
-    rows, _current = _fetch_rows(day)
+    rows, current = _fetch_rows(day)
     out = []
     for r in rows:
         d = dict(r)
         if str(d["plan_key"]) not in LINE_LEAD_PLAN_KEYS or str(d["mode"]) != "live":
             continue
+        # 型の除外は**そのレースの最新の型**で見る（昼・夕の波で型が変わることがある）。
+        # 型ラボの行が無いレースは `L_lead` の行の型のまま。
+        cur = current.get((str(d["race_key"]), "live"))
+        if cur is not None:
+            d["type_label"] = cur[1]
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         out.append(d)
     return out
@@ -1343,14 +1383,15 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         else:
             bump("failed")
 
-    # ── 逃げ先頭ライン（`L_lead`）: 型ラボが売らないレースに1日5本（2026-09-24〜）──
+    # ── 逃げ先頭ライン（`L_lead`）: 型ラボが売らないレースに足す（2026-09-24〜）──
     # 🔴 **型ラボの本体（上限・高額枠・自信あり）が全部終わってから回す。** ここで取るのは
     #    この時点でどの商品も出ていないレースだけ＝既存の商品は1件も減らない。
     # 🔴 **手動入稿（`--race-key`）では回さない**（名指しの1レースを出す操作なので）。
     def _run_line_lead() -> int:
         nonlocal n_ok
         n_lead = 0
-        if only_key or LINE_LEAD_SLOTS_PER_DAY <= 0 or not _is_enabled(settings, "L_lead"):
+        slots = LINE_LEAD_SLOTS_PER_DAY
+        if only_key or (slots is not None and slots <= 0) or not _is_enabled(settings, "L_lead"):
             return 0
         lead_rows = _load_line_lead_rows(day)
         lead_keys = sorted({str(r["race_key"]) for r in lead_rows})
@@ -1358,15 +1399,18 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         # （取消済みも含む＝一度出して取り消したレースは出し直さない）。
         lead_already = _already_submitted(lead_keys) if lead_keys else set()
         done = sum(1 for _rk, rank in lead_already | already if rank in LINE_LEAD_PLAN_KEYS)
-        left = LINE_LEAD_SLOTS_PER_DAY - done
+        left = len(lead_rows) if slots is None else slots - done
         if left > 0 and lead_rows:
             busy = ({rk for rk, _ in lead_already} | {rk for rk, _ in already}
                     | taken_by_type_lab | set(closed)
                     | morning_meeting_races(_load_day_races(day)))
             cands = line_lead_candidates(lead_rows, busy)
-            print(f"[type_lab_submit] 逃げ先頭ライン 残り {left}本"
-                  f"（本日 {done}本 出済み・候補 {len(cands)}レース／"
-                  f"行 {len(lead_rows)}レース）", flush=True)
+            n_excl = sum(1 for r in lead_rows
+                         if str(r["race_key"]) not in busy and line_lead_excluded(r))
+            print(f"[type_lab_submit] 逃げ先頭ライン "
+                  f"{'上限なし' if slots is None else f'残り {left}本'}"
+                  f"（本日 {done}本 出済み・候補 {len(cands)}レース・"
+                  f"除外 {n_excl}レース／行 {len(lead_rows)}レース）", flush=True)
             for row in cands:
                 if n_lead >= left:
                     break

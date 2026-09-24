@@ -75,7 +75,7 @@ PLAN_ORDER = [
     "F_line",
     "F_sign",
     "F_big",
-    # 逃げ先頭ライン（2026-09-24・検証中・型ラボが売らないレースへ1日5本）。検証ページは `/line-lead`。
+    # 逃げ先頭ライン（2026-09-24・検証中・型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）。検証ページは `/line-lead`。
     "L_lead",
 ]
 
@@ -848,7 +848,7 @@ async def get_type_lab_outcome(
 
 # ─────────────────── 逃げ先頭ライン（`L_lead`）の検証（2026-09-24） ───────────────────
 #
-# 🔴 `L_lead` は**検証中**のランク（行は全レース・売るのは型ラボが売らないレースへ1日5本）。
+# 🔴 `L_lead` は**検証中**のランク（行は全レース・売るのは型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）。
 #    「全部売っていたら」を、同じレースで実際に出した他の商品（買わなくなるランク）と
 #    並べて見るための窓口。`L_lead` 自身の入稿は `submitted` の印と `lead_sold` に分ける。
 #    計算の正本は `services/keirin_line_lead_verify.build_line_lead_report`（純関数）。
@@ -895,7 +895,7 @@ class LineLeadSummary(BaseModel):
     lead_roi_wo_top3: float | None = None
     lead_days_over_100: int
     n_days: int
-    #: 実際に出した `L_lead`（型ラボが売らないレースへ1日5本・2026-09-24〜）
+    #: 実際に出した `L_lead`（型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし・2026-09-24〜）
     lead_sold: LineLeadTally | None = None
 
 

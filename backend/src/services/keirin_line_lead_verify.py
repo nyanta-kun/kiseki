@@ -1,7 +1,7 @@
 """逃げ先頭ライン（`L_lead`）の検証集計（2026-09-24 新設・**DB にも FastAPI にも依存しない純関数**）。
 
 `L_lead` は型ラボの**検証中**のランク（keirin `src/type_lab.py` の `line_lead_legs`）。
-行は条件を満たす全レースで作り、**実際に出すのは型ラボが売らないレースへ1日5本**
+行は条件を満たす全レースで作り、**実際に出すのは型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし**
 （2026-09-24〜・穴狙い・`origin='line_lead'`）。ここでは「全部売っていたら」を見るために並べる:
 
 | 区分 | 中身 |
@@ -46,7 +46,7 @@ class LeadRow:
     pred_odds: tuple[float, ...] = ()
     #: 決着した目の三連単確定オッズ（倍率）。**買っていなくても入る**（レースの荒れ具合）。
     win_tf_odds: float | None = None
-    #: 実際に netkeirin へ出したか（2026-09-24〜 型ラボが売らないレースへ1日5本・穴狙い）。
+    #: 実際に netkeirin へ出したか（2026-09-24〜 型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし・穴狙い）。
     submitted: bool = False
 
     @property
@@ -177,7 +177,7 @@ def build_line_lead_report(leads: Iterable[LeadRow], sold: Iterable[SoldRow]) ->
         return days.setdefault(date, {}).setdefault(name, Tally())
 
     tot = {k: Tally() for k in ("lead", "displaced", "current", "combined")}
-    #: 実際に出した `L_lead`（型ラボが売らないレースへ1日5本・2026-09-24〜）。
+    #: 実際に出した `L_lead`（型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし・2026-09-24〜）。
     lead_sold = Tally()
 
     for r in leads:
