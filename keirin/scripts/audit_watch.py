@@ -427,6 +427,10 @@ LAYERS: tuple[tuple[str, str, tuple[float, float] | None, tuple[float, float] | 
     ("本線（高額・看板枠を除く）", "base", (0.697, 0.909), (0.25, 0.36), 300),
     ("高額枠（origin=highpay_fill）", "highpay", (0.50, 1.155), None, NEVER_JUDGE),
     ("看板枠（F_sign / F_pay）", "signboard", (0.614, 0.872), None, NEVER_JUDGE),
+    # 🔴 逃げ先頭ライン（2026-09-24〜・型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）。的中は 1レース
+    #    3〜4% なので実売では判定しない。帯は過去2年の③（1万円均等・最大3本を除く 93〜99%
+    #    ↔ 含む 111〜116%）の幅を広めに取った参考値。判定は `docs/type_lab/line_lead_2026_09_24.md` §7。
+    ("逃げ先頭ライン（L_lead）", "line_lead", (0.50, 1.50), None, NEVER_JUDGE),
 )
 
 
@@ -437,8 +441,12 @@ def _layer(races: Sequence[SoldRace], key: str) -> list[SoldRace]:
         return [r for r in races if (r.origin or "") == "highpay_fill"]
     if key == "signboard":
         return [r for r in races if r.rank_key in ("F_sign", "F_pay")]
+    if key == "line_lead":
+        return [r for r in races if r.rank_key == "L_lead"]
+    # 🔴 本線から逃げ先頭ラインを外す（的中 3〜4% の一撃商品が混ざると本線の的中帯が壊れる）。
     return [r for r in races
-            if (r.origin or "") != "highpay_fill" and r.rank_key not in ("F_sign", "F_pay")]
+            if (r.origin or "") != "highpay_fill"
+            and r.rank_key not in ("F_sign", "F_pay", "L_lead")]
 
 
 #: 今回の見直しで入った商品。**変更日より前は別の商品**なので、そこから積む。
@@ -447,6 +455,7 @@ REVISED: tuple[tuple[str, str, str], ...] = (
     ("高額枠 5本 (#588)", "2026-09-19", "__highpay__"),
     ("自信あり 第3世代 (#589)", "2026-09-19", "__confident__"),
     ("自信あり 的中型に限定 (#596)", "2026-09-21", "__confident__"),
+    ("逃げ先頭ライン 穴狙い（準決勝系・型E 除く・上限なし）", "2026-09-25", "L_lead"),
 )
 
 

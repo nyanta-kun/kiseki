@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * 逃げ先頭ライン（`L_lead`）の検証ページ（2026-09-24 新設・**検証中・入稿しない**）
+ * 逃げ先頭ライン（`L_lead`）の検証ページ（2026-09-24 新設・検証中）
  *
- * 「もし売っていたら」を、**同じレースで実際に出した商品（買わなくなるランク）**と
- * 並べて見る。置き換えの定義と会計は `backend/src/services/keirin_line_lead_verify.py`。
+ * 行は条件を満たす全レースで作り、**売るのは型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし**（穴狙い）。
+ * 「全部売っていたら」を、**同じレースで実際に出した他の商品（買わなくなるランク）**と
+ * 並べて見る。実際に出したレースには「入稿済み」の印を付ける。
+ * 置き換えの定義と会計は `backend/src/services/keirin_line_lead_verify.py`。
  *
  * 表示は2つ（2026-09-24 ユーザー要望で「1日」を追加・既定）:
  * - **1日**: その日の推奨レースを発走順に、買い目（1点ごとの賭け金・想定払戻）と結果、
@@ -79,7 +81,7 @@ export default function LineLeadPage() {
         <FlaskConical size={18} className="text-indigo-600 dark:text-indigo-300" />
         <h1 className="text-base font-bold text-gray-900 dark:text-white sm:text-lg">逃げ先頭ラインの検証</h1>
         <span className="rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200 sm:text-xs">
-          検証中・入稿しません
+          検証中・売っていないレースへ入稿
         </span>
       </header>
 
@@ -94,7 +96,11 @@ export default function LineLeadPage() {
             1レース1万円を均等に割る。得点1位のラインが4車のレースは対象外。
           </p>
           <p>
-            <b>買わなくなるランク</b>: 新ランクのレースで実際に netkeirin へ出した商品。
+            <b>入稿</b>: 対象の全レースを記録・採点し、実際に出すのは<b>型ラボが売っていない・モーニング開催でない・
+            準決勝系・型E でないレース</b>（穴狙いアイコン）。出したレースには「入稿済み」の印が付きます。
+          </p>
+          <p>
+            <b>買わなくなるランク</b>: 新ランクのレースで実際に netkeirin へ出した他の商品（新ランク自身は含めない）。
             <b>現行 ↔ 置き換え</b>は、売った全商品と「新ランクのレースだけ新ランクに置き換え（売っていなければ足す）」の比較。
           </p>
           <p className="text-amber-700 dark:text-amber-300">
@@ -187,6 +193,10 @@ function DayView({ data }: { data: LineLeadResponse }) {
             <b className={profit(s.combined) >= profit(s.current) ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
               {signed(profit(s.combined) - profit(s.current))}
             </b>} />
+          {s.lead_sold && (
+            <Row k="実際に出した分（穴狙い）" v={
+              `${s.lead_sold.n + s.lead_sold.pending}R・的中${s.lead_sold.hits}・${pct(s.lead_sold.roi)}`} />
+          )}
         </div>
       </section>
       {races.length === 0 ? (
@@ -218,6 +228,11 @@ function RaceCard({ r }: { r: LineLeadRace }) {
         {t && <span className="font-mono text-gray-600 dark:text-gray-400">{t}</span>}
         <b className="text-sm text-gray-900 dark:text-gray-100">{r.venue_name ?? ""}{r.race_no ?? ""}R</b>
         {r.race_type && <span className="text-gray-500 dark:text-gray-400">{r.race_type}</span>}
+        {r.submitted && (
+          <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+            入稿済み・穴狙い
+          </span>
+        )}
         <span className="ml-auto">{badge}</span>
       </div>
 
@@ -282,6 +297,10 @@ function RangeView({ data, onOpenDay }: { data: LineLeadResponse; onOpenDay: (d:
           extra={[
             ["大当たり3本を除く回収率", pct(s.lead_roi_wo_top3)],
             ["回収率100%超えの日", `${s.lead_days_over_100} / ${s.n_days}日`],
+            ...(s.lead_sold
+              ? [["実際に出した分（穴狙い）",
+                  `${s.lead_sold.n + s.lead_sold.pending}R・的中${s.lead_sold.hits}・${pct(s.lead_sold.roi)}`] as [string, string]]
+              : []),
           ]} />
         <SummaryCard title="買わなくなるランク" t={s.displaced}
           extra={[["新ランクとの収支差", signed(profit(s.lead) - profit(s.displaced))]]} />

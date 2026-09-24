@@ -473,7 +473,9 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 #: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
 #:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
 #:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
-LONGSHOT_PLANS = ({"F_pay", "A_ana", "T_upset"}
+#: 🔴 逃げ先頭ライン `L_lead`（2026-09-24〜）も穴狙い（ユーザー決定「穴狙いとして」）。
+#:    `SELLABLE_PLAN_KEYS` の外で売る（型ラボが売らないレースへ1日5本・別経路）。
+LONGSHOT_PLANS = ({"F_pay", "A_ana", "T_upset", "L_lead"}
                   | {f"{t}_sign" for t in "ABCDEF"}
                   | {f"{t}_big" for t in "ABCDEF"})
 
@@ -501,7 +503,9 @@ def test_only_declared_plans_are_longshot():
     #    表には最初から6型ぶん入れてある。**不足は許さない**ので検出力は落ちない。
     assert set(SELLABLE_PLAN_KEYS) <= set(ACT_TYPE_BY_PLAN), \
         "入稿しうるプランが表から漏れている"
-    assert all(k in SELLABLE_PLAN_KEYS or k.endswith(("_sign", "_big"))
+    from src.type_lab import LINE_LEAD_PLAN_KEYS
+    assert all(k in SELLABLE_PLAN_KEYS or k in LINE_LEAD_PLAN_KEYS
+               or k.endswith(("_sign", "_big"))
                for k in ACT_TYPE_BY_PLAN), "表に素性の分からないプランがある"
     assert {k for k, v in ACT_TYPE_BY_PLAN.items()
             if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS

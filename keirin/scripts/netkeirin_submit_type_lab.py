@@ -61,13 +61,17 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from collections.abc import Sequence
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+#: 日本時間（開催の時間帯の判定に使う。VPS のローカル時刻に依存させない）。
+_JST = timezone(timedelta(hours=9))
 
 from src.database import get_connection                      # noqa: E402
 from src.netkeirin_client import (                           # noqa: E402
@@ -123,6 +127,7 @@ from src.type_lab_submission import build_submission         # noqa: E402
 #    2箇所に分かれる。このリポジトリが繰り返し事故を起こした型。
 from scripts.netkeirin_submit_wt import (                    # noqa: E402
     ORIGIN_HIGHPAY,
+    ORIGIN_LINE_LEAD,
     ORIGIN_RANK,
     resolve_act_type,
     REVIEW_URL,
@@ -183,6 +188,9 @@ ACT_TYPE_BY_PLAN: dict[str, str] = {
     #    2026-08-30 の判断（「適用範囲を広げると切り分けが難しくなる」）とは
     #    別の話で、こちらは買い目からして穴狙いにしか読めない。
     "A_ana": ACT_TYPE_LONGSHOT,
+    # 🔴 逃げ先頭ライン（2026-09-24 ユーザー決定「穴狙いとして」）。得点1位でないラインの
+    #    逃げ切りを 1レース1万円の均等で買う一撃商品（的中は 1レース 3〜4%）。
+    "L_lead": ACT_TYPE_LONGSHOT,
     "B_hit": ACT_TYPE_DEFAULT,
     "C_hit": ACT_TYPE_DEFAULT,
     "D_hit": ACT_TYPE_DEFAULT,
@@ -262,6 +270,12 @@ def _fetch_rows(day: str) -> tuple[list, dict[tuple[str, str], tuple]]:
     current: dict[tuple[str, str], tuple] = {}
     for r in rows:
         d = dict(r)
+        # 🔴 **逃げ先頭ライン（`L_lead`）の行は型の判定に使わない**（2026-09-24）。
+        #    `build_type_lab_picks --only-plans L_lead` で後から足した行は `generated_at` が
+        #    新しいので、その型が「最新」になると同じレースの型ラボの行が古い行扱いになり
+        #    売られなくなる。`L_lead` は型と無関係に組むので、型の正本にはしない。
+        if str(d["plan_key"]) in LINE_LEAD_PLAN_KEYS:
+            continue
         key = (str(d["race_key"]), str(d["mode"]))
         gen = d.get("generated_at")
         if key not in current or (gen is not None and current[key][0] is not None
@@ -342,15 +356,146 @@ def _load_highpay_rows(day: str) -> dict[str, dict[str, dict]]:
     for r in rows:
         d = dict(r)
         rk, mode = str(d["race_key"]), str(d["mode"])
-        if str(d["type_label"]) != current[(rk, mode)][1]:
-            continue        # 組み直し前の古い型の行
+        # ⚠️ `current` は `L_lead` の行を数えないので、`L_lead` しか無いレースは載らない
+        #    （2026-09-24）。プランで先に絞ってから型を見る。
         if str(d["plan_key"]) not in HIGHPAY_PLAN_KEYS:
             continue
+        if (rk, mode) not in current or str(d["type_label"]) != current[(rk, mode)][1]:
+            continue        # 組み直し前の古い型の行
         if highpay_plan_for(d["type_label"], d["n_entries"]) is None:
             continue        # 型・車数が対象外
         d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
         out.setdefault(rk, {})[str(d["plan_key"])] = d
     return out
+
+
+# ── 逃げ先頭ライン（`L_lead`）の販売（2026-09-24 ユーザー決定）─────────────────────────
+#
+# 🔴 **型ラボが売らないレースにだけ足す（本数の上限なし・2026-09-24 改訂）。** 型ラボの
+#    本体の処理（上限・高額枠・自信あり）が全部終わった**後**に回るので、既存の商品は
+#    1件も減らない。
+#    - 対象: その日にどの商品も出していない・締切前・**モーニング開催でない**レース
+#    - 除外: **準決勝系**と**型E**（`line_lead_excluded`）
+#    - 順序: 発走の早い順（上限が無いので入稿の順番でしかない）
+#    - アイコン: 穴狙い（`ACT_TYPE_BY_PLAN["L_lead"]`）・出どころ `origin='line_lead'`
+# 🔴 **上限を外した理由**: 当初の「1日5本・早い順」は 2026-09 の実売で 9/1〜9/24 の
+#    98本中1的中（約5%）。9月の的中は午後以降に偏り、早い5本から全部漏れた。除外後の
+#    本数は過去2年で平均 3.7本/日・9月 5.1本/日しか無く、上限を外しても本数はほぼ増えない。
+# 🔴 **除外を2条件に絞った理由**: 準決勝系・型E は探索（2025）・確認（2026-01〜08）の
+#    両方で外すと回収率が上がり、9月でも下がらなかった。他に候補だった「型F の決勝系」
+#    「型C のミッドナイト」は 2025 で見つけた条件で、2026 では外すと下がった（130.5% →
+#    113〜116%）ので採らない。
+# 🔴 **`SELLABLE_PLAN_KEYS` には入れない。** 入れないので、`L_lead` で出したレースは
+#    昼・夕の波から見て「別ランクが取ったレース」（`races_taken_by_other_ranks`）になり、
+#    型ラボは出さない・組み直さない＝1レース1商品が保たれる。
+# 🔴 **モーニング開催を外す理由**: 過去2年でモーニングの `L_lead` は回収率 54 / 45%
+#    （探索 / 確認）と両窓で低い（当たっても配当が小さい）。早い順に選ぶと
+#    ここを優先して拾ってしまう（2026-09 の試算で 108R・的中0）。
+#    根拠: `docs/type_lab/line_lead_2026_09_24.md` §9
+# ⚠️ 止めるときは `LINE_LEAD_SLOTS_PER_DAY = 0`、または入稿設定（`netkeirin_settings`）で
+#    `L_lead` を無効にする（`_is_enabled` を見る）。
+#: 1日に出す `L_lead` の上限（波をまたいで数える）。**`None` = 上限なし**・`0` = 停止。
+LINE_LEAD_SLOTS_PER_DAY: int | None = None
+#: 出さない型（型E は過去2年の両窓で `L_lead` が弱い: 88 / 81%）。
+LINE_LEAD_EXCLUDED_TYPES = frozenset({"E"})
+#: 第1Rの発走がこの時刻（JST・時）より前の開催を**モーニング**とみなして外す
+#: （`backend/src/api/keirin_meeting.py` の `DAY_FROM_HOUR` と同じ境目）。
+LINE_LEAD_MORNING_BEFORE_HOUR = 9
+
+
+def morning_meeting_races(races: Sequence[tuple[str, object, object]]) -> set[str]:
+    """`(race_key, venue_id, start_at)` の一覧から、**モーニング開催のレース**を返す。
+
+    開催（日付×場）ごとに第1Rの発走時刻を見て、`LINE_LEAD_MORNING_BEFORE_HOUR` 時より
+    前ならその開催の全レースをモーニングとする。発走時刻が読めないレースは判定に使わない。
+
+    >>> jst = lambda h, m=0: int(datetime(2026, 9, 25, h, m, tzinfo=_JST).timestamp())
+    >>> sorted(morning_meeting_races([("20260925_87_01", 87, jst(8, 30)),
+    ...                               ("20260925_87_09", 87, jst(12, 40)),
+    ...                               ("20260925_28_01", 28, jst(10, 50))]))
+    ['20260925_87_01', '20260925_87_09']
+    """
+    first: dict[tuple[str, str], float] = {}
+    for rk, venue, start_at in races:
+        try:
+            ts = int(str(start_at))
+        except (TypeError, ValueError):
+            continue
+        h = datetime.fromtimestamp(ts, _JST)
+        hour = h.hour + h.minute / 60
+        key = (str(rk)[:8], str(venue))
+        first[key] = min(first.get(key, 99.0), hour)
+    return {str(rk) for rk, venue, _ in races
+            if first.get((str(rk)[:8], str(venue)), 99.0) < LINE_LEAD_MORNING_BEFORE_HOUR}
+
+
+def line_lead_excluded(row: dict) -> str | None:
+    """`L_lead` を出さない条件に当たれば理由を、当たらなければ `None` を返す。
+
+    - **準決勝系**（レース名に「準決勝」を含む。「決勝」だけの決勝系は対象のまま）
+    - **型E**（`LINE_LEAD_EXCLUDED_TYPES`）
+
+    >>> line_lead_excluded({"race_type": "準決勝", "type_label": "F"})
+    '準決勝系'
+    >>> line_lead_excluded({"race_type": "決勝", "type_label": "E"})
+    '型E'
+    >>> line_lead_excluded({"race_type": "決勝", "type_label": "F"}) is None
+    True
+    """
+    if "準決勝" in str(row.get("race_type") or ""):
+        return "準決勝系"
+    if str(row.get("type_label")) in LINE_LEAD_EXCLUDED_TYPES:
+        return f"型{row.get('type_label')}"
+    return None
+
+
+def line_lead_candidates(rows: Sequence[dict], busy: set[str]) -> list[dict]:
+    """`L_lead` の行から、出してよいものを**発走の早い順**に返す（本数では切らない）。
+
+    `busy` は出してはいけないレース（どれかの商品が出ている・締切後・モーニング開催）。
+    除外条件（`line_lead_excluded`）に当たる行も外す。
+    発走時刻が読めない行は最後に回す（同順は `race_key`）。
+
+    >>> rows = [{"race_key": "b", "start_at": "200"}, {"race_key": "a", "start_at": "100"},
+    ...         {"race_key": "c", "start_at": None}, {"race_key": "d", "start_at": "50"},
+    ...         {"race_key": "e", "start_at": "60", "race_type": "準決勝"}]
+    >>> [r["race_key"] for r in line_lead_candidates(rows, {"d"})]
+    ['a', 'b', 'c']
+    """
+    def _t(r: dict) -> tuple[int, str]:
+        try:
+            return (int(str(r.get("start_at"))), str(r["race_key"]))
+        except (TypeError, ValueError):
+            return (1 << 62, str(r["race_key"]))
+    return sorted((r for r in rows
+                   if str(r["race_key"]) not in busy and line_lead_excluded(r) is None),
+                  key=_t)
+
+
+def _load_line_lead_rows(day: str) -> list[dict]:
+    """当日の `L_lead` の行（7車・`mode='live'`）。買い目は `legs` を JSON から戻して返す。"""
+    rows, current = _fetch_rows(day)
+    out = []
+    for r in rows:
+        d = dict(r)
+        if str(d["plan_key"]) not in LINE_LEAD_PLAN_KEYS or str(d["mode"]) != "live":
+            continue
+        # 型の除外は**そのレースの最新の型**で見る（昼・夕の波で型が変わることがある）。
+        # 型ラボの行が無いレースは `L_lead` の行の型のまま。
+        cur = current.get((str(d["race_key"]), "live"))
+        if cur is not None:
+            d["type_label"] = cur[1]
+        d["legs"] = json.loads(d["legs"]) if isinstance(d["legs"], str) else (d["legs"] or [])
+        out.append(d)
+    return out
+
+
+def _load_day_races(day: str) -> list[tuple[str, object, object]]:
+    """当日の全レースの `(race_key, venue_id, start_at)`（モーニング開催の判定用）。"""
+    with get_connection() as conn:
+        return [tuple(r) for r in conn.execute(
+            "SELECT race_key, venue_id, start_at FROM wt_races WHERE race_date = ?",
+            (day,)).fetchall()]
 
 
 def races_taken_by_other_ranks(already: set[tuple[str, str]]) -> set[str]:
@@ -911,7 +1056,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
         todo = {int(r["n_entries"] or 7): [] for r in rows}
         for r in rows:
             rk = str(r["race_key"])
-            if (rk, str(r["plan_key"])) in already or rk in closed:
+            # 🔴 **別ランク（逃げ先頭ライン `L_lead` を含む）が取ったレースも組み直さない**
+            #    （2026-09-24）。組み直すと同じレースの `L_lead` の行まで UPSERT で書き換わり、
+            #    売った買い目と記録が食い違う。型ラボはどのみち `taken` で出さない。
+            if (rk, str(r["plan_key"])) in already or rk in closed or rk in taken:
                 continue
             todo[int(r["n_entries"] or 7)].append(rk)
         # 🔴 **行が1つも無いレースも組み直しの対象に入れる**（2026-09-21）。
@@ -1234,6 +1382,68 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             submitted.append((str(venue), str(plan)))
         else:
             bump("failed")
+
+    # ── 逃げ先頭ライン（`L_lead`）: 型ラボが売らないレースに足す（2026-09-24〜）──
+    # 🔴 **型ラボの本体（上限・高額枠・自信あり）が全部終わってから回す。** ここで取るのは
+    #    この時点でどの商品も出ていないレースだけ＝既存の商品は1件も減らない。
+    # 🔴 **手動入稿（`--race-key`）では回さない**（名指しの1レースを出す操作なので）。
+    def _run_line_lead() -> int:
+        nonlocal n_ok
+        n_lead = 0
+        slots = LINE_LEAD_SLOTS_PER_DAY
+        if only_key or (slots is not None and slots <= 0) or not _is_enabled(settings, "L_lead"):
+            return 0
+        lead_rows = _load_line_lead_rows(day)
+        lead_keys = sorted({str(r["race_key"]) for r in lead_rows})
+        # `already` は型ラボの行があるレースの断面なので、候補のレースについて引き直す
+        # （取消済みも含む＝一度出して取り消したレースは出し直さない）。
+        lead_already = _already_submitted(lead_keys) if lead_keys else set()
+        done = sum(1 for _rk, rank in lead_already | already if rank in LINE_LEAD_PLAN_KEYS)
+        left = len(lead_rows) if slots is None else slots - done
+        if left > 0 and lead_rows:
+            busy = ({rk for rk, _ in lead_already} | {rk for rk, _ in already}
+                    | taken_by_type_lab | set(closed)
+                    | morning_meeting_races(_load_day_races(day)))
+            cands = line_lead_candidates(lead_rows, busy)
+            n_excl = sum(1 for r in lead_rows
+                         if str(r["race_key"]) not in busy and line_lead_excluded(r))
+            print(f"[type_lab_submit] 逃げ先頭ライン "
+                  f"{'上限なし' if slots is None else f'残り {left}本'}"
+                  f"（本日 {done}本 出済み・候補 {len(cands)}レース・"
+                  f"除外 {n_excl}レース／行 {len(lead_rows)}レース）", flush=True)
+            for row in cands:
+                if n_lead >= left:
+                    break
+                race_key = str(row["race_key"])
+                venue = str(row["venue_name"] or "?")
+                race_no = int(row["race_no"])
+                if _missing_market_inputs(race_key):
+                    continue
+                reason = _gate_reason(row)
+                if reason is not None:
+                    skip(race_key, "L_lead", session, reason[0], reason[1],
+                         venue, race_no, quiet=True)
+                    continue
+                ok, msg = submit_row(row, session, client, dry_run,
+                                     show_detail=dry_run and n_ok < show, skip=skip,
+                                     origin=ORIGIN_LINE_LEAD)
+                if not ok:
+                    bump("failed")
+                    continue
+                taken_by_type_lab.add(race_key)
+                n_ok += 1
+                n_lead += 1
+                titles.append(f"{venue}{race_no}R(L_lead) 逃げ先頭 {msg}")
+                submitted.append((venue, "L_lead"))
+        return n_lead
+
+    # 🔴 **失敗しても型ラボの入稿・公開・通知を止めない**（付け足しの段なので）。
+    #    例外はログに残して先へ進む（通知の失敗を入稿の失敗にしないのと同じ考え方）。
+    try:
+        _run_line_lead()
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[type_lab_submit] ⚠️ 逃げ先頭ラインの入稿に失敗しました"
+              f"（型ラボの入稿は完了しています）: {e!r}", flush=True)
 
     tag = "[dry-run] " if dry_run else ""
     # 🔴 **高額枠は「入稿」に数える**（2026-09-06）。`bump()` は見送りの集計なので、
