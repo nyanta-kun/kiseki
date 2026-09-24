@@ -213,7 +213,9 @@ type RankFilter =
   // 看板枠（2026-08-31）
   | "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign"
   // 高額枠の「特大狙い」（2026-09-06・PR#477）
-  | "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big";
+  | "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big"
+  // 逃げ先頭ライン（2026-09-25〜）
+  | "L_lead";
 
 // 並び順は keirin ページの RANK_ORDER と同一基準（車数＞入稿の優先順位）。
 const RANK_FILTERS: { key: RankFilter; label: string }[] = [
@@ -254,6 +256,8 @@ const RANK_FILTERS: { key: RankFilter; label: string }[] = [
   { key: "D_big", label: "型D特大" },
   { key: "E_big", label: "型E特大" },
   { key: "F_big", label: "型F特大" },
+  // 逃げ先頭ライン（2026-09-25〜・型ラボが売らないレースへ穴狙いで足す）
+  { key: "L_lead", label: "逃げ先頭" },
   // 7S（2026-08-14 に旧 7SS / 7A を統合）
   { key: "7S", label: "7S" },
   // 7B（◎◯一致×順序/相手不一致・相手絞り3点・2026-08-03導入）

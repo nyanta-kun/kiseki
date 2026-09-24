@@ -1501,7 +1501,9 @@ export type TypeLabRankKey =
   "A_hit" | "A_trio" | "A_ana" |
   "B_hit" | "C_hit" | "D_hit" | "E_hit" | "F_pay" | "F_hit" | "F_line" |
   "A_sign" | "B_sign" | "C_sign" | "D_sign" | "E_sign" | "F_sign" |
-  "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big";
+  "A_big" | "B_big" | "C_big" | "D_big" | "E_big" | "F_big" |
+  // 逃げ先頭ライン（2026-09-25〜・型ラボが売らないレースへ穴狙いで足す）
+  "L_lead";
 
 export type NetkeirinRankKey =
   | "_global" | "7S" | "7B" | "9C" | "7H1" | "7H2" | "9H1" | "7C" | "7M1"

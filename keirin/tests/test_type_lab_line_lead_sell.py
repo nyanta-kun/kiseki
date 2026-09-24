@@ -257,3 +257,27 @@ def test_監査の本線に混ぜない():
              SimpleNamespace(origin="rank", rank_key="B_hit")]
     assert [r.rank_key for r in aw._layer(races, "base")] == ["B_hit"]
     assert [r.rank_key for r in aw._layer(races, "line_lead")] == ["L_lead"]
+
+
+def test_入稿通知に逃げ先頭のレース名を出す(monkeypatch):
+    """「ランク別 … L_lead 4」だけでは、どのレースへ足したのかが読めない（2026-09-25 指摘）。"""
+    rows = [_row("20260925_28_01", "B_hit", START["20260925_28_01"])]
+    m, sent = _env(monkeypatch, rows, _leads("20260925_28_02", "20260925_28_03"), DAY)
+    msgs: list[str] = []
+    monkeypatch.setattr(m, "send", lambda text, channel=None, **k: msgs.append(text))
+    monkeypatch.setattr(m, "auto_publish_submitted", lambda dry: [{"ok": True}] * 3)
+    monkeypatch.setattr(m, "_confident_line", lambda day: "🎯 自信あり: なし")
+    m.run("2026-09-25", "morning", dry_run=False, only_key=None, do_rebuild=False)
+    body = "\n".join(msgs)
+    assert "🏃 逃げ先頭（穴狙い）2件: 場2R（11:20）・場3R（11:50）" in body, body
+
+
+def test_逃げ先頭を出さなかった回は行を書かない(monkeypatch):
+    rows = [_row("20260925_28_01", "B_hit", START["20260925_28_01"])]
+    m, sent = _env(monkeypatch, rows, [], DAY)
+    msgs: list[str] = []
+    monkeypatch.setattr(m, "send", lambda text, channel=None, **k: msgs.append(text))
+    monkeypatch.setattr(m, "auto_publish_submitted", lambda dry: [{"ok": True}])
+    monkeypatch.setattr(m, "_confident_line", lambda day: "🎯 自信あり: なし")
+    m.run("2026-09-25", "morning", dry_run=False, only_key=None, do_rebuild=False)
+    assert msgs and "逃げ先頭" not in "\n".join(msgs), msgs

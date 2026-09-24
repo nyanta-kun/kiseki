@@ -339,6 +339,9 @@ const RANK_STYLE: Record<string, { bg: string; text: string; label: string }> = 
   "D_big":     { bg: "#4338ca", text: "#fff", label: "Db" },
   "E_big":     { bg: "#c2410c", text: "#fff", label: "Eb" },
   "F_big":     { bg: "#991b1b", text: "#fff", label: "Fb" },
+  // 逃げ先頭ライン（2026-09-25〜・型ラボが売らないレースへ穴狙いで足す）。
+  // 型に依らないので型の色域（緑〜赤）から外した紫紅にする。L＝line、lead=l。
+  "L_lead":    { bg: "#a21caf", text: "#fff", label: "Ll" },
   "7PLUS_CAND": { bg: "#9ca3af", text: "#fff", label: "候補" },
   // 9S=RANK_9S（S7の9車立て版・独立ランク）。7Sと同様2026-07-31にgate_label分岐
   // 廃止・単一ランク化済み。買い目コスト(7点流し=700円)・母集団が異なるため
@@ -1101,6 +1104,7 @@ const TYPE_LAB_PLAN_LABEL: Record<string, string> = {
   D_sign: "看板", E_sign: "看板", F_sign: "看板",
   A_big: "特大", B_big: "特大", C_big: "特大",
   D_big: "特大", E_big: "特大", F_big: "特大",
+  L_lead: "逃げ先頭",
 };
 
 /** 型ラボの型（A〜F）バッジ。型が商品を決めるので、一覧でも先頭に出す。 */
@@ -1660,7 +1664,7 @@ type RankStats = NonNullable<PeriodData["by_rank"]>[string];
 const RANK_ORDER = ["T_firm", "T_mid", "T_axis", "T_upset", "A_hit", "A_trio", "A_ana", "A_sign", "A_big",
   "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
   "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
-  "F_pay", "F_hit", "F_line", "F_sign", "F_big",
+  "F_pay", "F_hit", "F_line", "F_sign", "F_big", "L_lead",
   "7H2", "7T1", "7T3", "7S", "7B", "7C", "7H1", "7M1", "9H1", "9C"] as const;
 const RANK_LABEL: Record<string, string> = {
   // 7SS/7A/9A/9S は廃止済みだが実際に売った分が残るので表示名を保つ
@@ -1684,6 +1688,8 @@ const RANK_LABEL: Record<string, string> = {
   "A_sign": "As", "B_sign": "Bs", "C_sign": "Cs", "D_sign": "Ds", "E_sign": "Es", "F_sign": "Fs",
   // 高額枠の「特大狙い」（2026-09-06）。
   "A_big": "Ab", "B_big": "Bb", "C_big": "Cb", "D_big": "Db", "E_big": "Eb", "F_big": "Fb",
+  // 逃げ先頭ライン（2026-09-25〜）。
+  "L_lead": "Ll",
 };
 
 /** サマリーの「ランク別」で**型の中の狙い**を見分けるための短い添え字。
@@ -1700,6 +1706,7 @@ const RANK_AIM: Record<string, string> = {
   D_hit: "混戦", D_sign: "看板", D_big: "特大",
   E_hit: "高配当", E_sign: "看板", E_big: "特大",
   F_hit: "総流し", F_pay: "一撃", F_line: "ライン", F_sign: "看板", F_big: "特大",
+  L_lead: "逃げ先頭",
 };
 
 /** `A_hit@9` のような車数つきキーを `{ base, cars }` に割る。 */
@@ -1754,6 +1761,8 @@ const RANK_BADGE_STYLE: Record<string, string> = {
   "D_big": "bg-indigo-200 text-indigo-900 dark:bg-indigo-800/60 dark:text-indigo-200",
   "E_big": "bg-orange-200 text-orange-900 dark:bg-orange-800/60 dark:text-orange-200",
   "F_big": "bg-red-200 text-red-900 dark:bg-red-800/60 dark:text-red-200",
+  // 逃げ先頭ライン（2026-09-25〜）。一覧のバッジ（紫紅）と同じ色域。
+  "L_lead": "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300",
 };
 
 /** 投資・回収・最大払戻等、モバイルでは既定で隠す列のクラス。showAll時は常時表示。 */
