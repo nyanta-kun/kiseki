@@ -44,7 +44,7 @@ const TYPE_LAB_ORDER: TypeLabRankKey[] =
    "A_hit", "A_trio", "A_ana", "A_sign", "A_big",
    "B_hit", "B_sign", "B_big", "C_hit", "C_sign", "C_big",
    "D_hit", "D_sign", "D_big", "E_hit", "E_sign", "E_big",
-   "F_pay", "F_hit", "F_line", "F_sign", "F_big"];
+   "F_pay", "F_hit", "F_line", "F_sign", "F_big", "L_lead"];
 
 // 🔴 `Record<TypeLabRankKey, ...>` にしておく。プランを増やしたらここが
 //    型エラーになり、ラベルの付け忘れに気づける。
@@ -85,6 +85,9 @@ const TYPE_LAB_LABEL: Record<TypeLabRankKey, string> = {
   D_big: "型D 高額枠・特大狙い（三連単・軸1を買わず、当たれば40万円を狙うダッチ・「穴狙い」付与）",
   E_big: "型E 高額枠・特大狙い（三連単・軸1を買わず、当たれば40万円を狙うダッチ・「穴狙い」付与）",
   F_big: "型F 高額枠・特大狙い（三連単・軸1を買わず、当たれば40万円を狙うダッチ・「穴狙い」付与）",
+  // 🔴 逃げ先頭ライン（2026-09-25〜）。型ラボの本体が終わった後、どの商品も出ていない
+  //    レースにだけ足す（モーニング・準決勝系・型E を除く・上限なし）。OFF で止まる。
+  L_lead: "逃げ先頭（7車・型ラボが売らないレースへ足す／三連単・得点1位でないラインの逃げ先頭→番手→3着・1レース1万円均等・「穴狙い」付与）",
 };
 
 // 🔴 型ラボのプランは `TYPE_LAB_LABEL` が持つので**ここからは除く**。

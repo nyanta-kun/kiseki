@@ -465,6 +465,19 @@ def _sellable_plan_keys(src: str) -> set[str]:
     return keys
 
 
+def _line_lead_plan_keys(src: str) -> set[str]:
+    """逃げ先頭ライン（`LINE_LEAD_PLAN_ORDER`）。`SELLABLE_PLAN_KEYS` の外で、入稿スクリプトの
+    別の段で売る（2026-09-25〜）。**足し忘れて初日の入稿が「非」バッジになった**ので、
+    `SELLABLE_PLAN_KEYS` と同じく正本から読んで突き合わせる。"""
+    import re
+
+    m = re.search(r"LINE_LEAD_PLAN_ORDER: tuple\[str, \.\.\.\] = \(([^)]*)\)", src)
+    assert m, "keirin/src/type_lab.py の LINE_LEAD_PLAN_ORDER を読めない"
+    keys = set(re.findall(r'"([^"]+)"', m.group(1)))
+    assert keys, "LINE_LEAD_PLAN_ORDER からプランを1つも拾えなかった"
+    return keys
+
+
 def _type_lab_labels() -> set[str]:
     from src.api.keirin_router import TYPE_LAB_RANK_LABELS
 
@@ -482,7 +495,7 @@ def test_type_lab_labels_match_keirin_sell_plans():
        新しい商品が「backend のみ」に見えて偽陽性になる。
     """
     src = (KEIRIN_STRATEGY.parent / "type_lab.py").read_text(encoding="utf-8")
-    canonical = _sellable_plan_keys(src)
+    canonical = _sellable_plan_keys(src) | _line_lead_plan_keys(src)
 
     # 🔴 **backend 側は `{型}_sign` / `{型}_big` を6型ぶん先回りで持つ**
     #    （看板枠 2026-08-31・高額枠 2026-09-06）。実際に売るのは keirin 側

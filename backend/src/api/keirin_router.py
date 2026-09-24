@@ -1546,6 +1546,11 @@ TYPE_LAB_RANK_LABELS: dict[str, str] = {
     #    `type_lab.HIGHPAY_TYPES`（既定は B/C/D）だけだが、`_sign` と同じ理由で
     #    6型ぶん先回りで置く。こちらも足し忘れて「非」になっていた。
     **{f"RANK_{t}_big": f"{t}_big" for t in "ABCDEF"},
+    # 🔴 逃げ先頭ライン（2026-09-25〜・型ラボが売らないレースへ穴狙いで足す）。
+    #    keirin 側 `SELLABLE_PLAN_KEYS` の外（`LINE_LEAD_PLAN_KEYS`・別の段で売る）
+    #    なので写しの検査は別枠。**足し忘れて初日の入稿4件が「非」バッジになった**。
+    #    ここに載ると入稿設定の画面から ON/OFF できる（`_is_enabled(settings, "L_lead")`）。
+    "RANK_L_lead": "L_lead",
 }
 
 _LEGACY_RANK_LABELS: dict[str, str] = {

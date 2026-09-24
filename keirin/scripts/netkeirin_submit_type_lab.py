@@ -1100,6 +1100,10 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #: Discord の内訳用（`(会場, プラン)`）。**レース名は入れない**——通知は
     #: 件数と内訳だけにする（一覧は上の print で cron.log に残る）。
     submitted: list[tuple[str, str]] = []
+    #: 逃げ先頭ライン（`L_lead`）で出したレース（`会場NR（発走）`）。通知で**名前を出す**
+    #: 唯一の例外——「ランク別 … L_lead 4」だけでは型ラボの売らないレースへ
+    #: どこを足したのかが読めない（2026-09-25 ユーザー指摘）。本数は1日数本。
+    line_lead_sent: list[str] = []
     client = None if dry_run else NetkeirinClient(propose_only=propose_only)
 
     def bump(code: str) -> None:
@@ -1435,6 +1439,8 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                 n_lead += 1
                 titles.append(f"{venue}{race_no}R(L_lead) 逃げ先頭 {msg}")
                 submitted.append((venue, "L_lead"))
+                when = start_time_jst(row.get("start_at"))
+                line_lead_sent.append(f"{venue}{race_no}R（{when or '時刻不明'}）")
         return n_lead
 
     # 🔴 **失敗しても型ラボの入稿・公開・通知を止めない**（付け足しの段なので）。
@@ -1504,6 +1510,11 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
             #      「該当が無かった」のか読み手に区別できない）。
             if session == "morning":
                 body += f"\n{_confident_line(day)}"
+            # 逃げ先頭ライン（穴狙い）は**出した回だけ**レース名を並べる（無い回は書かない
+            # ——自信ありと違い「選定が落ちた」と区別すべき状態が無いため）。
+            if line_lead_sent:
+                body += (f"\n🏃 逃げ先頭（穴狙い）{len(line_lead_sent)}件: "
+                         + "・".join(line_lead_sent))
             send(f"📮 **NetKeirin入稿 {n_ok}件**（{day} / {session}）\n{body}",
                  channel="netkeirin")
         except Exception as e:      # noqa: BLE001 — 通知は付随情報
