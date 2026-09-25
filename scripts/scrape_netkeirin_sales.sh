@@ -52,22 +52,53 @@ fi
 echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
 
+# .env から1変数を読む。**値を囲む引用符（"…" / '…'）を1組だけ外す**（python-dotenv と同じ）。
+# 🔴 2026-09-23 にパスワードを更新した際、値が "…" で囲まれた。`cut` だけで読んでいた
+#    ため**引用符ごとパスワードとして送り**、9/23〜9/25 の3日間ログインに失敗し続けた。
+#    入稿側（netkeirin_submit_*）は python-dotenv で読むので影響を受けず、ここだけが止まった。
+#    ⚠️ `tr -d '"'` にしない（値の途中の引用符まで消える）。外すのは両端の1組だけ。
+env_get() {
+  local v
+  v=$(grep -E "^$1=" "$2" | head -1 | cut -d= -f2-)
+  if [ "${#v}" -ge 2 ]; then
+    case "$v" in
+      \"*\") v="${v#\"}"; v="${v%\"}" ;;
+      \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+  fi
+  printf '%s' "$v"
+}
+
+# 失敗を Discord（システム障害）へ出す（2026-09-25 追加）。
+# 🔴 それまでは rc=1 がログに残るだけで、**3日間ログイン失敗していても誰も気づかなかった**
+#    （気づいたきっかけは「毎朝の売上通知が来ない」）。通知の失敗で本処理は落とさない。
+notify_failure() {
+  local url
+  url=$(env_get DISCORD_WEBHOOK_URL_SYSTEM "$KEIRIN_DIR/.env" 2>/dev/null)
+  [ -z "$url" ] && return 0
+  "$PYTHON" -c 'import json,sys; print(json.dumps({"content": sys.argv[1][:1900]}))' \
+    "🚨 **[scrape_netkeirin_sales] 売上の取り込みに失敗しました**（$1）
+ログ: $LOG_FILE" \
+    | curl -sS -m 15 -H 'Content-Type: application/json' -d @- "$url" >/dev/null 2>&1 || true
+}
+
 # keirin/.env から認証情報だけを export する（他の変数は取り込まない）。
 if [ ! -f "$KEIRIN_DIR/.env" ]; then
   log "[FATAL] $KEIRIN_DIR/.env が見つかりません"
   exit 1
 fi
-NETKEIRIN_LOGIN_ID=$(grep -E '^NETKEIRIN_LOGIN_ID=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
-NETKEIRIN_PASSWORD=$(grep -E '^NETKEIRIN_PASSWORD=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
+NETKEIRIN_LOGIN_ID=$(env_get NETKEIRIN_LOGIN_ID "$KEIRIN_DIR/.env")
+NETKEIRIN_PASSWORD=$(env_get NETKEIRIN_PASSWORD "$KEIRIN_DIR/.env")
 export NETKEIRIN_LOGIN_ID NETKEIRIN_PASSWORD
 
 # 売上の Discord 通知先（2026-08-16 追加）。webhook URL は keirin/.env が唯一の正本。
 # ⚠️ 未設定でも取り込みは続ける（通知はデータ取得の付随物で、ここで落とすと
 #    「スクレイプが失敗した」ように見える）。python 側が警告を1行出す。
-DISCORD_WEBHOOK_URL_NETKEIRIN=$(grep -E '^DISCORD_WEBHOOK_URL_NETKEIRIN=' "$KEIRIN_DIR/.env" | head -1 | cut -d= -f2-)
+DISCORD_WEBHOOK_URL_NETKEIRIN=$(env_get DISCORD_WEBHOOK_URL_NETKEIRIN "$KEIRIN_DIR/.env")
 export DISCORD_WEBHOOK_URL_NETKEIRIN
 if [ -z "$NETKEIRIN_LOGIN_ID" ] || [ -z "$NETKEIRIN_PASSWORD" ]; then
   log "[FATAL] NETKEIRIN_LOGIN_ID / NETKEIRIN_PASSWORD を $KEIRIN_DIR/.env から取得できません"
+  notify_failure "資格情報を .env から読めない"
   exit 1
 fi
 
@@ -76,7 +107,7 @@ fi
 # 未導入のため、ここで環境変数として渡しておく（どちらの経路でも動くようにする）。
 if [ -f "$KISEKI_DIR/.env" ]; then
   for k in DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD; do
-    v=$(grep -E "^${k}=" "$KISEKI_DIR/.env" | head -1 | cut -d= -f2-)
+    v=$(env_get "$k" "$KISEKI_DIR/.env")
     [ -n "$v" ] && export "$k=$v"
   done
 fi
@@ -91,4 +122,7 @@ cd "$KISEKI_DIR/backend"
 "$PYTHON" "$SCRIPT" "$@" 2>&1 | tee -a "$LOG_FILE"
 RC=$?
 log "=== 終了 (rc=$RC) ==="
+if [ "$RC" -ne 0 ]; then
+  notify_failure "rc=$RC・$(grep -E '\[ERROR\]' "$LOG_FILE" | tail -1 | cut -c1-200)"
+fi
 exit $RC
