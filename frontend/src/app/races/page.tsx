@@ -1,10 +1,10 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { fetchNearestDate, fetchRacesByDate, fetchHeihachiPicks } from "@/lib/api";
+import { fetchNearestDate, fetchRacesByDate, fetchPlacePicks } from "@/lib/api";
 import { todayYYYYMMDD, formatDate } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { HeihachiPicksView } from "@/components/HeihachiPicksView";
+import { PlacePicksView } from "@/components/PlacePicksView";
 
 export const metadata: Metadata = {
   title: "開催レース一覧 | GallopLab",
@@ -64,11 +64,11 @@ function DateNavSkeleton({ currentDate }: { currentDate: string }) {
 async function RaceList({ date }: { date: string }) {
   let races;
   try {
-    // 推奨タブのデータを並列プリフェッチ: HeihachiPicksView での同一フェッチは
+    // 推奨タブのデータを並列プリフェッチ: PlacePicksView での同一フェッチは
     // Next の fetch キャッシュから即解決する
     [races] = await Promise.all([
       fetchRacesByDate(date),
-      fetchHeihachiPicks(date).catch(() => null),
+      fetchPlacePicks(date.slice(0, 6)).catch(() => null),
     ]);
   } catch {
     return (
@@ -113,15 +113,13 @@ async function RaceList({ date }: { date: string }) {
     if (!sortedGroups[name]) sortedGroups[name] = courseGroups[name];
   }
 
-  // 推奨タブ = 平八バッジ該当馬の一覧。
-  // 2026-08-22 に「レース信頼度一覧」へ刷新したが、2026-09-06 に推奨対象を
-  // 平八バッジ（OP特別以上 ∧ 指数3位以内 ∧ 単勝10〜40倍 ∧ 複勝確率30%以上）の
-  // 馬一覧へ置き換えた [[jra_heihachi_badge]]。全レースを並べるのをやめ、
-  // 「買う対象だけを出す」画面にする。RaceConfidenceView/Table は他所から
-  // 使えるよう残してある。
+  // 推奨タブ = 当月の複勝ピック一覧（結果つき）。
+  // 2026-09-26 に平八バッジの一覧から置き換えた（平八の一覧・しきい値スライダー・
+  // 年間バックテスト欄は撤去。レース詳細の平八バッジは既定しきい値で残る）。
+  // 判定は backend の services/jra_place_pick.py（レース詳細の「複勝」バッジと同じ関数）。
   const recommendPanel = (
     <Suspense fallback={<ConfidenceTableSkeleton />}>
-      <HeihachiPicksView date={date} />
+      <PlacePicksView date={date} />
     </Suspense>
   );
 

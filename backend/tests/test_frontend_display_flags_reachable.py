@@ -34,10 +34,11 @@ FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
 #    もあるため、中央のレース詳細から描画が消えても検知できなかった）。
 #    **その画面から辿れるか**で判定する。
 REQUIRED_DISPLAY_FLAGS = [
-    ("races/[id]", "is_sweet_spot"),   # スイートスポット該当馬（馬名を赤字）
-    ("races/[id]", "is_cut_off"),      # 着外率による足切り（グレーアウト）
+    ("races/[id]", "is_sweet_spot"),  # スイートスポット該当馬（馬名を赤字）
+    ("races/[id]", "is_cut_off"),  # 着外率による足切り（グレーアウト）
     ("races/[id]", "recommend_rank"),  # 軸の信頼度 tier
-    ("races/[id]", "dm_signals"),      # 穴 / 特穴バッジ
+    ("races/[id]", "dm_signals"),  # 穴 / 特穴バッジ
+    ("races/[id]", "is_place_pick"),  # 複勝ピック（1レース最大1頭）の「複勝」バッジ
 ]
 
 _IMPORT_RE = re.compile(r"""^\s*(?:import|export)\b[^'"]*from\s*['"]([^'"]+)['"]""", re.M)
@@ -106,8 +107,7 @@ def test_表示フラグに到達可能な描画先がある(route: str, flag: s
     orphans = sorted(
         str(p.relative_to(FRONTEND_SRC))
         for p in FRONTEND_SRC.rglob("*")
-        if p.is_file() and p.suffix in _EXTS and p != api_ts
-        and flag in p.read_text(encoding="utf-8")
+        if p.is_file() and p.suffix in _EXTS and p != api_ts and flag in p.read_text(encoding="utf-8")
     )
     raise AssertionError(
         f"画面 {route} に `{flag}` を描画している到達可能なコンポーネントがありません。"

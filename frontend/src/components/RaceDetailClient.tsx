@@ -349,6 +349,30 @@ export function RaceDetailClient({
                           >
                             {horse.horse_name}
                           </span>
+                          {/*
+                            複勝ピック（1レース最大1頭）。判定は backend の
+                            services/jra_place_pick.py（推奨ページの当月一覧と同じ関数）。
+                            発走約10分前のスナップショットが撮れるまでは最新オッズでの暫定で、
+                            点線枠で区別する。
+                          */}
+                          {horse.is_place_pick && (
+                            <span
+                              className={cn(
+                                "text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap",
+                                horse.place_pick_source === "snapshot"
+                                  ? "bg-emerald-600 text-white border-emerald-700"
+                                  : "bg-emerald-50 text-emerald-800 border-emerald-500 border-dashed"
+                              )}
+                              title={
+                                (horse.place_pick_source === "snapshot"
+                                  ? "複勝ピック（発走約10分前のオッズで確定）。"
+                                  : "複勝ピック（最新オッズでの暫定。発走約10分前に確定し、オッズ次第で外れることがある）。")
+                                + "条件: 8頭以上 ∧ 複勝3.0〜4.0倍未満 ∧ 複勝確率5位以内 ∧ 単勝÷複勝≤3.5。"
+                              }
+                            >
+                              複勝
+                            </span>
+                          )}
                           {isAnagusa && (
                             <span className={cn(
                               "text-[9px] px-1 py-0.5 rounded border font-bold",
