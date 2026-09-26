@@ -81,6 +81,61 @@ def send(content: str, channel: str) -> bool:
         return False
 
 
+#: Embed の上限（Discord 仕様）。超えると 400 で**丸ごと**落ちるので、ここで切る。
+_EMBED_LIMITS = {"title": 256, "description": 4096, "field_name": 256,
+                 "field_value": 1024, "footer": 2048, "fields": 25}
+
+
+def _clip(text: str, limit: int) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def send_embed(embed: dict, channel: str, content: str = "") -> bool:
+    """Discord に**カード（Embed）**を1枚送る。成功で True（2026-09-27 追加）。
+
+    PC では inline のフィールドが横に並び、スマホでは自動で縦に積まれるので、
+    テキストの桁揃えのように端末で崩れない。文字のままなので検索・コピーもできる。
+    上限（`_EMBED_LIMITS`）を超える部分はここで切る（超えると 400 で1枚ごと落ちる）。
+
+    channel: `_WEBHOOK_ENV_KEYS` のキー。`content` はカードの上に出る1行（任意）。
+    """
+    url = _load_webhook_url(channel)
+    if not url:
+        print(f"[Discord] {_WEBHOOK_ENV_KEYS[channel]} が未設定です")
+        return False
+    e = dict(embed)
+    if "title" in e:
+        e["title"] = _clip(e["title"], _EMBED_LIMITS["title"])
+    if "description" in e:
+        e["description"] = _clip(e["description"], _EMBED_LIMITS["description"])
+    if "footer" in e and "text" in e["footer"]:
+        e["footer"] = {**e["footer"], "text": _clip(e["footer"]["text"], _EMBED_LIMITS["footer"])}
+    e["fields"] = [
+        {**f, "name": _clip(f["name"], _EMBED_LIMITS["field_name"]),
+         "value": _clip(f["value"] or "—", _EMBED_LIMITS["field_value"])}
+        for f in e.get("fields", [])[: _EMBED_LIMITS["fields"]]
+    ]
+    body: dict = {"embeds": [e]}
+    if content:
+        body["content"] = _clip(content, CONTENT_LIMIT)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "DiscordBot (keirin-ai, 1.0)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status in (200, 204)
+    except urllib.error.URLError as err:
+        print(f"[Discord] カード送信失敗: {err}")
+        return False
+
+
 def send_file(filepath: str, channel: str, caption: str = "") -> bool:
     """Discord にファイルを添付送信する（multipart/form-data）。
 

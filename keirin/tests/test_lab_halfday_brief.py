@@ -46,6 +46,46 @@ def test_裏付けの強さを誇張しない():
     assert m.strength_of(t, -0.30) == "強"
 
 
-def test_Discordへは要約を送る():
+def test_Discordへはカードを送り失敗時だけテキスト():
     src = _PATH.read_text(encoding="utf-8")
-    assert "post_discord(short)" in src and "post_discord(text)" not in src
+    assert "post_embed(card) or post_discord(short)" in src
+    assert "post_discord(text)" not in src
+
+
+def test_カードの中身():
+    scored = [(_t("会場", "四日市", -0.545), "中"), (_t("会場", "前橋", -0.418), "弱")]
+    e = m.brief_embed("昼", 31, 10453, 0.757, _odds(0.86), scored)
+    f = {x["name"]: x for x in e["fields"]}
+    assert f["ROI"]["value"] == "**75.7%**" and f["ROI"]["inline"]
+    assert f["当たる目のオッズ"]["value"] == "**予測より 14% 安い**"
+    assert f["⚠️ 注意"]["value"] == "**四日市 −55pt**"
+    assert f["💤 参考（裏付け弱）"]["value"] == "前橋 −42pt"
+    assert e["color"] == 0xDC2626                      # 注意あり＝赤
+    assert m.brief_embed("", 1, 1, 1.0, [], [])["color"] == 0x6B7280
+
+
+def test_カードの上限を切る(monkeypatch):
+    """上限超えは 400 で1枚ごと落ちるので、送る前に切る。"""
+    import sys
+    sys.path.insert(0, str(_PATH.parent.parent))
+    from src.notify import discord as d
+
+    sent = {}
+
+    class _R:
+        status = 204
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _open(req, timeout=0):
+        import json
+        sent.update(json.loads(req.data))
+        return _R()
+
+    monkeypatch.setattr(d, "_load_webhook_url", lambda ch: "http://x")
+    monkeypatch.setattr(d.urllib.request, "urlopen", _open)
+    assert d.send_embed({"title": "t" * 300, "fields": [{"name": "a", "value": "v" * 2000}] * 30},
+                        channel="review")
+    e = sent["embeds"][0]
+    assert len(e["title"]) == 256 and len(e["fields"]) == 25
+    assert len(e["fields"][0]["value"]) == 1024

@@ -301,41 +301,84 @@ def _cell_short(t: dict) -> str:
     return f"{label} {t['effect'] * 100:+.0f}pt".replace("-", "−")
 
 
-def brief(label: str, days: int, n_rows: int, roi: float,
-          odds_rows: list[dict], scored: list[tuple[dict, str]]) -> str:
-    """Discord へ送る**要点だけ**の版（2026-09-27 ユーザー要望「ポイントのみ簡略に」）。
-
-    🔴 数字の根拠（CI・n・paper の効果量・前後半）はログ（stdout）の詳しい版に残す。
-       ここに載せるのは「見るべきか」を判断する材料だけ:
-         1行目 = 期間の ROI / オッズ = 当たる目の締まり1行 /
-         注意・好調 = 裏付け 強・中 のセル / 参考 = 裏付け 弱 のセル（名前だけ）
-    """
-    when = datetime.now(tz=ZoneInfo("Asia/Tokyo"))
-    lines = [f"🔎 **型ラボ 半日レビュー{(' ' + label) if label else ''}**（{when:%m/%d %H:%M}）",
-             f"ROI {roi * 100:.1f}%（直近{days}日・{n_rows:,}件）"]
+def _odds_text(odds_rows: list[dict]) -> str:
+    """当たった目の「確定÷予測」中央値を1句で。"""
     won = [float(r["final_odds"]) / float(r["pred_odds"]) for r in odds_rows if r["won"]]
     m = _median(won)
     if m is None:
-        lines.append("🎯 オッズ: 突き合わせ待ち")
-    elif m < 0.95:
-        lines.append(f"🎯 オッズ: 当たる目は予測より {(1 - m) * 100:.0f}% 安い")
-    elif m > 1.05:
-        lines.append(f"🎯 オッズ: 当たる目は予測より {(m - 1) * 100:.0f}% 高い")
-    else:
-        lines.append("🎯 オッズ: 当たる目は予測どおり")
+        return "突き合わせ待ち"
+    if m < 0.95:
+        return f"予測より {(1 - m) * 100:.0f}% 安い"
+    if m > 1.05:
+        return f"予測より {(m - 1) * 100:.0f}% 高い"
+    return "予測どおり"
+
+
+def _split(scored: list[tuple[dict, str]]) -> tuple[list[dict], list[dict], list[dict]]:
+    """(注意, 好調, 参考)。注意・好調は裏付け 強・中、参考は 弱。"""
     strong = [t for t, s in scored if s in ("強", "中")]
-    weak = [t for t, s in scored if s == "弱"]
-    bad = [_cell_short(t) for t in strong if t["effect"] < 0]
-    good = [_cell_short(t) for t in strong if t["effect"] > 0]
+    return ([t for t in strong if t["effect"] < 0], [t for t in strong if t["effect"] > 0],
+            [t for t, s in scored if s == "弱"])
+
+
+def brief(label: str, days: int, n_rows: int, roi: float,
+          odds_rows: list[dict], scored: list[tuple[dict, str]]) -> str:
+    """要点だけのテキスト版（カード送信に失敗したときの予備・ログ用）。
+
+    🔴 数字の根拠（CI・n・paper の効果量・前後半）はログ（stdout）の詳しい版に残す。
+    """
+    when = datetime.now(tz=ZoneInfo("Asia/Tokyo"))
+    lines = [f"🔎 **型ラボ 半日レビュー{(' ' + label) if label else ''}**（{when:%m/%d %H:%M}）",
+             f"ROI {roi * 100:.1f}%（直近{days}日・{n_rows:,}件）",
+             "🎯 オッズ: " + (o if (o := _odds_text(odds_rows)) == "突き合わせ待ち"
+                             else f"当たる目は{o}")]
+    bad, good, weak = _split(scored)
     if bad:
-        lines.append("⚠️ 注意: " + "・".join(bad))
+        lines.append("⚠️ 注意: " + "・".join(_cell_short(t) for t in bad))
     if good:
-        lines.append("✅ 好調: " + "・".join(good))
+        lines.append("✅ 好調: " + "・".join(_cell_short(t) for t in good))
     if weak:
         lines.append("💤 参考（裏付け弱）: " + "・".join(_cell_short(t) for t in weak))
     if not scored:
         lines.append("傾向: 目立つ偏りなし")
     return "\n".join(lines)
+
+
+#: カードの左端の色帯。注意がある＝赤 / 好調だけ＝緑 / どちらも無い＝灰。
+_COLOR_BAD, _COLOR_GOOD, _COLOR_NONE = 0xDC2626, 0x16A34A, 0x6B7280
+
+
+def brief_embed(label: str, days: int, n_rows: int, roi: float,
+                odds_rows: list[dict], scored: list[tuple[dict, str]]) -> dict:
+    """Discord のカード（Embed）版（2026-09-27 ユーザー要望「PC・スマホとも見やすく」）。
+
+    ROI とオッズは inline で並べる（PC は横並び・スマホは縦積みに自動で切り替わる）。
+    セルの列挙は1行1件にする——「・」でつなぐとスマホで折り返して読みにくい。
+    """
+    bad, good, weak = _split(scored)
+    fields = [
+        {"name": "ROI", "value": f"**{roi * 100:.1f}%**", "inline": True},
+        {"name": "当たる目のオッズ", "value": f"**{_odds_text(odds_rows)}**", "inline": True},
+    ]
+    if bad:
+        fields.append({"name": "⚠️ 注意", "inline": False,
+                       "value": "\n".join(f"**{_cell_short(t)}**" for t in bad)})
+    if good:
+        fields.append({"name": "✅ 好調", "inline": False,
+                       "value": "\n".join(f"**{_cell_short(t)}**" for t in good)})
+    if weak:
+        fields.append({"name": "💤 参考（裏付け弱）", "inline": False,
+                       "value": "\n".join(_cell_short(t) for t in weak)})
+    if not scored:
+        fields.append({"name": "傾向", "value": "目立つ偏りなし", "inline": False})
+    return {
+        "title": f"🔎 型ラボ 半日レビュー{(' ' + label) if label else ''}",
+        "description": f"直近{days}日・{n_rows:,}件",
+        "color": _COLOR_BAD if bad else _COLOR_GOOD if good else _COLOR_NONE,
+        "fields": fields,
+        "footer": {"text": "注意・好調＝長期でも同じ向き／参考＝直近だけ（分散の可能性大）"},
+        "timestamp": datetime.now(tz=ZoneInfo("Asia/Tokyo")).isoformat(),
+    }
 
 
 def post_discord(text: str) -> bool:
@@ -351,6 +394,14 @@ def post_discord(text: str) -> bool:
     from src.notify.discord import send
 
     return send(text, channel="review")
+
+
+def post_embed(embed: dict) -> bool:
+    """カードで送る（`post_discord` と同じく既存の通知実装へ委譲する）。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.notify.discord import send_embed
+
+    return send_embed(embed, channel="review")
 
 
 def main() -> int:
@@ -412,12 +463,14 @@ def main() -> int:
                  "（事前登録・両窓同符号・無作為対照20seed・TEST 4窓）でのみ行います。_")
     text = "\n".join(lines)
     short = brief(args.label, days, len(live_rows), pay / bet, odds_rows, scored)
+    card = brief_embed(args.label, days, len(live_rows), pay / bet, odds_rows, scored)
 
-    # 🔴 詳しい版はログ（run_job.sh が logs/jobs/ へ残す）に、Discord へは要点だけ。
+    # 🔴 詳しい版はログ（run_job.sh が logs/jobs/ へ残す）に、Discord へは要点のカードだけ。
+    #    カードが送れなかったときだけテキスト版で送り直す（通知が丸ごと消えるのを防ぐ）。
     print(text)
     print("\n--- Discord へ送る要約 ---\n" + short)
     if not args.dry_run:
-        ok = post_discord(short)
+        ok = post_embed(card) or post_discord(short)
         print(f"\nDiscord 送信: {'成功' if ok else '失敗'}", file=sys.stderr)
         return 0 if ok else 1
     return 0
