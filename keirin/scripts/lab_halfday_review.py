@@ -259,35 +259,83 @@ def analyse(board: Board, rng: random.Random) -> list[dict]:
 MATERIAL = 0.02   # これ未満の長期効果は「実質ゼロ」として扱う
 
 
-def hypothesis(t: dict, paper_eff: float | None) -> str:
-    """仮説を 1 件分の文にする。**長期の裏付けの強さを誇張しない**のがこの関数の要点。
+def strength_of(t: dict, paper_eff: float | None) -> str:
+    """長期（paper）の裏付けの強さ: 強 / 中 / 弱。**誇張しない**のが要点。
 
     直近 live の差は分散で簡単に ±0.3 動く（実売の日次 ROI は sd 0.374）。
     paper の長期履歴で同符号でも、効果量が 0.02 未満なら「裏が取れた」とは書かない。
     """
+    if paper_eff is None or abs(paper_eff) < MATERIAL or paper_eff * t["effect"] <= 0:
+        return "弱"
+    return "中" if abs(t["effect"]) / abs(paper_eff) >= 2 else "強"
+
+
+def hypothesis(t: dict, paper_eff: float | None) -> str:
+    """仮説を 1 件分の文にする（ログ用の詳しい版。Discord へは `brief` を送る）。"""
     dim, name = t["cell"]
     worse = t["effect"] < 0
     verb = "落としている" if worse else "稼いでいる"
     base = (f"**{dim}={name}** が層別 ROI を {t['effect']:+.3f} {verb}"
             f"（n={t['n']}・{t['plans']}プラン・95%CI [{t['lo']:+.3f},{t['hi']:+.3f}]）")
+    strength = strength_of(t, paper_eff)
     if paper_eff is None:
         note = "paper 履歴に同じセルの十分な標本が無く、長期の裏が取れていない"
-        strength = "弱"
     elif abs(paper_eff) < MATERIAL:
         note = (f"paper 履歴（長期）では {paper_eff:+.3f} ＝ **実質ゼロ**。"
                 f"直近の {t['effect']:+.3f} は大半が分散とみてよい")
-        strength = "弱"
     elif paper_eff * t["effect"] > 0:
         ratio = abs(t["effect"]) / abs(paper_eff)
         note = (f"paper 履歴（長期）も同符号 {paper_eff:+.3f}。"
                 + (f"ただし直近はその {ratio:.1f} 倍と大きく、差の大半は分散" if ratio >= 2
                    else "効果量も同程度＝**長期の裏が取れている**"))
-        strength = "中" if ratio >= 2 else "強"
     else:
         note = f"⚠️ paper 履歴では逆符号 {paper_eff:+.3f} ＝ 直近だけの現象の可能性が高い"
-        strength = "弱"
     action = "このセルを外す / 配分を薄くする" if worse else "このセルへ寄せる"
     return f"[裏付け:{strength}] {base}\n   → 検討: {action}。{note}"
+
+
+def _cell_short(t: dict) -> str:
+    """`四日市 −55pt` の形。会場・日次のように名前だけで分かる切り口は切り口名を省く。"""
+    dim, name = t["cell"]
+    label = name if dim in ("会場", "開催日次", "レース種別", "車立て", "型") else f"{dim} {name}"
+    return f"{label} {t['effect'] * 100:+.0f}pt".replace("-", "−")
+
+
+def brief(label: str, days: int, n_rows: int, roi: float,
+          odds_rows: list[dict], scored: list[tuple[dict, str]]) -> str:
+    """Discord へ送る**要点だけ**の版（2026-09-27 ユーザー要望「ポイントのみ簡略に」）。
+
+    🔴 数字の根拠（CI・n・paper の効果量・前後半）はログ（stdout）の詳しい版に残す。
+       ここに載せるのは「見るべきか」を判断する材料だけ:
+         1行目 = 期間の ROI / オッズ = 当たる目の締まり1行 /
+         注意・好調 = 裏付け 強・中 のセル / 参考 = 裏付け 弱 のセル（名前だけ）
+    """
+    when = datetime.now(tz=ZoneInfo("Asia/Tokyo"))
+    lines = [f"🔎 **型ラボ 半日レビュー{(' ' + label) if label else ''}**（{when:%m/%d %H:%M}）",
+             f"ROI {roi * 100:.1f}%（直近{days}日・{n_rows:,}件）"]
+    won = [float(r["final_odds"]) / float(r["pred_odds"]) for r in odds_rows if r["won"]]
+    m = _median(won)
+    if m is None:
+        lines.append("🎯 オッズ: 突き合わせ待ち")
+    elif m < 0.95:
+        lines.append(f"🎯 オッズ: 当たる目は予測より {(1 - m) * 100:.0f}% 安い")
+    elif m > 1.05:
+        lines.append(f"🎯 オッズ: 当たる目は予測より {(m - 1) * 100:.0f}% 高い")
+    else:
+        lines.append("🎯 オッズ: 当たる目は予測どおり")
+    strong = [t for t, s in scored if s in ("強", "中")]
+    weak = [t for t, s in scored if s == "弱"]
+    bad = [_cell_short(t) for t in strong if t["effect"] < 0]
+    good = [_cell_short(t) for t in strong if t["effect"] > 0]
+    if bad:
+        lines.append("⚠️ 注意: " + "・".join(bad))
+    if good:
+        lines.append("✅ 好調: " + "・".join(good))
+    if weak:
+        lines.append("💤 参考（裏付け弱）: " + "・".join(_cell_short(t) for t in weak))
+    if not scored:
+        lines.append("傾向: 目立つ偏りなし")
+    return "\n".join(lines)
 
 
 def post_discord(text: str) -> bool:
@@ -349,6 +397,7 @@ def main() -> int:
     lines = [head, ""]
     lines += odds_rows_summary
     lines.append("")
+    scored: list[tuple[dict, str]] = []
     if not consistent:
         lines.append("**当落の傾向: 検討に値するセルはありません**"
                      "（層別・FDR・前後半一致を通ったものが無い＝分散の範囲）")
@@ -357,14 +406,18 @@ def main() -> int:
         for t in sorted(consistent, key=lambda x: -abs(x["effect"]))[:TOP_N]:
             paper_eff = paper.effect(t["cell"]) if paper and t["cell"] in paper.cells else None
             lines.append("• " + hypothesis(t, paper_eff))
+            scored.append((t, strength_of(t, paper_eff)))
     lines.append("")
     lines.append("_この通知は仮説であって結論ではありません。採否は四半期ゲート"
                  "（事前登録・両窓同符号・無作為対照20seed・TEST 4窓）でのみ行います。_")
     text = "\n".join(lines)
+    short = brief(args.label, days, len(live_rows), pay / bet, odds_rows, scored)
 
+    # 🔴 詳しい版はログ（run_job.sh が logs/jobs/ へ残す）に、Discord へは要点だけ。
     print(text)
+    print("\n--- Discord へ送る要約 ---\n" + short)
     if not args.dry_run:
-        ok = post_discord(text)
+        ok = post_discord(short)
         print(f"\nDiscord 送信: {'成功' if ok else '失敗'}", file=sys.stderr)
         return 0 if ok else 1
     return 0
