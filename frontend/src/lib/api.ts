@@ -1076,8 +1076,13 @@ export type PlacePickRow = {
   finish_position: number | null;
   /** 100円あたりの払戻（的中時のみ） */
   place_payout: number | null;
-  /** pending=未確定 / void=返還（取消・除外） / hit / miss */
-  status: "pending" | "void" | "hit" | "miss";
+  /**
+   * candidate=当日の候補（最新オッズでの暫定・発走10分前に確定する）/
+   * confirmed=発走約10分前のスナップショットで確定（以後は変わらない）
+   */
+  stage: "candidate" | "confirmed";
+  /** candidate=候補 / pending=確定・結果待ち / void=返還（取消・除外） / hit / miss */
+  status: "candidate" | "pending" | "void" | "hit" | "miss";
 };
 
 export type PlacePickMonth = {
@@ -1085,7 +1090,10 @@ export type PlacePickMonth = {
   rule_version: string;
   n_races_logged: number;
   summary: {
+    /** 確定分の点数（候補は含まない） */
     n_picks: number;
+    /** 当日の候補数（確定前） */
+    n_candidates: number;
     n_settled: number;
     n_hits: number;
     hit_rate: number | null;
@@ -1098,6 +1106,11 @@ export type PlacePickMonth = {
 
 export async function fetchPlacePicks(month: string): Promise<PlacePickMonth> {
   return get<PlacePickMonth>(`/races/place-picks?month=${month}`, { next: { revalidate: 60 } });
+}
+
+/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし） */
+export async function fetchPlacePicksBrowser(month: string): Promise<PlacePickMonth> {
+  return get<PlacePickMonth>(`/races/place-picks?month=${month}`, { cache: "no-store" });
 }
 
 // ---------------------------------------------------------------------------
