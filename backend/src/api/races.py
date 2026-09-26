@@ -29,6 +29,7 @@ from ..betting.place_ev import SUB_INDEX_COLUMNS, get_place_ev_model
 from ..db.models import (
     CalculatedIndex,
     EntryChange,
+    HitTierPick,
     Horse,
     Jockey,
     OddsHistory,
@@ -62,6 +63,8 @@ from ..services.jra_heihachi_picks import (
     build_heihachi_backtest,
     build_heihachi_picks,
 )
+from ..services.jra_place_pick import PlacePickHorse, select_place_pick
+from ..services.jra_place_pick_month import build_place_pick_month
 from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from ..utils.racecourse import JRA_TO_SEKITO
@@ -70,11 +73,7 @@ from .ws_manager import results_manager
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
-_ALLOWED_ORIGINS: set[str] = {
-    o.strip()
-    for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
-}
+_ALLOWED_ORIGINS: set[str] = {o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()}
 
 
 def _check_ws_origin(ws: WebSocket) -> None:
@@ -88,6 +87,7 @@ def _check_ws_origin(ws: WebSocket) -> None:
     origin = ws.headers.get("origin", "")
     if origin not in _ALLOWED_ORIGINS:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
@@ -127,9 +127,7 @@ def _compute_upside_scores(horses: list[HorseIndexOut]) -> None:
         return
 
     # 総合指数の降順ランク（1=最高）
-    sorted_by_composite = sorted(
-        range(n), key=lambda i: horses[i].composite_index or 0.0, reverse=True
-    )
+    sorted_by_composite = sorted(range(n), key=lambda i: horses[i].composite_index or 0.0, reverse=True)
     composite_ranks = [0] * n
     for rank, idx in enumerate(sorted_by_composite, start=1):
         composite_ranks[idx] = rank
@@ -185,6 +183,7 @@ def _parse_index_num(raw: str | None) -> float | None:
     if not raw or raw.strip() in ("-", "", "0"):
         return None
     import re as _re
+
     m = _re.search(r"\d+", raw)
     return float(m.group()) if m else None
 
@@ -288,18 +287,18 @@ class RaceOut(BaseModel):
     has_anagusa: bool = False  # 穴ぐさ指数58以上の馬が存在するか
     confidence_score: int | None = None
     confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
-    confidence_rank: str | None = None   # S / A / B / C
-    recommend_rank: str | None = None    # S / A / B / C
-    buy_signal: str | None = None        # "buy" | "caution" | "pass" | None
-    top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
+    confidence_rank: str | None = None  # S / A / B / C
+    recommend_rank: str | None = None  # S / A / B / C
+    buy_signal: str | None = None  # "buy" | "caution" | "pass" | None
+    top_win_odds: float | None = None  # 指数1位馬の単勝オッズ
     top_horse_number: int | None = None  # 指数1位馬番
-    top_horse_name: str | None = None    # 指数1位馬名（結果確定後）
+    top_horse_name: str | None = None  # 指数1位馬名（結果確定後）
     top_horse_finish: int | None = None  # 指数1位馬の確定着順（取消の場合はnull）
-    result_confirmed: bool = False       # レース結果確定済み（いずれかの馬に着順あり）
-    is_special_only: bool = False        # 出馬表未確定で特別登録のみ存在
-    special_horse_count: int = 0         # 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
-    is_projected_only: bool = False      # 出馬表未確定で netkeiba 出走想定のみ存在
-    projected_horse_count: int = 0       # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
+    result_confirmed: bool = False  # レース結果確定済み（いずれかの馬に着順あり）
+    is_special_only: bool = False  # 出馬表未確定で特別登録のみ存在
+    special_horse_count: int = 0  # 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
+    is_projected_only: bool = False  # 出馬表未確定で netkeiba 出走想定のみ存在
+    projected_horse_count: int = 0  # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
 
     model_config = {"from_attributes": True}
 
@@ -369,11 +368,11 @@ class RaceConfidence(BaseModel):
     """レース信頼度スコア。"""
 
     score: int
-    label: str           # "HIGH" | "MID" | "LOW"
-    rank: str = "C"      # S / A / B / C
+    label: str  # "HIGH" | "MID" | "LOW"
+    rank: str = "C"  # S / A / B / C
     recommend_rank: str = "C"  # S / A / B / C
-    gap_1_2: float       # 1位-2位の指数差
-    gap_1_3: float       # 1位-3位の指数差
+    gap_1_2: float  # 1位-2位の指数差
+    gap_1_3: float  # 1位-3位の指数差
     head_count: int
     win_prob_top: float | None = None
     top_win_odds: float | None = None
@@ -418,8 +417,8 @@ class HorseIndexOut(BaseModel):
     upside_score: float | None = None  # 穴馬スコア（指数下位でも馬券になりやすい度合い）
     # 外部指数ランク（sekito.netkeiba / sekito.kichiuma）
     nb_course_rank: int | None = None  # netkeibaコース適性指数のレース内順位（1=最高）
-    nb_ave_rank: int | None = None     # netkeibaタイム平均指数のレース内順位（1=最高）
-    km_rank: int | None = None         # kichiumaスピードスコアのレース内順位（1=最高）
+    nb_ave_rank: int | None = None  # netkeibaタイム平均指数のレース内順位（1=最高）
+    km_rank: int | None = None  # kichiumaスピードスコアのレース内順位（1=最高）
     # JRA-VAN NEXT DM指数（タイム型・対戦型）
     jvan_time_dm: float | None = None
     jvan_battle_dm: float | None = None
@@ -450,6 +449,11 @@ class HorseIndexOut(BaseModel):
     # 夏穴バッジ（牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 × 夏競馬場）
     # 3年バックテスト: 単ROI 2.133 (n=539)
     is_natsu_ana: bool = False
+    # 複勝ピック（1レース最大1頭・判定は services/jra_place_pick.py が単一真実源）
+    # 発走前スナップショット（hit_tier_picks）があればそれで、無ければ最新オッズで判定する
+    is_place_pick: bool = False
+    # "snapshot"（発走約10分前で確定）/ "live"（最新オッズでの暫定）。is_place_pick=True の馬のみ
+    place_pick_source: str | None = None
 
 
 class OddsOut(BaseModel):
@@ -462,6 +466,7 @@ class OddsOut(BaseModel):
 # -------------------------------------------------------------------
 # エンドポイント
 # -------------------------------------------------------------------
+
 
 class HeihachiCandidateOut(BaseModel):
     """平八バッジの候補馬1頭（指数順位5位以内）。該当判定はフロント側が行う。"""
@@ -662,19 +667,9 @@ async def get_nearest_race_date(
     開催データが存在する日付のみ対象とする（平日等はスキップ）。
     """
     if direction == "prev":
-        stmt = (
-            select(Race.date)
-            .where(Race.date < from_date)
-            .order_by(Race.date.desc())
-            .limit(1)
-        )
+        stmt = select(Race.date).where(Race.date < from_date).order_by(Race.date.desc()).limit(1)
     else:
-        stmt = (
-            select(Race.date)
-            .where(Race.date > from_date)
-            .order_by(Race.date.asc())
-            .limit(1)
-        )
+        stmt = select(Race.date).where(Race.date > from_date).order_by(Race.date.asc()).limit(1)
     result = await db.execute(stmt)
     race_date = result.scalar()
     if not race_date:
@@ -714,6 +709,21 @@ async def get_heihachi_picks(
     ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
     """
     return HeihachiPicksOut(**await build_heihachi_picks(db, date))
+
+
+@router.get("/place-picks")
+async def get_place_picks(
+    db: DbDep,
+    month: str = Query(..., pattern=r"^\d{6}$", description="対象月 YYYYMM"),
+) -> dict[str, Any]:
+    """当月の**複勝ピック**（1レース最大1頭）と結果・集計を返す。
+
+    入力は前向き記録（発走約10分前のスナップショット）で、判定は
+    `services/jra_place_pick.select_place_pick()`。推奨ページの一覧用。
+
+    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
+    """
+    return await build_place_pick_month(db, month)
 
 
 @router.get("/heihachi/backtest")
@@ -826,7 +836,10 @@ async def list_races(
                 CalculatedIndex.win_probability,
                 RaceEntry.horse_number,
             )
-            .outerjoin(RaceEntry, (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id))
+            .outerjoin(
+                RaceEntry,
+                (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id),
+            )
             .where(tuple_(CalculatedIndex.race_id, CalculatedIndex.version).in_(version_pairs))
         )
         idx_result = await db.execute(idx_stmt)
@@ -853,27 +866,17 @@ async def list_races(
     # 変更後: (race_id, combination) IN (36ペア以内) + DISTINCT ON → 最大36行
     top_horse_win_odds: dict[int, float] = {}
     if race_top_horse_num:
-        top_pairs = [
-            (rid, str(hn))
-            for rid, hn in race_top_horse_num.items()
-            if hn is not None
-        ]
+        top_pairs = [(rid, str(hn)) for rid, hn in race_top_horse_num.items() if hn is not None]
         if top_pairs:
             odds_stmt = (
                 select(OddsHistory.race_id, OddsHistory.odds)
                 .distinct(OddsHistory.race_id)  # DISTINCT ON (race_id)
-                .where(
-                    tuple_(OddsHistory.race_id, OddsHistory.combination).in_(top_pairs)
-                )
+                .where(tuple_(OddsHistory.race_id, OddsHistory.combination).in_(top_pairs))
                 .where(OddsHistory.bet_type == "win")
                 .order_by(OddsHistory.race_id, OddsHistory.fetched_at.desc())
             )
             odds_result = await db.execute(odds_stmt)
-            top_horse_win_odds = {
-                int(rid): float(odds)
-                for rid, odds in odds_result.all()
-                if odds is not None
-            }
+            top_horse_win_odds = {int(rid): float(odds) for rid, odds in odds_result.all() if odds is not None}
 
     # 指数1位馬の成績をバッチ取得（取消馬は finish_position=null のまま返る）
     top_horse_result_map: dict[int, tuple[int | None, str]] = {}  # race_id → (finish_position, horse_name)
@@ -978,7 +981,9 @@ async def list_races(
         if r.id in indexed_ids:
             wp_list = race_win_probs.get(r.id) or None
             conf = calculate_race_confidence(
-                race_indices[r.id], r.head_count, wp_list,
+                race_indices[r.id],
+                r.head_count,
+                wp_list,
                 gap_full_score=JRA_GAP_FULL_SCORE,
             )
             top_odds = top_horse_win_odds.get(r.id)
@@ -1030,8 +1035,9 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
             out.special_horse_count = sp_count
         else:
             pj_count_row = await db.execute(
-                select(func.count(ProjectedEntry.id))
-                .where(ProjectedEntry.netkeiba_race_id == _jv_to_netkeiba_id(race.jravan_race_id))
+                select(func.count(ProjectedEntry.id)).where(
+                    ProjectedEntry.netkeiba_race_id == _jv_to_netkeiba_id(race.jravan_race_id)
+                )
             )
             pj_count = int(pj_count_row.scalar_one())
             if pj_count > 0:
@@ -1050,7 +1056,8 @@ async def get_entries(race_id: int, db: DbDep) -> list[EntryOut]:
 
     # 確定出走表（horse_number > 0）が存在するか確認
     has_confirmed = await db.scalar(
-        select(func.count()).select_from(RaceEntry)
+        select(func.count())
+        .select_from(RaceEntry)
         .where(RaceEntry.race_id == race_id)
         .where(RaceEntry.horse_number > 0)
     )
@@ -1168,14 +1175,9 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     """
     # Race と最大バージョンを 1 クエリで取得（2 往復 → 1 往復）
     latest_ver_sq = (
-        select(func.max(CalculatedIndex.version))
-        .where(CalculatedIndex.race_id == race_id)
-        .scalar_subquery()
+        select(func.max(CalculatedIndex.version)).where(CalculatedIndex.race_id == race_id).scalar_subquery()
     )
-    race_ver_result = await db.execute(
-        select(Race, latest_ver_sq.label("latest_version"))
-        .where(Race.id == race_id)
-    )
+    race_ver_result = await db.execute(select(Race, latest_ver_sq.label("latest_version")).where(Race.id == race_id))
     race_ver_row = race_ver_result.one_or_none()
     if not race_ver_row:
         raise HTTPException(status_code=404, detail="Race not found")
@@ -1189,8 +1191,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         select(CalculatedIndex, RaceEntry, Horse)
         .join(
             RaceEntry,
-            (RaceEntry.race_id == CalculatedIndex.race_id)
-            & (RaceEntry.horse_id == CalculatedIndex.horse_id),
+            (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id),
         )
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
         .where(CalculatedIndex.race_id == race_id)
@@ -1238,10 +1239,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             win_probability=_f(ci.win_probability),
             place_probability=_f(ci.place_probability),
             out_probability=_f(ci.out_probability),
-            is_cut_off=(
-                ci.out_probability is not None
-                and float(ci.out_probability) >= OUT_PROB_CUTOFF
-            ),
+            is_cut_off=(ci.out_probability is not None and float(ci.out_probability) >= OUT_PROB_CUTOFF),
             speed_index=_adj(ci.speed_index, "speed_index"),
             last3f_index=_adj(ci.last_3f_index, "last_3f_index"),
             course_aptitude=_adj(ci.course_aptitude, "course_aptitude"),
@@ -1326,16 +1324,12 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
     # シグナルなし」判定でレース全体のシグナルが消えるため
     scratched_hns: set[int] = set()
     ec_rows = await db.execute(
-        select(EntryChange.horse_id)
-        .where(EntryChange.race_id == race_id)
-        .where(EntryChange.change_type == "scratch")
+        select(EntryChange.horse_id).where(EntryChange.race_id == race_id).where(EntryChange.change_type == "scratch")
     )
     scratched_ids = {r for (r,) in ec_rows.all() if r is not None}
     if scratched_ids:
         scratched_hns |= {
-            e.horse_number
-            for _, e, _ in unique_rows
-            if e.horse_id in scratched_ids and e.horse_number is not None
+            e.horse_number for _, e, _ in unique_rows if e.horse_id in scratched_ids and e.horse_number is not None
         }
     rr_abn_rows = await db.execute(
         select(RaceResult.horse_number)
@@ -1394,6 +1388,48 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
             nb_ave_rank=h.nb_ave_rank,
             km_rank=h.km_rank,
         )
+
+    # 複勝ピック（1レース最大1頭）。発走前スナップショットが撮れていればそれを使う。
+    # 一覧（/place-picks）と同じ入力で判定し、画面ごとに結果がずれないようにする。
+    snap_rows = (
+        await db.execute(
+            select(
+                HitTierPick.horse_number,
+                HitTierPick.pre_win_odds,
+                HitTierPick.pre_place_odds,
+                HitTierPick.place_probability,
+            ).where(HitTierPick.race_id == race_id)
+        )
+    ).all()
+    if snap_rows:
+        pick_source = "snapshot"
+        pick_inputs = [
+            PlacePickHorse(
+                horse_number=int(hn),
+                win_odds=wo,
+                place_odds=po,
+                place_probability=float(pp) if pp is not None else None,
+            )
+            for hn, wo, po, pp in snap_rows
+            if hn not in scratched_hns
+        ]
+    else:
+        pick_source = "live"
+        pick_inputs = [
+            PlacePickHorse(
+                horse_number=h.horse_number,
+                win_odds=win_odds_map.get(h.horse_number),
+                place_odds=place_odds_map.get(h.horse_number),
+                place_probability=h.place_probability,
+            )
+            for h in horses
+            if h.horse_number is not None and h.horse_number not in scratched_hns
+        ]
+    place_pick_hn = select_place_pick(pick_inputs)
+    for h in horses:
+        if h.horse_number == place_pick_hn:
+            h.is_place_pick = True
+            h.place_pick_source = pick_source
 
     # 多頭該当(≥3頭)の混戦レースは sweet spot 判定を取り消す
     # 3年バックテスト: k=3 で単ROI 0.935 / k≥3 累積で ROI 改善幅 +0.006

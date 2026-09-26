@@ -114,6 +114,10 @@ export type HorseIndex = {
   // 夏穴バッジ（牡セン≤470kg × 芝 × 前走比-4〜-6kg × 7番人気以上 × 夏競馬場）
   // 3年バックテスト 単ROI 2.133
   is_natsu_ana?: boolean;
+  // 複勝ピック（1レース最大1頭）。判定は backend services/jra_place_pick.py が単一真実源
+  is_place_pick?: boolean;
+  /** "snapshot"=発走約10分前で確定 / "live"=最新オッズでの暫定 */
+  place_pick_source?: "snapshot" | "live" | null;
 };
 
 /**
@@ -1047,119 +1051,53 @@ export async function fetchRaceConfidenceBrowser(date: string): Promise<RaceConf
 }
 
 /**
- * 平八バッジの候補馬1頭（指数順位5位以内）。
- * どれをバッジ対象にするかは `lib/heihachi.ts` の matchesHeihachi() が決める
- * （推奨ページのスライダーで動かせるため、判定はフロント側に集約している）。
+ * 推奨ページ「複勝ピック」の1行（1レース最大1頭）。
+ *
+ * 入力は前向き記録（発走約10分前のスナップショット）で、判定は backend の
+ * `services/jra_place_pick.py` が単一真実源。レース詳細の「複勝」バッジと同じ関数を通る。
  */
-export type HeihachiCandidate = {
+export type PlacePickRow = {
+  date: string;
   race_id: number;
   course_name: string | null;
-  race_number: number;
+  race_number: number | null;
   race_name: string | null;
   post_time: string | null;
-  grade: string | null;
+  surface: string | null;
+  distance: number | null;
+  field_size: number;
   horse_number: number;
   horse_name: string | null;
-  /** レース内の composite_index 順位（1=1位、取消馬を除いた順位） */
-  index_rank: number;
-  composite_index: number | null;
-  /** モデルの複勝圏確率（0〜1） */
+  pre_win_odds: number | null;
+  pre_place_odds: number | null;
   place_probability: number | null;
-  /** 判定に使う単勝オッズ（確定後は確定オッズ） */
-  win_odds: number | null;
+  place_probability_rank: number | null;
+  pop_rank: number | null;
   finish_position: number | null;
-  result_win_odds: number | null;
-  /** 複勝払戻オッズ。7頭以下は2着までしか払わないので、的中判定はこの有無で行う */
-  result_place_odds: number | null;
+  /** 100円あたりの払戻（的中時のみ） */
+  place_payout: number | null;
+  /** pending=未確定 / void=返還（取消・除外） / hit / miss */
+  status: "pending" | "void" | "hit" | "miss";
 };
 
-/** ある期間での3着内率と、同期間の全出走馬のベースライン。 */
-export type HeihachiWindowStat = {
-  window: string;
-  n: number;
-  place_rate: number;
-  base_place_rate: number;
-};
-
-/** 既定しきい値。単一真実源は backend の HEIHACHI_* 定数。 */
-export type HeihachiDefaults = {
-  max_index_rank: number;
-  min_odds: number;
-  max_odds: number;
-  min_place_prob: number;
-  graded_only: boolean;
-  grades: string[];
-};
-
-export type HeihachiPicks = {
-  date: string;
-  candidates: HeihachiCandidate[];
-  defaults: HeihachiDefaults;
-  /**
-   * バッジの実測（3着内率の分離のみ）。当日実績とは別物。
-   *
-   * 回収率は返らない — TEST窓では全候補が複勝ROI 1 を割っており、「長期の目安」
-   * として出すと支持されない主張になるため。
-   *
-   * ⚠️ v28 の本番モデルは 2026-06-28 までで refit されているので、それ以前は
-   * in-sample。`in_sample` は当てはまりの良さであって将来の性能ではない。
-   * 学習に使っていないのは `out_of_sample` の窓だけ。
-   */
-  reference: {
-    in_sample: HeihachiWindowStat;
-    out_of_sample: HeihachiWindowStat;
+export type PlacePickMonth = {
+  month: string;
+  rule_version: string;
+  n_races_logged: number;
+  summary: {
+    n_picks: number;
+    n_settled: number;
+    n_hits: number;
+    hit_rate: number | null;
+    invest: number;
+    payout: number;
+    roi: number | null;
   };
+  picks: PlacePickRow[];
 };
 
-export async function fetchHeihachiPicks(date: string): Promise<HeihachiPicks> {
-  return get<HeihachiPicks>(`/races/heihachi?date=${date}`, { next: { revalidate: 60 } });
-}
-
-/** ブラウザ側ポーリング専用: 毎回サーバーから取得（キャッシュなし） */
-export async function fetchHeihachiPicksBrowser(date: string): Promise<HeihachiPicks> {
-  return get<HeihachiPicks>(`/races/heihachi?date=${date}`, { cache: "no-store" });
-}
-
-/** 同じしきい値を過去1年に当てた場合の成績。 */
-export type HeihachiBacktest = {
-  year: number;
-  /** その年の JRA 開催日数（1日12レース以上ある日） */
-  days: number;
-  races: number;
-  picks_per_day: number | null;
-  n: number;
-  win_hits: number;
-  place_hits: number;
-  win_rate: number | null;
-  place_rate: number | null;
-  win_roi: number | null;
-  place_roi: number | null;
-};
-
-/** 推奨ページのスライダーを動かすたびに呼ぶ（サーバー側は年データをキャッシュ済み）。 */
-export async function fetchHeihachiBacktest(
-  year: number,
-  t: {
-    maxIndexRank: number;
-    minOdds: number;
-    maxOdds: number;
-    minPlaceProb: number;
-    gradedOnly: boolean;
-  },
-  signal?: AbortSignal,
-): Promise<HeihachiBacktest> {
-  const params = new URLSearchParams({
-    year: String(year),
-    max_index_rank: String(t.maxIndexRank),
-    min_odds: String(t.minOdds),
-    max_odds: String(t.maxOdds),
-    min_place_prob: String(t.minPlaceProb),
-    graded_only: String(t.gradedOnly),
-  });
-  return get<HeihachiBacktest>(`/races/heihachi/backtest?${params}`, {
-    cache: "no-store",
-    signal,
-  });
+export async function fetchPlacePicks(month: string): Promise<PlacePickMonth> {
+  return get<PlacePickMonth>(`/races/place-picks?month=${month}`, { next: { revalidate: 60 } });
 }
 
 // ---------------------------------------------------------------------------
