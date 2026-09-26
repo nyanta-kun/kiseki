@@ -15,7 +15,7 @@ from src.services.jra_place_pick import (
     place_slots,
     select_place_pick,
 )
-from src.services.jra_place_pick_month import _status
+from src.services.jra_place_pick_month import LiveResult, _status, assemble_place_pick_month
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,18 +88,66 @@ def test_place_slots() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kw", "expected"),
+    ("abn", "fp", "pay", "finished", "expected"),
     [
-        ({"finish_position": None, "settled_at": None}, "pending"),
-        ({"finish_position": 3, "place_payout_odds": 3.4}, "hit"),
-        ({"finish_position": 4}, "miss"),
-        ({"abnormality_code": 1}, "void"),
-        ({"finish_position": 0, "settled_at": "x"}, "miss"),  # 競走中止など
+        (None, None, None, False, "pending"),  # 発走前・結果待ち
+        (0, 3, 3.4, True, "hit"),
+        (0, 3, None, True, "pending"),  # 3着内・払戻未着（HR 待ち）
+        (0, 4, None, True, "miss"),  # 着順だけで外れが決まる
+        (1, None, None, True, "void"),  # 取消 = 返還
+        (0, 0, None, True, "miss"),  # 競走中止など
+        (None, None, None, True, "miss"),  # 結果は出たがこの馬の行が無い
     ],
 )
-def test_month_status(kw: dict, expected: str) -> None:
-    base = {"abnormality_code": 0, "finish_position": None, "settled_at": "x", "place_payout_odds": None}
-    assert _status(SimpleNamespace(**{**base, **kw}), 3) == expected
+def test_month_status(abn, fp, pay, finished, expected) -> None:
+    assert _status(abn, fp, pay, finished, 3) == expected
+
+
+def _snapshot_race(race_id: int = 1, *, settled: bool) -> tuple[list, list]:
+    """8頭立て・3番が条件に当たるスナップショット1レース分。"""
+    lr = SimpleNamespace(race_id=race_id, date="20260927", course_name="中山", race_number=10, post_time="1500")
+    picks = []
+    for h in _with(_field(8), 3, win_odds=10.0, place_odds=3.2):
+        picks.append(
+            SimpleNamespace(
+                race_id=race_id,
+                horse_number=h.horse_number,
+                horse_name=f"馬{h.horse_number}",
+                pre_win_odds=h.win_odds,
+                pre_place_odds=h.place_odds,
+                place_probability=h.place_probability,
+                pop_rank=None,
+                abnormality_code=0 if settled else None,
+                finish_position=(1 if h.horse_number == 3 else 9) if settled else None,
+                place_payout_odds=(2.9 if h.horse_number == 3 else None) if settled else None,
+                final_win_odds=9.5 if settled else None,
+                settled_at="x" if settled else None,
+            )
+        )
+    return [(lr, "R", "芝", 1800)], picks
+
+
+def test_results_show_before_nightly_settle() -> None:
+    """settle（23:45）前でも race_results に入った着順・払戻が一覧に出る。"""
+    races, picks = _snapshot_race(settled=False)
+    d = assemble_place_pick_month("202609", races, picks)
+    assert d["picks"][0]["status"] == "pending"
+
+    live = {1: {3: LiveResult(2, 0, 3.6, 9.8), 1: LiveResult(1, 0, 1.2, 2.1)}}
+    latest = {1: ({3: 9.9}, {3: 3.5})}
+    d = assemble_place_pick_month("202609", races, picks, live=live, latest_odds=latest)
+    row = d["picks"][0]
+    assert (row["status"], row["finish_position"], row["place_payout"]) == ("hit", 2, 360)
+    assert row["now_win_odds"] == 9.8  # 確定単勝オッズを優先
+    assert row["pre_place_odds"] == 3.2  # 判定に使った値はそのまま
+    assert d["summary"]["n_hits"] == 1
+
+
+def test_settled_rows_ignore_live_overlay() -> None:
+    races, picks = _snapshot_race(settled=True)
+    live = {1: {3: LiveResult(9, 0, None, 1.0)}}
+    row = assemble_place_pick_month("202609", races, picks, live=live)["picks"][0]
+    assert (row["status"], row["place_payout"], row["now_win_odds"]) == ("hit", 290, 9.5)
 
 
 def test_both_screens_use_the_single_rule() -> None:
