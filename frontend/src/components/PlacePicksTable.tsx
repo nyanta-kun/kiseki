@@ -135,7 +135,12 @@ function StatusBadge({ p }: { p: PlacePickRow }) {
         </span>
       );
     default:
-      return <span className={cn(base, "bg-emerald-600 text-white")}>確定・発走前</span>;
+      // 確定済みで結果待ち。着順だけ先に入り、複勝払戻がまだの間は「払戻待ち」
+      return (
+        <span className={cn(base, "bg-emerald-600 text-white")}>
+          {p.finish_position ? `${p.finish_position}着・払戻待ち` : "確定・発走前"}
+        </span>
+      );
   }
 }
 
@@ -164,10 +169,19 @@ function PickItem({ p }: { p: PlacePickRow }) {
           {p.horse_name ?? "—"}
         </span>
         <span className="ml-auto shrink-0 text-[11px] text-gray-500 tabular-nums whitespace-nowrap">
+          {p.stage === "confirmed" && <span className="text-gray-400">判定時 </span>}
           単{p.pre_win_odds?.toFixed(1) ?? "—"} 複{p.pre_place_odds?.toFixed(1) ?? "—"}
           {p.pop_rank != null && ` · ${p.pop_rank}人気`}
         </span>
       </div>
+      {/* 確定後もオッズは締切まで動く。判定に使った発走10分前の値とは別に、最新（発走後は確定）を出す */}
+      {p.stage === "confirmed" && (p.now_win_odds != null || p.now_place_odds != null) && (
+        <div className="text-right text-[11px] text-gray-500 tabular-nums whitespace-nowrap mt-0.5">
+          <span className="text-gray-400">{p.finish_position ? "確定 " : "最新 "}</span>
+          単{p.now_win_odds?.toFixed(1) ?? "—"}
+          {p.now_place_odds != null && ` 複${p.now_place_odds.toFixed(1)}`}
+        </div>
+      )}
     </li>
   );
 }

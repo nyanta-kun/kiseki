@@ -1073,6 +1073,12 @@ export type PlacePickRow = {
   place_probability: number | null;
   place_probability_rank: number | null;
   pop_rank: number | null;
+  /**
+   * 最新の単勝・複勝オッズ。確定後も締切まで動くので、判定に使った発走10分前の値
+   * （pre_*）とは別に返す。発走後は単勝が確定オッズ、複勝は最終スナップショット
+   */
+  now_win_odds: number | null;
+  now_place_odds: number | null;
   finish_position: number | null;
   /** 100円あたりの払戻（的中時のみ） */
   place_payout: number | null;
