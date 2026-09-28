@@ -704,6 +704,9 @@ async def _fetch_odds_freshness(race_id: int, db: DbDep) -> OddsFreshness:
                     (SELECT max(oh.fetched_at)
                        FROM chihou.odds_history oh
                       WHERE oh.race_id = r.id) AS last_fetched_at,
+                    (SELECT max(oh.announced_at)
+                       FROM chihou.odds_history oh
+                      WHERE oh.race_id = r.id) AS last_announced_at,
                     (now() AT TIME ZONE 'UTC') AS now_utc
                 FROM chihou.races r
                 WHERE r.id = :rid
@@ -714,9 +717,10 @@ async def _fetch_odds_freshness(race_id: int, db: DbDep) -> OddsFreshness:
     if row is None:
         return OddsFreshness(STATUS_MISSING, None, None)
 
-    date, post_time, last_fetched_at, now_utc = row
+    date, post_time, last_fetched_at, last_announced_at, now_utc = row
     return classify_odds_freshness(
         last_fetched_at=last_fetched_at,
+        last_announced_at=last_announced_at,
         now_utc=now_utc,
         post_at_utc=post_time_to_utc(date, post_time),
     )
