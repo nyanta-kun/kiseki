@@ -768,6 +768,8 @@ export type ChihouGekisou = {
   room: number | null;
   horse_number: number | null;
   popularity: number | null;
+  /** 激走馬が複勝圏に入る確率（較正済み・0〜1）。激走以外は null */
+  place_prob?: number | null;
 };
 
 export type ChihouIndicesResponse = {
@@ -980,6 +982,8 @@ export type ChihouGekisouPick = {
   horse_name: string | null;
   /** 判定に使った発走前オッズでの人気 */
   popularity: number | null;
+  /** 複勝圏に入る確率（較正済み・0〜1）。高いほど回収率が高いわけではない */
+  place_prob: number | null;
   win_odds: number | null;
   place_odds: number | null;
   room: number | null;

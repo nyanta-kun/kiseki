@@ -42,6 +42,8 @@ REQUIRED_DISPLAY_FLAGS = [
     ("chihou/races/[id]", "is_gekisou"),  # 地方 激走馬（1レース最大1頭）
     ("chihou/races/[id]", "gekisou.status"),  # 地方 激走 / 見送り のレース判定パネル
     ("chihou/races", "gekisou_status"),  # 地方 一覧の 激走 / 見送り バッジ
+    ("chihou/races", "place_prob"),  # 地方 推奨タブ 激走馬の確率（確率順の並び替え）
+    ("chihou/races/[id]", "place_prob"),  # 地方 レース詳細 激走馬の確率
 ]
 
 _IMPORT_RE = re.compile(r"""^\s*(?:import|export)\b[^'"]*from\s*['"]([^'"]+)['"]""", re.M)

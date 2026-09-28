@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -51,12 +52,26 @@ GEKISOU_ROOM_MIN: float = 1.3
 # 複勝の枠数（8頭以上）
 _PLACE_SLOTS: int = 3
 
+# 激走馬の複勝確率（較正済み）= sigmoid(A + B × logit(市場の3着内確率 mq))。
+# 探索窓（2026-04-07〜08-13・激走 1,100点）だけで当てはめたロジスティック回帰。
+#
+#   🔴 モデル複勝確率 q は使わない。激走馬に限ると q は実際より大きく出て
+#      （平均 0.38 ↔ 的中 0.26）、しかも的中をほとんど分けない（AUC 0.52）。
+#      mq と一緒に回帰すると係数は −0.07 で、前向き記録の当てはまりも改善しない。
+#      市場の mq は逆に小さく出る（平均 0.18）が、的中を分ける（AUC 0.59）。
+#   前向き記録（2026-08-14〜09-27・541点・この関数そのもので採点）での当てはまり:
+#      予測 16.7% → 実際 15.6% / 22.7% → 22.7% / 27.4% → 23.2% / 31.8% → 31.5% / 36.6% → 44.4%(n=18)
+#      全体では予測 25.2% ↔ 実際 23.8%（やや高めに出る）。Brier 0.177（定数 0.180）
+#   ⚠️ 確率が高いほど回収率が高いわけではない（どの帯も 0.68〜0.91）。
+GEKISOU_PROB_INTERCEPT: float = 0.005
+GEKISOU_PROB_SLOPE: float = 0.678
+
 STATUS_GEKISOU: str = "gekisou"
 STATUS_MIOKURI: str = "miokuri"
 
 # 判定ルールの署名。閾値を変えたら値も変わるので、集計時に世代を混ぜずに済む。
 GEKISOU_RULE_VERSION: str = (
-    f"room{GEKISOU_ROOM_MIN}_fav{GEKISOU_FAV_TOP}_pop{GEKISOU_LONGSHOT_POP}" f"_n{GEKISOU_MIN_FIELD}_push"
+    f"room{GEKISOU_ROOM_MIN}_fav{GEKISOU_FAV_TOP}_pop{GEKISOU_LONGSHOT_POP}_n{GEKISOU_MIN_FIELD}_push"
 )
 
 
@@ -71,6 +86,8 @@ class GekisouVerdict:
         pick_pop: 激走馬の人気順位
         pick_q: 激走馬のモデル複勝確率（正規化後）
         fav_min_q: 人気1〜3番の中で最も低いモデル複勝確率（正規化後）
+        pick_mq: 激走馬の市場の3着内確率（発走前単勝オッズから Harville）
+        pick_place_prob: 激走馬が複勝圏に入る確率（較正済み・`gekisou_place_prob`）
     """
 
     status: str | None
@@ -79,6 +96,8 @@ class GekisouVerdict:
     pick_pop: int | None = None
     pick_q: float | None = None
     fav_min_q: float | None = None
+    pick_mq: float | None = None
+    pick_place_prob: float | None = None
 
 
 NO_VERDICT = GekisouVerdict(status=None)
@@ -120,6 +139,21 @@ def harville_top_k(win_probs: list[float], k: int) -> list[float]:
                         acc += p[j] * p[m] / r1 * p[i] / r2
         out[i] = acc
     return out
+
+
+def gekisou_place_prob(market_place_prob: float) -> float:
+    """激走馬が複勝圏に入る確率（較正済み）を返す。
+
+    Args:
+        market_place_prob: その馬の市場の3着内確率（発走前単勝オッズから Harville）
+
+    Returns:
+        複勝圏に入る確率（0〜1）。激走に選ばれた馬に対してだけ較正してあるので、
+        それ以外の馬に使ってはいけない。
+    """
+    p = min(max(market_place_prob, 1e-4), 1 - 1e-4)
+    z = GEKISOU_PROB_INTERCEPT + GEKISOU_PROB_SLOPE * math.log(p / (1 - p))
+    return 1.0 / (1.0 + math.exp(-z))
 
 
 def judge_gekisou(
@@ -169,5 +203,7 @@ def judge_gekisou(
             pick_pop=pop[cand],
             pick_q=q[cand],
             fav_min_q=fav_min_q,
+            pick_mq=mq[cand],
+            pick_place_prob=gekisou_place_prob(mq[cand]),
         )
     return GekisouVerdict(status=None, room=room, fav_min_q=fav_min_q)

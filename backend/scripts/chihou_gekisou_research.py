@@ -224,6 +224,7 @@ def run_forward(start: str, end: str) -> None:
                 rec["status"] = "void"
             else:
                 rec["hit"] = int(h.finish_position <= 3)
+                rec["prob"] = v.pick_place_prob
                 rec["ret"] = (h.payout or 0) / 100.0 if h.finish_position <= 3 else 0.0
         rows.append(rec)
     r = pd.DataFrame(rows)
@@ -244,6 +245,13 @@ def run_forward(start: str, end: str) -> None:
             f"  激走   n={len(g)} ({len(g) / len(r):.1%})  複勝的中 {g.hit.mean():.3f}"
             f" [{lo:.3f},{hi:.3f}]  回収 {g.ret.mean():.3f} [{rl:.3f},{rh:.3f}]"
         )
+        # 確率（較正済み）の当てはまり。予測と実際がずれてきたら較正のやり直しの合図
+        g = g.assign(band=pd.cut(g.prob, [0, 0.2, 0.25, 0.3, 0.35, 1.0]))
+        cal = g.groupby("band", observed=True).agg(
+            n=("hit", "size"), 予測=("prob", "mean"), 実際=("hit", "mean"), 回収=("ret", "mean")
+        )
+        print(f"  確率の当てはまり（全体 予測 {g.prob.mean():.3f} ↔ 実際 {g.hit.mean():.3f}）")
+        print(cal.round(3).to_string())
     for st, name in ((STATUS_GEKISOU, "激走"), (STATUS_MIOKURI, "見送り"), (None, "印なし")):
         s = r[r.status == st] if st is not None else r[r.status.isna()]
         if len(s):
