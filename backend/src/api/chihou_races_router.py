@@ -3,44 +3,31 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from sqlalchemy import exists, select, tuple_
+from sqlalchemy import exists, select
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.chihou_models import (
     ChihouCalculatedIndex,
     ChihouHorse,
-    ChihouOddsHistory,
-    ChihouPlacePick,
-    ChihouPlacePickRace,
     ChihouRace,
     ChihouRaceEntry,
     ChihouRaceResult,
 )
 from ..db.session import get_db
-from ..indices.buy_signal import (
-    chihou_buy_signal,
-    chihou_effective_head_count,
-    chihou_is_place_bet,
-    chihou_is_place_pick,
-    chihou_is_sweet_spot,
-    chihou_market_top3_share,
-    chihou_popularity_ranks,
-    chihou_select_place_picks,
-)
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_cutoff import cut_flags
+from ..indices.chihou_gekisou import STATUS_GEKISOU, STATUS_MIOKURI, GekisouVerdict
 from ..indices.confidence import (
     CHIHOU_DISPERSION_FULL_SCORE,
     CHIHOU_GAP_FULL_SCORE,
     calculate_race_confidence,
-    calculate_recommend_rank,
 )
+from ..services.chihou_gekisou_source import fetch_gekisou_verdicts
 from ..services.chihou_odds_freshness import (
     STATUS_MISSING,
     OddsFreshness,
@@ -64,38 +51,9 @@ def _adj_chihou(v: float | None, key: str) -> float | None:
     adjusted = (float(v) + offset - 50.0) * scale + 50.0
     return round(max(0.0, min(100.0, adjusted)), 1)
 
+
 router = APIRouter(prefix="/api/chihou/races", tags=["chihou-races"])
 DbDep = Annotated[AsyncSession, Depends(get_db)]
-
-
-def resolve_place_picks(
-    logged_picks: list[int] | None,
-    recomputed_picks: list[int],
-) -> list[int]:
-    """注目馬の表示に「前向き記録」と「再計算」のどちらを使うか決める。
-
-    🔴 **記録がある レースは記録が唯一の正本**（2026-08-26）。
-    再計算はオッズを引き直すので、終わったレースを開くと**その日に実際に出ていた
-    推奨と食い違う**。記録は発走 5〜6 分前で凍結されるのに対し、再計算が使う
-    「発走時刻以前の最新」は実測で発走 0〜1 分前を拾い、人気順もシェアも別物になる。
-
-    実例（2026-08-26 船橋）: 記録は 3R・4R に計 4 頭。再計算では 12R の 1 頭のみ。
-    さらにその 12R も 12 分後にはシェアが 0.628 → 0.661 へ動いて条件から外れた。
-
-    ⚠️ **`None` と `[]` は意味が違う。**
-      - `None` = 記録が無い（記録開始前の日付／まだスナップショット前）→ 再計算する
-      - `[]`   = 記録が「見送り」だった → **何も出さない**（再計算で拾い直さない）
-
-    Args:
-        logged_picks: 記録された推奨馬の馬番。記録自体が無ければ None。
-        recomputed_picks: いま再計算した推奨馬の馬番。
-
-    Returns:
-        表示に使う馬番のリスト。
-    """
-    if logged_picks is None:
-        return recomputed_picks
-    return logged_picks
 
 
 class ChihouRaceOut(BaseModel):
@@ -118,12 +76,12 @@ class ChihouRaceOut(BaseModel):
     has_anagusa: bool = False
     confidence_score: int | None = None
     confidence_label: str | None = None
-    confidence_rank: str | None = None   # S / A / B / C
-    recommend_rank: str | None = None    # S / A / B / C
-    buy_signal: str | None = None        # "buy" | "caution" | "pass"
-    top_win_odds: float | None = None    # 指数1位馬の単勝オッズ
-    result_confirmed: bool = False        # 成績確定済み（JRA RaceOut と互換）
-    has_place_pick: bool = False          # 注目馬（人気薄の複勝圏候補）がいる → ★表示
+    confidence_rank: str | None = None  # S / A / B / C
+    result_confirmed: bool = False  # 成績確定済み（JRA RaceOut と互換）
+    # 激走 / 見送り（`indices/chihou_gekisou.py`）。"gekisou" | "miokuri" | None
+    # 🔴 2026-09-28 に 購入指針(buy_signal) / 期待値ランク(recommend_rank) /
+    #    注目馬★(has_place_pick) を撤去してこれに置き換えた。いずれも回収率の根拠が無かった。
+    gekisou_status: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -144,26 +102,35 @@ class ChihouHorseIndexOut(BaseModel):
     last_margin_index: float | None = None  # 前走着差指数（0-100, 接戦=高評価, v5以降）
     place_ev_index: float | None = None  # 複勝期待値指数（EV>1.0→50超、v3以降）
     external_consensus: int | None = None  # 0〜2: kichiuma/netkeibaで1位になった数
-    win_odds: float | None = None          # 単勝オッズ（最新）
-    ev: float | None = None               # 期待値 win_probability × win_odds
-    is_sweet_spot: bool = False           # スイートスポット該当馬（赤字表示）
-    is_place_bet: bool = False            # 複穴（断然人気R×単勝10倍以上×指数3位内×8頭以上）
-    is_place_pick: bool = False           # 注目馬（6番人気以下×指数5位内×開いたR）→ ★表示
+    win_odds: float | None = None  # 単勝オッズ（最新）
+    # 激走馬（1レース最大1頭）。判定は `indices/chihou_gekisou.py`。
+    # 🔴 2026-09-28 に スイートスポット(赤字) / 複穴 / 注目馬★ / EV を撤去して置き換えた。
+    is_gekisou: bool = False
     # 足切り候補（Web でグレーアウト表示する馬）。ルールの正本は
     # `src/indices/chihou_cutoff.py`（2026-09-06 に frontend から移設）。
     is_cut_off: bool = False
 
 
 class ChihouRaceRanks(BaseModel):
-    """地方競馬 レース信頼度・推奨度ランク"""
+    """地方競馬 レース信頼度ランク（指数の分離度。期待値ではない）"""
 
     score: int
     confidence_rank: str  # S / A / B / C
-    recommend_rank: str   # S / A / B / C
     gap_1_2: float
     gap_1_3: float
-    win_prob_top: float | None = None
-    top_win_odds: float | None = None
+
+
+class ChihouGekisouOut(BaseModel):
+    """地方競馬 激走 / 見送り判定（レース単位）。
+
+    `status` が None のレースは「印なし」（空き枠はあるが押しのけそうな人気薄がいない）。
+    """
+
+    status: str | None  # "gekisou" | "miokuri" | None
+    source: str  # "snapshot"（発走前記録で確定）| "live"（暫定）
+    room: float | None = None  # 空き枠 = 3 − 人気1〜3番の好走見込み
+    horse_number: int | None = None  # 激走馬
+    popularity: int | None = None  # 激走馬の人気（判定に使った発走前オッズ）
 
 
 class ChihouIndicesResponse(BaseModel):
@@ -171,6 +138,17 @@ class ChihouIndicesResponse(BaseModel):
 
     horses: list[ChihouHorseIndexOut]
     ranks: ChihouRaceRanks | None = None
+    gekisou: ChihouGekisouOut | None = None
+
+
+def _gekisou_out(verdict: GekisouVerdict, source: str) -> ChihouGekisouOut:
+    return ChihouGekisouOut(
+        status=verdict.status,
+        source=source,
+        room=round(verdict.room, 3) if verdict.room is not None else None,
+        horse_number=verdict.pick,
+        popularity=verdict.pick_pop,
+    )
 
 
 class ChihouResultOut(BaseModel):
@@ -203,6 +181,7 @@ async def get_chihou_top_probability(
 ) -> list[ChihouTopHorseOut]:
     """指定日の勝率閾値以上の馬を発走時刻順で返す。"""
     from sqlalchemy import text as _text
+
     sql = _text("""
         SELECT
             r.course_name,
@@ -263,49 +242,46 @@ async def get_chihou_top_probability(
     ]
 
 
-class ChihouFeaturedPlaceOut(BaseModel):
-    """地方競馬 注目馬（人気薄の複勝圏候補）1頭ぶん。"""
+class ChihouGekisouPickOut(BaseModel):
+    """地方競馬 激走馬 1頭ぶん（推奨タブの一覧用）。"""
 
     race_id: int
     course_name: str
     race_number: int
     race_name: str | None
     post_time: str | None
-    head_count: int | None
-    horse_number: int | None
+    horse_number: int
     horse_name: str | None
-    win_odds: float | None
-    place_odds: float | None
-    top3_share: float
-    popularity: int | None       # 発走前オッズによる人気順位
-    index_rank: int | None       # composite_index のレース内順位
+    popularity: int | None  # 判定に使った発走前オッズでの人気
+    win_odds: float | None  # 判定に使った単勝オッズ
+    place_odds: float | None  # 判定時点の複勝オッズ（下限）
+    room: float | None  # 空き枠
+    source: str  # "snapshot"（確定）| "live"（暫定・発走前はまだ動く）
     finish_position: int | None
+    place_payout: float | None  # 複勝払戻（倍率）。複勝圏外・未確定は None
 
 
-@router.get("/featured-place")
-async def get_chihou_featured_place(
+class ChihouGekisouDayOut(BaseModel):
+    """地方競馬 激走 / 見送りの当日まとめ。"""
+
+    picks: list[ChihouGekisouPickOut]
+    n_judged: int  # 判定できたレース（8頭以上・指数とオッズあり）
+    n_gekisou: int
+    n_miokuri: int
+
+
+@router.get("/gekisou")
+async def get_chihou_gekisou(
     date: str = Query(..., description="開催日 YYYYMMDD"),
     db: AsyncSession = Depends(get_db),
-) -> list[ChihouFeaturedPlaceOut]:
-    """指定日の「注目馬」を発走時刻順で返す。
+) -> ChihouGekisouDayOut:
+    """指定日の「激走」馬を発走時刻順で返す。
 
-    条件は `chihou_is_place_pick()`
-    （発走前6番人気以下 × 指数5位以内 × 上位3頭シェア<0.63 × 8頭以上・1レース最大2頭）。
-    検証根拠は docs/chihou_darkhorse_feasibility_2026_08_05.md。
+    判定は `indices/chihou_gekisou.judge_gekisou`、入力の選び方（前向き記録が
+    あればそれが正本）は `services/chihou_gekisou_source` を参照。
 
-    ⚠️ 人気・シェアは **その時点で取得済みの最新オッズ**から作る。
-    確定オッズを使うと look-ahead になる（前身の条件がそれで崩壊した）。
-
-    🔴 **前向き記録がある レースは、その記録が唯一の正本**（2026-08-26）。
-    この関数はオッズを引き直して条件を再計算するので、**終わったレースを開くと
-    その日に実際に出ていた推奨と食い違う**。前向き記録は発走 5〜6 分前の
-    スナップショットで凍結されるのに対し、再計算は「発走時刻以前の最新」＝
-    実測で発走 0〜1 分前を拾うため、人気順もシェアも別の瞬間の値になる。
-
-    実例（2026-08-26 船橋）: 前向き記録は 3R・4R に計 4 頭を出していたが、
-    再計算では 12R の 1 頭しか返らなかった。**購入判断に使うのは記録側**なので、
-    記録がある レースは `place_pick_races` / `place_picks` をそのまま返し、
-    記録が無い レース（記録開始前の日付・まだスナップショット前）だけ再計算する。
+    ⚠️ 回収率は 1.0 に届かない（前向き確認 0.790）。当たりやすさの印であって
+    期待値の印ではない。
     """
     races_result = await db.execute(
         select(ChihouRace)
@@ -315,35 +291,16 @@ async def get_chihou_featured_place(
     )
     races = list(races_result.scalars().all())
     if not races:
-        return []
+        return ChihouGekisouDayOut(picks=[], n_judged=0, n_gekisou=0, n_miokuri=0)
     race_ids = [r.id for r in races]
+    verdicts = await fetch_gekisou_verdicts(db, race_ids)
 
-    # 全馬の「発走時刻以前の最新」単勝・複勝オッズ。
-    # ⚠️ 単純な最新スナップショットを使ってはいけない。確定済みレースでは発走後の
-    #    スナップショットを拾ってしまい、実際に発走前に見えていた顔ぶれと変わる
-    #    （実測: 発走5分前なら n=106 拾える条件が、最新スナップだと n=43 に落ちた）。
-    #    発走前に見る限りこの条件は no-op なので、ライブ表示の挙動は変わらない。
-    odds_rows = await db.execute(
-        sql_text(latest_odds_sql(["win", "place"])),
-        {"race_ids": race_ids},
-    )
-    win_by_race: dict[int, dict[str, float]] = defaultdict(dict)
-    place_by_race: dict[int, dict[str, float]] = defaultdict(dict)
-    for rid, bet_type, combo, odds_val in odds_rows.all():
-        if odds_val is None:
-            continue
-        target = win_by_race if bet_type == "win" else place_by_race
-        target[int(rid)][str(combo)] = float(odds_val)
-
-    # 馬名と着順
     name_rows = await db.execute(
         select(ChihouRaceEntry.race_id, ChihouRaceEntry.horse_number, ChihouHorse.name)
         .join(ChihouHorse, ChihouHorse.id == ChihouRaceEntry.horse_id)
         .where(ChihouRaceEntry.race_id.in_(race_ids))
     )
-    name_map: dict[tuple[int, int], str] = {
-        (int(rid), int(hn)): nm for rid, hn, nm in name_rows.all() if hn is not None
-    }
+    name_map = {(int(r), int(h)): n for r, h, n in name_rows.all() if h is not None}
     result_rows = await db.execute(
         select(
             ChihouRaceResult.race_id,
@@ -351,142 +308,49 @@ async def get_chihou_featured_place(
             ChihouRaceResult.finish_position,
         ).where(ChihouRaceResult.race_id.in_(race_ids))
     )
-    finish_map: dict[tuple[int, int], int | None] = {
-        (int(rid), int(hn)): fp for rid, hn, fp in result_rows.all() if hn is not None
-    }
-
-    # 指数（composite_index）のレース内順位。この条件は指数を使うので必須。
-    idx_rank_by_race = await _fetch_index_ranks(db, race_ids)
-
-    # --- 前向き記録（凍結済みの推奨）を読む。あるレースはこれが正本 ---
-    logged_races_result = await db.execute(
-        select(ChihouPlacePickRace).where(ChihouPlacePickRace.race_id.in_(race_ids))
+    finish_map = {(int(r), int(h)): fp for r, h, fp in result_rows.all() if h is not None}
+    pay_rows = await db.execute(
+        sql_text(
+            "SELECT race_id, combination, payout FROM chihou.race_payouts"
+            " WHERE race_id = ANY(:race_ids) AND bet_type = 'place'"
+        ),
+        {"race_ids": race_ids},
     )
-    logged_by_race = {int(pr.race_id): pr for pr in logged_races_result.scalars().all()}
-    logged_picks_by_race: dict[int, list[ChihouPlacePick]] = defaultdict(list)
-    if logged_by_race:
-        picks_result = await db.execute(
-            select(ChihouPlacePick)
-            .where(ChihouPlacePick.pick_race_id.in_([pr.id for pr in logged_by_race.values()]))
-            .where(ChihouPlacePick.is_picked.is_(True))
-            .order_by(ChihouPlacePick.pick_order.asc().nullslast())
-        )
-        for pk in picks_result.scalars().all():
-            logged_picks_by_race[int(pk.race_id)].append(pk)
+    pay_map = {(int(r), int(c)): p / 100.0 for r, c, p in pay_rows.all() if str(c).isdigit() and p is not None}
 
-    out: list[ChihouFeaturedPlaceOut] = []
+    picks: list[ChihouGekisouPickOut] = []
+    n_judged = n_gekisou = n_miokuri = 0
     for race in races:
-        # 記録があるならそれをそのまま返す（0 頭の記録＝見送りも尊重する）
-        logged = logged_by_race.get(race.id)
-        if logged is not None:
-            for pk in logged_picks_by_race.get(race.id, []):
-                out.append(
-                    ChihouFeaturedPlaceOut(
-                        race_id=race.id,
-                        course_name=race.course_name,
-                        race_number=race.race_number,
-                        race_name=race.race_name,
-                        post_time=race.post_time,
-                        head_count=logged.head_count_used,
-                        horse_number=pk.horse_number,
-                        horse_name=pk.horse_name or name_map.get((race.id, pk.horse_number)),
-                        win_odds=pk.pre_win_odds,
-                        place_odds=pk.pre_place_odds,
-                        top3_share=round(float(logged.top3_share), 3)
-                        if logged.top3_share is not None
-                        else 0.0,
-                        popularity=pk.pop_rank,
-                        index_rank=pk.index_rank,
-                        # 着順は記録側(settle は 23:30)より race_results のほうが新しい
-                        finish_position=finish_map.get((race.id, pk.horse_number))
-                        if (race.id, pk.horse_number) in finish_map
-                        else pk.finish_position,
-                    )
-                )
+        sv = verdicts.get(race.id)
+        if sv is None or sv.verdict.room is None:
             continue
-
-        win_odds = win_by_race.get(race.id)
-        if not win_odds:
+        n_judged += 1
+        v = sv.verdict
+        if v.status == STATUS_MIOKURI:
+            n_miokuri += 1
+        if v.status != STATUS_GEKISOU or v.pick is None:
             continue
-        share = chihou_market_top3_share(win_odds.values())
-        if share is None:
-            continue
-        idx_ranks = idx_rank_by_race.get(race.id)
-        if not idx_ranks:
-            continue
-        pop_ranks = chihou_popularity_ranks(
-            {int(c): o for c, o in win_odds.items() if c.isdigit()}
-        )
-        # 適格馬をいったん集め、1レース最大2頭に絞る（指数の良い順）
-        _eligible = [
-            (int(c), idx_ranks[int(c)])
-            for c in win_odds
-            if c.isdigit()
-            and idx_ranks.get(int(c)) is not None
-            and chihou_is_place_pick(
-                pop_ranks.get(int(c)), idx_ranks.get(int(c)), share,
-                chihou_effective_head_count(race.head_count, race.registered_count),
+        n_gekisou += 1
+        key = (race.id, v.pick)
+        picks.append(
+            ChihouGekisouPickOut(
+                race_id=race.id,
+                course_name=race.course_name,
+                race_number=race.race_number,
+                race_name=race.race_name,
+                post_time=race.post_time,
+                horse_number=v.pick,
+                horse_name=name_map.get(key),
+                popularity=v.pick_pop,
+                win_odds=sv.win_odds.get(v.pick),
+                place_odds=sv.place_odds.get(v.pick),
+                room=round(v.room, 3) if v.room is not None else None,
+                source=sv.source,
+                finish_position=finish_map.get(key),
+                place_payout=pay_map.get(key),
             )
-        ]
-        _selected = set(chihou_select_place_picks(_eligible))
-        for combo, odds_val in sorted(win_odds.items(), key=lambda kv: kv[1]):
-            if not combo.isdigit():
-                continue
-            hn = int(combo)
-            if hn not in _selected:
-                continue
-            pop = pop_ranks.get(hn)
-            irank = idx_ranks.get(hn)
-            out.append(
-                ChihouFeaturedPlaceOut(
-                    race_id=race.id,
-                    course_name=race.course_name,
-                    race_number=race.race_number,
-                    race_name=race.race_name,
-                    post_time=race.post_time,
-                    head_count=race.head_count,
-                    horse_number=hn,
-                    horse_name=name_map.get((race.id, hn)),
-                    win_odds=odds_val,
-                    place_odds=place_by_race.get(race.id, {}).get(combo),
-                    top3_share=round(share, 3),
-                    popularity=pop,
-                    index_rank=irank,
-                    finish_position=finish_map.get((race.id, hn)),
-                )
-            )
-    return out
-
-
-async def _fetch_index_ranks(
-    db: AsyncSession, race_ids: list[int]
-) -> dict[int, dict[int, int]]:
-    """race_id → {馬番: composite_index のレース内順位}（1 = 最上位）。"""
-    rows = await db.execute(
-        select(
-            ChihouCalculatedIndex.race_id,
-            ChihouRaceEntry.horse_number,
-            ChihouCalculatedIndex.composite_index,
         )
-        .join(
-            ChihouRaceEntry,
-            (ChihouRaceEntry.race_id == ChihouCalculatedIndex.race_id)
-            & (ChihouRaceEntry.horse_id == ChihouCalculatedIndex.horse_id),
-        )
-        .where(ChihouCalculatedIndex.race_id.in_(race_ids))
-        .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
-    )
-    by_race: dict[int, list[tuple[int, float]]] = defaultdict(list)
-    for rid, hn, ci in rows.all():
-        if hn is None or ci is None:
-            continue
-        by_race[int(rid)].append((int(hn), float(ci)))
-    out: dict[int, dict[int, int]] = {}
-    for rid, pairs in by_race.items():
-        # 同値は馬番の小さい方を上位（本番の rank_by_hn と同じ「先着」規則）
-        pairs.sort(key=lambda x: (-x[1], x[0]))
-        out[rid] = {hn: i + 1 for i, (hn, _ci) in enumerate(pairs)}
-    return out
+    return ChihouGekisouDayOut(picks=picks, n_judged=n_judged, n_gekisou=n_gekisou, n_miokuri=n_miokuri)
 
 
 @router.get("/race-keys")
@@ -530,60 +394,14 @@ async def get_chihou_races_by_date(
 
     race_ids = [r.id for r in races]
 
-    # --- 指数バッチ取得（信頼度算出用） ---
+    # --- 指数の有無 ---
     idx_rows = await db.execute(
-        select(
-            ChihouCalculatedIndex.race_id,
-            ChihouCalculatedIndex.composite_index,
-            ChihouCalculatedIndex.win_probability,
-            ChihouRaceEntry.horse_number,
-        )
-        .outerjoin(
-            ChihouRaceEntry,
-            (ChihouRaceEntry.race_id == ChihouCalculatedIndex.race_id)
-            & (ChihouRaceEntry.horse_id == ChihouCalculatedIndex.horse_id),
-        )
+        select(ChihouCalculatedIndex.race_id)
         .where(ChihouCalculatedIndex.race_id.in_(race_ids))
         .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
+        .distinct()
     )
-    # race_id → [(composite_index, win_probability, horse_number)]
-    race_index_rows: dict[int, list[tuple]] = defaultdict(list)
-    for rid, ci, wp, hn in idx_rows.all():
-        race_index_rows[rid].append((float(ci) if ci is not None else 0.0, wp, hn))
-
-    indexed_race_ids = set(race_index_rows.keys())
-
-    # 各レースのトップ馬（composite_index 最大）の horse_number を特定
-    top_horse_numbers: dict[int, int | None] = {}
-    for rid, entries in race_index_rows.items():
-        best = max(entries, key=lambda x: x[0])
-        top_horse_numbers[rid] = best[2]  # horse_number
-
-    # --- 最新単勝オッズ取得（トップ馬対象） ---
-    # DISTINCT ON (race_id) + tuple_ IN でトップ馬のみを DB 側で絞り込む
-    latest_win_odds: dict[int, float] = {}
-    if indexed_race_ids:
-        top_pairs = [
-            (rid, str(hn))
-            for rid, hn in top_horse_numbers.items()
-            if hn is not None
-        ]
-        if top_pairs:
-            odds_stmt = (
-                select(ChihouOddsHistory.race_id, ChihouOddsHistory.odds)
-                .distinct(ChihouOddsHistory.race_id)
-                .where(
-                    tuple_(ChihouOddsHistory.race_id, ChihouOddsHistory.combination).in_(top_pairs)
-                )
-                .where(ChihouOddsHistory.bet_type == "win")
-                .order_by(ChihouOddsHistory.race_id, ChihouOddsHistory.fetched_at.desc())
-            )
-            odds_result = await db.execute(odds_stmt)
-            latest_win_odds = {
-                int(rid): float(odds)
-                for rid, odds in odds_result.all()
-                if odds is not None
-            }
+    indexed_race_ids = {int(rid) for (rid,) in idx_rows.all()}
 
     # --- 成績確定レース取得（finish_position が存在するレース）---
     confirmed_rows = await db.execute(
@@ -594,69 +412,10 @@ async def get_chihou_races_by_date(
     )
     confirmed_race_ids: set[int] = {r[0] for r in confirmed_rows.all()}
 
-    # --- 注目馬（人気薄の複勝圏候補）が居るレースの判定 ---
-    # 人気順位と上位3頭シェアの算出に全馬の最新単勝オッズが要る
-    # （トップ馬だけでは足りない）。1 クエリで当日ぶんをまとめて取る。
-    # 発走時刻以前の最新オッズを使う（理由は featured-place と同じ）
-    all_win_odds: dict[int, dict[int, float]] = defaultdict(dict)
-    all_odds_rows = await db.execute(
-        sql_text(latest_odds_sql(["win"])),
-        {"race_ids": race_ids},
-    )
-    for rid, _bet_type, combo, odds_val in all_odds_rows.all():
-        if odds_val is not None and str(combo).isdigit():
-            all_win_odds[int(rid)][int(combo)] = float(odds_val)
-
-    idx_rank_by_race = await _fetch_index_ranks(db, race_ids)
-
-    # 前向き記録があるレースはそれが正本（理由は featured-place の docstring）。
-    # 一覧の ★ と推奨タブの中身が食い違わないよう、同じ優先順位で判定する。
-    logged_rows = await db.execute(
-        select(ChihouPlacePickRace.race_id, ChihouPlacePickRace.n_picked)
-        .where(ChihouPlacePickRace.race_id.in_(race_ids))
-    )
-    logged_n_picked: dict[int, int] = {int(rid): int(n or 0) for rid, n in logged_rows.all()}
-
-    place_pick_race_ids: set[int] = set()
-    for race in races:
-        if race.id in logged_n_picked:
-            if logged_n_picked[race.id] > 0:
-                place_pick_race_ids.add(race.id)
-            continue
-        odds_by_hn = all_win_odds.get(race.id)
-        idx_ranks = idx_rank_by_race.get(race.id)
-        if not odds_by_hn or not idx_ranks:
-            continue
-        share = chihou_market_top3_share(odds_by_hn.values())
-        pop_ranks = chihou_popularity_ranks(odds_by_hn)
-        if any(
-            chihou_is_place_pick(
-                pop_ranks.get(hn), idx_ranks.get(hn), share,
-                chihou_effective_head_count(race.head_count, race.registered_count),
-            )
-            for hn in odds_by_hn
-        ):
-            place_pick_race_ids.add(race.id)
-
-    # --- 信頼度・推奨度算出 ---
-    confidence_data: dict[int, dict] = {}
-    for rid, entries in race_index_rows.items():
-        ci_list = [e[0] for e in entries]
-        wp_list = [float(e[1]) for e in entries if e[1] is not None]
-        race_obj = next((r for r in races if r.id == rid), None)
-        conf = calculate_race_confidence(
-            ci_list,
-            race_obj.head_count if race_obj else None,
-            wp_list or None,
-            gap_full_score=CHIHOU_GAP_FULL_SCORE,
-            dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
-        )
-        top_wp = conf.get("win_prob_top")
-        win_odds = latest_win_odds.get(rid)
-        conf["recommend_rank"] = calculate_recommend_rank(
-            conf["score"], top_wp, win_odds
-        )
-        confidence_data[rid] = conf
+    # --- 激走 / 見送り（推奨タブ・レース詳細と同じ判定・同じ入力の優先順位） ---
+    # 🔴 2026-09-28 に 信頼度/期待値ランク・購入指針・注目馬★ の算出をここから撤去した
+    #    （一覧で表示しなくなったため。回収率の根拠が無かった）。
+    verdicts = await fetch_gekisou_verdicts(db, race_ids)
 
     return [
         ChihouRaceOut(
@@ -673,17 +432,8 @@ async def get_chihou_races_by_date(
             head_count=race.head_count,
             post_time=race.post_time,
             has_indices=race.id in indexed_race_ids,
-            confidence_score=confidence_data[race.id]["score"] if race.id in confidence_data else None,
-            confidence_label=confidence_data[race.id]["label"] if race.id in confidence_data else None,
-            confidence_rank=confidence_data[race.id]["rank"] if race.id in confidence_data else None,
-            recommend_rank=confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
-            buy_signal=chihou_buy_signal(
-                race.course_name,
-                confidence_data[race.id]["recommend_rank"] if race.id in confidence_data else None,
-            ),
-            top_win_odds=latest_win_odds.get(race.id),
             result_confirmed=race.id in confirmed_race_ids,
-            has_place_pick=race.id in place_pick_race_ids,
+            gekisou_status=verdicts[race.id].verdict.status if race.id in verdicts else None,
         )
         for race in races
     ]
@@ -778,8 +528,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     if ext_rows:
         # horse_number → (sp_score, idx_ave) の辞書
         ext_dict: dict[int, tuple[float | None, float | None]] = {
-            r[0]: (float(r[1]) if r[1] is not None else None,
-                   float(r[2]) if r[2] is not None else None)
+            r[0]: (float(r[1]) if r[1] is not None else None, float(r[2]) if r[2] is not None else None)
             for r in ext_rows
         }
         kichi_entries = [(hn, v[0]) for hn, v in ext_dict.items() if v[0] is not None]
@@ -800,15 +549,12 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         {"race_ids": [race_id]},
     )
     win_odds_map: dict[str, float] = {
-        str(combo): float(odds_val)
-        for _rid, _bet_type, combo, odds_val in odds_result.all()
-        if odds_val is not None
+        str(combo): float(odds_val) for _rid, _bet_type, combo, odds_val in odds_result.all() if odds_val is not None
     }
 
-    # --- レース情報（head_count・course_name）取得 ---
+    # --- レース情報（head_count）取得 ---
     race_row = await db.execute(select(ChihouRace).where(ChihouRace.id == race_id))
     race_obj = race_row.scalar_one_or_none()
-    course_name: str | None = race_obj.course_name if race_obj else None
 
     horses = []
     for row in rows:
@@ -817,7 +563,6 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         horse_number: int | None = row[2]
         win_prob = float(ci.win_probability) if ci.win_probability is not None else None
         wo = win_odds_map.get(str(horse_number)) if horse_number is not None else None
-        ev = round(win_prob * wo, 4) if (win_prob is not None and wo is not None) else None
         horses.append(
             ChihouHorseIndexOut(
                 horse_id=ci.horse_id,
@@ -828,113 +573,36 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 place_probability=float(ci.place_probability) if ci.place_probability is not None else None,
                 speed_index=float(ci.speed_index) if ci.speed_index is not None else None,
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
-                jockey_index=_adj_chihou(float(ci.jockey_index) if ci.jockey_index is not None else None, "jockey_index"),
-                rotation_index=_adj_chihou(float(ci.rotation_index) if ci.rotation_index is not None else None, "rotation_index"),
-                last_margin_index=_adj_chihou(float(ci.last_margin_index) if ci.last_margin_index is not None else None, "last_margin_index"),
-                place_ev_index=_adj_chihou(float(ci.place_ev_index) if ci.place_ev_index is not None else None, "place_ev_index"),
-                external_consensus=consensus_map.get(horse_number) if (consensus_map and horse_number is not None) else None,
+                jockey_index=_adj_chihou(
+                    float(ci.jockey_index) if ci.jockey_index is not None else None, "jockey_index"
+                ),
+                rotation_index=_adj_chihou(
+                    float(ci.rotation_index) if ci.rotation_index is not None else None, "rotation_index"
+                ),
+                last_margin_index=_adj_chihou(
+                    float(ci.last_margin_index) if ci.last_margin_index is not None else None, "last_margin_index"
+                ),
+                place_ev_index=_adj_chihou(
+                    float(ci.place_ev_index) if ci.place_ev_index is not None else None, "place_ev_index"
+                ),
+                external_consensus=consensus_map.get(horse_number)
+                if (consensus_map and horse_number is not None)
+                else None,
                 win_odds=wo,
-                ev=ev,
             )
         )
 
-    # --- スイートスポット・複勝推奨判定（個別馬バッジ） ---
-    # 🔴 2026-09-01 まで `if CHIHOU_COMPOSITE_VERSION == 10:` で囲まれていた。
-    #    v10 ロールアウト時の一時ガード（commit 90cea0d）だが、v11 / v12 / v13 / v14 と
-    #    4 回の昇格すべてで外し忘れており、**v11 以降このブロックは一度も実行されて
-    #    いなかった**。is_sweet_spot / is_place_bet は常に既定値 False のまま返り、
-    #    レース詳細の赤字・複勝バッジが例外もログも出さずに消えていた。
-    #    判定条件は composite_index の**レース内順位**しか使っておらず、指数の版に
-    #    依存しない。版で分岐する理由が元から無い。
-    # composite_index でレース内順位を付与（降順・同値は先着）
-    _ranked = sorted(
-        (i for i, h in enumerate(horses) if h.composite_index is not None),
-        key=lambda i: horses[i].composite_index,
-        reverse=True,
-    )
-    _rank_of: dict[int, int] = {i: r + 1 for r, i in enumerate(_ranked)}
-
-    # 単勝推奨（スイートスポット: 指数1位 × 単勝10-30倍 × 割安場）
-    for i, h in enumerate(horses):
-        h.is_sweet_spot = chihou_is_sweet_spot(
-            index_rank=_rank_of.get(i),
-            win_odds=h.win_odds,
-            course_name=course_name,
-        )
-
-    # 断然人気複勝推奨: レース内最低単勝オッズ = 1番人気オッズの近似
-    _fav_values = [v for v in win_odds_map.values() if v is not None]
-    fav_odds: float | None = min(_fav_values) if _fav_values else None
-    # 🔴 頭数は effective を使う。`races.head_count` はレース後にしか入らないため、
-    #    生の head_count を渡すと発走前は常に None → chihou_is_place_bet が必ず
-    #    False になり、バッジが「発走後だけ点く」不整合になる。
-    _bet_head_count = (
-        chihou_effective_head_count(race_obj.head_count, race_obj.registered_count)
-        if race_obj
-        else None
-    )
-    for i, h in enumerate(horses):
-        h.is_place_bet = chihou_is_place_bet(
-            index_rank=_rank_of.get(i),
-            win_odds=h.win_odds,
-            fav_odds=fav_odds,
-            head_count=_bet_head_count,
-        )
-    # 混戦レース（複勝推奨が4頭以上）は除外。
-    # ⚠️ `index_rank <= 3` が構造的に最大3頭に抑えるため実際には発火しない
-    #    （前向き記録 572R で発火 0 件を実測）。保険として残す。
-    if sum(1 for h in horses if h.is_place_bet) >= 4:
-        for h in horses:
-            h.is_place_bet = False
-
-    # --- 注目馬（発走前6番人気以下 × 指数5位内 × 開いたレース）---
-    # 人気順位・シェアはこの時点で取得済みの最新オッズから作る。
-    # 確定オッズを使ってはいけない（前身の条件がそれで崩壊した）。
-    _odds_by_hn = {int(c): v for c, v in win_odds_map.items() if c.isdigit()}
-    _top3_share = chihou_market_top3_share(_odds_by_hn.values())
-    _pop_ranks = chihou_popularity_ranks(_odds_by_hn)
-    # head_count はレース後にしか入らないので registered_count で代替する
-    _head_count = (
-        chihou_effective_head_count(race_obj.head_count, race_obj.registered_count)
-        if race_obj
-        else None
-    )
-    # 指数順位は composite_index 降順・同値は馬番昇順（本番 rank_by_hn と同規則）
-    _idx_sorted = sorted(
-        (h for h in horses if h.horse_number is not None),
-        key=lambda h: (-h.composite_index, h.horse_number),
-    )
-    _idx_rank = {h.horse_number: i + 1 for i, h in enumerate(_idx_sorted)}
-    _eligible_picks = [
-        (h.horse_number, _idx_rank[h.horse_number])
-        for h in horses
-        if h.horse_number is not None
-        and _idx_rank.get(h.horse_number) is not None
-        and chihou_is_place_pick(
-            _pop_ranks.get(h.horse_number), _idx_rank.get(h.horse_number),
-            _top3_share, _head_count,
-        )
-    ]
-    # 1レース最大2頭。適格馬が3頭以上いても指数上位だけを注目馬にする
-    _recomputed = chihou_select_place_picks(_eligible_picks)
-
-    # 前向き記録があればそれが正本（`resolve_place_picks` の docstring 参照）。
-    _has_log = await db.scalar(
-        select(ChihouPlacePickRace.id).where(ChihouPlacePickRace.race_id == race_id)
-    )
-    _logged: list[int] | None = None
-    if _has_log is not None:
-        _logged_rows = await db.execute(
-            select(ChihouPlacePick.horse_number)
-            .where(ChihouPlacePick.pick_race_id == _has_log)
-            .where(ChihouPlacePick.is_picked.is_(True))
-            .order_by(ChihouPlacePick.pick_order.asc().nullslast())
-        )
-        _logged = [int(hn) for (hn,) in _logged_rows.all() if hn is not None]
-
-    _picked = set(resolve_place_picks(_logged, _recomputed))
-    for h in horses:
-        h.is_place_pick = h.horse_number in _picked
+    # --- 激走 / 見送り（1レース最大1頭） ---
+    # 🔴 2026-09-28 に スイートスポット(赤字) / 複穴 / 注目馬★ の個別馬バッジを撤去して
+    #    置き換えた。いずれも回収率の根拠が無く、注目馬と激走は同じ人気薄を別の札で
+    #    二重に出すことになるため。判定の入力（記録 or 最新オッズ）は一覧・推奨タブと同じ。
+    gekisou: ChihouGekisouOut | None = None
+    _sv = (await fetch_gekisou_verdicts(db, [race_id])).get(race_id)
+    if _sv is not None:
+        gekisou = _gekisou_out(_sv.verdict, _sv.source)
+        if _sv.verdict.status == STATUS_GEKISOU:
+            for h in horses:
+                h.is_gekisou = h.horse_number == _sv.verdict.pick
 
     # --- 足切り（グレーアウト）判定 ---
     # 2026-09-06: ルールの正本を frontend から `indices/chihou_cutoff.py` へ移した。
@@ -943,7 +611,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     for h, cut in zip(horses, cut_flags([h.composite_index for h in horses]), strict=True):
         h.is_cut_off = cut
 
-    # --- 信頼度・推奨度ランク算出 ---
+    # --- 信頼度ランク算出（指数の分離度） ---
     ranks: ChihouRaceRanks | None = None
     if horses:
         ci_list = [h.composite_index for h in horses]
@@ -957,20 +625,14 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
         )
 
-        top_horse = horses[0]  # composite_index 降順ソート済み
-        top_win_odds: float | None = win_odds_map.get(str(top_horse.horse_number)) if top_horse.horse_number is not None else None
-
         ranks = ChihouRaceRanks(
             score=conf["score"],
             confidence_rank=conf["rank"],
-            recommend_rank=calculate_recommend_rank(conf["score"], conf.get("win_prob_top"), top_win_odds),
             gap_1_2=conf["gap_1_2"],
             gap_1_3=conf["gap_1_3"],
-            win_prob_top=conf.get("win_prob_top"),
-            top_win_odds=top_win_odds,
         )
 
-    return ChihouIndicesResponse(horses=horses, ranks=ranks)
+    return ChihouIndicesResponse(horses=horses, ranks=ranks, gekisou=gekisou)
 
 
 @router.get("/{race_id}/odds")
@@ -1106,55 +768,6 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
     has_indices: bool = idx_check.scalar() or False
     result_confirmed: bool = confirmed_check.scalar() or False
 
-    # 一覧エンドポイントと同一の判定にするため recommend_rank を算出して渡す
-    # （以前は course_name のみの粗い判定でフロント側が独自再計算していた）
-    recommend_rank: str | None = None
-    if has_indices:
-        idx_rows = await db.execute(
-            select(
-                ChihouCalculatedIndex.composite_index,
-                ChihouCalculatedIndex.win_probability,
-                ChihouRaceEntry.horse_number,
-            )
-            .join(
-                ChihouRaceEntry,
-                (ChihouRaceEntry.race_id == ChihouCalculatedIndex.race_id)
-                & (ChihouRaceEntry.horse_id == ChihouCalculatedIndex.horse_id),
-            )
-            .where(ChihouCalculatedIndex.race_id == race_id)
-            .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
-        )
-        entries = [
-            (float(ci) if ci is not None else 0.0, wp, hn)
-            for ci, wp, hn in idx_rows.all()
-        ]
-        if entries:
-            ci_list = [e[0] for e in entries]
-            wp_list = [float(e[1]) for e in entries if e[1] is not None]
-            conf = calculate_race_confidence(
-                ci_list,
-                race.head_count,
-                wp_list or None,
-                gap_full_score=CHIHOU_GAP_FULL_SCORE,
-                dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
-            )
-            top_hn = max(entries, key=lambda x: x[0])[2]
-            top_win_odds: float | None = None
-            if top_hn is not None:
-                odds_row = await db.execute(
-                    select(ChihouOddsHistory.odds)
-                    .where(ChihouOddsHistory.race_id == race_id)
-                    .where(ChihouOddsHistory.bet_type == "win")
-                    .where(ChihouOddsHistory.combination == str(top_hn))
-                    .order_by(ChihouOddsHistory.fetched_at.desc())
-                    .limit(1)
-                )
-                odds_val = odds_row.scalar()
-                top_win_odds = float(odds_val) if odds_val is not None else None
-            recommend_rank = calculate_recommend_rank(
-                conf["score"], conf.get("win_prob_top"), top_win_odds
-            )
-
     return ChihouRaceOut(
         id=race.id,
         date=race.date,
@@ -1170,8 +783,6 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         post_time=race.post_time,
         has_indices=has_indices,
         result_confirmed=result_confirmed,
-        recommend_rank=recommend_rank,
-        buy_signal=chihou_buy_signal(race.course_name, recommend_rank),
     )
 
 
@@ -1206,12 +817,14 @@ async def _fetch_chihou_results_payload(race_id: int, db: AsyncSession) -> list[
 def _check_ws_origin(ws: WebSocket) -> None:
     """開発環境以外では Origin ヘッダーを検証する（CSRF対策）。"""
     import os
+
     origin = ws.headers.get("origin", "")
     allowed = os.environ.get("ALLOWED_ORIGINS", "")
     if not allowed:
         return  # 未設定時はスキップ（開発環境）
     if origin and origin not in allowed.split(","):
         import logging
+
         logging.getLogger(__name__).warning("WS blocked origin: %r", origin)
 
 

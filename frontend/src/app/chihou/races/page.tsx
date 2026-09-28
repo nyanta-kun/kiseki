@@ -3,16 +3,16 @@ import type { Metadata } from "next";
 import {
   fetchChihouRacesByDate,
   fetchChihouNearestDate,
-  fetchChihouFeaturedPlace,
+  fetchChihouGekisou,
 } from "@/lib/api";
 import { todayYYYYMMDD } from "@/lib/utils";
 import { CourseTabView } from "@/components/CourseTabView";
 import { DateNav } from "@/components/DateNav";
-import { ChihouFeaturedPlacePanel } from "@/components/ChihouFeaturedPlacePanel";
+import { ChihouGekisouPanel } from "@/components/ChihouGekisouPanel";
 
 function ChihouRecommendSkeleton() {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="注目馬読み込み中">
+    <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 animate-pulse motion-reduce:animate-none" aria-busy="true" aria-label="激走馬読み込み中">
       <div className="h-4 bg-gray-200 rounded w-1/2 mb-3" />
       <div className="h-3 bg-gray-100 rounded w-full mb-1" />
       <div className="h-3 bg-gray-100 rounded w-3/4 mb-4" />
@@ -71,11 +71,11 @@ export default async function ChihouRacesPage({ searchParams }: { searchParams: 
 async function ChihouRaceList({ date }: { date: string }) {
   let races;
   try {
-    // races と注目馬を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
-    // ChihouFeaturedPlacePanel での同一フェッチはキャッシュから即解決する
+    // races と激走馬を並列フェッチ: 各 fetcher が Next.js fetch キャッシュに結果を蓄積し
+    // ChihouGekisouPanel での同一フェッチはキャッシュから即解決する
     [races] = await Promise.all([
       fetchChihouRacesByDate(date),
-      fetchChihouFeaturedPlace(date).catch(() => []),
+      fetchChihouGekisou(date).catch(() => null),
     ]);
   } catch {
     return (
@@ -114,11 +114,11 @@ async function ChihouRaceList({ date }: { date: string }) {
     <CourseTabView
       courseGroups={courseGroups}
       recommendPanel={
-        // 推奨タブは注目馬のみ（2026-08-05）。
+        // 推奨タブは激走馬のみ（2026-09-28 に注目馬★から置き換え）。
         // 旧 ChihouRecommendPanel（高オッズ穴/穴軸/低オッズ本命など5カテゴリ）は
-        // 検証で ROI・的中率とも根拠が弱く、表示コストだけ高かったため外した。
+        // 2026-08-05 に、検証で ROI・的中率とも根拠が弱く表示コストだけ高かったため外した。
         <Suspense fallback={<ChihouRecommendSkeleton />}>
-          <ChihouFeaturedPlacePanel date={date} />
+          <ChihouGekisouPanel date={date} />
         </Suspense>
       }
       basePath="/chihou/races"

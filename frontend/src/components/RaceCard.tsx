@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Race } from "@/lib/api";
 import { gradeClass, raceClassBadgeClass, raceClassShort, surfaceIcon } from "@/lib/utils";
-import { BuySignalBadge } from "./BuySignalBadge";
+import { ChihouGekisouBadge } from "./ChihouGekisouBadge";
 
 type Props = {
   race: Race;
@@ -27,7 +27,6 @@ function formatPostTime(t: string | null): string | null {
 export function RaceCard({ race, basePath = "/races" }: Props) {
   const confRank   = race.confidence_rank ?? null;
   const recRank    = race.recommend_rank  ?? null;
-  const buySignal  = race.buy_signal ?? null;
   const postTime   = formatPostTime(race.post_time);
   const isChihou   = basePath.startsWith("/chihou");
   const activeColor = isChihou ? "var(--chihou-primary)" : "var(--primary)";
@@ -52,16 +51,8 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
             <span className="font-semibold text-gray-800 truncate">
               {race.race_name ?? race.race_class_label ?? `${race.race_number}R`}
             </span>
-            {/* 注目馬（人気薄の複勝圏候補）がいるレース */}
-            {race.has_place_pick && (
-              <span
-                className="text-amber-500 text-sm leading-none"
-                title="注目馬（複勝）あり"
-                aria-label="注目馬あり"
-              >
-                ★
-              </span>
-            )}
+            {/* 地方: 激走 / 見送り（2026-09-28 に注目馬★・購入指針・EVランクから置き換え） */}
+            {isChihou && <ChihouGekisouBadge status={race.gekisou_status} />}
             {race.grade && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${gradeClass(race.grade)}`}>
                 {race.grade}
@@ -92,7 +83,7 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
           </div>
         </div>
 
-        {/* 右側: 上段=購入指針+穴ぐさ / 下段=ランク */}
+        {/* 右側: 上段=穴ぐさ / 下段=ランク */}
         <div className="flex-shrink-0 flex items-center gap-1.5">
           <div className="flex flex-col items-end gap-0.5">
             {race.is_special_only && (
@@ -105,10 +96,9 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
                 📝 出走想定
               </span>
             )}
-            {/* 上段: 購入指針・穴ぐさを横並び（JRAはbuySignal廃止・[[jra_axis_market_agree_redesign]]） */}
-            {!race.is_special_only && ((buySignal && isChihou) || race.has_anagusa) && (
+            {/* 上段: 穴ぐさ（購入指針は JRA が先に廃止・地方も 2026-09-28 に廃止） */}
+            {!race.is_special_only && race.has_anagusa && (
               <div className="flex items-center gap-0.5">
-                {buySignal && isChihou && <BuySignalBadge signal={buySignal} size="sm" />}
                 {race.has_anagusa && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium whitespace-nowrap">
                     ☆穴
@@ -124,7 +114,7 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
                     信{confRank}
                   </span>
                   <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
-                    {isChihou ? "EV" : "推奨"}{recRank}
+                    推奨{recRank}
                   </span>
                   <span className="text-[9px] text-gray-400 tabular-nums">{race.confidence_score}pt</span>
                 </div>
