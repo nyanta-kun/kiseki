@@ -131,6 +131,7 @@ class ChihouGekisouOut(BaseModel):
     room: float | None = None  # 空き枠 = 3 − 人気1〜3番の好走見込み
     horse_number: int | None = None  # 激走馬
     popularity: int | None = None  # 激走馬の人気（判定に使った発走前オッズ）
+    place_prob: float | None = None  # 激走馬が複勝圏に入る確率（較正済み）
 
 
 class ChihouIndicesResponse(BaseModel):
@@ -148,7 +149,12 @@ def _gekisou_out(verdict: GekisouVerdict, source: str) -> ChihouGekisouOut:
         room=round(verdict.room, 3) if verdict.room is not None else None,
         horse_number=verdict.pick,
         popularity=verdict.pick_pop,
+        place_prob=_round_prob(verdict.pick_place_prob),
     )
+
+
+def _round_prob(p: float | None) -> float | None:
+    return round(p, 4) if p is not None else None
 
 
 class ChihouResultOut(BaseModel):
@@ -253,6 +259,9 @@ class ChihouGekisouPickOut(BaseModel):
     horse_number: int
     horse_name: str | None
     popularity: int | None  # 判定に使った発走前オッズでの人気
+    # 複勝圏に入る確率（較正済み・`chihou_gekisou.gekisou_place_prob`）。
+    # ⚠️ 確率が高いほど回収率が高いわけではない（前向き記録でどの帯も 0.68〜0.91）
+    place_prob: float | None
     win_odds: float | None  # 判定に使った単勝オッズ
     place_odds: float | None  # 判定時点の複勝オッズ（下限）
     room: float | None  # 空き枠
@@ -342,6 +351,7 @@ async def get_chihou_gekisou(
                 horse_number=v.pick,
                 horse_name=name_map.get(key),
                 popularity=v.pick_pop,
+                place_prob=_round_prob(v.pick_place_prob),
                 win_odds=sv.win_odds.get(v.pick),
                 place_odds=sv.place_odds.get(v.pick),
                 room=round(v.room, 3) if v.room is not None else None,

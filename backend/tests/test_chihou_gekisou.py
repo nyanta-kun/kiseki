@@ -15,6 +15,7 @@ from src.indices.chihou_gekisou import (
     NO_VERDICT,
     STATUS_GEKISOU,
     STATUS_MIOKURI,
+    gekisou_place_prob,
     harville_top_k,
     judge_gekisou,
 )
@@ -104,3 +105,34 @@ class Test人気は発走前オッズの順:
         assert v.status == STATUS_GEKISOU
         assert v.pick == 4  # 7番人気 = 馬番4
         assert v.pick_pop == 7
+
+
+class Test激走の確率:
+    """較正は探索窓で当てはめた sigmoid(A + B·logit(mq))。前向き記録の実測は 16〜44%。"""
+
+    def test_市場確率に対して単調に増える(self) -> None:
+        ps = [gekisou_place_prob(m) for m in (0.05, 0.1, 0.2, 0.3)]
+        assert ps == sorted(ps)
+
+    def test_人気薄の市場確率は実際より低く出るので持ち上げる(self) -> None:
+        # 激走馬の mq は平均 0.18 だが実際の的中は 0.24（前向き 23.8%）
+        assert gekisou_place_prob(0.18) == pytest.approx(0.26, abs=0.02)
+
+    def test_前向き記録の実測帯に収まる(self) -> None:
+        # 激走馬の mq は実測 0.03〜0.38。確率は 10〜40% 程度に収まる
+        assert 0.05 < gekisou_place_prob(0.03) < gekisou_place_prob(0.38) < 0.45
+
+    def test_極端な入力でも壊れない(self) -> None:
+        assert 0.0 < gekisou_place_prob(0.0) < gekisou_place_prob(1.0) < 1.0
+
+    def test_激走の判定結果に確率が載る(self) -> None:
+        odds = [4.0, 4.5, 5.0, 8.0, 9.0, 10.0, 11.0, 14.0, 20.0, 30.0]
+        v = judge_gekisou(_race([0.4, 0.35, 0.1, 0.3, 0.3, 0.2, 0.45, 0.2, 0.1, 0.1], odds))
+        assert v.status == STATUS_GEKISOU
+        assert v.pick_mq is not None and v.pick_place_prob is not None
+        assert v.pick_place_prob == pytest.approx(gekisou_place_prob(v.pick_mq))
+
+    def test_見送りには確率を付けない(self) -> None:
+        v = judge_gekisou(_race([0.9, 0.8, 0.7, 0.2, 0.2, 0.15, 0.1, 0.1, 0.05, 0.05]))
+        assert v.status == STATUS_MIOKURI
+        assert v.pick_place_prob is None

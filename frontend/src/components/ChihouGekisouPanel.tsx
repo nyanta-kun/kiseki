@@ -4,25 +4,9 @@
  * 2026-09-28 に注目馬（★・`ChihouFeaturedPlacePanel`）から置き換えた。
  * 判定の正本は backend `indices/chihou_gekisou.py`、一覧は `GET /api/chihou/races/gekisou`。
  */
-import Link from "next/link";
 import { fetchChihouGekisou, type ChihouGekisouDay } from "@/lib/api";
 import { ChihouGekisouBadge, GEKISOU_DESC } from "./ChihouGekisouBadge";
-
-function formatPostTime(t: string | null): string {
-  if (!t || t.length < 4) return "-";
-  return `${t.slice(0, 2)}:${t.slice(2, 4)}`;
-}
-
-function formatOdds(v: number | null): string {
-  return v === null ? "-" : `${v.toFixed(1)}倍`;
-}
-
-function positionCell(pos: number | null): { text: string; cls: string } {
-  if (pos === null) return { text: "-", cls: "text-gray-300" };
-  if (pos === 1) return { text: "1着", cls: "text-amber-600 font-bold" };
-  if (pos <= 3) return { text: `${pos}着`, cls: "text-blue-600 font-bold" };
-  return { text: `${pos}着`, cls: "text-gray-400" };
-}
+import { ChihouGekisouTable } from "./ChihouGekisouTable";
 
 export async function ChihouGekisouPanel({ date }: { date: string }) {
   let day: ChihouGekisouDay;
@@ -37,6 +21,8 @@ export async function ChihouGekisouPanel({ date }: { date: string }) {
   const settled = picks.filter((p) => p.finish_position !== null);
   const hits = settled.filter((p) => (p.finish_position ?? 99) <= 3);
   const returned = settled.reduce((s, p) => s + (p.place_payout ?? 0), 0);
+  // 確率から見込まれる的中数。実際の的中数と並べて、確率が当たっているかを毎日見られるようにする
+  const expected = settled.reduce((s, p) => s + (p.place_prob ?? 0), 0);
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4">
@@ -64,6 +50,7 @@ export async function ChihouGekisouPanel({ date }: { date: string }) {
             <span className="font-semibold text-gray-700 tabular-nums">
               複勝圏 {hits.length}/{settled.length}
             </span>
+            <span className="text-gray-400 tabular-nums">見込み {expected.toFixed(1)}頭</span>
             <span className="text-gray-400 tabular-nums">
               回収率 {Math.round((returned / settled.length) * 100)}%
             </span>
@@ -76,71 +63,14 @@ export async function ChihouGekisouPanel({ date }: { date: string }) {
           本日は激走の条件に一致する馬がいません（毎レース出るものではありません）
         </p>
       ) : (
-        <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-sm border-collapse min-w-[480px]">
-            <thead>
-              <tr className="text-xs text-gray-500 border-b border-gray-100">
-                <th className="text-left py-1.5 px-1 font-medium whitespace-nowrap">発走</th>
-                <th className="text-left py-1.5 px-1 font-medium whitespace-nowrap">競馬場</th>
-                <th className="text-center py-1.5 px-1 font-medium">R</th>
-                <th className="text-left py-1.5 px-1 font-medium">馬名</th>
-                <th className="text-center py-1.5 px-1 font-medium whitespace-nowrap">人気</th>
-                <th className="text-right py-1.5 px-1 font-medium whitespace-nowrap">単オッズ</th>
-                <th className="text-right py-1.5 px-1 font-medium whitespace-nowrap">複オッズ</th>
-                <th className="text-right py-1.5 px-1 font-medium whitespace-nowrap">着順</th>
-              </tr>
-            </thead>
-            <tbody>
-              {picks.map((p) => {
-                const pos = positionCell(p.finish_position);
-                return (
-                  <tr
-                    key={`${p.race_id}-${p.horse_number}`}
-                    className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="py-2 px-1 text-gray-500 whitespace-nowrap tabular-nums">
-                      {formatPostTime(p.post_time)}
-                    </td>
-                    <td className="py-2 px-1 font-medium text-gray-700 whitespace-nowrap">
-                      {p.course_name}
-                    </td>
-                    <td className="py-2 px-1 text-center text-gray-500">
-                      <Link
-                        href={`/chihou/races/${p.race_id}`}
-                        className="hover:underline"
-                        style={{ color: "var(--chihou-primary)" }}
-                      >
-                        {p.race_number}R
-                      </Link>
-                    </td>
-                    <td className="py-2 px-1 font-semibold text-gray-800 whitespace-nowrap">
-                      <span className="text-xs text-gray-400 mr-1">{p.horse_number}番</span>
-                      {p.horse_name ?? "-"}
-                      <span className="ml-1">
-                        <ChihouGekisouBadge status="gekisou" provisional={p.source === "live"} />
-                      </span>
-                    </td>
-                    <td className="py-2 px-1 text-center tabular-nums">
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                        {p.popularity ?? "-"}番人気
-                      </span>
-                    </td>
-                    <td className="py-2 px-1 text-right text-gray-600 tabular-nums">
-                      {formatOdds(p.win_odds)}
-                    </td>
-                    <td className="py-2 px-1 text-right text-gray-600 tabular-nums">
-                      {formatOdds(p.place_odds)}
-                    </td>
-                    <td className={`py-2 px-1 text-right tabular-nums ${pos.cls}`}>{pos.text}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <p className="text-[10px] text-gray-400 mt-2">
-            点線の「候補」は発走前の最新オッズでの暫定。発走約6分前の記録で確定し、以後は変わりません
+        <>
+          <ChihouGekisouTable picks={picks} />
+          <p className="text-[10px] text-gray-400 mt-2 leading-relaxed">
+            確率は複勝圏（3着以内）に入る見込み。オッズから較正した値で、前向き記録では
+            予測 25% に対し実際 24%。<strong>確率が高いほど回収率が高いわけではありません</strong>。
+            点線の「候補」は発走前の最新オッズでの暫定で、発走約6分前の記録で確定し以後は変わりません
           </p>
-        </div>
+        </>
       )}
     </div>
   );

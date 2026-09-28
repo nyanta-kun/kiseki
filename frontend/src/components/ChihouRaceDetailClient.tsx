@@ -249,7 +249,11 @@ export function ChihouRaceDetailClient({
               />
               <span className="text-[10px] text-gray-500 leading-snug">
                 {gekisou.status === "gekisou"
-                  ? `${gekisou.horse_number}番（${gekisou.popularity}番人気）。${GEKISOU_DESC}`
+                  ? `${gekisou.horse_number}番（${gekisou.popularity}番人気${
+                      gekisou.place_prob != null
+                        ? `・複勝圏に入る確率 ${Math.round(gekisou.place_prob * 100)}%`
+                        : ""
+                    }）。${GEKISOU_DESC}`
                   : MIOKURI_DESC}
                 {gekisou.source === "live" && "。発走約6分前の記録で確定します"}
                 {gekisou.status === "gekisou" && (
