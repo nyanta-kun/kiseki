@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
+  ChihouGekisou,
   ChihouHorseIndex,
   ChihouRaceRanks,
   OddsData,
@@ -11,7 +12,7 @@ import {
   fetchChihouOddsBrowser,
 } from "@/lib/api";
 import { cn, indexColor, calcShareRatio, winShareClass, placeShareClass, horseNumToFrame, frameColorClass } from "@/lib/utils";
-import { BuySignalBadge, BUY_SIGNAL_DESC } from "./BuySignalBadge";
+import { ChihouGekisouBadge, GEKISOU_DESC, MIOKURI_DESC } from "./ChihouGekisouBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { WsStatusBadge } from "@/components/WsStatusBadge";
 import { IndexBar } from "@/components/IndexBar";
@@ -24,7 +25,7 @@ type Props = {
   initialResults: RaceResult[];
   initialOdds: OddsData;
   ranks: ChihouRaceRanks | null;
-  buySignal?: "buy" | "caution" | "pass" | null;
+  gekisou?: ChihouGekisou | null;
 };
 
 type SortKey = "composite" | "speed" | "last3f" | "jockey" | "rotation" | "finish";
@@ -58,11 +59,6 @@ function winOddsColorClass(odds: number | null): string {
   if (odds < 10) return "text-red-600 font-semibold";
   if (odds >= 100) return "text-blue-600";
   return "text-gray-600";
-}
-
-/** EV は中立表示。高い EV を緑で強調しない（実測で ROI は EV と逆相関・2026-08-25）。 */
-function evColorClass(ev: number | null): string {
-  return ev === null ? "text-gray-400" : "text-gray-600";
 }
 
 function finishBadgeClass(pos: number | null | undefined): string {
@@ -131,7 +127,7 @@ export function ChihouRaceDetailClient({
   initialResults,
   initialOdds,
   ranks,
-  buySignal,
+  gekisou,
 }: Props) {
   const mounted = useIsMounted();
   const [resultsList, setResultsList] = useState<RaceResult[]>(initialResults);
@@ -235,69 +231,47 @@ export function ChihouRaceDetailClient({
   // ルールの正本は `backend/src/indices/chihou_cutoff.py`。JRA 側の
   // `RaceDetailClient` が既にバックエンドの `is_cut_off` を使っているのと同じ形。
 
-  const colSpan = hasResults ? 12 : 11;
+  const colSpan = hasResults ? 11 : 10;
 
   return (
     <>
-      {/* 信頼度・推奨度ランクパネル */}
-      {(ranks || buySignal) && (() => {
-        const ev =
-          ranks?.win_prob_top != null && ranks?.top_win_odds != null
-            ? ranks.win_prob_top * ranks.top_win_odds
-            : null;
-        // 🔴 EV の帯にラベル・色を付けない（2026-08-25）。
-        // 24,093R の walk-forward で **EV が高い帯ほど単勝ROIが低い**ことが確定した
-        // （Spearman ρ=-0.617／EV<0.6 で 0.752 → EV2.5+ で 0.554）。
-        // 旧実装は EV>=1.0 を緑の「最適帯」と表示していたが、実測と向きが逆で
-        // 買い煽りにしかならない。EV は説明用の数値として中立に出すだけにする。
-        return (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
-            {buySignal !== undefined && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-gray-400 whitespace-nowrap">購入指針</span>
-                <BuySignalBadge signal={buySignal} size="sm" />
-                {buySignal && (
-                  <span className="text-[10px] text-gray-400 leading-tight">{BUY_SIGNAL_DESC[buySignal]}</span>
-                )}
-              </div>
-            )}
-            {ranks && (
-              <div className="flex items-center gap-3 pt-1.5 border-t border-gray-50 flex-wrap">
-                <div className="flex items-center gap-1.5 text-[10px]">
-                  <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
-                  <RankBadge rank={ranks.confidence_rank} />
-                  <span className="text-gray-600 whitespace-nowrap">{ranks.score}pt</span>
-                  <span className="text-gray-400 whitespace-nowrap">
-                    差{ranks.gap_1_2.toFixed(1)}/{ranks.gap_1_3.toFixed(1)}
+      {/* 激走 / 見送り・指数信頼度パネル
+          🔴 2026-09-28 に 購入指針・期待値(EV)ランク を撤去した。いずれも回収率の根拠が無く、
+             EV は実測で回収率と逆相関だった（EV が高い帯ほど単勝ROIが低い）。 */}
+      {(ranks || gekisou?.status) && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
+          {gekisou?.status && (
+            <div className="flex items-start gap-2">
+              <ChihouGekisouBadge
+                status={gekisou.status}
+                provisional={gekisou.source === "live"}
+                size="sm"
+              />
+              <span className="text-[10px] text-gray-500 leading-snug">
+                {gekisou.status === "gekisou"
+                  ? `${gekisou.horse_number}番（${gekisou.popularity}番人気）。${GEKISOU_DESC}`
+                  : MIOKURI_DESC}
+                {gekisou.source === "live" && "。発走約6分前の記録で確定します"}
+                {gekisou.status === "gekisou" && (
+                  <span className="block text-gray-400">
+                    ※当たりやすさの印です（複勝的中は人気薄全体の約2倍）。回収率は100%に届いていません
                   </span>
-                </div>
-                <div className="w-px h-4 bg-gray-200 flex-shrink-0" />
-                <div className="flex items-center gap-1.5 text-[10px]">
-                  <span className="text-gray-400 whitespace-nowrap">期待値 EV</span>
-                  <RankBadge rank={ranks.recommend_rank} />
-                  {ev !== null ? (
-                    <>
-                      <span className="font-bold whitespace-nowrap text-gray-600">
-                        {ev.toFixed(2)}
-                      </span>
-                      {ranks.win_prob_top != null && ranks.top_win_odds != null && (
-                        <span className="text-gray-400 whitespace-nowrap">
-                          ({Math.round(ranks.win_prob_top * 100)}%×{ranks.top_win_odds.toFixed(1)}倍)
-                        </span>
-                      )}
-                      <span className="text-gray-400 whitespace-nowrap">
-                        ※EVが高いほど回収率は下がる（実測）
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-gray-400">オッズ未取得</span>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+                )}
+              </span>
+            </div>
+          )}
+          {ranks && (
+            <div className={cn("flex items-center gap-1.5 text-[10px] flex-wrap", gekisou?.status && "pt-1.5 border-t border-gray-50")}>
+              <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
+              <RankBadge rank={ranks.confidence_rank} />
+              <span className="text-gray-600 whitespace-nowrap">{ranks.score}pt</span>
+              <span className="text-gray-400 whitespace-nowrap">
+                差{ranks.gap_1_2.toFixed(1)}/{ranks.gap_1_3.toFixed(1)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <section className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
         {/* ヘッダー + ソートボタン */}
@@ -346,8 +320,7 @@ export function ChihouRaceDetailClient({
                 <th className="hidden sm:table-cell text-right py-1 px-1 w-12">ローテ</th>
                 <th className="text-right py-1 px-1 w-12">勝率</th>
                 <th className="text-right py-1 px-1 w-12">複率</th>
-                <th className="text-right py-1 px-1 w-14">単オッズ</th>
-                <th className="text-right py-1 pr-2 w-12">期待値</th>
+                <th className="text-right py-1 pr-2 w-14">単オッズ</th>
                 {hasResults && <th className="text-right py-1 pr-2 w-10">着順</th>}
               </tr>
             </thead>
@@ -361,10 +334,6 @@ export function ChihouRaceDetailClient({
                 const winOdds = horse.horse_number !== null
                   ? (odds.win[horse.horse_number.toString()] ?? null)
                   : null;
-                const ev =
-                  horse.win_probability !== null && winOdds !== null
-                    ? horse.win_probability * winOdds
-                    : null;
                 const frameNum = horse.horse_number !== null
                   ? horseNumToFrame(horse.horse_number, totalHorses)
                   : 0;
@@ -393,29 +362,18 @@ export function ChihouRaceDetailClient({
                       </span>
                     </td>
 
-                    {/* 馬名 + 外部コンセンサスバッジ */}
+                    {/* 馬名 + 激走 + 外部コンセンサスバッジ
+                        （2026-09-28 に 赤字/青字・★注目馬・複穴 を撤去して「激走」へ置き換え） */}
                     <td className="py-2 px-1 whitespace-normal">
                       <div className="flex items-center gap-1">
-                        <span className={cn(
-                          "font-medium truncate block max-w-[140px]",
-                          horse.is_sweet_spot ? "text-red-600" : horse.is_place_bet ? "text-blue-600" : "text-gray-800"
-                        )}>
+                        <span className="font-medium truncate block max-w-[140px] text-gray-800">
                           {horse.horse_name}
                         </span>
-                        {/* 注目馬（発走前6番人気以下 × 指数5位内 × 開いたレース） */}
-                        {horse.is_place_pick && (
-                          <span
-                            className="text-amber-500 text-sm leading-none"
-                            title="注目馬（複勝）"
-                            aria-label="注目馬"
-                          >
-                            ★
-                          </span>
-                        )}
-                        {horse.is_place_bet && (
-                          <span className="text-[9px] bg-blue-100 text-blue-700 border border-blue-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
-                            複穴
-                          </span>
+                        {horse.is_gekisou && (
+                          <ChihouGekisouBadge
+                            status="gekisou"
+                            provisional={gekisou?.source === "live"}
+                          />
                         )}
                         {horse.external_consensus === 2 && (
                           <span className="text-[9px] bg-purple-100 text-purple-700 border border-purple-300 px-1 py-0.5 rounded font-bold whitespace-nowrap">
@@ -476,13 +434,8 @@ export function ChihouRaceDetailClient({
                     </td>
 
                     {/* 単オッズ */}
-                    <td className={`py-2 px-1 text-right ${winOddsColorClass(winOdds)}`}>
+                    <td className={`py-2 pr-2 text-right ${winOddsColorClass(winOdds)}`}>
                       {winOdds !== null ? `${winOdds.toFixed(1)}倍` : "–"}
-                    </td>
-
-                    {/* 期待値 */}
-                    <td className={`py-2 pr-2 text-right ${evColorClass(ev)}`}>
-                      {ev !== null ? ev.toFixed(2) : "–"}
                     </td>
 
                     {/* 着順 */}
@@ -601,6 +554,10 @@ export function ChihouRaceDetailClient({
           </p>
           <p>
             <span className="opacity-50">グレー</span>=足切り候補（トップ差28以上、または差22以上かつ7位以下）
+          </p>
+          <p>
+            <span className="text-rose-700 font-bold">激走</span>={GEKISOU_DESC} /
+            {" "}<span className="font-bold">見送り</span>={MIOKURI_DESC}。点線は発走前の暫定
           </p>
           <p>行クリックで指数内訳・近走成績を表示</p>
         </div>

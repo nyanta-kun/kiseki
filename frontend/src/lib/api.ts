@@ -45,8 +45,11 @@ export type Race = {
   special_horse_count: number;       // 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
   is_projected_only?: boolean;       // 出馬表未確定で netkeiba 出走想定のみ
   projected_horse_count?: number;    // 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
-  /** 地方のみ: 注目馬（人気薄の複勝圏候補）がいる → レース名の右に★ */
-  has_place_pick?: boolean;
+  /**
+   * 地方のみ: 激走 / 見送り（判定の正本は backend `indices/chihou_gekisou.py`）。
+   * gekisou = 激走馬がいる / miokuri = 人気馬が複勝圏を埋めそう / null = 印なし
+   */
+  gekisou_status?: ChihouGekisouStatus;
 };
 
 export type RaceResult = {
@@ -740,31 +743,37 @@ export type ChihouHorseIndex = {
   /** kichiuma/netkeibaで1位になった数: 0〜2、null=外部データなし */
   external_consensus: number | null;
   win_odds: number | null;
-  /** 期待値 win_probability × win_odds */
-  ev: number | null;
-  /** スイートスポット（Phase2: 指数1位 ∧ 単勝10-30倍 ∧ 割安5場） */
-  is_sweet_spot: boolean;
-  /** 断然人気R複穴（Phase2: 1番人気<2.0 ∧ 単勝≥10 ∧ 指数3位以内） */
-  is_place_bet: boolean;
-  /** 注目馬（発走前6番人気以下 ∧ 指数5位内 ∧ 開いたレース ∧ 8頭以上・1R最大2頭）→ 馬名の右に★ */
-  is_place_pick?: boolean;
+  /** 激走馬（1レース最大1頭）。判定の正本は backend `indices/chihou_gekisou.py` */
+  is_gekisou?: boolean;
   /** 足切り候補（グレーアウト表示）。ルールの正本は backend の `indices/chihou_cutoff.py` */
   is_cut_off?: boolean;
 };
 
+/** 指数の分離度（期待値ではない） */
 export type ChihouRaceRanks = {
   score: number;
   confidence_rank: "S" | "A" | "B" | "C";
-  recommend_rank: "S" | "A" | "B" | "C";
   gap_1_2: number;
   gap_1_3: number;
-  win_prob_top: number | null;
-  top_win_odds: number | null;
+};
+
+export type ChihouGekisouStatus = "gekisou" | "miokuri" | null;
+
+/** 激走 / 見送り判定（レース単位） */
+export type ChihouGekisou = {
+  status: ChihouGekisouStatus;
+  /** snapshot = 発走前の記録で確定 / live = 最新オッズでの暫定（発走前はまだ動く） */
+  source: "snapshot" | "live";
+  /** 空き枠 = 3 − 人気1〜3番の好走見込み */
+  room: number | null;
+  horse_number: number | null;
+  popularity: number | null;
 };
 
 export type ChihouIndicesResponse = {
   horses: ChihouHorseIndex[];
   ranks: ChihouRaceRanks | null;
+  gekisou?: ChihouGekisou | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -960,29 +969,35 @@ export async function fetchChihouTopProbability(date: string): Promise<TopProbHo
   return get<TopProbHorse[]>(`/chihou/races/top-probability?date=${date}`, { next: { revalidate: 60 } });
 }
 
-/** 地方 注目馬（穴馬複勝）1頭ぶん */
-export type ChihouFeaturedPlaceHorse = {
+/** 地方 激走馬 1頭ぶん（推奨タブ） */
+export type ChihouGekisouPick = {
   race_id: number;
   course_name: string;
   race_number: number;
   race_name: string | null;
   post_time: string | null;
-  head_count: number | null;
-  horse_number: number | null;
+  horse_number: number;
   horse_name: string | null;
+  /** 判定に使った発走前オッズでの人気 */
+  popularity: number | null;
   win_odds: number | null;
   place_odds: number | null;
-  /** 市場上位3頭シェア。小さいほど「開いたレース」 */
-  top3_share: number;
-  /** 発走前オッズによる人気順位 */
-  popularity: number | null;
-  /** composite_index のレース内順位 */
-  index_rank: number | null;
+  room: number | null;
+  source: "snapshot" | "live";
   finish_position: number | null;
+  /** 複勝払戻（倍率）。複勝圏外・未確定は null */
+  place_payout: number | null;
 };
 
-export async function fetchChihouFeaturedPlace(date: string): Promise<ChihouFeaturedPlaceHorse[]> {
-  return get<ChihouFeaturedPlaceHorse[]>(`/chihou/races/featured-place?date=${date}`, {
+export type ChihouGekisouDay = {
+  picks: ChihouGekisouPick[];
+  n_judged: number;
+  n_gekisou: number;
+  n_miokuri: number;
+};
+
+export async function fetchChihouGekisou(date: string): Promise<ChihouGekisouDay> {
+  return get<ChihouGekisouDay>(`/chihou/races/gekisou?date=${date}`, {
     next: { revalidate: 60 },
   });
 }

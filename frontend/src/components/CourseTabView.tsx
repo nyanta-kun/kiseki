@@ -71,7 +71,7 @@ export function CourseTabView({ courseGroups, recommendPanel, basePath = "/races
             )}
             style={active === RECOMMEND_TAB ? { background: "var(--primary)" } : undefined}
           >
-            ★推奨
+            {isChihou ? "激走" : "★推奨"}
           </button>
         )}
 

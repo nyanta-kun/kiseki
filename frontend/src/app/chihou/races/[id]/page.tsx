@@ -63,9 +63,6 @@ async function ChihouRaceSubHeaderAsync({ raceId }: { raceId: number }) {
 
 /** メインコンテンツ（指数テーブル）を非同期でフェッチ */
 async function ChihouRaceBodyAsync({ raceId }: { raceId: number }) {
-  // race は generateMetadata / SubHeader でも呼ばれるが Next.js fetch が重複排除
-  const race = await fetchChihouRace(raceId).catch(() => null);
-
   const [initialResults, indicesResp, initialOdds] = await Promise.all([
     fetchChihouResults(raceId).catch(() => [] as RaceResult[]),
     fetchChihouIndices(raceId).catch(() => null),
@@ -90,7 +87,7 @@ async function ChihouRaceBodyAsync({ raceId }: { raceId: number }) {
         initialResults={initialResults}
         initialOdds={initialOdds}
         ranks={indicesResp.ranks ?? null}
-        buySignal={race?.buy_signal ?? null}
+        gekisou={indicesResp.gekisou ?? null}
       />
 
       <div className="text-xs text-gray-400 bg-white rounded-lg border border-gray-100 p-3">

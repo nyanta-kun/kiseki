@@ -73,9 +73,10 @@ class Test推奨カテゴリの配線:
         assert "chihou_is_place_bet" in _called_names(RECOMMENDER_SRC)
 
     def test_注目馬の関数は推奨カテゴリでは呼ばない(self) -> None:
-        """注目馬は `/featured-place`（ChihouFeaturedPlacePanel）の担当。
+        """注目馬は前向き記録（`chihou_place_pick_log`）の担当。
 
-        ここで呼ぶと同じページに同じ推奨が2度出る（過去の実害そのもの）。
+        ここで呼ぶと同じ推奨が2つの札で出る（過去の実害そのもの）。
+        画面の `/featured-place` は 2026-09-28 に「激走」へ置き換えて撤去した。
         """
         called = _called_names(RECOMMENDER_SRC)
         assert "chihou_is_place_pick" not in called
@@ -116,17 +117,28 @@ class Test個別馬バッジの版ガード:
             left = node.left
             if isinstance(left, ast.Name) and left.id == "CHIHOU_COMPOSITE_VERSION":
                 raise AssertionError(
-                    "CHIHOU_COMPOSITE_VERSION での分岐が復活しています。"
-                    " バッジ判定は指数の版に依存しません。"
+                    "CHIHOU_COMPOSITE_VERSION での分岐が復活しています。" " バッジ判定は指数の版に依存しません。"
                 )
 
-    def test_バッジ判定は実際に呼ばれている(self) -> None:
-        called = _called_names(ROUTER_SRC)
-        assert "chihou_is_sweet_spot" in called
-        assert "chihou_is_place_bet" in called
+    def test_旧バッジはレース画面から撤去済み(self) -> None:
+        """2026-09-28 に スイートスポット(赤字)・複穴・注目馬★・購入指針を撤去した。
 
-    def test_頭数はeffectiveを使う(self) -> None:
-        assert "chihou_effective_head_count" in _called_names(ROUTER_SRC)
+        いずれも回収率の根拠が無く、「激走 / 見送り」（`indices/chihou_gekisou.py`）へ
+        置き換えた。判定関数そのものは推奨エンジン（参考保持）と前向き記録が使うので
+        残してあるが、レース画面の API から呼ぶと旧バッジが復活する。
+        """
+        called = _called_names(ROUTER_SRC)
+        for name in (
+            "chihou_is_sweet_spot",
+            "chihou_is_place_bet",
+            "chihou_is_place_pick",
+            "chihou_buy_signal",
+            "calculate_recommend_rank",
+        ):
+            assert name not in called, f"{name} がレース画面の API に戻っています"
+
+    def test_激走判定は実際に呼ばれている(self) -> None:
+        assert "fetch_gekisou_verdicts" in _called_names(ROUTER_SRC)
 
 
 class Test頭数の扱い:
@@ -149,12 +161,7 @@ class Test頭数の扱い:
 
     def test_生のNoneを渡すと落ちることを記録しておく(self) -> None:
         """effective を通さないと発走前は必ず False になる、という罠の再現。"""
-        assert (
-            chihou_is_place_bet(
-                index_rank=2, win_odds=12.0, fav_odds=1.6, head_count=None
-            )
-            is False
-        )
+        assert chihou_is_place_bet(index_rank=2, win_odds=12.0, fav_odds=1.6, head_count=None) is False
 
     def test_7頭以下は複勝が2着までなので対象外(self) -> None:
         assert self._fire(head_count=None, registered=CHIHOU_PLACE_MIN_HEAD_COUNT - 1) is False
