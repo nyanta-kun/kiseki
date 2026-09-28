@@ -137,6 +137,13 @@ export type OddsFreshness = {
   age_seconds: number | null;
   /** 最終取得時刻 (ISO8601 / UTC)。未取得なら null */
   last_fetched_at: string | null;
+  /**
+   * 最新スナップショットの**発表時刻**（O レコードの発表月日時分・ISO8601 / UTC）。
+   * `last_fetched_at` は API が受け取った時刻で、UmaConn が古いデータを返していても
+   * 新しく見える。こちらはデータそのものの時刻。未記録（2026-09-29 以前・初期値）なら null。
+   * 旧バックエンドは返さないので省略可。
+   */
+  last_announced_at?: string | null;
 };
 
 export type OddsData = {
