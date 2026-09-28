@@ -45,11 +45,18 @@ class OddsFreshness:
         status: live / delayed / stale / missing / closed。
         age_seconds: 最終取得からの経過秒。取得実績が無ければ None。
         last_fetched_at: 最終取得時刻（**naive UTC**）。取得実績が無ければ None。
+        last_announced_at: 最新スナップショットの**発表時刻**（naive UTC）。
+            `last_fetched_at` は API が受け取った時刻なので、UmaConn が古いデータを
+            返していても新しく見える。こちらはデータそのものの時刻。
+            ⚠️ **status の判定には使っていない**（表示のための併記だけ）。
+            発表の通常間隔が未実測で、使うと平常時に黄色くなりうるため。
+            実測してから判定に入れること（2026-09-29）。
     """
 
     status: str
     age_seconds: int | None
     last_fetched_at: datetime | None
+    last_announced_at: datetime | None = None
 
     def to_dict(self) -> dict:
         """API レスポンス用の dict へ変換する。"""
@@ -61,6 +68,9 @@ class OddsFreshness:
                 if self.last_fetched_at is not None
                 else None
             ),
+            "last_announced_at": (
+                self.last_announced_at.isoformat() + "Z" if self.last_announced_at is not None else None
+            ),
         }
 
 
@@ -70,6 +80,7 @@ def classify_odds_freshness(
     now_utc: datetime,
     post_at_utc: datetime | None,
     grace: timedelta = timedelta(0),
+    last_announced_at: datetime | None = None,
 ) -> OddsFreshness:
     """オッズの鮮度を判定する。
 
@@ -81,6 +92,8 @@ def classify_odds_freshness(
         now_utc: 現在時刻（**naive UTC**）。
         post_at_utc: 発走時刻（**naive UTC**）。`post_time` が不正なら None。
         grace: 発走時刻の猶予。発走が遅れても更新は続くため、必要なら後ろへ延ばす。
+        last_announced_at: 最新スナップショットの発表時刻（**naive UTC**）。
+            判定には使わず、結果にそのまま載せる（`OddsFreshness` の注記を参照）。
 
     Returns:
         OddsFreshness。
@@ -92,7 +105,7 @@ def classify_odds_freshness(
             if last_fetched_at is not None
             else None
         )
-        return OddsFreshness(STATUS_CLOSED, age, last_fetched_at)
+        return OddsFreshness(STATUS_CLOSED, age, last_fetched_at, last_announced_at)
 
     if last_fetched_at is None:
         return OddsFreshness(STATUS_MISSING, None, None)
@@ -107,7 +120,7 @@ def classify_odds_freshness(
         status = STATUS_DELAYED
     else:
         status = STATUS_STALE
-    return OddsFreshness(status, age_seconds, last_fetched_at)
+    return OddsFreshness(status, age_seconds, last_fetched_at, last_announced_at)
 
 
 def post_time_to_utc(date: str | None, post_time: str | None) -> datetime | None:

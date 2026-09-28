@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { OddsFreshness } from "@/lib/api";
+import { formatAnnouncedJst } from "@/lib/oddsAnnounced";
 
 /**
  * オッズ更新の鮮度バッジ（常時表示）。
@@ -110,6 +111,10 @@ export function OddsFreshnessBadge({ freshness, receivedAtMs }: Props) {
   );
   const tone = TONES[status] ?? TONES.missing;
   const ageText = tone.showAge && ageSeconds !== null ? formatAge(ageSeconds) : null;
+  // 経過時間は「受け取ってから」でしかない。データそのものの時刻を併記して、
+  // 公式オッズとの見比べができるようにする（未取得のときは出さない）。
+  const announcedText =
+    status === "missing" ? null : formatAnnouncedJst(freshness.last_announced_at);
 
   return (
     <span
@@ -131,6 +136,11 @@ export function OddsFreshnessBadge({ freshness, receivedAtMs }: Props) {
         {tone.label}
       </span>
       {ageText && <span aria-hidden="true" className="opacity-70">{ageText}</span>}
+      {announcedText && (
+        <span aria-hidden="true" className="opacity-70">
+          ({announcedText})
+        </span>
+      )}
     </span>
   );
 }

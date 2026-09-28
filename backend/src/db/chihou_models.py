@@ -315,6 +315,16 @@ class ChihouOddsHistory(ChihouBase):
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), comment="取得日時"
     )
+    # fetched_at は API が受け取った時刻。データそのものの時刻はこちら（naive UTC）。
+    # 2026-09-29 以前の行は NULL（取込で捨てていたため復元不可）
+    announced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, comment="発表時刻（O レコードの発表月日時分・naive UTC）"
+    )
+    data_kubun: Mapped[str | None] = mapped_column(
+        String(1),
+        nullable=True,
+        comment="データ区分（1:中間 2:前日売最終 3:最終 4:確定 5:確定(月曜) 9:中止 0:削除）",
+    )
 
 
 class ChihouCalculatedIndex(ChihouBase):

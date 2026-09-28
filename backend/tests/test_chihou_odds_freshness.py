@@ -129,3 +129,45 @@ class TestPostTimeToUtc:
     )
     def test_returns_none_for_unusable_input(self, date, post_time) -> None:
         assert post_time_to_utc(date, post_time) is None
+
+
+class TestAnnouncedAt:
+    """発表時刻は併記するだけで、判定には使わない（2026-09-29）。
+
+    発表の通常間隔が未実測なので、判定に入れると平常時に黄色くなりうる。
+    実測してから判定へ入れること。
+    """
+
+    def test_passed_through_and_serialized(self) -> None:
+        announced = NOW - timedelta(minutes=3)
+        got = classify_odds_freshness(
+            last_fetched_at=NOW - timedelta(seconds=10),
+            now_utc=NOW,
+            post_at_utc=POST,
+            last_announced_at=announced,
+        )
+        assert got.last_announced_at == announced
+        assert got.to_dict()["last_announced_at"] == announced.isoformat() + "Z"
+
+    def test_old_announcement_does_not_change_status(self) -> None:
+        got = classify_odds_freshness(
+            last_fetched_at=NOW - timedelta(seconds=10),
+            now_utc=NOW,
+            post_at_utc=POST,
+            last_announced_at=NOW - timedelta(hours=2),
+        )
+        assert got.status == STATUS_LIVE
+
+    def test_closed_race_keeps_announced_at(self) -> None:
+        announced = POST - timedelta(minutes=1)
+        got = classify_odds_freshness(
+            last_fetched_at=POST,
+            now_utc=POST + timedelta(minutes=5),
+            post_at_utc=POST,
+            last_announced_at=announced,
+        )
+        assert got.status == STATUS_CLOSED
+        assert got.last_announced_at == announced
+
+    def test_missing_serializes_null(self) -> None:
+        assert _classify(None).to_dict()["last_announced_at"] is None

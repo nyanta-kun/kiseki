@@ -9,7 +9,7 @@ umaconn_race_id でレースを紐付ける点が keiba スキーマ版と異な
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -62,6 +62,58 @@ def _parse_odds_value(raw: str) -> float | None:
     return v / 10.0
 
 
+# O レコード共通: pos 3 = データ区分 / pos 12-15 = 開催年 / pos 16-19 = 開催月日 /
+# pos 28-35 = 発表月日時分（MMDDHHMI・JST）。O1〜O6 で位置は同じ。
+DATA_KUBUN_POS = 3
+YEAR_START, YEAR_END = 12, 15
+MONTH_DAY_START, MONTH_DAY_END = 16, 19
+ANNOUNCED_START, ANNOUNCED_END = 28, 35
+_JST_OFFSET = timedelta(hours=9)
+
+
+def parse_announced_at(data: str) -> datetime | None:
+    """O レコードの発表月日時分を **naive UTC** の datetime にする。
+
+    `fetched_at` は API が受け取った時刻でしかなく、UmaConn が古いスナップショットを
+    返していても新しく見える。発表時刻はデータそのものの時刻なので、
+    `fetched_at - announced_at` で「発表から手元に届くまでの遅れ」が測れる
+    （2026-09-29・楽天競馬とのオッズ乖離の切り分けのために残し始めた）。
+
+    発表月日時分には年が無いので開催年を使う。前日売は開催の前日に発表されるため、
+    1月開催のレースに12月の発表時刻が付くことがある。そのときだけ前年にする。
+
+    Args:
+        data: O1〜O6 レコードの生文字列。
+
+    Returns:
+        naive UTC の発表時刻。初期値 `00000000`・桁不正・存在しない日時なら None。
+    """
+    raw = data[ANNOUNCED_START - 1 : ANNOUNCED_END]
+    year_raw = data[YEAR_START - 1 : YEAR_END]
+    race_md = data[MONTH_DAY_START - 1 : MONTH_DAY_END]
+    if len(raw) != 8 or not raw.isdigit() or raw == "00000000":
+        return None
+    if not year_raw.isdigit() or not race_md.isdigit():
+        return None
+    year = int(year_raw)
+    announced_month = int(raw[:2])
+    race_month = int(race_md[:2])
+    # 年またぎ（1月開催・12月発表）。半年以上先の月なら前年とみなす
+    if announced_month - race_month > 6:
+        year -= 1
+    try:
+        jst = datetime.strptime(f"{year:04d}{raw}", "%Y%m%d%H%M")
+    except ValueError:
+        return None
+    return jst - _JST_OFFSET
+
+
+def parse_data_kubun(data: str) -> str | None:
+    """O レコードのデータ区分（1:中間 2:前日売最終 3:最終 4:確定 5:確定(月曜) 9:中止 0:削除）。"""
+    kubun = data[DATA_KUBUN_POS - 1 : DATA_KUBUN_POS]
+    return kubun if kubun.strip() else None
+
+
 class ChihouOddsImporter:
     """O1-O8レコードをchihou.odds_historyテーブルへ格納するクラス。
 
@@ -109,6 +161,11 @@ class ChihouOddsImporter:
                 rows = self._extract_odds_rows(
                     rec_id, rec["data"], parsed["bet_type"], race_db_id, now
                 )
+                announced_at = parse_announced_at(data)
+                data_kubun = parse_data_kubun(data)
+                for row in rows:
+                    row["announced_at"] = announced_at
+                    row["data_kubun"] = data_kubun
                 if rows:
                     await self.db.execute(insert(ChihouOddsHistory), rows)
                     stats["saved"] += len(rows)
