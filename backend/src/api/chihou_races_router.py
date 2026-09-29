@@ -7,7 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from sqlalchemy import exists, select
+from sqlalchemy import ColumnElement, exists, select
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from ..indices.confidence import (
     CHIHOU_GAP_FULL_SCORE,
     calculate_race_confidence,
 )
+from ..services.chihou_gekisou_roi import GekisouBet, summarize_gekisou_bets
 from ..services.chihou_gekisou_source import fetch_gekisou_verdicts
 from ..services.chihou_odds_freshness import (
     STATUS_MISSING,
@@ -268,6 +269,22 @@ class ChihouGekisouPickOut(BaseModel):
     source: str  # "snapshot"（確定）| "live"（暫定・発走前はまだ動く）
     finish_position: int | None
     place_payout: float | None  # 複勝払戻（倍率）。複勝圏外・未確定は None
+    win_payout: float | None = None  # 単勝払戻（倍率）。1着以外・未確定は None
+
+
+class ChihouGekisouRoiOut(BaseModel):
+    """激走馬を単勝・複勝それぞれ 100円ずつ買った場合の成績（確定分のみ）。
+
+    計算の正本は `services/chihou_gekisou_roi.py`。
+    """
+
+    n_bets: int
+    win_hits: int
+    win_return: int  # 円
+    win_roi: float | None  # 1.0 = 100%
+    place_hits: int
+    place_return: int  # 円
+    place_roi: float | None
 
 
 class ChihouGekisouDayOut(BaseModel):
@@ -277,6 +294,29 @@ class ChihouGekisouDayOut(BaseModel):
     n_judged: int  # 判定できたレース（8頭以上・指数とオッズあり）
     n_gekisou: int
     n_miokuri: int
+    day_roi: ChihouGekisouRoiOut | None = None  # 当日
+    month_roi: ChihouGekisouRoiOut | None = None  # 当月（月初〜指定日）
+
+
+def _roi_out(picks: list[ChihouGekisouPickOut], paid_races: set[int]) -> ChihouGekisouRoiOut:
+    """一覧の激走馬から 100円ずつ買った成績を作る。払戻が入ったレースだけを確定とみなす。"""
+    roi = summarize_gekisou_bets(
+        GekisouBet(
+            settled=p.finish_position is not None and p.race_id in paid_races,
+            win_payout=p.win_payout,
+            place_payout=p.place_payout,
+        )
+        for p in picks
+    )
+    return ChihouGekisouRoiOut(
+        n_bets=roi.n_bets,
+        win_hits=roi.win_hits,
+        win_return=roi.win_return,
+        win_roi=round(roi.win_roi, 4) if roi.win_roi is not None else None,
+        place_hits=roi.place_hits,
+        place_return=roi.place_return,
+        place_roi=round(roi.place_roi, 4) if roi.place_roi is not None else None,
+    )
 
 
 @router.get("/gekisou")
@@ -292,15 +332,32 @@ async def get_chihou_gekisou(
     ⚠️ 回収率は 1.0 に届かない（前向き確認 0.790）。当たりやすさの印であって
     期待値の印ではない。
     """
+    picks, n_judged, n_gekisou, n_miokuri, paid = await _collect_gekisou(db, ChihouRace.date == date)
+    # 当月 = 月初〜指定日。過去レースは発走前記録から判定するので1か月でもクエリ数本で済む
+    month_picks, _, _, _, month_paid = await _collect_gekisou(db, ChihouRace.date.between(date[:6] + "01", date))
+    return ChihouGekisouDayOut(
+        picks=picks,
+        n_judged=n_judged,
+        n_gekisou=n_gekisou,
+        n_miokuri=n_miokuri,
+        day_roi=_roi_out(picks, paid),
+        month_roi=_roi_out(month_picks, month_paid),
+    )
+
+
+async def _collect_gekisou(
+    db: AsyncSession, date_cond: ColumnElement[bool]
+) -> tuple[list[ChihouGekisouPickOut], int, int, int, set[int]]:
+    """条件に合うレースの激走馬と判定数、払戻の入ったレース ID を返す。"""
     races_result = await db.execute(
         select(ChihouRace)
-        .where(ChihouRace.date == date)
+        .where(date_cond)
         .where(ChihouRace.course != BANEI_COURSE_CODE)
         .order_by(ChihouRace.post_time.asc().nullslast(), ChihouRace.race_number)
     )
     races = list(races_result.scalars().all())
     if not races:
-        return ChihouGekisouDayOut(picks=[], n_judged=0, n_gekisou=0, n_miokuri=0)
+        return [], 0, 0, 0, set()
     race_ids = [r.id for r in races]
     verdicts = await fetch_gekisou_verdicts(db, race_ids)
 
@@ -320,12 +377,17 @@ async def get_chihou_gekisou(
     finish_map = {(int(r), int(h)): fp for r, h, fp in result_rows.all() if h is not None}
     pay_rows = await db.execute(
         sql_text(
-            "SELECT race_id, combination, payout FROM chihou.race_payouts"
-            " WHERE race_id = ANY(:race_ids) AND bet_type = 'place'"
+            "SELECT race_id, bet_type, combination, payout FROM chihou.race_payouts"
+            " WHERE race_id = ANY(:race_ids) AND bet_type IN ('win', 'place')"
         ),
         {"race_ids": race_ids},
     )
-    pay_map = {(int(r), int(c)): p / 100.0 for r, c, p in pay_rows.all() if str(c).isdigit() and p is not None}
+    pay_map: dict[str, dict[tuple[int, int], float]] = {"win": {}, "place": {}}
+    paid_races: set[int] = set()
+    for r, bt, c, p in pay_rows.all():
+        paid_races.add(int(r))
+        if str(c).isdigit() and p is not None:
+            pay_map[bt][(int(r), int(c))] = p / 100.0
 
     picks: list[ChihouGekisouPickOut] = []
     n_judged = n_gekisou = n_miokuri = 0
@@ -357,10 +419,11 @@ async def get_chihou_gekisou(
                 room=round(v.room, 3) if v.room is not None else None,
                 source=sv.source,
                 finish_position=finish_map.get(key),
-                place_payout=pay_map.get(key),
+                place_payout=pay_map["place"].get(key),
+                win_payout=pay_map["win"].get(key),
             )
         )
-    return ChihouGekisouDayOut(picks=picks, n_judged=n_judged, n_gekisou=n_gekisou, n_miokuri=n_miokuri)
+    return picks, n_judged, n_gekisou, n_miokuri, paid_races
 
 
 @router.get("/race-keys")
