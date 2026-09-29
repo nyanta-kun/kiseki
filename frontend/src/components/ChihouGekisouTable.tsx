@@ -115,7 +115,65 @@ export function ChihouGekisouTable({ picks }: { picks: ChihouGekisouPick[] }) {
         ))}
       </div>
 
-      <div className="overflow-x-auto -mx-1">
+      {/*
+        スマホ幅は表をやめて1頭3行のリストにする（2026-09-29）。
+        9列の表を min-w-[520px] で横スクロールさせていたため、390px 幅では
+        着順・複オッズが画面外に出て、「6番人気」のチップも縦に折り返していた。
+        右端の数値（着順・確率）は whitespace-nowrap で固定し、縮むのは馬名だけにする
+        （CLAUDE.md「一覧の数値列を固定幅にしない」）。
+      */}
+      <ul className="sm:hidden divide-y divide-gray-100 border-t border-gray-100">
+        {rows.map((p) => {
+          const pos = positionCell(p.finish_position);
+          return (
+            <li key={`${p.race_id}-${p.horse_number}`}>
+              <Link
+                href={`/chihou/races/${p.race_id}`}
+                className="block py-2 px-1 active:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className="tabular-nums">{formatPostTime(p.post_time)}</span>
+                  <span className="font-medium text-gray-700">{p.course_name}</span>
+                  <span className="tabular-nums" style={{ color: "var(--chihou-primary)" }}>
+                    {p.race_number}R
+                  </span>
+                  <span className={cn("ml-auto whitespace-nowrap tabular-nums", pos.cls)}>
+                    {pos.text}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs text-gray-400 tabular-nums whitespace-nowrap">
+                    {p.horse_number}番
+                  </span>
+                  <span className="min-w-0 truncate text-sm font-semibold text-gray-800">
+                    {p.horse_name ?? "-"}
+                  </span>
+                  <span className="flex-shrink-0">
+                    <ChihouGekisouBadge status="gekisou" provisional={p.source === "live"} />
+                  </span>
+                  <span
+                    className={cn(
+                      "ml-auto whitespace-nowrap text-sm tabular-nums",
+                      probClass(p.place_prob),
+                    )}
+                  >
+                    {formatProb(p.place_prob)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-gray-500 tabular-nums whitespace-nowrap">
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                    {p.popularity ?? "-"}番人気
+                  </span>
+                  <span>単 {formatOdds(p.win_odds)}</span>
+                  <span>複 {formatOdds(p.place_odds)}</span>
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden sm:block overflow-x-auto -mx-1">
         <table className="w-full text-sm border-collapse min-w-[520px]">
           <thead>
             <tr className="text-xs text-gray-500 border-b border-gray-100">
@@ -169,7 +227,7 @@ export function ChihouGekisouTable({ picks }: { picks: ChihouGekisouPick[] }) {
                     {formatProb(p.place_prob)}
                   </td>
                   <td className="py-2 px-1 text-center tabular-nums">
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 whitespace-nowrap">
                       {p.popularity ?? "-"}番人気
                     </span>
                   </td>
