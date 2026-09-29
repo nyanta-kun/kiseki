@@ -601,6 +601,30 @@ def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
     return [c for c, v in line_group.items() if v == g]
 
 
+def _line_pos_no(v: object) -> int:
+    """隊列の位置（1=先頭・2=番手…）を整数で返す。無い・読めなければ 0。
+
+    🔴 **`1` / `"1"` / `1.0` / `np.float32(1.0)` を同じ 1 として読む**（2026-09-29）。
+       以前は `str(v) == "1"` で比べていたため、比較台（`race_type_board.npz` の
+       `A_line_pos` は float32）から渡すと先頭・番手が見つからず、**荒れ度と型ラベルが
+       静かにずれていた**（台の TYPE 列との一致 54%・A↔B↔C / D↔E↔F の間で入れ替わる）。
+       `_lines_of` も同じ理由で隊列順ではなく車番順になっていた。
+       本番（`wt_entries.line_pos` は integer）は影響なし。例外もログも出ない型の壊れ方。
+
+    >>> [_line_pos_no(v) for v in (1, "2", 3.0, None, "", "x", 0, float("nan"))]
+    [1, 2, 3, 0, 0, 0, 0, 0]
+    """
+    if v is None:
+        return 0
+    try:
+        f = float(str(v))
+    except (TypeError, ValueError):
+        return 0
+    if f != f or f <= 0 or f != int(f):
+        return 0
+    return int(f)
+
+
 def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object],
                line_pos: Mapping[int, object], style: Mapping[int, str],
                race_point: Mapping[int, float], behind_pct: Mapping[int, float],
@@ -624,8 +648,8 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
                - sum(float(top3_probs[c]) for c in others[2:5]) / 3)
 
     mem = _line_members(line_group, order[0])
-    lead = next((c for c in mem if str(line_pos.get(c)) == "1"), None)
-    second = next((c for c in mem if str(line_pos.get(c)) == "2"), None)
+    lead = next((c for c in mem if _line_pos_no(line_pos.get(c)) == 1), None)
+    second = next((c for c in mem if _line_pos_no(line_pos.get(c)) == 2), None)
     size = len(mem) if mem else 1
 
     s = 1 if size == 2 else (-1 if size >= 4 else 0)
@@ -738,11 +762,9 @@ def _lines_of(line_group: Mapping[int, object],
     pos = line_pos or {}
 
     def _p(car: int) -> tuple[int, int]:
-        v = pos.get(car)
-        try:
-            n = int(str(v))
-        except (TypeError, ValueError):
-            n = 0
+        # float（比較台の `A_line_pos`）も読む。`int(str(1.0))` は ValueError になり、
+        # 以前は全車 99＝車番順に落ちていた（`_line_pos_no` の docstring）。
+        n = _line_pos_no(pos.get(car))
         return (n if n > 0 else 99, car)
 
     groups: dict[str, list[int]] = {}

@@ -162,9 +162,12 @@ D_hit 22.03 / E_hit 18.60 / F_hit 24.68 / F_sign 5.56 — **両窓でほぼ一�
    `B_hit`/`C_hit`/`E_hit`/`F_hit`）が掛かっていない。** 台が `RaceShape` を直接組んでおり
    `lines=()` のままなため（`scripts/exp_type_lab/typef_racetype.py::ctx`）。
    その4商品の実力は表より **+1.9〜2.3pt 高い**（`line_legs_2026_09_05.md`）。
-   ⚠️ **`race_shape()` に板の `A_line_pos` をそのまま渡さないこと。** float32 なので
-   `str(line_pos)=="1"` が一致せず、**型ラベルがずれ（該当率 48%→87%）`lines` が
-   隊列順でなく車番順になる**。確率側は float でも動くので**例外もログも出ない**。
+   ⚠️ **`race_shape()` に板の `A_line_pos` をそのまま渡すと型ラベルがずれていた**（float32 で
+   `str(line_pos)=="1"` が一致せず、該当率 48%→87%・`lines` が車番順になる。確率側は float でも
+   動くので**例外もログも出ない**）。🔴 **2026-09-29 に `race_shape` 側で直した**
+   （`_line_pos_no`・`tests/test_type_lab_line_pos_float.py`）。それまで
+   `scripts/exp_type_lab/lineup_sim.py::ctx` がこの形で渡しており、台の TYPE 列と一致するのは
+   **54%** だった。**9/22 の `product_redesign` と #607 の軸信頼ゲート再較正はこの台で測られている。**
 🔴🔴 **この表は「ゲート前」なので、実運用（ゲート後）の直接のベンチマークにはならない。**
    実運用は**軸信頼ゲート**と**日次上限**（`2×axis_sum + rp_sd` 降順の上位半分）を通るので、
    軸の堅い側に選別される。実測（実入稿12日・7車・当てにいく商品 n=510）:
