@@ -120,6 +120,13 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
              "role": roles.get(c, ROLE_BASE)}
             for c in legs
         ]
+        # 🔴 **目標額を行へ焼き付ける**（2026-09-29・`CHEAP_TARGET`）。安い決着の見込みで
+        #    5万→2.5万へ下げた行は `plan_key` が同じで、`pred_mean_payout` でも
+        #    見分けられない（add_perm の再ダッチで5万の行も3万台へ下がる）。
+        #    前向きの答え合わせ（`docs/type_lab/cheap_target_2026_09_29.md`）はこれで数える。
+        if plan_used.target:
+            for d in detail:
+                d["target"] = int(plan_used.target)
         out.append(dict(
             race_key=meta["race_key"], race_date=meta["race_date"],
             venue_name=meta.get("venue_name"), race_no=meta.get("race_no"),

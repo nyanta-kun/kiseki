@@ -315,6 +315,53 @@ SIGNBOARD_TARGET = 150_000
 #:    2026-09-22 にユーザーが目標を下ろす判断をした（現状すでに 23%）。
 #: 記録: `docs/type_lab/product_redesign_2026_09_22.md`
 HIT_BAND_TARGET = 50_000
+
+#: ── 安い決着が見込まれるレースだけ目標を下げる（2026-09-29）──────────────────
+#:
+#: 🔴🔴 **`HIT_BAND_TARGET`（5万）は「5倍未満の決着」を構造的に買えない**
+#:    （Σ(1/予測オッズ) <= 予算/5万 = 0.2 なので、1点でも5倍未満は枠に入らない）。
+#:    A_hit の外れの 26% は「二軸はそろったが5倍未満で決着」で、本命の目が6〜7倍だと
+#:    枠をその1点で使い切り**実質3点**（本命1点＋少額2点）になる。
+#:
+#: 🟢 そこで「決着が5倍未満になりそうなレース」だけ目標を `CHEAP_TARGET` へ下げる。
+#:    判定量は `cheap_share` ＝ **予測5倍未満の目に載っているモデル確率の割合**
+#:    （較正なしの生の確率で足りる。決着5倍未満への AUC 探索 0.815 / 確認 0.793 で、
+#:    オッズ帯で較正した版 0.811 / 0.788 と同等）。
+#:
+#: 実測（**この実装そのもの**を修正後の比較台 7車で1日の商品構成として回した
+#:    ＝軸信頼ゲート・日次上限・高額枠込み・探索 2024-07〜2025-12 / 確認 2026-01〜08-04。
+#:    日次上限の順位は目標額に依存しないので**選ばれるレースも件数も不変**。
+#:    切り替わらない行の買い目は1点も変わらない）:
+#:
+#:                      件/日   表示的中         ROI          4万+/日      10万+/日
+#:      全商品 現行     32.6/33.6  19.64 / 19.75  79.5 / 82.5  1.84 / 1.93  0.428 / 0.417
+#:      全商品 本案     32.6/33.6  21.07 / 21.24  80.9 / 83.8  1.74 / 1.81  0.428 / 0.417
+#:      Δ全商品 95%CI   表示的中 [+1.17,+1.68] / [+1.08,+1.91]  ROI [+0.7,+2.1] / [+0.1,+2.4]
+#:      A_hit          22.09→29.46 / 20.83→28.98   75.6→81.8 / 72.7→79.2（ROI CI 両窓 0 を跨がない）
+#:      B_hit          25.41→29.29 / 26.57→30.07   74.2→79.0 / 84.1→87.4（ROI CI は確認窓で跨ぐ）
+#:
+#:    切り替わる行だけ（確認）: A 36%（1.69件/日）的中 14.8→37.6%・B 33%（1.10件/日）21.4→31.9%。
+#:    救済 163 / 破壊 55（確認・全商品）。
+#: 🔴 **一律に目標を下げるより効率が良い**（同じ的中で 4万+ が多い）。一律は目標額の
+#:    ダイヤルを回すだけで、9/22 の判断（大口優先）をそのまま戻すことになる。
+#: 🔴 **C_hit には掛けない。** 同じ操作が一律引き下げと同じ曲線に乗る（確認 本案 21.8% /
+#:    0.551 ↔ 一律4万 22.0% / 0.565）＝上乗せが無い。
+#: 🔴 **「見送り」「払戻を下げる＋見込みが低ければ見送る」は劣る**（当たる64件も捨て、件数も
+#:    3割減る）。目標を下げるだけの形にした。
+#: ⚠️ `CHEAP_TARGET` を 2万にしないこと。平均想定払戻 > 2万 の入稿ゲートをダッチの端数で
+#:    割り、A_hit の 32% で組めない（その分が黙って5万へ戻る）。2.5万は組成 100%。
+#: ⚠️ 閾値は探索窓のプラン内 70% 点（入稿ゲート・軸信頼ゲート通過後）。**確認窓は
+#:    A で一度、B で一度見ている**（B は A の結果を見てから足した）。前向きの確かめは
+#:    `docs/type_lab/cheap_target_2026_09_29.md` の事前登録で行う。
+#: 記録: `docs/type_lab/cheap_target_2026_09_29.md`
+CHEAP_TARGET = 25_000
+#: 「安い決着」とみなす予測オッズ（5万ダッチの枠に1点も入らない境目 = 予算 ÷ 5万 の逆数）。
+CHEAP_ODDS = 5.0
+#: プランごとの `cheap_share` の下限（これ以上なら `CHEAP_TARGET` へ下げる）。
+CHEAP_SHARE_MIN: dict[str, float] = {"A_hit": 0.2807, "B_hit": 0.1158}
+#: 掛ける車数。**7車だけ**（閾値は7車の分位）。
+CHEAP_TARGET_N_ENTRIES = 7
+
 #: 予測オッズの上限。**帯ROI が崩れる超高配当を買わないための蓋**
 #: （三連単の帯ROI は 600倍まで 71〜76% だが 600-1200倍 64.5% / 1200倍- 51.6%）。
 SIGNBOARD_MAX_ODDS = 600.0
@@ -2451,6 +2498,48 @@ def apply_line_swap(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapp
 ORDER_SWAP_PLANS: frozenset[str] = frozenset({"B_hit", "F_hit"})
 
 
+def cheap_share(pred_odds: Mapping, probs: Mapping,
+                cheap_odds: float = CHEAP_ODDS) -> float:
+    """予測 `cheap_odds` 倍未満の目に載っているモデル確率の割合（0〜1）。
+
+    分母はモデル確率の合計（予測オッズの無い目も含む）。確率が無ければ 0.0。
+
+    >>> cheap_share({(1, 2, 3): 3.0, (1, 3, 2): 8.0}, {(1, 2, 3): 0.3, (1, 3, 2): 0.1, (2, 1, 3): 0.1})
+    0.6
+    """
+    tot = sum(float(p) for p in probs.values() if p and p > 0)
+    if tot <= 0:
+        return 0.0
+    s = sum(float(p) for c, p in probs.items()
+            if p and p > 0 and _pos(pred_odds.get(c)) and float(pred_odds[c]) < cheap_odds)
+    return s / tot
+
+
+def apply_cheap_target(plan: Plan, pred_odds: Mapping, probs: Mapping,
+                       n_entries: int = 7) -> Plan:
+    """安い決着が見込まれるなら目標額を `CHEAP_TARGET` に下げた `Plan` を返す。
+
+    それ以外（対象外プラン・7車以外・閾値未満）は受け取った `plan` をそのまま返す。
+    🔴 key は変えない（`sell_plans_for` の1レース1商品・行の `plan_key` を保つ）。
+
+    >>> odds = {(1, 2, 3): 3.0, (1, 3, 2): 20.0}
+    >>> probs = {(1, 2, 3): 0.5, (1, 3, 2): 0.5}
+    >>> apply_cheap_target(PLANS["A_hit"], odds, probs).target
+    25000
+    >>> apply_cheap_target(PLANS["C_hit"], odds, probs).target
+    50000
+    >>> apply_cheap_target(PLANS["A_hit"], odds, probs, 9).target
+    50000
+    """
+    thr = CHEAP_SHARE_MIN.get(plan.key)
+    if (thr is None or int(n_entries or 0) != CHEAP_TARGET_N_ENTRIES
+            or plan.bet_type != "trifecta"):
+        return plan
+    if cheap_share(pred_odds, probs) < thr:
+        return plan
+    return replace(plan, target=CHEAP_TARGET)
+
+
 def apply_order_swap(plan: Plan, legs: Sequence, stakes: Mapping,
                      pred_odds: Mapping, order_probs: Mapping | None,
                      min_mean_payout: float = MIN_MEAN_PAYOUT):
@@ -2943,6 +3032,9 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         pl = replace(plan, underband_min=0.0) if plan.underband_min else plan
         got = _build_plan(shape, pl, pred_odds, probs)
         return _done(got, pl) if got else None
+    # 🔴 **安い決着が見込まれるレースは目標額を下げる**（2026-09-29・`CHEAP_TARGET` の節）。
+    #    プランの key は変えない（行は `A_hit` / `B_hit` のまま・`pred_mean_payout` で見分ける）。
+    plan = apply_cheap_target(plan, pred_odds, probs, n_entries)
     def _build(pl: Plan):
         # 🔴 τ適応は**7車だけ**（上の `n_entries != 7` で既に分岐済み）。
         #    ゲートを通る最大点数を探し、見つからなければ従来どおり組む。
@@ -3183,6 +3275,10 @@ def rule_version(n_entries: int = 7) -> str:
         #    動かしても版が割れず新旧の行が混ざる（`_osae` と同じ理由）。
         #    ⚠️ **7車のときだけ入れる**（`_done` が7車以外では掛けない）。
         payload["_addperm"] = sorted(ADD_PERM_PLANS)
+        # 🔴 安い決着の目標引き下げも `PLANS` の外（`build_with_gate_fallback` の中で効く）。
+        #    **7車だけ**に掛けるので、ここ（7車の分岐）に入れる。
+        payload["_cheap"] = [CHEAP_TARGET, CHEAP_ODDS, sorted(CHEAP_SHARE_MIN.items()),
+                             CHEAP_TARGET_N_ENTRIES]
         payload["_upper"] = [[[b.kind, b.budget, b.structure, b.min_odds,
                                b.max_odds, b.max_legs, b.target, b.min_bought]
                               for b in UPPER_BANDS],
