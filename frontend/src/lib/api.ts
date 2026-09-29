@@ -998,6 +998,23 @@ export type ChihouGekisouPick = {
   finish_position: number | null;
   /** 複勝払戻（倍率）。複勝圏外・未確定は null */
   place_payout: number | null;
+  /** 単勝払戻（倍率）。1着以外・未確定は null */
+  win_payout?: number | null;
+};
+
+/**
+ * 激走馬を単勝・複勝それぞれ 100円ずつ買った場合の成績（確定分のみ）。
+ * 取消は返還なので数えない。計算の正本は backend `services/chihou_gekisou_roi.py`。
+ */
+export type ChihouGekisouRoi = {
+  n_bets: number;
+  win_hits: number;
+  win_return: number;
+  /** 1.0 = 100%。確定 0 点なら null */
+  win_roi: number | null;
+  place_hits: number;
+  place_return: number;
+  place_roi: number | null;
 };
 
 export type ChihouGekisouDay = {
@@ -1005,6 +1022,10 @@ export type ChihouGekisouDay = {
   n_judged: number;
   n_gekisou: number;
   n_miokuri: number;
+  /** 当日。旧バックエンドは返さない */
+  day_roi?: ChihouGekisouRoi | null;
+  /** 当月（月初〜指定日） */
+  month_roi?: ChihouGekisouRoi | null;
 };
 
 export async function fetchChihouGekisou(date: string): Promise<ChihouGekisouDay> {
