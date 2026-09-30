@@ -79,7 +79,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                       #    テーブル名を直接展開するので動いてしまい気づけない）。
                       r"|netkeirin_submissions|netkeirin_sales_daily"
                       r"|netkeirin_sales_race|submission_skips|type_lab_picks"
-                      r"|race_shapes)\b",
+                      r"|race_shapes|rider_interviews)\b",
                       r"keirin.\1", rest, flags=re.IGNORECASE)
 
         if action == "IGNORE":
@@ -117,7 +117,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
                  r"|netkeirin_sales_race|submission_skips|type_lab_picks"
-                 r"|race_shapes)\b",
+                 r"|race_shapes|rider_interviews)\b",
                  r"keirin.\1", sql, flags=re.IGNORECASE)
     # psycopg2 は % をフォーマット文字として扱う。
     # LIKE '7PLUS%' 等リテラル % を先に %% にエスケープしてから :name / ? を変換する。
@@ -826,6 +826,35 @@ def migrate_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_race_shapes_date "
                      "ON race_shapes(race_date)")
+
+        # 選手コメント（前検日・レース後）と分類（2026-10-01 新設。本番は kiseki alembic
+        # 202610010607_shared が正本・この CREATE TABLE はテスト用 SQLite 専用）。
+        # 列の意味は `src/rider_interviews.py`。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rider_interviews (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind           TEXT NOT NULL,
+                race_key       TEXT NOT NULL,
+                cup_id         TEXT,
+                race_date      TEXT NOT NULL,
+                player_id      INTEGER NOT NULL,
+                body           TEXT NOT NULL,
+                src_created_at TEXT,
+                src_updated_at TEXT,
+                fetched_at     TEXT DEFAULT (datetime('now')),
+                condition      INTEGER,
+                trouble        TEXT,
+                fatigue        INTEGER,
+                equipment      INTEGER,
+                self_eval      TEXT,
+                trend          TEXT,
+                tactic         TEXT,
+                confidence     INTEGER,
+                tag_model      TEXT,
+                tagged_at      TEXT,
+                UNIQUE (kind, race_key, player_id)
+            )
+        """)
 
         # netkeirin自動入稿のランク別ON/OFF・タイトル/コメントテンプレート設定
         # （2026-07-28新設。本番はkiseki alembic migration s2t3u4v5w6x7が正本・
