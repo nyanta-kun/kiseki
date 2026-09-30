@@ -71,6 +71,16 @@ JOBS: list[Job] = [
         note="日曜 23:30。再学習 → VPS へ rsync（昇格ゲートは未導入: 計画 7-3）",
     ),
     Job(
+        "keirin-rider-interviews-tag",
+        [".venv/bin/python3", "scripts/tag_rider_interviews.py"],
+        # VPS の取得（22:40 / 06:20）の後。1日 約5,000件で1〜2時間の見込み
+        cron=["10 23 * * *", "40 6 * * *"],
+        cwd=f"{KISEKI}/keirin",
+        max_age=18 * H,  # 実行の間隔は最大 16.5時間（06:40 → 23:10）
+        note="選手コメントを claude -p（サブスクリプション枠）で分類する。"
+        "ANTHROPIC_API_KEY は子プロセスへ渡さない（API 課金にしない）",
+    ),
+    Job(
         "keirin-monthly-vintage",
         ["scripts/ensure_monthly_vintage.sh"],
         cron=["5 0 1 * *"],
