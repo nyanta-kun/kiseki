@@ -79,8 +79,8 @@ def test_order_is_by_event_not_by_page_update_time():
     assert good is False  # 最新は前走後の「脚が重かった」（-1）
 
 
-def test_neutral_later_comment_keeps_earlier_rating():
-    """後のコメントが調子に触れていなければ（condition=0）、前の評価を生かす。"""
+def test_neutral_latest_comment_is_not_blue():
+    """直近のコメントが調子に触れていなければ青にしない（古い「良い」を持ち越さない）。"""
     neutral = {**PREV, "condition": 0, "body": "作戦通りでした"}
     _, good = comments_for_entry([PRE, neutral], race_key="20261002_63_03", cup_id="C", race_start=5000)
-    assert good is True
+    assert good is False
