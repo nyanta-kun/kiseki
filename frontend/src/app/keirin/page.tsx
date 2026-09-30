@@ -707,6 +707,7 @@ function SubmittedBetBlock({ bet, pick }: {
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
   // 選手コメントを開いている車番（1つだけ開く）。
   const [openFrame, setOpenFrame] = useState<number | null>(null);
+  const openEntry = entries.find((e) => e.frame_no === openFrame) ?? null;
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => {
     const winDiff = (b.pred_win_pct ?? -Infinity) - (a.pred_win_pct ?? -Infinity);
@@ -734,6 +735,9 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
     //    テーブルが card 幅を超える。**ページごと横スクロールさせない**ため、
     //    ここで内側スクロールに閉じ込める（`feedback_fixed_layout`）。
     //
+    // ⚠️ 2026-10-01 以降、スマホ（sm 未満）は table-fixed で端末幅に収める（表の直前のコメント）。
+    //    以下の min-w-max の話は sm 以上に適用される。
+    //
     // 🔴 **`w-full` にしてはいけない**（2026-08-12 修正）。`overflow-x-auto` の
     //    内側で `w-full` を指定すると、テーブルは常に親幅ちょうどに収まるので
     //    **横スクロールが一度も発生しない**。代わりに幅指定の無い列（選手名）が
@@ -745,29 +749,34 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
     //       テーブルが内容幅のまま左に寄り、カード右側が空く。CSS では
     //       min-width が width に優先するので、この2つで
     //       「広い画面＝カード幅いっぱい / 狭い画面＝内容幅＋横スクロール」になる。
+    <>
     <div className="overflow-x-auto">
-    <table className="w-full min-w-max">
+    {/* 🔴 スマホ（sm 未満）は table-fixed で**端末幅に収める**（2026-10-01・横スクロールをやめた）。
+        数値列は固定幅・見出しは短縮（1着/2着内/3着内/得点）、選手名が残りの幅を取り、
+        長い名前は「…」で切る（truncate）。1文字ずつ縦積みになった 2026-08-12 の事故は
+        折り返しが原因なので、truncate（折り返さない）なら起きない。sm 以上は従来どおり内容幅。 */}
+    <table className="w-full table-fixed sm:table-auto sm:min-w-max">
       <thead>
         <tr className="border-b border-gray-100 dark:border-gray-700">
-          <th className="text-center px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-7 sm:w-8">車</th>
+          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-6 sm:w-8">車</th>
           <th className="text-left px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs whitespace-nowrap">選手名</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-6 sm:w-8">W</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-9 sm:w-12">戦法</th>
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">単勝率</th>
+          <th className="text-center px-0.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-5 sm:w-8">W</th>
+          <th className="text-center px-0.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-7 sm:w-12">戦法</th>
+          <th className="text-right px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap"><span className="sm:hidden">1着</span><span className="hidden sm:inline">単勝率</span></th>
           {/* 2着内率（連対率）。1着率・3着内率と同じ経路のモデル出力（lgbm_wt_top2）。
               2026-08-12 以前のレースは列が無かったので「—」になる。 */}
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">2着内率</th>
-          <th className="text-right px-1.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">複勝率</th>
-          <th className="text-right px-2 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap">競走得点</th>
-          <th className="text-center px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-8 sm:w-10">着</th>
+          <th className="text-right px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap"><span className="sm:hidden">2着内</span><span className="hidden sm:inline">2着内率</span></th>
+          <th className="text-right px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap"><span className="sm:hidden">3着内</span><span className="hidden sm:inline">複勝率</span></th>
+          <th className="text-right px-1 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-11 sm:w-14 whitespace-nowrap"><span className="sm:hidden">得点</span><span className="hidden sm:inline">競走得点</span></th>
+          <th className="text-center px-0.5 sm:px-3 py-1 font-medium text-gray-500 dark:text-gray-300 text-xs w-7 sm:w-10">着</th>
         </tr>
       </thead>
       <tbody>
         {sorted.map((e) => (
           <Fragment key={e.frame_no}>
           <tr className="border-b border-gray-50 dark:border-gray-700 last:border-0">
-            <td className="px-2 sm:px-3 py-0.5 sm:py-1 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
-            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-xs sm:text-sm whitespace-nowrap">
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
+            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-xs sm:text-sm whitespace-nowrap truncate">
               {/* 選手名タップで選手コメント（前検日・前走後・このレース後）を開く。
                   青字 = 発走前に出ていた直近のコメントが「調子が良い」（backend が判定）。 */}
               {e.comments && e.comments.length > 0 ? (
@@ -788,21 +797,21 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
                   : "text-gray-800 dark:text-gray-100"}>{e.name ?? "—"}</span>
               )}
             </td>
-            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
-            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-500 dark:text-gray-300 text-xs">{e.style ?? "—"}</td>
-            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-0.5 sm:px-3 py-0.5 sm:py-1 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
+            <td className="px-0.5 sm:px-3 py-0.5 sm:py-1 text-center text-gray-500 dark:text-gray-300 text-xs">{e.style ?? "—"}</td>
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {rowProb(e).win != null ? `${rowProb(e).win!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {rowProb(e).top2 != null ? `${rowProb(e).top2!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {rowProb(e).top3 != null ? `${rowProb(e).top3!.toFixed(1)}%` : "—"}
             </td>
-            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
+            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
               {e.race_point != null ? e.race_point.toFixed(1) : "—"}
             </td>
-            <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center">
+            <td className="px-0.5 sm:px-3 py-0.5 sm:py-1 text-center">
               {e.finish_order != null && e.finish_order > 0 ? (
                 <span
                   className={`inline-flex items-center justify-center w-5 h-5 sm:w-6 sm:h-6 rounded-full text-xs font-bold
@@ -818,30 +827,40 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
               )}
             </td>
           </tr>
-          {openFrame === e.frame_no && e.comments && e.comments.length > 0 && (
-            <tr className="bg-gray-50 dark:bg-gray-800/60">
-              {/* 🔴 横スクロールする表の中でも折り返させる（whitespace-normal）。
-                  幅は親の表に合わせ、長いコメントで表が横に伸びないよう max-w を付ける。 */}
-              <td colSpan={9} className="px-3 py-2 text-xs text-gray-700 dark:text-gray-200 whitespace-normal">
-                <ul className="space-y-1.5 max-w-[36rem]">
-                  {e.comments.map((c, i) => (
-                    <li key={i}>
-                      <span className="inline-block mr-1.5 px-1.5 rounded bg-gray-200 dark:bg-gray-700 text-[10px] text-gray-600 dark:text-gray-300">
-                        {c.label}{c.race_date ? ` ${c.race_date.slice(5)}` : ""}
-                      </span>
-                      <span className={c.condition != null && c.condition >= 1
-                        ? "text-blue-700 dark:text-blue-300" : ""}>{c.body}</span>
-                    </li>
-                  ))}
-                </ul>
-              </td>
-            </tr>
-          )}
           </Fragment>
         ))}
       </tbody>
     </table>
     </div>
+    {/* 🔴 選手コメントは**表の外**に出す（2026-10-01・スマホで横スクロールが出た）。
+        表は数値列のために内側で横スクロールする作りなので、表の中の行に長い本文を入れると
+        表の幅が本文に引っ張られ、端末幅を超えてはみ出す。表の下に出せばカード幅で折り返す。 */}
+    {openEntry && openEntry.comments && openEntry.comments.length > 0 && (
+      <div className="border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3 py-2 text-xs text-gray-700 dark:text-gray-200">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className={`font-semibold ${openEntry.good_condition ? "text-blue-600 dark:text-blue-400" : ""}`}>
+            {openEntry.frame_no}番 {openEntry.name ?? ""} のコメント
+          </span>
+          <button type="button" onClick={() => setOpenFrame(null)}
+            className="px-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" aria-label="閉じる">×</button>
+        </div>
+        <ul className="space-y-1.5 break-words">
+          {openEntry.comments.map((c, i) => (
+            <li key={i}>
+              <span className="inline-block mr-1.5 px-1.5 rounded bg-gray-200 dark:bg-gray-700 text-[10px] text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                {c.label}{c.race_date ? ` ${c.race_date.slice(5)}` : ""}
+                {c.kind === "post" && c.finish_order != null
+                  ? (c.finish_order > 0 ? ` ${c.finish_order}着` : " 失格・落車等")
+                  : ""}
+              </span>
+              <span className={c.condition != null && c.condition >= 1
+                ? "text-blue-700 dark:text-blue-300" : ""}>{c.body}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+    </>
   );
 }
 

@@ -591,9 +591,26 @@ async def _fetch_rider_comments(
         WHERE player_id = ANY(:p)
           AND ((kind = 'pre' AND cup_id = ANY(:c)) OR (kind = 'post' AND race_date >= :since))
     """), {"p": players, "c": cups, "since": since})).mappings().all()
+    # レース後コメントには、そのレースの着順を添える（画面で「前走後 09-30 2着」）
+    post_keys = sorted({r["race_key"] for r in rows if r["kind"] == "post"})
+    finish: dict[tuple[str, int], Any] = {}
+    if post_keys:
+        for f in (
+            await db.execute(
+                text(
+                    "SELECT race_key, player_id, finish_order FROM keirin.wt_entries "
+                    "WHERE race_key = ANY(:k) AND player_id = ANY(:p)"
+                ),
+                {"k": post_keys, "p": players},
+            )
+        ).mappings().all():
+            finish[(f["race_key"], int(f["player_id"]))] = f["finish_order"]
     by_player: dict[int, list[dict]] = {}
     for r in rows:
-        by_player.setdefault(int(r["player_id"]), []).append(dict(r))
+        d = dict(r)
+        if d["kind"] == "post":
+            d["finish_order"] = finish.get((d["race_key"], int(d["player_id"])))
+        by_player.setdefault(int(r["player_id"]), []).append(d)
     out: dict[tuple[str, int], tuple[list[dict], bool]] = {}
     for rk in keys:
         race = races.get(rk)

@@ -158,6 +158,8 @@ def comments_for_entry(
             "race_date": str(c.get("race_date") or ""),
             "body": c.get("body") or "",
             "condition": c.get("condition"),
+            # レース後コメントのそのレースの着順（0 は失格・落車等・不明は None）
+            "finish_order": c.get("finish_order") if c.get("kind") == "post" else None,
             "before_race": published_before(c) if label != "このレース後" else False,
         }
 
