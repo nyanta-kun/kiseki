@@ -9,7 +9,11 @@
     PYTHONPATH=. .venv/bin/python3 scripts/tag_rider_interviews.py            # 未分類を全部
     PYTHONPATH=. .venv/bin/python3 scripts/tag_rider_interviews.py --limit 200 # 試し
 
-実測（2026-09-30）: 40件で約80秒・入力約2.7万トークン（Claude Code の組み込み分）。
+⚠️ 分類の尺度は過去分（API Batch）と少し違う（同じ160件で「調子が良い」55 ↔ 37件）。画面の表示用には
+   十分だが、事前登録の判定には判定窓を API Batch で分類し直して使う
+   （`docs/type_lab/prereg_rider_condition_2026_10_01.md` §3）。
+
+実測（2026-09-30）: 40件で約80秒・入力約2.7万トークン（Claude Code の組み込み分）。思考を切ると約4倍速い。
 呼び出しの固定費が大きいので1回あたり `--chunk` 件（既定 80）をまとめて渡す。
 """
 from __future__ import annotations
@@ -38,6 +42,10 @@ def build_prompt(rows: list[dict]) -> str:
 def call_claude(prompt: str, timeout: int = 900) -> list[dict]:
     """`claude -p` で分類して記号の配列を返す。失敗は例外。"""
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    # 🔴 思考を切る（2026-10-01）。思考ありだと過去分（API Batch・思考なし）より「調子が良い」を
+    #    倍近く付けた（同じ160件で 37 → 72件・一致率 62%）。切ると 55件・一致 69% で、
+    #    API どうしの再分類のぶれ（45件・一致 74%）に近づく。速さも約4倍
+    env["MAX_THINKING_TOKENS"] = "0"
     r = subprocess.run(
         ["claude", "-p", "--model", "haiku", "--tools", "", "--no-session-persistence",
          "--output-format", "json", "--system-prompt", SYSTEM_PROMPT,
