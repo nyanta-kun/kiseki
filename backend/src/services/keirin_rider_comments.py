@@ -14,6 +14,9 @@
 公開時刻は winticket 側の `updatedAt`（`src_updated_at`・本文の最終版の時刻）で見る。
 その中で**いちばん新しいコメント**の調子が `GOOD_CONDITION_MIN` 以上なら青
 （＝「いま調子が良いと言っている選手」）。
+🔴 **ただし、そのコメントがレース日の `GOOD_MAX_AGE_DAYS` 日以上前のものなら青にしない**
+   （2026-10-01 ユーザー指摘）。直近のコメントが前の開催（何日も前）のものだと、今の調子を表さない。
+   日付は前検日コメント＝開催初日、レース後コメント＝そのレース日で数える。
 
 🔴 **「新しい」は出来事の順（`_event_order`）で決める。公開時刻で並べてはいけない**（2026-10-01 修正）。
    前検日ページの `updatedAt` は後から更新されることが多く、公開時刻で並べると
@@ -35,6 +38,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 GOOD_CONDITION_MIN = 1
+#: これ以上前（日数）のコメントは「調子が良い」の判定に使わない（表示はする）。
+#: 3 = レース日の3日前以上をスルー（当日・前日・前々日のものだけ使う）。
+GOOD_MAX_AGE_DAYS = 3
 RECENT_POST_MAX = 2
 POST_MAX_DAYS = 30
 
@@ -71,6 +77,20 @@ def _event_order(c: Mapping[str, Any]) -> tuple[str, int, str]:
     return (str(c.get("race_date") or "")[:10], 1 if c.get("kind") == "post" else 0, str(c.get("race_key") or ""))
 
 
+def _age_days(c: Mapping[str, Any], race_key: str) -> int:
+    """対象レースの日（race_key の先頭 YYYYMMDD）から見て、コメントが何日前のものか。読めなければ大きい値。
+
+    >>> _age_days({"race_date": "2026-09-29"}, "20261001_63_05")
+    2
+    """
+    try:
+        d_race = datetime.strptime(str(race_key)[:8], "%Y%m%d")
+        d_c = datetime.fromisoformat(str(c.get("race_date"))[:10])
+    except (ValueError, TypeError):
+        return 10**6
+    return (d_race - d_c).days
+
+
 def comments_for_entry(
     comments: Sequence[Mapping[str, Any]], *, race_key: str, cup_id: str | None, race_start: Any
 ) -> tuple[list[dict], bool]:
@@ -88,14 +108,14 @@ def comments_for_entry(
         (表示するコメント, 調子が良いか)。表示の各要素は
         {"kind", "label", "race_date", "body", "condition", "before_race"}。
 
-    >>> cs = [{"kind": "pre", "race_key": "r1", "cup_id": "C", "race_date": "2026-10-01",
+    >>> cs = [{"kind": "pre", "race_key": "20261001_63_01", "cup_id": "C", "race_date": "2026-10-01",
     ...        "body": "仕上がり良い", "src_updated_at": 100, "condition": 1},
-    ...       {"kind": "post", "race_key": "r2", "cup_id": "C", "race_date": "2026-10-02",
+    ...       {"kind": "post", "race_key": "20261002_63_02", "cup_id": "C", "race_date": "2026-10-02",
     ...        "body": "脚が重い", "src_updated_at": 300, "condition": -1}]
-    >>> shown, good = comments_for_entry(cs, race_key="r3", cup_id="C", race_start=400)
+    >>> shown, good = comments_for_entry(cs, race_key="20261002_63_03", cup_id="C", race_start=400)
     >>> [c["label"] for c in shown], good
     (['前検日', '前走後'], False)
-    >>> comments_for_entry(cs, race_key="r3", cup_id="C", race_start=200)[1]   # r2 の談話は発走後
+    >>> comments_for_entry(cs, race_key="20261002_63_03", cup_id="C", race_start=200)[1]   # r2 の談話は発走後
     True
     """
     start = _epoch(race_start)
@@ -125,7 +145,10 @@ def comments_for_entry(
     before = [c for c in pre if published_before(c)] + prev_ok
     latest = max(before, key=_event_order, default=None)
     good = bool(
-        latest is not None and latest.get("condition") is not None and int(latest["condition"]) >= GOOD_CONDITION_MIN
+        latest is not None
+        and latest.get("condition") is not None
+        and int(latest["condition"]) >= GOOD_CONDITION_MIN
+        and _age_days(latest, race_key) < GOOD_MAX_AGE_DAYS
     )
 
     def fmt(c: Mapping[str, Any], label: str) -> dict:

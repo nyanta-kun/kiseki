@@ -84,3 +84,13 @@ def test_neutral_latest_comment_is_not_blue():
     neutral = {**PREV, "condition": 0, "body": "作戦通りでした"}
     _, good = comments_for_entry([PRE, neutral], race_key="20261002_63_03", cup_id="C", race_start=5000)
     assert good is False
+
+
+def test_good_comment_three_or_more_days_old_is_not_blue():
+    """レース日の3日前以上の「調子が良い」は青にしない（2026-10-01 ユーザー指摘）。"""
+    old = {**PRE, "race_date": "2026-09-28"}  # 20261001 の3日前
+    _, good = comments_for_entry([old], race_key="20261001_63_03", cup_id="C", race_start=None)
+    assert good is False
+    recent = {**PRE, "race_date": "2026-09-29"}  # 2日前はまだ使う
+    _, good = comments_for_entry([recent], race_key="20261001_63_03", cup_id="C", race_start=None)
+    assert good is True
