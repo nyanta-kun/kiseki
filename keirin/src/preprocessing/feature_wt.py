@@ -323,6 +323,21 @@ def build_features_wt(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+#: 決まり手の種類 → `wt_entries` の列名（2026-09-30）。
+#: 🔴 列名は winticket の英語フィールド名（frontRunner / stalker / deepCloser / marker）の写しで、
+#:    競輪の決まり手と**語が対応しない**。2026-09-30 に脚質別の平均回数で確認した中身:
+#:      脚質「追」: 差し 2.9 / マーク 1.9 / 捲り 0.2 / 逃げ 0.0
+#:      脚質「逃」: 逃げ 4.4 / 捲り 3.2 / 差し 1.0 / マーク 0.4
+#:    ＝ `stalker` が差し、`deep_closer` が捲り。列名から読むと差しと捲りを取り違える。
+#: 決まり手の回数を特徴量に使うときはこの対応を経由すること（現行 `FEATURE_COLS_WT` は未使用）。
+KIMARITE_COUNT_COLS: dict[str, str] = {
+    "逃げ": "front_runner",
+    "捲り": "deep_closer",
+    "差し": "stalker",
+    "マーク": "marker",
+}
+
+
 RACE_TYPE_COLS_WT = [
     "rt_is_final", "rt_is_semifinal", "rt_is_heat", "rt_is_senbatsu",
     "rt_is_tokusen", "rt_is_hatsu", "rt_is_ippan",

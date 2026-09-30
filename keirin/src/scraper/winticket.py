@@ -315,6 +315,10 @@ class WinticketScraper:
                 "s_count":         rec.get("standing", 0),
                 "h_count":         rec.get("home", 0),
                 "b_count":         rec.get("back", 0),
+                # 🔴 決まり手の回数（winticket の英語フィールド名をそのまま列名にしている）。
+                #    中身は 逃げ=front_runner / **捲り=deep_closer** / **差し=stalker** / マーク=marker。
+                #    列名から「差し=deep_closer」と読むと逆になる（2026-09-30 に脚質別平均で確認）。
+                #    対応の正本は `src/preprocessing/feature_wt.KIMARITE_COUNT_COLS`。
                 "front_runner":    rec.get("frontRunner", 0),
                 "stalker":         rec.get("stalker", 0),
                 "deep_closer":     rec.get("deepCloser", 0),
