@@ -12,15 +12,16 @@
 
 🔴 **発走前に公開されていたコメントだけ**で決める（このレースのレース後コメントは使わない）。
 公開時刻は winticket 側の `updatedAt`（`src_updated_at`・本文の最終版の時刻）で見る。
-その中で**調子に触れた（condition ≠ 0）いちばん新しいコメント**の調子が
-`GOOD_CONDITION_MIN` 以上なら青。
+その中で**いちばん新しいコメント**の調子が `GOOD_CONDITION_MIN` 以上なら青
+（＝「いま調子が良いと言っている選手」）。
 
 🔴 **「新しい」は出来事の順（`_event_order`）で決める。公開時刻で並べてはいけない**（2026-10-01 修正）。
    前検日ページの `updatedAt` は後から更新されることが多く、公開時刻で並べると
    開催前日の談話が前走後の談話より「新しい」扱いになっていた（初日の実測で青 213/595＝36%、
    うち 79件は「前検日で調子良い・その後のレース後は調子に触れず」だった）。
-⚠️ condition = 0 は「言及なし」で「普通」ではない。後のコメントが調子に触れていなければ、
-   それより前の調子の評価を生かす。
+🔴 **調子に触れていない（condition = 0）直近のコメントを飛ばして古い評価を生かしてはいけない**
+   （2026-10-01・同日に一度入れて戻した）。古い「良い」が残り続け、青が 280/595＝47% まで
+   膨らんで目印として働かなくなった。直近のコメントだけで決めると約16%。
 
 根拠（2026-10-01・142,624件の検証・`keirin/docs/type_lab/prereg_rider_condition_2026_10_01.md`）:
 前検日で調子が良いと言った選手の3着内率は、現行モデルの予測より +1.3 / +1.6pt（探索/確認）、
@@ -122,9 +123,10 @@ def comments_for_entry(
     )
 
     before = [c for c in pre if published_before(c)] + prev_ok
-    rated = [c for c in before if c.get("condition") not in (None, 0)]
-    latest = max(rated, key=_event_order, default=None)
-    good = bool(latest is not None and int(latest["condition"]) >= GOOD_CONDITION_MIN)
+    latest = max(before, key=_event_order, default=None)
+    good = bool(
+        latest is not None and latest.get("condition") is not None and int(latest["condition"]) >= GOOD_CONDITION_MIN
+    )
 
     def fmt(c: Mapping[str, Any], label: str) -> dict:
         return {
