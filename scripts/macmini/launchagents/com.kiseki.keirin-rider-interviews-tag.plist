@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kiseki.keirin-rider-interviews-tag</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/ysuzuki/GitHub/kiseki/scripts/macmini/run_job.sh</string>
+		<string>keirin-rider-interviews-tag</string>
+		<string>.venv/bin/python3</string>
+		<string>scripts/tag_rider_interviews.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-rider-interviews-tag.launchd.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/logs/jobs/keirin-rider-interviews-tag.launchd.log</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Hour</key>
+			<integer>23</integer>
+			<key>Minute</key>
+			<integer>10</integer>
+		</dict>
+		<dict>
+			<key>Hour</key>
+			<integer>6</integer>
+			<key>Minute</key>
+			<integer>40</integer>
+		</dict>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/ysuzuki/GitHub/kiseki/keirin</string>
+</dict>
+</plist>
