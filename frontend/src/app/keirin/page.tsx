@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { Fragment, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { formatMultiBetComboLines } from "@/lib/keirinCombo";
 import { makeRaceNormalizer, monotoneRow } from "@/lib/keirinProb";
 import {
@@ -705,6 +705,8 @@ function SubmittedBetBlock({ bet, pick }: {
 }
 
 function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
+  // 選手コメントを開いている車番（1つだけ開く）。
+  const [openFrame, setOpenFrame] = useState<number | null>(null);
   if (!entries.length) return <p className="text-xs text-gray-400 dark:text-gray-500 px-3 py-2">出走情報なし</p>;
   const sorted = [...entries].sort((a, b) => {
     const winDiff = (b.pred_win_pct ?? -Infinity) - (a.pred_win_pct ?? -Infinity);
@@ -762,9 +764,30 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
       </thead>
       <tbody>
         {sorted.map((e) => (
-          <tr key={e.frame_no} className="border-b border-gray-50 dark:border-gray-700 last:border-0">
+          <Fragment key={e.frame_no}>
+          <tr className="border-b border-gray-50 dark:border-gray-700 last:border-0">
             <td className="px-2 sm:px-3 py-0.5 sm:py-1 font-bold text-center text-xs sm:text-sm text-gray-700 dark:text-gray-200">{e.frame_no}</td>
-            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-xs sm:text-sm text-gray-800 dark:text-gray-100 whitespace-nowrap">{e.name ?? "—"}</td>
+            <td className="px-2 sm:px-3 py-0.5 sm:py-1 text-xs sm:text-sm whitespace-nowrap">
+              {/* 選手名タップで選手コメント（前検日・前走後・このレース後）を開く。
+                  青字 = 発走前に出ていた直近のコメントが「調子が良い」（backend が判定）。 */}
+              {e.comments && e.comments.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setOpenFrame(openFrame === e.frame_no ? null : e.frame_no)}
+                  aria-expanded={openFrame === e.frame_no}
+                  className={`underline decoration-dotted underline-offset-2 ${
+                    e.good_condition
+                      ? "text-blue-600 dark:text-blue-400 font-semibold"
+                      : "text-gray-800 dark:text-gray-100"}`}
+                >
+                  {e.name ?? "—"}
+                </button>
+              ) : (
+                <span className={e.good_condition
+                  ? "text-blue-600 dark:text-blue-400 font-semibold"
+                  : "text-gray-800 dark:text-gray-100"}>{e.name ?? "—"}</span>
+              )}
+            </td>
             <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-600 dark:text-gray-300 text-xs sm:text-sm">{wtMarkSymbol(e.prediction_mark)}</td>
             <td className="px-1 sm:px-3 py-0.5 sm:py-1 text-center text-gray-500 dark:text-gray-300 text-xs">{e.style ?? "—"}</td>
             <td className="px-1.5 sm:px-3 py-0.5 sm:py-1 text-right font-mono text-xs sm:text-sm text-gray-700 dark:text-gray-200">
@@ -795,6 +818,26 @@ function EntryTable({ entries }: { entries: KeirinPick["entries"] }) {
               )}
             </td>
           </tr>
+          {openFrame === e.frame_no && e.comments && e.comments.length > 0 && (
+            <tr className="bg-gray-50 dark:bg-gray-800/60">
+              {/* 🔴 横スクロールする表の中でも折り返させる（whitespace-normal）。
+                  幅は親の表に合わせ、長いコメントで表が横に伸びないよう max-w を付ける。 */}
+              <td colSpan={9} className="px-3 py-2 text-xs text-gray-700 dark:text-gray-200 whitespace-normal">
+                <ul className="space-y-1.5 max-w-[36rem]">
+                  {e.comments.map((c, i) => (
+                    <li key={i}>
+                      <span className="inline-block mr-1.5 px-1.5 rounded bg-gray-200 dark:bg-gray-700 text-[10px] text-gray-600 dark:text-gray-300">
+                        {c.label}{c.race_date ? ` ${c.race_date.slice(5)}` : ""}
+                      </span>
+                      <span className={c.condition != null && c.condition >= 1
+                        ? "text-blue-700 dark:text-blue-300" : ""}>{c.body}</span>
+                    </li>
+                  ))}
+                </ul>
+              </td>
+            </tr>
+          )}
+          </Fragment>
         ))}
       </tbody>
     </table>

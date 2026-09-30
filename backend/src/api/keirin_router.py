@@ -42,6 +42,7 @@ from ..services.keirin_race_confidence import (
     confidence_hit_count_from_entries,
 )
 from ..services.keirin_result_top3 import winning_combo_labels
+from ..services.keirin_rider_comments import comments_for_entry, post_window_start
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
     build_correlations,
@@ -538,6 +539,7 @@ async def _fetch_entries_by_race(
             SELECT
               race_key,
               frame_no,
+              player_id,
               name,
               race_point,
               style,
@@ -555,6 +557,55 @@ async def _fetch_entries_by_race(
         """), {"keys": list(race_keys)},
     )).mappings().all():
         out.setdefault(e["race_key"], []).append(e)
+    return out
+
+
+async def _fetch_rider_comments(
+    db: AsyncSession, entries_by_race: Mapping[str, Sequence[Any]],
+) -> dict[tuple[str, int], tuple[list[dict], bool]]:
+    """(race_key, 車番) → (表示する選手コメント, 調子が良いか)。まとめて2往復で引く。
+
+    判定と並べ方の正本は `services/keirin_rider_comments.py`。
+    🔴 表 `keirin.rider_interviews` が無い（マイグレーション前にデプロイされた）ときは空を返す。
+       素で SELECT すると PG のトランザクションが中断して、後続のクエリまで落ちる。
+    """
+    keys = [rk for rk, es in entries_by_race.items() if es]
+    if not keys:
+        return {}
+    if (await db.execute(text("SELECT to_regclass('keirin.rider_interviews')"))).scalar() is None:
+        return {}
+    races = {r["race_key"]: r for r in (await db.execute(text(
+        "SELECT race_key, cup_id, start_at, race_date FROM keirin.wt_races WHERE race_key = ANY(:k)"),
+        {"k": keys})).mappings().all()}
+    if not races:
+        return {}
+    players = sorted({int(e["player_id"]) for rk in keys for e in entries_by_race[rk]
+                      if e.get("player_id") is not None})
+    if not players:
+        return {}
+    cups = sorted({r["cup_id"] for r in races.values() if r["cup_id"]})
+    since = post_window_start([str(r["race_date"]) for r in races.values()])
+    rows = (await db.execute(text("""
+        SELECT kind, race_key, cup_id, race_date, player_id, body, src_updated_at, condition
+        FROM keirin.rider_interviews
+        WHERE player_id = ANY(:p)
+          AND ((kind = 'pre' AND cup_id = ANY(:c)) OR (kind = 'post' AND race_date >= :since))
+    """), {"p": players, "c": cups, "since": since})).mappings().all()
+    by_player: dict[int, list[dict]] = {}
+    for r in rows:
+        by_player.setdefault(int(r["player_id"]), []).append(dict(r))
+    out: dict[tuple[str, int], tuple[list[dict], bool]] = {}
+    for rk in keys:
+        race = races.get(rk)
+        if race is None:
+            continue
+        for e in entries_by_race[rk]:
+            if e.get("player_id") is None:
+                continue
+            cs = by_player.get(int(e["player_id"]), [])
+            if cs:
+                out[(rk, int(e["frame_no"]))] = comments_for_entry(
+                    cs, race_key=rk, cup_id=race["cup_id"], race_start=race["start_at"])
     return out
 
 
@@ -1228,6 +1279,8 @@ async def get_picks(
     #    `wt_entries` を1レース1本・`wt_odds_snapshot` を1レース1本ずつ引いており、
     #    60レースで最大120往復していた。実測 41行 0.37秒 ↔ 60行 0.47秒 ＝ 約5ms/行。
     entries_by_race = await _fetch_entries_by_race(db, _base_keys)
+    # 選手コメント（前検日・レース後）と「調子が良い」（選手名の青字）。2026-10-01
+    rider_comments = await _fetch_rider_comments(db, entries_by_race)
     # 合成オッズは **`picks_history` の候補（`pred_combo`）にしか要らない**。
     # 売った商品がある行は `bet_detail` の金額から出す（`_calc_synth_odds_from_lines`）。
     _synth_legs: dict[str, tuple[list[list[str]], str]] = {}
@@ -1451,6 +1504,11 @@ async def get_picks(
                     "pred_top2_pct": float(e["pred_top2_pct"]) if e["pred_top2_pct"] is not None else None,
                     "pred_top3_pct": float(e["pred_top3_pct"]) if e["pred_top3_pct"] is not None else None,
                     "prediction_mark": e["prediction_mark"],
+                    # 選手コメント（前検日・前走後・このレース後）。選手名タップで出す
+                    "comments": rider_comments.get((base_key, int(e["frame_no"])), ([], False))[0],
+                    # 発走前に出ていた直近のコメントが「調子が良い」（選手名を青字）。
+                    # 判定の正本は services/keirin_rider_comments.py
+                    "good_condition": rider_comments.get((base_key, int(e["frame_no"])), ([], False))[1],
                 }
                 for e in entries
             ],

@@ -1188,6 +1188,24 @@ export type KeirinEntry = {
   pred_top3_pct: number | null;
   /** WINTICKET公式予想印（0=無印, 1〜4=印あり） */
   prediction_mark: number | null;
+  /** 選手コメント（前検日・前走後・このレース後）。2025-12 以降のみ。選手名タップで出す */
+  comments?: KeirinRiderComment[];
+  /** 発走前に出ていた直近のコメントが「調子が良い」（選手名を青字にする）。
+   *  判定の正本は backend `services/keirin_rider_comments.py`。 */
+  good_condition?: boolean;
+};
+
+/** winticket の選手コメント（`keirin.rider_interviews`）。 */
+export type KeirinRiderComment = {
+  kind: "pre" | "post";
+  /** "前検日" | "前走後" | "このレース後" */
+  label: string;
+  race_date: string;
+  body: string;
+  /** 調子の自己申告（-2〜2・未分類は null） */
+  condition: number | null;
+  /** このレースの発走前に公開されていたか */
+  before_race: boolean;
 };
 
 export type KeirinPick = {
