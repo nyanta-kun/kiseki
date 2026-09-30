@@ -1206,6 +1206,8 @@ export type KeirinRiderComment = {
   condition: number | null;
   /** このレースの発走前に公開されていたか */
   before_race: boolean;
+  /** レース後コメント（kind="post"）のそのレースの着順。0 は失格・落車等、不明は null */
+  finish_order?: number | null;
 };
 
 export type KeirinPick = {

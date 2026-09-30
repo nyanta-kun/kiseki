@@ -94,3 +94,9 @@ def test_good_comment_three_or_more_days_old_is_not_blue():
     recent = {**PRE, "race_date": "2026-09-29"}  # 2日前はまだ使う
     _, good = comments_for_entry([recent], race_key="20261001_63_03", cup_id="C", race_start=None)
     assert good is True
+
+
+def test_post_comment_carries_finish_order():
+    prev = {**PREV, "finish_order": 2}
+    shown, _ = comments_for_entry([PRE, prev], race_key="20261002_63_03", cup_id="C", race_start=5000)
+    assert [(c["label"], c["finish_order"]) for c in shown] == [("前検日", None), ("前走後", 2)]
