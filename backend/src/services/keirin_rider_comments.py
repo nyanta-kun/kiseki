@@ -12,7 +12,15 @@
 
 🔴 **発走前に公開されていたコメントだけ**で決める（このレースのレース後コメントは使わない）。
 公開時刻は winticket 側の `updatedAt`（`src_updated_at`・本文の最終版の時刻）で見る。
-その中で**いちばん新しいコメントの調子（condition）が `GOOD_CONDITION_MIN` 以上**なら青。
+その中で**調子に触れた（condition ≠ 0）いちばん新しいコメント**の調子が
+`GOOD_CONDITION_MIN` 以上なら青。
+
+🔴 **「新しい」は出来事の順（`_event_order`）で決める。公開時刻で並べてはいけない**（2026-10-01 修正）。
+   前検日ページの `updatedAt` は後から更新されることが多く、公開時刻で並べると
+   開催前日の談話が前走後の談話より「新しい」扱いになっていた（初日の実測で青 213/595＝36%、
+   うち 79件は「前検日で調子良い・その後のレース後は調子に触れず」だった）。
+⚠️ condition = 0 は「言及なし」で「普通」ではない。後のコメントが調子に触れていなければ、
+   それより前の調子の評価を生かす。
 
 根拠（2026-10-01・142,624件の検証・`keirin/docs/type_lab/prereg_rider_condition_2026_10_01.md`）:
 前検日で調子が良いと言った選手の3着内率は、現行モデルの予測より +1.3 / +1.6pt（探索/確認）、
@@ -46,6 +54,20 @@ def _epoch(v: Any) -> float | None:
     except ValueError:
         return None
     return (d if d.tzinfo else d.replace(tzinfo=UTC)).timestamp()
+
+
+def _event_order(c: Mapping[str, Any]) -> tuple[str, int, str]:
+    """出来事の順。レース日 → 同じ日なら前検日（開催前）が先・レース後が後 → race_key（R番号）。
+
+    前検日コメントの `race_date` は開催初日（そのページのレース日）なので、同じ日の
+    レース後コメントより前に置く。
+
+    >>> pre = {"kind": "pre", "race_date": "2026-10-01", "race_key": "20261001_63_01"}
+    >>> post = {"kind": "post", "race_date": "2026-10-01", "race_key": "20261001_63_01"}
+    >>> _event_order(pre) < _event_order(post)
+    True
+    """
+    return (str(c.get("race_date") or "")[:10], 1 if c.get("kind") == "post" else 0, str(c.get("race_key") or ""))
 
 
 def comments_for_entry(
@@ -95,15 +117,14 @@ def comments_for_entry(
 
     prev_ok = sorted(
         [c for c in prev if published_before(c) and recent(c)],
-        key=lambda c: _epoch(c.get("src_updated_at")) or 0,
+        key=_event_order,
         reverse=True,
     )
 
     before = [c for c in pre if published_before(c)] + prev_ok
-    latest = max(before, key=lambda c: _epoch(c.get("src_updated_at")) or 0, default=None)
-    good = bool(
-        latest is not None and latest.get("condition") is not None and int(latest["condition"]) >= GOOD_CONDITION_MIN
-    )
+    rated = [c for c in before if c.get("condition") not in (None, 0)]
+    latest = max(rated, key=_event_order, default=None)
+    good = bool(latest is not None and int(latest["condition"]) >= GOOD_CONDITION_MIN)
 
     def fmt(c: Mapping[str, Any], label: str) -> dict:
         return {

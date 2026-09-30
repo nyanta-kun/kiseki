@@ -70,3 +70,17 @@ def test_untagged_comment_is_not_blue():
 
 def test_post_window_start():
     assert post_window_start(["2026-10-02", "2026-10-01"]) == "2026-09-01"
+
+
+def test_order_is_by_event_not_by_page_update_time():
+    """前検日ページの updatedAt が後から更新されても、開催前日の談話を「最新」にしない（2026-10-01 修正）。"""
+    pre_late = {**PRE, "src_updated_at": 3000}  # 前走後（2000）より後に更新された
+    _, good = comments_for_entry([pre_late, PREV], race_key="20261002_63_03", cup_id="C", race_start=5000)
+    assert good is False  # 最新は前走後の「脚が重かった」（-1）
+
+
+def test_neutral_later_comment_keeps_earlier_rating():
+    """後のコメントが調子に触れていなければ（condition=0）、前の評価を生かす。"""
+    neutral = {**PREV, "condition": 0, "body": "作戦通りでした"}
+    _, good = comments_for_entry([PRE, neutral], race_key="20261002_63_03", cup_id="C", race_start=5000)
+    assert good is True
