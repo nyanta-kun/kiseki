@@ -39,7 +39,7 @@ def summarize(rows: list[dict], final_odds: dict[str, dict[str, float]],
 
     rows: `type_lab_picks` の `L_flat` 決済済み行（`race_key` / `legs` / `payout` / `void_refund`）
     final_odds: race_key → {"5-6-1": 確定オッズ}
-    sold: race_key → (実際に売った現行商品の投資, 払戻)。`L_flat` 自身は含めない
+    sold: race_key → (実際に売った現行商品の投資, 払戻)。`L_flat` 自身と `L_lead` は含めない
 
     >>> rows = [{"race_key": "a", "legs": [{"combo": "5-6-1", "stake": 5000},
     ...                                     {"combo": "5-6-2", "stake": 5000}],
@@ -142,6 +142,10 @@ def main() -> None:
     ap.add_argument("--plan", default="L_flat")
     a = ap.parse_args()
     from src.database import get_connection
+    from src.type_lab import FLAT_LEAD_PLAN_KEYS, LINE_LEAD_PLAN_KEYS
+    # 🔴 副1 の「現行」は**置き換えの対象（型ラボの商品）だけ**。混戦では L_flat ⊇ L_lead なので、
+    #    L_lead の実売を入れるとほぼ同じ買い目同士を比べることになる（事前登録 §4）。
+    not_current = {a.plan} | set(FLAT_LEAD_PLAN_KEYS) | set(LINE_LEAD_PLAN_KEYS)
     with get_connection() as c:
         rows = [dict(zip(("race_key", "legs", "payout", "void_refund", "race_date"), r))
                 for r in c.execute(
@@ -165,7 +169,7 @@ def main() -> None:
                     "SELECT race_key, rank_key, settled_bet, settled_payout"
                     "  FROM netkeirin_submissions WHERE settled_at IS NOT NULL AND deleted_at IS NULL"
                     f"   AND split_part(race_key, '#', 1) IN ({ph})", ch).fetchall():
-                if str(rank) == a.plan:
+                if str(rank) in not_current:
                     continue
                 base = str(rk).split("#")[0]
                 b0, p0 = sold.get(base, (0, 0))
