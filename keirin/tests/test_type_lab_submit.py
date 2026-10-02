@@ -1693,6 +1693,35 @@ def test_段の日は自信ありを固めの決勝系から選ぶ(monkeypatch):
     assert ("R3", "T_mid") not in ev
 
 
+def test_型ラボの自信ありは決勝系を優先する():
+    """🔴 2026-10-02 ユーザー決定: 合成2.5〜3.5倍の候補のうち、決勝系があればその中で Σp 最大。
+
+    自信ありの販売は決勝系 13.8 ↔ 予選など 5.8（1件あたり）で、的中は変わらない
+    （`docs/type_lab/confident_synth_cap_2026_10_02.md` §5）。
+    """
+    import scripts.netkeirin_submit_type_lab as m
+
+    def legs(p):   # 2点とも6.0倍 → 合成3.0倍
+        return [{"combo": "1-2-3", "prob": p, "stake": 5000, "pred_odds": 6.0},
+                {"combo": "1-3-2", "prob": p, "stake": 5000, "pred_odds": 6.0}]
+    rows = [
+        dict(race_key="R1", plan_key="C_hit", legs=legs(0.20), start_at=0, race_type="予選",
+             venue_name="川崎", race_no=1),
+        dict(race_key="R2", plan_key="E_hit", legs=legs(0.15), start_at=0, race_type="準決勝",
+             venue_name="川崎", race_no=9),
+        # 決勝だが 18時以降 → 候補外（優先は候補の中でだけ効く）
+        dict(race_key="R3", plan_key="B_hit", legs=legs(0.25), start_at=13 * 3600, race_type="決勝",
+             venue_name="川崎", race_no=11),
+    ]
+    best, ev = m._choose_confident(rows)
+    assert best == ("R2", "E_hit")
+    # 値は Σp のまま（画面が「Σp ○○%」で表示する）
+    assert ev[("R2", "E_hit")] == pytest.approx(0.30)
+    # 決勝系が無ければ Σp 最大へ戻る
+    best, _ = m._choose_confident([rows[0], {**rows[1], "race_type": "特選"}])
+    assert best == ("R1", "C_hit")
+
+
 def test_荒れの段で一軸の行が入稿ゲートを通れば一軸を売る(monkeypatch):
     """🔴 一軸は荒れの段だけ。`T_axis` 行が入稿ゲートを通れば一軸、落ちれば荒れへ戻す。
 

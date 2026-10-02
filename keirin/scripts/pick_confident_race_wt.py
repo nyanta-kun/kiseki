@@ -87,8 +87,10 @@ sys.path.insert(0, str(REPO))
 
 from src.confident_pick import (  # noqa: E402
     CONFIDENT_BEFORE_HOUR,
+    CONFIDENT_MAX_SYNTH_ODDS,
     CONFIDENT_MIN_SYNTH_ODDS,
     pick_best,
+    pick_best_type_lab,
     race_expected_value,
     type_lab_confident_score,
     CONFIDENT_PRIORITY_KEYWORD,
@@ -198,14 +200,17 @@ def pick(date: str, dry_run: bool = False) -> tuple[str, str] | None:
           + (f"（固めに限る・「{CONFIDENT_PRIORITY_KEYWORD}」を含む種別を優先、"
              f"無ければ発走 {CONFIDENT_BEFORE_HOUR}時前）" if tier_day else
              f"（型ラボ・当たる回数を狙うプラン かつ 発走 {CONFIDENT_BEFORE_HOUR}時前 "
-             f"かつ 合成 {CONFIDENT_MIN_SYNTH_ODDS}倍以上に限る）"
+             f"かつ 合成 {CONFIDENT_MIN_SYNTH_ODDS}〜{CONFIDENT_MAX_SYNTH_ODDS}倍に限る・"
+             f"「{CONFIDENT_PRIORITY_KEYWORD}」を含む種別を優先）"
              if tl_rows else ""), flush=True)
     label = {(r["race_key"], r["rank_key"]):
              f"{r['venue_name']}{r['race_no']}R({r['rank_key']})" for r in rows}
     for rk, rank, v in sorted(usable, key=lambda t: -t[2])[:10]:
         print(f"    {metric}={v:.3f}  {label.get((rk, rank), rk)}", flush=True)
 
-    best = pick_best(scored)
+    # 🔴 2026-10-02: 型ラボは決勝系の候補があればその中で Σp 最大（`pick_best_type_lab`）。
+    best = (pick_best_type_lab(scored, {r["race_key"]: r.get("race_type") for r in rows})
+            if tl_rows and not tier_day else pick_best(scored))
     if best is None:
         # 🔴 **黙って終わらない。** 全件算出できないのは予測モデル未配備や
         #    「最低想定払戻が2万円に届く商品が1つも無い」といった異常。

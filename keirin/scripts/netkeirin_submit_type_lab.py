@@ -84,7 +84,8 @@ from src.netkeirin_client import (                           # noqa: E402
 )
 from src.notify.discord import send                          # noqa: E402
 from src.confident_pick import (                             # noqa: E402
-    pick_best, start_time_jst, tier_confident_score, type_lab_confident_score)
+    pick_best, pick_best_type_lab, start_time_jst, tier_confident_score,
+    type_lab_confident_score)
 from src.stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS   # noqa: E402
 from src.submission_skips import (                           # noqa: E402
     CANDIDATE_INVALID as SKIP_CANDIDATE_INVALID,
@@ -632,7 +633,7 @@ def _choose_confident(rows: list[dict]):
     🔴 判定は `src.confident_pick` が唯一の正本。段の商品がある日は
        `tier_confident_score`（固めの中から決勝系優先・無ければ18時前で Σp 最大）、
        無い日は `type_lab_confident_score`（**当たる回数を狙うプラン** ∧ 発走18時前
-       ∧ **合成2.5倍以上** の中で **Σp（的中確率）最大**・2026-09-20〜）。
+       ∧ **合成2.5〜3.5倍**（上限は 2026-10-02〜）の中で **Σp（的中確率）最大**・2026-09-20〜）。
        ここは母集団を渡すだけ。
     🔴 **入稿の前に呼ぶ**。netkeirin にアイコンが渡るのは入稿の瞬間だけなので、
        あとから選んでも付けられない（2026-09-04 豊橋3R）。
@@ -655,8 +656,12 @@ def _choose_confident(rows: list[dict]):
                    type_lab_confident_score(str(r["plan_key"]), r.get("legs") or [],
                                             r.get("start_at")))
                   for r in rows]
+        metric = "Σp(決勝系を優先)"
     ev = {(rk, pk): v for rk, pk, v in scored if v is not None}
-    best = pick_best(scored)
+    # 🔴 2026-10-02: 型ラボは決勝系の候補があればその中で Σp 最大（`pick_best_type_lab`）。
+    #    段の日は `tier_confident_score` 自体が決勝系を 1+Σp で上に置く。
+    best = (pick_best(scored) if tier_day else
+            pick_best_type_lab(scored, {str(r["race_key"]): r.get("race_type") for r in rows}))
     if best is None:
         print(f"[type_lab_submit] 自信あり: 候補なし（対象 {len(rows)}件 / "
               f"EV算出 {len(ev)}件）", flush=True)
