@@ -287,6 +287,20 @@ def test_type_lab_pick_takes_max_hit_prob_among_eligible(monkeypatch):
     assert m.pick("2026-09-02", dry_run=True) == ("20260902_11_02", "E_hit")
 
 
+def test_type_lab_pick_prefers_final_races(monkeypatch):
+    """🔴 2026-10-02: 型ラボの自信ありは決勝系（準決勝・チャレンジ決勝を含む）を優先する。"""
+    from scripts import pick_confident_race_wt as m
+
+    rows = [
+        {"race_key": "20261002_11_01", "rank_key": "C_hit", "venue_name": "A", "race_no": 1,
+         "legs": _legs(0.25, 6.0), "start_at": 0, "race_type": "予選"},
+        {"race_key": "20261002_11_09", "rank_key": "E_hit", "venue_name": "A", "race_no": 9,
+         "legs": _legs(0.15, 6.0), "start_at": 0, "race_type": "チャレンジ決勝"},
+    ]
+    monkeypatch.setattr(m, "_load_type_lab", lambda date: rows)
+    assert m.pick("2026-10-02", dry_run=True) == ("20261002_11_09", "E_hit")
+
+
 def test_confident_score_is_hit_probability_not_ev():
     """🔴 スコアは Σp であって EV ではない（`confident_ev` 列の中身が変わった）。"""
     from src.confident_pick import (legs_expected_value, legs_hit_probability,

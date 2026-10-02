@@ -55,6 +55,21 @@ netkeirin の「自信あり」アイコンは **1日に1つしか付けられ�
 選定が変わるのは 11 / 12 / 2 日（3〜5%）だけ。変わる日の旧選定（合成中央 3.7〜3.9倍）は
 探索 1/11・確認 1/12 しか当たらず、帯の中から選び直すと 4/11・2/12（実地は 2/2 → 0/2）。
 
+### 決勝系を優先する（2026-10-02・同日ユーザー決定）
+
+    候補 … 上と同じ（18時前 ∧ 2.5 <= 合成 <= 3.5 ∧ 当たる回数を狙うプラン）
+    順位 … **種別に「決勝」を含むレース（準決勝・チャレンジ決勝を含む）の候補があればその中で**
+           Σp 最大。無ければ全候補で Σp 最大（`pick_best_type_lab`）
+
+根拠（`docs/type_lab/confident_synth_cap_2026_10_02.md` §5）:
+- 売上（netkeirin 販売数・2026-08-27〜10-01）: 自信ありの1件あたり販売 **決勝系 13.8 ↔ 予選など 5.8**
+- 的中は変わらない: 表示的中 探索 30.1→29.9% / 確認 30.7→30.7%（ROI 85.4→88.0 / 85.8→101.8）。
+  決勝系に付く日が 26% → 約90% になる
+- 段（`tier_confident_score`）の「決勝系を優先」と同じ語（`CONFIDENT_PRIORITY_KEYWORD`）を使う
+
+🔴 **スコアの値（`confident_ev` 列）は Σp のまま**にしてある（段のように 1+Σp にしない）。
+   画面（`ReviewClient`）が「自信あり Σp ○○%」として表示するため。優先は選ぶ側で掛ける。
+
 ## 🔴🔴 型ラボ（2026-09-19〜）は行の `legs` だけで決める
 
 ユーザー指示（2026-09-19）:
@@ -518,6 +533,37 @@ def race_expected_value(race_key: str, bet_detail: str | None) -> float | None:
     if ev is None:
         log.warning("[confident] %s: 買い目の一部が盤面に無く EV を出せません", base)
     return ev
+
+
+def is_priority_race(race_type: str | None) -> bool:
+    """「自信あり」で優先するレース種別か（`CONFIDENT_PRIORITY_KEYWORD` の部分一致）。
+
+    >>> is_priority_race("決勝"), is_priority_race("準決勝"), is_priority_race("チャレンジ決勝")
+    (True, True, True)
+    >>> is_priority_race("特選"), is_priority_race(None)
+    (False, False)
+    """
+    return CONFIDENT_PRIORITY_KEYWORD in str(race_type or "")
+
+
+def pick_best_type_lab(candidates: list[tuple[str, str, float | None]],
+                       race_type_of: Mapping[str, str | None]) -> tuple[str, str] | None:
+    """型ラボの「自信あり」: **決勝系の候補があればその中で**、無ければ全体で Σp 最大（2026-10-02）。
+
+    candidates は `(race_key, plan_key, type_lab_confident_score の値)`。
+    race_type_of は race_key → レース種別。
+
+    >>> c = [("a", "C_hit", 0.40), ("b", "E_hit", 0.30), ("c", "B_hit", None)]
+    >>> pick_best_type_lab(c, {"a": "予選", "b": "準決勝", "c": "決勝"})   # c は候補外
+    ('b', 'E_hit')
+    >>> pick_best_type_lab(c, {"a": "予選", "b": "特選"})                 # 決勝系が無ければ Σp 最大
+    ('a', 'C_hit')
+    >>> pick_best_type_lab([("a", "C_hit", None)], {"a": "決勝"}) is None
+    True
+    """
+    usable = [c for c in candidates if c[2] is not None]
+    prio = [c for c in usable if is_priority_race(race_type_of.get(c[0]))]
+    return pick_best(prio or usable)
 
 
 def pick_best(candidates: list[tuple[str, str, float | None]]
