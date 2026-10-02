@@ -159,10 +159,11 @@ def test_every_plan_has_a_title_and_body():
 def test_every_type_has_a_view_and_note():
     """段の商品（type_label "T"）と逃げ先頭ライン（"L"・2026-09-24）は型ではないので
     型の網羅から外し、キーごとの見解を要求する。"""
-    from src.type_lab import LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
+    from src.type_lab import FLAT_LEAD_PLAN_KEYS, LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
     from src.type_lab_submission import PLAN_NOTES, PLAN_VIEWS
 
-    not_types = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS
+    # 混戦の逃げ先頭（"L"・2026-10-02・紙上だけ）も同じ扱い。
+    not_types = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS | FLAT_LEAD_PLAN_KEYS
     types = {p.type_label for k, p in PLANS.items() if k not in not_types}
     assert types <= set(TYPE_VIEWS) and types <= set(TYPE_NOTES)
     assert "T" not in TYPE_VIEWS and "T" not in TYPE_NOTES

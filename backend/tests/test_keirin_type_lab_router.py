@@ -35,7 +35,8 @@ def test_lists_are_not_empty():
     # 段分け商品 固め/広め/荒れ（T_firm/T_mid/T_upset）を先頭に足して 26（2026-09-15）。
     # 一軸（T_axis）を広めと荒れの間に足して 27（2026-09-15）。
     # 逃げ先頭ライン（L_lead・検証中・入稿しない）を末尾に足して 28（2026-09-24）。
-    assert len(PLAN_ORDER) == 28
+    # 混戦の逃げ先頭（L_flat・紙上の検証だけ）を末尾に足して 29（2026-10-02）。
+    assert len(PLAN_ORDER) == 29
     assert len(set(PLAN_ORDER)) == len(PLAN_ORDER), "表示順に重複がある"
     assert CURRENT_RANK_ORDER[0] == "RANK_7H2" and CURRENT_RANK_ORDER[-1] == "RANK_7M1"
 

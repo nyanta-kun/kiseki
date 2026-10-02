@@ -98,7 +98,8 @@ from src.submission_skips import (                           # noqa: E402
 )
 from src.marquee import is_fill_target                       # noqa: E402
 from src.type_lab import (                                  # noqa: E402
-    HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, LINE_LEAD_PLAN_KEYS, SELLABLE_PLAN_KEYS,
+    FLAT_LEAD_PLAN_KEYS, HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, LINE_LEAD_PLAN_KEYS,
+    SELLABLE_PLAN_KEYS,
     TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
     tier_realized_min_payout,
     highpay_plan_for, sell_plans_for)
@@ -274,7 +275,8 @@ def _fetch_rows(day: str) -> tuple[list, dict[tuple[str, str], tuple]]:
         #    `build_type_lab_picks --only-plans L_lead` で後から足した行は `generated_at` が
         #    新しいので、その型が「最新」になると同じレースの型ラボの行が古い行扱いになり
         #    売られなくなる。`L_lead` は型と無関係に組むので、型の正本にはしない。
-        if str(d["plan_key"]) in LINE_LEAD_PLAN_KEYS:
+        #    混戦の逃げ先頭（`L_flat`・紙上だけ）も型と無関係に組むので同じ扱い。
+        if str(d["plan_key"]) in LINE_LEAD_PLAN_KEYS | FLAT_LEAD_PLAN_KEYS:
             continue
         key = (str(d["race_key"]), str(d["mode"]))
         gen = d.get("generated_at")

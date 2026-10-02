@@ -639,6 +639,8 @@ class RaceShape:
     #: 逃げ先頭ライン（`L_lead`）の買い目 `(先頭, 番手, 3着)`。条件を満たすラインが
     #: 無ければ空（＝そのレースに `L_lead` の行は作られない）。`line_lead_legs` の docstring。
     lead_legs: tuple[tuple[int, int, int], ...] = ()
+    #: 混戦の逃げ先頭ライン（`L_flat`・紙上の検証だけ）の買い目。`flat_lead_legs` の docstring。
+    flat_legs: tuple[tuple[int, int, int], ...] = ()
 
 
 def _line_members(line_group: Mapping[int, object], car: int) -> list[int]:
@@ -720,7 +722,8 @@ def race_shape(top3_probs: Mapping[int, float], line_group: Mapping[int, object]
     lines = _lines_of(line_group, line_pos)
     return RaceShape(label, axis_sum, s, gap, firm, order, pw_ent, lines,
                      _strongest_pair(lines, top3_probs), win_top, win_gap,
-                     line_lead_legs(top3_probs, lines, style, race_point))
+                     line_lead_legs(top3_probs, lines, style, race_point),
+                     flat_lead_legs(top3_probs, lines, style, race_point, axis_sum))
 
 
 def type_label_of(axis_sum: float, arare: int) -> str:
@@ -865,14 +868,19 @@ def _rank_desc(values: Mapping[int, float], car: int) -> int:
 def line_lead_legs(top3_probs: Mapping[int, float],
                    lines: Sequence[Sequence[int]],
                    style: Mapping[int, str],
-                   race_point: Mapping[int, float]) -> tuple[tuple[int, int, int], ...]:
+                   race_point: Mapping[int, float],
+                   lead_rp_rank_min: int | None = None,
+                   ) -> tuple[tuple[int, int, int], ...]:
     """逃げ先頭ライン（`L_lead`）の買い目 `(先頭, 番手, 3着)` を返す。
 
     条件（すべて朝の出走表で決まる）:
       1. 7車立てで、全車の競走得点と3着内率がある
       2. 得点1位の居るラインが `LINE_LEAD_RP1_LINE_MAX` 車以下（単騎なら1車）
       3. 2車以上のラインのうち **得点1位が居ない**もので、先頭が `LINE_LEAD_STYLE`・
-         先頭の競走得点がレース内 `LINE_LEAD_LEAD_RP_RANK_MIN` 位以下
+         先頭の競走得点がレース内 `lead_rp_rank_min` 位以下
+         （`None` なら呼んだ時点の `LINE_LEAD_LEAD_RP_RANK_MIN`。`1` を渡すとこの条件が
+         消える＝`L_flat`。🔴 既定値に定数を直接書かない——定義時に束縛され、定数を
+         差し替えても効かなくなる）
       4. 3着は先頭・番手以外。ただし次を外す:
          ・**第三のライン**（対象ラインでも得点1位のラインでもない2車以上のライン）の番手以降
            （発生倍率 0.99 / 1.00 ＝偏りなし・回収率 83 / 90%）
@@ -892,6 +900,8 @@ def line_lead_legs(top3_probs: Mapping[int, float],
     >>> line_lead_legs(p3, ((1, 2, 3), (5, 6), (4, 7)), st2, rp)   # 先頭が逃でない
     ()
     """
+    if lead_rp_rank_min is None:
+        lead_rp_rank_min = LINE_LEAD_LEAD_RP_RANK_MIN
     cars = list(top3_probs)
     if len(cars) != LINE_LEAD_N_ENTRIES:
         return ()
@@ -914,7 +924,7 @@ def line_lead_legs(top3_probs: Mapping[int, float],
         lead, ban = int(ln[0]), int(ln[1])
         if str(style.get(lead, "")) != LINE_LEAD_STYLE:
             continue
-        if lead not in rp or _rank_desc(rp, lead) < LINE_LEAD_LEAD_RP_RANK_MIN:
+        if lead not in rp or _rank_desc(rp, lead) < lead_rp_rank_min:
             continue
         for c in sorted(cars):
             if c in (lead, ban):
@@ -928,6 +938,49 @@ def line_lead_legs(top3_probs: Mapping[int, float],
                 continue
             out.append((lead, ban, int(c)))
     return tuple(out)
+
+
+# ── 混戦の逃げ先頭ライン（`L_flat`・2026-10-02 新設・**紙上の検証だけ**）──────────────────
+#
+# 🔴🔴 **売らない。** 行を作って採点するだけ（2026-10-02 ユーザー決定「紙上で検証を実施」）。
+#    `sell_plans_for` / `SELLABLE_PLAN_KEYS` にも、`L_lead` を売る段（`LINE_LEAD_PLAN_KEYS`）
+#    にも入れない。固定: `tests/test_type_lab_flat_lead.py`。
+#
+# 狙い: 指数の上位2車の3着内率が抜けていない（`axis_sum` が低い）混戦では、型ラボの
+#    現行商品（F_hit / F_sign / E_hit / D_hit）が同じレースで 68.0 / 75.7%（探索 / 確認）と
+#    最低合格の 75% を割る。そこで `L_lead` の土台（得点1位の居ないラインの逃げ先頭→番手→3着）
+#    から**先頭の得点順位の条件を外した形**を出すと 112.8 / 143.5%（同じレース）。
+#    ⚠️ 区切りと形は両窓を見ながら選んだ（約30区分）。**前向きの記録で判定する**
+#    （事前登録 `docs/type_lab/flat_lead_2026_10_02.md`）。
+#: 混戦の上限（`axis_sum` がこれ**未満**）。探索窓（2024-07〜2025-12・7車 25,833R）の下位20%点。
+FLAT_LEAD_AXIS_SUM_MAX = 1.327
+#: 先頭の競走得点順位の下限。1 ＝条件なし（`L_lead` は 5）。
+FLAT_LEAD_LEAD_RP_RANK_MIN = 1
+
+
+def flat_lead_legs(top3_probs: Mapping[int, float],
+                   lines: Sequence[Sequence[int]],
+                   style: Mapping[int, str],
+                   race_point: Mapping[int, float],
+                   axis_sum: float) -> tuple[tuple[int, int, int], ...]:
+    """混戦の逃げ先頭ライン（`L_flat`）の買い目。混戦でなければ空。
+
+    `axis_sum < FLAT_LEAD_AXIS_SUM_MAX` のときだけ、`line_lead_legs` を先頭の得点順位の
+    条件なし（`FLAT_LEAD_LEAD_RP_RANK_MIN`）で呼ぶ。それ以外の条件（7車・得点1位のラインが
+    3車以下・先頭が逃・3着の除外）は `L_lead` と同じ。
+
+    >>> p3 = {1: .9, 2: .5, 3: .6, 4: .4, 5: .3, 6: .2, 7: .1}
+    >>> rp = {1: 100.0, 2: 95.0, 3: 94.0, 4: 93.0, 5: 92.0, 6: 79.0, 7: 70.0}
+    >>> st = {1: "逃", 2: "追", 3: "追", 4: "両", 5: "逃", 6: "追", 7: "追"}
+    >>> flat_lead_legs(p3, ((1, 2, 3), (5, 6), (4, 7)), st, rp, 1.30)  # 先頭5は得点5位でも可
+    ((5, 6, 1), (5, 6, 2), (5, 6, 3), (5, 6, 4))
+    >>> flat_lead_legs(p3, ((1, 2, 3), (5, 6), (4, 7)), st, rp, 1.327)  # 混戦でない
+    ()
+    """
+    if not float(axis_sum) < FLAT_LEAD_AXIS_SUM_MAX:
+        return ()
+    return line_lead_legs(top3_probs, lines, style, race_point,
+                          lead_rp_rank_min=FLAT_LEAD_LEAD_RP_RANK_MIN)
 
 
 # ───────────────────────────── 買い目 ─────────────────────────────
@@ -1335,6 +1388,14 @@ PLANS["L_lead"] = Plan("L_lead", "L", "trifecta", "line_lead", 0, alloc="equal",
 #: 逃げ先頭ラインのプラン（表示順）。**`sell_plans_for` には入れない**（売るのは入稿スクリプトの別の段）。
 LINE_LEAD_PLAN_ORDER: tuple[str, ...] = ("L_lead",)
 LINE_LEAD_PLAN_KEYS: frozenset[str] = frozenset(LINE_LEAD_PLAN_ORDER)
+
+# ── 混戦の逃げ先頭ライン（**紙上の検証だけ**・売らない）。条件と根拠は `flat_lead_legs` の上の節 ──
+PLANS["L_flat"] = Plan("L_flat", "L", "trifecta", "flat_lead", 0, alloc="equal",
+                       note="混戦の逃げ先頭: 軸2車の3着内率合計が低い混戦で、得点1位でない"
+                            "逃げ先頭→番手→3着・1レース1万円均等（紙上の検証だけ・売らない）")
+#: 🔴 **`LINE_LEAD_PLAN_KEYS` とは分ける。** あちらに入れると `L_lead` を売る段が拾って売ってしまう。
+FLAT_LEAD_PLAN_ORDER: tuple[str, ...] = ("L_flat",)
+FLAT_LEAD_PLAN_KEYS: frozenset[str] = frozenset(FLAT_LEAD_PLAN_ORDER)
 
 # ── 段の入稿ゲートを「当たったときの払戻の悪い側」で判定する（2026-09-15 ユーザー決定）──
 #
@@ -1797,7 +1858,7 @@ def plans_for(type_label: str, n_entries: int = 7,
        `build_legs` が組まない＝行があること自体が「一軸で売れる」印になる。
 
     >>> [p.key for p in plans_for("F")]
-    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_axis', 'T_upset', 'L_lead']
+    ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big', 'T_firm', 'T_mid', 'T_axis', 'T_upset', 'L_lead', 'L_flat']
     >>> [p.key for p in plans_for("F", 9, "決勝")]
     ['F_hit', 'F_pay', 'F_line', 'F_sign', 'F_big']
     >>> [p.key for p in plans_for("F", 9, "準決勝")]
@@ -1812,6 +1873,8 @@ def plans_for(type_label: str, n_entries: int = 7,
     #    条件を満たすラインが無いレースでは `build_legs` が None を返し、行は作られない。
     if int(n_entries or 0) == LINE_LEAD_N_ENTRIES:
         own += [PLANS[k] for k in LINE_LEAD_PLAN_ORDER]
+        # 混戦の逃げ先頭（`L_flat`）も型に関係なく組む（紙上の検証だけ・売らない）。
+        own += [PLANS[k] for k in FLAT_LEAD_PLAN_ORDER]
     return own
 
 
@@ -1944,6 +2007,9 @@ def build_legs(shape: RaceShape, plan: Plan,
     #    予測オッズの無い目は配分できないので外す（板は7車の全210目を持つので通常は落ちない）。
     if plan.structure == "line_lead":
         legs = [c for c in shape.lead_legs if c in pred_odds]
+        return legs or None
+    if plan.structure == "flat_lead":
+        legs = [c for c in shape.flat_legs if c in pred_odds]
         return legs or None
 
     order = list(shape.order)
@@ -3239,7 +3305,8 @@ def rule_version(n_entries: int = 7) -> str:
          # 🔴 **逃げ先頭ライン（`L_lead`）は入れない**（2026-09-24）。検証用の行を1種類
          #    足しただけで既存の全プランの版が割れると、夜間レビューの世代が無意味に
          #    分かれる。`L_lead` の行は `line_lead_rule_version()` を別に持つ。
-         for k, v in sorted(PLANS.items()) if k not in LINE_LEAD_PLAN_KEYS}
+         for k, v in sorted(PLANS.items())
+         if k not in LINE_LEAD_PLAN_KEYS and k not in FLAT_LEAD_PLAN_KEYS}
         | {"_axis": AXIS_SUM_FIRM, "_behind": BEHIND_MID, "_budget": BUDGET}
 
         # 🔴 看板枠は**プランの属性だけでは表せない**（計画払戻 T が `build_legs` の
@@ -3318,6 +3385,24 @@ def rule_version(n_entries: int = 7) -> str:
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()[:12]
+
+
+def flat_lead_rule_version() -> str:
+    """混戦の逃げ先頭（`L_flat`）の行の版。先頭に `F` を付けて見分ける。
+
+    `rule_version` から外してあるので、条件（`FLAT_LEAD_*` / `LINE_LEAD_*`）や配分を
+    動かしたときはこちらで版が割れる。
+    """
+    import hashlib
+    import json
+    p = PLANS["L_flat"]
+    payload = {"plan": [p.bet_type, p.structure, p.alloc, BUDGET, UNIT],
+               "cond": [FLAT_LEAD_AXIS_SUM_MAX, FLAT_LEAD_LEAD_RP_RANK_MIN,
+                        LINE_LEAD_N_ENTRIES, LINE_LEAD_RP1_LINE_MAX, LINE_LEAD_STYLE,
+                        LINE_LEAD_THIRD_DROP_RANK]}
+    return "F" + hashlib.sha1(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:11]
 
 
 def line_lead_rule_version() -> str:
