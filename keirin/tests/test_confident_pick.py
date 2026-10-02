@@ -191,7 +191,7 @@ def test_confident_score_excludes_evening_and_later():
     from src.confident_pick import CONFIDENT_BEFORE_HOUR, type_lab_confident_score
 
     assert CONFIDENT_BEFORE_HOUR == 18
-    legs = _legs(0.1, 10)                      # 合成 5.0倍
+    legs = _legs(0.1, 6)                       # 合成 3.0倍
     assert type_lab_confident_score("C_hit", legs, 0) is not None            # 09:00 JST
     assert type_lab_confident_score("C_hit", legs, 8 * _H) is not None       # 17:00 JST
     assert type_lab_confident_score("C_hit", legs, 9 * _H) is None           # 18:00 JST（境界は外）
@@ -209,6 +209,23 @@ def test_confident_score_requires_synthetic_odds_floor():
     assert type_lab_confident_score("C_hit", _legs(0.1, 4.9), 0) is None
 
 
+def test_confident_score_caps_synthetic_odds():
+    """🔴 合成 3.5倍まで（2026-10-02 ユーザー指示「合成 2.5〜3.5 程度で的中率を期待できるところ」）。
+
+    当日の久留米3R（`A_hit`・合成 4.37倍）は本命の1着率 73% のレースで、安い人気の目を
+    買わないため Σp は大きいのに人気決着で外れた。上限はこの型を候補から外す。
+    """
+    from src.confident_pick import CONFIDENT_MAX_SYNTH_ODDS, type_lab_confident_score
+
+    assert CONFIDENT_MAX_SYNTH_ODDS == 3.5
+    # 2点とも7.0倍 → 合成ちょうど3.5倍。「3.5倍まで」なので候補に入る
+    assert type_lab_confident_score("C_hit", _legs(0.1, 7.0), 0) is not None
+    # 2点とも7.1倍 → 合成 3.55倍
+    assert type_lab_confident_score("C_hit", _legs(0.1, 7.1), 0) is None
+    # Σp がいくら大きくても上限を超えれば候補外（Σp 最大の順位より先に効く）
+    assert type_lab_confident_score("A_hit", _legs(0.3, 8.74), 0) is None
+
+
 def test_confident_score_drops_races_without_start_time():
     """🔴 発走時刻が読めないレースは候補にしない。
 
@@ -217,7 +234,7 @@ def test_confident_score_drops_races_without_start_time():
     """
     from src.confident_pick import type_lab_confident_score
 
-    legs = _legs(0.1, 10)
+    legs = _legs(0.1, 6)
     assert type_lab_confident_score("C_hit", legs, None) is None
     assert type_lab_confident_score("C_hit", legs, "") is None
     assert type_lab_confident_score("C_hit", legs, "abc") is None
@@ -249,12 +266,15 @@ def test_type_lab_pick_takes_max_hit_prob_among_eligible(monkeypatch):
         # 候補。合成ちょうど 2.5倍（5.0倍×2点）・Σp = 0.50 ← 最大
         {"race_key": "20260902_11_02", "rank_key": "E_hit", "venue_name": "A",
          "race_no": 2, "legs": _legs(0.25, 5.0), "start_at": 0},
-        # 候補。Σp = 0.20（EV なら 2.0 で最大だが選ばれない）
+        # 候補。合成ちょうど 3.5倍・Σp = 0.40（EV なら 1.4 で最大だが選ばれない）
         {"race_key": "20260902_11_03", "rank_key": "B_hit", "venue_name": "A",
-         "race_no": 3, "legs": _legs(0.10, 20), "start_at": 0},
-        # 候補。Σp = 0.24
+         "race_no": 3, "legs": _legs(0.20, 7.0), "start_at": 0},
+        # 候補。合成 3.0倍・Σp = 0.24
         {"race_key": "20260902_11_04", "rank_key": "D_hit", "venue_name": "A",
-         "race_no": 4, "legs": _legs(0.12, 10), "start_at": 8 * _H},
+         "race_no": 4, "legs": _legs(0.12, 6.0), "start_at": 8 * _H},
+        # 合成 10倍＞上限 3.5 → 候補外（2026-10-02）
+        {"race_key": "20260902_11_05", "rank_key": "B_hit", "venue_name": "A",
+         "race_no": 5, "legs": _legs(0.10, 20), "start_at": 0},
     ]
     monkeypatch.setattr(m, "_load_type_lab", lambda date: rows)
 
@@ -272,9 +292,9 @@ def test_confident_score_is_hit_probability_not_ev():
     from src.confident_pick import (legs_expected_value, legs_hit_probability,
                                     type_lab_confident_score)
 
-    legs = _legs(0.1, 10)                      # 2点・合成5.0倍
+    legs = _legs(0.1, 6)                       # 2点・合成3.0倍
     assert legs_hit_probability(legs) == pytest.approx(0.2)
-    assert legs_expected_value(legs) == pytest.approx(1.0)
+    assert legs_expected_value(legs) == pytest.approx(0.6)
     assert type_lab_confident_score("C_hit", legs, 0) == pytest.approx(0.2)
 
 
@@ -404,7 +424,7 @@ def test_confident_score_excludes_payout_oriented_plans():
     """
     from src.confident_pick import type_lab_confident_score
 
-    legs = _legs(0.1, 10)                      # 条件①②は満たす買い目
+    legs = _legs(0.1, 6)                       # 条件①②は満たす買い目（合成3.0倍）
     for plan in ("F_sign", "F_pay", "A_ana", "B_sign", "C_big", "D_sign"):
         assert type_lab_confident_score(plan, legs, 0) is None, plan
     for plan in ("A_hit", "B_hit", "C_hit", "D_hit", "E_hit", "F_hit"):
@@ -418,7 +438,7 @@ def test_confident_plans_are_an_allow_list():
     """
     from src.confident_pick import TYPE_LAB_CONFIDENT_PLANS, type_lab_confident_score
 
-    assert type_lab_confident_score("Z_new", _legs(0.1, 10), 0) is None
+    assert type_lab_confident_score("Z_new", _legs(0.1, 6), 0) is None
     assert "F_sign" not in TYPE_LAB_CONFIDENT_PLANS
     assert "A_ana" not in TYPE_LAB_CONFIDENT_PLANS
 

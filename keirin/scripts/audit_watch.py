@@ -139,6 +139,7 @@ def live_config() -> dict[str, Any]:
         cfg[f"type_lab.{name}"] = _val(TL, name)
     cfg["type_lab.PLANS"] = sorted(getattr(TL, "PLANS", {}))
     for name in ("CONFIDENT_BEFORE_HOUR", "CONFIDENT_MIN_SYNTH_ODDS",
+                 "CONFIDENT_MAX_SYNTH_ODDS",   # 2026-10-02 追加（基準には無い＝変更として出る）
                  "CONFIDENT_PRIORITY_KEYWORD", "TIER_CONFIDENT_PLANS",
                  "TYPE_LAB_CONFIDENT_PLANS"):
         cfg[f"confident.{name}"] = _val(CP, name)

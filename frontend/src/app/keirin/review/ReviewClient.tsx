@@ -675,7 +675,7 @@ function RaceCard({ p, busy, closed, onApprove, onPublish,
                「なぜこのレースか」を後から読めるように全件へ残している。 */}
         {p.confident_ev != null && (
           <div>
-            <span className="text-gray-500" title="「自信あり」の選定に使った的中確率 Σp（買い目のどれかが当たる確率）。発走18時前・合成2.5倍以上のレースの中で最大の1件に付く。">
+            <span className="text-gray-500" title="「自信あり」の選定に使った的中確率 Σp（買い目のどれかが当たる確率）。発走18時前・合成2.5〜3.5倍のレースの中で最大の1件に付く。">
               自信あり Σp
             </span>{" "}
             {(p.confident_ev * 100).toFixed(1)}%

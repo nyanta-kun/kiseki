@@ -32,6 +32,29 @@ netkeirin の「自信あり」アイコンは **1日に1つしか付けられ�
    **「1つしか無い枠をどこに置くか」という相対比較**に限られる。
    絶対値が 1.0 を超えているかどうかには意味が無い。
 
+## 🔴🔴 合成オッズに上限 3.5倍を置く（2026-10-02 ユーザー指示）
+
+> 本日、「自信あり」フラグを久留米3Rとしていましたが、人気決着の上、外しています。
+> あまりに人気決着となるものはあまり購入者の購入意欲をそそりません。
+> **レースの合成オッズが 2.5〜3.5 程度で的中率を期待できるところ**にするのが良い。
+
+    候補 … 発走 JST < 18時 ∧ **2.5 <= 合成オッズ <= 3.5**（`CONFIDENT_MAX_SYNTH_ODDS`）
+    順位 … Σp 最大（変更なし）
+
+当日の久留米3R（`20261002_83_03` `A_hit`）は本命の1着率 73% のレースで、買い目の合成は
+**4.37倍**。5万円ダッチの `A_hit` は安い人気の目を買わないので、Σp は大きいのに
+人気決着で外れる形になる。上限 3.5 はこの型を候補から外す。
+
+実測（`type_lab_picks` 採点済み・本番関数で1日1件・`docs/type_lab/confident_synth_cap_2026_10_02.md`）:
+
+| 腕 | 探索365日 | 確認238日 | 実地36日 |
+|---|--:|--:|--:|
+| 合成 >= 2.5（〜2026-10-02） | 29.3%・ROI 82.2 | 30.3%・85.0 | 47.2%・125.0 |
+| **2.5〜3.5（現行）** | **30.1%・85.4** | **30.7%・85.8** | 41.7%・103.6 |
+
+選定が変わるのは 11 / 12 / 2 日（3〜5%）だけ。変わる日の旧選定（合成中央 3.7〜3.9倍）は
+探索 1/11・確認 1/12 しか当たらず、帯の中から選び直すと 4/11・2/12（実地は 2/2 → 0/2）。
+
 ## 🔴🔴 型ラボ（2026-09-19〜）は行の `legs` だけで決める
 
 ユーザー指示（2026-09-19）:
@@ -133,6 +156,12 @@ CONFIDENT_BEFORE_HOUR = NIGHT_FROM_HOUR
 #:    3.0 のときは `>=` か `>` で `B_hit` が丸ごと入るか出るかが変わったが、
 #:    2.5 では余裕があるので境界に張り付くプランは無い。
 CONFIDENT_MIN_SYNTH_ODDS = 2.5
+
+#: 「自信あり」の候補にする**合成オッズの上限**（倍・この値ちょうどは候補に入る）。
+#: ユーザー指示 2026-10-02「合成 2.5〜3.5 程度で的中率を期待できるところ」。
+#: Σp 最大で選ばれる合成は中央 2.8倍前後なので、上限に当たるのは全体の 3〜5% の日だけ
+#: （モジュール docstring の「合成オッズに上限 3.5倍を置く」）。
+CONFIDENT_MAX_SYNTH_ODDS = 3.5
 
 
 def start_hour_jst(start_at: str | int | None) -> float | None:
@@ -275,17 +304,21 @@ def type_lab_confident_score(plan_key, legs, start_at) -> float | None:
     候補の条件:
       ⓪ プランが `TYPE_LAB_CONFIDENT_PLANS`（＝当たる回数を狙う商品・2026-09-20）
       ① 発走 JST < `CONFIDENT_BEFORE_HOUR`（18時）
-      ② 合成オッズ >= `CONFIDENT_MIN_SYNTH_ODDS`（2.5倍）
+      ② `CONFIDENT_MIN_SYNTH_ODDS`（2.5倍） <= 合成オッズ <= `CONFIDENT_MAX_SYNTH_ODDS`（3.5倍）
 
     🔴 **発走時刻が読めないレースは候補にしない。** 「分からないものは通す」を
        ここで採ると、時刻の取れない開催だけが終日どこからでも選ばれてしまい
        ①の意味が消える（ゲートの「通す」思想は*商品を落とさない*ためのもので、
        *1つしかない枠の取り合い*には当てはまらない）。
 
-    >>> legs = [{"prob": 0.1, "stake": 5000, "pred_odds": 10},
-    ...         {"prob": 0.1, "stake": 5000, "pred_odds": 20}]
-    >>> round(type_lab_confident_score("C_hit", legs, 0), 4)   # 09:00 JST・合成 6.67倍
+    >>> legs = [{"prob": 0.1, "stake": 5000, "pred_odds": 6},
+    ...         {"prob": 0.1, "stake": 5000, "pred_odds": 6}]
+    >>> round(type_lab_confident_score("C_hit", legs, 0), 4)   # 09:00 JST・合成 3.0倍
     0.2
+    >>> type_lab_confident_score("C_hit", [{"prob": 0.3, "stake": 5000, "pred_odds": 8},
+    ...                                    {"prob": 0.1, "stake": 5000, "pred_odds": 8}],
+    ...                          0) is None                      # 合成 4.0倍＞上限 3.5
+    True
     >>> type_lab_confident_score("F_sign", legs, 0) is None    # 払戻狙いには付けない
     True
     >>> type_lab_confident_score("C_hit", legs, 0 + 9 * 3600) is None   # 18:00 JST
@@ -314,6 +347,8 @@ def type_lab_confident_score(plan_key, legs, start_at) -> float | None:
     legs = split_legs_by_role(legs) or legs
     synth = synthetic_odds(legs)
     if synth is None or synth < CONFIDENT_MIN_SYNTH_ODDS:
+        return None
+    if synth > CONFIDENT_MAX_SYNTH_ODDS:
         return None
     return legs_hit_probability(legs)
 
