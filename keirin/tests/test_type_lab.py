@@ -573,8 +573,9 @@ def test_nine_car_final_match_is_exact_not_substring():
 
 def test_nine_car_other_types_are_unchanged():
     """型A〜E は9車でも 7車と同じ買い方（絞るのは型F だけ）。"""
-    from src.type_lab import LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
-    seven_only = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS
+    from src.type_lab import FLAT_LEAD_PLAN_KEYS, LINE_LEAD_PLAN_KEYS, TIER_PLAN_KEYS
+    # 混戦の逃げ先頭（2026-10-02・紙上だけ）も7車だけ。
+    seven_only = TIER_PLAN_KEYS | LINE_LEAD_PLAN_KEYS | FLAT_LEAD_PLAN_KEYS
     for t in "ABCDE":
         for rt in ("決勝", "準決勝", "一予選", None):
             # 🔴 7車だけ段の3プランと逃げ先頭ライン（2026-09-24）を足している。型のプランだけで比べる。

@@ -40,8 +40,9 @@ sys.path.insert(0, str(REPO))
 from src.database import get_connection            # noqa: E402
 from src.entry_health import missing_market_inputs  # noqa: E402
 from src.type_lab import (                          # noqa: E402
-    BUDGET, LINE_LEAD_PLAN_KEYS, PLANS, ROLE_BASE, add_upper_band, allocate,
-    build_legs, build_with_gate_fallback, line_lead_rule_version,
+    BUDGET, FLAT_LEAD_PLAN_KEYS, LINE_LEAD_PLAN_KEYS, PLANS, ROLE_BASE, add_upper_band,
+    allocate, build_legs, build_with_gate_fallback, flat_lead_rule_version,
+    line_lead_rule_version,
     mean_expected_payout, min_expected_payout, plans_for, race_shape, rule_version,
 )
 
@@ -147,8 +148,11 @@ def rows_for_race(meta: dict, cars: dict, tf_odds: dict, tf_prob: dict,
             pred_mean_payout=gate_mean,
             pred_min_payout=gate_min,
             # 🔴 逃げ先頭ライン（`L_lead`）は別の版を持つ（`type_lab.line_lead_rule_version`）。
+            #    混戦の逃げ先頭（`L_flat`・紙上だけ）も同じ理由で別の版（`flat_lead_rule_version`）。
             rule_version=(line_lead_rule_version()
                           if plan_used.key in LINE_LEAD_PLAN_KEYS
+                          else flat_lead_rule_version()
+                          if plan_used.key in FLAT_LEAD_PLAN_KEYS
                           else rule_version(N_ENTRIES)),
         ))
     return out
