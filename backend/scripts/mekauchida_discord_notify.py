@@ -98,7 +98,9 @@ LEFT JOIN sekito.anagusa a
        WHEN '04' THEN 'JNGT' WHEN '05' THEN 'JTOK' WHEN '06' THEN 'JNKY'
        WHEN '07' THEN 'JCKO' WHEN '08' THEN 'JKYO' WHEN '09' THEN 'JHSN'
        WHEN '10' THEN 'JKKR' END
+LEFT JOIN keiba.race_results rr2 ON rr2.race_id = r.id AND rr2.horse_id = re.horse_id
 WHERE r.id = ANY(:race_ids)
+  AND COALESCE(rr2.abnormality_code, 0) NOT IN (1, 2)  -- 取消・除外馬は穴ぐさ一致でも送らない
 """)
 
 
@@ -185,6 +187,7 @@ def main() -> int:
             anagusa_rank=row.anagusa_rank,
         )
 
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     notified = load_state(today)
     to_send: list[MatchedPick] = []
     with SNAPSHOT_FILE.open("a") as snap:
@@ -192,8 +195,12 @@ def main() -> int:
             site = site_races.get(key)
             if site is None:
                 continue
-            matches = match_race(site, horses.get(db_race.id, {}))
+            race_horses = horses.get(db_race.id, {})
+            matches = match_race(site, race_horses)
             final = key in final_keys
+            if final and not any(h.index_rank is not None for h in race_horses.values()):
+                # 「一致なし」と「指数が算出されていない」を区別する
+                log(f"WARN: {key[0]}{key[1]}R の指数が DB に無い（穴ぐさ一致だけで判定）")
             snap.write(
                 json.dumps(
                     {
