@@ -40,6 +40,17 @@ from src.services.mekauchida_notify import (
     parse_post_at,
 )
 
+MENTION = "@here"
+"""通知の先頭に付けるメンション（スマホにプッシュ通知を鳴らすため）。
+
+Webhook は ``allowed_mentions`` を省くと @here / @everyone を解釈する。
+"""
+
+
+def with_mention(message: str, mention: str) -> str:
+    """本文の先頭にメンション行を付ける（空なら付けない）。"""
+    return f"{mention}\n{message}" if mention else message
+
 
 @dataclass(frozen=True)
 class MonitorConfig:
@@ -59,6 +70,7 @@ class MonitorConfig:
     snapshot_file: Path
     title: str  # 通知の見出し
     sql_params: dict[str, Any] = field(default_factory=dict)
+    mention: str = MENTION
 
 
 def _log(cfg: MonitorConfig, msg: str) -> None:
@@ -192,7 +204,7 @@ def run_once(
             _log(cfg, f"最終監視 {len(final_keys)}R: 一致なし")
         return 0
 
-    message = build_message(to_send, now, cfg.title)
+    message = with_mention(build_message(to_send, now, cfg.title), cfg.mention)
     print(message)
     if dry_run:
         _log(cfg, "--dry-run のため送信しない")
