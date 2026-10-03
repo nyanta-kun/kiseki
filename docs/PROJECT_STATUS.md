@@ -110,6 +110,9 @@
 - 5カテゴリ推奨は**実稼働を停止**し、コードは参考として保持（#413・#414）。
 - 画面の印は **激走 / 見送り だけ**（2026-09-28）。正本は `src/indices/chihou_gekisou.py`。
   注目馬★・スイートスポットの赤字・複穴・購入指針・EV ランクは撤去（回収率の根拠なし）。
+- **メカウチダ地方の買い目 × 指数5位内 の Discord 通知**（2026-10-03）。中央版と同じ実行ループ
+  （`src/services/mekauchida_runner.py`）。VPS cron `*/10 9-21` の `scripts/chihou_mekauchida_notify.sh`。
+  🔴 **穴ぐさは地方に無い**ので一致は指数だけ。指数は `version = CHIHOU_COMPOSITE_VERSION`。
   前向き記録（`chihou.place_picks`）は稼働中で、激走の判定入力もここから取る。
   経緯と数値は `docs/chihou_rebuild_2026_08.md` 18章
 - オッズ鮮度バッジ（`chihou_odds_freshness.py`）が稼働中。
