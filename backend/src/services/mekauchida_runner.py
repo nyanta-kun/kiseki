@@ -40,8 +40,8 @@ from src.services.mekauchida_notify import (
     parse_post_at,
 )
 
-MENTION = "@here"
-"""通知の先頭に付けるメンション（スマホにプッシュ通知を鳴らすため）。
+MENTION = "@everyone"
+"""通知の先頭に付けるメンション（オフラインの端末にもプッシュ通知を鳴らすため @everyone）。
 
 Webhook は ``allowed_mentions`` を省くと @here / @everyone を解釈する。
 """

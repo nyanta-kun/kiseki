@@ -162,10 +162,10 @@ def test_settled_buy_card_is_still_a_pick():
 
 
 def test_message_starts_with_here_mention():
-    """通知は @here 付きで送る（プッシュ通知を鳴らすため）。"""
+    """通知は @everyone 付きで送る（プッシュ通知を鳴らすため）。"""
     from src.services.mekauchida_runner import MENTION, MonitorConfig, with_mention
 
-    assert MENTION == "@here"
-    assert with_mention("本文", MENTION) == "@here\n本文"
+    assert MENTION == "@everyone"
+    assert with_mention("本文", MENTION) == "@everyone\n本文"
     assert with_mention("本文", "") == "本文"
-    assert MonitorConfig.__dataclass_fields__["mention"].default == "@here"
+    assert MonitorConfig.__dataclass_fields__["mention"].default == "@everyone"
