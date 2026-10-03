@@ -20,6 +20,7 @@ from src.services.mekauchida_notify import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mekauchida_index_20261003_1500.html"
+NAR_FIXTURE = Path(__file__).parent / "fixtures" / "mekauchida_nar_index_20261003_1503.html"
 
 
 @pytest.fixture(scope="module")
@@ -131,7 +132,30 @@ def test_match_race_and_message(page):
     horses = {11: HorseContext(11, 4, 57.9, None), 3: HorseContext(3, 1, 63.0, "A")}
     matches = match_race(race, horses)
     assert [m.pick.horse_number for m in matches] == [11]
-    msg = build_message(matches, _at("1540"))
+    msg = build_message(matches, _at("1540"), "見出し")
     assert "東京11R" in msg and "11番 ジャスティンアース[B]（見込み）" in msg and "指数4位" in msg
 
     assert match_race(race, {11: HorseContext(11, 6, 50.0, None)}) == []
+
+
+def test_nar_page():
+    """地方版も同じ構造で読める（複勝は「複 4.5〜」と上限なし）。"""
+    page = parse_today_page(NAR_FIXTURE.read_text(encoding="utf-8"), year=2026)
+    assert page.date == "20261003"
+    assert len(page.races) == 12
+    assert {r.venue for r in page.races} == {"高知"}
+    (pick,) = next(r for r in page.races if r.race_number == 7).picks
+    assert (pick.horse_number, pick.horse_name, pick.kind, pick.flags) == (12, "ブーバー", "pv", ())
+    assert (pick.popularity, pick.win_odds, pick.expected_value) == (2, 4.6, 1.24)
+    assert (pick.place_odds_low, pick.place_odds_high) == (4.5, None)
+    race = next(r for r in page.races if r.race_number == 7)
+    msg = build_message(match_race(race, {12: HorseContext(12, 2, 68.0, None)}), _at("1812"), "地方")
+    assert "複4.5〜" in msg and "指数2位" in msg
+
+
+def test_settled_buy_card_is_still_a_pick():
+    """精算後は res buy が res hit 等に変わる。買い目として読み続ける。"""
+    html = FIXTURE.read_text(encoding="utf-8").replace("<span class='res buy'>", "<span class='res hit'>")
+    page = parse_today_page(html, year=2026)
+    (pick,) = next(r for r in page.races if (r.venue, r.race_number) == ("京都", 4)).picks
+    assert pick.kind == "buy"

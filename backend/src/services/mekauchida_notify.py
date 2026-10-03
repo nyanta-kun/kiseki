@@ -118,18 +118,19 @@ def _fmt_odds(v: float | None) -> str:
     return f"{v:.1f}" if v is not None else "—"
 
 
-def build_message(matches: list[MatchedPick], now: datetime) -> str:
+def build_message(matches: list[MatchedPick], now: datetime, title: str) -> str:
     """Discord に送る本文。"""
-    lines = [f"🏇 **メカウチダ × 指数/穴ぐさ 一致**（{now:%m/%d %H:%M} 監視）"]
+    lines = [f"🏇 **{title}**（{now:%m/%d %H:%M} 監視）"]
     for m in matches:
         r, p = m.race, m.pick
         post = f"{r.post_hhmm[:2]}:{r.post_hhmm[2:]}"
         flags = "".join(f"[{f}]" for f in p.flags)
-        place = (
-            f"{p.place_odds_low:.1f}–{p.place_odds_high:.1f}"
-            if p.place_odds_low is not None and p.place_odds_high is not None
-            else "—"
-        )
+        if p.place_odds_low is None:
+            place = "—"
+        elif p.place_odds_high is None:
+            place = f"{p.place_odds_low:.1f}〜"
+        else:
+            place = f"{p.place_odds_low:.1f}–{p.place_odds_high:.1f}"
         ev = f"{p.expected_value:.2f}" if p.expected_value is not None else "—"
         pop = f"{p.popularity}人気" if p.popularity is not None else "—"
         lines.append(

@@ -1,6 +1,7 @@
 """メカウチダの買い目 × 指数上位5位 / 穴ぐさ 一致の Discord 通知（10 分おき cron）。
 
-判定は ``src/services/mekauchida_notify.py``、パーサは ``src/scrapers/mekauchida.py``。
+判定は ``src/services/mekauchida_notify.py``、実行ループは ``src/services/mekauchida_runner.py``
+（地方版 ``chihou_mekauchida_notify.py`` と共通）、パーサは ``src/scrapers/mekauchida.py``。
 
 1. 今日の中央のレースのうち、発走 1 時間前〜発走前のものを DB から取る。
    無ければサイトを見ずに終わる（＝開催日でなければ何もしない）
@@ -19,10 +20,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -38,27 +36,16 @@ except ImportError:
     pass  # Docker コンテナ内では環境変数が env_file で注入済み
 
 from sqlalchemy import text  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
 
 from src.db.session import sync_engine as engine  # noqa: E402
 from src.indices.composite import COMPOSITE_VERSION  # noqa: E402
-from src.scrapers.mekauchida import SITE_URL, MekauchidaParseError, parse_today_page  # noqa: E402
-from src.services.mekauchida_notify import (  # noqa: E402
-    JST,
-    HorseContext,
-    MatchedPick,
-    build_message,
-    is_final_poll,
-    is_monitoring,
-    match_race,
-    parse_post_at,
-)
+from src.scrapers.mekauchida import SITE_URL  # noqa: E402
+from src.services.mekauchida_notify import JST  # noqa: E402
+from src.services.mekauchida_runner import MonitorConfig, run_once  # noqa: E402
 from src.utils.discord import send  # noqa: E402
 
 # コンテナでは /app/logs（ホストの logs/ をマウント）。ローカルではリポジトリ直下の logs/
 LOG_DIR = Path("/app/logs") if Path("/app/logs").is_dir() else _root.parent / "logs"
-STATE_FILE = LOG_DIR / "mekauchida_notified.json"
-SNAPSHOT_FILE = LOG_DIR / "mekauchida_snapshots.jsonl"
 
 RACES_SQL = text("""
 SELECT id, course_name, race_number, post_time
@@ -104,38 +91,16 @@ WHERE r.id = ANY(:race_ids)
 """)
 
 
-def log(msg: str) -> None:
-    """標準出力へ時刻付きで書く（cron 側でログファイルへリダイレクト）。"""
-    print(f"{datetime.now(JST):%Y-%m-%d %H:%M:%S} [mekauchida] {msg}", flush=True)
-
-
-def fetch_page(retries: int) -> str:
-    """サイトの今日ページを取得する（失敗時は ``retries`` 回まで 20 秒おきに再試行）。"""
-    req = urllib.request.Request(SITE_URL, headers={"User-Agent": "kiseki-monitor/1.0"})
-    for attempt in range(retries + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return resp.read().decode("utf-8")
-        except Exception as e:  # noqa: BLE001 — 取得失敗は種類を問わず再試行
-            if attempt >= retries:
-                raise
-            log(f"WARN: 取得失敗（再試行します）: {e}")
-            time.sleep(20)
-    raise RuntimeError("unreachable")
-
-
-def load_state(date: str) -> set[str]:
-    """今日すでに通知したレース（``場名R``）を読む。日付が変われば空。"""
-    try:
-        data = json.loads(STATE_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
-    return set(data.get("races", [])) if data.get("date") == date else set()
-
-
-def save_state(date: str, races: set[str]) -> None:
-    """通知済みレースを書き出す。"""
-    STATE_FILE.write_text(json.dumps({"date": date, "races": sorted(races)}, ensure_ascii=False))
+CONFIG = MonitorConfig(
+    name="mekauchida",
+    site_url=SITE_URL,
+    races_sql=RACES_SQL,
+    horses_sql=HORSES_SQL,
+    state_file=LOG_DIR / "mekauchida_notified.json",
+    snapshot_file=LOG_DIR / "mekauchida_snapshots.jsonl",
+    title="メカウチダ × 指数/穴ぐさ 一致",
+    sql_params={"cv": COMPOSITE_VERSION},
+)
 
 
 def main() -> int:
@@ -144,108 +109,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Discord に送らず標準出力のみ")
     parser.add_argument("--now", help="現在時刻を上書き（検証用・JST 'YYYY-MM-DD HH:MM'）")
     args = parser.parse_args()
-
     now = datetime.strptime(args.now, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if args.now else datetime.now(JST)
-    today = now.strftime("%Y%m%d")
-
-    with Session(engine) as db:
-        races = db.execute(RACES_SQL, {"d": today}).fetchall()
-    monitored = {
-        (r.course_name, r.race_number): r for r in races if is_monitoring(parse_post_at(today, r.post_time), now)
-    }
-    if not monitored:
-        return 0  # 開催日でない・監視時間外。毎回出るのでログに書かない
-
-    final_keys = {k for k, r in monitored.items() if is_final_poll(parse_post_at(today, r.post_time), now)}
-
-    try:
-        page = parse_today_page(fetch_page(retries=1 if final_keys else 0), year=now.year)
-    except MekauchidaParseError as e:
-        log(f"ERROR: ページを読めない: {e}")
-        return 1
-    except Exception as e:  # noqa: BLE001
-        log(f"ERROR: 取得失敗: {e}")
-        return 1
-    if page.date != today:
-        log(f"ERROR: サイトの日付が今日ではない（site={page.date} today={today}）。通知しない")
-        return 1
-
-    site_races = {(r.venue, r.race_number): r for r in page.races}
-    missing = [f"{v}{n}R" for (v, n) in monitored if (v, n) not in site_races]
-    if missing:
-        log(f"WARN: サイトに無いレース: {','.join(missing)}")
-
-    race_ids = [r.id for r in monitored.values()]
-    with Session(engine) as db:
-        rows = db.execute(HORSES_SQL, {"race_ids": race_ids, "cv": COMPOSITE_VERSION}).fetchall()
-    horses: dict[int, dict[int, HorseContext]] = {}
-    for row in rows:
-        horses.setdefault(row.race_id, {})[row.horse_number] = HorseContext(
-            horse_number=row.horse_number,
-            index_rank=row.idx_rank,
-            composite_index=float(row.composite_index) if row.composite_index is not None else None,
-            anagusa_rank=row.anagusa_rank,
-        )
-
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    notified = load_state(today)
-    to_send: list[MatchedPick] = []
-    with SNAPSHOT_FILE.open("a") as snap:
-        for key, db_race in sorted(monitored.items(), key=lambda kv: kv[1].post_time):
-            site = site_races.get(key)
-            if site is None:
-                continue
-            race_horses = horses.get(db_race.id, {})
-            matches = match_race(site, race_horses)
-            final = key in final_keys
-            if final and not any(h.index_rank is not None for h in race_horses.values()):
-                # 「一致なし」と「指数が算出されていない」を区別する
-                log(f"WARN: {key[0]}{key[1]}R の指数が DB に無い（穴ぐさ一致だけで判定）")
-            snap.write(
-                json.dumps(
-                    {
-                        "at": now.isoformat(timespec="seconds"),
-                        "site_updated": page.updated,
-                        "race": f"{key[0]}{key[1]}R",
-                        "post": db_race.post_time,
-                        "state": site.state,
-                        "final": final,
-                        "picks": [
-                            {
-                                "no": p.horse_number,
-                                "kind": p.kind,
-                                "flags": list(p.flags),
-                                "ev": p.expected_value,
-                            }
-                            for p in site.picks
-                        ],
-                        "matched": [m.pick.horse_number for m in matches],
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-            label = f"{key[0]}{key[1]}R"
-            if final and matches and label not in notified:
-                to_send.extend(matches)
-                notified.add(label)
-
-    if not to_send:
-        if final_keys:
-            log(f"最終監視 {len(final_keys)}R: 一致なし")
-        return 0
-
-    message = build_message(to_send, now)
-    print(message)
-    if args.dry_run:
-        log("--dry-run のため送信しない")
-        return 0
-    if not send(message):
-        log("ERROR: Discord 送信失敗")
-        return 1
-    save_state(today, notified)
-    log(f"送信: {len(to_send)}頭")
-    return 0
+    return run_once(CONFIG, engine, now, args.dry_run, send)
 
 
 if __name__ == "__main__":

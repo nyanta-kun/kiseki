@@ -1,6 +1,6 @@
 """外部サイト「メカウチダ」（仮想購入サイト）の今日ページのパーサ。
 
-対象: ``https://d374d8pjjxnppk.cloudfront.net/index.html``
+対象: ``https://d374d8pjjxnppk.cloudfront.net/index.html``（中央）/ ``nar/index.html``（地方）
 （サイトの性質・更新タイミングの実測は ``docs/jra_ext_virtualbet_feature_plan_2026_09_27.md``）
 
 各レースのカード（``<div class='tl {decided|wait|missed} [has]'>``）から、
@@ -10,7 +10,7 @@
 
 | kind | HTML | 意味 |
 |---|---|---|
-| ``buy`` | ``<span class='res buy'>`` | 判断済み（発走 3 分前の正式判断） |
+| ``buy`` | ``<span class='res buy'>``（精算後は ``hit`` 等） | 判断済み（発走 3 分前の正式判断） |
 | ``pv``  | ``<div class='horse is-pv'>`` / ``<span class='res pv'>`` | 見込み（朝 09:00、発走 30 分前からはその時点のオッズで仮判断） |
 
 🔴 **構造が変わったら 0 件で黙らずに例外を出す。** 「今日は推奨なし」と
@@ -27,6 +27,8 @@ import re
 from dataclasses import dataclass, field
 
 SITE_URL = "https://d374d8pjjxnppk.cloudfront.net/index.html"
+NAR_SITE_URL = "https://d374d8pjjxnppk.cloudfront.net/nar/index.html"
+"""地方版。ページ構造は中央と同じ（2026-10-03 確認）。"""
 
 _RACE_CARD_RE = re.compile(r"<div class='tl ([a-z ]+)'>")
 _HERO_DATE_RE = re.compile(r"<div class='next' data-date='(\d{4}-\d{2}-\d{2})'")
@@ -34,14 +36,16 @@ _HERO_TITLE_RE = re.compile(r"<div class='hd'>(\d+)<small>月</small>(\d+)<small
 _UPDATED_RE = re.compile(r"<div class=[\"']upd[\"']>更新 ([0-9/]+ [0-9:]+)")
 _RT_RE = re.compile(r"<span class='rt'>(\d{1,2}):(\d{2})</span>")
 _RV_RE = re.compile(r"<span class='rv'>([^<]+)<b>(\d+)R</b></span>")
-_HORSE_RE = re.compile(r"<div class='horse( is-pv)?'>(.*?)<span class='res (buy|pv)'>", re.S)
+# 精算後は res buy が res hit / miss 等に変わる。pv 以外は判断済みとして扱う
+_HORSE_RE = re.compile(r"<div class='horse( is-pv)?'>(.*?)<span class='res ([a-z]+)'>", re.S)
 _NUM_RE = re.compile(r"<span class='num[^']*'[^>]*>(\d+)</span>")
 _HN_RE = re.compile(r"<div class='hn'>([^<]*)((?:<span class='flag'>[^<]*</span>)*)</div>")
 _FLAG_RE = re.compile(r"<span class='flag'>([^<]*)</span>")
 _HS_RE = re.compile(r"<div class='hs'>(.*?)</div>", re.S)
 _POP_RE = re.compile(r"(\d+)番人気")
 _WIN_RE = re.compile(r"単 ([0-9.]+)")
-_PLACE_RE = re.compile(r"複 ([0-9.]+)[–-]([0-9.]+)")
+# 中央は「複 2.0–2.7」、地方は「複 4.5〜」（上限なし）
+_PLACE_RE = re.compile(r"複 ([0-9.]+)(?:[–\-〜~]([0-9.]+)?)?")
 _EV_RE = re.compile(r"期待値 ([0-9.]+)")
 
 
@@ -107,7 +111,7 @@ def _parse_pick(is_pv: str | None, body: str, res: str) -> SitePick:
         popularity=int(pop.group(1)) if pop else None,
         win_odds=_to_float(_WIN_RE.search(hs_text)),
         place_odds_low=_to_float(place, 1),
-        place_odds_high=_to_float(place, 2),
+        place_odds_high=float(place.group(2)) if place and place.group(2) else None,
         expected_value=_to_float(_EV_RE.search(hs_text)),
     )
 
