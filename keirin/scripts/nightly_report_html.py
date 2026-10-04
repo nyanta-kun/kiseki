@@ -230,7 +230,8 @@ def build(day: str, n_boot: int = 2000) -> str:
 
     # §1
     A('<h2>§1 異常検知 <small>単日で黒白がつく唯一の層。ここだけは今日直す</small></h2>')
-    alerts, n_ng = NR.section_alerts(day, sold, n_skipped, subs, live)
+    alerts, n_ng = NR.section_alerts(day, sold, n_skipped, subs, live,
+                                     NR._cancelled_keys(day))
     A('<div class="card">')
     for line in alerts:
         t = line.strip()
