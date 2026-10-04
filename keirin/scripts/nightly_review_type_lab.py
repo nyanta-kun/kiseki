@@ -643,8 +643,13 @@ def _near(order: list[str], band: str | None, target: str | None) -> bool:
 # ───────────────────────────── §1 異常検知 ─────────────────────────────
 
 def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
-                   live: list[dict]) -> tuple[list[str], int]:
-    """動くはずのものが動いたか。**ここだけは単日で黒白がつく。**"""
+                   live: list[dict],
+                   cancelled: set[str] | None = None) -> tuple[list[str], int]:
+    """動くはずのものが動いたか。**ここだけは単日で黒白がつく。**
+
+    cancelled: 中止になったレース（`_cancelled_keys`）。未採点・採点不能の
+      判定から外し、情報行として別に出す。
+    """
     out: list[str] = []
     n_ng = 0
 
@@ -713,8 +718,25 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
     else:
         ok("並び・印の欠測なし")
 
+    # 🔴 **中止は「採点の取りこぼし」ではない**（2026-10-05 是正）。着順も払戻も
+    #    永久に入らないので未採点のまま残り、売った商品は返還になる。分けずに
+    #    数えると単発の中止（9/19 `20260919_38_03`・10/4 いわき平7R）のたびに
+    #    対処不要の [NG] が2件出る。`audit_watch._cancelled_keys` と同じ扱い。
+    cancelled = cancelled or set()
+    cancel_sold = [s for s in alive if s["status"] in ("submitted", "published")
+                   and str(s["race_key"]) in cancelled]
+    cancel_races = sorted(
+        {str(d["race_key"]) for d in live if str(d["race_key"]) in cancelled}
+        | {str(s["race_key"]) for s in cancel_sold})
+    if cancel_races:
+        out.append(f"  ---- 中止 {len(cancel_races)}レース（{', '.join(cancel_races[:5])}）"
+                   f"— 売った商品 {len(cancel_sold)}件は返還・採点対象外")
+    # 中止レースの入稿は着順が無いので必ず「採点できなかった」側に入っている。
+    n_skipped = max(0, n_skipped - len(cancel_sold))
+
     # 未採点。00 時台に走らせても残るなら、着順か確定オッズが来ていない。
-    unsettled = [d for d in live if d["settled_at"] is None]
+    unsettled = [d for d in live
+                 if d["settled_at"] is None and str(d["race_key"]) not in cancelled]
     if unsettled:
         ng(f"未採点の型ラボ行 {len(unsettled)}件"
            f"（{len({d['race_key'] for d in unsettled})}レース）"
@@ -734,6 +756,13 @@ def section_alerts(day: str, sold, n_skipped: int, subs: list[dict],
         out.append("  ---- 取消 " + ", ".join(f"{k}={v}" for k, v in cancels.items()))
 
     return out, n_ng
+
+
+def _cancelled_keys(day: str) -> set[str]:
+    """その日に中止になったレース（`wt_races.cancel = 1`）。"""
+    with get_connection() as c:
+        return {str(dict(r)["race_key"]) for r in c.execute(
+            "SELECT race_key FROM wt_races WHERE cancel = 1 AND race_date = ?", (day,))}
 
 
 def _recent_median_submits(day: str) -> tuple[int | None, int]:
@@ -1509,7 +1538,8 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("")
 
     lines.append("## §1 異常検知 — **単日で黒白がつく唯一の層。ここだけは今日直す**")
-    alerts, n_ng = section_alerts(day, sold, n_skipped, subs, live)
+    alerts, n_ng = section_alerts(day, sold, n_skipped, subs, live,
+                                  _cancelled_keys(day))
     lines += alerts
     lines.append("")
 

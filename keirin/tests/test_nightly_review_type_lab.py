@@ -568,3 +568,38 @@ def test_狙い帯の無いプランは決着率の分母に入れない():
     assert "狙い帯（±1帯）で決着" not in out
     assert "狙い帯を決められないプラン: T_firm, T_upset" in out
     assert " 0.0倍" not in out, "参照が無いのに参照中央を 0倍と出している"
+
+
+def _alerts_with_cancel(monkeypatch, cancelled):
+    """10/4 いわき平7R（中止）と同じ形：売った 1商品 + 未採点の型ラボ行。"""
+    m = _load()
+    monkeypatch.setattr(m, "_recent_median_submits", lambda day: (None, 0))
+    monkeypatch.setattr(m, "_skips", lambda day: {})
+    empty = frozenset()
+    monkeypatch.setattr(m, "_lineup_state",
+                        lambda day: m.LineupState(empty, empty, empty, empty))
+    subs = [{"race_key": "rc", "session": "day", "deleted_at": None,
+             "status": "published", "cancel_reason": None},
+            {"race_key": "rs", "session": "day", "deleted_at": None,
+             "status": "published", "cancel_reason": None}]
+    live = [{"race_key": "rc", "settled_at": None},
+            {"race_key": "rc", "settled_at": None},
+            {"race_key": "rs", "settled_at": "x"}]
+    out, n_ng = m.section_alerts("2026-10-04", [], 1, subs, live, cancelled)
+    return "\n".join(out), n_ng
+
+
+def test_中止レースは未採点にも採点不能にも数えない(monkeypatch):
+    out, n_ng = _alerts_with_cancel(monkeypatch, {"rc"})
+    assert n_ng == 0, out
+    assert "型ラボの行は全て採点済み" in out
+    assert "売った商品は全て採点できた" in out
+    assert "---- 中止 1レース（rc）— 売った商品 1件は返還" in out
+
+
+def test_中止でなければ従来どおり異常(monkeypatch):
+    out, n_ng = _alerts_with_cancel(monkeypatch, set())
+    assert n_ng == 2, out
+    assert "[NG] 未採点の型ラボ行 2件（1レース）" in out
+    assert "[NG] 売った商品のうち採点できなかったもの 1件" in out
+    assert "中止" not in out
