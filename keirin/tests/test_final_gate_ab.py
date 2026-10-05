@@ -123,3 +123,26 @@ def test_reject_keeps_gate_for_semifinal_in_on_week(monkeypatch, capsys):
     out, skips = _run_dry(monkeypatch, capsys, _row("準決勝", "2026-10-13"))
     assert "ゲート免除" not in out
     assert [s for s in skips if "axis_gate" in s]
+
+
+# ───────────── 夜間レビューも入稿と同じゲートを当てる（2026-10-05） ─────────────
+
+def _nightly():
+    import importlib
+    return importlib.import_module("scripts.nightly_review_type_lab")
+
+
+def test_夜間レビューは看板を素通ししない():
+    """8/31 に入稿側が看板にもゲートを掛けたのに、夜間レビューだけ素通ししていた。"""
+    nr = _nightly()
+    # 期間外の準決勝（看板）で軸信頼が極端に低い行はゲートで落ちる
+    row = {"plan_key": "F_sign", "axis_sum": 0.10, "n_entries": 7,
+           "race_type": "準決勝", "cup_grade": 3, "race_date": "2026-10-05"}
+    assert nr._gate_ok(row) is False
+
+
+def test_夜間レビューは決勝の免除を入稿と同じ正本で当てる():
+    nr = _nightly()
+    low = {"plan_key": "F_sign", "axis_sum": 0.10, "n_entries": 7, "race_type": "決勝"}
+    assert nr._gate_ok({**low, "race_date": "2026-10-12"}) is True    # 第1週 ON
+    assert nr._gate_ok({**low, "race_date": "2026-10-19"}) is False   # 第2週 OFF

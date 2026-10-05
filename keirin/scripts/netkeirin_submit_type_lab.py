@@ -819,53 +819,12 @@ def axis_gate_enabled() -> bool:
 
 
 #: 決勝の軸信頼ゲート免除 A/B（事前登録 `docs/type_lab/prereg_final_gate_ab_2026_10_05.md`）。
-#: 🔴 期間・対象は事前登録の固定値。変えるなら登録を取り直す（`tests/test_final_gate_ab.py` が固定）。
-FINAL_GATE_AB_START = date(2026, 10, 12)      # 月曜。この週が第1週
-FINAL_GATE_AB_END = date(2026, 12, 6)         # 日曜。第8週の最終日
-#: **完全一致**で見る。「準決勝」「準決勝A」などを部分一致で拾ってはいけない。
-FINAL_GATE_AB_RACE_TYPES = frozenset({"決勝", "チャレンジ決勝"})
-
-
-def final_gate_exempt(race_type: object, race_date: object) -> bool:
-    """決勝の軸信頼ゲート免除 A/B で、このレースがゲートを免除される（ON 週）か。
-
-    🔴 経緯: 2026-08-31 に看板へ軸信頼ゲートを掛けた（`_passes_axis_gate`）結果、
-       決勝の一部が無商品になった（2026-10-05 時点で決勝 42件中 5件）。決勝は最も売れる
-       種別なので、免除したときの売上を**前向きに**測る。2026-10-05 にユーザーが決定。
-       事前登録: `keirin/docs/type_lab/prereg_final_gate_ab_2026_10_05.md`
-       （主指標・判定規則・限界もそこ）。
-
-    割り付けは**日付だけ**で決まる（実行時の判断を入れない）:
-      - 対象: `race_type` が「決勝」「チャレンジ決勝」に完全一致
-      - 期間: 2026-10-12（月）〜 2026-12-06（日）の8週。月曜始まりで数え、
-        第1・3・5・7週が ON（免除）、第2・4・6・8週が OFF（現行どおり）
-      - 期間外は OFF
-
-    免除するのは軸信頼ゲートだけ。並び欠測・入稿ゲート・日次上限・1レース1商品は掛ける。
-    `race_date` は `YYYY-MM-DD` 文字列か `date`/`datetime`。読めなければ False（現行どおり）。
-
-    >>> final_gate_exempt("決勝", "2026-10-12")
-    True
-    >>> final_gate_exempt("決勝", "2026-10-19")
-    False
-    >>> final_gate_exempt("準決勝", "2026-10-12")
-    False
-    """
-    if str(race_type or "").strip() not in FINAL_GATE_AB_RACE_TYPES:
-        return False
-    try:
-        if isinstance(race_date, datetime):
-            d = race_date.date()
-        elif isinstance(race_date, date):
-            d = race_date
-        else:
-            d = date.fromisoformat(str(race_date).strip()[:10])
-    except ValueError:
-        return False
-    if not (FINAL_GATE_AB_START <= d <= FINAL_GATE_AB_END):
-        return False
-    week = (d - FINAL_GATE_AB_START).days // 7 + 1
-    return week % 2 == 1
+#: 🔴 正本は `backend/src/services/keirin_type_lab_gate.py::final_gate_exempt`。
+#:    夜間レビュー（`nightly_review_type_lab._gate_ok`）も同じ正本を当てるので、ここへ写さない。
+FINAL_GATE_AB_START = _GATE.FINAL_GATE_AB_START
+FINAL_GATE_AB_END = _GATE.FINAL_GATE_AB_END
+FINAL_GATE_AB_RACE_TYPES = _GATE.FINAL_GATE_AB_RACE_TYPES
+final_gate_exempt = _GATE.final_gate_exempt
 
 
 def _passes_axis_gate(row: dict) -> bool:

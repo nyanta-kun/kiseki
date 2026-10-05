@@ -42,7 +42,10 @@ CI 下限 +1.3pt は狭いとはいえ 8か月ぶんで、向きが両窓一致�
 🔴 **標準ライブラリ以外を import しないこと。** keirin 側がこのファイルを直接
 読み込んで束縛する余地を残す（`keirin_marquee.py` / `keirin_p3_calibration.py` と同じ制約）。
 """
+
 from __future__ import annotations
+
+from datetime import date, datetime
 
 #: プランごとの軸信頼の下限。**探索窓（2025-01-01〜12-31）のプラン内 20 パーセンタイル**
 #: ＝「下位1/5 を外す」境界。`A_pay` は `A_hit` と、`F_pay` は `F_hit` と同じレースに
@@ -175,31 +178,33 @@ AXIS_GATE_PLANS: frozenset[str] = frozenset(AXIS_GATE_MIN)
 #:    `tests/test_type_lab_submit.py::test_every_sellable_plan_has_an_axis_gate_threshold`
 #:    は「売りうるプランが `AXIS_GATE_MIN` ∪ ここ に入っていること」を要求するので、
 #:    新しいプランを足すと**どちらかへ明示するまで落ちる**。
-AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset({
-    "A_ana",     # 軸1が飛ぶ側に賭ける商品。軸信頼で絞るのは狙いと正面から逆（両窓で逆効果）
-    #            # 🔴 唯一「掛けてはいけない」プラン。腕⑥がここだけ除く理由は
-    #            #    `AXIS_GATE_MIN` の節（含めると 10万+ が −18%）。
-    "A_pay",     # 比較台。売らない
-    "F_pay",     # 9車の決勝だけ。7車では売らない（9車はそもそもゲート対象外）
-    "F_line",    # 9車の決勝以外だけ。同上（`passes_axis_gate` は7車以外を素通しする）
-    # 🔴 高額枠（`type_lab.HIGHPAY_PLAN_KEYS`）は **日次上限で捨てるレースに置く**
-    #    商品なので、軸信頼で絞るのは意味が無い（母集団が定義上「軸信頼の低い側」）。
-    #    `F_sign` を exempt にしているのと同じ理由（看板枠は当てにいく商品ではない）。
-    "B_sign",
-    "C_sign",
-    "D_sign",
-    "B_big",     # 同上。`_big` は軸1を買わない商品なので軸信頼で絞るのは正面から逆
-    "C_big",
-    "D_big",
-    # 🔴 **段分け商品（2026-09-15〜・7車）。** 段そのものが軸信頼（axis_sum）の四分位で
-    #    決まるので、軸信頼でさらに絞ると「波乱」段を丸ごと落とす（段分けと二重計上）。
-    #    検証: 軸信頼の高い順に上限50%を掛けると 10万+ が 0.43→0.13/日 に落ちる
-    #    （`scratchpad/policy_limits.py`・memory keirin-firm-upset-policy-2026-09-14）。
-    "T_firm",    # 硬い（axis_sum 上位50%）: 合成2.2倍・3〜5点
-    "T_mid",     # やや波乱（25〜50%）: 合成2.2倍・3〜8点
-    "T_axis",    # 波乱段のうち1着率1位−2位 >= 0.30: 1着=1着率1位に固定・2-3着を確率順
-    "T_upset",   # 波乱（下位25%）: 人気1位ラインを1-2着から外す・計画10万
-})
+AXIS_GATE_EXEMPT_PLANS: frozenset[str] = frozenset(
+    {
+        "A_ana",  # 軸1が飛ぶ側に賭ける商品。軸信頼で絞るのは狙いと正面から逆（両窓で逆効果）
+        #            # 🔴 唯一「掛けてはいけない」プラン。腕⑥がここだけ除く理由は
+        #            #    `AXIS_GATE_MIN` の節（含めると 10万+ が −18%）。
+        "A_pay",  # 比較台。売らない
+        "F_pay",  # 9車の決勝だけ。7車では売らない（9車はそもそもゲート対象外）
+        "F_line",  # 9車の決勝以外だけ。同上（`passes_axis_gate` は7車以外を素通しする）
+        # 🔴 高額枠（`type_lab.HIGHPAY_PLAN_KEYS`）は **日次上限で捨てるレースに置く**
+        #    商品なので、軸信頼で絞るのは意味が無い（母集団が定義上「軸信頼の低い側」）。
+        #    `F_sign` を exempt にしているのと同じ理由（看板枠は当てにいく商品ではない）。
+        "B_sign",
+        "C_sign",
+        "D_sign",
+        "B_big",  # 同上。`_big` は軸1を買わない商品なので軸信頼で絞るのは正面から逆
+        "C_big",
+        "D_big",
+        # 🔴 **段分け商品（2026-09-15〜・7車）。** 段そのものが軸信頼（axis_sum）の四分位で
+        #    決まるので、軸信頼でさらに絞ると「波乱」段を丸ごと落とす（段分けと二重計上）。
+        #    検証: 軸信頼の高い順に上限50%を掛けると 10万+ が 0.43→0.13/日 に落ちる
+        #    （`scratchpad/policy_limits.py`・memory keirin-firm-upset-policy-2026-09-14）。
+        "T_firm",  # 硬い（axis_sum 上位50%）: 合成2.2倍・3〜5点
+        "T_mid",  # やや波乱（25〜50%）: 合成2.2倍・3〜8点
+        "T_axis",  # 波乱段のうち1着率1位−2位 >= 0.30: 1着=1着率1位に固定・2-3着を確率順
+        "T_upset",  # 波乱（下位25%）: 人気1位ラインを1-2着から外す・計画10万
+    }
+)
 #: 🔴 **`A_ana` / `A_trio` は 2026-08-31 に追加した（PR#384 と同日に足し忘れていた）。**
 #:
 #:    型A が3分割された日、この表だけが更新されず、`passes_axis_gate` の
@@ -241,8 +246,58 @@ AXIS_GATE_DROP_RATIO = 0.2
 AXIS_GATE_N_ENTRIES = 7
 
 
-def passes_axis_gate(plan_key: str, axis_sum: float | None,
-                     n_entries: int | None = AXIS_GATE_N_ENTRIES) -> bool:
+#: 決勝の軸信頼ゲート免除 A/B（事前登録 `docs/type_lab/prereg_final_gate_ab_2026_10_05.md`）。
+#: 🔴 判定の唯一の正本（入稿 `netkeirin_submit_type_lab` と夜間レビューが共有）。
+#:    期間・対象は事前登録の固定値。変えるなら登録を取り直す（`tests/test_final_gate_ab.py` が固定）。
+FINAL_GATE_AB_START = date(2026, 10, 12)  # 月曜。この週が第1週
+FINAL_GATE_AB_END = date(2026, 12, 6)  # 日曜。第8週の最終日
+#: **完全一致**で見る。「準決勝」「準決勝A」などを部分一致で拾ってはいけない。
+FINAL_GATE_AB_RACE_TYPES = frozenset({"決勝", "チャレンジ決勝"})
+
+
+def final_gate_exempt(race_type: object, race_date: object) -> bool:
+    """決勝の軸信頼ゲート免除 A/B で、このレースがゲートを免除される（ON 週）か。
+
+    🔴 経緯: 2026-08-31 に看板へ軸信頼ゲートを掛けた（`netkeirin_submit_type_lab._passes_axis_gate`）結果、
+       決勝の一部が無商品になった（2026-10-05 時点で決勝 42件中 5件）。決勝は最も売れる
+       種別なので、免除したときの売上を**前向きに**測る。2026-10-05 にユーザーが決定。
+       事前登録: `keirin/docs/type_lab/prereg_final_gate_ab_2026_10_05.md`
+       （主指標・判定規則・限界もそこ）。
+
+    割り付けは**日付だけ**で決まる（実行時の判断を入れない）:
+      - 対象: `race_type` が「決勝」「チャレンジ決勝」に完全一致
+      - 期間: 2026-10-12（月）〜 2026-12-06（日）の8週。月曜始まりで数え、
+        第1・3・5・7週が ON（免除）、第2・4・6・8週が OFF（現行どおり）
+      - 期間外は OFF
+
+    免除するのは軸信頼ゲートだけ。並び欠測・入稿ゲート・日次上限・1レース1商品は掛ける。
+    `race_date` は `YYYY-MM-DD` 文字列か `date`/`datetime`。読めなければ False（現行どおり）。
+
+    >>> final_gate_exempt("決勝", "2026-10-12")
+    True
+    >>> final_gate_exempt("決勝", "2026-10-19")
+    False
+    >>> final_gate_exempt("準決勝", "2026-10-12")
+    False
+    """
+    if str(race_type or "").strip() not in FINAL_GATE_AB_RACE_TYPES:
+        return False
+    try:
+        if isinstance(race_date, datetime):
+            d = race_date.date()
+        elif isinstance(race_date, date):
+            d = race_date
+        else:
+            d = date.fromisoformat(str(race_date).strip()[:10])
+    except ValueError:
+        return False
+    if not (FINAL_GATE_AB_START <= d <= FINAL_GATE_AB_END):
+        return False
+    week = (d - FINAL_GATE_AB_START).days // 7 + 1
+    return week % 2 == 1
+
+
+def passes_axis_gate(plan_key: str, axis_sum: float | None, n_entries: int | None = AXIS_GATE_N_ENTRIES) -> bool:
     """そのプランの軸信頼ゲートを通るか。
 
     🔴 **判定できないものは通す**（`True` を返す）。閾値を持たないプランや
@@ -377,8 +432,7 @@ DAILY_CAP_EXEMPT_MIN_GRADE = 3
 #: `A_ana`（7車・型A の穴狙い）も段より先に売る7車の商品なので同じく数えない。
 #: 🔴 レース側の `daily_cap_exempt` とは別。こちらは**プランで**枠外にする。
 #: 🔴 入稿側 `netkeirin_submit_type_lab.CAP_FREE_PLANS` と同じ集合（テストで固定）。
-DAILY_CAP_EXEMPT_PLANS: frozenset[str] = frozenset(
-    {"T_firm", "T_mid", "T_axis", "T_upset", "A_ana"})
+DAILY_CAP_EXEMPT_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset", "A_ana"})
 
 
 def daily_cap_exempt_plan(plan_key: str | None) -> bool:
@@ -423,6 +477,7 @@ def daily_cap_exempt(race_type: str | None, cup_grade: int | None = None) -> boo
     if not race_type:
         return False
     return any(k in str(race_type) for k in DAILY_CAP_EXEMPT_KEYWORDS)
+
 
 #: 上限に当たったとき **何を残すか**。プランごとの `axis_sum` の分位（0/10/…/100%）で、
 #: `axis_priority()` がこれを使って 0〜1 の優先度へ写す。
@@ -483,7 +538,7 @@ def axis_priority(plan_key: str, axis_sum: float | None) -> float:
         v = float(axis_sum)
     except (TypeError, ValueError):
         return 0.5
-    n = len(qs) - 1                       # 区間の数（分位が 11 個なら 10 区間）
+    n = len(qs) - 1  # 区間の数（分位が 11 個なら 10 区間）
     for i in range(n + 1):
         if v < qs[i]:
             return i / n
@@ -567,7 +622,7 @@ def rp_sd_priority(plan_key: str, rp_sd: float | None) -> float | None:
     except (TypeError, ValueError):
         return None
     if v != v or v in (float("inf"), float("-inf")):
-        return None                      # NaN/inf は「読めなかった」と同じ扱い
+        return None  # NaN/inf は「読めなかった」と同じ扱い
     n = len(qs) - 1
     for i in range(n + 1):
         if v < qs[i]:
@@ -575,8 +630,7 @@ def rp_sd_priority(plan_key: str, rp_sd: float | None) -> float | None:
     return 1.0
 
 
-def cap_priority(plan_key: str, axis_sum: float | None,
-                 rp_sd: float | None = None) -> float:
+def cap_priority(plan_key: str, axis_sum: float | None, rp_sd: float | None = None) -> float:
     """日次上限に当たったときの**残す順**（0〜1・大きいほど先に残す）。
 
     軸信頼のプラン内順位に、実力伯仲のプラン内順位を W:1 で混ぜる。
