@@ -1,0 +1,15 @@
+{
+  "id": "H07_escape_rate_first_place",
+  "hypothesis": "確定市場は『逃げ比率の高い選手の1着』を 8〜11% 安く見ている（2026-09-30 総合監査 X3・両窓）。モデルの特徴量に入れると市場に対する増分が消えた（BT2）のは、モデルが市場と同じ向きに学ぶため。hit 商品の1着列の順位付けにだけ『逃げ比率の市場比』の倍率を掛けると、同じ点数で過小評価された1着の目へ寄せられ回収率が上がる。",
+  "kind": "bet_shape",
+  "feature_definition": "esc(x) = X3 と同じ定義の逃げ比率（point-in-time・closed=left。🔴 X3 の報告書は本リポジトリに無いので、定義の特定が required_data）。EB(x) = 1+γ（esc がレース内1位 ∧ esc ≥ 2025 の p70 のとき）、それ以外 1。三連単の目 (x,y,z) の確率 P に 1着の x についてだけ EB(x) を掛け、確率順の選択を回す。γ は 2025 の『予測オッズに対する1着の発生倍率』から CI 下限側で固定。H01 と同時に掛ける腕も作る（独立性の確認）。",
+  "required_data": "wt_entries.factor / res_back / res_standing（過去の決まり手・closed=left）、X3 の定義（2026-09-30 監査のスクリプト）、/tmp/race_type_board.npz、odds_tf 探索用 vintage、wt_odds 最終三連単。",
+  "available_before_submit": true,
+  "availability_note": "前日までの確定結果から作るローリング量なので 07:00 に得られる。",
+  "expected_bias": "市場が過小評価",
+  "why_not_already_priced": "逃げ選手は勝率の割に人気になりにくい（買い手は捲り・差しの強い選手や得点上位を1着に買う）という値付けの偏り（X3 で両窓）。",
+  "differs_from_settled": "BT2（逃げ比率を 1着モデルの特徴量に入れる）は消えた＝本仮説はモデルではなく買い目の1着列に市場比で掛ける。BT3（自力+番手の2点・別商品）とは、既存 hit 商品の中身を変える点と、ラインではなく個人の1着に掛ける点が違う。『軸が不利な指数（脚質・単騎…）は AUC 0.46〜0.53』（§7）は軸崩壊の予測で、本仮説は市場比。",
+  "kpi": "回収率（主）。副: 表示的中・1着の発生倍率",
+  "test_design": "Step0: 2025 で esc 上位の選手の『予測オッズに対する1着の発生倍率』を日クラスタ・ブートストラップ。CI 下限 > 1.00 でなければ停止。Step1: 台は `type_lab_picks` の paper 行ではなく `/tmp/race_type_board.npz`（7車・vintage p3/pw）＋本番関数（`scripts/exp_type_lab/lineup_arms.py` / `lineup_paired.py` / `build_with_gate_fallback`）で組み直す。paper 2025 は全行 rule_version `cf39e62d1442`（2026-09-02 生成＝9/22 の5万ダッチ化・9/23 の軸ゲート p20 より前の規則）で現行商品ではない。board は /tmp にあり揮発するので、無ければ `docs/type_lab/RUNBOOK.md` の手順で再生成する。 現行 vs EB 適用 vs H01+EB の同一レース対比較。合格基準案は H01 と同じ（ΔROI CI 下限 > 0・上期下期同符号・表示的中低下 ≤ 1pt）。予測オッズ odds_tf_n7/n9 は train_end 2025-12-31 なので 2025 の探索では in-sample。`scripts/train_odds_prediction_tf.py --train-end 2024-12-31` で探索用 vintage を作り直して使う（引数は実在を確認済み）。作り直せない場合は最終オッズ代理で測り、その旨を結果に明記する。 前向き確認の主指標: 1着の発生倍率（予測オッズ比）。見込みは H01 と同程度で判定可能。",
+  "priority": 2
+}
