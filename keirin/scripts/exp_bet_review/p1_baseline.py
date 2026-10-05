@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import pickle
 import sys
@@ -205,6 +206,8 @@ def build_rows() -> tuple[list[dict], dict]:
 
     rows: list[dict] = []
     meta: dict = defaultdict(int)
+    sa_f = CACHE / "start_at.json"
+    start_at = json.load(open(sa_f)) if sa_f.exists() else {}
     for f in sorted(CACHE.glob("day_*.pkl")):
         day = pickle.load(open(f, "rb"))
         for rk, race in day["races"].items():
@@ -280,6 +283,7 @@ def build_rows() -> tuple[list[dict], dict]:
                 row["asof_valid_frac"] = (sum(1 for v in asof_odds.values() if v < INVALID_ODDS)
                                           / max(len(asof_odds), 1)) if asof_odds else 0.0
                 row["why"] = {}
+                sels = {}
                 # 腕 A(朝) / Ag(生成時点の板) / C(予測) / F(最終)
                 for name, odds in (("A", mrn), ("Ag", asof_odds), ("C", pred), ("F", fin)):
                     if not odds:
@@ -287,6 +291,7 @@ def build_rows() -> tuple[list[dict], dict]:
                         row["why"][name] = "板なし"
                         continue
                     sel = _topk(odds, k)
+                    sels[name] = sel
                     if len(sel) < k:
                         row[name] = None
                         row["why"][name] = "有効オッズがk点に満たない"
@@ -302,6 +307,9 @@ def build_rows() -> tuple[list[dict], dict]:
                         row["why"][name] = "当たり目の最終オッズ欠損"
                     else:
                         row[name] = sc
+                row["a_f_overlap"] = (len(set(sels["A"]) & set(sels["F"])) / k
+                                      if sels.get("A") and sels.get("F") and len(sels["A"]) == k
+                                      and len(sels["F"]) == k else None)
                 # B' : B の買い目を予測オッズでダッチに配り直す
                 if pred:
                     odds_b = {c: pred.get(c) for c in b_st}
@@ -332,6 +340,11 @@ def build_rows() -> tuple[list[dict], dict]:
                 row["pred_mean_payout"] = (float(p["pred_mean_payout"])
                                            if p.get("pred_mean_payout") is not None else None)
                 row["ref_at"] = ref_at
+                sa = start_at.get(rk)
+                row["start_at"] = datetime.fromisoformat(sa) if sa else None
+                row["post_start_gen"] = bool(sa and p["generated_at"] > datetime.fromisoformat(sa))
+                row["start_band"] = (None if not sa else "デイ(<15時)" if row["start_at"].hour < 15
+                                     else "ナイター(15-20時)" if row["start_at"].hour < 20 else "ミッド(>=20時)")
                 row["sess"] = "朝便" if ref_at.hour < 9 else "昼夜便"
                 row["gen_lt_sub"] = bool(p["sub_status"] == "published" and p["sub_at"]
                                          and p["sub_at"] < p["generated_at"])
@@ -451,6 +464,21 @@ def family(plan: str) -> str:
 
 
 # ───────────────────────────── 前提（DB を読む） ─────────────────────────────
+
+def cmd_startat(a) -> None:
+    """全 race_key の発走時刻(JST・naive)を引いて start_at.json に保存する（読み取りのみ）。"""
+    from _db import q
+    keys = sorted({k for f in CACHE.glob("day_*.pkl")
+                   for k in pickle.load(open(f, "rb"))["races"]})
+    out = {}
+    for i in range(0, len(keys), 500):
+        c, r = q("SELECT race_key, to_timestamp(start_at::bigint) at time zone 'Asia/Tokyo' "
+                 "FROM keirin.wt_races WHERE race_key = ANY(%s) AND start_at ~ '^[0-9]+$'", (keys[i:i + 500],))
+        for rk, t in r:
+            out[rk] = str(t)[:19]
+    json.dump(out, open(CACHE / "start_at.json", "w"))
+    print(f"start_at {len(out)}/{len(keys)}")
+
 
 def cmd_premise(a) -> None:
     from _db import q
@@ -584,6 +612,145 @@ def pop_tables(W, title: str, rows: list[dict], arms, detail_plans: bool = True)
     W("\n".join(md_table(["腕"] + months, body)))
 
 
+TOPNS = (0, 1, 3, 5)
+
+
+def topn_stats(rows: list[dict], arms, ns=TOPNS, seed=SEED) -> dict:
+    """各腕から「その腕自身の払戻の上位 N 件(レース単位)」を除いた回収率と、B−各腕の差。
+
+    分母（賭け金−返還）は除かない。CI は開催日リサンプルのたびに、リサンプル後のレースの中で
+    上位 N 件を除き直す（点推定と同じ手続き）。重複して引かれたレースは別件として数える。
+    """
+    arms = list(arms)
+    days = sorted({r["day"] for r in rows})
+    didx = {d: i for i, d in enumerate(days)}
+    dr = np.array([didx[r["day"]] for r in rows])
+    pay = {a: np.array([r[a]["pay"] for r in rows], dtype=float) for a in arms}
+    cost = {a: np.array([r[a]["net_cost"] for r in rows], dtype=float) for a in arms}
+    rng = np.random.default_rng(seed)
+    D = len(days)
+    cnt = np.zeros((N_BOOT, D))
+    draws = rng.integers(0, D, (N_BOOT, D))
+    for b in range(N_BOOT):
+        cnt[b] = np.bincount(draws[b], minlength=D)
+    Wb = cnt[:, dr]                       # N_BOOT x R
+    W1 = np.ones((1, len(rows)))
+
+    def roi_for(a, W):
+        order = np.argsort(-pay[a], kind="stable")
+        ps, Ws = pay[a][order], W[:, order]
+        prev = np.cumsum(Ws, axis=1) - Ws
+        tot = Ws @ ps
+        c = W @ cost[a]
+        out = {}
+        for n in ns:
+            removed = (np.clip(n - prev, 0, Ws) * ps).sum(axis=1)
+            out[n] = (tot - removed) / np.maximum(c, 1)
+        return out
+
+    pt = {a: roi_for(a, W1) for a in arms}
+    bt = {a: roi_for(a, Wb) for a in arms}
+    res: dict = {}
+    for n in ns:
+        d: dict = {}
+        for a in arms:
+            lo, hi = np.percentile(bt[a][n], [2.5, 97.5])
+            d[a] = (float(pt[a][n][0]), float(lo), float(hi))
+        for a in arms:
+            if a == "B":
+                continue
+            lo, hi = np.percentile(bt["B"][n] - bt[a][n], [2.5, 97.5])
+            d["B-" + a] = (float(pt["B"][n][0] - pt[a][n][0]), float(lo), float(hi))
+        res[n] = d
+    return res
+
+
+def topn_table(W, rows: list[dict], arms, with_plans: bool = False) -> None:
+    rows = common(rows, arms)
+    groups = [("全体", rows)]
+    for fam in ("本線(_hit/_pay/_trio/_ana/F_line)", "高額・看板枠(_sign/_big)", "逃げ先頭(L_*)", "段(T_*)"):
+        g = [r for r in rows if family(r["plan"]) == fam]
+        if g:
+            groups.append((fam, g))
+    if with_plans:
+        for p in sorted({r["plan"] for r in rows}):
+            groups.append((f"　{p}", [r for r in rows if r["plan"] == p]))
+    body = []
+    for lab, g in groups:
+        st = topn_stats(g, arms)
+        for n in TOPNS:
+            d = st[n]
+            body.append([lab if n == 0 else "", f"{len(g)}" if n == 0 else "", "なし" if n == 0 else f"上位{n}件"]
+                        + [f"{pct(d[a][0])} [{pct(d[a][1], 0)}, {pct(d[a][2], 0)}]" for a in arms]
+                        + [f"{pp(d['B-' + a][0])} [{d['B-' + a][1] * 100:+.0f}, {d['B-' + a][2] * 100:+.0f}]"
+                           for a in arms if a != "B"])
+    W("\n".join(md_table(["商品", "R数", "除外"] + [ARM_NAME[a] for a in arms]
+                        + [f"B−{a}" for a in arms if a != "B"], body)))
+
+
+def _roi_of(g, a):
+    c = sum(r[a]["net_cost"] for r in g)
+    return sum(r[a]["pay"] for r in g) / c if c else float("nan")
+
+
+def strata_section(W, rows: list[dict]) -> None:
+    """R1: B−A の層別と、層内で符号が揃う比較の整理。rows = 売った × 朝便（共通母集団）。"""
+    arms = ARMS_MAIN
+    rows = [r for r in common(rows, arms) if r.get("start_band")]
+    for r in rows:
+        r["_thick"] = "厚(>=0.9)" if r["morning_valid_frac"] >= 0.9 else "薄(<0.9)"
+        r["_week"] = datetime.fromisoformat(r["day"]).isocalendar()[1]
+    W("##### 主表 B−A の層別（時間帯 × 朝板の厚さ・ISO 週）\n")
+    W("層は事前に定義したものではなく、事後の分割（§3.5 と同じ）。件数が少ない層は参考値。"
+      "`A∩F` は A の選ぶ k 点と最終市場の低オッズ k 点（F）の一致率の中央値（1 に近いほど A が最終の市場に近い）。\n")
+    strata: list[tuple[str, list[dict]]] = []
+    for band in ("デイ(<15時)", "ナイター(15-20時)", "ミッド(>=20時)"):
+        for th in ("厚(>=0.9)", "薄(<0.9)"):
+            g = [r for r in rows if r["start_band"] == band and r["_thick"] == th]
+            if g:
+                strata.append((f"{band} × {th}", g))
+    wk = [(f"ISO{w}週", [r for r in rows if r["_week"] == w]) for w in sorted({r["_week"] for r in rows})]
+    body = []
+    for lab, g in strata + wk:
+        if len(g) < 5:
+            continue
+        s_ = summarize(g, arms)
+        d, (lo, hi) = s_["B-A"]
+        ov = [r["a_f_overlap"] for r in g if r.get("a_f_overlap") is not None]
+        body.append([lab, str(s_["n"]), str(s_["days"])] + roi_cells(s_, arms)
+                    + [f"{pp(d)} [{lo * 100:+.0f}, {hi * 100:+.0f}]", f"{np.median(ov):.2f}" if ov else "-"])
+    W("\n".join(md_table(["層", "R数", "日数"] + [ARM_NAME[x] for x in arms] + ["B−A", "A∩F"], body)))
+    allov_thin = [r["a_f_overlap"] for r in rows if r["_thick"] == "薄(<0.9)" and r.get("a_f_overlap") is not None]
+    allov_thick = [r["a_f_overlap"] for r in rows if r["_thick"] == "厚(>=0.9)" and r.get("a_f_overlap") is not None]
+    W(f"薄い朝板は主表の {sum(1 for r in rows if r['_thick'] == '薄(<0.9)')}/{len(rows)} 件。"
+      f"A の選ぶ k 点と最終市場の低オッズ k 点の一致率の中央値は、薄い板 {np.median(allov_thin):.2f}・"
+      f"厚い板 {np.median(allov_thick):.2f}。**薄い板では A は「市場」の粗い近似にすぎない**"
+      "（この粗さが B−A をどちらへ偏らせるかは測れていない）。\n")
+    # 層内の符号
+    pairs = [("B", "A"), ("B", "C"), ("B", "F"), ("C", "A"), ("F", "A"), ("F", "C")]
+    use = [(lab, g) for lab, g in strata if len(g) >= 50] + [(lab, g) for lab, g in wk if len(g) >= 50]
+    body = []
+    consist = []
+    for x, y in pairs:
+        pos = neg = 0
+        for lab, g in use:
+            d = _roi_of(g, x) - _roi_of(g, y)
+            pos += d > 0
+            neg += d < 0
+        body.append([f"{ARM_NAME[x]} − {ARM_NAME[y]}", str(len(use)), str(pos), str(neg)])
+        if pos == 0 or neg == 0:
+            consist.append(f"{x}−{y}（{'すべて正' if neg == 0 else 'すべて負'}）")
+    W("**層内で符号が揃うか**（上の層のうち 50 件以上の層 × 週。回収率の点推定の差の符号を数えた）\n")
+    W("\n".join(md_table(["比較", "層の数", "差>0 の層", "差<0 の層"], body)))
+    _rg = {x: [_roi_of(g, x) for _, g in use] for x in ("B", "A")}
+    _f = dict(bmin=pct(min(_rg["B"]), 0), bmax=pct(max(_rg["B"]), 0), amin=pct(min(_rg["A"]), 0), amax=pct(max(_rg["A"]), 0))
+    W(("🔴 **主表の「B 67.8% ↔ A 70.8%（B−A −3.0pt）」は解釈できない。** B−A は層の切り方で符号が反転し"
+      "（上表）。50 件以上の層での回収率の範囲は B {bmin}〜{bmax}・A {amin}〜{amax}（B の振れの方が大きい）。主表の B−A を「市場に負けている」とも「並んでいる」とも読まないこと。"
+      + ("層・週のすべてで符号が揃った比較は " + "、".join(consist) + "。" if consist else
+         "層・週のすべてで符号が揃った比較は無い。")
+      + "\n").replace("{bmin}", _f["bmin"]).replace("{bmax}", _f["bmax"]).replace("{amin}", _f["amin"]).replace("{amax}", _f["amax"]))
+
+
 def write_report(rows, meta) -> None:  # noqa: C901
     from src.type_lab import PLANS
     prem = json.load(open(CACHE / "premise.json")) if (CACHE / "premise.json").exists() else {}
@@ -673,13 +840,23 @@ def write_report(rows, meta) -> None:  # noqa: C901
     W(f"- 予測板(C 腕)を再構成できなかった pick = {be}。出走表の行数が `wt_races.n_entries` と違う（欠車で行が消えた）"
       f"pick = {em}（うち予測板の失敗と重なる = {both}）。欠車レースでは「今の出走表」で板を作り直すため、"
       "C は欠車を知っている板で選ぶ一方、B は欠車の目も買っている（返還）点に注意。")
-    fids = [r["pred_fid"] for r in rows if r.get("pred_fid")]
-    W("- **予測板の再構成の忠実度**（B の保存済み予測オッズに対する再構成板の比・pick ごとの中央値）。"
+    psg = [r for r in rows if r.get("post_start_gen")]
+    rows_f = [r for r in rows if not r.get("post_start_gen")]
+    W(f"- 🔴 **発走後に生成された行（`generated_at` > 発走時刻）= {len(psg)} 件**"
+      f"（日付: {', '.join(f'{d} {n}' for d, n in sorted(collections.Counter(r['day'] for r in psg).items()))}。"
+      f"うち売った朝便 {sum(1 for r in psg if r['sold'] and r['sess'] == '朝便')}・昼夜便の候補 "
+      f"{sum(1 for r in psg if not r['sold'] and r['sess'] == '昼夜便')}）。"
+      "これらの `legs[].pred_odds` は組み直し時点の値なので、**下の予測板の忠実度と §4 の予測オッズ比はこの行を除いて**出した。"
+      f"（入稿時刻より後に再生成された売った行は別に {sum(1 for r in rows if r['gen_lt_sub'])} 件。"
+      "§4 に除いた版を併記した。回収率の B はどちらも `type_lab_picks.legs` で採点しているが、入稿の買い目と一致する"
+      "ことは確認済み。）")
+    fids = [r["pred_fid"] for r in rows_f if r.get("pred_fid")]
+    W("- **予測板の再構成の忠実度**（発走後生成行を除く）（B の保存済み予測オッズに対する再構成板の比・pick ごとの中央値）。"
       "`wt_entries.pred_*_pct` は 0.1% 刻みに丸められ、本番が生成時に使った未丸めの p3/pw とは僅かに違う。月別:\n")
     body = []
     for mo in sorted({r["day"][:7] for r in rows}):
         for sess in ("朝便", "昼夜便"):
-            f_ = [r["pred_fid"] for r in rows if r["day"][:7] == mo and r["sess"] == sess and r.get("pred_fid")]
+            f_ = [r["pred_fid"] for r in rows_f if r["day"][:7] == mo and r["sess"] == sess and r.get("pred_fid")]
             if f_:
                 body.append([mo, sess, str(len(f_))] + [f"{x:.3f}" for x in np.percentile(f_, [1, 5, 50, 95, 99])])
     W("\n".join(md_table(["月", "便", "n", "p1", "p5", "中央", "p95", "p99"], body)))
@@ -754,8 +931,12 @@ def write_report(rows, meta) -> None:  # noqa: C901
     W("## 3. 回収率と差\n")
     W(f"回収率 = Σ払戻 ÷ Σ(賭け金 − 欠車返還)。CI は開催日単位ブートストラップ {N_BOOT} 回"
       "（日を復元抽出し、同じ抽出で B−各腕を対にする）。\n")
+    W("> 🔴 **先に読む（レッドチーム R1）: 主表の B−A は解釈できない。** B−A は層（朝板の厚さ × 発走時間帯、週）で符号が反転し、"
+      "A は朝板が薄いとき最終市場の粗い近似にすぎない（A と F の選ぶ組の一致率の中央値 薄い板 0.50 付近）。"
+      "層別の表と、層内で符号が揃う比較の整理は 3.1 の末尾。さらに回収率の差は上位数件の高額的中に支配される（3.6 に上位 k 件除外後を出した）。\n")
     pop_tables(W, "3.1 【主表】売った買い目 × 朝便（基準時刻 09 時前・A=07:00 台の朝板 = 入稿時点の板）",
                sold_m, ARMS_MAIN)
+    strata_section(W, sold_m)
     pop_tables(W, "3.2 売った買い目 × 昼夜便（基準時刻 09 時以降。A=朝板（古い）／Ag=基準時刻以前の最新の板）",
                sold_w, ARMS_WAVE, detail_plans=False)
     pop_tables(W, "3.3 live 候補（段 T_* と紙上のみの L_flat を除く）× 朝便"
@@ -799,13 +980,31 @@ def write_report(rows, meta) -> None:  # noqa: C901
         body.append([lab, str(sm_["n"]), str(sm_["days"])] + roi_cells(sm_, ARMS_MAIN) + diff_cells(sm_, ARMS_MAIN)[:0])
     W("\n".join(md_table(["群", "R数", "日数"] + [ARM_NAME[x] for x in ARMS_MAIN], [b[:3 + len(ARMS_MAIN)] for b in body])))
 
+    W("#### 3.6 全腕から同じ件数の上位払戻を除いた回収率（レッドチーム R2）\n")
+    W("各腕が自分の払戻の上位 N 件（レース単位）を除いた回収率（分母は除かない）。N=0 は除外なし。"
+      "CI と B−各腕の差の CI は、日リサンプルのたびにリサンプル後のレースの中で上位 N 件を除き直したもの。"
+      "従来の「最高配当 1 件除外」は B にだけ効くように読めたので、**全腕に同じ手続き**を当てる。\n")
+    W("##### 3.6.1 売った × 朝便（共通母集団・商品別を含む）\n")
+    topn_table(W, sold_m, ARMS_MAIN, with_plans=True)
+    W("##### 3.6.2 売った × 昼夜便\n")
+    topn_table(W, sold_w, ARMS_WAVE)
+    W("##### 3.6.3 live 候補 × 朝便（1 レースに複数 plan の行が並ぶ候補集合）\n")
+    topn_table(W, cand_m, ARMS_MAIN)
+
     # ── 4 オッズの動き
     W("## 4. 朝 -> 最終 のオッズの動き（B の買った組・売った買い目・朝便）\n")
     W("比 = 分子 / 分母。分位は 10 / 25 / 50 / 75 / 90%（脚単位・賭け金で重み付けしない）。"
-      "朝板・最終オッズが引けない脚は除く。昼夜便は朝板が古いので含めない。\n")
-    groups = [("全体", sold_m)] + [(f, [r for r in sold_m if family(r["plan"]) == f])
-                                for f in sorted({family(r["plan"]) for r in sold_m})]
-    groups += [(p, [r for r in sold_m if r["plan"] == p]) for p in sorted({r["plan"] for r in sold_m})]
+      "朝板・最終オッズが引けない脚は除く。昼夜便は朝板が古いので含めない。"
+      f"**発走後に生成された行 {sum(1 for r in sold_m if r['post_start_gen'])} 件（売った朝便）は除いてある**"
+      "（その行の予測オッズは組み直し時点の値で、入稿時点の予測ではない）。\n")
+    W("⚠️ **朝 -> 最終 の動きを「B を公開したことによる目減り（追随買い）」と読まないこと**（レッドチーム R9）。"
+      "朝板は締切までに予測オッズへ半分ほど寄っていく（回帰係数 0.54）粗い板で、公開ダミーの係数は 0 を跨ぐ"
+      "（+0.037 [−0.030, +0.098]）。朝板の値で買えたことも意味しない。\n")
+    sold4 = [r for r in sold_m if not r["post_start_gen"]]
+    groups = [("全体", sold4), ("全体（入稿後に再生成された行も除く）", [r for r in sold4 if not r["gen_lt_sub"]])]
+    groups += [(f, [r for r in sold4 if family(r["plan"]) == f])
+               for f in sorted({family(r["plan"]) for r in sold4})]
+    groups += [(p, [r for r in sold4 if r["plan"] == p]) for p in sorted({r["plan"] for r in sold4})]
     body = []
     seen = set()
     for lab, g in groups:
@@ -860,6 +1059,59 @@ def write_report(rows, meta) -> None:  # noqa: C901
     W("- §0 の入稿セッション別時刻（morning / noon / evening）は netkeirin への入稿バッチの区分で、本表の朝便・昼夜便"
       "（基準時刻 09 時前/以降）とは別物。")
     W("- 払戻はすべて最終オッズ。入稿時点で A/Ag/C を実際に買えば、締切までに動くぶん（§4）だけ払戻が変わる。")
+    # ── 7 レッドチーム対応
+    cm = common(sold_m, ARMS_MAIN)
+    nz = tot = 0
+    for pk in sorted({r["plan"] for r in cm}):
+        g = [r for r in cm if r["plan"] == pk]
+        s_ = summarize(g, ARMS_MAIN)
+        for x in ("A", "C", "F"):
+            tot += 1
+            d, (lo, hi) = s_[f"B-{x}"]
+            nz += (lo > 0 or hi < 0)
+    b_all = _roi_of(sold_m, "B")
+    b_cm = _roi_of(cm, "B")
+    mo_cnt = collections.Counter(r["day"][:7] for r in cm)
+    mo_days = {m: len({r["day"] for r in cm if r["day"][:7] == m}) for m in mo_cnt}
+    W("## 7. レッドチーム対応（`reports/redteam_20261005.md` R1〜R17）\n")
+    W("レッドチーム報告本体は書き換えていない。状態: **対応済** = この報告に反映した、**対象外** = baseline の記述に影響しない"
+      "（H2・feature_audit の指摘）、**未** = 測れていない/実施していない。\n")
+    resp_rows = [
+        ["R1 重大", "対応済", "3.1 の冒頭に「B−A は解釈できない」を明記。3.1 末尾に 時間帯×朝板の厚さ・ISO 週の層別表（B−A の符号が行き来する）、"
+         "A∩F 一致率（薄い板で低い）、層内で符号が揃うかの数え上げ表を追加。"],
+        ["R2 重大", "対応済", "3.6 に全腕から同じ件数（上位 0/1/3/5 件）を除いた回収率と B−A/B−C/B−F（CI は除き直し）を、"
+         "売った×朝便（商品別・高額枠を含む）・昼夜便・候補で並べた。従来の「最高配当1件除外」列は残してある。"],
+        ["R3 中", "対象外", "H2（波乱指数）の最終オッズ使用の指摘。baseline の記述に影響しない。"],
+        ["R4 軽", f"対応済", f"発走後に生成された {len(psg)} 件を §0 の予測板の忠実度と §4 の予測オッズ比から除いた値に差し替え。"
+         "入稿後に再生成された売った行も除いた版を §4 に併記。回収率の B は legs=入稿の買い目で影響なし（食い違い 2 件は払戻 0 円）。"],
+        ["R5 中", "対応済（注記）", "C の予測板は抽出時点の `wt_entries` からの再構成で、本番が見た板ではない。昼夜便は忠実度が崩れる（§0）。"
+         "C 腕は参考値扱い。C が選んだ組の忠実度は本番が保存していないため測れない（未）。欠車 36 件は全腕共通の母集団から外れている。"],
+        ["R6 軽", "対象外", "H2 の `mdl_ent` の in-sample 疑い。"],
+        ["R7 中", "対象外", "H2 の `mdl_ent` と `mkt_p100` の独立性。"],
+        ["R7b 中", "対応済（注記）", "C は最終三連単オッズを目的変数に学習した予測オッズで選ぶため、C ≈ F の縮小版（最終市場の近似）。"
+         "主表で C が A と F の間にあるのはこの位置関係で、「モデルの予測だけで市場に近づく」証拠ではない。"],
+        ["R8 否定", "対象外", "H2 の板内順位バイアス。"],
+        ["R9 中", "対応済（注記）", "§4 の朝->最終のドリフトを「公開による目減り」と読まない旨を §4 に明記（公開ダミーの係数は 0 を跨ぐ）。"],
+        ["R10 中", "対応済（注記）", f"plan 別の差の表は多重比較と退化した CI（B が的中 0 件の plan 等）が混ざる。本版の主表では plan×{3} 腕の差の区間 "
+         f"{tot} 本のうち 0 を跨がないものが {nz} 本（偶然の期待は約 {tot * 0.05:.1f} 本）。plan 別の行で「X は朝の市場に勝つ」等と読まないこと。"],
+        ["R11 軽", "対象外", "H2 の探索窓/確認窓の構成数。"],
+        ["R12 軽", "未", "開催日ブートストラップの被覆。週単位は 6 クラスタで比較にならないため未実施。CI は名目より狭い可能性がある"
+         "（払戻が 10 万円超の数件に支配される母集団）。"],
+        ["R13 中", "対応済（注記）",
+         f"主表（共通母集団）は {len({r['day'] for r in cm})} 開催日・ISO {len({datetime.fromisoformat(r['day']).isocalendar()[1] for r in cm})} 週。"
+         "月別の日数: " + "、".join(f"{m} {mo_days[m]}日/{mo_cnt[m]}件" for m in sorted(mo_cnt)) + "。"
+         "段 T_* の実売は 2026-09-15 の 1 日だけで、その日は朝板 06:05 取得（有効比率 0.00）。グレード別の層別は未。"],
+        ["R14 中", "対応済（注記）",
+         f"帯が揃っていない（高額枠は A/C/F と狙う帯が別物）。共通母集団の取り方は B に有利側: 全 {len(sold_m)} 件の B {pct(b_all)} に対し"
+         f"共通母集団 {len(cm)} 件は {pct(b_cm)}（外れた 92 件ほどは主に薄い板）。配分は差を作っていない（§5 の B′）。"
+         "F は選定に最終オッズを使う腕なので、B−F を「市場に有意に負ける」と読まないこと（§3.6 の除き直し後も CI を併記）。"],
+        ["R15 軽", "未（一部対応）", "公開の影響は R9 の回帰で検出されず。自分の賭け金によるオッズ低下は組ごとの売上データが無く未測定。"
+         "冒頭の「払戻は上限値」の根拠は、締切までの動きと自分の賭け金による低下の両方で、後者の大きさは不明。"],
+        ["R16 軽", "対象外", "H2 の母集団から落ちたレース。"],
+        ["R17 軽", "対象外", "feature_audit の未検証 17 列・朝値の直接比較。"],
+    ]
+    W("\n".join(md_table(["指摘", "状態", "反映内容"], resp_rows)))
+
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(L) + "\n", encoding="utf-8")
     print("wrote", REPORT)
@@ -875,9 +1127,11 @@ def main() -> None:
     pr = sp.add_parser("premise")
     pr.add_argument("--from", dest="date_from", required=True)
     pr.add_argument("--to", dest="date_to", required=True)
+    sp.add_parser("startat")
     sp.add_parser("report")
     a = ap.parse_args()
-    {"extract": cmd_extract, "premise": cmd_premise, "report": cmd_report}[a.cmd](a)
+    {"extract": cmd_extract, "premise": cmd_premise, "startat": cmd_startat,
+     "report": cmd_report}[a.cmd](a)
 
 
 if __name__ == "__main__":
