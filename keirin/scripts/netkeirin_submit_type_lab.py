@@ -818,6 +818,56 @@ def axis_gate_enabled() -> bool:
     return True if v is None else bool(v)
 
 
+#: 決勝の軸信頼ゲート免除 A/B（事前登録 `docs/type_lab/prereg_final_gate_ab_2026_10_05.md`）。
+#: 🔴 期間・対象は事前登録の固定値。変えるなら登録を取り直す（`tests/test_final_gate_ab.py` が固定）。
+FINAL_GATE_AB_START = date(2026, 10, 12)      # 月曜。この週が第1週
+FINAL_GATE_AB_END = date(2026, 12, 6)         # 日曜。第8週の最終日
+#: **完全一致**で見る。「準決勝」「準決勝A」などを部分一致で拾ってはいけない。
+FINAL_GATE_AB_RACE_TYPES = frozenset({"決勝", "チャレンジ決勝"})
+
+
+def final_gate_exempt(race_type: object, race_date: object) -> bool:
+    """決勝の軸信頼ゲート免除 A/B で、このレースがゲートを免除される（ON 週）か。
+
+    🔴 経緯: 2026-08-31 に看板へ軸信頼ゲートを掛けた（`_passes_axis_gate`）結果、
+       決勝の一部が無商品になった（2026-10-05 時点で決勝 42件中 5件）。決勝は最も売れる
+       種別なので、免除したときの売上を**前向きに**測る。2026-10-05 にユーザーが決定。
+       事前登録: `keirin/docs/type_lab/prereg_final_gate_ab_2026_10_05.md`
+       （主指標・判定規則・限界もそこ）。
+
+    割り付けは**日付だけ**で決まる（実行時の判断を入れない）:
+      - 対象: `race_type` が「決勝」「チャレンジ決勝」に完全一致
+      - 期間: 2026-10-12（月）〜 2026-12-06（日）の8週。月曜始まりで数え、
+        第1・3・5・7週が ON（免除）、第2・4・6・8週が OFF（現行どおり）
+      - 期間外は OFF
+
+    免除するのは軸信頼ゲートだけ。並び欠測・入稿ゲート・日次上限・1レース1商品は掛ける。
+    `race_date` は `YYYY-MM-DD` 文字列か `date`/`datetime`。読めなければ False（現行どおり）。
+
+    >>> final_gate_exempt("決勝", "2026-10-12")
+    True
+    >>> final_gate_exempt("決勝", "2026-10-19")
+    False
+    >>> final_gate_exempt("準決勝", "2026-10-12")
+    False
+    """
+    if str(race_type or "").strip() not in FINAL_GATE_AB_RACE_TYPES:
+        return False
+    try:
+        if isinstance(race_date, datetime):
+            d = race_date.date()
+        elif isinstance(race_date, date):
+            d = race_date
+        else:
+            d = date.fromisoformat(str(race_date).strip()[:10])
+    except ValueError:
+        return False
+    if not (FINAL_GATE_AB_START <= d <= FINAL_GATE_AB_END):
+        return False
+    week = (d - FINAL_GATE_AB_START).days // 7 + 1
+    return week % 2 == 1
+
+
 def _passes_axis_gate(row: dict) -> bool:
     """軸信頼ゲートを通るか。**看板レースにも掛ける**（2026-08-31・ユーザー判断 A案）。
 
@@ -841,6 +891,12 @@ def _passes_axis_gate(row: dict) -> bool:
        約29%（14.5件/日）あるので、素通しの有無で結論が変わる。実際
        2026-08-31 に「下位1/5 → 2/5 へ強化」を素通し無しで測って +1.35pt と
        読み違え、素通しを入れたら 50%割れの日が 7.1 → 12.2% に悪化して不採用になった。
+
+    ⚠️ **2026-10-12〜12-06 は決勝（「決勝」「チャレンジ決勝」の完全一致）に免除の前向き
+       A/B がある**（`final_gate_exempt`・事前登録 `docs/type_lab/prereg_final_gate_ab_2026_10_05.md`）。
+       ON 週の決勝はこの関数が False でも入稿側（`run` の `_reject`）が通す。
+       **この関数自体は免除を知らない**ので、期間中のゲートの検証・再現では
+       `final_gate_exempt` も併せて当てること（漏れると決勝の無商品率を読み違える）。
     """
     return bool(_GATE.passes_axis_gate(
         str(row["plan_key"]),
@@ -1191,7 +1247,15 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
                     f"{lineup} → この回は見送り（後の波で再判定）"
                     "※この時点の型は欠測入力によるもので信用できない",
                     False, "lineup", False)
-        if use_axis_gate and not _passes_axis_gate(r):
+        if use_axis_gate and not _passes_axis_gate(r) and final_gate_exempt(
+                r.get("race_type"), r.get("race_date")):
+            # 🔴 決勝の軸信頼ゲート免除 A/B（ON 週・2026-10-12〜）。ゲートだけを通し、
+            #    以降の入稿ゲート・日次上限・1レース1商品はそのまま掛かる。
+            print("[type_lab_submit] 決勝の軸信頼ゲート免除（A/B ON 週）: "
+                  f"{r.get('venue_name')}{r.get('race_no')}R 軸信頼 "
+                  + (f"{float(r['axis_sum']):.3f}" if r.get("axis_sum") is not None else "不明"),
+                  flush=True)
+        elif use_axis_gate and not _passes_axis_gate(r):
             # 軸信頼ゲートは「商品の定義」であってゲート落ちではない。
             # 🔴 **2026-09-01 から記録する**（それまでは件数だけ数えていた）。
             #    日次上限の分母が「その回に判定するレース数」になり、内訳が
