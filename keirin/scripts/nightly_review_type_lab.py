@@ -332,8 +332,17 @@ def _race_meta(day: str) -> dict[str, dict]:
 
 
 def _gate_ok(row: dict) -> bool:
-    """軸信頼ゲートを通るか。**看板は素通し**（入稿側 `_passes_axis_gate` と同一）。"""
-    if is_fill_target(row.get("race_type"), row.get("cup_grade")):
+    """軸信頼ゲートを通るか（入稿側 `netkeirin_submit_type_lab._reject` と同じ判定）。
+
+    🔴 **看板も素通ししない**（2026-10-05 是正）。入稿側は 2026-08-31 に
+       「看板は素通し」を取り消して看板にもゲートを掛けたのに、ここだけ旧仕様のまま
+       看板を素通ししていた。docstring は「入稿側と同一」と書いていたが実際は食い違い、
+       夜のレビューは**売っていない看板を「ゲート通過」に数えていた**。
+    🔴 **決勝の免除 A/B（2026-10-12〜12-06 の奇数週）は当てる**。入稿側は ON 週の決勝を
+       ゲートで落とさずに売るので、当てないと売った決勝を「ゲート落ち」に数える。
+       判定は入稿と同じ正本 `keirin_type_lab_gate.final_gate_exempt`（`race_date` が要る）。
+    """
+    if _GATE.final_gate_exempt(row.get("race_type"), row.get("race_date")):
         return True
     return bool(_GATE.passes_axis_gate(
         str(row["plan_key"]),
@@ -367,7 +376,7 @@ def _baseline_pool() -> dict[tuple[str, int], list[tuple[int, int]]]:
     lo, hi = BASELINE_WINDOW
     with get_connection() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, "
+            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, t.race_date, "
             "       t.budget, t.payout, COALESCE(t.void_refund, 0) AS void_refund, "
             "       r.cup_grade "
             "FROM type_lab_picks t LEFT JOIN wt_races r ON r.race_key = t.race_key "
@@ -397,7 +406,7 @@ def _band_baseline() -> dict[str, dict]:
     lo, hi = BASELINE_WINDOW
     with get_connection() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, "
+            "SELECT t.plan_key, t.type_label, t.axis_sum, t.n_entries, t.race_type, t.race_date, "
             "       t.win_tf_odds, "
             "       r.cup_grade FROM type_lab_picks t "
             "LEFT JOIN wt_races r ON r.race_key = t.race_key "
