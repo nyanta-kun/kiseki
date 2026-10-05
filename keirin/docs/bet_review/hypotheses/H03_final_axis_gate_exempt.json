@@ -1,0 +1,15 @@
+{
+  "id": "H03_final_axis_gate_exempt",
+  "hypothesis": "決勝は最も売れる種別（日固定効果後 +1.33 log・AUDIT §5）なのに、型ラボ期の無商品の決勝 19R のうち 18R が軸信頼ゲート落ちで売上ゼロになっていた（AUDIT §2.1・ゲートが p30 だった 2026-09-20 時点の数字。9/23 に p20 へ緩めた後の落ち方は未確認）。軸信頼ゲートは表示的中・回収率を動かさない『量のダイヤル』（RECOMMENDATION §3.3: p40〜ゲート無しで表示的中・ROI は 0.3pt 以内）なので、決勝に限りゲートを免除して型どおりの1商品を必ず出すと、回収率を下げずに売上が増える。",
+  "kind": "sales_label",
+  "feature_definition": "対象: race_type が『決勝』または『チャレンジ決勝』に**完全一致**（部分一致は準決勝を拾うので禁止）するレース。`_passes_axis_gate` を常に通す。商品は `sell_plans_for` どおり（入稿ゲート・並び欠測ガードは掛ける）。副腕: 決勝の型F だけ `F_pay`/`F_sign` の代わりに `F_hit` を割り当てる（決勝の F_sign/F_pay は的中 0〜3%・AUDIT §4.3）。",
+  "required_data": "/tmp/race_type_board.npz（決勝サブセット）、2026-09-23 以降の keirin.submission_skips（reason が軸信頼ゲート）× 決勝の件数（p20 化の後も決勝が落ちているかの確認・最初にやる）、wt_races.race_type、netkeirin_sales_race（2026-08-01〜・sold_paid_points）、netkeirin_submissions（origin・is_confident）。",
+  "available_before_submit": true,
+  "availability_note": "race_type は出走表（07:00）で確定。決勝は日次上限の枠外なので既存商品を押しのけない。",
+  "expected_bias": "該当なし（市場の歪みではなく販売面: 買い手が最も多いレースで商品が無い）",
+  "why_not_already_priced": "オッズの話ではない。売上は買い手数で決まり（価格 300pt 固定）、決勝は買い手が最も多いのに商品を出していないこと自体が機会損失。",
+  "differs_from_settled": "2026-08-31 の取り消しは『看板（決勝・準決勝・特選）に必ず推奨』全体で、当時の KPI は表示的中だった。本仮説は決勝だけ・売上を最優先 KPI とした 9/20 の決定後・ゲートが量のダイヤルだという 9/23 の実測を根拠にする。🔴 ユーザー決定の部分的な撤回なので採否はユーザー判断。",
+  "kpi": "売上（決勝からの日売上 = 決勝の本数 × 1本あたり販売有償pt）。副: 決勝の回収率・表示的中（非劣性）。副腕（決勝の型F を F_hit へ）の代償として 10万+/日 の減少を必ず併記（F_sign は 10万+ の最大の源・確認窓 0.52件/日・AUDIT §4.2）",
+  "test_design": "回収率側（2025）: 台は `type_lab_picks` の paper 行ではなく `/tmp/race_type_board.npz`（7車・vintage p3/pw）＋本番関数（`scripts/exp_type_lab/lineup_arms.py` / `lineup_paired.py` / `build_with_gate_fallback`）で組み直す。paper 2025 は全行 rule_version `cf39e62d1442`（2026-09-02 生成＝9/22 の5万ダッチ化・9/23 の軸ゲート p20 より前の規則）で現行商品ではない。board は /tmp にあり揮発するので、無ければ `docs/type_lab/RUNBOOK.md` の手順で再生成する。 決勝サブセットで『ゲート通過の決勝』と『ゲート落ちの決勝』の回収率・表示的中・10万+ を比べ、ゲート免除の ΔROI（免除腕 − 現行）の CI 下限 > −5pt を非劣性の基準案とする（§3.3 が全体で示した『ゲートは量のダイヤル』が決勝サブセットでも成り立つかの確認）。予測オッズ odds_tf_n7/n9 は train_end 2025-12-31 なので 2025 の探索では in-sample。`scripts/train_odds_prediction_tf.py --train-end 2024-12-31` で探索用 vintage を作り直して使う（引数は実在を確認済み）。作り直せない場合は最終オッズ代理で測り、その旨を結果に明記する。 売上側: 2025 に売上データは無い（netkeirin_sales_race は 2026-08-01〜）。探索として 2026-08-01〜10-04 の決勝1本あたり sold_paid_points を種別・時間帯・日固定効果つきで記述（AUDIT G_sales の手法・同じデータの再利用なので弱い証拠）。確認は前向き A/B: 週単位で ON/OFF を交互（8週・ON 4週）にし、主指標 = 1日あたり決勝からの販売有償pt、日固定効果は使えないので曜日・開催グレードで調整。見込み: 決勝は 1日数本 → 8週で約200R。売上は 1本ごとに観測できるので判定可能。回収率は 200R では判定できない（非劣性の確認は 2025 の台で行う）。",
+  "priority": 1
+}

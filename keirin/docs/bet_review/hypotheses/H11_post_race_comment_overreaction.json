@@ -1,0 +1,15 @@
+{
+  "id": "H11_post_race_comment_overreaction",
+  "hypothesis": "前走で大敗（6着以下・完走）した選手のうち、レース後コメントで『展開・位置取りの問題（self_eval=t）』や『内容は良かった（g）』と自己評価した選手は、市場が直近の着順に過剰反応して次走（同じ開催の翌日以降）を過小評価している。",
+  "kind": "feature",
+  "feature_definition": "flag = 前走 finish_order ≥ 6（0=DNF は除く）∧ そのレース後コメントの self_eval ∈ {t, g} ∧ コメントの公開時刻（src_updated_at）が次走日の 07:00 JST 以前。指標: R = mean(着順≤3 − 市場3着内確率 | flag)（市場3着内確率は確定三連単の 1/オッズ を正規化して車ごとに合算・prereg_rider_condition と同じ）と、D = R − mean(同 | 前走6着以下・コメントあり・flag なし)。買い方への変換は flag 選手を hit 商品の3着列で優先する形（R が合格した場合のみ）。",
+  "required_data": "keirin.rider_interviews（kind=post・self_eval・src_updated_at。本文は 2025-12-01〜）、wt_entries.finish_order、wt_odds 最終三連単。分類は抽出し直さず、既存の `self_eval` 列（`tag_rider_interviews.py` / 過去分は API Batch）をそのまま使う。",
+  "available_before_submit": true,
+  "availability_note": "前日のレース後コメントは当日 07:00 までにほぼ公開されている（公開時刻で必ず絞る）。開催初日は前走が前の開催なので対象になるが、コメントの公開から日が空く。",
+  "expected_bias": "市場が過小評価",
+  "why_not_already_priced": "市場が見るのは前走の着順（数字）で、負けた理由（本文）は読まれにくい（推測）。",
+  "differs_from_settled": "2026-10-01 の本判定は35タグを単独で測り、市場基準で両窓有効だったのは前検日『調子が良い』だけ。本仮説は『結果（大敗）× 自己評価（理由）』の交差で、市場が見る情報と見ない情報の食い違いを狙う（交差は未測定）。ただし同じデータの 2026-01〜09 は本判定で使用済み。",
+  "kpi": "市場3着内確率に対する上振れ R・D（主）。合格後に回収率",
+  "test_design": "🔴 データ制約が致命的: コメント本文は 2025-12 から、探索窓 2025 は12月の1か月しか無い（2026-01〜09 は本判定で消費済み）。したがって探索 = 2025-12 の記述（n と R の点推定だけ）、確認 = 前向き 2026-10〜12（prereg_rider_condition と同じ窓）。🔴 分類は既存の列をそのまま使う（抽出し直さない）。日次分は `claude -p` で、過去分（API Batch）より『調子が良い』を多く付ける尺度差がある（同じ160件で 55 ↔ 37件）。self_eval でも同種の差がありうるので、判定窓の中で『claude -p 分類の期間』だけで R・D を出し、尺度差を限界として明記する。事前登録（prereg_rider_condition §3）は判定窓の再分類を求めており、どちらの分類に揃えるかはユーザー判断。合格基準案: flag あり n ≥ 1,500 出走 ∧ R の CI 下限 > 0 ∧ D の CI 下限 > 0（日クラスタ・ブートストラップ）。事前登録へ追記してから前向き窓のデータを見る。",
+  "priority": 4
+}

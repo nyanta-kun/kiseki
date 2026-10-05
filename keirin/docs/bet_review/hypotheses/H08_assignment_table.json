@@ -1,0 +1,15 @@
+{
+  "id": "H08_assignment_table",
+  "hypothesis": "1日の的中率・回収率の振れに日単位の構造は無い（daily_portfolio_2026_09_10: 振れは型構成と1商品ごとの運で説明される）。したがって日次の水準と安定は『レースごとの商品の割り当て』の積み上げと商品ミックスの算術でしか動かない。市場に対する歪みを持つ商品（H01/H02/H06/H07 の合格分、L_lead、L_flat）を、その歪みが効く条件のレースにだけ割り当て、それ以外は現行（または見送り）にする割り当て表を作ると、日次回収率の平均と下側（p10）が同時に上がる。",
+  "kind": "allocation",
+  "feature_definition": "レースごとの候補集合 = {現行 `sell_plans_for` の1商品, `{型}_sign`（H02）, H06, L_lead, L_flat, 見送り}。割り当て表 = (型, axis_sum 五分位, 平らさ五分位, L 条件の成立) → 商品。🔴 候補に入れるのは個別の検定（H01/H02/H06/H07）に合格したものだけ。2^n 通りの組み合わせ探索はしない。表は 2025 上期で決め、2025 下期で確かめる。制約: 1レース1商品・予算1万・日次上限・高額枠の本数は本番どおり、穴枠の合計は H09 の予算に従う。",
+  "required_data": "/tmp/race_type_board.npz、各候補商品の買い目（本番関数）、odds_tf 探索用 vintage、wt_odds 最終三連単。L_lead / L_flat は `src/type_lab.py::line_lead_legs` / `flat_lead_legs`。",
+  "available_before_submit": true,
+  "availability_note": "割り当ての入力はすべて 07:00 の生成時に揃う。並び欠測レースは 13:05/18:05 で再割り当て（L 系は並び必須）。",
+  "expected_bias": "該当なし（各候補の歪みに依存）",
+  "why_not_already_priced": "割り当て自体は市場の歪みを作らない。効くのは候補商品が持つ歪みを、それが効く条件に集めることだけ。",
+  "differs_from_settled": "§7『期待値で優先順位を並べる（EV最大＝EV最小）』は現行商品どうしの並べ替えで、全商品が壁へ値付けされていた。本仮説は歪みのある商品だけを候補に入れる。daily_portfolio の否定（日次の的中率を目標に上限・優先順位・会場の散らしを足す介入）とは、日単位ではなくレース単位の割り当てである点が違う。L_lead / L_flat の事前登録の判定は変えない（それぞれの合否をこの表の入力に使うだけ）。",
+  "kpi": "日次回収率の平均（主）と p10。副: 表示的中・10万+/日・回収率50%割れの日の割合",
+  "test_design": "台は `type_lab_picks` の paper 行ではなく `/tmp/race_type_board.npz`（7車・vintage p3/pw）＋本番関数（`scripts/exp_type_lab/lineup_arms.py` / `lineup_paired.py` / `build_with_gate_fallback`）で組み直す。paper 2025 は全行 rule_version `cf39e62d1442`（2026-09-02 生成＝9/22 の5万ダッチ化・9/23 の軸ゲート p20 より前の規則）で現行商品ではない。board は /tmp にあり揮発するので、無ければ `docs/type_lab/RUNBOOK.md` の手順で再生成する。 日次シミュレーションで、①現行ラインナップ（本番の lineup 再現）、②割り当て表、③各商品の本数を保ったまま割り当て先レースを無作為に入れ替える対照 20 seed。合格基準案: 日次回収率の平均で ②−③中央値の CI 下限 > 0 ∧ 日次 p10 が①以上 ∧ 2025 下期（表を決めていない半期）でも同符号。🔴 L_lead / L_flat の条件は探索・確認の両窓を見て決めたもの（line_lead §8・flat_lead §2）なので、2025 の数字は in-sample。L 系を含む版と含まない版を必ず併記する。予測オッズ odds_tf_n7/n9 は train_end 2025-12-31 なので 2025 の探索では in-sample。`scripts/train_odds_prediction_tf.py --train-end 2024-12-31` で探索用 vintage を作り直して使う（引数は実在を確認済み）。作り直せない場合は最終オッズ代理で測り、その旨を結果に明記する。 前向き確認: 個別仮説の前向き判定がそろった後（2026-12 以降）に、表を固定して 2027Q1 に一度だけ。",
+  "priority": 2
+}
