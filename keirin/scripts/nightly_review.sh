@@ -77,3 +77,10 @@ fi
 PYTHONPATH=. "$PY" scripts/notify_issues.py --day "$DAY" --kind anomaly \
   ${NIGHTLY_URL:+--url "$NIGHTLY_URL/$DAY.html"} \
   || echo "[nightly_review] ⚠️ 課題通知に失敗（レビュー本体は完了している）"
+
+# ⑥ オッズスナップショットの欠けの見張り（2026-10-07）。対象は前日。
+#    スナップショットは発走前にしか取れず後から埋められない。2026-06-17〜07-15 と
+#    evening（2026-09-22〜）の欠けは誰にも気づかれなかった。読み取りのみ。
+#    🔴 失敗しても夜間レビューは止めない（`set -e` 下なので || で受ける）。
+PYTHONPATH=. "$PY" scripts/check_odds_snapshot_health.py "$DAY" \
+  || echo "[nightly_review] ⚠️ オッズスナップショットに欠けがある（または検査に失敗）"

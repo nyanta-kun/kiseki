@@ -69,8 +69,25 @@ def auto_snapshot_type(dt: Optional[datetime] = None) -> str:
     return f"h{dt.hour:02d}"
 
 
+def snapshot_exists(target_date: str, snapshot_type: str) -> bool:
+    """target_date のレースに snapshot_type のスナップショットが1行でもあるか。"""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM wt_odds_snapshot s
+            JOIN wt_races r ON r.race_key = s.race_key
+            WHERE r.race_date = ? AND s.snapshot_type = ?
+            LIMIT 1
+            """,
+            (target_date, snapshot_type),
+        ).fetchone()
+    return row is not None
+
+
 def snapshot(target_date: str, snapshot_type: Optional[str] = None,
-             dry_run: bool = False, sleep_sec: float = 1.5) -> None:
+             dry_run: bool = False, sleep_sec: float = 1.5,
+             skip_if_exists: bool = False) -> None:
     """target_date の未発走レースの現在オッズを winticket から取得して保存する。
 
     Parameters
@@ -84,6 +101,10 @@ def snapshot(target_date: str, snapshot_type: Optional[str] = None,
         snapshot_type = auto_snapshot_type()
 
     init_db()
+
+    if skip_if_exists and snapshot_exists(target_date, snapshot_type):
+        print(f"[intraday] {target_date} ({snapshot_type}): 取得済みのためスキップ")
+        return
 
     # 当日の未発走レース（start_at > 現在の UNIX 秒、cancel=0）を取得
     # start_at は TEXT 型のため文字列で比較（SQLite/PostgreSQL 共通）
@@ -373,6 +394,11 @@ def main() -> None:
         help="DB 書き込みをせず取得件数だけ表示",
     )
     ap.add_argument(
+        "--skip-if-exists", action="store_true",
+        help="その日にこの snapshot_type が既にあれば何もしない（毎15分起動の"
+             "スクリプトから呼ぶとき用。intraday_results_wt.sh の h16）",
+    )
+    ap.add_argument(
         "--sleep", type=float, default=1.5,
         help="レース間リクエスト間隔 秒（既定: 1.5）",
     )
@@ -392,7 +418,8 @@ def main() -> None:
         report(args.date_from, args.date_to, args.race_key)
     else:
         target = args.target_date or date.today().isoformat()
-        snapshot(target, args.snap_type, dry_run=args.dry_run, sleep_sec=args.sleep)
+        snapshot(target, args.snap_type, dry_run=args.dry_run, sleep_sec=args.sleep,
+                 skip_if_exists=args.skip_if_exists)
 
 
 if __name__ == "__main__":

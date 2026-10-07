@@ -117,4 +117,22 @@ else
   echo "[$(date '+%H:%M:%S')] KEIRIN_DB_URL 未設定のため VPS 同期をスキップ"
 fi
 
+# --- 16時のオッズスナップショット（2026-10-07 復活）---
+# 🔴 `evening`（16:00）は 2026-09-22 から取れていなかった。取得は #603 で退役させた
+#    evening_picks_wt.sh の 1b にあり、退役の副作用で止まっていた（誰も気づかなかった）。
+#    crontab を変えずに戻すため、毎15分の本スクリプトに載せる。
+# ⚠️ 名前は `evening` ではなく `h16`。取得方法が違う（winticket から直接 vs
+#    `evening` は wt_odds からの写し・初回値保持）ので同じ名前に混ぜない。
+#    他の h10〜h20（VPS cron の snapshot_intraday_odds_wt.py）と同じ系列。
+# JST 16:00〜16:29 の回（16:00 と 16:15 の2回）で、その日の h16 がまだ無ければ取る（--skip-if-exists）。
+# 16:00 の回がロック待ちや失敗で取れなくても 16:15 の回で拾う。
+# 失敗しても結果収集は止めない。欠けは check_odds_snapshot_health.py が翌0:10に拾う。
+if [[ "$CURRENT_HOUR" == "16" && "$((10#$CURRENT_MIN))" -lt 30 ]]; then
+  echo "[$(date '+%H:%M:%S')] h16 オッズスナップショット $TODAY ..."
+  PYTHONPATH=. .venv/bin/python3 scripts/snapshot_intraday_odds_wt.py \
+    --type h16 --skip-if-exists "$TODAY" \
+    >> "$LOG_DIR/snapshot_h16_${TODAY}.log" 2>&1 \
+    || echo "[$(date '+%H:%M:%S')] h16 スナップショットに失敗（継続）"
+fi
+
 echo "[$(date '+%H:%M:%S')] 日中処理 完了"
