@@ -565,7 +565,16 @@ def fetch_realtime_data(nv, dataspec: str, key: str) -> list[dict]:
     """
     rc = nv.NVRTOpen(dataspec, key)
     if rc < 0:
+        # 🔴 失敗時も必ず NVClose する（2026-10-08 実機確認）。
+        # 閉じずに戻ると次の NVRTOpen / NVOpen が rc=-202 で全て失敗する。
+        # 配信側が一部の場だけ -1 を返す日に、その場がキー順の先頭にあると
+        # 後続の全場の成績・オッズが巻き添えで取れなくなっていた
+        # （10/5〜10/8 に「1 件 / 47 レース」・fetch-results「データなし」が続いた）。
         logger.debug(f"NVRTOpen no data: rc={rc}, dataspec={dataspec}, key={key[:16]}")
+        try:
+            nv.NVClose()
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"NVClose after failed NVRTOpen raised: {e}")
         return []
 
     records: list[dict] = []
