@@ -493,13 +493,17 @@ def test_固めと広めは買い目から二軸を判定する():
     assert "照らし出した二軸は、◎1番・○2番" in c
 
 
-def test_荒れは穴狙いアイコン_固めと広めは既定():
+def test_荒れは本線が穴なら穴狙いアイコン_固めは既定():
+    """2026-10-12〜 アイコンはプランではなく買い目（本線の予測倍率）で決まる。"""
     from scripts.netkeirin_submit_type_lab import (
-        ACT_TYPE_BY_PLAN, ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT)
+        ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT, act_type_for_legs)
 
-    assert ACT_TYPE_BY_PLAN["T_upset"] == ACT_TYPE_LONGSHOT
-    assert ACT_TYPE_BY_PLAN["T_firm"] == ACT_TYPE_DEFAULT
-    assert ACT_TYPE_BY_PLAN["T_mid"] == ACT_TYPE_DEFAULT
+    upset = [{"combo": "3-4-5", "stake": 1500, "pred_odds": 48.0},
+             {"combo": "4-3-6", "stake": 1200, "pred_odds": 60.0}]
+    firm = [{"combo": "1-2-3", "stake": 4000, "pred_odds": 4.5},
+            {"combo": "2-1-3", "stake": 3000, "pred_odds": 6.0}]
+    assert act_type_for_legs(upset) == ACT_TYPE_LONGSHOT
+    assert act_type_for_legs(firm) == ACT_TYPE_DEFAULT
 
 
 def test_一軸は買い目の1着を軸として印と文面に出す():

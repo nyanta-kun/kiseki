@@ -200,8 +200,11 @@ def test_失敗しても型ラボの入稿は止まらない(monkeypatch):
 
 
 def test_穴狙いのアイコン():
+    """逃げ先頭は均等買いで本線が人気薄なので穴狙い（2026-10-12〜 買い目で判定）。"""
     from scripts import netkeirin_submit_type_lab as m
-    assert m.ACT_TYPE_BY_PLAN["L_lead"] == m.ACT_TYPE_LONGSHOT
+    legs = [{"combo": c, "stake": 2500, "pred_odds": o}
+            for c, o in (("6-4-1", 82.1), ("6-4-3", 69.9), ("6-4-5", 201.1), ("6-4-7", 157.8))]
+    assert m.act_type_for_legs(legs) == m.ACT_TYPE_LONGSHOT
 
 
 def test_型ラボの本体より後に回る():
