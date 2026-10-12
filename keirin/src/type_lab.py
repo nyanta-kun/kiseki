@@ -2814,7 +2814,25 @@ def apply_osae(shape: "RaceShape", plan: Plan, legs: Sequence, stakes: Mapping,
 #:    並び違いを選んだ効果として立証できていない。
 #: ⚠️ 確認窓は既に何度も使っている。⚠️ 9車は未測定（`build_with_gate_fallback` が
 #:    7車以外では掛けない）。
-ADD_PERM_PLANS: frozenset[str] = frozenset({"A_hit", "B_hit", "E_hit"})
+#:
+#: 🔴🔴 **2026-10-12 に `A_hit` / `B_hit` を外した（#613・ユーザー決定）。残すのは `E_hit` だけ。**
+#:    上の実測は `conf`（信頼度傾斜）の商品で測った値。`A_hit` / `B_hit` は 2026-09-22 に
+#:    **計画払戻5万円のダッチ**へ替わっており、ダッチでは計画払戻が
+#:    `予算 ÷ Σ(1/予測オッズ)` なので、**安い並び違いを1点足すと Σ が倍近くになり
+#:    目標額が半減する**（入稿初日の計画払戻中央 `A_hit` 29,905円 / `B_hit` 24,953円）。
+#:    外した実測（`scripts/exp_type_lab/lineup_arms.py --arms current+noaddperm_ab`・
+#:    件/日と投資は不変・`docs/type_lab/product_redesign_2026_09_22.md` §7.6）:
+#:
+#:                    確認 2026-01〜08          探索 2024-07〜2025-12
+#:      4万+/日     +0.29 [+0.19,+0.40]        +0.29 [+0.24,+0.34]
+#:      表示的中    −1.25 [−1.53,−1.00]        −1.33 [−1.52,−1.15]
+#:      ROI         +0.34 [−0.77,+1.36]        +0.68 [+0.04,+1.32]
+#:
+#:    実売 2026-10-05〜11（396件）へ当てはめた再計算でも同じ向き
+#:    （4万+ 23→25〜26件・表示的中 80→77件・回収率 82.5→83.6〜84.1%）。
+#: 🔴 **`E_hit` は残す。** `conf` の商品なので半減の問題が無く、外しても
+#:    4万+ は +0.02件/日（誤差）しか増えない。
+ADD_PERM_PLANS: frozenset[str] = frozenset({"E_hit"})
 
 
 def apply_add_perm(plan: Plan, legs: Sequence, stakes: Mapping,
