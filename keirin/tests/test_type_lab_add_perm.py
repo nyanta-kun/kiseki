@@ -13,13 +13,20 @@
   2. 🔴 **足す1点は予測オッズ最安**（確率最上位ではない）。実測で全体
      +0.59/+0.64 → **+0.66/+0.71**。発端2件とも決着はモデル確率で最下位側なのに
      市場では集合内最安だった。
-  3. 🔴 **掛けるのは3プランだけ**。`C_hit` は対照に負け、`A_ana` は ΔROI −11.9pt
-     （探索窓で有意）。
+  3. 🔴 **掛けるのは `E_hit` だけ**（2026-10-12・#613）。`C_hit` は対照に負け、
+     `A_ana` は ΔROI −11.9pt（探索窓で有意）。`A_hit` / `B_hit` は計画払戻5万円の
+     ダッチへ替わった後、足すと目標額が半減するので外した。
+
+足す1点の選び方・帯・ゲートの検査（機構の検査）は、ダッチの商品にも掛け直せるよう
+`B_hit` を一時的に対象へ入れて走らせる（`_with_b_hit`）。本番の対象は別の検査で固定する。
 """
 from __future__ import annotations
 
 import itertools
 
+import pytest
+
+import src.type_lab as TL
 from src.stake_allocation import MIN_MEAN_PAYOUT, MIN_POINT_ODDS
 from src.type_lab import (
     ADD_PERM_PLANS, PLANS, RaceShape, allocate, apply_add_perm,
@@ -44,18 +51,39 @@ def _board(base: float = 60.0, over: dict | None = None):
 
 # ───────────────────────── 対象プラン ─────────────────────────
 
-def test_plans_are_exactly_a_b_e_hit():
-    """🔴 `C_hit` / `A_ana` を入れてはいけない。
+def test_plans_are_exactly_e_hit():
+    """🔴 対象は `E_hit` だけ。
 
-    `C_hit` は Δ +0.10 で無作為対照 +0.32 に負け、ΔROI −0.95 は有意。
-    `A_ana` は表示的中 +0.88 だが **ΔROI −11.9pt（探索窓で有意）・払戻中央 −8.3%**
-    ＝軸1を外す穴狙い商品に安い並びを足すと払戻が崩れる（`OSAE_PLANS` が
-    一撃商品を外しているのと同じ判断）。発端の大宮2R はこのプランなので、
-    **あのレースを救う操作は商品全体では損**という結論そのもの。
+    - `C_hit` は Δ +0.10 で無作為対照 +0.32 に負け、ΔROI −0.95 は有意。
+    - `A_ana` は表示的中 +0.88 だが **ΔROI −11.9pt（探索窓で有意）・払戻中央 −8.3%**
+      ＝軸1を外す穴狙い商品に安い並びを足すと払戻が崩れる。発端の大宮2R はこのプランなので、
+      **あのレースを救う操作は商品全体では損**という結論そのもの。
+    - 🔴 `A_hit` / `B_hit` は 2026-10-12 に外した（#613）。計画払戻5万円のダッチでは
+      計画払戻 = 予算 ÷ Σ(1/予測オッズ) なので、安い並びを1点足すと目標額が半減する。
+      外すと 4万+/日 +0.29（両窓）・表示的中 −1.25/−1.33pt。
     """
-    assert ADD_PERM_PLANS == frozenset({"A_hit", "B_hit", "E_hit"})
-    for key in ("C_hit", "A_ana", "A_trio", "D_hit", "F_sign", "F_pay"):
+    assert ADD_PERM_PLANS == frozenset({"E_hit"})
+    for key in ("A_hit", "B_hit", "C_hit", "A_ana", "A_trio", "D_hit", "F_sign", "F_pay"):
         assert key not in ADD_PERM_PLANS
+
+
+@pytest.mark.parametrize("key", ["A_hit", "B_hit"])
+def test_no_op_for_dutch_hit_plans(key):
+    """🔴 `A_hit` / `B_hit` には足さない（足すと計画払戻が半減する）。"""
+    plan = PLANS[key]
+    assert plan.alloc == "dutch"
+    po, pr = _board(60.0, {(3, 2, 1): 25.0})
+    legs = [(1, 2, 3), (4, 5, 6)]
+    st = allocate(legs, po, pr, plan)
+    out_legs, out_st = apply_add_perm(plan, legs, st, po, pr)
+    assert [tuple(c) for c in out_legs] == legs
+    assert out_st == st
+
+
+@pytest.fixture
+def _with_b_hit(monkeypatch):
+    """機構の検査用に `B_hit` を一時的に対象へ入れる（本番の対象は上の検査で固定）。"""
+    monkeypatch.setattr(TL, "ADD_PERM_PLANS", TL.ADD_PERM_PLANS | {"B_hit"})
 
 
 def test_no_op_for_plans_outside_the_set():
@@ -81,7 +109,7 @@ def test_no_op_for_trio_plans():
 
 # ───────────────────────── 足す1点の選び方 ─────────────────────────
 
-def test_adds_the_cheapest_unbought_permutation_of_the_first_leg():
+def test_adds_the_cheapest_unbought_permutation_of_the_first_leg(_with_b_hit):
     """🔴 **先頭の目と同じ3車**のうち、**予測オッズ最安**を1点足す。
 
     確率を最安の目だけ極端に低くしても選ばれること（＝確率で選んでいないこと）を
@@ -99,7 +127,7 @@ def test_adds_the_cheapest_unbought_permutation_of_the_first_leg():
     assert sum(out_st.values()) == sum(st.values())      # 投資は据え置き
 
 
-def test_uses_the_first_leg_not_another_bought_set():
+def test_uses_the_first_leg_not_another_bought_set(_with_b_hit):
     """足す先は**先頭の目の集合**。他の集合の並び違いは足さない（1点だけ）。"""
     plan = PLANS["B_hit"]
     po, pr = _board(60.0, {(6, 5, 4): 5.0})   # 2点目の集合の方が安い並びを持つ
@@ -111,7 +139,7 @@ def test_uses_the_first_leg_not_another_bought_set():
     assert {frozenset(c) for c in added} == {frozenset({1, 2, 3})}
 
 
-def test_never_adds_an_already_bought_permutation():
+def test_never_adds_an_already_bought_permutation(_with_b_hit):
     plan = PLANS["B_hit"]
     po, pr = _board(60.0)
     legs = [tuple(c) for c in itertools.permutations((1, 2, 3))]   # 6順列すべて
@@ -139,7 +167,7 @@ def test_keeps_the_band():
     assert added == {(2, 1, 3)}          # 12倍の方が安いが帯の外なので採らない
 
 
-def test_does_not_add_when_it_would_break_the_mean_payout_gate():
+def test_does_not_add_when_it_would_break_the_mean_payout_gate(_with_b_hit):
     """🔴 平均想定払戻が `MIN_MEAN_PAYOUT` を割るなら足さない（在庫を減らさない）。"""
     plan = PLANS["B_hit"]
     po, pr = _board(2.5, {(3, 2, 1): 2.1})      # 全点が安く、足すと平均が落ちる
@@ -154,7 +182,7 @@ def test_does_not_add_when_it_would_break_the_mean_payout_gate():
         assert min(float(po[c]) for c in out_st) >= MIN_POINT_ODDS
 
 
-def test_never_lets_a_point_fall_below_min_point_odds():
+def test_never_lets_a_point_fall_below_min_point_odds(_with_b_hit):
     """🔴 全点の予測オッズ >= `MIN_POINT_ODDS`。1点でも割るなら足さない。"""
     plan = PLANS["B_hit"]
     po, pr = _board(60.0, {(3, 2, 1): 1.5})     # 2.0倍未満は候補にならない
@@ -169,14 +197,26 @@ def test_never_lets_a_point_fall_below_min_point_odds():
 
 def test_wired_into_build_with_gate_fallback_for_7_cars():
     """🔴 `build_with_gate_fallback` を通して効くこと（生成側だけに書かない）。"""
-    plan = PLANS["B_hit"]
+    plan = PLANS["E_hit"]
     po, pr = _board(60.0)
     pr[(1, 2, 3)] = 0.5                          # 先頭の目を確定させる
-    got = build_with_gate_fallback(_shape("B"), plan, po, pr, 7)
+    got = build_with_gate_fallback(_shape("E"), plan, po, pr, 7)
     assert got
     legs = [tuple(c) for c in got[0]]
     first_set = frozenset(legs[0])
     assert sum(1 for c in legs if frozenset(c) == first_set) >= 2
+
+
+def test_not_wired_for_b_hit_in_production():
+    """🔴 本番経路でも `B_hit` には足さない（#613）。"""
+    plan = PLANS["B_hit"]
+    po, pr = _board(60.0)
+    pr[(1, 2, 3)] = 0.5
+    got = build_with_gate_fallback(_shape("B"), plan, po, pr, 7)
+    assert got
+    legs = [tuple(c) for c in got[0]]
+    base = TL.build_legs(_shape("B"), plan, po, pr)
+    assert len(legs) == len(base)            # 足されていない
 
 
 def test_not_applied_for_9_cars():
@@ -201,7 +241,7 @@ def test_rule_version_tracks_the_plan_set_for_7_cars_only():
     v7, v9 = rule_version(7), rule_version(9)
     orig = TL.ADD_PERM_PLANS
     try:
-        TL.ADD_PERM_PLANS = frozenset({"A_hit"})
+        TL.ADD_PERM_PLANS = frozenset({"A_hit", "E_hit"})
         assert rule_version(7) != v7
         assert rule_version(9) == v9
     finally:
