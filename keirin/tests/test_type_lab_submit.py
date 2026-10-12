@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 from pathlib import Path
 
@@ -469,48 +470,53 @@ def test_existing_rank_submitter_has_no_type_lab_branch():
 
 # ───────────────────────── 勝負アイコン ─────────────────────────
 
-#: 穴狙いアイコンを付けるプラン。**ここを増やすときは理由を書くこと。**
-#: 🔴 看板枠 `{型}_sign` は6型ぶんまとめて穴狙い。**買い方で決めている**——
-#:    「当たれば15万円」を狙って人気薄の順列だけを買う構成なので、型に関係なく
-#:    買い目そのものが穴狙いにしか読めない（`A_ana` と同じ理屈）。
-#: 🔴 逃げ先頭ライン `L_lead`（2026-09-24〜）も穴狙い（ユーザー決定「穴狙いとして」）。
-#:    `SELLABLE_PLAN_KEYS` の外で売る（型ラボが売らないレースへ1日5本・別経路）。
-LONGSHOT_PLANS = ({"F_pay", "A_ana", "T_upset", "L_lead"}
-                  | {f"{t}_sign" for t in "ABCDEF"}
-                  | {f"{t}_big" for t in "ABCDEF"})
+#: 🔴 穴狙いアイコンは**買い目で決める**（2026-10-12 ユーザー決定・旧 `ACT_TYPE_BY_PLAN` は廃止）。
+#:    看板枠は賭け金の大半を10〜20倍台の1点に置くのにプラン名で穴狙いが付いており、
+#:    買う側から見て穴狙いと言えなかった。
 
 
-def test_only_declared_plans_are_longshot():
-    """穴狙いアイコンは `LONGSHOT_PLANS` だけ。**複数可**なので選定は要らない。
+def _lg(stake, odds):
+    return {"combo": "1-2-3", "stake": stake, "pred_odds": odds}
 
-    🔴 **アイコンの表は入稿しうるプラン全体を覆うこと。** 9車の型F が売る
-       `F_hit` が漏れると `.get(..., 既定)` で黙って既定へ落ちる。
-    🔴 `F_hit` に穴狙いを付けていないのは 2026-08-30 のユーザー判断
-       （「穴狙いのアイコンは現状のまま様子見」）。広げると効果の切り分けが
-       さらに難しくなる。
-    🔴 `A_ana`（2026-08-31）は**指数1位を1点も買わない**商品なので、
-       買い目そのものが穴狙い。上の「様子見」は同じ型で hit/pay を分ける話で、
-       こちらは別の商品。
-    """
-    from src.type_lab import SELLABLE_PLAN_KEYS
-    from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
+
+@pytest.mark.parametrize("legs,expected", [
+    # 10/3 大宮11R F_sign（9,500円を予測15.8倍・確定11.4倍で的中）→ 穴狙いではない
+    ([_lg(9500, 15.8), _lg(500, 314.3)], "default"),
+    # 看板枠の典型（本線18倍台）
+    ([_lg(8200, 18.4), _lg(1500, 97.6), _lg(300, 519.4)], "default"),
+    # 境界: 36倍ちょうどは穴狙い・直下は既定
+    ([_lg(10_000, 36.0)], "longshot"),
+    ([_lg(10_000, 35.9)], "default"),
+    # 逃げ先頭の均等買い: 同額なら最も人気側で判定する
+    ([_lg(2500, 82.1), _lg(2500, 69.9), _lg(2500, 201.1), _lg(2500, 157.8)], "longshot"),
+    ([_lg(2500, 82.1), _lg(2500, 20.0), _lg(2500, 201.1)], "default"),
+    # 押さえが高くても本線が人気なら既定（賭け金の多い目で見る）
+    ([_lg(6000, 12.0), _lg(4000, 300.0)], "default"),
+    # 本線が穴なら押さえが人気でも穴狙い
+    ([_lg(6000, 60.0), _lg(4000, 10.0)], "longshot"),
+    # 予測オッズが無い・買い目が空 → 既定
+    ([_lg(10_000, None)], "default"),
+    ([], "default"),
+])
+def test_act_type_for_legs(legs, expected):
+    from scripts.netkeirin_submit_type_lab import LONGSHOT_MAIN_ODDS_MIN, act_type_for_legs
     from src.netkeirin_client import ACT_TYPE_DEFAULT, ACT_TYPE_LONGSHOT
 
-    # 🔴 **表は「入稿しうるプラン」を覆っていればよく、超過は許す**（2026-08-31）。
-    #    看板枠 `{型}_sign` は6型ぶん定義してあるが、実際に売るのは
-    #    `SIGNBOARD_TYPES` の型だけ。ダイヤルを回した瞬間に
-    #    `.get(..., 既定)` で黙って既定アイコンへ落ちるのを防ぐため、
-    #    表には最初から6型ぶん入れてある。**不足は許さない**ので検出力は落ちない。
-    assert set(SELLABLE_PLAN_KEYS) <= set(ACT_TYPE_BY_PLAN), \
-        "入稿しうるプランが表から漏れている"
-    from src.type_lab import LINE_LEAD_PLAN_KEYS
-    assert all(k in SELLABLE_PLAN_KEYS or k in LINE_LEAD_PLAN_KEYS
-               or k.endswith(("_sign", "_big"))
-               for k in ACT_TYPE_BY_PLAN), "表に素性の分からないプランがある"
-    assert {k for k, v in ACT_TYPE_BY_PLAN.items()
-            if v == ACT_TYPE_LONGSHOT} == LONGSHOT_PLANS
-    assert all(v == ACT_TYPE_DEFAULT for k, v in ACT_TYPE_BY_PLAN.items()
-               if k not in LONGSHOT_PLANS)
+    assert LONGSHOT_MAIN_ODDS_MIN == 36.0
+    want = ACT_TYPE_LONGSHOT if expected == "longshot" else ACT_TYPE_DEFAULT
+    assert act_type_for_legs(legs) == want
+
+
+def test_submit_row_decides_icon_from_legs_not_plan():
+    """🔴 `submit_row` はプラン名ではなく買い目でアイコンを決める。
+
+    プラン別の表へ戻すと、看板枠の「本線18倍」に再び穴狙いが付く。
+    """
+    import scripts.netkeirin_submit_type_lab as m
+
+    src = inspect.getsource(m.submit_row)
+    assert 'act_type_for_legs(row["legs"])' in src
+    assert not hasattr(m, "ACT_TYPE_BY_PLAN")
 
 
 def test_sellable_plan_keys_covers_every_type_and_car_count():
@@ -525,28 +531,6 @@ def test_sellable_plan_keys_covers_every_type_and_car_count():
             for rt in ("決勝", "準決勝", "選抜", "一般", None):
                 for pl in sell_plans_for(t, n, rt):
                     assert pl.key in SELLABLE_PLAN_KEYS, (t, n, rt, pl.key)
-
-
-@pytest.mark.parametrize("n_entries,race_type", [(7, "決勝"), (7, "チャレンジ決勝"),
-                                                 (9, "決勝")])
-def test_type_f_pay_is_longshot_regardless_of_car_count(n_entries, race_type):
-    """🔴 `F_pay` を売るときのアイコンは**車数で変わらない**。
-
-    ⚠️ 決勝以外は `F_hit` を売るのでこの表には含めない（別テスト）。
-    商品の性格とも一致する——9車決勝の `F_pay` は表示的中 2.99%（67件中2件）・
-    払戻中央 169,545円 で、この体系で最も極端な一撃枠。
-
-    ⚠️ 将来 `ACT_TYPE_BY_PLAN` を車数別に持つと、ここが落ちる。
-       落ちたときは「車数で売り方を変えた」という設計変更の合図として扱うこと。
-    """
-    from scripts.netkeirin_submit_type_lab import ACT_TYPE_BY_PLAN
-    from src.netkeirin_client import ACT_TYPE_LONGSHOT
-
-    plans = sell_plans_for("F", n_entries, race_type)
-    # 🔴 7車は看板枠（`F_sign`）・9車決勝は `F_pay`。**どちらも穴狙いアイコン**という
-    #    このテストの主張は変わらない（2026-09-01 に看板枠を再投入した）。
-    assert [p.key for p in plans] == ["F_sign" if n_entries == 7 else "F_pay"]
-    assert ACT_TYPE_BY_PLAN[plans[0].key] == ACT_TYPE_LONGSHOT
 
 
 def test_act_type_travels_in_bet_detail():
