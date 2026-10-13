@@ -302,6 +302,7 @@ export default function RivalsTab({ from, to }: { from: string; to: string }) {
                 <tr className="text-gray-400 border-b border-gray-100 dark:border-gray-700">
                   <th className="px-2 py-1 text-right">順位</th>
                   <th className="px-2 py-1 text-left">予想家</th>
+                  <th className="px-2 py-1 text-right">レース</th>
                   <th className="px-2 py-1 text-right">予想数</th>
                   <th className="px-2 py-1 text-right">的中</th>
                   <th className="px-2 py-1 text-right whitespace-nowrap">的中率<br />ガミ除く</th>
@@ -337,6 +338,7 @@ export default function RivalsTab({ from, to }: { from: string; to: string }) {
                           {r.is_self && <span className="text-[10px] text-blue-600">自分</span>}
                         </span>
                       </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{r.n_races}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{r.n_goods}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {r.n_net_hits}<span className="text-gray-400">/{r.n_hits}</span>
@@ -357,7 +359,7 @@ export default function RivalsTab({ from, to }: { from: string; to: string }) {
             </table>
           </div>
           <p className="mt-2 text-[11px] text-gray-400">
-            的中は「ガミ除く / ガミ含む」の件数。予想数は商品数（同じレースに2商品なら2）。
+            的中は「ガミ除く / ガミ含む」の件数。レースは予想したレース数、予想数は商品数（同じレースに2商品なら2）。
           </p>
         </div>
       </>)}
