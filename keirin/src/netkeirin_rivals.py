@@ -119,8 +119,12 @@ def parse(race_key: str, html: str) -> dict[str, Any]:
     return {"n_declared": int(m.group(1)) if m else None, "goods": goods}
 
 
-def fetch(race_key: str) -> str:
-    """API から一覧の HTML 断片を取り、生データを gzip で保存して返す。"""
+#: 応答が JSON でなかったときの取り直し回数と待ち秒（試行ごとに倍）
+FETCH_RETRIES = 4
+FETCH_BACKOFF = 2.0
+
+
+def _fetch_once(race_key: str) -> str:
     req = urllib.request.Request(API_URL.format(race_id=race_id_of(race_key)),
                                  headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -128,6 +132,25 @@ def fetch(race_key: str) -> str:
     html = json.loads(body)
     if not isinstance(html, str):
         raise ValueError(f"想定外の応答形式: {type(html).__name__}")
+    return html
+
+
+def fetch(race_key: str, *, retries: int = FETCH_RETRIES, backoff: float = FETCH_BACKOFF,
+          _once=_fetch_once, _sleep=time.sleep) -> str:
+    """API から一覧の HTML 断片を取り、生データを gzip で保存して返す。
+
+    🔴 この API は**約4回に1回、JSON の代わりに 2,400 バイトの HTML ページを
+    status 200 で返す**（2026-10-14 VPS 実測。同じレースを取り直せば正しく返る）。
+    取り直さないと1日 60 レース中 19 レースが落ちた。
+    """
+    for i in range(retries + 1):
+        try:
+            html = _once(race_key)
+            break
+        except (ValueError, OSError):
+            if i == retries:
+                raise
+            _sleep(backoff * (2 ** i))
     d = RAW_DIR / race_key[:8]
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{race_key}.html.gz").write_bytes(gzip.compress(html.encode("utf-8")))

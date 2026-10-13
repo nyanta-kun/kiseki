@@ -106,3 +106,31 @@ def test_collect_survives_fetch_error():
     st = NR.collect([(RK1, DAY)], fetcher=boom, interval=0)
     assert st["failed"] == 1 and st["saved"] == 0
     _clear()
+
+
+def test_fetch_retries_non_json_page(tmp_path, monkeypatch):
+    """🔴 API は約4回に1回 HTML ページ（JSON でない）を返す。取り直して拾うこと。"""
+    monkeypatch.setattr(NR, "RAW_DIR", tmp_path)
+    answers = [ValueError("Expecting value"), ValueError("Expecting value"), SETTLED]
+    waits: list[float] = []
+
+    def once(rk: str) -> str:
+        a = answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    assert NR.fetch(RK1, _once=once, _sleep=waits.append) == SETTLED
+    assert waits == [2.0, 4.0]
+    assert (tmp_path / RK1[:8] / f"{RK1}.html.gz").exists()
+
+
+def test_fetch_gives_up_after_retries(tmp_path, monkeypatch):
+    monkeypatch.setattr(NR, "RAW_DIR", tmp_path)
+
+    def once(rk: str) -> str:
+        raise ValueError("Expecting value")
+
+    import pytest
+    with pytest.raises(ValueError):
+        NR.fetch(RK1, retries=2, _once=once, _sleep=lambda s: None)
