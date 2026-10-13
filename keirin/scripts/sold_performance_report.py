@@ -22,9 +22,9 @@ sys.path.insert(0, str(REPO))
 
 from src.database import get_connection  # noqa: E402
 from src.entrants import valid_cars_by_race  # noqa: E402
-from src.evaluation.backtest_wt import _load_payouts_wt  # noqa: E402
+from src import official_payoffs  # noqa: E402
 from src.sold_performance import (  # noqa: E402
-    build_sold_races, group_by, summarize, winning_combo_labels,
+    build_sold_races, group_by, summarize,
 )
 
 #: `bet_detail` の保存開始日。これより前は買い目も金額も残っていない。
@@ -60,21 +60,9 @@ def _fetch(start: str, end: str) -> tuple[list[dict], dict, dict]:
     # `(着順, 車番)` のまま渡す。⚠️ 車番だけに畳むと**同着が潰れる**。
     finishes = {k: sorted(v) for k, v in fins.items()}
 
-    # 確定配当（100円あたり）。`bet_detail.odds` は入稿時点の値なので払戻には使わない。
-    raw = _load_payouts_wt(keys)
-    payouts: dict[str, dict[str, int]] = {}
-    for rk, rows in finishes.items():
-        pm = raw.get(rk, {})
-        m: dict[str, int] = {}
-        for label in winning_combo_labels(rows):
-            if "=" in label:                       # 三連複（順不同）
-                got = pm.get(("trio", frozenset(int(x) for x in label.split("="))))
-            else:                                  # 三連単（着順）
-                got = pm.get(("trifecta", tuple(int(x) for x in label.split("-"))))
-            if got:
-                m[label] = int(got)
-        payouts[rk] = m
-    return subs, finishes, payouts
+    # 公式払戻（100円あたり）。`bet_detail.odds` は入稿時点の値なので払戻には使わない。
+    # 🔴 最終オッズ（wt_odds）も使わない。同着では払戻が2倍に化ける（2026-10-13）。
+    return subs, finishes, official_payoffs.by_label(finishes)
 
 
 def _line(label: str, s) -> str:

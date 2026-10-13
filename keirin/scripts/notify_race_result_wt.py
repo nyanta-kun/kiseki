@@ -48,8 +48,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.combo_label import format_bet_lines, format_pred_combo
 from src.sold_performance import (
-    _as_dict, payout_per_100, settle_submission, winning_combo_labels,
+    _as_dict, settle_submission, winning_combo_labels,
 )
+from src import official_payoffs
 from src.database import get_connection
 from src.notify.discord import send
 from src.scraper.pipeline_wt import _save_batch
@@ -200,29 +201,31 @@ def _fetch_one(scraper: WinticketScraper, t: dict, date: str) -> dict | None:
 
 
 def _confirmed_payouts(conn, base: str) -> dict[str, int]:
-    """`{当たり目の表記: 100円あたりの確定配当}`（三連複 `1=2=4` / 三連単 `1-2-4`）。
+    """`{当たり目の表記: 100円あたりの公式払戻}`（三連複 `1=2=4` / 三連単 `1-2-4`）。
 
     🔴 **入稿時点のオッズ（`bet_detail.odds`）を払戻に使ってはいけない。**
        発走までに動くので必ず過大・過小になる。実測 2026-08-15 松山9R は
        入稿時 9.0倍 → 確定 6.3倍で、そのまま使うと払戻が 33,300円（正しくは
        23,310円）と **43% 過大**になる。
-    ⚠️ `wt_race_payouts` は当日には入らない（松山の当日分は0件だった）ので、
-       レース後に最終値へ上書きされる `wt_odds` を使う。
-    ⚠️ 組み合わせ表記は **`wt_odds` が '1-2-3'**（券種を問わず `-` 区切り・
+    🔴🔴 **最終オッズ（`wt_odds`）も使わない**（2026-10-13）。同着では公式払戻が
+       オッズの約半分になり、払戻が2倍に化ける（20261013_81_05 小倉5R）。
+       公式払戻（`wt_payoffs`）をその場で取りに行き、まだ確定していなければ
+       空のまま返す（＝`settle` が「未確定」にする）。
+    ⚠️ 組み合わせ表記は **`wt_payoffs` が '1-2-3'**（券種を問わず `-` 区切り・
        三連複は昇順）。買い目・当たり目の表記とは別なので変換する。
-    ⚠️ 端数は**10円未満切り捨て**（`payout_per_100`）。実払戻との一致は
-       2026-07-12 に検証済みで、切り捨てないと Web の表示と数円ずれる。
     """
+    try:
+        official_payoffs.collect([base])
+    except Exception as e:                           # noqa: BLE001  取れなければ未確定
+        print(f"⚠️ 公式払戻の取り込みに失敗 {base}: {e}")
     out: dict[str, int] = {}
     rows = conn.execute(
-        "SELECT bet_type, combination, odds_value FROM wt_odds "
-        "WHERE race_key = ? AND bet_type IN ('trio', 'trifecta')", (base,),
+        "SELECT bet_type, combination, payoff FROM wt_payoffs WHERE race_key = ?", (base,),
     ).fetchall()
     for r in rows:
         bt = r["bet_type"] if isinstance(r, dict) else r[0]
         comb = r["combination"] if isinstance(r, dict) else r[1]
-        odds = r["odds_value"] if isinstance(r, dict) else r[2]
-        pay = payout_per_100(odds)
+        pay = int(r["payoff"] if isinstance(r, dict) else r[2])
         if not pay:
             continue
         try:

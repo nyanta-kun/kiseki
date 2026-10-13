@@ -130,6 +130,43 @@ def _get_query(state: dict, key_fragment: str) -> dict | None:
     return None
 
 
+#: 採点に使う券種（winticket のキー → wt_odds / wt_payoffs の券種名）
+_PAYOFF_MARKETS = {"trifecta": "trifecta", "trio": "trio"}
+
+
+def parse_payoffs(data: dict) -> dict:
+    """`FETCH_KEIRIN_RACE_ODDS` → 公式払戻（2026-10-13）。
+
+    Returns:
+        {"confirmed": {券種: bool},  # `*PayoffStatus == 1`（払戻確定）
+         "items": [{"bet_type", "combination", "payoff"}, ...]}
+
+    🔴 **`odds` ではなく `payoffUnitPrice` を読む。** 同着では売上を当たり目の間で
+       分けて払うので、公式払戻はオッズの約半分になる（20261013_81_05:
+       1-5-2 は 52.1倍なのに 2,620円）。
+    - 表記は `wt_odds` と同じ（券種を問わず `-` 区切り・三連複は昇順）
+    - `payoffUnitPrice` が 0 の目（＝外れ目）は返さない
+    - 確定前（`PayoffStatus=0`）の値は返さない（呼び出し側は「まだ無い」と扱う）
+    """
+    confirmed: dict[str, bool] = {}
+    items: list[dict] = []
+    for src, bet_type in _PAYOFF_MARKETS.items():
+        ok = data.get(f"{src}PayoffStatus") == 1
+        confirmed[bet_type] = ok
+        if not ok:
+            continue
+        for it in data.get(src) or []:
+            pay = it.get("payoffUnitPrice") or 0
+            key = it.get("key")
+            if not pay or not isinstance(key, list) or len(key) != 3:
+                continue
+            cars = sorted(key) if bet_type == "trio" else key
+            items.append({"bet_type": bet_type,
+                          "combination": "-".join(str(int(c)) for c in cars),
+                          "payoff": int(pay)})
+    return {"confirmed": confirmed, "items": items}
+
+
 def _parse_lineup(lineup_data: dict) -> dict[int, dict]:
     """
     linePrediction JSON → {frame_no: {line_group, line_size, line_pos}}
@@ -419,6 +456,30 @@ class WinticketScraper:
             "quinella":     _parse_odds(data.get("quinella", []),      "quinella"),
             "quinellaPlace":_parse_odds(data.get("quinellaPlace", []),"quinellaPlace"),
         }
+
+    def fetch_payoffs(
+        self, venue_id: str, race_date: str, race_no: int,
+        cup_id: str, day_index: int,
+    ) -> dict | None:
+        """三連複・三連単の**公式払戻**（100円あたり）を取得する（2026-10-13）。
+
+        オッズページと同じ `FETCH_KEIRIN_RACE_ODDS` の各目の `payoffUnitPrice`
+        （当たり目だけ非 0）と、券種ごとの `*PayoffStatus`（1 = 払戻確定）を読む。
+        解釈は `parse_payoffs` が正本。
+
+        Returns `parse_payoffs` の結果、または None（ページが取れない）。
+        """
+        slug = VENUE_SLUGS.get(venue_id)
+        if not slug:
+            return None
+        url = f"{_BASE}/keirin/{slug}/odds/{cup_id}/{day_index}/{race_no}"
+        resp = self._get(url)
+        if resp is None or resp.status_code != 200:
+            return None
+        data = _get_query(_extract_state(resp.text), "FETCH_KEIRIN_RACE_ODDS")
+        if not data:
+            return None
+        return parse_payoffs(data)
 
     def get_race_count(self, venue_id: str, cup_id: str, day_index: int) -> int:
         """その日のレース数を取得する（スケジュールから）。"""

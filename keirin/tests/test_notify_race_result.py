@@ -36,15 +36,22 @@ class FakeConn:
 
 # --- 確定配当の取り出し -----------------------------------------------------
 
-def test_payouts_come_from_the_final_odds_board():
-    """🔴 入稿時オッズではなく確定オッズを使うこと。
+@pytest.fixture(autouse=True)
+def _no_payoff_fetch(monkeypatch):
+    """公式払戻を winticket へ取りに行かせない（テストは渡した行だけを見る）。"""
+    monkeypatch.setattr(m.official_payoffs, "collect", lambda keys, scraper=None: {})
 
-    実測 2026-08-15 松山9R は入稿時 9.0倍 → 確定 6.3倍。入稿時のまま計算すると
-    払戻が 33,300円（正しくは 23,310円）と **43% 過大**になる。
+
+def test_payouts_come_from_the_official_payoffs():
+    """🔴 入稿時オッズでも最終オッズでもなく、**公式払戻**を使うこと。
+
+    - 入稿時オッズ: 2026-08-15 松山9R は 9.0倍 → 確定 6.3倍で **43% 過大**
+    - 最終オッズ: 同着では公式払戻がオッズの約半分（2026-10-13 小倉5R:
+      1-5-2 は 52.1倍なのに 2,620円）＝**2倍に化ける**
     """
     conn = FakeConn([
-        {"bet_type": "trio", "combination": "1-2-8", "odds_value": 6.3},
-        {"bet_type": "trifecta", "combination": "8-2-1", "odds_value": 34.9},
+        {"bet_type": "trio", "combination": "1-2-8", "payoff": 630},
+        {"bet_type": "trifecta", "combination": "8-2-1", "payoff": 3490},
     ])
     got = m._confirmed_payouts(conn, "20260815_75_09")
     # 当たり目の表記（三連複 `1=2=8` / 三連単 `8-2-1`）をキーにする。
@@ -53,14 +60,14 @@ def test_payouts_come_from_the_final_odds_board():
     assert got["1=2=8"] == 630
     assert got["8-2-1"] == 3490
     sql, _ = conn._last
-    assert "wt_odds" in sql, "確定配当は wt_odds から引くこと"
+    assert "wt_payoffs" in sql and "wt_odds" not in sql, "払戻は wt_payoffs から引くこと"
 
 
 def test_trio_keys_are_sorted_and_trifecta_keeps_the_order():
     """三連複は順不同・三連単は着順。畳み方を間違えると着順違いを的中に数える。"""
     conn = FakeConn([
-        {"bet_type": "trio", "combination": "8-2-1", "odds_value": 6.3},
-        {"bet_type": "trifecta", "combination": "8-2-1", "odds_value": 34.9},
+        {"bet_type": "trio", "combination": "8-2-1", "payoff": 630},
+        {"bet_type": "trifecta", "combination": "8-2-1", "payoff": 3490},
     ])
     got = m._confirmed_payouts(conn, "rk")
     assert "1=2=8" in got            # 三連複は昇順へ畳む
@@ -68,8 +75,8 @@ def test_trio_keys_are_sorted_and_trifecta_keeps_the_order():
     assert "1-2-8" not in got
 
 
-def test_rows_without_odds_are_skipped():
-    conn = FakeConn([{"bet_type": "trio", "combination": "1-2-3", "odds_value": None}])
+def test_rows_without_payoff_are_skipped():
+    conn = FakeConn([{"bet_type": "trio", "combination": "1-2-3", "payoff": 0}])
     assert m._confirmed_payouts(conn, "rk") == {}
 
 

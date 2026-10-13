@@ -57,7 +57,10 @@ from typing import Any
 # 🔴 2026-09-21: 3 へ。`PickResult.net_hit` を `payout >= bet` → `payout > bet` に
 #    是正した（元返しは表示的中に数えない。CLAUDE.md と Web 型ラボの定義に揃えた）。
 #    **意味が変わったので版を上げる**＝焼き付け済みの行は採点し直される。
-SETTLE_VERSION = 3
+# 🔴 2026-10-13: 4 へ。払戻の入力を最終オッズ（`wt_odds`）から公式払戻
+#    （`wt_payoffs`）へ替えた。同着ではオッズ由来の払戻が約2倍に化けていたので、
+#    焼き付け済みの値（特に同着の的中）を作り直させる。
+SETTLE_VERSION = 4
 
 #: 指紋の列幅（`netkeirin_submissions.settled_fp`）。
 FINGERPRINT_LEN = 32
