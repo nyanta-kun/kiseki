@@ -27,6 +27,7 @@ _PG_CONFLICT_COLS: dict[str, tuple[str, ...]] = {
     "picks_history":    ("race_key",),
     "netkeirin_submissions": ("race_key", "rank_key"),
     "netkeirin_settings": ("rank_key",),
+    "netkeirin_rival_goods": ("goods_id",),
     "races":            ("race_key",),
     "odds":             ("race_key", "bet_type", "combination"),
     "race_entries":     ("race_key", "frame_no"),
@@ -73,7 +74,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
         #   未変換で relation "wt_odds" does not exist になっていた・2026-07-16 修正）
         rest = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds|wt_payoffs"
                       r"|wt_weather|venue_info|picks_history|model_evaluation"
-                      r"|netkeirin_settings"
+                      r"|netkeirin_settings|netkeirin_rival_goods"
                       # 🔴 keirin スキーマのテーブルを足したらここにも足すこと。
                       #    漏れると素の SELECT/UPDATE/DELETE だけが
                       #    relation does not exist で落ちる（INSERT 系は
@@ -115,7 +116,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
     sql = re.sub(r"(?<!\w)(?:keirin\.)?(wt_race_conditions|wt_races|wt_entries"
                  r"|wt_odds_snapshot|wt_odds|wt_payoffs"
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
-                 r"|netkeirin_settings"
+                 r"|netkeirin_settings|netkeirin_rival_goods"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
                  r"|netkeirin_sales_race|submission_skips|type_lab_picks"
                  r"|race_shapes|rider_interviews)\b",
@@ -654,6 +655,24 @@ def migrate_db():
                 payoff       INTEGER NOT NULL,
                 collected_at TEXT DEFAULT (datetime('now')),
                 PRIMARY KEY (race_key, bet_type, combination)
+            )
+        """)
+        # netkeirin の全予想家の商品成績（1商品=1行）。kiseki alembic
+        # 202610132300_keirin が正本・この CREATE TABLE はテスト用 SQLite 専用。
+        # payout / profit が NULL = 未確定（0 は外れ）。取り込みは src/netkeirin_rivals.py。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS netkeirin_rival_goods (
+                goods_id     TEXT PRIMARY KEY,
+                race_key     TEXT NOT NULL,
+                race_date    TEXT NOT NULL,
+                yosoka_id    INTEGER NOT NULL,
+                yosoka_name  TEXT,
+                bet          INTEGER,
+                payout       INTEGER,
+                profit       INTEGER,
+                published_at TEXT,
+                sortkey_raw  TEXT,
+                collected_at TEXT DEFAULT (datetime('now'))
             )
         """)
         # 朝オッズ前向き計測用スナップショット。

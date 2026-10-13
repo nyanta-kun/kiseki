@@ -23,6 +23,7 @@ import { fetchKeirinSalesAnalysis, type KeirinSalesAnalysisResponse } from "@/li
 import { fetchKeirinSoldPerformance, type KeirinSoldPerformanceResponse } from "@/lib/api";
 import AnalysisTab from "./AnalysisTab";
 import SoldTab, { type SoldGroupBy } from "./SoldTab";
+import RivalsTab from "./RivalsTab";
 import { formatYen } from "./format";
 import { CHART_GRID, ChartTooltip, chartAxisTick, chartLegendStyle } from "@/lib/chart-theme";
 
@@ -288,13 +289,15 @@ const REFERRAL_LABEL = "ベイベー紹介料";
 // 2026-08-15: 「実売」タブを追加。**成績タブは picks_history（ペーパー成績）**で、
 //   netkeirin で売れるのは1レース1商品なので母集団が違う（実測: 入稿472件のうち
 //   250件＝53% に picks_history 行が無い）。実際に売った商品だけの数字はここで見る。
-type StatsTab = "performance" | "sold" | "sales" | "analysis";
+// 2026-10-13: 「予想家比較」タブを追加（netkeirin の全予想家の中での自分の順位）。
+type StatsTab = "performance" | "sold" | "sales" | "analysis" | "rivals";
 
 const STATS_TABS: [StatsTab, string][] = [
   ["performance", "成績"],
   ["sold", "実売"],
   ["sales", "売上"],
   ["analysis", "分析"],
+  ["rivals", "予想家比較"],
 ];
 
 export default function KeirinStatsPage() {
@@ -1154,6 +1157,7 @@ export default function KeirinStatsPage() {
         />
       )}
       {tab === "analysis" && <AnalysisTab data={analysis} loading={analysisLoading} />}
+      {tab === "rivals" && <RivalsTab from={from} to={to} />}
     </div>
   );
 }

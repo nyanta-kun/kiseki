@@ -1857,6 +1857,102 @@ export async function fetchKeirinSalesAnalysis(
 }
 
 // ---------------------------------------------------------------------------
+// netkeirin 予想家比較（2026-10-13）
+//
+// 全予想家の商品成績（`keirin.netkeirin_rival_goods`）と、その中での自分の順位。
+// 計算の正本は backend `services/keirin_rivals_analysis.py`。
+// ---------------------------------------------------------------------------
+
+export type KeirinRivalMetric = "roi" | "net_hit_rate" | "hit_rate" | "profit" | "n_goods";
+export type KeirinRivalGranularity = "day" | "week" | "month";
+
+export type KeirinRivalStats = {
+  n_goods: number;
+  n_races: number;
+  /** 払戻 > 0（ガミ含む） */
+  n_hits: number;
+  /** 払戻 > 購入（ガミ除く・netkeirin の表示的中率） */
+  n_net_hits: number;
+  bet: number;
+  payout: number;
+  profit: number;
+  roi: number | null;
+  hit_rate: number | null;
+  net_hit_rate: number | null;
+};
+
+export type KeirinRivalRow = KeirinRivalStats & {
+  yosoka_id: number;
+  yosoka_name: string | null;
+  is_self: boolean;
+  /** 予想数が min_goods 以上か（未満なら順位は null） */
+  ranked: boolean;
+  rank: number | null;
+  rank_roi: number | null;
+  rank_net_hit_rate: number | null;
+  rank_hit_rate: number | null;
+  rank_profit: number | null;
+  rank_n_goods: number | null;
+};
+
+export type KeirinRivalSeriesPoint = {
+  bucket: string;
+  n_ranked: number;
+  self: {
+    n_goods: number; n_net_hits: number; bet: number; payout: number;
+    roi: number | null; net_hit_rate: number | null; rank: number | null;
+  } | null;
+  self_cum_roi: number | null;
+  field_roi: number | null;
+  field_cum_roi: number | null;
+  median_roi: number | null;
+  compare_cum_roi: Record<string, number | null>;
+};
+
+export type KeirinRivalsResponse = {
+  from_date: string;
+  to_date: string;
+  n_unsettled: number;
+  last_collected_at: string | null;
+  metric: KeirinRivalMetric;
+  min_goods: number;
+  granularity: KeirinRivalGranularity;
+  min_goods_per_bucket: number;
+  self_id: number;
+  self: KeirinRivalRow | null;
+  n_ranked: Record<KeirinRivalMetric, number>;
+  field: KeirinRivalStats & {
+    n_yosoka: number;
+    n_ranked: number;
+    median_roi: number | null;
+    median_net_hit_rate: number | null;
+  };
+  ranking: KeirinRivalRow[];
+  compare: { yosoka_id: number; yosoka_name: string | null }[];
+  series: KeirinRivalSeriesPoint[];
+};
+
+export async function fetchKeirinRivals(opts: {
+  fromDate?: string;
+  toDate?: string;
+  metric?: KeirinRivalMetric;
+  minGoods?: number;
+  granularity?: KeirinRivalGranularity;
+  compare?: number[];
+}): Promise<KeirinRivalsResponse> {
+  const params = new URLSearchParams();
+  if (opts.fromDate) params.set("from_date", opts.fromDate);
+  if (opts.toDate) params.set("to_date", opts.toDate);
+  if (opts.metric) params.set("metric", opts.metric);
+  if (opts.minGoods != null) params.set("min_goods", String(opts.minGoods));
+  if (opts.granularity) params.set("granularity", opts.granularity);
+  if (opts.compare && opts.compare.length) params.set("compare", opts.compare.join(","));
+  return get<KeirinRivalsResponse>(`/keirin/netkeirin-rivals?${params.toString()}`, {
+    cache: "no-store",
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 実際に売った商品の成績（2026-08-15）
 //
 // picks_history は**ペーパー成績**（各ランクが条件を満たした全レース）だが、

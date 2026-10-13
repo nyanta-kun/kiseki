@@ -43,6 +43,14 @@ from ..services.keirin_race_confidence import (
 )
 from ..services.keirin_result_top3 import winning_combo_labels
 from ..services.keirin_rider_comments import comments_for_entry, post_window_start
+from ..services.keirin_rivals_analysis import (
+    DEFAULT_MIN_GOODS,
+    DEFAULT_MIN_GOODS_PER_BUCKET,
+    SELF_YOSOKA_ID,
+)
+from ..services.keirin_rivals_analysis import (
+    analyze as analyze_rivals,
+)
 from ..services.keirin_sales_analysis import (
     ORIGIN_RANK,
     build_correlations,
@@ -2877,6 +2885,94 @@ async def _aggregate_paper(
             int(r["max_payout"]) if r["max_payout"] else None)
     result["by_rank"] = by_rank
     return result
+
+
+_RIVALS_READY = False
+
+
+async def _rivals_table_ready(db: AsyncSession) -> bool:
+    """予想家比較のテーブルがあるか（デプロイ直後のスキーマ窓の保険）。"""
+    global _RIVALS_READY
+    if not _RIVALS_READY:
+        got = (await db.execute(
+            text("SELECT to_regclass('keirin.netkeirin_rival_goods') IS NOT NULL"))).scalar()
+        _RIVALS_READY = bool(got)
+    return _RIVALS_READY
+
+
+@router.get("/netkeirin-rivals")
+async def get_netkeirin_rivals(
+    from_date: str = "",
+    to_date: str = "",
+    metric: str = "roi",
+    min_goods: int = DEFAULT_MIN_GOODS,
+    granularity: str = "week",
+    min_goods_per_bucket: int = DEFAULT_MIN_GOODS_PER_BUCKET,
+    compare: str = "",
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """netkeirin の全予想家の成績と、その中での自分の順位（成績ページの「予想家比較」タブ）。
+
+    元データは `keirin.netkeirin_rival_goods`（keirin `scripts/collect_netkeirin_rivals.sh`
+    が毎日 01:50 に直近3日を取り込む）。計算は `services/keirin_rivals_analysis` が正本。
+
+    - 🔴 **未確定（payout IS NULL）は SQL で落とす。** 0 として数えると取り込み直後だけ
+      全員の回収率が下がる
+    - metric: 順位を付ける指標（roi / net_hit_rate / hit_rate / profit / n_goods）
+    - min_goods: 期間内の予想数がこれ未満の予想家には順位を付けない
+    - granularity: 推移の区間（day / week / month）
+    - compare: 推移に並べる予想家ID（カンマ区切り）。空なら指標の上位5人
+    - from_date / to_date: YYYY-MM-DD。省略時は直近30日
+    """
+    today = _today_jst()
+    try:
+        to_dt = Date.fromisoformat(to_date) if to_date else today
+    except ValueError:
+        to_dt = today
+    try:
+        from_dt = Date.fromisoformat(from_date) if from_date else today - timedelta(days=29)
+    except ValueError:
+        from_dt = today - timedelta(days=29)
+    if granularity not in ("day", "week", "month"):
+        granularity = "week"
+    compare_ids = [int(x) for x in compare.split(",") if x.strip().isdigit()]
+
+    rows: list[dict[str, Any]] = []
+    n_unsettled = 0
+    last_collected = None
+    if await _rivals_table_ready(db):
+        rows = [dict(r) for r in (await db.execute(
+            text("""
+                SELECT race_date, race_key, yosoka_id, yosoka_name, bet, payout
+                FROM keirin.netkeirin_rival_goods
+                WHERE race_date BETWEEN :f AND :t AND payout IS NOT NULL
+            """),
+            {"f": from_dt, "t": to_dt},
+        )).mappings().all()]
+        meta = (await db.execute(
+            text("""
+                SELECT COUNT(*) FILTER (WHERE payout IS NULL) AS n_unsettled,
+                       MAX(collected_at) AS last_collected
+                FROM keirin.netkeirin_rival_goods
+                WHERE race_date BETWEEN :f AND :t
+            """),
+            {"f": from_dt, "t": to_dt},
+        )).mappings().one()
+        n_unsettled = int(meta["n_unsettled"] or 0)
+        last_collected = meta["last_collected"]
+
+    result = analyze_rivals(
+        rows, self_id=SELF_YOSOKA_ID, metric=metric, min_goods=max(1, min_goods),
+        granularity=granularity, min_goods_per_bucket=max(1, min_goods_per_bucket),
+        compare_ids=compare_ids or None,
+    )
+    return JSONResponse({
+        "from_date": from_dt.isoformat(),
+        "to_date": to_dt.isoformat(),
+        "n_unsettled": n_unsettled,
+        "last_collected_at": last_collected.isoformat() if last_collected else None,
+        **result,
+    })
 
 
 @router.get("/summary")
