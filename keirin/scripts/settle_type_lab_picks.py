@@ -4,9 +4,10 @@
     python scripts/settle_type_lab_picks.py --from 2026-01-01 --to 2026-08-26
     python scripts/settle_type_lab_picks.py --date 2026-08-27          # 当日ぶん
 
-🔴 **確定オッズで採点する**（`wt_odds` の trio / trifecta）。予測オッズは使わない。
-   的中目の 確定/予測 は中央 0.87 に下振れる（勝者の呪い）ので、想定払戻で採点すると
-   実績を上振れさせる。
+🔴 **公式払戻で採点する**（`wt_payoffs`・2026-10-13 から。正本は `src/official_payoffs.py`）。
+   予測オッズは使わない（的中目の 確定/予測 は中央 0.87 に下振れる＝勝者の呪い）。
+   🔴 **確定オッズでも採点しない。** 同着では公式払戻がオッズの約半分になり、
+   オッズ × 賭け金だと払戻が2倍に化ける（20261013_81_05 小倉5R で発覚）。
 🔴 **同着の当たり目は複数ある**（2026-08-28 是正）。判定の正本は `src/result_top3.py`。
    3着が2車同着なら三連複の当たりは2通り、三連単は着順の入れ替えぶん増える。
    旧実装は `{着順: 車番}` の辞書で持っていたため
@@ -33,6 +34,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 from src.database import get_connection
+from src import official_payoffs  # noqa: E402
 from src.entrants import valid_cars_by_race  # noqa: E402
 from src.result_top3 import (  # noqa: E402
     representative, winning_trifectas, winning_trios,
@@ -147,6 +149,33 @@ def _odds(keys: list[str]) -> dict:
     return dict(out)
 
 
+def _official_payoffs(targets: list[dict], fin: dict, fetch: bool = True) -> dict:
+    """{race_key: {(券種, 表記): 100円あたり公式払戻}}（2026-10-13）。
+
+    **買った目が当たっているレースだけ**を取りに行く（外れは着順だけで確定し、
+    払戻は要らない。全レースを取りに行くと `--redo` で数千ページを叩く）。
+    取りに行けなかったぶんは呼び出し側で保留になり、次の回（15分後）に取り直す。
+    """
+    need: set[str] = set()
+    for t in targets:
+        f = fin.get(t["race_key"])
+        if not f:
+            continue
+        legs = json.loads(t["legs"]) if isinstance(t["legs"], str) else t["legs"]
+        wins = winning_trios(f) if t["bet_type"] == "trio" else winning_trifectas(f)
+        win_strs = {_combo_str(w, t["bet_type"]) for w in wins}
+        if any(l["combo"] in win_strs for l in legs):
+            need.add(t["race_key"])
+    if fetch and need:
+        try:
+            st = official_payoffs.collect(need)
+            if st["target"]:
+                print(f"公式払戻の取り込み: {st}")
+        except Exception as e:                       # noqa: BLE001  取れなければ保留に倒す
+            print(f"⚠️ 公式払戻の取り込みに失敗（該当行は保留）: {e}")
+    return official_payoffs.load(need)
+
+
 def _cars(combo: str) -> list[int]:
     """`"1-4-5"`（三連単）/ `"2=5=7"`（三連複）の車番。"""
     sep = "=" if "=" in combo else "-"
@@ -180,6 +209,8 @@ def main() -> None:
     #    ので、日次バッチへ3本目として足せば取りこぼしが自然に埋まる。
     ap.add_argument("--pending-only", action="store_true",
                     help="日付を問わず未採点の行を全部対象にする（取りこぼしの掃除用）")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="公式払戻を winticket へ取りに行かない（取り込み済みの分だけで採点）")
     a = ap.parse_args()
     if a.pending_only:
         if a.redo:
@@ -198,6 +229,7 @@ def main() -> None:
         return
     keys = sorted({t["race_key"] for t in targets})
     fin, odds = _finish(keys), _odds(keys)
+    pays = _official_payoffs(targets, fin, fetch=not a.no_fetch)
     # 🔴 2026-09-20 追加: 欠車返還の判定に使う出走表（全車番）。
     entrants = _entrants(keys)
     has_void = _has_void_refund()
@@ -235,23 +267,27 @@ def main() -> None:
                     else winning_trifectas(f))
             win_strs = [_combo_str(w, t["bet_type"]) for w in wins]
             # 🔴🔴 **当たった目を全部払う**（2026-08-28）。同着では当たり目が2通りあり、
-            #    その両方を買っていれば**両方とも払い戻される**（確定オッズも目ごとに
-            #    別々に公表される。実測 2025-10-27 岸和田6R: 1-4-2 = 28.0倍 /
-            #    1-4-6 = 170.7倍 が両方とも板にある）。
+            #    その両方を買っていれば**両方とも払い戻される**。
+            #    ⚠️ ただし額は板のオッズではない（下の公式払戻を参照）。
             #    ⚠️ `result_top3.hit_trifecta` / `hit_trio` は**1つしか返さない**ので
             #       そのまま使うと払戻を取りこぼす。あちらは他ランクが共有する正本
             #       なので API は変えず、ここで全当たり目を舐める。
             won_legs = [l for l in legs if l["combo"] in win_strs]
-            missing = [l for l in won_legs
-                       if odds.get(t["race_key"], {}).get((t["bet_type"], l["combo"])) is None]
-            if missing:
-                # 当たっているのに確定オッズが引けない。0 を書くと外れと区別できないので待つ
+            # 🔴🔴 **払戻は公式払戻（100円あたり）で作る**（2026-10-13）。
+            #    以前は「確定オッズ × 賭け金」だったが、**同着では公式払戻がオッズの
+            #    約半分**になる（売上を当たり目の間で分けるため）。20261013_81_05 では
+            #    1-5-2 が 52.1倍なのに払戻 2,620円で、L_lead は 427,500円 ↔ 正 212,750円
+            #    と2倍に化けていた。ユーザー判断で同着に限らず全レースを公式払戻にする。
+            #    🔴 公式払戻が無ければ**オッズで代用しない**（代用すると同着で2倍に戻る）。
+            rp = pays.get(t["race_key"], {})
+            leg_pay = {l["combo"]: rp.get((t["bet_type"], official_payoffs.key(
+                t["bet_type"], l["combo"]))) for l in won_legs}
+            if any(v is None for v in leg_pay.values()):
+                # 当たっているのに公式払戻が引けない。0 を書くと外れと区別できないので待つ
                 n_wait += 1
                 stuck.append((str(t["race_date"]), f"{t['race_key']}#{t['plan_key']}"))
                 continue
-            payout = sum(int(round(l["stake"]
-                                   * odds[t["race_key"]][(t["bet_type"], l["combo"])]))
-                         for l in won_legs)
+            payout = sum(int(l["stake"]) * leg_pay[l["combo"]] // 100 for l in won_legs)
             hit = won_legs[0] if won_legs else None
             # 🔴 記録する `win_combo` は「**自分が買った当たり目**」。外れたときだけ
             #    代表を入れる（`representative` は決定的に1つ選ぶだけで、
@@ -260,7 +296,9 @@ def main() -> None:
             #       両方を足した額なので、**`final_odds × stake` と一致しない**。
             win = (hit["combo"] if hit is not None
                    else _combo_str(representative(wins), t["bet_type"]))
-            o = odds.get(t["race_key"], {}).get((t["bet_type"], win))
+            # `final_odds` は買った当たり目の**実効倍率**（公式払戻 ÷ 100）。
+            # 同着では板のオッズより小さくなる（それが実際に払われた倍率）。
+            o = leg_pay[win] / 100 if hit is not None else None
             # 🔴 **決着の三連単オッズは券種と的中に関係なく入れる**（答え合わせ用）。
             #    `final_odds` は「買った目」の確定オッズで的中時しか入らないため、
             #    外れたレースの荒れ具合が測れず「arare が配当を当てているか」を
@@ -268,6 +306,8 @@ def main() -> None:
             #    型どうしを同じ物差しで比べられる。
             # ⚠️ 同着では三連単の当たり目も複数ある。ここは**レース単位の荒れ具合**が
             #    要るだけなので代表を1つ選ぶ（同着は全体の 0.2% 程度）。
+            # ⚠️ こちらは払戻ではなく**板のオッズ**のまま（荒れ具合の物差しで、
+            #    外れたレースにも入れるため。公式払戻は当たり目しか無い）。
             tf_rep = representative(winning_trifectas(f))
             tf = "-".join(str(x) for x in tf_rep) if tf_rep else ""
             tf_odds = odds.get(t["race_key"], {}).get(("trifecta", tf))
@@ -283,7 +323,9 @@ def main() -> None:
         # 1行ずつ UPDATE すると 16,000 行で数分かかる（VPS への往復）。まとめて送る。
         if updates:
             c.executemany(
-                "UPDATE type_lab_picks SET settled_at = NOW(), win_combo = ?, "
+                # `datetime('now')` は get_connection が PG では NOW() に変換する
+                # （NOW() と直書きすると SQLite で実経路のテストが書けない）。
+                "UPDATE type_lab_picks SET settled_at = datetime('now'), win_combo = ?, "
                 "hit = ?, payout = ?, final_odds = ?, win_tf_odds = ?"
                 + (", void_refund = ? " if has_void else " ")
                 + "WHERE id = ?", updates)

@@ -21,7 +21,8 @@ _PG_CONFLICT_COLS: dict[str, tuple[str, ...]] = {
     "wt_entries":       ("race_key", "frame_no"),
     "wt_odds":          ("race_key", "bet_type", "combination"),
     "wt_odds_snapshot": ("race_key", "bet_type", "combination", "snapshot_type"),
-    "wt_weather":       ("venue_id", "dt_hour"),
+    "wt_payoffs":       ("race_key", "bet_type", "combination"),
+    "wt_weather":      ("venue_id", "dt_hour"),
     "venue_info":       ("venue_code",),
     "picks_history":    ("race_key",),
     "netkeirin_submissions": ("race_key", "rank_key"),
@@ -70,7 +71,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
         # INSERT ... SELECT の SELECT 本体にもスキーマを付与する
         # （snapshot_morning_odds_wt.py の INSERT OR IGNORE ... SELECT FROM wt_odds が
         #   未変換で relation "wt_odds" does not exist になっていた・2026-07-16 修正）
-        rest = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds"
+        rest = re.sub(r"(?<!\w)(?:keirin\.)?(wt_races|wt_entries|wt_odds_snapshot|wt_odds|wt_payoffs"
                       r"|wt_weather|venue_info|picks_history|model_evaluation"
                       r"|netkeirin_settings"
                       # 🔴 keirin スキーマのテーブルを足したらここにも足すこと。
@@ -112,7 +113,7 @@ def _pg_translate(sql: str, params: tuple | list | dict) -> tuple[str | None, ob
     #    tests/test_pg_schema_prefix.py が init_db の CREATE TABLE と突き合わせる。
     # ⚠️ 前方一致するものは**長い方を先に**書く（`wt_odds_snapshot` → `wt_odds`）。
     sql = re.sub(r"(?<!\w)(?:keirin\.)?(wt_race_conditions|wt_races|wt_entries"
-                 r"|wt_odds_snapshot|wt_odds"
+                 r"|wt_odds_snapshot|wt_odds|wt_payoffs"
                  r"|wt_weather|venue_info|picks_history|model_evaluation"
                  r"|netkeirin_settings"
                  r"|netkeirin_submissions|netkeirin_sales_daily"
@@ -642,6 +643,19 @@ def migrate_db():
                 UNIQUE(race_key, bet_type, combination)
             )
         """)
+        # 公式払戻（100円あたり・当たり目だけ）。kiseki alembic 202610131900_keirin が
+        # 正本・この CREATE TABLE はテスト用 SQLite 専用。取り込みと読み出しの正本は
+        # src/official_payoffs.py。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS wt_payoffs (
+                race_key     TEXT NOT NULL,
+                bet_type     TEXT NOT NULL,
+                combination  TEXT NOT NULL,
+                payoff       INTEGER NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (race_key, bet_type, combination)
+            )
+        """)
         # 朝オッズ前向き計測用スナップショット。
         # wt_odds は INSERT OR REPLACE で最終オッズに上書きされるため、
         # 朝7:00時点のオッズを別テーブルへ退避し、後日 wt_odds(最終) と突合して
@@ -801,6 +815,12 @@ def migrate_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_type_lab_picks_date "
                      "ON type_lab_picks(race_date, mode)")
+        # 本番にはある列（決着の三連単オッズ）。採点が書くので SQLite にも要る
+        # （無いと採点の実経路をテストで通せない・2026-10-13）。
+        try:
+            conn.execute("ALTER TABLE type_lab_picks ADD COLUMN win_tf_odds REAL")
+        except sqlite3.OperationalError:
+            pass
 
         # レースの型（A〜F）を**全車数**ぶん持つ表（2026-09-12 新設。本番は
         # kiseki alembic 202609120900_keirin が正本・この CREATE TABLE は

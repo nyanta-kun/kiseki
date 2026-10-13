@@ -76,12 +76,12 @@ sys.path.insert(0, str(REPO))
 
 from src.database import get_connection                       # noqa: E402
 from src.entry_health import missing_market_inputs            # noqa: E402
-from src.evaluation.backtest_wt import _load_payouts_wt       # noqa: E402
+from src import official_payoffs                              # noqa: E402
 from src.marquee import is_fill_target                        # noqa: E402
 from src.notify.discord import send                           # noqa: E402
 from src.entrants import valid_cars_by_race  # noqa: E402
 from src.sold_performance import (                            # noqa: E402
-    build_sold_races, group_by, summarize, winning_combo_labels,
+    build_sold_races, group_by, summarize,
 )
 from src.type_lab import (                                    # noqa: E402
     SELLABLE_PLAN_KEYS, TIER_PLAN_KEYS, sell_plans_for, split_legs_by_role)
@@ -263,19 +263,8 @@ def _results(keys: list[str]) -> tuple[dict, dict]:
                     (int(d["finish_order"]), int(d["frame_no"])))
     # ⚠️ 車番だけに畳むと同着が潰れる。`(着順, 車番)` のまま渡す。
     finishes = {k: sorted(v) for k, v in fins.items()}
-    raw = _load_payouts_wt(keys)
-    payouts: dict[str, dict[str, int]] = {}
-    for rk, rows in finishes.items():
-        pm = raw.get(rk, {})
-        m: dict[str, int] = {}
-        for label in winning_combo_labels(rows):
-            if "=" in label:
-                got = pm.get(("trio", frozenset(int(x) for x in label.split("="))))
-            else:
-                got = pm.get(("trifecta", tuple(int(x) for x in label.split("-"))))
-            if got:
-                m[label] = int(got)
-        payouts[rk] = m
+    # 🔴 公式払戻（wt_payoffs）。最終オッズだと同着で払戻が2倍に化ける（2026-10-13）。
+    payouts = official_payoffs.by_label(finishes)
     return finishes, payouts
 
 

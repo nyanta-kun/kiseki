@@ -63,7 +63,7 @@ from ..services.keirin_sales_report import (
     referral_yen,
     revenue_yen,
 )
-from ..services.keirin_settlement import Settlement, payout_per_100, settle
+from ..services.keirin_settlement import Settlement, settle
 from ..services.keirin_settlement_cache import (
     cached_settlement,
     is_cacheable,
@@ -629,10 +629,17 @@ async def _fetch_rider_comments(
 async def _fetch_winning_payouts(
     db: AsyncSession, won_by_race: Mapping[str, Sequence[str]],
 ) -> dict[str, dict[str, int]]:
-    """race_key → `{当たり目の表記: 100円あたりの確定払戻}`。
+    """race_key → `{当たり目の表記: 100円あたりの公式払戻}`。
 
-    ⚠️ `wt_odds.combination` は**券種を問わず `-` 区切り**（三連複は昇順）。
-       買い目・当たり目の表記（三連複 `1=2=4`）とは別なので変換して引く。
+    🔴🔴 **公式払戻（`keirin.wt_payoffs`）から引く**（2026-10-13）。以前は
+       `wt_odds` の最終オッズ × 100 を払戻としていたが、**同着では公式払戻が
+       オッズの約半分**になり（売上を当たり目の間で分けるため）、払戻が2倍に
+       化けていた（20261013_81_05 小倉5R: 1-5-2 は 52.1倍なのに 2,620円）。
+       ユーザー判断で同着に限らず全レースを公式払戻にする。取り込みは
+       keirin 側 `src/official_payoffs.py`（型ラボの採点が15分ごとに回す）。
+       行が無ければ返さない＝`settle` が「未確定」にする。オッズで代用しない。
+    ⚠️ `wt_payoffs.combination` は `wt_odds` と同じ**券種を問わず `-` 区切り**
+       （三連複は昇順）。買い目・当たり目の表記（三連複 `1=2=4`）とは別なので変換して引く。
     ⚠️ 同着では当たり目が増える（三連複2通り・三連単はさらに多い）ので
        レースあたり2行決め打ちの引き方をしてはいけない。
     """
@@ -645,21 +652,38 @@ async def _fetch_winning_payouts(
                            "cb": "-".join(cars), "lb": label})
     if not wanted:
         return {}
+    # 🔴 デプロイ直後はテーブルがまだ無い窓がある（blue-green は新 backend へ
+    #    切り替えた後に alembic を流す）。無ければ全部「未確定」で返す（500 にしない）。
+    if not await _payoffs_table_ready(db):
+        return {}
     rows = (await db.execute(
         text("""
-            SELECT w.rk AS race_key, w.lb AS label, o.odds_value
+            SELECT w.rk AS race_key, w.lb AS label, p.payoff
             FROM jsonb_to_recordset(CAST(:w AS jsonb))
                  AS w(rk text, bt text, cb text, lb text)
-            JOIN keirin.wt_odds o
-              ON o.race_key = w.rk AND o.bet_type = w.bt AND o.combination = w.cb
+            JOIN keirin.wt_payoffs p
+              ON p.race_key = w.rk AND p.bet_type = w.bt AND p.combination = w.cb
         """), {"w": json.dumps(wanted)},
     )).mappings().all()
     out: dict[str, dict[str, int]] = {}
     for r in rows:
-        pay = payout_per_100(r["odds_value"])
-        if pay:
-            out.setdefault(r["race_key"], {})[r["label"]] = pay
+        if r["payoff"]:
+            out.setdefault(r["race_key"], {})[r["label"]] = int(r["payoff"])
     return out
+
+
+#: `keirin.wt_payoffs`（`202610131900_keirin`）が本番に居るか。一度 True なら引き直さない。
+_PAYOFFS_READY = False
+
+
+async def _payoffs_table_ready(db: AsyncSession) -> bool:
+    """公式払戻テーブルがあるか（デプロイ直後のスキーマ窓の保険）。"""
+    global _PAYOFFS_READY
+    if not _PAYOFFS_READY:
+        got = (await db.execute(
+            text("SELECT to_regclass('keirin.wt_payoffs') IS NOT NULL"))).scalar()
+        _PAYOFFS_READY = bool(got)
+    return _PAYOFFS_READY
 
 
 #: 採点キャッシュ列（`202608291900_keirin`）が本番に居るか。None=未確認。
