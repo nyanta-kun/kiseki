@@ -28,7 +28,7 @@ import statistics
 import sys
 from datetime import datetime
 
-LINE = re.compile(r'\[(\S+) [+-]\d{4}\] "GET (\S+)')
+LINE = re.compile(r'\[(\S+ [+-]\d{4})\] "GET (\S+)')
 NON_DOC_PREFIX = ("/api/", "/_next", "/sw.js", "/workbox", "/favicon", "/images", "/manifest")
 WINDOW_SECONDS = 60
 
@@ -44,7 +44,7 @@ def main() -> None:
     for line in sys.stdin:
         m = LINE.search(line)
         if m:
-            rows.append((datetime.strptime(m.group(1), "%d/%b/%Y:%H:%M:%S"), m.group(2)))
+            rows.append((datetime.strptime(m.group(1), "%d/%b/%Y:%H:%M:%S %z"), m.group(2)))
     rows.sort()
 
     results: list[tuple[float, bool]] = []
