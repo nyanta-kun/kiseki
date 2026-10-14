@@ -107,8 +107,8 @@ PLAN_NOTES: dict[str, str] = {
     "T_mid": ("上位は見えているものの、崩れる余地も残る一戦と読みました。"),
     "T_axis": ("1着候補が一人抜けている一方、2着・3着は混戦と読み、相手を手広く押さえる一戦です。"),
     "T_upset": ("人気を集める選手のラインが崩れる余地の大きい一戦と読みました。"),
-    # 🔴 逃げ先頭ライン（`L_lead`・2026-09-24・**検証中・入稿しない**）。
-    #    売ると決めたときにそのまま使える文面として置いてある（全プランに文面を要求するテストのため）。
+    # 🔴 逃げ先頭ライン（`L_lead`・2026-09-24）。**入稿している**（型ラボが売らないレースへ
+    #    別の段で売る・`type_lab.line_lead_legs` の節）。旧注記の「入稿しない」は誤り。
     "L_lead": ("人気の中心とは別のラインで、先行する選手がそのまま押し切り、番手が続く展開を"
                "狙う一戦です。"),
     # 🔴 混戦の逃げ先頭（`L_flat`・2026-10-02・**紙上の検証だけ・入稿しない**）。理由は `L_lead` と同じ。
@@ -141,6 +141,18 @@ PLAN_AXIS_NOTES: dict[str, str] = {
 LINE_AXIS_PLANS: frozenset[str] = frozenset({"F_line"})
 #: 一軸（1着を1着率1位に固定する段の商品）。軸は買い目の1着から拾う（`build_submission`）。
 ONE_AXIS_PLAN = "T_axis"
+
+#: 🔴🔴 **逃げ先頭ライン（`L_lead` / `L_flat`）の軸は「先頭→番手」**（2026-10-14 是正）。
+#:    `type_lab_picks.axis1/axis2` は指数（3着内率）の上位2車＝**人気の中心側**で、
+#:    この商品はまさにそのラインを1・2着から外して組む。それをそのまま印と【二軸】に
+#:    使っていたため、**◎○が3着にしか出てこない**（実入稿 2026-10-13 の6件すべて）:
+#:      小倉5R: 本文「二軸は、◎2番・○7番です」・印 ◎2 ○7 ↔ 買い目 1-5-2 / 1-5-3 / 1-5-4 / 1-5-7
+#:              （1着に固定した1番・2着に固定した5番はどちらも △）
+#:      前橋8R: ◎7 ○3 ↔ 6-2-x（6・2 は △）／小倉7R: ◎1・○なし ↔ 4-3-x（4・3 は △）
+#:    軸は買い目そのもの（全点に共通する1着・2着）から拾い直す（`line_pairs`）。
+#:    条件に合うラインが2つあるレース（小倉2R 1-7 / 6-3 等）は、確率の高い方を ◎○ に、
+#:    もう一方は【二軸】で併記する。
+LINE_LEAD_COPY_PLANS: frozenset[str] = frozenset({"L_lead", "L_flat"})
 
 # 🔴🔴 **軸1を買わないプランは全部ここに要る**（2026-09-06）。`{型}_big` を足した日、
 #    この表だけ `A_ana` のままだったので既定の「二軸は◎○です」が出て、
@@ -396,11 +408,16 @@ PLAN_BODIES: dict[str, str] = {
                 "どの目が当たっても大きな払戻がほぼ同じ額でそろうよう賭け金を配分しました。"
                 "当たる回数は少なく、狙いは一撃の大きさです。"),
     # 🔴 逃げ先頭ライン: 配分は**均等**（ダッチではない）ので「払戻が揃う」とは書かない。
-    "L_lead": ("買い目は三連単。人気の中心とは別のラインの先行選手を1着、その番手を2着に固定し、"
-               "3着は届きにくい選手を外して流しました。賭け金は各点同額です。"
-               "当たる回数は少なく、狙いは一撃の大きさです。"),
+    # 🔴 **配分の文をここに書かない**（2026-10-14）。旧文の「賭け金は各点同額です」は
+    #    直後に `alloc_note` が出す「金額は各点ほぼ均等に置いています」と重複していた。
+    # 🔴 条件に合うラインが2つあると両方を同じ形で買う（`line_lead_legs`）。
+    #    「1着に固定」と言い切ると2ラインのレースで嘘になるので、その場合を断る。
+    "L_lead": ("買い目は三連単。人気の中心とは別のラインの先行選手を1着、その番手を2着に置き、"
+               "3着は届きにくい選手を外して流しました。条件に合うラインが複数あるレースでは、"
+               "それぞれ同じ形で買っています。当たる回数は少なく、狙いは一撃の大きさです。"),
     "L_flat": ("買い目は三連単。上位が拮抗する混戦で、人気の中心とは別のラインの先行選手を1着、"
-               "その番手を2着に固定し、3着は届きにくい選手を外して流しました。賭け金は各点同額です。"
+               "その番手を2着に置き、3着は届きにくい選手を外して流しました。条件に合うラインが"
+               "複数あるレースでは、それぞれ同じ形で買っています。"
                "当たる回数は少なく、狙いは一撃の大きさです。"),
 }
 
@@ -548,6 +565,8 @@ def axis_note(plan_key: str, axis1: int, axis2: int,
     >>> axis_note("A_ana", 4, 3, [{"combo": "3-1-2"}]).startswith("【二軸】\\n本レースの指数上位2車は 4番")
     True
     """
+    if plan_key in LINE_LEAD_COPY_PLANS:
+        return line_axis_note(axis1, axis2, legs)
     if plan_key in PLAN_AXIS_NOTES:
         return PLAN_AXIS_NOTES[plan_key].format(a1=axis1, a2=axis2)
     used: set[int] = set()
@@ -561,6 +580,58 @@ def axis_note(plan_key: str, axis1: int, axis2: int,
             "ただしこの商品は配当の大きい目に絞ったため、"
             f"{'・'.join(f'{c}番' for c in missing)} が入る目は買い目にありません。"
             "印は買っている車だけに付けています。")
+
+
+def line_pairs(legs: Sequence[Mapping]) -> list[tuple[int, int]]:
+    """逃げ先頭ラインの `(先頭, 番手)` ＝三連単の (1着, 2着)。**確率の高い順**。
+
+    確率の合計が同じなら賭け金の合計、それも同じなら買い目に先に出た順。
+    三連複・2車未満の目は無視する。
+
+    >>> line_pairs([{"combo": "1-7-2", "prob": .01}, {"combo": "6-3-2", "prob": .03},
+    ...             {"combo": "1-7-4", "prob": .01}])
+    [(6, 3), (1, 7)]
+    >>> line_pairs([{"combo": "1-5-2"}, {"combo": "1-5-3"}])
+    [(1, 5)]
+    >>> line_pairs([{"combo": "1=5=2"}])
+    []
+    """
+    score: dict[tuple[int, int], tuple[float, float]] = {}
+    first_seen: dict[tuple[int, int], int] = {}
+    for i, lg in enumerate(_base_legs(legs) or list(legs)):
+        combo = str(lg.get("combo", ""))
+        if "=" in combo:
+            continue
+        cars = _combo_cars(combo)
+        if len(cars) < 2:
+            continue
+        key = (int(cars[0]), int(cars[1]))
+        p, s = score.get(key, (0.0, 0.0))
+        score[key] = (p + float(lg.get("prob") or 0.0), s + float(lg.get("stake") or 0.0))
+        first_seen.setdefault(key, i)
+    return sorted(score, key=lambda k: (-score[k][0], -score[k][1], first_seen[k]))
+
+
+def line_axis_note(axis1: int, axis2: int, legs: Sequence[Mapping]) -> str:
+    """逃げ先頭ライン（`L_lead` / `L_flat`）の【二軸】。**軸＝1着・2着に置いた車**。
+
+    `axis1/axis2` は `build_submission` が `line_pairs` から拾い直した先頭・番手を渡す。
+    🔴 「指数の上位2車」と書かない（この商品は人気の中心側のラインを外して組む）。
+
+    >>> line_axis_note(1, 5, [{"combo": "1-5-2"}, {"combo": "1-5-3"}]).startswith(
+    ...     "【二軸】\\n本レースで照らし出した二軸は、◎1番・○5番です。")
+    True
+    >>> "6番→3番" in line_axis_note(1, 7, [{"combo": "1-7-2"}, {"combo": "6-3-2"}])
+    True
+    """
+    head = (f"【二軸】\n本レースで照らし出した二軸は、◎{axis1}番・○{axis2}番です。"
+            f"人気の中心とは別のラインの先行選手（◎{axis1}番）とその番手（○{axis2}番）で、"
+            "指数の上位2車とは限りません。")
+    others = [p for p in line_pairs(legs) if p != (int(axis1), int(axis2))]
+    if not others:
+        return head + f"全ての買い目で ◎{axis1}番 を1着、○{axis2}番 を2着に置いています。"
+    alt = "・".join(f"{a}番→{b}番" for a, b in others)
+    return (head + f"条件に合うラインがほかにもあり（{alt}）、そちらも同じ形で押さえています。")
 
 
 def axes_from_legs(legs: Sequence[Mapping],
@@ -815,6 +886,11 @@ def build_submission(row: Mapping, entry_table_html: str | None = None) -> dict:
             a1, a2 = int(got[0]), int(got[1])
     # 🔴 **一軸は買い目の1着（全点共通）が軸**、相手は確率最上位の目の2着（2026-09-15）。
     #    `axis1/axis2` は3着内率の上位2車で、1着率1位と一致しないことがある（約15%）。
+    # 🔴 **逃げ先頭ラインは「先頭→番手」が軸**（`LINE_LEAD_COPY_PLANS` の節）。
+    if plan_key in LINE_LEAD_COPY_PLANS and legs:
+        pairs = line_pairs(legs)
+        if pairs:
+            a1, a2 = pairs[0]
     if plan_key == ONE_AXIS_PLAN and legs:
         firsts = {str(lg["combo"]).split("-")[0] for lg in legs}
         if len(firsts) == 1:

@@ -521,3 +521,47 @@ def test_一軸は買い目の1着を軸として印と文面に出す():
     # 🔴 ブランド「二軸探偵」: 販売面（タイトル・本文）に「一軸」を出さない（2026-09-15 ユーザー指示）
     assert "一軸" not in sub["title"] and "一軸" not in sub["comment"]
     assert "【二軸】" in sub["comment"]
+
+
+# ───────────────────────── 逃げ先頭ライン（2026-10-14） ─────────────────────────
+#
+# 🔴 `axis1/axis2`（指数上位2車＝人気の中心側）をそのまま印と【二軸】に使っていたため、
+#    **1着・2着に固定した車が △ で、◎○ は3着にしか出てこなかった**（2026-10-13 の6件すべて）。
+
+def _row(plan, axis1, axis2, order, combos, probs=None):
+    probs = probs or [0.01] * len(combos)
+    return {"plan_key": plan, "type_label": "L", "axis1": axis1, "axis2": axis2,
+            "p3_order": order, "bet_type": "trifecta",
+            "legs": [{"combo": c, "stake": 2500, "pred_odds": 50.0, "prob": p}
+                     for c, p in zip(combos, probs)]}
+
+
+@pytest.mark.parametrize("plan", ["L_lead", "L_flat"])
+def test_逃げ先頭は1着2着の車を二軸として印と文面に出す(plan):
+    """実データ 2026-10-13 小倉5R: 指数上位 2・7 ↔ 買い目 1-5-2 / 1-5-3 / 1-5-4 / 1-5-7。"""
+    row = _row(plan, 2, 7, "2-7-4-5-3-1-6", ["1-5-2", "1-5-3", "1-5-4", "1-5-7"])
+    sub = build_submission(row)
+    assert sub["marks"][1] == "◎" and sub["marks"][5] == "○", sub["marks"]
+    assert "◎1番・○5番" in sub["comment"]
+    assert "◎2番" not in sub["comment"] and "○7番" not in sub["comment"]
+    # 指数上位だった 2・7 は3着だけで買っているので ▲△ に下がる
+    assert sub["marks"][2] in ("▲", "△") and sub["marks"][7] in ("▲", "△")
+
+
+def test_逃げ先頭で条件に合うラインが2つなら確率の高い方を軸にもう一方を併記する():
+    """実データ 2026-10-13 小倉2R: 1-7-x 3点 / 6-3-x 3点。"""
+    row = _row("L_lead", 2, 3, "2-3-7-4-6-5-1",
+               ["1-7-2", "1-7-4", "1-7-5", "6-3-2", "6-3-4", "6-3-5"],
+               [0.01, 0.01, 0.01, 0.02, 0.02, 0.02])
+    sub = build_submission(row)
+    assert sub["marks"][6] == "◎" and sub["marks"][3] == "○", sub["marks"]
+    assert "◎6番・○3番" in sub["comment"]
+    assert "1番→7番" in sub["comment"]
+
+
+def test_逃げ先頭の文面は配分を二重に書かない():
+    """旧文「賭け金は各点同額です」＋`alloc_note`「各点ほぼ均等」が並んでいた。"""
+    sub = build_submission(_row("L_lead", 1, 2, "1-2-3-4-5-6-7",
+                                ["4-3-1", "4-3-5", "4-3-7"]))
+    assert "各点同額" not in sub["comment"]
+    assert sub["comment"].count("均等") == 1
