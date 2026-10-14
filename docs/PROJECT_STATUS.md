@@ -255,6 +255,7 @@
 | 取り込み済みブランチ4本の削除・退避した3本の決着 | 判断待ち | `docs/branch_cleanup_2026_09_23.md` |
 | sekito の完全停止 | 待機 | galloplab 側のページ整理が前提（`CLAUDE.md`） |
 | `.planning/` の扱い | 未着手 | 2026-08-03 から更新なし |
+| Service Worker 撤去の効果（iPhone の復帰時表示） | 待機 | 2026-10-15 撤去。撤去前は間を空けた回の「HTML → 初 API」が中央値 11秒（42件・最大 29秒）、続けて操作中は 1秒。デプロイ後 2日分の nginx ログで同じ指標を測る。経緯は `frontend/src/app/sw-register.tsx` |
 
 ### 4.2 中央
 
