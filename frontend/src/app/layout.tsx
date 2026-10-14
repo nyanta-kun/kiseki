@@ -4,7 +4,7 @@ import { GoogleAnalytics } from "@next/third-parties/google";
 import { SiteHeader } from "@/components/SiteHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { Footer } from "@/components/Footer";
-import ServiceWorkerRegister from "./sw-register";
+import ServiceWorkerCleanup from "./sw-register";
 import "./globals.css";
 import { getMenuContext } from "@/lib/menu";
 
@@ -121,7 +121,7 @@ export default async function RootLayout({
         </div>
         {paidMode && <Footer />}
         <BottomNav access={access} pogYear={pogYear} />
-        <ServiceWorkerRegister />
+        <ServiceWorkerCleanup />
         {process.env.NEXT_PUBLIC_GA_ID && (
           <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
         )}
