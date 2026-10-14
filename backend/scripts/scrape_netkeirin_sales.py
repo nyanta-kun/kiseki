@@ -297,7 +297,8 @@ def _dsn() -> str:
 #    keirin の venv（FastAPI も SQLAlchemy も無い）で動くため。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.services.keirin_sales_report import (  # noqa: E402
-    BIG_PAYOUT_YEN, GUARD_WINDOW_DAYS, build_sales_message, post_to_discord,
+    BIG_PAYOUT_YEN, CONFIDENT_WINDOW_DAYS, GUARD_WINDOW_DAYS, build_sales_message,
+    post_to_discord,
 )
 
 #: 通知先の Discord チャンネル（keirin/.env の webhook URL 環境変数名）
@@ -344,6 +345,12 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
             except Exception as e:  # noqa: BLE001
                 logger.warning("的中・自信ありの読み取りに失敗: %s", e)
                 confident, race_stats = None, None
+            # 直近5日の自信ありも付随情報。**別の try に分ける**（理由は下と同じ）。
+            try:
+                confident_recent = _fetch_confident_recent(cur, sale_date)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("直近5日の自信ありの読み取りに失敗: %s", e)
+                confident_recent = None
             # 見張り（直近7日）も付随情報。**別の try に分ける**——片方の失敗で
             # もう片方まで消さないため。
             try:
@@ -362,6 +369,7 @@ def fetch_sales_summary(sale_date: date) -> dict | None:
         "month_sold_points": int(month_points or 0),
         "month_sold_paid_points": int(month_paid or 0),
         "confident": confident,
+        "confident_recent": confident_recent,
         "race_stats": race_stats,
         "guard": guard,
     }
@@ -400,6 +408,36 @@ def _fetch_confident(cur, ymd: str) -> dict | None:
         "n_sold": row[6],
         "sold_paid_points": row[7],
     }
+
+
+def _fetch_confident_recent(cur, sale_date: date) -> dict:
+    """直近5日の「自信あり」の対象プラン・的中・回収（2026-10-15 追加）。
+
+    窓は **sale_date を含む暦日**で `CONFIDENT_WINDOW_DAYS` 日（見張りと同じ数え方）。
+    結合・取消の扱い・的中の正本は `_fetch_confident` と同じ。1日1本の前提に
+    頼らず、窓にあるものを全部並べる（`LIMIT` を掛けない）。
+    ⚠️ 賭け金・払戻もレース別テーブルから読む。未取込の日は None のまま返し、
+       文面側で「採点待ち」として回収率の母数から外す。
+    """
+    start = (sale_date - timedelta(days=CONFIDENT_WINDOW_DAYS - 1)).strftime("%Y%m%d")
+    end = sale_date.strftime("%Y%m%d")
+    cur.execute(
+        "SELECT LEFT(s.race_key, 8), s.venue_name, s.race_no, s.rank_key, "
+        "       r.n_hits_incl_garami, r.n_hits_excl_garami, "
+        "       r.stake_amount, r.payout_amount "
+        "FROM keirin.netkeirin_submissions s "
+        "LEFT JOIN keirin.netkeirin_sales_race r ON r.race_key = s.race_key "
+        "WHERE LEFT(s.race_key, 8) BETWEEN %s AND %s AND s.is_confident "
+        "  AND COALESCE(s.status, 'submitted') <> 'deleted' "
+        "ORDER BY s.race_key",
+        (start, end))
+    races = [
+        {"date": row[0], "label": f"{row[1] or '?'}{row[2] or '?'}R",
+         "rank_key": row[3], "n_hits_incl": row[4], "n_hits_excl": row[5],
+         "stake": row[6], "payout": row[7]}
+        for row in cur.fetchall()
+    ]
+    return {"start": start, "end": end, "races": races}
 
 
 def _fetch_race_stats(cur, ymd: str) -> dict | None:

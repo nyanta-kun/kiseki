@@ -33,7 +33,8 @@
    紹介料は当日ぶんの内訳としてだけ出す。段ごとに切り捨てるので、レース別の
    手取りを足しても当日の手取りとはぴったり一致しない（売上そのものと同じ）。
 
-本文は4節: 当日の売上 → 「自信あり」1レースの的中と売上 → 的中レースの売上 →
+本文は5節: 当日の売上 → 「自信あり」1レースの的中と売上 →
+**直近5日の自信あり**（対象プラン・的中・回収・2026-10-15 追加）→ 的中レースの売上 →
 **直近7日の見張り**（表示的中率と10万円以上の件数・2026-09-20 追加）。
 的中の定義は netkeirin の表示的中と同じ `n_hits_excl_garami`（ガミを除く）で、
 ガミ（払戻＜賭け金）は「的中」と混ぜずに別の記号で出す。
@@ -88,6 +89,10 @@ GUARD_WINDOW_DAYS = 7
 #: 「高額払戻」の境目（円・払戻額）。監査 §5 で**この的中の翌日だけ**売上が
 #: 1.49倍 [1.03, 2.19] になることを確認している（置換検定 p=0.004・n=7日）。
 BIG_PAYOUT_YEN = 100_000
+
+#: 「自信あり」の振り返りの窓（暦日・2026-10-15 ユーザー指示）。**sale_date を
+#: 含む暦5日**。自信ありは1日1本なので、開催があれば最大5本になる。
+CONFIDENT_WINDOW_DAYS = 5
 
 
 def revenue_yen(sold_paid_points: int | float | None) -> int:
@@ -215,6 +220,59 @@ def _confident_lines(c: Mapping[str, Any] | None) -> list[str]:
     return [head, line2, line3]
 
 
+def _confident_recent_lines(w: Mapping[str, Any] | None) -> list[str]:
+    """直近5日の「自信あり」の対象プラン・的中・回収（2026-10-15 ユーザー指示）。
+
+    必要なキー: `start` / `end`（YYYYMMDD）/ `races`
+    `races` の各行: `date`（YYYYMMDD）/ `label` / `rank_key` / `n_hits_incl` /
+    `n_hits_excl` / `stake` / `payout`
+
+    🔴 **回収率は採点済みのレースだけで出す。** 採点待ち（レース別が未取込）を
+       払戻 0 として分母に入れると回収を低く見せる。何本で出した数字かを併記する。
+    🔴 的中は netkeirin の表示的中と同じ `n_hits_excl`（ガミを混ぜない）。
+       ガミの払戻は回収には入れる（実際に戻ってきたお金なので）。
+    🔴 **判定しない**（⚠️ も合格線も出さない）。見張りの節と同じ理由で、
+       5本の上下は偶然で大きく振れる。
+    """
+    if not w:
+        return []
+    start, end = str(w["start"]), str(w["end"])
+    head = (f"📅 **自信あり 直近{CONFIDENT_WINDOW_DAYS}日** "
+            f"{start[4:6]}/{start[6:]}〜{end[4:6]}/{end[6:]}")
+    races = list(w.get("races") or [])
+    if not races:
+        return [head, "該当なし"]
+
+    lines = [head]
+    n_scored = n_hit = stake = payout = 0
+    for r in races:
+        d = str(r.get("date") or "")
+        scored = r.get("stake") is not None and (
+            r.get("n_hits_incl") is not None or r.get("n_hits_excl") is not None)
+        mark = _hit_mark(r.get("n_hits_incl"), r.get("n_hits_excl")) if scored else "⏳ 採点待ち"
+        line = (f"{d[4:6]}/{d[6:]} {r.get('label') or '?'} "
+                f"{r.get('rank_key') or '?'} {mark}")
+        if scored:
+            n_scored += 1
+            n_hit += int(int(r.get("n_hits_excl") or 0) > 0)
+            stake += int(r.get("stake") or 0)
+            p = int(r.get("payout") or 0)
+            payout += p
+            if p:
+                line += f" {p:,}円"
+        lines.append(line)
+
+    if not n_scored:
+        lines.append("採点済みなし")
+        return lines
+    note = "" if n_scored == len(races) else f"（採点済 {n_scored}/{len(races)}）"
+    lines.append(f"的中 {n_hit}/{n_scored}（{n_hit / n_scored * 100:.0f}%）{note}")
+    if stake:
+        lines.append(f"回収 {payout / stake * 100:.1f}%"
+                     f"（{payout:,} / {stake:,} 円）")
+    return lines
+
+
 def _hit_race_lines(r: Mapping[str, Any] | None) -> list[str]:
     """その日の**的中レースの売上**（2026-09-07 ユーザー指示）。
 
@@ -280,8 +338,8 @@ def build_sales_message(s: Mapping[str, Any]) -> str:
 
     必要なキー: `sale_date`(YYYYMMDD) / `n_sold` / `sold_points` /
     `sold_paid_points` / `month_n_days` / `month_sold_paid_points`
-    任意のキー: `confident`（自信ありの1レース）/ `race_stats`（的中レースの売上）/
-    `guard`（直近7日の見張り）
+    任意のキー: `confident`（自信ありの1レース）/ `confident_recent`（直近5日の
+    自信あり）/ `race_stats`（的中レースの売上）/ `guard`（直近7日の見張り）
 
     🔴 **コードブロック（```）で桁を揃えない**（2026-09-07 ユーザー指摘）。
        Discord のスマホ表示はコードブロックを折り返さず、幅の広い行が
@@ -310,7 +368,10 @@ def build_sales_message(s: Mapping[str, Any]) -> str:
         f"（{int(s['month_n_days'] or 0)}日 / 有償 {month_paid:,} pt）",
     ]
     lines += [""] + _confident_lines(s.get("confident"))
-    hit = _hit_race_lines(s.get("race_stats"))
+    recent = _confident_recent_lines(s.get("confident_recent"))
+    if recent:
+        lines += [""] + recent
+    hit =_hit_race_lines(s.get("race_stats"))
     if hit:
         lines += [""] + hit
     guard = _guard_lines(s.get("guard"))
