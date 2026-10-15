@@ -118,7 +118,7 @@ JOBS: list[Job] = [
     Job(
         "dm-auto-fetch",
         ["scripts/dm_auto_fetch.sh"],
-        cron=["0 12,14,18 * * *", "30 22 * * *", "0 8,11 * * 0,6"],
+        cron=["0 12,14,19 * * *", "30 22 * * *", "0 8,11 * * 0,6"],
         max_age=15 * H,
         tags=("vm",),
         note="DM 指数自動収集。ssh windows-vm でパイプラインを叩く",
