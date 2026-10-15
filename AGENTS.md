@@ -1570,7 +1570,7 @@ for i in 1 2 3 4; do echo "=P${i}="; grep -E "\[.*\].*頭 \(累計" /tmp/v15_p${
 - **LaunchAgent**: `~/Library/LaunchAgents/com.kiseki.dm-auto-fetch.plist`
 - **スクリプト**: `scripts/dm_auto_fetch.sh`
 - **オーケストレーター**: `backend/scripts/protocol_dm_orchestrator.py --from-db --courses 01..10`
-- **スケジュール**: 12:00 / 14:00 / 18:00 / 22:30 (毎日) + 8:00, 11:00 (土日)
+- **スケジュール**: 12:00 / 14:00 / 19:00 / 22:30 (毎日) + 8:00, 11:00 (土日)。19:00 は 2026-10-15 に 18:00 から変更（木曜は週末の出馬表が出揃ってから回すため）
 - **多重起動防止**: `/tmp/dm_auto_fetch.lock`
 
 ```bash
