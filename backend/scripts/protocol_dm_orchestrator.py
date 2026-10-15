@@ -27,6 +27,7 @@ JV-Next の独自プロトコルを使って 1403 を直接取得するオーケ
   # DRY RUN
   python3 scripts/protocol_dm_orchestrator.py --from-db --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -60,8 +61,8 @@ def log(msg: str) -> None:
 # DB問い合わせ
 # ---------------------------------------------------------------------------
 
-def query_missing_dates(courses: list[str], since: str | None,
-                         until: str | None = None) -> list[dict]:
+
+def query_missing_dates(courses: list[str], since: str | None, until: str | None = None) -> list[dict]:
     """DBから未取得 (date, course) リストを取得.
     Returns: [{"date": "20260419", "courses": ["03", "05"]}, ...]
     """
@@ -115,6 +116,7 @@ def query_missing_dates(courses: list[str], since: str | None,
 # Windows 連携
 # ---------------------------------------------------------------------------
 
+
 def deploy_pipeline_script() -> bool:
     """protocol_dm_pipeline.py を Windows にデプロイ."""
     src = Path(__file__).resolve().parents[2] / "windows-agent" / WINDOWS_PIPELINE
@@ -123,7 +125,8 @@ def deploy_pipeline_script() -> bool:
         return False
     r = subprocess.run(
         ["scp", str(src), f"windows-vm:{WINDOWS_DIR}/{WINDOWS_PIPELINE}"],
-        capture_output=True, timeout=30,
+        capture_output=True,
+        timeout=30,
     )
     if r.returncode == 0:
         log(f"deployed {WINDOWS_PIPELINE}")
@@ -143,9 +146,13 @@ def write_session_remote(targets: list[dict]) -> bool:
     return by_date
 
 
-def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
-                        force_refresh_key: bool = False, timeout: int = 1800,
-                        batch_per_venue: bool = True) -> dict:
+def run_pipeline_remote(
+    by_date: dict[str, list[str]],
+    no_import: bool = False,
+    force_refresh_key: bool = False,
+    timeout: int = 1800,
+    batch_per_venue: bool = True,
+) -> dict:
     """Windows 上で protocol_dm_pipeline.py を呼び出し.
 
     batch_per_venue=True (デフォルト): 全 (date,course) を場ごとにグルーピングして
@@ -169,9 +176,12 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
             if force_refresh_key:
                 flags.append("--force-refresh-key")
                 force_refresh_key = False  # 初回のみ
-            cmd = ["ssh", "windows-vm",
-                   f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} " +
-                   " ".join(flags)]
+            cmd = [
+                "ssh",
+                "windows-vm",
+                f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} "
+                + " ".join(flags),
+            ]
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -183,12 +193,16 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
                 if "fetch summary:" in line:
                     parts = line.split()
                     for p in parts:
-                        if p.startswith("saved="): saved = int(p.split("=")[1])
-                        elif p.startswith("skipped="): skipped = int(p.split("=")[1])
-                        elif p.startswith("failed="): failed = int(p.split("=")[1])
+                        if p.startswith("saved="):
+                            saved = int(p.split("=")[1])
+                        elif p.startswith("skipped="):
+                            skipped = int(p.split("=")[1])
+                        elif p.startswith("failed="):
+                            failed = int(p.split("=")[1])
                     break
-            results["per_call"].append({"cc": cc, "saved": saved, "skipped": skipped,
-                                         "failed": failed, "rc": r.returncode})
+            results["per_call"].append(
+                {"cc": cc, "saved": saved, "skipped": skipped, "failed": failed, "rc": r.returncode}
+            )
             results["total_saved"] += saved
             results["total_skipped"] += skipped
             results["total_failed"] += failed
@@ -204,9 +218,12 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
         if not no_import and by_date:
             recheck = ",".join(sorted(by_date.keys()))
             log(f"  Running importer (recheck-dates {recheck})")
-            cmd = ["ssh", "windows-vm",
-                   "C:\\Python312-32\\python.exe C:\\\\kiseki\\\\windows-agent\\\\jvnext_dm_importer.py "
-                   f"--recheck-dates {recheck}"]
+            cmd = [
+                "ssh",
+                "windows-vm",
+                "C:\\Python312-32\\python.exe C:\\\\kiseki\\\\windows-agent\\\\jvnext_dm_importer.py "
+                f"--recheck-dates {recheck}",
+            ]
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout * 2)
                 # 完了行を抽出
@@ -227,9 +244,11 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
             force_refresh_key = False
 
         log(f"  Running pipeline for {date_str} CC={ccs_arg}")
-        cmd = ["ssh", "windows-vm",
-               f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} " +
-               " ".join(flags)]
+        cmd = [
+            "ssh",
+            "windows-vm",
+            f"C:\\Python312-32\\python.exe {WINDOWS_DIR.replace('/', '\\\\')}\\\\{WINDOWS_PIPELINE} " + " ".join(flags),
+        ]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -240,12 +259,14 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
             if "fetch summary:" in line:
                 parts = line.split()
                 for p in parts:
-                    if p.startswith("saved="): saved = int(p.split("=")[1])
-                    elif p.startswith("skipped="): skipped = int(p.split("=")[1])
-                    elif p.startswith("failed="): failed = int(p.split("=")[1])
+                    if p.startswith("saved="):
+                        saved = int(p.split("=")[1])
+                    elif p.startswith("skipped="):
+                        skipped = int(p.split("=")[1])
+                    elif p.startswith("failed="):
+                        failed = int(p.split("=")[1])
                 break
-        results["per_call"].append({"date": date_str, "saved": saved, "skipped": skipped,
-                                     "failed": failed})
+        results["per_call"].append({"date": date_str, "saved": saved, "skipped": skipped, "failed": failed})
         results["total_saved"] += saved
         results["total_skipped"] += skipped
         results["total_failed"] += failed
@@ -258,29 +279,27 @@ def run_pipeline_remote(by_date: dict[str, list[str]], no_import: bool = False,
 # main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Protocol版 DM指数取得オーケストレーター")
-    parser.add_argument("--from-db", action="store_true",
-                        help="DB から未取得レースを自動検出")
+    parser.add_argument("--from-db", action="store_true", help="DB から未取得レースを自動検出")
     parser.add_argument("--dates", help="カンマ区切り日付 (例: 20260419,20260420)")
     parser.add_argument("--courses", help="カンマ区切り場コード (例: 03,04,07,10)")
     parser.add_argument("--since", help="検索開始日 YYYYMMDD (--from-db 時)")
     parser.add_argument("--until", help="検索終了日 YYYYMMDD (--from-db 時)")
-    parser.add_argument("--no-import", action="store_true",
-                        help="DB importer を実行しない")
-    parser.add_argument("--force-refresh-key", action="store_true",
-                        help="初回 KEY 取得を強制 refresh (キャッシュ無視)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="取得対象を確認のみ")
-    parser.add_argument("--timeout", type=int, default=1800,
-                        help="各日のタイムアウト秒 (デフォルト 1800)")
+    parser.add_argument("--no-import", action="store_true", help="DB importer を実行しない")
+    parser.add_argument("--force-refresh-key", action="store_true", help="初回 KEY 取得を強制 refresh (キャッシュ無視)")
+    parser.add_argument("--dry-run", action="store_true", help="取得対象を確認のみ")
+    parser.add_argument("--timeout", type=int, default=1800, help="各日のタイムアウト秒 (デフォルト 1800)")
     args = parser.parse_args()
 
     # 取得対象決定
     if args.from_db:
         courses_filter = args.courses.split(",") if args.courses else []
-        log(f"Querying DB for missing dates (since={args.since or 'last 30 days'}, "
-            f"courses={courses_filter or 'all'})...")
+        log(
+            f"Querying DB for missing dates (since={args.since or 'last 30 days'}, "
+            f"courses={courses_filter or 'all'})..."
+        )
         targets = query_missing_dates(courses_filter, args.since, args.until)
         if not targets:
             log("No missing dates found in DB.")
@@ -292,8 +311,7 @@ def main() -> int:
             log(f"  ... ({len(targets) - 10} more)")
     elif args.dates:
         dates = args.dates.split(",")
-        ccs = args.courses.split(",") if args.courses else \
-              ["03", "04", "05", "06", "07", "08", "09", "10"]
+        ccs = args.courses.split(",") if args.courses else ["03", "04", "05", "06", "07", "08", "09", "10"]
         targets = [{"date": d, "courses": ccs} for d in dates]
     else:
         parser.print_help()
@@ -323,14 +341,44 @@ def main() -> int:
     )
 
     log("=" * 60)
-    log(f"OVERALL: saved={results['total_saved']} "
-        f"skipped={results['total_skipped']} failed={results['total_failed']}")
+    log(
+        f"OVERALL: saved={results['total_saved']} "
+        f"skipped={results['total_skipped']} failed={results['total_failed']}"
+    )
 
     # ⚠️ saved/skipped はファイル数であって DB 反映数ではない。
     # 「今回の対象日が実際に埋まったか」と「終了済みの日に取り残しがないか」を別々に見る。
     rc_now = report_processed_coverage(by_date)
     rc_past = report_unrecovered(args.courses.split(",") if args.courses else [])
     return 1 if (rc_now or rc_past) else 0
+
+
+# 枠順の発表を待つだけの日。前日（JRA の枠順確定）より先は、枠順が無いのが正常
+FRAME_PENDING_GRACE_DAYS = 2
+
+
+def coverage_verdict(race_date: str, n: int, n_dm: int, n_frame: int, today: date) -> str:
+    """今回処理した日の DM 充足率を判定する。
+
+    Returns:
+        ``"ok"``: 充足率 90% 以上。
+        ``"frame_pending"``: 枠順が未確定で、開催が 2 日以上先。待てば直るので失敗にしない。
+        ``"fail"``: それ以外。人が手を入れるべき状態。
+
+    Why:
+      木曜に週末の出馬表が入ると、枠順（``horse_number``）が 0 のまま DM を取りに行き、
+      充足率 0% で rc=1 を返していた。DM は馬番で突き合わせるので、枠順の発表前は
+      必ず 0% になる。2026-10-10〜11 は 9 回、10-15 にも同じ誤報が Discord へ飛んだ
+      （いずれも枠順が入った後の定時実行で自然に埋まった）。
+      前日・当日は従来どおり失敗にする（2026-08-16 は当日朝まで枠順が 0 だった）。
+    """
+    pct = (n_dm / n * 100) if n else 0.0
+    if pct >= 90.0:
+        return "ok"
+    d = date(int(race_date[:4]), int(race_date[4:6]), int(race_date[6:8]))
+    if n_frame < n and (d - today).days >= FRAME_PENDING_GRACE_DAYS:
+        return "frame_pending"
+    return "fail"
 
 
 def report_processed_coverage(by_date: dict[str, list[str]]) -> int:
@@ -380,24 +428,38 @@ def report_processed_coverage(by_date: dict[str, list[str]]) -> int:
         return 0
 
     rc = 0
+    today = date.today()
     for d, n, n_dm, n_frame in rows:
         pct = (n_dm / n * 100) if n else 0.0
-        if pct >= 90.0:
+        verdict = coverage_verdict(str(d), n, n_dm, n_frame, today)
+        if verdict == "ok":
             log(f"DM coverage {d}: {n_dm}/{n} ({pct:.1f}%) OK")
+            continue
+        if verdict == "frame_pending":
+            log(
+                f"DM coverage {d}: {n_dm}/{n} ({pct:.1f}%) — 枠順の発表待ち"
+                f"（horse_number>0 は {n_frame}/{n}）。枠順が入った後の回で埋まる"
+            )
             continue
         rc = 1
         log(f"WARNING: DM coverage {d}: {n_dm}/{n} ({pct:.1f}%) — 低すぎます")
         if n_frame < n:
             # ここが今回の型。順序を間違えると何度 recheck しても入らない
-            log(f"  原因候補: 枠順が未確定（horse_number>0 は {n_frame}/{n}）。"
+            log(
+                f"  原因候補: 枠順が未確定（horse_number>0 は {n_frame}/{n}）。"
                 "DM は馬番でマッチするため、**枠順を入れてから** "
-                "jvnext_dm_importer --recheck-dates を回し直すこと")
-            log("  1) ssh windows-vm 'powershell -NoProfile -Command \"Set-Content -Path "
-                "\\\"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\\\" -Value "
-                f"\\\"fetch_entries_rt.py --date {d}\\\" -Encoding ASCII\"'")
+                "jvnext_dm_importer --recheck-dates を回し直すこと"
+            )
+            log(
+                "  1) ssh windows-vm 'powershell -NoProfile -Command \"Set-Content -Path "
+                '\\"C:\\kiseki\\windows-agent\\adhoc_cmd.txt\\" -Value '
+                f'\\"fetch_entries_rt.py --date {d}\\" -Encoding ASCII"\''
+            )
             log("     ssh windows-vm 'schtasks /run /tn kiseki-RunAdhoc'")
-        log("  2) ssh windows-vm \"C:\\Python312-32\\python.exe "
-            f"C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates {d}\"")
+        log(
+            '  2) ssh windows-vm "C:\\Python312-32\\python.exe '
+            f'C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates {d}"'
+        )
         log(f"  3) 指数を再算出: jra_calculate_trigger.sh {d}")
     return rc
 
@@ -428,8 +490,10 @@ def report_unrecovered(courses: list[str]) -> int:
     log(f"WARNING: DM MISSING (past) — 終了済みの {len(stale)} 日で DM が入っていません")
     for t in stale:
         log(f"  {t['date']} courses={t['courses']}")
-    log("  回収: ssh windows-vm \"C:\\Python312-32\\python.exe "
-        "C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates <日付>\"")
+    log(
+        '  回収: ssh windows-vm "C:\\Python312-32\\python.exe '
+        'C:\\kiseki\\windows-agent\\jvnext_dm_importer.py --recheck-dates <日付>"'
+    )
     return 1
 
 
