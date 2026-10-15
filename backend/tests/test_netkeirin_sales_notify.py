@@ -208,9 +208,30 @@ def _guard(**kw) -> dict:
     return base
 
 
+def _recent_race(date: str, label: str, rank_key: str, hit: int | None,
+                 payout: int | None, stake: int | None = 10000) -> dict:
+    return {"date": date, "label": label, "rank_key": rank_key,
+            "n_hits_incl": hit, "n_hits_excl": hit, "stake": stake,
+            "payout": payout}
+
+
+def _confident_recent(**kw) -> dict:
+    # 10/09〜10/13 の実測（5本・的中1・払戻 37,440 / 賭け 50,000）。
+    # 3文字の場名（和歌山）と5桁の払戻で1行の幅を見る。
+    base = {"start": "20261009", "end": "20261013", "races": [
+        _recent_race("20261009", "平塚5R", "B_hit", 0, 0),
+        _recent_race("20261010", "富山7R", "B_hit", 0, 0),
+        _recent_race("20261011", "岐阜4R", "E_hit", 0, 0),
+        _recent_race("20261012", "和歌山11R", "E_hit", 1, 37440),
+        _recent_race("20261013", "大宮5R", "E_hit", 0, 0),
+    ]}
+    base.update(kw)
+    return base
+
+
 def _full_summary(**kw) -> dict:
     base = {"confident": _confident(), "race_stats": _race_stats(),
-            "guard": _guard()}
+            "guard": _guard(), "confident_recent": _confident_recent()}
     base.update(kw)
     return _summary(**base)
 
@@ -234,14 +255,16 @@ def test_自信ありのガミを的中と混ぜない():
     """netkeirin の表示的中は `n_hits_excl_garami`。払戻＜賭け金は「ガミ」。"""
     msg = rep.build_sales_message(
         _full_summary(confident=_confident(n_hits_incl=1, n_hits_excl=0,
-                                           payout=8000)))
+                                           payout=8000),
+                      confident_recent=None))   # 直近5日の節の「⭕ 的中」と混ぜない
     assert "ガミ" in msg and "⭕ 的中" not in msg
 
 
 def test_自信ありが採点前なら採点待ちと書く():
     """レース別を取り込んでいない回。黙って「不的中」にしない。"""
     msg = rep.build_sales_message(
-        _full_summary(confident=_confident(n_hits_incl=None, n_hits_excl=None)))
+        _full_summary(confident=_confident(n_hits_incl=None, n_hits_excl=None),
+                      confident_recent=None))   # 直近5日の節の「不的中」と混ぜない
     assert "採点待ち" in msg
     assert "不的中" not in msg
 
@@ -584,3 +607,78 @@ def test_見張りの失敗で他の付加情報を消さない():
     j = src.index("race_stats = _fetch_race_stats(")
     assert j < i, "見張りは的中レースの後に読む"
     assert "try:" in src[j:i], "見張りが自信あり・的中レースと同じ try に入っています"
+
+
+# ---------------------------------------------------------------------------
+# 直近5日の自信あり（2026-10-15 ユーザー指示）
+# ---------------------------------------------------------------------------
+
+def test_自信ありの窓は5日():
+    assert rep.CONFIDENT_WINDOW_DAYS == 5
+
+
+def test_直近5日の自信ありは対象プランと的中と回収を出す():
+    msg = rep.build_sales_message(_full_summary())
+    assert "自信あり 直近5日" in msg and "10/09〜10/13" in msg
+    assert "10/12 和歌山11R E_hit ⭕ 的中 37,440円" in msg
+    assert "10/09 平塚5R B_hit ❌ 不的中" in msg
+    assert "的中 1/5（20%）" in msg
+    assert "回収 74.9%（37,440 / 50,000 円）" in msg
+
+
+def test_直近5日は採点待ちを回収の母数に入れない():
+    """🔴 払戻 0 として分母に入れると回収を低く見せる。"""
+    w = _confident_recent(races=[
+        _recent_race("20261013", "大宮5R", "E_hit", 1, 25000),
+        _recent_race("20261014", "前橋4R", "A_hit", None, None, stake=None),
+    ])
+    msg = rep.build_sales_message(_full_summary(confident_recent=w))
+    assert "10/14 前橋4R A_hit ⏳ 採点待ち" in msg
+    assert "的中 1/1（100%）（採点済 1/2）" in msg
+    assert "回収 250.0%（25,000 / 10,000 円）" in msg
+
+
+def test_直近5日のガミは的中に数えず回収には入れる():
+    w = _confident_recent(races=[
+        {"date": "20261013", "label": "大宮5R", "rank_key": "E_hit",
+         "n_hits_incl": 1, "n_hits_excl": 0, "stake": 10000, "payout": 8000},
+    ])
+    msg = rep.build_sales_message(_full_summary(confident_recent=w))
+    assert "△ ガミ 8,000円" in msg
+    assert "的中 0/1（0%）" in msg and "回収 80.0%" in msg
+
+
+def test_直近5日に自信ありが無ければ該当なしと書く():
+    msg = rep.build_sales_message(_full_summary(confident_recent=_confident_recent(races=[])))
+    assert "自信あり 直近5日" in msg and "該当なし" in msg
+
+
+def test_直近5日は判定しない():
+    """🔴 5本の上下は偶然で大きく振れる。合格線も ⚠️ も出さない。"""
+    msg = rep.build_sales_message(_full_summary())
+    assert "⚠️" not in msg
+
+
+def test_スクリプトが直近5日の自信ありを読む():
+    """🔴 SQL を消すと**この節だけが静かに消える**（売上は出続ける）。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "confident_recent = _fetch_confident_recent(cur, sale_date)" in src
+    assert '"confident_recent": confident_recent' in src
+    i = src.index("def _fetch_confident_recent(")
+    body = src[i:src.index("\ndef ", i + 1)]
+    # 窓は正本の定数から（写さない）
+    assert "CONFIDENT_WINDOW_DAYS" in body
+    # 自信ありの1本と同じ結合・取消の扱い。1日1本を前提に LIMIT しない
+    assert "r.race_key = s.race_key" in body and "s.is_confident" in body
+    assert "COALESCE(s.status, 'submitted') <> 'deleted'" in body
+    assert "LIMIT 1" not in body and "LIMIT %s" not in body
+    assert "r.stake_amount" in body and "r.payout_amount" in body
+
+
+def test_直近5日の失敗で他の付加情報を消さない():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    i = src.index("confident_recent = _fetch_confident_recent(")
+    j = src.index("race_stats = _fetch_race_stats(")
+    k = src.index("guard = _fetch_guard(")
+    assert j < i < k
+    assert "try:" in src[j:i] and "try:" in src[i:k]
