@@ -11,6 +11,9 @@
  *    1レースだけ出して当てた予想家が回収率 2,000% で常に1位になるため。
  * ⚠️ **的中率は2種類ある。** ガミ含む（払戻>0・一覧の「的中」アイコン）と
  *    ガミ除く（払戻>購入・netkeirin のプロフィールの的中率）。両方出す。
+ * 🔴 **推移グラフの既定の比較相手は「表示期間の前の1年で継続して回収率が高い人」。**
+ *    表示期間の上位で選ぶと、その期間に運が良かった人が並び線が実力以上に高く見える
+ *    （選び方の正本は backend `steady_compare_candidates`）。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -104,7 +107,7 @@ export default function RivalsTab({ from, to }: { from: string; to: string }) {
   const [metric, setMetric] = useState<KeirinRivalMetric>("roi");
   const [minGoods, setMinGoods] = useState(20);
   const [granularity, setGranularity] = useState<KeirinRivalGranularity>("week");
-  const [compare, setCompare] = useState<number[] | null>(null); // null = 上位5人（既定）
+  const [compare, setCompare] = useState<number[] | null>(null); // null = 継続上位（既定）
   const [showUnranked, setShowUnranked] = useState(false);
   const [data, setData] = useState<KeirinRivalsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -226,10 +229,43 @@ export default function RivalsTab({ from, to }: { from: string; to: string }) {
 
         {/* ── 累積回収率の推移 ───────────────────────── */}
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 p-3">
-          <p className="text-xs font-semibold text-gray-500 mb-1">累積回収率の推移</p>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="text-xs font-semibold text-gray-500">累積回収率の推移</p>
+            {compare != null && (
+              <Chip active={false} onClick={() => setCompare(null)}>既定の比較相手に戻す</Chip>
+            )}
+          </div>
           <p className="text-[11px] text-gray-400 mb-2">
-            比較相手は表の行をタップで追加・削除（既定は指標の上位5人）。
+            {data.compare_basis === "steady" && (
+              <>
+                比較相手は<b>継続して回収率が高い予想家</b>：表示期間の前の1年
+                （{data.steady_window.from_date}〜{data.steady_window.to_date}）で予想{data.steady_window.min_goods}件以上・
+                {data.steady_window.min_quarters}四半期以上にわたり、その過半で全体を上回った人を、その1年の回収率順に（表示期間の成績では選んでいません。四半期は窓の端の短い分も1つと数えます）。
+              </>
+            )}
+            {data.compare_basis === "period_top" && (
+              <span className="text-amber-600">
+                継続上位の該当者がいない（またはこの期間に予想を出していない）ため、この期間の指標上位を表示しています（運の良かった人が並びやすい）。
+              </span>
+            )}
+            {data.compare_basis === "manual" && <>比較相手は手動で選択中。</>}
+            {" "}表の行をタップで追加・削除。
           </p>
+          {data.compare_basis === "steady" && data.compare.length > 0 && (
+            <ul className="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+              {data.compare.map((c, i) => (
+                <li key={c.yosoka_id} className="flex items-center gap-1 min-w-0">
+                  <span aria-hidden className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ background: COMPARE_COLORS[i % COMPARE_COLORS.length] }} />
+                  {c.yosoka_name ?? `#${c.yosoka_id}`}
+                  <span className="tabular-nums text-gray-400">
+                    前の1年 {formatPct(c.lookback_roi ?? null)}・{c.lookback_n_goods?.toLocaleString()}件・
+                    {c.quarters_above}/{c.quarters_counted}四半期で全体超
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 5, right: 8, left: -12, bottom: 0 }}>

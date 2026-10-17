@@ -47,6 +47,10 @@ from ..services.keirin_rivals_analysis import (
     DEFAULT_MIN_GOODS,
     DEFAULT_MIN_GOODS_PER_BUCKET,
     SELF_YOSOKA_ID,
+    STEADY_LOOKBACK_DAYS,
+    STEADY_MIN_GOODS,
+    STEADY_MIN_QUARTERS,
+    steady_compare_candidates,
 )
 from ..services.keirin_rivals_analysis import (
     analyze as analyze_rivals,
@@ -2921,7 +2925,9 @@ async def get_netkeirin_rivals(
     - metric: 順位を付ける指標（roi / net_hit_rate / hit_rate / profit / n_goods）
     - min_goods: 期間内の予想数がこれ未満の予想家には順位を付けない
     - granularity: 推移の区間（day / week / month）
-    - compare: 推移に並べる予想家ID（カンマ区切り）。空なら指標の上位5人
+    - compare: 推移に並べる予想家ID（カンマ区切り）。空なら**表示期間の前日までの1年で
+      継続して回収率が高い5人**（`steady_compare_candidates`）。🔴 表示期間の上位で
+      選ぶと、その期間に運が良かった人を選んでしまう
     - from_date / to_date: YYYY-MM-DD。省略時は直近30日
     """
     today = _today_jst()
@@ -2961,16 +2967,40 @@ async def get_netkeirin_rivals(
         n_unsettled = int(meta["n_unsettled"] or 0)
         last_collected = meta["last_collected"]
 
+    # 既定の比較相手は表示期間と重ならない前の1年から選ぶ（指定があれば引かない）
+    steady_to = from_dt - timedelta(days=1)
+    steady_from = from_dt - timedelta(days=STEADY_LOOKBACK_DAYS)
+    steady: list[dict[str, Any]] = []
+    if not compare_ids and await _rivals_table_ready(db):
+        agg = [dict(r) for r in (await db.execute(
+            text("""
+                SELECT yosoka_id, MAX(yosoka_name) AS yosoka_name,
+                       date_trunc('quarter', race_date)::date AS quarter,
+                       COUNT(*) AS n_goods, SUM(bet) AS bet, SUM(payout) AS payout
+                FROM keirin.netkeirin_rival_goods
+                WHERE race_date BETWEEN :f AND :t AND payout IS NOT NULL
+                GROUP BY yosoka_id, date_trunc('quarter', race_date)
+            """),
+            {"f": steady_from, "t": steady_to},
+        )).mappings().all()]
+        steady = steady_compare_candidates(agg, self_id=SELF_YOSOKA_ID)
+
     result = analyze_rivals(
         rows, self_id=SELF_YOSOKA_ID, metric=metric, min_goods=max(1, min_goods),
         granularity=granularity, min_goods_per_bucket=max(1, min_goods_per_bucket),
-        compare_ids=compare_ids or None,
+        compare_ids=compare_ids or None, steady_candidates=steady,
     )
     return JSONResponse({
         "from_date": from_dt.isoformat(),
         "to_date": to_dt.isoformat(),
         "n_unsettled": n_unsettled,
         "last_collected_at": last_collected.isoformat() if last_collected else None,
+        "steady_window": {
+            "from_date": steady_from.isoformat(),
+            "to_date": steady_to.isoformat(),
+            "min_goods": STEADY_MIN_GOODS,
+            "min_quarters": STEADY_MIN_QUARTERS,
+        },
         **result,
     })
 
