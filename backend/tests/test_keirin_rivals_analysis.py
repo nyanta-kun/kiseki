@@ -1,16 +1,22 @@
 """予想家比較の集計（`services/keirin_rivals_analysis`）の検査。
 
-固定したいのは読み違えやすい3点:
+固定したいのは読み違えやすい4点:
   - 予想数が `min_goods` 未満の予想家に順位を付けない（1レース的中の予想家が常に1位になる）
   - 的中(ガミ含む) と 的中(ガミ除く) を取り違えない
   - 未確定（payout None）を 0 円として数えない
+  - 推移の既定の比較相手を表示期間の成績で選ばない（前の1年で継続して高い人を並べる）
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-from src.services.keirin_rivals_analysis import SELF_YOSOKA_ID, analyze, bucket_of
+from src.services.keirin_rivals_analysis import (
+    SELF_YOSOKA_ID,
+    analyze,
+    bucket_of,
+    steady_compare_candidates,
+)
 
 ME = SELF_YOSOKA_ID
 
@@ -99,3 +105,103 @@ def test_bucket_of():
     assert bucket_of(d, "week") == "2026-10-12"
     assert bucket_of(d, "month") == "2026-10-01"
     assert bucket_of(d, "day") == "2026-10-14"
+
+
+# ── 推移の既定の比較相手（継続上位・2026-10-16） ──────────────────────────
+
+
+def _q(yid: int, q: str, n: int, roi: float, name: str = "") -> dict:
+    bet = n * 10000
+    return {
+        "yosoka_id": yid,
+        "yosoka_name": name or f"y{yid}",
+        "quarter": date.fromisoformat(q),
+        "n_goods": n,
+        "bet": bet,
+        "payout": int(bet * roi),
+    }
+
+
+def _lookback() -> list[dict]:
+    """全体の四半期回収率がほぼ 0.75 になる母集団 + 判定対象の予想家。"""
+    qs = ("2025-10-01", "2026-01-01", "2026-04-01", "2026-07-01")
+    rows = [_q(900, q, 5000, 0.75) for q in qs]  # 全体を作る大口（回収率は全体と同じ）
+    # 10: 4/4 で全体超・回収率 0.95 → 採る
+    rows += [_q(10, q, 100, 0.95) for q in qs]
+    # 11: 3/4 で全体超・回収率 1.10（1四半期だけ大負け） → 採る・10 より上
+    rows += [_q(11, "2025-10-01", 100, 0.10)] + [_q(11, q, 100, 1.50) for q in qs[1:]]
+    # 12: 2/4 で全体超（過半に届かない）。1年の回収率は高い 1.20 → 落とす
+    rows += [_q(12, q, 100, r) for q, r in zip(qs, (2.0, 2.0, 0.40, 0.40))]
+    # 13: 全四半期で全体超だが予想数 160 < 200 → 落とす
+    rows += [_q(13, q, 40, 1.30) for q in qs]
+    # 14: 予想数は足りるが、数える四半期（20件以上）が1つだけ（そこは全体超） → 短すぎて落とす
+    rows += [_q(14, "2026-07-01", 190, 0.90)] + [_q(14, q, 10, 0.10) for q in qs[:3]]
+    # 15: 数える四半期がちょうど3つ・2/3 で全体超 → 採る
+    rows += [_q(15, q, 100, r) for q, r in zip(qs[1:], (0.90, 0.90, 0.50))] + [_q(15, qs[0], 10, 0.0)]
+    # 自分: 全四半期で全体超でも候補に入れない
+    rows += [_q(ME, q, 100, 1.40) for q in qs]
+    return rows
+
+
+def test_steady_candidates_filter_and_order():
+    got = steady_compare_candidates(_lookback(), self_id=ME)
+    ids = [c["yosoka_id"] for c in got]
+    assert ids == [11, 10, 15]
+    by = {c["yosoka_id"]: c for c in got}
+    assert (by[11]["quarters_above"], by[11]["quarters_counted"]) == (3, 4)
+    assert (by[15]["quarters_above"], by[15]["quarters_counted"]) == (2, 3)
+    assert by[10]["lookback_n_goods"] == 400 and abs(by[10]["lookback_roi"] - 0.95) < 1e-9
+
+
+def test_steady_default_ignores_displayed_period_performance():
+    """表示期間に大勝ちした人（他C=3）ではなく、前の1年で継続して高い人を並べる。"""
+    steady = [
+        {
+            "yosoka_id": 1,
+            "yosoka_name": "y1",
+            "lookback_roi": 0.95,
+            "lookback_n_goods": 400,
+            "quarters_above": 4,
+            "quarters_counted": 4,
+        },
+        {
+            "yosoka_id": 77,
+            "yosoka_name": "y77",
+            "lookback_roi": 0.93,
+            "lookback_n_goods": 400,
+            "quarters_above": 4,
+            "quarters_counted": 4,
+        },  # 表示期間に予想が無い → 飛ばす
+        {
+            "yosoka_id": 2,
+            "yosoka_name": "y2",
+            "lookback_roi": 0.90,
+            "lookback_n_goods": 400,
+            "quarters_above": 3,
+            "quarters_counted": 4,
+        },
+    ]
+    got = analyze(_rows(), self_id=ME, min_goods=3, steady_candidates=steady, n_compare_default=5)
+    assert got["compare_basis"] == "steady"
+    assert [c["yosoka_id"] for c in got["compare"]] == [1, 2]
+    assert got["compare"][0]["lookback_roi"] == 0.95 and got["compare"][0]["quarters_above"] == 4
+    assert set(got["series"][-1]["compare_cum_roi"]) == {"1", "2"}
+
+
+def test_steady_skips_absent_and_takes_next():
+    steady = [{"yosoka_id": i, "yosoka_name": f"y{i}"} for i in (77, 78, 1, 3, 2)]
+    got = analyze(_rows(), self_id=ME, min_goods=3, steady_candidates=steady, n_compare_default=2)
+    assert [c["yosoka_id"] for c in got["compare"]] == [1, 3]
+
+
+def test_no_steady_candidates_falls_back_to_period_top():
+    got = analyze(_rows(), self_id=ME, min_goods=3, steady_candidates=[])
+    assert got["compare_basis"] == "period_top"
+    assert [c["yosoka_id"] for c in got["compare"]][0] == 3
+
+
+def test_manual_compare_wins():
+    steady = [{"yosoka_id": 1, "yosoka_name": "y1"}]
+    got = analyze(_rows(), self_id=ME, min_goods=3, compare_ids=[3, ME], steady_candidates=steady)
+    assert got["compare_basis"] == "manual"
+    assert [c["yosoka_id"] for c in got["compare"]] == [3]

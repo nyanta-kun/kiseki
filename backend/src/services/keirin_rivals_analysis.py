@@ -22,6 +22,21 @@
    出して当てた予想家が回収率 2,000% で常に1位になり、順位が意味を失う。
    表には出す（`ranked=False`）が順位は None。
    同値は同順位（1, 2, 2, 4 …）。
+
+## 推移グラフの比較相手（既定・2026-10-16）
+
+🔴 **表示期間の成績で比較相手を選ばない。** 以前は「表示期間の指標上位5人」を
+   既定にしていたが、それは*その期間に運が良かった人*を選ぶことになり、線が
+   実力以上に高く見える（2026-09-14〜10-12 の実測: 前半の上位5人は後半に平均
+   69.5% まで落ち、全員の平均 71.8% を下回った）。一方で 1 年単位では順位に
+   持続性がある（2025→2026 の順位相関 +0.40）。
+
+→ 既定は `steady_compare_candidates`: **表示期間の前日までの1年**で
+   予想数 `STEADY_MIN_GOODS` 以上・**数えられる四半期が `STEADY_MIN_QUARTERS` 以上あり、
+   その過半で全体の回収率を上回った**
+   予想家を、その1年の回収率順に並べたもの。表示期間に予想が無い人は飛ばして
+   次の人を採る（候補は人数で切らずに全員渡すこと。先に5人へ切ると線が減る）。
+   該当者がいなければ従来どおり表示期間の上位へ落とし、`compare_basis` で知らせる。
 """
 
 from __future__ import annotations
@@ -43,6 +58,16 @@ RANK_METRICS = ("roi", "net_hit_rate", "hit_rate", "profit", "n_goods")
 DEFAULT_MIN_GOODS = 20
 #: 推移グラフの1区間で順位を付ける最低予想数
 DEFAULT_MIN_GOODS_PER_BUCKET = 5
+
+#: 継続上位の選定窓（表示期間の前日から遡る日数）
+STEADY_LOOKBACK_DAYS = 365
+#: 選定窓での最低予想数
+STEADY_MIN_GOODS = 200
+#: 「全体を上回ったか」を数える四半期の最低予想数（これ未満の四半期は数えない）
+STEADY_MIN_GOODS_PER_QUARTER = 20
+#: 数えられる四半期の最低数。1〜2 四半期だけでは「継続」と言えない
+#: （データ開始 2025-04 の直後は該当者がいなくなり、表示期間の上位へ落ちる）
+STEADY_MIN_QUARTERS = 3
 
 
 def _blank() -> dict[str, Any]:
@@ -101,6 +126,65 @@ def bucket_of(d: date, granularity: str) -> str:
     return d.isoformat()
 
 
+def steady_compare_candidates(
+    agg_rows: Iterable[dict[str, Any]],
+    *,
+    self_id: int,
+    min_goods: int = STEADY_MIN_GOODS,
+    min_goods_per_quarter: int = STEADY_MIN_GOODS_PER_QUARTER,
+    min_quarters: int = STEADY_MIN_QUARTERS,
+) -> list[dict[str, Any]]:
+    """選定窓の四半期集計 → 継続して回収率が高い予想家（選定窓の回収率が高い順）。
+
+    agg_rows: 予想家×四半期の集計。`yosoka_id` / `yosoka_name` / `quarter` / `n_goods` /
+              `bet` / `payout`（確定済みのみ）。全体の四半期回収率も同じ行から作る。
+
+    条件: 予想数 `min_goods` 以上 かつ、予想数 `min_goods_per_quarter` 以上の四半期が
+    `min_quarters` 以上あり、その**過半**で全体の回収率を上回ったこと。自分は含めない。
+    """
+    per: dict[int, dict[Any, list[int]]] = defaultdict(dict)
+    names: dict[int, str] = {}
+    field_q: dict[Any, list[int]] = defaultdict(lambda: [0, 0])
+    for r in agg_rows:
+        yid, q = int(r["yosoka_id"]), r["quarter"]
+        n, bet, pay = int(r["n_goods"]), int(r["bet"] or 0), int(r["payout"] or 0)
+        if r.get("yosoka_name"):
+            names[yid] = str(r["yosoka_name"])
+        acc = per[yid].setdefault(q, [0, 0, 0])
+        acc[0] += n
+        acc[1] += bet
+        acc[2] += pay
+        field_q[q][0] += bet
+        field_q[q][1] += pay
+    field_roi = {q: v[1] / v[0] for q, v in field_q.items() if v[0] > 0}
+
+    out: list[dict[str, Any]] = []
+    for yid, qs in per.items():
+        if yid == self_id:
+            continue
+        n = sum(v[0] for v in qs.values())
+        bet = sum(v[1] for v in qs.values())
+        pay = sum(v[2] for v in qs.values())
+        if n < min_goods or bet <= 0:
+            continue
+        counted = [q for q, v in qs.items() if v[0] >= min_goods_per_quarter and v[1] > 0 and q in field_roi]
+        above = sum(1 for q in counted if qs[q][2] / qs[q][1] > field_roi[q])
+        if len(counted) < min_quarters or above * 2 <= len(counted):  # 短すぎる / 過半に届かない
+            continue
+        out.append(
+            {
+                "yosoka_id": yid,
+                "yosoka_name": names.get(yid),
+                "lookback_n_goods": n,
+                "lookback_roi": pay / bet,
+                "quarters_above": above,
+                "quarters_counted": len(counted),
+            }
+        )
+    out.sort(key=lambda c: (-c["lookback_roi"], -c["lookback_n_goods"]))
+    return out
+
+
 def analyze(
     rows: Iterable[dict[str, Any]],
     *,
@@ -111,11 +195,14 @@ def analyze(
     min_goods_per_bucket: int = DEFAULT_MIN_GOODS_PER_BUCKET,
     compare_ids: list[int] | None = None,
     n_compare_default: int = 5,
+    steady_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """確定済みの商品行 → 順位表・自分の位置・推移。
 
     rows: `race_date`(date) / `race_key` / `yosoka_id` / `yosoka_name` / `bet` / `payout`。
           payout が None の行は渡さないこと（渡されても数えない）。
+    steady_candidates: `steady_compare_candidates` の戻り値（並び順どおり）。`compare_ids` が
+          無いときの既定の比較相手で、表示期間に予想が無い人は飛ばす。空なら表示期間の上位。
     """
     if metric not in RANK_METRICS:
         metric = "roi"
@@ -164,11 +251,17 @@ def analyze(
         "median_net_hit_rate": median([r["net_hit_rate"] for r in ranked_rows]) if ranked_rows else None,
     }
 
-    # ── 推移で並べる相手（指定が無ければ、いまの指標の上位） ──
+    # ── 推移で並べる相手（指定 > 継続上位 > 表示期間の上位） ──
+    steady_by_id = {int(c["yosoka_id"]): c for c in steady_candidates or []}
     if compare_ids:
+        compare_basis = "manual"
         cmp_ids = [i for i in compare_ids if i in per and i != self_id]
     else:
-        cmp_ids = [r["yosoka_id"] for r in table if r["rank"] is not None and not r["is_self"]][:n_compare_default]
+        compare_basis = "steady"
+        cmp_ids = [i for i in steady_by_id if i in per and i != self_id][:n_compare_default]
+        if not cmp_ids:
+            compare_basis = "period_top"
+            cmp_ids = [r["yosoka_id"] for r in table if r["rank"] is not None and not r["is_self"]][:n_compare_default]
 
     # ── 推移（区間ごと＋累積） ──
     series = []
@@ -219,6 +312,14 @@ def analyze(
         "n_ranked": n_ranked,
         "field": field,
         "ranking": table,
-        "compare": [{"yosoka_id": i, "yosoka_name": names.get(i)} for i in cmp_ids],
+        "compare_basis": compare_basis,
+        "compare": [
+            {
+                "yosoka_id": i,
+                "yosoka_name": names.get(i),
+                **{k: v for k, v in steady_by_id.get(i, {}).items() if k.startswith(("lookback_", "quarters_"))},
+            }
+            for i in cmp_ids
+        ],
         "series": series,
     }

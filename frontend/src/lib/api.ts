@@ -1928,7 +1928,22 @@ export type KeirinRivalsResponse = {
     median_net_hit_rate: number | null;
   };
   ranking: KeirinRivalRow[];
-  compare: { yosoka_id: number; yosoka_name: string | null }[];
+  /**
+   * 比較相手の選び方。steady = 表示期間の前の1年で継続して回収率が高い人（既定）/
+   * period_top = 該当者がいないため表示期間の上位 / manual = 指定
+   */
+  compare_basis: "steady" | "period_top" | "manual";
+  /** 継続上位を選ぶ窓（表示期間の前日まで） */
+  steady_window: { from_date: string; to_date: string; min_goods: number; min_quarters: number };
+  compare: {
+    yosoka_id: number;
+    yosoka_name: string | null;
+    /** 以下は compare_basis が steady のときだけ入る（選定窓の成績） */
+    lookback_roi?: number;
+    lookback_n_goods?: number;
+    quarters_above?: number;
+    quarters_counted?: number;
+  }[];
   series: KeirinRivalSeriesPoint[];
 };
 
