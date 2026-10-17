@@ -1151,6 +1151,10 @@ def run_realtime_monitor(nv) -> None:
     finalized_races: set[str] = set()
     cycle = 0
     INCREMENTAL_EVERY = 10  # 約5分ごと（30秒×10）に蓄積系差分取得
+    # 前回オッズを送った時刻（monotonic）。1周の実際の長さをログに残すため。
+    # 2026-09-29 に「楽天競馬のオッズと乖離が大きい」と報告されたが、ループが
+    # 何秒で1周しているかがログから読めず、取得側の遅れかを判断できなかった。
+    last_odds_post_at: float | None = None
     _calc_triggered_today = False  # 当日指数算出トリガー済みフラグ（1日1回）
 
     # ---- ウォッチドッグスレッド ----
@@ -1379,6 +1383,7 @@ def run_realtime_monitor(nv) -> None:
             # ----- 蓄積系差分取得 (option=2) — 約5分ごとに確定成績をポーリング -----
             if cycle % INCREMENTAL_EVERY == 0:
                 _heartbeat[0] = time.time()  # NVOpen前にリセット（NVOpenは最大数分ブロック）
+                incremental_started = time.monotonic()
                 incremental_total = [0]
 
                 def on_incremental_file(filename: str, file_records: list[dict]) -> None:
@@ -1399,6 +1404,11 @@ def run_realtime_monitor(nv) -> None:
                     nv, DATASPEC_RACE, yesterday, option=2,
                     on_file_done=on_incremental_file,
                     skip_cache=True,
+                )
+                # 同じ接続で回すので、この間はオッズを1件も取っていない
+                logger.info(
+                    f"[timing] 蓄積差分 {time.monotonic() - incremental_started:.0f}秒"
+                    f"（この間 0B31 は止まる）"
                 )
                 if incremental_total[0] > 0:
                     logger.info(f"蓄積差分取得完了: 合計 {incremental_total[0]} 件 DB 反映")
@@ -1421,13 +1431,31 @@ def run_realtime_monitor(nv) -> None:
 
             # ----- オッズ取得 (0B31) -----
             all_odds: list[dict] = []
+            odds_started = time.monotonic()
+            slowest_key, slowest_sec = "", 0.0
             for race_key in race_keys:
+                key_started = time.monotonic()
                 odds_records = fetch_realtime_data(nv, RT_ODDS, race_key)
+                key_sec = time.monotonic() - key_started
+                if key_sec > slowest_sec:
+                    slowest_key, slowest_sec = race_key, key_sec
                 odds = [r for r in odds_records if r.get("rec_id", "").startswith("O")]
                 all_odds.extend(odds)
+            odds_sec = time.monotonic() - odds_started
 
             if all_odds:
-                logger.info(f"オッズ取得: {len(all_odds)} 件 / {len(race_keys)} レース → chihou/odds へ送信")
+                now_mono = time.monotonic()
+                gap_text = (
+                    f"前回送信から {now_mono - last_odds_post_at:.0f}秒"
+                    if last_odds_post_at is not None
+                    else "初回"
+                )
+                last_odds_post_at = now_mono
+                logger.info(
+                    f"オッズ取得: {len(all_odds)} 件 / {len(race_keys)} レース → chihou/odds へ送信 "
+                    f"[timing] 0B31 {odds_sec:.0f}秒・{gap_text}・"
+                    f"最遅 {slowest_key[-8:]} {slowest_sec:.1f}秒"
+                )
                 post_to_backend(EP_ODDS, {"date": today, "records": all_odds}, BACKEND_URL, API_KEY)
                 _heartbeat[0] = time.time()  # 長時間POST後にウォッチドッグが誤作動しないよう更新
 
