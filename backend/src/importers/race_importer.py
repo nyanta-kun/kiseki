@@ -46,41 +46,25 @@ POST_RACE_ONLY_COLS = frozenset(
 
 # 一般競走（特別競走以外）のレース名。
 # RA の競走名本題は一般競走では空なので、そのまま UPSERT すると
-# scrape_projected_entries.py が出馬表確定前に入れた「２歳未勝利」等の名前が
+# scrape_projected_entries.py が出馬表確定前に入れた「２歳未勝利」等の仮名が
 # 確定後の RA で NULL に戻り、sekito の画面（POG 出走予定・レース詳細）で
 # レース名が出なくなっていた（2026-10-22）。
-# 競走種別コード（コード表2005）+ 競走条件コード（コード表2007）から組み立てる。
-# 表記は出馬表確定前の仮名（netkeiba 由来）に合わせて全角数字・「新馬」とし、
-# 確定の前後でレース名が変わらないようにする。sekito.jra_race_class_label と同じ表。
-# kiseki の画面用ラベル（Race.race_class_label の「メイクデビュー」等）とは別物。
-_RACE_TYPE_AGE = {
-    "11": "２歳",
-    "12": "３歳",
-    "13": "３歳以上",
-    "14": "４歳以上",
-    "18": "３歳以上障害",
-    "19": "４歳以上障害",
-}
-_RACE_CONDITION = {
-    "701": "新馬",
-    "702": "未出走",
-    "703": "未勝利",
-    "005": "１勝クラス",
-    "010": "２勝クラス",
-    "016": "３勝クラス",
-    "999": "オープン",
-}
+# 表記は kiseki の画面と同じ Race.race_class_label（例: メイクデビュー / 2歳未勝利 /
+# 3歳以上1勝クラス）を使う。sekito.jra_race_class_label も同じ表記に揃えてある。
+#
+# 競走条件コード（コード表2007）が分かるときだけ名前を入れる。race_class_label は
+# コードが無いと賞金から推定するが、推定値をレース名として保存はしない。
+_GENERAL_RACE_CONDITION_CODES = frozenset({"701", "702", "703", "005", "010", "016", "999"})
 
 
 def jra_general_race_name(race_type_code: str | None, race_condition_code: str | None) -> str | None:
-    """競走種別・競走条件コードから一般競走のレース名を作る（例: 11+703 → ２歳未勝利）。
+    """競走種別・競走条件コードから一般競走のレース名を作る（例: 11+703 → 2歳未勝利）。
 
     競走条件コードが無い・表に無い（旧式の賞金クラス等）場合は None。
     """
-    cond = _RACE_CONDITION.get(race_condition_code or "")
-    if cond is None:
+    if race_condition_code not in _GENERAL_RACE_CONDITION_CODES:
         return None
-    return _RACE_TYPE_AGE.get(race_type_code or "", "") + cond
+    return Race(race_type_code=race_type_code, race_condition_code=race_condition_code).race_class_label
 
 
 # -------------------------------------------------------------------

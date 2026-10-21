@@ -21,23 +21,27 @@ from src.importers.race_importer import RaceImporter, jra_general_race_name
 @pytest.mark.parametrize(
     ("type_code", "cond_code", "expected"),
     [
-        ("11", "701", "２歳新馬"),
-        ("11", "703", "２歳未勝利"),
-        ("11", "005", "２歳１勝クラス"),
-        ("12", "702", "３歳未出走"),
-        ("13", "010", "３歳以上２勝クラス"),
-        ("14", "016", "４歳以上３勝クラス"),
-        ("18", "703", "３歳以上障害未勝利"),
-        ("19", "999", "４歳以上障害オープン"),
+        ("11", "701", "メイクデビュー"),
+        ("11", "703", "2歳未勝利"),
+        ("11", "005", "2歳1勝クラス"),
+        ("12", "702", "3歳未出走"),
+        ("13", "010", "3歳以上2勝クラス"),
+        ("14", "016", "4歳以上3勝クラス"),
+        ("18", "703", "障害3歳以上未勝利"),
+        ("19", "999", "オープン"),
     ],
 )
 def test_general_race_name(type_code, cond_code, expected):
+    """表記は kiseki 画面の Race.race_class_label と同じ。"""
     assert jra_general_race_name(type_code, cond_code) == expected
 
 
 @pytest.mark.parametrize("cond_code", [None, "", "000", "500"])
 def test_general_race_name_unknown_condition_is_none(cond_code):
-    """条件コード無し・旧式の賞金クラスは名前を作らない（誤った名前を入れない）。"""
+    """条件コード無し・旧式の賞金クラスは名前を作らない。
+
+    race_class_label は賞金から推定するが、推定値をレース名として保存しない。
+    """
     assert jra_general_race_name("11", cond_code) is None
 
 
@@ -77,7 +81,7 @@ async def _captured_upsert(ra_list: list[dict]):
 @pytest.mark.asyncio
 async def test_empty_ra_name_is_filled_from_codes():
     compiled = await _captured_upsert([_ra()])
-    assert "２歳未勝利" in compiled.params.values()
+    assert "2歳未勝利" in compiled.params.values()
 
 
 @pytest.mark.asyncio
