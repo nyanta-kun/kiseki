@@ -294,7 +294,12 @@ def _coverage(
     #    地方は実測でレースの約半分が race_name NULL（2026-09-05: 21R 中 13R）。
     #    coalesce 無しだと 9/4 の地方が 19/36R → 8/19R に化けた。
     #    この監視自体が「静かに数が減る」型で壊れては本末転倒なので、ここは触らない。
-    maiden = " and coalesce(r.race_name, '') not like '%新馬%'" if skip_maiden else ""
+    # 新馬戦の名前は確定前の仮名（netkeiba）が「２歳新馬」、RA 取込後が「メイクデビュー」
+    maiden = (
+        " and coalesce(r.race_name, '') not like '%新馬%'" " and coalesce(r.race_name, '') not like '%メイクデビュー%'"
+        if skip_maiden
+        else ""
+    )
     row = s.execute(
         text(
             "with x as ("
@@ -330,9 +335,7 @@ def _judge(rep: Report, label: str, got: int, held: int, floor: float) -> None:
 def check_netkeiba_coverage(s, target: date, rep: Report) -> None:
     """③ netkeiba の網羅率。中央・地方を必ず分けて見る。"""
     # タイム指数（新馬戦は分母から除く）
-    jra_held, jra_got, nar_held, nar_got = _coverage(
-        s, "netkeiba", target, "idx_max", skip_maiden=True
-    )
+    jra_held, jra_got, nar_held, nar_got = _coverage(s, "netkeiba", target, "idx_max", skip_maiden=True)
     _judge(rep, "netkeiba タイム指数[中央・新馬除く]", jra_got, jra_held, COVERAGE_MIN)
     _judge(rep, "netkeiba タイム指数[地方・新馬除く]", nar_got, nar_held, COVERAGE_MIN)
 
@@ -353,9 +356,7 @@ def check_anagusa_presence(s, target: date, rep: Report) -> None:
     jra_held, _ = _race_counts(s, target)
     if jra_held == 0:
         return
-    n = s.execute(
-        text("select count(*) from sekito.anagusa where date = :d"), {"d": target}
-    ).scalar_one()
+    n = s.execute(text("select count(*) from sekito.anagusa where date = :d"), {"d": target}).scalar_one()
     if n == 0:
         rep.warn(f"穴ぐさ: 中央 {jra_held}R の開催日なのにピックが 0 件")
     else:
@@ -379,9 +380,7 @@ def main() -> int:
     # 既定は「昨日」。07:00 実行で、網羅率は確定済みの前日を、発走時刻は
     # 06:00 の同期が済んだ当日（= target + 1）を見るための既定値。
     target = (
-        datetime.strptime(args.date, "%Y-%m-%d").date()
-        if args.date
-        else datetime.now(JST).date() - timedelta(days=1)
+        datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now(JST).date() - timedelta(days=1)
     )
 
     rep = Report()

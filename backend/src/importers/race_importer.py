@@ -31,10 +31,40 @@ logger = logging.getLogger(__name__)
 #
 # ⚠️ `registered_count`（登録頭数）は発走前から埋まるので**ここに入れない**。
 # 入れると出走取消で頭数が減ったときに古い値が残る。
-POST_RACE_ONLY_COLS = frozenset({
-    "condition", "weather", "first_3f", "last_3f_race", "lap_times",
-    "finishers_count", "head_count",
-})
+POST_RACE_ONLY_COLS = frozenset(
+    {
+        "condition",
+        "weather",
+        "first_3f",
+        "last_3f_race",
+        "lap_times",
+        "finishers_count",
+        "head_count",
+    }
+)
+
+
+# 一般競走（特別競走以外）のレース名。
+# RA の競走名本題は一般競走では空なので、そのまま UPSERT すると
+# scrape_projected_entries.py が出馬表確定前に入れた「２歳未勝利」等の仮名が
+# 確定後の RA で NULL に戻り、sekito の画面（POG 出走予定・レース詳細）で
+# レース名が出なくなっていた（2026-10-22）。
+# 表記は kiseki の画面と同じ Race.race_class_label（例: メイクデビュー / 2歳未勝利 /
+# 3歳以上1勝クラス）を使う。sekito.jra_race_class_label も同じ表記に揃えてある。
+#
+# 競走条件コード（コード表2007）が分かるときだけ名前を入れる。race_class_label は
+# コードが無いと賞金から推定するが、推定値をレース名として保存はしない。
+_GENERAL_RACE_CONDITION_CODES = frozenset({"701", "702", "703", "005", "010", "016", "999"})
+
+
+def jra_general_race_name(race_type_code: str | None, race_condition_code: str | None) -> str | None:
+    """競走種別・競走条件コードから一般競走のレース名を作る（例: 11+703 → 2歳未勝利）。
+
+    競走条件コードが無い・表に無い（旧式の賞金クラス等）場合は None。
+    """
+    if race_condition_code not in _GENERAL_RACE_CONDITION_CODES:
+        return None
+    return Race(race_type_code=race_type_code, race_condition_code=race_condition_code).race_class_label
 
 
 # -------------------------------------------------------------------
@@ -220,9 +250,7 @@ class RaceImporter:
 
         if new_horse_codes:
             rows = (
-                await self.db.execute(
-                    select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(new_horse_codes))
-                )
+                await self.db.execute(select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(new_horse_codes)))
             ).fetchall()
             self._horse_cache.update({r.jravan_code: r.id for r in rows})
 
@@ -244,9 +272,7 @@ class RaceImporter:
 
         if new_race_ids:
             rows = (
-                await self.db.execute(
-                    select(Race.jravan_race_id, Race.id).where(Race.jravan_race_id.in_(new_race_ids))
-                )
+                await self.db.execute(select(Race.jravan_race_id, Race.id).where(Race.jravan_race_id.in_(new_race_ids)))
             ).fetchall()
             self._race_cache.update({r.jravan_race_id: r.id for r in rows})
 
@@ -272,7 +298,8 @@ class RaceImporter:
                 "course": p.get("course", ""),
                 "course_name": p.get("course_name", ""),
                 "race_number": p.get("race_number", 0),
-                "race_name": p.get("race_name") or None,
+                "race_name": p.get("race_name")
+                or jra_general_race_name(p.get("race_type_code"), p.get("race_condition_code")),
                 "surface": p.get("surface", ""),
                 "distance": p.get("distance") or 0,
                 "direction": p.get("direction"),
@@ -336,11 +363,13 @@ class RaceImporter:
             )
             for col in update_cols
         }
+        # 名前を作れなかった RA（条件コード無し等）で、確定前の仮名を NULL に戻さない
+        set_["race_name"] = func.coalesce(stmt.excluded.race_name, Race.__table__.c.race_name)
         returning_stmt = stmt.on_conflict_do_update(  # type: ignore[assignment]
             index_elements=["jravan_race_id"],
             set_=set_,
         ).returning(Race.id, Race.jravan_race_id)
-        for race_id, jravan_id in (await self.db.execute(returning_stmt)):
+        for race_id, jravan_id in await self.db.execute(returning_stmt):
             self._race_cache[jravan_id] = race_id
 
     async def _ensure_entities_bulk(self, se_list: list[dict[str, Any]]) -> None:
@@ -362,9 +391,7 @@ class RaceImporter:
                     "jravan_code": code,
                 }
         if new_horses:
-            await self.db.execute(
-                insert(Horse).values(list(new_horses.values())).on_conflict_do_nothing()
-            )
+            await self.db.execute(insert(Horse).values(list(new_horses.values())).on_conflict_do_nothing())
             rows = (
                 await self.db.execute(
                     select(Horse.jravan_code, Horse.id).where(Horse.jravan_code.in_(new_horses.keys()))
@@ -379,9 +406,7 @@ class RaceImporter:
             if code and code not in self._jockey_cache and code not in new_jockeys:
                 new_jockeys[code] = {"name": p.get("jockey_name", ""), "jravan_code": code}
         if new_jockeys:
-            await self.db.execute(
-                insert(Jockey).values(list(new_jockeys.values())).on_conflict_do_nothing()
-            )
+            await self.db.execute(insert(Jockey).values(list(new_jockeys.values())).on_conflict_do_nothing())
             rows = (
                 await self.db.execute(
                     select(Jockey.jravan_code, Jockey.id).where(Jockey.jravan_code.in_(new_jockeys.keys()))
@@ -396,9 +421,7 @@ class RaceImporter:
             if code and code not in self._trainer_cache and code not in new_trainers:
                 new_trainers[code] = {"name": p.get("trainer_name", ""), "jravan_code": code}
         if new_trainers:
-            await self.db.execute(
-                insert(Trainer).values(list(new_trainers.values())).on_conflict_do_nothing()
-            )
+            await self.db.execute(insert(Trainer).values(list(new_trainers.values())).on_conflict_do_nothing())
             rows = (
                 await self.db.execute(
                     select(Trainer.jravan_code, Trainer.id).where(Trainer.jravan_code.in_(new_trainers.keys()))
@@ -465,7 +488,7 @@ class RaceImporter:
             set_={col: stmt.excluded[col] for col in update_cols},
         ).returning(RaceEntry.id, RaceEntry.race_id, RaceEntry.horse_id)
         entry_map: dict[tuple[int, int], int] = {}
-        for entry_id, race_id, horse_id in (await self.db.execute(returning_stmt)):
+        for entry_id, race_id, horse_id in await self.db.execute(returning_stmt):
             entry_map[(race_id, horse_id)] = entry_id
         return entry_map
 
