@@ -34,7 +34,8 @@ def test_販売スイッチの既定はOFF():
 # e018af8 の `sell_plans_for`（axis_sum を受け取らない版）で期待される結果。
 @pytest.mark.parametrize("args,kw,expected", [
     (("A", 7), dict(pw_ent=1.20, trio_ok=True), ["A_trio"]),
-    (("A", 7), dict(pw_ent=1.20, trio_ok=False), ["A_hit"]),
+    # 🔴 A_hit は 2026-10-24 から販売停止（`SELL_SUSPENDED_PLANS`）＝売るものなし
+    (("A", 7), dict(pw_ent=1.20, trio_ok=False), []),
     (("A", 7), dict(pw_ent=1.50, trio_ok=True), ["A_ana"]),
     (("F", 9, "決勝"), {}, ["F_pay"]),
     (("F", 7, "予選"), {}, ["F_hit"]),

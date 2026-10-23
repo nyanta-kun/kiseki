@@ -100,6 +100,7 @@ from src.submission_skips import (                           # noqa: E402
 from src.marquee import is_fill_target                       # noqa: E402
 from src.type_lab import (                                  # noqa: E402
     FLAT_LEAD_PLAN_KEYS, HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, LINE_LEAD_PLAN_KEYS,
+    HIT_POINT_GATE_MIN, HIT_POINT_GATE_N_ENTRIES, HIT_POINT_GATE_PLANS,
     SELLABLE_PLAN_KEYS,
     TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
     tier_realized_min_payout,
@@ -555,6 +556,24 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
     #       新しい判定は旧判定を含む（旧で落ちる行は新でも落ちる）。
     #    ⚠️ 手広く（`T_axis`）はここに落ちると `one_axis_ok=False` になり荒れで売る
     #       （`_load_rows` が同じ `_gate_reason` を呼ぶ）。
+    # 🔴 **的中重視の本体（7車 C_hit）は「当たったときの悪い側 >= 1万円」**（2026-10-24 ユーザー決定
+    #    「ガミにならない線」・`type_lab.C_HIT_TARGET` の節）。下振れ係数は段と同じ表。
+    #    平均2万ゲートは使わない（2.5万狙いで最低3点に広げたレースが端数で落ちる）。
+    #    ⚠️ 9車の C_hit は旧定義（5万ダッチ）なので従来の平均2万ゲートのまま。
+    if (str(row.get("plan_key")) in HIT_POINT_GATE_PLANS
+            and int(row.get("n_entries") or 0) == HIT_POINT_GATE_N_ENTRIES):
+        worst = tier_realized_min_payout(
+            row.get("legs") or [], row.get("race_type"),
+            float(row["axis_sum"]) if row.get("axis_sum") is not None else None)
+        if worst is not None and worst < HIT_POINT_GATE_MIN:
+            return (SKIP_GATE_MEAN_PAYOUT,
+                    f"当たったときの見込み払戻（悪い側） {worst:,.0f}円 < {HIT_POINT_GATE_MIN:,}円")
+        odds = [float(lg.get("pred_odds") or 0) for lg in row["legs"]]
+        odds = [o for o in odds if o > 0]
+        if odds and min(odds) < MIN_POINT_ODDS:
+            return (SKIP_GATE_POINT_ODDS,
+                    f"予測 {min(odds):.1f} 倍の目があります（下限 {MIN_POINT_ODDS} 倍）")
+        return None
     if str(row.get("plan_key")) in TIER_POINT_GATE_PLANS:
         worst = tier_realized_min_payout(
             row.get("legs") or [], row.get("race_type"),

@@ -27,7 +27,7 @@ from src.type_lab import (
 #:    ダッチは全点の払戻が揃うので、2倍保証は床ではなく**目標額そのもの**が担保する
 #:    （5万円 = 予算の5倍）。信頼度傾斜の床が効くのは残る3プラン。
 HIT = ("D_hit", "E_hit", "F_hit")
-DUTCH_HIT = ("A_hit", "B_hit", "C_hit")
+DUTCH_HIT = ("A_hit", "B_hit")   # C_hit は 2026-10-24 に的中重視（tier_firm・2.5万）へ
 KEEP = ("A_ana", "A_trio", "A_pay", "F_pay", "F_sign")
 PERMS = list(itertools.permutations(range(1, 8), 3))
 
