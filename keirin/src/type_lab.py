@@ -316,6 +316,41 @@ SIGNBOARD_TARGET = 150_000
 #: 記録: `docs/type_lab/product_redesign_2026_09_22.md`
 HIT_BAND_TARGET = 50_000
 
+#: ── 型C 本体（`C_hit`）の計画払戻（2026-10-24 ユーザー決定）──────────────────
+#:
+#: 🔴🔴 **C_hit は高額ではなく的中率を狙う。ガミにならない線で組む。**
+#:    9/22 に 5万ダッチ（`HIT_BAND_TARGET`）へ替えた後、実売の C_hit は見込みの
+#:    0.76〜0.79 倍しか当たらなかった（9/23〜10/22・売った 214 行・表示的中 15.0%・回収 67%）。
+#:    同じ C のレースで段の「広め」（2.2万・売っていないが毎日組んで採点している）は
+#:    表示的中 31.8%・回収 77.7%・見込みどおり（1.03）だった。
+#:
+#: 詰め方は段の固め・広めと同じ（`structure="tier_firm"`＝確率順・合成を割る直前で止める・
+#: 3〜8点）。看板の詰め方（超える目を飛ばして先へ進む）より点数が少なく、同じ的中で回収が良い。
+#:
+#: 掃引（vintage 比較台・7車・軸信頼ゲート・日次上限・高額枠込み・C_hit の行だけ・
+#: `scripts/exp_type_lab/c_hit_target.py`・探索 2024-07〜2025-12 / 確認 2026-01〜08-04）:
+#:
+#:   腕                     表示的中        回収            払戻中央         ガミ当たり
+#:   現行 5万ダッチ         19.6 / 19.3%    89.8 / 85.5%    42,680 / 42,250   0.1 / 0.1%
+#:   **広め型 2.5万**       32.0 / 31.0%    83.3 / 81.4%    22,560 / 22,360   0.7 / 1.0%
+#:   広め型 3万             29.7 / 28.7%    83.1 / 80.7%    24,185 / 24,890   0.5 / 0.9%
+#:   看板型 3.5万           26.7 / 26.4%    87.2 / 85.4%    29,900 / 30,740   0.2 / 0.3%
+#:   広め型 2.2万           33.5 / 32.3%    82.6 / 80.1%    21,450 / 21,120   1.0 / 1.3%
+#:
+#:   Δ表示的中（2.5万 − 現行） [+10.8,+14.0] / [+9.0,+14.4]pt（日ブートストラップ・両窓 0 を跨がない）
+#:   Δ回収                     [−12.8,−0.6] / [−13.0,+4.8]pt（探索窓は有意に下がる）
+#:
+#: 🔴 **回収は台では下がる**（探索 −6.5pt）。実売では逆で、5万ダッチの見込み過大のため
+#:    実売 66% ↔ 同じレースの広め型 78%（9/23〜10/22）。台は実売の見込み過大を再現しない
+#:    （台の現行 C_hit の実際/見込みは 0.98 ↔ 実売 0.79）ので、**回収の向きは前向きで確かめる**。
+#: 🔴 **2万以下にしない。** 2.2万でガミ当たりが 1.0〜1.3% に増える（当たり10件に約0.4件）。
+#: 🔴 入稿ゲートは「当たったときの悪い側の見込み >= 1万円」（`HIT_POINT_GATE_MIN`）。
+#:    段の 1.5万円を当てると型C の約4割が売れなくなる（台 5.1→3.1件/日）。
+#: 🔴 旧構成への代替（`GATE_FALLBACK["C_hit"]`）は外した。下がった目標で平均2万を割るレースを
+#:    旧12点構成で売ると、5万ダッチより前の別商品が混ざる。
+#: 記録と事前登録: `docs/type_lab/c_hit_retarget_2026_10_24.md`
+C_HIT_TARGET = 25_000
+
 #: ── 安い決着が見込まれるレースだけ目標を下げる（2026-09-29）──────────────────
 #:
 #: 🔴🔴 **`HIT_BAND_TARGET`（5万）は「5倍未満の決着」を構造的に買えない**
@@ -1163,11 +1198,13 @@ PLANS: dict[str, Plan] = {
     #    **払戻を下げて表示的中を買う**操作で、累積すると計画払戻中央が
     #    33,670 → 20,900円（−38%）まで落ちていた。**4万+ は 0.06件/日**。
     #    ⚠️ 上の実測表（帯20→15・帯下差込・τ適応）は**この置き換えで全て無効になる**。
-    #       戻すときは `GATE_FALLBACK["C_hit"]` の定義がそのまま旧構成なので流用できる。
-    "C_hit": Plan("C_hit", "C", "trifecta", "signboard", 0,
-                  max_odds=SIGNBOARD_MAX_ODDS, alloc="dutch",
-                  floor_mult=MIN_PAYOUT_MULT, target=HIT_BAND_TARGET,
-                  note="確率順に Σ(1/予測オッズ) <= 予算/5万 まで（どの目でも約5万円）"),
+    # 🔴🔴 **2026-10-24: 5万ダッチをやめ、的中重視（段の「広め」と同じ詰め方・約2.5万円）へ替えた**
+    #    （ユーザー決定「C は高額ではなく的中率を目指す・ガミにならない線で」・`C_HIT_TARGET` の節）。
+    #    5万ダッチの実売は見込みの 0.76〜0.79 倍しか当たらず（9/23〜10/22）、表示的中 15%・
+    #    回収 66% だった。**9車は替えていない**（`NINE_CAR_PLAN_OVERRIDES`）。
+    "C_hit": Plan("C_hit", "C", "trifecta", "tier_firm", 0, max_legs=8,
+                  alloc="dutch", target=C_HIT_TARGET,
+                  note="的中重視: 確率順に合成2.5倍まで・3〜8点・どの目でも約2.5万円"),
     # 型D 混戦・軸あり — 唯一の三連複。最人気の相手を外す。
     # 🔴 **2026-09-01 に相手を 4点 → 3点へ減らした。** 型D は「的中頻度に対して
     #    払戻が足りない」（的中 26.87% に対し損益分岐に要る 37,222円 ↔ 実際 28,696円）。
@@ -1378,6 +1415,12 @@ TIER_PLAN_ORDER: tuple[str, ...] = ("T_firm", "T_mid", "T_axis", "T_upset")
 TIER_PLAN_KEYS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis", "T_upset"})
 #: 入稿ゲートを「全点の想定払戻 >= TIER_POINT_PAYOUT_MIN」で判定するプラン。
 TIER_POINT_GATE_PLANS: frozenset[str] = frozenset({"T_firm", "T_mid", "T_axis"})
+#: 的中重視の本体プランの入稿ゲート（2026-10-24・`C_HIT_TARGET` の節）。判定は段と同じ
+#: 「各点の 賭け金×予測オッズ×下振れ係数 の最小」だが、下限は**ガミにならない線**の1万円。
+#: 🔴 **7車だけ**（9車の `C_hit` は旧定義＝平均2万ゲートのまま。`NINE_CAR_PLAN_OVERRIDES`）。
+HIT_POINT_GATE_PLANS: frozenset[str] = frozenset({"C_hit"})
+HIT_POINT_GATE_MIN = 10_000
+HIT_POINT_GATE_N_ENTRIES = 7
 
 # ── 逃げ先頭ライン（検証中・型ラボが売らないレースへ・準決勝系と型Eを除く・上限なし）。条件と根拠は `line_lead_legs` の上の節 ──
 #: 🔴 **1レース1万円を均等に割る**（`alloc="equal"`・100円単位で切り捨て）。
@@ -1878,7 +1921,7 @@ def plans_for(type_label: str, n_entries: int = 7,
     return own
 
 
-def sell_plans_for(type_label: str, n_entries: int = 7,
+def _sell_plans_unfiltered(type_label: str, n_entries: int = 7,
                    race_type: str | None = None, *,
                    pw_ent: float | None = None,
                    trio_ok: bool | None = None,
@@ -1890,9 +1933,9 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
        2つ返るようになったら優先順位の設計が別途要る＝設計が変わった合図なので、
        `tests/test_type_lab_submit.py` が全型・全車数で 1 以下を固定している。
 
-    >>> [p.key for p in sell_plans_for("A")]
+    >>> [p.key for p in _sell_plans_unfiltered("A")]
     ['A_hit']
-    >>> [p.key for p in sell_plans_for("F")]
+    >>> [p.key for p in _sell_plans_unfiltered("F")]
     ['F_hit']
 
     🔴 **9車の型F だけ `SELL_PLANS` を使わない**（2026-08-30）。決勝は `F_pay`・
@@ -1900,15 +1943,15 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
        固定の集合では表せない。ここでも返すのは**1つだけ**なので
        1レース1商品は保たれる。7車の決勝以外は `F_hit`（三連単12点）のまま。
 
-    >>> [p.key for p in sell_plans_for("F", 9, "決勝")]
+    >>> [p.key for p in _sell_plans_unfiltered("F", 9, "決勝")]
     ['F_pay']
-    >>> [p.key for p in sell_plans_for("F", 9, "準決勝")]
+    >>> [p.key for p in _sell_plans_unfiltered("F", 9, "準決勝")]
     ['F_line']
-    >>> [p.key for p in sell_plans_for("F", 9, None)]
+    >>> [p.key for p in _sell_plans_unfiltered("F", 9, None)]
     ['F_line']
-    >>> [p.key for p in sell_plans_for("A", 9, "特選")]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 9, "特選")]
     ['A_hit']
-    >>> [p.key for p in sell_plans_for("F", 7)]
+    >>> [p.key for p in _sell_plans_unfiltered("F", 7)]
     ['F_hit']
 
     🔴 **型A だけ3つに分かれる**（2026-08-31・`docs/type_lab/type_a_upset_2026_08_31.md` §12）。
@@ -1922,15 +1965,15 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
           `passes_axis_gate` と同じ思想で、分からないことを理由に商品を変えない。
        🔴 **7車だけ**。`ANA_PW_ENT_MIN` は7車の分位で、9車に当てると絶対値切りになる。
 
-    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.50, trio_ok=True)]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 7, pw_ent=1.50, trio_ok=True)]
     ['A_ana']
-    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, trio_ok=True)]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 7, pw_ent=1.20, trio_ok=True)]
     ['A_trio']
-    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, trio_ok=False)]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 7, pw_ent=1.20, trio_ok=False)]
     ['A_hit']
-    >>> [p.key for p in sell_plans_for("A", 7)]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 7)]
     ['A_hit']
-    >>> [p.key for p in sell_plans_for("A", 9, pw_ent=1.50, trio_ok=True)]
+    >>> [p.key for p in _sell_plans_unfiltered("A", 9, pw_ent=1.50, trio_ok=True)]
     ['A_hit']
     """
     plans = plans_for(type_label, n_entries, race_type)
@@ -1993,6 +2036,44 @@ def sell_plans_for(type_label: str, n_entries: int = 7,
             key = TYPE_F_SELL_LINE
         return [p for p in plans if p.key == key]
     return [p for p in plans if p.key in SELL_PLANS]
+
+
+#: 🔴🔴 **販売を止めたプラン**（2026-10-24 ユーザー決定「A は推奨をやめる」）。
+#:    生成・採点は止めない（`plans_for` には残す＝`type_lab_picks` に行は作られ続ける。
+#:    段の `TIER_SELL_ENABLED=False` と同じ形）。売らないだけなので、型A のレースは
+#:    `A_ana` / `A_trio` に当たらなければ**その日は売らない**（型A は高額枠の対象外）。
+#:    A_hit の実売は見込みの 0.68 倍しか当たらず（9/23〜10/22・売った 186 行）、
+#:    決着の半分が10倍未満で「ガミにならない線」でも払戻が2倍前後にしかならない。
+#:    🔴 **車数を問わない**（9車の A_hit も止める）。
+SELL_SUSPENDED_PLANS: frozenset[str] = frozenset({"A_hit"})
+
+
+def sell_plans_for(type_label: str, n_entries: int = 7,
+                   race_type: str | None = None, *,
+                   pw_ent: float | None = None,
+                   trio_ok: bool | None = None,
+                   axis_sum: float | None = None,
+                   one_axis_ok: bool | None = None) -> list[Plan]:
+    """その型で **netkeirin へ入稿する**買い方（0 個か 1 個）。
+
+    規則の本体は `_sell_plans_unfiltered`。ここでは販売を止めたプラン
+    （`SELL_SUSPENDED_PLANS`）を外すだけ。外した結果 0 個になったレースは売らない。
+
+    >>> [p.key for p in sell_plans_for("A")]
+    []
+    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.50, trio_ok=True)]
+    ['A_ana']
+    >>> [p.key for p in sell_plans_for("A", 7, pw_ent=1.20, trio_ok=True)]
+    ['A_trio']
+    >>> [p.key for p in sell_plans_for("A", 9, "特選")]
+    []
+    >>> [p.key for p in sell_plans_for("C")]
+    ['C_hit']
+    """
+    return [p for p in _sell_plans_unfiltered(
+        type_label, n_entries, race_type, pw_ent=pw_ent, trio_ok=trio_ok,
+        axis_sum=axis_sum, one_axis_ok=one_axis_ok)
+        if p.key not in SELL_SUSPENDED_PLANS]
 
 
 def build_legs(shape: RaceShape, plan: Plan,
@@ -2592,8 +2673,8 @@ def apply_cheap_target(plan: Plan, pred_odds: Mapping, probs: Mapping,
     >>> probs = {(1, 2, 3): 0.5, (1, 3, 2): 0.5}
     >>> apply_cheap_target(PLANS["A_hit"], odds, probs).target
     25000
-    >>> apply_cheap_target(PLANS["C_hit"], odds, probs).target
-    50000
+    >>> apply_cheap_target(PLANS["C_hit"], odds, probs) is PLANS["C_hit"]   # 対象外
+    True
     >>> apply_cheap_target(PLANS["A_hit"], odds, probs, 9).target
     50000
     """
@@ -2952,11 +3033,20 @@ GATE_FALLBACK: dict[str, tuple[Plan, ...]] = {
     #    **フォールバックが意味を失う**（ゲートに落ちたレースの在庫がそのまま消える）。
     #    ここに残すのは 2026-09-21 までの C_hit そのもの（帯15倍・τ適応・差込なし）で、
     #    5万円のダッチが組めないレースだけ従来の買い方で売る＝在庫は1件も減らない。
-    "C_hit": (Plan("C_hit", "C", "trifecta", "prob_top", 0, min_odds=15.0,
-                   max_legs=12, alloc="conf", floor_mult=MIN_PAYOUT_MULT,
-                   tau_adaptive=True,
-                   note="C_hit がゲートに落ちたとき: "
-                        "予測15倍以上から想定2万を割らない点数（2026-09-21 までの構成）"),),
+    # 🔴🔴 **2026-10-24 に `C_hit` の代替を外した**（`C_HIT_TARGET` の節）。的中重視の
+    #    2.5万では平均2万を割るレースが出る（最低3点へ広げたとき）。そこを旧12点構成で
+    #    売ると別商品が混ざるので、判定は入稿ゲート（`HIT_POINT_GATE_PLANS`）に任せる。
+    #    旧構成は 2026-09-21 までの `C_hit`: prob_top・min_odds=15・max_legs=12・conf・τ適応。
+}
+
+#: 🔴 **9車では旧定義のまま組むプラン**（2026-10-24）。`PLANS` は車数で共通なので、
+#:    7車だけ替えたいプランはここに旧定義を置く（`build_with_gate_fallback` が 9車で差し替える）。
+#:    9車は予測オッズの分布が丸ごと違い、今回の掃引は7車でしか測っていない。
+NINE_CAR_PLAN_OVERRIDES: dict[str, Plan] = {
+    "C_hit": Plan("C_hit", "C", "trifecta", "signboard", 0,
+                  max_odds=SIGNBOARD_MAX_ODDS, alloc="dutch",
+                  floor_mult=MIN_PAYOUT_MULT, target=HIT_BAND_TARGET,
+                  note="9車: 確率順に Σ(1/予測オッズ) <= 予算/5万 まで（どの目でも約5万円）"),
 }
 
 #: 最低2倍の床が置けないときに落とす配分（＝2026-09-05 以前の配分）。
@@ -3110,6 +3200,8 @@ def build_with_gate_fallback(shape: "RaceShape", plan: Plan,
         return legs, stakes, pl
 
     if n_entries != 7:
+        # 🔴 **9車は替えていないプランを旧定義で組む**（`NINE_CAR_PLAN_OVERRIDES`）。
+        plan = NINE_CAR_PLAN_OVERRIDES.get(plan.key, plan)
         # 🔴 **帯下の差込は7車で測った操作**（`_insert_underband`）。9車は予測オッズの
         #    分布が丸ごと違ううえ `GATE_FALLBACK` も掛からない（ゲートに落ちたら
         #    そのまま在庫が消える）ので、ここで外す。9車で使うなら9車の窓で測り直すこと。
@@ -3387,6 +3479,8 @@ def rule_version(n_entries: int = 7) -> str:
                             TIER_MIN_LEGS, TIER_POINT_PAYOUT_MIN, TIER_UPSET_TARGET,
                             TIER_UPSET_MIN_ODDS, sorted(TIER_POINT_GATE_PLANS),
                             TIER_ONE_AXIS_WIN_GAP_MIN]
+        # 🔴 的中重視の本体プランの入稿ゲートも `PLANS` の外なので載せる（2026-10-24）。
+        payload["_hit_gate"] = [sorted(HIT_POINT_GATE_PLANS), HIT_POINT_GATE_MIN]
         # 🔴 入稿ゲートの下振れ係数も `PLANS` の外なので載せる（2026-09-15）。表を引き直すと版が割れる。
         payload["_tier_realized"] = [list(TIER_REALIZED_BANDS), TIER_REALIZED_QUANTILE,
                                      TIER_REALIZED_MIN_N,
@@ -3400,6 +3494,10 @@ def rule_version(n_entries: int = 7) -> str:
                              list(NINE_CAR_TYPE_F_PLANS),
                              TYPE_F_SELL_LINE, TYPE_F_LINE_N_ENTRIES,
                              round(TRIO_LINE_SIGMA_MAX, 6), TRIO_LINE_MIN_LEGS]
+        # 🔴 9車で旧定義のまま組むプラン（2026-10-24）。`PLANS` だけだと 7車の変更しか見えない。
+        payload["_nine_override"] = {
+            k: [v.bet_type, v.structure, v.max_odds, v.alloc, v.floor_mult, v.target]
+            for k, v in sorted(NINE_CAR_PLAN_OVERRIDES.items())}
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()[:12]
