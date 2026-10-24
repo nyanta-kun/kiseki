@@ -50,7 +50,15 @@ export type Race = {
    * gekisou = 激走馬がいる / miokuri = 人気馬が複勝圏を埋めそう / null = 印なし
    */
   gekisou_status?: ChihouGekisouStatus;
+  /**
+   * 外部サイト「メカウチダ」の荒れやすさ（中央・地方のレース詳細 API のみ）。
+   * 発走前に最後に読んだ値で、kiseki の指数とは別物。未取得は null / undefined。
+   * 保存先は `keiba.mekauchida_race_upset`、書き手は `services/mekauchida_runner.py`。
+   */
+  mekauchida_upset?: MekauchidaUpsetLevel | null;
 };
+
+export type MekauchidaUpsetLevel = "低" | "中" | "高";
 
 export type RaceResult = {
   horse_number: number | null;
