@@ -46,6 +46,7 @@ REQUIRED_DISPLAY_FLAGS = [
     ("chihou/races", "place_prob"),  # 地方 推奨タブ 激走馬の確率（確率順の並び替え）
     ("chihou/races/[id]", "place_prob"),  # 地方 レース詳細 激走馬の確率
     ("chihou/races/[id]", "mekauchida_upset"),  # 地方 メカウチダの荒れやすさ（見出しの波乱度チップ）
+    ("chihou/races", "mekauchida_upset"),  # 地方 一覧カードの波乱度チップ
 ]
 
 _IMPORT_RE = re.compile(r"""^\s*(?:import|export)\b[^'"]*from\s*['"]([^'"]+)['"]""", re.M)

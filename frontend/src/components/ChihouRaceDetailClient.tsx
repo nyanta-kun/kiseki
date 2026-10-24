@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   ChihouGekisou,
   ChihouHorseIndex,
-  ChihouRaceRanks,
   OddsData,
   RaceResult,
   buildChihouResultsWsUrl,
@@ -24,7 +23,6 @@ type Props = {
   horses: ChihouHorseIndex[];
   initialResults: RaceResult[];
   initialOdds: OddsData;
-  ranks: ChihouRaceRanks | null;
   gekisou?: ChihouGekisou | null;
 };
 
@@ -69,22 +67,6 @@ function finishBadgeClass(pos: number | null | undefined): string {
   return "text-gray-400";
 }
 
-const RANK_CONF: Record<string, { bg: string; text: string; border: string }> = {
-  S: { bg: "bg-purple-100", text: "text-purple-700", border: "border-purple-300" },
-  A: { bg: "bg-green-100",  text: "text-green-700",  border: "border-green-300"  },
-  B: { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" },
-  C: { bg: "bg-gray-100",   text: "text-gray-500",   border: "border-gray-200"   },
-};
-
-function RankBadge({ rank }: { rank: string }) {
-  const c = RANK_CONF[rank] ?? RANK_CONF.C;
-  return (
-    <span className={`inline-flex items-center justify-center w-6 h-6 rounded border font-bold text-sm flex-shrink-0 ${c.bg} ${c.text} ${c.border}`}>
-      {rank}
-    </span>
-  );
-}
-
 function SortButton({
   k, label, sortKey, setSortKey,
 }: {
@@ -126,7 +108,6 @@ export function ChihouRaceDetailClient({
   horses,
   initialResults,
   initialOdds,
-  ranks,
   gekisou,
 }: Props) {
   const mounted = useIsMounted();
@@ -235,10 +216,11 @@ export function ChihouRaceDetailClient({
 
   return (
     <>
-      {/* 激走 / 見送り・指数信頼度パネル
+      {/* 激走 / 見送りパネル
           🔴 2026-09-28 に 購入指針・期待値(EV)ランク を撤去した。いずれも回収率の根拠が無く、
-             EV は実測で回収率と逆相関だった（EV が高い帯ほど単勝ROIが低い）。 */}
-      {(ranks || gekisou?.status) && (
+             EV は実測で回収率と逆相関だった（EV が高い帯ほど単勝ROIが低い）。
+          🔴 2026-10-24 に 指数信頼度（分離度ランク）も撤去した（中央の購入指針・指数信頼度の廃止に揃えたユーザー判断）。 */}
+      {gekisou?.status && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2.5 space-y-1.5">
           {gekisou?.status && (
             <div className="flex items-start gap-2">
@@ -261,16 +243,6 @@ export function ChihouRaceDetailClient({
                     ※当たりやすさの印です（複勝的中は人気薄全体の約2倍）。回収率は100%に届いていません
                   </span>
                 )}
-              </span>
-            </div>
-          )}
-          {ranks && (
-            <div className={cn("flex items-center gap-1.5 text-[10px] flex-wrap", gekisou?.status && "pt-1.5 border-t border-gray-50")}>
-              <span className="text-gray-400 whitespace-nowrap">指数信頼度</span>
-              <RankBadge rank={ranks.confidence_rank} />
-              <span className="text-gray-600 whitespace-nowrap">{ranks.score}pt</span>
-              <span className="text-gray-400 whitespace-nowrap">
-                差{ranks.gap_1_2.toFixed(1)}/{ranks.gap_1_3.toFixed(1)}
               </span>
             </div>
           )}
