@@ -49,13 +49,6 @@ from ..indices.buy_signal import (
     jra_horse_purchase_signal,
 )
 from ..indices.composite import COMPOSITE_VERSION, OUT_PROB_CUTOFF
-from ..indices.confidence import (
-    JRA_GAP_FULL_SCORE,
-    calculate_market_chaos,
-    calculate_race_confidence,
-    calculate_recommend_rank,
-    is_market_favorite,
-)
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
 from ..services.graded_races import fetch_graded_races
 from ..services.jra_heihachi_picks import (
@@ -66,7 +59,6 @@ from ..services.jra_heihachi_picks import (
 )
 from ..services.jra_place_pick import PlacePickHorse, select_place_pick
 from ..services.jra_place_pick_month import build_place_pick_month
-from ..services.jra_race_confidence import build_race_confidence_list
 from ..utils.constants import INDEX_DISPLAY_ADJUST
 from ..utils.racecourse import JRA_TO_SEKITO
 from .ws_manager import manager as ws_manager
@@ -286,10 +278,6 @@ class RaceOut(BaseModel):
     race_type_code: str | None = None  # 競走種別コード（コード表2005）
     has_indices: bool = False
     has_anagusa: bool = False  # 穴ぐさ指数58以上の馬が存在するか
-    confidence_score: int | None = None
-    confidence_label: str | None = None  # "HIGH" | "MID" | "LOW"
-    confidence_rank: str | None = None  # S / A / B / C
-    recommend_rank: str | None = None  # S / A / B / C
     buy_signal: str | None = None  # "buy" | "caution" | "pass" | None
     top_win_odds: float | None = None  # 指数1位馬の単勝オッズ
     top_horse_number: int | None = None  # 指数1位馬番
@@ -301,7 +289,7 @@ class RaceOut(BaseModel):
     is_projected_only: bool = False  # 出馬表未確定で netkeiba 出走想定のみ存在
     projected_horse_count: int = 0  # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
     # 外部サイト「メカウチダ」の荒れやすさ（"低" / "中" / "高"）。kiseki の指標ではない。
-    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None。詳細 API のみ
+    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None
     mekauchida_upset: str | None = None
 
     model_config = {"from_attributes": True}
@@ -368,25 +356,10 @@ class ResultOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class RaceConfidence(BaseModel):
-    """レース信頼度スコア。"""
-
-    score: int
-    label: str  # "HIGH" | "MID" | "LOW"
-    rank: str = "C"  # S / A / B / C
-    recommend_rank: str = "C"  # S / A / B / C
-    gap_1_2: float  # 1位-2位の指数差
-    gap_1_3: float  # 1位-3位の指数差
-    head_count: int
-    win_prob_top: float | None = None
-    top_win_odds: float | None = None
-
-
 class IndicesResponse(BaseModel):
-    """指数APIレスポンス（馬リスト + レース信頼度）。"""
+    """指数APIレスポンス（馬リスト）。"""
 
     horses: list[HorseIndexOut]
-    confidence: RaceConfidence
 
 
 class HorseIndexOut(BaseModel):
@@ -552,43 +525,6 @@ class HeihachiPicksOut(BaseModel):
     reference: HeihachiReferenceOut
 
 
-class RaceConfidenceOut(BaseModel):
-    """推奨ページ（レース信頼度一覧）の1行。
-
-    レース属性 + 信頼度（既存 confidence_score / tier）+ **市場1番人気馬**の情報。
-    指数やオッズが未取得のレースも欠損のまま返すため、馬の項目は全て optional。
-    """
-
-    race_id: int
-    course_name: str
-    race_number: int
-    race_name: str | None
-    post_time: str | None
-    surface: str | None
-    distance: int | None
-    head_count: int | None
-    confidence_score: int | None
-    """指数gapベースの信頼度 0-100。⚠️ **tier とは対応しない**（tier の第一分岐は
-    市場一致で、confidence_score は第二分岐でしか効かないため）。並び替えの主軸には
-    tier_score を使うこと。"""
-    tier: str | None
-    tier_score: float | None
-    """tier を 0-100 の連続値にしたもの。降順に並べると tier 順が完全に再現され、
-    かつ同じ tier の中でも priority_score の順に並ぶ。画面の並び替えはこれを使う。"""
-    market_agree: bool | None
-    """指数1位馬が単勝1番人気と一致するか。tier の第一分岐。"""
-    entropy_norm: float | None
-    """市場の混戦度 0-1。高いほど拮抗。C+/C の分岐と priority_score の減点に使う。"""
-    priority_score: float | None
-    """tier 内の並び順に使う連続値（confidence_score - entropy_norm*30）。"""
-    horse_number: int | None
-    horse_name: str | None
-    win_odds: float | None
-    win_probability: float | None
-    ev: float | None
-    finish_position: int | None
-
-
 class TopHorseOut(BaseModel):
     course_name: str
     race_number: int
@@ -679,23 +615,6 @@ async def get_nearest_race_date(
     if not race_date:
         raise HTTPException(status_code=404, detail="No adjacent race date found")
     return {"date": race_date}
-
-
-@router.get("/confidence")
-async def get_race_confidence(
-    db: DbDep,
-    date: str = Query(..., description="開催日 YYYYMMDD"),
-) -> list[RaceConfidenceOut]:
-    """指定日の**全レース**を、信頼度と市場1番人気馬の情報つきで返す。
-
-    推奨ページ（レース信頼度一覧）用。従来の `/api/recommendations` が tier=C を
-    落として1レース1推奨を出すのに対し、こちらは**1レースも落とさない**。
-    並び替えはフロント側で行うため、返却順は常に発走時刻順。
-
-    ⚠️ 本エンドポイントは `/{race_id}` より **前** に定義すること（順序依存）。
-    """
-    rows = await build_race_confidence_list(db, date)
-    return [RaceConfidenceOut(**row) for row in rows]
 
 
 @router.get("/heihachi")
@@ -827,9 +746,8 @@ async def list_races(
         for rid, ver in ver_result.all():
             best_versions[rid] = min(ver, COMPOSITE_VERSION)
 
-    # 各レースの composite_index + win_probability 一覧を取得
+    # 各レースの composite_index 一覧を取得
     race_indices: dict[int, list[float]] = defaultdict(list)
-    race_win_probs: dict[int, list[float]] = defaultdict(list)
     race_top_horse_num: dict[int, int | None] = {}
     if best_versions:
         version_pairs = list({(rid, ver) for rid, ver in best_versions.items()})
@@ -837,7 +755,6 @@ async def list_races(
             select(
                 CalculatedIndex.race_id,
                 CalculatedIndex.composite_index,
-                CalculatedIndex.win_probability,
                 RaceEntry.horse_number,
             )
             .outerjoin(
@@ -848,13 +765,11 @@ async def list_races(
         )
         idx_result = await db.execute(idx_stmt)
         idx_rows_all = idx_result.all()
-        for rid, ci, wp, hn in idx_rows_all:
+        for rid, ci, hn in idx_rows_all:
             race_indices[rid].append(float(ci))
-            if wp is not None:
-                race_win_probs[rid].append(float(wp))
         # トップ馬（最大 composite_index）の horse_number を抽出
         by_race: dict[int, list[tuple]] = defaultdict(list)
-        for rid, ci, wp, hn in idx_rows_all:
+        for rid, ci, hn in idx_rows_all:
             by_race[rid].append((float(ci), hn))
         for rid, entries in by_race.items():
             valid = [(ci, hn) for ci, hn in entries if hn]
@@ -956,10 +871,21 @@ async def list_races(
         entry_result = await db.execute(entry_stmt)
         confirmed_entry_ids = {row[0] for row in entry_result.all()}
 
+    # メカウチダの荒れやすさ（波乱度）。発走前に最後に読んだ値。未取得のレースは None
+    upset_map: dict[int, str] = {}
+    if race_ids:
+        upset_rows = await db.execute(
+            select(MekauchidaRaceUpset.race_id, MekauchidaRaceUpset.level).where(
+                MekauchidaRaceUpset.pillar == "jra", MekauchidaRaceUpset.race_id.in_(race_ids)
+            )
+        )
+        upset_map = {int(rid): lv for rid, lv in upset_rows.all()}
+
     result_list = []
     for r in races:
         out = RaceOut.model_validate(r)
         out.has_indices = r.id in indexed_ids
+        out.mekauchida_upset = upset_map.get(r.id)
         sekito_code = JRA_TO_SEKITO.get(r.course)
         out.has_anagusa = bool(sekito_code and (sekito_code, r.race_number) in anagusa_picks_set)
         out.result_confirmed = r.id in confirmed_race_ids
@@ -983,25 +909,7 @@ async def list_races(
             out.top_horse_finish = fp
             out.top_horse_name = hname
         if r.id in indexed_ids:
-            wp_list = race_win_probs.get(r.id) or None
-            conf = calculate_race_confidence(
-                race_indices[r.id],
-                r.head_count,
-                wp_list,
-                gap_full_score=JRA_GAP_FULL_SCORE,
-            )
             top_odds = top_horse_win_odds.get(r.id)
-            out.confidence_score = conf["score"]
-            out.confidence_label = conf["label"]
-            out.confidence_rank = conf["rank"]
-            # 一覧系はトップ馬オッズのみ取得（全馬オッズ取得は過去に数万行/リクエストの
-            # 性能劣化を招いたため意図的に避けている）→ market_agree は計算不能(None)の
-            # まま渡し、calculate_recommend_rank の旧ロジックフォールバックに委ねる。
-            out.recommend_rank = calculate_recommend_rank(
-                conf["score"],
-                conf.get("win_prob_top"),
-                top_odds,
-            )
             out.top_win_odds = top_odds
             # jra_buy_signalはOOS testでbuy単ROI 0.705(claim1.237から乖離、CI非有意)と
             # 検証済みのため2026-07-25よりフロント表示は廃止([[jra_axis_market_agree_redesign]])。
@@ -1513,37 +1421,7 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
                     h.place_ev_value = pick["expected_value"]
                     break
 
-    wp_list = [h.win_probability for h in horses if h.win_probability is not None]
-    conf_data = calculate_race_confidence(
-        composite_indices=[h.composite_index for h in horses],
-        head_count=race.head_count,
-        win_probabilities=wp_list or None,
-        gap_full_score=JRA_GAP_FULL_SCORE,
-    )
-
-    # トップ馬 (composite 1位) の単勝オッズ
-    top_win_odds: float | None = None
-    if horses and horses[0].horse_number is not None:
-        top_win_odds = win_odds_map.get(horses[0].horse_number)
-
-    # 指数1位馬が単勝1番人気と一致するか（market_agree, [[jra_axis_market_agree_redesign]]）
-    all_win_odds = [o for o in win_odds_map.values() if o is not None]
-    market_agree = is_market_favorite(top_win_odds, all_win_odds or None)
-    # 市場混戦度（entropy_norm）: tier=C を C+/C に分割する（Phase3, 2026-07-26）
-    entropy_norm = calculate_market_chaos(all_win_odds).get("entropy_norm")
-
-    rec_rank = calculate_recommend_rank(
-        conf_data["score"], conf_data.get("win_prob_top"), top_win_odds, market_agree, entropy_norm
-    )
-
-    return IndicesResponse(
-        horses=horses,
-        confidence=RaceConfidence(
-            **conf_data,
-            recommend_rank=rec_rank,
-            top_win_odds=top_win_odds,
-        ),
-    )
+    return IndicesResponse(horses=horses)
 
 
 @router.get("/{race_id}/results")

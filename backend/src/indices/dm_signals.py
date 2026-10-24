@@ -1,7 +1,7 @@
 """DM (JV-Next タイム型・対戦型) × 穴ぐさ × 既存指数 「穴」シグナル算出モジュール
 
 ⚠️ 2026-07-25 全面簡素化 [[jra_upset_badge_redesign]]:
-軸信頼度は`recommend_rank`（market_agreeベースtier、confidence.py）に一本化済み
+軸信頼度は`recommend_rank`（market_agreeベースtier、confidence.py・2026-10-24 に廃止）に一本化済み
 のため、本モジュールが個別に付与していた軸シグナル(三冠一致/高得点鉄板)・
 警戒シグナル(人気下振れ)はユーザー指示により廃止。「穴として期待できそうな馬」
 を示す単一マーク`SIGNAL_UPSET_CANDIDATE`のみを残す。

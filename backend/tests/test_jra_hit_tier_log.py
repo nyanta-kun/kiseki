@@ -4,19 +4,15 @@
 
 - **発走時刻を過ぎたレースを記録しない**こと。締切間際〜発走後のオッズを混ぜると
   記録そのものが look-ahead になり、検証窓としての価値が消える
-- **tier 判定を本番と同じ関数から引く**こと。条件を記録側に書き写すと、
-  本番の閾値を変えたときに記録だけ古い条件で残る
-- **推奨が出なかったレース（tier=C）も記録する**こと。hit_tier は C を見送るので、
-  棄権側が無いと「見送って正解だったか」を一切測れない
+- **購入指針（tier）・指数信頼度を算出しない**こと（2026-10-24 廃止）。
+  記録は「★推奨」タブ（複勝ピック）の材料として続けるが、判定値は NULL で書く
+- **全出走馬の順位と人気は残す**こと。複勝ピックの月次集計がこれを読む
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import pytest
-
-from src.indices.confidence import calculate_recommend_rank
 from src.services.jra_hit_tier_log import (
     JST,
     RULE_VERSION,
@@ -85,40 +81,30 @@ class TestEvaluateRace:
     def _idx(self) -> dict[int, float]:
         return {1: 70.0, 2: 60.0, 3: 55.0, 4: 50.0, 5: 45.0}
 
-    def test_指数1位が1番人気なら市場一致(self) -> None:
-        d = evaluate_race(
-            win_odds={1: 2.1, 2: 4.0, 3: 6.0, 4: 12.0, 5: 30.0},
-            index_by_hn=self._idx(),
-            win_probs={1: 0.4, 2: 0.25, 3: 0.2, 4: 0.1, 5: 0.05},
-            head_count=5,
-        )
-        assert d.market_agree is True
-        assert d.top1_horse_number == 1
-        assert d.tier in ("S", "A", "B")
-        assert d.skip_reason is None
-
-    def test_市場乖離ならC系で棄権になる(self) -> None:
-        d = evaluate_race(
-            win_odds={1: 30.0, 2: 1.8, 3: 6.0, 4: 12.0, 5: 40.0},
-            index_by_hn=self._idx(),
-            win_probs={1: 0.4, 2: 0.25, 3: 0.2, 4: 0.1, 5: 0.05},
-            head_count=5,
-        )
-        assert d.market_agree is False
-        assert d.tier in ("C", "C+")
-        if d.tier == "C":
-            assert d.skip_reason == "tier_c"
-
-    def test_断然人気はmarket_agreeを問わずS(self) -> None:
-        """本番 `calculate_recommend_rank` の「単勝<1.5 は無条件 S」を記録側でも踏む。"""
+    def test_tierと信頼度は算出しない(self) -> None:
         d = evaluate_race(
             win_odds={1: 1.3, 2: 4.0, 3: 6.0, 4: 12.0, 5: 30.0},
             index_by_hn=self._idx(),
             win_probs={1: 0.6, 2: 0.2, 3: 0.1, 4: 0.05, 5: 0.05},
             head_count=5,
         )
-        assert d.tier == "S"
-        assert d.bet_type == "win"
+        assert d.tier is None
+        assert d.bet_type is None
+        assert d.confidence_score is None
+        assert d.market_agree is None
+        assert d.skip_reason == "tier_retired"  # 推奨は出さない（is_recommended=False）
+
+    def test_順位と人気は残す(self) -> None:
+        d = evaluate_race(
+            win_odds={1: 30.0, 2: 1.8, 3: 6.0, 4: 12.0, 5: 40.0},
+            index_by_hn=self._idx(),
+            win_probs={},
+            head_count=None,
+        )
+        assert d.top1_horse_number == 1
+        assert d.top1_win_odds == 30.0
+        assert d.index_ranks[1] == 1
+        assert d.pop_ranks[2] == 1
 
     def test_指数が無ければno_index(self) -> None:
         d = evaluate_race(win_odds={1: 2.0}, index_by_hn={}, win_probs={}, head_count=5)
@@ -131,29 +117,12 @@ class TestEvaluateRace:
             win_probs={1: 0.4, 2: 0.25, 3: 0.2, 4: 0.1, 5: 0.05}, head_count=5,
         )
         assert d.skip_reason == "no_odds"
-        assert d.market_agree is None
-
-    @pytest.mark.parametrize("odds1", [1.3, 2.1, 30.0])
-    def test_tierは本番関数と一致する(self, odds1: float) -> None:
-        """記録側で条件を書き写していないことの確認。"""
-        d = evaluate_race(
-            win_odds={1: odds1, 2: 4.0, 3: 6.0, 4: 12.0, 5: 30.0},
-            index_by_hn=self._idx(),
-            win_probs={1: 0.4, 2: 0.25, 3: 0.2, 4: 0.1, 5: 0.05},
-            head_count=5,
-        )
-        expected = calculate_recommend_rank(
-            d.confidence_score, d.win_prob_top, d.top1_win_odds,
-            d.market_agree, d.entropy_norm,
-        )
-        assert d.tier == expected
 
 
 class TestRuleVersion:
-    def test_閾値が署名に入っている(self) -> None:
-        """閾値を変えたら rule_version が変わり、集計時に世代が分かれる。"""
-        assert RULE_VERSION.startswith("hit_tier,")
-        assert "gap=" in RULE_VERSION
+    def test_廃止後の世代になっている(self) -> None:
+        """tier を持つ旧世代（"hit_tier,..."）と混ざらないこと。"""
+        assert RULE_VERSION.startswith("snapshot_only,")
         assert "cut=" in RULE_VERSION
 
     def test_リードは10分(self) -> None:

@@ -1,5 +1,11 @@
 """JRA 推奨（hit_tier）の**前向き記録**（発走前スナップショット → 翌日確定）。
 
+🔴 **2026-10-24 に購入指針（tier）と指数信頼度を廃止した**（前向き 648R の検証で、
+tier 別の勝率差はほぼすべてオッズで説明できたため）。以後は判定をせず、
+`tier` / `confidence_score` / `market_agree` / `final_tier` 等は NULL のまま書く。
+記録そのものは止めない——「★推奨」タブ（`jra_place_pick_month`）が
+全出走馬の発走前スナップショットを読んでいるため。以下は廃止前の設計メモ。
+
 ## なぜ要るか
 
 現行の推奨は「1レース1推奨 = 指数1位馬 + tier(S/A/B/C+/C)」で、C は見送り。
@@ -68,15 +74,6 @@ from ..db.models import (
     RaceResult,
 )
 from ..indices.composite import COMPOSITE_VERSION, OUT_PROB_CUTOFF
-from ..indices.confidence import (
-    ENTROPY_THRESHOLDS,
-    JRA_GAP_FULL_SCORE,
-    calculate_market_chaos,
-    calculate_race_confidence,
-    calculate_recommend_rank,
-    is_market_favorite,
-)
-from .recommender import _HIT_TIER_BET
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +91,9 @@ JRA_COURSE_CODES = ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10")
 # の 3 点による。毎分 cron なので実際に撮れるのは 9〜10 分前。
 SNAPSHOT_LEAD_MINUTES: int = 10
 
-# 判定ルールの署名。閾値を変えたら自動的に値が変わるので、集計時に世代を混ぜずに済む。
-RULE_VERSION: str = (
-    f"hit_tier,gap={JRA_GAP_FULL_SCORE},"
-    f"entC={ENTROPY_THRESHOLDS.get('C')},"
-    f"cut={OUT_PROB_CUTOFF}"
-)
+# 記録の世代。2026-10-24 に購入指針（tier）と指数信頼度の判定をやめた。
+# それ以前の行（"hit_tier,..."）だけが tier / confidence_score / market_agree を持つ。
+RULE_VERSION: str = f"snapshot_only,cut={OUT_PROB_CUTOFF}"
 
 
 def parse_post_datetime(date: str, post_time: str | None) -> datetime | None:
@@ -181,10 +175,9 @@ def evaluate_race(
     win_probs: dict[int, float],
     head_count: int | None,
 ) -> TierDecision:
-    """1レースの tier を判定する。
+    """1レースの記録に要る順位を組み立てる（tier 判定は 2026-10-24 に廃止）。
 
-    ⚠️ 判定そのものは本番と同じ関数に委ねる。ここがやるのは入力の組み立てと、
-    「なぜ推奨が出なかったか」の分類だけ。
+    `win_probs` / `head_count` は廃止前の互換のために受け取るだけで使わない。
 
     Args:
         win_odds: 馬番 → 発走前単勝オッズ。
@@ -203,40 +196,21 @@ def evaluate_race(
                             ranks, pops, "no_index")
 
     top1_hn = min(ranks, key=lambda hn: ranks[hn])
-    top_odds = win_odds.get(top1_hn)
-    all_odds = list(win_odds.values())
 
-    conf = calculate_race_confidence(
-        list(index_by_hn.values()),
-        head_count,
-        list(win_probs.values()) or None,
-        gap_full_score=JRA_GAP_FULL_SCORE,
-    )
-    market_agree = is_market_favorite(top_odds, all_odds or None)
-    entropy_norm = calculate_market_chaos(all_odds).get("entropy_norm")
-    tier = calculate_recommend_rank(
-        conf["score"], conf.get("win_prob_top"), top_odds, market_agree, entropy_norm
-    )
-
-    if not win_odds:
-        skip_reason = "no_odds"
-    elif tier == "C":
-        skip_reason = "tier_c"
-    else:
-        skip_reason = None
-
+    # 2026-10-24 に購入指針（tier）と指数信頼度を廃止した。判定はせず、
+    # 「★推奨」タブ（複勝ピック）が読む全出走馬の発走前スナップショットだけを残す
     return TierDecision(
-        tier=tier,
-        bet_type=_HIT_TIER_BET.get(tier),
-        confidence_score=conf["score"],
-        win_prob_top=conf.get("win_prob_top"),
-        entropy_norm=entropy_norm,
-        market_agree=market_agree,
+        tier=None,
+        bet_type=None,
+        confidence_score=None,
+        win_prob_top=None,
+        entropy_norm=None,
+        market_agree=None,
         top1_horse_number=top1_hn,
-        top1_win_odds=top_odds,
+        top1_win_odds=win_odds.get(top1_hn),
         index_ranks=ranks,
         pop_ranks=pops,
-        skip_reason=skip_reason,
+        skip_reason="no_odds" if not win_odds else "tier_retired",
     )
 
 
@@ -474,9 +448,7 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
     冪等。未確定のレースは触らない（`settled_at` が NULL のまま残り、翌日以降の
     実行で拾われる）。
 
-    確定オッズでの `market_agree` / tier も同時に計算して保存する。
-    **これが「発走前 tier」と「確定 tier」の比較を後から可能にする唯一の手段**で、
-    発走10分前の1番人気は確定の 80.7% しか一致しない（モジュール docstring）。
+    確定 tier の再計算は 2026-10-24 の購入指針廃止とともにやめた。
 
     Args:
         db: セッション。
@@ -563,18 +535,6 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
         else:
             lr.hit = None
 
-        # 確定オッズで tier を作り直す（発走前 tier との差＝オッズの動き）
-        if top1 is not None and final_odds:
-            lr.final_market_agree = is_market_favorite(
-                final_odds.get(top1.horse_number), list(final_odds.values())
-            )
-            lr.final_tier = calculate_recommend_rank(
-                lr.confidence_score or 0,
-                lr.win_prob_top,
-                final_odds.get(top1.horse_number),
-                lr.final_market_agree,
-                lr.entropy_norm,
-            )
         lr.settled_at = now
         n_races += 1
 

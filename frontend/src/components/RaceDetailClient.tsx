@@ -381,7 +381,7 @@ export function RaceDetailClient({
                               ☆{horse.anagusa_rank}
                             </span>
                           )}
-                          {/* 穴候補（レース内最有力1頭のみ・軸信頼度は購入指針パネルのrecommend_rankに一本化） */}
+                          {/* 穴候補（レース内最有力1頭のみ。軸の信頼度 tier は 2026-10-24 に廃止） */}
                           {/* 平八はユーザーのしきい値で判定し直すので、サーバー側のタグは落とす */}
                           <DmSignalBadges
                             signals={[

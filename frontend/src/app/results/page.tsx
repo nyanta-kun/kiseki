@@ -5,7 +5,6 @@ import { PerformanceChart } from "@/components/PerformanceChart";
 import { FilterForm } from "./FilterForm";
 import { BreakdownTabs } from "./BreakdownTabs";
 import { OddsRangeSensitivity } from "./OddsRangeSensitivity";
-import { JraBuyingGuide } from "./BuyingGuide";
 
 export const metadata: Metadata = {
   title: "AI指数実績 | GallopLab",
@@ -212,12 +211,9 @@ export default async function ResultsPage({
                 aria-label="月次推移チャート"
               >
                 <h2 className="text-sm font-bold text-gray-700 mb-4">月次推移</h2>
-                <PerformanceChart monthly={data.monthly_stats} initialFilter="ALL" />
+                <PerformanceChart monthly={data.monthly_stats} />
               </section>
             )}
-
-            {/* 購入指針統計 */}
-            <JraBuyingGuide />
 
             {/* オッズ帯別ROI感度分析 */}
             <OddsRangeSensitivity filters={filters} />

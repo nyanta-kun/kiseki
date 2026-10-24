@@ -1,8 +1,5 @@
 """推奨レース・馬券APIルーター
 
-GET  /api/recommendations?date=YYYYMMDD
-  → DBに保存済みの推奨を返す。未生成の場合は空リスト。
-
 GET  /api/recommendations/source?date=YYYYMMDD
   → Claude定期エージェントが推奨選定に使うソースデータを返す（X-API-Key認証）。
 
@@ -31,7 +28,6 @@ from ..db.models import Race, RaceRecommendation
 from ..db.session import get_db
 from ..services.recommender import (
     build_anagusa_rule_recommendations,
-    build_hit_tier_recommendations,
     collect_recommendation_source,
     submit_recommendations,
     update_results,
@@ -78,29 +74,6 @@ class RaceInfo(BaseModel):
     head_count: int | None
 
 
-class ValueCandidate(BaseModel):
-    """妙味候補（収支保証なし・注記）。的中重視推奨の副次情報。"""
-
-    horse_number: int
-    horse_name: str | None
-    win_odds: float | None
-    index_rank: int | None
-    badges: list[str]
-    # 複勝EVモデルの人気薄1頭軸（2026-06-13・検証 memory: place_ev_model）
-    is_place_axis: bool = False
-    """複勝＋ワイド軸の「軸」該当（単勝10倍+×較正複勝率フロア×EV最大の1頭）。"""
-    upset_tier: str | None = None
-    """軸の強度: "strong"(バッジ2+) / "standard"(バッジ1+/0) / None。"""
-    wide_partner_horse_number: int | None = None
-    """ワイド相手＝モデルcomposite1位（=本命）の馬番。"""
-    place_prob_cal: float | None = None
-    """複勝EVモデルの較正済み複勝圏確率（軸該当馬のみ・memory: place_ev_model）。"""
-    place_ev: float | None = None
-    """複勝EV = 較正複勝率 × 複勝最低オッズ近似（軸該当馬のみ）。"""
-    finish_position: int | None = None
-    """確定着順（レース後表示用）。"""
-
-
 class RecommendationOut(BaseModel):
     """推奨1件のレスポンス。"""
 
@@ -119,8 +92,6 @@ class RecommendationOut(BaseModel):
     """バックテスト実証ROI (None=仮説)。"""
     is_verified: bool | None = None
     """バックテスト実証済みか。"""
-    value_candidates: list[ValueCandidate] | None = None
-    """妙味候補（穴・収支保証なし）。的中重視推奨の副次情報。"""
     target_horses: list[TargetHorse]
     snapshot_win_odds: dict[str, float] | None
     snapshot_place_odds: dict[str, float] | None
@@ -200,123 +171,6 @@ class SubmitRequest(BaseModel):
     """提出ペイロード。"""
 
     recommendations: list[SubmitItem]
-
-
-def _sweet_spot_to_out(c: dict[str, Any]) -> RecommendationOut:
-    """推奨候補 dict（build_hit_tier_recommendations 系の共通スキーマ）を RecommendationOut に変換。"""
-    race_info = RaceInfo(
-        race_id=c["race_id"],
-        course_name=c["course_name"],
-        race_number=c["race_number"],
-        race_name=c.get("race_name"),
-        post_time=c.get("post_time"),
-        surface=c.get("surface"),
-        distance=c.get("distance"),
-        grade=c.get("grade"),
-        head_count=c.get("head_count"),
-    )
-    target = [
-        TargetHorse(
-            horse_number=h["horse_number"],
-            horse_name=h.get("horse_name"),
-            composite_index=h.get("composite_index"),
-            win_probability=h.get("win_probability"),
-            place_probability=h.get("place_probability"),
-            ev_win=h.get("ev_win"),
-            ev_place=h.get("ev_place"),
-            win_odds=h.get("win_odds"),
-            place_odds=h.get("place_odds"),
-            finish_position=h.get("finish_position"),
-        )
-        for h in c["target_horses"]
-    ]
-    return RecommendationOut(
-        id=c["id"],
-        rank=c["rank"],
-        race=race_info,
-        bet_type=c["bet_type"],
-        tier=c.get("tier"),
-        ticket_combos=c.get("ticket_combos"),
-        points=c.get("points"),
-        roi_basis=c.get("roi_basis"),
-        is_verified=c.get("is_verified"),
-        target_horses=target,
-        snapshot_win_odds=c.get("snapshot_win_odds"),
-        snapshot_place_odds=c.get("snapshot_place_odds"),
-        snapshot_at=c.get("snapshot_at"),
-        reason=c["reason"],
-        confidence=c["confidence"],
-        result_correct=c.get("result_correct"),
-        result_payout=c.get("result_payout"),
-        result_updated_at=c.get("result_updated_at"),
-        created_at=c["created_at"],
-    )
-
-
-def _hit_tier_to_out(c: dict[str, Any]) -> RecommendationOut:
-    """build_hit_tier_recommendations() が返す dict を RecommendationOut に変換。"""
-    out = _sweet_spot_to_out(c)
-    out.value_candidates = [
-        ValueCandidate(
-            horse_number=v["horse_number"],
-            horse_name=v.get("horse_name"),
-            win_odds=v.get("win_odds"),
-            index_rank=v.get("index_rank"),
-            badges=v.get("badges", []),
-            is_place_axis=v.get("is_place_axis", False),
-            upset_tier=v.get("upset_tier"),
-            wide_partner_horse_number=v.get("wide_partner_horse_number"),
-            place_prob_cal=v.get("place_prob_cal"),
-            place_ev=v.get("place_ev"),
-            finish_position=v.get("finish_position"),
-        )
-        for v in (c.get("value_candidates") or [])
-    ]
-    return out
-
-
-_HIT_TIER_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-_HIT_TIER_LOCKS: dict[str, asyncio.Lock] = {}
-_HIT_TIER_TTL_SEC = 60.0
-
-
-async def _build_hit_tier_cached(db: AsyncSession, date: str) -> list[dict[str, Any]]:
-    now = time.monotonic()
-    cached = _HIT_TIER_CACHE.get(date)
-    if cached and now - cached[0] < _HIT_TIER_TTL_SEC:
-        return cached[1]
-    lock = _HIT_TIER_LOCKS.setdefault(date, asyncio.Lock())
-    async with lock:
-        cached = _HIT_TIER_CACHE.get(date)
-        if cached and time.monotonic() - cached[0] < _HIT_TIER_TTL_SEC:
-            return cached[1]
-        result = await build_hit_tier_recommendations(db, date)
-        _HIT_TIER_CACHE[date] = (time.monotonic(), result)
-        return result
-
-
-@router.get("", response_model=list[RecommendationOut])
-async def get_recommendations(
-    db: DbDep,
-    date: str = Query(..., description="開催日 YYYYMMDD"),
-) -> list[RecommendationOut]:
-    """指定日の的中重視 自動推奨を返す（最新オッズ反映）。
-
-    2026-06-05 再定義: OOS検証で JRA 単一レースの価値(ROI)系バッジは全て脆弱と判明したため、
-    推奨エンジンを「1レース1推奨＝指数1位馬 ＋ 信頼度tier(S鉄板/A信頼/B複勝圏)」へ変更。
-    混戦(C)は推奨しない。価値系は value_candidates（妙味候補・収支保証なし）に降格。
-    tier別1位馬の的中率は OOS で単調(S勝率67%/複勝93% … A34/71 … B26/64)。
-
-    返却順は発走時刻順（post_time 昇順）。プロセス内60秒キャッシュ + フロント60秒 revalidate。
-    """
-    try:
-        candidates = await _build_hit_tier_cached(db, date)
-    except Exception as e:
-        logger.error("的中tier 推奨生成失敗: %s", e)
-        return []
-    items = [_hit_tier_to_out(c) for c in candidates]
-    items.sort(key=lambda x: (x.race.post_time is None, x.race.post_time or "", x.rank))
-    return items
 
 
 class AnagusaRuleItem(BaseModel):
