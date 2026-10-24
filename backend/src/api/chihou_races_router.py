@@ -18,6 +18,7 @@ from ..db.chihou_models import (
     ChihouRaceEntry,
     ChihouRaceResult,
 )
+from ..db.models import MekauchidaRaceUpset
 from ..db.session import get_db
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_cutoff import cut_flags
@@ -83,6 +84,9 @@ class ChihouRaceOut(BaseModel):
     # 🔴 2026-09-28 に 購入指針(buy_signal) / 期待値ランク(recommend_rank) /
     #    注目馬★(has_place_pick) を撤去してこれに置き換えた。いずれも回収率の根拠が無かった。
     gekisou_status: str | None = None
+    # 外部サイト「メカウチダ」の荒れやすさ（"低" / "中" / "高"）。kiseki の指標ではない。
+    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None。詳細 API のみ
+    mekauchida_upset: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -844,6 +848,11 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
     )
     has_indices: bool = idx_check.scalar() or False
     result_confirmed: bool = confirmed_check.scalar() or False
+    mekauchida_upset = await db.scalar(
+        select(MekauchidaRaceUpset.level).where(
+            MekauchidaRaceUpset.pillar == "chihou", MekauchidaRaceUpset.race_id == race_id
+        )
+    )
 
     return ChihouRaceOut(
         id=race.id,
@@ -860,6 +869,7 @@ async def get_chihou_race(race_id: int, db: DbDep) -> ChihouRaceOut:
         post_time=race.post_time,
         has_indices=has_indices,
         result_confirmed=result_confirmed,
+        mekauchida_upset=mekauchida_upset,
     )
 
 

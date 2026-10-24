@@ -217,6 +217,7 @@ def test_upset_storage_is_opt_in():
     assert MonitorConfig.__dataclass_fields__["upset_pillar"].default is None
     root = Path(__file__).resolve().parents[1] / "scripts"
     assert 'upset_pillar="jra"' in (root / "mekauchida_discord_notify.py").read_text(encoding="utf-8")
+    assert 'upset_pillar="chihou"' in (root / "chihou_mekauchida_notify.py").read_text(encoding="utf-8")
 
 
 def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
