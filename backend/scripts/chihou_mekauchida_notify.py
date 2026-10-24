@@ -83,6 +83,7 @@ CONFIG = MonitorConfig(
     snapshot_file=LOG_DIR / "mekauchida_nar_snapshots.jsonl",
     title="メカウチダ地方 × 指数 一致",
     sql_params={"cv": CHIHOU_COMPOSITE_VERSION},
+    upset_pillar="chihou",  # 荒れやすさを keiba.mekauchida_race_upset へ（レース詳細の波乱度）
 )
 
 

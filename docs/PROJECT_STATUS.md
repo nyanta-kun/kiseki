@@ -121,6 +121,8 @@
 - **メカウチダ地方の買い目 × 指数5位内 の Discord 通知**（2026-10-03）。中央版と同じ実行ループ
   （`src/services/mekauchida_runner.py`）。VPS cron `*/10 9-21` の `scripts/chihou_mekauchida_notify.sh`。
   🔴 **穴ぐさは地方に無い**ので一致は指数だけ。指数は `version = CHIHOU_COMPOSITE_VERSION`。
+  同じ runner が地方の「荒れやすさ」も `keiba.mekauchida_race_upset`（pillar='chihou'）へ
+  保存し、地方のレース詳細の見出しに波乱度として出す（2026-10-24・中央の項を参照）。
   前向き記録（`chihou.place_picks`）は稼働中で、激走の判定入力もここから取る。
   経緯と数値は `docs/chihou_rebuild_2026_08.md` 18章
 - オッズ鮮度バッジ（`chihou_odds_freshness.py`）が稼働中。
