@@ -88,7 +88,8 @@ VALUES (:pillar, :race_id, :level, :site_updated, :observed_at)
 ON CONFLICT (pillar, race_id) DO UPDATE
 SET level = EXCLUDED.level,
     site_updated = EXCLUDED.site_updated,
-    observed_at = EXCLUDED.observed_at
+    observed_at = EXCLUDED.observed_at,
+    source = 'live'
 """)
 
 

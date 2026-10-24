@@ -179,3 +179,72 @@ def parse_today_page(html: str, year: int) -> SitePage:
             )
         )
     return SitePage(date=date, updated=upd.group(1) if upd else None, races=tuple(races))
+
+
+# ── 履歴ページ（/history/YYYYMMDD.html・/nar/history/YYYYMMDD.html）──────────
+#
+# 過去レースの波乱度を取り込むために使う（2026-10-25）。
+# 🔴 履歴ページの札は**確定オッズで作り直したもの**で、発走前に利用者が見た札とは
+# 別物。保存するときは ``source='history'`` として区別すること。
+# また中央の 2026-09-25 以前のページは、サイトが買ったレースにしか札が無い。
+
+HISTORY_URL = "https://d374d8pjjxnppk.cloudfront.net/history/{date}.html"
+NAR_HISTORY_URL = "https://d374d8pjjxnppk.cloudfront.net/nar/history/{date}.html"
+HISTORY_INDEX_URL = "https://d374d8pjjxnppk.cloudfront.net/history/index.html"
+NAR_HISTORY_INDEX_URL = "https://d374d8pjjxnppk.cloudfront.net/nar/history/index.html"
+
+# レースごとの見出し。発走時刻・場名・レース番号・コース・荒れやすさの札が入る
+_RH_RE = re.compile(r"<div class='rh'>(.*?)</div>", re.S)
+_HISTORY_LINK_RE = re.compile(r"href='(\d{8})\.html'")
+
+
+@dataclass(frozen=True)
+class HistoryRace:
+    """履歴ページのレース 1 件（波乱度の取り込みに要る分だけ）。"""
+
+    venue: str
+    race_number: int
+    upset: str | None  # "低" / "中" / "高"。札の無いレースは None
+
+
+@dataclass(frozen=True)
+class HistoryPage:
+    """履歴ページ全体。"""
+
+    date: str  # "YYYYMMDD"
+    updated: str | None  # サイト表記の「更新 10/24 15:45」
+    races: tuple[HistoryRace, ...]
+
+
+def parse_history_index(html: str) -> list[str]:
+    """履歴の目次から日付（``YYYYMMDD``）を昇順で返す。"""
+    return sorted(set(_HISTORY_LINK_RE.findall(html)))
+
+
+def parse_history_page(html: str, date: str) -> HistoryPage:
+    """履歴ページの HTML から、レースごとの荒れやすさを読む。
+
+    買い目のあるカード（``card race``）も無いカード（``rest``）も、見出し
+    （``<div class='rh'>``）は同じ形なので見出しだけを見る。
+
+    Raises:
+        MekauchidaParseError: レースの見出しが 1 件も無い・場名が読めない場合
+    """
+    heads = _RH_RE.findall(html)
+    if not heads:
+        raise MekauchidaParseError(f"{date}: レースの見出しが 1 件も無い（ページ構造が変わった可能性）")
+    races: list[HistoryRace] = []
+    for head in heads:
+        rv = _RV_RE.search(head)
+        if not rv:
+            raise MekauchidaParseError(f"{date}: レースの場名が読めない: {head[:200]!r}")
+        upset = _UPSET_RE.search(head)
+        races.append(
+            HistoryRace(
+                venue=html_lib.unescape(rv.group(1)).strip(),
+                race_number=int(rv.group(2)),
+                upset=upset.group(1) if upset else None,
+            )
+        )
+    upd = _UPDATED_RE.search(html)
+    return HistoryPage(date=date, updated=upd.group(1) if upd else None, races=tuple(races))

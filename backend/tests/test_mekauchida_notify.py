@@ -242,7 +242,8 @@ def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
         c.execute(
             text(
                 "CREATE TABLE keiba.mekauchida_race_upset (pillar TEXT, race_id INT, level TEXT, "
-                "site_updated TEXT, observed_at TEXT, PRIMARY KEY (pillar, race_id))"
+                "site_updated TEXT, observed_at TEXT, source TEXT NOT NULL DEFAULT 'live', "
+                "PRIMARY KEY (pillar, race_id))"
             )
         )
         c.execute(
@@ -253,7 +254,7 @@ def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
             )
         )
         # 発走済みの京都1R は前の値のまま残ること
-        c.execute(text("INSERT INTO keiba.mekauchida_race_upset VALUES ('jra',1,'低','old','old')"))
+        c.execute(text("INSERT INTO keiba.mekauchida_race_upset VALUES ('jra',1,'低','old','old','live')"))
 
     cfg = runner.MonitorConfig(
         name="t",
