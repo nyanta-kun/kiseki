@@ -107,7 +107,28 @@ def _tf_boards(order):
     return odds, prob
 
 
-BAND_PLANS = ("A_hit", "B_hit", "C_hit")
+BAND_PLANS = ("A_hit", "B_hit")
+
+
+def test_c_hit_is_hit_oriented_tier_build():
+    """🔴🔴 **2026-10-24: C_hit は的中重視**（`type_lab.C_HIT_TARGET` の節・ユーザー決定）。
+
+    段の「広め」と同じ詰め方（確率順・合成を割る直前で止める・3〜8点）で目標 2.5万円。
+    9車は旧定義（5万ダッチ）のまま。
+    """
+    from src.type_lab import (BUDGET, C_HIT_TARGET, HIT_BAND_TARGET,
+                              NINE_CAR_PLAN_OVERRIDES, TIER_MIN_LEGS)
+    p = PLANS["C_hit"]
+    assert p.structure == "tier_firm" and p.alloc == "dutch"
+    assert p.target == C_HIT_TARGET == 25_000 and p.max_legs == 8
+    assert C_HIT_TARGET > 2 * BUDGET, "ガミにならない線（予算の2倍超）"
+    nine = NINE_CAR_PLAN_OVERRIDES["C_hit"]
+    assert nine.structure == "signboard" and nine.target == HIT_BAND_TARGET
+    s = _shape({1: .80, 2: .70, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
+    odds, prob = _tf_boards(s.order)
+    legs = build_legs(s, p, odds, prob)
+    assert TIER_MIN_LEGS <= len(legs) <= p.max_legs
+    assert list(legs) == sorted(legs, key=lambda k: -prob[k]), "確率順"
 
 
 @pytest.mark.parametrize("key", BAND_PLANS)
@@ -204,14 +225,8 @@ def test_prob_top_respects_band_and_sigma():
     legs = build_legs(s, f, odds, prob)
     assert legs and len(legs) <= f.max_legs
     assert all(odds[l] >= f.min_odds for l in legs)
-    # 帯（旧・型C は予測15倍以上）と Σ の上限は、代替の側に残っている。
-    c = _shape(FIRM_P3, behind=LOW_BEHIND, day=3)
-    assert c.type_label == "C"
-    fb = GATE_FALLBACK["C_hit"][0]
-    assert fb.structure == "prob_top" and fb.min_odds == 15.0
-    legs_c = build_legs(c, fb, odds, prob)
-    assert legs_c and len(legs_c) <= fb.max_legs
-    assert all(odds[l] >= fb.min_odds for l in legs_c), "帯より安い点を買っている"
+    # 🔴 型C の旧構成（帯15倍）の代替は 2026-10-24 に外した（`GATE_FALLBACK` の節）。
+    assert "C_hit" not in GATE_FALLBACK
 
 
 # ─────────────────────────── 配分 ───────────────────────────
@@ -1037,18 +1052,37 @@ def test_race_shape_without_win_probs_is_unchanged():
 
 
 def test_type_a_sells_exactly_one_plan_in_every_combination():
-    """🔴 **1レース1商品**。型A が3つに割れても返るのは必ず1つ。"""
-    from src.type_lab import ANA_PW_ENT_MIN, sell_plans_for
+    """🔴 **1レース1商品**。型A が3つに割れても規則が返すのは必ず1つ。
+
+    🔴 2026-10-24 から A_hit は販売を止めた（`SELL_SUSPENDED_PLANS`）ので、
+       売るのは 0 個（A_hit に当たる）か 1 個（A_ana / A_trio）。
+    """
+    from src.type_lab import (ANA_PW_ENT_MIN, SELL_SUSPENDED_PLANS,
+                              _sell_plans_unfiltered, sell_plans_for)
     for pw in (None, 0.0, ANA_PW_ENT_MIN - 1e-9, ANA_PW_ENT_MIN, 2.0):
         for trio in (None, True, False):
             for n in (7, 9):
+                raw = _sell_plans_unfiltered("A", n, "予選", pw_ent=pw, trio_ok=trio)
+                assert len(raw) == 1, (pw, trio, n, [p.key for p in raw])
                 got = sell_plans_for("A", n, "予選", pw_ent=pw, trio_ok=trio)
-                assert len(got) == 1, (pw, trio, n, [p.key for p in got])
+                want = [] if raw[0].key in SELL_SUSPENDED_PLANS else raw
+                assert [p.key for p in got] == [p.key for p in want]
+
+
+def test_a_hit_is_never_sold_but_still_generated():
+    """🔴🔴 A_hit は売らない（2026-10-24 ユーザー決定）。生成・採点は続ける。"""
+    from src.type_lab import SELL_SUSPENDED_PLANS, plans_for, sell_plans_for
+    assert SELL_SUSPENDED_PLANS == frozenset({"A_hit"})
+    for n in (7, 9):
+        assert "A_hit" in {p.key for p in plans_for("A", n)}
+        for rt in (None, "予選", "特選", "決勝"):
+            assert sell_plans_for("A", n, rt) == []
 
 
 def test_type_a_split_priority():
-    """①穴狙い → ②三連複 → ③A_hit の順（同着なら穴狙いが勝つ）。"""
-    from src.type_lab import ANA_PW_ENT_MIN, sell_plans_for
+    """①穴狙い → ②三連複 → ③A_hit の順（同着なら穴狙いが勝つ）。規則そのものを見る。"""
+    from src.type_lab import ANA_PW_ENT_MIN
+    from src.type_lab import _sell_plans_unfiltered as sell_plans_for
     k = lambda **kw: sell_plans_for("A", 7, "予選", **kw)[0].key   # noqa: E731
     assert k(pw_ent=ANA_PW_ENT_MIN, trio_ok=True) == "A_ana"
     assert k(pw_ent=ANA_PW_ENT_MIN, trio_ok=False) == "A_ana"

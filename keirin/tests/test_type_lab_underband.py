@@ -100,7 +100,7 @@ def test_other_plans_are_untouched():
     for key, plan in PLANS.items():
         assert plan.underband_min == 0.0, f"{key} に差込が漏れている"
     assert GATE_FALLBACK["F_hit"][1].underband_min == 0.0, "2段目は差込なしの受け皿"
-    assert GATE_FALLBACK["C_hit"][0].underband_min == 0.0
+    assert "C_hit" not in GATE_FALLBACK, "C_hit の代替は 2026-10-24 に外した"
 
 
 # ───────────────────────── ゲートとの噛み合わせ ─────────────────────────

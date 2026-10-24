@@ -38,9 +38,10 @@ def test_fallback_is_defined_for_the_two_measured_plans_only():
     """フォールバックを持つのは実測した2つだけ（増やすときは実測を伴うこと）。
 
     `F_hit` … 帯なし12点がゲートに落ちた分を「帯15倍＋帯下1点差込」→「帯15倍」で拾う
-    `C_hit` … 計画払戻5万円のダッチが組めない分を、2026-09-21 までの構成で拾う（2026-09-22）
+    🔴 `C_hit` の代替（2026-09-21 までの構成）は 2026-10-24 に外した。的中重視の 2.5万で
+       平均2万を割るレースを旧12点構成で売ると別商品が混ざるため（`type_lab.C_HIT_TARGET`）。
     """
-    assert set(GATE_FALLBACK) == {"C_hit", "F_hit"}
+    assert set(GATE_FALLBACK) == {"F_hit"}
     for k, vs in GATE_FALLBACK.items():
         assert isinstance(vs, tuple) and vs, f"{k} の値は試す順の並びであること"
     f0, f1 = GATE_FALLBACK["F_hit"]
@@ -50,14 +51,9 @@ def test_fallback_is_defined_for_the_two_measured_plans_only():
     for f in (f0, f1):
         assert f.max_legs == PLANS["F_hit"].max_legs
         assert f.alloc == PLANS["F_hit"].alloc
-    # 🔴 **2026-09-22: `C_hit` の代替は本命の派生ではなく「旧構成そのもの」。**
-    #    本命がダッチ（`signboard`）へ移ったので、`replace(PLANS["C_hit"], ...)` で作ると
-    #    代替が本命と同じものになり、ゲートに落ちたレースの在庫がそのまま消える。
-    (c0,) = GATE_FALLBACK["C_hit"]
-    assert c0.structure == "prob_top", "代替が本命と同じ構成になっている"
-    assert (c0.min_odds, c0.max_legs, c0.alloc) == (15.0, 12, "conf")
-    assert c0.tau_adaptive and c0.underband_min == 0.0
-    assert PLANS["C_hit"].structure == "signboard", "本命はダッチであること"
+    # 🔴 `C_hit` の代替（2026-09-22〜10-23 の「旧構成そのもの」）は 2026-10-24 に外した。
+    #    入稿ゲートは「当たったときの悪い側 >= 1万円」（`HIT_POINT_GATE_PLANS`）が担う。
+    assert PLANS["C_hit"].structure == "tier_firm", "本命は的中重視（段の広めと同じ詰め方）"
 
 
 def test_fallback_keeps_the_same_plan_key():

@@ -37,9 +37,14 @@ def test_sell_plans_is_at_most_one(type_label, n_entries, race_type):
 
 
 def test_every_type_has_a_plan_for_7car():
-    """7車は全6型に売るものがある（見送りの型を作らない）。"""
-    for t in "ABCDEF":
+    """7車は型A 以外の5型に売るものがある。
+
+    🔴 型A は 2026-10-24 から A_hit の販売を止めた（ユーザー決定・`SELL_SUSPENDED_PLANS`）。
+       A_ana / A_trio に当たらない型A のレースは売らない。
+    """
+    for t in "BCDEF":
         assert len(sell_plans_for(t, 7)) == 1, t
+    assert sell_plans_for("A", 7) == []
 
 
 def test_sell_plans_matches_constant():
@@ -88,8 +93,9 @@ def test_type_f_splits_by_race_type():
     #    ここで「準決勝」を部分一致で拾わないことも一緒に固定する
     #    （拾うと表示的中の低い `F_pay` が母集団の何倍にも広がる）。
     assert [p.key for p in sell_plans_for("F", 9, "準決勝")] == ["F_line"]
-    # 型F以外は9車でも種別によらず売る
-    assert [p.key for p in sell_plans_for("A", 9, "特選")] == ["A_hit"]
+    # 型F以外は9車でも種別によらず売る（🔴 型A は A_hit の販売停止で 0・2026-10-24）
+    assert [p.key for p in sell_plans_for("B", 9, "特選")] == ["B_hit"]
+    assert sell_plans_for("A", 9, "特選") == []
 
 
 def test_every_type_has_a_plan_for_9car():
@@ -97,11 +103,17 @@ def test_every_type_has_a_plan_for_9car():
 
     ここが 0 に戻ったら、その型のレースは商品ゼロになる。看板が含まれていれば
     「看板には必ず出す」方針に反する（2026-08-30 に実際に起きた）。
+
+    🔴 **型A は例外**（2026-10-24 ユーザー決定で A_hit の販売を止めた。9車の型A は
+       A_ana / A_trio を持たないので売るものが無い）。「看板には必ず出す」方針は
+       2026-08-31 に取り消されている。
     """
-    for t in "ABCDEF":
+    for t in "BCDEF":
         for rt in ("決勝", "準決勝", "選抜", "特選", "特秀", "一般", None):
             got = sell_plans_for(t, 9, rt)
             assert len(got) == 1, f"型{t}/9車/{rt} → {[p.key for p in got]}"
+    for rt in ("決勝", "準決勝", "選抜", "特選", "特秀", "一般", None):
+        assert sell_plans_for("A", 9, rt) == []
 
 
 # ───────────────────────── 賭け金を作り直さない ─────────────────────────

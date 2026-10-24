@@ -536,10 +536,13 @@ def test_ゲートの答え合わせから段の商品を外す():
          "race_type": "予選", "cup_grade": None},
         {"plan_key": "A_hit", "type_label": "A", "n_entries": 9, "axis_sum": 1.6,
          "race_type": "予選", "cup_grade": None},
+        {"plan_key": "C_hit", "type_label": "C", "n_entries": 7, "axis_sum": 1.6,
+         "race_type": "予選", "cup_grade": None},
     ]
     got = [(d["plan_key"], d["n_entries"]) for d in m.gate_population(rows)]
-    # 段の商品・閾値の無い A_ana・型別規則で売らない A_trio・9車は入らない
-    assert got == [("A_hit", 7)]
+    # 段の商品・閾値の無い A_ana・型別規則で売らない A_trio・9車は入らない。
+    # 🔴 A_hit は 2026-10-24 から販売を止めた（`SELL_SUSPENDED_PLANS`）ので入らない。
+    assert got == [("C_hit", 7)]
     assert "T_firm" in m.SELLABLE_PLAN_KEYS, "前提: 段の商品は売りうるプランに入っている"
 
 
