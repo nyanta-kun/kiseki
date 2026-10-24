@@ -1635,7 +1635,11 @@ class MekauchidaRaceUpset(Base):
 
     🔴 書き手（``services/mekauchida_runner.py``）は**発走前のレースだけ**を
     上書きする。残る値は kiseki が発走前に最後に読んだ札で、サイトの履歴ページ
-    （確定オッズで作り直した札）とは別物。履歴からバックフィルしないこと。
+    （確定オッズで作り直した札）とは別物。
+
+    過去分は履歴ページから ``source='history'`` として取り込む（2026-10-25・
+    ユーザー要望）。取り込みは ``live`` の行を上書きしない。
+    🔴 発走前の精度を測るときは ``source='live'`` で絞ること。
     """
 
     __tablename__ = "mekauchida_race_upset"
@@ -1649,4 +1653,10 @@ class MekauchidaRaceUpset(Base):
     )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, comment="kiseki が読んだ時刻"
+    )
+    source: Mapped[str] = mapped_column(
+        String(8),
+        nullable=False,
+        server_default="live",
+        comment="live = 発走前に読んだ札 / history = 履歴ページ（確定オッズ時点）から取り込んだ札",
     )
