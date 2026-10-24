@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { OddsData, RaceEntry, RaceResult, SpecialRegistration, ProjectedEntry, fetchEntries, fetchIndices, fetchOdds, fetchRace, fetchRacesByDate, fetchResults, fetchSpecialRegistrations, fetchProjectedEntries, Race } from "@/lib/api";
-import { ConfidencePanel } from "@/components/ConfidencePanel";
 import { RaceDetailClient } from "@/components/RaceDetailClient";
 import { RaceSubHeader } from "@/components/RaceSubHeader";
 import { EntriesTable } from "@/components/EntriesTable";
@@ -139,7 +138,6 @@ export default async function RacePage({ params }: { params: Params }) {
   }
 
   const indices = indicesResp.horses;
-  const confidence = indicesResp.confidence;
 
   return (
     <div style={wrapperStyle}>
@@ -147,9 +145,6 @@ export default async function RacePage({ params }: { params: Params }) {
 
       <main id="main-content" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto" }}>
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
-          {/* 信頼度パネル */}
-          <ConfidencePanel confidence={confidence} />
-
           {/* 指数テーブル（成績WebSocketで自動更新） */}
           <RaceDetailClient
             raceId={raceId}

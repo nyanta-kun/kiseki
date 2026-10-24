@@ -4,18 +4,12 @@ import Link from "next/link";
 import { Race } from "@/lib/api";
 import { gradeClass, raceClassBadgeClass, raceClassShort, surfaceIcon } from "@/lib/utils";
 import { ChihouGekisouBadge } from "./ChihouGekisouBadge";
+import { MekauchidaUpsetChip } from "./MekauchidaUpsetChip";
 
 type Props = {
   race: Race;
   basePath?: string;
 };
-
-const RANK_CONFIG = {
-  S: { cls: "bg-purple-100 text-purple-700 border-purple-300 font-bold" },
-  A: { cls: "bg-green-100 text-green-700 border-green-300 font-bold" },
-  B: { cls: "bg-yellow-100 text-yellow-700 border-yellow-300 font-semibold" },
-  C: { cls: "bg-gray-100 text-gray-500 border-gray-200" },
-} as const;
 
 /** "1025" → "10:25" */
 function formatPostTime(t: string | null): string | null {
@@ -25,8 +19,6 @@ function formatPostTime(t: string | null): string | null {
 
 
 export function RaceCard({ race, basePath = "/races" }: Props) {
-  const confRank   = race.confidence_rank ?? null;
-  const recRank    = race.recommend_rank  ?? null;
   const postTime   = formatPostTime(race.post_time);
   const isChihou   = basePath.startsWith("/chihou");
   const activeColor = isChihou ? "var(--chihou-primary)" : "var(--primary)";
@@ -83,7 +75,7 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
           </div>
         </div>
 
-        {/* 右側: 上段=穴ぐさ / 下段=ランク */}
+        {/* 右側: 上段=穴ぐさ / 下段=波乱度 */}
         <div className="flex-shrink-0 flex items-center gap-1.5">
           <div className="flex flex-col items-end gap-0.5">
             {race.is_special_only && (
@@ -106,18 +98,11 @@ export function RaceCard({ race, basePath = "/races" }: Props) {
                 )}
               </div>
             )}
-            {/* 下段: 信頼度・推奨度ランク（特別登録のみのレースは出さない） */}
+            {/* 下段: 波乱度（メカウチダ）。購入指針・指数信頼度は 2026-10-24 に廃止
+                （特別登録のみのレースは出さない） */}
             {!race.is_special_only && (
-              confRank && recRank ? (
-                <div className="flex items-center gap-0.5">
-                  <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[confRank].cls}`}>
-                    信{confRank}
-                  </span>
-                  <span className={`text-[9px] px-1 py-0.5 rounded border whitespace-nowrap ${RANK_CONFIG[recRank].cls}`}>
-                    推奨{recRank}
-                  </span>
-                  <span className="text-[9px] text-gray-400 tabular-nums">{race.confidence_score}pt</span>
-                </div>
+              race.mekauchida_upset ? (
+                <MekauchidaUpsetChip level={race.mekauchida_upset} variant="card" />
               ) : race.has_indices ? (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium whitespace-nowrap">
                   指数✓

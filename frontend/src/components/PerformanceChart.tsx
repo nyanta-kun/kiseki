@@ -12,23 +12,14 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
-import type { MonthlyStats, ConfidenceStats } from "@/lib/api";
+import type { MonthlyStats } from "@/lib/api";
 import { CHART_GRID, ChartTooltip, chartAxisTick, chartLegendStyle } from "@/lib/chart-theme";
-
-type ConfidenceFilter = "ALL" | "HIGH" | "MID" | "LOW";
 
 type Props = {
   monthly: MonthlyStats[];
-  initialFilter: ConfidenceFilter;
 };
 
-function getStats(month: MonthlyStats, filter: ConfidenceFilter): ConfidenceStats | null {
-  if (filter === "ALL") return month;
-  return month.breakdown[filter];
-}
-
-export function PerformanceChart({ monthly, initialFilter }: Props) {
-  const [filter, setFilter] = useState<ConfidenceFilter>(initialFilter);
+export function PerformanceChart({ monthly }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
@@ -43,52 +34,20 @@ export function PerformanceChart({ monthly, initialFilter }: Props) {
     return () => obs.disconnect();
   }, []);
 
-  const data = monthly
-    .map((m) => {
-      const s = getStats(m, filter);
-      if (!s) return null;
-      return {
-        month: m.year_month.replace(/^(\d{4})-(\d{2})$/, "$1/$2"),
-        単勝的中率: Math.round(s.win_hit_rate * 1000) / 10,
-        複勝的中率: Math.round(s.place_hit_rate * 1000) / 10,
-        top3カバー率: Math.round(s.top3_coverage_rate * 1000) / 10,
-        回収率: Math.round(s.simulated_roi_win * 1000) / 10,
-        レース数: s.total_races,
-      };
-    })
-    .filter((d): d is NonNullable<typeof d> => d !== null);
-
-  const filters: { key: ConfidenceFilter; label: string; color: string }[] = [
-    { key: "ALL", label: "全レース", color: "#6b7280" },
-    { key: "HIGH", label: "HIGH（高信頼）", color: "#16a34a" },
-    { key: "MID", label: "MID（中信頼）", color: "#ca8a04" },
-    { key: "LOW", label: "LOW（低信頼）", color: "#dc2626" },
-  ];
+  const data = monthly.map((s) => ({
+    month: s.year_month.replace(/^(\d{4})-(\d{2})$/, "$1/$2"),
+    単勝的中率: Math.round(s.win_hit_rate * 1000) / 10,
+    複勝的中率: Math.round(s.place_hit_rate * 1000) / 10,
+    top3カバー率: Math.round(s.top3_coverage_rate * 1000) / 10,
+    回収率: Math.round(s.simulated_roi_win * 1000) / 10,
+    レース数: s.total_races,
+  }));
 
   return (
     <div className="space-y-4">
-      {/* 信頼度フィルタ */}
-      <div className="flex flex-wrap gap-2">
-        {filters.map(({ key, label, color }) => (
-          <button
-            key={key}
-            onClick={() => setFilter(key)}
-            aria-pressed={filter === key}
-            className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${
-              filter === key
-                ? "text-white border-transparent"
-                : "text-gray-600 border-gray-200 hover:border-gray-400"
-            }`}
-            style={filter === key ? { background: color, borderColor: color } : undefined}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {data.length === 0 ? (
         <div className="text-center py-8 text-gray-400 text-sm">
-          {filter !== "ALL" ? `${filter}信頼度のデータがありません` : "データがありません"}
+          データがありません
         </div>
       ) : (
         <>

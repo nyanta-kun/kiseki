@@ -1,8 +1,18 @@
-import { MEKAUCHIDA_UPSET_NOTE, mekauchidaUpsetClass } from "@/lib/mekauchidaUpset";
+import {
+  MEKAUCHIDA_UPSET_NOTE,
+  type MekauchidaUpsetVariant,
+  mekauchidaUpsetClass,
+} from "@/lib/mekauchidaUpset";
 
-/** レース詳細の見出しに出す波乱度（メカウチダの荒れやすさ）。未取得なら何も出さない。 */
-export function MekauchidaUpsetChip({ level }: { level: string | null | undefined }) {
-  const cls = mekauchidaUpsetClass(level);
+/** 波乱度（メカウチダの荒れやすさ）。詳細の見出しと一覧カードで使う。未取得なら何も出さない。 */
+export function MekauchidaUpsetChip({
+  level,
+  variant = "header",
+}: {
+  level: string | null | undefined;
+  variant?: MekauchidaUpsetVariant;
+}) {
+  const cls = mekauchidaUpsetClass(level, variant);
   if (!cls) return null;
   return (
     <span
@@ -10,7 +20,7 @@ export function MekauchidaUpsetChip({ level }: { level: string | null | undefine
       title={MEKAUCHIDA_UPSET_NOTE}
     >
       波乱度 <b>{level}</b>
-      <span className="ml-1 opacity-80">メカウチダ</span>
+      <span className="ml-1 opacity-70 text-[9px]">メカウチダ</span>
     </span>
   );
 }

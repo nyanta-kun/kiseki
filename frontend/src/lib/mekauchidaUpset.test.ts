@@ -15,3 +15,17 @@ describe("mekauchidaUpsetClass", () => {
     expect(mekauchidaUpsetClass("特高")).toBeNull();
   });
 });
+
+describe("mekauchidaUpsetClass（一覧カード）", () => {
+  it("白いカードでは白文字を使わない（背景に溶けて読めなくなる）", () => {
+    for (const l of ["低", "中", "高"]) {
+      const c = mekauchidaUpsetClass(l, "card");
+      expect(c).not.toBeNull();
+      expect(c).not.toMatch(/text-white|bg-white\//);
+    }
+  });
+
+  it("見出しとカードで見た目を分ける", () => {
+    expect(mekauchidaUpsetClass("低", "card")).not.toBe(mekauchidaUpsetClass("低", "header"));
+  });
+});

@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
  * タグ文字列はバックエンド backend/src/indices/dm_signals.py の定数と一致させること。
  *
  * ⚠️ 2026-07-25 全面簡素化([[jra_upset_badge_redesign]]): 軸信頼度は
- * `recommend_rank`（購入指針パネル）に一本化済みのため、per-horseの軸タグ
+ * `recommend_rank`（購入指針パネル・2026-10-24 に廃止）に一本化済みだったため、per-horseの軸タグ
  * (三冠一致/高得点鉄板)・警戒タグ(人気下振れ)はユーザー指示により廃止。
  * 穴タグも複数指数一致穴/指数一致穴の2段階を単一の「穴」マークに統合。
  *

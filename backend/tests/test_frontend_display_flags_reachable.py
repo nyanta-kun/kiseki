@@ -36,10 +36,10 @@ FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
 REQUIRED_DISPLAY_FLAGS = [
     ("races/[id]", "is_sweet_spot"),  # スイートスポット該当馬（馬名を赤字）
     ("races/[id]", "is_cut_off"),  # 着外率による足切り（グレーアウト）
-    ("races/[id]", "recommend_rank"),  # 軸の信頼度 tier
     ("races/[id]", "dm_signals"),  # 穴 / 特穴バッジ
     ("races/[id]", "is_place_pick"),  # 複勝ピック（1レース最大1頭）の「複勝」バッジ
     ("races/[id]", "mekauchida_upset"),  # メカウチダの荒れやすさ（見出しの波乱度チップ）
+    ("races", "mekauchida_upset"),  # 一覧カードの波乱度チップ（購入指針・指数信頼度の後継）
     ("chihou/races/[id]", "is_gekisou"),  # 地方 激走馬（1レース最大1頭）
     ("chihou/races/[id]", "gekisou.status"),  # 地方 激走 / 見送り のレース判定パネル
     ("chihou/races", "gekisou_status"),  # 地方 一覧の 激走 / 見送り バッジ

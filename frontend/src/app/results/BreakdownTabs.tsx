@@ -3,10 +3,9 @@
 import { useState } from "react";
 import type { DimensionStat, PerformanceSummary } from "@/lib/api";
 
-type TabKey = "confidence" | "course" | "surface" | "distance" | "condition";
+type TabKey = "course" | "surface" | "distance" | "condition";
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: "confidence", label: "信頼度別" },
   { key: "course",     label: "競馬場別" },
   { key: "surface",    label: "馬場別" },
   { key: "distance",   label: "距離別" },
@@ -48,24 +47,9 @@ type Props = {
 };
 
 export function BreakdownTabs({ summary }: Props) {
-  const [tab, setTab] = useState<TabKey>("confidence");
-
-  // 信頼度別を DimensionStat 形式に変換
-  const confidenceRows: DimensionStat[] = (
-    [
-      { key: "HIGH", label: "HIGH（高信頼）" },
-      { key: "MID",  label: "MID（中信頼）"  },
-      { key: "LOW",  label: "LOW（低信頼）"  },
-    ] satisfies { key: "HIGH" | "MID" | "LOW"; label: string }[]
-  )
-    .flatMap(({ key, label }) => {
-      const s = summary.breakdown[key];
-      if (!s) return [];
-      return [{ label, ...s } as DimensionStat];
-    });
+  const [tab, setTab] = useState<TabKey>("course");
 
   const rows: DimensionStat[] = {
-    confidence: confidenceRows,
     course:    summary.by_course,
     surface:   summary.by_surface,
     distance:  summary.by_distance_range,
