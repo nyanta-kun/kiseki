@@ -133,7 +133,10 @@
   （`src/services/mekauchida_runner.py`）。VPS cron `*/10 9-21` の `scripts/chihou_mekauchida_notify.sh`。
   🔴 **穴ぐさは地方に無い**ので一致は指数だけ。指数は `version = CHIHOU_COMPOSITE_VERSION`。
   同じ runner が地方の「荒れやすさ」も `keiba.mekauchida_race_upset`（pillar='chihou'）へ
-  保存し、地方のレース詳細の見出しに波乱度として出す（2026-10-24・中央の項を参照）。
+  保存し、地方のレース詳細の見出しと一覧カードに波乱度として出す（2026-10-24・中央の項を参照）。
+- **指数信頼度（分離度ランク）は 2026-10-24 に算出・表示とも廃止**（中央の購入指針・指数信頼度の
+  廃止に揃えたユーザー判断。地方の指数信頼度そのものは検証していない）。成績ページの
+  購入指針統計（`/chihou/performance/buying-guide`）も外した。
   前向き記録（`chihou.place_picks`）は稼働中で、激走の判定入力もここから取る。
   経緯と数値は `docs/chihou_rebuild_2026_08.md` 18章
 - オッズ鮮度バッジ（`chihou_odds_freshness.py`）が稼働中。

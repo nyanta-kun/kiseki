@@ -86,7 +86,6 @@ async function ChihouRaceBodyAsync({ raceId }: { raceId: number }) {
         horses={indicesResp.horses}
         initialResults={initialResults}
         initialOdds={initialOdds}
-        ranks={indicesResp.ranks ?? null}
         gekisou={indicesResp.gekisou ?? null}
       />
 

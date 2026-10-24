@@ -23,11 +23,6 @@ from ..db.session import get_db
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_cutoff import cut_flags
 from ..indices.chihou_gekisou import STATUS_GEKISOU, STATUS_MIOKURI, GekisouVerdict
-from ..indices.confidence import (
-    CHIHOU_DISPERSION_FULL_SCORE,
-    CHIHOU_GAP_FULL_SCORE,
-    calculate_race_confidence,
-)
 from ..services.chihou_gekisou_roi import GekisouBet, summarize_gekisou_bets
 from ..services.chihou_gekisou_source import fetch_gekisou_verdicts
 from ..services.chihou_odds_freshness import (
@@ -76,16 +71,13 @@ class ChihouRaceOut(BaseModel):
     race_class_label: str | None = None
     has_indices: bool = False
     has_anagusa: bool = False
-    confidence_score: int | None = None
-    confidence_label: str | None = None
-    confidence_rank: str | None = None  # S / A / B / C
     result_confirmed: bool = False  # 成績確定済み（JRA RaceOut と互換）
     # 激走 / 見送り（`indices/chihou_gekisou.py`）。"gekisou" | "miokuri" | None
     # 🔴 2026-09-28 に 購入指針(buy_signal) / 期待値ランク(recommend_rank) /
     #    注目馬★(has_place_pick) を撤去してこれに置き換えた。いずれも回収率の根拠が無かった。
     gekisou_status: str | None = None
     # 外部サイト「メカウチダ」の荒れやすさ（"低" / "中" / "高"）。kiseki の指標ではない。
-    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None。詳細 API のみ
+    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None
     mekauchida_upset: str | None = None
 
     model_config = {"from_attributes": True}
@@ -116,15 +108,6 @@ class ChihouHorseIndexOut(BaseModel):
     is_cut_off: bool = False
 
 
-class ChihouRaceRanks(BaseModel):
-    """地方競馬 レース信頼度ランク（指数の分離度。期待値ではない）"""
-
-    score: int
-    confidence_rank: str  # S / A / B / C
-    gap_1_2: float
-    gap_1_3: float
-
-
 class ChihouGekisouOut(BaseModel):
     """地方競馬 激走 / 見送り判定（レース単位）。
 
@@ -143,7 +126,6 @@ class ChihouIndicesResponse(BaseModel):
     """地方競馬 指数レスポンス"""
 
     horses: list[ChihouHorseIndexOut]
-    ranks: ChihouRaceRanks | None = None
     gekisou: ChihouGekisouOut | None = None
 
 
@@ -494,6 +476,14 @@ async def get_chihou_races_by_date(
     #    （一覧で表示しなくなったため。回収率の根拠が無かった）。
     verdicts = await fetch_gekisou_verdicts(db, race_ids)
 
+    # --- 波乱度（メカウチダの荒れやすさ・発走前に最後に読んだ値） ---
+    upset_rows = await db.execute(
+        select(MekauchidaRaceUpset.race_id, MekauchidaRaceUpset.level).where(
+            MekauchidaRaceUpset.pillar == "chihou", MekauchidaRaceUpset.race_id.in_(race_ids)
+        )
+    )
+    upset_map = {int(rid): lv for rid, lv in upset_rows.all()}
+
     return [
         ChihouRaceOut(
             id=race.id,
@@ -511,6 +501,7 @@ async def get_chihou_races_by_date(
             has_indices=race.id in indexed_race_ids,
             result_confirmed=race.id in confirmed_race_ids,
             gekisou_status=verdicts[race.id].verdict.status if race.id in verdicts else None,
+            mekauchida_upset=upset_map.get(race.id),
         )
         for race in races
     ]
@@ -629,10 +620,6 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         str(combo): float(odds_val) for _rid, _bet_type, combo, odds_val in odds_result.all() if odds_val is not None
     }
 
-    # --- レース情報（head_count）取得 ---
-    race_row = await db.execute(select(ChihouRace).where(ChihouRace.id == race_id))
-    race_obj = race_row.scalar_one_or_none()
-
     horses = []
     for row in rows:
         ci: ChihouCalculatedIndex = row[0]
@@ -688,28 +675,8 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     for h, cut in zip(horses, cut_flags([h.composite_index for h in horses]), strict=True):
         h.is_cut_off = cut
 
-    # --- 信頼度ランク算出（指数の分離度） ---
-    ranks: ChihouRaceRanks | None = None
-    if horses:
-        ci_list = [h.composite_index for h in horses]
-        wp_list = [h.win_probability for h in horses if h.win_probability is not None]
-
-        conf = calculate_race_confidence(
-            ci_list,
-            race_obj.head_count if race_obj else None,
-            wp_list or None,
-            gap_full_score=CHIHOU_GAP_FULL_SCORE,
-            dispersion_full_score=CHIHOU_DISPERSION_FULL_SCORE,
-        )
-
-        ranks = ChihouRaceRanks(
-            score=conf["score"],
-            confidence_rank=conf["rank"],
-            gap_1_2=conf["gap_1_2"],
-            gap_1_3=conf["gap_1_3"],
-        )
-
-    return ChihouIndicesResponse(horses=horses, ranks=ranks, gekisou=gekisou)
+    # 指数信頼度（分離度ランク）は 2026-10-24 に算出・表示とも廃止した
+    return ChihouIndicesResponse(horses=horses, gekisou=gekisou)
 
 
 @router.get("/{race_id}/odds")
