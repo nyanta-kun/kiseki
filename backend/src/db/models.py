@@ -1625,3 +1625,28 @@ class CronRun(Base):
     summary: Mapped[str | None] = mapped_column(
         Text, comment="ジョブ自身が書く要約（件数など）。0 件 success を人が読んで気づくため"
     )
+
+
+class MekauchidaRaceUpset(Base):
+    """外部サイト「メカウチダ」がレースに付ける「荒れやすさ」（波乱度）。
+
+    中央・地方で 1 表。``race_id`` は ``pillar`` により ``keiba.races.id`` /
+    ``chihou.races.id`` を指す（スキーマをまたぐので FK は張らない）。
+
+    🔴 書き手（``services/mekauchida_runner.py``）は**発走前のレースだけ**を
+    上書きする。残る値は kiseki が発走前に最後に読んだ札で、サイトの履歴ページ
+    （確定オッズで作り直した札）とは別物。履歴からバックフィルしないこと。
+    """
+
+    __tablename__ = "mekauchida_race_upset"
+    __table_args__ = {"schema": SCHEMA}
+
+    pillar: Mapped[str] = mapped_column(String(8), primary_key=True, comment="jra / chihou")
+    race_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    level: Mapped[str] = mapped_column(String(2), nullable=False, comment="低 / 中 / 高")
+    site_updated: Mapped[str | None] = mapped_column(
+        String(20), comment="サイト表記の「更新 10/24 15:45」"
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, comment="kiseki が読んだ時刻"
+    )
