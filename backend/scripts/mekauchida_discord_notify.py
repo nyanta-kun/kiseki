@@ -100,6 +100,7 @@ CONFIG = MonitorConfig(
     snapshot_file=LOG_DIR / "mekauchida_snapshots.jsonl",
     title="メカウチダ × 指数/穴ぐさ 一致",
     sql_params={"cv": COMPOSITE_VERSION},
+    upset_pillar="jra",  # 荒れやすさを keiba.mekauchida_race_upset へ（レース詳細の波乱度）
 )
 
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { fetchRace, Race } from "@/lib/api";
 import { surfaceIcon, gradeClass, raceClassBadgeClass, raceClassShort, formatDate } from "@/lib/utils";
 import { RaceNav } from "@/components/RaceNav";
+import { MekauchidaUpsetChip } from "@/components/MekauchidaUpsetChip";
 
 function formatPostTime(postTime: string | null): string {
   if (!postTime || postTime.length < 4) return "";
@@ -55,6 +56,7 @@ export function RaceSubHeader({
                   {raceClassShort(race.race_class_label)}
                 </span>
               )}
+              <MekauchidaUpsetChip level={race?.mekauchida_upset} />
             </div>
             {race && (
               <p className={`${metaColorClass} text-[11px] mt-0.5`}>
