@@ -36,6 +36,8 @@ _HERO_TITLE_RE = re.compile(r"<div class='hd'>(\d+)<small>月</small>(\d+)<small
 _UPDATED_RE = re.compile(r"<div class=[\"']upd[\"']>更新 ([0-9/]+ [0-9:]+)")
 _RT_RE = re.compile(r"<span class='rt'>(\d{1,2}):(\d{2})</span>")
 _RV_RE = re.compile(r"<span class='rv'>([^<]+)<b>(\d+)R</b></span>")
+# 荒れやすさは文言で読む。class 名（c-risky=低 / c-hard=高）は直感と逆なので使わない
+_UPSET_RE = re.compile(r"荒れやすさ ([低中高])</span>")
 # 精算後は res buy が res hit / miss 等に変わる。pv 以外は判断済みとして扱う
 _HORSE_RE = re.compile(r"<div class='horse( is-pv)?'>(.*?)<span class='res ([a-z]+)'>", re.S)
 _NUM_RE = re.compile(r"<span class='num[^']*'[^>]*>(\d+)</span>")
@@ -77,6 +79,12 @@ class SiteRace:
     post_hhmm: str  # "1510"
     state: str  # "decided" / "wait" / "missed"
     picks: tuple[SitePick, ...] = field(default_factory=tuple)
+    upset: str | None = None
+    """荒れやすさ "低" / "中" / "高"。札の無いカード（障害・判断できなかったレース等）は None。
+
+    1・2番人気の複勝圏の確率をモデルとオッズで比べ、モデルの方が低く見ていれば「高」
+    （サイトの説明）。無いことは異常ではないので例外にしない。
+    """
 
 
 @dataclass(frozen=True)
@@ -157,6 +165,7 @@ def parse_today_page(html: str, year: int) -> SitePage:
         # 予想の詳細（<details>）より前だけを見る。詳細の表に馬番が大量にあるため
         head = card.split("<details", 1)[0]
         picks = tuple(_parse_pick(*m.groups()) for m in _HORSE_RE.finditer(head))
+        upset = _UPSET_RE.search(head)
         if "has" in cls.split() and not picks:
             raise MekauchidaParseError(f"買い目ありのカードから馬が読めない: {head[:300]!r}")
         races.append(
@@ -166,6 +175,7 @@ def parse_today_page(html: str, year: int) -> SitePage:
                 post_hhmm=f"{int(rt.group(1)):02d}{rt.group(2)}",
                 state=state,
                 picks=picks,
+                upset=upset.group(1) if upset else None,
             )
         )
     return SitePage(date=date, updated=upd.group(1) if upd else None, races=tuple(races))

@@ -17,6 +17,7 @@ from src.services.mekauchida_notify import (
     match_race,
     match_reasons,
     parse_post_at,
+    select_upset_rows,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mekauchida_index_20261003_1500.html"
@@ -169,3 +170,115 @@ def test_message_starts_with_here_mention():
     assert with_mention("本文", MENTION) == "@everyone\n本文"
     assert with_mention("本文", "") == "本文"
     assert MonitorConfig.__dataclass_fields__["mention"].default == "@everyone"
+
+
+def test_upset_level_is_read_from_text(page):
+    """荒れやすさは文言で読む（class 名 c-risky=低・c-hard=高 は直感と逆）。"""
+    by_key = {(r.venue, r.race_number): r.upset for r in page.races}
+    assert by_key[("京都", 1)] == "高"
+    assert by_key[("東京", 1)] == "中"
+    assert list(by_key.values()).count("低") == 3
+    # 札の無いカード（判断できなかったレース）は None で、例外にしない
+    assert by_key[("東京", 4)] is None
+
+
+def test_upset_level_nar_page():
+    """地方版も同じ書き方。判断前で札の無いカードは None。"""
+    page = parse_today_page(NAR_FIXTURE.read_text(encoding="utf-8"), year=2026)
+    by_no = {r.race_number: r.upset for r in page.races}
+    assert by_no[4] == "高"
+    assert by_no[8] is None
+
+
+def test_select_upset_rows_only_before_post(page):
+    """発走前のレースだけを保存対象にする（発走後に上書きすると前向きの記録でなくなる）。"""
+    db_races = [
+        (101, "京都", 11, "1530"),  # 発走前 → 保存
+        (102, "東京", 11, "1545"),  # 発走前 → 保存
+        (103, "京都", 1, "0950"),  # 発走済み → 保存しない
+        (104, "東京", 4, "1600"),  # 札なし → 保存しない
+        (105, "京都", 12, None),  # 発走時刻不明 → 保存しない
+        (106, "札幌", 11, "1530"),  # サイトに無い → 保存しない
+    ]
+    rows = select_upset_rows(db_races, list(page.races), "20261003", _at("1500"))
+    assert [(r.race_id, r.level) for r in rows] == [(101, "高"), (102, "中")]
+    # 発走時刻ちょうどは「発走後」扱い
+    rows = select_upset_rows(db_races, list(page.races), "20261003", _at("1530"))
+    assert [r.race_id for r in rows] == [102]
+
+
+def test_upset_storage_is_opt_in():
+    """保存先の柱は既定 None（設定し忘れた側の札を別の柱として保存しない）。
+
+    中央は jra、地方は chihou を明示する。
+    """
+    from src.services.mekauchida_runner import MonitorConfig
+
+    assert MonitorConfig.__dataclass_fields__["upset_pillar"].default is None
+    root = Path(__file__).resolve().parents[1] / "scripts"
+    assert 'upset_pillar="jra"' in (root / "mekauchida_discord_notify.py").read_text(encoding="utf-8")
+
+
+def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
+    """runner を通しで動かし、発走前のレースの荒れやすさだけが保存されることを見る。
+
+    SQLite に keiba スキーマを ATTACH して、本番と同じ UPSERT 文を流す。
+    """
+    from sqlalchemy import create_engine, event, text
+
+    from src.services import mekauchida_runner as runner
+
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def _attach(dbapi_conn, _):  # noqa: ANN001
+        dbapi_conn.execute("ATTACH DATABASE ':memory:' AS keiba")
+
+    with engine.begin() as c:
+        c.execute(
+            text("CREATE TABLE keiba.races (id INT, date TEXT, course_name TEXT, race_number INT, post_time TEXT)")
+        )
+        c.execute(
+            text(
+                "CREATE TABLE keiba.mekauchida_race_upset (pillar TEXT, race_id INT, level TEXT, "
+                "site_updated TEXT, observed_at TEXT, PRIMARY KEY (pillar, race_id))"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO keiba.races VALUES "
+                "(1,'20261003','京都',1,'0950'),(2,'20261003','京都',11,'1530'),"
+                "(3,'20261003','東京',11,'1545'),(4,'20261003','東京',4,'1555')"
+            )
+        )
+        # 発走済みの京都1R は前の値のまま残ること
+        c.execute(text("INSERT INTO keiba.mekauchida_race_upset VALUES ('jra',1,'低','old','old')"))
+
+    cfg = runner.MonitorConfig(
+        name="t",
+        site_url="x",
+        races_sql=text("SELECT id, course_name, race_number, post_time FROM keiba.races WHERE date = :d"),
+        horses_sql=text(
+            "SELECT id AS race_id, 1 AS horse_number, NULL AS idx_rank, NULL AS composite_index, "
+            "NULL AS anagusa_rank FROM keiba.races WHERE 0"
+        ),
+        state_file=tmp_path / "state.json",
+        snapshot_file=tmp_path / "snap.jsonl",
+        title="t",
+        upset_pillar="jra",
+    )
+    monkeypatch.setattr(runner, "fetch_html", lambda *a, **k: FIXTURE.read_text(encoding="utf-8"))
+    assert runner.run_once(cfg, engine, _at("1500"), dry_run=False, send=lambda m: True) == 0
+
+    with engine.connect() as c:
+        got = dict(c.execute(text("SELECT race_id, level FROM keiba.mekauchida_race_upset")).fetchall())
+    # 京都11R=高・東京11R=中 を保存、東京4R は札なし、京都1R は発走済みで上書きしない
+    assert got == {1: "低", 2: "高", 3: "中"}
+
+    # 地方の設定で保存先を付け忘れても、中央の札として入らない（opt-in）
+    cfg_off = runner.MonitorConfig(**{**cfg.__dict__, "upset_pillar": None})
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM keiba.mekauchida_race_upset"))
+    runner.run_once(cfg_off, engine, _at("1500"), dry_run=False, send=lambda m: True)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM keiba.mekauchida_race_upset")).scalar() == 0

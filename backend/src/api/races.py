@@ -32,6 +32,7 @@ from ..db.models import (
     HitTierPick,
     Horse,
     Jockey,
+    MekauchidaRaceUpset,
     OddsHistory,
     ProjectedEntry,
     Race,
@@ -299,6 +300,9 @@ class RaceOut(BaseModel):
     special_horse_count: int = 0  # 特別登録馬の頭数（is_special_only=true 時のみ意味あり）
     is_projected_only: bool = False  # 出馬表未確定で netkeiba 出走想定のみ存在
     projected_horse_count: int = 0  # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
+    # 外部サイト「メカウチダ」の荒れやすさ（"低" / "中" / "高"）。kiseki の指標ではない。
+    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None。詳細 API のみ
+    mekauchida_upset: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -1043,6 +1047,11 @@ async def get_race(race_id: int, db: DbDep) -> RaceOut:
             if pj_count > 0:
                 out.is_projected_only = True
                 out.projected_horse_count = pj_count
+    out.mekauchida_upset = await db.scalar(
+        select(MekauchidaRaceUpset.level).where(
+            MekauchidaRaceUpset.pillar == "jra", MekauchidaRaceUpset.race_id == race.id
+        )
+    )
     return out
 
 

@@ -140,3 +140,41 @@ def build_message(matches: list[MatchedPick], now: datetime, title: str) -> str:
         )
     lines.append("※ 見込み = サイトの正式判断（発走3分前）より前の仮判断。実際には買っていないサイトです")
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class UpsetRow:
+    """保存する荒れやすさ 1 件（``keiba.mekauchida_race_upset`` の 1 行）。"""
+
+    race_id: int
+    level: str
+
+
+def select_upset_rows(
+    db_races: list[tuple[int, str, int, str | None]],
+    site_races: list[SiteRace],
+    date: str,
+    now: datetime,
+) -> list[UpsetRow]:
+    """サイトの荒れやすさのうち、保存してよいものを選ぶ。
+
+    Args:
+        db_races: 今日の DB のレース ``(id, course_name, race_number, post_time)``
+        site_races: サイトのレースカード
+        date: ``YYYYMMDD``
+        now: 現在時刻（JST）
+
+    🔴 **発走前のレースだけを返す。** 発走後に読んだ札で上書きすると、保存値が
+    「発走前の札」でなくなり前向きの記録として使えなくなる。
+    発走時刻が読めないレースも返さない（前か後かが分からないため）。
+    札の無いカード（障害・判断できなかったレース等）も返さない。
+    """
+    levels = {(r.venue, r.race_number): r.upset for r in site_races if r.upset}
+    rows: list[UpsetRow] = []
+    for race_id, venue, race_number, post_hhmm in db_races:
+        level = levels.get((venue, race_number))
+        post_at = parse_post_at(date, post_hhmm)
+        if level is None or post_at is None or post_at <= now:
+            continue
+        rows.append(UpsetRow(race_id=race_id, level=level))
+    return rows
