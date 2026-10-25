@@ -12,11 +12,13 @@ from src.services.mekauchida_notify import (
     JST,
     HorseContext,
     build_message,
+    is_final_capture,
     is_final_poll,
     is_monitoring,
     match_race,
     match_reasons,
     parse_post_at,
+    select_final_upset_rows,
     select_upset_rows,
 )
 
@@ -207,6 +209,30 @@ def test_select_upset_rows_only_before_post(page):
     assert [r.race_id for r in rows] == [102]
 
 
+def test_select_final_upset_rows_decided_after_post_only(page):
+    """発走済み × 判断済みのカードだけを拾う。窓は切らない（取り逃しを次の回で拾う）。"""
+    db_races = [
+        (201, "京都", 1, "0950"),  # 発走済み・判断済み（高） → 拾う（5 時間前でも拾う）
+        (202, "東京", 5, "1500"),  # 発走時刻ちょうど・判断済み（低） → 拾う
+        (203, "東京", 4, "1340"),  # 発走済み・missed（札なし） → 拾わない
+        (204, "東京", 10, "1450"),  # 発走済みでもカードが wait → ページ未更新なので拾わない
+        (205, "京都", 11, "1530"),  # 発走前 → 拾わない（発走前の札は別の関数）
+        (206, "京都", 2, None),  # 発走時刻不明 → 拾わない
+    ]
+    rows = select_final_upset_rows(db_races, list(page.races), "20261003", _at("1500"))
+    assert [(r.race_id, r.level) for r in rows] == [(201, "高"), (202, "低")]
+
+
+@pytest.mark.parametrize(
+    ("hhmm", "expected"),
+    [("0949", False), ("0950", True), ("1019", True), ("1020", False)],
+)
+def test_final_capture_window(hhmm, expected):
+    """発走時刻ちょうど〜発走後 30 分未満だけサイトを読みに行く。"""
+    assert is_final_capture(parse_post_at("20261003", "0950"), _at(hhmm)) is expected
+    assert is_final_capture(None, _at(hhmm)) is False
+
+
 def test_upset_storage_is_opt_in():
     """保存先の柱は既定 None（設定し忘れた側の札を別の柱として保存しない）。
 
@@ -243,6 +269,7 @@ def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
             text(
                 "CREATE TABLE keiba.mekauchida_race_upset (pillar TEXT, race_id INT, level TEXT, "
                 "site_updated TEXT, observed_at TEXT, source TEXT NOT NULL DEFAULT 'live', "
+                "level_prepost TEXT, prepost_site_updated TEXT, prepost_observed_at TEXT, "
                 "PRIMARY KEY (pillar, race_id))"
             )
         )
@@ -253,8 +280,10 @@ def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
                 "(3,'20261003','東京',11,'1545'),(4,'20261003','東京',4,'1555')"
             )
         )
-        # 発走済みの京都1R は前の値のまま残ること
-        c.execute(text("INSERT INTO keiba.mekauchida_race_upset VALUES ('jra',1,'低','old','old','live')"))
+        # 発走済みの京都1R: 発走前の札（低）は level_prepost に残り、画面の値は判断済みの札（高）になる
+        c.execute(
+            text("INSERT INTO keiba.mekauchida_race_upset VALUES ('jra',1,'低','old','old','live','低','old','old')")
+        )
 
     cfg = runner.MonitorConfig(
         name="t",
@@ -272,10 +301,34 @@ def test_run_once_saves_upset_before_post_only(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "fetch_html", lambda *a, **k: FIXTURE.read_text(encoding="utf-8"))
     assert runner.run_once(cfg, engine, _at("1500"), dry_run=False, send=lambda m: True) == 0
 
-    with engine.connect() as c:
-        got = dict(c.execute(text("SELECT race_id, level FROM keiba.mekauchida_race_upset")).fetchall())
-    # 京都11R=高・東京11R=中 を保存、東京4R は札なし、京都1R は発走済みで上書きしない
-    assert got == {1: "低", 2: "高", 3: "中"}
+    def _rows():
+        with engine.connect() as c:
+            return {
+                r[0]: tuple(r[1:])
+                for r in c.execute(
+                    text("SELECT race_id, level, source, level_prepost FROM keiba.mekauchida_race_upset")
+                ).fetchall()
+            }
+
+    # 京都11R=高・東京11R=中 は発走前の札として両方の列に保存、東京4R は札なし。
+    # 京都1R は発走済みで判断済み（高）→ 画面の値だけ差し替え、発走前の札（低）は残す
+    assert _rows() == {1: ("高", "final", "低"), 2: ("高", "live", "高"), 3: ("中", "live", "中")}
+
+    # 発走後に判断済みの札は最初の 1 回だけ。後でページの札が変わっても上書きしない
+    with engine.begin() as c:
+        c.execute(text("UPDATE keiba.mekauchida_race_upset SET level = '中' WHERE race_id = 1"))
+    runner.run_once(cfg, engine, _at("1500"), dry_run=False, send=lambda m: True)
+    assert _rows()[1] == ("中", "final", "低")
+
+    # 発走後 30 分以内だけのとき（発走前のレースが 1 時間以内に無い）も、判断済みの札を取りに行く
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM keiba.races WHERE id IN (2, 3, 4)"))
+        c.execute(text("DELETE FROM keiba.mekauchida_race_upset"))
+    assert runner.run_once(cfg, engine, _at("1010"), dry_run=False, send=lambda m: True) == 0
+    assert _rows() == {1: ("高", "final", None)}  # 発走前に読めていないので level_prepost は空
+    # 発走後 30 分を過ぎたらサイトを読まない
+    monkeypatch.setattr(runner, "fetch_html", lambda *a, **k: pytest.fail("サイトを読んではいけない"))
+    assert runner.run_once(cfg, engine, _at("1020"), dry_run=False, send=lambda m: True) == 0
 
     # 地方の設定で保存先を付け忘れても、中央の札として入らない（opt-in）
     cfg_off = runner.MonitorConfig(**{**cfg.__dict__, "upset_pillar": None})
