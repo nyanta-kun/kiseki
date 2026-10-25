@@ -1633,13 +1633,18 @@ class MekauchidaRaceUpset(Base):
     中央・地方で 1 表。``race_id`` は ``pillar`` により ``keiba.races.id`` /
     ``chihou.races.id`` を指す（スキーマをまたぐので FK は張らない）。
 
-    🔴 書き手（``services/mekauchida_runner.py``）は**発走前のレースだけ**を
-    上書きする。残る値は kiseki が発走前に最後に読んだ札で、サイトの履歴ページ
-    （確定オッズで作り直した札）とは別物。
+    ``level`` / ``site_updated`` / ``observed_at`` は**画面に出す札**、
+    ``level_prepost`` 以下 3 列は**発走前に最後に読んだ札**（2026-10-25 に分けた）。
 
-    過去分は履歴ページから ``source='history'`` として取り込む（2026-10-25・
-    ユーザー要望）。取り込みは ``live`` の行を上書きしない。
-    🔴 発走前の精度を測るときは ``source='live'`` で絞ること。
+    書き手 ``services/mekauchida_runner.py``:
+
+    - 発走前: 両方を上書きする（``source='live'``）
+    - 発走後: サイトが判断済みとして出した札を**最初に読んだ 1 回だけ** ``level`` へ
+      書き、``source='final'`` にする。発走前の列は触らない
+
+    過去分は履歴ページ（確定オッズで作り直した札）から ``source='history'`` として
+    取り込む。取り込みは ``live`` / ``final`` の行を上書きしない。
+    🔴 発走前の精度を測るときは ``level_prepost IS NOT NULL`` で絞ること。
     """
 
     __tablename__ = "mekauchida_race_upset"
@@ -1658,5 +1663,15 @@ class MekauchidaRaceUpset(Base):
         String(8),
         nullable=False,
         server_default="live",
-        comment="live = 発走前に読んだ札 / history = 履歴ページ（確定オッズ時点）から取り込んだ札",
+        comment=(
+            "live = 発走前に読んだ札だけ / final = 発走後に判断済みの札へ差し替えた / "
+            "history = 履歴ページ（確定オッズ時点）から取り込んだ札"
+        ),
+    )
+    level_prepost: Mapped[str | None] = mapped_column(String(2), comment="発走前に最後に読んだ札")
+    prepost_site_updated: Mapped[str | None] = mapped_column(
+        String(20), comment="発走前に最後に読んだページの「更新 10/24 15:45」"
+    )
+    prepost_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="発走前に最後に読んだ時刻"
     )
