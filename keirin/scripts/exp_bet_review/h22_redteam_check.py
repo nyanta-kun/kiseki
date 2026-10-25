@@ -1,6 +1,6 @@
 import pickle, numpy as np, sys
 from collections import Counter
-P="/Users/ysuzuki/GitHub/kiseki-dev/keirin-lab/keirin/data/exp_bet_review/h22/h22_arms.pkl"
+P = sys.argv[1] if len(sys.argv) > 1 else "data/exp_bet_review/h22/h22_arms.pkl"  # keirin/ で実行
 z=pickle.load(open(P,"rb")); arms,cur,races=z["arms"],z["cur"],z["races"]
 keys=sorted(arms); N=len(keys)
 days=sorted({races[k]["day"] for k in keys}); dpos={d:i for i,d in enumerate(days)}; ND=len(days)
