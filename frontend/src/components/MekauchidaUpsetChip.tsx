@@ -20,7 +20,6 @@ export function MekauchidaUpsetChip({
       title={MEKAUCHIDA_UPSET_NOTE}
     >
       波乱度 <b>{level}</b>
-      <span className="ml-1 opacity-70 text-[9px]">メカウチダ</span>
     </span>
   );
 }
