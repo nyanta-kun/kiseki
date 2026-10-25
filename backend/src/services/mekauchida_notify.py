@@ -35,6 +35,13 @@ MONITOR_LEAD = timedelta(minutes=60)
 POLL_INTERVAL = timedelta(minutes=10)
 """監視の間隔（cron と揃えること）。発走までこれ以下なら「最後の監視」。"""
 
+FINAL_CAPTURE_WINDOW = timedelta(minutes=30)
+"""発走後もサイトを読みに行く時間（判断済みの波乱度を取るため）。
+
+サイトのページは約 10 分おきの更新で、発走直前の判断がページに載るのは発走後に
+なることが多い。10 分おきの監視で 2〜3 回は読めるよう 30 分にしてある。
+"""
+
 INDEX_RANK_MAX = 5
 """指数順位がこれ以内なら一致。"""
 
@@ -57,6 +64,16 @@ def is_monitoring(post_at: datetime | None, now: datetime) -> bool:
         return False
     remain = post_at - now
     return timedelta(0) < remain <= MONITOR_LEAD
+
+
+def is_final_capture(post_at: datetime | None, now: datetime) -> bool:
+    """発走後 ``FINAL_CAPTURE_WINDOW`` 以内なら True（発走時刻ちょうどを含む）。
+
+    この間はサイトを読み、判断済みの波乱度を取る（通知はしない）。
+    """
+    if post_at is None:
+        return False
+    return timedelta(0) <= now - post_at < FINAL_CAPTURE_WINDOW
 
 
 def is_final_poll(post_at: datetime | None, now: datetime) -> bool:
@@ -175,6 +192,33 @@ def select_upset_rows(
         level = levels.get((venue, race_number))
         post_at = parse_post_at(date, post_hhmm)
         if level is None or post_at is None or post_at <= now:
+            continue
+        rows.append(UpsetRow(race_id=race_id, level=level))
+    return rows
+
+
+def select_final_upset_rows(
+    db_races: list[tuple[int, str, int, str | None]],
+    site_races: list[SiteRace],
+    date: str,
+    now: datetime,
+) -> list[UpsetRow]:
+    """発走済みのレースのうち、サイトが判断済みとして札を出しているものを選ぶ。
+
+    画面の波乱度は、発走後はこの札に差し替える（2026-10-25 ユーザー判断）。
+    発走前に読んだ札は ``select_upset_rows`` が別の列に残す。
+
+    - 発走時刻を過ぎたレースだけ（発走時刻ちょうどを含む）。時間で窓を切らないので、
+      取り逃した回があっても次に読んだときにページ上の発走済みレースをまとめて拾う
+    - カードが ``decided`` のものだけ。発走後でも ``wait`` のカードはページが
+      まだ更新されておらず、札は判断前の仮のもの。``missed`` には札が無い
+    """
+    rows: list[UpsetRow] = []
+    decided = {(r.venue, r.race_number): r.upset for r in site_races if r.state == "decided" and r.upset}
+    for race_id, venue, race_number, post_hhmm in db_races:
+        level = decided.get((venue, race_number))
+        post_at = parse_post_at(date, post_hhmm)
+        if level is None or post_at is None or post_at > now:
             continue
         rows.append(UpsetRow(race_id=race_id, level=level))
     return rows

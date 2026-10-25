@@ -117,15 +117,24 @@
   指数には入れていない（理由と評価計画は `docs/jra_ext_virtualbet_feature_plan_2026_09_27.md`）。
 - **レース詳細の見出しと一覧カードに メカウチダの「荒れやすさ」を波乱度として表示**（2026-10-24）。
   上の通知の runner がサイトを読んだついでに、今日の**発走前**の全レースの札を
-  `keiba.mekauchida_race_upset` へ保存する（発走後は上書きしない＝kiseki が発走前に最後に読んだ札）。
-  保存は `MonitorConfig.upset_pillar` で opt-in。朝の第1Rの約1時間前から入る。
+  `keiba.mekauchida_race_upset` へ保存する。保存は `MonitorConfig.upset_pillar` で opt-in。
+  朝の第1Rの約1時間前から入る。
+  **発走後は判断済みの札に差し替える**（2026-10-25・ユーザー判断）。発走前に読める札は
+  ページ更新の都合で発走10〜20分前のもので、10/25 中央の発走済み 12R 中 7R でサイトの
+  判断済みの札と食い違っていた。runner は発走後30分もサイトを読み、カードが判断済みに
+  なった札を**最初の1回だけ** `level` に書く（`source='final'`）。発走前に最後に読んだ札は
+  `level_prepost` / `prepost_site_updated` / `prepost_observed_at` に残る。
+  🔴 **発走前の精度は `level_prepost IS NOT NULL` で測る**。食い違いの率は
+  `source='final' AND level_prepost IS NOT NULL` で `level <> level_prepost` を数える。
+  ⚠️ 判断済みの札がサイトの正式判断（発走直前のオッズ）そのものか、確定オッズで
+  作り直した履歴の札と同じかは未確認（10/25 の履歴ページと突き合わせて確かめる）。
   精度（2026-10-24・サイト履歴で検証）: **地方はオッズ調整後も有意**（高−低で三連複×1.41・
   1・2番人気の複勝圏 −0.12頭/R）、**中央は 244R でまだ判定不能**。サイトの履歴の札は
   確定オッズで作り直したものなので、中央の検証はこの保存値（前向き記録）で行う。
 - **過去レースの波乱度は履歴ページから取り込む**（2026-10-25・ユーザー要望）。
   `backend/scripts/mekauchida_upset_backfill.py`（既定 dry-run・`--apply` で書き込み）。
-  同じ表へ **`source='history'`** として入れ、`live` の行は上書きしない。
-  🔴 **前向きの精度を測るときは `source='live'` で絞ること**（history は確定オッズ時点の札）。
+  同じ表へ **`source='history'`** として入れ、`live` / `final` の行は上書きしない。
+  🔴 **前向きの精度を測るときは `level_prepost IS NOT NULL` で絞ること**（history は確定オッズ時点の札）。
   dry-run（10-25）: 中央 118日・959R / 地方 370日・13,560R、対応づかないレース 0。
   ⚠️ 中央の 2026-09-25 以前は**サイトが買ったレースにしか札が無い**（札なし ≠ 波乱度なし）。
 

@@ -4,7 +4,7 @@
 
 🔴 **履歴ページの札は確定オッズで作り直したもの**で、利用者が発走前に見た札とは
 別物。``keiba.mekauchida_race_upset`` へ ``source='history'`` として入れ、
-発走前に読んだ ``live`` の行は**上書きしない**。今日以降の日付も取り込まない
+runner が書いた ``live`` / ``final`` の行は**上書きしない**。今日以降の日付も取り込まない
 （今日の札は ``services/mekauchida_runner.py`` が発走前に書く）。
 
 ⚠️ 中央の 2026-09-25 以前のページは、サイトが買ったレースにしか札が無い。
@@ -75,7 +75,7 @@ PILLARS = {
     "chihou": PillarConfig("chihou", NAR_HISTORY_INDEX_URL, NAR_HISTORY_URL, "chihou.races", "nar/history"),
 }
 
-# live（発走前に読んだ札）の行は上書きしない
+# runner が書いた live / final の行は上書きしない
 UPSERT_HISTORY_SQL = text("""
 INSERT INTO keiba.mekauchida_race_upset (pillar, race_id, level, site_updated, observed_at, source)
 VALUES (:pillar, :race_id, :level, :site_updated, :observed_at, 'history')
@@ -87,9 +87,7 @@ WHERE keiba.mekauchida_race_upset.source = 'history'
 """)
 
 
-def match_rows(
-    page: HistoryPage, db_races: list[tuple[int, str, int]]
-) -> tuple[list[dict[str, object]], Counter[str]]:
+def match_rows(page: HistoryPage, db_races: list[tuple[int, str, int]]) -> tuple[list[dict[str, object]], Counter[str]]:
     """履歴ページの札を DB のレースに対応づける。
 
     Args:

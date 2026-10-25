@@ -289,7 +289,7 @@ class RaceOut(BaseModel):
     is_projected_only: bool = False  # 出馬表未確定で netkeiba 出走想定のみ存在
     projected_horse_count: int = 0  # 出走想定馬の頭数（is_projected_only=true 時のみ意味あり）
     # 外部サイト「メカウチダ」の荒れやすさ（"低" / "中" / "高"）。kiseki の指標ではない。
-    # 発走前に最後に読んだ値（keiba.mekauchida_race_upset）。未取得は None
+    # keiba.mekauchida_race_upset.level（発走後は判断済みの札）。未取得は None
     mekauchida_upset: str | None = None
 
     model_config = {"from_attributes": True}
@@ -871,7 +871,7 @@ async def list_races(
         entry_result = await db.execute(entry_stmt)
         confirmed_entry_ids = {row[0] for row in entry_result.all()}
 
-    # メカウチダの荒れやすさ（波乱度）。発走前に最後に読んだ値。未取得のレースは None
+    # メカウチダの荒れやすさ（波乱度）。発走後は判断済みの札。未取得のレースは None
     upset_map: dict[int, str] = {}
     if race_ids:
         upset_rows = await db.execute(

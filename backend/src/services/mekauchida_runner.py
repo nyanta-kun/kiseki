@@ -10,7 +10,10 @@
    無ければサイトを見ずに終わる（＝開催日でなければ何もしない）
 2. サイトを 1 回だけ取得し、監視中のレースの買い目を記録する（snapshot）。
    あわせて、今日の発走前の全レースの「荒れやすさ」を DB に保存する
-   （``upset_pillar`` を指定した設定だけ。レース詳細の波乱度表示に使う）
+   （``upset_pillar`` を指定した設定だけ。レース詳細の波乱度表示に使う）。
+   発走済みのレースは、サイトが判断済みとして出した札を最初の 1 回だけ保存し、
+   画面の値をそれに差し替える（発走前の札は ``level_prepost`` に残る）。
+   そのため発走後 30 分もサイトを読みに行く（通知はしない）
 3. 発走まで 10 分以内（＝発走前の最後の監視）のレースで一致した馬を送る。
    送ったレースは state に残し二重送信しない
 """
@@ -36,10 +39,12 @@ from src.services.mekauchida_notify import (
     HorseContext,
     MatchedPick,
     build_message,
+    is_final_capture,
     is_final_poll,
     is_monitoring,
     match_race,
     parse_post_at,
+    select_final_upset_rows,
     select_upset_rows,
 )
 
@@ -83,14 +88,37 @@ class MonitorConfig:
 
 
 UPSERT_UPSET_SQL = text("""
-INSERT INTO keiba.mekauchida_race_upset (pillar, race_id, level, site_updated, observed_at)
-VALUES (:pillar, :race_id, :level, :site_updated, :observed_at)
+INSERT INTO keiba.mekauchida_race_upset
+    (pillar, race_id, level, site_updated, observed_at, source,
+     level_prepost, prepost_site_updated, prepost_observed_at)
+VALUES (:pillar, :race_id, :level, :site_updated, :observed_at, 'live',
+        :level, :site_updated, :observed_at)
 ON CONFLICT (pillar, race_id) DO UPDATE
 SET level = EXCLUDED.level,
     site_updated = EXCLUDED.site_updated,
     observed_at = EXCLUDED.observed_at,
-    source = 'live'
+    source = 'live',
+    level_prepost = EXCLUDED.level_prepost,
+    prepost_site_updated = EXCLUDED.prepost_site_updated,
+    prepost_observed_at = EXCLUDED.prepost_observed_at
+WHERE keiba.mekauchida_race_upset.source <> 'final'
 """)
+"""発走前の札。画面の値と発走前の列の両方を上書きする。"""
+
+FINALIZE_UPSET_SQL = text("""
+INSERT INTO keiba.mekauchida_race_upset (pillar, race_id, level, site_updated, observed_at, source)
+VALUES (:pillar, :race_id, :level, :site_updated, :observed_at, 'final')
+ON CONFLICT (pillar, race_id) DO UPDATE
+SET level = EXCLUDED.level,
+    site_updated = EXCLUDED.site_updated,
+    observed_at = EXCLUDED.observed_at,
+    source = 'final'
+WHERE keiba.mekauchida_race_upset.source = 'live'
+""")
+"""発走後に判断済みの札。最初に読んだ 1 回だけ画面の値を差し替え、発走前の列は触らない。
+
+発走前に札を読めなかったレース（行が無い）は ``level_prepost`` が NULL の行になる。
+"""
 
 
 def _log(cfg: MonitorConfig, msg: str) -> None:
@@ -139,7 +167,8 @@ def run_once(
     monitored = {
         (r.course_name, r.race_number): r for r in races if is_monitoring(parse_post_at(today, r.post_time), now)
     }
-    if not monitored:
+    capturing = bool(cfg.upset_pillar) and any(is_final_capture(parse_post_at(today, r.post_time), now) for r in races)
+    if not monitored and not capturing:
         return 0  # 開催日でない・監視時間外。毎回出るのでログに書かない
 
     final_keys = {k for k, r in monitored.items() if is_final_poll(parse_post_at(today, r.post_time), now)}
@@ -159,32 +188,37 @@ def run_once(
 
     upset_failed = False
     if cfg.upset_pillar:
-        upset_rows = select_upset_rows(
-            [(r.id, r.course_name, r.race_number, r.post_time) for r in races],
-            list(page.races),
-            today,
-            now,
-        )
+        db_races = [(r.id, r.course_name, r.race_number, r.post_time) for r in races]
+        writes = [
+            (UPSERT_UPSET_SQL, select_upset_rows(db_races, list(page.races), today, now)),
+            (FINALIZE_UPSET_SQL, select_final_upset_rows(db_races, list(page.races), today, now)),
+        ]
         try:
-            if upset_rows and not dry_run:
+            if not dry_run:
                 with Session(engine) as db:
-                    db.execute(
-                        UPSERT_UPSET_SQL,
-                        [
-                            {
-                                "pillar": cfg.upset_pillar,
-                                "race_id": row.race_id,
-                                "level": row.level,
-                                "site_updated": page.updated,
-                                "observed_at": now,
-                            }
-                            for row in upset_rows
-                        ],
-                    )
+                    for sql, upset_rows in writes:
+                        if not upset_rows:
+                            continue
+                        db.execute(
+                            sql,
+                            [
+                                {
+                                    "pillar": cfg.upset_pillar,
+                                    "race_id": row.race_id,
+                                    "level": row.level,
+                                    "site_updated": page.updated,
+                                    "observed_at": now,
+                                }
+                                for row in upset_rows
+                            ],
+                        )
                     db.commit()
         except Exception as e:  # noqa: BLE001 — 保存に失敗しても通知は続ける
             _log(cfg, f"ERROR: 荒れやすさを保存できない: {e}")
             upset_failed = True
+
+    if not monitored:
+        return 1 if upset_failed else 0  # 発走後の札を取りに来ただけ。通知の対象は無い
 
     site_races = {(r.venue, r.race_number): r for r in page.races}
     site_venues = {r.venue for r in page.races}
