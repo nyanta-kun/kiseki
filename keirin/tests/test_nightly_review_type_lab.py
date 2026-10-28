@@ -19,6 +19,10 @@
    その日自体を流してもレポートは出し、台帳は増やさない
 8. **参照分布の無い商品を黙って落とさない。** 段の商品（T_*）にはペーパー行が無い
 9. **§4 の母集団にゲート対象外のプラン（段の商品など）を入れない**
+10. **外れ方（①〜④）と見込みはプラン行にだけ積む。** 種別・時間帯の「実際÷見込み」は
+   プランの構成で動く（10/28: 準決勝 0.68 → 構成をそろえると 0.83）。①②の判定は
+   実際に売った目（`bet_detail`）で行い、外した車の素性は出さない（反実仮想の入口）
+11. **列を足す前の台帳行は空欄のまま。** 見込みの比は値のある行だけで作る
 """
 
 from __future__ import annotations
@@ -606,3 +610,135 @@ def test_中止でなければ従来どおり異常(monkeypatch):
     assert "[NG] 未採点の型ラボ行 2件（1レース）" in out
     assert "[NG] 売った商品のうち採点できなかったもの 1件" in out
     assert "中止" not in out
+
+
+# ───────────── 外れ方（①〜④）と見込み（2026-10-28 追加） ─────────────
+
+def _bd(lines, status="published", deleted=None, rk="rk", plan="A_hit"):
+    import json as _j
+    return {"race_key": rk, "rank_key": plan, "status": status, "deleted_at": deleted,
+            "bet_detail": _j.dumps({"lines": lines})}
+
+
+def test_外れ方は決着クラスと売った目で決まる():
+    m = _load()
+    tri = [(frozenset({1, 2, 3}), True)]
+    other = [(frozenset({1, 2, 4}), True)]
+    # 当たり・分類不能は外れに数えない
+    assert m.miss_kind("firm34", True, "1-2-3", tri) is None
+    assert m.miss_kind(None, False, "1-2-3", tri) is None
+    # 指数1・2位そろい: 同じ3車の三連単を売っていれば ①、売っていなければ ②
+    assert m.miss_kind("firm34", False, "2-1-3", tri) == "miss_order"
+    assert m.miss_kind("firm_ana", False, "2-1-3", other) == "miss_set"
+    # 同じ3車でも三連複なら当たっているはずなので ① にはしない
+    assert m.miss_kind("firm34", False, "2-1-3", [(frozenset({1, 2, 3}), False)]) == "miss_set"
+    # 片軸・軸崩壊は既存の決着クラスをそのまま使う
+    assert m.miss_kind("half_ana", False, "1-5-6", tri) == "miss_half"
+    assert m.miss_kind("broken", False, "4-5-6", tri) == "miss_broken"
+    # 売った目が読めないときは ①② を決めない（黙って ② にしない）
+    assert m.miss_kind("firm34", False, "2-1-3", None) == "unknown"
+
+
+def test_売った目は_bet_detail_の生きている入稿から取る():
+    m = _load()
+    subs = [_bd([{"bet_type": "3連単", "combo": "2-1-3"},
+                 {"bet_type": "3連複", "combo": "1=2=4"}]),
+            _bd([{"bet_type": "3連単", "combo": "5-6-7"}], status="proposed", plan="B_hit"),
+            _bd([{"bet_type": "3連単", "combo": "5-6-7"}], deleted="x", plan="C_hit")]
+    got = m.bought_sets(subs)
+    assert set(got) == {("rk", "A_hit")}, "承認待ち・取消の入稿が混ざっている"
+    assert got[("rk", "A_hit")] == [(frozenset({1, 2, 3}), True),
+                                    (frozenset({1, 2, 4}), False)]
+
+
+def test_見込みは_legs_の確率の和で読めなければ_None():
+    m = _load()
+    assert abs(m.leg_prob_sum('[{"prob": 0.1}, {"prob": 0.05}]') - 0.15) < 1e-9
+    assert m.leg_prob_sum([{"prob": 0.2}]) == 0.2
+    for bad in (None, "", "[]", "not json", '[{"x": 1}]'):
+        assert m.leg_prob_sum(bad) is None, f"{bad!r} を 0 扱いしている"
+
+
+def _sold_row(plan, hit, rk="rk"):
+    class _R:
+        pass
+    r = _R()
+    r.race_key, r.rank_key, r.origin = rk, plan, None
+    r.bet, r.payout = 10_000, (20_000 if hit else 0)
+    r.hit, r.net_hit, r.n_points = hit, hit, 5
+    return r
+
+
+def test_外れ方を分けて当日の行に出す():
+    m = _load()
+    live = [{"race_key": "r1", "plan_key": "A_hit", "win_combo": "2-1-3",
+             "p3_order": "1-2-3-4-5-6-7", "legs": '[{"prob": 0.3}]'},
+            {"race_key": "r2", "plan_key": "A_hit", "win_combo": "1-5-6",
+             "p3_order": "1-2-3-4-5-6-7", "legs": '[{"prob": 0.2}]'},
+            {"race_key": "r3", "plan_key": "A_hit", "win_combo": "1-2-3",
+             "p3_order": "1-2-3-4-5-6-7", "legs": '[{"prob": 0.4}]'}]
+    sold = [_sold_row("A_hit", False, "r1"), _sold_row("A_hit", False, "r2"),
+            _sold_row("A_hit", True, "r3")]
+    bought = {("r1", "A_hit"): [(frozenset({1, 2, 3}), True)],
+              ("r2", "A_hit"): [(frozenset({1, 2, 3}), True)],
+              ("r3", "A_hit"): [(frozenset({1, 2, 3}), True)]}
+    lines, brk = m.section_breakdown(sold, live, bought)
+    assert brk["misses"] == {"miss_order": 1, "miss_half": 1}
+    assert brk["exp_by_plan"]["A_hit"]["n_exp"] == 3
+    assert brk["exp_by_plan"]["A_hit"]["hits_exp"] == 1
+    assert abs(brk["exp_by_plan"]["A_hit"]["exp_hits"] - 0.9) < 1e-9
+    text = "\n".join(lines)
+    assert "外れ方（外れた商品 2件" in text
+    # 旧呼び出し（bought なし）は従来どおりで外れ方を出さない
+    lines0, brk0 = m.section_breakdown(sold, live)
+    assert "外れ方" not in "\n".join(lines0) and brk0["misses"] == {}
+
+
+def test_外れ方と見込みはプラン行にだけ積む(tmp_path, monkeypatch):
+    from collections import Counter
+    m = _load()
+    ledger = tmp_path / "ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    brk = {"per_plan": {"A_hit": Counter({"firm34": 1})}, "gami_by_plan": {},
+           "misses": {"miss_set": 1},
+           "miss_by_plan": {"A_hit": Counter({"miss_set": 1})},
+           "exp_by_plan": {"A_hit": {"n_exp": 1, "hits_exp": 0, "exp_hits": 0.25}}}
+    meta = {"rk": {"race_type": "一般", "hour": 19, "marquee": False}}
+    m.append_ledger("2026-10-29", [_sold_row("A_hit", False)], brk, meta)
+    got = {(r["dim"], r["key"]): r for r in csv.DictReader(ledger.open(encoding="utf-8"))}
+    plan = got[("plan", "A_hit")]
+    assert plan["miss_set"] == "1" and plan["miss_order"] == "0"
+    assert plan["n_exp"] == "1" and float(plan["exp_hits"]) == 0.25
+    rt = got[("race_type", "一般")]
+    for k in ("miss_set", "n_exp", "exp_hits"):
+        assert rt[k] == "", f"race_type 行にも {k} が入っている（構成の影響を受ける比を積む）"
+
+
+def test_見込みの比は列のある行だけで作る(tmp_path, monkeypatch):
+    m = _load()
+    ledger = tmp_path / "ledger.csv"
+    monkeypatch.setattr(m, "LEDGER", ledger)
+    with ledger.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=m.FIELDS)
+        w.writeheader()
+        # 列を足す前の行（空欄）: 的中は多いが見込みの分母には入らない
+        w.writerow({"date": "2026-10-01", "dim": "plan", "key": "A_hit", "n": 50,
+                    "bet": 500_000, "payout": 0, "n_hits": 40, "n_net_hits": 40})
+        for plan, n, h, e in (("A_hit", 10, 2, 4.0), ("B_hit", 10, 4, 4.0)):
+            w.writerow({"date": "2026-10-29", "dim": "plan", "key": plan, "n": n,
+                        "bet": n * 10_000, "payout": 0, "n_hits": h, "n_net_hits": h,
+                        "miss_order": 1, "miss_set": 2, "miss_half": 3, "miss_broken": 1,
+                        "n_exp": n, "hits_exp": h, "exp_hits": e})
+    text = "\n".join(m.section_escalate({}))
+    # 全体 6/8.0 = 0.75。A は 2/4 = 0.5 → 全体比 0.67、B は 1/0.75 = 1.33
+    assert "全体 6/8.0 = 0.75" in text, "空欄の行が分母に入っている"
+    assert "全体比 0.67" in text and "全体比 1.33" in text
+    assert "【プラン別 外れ方の累積】" in text
+
+
+def test_外れ方の区分に外した車の素性を出さない():
+    """反実仮想を出さない: 外した車の指数順位・ライン位置・印を並べない。"""
+    src = SCRIPT.read_text(encoding="utf-8")
+    body = src.split("def section_breakdown", 1)[1].split("# ───", 1)[0]
+    for token in ("sp_role", "sp_mark", "spoiler", "line_pos", "prediction_mark"):
+        assert token not in body, f"外れ方の分解が車の素性を見ている: {token}"

@@ -52,6 +52,9 @@
       **起点（`REVIEW_EPOCH`）ごとに別ファイル**（`ledger_path`）。起点を動かすと新しい
       台帳から積み直し、旧台帳は消さずにそのまま残る。
       **除外日（`EXCLUDED_DAYS`＝2026-09-15）は台帳へ積まず、累積にも数えない。**
+      2026-10-28 に外れ方（`miss_order`/`miss_set`/`miss_half`/`miss_broken`）と見込み
+      （`n_exp`/`hits_exp`/`exp_hits`＝Σ legs.prob）の列を足した。**プラン行だけ**に入れ、
+      追加前の行は空欄のまま（遡って埋めない）。§6 は値のある行だけで集計する。
 
 ⚠️ **過去日へ遡って実行しないこと。** §4 のゲート判定は `axis_sum`＝その日の
    本番モデルの出力に依存する。モデルを再学習した後に遡ると、別のモデルの目で
@@ -83,6 +86,7 @@ from src.entrants import valid_cars_by_race  # noqa: E402
 from src.sold_performance import (                            # noqa: E402
     build_sold_races, group_by, summarize,
 )
+from src.sold_performance import _as_dict as _as_bet_detail   # noqa: E402
 from src.type_lab import (                                    # noqa: E402
     SELLABLE_PLAN_KEYS, TIER_PLAN_KEYS, sell_plans_for, split_legs_by_role)
 from src.confident_pick import TIER_CONFIDENT_PLANS           # noqa: E402
@@ -1021,12 +1025,94 @@ def reference_block(sold, pool, cars_of: dict[str, int] | None,
 
 # ─────────────────── §3 外れの分解（台帳へ積む） ───────────────────
 
-def section_breakdown(sold, live: list[dict]) -> tuple[list[str], dict]:
+#: 外れ方の4区分（2026-10-28 追加）。決着クラスを「外れた商品」だけに絞り、
+#: 指数1・2位がそろった外れを**買った組かどうか**でさらに2つに割る。
+#:
+#: 🔴 **数えるだけ。外した車の素性（指数何位・ライン位置・印）は出さない。**
+#:    それを並べ始めると「この車を足せば当たった」という反実仮想の入口になる。
+#:    10/28 の全期間の分解で、②の車は選手単位では較正どおり（実/モデル 0.92〜1.05）
+#:    ＝モデルの見落としではなく点数の選択だと確認済み（memory
+#:    keirin-daily-miss-breakdown-2026-10-28）。
+MISS_KINDS: list[tuple[str, str]] = [
+    ("miss_order", "① 指数1・2位そろい・買った組の着順違い"),
+    ("miss_set", "② 指数1・2位そろい・その組を買っていない"),
+    ("miss_half", "③ 指数1・2位の片方が4着以下"),
+    ("miss_broken", "④ 指数1・2位とも4着以下"),
+]
+
+
+def bought_sets(subs: list[dict]) -> dict[tuple[str, str], list[tuple[frozenset, bool]]]:
+    """`(race_key, rank_key)` → 実際に売った目の `(車番の集合, 三連単か)`。
+
+    🔴 正本は `bet_detail.lines`（実際に入稿した目）。型ラボの `legs` は作った時点の
+       計画で、欠車返還や配分で売ったものとずれうる。読めない入稿は入れない
+       （呼び出し側で「判定不能」に数える）。
+    """
+    out: dict[tuple[str, str], list[tuple[frozenset, bool]]] = {}
+    for s in subs:
+        if s.get("deleted_at") is not None or s.get("status") not in ("submitted", "published"):
+            continue
+        detail = _as_bet_detail(s.get("bet_detail")) or {}
+        lines = []
+        for line in detail.get("lines") or []:
+            cars = [p for p in str(line.get("combo") or "").replace("=", "-").split("-")
+                    if p.strip().isdigit()]
+            if len(cars) != 3:
+                continue
+            lines.append((frozenset(int(c) for c in cars),
+                          str(line.get("bet_type")) == "3連単"))
+        if lines:
+            out.setdefault((str(s["race_key"]), str(s["rank_key"])), []).extend(lines)
+    return out
+
+
+def miss_kind(cls: str | None, hit: bool, win_combo: str | None,
+              bought: list[tuple[frozenset, bool]] | None) -> str | None:
+    """外れた商品の区分（`MISS_KINDS` の key）。当たり・分類不能は None、
+    指数1・2位がそろったのに売った目が読めないときは `"unknown"`。"""
+    if hit or cls is None:
+        return None
+    if cls in ("half34", "half_ana"):
+        return "miss_half"
+    if cls == "broken":
+        return "miss_broken"
+    if bought is None:
+        return "unknown"
+    fin = frozenset(_OUTCOME.finishers(win_combo))
+    if any(tri and cars == fin for cars, tri in bought):
+        return "miss_order"
+    return "miss_set"
+
+
+def leg_prob_sum(legs: object) -> float | None:
+    """型ラボの行の `legs[].prob` の和＝**その商品が当たる見込み（モデル）**。
+
+    買い目は互いに排他（1レースで当たる組は1つ）なので和がそのまま的中確率になる。
+    読めなければ None（0 にすると見込みが過小になり「実際÷見込み」が膨らむ）。
+    """
+    if isinstance(legs, str):
+        try:
+            legs = json.loads(legs)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(legs, list) or not legs:
+        return None
+    try:
+        return sum(float(x.get("prob")) for x in legs)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def section_breakdown(sold, live: list[dict],
+                      bought: dict | None = None) -> tuple[list[str], dict]:
     """売った商品の決着を分類する。**反実仮想は出さない。**
 
     分類は `keirin_type_lab_outcome.finish_class` に委譲する（順当／軸2+穴／
     片軸+中位／片軸+穴／軸崩壊）。`p3_order` が無い行は分類しない——後から
     `wt_entries` を引き直すと、モデルの再学習ぶんだけ当時と違う並びになる。
+
+    `bought`（`bought_sets()`）を渡すと、外れた商品を `MISS_KINDS` の4つに分ける。
+    見込み（`legs[].prob` の和）はプラン別に積み、§6 で「実際÷見込み」を出す。
     """
     out: list[str] = []
     idx = {(str(d["race_key"]), str(d["plan_key"])): d for d in live}
@@ -1036,8 +1122,20 @@ def section_breakdown(sold, live: list[dict]) -> tuple[list[str], dict]:
     n_gami = 0
     gami_by_plan: Counter = Counter()
     n_hits_cls = 0
+    misses: Counter = Counter()
+    miss_by_plan: dict[str, Counter] = {}
+    #: プラン → {"n_exp": 見込みを持つ商品数, "hits_exp": そのうち素の的中, "exp_hits": Σ見込み}
+    exp_by_plan: dict[str, dict[str, float]] = {}
     for r in sold:
         d = idx.get((r.race_key, r.rank_key))
+        if d is not None:
+            p = leg_prob_sum(d.get("legs"))
+            if p is not None:
+                e = exp_by_plan.setdefault(r.rank_key,
+                                           {"n_exp": 0, "hits_exp": 0, "exp_hits": 0.0})
+                e["n_exp"] += 1
+                e["hits_exp"] += int(r.hit)
+                e["exp_hits"] += p
         cls = None
         if d is not None:
             cls = _OUTCOME.finish_class(d.get("win_combo"), d.get("p3_order"))
@@ -1050,6 +1148,12 @@ def section_breakdown(sold, live: list[dict]) -> tuple[list[str], dict]:
         if r.hit and not r.net_hit:
             n_gami += 1
             gami_by_plan[r.rank_key] += 1
+        if bought is not None:
+            mk = miss_kind(cls, r.hit, d.get("win_combo"),
+                           bought.get((r.race_key, r.rank_key)))
+            if mk is not None:
+                misses[mk] += 1
+                miss_by_plan.setdefault(r.rank_key, Counter())[mk] += 1
 
     labels = {c["key"]: c["label"] for c in _OUTCOME.FINISH_CLASSES}
     order = [c["key"] for c in _OUTCOME.FINISH_CLASSES]
@@ -1079,9 +1183,26 @@ def section_breakdown(sold, live: list[dict]) -> tuple[list[str], dict]:
                    f"   = 素の的中 {hit}/{n} = {hit / n:.1%}")
         out.append("    ※ どちらが効いているかで打ち手が変わる（軸＝モデル側／"
                    "相手＝買い目側）。1日ぶんでは判断しない。台帳に積む。")
+
+    n_miss = sum(v for k, v in misses.items() if k != "unknown")
+    if bought is not None and (n_miss or misses.get("unknown")):
+        out.append("")
+        out.append(f"  外れ方（外れた商品 {n_miss}件・軸＝指数1・2位）")
+        for k, label in MISS_KINDS:
+            v = misses.get(k, 0)
+            out.append(f"    {label:<24}{v:>4}件  {(v / n_miss if n_miss else 0):6.1%}")
+        if misses.get("unknown"):
+            out.append(f"    ⚠️ 売った目が読めず①②を決められなかった {misses['unknown']}件")
+        for plan in sorted(miss_by_plan):
+            c = miss_by_plan[plan]
+            out.append(f"    {plan:<10}" + "  ".join(
+                f"{label[0]}{c.get(k, 0)}" for k, label in MISS_KINDS))
+        out.append("    ※ ①②はプランの設計で比率が決まる（狙いの狭いプランほど②が多い）。"
+                   "日ごとの増減では判断しない。台帳に積む。")
     return out, {"counts": dict(counts), "per_plan": per_plan,
                  "n_unclassified": n_unclassified, "n_gami": n_gami,
-                 "gami_by_plan": gami_by_plan}
+                 "gami_by_plan": gami_by_plan, "misses": dict(misses),
+                 "miss_by_plan": miss_by_plan, "exp_by_plan": exp_by_plan}
 
 
 # ─────────────────── §4 軸信頼ゲートの答え合わせ ───────────────────
@@ -1350,8 +1471,19 @@ def section_confident(day: str, n_boot: int, seed: int) -> list[str]:
 #:    どちらの窓も一度は別の目的で使われており **前向きにしか確定させられない**。
 #:    積んでいなければ半年後にも同じことしか言えないので、軸ごとに毎晩積む。
 #: 🔴 決着クラスの内訳は `dim="plan"` の行にだけ入れる（他の軸で足すと二重に数える）。
+#: 🔴 2026-10-28 追加の列（外れ方 `miss_*` と見込み `n_exp`/`hits_exp`/`exp_hits`）も
+#:    **プラン行だけ**。種別・時間帯の「実際÷見込み」はプランの構成で動くので積まない
+#:    （10/28 実測: 準決勝 0.68 → プラン構成をそろえると 0.83・CI が 1 を跨ぐ）。
+#:    追加前の日の行は空欄のまま（遡って埋めない）。集計は値のある行だけで行う。
 FIELDS = ["date", "dim", "key", "n", "bet", "payout", "n_hits", "n_net_hits",
-          "firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami"]
+          "firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami",
+          "miss_order", "miss_set", "miss_half", "miss_broken",
+          "n_exp", "hits_exp", "exp_hits"]
+
+#: プラン行にだけ入れる列（`append_ledger` が他の軸では空欄にする）。
+PLAN_ONLY_FIELDS = ("firm34", "firm_ana", "half34", "half_ana", "broken", "n_gami",
+                    "miss_order", "miss_set", "miss_half", "miss_broken",
+                    "n_exp", "hits_exp", "exp_hits")
 
 #: 積む軸。値の作り方は `_segments()`。
 LEDGER_DIMS = ("plan", "race_type", "band", "marquee", "payout_band")
@@ -1419,6 +1551,25 @@ def append_ledger(day: str, sold, brk: dict, race_meta: dict | None = None) -> N
         for k in ("firm34", "firm_ana", "half34", "half_ana", "broken"):
             b[k] = c.get(k, 0)
         b["n_gami"] = int(brk["gami_by_plan"].get(plan, 0))
+    # 外れ方と見込みもプラン行だけ。`misses` を持たない brk（旧呼び出し）は空欄のまま。
+    for (dim, plan), b in buckets.items():
+        if dim != "plan":
+            for k in PLAN_ONLY_FIELDS:
+                b[k] = ""
+            continue
+        if "miss_by_plan" in brk:
+            c = brk["miss_by_plan"].get(plan, {})
+            for k, _label in MISS_KINDS:
+                b[k] = int(c.get(k, 0))
+        else:
+            for k, _label in MISS_KINDS:
+                b[k] = ""
+        e = (brk.get("exp_by_plan") or {}).get(plan)
+        if e:
+            b["n_exp"], b["hits_exp"] = int(e["n_exp"]), int(e["hits_exp"])
+            b["exp_hits"] = round(float(e["exp_hits"]), 4)
+        else:
+            b["n_exp"] = b["hits_exp"] = b["exp_hits"] = ""
     rows = [{"date": day, "dim": dim, "key": key, **vals}
             for (dim, key), vals in sorted(buckets.items())]
     if not rows:
@@ -1454,6 +1605,8 @@ def section_escalate(pool) -> list[str]:
     if not LEDGER.exists():
         return out + ["  台帳がまだ無い（次回から積み上がる）"]
     agg: dict[tuple[str, str], dict[str, int]] = {}
+    miss_agg: dict[str, Counter] = {}
+    exp_agg: dict[str, dict[str, float]] = {}
     with LEDGER.open(encoding="utf-8") as f:
         for r in csv.DictReader(f):
             # 🔴 除外日の行が台帳に紛れていても数えない（手で流した・旧コードが積んだ等）。
@@ -1464,6 +1617,18 @@ def section_escalate(pool) -> list[str]:
                                    ("n", "bet", "payout", "n_net_hits")})
             for x in a:
                 a[x] += int(r.get(x) or 0)
+            # 外れ方・見込みは列を積み始めた後の行だけ（空欄の行は分母にも入れない）。
+            if k[0] == "plan":
+                if (r.get("miss_order") or "") != "":
+                    m = miss_agg.setdefault(k[1], Counter())
+                    for x, _label in MISS_KINDS:
+                        m[x] += int(r.get(x) or 0)
+                if (r.get("exp_hits") or "") != "":
+                    e = exp_agg.setdefault(k[1], {"n_exp": 0, "hits_exp": 0,
+                                                  "exp_hits": 0.0})
+                    e["n_exp"] += int(r.get("n_exp") or 0)
+                    e["hits_exp"] += int(r.get("hits_exp") or 0)
+                    e["exp_hits"] += float(r.get("exp_hits") or 0)
 
     def rate(a: dict) -> tuple[float, float]:
         return (a["n_net_hits"] / a["n"] if a["n"] else 0.0,
@@ -1499,6 +1664,52 @@ def section_escalate(pool) -> list[str]:
                        f"  ROI {roi:6.1%}{todo}{mark}")
     out.append("    ※ 種別・時間帯・看板には参照分布が無い（paper 側にゲート後の"
                "同一軸が無い）。**同じ軸の中の並びだけ**を見ること。")
+    out += escalate_calibration(exp_agg)
+    out += escalate_misses(miss_agg)
+    return out
+
+
+def escalate_calibration(exp_agg: dict[str, dict[str, float]]) -> list[str]:
+    """プラン別の「素の的中 ÷ 見込み（Σ legs.prob）」を、全体の比を 1 として並べる。
+
+    🔴 **プラン行だけ。** 種別・時間帯の比はプランの構成で動く（10/28 実測で
+       準決勝 0.68 → 構成をそろえると 0.83）。生の比を並べると、その誤読を毎晩誘う。
+    🔴 全体が 1 を下回るのは平常（9/16〜10/27 で 0.87）。見るのは**全体との差**。
+    """
+    tot_n = sum(int(e["n_exp"]) for e in exp_agg.values())
+    tot_h = sum(int(e["hits_exp"]) for e in exp_agg.values())
+    tot_e = sum(float(e["exp_hits"]) for e in exp_agg.values())
+    if not tot_n or tot_e <= 0:
+        return []
+    cal = tot_h / tot_e
+    out = ["", (f"  【プラン別 実際÷見込み】見込み＝買い目の確率の和。"
+                f"全体 {tot_h}/{tot_e:.1f} = {cal:.2f}（見込みの記録がある {tot_n}件）")]
+    for plan, e in sorted(exp_agg.items(), key=lambda kv: -int(kv[1]["n_exp"])):
+        n, h, x = int(e["n_exp"]), int(e["hits_exp"]), float(e["exp_hits"])
+        if x <= 0:
+            continue
+        rel = h / x / cal if cal > 0 else 0.0
+        todo = "" if n >= ESCALATE_MIN_N else f"  （{ESCALATE_MIN_N}件まで判定しない）"
+        out.append(f"    {plan:<14}{n:>4}件  的中 {h:>3} / 見込み {x:6.1f}"
+                   f"  全体比 {rel:4.2f}{todo}")
+    out.append("    ※ 1 より小さい＝モデルの見込みほど当たっていない（そのプランだけ確率が"
+               "強気）。1日では動かない。")
+    return out
+
+
+def escalate_misses(miss_agg: dict[str, Counter]) -> list[str]:
+    """プラン別の外れ方（①〜④）の累積構成。**採否はここで決めない。**"""
+    if not miss_agg:
+        return []
+    out = ["", "  【プラン別 外れ方の累積】" + " / ".join(l for _k, l in MISS_KINDS)]
+    for plan, c in sorted(miss_agg.items(), key=lambda kv: -sum(kv[1].values())):
+        n = sum(c.get(k, 0) for k, _l in MISS_KINDS)
+        if not n:
+            continue
+        out.append(f"    {plan:<14}外れ {n:>4}件  " + "  ".join(
+            f"{l[0]}{c.get(k, 0) / n:4.0%}" for k, l in MISS_KINDS))
+    out.append("    ※ 構成はプランの設計でほぼ決まる（狭く買うプランは②が多い）。"
+               "同じプランの構成が時期で動いたかだけを見る。")
     return out
 
 
@@ -1549,7 +1760,7 @@ def build_report(day: str, n_boot: int, append: bool = True) -> tuple[str, str, 
     lines.append("")
 
     lines.append("## §3 外れの分解 — **台帳へ積む。反実仮想は出さない**")
-    brk_lines, brk = section_breakdown(sold, live)
+    brk_lines, brk = section_breakdown(sold, live, bought_sets(subs))
     lines += brk_lines
     lines.append("")
 

@@ -294,7 +294,7 @@ def build(day: str, n_boot: int = 2000) -> str:
 
     # §3
     A('<h2>§3 外れの分解 <small>台帳へ積む。反実仮想は出さない</small></h2>')
-    brk_lines, brk = NR.section_breakdown(sold, live)
+    brk_lines, brk = NR.section_breakdown(sold, live, NR.bought_sets(subs))
     counts = brk["counts"]
     order = [c["key"] for c in NR._OUTCOME.FINISH_CLASSES]
     lab = {c["key"]: c["label"] for c in NR._OUTCOME.FINISH_CLASSES}
@@ -312,6 +312,25 @@ def build(day: str, n_boot: int = 2000) -> str:
               f'{esc(line.strip())}</p>')
     A('<p class="note">軸2車そろい（モデル側）× 相手カバー（買い目側）に分けて見る。'
       'どちらが効いているかで打ち手が変わる。<b>1日ぶんでは判断しない。</b></p>')
+    # 外れ方（①〜④）。数えるだけで、外した車の素性は出さない（反実仮想の入口になる）。
+    misses = brk.get("misses") or {}
+    mkeys = [k for k, _l in NR.MISS_KINDS]
+    mlab = dict(NR.MISS_KINDS)
+    if any(misses.get(k) for k in mkeys):
+        mrows = [("全体", [(k, misses.get(k, 0)) for k in mkeys])]
+        for plan, c in sorted(brk["miss_by_plan"].items()):
+            mrows.append((plan, [(k, c.get(k, 0)) for k in mkeys]))
+        A('<div class="legend" style="margin-top:10px">外れ方（外れた商品・軸＝指数1・2位）</div>')
+        A(stacked(mrows, mkeys))
+        A('<div class="legend">'
+          + "".join(f'<span><i style="background:{BAND_COLORS[i % 5]}"></i>'
+                    f'{esc(mlab[k])} {misses.get(k, 0)}件</span>'
+                    for i, k in enumerate(mkeys)) + "</div>")
+        if misses.get("unknown"):
+            A(f'<p class="note">⚠️ 売った目が読めず①②を決められなかった '
+              f'{misses["unknown"]}件</p>')
+        A('<p class="note">①②の比はプランの設計で決まる（狭く買うプランほど②が多い）。'
+          '<b>日ごとの増減では判断しない。</b>累積は §6。</p>')
     A("</div>")
 
     # §3.5 / §3.6
