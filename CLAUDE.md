@@ -2185,6 +2185,21 @@ ChihouSweetSpotResponse {
 | `backend/scripts/backtest_chihou_sweetspot.py --version N [--show-bias]` | sweet_spot/place_bet の honest バックテスト（本番同一母集団・2026-07-23新設） |
 | `backend/scripts/backtest_chihou_low_odds.py` | low_odds 信頼/不信頼分割の検証 |
 
+## kiseki-lab の読み取り専用アクセス（2026-10-31）
+
+別プロジェクト kiseki-lab（指数を波乱帯別に観測するだけ・書き込みなし）が、
+ロール `kiseki_lab_ro` で本番 `hrdb` を読んでいる。経路は SSH 利用者 `kisekilab` の
+トンネル経由（VPS の `127.0.0.1:5432`）だけ。権限・設定・戻し方は
+`docs/kiseki_lab_readonly_access.md`。
+
+🔴 **pg_hba.conf を編集するときは、`kiseki_lab_ro` の4行（`local all postgres peer` の直後）を
+既存の `host all all ... md5` 行より上に保つこと。** 既存行は外部 IP・Tailscale・Docker から
+全ユーザーを受け付けており、pg_hba は最初に当たった行を使う。4行が下に回ると
+読み取り専用ロールが外から入れるようになる。
+
+⚠️ 今後のテーブルへの SELECT 自動付与は `FOR ROLE hrdb_user` に掛けてある。
+hrdb_user 以外（postgres 等）で keiba / chihou / keirin にテーブルを作ったら手で GRANT すること。
+
 ## DB 自動バックアップ運用
 
 VPS PostgreSQL `hrdb` (4.96GB) を Mac に毎日 03:30 JST 自動バックアップ。
