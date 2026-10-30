@@ -141,6 +141,14 @@ JOBS: list[Job] = [
         note="水曜 19:00（MacBook の plist と照合済み 2026-09-23）。netkeiba の出走想定は水曜 20:00 までに出揃うため、取りこぼしがあれば時刻を見直す",
     ),
     Job(
+        "notify-pog-report",
+        ["scripts/notify_pog_report.sh"],
+        cron=["30 20 * * 3"],
+        max_age=8 * D,
+        note="POG 週報（PDF を Discord へ）。19:00 の scrape-projected と 19:30 の出走想定通知の後。"
+        "netkeiba 70頭で約23分。PDF 化に Chrome が要るので VPS ではなくここで動かす",
+    ),
+    Job(
         "scrape-special-jockeys",
         ["scripts/scrape_special_jockeys.sh"],
         cron=["30 18 * * *"],
