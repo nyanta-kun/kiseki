@@ -70,8 +70,7 @@
     4. 吉馬のレース網羅率 — 同上。正常時は実測 1.0。
        ⚠️ 吉馬は**新馬戦でも取れている**（2026-09-05 実測 36/36R）ので、
        3 の新馬除外をここへ広げないこと。
-    5. 穴ぐさの当日ピック — 中央開催日にピックが 0 件なら WARN。穴ぐさは
-       全レースにピックが付くわけではないので、比率ではなく有無で見る。
+    （旧 5. 穴ぐさの当日ピック — サラブレのサービス終了で 2026-10-31 に取得ごと削除）
 
     網羅率の既定閾値 0.8 は「数レースの取りこぼしは許すが、体系的な欠落は
     捕まえる」水準。障害時の実測値（中央 0.28 / 地方 0.00）とは大きく離れており、
@@ -208,9 +207,6 @@ _EXPECTED_JOBS: tuple[tuple[str, frozenset[int] | None, str], ...] = (
     # 6 週間誰も気づかなかった。Mac mini の launchd で動くので、Mac mini が
     # 止まっていたら木曜朝のこのチェックで分かる。
     ("notify_pog_report", frozenset({2}), "POG 週報（水曜 20:30・Mac mini）"),
-    # 穴ぐさとパドックは土日月のみ。
-    # ⚠️ 穴ぐさは月曜にピックが出ないが**ジョブ自体は走る**ので、ここには含める。
-    ("scrape_anagusa", frozenset({5, 6, 0}), "穴ぐさ（土日月 07:10）"),
 )
 
 
@@ -355,18 +351,6 @@ def check_kichiuma_coverage(s, target: date, rep: Report) -> None:
     _judge(rep, "吉馬[地方]", nar_got, nar_held, COVERAGE_MIN)
 
 
-def check_anagusa_presence(s, target: date, rep: Report) -> None:
-    """⑤ 中央開催日に穴ぐさのピックが入っているか（比率ではなく有無で見る）。"""
-    jra_held, _ = _race_counts(s, target)
-    if jra_held == 0:
-        return
-    n = s.execute(text("select count(*) from sekito.anagusa where date = :d"), {"d": target}).scalar_one()
-    if n == 0:
-        rep.warn(f"穴ぐさ: 中央 {jra_held}R の開催日なのにピックが 0 件")
-    else:
-        rep.ok(f"穴ぐさ: {n} 件")
-
-
 def main() -> int:
     p = argparse.ArgumentParser(description="sekito スクレイプ供給の死活監視")
     p.add_argument(
@@ -395,7 +379,6 @@ def main() -> int:
         check_job_failures(s, target, rep)
         check_netkeiba_coverage(s, target, rep)
         check_kichiuma_coverage(s, target, rep)
-        check_anagusa_presence(s, target, rep)
 
     header = f"スクレイプ供給チェック {target}"
     print("=" * 72)

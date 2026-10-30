@@ -82,12 +82,6 @@ class Settings(BaseSettings):
     #    見るので、どの接尾辞で書いても kiseki・sekito 双方のゲートが効く。
     scraper_environment_id: str = "local"
 
-    # --- サラブレ（穴ぐさ）スクレイピング ---
-    # 2026-09-06 の統合 Phase 2 で sekito から移設。VPS では sekito 側の .env に
-    # だけ入っていたので、kiseki の .env にも同じ値を置く必要がある。
-    sarabure_user: str = ""
-    sarabure_pass: str = ""
-
     # --- Auth (Auth.js / NextAuth.js) ---
     auth_secret: str = ""
     auth_password: str = ""
