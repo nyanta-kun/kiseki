@@ -119,6 +119,17 @@ def test_merge_prefers_confirmed() -> None:
     assert [(e.horse_id, e.src) for e in merged] == [("2", "nk"), ("1", "fix")]
 
 
+def test_merge_carries_projected_jockey_to_special() -> None:
+    """特別登録には鞍上が無いので、同じ馬の想定鞍上を移す（水曜の号の重賞）。"""
+    sat = date(2026, 10, 31)
+    from dataclasses import replace
+
+    sp = _entry("1", sat, "sp", "15:45")
+    nk = replace(_entry("1", sat, "nk"), jockey="ルメール")
+    merged = pr.merge_entries([sp], [nk])
+    assert [(e.src, e.jockey) for e in merged] == [("sp", "ルメール")]
+
+
 def _report(**kw: object) -> pr.Report:
     base = dict(
         title="赤兎週報",

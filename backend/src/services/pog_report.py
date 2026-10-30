@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
 ESC = html.escape
@@ -407,11 +407,20 @@ def owner_label(owners: object) -> str:
 def merge_entries(confirmed: list[EntryRow], projected: list[EntryRow]) -> list[EntryRow]:
     """出馬表・特別登録と出走想定をまとめる。
 
-    同じ馬・同じ日は出馬表（`fix`）を優先し、想定は捨てる。木曜以降に
+    同じ馬・同じ日は出馬表・特別登録を優先し、想定は捨てる。木曜以降に
     確定出馬表が入ると、水曜の想定と二重に載るのを防ぐ。
+
+    ただし**特別登録には鞍上が無い**。水曜の号では重賞が特別登録と想定の
+    両方に載るので、想定の鞍上を特別登録の行へ移してから捨てる
+    （捨てると、いちばん注目されるレースだけ鞍上が「未定」になる）。
     """
+    proj = {(p.horse_id, p.day): p for p in projected}
+    kept = [
+        replace(e, jockey=proj[(e.horse_id, e.day)].jockey) if not e.jockey and (e.horse_id, e.day) in proj else e
+        for e in confirmed
+    ]
     have = {(e.horse_id, e.day) for e in confirmed}
-    merged = list(confirmed) + [p for p in projected if (p.horse_id, p.day) not in have]
+    merged = kept + [p for p in projected if (p.horse_id, p.day) not in have]
     return sorted(merged, key=lambda e: (e.day, e.time or "99:99", e.place, e.horse))
 
 
