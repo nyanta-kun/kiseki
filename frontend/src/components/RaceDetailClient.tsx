@@ -654,7 +654,7 @@ export function RaceDetailClient({
 
               {/* 穴ぐさランク */}
               <div>
-                <p className="font-bold text-gray-700 mb-1">⭐ 穴ぐさランク <span className="font-normal text-gray-500 text-[10px]">(専門紙 sekito.anagusa ピック)</span></p>
+                <p className="font-bold text-gray-700 mb-1">⭐ 穴ぐさランク <span className="font-normal text-gray-500 text-[10px]">(サラブレのピック・サービス終了により 2026-10-25 開催まで)</span></p>
                 <ul className="space-y-1 ml-1">
                   <li className="flex items-start gap-2">
                     <span className={cn("text-[9px] px-1 py-0.5 rounded border font-bold whitespace-nowrap shrink-0", ANAGUSA_RANK_COLOR.A)}>

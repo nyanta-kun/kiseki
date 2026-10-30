@@ -44,12 +44,14 @@ def _parse_nb_num(raw: str | None) -> float | None:
     if not raw or raw.strip() in ("-", "", "0"):
         return None
     import re as _re
+
     m = _re.search(r"\d+", raw)
     return float(m.group()) if m else None
 
 
 async def _fetch_external_data_batch(
-    session: AsyncSession, races: list,
+    session: AsyncSession,
+    races: list,
 ) -> dict[int, dict[int, dict[str, int | None]]]:
     """複数レース分の外部指数ランクを一括取得する。
 
@@ -64,23 +66,34 @@ async def _fetch_external_data_batch(
             continue
         race_date = _date(int(race.date[:4]), int(race.date[4:6]), int(race.date[6:8]))
 
-        nb_rows = (await session.execute(
-            _text("SELECT horse_no, idx_course, idx_ave FROM sekito.netkeiba"
-                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
-            {"d": race_date, "c": sekito_code, "r": race.race_number},
-        )).fetchall()
+        nb_rows = (
+            await session.execute(
+                _text(
+                    "SELECT horse_no, idx_course, idx_ave FROM sekito.netkeiba"
+                    " WHERE date = :d AND course_code = :c AND race_no = :r"
+                ),
+                {"d": race_date, "c": sekito_code, "r": race.race_number},
+            )
+        ).fetchall()
 
-        km_rows = (await session.execute(
-            _text("SELECT horse_no, sp_score FROM sekito.kichiuma"
-                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
-            {"d": race_date, "c": sekito_code, "r": race.race_number},
-        )).fetchall()
+        km_rows = (
+            await session.execute(
+                _text(
+                    "SELECT horse_no, sp_score FROM sekito.kichiuma"
+                    " WHERE date = :d AND course_code = :c AND race_no = :r"
+                ),
+                {"d": race_date, "c": sekito_code, "r": race.race_number},
+            )
+        ).fetchall()
 
-        ag_rows = (await session.execute(
-            _text("SELECT horse_no, rank FROM sekito.anagusa"
-                  " WHERE date = :d AND course_code = :c AND race_no = :r"),
-            {"d": race_date, "c": sekito_code, "r": race.race_number},
-        )).fetchall()
+        ag_rows = (
+            await session.execute(
+                _text(
+                    "SELECT horse_no, rank FROM sekito.anagusa" " WHERE date = :d AND course_code = :c AND race_no = :r"
+                ),
+                {"d": race_date, "c": sekito_code, "r": race.race_number},
+            )
+        ).fetchall()
         anagusa_ranks = {hn: r for hn, r in ag_rows if r in ("A", "B", "C")}
 
         nb_course: dict[int, float] = {}
@@ -105,10 +118,7 @@ async def _fetch_external_data_batch(
         nb_ave_ranks = _rank(nb_ave)
         km_ranks = _rank(km_score)
 
-        all_horses = (
-            set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys())
-            | set(anagusa_ranks.keys())
-        )
+        all_horses = set(nb_course.keys()) | set(nb_ave.keys()) | set(km_score.keys()) | set(anagusa_ranks.keys())
         result[race.id] = {
             hn: {
                 "nb_course_rank": nb_course_ranks.get(hn),
@@ -119,6 +129,7 @@ async def _fetch_external_data_batch(
             for hn in all_horses
         }
     return result
+
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +169,7 @@ def _fmt_date(date_str: str) -> str:
 
 async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str, Any]]:
     """当日の全レースデータ（指数・オッズ付き）を収集する。"""
-    races_result = await session.execute(
-        select(Race).where(Race.date == date).order_by(Race.post_time, Race.id)
-    )
+    races_result = await session.execute(select(Race).where(Race.date == date).order_by(Race.post_time, Race.id))
     races = races_result.scalars().all()
     if not races:
         return []
@@ -172,8 +181,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         select(CalculatedIndex, RaceEntry, Horse)
         .join(
             RaceEntry,
-            (RaceEntry.race_id == CalculatedIndex.race_id)
-            & (RaceEntry.horse_id == CalculatedIndex.horse_id),
+            (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id),
         )
         .join(Horse, Horse.id == CalculatedIndex.horse_id)
         .where(
@@ -189,16 +197,10 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
     race_ids_tuple = tuple(race_ids)
 
     latest_time_result = await session.execute(
-        select(func.max(OddsHistory.fetched_at)).where(
-            OddsHistory.race_id.in_(race_ids_tuple)
-        )
+        select(func.max(OddsHistory.fetched_at)).where(OddsHistory.race_id.in_(race_ids_tuple))
     )
     latest_time = latest_time_result.scalar()
-    time_filter = (
-        [OddsHistory.fetched_at >= latest_time - timedelta(minutes=5)]
-        if latest_time is not None
-        else []
-    )
+    time_filter = [OddsHistory.fetched_at >= latest_time - timedelta(minutes=5)] if latest_time is not None else []
 
     odds_result = await session.execute(
         select(
@@ -293,38 +295,40 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             ev_place = round(place_prob * p_odds, 3) if place_prob is not None and p_odds is not None else None
 
             ext = race_ext.get(entry.horse_number, {})
-            horses.append({
-                "horse_number": entry.horse_number,
-                "horse_name": horse.name,
-                "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
-                "win_probability": round(win_prob, 4) if win_prob is not None else None,
-                "place_probability": round(place_prob, 4) if place_prob is not None else None,
-                "win_odds": w_odds,
-                "place_odds": p_odds,
-                "ev_win": ev_win,
-                "ev_place": ev_place,
-                "anagusa_index": round(float(ci.anagusa_index), 1) if ci.anagusa_index else None,
-                "nb_course_rank": ext.get("nb_course_rank"),
-                "nb_ave_rank": ext.get("nb_ave_rank"),
-                "km_rank": ext.get("km_rank"),
-                # JV-Next DM 指数 (DMシグナル算出に使用)
-                "jvan_time_dm": _f(entry.jvan_time_dm),
-                "jvan_battle_dm": _f(entry.jvan_battle_dm),
-                "anagusa_rank": ext.get("anagusa_rank"),
-                # サブ指数 (人気薄リランカー upset_reranker の特徴量)
-                "speed_index": _f(ci.speed_index),
-                "adjusted_speed_index": _f(ci.adjusted_speed_index),
-                "last_3f_index": _f(ci.last_3f_index),
-                "course_aptitude": _f(ci.course_aptitude),
-                "distance_aptitude": _f(ci.distance_aptitude),
-                "position_advantage": _f(ci.position_advantage),
-                "jockey_index": _f(ci.jockey_index),
-                "pace_index": _f(ci.pace_index),
-                "rotation_index": _f(ci.rotation_index),
-                "rebound_index": _f(ci.rebound_index),
-                "career_phase_index": _f(ci.career_phase_index),
-                "distance_change_index": _f(ci.distance_change_index),
-            })
+            horses.append(
+                {
+                    "horse_number": entry.horse_number,
+                    "horse_name": horse.name,
+                    "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
+                    "win_probability": round(win_prob, 4) if win_prob is not None else None,
+                    "place_probability": round(place_prob, 4) if place_prob is not None else None,
+                    "win_odds": w_odds,
+                    "place_odds": p_odds,
+                    "ev_win": ev_win,
+                    "ev_place": ev_place,
+                    "anagusa_index": round(float(ci.anagusa_index), 1) if ci.anagusa_index else None,
+                    "nb_course_rank": ext.get("nb_course_rank"),
+                    "nb_ave_rank": ext.get("nb_ave_rank"),
+                    "km_rank": ext.get("km_rank"),
+                    # JV-Next DM 指数 (DMシグナル算出に使用)
+                    "jvan_time_dm": _f(entry.jvan_time_dm),
+                    "jvan_battle_dm": _f(entry.jvan_battle_dm),
+                    "anagusa_rank": ext.get("anagusa_rank"),
+                    # サブ指数 (人気薄リランカー upset_reranker の特徴量)
+                    "speed_index": _f(ci.speed_index),
+                    "adjusted_speed_index": _f(ci.adjusted_speed_index),
+                    "last_3f_index": _f(ci.last_3f_index),
+                    "course_aptitude": _f(ci.course_aptitude),
+                    "distance_aptitude": _f(ci.distance_aptitude),
+                    "position_advantage": _f(ci.position_advantage),
+                    "jockey_index": _f(ci.jockey_index),
+                    "pace_index": _f(ci.pace_index),
+                    "rotation_index": _f(ci.rotation_index),
+                    "rebound_index": _f(ci.rebound_index),
+                    "career_phase_index": _f(ci.career_phase_index),
+                    "distance_change_index": _f(ci.distance_change_index),
+                }
+            )
 
         if not horses:
             continue
@@ -335,17 +339,11 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             key=lambda h: h["composite_index"],
             reverse=True,
         )
-        gap_1_2 = (
-            round(ranked[0]["composite_index"] - ranked[1]["composite_index"], 2)
-            if len(ranked) >= 2
-            else None
-        )
+        gap_1_2 = round(ranked[0]["composite_index"] - ranked[1]["composite_index"], 2) if len(ranked) >= 2 else None
         # 上位2頭が3位以下から抜け出している差 (breakaway 指標)
         # v26 検証: top2_t3_gap≥7 で上位2頭中穴オッズ → 単勝ROI 1.593
         top2_t3_gap = (
-            round(ranked[1]["composite_index"] - ranked[2]["composite_index"], 2)
-            if len(ranked) >= 3
-            else None
+            round(ranked[1]["composite_index"] - ranked[2]["composite_index"], 2) if len(ranked) >= 3 else None
         )
         # win_probability ベースの gap12（bet-structure-guide.md の競馬版適用）
         # gap12_prob が大きい = 1位と2位の確率差が明確 = 2頭軸戦略が有効
@@ -356,16 +354,13 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         )
         gap12_prob = (
             round(
-                float(ranked_by_prob[0]["win_probability"])
-                - float(ranked_by_prob[1]["win_probability"]),
+                float(ranked_by_prob[0]["win_probability"]) - float(ranked_by_prob[1]["win_probability"]),
                 4,
             )
             if len(ranked_by_prob) >= 2
             else None
         )
-        win_prob_rank1 = (
-            float(ranked[0].get("win_probability") or 0) if ranked else None
-        )
+        win_prob_rank1 = float(ranked[0].get("win_probability") or 0) if ranked else None
 
         # 外部指数穴馬候補を計算（CI4位以下でnb_course_rank=1、またはNB1×KM1）
         ci_rank_map = {h["horse_number"]: i + 1 for i, h in enumerate(ranked)}
@@ -402,11 +397,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
             odds_rank = odds_rank_map.get(h["horse_number"])
             h["index_rank"] = idx_rank
             h["odds_rank"] = odds_rank
-            h["odds_rank_gap"] = (
-                odds_rank - idx_rank
-                if idx_rank is not None and odds_rank is not None
-                else None
-            )
+            h["odds_rank_gap"] = odds_rank - idx_rank if idx_rank is not None and odds_rank is not None else None
 
             # 購入シグナル (v26 breakaway ROI 検証ベース)
             #   super_buy: 単勝ROI 1.593 (rank<=2 ∧ top2_t3_gap>=7 ∧ オッズ>=10)
@@ -423,6 +414,7 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         from types import SimpleNamespace
 
         from ..indices.dm_signals import compute_dm_signals
+
         sig_objs = [
             SimpleNamespace(
                 horse_number=h["horse_number"],
@@ -451,10 +443,12 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         # レース条件を渡して低信頼セグメントは自動除外
         compute_dm_signals(
             sig_objs,
-            popularity_map={obj.horse_number: odds_rank_map[obj.horse_number]
-                            for obj in sig_objs if obj.horse_number in odds_rank_map},
-            win_odds_map={h["horse_number"]: h["win_odds"]
-                          for h in horses if h.get("win_odds") is not None},
+            popularity_map={
+                obj.horse_number: odds_rank_map[obj.horse_number]
+                for obj in sig_objs
+                if obj.horse_number in odds_rank_map
+            },
+            win_odds_map={h["horse_number"]: h["win_odds"] for h in horses if h.get("win_odds") is not None},
             course_name=race.course_name,
             surface=race.surface,
             distance=race.distance,
@@ -465,24 +459,26 @@ async def _collect_race_data(session: AsyncSession, date: str) -> list[dict[str,
         for h in horses:
             h["dm_signals"] = sig_by_hn.get(h["horse_number"], [])
 
-        race_data.append({
-            "race_id": race.id,
-            "course_name": race.course_name,
-            "race_number": race.race_number,
-            "race_name": race.race_name,
-            "post_time": race.post_time,
-            "surface": race.surface,
-            "distance": race.distance,
-            "grade": race.grade,
-            "head_count": race.head_count,
-            "gap_1_2": gap_1_2,
-            "top2_t3_gap": top2_t3_gap,
-            "gap12_prob": gap12_prob,
-            "win_prob_rank1": win_prob_rank1,
-            "ranked_horses": ranked,
-            "has_odds": bool(win_odds or place_odds),
-            "horses": horses,
-        })
+        race_data.append(
+            {
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "grade": race.grade,
+                "head_count": race.head_count,
+                "gap_1_2": gap_1_2,
+                "top2_t3_gap": top2_t3_gap,
+                "gap12_prob": gap12_prob,
+                "win_prob_rank1": win_prob_rank1,
+                "ranked_horses": ranked,
+                "has_odds": bool(win_odds or place_odds),
+                "horses": horses,
+            }
+        )
 
     return race_data
 
@@ -516,9 +512,7 @@ async def submit_recommendations(
     race_entry_map = {r["race_id"]: r for r in race_data_with_odds}
 
     # 既存レコード削除 → 上書き
-    await session.execute(
-        delete(RaceRecommendation).where(RaceRecommendation.date == date)
-    )
+    await session.execute(delete(RaceRecommendation).where(RaceRecommendation.date == date))
 
     # ---- ハードフィルター（Claude の指示無視を防ぐバックエンド側の安全網） ----
     # A: index_rank ≤ 3（external_dark_horse=True は例外）
@@ -544,7 +538,8 @@ async def submit_recommendations(
             if idx_rank is not None and idx_rank > 3 and not is_dark:
                 logger.warning(
                     "ハードフィルターA: 馬番%d 指数%d位（external_dark_horse=False）→ 除外",
-                    hn, idx_rank,
+                    hn,
+                    idx_rank,
                 )
                 return False
 
@@ -552,14 +547,18 @@ async def submit_recommendations(
             ev = ev_win if bet_type == "win" else ev_place
             if ev is not None and ev < 1.0 and not has_any_signal:
                 logger.warning(
-                    "ハードフィルターB: 馬番%d EV=%.2f < 1.0 → 除外", hn, ev,
+                    "ハードフィルターB: 馬番%d EV=%.2f < 1.0 → 除外",
+                    hn,
+                    ev,
                 )
                 return False
 
             # C: 勝率下限（単勝のみ、purchase_signal=super_buy/buy 馬は除外しない）
             if bet_type == "win" and not is_dark and not has_strong_signal and win_prob < 0.05:
                 logger.warning(
-                    "ハードフィルターC: 馬番%d win_prob=%.4f < 0.05 → 除外", hn, win_prob,
+                    "ハードフィルターC: 馬番%d win_prob=%.4f < 0.05 → 除外",
+                    hn,
+                    win_prob,
                 )
                 return False
 
@@ -582,24 +581,28 @@ async def submit_recommendations(
             continue
 
         win_snap = {str(h["horse_number"]): h["win_odds"] for h in race_entry["horses"] if h["win_odds"] is not None}
-        place_snap = {str(h["horse_number"]): h["place_odds"] for h in race_entry["horses"] if h["place_odds"] is not None}
+        place_snap = {
+            str(h["horse_number"]): h["place_odds"] for h in race_entry["horses"] if h["place_odds"] is not None
+        }
 
         target_details = []
         for hn in item.get("target_horse_numbers", []):
             horse = next((h for h in race_entry["horses"] if h["horse_number"] == hn), None)
             if horse:
-                target_details.append({
-                    "horse_number": hn,
-                    "horse_name": horse.get("horse_name"),
-                    "composite_index": horse.get("composite_index"),
-                    "win_probability": horse.get("win_probability"),
-                    "place_probability": horse.get("place_probability"),
-                    "ev_win": horse.get("ev_win"),
-                    "ev_place": horse.get("ev_place"),
-                    "win_odds": horse.get("win_odds"),
-                    "place_odds": horse.get("place_odds"),
-                    "index_rank": horse.get("index_rank"),
-                })
+                target_details.append(
+                    {
+                        "horse_number": hn,
+                        "horse_name": horse.get("horse_name"),
+                        "composite_index": horse.get("composite_index"),
+                        "win_probability": horse.get("win_probability"),
+                        "place_probability": horse.get("place_probability"),
+                        "ev_win": horse.get("ev_win"),
+                        "ev_place": horse.get("ev_place"),
+                        "win_odds": horse.get("win_odds"),
+                        "place_odds": horse.get("place_odds"),
+                        "index_rank": horse.get("index_rank"),
+                    }
+                )
 
         rec = RaceRecommendation(
             date=date,
@@ -647,9 +650,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
     """
     from ..db.models import RacePayout, RaceResult
 
-    result = await session.execute(
-        select(RaceRecommendation).where(RaceRecommendation.date == date)
-    )
+    result = await session.execute(select(RaceRecommendation).where(RaceRecommendation.date == date))
     recs = result.scalars().all()
     if not recs:
         return 0
@@ -661,9 +662,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
             continue
 
         # レース全体の成績が取込済みかチェック（対象馬の有無に関わらず）
-        any_result = await session.execute(
-            select(RaceResult.id).where(RaceResult.race_id == rec.race_id).limit(1)
-        )
+        any_result = await session.execute(select(RaceResult.id).where(RaceResult.race_id == rec.race_id).limit(1))
         if not any_result.scalar():
             continue  # 成績未確定（まだ取り込まれていない）
 
@@ -713,10 +712,7 @@ async def update_results(session: AsyncSession, date: str) -> int:
         # SQLAlchemy は JSONB 内部変更を自動検知しないため flag_modified が必要
         from sqlalchemy.orm.attributes import flag_modified
 
-        updated_horses = [
-            {**h, "finish_position": finish_map.get(h.get("horse_number"))}
-            for h in rec.target_horses
-        ]
+        updated_horses = [{**h, "finish_position": finish_map.get(h.get("horse_number"))} for h in rec.target_horses]
         rec.target_horses = updated_horses  # type: ignore[assignment]
         flag_modified(rec, "target_horses")
 
@@ -728,155 +724,3 @@ async def update_results(session: AsyncSession, date: str) -> int:
     await session.commit()
     logger.info("推奨結果更新: %s → %d 件", date, updated)
     return updated
-
-
-# ---------------------------------------------------------------------------
-# 穴ぐさルール推奨
-# ---------------------------------------------------------------------------
-
-# バックテスト実証済みルール（3年 2023/5/17-2026/5/15, surface='芝'/'ダ' 正確版）
-_ANAGUSA_RULES: list[dict[str, Any]] = [
-    {
-        "label": "Rule1",
-        "desc": "東京×芝×1201-1800m",
-        "course_name": "東京",
-        "surface": "芝",
-        "dist_lo": 1201,
-        "dist_hi": 1800,
-        "bet": "place",  # 複勝
-        "backtest_place_roi": 1.044,
-        "backtest_win_roi": None,
-        "backtest_n": 174,
-    },
-    {
-        "label": "Rule2",
-        "desc": "新潟×芝×1601-1800m",
-        "course_name": "新潟",
-        "surface": "芝",
-        "dist_lo": 1601,
-        "dist_hi": 1800,
-        "bet": "win_place",  # 単+複
-        "backtest_place_roi": 1.168,
-        "backtest_win_roi": 1.604,
-        "backtest_n": 28,
-    },
-    {
-        "label": "Rule3",
-        "desc": "京都×芝×~1200m",
-        "course_name": "京都",
-        "surface": "芝",
-        "dist_lo": 0,
-        "dist_hi": 1200,
-        "bet": "win_place",  # 単+複
-        "backtest_place_roi": 1.030,
-        "backtest_win_roi": 1.209,
-        "backtest_n": 43,
-    },
-    {
-        "label": "Rule4",
-        "desc": "京都×ダ×1601-1800m",
-        "course_name": "京都",
-        "surface": "ダ",
-        "dist_lo": 1601,
-        "dist_hi": 1800,
-        "bet": "win_place",  # 単+複
-        "backtest_place_roi": 1.161,
-        "backtest_win_roi": 1.472,
-        "backtest_n": 150,
-    },
-]
-
-
-async def build_anagusa_rule_recommendations(
-    session: AsyncSession, date: str
-) -> list[dict[str, Any]]:
-    """穴ぐさ条件ルールに基づく推奨馬を生成する（オッズ反映・都度算出）。
-
-    抽出条件: sekito.anagusa rank_A × コース/surface/距離ルール。
-    人気4-6番が最優先（pop4-6で複ROI 1.192〜1.425の実証値あり）。
-    レース結果が確定している場合は finish_position・確定オッズも返す。
-    """
-    race_data = await _collect_race_data(session, date)
-    if not race_data:
-        return []
-
-    now = datetime.now(UTC)
-
-    # レース結果を一括取得
-    race_ids_all = [r["race_id"] for r in race_data]
-    results_map: dict[tuple[int, int], dict[str, Any]] = {}
-    entry_map: dict[tuple[int, int], int] = {}
-    if race_ids_all:
-        rr_result = await session.execute(
-            select(RaceResult).where(RaceResult.race_id.in_(race_ids_all))
-        )
-        for rr_obj in rr_result.scalars().all():
-            results_map[(rr_obj.race_id, rr_obj.horse_id)] = {
-                "finish_position": rr_obj.finish_position,
-                "win_odds": float(rr_obj.win_odds) if rr_obj.win_odds is not None else None,
-                "place_odds": float(rr_obj.place_odds) if rr_obj.place_odds is not None else None,
-            }
-        entries_result = await session.execute(
-            select(RaceEntry.race_id, RaceEntry.horse_number, RaceEntry.horse_id)
-            .where(RaceEntry.race_id.in_(race_ids_all))
-        )
-        for race_id, hn, hid in entries_result.all():
-            if hn is not None:
-                entry_map[(race_id, hn)] = hid
-
-    items: list[dict[str, Any]] = []
-    for race in race_data:
-        race_surface = (race.get("surface") or "").strip()
-        race_dist = race.get("distance") or 0
-
-        for rule in _ANAGUSA_RULES:
-            if (
-                race["course_name"] != rule["course_name"]
-                or race_surface != rule["surface"]
-                or not (rule["dist_lo"] <= race_dist <= rule["dist_hi"])
-            ):
-                continue
-
-            # rank_A 馬を抽出
-            a_horses = [h for h in race["horses"] if h.get("anagusa_rank") == "A"]
-            if not a_horses:
-                break  # このレースに rank_A 馬なし
-
-            for h in a_horses:
-                pop = h.get("odds_rank")  # 単勝オッズ順位 = 人気
-
-                # 確定結果取得
-                horse_id = entry_map.get((race["race_id"], h["horse_number"]))
-                rr = results_map.get((race["race_id"], horse_id)) if horse_id else None
-                finish_pos = rr["finish_position"] if rr else None
-                final_win = rr["win_odds"] if rr and rr.get("win_odds") is not None else h.get("win_odds")
-                final_place = rr["place_odds"] if rr and rr.get("place_odds") is not None else h.get("place_odds")
-
-                items.append({
-                    "rule_label": rule["label"],
-                    "rule_desc": rule["desc"],
-                    "bet_type": rule["bet"],
-                    "race_id": race["race_id"],
-                    "course_name": race["course_name"],
-                    "race_number": race["race_number"],
-                    "race_name": race.get("race_name"),
-                    "post_time": race.get("post_time"),
-                    "distance": race_dist,
-                    "surface": race_surface,
-                    "horse_number": h["horse_number"],
-                    "horse_name": h.get("horse_name"),
-                    "win_odds": final_win,
-                    "place_odds": final_place,
-                    "popularity": pop,
-                    "is_preferred_pop": (pop is not None and 4 <= pop <= 6),
-                    "finish_position": finish_pos,
-                    "backtest_place_roi": rule["backtest_place_roi"],
-                    "backtest_win_roi": rule.get("backtest_win_roi"),
-                    "backtest_n": rule["backtest_n"],
-                    "snapshot_at": now,
-                })
-            break  # 1レースに対して1ルールのみ適用
-
-    # 発走時刻順・ルール順ソート
-    items.sort(key=lambda x: (x["post_time"] is None, x["post_time"] or "", x["rule_label"]))
-    return items

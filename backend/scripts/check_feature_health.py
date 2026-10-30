@@ -44,11 +44,23 @@ logger = logging.getLogger("feature_health")
 
 # 監視対象（calculated_indices の列名）
 SUBINDEX_COLUMNS = [
-    "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
-    "rotation_index", "jockey_index", "pace_index", "pedigree_index",
-    "training_index", "anagusa_index", "paddock_index", "rebound_index",
-    "rivals_growth_index", "career_phase_index", "distance_change_index",
-    "jockey_trainer_combo_index", "going_pedigree_index",
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
 ]
 
 # 実質定数とみなす標準偏差の閾値
@@ -78,6 +90,13 @@ SPARSE_NULL_RATE = 0.20
 #    ⚠️ 教訓として残す: このリストに入れるときは「いつ・何を満たせば外すか」を
 #    必ず一緒に書くこと。書かないと、直った後も誰も外さない。
 KNOWN_ISSUES = {
+    "anagusa_index": (
+        "サラブレのサービス終了で穴ぐさの取得を 2026-10-31 に削除した（最終ピック 2026-10-25）。"
+        " 以降は全馬が「ピックなし」の 50＋コース等補正になり、ばらつきが縮む。"
+        " 配信時の損失は VAL 4,338R で 1位馬勝率 −0.07pt・Spearman −0.0009、"
+        " 外して学習し直しても有意差なし（docs/PROJECT_STATUS.md 2026-10-31）。"
+        " 外す条件: モデルの特徴量から anagusa_index を外したとき。"
+    ),
     "going_pedigree_index": (
         "**レース当日に算出すると必ず全馬 50** になる（算出時点で races.condition が"
         " 未確定＝重/不でないため早期 return する）。値が入るのは後日バックフィルした"
@@ -124,13 +143,13 @@ def fetch(version: int, months: int) -> pd.DataFrame:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--version", type=int, default=None,
-                   help="calculated_indices.version（既定: COMPOSITE_VERSION）")
+    p.add_argument("--version", type=int, default=None, help="calculated_indices.version（既定: COMPOSITE_VERSION）")
     p.add_argument("--months", type=int, default=3, help="DEAD 判定に使う直近月数")
     args = p.parse_args()
 
     if args.version is None:
         from src.indices.composite import COMPOSITE_VERSION
+
         args.version = COMPOSITE_VERSION
 
     df = fetch(args.version, args.months)
@@ -145,7 +164,7 @@ def main() -> int:
         sd = pd.to_numeric(df[f"sd_{c}"], errors="coerce")
         nullrate = pd.to_numeric(df[f"null_{c}"], errors="coerce")
         recent = sd.tail(args.months)
-        past = sd.iloc[:-args.months] if len(sd) > args.months else sd
+        past = sd.iloc[: -args.months] if len(sd) > args.months else sd
 
         msgs: list[str] = []
         if recent.notna().all() and (recent < DEAD_SD_THRESHOLD).all():
@@ -153,12 +172,12 @@ def main() -> int:
         elif len(past.dropna()) >= 3 and recent.notna().any():
             med = float(past.median())
             cur_sd = float(recent.iloc[-1])
-            if med > DEAD_SD_THRESHOLD and (
-                cur_sd > med * SHIFT_RATIO or cur_sd < med / SHIFT_RATIO
-            ):
+            if med > DEAD_SD_THRESHOLD and (cur_sd > med * SHIFT_RATIO or cur_sd < med / SHIFT_RATIO):
                 msgs.append(f"SHIFT 直近月 sd={cur_sd:.3f} vs 過去中央値 {med:.3f}")
-        if nullrate.tail(args.months).max() is not None and \
-                float(nullrate.tail(args.months).max() or 0) > SPARSE_NULL_RATE:
+        if (
+            nullrate.tail(args.months).max() is not None
+            and float(nullrate.tail(args.months).max() or 0) > SPARSE_NULL_RATE
+        ):
             msgs.append(f"SPARSE 欠損率 {float(nullrate.tail(args.months).max()):.1%}")
 
         for m in msgs:

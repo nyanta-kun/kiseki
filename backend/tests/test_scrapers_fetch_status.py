@@ -125,10 +125,10 @@ def test_日付は_YYYY_MM_DD_に正規化される(raw, expected):
     assert _norm_date(raw) == expected
 
 
-def test_中止時に潰すデータタイプに移設した2種が入っている():
-    """穴ぐさ・吉馬が抜けていると、中止レースを取りに行き続ける。"""
-    assert "anagusa" in ALL_DATA_TYPES
+def test_中止時に潰すデータタイプに吉馬が入っている():
+    """吉馬が抜けていると、中止レースを取りに行き続ける（穴ぐさは 2026-10-31 に取得ごと削除）。"""
     assert "kichiuma" in ALL_DATA_TYPES
+    assert "anagusa" not in ALL_DATA_TYPES
 
 
 @pytest.mark.parametrize(

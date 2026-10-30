@@ -36,7 +36,6 @@ ALL_DATA_TYPES: tuple[str, ...] = (
     "odds",
     "results",
     "kichiuma",
-    "anagusa",
     "netkeiba_time_index",
     "netkeiba_blood",
     "netkeiba_paddock",
@@ -102,9 +101,15 @@ class FetchStatusManager:
         if force:
             return True
 
-        row = self.session.execute(_SHOULD_FETCH_SQL, {
-            "d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type,
-        }).fetchone()
+        row = self.session.execute(
+            _SHOULD_FETCH_SQL,
+            {
+                "d": _norm_date(date),
+                "c": course_code,
+                "n": race_no,
+                "t": data_type,
+            },
+        ).fetchone()
 
         if row is None:
             return True
@@ -128,7 +133,11 @@ class FetchStatusManager:
             if (retry_count or 0) >= max_retries:
                 logger.warning(
                     "最大リトライ回数超過: %s %s %sR %s (retry_count=%s)",
-                    _norm_date(date), course_code, race_no, data_type, retry_count,
+                    _norm_date(date),
+                    course_code,
+                    race_no,
+                    data_type,
+                    retry_count,
                 )
                 return False
             return elapsed >= 1
@@ -153,8 +162,13 @@ class FetchStatusManager:
         return (row[0], row[1]) if row else None
 
     def mark_fetched(
-        self, date: str | date_type, course_code: str, race_no: int, data_type: str,
-        *, commit: bool = True,
+        self,
+        date: str | date_type,
+        course_code: str,
+        race_no: int,
+        data_type: str,
+        *,
+        commit: bool = True,
     ) -> None:
         """取得成功を記録する（error_message と retry_count をクリアする）。"""
         self.session.execute(
@@ -174,22 +188,40 @@ class FetchStatusManager:
             self.session.commit()
 
     def mark_not_available(
-        self, date: str | date_type, course_code: str, race_no: int, data_type: str,
-        *, reason: str | None = None, commit: bool = True,
+        self,
+        date: str | date_type,
+        course_code: str,
+        race_no: int,
+        data_type: str,
+        *,
+        reason: str | None = None,
+        commit: bool = True,
     ) -> None:
         """データ不在（恒久的とみなす）を記録する。既定 6 時間後に再試行される。"""
         self._mark_status(date, course_code, race_no, data_type, "not_available", reason, commit)
 
     def mark_not_yet_published(
-        self, date: str | date_type, course_code: str, race_no: int, data_type: str,
-        *, reason: str | None = None, commit: bool = True,
+        self,
+        date: str | date_type,
+        course_code: str,
+        race_no: int,
+        data_type: str,
+        *,
+        reason: str | None = None,
+        commit: bool = True,
     ) -> None:
         """未公開（一時的）を記録する。1 時間後に再試行される。"""
         self._mark_status(date, course_code, race_no, data_type, "not_yet_published", reason, commit)
 
     def _mark_status(
-        self, date, course_code: str, race_no: int, data_type: str,
-        status: str, reason: str | None, commit: bool,
+        self,
+        date,
+        course_code: str,
+        race_no: int,
+        data_type: str,
+        status: str,
+        reason: str | None,
+        commit: bool,
     ) -> None:
         self.session.execute(
             text(
@@ -202,15 +234,20 @@ class FetchStatusManager:
                               error_message = EXCLUDED.error_message, updated_at = NOW()
                 """
             ),
-            {"d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type,
-             "s": status, "msg": reason},
+            {"d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type, "s": status, "msg": reason},
         )
         if commit:
             self.session.commit()
 
     def mark_failed(
-        self, date: str | date_type, course_code: str, race_no: int, data_type: str,
-        error_msg: str, *, commit: bool = True,
+        self,
+        date: str | date_type,
+        course_code: str,
+        race_no: int,
+        data_type: str,
+        error_msg: str,
+        *,
+        commit: bool = True,
     ) -> None:
         """取得失敗を記録し、retry_count を 1 増やす。"""
         self.session.execute(
@@ -227,17 +264,20 @@ class FetchStatusManager:
                               updated_at = NOW()
                 """
             ),
-            {"d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type,
-             "msg": error_msg},
+            {"d": _norm_date(date), "c": course_code, "n": race_no, "t": data_type, "msg": error_msg},
         )
         if commit:
             self.session.commit()
-        logger.error("取得失敗記録: %s %s %sR %s - %s",
-                     _norm_date(date), course_code, race_no, data_type, error_msg)
+        logger.error("取得失敗記録: %s %s %sR %s - %s", _norm_date(date), course_code, race_no, data_type, error_msg)
 
     def mark_race_cancelled(
-        self, date: str | date_type, course_code: str, race_no: int,
-        *, commit: bool = True, update_sekito_races: bool = True,
+        self,
+        date: str | date_type,
+        course_code: str,
+        race_no: int,
+        *,
+        commit: bool = True,
+        update_sekito_races: bool = True,
     ) -> None:
         """レース中止を記録し、全データタイプを race_cancelled にする。
 
@@ -277,9 +317,14 @@ class FetchStatusManager:
 
 # レース中止を示す文言。移設前の一覧をそのまま持つ。
 _CANCEL_KEYWORDS = (
-    "レース中止", "レース取消", "中止になりました",
-    "取消になりました", "取り消しになりました",
-    "race cancelled", "開催中止", "このレースは中止",
+    "レース中止",
+    "レース取消",
+    "中止になりました",
+    "取消になりました",
+    "取り消しになりました",
+    "race cancelled",
+    "開催中止",
+    "このレースは中止",
 )
 
 
