@@ -66,6 +66,8 @@
 | 10-13 | 競輪 | 採点の払戻を**公式払戻**（`wt_payoffs`）へ切り替え（#675・同着で約2倍に過大だった）。netkeirin の**全予想家の成績**を取り込み、成績ページに「予想家比較」タブ（自分の順位・推移） |
 | 10-24 | 競輪 | 5万ダッチ後の実売が見込みの 0.68（A_hit）/ 0.76（C_hit）倍しか当たらないため、**A_hit の販売を停止**し、**C_hit（7車）を的中重視（広め型・2.5万・悪い側1万円ゲート）へ**。事前登録（公開120件で 表示的中 <22% か 実際/見込み <0.80 なら C_hit も停止）: `keirin/docs/type_lab/c_hit_retarget_2026_10_24.md` |
 
+| 10-30 | 中央（POG） | **POG 週報「赤兎週報」を自動化**。9/16 に Claude Desktop から手で 1 回送っただけで、自動化（Windows 用セット）は未設置のまま 6 週間止まっていた。kiseki の DB ＋ netkeiba の近況・掲示板から PDF を作り、毎週水曜 20:30 に Mac mini から Discord へ添付で送る |
+
 ---
 
 ## 2. 最新の実装状況（2026-09-23）
@@ -75,6 +77,11 @@
 - **sekito 統合は完了**（Phase 1〜5・#473〜#564）。POG の全機能、`keiba.mv_horse_runs` / `mv_graded_wins` と
   その REFRESH、netkeiba・穴ぐさ・吉馬のスクレイパはすべて kiseki 側へ移った。
   sekito は表示だけ稼働中で、完全停止は galloplab 側のページ整理待ち（`CLAUDE.md`）。
+- **POG 週報「赤兎週報」**（2026-10-30）。`backend/scripts/notify_pog_report.py` が毎週水曜 20:30 に
+  Mac mini で走り（PDF 化に Chrome が要るため VPS ではない）、`keiba.pog_notifications`
+  （`notification_type='report'`）に送信を記録する。netkeiba からは近況と掲示板だけを取り、
+  掲示板は原文のまま抜粋する（言い換えると未確認の話が断定口調になるため）。
+  掲示板 API は 9/16 時点の HTML から JSON に変わっていた。故障の判定から「回避」を外した（試走で 2 件とも誤判定）
 - **表示メニューのユーザー別 ON/OFF**（#564）。正本は `services/menu_access.py`。
 - **cron の死活監視**: `keiba.cron_runs`（#503）＋監視（#504）。
 - **CI・リポジトリの保全**
