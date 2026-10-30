@@ -81,7 +81,7 @@
   Mac mini で走り（PDF 化に Chrome が要るため VPS ではない）、`keiba.pog_notifications`
   （`notification_type='report'`）に送信を記録する。netkeiba からは近況と掲示板だけを取り、
   掲示板は原文のまま抜粋する（言い換えると未確認の話が断定口調になるため）。
-  掲示板 API は 9/16 時点の HTML から JSON に変わっていた。故障の判定から「回避」を外した（試走で 2 件とも誤判定）
+  掲示板 API は 9/16 時点の HTML から JSON に変わっていた。故障の判定から「回避」を外した（試走で 2 件とも誤判定）。故障の話題は別の馬の話を拾うことが多い（全頭試走で 3 頭中 2 頭）ので、Discord の本文には出さず PDF にだけ原文で載せる
 - **表示メニューのユーザー別 ON/OFF**（#564）。正本は `services/menu_access.py`。
 - **cron の死活監視**: `keiba.cron_runs`（#503）＋監視（#504）。
 - **CI・リポジトリの保全**

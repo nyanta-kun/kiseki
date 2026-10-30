@@ -489,7 +489,7 @@ table{width:100%;border-collapse:collapse}
 .rk-foot{display:flex;justify-content:space-between;padding:6px 8px;background:#14110f;color:#fffdf6;font-size:14px}
 .tp-row{display:flex;padding:7px 11px;border-bottom:1px dotted #c9bfae;font-size:13.5px;line-height:1.5}
 .tp-row:last-child{border-bottom:none}
-.tp-l{width:66px;flex-shrink:0} .tp-c{flex:1;padding-left:11px;min-width:0}
+.tp-l{width:76px;flex-shrink:0} .tp-c{flex:1;padding-left:11px;min-width:0}
 .tp-lb{display:block;text-align:center;font-size:12px;font-weight:700;padding:1px 4px;color:#fff}
 .chip{display:block;text-align:center;font-size:10.5px;color:#6b5f52;margin-top:2px}
 .lb-rest{background:#2b5fa8} .lb-back{background:#1e7a46} .lb-alert{background:#c8102e} .lb-note{background:#8a6d1f}
@@ -631,10 +631,10 @@ def _topics(rep: Report) -> str:
         or '<span class="muted">報告はありません。</span>'
     )
     rows += (
-        '<div class="tp-row"><div class="tp-l"><span class="tp-lb lb-alert">故障</span>'
+        '<div class="tp-row"><div class="tp-l"><span class="tp-lb lb-alert">故障の話題</span>'
         '<span class="chip">掲示板</span></div><div class="tp-c">'
         + inj_body
-        + '<div class="ig-f">※ 掲示板の投稿から拾ったもので、いずれも未確認情報です。</div></div></div>'
+        + '<div class="ig-f">※ 掲示板で故障に触れた投稿です。<b>別の馬の話も含みます</b>。いずれも未確認情報です。</div></div></div>'
     )
     return rows
 
@@ -797,8 +797,8 @@ def build_discord_content(rep: Report) -> str:
             )
     else:
         lines.append("**今週の出走予定** … なし")
-    inj = rep.injuries()
-    if inj:
-        lines += ["", "**⚠ 故障情報**（掲示板・未確認）", "・" + "／".join(f"{h.name}［{h.owner}］" for h in inj)]
+    # 🔴 故障の話題は本文に出さない（PDF にだけ原文ごと載せる）。
+    #    2026-10-30 の全頭試走で 3 頭中 2 頭が**別の馬の**骨折・屈腱炎の話だった。
+    #    キーワードではどの馬の話かを見分けられず、本文に名前を出すと誤報になる。
     text = "\n".join(lines)
     return text if len(text) <= 1900 else text[:1899] + "…"

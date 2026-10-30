@@ -156,7 +156,8 @@ def test_discord_content() -> None:
     text = pr.build_discord_content(_report(horses=[h], this_week=[_entry("2", sat, "nk")]))
     assert text.startswith("📰 **赤兎週報**")
     assert "（想定）" in text
-    assert "骨折馬［渡］" in text
+    # 故障の話題は本文に出さない（別の馬の話を拾う誤判定が多いため）
+    assert "骨折馬" not in text
     many = [_entry(str(i), sat, "fix") for i in range(200)]
     assert len(pr.build_discord_content(_report(this_week=many))) <= 1900
 
