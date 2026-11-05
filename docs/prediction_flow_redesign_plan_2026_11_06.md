@@ -129,9 +129,13 @@ PROJECT_STATUS §4.2 の未着手案件「事前登録 `jra_exotic_ev_preregistr
 | # | 内容 | 場所 |
 |---|---|---|
 | 1 | 中央の成績ページの凡例に、廃止済みの「信頼度（HIGH/MID/LOW）」の説明が残っている | `frontend/src/app/results/page.tsx:313-314` |
-| 2 | 地方詳細の凡例に足切りの閾値（28／22／7位）が直書きされている。正本はバックエンドの `is_cut_off` | `frontend/src/components/ChihouRaceDetailClient.tsx:532` |
 
-⚠️ デザイン部の「穴ぐさ表示（☆・コメント）の削除」は**採らない**。過去レースの ☆ランク・特穴は履歴として出るのが正常（CLAUDE.md）。
+#1 は本計画のブランチで削除済み。
+
+⚠️ デザイン部の次の2点は**採らない**:
+- 「地方詳細の凡例に足切り閾値（28／22／7位）が直書き」— `backend/tests/test_chihou_cutoff_legend_matches_impl.py` が
+  凡例の数値と `chihou_cutoff.py` の定数の一致を既に固定しているので、食い違いは起きない
+- 「穴ぐさ表示（☆・コメント）の削除」— 過去レースの ☆ランク・特穴は履歴として出るのが正常（CLAUDE.md）
 
 ### 4.2 ユーザー判断が要るもの
 
