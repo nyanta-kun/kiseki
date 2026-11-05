@@ -191,3 +191,28 @@ PROJECT_STATUS §4.2 の未着手案件「事前登録 `jra_exotic_ev_preregistr
 | D | 推奨どおり。中央の詳細画面の期待値列を撤去した（本ブランチで実施） |
 | E | 推奨どおり。`v28_h1`・ラップ7列の一度きり評価 → v29 の採否は本計画とは別に先に決める |
 | F | 推奨どおり。netkeiba 有料契約と Mac mini 構成は Phase 5 の結果が出るまで保留 |
+
+### 5.2 進捗（2026-11-06）
+
+| Wave | 状態 | 結果 |
+|---|---|---|
+| 0a | 済 | `feat/jra-race-level-pace` に `e1fa509c` でコミット（push・PR 未了。main より 67 コミット遅れ） |
+| 0b | 一部済 | 成績ページの「信頼度」凡例を削除・中央詳細の期待値列を撤去（本ブランチ） |
+| 0c | 済 | `feat/jra-finish-dist-scoring`。`src/indices/finish_dist_scoring.py` ＋ `scripts/jra_finish_dist_scoring.py`。結果は `docs/model_verification/jra_finish_dist_scoring.json` |
+
+0c の結果（walk-forward 2024Q1〜2026Q2・8,631R）:
+
+- 既知値の再現: `jra_place_head_ab.json` の四半期別 `place_ll` 30件（3腕×10四半期）とずれ 0
+- 1〜3着を使う指標の対象から外したレース: 60R（0.7%・同着 47 / 1着が1頭でない 13）
+- 参考: Harville に対し `p_win^0.88` で全体を平らにした腕は、確認窓（2025Q3〜2026Q2）で
+  三連複 Δ −0.0189 [−0.0250, −0.0124]・単勝 +0.0088 [+0.0055, +0.0122]。
+  **Phase 2 の結果ではない**（勝率そのものを変えているので単勝が悪化する。λ は探索窓で
+  `place_ll` に当てたもの）。示しているのは「Harville の2・3着の構造は改善の余地がある」ことだけ
+
+Phase 2 に持ち越す点:
+
+- 2026Q3 は採点していない（`jra_place_head_ab` の `TEST_START=20260701` 固定のガードを継承）。
+  VAL（〜2026-09-30）で判定するため、窓を `jra_protocol` から取る walk-forward を別に作る。
+  事前登録済みのスクリプトのガードは緩めない
+- 能力の幅が馬ごとに違う Gumbel では、組（三連複・ワイド・馬連）の確率は1次元積分で厳密に出るが、
+  順序つき（馬単・三連単）は出ない。組から作る経路を足し、馬単・三連単は副指標にする
