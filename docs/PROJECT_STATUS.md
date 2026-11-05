@@ -321,7 +321,7 @@
 | VM タスクの棚卸し（`kiseki-RunNEXT5` / `kiseki-Chokyo-Setup`） | 未確認 | 削除した記録が無い |
 | 塩漬けブランチ `feat/jra-recommend-confidence-table` | 判断待ち | |
 | 予想フロー再設計（シミュレーション・組合せ確率・説明表示） | 判断待ち | `docs/prediction_flow_redesign_plan_2026_11_06.md`。🔴 `meet_bias.py` の開催回の取り出し誤りで開催バイアスが 94% のレースで中立値（Phase 4 で再学習と一組で直す） |
-| `feat/jra-race-level-pace` の未コミット実験（段1ゲート通過・`v28_h1` 採用候補） | 未着手 | worktree にだけある。まずコミットして残す（上記計画 §1.4） |
+| `feat/jra-race-level-pace` の実験（段1ゲート通過・`v28_h1` 採用候補） | コミット済み・push 待ち | 2026-11-06 に `e1fa509c` でコミット。v29 の採否（一度きり評価）は本計画とは別に先に決める（上記計画 §5.1 E） |
 
 ### 4.3 地方
 

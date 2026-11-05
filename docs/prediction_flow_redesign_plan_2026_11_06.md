@@ -81,6 +81,8 @@ worktree `kiseki-wt/jra/race-level-pace`（`feat/jra-race-level-pace`）に、20
 
 この結果は失われると作り直しになる。**まずコミットして残す**（Wave 0）。
 
+→ 2026-11-06 にコミット済み（`feat/jra-race-level-pace` の `e1fa509c`）。push と PR は未了。
+
 ## 2. 段ごとの現状（要約）
 
 | 図の段 | 中央 | 地方 |
@@ -110,7 +112,7 @@ worktree `kiseki-wt/jra/race-level-pace`（`feat/jra-race-level-pace`）に、20
 |---|---|---|---|---|
 | **0a** | §1.4 の pace 実験をコミットして残す | jra | — | なし |
 | **0b** | 画面の即時修正（§4 の P0。判断不要のものだけ） | jra / chihou 別PR | 静的テスト | なし |
-| **0c** | 採点の土台 `finish_dist_scoring.py`（単勝・`place_ll`・連対・馬連・ワイド・三連複の実現組の対数損失、レース単位クラスタ bootstrap）。入力は独立複勝ヘッドの walk-forward（`jra_place_head_ab.run_walk_forward`）。`jra_prob_scoring.py` の Harville 複勝は入力にしない | jra | 既知値の再現・CI が出ること・10万回と100万回で判定が変わらないこと | なし |
+| **0c** | 採点の土台 `finish_dist_scoring.py`（単勝・`place_ll`・連対・馬連・ワイド・三連複の実現組の対数損失、レース単位クラスタ bootstrap）。入力は独立複勝ヘッドの walk-forward（`jra_place_head_ab.run_walk_forward`）。`jra_prob_scoring.py` の Harville 複勝は入力にしない | jra | 既知値の再現・CI が出ること・シミュレーション（10万回・100万回）が厳密値へ収束すること。※採点は上位3着の順序分布から厳密に計算する。三連複の実現組（確率 0.1% 前後）を10万回のシミュレーションで数えると、1レースあたり約0.1 nat の誤差が乗り、検出したい差（0.005 nat）より20倍大きいため、シミュレーションは自己検査に回す（2026-11-06 改訂） | なし |
 | **1** | 地方の確率を**読み出し側で**正規化（勝率は合計1、3着以内率は合計3）。保存値と版は変えない。生の値を前提にしている消費者（gekisou_source・cutoff・recommender・place_pick_log）を先に全部辿る | chihou | 地方 VAL の前向き記録 3,142R で、単勝の多項対数損失と `place_ll` が悪化しない（95%CI 上限 ≤ 0） | 0c |
 | **2** | 能力分布シミュレータ `indices/finish_dist.py`（Gumbel・馬ごと σ_i を当てはめ）。比較対象は B0 Harville と B1（2・3着ヘッド＋Henery） | jra（地方は 1 の後） | 主指標: 三連複の実現組の対数損失 Δ(R1−B0)。95%CI 上限 < 0 なら採用。非劣性（上限 < +0.005 nat）なら整合のために採用。それより悪ければ B0 で配信 | 0c |
 | **3** | 配信と前向き記録（連対率・馬連・ワイド・三連複）。Alembic は shared の単独PRを先に入れる。中央は発走前の exotic オッズを凍結する（21日で消えるため） | shared → jra → chihou | 運用監視: 当てはめ失敗率 < 1%、前向きの対数損失が VAL の水準から外れない | 2 |
