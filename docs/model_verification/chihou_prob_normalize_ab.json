@@ -1,0 +1,182 @@
+{
+  "plan": "docs/prediction_flow_redesign_plan_2026_11_06.md §3 Phase 1",
+  "window": {
+    "start": "20250701",
+    "end": "20261031",
+    "val_end": "20261031"
+  },
+  "population": {
+    "n_races": 3128,
+    "n_races_8plus": 2902,
+    "date_min": "20260814",
+    "date_max": "20261031",
+    "win_sum_p10_p50_p90": [
+      0.744,
+      1.072,
+      1.435
+    ],
+    "place_sum_p10_p50_p90": [
+      2.582,
+      3.157,
+      3.77
+    ],
+    "place_clipped_horses": 47
+  },
+  "criterion": "win_mll と top3_ll（8頭以上）の両方で 正規化−生 の 95%CI 上限 ≤ 0",
+  "verdict_pass_original_criterion": false,
+  "criterion_amendment": "2026-11-06: 生の勝率はレース内で合計が1でない（分布でない）ため、単勝の多項対数損失の差は 1着が1頭のレースで log(Σp) と恒等的に等しく、結果に依存しない（win_mll_identity_check）。判定は馬ごとの二値対数損失（win_bll・top3_ll）に置き換える。ユーザー確認待ち",
+  "verdict_pass_amended": true,
+  "summary": {
+    "win_mll": {
+      "raw": 1.70949,
+      "norm": 1.75703,
+      "delta_norm_minus_raw": {
+        "n_races": 3125,
+        "mean": 0.04754,
+        "ci95": [
+          0.03832,
+          0.05621
+        ]
+      },
+      "not_worse": false,
+      "by_month": {
+        "202608": {
+          "n_races": 621,
+          "delta": 0.02215
+        },
+        "202609": {
+          "n_races": 1238,
+          "delta": 0.04405
+        },
+        "202610": {
+          "n_races": 1266,
+          "delta": 0.06342
+        }
+      }
+    },
+    "win_bll": {
+      "raw": 0.26318,
+      "norm": 0.25903,
+      "delta_norm_minus_raw": {
+        "n_races": 3128,
+        "mean": -0.00415,
+        "ci95": [
+          -0.00448,
+          -0.00382
+        ]
+      },
+      "not_worse": true,
+      "by_month": {
+        "202608": {
+          "n_races": 621,
+          "delta": -0.00459
+        },
+        "202609": {
+          "n_races": 1239,
+          "delta": -0.00386
+        },
+        "202610": {
+          "n_races": 1268,
+          "delta": -0.00423
+        }
+      }
+    },
+    "top3_ll": {
+      "raw": 0.48496,
+      "norm": 0.48019,
+      "delta_norm_minus_raw": {
+        "n_races": 2902,
+        "mean": -0.00477,
+        "ci95": [
+          -0.00539,
+          -0.0041
+        ]
+      },
+      "not_worse": true,
+      "by_month": {
+        "202608": {
+          "n_races": 572,
+          "delta": -0.00477
+        },
+        "202609": {
+          "n_races": 1151,
+          "delta": -0.00527
+        },
+        "202610": {
+          "n_races": 1179,
+          "delta": -0.00428
+        }
+      }
+    },
+    "top3_ll_all_fields": {
+      "raw": 0.49096,
+      "norm": 0.48585,
+      "delta_norm_minus_raw": {
+        "n_races": 3128,
+        "mean": -0.00511,
+        "ci95": [
+          -0.00579,
+          -0.00439
+        ]
+      },
+      "not_worse": true,
+      "by_month": {
+        "202608": {
+          "n_races": 621,
+          "delta": -0.00526
+        },
+        "202609": {
+          "n_races": 1239,
+          "delta": -0.00558
+        },
+        "202610": {
+          "n_races": 1268,
+          "delta": -0.00457
+        }
+      }
+    },
+    "win_mll_identity_check": {
+      "mean_log_win_sum": 0.04754,
+      "delta_win_mll": 0.04754
+    },
+    "split_by_sum": {
+      "win_bll__win_sum_below_1": {
+        "n_races": 1254,
+        "mean": -0.00374,
+        "ci95": [
+          -0.00414,
+          -0.00334
+        ]
+      },
+      "win_bll__win_sum_above_1": {
+        "n_races": 1874,
+        "mean": -0.00443,
+        "ci95": [
+          -0.00492,
+          -0.00394
+        ]
+      },
+      "top3_ll__place_sum_below_3": {
+        "n_races": 1067,
+        "mean": -0.00395,
+        "ci95": [
+          -0.00508,
+          -0.0027
+        ]
+      },
+      "top3_ll__place_sum_above_3": {
+        "n_races": 1835,
+        "mean": -0.00525,
+        "ci95": [
+          -0.006,
+          -0.00453
+        ]
+      }
+    },
+    "sum_vs_truth": {
+      "mean_win_sum": 1.0828,
+      "mean_place_sum_8plus": 3.1714,
+      "note": "1着は1頭・3着以内は3頭（8頭以上）"
+    }
+  }
+}
