@@ -2,7 +2,9 @@
 
 kiseki-lab は kiseki の指数を波乱帯別に観測する別プロジェクトです。観測と提案だけを行い、
 kiseki のコードや DB は変えません。本番 `hrdb` を読むための専用ロールと SSH 利用者を
-2026-10-31 に作りました。
+2026-10-31 に作り、2026-11-05 に sshd の絞り込みと `temp_file_limit` を足しました。
+
+依頼文は kiseki-lab 側の `docs/requests/2026-10-31-readonly-role.md` にあります。
 
 ## 構成
 
@@ -41,6 +43,13 @@ Mac (kiseki-lab)
 | `statement_timeout` | `120s` | 重い集計で確定処理を邪魔しない |
 | `idle_in_transaction_session_timeout` | `60s` | 開きっぱなしのトランザクションを残さない |
 | `CONNECTION LIMIT` | `3` | 接続の占有を防ぐ |
+| `temp_file_limit` | `2GB` | 重いソートや結合でディスク（空き約 25GB）を食い潰さない。**管理者しか変えられない設定なので、ロール自身は外せない**（2026-11-05 追加） |
+
+`temp_file_limit` 以外の3つの設定はロール自身が `SET` で外せる初期値です。kiseki-lab の
+コード側でも同じ値を付けて守る取り決めです。
+
+🔴 **VPS のメモリは 1.9GB しかありません。** `work_mem`（既定 4MB）はロール自身が `SET` で
+上げられ、DB 側では止められません。kiseki-lab のコードで `work_mem` を上げないこと。
 
 kiseki-lab 側は、確定処理の時間帯（JST 23:30〜23:45 ごろ）には集計を流さない取り決めです。
 
@@ -82,6 +91,15 @@ SELECT pg_reload_conf();
 
 作成前のバックアップ: `/etc/postgresql/16/main/pg_hba.conf.bak-20261031082444-before-kiseki-lab`
 
+### listen_addresses は外向きのまま
+
+`listen_addresses = '*'` です。自宅の固定 IP（115.125.209.92）と Docker のコンテナが外向きの
+待ち受けで DB を使っているため、狭めるとアプリが止まります。外からの 5432 番は ufw で
+その2か所に絞られています。`kiseki_lab_ro` は上の reject 行で localhost 以外から入れません。
+
+localhost 系の既存行（`local` / `127.0.0.1/32` / `::1/128`）は peer と scram-sha-256 だけで、
+`trust` はありません（2026-11-05 確認）。
+
 ## SSH 利用者 kisekilab
 
 - ログインシェルなし（`/usr/sbin/nologin`）・パスワードはロック済みで、鍵でしか入れない
@@ -99,6 +117,35 @@ restrict,port-forwarding,permitopen="127.0.0.1:5432",permitopen="localhost:5432"
   そのため `127.0.0.1` と `localhost` の両方を書いてあります
 - `command="/bin/false"` なので、シェルを要求すると即座に切れます。**トンネルは必ず `ssh -N` で張ります**
 - 5432 番以外への転送は `administratively prohibited` で拒否されます
+
+### sshd 側の絞り込み（2026-11-05 追加）
+
+authorized_keys の `port-forwarding` は、`restrict` で止めた転送を**逆向き（-R）も含めて**
+許し直します。実際に kisekilab で -R が通ることを確認したので、sshd 側でも絞りました。
+
+`/etc/ssh/sshd_config.d/60-kisekilab.conf`:
+
+```
+Match User kisekilab
+    AllowTcpForwarding local
+    AllowStreamLocalForwarding no
+    PermitOpen 127.0.0.1:5432 localhost:5432
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+```
+
+- 既存の設定ファイルは変えていません。`ysuzuki` の実効設定（`sshd -T -C user=ysuzuki,...`）は
+  追加の前後で1項目も変わらないことを確認しました
+- 反映は `systemctl reload ssh`（接続中の SSH は切れない）
+- 確認: -R は `remote port forwarding failed`、UNIX ソケットへの転送も接続できない
+
+編集したら反映前に検査します:
+
+```bash
+sudo sshd -t
+sudo sshd -T -C user=kisekilab,host=x,addr=203.0.113.1 | grep -Ei 'forwarding|permitopen|permittty'
+```
 
 ## kiseki-lab 側の接続設定
 
@@ -160,8 +207,9 @@ DROP ROLE kiseki_lab_ro;
 ```bash
 # pg_hba.conf の4行（とコメント1行）を消して読み直す
 sudo -u postgres psql -d hrdb -c "select pg_reload_conf()"
-# SSH 利用者を消す
+# SSH 利用者と sshd の設定を消す
 sudo deluser --remove-home kisekilab
+sudo rm /etc/ssh/sshd_config.d/60-kisekilab.conf && sudo sshd -t && sudo systemctl reload ssh
 ```
 
 一時的に止めるだけなら `ALTER ROLE kiseki_lab_ro NOLOGIN;` で足ります。
