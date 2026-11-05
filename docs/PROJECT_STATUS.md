@@ -320,6 +320,8 @@
 | 調教 ck_x（1〜4番人気 +1.22pt）の再確認 | 待機（2026Q4） | |
 | VM タスクの棚卸し（`kiseki-RunNEXT5` / `kiseki-Chokyo-Setup`） | 未確認 | 削除した記録が無い |
 | 塩漬けブランチ `feat/jra-recommend-confidence-table` | 判断待ち | |
+| 予想フロー再設計（シミュレーション・組合せ確率・説明表示） | 判断待ち | `docs/prediction_flow_redesign_plan_2026_11_06.md`。🔴 `meet_bias.py` の開催回の取り出し誤りで開催バイアスが 94% のレースで中立値（Phase 4 で再学習と一組で直す） |
+| `feat/jra-race-level-pace` の未コミット実験（段1ゲート通過・`v28_h1` 採用候補） | 未着手 | worktree にだけある。まずコミットして残す（上記計画 §1.4） |
 
 ### 4.3 地方
 
@@ -329,6 +331,7 @@
 | `odds_history` 刈り込み（#531）の実行結果の確認 | 未確認 |
 | v14 で tier が動いたことに伴う買い目閾値の見直し | **不要**（購入指針を 2026-09-28 に撤去） |
 | 激走の再確認（**2026-09-28 以降**の前向き記録で。08-14〜09-27 は消費済み） | 待機 | `scripts/chihou_gekisou_research.py forward` |
+| 🔴 勝率・複勝率がレース内で正規化されていない（較正ヘッドの生値を保存） | 未着手 | `docs/prediction_flow_redesign_plan_2026_11_06.md` §1.2・Phase 1 |
 
 ### 4.4 競輪
 
