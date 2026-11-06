@@ -320,7 +320,7 @@
 | 調教 ck_x（1〜4番人気 +1.22pt）の再確認 | 待機（2026Q4） | |
 | VM タスクの棚卸し（`kiseki-RunNEXT5` / `kiseki-Chokyo-Setup`） | 未確認 | 削除した記録が無い |
 | 塩漬けブランチ `feat/jra-recommend-confidence-table` | 判断待ち | |
-| 予想フロー再設計（シミュレーション・組合せ確率・説明表示） | 進行中（判断 A〜F 決定済み・0a / 0c / 1 / 2 済。Phase 2 は採用: 三連複 Δ −0.059 [−0.073, −0.045]） | `docs/prediction_flow_redesign_plan_2026_11_06.md`（§5.1 決定・§5.2 進捗・§5.4 Phase 2）。採点の土台は `feat/jra-finish-dist-scoring`、能力分布モデルは `feat/jra-finish-dist`。次の Phase 3 は Alembic（shared）を含む。🔴 `meet_bias.py` の開催回の取り出し誤りで開催バイアスが 94% のレースで中立値（Phase 4 で再学習と一組で直す） |
+| 予想フロー再設計（シミュレーション・組合せ確率・説明表示） | 進行中（判断 A〜F 決定済み・0a / 0c / 1 / 2 / 3（中央の配信）済。Phase 2 採用: 三連複 Δ −0.059 [−0.073, −0.045]・Phase 3 前向き 2026-09 で合格: −0.076 [−0.135, −0.015]） | `docs/prediction_flow_redesign_plan_2026_11_06.md`（§5.1 決定・§5.2 進捗・§5.4 Phase 2）。採点の土台は `feat/jra-finish-dist-scoring`、能力分布モデルは `feat/jra-finish-dist`、配信と前向き採点は `feat/jra-finish-dist-serve`（新しい表は不要になった・§5.5）。次は画面（連対率・組合せ）。🔴 `meet_bias.py` の開催回の取り出し誤りで開催バイアスが 94% のレースで中立値（Phase 4 で再学習と一組で直す） |
 | `feat/jra-race-level-pace` の実験（段1ゲート通過・`v28_h1` 採用候補） | コミット済み・push 待ち | 2026-11-06 に `e1fa509c` でコミット。v29 の採否（一度きり評価）は本計画とは別に先に決める（上記計画 §5.1 E） |
 
 ### 4.3 地方
