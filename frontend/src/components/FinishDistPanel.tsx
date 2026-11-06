@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * 中央レース詳細: 組合せ確率（三連複・馬連・ワイド）の上位。
+ * レース詳細: 組合せ確率（三連複・馬連・ワイド）の上位。中央・地方の両方で使う（`scope`）。
  *
  * 値は能力分布モデル（勝率と複勝率の両方に合う着順の同時分布）。
- * 前向き確認（2026-09・計画 §5.5.1）で Harville より当たりやすさの予測が良いことを確かめてから出している。
+ * Harville より当たりやすさの予測が良いことを確かめてから出している
+ * （中央: 前向き 2026-09・計画 §5.5.1 / 地方: 前向き記録の VAL・§5.6.1）。
  * 🔴 当たりやすさの確率であって、回収率（期待値）の印ではない。オッズとは比べない。
  */
 
@@ -13,22 +14,24 @@ import {
   FINISH_DIST_KINDS,
   FinishDist,
   FinishDistKind,
+  FinishDistScope,
   comboPct,
   fetchFinishDistBrowser,
   formatCombo,
+  harvilleNote,
 } from "@/lib/finishDist";
 import { cn } from "@/lib/utils";
 
 const SHOW = 10;
 
-export function FinishDistPanel({ raceId }: { raceId: number }) {
+export function FinishDistPanel({ raceId, scope = "jra" }: { raceId: number; scope?: FinishDistScope }) {
   const [data, setData] = useState<FinishDist | null>(null);
   const [failed, setFailed] = useState(false);
   const [kind, setKind] = useState<FinishDistKind>("trio");
 
   useEffect(() => {
     let alive = true;
-    fetchFinishDistBrowser(raceId, SHOW)
+    fetchFinishDistBrowser(raceId, SHOW, scope)
       .then((d) => {
         if (alive) setData(d);
       })
@@ -38,7 +41,7 @@ export function FinishDistPanel({ raceId }: { raceId: number }) {
     return () => {
       alive = false;
     };
-  }, [raceId]);
+  }, [raceId, scope]);
 
   if (failed || data === null) return null;
   const combos = data[kind];
@@ -83,10 +86,7 @@ export function FinishDistPanel({ raceId }: { raceId: number }) {
       <p className="mt-2 text-[10px] text-gray-400">
         勝率と複勝率の両方に合うように作った着順の分布から計算した、組合せが来る確率です。
         当たりやすさの目安で、回収率を示すものではありません。
-        {data.source !== "r1" &&
-          (data.place_slots === 0
-            ? " 5頭未満で複勝が無いため、勝率だけから求めた値（Harville）です。"
-            : " このレースは計算が収束しなかったため、勝率だけから求めた値（Harville）です。")}
+        {harvilleNote(data) && ` ${harvilleNote(data)}`}
       </p>
     </section>
   );
