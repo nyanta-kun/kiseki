@@ -164,7 +164,13 @@ def compare_known_json(sc: pd.DataFrame, known_path: Path) -> dict:
     }
 
 
-def summarize(sc: pd.DataFrame, quarters: dict[str, list[str]], n_boot: int) -> dict:
+def summarize(
+    sc: pd.DataFrame,
+    quarters: dict[str, list[str]],
+    n_boot: int,
+    arms: tuple[str, ...] = ARMS,
+    base_arm: str = BASE_ARM,
+) -> dict:
     """窓ごと・腕ごと・指標ごとの平均と、基準腕との対応差の 95%CI。"""
     out: dict = {}
     wide = sc.pivot_table(index="race_id", columns="arm", values=list(METRICS), aggfunc="first")
@@ -179,13 +185,13 @@ def summarize(sc: pd.DataFrame, quarters: dict[str, list[str]], n_boot: int) -> 
             if metric == "place_ll":
                 # 判定は place_slots=3（jra_place_head_ab と同じ）
                 sub = sub.loc[sub.index.intersection(slots.index[slots == 3])]
-            m: dict = {"mean": {a: _r(sub[a].mean()) for a in ARMS}}
-            m["n_races"] = {a: int(sub[a].notna().sum()) for a in ARMS}
+            m: dict = {"mean": {a: _r(sub[a].mean()) for a in arms}}
+            m["n_races"] = {a: int(sub[a].notna().sum()) for a in arms}
             m["delta_vs_base"] = {}
-            for a in ARMS:
-                if a == BASE_ARM:
+            for a in arms:
+                if a == base_arm:
                     continue
-                d = (sub[a] - sub[BASE_ARM]).to_numpy(dtype=float)
+                d = (sub[a] - sub[base_arm]).to_numpy(dtype=float)
                 if np.all(np.isnan(d) | (d == 0.0)):
                     m["delta_vs_base"][a] = {"identical_to_base": True}
                     continue
