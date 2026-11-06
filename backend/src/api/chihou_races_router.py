@@ -23,6 +23,7 @@ from ..db.session import get_db
 from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERSION
 from ..indices.chihou_cutoff import cut_flags
 from ..indices.chihou_gekisou import STATUS_GEKISOU, STATUS_MIOKURI, GekisouVerdict
+from ..indices.chihou_prob_normalize import SCRATCH_ABNORMALITY_CODES, normalize_field
 from ..services.chihou_gekisou_roi import GekisouBet, summarize_gekisou_bets
 from ..services.chihou_gekisou_source import fetch_gekisou_verdicts
 from ..services.chihou_odds_freshness import (
@@ -172,10 +173,34 @@ async def get_chihou_top_probability(
     threshold: float = Query(0.5, description="勝率閾値（デフォルト0.5）"),
     db: AsyncSession = Depends(get_db),
 ) -> list[ChihouTopHorseOut]:
-    """指定日の勝率閾値以上の馬を発走時刻順で返す。"""
+    """指定日の勝率閾値以上の馬を発走時刻順で返す。
+
+    勝率はレース内で合計 1 に揃えた値（予想フロー再設計 Phase 1・2026-11-06）。
+    正本 `indices/chihou_prob_normalize.py` と同じく、取消・除外（成績が入った後だけ分かる）を
+    除いた馬で揃える。閾値もこの揃えた値に対して掛かる。
+    """
     from sqlalchemy import text as _text
 
     sql = _text("""
+        WITH latest AS (
+            SELECT DISTINCT ON (c.race_id, c.horse_id) c.race_id, c.horse_id, c.win_probability
+            FROM chihou.calculated_indices c
+            JOIN chihou.races r0 ON r0.id = c.race_id
+            WHERE r0.date = :date
+            ORDER BY c.race_id, c.horse_id, c.version DESC, c.calculated_at DESC
+        ), active AS (
+            SELECT l.race_id, l.horse_id, l.win_probability
+            FROM latest l
+            LEFT JOIN chihou.race_results rr0
+                ON rr0.race_id = l.race_id AND rr0.horse_id = l.horse_id
+            WHERE l.win_probability IS NOT NULL
+              AND COALESCE(rr0.abnormality_code, 0) NOT IN (1, 2)
+        ), ci AS (
+            SELECT race_id, horse_id,
+                   win_probability / NULLIF(SUM(win_probability) OVER (PARTITION BY race_id), 0)
+                       AS win_probability
+            FROM active
+        )
         SELECT
             r.course_name,
             r.race_number,
@@ -189,12 +214,7 @@ async def get_chihou_top_probability(
         FROM chihou.races r
         JOIN chihou.race_entries re ON re.race_id = r.id
         JOIN chihou.horses h ON h.id = re.horse_id
-        JOIN LATERAL (
-            SELECT win_probability FROM chihou.calculated_indices
-            WHERE race_id = r.id AND horse_id = re.horse_id
-            ORDER BY version DESC, calculated_at DESC
-            LIMIT 1
-        ) ci ON TRUE
+        JOIN ci ON ci.race_id = r.id AND ci.horse_id = re.horse_id
         LEFT JOIN LATERAL (
             SELECT odds FROM chihou.odds_history
             WHERE race_id = r.id
@@ -620,12 +640,28 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         str(combo): float(odds_val) for _rid, _bet_type, combo, odds_val in odds_result.all() if odds_val is not None
     }
 
+    # --- 勝率・3着内率をレース内で揃える（予想フロー再設計 Phase 1・2026-11-06） ---
+    # 保存値は is_win / is_top3 ヘッドの生確率で合計が揃っていない（勝率の合計 平均1.08）。
+    # 正本は `indices/chihou_prob_normalize.py`。取消・除外は成績が入ってからしか分からないので、
+    # 発走前は指数のある全馬で揃える。
+    scratched_rows = await db.execute(
+        select(ChihouRaceResult.horse_id)
+        .where(ChihouRaceResult.race_id == race_id)
+        .where(ChihouRaceResult.abnormality_code.in_(SCRATCH_ABNORMALITY_CODES))
+    )
+    scratched = {int(h) for (h,) in scratched_rows.all()}
+    norm_win, norm_top3 = normalize_field(
+        {r[0].horse_id: (float(r[0].win_probability) if r[0].win_probability is not None else None) for r in rows},
+        {r[0].horse_id: (float(r[0].place_probability) if r[0].place_probability is not None else None) for r in rows},
+        excluded=scratched,
+    )
+
     horses = []
     for row in rows:
         ci: ChihouCalculatedIndex = row[0]
         horse_name: str = row[1]
         horse_number: int | None = row[2]
-        win_prob = float(ci.win_probability) if ci.win_probability is not None else None
+        win_prob = norm_win.get(ci.horse_id)
         wo = win_odds_map.get(str(horse_number)) if horse_number is not None else None
         horses.append(
             ChihouHorseIndexOut(
@@ -634,7 +670,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
                 horse_name=horse_name,
                 composite_index=float(ci.composite_index) if ci.composite_index is not None else 0.0,
                 win_probability=win_prob,
-                place_probability=float(ci.place_probability) if ci.place_probability is not None else None,
+                place_probability=norm_top3.get(ci.horse_id),
                 speed_index=float(ci.speed_index) if ci.speed_index is not None else None,
                 last3f_index=float(ci.last3f_index) if ci.last3f_index is not None else None,
                 jockey_index=_adj_chihou(

@@ -60,3 +60,27 @@ def normalize_win[K: Hashable](win: Mapping[K, float | None]) -> dict[K, float |
 def normalize_top3[K: Hashable](top3: Mapping[K, float | None]) -> dict[K, float | None]:
     """3着内率をレース内で合計 3 に揃える（1 を超えた馬は 1）。"""
     return scale_to_sum(top3, TOP3_TARGET_SUM)
+
+
+SCRATCH_ABNORMALITY_CODES = frozenset({1, 2})  # 1: 出走取消 / 2: 発走除外
+
+
+def normalize_field[K: Hashable](
+    win: Mapping[K, float | None],
+    top3: Mapping[K, float | None],
+    excluded: frozenset[K] | set[K] = frozenset(),
+) -> tuple[dict[K, float | None], dict[K, float | None]]:
+    """1 レースの勝率と3着内率をまとめて揃える。
+
+    ``excluded``（取消・除外の馬）は母集団から外し、確率を ``None`` にして返す。
+    地方では取消・除外は成績（``race_results.abnormality_code``）にしか入らないので、
+    発走前は空集合で呼ばれ、指数のある全馬で揃えることになる。
+    """
+    active_w = {k: v for k, v in win.items() if k not in excluded}
+    active_p = {k: v for k, v in top3.items() if k not in excluded}
+    nw = normalize_win(active_w)
+    np_ = normalize_top3(active_p)
+    return (
+        {k: (None if k in excluded else nw.get(k)) for k in win},
+        {k: (None if k in excluded else np_.get(k)) for k in top3},
+    )

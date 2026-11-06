@@ -48,3 +48,12 @@ def test_matches_measurement_script_definition() -> None:
     np.testing.assert_allclose([ours_w[i] for i in range(12)], ref_w)
     np.testing.assert_allclose([ours_p[i] for i in range(12)], ref_p, atol=1e-8)
     assert isinstance(pd.Series(ours_w).sum(), float)
+
+
+def test_normalize_field_excludes_scratched_horses() -> None:
+    from src.indices.chihou_prob_normalize import normalize_field
+
+    w, p = normalize_field({1: 0.5, 2: 0.5, 3: 0.25}, {1: 0.9, 2: 0.9, 3: 0.6}, excluded={2})
+    assert w[2] is None and p[2] is None
+    assert w[1] == pytest.approx(0.5 / 0.75)
+    assert p[1] == pytest.approx(min(1.0, 0.9 * 3 / 1.5))
