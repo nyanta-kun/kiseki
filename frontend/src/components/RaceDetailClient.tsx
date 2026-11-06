@@ -17,7 +17,7 @@ import { DmSignalBadges, DM_SIGNAL_META } from "@/components/DmSignalBadges";
 import { SIGNAL_HEIHACHI, matchesHeihachi } from "@/lib/heihachi";
 import { useHeihachiThresholds } from "@/lib/useHeihachiThresholds";
 import { IndexBar } from "./IndexBar";
-import { cn, indexColor, horseNumToFrame, frameColorClass, EV_HIGHLIGHT_THRESHOLD } from "@/lib/utils";
+import { cn, indexColor, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { HorseHistorySection } from "./HorseHistorySection";
 import { PaywallGate } from "@/components/PaywallGate";
 
@@ -69,14 +69,6 @@ function winOddsColorClass(odds: number | null): string {
   if (odds < 10) return "text-red-600 font-semibold";
   if (odds >= 100) return "text-blue-600";
   return "text-gray-600";
-}
-
-function evColorClass(ev: number | null): string {
-  if (ev === null) return "text-gray-400";
-  if (ev >= 1.5) return "text-green-600 font-bold";
-  if (ev >= EV_HIGHLIGHT_THRESHOLD) return "text-green-500 font-semibold";
-  if (ev >= 1.0) return "text-gray-600";
-  return "text-gray-400";
 }
 
 function finishBadgeClass(pos: number | null | undefined): string {
@@ -230,7 +222,7 @@ export function RaceDetailClient({
     return horse.is_cut_off ?? false;
   }
 
-  const colSpan = hasResults ? 12 : 11;
+  const colSpan = hasResults ? 11 : 10;
 
   return (
     <PaywallGate isPremium={isPremium} raceNumber={raceNumber} paywallEnabled={paywallEnabled ?? false}>
@@ -279,7 +271,9 @@ export function RaceDetailClient({
                   <th className="text-right py-1 px-1 w-12">勝率</th>
                   <th className="text-right py-1 px-1 w-12">複率</th>
                   <th className="text-right py-1 px-1 w-14">単オッズ</th>
-                  <th className="text-right py-1 pr-2 w-12">期待値</th>
+                  {/* 期待値列は 2026-11-06 に撤去（地方に揃えたユーザー判断）。
+                      確率の当たりやすさを見せる画面で、収支の根拠が無い EV を並べないため。
+                      買い目の回収率は当たりやすさとは別に検証する。 */}
                   {hasResults && <th className="text-right py-1 pr-2 w-10">着順</th>}
                 </tr>
               </thead>
@@ -289,10 +283,6 @@ export function RaceDetailClient({
                   const isWin = finishPos === 1;
                   const isPlace = finishPos !== undefined && finishPos !== null && finishPos <= 3;
                   const winOdds = odds.win[String(horse.horse_number)] ?? null;
-                  const ev =
-                    horse.win_probability !== null && winOdds !== null
-                      ? horse.win_probability * winOdds
-                      : null;
                   const frameNum = horseNumToFrame(horse.horse_number, totalHorses);
                   const cutOff = isCutOff(horse);
                   const isTop = horse.horse_number === topHorseNumber;
@@ -451,11 +441,6 @@ export function RaceDetailClient({
                       {/* 単オッズ */}
                       <td className={`py-2 px-1 text-right ${winOddsColorClass(winOdds)}`}>
                         {winOdds !== null ? `${winOdds.toFixed(1)}倍` : "–"}
-                      </td>
-
-                      {/* 期待値 */}
-                      <td className={`py-2 pr-2 text-right ${evColorClass(ev)}`}>
-                        {ev !== null ? ev.toFixed(2) : "–"}
                       </td>
 
                       {/* 着順 */}
