@@ -199,7 +199,8 @@ PROJECT_STATUS §4.2 の未着手案件「事前登録 `jra_exotic_ev_preregistr
 | 0a | 済 | `feat/jra-race-level-pace` に `e1fa509c` でコミット（push・PR 未了。main より 67 コミット遅れ） |
 | 0b | 一部済 | 成績ページの「信頼度」凡例を削除・中央詳細の期待値列を撤去（本ブランチ） |
 | 2 | 済・採用 | `feat/jra-finish-dist`（0c の上に積む）。結果は §5.4 |
-| 3 | 中央の配信と前向き確認 済・合格 | `feat/jra-finish-dist-serve`（2 の上に積む）。API の連対率と組合せ。画面の連対率列は #707 マージ後に別 PR。結果は §5.5.1 |
+| 3 | 中央の配信と前向き確認 済・合格（2026-11-07 main へマージ・本番で動作確認） | #708・#710・#711。API の連対率と組合せ。結果は §5.5.1 |
+| UI-3（中央の一部） | PR | `feat/jra-finish-dist-ui`。詳細の表に「連対」列、表の下に組合せ確率（三連複・馬連・ワイドの上位10）。回収率の印ではないと明記 |
 | 0c | 済 | `feat/jra-finish-dist-scoring`。`src/indices/finish_dist_scoring.py` ＋ `scripts/jra_finish_dist_scoring.py`。結果は `docs/model_verification/jra_finish_dist_scoring.json` |
 
 0c の結果（walk-forward 2024Q1〜2026Q2・8,631R）:
