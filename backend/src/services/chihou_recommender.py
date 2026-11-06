@@ -8,6 +8,7 @@ Claude.ai 定期エージェントが以下を行う：
 このサービスは Anthropic API を呼び出さない（API課金なし）。
 発走10分前にオッズを取得してbuy/pass判断を更新する処理は維持する。
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,6 +40,7 @@ from ..indices.buy_signal import (
     chihou_low_odds_trust_level,
 )
 from ..indices.chihou_calculator import CHIHOU_COMPOSITE_VERSION as _CHIHOU_COMPOSITE_VERSION
+from ..indices.chihou_prob_normalize import SCRATCH_ABNORMALITY_CODES, normalize_field
 from ..indices.chihou_upset import get_chihou_upset_reranker
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ def calc_race_concentration(place_probs: list[float]) -> dict[str, object]:
         "hhi": round(hhi, 4),
         "confidence_level": confidence_level,
     }
+
 
 _DANTEIKEI = [
     re.compile(r"だ$"),
@@ -167,9 +170,7 @@ async def _fetch_external_raw(
     return raw
 
 
-async def _fetch_external_consensus(
-    session: AsyncSession, race_ids: list[int]
-) -> dict[int, dict[int, int]]:
+async def _fetch_external_consensus(session: AsyncSession, race_ids: list[int]) -> dict[int, dict[int, int]]:
     """sekito.kichiuma / sekito.netkeiba から外部指数コンセンサスを取得する。
 
     Returns:
@@ -259,18 +260,27 @@ async def _collect_chihou_race_data(session: AsyncSession, date: str) -> list[di
 
         race_consensus = consensus_map.get(race.id)  # None = 外部データなし
 
+        # 勝率・3着内率はレース内で揃えた値を渡す（予想フロー再設計 Phase 1・2026-11-06）。
+        # 発走前の入力なので取消・除外はまだ分からず、指数のある全馬で揃える。
+        nw, np_ = normalize_field(
+            {ci.horse_id: (float(ci.win_probability) if ci.win_probability else None) for ci, _, _ in rows},
+            {ci.horse_id: (float(ci.place_probability) if ci.place_probability else None) for ci, _, _ in rows},
+        )
         horses: list[dict[str, Any]] = []
         for ci, entry, horse in rows:
             hn = entry.horse_number
-            horses.append({
-                "horse_number": hn,
-                "horse_name": horse.name,
-                "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
-                "win_probability": round(float(ci.win_probability), 4) if ci.win_probability else None,
-                "place_probability": round(float(ci.place_probability), 4) if ci.place_probability else None,
-                # 外部指数コンセンサス: 0〜2（外部データなしの場合は null）
-                "external_consensus": race_consensus.get(hn) if race_consensus is not None else None,
-            })
+            _w, _p = nw.get(ci.horse_id), np_.get(ci.horse_id)
+            horses.append(
+                {
+                    "horse_number": hn,
+                    "horse_name": horse.name,
+                    "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
+                    "win_probability": round(_w, 4) if _w else None,
+                    "place_probability": round(_p, 4) if _p else None,
+                    # 外部指数コンセンサス: 0〜2（外部データなしの場合は null）
+                    "external_consensus": race_consensus.get(hn) if race_consensus is not None else None,
+                }
+            )
 
         if not horses:
             continue
@@ -280,24 +290,22 @@ async def _collect_chihou_race_data(session: AsyncSession, date: str) -> list[di
             key=lambda h: h["composite_index"],
             reverse=True,
         )
-        gap_1_2 = (
-            round(ranked[0]["composite_index"] - ranked[1]["composite_index"], 2)
-            if len(ranked) >= 2
-            else None
-        )
+        gap_1_2 = round(ranked[0]["composite_index"] - ranked[1]["composite_index"], 2) if len(ranked) >= 2 else None
 
-        race_data.append({
-            "race_id": race.id,
-            "course_name": race.course_name,
-            "race_number": race.race_number,
-            "race_name": race.race_name,
-            "post_time": race.post_time,
-            "surface": race.surface,
-            "distance": race.distance,
-            "head_count": len(horses),
-            "gap_1_2": gap_1_2,
-            "horses": horses,
-        })
+        race_data.append(
+            {
+                "race_id": race.id,
+                "course_name": race.course_name,
+                "race_number": race.race_number,
+                "race_name": race.race_name,
+                "post_time": race.post_time,
+                "surface": race.surface,
+                "distance": race.distance,
+                "head_count": len(horses),
+                "gap_1_2": gap_1_2,
+                "horses": horses,
+            }
+        )
 
     return race_data
 
@@ -322,9 +330,7 @@ async def submit_chihou_recommendations(
 
     race_entry_map = {r["race_id"]: r for r in race_data}
 
-    await session.execute(
-        delete(ChihouRaceRecommendation).where(ChihouRaceRecommendation.date == date)
-    )
+    await session.execute(delete(ChihouRaceRecommendation).where(ChihouRaceRecommendation.date == date))
 
     records: list[ChihouRaceRecommendation] = []
     for item in items:
@@ -338,13 +344,15 @@ async def submit_chihou_recommendations(
         for hn in item.get("target_horse_numbers", []):
             horse = next((h for h in race_entry["horses"] if h["horse_number"] == hn), None)
             if horse:
-                target_details.append({
-                    "horse_number": hn,
-                    "horse_name": horse.get("horse_name"),
-                    "composite_index": horse.get("composite_index"),
-                    "win_probability": horse.get("win_probability"),
-                    "place_probability": horse.get("place_probability"),
-                })
+                target_details.append(
+                    {
+                        "horse_number": hn,
+                        "horse_name": horse.get("horse_name"),
+                        "composite_index": horse.get("composite_index"),
+                        "win_probability": horse.get("win_probability"),
+                        "place_probability": horse.get("place_probability"),
+                    }
+                )
 
         rec = ChihouRaceRecommendation(
             date=date,
@@ -363,9 +371,7 @@ async def submit_chihou_recommendations(
     return records
 
 
-async def collect_chihou_recommendation_source(
-    session: AsyncSession, date: str
-) -> dict[str, Any]:
+async def collect_chihou_recommendation_source(session: AsyncSession, date: str) -> dict[str, Any]:
     """Claude定期エージェントが地方推奨選定に使うソースデータを返す。
 
     Returns:
@@ -384,9 +390,7 @@ async def update_chihou_results(session: AsyncSession, date: str) -> int:
     """レース結果に基づいて地方推奨の的中・払戻を更新する。"""
     from sqlalchemy.orm.attributes import flag_modified
 
-    result = await session.execute(
-        select(ChihouRaceRecommendation).where(ChihouRaceRecommendation.date == date)
-    )
+    result = await session.execute(select(ChihouRaceRecommendation).where(ChihouRaceRecommendation.date == date))
     recs = result.scalars().all()
     if not recs:
         return 0
@@ -453,10 +457,7 @@ async def update_chihou_results(session: AsyncSession, date: str) -> int:
                     elif place_winner.place_odds is not None:
                         payout = int(float(place_winner.place_odds) * 100)
 
-        updated_horses = [
-            {**h, "finish_position": finish_map.get(h.get("horse_number"))}
-            for h in rec.target_horses
-        ]
+        updated_horses = [{**h, "finish_position": finish_map.get(h.get("horse_number"))} for h in rec.target_horses]
         rec.target_horses = updated_horses  # type: ignore[assignment]
         flag_modified(rec, "target_horses")
         rec.result_correct = correct
@@ -491,8 +492,7 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
     today = jst_now.strftime("%Y%m%d")
 
     recs_result = await session.execute(
-        select(ChihouRaceRecommendation)
-        .where(
+        select(ChihouRaceRecommendation).where(
             ChihouRaceRecommendation.date == today,
             ChihouRaceRecommendation.odds_decision.is_(None),
         )
@@ -504,15 +504,11 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
     rec_race_ids = {rec.race_id for rec in recs}
 
     # 対象レースの発走時刻確認
-    races_result = await session.execute(
-        select(ChihouRace).where(ChihouRace.id.in_(list(rec_race_ids)))
-    )
+    races_result = await session.execute(select(ChihouRace).where(ChihouRace.id.in_(list(rec_race_ids))))
     races_map = {r.id: r for r in races_result.scalars().all()}
 
     target_race_ids = {
-        race_id
-        for race_id, race in races_map.items()
-        if race.post_time and race.post_time in target_times
+        race_id for race_id, race in races_map.items() if race.post_time and race.post_time in target_times
     }
 
     if not target_race_ids:
@@ -520,9 +516,7 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
 
     # 最新オッズ取得
     latest_time_result = await session.execute(
-        select(func.max(ChihouOddsHistory.fetched_at)).where(
-            ChihouOddsHistory.race_id.in_(list(target_race_ids))
-        )
+        select(func.max(ChihouOddsHistory.fetched_at)).where(ChihouOddsHistory.race_id.in_(list(target_race_ids)))
     )
     latest_time = latest_time_result.scalar()
 
@@ -588,6 +582,7 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
                 horse = next((h for h in rec.target_horses if h.get("horse_number") == hn), None)
                 if horse is None:
                     continue
+                # 2026-11-06 以降に入稿された推奨はレース内で揃えた確率を持つ（それ以前は生の値）
                 win_prob = horse.get("win_probability") or 0.0
                 place_prob = horse.get("place_probability") or 0.0
                 hn_str = str(hn)
@@ -595,14 +590,12 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
                 if rec.bet_type == "win" and hn_str in win_odds_map:
                     ev = win_prob * win_odds_map[hn_str]
                     best_ev = max(best_ev, ev)
-                    ev_reason_parts.append(
-                        f"単勝{win_odds_map[hn_str]:.1f}倍×勝率{win_prob*100:.1f}%=EV{ev:.2f}"
-                    )
+                    ev_reason_parts.append(f"単勝{win_odds_map[hn_str]:.1f}倍×勝率{win_prob * 100:.1f}%=EV{ev:.2f}")
                 elif rec.bet_type == "place" and hn_str in place_odds_map:
                     ev = place_prob * place_odds_map[hn_str]
                     best_ev = max(best_ev, ev)
                     ev_reason_parts.append(
-                        f"複勝{place_odds_map[hn_str]:.1f}倍×複勝率{place_prob*100:.1f}%=EV{ev:.2f}"
+                        f"複勝{place_odds_map[hn_str]:.1f}倍×複勝率{place_prob * 100:.1f}%=EV{ev:.2f}"
                     )
 
             if not ev_reason_parts:
@@ -638,9 +631,7 @@ async def update_chihou_odds_decision(session: AsyncSession) -> int:
 _CHIHOU_RECO_INDEX_VERSION = _CHIHOU_COMPOSITE_VERSION
 
 
-async def build_chihou_sweet_spot_recommendations(
-    session: AsyncSession, date: str
-) -> list[dict[str, Any]]:
+async def build_chihou_sweet_spot_recommendations(session: AsyncSession, date: str) -> list[dict[str, Any]]:
     """地方競馬 5カテゴリ推奨を生成する（DB保存なし・都度算出）。
 
     🔴 **実稼働停止（2026-09-01）。参考として残しているだけで、どこからも呼ばれない。**
@@ -725,9 +716,7 @@ async def build_chihou_sweet_spot_recommendations(
             place_odds_by_race.setdefault(race_id, {})[combo] = float(odds_val)
 
     # レース結果（確定後の払戻確認用）
-    results_result = await session.execute(
-        select(ChihouRaceResult).where(ChihouRaceResult.race_id.in_(race_ids))
-    )
+    results_result = await session.execute(select(ChihouRaceResult).where(ChihouRaceResult.race_id.in_(race_ids)))
     results_map: dict[tuple[int, int], ChihouRaceResult] = {}
     for _rr in results_result.scalars().all():
         if _rr.horse_number is not None:
@@ -795,21 +784,21 @@ async def build_chihou_sweet_spot_recommendations(
                 if _hn is None:
                     continue
                 _kc, _nk = ext_map.get(_hn, (None, None))
-                upset_rows.append({
-                    "horse_number": _hn,
-                    "win_odds": win_odds.get(str(_hn)),
-                    "speed_index": float(_ci.speed_index) if _ci.speed_index is not None else None,
-                    "last3f_index": float(_ci.last3f_index) if _ci.last3f_index is not None else None,
-                    "jockey_index": float(_ci.jockey_index) if _ci.jockey_index is not None else None,
-                    "rotation_index": (
-                        float(_ci.rotation_index) if _ci.rotation_index is not None else None
-                    ),
-                    "last_margin_index": (
-                        float(_ci.last_margin_index) if _ci.last_margin_index is not None else None
-                    ),
-                    "kc_sp": _kc,
-                    "nk_idx": _nk,
-                })
+                upset_rows.append(
+                    {
+                        "horse_number": _hn,
+                        "win_odds": win_odds.get(str(_hn)),
+                        "speed_index": float(_ci.speed_index) if _ci.speed_index is not None else None,
+                        "last3f_index": float(_ci.last3f_index) if _ci.last3f_index is not None else None,
+                        "jockey_index": float(_ci.jockey_index) if _ci.jockey_index is not None else None,
+                        "rotation_index": (float(_ci.rotation_index) if _ci.rotation_index is not None else None),
+                        "last_margin_index": (
+                            float(_ci.last_margin_index) if _ci.last_margin_index is not None else None
+                        ),
+                        "kc_sp": _kc,
+                        "nk_idx": _nk,
+                    }
+                )
             upset_scores = upset_reranker.score_race(upset_rows, race.head_count)
 
         # composite_index でレース内順位（降順・同値は先着）。sweet_spot/place_bet の
@@ -824,16 +813,36 @@ async def build_chihou_sweet_spot_recommendations(
             if _entry.horse_number is not None:
                 rank_by_hn[_entry.horse_number] = _r + 1
 
+        # 勝率・3着内率はレース内で揃えた値を使う（予想フロー再設計 Phase 1・2026-11-06）。
+        # 成績が入っていれば取消・除外を除いて揃える。
+        _scratched = {
+            _ci.horse_id
+            for _ci, _entry, _ in horse_rows
+            if (_res := results_map.get((race.id, _entry.horse_number))) is not None
+            and _res.abnormality_code in SCRATCH_ABNORMALITY_CODES
+        }
+        _nw, _np = normalize_field(
+            {
+                _ci.horse_id: (float(_ci.win_probability) if _ci.win_probability is not None else None)
+                for _ci, _, _ in horse_rows
+            },
+            {
+                _ci.horse_id: (float(_ci.place_probability) if _ci.place_probability is not None else None)
+                for _ci, _, _ in horse_rows
+            },
+            excluded=_scratched,
+        )
         for ci, entry, horse in horse_rows:
             hn = entry.horse_number
             wo = win_odds.get(str(hn)) if hn is not None else None
-            win_prob = float(ci.win_probability) if ci.win_probability is not None else None
+            win_prob = _nw.get(ci.horse_id)
+            _pp = _np.get(ci.horse_id)
             base = {
                 "horse_number": hn,
                 "horse_name": horse.name,
                 "composite_index": round(float(ci.composite_index), 2) if ci.composite_index else None,
                 "win_probability": round(win_prob, 4) if win_prob is not None else None,
-                "place_probability": round(float(ci.place_probability), 4) if ci.place_probability else None,
+                "place_probability": round(_pp, 4) if _pp else None,
                 "win_odds": wo,
                 "place_odds": place_odds.get(str(hn)) if hn is not None else None,
                 "ev": round(win_prob * wo, 3) if (win_prob and wo) else None,
@@ -876,9 +885,7 @@ async def build_chihou_sweet_spot_recommendations(
             ):
                 u_tier = upset_reranker.axis_tier(wo, us["ns"], us["badge_cnt"])
                 if u_tier:
-                    upset_axis.append(
-                        {**base, "_ns": us["ns"], "_tier": u_tier, "_badge": us["badge_cnt"]}
-                    )
+                    upset_axis.append({**base, "_ns": us["ns"], "_tier": u_tier, "_badge": us["badge_cnt"]})
 
         # ---- 高オッズ穴狙い（既存）: k≥3 の混戦は除外 ----
         if sweet_horses and len(sweet_horses) < 3:
@@ -909,30 +916,32 @@ async def build_chihou_sweet_spot_recommendations(
                     for h in sweet_horses
                 )
             )
-            candidates.append({
-                "race_id": race.id,
-                "course_name": race.course_name,
-                "race_number": race.race_number,
-                "race_name": race.race_name,
-                "post_time": race.post_time,
-                "surface": race.surface,
-                "distance": race.distance,
-                "head_count": race.head_count,
-                "bet_type": "win",
-                "category": "sweet_spot",
-                "race_concentration": race_concentration,
-                "target_horses": sweet_horses,
-                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
-                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
-                "snapshot_at": now,
-                "reason": reason,
-                "confidence": confidence,
-                "max_ev": max_ev,
-                "result_correct": result_correct,
-                "result_payout": result_payout,
-                "result_updated_at": now if any_finished else None,
-                "created_at": now,
-            })
+            candidates.append(
+                {
+                    "race_id": race.id,
+                    "course_name": race.course_name,
+                    "race_number": race.race_number,
+                    "race_name": race.race_name,
+                    "post_time": race.post_time,
+                    "surface": race.surface,
+                    "distance": race.distance,
+                    "head_count": race.head_count,
+                    "bet_type": "win",
+                    "category": "sweet_spot",
+                    "race_concentration": race_concentration,
+                    "target_horses": sweet_horses,
+                    "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                    "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                    "snapshot_at": now,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "max_ev": max_ev,
+                    "result_correct": result_correct,
+                    "result_payout": result_payout,
+                    "result_updated_at": now if any_finished else None,
+                    "created_at": now,
+                }
+            )
 
         # ---- 複穴（place_bet）: 断然人気レースの高オッズ馬を複勝買い ----
         # 1番人気 単勝<2.0 ∧ 対象馬 単勝≥10.0 ∧ 指数3位内 ∧ 8頭立て以上。
@@ -956,18 +965,13 @@ async def build_chihou_sweet_spot_recommendations(
             result_correct = None
             result_payout = None
             if any_finished:
-                placed = [
-                    h for h in place_bet_horses
-                    if h["finish_position"] is not None and h["finish_position"] <= 3
-                ]
+                placed = [h for h in place_bet_horses if h["finish_position"] is not None and h["finish_position"] <= 3]
                 if placed:
                     result_correct = True
                     # 払戻は的中馬のうち最も早く確定した馬の place_odds を採用
                     placed.sort(key=lambda x: x["finish_position"])
                     p_odds = placed[0].get("place_odds")
-                    result_payout = (
-                        int(round(float(p_odds) * 100)) if p_odds is not None else None
-                    )
+                    result_payout = int(round(float(p_odds) * 100)) if p_odds is not None else None
                 else:
                     result_correct = False
                     result_payout = 0
@@ -988,35 +992,36 @@ async def build_chihou_sweet_spot_recommendations(
                 f"（同条件の母集団 17.8% の約2.1倍）・複勝ROI 0.77。"
                 f"的中率の指標であり収支は保証しない（控除率分マイナス）。 "
                 + " / ".join(
-                    f"{h['horse_number']}番{h.get('horse_name') or ''}"
-                    f"(単{(h.get('win_odds') or 0):.1f})"
+                    f"{h['horse_number']}番{h.get('horse_name') or ''}(単{(h.get('win_odds') or 0):.1f})"
                     for h in place_bet_horses
                 )
             )
-            candidates.append({
-                "race_id": race.id,
-                "course_name": race.course_name,
-                "race_number": race.race_number,
-                "race_name": race.race_name,
-                "post_time": race.post_time,
-                "surface": race.surface,
-                "distance": race.distance,
-                "head_count": race.head_count,
-                "bet_type": "place",
-                "category": "place_bet",
-                "race_concentration": race_concentration,
-                "target_horses": place_bet_horses,
-                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
-                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
-                "snapshot_at": now,
-                "reason": reason,
-                "confidence": confidence,
-                "max_ev": max_ev,
-                "result_correct": result_correct,
-                "result_payout": result_payout,
-                "result_updated_at": now if any_finished else None,
-                "created_at": now,
-            })
+            candidates.append(
+                {
+                    "race_id": race.id,
+                    "course_name": race.course_name,
+                    "race_number": race.race_number,
+                    "race_name": race.race_name,
+                    "post_time": race.post_time,
+                    "surface": race.surface,
+                    "distance": race.distance,
+                    "head_count": race.head_count,
+                    "bet_type": "place",
+                    "category": "place_bet",
+                    "race_concentration": race_concentration,
+                    "target_horses": place_bet_horses,
+                    "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                    "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                    "snapshot_at": now,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "max_ev": max_ev,
+                    "result_correct": result_correct,
+                    "result_payout": result_payout,
+                    "result_updated_at": now if any_finished else None,
+                    "created_at": now,
+                }
+            )
 
         # ---- 穴軸複勝（upset_place）: 人気薄リランカー軸（2026-06-11 検証） ----
         # レース内は ns 上位2頭まで。的中精度特化（複勝ROI≈0.83 は参考表示）。
@@ -1029,17 +1034,12 @@ async def build_chihou_sweet_spot_recommendations(
             result_correct = None
             result_payout = None
             if any_finished:
-                placed = [
-                    h for h in upset_picks
-                    if h["finish_position"] is not None and h["finish_position"] <= 3
-                ]
+                placed = [h for h in upset_picks if h["finish_position"] is not None and h["finish_position"] <= 3]
                 if placed:
                     result_correct = True
                     placed.sort(key=lambda x: x["finish_position"])
                     p_odds = placed[0].get("place_odds")
-                    result_payout = (
-                        int(round(float(p_odds) * 100)) if p_odds is not None else None
-                    )
+                    result_payout = int(round(float(p_odds) * 100)) if p_odds is not None else None
                 else:
                     result_correct = False
                     result_payout = 0
@@ -1057,30 +1057,32 @@ async def build_chihou_sweet_spot_recommendations(
                     for h in upset_picks
                 )
             )
-            candidates.append({
-                "race_id": race.id,
-                "course_name": race.course_name,
-                "race_number": race.race_number,
-                "race_name": race.race_name,
-                "post_time": race.post_time,
-                "surface": race.surface,
-                "distance": race.distance,
-                "head_count": race.head_count,
-                "bet_type": "place",
-                "category": "upset_place",
-                "race_concentration": race_concentration,
-                "target_horses": upset_picks,
-                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
-                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
-                "snapshot_at": now,
-                "reason": reason,
-                "confidence": 0.50,
-                "max_ev": max_ns,
-                "result_correct": result_correct,
-                "result_payout": result_payout,
-                "result_updated_at": now if any_finished else None,
-                "created_at": now,
-            })
+            candidates.append(
+                {
+                    "race_id": race.id,
+                    "course_name": race.course_name,
+                    "race_number": race.race_number,
+                    "race_name": race.race_name,
+                    "post_time": race.post_time,
+                    "surface": race.surface,
+                    "distance": race.distance,
+                    "head_count": race.head_count,
+                    "bet_type": "place",
+                    "category": "upset_place",
+                    "race_concentration": race_concentration,
+                    "target_horses": upset_picks,
+                    "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                    "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                    "snapshot_at": now,
+                    "reason": reason,
+                    "confidence": 0.50,
+                    "max_ev": max_ns,
+                    "result_correct": result_correct,
+                    "result_payout": result_payout,
+                    "result_updated_at": now if any_finished else None,
+                    "created_at": now,
+                }
+            )
 
         # ---- 低オッズ本命（信頼/不信頼）: 各カテゴリ最低オッズ馬1頭のみ採用 ----
         for category, horses, base_reason in (
@@ -1093,13 +1095,12 @@ async def build_chihou_sweet_spot_recommendations(
             (
                 "low_odds_untrusted",
                 low_untrusted,
-                "信頼できない本命：1.5≤単勝<2.0（バックテスト的中率約48%）。"
-                "ROIは0.81。半分は外れる帯。",
+                "信頼できない本命：1.5≤単勝<2.0（バックテスト的中率約48%）。ROIは0.81。半分は外れる帯。",
             ),
         ):
             if not horses:
                 continue
-            horses.sort(key=lambda h: (h.get("win_odds") or 9.99))
+            horses.sort(key=lambda h: h.get("win_odds") or 9.99)
             chosen = horses[0]
             _attach_finish(chosen, race.id)
             picked = [chosen]
@@ -1119,31 +1120,33 @@ async def build_chihou_sweet_spot_recommendations(
                 f"(単{(chosen.get('win_odds') or 0):.1f}"
                 f"/v10勝率{((chosen.get('win_probability') or 0) * 100):.0f}%)"
             )
-            candidates.append({
-                "race_id": race.id,
-                "course_name": race.course_name,
-                "race_number": race.race_number,
-                "race_name": race.race_name,
-                "post_time": race.post_time,
-                "surface": race.surface,
-                "distance": race.distance,
-                "head_count": race.head_count,
-                "bet_type": "win",
-                "category": category,
-                "race_concentration": race_concentration,
-                "target_horses": picked,
-                "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
-                "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
-                "snapshot_at": now,
-                "reason": f"{base_reason} {badge}",
-                # confidence は信頼=0.7 / 不信頼=0.45 の固定値（バックテストの hit 率に近い値）
-                "confidence": 0.70 if category == "low_odds_trusted" else 0.45,
-                "max_ev": chosen.get("ev") or 0.0,
-                "result_correct": result_correct,
-                "result_payout": result_payout,
-                "result_updated_at": now if any_finished else None,
-                "created_at": now,
-            })
+            candidates.append(
+                {
+                    "race_id": race.id,
+                    "course_name": race.course_name,
+                    "race_number": race.race_number,
+                    "race_name": race.race_name,
+                    "post_time": race.post_time,
+                    "surface": race.surface,
+                    "distance": race.distance,
+                    "head_count": race.head_count,
+                    "bet_type": "win",
+                    "category": category,
+                    "race_concentration": race_concentration,
+                    "target_horses": picked,
+                    "snapshot_win_odds": {str(k): v for k, v in win_odds.items()},
+                    "snapshot_place_odds": {str(k): v for k, v in place_odds.items()},
+                    "snapshot_at": now,
+                    "reason": f"{base_reason} {badge}",
+                    # confidence は信頼=0.7 / 不信頼=0.45 の固定値（バックテストの hit 率に近い値）
+                    "confidence": 0.70 if category == "low_odds_trusted" else 0.45,
+                    "max_ev": chosen.get("ev") or 0.0,
+                    "result_correct": result_correct,
+                    "result_payout": result_payout,
+                    "result_updated_at": now if any_finished else None,
+                    "created_at": now,
+                }
+            )
 
     # category × max_ev 降順で rank 付与
     _CATEGORY_ORDER = {

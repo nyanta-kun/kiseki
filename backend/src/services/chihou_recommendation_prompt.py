@@ -18,6 +18,7 @@ CHIHOU_SYSTEM_PROMPT = """\
    - gap_1_2 < 4: 混戦（原則回避）
 
 2. **勝率（win_probability）**
+   - 勝率はレース内で合計1、複勝率（3着内率）は合計3に揃えた値（2026-11-06〜）
    - win_probability ≥ 0.25: 頭数に対して十分な支持
    - 複勝: place_probability ≥ 0.55 を重視
 
