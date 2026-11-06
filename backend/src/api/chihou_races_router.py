@@ -24,6 +24,7 @@ from ..indices.chihou_calculator import BANEI_COURSE_CODE, CHIHOU_COMPOSITE_VERS
 from ..indices.chihou_cutoff import cut_flags
 from ..indices.chihou_gekisou import STATUS_GEKISOU, STATUS_MIOKURI, GekisouVerdict
 from ..indices.chihou_prob_normalize import SCRATCH_ABNORMALITY_CODES, normalize_field
+from ..services.chihou_finish_dist import cached_race_finish_dist, top_combinations
 from ..services.chihou_gekisou_roi import GekisouBet, summarize_gekisou_bets
 from ..services.chihou_gekisou_source import fetch_gekisou_verdicts
 from ..services.chihou_odds_freshness import (
@@ -93,6 +94,9 @@ class ChihouHorseIndexOut(BaseModel):
     composite_index: float
     win_probability: float | None = None
     place_probability: float | None = None
+    # 連対率（2着以内）。能力分布モデル（services/chihou_finish_dist.py・計画 §5.6）。
+    # 当てはめが ok でないレースは Harville。取消・除外が判明している馬は None
+    top2_probability: float | None = None
     speed_index: float | None = None
     last3f_index: float | None = None
     jockey_index: float | None = None
@@ -558,9 +562,8 @@ async def get_chihou_nearest_date(
     return {"date": row}
 
 
-@router.get("/{race_id}/indices")
-async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesResponse:
-    """レースの指数一覧を返す。"""
+async def _fetch_index_rows(db: AsyncSession, race_id: int):
+    """現行版の指数行（指数・馬名・馬番）を総合指数の降順で返す。"""
     result = await db.execute(
         select(
             ChihouCalculatedIndex,
@@ -577,7 +580,23 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
         .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
         .order_by(ChihouCalculatedIndex.composite_index.desc())
     )
-    rows = result.all()
+    return result.all()
+
+
+async def _fetch_scratched(db: AsyncSession, race_id: int) -> set[int]:
+    """取消・除外の horse_id。地方では成績が入ってからしか分からない（発走前は空）。"""
+    scratched_rows = await db.execute(
+        select(ChihouRaceResult.horse_id)
+        .where(ChihouRaceResult.race_id == race_id)
+        .where(ChihouRaceResult.abnormality_code.in_(SCRATCH_ABNORMALITY_CODES))
+    )
+    return {int(h) for (h,) in scratched_rows.all()}
+
+
+@router.get("/{race_id}/indices")
+async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesResponse:
+    """レースの指数一覧を返す。"""
+    rows = await _fetch_index_rows(db, race_id)
 
     if not rows:
         raise HTTPException(status_code=404, detail="No indices found for this race")
@@ -644,12 +663,7 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
     # 保存値は is_win / is_top3 ヘッドの生確率で合計が揃っていない（勝率の合計 平均1.08）。
     # 正本は `indices/chihou_prob_normalize.py`。取消・除外は成績が入ってからしか分からないので、
     # 発走前は指数のある全馬で揃える。
-    scratched_rows = await db.execute(
-        select(ChihouRaceResult.horse_id)
-        .where(ChihouRaceResult.race_id == race_id)
-        .where(ChihouRaceResult.abnormality_code.in_(SCRATCH_ABNORMALITY_CODES))
-    )
-    scratched = {int(h) for (h,) in scratched_rows.all()}
+    scratched = await _fetch_scratched(db, race_id)
     norm_win, norm_top3 = normalize_field(
         {r[0].horse_id: (float(r[0].win_probability) if r[0].win_probability is not None else None) for r in rows},
         {r[0].horse_id: (float(r[0].place_probability) if r[0].place_probability is not None else None) for r in rows},
@@ -692,6 +706,14 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
             )
         )
 
+    # --- 連対率（能力分布モデル・計画 §5.6）。入力は揃える前の生の値（中で揃える）・取消除外は外す ---
+    fd = await _chihou_finish_dist(race_id, rows, scratched)
+    if fd is not None:
+        top2_by_hn = dict(zip(fd.horse_numbers, fd.top2.tolist(), strict=True))
+        for h in horses:
+            v = top2_by_hn.get(h.horse_number) if h.horse_number is not None else None
+            h.top2_probability = round(v, 4) if v is not None else None
+
     # --- 激走 / 見送り（1レース最大1頭） ---
     # 🔴 2026-09-28 に スイートスポット(赤字) / 複穴 / 注目馬★ の個別馬バッジを撤去して
     #    置き換えた。いずれも回収率の根拠が無く、注目馬と激走は同じ人気薄を別の札で
@@ -713,6 +735,87 @@ async def get_chihou_race_indices(race_id: int, db: DbDep) -> ChihouIndicesRespo
 
     # 指数信頼度（分離度ランク）は 2026-10-24 に算出・表示とも廃止した
     return ChihouIndicesResponse(horses=horses, gekisou=gekisou)
+
+
+async def _chihou_finish_dist(race_id: int, rows, scratched: set[int]):
+    """取消・除外を除いた全馬の生の勝率・3着内率から着順分布を作る。1頭でも欠ければ None。"""
+    field = [r for r in rows if r[0].horse_id not in scratched and r[2] is not None]
+    if not field or any(r[0].win_probability is None or r[0].place_probability is None for r in field):
+        return None
+    return await asyncio.to_thread(
+        cached_race_finish_dist,
+        race_id,
+        [int(r[2]) for r in field],
+        [float(r[0].win_probability) for r in field],
+        [float(r[0].place_probability) for r in field],
+    )
+
+
+class ChihouFinishDistHorseOut(BaseModel):
+    """1頭分の着順確率。"""
+
+    horse_number: int
+    win: float
+    top2: float
+    top3: float
+
+
+class ChihouFinishDistComboOut(BaseModel):
+    """組合せ1つ（馬番は昇順）。"""
+
+    horses: list[int]
+    probability: float
+
+
+class ChihouFinishDistOut(BaseModel):
+    """地方レースの着順分布（能力分布モデル）。
+
+    🔴 組合せは当たりやすさの確率で、回収率の印ではない。画面へ出すかは計画 §5.6 の後で決める。
+    """
+
+    race_id: int
+    method_version: str
+    source: str  # "r1" / "harville"
+    fit_status: str
+    k: int  # 当てはめに使った上位 k 着（地方は 3。4頭未満は 0）
+    horses: list[ChihouFinishDistHorseOut]
+    quinella: list[ChihouFinishDistComboOut]
+    wide: list[ChihouFinishDistComboOut]
+    trio: list[ChihouFinishDistComboOut]
+
+
+@router.get("/{race_id}/finish-dist")
+async def get_chihou_finish_dist(
+    race_id: int, db: DbDep, limit: Annotated[int, Query(ge=1, le=200)] = 20
+) -> ChihouFinishDistOut:
+    """勝率・連対率・3着内率と、確率の高い組合せ（馬連・ワイド・三連複）を返す。"""
+    rows = await _fetch_index_rows(db, race_id)
+    fd = await _chihou_finish_dist(race_id, rows, await _fetch_scratched(db, race_id)) if rows else None
+    if fd is None:
+        raise HTTPException(status_code=404, detail="Win/top3 probabilities are not available for this race")
+
+    def combos(kind: str) -> list[ChihouFinishDistComboOut]:
+        return [
+            ChihouFinishDistComboOut(horses=list(c), probability=round(p, 6))
+            for c, p in top_combinations(fd, kind, limit)
+        ]
+
+    return ChihouFinishDistOut(
+        race_id=race_id,
+        method_version=fd.method_version,
+        source=fd.source,
+        fit_status=fd.fit_status,
+        k=fd.k,
+        horses=[
+            ChihouFinishDistHorseOut(
+                horse_number=hn, win=round(float(w), 6), top2=round(float(t2), 6), top3=round(float(t3), 6)
+            )
+            for hn, w, t2, t3 in zip(fd.horse_numbers, fd.win, fd.top2, fd.top3, strict=True)
+        ],
+        quinella=combos("quinella"),
+        wide=combos("wide"),
+        trio=combos("trio"),
+    )
 
 
 @router.get("/{race_id}/odds")

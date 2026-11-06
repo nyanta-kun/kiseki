@@ -57,3 +57,28 @@ def test_ab_script_uses_chihou_service_not_jra() -> None:
     mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     assert "src.services.chihou_finish_dist" in mods
     assert "src.services.jra_finish_dist" not in mods
+
+
+def test_api_uses_chihou_service_not_jra() -> None:
+    """地方の API は地方の入口（k=3）だけを通す。"""
+    tree = ast.parse((BACKEND / "src/api/chihou_races_router.py").read_text())
+    imported = {
+        (n.module, a.name) for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module for a in n.names
+    }
+    assert ("services.chihou_finish_dist", "cached_race_finish_dist") in imported
+    assert not any(m and m.endswith("jra_finish_dist") for m, _ in imported)
+
+
+def test_serving_cache_matches_direct_build() -> None:
+    """API（キャッシュ経由・指数順）と採点（直呼び・馬番順）が同じ分布になる。"""
+    from src.services.chihou_finish_dist import cached_race_finish_dist
+
+    hn, win, top3 = _race(11, seed=9)
+    raw_w, raw_t = win * 1.07, top3 * 1.04  # 保存値は合計が揃っていない
+    direct = build_race_finish_dist(hn, raw_w, raw_t)
+    perm = np.random.default_rng(3).permutation(len(hn))
+    served = cached_race_finish_dist(990_001, [hn[i] for i in perm], raw_w[perm].tolist(), raw_t[perm].tolist())
+    assert direct is not None and served is not None
+    inv = np.argsort(perm)
+    np.testing.assert_allclose(served.t3[np.ix_(inv, inv, inv)], direct.t3, atol=1e-10)
+    np.testing.assert_allclose(served.top2[inv], direct.top2, atol=1e-10)

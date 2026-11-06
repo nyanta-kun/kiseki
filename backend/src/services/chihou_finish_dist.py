@@ -22,7 +22,9 @@ DB にも FastAPI にも依存しない純関数。
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from threading import Lock
 
 import numpy as np
 
@@ -103,3 +105,61 @@ def build_race_finish_dist(
         t3=t3,
         sigma=sigma,
     )
+
+
+def top_combinations(fd: ChihouFinishDist, kind: str, limit: int) -> list[tuple[tuple[int, ...], float]]:
+    """確率の高い順に組合せを返す。kind = quinella（馬連）/ wide（ワイド）/ trio（三連複）。馬番は昇順。"""
+    m = marginals_from_t3(fd.t3)
+    hn = fd.horse_numbers
+    n = len(hn)
+    out: list[tuple[tuple[int, ...], float]] = []
+    if kind in ("quinella", "wide"):
+        mat = m.quinella if kind == "quinella" else m.wide
+        out = [(tuple(sorted((hn[i], hn[j]))), float(mat[i, j])) for i in range(n) for j in range(i + 1, n)]
+    elif kind == "trio":
+        out = [
+            (tuple(sorted((hn[i], hn[j], hn[c]))), float(m.trio[i, j, c]))
+            for i in range(n)
+            for j in range(i + 1, n)
+            for c in range(j + 1, n)
+        ]
+    else:
+        raise ValueError(f"未知の券種: {kind}")
+    out.sort(key=lambda x: -x[1])
+    return out[:limit]
+
+
+# ---------------------------------------------------------------------------
+# プロセス内キャッシュ（入力そのものをキーにするので古い値は返さない）
+# ---------------------------------------------------------------------------
+
+_CACHE_SIZE = 512
+_cache: OrderedDict[tuple, ChihouFinishDist | None] = OrderedDict()
+_cache_lock = Lock()
+
+
+def cached_race_finish_dist(
+    race_id: int,
+    horse_numbers: list[int] | tuple[int, ...],
+    win_probs: list[float],
+    top3_probs: list[float],
+) -> ChihouFinishDist | None:
+    """`build_race_finish_dist` を (race_id, 入力) でキャッシュする（1 レース 0.1〜0.3 秒かかるため）。"""
+    key = (
+        race_id,
+        METHOD_VERSION,
+        tuple(int(h) for h in horse_numbers),
+        tuple(round(float(x), 8) for x in win_probs),
+        tuple(round(float(x), 8) for x in top3_probs),
+    )
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    fd = build_race_finish_dist(horse_numbers, win_probs, top3_probs)
+    with _cache_lock:
+        _cache[key] = fd
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_SIZE:
+            _cache.popitem(last=False)
+    return fd
