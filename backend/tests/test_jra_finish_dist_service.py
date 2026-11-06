@@ -156,3 +156,16 @@ def test_top_combinations_order_and_sum() -> None:
     assert sum(p for _, p in wide) == pytest.approx(3.0, abs=1e-5)
     with pytest.raises(ValueError):
         top_combinations(fd, "exacta", 3)
+
+
+def test_order_of_horses_does_not_matter() -> None:
+    """API は指数順・前向き採点は馬番順で渡す。並びが違っても同じ分布になる。"""
+    hn, win, place = _race(15, seed=21)
+    w4, p4 = np.round(win, 4), np.round(place, 4)
+    base = build_race_finish_dist(hn, w4, p4)
+    perm = np.random.default_rng(7).permutation(len(hn))
+    moved = build_race_finish_dist([hn[i] for i in perm], w4[perm], p4[perm])
+    assert base is not None and moved is not None
+    inv = np.argsort(perm)
+    np.testing.assert_allclose(moved.t3[np.ix_(inv, inv, inv)], base.t3, atol=1e-10)
+    np.testing.assert_allclose(moved.top2[inv], base.top2, atol=1e-10)
