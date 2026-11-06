@@ -331,7 +331,7 @@
 | `odds_history` 刈り込み（#531）の実行結果の確認 | 未確認 |
 | v14 で tier が動いたことに伴う買い目閾値の見直し | **不要**（購入指針を 2026-09-28 に撤去） |
 | 激走の再確認（**2026-09-28 以降**の前向き記録で。08-14〜09-27 は消費済み） | 待機 | `scripts/chihou_gekisou_research.py forward` |
-| 🔴 勝率・複勝率がレース内で正規化されていない（較正ヘッドの生値を保存） | 未着手 | `docs/prediction_flow_redesign_plan_2026_11_06.md` §1.2・Phase 1 |
+| 🔴 勝率・複勝率がレース内で正規化されていない（較正ヘッドの生値を保存） | 実装済み・push 待ち（`feat/chihou-prob-normalize`。読み出し側で揃える。保存値は生のまま） | `docs/prediction_flow_redesign_plan_2026_11_06.md` §1.2・Phase 1 |
 
 ### 4.4 競輪
 
