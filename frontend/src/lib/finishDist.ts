@@ -8,7 +8,7 @@
  *
  * `lib/api.ts` は全柱共通（shared）なので、ここに置く。
  */
-import type { HorseIndex } from "@/lib/api";
+import type { ChihouHorseIndex, HorseIndex } from "@/lib/api";
 
 const _rawBase =
   typeof window === "undefined"
@@ -48,9 +48,9 @@ export const FINISH_DIST_KINDS: { key: FinishDistKind; label: string }[] = [
   { key: "wide", label: "ワイド" },
 ];
 
-/** `/indices` の連対率（`top2_probability`）。古いバックエンドでは無いので null。 */
-export function top2Of(h: HorseIndex): number | null {
-  const v = (h as HorseIndex & { top2_probability?: number | null }).top2_probability;
+/** `/indices` の連対率（`top2_probability`）。中央・地方どちらの馬でも可。古いバックエンドでは無いので null。 */
+export function top2Of(h: HorseIndex | ChihouHorseIndex): number | null {
+  const v = (h as { top2_probability?: number | null }).top2_probability;
   return typeof v === "number" ? v : null;
 }
 
