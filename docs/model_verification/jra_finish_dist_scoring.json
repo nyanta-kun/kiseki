@@ -1,0 +1,736 @@
+{
+  "generated_at": "2026-11-06T08:43:11+09:00",
+  "plan": "docs/prediction_flow_redesign_plan_2026_11_06.md §3 Wave 0c",
+  "input": {
+    "pred_cache": "/private/tmp/claude-501/-Users-ysuzuki-GitHub-kiseki-dev-jra/1e1045b6-119c-4082-b05f-c8b89e34994c/scratchpad/place_head_preds.pkl",
+    "lambda": 0.88,
+    "top3_norm_clipped_horses": 7
+  },
+  "arms": [
+    "harville",
+    "henery_fit",
+    "place_head"
+  ],
+  "base_arm": "harville",
+  "population": {
+    "n_races": 8631,
+    "status_counts": {
+      "ok": 8571,
+      "dead_heat": 47,
+      "no_single_winner": 13
+    },
+    "note": "1〜3着を使う指標は status=ok のレースだけで採点。place_ll は place_slots=3 で集計"
+  },
+  "acceptance": {
+    "reproduce_place_ll_same_predictions": {
+      "harville": {
+        "n_races": 8375,
+        "max_abs_dev": 9.992007221626409e-16,
+        "match": true
+      },
+      "henery_fit": {
+        "n_races": 8375,
+        "max_abs_dev": 5.551115123125783e-16,
+        "match": true
+      },
+      "place_head": {
+        "n_races": 8375,
+        "max_abs_dev": 3.3306690738754696e-16,
+        "match": true
+      }
+    },
+    "compare_saved_json": {
+      "available": true,
+      "rows": [
+        {
+          "arm": "harville",
+          "quarter": "2024Q1",
+          "ours": 0.44121,
+          "known": 0.44121,
+          "abs_dev": 0.0,
+          "n_races_ours": 886,
+          "n_races_known": 886
+        },
+        {
+          "arm": "harville",
+          "quarter": "2024Q2",
+          "ours": 0.4394,
+          "known": 0.4394,
+          "abs_dev": 0.0,
+          "n_races_ours": 867,
+          "n_races_known": 867
+        },
+        {
+          "arm": "harville",
+          "quarter": "2024Q3",
+          "ours": 0.45866,
+          "known": 0.45866,
+          "abs_dev": 0.0,
+          "n_races_ours": 779,
+          "n_races_known": 779
+        },
+        {
+          "arm": "harville",
+          "quarter": "2024Q4",
+          "ours": 0.4458,
+          "known": 0.4458,
+          "abs_dev": 0.0,
+          "n_races_ours": 807,
+          "n_races_known": 807
+        },
+        {
+          "arm": "harville",
+          "quarter": "2025Q1",
+          "ours": 0.43447,
+          "known": 0.43447,
+          "abs_dev": 0.0,
+          "n_races_ours": 850,
+          "n_races_known": 850
+        },
+        {
+          "arm": "harville",
+          "quarter": "2025Q2",
+          "ours": 0.44372,
+          "known": 0.44372,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "harville",
+          "quarter": "2025Q3",
+          "ours": 0.4582,
+          "known": 0.4582,
+          "abs_dev": 0.0,
+          "n_races_ours": 831,
+          "n_races_known": 831
+        },
+        {
+          "arm": "harville",
+          "quarter": "2025Q4",
+          "ours": 0.43502,
+          "known": 0.43502,
+          "abs_dev": 0.0,
+          "n_races_ours": 818,
+          "n_races_known": 818
+        },
+        {
+          "arm": "harville",
+          "quarter": "2026Q1",
+          "ours": 0.41551,
+          "known": 0.41551,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "harville",
+          "quarter": "2026Q2",
+          "ours": 0.43686,
+          "known": 0.43686,
+          "abs_dev": 0.0,
+          "n_races_ours": 849,
+          "n_races_known": 849
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2024Q1",
+          "ours": 0.44175,
+          "known": 0.44175,
+          "abs_dev": 0.0,
+          "n_races_ours": 886,
+          "n_races_known": 886
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2024Q2",
+          "ours": 0.43865,
+          "known": 0.43865,
+          "abs_dev": 0.0,
+          "n_races_ours": 867,
+          "n_races_known": 867
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2024Q3",
+          "ours": 0.45603,
+          "known": 0.45603,
+          "abs_dev": 0.0,
+          "n_races_ours": 779,
+          "n_races_known": 779
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2024Q4",
+          "ours": 0.44447,
+          "known": 0.44447,
+          "abs_dev": 0.0,
+          "n_races_ours": 807,
+          "n_races_known": 807
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2025Q1",
+          "ours": 0.43315,
+          "known": 0.43315,
+          "abs_dev": 0.0,
+          "n_races_ours": 850,
+          "n_races_known": 850
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2025Q2",
+          "ours": 0.44062,
+          "known": 0.44062,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2025Q3",
+          "ours": 0.45438,
+          "known": 0.45438,
+          "abs_dev": 0.0,
+          "n_races_ours": 831,
+          "n_races_known": 831
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2025Q4",
+          "ours": 0.43393,
+          "known": 0.43393,
+          "abs_dev": 0.0,
+          "n_races_ours": 818,
+          "n_races_known": 818
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2026Q1",
+          "ours": 0.41545,
+          "known": 0.41545,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "henery_fit",
+          "quarter": "2026Q2",
+          "ours": 0.43498,
+          "known": 0.43498,
+          "abs_dev": 0.0,
+          "n_races_ours": 849,
+          "n_races_known": 849
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2024Q1",
+          "ours": 0.43864,
+          "known": 0.43864,
+          "abs_dev": 0.0,
+          "n_races_ours": 886,
+          "n_races_known": 886
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2024Q2",
+          "ours": 0.43481,
+          "known": 0.43481,
+          "abs_dev": 0.0,
+          "n_races_ours": 867,
+          "n_races_known": 867
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2024Q3",
+          "ours": 0.45282,
+          "known": 0.45282,
+          "abs_dev": 0.0,
+          "n_races_ours": 779,
+          "n_races_known": 779
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2024Q4",
+          "ours": 0.44271,
+          "known": 0.44271,
+          "abs_dev": 0.0,
+          "n_races_ours": 807,
+          "n_races_known": 807
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2025Q1",
+          "ours": 0.42974,
+          "known": 0.42974,
+          "abs_dev": 0.0,
+          "n_races_ours": 850,
+          "n_races_known": 850
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2025Q2",
+          "ours": 0.43484,
+          "known": 0.43484,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2025Q3",
+          "ours": 0.45127,
+          "known": 0.45127,
+          "abs_dev": 0.0,
+          "n_races_ours": 831,
+          "n_races_known": 831
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2025Q4",
+          "ours": 0.43313,
+          "known": 0.43313,
+          "abs_dev": 0.0,
+          "n_races_ours": 818,
+          "n_races_known": 818
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2026Q1",
+          "ours": 0.41318,
+          "known": 0.41318,
+          "abs_dev": 0.0,
+          "n_races_ours": 844,
+          "n_races_known": 844
+        },
+        {
+          "arm": "place_head",
+          "quarter": "2026Q2",
+          "ours": 0.4325,
+          "known": 0.4325,
+          "abs_dev": 0.0,
+          "n_races_ours": 849,
+          "n_races_known": 849
+        }
+      ],
+      "max_abs_dev": 0.0,
+      "exact_to_printed_precision": true
+    }
+  },
+  "summary": {
+    "explore": {
+      "win_ll": {
+        "mean": {
+          "harville": 2.0817,
+          "henery_fit": 2.09541,
+          "place_head": 2.0817
+        },
+        "n_races": {
+          "harville": 5171,
+          "henery_fit": 5171,
+          "place_head": 5171
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.01371,
+            "ci95": [
+              0.01102,
+              0.01636
+            ],
+            "n_races": 5171
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "place_ll": {
+        "mean": {
+          "harville": 0.44362,
+          "henery_fit": 0.44222,
+          "place_head": 0.43869
+        },
+        "n_races": {
+          "harville": 5033,
+          "henery_fit": 5033,
+          "place_head": 5033
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.0014,
+            "ci95": [
+              -0.00184,
+              -0.00097
+            ],
+            "n_races": 5033
+          },
+          "place_head": {
+            "mean": -0.00493,
+            "ci95": [
+              -0.00605,
+              -0.00383
+            ],
+            "n_races": 5033
+          }
+        }
+      },
+      "top2_ll": {
+        "mean": {
+          "harville": 0.35528,
+          "henery_fit": 0.35566,
+          "place_head": 0.35528
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00037,
+            "ci95": [
+              3e-05,
+              0.00073
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "exacta_ll": {
+        "mean": {
+          "harville": 4.25154,
+          "henery_fit": 4.2604,
+          "place_head": 4.25154
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00886,
+            "ci95": [
+              0.00486,
+              0.0129
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "quinella_ll": {
+        "mean": {
+          "harville": 3.57603,
+          "henery_fit": 3.5827,
+          "place_head": 3.57603
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00667,
+            "ci95": [
+              0.00265,
+              0.01064
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "wide_ll": {
+        "mean": {
+          "harville": 0.14215,
+          "henery_fit": 0.14167,
+          "place_head": 0.14215
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.00048,
+            "ci95": [
+              -0.00065,
+              -0.00032
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "trio_ll": {
+        "mean": {
+          "harville": 4.70516,
+          "henery_fit": 4.69142,
+          "place_head": 4.70516
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.01374,
+            "ci95": [
+              -0.01851,
+              -0.00881
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "trifecta_ll": {
+        "mean": {
+          "harville": 6.44222,
+          "henery_fit": 6.43424,
+          "place_head": 6.44222
+        },
+        "n_races": {
+          "harville": 5149,
+          "henery_fit": 5149,
+          "place_head": 5149
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.00798,
+            "ci95": [
+              -0.01289,
+              -0.00297
+            ],
+            "n_races": 5149
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      }
+    },
+    "confirm": {
+      "win_ll": {
+        "mean": {
+          "harville": 2.08055,
+          "henery_fit": 2.08936,
+          "place_head": 2.08055
+        },
+        "n_races": {
+          "harville": 3447,
+          "henery_fit": 3447,
+          "place_head": 3447
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.0088,
+            "ci95": [
+              0.00553,
+              0.0122
+            ],
+            "n_races": 3447
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "place_ll": {
+        "mean": {
+          "harville": 0.43633,
+          "henery_fit": 0.43461,
+          "place_head": 0.43244
+        },
+        "n_races": {
+          "harville": 3342,
+          "henery_fit": 3342,
+          "place_head": 3342
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.00171,
+            "ci95": [
+              -0.00223,
+              -0.00118
+            ],
+            "n_races": 3342
+          },
+          "place_head": {
+            "mean": -0.00388,
+            "ci95": [
+              -0.00545,
+              -0.00216
+            ],
+            "n_races": 3342
+          }
+        }
+      },
+      "top2_ll": {
+        "mean": {
+          "harville": 0.35107,
+          "henery_fit": 0.3512,
+          "place_head": 0.35107
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00012,
+            "ci95": [
+              -0.00032,
+              0.00058
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "exacta_ll": {
+        "mean": {
+          "harville": 4.20664,
+          "henery_fit": 4.20987,
+          "place_head": 4.20664
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00323,
+            "ci95": [
+              -0.00146,
+              0.00825
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "quinella_ll": {
+        "mean": {
+          "harville": 3.52734,
+          "henery_fit": 3.52921,
+          "place_head": 3.52734
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": 0.00187,
+            "ci95": [
+              -0.0029,
+              0.00688
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "wide_ll": {
+        "mean": {
+          "harville": 0.14181,
+          "henery_fit": 0.1411,
+          "place_head": 0.14181
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.00071,
+            "ci95": [
+              -0.00096,
+              -0.00047
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "trio_ll": {
+        "mean": {
+          "harville": 4.61414,
+          "henery_fit": 4.59528,
+          "place_head": 4.61414
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.01886,
+            "ci95": [
+              -0.02498,
+              -0.01236
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      },
+      "trifecta_ll": {
+        "mean": {
+          "harville": 6.35402,
+          "henery_fit": 6.33967,
+          "place_head": 6.35402
+        },
+        "n_races": {
+          "harville": 3422,
+          "henery_fit": 3422,
+          "place_head": 3422
+        },
+        "delta_vs_base": {
+          "henery_fit": {
+            "mean": -0.01434,
+            "ci95": [
+              -0.02077,
+              -0.00772
+            ],
+            "n_races": 3422
+          },
+          "place_head": {
+            "identical_to_base": true
+          }
+        }
+      }
+    }
+  }
+}
