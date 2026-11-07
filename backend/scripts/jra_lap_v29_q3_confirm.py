@@ -74,16 +74,18 @@ BASE, NEW = "v28", "lap"
 GD0_COLS = ["is_good", "is_yaya", "is_heavy", "is_bad"]
 
 
-def assert_no_test_rows(df: pd.DataFrame) -> None:
-    """🔴 2026Q4 の行が混ざっていたら止める（§3）。"""
-    bad = int((df["date"].astype(str) >= HARD_STOP).sum())
+def assert_no_test_rows(df: pd.DataFrame, hard_stop: str = HARD_STOP) -> None:
+    """🔴 評価窓より後（既定は 2026Q4）の行が混ざっていたら止める（§3）。"""
+    bad = int((df["date"].astype(str) >= hard_stop).sum())
     if bad:
-        raise SystemExit(f"🔴 {HARD_STOP} 以降の行が {bad} 行ある。2026Q4 は TEST なので使わない")
+        raise SystemExit(f"🔴 {hard_stop} 以降の行が {bad} 行ある。評価窓より後のデータは使わない")
 
 
-def split_train_valid(train: pd.DataFrame, valid_days: int) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+def split_train_valid(
+    train: pd.DataFrame, valid_days: int, eval_start: str = EVAL_START
+) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """`jra_winplace_feature_ab.run_arm` と同じ train / valid 分割。"""
-    cut = (pd.to_datetime(EVAL_START) - pd.Timedelta(days=valid_days)).strftime("%Y%m%d")
+    cut = (pd.to_datetime(eval_start) - pd.Timedelta(days=valid_days)).strftime("%Y%m%d")
     tr, va = train[train["date"] <= cut], train[train["date"] > cut]
     if len(va) < 2000:
         i = int(len(train) * 0.8)
@@ -92,12 +94,23 @@ def split_train_valid(train: pd.DataFrame, valid_days: int) -> tuple[pd.DataFram
 
 
 def fit_condition(
-    df: pd.DataFrame, seeds: list[int], valid_days: int, with_place_head: bool
+    df: pd.DataFrame,
+    seeds: list[int],
+    valid_days: int,
+    with_place_head: bool,
+    *,
+    eval_start: str = EVAL_START,
+    eval_end: str = EVAL_END,
+    quarter: str = "2026Q3",
 ) -> tuple[dict[str, pd.DataFrame], dict]:
-    """1条件（主 or gd0）で2腕を同じ分割で学習し、評価行に確率を付けて返す。"""
-    train = df[df["date"] < EVAL_START]
-    te0 = df[(df["date"] >= EVAL_START) & (df["date"] <= EVAL_END)].reset_index(drop=True)
-    tr, va, cut = split_train_valid(train, valid_days)
+    """1条件（主 or gd0）で2腕を同じ分割で学習し、評価行に確率を付けて返す。
+
+    窓の引数は 2026Q4 の再確認（`jra_lap_v29_q4_recheck.py`・§9）が同じ学習を
+    別の窓で回すためにある。既定値は §3 の 2026Q3。
+    """
+    train = df[df["date"] < eval_start]
+    te0 = df[(df["date"] >= eval_start) & (df["date"] <= eval_end)].reset_index(drop=True)
+    tr, va, cut = split_train_valid(train, valid_days, eval_start)
     info: dict = {
         "train_rows": int(len(tr)),
         "valid_rows": int(len(va)),
@@ -113,7 +126,7 @@ def fit_condition(
         raw_w, it_w = ab.fit_predict(tr, va, te, cols, cols, seeds)
         te["p_win"] = race_normalize(raw_w, te["race_id"])
         te["p_place"] = harville_place(te, "p_win")
-        te["quarter"] = "2026Q3"
+        te["quarter"] = quarter
         info[f"best_iters_win__{arm}"] = it_w
         logger.info("  [%s] is_win: %d列 iters=%s (%.1fs)", arm, len(cols), it_w, time.time() - t0)
         if with_place_head:
