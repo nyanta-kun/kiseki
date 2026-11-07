@@ -1657,9 +1657,46 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **地方競馬は対象外**（下記の別系統）。
 
+### 総合指数 v29（単勝・複勝ヘッドにラップ7列・2026-11-07）
+
+`COMPOSITE_VERSION = 29`。事前登録・結果・Q4 の再確認ルールは
+`docs/jra_lap_v29_q3_confirm_plan_2026_11_07.md`（§8 が 2026Q3 の確認・§9 が Q4 の再確認）。
+**v28 との差は、単勝・複勝の2ヘッドの入力に `lap_form.LAP_FORM_FEATURE_NAMES` の7列を
+足して 45列にしたことだけ。** `composite_index` / `out_probability` / `reg_rank` は不変。
+
+- モデル: `models/v29_iswin_calib.txt` + `models/v29_placed_head.txt`。
+  読めなければ単勝は v28 → v27、複勝は v28 → Harville へ自動で落ちる（**戻すときはこの2ファイルを外す**）
+- 学習: `train_jra_iswin_head.py` / `train_jra_placed_head.py`（四半期ローリングが引数なしで呼ぶ）。
+  🔴 **四半期の途中で手で回すときは `--end <VAL_END> --skip-honest-test` を付ける**
+  （付けないと当四半期の TEST 行で honest test を行い、一度きりの窓を開けてしまう）
+- バックフィル: `scripts/inference_v29.py`（既定 2023-05-06〜・冪等）
+- 2026Q3 887R: 単勝 多項対数損失 Δ −0.01331（**95%CI [−0.02238, −0.00456]・確認成功**）。
+  ただし v28 の確認に使われていない9月だけでは Δ −0.00068 で差がほぼ無い
+- 評価は seed 3本の平均、**出荷モデルは seed 1本**（v28 と同じ扱い）
+
+#### 🔴 ラップ特徴は `src/indices/lap_form.py` からのみ取る
+
+学習・バックフィル・検証は `load_lap_context`（全期間）、配信は
+`build_lap_form_features_for_race`（その馬たちの過去走と、走った区分のレースだけを読む）。
+**どちらも `build_lap_context` → `lap_features_for_horses` を通すので par の値が一致する**
+（本番 DB 20R・283頭で 1,981 値すべて一致・`test_v29_lap_wiring.py` が合成データで固定）。
+欠損は v28 の過去走4列と同じく **NaN のまま**渡す。
+
+#### 🔴 2026Q4 の再確認（2027-01-01 以降に1回だけ）
+
+    cd backend
+    ~/bin/kiseki-ro env JRA_TEST_START=20261001 .venv/bin/python scripts/jra_lap_v29_q4_recheck.py
+
+`JRA_TEST_START` を付けないと止まる（1/1 に TEST_START が繰り上がり、台帳の行が別の窓を指すため）。
+Q4 単独の点推定 ≥ 0 かつ Q3+Q4 合算の CI 上端が 0 未満でなければ **v28 へ戻す**。
+戻すなら 2027Q1 の v29 バックフィルより前に行う。
+
+⚠️ kiseki-lab は指数を `version = 28` 固定で読んでいた（2026-11-07 に予告を送った）。
+版を上げ下げしたら知らせること。
+
 ### 総合指数 v28（単勝ヘッド38列 + 複勝の独立ヘッド・2026-09-04）
 
-`COMPOSITE_VERSION = 28`。事前登録・結果は
+v29 の土台（v29 は単勝・複勝ヘッドの列にラップ7列を足しただけ）。当時は `COMPOSITE_VERSION = 28`。事前登録・結果は
 `docs/jra_winplace_structure_plan_2026_09_04.md`（§16 が実装設計・§18 が 2026Q3 の確認）。
 **`composite_index` / `out_probability` / `reg_rank` / tier 判定は v27 から変更なし。**
 変えたのは確率の2本だけ。
