@@ -1,4 +1,7 @@
-"""JRA v28 複勝の独立ヘッド（is_placed・38特徴）の学習スクリプト。
+"""JRA v29 複勝の独立ヘッド（is_placed・45特徴）の学習スクリプト。
+
+v29（2026-11-07）: 単勝ヘッドと同じ45列（`train_jra_iswin_head.HEAD_FEATURE_NAMES`）。
+
 
 計画 `docs/jra_winplace_structure_plan_2026_09_04.md` §16.1 / §13.1 / §18。
 
@@ -64,6 +67,7 @@ early stopping が食い違わないようにするため（検証も `fit_predi
   cd backend
   .venv/bin/python scripts/train_jra_placed_head.py
 """
+
 from __future__ import annotations
 
 import json
@@ -86,6 +90,7 @@ import pandas as pd  # noqa: E402
 from scripts.jra_calibration_ab import race_normalize  # noqa: E402
 from scripts.jra_prob_scoring import harville_place, place_scores  # noqa: E402
 from scripts.train_jra_iswin_head import (  # noqa: E402
+    HEAD_FEATURE_NAMES,
     MAX_ROUND,
     NEW_FEATURE_NAMES,
     PARAMS,
@@ -94,8 +99,8 @@ from scripts.train_jra_iswin_head import (  # noqa: E402
     train_model,
 )
 from src import jra_protocol  # noqa: E402
+from src.indices.lap_form import LAP_FORM_FEATURE_NAMES  # noqa: E402
 from src.indices.composite import (  # noqa: E402
-    V28_FEATURE_NAMES,
     normalize_place_to_slots,
     place_slots_for_field,
 )
@@ -104,8 +109,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("train_placed")
 
 MODELS_DIR = _root / "models"
-MODEL_PATH = MODELS_DIR / "v28_placed_head.txt"
-METRICS_PATH = MODELS_DIR / "v28_placed_head_metrics.json"
+MODEL_PATH = MODELS_DIR / "v29_placed_head.txt"
+METRICS_PATH = MODELS_DIR / "v29_placed_head_metrics.json"
 
 EPS = 1e-9
 
@@ -119,9 +124,7 @@ def is_placed_label(df: pd.DataFrame) -> np.ndarray:
     """
     slots = pd.to_numeric(df["place_slots"], errors="coerce")
     if bool((slots <= 0).any()):
-        raise ValueError(
-            "place_slots <= 0 の行が学習に混ざっている（§18.3-2: 5頭未満は除外する）"
-        )
+        raise ValueError("place_slots <= 0 の行が学習に混ざっている（§18.3-2: 5頭未満は除外する）")
     fp = pd.to_numeric(df["finish_position"], errors="coerce")
     return (fp <= slots).astype(int).to_numpy()
 
@@ -153,9 +156,7 @@ def sanity_check_place_slots(df: pd.DataFrame) -> dict:
     """
     for col in ("n_entries", "n_runners", "place_slots", "place_slots_finishers"):
         if col not in df.columns:
-            raise SystemExit(
-                f"{col} 列が無い。load_v28_dataset を経由していない可能性がある"
-            )
+            raise SystemExit(f"{col} 列が無い。load_v28_dataset を経由していない可能性がある")
     n_entries = pd.to_numeric(df["n_entries"], errors="coerce").to_numpy()
     n_runners = pd.to_numeric(df["n_runners"], errors="coerce").to_numpy()
     slots = pd.to_numeric(df["place_slots"], errors="coerce").to_numpy()
@@ -165,13 +166,14 @@ def sanity_check_place_slots(df: pd.DataFrame) -> dict:
     expect = np.asarray([place_slots_for_field(int(v)) for v in n_entries])
     bad = int((expect != slots).sum())
     if bad:
-        raise SystemExit(
-            f"place_slots が配信側の定義 place_slots_for_field(n_entries) と {bad} 行で不一致"
-        )
+        raise SystemExit(f"place_slots が配信側の定義 place_slots_for_field(n_entries) と {bad} 行で不一致")
 
     per_race = df.groupby("race_id").agg(
-        n_entries=("n_entries", "first"), n_runners=("n_runners", "first"),
-        slots=("place_slots", "first"), slots_fin=("place_slots_finishers", "first"))
+        n_entries=("n_entries", "first"),
+        n_runners=("n_runners", "first"),
+        slots=("place_slots", "first"),
+        slots_fin=("place_slots_finishers", "first"),
+    )
     n_race = int(len(per_race))
     field_diff = int((per_race["n_entries"] != per_race["n_runners"]).sum())
     slots_diff = int((per_race["slots"] != per_race["slots_fin"]).sum())
@@ -180,21 +182,18 @@ def sanity_check_place_slots(df: pd.DataFrame) -> dict:
     return {
         "rule": "place_slots_for_field(n_entries): n>=8→3 / 5<=n<=7→2 / n<5→0",
         "n_entries_source": "🔴 build_population を掛ける**前**のレース内行数"
-                            "（= 配信の race_entries 全馬。取消・除外を含む）",
+        "（= 配信の race_entries 全馬。取消・除外を含む）",
         "n_runners_source": "jra_prob_scoring.build_population 後の完走馬の数（監視用）",
         "n_races": n_race,
         "races_where_n_entries_differs_from_n_runners": field_diff,
         "races_where_n_entries_differs_pct": round(100 * field_diff / max(1, n_race), 3),
         "races_where_place_slots_differs_from_payout_rule": slots_diff,
         "races_where_place_slots_differs_pct": round(100 * slots_diff / max(1, n_race), 3),
-        "place_slots_deviation_note":
-            "🔴 払戻規則は「出走頭数」基準なので、この件数ぶんラベルが規則とずれる。"
-            "配信は取消を知り得ないため意図的に飲んでいる代償（モジュール docstring 参照）",
+        "place_slots_deviation_note": "🔴 払戻規則は「出走頭数」基準なので、この件数ぶんラベルが規則とずれる。"
+        "配信は取消を知り得ないため意図的に飲んでいる代償（モジュール docstring 参照）",
         "rows_where_head_count_differs_from_n_runners": int(np.nansum(hc != n_runners)),
         "rows_where_head_count_differs_from_n_entries": int(np.nansum(hc != n_entries)),
-        "slots_distribution": {
-            str(int(k)): int(v) for k, v in pd.Series(slots).value_counts().items()
-        },
+        "slots_distribution": {str(int(k)): int(v) for k, v in pd.Series(slots).value_counts().items()},
     }
 
 
@@ -210,6 +209,7 @@ def place_metrics(te: pd.DataFrame, place_col: str, win_col: str) -> dict:
 
 def main() -> None:
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="20230501")
     p.add_argument("--end", default="20991231")
@@ -217,11 +217,17 @@ def main() -> None:
     p.add_argument("--valid-end", default=jra_protocol.VAL_END)
     p.add_argument("--refit-end", default=jra_protocol.TRAIN_DATA_END)
     p.add_argument("--seeds", default="42,123,456")
-    p.add_argument("--skip-honest-test", action="store_true",
-                   help="🔴 TEST 窓での honest test を省く。TEST 窓を既に消費した後に "
-                        "実装の修正でモデルだけ作り直すときに使う（refit 境界は不変）")
-    p.add_argument("--no-harville-baseline", action="store_true",
-                   help="honest test の Harville ベースライン（is_win ヘッドの学習が要る）を省く")
+    p.add_argument(
+        "--skip-honest-test",
+        action="store_true",
+        help="🔴 TEST 窓での honest test を省く。TEST 窓を既に消費した後に "
+        "実装の修正でモデルだけ作り直すときに使う（refit 境界は不変）",
+    )
+    p.add_argument(
+        "--no-harville-baseline",
+        action="store_true",
+        help="honest test の Harville ベースライン（is_win ヘッドの学習が要る）を省く",
+    )
     args = p.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
     logger.info("protocol: %s", jra_protocol.describe())
@@ -240,13 +246,16 @@ def main() -> None:
 
     # 🔴 place_slots=0 は学習からのみ除外する（評価対象にも入らない）
     tr, va = drop_no_place_slots(tr_all), drop_no_place_slots(va_all)
-    dropped = {"train": int(len(tr_all) - len(tr)), "valid": int(len(va_all) - len(va)),
-               "reason": "place_slots=0（5頭未満）は払戻対象着順が無くラベルが定義できない"}
+    dropped = {
+        "train": int(len(tr_all) - len(tr)),
+        "valid": int(len(va_all) - len(va)),
+        "reason": "place_slots=0（5頭未満）は払戻対象着順が無くラベルが定義できない",
+    }
     logger.info("train=%d valid=%d test=%d / 除外 %s", len(tr), len(va), len(te), dropped)
     if not len(tr) or not len(va):
         raise SystemExit("train / valid が空。境界を確認すること")
 
-    Xte = te[V28_FEATURE_NAMES].to_numpy(dtype=float) if len(te) else None
+    Xte = te[HEAD_FEATURE_NAMES].to_numpy(dtype=float) if len(te) else None
 
     # ── ラウンド数を VAL で選ぶ ──
     best_iters, te_preds = [], []
@@ -259,7 +268,7 @@ def main() -> None:
     logger.info("best_iter=%s → refit rounds=%d", best_iters, n_rounds)
 
     metrics: dict = {
-        "head": "is_placed (v28 / 38特徴・独立ヘッド)",
+        "head": "is_placed (v29 / 45特徴・独立ヘッド)",
         "label": "finish_position <= place_slots（🔴 place_slots ごとに変える・§13.1 罠1）",
         "place_slots": slots_info,
         "dropped_rows": dropped,
@@ -269,12 +278,12 @@ def main() -> None:
         "seeds": seeds,
         "best_iters": best_iters,
         "refit_rounds": n_rounds,
-        "features": list(V28_FEATURE_NAMES),
-        "n_features": len(V28_FEATURE_NAMES),
+        "features": list(HEAD_FEATURE_NAMES),
+        "n_features": len(HEAD_FEATURE_NAMES),
         "params": PARAMS,
         "max_round": MAX_ROUND,
         "new_feature_missing_pct": {
-            c: round(float(df[c].isna().mean() * 100), 2) for c in NEW_FEATURE_NAMES
+            c: round(float(df[c].isna().mean() * 100), 2) for c in NEW_FEATURE_NAMES + LAP_FORM_FEATURE_NAMES
         },
     }
 
@@ -313,21 +322,29 @@ def main() -> None:
 
         metrics["test"] = {
             "period": [te["date"].min(), te["date"].max()],
-            "n": int(len(te)), "n_races": int(te["race_id"].nunique()),
+            "n": int(len(te)),
+            "n_races": int(te["race_id"].nunique()),
             **place_metrics(te, "p_place_new", "p_win"),
         }
 
         # Σp = place_slots の実測（クリップの分だけ崩れうる）
-        s = te[te["place_slots"] > 0].groupby("race_id").agg(
-            total=("p_place_new", "sum"), slots=("place_slots", "first"))
-        metrics["test_sum_deviation_max"] = round(
-            float((s["total"] - s["slots"]).abs().max()), 6)
-        logger.info("honest test: Σp−place_slots の最大乖離 = %.6f / クリップ %d頭",
-                    metrics["test_sum_deviation_max"], n_clipped)
+        s = (
+            te[te["place_slots"] > 0]
+            .groupby("race_id")
+            .agg(total=("p_place_new", "sum"), slots=("place_slots", "first"))
+        )
+        metrics["test_sum_deviation_max"] = round(float((s["total"] - s["slots"]).abs().max()), 6)
+        logger.info(
+            "honest test: Σp−place_slots の最大乖離 = %.6f / クリップ %d頭",
+            metrics["test_sum_deviation_max"],
+            n_clipped,
+        )
 
         visual_check(te)
     elif args.skip_honest_test:
-        metrics["honest_test"] = "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json"
+        metrics["honest_test"] = (
+            "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json"
+        )
     else:
         logger.warning("test 期間にデータなし（TEST_START=%s）", jra_protocol.TEST_START)
 
@@ -358,12 +375,13 @@ def visual_check(te: pd.DataFrame) -> None:
     rid = int(d["race_id"].iloc[0])
     g = te[te["race_id"] == rid].sort_values("horse_number")
     print("\n" + "=" * 120)
-    print(f"🔴 目視確認 race_id={rid} {g.iloc[0]['date']} n={len(g)} "
-          f"place_slots={int(g.iloc[0]['place_slots'])}")
+    print(f"🔴 目視確認 race_id={rid} {g.iloc[0]['date']} n={len(g)} " f"place_slots={int(g.iloc[0]['place_slots'])}")
     print("=" * 120)
-    print(f"{'馬番':>4}{'着':>4}{'脚質ord':>9}{'着順分散5':>11}{'勝複比5':>10}"
-          f"{'pace_pit':>10}{'p_win':>10}{'raw_placed':>12}{'p_place new':>13}"
-          f"{'p_place harv':>14}")
+    print(
+        f"{'馬番':>4}{'着':>4}{'脚質ord':>9}{'着順分散5':>11}{'勝複比5':>10}"
+        f"{'pace_pit':>10}{'p_win':>10}{'raw_placed':>12}{'p_place new':>13}"
+        f"{'p_place harv':>14}"
+    )
 
     def _f(v: object, w: int, dg: int = 3) -> str:
         try:
@@ -373,16 +391,22 @@ def visual_check(te: pd.DataFrame) -> None:
         return f"{'NaN':>{w}}" if np.isnan(fv) else f"{fv:>{w}.{dg}f}"
 
     for _, r in g.iterrows():
-        print(f"{int(r['horse_number']):>4}{int(r['finish_position']):>4}"
-              f"{_f(r['runner_type_ord'], 9)}{_f(r['finish_var5'], 11)}"
-              f"{_f(r['win_place_ratio5'], 10)}{_f(r['pace_handicap_pit'], 10)}"
-              f"{_f(r.get('p_win'), 10, 5)}{_f(r['p_placed_raw'], 12, 5)}"
-              f"{_f(r['p_place_new'], 13, 5)}{_f(r.get('p_place_harville'), 14, 5)}")
-    print(f"{'Σ':>4}{'':>4}{'':>9}{'':>11}{'':>10}{'':>10}"
-          f"{_f(g['p_win'].sum(), 10, 5)}{_f(g['p_placed_raw'].sum(), 12, 5)}"
-          f"{_f(g['p_place_new'].sum(), 13, 5)}{_f(g['p_place_harville'].sum() if 'p_place_harville' in g else None, 14, 5)}")
-    print(f"（期待: Σp_win=1.00000 / Σp_place new = {int(g.iloc[0]['place_slots'])}.00000 "
-          f"/ raw_placed だけはずれてよい）")
+        print(
+            f"{int(r['horse_number']):>4}{int(r['finish_position']):>4}"
+            f"{_f(r['runner_type_ord'], 9)}{_f(r['finish_var5'], 11)}"
+            f"{_f(r['win_place_ratio5'], 10)}{_f(r['pace_handicap_pit'], 10)}"
+            f"{_f(r.get('p_win'), 10, 5)}{_f(r['p_placed_raw'], 12, 5)}"
+            f"{_f(r['p_place_new'], 13, 5)}{_f(r.get('p_place_harville'), 14, 5)}"
+        )
+    print(
+        f"{'Σ':>4}{'':>4}{'':>9}{'':>11}{'':>10}{'':>10}"
+        f"{_f(g['p_win'].sum(), 10, 5)}{_f(g['p_placed_raw'].sum(), 12, 5)}"
+        f"{_f(g['p_place_new'].sum(), 13, 5)}{_f(g['p_place_harville'].sum() if 'p_place_harville' in g else None, 14, 5)}"
+    )
+    print(
+        f"（期待: Σp_win=1.00000 / Σp_place new = {int(g.iloc[0]['place_slots'])}.00000 "
+        f"/ raw_placed だけはずれてよい）"
+    )
 
 
 if __name__ == "__main__":
