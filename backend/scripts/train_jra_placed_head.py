@@ -343,7 +343,7 @@ def main() -> None:
         visual_check(te)
     elif args.skip_honest_test:
         metrics["honest_test"] = (
-            "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json"
+            "🔴 --skip-honest-test で省略（TEST 窓に触れずに学習した）。v29 は 2026-11-07 に学習終端 2026-09-30 で作り、採否の確認は 2026Q3 で行った（docs/jra_lap_v29_q3_confirm_plan_2026_11_07.md）。2026Q4 はその §9 の再確認と四半期ローリングの evaluate にだけ使う"
         )
     else:
         logger.warning("test 期間にデータなし（TEST_START=%s）", jra_protocol.TEST_START)
