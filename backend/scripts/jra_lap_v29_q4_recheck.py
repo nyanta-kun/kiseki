@@ -39,7 +39,13 @@ TEST を開封したことになるので、本番の実行は **2027-01-01 以�
 
 窓を1四半期ずつ前へずらす（Q2 の脚 → Q3 の脚）。使うのは 2026-09-30 までの
 VAL だけなので TEST を開けない。台帳にも書かない。Q3 の脚が §8 の数字を
-再現するかもここで確かめられる。
+再現するかもここで確かめられる（2026-11-07 実施: 反復回数まで一致）。
+出力は一時ディレクトリへ書く（結果と紛らわしいので docs には置かない）。
+
+## Q3 の脚が §8 を再現しないとき
+
+`REPRO_TOL` を緩めない。まず `build_dataset` が読むサブ指数の版を見る
+（v29 のバックフィル後は version=29 の行が最大版になる。38列が版で変わらない前提が崩れていないか）。
 
     ~/bin/kiseki-ro .venv/bin/python scripts/jra_lap_v29_q4_recheck.py --rehearsal \\
         --cache /tmp/v29_rehearsal_dataset.pkl
@@ -52,6 +58,7 @@ import datetime
 import json
 import logging
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -217,7 +224,7 @@ def main() -> None:
     out_path = (
         Path(args.out)
         if args.out
-        else (OUT_PATH.with_name(OUT_PATH.stem + "_rehearsal.json") if args.rehearsal else OUT_PATH)
+        else (Path(tempfile.gettempdir()) / "jra_lap_v29_q4_recheck_rehearsal.json" if args.rehearsal else OUT_PATH)
     )
     logger.info("脚: %s → %s / hard_stop=%s / %s", earlier.quarter, later.quarter, hard_stop, jra_protocol.describe())
 
@@ -248,6 +255,8 @@ def main() -> None:
             eval_end=leg.eval_end,
             quarter=leg.quarter,
         )
+        if info["eval_races"] == 0:
+            raise SystemExit(f"🔴 {leg.quarter} の評価行が0件。データの終端（--cache の古さ等）を確かめる")
         legs.append((leg, evs, info))
 
     by_leg = {leg.quarter: win_delta(evs, args.bootstrap) for leg, evs, _ in legs}
