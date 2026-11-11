@@ -6,6 +6,8 @@
 
 # Data collection
 requests==2.31.0
+# netkeirin への通信だけを Mac mini の SOCKS トンネル経由で出す（NETKEIRIN_PROXY_URL・2026-11）
+PySocks==1.7.1
 beautifulsoup4==4.12.3
 lxml==5.1.0
 

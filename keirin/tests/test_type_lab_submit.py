@@ -680,6 +680,9 @@ def test_dry_run_never_rebuilds(monkeypatch):
         def submit_pick_multi(self, **k):
             return False, "test"
 
+        def ensure_ready(self):
+            return m.PreflightResult("ok", "test")
+
     monkeypatch.setattr(m, "NetkeirinClient", _FakeClient)
     monkeypatch.setattr(m, "send", lambda *a, **k: None)
 
@@ -1476,6 +1479,17 @@ def _highpay_env(monkeypatch, rows, highpay, already=frozenset()):
     monkeypatch.setattr(m, "_load_rows", lambda day: rows)
     monkeypatch.setattr(m, "_load_highpay_rows", lambda day: highpay)
     monkeypatch.setattr(m, "send", lambda *a, **k: None)
+
+    # 🔴 **本物の `NetkeirinClient` を作らせない。** 入稿前チェック（2026-11-11）が
+    #    netkeirin へ実際に GET する。
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def ensure_ready(self):
+            return m.PreflightResult("ok", "test")
+
+    monkeypatch.setattr(m, "NetkeirinClient", _FakeClient)
 
     def _fake_submit(row, session, client, dry_run, show_detail=False,
                      skip=None, confident=False, origin=m.ORIGIN_RANK):

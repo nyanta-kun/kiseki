@@ -48,6 +48,7 @@ def pytest_configure(config):
        `KEIRIN_TEST_ALLOW_REMOTE_DB=1` を明示する（通常は使わない）。
     """
     import os
+    config.addinivalue_line("markers", "real_preflight: 本物の入稿前チェックを使う")
     if not os.environ.get("KEIRIN_TEST_ALLOW_REMOTE_DB"):
         os.environ.pop("KEIRIN_DB_URL", None)
     if not os.environ.get("KEIRIN_DB_URL"):
@@ -86,3 +87,23 @@ def _isolate_zero_row_state(tmp_path, monkeypatch):
     from src import wt_rebuild_common
     monkeypatch.setattr(
         wt_rebuild_common, "_ZERO_ROW_STATE", tmp_path / "zero_row_notified.json")
+
+
+@pytest.fixture(autouse=True)
+def _block_netkeirin_preflight(request, monkeypatch):
+    """全テストで netkeirin の入稿前チェックを「正常」に差し替える（2026-11-11）。
+
+    🔴 入稿前チェック（`NetkeirinClient.ensure_ready`）は入稿ツールへ実際に GET し、
+       セッション切れならログインまでする。型ラボの `run()` を本番モードで回す
+       テストは本物のクライアントを作るものが多く、差し替えないと
+       **CI から本物の netkeirin へ通信する**（サンドボックスのあるローカルでは
+       止まって見えるので気づけない）。
+
+    分類そのものを確かめるテストは `@pytest.mark.real_preflight` を付けて外す。
+    """
+    if request.node.get_closest_marker("real_preflight"):
+        return
+    from src import netkeirin_client as nc
+    monkeypatch.setattr(nc.NetkeirinClient, "ensure_ready",
+                        lambda self: nc.PreflightResult(nc.PREFLIGHT_OK, "test"))
+
