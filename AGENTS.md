@@ -2244,3 +2244,18 @@ pmset -g sched                                     # 確認
 
 ⚠️ `pmset repeat` は**繰り返しスケジュールを1つしか持てない**。別の時刻で上書きすると
 バックアップと月次ローリングの**両方**が起床しなくなる。変更するときは両方を見ること。
+
+## 🔴 Mac の空き容量が尽きると Windows VM が凍結する（2026-11-10・本番で発生）
+
+Mac の空きが 358MB まで落ちたとき、Parallels が Windows VM を**凍結**し、
+確認ダイアログ（`PRL_WARN_TOO_LOW_HDD_SIZE`）を出して応答を待ち続けた。
+VM の中の realtime も watchdog も止まり、**地方のオッズと結果が 06:22〜17:49 の間 1 件も取れなかった**。
+
+- `prlctl list -a` は凍結中も **`running` と表示する**。`prlctl list -i "Windows 11"` の `State` と
+  `~/Parallels/Windows 11.pvm/parallels.log` の `Low free HDD space` / `VmStateFrozen` で判別する
+- ⚠️ **凍結中に `prlctl exec` を打たない。** 待っている確認に「停止」で答えたとみられ、VM が電源断で止まった
+- 復旧は `prlctl start "Windows 11"`。起動すると realtime は自動で立ち上がる（約20秒で ssh 可）
+
+**監視**: LaunchAgent `com.kiseki.disk-space-watch`（30分ごと・`scripts/disk_space_watch.sh`）が
+空き 15GB 未満で通知センターへ出す（3時間に1回まで）。5GB 未満は毎回出す。
+ログ: `logs/disk_space_watch.log`。常時 9 割以上埋まっているので、一時的な書き込みで簡単に尽きる。
