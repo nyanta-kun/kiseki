@@ -288,9 +288,12 @@ def cmd_ab(args: argparse.Namespace) -> None:
 
 ODDS_SQL = """
 WITH rc AS (
+  -- 🔴 fetched_at は naive UTC。to_timestamp は（DB セッションの）JST で解釈されるので、
+  --    AT TIME ZONE 'UTC' で naive UTC に直して比べる。二重に変換すると締切が 9 時間ずれ、
+  --    発走直前のオッズを拾う（2026-11-14 に一度踏んだ）
   SELECT id AS race_id,
-         (to_timestamp(date || post_time, 'YYYYMMDDHH24MI') AT TIME ZONE 'Asia/Tokyo')
-           AT TIME ZONE 'UTC' - interval '10 minutes' AS cutoff
+         to_timestamp(date || post_time, 'YYYYMMDDHH24MI') AT TIME ZONE 'UTC'
+           - interval '10 minutes' AS cutoff
   FROM keiba.races
   WHERE date BETWEEN %(start)s AND %(end)s AND post_time ~ '^[0-9]{4}$'
 )
