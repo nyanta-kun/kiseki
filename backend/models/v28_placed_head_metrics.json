@@ -5,17 +5,17 @@
     "rule": "place_slots_for_field(n_entries): n>=8→3 / 5<=n<=7→2 / n<5→0",
     "n_entries_source": "🔴 build_population を掛ける**前**のレース内行数（= 配信の race_entries 全馬。取消・除外を含む）",
     "n_runners_source": "jra_prob_scoring.build_population 後の完走馬の数（監視用）",
-    "n_races": 11535,
-    "races_where_n_entries_differs_from_n_runners": 1236,
-    "races_where_n_entries_differs_pct": 10.715,
-    "races_where_place_slots_differs_from_payout_rule": 43,
-    "races_where_place_slots_differs_pct": 0.373,
+    "n_races": 11775,
+    "races_where_n_entries_differs_from_n_runners": 1258,
+    "races_where_n_entries_differs_pct": 10.684,
+    "races_where_place_slots_differs_from_payout_rule": 44,
+    "races_where_place_slots_differs_pct": 0.374,
     "place_slots_deviation_note": "🔴 払戻規則は「出走頭数」基準なので、この件数ぶんラベルが規則とずれる。配信は取消を知り得ないため意図的に飲んでいる代償（モジュール docstring 参照）",
-    "rows_where_head_count_differs_from_n_runners": 8306,
-    "rows_where_head_count_differs_from_n_entries": 7970,
+    "rows_where_head_count_differs_from_n_runners": 8458,
+    "rows_where_head_count_differs_from_n_entries": 8118,
     "slots_distribution": {
-      "3": 155391,
-      "2": 1937
+      "3": 158407,
+      "2": 2037
     }
   },
   "dropped_rows": {
@@ -30,7 +30,7 @@
   ],
   "valid_period": [
     "20250630",
-    "20260630"
+    "20260930"
   ],
   "seeds": [
     42,
@@ -39,10 +39,10 @@
   ],
   "best_iters": [
     238,
-    259,
+    188,
     210
   ],
-  "refit_rounds": 238,
+  "refit_rounds": 210,
   "features": [
     "speed_index",
     "last_3f_index",
@@ -100,18 +100,17 @@
   },
   "max_round": 2000,
   "new_feature_missing_pct": {
-    "runner_type_ord": 10.11,
-    "finish_var5": 41.38,
-    "win_place_ratio5": 41.38,
+    "runner_type_ord": 10.19,
+    "finish_var5": 41.35,
+    "win_place_ratio5": 41.35,
     "pace_handicap_pit": 0.0
   },
-  "honest_test": "🔴 --skip-honest-test で省略。TEST 窓（2026Q3）は docs/jra_winplace_structure_plan_2026_09_04.md §18 の一度きり評価で消費済みで、PR #462 レビュー指摘1+2 の修正後に再測定してはいけない。このモデルの honest な数字は 2026Q4 のローリングで出す。修正前後の比較は VAL で行った: docs/model_verification/jra_v28_field_definition_ab.json",
-  "model_path": "/Users/ysuzuki/GitHub/kiseki-wt/jra/v28-place-head/backend/models/v28_placed_head.txt",
+  "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/v28_placed_head.txt",
   "refit_period": [
     "20230506",
-    "20260628"
+    "20260927"
   ],
-  "n_rows": 148885,
-  "n_races": 10887,
-  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260630 / TEST 20260701〜 (本番学習終端 20260630)"
+  "n_rows": 160444,
+  "n_races": 11775,
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260930 / TEST 20261001〜 (本番学習終端 20260930)"
 }
