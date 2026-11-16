@@ -66,6 +66,7 @@ keirin/
 │   │                                   # （「朝夕の推奨」は2026-07-31廃止。日次/夕方cronからの呼び出しなし）
 │   ├── notify_results_wt.py           # wt前日結果採点 + picks_history(route='wt') → Discord
 │   ├── snapshot_morning_odds_wt.py    # 朝オッズ退避(wt_odds_snapshot) / --report ドリフト計測
+│   ├── snapshot_prestart_odds_wt.py   # 発走10分前(t10)・7分前(t07)の3連複/3連単(wt_odds_snapshot・毎分cron)
 │   ├── snapshot_intraday_odds_wt.py   # 日中オッズスナップショット（money-flow素材・G03）
 │   ├── live_report_wt.py              # live実測レポート（ランク別/タグ別成績・ドリフト分布・標本数・G02）
 │   ├── collect_weather.py             # 気象データバックフィル（Open-Meteo API・G05）
@@ -176,7 +177,7 @@ winticket.jp (PRELOADED_STATE JSON / SSR)
 | `wt_races` | レース情報（cup_id, day_index, grade, start_at 等） |
 | `wt_entries` | 出走情報（34カラム: race_point, 脚質, lineup情報, 戦術率, finish_order 等） |
 | `wt_odds` | 事前オッズ（bet_type: trifecta/trio/exacta/quinella 等, odds_value・最終値で上書き） |
-| `wt_odds_snapshot` | オッズスナップショット（snapshot_type='morning'/'h06'/'h10'等・初回値保持。朝→最終ドリフト計測・money-flow用）。🔴 `evening`(16:00) は 2026-09-22 から停止（#603 の副作用）。2026-10-07 から 16時は `h16` として `intraday_results_wt.sh` が取得（`evening` は wt_odds の写しで別物）。欠けは `check_odds_snapshot_health.py`（`nightly_review.sh`・前日分）が Discord system へ通知 |
+| `wt_odds_snapshot` | オッズスナップショット（snapshot_type='morning'/'h06'/'h10'等・初回値保持。朝→最終ドリフト計測・money-flow用）。🔴 `evening`(16:00) は 2026-09-22 から停止（#603 の副作用）。2026-10-07 から 16時は `h16` として `intraday_results_wt.sh` が取得（`evening` は wt_odds の写しで別物）。2026-11-15 から発走直前の `t10`（10分前）/`t07`（7分前）を `snapshot_prestart_odds_wt.py`（VPS cron 毎分 8〜23時）が各レース1回ずつ取る（3連複・3連単のみ・`snapshot_at` は実際の取得時刻・取り逃した t10 は埋めない）。kaime-sim（仮想運用）の検証用。欠けは `check_odds_snapshot_health.py`（`nightly_review.sh`・前日分）が Discord system へ通知（t10/t07 は被覆90%未満で通知・`PRESTART_FIRST_DAY` から） |
 | `wt_weather` | 気象データ（venue_id×dt_hour PK・wind_speed/wind_gust/temperature 等。Open-Meteo API 経由バックフィル済） |
 
 ---

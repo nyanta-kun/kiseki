@@ -44,16 +44,25 @@ H16_FIRST_DAY = "2026-10-08"
 MORNING_MIN_COVERAGE = 0.90
 #: 朝バッチの対象にする最小車数。
 MIN_ENTRIES = 7
+#: 発走直前の型（`snapshot_prestart_odds_wt.py`・毎分 cron）。全レースが対象。
+PRESTART_TYPES = ("t10", "t07")
+#: 直前の型を判定し始める日。cron を入れた翌日にする（入れた当日は途中からしか取れない）。
+#: ⚠️ cron の導入が遅れたらこの日付も後ろへずらす（ずらさないと毎晩誤報が出る）。
+PRESTART_FIRST_DAY = "2026-11-19"
+#: 直前の型の被覆の下限（その日の開催レースに対する割合）。
+PRESTART_MIN_COVERAGE = 0.90
 
 
 def evaluate(day: str, n_races: int, n_big: int, morning_big: int,
-             type_counts: dict[str, int]) -> list[str]:
+             type_counts: dict[str, int],
+             prestart_races: dict[str, int] | None = None) -> list[str]:
     """欠けの一覧を返す（空なら正常）。DB にも通知にも依存しない純関数。
 
     n_races     : その日の開催レース数（中止を除く）。0 なら開催なしで判定しない
     n_big       : うち MIN_ENTRIES 車以上のレース数
     morning_big : n_big のうち morning があるレース数
     type_counts : snapshot_type -> その日のレースに付いた行数（0 や欠落は「無い」）
+    prestart_races : 直前の型 -> その型があるレース数。None なら直前の型は判定しない
     """
     if n_races <= 0:
         return []
@@ -69,6 +78,14 @@ def evaluate(day: str, n_races: int, n_big: int, morning_big: int,
             problems.append(
                 f"morning の被覆 {cov:.0%}（{morning_big}/{n_big}・{MIN_ENTRIES}車以上）"
                 f"が {MORNING_MIN_COVERAGE:.0%} 未満")
+    if prestart_races is not None and day >= PRESTART_FIRST_DAY:
+        for t in PRESTART_TYPES:
+            got = prestart_races.get(t, 0)
+            cov = got / n_races
+            if cov < PRESTART_MIN_COVERAGE:
+                problems.append(
+                    f"{t}（発走直前）の被覆 {cov:.0%}（{got}/{n_races}）"
+                    f"が {PRESTART_MIN_COVERAGE:.0%} 未満")
     return problems
 
 
@@ -77,7 +94,8 @@ def build_message(day: str, problems: list[str]) -> str:
     body = "\n".join(f"・{p}" for p in problems)
     return (f"⚠️ **オッズスナップショットに欠け**（{day}）\n{body}\n"
             "スナップショットは発走前にしか取れず、後から埋められない。"
-            "取得経路（VPS cron / intraday_results_wt.sh の h16）を確認すること。")
+            "取得経路（VPS cron / intraday_results_wt.sh の h16 / "
+            "snapshot_prestart_odds_wt.py の t10・t07）を確認すること。")
 
 
 def collect(day: str) -> tuple[int, int, int, dict[str, int]]:
@@ -108,6 +126,22 @@ def collect(day: str) -> tuple[int, int, int, dict[str, int]]:
     return int(n_races), int(n_big), int(morning_big), {t: int(c) for t, c in rows}
 
 
+def collect_prestart(day: str) -> dict[str, int]:
+    """直前の型ごとに、その型があるレース数（読み取りのみ）。"""
+    from src.database import get_connection
+
+    ph = ",".join("?" * len(PRESTART_TYPES))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT s.snapshot_type, COUNT(DISTINCT s.race_key)
+            FROM wt_odds_snapshot s JOIN wt_races r ON r.race_key = s.race_key
+            WHERE r.race_date = ? AND r.cancel = 0 AND s.snapshot_type IN ({ph})
+            GROUP BY s.snapshot_type
+            """, (day, *PRESTART_TYPES)).fetchall()
+    return {t: int(c) for t, c in rows}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="wt_odds_snapshot の欠けを見張る")
     ap.add_argument("day", nargs="?", default=None, help="YYYY-MM-DD（既定: 前日）")
@@ -116,7 +150,8 @@ def main() -> int:
     day = args.day or (date.today() - timedelta(days=1)).isoformat()
 
     n_races, n_big, morning_big, counts = collect(day)
-    problems = evaluate(day, n_races, n_big, morning_big, counts)
+    problems = evaluate(day, n_races, n_big, morning_big, counts,
+                        prestart_races=collect_prestart(day))
     if n_races <= 0:
         print(f"[snapshot_health] {day}: 開催なし")
         return 0
