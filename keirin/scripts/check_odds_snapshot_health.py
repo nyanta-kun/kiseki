@@ -48,7 +48,7 @@ MIN_ENTRIES = 7
 PRESTART_TYPES = ("t10", "t07")
 #: 直前の型を判定し始める日。cron を入れた翌日にする（入れた当日は途中からしか取れない）。
 #: ⚠️ cron の導入が遅れたらこの日付も後ろへずらす（ずらさないと毎晩誤報が出る）。
-PRESTART_FIRST_DAY = "2026-11-17"
+PRESTART_FIRST_DAY = "2026-11-19"
 #: 直前の型の被覆の下限（その日の開催レースに対する割合）。
 PRESTART_MIN_COVERAGE = 0.90
 
