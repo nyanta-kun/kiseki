@@ -30,7 +30,9 @@ VPS - PostgreSQL（keiba / sekito / chihou スキーマ共存）
   │   ├─ sekito.races        — 🔴 **実テーブル**。keiba.races / chihou.races からの
   │   │                        供給が要る（scripts/sync_sekito_races.sh・毎日 06:00）。
   │   │                        kiseki のスクレイパが対象レースをここから引くので**まだ要る**
-  │   ├─ sekito.netkeiba / kichiuma / anagusa — 外部指数。kiseki のスクレイパが書く
+  │   ├─ sekito.netkeiba / kichiuma — 外部指数。kiseki のスクレイパが書く
+  │   ├─ sekito.anagusa      — 🔴 **更新停止**。サラブレのサービス終了で最終ピックは
+  │   │                        2026-10-25（取得は 2026-10-31 に削除）。履歴として残す
   │   ├─ sekito.v_*          — sekito の画面用ビュー。**kiseki からの参照は 0 件**
   │   │                        （2026-09-10 に pg_depend で確認済み）
   │   └─ sekito.mv_horse_runs / mv_graded_wins
@@ -104,7 +106,7 @@ redirect_uri を変えて `accounts.google.com/o/oauth2/v2/auth` を叩けば判
 - Python: Ruff準拠、型ヒント必須、docstring必須
 - TypeScript: strict mode、ESLint準拠
 - テスト: 指数計算ロジックは必ずユニットテスト作成
-- DB: keiba スキーマ（メイン）+ sekito スキーマ（穴ぐさ等外部データ）を使用。Alembic経由のみでDDL変更
+- DB: keiba スキーマ（メイン）+ sekito スキーマ（netkeiba・吉馬等の外部データ。穴ぐさは履歴のみ）を使用。Alembic経由のみでDDL変更
 - 環境変数: .env に記載、コードにハードコードしない
 - Git: .env は絶対にコミットしない
 
@@ -371,6 +373,13 @@ netkeirin の分析支援ツール「予想家成績状況」
 ## DBスキーマ構成
 - `keiba.*` — races / race_entries / horses / calculated_indices 等メインデータ
 - `sekito.anagusa` — 穴ぐさピック情報（date, course_code, race_no, horse_no, rank A/B/C）
+  - 🔴 **2026-10-25 が最後で、以後は増えない**（サラブレのサービス終了・取得は 2026-10-31 に削除）。
+    過去レースの ☆ランク・特穴表示は履歴として出るのが正常
+  - 指数の `anagusa_index` とモデルの特徴量は**据え置き**。ピックが無いと全馬
+    「50＋コース等補正」になる。VAL 4,338R で配信時の損失は 1位馬勝率 −0.07pt（有意差なし）、
+    外して再学習しても有意差なし（`docs/PROJECT_STATUS.md` 2026-10-31）。
+    外すのは別の理由でモデルを作り直すとき。外したら `check_feature_health.py` の
+    `KNOWN_ISSUES` からも消す
   - course_code は JSPK/JHKD/JFKS/JNGT/JTOK/JNKY/JCKO/JKYO/JHSN/JKKR（sekito独自コード）
   - `has_anagusa` 判定はスコア閾値でなく sekito.anagusa のピック有無で行う
   - `anagusa_rank`（A/B/C）は API の `HorseIndexOut` レスポンスに含まれる（DBには未格納）
@@ -1590,6 +1599,9 @@ tail -f /Users/ysuzuki/GitHub/kiseki/logs/dm_auto_fetch.log
 |------|------|------|
 | 穴 (`SIGNAL_UPSET_CANDIDATE`) | 単勝≥10 ∧ 穴ぐさ/netkeiba/kichiuma/DM-battle のいずれか1つ以上が上位評価 → そのうち **badge_cnt 最大の1頭のみ**（同点は composite 降順） | 的中率の頑健な分離（複勝約20%）。**ROIではない** |
 | 特穴 (`SIGNAL_ANAGUSA_ELITE`) | 穴ぐさ(A/B/C) ∧ composite順位≤3 ∧ 単勝≥10 | 単勝ROI狙い（FULL n=535 で 1.417・drop1 1.329） |
+
+🔴 **穴ぐさは 2026-10-25 で終わった**ので、それ以降のレースでは**特穴は出ない**（正常）。
+穴は netkeiba / kichiuma / DM-battle の3つで判定が続く。
 
 ⚠️ **「7種シグナル」(🔥三冠一致・⭐高得点鉄板・🏆穴ぐさDM・⚡DM大穴・⚡DM高オッズ・
 💎anagusa+DMtime・❌人気下振れ) は 2026-07-25 に全廃**（`jra_upset_badge_redesign`）。
