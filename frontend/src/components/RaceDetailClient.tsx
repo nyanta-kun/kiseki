@@ -20,6 +20,8 @@ import { IndexBar } from "./IndexBar";
 import { cn, indexColor, horseNumToFrame, frameColorClass } from "@/lib/utils";
 import { HorseHistorySection } from "./HorseHistorySection";
 import { PaywallGate } from "@/components/PaywallGate";
+import { FinishDistPanel } from "@/components/FinishDistPanel";
+import { top2Of } from "@/lib/finishDist";
 
 type Props = {
   raceId: number;
@@ -222,7 +224,7 @@ export function RaceDetailClient({
     return horse.is_cut_off ?? false;
   }
 
-  const colSpan = hasResults ? 11 : 10;
+  const colSpan = hasResults ? 12 : 11;
 
   return (
     <PaywallGate isPremium={isPremium} raceNumber={raceNumber} paywallEnabled={paywallEnabled ?? false}>
@@ -269,6 +271,7 @@ export function RaceDetailClient({
                   <th className="hidden sm:table-cell text-right py-1 px-1 w-12">騎手</th>
                   <th className="hidden sm:table-cell text-right py-1 px-1 w-12">ローテ</th>
                   <th className="text-right py-1 px-1 w-12">勝率</th>
+                  <th className="text-right py-1 px-1 w-12">連対</th>
                   <th className="text-right py-1 px-1 w-12">複率</th>
                   <th className="text-right py-1 px-1 w-14">単オッズ</th>
                   {/* 期待値列は 2026-11-06 に撤去（地方に揃えたユーザー判断）。
@@ -431,6 +434,11 @@ export function RaceDetailClient({
                       {/* 勝率 */}
                       <td className="py-2 px-1 text-right text-gray-600">
                         {pct(horse.win_probability)}
+                      </td>
+
+                      {/* 連対（2着以内） */}
+                      <td className="py-2 px-1 text-right text-gray-600">
+                        {pct(top2Of(horse))}
                       </td>
 
                       {/* 複率 */}
@@ -602,8 +610,11 @@ export function RaceDetailClient({
             </div>
           )}
 
+          <FinishDistPanel raceId={raceId} />
+
           {/* 凡例 */}
           <div className="mt-3 text-[10px] text-gray-400 border-t border-gray-50 pt-2 space-y-0.5">
+            <p>勝率=1着 / 連対=2着以内 / 複率=複勝圏（8頭以上は3着以内・5〜7頭は2着以内）に入る確率</p>
             <p>
               <span className="text-green-600">緑</span>=高評価 / <span className="text-red-500">赤</span>=低評価（65↑: 強 / 55–65: 良 / 45–55: 並 / 35–45: 劣 / ↓35: 弱）
             </p>
