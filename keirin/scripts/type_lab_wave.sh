@@ -52,5 +52,18 @@ if ! "$PY" scripts/build_race_shapes.py --date "$TODAY"; then
 fi
 
 echo "[type_lab] $(date '+%F %T') === 型ラボ入稿（波: ${SESSION}） $TODAY ==="
+# 🔴 **落ちたら知らせる**（2026-11-11）。`set -e` のままだとこの行で黙って終わる。
+#    終了コード 3 は入稿前チェックで止めたもの（Python 側が未入稿一覧つきで通知済み）。
+set +e
 "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" "$SESSION" \
   2>&1 | tee -a "$LOG_DIR/type_lab_${TODAY}.log"
+RC=${PIPESTATUS[0]}
+set -e
+if [[ "$RC" -ne 0 && "$RC" -ne 3 ]]; then
+  echo "[type_lab] ⚠️ 入稿が異常終了 rc=$RC"
+  PYTHONPATH=. "$PY" -c "
+from src.notify.discord import send
+send(f'🚨 **[type_lab_wave.sh ${SESSION}] 入稿が異常終了しました（rc=${RC}・${TODAY}）。** cron.log を確認してください。', channel='system')
+" || true
+fi
+exit "$RC"
