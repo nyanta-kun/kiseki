@@ -82,6 +82,12 @@ MODEL_FILES = [
     "v28_iswin_calib_metrics.json",
     "v28_placed_head.txt",
     "v28_placed_head_metrics.json",
+    # v29（2026-11-07）: 2ヘッドを45列にした。retrain が作るのはこちら。
+    # v28 のファイルはフォールバック用に残す（再学習はされず、学習終端 2026-09-27 で固定）。
+    "v29_iswin_calib.txt",
+    "v29_iswin_calib_metrics.json",
+    "v29_placed_head.txt",
+    "v29_placed_head_metrics.json",
 ]
 JRA_COURSES = ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10")
 
@@ -124,8 +130,10 @@ GROUP BY 1 ORDER BY 1
 
 def connect():
     return psycopg2.connect(
-        host=os.getenv("DB_HOST"), port=os.getenv("DB_PORT"),
-        dbname=os.getenv("DB_NAME"), user=os.getenv("DB_USER"),
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
     )
 
@@ -146,12 +154,10 @@ def prev_quarter(today: datetime.date) -> str:
 
 
 def quarter_bounds(label: str) -> tuple[str, str]:
-    """"YYYYQn" → ("YYYYMMDD", "YYYYMMDD")。"""
+    """ "YYYYQn" → ("YYYYMMDD", "YYYYMMDD")。"""
     year, q = int(label[:4]), int(label[5])
     start = datetime.date(year, (q - 1) * 3 + 1, 1)
-    end_month_first = (
-        datetime.date(year + 1, 1, 1) if q == 4 else datetime.date(year, q * 3 + 1, 1)
-    )
+    end_month_first = datetime.date(year + 1, 1, 1) if q == 4 else datetime.date(year, q * 3 + 1, 1)
     end = end_month_first - datetime.timedelta(days=1)
     return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
@@ -173,12 +179,10 @@ def phase_evaluate(label: str) -> dict:
     logger.info(f"[evaluate] {label} ({start}〜{end}) を一度きり評価")
     conn = connect()
     try:
-        df = _query(conn, EVAL_SQL,
-                    {"ver": COMPOSITE_VERSION, "start": start, "end": end,
-                     "courses": JRA_COURSES})
-        yoy = _query(conn, YOY_SQL,
-                     {"ver": COMPOSITE_VERSION, "q": int(label[5]),
-                      "courses": JRA_COURSES}).to_dict("records")
+        df = _query(conn, EVAL_SQL, {"ver": COMPOSITE_VERSION, "start": start, "end": end, "courses": JRA_COURSES})
+        yoy = _query(conn, YOY_SQL, {"ver": COMPOSITE_VERSION, "q": int(label[5]), "courses": JRA_COURSES}).to_dict(
+            "records"
+        )
     finally:
         conn.close()
 
@@ -206,13 +210,9 @@ def phase_evaluate(label: str) -> dict:
         # 足切り（Web グレーアウト）の較正が保たれているか
         "cut_rate": float(cut_mask.mean()) if len(cut) else None,
         "cut_actual_out_rate": (
-            float((cut_fin.loc[cut_fin_mask, "finish_position"] >= 6).mean())
-            if cut_fin_mask.any() else None
+            float((cut_fin.loc[cut_fin_mask, "finish_position"] >= 6).mean()) if cut_fin_mask.any() else None
         ),
-        "cut_missed_win": (
-            float((cut_fin.loc[cut_fin_mask, "finish_position"] == 1).sum() / n_win)
-            if n_win else None
-        ),
+        "cut_missed_win": (float((cut_fin.loc[cut_fin_mask, "finish_position"] == 1).sum() / n_win) if n_win else None),
     }
 
     jra_protocol.record_test_usage(
@@ -221,8 +221,7 @@ def phase_evaluate(label: str) -> dict:
         f"指数1位 勝率={overall['top1_win']:.4f} 複勝率={overall['top1_place']:.4f} / "
         f"足切り率={overall['cut_rate']} 1着取りこぼし={overall['cut_missed_win']}",
     )
-    return {"quarter": label, "start": start, "end": end,
-            "overall": overall, "same_quarter_history": yoy}
+    return {"quarter": label, "start": start, "end": end, "overall": overall, "same_quarter_history": yoy}
 
 
 def phase_retrain() -> None:
@@ -307,15 +306,18 @@ def write_report(label: str, evaluated: dict | None, retrained: bool) -> Path:
         ]
         for r in evaluated["same_quarter_history"]:
             lines.append(
-                f"| {r['yr']} | {int(r['races']):,} | {float(r['top1_win']):.4f} "
-                f"| {float(r['top1_place']):.4f} |"
+                f"| {r['yr']} | {int(r['races']):,} | {float(r['top1_win']):.4f} " f"| {float(r['top1_place']):.4f} |"
             )
         lines.append("")
     if retrained:
-        lines += ["## 再学習", "",
-                  "`train_jra_out_rate.py` / `train_jra_reg_rank.py` / "
-                  "`train_jra_iswin_head.py` / `train_jra_placed_head.py` を実行済み。",
-                  f"旧モデルは `data/backup/jra_model_{datetime.date.today():%Y%m%d}/` に退避。", ""]
+        lines += [
+            "## 再学習",
+            "",
+            "`train_jra_out_rate.py` / `train_jra_reg_rank.py` / "
+            "`train_jra_iswin_head.py` / `train_jra_placed_head.py` を実行済み。",
+            f"旧モデルは `data/backup/jra_model_{datetime.date.today():%Y%m%d}/` に退避。",
+            "",
+        ]
     lines += [
         "## 次に人が行うこと",
         "",
@@ -336,7 +338,7 @@ def write_report(label: str, evaluated: dict | None, retrained: bool) -> Path:
         "```bash",
         "ssh sekito \"API_KEY=\\$(grep '^CHANGE_NOTIFY_API_KEY=' ~/GitHub/kiseki/.env | cut -d= -f2-)",
         "  curl -s -X POST 'http://127.0.0.1:8003/api/import/calculate?date=YYYYMMDD' "
-        "-H \\\"X-API-Key: \\$API_KEY\\\"\"",
+        '-H \\"X-API-Key: \\$API_KEY\\""',
         "```",
         "",
     ]

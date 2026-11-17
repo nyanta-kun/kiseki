@@ -213,3 +213,24 @@ sudo rm /etc/ssh/sshd_config.d/60-kisekilab.conf && sudo sshd -t && sudo systemc
 ```
 
 一時的に止めるだけなら `ALTER ROLE kiseki_lab_ro NOLOGIN;` で足ります。
+
+## kaime-sim 用のロール kaime_sim_ro（2026-11-15）
+
+kaime-sim（kiseki の指数で買い目を仮想で判断するシミュレーション。本物の購入はしない）は、
+Mac mini の launchd で毎分 hrdb を読みます。kiseki-lab の夜の集計と接続の枠を分け合わないよう、
+専用のロールを分けました。
+
+| 項目 | kaime_sim_ro |
+|---|---|
+| 権限・設定 | `kiseki_lab_ro` と同じ（3スキーマの SELECT・自動付与・read_only・120s・60s・`temp_file_limit` 2GB） |
+| `CONNECTION LIMIT` | **2**（kaime-sim は同時に1本しか使わない） |
+| SSH | **`kisekilab` を共用**。SSH は 5432 番への転送しかできないので、切り分けは DB のロールで行う |
+| Mac 側の転送 | `127.0.0.1:15442` → VPS `127.0.0.1:5432`（LaunchAgent `com.ai-company.kaime-sim.tunnel`） |
+| `~/.pgpass` | `127.0.0.1:15442:hrdb:kaime_sim_ro:<パスワード>` |
+
+pg_hba.conf には `kiseki_lab_ro` の4行のすぐ下に同じ形の4行（コメント1行つき）を足しました。
+**こちらも `host all all ... md5` の行より上に置くこと。**
+作成前のバックアップ: `/etc/postgresql/16/main/pg_hba.conf.bak-20261115114036-before-kaime-sim`
+
+戻し方は上の「戻し方」の SQL でロール名を `kaime_sim_ro` に替え、pg_hba.conf の4行を消して
+読み直します。SSH 利用者と sshd の設定は kiseki-lab と共用なので消しません。

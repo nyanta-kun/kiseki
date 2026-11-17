@@ -81,6 +81,9 @@ from src.netkeirin_client import (                           # noqa: E402
     BET_KIND_TRIO_BOX,
     BetLeg,
     NetkeirinClient,
+    PREFLIGHT_CF_AUTH,
+    PREFLIGHT_EGRESS_DOWN,
+    PreflightResult,
 )
 from src.notify.discord import send                          # noqa: E402
 from src.confident_pick import (                             # noqa: E402
@@ -98,6 +101,8 @@ from src.submission_skips import (                           # noqa: E402
     SUBMIT_FAILED as SKIP_SUBMIT_FAILED,
 )
 from src.marquee import is_fill_target                       # noqa: E402
+# 締切の正本。ここでは未入稿一覧の表示にだけ使う（判定は `_load_closed_races`）。
+from src.submit_window import SUBMIT_DEADLINE_SEC as _DEADLINE_SEC   # noqa: E402
 from src.type_lab import (                                  # noqa: E402
     FLAT_LEAD_PLAN_KEYS, HIGHPAY_PLAN_KEYS, HIGHPAY_SLOTS_PER_DAY, LINE_LEAD_PLAN_KEYS,
     HIT_POINT_GATE_MIN, HIT_POINT_GATE_N_ENTRIES, HIT_POINT_GATE_PLANS,
@@ -777,6 +782,74 @@ def _is_marquee(row: dict) -> bool:
     return bool(is_fill_target(row.get("race_type"), row.get("cup_grade")))
 
 
+#: 入稿前チェックで止めたときの終了コード。**呼び出し側のシェルはこのコードでは
+#: 通知しない**（ここで通知済み）。他の非0は想定外の落ち方としてシェルが通知する。
+EXIT_PREFLIGHT_BLOCKED = 3
+
+
+
+def _pending_lines(rows: list[dict], already: set, closed: set[str],
+                   limit: int = 40) -> list[str]:
+    """まだ入稿していない・締切前のレースを「会場NR 発走HH:MM（締切HH:MM）」で返す。
+
+    手動入稿に切り替えるときの手元の一覧。**発走の早い順**に並べる。
+    """
+    done = {rk for rk, _ in already}
+    seen: dict[str, dict] = {}
+    for r in rows:
+        rk = str(r["race_key"])
+        if rk in done or rk in closed or rk in seen:
+            continue
+        seen[rk] = r
+
+    def _key(r: dict) -> tuple[int, str]:
+        try:
+            return (int(str(r.get("start_at"))), str(r["race_key"]))
+        except (TypeError, ValueError):
+            return (1 << 62, str(r["race_key"]))
+
+    lines = []
+    for r in sorted(seen.values(), key=_key):
+        start = start_time_jst(r.get("start_at"))
+        try:
+            dl = start_time_jst(int(str(r.get("start_at"))) - _DEADLINE_SEC)
+        except (TypeError, ValueError):
+            dl = None
+        when = f"発走{start}（締切{dl}）" if start and dl else "発走時刻不明"
+        lines.append(f"{r.get('venue_name') or '?'}{r.get('race_no')}R {when}")
+    if len(lines) > limit:
+        lines = lines[:limit] + [f"…ほか {len(lines) - limit}レース"]
+    return lines
+
+
+def _notify_preflight_blocked(day: str, session: str, res: PreflightResult,
+                              pending: list[str]) -> None:
+    """入稿前チェックで止めたことを知らせる。**通知が落ちても終了コードは変えない**。"""
+    if res.status == PREFLIGHT_CF_AUTH:
+        head = "🚨 **netkeirin 入稿を中止: Cloudflare の本人確認が切れています**"
+        todo = ("Mac mini の Cloudflare One Client でメールの6桁コードを入力し直してください。"
+                "復旧後は昼・夕の回が残りを拾います（急ぐレースは手で入稿）。")
+    elif res.status == PREFLIGHT_EGRESS_DOWN:
+        head = "🚨 **netkeirin 入稿を中止: Mac mini への出口（トンネル）が切れています**"
+        todo = ("Mac mini の電源・ネットワーク・`launchctl list com.kiseki.netkeirin-egress` を"
+                "確認してください。急ぐレースは手で入稿してください。")
+    else:
+        head = "🚨 **netkeirin 入稿を中止: 入稿ツールに入れません**"
+        todo = "入稿ツールをブラウザで開いて状態を確認してください。"
+    body = [f"{head}（{day} / {session}）", f"理由: {res.detail}", todo]
+    if pending:
+        body.append(f"未入稿 {len(pending)}レース:")
+        body.extend(f"・{x}" for x in pending)
+    else:
+        body.append("未入稿のレースはありません。")
+    msg = "\n".join(body)
+    print(msg, flush=True)
+    try:
+        send(msg[:1900], channel="system")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[type_lab_submit] Discord通知失敗: {e!r}", flush=True)
+
+
 def _make_skip(dry_run: bool):
     """見送りの記録関数。**dry-run では何も書かない**。
 
@@ -1128,6 +1201,18 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #: どこを足したのかが読めない（2026-09-25 ユーザー指摘）。本数は1日数本。
     line_lead_sent: list[str] = []
     client = None if dry_run else NetkeirinClient(propose_only=propose_only)
+
+    # 🔴 **入稿前チェック**（2026-11-11・Cloudflare Zero Trust 対応）。入稿ツールに
+    #    入れない状態で回すと、1件ずつ SUBMIT_FAILED を積むだけで誰にも届かない。
+    #    認証切れ・出口断は再試行せずに止め、未入稿の一覧つきで知らせる。
+    #    承認制（入稿案だけ作る）は netkeirin に触らないので見ない。
+    if client is not None and not propose_only:
+        res = client.ensure_ready()
+        print(f"[type_lab_submit] 入稿前チェック: {res.status} {res.detail}", flush=True)
+        if not res.ok:
+            _notify_preflight_blocked(day, session, res,
+                                      _pending_lines(rows, already, closed))
+            sys.exit(EXIT_PREFLIGHT_BLOCKED)
 
     def bump(code: str) -> None:
         skipped[code] = skipped.get(code, 0) + 1
@@ -1505,6 +1590,17 @@ def run(day: str, session: str, dry_run: bool, only_key: str | None,
     #    まさに今回直した食い違いに戻る。
     if session == "morning" and not dry_run:
         _write_confident(day, confident_done, confident_ev)
+
+    n_failed = skipped.get("failed", 0)
+    if n_failed and not dry_run:
+        # 🔴 **全件失敗の日も必ず知らせる**（2026-11-11）。下の通知は `n_ok` が
+        #    あるときしか出ないので、入稿ツールが全件はじいた日は無言だった。
+        try:
+            send(f"⚠️ **NetKeirin入稿の失敗 {n_failed}件**（{day} / {session}・"
+                 f"成功 {n_ok}件）\n理由は `submission_skips`（submit_failed）と cron.log。"
+                 f"\n入稿確認 → {REVIEW_URL}", channel="system")
+        except Exception as e:                               # noqa: BLE001
+            print(f"[type_lab_submit] Discord通知失敗: {e!r}", flush=True)
 
     if n_ok and not dry_run:
         # 🔴 チャンネルキーは `src/notify/discord.py::_WEBHOOK_ENV_KEYS` にあるものだけ。

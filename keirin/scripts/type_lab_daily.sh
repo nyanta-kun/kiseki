@@ -47,8 +47,18 @@ echo "[type_lab] $(date '+%F %T') build morning $TODAY  ($PY)"
 # 🔴 入稿の失敗で採点を止めない。採点が落ちると前日の成績が画面に出ないまま
 #    翌日を迎える（入稿の失敗より復旧が遅れる）。
 echo "[type_lab] $(date '+%F %T') submit morning $TODAY"
-if ! "$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" morning; then
-  echo "[type_lab] ⚠️ 入稿に失敗（採点は続行する）"
+# 🔴 **落ちたら知らせる**（2026-11-11）。以前はログに1行残すだけだった。
+#    終了コード 3 は入稿前チェックで止めたもの（Python 側が未入稿一覧つきで通知済み）。
+RC=0
+"$PY" scripts/netkeirin_submit_type_lab.py "$TODAY" morning || RC=$?
+if [[ "$RC" -ne 0 ]]; then
+  echo "[type_lab] ⚠️ 入稿に失敗 rc=$RC（採点は続行する）"
+  if [[ "$RC" -ne 3 ]]; then
+    PYTHONPATH=. "$PY" -c "
+from src.notify.discord import send
+send('🚨 **[type_lab_daily.sh] 朝の入稿が異常終了しました（rc=${RC}・${TODAY}）。** cron.log を確認してください。', channel='system')
+" || true
+  fi
 fi
 
 # 🔴 **「自信あり」の選定は入稿スクリプトの中へ移した**（2026-09-04）。

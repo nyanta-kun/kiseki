@@ -52,6 +52,11 @@ from .going_pedigree import GoingPedigreeIndexCalculator
 from .jockey import JockeyIndexCalculator
 from .jockey_trainer_combo import JockeyTrainerComboIndexCalculator
 from .jvan_dm import JvanBattleDmCalculator, JvanTimeDmCalculator
+from .lap_form import (
+    LAP_FORM_FEATURE_NAMES,
+    build_lap_form_features_for_race,
+    lap_form_feature_row,
+)
 from .last3f import Last3FIndexCalculator
 from .pace import PaceIndexCalculator
 from .pace_handicap import PaceHandicapCalculator
@@ -203,7 +208,25 @@ logger = logging.getLogger(__name__)
 #   モデル: backend/models/v28_iswin_calib.txt + backend/models/v28_placed_head.txt
 #   学習: scripts/train_jra_iswin_head.py / scripts/train_jra_placed_head.py
 #   バックフィル: scripts/inference_v28.py
-COMPOSITE_VERSION = 28
+# v29: 単勝・複勝の両ヘッドにラップ由来の過去走特徴7列 (2026-11-07)
+#   事前登録: docs/jra_lap_feature_plan_2026_09_16.md（VAL 10四半期で採用候補）/
+#   docs/jra_lap_v29_q3_confirm_plan_2026_11_07.md（2026Q3 確認・**確認成功**）。
+#
+#   ① 単勝ヘッド・複勝の独立ヘッド: 38列 → **45列**（`LAP_FORM_FEATURE_NAMES` の7列を追加）。
+#      追加分は `src/indices/lap_form.py` からのみ取得する（学習・配信で同じ組み立て関数）。
+#      🔴 欠損は NaN のまま渡す（v28 の4列と同じ）。
+#   ② `composite_index` / `out_probability` / `reg_rank` は**変更しない**。
+#
+#   2026Q3（887R・学習 〜2026-06-30・seed 3本平均）:
+#     単勝 多項対数損失 2.08142 → 2.06811（Δ −0.01331・95%CI [−0.02238, −0.00456]）
+#     複勝 place_ll（slots=3）Δ −0.00199（95%CI [−0.00309, −0.00085]・報告のみ）
+#   ⚠️ 9月（240R）単独では Δ −0.00068 と弱い。2026Q4 で再確認し、戻す条件は
+#      確認計画の §9 に先に決めてある。
+#   モデル: backend/models/v29_iswin_calib.txt + backend/models/v29_placed_head.txt
+#   （無ければ v28 の2ヘッドへ、それも無ければ v27 へ落ちる。v28 のファイルは消さない）
+#   学習: scripts/train_jra_iswin_head.py / scripts/train_jra_placed_head.py
+#   バックフィル: scripts/inference_v29.py
+COMPOSITE_VERSION = 29
 
 # 未実装指数のデフォルト値（全馬計算不能時の最終フォールバック）
 DEFAULT_INDEX = SPEED_INDEX_MEAN  # 50.0
@@ -251,17 +274,14 @@ def _segment_weights(surface: str | None, distance: int | None) -> dict:
     """
     w = dict(INDEX_WEIGHTS)
 
-    is_turf_sprint = (
-        isinstance(surface, str) and surface.startswith("芝")
-        and distance is not None and distance <= 1400
-    )
+    is_turf_sprint = isinstance(surface, str) and surface.startswith("芝") and distance is not None and distance <= 1400
 
     # 芝スプリント: 展開ウェイトを0にしてスピード・騎手に再配分
     if is_turf_sprint:
-        freed = w["pace"]                        # 0.02132
+        freed = w["pace"]  # 0.02132
         w["pace"] = 0.0
-        w["speed"] += freed * 0.70               # +0.01492
-        w["jockey_trainer"] += freed * 0.30      # +0.00640
+        w["speed"] += freed * 0.70  # +0.01492
+        w["jockey_trainer"] += freed * 0.30  # +0.00640
 
     # 負値クランプ（念のため）
     for k in w:
@@ -270,6 +290,7 @@ def _segment_weights(surface: str | None, distance: int | None) -> dict:
 
     return w
 
+
 # Softmax 温度パラメータ（composite_index 10点差 → 約2.7倍の確率比）
 SOFTMAX_TEMPERATURE = 10.0
 
@@ -277,17 +298,42 @@ SOFTMAX_TEMPERATURE = 10.0
 # 着外率ヘッド・順位回帰ヘッド・is_win 較正ヘッドが同じ 34 列を共有する）
 _V26_FEATURE_NAMES: list[str] = [
     # sub-indices (17)
-    "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
-    "rotation_index", "jockey_index", "pace_index", "pedigree_index",
-    "training_index", "anagusa_index", "paddock_index", "rebound_index",
-    "rivals_growth_index", "career_phase_index", "distance_change_index",
-    "jockey_trainer_combo_index", "going_pedigree_index",
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
     # race meta (10)
-    "distance", "head_count", "is_turf", "is_dirt", "is_jump",
-    "is_good", "is_yaya", "is_heavy", "is_bad", "is_g1g2g3",
+    "distance",
+    "head_count",
+    "is_turf",
+    "is_dirt",
+    "is_jump",
+    "is_good",
+    "is_yaya",
+    "is_heavy",
+    "is_bad",
+    "is_g1g2g3",
     # horse meta (7)
-    "frame_number", "horse_age", "weight_carried", "horse_weight",
-    "weight_change", "jvan_time_dm", "jvan_battle_dm",
+    "frame_number",
+    "horse_age",
+    "weight_carried",
+    "horse_weight",
+    "weight_change",
+    "jvan_time_dm",
+    "jvan_battle_dm",
 ]
 
 # is_win 較正ヘッド（win_probability 較正用, 2026-06-05 / 2026-08-22 再学習）
@@ -337,6 +383,19 @@ _V28_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v28_is
 # 読めなければ `_harville_place_probs` へ落ちる（v27 と同じ挙動）。
 # 学習: scripts/train_jra_placed_head.py
 _V28_PLACED_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v28_placed_head.txt"
+
+# ---------------------------------------------------------------------------
+# v29: 単勝・複勝ヘッドの特徴 45 列（38列 + ラップ7列）
+# ---------------------------------------------------------------------------
+# 🔴 **38列の後ろに `LAP_FORM_FEATURE_NAMES` を連結した順序が正準**。
+# 学習（`train_jra_iswin_head.py` / `train_jra_placed_head.py`）も配信
+# （`_build_v29_features`）もこの定数を通ること。
+V29_FEATURE_NAMES: list[str] = list(V28_FEATURE_NAMES) + list(LAP_FORM_FEATURE_NAMES)
+
+# v29 単勝ヘッド（45列）。読めなければ v28 の 38列ヘッドへ落ちる。
+_V29_ISWIN_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v29_iswin_calib.txt"
+# v29 複勝の独立ヘッド（45列）。読めなければ v28 の 38列ヘッドへ落ちる。
+_V29_PLACED_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "v29_placed_head.txt"
 
 # 学習・検証がサブ指数（17列）を読み出してよい `calculated_indices.version` の下限。
 #
@@ -406,7 +465,7 @@ _v28_iswin_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _v28_iswin_load_attempted: bool = False
 _v28_placed_model_cache: lgb.Booster | None = None  # type: ignore[name-defined]
 _v28_placed_load_attempted: bool = False
-
+_v29_model_cache: dict[str, lgb.Booster | None] = {}  # type: ignore[name-defined]
 
 
 def _load_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
@@ -422,6 +481,7 @@ def _load_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return None
     try:
         import lightgbm as lgb
+
         _iswin_model_cache = lgb.Booster(model_file=str(_V26_ISWIN_MODEL_PATH))
         logger.info(f"iswin calib model loaded: {_V26_ISWIN_MODEL_PATH}")
         return _iswin_model_cache
@@ -443,6 +503,7 @@ def _load_out_prob_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return None
     try:
         import lightgbm as lgb
+
         _out_prob_model_cache = lgb.Booster(model_file=str(_OUT_PROB_MODEL_PATH))
         logger.info(f"out_rate model loaded: {_OUT_PROB_MODEL_PATH}")
         return _out_prob_model_cache
@@ -460,12 +521,11 @@ def _load_reg_rank_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return None
     _reg_rank_load_attempted = True
     if not _REG_RANK_MODEL_PATH.exists():
-        logger.warning(
-            f"reg_rank model not found: {_REG_RANK_MODEL_PATH}, composite は v24 線形和にフォールバック"
-        )
+        logger.warning(f"reg_rank model not found: {_REG_RANK_MODEL_PATH}, composite は v24 線形和にフォールバック")
         return None
     try:
         import lightgbm as lgb
+
         _reg_rank_model_cache = lgb.Booster(model_file=str(_REG_RANK_MODEL_PATH))
         logger.info(f"reg_rank model loaded: {_REG_RANK_MODEL_PATH}")
         return _reg_rank_model_cache
@@ -483,12 +543,11 @@ def _load_v28_iswin_model() -> lgb.Booster | None:  # type: ignore[name-defined]
         return None
     _v28_iswin_load_attempted = True
     if not _V28_ISWIN_MODEL_PATH.exists():
-        logger.warning(
-            f"v28 iswin model not found: {_V28_ISWIN_MODEL_PATH}, win_probability は v27 の34列ヘッド"
-        )
+        logger.warning(f"v28 iswin model not found: {_V28_ISWIN_MODEL_PATH}, win_probability は v27 の34列ヘッド")
         return None
     try:
         import lightgbm as lgb
+
         _v28_iswin_model_cache = lgb.Booster(model_file=str(_V28_ISWIN_MODEL_PATH))
         logger.info(f"v28 iswin model loaded: {_V28_ISWIN_MODEL_PATH}")
         return _v28_iswin_model_cache
@@ -510,18 +569,40 @@ def _load_v28_placed_model() -> lgb.Booster | None:  # type: ignore[name-defined
         return None
     _v28_placed_load_attempted = True
     if not _V28_PLACED_MODEL_PATH.exists():
-        logger.warning(
-            f"v28 placed head not found: {_V28_PLACED_MODEL_PATH}, place_probability は Harville"
-        )
+        logger.warning(f"v28 placed head not found: {_V28_PLACED_MODEL_PATH}, place_probability は Harville")
         return None
     try:
         import lightgbm as lgb
+
         _v28_placed_model_cache = lgb.Booster(model_file=str(_V28_PLACED_MODEL_PATH))
         logger.info(f"v28 placed head loaded: {_V28_PLACED_MODEL_PATH}")
         return _v28_placed_model_cache
     except Exception as e:
         logger.error(f"v28 placed head load failed: {e}")
         return None
+
+
+def _load_v29_model(kind: str) -> lgb.Booster | None:  # type: ignore[name-defined]
+    """v29 の2ヘッド（`kind` = "iswin" / "placed"・45列）を lazy load する。
+
+    無ければ None（呼び出し側が v28 の38列ヘッドへ落とす）。1プロセスで1回だけ試す。
+    """
+    if kind in _v29_model_cache:
+        return _v29_model_cache[kind]
+    path = _V29_ISWIN_MODEL_PATH if kind == "iswin" else _V29_PLACED_MODEL_PATH
+    model = None
+    if not path.exists():
+        logger.warning(f"v29 {kind} model not found: {path}, v28 の38列ヘッドへ落とす")
+    else:
+        try:
+            import lightgbm as lgb
+
+            model = lgb.Booster(model_file=str(path))
+            logger.info(f"v29 {kind} model loaded: {path}")
+        except Exception as e:
+            logger.error(f"v29 {kind} model load failed: {e}")
+    _v29_model_cache[kind] = model
+    return model
 
 
 def place_slots_for_field(n_field: int) -> int:
@@ -561,9 +642,7 @@ def place_slots_for_field(n_field: int) -> int:
     return 0
 
 
-def normalize_place_to_slots(
-    raw_probs: np.ndarray | list[float], place_slots: int
-) -> list[float]:
+def normalize_place_to_slots(raw_probs: np.ndarray | list[float], place_slots: int) -> list[float]:
     """独立ヘッドの生出力をレース内で `Σp = place_slots` に正規化する。
 
     🔴 **検証実装と同一の式**（`scripts/jra_place_head_ab.py::_top3_norm` /
@@ -684,35 +763,44 @@ def _build_v26_features(
         hid = r["horse_id"]
         e = entries_by_horse.get(hid)
         wc = weight_change_by_horse.get(hid)
-        rows.append([
-            float(r.get("speed_index", 50.0)),
-            float(r.get("last3f_index", 50.0)),
-            float(r.get("course_aptitude", 50.0)),
-            float(r.get("position_advantage", 50.0)),
-            float(r.get("rotation_index", 50.0)),
-            float(r.get("jockey_index", 50.0)),
-            float(r.get("pace_index", 50.0)),
-            float(r.get("pedigree_index", 50.0)),
-            float(r.get("training_index", 50.0)),
-            float(r.get("anagusa_index", 50.0)),
-            float(r.get("paddock_index", 50.0)),
-            float(r.get("rebound_index", 50.0)),
-            float(r.get("rivals_growth_index", 50.0)),
-            float(r.get("career_phase_index", 50.0)),
-            float(r.get("distance_change_index", 50.0)),
-            float(r.get("jockey_trainer_combo_index", 50.0)),
-            float(r.get("going_pedigree_index", 50.0)),
-            distance, head_count,
-            is_turf, is_dirt, is_jump,
-            is_good, is_yaya, is_heavy, is_bad, is_g123,
-            float(e.frame_number) if e and e.frame_number is not None else float("nan"),
-            float(e.horse_age) if e and e.horse_age is not None else float("nan"),
-            float(e.weight_carried) if e and e.weight_carried is not None else float("nan"),
-            float(e.horse_weight) if e and e.horse_weight is not None else float("nan"),
-            float(wc) if wc is not None else float("nan"),
-            float(e.jvan_time_dm) if e and e.jvan_time_dm is not None else 50.0,
-            float(e.jvan_battle_dm) if e and e.jvan_battle_dm is not None else 50.0,
-        ])
+        rows.append(
+            [
+                float(r.get("speed_index", 50.0)),
+                float(r.get("last3f_index", 50.0)),
+                float(r.get("course_aptitude", 50.0)),
+                float(r.get("position_advantage", 50.0)),
+                float(r.get("rotation_index", 50.0)),
+                float(r.get("jockey_index", 50.0)),
+                float(r.get("pace_index", 50.0)),
+                float(r.get("pedigree_index", 50.0)),
+                float(r.get("training_index", 50.0)),
+                float(r.get("anagusa_index", 50.0)),
+                float(r.get("paddock_index", 50.0)),
+                float(r.get("rebound_index", 50.0)),
+                float(r.get("rivals_growth_index", 50.0)),
+                float(r.get("career_phase_index", 50.0)),
+                float(r.get("distance_change_index", 50.0)),
+                float(r.get("jockey_trainer_combo_index", 50.0)),
+                float(r.get("going_pedigree_index", 50.0)),
+                distance,
+                head_count,
+                is_turf,
+                is_dirt,
+                is_jump,
+                is_good,
+                is_yaya,
+                is_heavy,
+                is_bad,
+                is_g123,
+                float(e.frame_number) if e and e.frame_number is not None else float("nan"),
+                float(e.horse_age) if e and e.horse_age is not None else float("nan"),
+                float(e.weight_carried) if e and e.weight_carried is not None else float("nan"),
+                float(e.horse_weight) if e and e.horse_weight is not None else float("nan"),
+                float(wc) if wc is not None else float("nan"),
+                float(e.jvan_time_dm) if e and e.jvan_time_dm is not None else 50.0,
+                float(e.jvan_battle_dm) if e and e.jvan_battle_dm is not None else 50.0,
+            ]
+        )
     return np.asarray(rows, dtype=float)
 
 
@@ -742,6 +830,30 @@ def _build_v28_features(
         dtype=float,
     ).reshape(len(results), len(PAST_FORM_FEATURE_NAMES))
     return np.hstack([x_v26, extra])
+
+
+def _build_v29_features(
+    x_v28: np.ndarray,
+    results: list[dict],
+    lap_form: dict[int, dict[str, float | None]],
+) -> np.ndarray:
+    """38列（v28）の右に `LAP_FORM_FEATURE_NAMES` の7列を連結して 45列にする。
+
+    🔴 欠損は NaN のまま（`lap_form.lap_form_feature_row` が `None → NaN` にする）。
+
+    Args:
+        x_v28: `_build_v28_features` の出力（行順は `results` と一致）。
+        results: `calculate_and_save` の算出結果（`horse_id` を使う）。
+        lap_form: `lap_form.build_lap_form_features_for_race` の返り値。
+
+    Returns:
+        `(len(results), 45)` の float 配列。列順は `V29_FEATURE_NAMES`。
+    """
+    extra = np.asarray(
+        [lap_form_feature_row(lap_form.get(r["horse_id"], {})) for r in results],
+        dtype=float,
+    ).reshape(len(results), len(LAP_FORM_FEATURE_NAMES))
+    return np.hstack([x_v28, extra])
 
 
 class CompositeIndexCalculator:
@@ -846,11 +958,25 @@ class CompositeIndexCalculator:
         )
 
         _labels = [
-            "last3f", "course", "frame", "rotation", "jockey", "pace", "pace_handicap",
-            "pedigree", "training", "anagusa", "paddock", "rebound",
-            "rivals_growth", "career_phase", "distance_change",
-            "jockey_trainer_combo", "going_pedigree",
-            "jvan_time_dm", "jvan_battle_dm",
+            "last3f",
+            "course",
+            "frame",
+            "rotation",
+            "jockey",
+            "pace",
+            "pace_handicap",
+            "pedigree",
+            "training",
+            "anagusa",
+            "paddock",
+            "rebound",
+            "rivals_growth",
+            "career_phase",
+            "distance_change",
+            "jockey_trainer_combo",
+            "going_pedigree",
+            "jvan_time_dm",
+            "jvan_battle_dm",
         ]
 
         def _safe(result: object, label: str) -> dict[int, float | None]:
@@ -861,12 +987,25 @@ class CompositeIndexCalculator:
 
         # None（計算不能）をレース内平均で埋める（全指数共通）
         (
-            last3f_map, course_map, frame_map, rotation_map,
-            jockey_map, pace_map, pace_handicap_map, pedigree_map, training_map,
-            anagusa_map, paddock_map, rebound_map, rivals_growth_map,
-            career_phase_map, distance_change_map, jockey_trainer_combo_map,
+            last3f_map,
+            course_map,
+            frame_map,
+            rotation_map,
+            jockey_map,
+            pace_map,
+            pace_handicap_map,
+            pedigree_map,
+            training_map,
+            anagusa_map,
+            paddock_map,
+            rebound_map,
+            rivals_growth_map,
+            career_phase_map,
+            distance_change_map,
+            jockey_trainer_combo_map,
             going_pedigree_map,
-            jvan_time_dm_map, jvan_battle_dm_map,
+            jvan_time_dm_map,
+            jvan_battle_dm_map,
         ) = [_fill_with_race_mean(_safe(r, lbl)) for r, lbl in zip(_parallel, _labels)]
 
         # セグメント別ウェイト（レース単位で1回だけ計算）
@@ -905,9 +1044,7 @@ class CompositeIndexCalculator:
         X_v26: np.ndarray | None = None
         if results:
             # 重み変化計算用に過去成績取得（rebound と同じパターン）
-            wc_by_horse = await self._get_weight_change_map(
-                race.id, [r["horse_id"] for r in results]
-            )
+            wc_by_horse = await self._get_weight_change_map(race.id, [r["horse_id"] for r in results])
             entries_by_horse = {e.horse_id: e for e in entries}
             try:
                 X_v26 = _build_v26_features(results, race, entries_by_horse, wc_by_horse)
@@ -926,6 +1063,17 @@ class CompositeIndexCalculator:
                 X_v28 = _build_v28_features(X_v26, results, past_form)
             except Exception as e:
                 logger.error(f"v28 past_form feature build failed for race={race.id}: {e}")
+
+        # v29: ラップ由来の7特徴。🔴 `lap_form` モジュール経由でのみ取得する（学習と同じ関数）。
+        X_v29: np.ndarray | None = None
+        if results and X_v28 is not None:
+            try:
+                lap_form = await build_lap_form_features_for_race(
+                    self.db, race=race, horse_ids=[r["horse_id"] for r in results]
+                )
+                X_v29 = _build_v29_features(X_v28, results, lap_form)
+            except Exception as e:
+                logger.error(f"v29 lap_form feature build failed for race={race.id}: {e}")
 
         # 着外率（6着以下確率）。Web の足切り判定と v27 の下位補正に使う
         out_probs: list[float] | None = None
@@ -954,12 +1102,15 @@ class CompositeIndexCalculator:
 
         # is_win 較正ヘッドで win_probability を較正（softmax の最上位過信を解消）
         # composite_index ランキングは上で確定済み。確率のみ較正値に置換する。
-        # v28 は 38列ヘッド、無ければ v27 の 34列ヘッド、それも無ければ softmax。
+        # v29 は 45列ヘッド、無ければ v28 の 38列、v27 の 34列、それも無ければ softmax。
         calib_win: list[float] | None = None
+        iswin_v29 = _load_v29_model("iswin")
         iswin_v28 = _load_v28_iswin_model()
         win_model: lgb.Booster | None  # type: ignore[name-defined]
         win_X: np.ndarray | None
-        if iswin_v28 is not None and X_v28 is not None:
+        if iswin_v29 is not None and X_v29 is not None:
+            win_model, win_X, win_tag = iswin_v29, X_v29, "v29"
+        elif iswin_v28 is not None and X_v28 is not None:
             win_model, win_X, win_tag = iswin_v28, X_v28, "v28"
         else:
             win_model, win_X, win_tag = _load_iswin_model(), X_v26, "v27"
@@ -978,21 +1129,27 @@ class CompositeIndexCalculator:
         #    （`races.head_count` は発走前 NULL で配信時に壊れる）。学習側も同じ集合で
         #    数える（`train_jra_iswin_head.attach_serving_field`）。ヘッドが読めない /
         #    n<5 で複勝が成立しない場合は Harville（v27 と同じ）へ落ちる。
+        # v29 は 45列の独立ヘッド、無ければ v28 の 38列、それも無ければ Harville。
         calib_place: list[float] | None = None
-        placed_model = _load_v28_placed_model()
+        placed_v29 = _load_v29_model("placed")
+        placed_v28 = _load_v28_placed_model()
+        place_model: lgb.Booster | None  # type: ignore[name-defined]
+        place_X: np.ndarray | None
+        if placed_v29 is not None and X_v29 is not None:
+            place_model, place_X, place_tag = placed_v29, X_v29, "v29"
+        else:
+            place_model, place_X, place_tag = placed_v28, X_v28, "v28"
         slots = place_slots_for_field(len(results))
-        if placed_model is not None and X_v28 is not None and slots > 0:
+        if place_model is not None and place_X is not None and slots > 0:
             try:
-                raw_p = np.asarray(placed_model.predict(X_v28), dtype=float)
+                raw_p = np.asarray(place_model.predict(place_X), dtype=float)
                 raw_p = np.clip(raw_p, _PROB_EPS, 1.0 - _PROB_EPS)
                 calib_place = normalize_place_to_slots(raw_p, slots)
             except Exception as e:
-                logger.error(f"v28 placed head inference failed for race={race.id}: {e}")
+                logger.error(f"{place_tag} placed head inference failed for race={race.id}: {e}")
 
         # 全馬の指数が揃ってから勝率・複勝率を算出
-        self._attach_probabilities(
-            results, win_override=calib_win, place_override=calib_place
-        )
+        self._attach_probabilities(results, win_override=calib_win, place_override=calib_place)
 
         # バルク upsert（1 SELECT/レース + add_all で馬ごと N 往復を回避）
         await self._bulk_upsert_for_race(race_id, results)
@@ -1015,9 +1172,7 @@ class CompositeIndexCalculator:
         """
         _JRA_COURSE_CODES = {"01", "02", "03", "04", "05", "06", "07", "08", "09", "10"}
         races_result = await self.db.execute(
-            select(Race)
-            .where(Race.date == date, Race.course.in_(list(_JRA_COURSE_CODES)))
-            .order_by(Race.race_number)
+            select(Race).where(Race.date == date, Race.course.in_(list(_JRA_COURSE_CODES))).order_by(Race.race_number)
         )
         races = races_result.scalars().all()
         if not races:
@@ -1047,9 +1202,7 @@ class CompositeIndexCalculator:
                         row["race_name"] = race.race_name
                     return rows
 
-        raw = await asyncio.gather(
-            *[_process_race(r) for r in races], return_exceptions=True
-        )
+        raw = await asyncio.gather(*[_process_race(r) for r in races], return_exceptions=True)
         all_results: list[dict] = []
         for i, result in enumerate(raw):
             if isinstance(result, Exception):
@@ -1285,9 +1438,7 @@ class CompositeIndexCalculator:
 
         return place_probs
 
-    async def _get_weight_change_map(
-        self, race_id: int, horse_ids: list[int]
-    ) -> dict[int, int | None]:
+    async def _get_weight_change_map(self, race_id: int, horse_ids: list[int]) -> dict[int, int | None]:
         """当該レースの馬体重増減（前走比）を取得する。
 
         🔴 **`race_entries` を先に見ること。** `race_results` はレース確定後にしか
@@ -1301,6 +1452,7 @@ class CompositeIndexCalculator:
         確認済みなので、置き換えても学習時の分布は変わらない。
         """
         from ..db.models import RaceResult
+
         if not horse_ids:
             return {}
         rows = (
@@ -1347,9 +1499,7 @@ class CompositeIndexCalculator:
                 CalculatedIndex.version == COMPOSITE_VERSION,
             )
         )
-        existing_map: dict[int, CalculatedIndex] = {
-            r.horse_id: r for r in existing_result.scalars().all()
-        }
+        existing_map: dict[int, CalculatedIndex] = {r.horse_id: r for r in existing_result.scalars().all()}
 
         def _d(v: object) -> Decimal | None:
             return Decimal(str(v)) if v is not None else None

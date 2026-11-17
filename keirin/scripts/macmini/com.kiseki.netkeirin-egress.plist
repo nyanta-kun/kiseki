@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  netkeirin への出口（Mac mini → VPS の逆向き SOCKS トンネル）。2026-11-11 新設。
+  VPS の 127.0.0.1:18080 に SOCKS を開き、そこへ来た通信を Mac mini から外へ出す。
+  VPS の keirin/.env に NETKEIRIN_PROXY_URL=socks5h://127.0.0.1:18080 を置くと、
+  netkeirin への通信だけがここを通る。設計: keirin/docs/netkeirin_macmini_egress_plan_2026_11.md
+
+  置き場所: ~/Library/LaunchAgents/com.kiseki.netkeirin-egress.plist
+  入れ方:   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kiseki.netkeirin-egress.plist
+  状態:     launchctl print gui/$(id -u)/com.kiseki.netkeirin-egress | grep -E 'state|last exit'
+  止め方:   launchctl bootout gui/$(id -u)/com.kiseki.netkeirin-egress
+
+  - BatchMode=yes: 鍵にパスフレーズがあると待たずに失敗する（launchd には ssh-agent が無い）
+  - ExitOnForwardFailure=yes: VPS 側で 18080 がまだ解放されていないときは終わって再起動させる
+  - ThrottleInterval=30: その再起動が空回りしないよう 30秒あける
+  - 127.0.0.1 にだけ開く（VPS の外からは使えない）
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.netkeirin-egress</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-N</string>
+    <string>-o</string><string>BatchMode=yes</string>
+    <string>-o</string><string>ExitOnForwardFailure=yes</string>
+    <string>-o</string><string>ServerAliveInterval=30</string>
+    <string>-o</string><string>ServerAliveCountMax=3</string>
+    <string>-R</string><string>127.0.0.1:18080</string>
+    <string>sekito</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/netkeirin-egress.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/netkeirin-egress.log</string>
+</dict>
+</plist>
