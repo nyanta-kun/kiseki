@@ -6,7 +6,7 @@
   ],
   "valid_period": [
     "20250630",
-    "20251231"
+    "20260930"
   ],
   "seeds": [
     42,
@@ -14,9 +14,9 @@
     456
   ],
   "best_iters": [
-    172,
+    180,
     203,
-    265
+    208
   ],
   "refit_rounds": 203,
   "features": [
@@ -55,19 +55,10 @@
     "jvan_time_dm",
     "jvan_battle_dm"
   ],
-  "test": {
-    "period": [
-      "20260104",
-      "20260801"
-    ],
-    "n": 28324,
-    "n_races": 2046,
-    "spearman_by_race": 0.50865,
-    "rmse": 0.26335
-  },
   "model_path": "/Users/ysuzuki/GitHub/kiseki/backend/models/jra_reg_rank_lgb.txt",
   "refit_period": [
     "20230506",
-    "20260801"
-  ]
+    "20260927"
+  ],
+  "protocol": "TRAIN ≤20250630 / VAL 20250701〜20260930 / TEST 20261001〜 (本番学習終端 20260930)"
 }

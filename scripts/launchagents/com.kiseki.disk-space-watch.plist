@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kiseki.disk-space-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/ysuzuki/GitHub/kiseki/scripts/disk_space_watch.sh</string>
+  </array>
+
+  <!-- 30 分ごと。空きが 15GB を切ったら通知センターへ出す。
+       2026-11-10 に空き 358MB で Parallels が Windows VM を凍結し、
+       地方のオッズ取得が 11 時間止まった（scripts/disk_space_watch.sh 冒頭）。
+       スリープ中は走らないが、起床時に 1 回実行される。 -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/disk_space_watch_launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ysuzuki/GitHub/kiseki/logs/disk_space_watch_launchd.log</string>
+</dict>
+</plist>

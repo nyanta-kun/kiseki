@@ -309,10 +309,6 @@ export default async function ResultsPage({
                   <strong className="text-gray-700">複勝ROI</strong>{" "}
                   — 毎レース予測1位に同額の複勝を購入した場合の仮想回収率。複勝オッズの記録があるレースのみ集計
                 </p>
-                <p>
-                  <strong className="text-gray-700">信頼度（HIGH/MID/LOW）</strong>{" "}
-                  — 予測1位と2位の指数差・出走頭数・指数分散から算出。HIGH は本命が機能しやすいレース
-                </p>
               </div>
             </details>
           </>

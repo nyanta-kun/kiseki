@@ -53,8 +53,8 @@ class TestBlendV27:
         `calculate_race_confidence` の分散スコアが機能しなくなるため、
         レース内のばらつきが保存されることを保証する。
         """
-        clear = blend_v27([0.10, 0.50, 0.90], None)   # よく分離したレース
-        muddy = blend_v27([0.45, 0.50, 0.55], None)   # 混戦
+        clear = blend_v27([0.10, 0.50, 0.90], None)  # よく分離したレース
+        muddy = blend_v27([0.45, 0.50, 0.55], None)  # 混戦
         assert (max(clear) - min(clear)) > (max(muddy) - min(muddy)) * 2
 
     def test_lower_reg_rank_is_higher_index(self) -> None:
@@ -117,8 +117,9 @@ class TestVersion:
         （Harville → 独立ヘッド）だけで、`blend_v27` / `V27_OUT_WEIGHT` /
         `V27_INDEX_SCALE` は不変（本ファイルの残りのテストがそれを固定している）。
         版そのものの検査は `tests/test_v28_winplace.py::TestVersions`。
+        v29（2026-11-07）も確率の2ヘッドに列を足しただけで、合成ロジックは不変。
         """
-        assert COMPOSITE_VERSION == 28
+        assert COMPOSITE_VERSION == 29
 
 
 @pytest.mark.skipif(
@@ -141,5 +142,5 @@ class TestRegRankModel:
         weak[0, :17] = 25.0
         for row in (strong, weak):
             row[0, 17] = 1600.0  # distance
-            row[0, 18] = 16.0    # head_count
+            row[0, 18] = 16.0  # head_count
         assert float(m.predict(strong)[0]) < float(m.predict(weak)[0])

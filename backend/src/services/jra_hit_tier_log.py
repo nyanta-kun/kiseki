@@ -4,7 +4,12 @@
 tier 別の勝率差はほぼすべてオッズで説明できたため）。以後は判定をせず、
 `tier` / `confidence_score` / `market_agree` / `final_tier` 等は NULL のまま書く。
 記録そのものは止めない——「★推奨」タブ（`jra_place_pick_month`）が
-全出走馬の発走前スナップショットを読んでいるため。以下は廃止前の設計メモ。
+全出走馬の発走前スナップショットを読んでいるため。
+
+🔴 **能力分布モデル（連対率・組合せ確率）の前向き確認もこの記録を読む**（2026-11-07・
+`scripts/jra_finish_dist_forward.py`・計画 `docs/prediction_flow_redesign_plan_2026_11_06.md` §5.5）。
+保存している勝率・複勝率から分布を作り直すので、**列を減らす・記録を止めるときは
+そちらの確認も止まる**。以下は廃止前の設計メモ。
 
 ## なぜ要るか
 
@@ -192,8 +197,7 @@ def evaluate_race(
     pops = popularity_ranks(win_odds)
 
     if not index_by_hn:
-        return TierDecision(None, None, None, None, None, None, None, None,
-                            ranks, pops, "no_index")
+        return TierDecision(None, None, None, None, None, None, None, None, ranks, pops, "no_index")
 
     top1_hn = min(ranks, key=lambda hn: ranks[hn])
 
@@ -226,17 +230,9 @@ async def _latest_win_place_odds(
     if not race_ids:
         return {}, {}
     latest = (
-        await db.execute(
-            select(func.max(OddsHistory.fetched_at)).where(
-                OddsHistory.race_id.in_(race_ids)
-            )
-        )
+        await db.execute(select(func.max(OddsHistory.fetched_at)).where(OddsHistory.race_id.in_(race_ids)))
     ).scalar()
-    time_filter = (
-        [OddsHistory.fetched_at >= latest - timedelta(minutes=5)]
-        if latest is not None
-        else []
-    )
+    time_filter = [OddsHistory.fetched_at >= latest - timedelta(minutes=5)] if latest is not None else []
     rows = await db.execute(
         select(
             OddsHistory.race_id,
@@ -287,28 +283,19 @@ async def snapshot_hit_tier(
     date = now.astimezone(JST).strftime("%Y%m%d")
 
     races = (
-        await db.execute(
-            select(Race)
-            .where(Race.date == date)
-            .where(Race.course.in_(list(JRA_COURSE_CODES)))
-        )
-    ).scalars().all()
-    due = [
-        r for r in races
-        if is_snapshot_due(parse_post_datetime(r.date, r.post_time), now, lead_minutes)
-    ]
+        (await db.execute(select(Race).where(Race.date == date).where(Race.course.in_(list(JRA_COURSE_CODES)))))
+        .scalars()
+        .all()
+    )
+    due = [r for r in races if is_snapshot_due(parse_post_datetime(r.date, r.post_time), now, lead_minutes)]
     if not due:
         return {"races": 0, "recommended": 0, "horses": 0}
 
     # 既に撮ってあるレースは触らない（毎分 cron なので同じレースが何度も窓に入る）
     already = set(
-        (
-            await db.execute(
-                select(HitTierRace.race_id).where(
-                    HitTierRace.race_id.in_([r.id for r in due])
-                )
-            )
-        ).scalars().all()
+        (await db.execute(select(HitTierRace.race_id).where(HitTierRace.race_id.in_([r.id for r in due]))))
+        .scalars()
+        .all()
     )
     targets = [r for r in due if r.id not in already]
     if not targets:
@@ -338,8 +325,7 @@ async def snapshot_hit_tier(
         )
         .join(
             RaceEntry,
-            (RaceEntry.race_id == CalculatedIndex.race_id)
-            & (RaceEntry.horse_id == CalculatedIndex.horse_id),
+            (RaceEntry.race_id == CalculatedIndex.race_id) & (RaceEntry.horse_id == CalculatedIndex.horse_id),
         )
         .where(CalculatedIndex.race_id.in_(race_ids))
         .where(CalculatedIndex.version == COMPOSITE_VERSION)
@@ -378,9 +364,7 @@ async def snapshot_hit_tier(
                 race_number=race.race_number,
                 post_time=race.post_time,
                 snapshot_at=now.astimezone(UTC),
-                lead_minutes=(
-                    int((post_at - now).total_seconds() // 60) if post_at is not None else None
-                ),
+                lead_minutes=(int((post_at - now).total_seconds() // 60) if post_at is not None else None),
                 index_version=COMPOSITE_VERSION,
                 rule_version=RULE_VERSION,
                 head_count=race.head_count,
@@ -425,9 +409,7 @@ async def snapshot_hit_tier(
                     pre_place_odds=place_odds.get(hn),
                     pop_rank=decision.pop_ranks.get(hn),
                     is_top1=hn == decision.top1_horse_number,
-                    is_recommended=(
-                        decision.skip_reason is None and hn == decision.top1_horse_number
-                    ),
+                    is_recommended=(decision.skip_reason is None and hn == decision.top1_horse_number),
                 )
             )
             n_horses += 1
@@ -437,7 +419,10 @@ async def snapshot_hit_tier(
     await db.commit()
     logger.info(
         "[jra hit-tier snapshot] %d レース / 推奨 %d / %d 行 (date=%s)",
-        n_races, n_reco, n_horses, date,
+        n_races,
+        n_reco,
+        n_horses,
+        date,
     )
     return {"races": n_races, "recommended": n_reco, "horses": n_horses}
 
@@ -458,13 +443,9 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
         `{"races": 確定レース数, "horses": 更新した馬の行数}`
     """
     log_races = list(
-        (
-            await db.execute(
-                select(HitTierRace)
-                .where(HitTierRace.date == date)
-                .where(HitTierRace.settled_at.is_(None))
-            )
-        ).scalars().all()
+        (await db.execute(select(HitTierRace).where(HitTierRace.date == date).where(HitTierRace.settled_at.is_(None))))
+        .scalars()
+        .all()
     )
     if not log_races:
         return {"races": 0, "horses": 0}
@@ -474,23 +455,18 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
     entry_hn: dict[tuple[int, int], int] = {}
     for rid, hn, hid in (
         await db.execute(
-            select(RaceEntry.race_id, RaceEntry.horse_number, RaceEntry.horse_id)
-            .where(RaceEntry.race_id.in_(race_ids))
+            select(RaceEntry.race_id, RaceEntry.horse_number, RaceEntry.horse_id).where(RaceEntry.race_id.in_(race_ids))
         )
     ).all():
         if hn is not None:
             entry_hn[(int(rid), int(hid))] = int(hn)
-    for rr in (
-        await db.execute(select(RaceResult).where(RaceResult.race_id.in_(race_ids)))
-    ).scalars().all():
+    for rr in (await db.execute(select(RaceResult).where(RaceResult.race_id.in_(race_ids)))).scalars().all():
         hn = entry_hn.get((rr.race_id, rr.horse_id))
         if hn is not None:
             results[rr.race_id][hn] = rr
 
     picks_by_race: dict[int, list[HitTierPick]] = defaultdict(list)
-    for p in (
-        await db.execute(select(HitTierPick).where(HitTierPick.race_id.in_(race_ids)))
-    ).scalars().all():
+    for p in (await db.execute(select(HitTierPick).where(HitTierPick.race_id.in_(race_ids)))).scalars().all():
         picks_by_race[p.race_id].append(p)
 
     now = datetime.now(UTC)
@@ -500,8 +476,7 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
         if not race_results:
             continue  # まだ確定していない
         finished = [
-            rr for rr in race_results.values()
-            if rr.finish_position is not None and (rr.abnormality_code or 0) == 0
+            rr for rr in race_results.values() if rr.finish_position is not None and (rr.abnormality_code or 0) == 0
         ]
         if not finished:
             continue
@@ -528,10 +503,7 @@ async def settle_hit_tier(db: AsyncSession, date: str) -> dict[str, int]:
         # 推奨が無いレース（tier=C 等）は「外れ」ではなく「対象外」。False と NULL を混ぜない
         if lr.is_recommended and top1 is not None and top1.finish_position is not None:
             need = 1 if lr.bet_type == "win" else 3
-            lr.hit = (
-                top1.finish_position <= need
-                and (top1.abnormality_code or 0) == 0
-            )
+            lr.hit = top1.finish_position <= need and (top1.abnormality_code or 0) == 0
         else:
             lr.hit = None
 

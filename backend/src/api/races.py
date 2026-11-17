@@ -5,6 +5,7 @@ DBに格納済みのレース・出馬表・成績データを返すエンドポ
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections import defaultdict
 from datetime import date as _date
@@ -51,6 +52,7 @@ from ..indices.buy_signal import (
 from ..indices.composite import COMPOSITE_VERSION, OUT_PROB_CUTOFF
 from ..indices.dm_signals import compute_dm_signals, popularity_from_odds
 from ..services.graded_races import fetch_graded_races
+from ..services.jra_finish_dist import cached_race_finish_dist, top_combinations
 from ..services.jra_heihachi_picks import (
     BACKTEST_MAX_YEAR,
     BACKTEST_MIN_YEAR,
@@ -370,7 +372,10 @@ class HorseIndexOut(BaseModel):
     horse_name: str
     composite_index: float
     win_probability: float | None  # 勝率予測
-    place_probability: float | None  # 複勝率予測（3着以内）
+    place_probability: float | None  # 複勝率予測（払戻対象着順以内。8頭以上は3着・5〜7頭は2着）
+    # 連対率（2着以内）。能力分布モデル R1 が勝率と複勝率の両方に合わせて作る同時分布から出す
+    # （services/jra_finish_dist.py・計画 §5.5）。当てはめに失敗したレースは Harville
+    top2_probability: float | None = None
     # 着外率予測（6着以下）。models/jra_out_rate_lgb.txt（オッズ非使用）
     out_probability: float | None = None
     # 足切り候補（Web でグレーアウト表示する馬）= out_probability >= OUT_PROB_CUTOFF(0.80)
@@ -1174,6 +1179,14 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
         for ci, entry, horse in unique_rows
     ]
 
+    # 連対率（能力分布モデル R1）。フィールドは calculated_indices の全馬（v28 の正規化と同じ母集団）
+    fd = await _race_finish_dist(race_id, horses)
+    if fd is not None:
+        top2_by_hn = dict(zip(fd.horse_numbers, fd.top2.tolist(), strict=True))
+        for h in horses:
+            v = top2_by_hn.get(h.horse_number)
+            h.top2_probability = round(v, 4) if v is not None else None
+
     # sekito.anagusa からランク情報を付与
     picks = await _fetch_anagusa_picks(db, race)
     for h in horses:
@@ -1422,6 +1435,84 @@ async def get_indices(race_id: int, db: DbDep) -> IndicesResponse:
                     break
 
     return IndicesResponse(horses=horses)
+
+
+async def _race_finish_dist(race_id: int, horses: list[HorseIndexOut]):
+    """勝率・複勝率が全馬そろっていれば着順分布を作る（1 レース 0.1〜0.3 秒なのでスレッドで回す）。"""
+    if not horses or any(h.win_probability is None or h.place_probability is None for h in horses):
+        return None
+    return await asyncio.to_thread(
+        cached_race_finish_dist,
+        race_id,
+        [h.horse_number for h in horses],
+        [float(h.win_probability) for h in horses if h.win_probability is not None],
+        [float(h.place_probability) for h in horses if h.place_probability is not None],
+    )
+
+
+class FinishDistHorseOut(BaseModel):
+    """1頭分の着順確率。"""
+
+    horse_number: int
+    win: float
+    top2: float
+    top3: float
+
+
+class FinishDistComboOut(BaseModel):
+    """組合せ1つ（馬番は昇順）。"""
+
+    horses: list[int]
+    probability: float
+
+
+class FinishDistOut(BaseModel):
+    """レースの着順分布（能力分布モデル R1）。
+
+    🔴 組合せ（馬連・ワイド・三連複）は**前向きの確認（計画 §5.5）を通るまで画面に出さない**。
+    API だけ先に置き、前向き記録の採点と同じ関数（services/jra_finish_dist.py）で作る。
+    """
+
+    race_id: int
+    method_version: str
+    source: str  # "r1" / "harville"（当てはめが ok でない・5頭未満）
+    fit_status: str
+    place_slots: int
+    horses: list[FinishDistHorseOut]
+    quinella: list[FinishDistComboOut]
+    wide: list[FinishDistComboOut]
+    trio: list[FinishDistComboOut]
+
+
+@router.get("/{race_id}/finish-dist")
+async def get_finish_dist(race_id: int, db: DbDep, limit: Annotated[int, Query(ge=1, le=200)] = 20) -> FinishDistOut:
+    """勝率・連対率・3着内率と、確率の高い組合せ（馬連・ワイド・三連複）を返す。"""
+    res = await get_indices(race_id, db)
+    fd = await _race_finish_dist(race_id, res.horses)
+    if fd is None:
+        raise HTTPException(status_code=404, detail="Win/place probabilities are not available for this race")
+
+    def combos(kind: str) -> list[FinishDistComboOut]:
+        return [
+            FinishDistComboOut(horses=list(c), probability=round(p, 6)) for c, p in top_combinations(fd, kind, limit)
+        ]
+
+    return FinishDistOut(
+        race_id=race_id,
+        method_version=fd.method_version,
+        source=fd.source,
+        fit_status=fd.fit_status,
+        place_slots=fd.place_slots,
+        horses=[
+            FinishDistHorseOut(
+                horse_number=hn, win=round(float(w), 6), top2=round(float(t2), 6), top3=round(float(t3), 6)
+            )
+            for hn, w, t2, t3 in zip(fd.horse_numbers, fd.win, fd.top2, fd.top3, strict=True)
+        ],
+        quinella=combos("quinella"),
+        wide=combos("wide"),
+        trio=combos("trio"),
+    )
 
 
 @router.get("/{race_id}/results")

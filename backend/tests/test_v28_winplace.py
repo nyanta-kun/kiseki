@@ -44,9 +44,7 @@ from src.indices.past_form import PAST_FORM_FEATURE_NAMES  # noqa: E402
 
 class TestFeatureNames:
     def test_v28_is_34_plus_past_form_in_this_order(self) -> None:
-        assert C.V28_FEATURE_NAMES == (
-            list(C.OUT_PROB_FEATURE_NAMES) + list(PAST_FORM_FEATURE_NAMES)
-        )
+        assert C.V28_FEATURE_NAMES == (list(C.OUT_PROB_FEATURE_NAMES) + list(PAST_FORM_FEATURE_NAMES))
         assert len(C.V28_FEATURE_NAMES) == 38
         assert len(C.OUT_PROB_FEATURE_NAMES) == 34
 
@@ -66,8 +64,9 @@ class TestFeatureNames:
 
 
 class TestVersions:
-    def test_composite_version_is_28(self) -> None:
-        assert C.COMPOSITE_VERSION == 28
+    def test_composite_version_is_29(self) -> None:
+        """v29（2026-11-07）でラップ7列を足して版を上げた。v28 の配線はそのまま残る。"""
+        assert C.COMPOSITE_VERSION == 29
 
     def test_subindex_min_version_stays_26(self) -> None:
         """🔴 サブ指数の下限は v26 のまま。`COMPOSITE_VERSION` で引いてはいけない。"""
@@ -105,21 +104,23 @@ class TestPlaceSlots:
         """🔴 n=8 → 3着以内 / n=6 → 2着以内 / n=4 → 学習から除外。"""
         from scripts.train_jra_placed_head import drop_no_place_slots, is_placed_label
 
-        df = pd.DataFrame({
-            "race_id": [1] * 8 + [2] * 6 + [3] * 4,
-            "n_runners": [8] * 8 + [6] * 6 + [4] * 4,
-            "finish_position": list(range(1, 9)) + list(range(1, 7)) + list(range(1, 5)),
-        })
+        df = pd.DataFrame(
+            {
+                "race_id": [1] * 8 + [2] * 6 + [3] * 4,
+                "n_runners": [8] * 8 + [6] * 6 + [4] * 4,
+                "finish_position": list(range(1, 9)) + list(range(1, 7)) + list(range(1, 5)),
+            }
+        )
         df["place_slots"] = [C.place_slots_for_field(n) for n in df["n_runners"]]
         assert list(df["place_slots"].unique()) == [3, 2, 0]
 
         kept = drop_no_place_slots(df)
-        assert len(kept) == 14                      # n=4 のレースだけ落ちる
+        assert len(kept) == 14  # n=4 のレースだけ落ちる
         assert set(kept["race_id"]) == {1, 2}
 
         y = is_placed_label(kept)
-        assert list(y[:8]) == [1, 1, 1, 0, 0, 0, 0, 0]      # n=8 → 3着以内
-        assert list(y[8:]) == [1, 1, 0, 0, 0, 0]            # n=6 → 2着以内
+        assert list(y[:8]) == [1, 1, 1, 0, 0, 0, 0, 0]  # n=8 → 3着以内
+        assert list(y[8:]) == [1, 1, 0, 0, 0, 0]  # n=6 → 2着以内
 
     def test_label_refuses_slots_zero(self) -> None:
         """`place_slots=0` を学習に渡したら静かに通さず落ちること（§18.3-2）。"""
@@ -159,8 +160,8 @@ class TestNormalizeToSlots:
         # 1頭が突出していると正規化後に 1 を超える
         raw = [0.95] + [0.02] * 7
         p = C.normalize_place_to_slots(raw, 3)
-        assert p[0] == pytest.approx(1.0, abs=1e-8)          # クリップされた
-        assert sum(p) < 3.0                                   # 再正規化していない
+        assert p[0] == pytest.approx(1.0, abs=1e-8)  # クリップされた
+        assert sum(p) < 3.0  # 再正規化していない
         assert sum(p) == pytest.approx(3.0 - (0.95 * 3 / sum(raw) - 1.0), abs=1e-6)
 
     def test_returns_empty_when_no_place_payout(self) -> None:
@@ -184,29 +185,25 @@ class TestFallback:
         win = [0.1] * 10
         C.CompositeIndexCalculator._attach_probabilities(results, win_override=win)
         expected = C.CompositeIndexCalculator._harville_place_probs(win)
-        assert [r["place_probability"] for r in results] == [
-            round(v, 4) for v in expected
-        ]
+        assert [r["place_probability"] for r in results] == [round(v, 4) for v in expected]
         assert sum(r["place_probability"] for r in results) == pytest.approx(3.0, abs=1e-3)
 
     def test_length_mismatch_falls_back_to_harville(self) -> None:
         results = [{"composite_index": 60.0 - i, "horse_id": i} for i in range(10)]
         win = [0.1] * 10
         C.CompositeIndexCalculator._attach_probabilities(
-            results, win_override=win, place_override=[0.5] * 3  # 長さが合わない
+            results,
+            win_override=win,
+            place_override=[0.5] * 3,  # 長さが合わない
         )
         expected = C.CompositeIndexCalculator._harville_place_probs(win)
-        assert [r["place_probability"] for r in results] == [
-            round(v, 4) for v in expected
-        ]
+        assert [r["place_probability"] for r in results] == [round(v, 4) for v in expected]
 
     def test_place_override_is_used_when_given(self) -> None:
         results = [{"composite_index": 60.0 - i, "horse_id": i} for i in range(8)]
         win = [0.125] * 8
         override = C.normalize_place_to_slots([0.4] * 8, 3)
-        C.CompositeIndexCalculator._attach_probabilities(
-            results, win_override=win, place_override=override
-        )
+        C.CompositeIndexCalculator._attach_probabilities(results, win_override=win, place_override=override)
         assert sum(r["place_probability"] for r in results) == pytest.approx(3.0, abs=1e-3)
         assert results[0]["place_probability"] == round(override[0], 4)
 
@@ -228,18 +225,28 @@ class TestFallback:
 # ---------------------------------------------------------------------------
 
 _SUBINDEX_DB_COLS = [
-    "speed_index", "last_3f_index", "course_aptitude", "position_advantage",
-    "rotation_index", "jockey_index", "pace_index", "pedigree_index",
-    "training_index", "anagusa_index", "paddock_index", "rebound_index",
-    "rivals_growth_index", "career_phase_index", "distance_change_index",
-    "jockey_trainer_combo_index", "going_pedigree_index",
+    "speed_index",
+    "last_3f_index",
+    "course_aptitude",
+    "position_advantage",
+    "rotation_index",
+    "jockey_index",
+    "pace_index",
+    "pedigree_index",
+    "training_index",
+    "anagusa_index",
+    "paddock_index",
+    "rebound_index",
+    "rivals_growth_index",
+    "career_phase_index",
+    "distance_change_index",
+    "jockey_trainer_combo_index",
+    "going_pedigree_index",
 ]
 # 配信側 `results` の key（`_build_v26_features` が読む名前）。DB 列名と1つだけ違う。
-_SUBINDEX_SERVE_KEYS = ["last3f_index" if c == "last_3f_index" else c
-                        for c in _SUBINDEX_DB_COLS]
+_SUBINDEX_SERVE_KEYS = ["last3f_index" if c == "last_3f_index" else c for c in _SUBINDEX_DB_COLS]
 
-_RACE = dict(date="20260215", course="05", head_count=10, distance=1800,
-             surface="芝", condition="良", grade="G3")
+_RACE = dict(date="20260215", course="05", head_count=10, distance=1800, surface="芝", condition="良", grade="G3")
 _N = 10
 
 
@@ -248,16 +255,21 @@ def _horses() -> list[dict]:
     rng = np.random.default_rng(7)
     rows = []
     for i in range(_N):
-        r = {"horse_id": 100 + i, "horse_number": i + 1,
-             "frame_number": i // 2 + 1, "horse_age": 3 + (i % 4),
-             "weight_carried": 54.0 + i * 0.5, "horse_weight": 460 + i * 3,
-             "weight_change": i - 4,
-             "jvan_time_dm": None if i == 2 else 40.0 + i,      # 欠損 → 両経路 50.0
-             "jvan_battle_dm": None if i in (2, 5) else 45.0 + i}
+        r = {
+            "horse_id": 100 + i,
+            "horse_number": i + 1,
+            "frame_number": i // 2 + 1,
+            "horse_age": 3 + (i % 4),
+            "weight_carried": 54.0 + i * 0.5,
+            "horse_weight": 460 + i * 3,
+            "weight_change": i - 4,
+            "jvan_time_dm": None if i == 2 else 40.0 + i,  # 欠損 → 両経路 50.0
+            "jvan_battle_dm": None if i in (2, 5) else 45.0 + i,
+        }
         for c in _SUBINDEX_DB_COLS:
             r[c] = float(round(rng.uniform(30, 70), 1))
         if i == 7:
-            r["horse_weight"] = None          # 欠損 → 両経路 NaN
+            r["horse_weight"] = None  # 欠損 → 両経路 NaN
             r["weight_change"] = None
         rows.append(r)
     return rows
@@ -267,15 +279,18 @@ def _past_run_rows(horses: list[dict]) -> list[dict]:
     """過去走（`past_form.PAST_RUNS_SQL` / `fetch_past_runs_for_race` が返す形）。"""
     rows = []
     for i, h in enumerate(horses):
-        n_past = 0 if i == 3 else (3 if i == 4 else 8)   # 0走 / 5走未満 / 十分
+        n_past = 0 if i == 3 else (3 if i == 4 else 8)  # 0走 / 5走未満 / 十分
         for k in range(n_past):
-            rows.append({
-                "horse_id": h["horse_id"], "race_id": 900 + k,
-                "date": f"20251{k % 2}{10 + k:02d}",
-                "finish_position": float((i + k) % 12 + 1),
-                "passing_4": float((i + k) % 14 + 1),
-                "head_count": 14.0,
-            })
+            rows.append(
+                {
+                    "horse_id": h["horse_id"],
+                    "race_id": 900 + k,
+                    "date": f"20251{k % 2}{10 + k:02d}",
+                    "finish_position": float((i + k) % 12 + 1),
+                    "passing_4": float((i + k) % 14 + 1),
+                    "head_count": 14.0,
+                }
+            )
     return rows
 
 
@@ -290,12 +305,14 @@ class _FakeCursor:
         self._result: list = []
 
     def execute(self, sql: str, params: dict | None = None) -> None:
-        if "racecourse_features" in sql:
+        if "lap_times" in sql:
+            # v29 のラップ7列（`lap_form.load_lap_context`）。この擬似 DB にはラップが無い
+            self._result = []
+        elif "racecourse_features" in sql:
             self._result = [_COURSE_ROW]
         else:
             self._result = [
-                (r["horse_id"], r["race_id"], r["date"], r["finish_position"],
-                 r["passing_4"], r["head_count"])
+                (r["horse_id"], r["race_id"], r["date"], r["finish_position"], r["passing_4"], r["head_count"])
                 for r in sorted(self._past, key=lambda x: (x["horse_id"], x["date"]))
             ]
 
@@ -319,13 +336,22 @@ def _train_rows() -> np.ndarray:
     from scripts.train_jra_iswin_head import attach_past_form
 
     horses = _horses()
-    df = pd.DataFrame([
-        {"race_id": 1, "date": _RACE["date"], "course": _RACE["course"],
-         "head_count": _RACE["head_count"], "distance": _RACE["distance"],
-         "surface": _RACE["surface"], "condition": _RACE["condition"],
-         "grade": _RACE["grade"], **h}
-        for h in horses
-    ])
+    df = pd.DataFrame(
+        [
+            {
+                "race_id": 1,
+                "date": _RACE["date"],
+                "course": _RACE["course"],
+                "head_count": _RACE["head_count"],
+                "distance": _RACE["distance"],
+                "surface": _RACE["surface"],
+                "condition": _RACE["condition"],
+                "grade": _RACE["grade"],
+                **h,
+            }
+            for h in horses
+        ]
+    )
     from scripts.train_jra_out_rate import featurize as prod_featurize
 
     df = prod_featurize(df)
@@ -339,16 +365,19 @@ async def _serve_rows() -> np.ndarray:
 
     horses = _horses()
     results = [
-        {"horse_id": h["horse_id"],
-         **{k: h[c] for k, c in zip(_SUBINDEX_SERVE_KEYS, _SUBINDEX_DB_COLS)}}
+        {"horse_id": h["horse_id"], **{k: h[c] for k, c in zip(_SUBINDEX_SERVE_KEYS, _SUBINDEX_DB_COLS)}}
         for h in horses
     ]
     race = SimpleNamespace(id=1, **_RACE)
     entries = {
         h["horse_id"]: SimpleNamespace(
-            frame_number=h["frame_number"], horse_age=h["horse_age"],
-            weight_carried=h["weight_carried"], horse_weight=h["horse_weight"],
-            jvan_time_dm=h["jvan_time_dm"], jvan_battle_dm=h["jvan_battle_dm"])
+            frame_number=h["frame_number"],
+            horse_age=h["horse_age"],
+            weight_carried=h["weight_carried"],
+            horse_weight=h["horse_weight"],
+            jvan_time_dm=h["jvan_time_dm"],
+            jvan_battle_dm=h["jvan_battle_dm"],
+        )
         for h in horses
     }
     wc = {h["horse_id"]: h["weight_change"] for h in horses}
@@ -361,23 +390,24 @@ async def _serve_rows() -> np.ndarray:
     rows = [
         SimpleNamespace(
             RaceResult=SimpleNamespace(
-                horse_id=r["horse_id"], race_id=r["race_id"],
-                finish_position=r["finish_position"], passing_4=r["passing_4"]),
+                horse_id=r["horse_id"],
+                race_id=r["race_id"],
+                finish_position=r["finish_position"],
+                passing_4=r["passing_4"],
+            ),
             Race=SimpleNamespace(date=r["date"], head_count=r["head_count"]),
         )
         for r in ordered
     ]
     course_row = SimpleNamespace(
-        straight_distance=_COURSE_ROW[1], corner_tightness=_COURSE_ROW[2],
-        start_to_corner_m=_COURSE_ROW[3])
+        straight_distance=_COURSE_ROW[1], corner_tightness=_COURSE_ROW[2], start_to_corner_m=_COURSE_ROW[3]
+    )
     db = AsyncMock()
     db.execute.side_effect = [
         SimpleNamespace(all=lambda: rows),
         SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: course_row)),
     ]
-    feats = await build_past_form_features_for_race(
-        db, race=race, horse_ids=[r["horse_id"] for r in results]
-    )
+    feats = await build_past_form_features_for_race(db, race=race, horse_ids=[r["horse_id"] for r in results])
     return C._build_v28_features(x26, results, feats)
 
 
@@ -390,8 +420,10 @@ async def test_train_and_serve_build_identical_38_columns() -> None:
     assert train.shape == serve.shape == (_N, 38)
     np.testing.assert_array_equal(np.isnan(train), np.isnan(serve))
     np.testing.assert_allclose(
-        np.nan_to_num(train, nan=-12345.0), np.nan_to_num(serve, nan=-12345.0),
-        rtol=0, atol=0,
+        np.nan_to_num(train, nan=-12345.0),
+        np.nan_to_num(serve, nan=-12345.0),
+        rtol=0,
+        atol=0,
     )
 
 
@@ -407,7 +439,7 @@ async def test_new_features_stay_nan_and_are_not_filled_with_fifty() -> None:
     for arr in (train, serve):
         assert np.isnan(arr[3, i_var]) and np.isnan(arr[3, i_ratio])
         assert np.isnan(arr[4, i_var]) and np.isnan(arr[4, i_ratio])
-        assert np.isnan(arr[3, i_ord])          # 過去走ゼロ ⇒ 脚質 unknown ⇒ NaN
+        assert np.isnan(arr[3, i_ord])  # 過去走ゼロ ⇒ 脚質 unknown ⇒ NaN
         assert not np.isnan(arr[0, i_var])
         # 欠損しうる3列が `50.0` で埋まっていないこと
         # （`pace_handicap_pit` は常に値が出る量で、素点が 50 付近なので対象外）
@@ -437,9 +469,7 @@ async def test_serve_uses_field_size_when_head_count_is_null() -> None:
         SimpleNamespace(all=lambda: []),
         SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None)),
     ]
-    feats = await build_past_form_features_for_race(
-        db, race=race, horse_ids=[h["horse_id"] for h in horses]
-    )
+    feats = await build_past_form_features_for_race(db, race=race, horse_ids=[h["horse_id"] for h in horses])
     assert len(feats) == _N
     assert all(f["pace_handicap_pit"] is not None for f in feats.values())
     assert C.place_slots_for_field(len(horses)) == 3
@@ -467,15 +497,14 @@ async def test_serve_uses_field_size_when_head_count_is_null() -> None:
 #    本テストは v28 が持ち込んだフィールド定義の差だけを見たいので、ここでは
 #    両経路が同じ値になるよう実数を置く。`head_count` の差は本 PR の対象外
 #    （v27 も同じ挙動。報告に残してある）。
-_SCR_RACE = dict(date="20260215", course="05", head_count=9, distance=1800,
-                 surface="芝", condition="良", grade="G3")
+_SCR_RACE = dict(date="20260215", course="05", head_count=9, distance=1800, surface="芝", condition="良", grade="G3")
 
 # 9頭。index 0,1 が取消（abnormality_code=1）で、この2頭だけが escape。
 # 全9頭: escape2 + leader1 → indicator 2.5 → **fast**
 # 完走7頭: escape0 + leader1 → indicator 0.5 → **slow**
 # ⇒ フィールドの取り方を間違えると `pace_handicap_pit` がレース全馬で 10 点動く。
 # place_slots も 9頭→3 / 7頭→2 と変わる。
-_SCR_PASSING = [2, 2, 5, 8, 8, 8, 8, 8, 8]      # /14 → escape, escape, leader, mid×6
+_SCR_PASSING = [2, 2, 5, 8, 8, 8, 8, 8, 8]  # /14 → escape, escape, leader, mid×6
 _SCR_ABNORMAL = [1, 1, 0, 0, 0, 0, 0, 0, 0]
 
 
@@ -483,14 +512,20 @@ def _scr_horses() -> list[dict]:
     rng = np.random.default_rng(11)
     rows = []
     for i in range(9):
-        r = {"horse_id": 200 + i, "horse_number": i + 1,
-             "frame_number": i // 2 + 1, "horse_age": 3 + (i % 4),
-             "weight_carried": 55.0 + i * 0.5, "horse_weight": 470 + i * 2,
-             "weight_change": i - 3,
-             "jvan_time_dm": 44.0 + i, "jvan_battle_dm": 46.0 + i,
-             "abnormality_code": _SCR_ABNORMAL[i],
-             # 取消馬は着順が無い（本番の `race_results` と同じ形）
-             "finish_position": None if _SCR_ABNORMAL[i] else float(i - 1)}
+        r = {
+            "horse_id": 200 + i,
+            "horse_number": i + 1,
+            "frame_number": i // 2 + 1,
+            "horse_age": 3 + (i % 4),
+            "weight_carried": 55.0 + i * 0.5,
+            "horse_weight": 470 + i * 2,
+            "weight_change": i - 3,
+            "jvan_time_dm": 44.0 + i,
+            "jvan_battle_dm": 46.0 + i,
+            "abnormality_code": _SCR_ABNORMAL[i],
+            # 取消馬は着順が無い（本番の `race_results` と同じ形）
+            "finish_position": None if _SCR_ABNORMAL[i] else float(i - 1),
+        }
         for c in _SUBINDEX_DB_COLS:
             r[c] = float(round(rng.uniform(30, 70), 1))
         rows.append(r)
@@ -502,24 +537,36 @@ def _scr_past_rows(horses: list[dict]) -> list[dict]:
     rows = []
     for i, h in enumerate(horses):
         for k in range(6):
-            rows.append({
-                "horse_id": h["horse_id"], "race_id": 800 + k,
-                "date": f"20251{k % 2}{10 + k:02d}",
-                "finish_position": float((i + k) % 12 + 1),
-                "passing_4": float(_SCR_PASSING[i]),
-                "head_count": 14.0,
-            })
+            rows.append(
+                {
+                    "horse_id": h["horse_id"],
+                    "race_id": 800 + k,
+                    "date": f"20251{k % 2}{10 + k:02d}",
+                    "finish_position": float((i + k) % 12 + 1),
+                    "passing_4": float(_SCR_PASSING[i]),
+                    "head_count": 14.0,
+                }
+            )
     return rows
 
 
 def _scr_raw_df(horses: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame([
-        {"race_id": 2, "date": _SCR_RACE["date"], "course": _SCR_RACE["course"],
-         "head_count": _SCR_RACE["head_count"], "distance": _SCR_RACE["distance"],
-         "surface": _SCR_RACE["surface"], "condition": _SCR_RACE["condition"],
-         "grade": _SCR_RACE["grade"], **h}
-        for h in horses
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "race_id": 2,
+                "date": _SCR_RACE["date"],
+                "course": _SCR_RACE["course"],
+                "head_count": _SCR_RACE["head_count"],
+                "distance": _SCR_RACE["distance"],
+                "surface": _SCR_RACE["surface"],
+                "condition": _SCR_RACE["condition"],
+                "grade": _SCR_RACE["grade"],
+                **h,
+            }
+            for h in horses
+        ]
+    )
 
 
 def _scr_train_df() -> pd.DataFrame:
@@ -527,9 +574,7 @@ def _scr_train_df() -> pd.DataFrame:
     from scripts.train_jra_iswin_head import build_v28_frame
 
     horses = _scr_horses()
-    return build_v28_frame(
-        _scr_raw_df(horses), _FakeConn(_scr_past_rows(horses)), end="20260215"
-    )
+    return build_v28_frame(_scr_raw_df(horses), _FakeConn(_scr_past_rows(horses)), end="20260215")
 
 
 def _scr_train_df_old_order() -> pd.DataFrame:
@@ -555,16 +600,19 @@ async def _scr_serve_df() -> tuple[np.ndarray, list[int], int]:
 
     horses = _scr_horses()
     results = [
-        {"horse_id": h["horse_id"],
-         **{k: h[c] for k, c in zip(_SUBINDEX_SERVE_KEYS, _SUBINDEX_DB_COLS)}}
+        {"horse_id": h["horse_id"], **{k: h[c] for k, c in zip(_SUBINDEX_SERVE_KEYS, _SUBINDEX_DB_COLS)}}
         for h in horses
     ]
     race = SimpleNamespace(id=2, **_SCR_RACE)
     entries = {
         h["horse_id"]: SimpleNamespace(
-            frame_number=h["frame_number"], horse_age=h["horse_age"],
-            weight_carried=h["weight_carried"], horse_weight=h["horse_weight"],
-            jvan_time_dm=h["jvan_time_dm"], jvan_battle_dm=h["jvan_battle_dm"])
+            frame_number=h["frame_number"],
+            horse_age=h["horse_age"],
+            weight_carried=h["weight_carried"],
+            horse_weight=h["horse_weight"],
+            jvan_time_dm=h["jvan_time_dm"],
+            jvan_battle_dm=h["jvan_battle_dm"],
+        )
         for h in horses
     }
     wc = {h["horse_id"]: h["weight_change"] for h in horses}
@@ -575,23 +623,24 @@ async def _scr_serve_df() -> tuple[np.ndarray, list[int], int]:
     rows = [
         SimpleNamespace(
             RaceResult=SimpleNamespace(
-                horse_id=r["horse_id"], race_id=r["race_id"],
-                finish_position=r["finish_position"], passing_4=r["passing_4"]),
+                horse_id=r["horse_id"],
+                race_id=r["race_id"],
+                finish_position=r["finish_position"],
+                passing_4=r["passing_4"],
+            ),
             Race=SimpleNamespace(date=r["date"], head_count=r["head_count"]),
         )
         for r in ordered
     ]
     course_row = SimpleNamespace(
-        straight_distance=_COURSE_ROW[1], corner_tightness=_COURSE_ROW[2],
-        start_to_corner_m=_COURSE_ROW[3])
+        straight_distance=_COURSE_ROW[1], corner_tightness=_COURSE_ROW[2], start_to_corner_m=_COURSE_ROW[3]
+    )
     db = AsyncMock()
     db.execute.side_effect = [
         SimpleNamespace(all=lambda: rows),
         SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: course_row)),
     ]
-    feats = await build_past_form_features_for_race(
-        db, race=race, horse_ids=[r["horse_id"] for r in results]
-    )
+    feats = await build_past_form_features_for_race(db, race=race, horse_ids=[r["horse_id"] for r in results])
     x38 = C._build_v28_features(x26, results, feats)
     return x38, [r["horse_id"] for r in results], C.place_slots_for_field(len(results))
 
@@ -621,8 +670,10 @@ class TestScratchedHorseFieldSkew:
 
         np.testing.assert_array_equal(np.isnan(train_x), np.isnan(serve_sub))
         np.testing.assert_allclose(
-            np.nan_to_num(train_x, nan=-12345.0), np.nan_to_num(serve_sub, nan=-12345.0),
-            rtol=0, atol=0,
+            np.nan_to_num(train_x, nan=-12345.0),
+            np.nan_to_num(serve_sub, nan=-12345.0),
+            rtol=0,
+            atol=0,
         )
         # place_slots も配信と一致する（完走数 7 の 2 ではなく、エントリー数 9 の 3）
         assert serve_slots == 3
@@ -671,20 +722,23 @@ class TestInferenceV28Safety:
         """
         from scripts.inference_v28 import _visual_check
 
-        n = 4                                      # 4頭立て ⇒ place_slots_for_field=0
-        df = pd.DataFrame({
-            "race_id": [1] * n, "date": ["20260215"] * n,
-            "horse_number": range(1, n + 1),
-            "runner_type_ord": [0.0, 1.0, 2.0, np.nan],
-            "finish_var5": [1.0, 2.0, np.nan, np.nan],
-            "win_place_ratio5": [0.5, 0.25, np.nan, np.nan],
-            "pace_handicap_pit": [55.0, 60.0, 65.0, 70.0],
-            "_win_raw": [0.4, 0.3, 0.2, 0.1],
-            "_placed_raw": [0.8, 0.6, 0.4, 0.2],
-            "_out": [0.2, 0.4, 0.6, 0.8],
-        })
+        n = 4  # 4頭立て ⇒ place_slots_for_field=0
+        df = pd.DataFrame(
+            {
+                "race_id": [1] * n,
+                "date": ["20260215"] * n,
+                "horse_number": range(1, n + 1),
+                "runner_type_ord": [0.0, 1.0, 2.0, np.nan],
+                "finish_var5": [1.0, 2.0, np.nan, np.nan],
+                "win_place_ratio5": [0.5, 0.25, np.nan, np.nan],
+                "pace_handicap_pit": [55.0, 60.0, 65.0, 70.0],
+                "_win_raw": [0.4, 0.3, 0.2, 0.1],
+                "_placed_raw": [0.8, 0.6, 0.4, 0.2],
+                "_out": [0.2, 0.4, 0.6, 0.8],
+            }
+        )
         assert C.place_slots_for_field(n) == 0
-        _visual_check(df)                          # 例外が出ないこと
+        _visual_check(df)  # 例外が出ないこと
         out = capsys.readouterr().out
         assert "Harville" in out
 

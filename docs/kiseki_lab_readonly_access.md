@@ -1,0 +1,236 @@
+# kiseki-lab の本番 DB 読み取り専用アクセス
+
+kiseki-lab は kiseki の指数を波乱帯別に観測する別プロジェクトです。観測と提案だけを行い、
+kiseki のコードや DB は変えません。本番 `hrdb` を読むための専用ロールと SSH 利用者を
+2026-10-31 に作り、2026-11-05 に sshd の絞り込みと `temp_file_limit` を足しました。
+
+依頼文は kiseki-lab 側の `docs/requests/2026-10-31-readonly-role.md` にあります。
+
+## 構成
+
+```
+Mac (kiseki-lab)
+  └─ ssh -N kisekilab@160.251.234.83  (-L 15432:127.0.0.1:5432)
+       └─ VPS の 127.0.0.1:5432 → PostgreSQL 16 / hrdb / ロール kiseki_lab_ro
+```
+
+| 項目 | 値 |
+|---|---|
+| ロール | `kiseki_lab_ro`（LOGIN・パスワード認証 scram-sha-256） |
+| DB | `hrdb` |
+| 接続 | SSH トンネル経由のみ。Mac 側 `127.0.0.1:15432` → VPS 側 `127.0.0.1:5432` |
+| SSH 利用者 | `kisekilab`（uid 1001） |
+| SSH 鍵 | Mac の `~/.ssh/kiseki_lab_tunnel` |
+| パスワード | 利用者が `\password` で設定し、Mac の `~/.pgpass` に保存。リポジトリには置かない |
+
+外部にポートは開けていません。
+
+## ロールの権限
+
+| 対象 | 権限 |
+|---|---|
+| DB `hrdb` | CONNECT |
+| スキーマ keiba / chihou / keirin | USAGE と全テーブル・ビュー・マテビューへの SELECT |
+| 今後のテーブル | `ALTER DEFAULT PRIVILEGES FOR ROLE hrdb_user IN SCHEMA keiba, chihou, keirin GRANT SELECT ON TABLES` |
+| sekito / public | なし |
+| 属性 | NOSUPERUSER / NOCREATEDB / NOCREATEROLE / NOINHERIT / NOREPLICATION / NOBYPASSRLS |
+
+ロールに付けた設定:
+
+| 設定 | 値 | 目的 |
+|---|---|---|
+| `default_transaction_read_only` | `on` | 書き込み事故の保険 |
+| `statement_timeout` | `120s` | 重い集計で確定処理を邪魔しない |
+| `idle_in_transaction_session_timeout` | `60s` | 開きっぱなしのトランザクションを残さない |
+| `CONNECTION LIMIT` | `3` | 接続の占有を防ぐ |
+| `temp_file_limit` | `2GB` | 重いソートや結合でディスク（空き約 25GB）を食い潰さない。**管理者しか変えられない設定なので、ロール自身は外せない**（2026-11-05 追加） |
+
+`temp_file_limit` 以外の3つの設定はロール自身が `SET` で外せる初期値です。kiseki-lab の
+コード側でも同じ値を付けて守る取り決めです。
+
+🔴 **VPS のメモリは 1.9GB しかありません。** `work_mem`（既定 4MB）はロール自身が `SET` で
+上げられ、DB 側では止められません。kiseki-lab のコードで `work_mem` を上げないこと。
+
+kiseki-lab 側は、確定処理の時間帯（JST 23:30〜23:45 ごろ）には集計を流さない取り決めです。
+
+### 注意
+
+- **書き込めない根拠は「書き込み権限を付けていないこと」です。** `default_transaction_read_only` は
+  ロール自身が `SET` で外せるので、これだけでは防げません
+- **自動付与は hrdb_user が作ったテーブルにしか効きません。** Alembic 経由なら hrdb_user が
+  作るので問題ありません。postgres など別のロールで作ったテーブルは、手で GRANT が要ります
+- 一時テーブルの作成権限（TEMP）は PostgreSQL の既定で全員に付いています。
+  read_only を外せば一時テーブルは作れますが、本番データには影響しません
+
+## 🔴 pg_hba.conf の行の位置を崩さない
+
+`/etc/postgresql/16/main/pg_hba.conf` には、`local all postgres peer` の直後に次の4行があります。
+
+```
+host    hrdb  kiseki_lab_ro  127.0.0.1/32  scram-sha-256
+host    hrdb  kiseki_lab_ro  ::1/128       scram-sha-256
+host    all   kiseki_lab_ro  all           reject
+local   all   kiseki_lab_ro                reject
+```
+
+pg_hba.conf は上から照合して**最初に当たった行**を使います。既存の行には、外部 IP・
+Tailscale（`100.64.0.0/10`）・Docker のネットワークから**全ユーザー**を受け付けるもの
+（`host all all ... md5`）があります。この4行がそれらより下に回ると、`kiseki_lab_ro` が
+外から入れるようになります。
+
+DB 名を `hrdb` に限っているのは、全員が CONNECT を持つ他の DB（`postgres` など）への接続も
+同時に塞ぐためです。
+
+編集したら、反映前に書式を検査してから設定を読み直します。**再起動はしません**
+（オッズ取込や API の接続が切れるため）。
+
+```sql
+SELECT line_number, error FROM pg_hba_file_rules WHERE error IS NOT NULL;  -- 0 行なら OK
+SELECT pg_reload_conf();
+```
+
+作成前のバックアップ: `/etc/postgresql/16/main/pg_hba.conf.bak-20261031082444-before-kiseki-lab`
+
+### listen_addresses は外向きのまま
+
+`listen_addresses = '*'` です。自宅の固定 IP（115.125.209.92）と Docker のコンテナが外向きの
+待ち受けで DB を使っているため、狭めるとアプリが止まります。外からの 5432 番は ufw で
+その2か所に絞られています。`kiseki_lab_ro` は上の reject 行で localhost 以外から入れません。
+
+localhost 系の既存行（`local` / `127.0.0.1/32` / `::1/128`）は peer と scram-sha-256 だけで、
+`trust` はありません（2026-11-05 確認）。
+
+## SSH 利用者 kisekilab
+
+- ログインシェルなし（`/usr/sbin/nologin`）・パスワードはロック済みで、鍵でしか入れない
+- sudo・docker グループには入れていない（docker グループに入ると root と同等になるため）
+- バックアップ用の `ysuzuki`（sudo で postgres になれる）とは分けている。同じ利用者を使うと
+  読み取り専用ロールの意味がなくなるため
+
+`/home/kisekilab/.ssh/authorized_keys`:
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:5432",permitopen="localhost:5432",command="/bin/false" ssh-ed25519 ... kiseki-lab
+```
+
+- `permitopen` は、クライアントが指定した転送先の文字列と**文字どおり**照合されます。
+  そのため `127.0.0.1` と `localhost` の両方を書いてあります
+- `command="/bin/false"` なので、シェルを要求すると即座に切れます。**トンネルは必ず `ssh -N` で張ります**
+- 5432 番以外への転送は `administratively prohibited` で拒否されます
+
+### sshd 側の絞り込み（2026-11-05 追加）
+
+authorized_keys の `port-forwarding` は、`restrict` で止めた転送を**逆向き（-R）も含めて**
+許し直します。実際に kisekilab で -R が通ることを確認したので、sshd 側でも絞りました。
+
+`/etc/ssh/sshd_config.d/60-kisekilab.conf`:
+
+```
+Match User kisekilab
+    AllowTcpForwarding local
+    AllowStreamLocalForwarding no
+    PermitOpen 127.0.0.1:5432 localhost:5432
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+```
+
+- 既存の設定ファイルは変えていません。`ysuzuki` の実効設定（`sshd -T -C user=ysuzuki,...`）は
+  追加の前後で1項目も変わらないことを確認しました
+- 反映は `systemctl reload ssh`（接続中の SSH は切れない）
+- 確認: -R は `remote port forwarding failed`、UNIX ソケットへの転送も接続できない
+
+編集したら反映前に検査します:
+
+```bash
+sudo sshd -t
+sudo sshd -T -C user=kisekilab,host=x,addr=203.0.113.1 | grep -Ei 'forwarding|permitopen|permittty'
+```
+
+## kiseki-lab 側の接続設定
+
+`~/.ssh/config`:
+
+```
+Host kiseki-lab-tunnel
+    HostName 160.251.234.83
+    User kisekilab
+    IdentityFile ~/.ssh/kiseki_lab_tunnel
+    IdentitiesOnly yes
+    LocalForward 15432 127.0.0.1:5432
+    SessionType none
+    ExitOnForwardFailure yes
+```
+
+既存の `sekito` の設定は利用者が `ysuzuki` なので流用できません。
+
+`~/.pgpass`（権限 600）:
+
+```
+127.0.0.1:15432:hrdb:kiseki_lab_ro:<パスワード>
+```
+
+Mac 側を 15432 番にしているのは、この Mac にも PostgreSQL 16 が入っていて 5432 番が
+使われている可能性があるためです。
+
+## 確認方法
+
+トンネルを張った状態で:
+
+```bash
+psql "host=127.0.0.1 port=15432 dbname=hrdb user=kiseki_lab_ro" \
+  -c "show default_transaction_read_only" -c "show statement_timeout" \
+  -c "select count(*) from keiba.races" \
+  -c "insert into keiba.races default values" \
+  -c "select count(*) from sekito.races"
+```
+
+期待値: `on` / `2min` / 件数 / `cannot execute INSERT in a read-only transaction` /
+`permission denied for schema sekito`。
+
+権限だけなら、VPS で postgres から `SET ROLE kiseki_lab_ro` に切り替えればパスワードなしで
+確かめられます。ただし `ALTER ROLE ... SET` の3つの設定はログイン時にしか効かないので、
+`SET ROLE` では確かめられません。
+
+## 戻し方
+
+```sql
+-- 1. 既定権限を外す（残したまま DROP ROLE すると依存エラーで失敗する）
+ALTER DEFAULT PRIVILEGES FOR ROLE hrdb_user IN SCHEMA keiba, chihou, keirin
+  REVOKE SELECT ON TABLES FROM kiseki_lab_ro;
+-- 2. 付与した権限をまとめて外す
+DROP OWNED BY kiseki_lab_ro;
+-- 3. ロールを消す
+DROP ROLE kiseki_lab_ro;
+```
+
+```bash
+# pg_hba.conf の4行（とコメント1行）を消して読み直す
+sudo -u postgres psql -d hrdb -c "select pg_reload_conf()"
+# SSH 利用者と sshd の設定を消す
+sudo deluser --remove-home kisekilab
+sudo rm /etc/ssh/sshd_config.d/60-kisekilab.conf && sudo sshd -t && sudo systemctl reload ssh
+```
+
+一時的に止めるだけなら `ALTER ROLE kiseki_lab_ro NOLOGIN;` で足ります。
+
+## kaime-sim 用のロール kaime_sim_ro（2026-11-15）
+
+kaime-sim（kiseki の指数で買い目を仮想で判断するシミュレーション。本物の購入はしない）は、
+Mac mini の launchd で毎分 hrdb を読みます。kiseki-lab の夜の集計と接続の枠を分け合わないよう、
+専用のロールを分けました。
+
+| 項目 | kaime_sim_ro |
+|---|---|
+| 権限・設定 | `kiseki_lab_ro` と同じ（3スキーマの SELECT・自動付与・read_only・120s・60s・`temp_file_limit` 2GB） |
+| `CONNECTION LIMIT` | **2**（kaime-sim は同時に1本しか使わない） |
+| SSH | **`kisekilab` を共用**。SSH は 5432 番への転送しかできないので、切り分けは DB のロールで行う |
+| Mac 側の転送 | `127.0.0.1:15442` → VPS `127.0.0.1:5432`（LaunchAgent `com.ai-company.kaime-sim.tunnel`） |
+| `~/.pgpass` | `127.0.0.1:15442:hrdb:kaime_sim_ro:<パスワード>` |
+
+pg_hba.conf には `kiseki_lab_ro` の4行のすぐ下に同じ形の4行（コメント1行つき）を足しました。
+**こちらも `host all all ... md5` の行より上に置くこと。**
+作成前のバックアップ: `/etc/postgresql/16/main/pg_hba.conf.bak-20261115114036-before-kaime-sim`
+
+戻し方は上の「戻し方」の SQL でロール名を `kaime_sim_ro` に替え、pg_hba.conf の4行を消して
+読み直します。SSH 利用者と sshd の設定は kiseki-lab と共用なので消しません。

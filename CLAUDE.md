@@ -1669,9 +1669,46 @@ super_buy・DM穴・高得点鉄板）は全て OOS 脆弱と判明したため�
 
 **地方競馬は対象外**（下記の別系統）。
 
+### 総合指数 v29（単勝・複勝ヘッドにラップ7列・2026-11-07）
+
+`COMPOSITE_VERSION = 29`。事前登録・結果・Q4 の再確認ルールは
+`docs/jra_lap_v29_q3_confirm_plan_2026_11_07.md`（§8 が 2026Q3 の確認・§9 が Q4 の再確認）。
+**v28 との差は、単勝・複勝の2ヘッドの入力に `lap_form.LAP_FORM_FEATURE_NAMES` の7列を
+足して 45列にしたことだけ。** `composite_index` / `out_probability` / `reg_rank` は不変。
+
+- モデル: `models/v29_iswin_calib.txt` + `models/v29_placed_head.txt`。
+  読めなければ単勝は v28 → v27、複勝は v28 → Harville へ自動で落ちる（**戻すときはこの2ファイルを外す**）
+- 学習: `train_jra_iswin_head.py` / `train_jra_placed_head.py`（四半期ローリングが引数なしで呼ぶ）。
+  🔴 **四半期の途中で手で回すときは `--end <VAL_END> --skip-honest-test` を付ける**
+  （付けないと当四半期の TEST 行で honest test を行い、一度きりの窓を開けてしまう）
+- バックフィル: `scripts/inference_v29.py`（既定 2023-05-06〜・冪等）
+- 2026Q3 887R: 単勝 多項対数損失 Δ −0.01331（**95%CI [−0.02238, −0.00456]・確認成功**）。
+  ただし v28 の確認に使われていない9月だけでは Δ −0.00068 で差がほぼ無い
+- 評価は seed 3本の平均、**出荷モデルは seed 1本**（v28 と同じ扱い）
+
+#### 🔴 ラップ特徴は `src/indices/lap_form.py` からのみ取る
+
+学習・バックフィル・検証は `load_lap_context`（全期間）、配信は
+`build_lap_form_features_for_race`（その馬たちの過去走と、走った区分のレースだけを読む）。
+**どちらも `build_lap_context` → `lap_features_for_horses` を通すので par の値が一致する**
+（本番 DB 20R・283頭で 1,981 値すべて一致・`test_v29_lap_wiring.py` が合成データで固定）。
+欠損は v28 の過去走4列と同じく **NaN のまま**渡す。
+
+#### 🔴 2026Q4 の再確認（2027-01-01 以降に1回だけ）
+
+    cd backend
+    ~/bin/kiseki-ro env JRA_TEST_START=20261001 .venv/bin/python scripts/jra_lap_v29_q4_recheck.py
+
+`JRA_TEST_START` を付けないと止まる（1/1 に TEST_START が繰り上がり、台帳の行が別の窓を指すため）。
+Q4 単独の点推定 ≥ 0 かつ Q3+Q4 合算の CI 上端が 0 未満でなければ **v28 へ戻す**。
+戻すなら 2027Q1 の v29 バックフィルより前に行う。
+
+⚠️ kiseki-lab は指数を `version = 28` 固定で読んでいた（2026-11-07 に予告を送った）。
+版を上げ下げしたら知らせること。
+
 ### 総合指数 v28（単勝ヘッド38列 + 複勝の独立ヘッド・2026-09-04）
 
-`COMPOSITE_VERSION = 28`。事前登録・結果は
+v29 の土台（v29 は単勝・複勝ヘッドの列にラップ7列を足しただけ）。当時は `COMPOSITE_VERSION = 28`。事前登録・結果は
 `docs/jra_winplace_structure_plan_2026_09_04.md`（§16 が実装設計・§18 が 2026Q3 の確認）。
 **`composite_index` / `out_probability` / `reg_rank` / tier 判定は v27 から変更なし。**
 変えたのは確率の2本だけ。
@@ -2197,6 +2234,21 @@ ChihouSweetSpotResponse {
 | `backend/scripts/backtest_chihou_sweetspot.py --version N [--show-bias]` | sweet_spot/place_bet の honest バックテスト（本番同一母集団・2026-07-23新設） |
 | `backend/scripts/backtest_chihou_low_odds.py` | low_odds 信頼/不信頼分割の検証 |
 
+## kiseki-lab の読み取り専用アクセス（2026-10-31）
+
+別プロジェクト kiseki-lab（指数を波乱帯別に観測するだけ・書き込みなし）が、
+ロール `kiseki_lab_ro` で本番 `hrdb` を読んでいる。経路は SSH 利用者 `kisekilab` の
+トンネル経由（VPS の `127.0.0.1:5432`）だけ。権限・設定・戻し方は
+`docs/kiseki_lab_readonly_access.md`。
+
+🔴 **pg_hba.conf を編集するときは、`kiseki_lab_ro` の4行（`local all postgres peer` の直後）を
+既存の `host all all ... md5` 行より上に保つこと。** 既存行は外部 IP・Tailscale・Docker から
+全ユーザーを受け付けており、pg_hba は最初に当たった行を使う。4行が下に回ると
+読み取り専用ロールが外から入れるようになる。
+
+⚠️ 今後のテーブルへの SELECT 自動付与は `FOR ROLE hrdb_user` に掛けてある。
+hrdb_user 以外（postgres 等）で keiba / chihou / keirin にテーブルを作ったら手で GRANT すること。
+
 ## DB 自動バックアップ運用
 
 VPS PostgreSQL `hrdb` (4.96GB) を Mac に毎日 03:30 JST 自動バックアップ。
@@ -2241,3 +2293,18 @@ pmset -g sched                                     # 確認
 
 ⚠️ `pmset repeat` は**繰り返しスケジュールを1つしか持てない**。別の時刻で上書きすると
 バックアップと月次ローリングの**両方**が起床しなくなる。変更するときは両方を見ること。
+
+## 🔴 Mac の空き容量が尽きると Windows VM が凍結する（2026-11-10・本番で発生）
+
+Mac の空きが 358MB まで落ちたとき、Parallels が Windows VM を**凍結**し、
+確認ダイアログ（`PRL_WARN_TOO_LOW_HDD_SIZE`）を出して応答を待ち続けた。
+VM の中の realtime も watchdog も止まり、**地方のオッズと結果が 06:22〜17:49 の間 1 件も取れなかった**。
+
+- `prlctl list -a` は凍結中も **`running` と表示する**。`prlctl list -i "Windows 11"` の `State` と
+  `~/Parallels/Windows 11.pvm/parallels.log` の `Low free HDD space` / `VmStateFrozen` で判別する
+- ⚠️ **凍結中に `prlctl exec` を打たない。** 待っている確認に「停止」で答えたとみられ、VM が電源断で止まった
+- 復旧は `prlctl start "Windows 11"`。起動すると realtime は自動で立ち上がる（約20秒で ssh 可）
+
+**監視**: LaunchAgent `com.kiseki.disk-space-watch`（30分ごと・`scripts/disk_space_watch.sh`）が
+空き 15GB 未満で通知センターへ出す（3時間に1回まで）。5GB 未満は毎回出す。
+ログ: `logs/disk_space_watch.log`。常時 9 割以上埋まっているので、一時的な書き込みで簡単に尽きる。

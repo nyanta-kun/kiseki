@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from check_odds_snapshot_health import (  # noqa: E402
-    EXPECTED_TYPES, H16_FIRST_DAY, build_message, evaluate)
+    EXPECTED_TYPES, H16_FIRST_DAY, PRESTART_FIRST_DAY, build_message, evaluate)
 
 DAY = "2026-10-09"
 FULL = {t: 100 for t in EXPECTED_TYPES}
@@ -97,3 +97,28 @@ def test_nightly_review_が見張りを呼ぶ():
     assert '"$DAY"' in line
     # 失敗しても夜間レビューを止めない
     assert "||" in code.split(line, 1)[1].splitlines()[1]
+
+
+# --- 発走直前の t10 / t07（2026-11-15）---
+
+def test_直前の型は件数を渡さないか導入日より前なら判定しない():
+    assert evaluate(PRESTART_FIRST_DAY, 40, 36, 36, FULL) == []
+    assert evaluate("2026-11-16", 40, 36, 36, FULL, prestart_races={}) == []
+
+
+def test_直前の型が無ければ報告する():
+    p = evaluate(PRESTART_FIRST_DAY, 40, 36, 36, FULL, prestart_races={"t10": 40})
+    assert p == ["t07（発走直前）の被覆 0%（0/40）が 90% 未満"]
+
+
+def test_直前の型の被覆の下限():
+    ok = {"t10": 36, "t07": 36}   # 90%
+    assert evaluate(PRESTART_FIRST_DAY, 40, 36, 36, FULL, prestart_races=ok) == []
+    low = {"t10": 35, "t07": 40}  # 87.5%
+    assert evaluate(PRESTART_FIRST_DAY, 40, 36, 36, FULL, prestart_races=low) == [
+        "t10（発走直前）の被覆 88%（35/40）が 90% 未満"]
+
+
+def test_見張りが直前の型を集めて渡す():
+    code = "\n".join(_code(ROOT / "scripts" / "check_odds_snapshot_health.py"))
+    assert "prestart_races=collect_prestart(day)" in code

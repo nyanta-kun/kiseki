@@ -111,6 +111,8 @@ async def fetch_gekisou_verdicts(db: AsyncSession, race_ids: list[int]) -> dict[
         .where(ChihouCalculatedIndex.race_id.in_(live_ids))
         .where(ChihouCalculatedIndex.version == CHIHOU_COMPOSITE_VERSION)
     )
+    # place_probability は生の値のまま渡す。chihou_gekisou が内部で Σ=3 に揃えるので、
+    # 先に `chihou_prob_normalize` を掛けても判定は変わらない（前向き記録の経路とも揃う）。
     probs: dict[int, dict[int, float | None]] = defaultdict(dict)
     for rid, hn, pp in prob_rows.all():
         if hn is not None:

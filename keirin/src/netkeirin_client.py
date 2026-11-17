@@ -213,6 +213,99 @@ def expand_bet(bet_kind: str, groups: list[list[int]]) -> set:
 PROPOSED_PREFIX = "PROPOSED:"
 
 
+# ── 出口（Mac mini 経由の送信）と入稿前チェック ──────────────────────────
+# 2026-11-17 目安で入稿ツールが Cloudflare Zero Trust の内側へ入る。VPS には
+# Cloudflare のアプリを入れられないので、netkeirin への通信だけを Mac mini の
+# 逆向き SOCKS トンネル経由で出す（設計: docs/netkeirin_macmini_egress_plan_2026_11.md）。
+#
+# 🔴 **環境変数 HTTPS_PROXY をグローバルに入れないこと。** DB・Discord・winticket
+#    まで Mac mini 経由になり、トンネルが落ちると全部が止まる。プロキシは
+#    netkeirin の Session にだけ掛ける（`NETKEIRIN_PROXY_URL`）。
+# 🔴 **トンネル断のとき直接接続へ戻さない。** 切替後の直接接続ははじかれるだけで、
+#    戻すと「出口断」が「ログイン失敗」に化けて原因が読めなくなる。
+
+PROXY_ENV_KEY = "NETKEIRIN_PROXY_URL"
+
+#: 入稿前チェックの結果
+PREFLIGHT_OK = "ok"                    # 入稿ツールにログイン済みで届く
+PREFLIGHT_NEEDS_LOGIN = "needs_login"  # netkeirin のセッション切れ（通常ログインで直る）
+PREFLIGHT_CF_AUTH = "cf_auth"          # Cloudflare の本人確認が切れた（人のメールコード入力が要る）
+PREFLIGHT_EGRESS_DOWN = "egress_down"  # Mac mini へのトンネルが無い
+PREFLIGHT_BLOCKED = "blocked"          # 想定外の応答（再試行しない）
+PREFLIGHT_TRANSIENT = "transient"      # タイムアウト・5xx（再試行してよい）
+
+#: 再試行しても直らない（人が手を入れるまで入稿できない）状態
+PREFLIGHT_FATAL = frozenset({PREFLIGHT_CF_AUTH, PREFLIGHT_EGRESS_DOWN, PREFLIGHT_BLOCKED})
+
+
+class PreflightResult(NamedTuple):
+    """入稿前チェックの結果。`status` は上の PREFLIGHT_* のどれか。"""
+    status: str
+    detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status == PREFLIGHT_OK
+
+
+def _proxy_url() -> str:
+    return _env(PROXY_ENV_KEY)
+
+
+def _check_socks_available(url: str) -> None:
+    """SOCKS を使う設定なのに PySocks が無ければ、ここで止める。
+
+    🔴 止めないと requests は `InvalidSchema` を**ログイン確認の except の中で**
+       出し、「ログイン失敗」→ 全件 SUBMIT_FAILED になる。まさに無言の全件失敗。
+    """
+    if not url.lower().startswith("socks"):
+        return
+    try:
+        import socks  # noqa: F401  (PySocks)
+    except ImportError as e:
+        raise RuntimeError(
+            f"{PROXY_ENV_KEY}={url} は SOCKS ですが PySocks が入っていません"
+            "（pip install PySocks）") from e
+
+
+def classify_preflight_response(status_code: int, headers: dict[str, str] | Any,
+                                text: str = "") -> PreflightResult:
+    """入稿ツールのトップ（リダイレクトを追わない）への応答を分類する。
+
+    | 応答 | 分類 |
+    |---|---|
+    | 200 で本文に「ログアウト」 | ok |
+    | 302 → `bettool/auth/login.html` | needs_login（netkeirin のセッション切れ） |
+    | 302 → `*.cloudflareaccess.com`／403 で `server: cloudflare` | cf_auth |
+    | 5xx | transient |
+    | それ以外 | blocked（中身が読めないものは止めて人に見せる） |
+    """
+    get = headers.get if hasattr(headers, "get") else (lambda k, d=None: d)
+    location = str(get("Location", "") or get("location", "") or "")
+    server = str(get("Server", "") or get("server", "") or "").lower()
+    is_cf = server == "cloudflare" or bool(get("cf-ray") or get("CF-RAY"))
+
+    if 300 <= status_code < 400:
+        if "cloudflareaccess.com" in location or "cdn-cgi/access" in location:
+            return PreflightResult(PREFLIGHT_CF_AUTH, f"Cloudflare の本人確認へ転送: {location}")
+        if "auth/login" in location:
+            return PreflightResult(PREFLIGHT_NEEDS_LOGIN, "netkeirin のログイン画面へ転送")
+        return PreflightResult(PREFLIGHT_BLOCKED, f"想定外の転送 {status_code}: {location}")
+    if status_code in (401, 403):
+        if is_cf:
+            return PreflightResult(PREFLIGHT_CF_AUTH, f"Cloudflare が拒否 ({status_code})")
+        return PreflightResult(PREFLIGHT_BLOCKED, f"拒否 ({status_code}, server={server or '?'})")
+    if status_code >= 500:
+        return PreflightResult(PREFLIGHT_TRANSIENT, f"サーバーエラー ({status_code})")
+    if status_code == 200:
+        if "cloudflareaccess.com" in text or "Cloudflare Access" in text:
+            return PreflightResult(PREFLIGHT_CF_AUTH, "Cloudflare の本人確認画面が返った")
+        if "ログアウト" in text:
+            return PreflightResult(PREFLIGHT_OK, "入稿ツールに届く（ログイン済み）")
+        return PreflightResult(PREFLIGHT_NEEDS_LOGIN, "200 だがログイン状態ではない")
+    return PreflightResult(PREFLIGHT_BLOCKED, f"想定外の応答 ({status_code})")
+
+
 class NetkeirinClient:
     def __init__(self, propose_only: bool = False) -> None:
         """propose_only=True なら **netkeirin へ一切 POST しない**。
@@ -225,6 +318,12 @@ class NetkeirinClient:
         """
         self.propose_only = propose_only
         self.session = requests.Session()
+        self.proxy_url = _proxy_url()
+        if self.proxy_url:
+            _check_socks_available(self.proxy_url)
+            self.session.proxies = {"http": self.proxy_url, "https": self.proxy_url}
+            # 環境変数のプロキシ設定で上書きされないようにする（この Session だけの経路）
+            self.session.trust_env = False
         self._load_cookies()
 
     # ── セッション管理 ──────────────────────────────────────────────────
@@ -244,6 +343,61 @@ class NetkeirinClient:
             json.dumps(self.session.cookies.get_dict(), ensure_ascii=False),
             encoding="utf-8",
         )
+        # ログイン済みの Cookie＝入稿ツールの鍵。本人以外が読めないようにする
+        try:
+            os.chmod(SESSION_FILE, 0o600)
+        except OSError:
+            pass
+
+    # ── 入稿前チェック ──────────────────────────────────────────────────
+
+    def preflight_once(self) -> PreflightResult:
+        """入稿ツールのトップへ1回だけ GET する（ログインしない・何も書かない）。"""
+        try:
+            r = self.session.get(TOP_URL, timeout=10, allow_redirects=False)
+        except requests.exceptions.ProxyError as e:
+            return PreflightResult(PREFLIGHT_EGRESS_DOWN, f"Mac mini の出口に繋がらない: {e}")
+        except requests.exceptions.InvalidSchema as e:
+            return PreflightResult(PREFLIGHT_EGRESS_DOWN, f"プロキシ設定が使えない: {e}")
+        except requests.exceptions.Timeout as e:
+            return PreflightResult(PREFLIGHT_TRANSIENT, f"タイムアウト: {e}")
+        except requests.exceptions.ConnectionError as e:
+            # プロキシ経由で繋がらない＝出口側の問題。直接接続なら一時的とみなす
+            if self.proxy_url:
+                return PreflightResult(PREFLIGHT_EGRESS_DOWN, f"出口経由で接続できない: {e}")
+            return PreflightResult(PREFLIGHT_TRANSIENT, f"接続できない: {e}")
+        except requests.RequestException as e:
+            return PreflightResult(PREFLIGHT_TRANSIENT, f"通信エラー: {e}")
+        return classify_preflight_response(r.status_code, r.headers, r.text or "")
+
+    def preflight(self, retries: int = 2, wait_sec: float = 5.0) -> PreflightResult:
+        """入稿前チェック。一時的なエラーだけ `retries` 回まで再試行する。
+
+        🔴 Cloudflare の認証切れ・出口断は**再試行しない**（直らないうえ、
+           再試行のぶん通知が遅れる）。
+        """
+        import time
+        res = self.preflight_once()
+        for _ in range(retries):
+            if res.status != PREFLIGHT_TRANSIENT:
+                break
+            time.sleep(wait_sec)
+            res = self.preflight_once()
+        return res
+
+    def ensure_ready(self) -> PreflightResult:
+        """入稿の直前に呼ぶ。セッション切れならログインし、もう一度確かめる。"""
+        res = self.preflight()
+        if res.status != PREFLIGHT_NEEDS_LOGIN:
+            return res
+        if not self.login():
+            # login() 自体は Cloudflare を区別しないので、もう一度見て理由を出す
+            again = self.preflight_once()
+            if again.status in PREFLIGHT_FATAL:
+                return again
+            return PreflightResult(PREFLIGHT_BLOCKED,
+                                   "netkeirin へのログインに失敗（ID・パスワードを確認）")
+        return self.preflight()
 
     def _is_logged_in(self) -> bool:
         """認証状態を判定する。
@@ -273,6 +427,11 @@ class NetkeirinClient:
             data: {output: 'json', action: 'login', user_id: <ID>, password: <PW>}
             成功時レスポンス: {"status":"OK","user_id":"<内部ID>"}
         """
+        # 🔴 承認制（入稿案だけ作る）では**ログインしない**。送らないのにセッションだけ
+        #    消費するうえ、Cloudflare の内側に入った後は朝バッチが毎回失敗する。
+        #    送信を止める本体は `_post_goods`（ここは通信を減らすための早抜け）。
+        if self.propose_only:
+            return True
         if self._is_logged_in():
             return True
         login_id = _env("NETKEIRIN_LOGIN_ID")
@@ -324,6 +483,11 @@ class NetkeirinClient:
         cache = self._load_venue_cache()
         if venue_name in cache:
             return cache[venue_name]
+        if self.propose_only:
+            # 承認制では netkeirin に触らない。未知の場は入稿案を作れないので失敗で返す
+            # （場名は増えないので通常はキャッシュで足りる。実測 39場）
+            print(f"[netkeirin] 承認制のため場コードをキャッシュからのみ解決: {venue_name} なし")
+            return None
 
         date_str = race_date.strftime("%Y%m%d")
         try:
