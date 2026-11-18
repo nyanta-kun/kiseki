@@ -1,7 +1,7 @@
 #!/bin/bash
 # netkeiba 出走想定スクレイピング (Mac LaunchAgent から週次実行)
 #
-# 水曜夜に実行し、次の週末（土日）全レースの出走想定を取得して
+# 水曜夜に実行し、次の週末（土日月）全レースの出走想定を取得して
 # keiba.projected_entries + keiba.races(placeholder) に保存する。
 # netkeiba の出走想定は水曜 20:00 までに出揃うため、その後に走らせる。
 # 確定出馬表(JV-Link RA/SE)が木曜に入るまでの「想定」を kiseki 一覧/詳細に表示する。
@@ -37,7 +37,7 @@ trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
 
 log "=== scrape_projected_entries 開始 ==="
 cd "$BACKEND_DIR"
-# --dates 省略で「次の土日」を自動算出
+# --dates 省略で「次の土日月」を自動算出（月曜は祝日開催ぶん）
 "$PYTHON" "$SCRIPT" 2>&1 | tee -a "$LOG_FILE"
 RC=$?
 log "=== 終了 (rc=$RC) ==="
