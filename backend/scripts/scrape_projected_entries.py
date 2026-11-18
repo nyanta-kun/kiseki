@@ -48,8 +48,16 @@ SLEEP_SEC = 2.0
 TIMEOUT = 25
 
 _COURSE_NAME = {
-    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
-    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
+    "01": "札幌",
+    "02": "函館",
+    "03": "福島",
+    "04": "新潟",
+    "05": "東京",
+    "06": "中山",
+    "07": "中京",
+    "08": "京都",
+    "09": "阪神",
+    "10": "小倉",
 }
 _HORSE_ROW_RE = re.compile(r'<tr class="HorseList.*?</tr>', re.DOTALL)
 
@@ -65,8 +73,7 @@ def login() -> requests.Session:
     s.get(LOGIN_PAGE, timeout=TIMEOUT)
     s.post(
         LOGIN_POST,
-        data={"pid": "login", "action": "auth", "rtn_url": "",
-              "login_id": uid, "pswd": pw},
+        data={"pid": "login", "action": "auth", "rtn_url": "", "login_id": uid, "pswd": pw},
         headers={"Referer": "https://regist.netkeiba.com/?pid=login"},
         timeout=TIMEOUT,
     )
@@ -118,14 +125,15 @@ def parse_shutuba(html: str) -> dict:
         name = nm.group(1).strip() if nm else None
         if not name:
             continue
-        horses.append({
-            "netkeiba_horse_id": hid.group(1) if hid else None,
-            "horse_name": name,
-            "sex_age": sexage.group(1).strip() if sexage else None,
-            "expected_jockey": jockey,
-        })
-    return {"race_name": race_name, "surface": surface, "distance": distance,
-            "horses": horses}
+        horses.append(
+            {
+                "netkeiba_horse_id": hid.group(1) if hid else None,
+                "horse_name": name,
+                "sex_age": sexage.group(1).strip() if sexage else None,
+                "expected_jockey": jockey,
+            }
+        )
+    return {"race_name": race_name, "surface": surface, "distance": distance, "horses": horses}
 
 
 UPSERT_SQL = """
@@ -175,7 +183,7 @@ def jravan_from(date: str, netkeiba_race_id: str) -> str:
 
 
 def _split_sex_age(sex_age: str | None) -> tuple[str | None, int | None]:
-    """"牝3" → ("牝", 3)。"""
+    """ "牝3" → ("牝", 3)。"""
     if not sex_age:
         return None, None
     m = re.match(r"^(牡|牝|セ|騸|せん)?\s*(\d+)?", sex_age)
@@ -206,24 +214,50 @@ def save_db(results: list[dict]) -> tuple[int, int, int]:
         if not r["horses"]:
             continue
         jid = jravan_from(r["date"], r["netkeiba_race_id"])
-        race_rows.append((
-            jid, r["date"], r["course_code"], r["course_name"], r["race_number"],
-            r["race_name"], r.get("surface"), r.get("distance"), len(r["horses"]),
-        ))
+        race_rows.append(
+            (
+                jid,
+                r["date"],
+                r["course_code"],
+                r["course_name"],
+                r["race_number"],
+                r["race_name"],
+                r.get("surface"),
+                r.get("distance"),
+                len(r["horses"]),
+            )
+        )
         for h in r["horses"]:
-            horse_rows.append((
-                r["netkeiba_race_id"], r["date"], r["course_code"], r["race_number"],
-                r["race_name"], h["netkeiba_horse_id"], h["horse_name"],
-                h["sex_age"], h["expected_jockey"],
-            ))
+            horse_rows.append(
+                (
+                    r["netkeiba_race_id"],
+                    r["date"],
+                    r["course_code"],
+                    r["race_number"],
+                    r["race_name"],
+                    h["netkeiba_horse_id"],
+                    h["horse_name"],
+                    h["sex_age"],
+                    h["expected_jockey"],
+                )
+            )
             # special_registrations は血統登録番号(=netkeiba_horse_id)が必須
             if h["netkeiba_horse_id"]:
                 sex, age = _split_sex_age(h["sex_age"])
-                special_rows.append((
-                    jid, r["date"], r["course_code"], r["race_number"],
-                    h["netkeiba_horse_id"], h["horse_name"], sex, age,
-                    r["race_name"], "netkeiba",
-                ))
+                special_rows.append(
+                    (
+                        jid,
+                        r["date"],
+                        r["course_code"],
+                        r["race_number"],
+                        h["netkeiba_horse_id"],
+                        h["horse_name"],
+                        sex,
+                        age,
+                        r["race_name"],
+                        "netkeiba",
+                    )
+                )
     if not horse_rows:
         return 0, 0, 0
     # ON CONFLICT DO UPDATE は同一バッチ内の重複行をエラーにするため事前に排除する
@@ -241,42 +275,41 @@ def save_db(results: list[dict]) -> tuple[int, int, int]:
     conn = psycopg2.connect(_dsn())
     with conn, conn.cursor() as cur:
         if race_rows:
-            execute_values(cur, RACES_SQL, race_rows,
-                           template="(%s,%s,%s,%s,%s,%s,%s,%s,%s)")
-        execute_values(cur, UPSERT_SQL, horse_rows,
-                       template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
+            execute_values(cur, RACES_SQL, race_rows, template="(%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+        execute_values(cur, UPSERT_SQL, horse_rows, template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
         if special_rows:
-            execute_values(cur, SPECIAL_SQL, special_rows,
-                           template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
+            execute_values(cur, SPECIAL_SQL, special_rows, template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())")
     conn.close()
     return len(horse_rows), len(race_rows), len(special_rows)
 
 
 def next_weekend() -> list[str]:
-    """次に来る土曜・日曜の YYYYMMDD を返す（今日が土日でも翌週末）。"""
+    """次に来る土曜・日曜・月曜の YYYYMMDD を返す（今日が土日でも翌週末）。
+
+    月曜は祝日開催（3日間開催）のため。開催の無い月曜はレース 0 件で終わるだけ。
+    POG 出走想定通知（notify_pog_entries.py --weekend）も土日月を見ているので揃える。
+    """
     from datetime import date, timedelta
+
     today = date.today()
     # 次の土曜（today より後の最初の土曜）
     days_to_sat = (5 - today.weekday()) % 7
     if days_to_sat == 0:
         days_to_sat = 7
     sat = today + timedelta(days=days_to_sat)
-    sun = sat + timedelta(days=1)
-    return [sat.strftime("%Y%m%d"), sun.strftime("%Y%m%d")]
+    return [(sat + timedelta(days=i)).strftime("%Y%m%d") for i in range(3)]
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--dates", default=None,
-                   help="対象日 YYYYMMDD（カンマ区切り）。省略時は次の土日を自動算出")
+    p.add_argument("--dates", default=None, help="対象日 YYYYMMDD（カンマ区切り）。省略時は次の土日月を自動算出")
     p.add_argument("--limit", type=int, default=None, help="処理レース数上限（テスト用）")
     p.add_argument("--out", default=None, help="JSON 出力先パス（任意）")
     p.add_argument("--dry-run", action="store_true", help="DB 保存をスキップ")
     args = p.parse_args()
 
     s = login()
-    dates = ([d.strip() for d in args.dates.split(",") if d.strip()]
-             if args.dates else next_weekend())
+    dates = [d.strip() for d in args.dates.split(",") if d.strip()] if args.dates else next_weekend()
     logger.info("対象日: %s", ",".join(dates))
     results: list[dict] = []
     n_race = 0
@@ -289,8 +322,7 @@ def main() -> int:
                 break
             n_race += 1
             try:
-                html = s.get(SHUTUBA.format(race_id=rid), timeout=TIMEOUT).content.decode(
-                    "utf-8", errors="replace")
+                html = s.get(SHUTUBA.format(race_id=rid), timeout=TIMEOUT).content.decode("utf-8", errors="replace")
             except Exception as e:  # noqa: BLE001
                 logger.error("  %s fetch失敗: %s", rid, e)
                 time.sleep(SLEEP_SEC)
@@ -307,9 +339,14 @@ def main() -> int:
             }
             results.append(rec)
             n_jk = sum(1 for h in parsed["horses"] if h["expected_jockey"])
-            logger.info("  %s %sR %s: 想定%d頭(騎手%d)",
-                        rec["course_name"], rec["race_number"], rec["race_name"],
-                        len(parsed["horses"]), n_jk)
+            logger.info(
+                "  %s %sR %s: 想定%d頭(騎手%d)",
+                rec["course_name"],
+                rec["race_number"],
+                rec["race_name"],
+                len(parsed["horses"]),
+                n_jk,
+            )
             time.sleep(SLEEP_SEC)
 
     total_h = sum(len(r["horses"]) for r in results)
@@ -324,8 +361,11 @@ def main() -> int:
     else:
         n_h, n_r, n_s = save_db(results)
         logger.info(
-            "DB 保存: projected_entries %d 行 / races placeholder %d 件 / "
-            "special_registrations(netkeiba) %d 行", n_h, n_r, n_s)
+            "DB 保存: projected_entries %d 行 / races placeholder %d 件 / " "special_registrations(netkeiba) %d 行",
+            n_h,
+            n_r,
+            n_s,
+        )
     return 0
 
 
