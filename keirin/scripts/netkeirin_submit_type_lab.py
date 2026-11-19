@@ -386,8 +386,17 @@ def _load_highpay_rows(day: str) -> dict[str, dict[str, dict]]:
 #    根拠: `docs/type_lab/line_lead_2026_09_24.md` §9
 # ⚠️ 止めるときは `LINE_LEAD_SLOTS_PER_DAY = 0`、または入稿設定（`netkeirin_settings`）で
 #    `L_lead` を無効にする（`_is_enabled` を見る）。
+# 🔴 **2026-11-19 販売を停止した（ユーザー決定「L_lead は停止します」）。**
+#    実売 372件（9/25〜11/16）で表示的中 1.9%・回収 20.7%（他の商品は 80.8%）。
+#    的中の数は見込みどおりで、足りないのは高い払戻（100倍以上が見込み 2.7本 → 0本）。
+#    偶然と区別はできない（模型どおりでも 20.7% 以下は 9〜19%）が、見込みどおりでも
+#    回収 55.5% で他の商品を下回る。**行の生成と 11/24 の前向き判定（紙上・§7）は続ける**
+#    （判定は紙上の全行で行い、実売は使わない）。再開するときはここを `None` に戻す。
+#    入稿設定（`netkeirin_settings`）で無効にしなかったのは、`enabled` が Web の表示も
+#    兼ねていて、紙上の成績まで画面から消えるため。
+#    根拠: `docs/type_lab/line_lead_2026_09_24.md` §9.2
 #: 1日に出す `L_lead` の上限（波をまたいで数える）。**`None` = 上限なし**・`0` = 停止。
-LINE_LEAD_SLOTS_PER_DAY: int | None = None
+LINE_LEAD_SLOTS_PER_DAY: int | None = 0
 #: 出さない型（型E は過去2年の両窓で `L_lead` が弱い: 88 / 81%）。
 LINE_LEAD_EXCLUDED_TYPES = frozenset({"E"})
 #: 第1Rの発走がこの時刻（JST・時）より前の開催を**モーニング**とみなして外す

@@ -10,6 +10,7 @@
 - **モーニング開催・準決勝系・型E を外し**、発走の早い順に**本数の上限なし**で出す
   （上限を掛けたときは波をまたいで数える）
 - 出どころ `origin='line_lead'`・勝負アイコンは**穴狙い**
+- **2026-11-19 から販売停止**（`LINE_LEAD_SLOTS_PER_DAY = 0`）。下の規則は再開するときのために残す
 - 手動入稿（`--race-key`）では回さない・入稿設定で無効にできる・失敗しても型ラボの入稿を止めない
 - `L_lead` で出したレースを昼・夕に**組み直さない**（売った買い目が書き換わる）
 - 監査の見張りで `L_lead` を**本線に混ぜない**
@@ -47,7 +48,7 @@ def _row(rk: str, plan: str, start: str, *, type_label: str = "B", axis_sum: flo
             "start_at": start, "legs": legs}
 
 
-def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots="unset"):
+def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots=None):
     from scripts import netkeirin_submit_type_lab as m
 
     sent: list[tuple] = []
@@ -65,7 +66,9 @@ def _env(monkeypatch, rows, lead_rows, day_races, *, already=frozenset(), slots=
     monkeypatch.setattr(m, "auto_publish_submitted", lambda dry: [])
     monkeypatch.setattr(m, "_write_confident", lambda *a, **k: None)
     monkeypatch.setattr(m, "send", lambda *a, **k: None)
-    if slots != "unset":
+    # 🔴 本番の既定は停止（`0`・2026-11-19）。ここでは販売するときの規則を確かめるので、
+    #    既定では「上限なし」（販売していた頃の値）を当てる。停止そのものは下のテストで見る。
+    if slots != "default":
         monkeypatch.setattr(m, "LINE_LEAD_SLOTS_PER_DAY", slots)
 
     def _fake_submit(row, session, client, dry_run, show_detail=False,
@@ -127,9 +130,19 @@ def test_上限を掛けたときは波をまたいで数える(monkeypatch):
     assert [rk for rk, p, _ in sent if p == "L_lead"] == ["20260925_28_02"], sent
 
 
-def test_上限の既定は無し():
+def test_販売は停止している():
+    """2026-11-19 ユーザー決定「L_lead は停止します」。行の生成と紙上の判定は続ける。"""
     from scripts import netkeirin_submit_type_lab as m
-    assert m.LINE_LEAD_SLOTS_PER_DAY is None
+    assert m.LINE_LEAD_SLOTS_PER_DAY == 0
+
+
+def test_停止中は売らないレースがあっても出さない(monkeypatch):
+    leads = _leads("20260925_28_02", "20260925_28_03", "20260925_28_04")
+    m, sent = _env(monkeypatch, _TL, leads, DAY, slots="default")
+    m.run("2026-09-25", "noon", dry_run=False, only_key=None, do_rebuild=False)
+    assert [rk for rk, p, _ in sent if p == "L_lead"] == [], sent
+    # 型ラボの本体は止まらない
+    assert [p for _rk, p, _ in sent] == ["B_hit"], sent
 
 
 def test_準決勝系と型Eは出さない(monkeypatch):
