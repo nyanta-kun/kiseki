@@ -300,10 +300,14 @@ PLAN_TITLES: dict[str, str] = {
     # 🔴 **2026-09-22: A/B/C は買い方が同一になったので文言も揃える**
     #    （看板枠を6型とも同じ文言にしているのと同じ理由。型の違いは
     #    タイトル後半のレース見解と `TYPE_NOTES` が担う）。
-    "B_hit": "中配当狙いの三連単",
+    # 🔴🔴 **2026-11-21: 7車の B/C/D は三連複の二軸流しへ替えた**（`type_lab.TRIO_HIT_PLANS`）。
+    #    9車は旧定義のままなので、9車の文面は `NINE_CAR_PLAN_TITLES` / `NINE_CAR_PLAN_BODIES`。
+    #    ⚠️ 結果通知（`notify_race_result_wt._rank_label`）は車数を見ないので、
+    #       9車の B/C も「三連複」と名乗る（1日0〜1件）。
+    "B_hit": "的中重視の三連複",
     # 🔴 **2026-10-24: C_hit は的中重視へ替えた**（`type_lab.C_HIT_TARGET`）。
     #    段の「固め」「広め」と重ならない語にする。
-    "C_hit": "的中重視の三連単",
+    "C_hit": "的中重視の三連複",
     "D_hit": "混戦の三連複",
     "E_hit": "高配当の三連単",
     # 🔴🔴 **2026-09-03: `F_hit` を「一撃」から外した。**
@@ -366,17 +370,20 @@ PLAN_BODIES: dict[str, str] = {
               "1着が読みにくいレースと判断し、指数1位が3着以内に残らない側に賭けて、"
               "残りの車から確率の高い目を押さえました。"
               "当たれば大きいぶん、外れる回数は多くなります。"),
-    "B_hit": ("買い目は三連単。点数を欲張らず、当たったときに手元へ残る額のほうを取る組み立てにしました。当方の指数で確率の高い目から順に、狙う払戻を割らない範囲まで積んでいます。着順は決め打ちしていません。"),
+    # 🔴 **2026-11-21: 7車は三連複の二軸流し**（`type_lab.TRIO_HIT_PLANS`）。9車は `NINE_CAR_PLAN_BODIES`。
+    "B_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
+              "当たる回数を優先し、相手は当方の指数で3着以内に入る見込みの高い順に選びました。"
+              "着順を問わない三連複なので、順番の入れ替わりを気にせず取れます。"),
     # 🔴 **2026-09-22 に帯（15倍）が無くなった**ので「一定の配当が付く目に絞り」を外した。
     #    帯下の差込も無くなったため `UNDERBAND_BANDS` からも落としてある。
     # 🔴 **2026-10-24: 的中重視へ替えた**（`type_lab.C_HIT_TARGET`）。確定オッズは下振れしうるので
     #    「当たれば◯円」と約束しない（段の文面と同じ規律）。
-    "C_hit": ("買い目は三連単。当たる回数を優先し、当方の指数で確率の高い目から順に3〜8点を押さえました。"
-              "当方が想定する発走時オッズで、どの目が当たっても払戻がほぼ同じ額になるよう賭け金を配分しています。"
-              "着順は決め打ちしていません。"),
+    "C_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
+              "当たる回数を優先し、相手は当方の指数で3着以内に入る見込みの高い順に選びました。"
+              "着順を問わない三連複なので、順番の入れ替わりを気にせず取れます。"),
     "D_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
-              "ただし相手のうち、最も人気を集めている1車をあえて外しています。"
-              "そこを買うと当たっても配当が残らないためです。"),
+              "混戦と読んだので相手を広めに取り、当方の指数で3着以内に入る見込みの高い順に押さえました。"
+              "着順を問わない三連複なので、順番の入れ替わりを気にせず取れます。"),
     "E_hit": ("買い目は三連単。当方が想定する発走時オッズで高い配当が付く帯だけに絞り、"
               "そのなかから確率の高い順に広く押さえました。"
               "◎○が2着・3着へ回る目も含みます。"),
@@ -820,9 +827,24 @@ def upper_note(legs: Sequence[Mapping]) -> str:
             "本線が本命で、押さえはあくまで保険としてお考えください。")
 
 
+#: 🔴 **9車は B/C/D を替えていない**（2026-11-21・`type_lab.NINE_CAR_PLAN_OVERRIDES`）。
+#:    文面も 11-20 までのものを使う。`build_title` / `build_comment` が車数で引き分ける。
+NINE_CAR_PLAN_TITLES: dict[str, str] = {
+    "B_hit": "中配当狙いの三連単",
+    "C_hit": "的中重視の三連単",
+}
+NINE_CAR_PLAN_BODIES: dict[str, str] = {
+    "B_hit": ("買い目は三連単。点数を欲張らず、当たったときに手元へ残る額のほうを取る組み立てにしました。当方の指数で確率の高い目から順に、狙う払戻を割らない範囲まで積んでいます。着順は決め打ちしていません。"),
+    "C_hit": ("買い目は三連単。点数を欲張らず、当たったときに手元へ残る額のほうを取る組み立てにしました。当方の指数で確率の高い目から順に、狙う払戻を割らない範囲まで積んでいます。着順は決め打ちしていません。"),
+    "D_hit": ("買い目は三連複・◎○の2車軸から相手流し。"
+              "ただし相手のうち、最も人気を集めている1車をあえて外しています。"
+              "そこを買うと当たっても配当が残らないためです。"),
+}
+
+
 # ───────────────────────────── 組み立て ─────────────────────────────
 
-def build_title(plan_key: str, type_label: str) -> str:
+def build_title(plan_key: str, type_label: str, n_entries: int | None = None) -> str:
     """「狙い｜レース見解」。既存ランクのタイトルと同じ2ブロック構成。
 
     🔴 **`race_type`（決勝/特選）やグレードを入れない。** 既存ランクで
@@ -832,15 +854,19 @@ def build_title(plan_key: str, type_label: str) -> str:
     '中配当狙いの三連単｜二軸が堅い一戦'
     >>> build_title("D_hit", "D")
     '混戦の三連複｜二軸が絞りきれない混戦'
+    >>> build_title("B_hit", "B", 9).startswith("中配当狙いの三連単")
+    True
     """
-    head = PLAN_TITLES.get(plan_key, "型ラボ")
+    head = ((NINE_CAR_PLAN_TITLES.get(plan_key) if n_entries == 9 else None)
+            or PLAN_TITLES.get(plan_key, "型ラボ"))
     view = PLAN_VIEWS.get(plan_key) or TYPE_VIEWS.get(type_label, "")
     return f"{head}｜{view}" if view else head
 
 
 def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
                   legs: Sequence[Mapping], bet_type: str,
-                  entry_table_html: str | None = None) -> str:
+                  entry_table_html: str | None = None,
+                  n_entries: int | None = None) -> str:
     """コメント本文。`entry_table_html` を渡すと末尾に出走表を付ける。
 
     構成は既存ランク（看板テンプレート）と同じ:
@@ -855,7 +881,7 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
         # 🔴 **買い目から判定する**（2026-09-12）。`_sign` は軸2が1点も入らないことが
         #    あり、既定文をそのまま出すと買っていない車を軸として案内する。
         axis_note(plan_key, axis1, axis2, legs),
-        (f"【買い目】\n{PLAN_BODIES.get(plan_key, '')}"
+        (f"【買い目】\n{_body(plan_key, n_entries)}"
          # 🔴 帯下の差込は**本文の直後**（買い目そのものの説明）。上帯の押さえは
          #    点数の後（本線とは別枠の説明）なので位置を分けている。
          + (f"\n{underband_note(plan_key, legs)}"
@@ -867,6 +893,13 @@ def build_comment(plan_key: str, type_label: str, axis1: int, axis2: int,
     if entry_table_html:
         blocks.append(f"{ENTRY_TABLE_LEAD}\n{entry_table_html}")
     return "\n\n".join(b for b in blocks if b)
+
+
+def _body(plan_key: str, n_entries: int | None) -> str:
+    """【買い目】の本文。9車で替えていないプランは旧文面（`NINE_CAR_PLAN_BODIES`）。"""
+    if n_entries == 9 and plan_key in NINE_CAR_PLAN_BODIES:
+        return NINE_CAR_PLAN_BODIES[plan_key]
+    return PLAN_BODIES.get(plan_key, "")
 
 
 def build_submission(row: Mapping, entry_table_html: str | None = None) -> dict:
@@ -903,10 +936,11 @@ def build_submission(row: Mapping, entry_table_html: str | None = None) -> dict:
             top = max(legs, key=lambda lg: float(lg.get("prob") or 0.0))
             parts = str(top["combo"]).split("-")
             a1, a2 = int(parts[0]), int(parts[1])
+    n_ent = int(row["n_entries"]) if row.get("n_entries") is not None else None
     return {
-        "title": build_title(plan_key, str(row["type_label"])),
+        "title": build_title(plan_key, str(row["type_label"]), n_ent),
         "comment": build_comment(
             plan_key, str(row["type_label"]), a1, a2, legs,
-            str(row.get("bet_type") or "trifecta"), entry_table_html),
+            str(row.get("bet_type") or "trifecta"), entry_table_html, n_ent),
         "marks": marks_for(order, legs, a1, a2),
     }

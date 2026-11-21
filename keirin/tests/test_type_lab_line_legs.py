@@ -30,6 +30,12 @@ LINE = (1, 2, 3)
 LINE_PERMS = list(itertools.permutations(LINE))
 
 
+
+#: 🔴 2026-11-21 から 7車の B/C/D は三連複（`type_lab.TRIO_HIT_PLANS`）。三連単の仕組みを試す検査は
+#:    9車に残した旧定義（`NINE_CAR_PLAN_OVERRIDES`）で行う。
+from src.type_lab import NINE_CAR_PLAN_OVERRIDES  # noqa: E402
+C_TRI = NINE_CAR_PLAN_OVERRIDES["C_hit"]
+
 def _shape(lines=((1, 2, 3),)) -> RaceShape:
     return RaceShape("C", 1.50, 0, 0.10, True, tuple(range(1, 8)), 0.0, lines)
 
@@ -105,7 +111,7 @@ def test_swap_keeps_the_point_count_and_drops_the_tail():
     """点数は変えない。落とすのは末尾 m 点だけで、先頭は1点も動かない。"""
     po, pr = _board(60.0, {p: 40.0 + i for i, p in enumerate(LINE_PERMS)})
     legs = [c for c in PERMS if c not in LINE_PERMS][:6]
-    out = line_legs(_shape(), PLANS["C_hit"], legs, po, 2)
+    out = line_legs(_shape(), C_TRI, legs, po, 2)
     assert out is not None
     assert len(out) == len(legs)
     assert out[:4] == legs[:4]              # 先頭は保存
@@ -125,10 +131,10 @@ def test_swap_buys_both_directions_of_head_and_second():
     odds[(2, 1, 3)] = 55.0
     po, pr = _board(60.0, odds)
     legs = [c for c in PERMS if c not in LINE_PERMS][:6]
-    out = line_legs(_shape(), PLANS["C_hit"], legs, po, 2)
+    out = line_legs(_shape(), C_TRI, legs, po, 2)
     assert out[-2:] == [(1, 2, 3), (2, 1, 3)]
     # 3点目でようやく「安い順」の並びが入る
-    out3 = line_legs(_shape(), PLANS["C_hit"], legs, po, 3)
+    out3 = line_legs(_shape(), C_TRI, legs, po, 3)
     assert out3[-1] == (3, 1, 2)
 
 
@@ -139,7 +145,7 @@ def test_swap_skips_combos_below_the_odds_floor():
     odds[(1, 2, 3)] = 2.0                   # 下限未満 → 採らない
     po, pr = _board(60.0, odds)
     legs = [c for c in PERMS if c not in LINE_PERMS][:6]
-    out = line_legs(_shape(), PLANS["C_hit"], legs, po, 2)
+    out = line_legs(_shape(), C_TRI, legs, po, 2)
     assert (1, 2, 3) not in out
     # 先頭→番手が下限で落ちたので「番手→先頭」＋残りの並び（同値なので生成順）
     assert out[-2:] == [(2, 1, 3), (1, 3, 2)]
@@ -149,22 +155,22 @@ def test_line_must_be_fully_present_in_the_buy():
     """3車のうち1車でも買い目に出ていないラインは対象外。"""
     po, pr = _board(60.0, {p: 40.0 for p in LINE_PERMS})
     legs = [c for c in PERMS if 3 not in c and c not in LINE_PERMS][:6]
-    assert line_legs(_shape(), PLANS["C_hit"], legs, po, 2) is None
+    assert line_legs(_shape(), C_TRI, legs, po, 2) is None
 
 
 def test_never_shrinks_below_the_minimum_kept():
     """差し替え後に `LINE_SWAP_MIN_KEEP` 点を割るなら差し替えない。"""
     po, pr = _board(60.0, {p: 40.0 for p in LINE_PERMS})
     legs = [(1, 2, 4), (1, 3, 5), (2, 3, 6), (1, 2, 7)]   # 1・2・3 が揃っている
-    assert line_legs(_shape(), PLANS["C_hit"], legs, po, 1) is not None   # 4-1=3 点
-    assert line_legs(_shape(), PLANS["C_hit"], legs, po, 2) is None       # 4-2=2 点
+    assert line_legs(_shape(), C_TRI, legs, po, 1) is not None   # 4-1=3 点
+    assert line_legs(_shape(), C_TRI, legs, po, 2) is None       # 4-2=2 点
     assert LINE_SWAP_MIN_KEEP == 3
 
 
 def test_no_line_no_swap():
     po, pr = _board(60.0, {p: 40.0 for p in LINE_PERMS})
     legs = [c for c in PERMS if c not in LINE_PERMS][:6]
-    assert line_legs(_shape(lines=()), PLANS["C_hit"], legs, po, 2) is None
+    assert line_legs(_shape(lines=()), C_TRI, legs, po, 2) is None
 
 
 # ───────────────────── 🔴 ゲートを割るなら差し替えない ─────────────────────
@@ -183,7 +189,7 @@ def test_swap_is_refused_when_it_would_break_the_gate():
     元の想定払戻がゲートすれすれの盤面なら、1点足しただけで割るので差し替えない。
     """
     po, pr = _board(26.0, {p: 10.0 for p in LINE_PERMS})   # 下限ちょうど＝人気すぎる並び
-    plan = PLANS["C_hit"]
+    plan = C_TRI
     legs, stakes = _legs_and_stakes(po, pr, plan, n=12)
     assert mean_expected_payout(stakes, po) > MIN_MEAN_PAYOUT
     out_legs, out_stakes = apply_line_swap(_shape(), plan, legs, stakes, po, pr)
@@ -198,7 +204,7 @@ def test_swap_falls_back_from_two_legs_to_one():
     odds[(1, 2, 3)] = 10.0
     odds[(2, 1, 3)] = 10.0
     po, pr = _board(33.0, odds)
-    plan = PLANS["C_hit"]
+    plan = C_TRI
     legs, stakes = _legs_and_stakes(po, pr, plan, n=12)
     assert line_legs(_shape(), plan, legs, po, 2) is not None      # 2点は組める
     out_legs, out_stakes = apply_line_swap(_shape(), plan, legs, stakes, po, pr)
@@ -213,7 +219,7 @@ def test_swap_fires_when_the_gate_still_passes():
     odds[(1, 2, 3)] = 35.0
     odds[(2, 1, 3)] = 30.0
     po, pr = _board(60.0, odds)
-    plan = PLANS["C_hit"]
+    plan = C_TRI
     legs, stakes = _legs_and_stakes(po, pr, plan)
     out_legs, out_stakes = apply_line_swap(_shape(), plan, legs, stakes, po, pr)
     assert out_legs[-2:] == [(1, 2, 3), (2, 1, 3)]

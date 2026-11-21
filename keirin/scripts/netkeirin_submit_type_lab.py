@@ -108,6 +108,7 @@ from src.type_lab import (                                  # noqa: E402
     HIT_POINT_GATE_MIN, HIT_POINT_GATE_N_ENTRIES, HIT_POINT_GATE_PLANS,
     SELLABLE_PLAN_KEYS,
     TIER_PLAN_KEYS, TIER_POINT_GATE_PLANS, TIER_POINT_PAYOUT_MIN,
+    TRIO_HIT_N_ENTRIES, TRIO_HIT_PLANS,
     tier_realized_min_payout,
     highpay_plan_for, sell_plans_for)
 
@@ -574,6 +575,14 @@ def _gate_reason(row: dict) -> tuple[str, str] | None:
     #    「ガミにならない線」・`type_lab.C_HIT_TARGET` の節）。下振れ係数は段と同じ表。
     #    平均2万ゲートは使わない（2.5万狙いで最低3点に広げたレースが端数で落ちる）。
     #    ⚠️ 9車の C_hit は旧定義（5万ダッチ）なので従来の平均2万ゲートのまま。
+    # 🔴🔴 **7車の B/C/D（三連複の的中系）は払戻のゲートを当てない**（2026-11-21 ユーザー決定・
+    #    `type_lab.TRIO_HIT_PLANS` の節）。二軸＋相手3〜4点のダッチは合成倍率が低く、
+    #    平均2万ゲートだと半数近くが落ちる。測った腕は全レースを買っている。
+    #    ⚠️ 券種も見る。9車の B/C/D は旧定義（三連単・三連複の最人気外し）なので従来のゲート。
+    if (str(row.get("plan_key")) in TRIO_HIT_PLANS
+            and int(row.get("n_entries") or 0) == TRIO_HIT_N_ENTRIES
+            and str(row.get("bet_type")) == "trio"):
+        return None
     if (str(row.get("plan_key")) in HIT_POINT_GATE_PLANS
             and int(row.get("n_entries") or 0) == HIT_POINT_GATE_N_ENTRIES):
         worst = tier_realized_min_payout(

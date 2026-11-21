@@ -63,7 +63,7 @@ def test_share_counts_only_cheap_legs():
     assert cheap_share(odds, probs) == pytest.approx(0.2)   # 4倍の2点ぶん = 0.6 × 2/6
 
 
-@pytest.mark.parametrize("key", ["A_hit", "B_hit"])
+@pytest.mark.parametrize("key", ["A_hit"])
 def test_switches_only_at_or_above_threshold(key):
     odds, probs = _board(0.6)
     assert apply_cheap_target(PLANS[key], odds, probs).target == (
@@ -72,7 +72,7 @@ def test_switches_only_at_or_above_threshold(key):
     assert apply_cheap_target(PLANS[key], lo_odds, probs) is PLANS[key]
 
 
-@pytest.mark.parametrize("key,n", [("C_hit", 7), ("E_hit", 7), ("A_trio", 7), ("A_hit", 9)])
+@pytest.mark.parametrize("key,n", [("B_hit", 7), ("C_hit", 7), ("E_hit", 7), ("A_trio", 7), ("A_hit", 9)])
 def test_not_applied_outside_scope(key, n):
     odds = {p: 2.0 for p in PERMS}
     probs = {p: 1 / len(PERMS) for p in PERMS}

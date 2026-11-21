@@ -19,7 +19,7 @@ import pytest
 
 from src.type_lab import (
     ALLOC_BEFORE_MIN_PAYOUT, BUDGET, DEFAULT_FLOOR_MULT, MIN_PAYOUT_MULT,
-    PLANS, RaceShape, alloc_fallback, allocate, build_with_gate_fallback,
+    NINE_CAR_PLAN_OVERRIDES, PLANS, RaceShape, alloc_fallback, allocate, build_with_gate_fallback,
     min_expected_payout,
 )
 
@@ -39,7 +39,8 @@ def test_min_payout_mult_is_two():
 @pytest.mark.parametrize("key", HIT)
 def test_hit_plans_guarantee_two_times(key):
     """🔴 当たれば最低2倍。当たる回数を売る6商品に掛ける。"""
-    p = PLANS[key]
+    # 🔴 2026-11-21 から 7車の D_hit はダッチ（`type_lab.TRIO_HIT_PLANS`）。床は9車の D_hit に残る。
+    p = {**PLANS, **NINE_CAR_PLAN_OVERRIDES}[key]
     assert p.alloc == "conf"
     assert p.floor_mult == MIN_PAYOUT_MULT
 
@@ -49,7 +50,7 @@ def test_dutch_hit_plans_guarantee_two_times_by_the_target(key):
     """🔴 ダッチの3商品は「どの目でも目標額」なので、目標が予算の2倍以上なら保証される。"""
     from src.type_lab import HIT_BAND_TARGET
 
-    p = PLANS[key]
+    p = {**PLANS, **NINE_CAR_PLAN_OVERRIDES}[key]   # B_hit の5万ダッチは9車に残る（2026-11-21）
     assert p.alloc == "dutch" and p.structure == "signboard"
     assert p.target == HIT_BAND_TARGET >= BUDGET * MIN_PAYOUT_MULT
     assert alloc_fallback(p) is None, "ダッチでは床が効かないので代替を持たせない"
@@ -92,11 +93,14 @@ def test_confidence_gets_a_bigger_payout():
 # ───────────────── 🔴 床が置けないときに見送りにしない ─────────────────
 
 def test_fallback_returns_the_previous_allocation():
+    plans = {**PLANS, **NINE_CAR_PLAN_OVERRIDES}   # D_hit の床は9車に残る（2026-11-21）
     for key in HIT:
-        fb = alloc_fallback(PLANS[key])
+        fb = alloc_fallback(plans[key])
         assert fb is not None
         assert (fb.alloc, fb.floor_mult) == ALLOC_BEFORE_MIN_PAYOUT[key]
-        assert fb.key == PLANS[key].key, "別名にすると1レース2商品になる"
+        assert fb.key == plans[key].key, "別名にすると1レース2商品になる"
+    # 7車の D_hit はダッチ（床なし）なので代替を持たない
+    assert alloc_fallback(PLANS["D_hit"]) is None
 
 
 def test_product_is_still_built_when_the_floor_does_not_fit():
@@ -112,7 +116,7 @@ def test_product_is_still_built_when_the_floor_does_not_fit():
     trio = [frozenset({a1, a2, c}) for c in shape.order[2:]]
     po = {k: 5.0 for k in trio}
     pr = {k: 1.0 / len(trio) for k in trio}
-    plan = PLANS["D_hit"]
+    plan = NINE_CAR_PLAN_OVERRIDES["D_hit"]   # 床を持つ D_hit は9車に残る（2026-11-21）
     assert allocate(trio[:3], po, pr, plan) is None
     got = build_with_gate_fallback(shape, plan, po, pr)
     assert got is not None, "床が置けないだけで商品が消えている"

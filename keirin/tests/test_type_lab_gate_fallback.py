@@ -53,7 +53,8 @@ def test_fallback_is_defined_for_the_two_measured_plans_only():
         assert f.alloc == PLANS["F_hit"].alloc
     # 🔴 `C_hit` の代替（2026-09-22〜10-23 の「旧構成そのもの」）は 2026-10-24 に外した。
     #    入稿ゲートは「当たったときの悪い側 >= 1万円」（`HIT_POINT_GATE_PLANS`）が担う。
-    assert PLANS["C_hit"].structure == "tier_firm", "本命は的中重視（段の広めと同じ詰め方）"
+    # 🔴 2026-11-21 から 7車の C_hit は三連複の二軸流し（`type_lab.TRIO_HIT_PLANS`）。
+    assert PLANS["C_hit"].structure == "axis2_flow" and PLANS["C_hit"].bet_type == "trio"
 
 
 def test_fallback_keeps_the_same_plan_key():
