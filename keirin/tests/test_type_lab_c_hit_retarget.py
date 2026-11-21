@@ -32,13 +32,15 @@ def _row(stake, odds, n_entries=7, plan_key="C_hit", race_type="予選", axis_su
 
 def test_定数():
     assert C_HIT_TARGET == 25_000
-    assert HIT_POINT_GATE_PLANS == frozenset({"C_hit"})
+    # 🔴 2026-11-21 に空にした（7車の C_hit は三連複・`TRIO_HIT_PLANS`）。仕組みは下で検査する。
+    assert HIT_POINT_GATE_PLANS == frozenset()
     assert HIT_POINT_GATE_MIN == 10_000, "ガミにならない線（予算1万円）"
     assert "C_hit" not in T.GATE_FALLBACK
 
 
 def test_7車のC_hitは悪い側1万円で判定する(monkeypatch):
     import scripts.netkeirin_submit_type_lab as m
+    monkeypatch.setattr(m, "HIT_POINT_GATE_PLANS", frozenset({"C_hit"}))   # 仕組みの検査
     monkeypatch.setattr(m, "tier_realized_min_payout", lambda *a, **k: 10_000.0)
     assert m._gate_reason(_row(5000, 4.0)) is None
     monkeypatch.setattr(m, "tier_realized_min_payout", lambda *a, **k: 9_999.0)
@@ -47,16 +49,18 @@ def test_7車のC_hitは悪い側1万円で判定する(monkeypatch):
     assert "10,000円" in got[1]
 
 
-def test_7車のC_hitは平均2万ゲートを使わない():
+def test_7車のC_hitは平均2万ゲートを使わない(monkeypatch):
     """平均は 1.9万（旧ゲートなら落ちる）でも、悪い側が1万円を超えれば通す。"""
     import scripts.netkeirin_submit_type_lab as m
+    monkeypatch.setattr(m, "HIT_POINT_GATE_PLANS", frozenset({"C_hit"}))   # 仕組みの検査
     row = _row(5000, 3.8)
     assert row["pred_mean_payout"] < 20_000
     assert m._gate_reason(row) is None
 
 
-def test_7車のC_hitも2倍未満の目は落とす():
+def test_7車のC_hitも2倍未満の目は落とす(monkeypatch):
     import scripts.netkeirin_submit_type_lab as m
+    monkeypatch.setattr(m, "HIT_POINT_GATE_PLANS", frozenset({"C_hit"}))   # 仕組みの検査
     got = m._gate_reason(_row(9000, 1.9))
     assert got is not None and got[0] == m.SKIP_GATE_POINT_ODDS
 
@@ -79,10 +83,10 @@ def test_9車は旧定義の5万ダッチで組む():
     odds, prob = _board()
     shape = RaceShape("C", 1.5, 0, 0.05, False, (1, 2, 3, 4, 5, 6, 7), 1.5)
     got9 = build_with_gate_fallback(shape, PLANS["C_hit"], odds, prob, 9)
-    got7 = build_with_gate_fallback(shape, PLANS["C_hit"], odds, prob, 7)
-    assert got9 and got7
+    assert got9
     assert got9[2].structure == "signboard" and got9[2].target == HIT_BAND_TARGET
-    assert got7[2].structure == "tier_firm" and got7[2].target == C_HIT_TARGET
+    # 🔴 7車は 2026-11-21 から三連複の二軸流し（`TRIO_HIT_PLANS`）。三連単の盤では組めない。
+    assert PLANS["C_hit"].bet_type == "trio"
     assert got9[2] is NINE_CAR_PLAN_OVERRIDES["C_hit"]
 
 

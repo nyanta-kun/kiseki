@@ -110,25 +110,16 @@ def _tf_boards(order):
 BAND_PLANS = ("A_hit", "B_hit")
 
 
-def test_c_hit_is_hit_oriented_tier_build():
-    """🔴🔴 **2026-10-24: C_hit は的中重視**（`type_lab.C_HIT_TARGET` の節・ユーザー決定）。
+def test_c_hit_tier_build_is_kept_only_as_a_constant():
+    """2026-10-24 の的中重視（tier_firm・2.5万）は 2026-11-21 に7車の三連複へ替わった。
 
-    段の「広め」と同じ詰め方（確率順・合成を割る直前で止める・3〜8点）で目標 2.5万円。
-    9車は旧定義（5万ダッチ）のまま。
+    🔴 7車の定義は `tests/test_type_lab_bcd_trio.py` が固定する。9車は旧定義（5万ダッチ）のまま。
     """
-    from src.type_lab import (BUDGET, C_HIT_TARGET, HIT_BAND_TARGET,
-                              NINE_CAR_PLAN_OVERRIDES, TIER_MIN_LEGS)
-    p = PLANS["C_hit"]
-    assert p.structure == "tier_firm" and p.alloc == "dutch"
-    assert p.target == C_HIT_TARGET == 25_000 and p.max_legs == 8
-    assert C_HIT_TARGET > 2 * BUDGET, "ガミにならない線（予算の2倍超）"
+    from src.type_lab import BUDGET, C_HIT_TARGET, HIT_BAND_TARGET, NINE_CAR_PLAN_OVERRIDES
+    assert C_HIT_TARGET == 25_000 and C_HIT_TARGET > 2 * BUDGET
+    assert PLANS["C_hit"].structure == "axis2_flow"
     nine = NINE_CAR_PLAN_OVERRIDES["C_hit"]
     assert nine.structure == "signboard" and nine.target == HIT_BAND_TARGET
-    s = _shape({1: .80, 2: .70, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
-    odds, prob = _tf_boards(s.order)
-    legs = build_legs(s, p, odds, prob)
-    assert TIER_MIN_LEGS <= len(legs) <= p.max_legs
-    assert list(legs) == sorted(legs, key=lambda k: -prob[k]), "確率順"
 
 
 @pytest.mark.parametrize("key", BAND_PLANS)
@@ -147,7 +138,9 @@ def test_firm_types_buy_to_a_single_payout_target(key):
 
     s = _shape({1: .80, 2: .70, 3: .4, 4: .3, 5: .2, 6: .1, 7: .05}, day=1)
     odds, prob = _tf_boards(s.order)
-    plan = PLANS[key]
+    # 🔴 B_hit の5万ダッチは 2026-11-21 から9車だけ（7車は三連複・`TRIO_HIT_PLANS`）。
+    from src.type_lab import NINE_CAR_PLAN_OVERRIDES
+    plan = {**PLANS, **NINE_CAR_PLAN_OVERRIDES}[key]
     assert plan.structure == "signboard" and plan.alloc == "dutch"
     assert plan.target == HIT_BAND_TARGET
     legs = build_legs(s, plan, odds, prob)
@@ -207,8 +200,11 @@ def test_type_d_drops_the_most_popular_partner():
     rest = list(s.order[2:])
     odds = {frozenset({a1, a2, c}): 5.0 + i for i, c in enumerate(rest)}
     prob = {k: 1.0 / v for k, v in odds.items()}
-    legs = build_legs(s, PLANS["D_hit"], odds, prob)
-    assert len(legs) == PLANS["D_hit"].n_partners == 3
+    # 🔴 2026-11-21 から「最人気を外す」形は9車だけ（7車は相手4点・外さない・`TRIO_HIT_PLANS`）。
+    from src.type_lab import NINE_CAR_PLAN_OVERRIDES
+    d9 = NINE_CAR_PLAN_OVERRIDES["D_hit"]
+    legs = build_legs(s, d9, odds, prob)
+    assert len(legs) == d9.n_partners == 3
     fav = min(odds, key=lambda k: odds[k])
     assert fav not in legs, "最人気の相手が残っている"
 
@@ -746,7 +742,8 @@ def test_prob_top_takes_the_highest_probability_combos_first():
     want = [(1, 2, 3), (1, 2, 4), (1, 2, 5)]
     for i, k in enumerate(want):
         prob[k] = 0.9 - i * 0.1                      # 明確に上位3点
-    plan = PLANS["C_hit"]
+    from src.type_lab import NINE_CAR_PLAN_OVERRIDES
+    plan = NINE_CAR_PLAN_OVERRIDES["C_hit"]   # 7車の C_hit は 2026-11-21 から三連複
     legs = build_legs(shape, plan, pred, prob)
     assert legs is not None
     assert list(legs)[:3] == want, list(legs)[:3]

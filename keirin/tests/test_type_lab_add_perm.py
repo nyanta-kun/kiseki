@@ -36,6 +36,12 @@ from src.type_lab import (
 PERMS = list(itertools.permutations(range(1, 8), 3))
 
 
+
+#: 🔴 2026-11-21 から 7車の B/C/D は三連複（`type_lab.TRIO_HIT_PLANS`）。三連単の仕組みを試す検査は
+#:    9車に残した旧定義（`NINE_CAR_PLAN_OVERRIDES`）で行う。
+B_TRI = TL.NINE_CAR_PLAN_OVERRIDES["B_hit"]
+C_TRI = TL.NINE_CAR_PLAN_OVERRIDES["C_hit"]
+
 def _shape(type_label: str = "B") -> RaceShape:
     return RaceShape(type_label, 1.50, 0, 0.10, True, tuple(range(1, 8)), 0.0,
                      ((1, 2, 3), (4, 5), (6, 7)))
@@ -70,7 +76,7 @@ def test_plans_are_exactly_e_hit():
 @pytest.mark.parametrize("key", ["A_hit", "B_hit"])
 def test_no_op_for_dutch_hit_plans(key):
     """🔴 `A_hit` / `B_hit` には足さない（足すと計画払戻が半減する）。"""
-    plan = PLANS[key]
+    plan = {**PLANS, **TL.NINE_CAR_PLAN_OVERRIDES}[key]
     assert plan.alloc == "dutch"
     po, pr = _board(60.0, {(3, 2, 1): 25.0})
     legs = [(1, 2, 3), (4, 5, 6)]
@@ -89,8 +95,8 @@ def _with_b_hit(monkeypatch):
 def test_no_op_for_plans_outside_the_set():
     po, pr = _board()
     legs = [(1, 2, 3), (1, 3, 2)]
-    st = allocate(legs, po, pr, PLANS["C_hit"])
-    out_legs, out_st = apply_add_perm(PLANS["C_hit"], legs, st, po, pr)
+    st = allocate(legs, po, pr, C_TRI)
+    out_legs, out_st = apply_add_perm(C_TRI, legs, st, po, pr)
     assert [tuple(c) for c in out_legs] == legs
     assert out_st == st
 
@@ -116,7 +122,7 @@ def test_adds_the_cheapest_unbought_permutation_of_the_first_leg(_with_b_hit):
     固定する。ここが確率最上位に戻ると、発端の大宮2R が拾えなくなる
     （{1,2,7} の確率最上位は `2-1-7`=6位で、決着 `7-2-1` は7位＝最安だった）。
     """
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(60.0, {(3, 2, 1): 25.0, (2, 1, 3): 30.0})
     pr[(3, 2, 1)] = 1e-9                      # 最安だが確率は最下位
     legs = [(1, 2, 3), (4, 5, 6)]
@@ -129,7 +135,7 @@ def test_adds_the_cheapest_unbought_permutation_of_the_first_leg(_with_b_hit):
 
 def test_uses_the_first_leg_not_another_bought_set(_with_b_hit):
     """足す先は**先頭の目の集合**。他の集合の並び違いは足さない（1点だけ）。"""
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(60.0, {(6, 5, 4): 5.0})   # 2点目の集合の方が安い並びを持つ
     legs = [(1, 2, 3), (4, 5, 6)]
     st = allocate(legs, po, pr, plan)
@@ -140,7 +146,7 @@ def test_uses_the_first_leg_not_another_bought_set(_with_b_hit):
 
 
 def test_never_adds_an_already_bought_permutation(_with_b_hit):
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(60.0)
     legs = [tuple(c) for c in itertools.permutations((1, 2, 3))]   # 6順列すべて
     st = allocate(legs, po, pr, plan)
@@ -169,7 +175,7 @@ def test_keeps_the_band():
 
 def test_does_not_add_when_it_would_break_the_mean_payout_gate(_with_b_hit):
     """🔴 平均想定払戻が `MIN_MEAN_PAYOUT` を割るなら足さない（在庫を減らさない）。"""
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(2.5, {(3, 2, 1): 2.1})      # 全点が安く、足すと平均が落ちる
     legs = [(1, 2, 3), (1, 3, 2)]
     st = allocate(legs, po, pr, plan)
@@ -184,7 +190,7 @@ def test_does_not_add_when_it_would_break_the_mean_payout_gate(_with_b_hit):
 
 def test_never_lets_a_point_fall_below_min_point_odds(_with_b_hit):
     """🔴 全点の予測オッズ >= `MIN_POINT_ODDS`。1点でも割るなら足さない。"""
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(60.0, {(3, 2, 1): 1.5})     # 2.0倍未満は候補にならない
     legs = [(1, 2, 3), (4, 5, 6)]
     st = allocate(legs, po, pr, plan)
@@ -209,7 +215,7 @@ def test_wired_into_build_with_gate_fallback_for_7_cars():
 
 def test_not_wired_for_b_hit_in_production():
     """🔴 本番経路でも `B_hit` には足さない（#613）。"""
-    plan = PLANS["B_hit"]
+    plan = B_TRI
     po, pr = _board(60.0)
     pr[(1, 2, 3)] = 0.5
     got = build_with_gate_fallback(_shape("B"), plan, po, pr, 7)
@@ -228,10 +234,10 @@ def test_not_applied_for_9_cars():
     pr[(1, 2, 3)] = 0.5
     shape = RaceShape("B", 1.50, 0, 0.10, True, tuple(range(1, 10)), 0.0,
                       ((1, 2, 3), (4, 5, 6), (7, 8, 9)))
-    got = build_with_gate_fallback(shape, PLANS["B_hit"], po, pr, 9)
+    got = build_with_gate_fallback(shape, B_TRI, po, pr, 9)
     if got:
         legs = [tuple(c) for c in got[0]]
-        base = TL.build_legs(shape, PLANS["B_hit"], po, pr)
+        base = TL.build_legs(shape, B_TRI, po, pr)
         assert len(legs) == len(base)            # 足されていない
 
 
